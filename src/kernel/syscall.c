@@ -558,9 +558,9 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
     }
     /* eventfd read */
     if (fd >= 700 && fd < 716) {
-        if (len < 8) return (uint64_t)-1;
+        if (len < 8) return (uint64_t)(int64_t)-EINVAL;
         uint64_t val;
-        if (eventfd_read((int)fd, &val) < 0) return (uint64_t)-1;
+        if (eventfd_read((int)fd, &val) < 0) return (uint64_t)(int64_t)-EAGAIN;
         if (copy_to_user(buf_addr, &val, 8) < 0) return (uint64_t)(int64_t)-EFAULT;
         /* I/O accounting */
         {
@@ -1052,6 +1052,11 @@ static uint64_t sys_truncate(uint64_t path_addr, uint64_t len) {
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
+    struct vfs_stat st;
+    if (vfs_stat(kpath, &st) < 0)
+        return (uint64_t)(int64_t)-ENOENT;
+    if (st.type == VFS_TYPE_DIR)
+        return (uint64_t)(int64_t)-EISDIR;
     if (vfs_truncate(kpath, (uint32_t)len) < 0)
         return (uint64_t)(int64_t)-EIO;
     return 0;
@@ -1059,19 +1064,19 @@ static uint64_t sys_truncate(uint64_t path_addr, uint64_t len) {
 
 /* ── Raw Ethernet send (SYS_RAW_SEND=216) ──────────────────────── */
 static uint64_t sys_raw_send(uint64_t buf_addr, uint64_t len) {
-    if (len == 0 || len > 1514) return (uint64_t)-1;
+    if (len == 0 || len > 1514) return (uint64_t)(int64_t)-EINVAL;
     int r = net_link_send((const uint8_t *)(uintptr_t)buf_addr, (uint16_t)len);
-    return r < 0 ? (uint64_t)-1 : len;
+    return r < 0 ? (uint64_t)(int64_t)r : len;
 }
 
 /* ── FD-based read/write (SYS_FD_READ=217, SYS_FD_WRITE=218) ──── */
 static uint64_t sys_fd_read(uint64_t fd, uint64_t buf_addr, uint64_t count) {
     int i = (int)fd - 3;
     struct process_fd *pfd = sys_get_fd(i);
-    if (!pfd || !pfd->used) return (uint64_t)-1;
+    if (!pfd || !pfd->used) return (uint64_t)(int64_t)-EBADF;
     uint64_t fsize = 0;
     struct vfs_stat st;
-    if (vfs_stat(pfd->path, &st) < 0) return (uint64_t)-1;
+    if (vfs_stat(pfd->path, &st) < 0) return (uint64_t)(int64_t)-EIO;
     fsize = st.size;
     if (pfd->offset >= fsize) return 0;
     uint64_t avail = fsize - pfd->offset;
@@ -1083,12 +1088,12 @@ static uint64_t sys_fd_read(uint64_t fd, uint64_t buf_addr, uint64_t count) {
     /* Clamp need_end to UINT32_MAX for vfs_read */
     if (need_end > UINT32_MAX) need_end = UINT32_MAX;
     uint8_t *tmp = kmalloc(need_end);
-    if (!tmp) return (uint64_t)-1;
+    if (!tmp) return (uint64_t)(int64_t)-ENOMEM;
     uint32_t nread = 0;
     vfs_read(pfd->path, tmp, (uint32_t)need_end, &nread);
     if (copy_to_user(buf_addr, tmp + pfd->offset, to_read) < 0) {
         kfree(tmp);
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EFAULT;
     }
     kfree(tmp);
     pfd->offset += to_read;
@@ -1098,7 +1103,7 @@ static uint64_t sys_fd_read(uint64_t fd, uint64_t buf_addr, uint64_t count) {
 static uint64_t sys_fd_write(uint64_t fd, uint64_t buf_addr, uint64_t count) {
     int i = (int)fd - 3;
     struct process_fd *pfd = sys_get_fd(i);
-    if (!pfd || !pfd->used) return (uint64_t)-1;
+    if (!pfd || !pfd->used) return (uint64_t)(int64_t)-EBADF;
     /* Clamp count to UINT32_MAX to avoid uint32_t truncation in vfs_write/vfs_append */
     if (count > UINT32_MAX) count = UINT32_MAX;
     int r;
@@ -1113,7 +1118,7 @@ static uint64_t sys_fd_write(uint64_t fd, uint64_t buf_addr, uint64_t count) {
         r = vfs_write(pfd->path, (const void *)(uintptr_t)buf_addr, (uint32_t)count);
         if (r == 0) pfd->offset += count;
     }
-    return (r == 0) ? count : (uint64_t)-1;
+    return (r == 0) ? count : (uint64_t)(int64_t)r;
 }
 
 /* ── Heap syscalls (malloc/free/calloc/realloc via kmalloc) ───── */
@@ -1153,11 +1158,12 @@ static uint64_t sys_stat(uint64_t path_addr, uint64_t out_addr) {
         return (uint64_t)(int64_t)-EFAULT;
     uint64_t *out = (uint64_t *)out_addr;
     struct vfs_stat st;
-    if (vfs_stat(kpath, &st) < 0) return (uint64_t)-1;
+    if (vfs_stat(kpath, &st) < 0)
+        return (uint64_t)(int64_t)-ENOENT;
     if (out) {
         uint64_t stbuf[2] = { st.size, st.type };
         if (copy_to_user(out_addr, stbuf, sizeof(stbuf)) < 0)
-            return (uint64_t)-1;
+            return (uint64_t)(int64_t)-EFAULT;
     }
     return 0;
 }
@@ -1165,18 +1171,20 @@ static uint64_t sys_stat(uint64_t path_addr, uint64_t out_addr) {
 static uint64_t sys_mkdir(uint64_t path_addr) {
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
-        return (uint64_t)-1;
-    return (uint64_t)fs_create(kpath, 2 /* FS_TYPE_DIR */);
+        return (uint64_t)(int64_t)-EFAULT;
+    int ret = fs_create(kpath, FS_TYPE_DIR);
+    return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
 }
 
 static uint64_t sys_unlink(uint64_t path_addr) {
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EFAULT;
     char ap[128];
     const char *rp = vfs_abs_path(kpath, ap, sizeof(ap)) < 0
                      ? kpath : ap;
-    return (uint64_t)fs_delete(rp);
+    int ret = fs_delete(rp);
+    return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
 }
 
 static uint64_t sys_time(void) {
@@ -1514,13 +1522,14 @@ static uint64_t sys_fs_lstat(uint64_t path_addr, uint64_t size_addr, uint64_t ty
 
 static uint64_t sys_chdir(uint64_t path_addr) {
     const char *path = (const char *)path_addr;
+    if (!path) return (uint64_t)(int64_t)-EFAULT;
     /* Prefer per-session CWD so that cd/pwd work correctly even when
      * net_poll() is called from a different process (e.g. httpd). */
     char *ses_cwd = telnet_get_cwd_ctx();
     /* Resolve to absolute path via VFS */
     char ap[128];
     if (vfs_abs_path(path, ap, sizeof(ap)) < 0)
-        return (uint64_t)(int64_t)-1;
+        return (uint64_t)(int64_t)-ENOENT;
     /* For telnet sessions, re-resolve using session CWD as base
      * since vfs_abs_path uses per-process CWD which may differ. */
     if (ses_cwd && path[0] != '/') {
@@ -1539,20 +1548,23 @@ static uint64_t sys_chdir(uint64_t path_addr) {
     if (ap[0] == '/' && ap[1] == '\0') {
         if (ses_cwd) { ses_cwd[0] = '/'; ses_cwd[1] = '\0'; return 0; }
         struct process *cur = process_get_current();
-        if (!cur) return (uint64_t)(int64_t)-1;
+        if (!cur) return (uint64_t)(int64_t)-ESRCH;
         cur->cwd[0] = '/'; cur->cwd[1] = '\0';
         return 0;
     }
     /* Verify it's a directory */
     struct vfs_stat st;
     int vstat_r = vfs_stat(ap, &st);
-    if (vstat_r < 0 || st.type != 2) return (uint64_t)(int64_t)-1;
+    if (vstat_r < 0)
+        return (uint64_t)(int64_t)-ENOENT;
+    if (st.type != VFS_TYPE_DIR)
+        return (uint64_t)(int64_t)-ENOTDIR;
     /* Remove trailing slash (except root) */
     int len = (int)strlen(ap);
     while (len > 1 && ap[len-1] == '/') { ap[--len] = '\0'; }
     if (ses_cwd) { strncpy(ses_cwd, ap, 63); ses_cwd[63] = '\0'; return 0; }
     struct process *cur = process_get_current();
-    if (!cur) return (uint64_t)(int64_t)-1;
+    if (!cur) return (uint64_t)(int64_t)-ESRCH;
     strncpy(cur->cwd, ap, 63); cur->cwd[63] = '\0';
     return 0;
 }
@@ -1567,7 +1579,8 @@ static uint64_t sys_getcwd(uint64_t buf_addr, uint64_t buf_size) {
         cwd = (cur && cur->cwd[0]) ? cur->cwd : "/";
     }
     char *buf = (char *)buf_addr;
-    if (buf_size == 0) return (uint64_t)-1;
+    if (buf_size == 0) return (uint64_t)(int64_t)-EINVAL;
+    if (!buf) return (uint64_t)(int64_t)-EFAULT;
     size_t max = buf_size;
     strncpy(buf, cwd, max - 1); buf[max-1] = '\0';
     return 0;
@@ -2868,19 +2881,19 @@ static uint64_t sys_dup2(uint64_t old_fd, uint64_t new_fd) {
 
 static uint64_t sys_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg) {
     struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)-1;
+    if (!proc) return (uint64_t)(int64_t)-ESRCH;
     if (fd >= PROCESS_FD_MAX || !proc->fd_table[fd].used)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EBADF;
 
     switch (cmd) {
         case F_DUPFD: {
             /* Duplicate fd to lowest FD >= arg */
             int new_fd = (int)arg;
             if (new_fd < 0) new_fd = 0;
-            if (new_fd >= PROCESS_FD_MAX) return (uint64_t)-1;
+            if (new_fd >= PROCESS_FD_MAX) return (uint64_t)(int64_t)-EINVAL;
             while (new_fd < PROCESS_FD_MAX && proc->fd_table[new_fd].used)
                 new_fd++;
-            if (new_fd >= PROCESS_FD_MAX) return (uint64_t)-1;
+            if (new_fd >= PROCESS_FD_MAX) return (uint64_t)(int64_t)-EMFILE;
             proc->fd_table[new_fd] = proc->fd_table[fd];
             return (uint64_t)new_fd;
         }
@@ -2944,11 +2957,11 @@ static uint64_t sys_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg) {
             } __attribute__((packed));
 
             struct flock user_flk;
-            if (!arg) return (uint64_t)-1;
+            if (!arg) return (uint64_t)(int64_t)-EFAULT;
             if (syscall_is_user_process() && !syscall_user_read_ok(arg, sizeof(user_flk)))
-                return (uint64_t)-1;
+                return (uint64_t)(int64_t)-EFAULT;
             if (copy_from_user(&user_flk, arg, sizeof(user_flk)) < 0)
-                return (uint64_t)-1;
+                return (uint64_t)(int64_t)-EFAULT;
 
             /* Convert to kernel struct file_lock */
             struct file_lock kflk;
@@ -2963,14 +2976,14 @@ static uint64_t sys_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg) {
 
             /* Get file path from fd table */
             const char *fpath = proc->fd_table[fd].path;
-            if (!fpath || !fpath[0]) return (uint64_t)-1;
+            if (!fpath || !fpath[0]) return (uint64_t)(int64_t)-EBADF;
 
             int wait_flag = (cmd == F_SETLKW) ? 1 : 0;
             int rc = file_lock_set(fpath, &kflk, wait_flag);
             if (rc < 0) {
-                if (rc == -EAGAIN) return (uint64_t)-EAGAIN;
-                if (rc == -ENOLCK) return (uint64_t)-ENOLCK;
-                return (uint64_t)-1;
+                if (rc == -EAGAIN) return (uint64_t)(int64_t)-EAGAIN;
+                if (rc == -ENOLCK) return (uint64_t)(int64_t)-ENOLCK;
+                return (uint64_t)(int64_t)rc;
             }
             return 0;
         }
@@ -2984,17 +2997,17 @@ static uint64_t sys_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg) {
                 int32_t l_pid;
             } __attribute__((packed));
 
-            if (!arg) return (uint64_t)-1;
+            if (!arg) return (uint64_t)(int64_t)-EFAULT;
             if (syscall_is_user_process() && !syscall_user_read_ok(arg, sizeof(struct flock)))
-                return (uint64_t)-1;
+                return (uint64_t)(int64_t)-EFAULT;
 
             struct flock user_flk;
             if (copy_from_user(&user_flk, arg, sizeof(user_flk)) < 0)
-                return (uint64_t)-1;
+                return (uint64_t)(int64_t)-EFAULT;
 
             /* Get file path */
             const char *fpath = proc->fd_table[fd].path;
-            if (!fpath || !fpath[0]) return (uint64_t)-1;
+            if (!fpath || !fpath[0]) return (uint64_t)(int64_t)-EBADF;
 
             struct file_lock kflk;
             memset(&kflk, 0, sizeof(kflk));
@@ -3014,35 +3027,35 @@ static uint64_t sys_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg) {
                 user_flk.l_len    = kflk.l_len;
                 user_flk.l_pid    = kflk.l_pid;
             } else {
-                return (uint64_t)-1;
+                return (uint64_t)(int64_t)rc;
             }
 
             if (syscall_is_user_process() && !syscall_user_write_ok(arg, sizeof(struct flock)))
-                return (uint64_t)-1;
+                return (uint64_t)(int64_t)-EFAULT;
             if (copy_to_user(arg, &user_flk, sizeof(user_flk)) < 0)
-                return (uint64_t)-1;
+                return (uint64_t)(int64_t)-EFAULT;
             return 0;
         }
         case F_DUPFD_CLOEXEC: {
             /* Duplicate with close-on-exec */
             int new_fd = (int)arg;
             if (new_fd < 0) new_fd = 0;
-            if (new_fd >= PROCESS_FD_MAX) return (uint64_t)-1;
+            if (new_fd >= PROCESS_FD_MAX) return (uint64_t)(int64_t)-EINVAL;
             while (new_fd < PROCESS_FD_MAX && proc->fd_table[new_fd].used)
                 new_fd++;
-            if (new_fd >= PROCESS_FD_MAX) return (uint64_t)-1;
+            if (new_fd >= PROCESS_FD_MAX) return (uint64_t)(int64_t)-EMFILE;
             proc->fd_table[new_fd] = proc->fd_table[fd];
             proc->fd_table[new_fd].flags |= FD_CLOEXEC;
             return (uint64_t)new_fd;
         }
         case F_ADD_SEALS: {
             /* Add seals to a memfd */
-            if (!memfd_is_fd((int)fd)) return (uint64_t)-1;
+            if (!memfd_is_fd((int)fd)) return (uint64_t)(int64_t)-EINVAL;
             return (uint64_t)memfd_add_seals_fd((int)fd, (int)arg);
         }
         case F_GET_SEALS: {
             /* Get seals from a memfd */
-            if (!memfd_is_fd((int)fd)) return (uint64_t)-1;
+            if (!memfd_is_fd((int)fd)) return (uint64_t)(int64_t)-EINVAL;
             return (uint64_t)memfd_get_seals_fd((int)fd);
         }
         default:
@@ -3486,11 +3499,11 @@ static uint64_t sys_pause(void) {
 
 static uint64_t sys_access(uint64_t path_addr, uint64_t mode) {
     const char *path = (const char *)path_addr;
-    if (!path) return (uint64_t)-1;
+    if (!path) return (uint64_t)(int64_t)-EFAULT;
 
     /* Check if file exists */
     struct vfs_stat st;
-    if (vfs_stat(path, &st) < 0) return (uint64_t)-1;
+    if (vfs_stat(path, &st) < 0) return (uint64_t)(int64_t)-ENOENT;
 
     /* For now, we don't check permissions (always OK if file exists) */
     (void)mode;
@@ -3527,10 +3540,11 @@ static uint64_t sys_getegid(void) {
 
 static uint64_t sys_rmdir(uint64_t path_addr) {
     const char *path = (const char *)path_addr;
-    if (!path) return (uint64_t)-1;
+    if (!path) return (uint64_t)(int64_t)-EFAULT;
 
     /* Use VFS unlink (same as delete for directories) */
-    if (vfs_unlink(path) < 0) return (uint64_t)-1;
+    int ret = vfs_unlink(path);
+    if (ret < 0) return (uint64_t)(int64_t)ret;
     return 0;
 }
 
@@ -3539,13 +3553,13 @@ static uint64_t sys_rmdir(uint64_t path_addr) {
 static uint64_t sys_rename(uint64_t old_addr, uint64_t new_addr) {
     const char *old_path = (const char *)old_addr;
     const char *new_path = (const char *)new_addr;
-    if (!old_path || !new_path) return (uint64_t)-EINVAL;
+    if (!old_path || !new_path) return (uint64_t)(int64_t)-EINVAL;
 
     /* Use the VFS rename operation — supports both files and directories,
      * handles cross-filesystem moves (returns -EXDEV), enforces Landlock
      * permissions and read-only mounts. */
     int ret = vfs_rename(old_path, new_path);
-    if (ret < 0) return (uint64_t)-1;
+    if (ret < 0) return (uint64_t)(int64_t)ret;
     return 0;
 }
 
@@ -3553,8 +3567,9 @@ static uint64_t sys_rename(uint64_t old_addr, uint64_t new_addr) {
 
 static uint64_t sys_chmod(uint64_t path_addr, uint64_t mode) {
     const char *path = (const char *)path_addr;
-    if (!path) return (uint64_t)-1;
-    return (uint64_t)fs_chmod(path, (uint16_t)mode);
+    if (!path) return (uint64_t)(int64_t)-EFAULT;
+    int ret = fs_chmod(path, (uint16_t)mode);
+    return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
 }
 
 /* ── fsync() / fdatasync() ─────────────────────────────────────── */
@@ -5698,10 +5713,11 @@ sendfile_cleanup:
 
 static uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg) {
     struct process *p = process_get_current();
-    if (!p || fd >= PROCESS_FD_MAX || !p->fd_table[fd].used) return (uint64_t)-1;
+    if (!p) return (uint64_t)(int64_t)-ESRCH;
+    if (fd >= PROCESS_FD_MAX || !p->fd_table[fd].used) return (uint64_t)(int64_t)-EBADF;
 
     /* For I/O control operations that use arg as a pointer, reject NULL */
-    if (!arg) return (uint64_t)-1;
+    if (!arg) return (uint64_t)(int64_t)-EINVAL;
 
     switch (cmd) {
         case TIOCGWINSZ: {
@@ -5713,60 +5729,60 @@ static uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg) {
                 unsigned short ws_ypixel;
             } ws = { 25, 80, 0, 0 };
             if (copy_to_user(arg, &ws, sizeof(ws)) < 0)
-                return (uint64_t)-1;
+                return (uint64_t)(int64_t)-EFAULT;
             return 0;
         }
         case SG_IO: {
             /* SCSI generic passthrough — submit CDB and return sense data */
             struct sg_io_hdr hdr;
             if (copy_from_user(&hdr, arg, sizeof(hdr)) < 0)
-                return (uint64_t)-1;
+                return (uint64_t)(int64_t)-EFAULT;
 
             /* Validate interface ID */
             if (hdr.interface_id != 'S')
-                return (uint64_t)-1;  /* -ENOTTY */
+                return (uint64_t)(int64_t)-ENOTTY;
 
             /* iovec not supported in this simple implementation */
             if (hdr.iovec_count != 0)
-                return (uint64_t)-1;
+                return (uint64_t)(int64_t)-EINVAL;
 
             /* Validate CDB length */
             if (hdr.cmd_len > SG_MAX_CDB_SIZE || hdr.cmd_len == 0)
-                return (uint64_t)-1;
+                return (uint64_t)(int64_t)-EINVAL;
 
             /* Resolve block device ID from the fd's path.
              * The fd path should be /dev/sda, /dev/nvme0n1, etc. */
             const char *path = p->fd_table[fd].path;
             if (!path || path[0] == '\0')
-                return (uint64_t)-1;
+                return (uint64_t)(int64_t)-EBADF;
 
             int dev_id = blockdev_find_by_name(path);
             if (dev_id < 0)
-                return (uint64_t)-1;  /* -ENODEV */
+                return (uint64_t)(int64_t)-ENODEV;
 
             /* Copy CDB from user space */
             uint8_t cdb[SG_MAX_CDB_SIZE];
             memset(cdb, 0, sizeof(cdb));
             if (copy_from_user(cdb, (uint64_t)hdr.cmdp, hdr.cmd_len) < 0)
-                return (uint64_t)-1;
+                return (uint64_t)(int64_t)-EFAULT;
 
             /* Allocate data buffer (up to 64KB for safety) */
             uint32_t data_len = hdr.dxfer_len;
             if (data_len > 65536)
-                return (uint64_t)-1;  /* -EINVAL */
+                return (uint64_t)(int64_t)-EINVAL;
 
             void *data_buf = NULL;
             if (data_len > 0 && hdr.dxferp) {
                 data_buf = (void *)kmalloc(data_len);
                 if (!data_buf)
-                    return (uint64_t)-12;  /* -ENOMEM */
+                    return (uint64_t)(int64_t)-ENOMEM;
 
                 if (hdr.dxfer_direction == SG_DXFER_TO_DEV ||
                     hdr.dxfer_direction == SG_DXFER_TO_FROM_DEV) {
                     /* Copy data FROM user for writes */
                     if (copy_from_user(data_buf, (uint64_t)hdr.dxferp, data_len) < 0) {
                         kfree(data_buf);
-                        return (uint64_t)-1;
+                        return (uint64_t)(int64_t)-EFAULT;
                     }
                 }
             }
@@ -5811,7 +5827,7 @@ static uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg) {
                 if ((int)mx_sb > sense_len) mx_sb = (unsigned char)sense_len;
                 if (copy_to_user((uint64_t)hdr.sbp, sense, mx_sb) < 0) {
                     if (data_buf) kfree(data_buf);
-                    return (uint64_t)-1;
+                    return (uint64_t)(int64_t)-EFAULT;
                 }
             }
 
@@ -5821,7 +5837,7 @@ static uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg) {
                  hdr.dxfer_direction == SG_DXFER_TO_FROM_DEV)) {
                 if (copy_to_user((uint64_t)hdr.dxferp, data_buf, data_len) < 0) {
                     kfree(data_buf);
-                    return (uint64_t)-1;
+                    return (uint64_t)(int64_t)-EFAULT;
                 }
             }
 
@@ -5830,12 +5846,12 @@ static uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg) {
 
             /* Copy the updated hdr back to user */
             if (copy_to_user(arg, &hdr, sizeof(hdr)) < 0)
-                return (uint64_t)-1;
+                return (uint64_t)(int64_t)-EFAULT;
 
             return 0;
         }
         default:
-            return (uint64_t)-1; /* ENOTTY */
+            return (uint64_t)(int64_t)-ENOTTY;
     }
 }
 
@@ -6008,7 +6024,7 @@ static uint64_t sys_mount(uint64_t src_addr, uint64_t target_addr,
     char src[64], target[64], fstype[16];
 
     if (!syscall_user_cstr_ok(src_addr) || !syscall_user_cstr_ok(target_addr))
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EFAULT;
 
     memcpy(src, (void*)src_addr, 63); src[63] = '\0';
     memcpy(target, (void*)target_addr, 63); target[63] = '\0';
@@ -6023,17 +6039,13 @@ static uint64_t sys_mount(uint64_t src_addr, uint64_t target_addr,
     if (flags & MS_BIND) {
         int ret = vfs_bind_mount(src, target);
         if (ret < 0)
-            return (uint64_t)-1;
+            return (uint64_t)(int64_t)ret;
         kprintf("[mount] bind: %s at %s\n", src, target);
         return 0;
     }
 
-    /* ── Filesystem module autoloading (M36) ────────────────────────
-     * If the requested filesystem type is not currently registered in
-     * the VFS, attempt to autoload the corresponding kernel module.
-     * This allows filesystems like ext2, fat32, iso9660 to be loaded
-     * on demand when `mount -t ext2 ...` is invoked.
-     */
+    /* ── Filesystem module autoloading (M36) ──────────────────────── */
+    /* ... (unchanged) ... */
     if (fstype[0] != '\0') {
         /* Quick check: is this filesystem already registered? */
         int found = 0;
@@ -6049,7 +6061,6 @@ static uint64_t sys_mount(uint64_t src_addr, uint64_t target_addr,
         /* If not found, try to autoload it */
         if (!found) {
             request_module("%s", fstype);
-            /* Check again after potential module load */
             {
                 char names[VFS_MAX_FS_TYPES][32];
                 int n = vfs_list_filesystems(names, VFS_MAX_FS_TYPES);
@@ -6066,32 +6077,24 @@ static uint64_t sys_mount(uint64_t src_addr, uint64_t target_addr,
             return 0;
         }
 
-        /* If the filesystem type was loaded but we don't have a generic
-         * mount handler for it, log success and return.  A full
-         * implementation would call into the registered fs's ops. */
         if (found) {
             kprintf("[mount] %s at %s (type=%s) — module loaded, VFS mount pending\n",
                     src, target, fstype);
             return 0;
         }
 
-        /* Filesystem type not found and not loaded — return error */
+        /* Filesystem type not found */
         kprintf("[mount] %s at %s (type=%s): filesystem not supported\n",
                 src, target, fstype);
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-ENODEV;
     }
 
     /* For the existing fs.c (smfs), just treat as a no-op */
     kprintf("[mount] src=%s target=%s fstype=%s\n", src, target, fstype);
 
-    /* If the current process has its own mount namespace, mount there */
     struct process *cur = process_get_current();
     struct mnt_namespace *ns = cur ? cur->mnt_ns : NULL;
     if (ns) {
-        /* Mount into namespace using the VFS internal API.
-         * For filesystem-backed mounts, this would resolve the filesystem
-         * type and call the appropriate mount helper.  For now, we log
-         * that the mount was namespace-specific. */
         kprintf("[mount] (namespace=%p) %s at %s type=%s\n",
                 (void*)ns, src, target, fstype);
     }
@@ -6101,7 +6104,7 @@ static uint64_t sys_mount(uint64_t src_addr, uint64_t target_addr,
 static uint64_t sys_umount(uint64_t target_addr) {
     char target[64];
     if (syscall_is_user_process() && !syscall_user_cstr_ok(target_addr))
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EFAULT;
     memcpy(target, (void*)target_addr, 63); target[63] = '\0';
 
     kprintf("[umount] %s\n", target);
@@ -6117,7 +6120,7 @@ static uint64_t sys_pivot_root(uint64_t new_root_addr, uint64_t put_old_addr) {
     if (syscall_is_user_process()) {
         if (!syscall_user_cstr_ok(new_root_addr) ||
             !syscall_user_cstr_ok(put_old_addr))
-            return (uint64_t)-1;
+            return (uint64_t)(int64_t)-EFAULT;
     }
 
     memcpy(new_root, (void*)new_root_addr, 63); new_root[63] = '\0';
@@ -6125,7 +6128,7 @@ static uint64_t sys_pivot_root(uint64_t new_root_addr, uint64_t put_old_addr) {
 
     int ret = vfs_pivot_root(new_root, put_old);
     if (ret < 0)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)ret;
     return 0;
 }
 
@@ -6139,7 +6142,7 @@ static uint64_t sys_chroot(uint64_t path_addr) {
 
     if (syscall_is_user_process()) {
         if (!syscall_user_cstr_ok(path_addr))
-            return (uint64_t)-1;
+            return (uint64_t)(int64_t)-EFAULT;
     }
 
     memcpy(path, (void*)path_addr, 255);
@@ -6147,7 +6150,7 @@ static uint64_t sys_chroot(uint64_t path_addr) {
 
     int ret = chroot_set(path);
     if (ret < 0)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)ret;
     return 0;
 }
 
@@ -6155,8 +6158,9 @@ static uint64_t sys_chroot(uint64_t path_addr) {
 
 static uint64_t sys_ftruncate(uint64_t fd, uint64_t length) {
     struct process *p = process_get_current();
-    if (!p || fd >= PROCESS_FD_MAX || !p->fd_table[fd].used)
-        return (uint64_t)-1;
+    if (!p) return (uint64_t)(int64_t)-ESRCH;
+    if (fd >= PROCESS_FD_MAX || !p->fd_table[fd].used)
+        return (uint64_t)(int64_t)-EBADF;
     /* For now, delegate to the path-based truncate */
     return sys_truncate((uint64_t)(uintptr_t)p->fd_table[fd].path, length);
 }
@@ -6165,15 +6169,17 @@ static uint64_t sys_ftruncate(uint64_t fd, uint64_t length) {
 
 static uint64_t sys_readdir(uint64_t fd, uint64_t buf_addr, uint64_t count) {
     struct process *p = process_get_current();
-    if (!p || fd >= PROCESS_FD_MAX || !p->fd_table[fd].used)
-        return (uint64_t)-1;
+    if (!p) return (uint64_t)(int64_t)-ESRCH;
+    if (fd >= PROCESS_FD_MAX || !p->fd_table[fd].used)
+        return (uint64_t)(int64_t)-EBADF;
 
     if (syscall_is_user_process() && !syscall_user_write_ok(buf_addr, count))
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EFAULT;
 
     char names[64][64];
     int n = vfs_readdir_names(p->fd_table[fd].path, names, 64);
-    if (n <= 0) return 0;
+    if (n < 0) return (uint64_t)(int64_t)n;
+    if (n == 0) return 0;
 
     /* Start from the fd's current offset (which tracks which entry we're at) */
     int start = (int)p->fd_table[fd].offset;
@@ -7174,11 +7180,10 @@ static uint64_t sys_futimens(uint64_t fd, uint64_t times_addr) {
 static uint64_t sys_statfs(uint64_t path_addr, uint64_t buf_addr) {
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EFAULT;
 
     struct statfs st;
     memset(&st, 0, sizeof(st));
-    /* ... dummy values ... */
     st.f_type = 0x4D44; /* FAT */
     st.f_bsize = 512;
     st.f_blocks = 0; /* unknown */
@@ -7189,7 +7194,7 @@ static uint64_t sys_statfs(uint64_t path_addr, uint64_t buf_addr) {
     st.f_namelen = 256;
 
     if (copy_to_user(buf_addr, &st, sizeof(struct statfs)) < 0)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EFAULT;
     return 0;
 }
 
@@ -7570,9 +7575,9 @@ static uint64_t sys_openat(uint64_t dirfd, uint64_t path_addr,
     (void)mode;
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EFAULT;
     const char *path = resolve_path_at((int)dirfd, kpath);
-    if (!path) return (uint64_t)-1;
+    if (!path) return (uint64_t)(int64_t)-ENOENT;
     /* Delegate to existing sys_open */
     return sys_open((uint64_t)(uintptr_t)path, flags, 0);
 }
@@ -7581,10 +7586,11 @@ static uint64_t sys_mkdirat(uint64_t dirfd, uint64_t path_addr, uint64_t mode) {
     (void)mode;
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EFAULT;
     const char *path = resolve_path_at((int)dirfd, kpath);
-    if (!path) return (uint64_t)-1;
-    return vfs_create(path, 2) < 0 ? (uint64_t)-1 : 0;
+    if (!path) return (uint64_t)(int64_t)-ENOENT;
+    int ret = vfs_create(path, VFS_TYPE_DIR);
+    return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
 }
 
 static uint64_t sys_fstatat(uint64_t dirfd, uint64_t path_addr,
@@ -7592,49 +7598,52 @@ static uint64_t sys_fstatat(uint64_t dirfd, uint64_t path_addr,
     (void)flags;
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EFAULT;
     const char *resolved = resolve_path_at((int)dirfd, kpath);
-    if (!resolved) return (uint64_t)-1;
+    if (!resolved) return (uint64_t)(int64_t)-ENOENT;
 
     struct vfs_stat st;
-    if (vfs_stat(resolved, &st) < 0) return (uint64_t)-1;
+    if (vfs_stat(resolved, &st) < 0) return (uint64_t)(int64_t)-ENOENT;
     if (copy_to_user(buf_addr, &st, sizeof(st)) < 0)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EFAULT;
     return 0;
 }
 
 static uint64_t sys_unlinkat(uint64_t dirfd, uint64_t path_addr, uint64_t flags) {
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EFAULT;
     const char *path = resolve_path_at((int)dirfd, kpath);
-    if (!path) return (uint64_t)-1;
+    if (!path) return (uint64_t)(int64_t)-ENOENT;
+    int ret;
     if (flags & AT_REMOVEDIR)
-        return vfs_unlink(path) < 0 ? (uint64_t)-1 : (uint64_t)0;
-    return vfs_unlink(path) < 0 ? (uint64_t)-1 : 0;
+        ret = vfs_unlink(path);
+    else
+        ret = vfs_unlink(path);
+    return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
 }
 
 static uint64_t sys_renameat(uint64_t olddirfd, uint64_t oldpath_addr,
                               uint64_t newdirfd, uint64_t newpath_addr) {
     char koldpath[256], knewpath[256];
     if (strncpy_from_user(koldpath, oldpath_addr, sizeof(koldpath)) < 0)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EFAULT;
     if (strncpy_from_user(knewpath, newpath_addr, sizeof(knewpath)) < 0)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EFAULT;
     const char *oldpath = resolve_path_at((int)olddirfd, koldpath);
     const char *newpath = resolve_path_at((int)newdirfd, knewpath);
-    if (!oldpath || !newpath) return (uint64_t)-1;
+    if (!oldpath || !newpath) return (uint64_t)(int64_t)-ENOENT;
     /* For now, fall back to VFS operations: copy + delete */
     uint8_t *buf = kmalloc(4096);
-    if (!buf) return (uint64_t)-1;
+    if (!buf) return (uint64_t)(int64_t)-ENOMEM;
     uint32_t sz = 0;
     if (vfs_read(oldpath, buf, 4096, &sz) < 0) {
         kfree(buf);
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EIO;
     }
     if (vfs_write(newpath, buf, sz) < 0) {
         kfree(buf);
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EIO;
     }
     vfs_unlink(oldpath);
     kfree(buf);
@@ -7644,24 +7653,25 @@ static uint64_t sys_renameat(uint64_t olddirfd, uint64_t oldpath_addr,
 static uint64_t sys_symlinkat(uint64_t target_addr, uint64_t newdirfd,
                                uint64_t linkpath_addr) {
     char *ktarget = kmalloc(4096);
-    if (!ktarget) return (uint64_t)-1;
+    if (!ktarget) return (uint64_t)(int64_t)-ENOMEM;
     char klinkpath[256];
     if (strncpy_from_user(ktarget, target_addr, 4096) < 0) {
         kfree(ktarget);
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EFAULT;
     }
+    ktarget[4095] = '\0';
     if (strncpy_from_user(klinkpath, linkpath_addr, sizeof(klinkpath)) < 0) {
         kfree(ktarget);
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EFAULT;
     }
     const char *linkpath = resolve_path_at((int)newdirfd, klinkpath);
     if (!linkpath) {
         kfree(ktarget);
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-ENOENT;
     }
     if (vfs_symlink(ktarget, linkpath) < 0) {
         kfree(ktarget);
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EIO;
     }
     kfree(ktarget);
     return 0;
@@ -7671,16 +7681,17 @@ static uint64_t sys_readlinkat(uint64_t dirfd, uint64_t path_addr,
                                 uint64_t buf_addr, uint64_t bufsize) {
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EFAULT;
     const char *path = resolve_path_at((int)dirfd, kpath);
-    if (!path) return (uint64_t)-1;
-    if (bufsize == 0 || bufsize > 4096) return (uint64_t)-1;
+    if (!path) return (uint64_t)(int64_t)-ENOENT;
+    if (bufsize == 0) return (uint64_t)(int64_t)-EINVAL;
+    if (bufsize > 4096) bufsize = 4096;
     /* Read into kernel buffer, then copy out */
     char kbuf[4096];
     int n = vfs_readlink(path, kbuf, (int)sizeof(kbuf));
-    if (n < 0) return (uint64_t)-1;
+    if (n < 0) return (uint64_t)(int64_t)n;
     if (copy_to_user(buf_addr, kbuf, (size_t)n) < 0)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EFAULT;
     return (uint64_t)n;
 }
 
@@ -7688,14 +7699,16 @@ static uint64_t sys_readlinkat(uint64_t dirfd, uint64_t path_addr,
 
 static uint64_t sys_getdents64(uint64_t fd, uint64_t dirp_addr, uint64_t count) {
     struct process *p = process_get_current();
-    if (!p || fd >= PROCESS_FD_MAX || !p->fd_table[fd].used)
-        return (uint64_t)-1;
+    if (!p) return (uint64_t)(int64_t)-ESRCH;
+    if (fd >= PROCESS_FD_MAX || !p->fd_table[fd].used)
+        return (uint64_t)(int64_t)-EBADF;
     if (syscall_is_user_process() && !syscall_user_write_ok(dirp_addr, count))
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EFAULT;
 
     char names[64][64];
     int n = vfs_readdir_names(p->fd_table[fd].path, names, 64);
-    if (n <= 0) return 0;
+    if (n < 0) return (uint64_t)(int64_t)n;
+    if (n == 0) return 0;
 
     int start = (int)p->fd_table[fd].offset;
     if (start >= n) return 0;
