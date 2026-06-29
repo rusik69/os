@@ -1317,6 +1317,53 @@ static void test_syscall(void) {
     t_ok("syscall tests");
 }
 
+/* ── Linux ABI syscall dispatch tests (sys_call_table[]) ──── */
+
+static void test_linux_abi(void) {
+    /* __NR_getpid — should return current process PID (> 0) */
+    {
+        uint64_t pid = syscall_linux_dispatch(__NR_getpid, 0, 0, 0, 0, 0);
+        ASSERT("linux_abi getpid > 0", pid > 0);
+        ASSERT("linux_abi getpid finite", pid < 10000);
+        t_ok("linux_abi getpid");
+    }
+
+    /* __NR_write to stdout (fd=1) — should succeed */
+    {
+        const char *msg = "[linux_abi] hello from ABI dispatch table\n";
+        uint64_t written = syscall_linux_dispatch(__NR_write, 1,
+                                                  (uint64_t)(uintptr_t)msg,
+                                                  strlen(msg), 0, 0);
+        ASSERT("linux_abi write > 0", written > 0);
+        t_ok("linux_abi write stdout");
+    }
+
+    /* __NR_close with invalid fd — should return negative errno */
+    {
+        uint64_t ret = syscall_linux_dispatch(__NR_close, 9999, 0, 0, 0, 0);
+        ASSERT("linux_abi close invalid fd < 0", (int64_t)ret < 0);
+        t_ok("linux_abi close invalid fd");
+    }
+
+    /* Invalid syscall number (beyond table) — must return -ENOSYS */
+    {
+        uint64_t ret = syscall_linux_dispatch((uint64_t)(__NR_syscalls + 100),
+                                              0, 0, 0, 0, 0);
+        ASSERT("linux_abi out-of-range == -ENOSYS",
+               (int64_t)ret == -ENOSYS);
+        t_ok("linux_abi out-of-range -ENOSYS");
+    }
+
+    /* __NR_sched_yield — should return 0 (success) */
+    {
+        uint64_t ret = syscall_linux_dispatch(__NR_sched_yield, 0, 0, 0, 0, 0);
+        ASSERT("linux_abi sched_yield == 0", ret == 0);
+        t_ok("linux_abi sched_yield");
+    }
+
+    t_ok("linux abi dispatch tests");
+}
+
 /* ── Heap stress: fragmentation and OOM ────────────────────── */
 
 static void test_heap_stress(void) {
@@ -4698,6 +4745,7 @@ void test_run_all(void) {
     kprintf("[TEST] doom\n");        test_doom();        test_progress_tick();
     kprintf("[TEST] dos\n");         test_dos();         test_progress_tick();
     kprintf("[TEST] syscall\n");     test_syscall();     test_progress_tick();
+    kprintf("[TEST] linux_abi\n");   test_linux_abi();   test_progress_tick();
     kprintf("[TEST] waitqueue\n");   test_waitqueue();   test_progress_tick();
     kprintf("[TEST] completion\n");  test_completion_done_first(); test_progress_tick();
     kprintf("[TEST] rwlock\n");      test_rwlock();      test_progress_tick();
