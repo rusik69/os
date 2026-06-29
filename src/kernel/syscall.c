@@ -494,12 +494,12 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
         /* Clamp need_end to UINT32_MAX for vfs_read */
         if (need_end > UINT32_MAX) need_end = UINT32_MAX;
         uint8_t *tmp = kmalloc(need_end);
-        if (!tmp) return (uint64_t)-1;
+        if (!tmp) return (uint64_t)(int64_t)-ENOMEM;
         uint32_t nread = 0;
         vfs_read(pfd->path, tmp, (uint32_t)need_end, &nread);
         if (copy_to_user(buf_addr, tmp + pfd->offset, to_read) < 0) {
             kfree(tmp);
-            return (uint64_t)-1;
+            return (uint64_t)(int64_t)-EFAULT;
         }
         kfree(tmp);
         pfd->offset += to_read;
@@ -518,12 +518,12 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
     if (fd >= 600 && fd < 616) {
         int slot = (int)fd - 600;
         uint8_t *kbuf = kmalloc(len > 4096 ? 4096 : len);
-        if (!kbuf) return (uint64_t)-1;
+        if (!kbuf) return (uint64_t)(int64_t)-ENOMEM;
         int ret = signalfd_do_read(slot, kbuf, len);
         if (ret > 0) {
             if (copy_to_user(buf_addr, kbuf, (size_t)ret) < 0) {
                 kfree(kbuf);
-                return (uint64_t)-1;
+                return (uint64_t)(int64_t)-EFAULT;
             }
         }
         kfree(kbuf);
@@ -544,7 +544,7 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
         if (timerfd_do_read(slot, &tval) == 0 &&
             syscall_user_write_ok(buf_addr, 8)) {
             if (copy_to_user(buf_addr, &tval, 8) < 0)
-                return (uint64_t)-1;
+                return (uint64_t)(int64_t)-EFAULT;
         }
         /* I/O accounting */
         {
@@ -561,7 +561,7 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
         if (len < 8) return (uint64_t)-1;
         uint64_t val;
         if (eventfd_read((int)fd, &val) < 0) return (uint64_t)-1;
-        if (copy_to_user(buf_addr, &val, 8) < 0) return (uint64_t)-1;
+        if (copy_to_user(buf_addr, &val, 8) < 0) return (uint64_t)(int64_t)-EFAULT;
         /* I/O accounting */
         {
             struct process *cur = process_get_current();
@@ -577,13 +577,13 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
         struct memfd *mfd = memfd_get_by_fd((int)fd);
         if (!mfd) return (uint64_t)-1;
         uint8_t *kbuf = kmalloc(len > 65536 ? 65536 : len);
-        if (!kbuf) { memfd_put(mfd); return (uint64_t)-1; }
+        if (!kbuf) { memfd_put(mfd); return (uint64_t)(int64_t)-ENOMEM; }
         int64_t ret = memfd_read(mfd, kbuf, len, 0);
         if (ret > 0) {
             if (copy_to_user(buf_addr, kbuf, (size_t)ret) < 0) {
                 kfree(kbuf);
                 memfd_put(mfd);
-                return (uint64_t)-1;
+                return (uint64_t)(int64_t)-EFAULT;
             }
         }
         kfree(kbuf);
@@ -601,12 +601,12 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
     /* inotify read (fd range 720-727) */
     if (fd >= INOTIFY_FD_BASE && fd < INOTIFY_FD_BASE + INOTIFY_INSTANCES) {
         uint8_t *kbuf = kmalloc(len > 4096 ? 4096 : len);
-        if (!kbuf) return (uint64_t)-1;
+        if (!kbuf) return (uint64_t)(int64_t)-ENOMEM;
         int ret = inotify_read((int)fd, kbuf, (size_t)(len > 4096 ? 4096 : len));
         if (ret >= 0) {
             if (copy_to_user(buf_addr, kbuf, (size_t)ret) < 0) {
                 kfree(kbuf);
-                return (uint64_t)-1;
+                return (uint64_t)(int64_t)-EFAULT;
             }
             struct process *cur = process_get_current();
             if (cur) {
@@ -641,12 +641,12 @@ static uint64_t sys_write(uint64_t fd, uint64_t buf_addr, uint64_t len) {
     if (fd == 1 || fd == 2) {
         /* Copy from user-space to avoid SMAP fault */
         uint8_t *kbuf = kmalloc(len > 4096 ? 4096 : (len > 0 ? len : 1));
-        if (!kbuf) return (uint64_t)-1;
+        if (!kbuf) return (uint64_t)(int64_t)-ENOMEM;
         size_t to_copy = len > 4096 ? 4096 : len;
         if (to_copy > 0) {
             if (copy_from_user(kbuf, buf_addr, to_copy) < 0) {
                 kfree(kbuf);
-                return (uint64_t)-1;
+                return (uint64_t)(int64_t)-EFAULT;
             }
             for (uint64_t i = 0; i < to_copy; i++) {
                 vga_putchar((char)kbuf[i]);
@@ -669,7 +669,7 @@ static uint64_t sys_write(uint64_t fd, uint64_t buf_addr, uint64_t len) {
     if (fd >= 700 && fd < 716) {
         if (len < 8) return (uint64_t)-1;
         uint64_t val;
-        if (copy_from_user(&val, buf_addr, 8) < 0) return (uint64_t)-1;
+        if (copy_from_user(&val, buf_addr, 8) < 0) return (uint64_t)(int64_t)-EFAULT;
         if (eventfd_write((int)fd, val) < 0) return (uint64_t)-1;
         /* I/O accounting */
         {
@@ -687,12 +687,12 @@ static uint64_t sys_write(uint64_t fd, uint64_t buf_addr, uint64_t len) {
         struct memfd *mfd = memfd_get_by_fd((int)fd);
         if (!mfd) return (uint64_t)-1;
         uint8_t *kbuf = kmalloc(len > 65536 ? 65536 : (len > 0 ? len : 1));
-        if (!kbuf) { memfd_put(mfd); return (uint64_t)-1; }
+        if (!kbuf) { memfd_put(mfd); return (uint64_t)(int64_t)-ENOMEM; }
         size_t wlen = len > 65536 ? 65536 : len;
         if (copy_from_user(kbuf, buf_addr, wlen) < 0) {
             kfree(kbuf);
             memfd_put(mfd);
-            return (uint64_t)-1;
+            return (uint64_t)(int64_t)-EFAULT;
         }
         int64_t ret = memfd_write(mfd, kbuf, wlen, 0);
         kfree(kbuf);
