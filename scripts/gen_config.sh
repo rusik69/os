@@ -111,6 +111,7 @@ CONFIG_EXECUTABLE_ONLY=y
 CONFIG_STACK_GUARD=y
 CONFIG_LOCKDOWN=y
 CONFIG_SIGNAL_VALIDATE=y
+CONFIG_LINUX_ABI=y
 CONFIG_PERF_PARANOID=2
 
 # ── Device Drivers ───────────────────────────────────────────────
