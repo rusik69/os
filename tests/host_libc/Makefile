@@ -105,6 +105,9 @@ BITFIELD_OBJS = test_bitfield.o
 # Errno string tests
 ERRNO_EXT_OBJS = errno_ext.o test_errno_ext.o
 
+# Errno integration test (kernel errno.h vs system errno.h)
+ERRNO_INTEGRATION_OBJS = errno_integration_data.o test_errno_integration.o
+
 # UID16 conversion tests (self-contained — inline functions only)
 UID16_OBJS = test_uid16.o
 
@@ -141,7 +144,8 @@ all: test_libc test_bitops_crc_sha test_crypto_ext test_lib_structs test_cipher 
      test_search test_stdlib_ext test_hweight test_range test_sort_ext test_crc16 \
      test_find_bit test_div64 test_idr test_notifier test_ratelimit test_time \
      test_uuid test_hashtable test_refcount \
-     test_bitfield test_errno_ext test_uid16 test_mempool test_rng_core \
+     test_bitfield test_errno_ext test_errno_integration \
+     test_uid16 test_mempool test_rng_core \
      test_cmdline test_compress test_logbuf test_module_alias test_sched_attr \
      test_signal_validate test_kptr_restrict \
      test_notifier_ext test_wx_enforce test_stackleak \
@@ -217,6 +221,9 @@ ifeq ($(JUNIT_DIR),)
 	@echo "Running errno string tests..."
 	./test_errno_ext
 	@echo ""
+	@echo "Running errno integration tests..."
+	./test_errno_integration
+	@echo ""
 	@echo "Running UID16 conversion tests..."
 	./test_uid16
 	@echo ""
@@ -284,6 +291,7 @@ else
 	python3 ../../tests/junit_reporter.py host-refcount ./test_refcount
 	python3 ../../tests/junit_reporter.py host-bitfield ./test_bitfield
 	python3 ../../tests/junit_reporter.py host-errno-ext ./test_errno_ext
+	python3 ../../tests/junit_reporter.py host-errno-integration ./test_errno_integration
 	python3 ../../tests/junit_reporter.py host-uid16 ./test_uid16
 	python3 ../../tests/junit_reporter.py host-mempool ./test_mempool
 	python3 ../../tests/junit_reporter.py host-rng-core ./test_rng_core
@@ -310,6 +318,7 @@ else
 	      host-uuid-results.xml host-hashtable-results.xml \
 	      host-refcount-results.xml \
 	      host-bitfield-results.xml host-errno-ext-results.xml \
+	      host-errno-integration-results.xml \
 	      host-uid16-results.xml host-mempool-results.xml \
 	      host-rng-core-results.xml \
 	      host-cmdline-results.xml host-compress-results.xml \
@@ -677,6 +686,17 @@ errno_ext.o: $(SRCDIR)/errno_ext.c
 test_errno_ext.o: test_errno_ext.c
 	$(CC) $(TEST_CFLAGS) -c -o $@ $<
 
+# ── Errno integration test (kernel vs system) ────────────────
+
+test_errno_integration: $(ERRNO_INTEGRATION_OBJS) errno_ext.o
+	$(CC) -o $@ $^
+
+errno_integration_data.o: errno_integration_data.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+test_errno_integration.o: test_errno_integration.c
+	$(CC) $(TEST_CFLAGS) -c -o $@ $<
+
 # ── UID16 conversion tests ────────────────────────────────
 
 test_uid16: $(UID16_OBJS)
@@ -788,7 +808,7 @@ clean:
 	      $(SEARCH_OBJS) $(STDLIB_EXT_OBJS) $(HWEIGHT_OBJS) $(RANGE_OBJS) $(SORT_EXT_OBJS) $(CRC16_OBJS) \
 	      $(FIND_BIT_OBJS) $(DIV64_OBJS) $(IDR_OBJS) $(NOTIFIER_OBJS) $(RATELIMIT_OBJS) $(TIME_OBJS) \
 	      $(UUID_OBJS) $(HASHTABLE_OBJS) $(REFCOUNT_OBJS) \
-	      $(BITFIELD_OBJS) $(ERRNO_EXT_OBJS) $(UID16_OBJS) $(MEMPOOL_OBJS) $(RNG_CORE_OBJS) \
+	      $(BITFIELD_OBJS) $(ERRNO_EXT_OBJS) $(ERRNO_INTEGRATION_OBJS) $(UID16_OBJS) $(MEMPOOL_OBJS) $(RNG_CORE_OBJS) \
 	      $(CMDLINE_OBJS) $(COMPRESS_OBJS) $(LOGBUF_OBJS) $(MODULE_ALIAS_OBJS) \
 	      $(SCHED_ATTR_OBJS) $(SIGNAL_VALIDATE_OBJS) $(KPTR_RESTRICT_OBJS) \
 	      $(NOTIFIER_EXT_OBJS) $(WX_ENFORCE_OBJS) $(STACKLEAK_OBJS) \
@@ -797,7 +817,8 @@ clean:
 	      test_search test_stdlib_ext test_hweight test_range test_sort_ext test_crc16 \
 	      test_find_bit test_div64 test_idr test_notifier test_ratelimit test_time \
 	      test_uuid test_hashtable test_refcount \
-	      test_bitfield test_errno_ext test_uid16 test_mempool test_rng_core \
+	      test_bitfield test_errno_ext test_errno_integration \
+      test_uid16 test_mempool test_rng_core \
 	      test_cmdline test_compress test_logbuf test_module_alias test_sched_attr \
 	      test_signal_validate test_kptr_restrict \
 	      test_notifier_ext test_wx_enforce test_stackleak test_negative_path

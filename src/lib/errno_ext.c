@@ -112,6 +112,7 @@ static const char * const err_desc[] = {
     [ENOTRECOVERABLE] = "State not recoverable",
     [ERFKILL]      = "Operation not possible due to RF-kill",
     [EHWPOISON]    = "Memory page has hardware error",
+    [EFSCORRUPTED]  = "Filesystem corruption",
 };
 
 #define ERR_DESC_COUNT ARRAY_SIZE(err_desc)
@@ -142,12 +143,12 @@ void perror(const char *s) {
 }
 
 /* ── errno_str ─────────────────────────────── */
-static const char* errno_str(int err)
+const char* errno_str(int err)
 {
     return strerror(err);
 }
 /* ── errno_set ─────────────────────────────── */
-static int errno_set(int err)
+int errno_set(int err)
 {
     __errno_value = err;
     return 0;
