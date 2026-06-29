@@ -193,4 +193,11 @@ poll_table_clear_error(struct poll_table *pt)
     pt->error = 0;
 }
 
+/*
+ * sys_poll — poll(2) system call (external definition in poll.c).
+ * Returns number of ready file descriptors on success,
+ * or negative errno on error.
+ */
+uint64_t sys_poll(uint64_t fds_addr, uint64_t nfds, uint64_t timeout_ms);
+
 #endif /* POLL_H */

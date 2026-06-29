@@ -81,6 +81,7 @@
 #include "mseal.h"
 #include "lockdown.h"
 #include "userfaultfd.h"
+#include "poll.h"
 #include "blockdev.h"   /* for SG_IO ioctl */
 #include "io_uring.h"   /* for io_uring syscalls */
 
@@ -5124,131 +5125,10 @@ static uint64_t sys_arch_prctl(uint64_t code, uint64_t addr) {
     }
 }
 
-/* ── poll ──────────────────────────────────────────────────────────────── */
+/* ── Poll is implemented in src/kernel/poll.c using the poll_table
+ * infrastructure.  The dispatch table entry calls the external
+ * sys_poll() declared in poll.h. ──────────────────────────────*/
 
-static uint64_t sys_poll(uint64_t fds_addr, uint64_t nfds, uint64_t timeout_ms) {
-    /* Prevent integer overflow in nfds * sizeof(struct pollfd).
-     * Clamp to PROCESS_FD_MAX (the maximum number of FDs in the fd_table)
-     * to bound the iteration and prevent out-of-bounds access. */
-    if (nfds > PROCESS_FD_MAX)
-        nfds = PROCESS_FD_MAX;
-    if (nfds == 0)
-        return 0;
-
-    uint64_t fds_size = nfds * sizeof(struct pollfd);
-    /* Check for overflow */
-    if (fds_size / sizeof(struct pollfd) != nfds)
-        return (uint64_t)-1; /* EINVAL */
-
-    if (syscall_is_user_process() && !syscall_user_read_ok(fds_addr, fds_size))
-        return (uint64_t)-1;
-    if (syscall_is_user_process() && !syscall_user_write_ok(fds_addr, fds_size))
-        return (uint64_t)-1;
-
-    struct pollfd *fds = (struct pollfd *)fds_addr;
-    int n = (int)nfds;
-    int ready = 0;
-    uint64_t start_tick = timer_get_ticks();
-    uint64_t timeout_ticks = (timeout_ms * TIMER_FREQ) / 1000;
-    if (timeout_ms == (uint64_t)-1) timeout_ticks = ~0ULL; /* infinite */
-
-    struct process *cur = process_get_current();
-
-    for (;;) {
-        ready = 0;
-        for (int i = 0; i < n; i++) {
-            fds[i].revents = 0;
-            if (fds[i].fd < 0) {
-                fds[i].revents = POLLNVAL;
-                ready++;
-                continue;
-            }
-
-            /* Check if fd is valid */
-            struct process *p = process_get_current();
-            if (!p) {
-                fds[i].revents = POLLNVAL;
-                ready++;
-                continue;
-            }
-
-            int fd_idx = fds[i].fd;
-            int revents = 0;
-
-            /* ── Inotify FDs (fd 720..727) ────────────────────── */
-            if (fd_idx >= INOTIFY_FD_BASE &&
-                fd_idx < INOTIFY_FD_BASE + INOTIFY_INSTANCES) {
-                revents = inotify_poll(fd_idx);
-                if (revents < 0) {
-                    fds[i].revents = POLLNVAL;
-                    ready++;
-                    continue;
-                }
-                if (revents && (fds[i].events & POLLIN)) {
-                    fds[i].revents = POLLIN;
-                    ready++;
-                } else {
-                    fds[i].revents = 0;
-                }
-                continue;
-            }
-
-            /* ── Socket FDs (fd 100..100+SOCK_MAX-1) ──────────── */
-            if (fd_idx >= 100 && fd_idx < 100 + SOCK_MAX) {
-                revents = sock_poll(fd_idx, fds[i].events);
-                fds[i].revents = (int16_t)revents;
-                if (revents) ready++;
-                continue;
-            }
-
-            /* ── Regular process FDs ─────────────────────────── */
-            if (fd_idx >= PROCESS_FD_MAX || !p->fd_table[fd_idx].used) {
-                fds[i].revents = POLLNVAL;
-                ready++;
-                continue;
-            }
-
-            struct process_fd *pfd = &p->fd_table[fd_idx];
-
-            /* Determine fd type and check readiness */
-            if (strncmp(pfd->path, "pipe_read_", 10) == 0) {
-                /* Pipe read end */
-                int pipe_id = (int)pfd->offset;
-                revents = pipe_poll(pipe_id, 1 /* is_read_end */);
-            } else if (strncmp(pfd->path, "pipe_write_", 11) == 0) {
-                /* Pipe write end */
-                int pipe_id = (int)pfd->offset;
-                revents = pipe_poll(pipe_id, 0 /* is_write_end */);
-            } else {
-                /* Regular file / other: always readable and writable */
-                if (fds[i].events & POLLIN)  revents |= POLLIN;
-                if (fds[i].events & POLLOUT) revents |= POLLOUT;
-            }
-
-            /* Mask with requested events — only report what was asked for */
-            fds[i].revents = (int16_t)(revents & fds[i].events);
-
-            if (fds[i].revents) ready++;
-        }
-
-        if (ready > 0) break;
-        if (timeout_ticks == 0) break; /* non-blocking */
-
-        /* Check timeout */
-        uint64_t elapsed = timer_get_ticks() - start_tick;
-        if (elapsed >= timeout_ticks) break;
-
-        /* Yield until next tick */
-        if (cur) {
-            cur->sleep_until = timer_get_ticks() + 1;
-            cur->state = PROCESS_BLOCKED;
-            scheduler_remove(cur);
-            scheduler_yield();
-        }
-    }
-
-    return (uint64_t)ready;
-}
 
 /* ── pselect6 — safer select with atomic signal mask (Item 251) ────── */
 
