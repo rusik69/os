@@ -966,8 +966,8 @@ static uint64_t sys_kill(uint64_t pid, uint64_t sig) {
 
 static uint64_t sys_brk(uint64_t addr) {
     struct process *p = process_get_current();
-    if (!p) return addr;
-    if (!p->is_user || !p->pml4) return addr;
+    if (!p) return (uint64_t)(int64_t)-ENOMEM;
+    if (!p->is_user || !p->pml4) return (uint64_t)(int64_t)-EFAULT;
 
     /* Track heap start/end — initialized lazily with ASLR offset */
     if (p->heap_end == 0) {
@@ -996,11 +996,11 @@ static uint64_t sys_brk(uint64_t addr) {
          * heap_start must not exceed rlim_cur[RLIMIT_AS]. */
         uint64_t as_limit = p->rlim_cur[RLIMIT_AS];
         if (as_limit != RLIM_INFINITY && (addr - p->heap_start) > as_limit)
-            return (uint64_t)-1;
+            return (uint64_t)(int64_t)-ENOMEM;
         uint64_t pages = (grow + PAGE_SIZE - 1) / PAGE_SIZE;
         uint64_t page_flags = VMM_FLAG_PRESENT | VMM_FLAG_USER | VMM_FLAG_WRITE | VMM_FLAG_NOEXEC | VMM_FLAG_LAZY;
         if (vmm_map_user_pages(p->pml4, old_end, pages, page_flags) < 0)
-            return (uint64_t)-1;
+            return (uint64_t)(int64_t)-ENOMEM;
         p->heap_end = addr;
     } else if (addr < old_end) {
         /* Shrink heap — unmap pages */
@@ -2439,12 +2439,12 @@ static uint64_t sys_posix_spawn(uint64_t path_addr, uint64_t argv_addr, uint64_t
 
 static uint64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot, uint64_t flags) {
     struct process *proc = process_get_current();
-    if (!proc || !proc->pml4) return (uint64_t)-1;
+    if (!proc || !proc->pml4) return (uint64_t)(int64_t)-EFAULT;
 
     /* Anonymous private mapping only for now (MAP_SHARED is not yet
      * implemented).  But we DO look at MAP_HUGETLB to use the pre-allocated
      * huge page pool. */
-    if (length == 0) return (uint64_t)-1;
+    if (length == 0) return (uint64_t)(int64_t)-EINVAL;
 
     /* Round up to page size */
     length = (length + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
@@ -2581,7 +2581,7 @@ static uint64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot, uint64_t
                 addr += 0x100000ULL; /* 1MB steps */
             }
         }
-        if (addr + length >= USER_VADDR_MAX) return (uint64_t)-1;
+        if (addr + length >= USER_VADDR_MAX) return (uint64_t)(int64_t)-ENOMEM;
     }
 
     /*
@@ -2605,10 +2605,10 @@ static uint64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot, uint64_t
         uint64_t hp_flags = page_flags & ~(uint64_t)VMM_FLAG_LAZY;
         hp_flags |= VMM_FLAG_WRITE; /* eager allocation needs write access */
         if (vmm_map_user_huge_pages(proc->pml4, addr, length / PAGE_SIZE, hp_flags) < 0)
-            return (uint64_t)-1;
+            return (uint64_t)(int64_t)-ENOMEM;
     } else {
         if (vmm_map_user_pages(proc->pml4, addr, length / PAGE_SIZE, page_flags) < 0)
-            return (uint64_t)-1;
+            return (uint64_t)(int64_t)-ENOMEM;
     }
 
     if (proc->pml4 == vmm_get_pml4()) {
@@ -2622,20 +2622,20 @@ static uint64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot, uint64_t
 
 static uint64_t sys_munmap(uint64_t addr, uint64_t length) {
     struct process *proc = process_get_current();
-    if (!proc || !proc->pml4) return (uint64_t)-1;
-    if (addr & (PAGE_SIZE - 1)) return (uint64_t)-1;
+    if (!proc || !proc->pml4) return (uint64_t)(int64_t)-EFAULT;
+    if (addr & (PAGE_SIZE - 1)) return (uint64_t)(int64_t)-EINVAL;
 
     if (length == 0) return 0;
     length = (length + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
-    if (addr + length < addr) return (uint64_t)-1;
-    if (addr + length > USER_VADDR_MAX) return (uint64_t)-1;
+    if (addr + length < addr) return (uint64_t)(int64_t)-EINVAL;
+    if (addr + length > USER_VADDR_MAX) return (uint64_t)(int64_t)-EFAULT;
 
     /* Check if the range is sealed (mseal) — sealed ranges are immutable */
     if (mseal_check(addr, length) == 0)
         return (uint64_t)(int64_t)-EPERM;
 
     if (vmm_unmap_user_pages(proc->pml4, addr, length / PAGE_SIZE) < 0)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EFAULT;
     return 0;
 }
 
@@ -2643,14 +2643,14 @@ static uint64_t sys_munmap(uint64_t addr, uint64_t length) {
 
 static uint64_t sys_mseal(uint64_t addr, uint64_t length, uint64_t flags) {
     struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)-1;
+    if (!proc) return (uint64_t)(int64_t)-ENOMEM;
 
     /* Address must be page-aligned */
-    if (addr & (PAGE_SIZE - 1)) return (uint64_t)-1;
+    if (addr & (PAGE_SIZE - 1)) return (uint64_t)(int64_t)-EINVAL;
 
     length = (length + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
-    if (addr + length < addr) return (uint64_t)-1;
-    if (addr + length > USER_VADDR_MAX) return (uint64_t)-1;
+    if (addr + length < addr) return (uint64_t)(int64_t)-EINVAL;
+    if (addr + length > USER_VADDR_MAX) return (uint64_t)(int64_t)-EFAULT;
 
     int ret = mseal(addr, length, (int)flags);
     return ret < 0 ? (uint64_t)(int64_t)ret : 0;
@@ -2682,12 +2682,12 @@ static uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size,
                             uint64_t new_size, uint64_t flags,
                             uint64_t new_addr) {
     struct process *proc = process_get_current();
-    if (!proc || !proc->pml4) return (uint64_t)-1;
-    if (old_addr & (PAGE_SIZE - 1)) return (uint64_t)-1;
+    if (!proc || !proc->pml4) return (uint64_t)(int64_t)-EFAULT;
+    if (old_addr & (PAGE_SIZE - 1)) return (uint64_t)(int64_t)-EINVAL;
 
     old_size = (old_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
     new_size = (new_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
-    if (old_size == 0) return (uint64_t)-1;
+    if (old_size == 0) return (uint64_t)(int64_t)-EINVAL;
 
     /* Same size = no-op */
     if (old_size == new_size) return old_addr;
@@ -2720,12 +2720,12 @@ static uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size,
         uint64_t page_flags = VMM_FLAG_PRESENT | VMM_FLAG_USER | VMM_FLAG_WRITE | VMM_FLAG_LAZY;
         if (vmm_map_user_pages(proc->pml4, old_addr + old_size,
                                extend / PAGE_SIZE, page_flags) < 0)
-            return (uint64_t)-1;
+            return (uint64_t)(int64_t)-ENOMEM;
         return old_addr;
     }
 
     /* Can't extend in place — need to move (only if MREMAP_MAYMOVE) */
-    if (!(flags & MREMAP_MAYMOVE)) return (uint64_t)-1;
+    if (!(flags & MREMAP_MAYMOVE)) return (uint64_t)(int64_t)-ENOMEM;
 
     /* Find a new location */
     uint64_t new = (flags & MREMAP_FIXED) ? new_addr : 0;
@@ -2741,7 +2741,7 @@ static uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size,
             if (free) break;
             new += 0x100000ULL;
         }
-        if (new + new_size >= USER_VADDR_MAX) return (uint64_t)-1;
+        if (new + new_size >= USER_VADDR_MAX) return (uint64_t)(int64_t)-ENOMEM;
     }
 
     /* Copy pages one by one */
@@ -2749,7 +2749,7 @@ static uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size,
         uint64_t old_phys = vmm_get_physaddr(old_addr + off);
         if (old_phys) {
             uint64_t new_phys = pmm_alloc_frame();
-            if (!new_phys) return (uint64_t)-1;
+            if (!new_phys) return (uint64_t)(int64_t)-ENOMEM;
             memcpy(PHYS_TO_VIRT(new_phys), PHYS_TO_VIRT(old_phys), PAGE_SIZE);
             vmm_map_user_page(proc->pml4, new + off, new_phys,
                               VMM_FLAG_PRESENT | VMM_FLAG_USER | VMM_FLAG_WRITE);
@@ -7829,14 +7829,14 @@ static uint64_t sys_munlockall(void) {
 
 static uint64_t sys_mincore(uint64_t addr, uint64_t len, uint64_t vec_addr) {
     struct process *p = process_get_current();
-    if (!p || !p->pml4) return (uint64_t)-1;
-    if (addr & (PAGE_SIZE - 1)) return (uint64_t)-1;
+    if (!p || !p->pml4) return (uint64_t)(int64_t)-EFAULT;
+    if (addr & (PAGE_SIZE - 1)) return (uint64_t)(int64_t)-EINVAL;
 
     uint64_t pages = (len + PAGE_SIZE - 1) / PAGE_SIZE;
     uint8_t *vec = NULL;
     if (vec_addr) {
         vec = (uint8_t *)kmalloc(pages);
-        if (!vec) return (uint64_t)-1;
+        if (!vec) return (uint64_t)(int64_t)-ENOMEM;
     }
     for (uint64_t i = 0; i < pages; i++) {
         uint64_t vaddr = addr + i * PAGE_SIZE;
@@ -7845,7 +7845,7 @@ static uint64_t sys_mincore(uint64_t addr, uint64_t len, uint64_t vec_addr) {
     if (vec) {
         if (copy_to_user(vec_addr, vec, pages) < 0) {
             kfree(vec);
-            return (uint64_t)-1;
+            return (uint64_t)(int64_t)-EFAULT;
         }
         kfree(vec);
     }
@@ -7854,7 +7854,7 @@ static uint64_t sys_mincore(uint64_t addr, uint64_t len, uint64_t vec_addr) {
 
 static uint64_t sys_madvise(uint64_t addr, uint64_t len, uint64_t advice) {
     struct process *p = process_get_current();
-    if (!p || !p->pml4) return (uint64_t)-1;
+    if (!p || !p->pml4) return (uint64_t)(int64_t)-EFAULT;
 
     /* Common validation for operations that touch user pages */
     switch (advice) {
@@ -7879,12 +7879,12 @@ static uint64_t sys_madvise(uint64_t addr, uint64_t len, uint64_t advice) {
         case MADV_DONTNEED: {
             /* Immediately unmap and free physical pages */
             int ret = madvise_dontneed(addr, len);
-            return (ret < 0) ? (uint64_t)-1 : 0;
+            return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
         }
         case MADV_FREE: {
             /* Lazy freeing: pages become freeable (immediate in our impl) */
             int ret = madvise_free(addr, len);
-            return (ret < 0) ? (uint64_t)-1 : 0;
+            return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
         }
         case MADV_WILLNEED: {
             /* Pre-fault: ensure pages are mapped (already are in our case) */
@@ -7893,17 +7893,17 @@ static uint64_t sys_madvise(uint64_t addr, uint64_t len, uint64_t advice) {
         case MADV_COLD: {
             /* Hint pages are cold — clear accessed/dirty, reclaim immediately */
             int ret = madvise_cold(addr, len);
-            return (ret < 0) ? (uint64_t)-1 : 0;
+            return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
         }
         case MADV_PAGEOUT: {
             /* Proactively swap out pages (immediate reclaim without swap) */
             int ret = madvise_pageout(addr, len);
-            return (ret < 0) ? (uint64_t)-1 : 0;
+            return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
         }
         case MADV_MERGEABLE: {
             /* Mark pages as candidates for KSM merging */
             int ret = madvise_mergeable(addr, len);
-            return (ret < 0) ? (uint64_t)-1 : 0;
+            return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
         }
         case MADV_UNMERGEABLE: {
             /* Unmark as KSM mergeable — no-op since we don't track merge state */

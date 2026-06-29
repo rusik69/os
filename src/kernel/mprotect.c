@@ -41,7 +41,7 @@ extern int mseal_check(uint64_t addr, uint64_t length);
 
 int64_t sys_mprotect(uint64_t addr, uint64_t length, uint64_t prot) {
     struct process *proc = process_get_current();
-    if (!proc || !proc->pml4) return (int64_t)-1;
+    if (!proc || !proc->pml4) return (int64_t)-EFAULT;
 
     /* ── Validate protection flags ───────────────────────────────────
      * Only PROT_READ (1), PROT_WRITE (2), PROT_EXEC (4),
