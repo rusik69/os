@@ -691,7 +691,7 @@ int vfs_read(const char *path, void *buf, uint32_t max, uint32_t *out_size) {
     }
 
     struct vfs_mount *m = resolve(ap);
-    if (!m || !m->ops->read) return -1;
+    if (!m || !m->ops->read) return -EIO;
     int r = m->ops->read(m->priv, ap, buf, max, out_size);
     /* If the read fails with an I/O or corruption error, auto-remount
      * read-only to prevent further damage.  Reads into corrupted areas
@@ -742,7 +742,7 @@ int vfs_write(const char *path, const void *data, uint32_t size) {
     }
 
     struct vfs_mount *m = resolve(ap);
-    if (!m || !m->ops->write) return -1;
+    if (!m || !m->ops->write) return -EIO;
 
     /* Check read-only mount */
     if (m->flags & MS_RDONLY) return -EROFS_KERNEL;
@@ -762,7 +762,7 @@ int vfs_write(const char *path, const void *data, uint32_t size) {
                     (unsigned long long)proc->rlim_cur[RLIMIT_FSIZE]);
             /* Send SIGXFSZ */
             signal_send(proc->pid, SIGXFSZ);
-            return -1;
+            return -EFBIG;
         }
     }
 

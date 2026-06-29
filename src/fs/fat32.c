@@ -1426,7 +1426,7 @@ int fat32_write_file(const char *path, const void *data, uint32_t size) {
 
     char leaf[FAT32_MAX_NAME];
     uint32_t parent = path_parent_cluster(path, leaf, FAT32_MAX_NAME);
-    if (!parent) return -2;
+    if (!parent) return -ENOENT;
 
     char n8[8], n3[3];
     fat32_generate_short_name(leaf, parent, n8, n3);
@@ -1459,7 +1459,7 @@ int fat32_write_file(const char *path, const void *data, uint32_t size) {
         uint32_t c = fat_alloc_cluster();
         if (!c) {
             if (first) fat_free_chain(first);
-            return -3;
+            return -ENOSPC;
         }
         if (!first) first = c;
         if (prev) fat_write_entry(prev, c);
@@ -1480,7 +1480,7 @@ int fat32_write_file(const char *path, const void *data, uint32_t size) {
             uint32_t chunk = SECT_SIZE;
             if (chunk > size - done) chunk = size - done;
             memcpy(sect_buf, (const uint8_t *)data + done, chunk);
-            if (write_sector(lba + s, sect_buf) != 0) return (int)done;
+            if (write_sector(lba + s, sect_buf) != 0) return -EIO;
             done += chunk;
         }
         clus = fat_next_cluster(clus);
@@ -1489,7 +1489,7 @@ int fat32_write_file(const char *path, const void *data, uint32_t size) {
     if (!old_clus) {
         if (dir_add_entry(parent, n8, n3, first, size, 0, leaf) != 0) {
             if (first) fat_free_chain(first);
-            return -4;
+            return -EIO;
         }
     } else {
         dir_update_size(parent, cmp, first, size);
@@ -1805,7 +1805,7 @@ static int fat32_vfs_read(void *priv, const char *path, void *buf,
     (void)priv;
     if (!mounted) return -EINVAL;
     int n = fat32_read_file(fat32_vfs_rel(path), buf, max_size);
-    if (n < 0) return -EINVAL;
+    if (n < 0) return n;
     if (out_size) *out_size = (uint32_t)n;
     return 0;
 }
@@ -1813,7 +1813,8 @@ static int fat32_vfs_read(void *priv, const char *path, void *buf,
 static int fat32_vfs_write(void *priv, const char *path, const void *data, uint32_t size) {
     (void)priv;
     if (!mounted) return -EINVAL;
-    return fat32_write_file(fat32_vfs_rel(path), data, size) < 0 ? -1 : 0;
+    int ret = fat32_write_file(fat32_vfs_rel(path), data, size);
+    return ret < 0 ? ret : 0;
 }
 
 static int fat32_vfs_stat(void *priv, const char *path, struct vfs_stat *st) {
@@ -1833,7 +1834,8 @@ static int fat32_vfs_create(void *priv, const char *path, uint8_t type) {
     (void)priv;
     if (!mounted) return -EINVAL;
     if (type == 2) return fat32_mkdir(fat32_vfs_rel(path));
-    return fat32_write_file(fat32_vfs_rel(path), "", 0) < 0 ? -1 : 0;
+    int ret = fat32_write_file(fat32_vfs_rel(path), "", 0);
+    return ret < 0 ? ret : 0;
 }
 
 static int fat32_vfs_unlink(void *priv, const char *path) {
