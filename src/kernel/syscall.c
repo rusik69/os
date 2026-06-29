@@ -957,10 +957,10 @@ static uint64_t sys_kill(uint64_t pid, uint64_t sig) {
     struct process *cur = process_get_current();
     struct process *target = process_get_by_pid((uint32_t)pid);
     if (!target || target->state == PROCESS_UNUSED)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-ESRCH;
     /* Permission check: root (euid 0) or same uid can signal */
     if (cur->euid != 0 && cur->euid != target->euid)
-        return (uint64_t)-1;  /* EPERM */
+        return (uint64_t)(int64_t)-EPERM;
     return (uint64_t)signal_send((uint32_t)pid, (int)sig);
 }
 
@@ -1018,7 +1018,7 @@ static uint64_t sys_brk(uint64_t addr) {
 static uint64_t sys_signal(uint64_t signum, uint64_t handler_addr) {
     if (syscall_is_user_process() &&
         handler_addr != (uint64_t)SIG_DFL && handler_addr != (uint64_t)SIG_IGN)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EINVAL;
     signal_register((int)signum, (signal_handler_t)(uintptr_t)handler_addr);
     return 0;
 }
@@ -1622,7 +1622,7 @@ static int clamp_nice(int nice) {
  */
 static uint64_t sys_setpriority(uint64_t which, uint64_t who, uint64_t prio) {
     struct process *cur = process_get_current();
-    if (!cur) return (uint64_t)(int64_t)-1;
+    if (!cur) return (uint64_t)(int64_t)-ESRCH;
 
     int nice = clamp_nice((int)(int64_t)prio);
 
@@ -1635,7 +1635,7 @@ static uint64_t sys_setpriority(uint64_t which, uint64_t who, uint64_t prio) {
         } else {
             p = process_get_by_pid((uint32_t)who);
             if (!p || p->state == PROCESS_UNUSED)
-                return (uint64_t)(int64_t)-1; /* ESRCH */
+                return (uint64_t)(int64_t)-ESRCH;
         }
         scheduler_set_nice(p, nice);
         return 0;
@@ -1653,7 +1653,7 @@ static uint64_t sys_setpriority(uint64_t which, uint64_t who, uint64_t prio) {
                 found = 1;
             }
         }
-        if (!found) return (uint64_t)(int64_t)-1; /* ESRCH */
+        if (!found) return (uint64_t)(int64_t)-ESRCH;
         return 0;
     }
     case PRIO_USER: {
@@ -1669,11 +1669,11 @@ static uint64_t sys_setpriority(uint64_t which, uint64_t who, uint64_t prio) {
                 found = 1;
             }
         }
-        if (!found) return (uint64_t)(int64_t)-1; /* ESRCH */
+        if (!found) return (uint64_t)(int64_t)-ESRCH;
         return 0;
     }
     default:
-        return (uint64_t)(int64_t)-1; /* EINVAL */
+        return (uint64_t)(int64_t)-EINVAL;
     }
 }
 
@@ -1690,7 +1690,7 @@ static uint64_t sys_setpriority(uint64_t which, uint64_t who, uint64_t prio) {
  */
 static uint64_t sys_getpriority(uint64_t which, uint64_t who) {
     struct process *cur = process_get_current();
-    if (!cur) return (uint64_t)(int64_t)-1;
+    if (!cur) return (uint64_t)(int64_t)-ESRCH;
 
     int highest_nice = NICE_MIN - 1; /* sentinel: below valid range */
 
@@ -1702,7 +1702,7 @@ static uint64_t sys_getpriority(uint64_t which, uint64_t who) {
         } else {
             p = process_get_by_pid((uint32_t)who);
             if (!p || p->state == PROCESS_UNUSED)
-                return (uint64_t)(int64_t)-1; /* ESRCH */
+                return (uint64_t)(int64_t)-ESRCH;
         }
         highest_nice = p->nice;
         break;
@@ -1717,7 +1717,7 @@ static uint64_t sys_getpriority(uint64_t which, uint64_t who) {
                 highest_nice = table[i].nice;
         }
         if (highest_nice < NICE_MIN)
-            return (uint64_t)(int64_t)-1; /* ESRCH */
+            return (uint64_t)(int64_t)-ESRCH;
         break;
     }
     case PRIO_USER: {
@@ -1730,11 +1730,11 @@ static uint64_t sys_getpriority(uint64_t which, uint64_t who) {
                 highest_nice = table[i].nice;
         }
         if (highest_nice < NICE_MIN)
-            return (uint64_t)(int64_t)-1; /* ESRCH */
+            return (uint64_t)(int64_t)-ESRCH;
         break;
     }
     default:
-        return (uint64_t)(int64_t)-1; /* EINVAL */
+        return (uint64_t)(int64_t)-EINVAL;
     }
 
     /* Return the nice value as a signed value properly cast.
@@ -1887,7 +1887,7 @@ static uint64_t sys_setpgid(uint64_t pid, uint64_t pgid) {
     struct process *p;
     if (pid == 0) p = process_get_current();
     else p = process_get_by_pid((uint32_t)pid);
-    if (!p || p->state == PROCESS_UNUSED) return (uint64_t)(int64_t)-1;
+    if (!p || p->state == PROCESS_UNUSED) return (uint64_t)(int64_t)-ESRCH;
     p->pgid = pgid ? (uint32_t)pgid : p->pid;
     if (p->sid == 0) p->sid = p->pgid;
     return 0;
@@ -1897,7 +1897,7 @@ static uint64_t sys_getpgid(uint64_t pid) {
     struct process *p;
     if (pid == 0) p = process_get_current();
     else p = process_get_by_pid((uint32_t)pid);
-    if (!p || p->state == PROCESS_UNUSED) return (uint64_t)(int64_t)-1;
+    if (!p || p->state == PROCESS_UNUSED) return (uint64_t)(int64_t)-ESRCH;
     return p->pgid;
 }
 
@@ -2009,7 +2009,7 @@ static uint64_t sys_clone(uint64_t flags, uint64_t child_stack, uint64_t ptid,
     (void)ptid; (void)tls; (void)ctid;
 
     struct process *parent = process_get_current();
-    if (!parent) return (uint64_t)-1;
+    if (!parent) return (uint64_t)(int64_t)-EAGAIN;
 
     uint64_t user_rip = syscall_user_rip;
     uint64_t user_rflags = syscall_user_rflags;
@@ -2341,7 +2341,7 @@ static uint64_t sys_tkill(uint64_t pid, uint64_t sig) {
 static uint64_t sys_execve(uint64_t path_addr, uint64_t argv_addr, uint64_t envp_addr) {
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EFAULT;
     const char *path = kpath;
     /* For now, ignore argv/envp */
     (void)argv_addr; (void)envp_addr;
@@ -2776,7 +2776,7 @@ static uint64_t sys_sched_setaffinity(uint64_t pid, uint64_t cpuset) {
     } else {
         proc = process_get_by_pid((uint32_t)pid);
     }
-    if (!proc) return (uint64_t)-1;
+    if (!proc) return (uint64_t)(int64_t)-ESRCH;
     /* Only the low 8 bits represent CPU affinity; bit 0 = CPU 0, etc. */
     proc->cpu_affinity = (uint8_t)(cpuset & 0xFF);
     return 0;
@@ -2789,7 +2789,7 @@ static uint64_t sys_sched_getaffinity(uint64_t pid) {
     } else {
         proc = process_get_by_pid((uint32_t)pid);
     }
-    if (!proc) return (uint64_t)-1;
+    if (!proc) return (uint64_t)(int64_t)-ESRCH;
     return (uint64_t)proc->cpu_affinity;
 }
 
@@ -3450,7 +3450,7 @@ static uint64_t sys_getppid(void) {
 
 static uint64_t sys_alarm(uint64_t seconds) {
     struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)-1;
+    if (!proc) return (uint64_t)(int64_t)-ESRCH;
 
     /* Convert seconds to ticks (100 Hz) */
     uint64_t ticks = seconds * 100;
@@ -3472,14 +3472,14 @@ static uint64_t sys_alarm(uint64_t seconds) {
 static uint64_t sys_pause(void) {
     /* Block the current process until a signal arrives */
     struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)-1;
+    if (!proc) return (uint64_t)(int64_t)-ESRCH;
 
     proc->state = PROCESS_BLOCKED;
     scheduler_remove(proc);
     scheduler_yield();
 
-    /* Woken by signal — return -1 (always interrupted) */
-    return (uint64_t)-1;
+    /* Woken by signal — return -EINTR (always interrupted) */
+    return (uint64_t)(int64_t)-EINTR;
 }
 
 /* ── access() ────────────────────────────────────────────────── */
@@ -3501,25 +3501,25 @@ static uint64_t sys_access(uint64_t path_addr, uint64_t mode) {
 
 static uint64_t sys_getuid(void) {
     struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)-1;
+    if (!proc) return (uint64_t)(int64_t)-ESRCH;
     return (uint64_t)proc->uid;
 }
 
 static uint64_t sys_geteuid(void) {
     struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)-1;
+    if (!proc) return (uint64_t)(int64_t)-ESRCH;
     return (uint64_t)proc->euid;
 }
 
 static uint64_t sys_getgid(void) {
     struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)-1;
+    if (!proc) return (uint64_t)(int64_t)-ESRCH;
     return (uint64_t)proc->gid;
 }
 
 static uint64_t sys_getegid(void) {
     struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)-1;
+    if (!proc) return (uint64_t)(int64_t)-ESRCH;
     return (uint64_t)proc->egid;
 }
 
@@ -4372,8 +4372,8 @@ static uint64_t sys_elf_exec(uint64_t path_addr) {
 
 static uint64_t sys_script_exec(uint64_t path_addr) {
     const char *path = (const char *)path_addr;
-    if (!path) return (uint64_t)-1;
-    if (!script_exec_ptr) return (uint64_t)-1;
+    if (!path) return (uint64_t)(int64_t)-EFAULT;
+    if (!script_exec_ptr) return (uint64_t)(int64_t)-ENOSYS;
     return (uint64_t)script_exec_ptr(path);
 }
 
@@ -5900,12 +5900,12 @@ static uint64_t sys_prctl(uint64_t op, uint64_t a2, uint64_t a3,
                            uint64_t a4, uint64_t a5) {
     (void)a3; (void)a4; (void)a5;
     struct process *p = process_get_current();
-    if (!p) return (uint64_t)-1;
+    if (!p) return (uint64_t)(int64_t)-ESRCH;
 
     switch (op) {
         case PR_SET_NAME: {
             if (syscall_is_user_process() && !syscall_user_read_ok(a2, 16))
-                return (uint64_t)-1;
+                return (uint64_t)(int64_t)-EFAULT;
             memset(p->proc_comm, 0, 16);
             memcpy(p->proc_comm, (const char *)a2, 15);
             p->proc_comm[15] = '\0';
@@ -5915,7 +5915,7 @@ static uint64_t sys_prctl(uint64_t op, uint64_t a2, uint64_t a3,
             char name[16];
             memcpy(name, p->proc_comm, 16);
             if (copy_to_user(a2, name, 16) < 0)
-                return (uint64_t)-1;
+                return (uint64_t)(int64_t)-EFAULT;
             return 0;
         }
         case PR_SET_PDEATHSIG: {
@@ -5929,7 +5929,7 @@ static uint64_t sys_prctl(uint64_t op, uint64_t a2, uint64_t a3,
             /* Once set to 1, no_new_privs is irreversible.
              * After this, execve() cannot gain privileges via setuid/setgid
              * or file capabilities. Foundation for modern seccomp usage. */
-            if (a2 != 1 || p->no_new_privs) return (uint64_t)-1;
+            if (a2 != 1 || p->no_new_privs) return (uint64_t)(int64_t)-EINVAL;
             p->no_new_privs = 1;
             return 0;
         }
@@ -5949,17 +5949,17 @@ static uint64_t sys_prctl(uint64_t op, uint64_t a2, uint64_t a3,
             uint8_t current = (uint8_t)securebits_get(p);
             /* Locked bits are immutable */
             if ((current & SECBIT_LOCKED_MASK) & (new_bits & SECBIT_LOCKED_MASK))
-                return (uint64_t)-1;
+                return (uint64_t)(int64_t)-EPERM;
             /* Can only set bits in SECBIT_ALLOWED_MASK */
             if (new_bits & ~SECBIT_ALLOWED_MASK & ~SECBIT_LOCKED_MASK)
-                return (uint64_t)-1;
+                return (uint64_t)(int64_t)-EINVAL;
             /* Setting a locked bit requires the corresponding non-locked bit to be set */
             if ((new_bits & SECBIT_KEEP_CAPS_LOCKED) && !(new_bits & SECBIT_KEEP_CAPS))
-                return (uint64_t)-1;
+                return (uint64_t)(int64_t)-EINVAL;
             if ((new_bits & SECBIT_NO_SETUID_FIXUP_LOCKED) && !(new_bits & SECBIT_NO_SETUID_FIXUP))
-                return (uint64_t)-1;
+                return (uint64_t)(int64_t)-EINVAL;
             if ((new_bits & SECBIT_NOROOT_LOCKED) && !(new_bits & SECBIT_NOROOT))
-                return (uint64_t)-1;
+                return (uint64_t)(int64_t)-EINVAL;
             return (uint64_t)securebits_set(p, new_bits);
         }
         case PR_GET_SECUREBITS: {
@@ -5971,7 +5971,7 @@ static uint64_t sys_prctl(uint64_t op, uint64_t a2, uint64_t a3,
              * can set dumpable to a more restrictive value. */
             int val = (int)a2;
             if (val < 0 || val > 2)
-                return (uint64_t)-1; /* -EINVAL */
+                return (uint64_t)(int64_t)-EINVAL;
             /* Once set to 0, only privileged code can raise it back */
             p->dumpable = val;
             return 0;
@@ -5996,7 +5996,7 @@ static uint64_t sys_prctl(uint64_t op, uint64_t a2, uint64_t a3,
             return (uint64_t)(int64_t)yama_get_ptracer(p->pid);
         }
         default:
-            return (uint64_t)-1;
+            return (uint64_t)(int64_t)-EINVAL;
     }
 }
 
@@ -6212,7 +6212,7 @@ static uint64_t sys_execveat(uint64_t dirfd, uint64_t path_addr,
     char path[256];
 
     if (!syscall_user_cstr_ok(path_addr))
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EFAULT;
     memcpy(path, (void*)path_addr, 255); path[255] = '\0';
 
     /* Resolve relative paths against dirfd if not AT_EMPTY_PATH */
@@ -6228,7 +6228,7 @@ static uint64_t sys_execveat(uint64_t dirfd, uint64_t path_addr,
             /* Combine */
             char combined[256];
             int n = snprintf(combined, 256, "%s%s", base, path);
-            if (n < 0 || n >= 256) return (uint64_t)-1;
+            if (n < 0 || n >= 256) return (uint64_t)(int64_t)-ENAMETOOLONG;
             /* Use existing sys_execve which takes a path */
             return sys_script_exec((uint64_t)(uintptr_t)combined);
         }
@@ -6247,11 +6247,11 @@ static uint64_t sys_sched_setscheduler(uint64_t pid, uint64_t policy,
     else
         target = process_get_by_pid((uint32_t)pid);
 
-    if (!target || target->state == PROCESS_UNUSED) return (uint64_t)-1;
+    if (!target || target->state == PROCESS_UNUSED) return (uint64_t)(int64_t)-ESRCH;
 
     if (policy != SCHED_OTHER && policy != SCHED_FIFO && policy != SCHED_RR &&
         policy != SCHED_BATCH && policy != SCHED_IDLE)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EINVAL;
 
     target->sched_policy = (uint8_t)policy;
 
@@ -6263,7 +6263,7 @@ static uint64_t sys_sched_setscheduler(uint64_t pid, uint64_t policy,
     if (param_addr) {
         struct sched_param param;
         if (copy_from_user(&param, param_addr, sizeof(param)) < 0)
-            return (uint64_t)-1;
+            return (uint64_t)(int64_t)-EFAULT;
         /* SCHED_FIFO/RR priority: only privileged processes can set > 0 */
         if (param.sched_priority > 0)
             target->priority = (uint8_t)(param.sched_priority > 3 ? 3 : param.sched_priority);
@@ -6279,7 +6279,7 @@ static uint64_t sys_sched_getscheduler(uint64_t pid) {
     else
         target = process_get_by_pid((uint32_t)pid);
 
-    if (!target || target->state == PROCESS_UNUSED) return (uint64_t)-1;
+    if (!target || target->state == PROCESS_UNUSED) return (uint64_t)(int64_t)-ESRCH;
     return (uint64_t)target->sched_policy;
 }
 
@@ -6300,16 +6300,16 @@ static uint64_t sys_sched_setattr(uint64_t pid, uint64_t attr_addr, uint64_t fla
     int ret;
 
     if (!attr_addr)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EINVAL;
 
     /* Copy struct sched_attr from userspace */
     if (syscall_is_user_process() && !syscall_user_read_ok((uint64_t)attr_addr, sizeof(struct sched_attr)))
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EFAULT;
     memcpy(&attr, (const void *)attr_addr, sizeof(struct sched_attr));
 
     /* Validate the size field before using it */
     if (attr.size == 0 || attr.size > sizeof(struct sched_attr))
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EINVAL;
 
     /* If caller provided a smaller struct, zero the tail */
     size_t copy_size = attr.size < sizeof(struct sched_attr) ? attr.size : sizeof(struct sched_attr);
@@ -6321,11 +6321,11 @@ static uint64_t sys_sched_setattr(uint64_t pid, uint64_t attr_addr, uint64_t fla
     if (pid == 0)
         pid = process_get_current() ? process_get_current()->pid : 0;
     if (pid == 0)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-ESRCH;
 
     ret = sched_setattr((uint32_t)pid, &attr, (uint32_t)flags);
     if (ret < 0)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)ret;
     return 0;
 }
 
@@ -6345,16 +6345,16 @@ static uint64_t sys_sched_getattr(uint64_t pid, uint64_t attr_addr, uint64_t siz
     int ret;
 
     if (!attr_addr || size == 0 || size > sizeof(struct sched_attr))
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EINVAL;
 
     if (syscall_is_user_process() && !syscall_user_write_ok((uint64_t)attr_addr, sizeof(struct sched_attr)))
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EFAULT;
 
     /* Resolve PID */
     uint32_t target_pid;
     if (pid == 0) {
         struct process *cur = process_get_current();
-        if (!cur) return (uint64_t)-1;
+        if (!cur) return (uint64_t)(int64_t)-ESRCH;
         target_pid = cur->pid;
     } else {
         target_pid = (uint32_t)pid;
@@ -6362,12 +6362,12 @@ static uint64_t sys_sched_getattr(uint64_t pid, uint64_t attr_addr, uint64_t siz
 
     ret = sched_getattr(target_pid, &attr, (size_t)size, (uint32_t)flags);
     if (ret < 0)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)ret;
 
     /* Copy result back to userspace */
     size_t copy_size = size < sizeof(struct sched_attr) ? (size_t)size : sizeof(struct sched_attr);
     if (copy_to_user(attr_addr, &attr, copy_size) < 0)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EFAULT;
     return 0;
 }
 
@@ -7294,69 +7294,69 @@ static uint64_t sys_sysinfo(uint64_t info_addr) {
 
 static uint64_t sys_getresuid(uint64_t ruid_addr, uint64_t euid_addr, uint64_t suid_addr) {
     struct process *p = process_get_current();
-    if (!p) return (uint64_t)-1;
+    if (!p) return (uint64_t)(int64_t)-ESRCH;
 
     if (ruid_addr) {
         uint32_t val = p->uid;
         if (copy_to_user(ruid_addr, &val, sizeof(val)) < 0)
-            return (uint64_t)-1;
+            return (uint64_t)(int64_t)-EFAULT;
     }
     if (euid_addr) {
         uint32_t val = p->euid;
         if (copy_to_user(euid_addr, &val, sizeof(val)) < 0)
-            return (uint64_t)-1;
+            return (uint64_t)(int64_t)-EFAULT;
     }
     if (suid_addr) {
         uint32_t val = p->euid;
         if (copy_to_user(suid_addr, &val, sizeof(val)) < 0)
-            return (uint64_t)-1;
+            return (uint64_t)(int64_t)-EFAULT;
     }
     return 0;
 }
 
 static uint64_t sys_setresuid(uint64_t ruid, uint64_t euid, uint64_t suid) {
     struct process *p = process_get_current();
-    if (!p) return (uint64_t)-1;
+    if (!p) return (uint64_t)(int64_t)-ESRCH;
 
     /* Simple: allow setting if the caller is root (uid 0) */
     if (p->euid != 0 && (ruid != (uint64_t)-1 || euid != (uint64_t)-1 || suid != (uint64_t)-1))
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EPERM;
 
     if (ruid != (uint64_t)-1) { p->uid = (uint32_t)ruid; p->euid = (uint32_t)ruid; }
     if (euid != (uint64_t)-1) p->euid = (uint32_t)euid;
     if (suid != (uint64_t)-1) { /* suid storage not separate */ }
-    /* Clear dumpable on credential change — user might have dropped privileges */
+    /* Clear dumpable on credential change — caller might have dropped privileges */
     p->dumpable = 0;
     return 0;
 }
 
 static uint64_t sys_getresgid(uint64_t rgid_addr, uint64_t egid_addr, uint64_t sgid_addr) {
     struct process *p = process_get_current();
-    if (!p) return (uint64_t)-1;
+    if (!p) return (uint64_t)(int64_t)-ESRCH;
 
     if (rgid_addr) {
         uint32_t val = p->gid;
         if (copy_to_user(rgid_addr, &val, sizeof(val)) < 0)
-            return (uint64_t)-1;
+            return (uint64_t)(int64_t)-EFAULT;
     }
     if (egid_addr) {
         uint32_t val = p->egid;
         if (copy_to_user(egid_addr, &val, sizeof(val)) < 0)
-            return (uint64_t)-1;
+            return (uint64_t)(int64_t)-EFAULT;
     }
     if (sgid_addr) {
         uint32_t val = p->egid;
         if (copy_to_user(sgid_addr, &val, sizeof(val)) < 0)
-            return (uint64_t)-1;
+            return (uint64_t)(int64_t)-EFAULT;
     }
     return 0;
 }
 
 static uint64_t sys_setresgid(uint64_t rgid, uint64_t egid, uint64_t sgid) {
     struct process *p = process_get_current();
-    if (!p) return (uint64_t)-1;
+    if (!p) return (uint64_t)(int64_t)-ESRCH;
 
-    if (p->euid != 0) return (uint64_t)-1;
+    if (p->euid != 0) return (uint64_t)(int64_t)-EPERM;
 
     if (rgid != (uint64_t)-1) { p->gid = (uint32_t)rgid; p->egid = (uint32_t)rgid; }
     if (egid != (uint64_t)-1) p->egid = (uint32_t)egid;
@@ -7370,15 +7370,15 @@ static uint64_t sys_sched_getparam(uint64_t pid, uint64_t param_addr) {
     struct process *target;
     if (pid == 0) target = process_get_current();
     else target = process_get_by_pid((uint32_t)pid);
-    if (!target || target->state == PROCESS_UNUSED) return (uint64_t)-1;
+    if (!target || target->state == PROCESS_UNUSED) return (uint64_t)(int64_t)-ESRCH;
 
     if (syscall_is_user_process() && !syscall_user_write_ok(param_addr, sizeof(struct sched_param)))
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EFAULT;
 
     struct sched_param param;
     param.sched_priority = (int)target->priority;
     if (copy_to_user(param_addr, &param, sizeof(struct sched_param)) < 0)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EFAULT;
     return 0;
 }
 
@@ -7386,14 +7386,14 @@ static uint64_t sys_sched_setparam(uint64_t pid, uint64_t param_addr) {
     struct process *target;
     if (pid == 0) target = process_get_current();
     else target = process_get_by_pid((uint32_t)pid);
-    if (!target || target->state == PROCESS_UNUSED) return (uint64_t)-1;
+    if (!target || target->state == PROCESS_UNUSED) return (uint64_t)(int64_t)-ESRCH;
 
     if (syscall_is_user_process() && !syscall_user_read_ok(param_addr, sizeof(struct sched_param)))
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EFAULT;
 
     struct sched_param param;
     if (copy_from_user(&param, param_addr, sizeof(struct sched_param)) < 0)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EFAULT;
     if (param.sched_priority >= 0 && param.sched_priority < 4)
         target->priority = (uint8_t)param.sched_priority;
     return 0;
@@ -8330,7 +8330,7 @@ static uint64_t sys_signalfd(uint64_t fd, uint64_t mask_addr, uint64_t flags) {
     if (mask_addr) {
         uint32_t val;
         if (copy_from_user(&val, mask_addr, sizeof(val)) < 0)
-            return (uint64_t)-1;
+            return (uint64_t)(int64_t)-EFAULT;
         sigmask = val;
     }
 
@@ -8341,7 +8341,7 @@ static uint64_t sys_signalfd(uint64_t fd, uint64_t mask_addr, uint64_t flags) {
             signalfd_table[slot].sigmask = sigmask;
             return fd;
         }
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EINVAL;
     }
 
     /* Create new signalfd */
@@ -8359,7 +8359,7 @@ static uint64_t sys_signalfd(uint64_t fd, uint64_t mask_addr, uint64_t flags) {
             return (uint64_t)(600 + i);
         }
     }
-    return (uint64_t)-1;
+    return (uint64_t)(int64_t)-ENFILE;
 }
 
 /* Legacy signalfd_notify — called from signal_send().
