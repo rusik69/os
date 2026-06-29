@@ -6447,97 +6447,97 @@ int sys_getpeername_impl(int sockfd, struct sockaddr_in *addr, uint32_t *addrlen
 int sys_socketpair_impl(int domain, int type, int protocol, int sv[2]);
 
 static uint64_t sys_socket(uint64_t domain, uint64_t type, uint64_t protocol) {
-    int fd = sys_socket_impl((int)domain, (int)type, (int)protocol);
-    return fd >= 0 ? (uint64_t)fd : (uint64_t)-1;
+    int ret = sys_socket_impl((int)domain, (int)type, (int)protocol);
+    return ret >= 0 ? (uint64_t)ret : (uint64_t)(int64_t)ret;
 }
 
 static uint64_t sys_bind(uint64_t sockfd, uint64_t addr_addr, uint64_t addrlen) {
     (void)addrlen;
     if (syscall_is_user_process() && !syscall_user_read_ok(addr_addr, sizeof(struct sockaddr_in)))
-        return (uint64_t)-1;
-    return (uint64_t)sys_bind_impl((int)sockfd, (const struct sockaddr_in *)addr_addr);
+        return (uint64_t)(int64_t)-EFAULT;
+    return (uint64_t)(int64_t)sys_bind_impl((int)sockfd, (const struct sockaddr_in *)addr_addr);
 }
 
 static uint64_t sys_listen(uint64_t sockfd, uint64_t backlog) {
-    return (uint64_t)sys_listen_impl((int)sockfd, (int)backlog);
+    return (uint64_t)(int64_t)sys_listen_impl((int)sockfd, (int)backlog);
 }
 
 static uint64_t sys_accept(uint64_t sockfd, uint64_t addr_addr, uint64_t addrlen_addr) {
     if (addr_addr && addrlen_addr) {
         if (syscall_is_user_process() && !syscall_user_write_ok(addr_addr, sizeof(struct sockaddr_in)))
-            return (uint64_t)-1;
+            return (uint64_t)(int64_t)-EFAULT;
         if (syscall_is_user_process() && !syscall_user_read_ok(addrlen_addr, 4))
-            return (uint64_t)-1;
+            return (uint64_t)(int64_t)-EFAULT;
     }
     int fd = sys_accept_impl((int)sockfd,
                              (struct sockaddr_in *)addr_addr,
                              (uint32_t *)addrlen_addr);
-    return fd >= 0 ? (uint64_t)fd : (uint64_t)-1;
+    return fd >= 0 ? (uint64_t)fd : (uint64_t)(int64_t)fd;
 }
 
 static uint64_t sys_connect(uint64_t sockfd, uint64_t addr_addr, uint64_t addrlen) {
     (void)addrlen;
     if (syscall_is_user_process() && !syscall_user_read_ok(addr_addr, sizeof(struct sockaddr_in)))
-        return (uint64_t)-1;
-    return (uint64_t)sys_connect_impl((int)sockfd, (const struct sockaddr_in *)addr_addr);
+        return (uint64_t)(int64_t)-EFAULT;
+    return (uint64_t)(int64_t)sys_connect_impl((int)sockfd, (const struct sockaddr_in *)addr_addr);
 }
 
 static uint64_t sys_setsockopt(uint64_t sockfd, uint64_t level, uint64_t optname,
                                 uint64_t optval_addr, uint64_t optlen) {
     if (syscall_is_user_process() && !syscall_user_read_ok(optval_addr, (uint32_t)optlen))
-        return (uint64_t)-1;
-    return (uint64_t)sys_setsockopt_impl((int)sockfd, (int)level, (int)optname,
-                                          (const void *)optval_addr, (uint32_t)optlen);
+        return (uint64_t)(int64_t)-EFAULT;
+    return (uint64_t)(int64_t)sys_setsockopt_impl((int)sockfd, (int)level, (int)optname,
+                                                  (const void *)optval_addr, (uint32_t)optlen);
 }
 
 static uint64_t sys_getsockopt(uint64_t sockfd, uint64_t level, uint64_t optname,
                                 uint64_t optval_addr, uint64_t optlen_addr) {
     if (syscall_is_user_process() && !syscall_user_write_ok(optval_addr, 4))
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EFAULT;
     if (syscall_is_user_process() && !syscall_user_read_ok(optlen_addr, 4))
-        return (uint64_t)-1;
-    return (uint64_t)sys_getsockopt_impl((int)sockfd, (int)level, (int)optname,
-                                          (void *)optval_addr, (uint32_t *)optlen_addr);
+        return (uint64_t)(int64_t)-EFAULT;
+    return (uint64_t)(int64_t)sys_getsockopt_impl((int)sockfd, (int)level, (int)optname,
+                                                  (void *)optval_addr, (uint32_t *)optlen_addr);
 }
 
 static uint64_t sys_sendmsg(uint64_t sockfd, uint64_t msg_addr, uint64_t flags) {
     if (syscall_is_user_process() && !syscall_user_read_ok(msg_addr, sizeof(struct msghdr)))
-        return (uint64_t)-1;
-    return (uint64_t)sys_sendmsg_impl((int)sockfd, (const struct msghdr *)msg_addr, (int)flags);
+        return (uint64_t)(int64_t)-EFAULT;
+    return (uint64_t)(int64_t)sys_sendmsg_impl((int)sockfd, (const struct msghdr *)msg_addr, (int)flags);
 }
 
 static uint64_t sys_recvmsg(uint64_t sockfd, uint64_t msg_addr, uint64_t flags) {
     if (syscall_is_user_process() && !syscall_user_read_ok(msg_addr, sizeof(struct msghdr)))
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EFAULT;
     if (syscall_is_user_process() && !syscall_user_write_ok(msg_addr, sizeof(struct msghdr)))
-        return (uint64_t)-1;
-    return (uint64_t)sys_recvmsg_impl((int)sockfd, (struct msghdr *)msg_addr, (int)flags);
+        return (uint64_t)(int64_t)-EFAULT;
+    return (uint64_t)(int64_t)sys_recvmsg_impl((int)sockfd, (struct msghdr *)msg_addr, (int)flags);
 }
 
 static uint64_t sys_getsockname(uint64_t sockfd, uint64_t addr_addr, uint64_t addrlen_addr) {
     if (syscall_is_user_process() && !syscall_user_write_ok(addr_addr, sizeof(struct sockaddr_in)))
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EFAULT;
     if (syscall_is_user_process() && !syscall_user_read_ok(addrlen_addr, 4))
-        return (uint64_t)-1;
-    return (uint64_t)sys_getsockname_impl((int)sockfd, (struct sockaddr_in *)addr_addr,
-                                           (uint32_t *)addrlen_addr);
+        return (uint64_t)(int64_t)-EFAULT;
+    return (uint64_t)(int64_t)sys_getsockname_impl((int)sockfd, (struct sockaddr_in *)addr_addr,
+                                                   (uint32_t *)addrlen_addr);
 }
 
 static uint64_t sys_getpeername(uint64_t sockfd, uint64_t addr_addr, uint64_t addrlen_addr) {
     if (syscall_is_user_process() && !syscall_user_write_ok(addr_addr, sizeof(struct sockaddr_in)))
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EFAULT;
     if (syscall_is_user_process() && !syscall_user_read_ok(addrlen_addr, 4))
-        return (uint64_t)-1;
-    return (uint64_t)sys_getpeername_impl((int)sockfd, (struct sockaddr_in *)addr_addr,
-                                           (uint32_t *)addrlen_addr);
+        return (uint64_t)(int64_t)-EFAULT;
+    return (uint64_t)(int64_t)sys_getpeername_impl((int)sockfd, (struct sockaddr_in *)addr_addr,
+                                                   (uint32_t *)addrlen_addr);
 }
 
 static uint64_t sys_socketpair(uint64_t domain, uint64_t type, uint64_t protocol, uint64_t sv_addr) {
     if (syscall_is_user_process() && !syscall_user_write_ok(sv_addr, 8))
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EFAULT;
     int sv[2];
     int r = sys_socketpair_impl((int)domain, (int)type, (int)protocol, sv);
-    if (r < 0) return (uint64_t)-1;
+    if (r < 0) return (uint64_t)(int64_t)r;
     memcpy((void *)sv_addr, sv, 8);
     return 0;
 }
@@ -8615,7 +8615,7 @@ static uint64_t sys_sendmmsg(uint64_t sockfd, uint64_t msgvec_addr,
     (void)flags;
     struct process *p = process_get_current();
     if (!p || sockfd >= PROCESS_FD_MAX || !p->fd_table[sockfd].used)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EBADF;
 
     int max = (int)vlen > 8 ? 8 : (int)vlen;
     int sent = 0;
@@ -8635,7 +8635,7 @@ static uint64_t sys_sendmmsg(uint64_t sockfd, uint64_t msgvec_addr,
 static uint64_t sys_recvmmsg(uint64_t sockfd, uint64_t msgvec_addr,
                               uint64_t vlen, uint64_t flags, uint64_t timeout_addr) {
     (void)sockfd; (void)msgvec_addr; (void)vlen; (void)flags; (void)timeout_addr;
-    return (uint64_t)-1;
+    return (uint64_t)(int64_t)-ENOSYS;
 }
 
 /* ── sync / syncfs ────────────────────────────────────────────────────── */
