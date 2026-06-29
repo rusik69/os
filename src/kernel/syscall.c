@@ -205,13 +205,13 @@ static int syscall_user_cstr_ok(uint64_t addr) {
 
 static int syscall_validate_user_args(uint64_t num, uint64_t a1, uint64_t a2,
                                       uint64_t a3, uint64_t a4, uint64_t a5) {
-    if (!syscall_is_user_process()) return 1;
+    if (!syscall_is_user_process()) return 0;
 
     switch (num) {
         case SYS_READ:
-            return syscall_user_write_ok(a2, a3);
+            return syscall_user_write_ok(a2, a3) ? 0 : -EFAULT;
         case SYS_WRITE:
-            return syscall_user_read_ok(a2, a3);
+            return syscall_user_read_ok(a2, a3) ? 0 : -EFAULT;
         case SYS_OPEN:
         case SYS_MKDIR:
         case SYS_UNLINK:
@@ -225,214 +225,216 @@ static int syscall_validate_user_args(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_FAT_FILE_SIZE:
 
         case SYS_STAT:
-            return syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, sizeof(uint32_t) * 2);
+            return (syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, sizeof(uint32_t) * 2)) ? 0 : -EFAULT;
         case SYS_FS_CREATE:
         case SYS_FS_CHMOD:
-            return syscall_user_cstr_ok(a1);
+            return syscall_user_cstr_ok(a1) ? 0 : -EFAULT;
         case SYS_FS_CHOWN:
-            return syscall_user_cstr_ok(a1);
+            return syscall_user_cstr_ok(a1) ? 0 : -EFAULT;
         case SYS_FS_WRITE:
-            return syscall_user_cstr_ok(a1) && syscall_user_read_ok(a2, a3);
+            return (syscall_user_cstr_ok(a1) && syscall_user_read_ok(a2, a3)) ? 0 : -EFAULT;
         case SYS_FS_READ:
-            return syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, a3) &&
-                   syscall_user_write_ok(a4, sizeof(uint32_t));
+            return (syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, a3) &&
+                    syscall_user_write_ok(a4, sizeof(uint32_t))) ? 0 : -EFAULT;
         case SYS_FS_STAT:
-            return syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, sizeof(uint32_t) * 2);
+            return (syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, sizeof(uint32_t) * 2)) ? 0 : -EFAULT;
         case SYS_FS_STAT_EX:
-            return syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, sizeof(struct syscall_fs_stat_ex));
+            return (syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, sizeof(struct syscall_fs_stat_ex))) ? 0 : -EFAULT;
         case SYS_FS_LIST_NAMES:
-            if (!syscall_user_cstr_ok(a1)) return 0;
-            if (a2 && !syscall_user_cstr_ok(a2)) return 0;
-            if (a4 == 0) return 1;
-            if (a4 > (1ULL << 20)) return 0;
-            return syscall_user_write_ok(a3, a4 * FS_MAX_NAME);
+            if (!syscall_user_cstr_ok(a1)) return -EFAULT;
+            if (a2 && !syscall_user_cstr_ok(a2)) return -EFAULT;
+            if (a4 == 0) return 0;
+            if (a4 > (1ULL << 20)) return -EINVAL;
+            return syscall_user_write_ok(a3, a4 * FS_MAX_NAME) ? 0 : -EFAULT;
         case SYS_VFS_READ:
-            return syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, a3) &&
-                   syscall_user_write_ok(a4, sizeof(uint32_t));
+            return (syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, a3) &&
+                    syscall_user_write_ok(a4, sizeof(uint32_t))) ? 0 : -EFAULT;
         case SYS_VFS_WRITE:
-            return syscall_user_cstr_ok(a1) && syscall_user_read_ok(a2, a3);
+            return (syscall_user_cstr_ok(a1) && syscall_user_read_ok(a2, a3)) ? 0 : -EFAULT;
         case SYS_VFS_STAT:
-            return syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, sizeof(struct vfs_stat));
+            return (syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, sizeof(struct vfs_stat))) ? 0 : -EFAULT;
         case SYS_WAITPID:
-            return a2 ? syscall_user_write_ok(a2, sizeof(int)) : 1;
+            return (a2 ? syscall_user_write_ok(a2, sizeof(int)) : 1) ? 0 : -EFAULT;
         case SYS_NET_GET_MAC:
-            return syscall_user_write_ok(a1, 6);
+            return syscall_user_write_ok(a1, 6) ? 0 : -EFAULT;
         case SYS_NET_GET_IP:
-            return syscall_user_write_ok(a1, 4);
+            return syscall_user_write_ok(a1, 4) ? 0 : -EFAULT;
         case SYS_NET_UDP_SEND:
-            return syscall_user_read_ok(a4, a5);
+            return syscall_user_read_ok(a4, a5) ? 0 : -EFAULT;
         case SYS_NET_HTTP_GET: {
             uint64_t bufsize = (uint32_t)(a5 >> 32);
-            return syscall_user_cstr_ok(a1) && syscall_user_cstr_ok(a3) &&
-                   syscall_user_write_ok(a4, bufsize);
+            return (syscall_user_cstr_ok(a1) && syscall_user_cstr_ok(a3) &&
+                    syscall_user_write_ok(a4, bufsize)) ? 0 : -EFAULT;
         }
         case SYS_NET_TCP_SEND_CONN:
-            return syscall_user_read_ok(a2, a3);
+            return syscall_user_read_ok(a2, a3) ? 0 : -EFAULT;
         case SYS_NET_TCP_RECV_CONN:
-            return syscall_user_write_ok(a2, a3);
+            return syscall_user_write_ok(a2, a3) ? 0 : -EFAULT;
         case SYS_PROC_LIST:
-            if (a2 == 0) return 1;
-            if (a2 > PROCESS_MAX) return 0;
-            return syscall_user_write_ok(a1, a2 * sizeof(struct syscall_process_info));
+            if (a2 == 0) return 0;
+            if (a2 > PROCESS_MAX) return -EINVAL;
+            return syscall_user_write_ok(a1, a2 * sizeof(struct syscall_process_info)) ? 0 : -EFAULT;
         case SYS_USER_FIND:
-            return syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, sizeof(struct user_entry));
+            return (syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, sizeof(struct user_entry))) ? 0 : -EFAULT;
         case SYS_USER_ADD:
-            return syscall_user_cstr_ok(a1) && syscall_user_cstr_ok(a3);
+            return (syscall_user_cstr_ok(a1) && syscall_user_cstr_ok(a3)) ? 0 : -EFAULT;
         case SYS_USER_PASSWD:
         case SYS_SESSION_LOGIN:
-            return syscall_user_cstr_ok(a1) && syscall_user_cstr_ok(a2);
+            return (syscall_user_cstr_ok(a1) && syscall_user_cstr_ok(a2)) ? 0 : -EFAULT;
         case SYS_USER_DELETE:
-            return syscall_user_cstr_ok(a1);
+            return syscall_user_cstr_ok(a1) ? 0 : -EFAULT;
         case SYS_USERS_GET_BY_INDEX:
-            return syscall_user_write_ok(a2, sizeof(struct user_entry));
+            return syscall_user_write_ok(a2, sizeof(struct user_entry)) ? 0 : -EFAULT;
         case SYS_RTC_GET_TIME:
-            return syscall_user_write_ok(a1, sizeof(struct rtc_time));
+            return syscall_user_write_ok(a1, sizeof(struct rtc_time)) ? 0 : -EFAULT;
         case SYS_MOUSE_GET_STATE:
-            return syscall_user_write_ok(a1, sizeof(struct mouse_state));
+            return syscall_user_write_ok(a1, sizeof(struct mouse_state)) ? 0 : -EFAULT;
         case SYS_SERIAL_READ:
-            return syscall_user_write_ok(a1, a2);
+            return syscall_user_write_ok(a1, a2) ? 0 : -EFAULT;
         case SYS_SERIAL_WRITE:
-            return syscall_user_read_ok(a1, a2);
+            return syscall_user_read_ok(a1, a2) ? 0 : -EFAULT;
         case SYS_PMM_GET_STATS:
-            return syscall_user_write_ok(a1, sizeof(struct pmm_stats));
+            return syscall_user_write_ok(a1, sizeof(struct pmm_stats)) ? 0 : -EFAULT;
         case SYS_FAT_LIST_DIR:
-            return syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, a3 * FAT32_MAX_NAME);
+            return (syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, a3 * FAT32_MAX_NAME)) ? 0 : -EFAULT;
         case SYS_FAT_READ_FILE:
-            return syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, a3);
+            return (syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, a3)) ? 0 : -EFAULT;
         case SYS_FAT_WRITE_FILE:
-            return syscall_user_cstr_ok(a1) && syscall_user_read_ok(a2, a3);
+            return (syscall_user_cstr_ok(a1) && syscall_user_read_ok(a2, a3)) ? 0 : -EFAULT;
 
         case SYS_FREE:
             /* Pointer could be any previously-allocated address; no range check needed */
-            return 1;
+            return 0;
         case SYS_REALLOC:
             /* old ptr is arbitrary; just validate that the new result ptr location is writable */
-            return 1;
+            return 0;
         case SYS_CHDIR:
         case SYS_TRUNCATE:
-            return syscall_user_cstr_ok(a1);
+            return syscall_user_cstr_ok(a1) ? 0 : -EFAULT;
         case SYS_GETCWD:
-            if (a2 == 0) return 0;
-            return syscall_user_write_ok(a1, a2);
+            if (a2 == 0) return -EINVAL;
+            return syscall_user_write_ok(a1, a2) ? 0 : -EFAULT;
         case SYS_FD_READ:
-            return syscall_user_write_ok(a2, a3);
+            return syscall_user_write_ok(a2, a3) ? 0 : -EFAULT;
         case SYS_FD_WRITE:
-            return syscall_user_read_ok(a2, a3);
+            return syscall_user_read_ok(a2, a3) ? 0 : -EFAULT;
         case SYS_RAW_SEND:
-            if (a2 == 0 || a2 > 1514) return 0;
-            return syscall_user_read_ok(a1, a2);
+            if (a2 == 0 || a2 > 1514) return -EINVAL;
+            return syscall_user_read_ok(a1, a2) ? 0 : -EFAULT;
         /* New production syscalls */
         case SYS_PRLIMIT64: {
-            if (a2 >= _RLIMIT_NLIMITS) return 0;
-            if (a3 && !syscall_user_read_ok(a3, 16)) return 0;
-            if (a4 && !syscall_user_write_ok(a4, 16)) return 0;
-            return 1;
+            if (a2 >= _RLIMIT_NLIMITS) return -EINVAL;
+            if (a3 && !syscall_user_read_ok(a3, 16)) return -EFAULT;
+            if (a4 && !syscall_user_write_ok(a4, 16)) return -EFAULT;
+            return 0;
         }
         case SYS_FUTEX:
-            return a2 == FUTEX_WAIT ? syscall_user_read_ok(a1, 4) : 1;
+            if (a2 == FUTEX_WAIT && !syscall_user_read_ok(a1, 4)) return -EFAULT;
+            return 0;
         case SYS_ARCH_PRCTL:
-            return (a1 == ARCH_GET_FS || a1 == ARCH_GET_GS) ?
-                   syscall_user_write_ok(a2, 8) : 1;
+            if ((a1 == ARCH_GET_FS || a1 == ARCH_GET_GS) &&
+                !syscall_user_write_ok(a2, 8)) return -EFAULT;
+            return 0;
         case SYS_POLL:
-            if (a2 == 0) return 1;
-            return syscall_user_read_ok(a1, a2 * sizeof(struct pollfd)) &&
-                   syscall_user_write_ok(a1, a2 * sizeof(struct pollfd));
+            if (a2 == 0) return 0;
+            return (syscall_user_read_ok(a1, a2 * sizeof(struct pollfd)) &&
+                    syscall_user_write_ok(a1, a2 * sizeof(struct pollfd))) ? 0 : -EFAULT;
         case SYS_EVENTFD:
-            return 1;
+            return 0;
         case SYS_SENDFILE:
-            if (a3 && !syscall_user_read_ok(a3, 8)) return 0;
-            return 1;
+            if (a3 && !syscall_user_read_ok(a3, 8)) return -EFAULT;
+            return 0;
         case SYS_IOCTL:
-            return 1;
+            return 0;
         case SYS_SYSLOG:
-            if (a1 == SYSLOG_ACTION_READ_ALL || a1 == SYSLOG_ACTION_READ_CLEAR)
-                return syscall_user_write_ok(a2, a3);
-            return 1;
+            if ((a1 == SYSLOG_ACTION_READ_ALL || a1 == SYSLOG_ACTION_READ_CLEAR) &&
+                !syscall_user_write_ok(a2, a3)) return -EFAULT;
+            return 0;
         case SYS_PRCTL:
-            if (a1 == PR_SET_NAME) return syscall_user_read_ok(a2, 16);
-            if (a1 == PR_GET_NAME) return syscall_user_write_ok(a2, 16);
-            return 1;
+            if (a1 == PR_SET_NAME && !syscall_user_read_ok(a2, 16)) return -EFAULT;
+            if (a1 == PR_GET_NAME && !syscall_user_write_ok(a2, 16)) return -EFAULT;
+            return 0;
         case SYS_MOUNT:
-            return syscall_user_cstr_ok(a1) && syscall_user_cstr_ok(a2);
+            return (syscall_user_cstr_ok(a1) && syscall_user_cstr_ok(a2)) ? 0 : -EFAULT;
         case SYS_UMOUNT:
-            return syscall_user_cstr_ok(a1);
+            return syscall_user_cstr_ok(a1) ? 0 : -EFAULT;
         case SYS_FTRUNCATE:
-            return 1;
+            return 0;
         case SYS_READDIR:
-            return syscall_user_write_ok(a2, a3);
+            return syscall_user_write_ok(a2, a3) ? 0 : -EFAULT;
         case SYS_EXECVEAT:
-            return syscall_user_cstr_ok(a2);
+            return syscall_user_cstr_ok(a2) ? 0 : -EFAULT;
         case SYS_SCHED_SETSCHEDULER:
-            return 1;
+            return 0;
         case SYS_SCHED_GETSCHEDULER:
-            return 1;
+            return 0;
         case SYS_SCHED_SETATTR:
-            /* Validate that the userspace attr struct is readable */
-            return a2 ? syscall_user_read_ok(a2, sizeof(struct sched_attr)) : 0;
+            if (!a2) return -EINVAL;
+            return syscall_user_read_ok(a2, sizeof(struct sched_attr)) ? 0 : -EFAULT;
         case SYS_SCHED_GETATTR:
-            /* Validate that the userspace attr struct is writable */
-            return a2 ? syscall_user_write_ok(a2, a3) : 0;
+            if (!a2) return -EINVAL;
+            return syscall_user_write_ok(a2, a3) ? 0 : -EFAULT;
         /* New production syscalls (batch 2) */
         case SYS_OPENAT:
-            return syscall_user_cstr_ok(a2);
+            return syscall_user_cstr_ok(a2) ? 0 : -EFAULT;
         case SYS_MKDIRAT:
-            return syscall_user_cstr_ok(a2);
+            return syscall_user_cstr_ok(a2) ? 0 : -EFAULT;
         case SYS_FSTATAT:
-            return syscall_user_cstr_ok(a2) && syscall_user_write_ok(a3, sizeof(struct vfs_stat));
+            return (syscall_user_cstr_ok(a2) && syscall_user_write_ok(a3, sizeof(struct vfs_stat))) ? 0 : -EFAULT;
         case SYS_UNLINKAT:
-            return syscall_user_cstr_ok(a2);
+            return syscall_user_cstr_ok(a2) ? 0 : -EFAULT;
         case SYS_RENAMEAT:
-            return syscall_user_cstr_ok(a2) && syscall_user_cstr_ok(a4);
+            return (syscall_user_cstr_ok(a2) && syscall_user_cstr_ok(a4)) ? 0 : -EFAULT;
         case SYS_SYMLINKAT:
-            return syscall_user_cstr_ok(a1) && syscall_user_cstr_ok(a3);
+            return (syscall_user_cstr_ok(a1) && syscall_user_cstr_ok(a3)) ? 0 : -EFAULT;
         case SYS_READLINKAT:
-            return syscall_user_cstr_ok(a2) && syscall_user_write_ok(a3, a4);
+            return (syscall_user_cstr_ok(a2) && syscall_user_write_ok(a3, a4)) ? 0 : -EFAULT;
         case SYS_GETDENTS64:
-            return syscall_user_write_ok(a2, a3);
+            return syscall_user_write_ok(a2, a3) ? 0 : -EFAULT;
         case SYS_MLOCK:
         case SYS_MLOCKALL:
         case SYS_MUNLOCK:
         case SYS_MUNLOCKALL:
         case SYS_FALLOCATE:
-            return 1;
+            return 0;
         case SYS_MINCORE:
-            return syscall_user_write_ok(a3, (a2 + PAGE_SIZE - 1) / PAGE_SIZE);
+            return syscall_user_write_ok(a3, (a2 + PAGE_SIZE - 1) / PAGE_SIZE) ? 0 : -EFAULT;
         case SYS_MADVISE:
-            return 1;
+            return 0;
         case SYS_TIMERFD_CREATE:
-            return 1;
+            return 0;
         case SYS_TIMERFD_SETTIME:
-            if (a3 && !syscall_user_read_ok(a3, sizeof(struct itimerspec))) return 0;
-            if (a4 && !syscall_user_write_ok(a4, sizeof(struct itimerspec))) return 0;
-            return 1;
+            if (a3 && !syscall_user_read_ok(a3, sizeof(struct itimerspec))) return -EFAULT;
+            if (a4 && !syscall_user_write_ok(a4, sizeof(struct itimerspec))) return -EFAULT;
+            return 0;
         case SYS_TIMERFD_GETTIME:
-            return syscall_user_write_ok(a2, sizeof(struct itimerspec));
+            return syscall_user_write_ok(a2, sizeof(struct itimerspec)) ? 0 : -EFAULT;
         case SYS_SIGNALFD:
-            if (a2 && !syscall_user_read_ok(a2, 8)) return 0;
-            return 1;
+            if (a2 && !syscall_user_read_ok(a2, 8)) return -EFAULT;
+            return 0;
         case SYS_MEMFD_CREATE:
-            if (a1 && !syscall_user_cstr_ok(a1)) return 0;
-            return 1;
+            if (a1 && !syscall_user_cstr_ok(a1)) return -EFAULT;
+            return 0;
         case SYS_SPLICE:
         case SYS_TEE:
-            return 1;
+            return 0;
         case SYS_SENDMMSG:
         case SYS_RECVMMSG:
-            return 1; /* simplified validation */
+            return 0; /* simplified validation */
         case SYS_SYNC:
         case SYS_SYNCFS:
         case SYS_SETSID:
-            return 1;
+            return 0;
         case SYS_GETSID:
-            return 1;
+            return 0;
         case SYS_SIGALTSTACK:
-            if (a1 && !syscall_user_read_ok(a1, sizeof(stack_t))) return 0;
-            if (a2 && !syscall_user_write_ok(a2, sizeof(stack_t))) return 0;
-            return 1;
+            if (a1 && !syscall_user_read_ok(a1, sizeof(stack_t))) return -EFAULT;
+            if (a2 && !syscall_user_write_ok(a2, sizeof(stack_t))) return -EFAULT;
+            return 0;
         case SYS_PERSONALITY:
-            return 1;
+            return 0;
         default:
-            return 1;
+            return 0;
     }
 }
 
@@ -9180,8 +9182,11 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         if (!p || !process_caps_has(p, (uint32_t)num)) return (uint64_t)-1;
     }
 
-    if (!syscall_validate_user_args(num, a1, a2, a3, a4, a5)) {
-        return (uint64_t)-1;
+    {
+        int args_ret = syscall_validate_user_args(num, a1, a2, a3, a4, a5);
+        if (args_ret < 0) {
+            return (uint64_t)(int64_t)args_ret;
+        }
     }
 
     return syscall_dispatch_internal(num, a1, a2, a3, a4, a5);
