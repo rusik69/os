@@ -757,9 +757,34 @@ static uint64_t sys_open(uint64_t path_addr, uint64_t flags, uint64_t mode) {
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
+
+    /* Validate access mode flags — only O_RDONLY=0, O_WRONLY=1, O_RDWR=2 */
+    uint64_t access_mode = flags & 3;
+    if (access_mode > 2)
+        return (uint64_t)(int64_t)-EINVAL;
+
+    /* O_TMPFILE must be accompanied by O_RDWR on Linux */
+    if ((flags & O_TMPFILE) && access_mode != 2)
+        return (uint64_t)(int64_t)-EINVAL;
+
     const char *path = kpath;
     struct vfs_stat st;
     int exists = (vfs_stat(path, &st) >= 0);
+
+    /* Permission check for existing file */
+    if (exists && !(flags & O_TMPFILE)) {
+        struct process *p = process_get_current();
+        if (!p) return (uint64_t)(int64_t)-EPERM;
+        uint16_t perm_op = 0;
+        if (access_mode == 0 || access_mode == 2)  /* O_RDONLY or O_RDWR */
+            perm_op |= VFS_R_OK;
+        if (access_mode == 1 || access_mode == 2)  /* O_WRONLY or O_RDWR */
+            perm_op |= VFS_W_OK;
+        if ((flags & O_TRUNC))
+            perm_op |= VFS_W_OK;
+        if (vfs_check_perms(path, (uint16_t)p->uid, (uint16_t)p->gid, perm_op) < 0)
+            return (uint64_t)(int64_t)-EACCES;
+    }
 
     /* Handle O_TMPFILE */
     if (flags & O_TMPFILE) {
@@ -769,7 +794,7 @@ static uint64_t sys_open(uint64_t path_addr, uint64_t flags, uint64_t mode) {
 
         /* Create the hidden temp file */
         if (vfs_create(tmp_path, 0) < 0)
-            return (uint64_t)-1;
+            return (uint64_t)(int64_t)-ENOSPC;
 
         /* Allocate fd slot and mark as FD_TMPFILE */
         struct process *p = process_get_current();
@@ -780,7 +805,7 @@ static uint64_t sys_open(uint64_t path_addr, uint64_t flags, uint64_t mode) {
             if (!p->fd_table[i].used) {
                 if ((uint64_t)i >= max_fds) {
                     vfs_unlink(tmp_path);
-                    return (uint64_t)-EMFILE;
+                    return (uint64_t)(int64_t)-EMFILE;
                 }
                 strncpy(p->fd_table[i].path, tmp_path, 63);
                 p->fd_table[i].path[63] = '\0';
@@ -792,7 +817,7 @@ static uint64_t sys_open(uint64_t path_addr, uint64_t flags, uint64_t mode) {
             }
         }
         vfs_unlink(tmp_path);
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EMFILE;
     }
 
     /* Handle O_TRUNC: truncate file to zero length */
@@ -812,13 +837,13 @@ static uint64_t sys_open(uint64_t path_addr, uint64_t flags, uint64_t mode) {
 
     /* Allocate fd slot in current process's table */
     struct process *p = process_get_current();
-    if (!p) return (uint64_t)-1;
+    if (!p) return (uint64_t)(int64_t)-EPERM;
     /* Enforce RLIMIT_NOFILE */
     uint64_t max_fds = p->rlim_cur[RLIMIT_NOFILE] > 0 ?
                        p->rlim_cur[RLIMIT_NOFILE] : PROCESS_FD_MAX;
     for (int i = 0; i < PROCESS_FD_MAX; i++) {
         if (!p->fd_table[i].used) {
-            if ((uint64_t)i >= max_fds) return (uint64_t)-EMFILE;
+            if ((uint64_t)i >= max_fds) return (uint64_t)(int64_t)-EMFILE;
             strncpy(p->fd_table[i].path, path, 63);
             p->fd_table[i].path[63] = '\0';
             p->fd_table[i].offset = 0;
@@ -827,7 +852,7 @@ static uint64_t sys_open(uint64_t path_addr, uint64_t flags, uint64_t mode) {
             return (uint64_t)(i + 3);
         }
     }
-    return (uint64_t)-1;
+    return (uint64_t)(int64_t)-EMFILE;
 }
 
 /**
