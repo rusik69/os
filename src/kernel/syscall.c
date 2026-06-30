@@ -114,6 +114,7 @@ uint64_t sys_rt_sigaction(uint64_t signum, uint64_t act_addr,
                           uint64_t oldact_addr, uint64_t sigsetsize);
 uint64_t sys_rt_sigprocmask(uint64_t how, uint64_t set_addr,
                             uint64_t oldset_addr, uint64_t sigsetsize);
+uint64_t sys_rt_sigreturn(void);
 
 /* ── Open file descriptor table (for lseek support) ────────────── */
 
@@ -447,6 +448,9 @@ static int syscall_validate_user_args(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_RT_SIGPROCMASK:
             if (a2 && !syscall_user_read_ok(a2, sizeof(uint64_t))) return -EFAULT;
             if (a3 && !syscall_user_write_ok(a3, sizeof(uint64_t))) return -EFAULT;
+            return 0;
+        case SYS_RT_SIGRETURN:
+            /* No arguments — just validate that user is calling from user mode */
             return 0;
         case SYS_PERSONALITY:
             return 0;
@@ -9637,6 +9641,8 @@ uint64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2,
             return sys_rt_sigaction(a1, a2, a3, a4);
         case SYS_RT_SIGPROCMASK:
             return sys_rt_sigprocmask(a1, a2, a3, a4);
+        case SYS_RT_SIGRETURN:
+            return sys_rt_sigreturn();
         default: {
             uint64_t ret = (uint64_t)-1;
             audit_syscall_exit(ret);

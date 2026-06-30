@@ -1158,6 +1158,14 @@ static uint64_t lin_rseq(uint64_t a1, uint64_t a2, uint64_t a3,
     return syscall_dispatch_internal(SYS_RSEQ, a1, a2, a3, a4, 0);
 }
 
+/* ── rt_sigreturn wrapper — no arguments ──────────────────────── */
+static uint64_t lin_rt_sigreturn(uint64_t a1, uint64_t a2, uint64_t a3,
+                                  uint64_t a4, uint64_t a5, uint64_t a6)
+{
+    lin_discard6(a1, a2, a3, a4, a5, a6);
+    return syscall_dispatch_internal(SYS_RT_SIGRETURN, 0, 0, 0, 0, 0);
+}
+
 static uint64_t lin_readahead(uint64_t a1, uint64_t a2, uint64_t a3,
                                uint64_t a4, uint64_t a5, uint64_t a6)
 {
@@ -1409,7 +1417,7 @@ linux_syscall_t sys_call_table[__NR_syscalls] = {
     [12]  = lin_brk,             /* __NR_brk */
     [13]  = sys_ni_syscall,     /* __NR_rt_sigaction (no internal equiv) */
     [14]  = sys_ni_syscall,     /* __NR_rt_sigprocmask (no internal equiv) */
-    [15]  = sys_ni_syscall,     /* __NR_rt_sigreturn (no internal equiv) */
+    [15]  = lin_rt_sigreturn,    /* __NR_rt_sigreturn */
     [16]  = lin_ioctl,           /* __NR_ioctl */
     [17]  = lin_pread64,         /* __NR_pread64 */
     [18]  = lin_pwrite64,        /* __NR_pwrite64 */

@@ -17,6 +17,8 @@
 #include "spinlock.h"
 #include "printf.h"
 #include "signal_libc.h"    /* for struct sigaction (userspace ABI) */
+#include "signal_frame.h"   /* for ucontext_t, sigcontext */
+#include "vmm.h"            /* for USER_VADDR_MAX */
 
 /* Module metadata */
 MODULE_LICENSE("GPL v2");
@@ -177,4 +179,96 @@ uint64_t sys_rt_sigprocmask(uint64_t how, uint64_t set_addr,
     }
 
     return 0;
+}
+
+/* ── sys_rt_sigreturn — restore context from signal frame ─────────
+ *
+ *   int rt_sigreturn(void);
+ *
+ * Called by the signal handler trampoline (__restore_rt) after the
+ * user-registered signal handler returns.  Reads the saved register
+ * context and signal mask from the signal frame on the user stack,
+ * restores them, and returns to the point where execution was
+ * interrupted by the signal.
+ *
+ * Does NOT return a meaningful value to the caller — instead the
+ * saved registers from the signal frame are injected into the kernel
+ * stack frame so the syscall exit path returns to the interrupted
+ * user code with the pre-signal register state.
+ *
+ * Returns rax from the saved context on success, -errno on error.
+ */
+
+/* syscall_entry_rsp_saved is set in syscall_asm.asm to the RSP after
+ * all user registers are pushed onto the kernel stack.  It points to
+ * the r15 slot — the base of the saved register frame. */
+extern volatile uint64_t syscall_entry_rsp_saved;
+
+uint64_t sys_rt_sigreturn(void)
+{
+    struct process *p = process_get_current();
+    if (!p)
+        return (uint64_t)(int64_t)-ESRCH;
+
+    /*
+     * The saved user RSP is at index [8] in the kernel stack frame
+     * (9th qword, offset +64 from the r15 base).
+     *
+     * At the time this syscall is invoked, the saved user RSP points
+     * to the ucontext within the signal frame on the user stack.
+     * The signal handler's ret instruction consumed the pretcode
+     * return address, advancing RSP past it to the ucontext, and
+     * the trampoline called rt_sigreturn without modifying RSP.
+     */
+    volatile uint64_t *saved_frame = (volatile uint64_t *)(uintptr_t)syscall_entry_rsp_saved;
+    uint64_t user_rsp = saved_frame[8];
+
+    /* Validate the ucontext address is in user space */
+    if (user_rsp == 0 || user_rsp >= USER_VADDR_MAX)
+        return (uint64_t)(int64_t)-EFAULT;
+
+    /* Read ucontext from user stack */
+    ucontext_t uc;
+    if (copy_from_user(&uc, user_rsp, sizeof(uc)) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
+
+    /* Restore signal mask from the saved ucontext */
+    {
+        uint64_t __sig_flags;
+        spinlock_irqsave_acquire(&p->sig_lock, &__sig_flags);
+        p->sig_mask = uc.uc_sigmask;
+        spinlock_irqsave_release(&p->sig_lock, __sig_flags);
+    }
+
+    /* Overwrite the saved kernel stack frame with the signal context.
+     *
+     * The asm exit path (syscall_asm.asm) pops these values before
+     * returning to userspace via sysret.  By overwriting them here,
+     * the signal handler's context restore takes effect transparently.
+     *
+     * Layout (from saved_frame, which points to the r15 slot):
+     *   [0] r15     -> popped into R15
+     *   [1] r14     -> popped into R14
+     *   [2] r13     -> popped into R13
+     *   [3] r12     -> popped into R12
+     *   [4] rbx     -> popped into RBX
+     *   [5] rbp     -> popped into RBP
+     *   [6] r11     -> popped into R11 -> sysret reads RFLAGS from R11
+     *   [7] rcx     -> popped into RCX -> sysret reads RIP from RCX
+     *   [8] user RSP -> popped into RSP
+     */
+    saved_frame[0] = uc.uc_mcontext.r15;
+    saved_frame[1] = uc.uc_mcontext.r14;
+    saved_frame[2] = uc.uc_mcontext.r13;
+    saved_frame[3] = uc.uc_mcontext.r12;
+    saved_frame[4] = uc.uc_mcontext.rbx;
+    saved_frame[5] = uc.uc_mcontext.rbp;
+    saved_frame[6] = uc.uc_mcontext.rflags;
+    saved_frame[7] = uc.uc_mcontext.rip;
+    saved_frame[8] = uc.uc_mcontext.rsp;
+
+    /* Return rax from the saved context so the interrupted user code
+     * sees the rax value it had before the signal interrupted it,
+     * not the return value of the sigreturn syscall itself. */
+    return uc.uc_mcontext.rax;
 }
