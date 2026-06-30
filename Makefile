@@ -311,6 +311,7 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/sound_oss.c \
          src/drivers/sound_pcm.c \
          src/drivers/sound_src.c \
+         src/drivers/fm_synth.c \
          src/drivers/ramdisk.c \
          src/drivers/watchdog.c \
          src/drivers/netconsole.c \
@@ -870,6 +871,7 @@ obj-m += drivers/ac97.ko
 obj-m += drivers/sound_oss.ko
 obj-m += drivers/sound_core.ko
 obj-m += drivers/sound_midi.ko
+obj-m += drivers/fm_synth.ko
 obj-m += drivers/usb_uas.ko
 obj-m += drivers/usb_serial.ko
 obj-m += drivers/usb_cdc_ether.ko

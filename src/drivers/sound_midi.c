@@ -20,6 +20,7 @@
 #include "heap.h"
 #include "timer.h"
 #include "errno.h"
+#include "fm_synth.h"
 
 /* ── MIDI sequencer constants ────────────────────────────────────── */
 
@@ -227,16 +228,8 @@ static void midi_note_on(uint8_t channel, uint8_t note, uint8_t velocity)
 
     g_voices[voice].velocity = (uint8_t)scaled_vol;
 
-    /* Play note through available audio output */
-    if (ac97_present()) {
-        /* For AC97, we'd schedule a PCM synthesis note.
-         * For now, route through PC speaker for audible output. */
-        /* EMU: in a full implementation, wavetable synthesis or
-         * FM synthesis would generate the actual PCM samples. */
-        speaker_midi_note(note, 0);  /* continuous tone */
-    } else {
-        speaker_midi_note(note, 0);  /* continuous tone via PC speaker */
-    }
+    /* Play note through FM synthesiser */
+    fm_synth_note_on(channel, note, (uint8_t)scaled_vol);
 }
 
 static void midi_note_off(uint8_t channel, uint8_t note, uint8_t velocity)
@@ -257,7 +250,7 @@ static void midi_note_off(uint8_t channel, uint8_t note, uint8_t velocity)
     if (voice < 0) return;
 
     midi_free_voice(voice);
-    speaker_off();
+    fm_synth_note_off(channel, note);
 }
 
 static void midi_program_change(uint8_t channel, uint8_t program)
@@ -299,7 +292,7 @@ static void midi_control_change(uint8_t channel, uint8_t controller, uint8_t val
             if (g_voices[i].active && g_voices[i].channel == channel)
                 g_voices[i].active = 0;
         }
-        speaker_off();
+        fm_synth_all_notes_off();
         break;
     default:
         break;
@@ -495,7 +488,7 @@ int midi_seq_stop(void)
     /* All notes off */
     for (int i = 0; i < MIDI_SEQ_MAX_VOICES; i++)
         g_voices[i].active = 0;
-    speaker_off();
+    fm_synth_all_notes_off();
     return 0;
 }
 
@@ -513,6 +506,9 @@ void sound_midi_init(void)
 {
     if (g_seq_initialized)
         return;
+
+    /* Initialize FM synthesis engine for MIDI audio output */
+    fm_synth_init(FM_SYNTH_DEFAULT_RATE);
 
     spinlock_init(&g_seq_lock);
 
@@ -678,7 +674,7 @@ int midi_raw_ioctl(int cmd, void *arg)
         }
         for (int i = 0; i < MIDI_SEQ_MAX_VOICES; i++)
             g_voices[i].active = 0;
-        speaker_off();
+        fm_synth_all_notes_off();
         return 0;
 
     default:
