@@ -24,6 +24,7 @@
 #include "process.h"
 #include "uaccess.h"
 #include "caps.h"
+#include "scheduler.h"
 #include "string.h"
 #include "printf.h"
 #include "module.h"
@@ -322,6 +323,141 @@ uint64_t sys_clock_getres(uint64_t clockid, uint64_t res_addr)
         ts.tv_nsec = NS_PER_TICK; /* 10 ms — tick-level resolution */
         if (copy_to_user(res_addr, &ts, sizeof(struct timespec)) < 0)
             return (uint64_t)(int64_t)-EFAULT;
+    }
+
+    return 0;
+}
+
+/* ── TIMER_ABSTIME flag for clock_nanosleep ──────────────────── */
+#ifndef TIMER_ABSTIME
+#define TIMER_ABSTIME 1
+#endif
+
+/* ── sys_clock_nanosleep ──────────────────────────────────────────
+ *
+ *   clock_nanosleep(clockid, flags, const struct timespec *req,
+ *                   struct timespec *rem)
+ *
+ * High-resolution sleep with support for both relative and absolute
+ * deadlines.  Supported clocks: CLOCK_REALTIME, CLOCK_MONOTONIC,
+ * CLOCK_MONOTONIC_RAW, CLOCK_BOOTTIME.
+ *
+ * If flags & TIMER_ABSTIME, req is an absolute time according to
+ * the given clock; otherwise it is a relative interval.
+ *
+ * If the sleep is interrupted by a signal and rem is non-NULL, the
+ * remaining time is written back.
+ *
+ * Returns: 0 on success, -EFAULT on bad pointer, -EINTR if
+ * interrupted by a signal, -EINVAL on invalid clockid or
+ * invalid tv_nsec.
+ */
+uint64_t sys_clock_nanosleep(uint64_t clockid, uint64_t flags,
+                             uint64_t req_addr, uint64_t rem_addr)
+{
+    struct process *proc;
+    struct timespec req;
+    uint64_t now;
+    uint64_t deadline;   /* target boot tick */
+    uint64_t ticks;
+
+    /* Validate clockid */
+    switch (clockid) {
+    case CLOCK_REALTIME:
+    case CLOCK_REALTIME_COARSE:
+    case CLOCK_MONOTONIC:
+    case CLOCK_MONOTONIC_RAW:
+    case CLOCK_MONOTONIC_COARSE:
+    case CLOCK_BOOTTIME:
+    case CLOCK_BOOTTIME_ALARM:
+        break;
+    default:
+        return (uint64_t)(int64_t)-EINVAL;
+    }
+
+    /* Copy request from user space */
+    if (copy_from_user(&req, req_addr, sizeof(struct timespec)) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
+
+    /* Validate tv_nsec */
+    if (req.tv_nsec >= 1000000000ULL)
+        return (uint64_t)(int64_t)-EINVAL;
+
+    proc = process_get_current();
+    if (!proc)
+        return (uint64_t)(int64_t)-EINTR;
+
+    now = timer_get_ticks();
+
+    if (flags & TIMER_ABSTIME) {
+        /* Absolute deadline */
+        switch (clockid) {
+        case CLOCK_REALTIME:
+        case CLOCK_REALTIME_COARSE: {
+            /*
+             * Convert wall-clock absolute time to boot ticks.
+             *   deadline = (req_sec - boot_epoch) * TIMER_FREQ
+             *            + req_nsec / NS_PER_TICK
+             */
+            uint64_t epoch = rtc_get_epoch();
+            uint64_t req_sec = req.tv_sec;
+            if (req_sec <= epoch) {
+                deadline = 0;  /* already passed */
+            } else {
+                deadline = (req_sec - epoch) * TIMER_FREQ
+                         + req.tv_nsec / NS_PER_TICK;
+            }
+            break;
+        }
+
+        case CLOCK_MONOTONIC:
+        case CLOCK_MONOTONIC_RAW:
+        case CLOCK_MONOTONIC_COARSE:
+        case CLOCK_BOOTTIME:
+        case CLOCK_BOOTTIME_ALARM:
+            /* Monotonic absolute time is already in boot ticks */
+            deadline = req.tv_sec * TIMER_FREQ
+                     + req.tv_nsec / NS_PER_TICK;
+            break;
+
+        default:
+            return (uint64_t)(int64_t)-EINVAL;
+        }
+
+        /* If deadline already passed, return 0 immediately */
+        if (deadline <= now)
+            return 0;
+
+    } else {
+        /* Relative interval */
+        ticks = req.tv_sec * TIMER_FREQ
+              + req.tv_nsec / NS_PER_TICK;
+        if (ticks == 0 && req.tv_nsec > 0)
+            ticks = 1;  /* minimum 1 tick */
+
+        deadline = now + ticks;
+    }
+
+    /* Block the process until deadline */
+    proc->sleep_until = deadline;
+    proc->state = PROCESS_BLOCKED;
+    scheduler_remove(proc);
+    scheduler_yield();
+
+    /* Process woke up — check if timer expired or signal */
+    now = timer_get_ticks();
+    if (now < deadline) {
+        /* Woken early by signal — compute remaining time */
+        uint64_t remaining = deadline - now;
+        if (rem_addr) {
+            struct timespec rem;
+            rem.tv_sec  = remaining / TIMER_FREQ;
+            rem.tv_nsec = (remaining % TIMER_FREQ) * NS_PER_TICK;
+            if (copy_to_user(rem_addr, &rem,
+                             sizeof(struct timespec)) < 0)
+                return (uint64_t)(int64_t)-EFAULT;
+        }
+        return (uint64_t)(int64_t)-EINTR;
     }
 
     return 0;

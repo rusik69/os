@@ -353,6 +353,7 @@
 #define SYS_CLOCK_GETTIME     333  /* clock_gettime(clockid, tp) */
 #define SYS_CLOCK_SETTIME     334  /* clock_settime(clockid, tp) */
 #define SYS_CLOCK_GETRES      335  /* clock_getres(clockid, res) */
+#define SYS_CLOCK_NANOSLEEP   388  /* clock_nanosleep(clockid, flags, req, rem) */
 #define SYS_TIMER_CREATE      336  /* timer_create(clockid, sevp, timerid) */
 #define SYS_TIMER_SETTIME     337  /* timer_settime(timerid, flags, new, old) */
 #define SYS_TIMER_GETTIME     338  /* timer_gettime(timerid, cur) */
@@ -1280,6 +1281,8 @@ void posix_timer_init(void);
 uint64_t sys_clock_gettime(uint64_t clockid, uint64_t tp_addr);
 uint64_t sys_clock_settime(uint64_t clockid, uint64_t tp_addr);
 uint64_t sys_clock_getres(uint64_t clockid, uint64_t res_addr);
+uint64_t sys_clock_nanosleep(uint64_t clockid, uint64_t flags,
+                             uint64_t req_addr, uint64_t rem_addr);
 uint64_t sys_timer_create(uint64_t clockid, uint64_t sevp_addr, uint64_t timerid_addr);
 uint64_t sys_timer_settime(uint64_t timerid, uint64_t flags, uint64_t new_addr, uint64_t old_addr);
 uint64_t sys_timer_gettime(uint64_t timerid, uint64_t cur_addr);

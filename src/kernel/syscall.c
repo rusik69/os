@@ -10449,6 +10449,7 @@ uint64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_CLOCK_GETTIME:   return sys_clock_gettime(a1, a2);
         case SYS_CLOCK_SETTIME:   return sys_clock_settime(a1, a2);
         case SYS_CLOCK_GETRES:    return sys_clock_getres(a1, a2);
+        case SYS_CLOCK_NANOSLEEP: return sys_clock_nanosleep(a1, a2, a3, a4);
         case SYS_TIMER_CREATE:    return sys_timer_create(a1, a2, a3);
         case SYS_TIMER_SETTIME:   return sys_timer_settime(a1, a2, a3, a4);
         case SYS_TIMER_GETTIME:   return sys_timer_gettime(a1, a2);
