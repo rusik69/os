@@ -3,6 +3,7 @@
 
 #include "types.h"
 #include "spinlock.h"
+#include "ioctl.h"
 
 /* USB HID class protocol values */
 #define USB_HID_PROTOCOL_BOOT   0
@@ -798,5 +799,260 @@ void usb_hid_sysctrl_poll(void);
  * flag from interrupt context.
  */
 void usb_hid_sysctrl_set_callback(void (*cb)(uint16_t code, int pressed));
+
+/* ── Gamepad / Joystick API ──────────────────────────────────────────── */
+
+#define GAMEPAD_EVENT_QUEUE     32
+#define GAMEPAD_MAX_AXES        64
+#define GAMEPAD_MAX_BUTTONS     128
+#define GAMEPAD_MAX_DEVICES     4
+
+/*
+ * Gamepad event types
+ */
+#define GAMEPAD_EV_KEY          1   /* Button press/release */
+#define GAMEPAD_EV_ABS          2   /* Absolute axis change */
+#define GAMEPAD_EV_HAT          3   /* Hat switch (POV) direction */
+
+/*
+ * Gamepad event — reports button presses, axis motion, and hat.
+ */
+struct hid_gamepad_event {
+    int      type;       /* GAMEPAD_EV_KEY, _ABS, _HAT */
+    int      code;       /* Key/axis/hat index */
+    int32_t  value;      /* 1/0 for keys, raw for axes, direction for hat */
+};
+
+/*
+ * Gamepad axis state with deadzone.
+ */
+struct hid_gamepad_axis {
+    int32_t  min;
+    int32_t  max;
+    int32_t  value;
+    int32_t  deadzone;
+    int32_t  fuzz;
+    int32_t  flat;
+};
+
+/*
+ * Gamepad device instance — tracks one gamepad/joystick device.
+ */
+struct hid_gamepad_dev {
+    uint8_t  dev_addr;
+    uint16_t vendor_id;
+    uint16_t product_id;
+    uint8_t  input_ep;
+    uint8_t  input_ep_interval;
+    uint8_t  intf_num;
+    int      present;
+    int      is_gamepad;          /* 1 = Gamepad collection, 0 = Joystick */
+
+    /* Report descriptor info */
+    uint8_t  *report_desc;
+    int       report_desc_len;
+    int       report_len;
+
+    /* Axis state */
+    struct hid_gamepad_axis axes[GAMEPAD_MAX_AXES];
+    int      n_axes;
+
+    /* Button state */
+    uint8_t  buttons[GAMEPAD_MAX_BUTTONS];
+    int      n_buttons;
+
+    /* Hat switch state (up to 4 hat switches) */
+    int      hats[4];
+    int      n_hats;
+
+    /* Event ring buffer */
+    struct hid_gamepad_event events[GAMEPAD_EVENT_QUEUE];
+    int      ev_head;
+    int      ev_tail;
+
+    /* Rumble motor state */
+    uint8_t  rumble_strong;
+    uint8_t  rumble_weak;
+
+    spinlock_t lock;
+};
+
+/*
+ * Initialise the gamepad/joystick subsystem.
+ * Called once at boot.
+ */
+int usb_hid_joy_init(void);
+
+/*
+ * Register a gamepad/joystick device.
+ * Parses the HID report descriptor to detect axes, buttons, and hats.
+ * @dev_addr:   USB device address
+ * @vid:        USB vendor ID
+ * @pid:        USB product ID
+ * @intf_num:   interface number
+ * @input_ep:   interrupt IN endpoint address
+ * @interval:   endpoint polling interval (in frames)
+ * @report_desc: raw HID report descriptor
+ * @desc_len:   length of report descriptor
+ * Returns device index (>=0) on success, negative errno on failure.
+ */
+int usb_hid_joy_register(uint8_t dev_addr, uint16_t vid, uint16_t pid,
+                          uint8_t intf_num, uint8_t input_ep,
+                          uint8_t interval,
+                          const uint8_t *report_desc, int desc_len);
+
+/*
+ * Unregister a gamepad/joystick device.
+ */
+void usb_hid_joy_unregister(int joy_idx);
+
+/*
+ * Feed a raw HID input report to a registered gamepad device.
+ * Parses axes, buttons, and hats from the report and generates events.
+ */
+void usb_hid_joy_input(int joy_idx, const uint8_t *report, int len);
+
+/*
+ * Read the current axis value (raw, no deadzone applied).
+ */
+int usb_hid_joy_get_axis(int joy_idx, int axis);
+
+/*
+ * Read the current button state (1 = pressed, 0 = released).
+ */
+int usb_hid_joy_get_button(int joy_idx, int btn);
+
+/*
+ * Return the number of axes for a given device.
+ */
+int usb_hid_joy_get_axis_count(int joy_idx);
+
+/*
+ * Return the number of buttons for a given device.
+ */
+int usb_hid_joy_get_button_count(int joy_idx);
+
+/*
+ * Return the number of registered gamepad devices.
+ */
+int usb_hid_joy_get_count(void);
+
+/*
+ * Return the number of hat switches for a given device.
+ */
+int usb_hid_joy_get_hat_count(int joy_idx);
+
+/*
+ * Read the current hat switch direction.
+ * Returns 0=centered, 1=up, 2=right, 3=down, 4=left, or
+ * combined diagonals: 5=up-right, 6=down-right, 7=down-left, 8=up-left.
+ */
+int usb_hid_joy_get_hat(int joy_idx, int hat_idx);
+
+/*
+ * Read the next pending gamepad event (non-blocking).
+ * Returns 1 if an event was read, 0 if the queue is empty.
+ * The event is written to @out.
+ */
+int usb_hid_joy_get_event(int joy_idx, struct hid_gamepad_event *out);
+
+/*
+ * Poll a gamepad device's interrupt endpoint.
+ * Called from the USB HID poll loop.
+ */
+void usb_hid_joy_poll(int joy_idx);
+
+/*
+ * Poll all registered gamepad devices.
+ */
+void usb_hid_joy_poll_all(void);
+
+/*
+ * Set a callback function invoked on each gamepad event.
+ * Set to NULL to disable.  Called from interrupt context with
+ * a pointer to the event structure (valid only during callback).
+ */
+void usb_hid_joy_set_callback(int joy_idx,
+                               void (*cb)(struct hid_gamepad_event *ev));
+
+/*
+ * Set rumble motor intensities (force feedback).
+ * @strong: low-frequency motor (0–255)
+ * @weak:   high-frequency motor (0–255)
+ * Returns 0 on success, negative errno on failure or if unsupported.
+ */
+int usb_hid_joy_set_rumble(int joy_idx, uint8_t strong, uint8_t weak);
+
+/*
+ * Set the deadzone for a specific axis (in raw units).
+ * Axis values within deadzone of centre are snapped to centre.
+ * Pass axis = -1 to set deadzone for all axes.
+ */
+int usb_hid_joy_set_deadzone(int joy_idx, int axis, int32_t deadzone);
+
+/*
+ * Read raw input report data (for /dev/input/js* style access).
+ * Copies the current full gamepad state into @buf (struct layout).
+ * Returns number of bytes written, or negative errno.
+ */
+int usb_hid_joy_read(int joy_idx, void *buf, size_t count);
+
+/*
+ * Gamepad-specific ioctl commands.
+ * Returns negative errno on failure.
+ */
+int usb_hid_joy_ioctl(int joy_idx, int cmd, void *arg);
+
+/* Gamepad ioctl command codes */
+#define JOYIOC_GAXES        _IOR('J', 0, int)    /* get number of axes */
+#define JOYIOC_GBUTTONS     _IOR('J', 1, int)    /* get number of buttons */
+#define JOYIOC_GHATS        _IOR('J', 2, int)    /* get number of hats */
+#define JOYIOC_GDEADZONE    _IOR('J', 3, int)    /* get deadzone */
+#define JOYIOC_SDEADZONE    _IOW('J', 3, int)    /* set deadzone */
+#define JOYIOC_GRUMBLE      _IOR('J', 4, int)    /* get rumble capability */
+#define JOYIOC_SRUMBLE      _IOW('J', 5, struct joy_rumble) /* set rumble */
+#define JOYIOC_GAME_PAD     _IOR('J', 6, int)    /* get 1 if gamepad, 0 if joystick */
+#define JOYIOC_CALIBRATE    _IOW('J', 7, int)    /* trigger auto-calibration */
+
+/* Rumble parameters for JOYIOC_SRUMBLE */
+struct joy_rumble {
+    uint8_t strong;
+    uint8_t weak;
+};
+
+/* ── HID Gamepad-specific usage page values (from USB HID Usage Tables) ─ */
+/* Simulation Page (0x02) — additional values not yet defined */
+#ifndef HID_PAGE_SIMULATION
+#define HID_PAGE_SIMULATION         0x02
+#endif
+#define HID_USAGE_FLIGHT_SIM        0x01
+#define HID_USAGE_AUTOMOBILE_SIM    0x02
+#define HID_USAGE_TANK_SIM          0x03
+#define HID_USAGE_SPACESHIP_SIM     0x04
+#define HID_USAGE_SUBMARINE_SIM     0x05
+#define HID_USAGE_RUDDER            0xBA
+#define HID_USAGE_THROTTLE          0xBB
+
+/* Generic Desktop Hat Switch */
+#define HID_USAGE_HAT_SWITCH        0x39
+
+/* Generic Desktop additional usages not yet defined */
+#define HID_USAGE_KEYPAD            0x07
+
+/* Gamepad specific button codes (Linux evdev style for user mapping) */
+#define GAMEPAD_BTN_A               0
+#define GAMEPAD_BTN_B               1
+#define GAMEPAD_BTN_X               2
+#define GAMEPAD_BTN_Y               3
+#define GAMEPAD_BTN_LB              4
+#define GAMEPAD_BTN_RB              5
+#define GAMEPAD_BTN_LT              6
+#define GAMEPAD_BTN_RT              7
+#define GAMEPAD_BTN_SELECT          8
+#define GAMEPAD_BTN_START           9
+#define GAMEPAD_BTN_L3              10
+#define GAMEPAD_BTN_R3              11
+#define GAMEPAD_BTN_HOME            12
+#define GAMEPAD_BTN_GUIDE           12      /* alias */
 
 #endif /* UHID_H */
