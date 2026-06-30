@@ -776,27 +776,24 @@ static int tmpfile_make_path(const char *dir, char *buf, int bufsize)
 }
 
 /**
- * sys_open - Open a file
- * @path_addr: User-space address of the path string
+ * do_sys_open - Core file open logic (kernel-space path)
+ * @path: Kernel-space path string
  * @flags: Open flags (O_RDONLY, O_WRONLY, O_RDWR, O_CREAT, O_TRUNC,
  *         O_TMPFILE, etc.)
  * @mode: File creation mode (unused in current implementation)
  *
- * Opens or creates a file by copying the path from user space,
- * performing VFS operations, and allocating a file descriptor in
- * the current process's file descriptor table. Supports O_TMPFILE
+ * Performs the actual VFS open operations and allocates a file
+ * descriptor in the current process's fd table. Supports O_TMPFILE
  * for creating unnamed temporary files and O_TRUNC for truncation.
- * Enforces RLIMIT_NOFILE on fd allocation.
+ * Enforces RLIMIT_NOFILE on fd allocation and performs IMA
+ * measurement for files opened for read.
  *
  * Context: Called from syscall dispatch. May sleep. Must be called
  *          with a valid current process.
- * Return: File descriptor (>= 3) on success, or (uint64_t)-1 on error.
+ * Return: File descriptor (>= 3) on success, or negative errno on error.
  */
-static uint64_t sys_open(uint64_t path_addr, uint64_t flags, uint64_t mode) {
+static uint64_t do_sys_open(const char *path, uint64_t flags, uint64_t mode) {
     (void)mode;
-    char kpath[256];
-    if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
-        return (uint64_t)(int64_t)-EFAULT;
 
     /* Validate access mode flags — only O_RDONLY=0, O_WRONLY=1, O_RDWR=2 */
     uint64_t access_mode = flags & 3;
@@ -807,7 +804,6 @@ static uint64_t sys_open(uint64_t path_addr, uint64_t flags, uint64_t mode) {
     if ((flags & O_TMPFILE) && access_mode != 2)
         return (uint64_t)(int64_t)-EINVAL;
 
-    const char *path = kpath;
     struct vfs_stat st;
     int exists = (vfs_stat(path, &st) >= 0);
 
@@ -893,6 +889,30 @@ static uint64_t sys_open(uint64_t path_addr, uint64_t flags, uint64_t mode) {
         }
     }
     return (uint64_t)(int64_t)-EMFILE;
+}
+
+/**
+ * sys_open - Open a file
+ * @path_addr: User-space address of the path string
+ * @flags: Open flags (O_RDONLY, O_WRONLY, O_RDWR, O_CREAT, O_TRUNC,
+ *         O_TMPFILE, etc.)
+ * @mode: File creation mode (unused in current implementation)
+ *
+ * Opens or creates a file by copying the path from user space,
+ * then delegating to do_sys_open() for the core VFS operations.
+ * Supports O_TMPFILE for creating unnamed temporary files and
+ * O_TRUNC for truncation. Enforces RLIMIT_NOFILE on fd allocation.
+ *
+ * Context: Called from syscall dispatch. May sleep. Must be called
+ *          with a valid current process.
+ * Return: File descriptor (>= 3) on success, or negative errno on error.
+ */
+static uint64_t sys_open(uint64_t path_addr, uint64_t flags, uint64_t mode) {
+    (void)mode;
+    char kpath[256];
+    if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
+    return do_sys_open(kpath, flags, mode);
 }
 
 /**
@@ -7715,8 +7735,8 @@ static uint64_t sys_openat(uint64_t dirfd, uint64_t path_addr,
         return (uint64_t)(int64_t)-EFAULT;
     const char *path = resolve_path_at((int)dirfd, kpath);
     if (!path) return (uint64_t)(int64_t)-ENOENT;
-    /* Delegate to existing sys_open */
-    return sys_open((uint64_t)(uintptr_t)path, flags, 0);
+    /* Delegate to core open logic with resolved path */
+    return do_sys_open(path, flags, 0);
 }
 
 static uint64_t sys_mkdirat(uint64_t dirfd, uint64_t path_addr, uint64_t mode) {
