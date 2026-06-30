@@ -247,7 +247,7 @@ uint64_t sys_poll(uint64_t fds_addr, uint64_t nfds, uint64_t timeout_ms)
              */
             if (fd_idx >= 100 &&
                 fd_idx < 100 + SOCK_MAX) {
-                revents = sock_poll(fd_idx, fds[i].events);
+                revents = sock_poll(fd_idx, fds[i].events, &pt);
                 fds[i].revents = (int16_t)revents;
                 if (revents)
                     ready++;
@@ -382,7 +382,7 @@ int vfs_poll_fd(int fd, int events)
 
     /* ── Socket FDs (100–131) ──────────────────────────────── */
     if (fd >= 100 && fd < 100 + SOCK_MAX) {
-        revents = sock_poll(fd, events);
+        revents = sock_poll(fd, events, NULL);
         return revents;
     }
 

@@ -3165,7 +3165,7 @@ static uint64_t sys_select(uint64_t nfds, uint64_t readfds_addr,
                     continue;
                 /* Socket FDs */
                 if (i >= 100 && i < 100 + SOCK_MAX) {
-                    int revents = sock_poll(i, POLLIN);
+                    int revents = sock_poll(i, POLLIN, NULL);
                     if (!(revents & POLLIN))
                         FD_CLR(i, &readfds);
                 } else if (i >= PROCESS_FD_MAX || !cur->fd_table[i].used) {
@@ -3189,7 +3189,7 @@ static uint64_t sys_select(uint64_t nfds, uint64_t readfds_addr,
                 if (!FD_ISSET(i, &writefds))
                     continue;
                 if (i >= 100 && i < 100 + SOCK_MAX) {
-                    int revents = sock_poll(i, POLLOUT);
+                    int revents = sock_poll(i, POLLOUT, NULL);
                     if (!(revents & POLLOUT))
                         FD_CLR(i, &writefds);
                 } else if (i >= PROCESS_FD_MAX || !cur->fd_table[i].used) {
@@ -5307,7 +5307,7 @@ static uint64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr,
             for (int i = 0; i < (int)nfds; i++) {
                 if (!FD_ISSET(i, &readfds)) continue;
                 if (i >= 100 && i < 100 + SOCK_MAX) {
-                    int revents = sock_poll(i, POLLIN);
+                    int revents = sock_poll(i, POLLIN, NULL);
                     if (!(revents & POLLIN)) FD_CLR(i, &readfds);
                     continue;
                 }
@@ -5328,7 +5328,7 @@ static uint64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr,
             for (int i = 0; i < (int)nfds; i++) {
                 if (!FD_ISSET(i, &writefds)) continue;
                 if (i >= 100 && i < 100 + SOCK_MAX) {
-                    int revents = sock_poll(i, POLLOUT);
+                    int revents = sock_poll(i, POLLOUT, NULL);
                     if (!(revents & POLLOUT)) FD_CLR(i, &writefds);
                     continue;
                 }
@@ -5350,7 +5350,7 @@ static uint64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr,
                 if (!FD_ISSET(i, &exceptfds)) continue;
                 /* For exceptfds, check for out-of-band data on sockets */
                 if (i >= 100 && i < 100 + SOCK_MAX) {
-                    int revents = sock_poll(i, POLLPRI);
+                    int revents = sock_poll(i, POLLPRI, NULL);
                     if (!(revents & POLLPRI)) FD_CLR(i, &exceptfds);
                     continue;
                 }
@@ -5500,7 +5500,7 @@ static uint64_t sys_ppoll(uint64_t fds_addr, uint64_t nfds,
 
             /* Socket FDs */
             if (fd_idx >= 100 && fd_idx < 100 + SOCK_MAX) {
-                revents = sock_poll(fd_idx, fds_buf[i].events);
+                revents = sock_poll(fd_idx, fds_buf[i].events, NULL);
                 fds_buf[i].revents = (int16_t)revents;
                 if (revents) ready++;
                 continue;

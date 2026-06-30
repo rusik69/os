@@ -1270,6 +1270,8 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
                 if (copy > 0) {
                     memcpy(c->rxbuf + c->rxlen, data, copy);
                     c->rxlen += copy;
+                    /* Wake any poll/select/epoll waiters on this socket */
+                    sock_wake_by_conn_id(conn_id);
                 }
             }
         }

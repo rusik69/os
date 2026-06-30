@@ -5,6 +5,8 @@
 #include "scheduler.h"
 #include "string.h"
 #include "printf.h"
+#include "poll.h"
+#include "can.h"
 #include "types.h"
 #include "timer.h"
 #include "export.h"
@@ -52,6 +54,7 @@ int sock_alloc(void) {
             socket_table[i].state = SOCK_STATE_CREATED;
             socket_table[i].conn_id = -1;
             socket_table[i].udp_listener = -1;
+            wait_queue_init(&socket_table[i].wq);
             return i;
         }
     }
@@ -952,7 +955,7 @@ int sys_socketpair_impl(int domain, int type, int protocol, int sv[2]) {
 
 /* ── Socket poll support ─────────────────────────────────────── */
 
-int sock_poll(int sockfd, int events)
+int sock_poll(int sockfd, int events, struct poll_table *pt)
 {
     struct socket *s = sock_get(sockfd);
     if (!s) return POLLNVAL;
@@ -1041,7 +1044,15 @@ int sock_poll(int sockfd, int events)
     }
 
     /* Mask with requested events — only report what was asked for */
-    return revents & events;
+    int result = revents & events;
+
+    /* If nothing is ready and we have a poll_table, register the
+     * socket's waitqueue so that poll_schedule can block on it
+     * and wake when data arrives or state changes. */
+    if (result == 0 && pt)
+        poll_wait(pt, &s->wq);
+
+    return result;
 }
 
 /* ── Exported symbols for network protocol/driver modules ─────────── */
@@ -1056,6 +1067,22 @@ EXPORT_SYMBOL(sys_listen_impl);
 EXPORT_SYMBOL(sys_accept_impl);
 EXPORT_SYMBOL(sys_sendmsg_impl);
 EXPORT_SYMBOL(sys_recvmsg_impl);
+/* ── Wake socket by connection ID ────────────────────────────── */
+
+/*
+ * sock_wake_by_conn_id — wake the waitqueue of all sockets that
+ * have the given conn_id.  Called from the TCP stack when data
+ * arrives so poll/select/epoll waiters wake up and re-check.
+ */
+void sock_wake_by_conn_id(int conn_id)
+{
+    for (int i = 0; i < SOCK_MAX; i++) {
+        if (socket_table[i].in_use &&
+            socket_table[i].conn_id == conn_id) {
+            wait_queue_wake_all(&socket_table[i].wq);
+        }
+    }
+}
 EXPORT_SYMBOL(sys_setsockopt_impl);
 EXPORT_SYMBOL(sys_getsockopt_impl);
 

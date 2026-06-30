@@ -3,6 +3,10 @@
 
 #include "types.h"
 #include "net.h" /* for net_tcp_* API */
+#include "waitqueue.h"
+
+/* Forward declaration for poll support */
+struct poll_table;
 
 /* ── Poll event flags ────────────────────────────────────────── */
 #ifndef POLLIN
@@ -213,6 +217,10 @@ struct socket {
 
     /* UNIX domain socket endpoint index (or -1 if not AF_UNIX) */
     int           unix_ep;
+
+    /* Poll waitqueue — woken when socket state changes (data arrives,
+     * connection established, etc.) for poll/select/epoll support. */
+    struct wait_queue wq;
 };
 
 /* Socket table operations */
@@ -229,7 +237,14 @@ void socket_init(void);
  * @events  Requested events (POLLIN | POLLOUT)
  * @return  Bitmask of POLLIN|POLLOUT|POLLHUP|POLLERR|POLLNVAL
  */
-int sock_poll(int sockfd, int events);
+/* Network poll interface (supports poll/select/epoll via poll_table) */
+int sock_poll(int sockfd, int events, struct poll_table *pt);
+
+/*
+ * sock_wake_by_conn_id — wake socket waitqueues for a TCP conn_id.
+ * Called from the TCP stack when data arrives for poll/select/epoll.
+ */
+void sock_wake_by_conn_id(int conn_id);
 
 /* ── AF_UNIX socket operations ──────────────────────────────────── */
 int unix_create(int type);
