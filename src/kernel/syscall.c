@@ -6897,7 +6897,7 @@ static const char *resolve_path_at(int dirfd, const char *path) {
 
 /* Forward declarations from net/socket.c */
 int sys_socket_impl(int domain, int type, int protocol);
-int sys_bind_impl(int sockfd, const struct sockaddr_in *addr);
+int sys_bind_impl(int sockfd, const struct sockaddr_in *addr, int addrlen);
 int sys_listen_impl(int sockfd, int backlog);
 int sys_accept_impl(int sockfd, struct sockaddr_in *addr, uint32_t *addrlen);
 int sys_connect_impl(int sockfd, const struct sockaddr_in *addr);
@@ -6915,10 +6915,14 @@ static uint64_t sys_socket(uint64_t domain, uint64_t type, uint64_t protocol) {
 }
 
 static uint64_t sys_bind(uint64_t sockfd, uint64_t addr_addr, uint64_t addrlen) {
-    (void)addrlen;
-    if (syscall_is_user_process() && !syscall_user_read_ok(addr_addr, sizeof(struct sockaddr_in)))
+    /* Reject negative or impossibly small addrlen */
+    if ((int)addrlen < (int)sizeof(uint16_t))
+        return (uint64_t)(int64_t)-EINVAL;
+    /* Validate user-space address range before dereferencing */
+    if (syscall_is_user_process() && !syscall_user_read_ok(addr_addr, (unsigned long)addrlen))
         return (uint64_t)(int64_t)-EFAULT;
-    return (uint64_t)(int64_t)sys_bind_impl((int)sockfd, (const struct sockaddr_in *)addr_addr);
+    return (uint64_t)(int64_t)sys_bind_impl((int)sockfd,
+        (const struct sockaddr_in *)addr_addr, (int)addrlen);
 }
 
 static uint64_t sys_listen(uint64_t sockfd, uint64_t backlog) {

@@ -172,21 +172,30 @@ int sys_socket_impl(int domain, int type, int protocol) {
     return sock_fd_from_slot(slot);
 }
 
-int sys_bind_impl(int sockfd, const struct sockaddr_in *addr) {
+int sys_bind_impl(int sockfd, const struct sockaddr_in *addr, int addrlen)
+{
     struct socket *s = sock_get(sockfd);
     if (!s) return -EBADF;
 
+    /* Validate minimum address length (at least the family field) */
+    if (addrlen < (int)sizeof(uint16_t))
+        return -EINVAL;
+
     /* AF_UNIX: dispatch to local socket handler */
     if (s->domain == AF_UNIX) {
+        if (addrlen < (int)sizeof(struct sockaddr_un))
+            return -EINVAL;
         if (s->unix_ep < 0) return -EINVAL;
         const struct sockaddr_un *un = (const struct sockaddr_un *)addr;
-        int ret = unix_bind(s->unix_ep, un, sizeof(struct sockaddr_un));
+        int ret = unix_bind(s->unix_ep, un, (uint32_t)addrlen);
         if (ret == 0) s->state = SOCK_STATE_BOUND;
         return ret;
     }
 
     /* AF_PACKET: dispatch to raw packet handler */
     if (s->domain == AF_PACKET || (s->domain == 0 && s->type == SOCK_RAW)) {
+        if (addrlen < (int)sizeof(struct sockaddr_ll))
+            return -EINVAL;
         /* sockaddr_ll structure cast from addr */
         const struct sockaddr_ll *sll = (const struct sockaddr_ll *)addr;
         /* Bind to interface index (0 = any interface) */
@@ -197,6 +206,8 @@ int sys_bind_impl(int sockfd, const struct sockaddr_in *addr) {
 
     /* AF_NETLINK: dispatch to netlink handler */
     if (s->domain == AF_NETLINK) {
+        if (addrlen < (int)sizeof(struct sockaddr_nl))
+            return -EINVAL;
         const struct sockaddr_nl *nl_addr = (const struct sockaddr_nl *)addr;
         int ret = netlink_bind(sockfd, nl_addr);
         if (ret == 0) s->state = SOCK_STATE_BOUND;
@@ -205,12 +216,17 @@ int sys_bind_impl(int sockfd, const struct sockaddr_in *addr) {
 
     /* AF_CAN: dispatch to CAN bus handler */
     if (s->domain == AF_CAN) {
+        if (addrlen < (int)sizeof(struct sockaddr_can))
+            return -EINVAL;
         const struct sockaddr_can *can_addr = (const struct sockaddr_can *)addr;
         int ret = can_bind(sockfd, can_addr);
         if (ret == 0) s->state = SOCK_STATE_BOUND;
         return ret;
     }
 
+    /* AF_INET (or default) — sockaddr_in */
+    if (addrlen < (int)sizeof(struct sockaddr_in))
+        return -EINVAL;
     s->local_ip = addr->sin_addr.s_addr;
     s->local_port = ntohs(addr->sin_port);
     s->state = SOCK_STATE_BOUND;
@@ -1109,8 +1125,7 @@ int socket_create(int family, int type, int proto)
 /* ── Implement: socket_bind ───────────────────────────── */
 int socket_bind(int sock, const void *addr, int addrlen)
 {
-    (void)addrlen;
-    return sys_bind_impl(sock, (const struct sockaddr_in *)addr);
+    return sys_bind_impl(sock, (const struct sockaddr_in *)addr, addrlen);
 }
 /* ── Implement: socket_listen ─────────────────────────── */
 int socket_listen(int sock, int backlog)
