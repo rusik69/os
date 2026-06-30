@@ -462,6 +462,12 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size,
 #define SYS_GET_MEMPOLICY      391 /* get_mempolicy(policy, nodemask, maxnode, addr, flags) */
 #define SYS_MIGRATE_PAGES      392 /* migrate_pages(pid, maxnode, old_nodes, new_nodes) */
 #define SYS_MOVE_PAGES         393 /* move_pages(pid, nr_pages, pages, nodes, status, flags) */
+/* ── Credential syscalls (D127) ──────────────────────────────── */
+#define SYS_SETUID             401 /* setuid(uid) → 0 or -errno */
+#define SYS_SETEUID            402 /* seteuid(euid) → 0 or -errno */
+#define SYS_SETGID             403 /* setgid(gid) → 0 or -errno */
+#define SYS_SETEGID            404 /* setegid(egid) → 0 or -errno */
+
 #define SYS_REMAP_FILE_PAGES   400 /* remap_file_pages(addr, size, prot, pgoff, flags) */
 
 /* Maximum size of a file handle (in bytes) */

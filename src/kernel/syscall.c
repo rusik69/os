@@ -112,6 +112,10 @@ static spinlock_t proc_table_lock = SPINLOCK_INIT;
  * Interrupts are masked during the syscall handler so a single global is safe. */
 extern uint64_t syscall_arg6;
 
+/* D127: Credential syscalls — declared in sys_credentials.c */
+uint64_t sys_setuid(uint64_t uid);
+uint64_t sys_seteuid(uint64_t euid);
+
 /* D123: Process & Signal syscalls — declared in sys_process.c */
 uint64_t sys_rt_sigaction(uint64_t signum, uint64_t act_addr,
                           uint64_t oldact_addr, uint64_t sigsetsize);
@@ -485,8 +489,13 @@ static int syscall_validate_user_args(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_SYNC:
         case SYS_SYNCFS:
         case SYS_SETSID:
-            return 0;
         case SYS_GETSID:
+        case SYS_GETUID:
+        case SYS_GETEUID:
+        case SYS_GETGID:
+        case SYS_GETEGID:
+        case SYS_SETUID:
+        case SYS_SETEUID:
             return 0;
         case SYS_SIGALTSTACK:
             if (a1 && !syscall_user_read_ok(a1, sizeof(stack_t))) return -EFAULT;
@@ -10380,6 +10389,8 @@ uint64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_GETEUID:     return sys_geteuid();
         case SYS_GETGID:      return sys_getgid();
         case SYS_GETEGID:     return sys_getegid();
+        case SYS_SETUID:      return sys_setuid(a1);
+        case SYS_SETEUID:     return sys_seteuid(a1);
         case SYS_RMDIR:       return sys_rmdir(a1);
         case SYS_RENAME:      return sys_rename(a1, a2);
         case SYS_CHMOD:       return sys_chmod(a1, a2);
