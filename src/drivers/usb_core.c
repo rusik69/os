@@ -36,6 +36,8 @@ struct usb_core_device {
     struct usb_driver     *driver;       /* bound driver or NULL */
     int                    refcount;
     int                    in_use;
+    uint8_t                num_interfaces;                               /* number of interfaces */
+    uint8_t                cur_alt_setting[USB_MAX_INTERFACES];          /* current alt setting per iface */
 };
 
 #define USB_CORE_MAX_DEVICES 32
@@ -161,6 +163,19 @@ int usb_deregister_driver(struct usb_driver *driver)
     return 0;
 }
 
+/* ── Internal helper: find core device index by USB device address ────── */
+
+static int usb_find_device_by_addr(uint8_t dev_addr)
+{
+    for (int i = 0; i < g_core_device_count; i++) {
+        if (g_core_devices[i].in_use && g_core_devices[i].desc.addr == dev_addr)
+            return i;
+    }
+    return -1;
+}
+
+/* ── Core API ────────────────────────────────────────────────────── */
+
 int usb_core_add_device(const struct usb_device *desc)
 {
     if (!desc)
@@ -179,6 +194,9 @@ int usb_core_add_device(const struct usb_device *desc)
     g_core_devices[idx].driver = NULL;
     g_core_devices[idx].refcount = 1;
     g_core_devices[idx].in_use = 1;
+    g_core_devices[idx].num_interfaces = 0;
+    memset(g_core_devices[idx].cur_alt_setting, 0,
+           sizeof(g_core_devices[idx].cur_alt_setting));
 
     spinlock_release(&g_drivers_lock);
 
@@ -822,5 +840,148 @@ int usb_resume_all(void)
 
     kprintf("[USB] All USB devices resumed\n");
     return 0;
+}
+
+/* ── USB alternate setting selection API ────────────────────────────────── */
+
+/**
+ * usb_set_device_interface_count — Record the number of interfaces for a device.
+ *
+ * This is called during configuration descriptor parsing to inform the core
+ * about how many interfaces a device has.  All alternate settings are
+ * initialised to USB_DEFAULT_ALT_SETTING (0).
+ *
+ * @dev_addr:       USB device address
+ * @num_interfaces: Number of interfaces on this device
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int usb_set_device_interface_count(uint8_t dev_addr, uint8_t num_interfaces)
+{
+    int idx;
+
+    if (num_interfaces > USB_MAX_INTERFACES)
+        return -EINVAL;
+
+    spinlock_acquire(&g_drivers_lock);
+    idx = usb_find_device_by_addr(dev_addr);
+    if (idx < 0) {
+        spinlock_release(&g_drivers_lock);
+        kprintf("[USB] set_device_interface_count: device addr=%d not found\n",
+                dev_addr);
+        return -ENODEV;
+    }
+
+    g_core_devices[idx].num_interfaces = num_interfaces;
+    memset(g_core_devices[idx].cur_alt_setting, 0,
+           sizeof(g_core_devices[idx].cur_alt_setting));
+    spinlock_release(&g_drivers_lock);
+
+    kprintf("[USB] device addr=%d: %d interface(s) registered\n",
+            dev_addr, num_interfaces);
+    return 0;
+}
+
+/**
+ * usb_set_interface — Select an alternate setting for a USB interface.
+ *
+ * Sends a USB_REQ_SET_INTERFACE standard control request to the device.
+ * The interface's endpoints are reconfigured per the selected alternate
+ * setting's descriptor.  The core also updates its internal tracking.
+ *
+ * USB 2.0 spec §9.4.10: SET_INTERFACE
+ *   bmRequestType = 0x01 (Host-to-Device, Standard, Interface)
+ *   bRequest      = SET_INTERFACE (0x0B)
+ *   wValue        = Alternate setting number
+ *   wIndex        = Interface number
+ *   wLength       = 0
+ *
+ * @dev_addr:    USB device address
+ * @iface_num:   Interface number (0-based)
+ * @alt_setting: Alternate setting to activate (0 = default)
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int usb_set_interface(uint8_t dev_addr, uint8_t iface_num,
+                      uint8_t alt_setting)
+{
+    int ret;
+
+    if (iface_num >= USB_MAX_INTERFACES)
+        return -EINVAL;
+
+    kprintf("[USB] set_interface: addr=%d iface=%d alt=%d\n",
+            dev_addr, iface_num, alt_setting);
+
+    ret = usb_control_msg(dev_addr,
+                          USB_DIR_OUT | USB_REQ_TYPE_STANDARD |
+                              USB_REQ_RECIP_INTERFACE,
+                          USB_REQ_SET_INTERFACE,
+                          alt_setting,
+                          iface_num,
+                          0, NULL);
+    if (ret < 0) {
+        kprintf("[USB] set_interface: failed for addr=%d iface=%d "
+                "alt=%d (err=%d)\n",
+                dev_addr, iface_num, alt_setting, ret);
+        return ret;
+    }
+
+    /* Update internal tracking */
+    spinlock_acquire(&g_drivers_lock);
+    int idx = usb_find_device_by_addr(dev_addr);
+    if (idx >= 0 && iface_num < g_core_devices[idx].num_interfaces)
+        g_core_devices[idx].cur_alt_setting[iface_num] = alt_setting;
+    spinlock_release(&g_drivers_lock);
+
+    kprintf("[USB] set_interface: addr=%d iface=%d alt=%d activated\n",
+            dev_addr, iface_num, alt_setting);
+    return 0;
+}
+
+/**
+ * usb_get_interface — Get the current alternate setting for a USB interface.
+ *
+ * Sends a USB_REQ_GET_INTERFACE standard control request to the device.
+ * Returns the alternate setting currently active on the given interface.
+ *
+ * USB 2.0 spec §9.4.9: GET_INTERFACE
+ *   bmRequestType = 0x81 (Device-to-Host, Standard, Interface)
+ *   bRequest      = GET_INTERFACE (0x0A)
+ *   wValue        = 0
+ *   wIndex        = Interface number
+ *   wLength       = 1
+ *   Data          = One byte: the current alternate setting
+ *
+ * @dev_addr:    USB device address
+ * @iface_num:   Interface number (0-based)
+ *
+ * Returns the current alternate setting number (>= 0) on success,
+ * or negative errno on failure.
+ */
+int usb_get_interface(uint8_t dev_addr, uint8_t iface_num)
+{
+    uint8_t alt_setting;
+    int ret;
+
+    if (iface_num >= USB_MAX_INTERFACES)
+        return -EINVAL;
+
+    ret = usb_control_msg(dev_addr,
+                          USB_DIR_IN | USB_REQ_TYPE_STANDARD |
+                              USB_REQ_RECIP_INTERFACE,
+                          USB_REQ_GET_INTERFACE,
+                          0,
+                          iface_num,
+                          1, &alt_setting);
+    if (ret < 0) {
+        kprintf("[USB] get_interface: failed for addr=%d iface=%d (err=%d)\n",
+                dev_addr, iface_num, ret);
+        return ret;
+    }
+
+    kprintf("[USB] get_interface: addr=%d iface=%d alt=%d\n",
+            dev_addr, iface_num, alt_setting);
+    return (int)alt_setting;
 }
 

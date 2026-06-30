@@ -322,4 +322,54 @@ void ehci_suspend_all_ports(void);
 void ehci_resume_all_ports(void);
 int ehci_port_has_remote_wakeup(int ctrl_idx, int port);
 
+/* ── USB alternate setting selection API ──────────────────────────────────── */
+
+/*
+ * USB 2.0 spec §9.4.10: SET_INTERFACE.
+ * Each interface on a USB device can have multiple alternate settings
+ * (e.g., different endpoint configurations for the same logical function).
+ * Alternate setting 0 is the default.
+ */
+
+#define USB_MAX_INTERFACES          16      /* maximum interfaces per device */
+#define USB_DEFAULT_ALT_SETTING     0       /* default alternate setting */
+
+/*
+ * Select an alternate setting for a USB interface.
+ * Sends a USB_REQ_SET_INTERFACE standard control request to the device.
+ * After this call, the specified interface's endpoints are reconfigured
+ * according to the selected alternate setting's descriptor.
+ *
+ * @dev_addr:    USB device address
+ * @iface_num:   Interface number (0-based)
+ * @alt_setting: Alternate setting to activate (0 = default)
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int usb_set_interface(uint8_t dev_addr, uint8_t iface_num, uint8_t alt_setting);
+
+/*
+ * Get the current alternate setting for a USB interface.
+ * Sends a USB_REQ_GET_INTERFACE standard control request to the device.
+ *
+ * @dev_addr:    USB device address
+ * @iface_num:   Interface number (0-based)
+ *
+ * Returns the current alternate setting number (>= 0) on success,
+ * or negative errno on failure.
+ */
+int usb_get_interface(uint8_t dev_addr, uint8_t iface_num);
+
+/*
+ * Record the number of interfaces for a device (used during
+ * configuration descriptor parsing / device enumeration).
+ * Initialises all interface alternate settings to USB_DEFAULT_ALT_SETTING.
+ *
+ * @dev_addr:      USB device address
+ * @num_interfaces: Number of interfaces on this device
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int usb_set_device_interface_count(uint8_t dev_addr, uint8_t num_interfaces);
+
 #endif
