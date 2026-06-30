@@ -528,11 +528,19 @@ struct itimerspec {
 #define EPOLL_CTL_MOD 3
 
 enum EPOLL_EVENTS {
-    EPOLLIN  = 0x001,
-    EPOLLOUT = 0x004,
-    EPOLLERR = 0x008,
-    EPOLLHUP = 0x010,
-    EPOLLET  = 0x80000000,
+    EPOLLIN      = 0x001,
+    EPOLLPRI     = 0x002,
+    EPOLLOUT     = 0x004,
+    EPOLLERR     = 0x008,
+    EPOLLHUP     = 0x010,
+    EPOLLRDNORM  = 0x040,
+    EPOLLRDBAND  = 0x080,
+    EPOLLWRNORM  = 0x100,
+    EPOLLWRBAND  = 0x200,
+    EPOLLMSG     = 0x400,
+    EPOLLRDHUP   = 0x2000,
+    EPOLLONESHOT = 0x40000000,
+    EPOLLET      = 0x80000000,
 };
 
 struct epoll_event {

@@ -102,6 +102,13 @@ int epoll_create1_syscall(int flags)
 
 /* ── epoll_ctl ───────────────────────────────────────────────── */
 
+/* Valid event flags mask — all known epoll event bits.
+ * Used to reject invalid or undefined event flags in ADD/MOD. */
+#define EPOLL_VALID_EVENTS                                            \
+    (EPOLLIN | EPOLLPRI | EPOLLOUT | EPOLLERR | EPOLLHUP |           \
+     EPOLLRDNORM | EPOLLRDBAND | EPOLLWRNORM | EPOLLWRBAND |         \
+     EPOLLMSG | EPOLLRDHUP | EPOLLONESHOT | EPOLLET)
+
 /*
  * epoll_ctl_syscall — control interface for an epoll instance.
  *
@@ -109,11 +116,20 @@ int epoll_create1_syscall(int flags)
  * EPOLL_CTL_MOD (modify an existing fd's events), and
  * EPOLL_CTL_DEL (remove an fd from monitoring).
  *
+ * Validation:
+ *   - epfd must refer to a valid epoll instance
+ *   - For ADD, fd must not equal epfd (cannot monitor self)
+ *   - For ADD/MOD, event must be non-NULL
+ *   - For ADD/MOD, events field is checked for unknown flag bits
+ *   - For DEL, the event pointer is ignored (Linux semantics)
+ *
  * Returns 0 on success, or a negative errno:
  *   -EBADF  if epfd is not a valid epoll instance
- *   -EINVAL if op is invalid or event is NULL
- *   -ENOENT if fd not found (for DEL/MOD)
- *   -ENOMEM if instance is full (for ADD)
+ *   -EINVAL if op is invalid, event is NULL, bad event flags,
+ *           or fd == epfd (ADD only)
+ *   -EEXIST if fd is already monitored (ADD only)
+ *   -ENOENT if fd not found (DEL/MOD only)
+ *   -ENOMEM if instance is full (ADD only)
  */
 int epoll_ctl_syscall(int epfd, int op, int fd,
                        struct epoll_event *event)
@@ -126,6 +142,18 @@ int epoll_ctl_syscall(int epfd, int op, int fd,
 
     switch (op) {
     case EPOLL_CTL_ADD: {
+        /* Cannot monitor self — would cause deadlock */
+        if (fd == epfd)
+            return -EINVAL;
+
+        /* event is required for ADD */
+        if (!event)
+            return -EINVAL;
+
+        /* Validate event flags — reject undefined bits */
+        if (event->events & ~(uint32_t)EPOLL_VALID_EVENTS)
+            return -EINVAL;
+
         /* Check if the fd is already monitored */
         if (epoll_find_entry(ep, fd)) {
             ret = -EEXIST;
@@ -138,23 +166,26 @@ int epoll_ctl_syscall(int epfd, int op, int fd,
             break;
         }
 
+        /* Populate the entry */
         struct epoll_fd_entry *e = &ep->entries[ep->num_entries++];
         e->fd     = fd;
-        e->events = event ? event->events : 0;
-        e->data   = event ? event->data : 0;
+        e->events = event->events;
+        e->data   = event->data;
         e->in_use = 1;
         break;
     }
 
     case EPOLL_CTL_DEL: {
+        /* event is ignored for DEL (Linux semantics) */
         struct epoll_fd_entry *e = epoll_find_entry(ep, fd);
         if (!e) {
             ret = -ENOENT;
             break;
         }
+
         /* Swap with last entry and decrement count */
         *e = ep->entries[--ep->num_entries];
-        /* Clear the slot that was the last entry */
+        /* Clear the now-unused last slot */
         if (ep->num_entries > 0)
             memset(&ep->entries[ep->num_entries], 0,
                    sizeof(struct epoll_fd_entry));
@@ -162,13 +193,22 @@ int epoll_ctl_syscall(int epfd, int op, int fd,
     }
 
     case EPOLL_CTL_MOD: {
+        /* event is required for MOD */
+        if (!event)
+            return -EINVAL;
+
+        /* Validate event flags — reject undefined bits */
+        if (event->events & ~(uint32_t)EPOLL_VALID_EVENTS)
+            return -EINVAL;
+
         struct epoll_fd_entry *e = epoll_find_entry(ep, fd);
         if (!e) {
             ret = -ENOENT;
             break;
         }
-        e->events = event ? event->events : 0;
-        e->data   = event ? event->data : 0;
+
+        e->events = event->events;
+        e->data   = event->data;
         break;
     }
 
