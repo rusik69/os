@@ -64,11 +64,11 @@ static void sync_to_hardware(enum sound_mixer_channel ch)
     /* Map software channel to AC97 NAM register */
     uint16_t ac97_reg;
     switch (ch) {
-        case SOUND_MIXER_MASTER:  ac97_reg = AC97_MIXER_MASTER; break;
-        case SOUND_MIXER_PCM:     ac97_reg = AC97_MIXER_PCM;    break;
-        case SOUND_MIXER_MIC:     ac97_reg = AC97_MIXER_MIC;    break;
-        case SOUND_MIXER_LINE_IN: ac97_reg = AC97_MIXER_LINE_IN; break;
-        case SOUND_MIXER_CD:      ac97_reg = AC97_MIXER_CD;     break;
+        case SOUND_MIXER_MASTER:  ac97_reg = AC97_REG_MASTER; break;
+        case SOUND_MIXER_PCM:     ac97_reg = AC97_REG_PCM_OUT; break;
+        case SOUND_MIXER_MIC:     ac97_reg = AC97_REG_MIC;    break;
+        case SOUND_MIXER_LINE_IN: ac97_reg = AC97_REG_LINE_IN; break;
+        case SOUND_MIXER_CD:      ac97_reg = AC97_REG_CD;     break;
         default:
             return; /* No hardware mapping for SPEAKER or unknown */
     }
@@ -95,11 +95,11 @@ static void sync_from_hardware(enum sound_mixer_channel ch)
 
     uint16_t ac97_reg;
     switch (ch) {
-        case SOUND_MIXER_MASTER:  ac97_reg = AC97_MIXER_MASTER; break;
-        case SOUND_MIXER_PCM:     ac97_reg = AC97_MIXER_PCM;    break;
-        case SOUND_MIXER_MIC:     ac97_reg = AC97_MIXER_MIC;    break;
-        case SOUND_MIXER_LINE_IN: ac97_reg = AC97_MIXER_LINE_IN; break;
-        case SOUND_MIXER_CD:      ac97_reg = AC97_MIXER_CD;     break;
+        case SOUND_MIXER_MASTER:  ac97_reg = AC97_REG_MASTER; break;
+        case SOUND_MIXER_PCM:     ac97_reg = AC97_REG_PCM_OUT; break;
+        case SOUND_MIXER_MIC:     ac97_reg = AC97_REG_MIC;    break;
+        case SOUND_MIXER_LINE_IN: ac97_reg = AC97_REG_LINE_IN; break;
+        case SOUND_MIXER_CD:      ac97_reg = AC97_REG_CD;     break;
         default:
             return;
     }

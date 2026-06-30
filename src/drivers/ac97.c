@@ -16,6 +16,7 @@
 #include "types.h"
 #include "sound_pcm.h"
 #include "idt.h"
+#include "errno.h"
 
 /* ── PCI identification ─────────────────────────────────────────── */
 #define AC97_CLASS    0x04
@@ -206,6 +207,9 @@ int ac97_init(void) {
                     " — using synchronous DMA only\n", irq_ret);
         }
     }
+
+    /* ── Apply mixer defaults ──────────────────────────────────────── */
+    ac97_mixer_init_defaults();
 
     return 0;
 }
@@ -811,6 +815,326 @@ int ac97_capture_is_active(void)
 {
     return ac97_cap.running;
 }
+
+/* ── AC97 mixer implementation ────────────────────────────────────── */
+
+/**
+ * Channel-to-register mapping table.
+ * Maps each ac97_mixer_channel enum value to its NAM register offset.
+ * 0 means "no direct register" — the channel is virtual or handled
+ * via a different mechanism.
+ */
+static const uint16_t ac97_channel_regs[AC97_MIXER_CHANNEL_COUNT] = {
+    [AC97_MIXER_MASTER]     = AC97_REG_MASTER,
+    [AC97_MIXER_AUX_OUT]    = AC97_REG_AUX_OUT,
+    [AC97_MIXER_MASTER_MONO]= AC97_REG_MASTER_MONO,
+    [AC97_MIXER_PC_BEEP]    = AC97_REG_PC_BEEP,
+    [AC97_MIXER_PHONE]      = AC97_REG_PHONE,
+    [AC97_MIXER_MIC]        = AC97_REG_MIC,
+    [AC97_MIXER_LINE_IN]    = AC97_REG_LINE_IN,
+    [AC97_MIXER_CD]         = AC97_REG_CD,
+    [AC97_MIXER_VIDEO]      = AC97_REG_VIDEO,
+    [AC97_MIXER_AUX]        = AC97_REG_AUX,
+    [AC97_MIXER_PCM]        = AC97_REG_PCM_OUT,
+    [AC97_MIXER_RECORD_GAIN]= AC97_REG_RECORD_GAIN,
+};
+
+/**
+ * Human-readable channel names.
+ */
+static const char * const ac97_channel_names[AC97_MIXER_CHANNEL_COUNT] = {
+    [AC97_MIXER_MASTER]      = "Master",
+    [AC97_MIXER_AUX_OUT]     = "Aux Out",
+    [AC97_MIXER_MASTER_MONO] = "Master Mono",
+    [AC97_MIXER_PC_BEEP]     = "PC Beep",
+    [AC97_MIXER_PHONE]       = "Phone",
+    [AC97_MIXER_MIC]         = "Mic",
+    [AC97_MIXER_LINE_IN]     = "Line In",
+    [AC97_MIXER_CD]          = "CD",
+    [AC97_MIXER_VIDEO]       = "Video",
+    [AC97_MIXER_AUX]         = "Aux",
+    [AC97_MIXER_PCM]         = "PCM",
+    [AC97_MIXER_RECORD_GAIN] = "Record Gain",
+};
+
+/**
+ * ac97_mixer_get_channel_register — Return the NAM register offset for a channel.
+ */
+uint16_t ac97_mixer_get_channel_register(enum ac97_mixer_channel ch)
+{
+    if (ch < 0 || ch >= AC97_MIXER_CHANNEL_COUNT)
+        return 0;
+    return ac97_channel_regs[(int)ch];
+}
+
+/**
+ * ac97_mixer_get_channel_name — Return a human-readable name for a channel.
+ */
+const char *ac97_mixer_get_channel_name(enum ac97_mixer_channel ch)
+{
+    if (ch < 0 || ch >= AC97_MIXER_CHANNEL_COUNT)
+        return "Unknown";
+    return ac97_channel_names[(int)ch];
+}
+
+/* ── Gain conversion helpers ─────────────────────────────────────── */
+
+/**
+ * pct_to_ac97_gain — Convert 0–100% to AC97 5-bit volume (0=max, 31=min).
+ *
+ * AC97 volume registers use inverted scaling: 0 = 0dB (max), 31 = -46.5dB (min).
+ * Each step is 1.5dB.  We map linearly:
+ *   0% -> 31 (silent)
+ *   100% -> 0 (0dB max)
+ */
+static inline uint8_t pct_to_ac97_5bit(uint8_t pct)
+{
+    if (pct >= 100) return 0;       /* max volume (0dB) */
+    if (pct == 0)   return 31;      /* min volume (-46.5dB) */
+    return (uint8_t)(31U - (pct * 31U / 100U));
+}
+
+/**
+ * ac97_5bit_to_pct — Convert AC97 5-bit volume to 0–100%.
+ */
+static inline uint8_t ac97_5bit_to_pct(uint8_t raw)
+{
+    if (raw == 0)   return 100;     /* max */
+    if (raw >= 31)  return 0;       /* min */
+    return (uint8_t)((31U - raw) * 100U / 31U);
+}
+
+/**
+ * pct_to_ac97_gain_4bit — Convert 0–100% to AC97 4-bit recording gain (0–15).
+ *
+ * AC97 recording gain: 0 = 0dB, 15 = +22.5dB (1.5dB steps).
+ * We map: 0% -> 0 (0dB), 100% -> 15 (+22.5dB).
+ */
+static inline uint8_t pct_to_ac97_4bit(uint8_t pct)
+{
+    if (pct >= 100) return 15;
+    return (uint8_t)(pct * 15U / 100U);
+}
+
+/**
+ * ac97_4bit_to_pct — Convert AC97 4-bit gain to 0–100%.
+ */
+static inline uint8_t ac97_4bit_to_pct(uint8_t raw)
+{
+    if (raw >= 15) return 100;
+    return (uint8_t)(raw * 100U / 15U);
+}
+
+/* ── Mixer API implementations ────────────────────────────────────── */
+
+int ac97_mixer_set_volume(enum ac97_mixer_channel ch, uint8_t left, uint8_t right)
+{
+    if (ch < 0 || ch >= AC97_MIXER_CHANNEL_COUNT)
+        return -EINVAL;
+    if (!ac97_dev_present)
+        return -ENODEV;
+
+    uint16_t reg = ac97_channel_regs[(int)ch];
+    if (reg == 0)
+        return -EINVAL;  /* No direct register mapping */
+
+    if (left  > 100) left  = 100;
+    if (right > 100) right = 100;
+
+    /* Convert to AC97 5-bit raw values (0=max, 31=min) */
+    uint8_t raw_left  = pct_to_ac97_5bit(left);
+    uint8_t raw_right = pct_to_ac97_5bit(right);
+
+    /* Build register value, preserving mute state */
+    uint16_t cur = inw(ac97_nam_base + reg);
+    uint16_t mute_bit = cur & AC97_VOL_MUTE_BIT;
+
+    uint16_t val = (uint16_t)raw_left | ((uint16_t)raw_right << 8) | mute_bit;
+    outw(ac97_nam_base + reg, val);
+
+    return 0;
+}
+
+int ac97_mixer_get_volume(enum ac97_mixer_channel ch, uint8_t *left, uint8_t *right)
+{
+    if (ch < 0 || ch >= AC97_MIXER_CHANNEL_COUNT)
+        return -EINVAL;
+    if (!ac97_dev_present)
+        return -ENODEV;
+
+    uint16_t reg = ac97_channel_regs[(int)ch];
+    if (reg == 0)
+        return -EINVAL;
+
+    uint16_t val = inw(ac97_nam_base + reg);
+
+    uint8_t raw_left  = (uint8_t)(val & AC97_VOL_LEFT_MASK);
+    uint8_t raw_right = (uint8_t)((val & AC97_VOL_RIGHT_MASK) >> 8);
+
+    if (left)  *left  = ac97_5bit_to_pct(raw_left);
+    if (right) *right = ac97_5bit_to_pct(raw_right);
+
+    return 0;
+}
+
+int ac97_mixer_set_mute(enum ac97_mixer_channel ch, int mute)
+{
+    if (ch < 0 || ch >= AC97_MIXER_CHANNEL_COUNT)
+        return -EINVAL;
+    if (!ac97_dev_present)
+        return -ENODEV;
+
+    uint16_t reg = ac97_channel_regs[(int)ch];
+    if (reg == 0)
+        return -EINVAL;
+
+    uint16_t val = inw(ac97_nam_base + reg);
+    if (mute)
+        val |= AC97_VOL_MUTE_BIT;
+    else
+        val &= ~AC97_VOL_MUTE_BIT;
+
+    outw(ac97_nam_base + reg, val);
+    return 0;
+}
+
+int ac97_mixer_get_mute(enum ac97_mixer_channel ch, int *mute)
+{
+    if (ch < 0 || ch >= AC97_MIXER_CHANNEL_COUNT)
+        return -EINVAL;
+    if (!ac97_dev_present)
+        return -ENODEV;
+
+    if (!mute)
+        return -EINVAL;
+
+    uint16_t reg = ac97_channel_regs[(int)ch];
+    if (reg == 0)
+        return -EINVAL;
+
+    uint16_t val = inw(ac97_nam_base + reg);
+    *mute = (val & AC97_VOL_MUTE_BIT) ? 1 : 0;
+
+    return 0;
+}
+
+int ac97_mixer_set_mic_boost(int enable)
+{
+    if (!ac97_dev_present)
+        return -ENODEV;
+
+    uint16_t val = inw(ac97_nam_base + AC97_REG_MIC);
+    if (enable)
+        val |= AC97_MIC_20DB_BIT;
+    else
+        val &= ~AC97_MIC_20DB_BIT;
+
+    outw(ac97_nam_base + AC97_REG_MIC, val);
+    return 0;
+}
+
+int ac97_mixer_get_mic_boost(int *enabled)
+{
+    if (!ac97_dev_present)
+        return -ENODEV;
+    if (!enabled)
+        return -EINVAL;
+
+    uint16_t val = inw(ac97_nam_base + AC97_REG_MIC);
+    *enabled = (val & AC97_MIC_20DB_BIT) ? 1 : 0;
+
+    return 0;
+}
+
+int ac97_mixer_set_tone(uint8_t bass, uint8_t treble)
+{
+    if (!ac97_dev_present)
+        return -ENODEV;
+
+    /* Clamp to 4-bit range */
+    if (bass   > 15) bass   = 15;
+    if (treble > 15) treble = 15;
+
+    /* Tone control register: bits [7:0] = left (bass), [15:8] = right (treble)
+     * Each nibble: 0 = flat, 1-15 = cut/boost (vendor-specific scaling). */
+    uint16_t val = (uint16_t)bass | ((uint16_t)treble << 8);
+
+    /* Write bass to AC97_REG_MASTER_TONE_L and treble to AC97_REG_MASTER_TONE_R.
+     * Note: both registers share offset 0x08, but the spec defines
+     * MASTER_TONE_L at 0x08 and MASTER_TONE_R at 0x0A (PC_BEEP overlap).
+     * In practice, many codecs use a single 16-bit register at 0x08. */
+    outw(ac97_nam_base + AC97_REG_MASTER_TONE_L, val);
+
+    return 0;
+}
+
+int ac97_mixer_set_record_gain(enum ac97_mixer_channel ch, uint8_t left, uint8_t right, int mute)
+{
+    if (ch < 0 || ch >= AC97_MIXER_CHANNEL_COUNT)
+        return -EINVAL;
+    if (!ac97_dev_present)
+        return -ENODEV;
+
+    /* Only RECORD_GAIN channel controls recording gain level.
+     * Other channels use the standard volume register format. */
+    if (ch == AC97_MIXER_RECORD_GAIN) {
+        if (left  > 100) left  = 100;
+        if (right > 100) right = 100;
+
+        /* Recording gain is 4-bit (0–15), mapped from 0–100% */
+        uint8_t raw_left  = pct_to_ac97_4bit(left);
+        uint8_t raw_right = pct_to_ac97_4bit(right);
+
+        uint16_t val = (uint16_t)raw_left | ((uint16_t)raw_right << 8);
+        if (mute) val |= AC97_VOL_MUTE_BIT;
+
+        outw(ac97_nam_base + AC97_REG_RECORD_GAIN, val);
+        return 0;
+    }
+
+    /* For other channels, use standard volume/mute control */
+    return ac97_mixer_set_volume(ch, left, right);
+}
+
+void ac97_mixer_init_defaults(void)
+{
+    if (!ac97_dev_present)
+        return;
+
+    /* Set all channels to default volume (75%), unmuted */
+    for (int i = 0; i < AC97_MIXER_CHANNEL_COUNT; i++) {
+        uint16_t reg = ac97_channel_regs[i];
+        if (reg == 0) continue;
+
+        /* Initialise volume to default (75% == ~8 raw AC97) */
+        uint8_t raw_default = pct_to_ac97_5bit(AC97_VOLUME_DEFAULT);
+        uint16_t val = (uint16_t)raw_default | ((uint16_t)raw_default << 8);
+
+        /* All stereo/mono volume registers are unmuted by default */
+        outw(ac97_nam_base + reg, val);
+    }
+
+    /* Special handling for PC_BEEP: also set beep enable bit */
+    uint16_t beep_val = inw(ac97_nam_base + AC97_REG_PC_BEEP);
+    beep_val |= AC97_BEEP_ENABLE_BIT;  /* enable beep passthrough */
+    outw(ac97_nam_base + AC97_REG_PC_BEEP, beep_val);
+
+    /* Disable mic 20dB boost by default */
+    uint16_t mic_val = inw(ac97_nam_base + AC97_REG_MIC);
+    mic_val &= ~AC97_MIC_20DB_BIT;
+    outw(ac97_nam_base + AC97_REG_MIC, mic_val);
+
+    /* Select microphone as default recording source */
+    outw(ac97_nam_base + AC97_REG_RECORD_SOURCE, REC_SEL_MIC);
+
+    /* Set recording gain to default (75% of 0–15 = ~11, ~16.5dB) */
+    uint8_t raw_gain = pct_to_ac97_4bit(AC97_VOLUME_DEFAULT);
+    outw(ac97_nam_base + AC97_REG_RECORD_GAIN, (uint16_t)raw_gain | ((uint16_t)raw_gain << 8));
+
+    kprintf("[AC97] Mixer defaults applied (%d channels)\\n", AC97_MIXER_CHANNEL_COUNT);
+}
+
+/* ── ac97_init now also calls mixer defaults ──────────────────────── */
 
 MODULE_LICENSE("GPL");
 MODULE_VERSION("1.0.0");
