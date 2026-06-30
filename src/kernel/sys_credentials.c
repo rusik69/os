@@ -85,3 +85,69 @@ uint64_t sys_seteuid(uint64_t euid)
     p->dumpable = 0;
     return 0;
 }
+
+/* ── sys_setgid — set group identity ──────────────────────────────
+ *
+ * int setgid(gid_t gid);
+ *
+ * Sets the effective group ID. If called by root (euid == 0), also
+ * sets the real and saved group IDs. Unprivileged callers may only
+ * set the effective ID to the real, effective, or saved group ID.
+ *
+ * Returns 0 on success, -EPERM if not allowed.
+ */
+uint64_t sys_setgid(uint64_t gid)
+{
+    struct process *p = process_get_current();
+    if (!p)
+        return (uint64_t)(int64_t)-ESRCH;
+
+    /* Root (euid 0) can set all GID values */
+    if (p->euid == 0) {
+        p->gid  = (uint32_t)gid;
+        p->egid = (uint32_t)gid;
+        /* Clear dumpable on credential change */
+        p->dumpable = 0;
+        return 0;
+    }
+
+    /* Non-root: only allowed if gid matches real or saved (effective) GID */
+    if ((uint32_t)gid != p->gid && (uint32_t)gid != p->egid)
+        return (uint64_t)(int64_t)-EPERM;
+
+    p->egid = (uint32_t)gid;
+    p->dumpable = 0;
+    return 0;
+}
+
+/* ── sys_setegid — set effective group identity ───────────────────
+ *
+ * int setegid(gid_t egid);
+ *
+ * Sets the effective group ID. Unprivileged callers may only set
+ * the effective ID to the real group ID. Privileged callers
+ * (euid == 0) may set to any value.
+ *
+ * Returns 0 on success, -EPERM if not allowed.
+ */
+uint64_t sys_setegid(uint64_t egid)
+{
+    struct process *p = process_get_current();
+    if (!p)
+        return (uint64_t)(int64_t)-ESRCH;
+
+    /* Root (euid 0) can set effective GID to any value */
+    if (p->euid == 0) {
+        p->egid = (uint32_t)egid;
+        p->dumpable = 0;
+        return 0;
+    }
+
+    /* Non-root: only allowed if egid matches real GID */
+    if ((uint32_t)egid != p->gid)
+        return (uint64_t)(int64_t)-EPERM;
+
+    p->egid = (uint32_t)egid;
+    p->dumpable = 0;
+    return 0;
+}

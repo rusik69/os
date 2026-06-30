@@ -115,6 +115,8 @@ extern uint64_t syscall_arg6;
 /* D127: Credential syscalls — declared in sys_credentials.c */
 uint64_t sys_setuid(uint64_t uid);
 uint64_t sys_seteuid(uint64_t euid);
+uint64_t sys_setgid(uint64_t gid);
+uint64_t sys_setegid(uint64_t egid);
 
 /* D123: Process & Signal syscalls — declared in sys_process.c */
 uint64_t sys_rt_sigaction(uint64_t signum, uint64_t act_addr,
@@ -496,6 +498,8 @@ static int syscall_validate_user_args(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_GETEGID:
         case SYS_SETUID:
         case SYS_SETEUID:
+        case SYS_SETGID:
+        case SYS_SETEGID:
             return 0;
         case SYS_SIGALTSTACK:
             if (a1 && !syscall_user_read_ok(a1, sizeof(stack_t))) return -EFAULT;
@@ -10391,6 +10395,8 @@ uint64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_GETEGID:     return sys_getegid();
         case SYS_SETUID:      return sys_setuid(a1);
         case SYS_SETEUID:     return sys_seteuid(a1);
+        case SYS_SETGID:      return sys_setgid(a1);
+        case SYS_SETEGID:     return sys_setegid(a1);
         case SYS_RMDIR:       return sys_rmdir(a1);
         case SYS_RENAME:      return sys_rename(a1, a2);
         case SYS_CHMOD:       return sys_chmod(a1, a2);
