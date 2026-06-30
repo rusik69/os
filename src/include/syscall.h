@@ -597,9 +597,17 @@ struct sysinfo {
 };
 
 /* ── wait4/waitid option flags (Linux-compatible) ────────────── */
-#define WNOHANG     1   /* non-blocking wait; return 0 if no child ready */
-#define WUNTRACED   4   /* also report stopped children */
-#define WCONTINUED  8   /* also report continued children */
+#define WNOHANG     1           /* non-blocking wait; return 0 if no child ready */
+#define WUNTRACED   4           /* also report stopped children (wait4) */
+#define WCONTINUED  8           /* also report continued children */
+#define WEXITED     4           /* wait for exited children (waitid) */
+#define WSTOPPED    2           /* wait for stopped children (waitid) */
+#define WNOWAIT     0x01000000  /* leave child as zombie after waitid */
+
+/* ── waitid idtype values ────────────────────────────────────── */
+#define P_PID   0   /* wait for child with specific PID */
+#define P_PGID  1   /* wait for any child in process group */
+#define P_ALL   2   /* wait for any child */
 
 /* ── wait status encoding/decoding macros (Linux-compatible) ────
  *

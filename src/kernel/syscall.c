@@ -278,6 +278,10 @@ static int syscall_validate_user_args(uint64_t num, uint64_t a1, uint64_t a2,
             if (a2 && !syscall_user_write_ok(a2, sizeof(int))) return -EFAULT;
             if (a4 && !syscall_user_write_ok(a4, sizeof(struct rusage))) return -EFAULT;
             return 0;
+        case SYS_WAITID:
+            if (a3 && !syscall_user_write_ok(a3, sizeof(struct siginfo))) return -EFAULT;
+            if (a5 && !syscall_user_write_ok(a5, sizeof(struct rusage))) return -EFAULT;
+            return 0;
         case SYS_NET_GET_MAC:
             return syscall_user_write_ok(a1, 6) ? 0 : -EFAULT;
         case SYS_NET_GET_IP:

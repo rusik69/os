@@ -837,20 +837,172 @@ rescan:
     }
 }
 
+/* ── Helper: check if a process is a child matching the given
+ * waitid criteria (which/idtype-based selection).
+ *
+ *   P_PID   — match child with specific PID == (uint32_t)req_id
+ *   P_PGID  — match any child in process group req_id
+ *   P_ALL   — match any child (regardless of req_id)
+ *
+ * Returns 1 if `child` is a living (non-UNUSED) child of `parent_pid`
+ * matching the criteria, 0 otherwise. */
+static int waitid_child_matches(const struct process *child,
+                                 uint32_t parent_pid,
+                                 uint32_t parent_pgid,
+                                 int which,
+                                 int64_t req_id)
+{
+    if (child->state == PROCESS_UNUSED)
+        return 0;
+    if (child->parent_pid != parent_pid)
+        return 0;
+    if (child->pid == parent_pid)
+        return 0;  /* skip self */
+
+    switch (which) {
+    case P_PID:
+        return (uint32_t)req_id == 0 || child->pid == (uint32_t)req_id;
+    case P_PGID:
+        return child->pgid == (uint32_t)req_id;
+    case P_ALL:
+        return 1;  /* any child */
+    default:
+        return 0;
+    }
+}
+
 /* ── sys_waitid — wait for child with siginfo ──────────────────
  *
- *   int waitid(idtype_t which, id_t pid, siginfo_t *info,
+ *   int waitid(idtype_t which, id_t id, siginfo_t *info,
  *              int options, struct rusage *rusage);
  *
- * Stub: returns -ENOSYS.  Full implementation is task 12.
+ * Linux-compatible waitid syscall.  Waits for children matching
+ * `which`/`id` criteria:
+ *   P_PID   (0) — wait for child with specific PID == id
+ *   P_PGID  (1) — wait for any child in process group id
+ *   P_ALL   (2) — wait for any child (ignores id)
+ *
+ * Options:
+ *   WEXITED     (4) — wait for exited children (always implied)
+ *   WSTOPPED    (2) — also report stopped children (currently no-op:
+ *                     the kernel does not distinguish stopped children)
+ *   WCONTINUED  (8) — also report continued children (currently no-op)
+ *   WNOHANG     (1) — return 0 immediately if no child is ready
+ *   WNOWAIT     (0x01000000) — leave child as zombie (don't clean up)
+ *
+ * Returns 0 on success, -errno on error.
+ * On success, siginfo_t is written to *info with:
+ *   si_signo = SIGCHLD
+ *   si_code  = CLD_EXITED (or CLD_KILLED/CLD_DUMPED)
+ *   si_pid   = child PID
+ *   si_uid   = child UID
+ *   si_status = child exit code
  */
 uint64_t sys_waitid(uint64_t which, uint64_t id, uint64_t info_addr,
                     uint64_t options, uint64_t rusage_addr)
 {
-    (void)which;
-    (void)id;
-    (void)info_addr;
-    (void)options;
-    (void)rusage_addr;
-    return (uint64_t)(int64_t)-ENOSYS;
+    struct process *cur = process_get_current();
+    if (!cur)
+        return (uint64_t)(int64_t)-ESRCH;
+
+    int do_not_reap = (options & WNOWAIT) ? 1 : 0;
+    uint32_t my_pid = cur->pid;
+    uint32_t my_pgid = cur->pgid;
+    struct process *table = process_get_table();
+
+    for (;;) {
+        int found_any = 0;
+
+        /* Scan for matching children */
+        for (int i = 0; i < PROCESS_MAX; i++) {
+            struct process *child = &table[i];
+
+            if (!waitid_child_matches(child, my_pid, my_pgid,
+                                       (int)which, (int64_t)id))
+                continue;
+
+            found_any = 1;
+
+            /* Is this child ready (zombie)? */
+            if (child->state == PROCESS_ZOMBIE) {
+                struct siginfo info;
+                memset(&info, 0, sizeof(info));
+                info.si_signo = SIGCHLD;
+                info.si_errno = 0;
+                info.si_code  = CLD_EXITED;
+                info.si_pid   = child->pid;
+                info.si_uid   = child->uid;
+                info.si_status = child->exit_code & 0xff;
+                info.si_addr  = NULL;
+
+                /* Copy siginfo to userspace */
+                if (info_addr) {
+                    if (copy_to_user(info_addr, &info, sizeof(info)) < 0)
+                        return (uint64_t)(int64_t)-EFAULT;
+                }
+
+                /* Optionally fill rusage */
+                if (rusage_addr) {
+                    struct rusage ru;
+                    memset(&ru, 0, sizeof(ru));
+                    ru.ru_utime.tv_sec  = child->utime_ticks / 100;
+                    ru.ru_utime.tv_usec = (child->utime_ticks % 100) * 10000;
+                    ru.ru_stime.tv_sec  = child->stime_ticks / 100;
+                    ru.ru_stime.tv_usec = (child->stime_ticks % 100) * 10000;
+                    ru.ru_minflt  = child->minflt;
+                    ru.ru_majflt  = child->majflt;
+                    ru.ru_nvcsw   = child->nvcsw;
+                    ru.ru_nivcsw  = child->nivcsw;
+                    ru.ru_nsignals = child->signals_received;
+
+                    if (copy_to_user(rusage_addr, &ru, sizeof(ru)) < 0)
+                        return (uint64_t)(int64_t)-EFAULT;
+                }
+
+                /* Clean up the zombie unless WNOWAIT */
+                if (!do_not_reap)
+                    process_cleanup(child);
+
+                return 0;  /* waitid returns 0 on success, not PID */
+            }
+        }
+
+        /* No matching children at all */
+        if (!found_any)
+            return (uint64_t)(int64_t)-ECHILD;
+
+        /* WNOHANG: no child ready, return 0 */
+        if (options & WNOHANG)
+            return 0;
+
+        /* Block until a child becomes zombie.
+         * Find the first non-zombie matching child and wait for it
+         * specifically (process_wake_waiter is PID-specific). */
+        for (int i = 0; i < PROCESS_MAX; i++) {
+            struct process *child = &table[i];
+            if (!waitid_child_matches(child, my_pid, my_pgid,
+                                       (int)which, (int64_t)id))
+                continue;
+            if (child->state != PROCESS_ZOMBIE) {
+                cur->wait_for_pid = child->pid;
+                cur->state = PROCESS_BLOCKED;
+                scheduler_remove(cur);
+                scheduler_yield();
+
+                /* Woken up — re-acquire current process pointer
+                 * (may have changed if another CPU woke us). */
+                cur = process_get_current();
+                if (!cur)
+                    return (uint64_t)(int64_t)-ESRCH;
+                my_pid = cur->pid;
+                my_pgid = cur->pgid;
+                cur->wait_for_pid = 0;
+                goto rescan;
+            }
+        }
+        /* Fallthrough: all matching children became zombies while
+         * we were selecting one to wait on — loop back and collect. */
+rescan:
+        ;
+    }
 }
