@@ -8321,19 +8321,48 @@ static uint64_t sys_msync(uint64_t addr, uint64_t len, uint64_t flags) {
     return 0;
 }
 
-static uint64_t sys_fallocate(uint64_t fd, uint64_t mode, uint64_t offset, uint64_t len) {
+/**
+ * sys_fallocate - Pre-allocate disk space for a file descriptor
+ * @fd:     File descriptor of the file
+ * @mode:   Fallocate mode flags (FALLOC_FL_KEEP_SIZE, FALLOC_FL_PUNCH_HOLE)
+ * @offset: Starting byte offset for allocation
+ * @len:    Number of bytes to allocate
+ *
+ * Allocates disk space for the file descriptor @fd covering the byte
+ * range [@offset, @offset+@len).  Subsequent writes to this range are
+ * guaranteed not to fail with ENOSPC.  This is a Linux-compatible
+ * implementation of the fallocate() syscall.
+ *
+ * Context: Called from syscall dispatch. May sleep.
+ * Return: 0 on success, or (uint64_t)-1 on error with errno encoded
+ *         as a negative value.
+ */
+static uint64_t sys_fallocate(uint64_t fd, uint64_t mode, uint64_t offset, uint64_t len)
+{
+    if (fd < 3)
+        return (uint64_t)(int64_t)-EBADF;
     int i = (int)fd - 3;
     struct process_fd *pfd = sys_get_fd(i);
-    if (!pfd || !pfd->used) return (uint64_t)-1;
+    if (!pfd || !pfd->used)
+        return (uint64_t)(int64_t)-EBADF;
 
-    /* Resolve path to mount */
-    const char *path = pfd->path;
+    /* Validate offset and len fit in uint32_t */
+    if (offset > 0xFFFFFFFFULL || len > 0xFFFFFFFFULL)
+        return (uint64_t)(int64_t)-EOVERFLOW;
 
-    /* Delegate to the proper filesystem-level fallocate implementation
-     * which pre-allocates disk blocks without writing data. */
-    if (offset > 0xFFFFFFFFULL || len > 0xFFFFFFFFULL) return (uint64_t)-EOVERFLOW;
-    int ret = fs_fallocate(path, (int)mode, (uint32_t)offset, (uint32_t)len);
-    return ret == 0 ? 0 : (uint64_t)-1;
+    /* Check that the target is a regular file */
+    struct vfs_stat st;
+    if (vfs_stat(pfd->path, &st) < 0)
+        return (uint64_t)(int64_t)-EIO;
+    if (st.type != 1)
+        return (uint64_t)(int64_t)-EINVAL;
+
+    /* Delegate to VFS-level fallocate which handles mount resolution,
+     * RDONLY checks, and filesystem-specific fallocate ops. */
+    int ret = vfs_fallocate(pfd->path, (int)mode, (uint32_t)offset, (uint32_t)len);
+    if (ret < 0)
+        return (uint64_t)(int64_t)ret;
+    return 0;
 }
 
 
