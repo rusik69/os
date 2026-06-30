@@ -184,6 +184,7 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/usb_printer.c \
          src/drivers/usb_typec.c \
          src/drivers/usb_debug.c \
+         src/drivers/usb_audio.c \
          src/drivers/ps2.c \
          src/drivers/fbcon.c \
          src/drivers/partitions.c \
