@@ -1272,6 +1272,20 @@ void prng_add_entropy(uint64_t entropy);
 void timerfd_tick(void);
 /* POSIX per-process timer tick — called from timer interrupt */
 void posix_timer_tick(void);
+
+/* Initialize POSIX timer subsystem (called from production_subsystems_init) */
+void posix_timer_init(void);
+
+/* ── POSIX Timer & Clock syscalls (implemented in posix_timer.c) ── */
+uint64_t sys_clock_gettime(uint64_t clockid, uint64_t tp_addr);
+uint64_t sys_clock_settime(uint64_t clockid, uint64_t tp_addr);
+uint64_t sys_clock_getres(uint64_t clockid, uint64_t res_addr);
+uint64_t sys_timer_create(uint64_t clockid, uint64_t sevp_addr, uint64_t timerid_addr);
+uint64_t sys_timer_settime(uint64_t timerid, uint64_t flags, uint64_t new_addr, uint64_t old_addr);
+uint64_t sys_timer_gettime(uint64_t timerid, uint64_t cur_addr);
+uint64_t sys_timer_getoverrun(uint64_t timerid);
+uint64_t sys_timer_delete(uint64_t timerid);
+
 /* Initialize production subsystems (socket, epoll, timers, mq) */
 void production_subsystems_init(void);
 #endif
