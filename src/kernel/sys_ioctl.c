@@ -29,6 +29,7 @@
 #include "module.h"
 #include "netdevice.h"
 #include "vfs.h"
+#include "sound_oss.h"
 
 MODULE_LICENSE("MIT");
 MODULE_VERSION("1.0");
@@ -563,6 +564,38 @@ uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg)
 	/* ── Block-device ioctls ────────────────────────────────── */
 	case SG_IO:
 		return (uint64_t)(int64_t)ioctl_sg_io(p, (int)fd, arg);
+
+	/* ── OSS audio / sound ioctls ──────────────────────────── */
+	case SNDCTL_DSP_RESET:
+	case SNDCTL_DSP_SYNC:
+	case SNDCTL_DSP_SPEED:
+	case SNDCTL_DSP_GETBLKSIZE:
+	case SNDCTL_DSP_SETFMT:
+	case SNDCTL_DSP_CHANNELS:
+	case SNDCTL_DSP_GETTRIGGER:
+	case SNDCTL_DSP_SETTRIGGER:
+	case SNDCTL_DSP_GETOSPACE:
+	case SNDCTL_DSP_GETISPACE:
+	case SNDCTL_DSP_SETFRAGMENT:
+	case SNDCTL_DSP_GETCAPS:
+	case SNDCTL_DSP_POST:
+	case SNDCTL_DSP_GETIPTR:
+	case SNDCTL_DSP_GETOPTR:
+	case SNDCTL_DSP_SETRECORD_SOURCE:
+	case SNDCTL_DSP_GETRECORD_SOURCE:
+	case SNDCTL_DSP_SETRECORD_GAIN:
+	case SNDCTL_DSP_GETRECORD_GAIN:
+	case SOUND_MIXER_READ_VOLUME:
+	case SOUND_MIXER_WRITE_VOLUME:
+	case SOUND_MIXER_READ_MUTE:
+	case SOUND_MIXER_WRITE_MUTE:
+	case SOUND_MIXER_READ_RECMASK:
+	case SOUND_MIXER_READ_DEVMASK:
+	case SOUND_MIXER_READ_RECSRC:
+	case SOUND_MIXER_WRITE_RECSRC:
+	case SOUND_MIXER_READ_STEREO:
+	case SOUND_MIXER_READ_CAPS:
+		return (uint64_t)(int64_t)sound_oss_ioctl((int)cmd, arg);
 
 	default:
 		return (uint64_t)(int64_t)-ENOTTY;
