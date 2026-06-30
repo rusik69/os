@@ -2885,27 +2885,8 @@ static uint64_t sys_posix_spawn(uint64_t path_addr, uint64_t argv_addr, uint64_t
     return (uint64_t)(uint64_t)ret;
 }
 
-/* ── munmap / mprotect syscalls ──────────────────────── */
-/* sys_mmap is now in sys_mmap.c */
-
-static uint64_t sys_munmap(uint64_t addr, uint64_t length) {
-    struct process *proc = process_get_current();
-    if (!proc || !proc->pml4) return (uint64_t)(int64_t)-EFAULT;
-    if (addr & (PAGE_SIZE - 1)) return (uint64_t)(int64_t)-EINVAL;
-
-    if (length == 0) return 0;
-    length = (length + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
-    if (addr + length < addr) return (uint64_t)(int64_t)-EINVAL;
-    if (addr + length > USER_VADDR_MAX) return (uint64_t)(int64_t)-EFAULT;
-
-    /* Check if the range is sealed (mseal) — sealed ranges are immutable */
-    if (mseal_check(addr, length) == 0)
-        return (uint64_t)(int64_t)-EPERM;
-
-    if (vmm_unmap_user_pages(proc->pml4, addr, length / PAGE_SIZE) < 0)
-        return (uint64_t)(int64_t)-EFAULT;
-    return 0;
-}
+/* ── mprotect ─────────────────────────────────────────────────────── */
+/* sys_mmap and sys_munmap are now in sys_mmap.c */
 
 /* ── mseal — seal virtual memory ranges against further changes ── */
 

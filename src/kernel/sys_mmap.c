@@ -19,13 +19,58 @@
 #include "string.h"
 #include "uaccess.h"
 #include "scheduler.h"
+#include "mseal.h"
 
 /* ── Inline helper for TLB invalidation ──────────────────────── */
 static inline void local_invlpg(uint64_t addr) {
     __asm__ volatile("invlpg (%0)" : : "r"(addr) : "memory");
 }
 
-/* Module metadata */
+/* ── sys_munmap — unmap a range of pages ────────────────────────── */
+
+uint64_t sys_munmap(uint64_t addr, uint64_t length) {
+    struct process *proc = process_get_current();
+    if (!proc || !proc->pml4)
+        return (uint64_t)(int64_t)-EFAULT;
+
+    /* Address must be page-aligned */
+    if (addr & (PAGE_SIZE - 1))
+        return (uint64_t)(int64_t)-EINVAL;
+
+    /* Linux returns 0 for zero-length munmap */
+    if (length == 0)
+        return 0;
+
+    /* Round length up to page boundary */
+    length = (length + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
+
+    /* Check for overflow */
+    if (addr + length < addr)
+        return (uint64_t)(int64_t)-EINVAL;
+
+    /* Must be entirely within user address space */
+    if (addr + length > USER_VADDR_MAX)
+        return (uint64_t)(int64_t)-EFAULT;
+
+    /* Sealed (mseal) ranges are immutable — reject unmap on sealed pages */
+    if (mseal_check(addr, length) == 0)
+        return (uint64_t)(int64_t)-EPERM;
+
+    /* Perform the unmap. vmm_unmap_user_pages skips unmapped pages,
+     * freeing only pages that are actually present. */
+    if (vmm_unmap_user_pages(proc->pml4, addr, length / PAGE_SIZE) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
+
+    /* Flush TLB for the unmapped range if running on this PML4 */
+    if (proc->pml4 == vmm_get_pml4()) {
+        for (uint64_t v = addr; v < addr + length; v += PAGE_SIZE)
+            local_invlpg(v);
+    }
+
+    return 0;
+}
+
+/* ── Module metadata ───────────────────────────────────────────── */
 MODULE_LICENSE("GPL v2");
 MODULE_VERSION("1.0");
 MODULE_DESCRIPTION("Linux-compatible memory mapping syscalls");
