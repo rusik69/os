@@ -595,3 +595,77 @@ uint64_t sys_tkill(uint64_t pid, uint64_t sig)
 
     return 0;
 }
+
+/* ── sys_tgkill — send signal to thread in a specific thread group ─
+ *
+ *   int tgkill(int tgid, int tid, int sig);
+ *
+ * Linux-compatible tgkill syscall.  Sends signal `sig` to the thread
+ * identified by `tid` within the thread group `tgid`.  This is a
+ * more robust version of tkill(2) that also verifies that `tid`
+ * actually belongs to `tgid`, preventing race conditions where the
+ * thread identified by `tid` might have exited and its TID been
+ * reused by an unrelated process.
+ *
+ * Thread group semantics:
+ *   - The thread group leader has tgid == pid.
+ *   - Child threads (created via clone(CLONE_THREAD)) share the
+ *     same tgid as the leader.
+ *   - If `tid` does not belong to `tgid`, -EINVAL is returned.
+ *
+ * If sig == 0, perform error checking only — no signal is actually
+ * sent.  This null-signal probe is used by userspace to verify that
+ * a specific TID exists in the given thread group and is killable.
+ *
+ * Returns 0 on success, -errno on error.
+ */
+uint64_t sys_tgkill(uint64_t tgid, uint64_t tid, uint64_t sig)
+{
+    struct process *cur = process_get_current();
+    if (!cur)
+        return (uint64_t)(int64_t)-ESRCH;
+
+    /* Basic signal number sanity — sig == 0 is the null-signal probe,
+     * sig > SIG_MAX is invalid, everything 1..SIG_MAX is valid. */
+    if (sig > SIG_MAX)
+        return (uint64_t)(int64_t)-EINVAL;
+
+    /* Find the target thread by TID */
+    struct process *target = process_get_by_pid((uint32_t)tid);
+    if (!target || target->state == PROCESS_UNUSED)
+        return (uint64_t)(int64_t)-ESRCH;
+
+    /* Verify that the target thread belongs to the specified thread group.
+     * Both the thread group leader (tgid == pid) and threads within the
+     * group (tgid == leader's pid) share the same tgid field. */
+    if (target->tgid != (uint32_t)tgid)
+        return (uint64_t)(int64_t)-EINVAL;
+
+    /* Permission check — root (euid 0) or matching UID can signal.
+     * Follows POSIX.1-2008 semantics: either the real or effective
+     * UID of the caller must match the real or saved UID of the target. */
+    if (cur->euid != 0 &&
+        cur->euid != target->euid &&
+        cur->uid  != target->uid)
+        return (uint64_t)(int64_t)-EPERM;
+
+    /* Null-signal probe: existence + permission check only */
+    if (sig == 0)
+        return 0;
+
+    /* Build siginfo with SI_TKILL to distinguish from kill(2) */
+    struct siginfo info;
+    memset(&info, 0, sizeof(info));
+    info.si_signo = (int)sig;
+    info.si_code  = SI_TKILL;
+    info.si_pid   = cur->pid;
+    info.si_uid   = cur->uid;
+
+    /* Deliver the signal via signal_send_info which handles
+     * the si_code, pending bit setting, and process wakeup.
+     * Returns 0 on success, -1 on failure. */
+    if (signal_send_info((uint32_t)tid, (int)sig, &info) < 0)
+        return (uint64_t)(int64_t)-EAGAIN;
+
+    return 0;
+}
