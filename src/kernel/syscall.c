@@ -4830,30 +4830,101 @@ static int futex_pi_alloc_internal(uint32_t *uaddr, uint32_t owner_pid) {
 
 /* ── Robust list support ───────────────────────────────────── */
 
-int sys_set_robust_list(struct robust_list_head *head, size_t len) {
-    (void)head; (void)len;
+int sys_set_robust_list(struct robust_list_head *head, size_t len)
+{
     struct process *cur = process_get_current();
-    if (!cur) return -EPERM;
-    /* Store robust list head pointer for later cleanup */
-    cur->ctid_ptr = (void*)head; /* reuse ctid_ptr for robust list head */
+
+    if (!cur)
+        return -EPERM;
+
+    /* Linux requires len == sizeof(struct robust_list_head) */
+    if (len != sizeof(struct robust_list_head))
+        return -EINVAL;
+
+    if (head) {
+        /* Validate user pointer if called from userspace */
+        if (syscall_is_user_process() &&
+            !syscall_user_read_ok((uint64_t)head, sizeof(struct robust_list_head)))
+            return -EFAULT;
+        cur->ctid_ptr = (void *)head;
+    } else {
+        /* NULL head clears the robust list */
+        cur->ctid_ptr = NULL;
+    }
+
     return 0;
 }
 
-int sys_get_robust_list(int pid, struct robust_list_head **head_ptr, size_t *len_ptr) {
-    struct process *p = process_get_by_pid((uint32_t)pid);
-    if (!p || p->state == PROCESS_UNUSED) return -ESRCH;
-    if (head_ptr) *head_ptr = (struct robust_list_head *)p->ctid_ptr;
-    if (len_ptr) *len_ptr = sizeof(struct robust_list_head);
+int sys_get_robust_list(int pid, struct robust_list_head **head_ptr,
+                        size_t *len_ptr)
+{
+    struct process *cur = process_get_current();
+    struct process *p;
+
+    /* pid == 0 means current process */
+    if (pid == 0) {
+        p = cur;
+    } else {
+        p = process_get_by_pid((uint32_t)pid);
+    }
+
+    if (!p || p->state == PROCESS_UNUSED)
+        return -ESRCH;
+
+    /* Validate output user pointers */
+    if (syscall_is_user_process()) {
+        if (!syscall_user_write_ok((uint64_t)head_ptr, sizeof(void *)))
+            return -EFAULT;
+        if (!syscall_user_write_ok((uint64_t)len_ptr, sizeof(size_t)))
+            return -EFAULT;
+    }
+
+    /* Copy results to user-space */
+    {
+        struct robust_list_head *h = (struct robust_list_head *)p->ctid_ptr;
+        size_t l = sizeof(struct robust_list_head);
+
+        if (copy_to_user((uint64_t)head_ptr, &h, sizeof(h)))
+            return -EFAULT;
+        if (copy_to_user((uint64_t)len_ptr, &l, sizeof(l)))
+            return -EFAULT;
+    }
+
     return 0;
 }
 
 /* On thread exit, walk robust list and wake waiters */
-void futex_robust_list_cleanup(struct process *proc) {
-    if (!proc || !proc->ctid_ptr) return;
+void futex_robust_list_cleanup(struct process *proc)
+{
+    if (!proc || !proc->ctid_ptr)
+        return;
+
     struct robust_list_head *head = (struct robust_list_head *)proc->ctid_ptr;
+    struct robust_list *list;
+    int max_entries = 1024; /* Prevent infinite loop on corrupted list */
+
+    /* Handle list_op_pending: if non-NULL, there's a pending futex operation
+     * that was interrupted.  Wake waiters on that address too. */
+    if (head->list_op_pending) {
+        uint32_t *uaddr = (uint32_t *)((uint8_t *)head->list_op_pending +
+                                       head->futex_offset);
+        for (int i = 0; i < FUTEX_MAX_WAITERS; i++) {
+            if (futex_waiters[i].proc && futex_waiters[i].uaddr == uaddr) {
+                struct process *p = futex_waiters[i].proc;
+                futex_waiters[i].proc = NULL;
+                futex_waiters[i].uaddr = NULL;
+                futex_num_waiters--;
+                if (p->state == PROCESS_BLOCKED) {
+                    p->state = PROCESS_READY;
+                    scheduler_add(p);
+                }
+            }
+        }
+    }
+
     /* Wake waiters on all futexes in the robust list */
-    struct robust_list *list = head->list.next;
-    while (list && list != &head->list) {
+    list = head->list.next;
+    while (list && list != &head->list && max_entries-- > 0) {
         uint32_t *uaddr = (uint32_t *)((uint8_t *)list + head->futex_offset);
         /* Wake all waiters on this uaddr */
         for (int i = 0; i < FUTEX_MAX_WAITERS; i++) {
