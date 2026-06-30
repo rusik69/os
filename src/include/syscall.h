@@ -855,6 +855,7 @@ struct linux_dirent64 {
 #define SYS_EXIT_GROUP            451  /* exit_group(status) */
 #define SYS_SET_TID_ADDRESS       452  /* set_tid_address(tidptr) */
 #define SYS_RT_SIGRETURN          454  /* rt_sigreturn() — no args */
+#define SYS_RT_SIGTIMEDWAIT       455  /* rt_sigtimedwait(set, info, timeout, sigsetsize) */
 
 /* ── kexec (Item 362) ─────────────────────────────────────────── */
 #define SYS_KEXEC_LOAD       778  /* kexec_load(phys_addr, entry, flags) → 0 or -1 */

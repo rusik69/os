@@ -12,6 +12,7 @@
 #include "syscall.h"
 #include "errno.h"
 #include "signal_validate.h"
+#include "timer.h"
 
 /* Maximum signal number (signals 1-64) — bounds all signal arrays */
 #define MAX_SIG  65
@@ -122,6 +123,17 @@ int signal_send(uint32_t pid, int signum) {
 
     p->pending_signals |= (1ULL << signum);
 
+    /* Wake process if it's blocked in sigtimedwait for this signal */
+    if (p->state == PROCESS_BLOCKED && (p->sigwait_mask & (1ULL << signum))) {
+        p->sigwait_mask = 0;
+        p->sleep_until = 0;
+        p->state = PROCESS_READY;
+        p->last_run_tick = timer_get_ticks();
+        spinlock_irqsave_release(&p->sig_lock, __sig_flags);
+        scheduler_add(p);
+        return 0;
+    }
+
     /* Notify signalfd listeners */
     extern void signalfd_notify(int signum);
     signalfd_notify(signum);
@@ -186,6 +198,17 @@ int signal_send_info(uint32_t pid, int signum, struct siginfo *info) {
         int is_from_userspace = (caller && caller->is_user) ? 1 : 0;
         signal_validate_siginfo(&validated, is_from_userspace);
         p->sig_info[signum] = validated;
+    }
+
+    /* Wake process if it's blocked in sigtimedwait for this signal */
+    if (p->state == PROCESS_BLOCKED && (p->sigwait_mask & (1ULL << signum))) {
+        p->sigwait_mask = 0;
+        p->sleep_until = 0;
+        p->state = PROCESS_READY;
+        p->last_run_tick = timer_get_ticks();
+        spinlock_irqsave_release(&p->sig_lock, __sig_flags);
+        scheduler_add(p);
+        return 0;
     }
 
     spinlock_irqsave_release(&p->sig_lock, __sig_flags);

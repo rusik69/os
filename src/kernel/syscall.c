@@ -115,6 +115,8 @@ uint64_t sys_rt_sigaction(uint64_t signum, uint64_t act_addr,
 uint64_t sys_rt_sigprocmask(uint64_t how, uint64_t set_addr,
                             uint64_t oldset_addr, uint64_t sigsetsize);
 uint64_t sys_rt_sigreturn(void);
+uint64_t sys_rt_sigtimedwait(uint64_t set_addr, uint64_t info_addr,
+                             uint64_t timeout_addr, uint64_t sigsetsize);
 
 /* ── Open file descriptor table (for lseek support) ────────────── */
 
@@ -9643,6 +9645,8 @@ uint64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2,
             return sys_rt_sigprocmask(a1, a2, a3, a4);
         case SYS_RT_SIGRETURN:
             return sys_rt_sigreturn();
+        case SYS_RT_SIGTIMEDWAIT:
+            return sys_rt_sigtimedwait(a1, a2, a3, a4);
         default: {
             uint64_t ret = (uint64_t)-1;
             audit_syscall_exit(ret);

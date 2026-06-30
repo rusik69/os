@@ -19,6 +19,8 @@
 #include "signal_libc.h"    /* for struct sigaction (userspace ABI) */
 #include "signal_frame.h"   /* for ucontext_t, sigcontext */
 #include "vmm.h"            /* for USER_VADDR_MAX */
+#include "timer.h"          /* for TIMER_FREQ, NS_PER_TICK, timer_get_ticks */
+#include "scheduler.h"      /* for scheduler_remove, scheduler_yield */
 
 /* Module metadata */
 MODULE_LICENSE("GPL v2");
@@ -271,4 +273,146 @@ uint64_t sys_rt_sigreturn(void)
      * sees the rax value it had before the signal interrupted it,
      * not the return value of the sigreturn syscall itself. */
     return uc.uc_mcontext.rax;
+}
+
+/* ── sys_rt_sigtimedwait — synchronously wait for signals ────────
+ *
+ *   int rt_sigtimedwait(const sigset_t *set, siginfo_t *info,
+ *                        const struct timespec *timeout,
+ *                        size_t sigsetsize);
+ *
+ * Suspends the calling thread until one of the signals in `set` is
+ * pending.  If a signal in `set` is already pending at the time of
+ * the call, it is consumed and returned immediately.
+ *
+ * If `info` is non-NULL, the siginfo_t associated with the signal
+ * is returned there (if available, otherwise zeroed with si_signo
+ * and si_code set).
+ *
+ * If `timeout` is NULL, wait indefinitely.
+ * If `timeout` points to a zero-valued timespec {0, 0}, poll once
+ * and return -EAGAIN if no signal is pending.
+ *
+ * Returns the signal number on success, -errno on error.
+ */
+uint64_t sys_rt_sigtimedwait(uint64_t set_addr, uint64_t info_addr,
+                             uint64_t timeout_addr, uint64_t sigsetsize)
+{
+    struct process *p = process_get_current();
+    if (!p)
+        return (uint64_t)(int64_t)-ESRCH;
+
+    /* Validate sigsetsize — must match kernel's sigset_t size */
+    if (sigsetsize != sizeof(uint64_t))
+        return (uint64_t)(int64_t)-EINVAL;
+
+    /* Read the signal set from userspace */
+    uint64_t sig_set = 0;
+    if (copy_from_user(&sig_set, set_addr, sizeof(sig_set)) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
+
+    /* Empty set is invalid */
+    if (sig_set == 0)
+        return (uint64_t)(int64_t)-EINVAL;
+
+    /* Mask out signals that can't be waited on */
+    sig_set &= ~((1ULL << SIGKILL) | (1ULL << SIGSTOP));
+
+    /* Parse timeout */
+    int poll_mode = 0;         /* 1 = return -EAGAIN if no signal pending now */
+    uint64_t timeout_abs = 0;  /* absolute tick deadline (0 = no timeout) */
+    if (timeout_addr) {
+        struct timespec ts;
+        if (copy_from_user(&ts, timeout_addr, sizeof(ts)) < 0)
+            return (uint64_t)(int64_t)-EFAULT;
+
+        if (ts.tv_sec == 0 && ts.tv_nsec == 0) {
+            poll_mode = 1;
+        } else {
+            /* Convert timespec to ticks, rounding up so we don't wake early */
+            uint64_t timeout_ticks = ts.tv_sec * (uint64_t)TIMER_FREQ;
+            timeout_ticks += (ts.tv_nsec + (uint64_t)NS_PER_TICK - 1)
+                             / (uint64_t)NS_PER_TICK;
+            if (timeout_ticks > 0)
+                timeout_abs = timer_get_ticks() + timeout_ticks;
+            else
+                timeout_abs = timer_get_ticks() + 1; /* at least 1 tick */
+        }
+    }
+
+    uint64_t __sig_flags;
+
+    for (;;) {
+        spinlock_irqsave_acquire(&p->sig_lock, &__sig_flags);
+
+        /* Check for any pending signal in our set */
+        uint64_t pending = p->pending_signals & sig_set;
+        if (pending) {
+            /* Found one — pick the lowest-numbered signal */
+            int signum = __builtin_ctzll(pending);
+            if (signum > 0 && signum < SIG_MAX) {
+                p->pending_signals &= ~(1ULL << signum);
+
+                /* Capture siginfo if available */
+                struct siginfo saved_info;
+                memset(&saved_info, 0, sizeof(saved_info));
+                int have_info = 0;
+                if (p->sig_info[signum].si_signo == signum) {
+                    memcpy(&saved_info, &p->sig_info[signum], sizeof(saved_info));
+                    memset(&p->sig_info[signum], 0, sizeof(struct siginfo));
+                    have_info = 1;
+                } else {
+                    saved_info.si_signo = signum;
+                    saved_info.si_code  = SI_USER;
+                }
+
+                p->sigwait_mask = 0;
+                spinlock_irqsave_release(&p->sig_lock, __sig_flags);
+
+                /* Copy info to userspace if requested */
+                if (info_addr) {
+                    if (copy_to_user(info_addr, &saved_info,
+                                     sizeof(saved_info)) < 0)
+                        return (uint64_t)(int64_t)-EFAULT;
+                }
+
+                return (uint64_t)(int64_t)signum;
+            }
+        }
+
+        /* Poll mode: no pending signal, return immediately */
+        if (poll_mode) {
+            p->sigwait_mask = 0;
+            spinlock_irqsave_release(&p->sig_lock, __sig_flags);
+            return (uint64_t)(int64_t)-EAGAIN;
+        }
+
+        /* Check timeout expiration */
+        if (timeout_abs != 0) {
+            uint64_t now = timer_get_ticks();
+            if (now >= timeout_abs) {
+                p->sigwait_mask = 0;
+                spinlock_irqsave_release(&p->sig_lock, __sig_flags);
+                return (uint64_t)(int64_t)-EAGAIN;
+            }
+        }
+
+        /* Block until a signal arrives (woken by signal_send) or timeout */
+        p->sigwait_mask = sig_set;
+        if (timeout_abs != 0)
+            p->sleep_until = timeout_abs;
+        else
+            p->sleep_until = 0;  /* unlimited wait */
+
+        p->state = PROCESS_BLOCKED;
+        scheduler_remove(p);
+        spinlock_irqsave_release(&p->sig_lock, __sig_flags);
+
+        scheduler_yield();
+
+        /* Woken up — loop back and re-check pending signals.
+         * signal_send (with sigwait_mask match) or scheduler_wake_sleepers
+         * (timeout expired) woke us.  sigwait_mask is cleared by the
+         * waker. */
+    }
 }

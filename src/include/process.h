@@ -318,6 +318,7 @@ struct process {
     uint64_t locked_pages;   /* total pages locked via mlock/mlockall */
     /* ── Signal lock for SMP safety (T3) ──────────────────────── */
     spinlock_t sig_lock;     /* guards pending_signals/state/exit_code */
+    uint64_t sigwait_mask;   /* signals blocked on in sigtimedwait (0 = none) */
 };
 
 void process_init(void);
