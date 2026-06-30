@@ -15,6 +15,7 @@
 #include "string.h"
 #include "printf.h"
 #include "timer.h"
+#include "delay.h"
 
 /* ── Hub class constants ───────────────────────────────────────────── */
 
@@ -130,10 +131,16 @@ struct hub_state {
     uint8_t  power_good_delay;  /* in 2 ms units */
     uint8_t  port_powered[USB_MAX_PORTS_PER_HUB];
     uint16_t port_status[USB_MAX_PORTS_PER_HUB];
+    uint64_t debounce_until[USB_MAX_PORTS_PER_HUB]; /* timestamp when debounce completes */
+    uint8_t  debounce_pending[USB_MAX_PORTS_PER_HUB]; /* non-zero if debounce in progress */
 };
 
 static struct hub_state g_hubs[USB_MAX_HUBS];
 static int g_hub_count = 0;
+
+/* ── Forward declarations for static functions ───────────────────── */
+static int hub_port_debounce(struct hub_state *hub, int port, uint16_t status);
+static int hub_port_over_current_recover(struct hub_state *hub, int port);
 
 /* ── DMA / MMIO helpers ────────────────────────────────────────────── */
 
@@ -313,7 +320,11 @@ static void hub_enum_device(struct hub_state *hub, uint8_t port) {
     if (!(status & PORT_STATUS_CONNECTION)) return;
     if (!(status & PORT_STATUS_ENABLE)) return;
 
-    int speed = PORT_STATUS_HIGH_SPEED ? 2 : 1;
+    int speed = 0;  /* full speed (12 Mbps) */
+    if (status & PORT_STATUS_HIGH_SPEED)
+        speed = 2;  /* high speed (480 Mbps) */
+    else if (status & PORT_STATUS_LOW_SPEED)
+        speed = 1;  /* low speed (1.5 Mbps) */
 
     /* Register with core USB layer */
     if (usb_get_device_count() < USB_MAX_DEVICES) {
@@ -404,28 +415,70 @@ void usb_hub_poll(void) {
 
         for (int p = 1; p <= hub->n_ports; p++) {
             uint16_t status = 0, change = 0;
-            if (hub_get_port_status(hub->dev_addr, p, &status, &change) < 0)
+            if (hub_get_port_status(hub->dev_addr, (uint8_t)p, &status, &change) < 0)
                 continue;
 
+            /* Connection change detected */
             if (change & PORT_CHANGE_C_CONNECTION) {
-                /* Clear change bit */
-                hub_clear_feature(hub->dev_addr, HUB_FEATURE_C_PORT_CONNECTION, p);
+                /* Clear the change bit first */
+                hub_clear_feature(hub->dev_addr, HUB_FEATURE_C_PORT_CONNECTION, (uint16_t)p);
 
                 if (status & PORT_STATUS_CONNECTION) {
-                    kprintf("[USB HUB] Port %d: device connected\n", p);
-                    hub_enum_device(hub, p);
+                    kprintf("[USB HUB] Port %d: device connected, debouncing...\n", p);
+                    /* Start debounce */
+                    int db = hub_port_debounce(hub, p, status);
+                    if (db < 0) {
+                        kprintf("[USB HUB] Port %d: debounce error\n", p);
+                    }
                 } else {
                     kprintf("[USB HUB] Port %d: device disconnected\n", p);
+                    /* Clear any pending debounce */
+                    hub->debounce_pending[p - 1] = 0;
                 }
             }
 
-            if (change & PORT_CHANGE_C_RESET) {
-                hub_clear_feature(hub->dev_addr, HUB_FEATURE_C_PORT_RESET, p);
+            /* If we had a pending debounce, check it */
+            if (hub->debounce_pending[p - 1]) {
+                int db = hub_port_debounce(hub, p, status);
+                if (db > 0) {
+                    /* Debounce passed — connection is stable */
+                    kprintf("[USB HUB] Port %d: debounce stable, enumerating...\n", p);
+                    hub_enum_device(hub, (uint8_t)p);
+                } else if (db < 0) {
+                    kprintf("[USB HUB] Port %d: debounce failed\n", p);
+                    hub->debounce_pending[p - 1] = 0;
+                }
+                /* db == 0: still debouncing, continue polling */
             }
 
-            if (change & PORT_CHANGE_C_ENABLE) {
-                hub_clear_feature(hub->dev_addr, HUB_FEATURE_C_PORT_ENABLE, p);
+            /* Over-current change */
+            if (change & PORT_CHANGE_C_OVER_CURRENT) {
+                kprintf("[USB HUB] Port %d: over-current detected\n", p);
+                hub_port_over_current_recover(hub, p);
             }
+
+            /* Enable change */
+            if (change & PORT_CHANGE_C_ENABLE) {
+                hub_clear_feature(hub->dev_addr, HUB_FEATURE_C_PORT_ENABLE, (uint16_t)p);
+                kprintf("[USB HUB] Port %d: %s\n", p,
+                        (status & PORT_STATUS_ENABLE) ? "enabled" : "disabled");
+            }
+
+            /* Suspend change */
+            if (change & PORT_CHANGE_C_SUSPEND) {
+                hub_clear_feature(hub->dev_addr, HUB_FEATURE_C_PORT_SUSPEND, (uint16_t)p);
+                kprintf("[USB HUB] Port %d: %s\n", p,
+                        (status & PORT_STATUS_SUSPEND) ? "suspended" : "resumed");
+            }
+
+            /* Reset complete */
+            if (change & PORT_CHANGE_C_RESET) {
+                hub_clear_feature(hub->dev_addr, HUB_FEATURE_C_PORT_RESET, (uint16_t)p);
+                kprintf("[USB HUB] Port %d: reset completed\n", p);
+            }
+
+            /* Update cached status */
+            hub->port_status[p - 1] = status;
         }
     }
 }
@@ -478,26 +531,186 @@ int usb_hub_init(void) {
     return 0;
 }
 
-/* ── Stub: usb_hub_port_reset ─────────────────────────────── */
-int usb_hub_port_reset(void *hub, int port)
+/* ── Hub port reset ────────────────────────────────────────── */
+int usb_hub_port_reset(void *hub_ptr, int port)
 {
-    (void)hub;
-    (void)port;
-    kprintf("[USB] usb_hub_port_reset: not yet implemented\n");
+    struct hub_state *hub = (struct hub_state *)hub_ptr;
+    if (!hub || port < 0 || port > hub->n_ports)
+        return -1;
+
+    /* Set PORT_RESET feature on the hub */
+    int rc = hub_set_port_feature(hub->dev_addr, HUB_FEATURE_PORT_RESET, (uint16_t)port);
+    if (rc < 0)
+        return rc;
+
+    /* Wait for reset to complete (USB 2.0 spec: 50 ms reset time) */
+    mdelay(50);
+
+    /* Clear C_PORT_RESET change bit */
+    hub_clear_feature(hub->dev_addr, HUB_FEATURE_C_PORT_RESET, (uint16_t)port);
+
     return 0;
 }
-/* ── Stub: usb_hub_port_enable ─────────────────────────────── */
-int usb_hub_port_enable(void *hub, int port)
+
+/* ── Hub port enable/disable ───────────────────────────────── */
+int usb_hub_port_enable(void *hub_ptr, int port)
 {
-    (void)hub;
-    (void)port;
-    kprintf("[USB] usb_hub_port_enable: not yet implemented\n");
+    struct hub_state *hub = (struct hub_state *)hub_ptr;
+    if (!hub || port < 0 || port > hub->n_ports)
+        return -1;
+
+    /* Set PORT_ENABLE feature to enable the port */
+    return hub_set_port_feature(hub->dev_addr, HUB_FEATURE_PORT_ENABLE, (uint16_t)port);
+}
+
+/* ── Hub port disable ───────────────────────────────────────── */
+int usb_hub_port_disable(void *hub_ptr, int port)
+{
+    struct hub_state *hub = (struct hub_state *)hub_ptr;
+    if (!hub || port < 0 || port > hub->n_ports)
+        return -1;
+
+    /* Clear PORT_ENABLE to disable the port */
+    return hub_clear_feature(hub->dev_addr, HUB_FEATURE_PORT_ENABLE, (uint16_t)port);
+}
+
+/* ── Hub port power control ─────────────────────────────────── */
+int usb_hub_port_power(void *hub_ptr, int port, int on)
+{
+    struct hub_state *hub = (struct hub_state *)hub_ptr;
+    if (!hub || port < 0 || port > hub->n_ports)
+        return -1;
+
+    if (on) {
+        return hub_set_port_feature(hub->dev_addr, HUB_FEATURE_PORT_POWER, (uint16_t)port);
+    } else {
+        return hub_clear_feature(hub->dev_addr, HUB_FEATURE_PORT_POWER, (uint16_t)port);
+    }
+}
+
+/* ── Hub port over-current recovery ─────────────────────────── */
+static int hub_port_over_current_recover(struct hub_state *hub, int port)
+{
+    kprintf("[USB HUB] Port %d: over-current condition, disabling port\n", port);
+
+    /* Disable the port */
+    int rc = hub_clear_feature(hub->dev_addr, HUB_FEATURE_PORT_ENABLE, (uint16_t)port);
+    if (rc < 0)
+        return rc;
+
+    /* Clear the over-current change */
+    rc = hub_clear_feature(hub->dev_addr, HUB_FEATURE_C_PORT_OVER_CURRENT, (uint16_t)port);
+    if (rc < 0)
+        return rc;
+
+    /* Wait 100 ms for over-current to clear */
+    mdelay(100);
+
+    /* Re-enable the port */
+    rc = hub_set_port_feature(hub->dev_addr, HUB_FEATURE_PORT_ENABLE, (uint16_t)port);
+    if (rc < 0)
+        return rc;
+
+    kprintf("[USB HUB] Port %d: over-current cleared, port re-enabled\n", port);
     return 0;
 }
-/* ── Stub: usb_hub_detect ─────────────────────────────── */
-int usb_hub_detect(void *hub)
+
+/* ── Hub port debounce ──────────────────────────────────────── */
+/*
+ * Debounce a port connection change.  Returns 1 when the connection
+ * is stable (debounce passed), 0 while still debouncing, negative on error.
+ */
+static int hub_port_debounce(struct hub_state *hub, int port, uint16_t status)
 {
-    (void)hub;
-    kprintf("[USB] usb_hub_detect: not yet implemented\n");
-    return 0;
+    uint64_t now = timer_get_ticks();
+
+    /* Debounce time: 100 ms (USB 2.0 spec §7.1.7.3: 100 ms debounce) */
+    const uint64_t debounce_ms = 100;
+
+    if (!hub->debounce_pending[port - 1]) {
+        /* Start debouncing */
+        hub->debounce_pending[port - 1] = 1;
+        hub->debounce_until[port - 1] = now + (debounce_ms * 100 / 1000);
+        return 0;
+    }
+
+    /* Check if debounce timer expired */
+    if (now < hub->debounce_until[port - 1])
+        return 0;
+
+    /* Debounce done — check if the connection state is still valid */
+    hub->debounce_pending[port - 1] = 0;
+
+    uint16_t final_status = 0;
+    uint16_t final_change = 0;
+    if (hub_get_port_status(hub->dev_addr, (uint8_t)port, &final_status, &final_change) < 0)
+        return -1;
+
+    if (!!(final_status & PORT_STATUS_CONNECTION) != !!(status & PORT_STATUS_CONNECTION)) {
+        /* State changed during debounce — restart */
+        kprintf("[USB HUB] Port %d: connection state changed during debounce, "
+                "restarting\n", port);
+        return 0;  /* caller will re-detect on next poll */
+    }
+
+    return 1;  /* Connection stable */
+}
+
+/* ── Detect port status changes on all hubs ─────────────────── */
+int usb_hub_detect(void)
+{
+    int changes = 0;
+
+    for (int h = 0; h < g_hub_count; h++) {
+        struct hub_state *hub = &g_hubs[h];
+
+        for (int p = 1; p <= hub->n_ports; p++) {
+            uint16_t status = 0, change = 0;
+            if (hub_get_port_status(hub->dev_addr, (uint8_t)p, &status, &change) < 0)
+                continue;
+
+            if (change != 0) {
+                changes++;
+                kprintf("[USB HUB] Hub %d port %d: status=0x%04x change=0x%04x\n",
+                        h, p, status, change);
+            }
+
+            /* Handle connection changes with debounce */
+            if (change & PORT_CHANGE_C_CONNECTION) {
+                hub_clear_feature(hub->dev_addr, HUB_FEATURE_C_PORT_CONNECTION, (uint16_t)p);
+                kprintf("[USB HUB] Port %d: connection change%s\n", p,
+                        (status & PORT_STATUS_CONNECTION) ? " (connected)" : " (disconnected)");
+            }
+
+            /* Handle over-current */
+            if (change & PORT_CHANGE_C_OVER_CURRENT) {
+                hub_port_over_current_recover(hub, p);
+            }
+
+            /* Handle enable changes */
+            if (change & PORT_CHANGE_C_ENABLE) {
+                hub_clear_feature(hub->dev_addr, HUB_FEATURE_C_PORT_ENABLE, (uint16_t)p);
+                kprintf("[USB HUB] Port %d: enable change -> %s\n", p,
+                        (status & PORT_STATUS_ENABLE) ? "enabled" : "disabled");
+            }
+
+            /* Handle suspend changes */
+            if (change & PORT_CHANGE_C_SUSPEND) {
+                hub_clear_feature(hub->dev_addr, HUB_FEATURE_C_PORT_SUSPEND, (uint16_t)p);
+                kprintf("[USB HUB] Port %d: suspend change -> %s\n", p,
+                        (status & PORT_STATUS_SUSPEND) ? "suspended" : "resumed");
+            }
+
+            /* Handle reset completion */
+            if (change & PORT_CHANGE_C_RESET) {
+                hub_clear_feature(hub->dev_addr, HUB_FEATURE_C_PORT_RESET, (uint16_t)p);
+                kprintf("[USB HUB] Port %d: reset complete\n", p);
+            }
+
+            /* Update cached status */
+            hub->port_status[p - 1] = status;
+        }
+    }
+
+    return changes;
 }
