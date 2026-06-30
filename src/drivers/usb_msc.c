@@ -19,6 +19,7 @@
 #include "string.h"
 #include "printf.h"
 #include "types.h"
+#include "errno.h"
 
 /* ── EHCI TD / QH structures ─────────────────────────────────────────────── */
 
@@ -273,6 +274,35 @@ static int usb_control(uint8_t bm_req_type, uint8_t b_req,
     return rc;
 }
 
+/* ── CLEAR_FEATURE(ENDPOINT_HALT) ────────────────────────────────────────── */
+/*
+ * USB 2.0 spec §9.4.1: Clear a feature on a device, interface, or endpoint.
+ * For BBB stall recovery, we call CLEAR_FEATURE(ENDPOINT_HALT) on the bulk
+ * endpoint that stalled.  The wIndex is the endpoint address (ep_num | dir).
+ * Returns 0 on success, negative on error.
+ */
+static int usb_clear_halt(uint8_t dev_addr, uint8_t ep_addr)
+{
+    (void)dev_addr;
+    /* bmRequestType = 0x02 (Standard, Endpoint, Host-to-Device) */
+    return usb_control(0x02, USB_REQ_CLEAR_FEATURE,
+                       USB_FEATURE_ENDPOINT_HALT, ep_addr, 0, (void *)0);
+}
+
+/* ── BOT Mass Storage Reset (class-specific request) ─────────────────────── */
+/*
+ * USB Mass Storage Class spec §3.1: Bulk-Only Transport Reset.
+ * Resets the mass storage device's BBB state machine.
+ * Returns 0 on success, negative on error.
+ */
+static int bot_reset(void)
+{
+    /* bmRequestType = 0x21 (Class, Interface, Host-to-Device)
+     * bRequest = 0xFF (Bulk-Only Mass Storage Reset)
+     * wValue = 0, wIndex = interface 0 */
+    return usb_control(0x21, 0xFF, 0, 0, 0, (void *)0);
+}
+
 /* ── BOT bulk transfer helpers ───────────────────────────────────────────── */
 
 static int bot_send_cbw(struct bot_cbw *cbw)
@@ -292,14 +322,192 @@ static int bot_send_data(const void *buf, uint32_t len)
                             (void *)buf, len, 0);
 }
 
-static int bot_recv_csw(struct bot_csw *csw)
+static int bot_recv_csw(struct bot_csw *csw, struct bot_cbw *cbw)
 {
     int rc = ehci_do_transfer(QTD_PID_IN, g_bulk_in_ep,
                               csw, sizeof(*csw), 1);
     if (rc < 0) return rc;
-    if (csw->signature != BOT_CSW_SIGNATURE) return -10;
-    if (csw->status != 0) return -11;
+
+    /* Validate CSW (USB MSC spec §6.3) */
+    if (csw->signature != BOT_CSW_SIGNATURE)
+        return -EIO;
+    if (cbw && csw->tag != cbw->tag)
+        return -EPROTO;
+
+    /* status: 0=good, 1=failed, 2=phase error */
+    if (csw->status == 1)
+        return -EIO;
+    if (csw->status == 2)
+        return -EPROTO;
+
     return 0;
+}
+
+/* ── SCSI command execution with stall recovery ──────────────────────────── */
+/*
+ * Execute a SCSI command over BBB, with automatic stall recovery:
+ * 1. Send CBW
+ * 2. Send/receive data (if wlen > 0)
+ * 3. Receive CSW
+ * 4. If any step stalls → do CLEAR_FEATURE on the stalled endpoint,
+ *    do BOT reset, and retry once.
+ *
+ * @cdb:       SCSI command descriptor block (6–16 bytes)
+ * @cdb_len:   CDB length in bytes
+ * @data:      Data buffer (NULL for no data phase)
+ * @data_len:  Data transfer length
+ * @dir:       0 = data out (host→device), 1 = data in (device→host)
+ * @tag:       CBW tag (output — filled from g_tag)
+ * Returns 0 on success, negative errno on failure.
+ */
+static int scsi_execute(const uint8_t *cdb, int cdb_len,
+                        void *data, uint32_t data_len, int dir)
+{
+    struct bot_cbw *cbw = (struct bot_cbw *)alloc_dma(sizeof(*cbw));
+    struct bot_csw *csw = (struct bot_csw *)alloc_dma(sizeof(*csw));
+    if (!cbw || !csw) {
+        if (cbw) pmm_free_frame(VIRT_TO_PHYS((uint64_t)cbw));
+        if (csw) pmm_free_frame(VIRT_TO_PHYS((uint64_t)csw));
+        return -ENOMEM;
+    }
+
+    int rc;
+    int stalled = 0;
+    int max_retries = 2;
+
+    do {
+        /* Build CBW */
+        cbw->signature = BOT_CBW_SIGNATURE;
+        cbw->tag       = g_tag++;
+        cbw->data_len  = data_len;
+        cbw->flags     = (uint8_t)(dir ? 0x80 : 0x00);
+        cbw->lun       = 0;
+        cbw->cb_len    = (uint8_t)(cdb_len & 0xFF);
+        memset(cbw->cb, 0, 16);
+        memcpy(cbw->cb, cdb, (size_t)(cdb_len < 16 ? cdb_len : 16));
+
+        rc = bot_send_cbw(cbw);
+        if (rc < 0) {
+            /* Out endpoint stalled — clear halt + reset */
+            rc = usb_clear_halt(g_dev_addr, g_bulk_out_ep);
+            if (rc == 0) rc = bot_reset();
+            if (rc == 0) stalled = 1;
+            continue;
+        }
+
+        if (data_len && data) {
+            if (dir) {
+                rc = bot_recv_data(data, data_len);
+            } else {
+                rc = bot_send_data(data, data_len);
+            }
+            if (rc < 0) {
+                /* Determine which endpoint stalled */
+                uint8_t stalled_ep = dir ? g_bulk_in_ep : g_bulk_out_ep;
+                rc = usb_clear_halt(g_dev_addr, stalled_ep);
+                if (rc == 0) rc = bot_reset();
+                if (rc == 0) stalled = 1;
+                continue;
+            }
+        }
+
+        rc = bot_recv_csw(csw, cbw);
+        if (rc < 0) {
+            /* CSW phase error — BOT reset required */
+            usb_clear_halt(g_dev_addr, g_bulk_in_ep);
+            bot_reset();
+            stalled = 1;
+            continue;
+        }
+        rc = 0;  /* success */
+        break;
+
+    } while (stalled && --max_retries > 0);
+
+    if (rc != 0) {
+        kprintf("  USB MSC: SCSI cmd 0x%02x failed: %d\n",
+                cdb[0], rc);
+    }
+
+    pmm_free_frame(VIRT_TO_PHYS((uint64_t)cbw));
+    pmm_free_frame(VIRT_TO_PHYS((uint64_t)csw));
+    return rc;
+}
+
+/* ── SCSI INQUIRY (0x12) ─────────────────────────────────────────────────── */
+#define SCSI_INQUIRY_LEN 36
+
+static int scsi_inquiry(uint8_t *vendor, size_t vendor_sz,
+                        uint8_t *product, size_t product_sz)
+{
+    uint8_t *buf = (uint8_t *)alloc_dma(SCSI_INQUIRY_LEN);
+    if (!buf) return -ENOMEM;
+
+    uint8_t cdb[6] = {0x12, 0, 0, 0, SCSI_INQUIRY_LEN, 0};
+    int rc = scsi_execute(cdb, 6, buf, SCSI_INQUIRY_LEN, 1);
+
+    if (rc == 0 && vendor && vendor_sz > 0) {
+        size_t vlen = vendor_sz - 1;
+        if (vlen > 8) vlen = 8;
+        memcpy(vendor, buf + 8, vlen);
+        vendor[vlen] = '\0';
+    }
+    if (rc == 0 && product && product_sz > 0) {
+        size_t plen = product_sz - 1;
+        if (plen > 16) plen = 16;
+        memcpy(product, buf + 16, plen);
+        product[plen] = '\0';
+    }
+
+    if (rc == 0) {
+        kprintf("  USB MSC: INQUIRY — %.8s %.16s rev=%.4s\n",
+                (const char *)(buf + 8), (const char *)(buf + 16),
+                (const char *)(buf + 32));
+    }
+
+    pmm_free_frame(VIRT_TO_PHYS((uint64_t)buf));
+    return rc;
+}
+
+/* ── SCSI TEST UNIT READY (0x00) ─────────────────────────────────────────── */
+static int scsi_test_unit_ready(void)
+{
+    uint8_t cdb[6] = {0x00, 0, 0, 0, 0, 0};
+    return scsi_execute(cdb, 6, (void *)0, 0, 0);
+}
+
+/* ── SCSI REQUEST SENSE (0x03) ───────────────────────────────────────────── */
+struct scsi_sense_data {
+    uint8_t  response_code;
+    uint8_t  _rsvd0;
+    uint8_t  sense_key;
+    uint8_t  info[4];
+    uint8_t  additional_len;
+    uint8_t  _rsvd1[4];
+    uint8_t  asc;
+    uint8_t  ascq;
+    uint8_t  _rsvd2[4];
+} __attribute__((packed));
+
+static int scsi_request_sense(uint8_t *sense_key, uint8_t *asc, uint8_t *ascq)
+{
+    struct scsi_sense_data *sense =
+        (struct scsi_sense_data *)alloc_dma(sizeof(*sense));
+    if (!sense) return -ENOMEM;
+
+    uint8_t cdb[6] = {0x03, 0, 0, 0, sizeof(*sense), 0};
+    int rc = scsi_execute(cdb, 6, sense, sizeof(*sense), 1);
+
+    if (rc == 0) {
+        if (sense_key) *sense_key = sense->sense_key & 0x0F;
+        if (asc)       *asc       = sense->asc;
+        if (ascq)      *ascq      = sense->ascq;
+        kprintf("  USB MSC: SENSE key=0x%02x ASC=0x%02x ASCQ=0x%02x\n",
+                sense->sense_key & 0x0F, sense->asc, sense->ascq);
+    }
+
+    pmm_free_frame(VIRT_TO_PHYS((uint64_t)sense));
+    return rc;
 }
 
 /* ── SCSI READ CAPACITY (10) ─────────────────────────────────────────────── */
@@ -321,7 +529,7 @@ static int scsi_read_capacity(uint32_t *max_lba_out)
 
     int rc = bot_send_cbw(cbw);
     if (rc == 0) rc = bot_recv_data(buf, 8);
-    if (rc == 0) rc = bot_recv_csw(csw);
+    if (rc == 0) rc = bot_recv_csw(csw, cbw);
 
     if (rc == 0) {
         uint32_t lba = ((uint32_t)buf[0] << 24) | ((uint32_t)buf[1] << 16)
@@ -359,7 +567,7 @@ static int scsi_read10(uint32_t lba, uint8_t count, void *buf)
 
     int rc = bot_send_cbw(cbw);
     if (rc == 0) rc = bot_recv_data(buf, (uint32_t)count * 512);
-    if (rc == 0) rc = bot_recv_csw(csw);
+    if (rc == 0) rc = bot_recv_csw(csw, cbw);
 
     pmm_free_frame(VIRT_TO_PHYS((uint64_t)cbw));
     pmm_free_frame(VIRT_TO_PHYS((uint64_t)csw));
@@ -390,7 +598,7 @@ static int scsi_write10(uint32_t lba, uint8_t count, const void *buf)
 
     int rc = bot_send_cbw(cbw);
     if (rc == 0) rc = bot_send_data(buf, (uint32_t)count * 512);
-    if (rc == 0) rc = bot_recv_csw(csw);
+    if (rc == 0) rc = bot_recv_csw(csw, cbw);
 
     pmm_free_frame(VIRT_TO_PHYS((uint64_t)cbw));
     pmm_free_frame(VIRT_TO_PHYS((uint64_t)csw));
@@ -416,6 +624,108 @@ uint32_t usb_msc_get_sectors(void)
 
 /* ── Public init / exit ─────────────────────────────────────────── */
 
+/*
+ * Parse the configuration descriptor to find MSC interface with bulk endpoints.
+ * Walks sub-descriptors searching for:
+ *   - Interface descriptor with bInterfaceClass = 0x08 (MSC)
+ *   - Bulk IN and Bulk OUT endpoint descriptors within that interface
+ * Updates g_bulk_in_ep and g_bulk_out_ep on success.
+ * Returns 0 on success, negative on error.
+ */
+static int usb_msc_parse_config(void)
+{
+    /* First get config descriptor header (9 bytes) to learn total length */
+    uint8_t hdr[9];
+    int rc = usb_control(0x80, USB_REQ_GET_DESCRIPTOR,
+                         0x0200, 0, 9, hdr);
+    if (rc < 0) {
+        kprintf("  USB MSC: GET_CONFIG_DESC header failed (%d)\n", rc);
+        return rc;
+    }
+
+    uint16_t total_len = (uint16_t)hdr[2] | ((uint16_t)hdr[3] << 8);
+    if (total_len < 9 || total_len > 512) {
+        kprintf("  USB MSC: invalid config descriptor length %u\n",
+                (unsigned)total_len);
+        return -EINVAL;
+    }
+
+    /* Allocate buffer for full config descriptor */
+    uint8_t *config = (uint8_t *)alloc_dma((size_t)total_len);
+    if (!config) return -ENOMEM;
+
+    rc = usb_control(0x80, USB_REQ_GET_DESCRIPTOR,
+                     0x0200, 0, total_len, config);
+    if (rc < 0) {
+        kprintf("  USB MSC: GET_CONFIG_DESC full failed (%d)\n", rc);
+        pmm_free_frame(VIRT_TO_PHYS((uint64_t)config));
+        return rc;
+    }
+
+    /* Walk sub-descriptors looking for MSC interface */
+    int found = 0;
+    uint16_t offset = config[0];  /* skip config descriptor header */
+    while (offset + 1 < total_len) {
+        uint8_t desc_len = config[offset];
+        uint8_t desc_type = config[offset + 1];
+
+        if (desc_len == 0) break;  /* malformed: prevent infinite loop */
+        if (offset + desc_len > total_len) break;
+
+        if (desc_type == USB_DT_INTERFACE && desc_len >= 9) {
+            uint8_t if_class = config[offset + 5];
+            if (if_class == 0x08) {  /* Mass Storage Class */
+                /* Walk endpoints inside this interface */
+                uint8_t num_ep = config[offset + 4];
+                uint16_t ep_offset = offset + desc_len;
+                int found_in = 0, found_out = 0;
+
+                while (num_ep > 0 && ep_offset + 1 < total_len) {
+                    uint8_t ep_len = config[ep_offset];
+                    uint8_t ep_type = config[ep_offset + 1];
+
+                    if (ep_len == 0) break;
+                    if (ep_type == USB_DT_ENDPOINT && ep_len >= 7) {
+                        uint8_t ep_addr = config[ep_offset + 2];
+                        uint8_t ep_attr = config[ep_offset + 3];
+
+                        if ((ep_attr & USB_ENDPOINT_XFERTYPE_MASK) ==
+                            USB_ENDPOINT_XFER_BULK) {
+                            if (ep_addr & USB_ENDPOINT_DIR_IN) {
+                                g_bulk_in_ep = ep_addr;
+                                found_in = 1;
+                            } else {
+                                g_bulk_out_ep = ep_addr;
+                                found_out = 1;
+                            }
+                            num_ep--;
+                        }
+                    }
+                    ep_offset += ep_len;
+                }
+
+                if (found_in && found_out) {
+                    found = 1;
+                    break;
+                }
+            }
+        }
+
+        offset = (uint16_t)(offset + desc_len);
+    }
+
+    pmm_free_frame(VIRT_TO_PHYS((uint64_t)config));
+
+    if (!found) {
+        kprintf("  USB MSC: no bulk endpoints found in config\n");
+        return -ENODEV;
+    }
+
+    kprintf("  USB MSC: bulk IN=0x%02x bulk OUT=0x%02x\n",
+            g_bulk_in_ep, g_bulk_out_ep);
+    return 0;
+}
+
 int usb_msc_init(void)
 {
     if (!usb_is_present()) return -1;
@@ -424,41 +734,39 @@ int usb_msc_init(void)
     g_op_base = ehci_get_op_base();
     if (!g_op_base) return -3;
 
-    /*
-     * The EHCI driver already reset the port and detected the device.
-     * We assume the device is a high-speed MSC with standard endpoint
-     * numbers (bulk-in=1, bulk-out=2).  For real hardware we would
-     * read the configuration descriptor; that requires control transfers
-     * to endpoint 0 which we do here via usb_control().
-     */
+    /* Reset device state */
+    g_bulk_in_ep  = 0x81;   /* default: EP1 IN */
+    g_bulk_out_ep = 0x02;   /* default: EP2 OUT */
+    g_tag = 1;
+    g_max_lba = 0;
 
     /* SET_ADDRESS (standard SETUP to ep0, device address = 1) */
-    int rc = usb_control(0x00, 0x05, g_dev_addr, 0, 0, (void *)0);
+    int rc = usb_control(0x00, USB_REQ_SET_ADDRESS, g_dev_addr, 0, 0, (void *)0);
     if (rc < 0) {
-        kprintf("  USB MSC: SET_ADDRESS failed (%ld)\n", (unsigned long)rc);
+        kprintf("  USB MSC: SET_ADDRESS failed (%d)\n", rc);
         return rc;
     }
     busy_wait(50000);
 
     /* GET_DESCRIPTOR — device descriptor (just to confirm it's alive) */
     uint8_t *desc = (uint8_t *)alloc_dma(18);
-    if (!desc) return -4;
-    rc = usb_control(0x80, 0x06, 0x0100, 0, 18, desc);
+    if (!desc) return -ENOMEM;
+    rc = usb_control(0x80, USB_REQ_GET_DESCRIPTOR, 0x0100, 0, 18, desc);
     if (rc < 0) {
-        kprintf("  USB MSC: GET_DESCRIPTOR failed (%ld)\n", (unsigned long)rc);
-        pmm_free_frame(VIRT_TO_PHYS((unsigned long)desc));
+        kprintf("  USB MSC: GET_DESCRIPTOR failed (%d)\n", rc);
+        pmm_free_frame(VIRT_TO_PHYS((uint64_t)desc));
         return rc;
     }
     /* Validate device descriptor contents */
     if (desc[0] != 18) {
         kprintf("  USB MSC: invalid descriptor length (%u)\n", (unsigned)desc[0]);
-        pmm_free_frame(VIRT_TO_PHYS((unsigned long)desc));
-        return -5;
+        pmm_free_frame(VIRT_TO_PHYS((uint64_t)desc));
+        return -EINVAL;
     }
     if (desc[1] != 0x01) {
         kprintf("  USB MSC: not a device descriptor (type 0x%02x)\n", desc[1]);
-        pmm_free_frame(VIRT_TO_PHYS((unsigned long)desc));
-        return -5;
+        pmm_free_frame(VIRT_TO_PHYS((uint64_t)desc));
+        return -EINVAL;
     }
     uint8_t dev_class = desc[4] & 0xEF;
     if (dev_class != 0x00 && dev_class != 0x08) {
@@ -466,27 +774,47 @@ int usb_msc_init(void)
         /* Non-fatal: some MSC devices report class 0 in the device descriptor
          * and set the interface descriptor class instead. Continue anyway. */
     }
-    /* desc[14]=bNumConfigurations */
-    pmm_free_frame(VIRT_TO_PHYS((unsigned long)desc));
+    pmm_free_frame(VIRT_TO_PHYS((uint64_t)desc));
 
     /* SET_CONFIGURATION 1 */
-    rc = usb_control(0x00, 0x09, 1, 0, 0, (void *)0);
+    rc = usb_control(0x00, USB_REQ_SET_CONFIGURATION, 1, 0, 0, (void *)0);
     if (rc < 0) {
-        kprintf("  USB MSC: SET_CONFIGURATION failed (%ld)\n", (unsigned long)rc);
+        kprintf("  USB MSC: SET_CONFIGURATION failed (%d)\n", rc);
         return rc;
     }
 
+    /* Parse configuration descriptor to discover bulk endpoints */
+    rc = usb_msc_parse_config();
+    if (rc < 0) {
+        kprintf("  USB MSC: endpoint discovery failed (%d), using defaults\n", rc);
+        /* Non-fatal — fall back to hard-coded defaults */
+    }
+
     /* BOT Class Reset */
-    rc = usb_control(0x21, 0xFF, 0, 0, 0, (void *)0);
+    rc = bot_reset();
     if (rc < 0) {
         /* Non-fatal — some devices ignore it */
-        kprintf("  USB MSC: BOT reset warning (%ld)\n", (unsigned long)rc);
+        kprintf("  USB MSC: BOT reset warning (%d)\n", rc);
+    }
+
+    /* Issue INQUIRY to identify the device */
+    scsi_inquiry((uint8_t *)0, 0, (uint8_t *)0, 0);
+
+    /* Wait for device ready (up to 5 retries) */
+    for (int retry = 0; retry < 5; retry++) {
+        rc = scsi_test_unit_ready();
+        if (rc == 0) break;
+        /* If check condition, request sense to clear */
+        if (rc == -EIO) {
+            scsi_request_sense((uint8_t *)0, (uint8_t *)0, (uint8_t *)0);
+        }
+        busy_wait(100000);
     }
 
     /* READ CAPACITY to discover drive size */
     rc = scsi_read_capacity(&g_max_lba);
     if (rc < 0) {
-        kprintf("  USB MSC: READ CAPACITY failed (%ld)\n", (unsigned long)rc);
+        kprintf("  USB MSC: READ CAPACITY failed (%d)\n", rc);
         return rc;
     }
 
@@ -512,31 +840,38 @@ void usb_msc_exit(void)
     kprintf("[USB] MSC device unregistered\n");
 }
 
-/* ── Stub: usb_msc_read ─────────────────────────────── */
+/* ── Public API: byte-level read/write/capacity (non-blockdev) ──── */
+
 int usb_msc_read(void *dev, void *buf, size_t count, uint64_t offset)
 {
     (void)dev;
-    (void)buf;
-    (void)count;
-    (void)offset;
-    kprintf("[USB] usb_msc_read: not yet implemented\n");
-    return 0;
+    if (!buf || count == 0) return 0;
+
+    /* Convert byte offset/count to LBA/sectors (512-byte sectors) */
+    uint32_t lba = (uint32_t)(offset / 512);
+    uint32_t nsec = (uint32_t)((count + 511) / 512);
+    if (nsec > 255) nsec = 255;  /* limit to max sectors per request */
+
+    return scsi_read10(lba, (uint8_t)nsec, buf);
 }
-/* ── Stub: usb_msc_write ─────────────────────────────── */
+
 int usb_msc_write(void *dev, const void *buf, size_t count, uint64_t offset)
 {
     (void)dev;
-    (void)buf;
-    (void)count;
-    (void)offset;
-    kprintf("[USB] usb_msc_write: not yet implemented\n");
-    return 0;
+    if (!buf || count == 0) return 0;
+
+    uint32_t lba = (uint32_t)(offset / 512);
+    uint32_t nsec = (uint32_t)((count + 511) / 512);
+    if (nsec > 255) nsec = 255;
+
+    return scsi_write10(lba, (uint8_t)nsec, buf);
 }
-/* ── Stub: usb_msc_capacity ─────────────────────────────── */
+
 int usb_msc_capacity(void *dev, void *cap)
 {
     (void)dev;
-    (void)cap;
-    kprintf("[USB] usb_msc_capacity: not yet implemented\n");
+    if (cap) {
+        *(uint64_t *)cap = (uint64_t)(g_max_lba + 1);
+    }
     return 0;
 }
