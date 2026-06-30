@@ -47,6 +47,7 @@ struct epoll_event;
  * @data:          user-provided data returned on event delivery
  * @last_reported: last set of events reported to user (for EPOLLET delta)
  * @in_use:        1 if this slot is active
+ * @armed:         1 if actively monitoring (0 = disarmed by EPOLLONESHOT)
  */
 struct epoll_fd_entry {
     int      fd;
@@ -54,6 +55,7 @@ struct epoll_fd_entry {
     uint64_t data;
     uint32_t last_reported;
     int      in_use;
+    uint8_t  armed;
 };
 
 /*

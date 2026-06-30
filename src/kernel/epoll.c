@@ -10,8 +10,11 @@
  *   epoll_ctl adds/modifies/removes fd entries tracked by the instance.
  *   epoll_wait iterates the instance's entries, checks each fd for
  *   readiness, and blocks using scheduler_yield() under a timeout.
- *   Future enhancements (tasks 7-10) will add edge-triggered support,
- *   EPOLLONESHOT, EPOLLEXCLUSIVE, and waitqueue-based blocking.
+ *   Both level-triggered (default) and edge-triggered (EPOLLET)
+ *   event reporting are supported.  EPOLLONESHOT entries are
+ *   automatically disarmed after the first event report.
+ *   Future enhancements (tasks 9-10) will add EPOLLEXCLUSIVE,
+ *   EPOLLWAKEUP, and waitqueue-based blocking.
  *
  * Module metadata:
  *   MODULE_LICENSE("GPL v2")
@@ -173,6 +176,7 @@ int epoll_ctl_syscall(int epfd, int op, int fd,
         e->data           = event->data;
         e->last_reported  = 0;
         e->in_use         = 1;
+        e->armed          = 1;
         break;
     }
 
@@ -211,6 +215,7 @@ int epoll_ctl_syscall(int epfd, int op, int fd,
         e->events = event->events;
         e->data   = event->data;
         e->last_reported = 0;
+        e->armed  = 1;
         break;
     }
 
@@ -267,7 +272,7 @@ int epoll_wait_syscall(int epfd, struct epoll_event *events,
 
         for (int i = 0; i < ep->num_entries && ready < maxevents; i++) {
             struct epoll_fd_entry *e = &ep->entries[i];
-            if (!e->in_use)
+            if (!e->in_use || !e->armed)
                 continue;
 
             uint32_t revents = 0;
@@ -312,6 +317,10 @@ int epoll_wait_syscall(int epfd, struct epoll_event *events,
                 }
                 events[ready].data   = e->data;
                 ready++;
+
+                /* EPOLLONESHOT: disarm after first event report */
+                if (e->events & EPOLLONESHOT)
+                    e->armed = 0;
             }
         }
 
