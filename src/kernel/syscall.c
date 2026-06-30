@@ -1021,56 +1021,6 @@ static uint64_t sys_getpid(void) {
     return p ? pid_ns_get_ns_pid(p) : 0;
 }
 
-static uint64_t sys_brk(uint64_t addr) {
-    struct process *p = process_get_current();
-    if (!p) return (uint64_t)(int64_t)-ENOMEM;
-    if (!p->is_user || !p->pml4) return (uint64_t)(int64_t)-EFAULT;
-
-    /* Track heap start/end — initialized lazily with ASLR offset */
-    if (p->heap_end == 0) {
-        uint64_t brk_aslr = aslr_brk_offset() * PAGE_SIZE;
-        p->heap_start = 0x0000000002000000ULL + brk_aslr;
-        p->heap_end = p->heap_start;
-    }
-
-    if (addr == 0) return p->heap_end; /* brk(0) — get current */
-
-    /* Align to page boundary */
-    addr = (addr + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
-    if (addr > USER_VADDR_MAX) return (uint64_t)(int64_t)-ENOMEM;
-
-    uint64_t old_end = p->heap_end;
-    if (addr > old_end) {
-        /* Grow heap — map new pages */
-        uint64_t grow = addr - old_end;
-
-        /* Enforce RLIMIT_DATA */
-        uint64_t data_limit = p->rlim_cur[RLIMIT_DATA];
-        if (data_limit != RLIM_INFINITY && (addr - p->heap_start) > data_limit)
-            return (uint64_t)(int64_t)-ENOMEM;
-
-        /* Also enforce RLIMIT_AS: new heap end relative to
-         * heap_start must not exceed rlim_cur[RLIMIT_AS]. */
-        uint64_t as_limit = p->rlim_cur[RLIMIT_AS];
-        if (as_limit != RLIM_INFINITY && (addr - p->heap_start) > as_limit)
-            return (uint64_t)(int64_t)-ENOMEM;
-        uint64_t pages = (grow + PAGE_SIZE - 1) / PAGE_SIZE;
-        uint64_t page_flags = VMM_FLAG_PRESENT | VMM_FLAG_USER | VMM_FLAG_WRITE | VMM_FLAG_NOEXEC | VMM_FLAG_LAZY;
-        if (vmm_map_user_pages(p->pml4, old_end, pages, page_flags) < 0)
-            return (uint64_t)(int64_t)-ENOMEM;
-        p->heap_end = addr;
-    } else if (addr < old_end) {
-        /* Shrink heap — unmap pages */
-        uint64_t shrink = old_end - addr;
-        uint64_t pages = shrink / PAGE_SIZE;
-        if (pages > 0) {
-            vmm_unmap_user_pages(p->pml4, addr, pages);
-        }
-        p->heap_end = addr;
-    }
-    return p->heap_end;
-}
-
 /* ── Signal registration (SYS_SIGNAL=213) ──────────────────────── */
 static uint64_t sys_signal(uint64_t signum, uint64_t handler_addr) {
     if (syscall_is_user_process() &&
