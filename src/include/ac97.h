@@ -16,6 +16,23 @@ void ac97_play_pcm(const int16_t *samples, uint32_t len, uint32_t rate);
 /* Returns 1 if AC'97 device is present. */
 int ac97_present(void);
 
+/* ── Codec register access ────────────────────────────────────────── */
+
+/**
+ * ac97_read — Read an AC97 NAM register.
+ * @reg: Register offset (0x00--0x7E, must be even).
+ * Returns the 16-bit register value, or a negative errno on error.
+ */
+int ac97_read(int reg);
+
+/**
+ * ac97_write — Write an AC97 NAM register.
+ * @reg: Register offset (0x00--0x7E, must be even).
+ * @val: 16-bit value to write.
+ * Returns 0 on success, or a negative errno on error.
+ */
+int ac97_write(uint16_t reg, uint16_t val);
+
 /* ── Capture (Recording) API ─────────────────────────────────────── */
 
 /**

@@ -451,11 +451,15 @@ int ac97_read(int reg)
     return (int)inw(ac97_nam_base + (uint16_t)reg);
 }
 
-/* ── Write AC97 register ────────────────────────────── */
-int ac97_write(void *dev, uint32_t reg, uint16_t val)
+/* ── Write AC97 register via NAM I/O ────────────────── */
+int ac97_write(uint16_t reg, uint16_t val)
 {
-    if (!dev) return -EINVAL;
-    (void)reg; (void)val;
+    if (reg > 0x7E || (reg & 1))
+        return -EINVAL;
+    if (!ac97_dev_present)
+        return -ENODEV;
+
+    outw(ac97_nam_base + reg, val);
     return 0;
 }
 
@@ -807,3 +811,8 @@ int ac97_capture_is_active(void)
 {
     return ac97_cap.running;
 }
+
+MODULE_LICENSE("GPL");
+MODULE_VERSION("1.0.0");
+MODULE_DESCRIPTION("AC97 audio controller driver");
+MODULE_AUTHOR("OS Kernel Team");
