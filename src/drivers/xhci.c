@@ -264,7 +264,50 @@ int xhci_ring_has_pending(struct xhci_ring *ring)
     return (ctrl & TRB_CYCLE_BIT) != 0;
 }
 
-/* ── Event Ring ──────────────────────────────────────────────────────── */
+/**
+ * xhci_ring_dequeue — Read a consumed TRB from the ring (driver side).
+ * @ring:            Target ring.
+ * @trb:             Output buffer for the consumed TRB.
+ * @consumer_cycle:  Expected cycle bit from the consumer's perspective.
+ *
+ * If the TRB at the dequeue position has the expected cycle bit (meaning the
+ * consumer — xHC — has already processed it), it is copied into @trb and the
+ * dequeue pointer is advanced.  Link TRBs are skipped transparently.
+ *
+ * Returns: 1 if a TRB was consumed, 0 if nothing available,
+ *          negative errno on error.
+ */
+int xhci_ring_dequeue(struct xhci_ring *ring, struct xhci_trb *trb, int consumer_cycle)
+{
+    int idx;
+
+    if (!ring || !ring->trbs || !trb)
+        return -EINVAL;
+
+    idx = ring->deq_idx;
+
+    /* Skip Link TRBs (the last slot) */
+    if (idx < 0 || idx >= XHCI_RING_USABLE)
+        return 0;
+
+    /* Check cycle bit to see if xHC has consumed this TRB */
+    {
+        uint32_t ctrl = ring->trbs[idx].control;
+        int trb_cycle = (ctrl & TRB_CYCLE_BIT) ? 1 : 0;
+        if (trb_cycle != consumer_cycle)
+            return 0;
+    }
+
+    /* Copy the consumed TRB */
+    *trb = ring->trbs[idx];
+
+    /* Advance dequeue pointer, wrapping past the Link TRB */
+    ring->deq_idx++;
+    if (ring->deq_idx >= XHCI_RING_USABLE)
+        ring->deq_idx = 0;
+
+    return 1;
+}
 
 /**
  * xhci_event_ring_init — Initialise an event ring with one segment.
@@ -416,6 +459,389 @@ void xhci_ring_doorbell(struct xhci_controller *xhci, int slot_id, int doorbell_
     __asm__ volatile("mfence" ::: "memory");
 }
 
+/* ── Endpoint / Device Context Management ──────────────────────────── */
+
+/* ── DCBAA (Device Context Base Address Array) ────────────────────── */
+
+/**
+ * xhci_dcbaa_init — Allocate and program the Device Context Base Address Array.
+ *
+ * DCBAA holds one 64-bit pointer per device slot.  The register at
+ * XHCI_OP_DCBAAP points to it.  Called once during controller init.
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int xhci_dcbaa_init(struct xhci_controller *xhci)
+{
+    if (!xhci || !xhci->present)
+        return -ENODEV;
+
+    if (xhci->dcbaa)
+        return 0;  /* Already initialised */
+
+    /* DCBAA: one 64-bit pointer per device slot, max 255 slots.
+     * One page (4096 bytes) holds 512 pointers — more than enough. */
+    xhci->dcbaa_paddr = pmm_alloc_frame();
+    if (!xhci->dcbaa_paddr)
+        return -ENOMEM;
+
+    xhci->dcbaa = (uint32_t *)PHYS_TO_VIRT((void *)(uintptr_t)xhci->dcbaa_paddr);
+    memset(xhci->dcbaa, 0, PAGE_SIZE);
+
+    /* Program DCBAAP register (two 32-bit writes for 64-bit addr) */
+    xhci_write32(xhci, xhci->op_regs, XHCI_OP_DCBAAP,
+                 (uint32_t)(xhci->dcbaa_paddr & 0xFFFFFFFF));
+    xhci_write32(xhci, xhci->op_regs, XHCI_OP_DCBAAP + 4,
+                 (uint32_t)((xhci->dcbaa_paddr >> 32) & 0xFFFFFFFF));
+    __asm__ volatile("mfence" ::: "memory");
+
+    kprintf("[xHCI] DCBAA programmed @ 0x%lx\n",
+            (unsigned long)xhci->dcbaa_paddr);
+    return 0;
+}
+
+/**
+ * xhci_dcbaa_fini — Tear down DCBAA.
+ */
+void xhci_dcbaa_fini(struct xhci_controller *xhci)
+{
+    if (!xhci || !xhci->dcbaa_paddr)
+        return;
+
+    /* Clear DCBAAP register */
+    xhci_write32(xhci, xhci->op_regs, XHCI_OP_DCBAAP, 0);
+    xhci_write32(xhci, xhci->op_regs, XHCI_OP_DCBAAP + 4, 0);
+
+    pmm_free_frame(xhci->dcbaa_paddr);
+    xhci->dcbaa = NULL;
+    xhci->dcbaa_paddr = 0;
+}
+
+/* ── Device Slot Alloc / Free ─────────────────────────────────────── */
+
+/**
+ * xhci_dev_slot_alloc — Allocate a device slot with a device-context page.
+ * @xhci:       Controller.
+ * @port_num:   Root hub port the device is connected to.
+ * @speed:      USB speed (XHCI_SPEED_*).
+ * @out_slot_id: On success, filled with the 1-based slot ID.
+ *
+ * Allocates one page (4096 bytes) for the device context (slot + 31 endpoint
+ * contexts, 1024 bytes used) and registers it in the DCBAA.
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int xhci_dev_slot_alloc(struct xhci_controller *xhci, int port_num,
+                        int speed, int *out_slot_id)
+{
+    int slot_id;
+    uint64_t ctx_paddr;
+    struct xhci_dev_ctx *dev_ctx;
+
+    if (!xhci || !out_slot_id)
+        return -EINVAL;
+    if (port_num < 0 || port_num >= (int)xhci->max_ports)
+        return -EINVAL;
+    if (speed < XHCI_SPEED_FULL || speed > XHCI_SPEED_SUPER_PLUS)
+        return -EINVAL;
+    if (xhci->num_slots_used >= (int)xhci->max_slots)
+        return -ENOSPC;
+
+    /* Find a free slot ID (1-based, slot 0 is unused) */
+    for (slot_id = 1; slot_id <= (int)xhci->max_slots; slot_id++) {
+        if (!xhci->slots[slot_id].enabled)
+            break;
+    }
+    if (slot_id > (int)xhci->max_slots)
+        return -ENOSPC;
+
+    /* Allocate a page for the device context */
+    ctx_paddr = pmm_alloc_frame();
+    if (!ctx_paddr)
+        return -ENOMEM;
+
+    dev_ctx = (struct xhci_dev_ctx *)PHYS_TO_VIRT((void *)(uintptr_t)ctx_paddr);
+    memset(dev_ctx, 0, PAGE_SIZE);
+
+    /* Initialise the slot structure */
+    {
+        struct xhci_dev_slot *slot = &xhci->slots[slot_id];
+        memset(slot, 0, sizeof(*slot));
+        slot->slot_id    = slot_id;
+        slot->enabled    = 1;
+        slot->port_num   = port_num;
+        slot->speed      = speed;
+        slot->dev_ctx    = dev_ctx;
+        slot->dev_ctx_paddr = ctx_paddr;
+    }
+
+    /* Update DCBAA entry for this slot (two 32-bit writes = 64-bit ptr) */
+    xhci->dcbaa[slot_id * 2]     = (uint32_t)(ctx_paddr & 0xFFFFFFFF);
+    xhci->dcbaa[slot_id * 2 + 1] = (uint32_t)((ctx_paddr >> 32) & 0xFFFFFFFF);
+    __asm__ volatile("mfence" ::: "memory");
+
+    xhci->num_slots_used++;
+    *out_slot_id = slot_id;
+
+    kprintf("[xHCI] Slot %d allocated (port %d, speed %d, ctx @ 0x%lx)\n",
+            slot_id, port_num, speed, (unsigned long)ctx_paddr);
+    return 0;
+}
+
+/**
+ * xhci_dev_slot_free — Release a device slot.
+ */
+int xhci_dev_slot_free(struct xhci_controller *xhci, int slot_id)
+{
+    struct xhci_dev_slot *slot;
+    int i;
+
+    if (!xhci || slot_id < 1 || slot_id > (int)xhci->max_slots)
+        return -EINVAL;
+
+    slot = &xhci->slots[slot_id];
+    if (!slot->enabled)
+        return -ENOENT;
+
+    /* Free per-endpoint transfer rings */
+    for (i = 0; i < MAX_XHCI_ENDPOINTS; i++) {
+        if (slot->ep_rings_initialized[i]) {
+            xhci_ring_destroy(&slot->ep_rings[i]);
+            slot->ep_rings_initialized[i] = 0;
+        }
+    }
+
+    /* Free device context page */
+    if (slot->dev_ctx_paddr) {
+        pmm_free_frame(slot->dev_ctx_paddr);
+    }
+
+    /* Clear DCBAA entry */
+    if (xhci->dcbaa) {
+        xhci->dcbaa[slot_id * 2]     = 0;
+        xhci->dcbaa[slot_id * 2 + 1] = 0;
+        __asm__ volatile("mfence" ::: "memory");
+    }
+
+    memset(slot, 0, sizeof(*slot));
+    xhci->num_slots_used--;
+
+    kprintf("[xHCI] Slot %d freed\n", slot_id);
+    return 0;
+}
+
+/* ── Per-Endpoint Transfer Rings ──────────────────────────────────── */
+
+/**
+ * xhci_ep_ring_create — Create a transfer ring for an endpoint.
+ * @slot:   Device slot the endpoint belongs to.
+ * @ep_idx: Endpoint index (0..30, maps to EP ID 1..31).
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int xhci_ep_ring_create(struct xhci_dev_slot *slot, int ep_idx)
+{
+    int ret;
+
+    if (!slot || !slot->enabled)
+        return -EINVAL;
+    if (ep_idx < 0 || ep_idx >= MAX_XHCI_ENDPOINTS)
+        return -EINVAL;
+    if (slot->ep_rings_initialized[ep_idx])
+        return 0;  /* Already created */
+
+    ret = xhci_ring_create(&slot->ep_rings[ep_idx]);
+    if (ret < 0)
+        return ret;
+
+    slot->ep_rings_initialized[ep_idx] = 1;
+    return 0;
+}
+
+/**
+ * xhci_ep_ring_free — Destroy a transfer ring for an endpoint.
+ */
+void xhci_ep_ring_free(struct xhci_dev_slot *slot, int ep_idx)
+{
+    if (!slot || ep_idx < 0 || ep_idx >= MAX_XHCI_ENDPOINTS)
+        return;
+
+    if (slot->ep_rings_initialized[ep_idx]) {
+        xhci_ring_destroy(&slot->ep_rings[ep_idx]);
+        slot->ep_rings_initialized[ep_idx] = 0;
+    }
+}
+
+/* ── Context Initialisation Helpers ───────────────────────────────── */
+
+/**
+ * xhci_slot_context_init — Fill in a slot context structure.
+ *
+ * Writes DW0 and DW1 (route string, speed, root port info, context entries).
+ * Caller is responsible for placing the result in the right position within
+ * an input context or device context.
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int xhci_slot_context_init(struct xhci_slot_ctx *sctx, int route_string,
+                           int speed, int root_port, int num_ports,
+                           int ctx_entries)
+{
+    if (!sctx)
+        return -EINVAL;
+
+    memset(sctx, 0, sizeof(*sctx));
+
+    /* DW0: Route String | Speed | Context Entries */
+    sctx->dw0 = XHCI_BF(route_string, XHCI_SLOT_CTX_ROUTE_STRING_S,
+                        XHCI_SLOT_CTX_ROUTE_STRING_M)
+              | XHCI_BF(speed, XHCI_SLOT_CTX_SPEED_S, XHCI_SLOT_CTX_SPEED_M)
+              | XHCI_BF(ctx_entries, XHCI_SLOT_CTX_CTX_ENTRIES_S,
+                        XHCI_SLOT_CTX_CTX_ENTRIES_M);
+
+    /* DW1: Root Hub Port Number | Number of Ports */
+    sctx->dw1 = XHCI_BF(root_port, XHCI_SLOT_CTX_RH_PORT_NUM_S,
+                        XHCI_SLOT_CTX_RH_PORT_NUM_M)
+              | XHCI_BF(num_ports, XHCI_SLOT_CTX_NUM_PORTS_S,
+                        XHCI_SLOT_CTX_NUM_PORTS_M);
+
+    return 0;
+}
+
+/**
+ * xhci_ep_context_init — Fill in an endpoint context structure.
+ *
+ * Sets EP type, CErr=3 (as recommended by the xHCI spec), the TR dequeue
+ * pointer (pointing to the endpoint's transfer ring), max packet size,
+ * and max burst size.
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int xhci_ep_context_init(struct xhci_endpoint_ctx *ep_ctx, int ep_type,
+                         int max_packet_size, int max_burst_size,
+                         uint64_t tr_dequeue_paddr, int dcs)
+{
+    if (!ep_ctx)
+        return -EINVAL;
+    if (ep_type < 0 || ep_type > 7)
+        return -EINVAL;
+
+    memset(ep_ctx, 0, sizeof(*ep_ctx));
+
+    /* DW0: EP State = 0 (Disabled — will transition when the xHC processes
+     * the Configure Endpoint command) */
+    ep_ctx->dw0 = 0;
+
+    /* DW1: EP Type, CErr = 3 (max error count per xHCI recommendation) */
+    ep_ctx->dw1 = XHCI_BF(3, XHCI_EP_CTX_CERR_S, XHCI_EP_CTX_CERR_M)
+                | XHCI_BF(ep_type, XHCI_EP_CTX_EP_TYPE_S, XHCI_EP_CTX_EP_TYPE_M);
+
+    /* DW2: TR Dequeue Pointer Lo (bits 3:31) + DCS (bit 0)
+     * DW3: TR Dequeue Pointer Hi */
+    ep_ctx->dw2 = (dcs ? 1U : 0U)
+                | ((uint32_t)(tr_dequeue_paddr >> 4)
+                   << XHCI_EP_CTX_TR_DEQUEUE_PTR_LO_S);
+    ep_ctx->dw3 = (uint32_t)((tr_dequeue_paddr >> 32) & 0xFFFFFFFF);
+
+    /* DW4: Max Packet Size | Max Burst / ESIT Payload */
+    ep_ctx->dw4 = XHCI_BF(max_packet_size, XHCI_EP_CTX_MAX_PACKET_SIZE_S,
+                          XHCI_EP_CTX_MAX_PACKET_SIZE_M)
+                | XHCI_BF(max_burst_size, XHCI_EP_CTX_MAX_ESIT_PAYLOAD_S,
+                          XHCI_EP_CTX_MAX_ESIT_PAYLOAD_M);
+
+    return 0;
+}
+
+/**
+ * xhci_input_ctx_init — Zero and set the drop/add flags of an input context.
+ *
+ * @drop_mask: Bitmask of contexts to drop (bit N = endpoint context N,
+ *             bit 0 = slot context).
+ * @add_mask:  Bitmask of contexts to add/update.
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int xhci_input_ctx_init(struct xhci_input_ctx *in_ctx, int drop_mask,
+                        int add_mask)
+{
+    if (!in_ctx)
+        return -EINVAL;
+
+    memset(in_ctx, 0, sizeof(*in_ctx));
+    in_ctx->icc.drop_flags = (uint32_t)drop_mask;
+    in_ctx->icc.add_flags  = (uint32_t)add_mask;
+    return 0;
+}
+
+/* ── Endpoint / Slot State Queries ────────────────────────────────── */
+
+int xhci_ep_ctx_get_state(const struct xhci_endpoint_ctx *ep_ctx)
+{
+    if (!ep_ctx)
+        return -EINVAL;
+    return XHCI_BF_GET(ep_ctx->dw0, XHCI_EP_CTX_STATE_S, XHCI_EP_CTX_STATE_M);
+}
+
+int xhci_slot_ctx_get_state(const struct xhci_slot_ctx *sctx)
+{
+    if (!sctx)
+        return -EINVAL;
+    return XHCI_BF_GET(sctx->dw3, XHCI_SLOT_CTX_SLOT_STATE_S,
+                       XHCI_SLOT_CTX_SLOT_STATE_M);
+}
+
+/* ── Configure Endpoint Command ───────────────────────────────────── */
+
+/**
+ * xhci_configure_endpoint — Build and submit a Configure Endpoint command.
+ * @xhci:       Controller.
+ * @slot_id:    Target device slot (1-based).
+ * @in_ctx_paddr: Physical address of the input context (must be 64-byte
+ *               aligned, caller-managed).
+ *
+ * The caller must have filled the input context with the desired slot and
+ * endpoint contexts and the drop/add flags before calling this function.
+ * The input context must reside in physically contiguous, 64-byte aligned
+ * memory (e.g., allocated via pmm_alloc_frame()).
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int xhci_configure_endpoint(struct xhci_controller *xhci, int slot_id,
+                            uint64_t in_ctx_paddr)
+{
+    struct xhci_trb cmd_trb;
+    int ret;
+
+    if (!xhci || !xhci->present || !xhci->cmd_ring.trbs)
+        return -ENODEV;
+    if (slot_id < 1 || slot_id > (int)xhci->max_slots)
+        return -EINVAL;
+    if (!in_ctx_paddr || (in_ctx_paddr & 0x3FULL))
+        return -EINVAL;
+
+    /* Build Configure Endpoint command TRB (type 12, xHCI 1.2 §6.4.3.5) */
+    memset(&cmd_trb, 0, sizeof(cmd_trb));
+    cmd_trb.parameter = in_ctx_paddr & ~0x3FULL;  /* 64-byte aligned */
+    cmd_trb.status    = (uint32_t)((slot_id & 0xFF) << 24);  /* Slot ID */
+    cmd_trb.control   = TRB_SET_TYPE(TRB_TYPE_CONFIG_ENDPOINT)
+                      | TRB_IOC_BIT
+                      | TRB_CYCLE_BIT;
+
+    /* Enqueue the command on the command ring */
+    ret = xhci_ring_enqueue(&xhci->cmd_ring, &cmd_trb);
+    if (ret < 0) {
+        kprintf("[xHCI] configure_endpoint: enqueue failed: %d\n", ret);
+        return ret;
+    }
+
+    /* Ring the command doorbell (slot 0, target 0) */
+    xhci_ring_doorbell(xhci, 0, 0);
+
+    kprintf("[xHCI] Configure Endpoint submitted (slot %d, in_ctx @ 0x%lx)\n",
+            slot_id, (unsigned long)in_ctx_paddr);
+    return 0;
+}
+
 /* ── Ring init in controller startup ──────────────────────────────────── */
 
 /**
@@ -475,6 +901,19 @@ static int xhci_rings_init(struct xhci_controller *xhci)
         xhci_write32(xhci, rt_base, XHCI_ERDP(0, 0) + 4, (uint32_t)((erdp >> 32) & 0xFFFFFFFF));
     }
 
+    /* Allocate and program the Device Context Base Address Array */
+    ret = xhci_dcbaa_init(xhci);
+    if (ret < 0) {
+        kprintf("[xHCI] Failed to initialise DCBAA: %d\n", ret);
+        xhci_event_ring_fini(&xhci->ev_ring);
+        xhci_ring_destroy(&xhci->cmd_ring);
+        return ret;
+    }
+
+    /* Initialise device slot array */
+    memset(xhci->slots, 0, sizeof(xhci->slots));
+    xhci->num_slots_used = 0;
+
     xhci->rings_initialized = 1;
     kprintf("[xHCI] Rings initialized (cmd @ 0x%lx, ev @ 0x%lx)\n",
             (unsigned long)xhci->cmd_ring.paddr,
@@ -490,6 +929,7 @@ static void xhci_rings_fini(struct xhci_controller *xhci)
     if (!xhci) return;
     if (!xhci->rings_initialized) return;
 
+    xhci_dcbaa_fini(xhci);
     xhci_event_ring_fini(&xhci->ev_ring);
     xhci_ring_destroy(&xhci->cmd_ring);
     xhci->rings_initialized = 0;

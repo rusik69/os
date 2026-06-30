@@ -170,6 +170,194 @@ struct xhci_event_ring {
     int                num_trbs;      /* Number of TRBs in the event ring segment */
 };
 
+/* ── Device Context Management (xHCI 1.2 §6.2) ──────────────────── */
+
+/* Max endpoints per device */
+#define MAX_XHCI_ENDPOINTS      31
+#define MAX_XHCI_DEVICE_SLOTS   255
+
+/* Endpoint context state values */
+#define XHCI_EP_STATE_DISABLED     0
+#define XHCI_EP_STATE_RUNNING      1
+#define XHCI_EP_STATE_HALTED       2
+#define XHCI_EP_STATE_STOPPED      3
+#define XHCI_EP_STATE_ERROR        4
+
+/* Endpoint types (xHCI 1.2 §6.2.3 Table 6-10) */
+#define XHCI_EP_TYPE_INVALID      0
+#define XHCI_EP_TYPE_ISOCH_OUT    1
+#define XHCI_EP_TYPE_BULK_OUT     2
+#define XHCI_EP_TYPE_INTERRUPT_OUT 3
+#define XHCI_EP_TYPE_CONTROL      4
+#define XHCI_EP_TYPE_ISOCH_IN     5
+#define XHCI_EP_TYPE_BULK_IN      6
+#define XHCI_EP_TYPE_INTERRUPT_IN  7
+
+/* Slot context speeds */
+#define XHCI_SPEED_FULL       1
+#define XHCI_SPEED_LOW        2
+#define XHCI_SPEED_HIGH       3
+#define XHCI_SPEED_SUPER      4
+#define XHCI_SPEED_SUPER_PLUS 5
+
+/* Slot context state values */
+#define XHCI_SLOT_STATE_DISABLED      0
+#define XHCI_SLOT_STATE_ENABLED       1
+#define XHCI_SLOT_STATE_DEFAULT       2
+#define XHCI_SLOT_STATE_ADDRESSED     3
+#define XHCI_SLOT_STATE_CONFIGURED    4
+
+/*
+ * Slot Context (32 bytes, xHCI 1.2 §6.2.2)
+ *
+ * DW0: Route String [0:19] | Speed [20:23] | Reserved [24:25] |
+ *      MTZ [26] | Reserved [27:26?] | Context Entries [27:31]
+ * DW1: Max Exit Latency [0:15] | Root Hub Port Number [16:23] |
+ *      Number of Ports [24:31]
+ * DW2: TT Think Time [0:1] | TT Hub Slot ID [2:8] |
+ *      Reserved [9:15] | TT Port Number [16:23] | Reserved [24:31]
+ * DW3: Device Address [0:7] | Reserved [8:26] | Slot State [27:31]
+ */
+struct xhci_slot_ctx {
+    uint32_t dw0;
+    uint32_t dw1;
+    uint32_t dw2;
+    uint32_t dw3;
+    uint32_t _rsvd[4];
+} __attribute__((packed, aligned(32)));
+
+/* Slot context field accessors */
+#define XHCI_SLOT_CTX_ROUTE_STRING_S    0
+#define XHCI_SLOT_CTX_ROUTE_STRING_M    0x000FFFFF
+#define XHCI_SLOT_CTX_SPEED_S           20
+#define XHCI_SLOT_CTX_SPEED_M           0x00F00000
+#define XHCI_SLOT_CTX_MTZ_S             26
+#define XHCI_SLOT_CTX_MTZ_M             0x04000000
+#define XHCI_SLOT_CTX_CTX_ENTRIES_S     27
+#define XHCI_SLOT_CTX_CTX_ENTRIES_M     0xF8000000
+
+#define XHCI_SLOT_CTX_MAX_EXIT_LAT_S    0
+#define XHCI_SLOT_CTX_MAX_EXIT_LAT_M    0x0000FFFF
+#define XHCI_SLOT_CTX_RH_PORT_NUM_S     16
+#define XHCI_SLOT_CTX_RH_PORT_NUM_M     0x00FF0000
+#define XHCI_SLOT_CTX_NUM_PORTS_S       24
+#define XHCI_SLOT_CTX_NUM_PORTS_M       0xFF000000
+
+#define XHCI_SLOT_CTX_DEV_ADDR_S        0
+#define XHCI_SLOT_CTX_DEV_ADDR_M        0x000000FF
+#define XHCI_SLOT_CTX_SLOT_STATE_S      27
+#define XHCI_SLOT_CTX_SLOT_STATE_M      0xF8000000
+
+/*
+ * Endpoint Context (32 bytes, xHCI 1.2 §6.2.3)
+ *
+ * DW0: EP State [0:2] | Reserved [3:7] | Mult [8:9] |
+ *      MaxPStreams [10:15] | LSA [16] | HID [17] |
+ *      Reserved [18:23] | Interval [24:31]
+ * DW1: Max ESIT Payload Lo [0:15] | Reserved [16:23] |
+ *      Max ESIT Payload Hi [24:25] | Reserved [26] |
+ *      CErr [27:28] | EP Type [29:31]
+ * DW2: TR Dequeue Pointer Lo [4:31] + DCS [0]
+ * DW3: TR Dequeue Pointer Hi
+ * DW4: Average TRB Length [0:15] | Max ESIT Payload [16:23] | Max Packet Size [24:31]
+ */
+struct xhci_endpoint_ctx {
+    uint32_t dw0;
+    uint32_t dw1;
+    uint32_t dw2;
+    uint32_t dw3;
+    uint32_t dw4;
+    uint32_t _rsvd[3];
+} __attribute__((packed, aligned(32)));
+
+/* Endpoint context field accessors — DW0 */
+#define XHCI_EP_CTX_STATE_S             0
+#define XHCI_EP_CTX_STATE_M             0x00000007
+#define XHCI_EP_CTX_MULT_S              8
+#define XHCI_EP_CTX_MULT_M              0x00000300
+#define XHCI_EP_CTX_MAXPSTREAMS_S       10
+#define XHCI_EP_CTX_MAXPSTREAMS_M       0x0000FC00
+#define XHCI_EP_CTX_LSA_S               16
+#define XHCI_EP_CTX_LSA_M               0x00010000
+#define XHCI_EP_CTX_INTERVAL_S          24
+#define XHCI_EP_CTX_INTERVAL_M          0xFF000000
+
+/* Endpoint context field accessors — DW1 */
+#define XHCI_EP_CTX_MAX_ESIT_LO_S       0
+#define XHCI_EP_CTX_MAX_ESIT_LO_M       0x0000FFFF
+#define XHCI_EP_CTX_CERR_S              27
+#define XHCI_EP_CTX_CERR_M              0x18000000
+#define XHCI_EP_CTX_EP_TYPE_S           29
+#define XHCI_EP_CTX_EP_TYPE_M           0xE0000000
+
+/* Endpoint context field accessors — DW2 */
+#define XHCI_EP_CTX_DCS_S               0
+#define XHCI_EP_CTX_DCS_M               0x00000001
+#define XHCI_EP_CTX_TR_DEQUEUE_PTR_LO_S 4
+#define XHCI_EP_CTX_TR_DEQUEUE_PTR_LO_M 0xFFFFFFF0
+
+/* Endpoint context field accessors — DW4 */
+#define XHCI_EP_CTX_AVG_TRB_LEN_S       0
+#define XHCI_EP_CTX_AVG_TRB_LEN_M       0x0000FFFF
+#define XHCI_EP_CTX_MAX_ESIT_PAYLOAD_S  16
+#define XHCI_EP_CTX_MAX_ESIT_PAYLOAD_M  0x00FF0000
+#define XHCI_EP_CTX_MAX_PACKET_SIZE_S   24
+#define XHCI_EP_CTX_MAX_PACKET_SIZE_M   0xFF000000
+
+/* Helper: extract unsigned bitfield value */
+#define XHCI_BF_GET(val, shift, mask)  (((val) & (mask)) >> (shift))
+
+/* Helper: set unsigned bitfield value, preserving other bits */
+#define XHCI_BF_SET(reg, val, shift, mask) \
+    (((reg) & ~(mask)) | (((uint32_t)(val) << (shift)) & (mask)))
+
+/* Helper: construct a bitfield value for direct assignment */
+#define XHCI_BF(val, shift, mask) \
+    (((uint32_t)(val) << (shift)) & (mask))
+
+/*
+ * Input Control Context (xHCI 1.2 §6.2.1)
+ * 8 bytes used, padded to 64 bytes so slot context starts at offset 0x40.
+ */
+struct xhci_input_control_ctx {
+    uint32_t drop_flags;
+    uint32_t add_flags;
+    uint32_t _rsvd[14];
+} __attribute__((packed, aligned(64)));
+
+/*
+ * Input Context = ICC (64 bytes) + slot context (32) + endpoint contexts (31*32)
+ * Total: 1088 bytes.
+ */
+struct xhci_input_ctx {
+    struct xhci_input_control_ctx icc;
+    struct xhci_slot_ctx          slot;
+    struct xhci_endpoint_ctx      eps[MAX_XHCI_ENDPOINTS];
+} __attribute__((packed, aligned(64)));
+
+/*
+ * Device Context = slot context (32) + endpoint contexts (31*32)
+ * Total: 1024 bytes.  Must be 64-byte aligned (xHCI §6.1).
+ */
+struct xhci_dev_ctx {
+    struct xhci_slot_ctx     slot;
+    struct xhci_endpoint_ctx eps[MAX_XHCI_ENDPOINTS];
+} __attribute__((packed, aligned(64)));
+
+/* Per-device slot tracking structure */
+struct xhci_dev_slot {
+    int    slot_id;                   /* 1-based slot ID assigned by xHC */
+    int    enabled;
+    int    port_num;                  /* Root hub port number */
+    int    speed;                     /* USB speed (XHCI_SPEED_*) */
+    /* Per-endpoint transfer rings (index 0..30, maps to EP ID 1..31) */
+    struct xhci_ring  ep_rings[MAX_XHCI_ENDPOINTS];
+    int               ep_rings_initialized[MAX_XHCI_ENDPOINTS];
+    /* Device context (slot + endpoint contexts) */
+    struct xhci_dev_ctx *dev_ctx;
+    uint64_t            dev_ctx_paddr;
+};
+
 /* Event Ring registers in Runtime Register Space */
 #define XHCI_ERSTSZ(base, n)  ((base) + 0x28 + (n) * 0x20)
 #define XHCI_ERSTBA(base, n)  ((base) + 0x30 + (n) * 0x20)
@@ -203,9 +391,14 @@ struct xhci_controller {
     int      irq;
     uint32_t page_size;      /* Page size (1 << (page_size + 12)) */
     /* Ring infrastructure */
-    struct xhci_ring     cmd_ring;      /* Command ring */
-    struct xhci_event_ring ev_ring;     /* Event ring */
-    int                  rings_initialized;
+    struct xhci_ring        cmd_ring;      /* Command ring */
+    struct xhci_event_ring  ev_ring;       /* Event ring */
+    int                     rings_initialized;
+    /* Device Context Management */
+    uint64_t                dcbaa_paddr;   /* Physical address of DCBAA array */
+    uint32_t               *dcbaa;         /* Virtual address of DCBAA */
+    struct xhci_dev_slot    slots[MAX_XHCI_DEVICE_SLOTS + 1]; /* indexed by slot_id (1..) */
+    int                     num_slots_used;
 };
 
 /* MMIO access helpers */
@@ -245,5 +438,38 @@ int  xhci_event_ring_process(struct xhci_event_ring *ev,
                              void *ctx);
 
 void xhci_ring_doorbell(struct xhci_controller *xhci, int slot_id, int doorbell_target);
+
+/* ── Endpoint Context Management API ───────────────────────────── */
+
+/* DCBAA */
+int  xhci_dcbaa_init(struct xhci_controller *xhci);
+void xhci_dcbaa_fini(struct xhci_controller *xhci);
+
+/* Device slot lifecycle */
+int  xhci_dev_slot_alloc(struct xhci_controller *xhci, int port_num,
+                          int speed, int *out_slot_id);
+int  xhci_dev_slot_free(struct xhci_controller *xhci, int slot_id);
+
+/* Per-endpoint transfer rings */
+int  xhci_ep_ring_create(struct xhci_dev_slot *slot, int ep_idx);
+void xhci_ep_ring_free(struct xhci_dev_slot *slot, int ep_idx);
+
+/* Context initialization helpers */
+int  xhci_slot_context_init(struct xhci_slot_ctx *sctx, int route_string,
+                             int speed, int root_port, int num_ports,
+                             int ctx_entries);
+int  xhci_ep_context_init(struct xhci_endpoint_ctx *ep_ctx, int ep_type,
+                           int max_packet_size, int max_burst_size,
+                           uint64_t tr_dequeue_paddr, int dcs);
+int  xhci_input_ctx_init(struct xhci_input_ctx *in_ctx, int drop_mask,
+                          int add_mask);
+
+/* Configure endpoint command */
+int  xhci_configure_endpoint(struct xhci_controller *xhci, int slot_id,
+                              uint64_t in_ctx_paddr);
+
+/* Endpoint/context state queries */
+int  xhci_ep_ctx_get_state(const struct xhci_endpoint_ctx *ep_ctx);
+int  xhci_slot_ctx_get_state(const struct xhci_slot_ctx *sctx);
 
 #endif /* XHCI_H */
