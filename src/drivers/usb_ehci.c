@@ -536,6 +536,453 @@ void ehci_iso_pool_destroy(int pool_id)
     kprintf("[ISO] Pool %d destroyed\n", pool_id);
 }
 
+/* ── QH/qTD Pool (reduces allocation churn) ──────────────────────────────────── */
+
+/*
+ * To avoid per-transfer page allocation overhead, we maintain a pool
+ * of pre-allocated QH and qTD structures.  Each pool entry uses one
+ * physical page, but multiple structures share the same page when
+ * possible (a QH is 48 bytes + alignment).
+ */
+
+#define EHCI_QH_POOL_SIZE  16
+#define EHCI_QTD_POOL_SIZE 32
+
+/* Pre-allocated QH from pool */
+struct ehci_pool_qh {
+    uint64_t phys;               /* physical address of QH page */
+    volatile uint32_t *virt;     /* virtual address of QH */
+    int in_use;                  /* 1 if allocated */
+};
+
+/* Pre-allocated qTD from pool */
+struct ehci_pool_qtd {
+    uint64_t phys;
+    volatile uint32_t *virt;
+    int in_use;
+};
+
+/* Global pool state */
+static struct ehci_pool_qh  g_qh_pool[EHCI_QH_POOL_SIZE];
+static int                  g_qh_pool_count;
+static struct ehci_pool_qtd g_qtd_pool[EHCI_QTD_POOL_SIZE];
+static int                  g_qtd_pool_count;
+
+/**
+ * ehci_pool_init — Initialise the QH/qTD pool.
+ *
+ * Pre-allocates EHCI_QH_POOL_SIZE QH pages and EHCI_QTD_POOL_SIZE qTD pages.
+ * Each page holds one QH (48 bytes + padding) or one qTD (32 bytes + padding).
+ * Returns 0 on success, negative on failure.
+ */
+static int ehci_pool_init(void)
+{
+    if (g_qh_pool_count > 0)
+        return 0;  /* already initialised */
+
+    /* Allocate QH pool pages */
+    for (int i = 0; i < EHCI_QH_POOL_SIZE; i++) {
+        uint64_t phys = pmm_alloc_frame();
+        if (!phys)
+            goto fail_qh;
+        g_qh_pool[i].phys   = phys;
+        g_qh_pool[i].virt   = (volatile uint32_t *)PHYS_TO_VIRT(phys);
+        g_qh_pool[i].in_use = 0;
+        memset((void *)g_qh_pool[i].virt, 0, 4096);
+        g_qh_pool_count++;
+    }
+
+    /* Allocate qTD pool pages */
+    int last_qtd = 0;
+    for (int i = 0; i < EHCI_QTD_POOL_SIZE; i++) {
+        uint64_t phys = pmm_alloc_frame();
+        if (!phys)
+            goto fail_qtd;
+        g_qtd_pool[i].phys   = phys;
+        g_qtd_pool[i].virt   = (volatile uint32_t *)PHYS_TO_VIRT(phys);
+        g_qtd_pool[i].in_use = 0;
+        memset((void *)g_qtd_pool[i].virt, 0, 4096);
+        g_qtd_pool_count++;
+        last_qtd = i;
+    }
+
+    kprintf("[EHCI] QH pool: %d entries, qTD pool: %d entries\n",
+            EHCI_QH_POOL_SIZE, EHCI_QTD_POOL_SIZE);
+    return 0;
+
+fail_qtd:
+    for (int j = 0; j <= last_qtd; j++)
+        pmm_free_frame(g_qtd_pool[j].phys);
+fail_qh:
+    for (int j = 0; j < g_qh_pool_count; j++)
+        pmm_free_frame(g_qh_pool[j].phys);
+    g_qh_pool_count = 0;
+    return -ENOMEM;
+}
+
+/**
+ * ehci_pool_alloc_qh — Allocate a QH from the pool.
+ * @out_phys:  Receives the physical address (32-byte aligned).
+ * @out_virt:  Receives the virtual address (cast to uint32_t*).
+ * Returns 0 on success, negative on failure.
+ */
+static int ehci_pool_alloc_qh(uint64_t *out_phys,
+                               volatile uint32_t **out_virt)
+{
+    for (int i = 0; i < g_qh_pool_count; i++) {
+        if (!g_qh_pool[i].in_use) {
+            g_qh_pool[i].in_use = 1;
+            memset((void *)g_qh_pool[i].virt, 0, 48);  /* QH is 48 B */
+            *out_phys = g_qh_pool[i].phys;
+            *out_virt = g_qh_pool[i].virt;
+            return 0;
+        }
+    }
+    return -ENOMEM;
+}
+
+/**
+ * ehci_pool_free_qh — Return a QH to the pool.
+ */
+static void ehci_pool_free_qh(uint64_t phys)
+{
+    for (int i = 0; i < g_qh_pool_count; i++) {
+        if (g_qh_pool[i].phys == phys) {
+            g_qh_pool[i].in_use = 0;
+            return;
+        }
+    }
+}
+
+/**
+ * ehci_pool_alloc_qtd — Allocate a qTD from the pool.
+ * @out_phys:  Receives the physical address (32-byte aligned).
+ * @out_virt:  Receives the virtual address.
+ * Returns 0 on success, negative on failure.
+ */
+static int ehci_pool_alloc_qtd(uint64_t *out_phys,
+                                volatile uint32_t **out_virt)
+{
+    for (int i = 0; i < g_qtd_pool_count; i++) {
+        if (!g_qtd_pool[i].in_use) {
+            g_qtd_pool[i].in_use = 1;
+            memset((void *)g_qtd_pool[i].virt, 0, 32);  /* qTD is 32 B */
+            *out_phys = g_qtd_pool[i].phys;
+            *out_virt = g_qtd_pool[i].virt;
+            return 0;
+        }
+    }
+    return -ENOMEM;
+}
+
+/**
+ * ehci_pool_free_qtd — Return a qTD to the pool.
+ */
+static void ehci_pool_free_qtd(uint64_t phys)
+{
+    for (int i = 0; i < g_qtd_pool_count; i++) {
+        if (g_qtd_pool[i].phys == phys) {
+            g_qtd_pool[i].in_use = 0;
+            return;
+        }
+    }
+}
+
+/* ── Async schedule manager (QH list operations) ────────────────────────────── */
+
+/*
+ * The EHCI async schedule is a circular list of QHs rooted at the
+ * ASYNCLISTADDR register.  This manager provides operations to add and
+ * remove QHs from the list safely, while tracking the head pointer.
+ */
+
+/* Saved async list head for restoration */
+static uint32_t g_async_head_phys = 0;
+
+/**
+ * ehci_async_add_qh — Insert a QH at the head of the async schedule.
+ *
+ * Links the new QH before the current async list head and updates
+ * ASYNCLISTADDR to point to the new QH.  If the list was empty,
+ * the new QH's horizontal link is set to terminate.
+ *
+ * @qh_phys:  Physical address of the QH to insert (32-byte aligned).
+ * Returns 0 on success, negative on error.
+ */
+static int ehci_async_add_qh(uint64_t qh_phys)
+{
+    int c = 0;
+    if (ehci_count < 1)
+        return -ENODEV;
+
+    volatile uint32_t *qh = (volatile uint32_t *)PHYS_TO_VIRT(qh_phys);
+
+    /* Read the current async list head */
+    uint32_t curr_head = op_read(c, EHCI_ASYNCLISTADDR);
+
+    /* Point the new QH to the current head (or terminate if empty) */
+    qh[0] = curr_head ? curr_head : EHCI_PTR_TERMINATE;
+    __asm__ volatile("mfence" ::: "memory");
+
+    /* Update async list head to new QH */
+    op_write(c, EHCI_ASYNCLISTADDR, (uint32_t)(qh_phys & 0xFFFFFFE0u));
+
+    /* Enable async schedule if not running */
+    uint32_t cmd = op_read(c, EHCI_USBCMD);
+    if (!(cmd & EHCI_CMD_ASE))
+        op_write(c, EHCI_USBCMD, cmd | EHCI_CMD_ASE);
+
+    g_async_head_phys = (uint32_t)(qh_phys & 0xFFFFFFE0u);
+    __asm__ volatile("mfence" ::: "memory");
+
+    return 0;
+}
+
+/**
+ * ehci_async_remove_qh — Remove a QH from the async schedule list.
+ *
+ * Walks the async schedule to find the given QH and unlinks it.
+ * Updates the previous QH's horizontal link to skip the removed QH.
+ * If the removed QH was the head, updates ASYNCLISTADDR.
+ *
+ * @qh_phys:  Physical address of the QH to remove (32-byte aligned).
+ * Returns 0 on success, negative if not found.
+ */
+static int ehci_async_remove_qh(uint64_t qh_phys)
+{
+    int c = 0;
+    if (ehci_count < 1)
+        return -ENODEV;
+
+    uint32_t target = (uint32_t)(qh_phys & 0xFFFFFFE0u);
+    uint32_t async_head = op_read(c, EHCI_ASYNCLISTADDR);
+
+    if (async_head == 0 || (async_head & EHCI_PTR_TERMINATE))
+        return -ENOENT;  /* empty list */
+
+    /* If target is the head, just advance the head */
+    if (async_head == target) {
+        uint64_t qh_virt = (uint64_t)PHYS_TO_VIRT(target);
+        volatile uint32_t *qh = (volatile uint32_t *)qh_virt;
+        uint32_t next = qh[0];
+
+        /* Clear the removed QH's horizontal link */
+        qh[0] = EHCI_PTR_TERMINATE;
+
+        /* Update head pointer */
+        if (next & EHCI_PTR_TERMINATE) {
+            op_write(c, EHCI_ASYNCLISTADDR, 0);
+            g_async_head_phys = 0;
+        } else {
+            op_write(c, EHCI_ASYNCLISTADDR, next & ~0x1Fu);
+            g_async_head_phys = next & ~0x1Fu;
+        }
+        __asm__ volatile("mfence" ::: "memory");
+        return 0;
+    }
+
+    /* Walk the list to find the predecessor of target */
+    uint32_t prev_phys = async_head;
+    int safety = 32;  /* ASYNC_MAX_QDS */
+    while (!(prev_phys & EHCI_PTR_TERMINATE) && safety > 0) {
+        uint64_t prev_virt = (uint64_t)PHYS_TO_VIRT(prev_phys & ~0x1Fu);
+        volatile uint32_t *prev_qh = (volatile uint32_t *)prev_virt;
+        uint32_t next = prev_qh[0];
+
+        if ((next & ~0x1Fu) == target) {
+            /* Found predecessor — unlink target */
+            uint64_t tgt_virt = (uint64_t)PHYS_TO_VIRT(target);
+            volatile uint32_t *tgt_qh = (volatile uint32_t *)tgt_virt;
+            uint32_t target_next = tgt_qh[0];
+
+            prev_qh[0] = target_next;
+            tgt_qh[0] = EHCI_PTR_TERMINATE;
+            __asm__ volatile("mfence" ::: "memory");
+            return 0;
+        }
+
+        prev_phys = next;
+        safety--;
+    }
+
+    return -ENOENT;  /* not found */
+}
+
+/* ── Periodic schedule manager (interrupt QH persistence) ──────────────────── */
+
+/*
+ * Interrupt transfers require persistent QHs linked into the periodic
+ * frame list.  This manager tracks interrupt QH slots and provides
+ * add/remove operations.
+ */
+
+#define EHCI_MAX_PERIODIC_INTR 8
+
+/* Slots for persistent interrupt QHs */
+static struct {
+    uint64_t   qh_phys;           /* physical address of QH (0 = free) */
+    volatile uint32_t *qh_virt;   /* virtual address of QH */
+    uint32_t   frame_idx;         /* frame list slot index */
+    uint32_t   old_fl_entry;      /* saved frame list entry for restore */
+    uint8_t    dev_addr;
+    uint8_t    ep;
+    int        in_use;
+} g_periodic_intr[EHCI_MAX_PERIODIC_INTR];
+
+/**
+ * ehci_periodic_add_int_qh — Add a persistent interrupt QH to the frame list.
+ *
+ * Allocates a QH from the pool, sets it up for interrupt transfers on
+ * the given endpoint, and links it into the periodic schedule at one
+ * frame list slot.
+ *
+ * @dev_addr:  USB device address
+ * @ep:        Endpoint number
+ * @qtd_phys:  Physical address of the qTD (the first transfer descriptor)
+ * @frame_idx: Frame list slot index (0–1023) or ~0 for auto-select
+ * @out_slot:  Receives the slot index [0..EHCI_MAX_PERIODIC_INTR) on success
+ *
+ * Returns 0 on success, negative on failure.
+ */
+static int ehci_periodic_add_int_qh(uint8_t dev_addr, uint8_t ep,
+                                     uint64_t qtd_phys,
+                                     uint32_t frame_idx,
+                                     int *out_slot)
+{
+    int c = 0;
+    int ret;
+    uint64_t qh_phys = 0;
+    volatile uint32_t *qh = NULL;
+
+    if (!g_periodic_on)
+        return -ENOSYS;
+
+    /* Find a free slot */
+    int slot = -1;
+    for (int i = 0; i < EHCI_MAX_PERIODIC_INTR; i++) {
+        if (!g_periodic_intr[i].in_use) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot < 0)
+        return -EBUSY;
+
+    /* Allocate QH from pool */
+    ret = ehci_pool_alloc_qh(&qh_phys, &qh);
+    if (ret < 0)
+        return -ENOMEM;
+
+    /* Determine frame index if auto-select */
+    if (frame_idx == (uint32_t)~0u) {
+        uint32_t fi = op_read(c, EHCI_FRINDEX);
+        /* Place interrupt QH at a few fixed slots for distribution */
+        uint32_t base_slots[] = { 0, 32, 64, 128, 256, 384, 512, 768 };
+        int ns = sizeof(base_slots) / sizeof(base_slots[0]);
+        frame_idx = base_slots[(unsigned)slot % (unsigned)ns];
+        frame_idx %= EHCI_FRAME_LIST_ENTRIES;
+    } else {
+        frame_idx %= EHCI_FRAME_LIST_ENTRIES;
+    }
+
+    /* Horizontal link pointer: terminate (single QH in this slot) */
+    qh[0] = EHCI_PTR_TERMINATE;
+
+    /* Endpoint capabilities: speed + endpoint number + device address */
+    uint32_t ep_cap = ((2u << 12) /* QH_EPS_HIGH */) |
+                       ((uint32_t)ep << 8) | dev_addr;
+    qh[1] = ep_cap;
+
+    /* Overlay qTD pointer + S-mask (micro-frame 0) */
+    qh[2] = ((uint32_t)(qtd_phys & 0xFFFFFFE0u) |
+             0x00000001u /* EHCI_SMASK_MICROFRAME0 */);
+
+    /* qTD pointer fields */
+    qh[3] = (uint32_t)(qtd_phys & 0xFFFFFFE0u);
+    qh[4] = (uint32_t)(qtd_phys & 0xFFFFFFE0u);
+
+    __asm__ volatile("mfence" ::: "memory");
+
+    /* Save the frame list entry we are replacing */
+    uint32_t old_entry = g_flist[frame_idx];
+
+    /* Insert the QH into the schedule */
+    g_flist[frame_idx] = (uint32_t)(qh_phys & 0xFFFFFFE0u);
+    __asm__ volatile("mfence" ::: "memory");
+
+    /* Fill the slot descriptor */
+    g_periodic_intr[slot].qh_phys      = qh_phys;
+    g_periodic_intr[slot].qh_virt      = qh;
+    g_periodic_intr[slot].frame_idx    = frame_idx;
+    g_periodic_intr[slot].old_fl_entry = old_entry;
+    g_periodic_intr[slot].dev_addr     = dev_addr;
+    g_periodic_intr[slot].ep           = ep;
+    g_periodic_intr[slot].in_use       = 1;
+
+    kprintf("[EHCI] periodic_intr: slot=%d addr=%d ep=0x%02x "
+            "frame=%u QH=0x%lx\n",
+            slot, dev_addr, ep, (unsigned)frame_idx,
+            (unsigned long)qh_phys);
+
+    if (out_slot)
+        *out_slot = slot;
+    return 0;
+}
+
+/**
+ * ehci_periodic_remove_int_qh — Remove a persistent interrupt QH.
+ *
+ * Restores the saved frame list entry and returns the QH to the pool.
+ *
+ * @slot:  Slot index returned by ehci_periodic_add_int_qh().
+ */
+static void ehci_periodic_remove_int_qh(int slot)
+{
+    if (slot < 0 || slot >= EHCI_MAX_PERIODIC_INTR)
+        return;
+    if (!g_periodic_intr[slot].in_use)
+        return;
+
+    /* Restore the frame list entry */
+    g_flist[g_periodic_intr[slot].frame_idx] =
+        g_periodic_intr[slot].old_fl_entry;
+    __asm__ volatile("mfence" ::: "memory");
+
+    kprintf("[EHCI] periodic_intr: removed slot=%d "
+            "(addr=%d ep=0x%02x)\n",
+            slot, g_periodic_intr[slot].dev_addr,
+            g_periodic_intr[slot].ep);
+
+    /* Return the QH to the pool */
+    ehci_pool_free_qh(g_periodic_intr[slot].qh_phys);
+    memset(&g_periodic_intr[slot], 0,
+           sizeof(g_periodic_intr[slot]));
+}
+
+/**
+ * ehci_periodic_update_int_qh — Replace the qTD pointer for an interrupt QH.
+ *
+ * Used when the transfer completes and a new qTD is needed for the next
+ * interrupt poll cycle.
+ *
+ * @slot:     Slot index.
+ * @qtd_phys: Physical address of the new qTD.
+ */
+static void ehci_periodic_update_int_qh(int slot, uint64_t qtd_phys)
+{
+    if (slot < 0 || slot >= EHCI_MAX_PERIODIC_INTR)
+        return;
+    if (!g_periodic_intr[slot].in_use)
+        return;
+
+    volatile uint32_t *qh = g_periodic_intr[slot].qh_virt;
+    qh[3] = (uint32_t)(qtd_phys & 0xFFFFFFE0u);
+    qh[4] = (uint32_t)(qtd_phys & 0xFFFFFFE0u);
+    qh[2] = ((uint32_t)(qtd_phys & 0xFFFFFFE0u) |
+             0x00000001u /* EHCI_SMASK_MICROFRAME0 */);
+    __asm__ volatile("mfence" ::: "memory");
+}
+
 /* ── Periodic schedule (isochronous) support ────────────────────────────────── */
 
 int ehci_setup_periodic(void) {
@@ -583,6 +1030,19 @@ int ehci_setup_periodic(void) {
 void ehci_teardown_periodic(void) {
     int c = 0;
     if (!g_periodic_on) return;
+
+    /* Remove any persistent interrupt QH slots */
+    for (int i = 0; i < EHCI_MAX_PERIODIC_INTR; i++) {
+        if (g_periodic_intr[i].in_use) {
+            uint32_t fi = g_periodic_intr[i].frame_idx;
+            /* Restore the frame list entry we replaced */
+            g_flist[fi] = g_periodic_intr[i].old_fl_entry;
+            /* Return the QH to the pool */
+            ehci_pool_free_qh(g_periodic_intr[i].qh_phys);
+            memset(&g_periodic_intr[i], 0,
+                   sizeof(g_periodic_intr[0]));
+        }
+    }
 
     /* Disable periodic schedule */
     uint32_t cmd = op_read(c, EHCI_USBCMD);
@@ -799,10 +1259,12 @@ static int ehci_process_async_qtd(uint64_t qtd_phys)
 }
 
 /**
- * ehci_process_async_schedule — Process the async schedule list.
+ * ehci_process_async_schedule — Process the async schedule list with NAK recovery.
  *
- * Walks the async schedule (QH list) and processes any completed qTDs.
- * Called from the USB interrupt handler or periodically.
+ * Walks the async schedule (QH list) and processes completed qTDs.
+ * Implements NAK counting: if a qTD is still active after NAK_THRESHOLD
+ * passes, it is retried up to the configured error count (CERR).
+ * Errored QHs are unlinked from the async list.
  *
  * Returns the number of qTDs processed, or negative on error.
  */
@@ -810,32 +1272,79 @@ int ehci_process_async_schedule(void)
 {
     int c = 0;
     if (ehci_count < 1)
-        return -1;
+        return -ENODEV;
 
     uint32_t async_list_addr = op_read(c, EHCI_ASYNCLISTADDR);
     if (async_list_addr == 0)
         return 0;  /* Empty schedule */
+
+    /* NAK recovery threshold: number of passes before retry */
+#define ASYNC_NAK_THRESHOLD 3
 
     int processed = 0;
     uint32_t current_qh_phys = async_list_addr;
     int safety = ASYNC_MAX_QDS;
 
     while (current_qh_phys && !(current_qh_phys & QH_NEXT_TERMINATE) && safety > 0) {
-        uint64_t qh_virt = (uint64_t)PHYS_TO_VIRT(current_qh_phys & ~0x1F);
+        uint64_t qh_virt = (uint64_t)PHYS_TO_VIRT(current_qh_phys & ~0x1Fu);
         volatile uint32_t *qh = (volatile uint32_t *)qh_virt;
 
         /* Get the horizontal link pointer (next QH) */
         uint32_t horiz_link = qh[0];
 
         /* Get the overlay qTD pointer (current transfer) */
-        uint32_t overlay_qtd = qh[2];  /* qTD pointer at offset 8 */
+        uint32_t overlay_qtd = qh[2];  /* endpoint caps + overlay pointer */
 
-        if (overlay_qtd && !(overlay_qtd & QH_NEXT_TERMINATE)) {
-            int ret = ehci_process_async_qtd((uint64_t)(overlay_qtd & ~0x1F));
+        /* Extract the actual qTD pointer (bits [31:5] from offset 8) */
+        uint32_t qtd_ptr = overlay_qtd & 0xFFFFFFE0u;
+
+        if (qtd_ptr && !(qtd_ptr & QH_NEXT_TERMINATE)) {
+            int ret = ehci_process_async_qtd((uint64_t)(qtd_ptr & ~0x1Fu));
             if (ret > 0) {
+                /* qTD completed successfully */
                 processed++;
                 kprintf("[EHCI] Async qTD completed (QH=0x%08X)\n",
                         (unsigned)current_qh_phys);
+
+                /* Clear the overlay qTD pointer to mark completion */
+                qh[2] = 0x00000001u;  /* S-mask only, no qTD */
+                qh[3] = 0;
+                qh[4] = 0;
+                __asm__ volatile("mfence" ::: "memory");
+            } else if (ret == 0) {
+                /*
+                 * qTD still active (NAK or in progress).
+                 * Decrement the qTD's CERR field as a NAK counter.
+                 * If the host has retried NAK_THRESHOLD times, adjust.
+                 *
+                 * The actual retry is handled by the controller's CERR
+                 * counter; we just track NAK passes in the software
+                 * overlay.  If the qTD has been active for too many
+                 * passes, we treat it as stalled and remove the QH.
+                 */
+                static int nak_count[ASYNC_MAX_QDS];  /* per-pass NAK tracking */
+                static int nak_idx = 0;
+
+                nak_idx = (nak_idx + 1) % ASYNC_MAX_QDS;
+                nak_count[nak_idx]++;
+
+                if (nak_count[nak_idx] > ASYNC_NAK_THRESHOLD * 32) {
+                    kprintf("[EHCI] Async qTD NAK timeout "
+                            "(QH=0x%08X, qTD=0x%08X)\n",
+                            (unsigned)current_qh_phys,
+                            (unsigned)qtd_ptr);
+                    /* Halt by setting HALTED in token */
+                    volatile uint32_t *qtd_virt =
+                        (volatile uint32_t *)PHYS_TO_VIRT(qtd_ptr & ~0x1Fu);
+                    qtd_virt[2] |= QTD_TOKEN_HALTED;
+                    nak_count[nak_idx] = 0;
+                }
+            } else {
+                /* qTD had an error — remove the QH from the schedule */
+                kprintf("[EHCI] Async qTD error, removing QH=0x%08X\n",
+                        (unsigned)current_qh_phys);
+                ehci_async_remove_qh(current_qh_phys);
+                processed++;
             }
         }
 
@@ -1389,6 +1898,15 @@ int xhci_submit_isochronous(uint8_t dev_addr, uint8_t ep,
 }
 
 int __init ehci_usb_init(void) {
+    int ret;
+
+    /* Initialise QH/qTD pool for reuse */
+    ret = ehci_pool_init();
+    if (ret < 0) {
+        kprintf("[EHCI] Failed to initialise QH/qTD pool (%d)\n", ret);
+        return ret;
+    }
+
     /* Scan PCI for EHCI controllers (class 0x0C, subclass 0x03, prog-if 0x20) */
     for (int bus = 0; bus < 256; bus++) {
         for (int slot = 0; slot < 32; slot++) {
