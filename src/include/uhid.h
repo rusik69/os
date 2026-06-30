@@ -11,6 +11,33 @@
 #define HID_DESC_HID           0x21
 #define HID_DESC_REPORT        0x22
 
+/* ── HID class-specific requests (USB HID Spec §7.2) ──────────────── */
+#define HID_REQ_GET_REPORT      0x01
+#define HID_REQ_GET_IDLE        0x02
+#define HID_REQ_GET_PROTOCOL    0x03
+#define HID_REQ_SET_REPORT      0x09
+#define HID_REQ_SET_IDLE        0x0A
+#define HID_REQ_SET_PROTOCOL    0x0B
+
+/* ── HID report types (for GET/SET_REPORT bRequest type) ─────────── */
+#define HID_REPORT_INPUT        1
+#define HID_REPORT_OUTPUT       2
+#define HID_REPORT_FEATURE      3
+
+/* ── HID request type byte builder ────────────────────────────────── */
+/* Host-to-device, Class, Interface */
+#define HID_REQTYPE_SET  ((USB_DIR_OUT | USB_REQ_TYPE_CLASS | USB_REQ_RECIP_INTERFACE))
+/* Device-to-host, Class, Interface */
+#define HID_REQTYPE_GET  ((USB_DIR_IN  | USB_REQ_TYPE_CLASS | USB_REQ_RECIP_INTERFACE))
+
+/* ── Boot protocol output report (keyboard LEDs) ──────────────────── */
+/* SET_REPORT output report bit definitions (1-byte report) */
+#define HID_BOOT_LED_NUM_LOCK     (1U << 0)
+#define HID_BOOT_LED_CAPS_LOCK    (1U << 1)
+#define HID_BOOT_LED_SCROLL_LOCK  (1U << 2)
+#define HID_BOOT_LED_COMPOSE      (1U << 3)
+#define HID_BOOT_LED_KANA         (1U << 4)
+
 /* ── HID item type (bType) ───────────────────────────────────────── */
 #define HID_TYPE_MAIN          0
 #define HID_TYPE_GLOBAL        1
@@ -292,6 +319,17 @@ struct hid_report_desc {
     int global_stack_depth;
 };
 
+/* ── HID descriptor structure (USB HID Spec §6.2.1, 9 bytes) ──────── */
+struct hid_descriptor {
+    uint8_t  bLength;            /* 9 bytes */
+    uint8_t  bDescriptorType;    /* HID_DESC_HID (0x21) */
+    uint16_t bcdHID;             /* HID specification release (BCD) */
+    uint8_t  bCountryCode;       /* country code of the localized hardware */
+    uint8_t  bNumDescriptors;    /* number of subordinate report/other descriptors */
+    uint8_t  bDescriptorType0;   /* type of first subordinate descriptor */
+    uint16_t wDescriptorLength0; /* total length of the first subordinate descriptor */
+} __attribute__((packed));
+
 /* ── Parser API ──────────────────────────────────────────────────── */
 
 /*
@@ -316,8 +354,26 @@ int  usb_hid_keyboard_present(void);
 int  usb_hid_getchar(void);
 int  usb_hid_has_input(void);
 
+/* Set keyboard LEDs (bitmask of HID_BOOT_LED_*) via SET_REPORT */
+int usb_hid_set_leds(uint8_t leds);
+
 /* Access HID mouse state */
 int  usb_hid_mouse_present(void);
 void usb_hid_mouse_get(int *buttons, int *dx, int *dy);
+
+/* Get mouse wheel delta (accumulated, resets on read) */
+int  usb_hid_mouse_wheel_get(void);
+
+/* ── Boot protocol control transfers ─────────────────────────────── */
+int usb_hid_get_report(uint8_t report_type, uint8_t report_id,
+                       void *buf, size_t len);
+int usb_hid_set_report(uint8_t report_type, uint8_t report_id,
+                       const void *buf, size_t len);
+
+/* Fetch the HID descriptor from the device */
+int usb_hid_get_hid_descriptor(struct hid_descriptor *desc);
+
+/* Fetch the HID report descriptor and parse it */
+int usb_hid_get_and_parse_report_descriptor(void);
 
 #endif /* UHID_H */

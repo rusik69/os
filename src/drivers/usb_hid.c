@@ -105,6 +105,13 @@ static int g_keyboard_present = 0;
 static int g_mouse_present = 0;
 static int g_has_interrupt = 0;
 
+/* Interface numbers for HID class requests */
+static uint8_t g_kbd_intf = 0;
+static uint8_t g_mouse_intf = 0;
+
+/* Current keyboard LED state via USB SET_REPORT */
+static uint8_t g_usb_led_state = 0;
+
 /* Interrupt endpoint info */
 static uint8_t g_int_in_ep = 0;
 static uint8_t g_mouse_int_in_ep = 0;
@@ -120,6 +127,10 @@ static int g_kbd_buf_tail = 0;
 static int g_mouse_buttons = 0;
 static int g_mouse_dx = 0;
 static int g_mouse_dy = 0;
+static int g_mouse_wheel = 0;
+
+/* Forward declarations */
+static int usb_hid_parse_report_legacy(void *dev, const void *report, size_t len);
 
 /* ── Transfer primitives ───────────────────────────────────────────── */
 
@@ -240,6 +251,118 @@ static int usb_control(uint64_t op_base, uint8_t bm_req_type, uint8_t b_req,
     return rc;
 }
 
+/* ── HID boot protocol control transfers ──────────────────────────── */
+
+/*
+ * GET_REPORT — request current report from the device.
+ * USB HID Spec §7.2.1
+ */
+int usb_hid_get_report(uint8_t report_type, uint8_t report_id,
+                        void *buf, size_t len)
+{
+    if (!g_hid_initialized || !buf || len == 0) return -EINVAL;
+
+    uint16_t w_val = ((uint16_t)report_type << 8) | report_id;
+    uint8_t iface = g_keyboard_present ? g_kbd_intf : g_mouse_intf;
+
+    return usb_control(g_op_base, HID_REQTYPE_GET, HID_REQ_GET_REPORT,
+                        w_val, iface, (uint16_t)len, buf, g_dev_addr);
+}
+
+/*
+ * SET_REPORT — send output/feature report to the device.
+ * USB HID Spec §7.2.4
+ */
+int usb_hid_set_report(uint8_t report_type, uint8_t report_id,
+                        const void *buf, size_t len)
+{
+    if (!g_hid_initialized || !buf || len == 0) return -EINVAL;
+
+    uint16_t w_val = ((uint16_t)report_type << 8) | report_id;
+    uint8_t iface = g_keyboard_present ? g_kbd_intf : g_mouse_intf;
+
+    return usb_control(g_op_base, HID_REQTYPE_SET, HID_REQ_SET_REPORT,
+                        w_val, iface, (uint16_t)len, (void *)buf, g_dev_addr);
+}
+
+/*
+ * GET_DESCRIPTOR (HID) — read the HID descriptor from the device.
+ * The HID descriptor contains the HID spec version, country code,
+ * and the length of the subordinate report descriptor.
+ * USB HID Spec §6.2.1, §7.1.1
+ */
+int usb_hid_get_hid_descriptor(struct hid_descriptor *desc)
+{
+    if (!desc) return -EINVAL;
+
+    return usb_control(g_op_base, 0x80, USB_REQ_GET_DESCRIPTOR,
+                        (uint16_t)(HID_DESC_HID << 8), 0,
+                        sizeof(struct hid_descriptor), desc, g_dev_addr);
+}
+
+/*
+ * Fetch the HID report descriptor and parse it for keyboard/mouse
+ * detection using the report descriptor parser.
+ */
+int usb_hid_get_and_parse_report_descriptor(void)
+{
+    struct hid_descriptor hdesc;
+    int rc = usb_hid_get_hid_descriptor(&hdesc);
+    if (rc < 0) {
+        kprintf("[USB HID] GET_DESCRIPTOR(HID) failed (%d)\n", rc);
+        return rc;
+    }
+
+    uint16_t report_len = hdesc.wDescriptorLength0;
+    if (report_len == 0 || report_len > 512) {
+        kprintf("[USB HID] Invalid report descriptor length %u\n", report_len);
+        return -EINVAL;
+    }
+
+    uint8_t *rdesc = (uint8_t *)hid_alloc_dma(report_len);
+    if (!rdesc) return -ENOMEM;
+
+    rc = usb_control(g_op_base, 0x80, USB_REQ_GET_DESCRIPTOR,
+                      (uint16_t)(HID_DESC_REPORT << 8), 0,
+                      report_len, rdesc, g_dev_addr);
+    if (rc < 0) {
+        kprintf("[USB HID] GET_DESCRIPTOR(REPORT) failed (%d)\n", rc);
+        pmm_free_frame(VIRT_TO_PHYS((uint64_t)rdesc));
+        return rc;
+    }
+
+    rc = usb_hid_parse_report_legacy(NULL, rdesc, report_len);
+    pmm_free_frame(VIRT_TO_PHYS((uint64_t)rdesc));
+
+    if (rc < 0) {
+        kprintf("[USB HID] Report descriptor parse failed (%d)\n", rc);
+        return rc;
+    }
+
+    kprintf("[USB HID] Report descriptor parsed (%u bytes)\n", report_len);
+    return 0;
+}
+
+/*
+ * Set keyboard LEDs via SET_REPORT (boot protocol output report).
+ * The boot keyboard output report is a single byte:
+ *   bit 0: Num Lock
+ *   bit 1: Caps Lock
+ *   bit 2: Scroll Lock
+ *   bit 3: Compose
+ *   bit 4: Kana
+ */
+int usb_hid_set_leds(uint8_t leds)
+{
+    if (!g_hid_initialized || !g_keyboard_present) return -ENODEV;
+
+    int rc = usb_hid_set_report(HID_REPORT_OUTPUT, 0, &leds, 1);
+    if (rc == 0) {
+        g_usb_led_state = leds;
+    }
+    return rc;
+}
+
 /* ── HID keycode to ASCII mapping (US layout, boot protocol subset) ── */
 
 static const char hid_keycode_to_ascii[128] = {
@@ -329,22 +452,43 @@ static int hid_key_to_ascii(uint8_t keycode, uint8_t modifiers) {
 
 /* ── Keyboard report processing ────────────────────────────────────── */
 
-static void process_keyboard_report(const struct hid_keyboard_report *rep) {
-    /* Compare with last report to detect changes */
-    /* For simplicity, just process the first non-zero keycode */
+/*
+ * Check if keycode was present in the previous report.
+ * Returns 1 if found, 0 if not.
+ */
+static int key_was_down(uint8_t keycode)
+{
+    for (int i = 0; i < 6; i++) {
+        if (g_last_kbd_report.keys[i] == keycode)
+            return 1;
+    }
+    return 0;
+}
+
+/*
+ * Process a boot protocol keyboard report with proper press/release
+ * detection.  Only generates input for newly pressed keys (transition
+ * from released to pressed).  Handles up to 6-key rollover.
+ */
+static void process_keyboard_report(const struct hid_keyboard_report *rep)
+{
+    /* Process newly pressed keys: keys in current report NOT in last report */
     for (int i = 0; i < 6; i++) {
         uint8_t kc = rep->keys[i];
-        if (kc != HID_KEYCODE_NONE) {
-            int ch = hid_key_to_ascii(kc, rep->modifiers);
-            if (ch > 0) {
-                int next = (g_kbd_buf_tail + 1) % sizeof(g_kbd_buf);
-                if (next != g_kbd_buf_head) {
-                    g_kbd_buf[g_kbd_buf_tail] = (char)ch;
-                    g_kbd_buf_tail = next;
+        if (kc != HID_KEYCODE_NONE && kc != HID_KEYCODE_ERROR) {
+            if (!key_was_down(kc)) {
+                int ch = hid_key_to_ascii(kc, rep->modifiers);
+                if (ch > 0) {
+                    int next = (g_kbd_buf_tail + 1) % sizeof(g_kbd_buf);
+                    if (next != g_kbd_buf_head) {
+                        g_kbd_buf[g_kbd_buf_tail] = (char)ch;
+                        g_kbd_buf_tail = next;
+                    }
                 }
             }
         }
     }
+
     memcpy(&g_last_kbd_report, rep, sizeof(g_last_kbd_report));
     g_kbd_changed = 1;
 }
@@ -355,6 +499,7 @@ static void process_mouse_report(const struct hid_mouse_report *rep) {
     g_mouse_buttons = rep->buttons;
     g_mouse_dx += rep->x_delta;
     g_mouse_dy += rep->y_delta;
+    g_mouse_wheel += rep->wheel;
 }
 
 /* ── Poll HID interrupt endpoint ────────────────────────────────────── */
@@ -448,9 +593,11 @@ int usb_hid_init(void) {
             if (if_class == 0x03) {  /* HID */
                 if (if_proto == 1) {  /* Keyboard */
                     g_keyboard_present = 1;
+                    g_kbd_intf = if_num;
                     kprintf("[USB HID] Found keyboard (if=%d)\n", if_num);
                 } else if (if_proto == 2) {  /* Mouse */
                     g_mouse_present = 1;
+                    g_mouse_intf = if_num;
                     kprintf("[USB HID] Found mouse (if=%d)\n", if_num);
                 }
             }
@@ -502,6 +649,37 @@ int usb_hid_init(void) {
         kprintf("[USB HID] SET_IDLE warning (%d)\n", rc);
     }
 
+    /* Fetch HID descriptor and parse report descriptor */
+    usb_hid_get_and_parse_report_descriptor();
+
+    /* Fetch initial keyboard report via GET_REPORT */
+    if (g_keyboard_present) {
+        uint8_t *init_kbd = (uint8_t *)hid_alloc_dma(8);
+        if (init_kbd) {
+            rc = usb_control(g_op_base, HID_REQTYPE_GET, HID_REQ_GET_REPORT,
+                              (uint16_t)(HID_REPORT_INPUT << 8), g_kbd_intf,
+                              8, init_kbd, g_dev_addr);
+            if (rc == 0) {
+                memcpy(&g_last_kbd_report, init_kbd, sizeof(g_last_kbd_report));
+            }
+            pmm_free_frame(VIRT_TO_PHYS((uint64_t)init_kbd));
+        }
+    }
+
+    /* Fetch initial mouse report via GET_REPORT */
+    if (g_mouse_present) {
+        uint8_t *init_mouse = (uint8_t *)hid_alloc_dma(4);
+        if (init_mouse) {
+            rc = usb_control(g_op_base, HID_REQTYPE_GET, HID_REQ_GET_REPORT,
+                              (uint16_t)(HID_REPORT_INPUT << 8), g_mouse_intf,
+                              4, init_mouse, g_dev_addr);
+            if (rc == 0) {
+                process_mouse_report((const struct hid_mouse_report *)init_mouse);
+            }
+            pmm_free_frame(VIRT_TO_PHYS((uint64_t)init_mouse));
+        }
+    }
+
     g_hid_initialized = 1;
     kprintf("[USB HID] Initialized: %s%s\n",
             g_keyboard_present ? "keyboard " : "",
@@ -545,6 +723,13 @@ void usb_hid_mouse_get(int *buttons, int *dx, int *dy) {
     g_mouse_dy = 0;
 }
 
+int usb_hid_mouse_wheel_get(void)
+{
+    int w = g_mouse_wheel;
+    g_mouse_wheel = 0;
+    return w;
+}
+
 int usb_hid_read(struct usb_device *dev, void *buf, size_t count)
 {
     if (!dev || !buf || count == 0) return -EINVAL;
@@ -573,9 +758,11 @@ int usb_hid_read(struct usb_device *dev, void *buf, size_t count)
             p[0] = (uint8_t)buttons;
             p[1] = (uint8_t)dx;
             p[2] = (uint8_t)dy;
-            /* Clear state */
-            memset(p + 3, 0, count - 3);
-            return 3;
+            /* Wheel at offset 3 */
+            p[3] = (uint8_t)usb_hid_mouse_wheel_get();
+            /* Clear remainder */
+            memset(p + 4, 0, count - 4);
+            return 4;
         }
     }
 
