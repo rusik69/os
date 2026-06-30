@@ -310,6 +310,7 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/sound_midi.c \
          src/drivers/sound_oss.c \
          src/drivers/sound_pcm.c \
+         src/drivers/sound_src.c \
          src/drivers/ramdisk.c \
          src/drivers/watchdog.c \
          src/drivers/netconsole.c \
