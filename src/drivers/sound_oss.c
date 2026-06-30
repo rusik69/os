@@ -71,6 +71,21 @@ static int g_dsp_initialized = 0;
 static int g_play_volume = 192;
 static int g_rec_volume  = 192;
 
+/* DSP volume (separate from mixer — for SNDCTL_DSP_SETPLAYVOL) */
+static int g_dsp_play_volume = 255;
+static int g_dsp_rec_volume  = 255;
+
+/* DSP profile */
+static int g_dsp_profile = DSP_PROFILE_DEFAULT;
+
+/* Error statistics (for SNDCTL_DSP_GETERROR) */
+static int g_err_play_underruns    = 0;
+static int g_err_rec_overruns      = 0;
+static int g_err_play_lost_intr    = 0;
+static int g_err_rec_lost_intr     = 0;
+static int g_err_play_last_error   = 0;
+static int g_err_rec_last_error    = 0;
+
 /* Capture state */
 static int g_record_source   = 0;  /* REC_SEL_MIC */
 static uint8_t g_record_gain_left  = 10;
@@ -535,6 +550,9 @@ int sound_oss_ioctl(int cmd, uint64_t arg)
 	/* ── DSP set fragment size/count ───────────────────────── */
 	case SNDCTL_DSP_SETFRAGMENT: {
 		uint32_t fragspec;
+		int old_frag_size = g_frag_size;
+		int old_frag_count = g_frag_count;
+
 		ret = oss_read_arg32(arg, &fragspec);
 		if (ret < 0)
 			return ret;
@@ -549,7 +567,32 @@ int sound_oss_ioctl(int cmd, uint64_t arg)
 
 		g_frag_size  = 1U << frag_shift;
 		g_frag_count = num_frags;
-		return 0;
+
+		/* Re-initialise streams with new fragment parameters
+		 * if they already exist */
+		if (g_playback && g_frag_size != old_frag_size) {
+			sound_pcm_reset(g_playback);
+			sound_pcm_init_stream(g_playback,
+					      SOUND_PCM_PLAYBACK,
+					      (uint32_t)g_frag_size,
+					      (uint32_t)g_frag_count,
+					      NULL);
+		}
+		if (g_capture && g_frag_size != old_frag_size) {
+			sound_pcm_reset(g_capture);
+			sound_pcm_init_stream(g_capture,
+					      SOUND_PCM_CAPTURE,
+					      (uint32_t)g_frag_size,
+					      (uint32_t)g_frag_count,
+					      NULL);
+		}
+
+		/* OSS semantics: write back the actual fragment spec */
+		uint32_t actual_fragspec =
+			((uint32_t)(31 - __builtin_clz(
+				(uint32_t)g_frag_size)) & 0xFFFF) |
+			(((uint32_t)g_frag_count & 0xFFFF) << 16);
+		return oss_write_arg32(arg, actual_fragspec);
 	}
 
 	/* ── DSP get output space ──────────────────────────────── */
@@ -559,9 +602,11 @@ int sound_oss_ioctl(int cmd, uint64_t arg)
 
 		if (g_playback)
 			avail_bytes = (int)sound_pcm_get_avail_write(
-				g_playback);
+					g_playback);
+		else
+			avail_bytes = g_frag_size * g_frag_count;
 
-		info.fragments  = g_frag_count > 0
+		info.fragments  = g_frag_size > 0
 				  ? avail_bytes / g_frag_size : 0;
 		info.fragstotal = g_frag_count;
 		info.fragsize   = g_frag_size;
@@ -573,11 +618,19 @@ int sound_oss_ioctl(int cmd, uint64_t arg)
 	/* ── DSP get input space ───────────────────────────────── */
 	case SNDCTL_DSP_GETISPACE: {
 		struct audio_buf_info info;
+		int avail_bytes = 0;
 
-		info.fragments  = 0;
+		if (g_capture)
+			avail_bytes = (int)sound_pcm_get_avail_write(
+					g_capture);
+		else
+			avail_bytes = g_frag_size * g_frag_count;
+
+		info.fragments  = g_frag_size > 0
+				  ? avail_bytes / g_frag_size : 0;
 		info.fragstotal = g_frag_count;
 		info.fragsize   = g_frag_size;
-		info.bytes      = g_frag_size * g_frag_count;
+		info.bytes      = avail_bytes;
 
 		return oss_copyout_buf(arg, &info, sizeof(info));
 	}
@@ -619,15 +672,19 @@ int sound_oss_ioctl(int cmd, uint64_t arg)
 	/* ── DSP get output pointer ────────────────────────────── */
 	case SNDCTL_DSP_GETOPTR: {
 		struct count_info info;
-		uint32_t bytes = 0;
+		uint32_t total_bytes = 0;
 
 		if (g_playback)
-			bytes = sound_pcm_get_avail_read(g_playback);
+			total_bytes = g_playback->app_ptr;
 
-		info.bytes  = (int)bytes;
+		info.bytes  = (int)total_bytes;
 		info.blocks = g_frag_size > 0
-			      ? (int)(bytes / (uint32_t)g_frag_size) : 0;
-		info.ptr    = 0;
+			      ? (int)(total_bytes /
+				      (uint32_t)g_frag_size) : 0;
+		info.ptr    = g_playback
+			      ? (int)(g_playback->hw_ptr &
+				      (g_playback->buf_mask))
+			      : 0;
 
 		return oss_copyout_buf(arg, &info, sizeof(info));
 	}
@@ -635,10 +692,19 @@ int sound_oss_ioctl(int cmd, uint64_t arg)
 	/* ── DSP get input pointer ─────────────────────────────── */
 	case SNDCTL_DSP_GETIPTR: {
 		struct count_info info;
+		uint32_t total_bytes = 0;
 
-		info.bytes  = 0;
-		info.blocks = 0;
-		info.ptr    = 0;
+		if (g_capture)
+			total_bytes = g_capture->hw_ptr;
+
+		info.bytes  = (int)total_bytes;
+		info.blocks = g_frag_size > 0
+			      ? (int)(total_bytes /
+				      (uint32_t)g_frag_size) : 0;
+		info.ptr    = g_capture
+			      ? (int)(g_capture->app_ptr &
+				      (g_capture->buf_mask))
+			      : 0;
 
 		return oss_copyout_buf(arg, &info, sizeof(info));
 	}
@@ -684,6 +750,115 @@ int sound_oss_ioctl(int cmd, uint64_t arg)
 		if (g_record_mute)
 			val |= 0x8000;
 		return oss_write_arg32(arg, val);
+	}
+
+	/* ── DSP get formats (SNDCTL_DSP_GETFMTS) ─────────────── */
+	case SNDCTL_DSP_GETFMTS: {
+		uint32_t fmts = AFMT_BIT_U8 |
+				AFMT_BIT_S16_LE |
+				AFMT_BIT_S16_BE;
+		return oss_write_arg32(arg, fmts);
+	}
+
+	/* ── DSP get output delay (SNDCTL_DSP_GETODELAY) ──────── */
+	case SNDCTL_DSP_GETODELAY: {
+		uint32_t delay = 0;
+		if (g_playback)
+			delay = sound_pcm_get_avail_read(g_playback);
+		return oss_write_arg32(arg, delay);
+	}
+
+	/* ── DSP get channels (SNDCTL_DSP_GETCHANNELS) ────────── */
+	case SNDCTL_DSP_GETCHANNELS: {
+		uint32_t ch = (uint32_t)g_channels;
+		if (ch < 1) ch = 1;
+		if (ch > 2) ch = 2;
+		return oss_write_arg32(arg, ch);
+	}
+
+	/* ── DSP subdivide (SNDCTL_DSP_SUBDIVIDE) ─────────────── */
+	case SNDCTL_DSP_SUBDIVIDE: {
+		uint32_t div;
+		ret = oss_read_arg32(arg, &div);
+		if (ret < 0)
+			return ret;
+		/* Accept 1 (no divide) — could support 2,4 for
+		 * fragment subdivision, but we always return 1. */
+		return oss_write_arg32(arg, 1);
+	}
+
+	/* ── DSP playback volume (SNDCTL_DSP_SETPLAYVOL) ──────── */
+	case SNDCTL_DSP_SETPLAYVOL: {
+		uint32_t vol;
+		ret = oss_read_arg32(arg, &vol);
+		if (ret < 0)
+			return ret;
+		g_dsp_play_volume = (int)(vol & 0xFF);
+		if (g_dsp_play_volume > 100)
+			g_dsp_play_volume = 100;
+		return 0;
+	}
+
+	/* ── DSP playback volume (SNDCTL_DSP_GETPLAYVOL) ──────── */
+	case SNDCTL_DSP_GETPLAYVOL: {
+		uint32_t vol = (uint32_t)g_dsp_play_volume |
+			       ((uint32_t)g_dsp_play_volume << 8);
+		return oss_write_arg32(arg, vol);
+	}
+
+	/* ── DSP recording volume (SNDCTL_DSP_SETRECVOL) ──────── */
+	case SNDCTL_DSP_SETRECVOL: {
+		uint32_t vol;
+		ret = oss_read_arg32(arg, &vol);
+		if (ret < 0)
+			return ret;
+		g_dsp_rec_volume = (int)(vol & 0xFF);
+		if (g_dsp_rec_volume > 100)
+			g_dsp_rec_volume = 100;
+		return 0;
+	}
+
+	/* ── DSP recording volume (SNDCTL_DSP_GETRECVOL) ──────── */
+	case SNDCTL_DSP_GETRECVOL: {
+		uint32_t vol = (uint32_t)g_dsp_rec_volume |
+			       ((uint32_t)g_dsp_rec_volume << 8);
+		return oss_write_arg32(arg, vol);
+	}
+
+	/* ── DSP profile (SNDCTL_DSP_PROFILE) ─────────────────── */
+	case SNDCTL_DSP_PROFILE: {
+		uint32_t profile;
+		ret = oss_read_arg32(arg, &profile);
+		if (ret < 0)
+			return ret;
+		switch ((int)profile) {
+		case DSP_PROFILE_DEFAULT:
+		case DSP_PROFILE_LOW_LATENCY:
+		case DSP_PROFILE_HIGH_Q:
+			g_dsp_profile = (int)profile;
+			break;
+		default:
+			g_dsp_profile = DSP_PROFILE_DEFAULT;
+			break;
+		}
+		return oss_write_arg32(arg,
+				       (uint32_t)g_dsp_profile);
+	}
+
+	/* ── DSP get error (SNDCTL_DSP_GETERROR) ──────────────── */
+	case SNDCTL_DSP_GETERROR: {
+		struct audio_errinfo err;
+		err.play_underruns       = g_err_play_underruns;
+		err.rec_overruns         = g_err_rec_overruns;
+		err.play_ptradjust       = 0UL;
+		err.rec_ptradjust        = 0UL;
+		err.play_error_count     = g_err_play_underruns;
+		err.rec_error_count      = g_err_rec_overruns;
+		err.play_lost_interrupts = g_err_play_lost_intr;
+		err.rec_lost_interrupts  = g_err_rec_lost_intr;
+		err.play_last_error      = g_err_play_last_error;
+		err.rec_last_error       = g_err_rec_last_error;
+		return oss_copyout_buf(arg, &err, sizeof(err));
 	}
 
 	/* ── OSS Mixer ioctls ──────────────────────────────────── */

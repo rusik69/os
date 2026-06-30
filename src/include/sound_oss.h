@@ -20,6 +20,12 @@
 #define AFMT_U8        8       /* 8-bit unsigned PCM */
 #define AFMT_S16_LE    16      /* 16-bit signed little-endian PCM */
 #define AFMT_S16_BE    17      /* 16-bit signed big-endian PCM */
+#define AFMT_QUERY     0       /* Query for the current format */
+
+/* Format capability bitmask for SNDCTL_DSP_GETFMTS */
+#define AFMT_BIT_U8      (1U << 0)   /* bit for AFMT_U8 */
+#define AFMT_BIT_S16_LE  (1U << 1)   /* bit for AFMT_S16_LE */
+#define AFMT_BIT_S16_BE  (1U << 2)   /* bit for AFMT_S16_BE */
 
 /* ── PCM trigger bits ─────────────────────────────────────────────── */
 #define PCM_ENABLE_INPUT   0x00000001
@@ -45,6 +51,18 @@
 #define SNDCTL_DSP_GETRECORD_SOURCE  0x00500051  /* Get record source */
 #define SNDCTL_DSP_SETRECORD_GAIN    0x00500052  /* Set record gain */
 #define SNDCTL_DSP_GETRECORD_GAIN    0x00500053  /* Get record gain */
+
+/* ── Additional standard OSS SNDCTL_DSP_* ioctls ──────────────────── */
+#define SNDCTL_DSP_SUBDIVIDE        0x00500007  /* Set/query subsample divide */
+#define SNDCTL_DSP_GETFMTS          0x00500012  /* Get supported format bitmask */
+#define SNDCTL_DSP_GETODELAY        0x00500016  /* Get output delay in bytes */
+#define SNDCTL_DSP_GETCHANNELS      0x00500017  /* Get actual channel count */
+#define SNDCTL_DSP_SETPLAYVOL       0x00500018  /* Set playback volume */
+#define SNDCTL_DSP_GETPLAYVOL       0x00500019  /* Get playback volume */
+#define SNDCTL_DSP_SETRECVOL        0x0050001A  /* Set recording volume */
+#define SNDCTL_DSP_GETRECVOL        0x0050001B  /* Get recording volume */
+#define SNDCTL_DSP_PROFILE          0x0050001C  /* Set/get DSP profile */
+#define SNDCTL_DSP_GETERROR         0x0050001D  /* Get error statistics */
 
 /* ── OSS Mixer ioctl commands (SOUND_MIXER_*) ──────────────────────── */
 #define SOUND_MIXER_READ_VOLUME   0x80044D00  /* Read master volume */
@@ -81,6 +99,25 @@ struct count_info {
 #define DSP_CAP_COPROC      0x00000010  /* Has coprocessor */
 #define DSP_CAP_TRIGGER     0x00000020  /* Supports SETTRIGGER */
 #define DSP_CAP_MMAP        0x00000040  /* Supports mmap */
+
+/* ── OSS error info structure (for SNDCTL_DSP_GETERROR) ───────────── */
+struct audio_errinfo {
+    int play_underruns;         /**< Number of playback underruns */
+    int rec_overruns;           /**< Number of capture overruns */
+    unsigned long play_ptradjust;  /**< Playback pointer adjustments */
+    unsigned long rec_ptradjust;   /**< Record pointer adjustments */
+    int play_error_count;       /**< Playback error count */
+    int rec_error_count;        /**< Record error count */
+    int play_lost_interrupts;   /**< Playback lost interrupts */
+    int rec_lost_interrupts;    /**< Record lost interrupts */
+    int play_last_error;        /**< Last playback error code */
+    int rec_last_error;         /**< Last record error code */
+};
+
+/* ── DSP profile constants ──────────────────────────────────────────── */
+#define DSP_PROFILE_DEFAULT     0   /**< Default profile */
+#define DSP_PROFILE_LOW_LATENCY 1   /**< Low-latency profile */
+#define DSP_PROFILE_HIGH_Q      2   /**< High-quality profile */
 
 /* ── Function declarations ─────────────────────────────────────────── */
 
