@@ -117,6 +117,8 @@ uint64_t sys_setuid(uint64_t uid);
 uint64_t sys_seteuid(uint64_t euid);
 uint64_t sys_setgid(uint64_t gid);
 uint64_t sys_setegid(uint64_t egid);
+uint64_t sys_getgroups(uint64_t size, uint64_t list_addr);
+uint64_t sys_setgroups(uint64_t size, uint64_t list_addr);
 
 /* D123: Process & Signal syscalls — declared in sys_process.c */
 uint64_t sys_rt_sigaction(uint64_t signum, uint64_t act_addr,
@@ -517,6 +519,15 @@ static int syscall_validate_user_args(uint64_t num, uint64_t a1, uint64_t a2,
             /* No arguments — just validate that user is calling from user mode */
             return 0;
         case SYS_PERSONALITY:
+            return 0;
+        /* Supplementary groups — validate user pointers */
+        case SYS_GETGROUPS:
+            if (a1 > 0 && a2 && !syscall_user_write_ok(a2, a1 * sizeof(uint32_t)))
+                return -EFAULT;
+            return 0;
+        case SYS_SETGROUPS:
+            if (a1 > 0 && a2 && !syscall_user_read_ok(a2, a1 * sizeof(uint32_t)))
+                return -EFAULT;
             return 0;
         default:
             return 0;
@@ -10641,6 +10652,9 @@ uint64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2,
         /* ── Swap — block device swap (Item 223) ──────────────────── */
         case SYS_SWAPON:          return (uint64_t)swap_swapon((const char *)a1);
         case SYS_SWAPOFF:         return (uint64_t)swap_swapoff((const char *)a1);
+        /* ── Supplementary groups (D127) ─────────────────────────── */
+        case SYS_GETGROUPS:       return sys_getgroups(a1, a2);
+        case SYS_SETGROUPS:       return sys_setgroups(a1, a2);
         /* ── pidfd operations ─────────────────────────────────────── */
         case SYS_PIDFD_OPEN: {
             int ret = pidfd_open((uint32_t)a1, (uint32_t)a2);

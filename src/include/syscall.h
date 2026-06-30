@@ -467,11 +467,12 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size,
 #define SYS_SETEUID            402 /* seteuid(euid) → 0 or -errno */
 #define SYS_SETGID             403 /* setgid(gid) → 0 or -errno */
 #define SYS_SETEGID            404 /* setegid(egid) → 0 or -errno */
+#define SYS_GETGROUPS          405 /* getgroups(size, list) → count or -errno */
+#define SYS_SETGROUPS          406 /* setgroups(size, list) → 0 or -errno */
 
 #define SYS_REMAP_FILE_PAGES   400 /* remap_file_pages(addr, size, prot, pgoff, flags) */
 
 /* Maximum size of a file handle (in bytes) */
-#define MAX_HANDLE_SZ 128
 
 /* AT_ flags for name_to_handle_at */
 #define AT_EMPTY_PATH   0x1000   /* Allow empty path (fd refers to file directly) */

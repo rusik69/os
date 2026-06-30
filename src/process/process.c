@@ -432,6 +432,7 @@ struct process *process_create(void (*entry)(void), const char *name) {
     proc->gid = 0;
     proc->euid = 0;
     proc->egid = 0;
+    proc->ngroups = 0;
     proc->umask = 0022;
     proc->wait_for_pid   = 0;
     proc->ticks_remaining = 0; /* set by scheduler on first run */
@@ -622,6 +623,7 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
     proc->cpu_affinity = 0;
     proc->base_priority = 1;
     proc->uid = 0; proc->gid = 0; proc->euid = 0; proc->egid = 0;
+    proc->ngroups = 0;
     proc->umask = 0022;
     proc->wait_for_pid   = 0;
     proc->ticks_remaining = 0;

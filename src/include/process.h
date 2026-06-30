@@ -19,6 +19,9 @@ struct cgroup_namespace;
 /* Resource limits (local defines since we can't rely on syscall.h include order) */
 #define _RLIMIT_NLIMITS 15
 
+/* Maximum number of supplementary groups */
+#define NGROUPS_MAX 32
+
 #define PROCESS_MAX 256
 #define KERNEL_STACK_SIZE (128 * 1024) /* 128 KB — cc parser + network call chains */
 #define KERNEL_STACK_PAGES ((KERNEL_STACK_SIZE + PAGE_SIZE - 1) / PAGE_SIZE)
@@ -168,6 +171,8 @@ struct process {
     uint32_t gid;             /* group ID */
     uint32_t euid;            /* effective user ID */
     uint32_t egid;            /* effective group ID */
+    uint16_t ngroups;         /* number of supplementary groups */
+    uint32_t groups[NGROUPS_MAX]; /* supplementary group IDs */
     uint16_t umask;           /* file creation mask */
     uint64_t syscall_caps[PROCESS_SYSCALL_CAP_WORDS];
     char     cwd[64];         /* current working directory */

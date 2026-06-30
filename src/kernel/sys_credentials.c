@@ -1,8 +1,9 @@
 /*
  * Linux-compatible credential syscalls.
  *
- * Provides setuid, seteuid, setgid, setegid, and related credential
- * management syscalls matching the Linux x86-64 ABI conventions.
+ * Provides setuid, seteuid, setgid, setegid, getgroups, setgroups,
+ * and related credential management syscalls matching the Linux
+ * x86-64 ABI conventions.
  *
  * Each function returns (uint64_t)(int64_t)-errno on error, or a
  * non-negative value on success.
@@ -149,5 +150,81 @@ uint64_t sys_setegid(uint64_t egid)
 
     p->egid = (uint32_t)egid;
     p->dumpable = 0;
+    return 0;
+}
+
+/* ── sys_getgroups — get list of supplementary group IDs ──────────
+ *
+ * int getgroups(int size, gid_t list[]);
+ *
+ * If size is 0, return the number of supplementary group IDs.
+ * If size is non-zero, copy up to size group IDs into list.
+ * Returns the number of groups copied, or -EINVAL if size is
+ * non-zero but smaller than the actual number of groups.
+ */
+uint64_t sys_getgroups(uint64_t size, uint64_t list_addr)
+{
+    struct process *p = process_get_current();
+    if (!p)
+        return (uint64_t)(int64_t)-ESRCH;
+
+    int ngroups = p->ngroups;
+
+    /* If size is 0, just return the count */
+    if (size == 0)
+        return (uint64_t)(int64_t)ngroups;
+
+    /* Size must be at least the number of groups */
+    if ((int)size < ngroups)
+        return (uint64_t)(int64_t)-EINVAL;
+
+    /* Copy groups to user buffer */
+    if (ngroups > 0) {
+        if (copy_to_user(list_addr, p->groups,
+                         (size_t)ngroups * sizeof(uint32_t)) < 0)
+            return (uint64_t)(int64_t)-EFAULT;
+    }
+
+    return (uint64_t)(int64_t)ngroups;
+}
+
+/* ── sys_setgroups — set supplementary group IDs ──────────────────
+ *
+ * int setgroups(size_t size, const gid_t *list);
+ *
+ * Sets the supplementary group IDs for the current process.
+ * Only privileged (euid == 0) processes may call this.
+ * Returns 0 on success, -EPERM if not privileged, -EFAULT if
+ * the list pointer is invalid, -EINVAL if size is too large.
+ */
+uint64_t sys_setgroups(uint64_t size, uint64_t list_addr)
+{
+    struct process *p = process_get_current();
+    if (!p)
+        return (uint64_t)(int64_t)-ESRCH;
+
+    /* Only root (euid == 0) may change supplementary groups */
+    if (p->euid != 0)
+        return (uint64_t)(int64_t)-EPERM;
+
+    /* Validate size */
+    if ((int)size > NGROUPS_MAX)
+        return (uint64_t)(int64_t)-EINVAL;
+
+    /* Clear existing groups */
+    p->ngroups = 0;
+
+    /* Copy in new groups from user buffer */
+    if (size > 0) {
+        uint32_t buf[NGROUPS_MAX];
+        if (copy_from_user(buf, list_addr,
+                           (size_t)size * sizeof(uint32_t)) < 0)
+            return (uint64_t)(int64_t)-EFAULT;
+
+        for (int i = 0; i < (int)size; i++)
+            p->groups[i] = buf[i];
+        p->ngroups = (uint16_t)size;
+    }
+
     return 0;
 }
