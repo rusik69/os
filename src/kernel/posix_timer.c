@@ -23,6 +23,7 @@
 #include "rtc.h"
 #include "process.h"
 #include "uaccess.h"
+#include "caps.h"
 #include "string.h"
 #include "printf.h"
 #include "module.h"
@@ -230,22 +231,52 @@ uint64_t sys_clock_gettime(uint64_t clockid, uint64_t tp_addr)
  *
  *   clock_settime(clockid, const struct timespec *tp)
  *
- * Only CLOCK_REALTIME is settable (and only when the caller has
- * sufficient privilege).  Adjusts the boot epoch so that
- * rtc_get_epoch() + ticks_since_boot reflects the new wall-clock time.
+ * Only CLOCK_REALTIME (and CLOCK_REALTIME_COARSE) are settable,
+ * and only when the caller has CAP_SYS_TIME.  Adjusts the boot
+ * epoch so that rtc_get_epoch() + ticks_since_boot reflects the
+ * new wall-clock time.
+ *
+ * Returns: 0 on success, -EPERM if not privileged, -EFAULT on
+ * bad pointer, -EINVAL on invalid clockid or invalid tv_nsec.
  */
 uint64_t sys_clock_settime(uint64_t clockid, uint64_t tp_addr)
 {
-    if (clockid != CLOCK_REALTIME)
+    /* Only realtime clocks are settable */
+    if (clockid != CLOCK_REALTIME && clockid != CLOCK_REALTIME_COARSE
+        && clockid != CLOCK_REALTIME_ALARM)
         return (uint64_t)(int64_t)-EINVAL;
+
+    /* CLOCK_REALTIME_ALARM requires CAP_WAKE_ALARM;
+     * all other settable clocks require CAP_SYS_TIME. */
+    if (clockid == CLOCK_REALTIME_ALARM) {
+        if (cap_capable_audit(CAP_WAKE_ALARM, "clock_settime") < 0)
+            return (uint64_t)(int64_t)-EPERM;
+    } else {
+        if (cap_capable_audit(CAP_SYS_TIME, "clock_settime") < 0)
+            return (uint64_t)(int64_t)-EPERM;
+    }
 
     struct timespec ts;
     if (copy_from_user(&ts, tp_addr, sizeof(struct timespec)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
 
+    /* Validate timespec: tv_nsec must be in [0, 999999999] */
+    if (ts.tv_nsec >= 1000000000ULL)
+        return (uint64_t)(int64_t)-EINVAL;
+
     uint64_t ticks = timer_get_ticks();
     uint64_t ticks_sec = ticks / TIMER_FREQ;
-    uint64_t new_epoch = ts.tv_sec - ticks_sec;
+
+    /*
+     * Compute new boot epoch so that:
+     *   current_wall_time = boot_epoch + ticks_since_boot
+     *   => new_boot_epoch = desired_time - ticks_since_boot
+     *
+     * If the desired time is before the boot (can't happen in
+     * practice with a valid epoch), clamp to zero.
+     */
+    uint64_t new_epoch = (ts.tv_sec >= ticks_sec)
+                         ? (ts.tv_sec - ticks_sec) : 0;
     rtc_set_epoch(new_epoch);
     return 0;
 }
