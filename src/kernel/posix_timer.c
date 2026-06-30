@@ -700,7 +700,11 @@ uint64_t sys_timer_gettime(uint64_t timerid, uint64_t cur_addr)
  *   timer_getoverrun(timerid)
  *
  * Returns the overrun count (number of extra expirations that
- * occurred between the signal delivery and the timer_getoverrun call).
+ * occurred between the signal delivery and the timer_getoverrun
+ * call).  The overrun is reset to 0 after reading, per POSIX.
+ *
+ * Returns: overrun count (capped at DELAYTIMER_MAX, 0x7FFFFFFF)
+ * on success, -EINVAL on invalid timerid.
  */
 uint64_t sys_timer_getoverrun(uint64_t timerid)
 {
@@ -708,7 +712,16 @@ uint64_t sys_timer_getoverrun(uint64_t timerid)
     if (idx < 0 || idx >= POSIX_TIMER_MAX || !posix_timers[idx].in_use)
         return (uint64_t)(int64_t)-EINVAL;
 
-    return posix_timers[idx].overrun;
+    uint64_t overrun = posix_timers[idx].overrun;
+
+    /* Reset overrun after reading (POSIX semantics) */
+    posix_timers[idx].overrun = 0;
+
+    /* Cap at DELAYTIMER_MAX (2147483647) as required by POSIX */
+    if (overrun > 2147483647ULL)
+        overrun = 2147483647ULL;
+
+    return overrun;
 }
 
 /* ── sys_timer_delete ────────────────────────────────────────────
