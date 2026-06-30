@@ -3173,7 +3173,7 @@ static uint64_t sys_select(uint64_t nfds, uint64_t readfds_addr,
                 } else if (strncmp(cur->fd_table[i].path, "pipe_read_", 10) == 0) {
                     /* Pipe read end */
                     int pipe_id = (int)cur->fd_table[i].offset;
-                    int revents = pipe_poll(pipe_id, 1);
+                    int revents = pipe_poll(pipe_id, 1, NULL);
                     if (!(revents & POLLIN))
                         FD_CLR(i, &readfds);
                 }
@@ -3197,7 +3197,7 @@ static uint64_t sys_select(uint64_t nfds, uint64_t readfds_addr,
                 } else if (strncmp(cur->fd_table[i].path, "pipe_write_", 11) == 0) {
                     /* Pipe write end */
                     int pipe_id = (int)cur->fd_table[i].offset;
-                    int revents = pipe_poll(pipe_id, 0);
+                    int revents = pipe_poll(pipe_id, 0, NULL);
                     if (!(revents & POLLOUT))
                         FD_CLR(i, &writefds);
                 }
@@ -5317,7 +5317,7 @@ static uint64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr,
                 }
                 if (strncmp(proc->fd_table[i].path, "pipe_read_", 10) == 0) {
                     int pipe_id = (int)proc->fd_table[i].offset;
-                    int revents = pipe_poll(pipe_id, 1);
+                    int revents = pipe_poll(pipe_id, 1, NULL);
                     if (!(revents & POLLIN)) FD_CLR(i, &readfds);
                     continue;
                 }
@@ -5338,7 +5338,7 @@ static uint64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr,
                 }
                 if (strncmp(proc->fd_table[i].path, "pipe_write_", 11) == 0) {
                     int pipe_id = (int)proc->fd_table[i].offset;
-                    int revents = pipe_poll(pipe_id, 0);
+                    int revents = pipe_poll(pipe_id, 0, NULL);
                     if (!(revents & POLLOUT)) FD_CLR(i, &writefds);
                     continue;
                 }
@@ -5517,10 +5517,10 @@ static uint64_t sys_ppoll(uint64_t fds_addr, uint64_t nfds,
 
             if (strncmp(pfd->path, "pipe_read_", 10) == 0) {
                 int pipe_id = (int)pfd->offset;
-                revents = pipe_poll(pipe_id, 1);
+                revents = pipe_poll(pipe_id, 1, NULL);
             } else if (strncmp(pfd->path, "pipe_write_", 11) == 0) {
                 int pipe_id = (int)pfd->offset;
-                revents = pipe_poll(pipe_id, 0);
+                revents = pipe_poll(pipe_id, 0, NULL);
             } else {
                 if (fds_buf[i].events & POLLIN)  revents |= POLLIN;
                 if (fds_buf[i].events & POLLOUT) revents |= POLLOUT;

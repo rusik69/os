@@ -269,11 +269,11 @@ uint64_t sys_poll(uint64_t fds_addr, uint64_t nfds, uint64_t timeout_ms)
             if (strncmp(pfd->path, "pipe_read_", 10) == 0) {
                 /* Pipe read end */
                 int pipe_id = (int)pfd->offset;
-                revents = pipe_poll(pipe_id, 1 /* is_read_end */);
+                revents = pipe_poll(pipe_id, 1 /* is_read_end */, &pt);
             } else if (strncmp(pfd->path, "pipe_write_", 11) == 0) {
                 /* Pipe write end */
                 int pipe_id = (int)pfd->offset;
-                revents = pipe_poll(pipe_id, 0 /* is_write_end */);
+                revents = pipe_poll(pipe_id, 0 /* is_write_end */, &pt);
             } else {
                 /* Regular file / other: always readable and
                  * writable if the requested events include them. */
@@ -443,10 +443,10 @@ int vfs_poll_fd(int fd, int events)
     /* Pipe FDs — dispatch by path prefix */
     if (strncmp(pfd->path, "pipe_read_", 10) == 0) {
         int pipe_id = (int)pfd->offset;
-        revents = pipe_poll(pipe_id, 1);
+        revents = pipe_poll(pipe_id, 1, NULL);
     } else if (strncmp(pfd->path, "pipe_write_", 11) == 0) {
         int pipe_id = (int)pfd->offset;
-        revents = pipe_poll(pipe_id, 0);
+        revents = pipe_poll(pipe_id, 0, NULL);
     } else {
         /* Regular files / other: always readable and writable */
         if (events & POLLIN)

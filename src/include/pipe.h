@@ -4,6 +4,9 @@
 #include "types.h"
 #include "waitqueue.h"
 
+/* Forward declaration for poll support */
+struct poll_table;
+
 #define PIPE_BUF_SIZE      65536   /* pipe buffer size (64KB, was 4096) */
 #define PIPE_DEFAULT_SIZE   65536  /* default pipe capacity (64KB, Linux default) */
 #define PIPE_MAX_SIZE      1048576 /* maximum pipe capacity (1MB) */
@@ -57,7 +60,7 @@ int pipe_available(int pipe_id);
 void pipe_init(void);
 
 /* ── poll/select support ─────────────────────────────────────────── */
-int pipe_poll(int pipe_id, int is_read_end);
+int pipe_poll(int pipe_id, int is_read_end, struct poll_table *pt);
 
 /* ── fcntl helpers ───────────────────────────────────────────────── */
 int pipe_set_nonblock(int pipe_id, int nonblock);

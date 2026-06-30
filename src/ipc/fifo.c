@@ -114,7 +114,7 @@ static int fifo_poll(int fd)
     for (int i = 0; i < FIFO_MAX; i++) {
         if (fifo_table[i].in_use) {
             /* Check if pipe has data to read */
-            return pipe_poll(fifo_table[i].pipe_id, 1);
+            return pipe_poll(fifo_table[i].pipe_id, 1, NULL);
         }
     }
     return 0;

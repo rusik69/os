@@ -3,6 +3,7 @@
 #include "string.h"
 #include "signal.h"
 #include "process.h"
+#include "poll.h"
 #include "timer.h"
 #include "syscall.h"
 #include "heap.h"
@@ -298,14 +299,23 @@ int pipe_get_capacity(int pipe_id) {
 }
 
 /* ── poll/select support ─────────────────────────────────────────── */
-int pipe_poll(int pipe_id, int is_read_end) {
+int pipe_poll(int pipe_id, int is_read_end, struct poll_table *pt) {
     if (pipe_id < 0 || pipe_id >= PIPE_MAX || !pipe_table[pipe_id].in_use)
         return 0;
     struct pipe *p = &pipe_table[pipe_id];
-    if (is_read_end)
-        return p->count > 0 ? (POLLIN) : 0;
-    else
-        return p->count < p->capacity ? (POLLOUT) : 0;
+    int revents = 0;
+    if (is_read_end) {
+        revents = p->count > 0 ? POLLIN : 0;
+        /* Register the read waitqueue if nothing ready yet */
+        if (revents == 0 && pt)
+            poll_wait(pt, &p->read_wq);
+    } else {
+        revents = p->count < p->capacity ? POLLOUT : 0;
+        /* Register the write waitqueue if nothing ready yet */
+        if (revents == 0 && pt)
+            poll_wait(pt, &p->write_wq);
+    }
+    return revents;
 }
 
 /* ── fcntl F_SETFL — O_NONBLOCK ──────────────────────────────────── */
