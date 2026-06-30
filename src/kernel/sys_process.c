@@ -529,3 +529,69 @@ uint64_t sys_kill(uint64_t pid, uint64_t sig) {
         return (uint64_t)(int64_t)signal_send_group(pgid, (int)sig);
     }
 }
+
+/* ── sys_tkill — send signal to a single thread ─────────────────
+ *
+ *   int tkill(pid_t tid, int sig);
+ *
+ * Linux-compatible tkill syscall.  Sends signal `sig` to the single
+ * thread identified by `tid` (which is the PID of the thread).
+ *
+ * Unlike kill(pid > 0) which sends to the main process (thread group
+ * leader), tkill targets a specific thread by its TID regardless of
+ * whether it is a thread within a thread group.
+ *
+ * This sets si_code = SI_TKILL in the siginfo to distinguish the
+ * signal source from kill(2) (which uses SI_USER).
+ *
+ * If sig == 0, perform error checking only — no signal is actually
+ * sent.  This null-signal probe is used by userspace to verify that
+ * a specific TID exists and is killable.
+ *
+ * Returns 0 on success, -errno on error.
+ */
+uint64_t sys_tkill(uint64_t pid, uint64_t sig)
+{
+    struct process *cur = process_get_current();
+    if (!cur)
+        return (uint64_t)(int64_t)-ESRCH;
+
+    /* Basic signal number sanity — sig == 0 is the null-signal probe,
+     * sig > SIG_MAX is invalid, everything 1..SIG_MAX is valid. */
+    if (sig > SIG_MAX)
+        return (uint64_t)(int64_t)-EINVAL;
+
+    /* Find the target thread by PID */
+    struct process *target = process_get_by_pid((uint32_t)pid);
+    if (!target || target->state == PROCESS_UNUSED)
+        return (uint64_t)(int64_t)-ESRCH;
+
+    /* Permission check — root (euid 0) or matching UID can signal.
+     * Follows POSIX.1-2008 semantics: either the real or effective
+     * UID of the caller must match the real or saved UID of the target.
+     * This kernel tracks real uid and effective uid per process. */
+    if (cur->euid != 0 &&
+        cur->euid != target->euid &&
+        cur->uid  != target->uid)
+        return (uint64_t)(int64_t)-EPERM;
+
+    /* Null-signal probe: existence + permission check only */
+    if (sig == 0)
+        return 0;
+
+    /* Build siginfo with SI_TKILL to distinguish from kill(2) */
+    struct siginfo info;
+    memset(&info, 0, sizeof(info));
+    info.si_signo = (int)sig;
+    info.si_code  = SI_TKILL;
+    info.si_pid   = cur->pid;
+    info.si_uid   = cur->uid;
+
+    /* Deliver the signal via signal_send_info which handles
+     * the si_code, pending bit setting, and process wakeup.
+     * Returns 0 on success, -1 on failure. */
+    if (signal_send_info((uint32_t)pid, (int)sig, &info) < 0)
+        return (uint64_t)(int64_t)-EAGAIN;
+
+    return 0;
+}

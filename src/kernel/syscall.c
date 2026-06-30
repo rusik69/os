@@ -118,6 +118,7 @@ uint64_t sys_rt_sigreturn(void);
 uint64_t sys_rt_sigtimedwait(uint64_t set_addr, uint64_t info_addr,
                              uint64_t timeout_addr, uint64_t sigsetsize);
 uint64_t sys_kill(uint64_t pid, uint64_t sig);
+uint64_t sys_tkill(uint64_t pid, uint64_t sig);
 
 /* ── Open file descriptor table (for lseek support) ────────────── */
 
@@ -2358,10 +2359,6 @@ static uint64_t sys_gettid(void) {
     struct process *p = process_get_current();
     if (!p) return 0;
     return (uint64_t)p->tgid ? (uint64_t)p->tgid : (uint64_t)p->pid;
-}
-
-static uint64_t sys_tkill(uint64_t pid, uint64_t sig) {
-    return (uint64_t)(int64_t)signal_send((uint32_t)pid, (int)sig);
 }
 
 static uint64_t sys_execve(uint64_t path_addr, uint64_t argv_addr, uint64_t envp_addr) {
