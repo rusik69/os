@@ -20,6 +20,9 @@ int  sys_cap_bset_has(uint32_t cap);
 /* Apply the system-wide bounding set to a process's cap sets */
 void sys_cap_bset_apply(struct process *proc);
 
+/* Get a word of the system-wide bounding set (for capset validation) */
+uint64_t sys_cap_bset_get_word(int word);
+
 /* POSIX capability numbers */
 #define CAP_CHOWN           0
 #define CAP_DAC_OVERRIDE    1

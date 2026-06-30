@@ -10530,27 +10530,7 @@ uint64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_GETRUSAGE:       return sys_getrusage(a1, a2);
         case SYS_SYSINFO:         return sys_sysinfo(a1);
         case SYS_CAPGET:          return sys_capget(a1, a2);
-        case SYS_CAPSET: {
-        	/* capset: set capability masks on current process */
-        	struct process *p = process_get_current();
-        	if (!p) return (uint64_t)-1;
-        	if (!a1 || !a2) return (uint64_t)-1;
-        	if (syscall_is_user_process()) {
-        		if (!syscall_user_read_ok(a1,
-        		    sizeof(struct __user_cap_header_struct)))
-        			return (uint64_t)-1;
-        		if (!syscall_user_read_ok(a2,
-        		    sizeof(struct __user_cap_data_struct)))
-        			return (uint64_t)-1;
-        	}
-        	struct __user_cap_data_struct data;
-        	if (copy_from_user(&data, a2, sizeof(data)) < 0)
-        		return (uint64_t)-1;
-        	p->cap_effective[0]   = (p->cap_effective[0] & ~0xFFFFFFFFULL) | data.effective;
-        	p->cap_permitted[0]   = (p->cap_permitted[0] & ~0xFFFFFFFFULL) | data.permitted;
-        	p->cap_inheritable[0] = (p->cap_inheritable[0] & ~0xFFFFFFFFULL) | data.inheritable;
-        	return 0;
-        }
+        case SYS_CAPSET:          return sys_capset(a1, a2);
         case SYS_GETRESUID:       return sys_getresuid(a1, a2, a3);
         case SYS_SETRESUID:       return sys_setresuid(a1, a2, a3);
         case SYS_GETRESGID:       return sys_getresgid(a1, a2, a3);

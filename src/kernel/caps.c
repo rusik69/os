@@ -55,18 +55,27 @@ int sys_cap_bset_has(uint32_t cap) {
     return (sys_cap_bset[word] >> bit) & 1;
 }
 
-/* Apply the system-wide bounding set mask to per-process cap sets.
+/* Apply the system-wide bounding set to a process's cap sets.
  * Called during fork/clone and exec to ensure no process exceeds
  * the global bounding set limits. */
 void sys_cap_bset_apply(struct process *proc) {
-    if (!proc) return;
-    /* The per-process syscall_caps (permitted set) is ANDed with
-     * the global bounding set so dropping a cap at system level
-     * immediately restricts all processes. */
-    for (int i = 0; i < PROCESS_SYSCALL_CAP_WORDS && i < CAP_BSET_SIZE; i++) {
-        proc->syscall_caps[i] &= sys_cap_bset[i];
-        proc->cap_bset[i]     &= sys_cap_bset[i];
-    }
+	if (!proc) return;
+	/* The per-process syscall_caps (permitted set) is ANDed with
+	 * the global bounding set so dropping a cap at system level
+	 * immediately restricts all processes. */
+	for (int i = 0; i < PROCESS_SYSCALL_CAP_WORDS && i < CAP_BSET_SIZE; i++) {
+		proc->syscall_caps[i] &= sys_cap_bset[i];
+		proc->cap_bset[i]     &= sys_cap_bset[i];
+	}
+}
+
+/* Get one word (64-bit) of the system-wide capability bounding set.
+ * Returns 0 if 'word' is out of bounds. Used by sys_capset for
+ * permission validation against the global bounding mask. */
+uint64_t sys_cap_bset_get_word(int word) {
+	if (word < 0 || word >= CAP_BSET_SIZE)
+		return 0;
+	return sys_cap_bset[word];
 }
 
 /*
