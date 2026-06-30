@@ -11,6 +11,11 @@
 #include "pipe.h"
 #include "inotify.h"
 #include "printf.h"
+#include "eventfd.h"
+#include "signalfd.h"
+#include "timerfd.h"
+#include "epoll.h"
+#include "memfd.h"
 
 /*
  * poll.c — Poll infrastructure implementation
@@ -346,4 +351,109 @@ uint64_t sys_poll(uint64_t fds_addr, uint64_t nfds, uint64_t timeout_ms)
     }
 
     return (uint64_t)ready;
+}
+
+/* ── Unified VFS poll dispatcher ─────────────────────────────── */
+
+/*
+ * vfs_poll_fd — unified file descriptor poll dispatcher.
+ *
+ * Dispatches to the correct subsystem poll handler based on fd
+ * number ranges:
+ *   Socket FDs:   100–131  → sock_poll()
+ *   Timerfd FDs:  800–815  → timerfd_poll()
+ *   Signalfd FDs: 600–615  → signalfd_poll()
+ *   Eventfd FDs:  700–715  → eventfd_poll()
+ *   Inotify FDs:  720–727  → inotify_poll()
+ *   Pipe FDs:              → pipe_poll() via fd_table path
+ *   Regular FDs:           → always POLLIN|POLLOUT
+ *   Epoll FDs:   730–745   → POLLIN (if events pending)
+ *   Invalid FDs:           → POLLNVAL
+ *
+ * @fd:      file descriptor number
+ * @events:  requested events (POLLIN, POLLOUT, etc.)
+ *
+ * Returns a revents bitmask of ready events, or POLLNVAL if fd
+ * is not valid.
+ */
+int vfs_poll_fd(int fd, int events)
+{
+    int revents = 0;
+
+    /* ── Socket FDs (100–131) ──────────────────────────────── */
+    if (fd >= 100 && fd < 100 + SOCK_MAX) {
+        revents = sock_poll(fd, events);
+        return revents;
+    }
+
+    /* ── Timerfd FDs (800–815) ─────────────────────────────── */
+    if (fd >= 800 && fd < 800 + 16) {
+        revents = timerfd_poll(NULL, NULL);
+        if (revents < 0)
+            return POLLNVAL;
+        return revents & events;
+    }
+
+    /* ── Signalfd FDs (600–615) ────────────────────────────── */
+    if (fd >= 600 && fd < 600 + 16) {
+        revents = signalfd_poll(fd, NULL);
+        if (revents < 0)
+            return POLLNVAL;
+        return revents & events;
+    }
+
+    /* ── Eventfd FDs (700–715) ─────────────────────────────── */
+    if (fd >= 700 && fd < 700 + 16) {
+        revents = eventfd_poll(fd);
+        if (revents < 0)
+            return POLLNVAL;
+        return revents & events;
+    }
+
+    /* ── Inotify FDs (720–727) ─────────────────────────────── */
+    if (fd >= INOTIFY_FD_BASE &&
+        fd < INOTIFY_FD_BASE + 8) {
+        revents = inotify_poll(fd);
+        if (revents < 0)
+            return POLLNVAL;
+        if (revents && (events & POLLIN))
+            return POLLIN;
+        return 0;
+    }
+
+    /* ── Epoll FDs (730–745) ───────────────────────────────── */
+    if (fd >= EPOLL_FD_BASE && fd < EPOLL_FD_BASE + 16) {
+        /* Epoll fds are always readable if they have pending events.
+         * For now, report POLLIN since epoll uses its own blocking. */
+        if (events & POLLIN)
+            return POLLIN;
+        return 0;
+    }
+
+    /* ── Process fd_table entries ──────────────────────────── */
+    struct process *cur = process_get_current();
+    if (!cur || fd < 0 || fd >= PROCESS_FD_MAX)
+        return POLLNVAL;
+
+    if (!cur->fd_table[fd].used)
+        return POLLNVAL;
+
+    struct process_fd *pfd = &cur->fd_table[fd];
+
+    /* Pipe FDs — dispatch by path prefix */
+    if (strncmp(pfd->path, "pipe_read_", 10) == 0) {
+        int pipe_id = (int)pfd->offset;
+        revents = pipe_poll(pipe_id, 1);
+    } else if (strncmp(pfd->path, "pipe_write_", 11) == 0) {
+        int pipe_id = (int)pfd->offset;
+        revents = pipe_poll(pipe_id, 0);
+    } else {
+        /* Regular files / other: always readable and writable */
+        if (events & POLLIN)
+            revents |= POLLIN;
+        if (events & POLLOUT)
+            revents |= POLLOUT;
+    }
+
+    return revents & events;
 }

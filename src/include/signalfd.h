@@ -56,4 +56,7 @@ int signalfd_create(uint64_t mask);
 /* Read one signalfd_siginfo entry from the slot. Returns bytes read or -1. */
 int signalfd_read_info(int slot, struct signalfd_siginfo *out);
 
+/* Poll support: returns a bitmask of POLLIN/POLLOUT */
+int signalfd_poll(int fd, void *pt);
+
 #endif /* SIGNALFD_H */

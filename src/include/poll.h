@@ -200,4 +200,19 @@ poll_table_clear_error(struct poll_table *pt)
  */
 uint64_t sys_poll(uint64_t fds_addr, uint64_t nfds, uint64_t timeout_ms);
 
+/*
+ * vfs_poll_fd — unified file descriptor poll dispatcher.
+ *
+ * Returns a revents bitmask (POLLIN | POLLOUT | POLLERR | etc.)
+ * for a single file descriptor by dispatching to the appropriate
+ * subsystem poll handler based on the fd type.
+ *
+ * @fd:      file descriptor number
+ * @events:  requested events (POLLIN, POLLOUT, etc.)
+ *
+ * Returns the revents bitmask on success, or POLLNVAL if fd is
+ * not valid.
+ */
+int vfs_poll_fd(int fd, int events);
+
 #endif /* POLL_H */

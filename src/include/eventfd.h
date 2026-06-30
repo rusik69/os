@@ -25,4 +25,7 @@ void eventfd_close(int fd);
 /* Syscall entry point (called from syscall dispatcher) */
 int eventfd_syscall(uint32_t initval, int flags);
 
+/* Poll support: returns a bitmask of POLLIN/POLLOUT for an eventfd fd */
+int eventfd_poll(int fd);
+
 #endif /* EVENTFD_H */

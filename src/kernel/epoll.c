@@ -36,6 +36,7 @@
 #include "socket.h"
 #include "errno.h"
 #include "wakeup.h"
+#include "poll.h"
 
 /* ── Global state ────────────────────────────────────────────── */
 
@@ -280,8 +281,6 @@ int epoll_wait_syscall(int epfd, struct epoll_event *events,
             deadline = timer_get_ticks() + 1;
     }
 
-    struct process *cur = process_get_current();
-
     /* EPOLLWAKEUP: register a wakeup source to prevent suspend
      * while waiting, if any monitored fd uses this flag. */
     int wsrc = -1;
@@ -302,33 +301,11 @@ int epoll_wait_syscall(int epfd, struct epoll_event *events,
             if (!e->in_use || !e->armed)
                 continue;
 
-            uint32_t revents = 0;
+            uint32_t revents = (uint32_t)vfs_poll_fd(e->fd, (int)e->events);
 
-            /* Check if fd is a socket and has data available */
-            struct socket *s = sock_get(e->fd);
-            if (s && s->state != SOCK_STATE_FREE) {
-                if (e->events & EPOLLIN) {
-                    /* Assume readable if connected or listening */
-                    if (s->state == SOCK_STATE_CONNECTED ||
-                        s->state == SOCK_STATE_LISTENING)
-                        revents |= EPOLLIN;
-                }
-                if (e->events & EPOLLOUT) {
-                    if (s->state == SOCK_STATE_CONNECTED)
-                        revents |= EPOLLOUT;
-                }
-            }
-
-            /* Also check regular fds via process fd_table */
-            if (e->fd >= 0 && e->fd < PROCESS_FD_MAX) {
-                struct process *p = cur;
-                if (p && p->fd_table[e->fd].used) {
-                    if (e->events & EPOLLIN)
-                        revents |= EPOLLIN;
-                    if (e->events & EPOLLOUT)
-                        revents |= EPOLLOUT;
-                }
-            }
+            /* Map POLLNVAL to EPOLLHUP | EPOLLERR (Linux epoll convention) */
+            if (revents == POLLNVAL)
+                revents = EPOLLHUP | EPOLLERR;
 
             if (revents) {
                 /* Edge-triggered: only report new events since last report */

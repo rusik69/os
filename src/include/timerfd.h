@@ -4,7 +4,9 @@
 
 /* timerfd flags */
 #define TFD_CLOEXEC      02000000
+#ifndef TFD_NONBLOCK
 #define TFD_NONBLOCK     00004000
+#endif
 #define TFD_TIMER_ABSTIME (1U << 0)
 
 /* clock IDs for timerfd */
@@ -28,5 +30,8 @@ int timerfd_settime(int fd, int flags,
 int timerfd_gettime(int fd, struct itimerspec *curr_value);
 int timerfd_read(int fd, uint64_t *val);
 void timerfd_close(int fd);
+
+/* Poll support: returns a bitmask of POLLIN/POLLOUT */
+int timerfd_poll(void *file, void *pt);
 
 #endif
