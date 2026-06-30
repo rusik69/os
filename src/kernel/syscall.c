@@ -1251,6 +1251,86 @@ static uint64_t sys_pread64(uint64_t fd, uint64_t buf_addr,
     return (uint64_t)to_read;
 }
 
+/**
+ * sys_pwrite64 - Write to a file descriptor at a specific offset
+ * @fd: File descriptor number
+ * @buf_addr: User-space address of the data to write
+ * @count: Number of bytes to write
+ * @offset: File offset to write at
+ *
+ * Writes up to @count bytes to the file descriptor @fd starting at
+ * @offset. Unlike sys_write/sys_fd_write, the file descriptor's current
+ * offset is NOT modified. If @offset extends beyond the current file
+ * size, the gap is zero-filled. Returns the number of bytes written,
+ * or (uint64_t)-1 on error with errno encoded as negative value.
+ *
+ * Context: Called from syscall dispatch. May sleep.
+ * Return: Number of bytes written, or (uint64_t)-1 on error.
+ */
+static uint64_t sys_pwrite64(uint64_t fd, uint64_t buf_addr,
+                             uint64_t count, uint64_t offset)
+{
+    if (fd < 3)
+        return (uint64_t)(int64_t)-EBADF;
+    int i = (int)fd - 3;
+    struct process_fd *pfd = sys_get_fd(i);
+    if (!pfd || !pfd->used)
+        return (uint64_t)(int64_t)-EBADF;
+    if (!buf_addr && count > 0)
+        return (uint64_t)(int64_t)-EFAULT;
+
+    struct vfs_stat st;
+    if (vfs_stat(pfd->path, &st) < 0)
+        return (uint64_t)(int64_t)-EIO;
+
+    uint64_t fsize = st.size;
+    uint64_t need_end = offset + count;
+    /* Clamp buffer size to UINT32_MAX to avoid uint32_t truncation */
+    uint64_t buf_size = need_end > fsize ? need_end : fsize;
+    if (buf_size > UINT32_MAX)
+        buf_size = UINT32_MAX;
+
+    uint8_t *tmp = kmalloc(buf_size);
+    if (!tmp)
+        return (uint64_t)(int64_t)-ENOMEM;
+
+    /* Read existing file content into buffer */
+    uint32_t nread = 0;
+    vfs_read(pfd->path, tmp, (uint32_t)buf_size, &nread);
+
+    /* If writing beyond current file size, zero-fill the gap */
+    if (offset + count > fsize) {
+        uint64_t zero_start = nread > offset ? offset : nread;
+        if (zero_start < offset) {
+            memset(tmp + zero_start, 0, (size_t)(offset - zero_start));
+        }
+    }
+
+    /* Copy user data into buffer at offset (validated by syscall_validate_user_args) */
+    if (copy_from_user(tmp + offset, buf_addr, count) < 0) {
+        kfree(tmp);
+        return (uint64_t)(int64_t)-EFAULT;
+    }
+
+    /* Write the entire buffer back */
+    int r = vfs_write(pfd->path, tmp, (uint32_t)buf_size);
+    kfree(tmp);
+    if (r < 0)
+        return (uint64_t)(int64_t)r;
+
+    /* I/O accounting */
+    {
+        struct process *cur = process_get_current();
+        if (cur) {
+            cur->io_wchar += count;
+            cur->io_syscw++;
+            cur->io_write_bytes += count;
+        }
+    }
+
+    return (uint64_t)count;
+}
+
 /* ── Heap syscalls (malloc/free/calloc/realloc via kmalloc) ───── */
 
 static uint64_t sys_malloc(uint64_t size) {
@@ -9714,6 +9794,7 @@ uint64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_FD_READ:             return sys_fd_read(a1, a2, a3);
         case SYS_FD_WRITE:            return sys_fd_write(a1, a2, a3);
         case SYS_PREAD64:             return sys_pread64(a1, a2, a3, a4);
+        case SYS_PWRITE64:            return sys_pwrite64(a1, a2, a3, a4);
         case SYS_SETPRIORITY_PID:     return sys_setpriority(PRIO_PROCESS, a1, a2);
         case SYS_GETPRIORITY:         return sys_getpriority(a1, a2);
         case SYS_SETPGID:             return sys_setpgid(a1, a2);
