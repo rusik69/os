@@ -4225,24 +4225,62 @@ static uint64_t sys_sigtimedwait(uint64_t set_addr, uint64_t info_addr,
 
 /* ── readv / writev (vectored I/O) ──────────────────────────── */
 
+/*
+ * Linux-compatible readv — vectored read into a scatter/gather array.
+ *
+ * Returns the total number of bytes read on success.
+ * On error, returns a negative errno value (Linux convention):
+ *   -EFAULT  — iov_addr points to invalid user memory
+ *   -EINVAL  — iovcnt > IOV_MAX (1024)
+ *   -ENOMEM  — out of kernel memory
+ *   -EBADF   — fd is not open
+ *   -EIO     — VFS I/O error
+ *
+ * On a partial read (some iovs consumed, then an error), returns the
+ * partial byte count rather than the error (consistent with Linux).
+ * Zero-length iovs are skipped silently.
+ */
 static uint64_t sys_readv(uint64_t fd, uint64_t iov_addr, uint64_t iovcnt) {
-    if (!iov_addr || iovcnt == 0) return 0;
-    if (iovcnt > 16) iovcnt = 16; /* sanity */
+    if (iovcnt > 1024)
+        return (uint64_t)(int64_t)-EINVAL;
+    if (iovcnt == 0)
+        return 0;
+    if (!iov_addr)
+        return (uint64_t)(int64_t)-EFAULT;
 
-    struct iovec iov[16];
-    if (copy_from_user(iov, iov_addr, sizeof(struct iovec) * iovcnt) < 0)
-        return (uint64_t)-1;
+    struct iovec iov_stack[16];
+    struct iovec *iov = iov_stack;
+    int allocd = 0;
+
+    if (iovcnt > 16) {
+        iov = kmalloc(sizeof(struct iovec) * (size_t)iovcnt);
+        if (!iov)
+            return (uint64_t)(int64_t)-ENOMEM;
+        allocd = 1;
+    }
+
+    if (copy_from_user(iov, iov_addr, sizeof(struct iovec) * iovcnt) < 0) {
+        if (allocd) kfree(iov);
+        return (uint64_t)(int64_t)-EFAULT;
+    }
 
     uint64_t total = 0;
     for (uint64_t i = 0; i < iovcnt; i++) {
-        if (iov[i].iov_base && iov[i].iov_len > 0) {
-            int64_t n = (int64_t)sys_read(fd, (uint64_t)iov[i].iov_base,
-                                          iov[i].iov_len);
-            if (n < 0) return total ? total : (uint64_t)-1;
-            total += (uint64_t)n;
-            if ((uint64_t)n < iov[i].iov_len) break; /* short read */
+        if (!iov[i].iov_base || iov[i].iov_len == 0)
+            continue;
+        int64_t n = (int64_t)sys_read(fd, (uint64_t)iov[i].iov_base,
+                                      iov[i].iov_len);
+        if (n < 0) {
+            if (allocd) kfree(iov);
+            /* Partial read: return bytes so far; full failure: propagate errno */
+            return total ? total : (uint64_t)(int64_t)n;
         }
+        total += (uint64_t)n;
+        /* Short read from this iov means no more data (e.g. EOF) */
+        if ((uint64_t)n < iov[i].iov_len) break;
     }
+
+    if (allocd) kfree(iov);
     return total;
 }
 
@@ -9853,7 +9891,7 @@ uint64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2,
             uint64_t saved_off = pfd->offset;
             pfd->offset = offset;
             uint64_t ret = sys_readv(fd, iov_addr, iovcnt);
-            if (ret == (uint64_t)-1) pfd->offset = saved_off;
+            if ((int64_t)ret < 0) pfd->offset = saved_off;
             return ret;
         }
         case SYS_PWRITEV: {
