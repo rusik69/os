@@ -19,6 +19,7 @@
 #include "printf.h"
 #include "spinlock.h"
 #include "pmm.h"
+#include "errno.h"
 
 /* ── Driver list ─────────────────────────────────────────────────── */
 
@@ -319,9 +320,144 @@ void usb_exit(void)
     kprintf("[USB] USB subsystem shut down\n");
 }
 
-/* ── usb_unregister_driver: Remove a USB driver ─────────────── */
-int usb_unregister_driver(void *drv)
+/* ── USB descriptor parsing ────────────────────────────────────────────── */
+
+int usb_parse_device_descriptor(const uint8_t *raw,
+                                struct usb_device_descriptor *desc)
 {
-    if (!drv) return -EINVAL;
-    return usb_deregister_driver((struct usb_driver *)drv);
+    if (!raw || !desc)
+        return -EINVAL;
+    if (raw[0] < 18)
+        return -EINVAL;
+    if (raw[1] != USB_DT_DEVICE)
+        return -EINVAL;
+
+    desc->bLength         = raw[0];
+    desc->bDescriptorType = raw[1];
+    desc->bcdUSB          = (uint16_t)raw[2] | ((uint16_t)raw[3] << 8);
+    desc->bDeviceClass    = raw[4];
+    desc->bDeviceSubClass = raw[5];
+    desc->bDeviceProtocol = raw[6];
+    desc->bMaxPacketSize0 = raw[7];
+    desc->idVendor        = (uint16_t)raw[8] | ((uint16_t)raw[9] << 8);
+    desc->idProduct       = (uint16_t)raw[10] | ((uint16_t)raw[11] << 8);
+    desc->bcdDevice       = (uint16_t)raw[12] | ((uint16_t)raw[13] << 8);
+    desc->iManufacturer   = raw[14];
+    desc->iProduct        = raw[15];
+    desc->iSerialNumber   = raw[16];
+    desc->bNumConfigurations = raw[17];
+
+    return 0;
+}
+
+int usb_parse_config_descriptor(const uint8_t *raw, uint16_t len,
+                                struct usb_config_descriptor *config)
+{
+    if (!raw || !config)
+        return -EINVAL;
+    if (len < 9)
+        return -EINVAL;
+    if (raw[0] < 9)
+        return -EINVAL;
+    if (raw[1] != USB_DT_CONFIG)
+        return -EINVAL;
+
+    config->bLength         = raw[0];
+    config->bDescriptorType = raw[1];
+    config->wTotalLength    = (uint16_t)raw[2] | ((uint16_t)raw[3] << 8);
+    config->bNumInterfaces  = raw[4];
+    config->bConfigurationValue = raw[5];
+    config->iConfiguration  = raw[6];
+    config->bmAttributes    = raw[7];
+    config->bMaxPower       = raw[8];
+
+    return 0;
+}
+
+int usb_parse_interface_descriptor(const uint8_t *raw,
+                                   struct usb_interface_descriptor *iface)
+{
+    if (!raw || !iface)
+        return -EINVAL;
+    if (raw[0] < 9)
+        return -EINVAL;
+    if (raw[1] != USB_DT_INTERFACE)
+        return -EINVAL;
+
+    iface->bLength            = raw[0];
+    iface->bDescriptorType    = raw[1];
+    iface->bInterfaceNumber   = raw[2];
+    iface->bAlternateSetting  = raw[3];
+    iface->bNumEndpoints      = raw[4];
+    iface->bInterfaceClass    = raw[5];
+    iface->bInterfaceSubClass = raw[6];
+    iface->bInterfaceProtocol = raw[7];
+    iface->iInterface         = raw[8];
+
+    return 0;
+}
+
+int usb_parse_endpoint_descriptor(const uint8_t *raw,
+                                  struct usb_endpoint_descriptor *ep)
+{
+    if (!raw || !ep)
+        return -EINVAL;
+    if (raw[0] < 7)
+        return -EINVAL;
+    if (raw[1] != USB_DT_ENDPOINT)
+        return -EINVAL;
+
+    ep->bLength          = raw[0];
+    ep->bDescriptorType  = raw[1];
+    ep->bEndpointAddress = raw[2];
+    ep->bmAttributes     = raw[3];
+    ep->wMaxPacketSize   = (uint16_t)raw[4] | ((uint16_t)raw[5] << 8);
+    ep->bInterval        = raw[6];
+
+    return 0;
+}
+
+int usb_print_device_descriptor(const struct usb_device_descriptor *desc)
+{
+    if (!desc)
+        return -EINVAL;
+
+    kprintf("  Device Descriptor:\n");
+    kprintf("    bLength             %u\n", (unsigned)desc->bLength);
+    kprintf("    bDescriptorType     %u\n", (unsigned)desc->bDescriptorType);
+    kprintf("    bcdUSB              %u.%u\n",
+            (unsigned)(desc->bcdUSB >> 8),
+            (unsigned)(desc->bcdUSB & 0xFF));
+    kprintf("    bDeviceClass        %u\n", (unsigned)desc->bDeviceClass);
+    kprintf("    bDeviceSubClass     %u\n", (unsigned)desc->bDeviceSubClass);
+    kprintf("    bDeviceProtocol     %u\n", (unsigned)desc->bDeviceProtocol);
+    kprintf("    bMaxPacketSize0     %u\n", (unsigned)desc->bMaxPacketSize0);
+    kprintf("    idVendor            0x%04x\n", (unsigned)desc->idVendor);
+    kprintf("    idProduct           0x%04x\n", (unsigned)desc->idProduct);
+    kprintf("    bcdDevice           %u.%u\n",
+            (unsigned)(desc->bcdDevice >> 8),
+            (unsigned)(desc->bcdDevice & 0xFF));
+    kprintf("    iManufacturer        %u\n", (unsigned)desc->iManufacturer);
+    kprintf("    iProduct             %u\n", (unsigned)desc->iProduct);
+    kprintf("    iSerialNumber        %u\n", (unsigned)desc->iSerialNumber);
+    kprintf("    bNumConfigurations   %u\n", (unsigned)desc->bNumConfigurations);
+
+    return 0;
+}
+
+void usb_update_device_from_desc(struct usb_device *dev,
+                                 const struct usb_device_descriptor *desc)
+{
+    if (!dev || !desc)
+        return;
+
+    memcpy(&dev->dev_desc, desc, sizeof(struct usb_device_descriptor));
+
+    dev->vendor_id  = desc->idVendor;
+    dev->product_id = desc->idProduct;
+    dev->class_code = desc->bDeviceClass;
+    dev->subclass   = desc->bDeviceSubClass;
+    dev->protocol   = desc->bDeviceProtocol;
+
+    dev->flags |= USB_DEV_FLAG_HAS_DESC;
 }

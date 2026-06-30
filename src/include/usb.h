@@ -3,7 +3,136 @@
 
 #include "types.h"
 
-/* USB device descriptor (simplified) */
+/* ── USB descriptor type constants (USB 2.0 spec §9.6) ──────────────── */
+#define USB_DT_DEVICE             1
+#define USB_DT_CONFIG             2
+#define USB_DT_STRING             3
+#define USB_DT_INTERFACE          4
+#define USB_DT_ENDPOINT           5
+#define USB_DT_DEVICE_QUALIFIER   6
+#define USB_DT_OTHER_SPEED_CONFIG 7
+#define USB_DT_INTERFACE_POWER    8
+#define USB_DT_OTG                9
+#define USB_DT_DEBUG             10
+#define USB_DT_INTERFACE_ASSOC   11
+#define USB_DT_BOS               15
+#define USB_DT_DEVICE_CAPABILITY 16
+#define USB_DT_HID               33
+#define USB_DT_REPORT            34
+#define USB_DT_PHYSICAL          35
+#define USB_DT_HUB               41
+#define USB_DT_SS_ENDPOINT_COMP  48
+
+/* ── Standard request type bits (bmRequestType) ──────────────────────── */
+#define USB_REQ_TYPE_STANDARD   (0x00 << 5)
+#define USB_REQ_TYPE_CLASS      (0x01 << 5)
+#define USB_REQ_TYPE_VENDOR     (0x02 << 5)
+#define USB_REQ_TYPE_MASK       (0x60)
+
+#define USB_REQ_RECIP_DEVICE    0x00
+#define USB_REQ_RECIP_INTERFACE 0x01
+#define USB_REQ_RECIP_ENDPOINT  0x02
+#define USB_REQ_RECIP_OTHER     0x03
+#define USB_REQ_RECIP_MASK      0x1F
+
+#define USB_DIR_OUT             0x00
+#define USB_DIR_IN              0x80
+
+/* ── Standard USB requests (bRequest) ────────────────────────────────── */
+#define USB_REQ_GET_STATUS          0x00
+#define USB_REQ_CLEAR_FEATURE       0x01
+#define USB_REQ_SET_FEATURE         0x03
+#define USB_REQ_SET_ADDRESS         0x05
+#define USB_REQ_GET_DESCRIPTOR      0x06
+#define USB_REQ_SET_DESCRIPTOR      0x07
+#define USB_REQ_GET_CONFIGURATION   0x08
+#define USB_REQ_SET_CONFIGURATION   0x09
+#define USB_REQ_GET_INTERFACE       0x0A
+#define USB_REQ_SET_INTERFACE       0x0B
+#define USB_REQ_SYNCH_FRAME         0x0C
+
+/* ── USB device descriptor (USB 2.0 spec §9.6.1, 18 bytes) ──────────── */
+struct usb_device_descriptor {
+    uint8_t  bLength;
+    uint8_t  bDescriptorType;
+    uint16_t bcdUSB;
+    uint8_t  bDeviceClass;
+    uint8_t  bDeviceSubClass;
+    uint8_t  bDeviceProtocol;
+    uint8_t  bMaxPacketSize0;
+    uint16_t idVendor;
+    uint16_t idProduct;
+    uint16_t bcdDevice;
+    uint8_t  iManufacturer;
+    uint8_t  iProduct;
+    uint8_t  iSerialNumber;
+    uint8_t  bNumConfigurations;
+} __attribute__((packed));
+
+/* ── USB configuration descriptor (USB 2.0 spec §9.6.3, 9 bytes) ─────── */
+struct usb_config_descriptor {
+    uint8_t  bLength;
+    uint8_t  bDescriptorType;
+    uint16_t wTotalLength;
+    uint8_t  bNumInterfaces;
+    uint8_t  bConfigurationValue;
+    uint8_t  iConfiguration;
+    uint8_t  bmAttributes;
+    uint8_t  bMaxPower;
+} __attribute__((packed));
+
+/* ── USB interface descriptor (USB 2.0 spec §9.6.5, 9 bytes) ─────────── */
+struct usb_interface_descriptor {
+    uint8_t  bLength;
+    uint8_t  bDescriptorType;
+    uint8_t  bInterfaceNumber;
+    uint8_t  bAlternateSetting;
+    uint8_t  bNumEndpoints;
+    uint8_t  bInterfaceClass;
+    uint8_t  bInterfaceSubClass;
+    uint8_t  bInterfaceProtocol;
+    uint8_t  iInterface;
+} __attribute__((packed));
+
+/* ── USB endpoint descriptor (USB 2.0 spec §9.6.6, 7 bytes) ──────────── */
+struct usb_endpoint_descriptor {
+    uint8_t  bLength;
+    uint8_t  bDescriptorType;
+    uint8_t  bEndpointAddress;
+    uint8_t  bmAttributes;
+    uint16_t wMaxPacketSize;
+    uint8_t  bInterval;
+} __attribute__((packed));
+
+/* ── USB string descriptor (variable length) ─────────────────────────── */
+struct usb_string_descriptor {
+    uint8_t  bLength;
+    uint8_t  bDescriptorType;
+    uint16_t wData[];
+} __attribute__((packed));
+
+/* ── Endpoint address/attribute decode constants ─────────────────────── */
+#define USB_ENDPOINT_DIR_MASK      0x80
+#define USB_ENDPOINT_DIR_IN        0x80
+#define USB_ENDPOINT_DIR_OUT       0x00
+#define USB_ENDPOINT_NUMBER_MASK   0x0F
+#define USB_ENDPOINT_XFERTYPE_MASK 0x03
+#define USB_ENDPOINT_XFER_CONTROL  0x00
+#define USB_ENDPOINT_XFER_ISOCH    0x01
+#define USB_ENDPOINT_XFER_BULK     0x02
+#define USB_ENDPOINT_XFER_INT      0x03
+
+/* ── Standard feature selectors ──────────────────────────────────────── */
+#define USB_FEATURE_ENDPOINT_HALT         0
+#define USB_FEATURE_DEVICE_REMOTE_WAKEUP  1
+#define USB_FEATURE_TEST_MODE             2
+
+/* ── USB device flags ────────────────────────────────────────────────── */
+#define USB_DEV_FLAG_HAS_DESC      (1U << 0)   /* device descriptor parsed */
+#define USB_DEV_FLAG_HAS_CONFIG    (1U << 1)   /* config descriptor parsed */
+#define USB_DEV_FLAG_HAS_STRINGS   (1U << 2)   /* string descriptors read */
+
+/* ── Expanded USB device structure ────────────────────────────────────── */
 struct usb_device {
     uint8_t  addr;
     uint8_t  speed;        /* 0=full, 1=low, 2=high */
@@ -12,6 +141,9 @@ struct usb_device {
     uint8_t  class_code;
     uint8_t  subclass;
     uint8_t  protocol;
+    uint8_t  _rsvd;        /* reserved for alignment */
+    struct usb_device_descriptor dev_desc;   /* full parsed descriptor */
+    uint32_t flags;
 };
 
 #define USB_CLASS_HID        0x03
@@ -28,6 +160,19 @@ void usb_exit(void);              /* shutdown all USB host controllers */
 int  usb_is_present(void);
 int  usb_get_device_count(void);
 struct usb_device *usb_get_device(int idx);
+
+/* ── Descriptor parsing API ──────────────────────────────────────────── */
+int usb_parse_device_descriptor(const uint8_t *raw,
+                                struct usb_device_descriptor *desc);
+int usb_parse_config_descriptor(const uint8_t *raw, uint16_t len,
+                                struct usb_config_descriptor *config);
+int usb_parse_interface_descriptor(const uint8_t *raw,
+                                   struct usb_interface_descriptor *iface);
+int usb_parse_endpoint_descriptor(const uint8_t *raw,
+                                  struct usb_endpoint_descriptor *ep);
+int usb_print_device_descriptor(const struct usb_device_descriptor *desc);
+void usb_update_device_from_desc(struct usb_device *dev,
+                                 const struct usb_device_descriptor *desc);
 
 /* EHCI internals exposed for the MSC transfer engine */
 uint64_t ehci_get_op_base(void);
