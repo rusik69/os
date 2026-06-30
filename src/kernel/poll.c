@@ -404,7 +404,7 @@ int vfs_poll_fd(int fd, int events)
 
     /* ── Eventfd FDs (700–715) ─────────────────────────────── */
     if (fd >= 700 && fd < 700 + 16) {
-        revents = eventfd_poll(fd);
+        revents = eventfd_poll(fd, NULL);
         if (revents < 0)
             return POLLNVAL;
         return revents & events;

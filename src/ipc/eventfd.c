@@ -14,6 +14,7 @@
 #include "scheduler.h"
 #include "waitqueue.h"
 #include "errno.h"
+#include "poll.h"
 
 #define EVENTFD_MAX 16
 #define EVENTFD_BASE 700
@@ -132,7 +133,7 @@ void eventfd_close(int fd) {
 /* Check eventfd readiness for poll/select.
  * Returns a bitmask of POLLIN/POLLOUT flags.
  * Called when userspace calls poll()/select() on this fd. */
-int eventfd_poll(int fd)
+int eventfd_poll(int fd, struct poll_table *pt)
 {
     struct eventfd_info *efd = eventfd_get(fd);
     if (!efd) return POLLNVAL;
@@ -143,13 +144,16 @@ int eventfd_poll(int fd)
     if (efd->counter > 0)
         mask |= POLLIN;
 
-    /* Writable if counter won't overflow on a write of 1 (always true
-     * unless counter == UINT64_MAX).  Non-blocking semantics apply at
-     * write time. */
+    /* Writable unless counter == UINT64_MAX */
     if (efd->counter < 0xFFFFFFFFFFFFFFFFULL)
         mask |= POLLOUT;
     else
-        mask |= POLLOUT; /* technically still writable; overflow handled in write */
+        mask |= POLLOUT; /* technically still writable */
+
+    /* If nothing is ready and we have a poll_table, register the
+     * eventfd's waitqueue so poll_schedule can block on it. */
+    if (mask == 0 && pt)
+        poll_wait(pt, &efd->wq);
 
     return mask;
 }

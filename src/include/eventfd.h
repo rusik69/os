@@ -3,6 +3,9 @@
 
 #include "types.h"
 
+/* Forward declaration for poll support */
+struct poll_table;
+
 /* eventfd flags */
 #define EFD_SEMAPHORE (1U << 0)
 #define EFD_CLOEXEC   (1U << 1)
@@ -26,6 +29,6 @@ void eventfd_close(int fd);
 int eventfd_syscall(uint32_t initval, int flags);
 
 /* Poll support: returns a bitmask of POLLIN/POLLOUT for an eventfd fd */
-int eventfd_poll(int fd);
+int eventfd_poll(int fd, struct poll_table *pt);
 
 #endif /* EVENTFD_H */
