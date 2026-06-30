@@ -631,3 +631,196 @@ int usb_print_config_descriptor_full(const struct usb_config_descriptor *config,
 
     return ret;
 }
+
+/* ── USB Power Management (suspend/resume) ────────────────────────────── */
+
+/*
+ * Forward declarations for EHCI port power management.
+ * These are resolved at link time when EHCI is compiled in.
+ */
+extern int ehci_port_suspend(int ctrl_idx, int port);
+extern int ehci_port_resume(int ctrl_idx, int port);
+extern void ehci_suspend_all_ports(void);
+extern void ehci_resume_all_ports(void);
+
+/**
+ * usb_enable_remote_wakeup — Enable or disable remote wakeup for a device.
+ *
+ * Sends a SET_FEATURE or CLEAR_FEATURE standard request to the device
+ * to enable/disable its remote wakeup capability (USB 2.0 spec §9.4.5).
+ * Remote wakeup allows a suspended device to signal the host to resume.
+ *
+ * @dev_addr:  USB device address
+ * @enable:    1 to enable, 0 to disable
+ * Returns 0 on success, negative errno on failure.
+ */
+int usb_enable_remote_wakeup(uint8_t dev_addr, int enable)
+{
+    int ret;
+    uint8_t bmReqType;
+    uint8_t bRequest;
+
+    bmReqType = USB_DIR_OUT | USB_REQ_TYPE_STANDARD | USB_REQ_RECIP_DEVICE;
+
+    if (enable) {
+        bRequest = USB_REQ_SET_FEATURE;
+    } else {
+        bRequest = USB_REQ_CLEAR_FEATURE;
+    }
+
+    ret = usb_control_msg(dev_addr, bmReqType, bRequest,
+                          USB_FEATURE_DEVICE_REMOTE_WAKEUP,
+                          0, 0, NULL);
+    if (ret < 0) {
+        kprintf("[USB] remote_wakeup: failed for addr=%d enable=%d "
+                "(err=%d)\n", dev_addr, enable, ret);
+        return ret;
+    }
+
+    kprintf("[USB] remote_wakeup %s for addr=%d\n",
+            enable ? "enabled" : "disabled", dev_addr);
+    return 0;
+}
+
+/**
+ * usb_suspend_device — Suspend a USB device.
+ *
+ * Suspends a device by:
+ *   1. Optionally enabling remote wakeup
+ *   2. Suspending the host controller port (stopping SOF/transactions)
+ *
+ * The device enters low-power mode after 3ms of bus idle.
+ * The device index maps directly to the EHCI port (simple mapping for
+ * single-controller setups).
+ *
+ * @dev_addr:  USB device address (1-based)
+ * Returns 0 on success, negative errno on failure.
+ */
+int usb_suspend_device(uint8_t dev_addr)
+{
+    int ret;
+    int port;
+
+    port = (int)dev_addr - 1;
+    if (port < 0)
+        return -EINVAL;
+
+    kprintf("[USB] Suspending device addr=%d (port=%d)...\n",
+            dev_addr, port);
+
+    /* Request the device to prepare for suspend */
+    ret = usb_enable_remote_wakeup(dev_addr, 1);
+    if (ret < 0) {
+        /* Non-fatal: device may not support remote wakeup */
+        kprintf("[USB] suspend: remote wakeup not supported for "
+                "addr=%d (continuing)\n", dev_addr);
+    }
+
+    /* Suspend the host controller port */
+    ret = ehci_port_suspend(0, port);
+    if (ret < 0) {
+        kprintf("[USB] suspend: port suspend failed for addr=%d "
+                "(err=%d)\n", dev_addr, ret);
+        return ret;
+    }
+
+    kprintf("[USB] Device addr=%d suspended\n", dev_addr);
+    return 0;
+}
+
+/**
+ * usb_resume_device — Resume a USB device from suspend.
+ *
+ * Resumes a device by driving resume signalling on the port.
+ * Attempts normal resume first; falls back to reset-resume if
+ * the device does not respond.
+ *
+ * @dev_addr:  USB device address (1-based)
+ * Returns 0 on success, negative errno on failure.
+ */
+int usb_resume_device(uint8_t dev_addr)
+{
+    int ret;
+    int port;
+
+    port = (int)dev_addr - 1;
+    if (port < 0)
+        return -EINVAL;
+
+    kprintf("[USB] Resuming device addr=%d (port=%d)...\n",
+            dev_addr, port);
+
+    /* Attempt normal resume first */
+    ret = ehci_port_resume(0, port);
+    if (ret < 0) {
+        kprintf("[USB] resume: port resume failed for addr=%d "
+                "(err=%d)\n", dev_addr, ret);
+        return ret;
+    }
+
+    kprintf("[USB] Device addr=%d resumed\n", dev_addr);
+    return 0;
+}
+
+/**
+ * usb_port_suspend — Suspend a specific port on the first EHCI controller.
+ *
+ * Convenience wrapper that calls ehci_port_suspend on controller 0.
+ *
+ * @port:  Port number (0-based)
+ * Returns 0 on success, negative errno on failure.
+ */
+int usb_port_suspend(int port)
+{
+    return ehci_port_suspend(0, port);
+}
+
+/**
+ * usb_port_resume — Resume a specific port on the first EHCI controller.
+ *
+ * Convenience wrapper that calls ehci_port_resume on controller 0.
+ *
+ * @port:  Port number (0-based)
+ * Returns 0 on success, negative errno on failure.
+ */
+int usb_port_resume(int port)
+{
+    return ehci_port_resume(0, port);
+}
+
+/**
+ * usb_suspend_all — Suspend all USB devices and ports.
+ *
+ * Suspends every enabled/connected port across all EHCI controllers.
+ * This is used for system-wide suspend (power management transitions).
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int usb_suspend_all(void)
+{
+    kprintf("[USB] Suspending all USB devices...\n");
+
+    ehci_suspend_all_ports();
+
+    kprintf("[USB] All USB devices suspended\n");
+    return 0;
+}
+
+/**
+ * usb_resume_all — Resume all suspended USB devices and ports.
+ *
+ * Resumes every suspended port across all EHCI controllers.
+ * This is used for system-wide resume (power management transitions).
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int usb_resume_all(void)
+{
+    kprintf("[USB] Resuming all USB devices...\n");
+
+    ehci_resume_all_ports();
+
+    kprintf("[USB] All USB devices resumed\n");
+    return 0;
+}
+

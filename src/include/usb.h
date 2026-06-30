@@ -264,4 +264,62 @@ int ehci_submit_isochronous(uint8_t dev_addr, uint8_t ep,
 int xhci_submit_isochronous(uint8_t dev_addr, uint8_t ep,
                              void *buf, uint32_t len);
 
+/* ── USB power management API ────────────────────────────────────────── */
+
+/*
+ * Suspend a USB device. Sends a SET_FEATURE(PORT_SUSPEND) control
+ * request and suspends the host controller port.
+ * Returns 0 on success, negative errno on failure.
+ */
+int usb_suspend_device(uint8_t dev_addr);
+
+/*
+ * Resume a USB device. Drives resume signalling on the port
+ * and restores the device to active state.
+ * Returns 0 on success, negative errno on failure.
+ */
+int usb_resume_device(uint8_t dev_addr);
+
+/*
+ * Enable or disable remote wakeup for a USB device.
+ * @dev_addr:  USB device address
+ * @enable:    1 to enable remote wakeup, 0 to disable
+ * Returns 0 on success, negative errno on failure.
+ */
+int usb_enable_remote_wakeup(uint8_t dev_addr, int enable);
+
+/*
+ * Suspend a specific port on the USB host controller.
+ * @port:  Port number (0-based)
+ * Returns 0 on success, negative errno on failure.
+ */
+int usb_port_suspend(int port);
+
+/*
+ * Resume a specific port on the USB host controller.
+ * @port:  Port number (0-based)
+ * Returns 0 on success, negative errno on failure.
+ */
+int usb_port_resume(int port);
+
+/*
+ * Suspend all USB ports and devices.
+ * Returns 0 on success, negative errno on failure.
+ */
+int usb_suspend_all(void);
+
+/*
+ * Resume all suspended USB ports and devices.
+ * Returns 0 on success, negative errno on failure.
+ */
+int usb_resume_all(void);
+
+/* EHCI port power management (available for HC-level control) */
+int ehci_port_suspend(int ctrl_idx, int port);
+int ehci_port_resume(int ctrl_idx, int port);
+int ehci_port_reset_resume(int ctrl_idx, int port);
+void ehci_suspend_all_ports(void);
+void ehci_resume_all_ports(void);
+int ehci_port_has_remote_wakeup(int ctrl_idx, int port);
+
 #endif

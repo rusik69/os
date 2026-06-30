@@ -64,6 +64,10 @@
 #define PORTSC_OWNER     (1u << 13)  /* Port Owner (1=companion OHCI/UHCI) */
 #define PORTSC_SPEED_MASK (3u << 20) /* Port Speed (xHCI ext) */
 
+/* Port power management bits (EHCI spec §4.4: Port Suspending/Resuming) */
+#define PORTSC_SUSPEND     (1u << 7)   /* Port Suspend */
+#define PORTSC_FPR        (1u << 6)   /* Force Port Resume */
+
 /* ── Driver state ──────────────────────────────────────────────────────────── */
 #define EHCI_MAX_CONTROLLERS 4
 
@@ -2071,5 +2075,192 @@ void ehci_irq(struct interrupt_frame *frame)
     if (sts & (1u << 0)) {
         op_write(0, EHCI_USBSTS, (1u << 0));
     }
+}
+
+/* ── EHCI Port Power Management (suspend/resume) ──────────────────────── */
+
+/**
+ * ehci_port_suspend — Suspend a specific USB port on an EHCI controller.
+ *
+ * Sets the port suspend bit (PORTSC[7]) to place the port in suspend
+ * state per EHCI spec §4.4.1. The controller stops processing
+ * transactions on this port and the device enters low-power mode.
+ * The port must be enabled (PED=1) and connected (CCS=1) to suspend.
+ *
+ * @ctrl_idx:  EHCI controller index (0-based)
+ * @port:      Port number (0-based)
+ * Returns 0 on success, negative errno on failure.
+ */
+int ehci_port_suspend(int ctrl_idx, int port)
+{
+    if (ctrl_idx < 0 || ctrl_idx >= ehci_count)
+        return -ENODEV;
+    if (port < 0 || port >= ehci_ctrl[ctrl_idx].n_ports)
+        return -EINVAL;
+
+    uint32_t portsc = op_read(ctrl_idx, EHCI_PORTSC_BASE + port * 4);
+
+    /* Already suspended */
+    if (portsc & PORTSC_SUSPEND)
+        return 0;
+
+    /* Port must be enabled and connected to suspend */
+    if (!(portsc & PORTSC_PED) || !(portsc & PORTSC_CCS))
+        return -EINVAL;
+
+    /* Set suspend bit */
+    op_write(ctrl_idx, EHCI_PORTSC_BASE + port * 4, portsc | PORTSC_SUSPEND);
+    __asm__ volatile("mfence" ::: "memory");
+
+    kprintf("[EHCI] Port %d suspended (ctrl=%d)\n", port, ctrl_idx);
+    return 0;
+}
+
+/**
+ * ehci_port_resume — Resume a suspended USB port.
+ *
+ * Initiates resume signalling on the port per EHCI spec §4.4.2.
+ * Sets the Force Port Resume (FPR) bit for 20ms (TDRSTR), then
+ * clears both FPR and Suspend bits.
+ *
+ * @ctrl_idx:  EHCI controller index (0-based)
+ * @port:      Port number (0-based)
+ * Returns 0 on success, negative errno on failure.
+ */
+int ehci_port_resume(int ctrl_idx, int port)
+{
+    if (ctrl_idx < 0 || ctrl_idx >= ehci_count)
+        return -ENODEV;
+    if (port < 0 || port >= ehci_ctrl[ctrl_idx].n_ports)
+        return -EINVAL;
+
+    uint32_t portsc = op_read(ctrl_idx, EHCI_PORTSC_BASE + port * 4);
+
+    /* Not suspended — nothing to resume */
+    if (!(portsc & PORTSC_SUSPEND))
+        return 0;
+
+    /* Set Force Port Resume (FPR) to initiate resume signalling */
+    op_write(ctrl_idx, EHCI_PORTSC_BASE + port * 4, portsc | PORTSC_FPR);
+    __asm__ volatile("mfence" ::: "memory");
+
+    /* Drive resume for 20ms (EHCI spec: minimum 20ms TDRSTR) */
+    busy_wait_n(200000);
+
+    /* Clear FPR and Suspend bits */
+    portsc = op_read(ctrl_idx, EHCI_PORTSC_BASE + port * 4);
+    op_write(ctrl_idx, EHCI_PORTSC_BASE + port * 4,
+             portsc & ~(PORTSC_SUSPEND | PORTSC_FPR));
+    __asm__ volatile("mfence" ::: "memory");
+
+    /* Allow 10ms for port to stabilise (TRSTRCY) */
+    busy_wait_n(100000);
+
+    kprintf("[EHCI] Port %d resumed (ctrl=%d)\n", port, ctrl_idx);
+    return 0;
+}
+
+/**
+ * ehci_port_reset_resume — Reset-resume a suspended port.
+ *
+ * Some devices do not support remote wakeup and require a full port
+ * reset to resume (USB 2.0 spec §7.1.7.6). Performs a 50ms reset
+ * pulse followed by recovery time.
+ *
+ * @ctrl_idx:  EHCI controller index (0-based)
+ * @port:      Port number (0-based)
+ * Returns 0 on success, negative errno on failure.
+ */
+int ehci_port_reset_resume(int ctrl_idx, int port)
+{
+    uint32_t portsc;
+
+    if (ctrl_idx < 0 || ctrl_idx >= ehci_count)
+        return -ENODEV;
+    if (port < 0 || port >= ehci_ctrl[ctrl_idx].n_ports)
+        return -EINVAL;
+
+    portsc = op_read(ctrl_idx, EHCI_PORTSC_BASE + port * 4);
+
+    /* Clear suspend, assert reset */
+    portsc &= ~PORTSC_SUSPEND;
+    op_write(ctrl_idx, EHCI_PORTSC_BASE + port * 4,
+             (portsc & ~PORTSC_PR) | PORTSC_PR);
+    __asm__ volatile("mfence" ::: "memory");
+
+    /* 50ms reset pulse */
+    busy_wait_n(500000);
+
+    /* De-assert reset */
+    portsc = op_read(ctrl_idx, EHCI_PORTSC_BASE + port * 4);
+    op_write(ctrl_idx, EHCI_PORTSC_BASE + port * 4, portsc & ~PORTSC_PR);
+    __asm__ volatile("mfence" ::: "memory");
+
+    /* Allow 10ms recovery */
+    busy_wait_n(100000);
+
+    kprintf("[EHCI] Port %d reset-resume completed (ctrl=%d)\n",
+            port, ctrl_idx);
+    return 0;
+}
+
+/**
+ * ehci_suspend_all_ports — Suspend all enabled/connected ports.
+ */
+void ehci_suspend_all_ports(void)
+{
+    for (int c = 0; c < ehci_count; c++) {
+        for (int p = 0; p < ehci_ctrl[c].n_ports; p++) {
+            uint32_t portsc = op_read(c, EHCI_PORTSC_BASE + p * 4);
+            if ((portsc & PORTSC_CCS) && (portsc & PORTSC_PED)) {
+                ehci_port_suspend(c, p);
+            }
+        }
+    }
+    kprintf("[EHCI] All ports suspended\n");
+}
+
+/**
+ * ehci_resume_all_ports — Resume all suspended ports.
+ */
+void ehci_resume_all_ports(void)
+{
+    for (int c = 0; c < ehci_count; c++) {
+        for (int p = 0; p < ehci_ctrl[c].n_ports; p++) {
+            uint32_t portsc = op_read(c, EHCI_PORTSC_BASE + p * 4);
+            if (portsc & PORTSC_SUSPEND) {
+                ehci_port_resume(c, p);
+            }
+        }
+    }
+    kprintf("[EHCI] All ports resumed\n");
+}
+
+/**
+ * ehci_port_has_remote_wakeup — Check if a port has remote wakeup pending.
+ *
+ * Detects if the device on a suspended port is signalling remote wakeup
+ * by checking FPR and Connect Status Change bits. The host controller
+ * sets FPR when it detects remote wakeup signalling on the bus.
+ *
+ * @ctrl_idx:  EHCI controller index (0-based)
+ * @port:      Port number (0-based)
+ * Returns 1 if remote wakeup is detected, 0 otherwise.
+ */
+int ehci_port_has_remote_wakeup(int ctrl_idx, int port)
+{
+    uint32_t portsc;
+
+    if (ctrl_idx < 0 || ctrl_idx >= ehci_count)
+        return 0;
+    if (port < 0 || port >= ehci_ctrl[ctrl_idx].n_ports)
+        return 0;
+
+    portsc = op_read(ctrl_idx, EHCI_PORTSC_BASE + port * 4);
+
+    /* Remote wakeup indicated by FPR being set while port is suspended,
+     * or by a Connect Status Change occuring during suspend */
+    return ((portsc & PORTSC_FPR) && (portsc & PORTSC_SUSPEND)) ||
+           (portsc & PORTSC_CSC) != 0;
 }
 
