@@ -194,6 +194,28 @@ static spinlock_t g_fm_lock;
 /* ── Internal helpers ─────────────────────────────────────────────── */
 
 /**
+ * fm_rate_to_time — Convert ADSR rate (0–255) to sample count.
+ *
+ * Higher rate = shorter time (faster envelope).  The max_ms parameter
+ * sets the duration for rate=0.  Minimum returned is ~1 ms (44 samples
+ * at 44.1 kHz).
+ *
+ * @rate:    Envelope rate value (0–255, 255=fastest).
+ * @sr:      Sample rate in Hz.
+ * @max_ms:  Maximum envelope duration in ms (for rate=0).
+ *
+ * Returns the sample count, clamped to uint16_t range.
+ */
+static uint16_t fm_rate_to_time(uint8_t rate, uint32_t sr, uint32_t max_ms)
+{
+    uint32_t t = sr * max_ms / 1000U;            /* max samples */
+    t = t * (255U - (uint32_t)rate) / 255U;      /* scale by rate */
+    if (t < 44U) t = 44U;                        /* minimum ~1 ms */
+    if (t > 65535U) t = 65535U;                  /* clamp */
+    return (uint16_t)t;
+}
+
+/**
  * fm_sine_lookup — Look up a sine value from the table.
  *
  * @phase:  32-bit phase accumulator (upper 10 bits = index).
@@ -467,26 +489,11 @@ static void fm_reset_voice(uint32_t idx)
 /* ── Operator configuration helpers ────────────────────────────────── */
 
 /**
- * fm_default_adsr — Set default ADSR envelope parameters on an operator.
+ * fm_setup_voice — Configure a voice for a given note using GM instrument.
  *
- * Uses instrument-like defaults suitable for a melodic voice:
- *   Attack:  10 ms  (~441 samples at 44.1 kHz)
- *   Decay:   50 ms  (~2205 samples)
- *   Sustain: 60%    (~153/255)
- *   Release: 100 ms (~4410 samples)
- */
-static void fm_default_adsr(struct fm_operator *op, uint32_t sample_rate)
-{
-    op->attack_time   = (uint16_t)(sample_rate / 100);   /* 10 ms */
-    op->decay_time    = (uint16_t)(sample_rate / 20);    /* 50 ms */
-    op->sustain_level = 153;                              /* ~60% */
-    op->release_time  = (uint16_t)(sample_rate / 10);    /* 100 ms */
-}
-
-/**
- * fm_setup_voice — Configure a voice for a given note.
- *
- * Sets all operator parameters based on the MIDI note and channel state.
+ * Reads the current GM program for the voice's MIDI channel from
+ * g_fm_synth.programs[] and applies its FM parameters (waveforms,
+ * frequency ratios, output levels, modulation index, ADSR envelopes).
  *
  * @v:         Voice to configure.
  * @channel:   MIDI channel.
@@ -497,7 +504,10 @@ static void fm_setup_voice(struct fm_voice *v, uint8_t channel,
                             uint8_t note, uint8_t velocity)
 {
     uint32_t sr = g_fm_synth.sample_rate;
-    uint32_t phase_inc;
+    uint8_t pgm = g_fm_synth.programs[channel];
+    if (pgm >= GM_PROGRAM_COUNT)
+        pgm = 0;
+    const struct fm_gm_instrument *inst = &g_fm_gm_instruments[pgm];
 
     /* Basic voice parameters */
     v->channel   = channel;
@@ -505,53 +515,50 @@ static void fm_setup_voice(struct fm_voice *v, uint8_t channel,
     v->velocity  = velocity;
     v->active    = 1;
 
-    /* Modulation index — default moderate (bright but not harsh).
-     * Higher notes get slightly more modulation for brilliance. */
-    if (note > 80)
-        v->mod_index = 120;
-    else if (note > 60)
-        v->mod_index = 100;
-    else
-        v->mod_index = 80;
+    /* Modulation index from instrument */
+    v->mod_index = inst->mod_index;
+
+    /* Compute frequency ratios */
+    uint32_t note_inc = (note < 128) ? g_fm_phase_incs[note] : 0;
 
     /* ── Carrier operator ──────────────────────────────────────────── */
     memset(&v->carrier, 0, sizeof(v->carrier));
 
-    /* Carrier frequency = note frequency */
-    phase_inc = (note < 128) ? g_fm_phase_incs[note] : 0;
     v->carrier.phase     = 0;
-    v->carrier.phase_inc = phase_inc;
+    v->carrier.phase_inc = (note_inc * (uint32_t)inst->car_ratio + 1U) / 2U;
+    v->carrier.waveform    = inst->car_wave;
+    v->carrier.output_level = inst->car_level;
 
-    /* Carrier waveform: sine (pure tone) for baseline */
-    v->carrier.waveform    = FM_WAVE_SINE;
-    v->carrier.output_level = 200;  /* ~78% */
+    /* Carrier ADSR from GM instrument */
+    v->carrier.attack_time   = fm_rate_to_time(inst->car_attack, sr, 200);
+    v->carrier.decay_time    = fm_rate_to_time(inst->car_decay,  sr, 400);
+    v->carrier.sustain_level = inst->car_sustain;
+    v->carrier.release_time  = fm_rate_to_time(inst->car_release, sr, 300);
 
-    /* Carrier envelope: use velocity for overall loudness scaling */
-    fm_default_adsr(&v->carrier, sr);
-
-    /* Speed up attack for higher velocities */
-    if (velocity > 100)
-        v->carrier.attack_time = (uint16_t)(sr / 200);    /* 5 ms */
-    else if (velocity < 40)
-        v->carrier.attack_time = (uint16_t)(sr / 50);     /* 20 ms */
+    /* Speed up attack for high velocities */
+    if (velocity > 100) {
+        uint32_t t = (uint32_t)v->carrier.attack_time * 3U / 4U;
+        if (t < 44) t = 44;
+        v->carrier.attack_time = (uint16_t)t;
+    } else if (velocity < 40) {
+        uint32_t t = (uint32_t)v->carrier.attack_time * 4U / 3U;
+        if (t > 65535) t = 65535;
+        v->carrier.attack_time = (uint16_t)t;
+    }
 
     /* ── Modulator operator ────────────────────────────────────────── */
     memset(&v->modulator, 0, sizeof(v->modulator));
 
-    /* Modulator frequency: by default, same as carrier (produces
-     * characteristic FM synthesis sidebands).  A ratio of 1:1 gives
-     * a rich harmonic spectrum. */
     v->modulator.phase     = 0;
-    v->modulator.phase_inc = phase_inc;  /* 1:1 ratio */
+    v->modulator.phase_inc = (note_inc * (uint32_t)inst->mod_ratio + 1U) / 2U;
+    v->modulator.waveform    = inst->mod_wave;
+    v->modulator.output_level = inst->mod_level;
 
-    /* Modulator waveform: sine */
-    v->modulator.waveform    = FM_WAVE_SINE;
-    v->modulator.output_level = 180;  /* ~71% */
-
-    /* Modulator envelope: slightly slower attack than carrier for
-     * a more natural sound (modulation builds up gradually). */
-    fm_default_adsr(&v->modulator, sr);
-    v->modulator.attack_time = (uint16_t)(sr / 67);       /* ~15 ms */
+    /* Modulator ADSR from GM instrument */
+    v->modulator.attack_time   = fm_rate_to_time(inst->mod_attack, sr, 200);
+    v->modulator.decay_time    = fm_rate_to_time(inst->mod_decay,  sr, 400);
+    v->modulator.sustain_level = inst->mod_sustain;
+    v->modulator.release_time  = fm_rate_to_time(inst->mod_release, sr, 300);
 
     /* Start both operators in attack phase */
     v->carrier.env_state   = FM_ENV_ATTACK;
@@ -584,6 +591,9 @@ void fm_synth_init(uint32_t sample_rate)
 
     /* Clear all voices */
     memset(g_fm_synth.voices, 0, sizeof(g_fm_synth.voices));
+
+    /* Reset all channels to GM program 0 (Acoustic Grand Piano) */
+    memset(g_fm_synth.programs, 0, sizeof(g_fm_synth.programs));
 
     g_fm_synth.initialized = 1;
 
@@ -681,6 +691,37 @@ uint32_t fm_synth_active_voice_count(void)
     }
 
     return count;
+}
+
+/**
+ * fm_synth_program_change — Select a GM instrument for a MIDI channel.
+ *
+ * @channel:  MIDI channel (0-15).
+ * @program:  GM program number (0-127).
+ */
+void fm_synth_program_change(uint8_t channel, uint8_t program)
+{
+    if (channel >= 16)
+        return;
+
+    if (program >= GM_PROGRAM_COUNT)
+        program = 0;
+
+    g_fm_synth.programs[channel] = program;
+}
+
+/**
+ * fm_synth_get_program — Get the current GM program for a channel.
+ *
+ * @channel:  MIDI channel (0-15).
+ * Returns the current GM program number (0-127), or 0 on invalid channel.
+ */
+uint8_t fm_synth_get_program(uint8_t channel)
+{
+    if (channel >= 16)
+        return 0;
+
+    return g_fm_synth.programs[channel];
 }
 
 /* ── Rendering ─────────────────────────────────────────────────────── */

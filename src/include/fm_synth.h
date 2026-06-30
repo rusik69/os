@@ -118,6 +118,59 @@ struct fm_voice {
     struct fm_operator  modulator;      /**< Modulator (modulates carrier) */
 };
 
+/* ── General MIDI instrument definition ─────────────────────────────── */
+
+/**
+ * struct fm_gm_instrument — FM synthesis parameters for one GM program.
+ *
+ * Each of the 128 General MIDI program numbers maps to one of these
+ * structs.  When a MIDI program-change event is received (or by default
+ * on channel 0), fm_setup_voice reads these parameters to configure the
+ * carrier and modulator operators for the appropriate timbre.
+ *
+ * Frequency ratios are stored as multiplier ×2 so that integer arithmetic
+ * works: ratio 2 = 1.0× (unison), 4 = 2.0× (octave), 1 = 0.5×, 3 = 1.5×
+ * (fifth), etc.
+ *
+ * ADSR values (attack, decay, release) are 0–255 where HIGHER = FASTER
+ * (shorter time, more percussive).  Sustain levels are 0–255 where 255 =
+ * full sustain (held note never decays to silence).
+ */
+struct fm_gm_instrument {
+	uint8_t car_wave;	/**< Carrier waveform  (fm_waveform enum) */
+	uint8_t mod_wave;	/**< Modulator waveform (fm_waveform enum) */
+	uint8_t car_ratio;	/**< Carrier  frequency multiplier ×2 */
+	uint8_t mod_ratio;	/**< Modulator frequency multiplier ×2 */
+	uint8_t car_level;	/**< Carrier  output level  (0–255) */
+	uint8_t mod_level;	/**< Modulator output level  (0–255) */
+	uint8_t mod_index;	/**< Modulation index       (0–255) */
+
+	/* ADSR for carrier */
+	uint8_t car_attack;	/**< Carrier  attack  rate (0–255, higher=shorter) */
+	uint8_t car_decay;	/**< Carrier  decay   rate (0–255) */
+	uint8_t car_sustain;	/**< Carrier  sustain level (0–255, 255=full) */
+	uint8_t car_release;	/**< Carrier  release rate (0–255) */
+
+	/* ADSR for modulator */
+	uint8_t mod_attack;	/**< Modulator attack  rate */
+	uint8_t mod_decay;	/**< Modulator decay   rate */
+	uint8_t mod_sustain;	/**< Modulator sustain level */
+	uint8_t mod_release;	/**< Modulator release rate */
+};
+
+/**
+ * Size of the General MIDI program table.
+ */
+#define GM_PROGRAM_COUNT  128U
+
+/**
+ * g_fm_gm_instruments — Table of 128 GM instrument definitions.
+ *
+ * Indexed by MIDI program number (0–127).  The default program for
+ * any channel is 0 (Acoustic Grand Piano).
+ */
+extern const struct fm_gm_instrument g_fm_gm_instruments[GM_PROGRAM_COUNT];
+
 /* ── FM synthesiser state ─────────────────────────────────────────── */
 
 struct fm_synth {
@@ -126,6 +179,9 @@ struct fm_synth {
 
     /* Polyphonic voices */
     struct fm_voice     voices[FM_SYNTH_MAX_VOICES];
+
+    /* Per-channel MIDI program (instrument) selection */
+    uint8_t             programs[16];   /**< Current GM program per channel */
 
     /* Global state */
     uint8_t             initialized;
@@ -151,8 +207,9 @@ void fm_synth_init(uint32_t sample_rate);
  * fm_synth_note_on — Start a MIDI note.
  *
  * Allocates a voice, configures its operators for the given note and
- * velocity, and begins the attack phase.  If all voices are busy the
- * oldest (least recently started) voice is stolen.
+ * velocity using the current GM program for the channel, and begins
+ * the attack phase.  If all voices are busy the oldest (least recently
+ * started) voice is stolen.
  *
  * @channel:   MIDI channel (0-15).
  * @note:      MIDI note number (0-127, 69 = A4 = 440 Hz).
@@ -179,6 +236,29 @@ void fm_synth_note_off(uint8_t channel, uint8_t note);
  * Transitions all active voices to IDLE instantly (panic button).
  */
 void fm_synth_all_notes_off(void);
+
+/**
+ * fm_synth_program_change — Select a GM instrument for a MIDI channel.
+ *
+ * Sets the GM program (instrument) for the given channel.  Subsequent
+ * note-on events on this channel will use the new program's FM synthesis
+ * parameters (waveforms, frequency ratios, ADSR envelopes).
+ *
+ * Program numbers follow the General MIDI Level 1 specification (0–127).
+ * Out-of-range values are silently clamped.
+ *
+ * @channel:  MIDI channel (0-15).
+ * @program:  GM program number (0-127).
+ */
+void fm_synth_program_change(uint8_t channel, uint8_t program);
+
+/**
+ * fm_synth_get_program — Get the current GM program for a channel.
+ *
+ * @channel:  MIDI channel (0-15).
+ * Returns the current GM program number (0-127).
+ */
+uint8_t fm_synth_get_program(uint8_t channel);
 
 /**
  * fm_synth_render — Generate PCM audio samples.

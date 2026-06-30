@@ -312,6 +312,7 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/sound_pcm.c \
          src/drivers/sound_src.c \
          src/drivers/fm_synth.c \
+         src/drivers/fm_gm.c \
          src/drivers/ramdisk.c \
          src/drivers/watchdog.c \
          src/drivers/netconsole.c \
