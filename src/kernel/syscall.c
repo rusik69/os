@@ -121,6 +121,10 @@ uint64_t sys_getgroups(uint64_t size, uint64_t list_addr);
 uint64_t sys_setgroups(uint64_t size, uint64_t list_addr);
 uint64_t sys_getpgrp(void);
 
+/* D128: Capability syscalls — implemented in sys_caps.c */
+uint64_t sys_capget(uint64_t header_addr, uint64_t data_addr);
+uint64_t sys_capset(uint64_t header_addr, uint64_t data_addr);
+
 /* D123: Process & Signal syscalls — declared in sys_process.c */
 uint64_t sys_rt_sigaction(uint64_t signum, uint64_t act_addr,
                           uint64_t oldact_addr, uint64_t sigsetsize);
@@ -10525,67 +10529,27 @@ uint64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_FSTATFS:         return sys_fstatfs(a1, a2);
         case SYS_GETRUSAGE:       return sys_getrusage(a1, a2);
         case SYS_SYSINFO:         return sys_sysinfo(a1);
-        case SYS_CAPGET: {
-            /* capget: return current process capabilities */
-            struct process *p = process_get_current();
-            if (!p) return (uint64_t)-1;
-            /* header at a1, data at a2 */
-            struct __user_cap_header_struct {
-                uint32_t version;
-                int pid;
-            };
-            struct __user_cap_data_struct {
-                uint32_t effective;
-                uint32_t permitted;
-                uint32_t inheritable;
-            };
-            if (!a1 || !a2) return (uint64_t)-1;
-            if (syscall_is_user_process()) {
-                if (!syscall_user_read_ok(a1, sizeof(struct __user_cap_header_struct)))
-                    return (uint64_t)-1;
-                if (!syscall_user_write_ok(a2, sizeof(struct __user_cap_data_struct)))
-                    return (uint64_t)-1;
-            }
-            struct __user_cap_header_struct hdr;
-            if (copy_from_user(&hdr, a1, sizeof(hdr)) < 0)
-                return (uint64_t)-1;
-            (void)hdr;
-            struct __user_cap_data_struct data;
-            /* Return the effective, permitted, inheritable masks (first word only) */
-            data.effective   = (uint32_t)(p->cap_effective[0] & 0xFFFFFFFFULL);
-            data.permitted   = (uint32_t)(p->cap_permitted[0] & 0xFFFFFFFFULL);
-            data.inheritable = (uint32_t)(p->cap_inheritable[0] & 0xFFFFFFFFULL);
-            if (copy_to_user(a2, &data, sizeof(data)) < 0)
-                return (uint64_t)-1;
-            return 0;
-        }
+        case SYS_CAPGET:          return sys_capget(a1, a2);
         case SYS_CAPSET: {
-            /* capset: set capability masks on current process */
-            struct __user_cap_header_struct {
-                uint32_t version;
-                int pid;
-            };
-            struct __user_cap_data_struct {
-                uint32_t effective;
-                uint32_t permitted;
-                uint32_t inheritable;
-            };
-            struct process *p = process_get_current();
-            if (!p) return (uint64_t)-1;
-            if (!a1 || !a2) return (uint64_t)-1;
-            if (syscall_is_user_process()) {
-                if (!syscall_user_read_ok(a1, sizeof(struct __user_cap_header_struct)))
-                    return (uint64_t)-1;
-                if (!syscall_user_read_ok(a2, sizeof(struct __user_cap_data_struct)))
-                    return (uint64_t)-1;
-            }
-            struct __user_cap_data_struct data;
-            if (copy_from_user(&data, a2, sizeof(data)) < 0)
-                return (uint64_t)-1;
-            p->cap_effective[0]   = (p->cap_effective[0] & ~0xFFFFFFFFULL) | data.effective;
-            p->cap_permitted[0]   = (p->cap_permitted[0] & ~0xFFFFFFFFULL) | data.permitted;
-            p->cap_inheritable[0] = (p->cap_inheritable[0] & ~0xFFFFFFFFULL) | data.inheritable;
-            return 0;
+        	/* capset: set capability masks on current process */
+        	struct process *p = process_get_current();
+        	if (!p) return (uint64_t)-1;
+        	if (!a1 || !a2) return (uint64_t)-1;
+        	if (syscall_is_user_process()) {
+        		if (!syscall_user_read_ok(a1,
+        		    sizeof(struct __user_cap_header_struct)))
+        			return (uint64_t)-1;
+        		if (!syscall_user_read_ok(a2,
+        		    sizeof(struct __user_cap_data_struct)))
+        			return (uint64_t)-1;
+        	}
+        	struct __user_cap_data_struct data;
+        	if (copy_from_user(&data, a2, sizeof(data)) < 0)
+        		return (uint64_t)-1;
+        	p->cap_effective[0]   = (p->cap_effective[0] & ~0xFFFFFFFFULL) | data.effective;
+        	p->cap_permitted[0]   = (p->cap_permitted[0] & ~0xFFFFFFFFULL) | data.permitted;
+        	p->cap_inheritable[0] = (p->cap_inheritable[0] & ~0xFFFFFFFFULL) | data.inheritable;
+        	return 0;
         }
         case SYS_GETRESUID:       return sys_getresuid(a1, a2, a3);
         case SYS_SETRESUID:       return sys_setresuid(a1, a2, a3);

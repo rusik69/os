@@ -63,6 +63,25 @@ void sys_cap_bset_apply(struct process *proc);
 
 #define CAP_BSET_SIZE       2  /* 64-bit words for up to 64 caps */
 
+/* Linux __user_cap_header_struct/__user_cap_data_struct version constants */
+#define _LINUX_CAPABILITY_VERSION_1  0x19980330
+#define _LINUX_CAPABILITY_VERSION_2  0x20071026
+#define _LINUX_CAPABILITY_VERSION_3  0x20080522
+#define LINUX_CAPABILITY_VERSION     _LINUX_CAPABILITY_VERSION_3
+
+/* User-space capability header (Linux ABI) */
+struct __user_cap_header_struct {
+    uint32_t version;
+    int32_t  pid;
+};
+
+/* User-space capability data (Linux ABI, V1/V2/V3) */
+struct __user_cap_data_struct {
+    uint32_t effective;
+    uint32_t permitted;
+    uint32_t inheritable;
+};
+
 /* ── Capability audit enforcement ──────────────────────────────── */
 
 /* Generic capable-with-audit check. Returns 0 if granted, -EPERM if denied. */
