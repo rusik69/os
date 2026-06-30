@@ -222,6 +222,14 @@ int usb_isochronous_msg(uint8_t dev_addr, uint8_t ep,
                         void *data, uint32_t len,
                         uint32_t sched_frame);
 
+/*
+ * DMA-safe buffer allocation helpers.
+ * Allocate/free a single page (4096 bytes) suitable for USB transfers.
+ * Returns virtual address or NULL on failure.
+ */
+void *usb_alloc_dma_buf(void);
+void usb_free_dma_buf(void *virt);
+
 void usb_core_init(void);
 
 int usb_register_driver(struct usb_driver *driver);
