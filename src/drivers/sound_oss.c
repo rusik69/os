@@ -859,6 +859,7 @@ void __init sound_oss_init(void)
 	g_frag_size     = OSS_DEFAULT_FRAG_SIZE;
 	g_frag_count    = OSS_DEFAULT_FRAG_COUNT;
 
+	/* Register /dev/dsp — PCM audio playback and capture */
 	int ret = devfs_register_device("dsp", NULL, dsp_read, dsp_write);
 	if (ret == 0) {
 		kprintf("[OK] OSS: /dev/dsp registered (%d Hz %d ch %d-bit)\n",
@@ -866,6 +867,17 @@ void __init sound_oss_init(void)
 		g_dsp_initialized = 1;
 	} else {
 		kprintf("[OSS] WARN: failed to register /dev/dsp\n");
+	}
+
+	/* Register /dev/mixer — volume control (ioctl-only device).
+	 * The mixer ioctls (SOUND_MIXER_READ_VOLUME, etc.) are dispatched
+	 * via sys_ioctl.c to sound_oss_ioctl() and work on any fd, but
+	 * userspace expects to open /dev/mixer explicitly per OSS spec. */
+	ret = devfs_register_device("mixer", NULL, NULL, NULL);
+	if (ret == 0) {
+		kprintf("[OK] OSS: /dev/mixer registered\n");
+	} else {
+		kprintf("[OSS] WARN: failed to register /dev/mixer\n");
 	}
 }
 
