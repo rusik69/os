@@ -1,15 +1,21 @@
 /*
- * usb_audio.c — USB Audio Class 1.0 (UAC1) driver
+ * usb_audio.c — USB Audio Class 1.0 (UAC1) / 2.0 (UAC2) driver
  *
- * Implements USB Audio Class 1.0 feature unit controls (mute, volume,
- * tone) and audio streaming interface detection.  Parses the AudioControl
- * interface descriptors to build a topology of terminals and feature units,
- * then exposes class-specific requests for volume/mute control.
+ * Implements USB Audio Class feature unit controls (mute, volume, tone),
+ * clock entity management, and audio streaming interface detection.
+ * Parses AudioControl interface descriptors to build a topology of
+ * terminals, feature units, and clock entities, then exposes
+ * class-specific requests for volume/mute/tone control.
+ *
+ * UAC1: 1-byte/2-byte controls, protocol=0x00, descriptors as per v1.0 spec.
+ * UAC2: 4-byte controls, protocol=0x20, clock entity hierarchy, descriptors
+ *        as per v2.0 spec with larger structures and added fields.
  *
  * References:
  *   USB Device Class Definition for Audio Devices, Release 1.0 (UAC1)
- *   USB Audio Data Formats, Release 1.0
- *   USB Audio Terminals Types, Release 1.0
+ *   USB Device Class Definition for Audio Devices, Release 2.0 (UAC2)
+ *   USB Audio Data Formats, Release 1.0/2.0
+ *   USB Audio Terminals Types, Release 1.0/2.0
  *   EHCI Specification, Revision 1.0 (isochronous transfer support)
  */
 
@@ -26,16 +32,18 @@
 /* ── UAC1 class constants ────────────────────────────────────────────── */
 
 #define UAC_VERSION_1_0          0x0100
+#define UAC_VERSION_2_0          0x0200
+
+/* Audio interface protocol codes */
+#define AUDIO_PROTOCOL_UNDEFINED 0x00
+#define AUDIO_PROTOCOL_UAC1      0x00   /* UAC1 uses protocol = 0x00 */
+#define AUDIO_PROTOCOL_UAC2      0x20   /* UAC2 uses protocol = 0x20 */
 
 /* Audio interface subclass codes */
 #define AUDIO_SUBCLASS_UNDEFINED 0x00
 #define AUDIO_SUBCLASS_CONTROL   0x01   /* AudioControl interface */
 #define AUDIO_SUBCLASS_STREAMING 0x02   /* AudioStreaming interface */
 #define AUDIO_SUBCLASS_MIDI      0x03   /* MIDIStreaming interface */
-
-/* Audio interface protocol codes */
-#define AUDIO_PROTOCOL_UNDEFINED 0x00
-#define AUDIO_PROTOCOL_V1_0      0x00   /* UAC1 uses protocol = 0x00 */
 
 /* ── AudioControl descriptor subtypes (CS_INTERFACE) ──────────────────── */
 /* USB class-specific descriptor type for audio interfaces */
@@ -51,6 +59,18 @@
 #define AC_FEATURE_UNIT          0x06
 #define AC_PROCESSING_UNIT       0x07
 #define AC_EXTENSION_UNIT        0x08
+
+/* ── UAC2-specific clock entity descriptor subtypes ────────────────── */
+#define AC_CLOCK_SOURCE          0x0A
+#define AC_CLOCK_SELECTOR        0x0B
+#define AC_CLOCK_MULTIPLIER      0x0C
+#define AC_SAMPLE_RATE_CONVERTER 0x0D
+
+/* UAC2 clock source attributes (bmaAttr) */
+#define CLOCKSOURCE_ATTR_EXTERNAL     (1U << 0)
+#define CLOCKSOURCE_ATTR_INTERNAL_FIXED (1U << 1)
+#define CLOCKSOURCE_ATTR_INTERNAL_VAR (1U << 2)
+#define CLOCKSOURCE_ATTR_PROGRAMMABLE (1U << 3)
 
 /* ── AudioStreaming descriptor subtypes (CS_INTERFACE) ────────────────── */
 #define AS_GENERAL               0x01
@@ -183,11 +203,46 @@ struct audio_terminal {
 struct audio_feature_unit {
 	uint8_t  id;              /* bUnitID */
 	uint8_t  source_id;       /* bSourceID — entity feeding this FU */
-	uint8_t  control_size;    /* bControlSize (1 for UAC1) */
+	uint8_t  control_size;    /* bControlSize (1 for UAC1, 4 for UAC2) */
 	uint16_t master_controls; /* bmaControls(0) — master channel */
 	uint16_t channel_controls[AUDIO_MAX_CHANNELS]; /* per-channel controls */
 	uint8_t  num_channels;    /* number of logical channels */
 	uint8_t  feature_index;   /* iFeature string descriptor index */
+};
+
+/* UAC2 clock entity limits */
+#define AUDIO_MAX_CLOCK_SOURCES     4
+#define AUDIO_MAX_CLOCK_SELECTORS   4
+#define AUDIO_MAX_CLOCK_MULTIPLIERS 4
+
+/* ── UAC2 clock source record ─────────────────────────────────────────── */
+/* A clock source generates a clock signal from an internal or external
+ * reference. It is the root of the clock tree.
+ */
+struct audio_clock_source {
+	uint8_t  id;              /* bClockID */
+	uint8_t  attributes;      /* bmAttributes (CLOCKSOURCE_ATTR_*) */
+	uint8_t  controls;        /* bmControls (bitmap of controlled attrs) */
+	uint8_t  assoc_terminal;  /* bAssocTerminal (0 = none) */
+};
+
+/* ── UAC2 clock selector record ───────────────────────────────────────── */
+/* A clock selector selects one of N input clocks as its output. */
+struct audio_clock_selector {
+	uint8_t  id;              /* bClockID */
+	uint8_t  num_inputs;      /* bNrInPins */
+	uint8_t  source_ids[4];   /* baCSourceID[] — input clock IDs */
+	uint8_t  controls;        /* bmControls */
+};
+
+/* ── UAC2 clock multiplier record ─────────────────────────────────────── */
+/* A clock multiplier produces an output clock that is a multiple of the
+ * input clock frequency.
+ */
+struct audio_clock_multiplier {
+	uint8_t  id;              /* bClockID */
+	uint8_t  source_id;       /* bCSourceID — input clock ID */
+	uint8_t  controls;        /* bmControls */
 };
 
 /* ── Audio device instance ────────────────────────────────────────────── */
@@ -197,6 +252,7 @@ struct audio_device {
 	uint8_t  ac_iface;        /* AudioControl interface number */
 	uint8_t  as_iface;        /* AudioStreaming interface number (first found) */
 	uint8_t  alt_setting;     /* alternate setting for streaming */
+	uint16_t uac_version;     /* UAC_VERSION_1_0 or UAC_VERSION_2_0 */
 	int      active;          /* 1 if device is initialised */
 
 	/* Topology */
@@ -205,6 +261,19 @@ struct audio_device {
 
 	int      num_feature_units;
 	struct audio_feature_unit feature_units[AUDIO_MAX_FEATURE_UNITS];
+
+	/* UAC2 clock entities */
+	int      num_clock_sources;
+	struct audio_clock_source clock_sources[AUDIO_MAX_CLOCK_SOURCES];
+
+	int      num_clock_selectors;
+	struct audio_clock_selector clock_selectors[AUDIO_MAX_CLOCK_SELECTORS];
+
+	int      num_clock_multipliers;
+	struct audio_clock_multiplier clock_multipliers[AUDIO_MAX_CLOCK_MULTIPLIERS];
+
+	/* UAC2 feedback endpoint tracking */
+	uint8_t  feedback_ep;     /* feedback endpoint (UAC2 implicit feedback) */
 
 	/* Streaming info */
 	uint8_t  iso_in_ep;       /* isochronous IN endpoint */
@@ -416,6 +485,578 @@ int audio_get_volume_range(uint8_t dev_addr, uint8_t iface,
 	*out_res = val;
 
 	return 0;
+}
+
+/* ── UAC2-specific control request helpers ────────────────────────────── */
+
+/*
+ * UAC2 version of the audio class-specific control request.
+ * Uses 4-byte data payloads for volume controls (int32_t) instead of
+ * the 2-byte (int16_t) used by UAC1.
+ */
+static int audio_feature_unit_request_uac2(uint8_t dev_addr, uint8_t iface,
+					    uint8_t entity_id, uint8_t selector,
+					    uint8_t channel, uint8_t request,
+					    void *data, uint16_t len)
+{
+	uint8_t bmReqType;
+	uint16_t wValue;
+
+	if (request & 0x80)
+		bmReqType = AUDIO_REQTYPE_GET_CUR;
+	else
+		bmReqType = AUDIO_REQTYPE_SET_CUR;
+
+	/* CS = channel << 8, entity ID = low byte */
+	wValue = ((uint16_t)selector << 8) | (uint16_t)entity_id;
+
+	uint16_t wIndex = (uint16_t)iface | ((uint16_t)channel << 8);
+
+	return usb_control_msg(dev_addr, bmReqType, request,
+			       wValue, wIndex, len, data);
+}
+
+/*
+ * Set the volume of a UAC2 feature unit (4-byte integer).
+ * @volume:  Volume in 1/256 dB units (signed 32-bit)
+ */
+int audio_set_volume_uac2(uint8_t dev_addr, uint8_t iface,
+			   uint8_t fu_id, uint8_t channel, int32_t volume)
+{
+	return audio_feature_unit_request_uac2(dev_addr, iface, fu_id,
+						VOLUME_CONTROL, channel,
+						AUDIO_REQ_SET_CUR,
+						&volume, sizeof(volume));
+}
+
+/*
+ * Get the current volume of a UAC2 feature unit (4-byte integer).
+ * @out_volume:  Receives volume in 1/256 dB units (signed 32-bit)
+ */
+int audio_get_volume_uac2(uint8_t dev_addr, uint8_t iface,
+			   uint8_t fu_id, uint8_t channel, int32_t *out_volume)
+{
+	int32_t val = 0;
+	int ret;
+
+	if (!out_volume)
+		return -EINVAL;
+
+	ret = audio_feature_unit_request_uac2(dev_addr, iface, fu_id,
+						VOLUME_CONTROL, channel,
+						AUDIO_REQ_GET_CUR,
+						&val, sizeof(val));
+	if (ret < 0)
+		return ret;
+
+	*out_volume = val;
+	return 0;
+}
+
+/*
+ * Get the volume range (min, max, resolution) of a UAC2 feature unit.
+ */
+int audio_get_volume_range_uac2(uint8_t dev_addr, uint8_t iface,
+				 uint8_t fu_id, uint8_t channel,
+				 int32_t *out_min, int32_t *out_max,
+				 int32_t *out_res)
+{
+	int32_t val;
+	int ret;
+
+	if (!out_min || !out_max || !out_res)
+		return -EINVAL;
+
+	ret = audio_feature_unit_request_uac2(dev_addr, iface, fu_id,
+						VOLUME_CONTROL, channel,
+						AUDIO_REQ_GET_MIN,
+						&val, sizeof(val));
+	if (ret < 0)
+		return ret;
+	*out_min = val;
+
+	ret = audio_feature_unit_request_uac2(dev_addr, iface, fu_id,
+						VOLUME_CONTROL, channel,
+						AUDIO_REQ_GET_MAX,
+						&val, sizeof(val));
+	if (ret < 0)
+		return ret;
+	*out_max = val;
+
+	ret = audio_feature_unit_request_uac2(dev_addr, iface, fu_id,
+						VOLUME_CONTROL, channel,
+						AUDIO_REQ_GET_RES,
+						&val, sizeof(val));
+	if (ret < 0)
+		return ret;
+	*out_res = val;
+
+	return 0;
+}
+
+/* ── UAC2 clock entity control helpers ───────────────────────────────── */
+
+/* Clock Source control selectors (UAC2 §5.2.1) */
+#define CLOCK_SOURCE_CONTROL_UNDEFINED 0x00
+#define CLOCK_SOURCE_CONTROL_SAMPLING_FREQ 0x01
+#define CLOCK_SOURCE_CONTROL_CLOCK_VALID 0x02
+
+/*
+ * Set the sampling frequency of a UAC2 clock source.
+ * @dev_addr:    USB device address
+ * @iface:       AudioControl interface number
+ * @clock_id:    Clock Source entity ID (bClockID)
+ * @freq_hz:     Sampling frequency in Hz
+ *
+ * The request entity is addressed as if it were a feature unit with
+ * entity_id = clock_id and control_selector = SAMPLING_FREQ_CONTROL.
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+static int audio_clock_set_frequency(uint8_t dev_addr, uint8_t iface,
+				      uint8_t clock_id, uint32_t freq_hz)
+{
+	return audio_feature_unit_request_uac2(dev_addr, iface, clock_id,
+						CLOCK_SOURCE_CONTROL_SAMPLING_FREQ,
+						0, AUDIO_REQ_SET_CUR,
+						&freq_hz, sizeof(freq_hz));
+}
+
+/*
+ * Get the current sampling frequency of a UAC2 clock source.
+ * @out_freq_hz: Receives sampling frequency in Hz
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+static int audio_clock_get_frequency(uint8_t dev_addr, uint8_t iface,
+				      uint8_t clock_id, uint32_t *out_freq_hz)
+{
+	uint32_t freq = 0;
+	int ret;
+
+	if (!out_freq_hz)
+		return -EINVAL;
+
+	ret = audio_feature_unit_request_uac2(dev_addr, iface, clock_id,
+						CLOCK_SOURCE_CONTROL_SAMPLING_FREQ,
+						0, AUDIO_REQ_GET_CUR,
+						&freq, sizeof(freq));
+	if (ret < 0)
+		return ret;
+
+	*out_freq_hz = freq;
+	return 0;
+}
+
+/*
+ * Check whether a UAC2 clock source is valid (locked to a stable clock).
+ * @out_valid:   Receives 1 if clock is valid, 0 otherwise
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+static int audio_clock_get_valid(uint8_t dev_addr, uint8_t iface,
+				  uint8_t clock_id, uint8_t *out_valid)
+{
+	uint8_t valid = 0;
+	int ret;
+
+	if (!out_valid)
+		return -EINVAL;
+
+	ret = audio_feature_unit_request_uac2(dev_addr, iface, clock_id,
+						CLOCK_SOURCE_CONTROL_CLOCK_VALID,
+						0, AUDIO_REQ_GET_CUR,
+						&valid, sizeof(valid));
+	if (ret < 0)
+		return ret;
+
+	*out_valid = valid ? 1 : 0;
+	return 0;
+}
+
+/*
+ * UAC2 mute control — same 1-byte request format as UAC1 in practice,
+ * but dispatched through the UAC2 control request path.
+ */
+static int audio_set_mute_uac2(uint8_t dev_addr, uint8_t iface,
+				uint8_t fu_id, uint8_t muted)
+{
+	uint8_t val = muted ? 1 : 0;
+	return audio_feature_unit_request_uac2(dev_addr, iface, fu_id,
+						MUTE_CONTROL, 0,
+						AUDIO_REQ_SET_CUR,
+						&val, sizeof(val));
+}
+
+static int audio_get_mute_uac2(uint8_t dev_addr, uint8_t iface,
+				uint8_t fu_id, uint8_t *out_muted)
+{
+	uint8_t val = 0;
+	int ret;
+
+	if (!out_muted)
+		return -EINVAL;
+
+	ret = audio_feature_unit_request_uac2(dev_addr, iface, fu_id,
+						MUTE_CONTROL, 0,
+						AUDIO_REQ_GET_CUR,
+						&val, sizeof(val));
+	if (ret < 0)
+		return ret;
+
+	*out_muted = val ? 1 : 0;
+	return 0;
+}
+
+/* ── UAC2-specific entity lookup helpers ─────────────────────────────── */
+
+static struct audio_clock_source *find_clock_source_by_id(
+	struct audio_device *dev, uint8_t id)
+{
+	for (int i = 0; i < dev->num_clock_sources; i++) {
+		if (dev->clock_sources[i].id == id)
+			return &dev->clock_sources[i];
+	}
+	return NULL;
+}
+
+static struct audio_clock_selector *find_clock_selector_by_id(
+	struct audio_device *dev, uint8_t id)
+{
+	for (int i = 0; i < dev->num_clock_selectors; i++) {
+		if (dev->clock_selectors[i].id == id)
+			return &dev->clock_selectors[i];
+	}
+	return NULL;
+}
+
+static struct audio_clock_multiplier *find_clock_multiplier_by_id(
+	struct audio_device *dev, uint8_t id)
+{
+	for (int i = 0; i < dev->num_clock_multipliers; i++) {
+		if (dev->clock_multipliers[i].id == id)
+			return &dev->clock_multipliers[i];
+	}
+	return NULL;
+}
+
+/* ── UAC2 descriptor parsing ──────────────────────────────────────────── */
+
+/*
+ * Parse a single UAC2 audio control descriptor.  UAC2 descriptors have
+ * different structures from UAC1: terminals are larger, feature units
+ * use 4-byte bmaControls, and clock entities are added.
+ *
+ * Layout differences from UAC1:
+ *   Input Terminal:  17 bytes  (vs 12 in UAC1) — adds bCSourceID(1), bmControls(2)
+ *   Output Terminal: 12 bytes  (vs 9 in UAC1)  — adds bCSourceID(1), bmControls(2)
+ *   Feature Unit:    9 + n*4   (vs 7 + n*cs)   — bmaControls always 4 bytes
+ *   Clock Source:    8 bytes   (new)
+ *   Clock Selector:  6 + n     (new)
+ *   Clock Multiplier:7 bytes   (new)
+ *
+ * Returns 0 on success, negative errno on parse error.
+ */
+static int parse_uac2_control_desc(struct audio_device *dev,
+				    const uint8_t *data, uint8_t length)
+{
+	uint8_t subtype;
+
+	if (!data || length < 3)
+		return -EINVAL;
+
+	subtype = data[2]; /* bDescriptorSubtype */
+
+	switch (subtype) {
+	case AC_INPUT_TERMINAL: {
+		/* UAC2 Input Terminal: 17 bytes
+		 * bLength(1) bDescType(1) bDescSubtype(1)
+		 * bTerminalID(1) wTerminalType(2) bAssocTerminal(1)
+		 * bCSourceID(1) bNrChannels(1) wChannelConfig(2)
+		 * iChannelNames(1) bmControls(2) iTerminal(1)
+		 */
+		if (length < 17) {
+			kprintf("[usb_audio] UAC2: short input terminal desc (%u)\n",
+				length);
+			return -EINVAL;
+		}
+		if (dev->num_terminals >= AUDIO_MAX_TERMINALS) {
+			kprintf("[usb_audio] UAC2: too many terminals\n");
+			return -ENOSPC;
+		}
+
+		struct audio_terminal *t = &dev->terminals[dev->num_terminals];
+		t->id = data[3];
+		t->terminal_type = *(const uint16_t *)(data + 4);
+		t->assoc_terminal = data[6];
+		/* bCSourceID at offset 7 */
+		t->nr_channels = data[8];
+		t->channel_config = *(const uint16_t *)(data + 9);
+		t->is_input = 1;
+
+		uint8_t clock_id = data[7];
+		(void)clock_id; /* used for topology tracing */
+
+		kprintf("[usb_audio] UAC2 Input Terminal id=%u type=0x%04X "
+			"channels=%u clock=%u\n",
+			t->id, t->terminal_type, t->nr_channels, clock_id);
+
+		dev->num_terminals++;
+		return 0;
+	}
+
+	case AC_OUTPUT_TERMINAL: {
+		/* UAC2 Output Terminal: 12 bytes
+		 * bLength(1) bDescType(1) bDescSubtype(1)
+		 * bTerminalID(1) wTerminalType(2) bAssocTerminal(1)
+		 * bSourceID(1) bCSourceID(1) bmControls(2) iTerminal(1)
+		 */
+		if (length < 12) {
+			kprintf("[usb_audio] UAC2: short output terminal desc (%u)\n",
+				length);
+			return -EINVAL;
+		}
+		if (dev->num_terminals >= AUDIO_MAX_TERMINALS) {
+			kprintf("[usb_audio] UAC2: too many terminals\n");
+			return -ENOSPC;
+		}
+
+		struct audio_terminal *t = &dev->terminals[dev->num_terminals];
+		t->id = data[3];
+		t->terminal_type = *(const uint16_t *)(data + 4);
+		t->assoc_terminal = data[6];
+		t->is_input = 0;
+
+		uint8_t src_id = data[7];
+		uint8_t clock_id = data[8];
+		(void)src_id;
+		(void)clock_id;
+
+		kprintf("[usb_audio] UAC2 Output Terminal id=%u type=0x%04X "
+			"source=%u clock=%u\n",
+			t->id, t->terminal_type, src_id, clock_id);
+
+		dev->num_terminals++;
+		return 0;
+	}
+
+	case AC_FEATURE_UNIT: {
+		/* UAC2 Feature Unit: 4-byte bmaControls
+		 * bLength(1) bDescType(1) bDescSubtype(1)
+		 * bUnitID(1) bSourceID(1) bmaControls(0..n) [4 bytes each]
+		 * iFeature(1)
+		 *
+		 * Each bmaControls entry is 4 bytes.
+		 * Number of channels = (bLength - 7 - 1) / 4
+		 *   (bLength - header(6) - iFeature(1)) / 4
+		 */
+		if (length < 11) { /* 6 header + 4 master control + 1 ifeature */
+			kprintf("[usb_audio] UAC2: short feature unit desc (%u)\n",
+				length);
+			return -EINVAL;
+		}
+
+		if (dev->num_feature_units >= AUDIO_MAX_FEATURE_UNITS) {
+			kprintf("[usb_audio] UAC2: too many feature units\n");
+			return -ENOSPC;
+		}
+
+		struct audio_feature_unit *fu =
+			&dev->feature_units[dev->num_feature_units];
+		fu->id = data[3];
+		fu->source_id = data[4];
+		fu->control_size = 4; /* UAC2 always 4-byte bmaControls */
+
+		/* Parse the 4-byte bmaControls */
+		uint8_t offset = 5; /* start of first bmaControls */
+		int num_controls = 0;
+
+		while (offset + 4 + 1 <= length) {
+			uint32_t ctrl = *(const uint32_t *)(data + offset);
+
+			if (num_controls == 0) {
+				fu->master_controls = (uint16_t)(ctrl & 0xFFFF);
+			} else if (num_controls - 1 < AUDIO_MAX_CHANNELS) {
+				fu->channel_controls[num_controls - 1] =
+					(uint16_t)(ctrl & 0xFFFF);
+			}
+
+			offset += 4;
+			num_controls++;
+		}
+
+		/* iFeature is the last byte */
+		fu->feature_index = data[length - 1];
+		fu->num_channels = (num_controls > 0) ? num_controls - 1 : 0;
+		if (fu->num_channels > AUDIO_MAX_CHANNELS)
+			fu->num_channels = AUDIO_MAX_CHANNELS;
+
+		kprintf("[usb_audio] UAC2 Feature Unit id=%u source=%u "
+			"master_ctl=0x%04X channels=%u\n",
+			fu->id, fu->source_id,
+			fu->master_controls, fu->num_channels);
+
+		dev->num_feature_units++;
+		return 0;
+	}
+
+	case AC_CLOCK_SOURCE: {
+		/* UAC2 Clock Source: 8 bytes
+		 * bLength(1) bDescType(1) bDescSubtype(1)
+		 * bClockID(1) bmAttributes(1) bmControls(1)
+		 * bAssocTerminal(1) iClockSource(1)
+		 */
+		if (length < 8) {
+			kprintf("[usb_audio] UAC2: short clock source desc (%u)\n",
+				length);
+			return -EINVAL;
+		}
+
+		if (dev->num_clock_sources >= AUDIO_MAX_CLOCK_SOURCES) {
+			kprintf("[usb_audio] UAC2: too many clock sources\n");
+			return -ENOSPC;
+		}
+
+		struct audio_clock_source *cs =
+			&dev->clock_sources[dev->num_clock_sources];
+		cs->id = data[3];
+		cs->attributes = data[4];
+		cs->controls = data[5];
+		cs->assoc_terminal = data[6];
+
+		kprintf("[usb_audio] UAC2 Clock Source id=%u attr=0x%02X "
+			"ctrl=0x%02X assoc=%u\n",
+			cs->id, cs->attributes, cs->controls,
+			cs->assoc_terminal);
+
+		dev->num_clock_sources++;
+		return 0;
+	}
+
+	case AC_CLOCK_SELECTOR: {
+		/* UAC2 Clock Selector:
+		 * bLength(1) bDescType(1) bDescSubtype(1)
+		 * bClockID(1) bNrInPins(1) baCSourceID[n](1 each)
+		 * bmControls(1) iClockSelector(1)
+		 */
+		if (length < 6) {
+			kprintf("[usb_audio] UAC2: short clock selector desc (%u)\n",
+				length);
+			return -EINVAL;
+		}
+
+		if (dev->num_clock_selectors >= AUDIO_MAX_CLOCK_SELECTORS) {
+			kprintf("[usb_audio] UAC2: too many clock selectors\n");
+			return -ENOSPC;
+		}
+
+		struct audio_clock_selector *cs =
+			&dev->clock_selectors[dev->num_clock_selectors];
+		cs->id = data[3];
+		cs->num_inputs = data[4];
+
+		/* Read source IDs (one byte each) */
+		uint8_t num_pins = cs->num_inputs;
+		if (num_pins > 4)
+			num_pins = 4;
+
+		for (uint8_t i = 0; i < num_pins; i++) {
+			uint8_t src_offset = 5 + i;
+			if (src_offset >= length)
+				break;
+			cs->source_ids[i] = data[src_offset];
+		}
+
+		/* bmControls is after the source ID list */
+		uint8_t controls_offset = 5 + cs->num_inputs;
+		if (controls_offset < length)
+			cs->controls = data[controls_offset];
+		else
+			cs->controls = 0;
+
+		kprintf("[usb_audio] UAC2 Clock Selector id=%u inputs=%u\n",
+			cs->id, cs->num_inputs);
+
+		dev->num_clock_selectors++;
+		return 0;
+	}
+
+	case AC_CLOCK_MULTIPLIER: {
+		/* UAC2 Clock Multiplier: 7 bytes
+		 * bLength(1) bDescType(1) bDescSubtype(1)
+		 * bClockID(1) bCSourceID(1) bmControls(1)
+		 * iClockMultiplier(1)
+		 */
+		if (length < 7) {
+			kprintf("[usb_audio] UAC2: short clock multiplier desc (%u)\n",
+				length);
+			return -EINVAL;
+		}
+
+		if (dev->num_clock_multipliers >= AUDIO_MAX_CLOCK_MULTIPLIERS) {
+			kprintf("[usb_audio] UAC2: too many clock multipliers\n");
+			return -ENOSPC;
+		}
+
+		struct audio_clock_multiplier *cm =
+			&dev->clock_multipliers[dev->num_clock_multipliers];
+		cm->id = data[3];
+		cm->source_id = data[4];
+		cm->controls = data[5];
+
+		kprintf("[usb_audio] UAC2 Clock Multiplier id=%u source=%u\n",
+			cm->id, cm->source_id);
+
+		dev->num_clock_multipliers++;
+		return 0;
+	}
+
+	case AC_SAMPLE_RATE_CONVERTER: {
+		kprintf("[usb_audio] UAC2 Sample Rate Converter (desc subtype 0x%02X, "
+			"len=%u)\n", subtype, length);
+		return 0; /* Acknowledge but skip for now */
+	}
+
+	case AC_HEADER:
+	case AC_MIXER_UNIT:
+	case AC_SELECTOR_UNIT:
+	case AC_PROCESSING_UNIT:
+	case AC_EXTENSION_UNIT:
+		return 0;
+
+	default:
+		kprintf("[usb_audio] UAC2: unknown AC descriptor subtype 0x%02X\n",
+			subtype);
+		return 0;
+	}
+}
+
+/*
+ * Print the UAC2 clock topology for debugging.
+ */
+static void dump_uac2_clock_topology(struct audio_device *dev)
+{
+	kprintf("[usb_audio] UAC2 clock topology for dev %u:\n", dev->dev_addr);
+
+	for (int i = 0; i < dev->num_clock_sources; i++) {
+		struct audio_clock_source *cs = &dev->clock_sources[i];
+		kprintf("[usb_audio]   Clock Source id=%u attr=0x%02X "
+			"ctrl=0x%02X\n", cs->id, cs->attributes,
+			cs->controls);
+	}
+
+	for (int i = 0; i < dev->num_clock_selectors; i++) {
+		struct audio_clock_selector *cs = &dev->clock_selectors[i];
+		kprintf("[usb_audio]   Clock Selector id=%u inputs=%u\n",
+			cs->id, cs->num_inputs);
+	}
+
+	for (int i = 0; i < dev->num_clock_multipliers; i++) {
+		struct audio_clock_multiplier *cm =
+			&dev->clock_multipliers[i];
+		kprintf("[usb_audio]   Clock Multiplier id=%u source=%u\n",
+			cm->id, cm->source_id);
+	}
 }
 
 /* ── UAC1 descriptor parsing ─────────────────────────────────────────── */
@@ -824,6 +1465,7 @@ struct audio_parse_ctx {
 	uint8_t current_iface;    /* current interface number */
 	uint8_t current_iface_class;
 	uint8_t current_iface_subclass;
+	uint8_t current_iface_protocol;  /* interface protocol (UAC1=0x00, UAC2=0x20) */
 };
 
 static int audio_desc_callback(uint8_t bDescriptorType,
@@ -840,12 +1482,20 @@ static int audio_desc_callback(uint8_t bDescriptorType,
 		ctx->current_iface = iface->bInterfaceNumber;
 		ctx->current_iface_class = iface->bInterfaceClass;
 		ctx->current_iface_subclass = iface->bInterfaceSubClass;
+		ctx->current_iface_protocol = iface->bInterfaceProtocol;
 
 		/* Track audio control interface */
 		if (iface->bInterfaceClass == USB_CLASS_AUDIO &&
 		    iface->bInterfaceSubClass == AUDIO_SUBCLASS_CONTROL) {
 			ctx->ac_iface_found = 1;
 			dev->ac_iface = iface->bInterfaceNumber;
+			/* Detect UAC version from interface protocol:
+			 * UAC1 = 0x00, UAC2 = 0x20
+			 */
+			if (iface->bInterfaceProtocol == AUDIO_PROTOCOL_UAC2)
+				dev->uac_version = UAC_VERSION_2_0;
+			else
+				dev->uac_version = UAC_VERSION_1_0;
 		}
 
 		/* Track audio streaming interface */
@@ -865,7 +1515,11 @@ static int audio_desc_callback(uint8_t bDescriptorType,
 		/* Only parse within audio control interfaces */
 		if (ctx->current_iface_class == USB_CLASS_AUDIO &&
 		    ctx->current_iface_subclass == AUDIO_SUBCLASS_CONTROL) {
-			ret = parse_audio_control_desc(dev, data, bLength);
+			/* Dispatch to UAC1 or UAC2 parser based on protocol */
+			if (dev->uac_version == UAC_VERSION_2_0)
+				ret = parse_uac2_control_desc(dev, data, bLength);
+			else
+				ret = parse_audio_control_desc(dev, data, bLength);
 		}
 
 		/* Parse audio streaming descriptors */
@@ -994,30 +1648,58 @@ static int usb_audio_probe(const struct usb_device *dev_desc)
 
 	/* Dump discovered topology */
 	dump_audio_topology(dev);
+	if (dev->uac_version == UAC_VERSION_2_0)
+		dump_uac2_clock_topology(dev);
 
 	/* If we found feature units with mute/volume control, cache initial values */
 	for (int i = 0; i < dev->num_feature_units; i++) {
 		struct audio_feature_unit *fu = &dev->feature_units[i];
 
 		if (fu->master_controls & FU_CTRL_MUTE) {
-			uint8_t muted = 0;
-			int r = audio_get_mute(dev->dev_addr, dev->ac_iface,
-					       fu->id, &muted);
-			if (r == 0) {
-				dev->mute_state = muted;
-				kprintf("[usb_audio] FU id=%u initial mute=%u\n",
-					fu->id, muted);
+			if (dev->uac_version == UAC_VERSION_2_0) {
+				uint8_t muted = 0;
+				int r = audio_get_mute_uac2(dev->dev_addr, dev->ac_iface,
+							     fu->id, &muted);
+				if (r == 0) {
+					dev->mute_state = muted;
+					kprintf("[usb_audio] UAC2 FU id=%u initial mute=%u\n",
+						fu->id, muted);
+				}
+			} else {
+				uint8_t muted = 0;
+				int r = audio_get_mute(dev->dev_addr, dev->ac_iface,
+						       fu->id, &muted);
+				if (r == 0) {
+					dev->mute_state = muted;
+					kprintf("[usb_audio] FU id=%u initial mute=%u\n",
+						fu->id, muted);
+				}
 			}
 		}
 
 		if (fu->master_controls & FU_CTRL_VOLUME) {
-			int16_t vol = 0;
-			int r = audio_get_volume(dev->dev_addr, dev->ac_iface,
-						 fu->id, 0, &vol);
-			if (r == 0) {
-				dev->volume = vol;
-				kprintf("[usb_audio] FU id=%u initial volume=%d\n",
-					fu->id, vol);
+			if (dev->uac_version == UAC_VERSION_2_0) {
+				int32_t vol = 0;
+				/* UAC2 volume is 4-byte int32_t but we store as int16_t
+				 * for compatibility with the volume field; this is
+				 * correct for common volume ranges (up to ±96 dB).
+				 */
+				int r = audio_get_volume_uac2(dev->dev_addr, dev->ac_iface,
+							       fu->id, 0, &vol);
+				if (r == 0) {
+					dev->volume = (int16_t)vol;
+					kprintf("[usb_audio] UAC2 FU id=%u initial volume=%d\n",
+						fu->id, (int)vol);
+				}
+			} else {
+				int16_t vol = 0;
+				int r = audio_get_volume(dev->dev_addr, dev->ac_iface,
+							 fu->id, 0, &vol);
+				if (r == 0) {
+					dev->volume = vol;
+					kprintf("[usb_audio] FU id=%u initial volume=%d\n",
+						fu->id, vol);
+				}
 			}
 		}
 	}
@@ -1025,9 +1707,19 @@ static int usb_audio_probe(const struct usb_device *dev_desc)
 	dev->active = 1;
 	g_audio_count++;
 
-	kprintf("[usb_audio] audio device %u probed: %d terminals, "
-		"%d feature units\n",
-		dev_desc->addr, dev->num_terminals, dev->num_feature_units);
+	if (dev->uac_version == UAC_VERSION_2_0) {
+		kprintf("[usb_audio] UAC2 audio device %u probed: "
+			"%d terminals, %d FUs, %d CSrc, %d CSel, %d CMul\n",
+			dev_desc->addr,
+			dev->num_terminals, dev->num_feature_units,
+			dev->num_clock_sources, dev->num_clock_selectors,
+			dev->num_clock_multipliers);
+	} else {
+		kprintf("[usb_audio] UAC1 audio device %u probed: "
+			"%d terminals, %d feature units\n",
+			dev_desc->addr,
+			dev->num_terminals, dev->num_feature_units);
+	}
 
 	return 0;
 }
@@ -1058,7 +1750,12 @@ static const struct usb_device_id usb_audio_ids[] = {
 	{ .match_flags = USB_DEVICE_ID_MATCH_DEV_CLASS |
 			 USB_DEVICE_ID_MATCH_DEV_SUBCLASS |
 			 USB_DEVICE_ID_MATCH_DEV_PROTOCOL,
-	  .class = USB_CLASS_AUDIO, .subclass = 0x00, .protocol = 0x00 },
+	  .class = USB_CLASS_AUDIO, .subclass = 0x00, .protocol = AUDIO_PROTOCOL_UAC1 },
+	/* Match USB Audio Class 2.0 devices (protocol = 0x20) */
+	{ .match_flags = USB_DEVICE_ID_MATCH_DEV_CLASS |
+			 USB_DEVICE_ID_MATCH_DEV_SUBCLASS |
+			 USB_DEVICE_ID_MATCH_DEV_PROTOCOL,
+	  .class = USB_CLASS_AUDIO, .subclass = 0x00, .protocol = AUDIO_PROTOCOL_UAC2 },
 	/* Also match devices that specify audio class at interface level
 	 * (device class = 0, subclass = 0, protocol = 0 — interface decides).
 	 * These will be probed and rejected by the probe function if no
@@ -1089,7 +1786,7 @@ void __init usb_audio_init(void)
 
 	usb_register_driver(&g_usb_audio_driver);
 
-	kprintf("[usb_audio] USB Audio Class 1.0 driver registered\n");
+	kprintf("[usb_audio] USB Audio Class 1.0/2.0 driver registered\n");
 }
 
 void usb_audio_exit(void)
@@ -1103,14 +1800,16 @@ void usb_audio_exit(void)
 	g_audio_count = 0;
 	g_initialized = 0;
 
-	kprintf("[usb_audio] USB Audio Class 1.0 driver unregistered\n");
+	kprintf("[usb_audio] USB Audio Class 1.0/2.0 driver unregistered\n");
 }
 
 module_init(usb_audio_init);
 module_exit(usb_audio_exit);
 
 MODULE_LICENSE("GPL");
-MODULE_VERSION("1.0.0");
-MODULE_DESCRIPTION("USB Audio Class 1.0 (UAC1) driver with feature unit controls");
+MODULE_VERSION("2.0.0");
+MODULE_DESCRIPTION("USB Audio Class 1.0 (UAC1) and 2.0 (UAC2) driver "
+		   "with feature unit controls, clock entities, and streaming");
 MODULE_AUTHOR("OS Kernel Team");
-MODULE_ALIAS("usb:v* p* d* dc01 dsc* dp*");          /* USB Audio Class */
+MODULE_ALIAS("usb:v* p* d* dc01 dsc* dp*");          /* USB Audio Class (UAC1) */
+MODULE_ALIAS("usb:v* p* d* dc01 dsc* dp02");          /* USB Audio Class (UAC2 protocol 0x20) */
