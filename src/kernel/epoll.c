@@ -168,10 +168,11 @@ int epoll_ctl_syscall(int epfd, int op, int fd,
 
         /* Populate the entry */
         struct epoll_fd_entry *e = &ep->entries[ep->num_entries++];
-        e->fd     = fd;
-        e->events = event->events;
-        e->data   = event->data;
-        e->in_use = 1;
+        e->fd             = fd;
+        e->events         = event->events;
+        e->data           = event->data;
+        e->last_reported  = 0;
+        e->in_use         = 1;
         break;
     }
 
@@ -209,6 +210,7 @@ int epoll_ctl_syscall(int epfd, int op, int fd,
 
         e->events = event->events;
         e->data   = event->data;
+        e->last_reported = 0;
         break;
     }
 
@@ -297,7 +299,17 @@ int epoll_wait_syscall(int epfd, struct epoll_event *events,
             }
 
             if (revents) {
-                events[ready].events = revents;
+                /* Edge-triggered: only report new events since last report */
+                if (e->events & EPOLLET) {
+                    uint32_t new_events = revents & ~e->last_reported;
+                    e->last_reported = revents;
+                    if (!new_events)
+                        continue;
+                    events[ready].events = new_events;
+                } else {
+                    /* Level-triggered: report all ready events */
+                    events[ready].events = revents;
+                }
                 events[ready].data   = e->data;
                 ready++;
             }

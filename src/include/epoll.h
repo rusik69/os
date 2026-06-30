@@ -42,15 +42,17 @@ struct epoll_event;
 /*
  * epoll_fd_entry — a single fd being monitored by an epoll instance.
  *
- * @fd:      file descriptor being monitored
- * @events:  requested epoll events (EPOLLIN, EPOLLOUT, etc.)
- * @data:    user-provided data returned on event delivery
- * @in_use:  1 if this slot is active
+ * @fd:            file descriptor being monitored
+ * @events:        requested epoll events (EPOLLIN, EPOLLOUT, etc.)
+ * @data:          user-provided data returned on event delivery
+ * @last_reported: last set of events reported to user (for EPOLLET delta)
+ * @in_use:        1 if this slot is active
  */
 struct epoll_fd_entry {
     int      fd;
     uint32_t events;
     uint64_t data;
+    uint32_t last_reported;
     int      in_use;
 };
 
