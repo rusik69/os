@@ -308,6 +308,7 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/ac97.c \
          src/drivers/sound_core.c \
          src/drivers/sound_midi.c \
+         src/drivers/sound_mixer_sw.c \
          src/drivers/sound_oss.c \
          src/drivers/sound_pcm.c \
          src/drivers/sound_src.c \
