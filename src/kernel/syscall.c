@@ -7970,7 +7970,10 @@ static uint64_t sys_madvise(uint64_t addr, uint64_t len, uint64_t advice) {
         case MADV_DONTNEED:
         case MADV_FREE:
         case MADV_MERGEABLE:
-        case MADV_UNMERGEABLE: {
+        case MADV_UNMERGEABLE:
+        case MADV_WILLNEED:
+        case MADV_COLD:
+        case MADV_PAGEOUT: {
             if (addr & (PAGE_SIZE - 1)) return (uint64_t)-EINVAL;
             uint64_t length = (len + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
             if (addr + length < addr) return (uint64_t)-EINVAL;
@@ -7996,8 +7999,9 @@ static uint64_t sys_madvise(uint64_t addr, uint64_t len, uint64_t advice) {
             return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
         }
         case MADV_WILLNEED: {
-            /* Pre-fault: ensure pages are mapped (already are in our case) */
-            return 0;
+            /* Pre-fault: ensure pages are mapped */
+            int ret = madvise_willneed(addr, len);
+            return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
         }
         case MADV_COLD: {
             /* Hint pages are cold — clear accessed/dirty, reclaim immediately */
