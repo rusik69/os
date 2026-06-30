@@ -210,6 +210,10 @@ uint64_t sys_munmap(uint64_t addr, uint64_t length);
 /* Memory mapping syscalls */
 #define SYS_MREMAP           370
 
+uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size,
+                     uint64_t new_size, uint64_t flags,
+                     uint64_t new_addr);
+
 /* Readahead: prefetch file data into page cache */
 #define SYS_READAHEAD        371
 #define SYS_MMAP            235  /* (addr, length, prot, flags, fd, offset) → addr or -errno */
