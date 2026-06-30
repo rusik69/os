@@ -9,6 +9,7 @@
 #define BLOCKDEV_ATA    0
 #define BLOCKDEV_AHCI   1
 #define BLOCKDEV_USB0   16
+#define BLOCKDEV_USB1   17  /* USB Attached SCSI (UAS) device */
 #define BLOCKDEV_VIRTIO0 2
 #define BLOCKDEV_RAMDISK 15
 #define BLOCKDEV_LOOP0   3
