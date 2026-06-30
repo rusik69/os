@@ -8229,12 +8229,24 @@ static uint64_t sys_remap_file_pages(uint64_t addr, uint64_t size,
                                       uint64_t prot, uint64_t pgoff,
                                       uint64_t flags)
 {
-    (void)addr;
-    (void)size;
+    /* remap_file_pages creates non-linear file mappings within an
+     * existing MAP_SHARED file-backed VMA.  This kernel does not
+     * currently support file-backed mmap with VMA tracking, so we
+     * validate parameters and return ENOSYS.
+     *
+     * Note: remap_file_pages was deprecated in Linux 3.16 and removed
+     * in Linux 6.0.  New code should use mmap with MAP_FIXED instead. */
+
+    /* Basic parameter validation */
+    if (addr & (PAGE_SIZE - 1ULL))
+        return (uint64_t)-EINVAL;
+    if (size == 0)
+        return (uint64_t)-EINVAL;
+    if (flags & ~(uint64_t)1)  /* only MAP_NONBLOCK (1) is valid */
+        return (uint64_t)-EINVAL;
     (void)prot;
     (void)pgoff;
-    (void)flags;
-    /* Stub: non-linear file mapping not yet implemented */
+
     return (uint64_t)-ENOSYS;
 }
 
