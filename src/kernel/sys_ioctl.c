@@ -27,6 +27,7 @@
 #include "string.h"
 #include "printf.h"
 #include "module.h"
+#include "netdevice.h"
 
 MODULE_LICENSE("MIT");
 MODULE_VERSION("1.0");
@@ -115,25 +116,98 @@ static int ioctl_tiocgwinsz(uint64_t arg)
 
 /* ═══════════════════════════════════════════════════════════════════
  *  NETWORK / SOCKET IOCTLS (SIOC*)
- *  Stubs — filled in by tasks 7-8.
  *  ═══════════════════════════════════════════════════════════════════ */
 
+/*
+ * SIOCGIFNAME — Get interface name by index.
+ * arg points to a struct ifreq with ifr_ifindex set.
+ * On success, ifr_name is filled with the interface name.
+ */
 static int ioctl_siocgifname(uint64_t arg)
 {
-	(void)arg;
-	return -EOPNOTSUPP;
+	struct ifreq ifr;
+	int ret;
+
+	ret = copy_from_user(&ifr, arg, sizeof(ifr));
+	if (ret < 0)
+		return -EFAULT;
+
+	int idx = ifr.ifr_ifindex;
+	if (idx < 0 || idx >= NETDEV_MAX)
+		return -ENODEV;
+
+	struct net_device *dev = netif_get(idx);
+	if (!dev)
+		return -ENODEV;
+
+	strncpy(ifr.ifr_name, dev->name, IFNAMSIZ);
+	ifr.ifr_name[IFNAMSIZ - 1] = '\0';
+
+	ret = copy_to_user(arg, &ifr, sizeof(ifr));
+	if (ret < 0)
+		return -EFAULT;
+	return 0;
 }
 
+/*
+ * SIOCGIFINDEX — Get interface index by name.
+ * arg points to a struct ifreq with ifr_name set.
+ * On success, ifr_ifindex is filled with the interface index.
+ */
 static int ioctl_siocgifindex(uint64_t arg)
 {
-	(void)arg;
-	return -EOPNOTSUPP;
+	struct ifreq ifr;
+	int ret;
+
+	ret = copy_from_user(&ifr, arg, sizeof(ifr));
+	if (ret < 0)
+		return -EFAULT;
+
+	ifr.ifr_name[IFNAMSIZ - 1] = '\0';
+
+	int idx = netif_name_to_index(ifr.ifr_name);
+	if (idx < 0)
+		return -ENODEV;
+
+	ifr.ifr_ifindex = idx;
+
+	ret = copy_to_user(arg, &ifr, sizeof(ifr));
+	if (ret < 0)
+		return -EFAULT;
+	return 0;
 }
 
+/*
+ * SIOCGIFHWADDR — Get hardware (MAC) address by interface name.
+ * arg points to a struct ifreq with ifr_name set.
+ * On success, ifr_hwaddr is filled with sa_family and 6-byte MAC.
+ */
 static int ioctl_siocgifhwaddr(uint64_t arg)
 {
-	(void)arg;
-	return -EOPNOTSUPP;
+	struct ifreq ifr;
+	int ret;
+
+	ret = copy_from_user(&ifr, arg, sizeof(ifr));
+	if (ret < 0)
+		return -EFAULT;
+
+	ifr.ifr_name[IFNAMSIZ - 1] = '\0';
+
+	int idx = netif_name_to_index(ifr.ifr_name);
+	if (idx < 0)
+		return -ENODEV;
+
+	struct net_device *dev = netif_get(idx);
+	if (!dev)
+		return -ENODEV;
+
+	ifr.ifr_hwaddr.sa_family = 1;       /* ARPHRD_ETHER */
+	memcpy(ifr.ifr_hwaddr.sa_data, dev->mac, 6);
+
+	ret = copy_to_user(arg, &ifr, sizeof(ifr));
+	if (ret < 0)
+		return -EFAULT;
+	return 0;
 }
 
 static int ioctl_siocgifflags(uint64_t arg)

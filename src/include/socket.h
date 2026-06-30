@@ -124,6 +124,24 @@ struct sockaddr_un {
     char     sun_path[UNIX_PATH_MAX];  /* pathname */
 };
 
+/* ── Interface request structure (net/if.h) ──────────────────────────── */
+
+#define IFNAMSIZ 16
+
+/* Linux-compatible struct ifreq for SIOCGIF* ioctls */
+struct ifreq {
+    char ifr_name[IFNAMSIZ];
+    union {
+        struct sockaddr ifr_addr;
+        struct sockaddr ifr_dstaddr;
+        struct sockaddr ifr_broadaddr;
+        struct sockaddr ifr_hwaddr;
+        short           ifr_flags;
+        int             ifr_ifindex;
+        int             ifr_metric;
+    };
+};
+
 /* ── Message flags for sendmsg/recvmsg ──────────────────────────── */
 #define MSG_OOB         0x0001  /* Out-of-band data */
 #define MSG_PEEK        0x0002  /* Peek at incoming message */
