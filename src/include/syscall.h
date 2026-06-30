@@ -211,7 +211,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot,
 
 /* Readahead: prefetch file data into page cache */
 #define SYS_READAHEAD        371
-#define SYS_MMAP            235  /* (addr, length, prot) → addr or -1 */
+#define SYS_MMAP            235  /* (addr, length, prot, flags, fd, offset) → addr or -errno */
 #define SYS_MUNMAP          236  /* (addr, length) → 0 or -1 */
 #define SYS_MPROTECT        237  /* (addr, length, prot) → 0 or -1 */
 
