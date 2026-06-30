@@ -82,8 +82,14 @@ typedef struct {
     size_t  ss_size;     /* stack size */
 } stack_t;
 
-#define SS_DISABLE  2
-#define SS_ONSTACK  1
+#define SS_DISABLE     2
+#define SS_ONSTACK     1
+#define SS_AUTODISARM  (1U << 31)  /* Linux 4.7+: automatic disarm on signal delivery */
+
+/* Minimum alternate signal stack size — must be at least this when enabling */
+#define MINSIGSTKSZ  2048
+/* Default/suggested alternate signal stack size */
+#define SIGSTKSZ     8192
 
 /* sigaltstack flags for syscall */
 #define SA_ONSTACK     0x08000000

@@ -8591,28 +8591,78 @@ static uint64_t sys_getsid(uint64_t pid) {
 
 /* ── sigaltstack ──────────────────────────────────────────────────────── */
 
-static uint64_t sys_sigaltstack(uint64_t ss_addr, uint64_t old_ss_addr) {
+/**
+ * sys_sigaltstack — Set or examine alternate signal stack.
+ *
+ *   int sigaltstack(const stack_t *restrict ss,
+ *                   stack_t *restrict old_ss);
+ *
+ * Linux-compatible implementation:
+ *  - If old_ss is non-NULL, return the current alt-stack configuration.
+ *  - If ss is non-NULL, set a new alt-stack (subject to validation).
+ *  - ss->ss_flags must be 0 (enable) or SS_DISABLE (disable).
+ *  - When enabling, ss->ss_size must be >= MINSIGSTKSZ.
+ *  - Attempting to change the stack while executing on it returns -EPERM.
+ *
+ * Returns 0 on success, -errno on failure.
+ */
+static uint64_t sys_sigaltstack(uint64_t ss_addr, uint64_t old_ss_addr)
+{
     struct process *p = process_get_current();
-    if (!p) return (uint64_t)-1;
+    if (!p)
+        return (uint64_t)(int64_t)-ESRCH;
 
-    /* Return old stack if requested */
+    /*
+     * Step 1: Return old stack configuration if requested.
+     * Do this BEFORE any state change so the caller can snapshot
+     * the current config even while simultaneously disabling it.
+     */
     if (old_ss_addr) {
         stack_t old;
-        old.ss_sp = p->alt_stack_sp;
+        old.ss_sp    = p->alt_stack_sp;
         old.ss_flags = p->alt_stack_flags;
-        old.ss_size = p->alt_stack_size;
-        if (copy_to_user(old_ss_addr, &old, sizeof(stack_t)) < 0)
-            return (uint64_t)-1;
+        old.ss_size  = p->alt_stack_size;
+
+        if (copy_to_user(old_ss_addr, &old, sizeof(old)) < 0)
+            return (uint64_t)(int64_t)-EFAULT;
     }
 
-    /* Set new stack if requested */
+    /*
+     * Step 2: Set new stack configuration if requested.
+     */
     if (ss_addr) {
         stack_t new;
-        if (copy_from_user(&new, ss_addr, sizeof(stack_t)) < 0)
-            return (uint64_t)-1;
-        p->alt_stack_sp = new.ss_sp;
-        p->alt_stack_flags = new.ss_flags;
-        p->alt_stack_size = (uint64_t)new.ss_size;
+        if (copy_from_user(&new, ss_addr, sizeof(new)) < 0)
+            return (uint64_t)(int64_t)-EFAULT;
+
+        int ss_flags = new.ss_flags;
+
+        /* Reject unknown flags (SS_AUTODISARM is not yet supported) */
+        if (ss_flags & ~(SS_DISABLE | SS_ONSTACK))
+            return (uint64_t)(int64_t)-EINVAL;
+
+        /* If the process is currently executing on the alternate stack,
+         * changing it would corrupt the running handler's stack frame.
+         * SS_ONSTACK is set by the kernel during signal delivery when
+         * SA_ONSTACK is in effect. */
+        if (ss_flags & SS_ONSTACK)
+            return (uint64_t)(int64_t)-EPERM;
+
+        if (ss_flags & SS_DISABLE) {
+            /* Disable the alternate signal stack */
+            p->alt_stack_sp     = NULL;
+            p->alt_stack_size   = 0;
+            p->alt_stack_flags  = SS_DISABLE;
+        } else {
+            /* Enable — must supply a large enough stack */
+            if (new.ss_size < MINSIGSTKSZ)
+                return (uint64_t)(int64_t)-ENOMEM;
+
+            p->alt_stack_sp     = new.ss_sp;
+            p->alt_stack_size   = (uint64_t)new.ss_size;
+            p->alt_stack_flags  = 0;   /* SS_ONSTACK will be set by the
+                                         * kernel at signal delivery time */
+        }
     }
 
     return 0;
