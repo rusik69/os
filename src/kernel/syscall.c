@@ -86,6 +86,7 @@
 #include "blockdev.h"   /* for SG_IO ioctl */
 #include "io_uring.h"   /* for io_uring syscalls */
 #include "signal_libc.h" /* for struct sigaction (sys_rt_sigaction validation) */
+#include "netlink.h"     /* for netlink_is_valid_fd / netlink_send (sys_sendfile) */
 
 /* Module metadata */
 MODULE_LICENSE("GPL v2");
@@ -6077,73 +6078,242 @@ static uint64_t sys_eventfd(uint64_t initval, uint64_t flags) {
 
 /* ── sendfile ──────────────────────────────────────────────────────────── */
 
+/* Forward declaration for sock_send_raw helper */
+static int sock_send_raw(struct socket *s, int sockfd,
+                          const void *data, uint32_t len);
+
+/**
+ * sys_sendfile — Copy data between file descriptors (zero-copy file-to-socket)
+ * @out_fd:   Output fd (socket or regular file)
+ * @in_fd:    Input fd (must be a regular file)
+ * @offset_addr: User-space pointer to off_t offset (0 = NULL, use file pos)
+ * @count:    Maximum number of bytes to transfer
+ *
+ * Linux signature:
+ *   ssize_t sendfile(int out_fd, int in_fd, off_t *offset, size_t count);
+ *
+ * Transfers up to @count bytes from @in_fd (a regular file opened for
+ * reading) to @out_fd (a socket or regular file opened for writing).
+ * Uses a 4 KiB kernel bounce buffer for the transfer.  When @out_fd is
+ * a socket, data is sent directly via the socket-layer send path.
+ *
+ * If @offset_addr is NULL (0 in the ABI), data is read from the current
+ * file offset of @in_fd, and that offset is advanced by the number of
+ * bytes transferred.  If @offset_addr is non-NULL, data is read from the
+ * absolute file offset stored in *@offset_addr; the file offset of @in_fd
+ * is NOT changed, and *@offset_addr is incremented by the number of bytes
+ * transferred.
+ *
+ * Return: Number of bytes transferred on success (as uint64_t, matching
+ *         the Linux ssize_t convention), or negative errno encoded as
+ *         (uint64_t)(int64_t)-ERRNO on failure.
+ *
+ * Linux errno values:
+ *   EBADF      @in_fd not open for reading, or @out_fd not valid/writable
+ *   EINVAL     offset pointer is non-NULL but points to a negative value,
+ *              or @out_fd is a socket of unsupported type
+ *   EFAULT     bad user-space pointer in @offset_addr
+ *   EISDIR     @in_fd or @out_fd refers to a directory
+ *   EIO        VFS read or socket send I/O failure
+ *   ENOMEM     cannot allocate bounce buffer
+ *   ESPIPE     @in_fd is not a regular file
+ */
 static uint64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd,
-                              uint64_t offset_addr, uint64_t count) {
+                              uint64_t offset_addr, uint64_t count)
+{
     struct process *p = process_get_current();
-    if (!p) return (uint64_t)-1;
+    if (!p)
+        return (uint64_t)(int64_t)-EPERM;
 
-    /* Validate fds */
-    if (in_fd >= PROCESS_FD_MAX || !p->fd_table[in_fd].used) return (uint64_t)-1;
-    if (out_fd >= PROCESS_FD_MAX || !p->fd_table[out_fd].used) return (uint64_t)-1;
+    /* ── Validate in_fd (must be a regular file, index = fd - 3) ── */
 
-    /* Read offset from user if non-NULL */
-    uint64_t off = 0;
-    int use_offset = 0;
-    if (offset_addr) {
-        if (copy_from_user(&off, offset_addr, 8) < 0)
-            return (uint64_t)-1;
-        use_offset = 1;
+    if (in_fd < 3 || in_fd >= (uint64_t)(3 + PROCESS_FD_MAX))
+        return (uint64_t)(int64_t)-EBADF;
+
+    int in_idx = (int)in_fd - 3;
+    struct process_fd *pfd_in = &p->fd_table[in_idx];
+    if (!pfd_in->used)
+        return (uint64_t)(int64_t)-EBADF;
+
+    /* in_fd must be open for reading (O_RDONLY=0 or O_RDWR=2) */
+    if ((pfd_in->open_flags & 3) == 1)   /* O_WRONLY alone */
+        return (uint64_t)(int64_t)-EBADF;
+
+    /* in_fd must refer to a regular file, not a directory or other type */
+    {
+        struct vfs_stat st_in;
+        if (vfs_stat(pfd_in->path, &st_in) < 0)
+            return (uint64_t)(int64_t)-EIO;
+        if (st_in.type != VFS_TYPE_FILE)
+            return (uint64_t)(int64_t)-EISDIR;
     }
 
-    /* Transfer up to 'count' bytes using a 4K kernel bounce buffer */
+    /* ── Validate out_fd ── */
+
+    int is_socket = 0;
+    struct socket *sock = NULL;
+    struct process_fd *pfd_out = NULL;
+    struct vfs_stat st_out;
+
+    if (out_fd >= 100 && out_fd < (uint64_t)(100 + SOCK_MAX)) {
+        /* Socket fd (slot = fd - 100) */
+        sock = sock_get((int)out_fd);
+        if (!sock)
+            return (uint64_t)(int64_t)-EBADF;
+        is_socket = 1;
+    } else if (out_fd >= 3 && out_fd < (uint64_t)(3 + PROCESS_FD_MAX)) {
+        /* Regular file fd */
+        int out_idx = (int)out_fd - 3;
+        pfd_out = &p->fd_table[out_idx];
+        if (!pfd_out->used)
+            return (uint64_t)(int64_t)-EBADF;
+
+        /* out_fd must be open for writing (O_WRONLY=1 or O_RDWR=2) */
+        if ((pfd_out->open_flags & 3) == 0)   /* O_RDONLY alone */
+            return (uint64_t)(int64_t)-EBADF;
+
+        if (vfs_stat(pfd_out->path, &st_out) < 0)
+            return (uint64_t)(int64_t)-EIO;
+        if (st_out.type != VFS_TYPE_FILE)
+            return (uint64_t)(int64_t)-EISDIR;
+    } else {
+        return (uint64_t)(int64_t)-EBADF;
+    }
+
+    /* ── Allocate bounce buffer ── */
+
     uint8_t *buf = kmalloc(4096);
-    if (!buf) return (uint64_t)-1;
+    if (!buf)
+        return (uint64_t)(int64_t)-ENOMEM;
+
+    /* ── Transfer state ── */
+
     uint64_t total = 0;
+    uint64_t sf_result;
+    int use_explicit_offset = (offset_addr != 0);
+
+    /* If explicit offset is given, read initial value from user-space */
+    if (use_explicit_offset) {
+        int64_t abs_off;
+        if (copy_from_user(&abs_off, offset_addr, sizeof(abs_off)) < 0) {
+            sf_result = (uint64_t)(int64_t)-EFAULT;
+            goto sendfile_cleanup;
+        }
+        if (abs_off < 0) {
+            sf_result = (uint64_t)(int64_t)-EINVAL;
+            goto sendfile_cleanup;
+        }
+        pfd_in->offset = (uint64_t)abs_off;
+    }
+
+    /* ── Transfer loop ── */
     while (total < count) {
         uint64_t chunk = count - total;
-        if (chunk > 4096) chunk = 4096;
+        if (chunk > 4096)
+            chunk = 4096;
 
-        int64_t nread;
-        if (use_offset) {
-            /* Need to seek and read — for now, use fd_read with offset */
-            /* We'll just read sequentially from current fd position */
-            nread = (int64_t)p->fd_table[in_fd].offset;
-            /* Use VFS to read via the fd path */
-            uint32_t actual = 0;
-            int ret = vfs_read(p->fd_table[in_fd].path, buf, (uint32_t)chunk, &actual);
-            if (ret < 0) break;
-            nread = (int64_t)actual;
-            p->fd_table[in_fd].offset += (uint32_t)nread;
-        } else {
-            uint32_t actual = 0;
-            int ret = vfs_read(p->fd_table[in_fd].path, buf, (uint32_t)chunk, &actual);
-            if (ret < 0) break;
-            nread = (int64_t)actual;
+        /* Read a chunk from in_fd */
+        uint32_t nread = 0;
+        int r = vfs_read(pfd_in->path, buf, (uint32_t)chunk, &nread);
+        if (r < 0) {
+            /* On first iteration, propagate exact VFS errno.
+             * On later iterations, return partial success. */
+            sf_result = (total > 0) ? (uint64_t)total
+                                    : (uint64_t)(int64_t)r;
+            goto sendfile_cleanup;
         }
 
-        if (nread <= 0) break;
+        if (nread == 0)
+            break;  /* EOF */
 
-        /* Write to out_fd using VFS write */
-        int ret = vfs_write(p->fd_table[out_fd].path, buf, (uint32_t)nread);
-        if (ret < 0) break;
+        /* Write chunk to out_fd */
+        int wret;
+        if (is_socket) {
+            wret = sock_send_raw(sock, (int)out_fd, buf, nread);
+        } else {
+            wret = vfs_write(pfd_out->path, buf, nread);
+        }
 
-        total += (uint64_t)nread;
-        if ((uint64_t)nread < chunk) break; /* EOF */
+        if (wret < 0) {
+            sf_result = (total > 0) ? (uint64_t)total
+                                    : (uint64_t)(int64_t)wret;
+            goto sendfile_cleanup;
+        }
+
+        total += nread;
+
+        if (nread < chunk)
+            break;  /* Short read — EOF */
     }
 
-    /* Update offset if requested */
-    uint64_t result;
-    if (use_offset && offset_addr) {
-        if (copy_to_user(offset_addr, &off, 8) < 0) {
-            result = (uint64_t)-1;
+    /* ── Update user-space offset pointer if applicable ── */
+    if (use_explicit_offset) {
+        int64_t new_off = (int64_t)(pfd_in->offset);
+        if (copy_to_user(offset_addr, &new_off, sizeof(new_off)) < 0) {
+            sf_result = (uint64_t)(int64_t)-EFAULT;
             goto sendfile_cleanup;
         }
     }
+    /* else: the implicit file offset was already advanced by vfs_read
+     * during the loop, so no update is needed. */
 
-    result = (uint64_t)total;
+    sf_result = (uint64_t)total;
+
 sendfile_cleanup:
     kfree(buf);
-    return result;
+    return sf_result;
+}
+
+/**
+ * sock_send_raw — Send a raw kernel buffer to a connected socket.
+ * @s:          Socket descriptor from sock_get()
+ * @sockfd:     Socket fd number (needed for packet/netlink/can dispatch)
+ * @data:       Kernel-space data buffer to send
+ * @len:        Number of bytes to send
+ *
+ * Dispatches to the correct protocol-specific send path depending on
+ * the socket domain/type.  Supports AF_UNIX, AF_PACKET, AF_NETLINK,
+ * AF_CAN, SOCK_STREAM (TCP), and SOCK_DGRAM (UDP).
+ *
+ * Return: Number of bytes sent on success, or negative errno on error.
+ */
+static int sock_send_raw(struct socket *s, int sockfd,
+                          const void *data, uint32_t len)
+{
+    if (s->domain == AF_UNIX && s->unix_ep >= 0) {
+        /* UNIX domain socket — unix_send handles kernel data */
+        return unix_send(s->unix_ep, data, len, 0);
+    }
+
+    if (s->domain == AF_NETLINK && netlink_is_valid_fd(sockfd)) {
+        /* AF_NETLINK socket */
+        int max_send = (int)(len > NETLINK_MAX_PAYLOAD
+                             ? NETLINK_MAX_PAYLOAD : len);
+        return netlink_send(sockfd, data, max_send);
+    }
+
+    if (s->type == SOCK_STREAM && s->conn_id >= 0) {
+        /* TCP stream — net_tcp_send with max 65535 per call */
+        uint16_t max_send = (len > 65535) ? 65535 : (uint16_t)len;
+        return net_tcp_send(s->conn_id, data, max_send);
+    }
+
+    if (s->type == SOCK_DGRAM) {
+        /* UDP datagram — connected or connectionless */
+        if (s->cache_valid && s->state == SOCK_STATE_CONNECTED &&
+            s->remote_ip != 0) {
+            net_udp_send_cached(s->cached_dst_mac, s->remote_ip,
+                                s->local_port, s->remote_port,
+                                data, (uint16_t)(len > 1500 ? 1500 : len));
+        } else {
+            net_udp_send(s->remote_ip, s->local_port, s->remote_port,
+                         data, (uint16_t)(len > 1500 ? 1500 : len));
+        }
+        return (int)len;
+    }
+
+    /* Unsupported socket type (AF_PACKET, AF_CAN, etc.) */
+    return -EINVAL;
 }
 
 /* ── ioctl ─────────────────────────────────────────────────────────────── */
