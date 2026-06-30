@@ -48,6 +48,7 @@
 #include "smp.h"
 #include "apic.h"
 #include "pipe.h"
+#include "rng.h"
 #include "users.h"
 #include "module.h"
 #include "module_elf.h"
@@ -4228,18 +4229,65 @@ void prng_add_entropy(uint64_t entropy) {
     xorshift64();
 }
 
+/*
+ * sys_getrandom — Fill a user-space buffer with random bytes.
+ *
+ * Compatible with Linux getrandom(2):
+ *   ssize_t getrandom(void *buf, size_t count, unsigned int flags);
+ *
+ * Uses the kernel RNG (rng_fill_buf via rng_get_random) which is seeded
+ * from timer jitter and hardware entropy (RDRAND/RDSEED when available).
+ *
+ * Flags:
+ *   GRND_NONBLOCK — return -EAGAIN if insufficient entropy (best-effort:
+ *                   we always have at least seed-quality entropy, so this
+ *                   flag is accepted but only acts as a documentation
+ *                   placeholder; the kernel never blocks on PRNG output).
+ *   GRND_RANDOM   — request blocking-pool random (accepted but treated
+ *                   identically; both pools use the same xorshift64 PRNG).
+ *
+ * Returns the number of bytes written on success, or a negative errno.
+ */
 static uint64_t sys_getrandom(uint64_t buf_addr, uint64_t count,
-                               uint64_t flags) {
-    if (!buf_addr || count == 0) return 0;
-    if (count > 4096) count = 4096; /* limit per call */
+                               uint64_t flags)
+{
+    /* Validate flags — reject unknown bits */
+    if (flags & ~(GRND_NONBLOCK | GRND_RANDOM))
+        return (uint64_t)(int64_t)-EINVAL;
 
-    uint8_t *buf = (uint8_t *)buf_addr;
-    for (uint64_t i = 0; i < count; i++) {
-        buf[i] = (uint8_t)(xorshift64() >> 56);
+    /* Linux: if buf is NULL and count is 0, return 0 */
+    if (!buf_addr) {
+        if (count == 0)
+            return 0;
+        return (uint64_t)(int64_t)-EFAULT;
+    }
+    if (count == 0)
+        return 0;
+
+    /* Cap per-call size to prevent unbounded kernel work */
+    if (count > 1048576)
+        count = 1048576;
+
+    /* Allocate a temporary kernel buffer */
+    uint8_t *kbuf = (uint8_t *)kmalloc(count);
+    if (!kbuf)
+        return (uint64_t)(int64_t)-ENOMEM;
+
+    /* Fill with random bytes from the kernel RNG */
+    int ret = rng_get_random(kbuf, (size_t)count);
+    if (ret < 0) {
+        kfree(kbuf);
+        return (uint64_t)(int64_t)ret;
     }
 
-    (void)flags;
-    return count;
+    /* Copy to user-space safely */
+    if (copy_to_user(buf_addr, kbuf, (size_t)ret) < 0) {
+        kfree(kbuf);
+        return (uint64_t)(int64_t)-EFAULT;
+    }
+
+    kfree(kbuf);
+    return (uint64_t)(int64_t)ret;
 }
 
 /* ── kexec_load — register a kernel image for kexec reboot (Item 362) ── */

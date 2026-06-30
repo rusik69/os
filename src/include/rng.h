@@ -54,4 +54,23 @@ int rng_seed_from_hw(int words, int flags);
 /* Flags for rng_seed_from_hw */
 #define RNG_HW_PREFER_RDSEED  1  /* prefer RDSEED over RDRAND */
 
+/*
+ * rng_get_random — Fill a kernel buffer with random bytes.
+ *
+ * Returns the number of bytes written on success, or a negative
+ * errno on error.  The buffer is filled from the kernel PRNG
+ * (xorshift64 seeded from timer jitter + hardware entropy).
+ *
+ * @buf:   kernel buffer to fill
+ * @count: number of random bytes requested
+ */
+int rng_get_random(void *buf, size_t count);
+
+/*
+ * Flags for sys_getrandom (GRND_*)
+ * Compatible with Linux include/uapi/linux/random.h
+ */
+#define GRND_NONBLOCK  1  /* don't block if insufficient entropy */
+#define GRND_RANDOM    2  /* use /dev/random (blocking) pool */
+
 #endif /* RNG_H */
