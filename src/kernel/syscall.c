@@ -6329,6 +6329,19 @@ static uint64_t sys_prctl(uint64_t op, uint64_t a2, uint64_t a3,
              * or 0 if none, or -1 if any. */
             return (uint64_t)(int64_t)yama_get_ptracer(p->pid);
         }
+        case PR_SET_KEEPCAPS: {
+            /* Set/clear the "keep capabilities" flag for exec.
+             * arg2: 0 = clear, non-zero = set.
+             * When set, effective capabilities survive execve.
+             * This directly manipulates the SECBIT_KEEP_CAPS securebit. */
+            p->securebits = (uint8_t)(a2 ? (p->securebits | SECBIT_KEEP_CAPS)
+                                         : (p->securebits & ~SECBIT_KEEP_CAPS));
+            return 0;
+        }
+        case PR_GET_KEEPCAPS: {
+            /* Return 1 if keep capabilities flag is set, 0 otherwise. */
+            return (uint64_t)((p->securebits & SECBIT_KEEP_CAPS) ? 1 : 0);
+        }
         default:
             return (uint64_t)(int64_t)-EINVAL;
     }
