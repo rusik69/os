@@ -871,6 +871,10 @@ struct linux_dirent64 {
  * immutable against further mprotect, munmap, or mmap changes */
 #define SYS_MSEAL            502  /* mseal(addr, len, flags) → 0 or -errno */
 
+/* Protection key — pkey_mprotect sets a protection key on a mapping.
+ * Falls back gracefully when PKU is not available. */
+#define SYS_PKEY_MPROTECT    576  /* pkey_mprotect(addr, len, prot, pkey) → 0 or -errno */
+
 /* seccomp(2) — standalone syscall for BPF-based syscall filtering.
  *    operation: SECCOMP_SET_MODE_STRICT=1, SECCOMP_SET_MODE_FILTER=2
  *    flags:     SECCOMP_FILTER_FLAG_TSYNC=1 */

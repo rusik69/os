@@ -87,6 +87,7 @@
 #include "io_uring.h"   /* for io_uring syscalls */
 #include "signal_libc.h" /* for struct sigaction (sys_rt_sigaction validation) */
 #include "netlink.h"     /* for netlink_is_valid_fd / netlink_send (sys_sendfile) */
+#include "pkey.h"        /* for sys_pkey_mprotect */
 
 /* Module metadata */
 MODULE_LICENSE("GPL v2");
@@ -10038,6 +10039,7 @@ uint64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_MMAP:    return sys_mmap(a1, a2, a3, a4, a5, 0);
         case SYS_MUNMAP:  return sys_munmap(a1, a2);
         case SYS_MPROTECT: return (uint64_t)sys_mprotect(a1, a2, a3);
+        case SYS_PKEY_MPROTECT: return (uint64_t)(int64_t)sys_pkey_mprotect((void *)a1, (size_t)a2, (int)a3, (int)a4);
         case SYS_MSEAL:    return sys_mseal(a1, a2, a3);
         case SYS_SECCOMP:  return sys_seccomp(a1, a2, a3);
         case SYS_MREMAP:   return sys_mremap(a1, a2, a3, a4, a5);

@@ -45,6 +45,17 @@ int pkey_free(int pkey);
 int pkey_mprotect(void *addr, size_t len, int prot, int pkey);
 
 /**
+ * sys_pkey_mprotect — Syscall wrapper for pkey_mprotect.
+ * @addr:  Start address.
+ * @len:   Length of the region.
+ * @prot:  Memory protection flags.
+ * @pkey:  Protection key number, or -1 to clear.
+ *
+ * Returns 0 on success, negative errno on error.
+ */
+int sys_pkey_mprotect(void *addr, size_t len, int prot, int pkey);
+
+/**
  * pkey_set_rights — Set protection key rights (via PKRU MSR).
  * @pkey:   Protection key number.
  * @rights: 0 = full access, PKEY_DISABLE_ACCESS, PKEY_DISABLE_WRITE, or both.
