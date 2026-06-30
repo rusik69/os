@@ -91,6 +91,40 @@ void ac97_playback_stop(void);
  */
 int ac97_playback_is_active(void);
 
+/* ── Interrupt-driven capture API ───────────────────────────────────── */
+
+
+/**
+ * ac97_capture_start — Start interrupt-driven PCM capture.
+ *
+ * @stream:  Initialised PCM capture stream (from sound_pcm_init_stream
+ *           with SOUND_PCM_CAPTURE direction).
+ *
+ * Fills the capture BDL ring with empty buffers and starts the DMA engine
+ * with IOC interrupts enabled.  Returns immediately (non-blocking).
+ * Subsequent DMA completion interrupts copy captured data from the BDL
+ * buffers into the PCM stream and refill empty BDL entries automatically.
+ *
+ * Returns 0 on success, -EINVAL/ -EBUSY/ -ENODATA on failure.
+ */
+int ac97_capture_start(struct sound_pcm_stream *stream);
+
+/**
+ * ac97_capture_stop — Stop interrupt-driven PCM capture.
+ *
+ * Halts the capture DMA engine and clears status bits.  The PCM stream
+ * is left intact and may be restarted later.  Any partially-captured
+ * data remains in the PCM buffer for the application to read.
+ */
+void ac97_capture_stop(void);
+
+/**
+ * ac97_capture_is_active — Check if DMA capture is running.
+ *
+ * Returns 1 if the DMA engine is actively capturing into BDL entries.
+ */
+int ac97_capture_is_active(void);
+
 /* ── Mixer control ───────────────────────────────────────────────── */
 
 /** AC'97 mixer channels (NAM register indices) */

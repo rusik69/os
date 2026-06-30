@@ -109,6 +109,17 @@ struct ac97_playback_state {
 
 static struct ac97_playback_state ac97_pb;
 
+/* ── Interrupt-driven capture state ────────────────────────────────── */
+
+struct ac97_capture_state {
+    struct sound_pcm_stream *stream;  /** PCM stream receiving capture data */
+    int  running;                      /** 1 if DMA capture engine is active */
+    int  bdl_entries;                  /** Number of BDL entries in the ring */
+    int  overrun;                      /** 1 if a capture overrun occurred */
+};
+
+static struct ac97_capture_state ac97_cap;
+
 /* Forward declaration for interrupt handler (used by ac97_init) */
 static void ac97_irq_handler(struct interrupt_frame *frame);
 
@@ -565,8 +576,53 @@ static void ac97_irq_handler(struct interrupt_frame *frame)
         }
     }
 
-    /* Clear capture status bits (even if not actively capturing) */
+    /* Handle capture IOC — a capture BDL entry just completed.
+     * The DMA engine just filled one BDL entry with audio data.
+     * Copy it into the PCM stream and advance the hw_ptr so the
+     * application can read the captured data via sound_pcm_read(). */
     uint16_t cap_sr = nabm_in16(NABM_PCM_IN_SR);
+    if ((cap_sr & 0x0010) && ac97_cap.running) {
+        struct sound_pcm_stream *s = ac97_cap.stream;
+        if (s) {
+            /* Determine which BDL entry just completed by reading CIV.
+             * CIV points to the CURRENT entry being processed; the previous
+             * entry (CIV - 1 mod count) just completed. */
+            uint8_t civ = nabm_in8(NABM_PCM_IN_CIV);
+            int bdl_count = ac97_cap.bdl_entries;
+            int slot = (int)(civ + bdl_count - 1) % bdl_count;
+
+            /* Get a free fragment in the PCM stream to receive the data */
+            void *frag_ptr;
+            uint32_t frag_size = sound_pcm_dma_get_fragment(s, &frag_ptr);
+
+            if (frag_ptr && frag_size > 0) {
+                uint32_t to_copy = frag_size;
+                if (to_copy > sizeof(cap_audio_buf[0]))
+                    to_copy = sizeof(cap_audio_buf[0]);
+
+                /* Copy captured data from the DMA buffer into the PCM stream */
+                memcpy(frag_ptr, cap_audio_buf[slot], to_copy);
+
+                /* Tell PCM stream that a fragment's worth of data is available */
+                sound_pcm_dma_consume(s);
+
+                ac97_cap.overrun = 0;
+            } else {
+                /* PCM buffer is full — discard this fragment (overrun) */
+                ac97_cap.overrun = 1;
+            }
+
+            /* Reset the BDL entry so the DMA engine can re-fill it */
+            memset(cap_audio_buf[slot], 0, sizeof(cap_audio_buf[0]));
+            cap_bdl[slot].addr    = (uint32_t)(uintptr_t)cap_audio_buf[slot];
+            cap_bdl[slot].samples = (uint16_t)(sizeof(cap_audio_buf[0]) / 2);
+            cap_bdl[slot].ctrl    = AC97_IOC;
+        } else {
+            ac97_cap.running = 0;
+        }
+    }
+
+    /* Clear capture status bits (even if not actively capturing) */
     if (cap_sr & 0x001E)
         nabm_out16(NABM_PCM_IN_SR, cap_sr & 0x001E);
 
@@ -676,4 +732,78 @@ void ac97_playback_stop(void)
 int ac97_playback_is_active(void)
 {
     return ac97_pb.running;
+}
+
+/* ── Interrupt-driven capture API ─────────────────────────────────── */
+
+int ac97_capture_start(struct sound_pcm_stream *stream)
+{
+    if (!ac97_dev_present || !stream)
+        return -EINVAL;
+
+    if (ac97_cap.running)
+        return -EBUSY;
+
+    /* Direction must be capture */
+    if (stream->dir != SOUND_PCM_CAPTURE)
+        return -EINVAL;
+
+    /* Reset PCM-in DMA engine */
+    nabm_out8(NABM_PCM_IN_CR, CR_RR);
+    for (volatile uint32_t i = 0; i < 10000; i++);
+    nabm_out8(NABM_PCM_IN_CR, 0);
+
+    /* Clear the capture state */
+    memset(&ac97_cap, 0, sizeof(ac97_cap));
+
+    /* Fill BDL entries with empty buffers. The DMA engine writes
+     * captured audio data directly into these buffers.  When a
+     * buffer is filled, an IOC interrupt fires and the interrupt
+     * handler copies the data into the PCM stream for the
+     * application to read via sound_pcm_read(). */
+    for (int i = 0; i < BDL_ENTRIES; i++) {
+        memset(cap_audio_buf[i], 0, sizeof(cap_audio_buf[0]));
+        cap_bdl[i].addr    = (uint32_t)(uintptr_t)cap_audio_buf[i];
+        cap_bdl[i].samples = (uint16_t)(sizeof(cap_audio_buf[0]) / 2);
+        cap_bdl[i].ctrl    = AC97_IOC;
+    }
+
+    ac97_cap.stream      = stream;
+    ac97_cap.bdl_entries = BDL_ENTRIES;
+    ac97_cap.running     = 0;
+    ac97_cap.overrun     = 0;
+
+    /* Program full BDL and start capture DMA */
+    nabm_out32(NABM_PCM_IN_BDBAR, (uint32_t)(uintptr_t)cap_bdl);
+    nabm_out8(NABM_PCM_IN_LVI,    (uint8_t)(BDL_ENTRIES - 1));
+
+    /* Memory barrier: ensure BDL and BDBAR are visible before starting */
+    __asm__ volatile("mfence" ::: "memory");
+
+    nabm_out8(NABM_PCM_IN_CR, CR_RPBM | CR_IOCE | CR_LVBIE | CR_FEIE);
+
+    ac97_cap.running = 1;
+    kprintf("[AC97] DMA capture started: %d BDL entries\n", BDL_ENTRIES);
+    return 0;
+}
+
+void ac97_capture_stop(void)
+{
+    if (!ac97_dev_present)
+        return;
+
+    /* Stop capture DMA engine */
+    nabm_out8(NABM_PCM_IN_CR, 0);
+    nabm_out16(NABM_PCM_IN_SR, 0x001E);  /* clear all status bits */
+
+    ac97_cap.running  = 0;
+    ac97_cap.stream   = NULL;
+    ac97_cap.overrun  = 0;
+
+    kprintf("[AC97] DMA capture stopped\n");
+}
+
+int ac97_capture_is_active(void)
+{
+    return ac97_cap.running;
 }
