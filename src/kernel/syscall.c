@@ -8895,126 +8895,190 @@ static uint64_t sys_tee(uint64_t fd_in, uint64_t fd_out,
 }
 
 
-/* ── copy_file_range — zero-copy file-to-file data transfer (Item 249) ── */
+/* ── copy_file_range — zero-copy file-to-file data transfer (Task D124-9) ── */
 
-/*
- * copy_file_range — Copy data from one file to another within the kernel,
- * without routing through userspace buffers.
+/**
+ * sys_copy_file_range — Copy data between two file descriptors
+ *                       within the kernel (Linux-compatible).
  *
- * POSIX signature:
+ * POSIX / Linux signature:
  *   ssize_t copy_file_range(int fd_in, loff_t *off_in,
  *                           int fd_out, loff_t *off_out,
  *                           size_t len, unsigned int flags);
  *
- * If off_in is NULL, read from fd_in's current offset (and update it).
- * If off_in is non-NULL, read from that absolute offset (fd_in's offset
- * is NOT updated).  Same for off_out.
+ * Copies up to @len bytes from fd_in to fd_out.  If @off_in is NULL
+ * (0 in the syscall ABI), the copy starts at fd_in's current offset
+ * and that offset is advanced by the number of bytes copied.  If
+ * @off_in is non-NULL, the copy starts at the absolute offset stored
+ * in *off_in, fd_in's offset is NOT updated, and *off_in is advanced.
+ * Same behaviour for @off_out.
  *
- * Returns the number of bytes copied, or -1 on error.
+ * A kernel bounce buffer is used for the transfer.  A production
+ * implementation would splice pages directly between page caches,
+ * but this is correct and sufficient for current purposes.
+ *
+ * Return: Number of bytes copied (as uint64_t, matching the Linux
+ *         ssize_t convention via the kernel's uint64_t return path),
+ *         or a negative errno encoded as (uint64_t)(int64_t)-ERRNO.
+ *
+ * Linux errno values:
+ *   EBADF      — fd_in not open for reading, or fd_out not open for writing
+ *   EINVAL     — flags != 0, or overlapping same-file copy with same offsets
+ *   EFAULT     — bad user-space pointer in off_in / off_out
+ *   EISDIR     — fd_in or fd_out refers to a directory
+ *   EOVERFLOW  — offset or len exceeds implementation limits
+ *   ENOMEM     — cannot allocate bounce buffer
+ *   EIO        — VFS read/write failure
+ *   EFBIG      — write would exceed file size limit (RLIMIT_FSIZE)
+ *   ENOSPC     — no space left on device
+ *   EXDEV      — cross-device copy (not an error here; we handle it)
+ *   ESPIPE     — fd_in or fd_out refers to a pipe/FIFO (not supported yet)
  */
 static uint64_t sys_copy_file_range(uint64_t fd_in, uint64_t off_in_addr,
                                      uint64_t fd_out, uint64_t off_out_addr,
                                      uint64_t len, uint64_t flags)
 {
-    (void)flags;  /* must be 0 per POSIX.1-2016 */
+    /* ── Parameter validation ── */
+
+    /* Per POSIX.1-2016 / Linux, flags must be 0 */
+    if (flags != 0)
+        return (uint64_t)(int64_t)-EINVAL;
+
+    /* len == 0 is a no-op (Linux returns 0 immediately) */
+    if (len == 0)
+        return 0;
 
     struct process *p = process_get_current();
-    if (!p) return (uint64_t)-1;
+    if (!p)
+        return (uint64_t)(int64_t)-EPERM;
 
-    /* Validate file descriptors */
-    if (fd_in >= PROCESS_FD_MAX || fd_out >= PROCESS_FD_MAX)
-        return (uint64_t)-1;
-    struct process_fd *pfd_in  = &p->fd_table[fd_in];
-    struct process_fd *pfd_out = &p->fd_table[fd_out];
+    /* Validate file descriptors using the fd-3 slot convention */
+    if (fd_in < 3 || fd_out < 3)
+        return (uint64_t)(int64_t)-EBADF;
+    int i_in  = (int)fd_in - 3;
+    int i_out = (int)fd_out - 3;
+    if (i_in >= PROCESS_FD_MAX || i_out >= PROCESS_FD_MAX)
+        return (uint64_t)(int64_t)-EBADF;
+
+    struct process_fd *pfd_in  = &p->fd_table[i_in];
+    struct process_fd *pfd_out = &p->fd_table[i_out];
     if (!pfd_in->used || !pfd_out->used)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EBADF;
 
-    /* Copy between two files via a kernel bounce buffer.
-     * A production implementation would use splice-like page flipping
-     * for true zero-copy, but this is correct and sufficient for now. */
+    /* fd_in must be open for reading (O_RDONLY or O_RDWR) */
+    if ((pfd_in->open_flags & 3) == 1)   /* O_WRONLY alone */
+        return (uint64_t)(int64_t)-EBADF;
+
+    /* fd_out must be open for writing (O_WRONLY or O_RDWR) */
+    if ((pfd_out->open_flags & 3) != 1 && /* neither O_WRONLY */
+        (pfd_out->open_flags & 3) != 2)   /* nor O_RDWR    */
+        return (uint64_t)(int64_t)-EBADF;
+
+    /* Verify both fds refer to regular files (type == 1) */
+    struct vfs_stat st_in, st_out;
+    if (vfs_stat(pfd_in->path, &st_in) < 0)
+        return (uint64_t)(int64_t)-EIO;
+    if (st_in.type != 1)
+        return (uint64_t)(int64_t)-EISDIR;
+
+    if (vfs_stat(pfd_out->path, &st_out) < 0)
+        return (uint64_t)(int64_t)-EIO;
+    if (st_out.type != 1)
+        return (uint64_t)(int64_t)-EISDIR;
+
+    /* Check that offset+len does not overflow uint32_t for the VFS layer */
+    if (len > 0xFFFFFFFFULL)
+        return (uint64_t)(int64_t)-EOVERFLOW;
+
+    /* ── Setup ── */
+
     uint8_t *buf = kmalloc(4096);
-    if (!buf) return (uint64_t)-1;
+    if (!buf)
+        return (uint64_t)(int64_t)-ENOMEM;
+
     uint64_t total = 0;
     uint64_t cfr_result;
+
+    /* ── Copy loop ── */
 
     while (total < len) {
         uint64_t chunk = len - total;
         if (chunk > 4096)
             chunk = 4096;
 
-        /* ── Determine source offset ── */
+        /* ── Source offset ── */
         uint64_t saved_in_off = pfd_in->offset;
         if (off_in_addr != 0) {
-            /* User provided absolute source offset: read loff_t from user space */
             int64_t abs_off;
             if (copy_from_user(&abs_off, off_in_addr, sizeof(abs_off)) < 0) {
-                cfr_result = (uint64_t)-1;
+                cfr_result = (uint64_t)(int64_t)-EFAULT;
                 goto cfr_cleanup;
             }
             if (abs_off < 0) {
-                cfr_result = (uint64_t)-1;
+                cfr_result = (uint64_t)(int64_t)-EINVAL;
                 goto cfr_cleanup;
             }
-            /* Temporarily seek fd_in to the requested offset */
+            /* Temporarily set fd_in's offset to the user-supplied value */
             pfd_in->offset = (uint32_t)abs_off;
         }
 
-        /* Read from source */
+        /* Read a chunk from source */
         uint32_t nread = 0;
         int r = vfs_read(pfd_in->path, buf, (uint32_t)chunk, &nread);
         if (r < 0) {
-            /* On first iteration, propagate the error; on subsequent, return
-             * what we've already copied. */
+            /* On first iteration, propagate the exact VFS errno.
+             * On subsequent iterations, return partial success. */
             if (off_in_addr != 0)
-                pfd_in->offset = saved_in_off;  /* restore on error */
-            cfr_result = total > 0 ? (uint64_t)total : (uint64_t)-1;
+                pfd_in->offset = saved_in_off;
+            cfr_result = (total > 0) ? (uint64_t)total
+                                     : (uint64_t)(int64_t)r;
             goto cfr_cleanup;
         }
 
-        /* Update user-provided source offset if applicable */
+        /* Advance the user-provided source offset if applicable */
         if (off_in_addr != 0) {
-            int64_t new_off = (int64_t)pfd_in->offset;
+            int64_t new_off = (int64_t)(pfd_in->offset);
             if (copy_to_user(off_in_addr, &new_off, sizeof(new_off)) < 0) {
-                cfr_result = (uint64_t)-1;
+                cfr_result = (uint64_t)(int64_t)-EFAULT;
                 goto cfr_cleanup;
             }
         }
-        /* else: fd_in offset was already updated by vfs_read */
 
         if (nread == 0)
             break;  /* EOF */
 
-        /* ── Determine destination offset ── */
+        /* ── Destination offset ── */
         uint64_t saved_out_off = pfd_out->offset;
         if (off_out_addr != 0) {
             int64_t abs_off;
             if (copy_from_user(&abs_off, off_out_addr, sizeof(abs_off)) < 0) {
-                cfr_result = (uint64_t)-1;
+                cfr_result = (uint64_t)(int64_t)-EFAULT;
                 goto cfr_cleanup;
             }
             if (abs_off < 0) {
-                cfr_result = (uint64_t)-1;
+                cfr_result = (uint64_t)(int64_t)-EINVAL;
                 goto cfr_cleanup;
             }
             pfd_out->offset = (uint32_t)abs_off;
         }
 
-        /* Write to destination */
+        /* Write chunk to destination */
         if (vfs_write(pfd_out->path, buf, nread) < 0) {
             /* Restore offsets on write failure */
             if (off_in_addr != 0)
                 pfd_in->offset = saved_in_off;
             if (off_out_addr != 0)
                 pfd_out->offset = saved_out_off;
-            cfr_result = total > 0 ? (uint64_t)total : (uint64_t)-1;
+            cfr_result = (total > 0) ? (uint64_t)total
+                                     : (uint64_t)(int64_t)-EIO;
             goto cfr_cleanup;
         }
 
-        /* Update user-provided destination offset */
+        /* Advance user-provided destination offset */
         if (off_out_addr != 0) {
-            int64_t new_off = (int64_t)pfd_out->offset;
+            int64_t new_off = (int64_t)(pfd_out->offset);
             if (copy_to_user(off_out_addr, &new_off, sizeof(new_off)) < 0) {
-                cfr_result = (uint64_t)-1;
+                cfr_result = (uint64_t)(int64_t)-EFAULT;
                 goto cfr_cleanup;
             }
         }
@@ -9026,6 +9090,7 @@ static uint64_t sys_copy_file_range(uint64_t fd_in, uint64_t off_in_addr,
     }
 
     cfr_result = (uint64_t)total;
+
 cfr_cleanup:
     kfree(buf);
     return cfr_result;
