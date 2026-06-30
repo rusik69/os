@@ -537,4 +537,19 @@ int module_sysfs_remove_params(struct kernel_module *mod);
 /* Build a /sys/module/<name> path string.  Exposed for testing. */
 int build_mod_dir(char *buf, int max, const char *mod_name);
 
+/* ── Legacy module syscall declarations (sys_module.c) ────────── */
+
+/*
+ * sys_create_module — Legacy module creation syscall (Linux 2.4 era).
+ * Returns -ENOSYS; use finit_module/init_module instead.
+ * Declared in module.h because module.h is included by syscall.c.
+ */
+uint64_t sys_create_module(uint64_t name_addr, uint64_t size);
+
+/*
+ * sys_get_kernel_syms — Legacy kernel symbol query syscall (Linux 2.4 era).
+ * Returns -ENOSYS; use /proc/kallsyms instead.
+ */
+uint64_t sys_get_kernel_syms(uint64_t table_addr);
+
 #endif /* MODULE_H */

@@ -129,6 +129,7 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/module_deps.c \
          src/kernel/module_alias.c \
          src/kernel/module_async.c \
+         src/kernel/sys_module.c \
          src/kernel/sysctl.c \
          src/kernel/ksym.c \
          src/kernel/caps.c \

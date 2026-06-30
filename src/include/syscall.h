@@ -423,6 +423,8 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size,
 #define SYS_FINIT_MODULE      367  /* finit_module(fd, params, flags) → module_id or -errno */
 #define SYS_DELETE_MODULE     368  /* delete_module(name, flags) → 0 or -errno */
 #define SYS_QUERY_MODULE      369  /* query_module(name, info_buf, buf_size) → 0 or -errno */
+#define SYS_CREATE_MODULE     511  /* create_module(name, size) — legacy, returns -ENOSYS */
+#define SYS_GET_KERNEL_SYMS   512  /* get_kernel_syms(table) — legacy, returns -ENOSYS */
 
 /* Userspace framebuffer graphics syscalls */
 #define SYS_VGA_PUT_PIXEL          504  /* put_pixel(x, y, color) */
