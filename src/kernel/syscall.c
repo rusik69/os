@@ -347,6 +347,12 @@ static int syscall_validate_user_args(uint64_t num, uint64_t a1, uint64_t a2,
             return syscall_user_write_ok(a2, a3) ? 0 : -EFAULT;
         case SYS_FD_WRITE:
             return syscall_user_read_ok(a2, a3) ? 0 : -EFAULT;
+        case SYS_PREAD64:
+            if (a3 == 0) return 0;
+            return syscall_user_write_ok(a2, a3) ? 0 : -EFAULT;
+        case SYS_PWRITE64:
+            if (a3 == 0) return 0;
+            return syscall_user_read_ok(a2, a3) ? 0 : -EFAULT;
         case SYS_RAW_SEND:
             if (a2 == 0 || a2 > 1514) return -EINVAL;
             return syscall_user_read_ok(a1, a2) ? 0 : -EFAULT;
@@ -1168,6 +1174,81 @@ static uint64_t sys_fd_write(uint64_t fd, uint64_t buf_addr, uint64_t count) {
         if (r == 0) pfd->offset += count;
     }
     return (r == 0) ? count : (uint64_t)(int64_t)r;
+}
+
+/* ── Positional read/write (pread64/pwrite64) ──────────────── */
+
+/**
+ * sys_pread64 - Read from a file descriptor at a specific offset
+ * @fd: File descriptor number
+ * @buf_addr: User-space address of the output buffer
+ * @count: Number of bytes to read
+ * @offset: File offset to read from
+ *
+ * Reads up to @count bytes from the file descriptor @fd starting at
+ * @offset. Unlike sys_read/sys_fd_read, the file descriptor's current
+ * offset is NOT modified. Returns the number of bytes read, 0 at EOF,
+ * or (uint64_t)-1 on error with errno encoded as negative value.
+ *
+ * Context: Called from syscall dispatch. May sleep.
+ * Return: Number of bytes read, 0 at EOF, or (uint64_t)-1 on error.
+ */
+static uint64_t sys_pread64(uint64_t fd, uint64_t buf_addr,
+                            uint64_t count, uint64_t offset)
+{
+    if (fd < 3)
+        return (uint64_t)(int64_t)-EBADF;
+    int i = (int)fd - 3;
+    struct process_fd *pfd = sys_get_fd(i);
+    if (!pfd || !pfd->used)
+        return (uint64_t)(int64_t)-EBADF;
+    if (!buf_addr && count > 0)
+        return (uint64_t)(int64_t)-EFAULT;
+
+    struct vfs_stat st;
+    if (vfs_stat(pfd->path, &st) < 0)
+        return (uint64_t)(int64_t)-EIO;
+
+    uint64_t fsize = st.size;
+    if (offset >= fsize)
+        return 0;
+
+    uint64_t avail = fsize - offset;
+    uint64_t to_read = count < avail ? count : avail;
+    /* Clamp to UINT32_MAX to avoid uint32_t truncation in vfs_read */
+    if (to_read > UINT32_MAX)
+        to_read = UINT32_MAX;
+
+    uint64_t need_end = offset + to_read;
+    if (need_end > fsize)
+        need_end = fsize;
+    if (need_end > UINT32_MAX)
+        need_end = UINT32_MAX;
+
+    uint8_t *tmp = kmalloc(need_end);
+    if (!tmp)
+        return (uint64_t)(int64_t)-ENOMEM;
+
+    uint32_t nread = 0;
+    vfs_read(pfd->path, tmp, (uint32_t)need_end, &nread);
+
+    if (copy_to_user(buf_addr, tmp + offset, to_read) < 0) {
+        kfree(tmp);
+        return (uint64_t)(int64_t)-EFAULT;
+    }
+    kfree(tmp);
+
+    /* I/O accounting */
+    {
+        struct process *cur = process_get_current();
+        if (cur) {
+            cur->io_rchar += to_read;
+            cur->io_syscr++;
+            cur->io_read_bytes += to_read;
+        }
+    }
+
+    return (uint64_t)to_read;
 }
 
 /* ── Heap syscalls (malloc/free/calloc/realloc via kmalloc) ───── */
@@ -9632,6 +9713,7 @@ uint64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_RAW_SEND:            return sys_raw_send(a1, a2);
         case SYS_FD_READ:             return sys_fd_read(a1, a2, a3);
         case SYS_FD_WRITE:            return sys_fd_write(a1, a2, a3);
+        case SYS_PREAD64:             return sys_pread64(a1, a2, a3, a4);
         case SYS_SETPRIORITY_PID:     return sys_setpriority(PRIO_PROCESS, a1, a2);
         case SYS_GETPRIORITY:         return sys_getpriority(a1, a2);
         case SYS_SETPGID:             return sys_setpgid(a1, a2);

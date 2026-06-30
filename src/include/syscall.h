@@ -433,6 +433,10 @@
 /* userfaultfd — Linux-compatible syscall number 323, using 384 in this kernel */
 #define SYS_USERFAULTFD         384 /* userfaultfd(cmd, arg) */
 
+/* Positional read/write — Linux-compatible pread64/pwrite64 */
+#define SYS_PREAD64             385 /* pread64(fd, buf, count, offset) — read at offset */
+#define SYS_PWRITE64            386 /* pwrite64(fd, buf, count, offset) — write at offset */
+
 /* Maximum size of a file handle (in bytes) */
 #define MAX_HANDLE_SZ 128
 
