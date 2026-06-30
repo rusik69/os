@@ -103,11 +103,13 @@ static int      g_hid_initialized = 0;
 /* HID device info */
 static int g_keyboard_present = 0;
 static int g_mouse_present = 0;
+static int g_consumer_present = 0;
 static int g_has_interrupt = 0;
 
 /* Interface numbers for HID class requests */
 static uint8_t g_kbd_intf = 0;
 static uint8_t g_mouse_intf = 0;
+static uint8_t g_consumer_intf = 0;
 
 /* Current keyboard LED state via USB SET_REPORT */
 static uint8_t g_usb_led_state = 0;
@@ -115,6 +117,7 @@ static uint8_t g_usb_led_state = 0;
 /* Interrupt endpoint info */
 static uint8_t g_int_in_ep = 0;
 static uint8_t g_mouse_int_in_ep = 0;
+static uint8_t g_consumer_int_in_ep = 0;
 
 /* Keyboard state */
 static struct hid_keyboard_report g_last_kbd_report;
@@ -537,6 +540,9 @@ int usb_hid_init(void) {
     if (g_hid_initialized) return 0;
     if (!usb_is_present()) return -1;
 
+    /* Initialise consumer control subsystem */
+    usb_hid_consumer_init();
+
     /* Get EHCI operational base */
     g_op_base = ehci_get_op_base();
     if (!g_op_base) return -2;
@@ -599,6 +605,17 @@ int usb_hid_init(void) {
                     g_mouse_present = 1;
                     g_mouse_intf = if_num;
                     kprintf("[USB HID] Found mouse (if=%d)\n", if_num);
+                } else {
+                    /* Non-boot HID interface — could be consumer,
+                     * multi-touch, joystick, etc.  Save as potential
+                     * consumer endpoint and let the report descriptor
+                     * parser determine the actual type. */
+                    if (!g_consumer_present) {
+                        g_consumer_present = 1;
+                        g_consumer_intf = if_num;
+                        kprintf("[USB HID] Found non-boot HID interface "
+                                "(if=%d)\n", if_num);
+                    }
                 }
             }
         } else if (dtype == 5 && pos + 6 <= cfg_len) {
@@ -614,6 +631,9 @@ int usb_hid_init(void) {
                     } else if (g_mouse_present && !g_mouse_int_in_ep) {
                         g_mouse_int_in_ep = ep_addr & 0x0F;
                         kprintf("[USB HID] Mouse int IN ep=0x%02x\n", ep_addr);
+                    } else if (g_consumer_present && !g_consumer_int_in_ep) {
+                        g_consumer_int_in_ep = ep_addr & 0x0F;
+                        kprintf("[USB HID] Consumer int IN ep=0x%02x\n", ep_addr);
                     }
                 }
             }
@@ -681,9 +701,10 @@ int usb_hid_init(void) {
     }
 
     g_hid_initialized = 1;
-    kprintf("[USB HID] Initialized: %s%s\n",
+    kprintf("[USB HID] Initialized: %s%s%s\n",
             g_keyboard_present ? "keyboard " : "",
-            g_mouse_present ? "mouse" : "");
+            g_mouse_present ? "mouse " : "",
+            g_consumer_present ? "consumer " : "");
     return 0;
 }
 
@@ -692,6 +713,11 @@ int usb_hid_init(void) {
 void usb_hid_poll(void) {
     if (!g_hid_initialized || !g_has_interrupt) return;
     hid_poll_interrupt_in();
+    /* Also poll consumer endpoint if present and separate from keyboard */
+    if (g_consumer_present && g_consumer_int_in_ep &&
+        g_consumer_int_in_ep != g_int_in_ep) {
+        usb_hid_consumer_poll();
+    }
 }
 
 /* ── Public API ────────────────────────────────────────────────────── */
@@ -1093,9 +1119,10 @@ int usb_hid_parse_report_legacy(void *dev, const void *report, size_t len)
     int rc = usb_hid_parse_report(dev, report, len, &desc);
     if (rc < 0) return rc;
 
-    /* Scan parsed items for keyboard/mouse detection */
+    /* Scan parsed items for keyboard/mouse/consumer detection */
     int has_keyboard = 0;
     int has_mouse = 0;
+    int has_consumer = 0;
 
     for (int i = 0; i < desc.num_items; i++) {
         struct hid_report_item *ri = &desc.items[i];
@@ -1117,14 +1144,24 @@ int usb_hid_parse_report_legacy(void *dev, const void *report, size_t len)
             has_mouse = 1;
         }
 
-        /* Also check collection-level usages */
-        for (int j = 0; j < desc.num_collections; j++) {
-            if (desc.collections[j].usage_page == HID_PAGE_GENERIC_DESKTOP) {
-                if (desc.collections[j].usage == HID_USAGE_KEYBOARD)
-                    has_keyboard = 1;
-                if (desc.collections[j].usage == HID_USAGE_MOUSE)
-                    has_mouse = 1;
-            }
+        /* Consumer Page: any usage in Consumer Control */
+        if (up == HID_PAGE_CONSUMER) {
+            has_consumer = 1;
+        }
+    }
+
+    /* Also check collection-level usages (more reliable for consumer) */
+    for (int j = 0; j < desc.num_collections; j++) {
+        if (desc.collections[j].usage_page == HID_PAGE_GENERIC_DESKTOP) {
+            if (desc.collections[j].usage == HID_USAGE_KEYBOARD)
+                has_keyboard = 1;
+            if (desc.collections[j].usage == HID_USAGE_MOUSE)
+                has_mouse = 1;
+        }
+        /* Consumer Control application collection */
+        if (desc.collections[j].usage_page == HID_PAGE_CONSUMER &&
+            desc.collections[j].usage == HID_USAGE_CONSUMER_CONTROL) {
+            has_consumer = 1;
         }
     }
 
@@ -1136,8 +1173,19 @@ int usb_hid_parse_report_legacy(void *dev, const void *report, size_t len)
         g_mouse_present = 1;
         kprintf("[usb_hid] Report parsed: mouse detected\n");
     }
-    if (!has_keyboard && !has_mouse) {
+    if (has_consumer) {
+        g_consumer_present = 1;
+        kprintf("[usb_hid] Report parsed: consumer control detected\n");
+    }
+    if (!has_keyboard && !has_mouse && !has_consumer) {
         kprintf("[usb_hid] Report parsed: unknown HID device\n");
+    }
+
+    /* If consumer detected, register with the consumer driver */
+    if (has_consumer) {
+        usb_hid_consumer_register(g_dev_addr, g_consumer_intf,
+                                   g_consumer_int_in_ep,
+                                   (const uint8_t *)report, len);
     }
 
     return 0;

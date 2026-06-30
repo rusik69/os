@@ -248,6 +248,79 @@ struct mt_device {
 #define HID_USAGE_TABLET_PC         0x0F
 #define HID_USAGE_CONSUMER_CONTROL  0x01  /* from Consumer page */
 
+/* ── Consumer Page usages (HID_PAGE_CONSUMER = 0x0C) ─────────────── */
+/* Transport control */
+#define HID_CONSUMER_PLAY            0xB0
+#define HID_CONSUMER_PAUSE           0xB1
+#define HID_CONSUMER_RECORD          0xB2
+#define HID_CONSUMER_FAST_FORWARD    0xB3
+#define HID_CONSUMER_REWIND          0xB4
+#define HID_CONSUMER_SCAN_NEXT       0xB5
+#define HID_CONSUMER_SCAN_PREVIOUS   0xB6
+#define HID_CONSUMER_STOP            0xB7
+#define HID_CONSUMER_EJECT           0xB8
+#define HID_CONSUMER_PLAY_PAUSE      0xCD
+
+/* Audio control */
+#define HID_CONSUMER_VOLUME          0xE0
+#define HID_CONSUMER_VOLUME_INCREMENT 0xE9
+#define HID_CONSUMER_VOLUME_DECREMENT 0xEA
+#define HID_CONSUMER_MUTE            0xE2
+#define HID_CONSUMER_BASS            0xE3
+#define HID_CONSUMER_TREBLE          0xE4
+#define HID_CONSUMER_BASS_BOOST      0xE5
+#define HID_CONSUMER_SURROUND_MODE   0xE6
+#define HID_CONSUMER_LOUDNESS        0xE7
+#define HID_CONSUMER_EQ              0xE8
+#define HID_CONSUMER_BALANCE         0xE1  /* or Volume Balance */
+#define HID_CONSUMER_FADE            0xEF  /* or Audio Fade */
+#define HID_CONSUMER_MICROPHONE_MUTE 0xF8
+
+/* Power control */
+#define HID_CONSUMER_POWER           0x30
+#define HID_CONSUMER_RESET           0x31
+#define HID_CONSUMER_SLEEP           0x32
+
+/* Menu/Navigation control */
+#define HID_CONSUMER_MENU            0x40
+#define HID_CONSUMER_MENU_PICK       0x41
+#define HID_CONSUMER_MENU_UP         0x42
+#define HID_CONSUMER_MENU_DOWN       0x43
+#define HID_CONSUMER_MENU_LEFT       0x44
+#define HID_CONSUMER_MENU_RIGHT      0x45
+#define HID_CONSUMER_MENU_ESCAPE     0x46
+#define HID_CONSUMER_MENU_VALUE_INC  0x47
+#define HID_CONSUMER_MENU_VALUE_DEC  0x48
+
+/* Display control */
+#define HID_CONSUMER_DISPLAY_INFO    0x60
+#define HID_CONSUMER_CLOSED_CAPTION  0x61
+#define HID_CONSUMER_BRIGHTNESS_UP   0x6F
+#define HID_CONSUMER_BRIGHTNESS_DOWN 0x70
+
+/* Application/Launch keys */
+#define HID_CONSUMER_MEDIA_SELECT    0x183  /* AL Consumer Control Config */
+#define HID_CONSUMER_EMAIL_READER    0x18A
+#define HID_CONSUMER_CALCULATOR      0x192
+#define HID_CONSUMER_MY_COMPUTER     0x194
+#define HID_CONSUMER_WWW_HOME        0x223  /* AL Internet Browser */
+#define HID_CONSUMER_WWW_SEARCH      0x221
+#define HID_CONSUMER_WWW_FAVORITES   0x224
+#define HID_CONSUMER_WWW_REFRESH     0x227
+#define HID_CONSUMER_WWW_STOP        0x226
+#define HID_CONSUMER_WWW_BACK        0x225
+#define HID_CONSUMER_WWW_FORWARD     0x222
+#define HID_CONSUMER_LAUNCH_DVD      0x228
+#define HID_CONSUMER_LAUNCH_TV       0x229
+#define HID_CONSUMER_LAUNCH_AUDIO    0x188
+#define HID_CONSUMER_LAUNCH_VIDEO    0x189
+
+/* Channel control */
+#define HID_CONSUMER_CHANNEL_UP      0x9C
+#define HID_CONSUMER_CHANNEL_DOWN    0x9D
+#define HID_CONSUMER_AL_CHANNEL_INC  0x32B
+#define HID_CONSUMER_AL_CHANNEL_DEC  0x32C
+
 /* Boot protocol keyboard report (8 bytes) */
 struct hid_keyboard_report {
     uint8_t modifiers;  /* bitmask: LCtrl=1, LShift=2, LAlt=4, LGui=8, RCtrl=16, RShift=32, RAlt=64, RGui=128 */
@@ -546,5 +619,90 @@ int usb_hid_mt_get_count(void);
  * Get a pointer to a registered multi-touch device by index.
  */
 struct mt_device *usb_hid_mt_get_device(int idx);
+
+/* ── Consumer Control (media keys) ──────────────────────────────────── */
+
+#define MAX_CONSUMER_KEYS        64
+#define CONSUMER_EVENT_QUEUE     32
+
+/*
+ * Consumer key event — reports press/release of a consumer-page key.
+ * code is a HID_CONSUMER_* usage value from the Consumer page (0x0C).
+ */
+struct hid_consumer_event {
+    uint16_t code;      /* HID_CONSUMER_* usage value */
+    int      pressed;   /* 1 = pressed, 0 = released */
+};
+
+/*
+ * Consumer device instance — tracks one consumer-control HID device.
+ */
+struct hid_consumer_dev {
+    uint8_t  dev_addr;
+    uint8_t  input_ep;
+    uint8_t  intf_num;
+    int      present;
+
+    /* Report descriptor info */
+    uint8_t  *report_desc;
+    int       report_desc_len;
+    int       report_len;        /* expected input report length */
+
+    /* Event ring buffer */
+    struct hid_consumer_event events[CONSUMER_EVENT_QUEUE];
+    int      ev_head;
+    int      ev_tail;
+
+    spinlock_t lock;
+};
+
+/*
+ * Register a consumer-control device.
+ * Returns 0 on success, negative errno on failure.
+ */
+int usb_hid_consumer_register(uint8_t dev_addr, uint8_t intf_num,
+                               uint8_t input_ep,
+                               const uint8_t *report_desc, int desc_len);
+
+/*
+ * Unregister a consumer-control device.
+ */
+void usb_hid_consumer_unregister(void);
+
+/*
+ * Feed a raw HID input report to the consumer driver.
+ * Parses consumer usages from the report and generates press/release events.
+ */
+void usb_hid_consumer_input(const uint8_t *report, int len);
+
+/*
+ * Check if the consumer driver is present and active.
+ */
+int usb_hid_consumer_present(void);
+
+/*
+ * Read the next pending consumer event (non-blocking).
+ * Returns 1 if an event was read, 0 if queue empty.
+ * The event is written to @out.
+ */
+int usb_hid_consumer_get_event(struct hid_consumer_event *out);
+
+/*
+ * Initialise the consumer subsystem (called once at boot).
+ */
+void usb_hid_consumer_init(void);
+
+/*
+ * Poll consumer device interrupt endpoint(s) and process reports.
+ * Called from usb_hid_poll().
+ */
+void usb_hid_consumer_poll(void);
+
+/*
+ * Set a callback function that is called on each consumer key event.
+ * Set to NULL to disable.  The callback is invoked with the event code
+ * and pressed flag from interrupt context.
+ */
+void usb_hid_consumer_set_callback(void (*cb)(uint16_t code, int pressed));
 
 #endif /* UHID_H */
