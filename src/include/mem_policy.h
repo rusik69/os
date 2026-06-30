@@ -29,4 +29,10 @@ int mbind(uint64_t addr, uint64_t len, int mode, uint64_t nodemask, int preferre
 /* Initialise the memory policy subsystem. */
 void mem_policy_init(void);
 
+/* Set/Get memory policy (richer interface used by syscalls). */
+int mempolicy_set(int mode, uint64_t nodemask, int preferred_node);
+int mempolicy_get(int *mode, uint64_t *nodemask, int *preferred_node);
+int mempolicy_mbind(uint64_t addr, uint64_t len, int mode, uint64_t nodemask);
+int mempolicy_migrate_pages(int pid, uint64_t new_nodemask);
+
 #endif /* MEM_POLICY_H */

@@ -88,6 +88,7 @@
 #include "signal_libc.h" /* for struct sigaction (sys_rt_sigaction validation) */
 #include "netlink.h"     /* for netlink_is_valid_fd / netlink_send (sys_sendfile) */
 #include "pkey.h"        /* for sys_pkey_mprotect */
+#include "mem_policy.h"  /* for NUMA memory policy syscalls */
 
 /* Module metadata */
 MODULE_LICENSE("GPL v2");
@@ -437,6 +438,29 @@ static int syscall_validate_user_args(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_MINCORE:
             return syscall_user_write_ok(a3, (a2 + PAGE_SIZE - 1) / PAGE_SIZE) ? 0 : -EFAULT;
         case SYS_MADVISE:
+            return 0;
+        /* NUMA memory policy */
+        case SYS_MBIND:
+            /* addr (a1) checked in handler; nodemask (a4) content checked in handler */
+            return 0;
+        case SYS_SET_MEMPOLICY:
+            return 0;
+        case SYS_GET_MEMPOLICY:
+            /* mode_addr (a1) and nodemask_addr (a2) are write pointers */
+            if (a1 && !syscall_user_write_ok(a1, sizeof(int))) return -EFAULT;
+            if (a2 && !syscall_user_write_ok(a2, sizeof(uint64_t))) return -EFAULT;
+            return 0;
+        case SYS_MIGRATE_PAGES:
+            /* new_nodes_addr (a4) is a read pointer */
+            if (a4 && !syscall_user_read_ok(a4, sizeof(uint64_t))) return -EFAULT;
+            return 0;
+        case SYS_MOVE_PAGES:
+            /* pages_addr (a3), nodes_addr (a4), status_addr (a5) */
+            if (a3 && !syscall_user_read_ok(a3, a2 * sizeof(uint64_t))) return -EFAULT;
+            if (a4 && !syscall_user_read_ok(a4, a2 * sizeof(int))) return -EFAULT;
+            if (a5 && !syscall_user_write_ok(a5, a2 * sizeof(int))) return -EFAULT;
+            return 0;
+        case SYS_REMAP_FILE_PAGES:
             return 0;
         case SYS_TIMERFD_CREATE:
             return 0;
@@ -8032,6 +8056,105 @@ static uint64_t sys_madvise(uint64_t addr, uint64_t len, uint64_t advice) {
     }
 }
 
+/* ── NUMA memory policy syscalls ─────────────────────────────────── */
+
+static uint64_t sys_mbind(uint64_t addr, uint64_t len, uint64_t mode,
+                           uint64_t nodemask, uint64_t maxnode,
+                           uint64_t flags)
+{
+    (void)maxnode;
+    (void)flags;
+    struct process *p = process_get_current();
+    if (!p) return (uint64_t)-ENOMEM;
+
+    if (addr & (PAGE_SIZE - 1))
+        return (uint64_t)-EINVAL;
+    if (addr + len < addr || len == 0)
+        return (uint64_t)-EINVAL;
+    if (addr + len > USER_VADDR_MAX)
+        return (uint64_t)-EINVAL;
+
+    int ret = mempolicy_mbind(addr, len, (int)mode, nodemask);
+    return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
+}
+
+static uint64_t sys_set_mempolicy(uint64_t mode, uint64_t nodemask,
+                                   uint64_t maxnode)
+{
+    (void)maxnode;
+    int ret = mempolicy_set((int)mode, nodemask, -1);
+    return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
+}
+
+static uint64_t sys_get_mempolicy(uint64_t mode_addr, uint64_t nodemask_addr,
+                                   uint64_t maxnode, uint64_t addr,
+                                   uint64_t flags)
+{
+    (void)maxnode;
+    (void)addr;
+    (void)flags;
+
+    int mode = MPOL_DEFAULT;
+    uint64_t nodemask = 0;
+    int ret = mempolicy_get(&mode, &nodemask, NULL);
+    if (ret < 0)
+        return (uint64_t)(int64_t)ret;
+
+    if (mode_addr) {
+        if (copy_to_user(mode_addr, &mode, sizeof(mode)) < 0)
+            return (uint64_t)-EFAULT;
+    }
+    if (nodemask_addr) {
+        if (copy_to_user(nodemask_addr, &nodemask, sizeof(nodemask)) < 0)
+            return (uint64_t)-EFAULT;
+    }
+    return 0;
+}
+
+static uint64_t sys_migrate_pages(uint64_t pid, uint64_t maxnode,
+                                   uint64_t old_nodes_addr,
+                                   uint64_t new_nodes_addr)
+{
+    (void)maxnode;
+    (void)old_nodes_addr;
+
+    uint64_t new_nodemask = 0;
+    if (new_nodes_addr) {
+        if (copy_from_user(&new_nodemask, new_nodes_addr, sizeof(new_nodemask)) < 0)
+            return (uint64_t)-EFAULT;
+    }
+
+    int ret = mempolicy_migrate_pages((int)pid, new_nodemask);
+    return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
+}
+
+static uint64_t sys_move_pages(uint64_t pid, uint64_t nr_pages,
+                                uint64_t pages_addr, uint64_t nodes_addr,
+                                uint64_t status_addr, uint64_t flags)
+{
+    (void)pid;
+    (void)nr_pages;
+    (void)pages_addr;
+    (void)nodes_addr;
+    (void)status_addr;
+    (void)flags;
+    /* Stub: NUMA page migration not yet implemented at page level */
+    return (uint64_t)-ENOSYS;
+}
+
+static uint64_t sys_remap_file_pages(uint64_t addr, uint64_t size,
+                                      uint64_t prot, uint64_t pgoff,
+                                      uint64_t flags)
+{
+    (void)addr;
+    (void)size;
+    (void)prot;
+    (void)pgoff;
+    (void)flags;
+    /* Stub: non-linear file mapping not yet implemented */
+    return (uint64_t)-ENOSYS;
+}
+
 static uint64_t sys_msync(uint64_t addr, uint64_t len, uint64_t flags) {
     (void)addr;
     (void)len;
@@ -10212,6 +10335,13 @@ uint64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_MUNLOCKALL:   return sys_munlockall();
         case SYS_MINCORE:      return sys_mincore(a1, a2, a3);
         case SYS_MADVISE:      return sys_madvise(a1, a2, a3);
+        /* NUMA memory policy */
+        case SYS_MBIND:            return sys_mbind(a1, a2, a3, a4, a5, syscall_arg6);
+        case SYS_SET_MEMPOLICY:    return sys_set_mempolicy(a1, a2, a3);
+        case SYS_GET_MEMPOLICY:    return sys_get_mempolicy(a1, a2, a3, a4, a5);
+        case SYS_MIGRATE_PAGES:    return sys_migrate_pages(a1, a2, a3, a4);
+        case SYS_MOVE_PAGES:       return sys_move_pages(a1, a2, a3, a4, a5, syscall_arg6);
+        case SYS_REMAP_FILE_PAGES: return sys_remap_file_pages(a1, a2, a3, a4, a5);
         case SYS_MSYNC:        return sys_msync(a1, a2, a3);
         case SYS_FALLOCATE:    return sys_fallocate(a1, a2, a3, a4);
         case SYS_READAHEAD:    return sys_readahead(a1, a2, a3);

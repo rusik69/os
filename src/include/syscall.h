@@ -456,6 +456,14 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size,
 #define SYS_PREAD64             385 /* pread64(fd, buf, count, offset) — read at offset */
 #define SYS_PWRITE64            386 /* pwrite64(fd, buf, count, offset) — write at offset */
 
+/* NUMA memory policy syscalls */
+#define SYS_MBIND              389 /* mbind(addr, len, mode, nodemask, maxnode, flags) */
+#define SYS_SET_MEMPOLICY      390 /* set_mempolicy(mode, nodemask, maxnode) */
+#define SYS_GET_MEMPOLICY      391 /* get_mempolicy(policy, nodemask, maxnode, addr, flags) */
+#define SYS_MIGRATE_PAGES      392 /* migrate_pages(pid, maxnode, old_nodes, new_nodes) */
+#define SYS_MOVE_PAGES         393 /* move_pages(pid, nr_pages, pages, nodes, status, flags) */
+#define SYS_REMAP_FILE_PAGES   400 /* remap_file_pages(addr, size, prot, pgoff, flags) */
+
 /* Maximum size of a file handle (in bytes) */
 #define MAX_HANDLE_SZ 128
 
