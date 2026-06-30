@@ -39,6 +39,7 @@
 #include "rtc.h"
 #include "mouse.h"
 #include "speaker.h"
+#include "sound_mixer_sw.h"
 #include "acpi.h"
 #include "cpupstate.h"
 #include "syscall.h"
@@ -1038,6 +1039,20 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
      * after AC97 so it can sync initial mixer state from hardware. */
     extern void sound_core_init(void);
     sound_core_init();
+
+    /* Software audio mixer — virtual PCM mixing for multi-stream audio.
+     * Creates a global mixer instance and wires it to the PC speaker
+     * driver so speaker beeps are also routed through the sound card. */
+    {
+        static struct sound_mixer_sw g_sw_mixer;
+        int ret = sound_mixer_sw_init(&g_sw_mixer, 2, 44100);
+        if (ret == 0) {
+            speaker_set_mixer(&g_sw_mixer);
+            kprintf("[OK] Software mixer: 8-channel, 44.1 kHz stereo\n");
+        } else {
+            kprintf("[--] Software mixer: init failed (%d)\n", ret);
+        }
+    }
 
     /* Initialise the netdevice interface layer before any NIC driver
      * so they can register themselves as net devices during init. */

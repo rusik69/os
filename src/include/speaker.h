@@ -3,6 +3,29 @@
 
 #include "types.h"
 
+/* ── Audio pipeline integration ─────────────────────────────────── */
+
+/* Forward declaration — full definition in sound_mixer_sw.h */
+struct sound_mixer_sw;
+
+/* Set the software mixer for routing speaker beeps through the audio
+ * output path.  When set (non-NULL), speaker_beep() also generates
+ * PCM sine-wave samples and writes them to the mixer, so the beep
+ * can be heard through the sound card as well as the physical PC
+ * speaker.  Pass NULL to disable the audio path. */
+void speaker_set_mixer(struct sound_mixer_sw *mixer);
+
+/* Fill a buffer with PCM sine-wave samples at the given frequency.
+ * @buf:          Output buffer (interleaved stereo int16_t).
+ * @max_frames:   Maximum frames to generate.
+ * @freq_hz:      Frequency in Hz (0 = silence).
+ * @sample_rate:  Sample rate in Hz (e.g. 44100).
+ *
+ * Returns the number of frames written.
+ */
+uint32_t speaker_pcm_fill(int16_t *buf, uint32_t max_frames,
+                          uint32_t freq_hz, uint32_t sample_rate);
+
 /* ── Public API ─────────────────────────────────────────────────── */
 
 void speaker_init(void);

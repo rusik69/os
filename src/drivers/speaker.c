@@ -1,7 +1,9 @@
 #include "speaker.h"
+#include "sound_mixer_sw.h"
 #include "io.h"
 #include "timer.h"
 #include "string.h"
+#include "printf.h"
 #ifdef MODULE
 #include "module.h"
 #endif
@@ -16,9 +18,117 @@
 
 static uint8_t g_volume = 50;  /* default 50% */
 
+/* ── Audio pipeline state (PC speaker → software mixer) ─────────── */
+
+/* Software mixer reference set by speaker_set_mixer().  When non-NULL,
+ * speaker_beep() also generates PCM sine-wave samples and feeds them
+ * to this mixer channel for output through the sound card. */
+static struct sound_mixer_sw *g_speaker_mixer = NULL;
+static int g_speaker_mixer_ch = -1;          /* -1 = not yet opened */
+static int g_speaker_mixer_init_done = 0;    /* 1 = open_channel done */
+
+/*
+ * 256-entry sine lookup table covering one full cycle.
+ * sin_table[i] = (int16_t)(sin(i * 2*pi / 256) * 32767)
+ */
+static const int16_t g_speaker_sin_table[256] = {
+         0,    804,   1608,   2410,   3212,   4011,   4808,   5602,
+      6393,   7179,   7962,   8739,   9512,  10278,  11039,  11793,
+     12539,  13279,  14010,  14732,  15446,  16151,  16846,  17530,
+     18204,  18868,  19519,  20159,  20787,  21403,  22005,  22594,
+     23170,  23731,  24279,  24811,  25329,  25832,  26319,  26790,
+     27245,  27683,  28105,  28510,  28898,  29268,  29621,  29956,
+     30273,  30571,  30852,  31113,  31356,  31580,  31785,  31971,
+     32137,  32285,  32412,  32521,  32609,  32678,  32728,  32757,
+     32767,  32757,  32728,  32678,  32609,  32521,  32412,  32285,
+     32137,  31971,  31785,  31580,  31356,  31113,  30852,  30571,
+     30273,  29956,  29621,  29268,  28898,  28510,  28105,  27683,
+     27245,  26790,  26319,  25832,  25329,  24811,  24279,  23731,
+     23170,  22594,  22005,  21403,  20787,  20159,  19519,  18868,
+     18204,  17530,  16846,  16151,  15446,  14732,  14010,  13279,
+     12539,  11793,  11039,  10278,   9512,   8739,   7962,   7179,
+      6393,   5602,   4808,   4011,   3212,   2410,   1608,    804,
+         0,   -804,  -1608,  -2410,  -3212,  -4011,  -4808,  -5602,
+     -6393,  -7179,  -7962,  -8739,  -9512, -10278, -11039, -11793,
+    -12539, -13279, -14010, -14732, -15446, -16151, -16846, -17530,
+    -18204, -18868, -19519, -20159, -20787, -21403, -22005, -22594,
+    -23170, -23731, -24279, -24811, -25329, -25832, -26319, -26790,
+    -27245, -27683, -28105, -28510, -28898, -29268, -29621, -29956,
+    -30273, -30571, -30852, -31113, -31356, -31580, -31785, -31971,
+    -32137, -32285, -32412, -32521, -32609, -32678, -32728, -32757,
+    -32767, -32757, -32728, -32678, -32609, -32521, -32412, -32285,
+    -32137, -31971, -31785, -31580, -31356, -31113, -30852, -30571,
+    -30273, -29956, -29621, -29268, -28898, -28510, -28105, -27683,
+    -27245, -26790, -26319, -25832, -25329, -24811, -24279, -23731,
+    -23170, -22594, -22005, -21403, -20787, -20159, -19519, -18868,
+    -18204, -17530, -16846, -16151, -15446, -14732, -14010, -13279,
+    -12539, -11793, -11039, -10278,  -9512,  -8739,  -7962,  -7179,
+     -6393,  -5602,  -4808,  -4011,  -3212,  -2410,  -1608,   -804,
+};
+
 /* ── Console bell parameters ────────────────────────────────────── */
 static uint32_t g_bell_freq = 880;   /* default ~A5 */
 static uint32_t g_bell_dur  = 100;   /* 100 ms */
+
+/* ·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─· */
+
+/*
+ * speaker_pcm_fill — Fill a buffer with PCM sine-wave samples.
+ *
+ * @buf:          Output buffer (interleaved stereo int16_t).
+ * @max_frames:   Maximum frames (sample pairs) to generate.
+ * @freq_hz:      Frequency in Hz (0 = silence).
+ * @sample_rate:  Sample rate in Hz (e.g. 44100).
+ *
+ * Generates stereo sine wave samples using the pre-computed lookup table.
+ * Both channels get the same signal at a reduced amplitude (-6 dB) to
+ * leave headroom for software mixing.
+ *
+ * Returns the number of frames written (always == max_frames unless
+ * max_frames == 0, in which case 0 is returned).
+ */
+uint32_t speaker_pcm_fill(int16_t *buf, uint32_t max_frames,
+                          uint32_t freq_hz, uint32_t sample_rate)
+{
+    if (!buf || max_frames == 0)
+        return 0;
+    if (freq_hz == 0 || sample_rate == 0) {
+        memset(buf, 0, (size_t)max_frames * 2 * sizeof(int16_t));
+        return max_frames;
+    }
+
+    /*
+     * Phase increment:  how many table entries to advance per sample.
+     * table_size = 256, so:
+     *   phase_inc = freq_hz * 256 / sample_rate
+     * Stored as 16.16 fixed-point for fractional stepping.
+     */
+    uint32_t phase_inc = (uint32_t)(((uint64_t)freq_hz << 16) / (uint64_t)sample_rate);
+    uint32_t phase = 0;
+
+    /* Amplitude: 16384 ≈ -6 dB — leaves headroom for multi-stream mixing */
+    const int32_t amp = 16384;
+
+    for (uint32_t i = 0; i < max_frames; i++) {
+        uint32_t idx = (phase >> 16) & 0xFF;
+        uint32_t frac = phase & 0xFFFF;
+        uint32_t next = (idx + 1) & 0xFF;
+
+        /* Linear interpolation between adjacent table entries */
+        int32_t s0 = (int32_t)g_speaker_sin_table[idx];
+        int32_t s1 = (int32_t)g_speaker_sin_table[next];
+        int32_t sample = s0 + ((s1 - s0) * (int32_t)frac >> 16);
+        sample = (sample * amp) >> 15;
+
+        /* Stereo interleaved: same signal on both channels */
+        buf[i * 2]     = (int16_t)sample;
+        buf[i * 2 + 1] = (int16_t)sample;
+
+        phase += phase_inc;
+    }
+
+    return max_frames;
+}
 
 /* ·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─· */
 
@@ -88,8 +198,58 @@ void speaker_beep(uint32_t frequency, uint32_t duration_ms) {
     uint64_t start = timer_get_ticks();
     uint64_t ticks_to_wait = (uint64_t)duration_ms * TIMER_FREQ / 1000;
     if (ticks_to_wait == 0) ticks_to_wait = 1;
-    while (timer_get_ticks() - start < ticks_to_wait);
 
+    /* ── Audio pipeline path ────────────────────────────────────────
+     * During the beep duration, generate PCM sine-wave samples and
+     * feed them to the software mixer so the beep is also heard
+     * through the sound card.                                 */
+    if (g_speaker_mixer && frequency > 0 && duration_ms > 0) {
+        uint32_t sample_rate = 44100;
+        uint32_t total_frames = (uint32_t)(
+            (uint64_t)duration_ms * (uint64_t)sample_rate / 1000ULL);
+
+        /*
+         * If the mixer channel hasn't been opened yet, open it now.
+         * This lazy-open avoids ordering dependencies at boot — the
+         * mixer can be registered after speaker_init().
+         */
+        if (!g_speaker_mixer_init_done) {
+            int ch = sound_mixer_sw_open_channel(g_speaker_mixer, 192);
+            if (ch >= 0) {
+                g_speaker_mixer_ch = ch;
+            }
+            g_speaker_mixer_init_done = 1;
+        }
+
+        if (g_speaker_mixer_ch >= 0) {
+            /*
+             * Write PCM data in small chunks during the busy-wait
+             * loop.  Each chunk is 128 frames (about 2.9 ms at
+             * 44.1 kHz) to keep stack usage modest.
+             */
+            uint32_t chunk_frames = 128;
+            uint32_t written = 0;
+
+            while (timer_get_ticks() - start < ticks_to_wait &&
+                   written < total_frames) {
+                uint32_t todo = total_frames - written;
+                if (todo > chunk_frames)
+                    todo = chunk_frames;
+
+                int16_t buf[256]; /* 128 frames * 2 channels */
+                speaker_pcm_fill(buf, todo, frequency, sample_rate);
+
+                int ret = sound_mixer_sw_write(
+                    g_speaker_mixer, g_speaker_mixer_ch, buf, todo);
+                if (ret > 0)
+                    written += (uint32_t)ret;
+                else
+                    break; /* mixer full, stop writing */
+            }
+        }
+    }
+
+    while (timer_get_ticks() - start < ticks_to_wait);
     speaker_off();
 }
 
@@ -100,6 +260,27 @@ void speaker_set_volume(uint8_t volume) {
 
 uint8_t speaker_get_volume(void) {
     return g_volume;
+}
+
+/* ── Audio pipeline integration ───────────────────────────────────── */
+
+void speaker_set_mixer(struct sound_mixer_sw *mixer)
+{
+    /* If a mixer channel was already opened and we're changing mixer,
+     * close the old channel first. */
+    if (mixer != g_speaker_mixer && g_speaker_mixer && g_speaker_mixer_ch >= 0) {
+        sound_mixer_sw_close_channel(g_speaker_mixer, g_speaker_mixer_ch);
+        g_speaker_mixer_ch = -1;
+        g_speaker_mixer_init_done = 0;
+    }
+
+    g_speaker_mixer = mixer;
+
+    /* If mixer is being cleared (NULL), also reset the channel state. */
+    if (!mixer) {
+        g_speaker_mixer_ch = -1;
+        g_speaker_mixer_init_done = 0;
+    }
 }
 
 /* ·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·─·
@@ -278,6 +459,8 @@ EXPORT_SYMBOL(speaker_midi_note);
 EXPORT_SYMBOL(speaker_play_note);
 EXPORT_SYMBOL(speaker_bell);
 EXPORT_SYMBOL(speaker_set_bell_params);
+EXPORT_SYMBOL(speaker_pcm_fill);
+EXPORT_SYMBOL(speaker_set_mixer);
 #endif /* !MODULE */
 
 /* ── Turn speaker on (use last set frequency) ──────── */
