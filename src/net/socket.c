@@ -670,6 +670,14 @@ int sys_sendmsg_impl(int sockfd, const struct msghdr *msg, int flags) {
     /* For now, just write the first iovec entry */
     if (msg->msg_iovlen < 1 || !msg->msg_iov) return -EINVAL;
 
+    /* AF_NETLINK: use msghdr-aware sendmsg that flattens all iovecs
+     * into one contiguous netlink message. */
+    if (s->domain == AF_NETLINK) {
+        if (!netlink_is_valid_fd(sockfd))
+            return -EINVAL;
+        return netlink_sendmsg(sockfd, msg, flags);
+    }
+
     uint64_t total = 0;
     for (uint32_t i = 0; i < msg->msg_iovlen; i++) {
         const void *data = msg->msg_iov[i].iov_base;
@@ -685,11 +693,6 @@ int sys_sendmsg_impl(int sockfd, const struct msghdr *msg, int flags) {
                    packet_is_valid_fd(sockfd)) {
             /* AF_PACKET raw packet send */
             int sent = packet_send(sockfd, data, (int)(len > 2048 ? 2048 : len));
-            if (sent < 0) return total > 0 ? (int)total : -EIO;
-            total += (uint64_t)sent;
-        } else if (s->domain == AF_NETLINK && netlink_is_valid_fd(sockfd)) {
-            /* AF_NETLINK send */
-            int sent = netlink_send(sockfd, data, (int)(len > NETLINK_MAX_PAYLOAD ? NETLINK_MAX_PAYLOAD : len));
             if (sent < 0) return total > 0 ? (int)total : -EIO;
             total += (uint64_t)sent;
         } else if (s->domain == AF_CAN) {
@@ -764,18 +767,11 @@ int sys_recvmsg_impl(int sockfd, struct msghdr *msg, int flags) {
         return n;
     }
 
-    /* AF_NETLINK: netlink message receive */
-    if (s->domain == AF_NETLINK && netlink_is_valid_fd(sockfd)) {
-        int n = netlink_recv(sockfd, buf, (int)(bufsize > NETLINK_MAX_PAYLOAD ? NETLINK_MAX_PAYLOAD : bufsize));
-        if (n < 0) return -EINVAL;
-        if (msg->msg_name && n >= 0) {
-            struct sockaddr_nl *snl = (struct sockaddr_nl *)msg->msg_name;
-            memset(snl, 0, sizeof(struct sockaddr_nl));
-            snl->nl_family = AF_NETLINK;
-            snl->nl_pid = 0; /* Kernel */
-            msg->msg_namelen = sizeof(struct sockaddr_nl);
-        }
-        return n;
+    /* AF_NETLINK: use msghdr-aware recvmsg */
+    if (s->domain == AF_NETLINK) {
+        if (!netlink_is_valid_fd(sockfd))
+            return -EINVAL;
+        return netlink_recvmsg(sockfd, msg, flags);
     }
 
     /* AF_CAN: CAN frame receive */

@@ -284,6 +284,174 @@ int netlink_recv(int fd, void *buf, int max_len) {
     return to_copy;
 }
 
+/* ── msghdr-based sendmsg ──────────────────────────────────────────── */
+
+/*
+ * netlink_sendmsg — Send a netlink message from a struct msghdr.
+ *
+ * Flattens all iovecs into a single netlink message buffer, validates
+ * the nlmsghdr, and honors msg_name / msg_namelen for an explicit
+ * destination sockaddr_nl (overriding nlmsg_pid from the header).
+ *
+ * Returns the total number of bytes sent on success, or a negative errno.
+ */
+int netlink_sendmsg(int fd, const struct msghdr *msg, int flags)
+{
+    (void)flags;
+
+    if (!netlink_initialized || !msg) return -EINVAL;
+    if (msg->msg_iovlen < 1 || !msg->msg_iov) return -EINVAL;
+
+    int slot = netlink_fd_to_slot(fd);
+    if (slot < 0) return -EINVAL;
+
+    spinlock_acquire(&netlink_lock);
+    struct netlink_sock *nl = &netlink_table[slot];
+    if (!nl->used || !nl->bound) {
+        spinlock_release(&netlink_lock);
+        return -EINVAL;
+    }
+    uint32_t src_portid = nl->portid;
+    int protocol = nl->protocol;
+    spinlock_release(&netlink_lock);
+
+    /* Calculate total payload length from all iovecs */
+    uint64_t total = 0;
+    for (uint32_t i = 0; i < msg->msg_iovlen; i++) {
+        total += msg->msg_iov[i].iov_len;
+    }
+
+    if (total < sizeof(struct nlmsghdr))
+        return -EINVAL;
+    if (total > NETLINK_MAX_PAYLOAD)
+        return -EMSGSIZE;
+
+    /* Allocate a contiguous buffer and flatten the iovecs */
+    struct nlmsghdr *buf = (struct nlmsghdr *)kmalloc(total);
+    if (!buf)
+        return -ENOMEM;
+
+    uint64_t offset = 0;
+    for (uint32_t i = 0; i < msg->msg_iovlen; i++) {
+        uint64_t len = msg->msg_iov[i].iov_len;
+        if (len == 0) continue;
+        memcpy((uint8_t *)buf + offset, msg->msg_iov[i].iov_base, len);
+        offset += len;
+    }
+
+    /* Validate the netlink message header */
+    if (buf->nlmsg_len < sizeof(struct nlmsghdr) ||
+        buf->nlmsg_len > total) {
+        kfree(buf);
+        return -EINVAL;
+    }
+
+    /* Determine destination port ID from msg_name if provided,
+     * otherwise fall back to nlmsg_pid in the header. */
+    uint32_t dst_portid = buf->nlmsg_pid;
+    if (msg->msg_name && msg->msg_namelen >= sizeof(struct sockaddr_nl)) {
+        const struct sockaddr_nl *snl =
+            (const struct sockaddr_nl *)msg->msg_name;
+        if (snl->nl_family == AF_NETLINK) {
+            dst_portid = snl->nl_pid;
+        }
+    }
+
+    int ret;
+    if (dst_portid == 0) {
+        /* Kernel destination — dispatch internally */
+        ret = netlink_handle_kernel(protocol, buf, (int)total, src_portid);
+        if (ret == 0)
+            ret = (int)total;
+    } else {
+        /* Unicast to another netlink socket */
+        ret = netlink_unicast(protocol, dst_portid, buf, (int)total,
+                              src_portid);
+        if (ret == 0) {
+            spinlock_acquire(&netlink_lock);
+            nl->msgs_sent++;
+            spinlock_release(&netlink_lock);
+            ret = (int)total;
+        } else {
+            ret = -EINVAL;
+        }
+    }
+
+    kfree(buf);
+    return ret;
+}
+
+/* ── msghdr-based recvmsg ──────────────────────────────────────────── */
+
+/*
+ * netlink_recvmsg — Receive a netlink message into a struct msghdr.
+ *
+ * Reads a pending netlink message into the caller's iovec buffers,
+ * fills msg_name with the source sockaddr_nl (kernel as sender),
+ * and sets msg_flags.
+ *
+ * Returns the number of bytes received on success, or a negative errno.
+ */
+int netlink_recvmsg(int fd, struct msghdr *msg, int flags)
+{
+    (void)flags;
+
+    if (!netlink_initialized || !msg) return -EINVAL;
+    if (msg->msg_iovlen < 1 || !msg->msg_iov) return -EINVAL;
+
+    int slot = netlink_fd_to_slot(fd);
+    if (slot < 0) return -EINVAL;
+
+    spinlock_acquire(&netlink_lock);
+    struct netlink_sock *nl = &netlink_table[slot];
+    if (!nl->used || !nl->bound) {
+        spinlock_release(&netlink_lock);
+        return -EINVAL;
+    }
+    int avail = nl->recv_used;
+    spinlock_release(&netlink_lock);
+
+    if (avail <= 0)
+        return -EAGAIN;
+
+    /* Calculate total receive capacity */
+    uint64_t bufcap = 0;
+    for (uint32_t i = 0; i < msg->msg_iovlen; i++)
+        bufcap += msg->msg_iov[i].iov_len;
+
+    if (bufcap == 0)
+        return -EINVAL;
+
+    /* Read into the first iovec buffer (netlink messages are small) */
+    void *buf = msg->msg_iov[0].iov_base;
+    uint64_t first_len = msg->msg_iov[0].iov_len;
+    uint64_t read_len = (uint64_t)avail;
+    if (read_len > first_len)
+        read_len = first_len;
+    if (read_len > NETLINK_MAX_PAYLOAD)
+        read_len = NETLINK_MAX_PAYLOAD;
+
+    int n = netlink_recv(fd, buf, (int)read_len);
+    if (n < 0) return n;
+
+    /* Fill source address (kernel is the sender for received messages) */
+    if (msg->msg_name && msg->msg_namelen >= sizeof(struct sockaddr_nl)) {
+        struct sockaddr_nl *snl = (struct sockaddr_nl *)msg->msg_name;
+        memset(snl, 0, sizeof(struct sockaddr_nl));
+        snl->nl_family = AF_NETLINK;
+        snl->nl_pid = 0;   /* From kernel */
+        snl->nl_groups = 0;
+        msg->msg_namelen = sizeof(struct sockaddr_nl);
+    }
+
+    /* Set flags */
+    msg->msg_flags = 0;
+    if ((unsigned int)n < (unsigned int)avail && msg->msg_iovlen == 1)
+        msg->msg_flags |= MSG_TRUNC;
+
+    return n;
+}
+
 void netlink_close(int fd) {
     if (!netlink_initialized) return;
     int slot = netlink_fd_to_slot(fd);

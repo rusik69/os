@@ -3,6 +3,9 @@
 
 #include "types.h"
 
+/* Forward declaration for msghdr-based sendmsg/recvmsg */
+struct msghdr;
+
 /*
  * ── AF_NETLINK — Kernel-Userspace Communication Sockets ────────
  *
@@ -228,8 +231,18 @@ int  netlink_bind(int fd, const struct sockaddr_nl *addr);
  * Returns bytes sent on success, -1 on error. */
 int  netlink_send(int fd, const void *buf, int len);
 
+/* Send a netlink message via msghdr (sendmsg syscall wrapper).
+ * Flattens iovecs, validates nlmsghdr, handles msg_name for destination.
+ * Returns bytes sent on success, negative errno on error. */
+int  netlink_sendmsg(int fd, const struct msghdr *msg, int flags);
+
 /* Receive a netlink message. Returns bytes received on success, -1 on error. */
 int  netlink_recv(int fd, void *buf, int max_len);
+
+/* Receive a netlink message via msghdr (recvmsg syscall wrapper).
+ * Reads into iovecs, fills msg_name with source sockaddr_nl.
+ * Returns bytes received on success, negative errno on error. */
+int  netlink_recvmsg(int fd, struct msghdr *msg, int flags);
 
 /* Close a netlink socket. */
 void netlink_close(int fd);

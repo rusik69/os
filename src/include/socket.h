@@ -124,6 +124,28 @@ struct sockaddr_un {
     char     sun_path[UNIX_PATH_MAX];  /* pathname */
 };
 
+/* ── Message flags for sendmsg/recvmsg ──────────────────────────── */
+#define MSG_OOB         0x0001  /* Out-of-band data */
+#define MSG_PEEK        0x0002  /* Peek at incoming message */
+#define MSG_DONTROUTE   0x0004  /* Bypass routing */
+#define MSG_CTRUNC      0x0008  /* Control data truncated */
+#define MSG_PROXY       0x0010  /* Wait for full request */
+#define MSG_TRUNC       0x0020  /* Data truncated */
+#define MSG_DONTWAIT    0x0040  /* Non-blocking operation */
+#define MSG_EOR         0x0080  /* End of record */
+#define MSG_WAITALL     0x0100  /* Wait for full request/response */
+#define MSG_FIN         0x0200  /* FIN (SCTP) */
+#define MSG_SYN         0x0400  /* SYN (SCTP) */
+#define MSG_CONFIRM     0x0800  /* Confirm path validity */
+#define MSG_RST         0x1000  /* RST (SCTP) */
+#define MSG_ERRQUEUE    0x2000  /* Fetch from error queue */
+#define MSG_NOSIGNAL    0x4000  /* Do not generate SIGPIPE */
+#define MSG_MORE        0x8000  /* Sender will send more */
+#define MSG_WAITFORONE  0x10000 /* Wait for at least one packet (epoll) */
+#define MSG_BATCH       0x40000 /* Batch send */
+#define MSG_FASTOPEN    0x20000000 /* TCP Fast Open */
+#define MSG_CMSG_CLOEXEC 0x40000000 /* Set close-on-exec on fd received via SCM_RIGHTS */
+
 /* Socket I/O (msghdr for sendmsg/recvmsg) */
 struct msghdr {
     void         *msg_name;       /* ptr to socket address structure */
