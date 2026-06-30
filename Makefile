@@ -578,6 +578,7 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/drm/drm_core.c \
          src/drivers/drm/drm_gem.c \
          src/drivers/drm/drm_dumb.c \
+         src/drivers/drm/drm_atomic.c \
          src/drivers/drm/bochs_drm.c \
          src/kernel/live_patch.c \
          src/kernel/cgroup.c \

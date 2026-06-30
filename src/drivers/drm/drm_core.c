@@ -24,6 +24,7 @@
 #include "pmm.h"
 #include "errno.h"
 #include "heap.h"
+#include "drm_atomic.h"
 
 /* ── Global state ──────────────────────────────────────────────── */
 
@@ -252,8 +253,17 @@ static __attribute__((unused)) int drm_ioctl_dispatch(struct drm_device *dev, st
             return drm_dumb_map_offset(dev, (struct drm_mode_map_dumb *)arg);
         case DRM_IOCTL_MODE_DESTROY_DUMB:
             return drm_dumb_destroy(dev, (struct drm_mode_destroy_dumb *)arg);
+        case DRM_IOCTL_MODE_GETPROPERTY:
+            return drm_ioctl_get_property(dev, fp,
+                       (struct drm_mode_get_property *)arg);
+        case DRM_IOCTL_MODE_SETPROPERTY:
+            return drm_ioctl_set_property(dev, fp,
+                       (struct drm_mode_set_property *)arg);
+        case DRM_IOCTL_MODE_GETPROPBLOB:
+            return drm_ioctl_get_property_blob(dev, fp,
+                       (struct drm_mode_get_blob *)arg);
         default:
-            return -1;
+            return -ENOTTY;
     }
 }
 
@@ -329,12 +339,17 @@ int drm_init(void)
     memset(g_drm_files, 0, sizeof(g_drm_files));
     g_drm_device_count = 0;
 
+    /* Initialise sub-systems */
+    drm_atomic_init();
+
     kprintf("[DRM] core initialised\n");
     return 0;
 }
 
 void drm_exit(void)
 {
+    drm_atomic_exit();
+
     for (int i = 0; i < g_drm_device_count; i++) {
         if (g_drm_devices[i]) {
             drm_unregister_device(g_drm_devices[i]);
