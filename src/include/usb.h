@@ -23,6 +23,20 @@
 #define USB_DT_HUB               41
 #define USB_DT_SS_ENDPOINT_COMP  48
 
+/* ── USB setup packet (USB 2.0 spec §9.3, 8 bytes) ──────────────────── */
+/*
+ * Every control transfer begins with an 8-byte setup packet that
+ * describes the request type, recipient, and transfer parameters.
+ * Packed to match the on-wire format.
+ */
+struct usb_setup_packet {
+    uint8_t  bmRequestType;   /* direction + type + recipient */
+    uint8_t  bRequest;        /* request code */
+    uint16_t wValue;          /* request-specific value */
+    uint16_t wIndex;          /* request-specific index (interface/endpoint) */
+    uint16_t wLength;         /* number of bytes in the data stage */
+} __attribute__((packed));
+
 /* ── Standard request type bits (bmRequestType) ──────────────────────── */
 #define USB_REQ_TYPE_STANDARD   (0x00 << 5)
 #define USB_REQ_TYPE_CLASS      (0x01 << 5)

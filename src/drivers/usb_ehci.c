@@ -13,6 +13,7 @@
  *   Revision 1.0, March 12, 2002.
  */
 #include "usb.h"
+#include "usb_core.h"
 #ifdef MODULE
 #include "module.h"
 #endif
@@ -947,6 +948,223 @@ int ehci_submit_async_qtd(uint8_t dev_addr, uint8_t ep,
 
     return 0;
 }
+
+/* ── Synchronous EHCI transfer helpers ──────────────────────────────── */
+
+/*
+ * ehci_sync_submit — Submit a qTD synchronously and wait for completion.
+ *
+ * Allocates a QH + qTD, links them into the async schedule, polls the
+ * qTD token until the controller completes the transaction, then
+ * removes the QH from the async schedule and frees all resources.
+ *
+ * @dev_addr:  USB device address
+ * @ep:        Endpoint number (0 for control EP0)
+ * @buf:       DMA-safe data buffer (virtual address)
+ * @len:       Transfer length in bytes
+ * @pid:       QTD_TOKEN_PID_SETUP, QTD_TOKEN_PID_INPUT, or QTD_TOKEN_PID_OUTPUT
+ * @toggle:    Data toggle value (0 or 1)
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+static int ehci_sync_submit(uint8_t dev_addr, uint8_t ep,
+                             void *buf, uint32_t len,
+                             uint32_t pid, int toggle)
+{
+    int c = 0;
+    int ret;
+
+    if (ehci_count < 1)
+        return -ENODEV;
+
+    /* Allocate qTD (one physical page) */
+    uint64_t qtd_phys = pmm_alloc_frame();
+    if (!qtd_phys)
+        return -ENOMEM;
+
+    volatile uint32_t *qtd = (volatile uint32_t *)PHYS_TO_VIRT(qtd_phys);
+    memset((void *)qtd, 0, 4096);
+
+    /* Fill qTD */
+    uint32_t buf_phys = (uint32_t)(uintptr_t)VIRT_TO_PHYS(buf);
+    uint32_t pg_base = buf_phys & ~0xFFFu;
+    uint32_t pg_off = buf_phys & 0xFFFu;
+
+    /* Buffer pointer entries (up to 5 pages) */
+    qtd[3] = pg_base;
+    qtd[4] = (pg_off + len > 4096) ? (pg_base + 0x1000u) : 0;
+    qtd[5] = (qtd[4] && (pg_off + len > 8192)) ? (pg_base + 0x2000u) : 0;
+    qtd[6] = 0;
+    qtd[7] = 0;
+
+    /* Token: status + PID + CERR + length + toggle */
+    uint32_t bytes_field = (len > 0) ? (len << QTD_TOKEN_BYTES_SHIFT) : 0;
+    uint32_t cerr_field = (3u << QTD_TOKEN_CERR_SHIFT);
+    uint32_t toggle_bit = toggle ? QTD_TOKEN_TOGGLE : 0;
+    uint32_t page_sel_field = (pg_off >> 12) & 0x07;
+
+    qtd[2] = QTD_TOKEN_ACTIVE | pid | cerr_field |
+             (page_sel_field << QTD_TOKEN_CPAGE_SHIFT) |
+             bytes_field | toggle_bit;
+
+    qtd[0] = EHCI_PTR_TERMINATE;  /* Next qTD pointer: terminate */
+    qtd[1] = EHCI_PTR_TERMINATE;  /* Alternate next: terminate */
+
+    __asm__ volatile("mfence" ::: "memory");
+
+    /* Allocate QH (one physical page) */
+    uint64_t qh_phys = pmm_alloc_frame();
+    if (!qh_phys) {
+        pmm_free_frame(qtd_phys);
+        return -ENOMEM;
+    }
+
+    volatile uint32_t *qh = (volatile uint32_t *)PHYS_TO_VIRT(qh_phys);
+    memset((void *)qh, 0, 4096);
+
+    /* Save current async list head */
+    uint32_t old_async_head = op_read(c, EHCI_ASYNCLISTADDR);
+
+    /* Horizontal link pointer: point to old head (or terminate) */
+    qh[0] = old_async_head ? old_async_head : EHCI_PTR_TERMINATE;
+
+    /* Endpoint capabilities: speed + endpoint number + device address */
+    uint32_t ep_cap = QH_EPS_HIGH | ((uint32_t)ep << 8) | dev_addr;
+    qh[1] = ep_cap;
+
+    /* Overlay qTD pointer (32-byte aligned) */
+    qh[2] = (uint32_t)(qtd_phys & 0xFFFFFFE0);
+    /* Current qTD pointer */
+    qh[4] = (uint32_t)(qtd_phys & 0xFFFFFFE0);
+
+    __asm__ volatile("mfence" ::: "memory");
+
+    /* Link our QH at the head of the async schedule */
+    op_write(c, EHCI_ASYNCLISTADDR, (uint32_t)(qh_phys & 0xFFFFFFE0));
+
+    /* Enable async schedule if not already running */
+    uint32_t cmd = op_read(c, EHCI_USBCMD);
+    if (!(cmd & EHCI_CMD_ASE))
+        op_write(c, EHCI_USBCMD, cmd | EHCI_CMD_ASE);
+
+    __asm__ volatile("mfence" ::: "memory");
+
+    /* Poll for qTD completion (200 ms timeout) */
+    int timeout = 200000;
+    while (timeout > 0) {
+        uint32_t token = qtd[2];
+        if (!(token & QTD_TOKEN_ACTIVE)) {
+            if (token & QTD_TOKEN_HALTED) {
+                kprintf("[EHCI] sync_submit: HALTED (token=0x%08X)\n",
+                        (unsigned)token);
+                ret = -EIO;
+                goto cleanup;
+            }
+            if (token & (QTD_TOKEN_BABBLE | QTD_TOKEN_XACTERR |
+                         QTD_TOKEN_DATABUFERR)) {
+                kprintf("[EHCI] sync_submit: transfer error (token=0x%08X)\n",
+                        (unsigned)token);
+                ret = -EIO;
+                goto cleanup;
+            }
+            /* Success */
+            ret = 0;
+            goto cleanup;
+        }
+        busy_wait_n(10);
+        timeout--;
+    }
+
+    /* Timeout */
+    kprintf("[EHCI] sync_submit: TIMEOUT (addr=%d ep=%d len=%u pid=%s)\n",
+            dev_addr, ep, len,
+            (pid == QTD_TOKEN_PID_SETUP) ? "SETUP" :
+            (pid == QTD_TOKEN_PID_INPUT) ? "IN" : "OUT");
+    ret = -ETIMEDOUT;
+
+cleanup:
+    /* Restore the async list head */
+    op_write(c, EHCI_ASYNCLISTADDR, old_async_head);
+
+    /* If our QH was the only one, disable async schedule */
+    cmd = op_read(c, EHCI_USBCMD);
+    if (old_async_head == 0 || old_async_head == EHCI_PTR_TERMINATE)
+        op_write(c, EHCI_USBCMD, cmd & ~EHCI_CMD_ASE);
+
+    __asm__ volatile("mfence" ::: "memory");
+
+    pmm_free_frame(qh_phys);
+    pmm_free_frame(qtd_phys);
+    return ret;
+}
+
+/*
+ * ehci_control_transfer — Full control transfer lifecycle via EHCI.
+ *
+ * Implements the three-phase control transfer:
+ *   1. SETUP  — 8-byte setup packet on EP0 (always)
+ *   2. DATA   — optional data stage (wLength > 0)
+ *   3. STATUS — zero-length handshake, direction opposite of DATA
+ *
+ * Implements usb_hc_ops.control_transfer.
+ */
+static int ehci_control_transfer(uint8_t dev_addr,
+                                  const struct usb_setup_packet *setup,
+                                  void *data, uint32_t len)
+{
+    int ret;
+    uint8_t direction;
+    uint32_t data_pid;
+
+    /* Phase 1: SETUP stage — send the 8-byte setup packet */
+    ret = ehci_sync_submit(dev_addr, 0,
+                           (void *)setup, sizeof(*setup),
+                           QTD_TOKEN_PID_SETUP, 0);
+    if (ret < 0) {
+        kprintf("[EHCI] ctrl: SETUP failed (addr=%d ret=%d)\n",
+                dev_addr, ret);
+        return ret;
+    }
+
+    /* Phase 2: DATA stage (if wLength > 0) */
+    if (len > 0 && data) {
+        direction = setup->bmRequestType & USB_DIR_IN;
+        data_pid = direction ? QTD_TOKEN_PID_INPUT : QTD_TOKEN_PID_OUTPUT;
+
+        ret = ehci_sync_submit(dev_addr, 0, data, len, data_pid, 1);
+        if (ret < 0) {
+            kprintf("[EHCI] ctrl: DATA failed (addr=%d ret=%d)\n",
+                    dev_addr, ret);
+            return ret;
+        }
+    }
+
+    /* Phase 3: STATUS stage — zero-length, direction opposite of DATA */
+    /* If no data stage, status is IN (device-side status) */
+    direction = setup->bmRequestType & USB_DIR_IN;
+    if (len > 0 && data) {
+        /* DATA was IN  → STATUS is OUT (host sends zero-length) */
+        /* DATA was OUT → STATUS is IN  (device sends zero-length) */
+        direction = !direction;
+    }
+    data_pid = direction ? QTD_TOKEN_PID_INPUT : QTD_TOKEN_PID_OUTPUT;
+
+    ret = ehci_sync_submit(dev_addr, 0, NULL, 0, data_pid, 1);
+    if (ret < 0) {
+        kprintf("[EHCI] ctrl: STATUS failed (addr=%d ret=%d)\n",
+                dev_addr, ret);
+        return ret;
+    }
+
+    return 0;
+}
+
+/* ── Registered HC ops table ──────────────────────────────────────────── */
+
+static const struct usb_hc_ops ehci_hc_ops = {
+    .control_transfer = ehci_control_transfer,
+};
+
 int xhci_submit_isochronous(uint8_t dev_addr, uint8_t ep,
                              void *buf, uint32_t len)
 {
@@ -970,7 +1188,11 @@ int __init ehci_usb_init(void) {
             }
         }
     }
-    return ehci_count > 0 ? 0 : -1;
+    if (ehci_count > 0) {
+        usb_register_hc_ops(&ehci_hc_ops);
+        return 0;
+    }
+    return -1;
 }
 
 /* ── Module support (M59: USB as loadable module) ──────────────── */

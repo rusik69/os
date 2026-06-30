@@ -288,6 +288,10 @@ struct usb_driver *usb_core_find_driver(const char *name)
 }
 
 /* ── usb_init: Initialise USB subsystem, probe for controllers ── */
+
+/* Forward declaration for EHCI initialisation */
+extern int ehci_usb_init(void);
+
 int usb_init(void)
 {
     kprintf("[USB] Initialising USB subsystem...\n");
@@ -296,13 +300,11 @@ int usb_init(void)
     usb_core_init();
 
     /* Try to initialise EHCI controllers */
-    /* ehci_pci_probe_all stub (EHCI not implemented) */
-    (void)0;
-    int ret = 0;
+    int ret = ehci_usb_init();
     if (ret == 0) {
-        kprintf("[USB] USB subsystem initialised\n");
+        kprintf("[USB] USB subsystem initialised (EHCI found)\n");
     } else {
-        kprintf("[USB] No EHCI controllers found\n");
+        kprintf("[USB] USB subsystem initialised (no EHCI controller)\n");
     }
 
     return 0;

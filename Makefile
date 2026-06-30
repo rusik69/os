@@ -559,6 +559,7 @@ C_SRCS = src/kernel/kernel.c \
          src/boot/uefi_runtime.c \
          src/drivers/simplefb.c \
          src/drivers/usb_core.c \
+         src/drivers/usb_transfer.c \
          src/drivers/usb_eth.c \
          src/drivers/gadget/udc_core.c \
          src/drivers/gadget/f_mass_storage.c \
@@ -733,7 +734,7 @@ obj-m += drivers/ahci.ko
 
 # USB EHCI + Mass Storage Class driver as single module (M59)
 obj-m += drivers/usb.ko
-usb-objs := drivers/usb_ehci drivers/usb_msc drivers/usb_hid drivers/usb_cdc_acm drivers/usb_hub
+usb-objs := drivers/usb_ehci drivers/usb_msc drivers/usb_hid drivers/usb_cdc_acm drivers/usb_hub drivers/usb_transfer
 
 # Filesystem modules — convert small read-only FS into loadable .ko
 # tarfs: read-only tar archive filesystem (M55)
