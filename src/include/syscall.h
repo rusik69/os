@@ -469,6 +469,7 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size,
 #define SYS_SETEGID            404 /* setegid(egid) → 0 or -errno */
 #define SYS_GETGROUPS          405 /* getgroups(size, list) → count or -errno */
 #define SYS_SETGROUPS          406 /* setgroups(size, list) → 0 or -errno */
+#define SYS_GETPGRP            407 /* getpgrp() → pgid of current process */
 
 #define SYS_REMAP_FILE_PAGES   400 /* remap_file_pages(addr, size, prot, pgoff, flags) */
 

@@ -153,6 +153,21 @@ uint64_t sys_setegid(uint64_t egid)
     return 0;
 }
 
+/* ── sys_getpgrp — get process group ID of calling process ───────
+ *
+ * pid_t getpgrp(void);
+ *
+ * Returns the process group ID of the calling process.
+ * Equivalent to getpgid(0).
+ */
+uint64_t sys_getpgrp(void)
+{
+    struct process *p = process_get_current();
+    if (!p)
+        return (uint64_t)(int64_t)-ESRCH;
+    return (uint64_t)p->pgid;
+}
+
 /* ── sys_getgroups — get list of supplementary group IDs ──────────
  *
  * int getgroups(int size, gid_t list[]);

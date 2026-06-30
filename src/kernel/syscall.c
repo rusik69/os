@@ -119,6 +119,7 @@ uint64_t sys_setgid(uint64_t gid);
 uint64_t sys_setegid(uint64_t egid);
 uint64_t sys_getgroups(uint64_t size, uint64_t list_addr);
 uint64_t sys_setgroups(uint64_t size, uint64_t list_addr);
+uint64_t sys_getpgrp(void);
 
 /* D123: Process & Signal syscalls — declared in sys_process.c */
 uint64_t sys_rt_sigaction(uint64_t signum, uint64_t act_addr,
@@ -10320,6 +10321,7 @@ uint64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_GETPRIORITY:         return sys_getpriority(a1, a2);
         case SYS_SETPGID:             return sys_setpgid(a1, a2);
         case SYS_GETPGID:             return sys_getpgid(a1);
+        case SYS_GETPGRP:             return sys_getpgrp();
         case SYS_KILLPG:              return sys_killpg(a1, a2);
         case SYS_PROC_LIST:     return sys_proc_list(a1, a2);
         case SYS_PCI_LIST:      return sys_pci_list();
