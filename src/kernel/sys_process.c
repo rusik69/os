@@ -416,3 +416,116 @@ uint64_t sys_rt_sigtimedwait(uint64_t set_addr, uint64_t info_addr,
          * waker. */
     }
 }
+
+/* ── sys_kill — send signal to process/process group ────────────
+ *
+ *   int kill(pid_t pid, int sig);
+ *
+ * Linux-compatible kill syscall.  Send signal `sig` to the process(es)
+ * identified by `pid`:
+ *   pid > 0   → send to the process with that PID
+ *   pid == 0  → send to all processes in the caller's process group
+ *   pid == -1 → send to all processes for which the caller has permission
+ *   pid < -1  → send to the process group with ID = -pid
+ *
+ * If sig == 0, perform error checking only — no signal is actually sent.
+ * This is still subject to the same permission checks, and is used by
+ * userspace to probe whether a process/group exists and is killable.
+ *
+ * Returns 0 on success, -errno on error.
+ */
+uint64_t sys_kill(uint64_t pid, uint64_t sig) {
+    struct process *cur = process_get_current();
+    if (!cur)
+        return (uint64_t)(int64_t)-ESRCH;
+
+    /* Basic signal number sanity — sig == 0 is the null-signal probe,
+     * sig > SIG_MAX is invalid, everything 1..SIG_MAX is valid. */
+    if (sig > SIG_MAX)
+        return (uint64_t)(int64_t)-EINVAL;
+
+    /* ── pid > 0: send to a specific process ──────────────────── */
+    if ((int64_t)pid > 0) {
+        struct process *target = process_get_by_pid((uint32_t)pid);
+        if (!target || target->state == PROCESS_UNUSED)
+            return (uint64_t)(int64_t)-ESRCH;
+
+        /* Permission check — root (euid 0) or matching UID can signal */
+        if (cur->euid != 0 &&
+            cur->euid != target->euid &&
+            cur->uid  != target->uid)
+            return (uint64_t)(int64_t)-EPERM;
+
+        /* Null-signal probe: existence+permission check only */
+        if (sig == 0)
+            return 0;
+
+        return (uint64_t)(int64_t)signal_send((uint32_t)pid, (int)sig);
+    }
+
+    /* ── pid == 0: send to all processes in caller's group ──── */
+    if ((int64_t)pid == 0) {
+        uint32_t pgid = cur->pgid;
+        struct process *table = process_get_table();
+        int found = 0;
+
+        for (int i = 0; i < PROCESS_MAX; i++) {
+            if (table[i].state == PROCESS_UNUSED)
+                continue;
+            if (table[i].pgid != pgid)
+                continue;
+            found = 1;
+            if (sig != 0)
+                signal_send(table[i].pid, (int)sig);
+        }
+
+        if (!found)
+            return (uint64_t)(int64_t)-ESRCH;
+        return 0;
+    }
+
+    /* ── pid == -1: broadcast to all processes ────────────────── */
+    if ((int64_t)pid == -1) {
+        struct process *table = process_get_table();
+
+        for (int i = 0; i < PROCESS_MAX; i++) {
+            if (table[i].state == PROCESS_UNUSED)
+                continue;
+            /* Skip ourselves (PID 1 / init is also excluded) */
+            if (table[i].pid == cur->pid || table[i].pid == 1)
+                continue;
+            if (sig != 0) {
+                /* Permission check per target */
+                if (cur->euid == 0 ||
+                    cur->euid == table[i].euid ||
+                    cur->uid  == table[i].uid)
+                    signal_send(table[i].pid, (int)sig);
+            }
+        }
+        /* Broadcast null-probe always succeeds (we can always signal
+         * at least ourselves, but we skip PID 1, so just return 0). */
+        return 0;
+    }
+
+    /* ── pid < -1: send to process group with ID = -pid ─────── */
+    {
+        uint32_t pgid = (uint32_t)(-(int64_t)pid);
+
+        if (pgid == 0)
+            return (uint64_t)(int64_t)-EINVAL;
+
+        /* Null-signal probe for process group */
+        if (sig == 0) {
+            struct process *table = process_get_table();
+            for (int i = 0; i < PROCESS_MAX; i++) {
+                if (table[i].state == PROCESS_UNUSED)
+                    continue;
+                if (table[i].pgid == pgid)
+                    return 0;
+            }
+            return (uint64_t)(int64_t)-ESRCH;
+        }
+
+        return (uint64_t)(int64_t)signal_send_group(pgid, (int)sig);
+    }
+}

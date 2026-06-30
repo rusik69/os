@@ -117,6 +117,7 @@ uint64_t sys_rt_sigprocmask(uint64_t how, uint64_t set_addr,
 uint64_t sys_rt_sigreturn(void);
 uint64_t sys_rt_sigtimedwait(uint64_t set_addr, uint64_t info_addr,
                              uint64_t timeout_addr, uint64_t sigsetsize);
+uint64_t sys_kill(uint64_t pid, uint64_t sig);
 
 /* ── Open file descriptor table (for lseek support) ────────────── */
 
@@ -974,17 +975,6 @@ static uint64_t sys_getpid(void) {
     struct process *p = process_get_current();
     /* Return namespace-local PID (Item 111) */
     return p ? pid_ns_get_ns_pid(p) : 0;
-}
-
-static uint64_t sys_kill(uint64_t pid, uint64_t sig) {
-    struct process *cur = process_get_current();
-    struct process *target = process_get_by_pid((uint32_t)pid);
-    if (!target || target->state == PROCESS_UNUSED)
-        return (uint64_t)(int64_t)-ESRCH;
-    /* Permission check: root (euid 0) or same uid can signal */
-    if (cur->euid != 0 && cur->euid != target->euid)
-        return (uint64_t)(int64_t)-EPERM;
-    return (uint64_t)signal_send((uint32_t)pid, (int)sig);
 }
 
 static uint64_t sys_brk(uint64_t addr) {
