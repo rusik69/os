@@ -860,6 +860,8 @@ struct linux_dirent64 {
 /* Process Credentials & Scheduling */
 #define SYS_CAPGET            570
 #define SYS_CAPSET            571
+#define SYS_SETSECUREBITS     577  /* setsecurebits(bits) → 0 or -errno */
+#define SYS_GETSECUREBITS     578  /* getsecurebits() → current securebits */
 #define SYS_GETRESUID         350
 #define SYS_TKILL           233
 #define SYS_EXECVE          234

@@ -24,9 +24,9 @@ MODULE_AUTHOR("Ruslan Gustomiasov");
  * Capability version negotiation helper.
  *
  * Linux capget() version negotiation:
- * 1. If header→version == _LINUX_CAPABILITY_VERSION_x, accept and return data.
- * 2. If header→version == some other value, the kernel overwrites
- *    header→version with LINUX_CAPABILITY_VERSION and returns -EINVAL.
+ * 1. If header->version == _LINUX_CAPABILITY_VERSION_x, accept and return data.
+ * 2. If header->version == some other value, the kernel overwrites
+ *    header->version with LINUX_CAPABILITY_VERSION and returns -EINVAL.
  *    The caller must retry with the reported version.
  */
 static int cap_version_negotiate(struct __user_cap_header_struct *hdr)
@@ -94,12 +94,12 @@ static int cap_fill_data(struct process *proc,
  * Get the capability sets of a process. The header specifies the
  * capability version and target PID.
  *
- * If header→pid == 0, returns capabilities of the calling process.
+ * If header->pid == 0, returns capabilities of the calling process.
  * Otherwise, returns capabilities of the specified process (requires
  * the caller to have permission to see that process).
  *
- * Version negotiation: if header→version is not a known capability
- * version, the kernel overwrites header→version with the latest
+ * Version negotiation: if header->version is not a known capability
+ * version, the kernel overwrites header->version with the latest
  * supported version and returns -EINVAL. The caller should retry
  * with the reported version.
  *
@@ -163,7 +163,7 @@ uint64_t sys_capget(uint64_t header_addr, uint64_t data_addr)
  * Set the capability sets of a process. The header specifies the
  * capability version and target PID.
  *
- * If header→pid == 0, sets capabilities of the calling process.
+ * If header->pid == 0, sets capabilities of the calling process.
  * Otherwise, sets capabilities of the specified process (requires
  * CAP_SETPCAP in the caller's effective set).
  *
@@ -309,4 +309,51 @@ uint64_t sys_capset(uint64_t header_addr, uint64_t data_addr)
 	sys_cap_bset_apply(target);
 
 	return 0;
+}
+
+/* ── sys_setsecurebits — set securebits for current process ────────────
+ *
+ * int setsecurebits(unsigned int bits);
+ *
+ * Set the securebits flags for the calling process. The bits argument
+ * specifies which securebits to set. Locked bits cannot be changed once
+ * set, and setting a locked bit requires the corresponding non-locked bit
+ * to also be set.
+ *
+ * Returns 0 on success, -EINVAL on invalid bits, -EPERM on locked bits,
+ * or -ESRCH if the current process cannot be determined.
+ */
+uint64_t sys_setsecurebits(uint64_t bits)
+{
+	struct process *p = process_get_current();
+
+	if (!p)
+		return (uint64_t)(int64_t)-ESRCH;
+
+	/* Validate: only accept the low byte (securebits is uint8_t) */
+	if (bits & ~0xFFULL)
+		return (uint64_t)(int64_t)-EINVAL;
+
+	int ret = securebits_set(p, (uint8_t)bits);
+	if (ret < 0)
+		return (uint64_t)(int64_t)ret;
+
+	return 0;
+}
+
+/* ── sys_getsecurebits — get securebits for current process ────────────
+ *
+ * int getsecurebits(void);
+ *
+ * Returns the current securebits flags for the calling process,
+ * or -ESRCH if the current process cannot be determined.
+ */
+uint64_t sys_getsecurebits(void)
+{
+	struct process *p = process_get_current();
+
+	if (!p)
+		return (uint64_t)(int64_t)-ESRCH;
+
+	return (uint64_t)securebits_get(p);
 }

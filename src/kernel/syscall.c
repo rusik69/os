@@ -124,6 +124,8 @@ uint64_t sys_getpgrp(void);
 /* D128: Capability syscalls — implemented in sys_caps.c */
 uint64_t sys_capget(uint64_t header_addr, uint64_t data_addr);
 uint64_t sys_capset(uint64_t header_addr, uint64_t data_addr);
+uint64_t sys_setsecurebits(uint64_t bits);
+uint64_t sys_getsecurebits(void);
 
 /* D123: Process & Signal syscalls — declared in sys_process.c */
 uint64_t sys_rt_sigaction(uint64_t signum, uint64_t act_addr,
@@ -10531,6 +10533,8 @@ uint64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_SYSINFO:         return sys_sysinfo(a1);
         case SYS_CAPGET:          return sys_capget(a1, a2);
         case SYS_CAPSET:          return sys_capset(a1, a2);
+        case SYS_SETSECUREBITS:   return sys_setsecurebits(a1);
+        case SYS_GETSECUREBITS:   return sys_getsecurebits();
         case SYS_GETRESUID:       return sys_getresuid(a1, a2, a3);
         case SYS_SETRESUID:       return sys_setresuid(a1, a2, a3);
         case SYS_GETRESGID:       return sys_getresgid(a1, a2, a3);
