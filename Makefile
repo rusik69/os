@@ -503,6 +503,7 @@ C_SRCS = src/kernel/kernel.c \
          src/test/kunit_container_ext.c \
          src/test/kunit_net.c \
          src/test/kunit_errno.c \
+         src/test/kunit_usb.c \
          src/container/runtime.c \
          src/container/config.c \
          src/container/state.c \
