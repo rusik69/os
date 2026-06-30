@@ -2595,6 +2595,17 @@ static uint64_t sys_gettid(void) {
     return (uint64_t)p->tgid ? (uint64_t)p->tgid : (uint64_t)p->pid;
 }
 
+uint64_t sys_set_tid_address(uint64_t tidptr) {
+    struct process *p = process_get_current();
+    if (!p) return (uint64_t)-ESRCH;
+    /* Save the old clear_child_tid pointer and set the new one.
+     * On thread exit, the kernel writes 0 to *clear_child_tid and
+     * performs a futex wake on that address (see process_exit_code). */
+    p->ctid_ptr = (void *)(uintptr_t)tidptr;
+    /* Return the calling thread's TID (same as gettid()) */
+    return (uint64_t)p->tgid ? (uint64_t)p->tgid : (uint64_t)p->pid;
+}
+
 static uint64_t sys_execve(uint64_t path_addr, uint64_t argv_addr, uint64_t envp_addr) {
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
@@ -9418,6 +9429,7 @@ uint64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_CLOSE_RANGE: return sys_close_range(a1, a2, a3);
         case SYS_EXIT:   return sys_exit(a1);
         case SYS_EXIT_GROUP:   return sys_exit_group(a1);
+        case SYS_SET_TID_ADDRESS: return sys_set_tid_address(a1);
         case SYS_GETPID: return sys_getpid();
         case SYS_KILL:   return sys_kill(a1, a2);
         case SYS_BRK:    return sys_brk(a1);
