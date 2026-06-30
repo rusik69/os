@@ -425,6 +425,19 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size,
 #define SYS_QUERY_MODULE      369  /* query_module(name, info_buf, buf_size) → 0 or -errno */
 #define SYS_CREATE_MODULE     511  /* create_module(name, size) — legacy, returns -ENOSYS */
 #define SYS_GET_KERNEL_SYMS   512  /* get_kernel_syms(table) — legacy, returns -ENOSYS */
+#define SYS_SYSCTL           513  /* sysctl(args) — legacy sysctl(2), returns -ENOSYS */
+
+/* __sysctl_args — argument structure for the legacy sys_sysctl() syscall.
+ * This is deprecated in Linux 2.6+ and always returns -ENOSYS here. */
+struct __sysctl_args {
+    int          *name;       /* integer array describing the variable */
+    int           nlen;       /* length of name array */
+    void         *oldval;     /* where to write old value */
+    size_t       *oldlenp;    /* old value size */
+    void         *newval;     /* where to write new value */
+    size_t        newlen;     /* new value size */
+    unsigned long __unused[4];
+};
 
 /* Userspace framebuffer graphics syscalls */
 #define SYS_VGA_PUT_PIXEL          504  /* put_pixel(x, y, color) */

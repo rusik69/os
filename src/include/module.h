@@ -552,4 +552,10 @@ uint64_t sys_create_module(uint64_t name_addr, uint64_t size);
  */
 uint64_t sys_get_kernel_syms(uint64_t table_addr);
 
+/*
+ * sys_sysctl — Legacy sysctl(2) syscall (deprecated, Linux 2.0 era).
+ * Returns -ENOSYS; use /proc/sys interface instead.
+ */
+uint64_t sys_sysctl(uint64_t args_addr);
+
 #endif /* MODULE_H */

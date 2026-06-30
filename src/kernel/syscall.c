@@ -10591,6 +10591,7 @@ uint64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2,
         /* ── Legacy module syscalls (D130) ──────────────────────────── */
         case SYS_CREATE_MODULE:   return sys_create_module(a1, a2);
         case SYS_GET_KERNEL_SYMS: return sys_get_kernel_syms(a1);
+        case SYS_SYSCTL:          return sys_sysctl(a1);
         /* ── membarrier (Item 252) ────────────────────────────────── */
         case SYS_MEMBARRIER:      return sys_membarrier(a1, a2, a3);
         /* ── rseq (Item 348) ──────────────────────────────────────── */

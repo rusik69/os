@@ -26,7 +26,7 @@
 
 MODULE_LICENSE("GPL v2");
 MODULE_VERSION("1.0");
-MODULE_DESCRIPTION("Legacy module syscall implementations (create_module, get_kernel_syms)");
+MODULE_DESCRIPTION("Legacy module syscall implementations (create_module, get_kernel_syms, sysctl)");
 MODULE_AUTHOR("OS Kernel Team");
 
 /*
@@ -116,6 +116,34 @@ uint64_t sys_get_kernel_syms(uint64_t table_addr)
 		return (uint64_t)-EPERM;
 
 	kprintf("[MOD] sys_get_kernel_syms: deprecated interface, use /proc/kallsyms\n");
+
+	return (uint64_t)(int64_t)-ENOSYS;
+}
+
+/*
+ * sys_sysctl — Legacy sysctl syscall (deprecated)
+ *
+ *   @args_addr:  User-space pointer to struct __sysctl_args.
+ *
+ * This is a legacy syscall from Linux 2.0 era, superseded by
+ * /proc/sys interface.  In modern Linux (2.6.8+, confirmed through
+ * 6.x) this syscall always returns -ENOSYS.  Glibc has not exposed
+ * sysctl(2) to userspace since glibc 2.32.
+ *
+ * Returns:
+ *   -ENOSYS    — always; this interface is not implemented.
+ *   -EPERM     — caller lacks permission (lockdown active).
+ *   -EFAULT    — invalid user-space pointer for args.
+ */
+uint64_t sys_sysctl(uint64_t args_addr)
+{
+	(void)args_addr;
+
+	/* Lockdown CONFIDENTIALITY: block access to kernel tunables */
+	if (lockdown_is_locked_down(LOCKDOWN_CONFIDENTIALITY))
+		return (uint64_t)-EPERM;
+
+	kprintf("[SYSCTL] sys_sysctl: deprecated interface, use /proc/sys instead\n");
 
 	return (uint64_t)(int64_t)-ENOSYS;
 }
