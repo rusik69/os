@@ -849,6 +849,11 @@ struct linux_dirent64 {
 /* Process spawning — lightweight create+exec (Item 306) */
 #define SYS_POSIX_SPAWN      777  /* posix_spawn(path, argv, envp, flags) → pid or -errno */
 
+/* ── D123: Process & Signal Syscalls ──────────────────────────── */
+#define SYS_RT_SIGACTION          450  /* rt_sigaction(sig, act, oldact, sigsetsize) */
+#define SYS_EXIT_GROUP            451  /* exit_group(status) */
+#define SYS_SET_TID_ADDRESS       452  /* set_tid_address(tidptr) */
+
 /* ── kexec (Item 362) ─────────────────────────────────────────── */
 #define SYS_KEXEC_LOAD       778  /* kexec_load(phys_addr, entry, flags) → 0 or -1 */
 

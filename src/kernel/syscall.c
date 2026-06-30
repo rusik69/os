@@ -85,6 +85,7 @@
 #include "poll.h"
 #include "blockdev.h"   /* for SG_IO ioctl */
 #include "io_uring.h"   /* for io_uring syscalls */
+#include "signal_libc.h" /* for struct sigaction (sys_rt_sigaction validation) */
 
 /* Module metadata */
 MODULE_LICENSE("GPL v2");
@@ -107,6 +108,10 @@ static spinlock_t proc_table_lock = SPINLOCK_INIT;
  * pselect6 packs {sigmask_ptr, sigset_size} in arg6 per the Linux x86_64 ABI.
  * Interrupts are masked during the syscall handler so a single global is safe. */
 extern uint64_t syscall_arg6;
+
+/* D123: Process & Signal syscalls — declared in sys_process.c */
+uint64_t sys_rt_sigaction(uint64_t signum, uint64_t act_addr,
+                          uint64_t oldact_addr, uint64_t sigsetsize);
 
 /* ── Open file descriptor table (for lseek support) ────────────── */
 
@@ -432,6 +437,10 @@ static int syscall_validate_user_args(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_SIGALTSTACK:
             if (a1 && !syscall_user_read_ok(a1, sizeof(stack_t))) return -EFAULT;
             if (a2 && !syscall_user_write_ok(a2, sizeof(stack_t))) return -EFAULT;
+            return 0;
+        case SYS_RT_SIGACTION:
+            if (a2 && !syscall_user_read_ok(a2, sizeof(struct sigaction))) return -EFAULT;
+            if (a3 && !syscall_user_write_ok(a3, sizeof(struct sigaction))) return -EFAULT;
             return 0;
         case SYS_PERSONALITY:
             return 0;
@@ -9617,6 +9626,9 @@ uint64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2,
             return 0;
         case SYS_SEMCTL:
             return sys_semctl(a1, a2, a3, a4);
+        /* ── D123: Process & Signal Syscalls ────────────────────── */
+        case SYS_RT_SIGACTION:
+            return sys_rt_sigaction(a1, a2, a3, a4);
         default: {
             uint64_t ret = (uint64_t)-1;
             audit_syscall_exit(ret);

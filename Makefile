@@ -89,6 +89,7 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/syscall_cleanup.c \
          src/kernel/syscall_new.c \
          src/kernel/syscall_linux.c \
+         src/kernel/sys_process.c \
          src/kernel/vfs.c \
          src/kernel/elf.c \
          src/kernel/spawn_kernel.c \
