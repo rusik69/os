@@ -46,6 +46,18 @@
 #define FIOASYNC   0x5452      /* set/clear O_ASYNC (arg: int*) */
 #define FIOQSIZE   0x5460      /* get file size (return uint64_t) */
 
+/* ── Generic file ioctls ─────────────────────────────────────────── */
+
+#define FIONREAD   0x541B      /* get # of immediately readable bytes */
+#define FIGETBSZ   0x5453      /* get filesystem block size */
+
+/* ── Filesystem ioctls (FS_IOC_*) ────────────────────────────────── */
+
+#define FS_IOC_GETFLAGS   0x80086601  /* get file flags (_IOR('f',1,long)) */
+#define FS_IOC_SETFLAGS   0x40086602  /* set file flags (_IOW('f',2,long)) */
+#define FS_IOC_GETVERSION 0x80086603  /* get inode generation (_IOR('f',3,long)) */
+#define FS_IOC_SETVERSION 0x40086604  /* set inode generation (_IOW('f',4,long)) */
+
 /* ── Terminal ioctls (TIOC*) ──────────────────────────────────────── */
 
 #define TIOCGWINSZ  0x5413     /* get terminal window size */

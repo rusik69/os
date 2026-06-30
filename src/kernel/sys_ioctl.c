@@ -28,6 +28,7 @@
 #include "printf.h"
 #include "module.h"
 #include "netdevice.h"
+#include "vfs.h"
 
 MODULE_LICENSE("MIT");
 MODULE_VERSION("1.0");
@@ -277,6 +278,84 @@ static int ioctl_siocsifflags(uint64_t arg)
 }
 
 /* ═══════════════════════════════════════════════════════════════════
+ *  GENERIC FILE IOCTLS (FIONREAD, FIOQSIZE, FIGETBSZ, FS_IOC_*)
+ *  ═══════════════════════════════════════════════════════════════════ */
+
+/*
+ * ioctl_file_dispatch — Handle file-level ioctl commands.
+ *
+ * Commands handled at the VFS layer without requiring a per-filesystem
+ * callback: FIONREAD, FIOQSIZE, FIGETBSZ.
+ * Commands that require filesystem support (FS_IOC_*) are dispatched
+ * through vfs_ioctl() so each filesystem can implement them.
+ *
+ * Returns 0 on success or negative errno.
+ */
+static int ioctl_file_dispatch(struct process *p, int fd, uint64_t cmd,
+                               uint64_t arg)
+{
+	const char *path = p->fd_table[fd].path;
+	if (!path || path[0] == '\0')
+		return -EBADF;
+
+	switch (cmd) {
+	case FIONREAD: {
+		/* Return the number of bytes immediately available to read.
+		 * For regular files this is the remaining bytes from the
+		 * current offset to EOF. */
+		struct vfs_stat st;
+		int ret = vfs_stat(path, &st);
+		if (ret < 0)
+			return ret;
+
+		uint64_t offset = p->fd_table[fd].offset;
+		uint64_t avail = (st.size > offset) ? (st.size - offset) : 0;
+
+		int val = (int)avail;
+		if (copy_to_user(arg, &val, sizeof(val)) < 0)
+			return -EFAULT;
+		return 0;
+	}
+
+	case FIOQSIZE: {
+		/* Return the file size as a 64-bit value */
+		struct vfs_stat st;
+		int ret = vfs_stat(path, &st);
+		if (ret < 0)
+			return ret;
+
+		uint64_t size = st.size;
+		if (copy_to_user(arg, &size, sizeof(size)) < 0)
+			return -EFAULT;
+		return 0;
+	}
+
+	case FIGETBSZ: {
+		/* Return the filesystem block size */
+		struct vfs_statfs st;
+		int ret = vfs_statfs(path, &st);
+		if (ret < 0)
+			return ret;
+
+		int bsize = (int)st.f_bsize;
+		if (copy_to_user(arg, &bsize, sizeof(bsize)) < 0)
+			return -EFAULT;
+		return 0;
+	}
+
+	case FS_IOC_GETFLAGS:
+	case FS_IOC_SETFLAGS:
+	case FS_IOC_GETVERSION:
+	case FS_IOC_SETVERSION:
+		/* Dispatch filesystem-specific ioctls through VFS */
+		return vfs_ioctl(path, cmd, arg);
+
+	default:
+		return -ENOTTY;
+	}
+}
+
+/* ═══════════════════════════════════════════════════════════════════
  *  BLOCK-DEVICE IOCTLS
  *  ═══════════════════════════════════════════════════════════════════ */
 
@@ -470,6 +549,16 @@ uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg)
 		return (uint64_t)(int64_t)ioctl_siocgifflags(arg);
 	case SIOCSIFFLAGS:
 		return (uint64_t)(int64_t)ioctl_siocsifflags(arg);
+
+	/* ── Generic file ioctls ───────────────────────────────── */
+	case FIONREAD:
+	case FIOQSIZE:
+	case FIGETBSZ:
+	case FS_IOC_GETFLAGS:
+	case FS_IOC_SETFLAGS:
+	case FS_IOC_GETVERSION:
+	case FS_IOC_SETVERSION:
+		return (uint64_t)(int64_t)ioctl_file_dispatch(p, (int)fd, cmd, arg);
 
 	/* ── Block-device ioctls ────────────────────────────────── */
 	case SG_IO:

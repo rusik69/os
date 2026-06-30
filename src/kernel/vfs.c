@@ -1843,6 +1843,7 @@ EXPORT_SYMBOL(vfs_mknod);
 EXPORT_SYMBOL(vfs_flush);
 EXPORT_SYMBOL(vfs_sync_all);
 EXPORT_SYMBOL(vfs_statfs);
+EXPORT_SYMBOL(vfs_ioctl);
 EXPORT_SYMBOL(vfs_bind_mount);
 
 /* ── Permission check (VFS_R_OK, VFS_W_OK, VFS_X_OK, VFS_F_OK) ───────── */
@@ -1930,4 +1931,26 @@ int vfs_close(void *file)
     (void)file;
     kprintf("[vfs] vfs_close: not yet implemented\n");
     return 0;
+}
+
+/*
+ * vfs_ioctl — Execute an ioctl command on a file.
+ *
+ * Resolves the path to its mounted filesystem and calls the
+ * filesystem's ioctl handler if present.  Returns -ENOTTY if the
+ * filesystem does not implement ioctl.
+ */
+int vfs_ioctl(const char *path, uint64_t cmd, uint64_t arg)
+{
+    char ap[128];
+    vfs_abs_path(path, ap, sizeof(ap));
+
+    struct vfs_mount *m = resolve(ap);
+    if (!m)
+        return -ENOENT;
+
+    if (!m->ops->ioctl)
+        return -ENOTTY;
+
+    return m->ops->ioctl(m->priv, ap, cmd, arg);
 }

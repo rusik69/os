@@ -192,6 +192,12 @@ struct vfs_ops {
      * The created file is not linked into any directory and is automatically
      * deleted when the last file descriptor is closed. */
     int (*tmpfile)(void *priv, uint32_t mode);
+    /* Optional: execute an ioctl command on a file.
+     * Returns 0 on success or negative errno on failure.
+     * If not provided, the generic dispatch handles FIONREAD, FIOQSIZE,
+     * FIGETBSZ directly via the VFS layer, and FS_IOC_* commands
+     * return -ENOTTY. */
+    int (*ioctl)(void *priv, const char *path, uint64_t cmd, uint64_t arg);
 };
 
 /* A mounted filesystem */
@@ -269,6 +275,11 @@ int vfs_fstatfs(int fd, struct vfs_statfs *st);
 /* Special tv_nsec values for utimensat/futimens */
 #define UTIME_NOW  ((1UL << 30) - 1)   /* set to current time */
 #define UTIME_OMIT ((1UL << 30) - 2)   /* leave unchanged */
+
+/* Execute an ioctl command on a file at the given path.
+ * Resolves the mount and calls the filesystem's ioctl handler.
+ * Returns 0 on success or negative errno. */
+int vfs_ioctl(const char *path, uint64_t cmd, uint64_t arg);
 
 /* Set atime and mtime for a path (nanosecond precision).
  * times[0] = atime, times[1] = mtime.  NULL times means set both to current time.
