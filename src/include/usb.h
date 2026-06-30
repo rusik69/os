@@ -118,6 +118,28 @@ struct usb_endpoint_descriptor {
     uint8_t  bInterval;
 } __attribute__((packed));
 
+/* ── USB interface association descriptor (USB-IF IAD, 8 bytes) ───────── */
+/*
+ * The Interface Association Descriptor (IAD) is defined in the USB-IF
+ * IAD ECN and allows multiple interfaces to be grouped as a single
+ * function.  Required for USB Video Class (UVC), USB Audio Class (UAC),
+ * and other composite devices whose function spans several interfaces.
+ * The IAD descriptor must appear before the first interface descriptor
+ * it groups within a configuration descriptor.
+ *
+ * USB-IF IAD ECN: https://www.usb.org/document-library/interface-association-descriptor-ecn
+ */
+struct usb_iad_descriptor {
+    uint8_t  bLength;            /* 8 bytes */
+    uint8_t  bDescriptorType;    /* USB_DT_INTERFACE_ASSOC (11) */
+    uint8_t  bFirstInterface;    /* index of the first interface in the group */
+    uint8_t  bInterfaceCount;    /* number of contiguous interfaces in the group */
+    uint8_t  bFunctionClass;     /* class code of the grouped function */
+    uint8_t  bFunctionSubClass;  /* subclass code of the grouped function */
+    uint8_t  bFunctionProtocol;  /* protocol code of the grouped function */
+    uint8_t  iFunction;          /* index to string descriptor describing the function */
+} __attribute__((packed));
+
 /* ── USB string descriptor (variable length) ─────────────────────────── */
 struct usb_string_descriptor {
     uint8_t  bLength;
@@ -184,12 +206,15 @@ int usb_parse_interface_descriptor(const uint8_t *raw,
                                    struct usb_interface_descriptor *iface);
 int usb_parse_endpoint_descriptor(const uint8_t *raw,
                                   struct usb_endpoint_descriptor *ep);
+int usb_parse_iad_descriptor(const uint8_t *raw,
+                             struct usb_iad_descriptor *iad);
 int usb_print_device_descriptor(const struct usb_device_descriptor *desc);
 int usb_print_config_descriptor_full(const struct usb_config_descriptor *config,
                                       const uint8_t *full_config_data,
                                       uint16_t total_length);
 int usb_print_interface_descriptor(const struct usb_interface_descriptor *iface);
 int usb_print_endpoint_descriptor(const struct usb_endpoint_descriptor *ep);
+int usb_print_iad_descriptor(const struct usb_iad_descriptor *iad);
 void usb_update_device_from_desc(struct usb_device *dev,
                                  const struct usb_device_descriptor *desc);
 
@@ -333,6 +358,7 @@ int ehci_port_has_remote_wakeup(int ctrl_idx, int port);
 
 #define USB_MAX_INTERFACES          16      /* maximum interfaces per device */
 #define USB_DEFAULT_ALT_SETTING     0       /* default alternate setting */
+#define USB_MAX_IADS                8       /* maximum IADs per device */
 
 /*
  * Select an alternate setting for a USB interface.
@@ -371,5 +397,62 @@ int usb_get_interface(uint8_t dev_addr, uint8_t iface_num);
  * Returns 0 on success, negative errno on failure.
  */
 int usb_set_device_interface_count(uint8_t dev_addr, uint8_t num_interfaces);
+
+/* ── Interface Association Descriptor (IAD) API ───────────────────────── */
+
+/*
+ * Maximum number of IADs that can be stored per device.
+ * USB-IF IAD ECN: IADs group multiple interfaces into a single function.
+ */
+
+/*
+ * Parse all Interface Association Descriptors from a configuration
+ * descriptor blob and store them in the device's IAD table.
+ *
+ * @dev_addr:       USB device address
+ * @config_data:    Full configuration descriptor blob (including header)
+ * @total_length:   Total length of the configuration blob (wTotalLength)
+ *
+ * Returns the number of IADs stored on success (>= 0),
+ * or negative errno on failure.
+ */
+int usb_parse_iads_from_config(uint8_t dev_addr,
+                                const uint8_t *config_data,
+                                uint16_t total_length);
+
+/*
+ * Look up the Interface Association Descriptor that contains a given
+ * interface number.
+ *
+ * @dev_addr:       USB device address
+ * @iface_num:      Interface number to look up
+ * @out_iad:        Output pointer for the matching IAD (if found)
+ *
+ * Returns 0 on success with @out_iad filled, or -ENOENT if no IAD
+ * contains the given interface number.
+ */
+int usb_get_iad_for_interface(uint8_t dev_addr, uint8_t iface_num,
+                               struct usb_iad_descriptor *out_iad);
+
+/*
+ * Get the number of IADs stored for a USB device.
+ *
+ * @dev_addr:       USB device address
+ *
+ * Returns the IAD count (>= 0) on success, or negative errno on failure.
+ */
+int usb_get_iad_count(uint8_t dev_addr);
+
+/*
+ * Get a specific IAD by index for a USB device.
+ *
+ * @dev_addr:       USB device address
+ * @index:          IAD index (0-based)
+ * @out_iad:        Output pointer for the IAD at the given index
+ *
+ * Returns 0 on success with @out_iad filled, or negative errno on failure.
+ */
+int usb_get_iad(uint8_t dev_addr, int index,
+                struct usb_iad_descriptor *out_iad);
 
 #endif

@@ -38,6 +38,8 @@ struct usb_core_device {
     int                    in_use;
     uint8_t                num_interfaces;                               /* number of interfaces */
     uint8_t                cur_alt_setting[USB_MAX_INTERFACES];          /* current alt setting per iface */
+    uint8_t                num_iads;                                     /* number of interfaces in iad_table */
+    struct usb_iad_descriptor iad_table[USB_MAX_IADS];                   /* interface association descriptors */
 };
 
 #define USB_CORE_MAX_DEVICES 32
@@ -197,6 +199,9 @@ int usb_core_add_device(const struct usb_device *desc)
     g_core_devices[idx].num_interfaces = 0;
     memset(g_core_devices[idx].cur_alt_setting, 0,
            sizeof(g_core_devices[idx].cur_alt_setting));
+    g_core_devices[idx].num_iads = 0;
+    memset(g_core_devices[idx].iad_table, 0,
+           sizeof(g_core_devices[idx].iad_table));
 
     spinlock_release(&g_drivers_lock);
 
@@ -437,6 +442,28 @@ int usb_parse_endpoint_descriptor(const uint8_t *raw,
     return 0;
 }
 
+int usb_parse_iad_descriptor(const uint8_t *raw,
+                             struct usb_iad_descriptor *iad)
+{
+    if (!raw || !iad)
+        return -EINVAL;
+    if (raw[0] < 8)
+        return -EINVAL;
+    if (raw[1] != USB_DT_INTERFACE_ASSOC)
+        return -EINVAL;
+
+    iad->bLength           = raw[0];
+    iad->bDescriptorType   = raw[1];
+    iad->bFirstInterface   = raw[2];
+    iad->bInterfaceCount   = raw[3];
+    iad->bFunctionClass    = raw[4];
+    iad->bFunctionSubClass = raw[5];
+    iad->bFunctionProtocol = raw[6];
+    iad->iFunction         = raw[7];
+
+    return 0;
+}
+
 int usb_print_device_descriptor(const struct usb_device_descriptor *desc)
 {
     if (!desc)
@@ -577,6 +604,23 @@ int usb_print_interface_descriptor(const struct usb_interface_descriptor *iface)
     return 0;
 }
 
+int usb_print_iad_descriptor(const struct usb_iad_descriptor *iad)
+{
+    if (!iad)
+        return -EINVAL;
+
+    kprintf("    Interface Association Descriptor:\n");
+    kprintf("      bLength             %u\n", (unsigned)iad->bLength);
+    kprintf("      bDescriptorType     %u\n", (unsigned)iad->bDescriptorType);
+    kprintf("      bFirstInterface     %u\n", (unsigned)iad->bFirstInterface);
+    kprintf("      bInterfaceCount     %u\n", (unsigned)iad->bInterfaceCount);
+    kprintf("      bFunctionClass      %u\n", (unsigned)iad->bFunctionClass);
+    kprintf("      bFunctionSubClass   %u\n", (unsigned)iad->bFunctionSubClass);
+    kprintf("      bFunctionProtocol   %u\n", (unsigned)iad->bFunctionProtocol);
+    kprintf("      iFunction           %u\n", (unsigned)iad->iFunction);
+    return 0;
+}
+
 /* ── Print sub-descriptor routing callback ──────────────────────────── */
 
 struct print_ctx {
@@ -596,6 +640,12 @@ static int print_subdesc_cb(uint8_t bDescType, const uint8_t *data,
         struct usb_interface_descriptor iface;
         if (usb_parse_interface_descriptor(data, &iface) == 0)
             usb_print_interface_descriptor(&iface);
+        break;
+    }
+    case USB_DT_INTERFACE_ASSOC: {
+        struct usb_iad_descriptor iad;
+        if (usb_parse_iad_descriptor(data, &iad) == 0)
+            usb_print_iad_descriptor(&iad);
         break;
     }
     case USB_DT_ENDPOINT: {
@@ -985,3 +1035,186 @@ int usb_get_interface(uint8_t dev_addr, uint8_t iface_num)
     return (int)alt_setting;
 }
 
+/* ── Interface Association Descriptor (IAD) API implementations ────────── */
+
+/*
+ * Callback context for usb_parse_iads_from_config.
+ */
+struct iad_parse_ctx {
+    uint8_t                    dev_addr;
+    int                        count;
+};
+
+/*
+ * IAD parsing callback — invoked by usb_for_each_config_subdesc for
+ * each USB_DT_INTERFACE_ASSOC descriptor found in the configuration blob.
+ */
+static int iad_parse_cb(uint8_t bDescType, const uint8_t *data,
+                         uint8_t bLength, void *user_data)
+{
+    struct iad_parse_ctx *ctx = (struct iad_parse_ctx *)user_data;
+    int idx;
+    struct usb_iad_descriptor iad;
+    int ret;
+
+    if (bDescType != USB_DT_INTERFACE_ASSOC)
+        return 0;  /* not an IAD — continue iteration */
+
+    ret = usb_parse_iad_descriptor(data, &iad);
+    if (ret < 0)
+        return ret;
+
+    spinlock_acquire(&g_drivers_lock);
+    idx = usb_find_device_by_addr(ctx->dev_addr);
+    if (idx < 0) {
+        spinlock_release(&g_drivers_lock);
+        return -ENODEV;
+    }
+
+    if (ctx->count >= USB_MAX_IADS) {
+        spinlock_release(&g_drivers_lock);
+        kprintf("[USB] iad_parse: too many IADs for device addr=%d\n",
+                ctx->dev_addr);
+        return -ENOSPC;
+    }
+
+    memcpy(&g_core_devices[idx].iad_table[ctx->count],
+           &iad, sizeof(iad));
+    ctx->count++;
+    spinlock_release(&g_drivers_lock);
+
+    kprintf("[USB] iad_parse: addr=%d IAD[%d] ifaces %u..%u class=%u "
+            "subclass=%u proto=%u\n",
+            ctx->dev_addr,
+            ctx->count - 1,
+            (unsigned)iad.bFirstInterface,
+            (unsigned)(iad.bFirstInterface + iad.bInterfaceCount - 1),
+            (unsigned)iad.bFunctionClass,
+            (unsigned)iad.bFunctionSubClass,
+            (unsigned)iad.bFunctionProtocol);
+
+    return 0;
+}
+
+int usb_parse_iads_from_config(uint8_t dev_addr,
+                                const uint8_t *config_data,
+                                uint16_t total_length)
+{
+    struct iad_parse_ctx ctx;
+    int idx;
+    int ret;
+
+    if (!config_data)
+        return -EINVAL;
+
+    /* Reset the device's IAD table */
+    spinlock_acquire(&g_drivers_lock);
+    idx = usb_find_device_by_addr(dev_addr);
+    if (idx < 0) {
+        spinlock_release(&g_drivers_lock);
+        return -ENODEV;
+    }
+    g_core_devices[idx].num_iads = 0;
+    memset(g_core_devices[idx].iad_table, 0,
+           sizeof(g_core_devices[idx].iad_table));
+    spinlock_release(&g_drivers_lock);
+
+    ctx.dev_addr = dev_addr;
+    ctx.count = 0;
+
+    ret = usb_for_each_config_subdesc(config_data, total_length,
+                                       iad_parse_cb, &ctx);
+    if (ret < 0) {
+        kprintf("[USB] iad_parse: config iteration failed for "
+                "addr=%d (err=%d)\n", dev_addr, ret);
+        return ret;
+    }
+
+    /* Store final count */
+    spinlock_acquire(&g_drivers_lock);
+    idx = usb_find_device_by_addr(dev_addr);
+    if (idx >= 0)
+        g_core_devices[idx].num_iads = (uint8_t)ctx.count;
+    spinlock_release(&g_drivers_lock);
+
+    if (ctx.count > 0) {
+        kprintf("[USB] iad_parse: found %d IAD(s) for device addr=%d\n",
+                ctx.count, dev_addr);
+    }
+
+    return ctx.count;
+}
+
+int usb_get_iad_for_interface(uint8_t dev_addr, uint8_t iface_num,
+                               struct usb_iad_descriptor *out_iad)
+{
+    int idx;
+
+    if (!out_iad)
+        return -EINVAL;
+
+    spinlock_acquire(&g_drivers_lock);
+    idx = usb_find_device_by_addr(dev_addr);
+    if (idx < 0) {
+        spinlock_release(&g_drivers_lock);
+        return -ENODEV;
+    }
+
+    for (uint8_t i = 0; i < g_core_devices[idx].num_iads; i++) {
+        const struct usb_iad_descriptor *iad =
+            &g_core_devices[idx].iad_table[i];
+        if (iface_num >= iad->bFirstInterface &&
+            iface_num < iad->bFirstInterface + iad->bInterfaceCount) {
+            memcpy(out_iad, iad, sizeof(*iad));
+            spinlock_release(&g_drivers_lock);
+            return 0;
+        }
+    }
+
+    spinlock_release(&g_drivers_lock);
+    return -ENOENT;
+}
+
+int usb_get_iad_count(uint8_t dev_addr)
+{
+    int idx;
+    uint8_t count;
+
+    spinlock_acquire(&g_drivers_lock);
+    idx = usb_find_device_by_addr(dev_addr);
+    if (idx < 0) {
+        spinlock_release(&g_drivers_lock);
+        return -ENODEV;
+    }
+    count = g_core_devices[idx].num_iads;
+    spinlock_release(&g_drivers_lock);
+
+    return (int)count;
+}
+
+int usb_get_iad(uint8_t dev_addr, int index,
+                struct usb_iad_descriptor *out_iad)
+{
+    int idx;
+
+    if (index < 0 || !out_iad)
+        return -EINVAL;
+
+    spinlock_acquire(&g_drivers_lock);
+    idx = usb_find_device_by_addr(dev_addr);
+    if (idx < 0) {
+        spinlock_release(&g_drivers_lock);
+        return -ENODEV;
+    }
+
+    if ((uint8_t)index >= g_core_devices[idx].num_iads) {
+        spinlock_release(&g_drivers_lock);
+        return -ENOENT;
+    }
+
+    memcpy(out_iad, &g_core_devices[idx].iad_table[index],
+           sizeof(*out_iad));
+    spinlock_release(&g_drivers_lock);
+
+    return 0;
+}
