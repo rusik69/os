@@ -1159,10 +1159,50 @@ static int ehci_control_transfer(uint8_t dev_addr,
     return 0;
 }
 
+/*
+ * ehci_bulk_transfer — Synchronous bulk transfer via EHCI async schedule.
+ *
+ * Wraps ehci_sync_submit for use as the HC ops bulk_transfer callback.
+ * Bulk transfers use the async schedule with qTDs.
+ *
+ * @dev_addr:  USB device address
+ * @ep:        Endpoint number (direction separate)
+ * @data:      DMA-safe data buffer
+ * @len:       Transfer length in bytes
+ * @dir_in:    1 = IN (device-to-host), 0 = OUT (host-to-device)
+ * @toggle:    Data toggle value (0 or 1)
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+static int ehci_bulk_transfer(uint8_t dev_addr, uint8_t ep,
+                               void *data, uint32_t len,
+                               int dir_in, int toggle)
+{
+    uint32_t pid;
+
+    /* Determine PID from direction */
+    if (dir_in)
+        pid = QTD_TOKEN_PID_INPUT;
+    else
+        pid = QTD_TOKEN_PID_OUTPUT;
+
+    if (len > 0 && !data)
+        return -EINVAL;
+
+    kprintf("[EHCI] bulk: addr=%d ep=%d dir=%s len=%u "
+            "toggle=%d pid=%s\n",
+            dev_addr, ep, dir_in ? "IN" : "OUT",
+            (unsigned)len, toggle,
+            dir_in ? "IN" : "OUT");
+
+    return ehci_sync_submit(dev_addr, ep, data, len, pid, toggle);
+}
+
 /* ── Registered HC ops table ──────────────────────────────────────────── */
 
 static const struct usb_hc_ops ehci_hc_ops = {
     .control_transfer = ehci_control_transfer,
+    .bulk_transfer    = ehci_bulk_transfer,
 };
 
 int xhci_submit_isochronous(uint8_t dev_addr, uint8_t ep,

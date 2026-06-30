@@ -69,6 +69,27 @@ struct usb_hc_ops {
     int (*control_transfer)(uint8_t dev_addr,
                             const struct usb_setup_packet *setup,
                             void *data, uint32_t len);
+
+    /*
+     * Submit a synchronous bulk transfer on a bulk endpoint.
+     *
+     * Bulk transfers are used for large data movement (mass storage,
+     * CDC ACM serial, ethernet) and have guaranteed delivery but no
+     * guaranteed bus bandwidth.  They use the async (periodic) schedule
+     * on EHCI and the primary interrupt ring on xHCI.
+     *
+     * @dev_addr:  USB device address
+     * @ep:        Endpoint number (0x0–0xF, direction from dir_in)
+     * @data:      DMA-safe data buffer (must remain valid until return)
+     * @len:       Length of data buffer in bytes
+     * @dir_in:    1 = IN (device-to-host), 0 = OUT (host-to-device)
+     * @toggle:    Data toggle value (0 or 1)
+     *
+     * Returns 0 on success, negative errno on failure.
+     */
+    int (*bulk_transfer)(uint8_t dev_addr, uint8_t ep,
+                         void *data, uint32_t len,
+                         int dir_in, int toggle);
 };
 
 /* Register a host controller's ops table (called during HC init) */
@@ -96,6 +117,26 @@ void usb_deregister_hc_ops(void);
 int usb_control_msg(uint8_t dev_addr, uint8_t bmReqType,
                     uint8_t bRequest, uint16_t wValue,
                     uint16_t wIndex, uint16_t wLength, void *data);
+
+/*
+ * Submit a synchronous USB bulk transfer.
+ *
+ * This is the primary API for USB class drivers to send and receive
+ * bulk data on arbitrary endpoints.  Handles data toggling and
+ * delegates to the registered host controller.
+ *
+ * @dev_addr:    USB device address
+ * @ep:          Endpoint number (0x0–0xF, direction from dir_in)
+ * @data:        DMA-safe data buffer
+ * @len:         Length of data buffer in bytes
+ * @dir_in:      1 = IN (device-to-host), 0 = OUT (host-to-device)
+ * @toggle:      Data toggle value (0 or 1) — caller tracks toggle state
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int usb_bulk_msg(uint8_t dev_addr, uint8_t ep,
+                 void *data, uint32_t len,
+                 int dir_in, int toggle);
 
 void usb_core_init(void);
 
