@@ -851,6 +851,7 @@ struct linux_dirent64 {
 
 /* ── D123: Process & Signal Syscalls ──────────────────────────── */
 #define SYS_RT_SIGACTION          450  /* rt_sigaction(sig, act, oldact, sigsetsize) */
+#define SYS_RT_SIGPROCMASK        453  /* rt_sigprocmask(how, set, oldset, sigsetsize) */
 #define SYS_EXIT_GROUP            451  /* exit_group(status) */
 #define SYS_SET_TID_ADDRESS       452  /* set_tid_address(tidptr) */
 

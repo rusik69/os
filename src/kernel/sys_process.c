@@ -112,3 +112,69 @@ uint64_t sys_rt_sigaction(uint64_t signum, uint64_t act_addr,
     spinlock_irqsave_release(&p->sig_lock, __sig_flags);
     return 0;
 }
+
+/* ── sys_rt_sigprocmask — examine/change signal mask ─────────────
+ *
+ *   int rt_sigprocmask(int how, const sigset_t *set,
+ *                       sigset_t *oldset, size_t sigsetsize);
+ *
+ * Examine or change the signal mask of the calling thread.
+ * how can be SIG_BLOCK (0), SIG_UNBLOCK (1), or SIG_SETMASK (2).
+ * If set is non-NULL, apply the new mask according to how.
+ * If oldset is non-NULL, the previous mask is stored there.
+ * sigsetsize must be sizeof(sigset_t) (8 bytes on x86-64).
+ *
+ * Returns 0 on success, -errno on error.
+ */
+uint64_t sys_rt_sigprocmask(uint64_t how, uint64_t set_addr,
+                            uint64_t oldset_addr, uint64_t sigsetsize)
+{
+    struct process *p = process_get_current();
+    if (!p)
+        return (uint64_t)(int64_t)-ESRCH;
+
+    /* Validate sigsetsize — must match kernel's sigset_t size */
+    if (sigsetsize != sizeof(uint64_t))
+        return (uint64_t)(int64_t)-EINVAL;
+
+    /* Validate how parameter */
+    if (how != SIG_BLOCK && how != SIG_UNBLOCK && how != SIG_SETMASK)
+        return (uint64_t)(int64_t)-EINVAL;
+
+    uint64_t __sig_flags;
+    uint64_t old_mask;
+
+    /* Snapshot the current mask atomically */
+    spinlock_irqsave_acquire(&p->sig_lock, &__sig_flags);
+    old_mask = p->sig_mask;
+    spinlock_irqsave_release(&p->sig_lock, __sig_flags);
+
+    /* Copy old mask to userspace */
+    if (oldset_addr) {
+        if (copy_to_user(oldset_addr, &old_mask, sizeof(old_mask)) < 0)
+            return (uint64_t)(int64_t)-EFAULT;
+    }
+
+    /* Read new mask from userspace and apply */
+    if (set_addr) {
+        uint64_t new_mask = 0;
+        if (copy_from_user(&new_mask, set_addr, sizeof(new_mask)) < 0)
+            return (uint64_t)(int64_t)-EFAULT;
+
+        spinlock_irqsave_acquire(&p->sig_lock, &__sig_flags);
+        switch (how) {
+        case SIG_BLOCK:
+            p->sig_mask |= new_mask;
+            break;
+        case SIG_UNBLOCK:
+            p->sig_mask &= ~new_mask;
+            break;
+        case SIG_SETMASK:
+            p->sig_mask = new_mask;
+            break;
+        }
+        spinlock_irqsave_release(&p->sig_lock, __sig_flags);
+    }
+
+    return 0;
+}
