@@ -286,20 +286,44 @@ uint64_t sys_clock_settime(uint64_t clockid, uint64_t tp_addr)
  *   clock_getres(clockid, struct timespec *res)
  *
  * Returns the resolution of the given clock.  The kernel timer runs
- * at TIMER_FREQ Hz, so the resolution is 1/TIMER_FREQ seconds.
+ * at TIMER_FREQ Hz (100 Hz → 10 ms resolution), so all supported
+ * clocks return the same resolution.
+ *
+ * Supported clock IDs: CLOCK_REALTIME, CLOCK_REALTIME_COARSE,
+ * CLOCK_REALTIME_ALARM, CLOCK_MONOTONIC, CLOCK_MONOTONIC_RAW,
+ * CLOCK_MONOTONIC_COARSE, CLOCK_BOOTTIME, CLOCK_BOOTTIME_ALARM,
+ * CLOCK_PROCESS_CPUTIME_ID, CLOCK_THREAD_CPUTIME_ID.
+ *
+ * Returns: 0 on success, -EFAULT on bad pointer, -EINVAL on
+ * invalid clockid.
  */
 uint64_t sys_clock_getres(uint64_t clockid, uint64_t res_addr)
 {
-    /* All supported clocks have tick-level resolution */
+    /* Validate the clock ID */
+    switch (clockid) {
+    case CLOCK_REALTIME:
+    case CLOCK_REALTIME_COARSE:
+    case CLOCK_REALTIME_ALARM:
+    case CLOCK_MONOTONIC:
+    case CLOCK_MONOTONIC_RAW:
+    case CLOCK_MONOTONIC_COARSE:
+    case CLOCK_BOOTTIME:
+    case CLOCK_BOOTTIME_ALARM:
+    case CLOCK_PROCESS_CPUTIME_ID:
+    case CLOCK_THREAD_CPUTIME_ID:
+        break;
+    default:
+        return (uint64_t)(int64_t)-EINVAL;
+    }
+
     if (res_addr) {
         struct timespec ts;
         ts.tv_sec  = 0;
-        ts.tv_nsec = 1000000000ULL / TIMER_FREQ; /* 10 ms */
+        ts.tv_nsec = NS_PER_TICK; /* 10 ms — tick-level resolution */
         if (copy_to_user(res_addr, &ts, sizeof(struct timespec)) < 0)
             return (uint64_t)(int64_t)-EFAULT;
     }
 
-    (void)clockid;
     return 0;
 }
 
