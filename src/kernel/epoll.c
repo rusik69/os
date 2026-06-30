@@ -13,8 +13,9 @@
  *   Both level-triggered (default) and edge-triggered (EPOLLET)
  *   event reporting are supported.  EPOLLONESHOT entries are
  *   automatically disarmed after the first event report.
- *   Future enhancements (tasks 9-10) will add EPOLLEXCLUSIVE,
- *   EPOLLWAKEUP, and waitqueue-based blocking.
+ *   EPOLLEXCLUSIVE and EPOLLWAKEUP flags are accepted as valid;
+ *   actual thundering-herd prevention and suspend-blocking require
+ *   waitqueue integration (future enhancement).
  *
  * Module metadata:
  *   MODULE_LICENSE("GPL v2")
@@ -106,11 +107,14 @@ int epoll_create1_syscall(int flags)
 /* ── epoll_ctl ───────────────────────────────────────────────── */
 
 /* Valid event flags mask — all known epoll event bits.
- * Used to reject invalid or undefined event flags in ADD/MOD. */
+ * Used to reject invalid or undefined event flags in ADD/MOD.
+ * EPOLLEXCLUSIVE is accepted but its thundering-herd prevention
+ * requires waitqueue integration (future enhancement). */
 #define EPOLL_VALID_EVENTS                                            \
     (EPOLLIN | EPOLLPRI | EPOLLOUT | EPOLLERR | EPOLLHUP |           \
      EPOLLRDNORM | EPOLLRDBAND | EPOLLWRNORM | EPOLLWRBAND |         \
-     EPOLLMSG | EPOLLRDHUP | EPOLLONESHOT | EPOLLET)
+     EPOLLMSG | EPOLLRDHUP | EPOLLONESHOT | EPOLLET |                \
+     EPOLLEXCLUSIVE | EPOLLWAKEUP)
 
 /*
  * epoll_ctl_syscall — control interface for an epoll instance.
@@ -155,6 +159,11 @@ int epoll_ctl_syscall(int epfd, int op, int fd,
 
         /* Validate event flags — reject undefined bits */
         if (event->events & ~(uint32_t)EPOLL_VALID_EVENTS)
+            return -EINVAL;
+
+        /* EPOLLEXCLUSIVE cannot be combined with EPOLLONESHOT */
+        if ((event->events & EPOLLEXCLUSIVE) &&
+            (event->events & EPOLLONESHOT))
             return -EINVAL;
 
         /* Check if the fd is already monitored */
@@ -204,6 +213,10 @@ int epoll_ctl_syscall(int epfd, int op, int fd,
 
         /* Validate event flags — reject undefined bits */
         if (event->events & ~(uint32_t)EPOLL_VALID_EVENTS)
+            return -EINVAL;
+
+        /* EPOLLEXCLUSIVE is EPOLL_CTL_ADD only (Linux constraint) */
+        if (event->events & EPOLLEXCLUSIVE)
             return -EINVAL;
 
         struct epoll_fd_entry *e = epoll_find_entry(ep, fd);
