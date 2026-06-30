@@ -11,6 +11,7 @@
  */
 
 #include "usb.h"
+#include "usb_core.h"
 #include "pmm.h"
 #include "string.h"
 #include "printf.h"
@@ -138,9 +139,86 @@ struct hub_state {
 static struct hub_state g_hubs[USB_MAX_HUBS];
 static int g_hub_count = 0;
 
+/* ── Root hub port state (EHCI root port polling) ──────────────── */
+
+/* Port Status/Control register (relative to EHCI op_base) */
+#define EHCI_PORTSC_BASE    0x44
+
+#define ROOT_HUB_MAX_PORTS  8
+
+/* Per-port root hub tracking state */
+struct root_hub_port_state {
+    int     connected;           /* 1 if a device is present */
+    int     core_idx;            /* USB core device index, -1 if none */
+    int     debounce_pending;
+    uint64_t debounce_until;
+};
+
+static struct {
+    struct root_hub_port_state ports[ROOT_HUB_MAX_PORTS];
+    int n_ports;
+    int initialized;
+} g_root_hub;
+
+/* ── Hotplug device-port mapping ────────────────────────────────── */
+/*
+ * Maps USB core device indices back to hub+port for disconnect cleanup.
+ * hub_id < 0 = root hub port; hub_id >= 0 = downstream hub index.
+ */
+#define HOTPLUG_MAX_DEVICES 16
+
+struct hotplug_entry {
+    int hub_id;     /* -1 for root hub, 0+ for downstream hub index */
+    int port;       /* 1-based port number */
+    int core_idx;   /* USB core device index */
+    int valid;
+};
+
+static struct hotplug_entry g_hotplug[HOTPLUG_MAX_DEVICES];
+
 /* ── Forward declarations for static functions ───────────────────── */
 static int hub_port_debounce(struct hub_state *hub, int port, uint16_t status);
 static int hub_port_over_current_recover(struct hub_state *hub, int port);
+
+/* ── Hotplug helpers ────────────────────────────────────────────── */
+
+/* Add a device to the hotplug tracking table */
+static int hotplug_add(int hub_id, int port, int core_idx)
+{
+    for (int i = 0; i < HOTPLUG_MAX_DEVICES; i++) {
+        if (!g_hotplug[i].valid) {
+            g_hotplug[i].hub_id = hub_id;
+            g_hotplug[i].port = port;
+            g_hotplug[i].core_idx = core_idx;
+            g_hotplug[i].valid = 1;
+            return 0;
+        }
+    }
+    return -1;
+}
+
+/* Find a hotplug entry by hub+port */
+static struct hotplug_entry *hotplug_find(int hub_id, int port)
+{
+    for (int i = 0; i < HOTPLUG_MAX_DEVICES; i++) {
+        if (g_hotplug[i].valid && g_hotplug[i].hub_id == hub_id &&
+            g_hotplug[i].port == port)
+            return &g_hotplug[i];
+    }
+    return NULL;
+}
+
+/* Remove a hotplug entry */
+static void hotplug_remove(int hub_id, int port)
+{
+    for (int i = 0; i < HOTPLUG_MAX_DEVICES; i++) {
+        if (g_hotplug[i].valid && g_hotplug[i].hub_id == hub_id &&
+            g_hotplug[i].port == port) {
+            g_hotplug[i].valid = 0;
+            return;
+        }
+    }
+}
 
 /* ── DMA / MMIO helpers ────────────────────────────────────────────── */
 
@@ -160,6 +238,51 @@ static inline void op_wr(uint32_t off, uint32_t val) {
     *(volatile uint32_t *)(g_hub_op_base + off) = val;
 }
 static void busy_wait(volatile int n) { while (n-- > 0) __asm__("pause"); }
+
+/* ── Root hub port register access ──────────────────────────────── */
+
+static inline uint32_t root_port_read(int port)
+{
+    if (port < 0 || port >= g_root_hub.n_ports)
+        return 0;
+    return op_rd(EHCI_PORTSC_BASE + (uint32_t)port * 4);
+}
+
+static inline void root_port_write(int port, uint32_t val)
+{
+    if (port < 0 || port >= g_root_hub.n_ports)
+        return;
+    op_wr(EHCI_PORTSC_BASE + (uint32_t)port * 4, val);
+}
+
+/* ── Root hub port debounce ─────────────────────────────────────── */
+/*
+ * Returns 1 when stable, 0 while debouncing, negative on error.
+ */
+static int root_port_debounce(int port, int connected)
+{
+    uint64_t now = timer_get_ticks();
+    const uint64_t debounce_ms = 100;
+
+    if (!g_root_hub.ports[port].debounce_pending) {
+        g_root_hub.ports[port].debounce_pending = 1;
+        g_root_hub.ports[port].debounce_until = now + (debounce_ms * 100 / 1000);
+        return 0;
+    }
+
+    if (now < g_root_hub.ports[port].debounce_until)
+        return 0;
+
+    /* Debounce period elapsed -- re-check connection */
+    g_root_hub.ports[port].debounce_pending = 0;
+    uint32_t portsc = root_port_read(port);
+    int still_connected = !!(portsc & 1u);  /* bit 0 = CCS */
+
+    if (still_connected != connected)
+        return -1;
+
+    return 1;
+}
 
 /* ── EHCI transfer ─────────────────────────────────────────────────── */
 
@@ -342,6 +465,205 @@ static void hub_enum_device(struct hub_state *hub, uint8_t port) {
             hub->dev_addr, port, speed == 2 ? "high" : "full");
 }
 
+/* ── Hotplug connect/disconnect handlers ────────────────────────── */
+
+/*
+ * hotplug_handle_connect -- Full device enumeration + USB core registration.
+ *
+ * Handles port reset, descriptor read, and registration with the USB core
+ * device model (triggers driver probe via usb_core_add_device).
+ *
+ * @hub_id:   hub index (-1 for root hub, 0+ for downstream hub)
+ * @port:     1-based port number
+ * @is_root:  1 if root hub port, 0 if downstream hub port
+ * Returns 0 on success, negative on error.
+ */
+static int hotplug_handle_connect(int hub_id, int port, int is_root)
+{
+    struct usb_device dev_desc;
+    int speed;
+    uint8_t dev_addr;
+    int rc;
+
+    memset(&dev_desc, 0, sizeof(dev_desc));
+
+    if (is_root) {
+        /* Root hub port: reset via EHCI PORTSC register */
+        uint32_t portsc = root_port_read(port);
+        portsc &= ~(1u << 2);  /* clear PED */
+        root_port_write(port, (portsc & ~(1u << 8)) | (1u << 8));  /* set PR */
+        busy_wait(500000);   /* 50 ms reset */
+        root_port_write(port, portsc & ~(1u << 8));  /* clear PR */
+        busy_wait(50000);    /* 5 ms recovery */
+
+        portsc = root_port_read(port);
+        if (!(portsc & (1u << 2)))  /* PED not set */
+            return -1;
+
+        uint32_t spd = (portsc >> 20) & 3u;
+        speed = (spd == 0) ? 2 : 0;  /* 0=HS, 1=FS */
+    } else {
+        /* Downstream hub port: use hub control requests */
+        struct hub_state *hub = &g_hubs[hub_id];
+
+        rc = hub_set_port_feature(hub->dev_addr, HUB_FEATURE_PORT_RESET,
+                                  (uint16_t)port);
+        if (rc < 0) return rc;
+        busy_wait(500000);
+        hub_clear_feature(hub->dev_addr, HUB_FEATURE_C_PORT_RESET,
+                          (uint16_t)port);
+        busy_wait((uint32_t)hub->power_good_delay * 2000);
+
+        uint16_t status = 0, change = 0;
+        hub_get_port_status(hub->dev_addr, (uint8_t)port, &status, &change);
+        if (!(status & PORT_STATUS_CONNECTION) || !(status & PORT_STATUS_ENABLE))
+            return -1;
+
+        speed = 0;
+        if (status & PORT_STATUS_HIGH_SPEED) speed = 2;
+        else if (status & PORT_STATUS_LOW_SPEED) speed = 1;
+    }
+
+    /* Assign a USB bus address above the init-time range */
+    {
+        static uint8_t g_next_addr = 32;
+        dev_addr = g_next_addr++;
+    }
+
+    /* Read device descriptor to get VID:PID and class */
+    uint8_t *desc_buf = (uint8_t *)hub_alloc_dma(18);
+    if (!desc_buf) return -1;
+
+    rc = usb_control(dev_addr, 0x80, 0x06, 0x0100, 0, 18, desc_buf);
+    if (rc == 0) {
+        dev_desc.vendor_id  = (uint16_t)desc_buf[8] | ((uint16_t)desc_buf[9] << 8);
+        dev_desc.product_id = (uint16_t)desc_buf[10] | ((uint16_t)desc_buf[11] << 8);
+        dev_desc.class_code = desc_buf[4];
+        dev_desc.subclass   = desc_buf[5];
+        dev_desc.protocol   = desc_buf[6];
+        dev_desc.flags      = USB_DEV_FLAG_HAS_DESC;
+    } else {
+        dev_desc.class_code = 0xFF;
+    }
+    pmm_free_frame(VIRT_TO_PHYS((uint64_t)desc_buf));
+
+    dev_desc.addr  = dev_addr;
+    dev_desc.speed = (uint8_t)speed;
+
+    /* Register with USB core device model (triggers driver probe) */
+    int core_idx = usb_core_add_device(&dev_desc);
+    if (core_idx < 0) {
+        kprintf("[USB HOTPLUG] Failed to register device on hub %d port %d\n",
+                hub_id, port);
+        return core_idx;
+    }
+
+    /* Track in hotplug mapping for disconnect cleanup */
+    hotplug_add(hub_id, port, core_idx);
+    if (is_root)
+        g_root_hub.ports[port].core_idx = core_idx;
+
+    kprintf("[USB HOTPLUG] Device connected on hub %d port %d: "
+            "%04x:%04x class=%02x (core idx %d, addr %d)\n",
+            hub_id, port,
+            (unsigned)dev_desc.vendor_id, (unsigned)dev_desc.product_id,
+            (unsigned)dev_desc.class_code, core_idx, dev_addr);
+
+    return 0;
+}
+
+/*
+ * hotplug_handle_disconnect -- Clean up device and unregister from USB core.
+ *
+ * Finds the device on the given hub+port, unregisters it from the USB core
+ * device model (triggers driver disconnect callback), and cleans up tracking.
+ */
+static void hotplug_handle_disconnect(int hub_id, int port, int is_root)
+{
+    struct hotplug_entry *entry = hotplug_find(hub_id, port);
+    int core_idx;
+
+    if (entry) {
+        core_idx = entry->core_idx;
+        kprintf("[USB HOTPLUG] Device disconnected on hub %d port %d "
+                "(core_idx %d)\n", hub_id, port, core_idx);
+
+        /* Unregister from USB core -- triggers driver disconnect */
+        usb_core_remove_device(core_idx);
+
+        /* Remove from tracking */
+        hotplug_remove(hub_id, port);
+    } else {
+        core_idx = -1;
+        kprintf("[USB HOTPLUG] Disconnect on untracked hub %d port %d\n",
+                hub_id, port);
+    }
+
+    if (is_root) {
+        g_root_hub.ports[port].connected = 0;
+        if (core_idx >= 0)
+            g_root_hub.ports[port].core_idx = -1;
+    } else {
+        if (hub_id >= 0 && hub_id < g_hub_count)
+            g_hubs[hub_id].debounce_pending[port - 1] = 0;
+    }
+}
+
+/* ── Root hub port polling ──────────────────────────────────────── */
+/*
+ * Poll EHCI root hub ports for connection/disconnection events.
+ * Called from usb_hub_poll() and usb_hub_detect().
+ */
+static void hub_poll_root_hub(void)
+{
+    if (!g_root_hub.initialized)
+        return;
+
+    for (int p = 0; p < g_root_hub.n_ports; p++) {
+        uint32_t portsc = root_port_read(p);
+
+        /* Check for connect status change */
+        if (!(portsc & (1u << 1)))  /* bit 1 = CSC */
+            continue;
+
+        /* Clear the change bit (write back PORTSC with CSC=1) */
+        root_port_write(p, portsc | (1u << 1));
+
+        int connected = !!(portsc & 1u);  /* bit 0 = CCS */
+
+        if (connected) {
+            kprintf("[USB ROOT] Port %d: device connected, debouncing...\n", p);
+            g_root_hub.ports[p].connected = 1;
+            root_port_debounce(p, 1);
+        } else {
+            kprintf("[USB ROOT] Port %d: device disconnected\n", p);
+            g_root_hub.ports[p].debounce_pending = 0;
+            if (g_root_hub.ports[p].connected) {
+                hotplug_handle_disconnect(-1, p, 1);
+            }
+        }
+    }
+
+    /* Check pending debounce timers */
+    for (int p = 0; p < g_root_hub.n_ports; p++) {
+        if (!g_root_hub.ports[p].debounce_pending)
+            continue;
+
+        int db = root_port_debounce(p, g_root_hub.ports[p].connected);
+        if (db > 0) {
+            /* Debounce stable -- enumerate */
+            kprintf("[USB ROOT] Port %d: debounce stable, enumerating...\n", p);
+            hotplug_handle_connect(-1, p, 1);
+        } else if (db < 0) {
+            kprintf("[USB ROOT] Port %d: debounce failed\n", p);
+            g_root_hub.ports[p].debounce_pending = 0;
+            if (g_root_hub.ports[p].connected) {
+                hotplug_handle_disconnect(-1, p, 1);
+            }
+        }
+    }
+}
+
 /* ── Hub initialisation ────────────────────────────────────────────── */
 
 static int enumerate_hub(uint8_t dev_addr) {
@@ -410,6 +732,9 @@ static int enumerate_hub(uint8_t dev_addr) {
 void usb_hub_poll(void) {
     if (!g_hub_initialized) return;
 
+    /* Poll root hub ports for hotplug events */
+    hub_poll_root_hub();
+
     for (int h = 0; h < g_hub_count; h++) {
         struct hub_state *hub = &g_hubs[h];
 
@@ -432,8 +757,8 @@ void usb_hub_poll(void) {
                     }
                 } else {
                     kprintf("[USB HUB] Port %d: device disconnected\n", p);
-                    /* Clear any pending debounce */
-                    hub->debounce_pending[p - 1] = 0;
+                    /* Use hotplug disconnect for proper cleanup */
+                    hotplug_handle_disconnect(h, p, 0);
                 }
             }
 
@@ -442,8 +767,8 @@ void usb_hub_poll(void) {
                 int db = hub_port_debounce(hub, p, status);
                 if (db > 0) {
                     /* Debounce passed — connection is stable */
-                    kprintf("[USB HUB] Port %d: debounce stable, enumerating...\n", p);
-                    hub_enum_device(hub, (uint8_t)p);
+                    kprintf("[USB HUB] Port %d: debounce stable, hot-enumerating...\n", p);
+                    hotplug_handle_connect(h, p, 0);
                 } else if (db < 0) {
                     kprintf("[USB HUB] Port %d: debounce failed\n", p);
                     hub->debounce_pending[p - 1] = 0;
@@ -490,6 +815,14 @@ int usb_hub_init(void) {
 
     g_hub_op_base = ehci_get_op_base();
     if (!g_hub_op_base) return -1;
+
+    /* Initialise root hub polling from EHCI port count */
+    memset(&g_root_hub, 0, sizeof(g_root_hub));
+    g_root_hub.n_ports = ehci_get_n_ports();
+    if (g_root_hub.n_ports > ROOT_HUB_MAX_PORTS)
+        g_root_hub.n_ports = ROOT_HUB_MAX_PORTS;
+    g_root_hub.initialized = 1;
+    kprintf("[USB ROOT] Root hub: %d ports\n", g_root_hub.n_ports);
 
     /* Check for hub-class devices already detected by EHCI */
     int n_devices = usb_get_device_count();
@@ -660,6 +993,11 @@ static int hub_port_debounce(struct hub_state *hub, int port, uint16_t status)
 int usb_hub_detect(void)
 {
     int changes = 0;
+
+    /* Check root hub ports for changes */
+    hub_poll_root_hub();
+    if (g_root_hub.initialized)
+        changes += g_root_hub.n_ports;  /* at least polled */
 
     for (int h = 0; h < g_hub_count; h++) {
         struct hub_state *hub = &g_hubs[h];
