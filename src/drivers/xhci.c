@@ -10,6 +10,8 @@
 #include "io.h"
 #include "printf.h"
 #include "string.h"
+#include "pmm.h"
+#include "errno.h"
 
 static struct xhci_controller g_xhci;
 static int g_xhci_init_done = 0;
@@ -89,6 +91,9 @@ static int xhci_start_controller(void) {
         return -1;
     }
 
+    /* Read page size */
+    g_xhci.page_size = xhci_read32(&g_xhci, g_xhci.op_regs, XHCI_OP_PAGESIZE);
+
     /* Set max slots in CONFIG register */
     xhci_write32(&g_xhci, g_xhci.op_regs, XHCI_OP_CONFIG, g_xhci.max_slots);
 
@@ -111,6 +116,383 @@ static int xhci_start_controller(void) {
 
     kprintf("[xHCI] Controller started\n");
     return 0;
+}
+
+/* ── Ring Management ──────────────────────────────────────────────────── */
+
+/**
+ * xhci_ring_create — Allocate and initialise a single-segment TRB ring.
+ * @ring: Ring structure to initialise (caller-allocated).
+ *
+ * Allocates one page (4096 bytes) for 256 TRBs (16 bytes each).
+ * TRB 255 is set up as a Link TRB pointing back to TRB 0 (circular
+ * single-segment ring), with TC (Toggle Cycle) set.
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int xhci_ring_create(struct xhci_ring *ring)
+{
+    memset(ring, 0, sizeof(*ring));
+
+    ring->paddr = pmm_alloc_frame();
+    if (!ring->paddr)
+        return -ENOMEM;
+
+    ring->trbs = (struct xhci_trb *)PHYS_TO_VIRT((void *)(uintptr_t)ring->paddr);
+    memset(ring->trbs, 0, PAGE_SIZE);
+
+    ring->cycle   = 1;   /* Producer cycle starts at 1 (xHCI spec §4.9.3) */
+    ring->enq_idx = 0;
+    ring->deq_idx = 0;
+
+    /* Set up Link TRB at the last position for circular wrapping.
+     * TC=1 causes the xHC to toggle its Consumer Cycle State when it
+     * follows this link, keeping producer and consumer in lockstep. */
+    {
+        struct xhci_trb *link = &ring->trbs[XHCI_RING_TRBS - 1];
+        link->parameter = TRB_LINK_PTR((uint64_t)ring->paddr);
+        link->status    = 0;
+        link->control   = TRB_SET_TYPE(TRB_TYPE_LINK) | TRB_TC_BIT | TRB_CYCLE_BIT;
+    }
+
+    return 0;
+}
+
+/**
+ * xhci_ring_destroy — Free a TRB ring segment.
+ */
+void xhci_ring_destroy(struct xhci_ring *ring)
+{
+    if (ring && ring->paddr) {
+        pmm_free_frame(ring->paddr);
+        memset(ring, 0, sizeof(*ring));
+    }
+}
+
+/**
+ * xhci_ring_enqueue — Place a TRB onto the ring.
+ * @ring: Target ring.
+ * @trb:  TRB to enqueue (the cycle bit is set automatically).
+ *
+ * The TRB is written at the current enqueue position with the appropriate
+ * cycle bit.  When the last usable slot is filled, the Link TRB's cycle
+ * bit is updated and the enqueue pointer wraps to index 0, toggling the
+ * producer cycle state.
+ *
+ * Returns 0 on success, -ENOMEM if ring is full, -EINVAL on bad state.
+ */
+int xhci_ring_enqueue(struct xhci_ring *ring, const struct xhci_trb *trb)
+{
+    int idx;
+
+    if (!ring || !ring->trbs)
+        return -EINVAL;
+
+    idx = ring->enq_idx;
+
+    /* Usable positions are 0 .. XHCI_RING_USABLE-1 (TRB 255 is Link) */
+    if (idx < 0 || idx >= XHCI_RING_USABLE)
+        return -EINVAL;
+
+    /* Quick fullness check: if the next usable position equals deq_idx
+     * the ring is full (we always leave at least one slot open to
+     * distinguish empty from full). */
+    {
+        int nxt = idx + 1;
+        if (nxt >= XHCI_RING_USABLE)
+            nxt = 0;
+        if (nxt == ring->deq_idx)
+            return -ENOMEM;
+    }
+
+    /* Write the TRB */
+    ring->trbs[idx].parameter = trb->parameter;
+    ring->trbs[idx].status    = trb->status;
+
+    /* Set the cycle bit per current producer cycle */
+    uint32_t ctrl = trb->control;
+    if (ring->cycle)
+        ctrl |=  TRB_CYCLE_BIT;
+    else
+        ctrl &= ~TRB_CYCLE_BIT;
+    ring->trbs[idx].control = ctrl;
+
+    /* Memory barrier: ensure TRB is fully written before xHC can see it */
+    __asm__ volatile("mfence" ::: "memory");
+
+    /* Advance the enqueue pointer */
+    if (idx == XHCI_RING_USABLE - 1) {
+        /* Last usable slot written — update the Link TRB's cycle so the
+         * xHC can follow it, then wrap to the beginning. */
+        uint32_t lctrl = TRB_SET_TYPE(TRB_TYPE_LINK) | TRB_TC_BIT;
+        if (ring->cycle)
+            lctrl |= TRB_CYCLE_BIT;
+        ring->trbs[XHCI_RING_TRBS - 1].control = lctrl;
+        __asm__ volatile("mfence" ::: "memory");
+
+        ring->enq_idx = 0;
+        ring->cycle = !ring->cycle;   /* Toggle producer cycle */
+    } else {
+        ring->enq_idx = idx + 1;
+    }
+
+    return 0;
+}
+
+/**
+ * xhci_ring_has_pending — Check whether the xHC has work on this ring.
+ * Returns non-zero if at least one TRB is available for the xHC to
+ * consume (based on whether enq_idx != deq_idx).
+ */
+int xhci_ring_has_pending(struct xhci_ring *ring)
+{
+    if (!ring || !ring->trbs)
+        return 0;
+
+    int e = ring->enq_idx;
+    int d = ring->deq_idx;
+
+    /* If enq == deq the ring could be either full or empty, but in
+     * practice a full ring only happens if the driver overcommits —
+     * treat as "has pending" conservatively so the caller drains. */
+    if (e != d)
+        return 1;
+
+    /* enq == deq: check the TRB's cycle bit to disambiguate.
+     * If the TRB at deq_idx has the expected consumer cycle, it's pending. */
+    uint32_t ctrl = ring->trbs[d].control;
+    return (ctrl & TRB_CYCLE_BIT) != 0;
+}
+
+/* ── Event Ring ──────────────────────────────────────────────────────── */
+
+/**
+ * xhci_event_ring_init — Initialise an event ring with one segment.
+ * @ev:        Event ring structure (caller-allocated).
+ * @num_trbs:  Number of event TRBs (must be a power of 2, ≥ 16).
+ *
+ * Allocates the event ring segment and one ERST entry.  The ERST is
+ * programmed later when the controller's runtime registers are known.
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int xhci_event_ring_init(struct xhci_event_ring *ev, int num_trbs)
+{
+    size_t seg_size;
+
+    memset(ev, 0, sizeof(*ev));
+
+    /* Event ring must have a power-of-2 number of TRBs */
+    if (num_trbs < 16 || (num_trbs & (num_trbs - 1)) != 0)
+        return -EINVAL;
+
+    ev->num_trbs = num_trbs;
+
+    /* Allocate event ring segment (16-byte TRBs) */
+    seg_size = (size_t)num_trbs * sizeof(struct xhci_trb);
+    if (seg_size > PAGE_SIZE) {
+        /* For rings larger than 4K we'd need multiple pages; for now
+         * cap at one page (256 TRBs max, same as command/transfer rings). */
+        ev->num_trbs = PAGE_SIZE / (int)sizeof(struct xhci_trb);
+        seg_size = PAGE_SIZE;
+    }
+
+    ev->paddr = pmm_alloc_frame();
+    if (!ev->paddr)
+        return -ENOMEM;
+
+    ev->trbs = (struct xhci_trb *)PHYS_TO_VIRT((void *)(uintptr_t)ev->paddr);
+    memset(ev->trbs, 0, seg_size);
+
+    ev->num_trbs = (int)(seg_size / sizeof(struct xhci_trb));
+    ev->deq_idx  = 0;
+    ev->cycle    = 1;   /* Consumer cycle starts at 1 (per spec) */
+
+    /* Allocate ERST (one page for simplicity) */
+    ev->erst_paddr = pmm_alloc_frame();
+    if (!ev->erst_paddr) {
+        pmm_free_frame(ev->paddr);
+        ev->paddr = 0;
+        return -ENOMEM;
+    }
+
+    ev->erst = (struct xhci_erst_entry *)PHYS_TO_VIRT((void *)(uintptr_t)ev->erst_paddr);
+    memset(ev->erst, 0, PAGE_SIZE);
+
+    /* Fill in the ERST entry */
+    ev->erst[0].seg_addr = (uint64_t)ev->paddr;  /* bits 63:4 of segment address */
+    ev->erst[0].seg_size = (uint32_t)ev->num_trbs; /* number of TRBs in segment */
+    ev->erst_entries = 1;
+
+    return 0;
+}
+
+/**
+ * xhci_event_ring_fini — Free event ring resources.
+ */
+void xhci_event_ring_fini(struct xhci_event_ring *ev)
+{
+    if (!ev) return;
+
+    if (ev->paddr) {
+        pmm_free_frame(ev->paddr);
+        ev->paddr = 0;
+    }
+    if (ev->erst_paddr) {
+        pmm_free_frame(ev->erst_paddr);
+        ev->erst_paddr = 0;
+    }
+    memset(ev, 0, sizeof(*ev));
+}
+
+/**
+ * xhci_event_ring_process — Drain pending events from the event ring.
+ * @ev:      Event ring to process.
+ * @handler: Callback invoked for each event TRB.
+ * @ctx:     Opaque context pointer for the handler.
+ *
+ * Reads event TRBs whose cycle bit matches the current consumer cycle,
+ * invokes the handler for each, and advances the dequeue pointer.
+ *
+ * Returns the number of events processed.
+ */
+int xhci_event_ring_process(struct xhci_event_ring *ev,
+                             void (*handler)(struct xhci_trb *ev_trb, void *ctx),
+                             void *ctx)
+{
+    int count = 0;
+    int idx;
+
+    if (!ev || !ev->trbs)
+        return 0;
+
+    while (1) {
+        idx = ev->deq_idx;
+
+        /* Check cycle bit */
+        uint32_t ctrl = ev->trbs[idx].control;
+        int trb_cycle = (ctrl & TRB_CYCLE_BIT) ? 1 : 0;
+
+        if (trb_cycle != ev->cycle)
+            break;   /* No more valid events */
+
+        /* Call the handler */
+        if (handler)
+            handler(&ev->trbs[idx], ctx);
+
+        /* Advance dequeue */
+        ev->deq_idx++;
+        if (ev->deq_idx >= ev->num_trbs) {
+            ev->deq_idx = 0;
+            ev->cycle = !ev->cycle;   /* Toggle consumer cycle */
+        }
+
+        count++;
+    }
+
+    return count;
+}
+
+/* ── Doorbell ─────────────────────────────────────────────────────────── */
+
+/**
+ * xhci_ring_doorbell — Ring the doorbell for a slot/endpoint.
+ * @xhci:            Controller.
+ * @slot_id:         Device slot ID (0 for command ring).
+ * @doorbell_target: Endpoint ID (1-31) or 0 for command.
+ *
+ * Writing to the doorbell register tells the xHC there is new work
+ * on the associated ring.
+ */
+void xhci_ring_doorbell(struct xhci_controller *xhci, int slot_id, int doorbell_target)
+{
+    uint64_t db_reg;
+
+    if (!xhci)
+        return;
+
+    db_reg = XHCI_DOORBELL_REG(xhci->db_off, slot_id);
+    xhci_write32(xhci, xhci->cap_regs, db_reg, (uint32_t)(doorbell_target & 0xFF));
+    __asm__ volatile("mfence" ::: "memory");
+}
+
+/* ── Ring init in controller startup ──────────────────────────────────── */
+
+/**
+ * xhci_rings_init — Initialise the command ring and event ring.
+ * Called after the controller is started and before devices are enumerated.
+ */
+static int xhci_rings_init(struct xhci_controller *xhci)
+{
+    int ret;
+
+    if (!xhci || !xhci->present)
+        return -ENODEV;
+
+    if (xhci->rings_initialized)
+        return 0;
+
+    /* Create command ring */
+    ret = xhci_ring_create(&xhci->cmd_ring);
+    if (ret < 0) {
+        kprintf("[xHCI] Failed to create command ring: %d\n", ret);
+        return ret;
+    }
+
+    /* Create event ring (256 TRBs) */
+    ret = xhci_event_ring_init(&xhci->ev_ring, 256);
+    if (ret < 0) {
+        kprintf("[xHCI] Failed to create event ring: %d\n", ret);
+        xhci_ring_destroy(&xhci->cmd_ring);
+        return ret;
+    }
+
+    /* Program the Command Ring Control Register (CRCR) */
+    {
+        uint64_t crcr = (uint64_t)xhci->cmd_ring.paddr & ~0x3FULL;
+        crcr |= 0;  /* CRR=0 (not running), RCS matches first producer cycle = 1 */
+        /* Write CRCR low 32 bits */
+        xhci_write32(xhci, xhci->op_regs, XHCI_OP_CRCR, (uint32_t)(crcr & 0xFFFFFFFF));
+        /* Write CRCR high 32 bits (must be 0 below 4GB, which we assume) */
+        xhci_write32(xhci, xhci->op_regs, XHCI_OP_CRCR + 4, (uint32_t)((crcr >> 32) & 0xFFFFFFFF));
+    }
+
+    /* Program the Event Ring registers in the Runtime Register Space */
+    {
+        uint64_t rt_base = xhci->rt_off;
+
+        /* ERSTSZ — number of segments (1) */
+        xhci_write32(xhci, rt_base, XHCI_ERSTSZ(0, 0), 1);
+
+        /* ERSTBA — physical address of ERST array */
+        uint64_t erst_ba = xhci->ev_ring.erst_paddr;
+        xhci_write32(xhci, rt_base, XHCI_ERSTBA(0, 0), (uint32_t)(erst_ba & 0xFFFFFFFF));
+        xhci_write32(xhci, rt_base, XHCI_ERSTBA(0, 0) + 4, (uint32_t)((erst_ba >> 32) & 0xFFFFFFFF));
+
+        /* ERDP — Event Ring Dequeue Pointer (point to start, DCS=1) */
+        uint64_t erdp = ((uint64_t)xhci->ev_ring.paddr & ~0x0FULL) | 1ULL;  /* DCS=1 */
+        xhci_write32(xhci, rt_base, XHCI_ERDP(0, 0), (uint32_t)(erdp & 0xFFFFFFFF));
+        xhci_write32(xhci, rt_base, XHCI_ERDP(0, 0) + 4, (uint32_t)((erdp >> 32) & 0xFFFFFFFF));
+    }
+
+    xhci->rings_initialized = 1;
+    kprintf("[xHCI] Rings initialized (cmd @ 0x%lx, ev @ 0x%lx)\n",
+            (unsigned long)xhci->cmd_ring.paddr,
+            (unsigned long)xhci->ev_ring.paddr);
+    return 0;
+}
+
+/**
+ * xhci_rings_fini — Tear down rings.
+ */
+static void xhci_rings_fini(struct xhci_controller *xhci)
+{
+    if (!xhci) return;
+    if (!xhci->rings_initialized) return;
+
+    xhci_event_ring_fini(&xhci->ev_ring);
+    xhci_ring_destroy(&xhci->cmd_ring);
+    xhci->rings_initialized = 0;
 }
 
 int xhci_port_reset(int port) {
@@ -167,6 +549,12 @@ int xhci_init(void) {
         return -1;
     }
 
+    /* Initialise command ring + event ring */
+    if (xhci_rings_init(&g_xhci) < 0) {
+        kprintf("[xHCI] Failed to initialise rings\n");
+        /* Continue without rings — basic port ops still work */
+    }
+
     /* Reset all ports */
     for (int i = 0; i < g_xhci.max_ports; i++) {
         if (xhci_port_status(i) & XHCI_PORTSC_CCS) {
@@ -194,23 +582,65 @@ void xhci_print_info(void) {
 #include "module.h"
 module_init(xhci_init);
 
-/* ── Stub: xhci_reset ─────────────────────────────── */
+/* ── xhci_reset ─────────────────────────────────────────────── */
 int xhci_reset(void *dev)
 {
     (void)dev;
-    kprintf("[XHCI] xhci_reset: not yet implemented\n");
+    /* Full controller reset followed by ring re-init */
+    if (g_xhci.present) {
+        xhci_rings_fini(&g_xhci);
+        if (xhci_start_controller() < 0)
+            return -EIO;
+        if (xhci_rings_init(&g_xhci) < 0)
+            kprintf("[XHCI] xhci_reset: rings re-init failed\n");
+    }
     return 0;
 }
-/* ── Stub: xhci_submit_urb ─────────────────────────────── */
+
+/* ── xhci_submit_urb ─────────────────────────────────────────────── */
 int xhci_submit_urb(void *urb)
 {
+    /* Build and enqueue a Normal TRB on the default endpoint's transfer ring.
+     * For now, use the command ring as a simple placeholder; full per-endpoint
+     * transfer ring support comes in task #9 (endpoint context management). */
     (void)urb;
-    kprintf("[XHCI] xhci_submit_urb: not yet implemented\n");
-    return 0;
+    kprintf("[XHCI] xhci_submit_urb: ring-based transfer not yet wired\n");
+    return -ENOSYS;
 }
+
+/* ── xhci_irq ───────────────────────────────────────────────── */
 void xhci_irq(struct interrupt_frame *frame)
 {
     (void)frame;
-    /* xHCI IRQ handler depends on types not yet defined */
+
+    if (!g_xhci.present)
+        return;
+
+    /* Read USBSTS to determine interrupt cause */
+    uint32_t sts = xhci_read32(&g_xhci, g_xhci.op_regs, XHCI_OP_USBSTS);
+
+    if (sts & XHCI_STS_EINT) {
+        /* Event Interrupt — process event ring */
+        xhci_event_ring_process(&g_xhci.ev_ring, NULL, NULL);
+    }
+
+    if (sts & XHCI_STS_PCD) {
+        /* Port Change Detect */
+        kprintf("[XHCI] Port change detected\n");
+    }
+
+    if (sts & XHCI_STS_HSE) {
+        /* Host System Error */
+        kprintf("[XHCI] Host system error!\n");
+    }
+
+    /* Clear interrupt status bits by writing 1 to set bits */
+    xhci_write32(&g_xhci, g_xhci.op_regs, XHCI_OP_USBSTS, sts);
 }
+
+/* ── Module metadata ─────────────────────────────────────────── */
+MODULE_LICENSE("GPL");
+MODULE_VERSION("0.1.0");
+MODULE_DESCRIPTION("xHCI (USB 3.0) host controller driver with TRB ring management");
+MODULE_AUTHOR("1000 Changes Project");
 
