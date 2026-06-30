@@ -963,6 +963,13 @@ static uint64_t lin_fallocate(uint64_t a1, uint64_t a2, uint64_t a3,
     return syscall_dispatch_internal(SYS_FALLOCATE, a1, a2, a3, a4, 0);
 }
 
+static uint64_t lin_fadvise64(uint64_t a1, uint64_t a2, uint64_t a3,
+                               uint64_t a4, uint64_t a5, uint64_t a6)
+{
+    lin_discard2(a5, a6);
+    return syscall_dispatch_internal(SYS_FADVISE64, a1, a2, a3, a4, 0);
+}
+
 static uint64_t lin_timerfd_create(uint64_t a1, uint64_t a2, uint64_t a3,
                                     uint64_t a4, uint64_t a5, uint64_t a6)
 {
@@ -1623,7 +1630,7 @@ linux_syscall_t sys_call_table[__NR_syscalls] = {
     [218] = sys_ni_syscall,     /* __NR_set_tid_address */
     [219] = sys_ni_syscall,     /* __NR_restart_syscall */
     [220] = sys_ni_syscall,     /* __NR_semtimedop */
-    [221] = sys_ni_syscall,     /* __NR_fadvise64 */
+    [221] = lin_fadvise64,      /* __NR_fadvise64 */
     [222] = lin_timer_create,    /* __NR_timer_create */
     [223] = lin_timer_settime,   /* __NR_timer_settime */
     [224] = lin_timer_gettime,   /* __NR_timer_gettime */
