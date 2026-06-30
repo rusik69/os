@@ -188,6 +188,7 @@ struct usb_device {
 #define USB_CLASS_AUDIO      0x01   /* USB Audio class */
 #define USB_CLASS_AUDIO_CTRL 0x01   /* Audio control interface */
 #define USB_CLASS_AUDIO_STREAM 0x02 /* Audio streaming interface (actually subclass) */
+#define USB_CLASS_VIDEO      0x0E   /* USB Video class (UVC 1.0/1.1/1.5) */
 
 #define USB_MAX_DEVICES 16
 
