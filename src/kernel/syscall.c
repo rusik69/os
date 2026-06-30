@@ -9028,40 +9028,248 @@ void signalfd_exec_close(void) {
 
 /* ── splice / tee ─────────────────────────────────────────────────────── */
 
+/**
+ * sys_splice — Move data between two file descriptors
+ * @fd_in:        Source fd (must be a pipe, or off_in must be non-NULL)
+ * @off_in_addr:  User-space offset pointer for source (NULL if fd_in is a pipe)
+ * @fd_out:       Destination fd (must be a pipe, or off_out must be non-NULL)
+ * @off_out_addr: User-space offset pointer for dest (NULL if fd_out is a pipe)
+ * @len:          Maximum bytes to transfer
+ * @flags:        SPLICE_F_MOVE, SPLICE_F_NONBLOCK, SPLICE_F_MORE, SPLICE_F_GIFT
+ *
+ * Linux signature:
+ *   ssize_t splice(int fd_in, loff_t *off_in, int fd_out,
+ *                  loff_t *off_out, size_t len, unsigned int flags);
+ *
+ * Linux semantics:
+ *   - At least one of fd_in, fd_out must be a pipe.
+ *   - If fd_in is a pipe, off_in_addr must be NULL (0). Data consumed from pipe.
+ *   - If fd_in is NOT a pipe, off_in_addr must point to the source file offset.
+ *   - If fd_out is a pipe, off_out_addr must be NULL (0). Data written to pipe.
+ *   - If fd_out is NOT a pipe, off_out_addr must point to the dest file offset.
+ *
+ * When both fds are pipes, uses zero-copy pipe_splice() internally.
+ * Otherwise uses a 4 KiB kernel bounce buffer.
+ *
+ * Return: Number of bytes transferred (as uint64_t), or negative errno:
+ *   EBADF  — invalid or wrong-mode fd
+ *   EINVAL — no pipe involved, or offset required but missing
+ *   ESPIPE — offset given on a pipe fd
+ *   EFAULT — bad user-space offset pointer
+ *   ENOMEM — cannot allocate bounce buffer
+ *   EIO    — VFS read/write failure
+ */
 static uint64_t sys_splice(uint64_t fd_in, uint64_t off_in_addr,
-                            uint64_t fd_out, uint64_t off_out_addr,
-                            uint64_t len) {
-    (void)off_in_addr; (void)off_out_addr;
-    struct process *p = process_get_current();
-    if (!p) return (uint64_t)-1;
-    if (fd_in >= PROCESS_FD_MAX || !p->fd_table[fd_in].used) return (uint64_t)-1;
-    if (fd_out >= PROCESS_FD_MAX || !p->fd_table[fd_out].used) return (uint64_t)-1;
+                           uint64_t fd_out, uint64_t off_out_addr,
+                           uint64_t len, uint64_t flags)
+{
+    (void)flags;  /* SPLICE_F_* flags are advisory; non-blocking depends on O_NONBLOCK */
 
+    struct process *p = process_get_current();
+    if (!p)
+        return (uint64_t)(int64_t)-EPERM;
+
+    /* len == 0 is a no-op per Linux semantics */
+    if (len == 0)
+        return 0;
+
+    /* Validate fd range (direct indexing: fds 0..PROCESS_FD_MAX-1) */
+    if (fd_in >= PROCESS_FD_MAX || fd_out >= PROCESS_FD_MAX)
+        return (uint64_t)(int64_t)-EBADF;
+
+    struct process_fd *pfd_in  = &p->fd_table[fd_in];
+    struct process_fd *pfd_out = &p->fd_table[fd_out];
+
+    if (!pfd_in->used || !pfd_out->used)
+        return (uint64_t)(int64_t)-EBADF;
+
+    /* Detect pipe fds by their path prefix */
+    int is_in_pipe  = (strncmp(pfd_in->path, "pipe_", 5) == 0);
+    int is_out_pipe = (strncmp(pfd_out->path, "pipe_", 5) == 0);
+
+    /* Linux: at least one fd must be a pipe */
+    if (!is_in_pipe && !is_out_pipe)
+        return (uint64_t)(int64_t)-EINVAL;
+
+    /* Linux: pipe fds must have NULL offsets, non-pipe fds must have offsets */
+    if (is_in_pipe && off_in_addr != 0)
+        return (uint64_t)(int64_t)-ESPIPE;
+    if (is_out_pipe && off_out_addr != 0)
+        return (uint64_t)(int64_t)-ESPIPE;
+    if (!is_in_pipe && off_in_addr == 0)
+        return (uint64_t)(int64_t)-EINVAL;
+    if (!is_out_pipe && off_out_addr == 0)
+        return (uint64_t)(int64_t)-EINVAL;
+
+    /* Extract pipe IDs */
+    int in_pipe_id  = (int)pfd_in->offset;
+    int out_pipe_id = (int)pfd_out->offset;
+
+    /* Verify pipe direction: source must be a read end, dest a write end */
+    if (is_in_pipe && strncmp(pfd_in->path, "pipe_read_", 10) != 0)
+        return (uint64_t)(int64_t)-EBADF;
+    if (is_out_pipe && strncmp(pfd_out->path, "pipe_write_", 11) != 0)
+        return (uint64_t)(int64_t)-EBADF;
+
+    /* Check open_flags: source must be readable, dest writable */
+    if (!is_in_pipe && (pfd_in->open_flags & 3) == 1)  /* O_WRONLY alone */
+        return (uint64_t)(int64_t)-EBADF;
+    if (!is_out_pipe && (pfd_out->open_flags & 3) == 0) /* O_RDONLY alone */
+        return (uint64_t)(int64_t)-EBADF;
+
+    /* ── Pipe-to-pipe: zero-copy via pipe_splice() ── */
+    if (is_in_pipe && is_out_pipe) {
+        int splice_len = (len > (uint64_t)INT32_MAX) ? INT32_MAX : (int)len;
+        int ret = pipe_splice(in_pipe_id, out_pipe_id, splice_len);
+        if (ret < 0)
+            return (uint64_t)(int64_t)ret;
+        return (uint64_t)ret;
+    }
+
+    /* ── File↔pipe: bounce buffer transfer ── */
     uint8_t *buf = kmalloc(4096);
-    if (!buf) return (uint64_t)-1;
+    if (!buf)
+        return (uint64_t)(int64_t)-ENOMEM;
+
     uint64_t total = 0;
+    uint64_t sp_result;
+
+    /* Read initial non-pipe source offset from user-space if provided */
+    uint64_t in_off = 0;
+    int use_in_explicit = (!is_in_pipe && off_in_addr != 0);
+    if (use_in_explicit) {
+        int64_t abs_off;
+        if (copy_from_user(&abs_off, off_in_addr,
+                           sizeof(abs_off)) < 0) {
+            sp_result = (uint64_t)(int64_t)-EFAULT;
+            goto splice_out;
+        }
+        if (abs_off < 0) {
+            sp_result = (uint64_t)(int64_t)-EINVAL;
+            goto splice_out;
+        }
+        in_off = (uint64_t)abs_off;
+    }
+
+    /* ── Transfer loop ── */
     while (total < len) {
         uint64_t chunk = len - total;
-        if (chunk > 4096) chunk = 4096;
-        uint32_t nread = 0;
-        if (vfs_read(p->fd_table[fd_in].path, buf, (uint32_t)chunk, &nread) < 0)
-            break;
-        if (nread == 0) break;
-        if (vfs_write(p->fd_table[fd_out].path, buf, nread) < 0)
-            break;
-        total += nread;
-        if (nread < chunk) break;
+        if (chunk > 4096)
+            chunk = 4096;
+
+        int nread_total = 0;
+
+        /* ── Read from source ── */
+        if (is_in_pipe) {
+            int n = pipe_read(in_pipe_id, buf, (int)chunk);
+            if (n < 0) {
+                sp_result = (total > 0) ? total : (uint64_t)(int64_t)n;
+                goto splice_out;
+            }
+            if (n == 0)
+                break;  /* EOF */
+            nread_total = n;
+        } else {
+            /* Non-pipe source: use explicit offset */
+            uint64_t saved_off = pfd_in->offset;
+            if (use_in_explicit)
+                pfd_in->offset = in_off;
+
+            uint32_t nread = 0;
+            int r = vfs_read(pfd_in->path, buf, (uint32_t)chunk, &nread);
+            if (r < 0) {
+                if (use_in_explicit)
+                    pfd_in->offset = saved_off;
+                sp_result = (total > 0) ? total : (uint64_t)(int64_t)r;
+                goto splice_out;
+            }
+            if (nread == 0) {
+                if (use_in_explicit)
+                    pfd_in->offset = saved_off;
+                break;  /* EOF */
+            }
+            nread_total = (int)nread;
+
+            if (use_in_explicit) {
+                in_off += nread;
+                pfd_in->offset = saved_off;
+            }
+        }
+
+        /* ── Write to destination ── */
+        if (is_out_pipe) {
+            int w = pipe_write(out_pipe_id, buf, nread_total);
+            if (w < 0) {
+                sp_result = (total > 0) ? total : (uint64_t)(int64_t)w;
+                goto splice_out;
+            }
+        } else {
+            /* Non-pipe dest: read offset from user-space each iteration */
+            uint64_t saved_off = pfd_out->offset;
+            if (off_out_addr != 0) {
+                int64_t abs_off;
+                if (copy_from_user(&abs_off, off_out_addr,
+                                   sizeof(abs_off)) < 0) {
+                    sp_result = (uint64_t)(int64_t)-EFAULT;
+                    goto splice_out;
+                }
+                if (abs_off < 0) {
+                    sp_result = (uint64_t)(int64_t)-EINVAL;
+                    goto splice_out;
+                }
+                pfd_out->offset = (uint64_t)abs_off;
+            }
+
+            int w = vfs_write(pfd_out->path, buf, (uint32_t)nread_total);
+            if (w < 0) {
+                if (off_out_addr != 0)
+                    pfd_out->offset = saved_off;
+                sp_result = (total > 0) ? total : (uint64_t)(int64_t)w;
+                goto splice_out;
+            }
+
+            /* Write back updated dest offset to user-space */
+            if (off_out_addr != 0) {
+                int64_t new_off = (int64_t)(pfd_out->offset);
+                if (copy_to_user(off_out_addr,
+                                 &new_off, sizeof(new_off)) < 0) {
+                    sp_result = (uint64_t)(int64_t)-EFAULT;
+                    goto splice_out;
+                }
+            }
+        }
+
+        total += (uint64_t)nread_total;
+
+        if (nread_total < (int)chunk)
+            break;  /* Short read/write — no more data */
     }
+
+    /* Write back updated source offset to user-space */
+    if (use_in_explicit) {
+        int64_t new_off = (int64_t)in_off;
+        if (copy_to_user(off_in_addr,
+                         &new_off, sizeof(new_off)) < 0) {
+            sp_result = (uint64_t)(int64_t)-EFAULT;
+            goto splice_out;
+        }
+    }
+
+    sp_result = total;
+
+splice_out:
     kfree(buf);
-    return total > 0 ? (uint64_t)total : (uint64_t)-1;
+    return sp_result;
 }
 
 static uint64_t sys_tee(uint64_t fd_in, uint64_t fd_out,
-                         uint64_t len, uint64_t flags) {
+                         uint64_t len, uint64_t flags)
+{
     (void)flags;
-    /* tee copies data between two fds without consuming.
-     * For now, just do a splice-like copy. */
-    return sys_splice(fd_in, 0, fd_out, 0, len);
+    /* tee copies data between two pipes without consuming from source.
+     * For now, implement as splice with both pipes and flags=0.
+     * A proper implementation would use pipe_peek + pipe_write. */
+    return sys_splice(fd_in, 0, fd_out, 0, len, 0);
 }
 
 
@@ -10211,7 +10419,7 @@ uint64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_TIMERFD_GETTIME: return sys_timerfd_gettime(a1, a2);
         case SYS_SIGNALFD:        return sys_signalfd(a1, a2, a3);
         case SYS_MEMFD_CREATE:    return (uint64_t)memfd_syscall_create((const char*)a1, (unsigned int)a2);
-        case SYS_SPLICE:          return sys_splice(a1, a2, a3, a4, a5);
+        case SYS_SPLICE:          return sys_splice(a1, a2, a3, a4, a5, syscall_arg6);
         case SYS_TEE:             return sys_tee(a1, a2, a3, a4);
         case SYS_COPY_FILE_RANGE: return sys_copy_file_range(a1, a2, a3, a4, a5, syscall_arg6);
         case SYS_SENDMMSG:        return sys_sendmmsg(a1, a2, a3, a4);

@@ -311,6 +311,12 @@
 /* ── I/O and data transfer ──────────────────────────────────── */
 #define SYS_SPLICE            307  /* splice(fd_in, off_in, fd_out, off_out, len, flags) */
 #define SYS_TEE               308  /* tee(fd_in, fd_out, len, flags) */
+
+/* splice/tee/vmsplice flags (SPLICE_F_*) */
+#define SPLICE_F_MOVE           1  /* move pages instead of copying (hint) */
+#define SPLICE_F_NONBLOCK       2  /* non-blocking operation */
+#define SPLICE_F_MORE           4  /* caller expects more data (hint) */
+#define SPLICE_F_GIFT           8  /* gift pages to kernel (hint) */
 #define SYS_SENDMMSG          309  /* sendmmsg(sockfd, msgvec, vlen, flags) */
 #define SYS_RECVMMSG          310  /* recvmmsg(sockfd, msgvec, vlen, flags, timeout) */
 #define SYS_SYNC              311  /* sync() → void */
