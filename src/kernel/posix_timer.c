@@ -665,6 +665,9 @@ uint64_t sys_timer_settime(uint64_t timerid, uint64_t flags,
  *   timer_gettime(timerid, struct itimerspec *cur)
  *
  * Returns the remaining time until expiry and the reload interval.
+ *
+ * Returns: 0 on success, -EFAULT on bad pointer, -EINVAL on invalid
+ * timerid.
  */
 uint64_t sys_timer_gettime(uint64_t timerid, uint64_t cur_addr)
 {
@@ -673,16 +676,18 @@ uint64_t sys_timer_gettime(uint64_t timerid, uint64_t cur_addr)
         return (uint64_t)(int64_t)-EINVAL;
 
     struct itimerspec cur;
-    uint64_t elapsed = timer_get_ticks() - posix_timers[idx].start_tick;
+    uint64_t now = timer_get_ticks();
+    uint64_t elapsed = (now >= posix_timers[idx].start_tick)
+                       ? (now - posix_timers[idx].start_tick) : 0;
     uint64_t remaining = posix_timers[idx].it_value > elapsed
                          ? posix_timers[idx].it_value - elapsed : 0;
 
     cur.it_interval.tv_sec  = posix_timers[idx].it_interval / TIMER_FREQ;
     cur.it_interval.tv_nsec = (posix_timers[idx].it_interval % TIMER_FREQ)
-                              * (1000000000ULL / TIMER_FREQ);
+                              * NS_PER_TICK;
     cur.it_value.tv_sec     = remaining / TIMER_FREQ;
     cur.it_value.tv_nsec    = (remaining % TIMER_FREQ)
-                              * (1000000000ULL / TIMER_FREQ);
+                              * NS_PER_TICK;
 
     if (copy_to_user(cur_addr, &cur, sizeof(struct itimerspec)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
