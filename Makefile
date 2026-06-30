@@ -91,6 +91,7 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/syscall_linux.c \
          src/kernel/posix_timer.c \
          src/kernel/sys_process.c \
+         src/kernel/sys_mmap.c \
          src/kernel/vfs.c \
          src/kernel/elf.c \
          src/kernel/spawn_kernel.c \

@@ -201,6 +201,11 @@
 #define SYS_CC_COMPILE_OBJ  229  /* compile C source to relocatable .o file */
 #define SYS_CC_LINK          230  /* link multiple .o files into executable */
 
+/* Memory mapping syscalls (implementations in sys_mmap.c) */
+uint64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot,
+                   uint64_t flags, uint64_t fd, uint64_t offset);
+/* sys_munmap is still static in syscall.c; sys_mprotect declared in mprotect.h */
+
 /* Memory mapping syscalls */
 #define SYS_MREMAP           370
 

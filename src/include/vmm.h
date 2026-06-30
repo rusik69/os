@@ -55,6 +55,43 @@
 #define PROT_WRITE  2
 #define PROT_EXEC   4
 
+/* ── mmap mapping flags (Linux-compatible values) ──────── */
+#define MAP_SHARED          0x01
+#define MAP_PRIVATE         0x02
+#define MAP_SHARED_VALIDATE 0x03
+#define MAP_FIXED           0x10
+#define MAP_ANONYMOUS       0x20
+#define MAP_GROWSDOWN       0x0100
+#define MAP_DENYWRITE       0x0800
+#define MAP_EXECUTABLE      0x1000
+#define MAP_LOCKED          0x2000
+#define MAP_NORESERVE       0x4000
+#define MAP_POPULATE        0x8000
+#define MAP_NONBLOCK        0x10000
+#define MAP_STACK           0x20000
+/* MAP_HUGETLB is defined in hugetlb.h (0x40000) */
+#define MAP_SYNC            0x80000
+#define MAP_FIXED_NOREPLACE 0x100000
+
+/* MAP_FAILED return value */
+#define MAP_FAILED          ((void *)(uint64_t)-1)
+
+/* Validate mmap flags — returns 0 on success, negative errno on invalid combo */
+static inline int vmm_validate_mmap_flags(uint64_t flags)
+{
+    /* Exactly one of MAP_SHARED or MAP_PRIVATE must be set */
+    uint64_t type = flags & (MAP_SHARED | MAP_PRIVATE);
+    if (type != MAP_SHARED && type != MAP_PRIVATE)
+        return -EINVAL;
+    /* MAP_SHARED_VALIDATE is a superset of MAP_SHARED */
+    if ((flags & MAP_SHARED_VALIDATE) == MAP_SHARED_VALIDATE)
+        return -EOPNOTSUPP;
+    /* MAP_SHARED without a backing fd requires MAP_ANONYMOUS */
+    if ((flags & MAP_SHARED) && !(flags & MAP_ANONYMOUS))
+        return -ENODEV;  /* file-backed shared not yet implemented */
+    return 0;
+}
+
 /* ── Address Space Type (AST) — abstract page permissions ──
  *
  * AST decouples the logical page type from the hardware PTE bits.
