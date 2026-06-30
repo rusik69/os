@@ -13,9 +13,10 @@
  *   Both level-triggered (default) and edge-triggered (EPOLLET)
  *   event reporting are supported.  EPOLLONESHOT entries are
  *   automatically disarmed after the first event report.
- *   EPOLLEXCLUSIVE and EPOLLWAKEUP flags are accepted as valid;
- *   actual thundering-herd prevention and suspend-blocking require
- *   waitqueue integration (future enhancement).
+ *   EPOLLWAKEUP registers a wakeup source during the wait to
+ *   prevent system suspend while epoll_wait is active.
+ *   EPOLLEXCLUSIVE is accepted as a valid flag; thundering-herd
+ *   prevention requires waitqueue integration (future enhancement).
  *
  * Module metadata:
  *   MODULE_LICENSE("GPL v2")
@@ -34,6 +35,7 @@
 #include "timer.h"
 #include "socket.h"
 #include "errno.h"
+#include "wakeup.h"
 
 /* ── Global state ────────────────────────────────────────────── */
 
@@ -280,6 +282,18 @@ int epoll_wait_syscall(int epfd, struct epoll_event *events,
 
     struct process *cur = process_get_current();
 
+    /* EPOLLWAKEUP: register a wakeup source to prevent suspend
+     * while waiting, if any monitored fd uses this flag. */
+    int wsrc = -1;
+    for (int i = 0; i < ep->num_entries && wsrc < 0; i++) {
+        if (ep->entries[i].in_use &&
+            (ep->entries[i].events & EPOLLWAKEUP))
+            wsrc = wakeup_source_register("epoll_wait");
+    }
+    if (wsrc >= 0)
+        wakeup_source_event(wsrc);
+
+    int ret = -EINTR;  /* default: interrupted */
     for (;;) {
         int ready = 0;
 
@@ -337,16 +351,26 @@ int epoll_wait_syscall(int epfd, struct epoll_event *events,
             }
         }
 
-        if (ready > 0)
-            return ready;
+        if (ready > 0) {
+            ret = ready;
+            break;
+        }
 
         /* Check timeout */
-        if (timeout >= 0 && timer_get_ticks() >= deadline)
-            return 0; /* timeout — no events ready */
+        if (timeout >= 0 && timer_get_ticks() >= deadline) {
+            ret = 0; /* timeout — no events ready */
+            break;
+        }
 
         /* Yield CPU while waiting */
         scheduler_yield();
     }
+
+    /* EPOLLWAKEUP: release the wakeup source before returning */
+    if (wsrc >= 0)
+        wakeup_source_unregister(wsrc);
+
+    return ret;
 }
 
 /* ── epoll_pwait ─────────────────────────────────────────────── */
