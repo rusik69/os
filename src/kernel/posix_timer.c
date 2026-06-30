@@ -728,7 +728,10 @@ uint64_t sys_timer_getoverrun(uint64_t timerid)
  *
  *   timer_delete(timerid)
  *
- * Destroys a POSIX per-process timer, freeing its slot.
+ * Destroys a POSIX per-process timer, freeing its slot.  All
+ * fields are zeroed to prevent stale data access.
+ *
+ * Returns: 0 on success, -EINVAL on invalid timerid.
  */
 uint64_t sys_timer_delete(uint64_t timerid)
 {
@@ -736,7 +739,8 @@ uint64_t sys_timer_delete(uint64_t timerid)
     if (idx < 0 || idx >= POSIX_TIMER_MAX || !posix_timers[idx].in_use)
         return (uint64_t)(int64_t)-EINVAL;
 
-    posix_timers[idx].in_use = 0;
+    /* Clear all fields to prevent stale data */
+    memset(&posix_timers[idx], 0, sizeof(struct posix_timer));
     return 0;
 }
 
