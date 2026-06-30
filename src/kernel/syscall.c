@@ -89,6 +89,7 @@
 #include "netlink.h"     /* for netlink_is_valid_fd / netlink_send (sys_sendfile) */
 #include "pkey.h"        /* for sys_pkey_mprotect */
 #include "mem_policy.h"  /* for NUMA memory policy syscalls */
+#include "cpu_features.h" /* for MSR_FS_BASE / MSR_GS_BASE constants */
 
 /* Module metadata */
 MODULE_LICENSE("GPL v2");
@@ -5351,46 +5352,52 @@ static uint64_t sys_futex(uint64_t uaddr, uint64_t op, uint64_t val,
     }
 }
 
-/* ── arch_prctl (TLS) ────────────────────────────────────────────────── */
+/* ── arch_prctl (TLS) — Linux x86_64 arch_prctl(2)
+ *
+ * Sets or reads the FS/GS segment base addresses used for thread-local
+ * storage (TLS, via FS) and per-CPU data (via GS).  Uses wrmsr/rdmsr
+ * with the MSR_FS_BASE / MSR_GS_BASE constants for maximum portability.
+ *
+ * Returns 0 on success, or -ENOSYS for unknown codes.  GET operations
+ * use copy_to_user() for SMAP-safe access. */
 
 static uint64_t sys_arch_prctl(uint64_t code, uint64_t addr) {
     struct process *p = process_get_current();
-    if (!p) return (uint64_t)-1;
+
+    if (!p)
+        return (uint64_t)(int64_t)-ENOSYS;
 
     switch (code) {
         case ARCH_SET_FS:
-            /* Set FS.base MSR (x86_64 thread-local storage) */
-            __asm__ volatile("wrmsr" : : "c"(0xC0000100ULL), "a"((uint32_t)addr),
-                            "d"((uint32_t)(addr >> 32)));
+            __asm__ volatile("wrmsr"
+                             : : "c"(MSR_FS_BASE),
+                                 "a"((uint32_t)addr),
+                                 "d"((uint32_t)(addr >> 32)));
             return 0;
+
         case ARCH_GET_FS: {
-            uint32_t lo, hi;
-            __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(0xC0000100ULL));
-            uint64_t fs_base = ((uint64_t)hi << 32) | lo;
-            if (syscall_is_user_process()) {
-                if (!syscall_user_write_ok(addr, 8))
-                    return (uint64_t)-1;
-            }
-            *(uint64_t*)addr = fs_base;
+            uint64_t fs_base = rdmsr(MSR_FS_BASE);
+            if (copy_to_user(addr, &fs_base, sizeof(fs_base)) < 0)
+                return (uint64_t)(int64_t)-EFAULT;
             return 0;
         }
+
         case ARCH_SET_GS:
-            __asm__ volatile("wrmsr" : : "c"(0xC0000101ULL), "a"((uint32_t)addr),
-                            "d"((uint32_t)(addr >> 32)));
+            __asm__ volatile("wrmsr"
+                             : : "c"(MSR_GS_BASE),
+                                 "a"((uint32_t)addr),
+                                 "d"((uint32_t)(addr >> 32)));
             return 0;
+
         case ARCH_GET_GS: {
-            uint32_t lo, hi;
-            __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(0xC0000101ULL));
-            uint64_t gs_base = ((uint64_t)hi << 32) | lo;
-            if (syscall_is_user_process()) {
-                if (!syscall_user_write_ok(addr, 8))
-                    return (uint64_t)-1;
-            }
-            *(uint64_t*)addr = gs_base;
+            uint64_t gs_base = rdmsr(MSR_GS_BASE);
+            if (copy_to_user(addr, &gs_base, sizeof(gs_base)) < 0)
+                return (uint64_t)(int64_t)-EFAULT;
             return 0;
         }
+
         default:
-            return (uint64_t)-1;
+            return (uint64_t)(int64_t)-ENOSYS;
     }
 }
 
