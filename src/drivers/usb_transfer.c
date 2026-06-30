@@ -225,3 +225,55 @@ int usb_int_msg(uint8_t dev_addr, uint8_t ep,
 
     return 0;
 }
+
+/* ── Isochronous transfer API ────────────────────────────────────────── */
+
+int usb_isochronous_msg(uint8_t dev_addr, uint8_t ep,
+                        void *data, uint32_t len,
+                        uint32_t sched_frame)
+{
+    const struct usb_hc_ops *ops;
+    int ret;
+
+    spinlock_acquire(&g_hc_lock);
+    ops = g_hc_ops;
+    spinlock_release(&g_hc_lock);
+
+    if (!ops) {
+        kprintf("[USB] iso_msg: no host controller registered\n");
+        return -ENODEV;
+    }
+
+    if (!ops->isochronous_transfer) {
+        kprintf("[USB] iso_msg: host controller does not support "
+                "isochronous transfers\n");
+        return -ENOSYS;
+    }
+
+    if (len > 0 && !data) {
+        kprintf("[USB] iso_msg: data buffer required for len=%u\n",
+                (unsigned)len);
+        return -EINVAL;
+    }
+
+    if (len > USB_ISO_MAX_PACKET) {
+        kprintf("[USB] iso_msg: len %u exceeds max isochronous packet "
+                "size %u\n",
+                (unsigned)len, USB_ISO_MAX_PACKET);
+        return -EINVAL;
+    }
+
+    int dir_in = (ep & USB_ENDPOINT_DIR_IN) ? 1 : 0;
+    kprintf("[USB] iso_msg: addr=%d ep=0x%02x dir=%s len=%u "
+            "frame=%u\n",
+            dev_addr, ep, dir_in ? "IN" : "OUT",
+            (unsigned)len, (unsigned)sched_frame);
+
+    ret = ops->isochronous_transfer(dev_addr, ep, data, len, sched_frame);
+    if (ret < 0) {
+        kprintf("[USB] iso_msg: failed (%d)\n", ret);
+        return ret;
+    }
+
+    return 0;
+}

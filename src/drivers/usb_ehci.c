@@ -1375,9 +1375,10 @@ cleanup:
 }
 
 static const struct usb_hc_ops ehci_hc_ops = {
-    .control_transfer  = ehci_control_transfer,
-    .bulk_transfer     = ehci_bulk_transfer,
-    .interrupt_transfer = ehci_interrupt_transfer,
+    .control_transfer     = ehci_control_transfer,
+    .bulk_transfer        = ehci_bulk_transfer,
+    .interrupt_transfer   = ehci_interrupt_transfer,
+    .isochronous_transfer = ehci_submit_isochronous,
 };
 
 int xhci_submit_isochronous(uint8_t dev_addr, uint8_t ep,

@@ -110,6 +110,26 @@ struct usb_hc_ops {
     int (*interrupt_transfer)(uint8_t dev_addr, uint8_t ep,
                               void *data, uint32_t len,
                               int dir_in, int toggle);
+
+    /*
+     * Submit a synchronous isochronous transfer on an isochronous endpoint.
+     *
+     * Isochronous transfers are used for time-sensitive data that can
+     * tolerate occasional loss (USB Audio, USB Video).  They use the
+     * periodic schedule and have guaranteed bus bandwidth but no
+     * retry on error.  There is no data toggle for isochronous endpoints.
+     *
+     * @dev_addr:   USB device address
+     * @ep:         Endpoint number (0x80|n for IN, n for OUT)
+     * @data:       DMA-safe data buffer
+     * @len:        Transfer length in bytes (≤ USB_ISO_MAX_PACKET)
+     * @sched_frame: Frame index modulo 1024 for bus-time alignment
+     *
+     * Returns 0 on success, negative errno on failure.
+     */
+    int (*isochronous_transfer)(uint8_t dev_addr, uint8_t ep,
+                                void *data, uint32_t len,
+                                uint32_t sched_frame);
 };
 
 /* Register a host controller's ops table (called during HC init) */
@@ -177,6 +197,30 @@ int usb_bulk_msg(uint8_t dev_addr, uint8_t ep,
 int usb_int_msg(uint8_t dev_addr, uint8_t ep,
                 void *data, uint32_t len,
                 int dir_in, int toggle);
+
+/*
+ * Submit a synchronous USB isochronous transfer.
+ *
+ * This is the primary API for USB class drivers to perform isochronous
+ * transfers on isochronous endpoints (e.g. USB Audio streaming, USB Video
+ * frames).  Delegates to the registered host controller's isochronous_transfer
+ * callback.
+ *
+ * Isochronous transfers have guaranteed bus bandwidth but no retry on error.
+ * They are scheduled on the periodic schedule at the specified frame index.
+ * The caller should provide a DMA-safe buffer and check the return value.
+ *
+ * @dev_addr:    USB device address
+ * @ep:          Endpoint number (0x80|n for IN, n for OUT)
+ * @data:        DMA-safe data buffer
+ * @len:         Length of data buffer in bytes (≤ USB_ISO_MAX_PACKET)
+ * @sched_frame: Frame index modulo 1024 for bus-time alignment
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int usb_isochronous_msg(uint8_t dev_addr, uint8_t ep,
+                        void *data, uint32_t len,
+                        uint32_t sched_frame);
 
 void usb_core_init(void);
 
