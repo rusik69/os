@@ -7760,35 +7760,101 @@ static uint64_t sys_munlock(uint64_t addr, uint64_t len) {
 static uint64_t sys_mlockall(uint64_t flags) {
     struct process *p = process_get_current();
     if (!p) return (uint64_t)-ENOMEM;
-    if (flags & ~(uint64_t)3) return (uint64_t)-EINVAL; /* MCL_CURRENT=1, MCL_FUTURE=2 */
-    p->vm_locked_flags = (int)(flags & 3);
+    /* MCL_CURRENT=1, MCL_FUTURE=2, MCL_ONFAULT=4 */
+    if (flags & ~(uint64_t)(MCL_CURRENT | MCL_FUTURE | MCL_ONFAULT))
+        return (uint64_t)-EINVAL;
+    p->vm_locked_flags = (int)(flags & (MCL_CURRENT | MCL_FUTURE | MCL_ONFAULT));
 
-    /* MCL_CURRENT: count currently mapped pages and check limit */
-    if (flags & 1) {
+    /* MCL_CURRENT: actually wire all currently mapped pages */
+    if (flags & MCL_CURRENT) {
         uint64_t total = 0;
+
         if (p->pml4) {
+            /* ── Phase 1: Count all mapped pages for RLIMIT_MEMLOCK check ── */
             for (int i4 = 0; i4 < 512; i4++) {
-                if (!(p->pml4[i4] & 1)) continue;
-                uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(p->pml4[i4] & ~0xFFFULL);
+                if (!(p->pml4[i4] & PTE_PRESENT)) continue;
+                uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(p->pml4[i4] & PTE_ADDR_MASK);
                 for (int i3 = 0; i3 < 512; i3++) {
-                    if (!(pdpt[i3] & 1)) continue;
-                    if (pdpt[i3] & PTE_HUGE) { total += 512; continue; }
-                    uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[i3] & ~0xFFFULL);
+                    if (!(pdpt[i3] & PTE_PRESENT)) continue;
+                    if (pdpt[i3] & PTE_HUGE) { total += 512 * 512; continue; }
+                    uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[i3] & PTE_ADDR_MASK);
                     for (int i2 = 0; i2 < 512; i2++) {
-                        if (!(pd[i2] & 1)) continue;
+                        if (!(pd[i2] & PTE_PRESENT)) continue;
                         if (pd[i2] & PTE_HUGE) { total += 512; continue; }
-                        uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[i2] & ~0xFFFULL);
+                        uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[i2] & PTE_ADDR_MASK);
                         for (int i1 = 0; i1 < 512; i1++) {
-                            if (pt[i1] & 1) total++;
+                            if (pt[i1] & PTE_PRESENT) total++;
+                        }
+                    }
+                }
+            }
+
+            /* RLIMIT_MEMLOCK check (rlimit index 8) */
+            uint64_t limit = p->rlim_cur[8];
+            if (limit != (uint64_t)-1 && (total * PAGE_SIZE) > limit)
+                return (uint64_t)-ENOMEM;
+
+            /* ── Phase 2: Actually lock all pages via vmm_lock_user_pages ── */
+            /* Only prefault+lock if MCL_ONFAULT is NOT set */
+            if (!(flags & MCL_ONFAULT)) {
+                for (int i4 = 0; i4 < 512; i4++) {
+                    if (!(p->pml4[i4] & PTE_PRESENT)) continue;
+                    uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(p->pml4[i4] & PTE_ADDR_MASK);
+                    for (int i3 = 0; i3 < 512; i3++) {
+                        if (!(pdpt[i3] & PTE_PRESENT)) continue;
+                        uint64_t base_virt_1g = ((uint64_t)i4 << 39) | ((uint64_t)i3 << 30);
+
+                        if (pdpt[i3] & PTE_HUGE) {
+                            /* 1GB huge page: lock each 2MB sub-range separately */
+                            for (int i2 = 0; i2 < 512; i2++) {
+                                uint64_t va = base_virt_1g | ((uint64_t)i2 << 21);
+                                vmm_lock_user_pages(p->pml4, va, 512);
+                            }
+                            continue;
+                        }
+
+                        uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[i3] & PTE_ADDR_MASK);
+                        for (int i2 = 0; i2 < 512; i2++) {
+                            if (!(pd[i2] & PTE_PRESENT)) continue;
+                            uint64_t base_virt_2m = base_virt_1g | ((uint64_t)i2 << 21);
+
+                            if (pd[i2] & PTE_HUGE) {
+                                /* 2MB huge page: lock all 512 frames */
+                                vmm_lock_user_pages(p->pml4, base_virt_2m, 512);
+                                continue;
+                            }
+
+                            /* 4KB pages: find contiguous mapped ranges */
+                            uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[i2] & PTE_ADDR_MASK);
+                            uint64_t range_start = 0;
+                            int in_range = 0;
+                            for (int i1 = 0; i1 < 512; i1++) {
+                                if (pt[i1] & PTE_PRESENT) {
+                                    if (!in_range) {
+                                        range_start = base_virt_2m | ((uint64_t)i1 << 12);
+                                        in_range = 1;
+                                    }
+                                } else {
+                                    if (in_range) {
+                                        uint64_t range_end = base_virt_2m | ((uint64_t)i1 << 12);
+                                        uint64_t npages = (range_end - range_start) / PAGE_SIZE;
+                                        vmm_lock_user_pages(p->pml4, range_start, npages);
+                                        in_range = 0;
+                                    }
+                                }
+                            }
+                            /* Close the last range if still open */
+                            if (in_range) {
+                                uint64_t range_end = base_virt_2m | (512ULL << 12);
+                                uint64_t npages = (range_end - range_start) / PAGE_SIZE;
+                                vmm_lock_user_pages(p->pml4, range_start, npages);
+                            }
                         }
                     }
                 }
             }
         }
-        /* RLIMIT_MEMLOCK check (index 8) */
-        uint64_t limit = p->rlim_cur[8];
-        if (limit != (uint64_t)-1 && (total * PAGE_SIZE) > limit)
-            return (uint64_t)-ENOMEM;
+
         p->locked_pages = total;
     }
     return 0;
@@ -7797,6 +7863,66 @@ static uint64_t sys_mlockall(uint64_t flags) {
 static uint64_t sys_munlockall(void) {
     struct process *p = process_get_current();
     if (!p) return (uint64_t)-ENOMEM;
+
+    /* Walk the page table and unwire every locked page */
+    if (p->pml4) {
+        for (int i4 = 0; i4 < 512; i4++) {
+            if (!(p->pml4[i4] & PTE_PRESENT)) continue;
+            uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(p->pml4[i4] & PTE_ADDR_MASK);
+            for (int i3 = 0; i3 < 512; i3++) {
+                if (!(pdpt[i3] & PTE_PRESENT)) continue;
+                uint64_t base_virt_1g = ((uint64_t)i4 << 39) | ((uint64_t)i3 << 30);
+
+                if (pdpt[i3] & PTE_HUGE) {
+                    /* 1GB huge page: check if locked, unlock each 2MB sub-range */
+                    /* Not all PDPTE entries are lockable at this level; skip.
+                     * Linux does not support locking 1GB pages individually. */
+                    continue;
+                }
+
+                uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[i3] & PTE_ADDR_MASK);
+                for (int i2 = 0; i2 < 512; i2++) {
+                    if (!(pd[i2] & PTE_PRESENT)) continue;
+                    uint64_t base_virt_2m = base_virt_1g | ((uint64_t)i2 << 21);
+
+                    if (pd[i2] & PTE_HUGE) {
+                        /* 2MB huge page: unlock if locked */
+                        if (pd[i2] & VMM_FLAG_LOCKED) {
+                            vmm_unlock_user_pages(p->pml4, base_virt_2m, 512);
+                        }
+                        continue;
+                    }
+
+                    /* 4KB pages: find contiguous locked ranges */
+                    uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[i2] & PTE_ADDR_MASK);
+                    uint64_t range_start = 0;
+                    int in_range = 0;
+                    for (int i1 = 0; i1 < 512; i1++) {
+                        if ((pt[i1] & PTE_PRESENT) && (pt[i1] & VMM_FLAG_LOCKED)) {
+                            if (!in_range) {
+                                range_start = base_virt_2m | ((uint64_t)i1 << 12);
+                                in_range = 1;
+                            }
+                        } else {
+                            if (in_range) {
+                                uint64_t range_end = base_virt_2m | ((uint64_t)i1 << 12);
+                                uint64_t npages = (range_end - range_start) / PAGE_SIZE;
+                                vmm_unlock_user_pages(p->pml4, range_start, npages);
+                                in_range = 0;
+                            }
+                        }
+                    }
+                    /* Close the last range if still open */
+                    if (in_range) {
+                        uint64_t range_end = base_virt_2m | (512ULL << 12);
+                        uint64_t npages = (range_end - range_start) / PAGE_SIZE;
+                        vmm_unlock_user_pages(p->pml4, range_start, npages);
+                    }
+                }
+            }
+        }
+    }
+
     p->vm_locked_flags = 0;
     p->locked_pages = 0;
     return 0;
