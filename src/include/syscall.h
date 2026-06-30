@@ -786,6 +786,7 @@ struct linux_dirent64 {
 
 /* Clone / threading */
 #define SYS_CLONE           231
+#define SYS_CLONE3          435  /* clone3( clone_args*, size_t ) — extensible clone */
 #define SYS_UNSHARE         394
 #define SYS_SETNS           395
 #define SYS_GETTID          232

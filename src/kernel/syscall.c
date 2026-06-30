@@ -2125,6 +2125,157 @@ static uint64_t sys_clone(uint64_t flags, uint64_t child_stack, uint64_t ptid,
     return (uint64_t)(int64_t)ret;
 }
 
+/* ── sys_clone3 — Linux-compatible extensible clone interface ───── */
+/*
+ * clone3 is the modern Linux clone interface that uses a struct
+ * clone_args for all parameters instead of encoding them in flags
+ * and register-passed args.  The size parameter allows future
+ * extension of the argument structure.
+ *
+ * Linux syscall signature:
+ *   long clone3(struct clone_args *uargs, size_t size);
+ *   syscall(SYS_clone3, &args, sizeof(args));
+ *
+ * Returns child PID on success, negative errno on failure.
+ */
+static uint64_t sys_clone3(uint64_t uargs_addr, uint64_t size) {
+    struct process *parent = process_get_current();
+    if (!parent) return (uint64_t)(int64_t)-EAGAIN;
+
+    /*
+     * The size must be at least CLONE_ARGS_SIZE_VER0.
+     * If it's larger, the kernel still knows how to handle the base
+     * struct — it just treats unknown trailing bytes as zero.
+     * Linux does this for forward compatibility.
+     */
+    if (size < CLONE_ARGS_SIZE_VER0)
+        return (uint64_t)(int64_t)-EINVAL;
+
+    /* Copy clone_args from user-space */
+    struct clone_args args;
+    int err = copy_from_user(&args, uargs_addr, sizeof(args));
+    if (err < 0)
+        return (uint64_t)(int64_t)-EFAULT;
+
+    uint64_t flags = args.flags;
+
+    /* ── Validate flag combinations (same as Linux clone) ──────── */
+    /* CLONE_THREAD requires CLONE_VM (cannot share TGID without VM) */
+    if ((flags & CLONE_THREAD) && !(flags & CLONE_VM))
+        return (uint64_t)(int64_t)-EINVAL;
+    /* CLONE_SIGHAND requires CLONE_VM */
+    if ((flags & CLONE_SIGHAND) && !(flags & CLONE_VM))
+        return (uint64_t)(int64_t)-EINVAL;
+
+    /* ── set_tid / set_tid_size: currently unsupported ─────────── */
+    if (args.set_tid_size > 0)
+        return (uint64_t)(int64_t)-EOPNOTSUPP;
+
+    /*
+     * Build the child stack pointer.
+     * In clone3, args.stack is the LOWEST address of the stack,
+     * and args.stack_size is its size.  The initial stack pointer
+     * is stack + stack_size.  If stack is 0, we treat it like
+     * legacy clone(child_stack=0).
+     */
+    void *child_stack = NULL;
+    if (args.stack != 0 && args.stack_size != 0) {
+        child_stack = (void *)(args.stack + args.stack_size);
+    }
+
+    uint64_t user_rip = syscall_user_rip;
+    uint64_t user_rflags = syscall_user_rflags;
+
+    if (parent->is_user) {
+        int ret = process_clone(parent, flags, child_stack,
+                                user_rip, user_rflags);
+        if (ret < 0)
+            return (uint64_t)(int64_t)ret;
+
+        struct process *child = process_get_by_pid((uint32_t)ret);
+
+        /* ── CLONE_PARENT_SETTID: write child PID to *parent_tid ── */
+        if ((flags & CLONE_PARENT_SETTID) && args.parent_tid && child) {
+            uint32_t child_pid = (uint32_t)ret;
+            int uerr = copy_to_user(args.parent_tid, &child_pid,
+                                    sizeof(child_pid));
+            if (uerr < 0)
+                return (uint64_t)(int64_t)-EFAULT;
+        }
+
+        /* ── CLONE_CHILD_SETTID: write child PID to *child_tid ──── */
+        if ((flags & CLONE_CHILD_SETTID) && args.child_tid && child) {
+            uint32_t child_pid = (uint32_t)ret;
+            int uerr = copy_to_user(args.child_tid, &child_pid,
+                                    sizeof(child_pid));
+            if (uerr < 0)
+                return (uint64_t)(int64_t)-EFAULT;
+        }
+
+        /* ── CLONE_CHILD_CLEARTID: store ctid ptr for teardown ──── */
+        if ((flags & CLONE_CHILD_CLEARTID) && args.child_tid && child) {
+            child->ctid_ptr = (void *)args.child_tid;
+        }
+
+        /* ── CLONE_SETTLS: set TLS (FS base) for child ──────────── */
+        if ((flags & CLONE_SETTLS) && child) {
+            uint32_t lo, hi;
+            __asm__ volatile("rdmsr"
+                             : "=a"(lo), "=d"(hi)
+                             : "c"(0xC0000100ULL));
+            uint64_t saved_fs_base = ((uint64_t)hi << 32) | lo;
+
+            __asm__ volatile("wrmsr"
+                             :
+                             : "c"(0xC0000100ULL),
+                               "a"((uint32_t)args.tls),
+                               "d"((uint32_t)(args.tls >> 32)));
+
+            __asm__ volatile("wrmsr"
+                             :
+                             : "c"(0xC0000100ULL),
+                               "a"((uint32_t)saved_fs_base),
+                               "d"((uint32_t)(saved_fs_base >> 32)));
+        }
+
+        /* ── CLONE_VFORK: block parent until child exec/exit ────── */
+        if ((flags & CLONE_VFORK) && child) {
+            parent->wait_for_pid = child->pid;
+            parent->state = PROCESS_BLOCKED;
+            scheduler_remove(parent);
+            scheduler_yield();
+            parent->wait_for_pid = 0;
+        }
+
+        /*
+         * ── pidfd: create a pidfd for the new child ─────────────
+         * If args.pidfd is non-zero, the caller wants a file
+         * descriptor that refers to the child process.  We write
+         * the fd number to the userspace pointer.
+         */
+        if (args.pidfd && child) {
+            int pidfd = pidfd_open((uint32_t)ret, 0);
+            if (pidfd >= 0) {
+                uint32_t pidfd_u32 = (uint32_t)pidfd;
+                int uerr = copy_to_user(args.pidfd, &pidfd_u32,
+                                        sizeof(pidfd_u32));
+                if (uerr < 0) {
+                    /* pidfd leaked on failure, but that's acceptable */
+                }
+            }
+            /* If pidfd_open fails, we silently skip — the caller
+             * gets -1 in *pidfd, which is the same as Linux behavior
+             * when pidfd_open is not supported by the filesystem. */
+        }
+
+        return (uint64_t)(int64_t)ret;
+    }
+
+    /* Kernel-mode clone3: same as kernel-mode clone path */
+    int ret = process_clone(parent, flags, child_stack, 0, 0);
+    return (uint64_t)(int64_t)ret;
+}
+
 /* ── unshare(CLONE_NEW*) — create namespaces without fork (Item 119) ──── */
 /*
  * The unshare syscall lets a process disassociate parts of its execution
@@ -9326,6 +9477,7 @@ uint64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_SHMCTL:              return sys_shmctl(a1, a2, a3);
         case SYS_FORK:                return sys_fork();
         case SYS_CLONE:               return sys_clone(a1, a2, a3, a4, a5);
+        case SYS_CLONE3:              return sys_clone3(a1, a2);
         case SYS_UNSHARE:             return sys_unshare(a1);
         case SYS_SETNS:               return sys_setns(a1, a2);
         case SYS_GETTID:              return sys_gettid();

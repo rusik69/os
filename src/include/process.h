@@ -99,6 +99,29 @@ struct itimerval {
 #define CLONE_NEWTIME       0x00000080
 #define CLONE_NEWUSER       0x10000000  /* Item 114 — user namespace */
 
+/*
+ * struct clone_args — argument structure for sys_clone3 (Linux ABI).
+ *
+ * Mirror of the Linux struct clone_args from <linux/sched.h>.
+ * The size field allows forward-compatible extension: the kernel
+ * handles any size >= CLONE_ARGS_SIZE_VER0 (64 bytes) and treats
+ * unknown fields as zero.
+ */
+struct clone_args {
+    uint64_t flags;             /* Flags bitmask (CLONE_*)              */
+    uint64_t pidfd;             /* pidfd fd (int *), written on success */
+    uint64_t child_tid;         /* CLONE_CHILD_SETTID pointer            */
+    uint64_t parent_tid;        /* CLONE_PARENT_SETTID pointer           */
+    uint64_t exit_signal;       /* Signal sent to parent on child exit   */
+    uint64_t stack;             /* Lowest address of child's stack       */
+    uint64_t stack_size;        /* Size of child's stack                 */
+    uint64_t tls;               /* CLONE_SETTLS value (FS base)          */
+    uint64_t set_tid;           /* pid_t * array for PID assignment      */
+    uint64_t set_tid_size;      /* Number of entries in set_tid          */
+    uint64_t cgroup;            /* CLONE_INTO_CGROUP fd (since Linux 5.3)*/
+} __attribute__((packed));
+
+#define CLONE_ARGS_SIZE_VER0   64  /* sizeof(struct clone_args) ver 0    */
 
 
 enum process_cap_profile {
