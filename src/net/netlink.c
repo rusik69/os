@@ -109,6 +109,9 @@ void af_netlink_init(void) {
 
     kprintf("[OK] af_netlink: initialized (domain=%d, max %d sockets)\n",
             AF_NETLINK, NETLINK_MAX_SOCKETS);
+
+    /* Initialise RTNETLINK handlers */
+    netlink_rtnl_init();
 }
 
 /* ── Socket lifecycle ──────────────────────────────────────────────── */
@@ -497,29 +500,400 @@ static int netlink_deliver_internal(struct netlink_sock *nl,
     return 0;
 }
 
-/* Handle a message destined for the kernel (generic netlink commands, etc.) */
+/* ── Handler registration table ──────────────────────────────────── */
+
+static struct netlink_handler nl_handlers[NETLINK_MAX_HANDLERS];
+static int nl_handlers_initialized = 0;
+
+/* Initialise the handler table */
+static void nl_handler_init(void)
+{
+    if (nl_handlers_initialized) return;
+    memset(nl_handlers, 0, sizeof(nl_handlers));
+    nl_handlers_initialized = 1;
+}
+
+/* Find a free handler slot */
+static int nl_handler_alloc_slot(void)
+{
+    for (int i = 0; i < NETLINK_MAX_HANDLERS; i++) {
+        if (!nl_handlers[i].in_use)
+            return i;
+    }
+    return -ENOSPC;
+}
+
+int netlink_register_handler(int protocol, uint16_t msg_type,
+                              nlmsg_handler_t handler, const char *name)
+{
+    return netlink_register_handler_range(protocol, msg_type, msg_type,
+                                           handler, name);
+}
+
+int netlink_register_handler_range(int protocol,
+                                    uint16_t msg_type_min,
+                                    uint16_t msg_type_max,
+                                    nlmsg_handler_t handler,
+                                    const char *name)
+{
+    if (!nl_handlers_initialized) nl_handler_init();
+    if (!handler) return -EINVAL;
+    if (msg_type_min > msg_type_max) return -EINVAL;
+
+    spinlock_acquire(&netlink_lock);
+
+    /* Check for duplicate (same protocol + overlapping range) */
+    for (int i = 0; i < NETLINK_MAX_HANDLERS; i++) {
+        if (!nl_handlers[i].in_use) continue;
+        if (nl_handlers[i].protocol != protocol) continue;
+        if (nl_handlers[i].handler == handler) {
+            spinlock_release(&netlink_lock);
+            return -EEXIST;
+        }
+        if (msg_type_min <= nl_handlers[i].msg_type_max &&
+            msg_type_max >= nl_handlers[i].msg_type_min) {
+            spinlock_release(&netlink_lock);
+            return -EBUSY;
+        }
+    }
+
+    int slot = nl_handler_alloc_slot();
+    if (slot < 0) {
+        spinlock_release(&netlink_lock);
+        return -ENOSPC;
+    }
+
+    nl_handlers[slot].in_use = 1;
+    nl_handlers[slot].protocol = protocol;
+    nl_handlers[slot].msg_type_min = msg_type_min;
+    nl_handlers[slot].msg_type_max = msg_type_max;
+    nl_handlers[slot].handler = handler;
+    nl_handlers[slot].name = name;
+
+    kprintf("[netlink] register handler \"%s\" proto=%d type=[%u,%u]\\n",
+            name, protocol, msg_type_min, msg_type_max);
+
+    spinlock_release(&netlink_lock);
+    return 0;
+}
+
+int netlink_unregister_handler(int protocol, nlmsg_handler_t handler)
+{
+    if (!nl_handlers_initialized) return -EINVAL;
+    if (!handler) return -EINVAL;
+
+    spinlock_acquire(&netlink_lock);
+
+    for (int i = 0; i < NETLINK_MAX_HANDLERS; i++) {
+        if (nl_handlers[i].in_use &&
+            nl_handlers[i].protocol == protocol &&
+            nl_handlers[i].handler == handler) {
+            nl_handlers[i].in_use = 0;
+            spinlock_release(&netlink_lock);
+            return 0;
+        }
+    }
+
+    spinlock_release(&netlink_lock);
+    return -EINVAL;
+}
+
+/* Find a handler matching protocol + message type.
+ * Caller must hold netlink_lock.  Returns pointer or NULL. */
+static struct netlink_handler *nl_handler_find(int protocol,
+                                                uint16_t msg_type)
+{
+    for (int i = 0; i < NETLINK_MAX_HANDLERS; i++) {
+        if (!nl_handlers[i].in_use) continue;
+        if (nl_handlers[i].protocol != protocol) continue;
+        if (msg_type >= nl_handlers[i].msg_type_min &&
+            msg_type <= nl_handlers[i].msg_type_max) {
+            return &nl_handlers[i];
+        }
+    }
+    return NULL;
+}
+
+/* ── Attribute parsing ───────────────────────────────────────────── */
+
+/*
+ * nla_parse — Parse netlink attributes according to a policy.
+ *
+ * Walks the attribute stream, validates each attribute against the
+ * policy, and stores a pointer for each type in the tb[] output array.
+ * Attributes with type > maxtype are silently skipped (forward-compat).
+ */
+int nla_parse(const struct nlattr *data, size_t len, int maxtype,
+              const struct nla_policy *policy, struct nlattr **tb)
+{
+    const struct nlattr *nla;
+    size_t remaining;
+
+    if (!tb) return -EINVAL;
+
+    /* Clear output array */
+    memset(tb, 0, (size_t)(maxtype + 1) * sizeof(struct nlattr *));
+
+    if (!data || len == 0)
+        return 0;
+
+    nla = data;
+    remaining = len;
+
+    while (NLA_OK(nla, (int)remaining)) {
+        uint16_t attr_type = nla->nla_type & NLA_TYPE_MASK;
+        uint16_t attr_len = nla->nla_len;
+
+        /* Silently skip types > maxtype */
+        if (attr_type > (uint16_t)maxtype) {
+            NLA_NEXT(nla, remaining);
+            continue;
+        }
+
+        /* Validate against policy if provided */
+        if (policy && attr_type <= (uint16_t)maxtype) {
+            uint16_t min_len = policy[attr_type].minlen;
+            uint16_t max_len = policy[attr_type].maxlen;
+
+            if (attr_len < NLA_HDRLEN)
+                return -EBADMSG;
+
+            int payload_len = (int)attr_len - NLA_HDRLEN;
+
+            if (min_len > 0 && payload_len < (int)min_len)
+                return -ERANGE;
+            if (max_len > 0 && payload_len > (int)max_len)
+                return -ERANGE;
+        }
+
+        /* Skip duplicate attributes */
+        if (tb[attr_type]) {
+            NLA_NEXT(nla, remaining);
+            continue;
+        }
+
+        tb[attr_type] = (struct nlattr *)(uintptr_t)nla;
+
+        NLA_NEXT(nla, remaining);
+    }
+
+    return 0;
+}
+
+/*
+ * nlmsg_parse — Parse attributes from a netlink message payload.
+ *
+ * Accounts for a fixed-size protocol header (e.g. struct genlmsghdr)
+ * between the nlmsghdr and the attribute area.
+ */
+int nlmsg_parse(const struct nlmsghdr *nlh, int hdrlen, int maxtype,
+                const struct nla_policy *policy, struct nlattr **tb)
+{
+    if (!nlh) return -EINVAL;
+    if (hdrlen < 0) return -EINVAL;
+
+    if (nlh->nlmsg_len < NLMSG_HDRLEN + (uint32_t)hdrlen)
+        return -EBADMSG;
+
+    int payload_len = (int)nlh->nlmsg_len - NLMSG_HDRLEN - hdrlen;
+    if (payload_len < 0)
+        payload_len = 0;
+
+    const struct nlattr *attrs = NULL;
+    if (payload_len > 0) {
+        attrs = (const struct nlattr *)((const char *)nlh
+                + NLMSG_HDRLEN + hdrlen);
+    }
+
+    return nla_parse(attrs, (size_t)payload_len, maxtype, policy, tb);
+}
+
+/*
+ * nla_find — Linear search for an attribute by type.
+ */
+struct nlattr *nla_find(const struct nlattr *nla, size_t nla_len,
+                         uint16_t type)
+{
+    const struct nlattr *cur = nla;
+    size_t remaining = nla_len;
+
+    while (NLA_OK(cur, (int)remaining)) {
+        if ((cur->nla_type & NLA_TYPE_MASK) == type)
+            return (struct nlattr *)(uintptr_t)cur;
+        NLA_NEXT(cur, remaining);
+    }
+
+    return NULL;
+}
+
+/* ── Typed attribute getters ─────────────────────────────────────── */
+
+int nla_get_u8(const struct nlattr *nla, uint8_t *val)
+{
+    if (!nla || !val) return -EINVAL;
+    if (nla->nla_len < NLA_HDRLEN + sizeof(uint8_t)) return -ERANGE;
+    *val = *(const uint8_t *)nla_data(nla);
+    return 0;
+}
+
+int nla_get_u16(const struct nlattr *nla, uint16_t *val)
+{
+    if (!nla || !val) return -EINVAL;
+    if (nla->nla_len < NLA_HDRLEN + sizeof(uint16_t)) return -ERANGE;
+    *val = *(const uint16_t *)nla_data(nla);
+    return 0;
+}
+
+int nla_get_u32(const struct nlattr *nla, uint32_t *val)
+{
+    if (!nla || !val) return -EINVAL;
+    if (nla->nla_len < NLA_HDRLEN + sizeof(uint32_t)) return -ERANGE;
+    *val = *(const uint32_t *)nla_data(nla);
+    return 0;
+}
+
+int nla_get_u64(const struct nlattr *nla, uint64_t *val)
+{
+    if (!nla || !val) return -EINVAL;
+    if (nla->nla_len < NLA_HDRLEN + sizeof(uint64_t)) return -ERANGE;
+    *val = *(const uint64_t *)nla_data(nla);
+    return 0;
+}
+
+int nla_get_string(const struct nlattr *nla, const char **str)
+{
+    if (!nla || !str) return -EINVAL;
+    if (nla->nla_len <= NLA_HDRLEN) return -ERANGE;
+    *str = (const char *)nla_data(nla);
+    if ((*str)[nla_len(nla) - 1] != '\0')
+        return -ERANGE;
+    return 0;
+}
+
+/* ── Enhanced kernel message dispatch ────────────────────────────── */
+
+/* Dispatch a netlink message to registered handlers for the given
+ * protocol.  Returns 0 if a handler claimed the message, negative
+ * errno otherwise. */
+static int nl_dispatch_to_handlers(int protocol,
+                                    const struct nlmsghdr *nlh,
+                                    uint32_t src_pid)
+{
+    spinlock_acquire(&netlink_lock);
+    struct netlink_handler *h = nl_handler_find(protocol,
+                                                 nlh->nlmsg_type);
+    if (!h) {
+        spinlock_release(&netlink_lock);
+        return -ENOENT;
+    }
+    nlmsg_handler_t handler_fn = h->handler;
+    spinlock_release(&netlink_lock);
+
+    return handler_fn(protocol, nlh, NULL, src_pid);
+}
+
+/* ── RTNETLINK (NETLINK_ROUTE) handler ───────────────────────────── */
+
+/* Handle RTM_GETROUTE — return route table dump (stub: empty) */
+static int nl_rt_getroute(int protocol, const struct nlmsghdr *nlh,
+                           const struct nlattr **attr, uint32_t src_pid)
+{
+    (void)attr;
+    struct {
+        struct nlmsghdr nlh;
+        struct rtmsg rtm;
+    } __attribute__((packed)) resp;
+
+    memset(&resp, 0, sizeof(resp));
+    resp.nlh.nlmsg_len = sizeof(resp);
+    resp.nlh.nlmsg_type = RTM_NEWROUTE;
+    resp.nlh.nlmsg_flags = NLM_F_MULTI;
+    resp.nlh.nlmsg_seq = nlh->nlmsg_seq;
+    resp.nlh.nlmsg_pid = 0;
+    resp.rtm.rtm_family = AF_UNSPEC;
+    resp.rtm.rtm_table = RT_TABLE_MAIN;
+    resp.rtm.rtm_type = RTN_UNICAST;
+    resp.rtm.rtm_scope = RT_SCOPE_NOWHERE;
+    resp.rtm.rtm_protocol = RTPROT_KERNEL;
+
+    netlink_unicast(protocol, src_pid, &resp, sizeof(resp), 0);
+
+    /* Send DONE to terminate multipart sequence */
+    {
+        struct nlmsghdr done;
+        memset(&done, 0, sizeof(done));
+        done.nlmsg_len = sizeof(done);
+        done.nlmsg_type = NLMSG_DONE;
+        done.nlmsg_flags = 0;
+        done.nlmsg_seq = nlh->nlmsg_seq;
+        done.nlmsg_pid = 0;
+        netlink_unicast(protocol, src_pid, &done, sizeof(done), 0);
+    }
+
+    return 0;
+}
+
+/* Handle RTM_NEWROUTE — accept route addition (stub) */
+static int nl_rt_newroute(int protocol, const struct nlmsghdr *nlh,
+                           const struct nlattr **attr, uint32_t src_pid)
+{
+    (void)protocol;
+    (void)nlh;
+    (void)attr;
+    (void)src_pid;
+    return 0;
+}
+
+/* Handle RTM_DELROUTE — accept route deletion (stub) */
+static int nl_rt_delroute(int protocol, const struct nlmsghdr *nlh,
+                           const struct nlattr **attr, uint32_t src_pid)
+{
+    (void)protocol;
+    (void)nlh;
+    (void)attr;
+    (void)src_pid;
+    return 0;
+}
+
+/* ── Enhanced kernel message handler with dispatch ──────────────── */
+
+/*
+ * netlink_handle_kernel — Dispatch kernel-bound netlink messages.
+ *
+ * First tries registered handlers (via nl_dispatch_to_handlers), and
+ * if no handler claims the message, falls back to built-in handling
+ * for generic netlink controller commands and family ACK responses.
+ */
 static int netlink_handle_kernel(int protocol, const void *buf, int len,
-                                  uint32_t src_pid) {
+                                  uint32_t src_pid)
+{
+    if (!buf || len < (int)sizeof(struct nlmsghdr))
+        return -EINVAL;
+
     const struct nlmsghdr *nlh = (const struct nlmsghdr *)buf;
 
-    /* NETLINK_ROUTE: stub */
+    /* First try registered handlers */
+    int ret = nl_dispatch_to_handlers(protocol, nlh, src_pid);
+    if (ret != -ENOENT)
+        return ret;
+
+    /* ── Fallback: built-in handling ──────────────────────────────── */
+
     if (protocol == NETLINK_ROUTE) {
-        /* Route management not yet implemented */
+        kprintf("[netlink] RTNETLINK: unhandled type %u (seq=%u)\\n",
+                nlh->nlmsg_type, nlh->nlmsg_seq);
         return 0;
     }
 
-    /* Only process generic netlink messages for now */    /* Only process generic netlink messages for now */
-    if (nlh->nlmsg_type == GENL_ID_CTRL) {
+    /* Generic netlink: handle controller commands */
+    if (nlh->nlmsg_type == GENL_ID_CTRL)
         return genl_handle_ctrl(buf, len, src_pid);
-    }
 
-    /* Check if there's a registered family for this message type */
+    /* Check for registered generic netlink families */
     int family_id = (int)nlh->nlmsg_type;
-    if (family_id >= GENL_ID_CTRL && family_id < GENL_ID_CTRL + GENL_MAX_FAMILIES) {
-        /* Message for a registered generic netlink family.
-         * For now, just acknowledge. Future: dispatch to family handler. */
+    if (family_id >= GENL_ID_CTRL &&
+        family_id < GENL_ID_CTRL + GENL_MAX_FAMILIES) {
         if (nlh->nlmsg_flags & NLM_F_ACK) {
-            /* Send ACK back to sender */
             struct {
                 struct nlmsghdr hdr;
                 struct nlmsgerr err;
@@ -530,8 +904,8 @@ static int netlink_handle_kernel(int protocol, const void *buf, int len,
             ack.hdr.nlmsg_type = NLMSG_ERROR;
             ack.hdr.nlmsg_flags = 0;
             ack.hdr.nlmsg_seq = nlh->nlmsg_seq;
-            ack.hdr.nlmsg_pid = 0; /* From kernel */
-            ack.err.error = 0;     /* Success */
+            ack.hdr.nlmsg_pid = 0;
+            ack.err.error = 0;
             ack.err.msg = *nlh;
 
             netlink_unicast(protocol, src_pid, &ack, sizeof(ack), 0);
@@ -540,6 +914,23 @@ static int netlink_handle_kernel(int protocol, const void *buf, int len,
     }
 
     return -EINVAL;
+}
+
+/* ── Initialise RTNETLINK handlers ───────────────────────────────── */
+
+/* Register built-in RTNETLINK handlers.  Called from af_netlink_init. */
+void __init netlink_rtnl_init(void)
+{
+    if (!nl_handlers_initialized) nl_handler_init();
+
+    netlink_register_handler(NETLINK_ROUTE, RTM_GETROUTE,
+                              nl_rt_getroute, "rtnl_getroute");
+    netlink_register_handler(NETLINK_ROUTE, RTM_NEWROUTE,
+                              nl_rt_newroute, "rtnl_newroute");
+    netlink_register_handler(NETLINK_ROUTE, RTM_DELROUTE,
+                              nl_rt_delroute, "rtnl_delroute");
+
+    kprintf("[OK] netlink: RTNETLINK handlers registered\\n");
 }
 
 /* ── Message delivery ──────────────────────────────────────────────── */

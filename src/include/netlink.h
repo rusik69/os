@@ -173,6 +173,13 @@ struct nlattr {
 #define NLA_ALIGN(len)      (((len) + NLA_ALIGNTO - 1) & ~(NLA_ALIGNTO - 1))
 #define NLA_DATA(nla)       ((void *)(((char *)nla) + NLA_HDRLEN))
 #define NLA_PAYLOAD(nla)    ((nla)->nla_len - NLA_HDRLEN)
+/* Attribute type mask — NLA_F_NESTED and NLA_F_NET_BYTEORDER flags
+ * occupy the upper bits of nla_type. */
+#define NLA_TYPE_MASK       0x7FFF
+#define NLA_F_NESTED        0x8000
+#define NLA_F_NET_BYTEORDER 0x4000
+
+/* Advance to the next attribute (updates remaining). */
 #define NLA_NEXT(nla, len)  do {                                    \
     (len) -= NLA_ALIGN((nla)->nla_len);                              \
     (nla)  = (struct nlattr *)((char *)(nla) + NLA_ALIGN((nla)->nla_len)); \
@@ -274,10 +281,144 @@ int  netlink_is_valid_fd(int fd);
 /* Get the protocol for an fd. */
 int  netlink_get_protocol(int fd);
 
+/* ── Netlink message handler registration ────────────────────────── */
+
+/* Callback type for netlink message handlers.
+ * @protocol: NETLINK_* protocol family
+ * @nlh:      The parsed netlink message header (points into the receive buffer)
+ * @attr:     Parsed attribute array (nla_policy-driven), or NULL if not parsed
+ * @src_pid:  Sender port ID
+ * Returns:   0 on success (message processed), negative errno on error
+ */
+typedef int (*nlmsg_handler_t)(int protocol, const struct nlmsghdr *nlh,
+                                const struct nlattr **attr, uint32_t src_pid);
+
+/* Descriptor for a registered netlink handler entry.
+ * Handlers are matched by protocol and nlmsg_type range. */
+struct netlink_handler {
+    int              in_use;         /* 1 if this slot is occupied */
+    int              protocol;       /* NETLINK_ROUTE, NETLINK_GENERIC, etc. */
+    uint16_t         msg_type_min;   /* Minimum nlmsg_type (inclusive) */
+    uint16_t         msg_type_max;   /* Maximum nlmsg_type (inclusive) */
+    nlmsg_handler_t  handler;        /* Callback function */
+    const char      *name;           /* Human-readable handler name */
+};
+
+/* Maximum number of registered netlink handlers */
+#define NETLINK_MAX_HANDLERS 32
+
+/* Register a netlink message handler.
+ * @protocol:  NETLINK_* protocol family
+ * @msg_type:  nlmsg_type value (a single type, min == max)
+ * @handler:   Callback function pointer
+ * @name:      Human-readable name for debugging
+ * Returns:    0 on success, negative errno on error (EEXIST, ENOSPC)
+ */
+int netlink_register_handler(int protocol, uint16_t msg_type,
+                              nlmsg_handler_t handler, const char *name);
+
+/* Register a netlink handler for a range of message types.
+ * Same as netlink_register_handler but covers [min, max] inclusive. */
+int netlink_register_handler_range(int protocol,
+                                    uint16_t msg_type_min,
+                                    uint16_t msg_type_max,
+                                    nlmsg_handler_t handler,
+                                    const char *name);
+
+/* Unregister a previously registered handler.
+ * @protocol:  NETLINK_* protocol family
+ * @handler:   The same callback pointer used during registration
+ * Returns:    0 on success, -EINVAL if not found */
+int netlink_unregister_handler(int protocol, nlmsg_handler_t handler);
+
+/* ── Netlink attribute parsing API ───────────────────────────────── */
+
+/* nla_policy — validation policy for a single netlink attribute.
+ * Used by nla_parse() and nlmsg_parse() to validate attribute types. */
+struct nla_policy {
+    uint16_t    type;       /* Expected attribute type (nla_type) */
+    uint16_t    minlen;     /* Minimum payload length (0 = no minimum) */
+    uint16_t    maxlen;     /* Maximum payload length (0 = no maximum) */
+    unsigned int flags;     /* Policy flags (NLA_POLICY_*) */
+};
+
+/* Policy flags */
+#define NLA_POLICY_NESTED   1   /* Attribute is a nested attribute set */
+
+/* Parse a set of netlink attributes from raw payload data.
+ * @data:      Pointer to the start of the attribute area
+ * @len:       Length of the attribute area in bytes
+ * @maxtype:   Maximum attribute type to parse
+ * @policy:    Per-type validation policy array (indexed by type)
+ * @tb:        Output array of pointers to parsed attributes
+ *             (indexed by type, NULL if type not present)
+ *
+ * Parses attributes in place (does not copy).  Sets tb[type] to point
+ * to each attribute found and validated.  Unrecognised attributes that
+ * are <= maxtype are silently skipped.
+ *
+ * Returns: 0 on success, negative errno on error (-EBADMSG, -ERANGE).
+ */
+int nla_parse(const struct nlattr *data, size_t len, int maxtype,
+              const struct nla_policy *policy, struct nlattr **tb);
+
+/* Parse attributes from a netlink message payload.
+ * Wrapper around nla_parse() that accounts for a fixed header (e.g.
+ * genlmsghdr) before the attribute area.
+ *
+ * @nlh:       The netlink message header
+ * @hdrlen:    Length of the fixed protocol header after nlmsghdr
+ *             (0 if no extra header, GENL_HDRLEN for generic netlink)
+ * @maxtype:   Maximum attribute type
+ * @policy:    Validation policy array
+ * @tb:        Output array of parsed attribute pointers
+ *
+ * Returns: 0 on success, negative errno on error.
+ */
+int nlmsg_parse(const struct nlmsghdr *nlh, int hdrlen, int maxtype,
+                const struct nla_policy *policy, struct nlattr **tb);
+
+/* Find a specific attribute by type in a raw attribute sequence.
+ * Returns pointer to the attribute or NULL if not found. */
+struct nlattr *nla_find(const struct nlattr *nla, size_t nla_len,
+                         uint16_t type);
+
+/* ── Attribute payload accessors ─────────────────────────────────── */
+
+/* Return a pointer to the payload of an attribute. */
+static inline void *nla_data(const struct nlattr *nla)
+{
+    return (void *)((const char *)nla + NLA_HDRLEN);
+}
+
+/* Return the payload length of an attribute. */
+static inline int nla_len(const struct nlattr *nla)
+{
+    return (int)(nla->nla_len - NLA_HDRLEN);
+}
+
+/* Typed attribute payload getters.  Returns 0 on success, -EINVAL
+ * if the attribute is NULL or its payload is too short. */
+int nla_get_u8(const struct nlattr *nla, uint8_t *val);
+int nla_get_u16(const struct nlattr *nla, uint16_t *val);
+int nla_get_u32(const struct nlattr *nla, uint32_t *val);
+int nla_get_u64(const struct nlattr *nla, uint64_t *val);
+int nla_get_string(const struct nlattr *nla, const char **str);
+
 /* ── RTNETLINK (NETLINK_ROUTE) ───────────────────────────────────── */
 #define RTM_NEWROUTE    24
 #define RTM_DELROUTE    25
 #define RTM_GETROUTE    26
+
+/* RTNETLINK route attributes and constants */
+#define RT_TABLE_MAIN   254
+#define RTN_UNICAST     1
+#define RT_SCOPE_NOWHERE 255
+#define RTPROT_KERNEL   2
+
+/* Initialise built-in RTNETLINK handlers (route stubs).
+ * Called during netlink subsystem initialisation. */
+void netlink_rtnl_init(void);
 
 struct rtmsg {
     uint8_t  rtm_family;
