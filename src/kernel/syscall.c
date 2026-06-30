@@ -4285,22 +4285,45 @@ static uint64_t sys_readv(uint64_t fd, uint64_t iov_addr, uint64_t iovcnt) {
 }
 
 static uint64_t sys_writev(uint64_t fd, uint64_t iov_addr, uint64_t iovcnt) {
-    if (!iov_addr || iovcnt == 0) return 0;
-    if (iovcnt > 16) iovcnt = 16;
+    if (iovcnt > 1024)
+        return (uint64_t)(int64_t)-EINVAL;
+    if (iovcnt == 0)
+        return 0;
 
-    struct iovec iov[16];
-    if (copy_from_user(iov, iov_addr, sizeof(struct iovec) * iovcnt) < 0)
-        return (uint64_t)-1;
+    if (!iov_addr)
+        return (uint64_t)(int64_t)-EFAULT;
+
+    struct iovec iov_stack[16];
+    struct iovec *iov = iov_stack;
+    int allocd = 0;
+
+    if (iovcnt > 16) {
+        iov = kmalloc(sizeof(struct iovec) * (size_t)iovcnt);
+        if (!iov)
+            return (uint64_t)(int64_t)-ENOMEM;
+        allocd = 1;
+    }
+
+    if (copy_from_user(iov, iov_addr, sizeof(struct iovec) * iovcnt) < 0) {
+        if (allocd) kfree(iov);
+        return (uint64_t)(int64_t)-EFAULT;
+    }
 
     uint64_t total = 0;
     for (uint64_t i = 0; i < iovcnt; i++) {
-        if (iov[i].iov_base && iov[i].iov_len > 0) {
-            int64_t n = (int64_t)sys_write(fd, (uint64_t)iov[i].iov_base,
-                                           iov[i].iov_len);
-            if (n < 0) return total ? total : (uint64_t)-1;
-            total += (uint64_t)n;
+        if (!iov[i].iov_base || iov[i].iov_len == 0)
+            continue;
+        int64_t n = (int64_t)sys_write(fd, (uint64_t)iov[i].iov_base,
+                                       iov[i].iov_len);
+        if (n < 0) {
+            if (allocd) kfree(iov);
+            /* Partial write: return bytes so far; full failure: propagate errno */
+            return total ? total : (uint64_t)(int64_t)n;
         }
+        total += (uint64_t)n;
     }
+
+    if (allocd) kfree(iov);
     return total;
 }
 
