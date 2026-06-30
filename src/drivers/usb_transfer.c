@@ -181,3 +181,47 @@ int usb_bulk_msg(uint8_t dev_addr, uint8_t ep,
 
     return 0;
 }
+
+/* ── Interrupt transfer API ────────────────────────────────────────── */
+
+int usb_int_msg(uint8_t dev_addr, uint8_t ep,
+                void *data, uint32_t len,
+                int dir_in, int toggle)
+{
+    const struct usb_hc_ops *ops;
+    int ret;
+
+    spinlock_acquire(&g_hc_lock);
+    ops = g_hc_ops;
+    spinlock_release(&g_hc_lock);
+
+    if (!ops) {
+        kprintf("[USB] int_msg: no host controller registered\n");
+        return -ENODEV;
+    }
+
+    if (!ops->interrupt_transfer) {
+        kprintf("[USB] int_msg: host controller does not support "
+                "interrupt transfers\n");
+        return -ENOSYS;
+    }
+
+    if (len > 0 && !data) {
+        kprintf("[USB] int_msg: data buffer required for len=%u\n",
+                (unsigned)len);
+        return -EINVAL;
+    }
+
+    kprintf("[USB] int_msg: addr=%d ep=0x%02x dir=%s len=%u "
+            "toggle=%d\n",
+            dev_addr, ep, dir_in ? "IN" : "OUT",
+            (unsigned)len, toggle);
+
+    ret = ops->interrupt_transfer(dev_addr, ep, data, len, dir_in, toggle);
+    if (ret < 0) {
+        kprintf("[USB] int_msg: failed (%d)\n", ret);
+        return ret;
+    }
+
+    return 0;
+}

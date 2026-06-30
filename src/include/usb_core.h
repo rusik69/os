@@ -90,6 +90,26 @@ struct usb_hc_ops {
     int (*bulk_transfer)(uint8_t dev_addr, uint8_t ep,
                          void *data, uint32_t len,
                          int dir_in, int toggle);
+
+    /*
+     * Submit a synchronous interrupt transfer on an interrupt endpoint.
+     *
+     * Interrupt transfers are used for devices that need periodic polling
+     * (HID keyboards/mice, gamepads, etc.).  They use the periodic schedule
+     * on EHCI and run at bus intervals determined by the endpoint's bInterval.
+     *
+     * @dev_addr:  USB device address
+     * @ep:        Endpoint number (0x0–0xF, direction from dir_in)
+     * @data:      DMA-safe data buffer (must remain valid until return)
+     * @len:       Length of data buffer in bytes
+     * @dir_in:    1 = IN (device-to-host), 0 = OUT (host-to-device)
+     * @toggle:    Data toggle value (0 or 1)
+     *
+     * Returns 0 on success, negative errno on failure.
+     */
+    int (*interrupt_transfer)(uint8_t dev_addr, uint8_t ep,
+                              void *data, uint32_t len,
+                              int dir_in, int toggle);
 };
 
 /* Register a host controller's ops table (called during HC init) */
@@ -137,6 +157,26 @@ int usb_control_msg(uint8_t dev_addr, uint8_t bmReqType,
 int usb_bulk_msg(uint8_t dev_addr, uint8_t ep,
                  void *data, uint32_t len,
                  int dir_in, int toggle);
+
+/*
+ * Submit a synchronous USB interrupt transfer.
+ *
+ * This is the primary API for USB class drivers to perform interrupt
+ * transfers on interrupt endpoints (e.g. HID reports).  Delegates to
+ * the registered host controller's interrupt_transfer callback.
+ *
+ * @dev_addr:    USB device address
+ * @ep:          Endpoint number (0x0–0xF, direction from dir_in)
+ * @data:        DMA-safe data buffer
+ * @len:         Length of data buffer in bytes
+ * @dir_in:      1 = IN (device-to-host), 0 = OUT (host-to-device)
+ * @toggle:      Data toggle value (0 or 1) — caller tracks toggle state
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int usb_int_msg(uint8_t dev_addr, uint8_t ep,
+                void *data, uint32_t len,
+                int dir_in, int toggle);
 
 void usb_core_init(void);
 

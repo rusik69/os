@@ -1200,9 +1200,184 @@ static int ehci_bulk_transfer(uint8_t dev_addr, uint8_t ep,
 
 /* ── Registered HC ops table ──────────────────────────────────────────── */
 
+/* Helper: build a periodic schedule link pointer to an interrupt QH */
+#define EHCI_PERIODIC_QH_LINK(phys)  ((uint32_t)(phys) & 0xFFFFFFE0u)
+
+/* QH S-mask: schedule on micro-frame 0 (one transfer per frame) */
+#define EHCI_SMASK_MICROFRAME0  0x00000001u
+
+/*
+ * ehci_interrupt_transfer — Synchronous interrupt transfer via periodic schedule.
+ *
+ * Interrupt transfers use the periodic schedule with QH + qTD, similar to
+ * bulk transfers but linked from the frame list instead of the async list.
+ * The QH is placed at one frame-list slot and the controller processes it
+ * once per frame (or at the interval specified by bInterval).
+ *
+ * This implementation performs a synchronous transfer:
+ *   1. Allocate QH + qTD
+ *   2. Insert QH into periodic schedule at current frame
+ *   3. Poll qTD for completion
+ *   4. Remove QH from periodic schedule
+ *   5. Free resources
+ *
+ * Implements usb_hc_ops.interrupt_transfer.
+ */
+static int ehci_interrupt_transfer(uint8_t dev_addr, uint8_t ep,
+                                    void *data, uint32_t len,
+                                    int dir_in, int toggle)
+{
+    int c = 0;
+    int ret;
+
+    if (ehci_count < 1)
+        return -ENODEV;
+
+    if (!g_periodic_on) {
+        kprintf("[EHCI] int_transfer: periodic schedule not enabled\n");
+        return -ENOSYS;
+    }
+
+    if (len > 0 && !data)
+        return -EINVAL;
+
+    /* Allocate qTD (one physical page, 32-byte aligned) */
+    uint64_t qtd_phys = pmm_alloc_frame();
+    if (!qtd_phys)
+        return -ENOMEM;
+
+    volatile uint32_t *qtd = (volatile uint32_t *)PHYS_TO_VIRT(qtd_phys);
+    memset((void *)qtd, 0, 4096);
+
+    /* Fill qTD */
+    uint32_t buf_phys = (uint32_t)(uintptr_t)VIRT_TO_PHYS(data);
+    uint32_t pg_base = buf_phys & ~0xFFFu;
+    uint32_t pg_off = buf_phys & 0xFFFu;
+
+    /* Buffer pointer entries (up to 5 pages) */
+    qtd[3] = pg_base;
+    qtd[4] = (pg_off + len > 4096) ? (pg_base + 0x1000u) : 0;
+    qtd[5] = (qtd[4] && (pg_off + len > 8192)) ? (pg_base + 0x2000u) : 0;
+    qtd[6] = 0;
+    qtd[7] = 0;
+
+    /* Token: status + PID + CERR + length + toggle */
+    uint32_t pid = dir_in ? QTD_TOKEN_PID_INPUT : QTD_TOKEN_PID_OUTPUT;
+    uint32_t bytes_field = (len > 0) ? (len << QTD_TOKEN_BYTES_SHIFT) : 0;
+    uint32_t cerr_field = (3u << QTD_TOKEN_CERR_SHIFT);
+    uint32_t toggle_bit = toggle ? QTD_TOKEN_TOGGLE : 0;
+    uint32_t page_sel_field = (pg_off >> 12) & 0x07;
+
+    qtd[2] = QTD_TOKEN_ACTIVE | pid | cerr_field |
+             (page_sel_field << QTD_TOKEN_CPAGE_SHIFT) |
+             bytes_field | toggle_bit;
+
+    qtd[0] = EHCI_PTR_TERMINATE;  /* Next qTD pointer: terminate */
+    qtd[1] = EHCI_PTR_TERMINATE;  /* Alternate next: terminate */
+
+    __asm__ volatile("mfence" ::: "memory");
+
+    /* Allocate QH (one physical page) */
+    uint64_t qh_phys = pmm_alloc_frame();
+    if (!qh_phys) {
+        pmm_free_frame(qtd_phys);
+        return -ENOMEM;
+    }
+
+    volatile uint32_t *qh = (volatile uint32_t *)PHYS_TO_VIRT(qh_phys);
+    memset((void *)qh, 0, 4096);
+
+    /* Horizontal link pointer: terminate */
+    qh[0] = EHCI_PTR_TERMINATE;
+
+    /* Endpoint capabilities: speed + endpoint number + device address */
+    uint32_t ep_cap = QH_EPS_HIGH | ((uint32_t)ep << 8) | dev_addr;
+    qh[1] = ep_cap;
+
+    /*
+     * Endpoint Capabilities dword (offset 8):
+     *   Bits [7:0] = S-mask: schedule mask (micro-frames)
+     *   Bits [26:16] = Maximum Packet Length (derived from len or endpoint desc)
+     * We set S-mask to micro-frame 0 so the controller processes this QH
+     * once per (micro-)frame.  The lower bits [4:0] of the qTD pointer
+     * occupy bits [31:5] of this dword for the overlay, so we OR in the
+     * S-mask without disturbing the pointer alignment.
+     */
+    qh[2] = ((uint32_t)(qtd_phys & 0xFFFFFFE0u) |
+             EHCI_SMASK_MICROFRAME0);
+
+    /* Overlay qTD pointer */
+    qh[3] = (uint32_t)(qtd_phys & 0xFFFFFFE0u);
+    /* Current qTD pointer */
+    qh[4] = (uint32_t)(qtd_phys & 0xFFFFFFE0u);
+
+    __asm__ volatile("mfence" ::: "memory");
+
+    /* Get current frame index */
+    uint32_t frame_idx = op_read(c, EHCI_FRINDEX) % EHCI_FRAME_LIST_ENTRIES;
+
+    /* Save the frame list entry we are overwriting */
+    uint32_t old_fl_entry = g_flist[frame_idx];
+
+    /* Insert QH into the periodic frame list */
+    g_flist[frame_idx] = EHCI_PERIODIC_QH_LINK(qh_phys);
+
+    __asm__ volatile("mfence" ::: "memory");
+
+    kprintf("[EHCI] int_transfer: addr=%d ep=%d dir=%s len=%u "
+            "toggle=%d frame=%u\n",
+            dev_addr, ep, dir_in ? "IN" : "OUT",
+            (unsigned)len, toggle, (unsigned)frame_idx);
+
+    /*
+     * Poll for qTD completion.  Interrupt transfers have longer timeouts
+     * than bulk (up to 500 ms for HID devices).
+     */
+    int timeout = 500000;
+    while (timeout > 0) {
+        uint32_t token = qtd[2];
+        if (!(token & QTD_TOKEN_ACTIVE)) {
+            if (token & QTD_TOKEN_HALTED) {
+                kprintf("[EHCI] int_transfer: HALTED (token=0x%08X)\n",
+                        (unsigned)token);
+                ret = -EIO;
+                goto cleanup;
+            }
+            if (token & (QTD_TOKEN_BABBLE | QTD_TOKEN_XACTERR |
+                         QTD_TOKEN_DATABUFERR)) {
+                kprintf("[EHCI] int_transfer: transfer error "
+                        "(token=0x%08X)\n", (unsigned)token);
+                ret = -EIO;
+                goto cleanup;
+            }
+            /* Success */
+            ret = 0;
+            goto cleanup;
+        }
+        busy_wait_n(10);
+        timeout--;
+    }
+
+    /* Timeout */
+    kprintf("[EHCI] int_transfer: TIMEOUT (addr=%d ep=%d len=%u "
+            "dir=%s)\n", dev_addr, ep, (unsigned)len,
+            dir_in ? "IN" : "OUT");
+    ret = -ETIMEDOUT;
+
+cleanup:
+    /* Restore the frame list entry */
+    g_flist[frame_idx] = old_fl_entry;
+    __asm__ volatile("mfence" ::: "memory");
+
+    pmm_free_frame(qh_phys);
+    pmm_free_frame(qtd_phys);
+    return ret;
+}
+
 static const struct usb_hc_ops ehci_hc_ops = {
-    .control_transfer = ehci_control_transfer,
-    .bulk_transfer    = ehci_bulk_transfer,
+    .control_transfer  = ehci_control_transfer,
+    .bulk_transfer     = ehci_bulk_transfer,
+    .interrupt_transfer = ehci_interrupt_transfer,
 };
 
 int xhci_submit_isochronous(uint8_t dev_addr, uint8_t ep,
