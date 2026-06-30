@@ -45,6 +45,34 @@
 #define AC97_REG_MIC_ADC_RATE    0x34   /* Mic ADC rate */
 #define AC97_REG_SPDIF_CONTROL   0x36   /* SPDIF control */
 
+/* ── Powerdown register (AC97_REG_POWERDOWN, 0x26) bit definitions ── */
+#define AC97_PD_PR0       (1U << 0)  /* ADC powerdown */
+#define AC97_PD_PR1       (1U << 1)  /* DAC powerdown */
+#define AC97_PD_PR2       (1U << 2)  /* Analog mixer powerdown */
+#define AC97_PD_PR3       (1U << 3)  /* AC-Link powerdown */
+#define AC97_PD_PR4       (1U << 4)  /* Internal clocks disable */
+#define AC97_PD_PR5       (1U << 5)  /* Wakeup status (read-only) */
+#define AC97_PD_PR6       (1U << 6)  /* VREF powerdown */
+#define AC97_PD_PR7       (1U << 7)  /* Reserved, must be 0 */
+#define AC97_PD_EAPD      (1U << 15) /* External amplifier power down */
+
+/* All audio functions powered down (deep sleep) */
+#define AC97_PD_ALL       (AC97_PD_PR0 | AC97_PD_PR1 | AC97_PD_PR2 | AC97_PD_PR3 | AC97_PD_PR4 | AC97_PD_PR6)
+
+/* NABM Global Control register bits */
+#define AC97_GC_COLD_RESET  (1U << 1)  /* Cold reset AC-link */
+#define AC97_GC_WARM_RESET  (1U << 2)  /* Warm reset AC-link */
+#define AC97_GC_PCM_SLOT_MAP 0x00000001U /* PCM slot map enable */
+
+/* AC97 power management states */
+enum ac97_power_state {
+    AC97_POWER_D0 = 0,   /**< Fully on: all functions active */
+    AC97_POWER_D1,        /**< Low-power: mixer active, DAC/ADC off */
+    AC97_POWER_D2,        /**< Deep sleep: only wakeup logic active */
+    AC97_POWER_D3,        /**< Off: AC-Link powered down, requires cold reset */
+    AC97_POWER_D3_COLD,   /**< Full power-off (cold reset required) */
+};
+
 /* Misc */
 #define AC97_REG_MISC            0x3C   /* Misc volume/3D */
 #define AC97_REG_VENDOR_ID1      0x7C   /* Vendor ID1 (high 16 bits) */
@@ -109,6 +137,75 @@ int ac97_write(uint16_t reg, uint16_t val);
  * Returns 0 on success, or a negative errno on failure.
  */
 int ac97_reset(void);
+
+/* ── Power Management API ─────────────────────────────────────────── */
+
+/**
+ * ac97_cold_reset — Full AC-link cold reset.
+ *
+ * Asserts the cold reset bit in NABM Global Control for 1us, releases it,
+ * then waits for the codec to stabilise and re-reads vendor ID to confirm.
+ *
+ * Returns 0 on success, -ENODEV if AC97 is not present, -EIO if the
+ * codec does not respond after reset.
+ */
+int ac97_cold_reset(void);
+
+/**
+ * ac97_warm_reset — Warm reset of the AC-link.
+ *
+ * Toggles the warm reset bit in NABM Global Control to resume the AC-link
+ * from PR3 (AC-Link powerdown) without a full cold reset.
+ * After warm reset, the codec retains mixer settings and register state.
+ *
+ * Returns 0 on success, -ENODEV if AC97 is not present.
+ */
+int ac97_warm_reset(void);
+
+/**
+ * ac97_suspend — Suspend the AC97 device to a given power state.
+ *
+ * @state: Target power state (AC97_POWER_D1, D2, D3, or D3_COLD).
+ *
+ * D1: Powers down ADC only (recording off).
+ * D2: Powers down ADC, DAC, and analog mixer (playback + recording off).
+ * D3: Powers down AC-Link (requires warm resume or cold reset).
+ * D3_COLD: Full power-off (requires cold reset to resume).
+ *
+ * Returns 0 on success, -ENODEV if AC97 is not present, -EINVAL for
+ * unsupported state requests.
+ */
+int ac97_suspend(enum ac97_power_state state);
+
+/**
+ * ac97_resume — Resume the AC97 device from a suspended state.
+ *
+ * Selects the appropriate resume method based on current power state:
+ *   D3_COLD -> full cold reset + re-initialisation
+ *   D3      -> warm reset + restore mixer state
+ *   D1/D2   -> clear powerdown bits
+ *
+ * Returns 0 on success, -ENODEV if AC97 is not present, -EIO on resume
+ * failure.
+ */
+int ac97_resume(void);
+
+/**
+ * ac97_get_power_state — Return the current AC97 power state.
+ */
+enum ac97_power_state ac97_get_power_state(void);
+
+/**
+ * ac97_set_amplifier_power — Control external amplifier power.
+ *
+ * @on: 1 to power up amplifier, 0 to power down.
+ *
+ * Uses the EAPD bit in the powerdown register (AC97_REG_POWERDOWN bit 15).
+ * May not be supported on all codecs.
+ *
+ * Returns 0 on success, -ENODEV if AC97 is not present.
+ */
+int ac97_set_amplifier_power(int on);
 
 /* ── Capture (Recording) API ─────────────────────────────────────── */
 

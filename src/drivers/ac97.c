@@ -1136,6 +1136,346 @@ void ac97_mixer_init_defaults(void)
 
 /* ── ac97_init now also calls mixer defaults ──────────────────────── */
 
+/* ═══════════════════════════════════════════════════════════════════════
+ *  Power Management — Cold Reset, Warm Resume, Suspend/Resume
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Current AC97 power management state.
+ * Starts at D0 (fully on) after ac97_init completes.
+ */
+static enum ac97_power_state ac97_pwr_state = AC97_POWER_D0;
+
+/**
+ * Saved mixer state for restore on resume.
+ * The AC97 spec guarantees that mixer registers survive a warm reset,
+ * but not a cold reset.  We save the primary channel volumes before
+ * D3_COLD suspend so they can be restored after cold reset.
+ */
+struct ac97_saved_mixer_state {
+    uint16_t master;
+    uint16_t pcm;
+    uint16_t mic;
+    uint16_t line_in;
+    uint16_t cd;
+    uint16_t rec_gain;
+    uint16_t rec_source;
+    uint16_t ext_audio;
+};
+
+static struct ac97_saved_mixer_state ac97_saved_regs;
+
+/**
+ * ac97_cold_reset — Full AC-link cold reset.
+ *
+ * Toggles the cold reset bit in the NABM Global Control register,
+ * which forces a complete AC-link reset.  All codec registers return
+ * to their hardware-default values.  After the reset completes, the
+ * codec vendor ID is read to confirm the codec is responsive.
+ */
+int ac97_cold_reset(void)
+{
+    if (!ac97_dev_present)
+        return -ENODEV;
+
+    /* Stop any active DMA before resetting */
+    nabm_out8(NABM_PCM_OUT_CR, 0);
+    nabm_out8(NABM_PCM_IN_CR, 0);
+    nabm_out16(NABM_PCM_OUT_SR, 0x001E);
+    nabm_out16(NABM_PCM_IN_SR, 0x001E);
+
+    /* Assert cold reset (write 1 to bit 1 of NABM Glob_Cnt) */
+    nabm_out32(NABM_GLOB_CNT, AC97_GC_COLD_RESET);
+
+    /* Hold reset for ~1us (busy-loop) */
+    for (volatile uint32_t i = 0; i < 100; i++)
+        io_wait();
+
+    /* Release reset */
+    nabm_out32(NABM_GLOB_CNT, 0);
+    ac97_pwr_state = AC97_POWER_D3_COLD;
+
+    /* Wait for AC-link to stabilise (AC97 spec: 128 SYNC cycles = ~32us) */
+    for (volatile uint32_t i = 0; i < 50000; i++)
+        io_wait();
+
+    /* Verify codec is responsive by reading vendor ID registers */
+    uint16_t vid1 = inw(ac97_nam_base + AC97_REG_VENDOR_ID1);
+    uint16_t vid2 = inw(ac97_nam_base + AC97_REG_VENDOR_ID2);
+
+    if (vid1 == 0xFFFF && vid2 == 0xFFFF) {
+        kprintf("[AC97] Cold reset failed — codec not responding\n");
+        return -EIO;
+    }
+
+    ac97_pwr_state = AC97_POWER_D0;
+    kprintf("[AC97] Cold reset OK (vendor=0x%04x:0x%04x)\n",
+            (unsigned)vid1, (unsigned)vid2);
+    return 0;
+}
+
+/**
+ * ac97_warm_reset — Warm reset of the AC-link.
+ *
+ * Toggles the warm reset bit in NABM Global Control (bit 2) to
+ * reinitialise the AC-link protocol without resetting codec registers.
+ * All mixer and volume settings are preserved across a warm reset.
+ *
+ * This is the preferred resume path when the codec was suspended
+ * to D3 (AC-Link powerdown via PR3).  It is substantially faster
+ * than a cold reset.
+ */
+int ac97_warm_reset(void)
+{
+    if (!ac97_dev_present)
+        return -ENODEV;
+
+    /* Assert warm reset (write 1 to bit 2 of NABM Glob_Cnt) */
+    nabm_out32(NABM_GLOB_CNT, AC97_GC_WARM_RESET);
+
+    /* Hold warm reset for at least 1us */
+    for (volatile uint32_t i = 0; i < 100; i++)
+        io_wait();
+
+    /* Release warm reset */
+    nabm_out32(NABM_GLOB_CNT, 0);
+
+    /* Wait for AC-link to synchronise (~128 SYNC frames @ 48kHz = ~2.67ms) */
+    for (volatile uint32_t i = 0; i < 100000; i++)
+        io_wait();
+
+    /* Verify codec is now responding */
+    uint16_t vid1 = inw(ac97_nam_base + AC97_REG_VENDOR_ID1);
+    uint16_t vid2 = inw(ac97_nam_base + AC97_REG_VENDOR_ID2);
+
+    if (vid1 == 0xFFFF && vid2 == 0xFFFF) {
+        kprintf("[AC97] Warm reset failed — codec not responding\n");
+        return -EIO;
+    }
+
+    ac97_pwr_state = AC97_POWER_D0;
+    kprintf("[AC97] Warm reset OK\n");
+    return 0;
+}
+
+/**
+ * ac97_suspend — Suspend the AC97 device.
+ *
+ * Powers down audio functions according to the requested ACPI-style
+ * power state:
+ *
+ *   D1 (suspend ADC):
+ *       Powers down the ADC (PR0).  DAC and mixer remain active.
+ *       Allows playback to continue but recording is disabled.
+ *
+ *   D2 (deep sleep):
+ *       Powers down ADC (PR0), DAC (PR1), and analog mixer (PR2).
+ *       All audio functions are off.  Internal clocks may also be
+ *       disabled (PR4).  Wakeup requires clearing PR bits.
+ *
+ *   D3 (AC-Link off):
+ *       Powers down the entire AC-link (PR3) plus all functions.
+ *       Only the wakeup logic (PR5) remains active.
+ *       Resume requires ac97_warm_reset().
+ *
+ *   D3_COLD (full off):
+ *       Like D3, but the caller intends to follow with ac97_cold_reset()
+ *       to resume.  Used for system-wide suspend-to-RAM/disk.
+ */
+int ac97_suspend(enum ac97_power_state state)
+{
+    if (!ac97_dev_present)
+        return -ENODEV;
+
+    if (state < AC97_POWER_D1 || state > AC97_POWER_D3_COLD)
+        return -EINVAL;
+
+    /* Stop any active DMA */
+
+    /* Save current mixer state for potential restore */
+    ac97_saved_regs.master     = inw(ac97_nam_base + AC97_REG_MASTER);
+    ac97_saved_regs.pcm        = inw(ac97_nam_base + AC97_REG_PCM_OUT);
+    ac97_saved_regs.mic        = inw(ac97_nam_base + AC97_REG_MIC);
+    ac97_saved_regs.line_in    = inw(ac97_nam_base + AC97_REG_LINE_IN);
+    ac97_saved_regs.cd         = inw(ac97_nam_base + AC97_REG_CD);
+    ac97_saved_regs.rec_gain   = inw(ac97_nam_base + AC97_REG_RECORD_GAIN);
+    ac97_saved_regs.rec_source = inw(ac97_nam_base + AC97_REG_RECORD_SOURCE);
+    ac97_saved_regs.ext_audio  = inw(ac97_nam_base + AC97_REG_EXT_AUDIO_CTRL);
+
+    switch (state) {
+    case AC97_POWER_D1:
+        /* Power down ADC only (PR0) */
+        outw(ac97_nam_base + AC97_REG_POWERDOWN, AC97_PD_PR0);
+        kprintf("[AC97] Suspend to D1: ADC powered down\n");
+        break;
+
+    case AC97_POWER_D2:
+        /* Power down ADC, DAC, analog mixer, VREF */
+        outw(ac97_nam_base + AC97_REG_POWERDOWN,
+             AC97_PD_PR0 | AC97_PD_PR1 | AC97_PD_PR2 | AC97_PD_PR4 | AC97_PD_PR6);
+        kprintf("[AC97] Suspend to D2: deep sleep\n");
+        break;
+
+    case AC97_POWER_D3:
+        /* Stop DMA engines first */
+        nabm_out8(NABM_PCM_OUT_CR, 0);
+        nabm_out8(NABM_PCM_IN_CR, 0);
+
+        /* Power down everything including AC-Link */
+        outw(ac97_nam_base + AC97_REG_POWERDOWN, AC97_PD_ALL);
+
+        /* Also power down external amplifier */
+        uint16_t pd = inw(ac97_nam_base + AC97_REG_POWERDOWN);
+        pd |= AC97_PD_EAPD;
+        outw(ac97_nam_base + AC97_REG_POWERDOWN, pd);
+
+        kprintf("[AC97] Suspend to D3: AC-Link off\n");
+        break;
+
+    case AC97_POWER_D3_COLD:
+        /* Stop DMA engines */
+        nabm_out8(NABM_PCM_OUT_CR, 0);
+        nabm_out8(NABM_PCM_IN_CR, 0);
+
+        /* Power down AC-Link */
+        outw(ac97_nam_base + AC97_REG_POWERDOWN, AC97_PD_ALL);
+
+        /* Perform cold reset to fully power off */
+        nabm_out32(NABM_GLOB_CNT, AC97_GC_COLD_RESET);
+        for (volatile uint32_t i = 0; i < 100; i++)
+            io_wait();
+        nabm_out32(NABM_GLOB_CNT, 0);
+
+        kprintf("[AC97] Suspend to D3_COLD: fully off\n");
+        break;
+
+    default:
+        return -EINVAL;
+    }
+
+    ac97_pwr_state = state;
+    return 0;
+}
+
+/**
+ * ac97_resume — Resume the AC97 device from a suspended state.
+ *
+ * Selects the appropriate resume method based on current power state:
+ *   D3_COLD -> ac97_cold_reset() + restore saved mixer settings
+ *   D3      -> ac97_warm_reset()  (mixer state preserved by spec)
+ *   D1/D2   -> Clear PR bits (immediate wakeup)
+ *
+ * After resume, mixer defaults are re-applied to ensure consistent
+ * audio state regardless of how much state survived the transition.
+ */
+int ac97_resume(void)
+{
+    int ret;
+
+    if (!ac97_dev_present)
+        return -ENODEV;
+
+    if (ac97_pwr_state == AC97_POWER_D0) {
+        kprintf("[AC97] Resume: already in D0, nothing to do\n");
+        return 0;
+    }
+
+    switch (ac97_pwr_state) {
+    case AC97_POWER_D3_COLD:
+        /* Cold reset brings the codec back from full power-off */
+        ret = ac97_cold_reset();
+        if (ret < 0)
+            return ret;
+
+        /* Restore mixer state (cold reset clears all registers) */
+        outw(ac97_nam_base + AC97_REG_MASTER,      ac97_saved_regs.master);
+        outw(ac97_nam_base + AC97_REG_PCM_OUT,     ac97_saved_regs.pcm);
+        outw(ac97_nam_base + AC97_REG_MIC,         ac97_saved_regs.mic);
+        outw(ac97_nam_base + AC97_REG_LINE_IN,     ac97_saved_regs.line_in);
+        outw(ac97_nam_base + AC97_REG_CD,          ac97_saved_regs.cd);
+        outw(ac97_nam_base + AC97_REG_RECORD_GAIN, ac97_saved_regs.rec_gain);
+        outw(ac97_nam_base + AC97_REG_RECORD_SOURCE, ac97_saved_regs.rec_source);
+
+        /* Re-enable VRA if it was active */
+        if (ac97_saved_regs.ext_audio & EA_VRA) {
+            uint16_t ext = inw(ac97_nam_base + AC97_REG_EXT_AUDIO_CTRL);
+            outw(ac97_nam_base + AC97_REG_EXT_AUDIO_CTRL, ext | EA_VRA);
+        }
+
+        /* Re-apply mixer defaults as a safety net */
+        ac97_mixer_init_defaults();
+        kprintf("[AC97] Resume from D3_COLD: mixer state restored\n");
+        break;
+
+    case AC97_POWER_D3:
+        /* Warm reset preserves mixer state per AC97 spec */
+        ret = ac97_warm_reset();
+        if (ret < 0)
+            return ret;
+
+        /* Re-apply mixer defaults in case some settings were lost */
+        ac97_mixer_init_defaults();
+        kprintf("[AC97] Resume from D3: warm reset OK\n");
+        break;
+
+    case AC97_POWER_D2:
+    case AC97_POWER_D1:
+        /* Clear all powerdown bits to resume audio functions */
+        outw(ac97_nam_base + AC97_REG_POWERDOWN, 0);
+
+        /* Wait for PLL and clocks to stabilise */
+        for (volatile uint32_t i = 0; i < 50000; i++)
+            io_wait();
+
+        ac97_mixer_init_defaults();
+        kprintf("[AC97] Resume from %s: powered up\n",
+                ac97_pwr_state == AC97_POWER_D2 ? "D2" : "D1");
+        break;
+
+    default:
+        return -EINVAL;
+    }
+
+    ac97_pwr_state = AC97_POWER_D0;
+    return 0;
+}
+
+/**
+ * ac97_get_power_state — Return the current power state.
+ */
+enum ac97_power_state ac97_get_power_state(void)
+{
+    return ac97_pwr_state;
+}
+
+/**
+ * ac97_set_amplifier_power — Control external amplifier power via EAPD bit.
+ *
+ * The EAPD bit (bit 15 of AC97_REG_POWERDOWN) controls an external
+ * amplifier power-down signal.  Setting EAPD=1 powers down the external
+ * amp; clearing it powers up.  Not all codecs implement this.
+ */
+int ac97_set_amplifier_power(int on)
+{
+    if (!ac97_dev_present)
+        return -ENODEV;
+
+    uint16_t pd = inw(ac97_nam_base + AC97_REG_POWERDOWN);
+
+    if (on) {
+        /* Power up: clear EAPD bit (EAPD=0 = amp on) */
+        pd &= ~AC97_PD_EAPD;
+    } else {
+        /* Power down: set EAPD bit (EAPD=1 = amp off) */
+        pd |= AC97_PD_EAPD;
+    }
+
+    outw(ac97_nam_base + AC97_REG_POWERDOWN, pd);
+
+    kprintf("[AC97] External amplifier %s\n", on ? "ON" : "OFF");
+    return 0;
+}
+
 MODULE_LICENSE("GPL");
 MODULE_VERSION("1.0.0");
 MODULE_DESCRIPTION("AC97 audio controller driver");
