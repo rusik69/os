@@ -1336,6 +1336,32 @@ static struct kunit_case lockdep_test_cases[] = {
 };
 
 /* ── Fault injection test cases ─────────────────────────────────── */
+/* ── POSIX Timer tests ────────────────────────────────────────── */
+
+/* Declarations from posix_timer.c / syscall.h */
+extern void posix_timer_init(void);
+extern void posix_timer_tick(void);
+
+static void posix_timer_init_test(struct kunit *kt)
+{
+    /* posix_timer_init should be safely callable */
+    posix_timer_init();
+    KUNIT_EXPECT_TRUE(kt, 1);
+}
+
+static void posix_timer_tick_test(struct kunit *kt)
+{
+    /* posix_timer_tick should be safely callable without crashes */
+    posix_timer_tick();
+    KUNIT_EXPECT_TRUE(kt, 1);
+}
+
+static struct kunit_case posix_timer_test_cases[] = {
+    KUNIT_CASE(posix_timer_init_test),
+    KUNIT_CASE(posix_timer_tick_test),
+    {0}
+};
+
 static void fault_inject_basic_test(struct kunit *kt)
 {
     /* Test that should_fail returns 0 when disabled */
@@ -1398,6 +1424,7 @@ static struct kunit_suite module_kallsyms_test_suite;
 static struct kunit_suite kmemleak_test_suite;
 static struct kunit_suite lockdep_test_suite;
 static struct kunit_suite fault_inject_test_suite;
+static struct kunit_suite posix_timer_test_suite;
 
 /* ── Registration function (called from kunit_init) ────────────── */
 
@@ -1435,6 +1462,7 @@ void kunit_register_builtin_tests(void)
     FILL_CASES(kmemleak_test_suite, kmemleak_test_cases);
     FILL_CASES(lockdep_test_suite, lockdep_test_cases);
     FILL_CASES(fault_inject_test_suite, fault_inject_test_cases);
+    FILL_CASES(posix_timer_test_suite, posix_timer_test_cases);
 
     /* Set suite names */
     pmm_test_suite.name    = "pmm";
@@ -1459,6 +1487,7 @@ void kunit_register_builtin_tests(void)
     kmemleak_test_suite.name = "kmemleak";
     lockdep_test_suite.name = "lockdep";
     fault_inject_test_suite.name = "fault_inject";
+    posix_timer_test_suite.name  = "posix_timer";
 
     kunit_register_suite(&pmm_test_suite);
     kunit_register_suite(&slab_test_suite);
@@ -1490,6 +1519,7 @@ void kunit_register_builtin_tests(void)
 
     /* ── Fault injection test suite ────────────────────────────────── */
     kunit_register_suite(&fault_inject_test_suite);
+    kunit_register_suite(&posix_timer_test_suite);
 
     /* Register the dedicated PMM test suite from kunit_pmm.c */
     kunit_pmm_register();
