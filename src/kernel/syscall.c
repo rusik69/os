@@ -124,6 +124,8 @@ uint64_t sys_wait4(uint64_t pid, uint64_t wstatus_addr,
                    uint64_t options, uint64_t rusage_addr);
 uint64_t sys_waitid(uint64_t which, uint64_t id, uint64_t info_addr,
                     uint64_t options, uint64_t rusage_addr);
+uint64_t sys_exit_group(uint64_t code);
+uint64_t sys_set_tid_address(uint64_t tidptr);
 
 /* ── Open file descriptor table (for lseek support) ────────────── */
 
@@ -9415,6 +9417,7 @@ uint64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_CLOSE:  return sys_close(a1);
         case SYS_CLOSE_RANGE: return sys_close_range(a1, a2, a3);
         case SYS_EXIT:   return sys_exit(a1);
+        case SYS_EXIT_GROUP:   return sys_exit_group(a1);
         case SYS_GETPID: return sys_getpid();
         case SYS_KILL:   return sys_kill(a1, a2);
         case SYS_BRK:    return sys_brk(a1);

@@ -1006,3 +1006,58 @@ rescan:
         ;
     }
 }
+
+/* ── sys_exit_group — exit all threads in the current thread group ─
+ *
+ *   void exit_group(int status);
+ *
+ * Linux-compatible exit_group syscall.  Terminates all threads in
+ * the calling process's thread group with the given exit status.
+ *
+ * Implementation: sends SIGKILL to every other thread in the group,
+ * then calls process_exit_code(status) for the current thread.
+ * Threads that receive SIGKILL will be torn down by the signal
+ * dispatch path (signal_deliver -> process_exit_code(9)).
+ *
+ * This function does not return (calls process_exit_code which
+ * terminates the current process).
+ */
+uint64_t sys_exit_group(uint64_t code)
+{
+	struct process *cur = process_get_current();
+	if (!cur)
+		return (uint64_t)(int64_t)-ESRCH;
+
+	uint32_t my_tgid = cur->tgid;
+	uint32_t my_pid = cur->pid;
+
+	/* Iterate the process table and signal every thread in the same group,
+	 * except the caller (which exits explicitly below). */
+	struct process *table = process_get_table();
+	for (int i = 0; i < PROCESS_MAX; i++) {
+		struct process *p = &table[i];
+		if (p->state == PROCESS_UNUSED)
+			continue;
+		if (p->tgid != my_tgid)
+			continue;
+		if (p->pid == my_pid)
+			continue;
+
+		struct siginfo info;
+		info.si_signo = SIGKILL;
+		info.si_errno = 0;
+		info.si_code  = SI_KERNEL;
+		info.si_pid   = my_pid;
+		info.si_uid   = cur->uid;
+		info.si_addr  = NULL;
+		info.si_status = 0;
+
+		signal_send_info(p->pid, SIGKILL, &info);
+	}
+
+	/* Terminate the caller — this doesn't return. */
+	process_exit_code((int)code);
+
+	/* Unreachable */
+	return 0;
+}
