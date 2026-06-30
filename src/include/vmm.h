@@ -45,6 +45,10 @@
  * since x86-64 lacks a hardware read-disable bit).  A read fault on such
  * a page triggers SIGSEGV. */
 #define VMM_FLAG_EXECONLY (1ULL << 11)
+/* Software bit 52 (available to OS — high address-range available bit) used for
+ * mlock/munlock page locking.  Pages with this bit set have an elevated refcount
+ * via pmm_ref_frame() and must not be swapped out or freed. */
+#define VMM_FLAG_LOCKED   (1ULL << 52)
 /* Page-level cache disable (PAT bit) for MMIO */
 #define VMM_FLAG_NOCACHE  (1ULL << 4)  /* PCD = Page Cache Disable */
 #define VMM_FLAG_NOEXEC   (1ULL << 63) /* No-Execute (NX bit) */
@@ -197,6 +201,13 @@ int vmm_map_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages, uint64_t
 int vmm_unmap_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages);
 int vmm_set_user_pages_flags(uint64_t *pml4, uint64_t virt, size_t num_pages, uint64_t new_flags);
 int vmm_page_is_mapped_user(uint64_t *pml4, uint64_t virt);
+
+/* Lock/unlock user pages — wire/unwire by incrementing/decrementing
+ * the physical frame refcount and marking the PTE with VMM_FLAG_LOCKED.
+ * Returns 0 on success, -ENOMEM if a page needs to be resolved first
+ * (COW break) and allocation fails, or -EFAULT if a page is not mapped. */
+int vmm_lock_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages);
+int vmm_unlock_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages);
 
 /* Huge page (2MB) support for anonymous mappings */
 #define HUGE_PAGE_SIZE      (2ULL * 1024 * 1024)

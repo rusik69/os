@@ -7701,6 +7701,7 @@ static uint64_t sys_mlock(uint64_t addr, uint64_t len) {
     len = (len + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
     if (addr + len < addr) return (uint64_t)-EINVAL;
     if (addr + len > USER_VADDR_MAX) return (uint64_t)-EINVAL;
+    if (len == 0) return 0;
 
     /* If MCL_FUTURE is set, pages are globally locked via mlockall;
      * individual mlock is not permitted. */
@@ -7717,9 +7718,14 @@ static uint64_t sys_mlock(uint64_t addr, uint64_t len) {
             return (uint64_t)-ENOMEM;
     }
 
-    /* Verify pages are mapped */
-    for (uint64_t v = addr; v < addr + len; v += PAGE_SIZE) {
-        if (!vmm_page_is_mapped_user(p->pml4, v)) return (uint64_t)-ENOMEM;
+    /* Wire the pages: resolve COW, ref physical frames, set LOCKED flag */
+    int ret = vmm_lock_user_pages(p->pml4, addr, npages);
+    if (ret < 0) {
+        /* On failure, unlock any pages we may have already locked
+         * in the range.  vmm_unlock_user_pages safely skips non-locked
+         * pages, so this works even if locking failed partway through. */
+        vmm_unlock_user_pages(p->pml4, addr, npages);
+        return (uint64_t)(int64_t)(ret == -ENOMEM ? -ENOMEM : -EFAULT);
     }
 
     p->locked_pages += npages;
@@ -7739,6 +7745,11 @@ static uint64_t sys_munlock(uint64_t addr, uint64_t len) {
         return (uint64_t)-EPERM;
 
     uint64_t npages = (len + PAGE_SIZE - 1) / PAGE_SIZE;
+    if (npages == 0) return 0;
+
+    /* Unwire the pages: clear LOCKED flag, unref physical frames */
+    vmm_unlock_user_pages(p->pml4, addr, npages);
+
     if (npages > p->locked_pages)
         p->locked_pages = 0;
     else

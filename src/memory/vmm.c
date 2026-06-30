@@ -1097,6 +1097,157 @@ int vmm_set_user_pages_flags(uint64_t *pml4, uint64_t virt, size_t num_pages,
     return 0;
 }
 
+/* ── vmm_lock_user_pages — wire (lock) user pages in memory ──────────────
+ * For each present page in the range:
+ *   - If the page is COW (lazy zero-page), resolve it first (private copy)
+ *   - Set VMM_FLAG_LOCKED in the PTE
+ *   - Increment the physical frame refcount via pmm_ref_frame()
+ *
+ * Returns 0 on success, negative errno on failure (-EFAULT if unmapped,
+ * -ENOMEM if COW-break allocation fails).  On error, already-locked pages
+ * are NOT unlocked (caller is expected to munlock on error).
+ */
+int vmm_lock_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages) {
+    if (!pml4 || virt >= USER_VADDR_MAX) return -EINVAL;
+    if (virt + num_pages * PAGE_SIZE < virt) return -EOVERFLOW;
+    if (virt + num_pages * PAGE_SIZE > USER_VADDR_MAX) return -EINVAL;
+
+    for (size_t i = 0; i < num_pages; i++) {
+        uint64_t addr = virt + i * PAGE_SIZE;
+        int pml4_idx = (addr >> 39) & 0x1FF;
+        int pdpt_idx = (addr >> 30) & 0x1FF;
+        int pd_idx   = (addr >> 21) & 0x1FF;
+        int pt_idx   = (addr >> 12) & 0x1FF;
+
+        if (!(pml4[pml4_idx] & PTE_PRESENT)) return -EFAULT;
+        uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(pml4[pml4_idx] & PTE_ADDR_MASK);
+        if (!(pdpt[pdpt_idx] & PTE_PRESENT)) return -EFAULT;
+        uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[pdpt_idx] & PTE_ADDR_MASK);
+        if (!(pd[pd_idx] & PTE_PRESENT)) return -EFAULT;
+
+        /* Handle 2MB huge pages */
+        if (pd[pd_idx] & PTE_HUGE) {
+            uint64_t pde = pd[pd_idx];
+            /* Skip if already locked */
+            if (pde & VMM_FLAG_LOCKED)
+                continue;
+            uint64_t base = pde & 0x000FFFFFFFE00000ULL;
+            /* Ref all 512 sub-frames */
+            for (int j = 0; j < 512; j++)
+                pmm_ref_frame(base + (uint64_t)j * PAGE_SIZE);
+            /* Set the LOCKED bit in the PDE */
+            pd[pd_idx] = pde | VMM_FLAG_LOCKED;
+            tlb_flush(addr & ~(HUGE_PAGE_SIZE - 1ULL));
+            /* Skip remaining pages in this 2MB region */
+            uint64_t remaining = HUGE_PAGE_SIZE / PAGE_SIZE - (i % (HUGE_PAGE_SIZE / PAGE_SIZE));
+            if (remaining > 1) {
+                i += remaining - 1;
+                if (i >= num_pages) break;
+            }
+            continue;
+        }
+
+        if (!(pd[pd_idx] & PTE_PRESENT)) return -EFAULT;
+        uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[pd_idx] & PTE_ADDR_MASK);
+        uint64_t pte = pt[pt_idx];
+        if (!(pte & PTE_PRESENT)) return -EFAULT;
+
+        /* Skip if already locked */
+        if (pte & VMM_FLAG_LOCKED)
+            continue;
+
+        /* Resolve COW pages: allocate private copy if this is a lazy/COW page */
+        if (pte & VMM_FLAG_COW) {
+            uint64_t old_phys = pte & PTE_ADDR_MASK;
+            uint64_t new_phys = pmm_alloc_frame();
+            if (unlikely(!new_phys))
+                return -ENOMEM;
+            memcpy((void *)PHYS_TO_VIRT(new_phys),
+                   (void *)PHYS_TO_VIRT(old_phys), PAGE_SIZE);
+            pmm_unref_frame(old_phys);
+            /* Map the new page: keep all flags except COW, add LOCKED + WRITE */
+            uint64_t preserved = pte & (PTE_NX | VMM_FLAG_EXECONLY);
+            uint64_t new_pte = (new_phys & PTE_ADDR_MASK)
+                             | (pte & 0xFFF & ~(uint64_t)VMM_FLAG_COW)
+                             | VMM_FLAG_LOCKED | PTE_WRITE | PTE_PRESENT
+                             | preserved;
+            pt[pt_idx] = new_pte;
+            pmm_ref_frame(new_phys);
+            tlb_flush(addr);
+            continue;
+        }
+
+        /* Normal (non-COW) present page: just set the locked flag and ref */
+        uint64_t phys = pte & PTE_ADDR_MASK;
+        pt[pt_idx] = pte | VMM_FLAG_LOCKED;
+        pmm_ref_frame(phys);
+        tlb_flush(addr);
+    }
+    return 0;
+}
+
+/* ── vmm_unlock_user_pages — unwire (unlock) user pages ──────────────────
+ * For each page in the range that has VMM_FLAG_LOCKED set:
+ *   - Clear VMM_FLAG_LOCKED in the PTE
+ *   - Decrement the physical frame refcount via pmm_unref_frame()
+ *
+ * Pages without VMM_FLAG_LOCKED are silently skipped (Linux semantics:
+ * munlock on non-locked pages is a no-op).
+ */
+int vmm_unlock_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages) {
+    if (!pml4 || virt >= USER_VADDR_MAX) return -EINVAL;
+    if (virt + num_pages * PAGE_SIZE < virt) return -EOVERFLOW;
+    if (virt + num_pages * PAGE_SIZE > USER_VADDR_MAX) return -EINVAL;
+
+    for (size_t i = 0; i < num_pages; i++) {
+        uint64_t addr = virt + i * PAGE_SIZE;
+        int pml4_idx = (addr >> 39) & 0x1FF;
+        int pdpt_idx = (addr >> 30) & 0x1FF;
+        int pd_idx   = (addr >> 21) & 0x1FF;
+        int pt_idx   = (addr >> 12) & 0x1FF;
+
+        if (!(pml4[pml4_idx] & PTE_PRESENT)) continue;
+        uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(pml4[pml4_idx] & PTE_ADDR_MASK);
+        if (!(pdpt[pdpt_idx] & PTE_PRESENT)) continue;
+        uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[pdpt_idx] & PTE_ADDR_MASK);
+        if (!(pd[pd_idx] & PTE_PRESENT)) continue;
+
+        /* Handle 2MB huge pages */
+        if (pd[pd_idx] & PTE_HUGE) {
+            uint64_t pde = pd[pd_idx];
+            if (!(pde & VMM_FLAG_LOCKED))
+                continue;
+            uint64_t base = pde & 0x000FFFFFFFE00000ULL;
+            /* Unref all 512 sub-frames */
+            for (int j = 0; j < 512; j++)
+                pmm_unref_frame(base + (uint64_t)j * PAGE_SIZE);
+            /* Clear the LOCKED bit */
+            pd[pd_idx] = pde & ~VMM_FLAG_LOCKED;
+            tlb_flush(addr & ~(HUGE_PAGE_SIZE - 1ULL));
+            /* Skip remaining pages in this 2MB region */
+            uint64_t remaining = HUGE_PAGE_SIZE / PAGE_SIZE - (i % (HUGE_PAGE_SIZE / PAGE_SIZE));
+            if (remaining > 1) {
+                i += remaining - 1;
+                if (i >= num_pages) break;
+            }
+            continue;
+        }
+
+        if (!(pd[pd_idx] & PTE_PRESENT)) continue;
+        uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[pd_idx] & PTE_ADDR_MASK);
+        uint64_t pte = pt[pt_idx];
+        if (!(pte & PTE_PRESENT)) continue;
+        if (!(pte & VMM_FLAG_LOCKED)) continue;
+
+        /* Clear the locked flag and unref */
+        uint64_t phys = pte & PTE_ADDR_MASK;
+        pt[pt_idx] = pte & ~VMM_FLAG_LOCKED;
+        pmm_unref_frame(phys);
+        tlb_flush(addr);
+    }
+    return 0;
+}
+
 /* ── Walk user page table and count present pages in a range ────────────
  * Count 4KB-equivalent present pages in [start_virt, end_virt).
  * Huge pages (2MB) are counted as 512 × 4KB pages.
