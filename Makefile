@@ -92,6 +92,7 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/posix_timer.c \
          src/kernel/sys_process.c \
          src/kernel/sys_mmap.c \
+         src/kernel/sys_nl.c \
          src/kernel/sys_credentials.c \
          src/kernel/sys_caps.c \
          src/kernel/vfs.c \

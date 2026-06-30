@@ -106,6 +106,12 @@ int sys_socket_impl(int domain, int type, int protocol) {
         /* Allow AF_PACKET / AF_UNSPEC for raw packet sockets */
         if (domain != 0 && domain != 17 && domain != AF_NETLINK && domain != AF_CAN) return -EAFNOSUPPORT;
     }
+
+    /* Validate socket type for AF_NETLINK — Linux only allows
+     * SOCK_RAW (direct message access) or SOCK_DGRAM for netlink. */
+    if (domain == AF_NETLINK && type != SOCK_RAW && type != SOCK_DGRAM)
+        return -EPROTONOSUPPORT;
+
     int slot = sock_alloc();
     if (slot < 0) return slot; /* -ENOMEM */
 
@@ -121,6 +127,12 @@ int sys_socket_impl(int domain, int type, int protocol) {
         if (type == SOCK_RAW && domain == 0) {
             /* ETH_P_ALL raw socket */
             s->protocol = ETH_P_ALL;
+        } else if (domain == AF_NETLINK) {
+            /* AF_NETLINK uses netlink protocol families (NETLINK_ROUTE,
+             * NETLINK_GENERIC, etc.) — never map to TCP/UDP.  The
+             * netlink_create() call below will default to NETLINK_GENERIC
+             * when protocol remains 0. */
+            s->protocol = 0;
         } else {
             s->protocol = (type == SOCK_STREAM) ? IPPROTO_TCP : IPPROTO_UDP;
         }
