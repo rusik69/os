@@ -14,6 +14,8 @@
 #include "printf.h"
 #include "io.h"
 #include "types.h"
+#include "sound_pcm.h"
+#include "idt.h"
 
 /* ── PCI identification ─────────────────────────────────────────── */
 #define AC97_CLASS    0x04
@@ -93,6 +95,23 @@ static int16_t __attribute__((aligned(4096))) audio_buf[BDL_ENTRIES][4096];
 static struct ac97_bdl_entry __attribute__((aligned(4096))) cap_bdl[BDL_ENTRIES];
 static int16_t __attribute__((aligned(4096))) cap_audio_buf[BDL_ENTRIES][4096];
 
+/* ── Interrupt-driven playback state ─────────────────────────────── */
+static struct pci_device         ac97_pci_dev;
+static struct pci_interrupt_config ac97_int_cfg;
+static int                       ac97_irq_initialized = 0;
+
+struct ac97_playback_state {
+    struct sound_pcm_stream *stream;  /** PCM stream driving the BDL ring */
+    int  running;                      /** 1 if DMA engine is active */
+    int  bdl_entries;                  /** Number of BDL entries in the ring */
+    int  underrun;                     /** 1 if a DMA underrun occurred */
+};
+
+static struct ac97_playback_state ac97_pb;
+
+/* Forward declaration for interrupt handler (used by ac97_init) */
+static void ac97_irq_handler(struct interrupt_frame *frame);
+
 /* ── Helpers ─────────────────────────────────────────────────────── */
 static inline void nam_out16(uint16_t reg, uint16_t v) { outw(ac97_nam_base  + reg, v); }
 static inline void nam_out32(uint16_t reg, uint32_t v) {
@@ -109,18 +128,21 @@ static inline void nabm_out32(uint16_t reg, uint32_t v) {
 }
 static inline uint8_t  nabm_in8 (uint16_t reg) { return inb(ac97_nabm_base + reg);  }
 static inline uint16_t nabm_in16(uint16_t reg) { return inw(ac97_nabm_base + reg);  }
+static inline uint32_t nabm_in32(uint16_t reg) {
+    return (uint32_t)inw(ac97_nabm_base + reg) |
+           ((uint32_t)inw(ac97_nabm_base + reg + 2) << 16);
+}
 
 /* ── Init ────────────────────────────────────────────────────────── */
 int ac97_init(void) {
-    struct pci_device dev;
-    if (pci_find_class(AC97_CLASS, AC97_SUBCLASS, &dev) < 0)
+    if (pci_find_class(AC97_CLASS, AC97_SUBCLASS, &ac97_pci_dev) < 0)
         return -1;
 
-    ac97_nam_base  = (uint16_t)(dev.bar[0] & ~0x3u);
-    ac97_nabm_base = (uint16_t)(dev.bar[1] & ~0x3u);
+    ac97_nam_base  = (uint16_t)(ac97_pci_dev.bar[0] & ~0x3u);
+    ac97_nabm_base = (uint16_t)(ac97_pci_dev.bar[1] & ~0x3u);
     if (!ac97_nam_base || !ac97_nabm_base) return -1;
 
-    pci_enable_bus_master(&dev);
+    pci_enable_bus_master(&ac97_pci_dev);
 
     /* Cold reset via GLOB_CNT */
     nabm_out32(NABM_GLOB_CNT, 0x00000002);  /* assert cold reset */
@@ -159,6 +181,21 @@ int ac97_init(void) {
     ac97_dev_present = 1;
     kprintf("ac97: initialized (NAM=0x%lx, NABM=0x%lx)\n",
             (unsigned long)ac97_nam_base, (unsigned long)ac97_nabm_base);
+
+    /* ── Set up PCI interrupts for the audio controller ──────────────── */
+    if (!ac97_irq_initialized) {
+        int irq_ret = pci_setup_interrupts(&ac97_pci_dev, &ac97_int_cfg,
+                                            ac97_irq_handler);
+        if (irq_ret == 0) {
+            ac97_irq_initialized = 1;
+            kprintf("[AC97] IRQ set up (type=%d, vector=%d)\n",
+                    ac97_int_cfg.type, ac97_int_cfg.vector);
+        } else {
+            kprintf("[AC97] WARN: interrupt setup failed (%d)"
+                    " — using synchronous DMA only\n", irq_ret);
+        }
+    }
+
     return 0;
 }
 
@@ -461,4 +498,182 @@ int ac97_mixer_set(int channel, int level)
 
     outw(ac97_nam_base + reg, val);
     return 0;
+}
+
+/* ── Interrupt handler ───────────────────────────────────────────── */
+
+/**
+ * ac97_irq_handler — Handle AC97 PCI interrupts (IOC, errors).
+ *
+ * Called from the IDT dispatch when the AC97 device raises an IRQ.
+ * Handles playback IOC (fragment completion) and capture events.
+ */
+static void ac97_irq_handler(struct interrupt_frame *frame)
+{
+    (void)frame;
+
+    if (!ac97_dev_present)
+        return;
+
+    /* Read and clear PCM-out (playback) status bits */
+    uint16_t sr = nabm_in16(NABM_PCM_OUT_SR);
+    if (sr & 0x001E)
+        nabm_out16(NABM_PCM_OUT_SR, sr & 0x001E);
+
+    /* Handle playback IOC — a BDL entry with IOC=1 completed */
+    if ((sr & 0x0010) && ac97_pb.running) {
+        struct sound_pcm_stream *s = ac97_pb.stream;
+        if (!s) {
+            ac97_pb.running = 0;
+            return;
+        }
+
+        /* The DMA engine just finished one BDL entry.
+         * Consume one fragment from the PCM stream. */
+        sound_pcm_dma_consume(s);
+
+        /* Determine which BDL entry just completed by reading CIV.
+         * CIV points to the CURRENT entry being processed; the previous
+         * entry (CIV - 1 mod count) just completed. */
+        uint8_t civ = nabm_in8(NABM_PCM_OUT_CIV);
+        int bdl_count = ac97_pb.bdl_entries;
+        int slot = (int)(civ + bdl_count - 1) % bdl_count;
+
+        /* Fill the just-vacated BDL slot with the next PCM fragment */
+        void *frag_ptr;
+        uint32_t frag_size = sound_pcm_dma_get_fragment(s, &frag_ptr);
+
+        if (frag_ptr && frag_size > 0) {
+            uint32_t to_copy = frag_size;
+            if (to_copy > sizeof(audio_buf[0]))
+                to_copy = sizeof(audio_buf[0]);
+
+            memcpy(audio_buf[slot], frag_ptr, to_copy);
+
+            /* Update BDL entry in-place (DMA wraps around) */
+            bdl[slot].addr    = (uint32_t)(uintptr_t)audio_buf[slot];
+            bdl[slot].samples = (uint16_t)(to_copy / 2);
+            bdl[slot].ctrl    = AC97_IOC;
+
+            ac97_pb.underrun = 0;
+        } else {
+            /* Underrun — fill with silence to avoid clicks/pops */
+            memset(audio_buf[slot], 0, sizeof(audio_buf[0]));
+            bdl[slot].samples = (uint16_t)(sizeof(audio_buf[0]) / 2);
+            bdl[slot].ctrl    = AC97_IOC;
+            ac97_pb.underrun  = 1;
+        }
+    }
+
+    /* Clear capture status bits (even if not actively capturing) */
+    uint16_t cap_sr = nabm_in16(NABM_PCM_IN_SR);
+    if (cap_sr & 0x001E)
+        nabm_out16(NABM_PCM_IN_SR, cap_sr & 0x001E);
+
+    /* Clear global status */
+    uint32_t gsts = nabm_in32(NABM_GLOB_STS);
+    if (gsts)
+        nabm_out32(NABM_GLOB_STS, gsts);
+
+    /* EOI is handled by the IDT layer — nothing more to do */
+}
+
+/* ── Interrupt-driven playback API ───────────────────────────────── */
+
+int ac97_playback_start(struct sound_pcm_stream *stream)
+{
+    if (!ac97_dev_present || !stream)
+        return -EINVAL;
+
+    if (ac97_pb.running)
+        return -EBUSY;
+
+    /* Direction must be playback */
+    if (stream->dir != SOUND_PCM_PLAYBACK)
+        return -EINVAL;
+
+    /* Reset PCM-out DMA engine */
+    nabm_out8(NABM_PCM_OUT_CR, CR_RR);
+    for (volatile uint32_t i = 0; i < 10000; i++);
+    nabm_out8(NABM_PCM_OUT_CR, 0);
+
+    /* Clear the playback state */
+    memset(&ac97_pb, 0, sizeof(ac97_pb));
+
+    /* Fill BDL entries from the PCM stream.
+     * We call get_fragment + dma_consume for each fragment:
+     *   get_fragment returns pointer to data at hw_ptr
+     *   dma_consume  advances hw_ptr to the next fragment
+     * The data is copied to audio_buf[] so the DMA engine can
+     * access it (the PCM buffer may be in a different memory region). */
+    int filled = 0;
+    for (int i = 0; i < BDL_ENTRIES; i++) {
+        void *frag_ptr;
+        uint32_t frag_size = sound_pcm_dma_get_fragment(stream, &frag_ptr);
+        if (!frag_ptr || frag_size == 0)
+            break;
+
+        uint32_t to_copy = frag_size;
+        if (to_copy > sizeof(audio_buf[0]))
+            to_copy = sizeof(audio_buf[0]);
+
+        memcpy(audio_buf[i], frag_ptr, to_copy);
+        sound_pcm_dma_consume(stream);
+
+        bdl[i].addr    = (uint32_t)(uintptr_t)audio_buf[i];
+        bdl[i].samples = (uint16_t)(to_copy / 2);
+        bdl[i].ctrl    = AC97_IOC;  /* interrupt on every fragment */
+
+        filled++;
+    }
+
+    if (filled == 0)
+        return -ENODATA;
+
+    /* Pad remaining BDL entries with silence for a constant ring size */
+    for (int i = filled; i < BDL_ENTRIES; i++) {
+        memset(audio_buf[i], 0, sizeof(audio_buf[0]));
+        bdl[i].addr    = (uint32_t)(uintptr_t)audio_buf[i];
+        bdl[i].samples = (uint16_t)(sizeof(audio_buf[0]) / 2);
+        bdl[i].ctrl    = AC97_IOC;
+    }
+
+    ac97_pb.stream      = stream;
+    ac97_pb.bdl_entries = BDL_ENTRIES;
+    ac97_pb.running     = 0;
+    ac97_pb.underrun    = 0;
+
+    /* Program full BDL and start DMA */
+    nabm_out32(NABM_PCM_OUT_BDBAR, (uint32_t)(uintptr_t)bdl);
+    nabm_out8(NABM_PCM_OUT_LVI,    (uint8_t)(BDL_ENTRIES - 1));
+
+    /* Memory barrier: ensure BDL and BDBAR are visible before starting */
+    __asm__ volatile("mfence" ::: "memory");
+
+    nabm_out8(NABM_PCM_OUT_CR, CR_RPBM | CR_IOCE | CR_LVBIE | CR_FEIE);
+
+    ac97_pb.running = 1;
+    kprintf("[AC97] DMA playback started: %d fragments\n", filled);
+    return 0;
+}
+
+void ac97_playback_stop(void)
+{
+    if (!ac97_dev_present)
+        return;
+
+    /* Stop DMA engine */
+    nabm_out8(NABM_PCM_OUT_CR, 0);
+    nabm_out16(NABM_PCM_OUT_SR, 0x001E);  /* clear all status bits */
+
+    ac97_pb.running  = 0;
+    ac97_pb.stream   = NULL;
+    ac97_pb.underrun = 0;
+
+    kprintf("[AC97] DMA playback stopped\n");
+}
+
+int ac97_playback_is_active(void)
+{
+    return ac97_pb.running;
 }

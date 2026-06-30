@@ -2,6 +2,7 @@
 #define AC97_H
 
 #include "types.h"
+#include "sound_pcm.h"
 
 /* Initialize AC'97 audio controller (PCI class 04:01).
  * Returns 0 if found and initialized, -1 if absent. */
@@ -55,6 +56,40 @@ void ac97_set_record_gain(uint8_t left, uint8_t right, int mute);
 #define REC_SEL_STEREO  0x0505
 #define REC_SEL_MONO    0x0606
 #define REC_SEL_PHONE   0x0707
+
+/* ── Interrupt-driven playback API ──────────────────────────────────── */
+
+/** Maximum number of BDL entries for playback */
+#define AC97_BDL_ENTRIES 32
+
+/**
+ * ac97_playback_start — Start interrupt-driven PCM playback.
+ *
+ * @stream:  Initialised PCM playback stream (from sound_pcm_init_stream).
+ *
+ * Fills the BDL ring from the PCM stream and starts the DMA engine
+ * with IOC interrupts enabled.  Returns immediately (non-blocking).
+ * Subsequent DMA completion interrupts refill BDL entries from the
+ * PCM stream automatically.
+ *
+ * Returns 0 on success, -EINVAL/ -EBUSY/ -ENODATA on failure.
+ */
+int ac97_playback_start(struct sound_pcm_stream *stream);
+
+/**
+ * ac97_playback_stop — Stop interrupt-driven PCM playback.
+ *
+ * Halts the DMA engine and clears status bits.  The PCM stream
+ * is left intact and may be restarted later.
+ */
+void ac97_playback_stop(void);
+
+/**
+ * ac97_playback_is_active — Check if DMA playback is running.
+ *
+ * Returns 1 if the DMA engine is actively processing playback BDL entries.
+ */
+int ac97_playback_is_active(void);
 
 /* ── Mixer control ───────────────────────────────────────────────── */
 
