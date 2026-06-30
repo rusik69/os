@@ -4,37 +4,122 @@
 #include "types.h"
 
 /* USB HID class protocol values */
-#define USB_HID_PROTOCOL_BOOT  0
+#define USB_HID_PROTOCOL_BOOT   0
 #define USB_HID_PROTOCOL_REPORT 1
 
 /* HID descriptor types */
 #define HID_DESC_HID           0x21
 #define HID_DESC_REPORT        0x22
 
-/* HID item tags (short items) */
-#define HID_ITEM_INPUT         0x80
-#define HID_ITEM_OUTPUT        0x90
-#define HID_ITEM_FEATURE       0xB0
-#define HID_ITEM_COLLECTION    0xA0
-#define HID_ITEM_END_COLLECTION 0xC0
-#define HID_ITEM_USAGE_PAGE    0x04
-#define HID_ITEM_USAGE         0x08
-#define HID_ITEM_LOGICAL_MIN   0x14
-#define HID_ITEM_LOGICAL_MAX   0x24
-#define HID_ITEM_REPORT_SIZE   0x74
-#define HID_ITEM_REPORT_ID     0x84
-#define HID_ITEM_REPORT_COUNT  0x94
-#define HID_ITEM_PUSH          0xB4
-#define HID_ITEM_POP           0xC4
+/* ── HID item type (bType) ───────────────────────────────────────── */
+#define HID_TYPE_MAIN          0
+#define HID_TYPE_GLOBAL        1
+#define HID_TYPE_LOCAL         2
+#define HID_TYPE_RESERVED      3
 
-/* Usage pages */
-#define HID_PAGE_GENERIC_DESKTOP  0x01
-#define HID_PAGE_KEYBOARD         0x07
-#define HID_PAGE_BUTTONS          0x09
+/* ── Short item bSize encoding ───────────────────────────────────── */
+/* bSize: 0 = 0 bytes, 1 = 1 byte, 2 = 2 bytes, 3 = 4 bytes */
 
-/* Generic Desktop usages */
-#define HID_USAGE_KEYBOARD        0x06
-#define HID_USAGE_MOUSE           0x02
+/* ── Main item tags (bTag in Main type) ──────────────────────────── */
+#define HID_ITEM_INPUT               0x80  /* bTag=8,  type=0 */
+#define HID_ITEM_OUTPUT              0x90  /* bTag=9,  type=0 */
+#define HID_ITEM_COLLECTION          0xA0  /* bTag=10, type=0 */
+#define HID_ITEM_FEATURE             0xB0  /* bTag=11, type=0 */
+#define HID_ITEM_END_COLLECTION     0xC0  /* bTag=12, type=0 */
+
+/* ── Input/Output/Feature item flags ─────────────────────────────── */
+#define HID_IOF_DATA                (0u << 0)  /* Data field */
+#define HID_IOF_CONST               (1u << 0)  /* Constant field */
+#define HID_IOF_ARRAY               (0u << 1)  /* Array (variable count) */
+#define HID_IOF_VARIABLE            (1u << 1)  /* Variable (one per field) */
+#define HID_IOF_ABSOLUTE            (0u << 2)  /* Absolute coordinate */
+#define HID_IOF_RELATIVE            (1u << 2)  /* Relative coordinate */
+#define HID_IOF_NO_WRAP             (0u << 3)  /* No wrap */
+#define HID_IOF_WRAP                (1u << 3)  /* Wrap */
+#define HID_IOF_LINEAR              (0u << 4)  /* Linear */
+#define HID_IOF_NON_LINEAR          (1u << 4)  /* Non-linear */
+#define HID_IOF_PREFERRED           (0u << 5)  /* Preferred state */
+#define HID_IOF_NO_PREFERRED        (1u << 5)  /* No preferred */
+#define HID_IOF_NO_NULL             (0u << 6)  /* No null position */
+#define HID_IOF_NULL_STATE          (1u << 6)  /* Null state */
+#define HID_IOF_NON_VOLATILE        (0u << 7)  /* Non-volatile */
+#define HID_IOF_VOLATILE            (1u << 7)  /* Volatile */
+#define HID_IOF_BIT_FIELD           (0u << 8)  /* Bit field */
+#define HID_IOF_BUFFERED_BYTES      (1u << 8)  /* Buffered bytes */
+
+/* ── Collection types ────────────────────────────────────────────── */
+#define HID_COLLECTION_PHYSICAL     0x00
+#define HID_COLLECTION_APPLICATION  0x01
+#define HID_COLLECTION_LOGICAL      0x02
+#define HID_COLLECTION_REPORT       0x03
+#define HID_COLLECTION_NAMED_ARRAY  0x04
+#define HID_COLLECTION_USAGE_SWITCH 0x05
+#define HID_COLLECTION_USAGE_MODIFIER 0x06
+
+/* ── Global item tags (bTag in Global type) ──────────────────────── */
+#define HID_ITEM_USAGE_PAGE         0x04  /* bTag=0,  type=1 */
+#define HID_ITEM_LOGICAL_MIN        0x14  /* bTag=1,  type=1 */
+#define HID_ITEM_LOGICAL_MAX        0x24  /* bTag=2,  type=1 */
+#define HID_ITEM_PHYSICAL_MIN       0x34  /* bTag=3,  type=1 */
+#define HID_ITEM_PHYSICAL_MAX       0x44  /* bTag=4,  type=1 */
+#define HID_ITEM_UNIT_EXPONENT      0x54  /* bTag=5,  type=1 */
+#define HID_ITEM_UNIT               0x64  /* bTag=6,  type=1 */
+#define HID_ITEM_REPORT_SIZE        0x74  /* bTag=7,  type=1 */
+#define HID_ITEM_REPORT_ID          0x84  /* bTag=8,  type=1 */
+#define HID_ITEM_REPORT_COUNT       0x94  /* bTag=9,  type=1 */
+#define HID_ITEM_PUSH               0xA4  /* bTag=10, type=1 */
+#define HID_ITEM_POP                0xB4  /* bTag=11, type=1 */
+
+/* ── Local item tags (bTag in Local type) ────────────────────────── */
+#define HID_ITEM_USAGE              0x08  /* bTag=0, type=2 */
+#define HID_ITEM_USAGE_MINIMUM      0x18  /* bTag=1, type=2 */
+#define HID_ITEM_USAGE_MAXIMUM      0x28  /* bTag=2, type=2 */
+#define HID_ITEM_DESIGNATOR_INDEX   0x38  /* bTag=3, type=2 */
+#define HID_ITEM_DESIGNATOR_MINIMUM 0x48  /* bTag=4, type=2 */
+#define HID_ITEM_DESIGNATOR_MAXIMUM 0x58  /* bTag=5, type=2 */
+#define HID_ITEM_STRING_INDEX       0x68  /* bTag=6, type=2 */
+#define HID_ITEM_STRING_MINIMUM     0x78  /* bTag=7, type=2 */
+#define HID_ITEM_STRING_MAXIMUM     0x88  /* bTag=8, type=2 */
+#define HID_ITEM_DELIMITER          0x98  /* bTag=9, type=2 */
+
+/* ── Long item prefix ────────────────────────────────────────────── */
+#define HID_LONG_ITEM_PREFIX        0xFE
+
+/* ── Usage pages ─────────────────────────────────────────────────── */
+#define HID_PAGE_GENERIC_DESKTOP    0x01
+#define HID_PAGE_SIMULATION         0x02
+#define HID_PAGE_VR_CONTROLS        0x03
+#define HID_PAGE_SPORT              0x04
+#define HID_PAGE_GAME               0x05
+#define HID_PAGE_KEYBOARD           0x07
+#define HID_PAGE_LEDS               0x08
+#define HID_PAGE_BUTTONS            0x09
+#define HID_PAGE_ORDINAL            0x0A
+#define HID_PAGE_TELEPHONY          0x0B
+#define HID_PAGE_CONSUMER           0x0C
+#define HID_PAGE_DIGITIZER          0x0D
+#define HID_PAGE_PID                0x0F
+#define HID_PAGE_UNICODE            0x10
+#define HID_PAGE_ALPHANUMERIC       0x14
+#define HID_PAGE_MEDICAL            0x40
+#define HID_PAGE_MONITOR            0x80
+#define HID_PAGE_POWER              0x84
+#define HID_PAGE_BARCODE            0x8C
+#define HID_PAGE_SCALE              0x8D
+#define HID_PAGE_MSR                0x8E
+#define HID_PAGE_CAMERA             0x90
+#define HID_PAGE_ARCADE             0x91
+#define HID_PAGE_VENDOR_MS_BEGIN    0xFF00
+#define HID_PAGE_VENDOR_MS_END      0xFFFF
+
+/* ── Generic Desktop usages ──────────────────────────────────────── */
+#define HID_USAGE_KEYBOARD          0x06
+#define HID_USAGE_MOUSE             0x02
+#define HID_USAGE_JOYSTICK          0x04
+#define HID_USAGE_GAMEPAD           0x05
+#define HID_USAGE_MULTI_AXIS        0x08
+#define HID_USAGE_TABLET_PC         0x0F
+#define HID_USAGE_CONSUMER_CONTROL  0x01  /* from Consumer page */
 
 /* Boot protocol keyboard report (8 bytes) */
 struct hid_keyboard_report {
@@ -123,6 +208,104 @@ struct hid_mouse_report {
 #define HID_KEYCODE_DOWN      0x51
 #define HID_KEYCODE_LEFT      0x50
 #define HID_KEYCODE_RIGHT     0x4F
+
+/* ── HID report descriptor parser structures ──────────────────────── */
+
+#define HID_REPORT_MAX_ITEMS         64
+#define HID_REPORT_MAX_COLLECTIONS   16
+#define HID_GLOBAL_STACK_DEPTH       4
+
+/*
+ * HID global item state — tracks the current global items that apply
+ * to subsequent Main items in the report descriptor.
+ */
+struct hid_global_state {
+    uint32_t usage_page;
+    int32_t  logical_minimum;
+    int32_t  logical_maximum;
+    int32_t  physical_minimum;
+    int32_t  physical_maximum;
+    uint32_t unit;
+    uint32_t unit_exponent;
+    uint32_t report_size;
+    uint32_t report_id;
+    uint32_t report_count;
+};
+
+/*
+ * HID local item state — tracks the current local items that apply
+ * to the immediately following Main item.  Resets to defaults
+ * after each Main item.
+ */
+struct hid_local_state {
+    uint32_t usage;
+    uint32_t usage_minimum;
+    uint32_t usage_maximum;
+    uint32_t designator_index;
+    uint32_t designator_minimum;
+    uint32_t designator_maximum;
+    uint32_t string_index;
+    uint32_t string_minimum;
+    uint32_t string_maximum;
+    uint32_t delimiter;
+};
+
+/*
+ * HID collection — tracks a collection start in the descriptor.
+ * Collections form a tree structure via nesting in the descriptor stream.
+ */
+struct hid_collection {
+    uint8_t  type;          /* HID_COLLECTION_* */
+    uint32_t usage_page;    /* usage page at time of collection start */
+    uint32_t usage;         /* usage at time of collection start */
+};
+
+/*
+ * HID parsed report item — represents one Main item (Input/Output/
+ * Feature/Collection) with its associated global and local state.
+ */
+struct hid_report_item {
+    uint8_t  tag;                    /* HID_ITEM_INPUT / OUTPUT / FEATURE / COLLECTION */
+    uint32_t flags;                  /* for Input/Output/Feature: IOF_* flags */
+    uint32_t data;                   /* for Collection: the collection type value */
+    struct hid_global_state global;  /* global state snapshot at this item */
+    struct hid_local_state  local;   /* local state at this item */
+    int      collection_depth;       /* collection nesting depth at this item */
+};
+
+/*
+ * HID parsed report descriptor — the fully parsed representation
+ * of a HID Report Descriptor.
+ */
+struct hid_report_desc {
+    struct hid_report_item items[HID_REPORT_MAX_ITEMS];
+    int num_items;
+
+    struct hid_collection collections[HID_REPORT_MAX_COLLECTIONS];
+    int num_collections;
+
+    /* collection stack for tracking nesting during parsing */
+    int collection_stack[HID_REPORT_MAX_COLLECTIONS];
+    int collection_stack_depth;
+
+    struct hid_global_state global_stack[HID_GLOBAL_STACK_DEPTH];
+    int global_stack_depth;
+};
+
+/* ── Parser API ──────────────────────────────────────────────────── */
+
+/*
+ * Parse a raw HID Report Descriptor into a structured representation.
+ *
+ * @dev:      USB device pointer (may be NULL)
+ * @report:   pointer to the raw report descriptor data
+ * @len:      length of the report descriptor in bytes
+ * @out:      [out] parsed report descriptor structure
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int usb_hid_parse_report(void *dev, const void *report, size_t len,
+                         struct hid_report_desc *out);
 
 /* USB HID driver API */
 int usb_hid_init(void);

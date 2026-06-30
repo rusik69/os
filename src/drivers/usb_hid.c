@@ -582,85 +582,365 @@ int usb_hid_read(struct usb_device *dev, void *buf, size_t count)
     return 0;
 }
 
-/* ── usb_hid_parse_report: Parse HID report descriptor ────────── */
-int usb_hid_parse_report(void *dev, const void *report, size_t len)
+/* ── Helper: read a value of a given byte size from the stream ──── */
+static uint32_t hid_read_value(const uint8_t *data, int bsize)
+{
+    switch (bsize) {
+    case 0:  return 0;
+    case 1:  return data[0];
+    case 2:  return (uint32_t)data[0] | ((uint32_t)data[1] << 8);
+    case 4:  return (uint32_t)data[0] | ((uint32_t)data[1] << 8)
+                       | ((uint32_t)data[2] << 16) | ((uint32_t)data[3] << 24);
+    default: return 0;
+    }
+}
+
+/* ── Helper: read a signed value of a given byte size ───────────── */
+static int32_t hid_read_svalue(const uint8_t *data, int bsize)
+{
+    uint32_t v = hid_read_value(data, bsize);
+    /* Sign-extend based on bsize */
+    switch (bsize) {
+    case 1:  return (int32_t)(int8_t)(v & 0xFF);
+    case 2:  return (int32_t)(int16_t)(v & 0xFFFF);
+    case 4:  return (int32_t)v;
+    default: return 0;
+    }
+}
+
+/* ── Reset local state to defaults ──────────────────────────────── */
+static void hid_reset_local(struct hid_local_state *ls)
+{
+    ls->usage              = 0;
+    ls->usage_minimum      = 0;
+    ls->usage_maximum      = 0;
+    ls->designator_index   = 0;
+    ls->designator_minimum = 0;
+    ls->designator_maximum = 0;
+    ls->string_index       = 0;
+    ls->string_minimum     = 0;
+    ls->string_maximum     = 0;
+    ls->delimiter          = 0;
+}
+
+/* ── Decode the collection type name ────────────────────────────── */
+static const char *hid_collection_name(uint8_t type)
+{
+    switch (type) {
+    case HID_COLLECTION_PHYSICAL:     return "Physical";
+    case HID_COLLECTION_APPLICATION:  return "Application";
+    case HID_COLLECTION_LOGICAL:      return "Logical";
+    case HID_COLLECTION_REPORT:       return "Report";
+    case HID_COLLECTION_NAMED_ARRAY:  return "Named Array";
+    case HID_COLLECTION_USAGE_SWITCH: return "Usage Switch";
+    case HID_COLLECTION_USAGE_MODIFIER: return "Usage Modifier";
+    default:                          return "Unknown";
+    }
+}
+
+/* ── Parse a raw HID report descriptor ──────────────────────────── */
+int usb_hid_parse_report(void *dev, const void *report, size_t len,
+                         struct hid_report_desc *out)
 {
     (void)dev;
-    if (!report || len == 0) return -EINVAL;
+    if (!report || len == 0 || !out) return -EINVAL;
 
-    kprintf("[usb_hid] Parsing HID report descriptor (%zu bytes)...\n", len);
-
-    /* Simple HID report descriptor parser */
     const uint8_t *data = (const uint8_t *)report;
     size_t pos = 0;
 
-    /* HID report item types */
-#define HID_ITEM_TAG_MAIN_INPUT   0x80
-#define HID_ITEM_TAG_MAIN_OUTPUT  0x90
-#define HID_ITEM_TAG_MAIN_FEATURE 0xB0
-#define HID_ITEM_TAG_GLOBAL_USAGE_PAGE 0x04
-#define HID_ITEM_TAG_GLOBAL_LOGICAL_MIN 0x14
-#define HID_ITEM_TAG_GLOBAL_LOGICAL_MAX 0x24
-#define HID_ITEM_TAG_GLOBAL_REPORT_SIZE 0x74
-#define HID_ITEM_TAG_GLOBAL_REPORT_COUNT 0x94
-#define HID_ITEM_TAG_LOCAL_USAGE  0x08
+    /* Initialise output structure */
+    memset(out, 0, sizeof(*out));
 
-    uint32_t usage_page = 0;
-    uint32_t usage = 0;
-    uint32_t report_count = 0;
-    int has_keyboard = 0;
-    int has_mouse = 0;
+    /* Initialise global state */
+    struct hid_global_state gs;
+    memset(&gs, 0, sizeof(gs));
 
-    while (pos < len) {
-        uint8_t item = data[pos++];
-        if (item == 0) continue; /* padding */
-        uint8_t tag = item & 0xFC;
-        uint8_t type = item & 0x03;
-        uint8_t size = item & 0xFC ? (item & 0x03) : 0;
-        if (size == 3) size = 4; /* 3 means 4 bytes */
+    /* Initialise local state */
+    struct hid_local_state ls;
+    hid_reset_local(&ls);
 
-        if (pos + size > len) break;
+    kprintf("[usb_hid] Parsing HID report descriptor (%zu bytes)...\n", len);
 
-        if (type == 1) { /* Global */
-            switch (tag) {
-            case HID_ITEM_TAG_GLOBAL_USAGE_PAGE:
-                if (size == 1) usage_page = data[pos];
-                else if (size == 2) usage_page = data[pos] | ((uint32_t)data[pos + 1] << 8);
+    while (pos < len && out->num_items < HID_REPORT_MAX_ITEMS) {
+        uint8_t prefix = data[pos];
+
+        /* Skip padding bytes */
+        if (prefix == 0) {
+            pos++;
+            continue;
+        }
+
+        /* ── Long item ─────────────────────────────────────────── */
+        if (prefix == HID_LONG_ITEM_PREFIX) {
+            /* Long item: FE <bSize> <bTag> <data...> */
+            if (pos + 2 > len) break;
+            uint8_t long_size = data[pos + 1];
+            uint8_t long_tag  = data[pos + 2];
+            size_t long_total = (size_t)3 + long_size;
+            if (pos + long_total > len) break;
+
+            kprintf("[usb_hid]   Long item: tag=0x%02x, size=%u\n", long_tag, long_size);
+            pos += long_total;
+            continue;
+        }
+
+        /* ── Short item ─────────────────────────────────────────── */
+        uint8_t bTag  = (prefix >> 4) & 0x0F;
+        uint8_t bType = (prefix >> 2) & 0x03;
+        uint8_t bSize = prefix & 0x03;
+
+        /* Decode bSize: 0→0, 1→1, 2→2, 3→4 */
+        int data_bytes = (bSize == 3) ? 4 : (int)bSize;
+
+        if (pos + 1 + data_bytes > len) break;
+        pos++;  /* consume prefix byte */
+
+        const uint8_t *item_data = data + pos;
+
+        /* Decode value based on signed/unsigned convention per item type */
+        uint32_t uval = hid_read_value(item_data, data_bytes);
+        int32_t  sval = hid_read_svalue(item_data, data_bytes);
+
+        switch (bType) {
+        /* ── Main items (bType=0) ──────────────────────────────── */
+        case HID_TYPE_MAIN: {
+            switch (bTag) {
+            case 8: { /* Input */
+                struct hid_report_item *ri = &out->items[out->num_items++];
+                ri->tag   = HID_ITEM_INPUT;
+                ri->flags = uval;
+                ri->data  = uval;
+                ri->global = gs;
+                ri->local  = ls;
+                ri->collection_depth = out->collection_stack_depth;
+                hid_reset_local(&ls);
                 break;
-            case HID_ITEM_TAG_GLOBAL_REPORT_SIZE:
-                if (size == 1) /* report_size = */ (void)data[pos];
-                else if (size == 2) /* report_size = */ (void)(data[pos] | ((uint32_t)data[pos + 1] << 8));
+            }
+            case 9: { /* Output */
+                struct hid_report_item *ri = &out->items[out->num_items++];
+                ri->tag   = HID_ITEM_OUTPUT;
+                ri->flags = uval;
+                ri->data  = uval;
+                ri->global = gs;
+                ri->local  = ls;
+                ri->collection_depth = out->collection_stack_depth;
+                hid_reset_local(&ls);
                 break;
-            case HID_ITEM_TAG_GLOBAL_REPORT_COUNT:
-                if (size == 1) report_count = data[pos];
-                else if (size == 2) report_count = data[pos] | ((uint32_t)data[pos + 1] << 8);
+            }
+            case 10: { /* Collection */
+                if (out->num_collections < HID_REPORT_MAX_COLLECTIONS) {
+                    struct hid_collection *c = &out->collections[out->num_collections++];
+                    c->type       = (uint8_t)(uval & 0xFF);
+                    c->usage_page = gs.usage_page;
+                    c->usage      = ls.usage;
+
+                    /* Track nesting */
+                    if (out->collection_stack_depth < HID_REPORT_MAX_COLLECTIONS) {
+                        out->collection_stack[out->collection_stack_depth++] =
+                            out->num_collections - 1;
+                    }
+
+                    kprintf("[usb_hid]   Collection: type=%s (0x%02x), "
+                            "usage_page=0x%x, usage=0x%x\n",
+                            hid_collection_name(c->type), c->type,
+                            c->usage_page, c->usage);
+                }
+
+                /* Also record as a parsed item */
+                if (out->num_items < HID_REPORT_MAX_ITEMS) {
+                    struct hid_report_item *ri = &out->items[out->num_items++];
+                    ri->tag   = HID_ITEM_COLLECTION;
+                    ri->flags = uval;
+                    ri->data  = uval;
+                    ri->global = gs;
+                    ri->local  = ls;
+                    ri->collection_depth = out->collection_stack_depth - 1;
+                }
+                hid_reset_local(&ls);
+                break;
+            }
+            case 11: { /* Feature */
+                struct hid_report_item *ri = &out->items[out->num_items++];
+                ri->tag   = HID_ITEM_FEATURE;
+                ri->flags = uval;
+                ri->data  = uval;
+                ri->global = gs;
+                ri->local  = ls;
+                ri->collection_depth = out->collection_stack_depth;
+                hid_reset_local(&ls);
+                break;
+            }
+            case 12: { /* End Collection */
+                /* Pop collection stack */
+                if (out->collection_stack_depth > 0) {
+                    out->collection_stack_depth--;
+                }
+
+                /* Also record as a parsed item */
+                if (out->num_items < HID_REPORT_MAX_ITEMS) {
+                    struct hid_report_item *ri = &out->items[out->num_items++];
+                    ri->tag   = HID_ITEM_END_COLLECTION;
+                    ri->flags = 0;
+                    ri->data  = 0;
+                    ri->global = gs;
+                    ri->local  = ls;
+                    ri->collection_depth = out->collection_stack_depth;
+                }
+                break;
+            }
+            default:
+                kprintf("[usb_hid]   Unknown Main item: bTag=%u, data=0x%x\n",
+                        bTag, uval);
+                break;
+            }
+            break;
+        }
+
+        /* ── Global items (bType=1) ────────────────────────────── */
+        case HID_TYPE_GLOBAL: {
+            switch (bTag) {
+            case 0:  /* Usage Page */
+                gs.usage_page = uval;
+                break;
+            case 1:  /* Logical Minimum */
+                gs.logical_minimum = sval;
+                break;
+            case 2:  /* Logical Maximum */
+                gs.logical_maximum = sval;
+                break;
+            case 3:  /* Physical Minimum */
+                gs.physical_minimum = sval;
+                break;
+            case 4:  /* Physical Maximum */
+                gs.physical_maximum = sval;
+                break;
+            case 5:  /* Unit Exponent */
+                gs.unit_exponent = uval;
+                break;
+            case 6:  /* Unit */
+                gs.unit = uval;
+                break;
+            case 7:  /* Report Size */
+                gs.report_size = uval;
+                break;
+            case 8:  /* Report ID */
+                gs.report_id = uval;
+                kprintf("[usb_hid]   Report ID: %u\n", uval);
+                break;
+            case 9:  /* Report Count */
+                gs.report_count = uval;
+                break;
+            case 10: /* Push — save global state onto stack */
+                if (out->global_stack_depth < HID_GLOBAL_STACK_DEPTH) {
+                    out->global_stack[out->global_stack_depth++] = gs;
+                }
+                break;
+            case 11: /* Pop — restore global state from stack */
+                if (out->global_stack_depth > 0) {
+                    gs = out->global_stack[--out->global_stack_depth];
+                }
                 break;
             default:
                 break;
             }
-        } else if (type == 2) { /* Local */
-            if (tag == HID_ITEM_TAG_LOCAL_USAGE) {
-                if (size == 1) usage = data[pos];
-                else if (size == 2) usage = data[pos] | ((uint32_t)data[pos + 1] << 8);
-            }
-        } else if (type == 0) { /* Main */
-            /* Check for Input/Output/Feature items */
-            uint8_t main_tag = tag;
-            (void)main_tag;
-            if (usage_page == 0x01) { /* Generic Desktop Controls */
-                if (usage == 0x06 && report_count > 0) {
-                    has_keyboard = 1;
-                }
-                if (usage == 0x02) {
-                    has_mouse = 1;
-                }
-            }
+            break;
         }
 
-        pos += size;
+        /* ── Local items (bType=2) ─────────────────────────────── */
+        case HID_TYPE_LOCAL: {
+            switch (bTag) {
+            case 0:  /* Usage */
+                ls.usage = uval;
+                break;
+            case 1:  /* Usage Minimum */
+                ls.usage_minimum = uval;
+                break;
+            case 2:  /* Usage Maximum */
+                ls.usage_maximum = uval;
+                break;
+            case 3:  /* Designator Index */
+                ls.designator_index = uval;
+                break;
+            case 4:  /* Designator Minimum */
+                ls.designator_minimum = uval;
+                break;
+            case 5:  /* Designator Maximum */
+                ls.designator_maximum = uval;
+                break;
+            case 6:  /* String Index */
+                ls.string_index = uval;
+                break;
+            case 7:  /* String Minimum */
+                ls.string_minimum = uval;
+                break;
+            case 8:  /* String Maximum */
+                ls.string_maximum = uval;
+                break;
+            case 9:  /* Delimiter */
+                ls.delimiter = uval;
+                break;
+            default:
+                break;
+            }
+            break;
+        }
+
+        /* ── Reserved (bType=3) ────────────────────────────────── */
+        default:
+            break;
+        }
+
+        pos += (size_t)data_bytes;
     }
 
-    /* Update HID state based on parsed report */
+    kprintf("[usb_hid] Parsed %d report items, %d collections\n",
+            out->num_items, out->num_collections);
+
+    return 0;
+}
+
+/* ── Legacy parser (single-call, no structured output) ──────────── */
+int usb_hid_parse_report_legacy(void *dev, const void *report, size_t len)
+{
+    struct hid_report_desc desc;
+    int rc = usb_hid_parse_report(dev, report, len, &desc);
+    if (rc < 0) return rc;
+
+    /* Scan parsed items for keyboard/mouse detection */
+    int has_keyboard = 0;
+    int has_mouse = 0;
+
+    for (int i = 0; i < desc.num_items; i++) {
+        struct hid_report_item *ri = &desc.items[i];
+        if (ri->tag != HID_ITEM_INPUT && ri->tag != HID_ITEM_OUTPUT &&
+            ri->tag != HID_ITEM_FEATURE)
+            continue;
+
+        uint32_t up = ri->global.usage_page;
+        uint32_t us = ri->local.usage;
+
+        /* Generic Desktop: Keyboard (usage=0x06) */
+        if (up == HID_PAGE_GENERIC_DESKTOP && us == HID_USAGE_KEYBOARD &&
+            ri->global.report_count > 0) {
+            has_keyboard = 1;
+        }
+
+        /* Generic Desktop: Mouse (usage=0x02) */
+        if (up == HID_PAGE_GENERIC_DESKTOP && us == HID_USAGE_MOUSE) {
+            has_mouse = 1;
+        }
+
+        /* Also check collection-level usages */
+        for (int j = 0; j < desc.num_collections; j++) {
+            if (desc.collections[j].usage_page == HID_PAGE_GENERIC_DESKTOP) {
+                if (desc.collections[j].usage == HID_USAGE_KEYBOARD)
+                    has_keyboard = 1;
+                if (desc.collections[j].usage == HID_USAGE_MOUSE)
+                    has_mouse = 1;
+            }
+        }
+    }
+
     if (has_keyboard) {
         g_keyboard_present = 1;
         kprintf("[usb_hid] Report parsed: keyboard detected\n");
@@ -669,10 +949,8 @@ int usb_hid_parse_report(void *dev, const void *report, size_t len)
         g_mouse_present = 1;
         kprintf("[usb_hid] Report parsed: mouse detected\n");
     }
-
     if (!has_keyboard && !has_mouse) {
-        kprintf("[usb_hid] Report parsed: unknown HID device (usage_page=0x%x, usage=0x%x)\n",
-                usage_page, usage);
+        kprintf("[usb_hid] Report parsed: unknown HID device\n");
     }
 
     return 0;
