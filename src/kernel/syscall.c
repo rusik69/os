@@ -2034,10 +2034,16 @@ static uint64_t sys_fork(void) {
 
 static uint64_t sys_clone(uint64_t flags, uint64_t child_stack, uint64_t ptid,
                            uint64_t tls, uint64_t ctid) {
-    (void)ptid; (void)tls; (void)ctid;
-
     struct process *parent = process_get_current();
     if (!parent) return (uint64_t)(int64_t)-EAGAIN;
+
+    /* ── Validate flag combinations (Linux-compatible) ───────────── */
+    /* CLONE_THREAD requires CLONE_VM (cannot share TGID without VM) */
+    if ((flags & CLONE_THREAD) && !(flags & CLONE_VM))
+        return (uint64_t)(int64_t)-EINVAL;
+    /* CLONE_SIGHAND requires CLONE_VM */
+    if ((flags & CLONE_SIGHAND) && !(flags & CLONE_VM))
+        return (uint64_t)(int64_t)-EINVAL;
 
     uint64_t user_rip = syscall_user_rip;
     uint64_t user_rflags = syscall_user_rflags;
@@ -2045,8 +2051,70 @@ static uint64_t sys_clone(uint64_t flags, uint64_t child_stack, uint64_t ptid,
     /* For kernel-mode callers: RIP/RFLAGS from syscall_user_* may be stale.
      * Use a default: treat kernel callers differently. */
     if (parent->is_user) {
+        /* ── CLONE_PARENT_SETTID: write child PID to *ptid ──── */
+        /* On Linux, PARENT_SETTID writes the child's PID to ptid
+         * before the child runs.  We do this after clone returns
+         * when we know the child PID. */
+
         int ret = process_clone(parent, flags, (void *)child_stack,
                                 user_rip, user_rflags);
+        if (ret < 0)
+            return (uint64_t)(int64_t)ret;
+
+        /* Child was created successfully — apply CLONE_* side effects */
+        struct process *child = process_get_by_pid((uint32_t)ret);
+
+        /* ── CLONE_PARENT_SETTID: write child PID to *ptid ────── */
+        if ((flags & CLONE_PARENT_SETTID) && ptid && child) {
+            uint32_t child_pid = (uint32_t)ret;
+            int uerr = copy_to_user(ptid, &child_pid, sizeof(child_pid));
+            if (uerr < 0) {
+                /* CLONE_PARENT_SETTID write failed — invalid user pointer */
+                return (uint64_t)(int64_t)-EFAULT;
+            }
+        }
+
+        /* ── CLONE_CHILD_SETTID: write child PID to *ctid ──────── */
+        if ((flags & CLONE_CHILD_SETTID) && ctid && child) {
+            uint32_t child_pid = (uint32_t)ret;
+            int uerr = copy_to_user(ctid, &child_pid, sizeof(child_pid));
+            if (uerr < 0) {
+                return (uint64_t)(int64_t)-EFAULT;
+            }
+        }
+
+        /* ── CLONE_CHILD_CLEARTID: store ctid ptr for teardown ─── */
+        if ((flags & CLONE_CHILD_CLEARTID) && ctid && child) {
+            child->ctid_ptr = (void *)ctid;
+        }
+
+        /* ── CLONE_SETTLS: set FS base for child thread ────────── */
+        if ((flags & CLONE_SETTLS) && child) {
+            /* Save parent's FS base first */
+            uint32_t lo, hi;
+            __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(0xC0000100ULL));
+            uint64_t saved_fs_base = ((uint64_t)hi << 32) | lo;
+
+            /* Set child's FS base */
+            __asm__ volatile("wrmsr" : : "c"(0xC0000100ULL),
+                             "a"((uint32_t)tls),
+                             "d"((uint32_t)(tls >> 32)));
+
+            /* Restore parent's FS base */
+            __asm__ volatile("wrmsr" : : "c"(0xC0000100ULL),
+                             "a"((uint32_t)saved_fs_base),
+                             "d"((uint32_t)(saved_fs_base >> 32)));
+        }
+
+        /* ── CLONE_VFORK: block parent until child exec/exit ──── */
+        if ((flags & CLONE_VFORK) && child) {
+            parent->wait_for_pid = child->pid;
+            parent->state = PROCESS_BLOCKED;
+            scheduler_remove(parent);
+            scheduler_yield();
+            parent->wait_for_pid = 0;
+        }
+
         return (uint64_t)(int64_t)ret;
     }
 
