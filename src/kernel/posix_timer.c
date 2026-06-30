@@ -75,6 +75,7 @@ struct posix_timer {
     int      in_use;
     int      clockid;
     int      signo;           /* signal to deliver on expiry */
+    int      notify;          /* SIGEV_SIGNAL, SIGEV_NONE */
     uint64_t it_value;        /* ticks to first expiry */
     uint64_t it_interval;     /* ticks between repeats */
     uint64_t start_tick;      /* creation/arm tick */
@@ -469,17 +470,66 @@ uint64_t sys_clock_nanosleep(uint64_t clockid, uint64_t flags,
  *
  * Allocates a per-process POSIX timer slot.  The timer is initially
  * disarmed (it_value == 0).  Returns the timer ID via timerid.
+ *
+ * Supported clock IDs: CLOCK_REALTIME, CLOCK_REALTIME_COARSE,
+ * CLOCK_REALTIME_ALARM, CLOCK_MONOTONIC, CLOCK_MONOTONIC_RAW,
+ * CLOCK_MONOTONIC_COARSE, CLOCK_BOOTTIME, CLOCK_BOOTTIME_ALARM,
+ * CLOCK_PROCESS_CPUTIME_ID, CLOCK_THREAD_CPUTIME_ID.
+ *
+ * Returns: 0 on success, -EFAULT on bad pointer, -EINVAL on invalid
+ * clockid or invalid sigevent, -EAGAIN if no timer slots available.
  */
 uint64_t sys_timer_create(uint64_t clockid, uint64_t sevp_addr,
                           uint64_t timerid_addr)
 {
     struct sigevent sev;
     int sig = SIGALRM; /* default signal */
+    int notify = SIGEV_SIGNAL;
+
+    /* Validate clockid */
+    switch (clockid) {
+    case CLOCK_REALTIME:
+    case CLOCK_REALTIME_COARSE:
+    case CLOCK_REALTIME_ALARM:
+    case CLOCK_MONOTONIC:
+    case CLOCK_MONOTONIC_RAW:
+    case CLOCK_MONOTONIC_COARSE:
+    case CLOCK_BOOTTIME:
+    case CLOCK_BOOTTIME_ALARM:
+    case CLOCK_PROCESS_CPUTIME_ID:
+    case CLOCK_THREAD_CPUTIME_ID:
+        break;
+    default:
+        return (uint64_t)(int64_t)-EINVAL;
+    }
 
     if (sevp_addr) {
         if (copy_from_user(&sev, sevp_addr, sizeof(struct sigevent)) < 0)
             return (uint64_t)(int64_t)-EFAULT;
-        sig = sev.sigev_signo;
+
+        notify = sev.sigev_notify;
+
+        /* Validate notification type */
+        switch (notify) {
+        case SIGEV_SIGNAL:
+            /* Signal number must be in valid range (1..31, 34..64) */
+            if (sev.sigev_signo < 1 ||
+                (sev.sigev_signo > 31 && sev.sigev_signo < 34) ||
+                sev.sigev_signo > 64)
+                return (uint64_t)(int64_t)-EINVAL;
+            sig = sev.sigev_signo;
+            break;
+        case SIGEV_NONE:
+            sig = 0;
+            break;
+        case SIGEV_THREAD:
+            /*
+             * SIGEV_THREAD requires thread creation — not yet
+             * implemented in this kernel.  Fall through to -EINVAL.
+             */
+        default:
+            return (uint64_t)(int64_t)-EINVAL;
+        }
     }
 
     struct process *cur = process_get_current();
@@ -489,6 +539,7 @@ uint64_t sys_timer_create(uint64_t clockid, uint64_t sevp_addr,
             posix_timers[i].in_use = 1;
             posix_timers[i].clockid = (int)clockid;
             posix_timers[i].signo = sig;
+            posix_timers[i].notify = notify;
             posix_timers[i].it_value = 0;
             posix_timers[i].it_interval = 0;
             posix_timers[i].start_tick = 0;
