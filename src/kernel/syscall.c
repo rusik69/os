@@ -7930,26 +7930,34 @@ static uint64_t sys_munlockall(void) {
 
 static uint64_t sys_mincore(uint64_t addr, uint64_t len, uint64_t vec_addr) {
     struct process *p = process_get_current();
-    if (!p || !p->pml4) return (uint64_t)(int64_t)-EFAULT;
+    if (!p || !p->pml4) return (uint64_t)(int64_t)-ENOMEM;
     if (addr & (PAGE_SIZE - 1)) return (uint64_t)(int64_t)-EINVAL;
 
+    /* Overflow and bounds check */
+    if (addr + len < addr) return (uint64_t)(int64_t)-EINVAL;
+    if (addr + len > USER_VADDR_MAX) return (uint64_t)(int64_t)-EINVAL;
+
     uint64_t pages = (len + PAGE_SIZE - 1) / PAGE_SIZE;
-    uint8_t *vec = NULL;
-    if (vec_addr) {
-        vec = (uint8_t *)kmalloc(pages);
-        if (!vec) return (uint64_t)(int64_t)-ENOMEM;
-    }
+    if (pages == 0) return 0;
+
+    /* vec_addr is validated by dispatch (syscall_user_write_ok), but
+     * also must be non-null for the operation to make sense. */
+    if (!vec_addr)
+        return (uint64_t)(int64_t)-EFAULT;
+
+    uint8_t *vec = (uint8_t *)kmalloc(pages);
+    if (!vec) return (uint64_t)(int64_t)-ENOMEM;
+
     for (uint64_t i = 0; i < pages; i++) {
         uint64_t vaddr = addr + i * PAGE_SIZE;
-        if (vec) vec[i] = vmm_page_is_mapped_user(p->pml4, vaddr) ? 1 : 0;
+        vec[i] = vmm_page_is_mapped_user(p->pml4, vaddr) ? 1 : 0;
     }
-    if (vec) {
-        if (copy_to_user(vec_addr, vec, pages) < 0) {
-            kfree(vec);
-            return (uint64_t)(int64_t)-EFAULT;
-        }
-        kfree(vec);
-    }
+
+    int ret = copy_to_user(vec_addr, vec, pages);
+    kfree(vec);
+    if (ret < 0)
+        return (uint64_t)(int64_t)-EFAULT;
+
     return 0;
 }
 
