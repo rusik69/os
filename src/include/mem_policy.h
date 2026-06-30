@@ -35,4 +35,8 @@ int mempolicy_get(int *mode, uint64_t *nodemask, int *preferred_node);
 int mempolicy_mbind(uint64_t addr, uint64_t len, int mode, uint64_t nodemask);
 int mempolicy_migrate_pages(int pid, uint64_t new_nodemask);
 
+/* Flags for sys_move_pages */
+#define MPOL_MF_MOVE        (1U << 0)  /* move pages */
+#define MPOL_MF_MOVE_ALL    (1U << 1)  /* move all pages */
+
 #endif /* MEM_POLICY_H */

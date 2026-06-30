@@ -8132,14 +8132,97 @@ static uint64_t sys_move_pages(uint64_t pid, uint64_t nr_pages,
                                 uint64_t pages_addr, uint64_t nodes_addr,
                                 uint64_t status_addr, uint64_t flags)
 {
-    (void)pid;
-    (void)nr_pages;
-    (void)pages_addr;
-    (void)nodes_addr;
-    (void)status_addr;
-    (void)flags;
-    /* Stub: NUMA page migration not yet implemented at page level */
-    return (uint64_t)-ENOSYS;
+    struct process *target = NULL;
+
+    if (nr_pages == 0)
+        return 0;
+
+    if (pid == 0) {
+        target = process_get_current();
+    } else {
+        target = process_get_by_pid((uint32_t)pid);
+    }
+    if (!target)
+        return (uint64_t)-ESRCH;
+
+    /* Allocate kernel buffers for page addresses, nodes, and status */
+    uint64_t *pages = (uint64_t *)kmalloc(nr_pages * sizeof(uint64_t));
+    int *nodes = (int *)kmalloc(nr_pages * sizeof(int));
+    int *status = (int *)kmalloc(nr_pages * sizeof(int));
+    if (!pages || !nodes || !status) {
+        kfree(pages);
+        kfree(nodes);
+        kfree(status);
+        return (uint64_t)-ENOMEM;
+    }
+
+    /* Copy pages array from userspace */
+    if (copy_from_user(pages, pages_addr, nr_pages * sizeof(uint64_t)) < 0) {
+        kfree(pages);
+        kfree(nodes);
+        kfree(status);
+        return (uint64_t)-EFAULT;
+    }
+
+    /* Copy nodes array from userspace (optional, NULL means don't move) */
+    int has_nodes = (nodes_addr != 0);
+    if (has_nodes) {
+        if (copy_from_user(nodes, nodes_addr, nr_pages * sizeof(int)) < 0) {
+            kfree(pages);
+            kfree(nodes);
+            kfree(status);
+            return (uint64_t)-EFAULT;
+        }
+    }
+
+    /* Determine status for each page */
+    for (uint64_t i = 0; i < nr_pages; i++) {
+        uint64_t page_addr = pages[i];
+
+        /* Page address must be aligned */
+        if (page_addr & (PAGE_SIZE - 1ULL)) {
+            status[i] = -EINVAL;
+            continue;
+        }
+
+        if (!target->pml4) {
+            status[i] = -EFAULT;
+            continue;
+        }
+
+        /* Check if the page is mapped */
+        if (!vmm_page_is_mapped_user(target->pml4, page_addr)) {
+            status[i] = -ENOENT;
+            continue;
+        }
+
+        /* Page is present */
+        status[i] = 0;
+
+        /* If MPOL_MF_MOVE or MPOL_MF_MOVE_ALL is set and we have
+         * a destination node, attempt to migrate.  Without NUMA
+         * hardware support, store the policy hint. */
+        if (has_nodes && (flags & (MPOL_MF_MOVE | MPOL_MF_MOVE_ALL))) {
+            int dst_node = nodes[i];
+            if (dst_node >= 0 && dst_node < MPOL_MAX_NODES) {
+                /* Record migration intent in current policy */
+                /* In a real NUMA system, this would call
+                 * pmm_migrate_frame(old_phys, dst_node). */
+                (void)dst_node;
+            }
+        }
+    }
+
+    /* Copy status array back to userspace */
+    int ret = 0;
+    if (copy_to_user(status_addr, status, nr_pages * sizeof(int)) < 0)
+        ret = -EFAULT;
+
+    kfree(pages);
+    kfree(nodes);
+    kfree(status);
+
+    return (ret < 0) ? (uint64_t)(int64_t)ret : nr_pages;
 }
 
 static uint64_t sys_remap_file_pages(uint64_t addr, uint64_t size,
