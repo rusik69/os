@@ -306,9 +306,10 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/virtio_net.c \
          src/drivers/virtio_blk.c \
          src/drivers/ac97.c \
-         src/drivers/sound_oss.c \
          src/drivers/sound_core.c \
          src/drivers/sound_midi.c \
+         src/drivers/sound_oss.c \
+         src/drivers/sound_pcm.c \
          src/drivers/ramdisk.c \
          src/drivers/watchdog.c \
          src/drivers/netconsole.c \
