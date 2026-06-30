@@ -564,6 +564,9 @@ uint64_t sys_timer_create(uint64_t clockid, uint64_t sevp_addr,
  * Arms or disarms the timer.  If new->it_value is zero the timer is
  * disarmed.  If flags & TIMER_ABSTIME the value is interpreted as
  * absolute time; otherwise it is a relative interval.
+ *
+ * Returns: 0 on success, -EFAULT on bad pointer, -EINVAL on invalid
+ * timerid or invalid timespec fields.
  */
 uint64_t sys_timer_settime(uint64_t timerid, uint64_t flags,
                            uint64_t new_addr, uint64_t old_addr)
@@ -577,6 +580,11 @@ uint64_t sys_timer_settime(uint64_t timerid, uint64_t flags,
     if (new_addr) {
         if (copy_from_user(&new_val, new_addr, sizeof(struct itimerspec)) < 0)
             return (uint64_t)(int64_t)-EFAULT;
+
+        /* Validate timespec fields */
+        if (new_val.it_value.tv_nsec >= 1000000000ULL ||
+            new_val.it_interval.tv_nsec >= 1000000000ULL)
+            return (uint64_t)(int64_t)-EINVAL;
     }
 
     /* Return old timer value before overwriting */
@@ -584,25 +592,69 @@ uint64_t sys_timer_settime(uint64_t timerid, uint64_t flags,
         struct itimerspec old;
         old.it_interval.tv_sec  = posix_timers[idx].it_interval / TIMER_FREQ;
         old.it_interval.tv_nsec = (posix_timers[idx].it_interval % TIMER_FREQ)
-                                  * (1000000000ULL / TIMER_FREQ);
+                                  * NS_PER_TICK;
         old.it_value.tv_sec     = posix_timers[idx].it_value / TIMER_FREQ;
         old.it_value.tv_nsec    = (posix_timers[idx].it_value % TIMER_FREQ)
-                                  * (1000000000ULL / TIMER_FREQ);
+                                  * NS_PER_TICK;
         if (copy_to_user(old_addr, &old, sizeof(struct itimerspec)) < 0)
             return (uint64_t)(int64_t)-EFAULT;
     }
 
     if (new_addr) {
-        uint64_t val_ticks = new_val.it_value.tv_sec * TIMER_FREQ
-                           + new_val.it_value.tv_nsec
-                             / (1000000000ULL / TIMER_FREQ);
-        uint64_t interval_ticks = new_val.it_interval.tv_sec * TIMER_FREQ
-                                + new_val.it_interval.tv_nsec
-                                  / (1000000000ULL / TIMER_FREQ);
-        posix_timers[idx].it_value    = val_ticks;
-        posix_timers[idx].it_interval = interval_ticks;
-        posix_timers[idx].start_tick  = timer_get_ticks();
-        posix_timers[idx].overrun     = 0;
+        uint64_t now = timer_get_ticks();
+
+        if ((flags & TIMER_ABSTIME) && new_val.it_value.tv_sec > 0) {
+            /*
+             * Absolute deadline — convert to relative ticks.
+             * The timer's clockid determines the time domain.
+             */
+            switch (posix_timers[idx].clockid) {
+            case CLOCK_REALTIME:
+            case CLOCK_REALTIME_COARSE:
+            case CLOCK_REALTIME_ALARM: {
+                uint64_t epoch = rtc_get_epoch();
+                if (new_val.it_value.tv_sec > epoch) {
+                    uint64_t deadline =
+                        (new_val.it_value.tv_sec - epoch) * TIMER_FREQ
+                        + new_val.it_value.tv_nsec / NS_PER_TICK;
+                    posix_timers[idx].it_value =
+                        (deadline > now) ? (deadline - now) : 0;
+                } else {
+                    posix_timers[idx].it_value = 0;  /* already passed */
+                }
+                break;
+            }
+
+            case CLOCK_MONOTONIC:
+            case CLOCK_MONOTONIC_RAW:
+            case CLOCK_MONOTONIC_COARSE:
+            case CLOCK_BOOTTIME:
+            case CLOCK_BOOTTIME_ALARM:
+            case CLOCK_PROCESS_CPUTIME_ID:
+            case CLOCK_THREAD_CPUTIME_ID: {
+                uint64_t deadline =
+                    new_val.it_value.tv_sec * TIMER_FREQ
+                    + new_val.it_value.tv_nsec / NS_PER_TICK;
+                posix_timers[idx].it_value =
+                    (deadline > now) ? (deadline - now) : 0;
+                break;
+            }
+
+            default:
+                return (uint64_t)(int64_t)-EINVAL;
+            }
+        } else {
+            /* Relative interval */
+            posix_timers[idx].it_value =
+                new_val.it_value.tv_sec * TIMER_FREQ
+                + new_val.it_value.tv_nsec / NS_PER_TICK;
+        }
+
+        posix_timers[idx].it_interval =
+            new_val.it_interval.tv_sec * TIMER_FREQ
+            + new_val.it_interval.tv_nsec / NS_PER_TICK;
+        posix_timers[idx].start_tick = now;
+        posix_timers[idx].overrun    = 0;
     }
 
     return 0;
