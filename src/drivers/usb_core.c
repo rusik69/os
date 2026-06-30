@@ -461,3 +461,171 @@ void usb_update_device_from_desc(struct usb_device *dev,
 
     dev->flags |= USB_DEV_FLAG_HAS_DESC;
 }
+
+/* ── Configuration descriptor sub-descriptor iteration ─────────────────── */
+
+/*
+ * Walk through all sub-descriptors within a configuration descriptor blob.
+ * Skips the config descriptor header itself (bLength bytes from the start).
+ */
+int usb_for_each_config_subdesc(const uint8_t *config_data,
+                                 uint16_t total_length,
+                                 usb_desc_callback_t callback,
+                                 void *user_data)
+{
+    uint16_t offset;
+    int ret;
+
+    if (!config_data || !callback)
+        return -EINVAL;
+    if (total_length < 9)
+        return -EINVAL;
+    if (config_data[0] == 0 || config_data[1] != USB_DT_CONFIG)
+        return -EINVAL;
+
+    /* Skip the config descriptor header */
+    offset = config_data[0];
+    if (offset > total_length)
+        return -EINVAL;
+
+    while (offset + 2 <= total_length) {
+        uint8_t bLength = config_data[offset];
+        uint8_t bDescriptorType = config_data[offset + 1];
+
+        if (bLength == 0)
+            return -EINVAL;           /* malformed — would loop forever */
+        if ((uint16_t)offset + bLength > total_length)
+            return -EINVAL;           /* descriptor extends past the blob */
+
+        ret = callback(bDescriptorType, &config_data[offset],
+                        bLength, user_data);
+        if (ret != 0)
+            return ret;               /* caller wants to stop */
+
+        offset += bLength;
+    }
+
+    /* Check that we consumed exactly the blob (or at least didn't underflow) */
+    if (offset != total_length && offset + 1 < total_length)
+        return -EINVAL;               /* junk trailing bytes */
+
+    return 0;
+}
+
+/* ── Printing helpers ────────────────────────────────────────────────── */
+
+int usb_print_endpoint_descriptor(const struct usb_endpoint_descriptor *ep)
+{
+    static const char *const xfer_names[] = {
+        "Control", "Isochronous", "Bulk", "Interrupt"
+    };
+
+    if (!ep)
+        return -EINVAL;
+
+    kprintf("    Endpoint Descriptor:\n");
+    kprintf("      bLength             %u\n", (unsigned)ep->bLength);
+    kprintf("      bDescriptorType     %u\n", (unsigned)ep->bDescriptorType);
+    kprintf("      bEndpointAddress    0x%02x  EP %u %s\n",
+            (unsigned)ep->bEndpointAddress,
+            (unsigned)(ep->bEndpointAddress & USB_ENDPOINT_NUMBER_MASK),
+            (ep->bEndpointAddress & USB_ENDPOINT_DIR_IN) ? "IN" : "OUT");
+    kprintf("      bmAttributes        0x%02x  (%s)\n",
+            (unsigned)ep->bmAttributes,
+            xfer_names[ep->bmAttributes & USB_ENDPOINT_XFERTYPE_MASK]);
+    kprintf("      wMaxPacketSize      0x%04x\n",
+            (unsigned)ep->wMaxPacketSize);
+    kprintf("      bInterval           %u\n", (unsigned)ep->bInterval);
+    return 0;
+}
+
+int usb_print_interface_descriptor(const struct usb_interface_descriptor *iface)
+{
+    if (!iface)
+        return -EINVAL;
+
+    kprintf("    Interface Descriptor:\n");
+    kprintf("      bLength             %u\n", (unsigned)iface->bLength);
+    kprintf("      bDescriptorType     %u\n", (unsigned)iface->bDescriptorType);
+    kprintf("      bInterfaceNumber    %u\n", (unsigned)iface->bInterfaceNumber);
+    kprintf("      bAlternateSetting   %u\n", (unsigned)iface->bAlternateSetting);
+    kprintf("      bNumEndpoints       %u\n", (unsigned)iface->bNumEndpoints);
+    kprintf("      bInterfaceClass     %u\n", (unsigned)iface->bInterfaceClass);
+    kprintf("      bInterfaceSubClass  %u\n", (unsigned)iface->bInterfaceSubClass);
+    kprintf("      bInterfaceProtocol  %u\n", (unsigned)iface->bInterfaceProtocol);
+    kprintf("      iInterface          %u\n", (unsigned)iface->iInterface);
+    return 0;
+}
+
+/* ── Print sub-descriptor routing callback ──────────────────────────── */
+
+struct print_ctx {
+    const uint8_t *base;
+    int depth;
+};
+
+static int print_subdesc_cb(uint8_t bDescType, const uint8_t *data,
+                             uint8_t bLength, void *user_data)
+{
+    struct print_ctx *ctx = (struct print_ctx *)user_data;
+    (void)bLength;
+    (void)ctx;
+
+    switch (bDescType) {
+    case USB_DT_INTERFACE: {
+        struct usb_interface_descriptor iface;
+        if (usb_parse_interface_descriptor(data, &iface) == 0)
+            usb_print_interface_descriptor(&iface);
+        break;
+    }
+    case USB_DT_ENDPOINT: {
+        struct usb_endpoint_descriptor ep;
+        if (usb_parse_endpoint_descriptor(data, &ep) == 0)
+            usb_print_endpoint_descriptor(&ep);
+        break;
+    }
+    default:
+        kprintf("    Unknown descriptor: type=%u, bLength=%u\n",
+                (unsigned)bDescType, (unsigned)bLength);
+        break;
+    }
+    return 0;
+}
+
+int usb_print_config_descriptor_full(const struct usb_config_descriptor *config,
+                                      const uint8_t *full_config_data,
+                                      uint16_t total_length)
+{
+    int ret;
+    struct print_ctx pctx;
+
+    if (!config)
+        return -EINVAL;
+
+    kprintf("  Configuration Descriptor:\n");
+    kprintf("    bLength             %u\n", (unsigned)config->bLength);
+    kprintf("    bDescriptorType     %u\n", (unsigned)config->bDescriptorType);
+    kprintf("    wTotalLength        %u\n", (unsigned)config->wTotalLength);
+    kprintf("    bNumInterfaces      %u\n", (unsigned)config->bNumInterfaces);
+    kprintf("    bConfigurationValue %u\n",
+            (unsigned)config->bConfigurationValue);
+    kprintf("    iConfiguration      %u\n", (unsigned)config->iConfiguration);
+    kprintf("    bmAttributes        0x%02x\n",
+            (unsigned)config->bmAttributes);
+    kprintf("    bMaxPower           %u (%umA)\n",
+            (unsigned)config->bMaxPower,
+            (unsigned)config->bMaxPower * 2);
+
+    if (!full_config_data || total_length == 0)
+        return 0;
+
+    pctx.base = full_config_data;
+    pctx.depth = 0;
+
+    ret = usb_for_each_config_subdesc(full_config_data, total_length,
+                                       print_subdesc_cb, &pctx);
+    if (ret < 0)
+        kprintf("  [config iteration error: %d]\n", ret);
+
+    return ret;
+}

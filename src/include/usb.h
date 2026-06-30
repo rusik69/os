@@ -171,8 +171,36 @@ int usb_parse_interface_descriptor(const uint8_t *raw,
 int usb_parse_endpoint_descriptor(const uint8_t *raw,
                                   struct usb_endpoint_descriptor *ep);
 int usb_print_device_descriptor(const struct usb_device_descriptor *desc);
+int usb_print_config_descriptor_full(const struct usb_config_descriptor *config,
+                                      const uint8_t *full_config_data,
+                                      uint16_t total_length);
+int usb_print_interface_descriptor(const struct usb_interface_descriptor *iface);
+int usb_print_endpoint_descriptor(const struct usb_endpoint_descriptor *ep);
 void usb_update_device_from_desc(struct usb_device *dev,
                                  const struct usb_device_descriptor *desc);
+
+/* ── Configuration sub-descriptor iterator ──────────────────────────── */
+
+/*
+ * Callback type for usb_for_each_config_subdesc().
+ * Receives each sub-descriptor in a configuration blob.
+ * Return 0 to continue iteration, non-zero to stop.
+ */
+typedef int (*usb_desc_callback_t)(uint8_t bDescriptorType,
+                                    const uint8_t *data, uint8_t bLength,
+                                    void *user_data);
+
+/*
+ * Iterate all sub-descriptors within a configuration descriptor blob.
+ * The config descriptor header is skipped; only sub-descriptors
+ * (interfaces, endpoints, class-specific, etc.) are passed to the callback.
+ * Returns 0 on success, negative errno on error, or the callback's
+ * non-zero return value to stop early.
+ */
+int usb_for_each_config_subdesc(const uint8_t *config_data,
+                                 uint16_t total_length,
+                                 usb_desc_callback_t callback,
+                                 void *user_data);
 
 /* EHCI internals exposed for the MSC transfer engine */
 uint64_t ehci_get_op_base(void);
