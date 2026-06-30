@@ -2,6 +2,7 @@
 #define UHID_H
 
 #include "types.h"
+#include "spinlock.h"
 
 /* USB HID class protocol values */
 #define USB_HID_PROTOCOL_BOOT   0
@@ -139,9 +140,108 @@
 #define HID_PAGE_VENDOR_MS_BEGIN    0xFF00
 #define HID_PAGE_VENDOR_MS_END      0xFFFF
 
+/* ── Digitizer page usages (HID_PAGE_DIGITIZER = 0x0D) ────────────── */
+#define HID_USAGE_TOUCH_SCREEN      0x04
+#define HID_USAGE_TOUCH_PAD         0x05
+#define HID_USAGE_TIP_SWITCH        0x42
+#define HID_USAGE_TIP_PRESSURE      0x30
+#define HID_USAGE_IN_RANGE          0x32
+#define HID_USAGE_CONTACT_ID        0x51
+#define HID_USAGE_CONTACT_COUNT     0x54
+#define HID_USAGE_SCAN_TIME         0x56
+#define HID_USAGE_CONFIDENCE        0x47
+#define HID_USAGE_WIDTH             0x48
+#define HID_USAGE_HEIGHT            0x49
+#define HID_USAGE_AZIMUTH           0x57
+#define HID_USAGE_ALTITUDE          0x58
+#define HID_USAGE_TWIST             0x5B
+#define HID_USAGE_DEVICE_INDEX      0x53
+/* HID_USAGE_ACTUAL_COUNT shares value 0x54 with HID_USAGE_CONTACT_COUNT */
+
+/* ── Multi-touch protocol constants ───────────────────────────────── */
+#define MT_MAX_CONTACTS             10
+#define MT_MAX_DEVICES              4
+
+/*
+ * Represents a single touch contact point.
+ */
+struct mt_contact {
+    int      active;           /* 1 if this slot contains live data */
+    uint8_t  contact_id;       /* HID Contact ID */
+    int      tip;              /* Tip Switch (1=touching) */
+    int      in_range;         /* In Range */
+    int      confidence;       /* Confidence metric */
+    int32_t  x;                /* X coordinate in device units */
+    int32_t  y;                /* Y coordinate in device units */
+    int32_t  pressure;         /* Tip pressure */
+    int32_t  width;            /* Touch width */
+    int32_t  height;           /* Touch height */
+};
+
+/*
+ * Multi-touch device instance — tracks the state of one
+ * touchscreen or touchpad.
+ */
+struct mt_device {
+    int      present;
+    spinlock_t lock;
+
+    /* Contact tracking */
+    struct mt_contact contacts[MT_MAX_CONTACTS];
+    int      num_contacts;        /* number of active contacts */
+    int      contact_count;       /* reported count from device */
+
+    /* Device type */
+    int      is_touchscreen;
+    int      is_touchpad;
+
+    /* Coordinate ranges (from Logical Min/Max of X/Y) */
+    int32_t  x_min, x_max;
+    int32_t  y_min, y_max;
+
+    /* Report layout hints (set during descriptor parse) */
+    int      has_contact_id;
+    int      has_tip_switch;
+    int      has_confidence;
+    int      has_scan_time;
+    int      has_pressure;
+    int      has_width;
+    int      has_height;
+
+    /* USB addressing */
+    uint8_t  dev_addr;
+    uint8_t  input_ep;
+    int      report_len;
+
+    /* ── Field offsets (computed during descriptor parse) ──────────── */
+    int      off_contact_count;   /* byte offset of Contact Count (or -1) */
+    int      off_contact_id;      /* byte offset of Contact ID (or -1) */
+    int      off_x;               /* byte offset of X (or -1) */
+    int      off_y;               /* byte offset of Y (or -1) */
+    int      off_width;           /* byte offset of Width (or -1) */
+    int      off_height;          /* byte offset of Height (or -1) */
+    int      off_pressure;        /* byte offset of Pressure (or -1) */
+    int      off_scan_time;       /* byte offset of Scan Time (or -1) */
+    int      size_x;              /* bit size of X field */
+    int      size_y;              /* bit size of Y field */
+    int      size_contact_id;     /* bit size of Contact ID */
+
+    /* Tip Switch and Confidence are often 1-bit fields inside a byte.
+     * Store both byte offset and bit mask. */
+    int      off_tip_switch;      /* byte offset (or -1) */
+    uint8_t  mask_tip_switch;     /* bit mask for Tip Switch */
+    int      off_confidence;      /* byte offset (or -1) */
+    uint8_t  mask_confidence;     /* bit mask for Confidence */
+
+    /* Per-contact data size in bits (for parallel mode / grouping) */
+    int      per_contact_bits;
+};
+
 /* ── Generic Desktop usages ──────────────────────────────────────── */
 #define HID_USAGE_KEYBOARD          0x06
 #define HID_USAGE_MOUSE             0x02
+#define HID_USAGE_X                 0x30
+#define HID_USAGE_Y                 0x31
 #define HID_USAGE_JOYSTICK          0x04
 #define HID_USAGE_GAMEPAD           0x05
 #define HID_USAGE_MULTI_AXIS        0x08
@@ -375,5 +475,76 @@ int usb_hid_get_hid_descriptor(struct hid_descriptor *desc);
 
 /* Fetch the HID report descriptor and parse it */
 int usb_hid_get_and_parse_report_descriptor(void);
+
+/* ── Multi-touch API ──────────────────────────────────────────────── */
+
+/*
+ * Initialise multi-touch subsystem.
+ * Scans the parsed report descriptor for touchscreen/touchpad collections
+ * and configures the multi-touch device state accordingly.
+ */
+int usb_hid_mt_init(struct mt_device *mt, uint8_t dev_addr,
+                     const struct hid_report_desc *desc);
+
+/*
+ * Convenience wrapper: parse a raw report descriptor and initialise
+ * the multi-touch device from it.
+ */
+int usb_hid_mt_init_raw(struct mt_device *mt, uint8_t dev_addr,
+                          const uint8_t *rdesc, int rlen);
+
+/*
+ * Register a multi-touch device with the global subsystem,
+ * allocating a device index from the pool.
+ * Returns the device index (>=0) or negative errno.
+ */
+int usb_hid_mt_register(uint8_t dev_addr, uint8_t input_ep,
+                          const struct hid_report_desc *desc);
+
+/*
+ * Unregister a multi-touch device by index.
+ */
+void usb_hid_mt_unregister(int mt_idx);
+
+/*
+ * Feed a raw HID input report to a registered multi-touch device.
+ */
+void usb_hid_mt_input(int mt_idx, const uint8_t *report, int len);
+
+/*
+ * Process a raw HID input report from a multi-touch device.
+ * Extracts per-contact data from the report and updates the
+ * contact tracking state.
+ */
+void usb_hid_mt_process_report(struct mt_device *mt,
+                                const uint8_t *report, int len);
+
+/*
+ * Read the current contact state for a given contact slot.
+ * Returns 0 on success, -ENOENT if the slot has no active contact.
+ * Internally synchronises via the device spinlock.
+ */
+int usb_hid_mt_get_contact(struct mt_device *mt, int slot,
+                            struct mt_contact *out);
+
+/*
+ * Return the number of currently active contacts.
+ */
+int usb_hid_mt_active_contacts(struct mt_device *mt);
+
+/*
+ * Reset all contacts to inactive.
+ */
+void usb_hid_mt_reset(struct mt_device *mt);
+
+/*
+ * Get the number of registered multi-touch devices.
+ */
+int usb_hid_mt_get_count(void);
+
+/*
+ * Get a pointer to a registered multi-touch device by index.
+ */
+struct mt_device *usb_hid_mt_get_device(int idx);
 
 #endif /* UHID_H */

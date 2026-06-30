@@ -554,6 +554,7 @@ C_SRCS = src/kernel/kernel.c \
          src/net/smtp.c \
          src/net/dns_server.c \
          src/drivers/usb_hid.c \
+         src/drivers/usb_hid_mt.c \
          src/drivers/usb_cdc_acm.c \
          src/drivers/usb_hub.c \
          src/boot/uefi_gop.c \
