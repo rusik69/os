@@ -669,3 +669,188 @@ uint64_t sys_tgkill(uint64_t tgid, uint64_t tid, uint64_t sig)
 
     return 0;
 }
+
+/* ── Helper: check if a process is a child matching the given
+ * wait4 pid criteria.
+ *
+ * Returns 1 if `child` is a living (non-UNUSED) child of `parent_pid`
+ * that matches the wait4 pid pattern, 0 otherwise. */
+static int wait4_child_matches(const struct process *child,
+                                uint32_t parent_pid,
+                                uint32_t parent_pgid,
+                                int64_t req_pid)
+{
+    if (child->state == PROCESS_UNUSED)
+        return 0;
+    if (child->parent_pid != parent_pid)
+        return 0;
+    if (child->pid == parent_pid)
+        return 0;  /* skip self */
+
+    if (req_pid > 0)
+        return child->pid == (uint32_t)req_pid;
+    if (req_pid == -1)
+        return 1;  /* any child */
+    if (req_pid == 0)
+        return child->pgid == parent_pgid;
+    if (req_pid < -1) {
+        uint32_t pgid = (uint32_t)(-req_pid);
+        return child->pgid == pgid;
+    }
+    return 0;
+}
+
+/* ── sys_wait4 — wait for child process state change ────────────
+ *
+ *   pid_t wait4(pid_t pid, int *wstatus, int options,
+ *                struct rusage *rusage);
+ *
+ * Linux-compatible wait4 syscall.  Waits for children matching `pid`:
+ *   pid  > 0  → wait for child with specific PID
+ *   pid == -1 → wait for any child
+ *   pid == 0  → wait for any child in the same process group
+ *   pid < -1  → wait for any child in process group |pid|
+ *
+ * Options:
+ *   WNOHANG    (1) — return 0 immediately if no child is ready
+ *   WUNTRACED  (4) — also report stopped children (currently no-op:
+ *                    the kernel does not distinguish stopped children)
+ *   WCONTINUED (8) — also report continued children (currently no-op)
+ *
+ * Returns on success:
+ *   The PID of the collected child (wait status written to *wstatus).
+ *   0 if WNOHANG was specified and no child was ready.
+ *   -errno on error:
+ *     -ECHILD — no matching (unwaited) children exist
+ *     -EFAULT — wstatus or rusage pointer is invalid
+ *     -EINTR  — a signal was caught (not yet implemented)
+ */
+uint64_t sys_wait4(uint64_t pid, uint64_t wstatus_addr,
+                   uint64_t options, uint64_t rusage_addr)
+{
+    struct process *cur = process_get_current();
+    if (!cur)
+        return (uint64_t)(int64_t)-ESRCH;
+
+    int64_t req_pid = (int64_t)pid;
+    uint32_t my_pid = cur->pid;
+    uint32_t my_pgid = cur->pgid;
+    struct process *table = process_get_table();
+
+    for (;;) {
+        int found_any = 0;
+
+        /* Scan for matching children */
+        for (int i = 0; i < PROCESS_MAX; i++) {
+            struct process *child = &table[i];
+
+            if (!wait4_child_matches(child, my_pid, my_pgid, req_pid))
+                continue;
+
+            found_any = 1;
+
+            /* Is this child ready (zombie)? */
+            if (child->state == PROCESS_ZOMBIE) {
+                int wstatus;
+
+                /* Encode exit status in Linux-compatible format.
+                 * The kernel stores the raw exit code in exit_code.
+                 * For now, all exits are treated as WIFEXITED with
+                 * WEXITSTATUS = exit_code. */
+                wstatus = __W_EXITCODE(child->exit_code & 0xff, 0);
+
+                /* Copy wait status to userspace */
+                if (wstatus_addr) {
+                    if (copy_to_user(wstatus_addr, &wstatus,
+                                     sizeof(wstatus)) < 0)
+                        return (uint64_t)(int64_t)-EFAULT;
+                }
+
+                /* Optionally fill rusage */
+                if (rusage_addr) {
+                    struct rusage ru;
+                    memset(&ru, 0, sizeof(ru));
+                    ru.ru_utime.tv_sec  = child->utime_ticks / 100;
+                    ru.ru_utime.tv_usec = (child->utime_ticks % 100) * 10000;
+                    ru.ru_stime.tv_sec  = child->stime_ticks / 100;
+                    ru.ru_stime.tv_usec = (child->stime_ticks % 100) * 10000;
+                    ru.ru_minflt  = child->minflt;
+                    ru.ru_majflt  = child->majflt;
+                    ru.ru_nvcsw   = child->nvcsw;
+                    ru.ru_nivcsw  = child->nivcsw;
+                    ru.ru_nsignals = child->signals_received;
+
+                    if (copy_to_user(rusage_addr, &ru, sizeof(ru)) < 0)
+                        return (uint64_t)(int64_t)-EFAULT;
+                }
+
+                uint32_t child_pid = child->pid;
+
+                /* Clean up the zombie */
+                process_cleanup(child);
+
+                return (uint64_t)(int64_t)child_pid;
+            }
+        }
+
+        /* No matching children at all */
+        if (!found_any)
+            return (uint64_t)(int64_t)-ECHILD;
+
+        /* WNOHANG: no child ready, return 0 */
+        if (options & WNOHANG)
+            return 0;
+
+        /* Block until a child becomes zombie.
+         * Find the first non-zombie matching child and wait for it
+         * specifically (process_wake_waiter is PID-specific). */
+        for (int i = 0; i < PROCESS_MAX; i++) {
+            struct process *child = &table[i];
+            if (!wait4_child_matches(child, my_pid, my_pgid, req_pid))
+                continue;
+            if (child->state != PROCESS_ZOMBIE) {
+                /* Wait for this specific child */
+                cur->wait_for_pid = child->pid;
+                cur->state = PROCESS_BLOCKED;
+                scheduler_remove(cur);
+                scheduler_yield();
+
+                /* Woken up — re-acquire current process pointer
+                 * (may have changed if another CPU woke us). */
+                cur = process_get_current();
+                if (!cur)
+                    return (uint64_t)(int64_t)-ESRCH;
+                my_pid = cur->pid;
+                my_pgid = cur->pgid;
+                cur->wait_for_pid = 0;
+
+                /* Re-scan children from the top — the child we
+                 * waited for may now be zombie, or another child
+                 * may have become ready concurrently. */
+                goto rescan;
+            }
+        }
+        /* Fallthrough: all matching children became zombies while
+         * we were selecting one to wait on — loop back and collect. */
+rescan:
+        ;
+    }
+}
+
+/* ── sys_waitid — wait for child with siginfo ──────────────────
+ *
+ *   int waitid(idtype_t which, id_t pid, siginfo_t *info,
+ *              int options, struct rusage *rusage);
+ *
+ * Stub: returns -ENOSYS.  Full implementation is task 12.
+ */
+uint64_t sys_waitid(uint64_t which, uint64_t id, uint64_t info_addr,
+                    uint64_t options, uint64_t rusage_addr)
+{
+    (void)which;
+    (void)id;
+    (void)info_addr;
+    (void)options;
+    (void)rusage_addr;
+    return (uint64_t)(int64_t)-ENOSYS;
+}

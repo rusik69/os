@@ -596,6 +596,26 @@ struct sysinfo {
     uint32_t mem_unit;
 };
 
+/* ── wait4/waitid option flags (Linux-compatible) ────────────── */
+#define WNOHANG     1   /* non-blocking wait; return 0 if no child ready */
+#define WUNTRACED   4   /* also report stopped children */
+#define WCONTINUED  8   /* also report continued children */
+
+/* ── wait status encoding/decoding macros (Linux-compatible) ────
+ *
+ * Linux encodes wait status in the lower 16 bits of an int:
+ *   [15:8] = exit code (for WIFEXITED) or stop signal (for WIFSTOPPED)
+ *   [7:0]  = termination signal (0 if exited normally, 0x7f if stopped)
+ *
+ * Usage: wstatus = __W_EXITCODE(exit_code, 0)    for normal exit
+ *        wstatus = __W_EXITCODE(0, term_sig)      for signal-kill
+ *        wstatus = __W_STOPCODE(stop_sig)          for stop signal
+ *        wstatus = __W_CONTINUED                   for continuation
+ */
+#define __W_EXITCODE(ret, sig)   (((ret) & 0xff) << 8 | ((sig) & 0x7f))
+#define __W_STOPCODE(sig)        (((sig) & 0xff) << 8 | 0x7f)
+#define __W_CONTINUED            0xffff
+
 /* ── rusage structure ────────────────────────────────────────── */
 #define RUSAGE_SELF     0
 #define RUSAGE_CHILDREN -1
@@ -858,6 +878,8 @@ struct linux_dirent64 {
 #define SYS_RT_SIGRETURN          454  /* rt_sigreturn() — no args */
 #define SYS_RT_SIGTIMEDWAIT       455  /* rt_sigtimedwait(set, info, timeout, sigsetsize) */
 #define SYS_TGKILL                456  /* tgkill(tgid, tid, sig) → 0 or -errno */
+#define SYS_WAIT4                 457  /* wait4(pid, wstatus, opts, rusage) */
+#define SYS_WAITID                458  /* waitid(which, pid, info, options, rusage) */
 
 /* ── kexec (Item 362) ─────────────────────────────────────────── */
 #define SYS_KEXEC_LOAD       778  /* kexec_load(phys_addr, entry, flags) → 0 or -1 */

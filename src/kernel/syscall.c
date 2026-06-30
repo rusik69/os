@@ -120,6 +120,10 @@ uint64_t sys_rt_sigtimedwait(uint64_t set_addr, uint64_t info_addr,
 uint64_t sys_kill(uint64_t pid, uint64_t sig);
 uint64_t sys_tkill(uint64_t pid, uint64_t sig);
 uint64_t sys_tgkill(uint64_t tgid, uint64_t tid, uint64_t sig);
+uint64_t sys_wait4(uint64_t pid, uint64_t wstatus_addr,
+                   uint64_t options, uint64_t rusage_addr);
+uint64_t sys_waitid(uint64_t which, uint64_t id, uint64_t info_addr,
+                    uint64_t options, uint64_t rusage_addr);
 
 /* ── Open file descriptor table (for lseek support) ────────────── */
 
@@ -270,6 +274,10 @@ static int syscall_validate_user_args(uint64_t num, uint64_t a1, uint64_t a2,
             return (syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, sizeof(struct vfs_stat))) ? 0 : -EFAULT;
         case SYS_WAITPID:
             return (a2 ? syscall_user_write_ok(a2, sizeof(int)) : 1) ? 0 : -EFAULT;
+        case SYS_WAIT4:
+            if (a2 && !syscall_user_write_ok(a2, sizeof(int))) return -EFAULT;
+            if (a4 && !syscall_user_write_ok(a4, sizeof(struct rusage))) return -EFAULT;
+            return 0;
         case SYS_NET_GET_MAC:
             return syscall_user_write_ok(a1, 6) ? 0 : -EFAULT;
         case SYS_NET_GET_IP:
@@ -9435,6 +9443,8 @@ uint64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_VFS_UNLINK:    return sys_vfs_unlink(a1);
         case SYS_VFS_READDIR:   return sys_vfs_readdir(a1);
         case SYS_WAITPID:       return sys_waitpid(a1, a2);
+        case SYS_WAIT4:         return sys_wait4(a1, a2, a3, a4);
+        case SYS_WAITID:        return sys_waitid(a1, a2, a3, a4, a5);
         case SYS_SLEEP_TICKS:   return sys_sleep_ticks(a1);
         case SYS_NET_PRESENT:   return sys_net_present();
         case SYS_NET_GET_MAC:   return sys_net_get_mac(a1);
