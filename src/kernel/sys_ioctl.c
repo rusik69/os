@@ -210,16 +210,70 @@ static int ioctl_siocgifhwaddr(uint64_t arg)
 	return 0;
 }
 
+/*
+ * SIOCGIFFLAGS — Get interface flags.
+ * arg points to a struct ifreq with ifr_name set.
+ * On success, ifr_flags is filled with the interface IFF_* flags.
+ */
 static int ioctl_siocgifflags(uint64_t arg)
 {
-	(void)arg;
-	return -EOPNOTSUPP;
+	struct ifreq ifr;
+	int ret;
+
+	ret = copy_from_user(&ifr, arg, sizeof(ifr));
+	if (ret < 0)
+		return -EFAULT;
+
+	ifr.ifr_name[IFNAMSIZ - 1] = '\0';
+
+	int idx = netif_name_to_index(ifr.ifr_name);
+	if (idx < 0)
+		return -ENODEV;
+
+	struct net_device *dev = netif_get(idx);
+	if (!dev)
+		return -ENODEV;
+
+	ifr.ifr_flags = (short)dev->flags;
+
+	ret = copy_to_user(arg, &ifr, sizeof(ifr));
+	if (ret < 0)
+		return -EFAULT;
+	return 0;
 }
 
+/*
+ * SIOCSIFFLAGS — Set interface flags.
+ * arg points to a struct ifreq with ifr_name and ifr_flags set.
+ * Only the flags that are modifiable from userspace are applied.
+ */
 static int ioctl_siocsifflags(uint64_t arg)
 {
-	(void)arg;
-	return -EOPNOTSUPP;
+	struct ifreq ifr;
+	int ret;
+
+	ret = copy_from_user(&ifr, arg, sizeof(ifr));
+	if (ret < 0)
+		return -EFAULT;
+
+	ifr.ifr_name[IFNAMSIZ - 1] = '\0';
+
+	int idx = netif_name_to_index(ifr.ifr_name);
+	if (idx < 0)
+		return -ENODEV;
+
+	struct net_device *dev = netif_get(idx);
+	if (!dev)
+		return -ENODEV;
+
+	/* Only allow userspace to toggle IFF_UP, IFF_PROMISC,
+	 * IFF_ALLMULTI, IFF_MULTICAST — not running state, etc. */
+#define IFF_CHANGEABLE  (IFF_UP | IFF_PROMISC | IFF_ALLMULTI | IFF_MULTICAST)
+
+	dev->flags = (dev->flags & ~IFF_CHANGEABLE) |
+	             (ifr.ifr_flags & IFF_CHANGEABLE);
+
+	return 0;
 }
 
 /* ═══════════════════════════════════════════════════════════════════

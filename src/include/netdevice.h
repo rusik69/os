@@ -27,6 +27,17 @@
 /* Return code from transmit callback: try again later (ring full) */
 #define NETDEV_TX_BUSY 1
 
+/* Interface flags (IFF_*) — Linux-compatible values */
+#define IFF_UP          0x0001  /* Interface is running */
+#define IFF_BROADCAST   0x0002  /* Broadcast address valid */
+#define IFF_LOOPBACK    0x0008  /* Is a loopback net */
+#define IFF_POINTOPOINT 0x0010  /* Is a point-to-point link */
+#define IFF_RUNNING     0x0040  /* Interface RFC2863 OPER_UP */
+#define IFF_NOARP       0x0080  /* No ARP protocol */
+#define IFF_PROMISC     0x0100  /* Receive all packets */
+#define IFF_ALLMULTI    0x0200  /* Receive all multicast packets */
+#define IFF_MULTICAST   0x1000  /* Supports multicast */
+
 /* Forward declaration */
 struct net_device;
 
