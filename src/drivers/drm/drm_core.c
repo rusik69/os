@@ -262,6 +262,9 @@ static __attribute__((unused)) int drm_ioctl_dispatch(struct drm_device *dev, st
         case DRM_IOCTL_MODE_GETPROPBLOB:
             return drm_ioctl_get_property_blob(dev, fp,
                        (struct drm_mode_get_blob *)arg);
+        case DRM_IOCTL_MODE_ATOMIC:
+            return drm_ioctl_atomic(dev, fp,
+                       (struct drm_mode_atomic *)arg);
         default:
             return -ENOTTY;
     }

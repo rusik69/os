@@ -165,4 +165,42 @@ int  drm_ioctl_get_property_blob(struct drm_device *dev,
                                   struct drm_file *fp,
                                   struct drm_mode_get_blob *arg);
 
+/* ═══════════════════════════════════════════════════════════════════
+ *  Atomic check + commit
+ * ═══════════════════════════════════════════════════════════════════ */
+
+/*
+ * drm_atomic_check — Validate an atomic modeset request without applying.
+ *
+ * Iterates every object and property in the request, checking that:
+ *   - All object IDs are valid
+ *   - All property IDs exist and are attached to the correct object type
+ *   - All proposed values are within range for the property type
+ *
+ * Returns 0 if valid, negative errno if any check fails.
+ */
+int  drm_atomic_check(struct drm_device *dev,
+                       const struct drm_mode_atomic *arg);
+
+/*
+ * drm_atomic_commit — Apply an atomic modeset request.
+ *
+ * Must only be called after drm_atomic_check returns 0.  Applies every
+ * property value change to the corresponding DRM object, then handles
+ * any side-effects (CRTC modesets, connector routing).
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int  drm_atomic_commit(struct drm_device *dev,
+                        const struct drm_mode_atomic *arg);
+
+/*
+ * drm_ioctl_atomic — Top-level DRM_IOCTL_MODE_ATOMIC handler.
+ *
+ * Reads the request from userspace, dispatches check + optional commit,
+ * handles TEST_ONLY and ALLOW_MODESET flags.
+ */
+int  drm_ioctl_atomic(struct drm_device *dev, struct drm_file *fp,
+                       struct drm_mode_atomic *arg);
+
 #endif /* DRM_ATOMIC_H */

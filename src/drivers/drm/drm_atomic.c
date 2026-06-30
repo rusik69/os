@@ -458,3 +458,443 @@ int drm_ioctl_get_property_blob(struct drm_device *dev,
 
 	return 0;
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+ *  Atomic check + commit
+ * ═══════════════════════════════════════════════════════════════════
+ *
+ * DRM_IOCTL_MODE_ATOMIC allows userspace to atomically set multiple
+ * property values across several objects (CRTCs, connectors) in a
+ * single operation.
+ *
+ *   Check phase:  validates the entire configuration without applying.
+ *   Commit phase: applies all validated changes atomically.
+ *
+ * Item D143 task 2 — DRM atomic check + commit
+ */
+
+/* ── Per-object property value in an atomic request ─────────────── */
+
+struct atomic_prop_val {
+	uint32_t prop_id;
+	uint64_t value;
+};
+
+/* ── Parsed atomic request for a single object ──────────────────── */
+
+struct atomic_obj_req {
+	uint32_t       obj_id;
+	uint32_t       obj_type;   /* DRM_MODE_OBJECT_* */
+	uint32_t       num_props;
+	struct atomic_prop_val *props;
+};
+
+/* ── Parsed atomic request (all objects) ────────────────────────── */
+
+struct atomic_req {
+	uint32_t           flags;
+	uint32_t           num_objs;
+	struct atomic_obj_req *objs;
+};
+
+/* Forward declarations */
+static int atomic_resolve_obj_type(struct drm_device *dev, uint32_t obj_id,
+                                    uint32_t *obj_type);
+static int atomic_check_obj(struct drm_device *dev,
+                             const struct atomic_obj_req *obj_req);
+static int atomic_commit_obj(struct drm_device *dev,
+                              const struct atomic_obj_req *obj_req);
+
+/* ═══════════════════════════════════════════════════════════════════
+ *  Parser — copy the atomic request from userspace
+ * ═══════════════════════════════════════════════════════════════════
+ *
+ * The userspace layout is:
+ *   objs_ptr[]       — uint32_t object IDs (count_objs entries)
+ *   count_props_ptr[] — uint32_t prop counts per object (count_objs)
+ *   props_ptr[]      — concatenated uint32_t prop IDs
+ *   prop_values_ptr[] — concatenated uint64_t prop values
+ */
+
+static int atomic_parse_request(struct drm_device *dev,
+                                 const struct drm_mode_atomic *arg,
+                                 struct atomic_req *req)
+{
+	(void)dev;
+
+	memset(req, 0, sizeof(*req));
+	req->flags = arg->flags;
+	req->num_objs = arg->count_objs;
+
+	if (req->num_objs == 0)
+		return 0;
+
+	/* Read array pointers from userspace */
+	const uint32_t *obj_ids =
+	    (const uint32_t *)(uintptr_t)arg->objs_ptr;
+	const uint32_t *count_props =
+	    (const uint32_t *)(uintptr_t)arg->count_props_ptr;
+	const uint32_t *prop_ids =
+	    (const uint32_t *)(uintptr_t)arg->props_ptr;
+	const uint64_t *prop_values =
+	    (const uint64_t *)(uintptr_t)arg->prop_values_ptr;
+
+	if (!obj_ids || !count_props || !prop_ids || !prop_values)
+		return -EFAULT;
+
+	/* Allocate object request array */
+	req->objs = (struct atomic_obj_req *)
+	    kmalloc(sizeof(struct atomic_obj_req) * req->num_objs);
+	if (!req->objs)
+		return -ENOMEM;
+	memset(req->objs, 0,
+	       sizeof(struct atomic_obj_req) * req->num_objs);
+
+	/* Walk concatenated arrays to build per-object property lists */
+	uint32_t prop_idx = 0;
+	for (uint32_t i = 0; i < req->num_objs; i++) {
+		struct atomic_obj_req *o = &req->objs[i];
+		o->obj_id = obj_ids[i];
+		o->num_props = count_props[i];
+		o->obj_type = 0;
+
+		if (o->num_props == 0)
+			continue;
+
+		o->props = (struct atomic_prop_val *)
+		    kmalloc(sizeof(struct atomic_prop_val) *
+		            o->num_props);
+		if (!o->props) {
+			/* Clean up previous allocations */
+			for (uint32_t j = 0; j < i; j++)
+				if (req->objs[j].props)
+					kfree(req->objs[j].props);
+			kfree(req->objs);
+			req->objs = NULL;
+			return -ENOMEM;
+		}
+
+		for (uint32_t j = 0; j < o->num_props; j++) {
+			o->props[j].prop_id = prop_ids[prop_idx];
+			o->props[j].value = prop_values[prop_idx];
+			prop_idx++;
+		}
+	}
+
+	return 0;
+}
+
+static void atomic_free_request(struct atomic_req *req)
+{
+	if (!req || !req->objs)
+		return;
+	for (uint32_t i = 0; i < req->num_objs; i++) {
+		if (req->objs[i].props)
+			kfree(req->objs[i].props);
+	}
+	kfree(req->objs);
+	req->objs = NULL;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+ *  Object type resolution
+ * ═══════════════════════════════════════════════════════════════════ */
+
+static int atomic_resolve_obj_type(struct drm_device *dev,
+                                    uint32_t obj_id,
+                                    uint32_t *obj_type)
+{
+	if (!dev || !obj_type)
+		return -EINVAL;
+
+	/* Check CRTCs */
+	for (int i = 0; i < DRM_MAX_CRTC; i++) {
+		if (dev->crtcs[i].in_use &&
+		    dev->crtcs[i].crtc_id == obj_id) {
+			*obj_type = DRM_MODE_OBJECT_CRTC;
+			return 0;
+		}
+	}
+
+	/* Check connectors */
+	for (int i = 0; i < DRM_MAX_CONNECTOR; i++) {
+		if (dev->connectors[i].in_use &&
+		    dev->connectors[i].connector_id == obj_id) {
+			*obj_type = DRM_MODE_OBJECT_CONNECTOR;
+			return 0;
+		}
+	}
+
+	/* Check framebuffers */
+	for (int i = 0; i < DRM_MAX_FB; i++) {
+		if (dev->framebuffers[i].in_use &&
+		    dev->framebuffers[i].fb_id == obj_id) {
+			*obj_type = DRM_MODE_OBJECT_ANY;
+			return 0;
+		}
+	}
+
+	return -ENOENT;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+ *  Check phase — validate a single object's property changes
+ * ═══════════════════════════════════════════════════════════════════ */
+
+static int atomic_check_obj(struct drm_device *dev,
+                             const struct atomic_obj_req *obj_req)
+{
+	uint32_t obj_type = 0;
+	int ret = atomic_resolve_obj_type(dev, obj_req->obj_id,
+	                                   &obj_type);
+	if (ret < 0)
+		return -ENOENT;
+
+	/* Validate each property */
+	for (uint32_t i = 0; i < obj_req->num_props; i++) {
+		struct drm_property *prop =
+		    drm_property_lookup(obj_req->props[i].prop_id);
+		if (!prop)
+			return -EINVAL;
+
+		/* Immutable properties cannot be changed */
+		if (prop->flags & DRM_MODE_PROP_IMMUTABLE)
+			return -EACCES;
+
+		/* For range properties, check value within bounds */
+		if (prop->flags & DRM_MODE_PROP_RANGE) {
+			if (prop->num_values >= 2) {
+				uint64_t min_val = prop->values[0];
+				uint64_t max_val = prop->values[1];
+				if (obj_req->props[i].value < min_val ||
+				    obj_req->props[i].value > max_val)
+					return -ERANGE;
+			}
+		}
+
+		/* For enum properties, check valid enum value */
+		if (prop->flags & DRM_MODE_PROP_ENUM) {
+			int valid = 0;
+			for (uint32_t e = 0; e < prop->num_values; e++) {
+				if (prop->values[e] ==
+				    obj_req->props[i].value) {
+					valid = 1;
+					break;
+				}
+			}
+			if (!valid)
+				return -EINVAL;
+		}
+
+		/* For object properties, check target exists */
+		if (prop->flags & DRM_MODE_PROP_OBJECT) {
+			if (obj_req->props[i].value != 0) {
+				uint32_t dummy_type = 0;
+				ret = atomic_resolve_obj_type(
+				    dev,
+				    (uint32_t)obj_req->props[i].value,
+				    &dummy_type);
+				if (ret < 0)
+					return -EINVAL;
+			}
+		}
+	}
+
+	return 0;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+ *  Commit phase — apply a single object's property changes
+ * ═══════════════════════════════════════════════════════════════════ */
+
+static int atomic_commit_obj(struct drm_device *dev,
+                              const struct atomic_obj_req *obj_req)
+{
+	uint32_t obj_type = 0;
+	int ret = atomic_resolve_obj_type(dev, obj_req->obj_id,
+	                                   &obj_type);
+	if (ret < 0)
+		return ret;
+
+	/* Apply each property value */
+	for (uint32_t i = 0; i < obj_req->num_props; i++) {
+		ret = drm_object_property_set_value(obj_type,
+		             obj_req->obj_id,
+		             obj_req->props[i].prop_id,
+		             obj_req->props[i].value);
+		if (ret < 0) {
+			kprintf("[DRM atomic] commit: set_property "
+			        "failed (obj=%u prop=%u ret=%d)\n",
+			        obj_req->obj_id,
+			        obj_req->props[i].prop_id, ret);
+			return ret;
+		}
+
+		/* CRTC-specific side-effects */
+		if (obj_type == DRM_MODE_OBJECT_CRTC) {
+			struct drm_property *prop =
+			    drm_property_lookup(
+			        obj_req->props[i].prop_id);
+			if (prop) {
+				/* FB_ID -> update CRTC fb_id */
+				if (!strcmp(prop->name, "FB_ID")) {
+					for (int c = 0;
+					     c < DRM_MAX_CRTC; c++) {
+						if (dev->crtcs[c].in_use &&
+						    dev->crtcs[c].crtc_id ==
+						    obj_req->obj_id) {
+							dev->crtcs[c].fb_id =
+							    (uint32_t)
+							    obj_req->props[i]
+							        .value;
+							break;
+						}
+					}
+				}
+				/* ACTIVE -> toggle CRTC enable */
+				if (!strcmp(prop->name, "ACTIVE")) {
+					for (int c = 0;
+					     c < DRM_MAX_CRTC; c++) {
+						if (dev->crtcs[c].in_use &&
+						    dev->crtcs[c].crtc_id ==
+						    obj_req->obj_id) {
+							dev->crtcs[c].enabled =
+							    obj_req->props[i]
+							        .value ? 1 : 0;
+							break;
+						}
+					}
+				}
+			}
+		}
+
+		/* Connector-specific side-effects */
+		if (obj_type == DRM_MODE_OBJECT_CONNECTOR) {
+			struct drm_property *prop =
+			    drm_property_lookup(
+			        obj_req->props[i].prop_id);
+			if (prop) {
+				/* CRTC_ID -> connector routing */
+				if (!strcmp(prop->name, "CRTC_ID")) {
+					kprintf("[DRM atomic] connector %u "
+					        "routed to CRTC %llu\n",
+					        obj_req->obj_id,
+					        (unsigned long long)
+					        obj_req->props[i].value);
+				}
+			}
+		}
+	}
+
+	return 0;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+ *  Top-level check — validate the entire atomic request
+ * ═══════════════════════════════════════════════════════════════════ */
+
+int drm_atomic_check(struct drm_device *dev,
+                      const struct drm_mode_atomic *arg)
+{
+	struct atomic_req req;
+	int ret = atomic_parse_request(dev, arg, &req);
+	if (ret < 0)
+		return ret;
+
+	for (uint32_t i = 0; i < req.num_objs; i++) {
+		ret = atomic_check_obj(dev, &req.objs[i]);
+		if (ret < 0) {
+			kprintf("[DRM atomic] check failed on "
+			        "object %u (ret=%d)\n",
+			        req.objs[i].obj_id, ret);
+			goto out;
+		}
+	}
+
+out:
+	atomic_free_request(&req);
+	return ret;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+ *  Top-level commit — apply the entire atomic request
+ * ═══════════════════════════════════════════════════════════════════
+ *
+ * Must only be called after drm_atomic_check succeeds.
+ */
+
+int drm_atomic_commit(struct drm_device *dev,
+                       const struct drm_mode_atomic *arg)
+{
+	struct atomic_req req;
+	int ret = atomic_parse_request(dev, arg, &req);
+	if (ret < 0)
+		return ret;
+
+	for (uint32_t i = 0; i < req.num_objs; i++) {
+		ret = atomic_commit_obj(dev, &req.objs[i]);
+		if (ret < 0) {
+			kprintf("[DRM atomic] commit failed on "
+			        "object %u (ret=%d)\n",
+			        req.objs[i].obj_id, ret);
+			goto out;
+		}
+	}
+
+	kprintf("[DRM atomic] committed %u objects\n",
+	        req.num_objs);
+
+out:
+	atomic_free_request(&req);
+	return ret;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+ *  IOCTL handler — DRM_IOCTL_MODE_ATOMIC
+ * ═══════════════════════════════════════════════════════════════════
+ *
+ * Top-level entry point for atomic modesetting from userspace.
+ * Handles TEST_ONLY, NONBLOCK, and ALLOW_MODESET flags.
+ */
+
+int drm_ioctl_atomic(struct drm_device *dev, struct drm_file *fp,
+                      struct drm_mode_atomic *arg)
+{
+	(void)fp;
+
+	if (!dev || !arg)
+		return -EINVAL;
+
+	/* Validate flags */
+	uint32_t valid_flags = DRM_MODE_ATOMIC_TEST_ONLY |
+	                       DRM_MODE_ATOMIC_NONBLOCK |
+	                       DRM_MODE_ATOMIC_ALLOW_MODESET;
+	if (arg->flags & ~valid_flags) {
+		kprintf("[DRM atomic] invalid flags 0x%x\n",
+		        arg->flags);
+		return -EINVAL;
+	}
+
+	/* Check phase — validate the entire request */
+	int ret = drm_atomic_check(dev, arg);
+	if (ret < 0) {
+		kprintf("[DRM atomic] check failed (ret=%d)\n", ret);
+		return ret;
+	}
+
+	/* If TEST_ONLY, stop after check */
+	if (arg->flags & DRM_MODE_ATOMIC_TEST_ONLY) {
+		kprintf("[DRM atomic] test-only check passed "
+		        "(%u objects)\n", arg->count_objs);
+		return 0;
+	}
+
+	/* Commit phase — apply all changes */
+	ret = drm_atomic_commit(dev, arg);
+	if (ret < 0) {
+		kprintf("[DRM atomic] commit failed (ret=%d)\n", ret);
+		return ret;
+	}
+
+	return 0;
+}
