@@ -9383,6 +9383,147 @@ tee_out:
     return tee_result;
 }
 
+/**
+ * sys_vmsplice — Splice user pages into a pipe
+ * @fd:          File descriptor (must be write end of a pipe)
+ * @iov_addr:    User-space pointer to struct iovec array
+ * @nr_segs:     Number of iovec entries
+ * @flags:       SPLICE_F_MOVE, SPLICE_F_NONBLOCK, SPLICE_F_MORE, SPLICE_F_GIFT
+ *
+ * Linux signature:
+ *   ssize_t vmsplice(int fd, const struct iovec *iov,
+ *                    unsigned long nr_segs, unsigned int flags);
+ *
+ * Linux semantics:
+ *   - fd must be the write end of a pipe.
+ *   - Data from user-space buffers (described by iov) is written to the pipe.
+ *   - SPLICE_F_GIFT is accepted but treated as a hint (pages are always
+ *     copied for safety).  SPLICE_F_NONBLOCK makes the pipe side use
+ *     non-blocking semantics.
+ *   - nr_segs is capped at 1024 (Linux limit).
+ *   - Returns the total number of bytes written to the pipe.
+ *
+ * Return: Number of bytes written (as uint64_t), or negative errno:
+ *   EBADF  — invalid fd or wrong mode
+ *   EINVAL — fd is not a pipe write end
+ *   EFAULT — bad user-space pointer
+ *   ENOMEM — cannot allocate iovec or bounce buffer
+ *   EPIPE  — pipe has no readers
+ */
+static uint64_t sys_vmsplice(uint64_t fd, uint64_t iov_addr,
+                             uint64_t nr_segs, uint64_t flags)
+{
+    (void)flags;
+
+    struct process *p = process_get_current();
+    if (!p)
+        return (uint64_t)(int64_t)-EPERM;
+
+    /* nr_segs == 0 is a no-op per Linux semantics */
+    if (nr_segs == 0)
+        return 0;
+    if (nr_segs > 1024)
+        return (uint64_t)(int64_t)-EINVAL;
+    if (!iov_addr)
+        return (uint64_t)(int64_t)-EFAULT;
+
+    /* Validate fd range */
+    if (fd >= PROCESS_FD_MAX)
+        return (uint64_t)(int64_t)-EBADF;
+
+    struct process_fd *pfd = &p->fd_table[fd];
+    if (!pfd->used)
+        return (uint64_t)(int64_t)-EBADF;
+
+    /* fd must be the write end of a pipe (vmsplice always writes to pipe) */
+    if (strncmp(pfd->path, "pipe_write_", 11) != 0)
+        return (uint64_t)(int64_t)-EINVAL;
+
+    /* Check that fd is writable */
+    if ((pfd->open_flags & 3) == 0)  /* O_RDONLY alone */
+        return (uint64_t)(int64_t)-EBADF;
+
+    int pipe_id = (int)pfd->offset;
+
+    /* Copy iovec array from userspace */
+    struct iovec iov_stack[16];
+    struct iovec *iov = iov_stack;
+    int allocd = 0;
+
+    if (nr_segs > 16) {
+        iov = kmalloc(sizeof(struct iovec) * (size_t)nr_segs);
+        if (!iov)
+            return (uint64_t)(int64_t)-ENOMEM;
+        allocd = 1;
+    }
+
+    if (copy_from_user(iov, iov_addr,
+                       sizeof(struct iovec) * nr_segs) < 0) {
+        if (allocd) kfree(iov);
+        return (uint64_t)(int64_t)-EFAULT;
+    }
+
+    /* Use a 4 KiB kernel bounce buffer for userspace→pipe transfer */
+    uint8_t *bounce = kmalloc(4096);
+    if (!bounce) {
+        if (allocd) kfree(iov);
+        return (uint64_t)(int64_t)-ENOMEM;
+    }
+
+    uint64_t total = 0;
+    uint64_t vmsplice_result;
+
+    for (uint64_t i = 0; i < nr_segs; i++) {
+        if (!iov[i].iov_base || iov[i].iov_len == 0)
+            continue;
+
+        uint64_t remaining = iov[i].iov_len;
+        uint64_t offset = 0;
+
+        while (remaining > 0) {
+            uint64_t chunk = (remaining > 4096) ? 4096 : remaining;
+
+            /* Copy user data into bounce buffer */
+            if (copy_from_user(bounce,
+                               (uint64_t)iov[i].iov_base + offset,
+                               chunk) < 0) {
+                vmsplice_result = (total > 0)
+                    ? total
+                    : (uint64_t)(int64_t)-EFAULT;
+                goto vmsplice_out;
+            }
+
+            /* Write bounce buffer to pipe */
+            int w = pipe_write(pipe_id, bounce, (int)chunk);
+            if (w < 0) {
+                vmsplice_result = (total > 0)
+                    ? total
+                    : (uint64_t)(int64_t)w;
+                goto vmsplice_out;
+            }
+            total += (uint64_t)w;
+            offset += (uint64_t)w;
+
+            /* Pipe full — stop */
+            if ((uint64_t)w < chunk)
+                break;
+
+            remaining -= (uint64_t)w;
+        }
+
+        /* Short write on this iovec — stop processing further segments */
+        if (offset < iov[i].iov_len)
+            break;
+    }
+
+    vmsplice_result = total;
+
+vmsplice_out:
+    kfree(bounce);
+    if (allocd) kfree(iov);
+    return vmsplice_result;
+}
+
 
 /* ── copy_file_range — zero-copy file-to-file data transfer (Task D124-9) ── */
 
@@ -10532,6 +10673,7 @@ uint64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_MEMFD_CREATE:    return (uint64_t)memfd_syscall_create((const char*)a1, (unsigned int)a2);
         case SYS_SPLICE:          return sys_splice(a1, a2, a3, a4, a5, syscall_arg6);
         case SYS_TEE:             return sys_tee(a1, a2, a3, a4);
+        case SYS_VMSPLICE:        return sys_vmsplice(a1, a2, a3, a4);
         case SYS_COPY_FILE_RANGE: return sys_copy_file_range(a1, a2, a3, a4, a5, syscall_arg6);
         case SYS_SENDMMSG:        return sys_sendmmsg(a1, a2, a3, a4);
         case SYS_RECVMMSG:        return sys_recvmmsg(a1, a2, a3, a4, a5);

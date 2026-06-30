@@ -311,6 +311,7 @@
 /* ── I/O and data transfer ──────────────────────────────────── */
 #define SYS_SPLICE            307  /* splice(fd_in, off_in, fd_out, off_out, len, flags) */
 #define SYS_TEE               308  /* tee(fd_in, fd_out, len, flags) */
+#define SYS_VMSPLICE          387  /* vmsplice(fd, iov, nr_segs, flags) — user pages to pipe */
 
 /* splice/tee/vmsplice flags (SPLICE_F_*) */
 #define SPLICE_F_MOVE           1  /* move pages instead of copying (hint) */
