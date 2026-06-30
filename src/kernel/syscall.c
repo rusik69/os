@@ -52,6 +52,7 @@
 #include "users.h"
 #include "module.h"
 #include "module_elf.h"
+#include "module_deps.h"
 #include "shm.h"
 #include "ac97.h"
 #include "socket.h"
@@ -9993,37 +9994,78 @@ static uint64_t sys_finit_module(uint64_t fd, uint64_t params_addr, uint64_t fla
 /*
  * sys_delete_module — Unload a kernel module by name.
  *
- *   @name:  Module name string.
+ *   @name:  User-space pointer to module name string.
  *   @flags: May contain O_NONBLOCK to fail instead of waiting for refcount drain.
  *
- * Only callable by root.
+ * Only callable by privileged code (root or kernel context).
+ *
+ * Linux-compatible behavior:
+ *   - Returns -EPERM under lockdown or lacking CAP_SYS_MODULE
+ *   - Returns -ENOENT if module not found
+ *   - Returns -EBUSY if module has active dependents or refcount > 0
+ *   - Returns -EINVAL if name is invalid or module cannot be unloaded
+ *   - Returns 0 on successful unload
  */
 static uint64_t sys_delete_module(uint64_t name_addr, uint64_t flags)
 {
-    const char *name = (const char *)name_addr;
+    /* Lockdown: reject module unloading at INTEGRITY level or above */
+    if (lockdown_is_locked_down(LOCKDOWN_INTEGRITY))
+        return (uint64_t)-EPERM;
 
-    /* Only root can unload modules */
+    /* CAP_SYS_MODULE check — required to unload kernel modules */
+    {
+        int cap_ret = cap_sys_module_check();
+        if (cap_ret < 0)
+            return (uint64_t)(int64_t)cap_ret;
+    }
+
+    /* Only root (or kernel context) can unload modules */
     if (syscall_is_user_process()) {
         struct process *p = process_get_current();
         if (!p || p->euid != 0)
             return (uint64_t)-EPERM;
+        /* Validate user-space name pointer */
+        if (!syscall_user_cstr_ok(name_addr))
+            return (uint64_t)-EFAULT;
     }
 
-    if (!name || !name[0])
+    /* Copy the module name from user-space */
+    char name_buf[64];
+    long ret = strncpy_from_user(name_buf, name_addr, sizeof(name_buf));
+    if (ret < 0)
+        return (uint64_t)-EFAULT;
+    if (ret == 0 || name_buf[0] == '\0')
         return (uint64_t)-EINVAL;
+
+    const char *name = name_buf;
 
     /* Find the module by name */
     struct kernel_module *mod = module_find(name);
     if (!mod)
         return (uint64_t)-ENOENT;
 
-    /* Check refcount */
-    if (mod->refcount > 0) {
-        if (flags & 1) { /* O_NONBLOCK */
+    /* Check whether any other loaded module depends on this one */
+    {
+        char dep_err[128];
+        if (module_can_unload(name, dep_err, sizeof(dep_err)) < 0) {
+            kprintf("[MOD] delete_module(%s): %s\n", name, dep_err);
             return (uint64_t)-EBUSY;
         }
-        /* Non-blocking case: just report busy for now.
-         * A full implementation would wait with timeout. */
+    }
+
+    /* Check refcount — wait or fail based on O_NONBLOCK flag */
+    if (mod->refcount > 0) {
+        if (flags & O_NONBLOCK) {
+            kprintf("[MOD] delete_module(%s): refcount=%d, O_NONBLOCK\n",
+                    name, mod->refcount);
+            return (uint64_t)-EBUSY;
+        }
+        /*
+         * A full implementation would block here and wait for the
+         * refcount to drain (via a completion/waitqueue), timing
+         * out after a configurable interval.  For now, report the
+         * state and return -EBUSY.
+         */
         kprintf("[MOD] delete_module(%s): refcount=%d, cannot unload\n",
                 name, mod->refcount);
         return (uint64_t)-EBUSY;
@@ -10033,8 +10075,8 @@ static uint64_t sys_delete_module(uint64_t name_addr, uint64_t flags)
     module_sysfs_remove_params(mod);
 
     /* Unload the module */
-    int ret = module_unload(mod->module_id);
-    if (ret < 0) {
+    int ul_ret = module_unload(mod->module_id);
+    if (ul_ret < 0) {
         kprintf("[MOD] delete_module(%s): unload failed\n", name);
         return (uint64_t)-EINVAL;
     }
