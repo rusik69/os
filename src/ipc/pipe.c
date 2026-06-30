@@ -345,6 +345,29 @@ int pipe_available(int pipe_id) {
         return -EBADF;
     return pipe_table[pipe_id].count;
 }
+
+/* ── pipe_peek — read data without consuming ──────────────────────── */
+int pipe_peek(int pipe_id, void *buf, int len) {
+    if (pipe_id < 0 || pipe_id >= PIPE_MAX || !pipe_table[pipe_id].in_use)
+        return -EBADF;
+    if (len <= 0) return -EINVAL;
+
+    struct pipe *p = &pipe_table[pipe_id];
+    uint8_t *dst = (uint8_t *)buf;
+
+    int avail = p->count;
+    if (avail == 0)
+        return 0;
+
+    int chunk = len < avail ? len : avail;
+
+    for (int i = 0; i < chunk; i++) {
+        int pos = (p->read_pos + i) % p->capacity;
+        dst[i] = p->buf[pos];
+    }
+
+    return chunk;
+}
 /* ── FIFO unlink — close one end ─────────────────────────────────── */
 void pipe_close_read(int pipe_id) {
     if (pipe_id < 0 || pipe_id >= PIPE_MAX) return;

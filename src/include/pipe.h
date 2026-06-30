@@ -56,6 +56,10 @@ int pipe_get_capacity(int pipe_id);
 /* Get bytes available for reading. */
 int pipe_available(int pipe_id);
 
+/* Peek at up to len bytes from pipe without consuming them.
+ * Returns bytes peeked, or -1 on error. */
+int pipe_peek(int pipe_id, void *buf, int len);
+
 /* Initialize pipe subsystem */
 void pipe_init(void);
 

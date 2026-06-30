@@ -9262,14 +9262,125 @@ splice_out:
     return sp_result;
 }
 
+/**
+ * sys_tee — Duplicate data from one pipe to another without consuming
+ * @fd_in:       Source fd (must be a pipe read end)
+ * @fd_out:      Destination fd (must be a pipe write end)
+ * @len:         Maximum bytes to duplicate
+ * @flags:       SPLICE_F_* flags (advisory)
+ *
+ * Linux signature:
+ *   ssize_t tee(int fd_in, int fd_out, size_t len, unsigned int flags);
+ *
+ * Linux semantics:
+ *   - Both fds MUST be pipes.
+ *   - Data is read from fd_in without being consumed, and written
+ *     to fd_out.
+ *   - The source data remains available for subsequent reads/splices.
+ *   - fd_in must be the read end of a pipe, fd_out the write end.
+ *
+ * Return: Number of bytes duplicated, or negative errno:
+ *   EBADF  — invalid or wrong-mode fd
+ *   EINVAL — fd is not a pipe
+ *   ENOMEM — cannot allocate bounce buffer
+ */
 static uint64_t sys_tee(uint64_t fd_in, uint64_t fd_out,
                          uint64_t len, uint64_t flags)
 {
     (void)flags;
-    /* tee copies data between two pipes without consuming from source.
-     * For now, implement as splice with both pipes and flags=0.
-     * A proper implementation would use pipe_peek + pipe_write. */
-    return sys_splice(fd_in, 0, fd_out, 0, len, 0);
+
+    struct process *p = process_get_current();
+    if (!p)
+        return (uint64_t)(int64_t)-EPERM;
+
+    /* len == 0 is a no-op per Linux semantics */
+    if (len == 0)
+        return 0;
+
+    /* Validate fd range */
+    if (fd_in >= PROCESS_FD_MAX || fd_out >= PROCESS_FD_MAX)
+        return (uint64_t)(int64_t)-EBADF;
+
+    struct process_fd *pfd_in  = &p->fd_table[fd_in];
+    struct process_fd *pfd_out = &p->fd_table[fd_out];
+
+    if (!pfd_in->used || !pfd_out->used)
+        return (uint64_t)(int64_t)-EBADF;
+
+    /* Both fds MUST be pipes for tee */
+    int is_in_pipe  = (strncmp(pfd_in->path, "pipe_", 5) == 0);
+    int is_out_pipe = (strncmp(pfd_out->path, "pipe_", 5) == 0);
+
+    if (!is_in_pipe || !is_out_pipe)
+        return (uint64_t)(int64_t)-EINVAL;
+
+    int in_pipe_id  = (int)pfd_in->offset;
+    int out_pipe_id = (int)pfd_out->offset;
+
+    /* Verify pipe direction: source must be a read end, dest a write end */
+    if (strncmp(pfd_in->path, "pipe_read_", 10) != 0)
+        return (uint64_t)(int64_t)-EBADF;
+    if (strncmp(pfd_out->path, "pipe_write_", 11) != 0)
+        return (uint64_t)(int64_t)-EBADF;
+
+    /* Check open_flags: source must be readable, dest writable */
+    if ((pfd_in->open_flags & 3) == 1)  /* O_WRONLY alone */
+        return (uint64_t)(int64_t)-EBADF;
+    if ((pfd_out->open_flags & 3) == 0) /* O_RDONLY alone */
+        return (uint64_t)(int64_t)-EBADF;
+
+    /* Use a 4 KiB kernel bounce buffer for the transfer */
+    uint8_t *buf = kmalloc(4096);
+    if (!buf)
+        return (uint64_t)(int64_t)-ENOMEM;
+
+    uint64_t total = 0;
+    uint64_t tee_result;
+
+    while (total < len) {
+        int avail = pipe_available(in_pipe_id);
+        if (avail <= 0) {
+            /* No data available. If we've done some work, return that. */
+            if (total > 0)
+                break;
+            /* Otherwise no data to copy — return 0 */
+            break;
+        }
+
+        uint64_t chunk = len - total;
+        if (chunk > 4096)
+            chunk = 4096;
+        if (chunk > (uint64_t)avail)
+            chunk = (uint64_t)avail;
+
+        /* Peek at data from source pipe without consuming */
+        int n = pipe_peek(in_pipe_id, buf, (int)chunk);
+        if (n < 0) {
+            tee_result = (total > 0) ? total : (uint64_t)(int64_t)n;
+            goto tee_out;
+        }
+        if (n == 0)
+            break;
+
+        /* Write to destination pipe */
+        int w = pipe_write(out_pipe_id, buf, n);
+        if (w < 0) {
+            tee_result = (total > 0) ? total : (uint64_t)(int64_t)w;
+            goto tee_out;
+        }
+
+        total += (uint64_t)w;
+
+        /* If we couldn't write everything, destination is full — stop */
+        if (w < n)
+            break;
+    }
+
+    tee_result = total;
+
+tee_out:
+    kfree(buf);
+    return tee_result;
 }
 
 
