@@ -298,6 +298,14 @@ struct mt_device {
 #define HID_CONSUMER_BRIGHTNESS_UP   0x6F
 #define HID_CONSUMER_BRIGHTNESS_DOWN 0x70
 
+/* ── System Control usages (Generic Desktop page 0x01) ──────────── */
+#define HID_USAGE_SYSTEM_CONTROL       0x80
+#define HID_USAGE_SYSTEM_POWER_DOWN    0x81
+#define HID_USAGE_SYSTEM_SLEEP         0x82
+#define HID_USAGE_SYSTEM_WAKE_UP       0x83
+#define HID_USAGE_SYSTEM_COLD_RESTART  0x8E
+#define HID_USAGE_SYSTEM_WARM_RESTART  0x8F
+
 /* Application/Launch keys */
 #define HID_CONSUMER_MEDIA_SELECT    0x183  /* AL Consumer Control Config */
 #define HID_CONSUMER_EMAIL_READER    0x18A
@@ -704,5 +712,91 @@ void usb_hid_consumer_poll(void);
  * and pressed flag from interrupt context.
  */
 void usb_hid_consumer_set_callback(void (*cb)(uint16_t code, int pressed));
+
+/* ── System Control API ─────────────────────────────────────────────── */
+
+#define SYSCTRL_EVENT_QUEUE     16
+
+/*
+ * System control event — reports press/release of a system control key.
+ * code is a HID_USAGE_SYSTEM_* usage value from Generic Desktop page (0x01).
+ */
+struct hid_sysctrl_event {
+    uint16_t code;      /* HID_USAGE_SYSTEM_* usage value */
+    int      pressed;   /* 1 = pressed, 0 = released */
+};
+
+/*
+ * System control device instance — tracks a system control HID device
+ * that reports power, sleep, and wake key events.
+ */
+struct hid_sysctrl_dev {
+    uint8_t  dev_addr;
+    uint8_t  input_ep;
+    uint8_t  intf_num;
+    int      present;
+
+    /* Report descriptor info */
+    uint8_t  *report_desc;
+    int       report_desc_len;
+    int       report_len;        /* expected input report length */
+
+    /* Event ring buffer */
+    struct hid_sysctrl_event events[SYSCTRL_EVENT_QUEUE];
+    int      ev_head;
+    int      ev_tail;
+
+    spinlock_t lock;
+};
+
+/*
+ * Initialise the system control subsystem (called once at boot).
+ */
+void usb_hid_sysctrl_init(void);
+
+/*
+ * Register a system control device.
+ * Returns 0 on success, negative errno on failure.
+ */
+int usb_hid_sysctrl_register(uint8_t dev_addr, uint8_t intf_num,
+                              uint8_t input_ep,
+                              const uint8_t *report_desc, int desc_len);
+
+/*
+ * Unregister a system control device.
+ */
+void usb_hid_sysctrl_unregister(void);
+
+/*
+ * Feed a raw HID input report to the system control driver.
+ * Parses system control usages from the report and generates
+ * press/release events.
+ */
+void usb_hid_sysctrl_input(const uint8_t *report, int len);
+
+/*
+ * Check if a system control device is present and active.
+ */
+int usb_hid_sysctrl_present(void);
+
+/*
+ * Read the next pending system control event (non-blocking).
+ * Returns 1 if an event was read, 0 if queue empty.
+ * The event is written to @out.
+ */
+int usb_hid_sysctrl_get_event(struct hid_sysctrl_event *out);
+
+/*
+ * Poll the system control device interrupt endpoint(s).
+ * Called from usb_hid_poll().
+ */
+void usb_hid_sysctrl_poll(void);
+
+/*
+ * Set a callback function invoked on each system control key event.
+ * Set to NULL to disable.  Called with the event code and pressed
+ * flag from interrupt context.
+ */
+void usb_hid_sysctrl_set_callback(void (*cb)(uint16_t code, int pressed));
 
 #endif /* UHID_H */

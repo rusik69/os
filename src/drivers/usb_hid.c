@@ -104,12 +104,14 @@ static int      g_hid_initialized = 0;
 static int g_keyboard_present = 0;
 static int g_mouse_present = 0;
 static int g_consumer_present = 0;
+static int g_sysctrl_present = 0;
 static int g_has_interrupt = 0;
 
 /* Interface numbers for HID class requests */
 static uint8_t g_kbd_intf = 0;
 static uint8_t g_mouse_intf = 0;
 static uint8_t g_consumer_intf = 0;
+static uint8_t g_sysctrl_intf = 0;
 
 /* Current keyboard LED state via USB SET_REPORT */
 static uint8_t g_usb_led_state = 0;
@@ -118,6 +120,7 @@ static uint8_t g_usb_led_state = 0;
 static uint8_t g_int_in_ep = 0;
 static uint8_t g_mouse_int_in_ep = 0;
 static uint8_t g_consumer_int_in_ep = 0;
+static uint8_t g_sysctrl_int_in_ep = 0;
 
 /* Keyboard state */
 static struct hid_keyboard_report g_last_kbd_report;
@@ -543,6 +546,9 @@ int usb_hid_init(void) {
     /* Initialise consumer control subsystem */
     usb_hid_consumer_init();
 
+    /* Initialise system control subsystem */
+    usb_hid_sysctrl_init();
+
     /* Get EHCI operational base */
     g_op_base = ehci_get_op_base();
     if (!g_op_base) return -2;
@@ -607,14 +613,19 @@ int usb_hid_init(void) {
                     kprintf("[USB HID] Found mouse (if=%d)\n", if_num);
                 } else {
                     /* Non-boot HID interface — could be consumer,
-                     * multi-touch, joystick, etc.  Save as potential
-                     * consumer endpoint and let the report descriptor
+                     * multi-touch, joystick, system control, etc.  Save as
+                     * potential endpoint and let the report descriptor
                      * parser determine the actual type. */
                     if (!g_consumer_present) {
                         g_consumer_present = 1;
                         g_consumer_intf = if_num;
                         kprintf("[USB HID] Found non-boot HID interface "
                                 "(if=%d)\n", if_num);
+                    }
+                    /* Also flag as potential system control endpoint */
+                    if (!g_sysctrl_present) {
+                        g_sysctrl_present = 1;
+                        g_sysctrl_intf = if_num;
                     }
                 }
             }
@@ -634,6 +645,9 @@ int usb_hid_init(void) {
                     } else if (g_consumer_present && !g_consumer_int_in_ep) {
                         g_consumer_int_in_ep = ep_addr & 0x0F;
                         kprintf("[USB HID] Consumer int IN ep=0x%02x\n", ep_addr);
+                    } else if (g_sysctrl_present && !g_sysctrl_int_in_ep) {
+                        g_sysctrl_int_in_ep = ep_addr & 0x0F;
+                        kprintf("[USB HID] SysCtrl int IN ep=0x%02x\n", ep_addr);
                     }
                 }
             }
@@ -701,10 +715,11 @@ int usb_hid_init(void) {
     }
 
     g_hid_initialized = 1;
-    kprintf("[USB HID] Initialized: %s%s%s\n",
+    kprintf("[USB HID] Initialized: %s%s%s%s\n",
             g_keyboard_present ? "keyboard " : "",
             g_mouse_present ? "mouse " : "",
-            g_consumer_present ? "consumer " : "");
+            g_consumer_present ? "consumer " : "",
+            g_sysctrl_present ? "sysctrl " : "");
     return 0;
 }
 
@@ -717,6 +732,12 @@ void usb_hid_poll(void) {
     if (g_consumer_present && g_consumer_int_in_ep &&
         g_consumer_int_in_ep != g_int_in_ep) {
         usb_hid_consumer_poll();
+    }
+    /* Also poll system control endpoint if present and separate */
+    if (g_sysctrl_present && g_sysctrl_int_in_ep &&
+        g_sysctrl_int_in_ep != g_int_in_ep &&
+        g_sysctrl_int_in_ep != g_consumer_int_in_ep) {
+        usb_hid_sysctrl_poll();
     }
 }
 
@@ -1119,10 +1140,11 @@ int usb_hid_parse_report_legacy(void *dev, const void *report, size_t len)
     int rc = usb_hid_parse_report(dev, report, len, &desc);
     if (rc < 0) return rc;
 
-    /* Scan parsed items for keyboard/mouse/consumer detection */
+    /* Scan parsed items for keyboard/mouse/consumer/system control detection */
     int has_keyboard = 0;
     int has_mouse = 0;
     int has_consumer = 0;
+    int has_sysctrl = 0;
 
     for (int i = 0; i < desc.num_items; i++) {
         struct hid_report_item *ri = &desc.items[i];
@@ -1148,6 +1170,11 @@ int usb_hid_parse_report_legacy(void *dev, const void *report, size_t len)
         if (up == HID_PAGE_CONSUMER) {
             has_consumer = 1;
         }
+
+        /* Generic Desktop: System Control (usage=0x80) */
+        if (up == HID_PAGE_GENERIC_DESKTOP && us == HID_USAGE_SYSTEM_CONTROL) {
+            has_sysctrl = 1;
+        }
     }
 
     /* Also check collection-level usages (more reliable for consumer) */
@@ -1163,6 +1190,11 @@ int usb_hid_parse_report_legacy(void *dev, const void *report, size_t len)
             desc.collections[j].usage == HID_USAGE_CONSUMER_CONTROL) {
             has_consumer = 1;
         }
+        /* System Control application collection */
+        if (desc.collections[j].usage_page == HID_PAGE_GENERIC_DESKTOP &&
+            desc.collections[j].usage == HID_USAGE_SYSTEM_CONTROL) {
+            has_sysctrl = 1;
+        }
     }
 
     if (has_keyboard) {
@@ -1177,7 +1209,10 @@ int usb_hid_parse_report_legacy(void *dev, const void *report, size_t len)
         g_consumer_present = 1;
         kprintf("[usb_hid] Report parsed: consumer control detected\n");
     }
-    if (!has_keyboard && !has_mouse && !has_consumer) {
+    if (has_sysctrl) {
+        kprintf("[usb_hid] Report parsed: system control detected\n");
+    }
+    if (!has_keyboard && !has_mouse && !has_consumer && !has_sysctrl) {
         kprintf("[usb_hid] Report parsed: unknown HID device\n");
     }
 
@@ -1186,6 +1221,13 @@ int usb_hid_parse_report_legacy(void *dev, const void *report, size_t len)
         usb_hid_consumer_register(g_dev_addr, g_consumer_intf,
                                    g_consumer_int_in_ep,
                                    (const uint8_t *)report, len);
+    }
+
+    /* If system control detected, register with the sysctrl driver */
+    if (has_sysctrl) {
+        usb_hid_sysctrl_register(g_dev_addr, g_sysctrl_intf,
+                                  g_sysctrl_int_in_ep,
+                                  (const uint8_t *)report, len);
     }
 
     return 0;

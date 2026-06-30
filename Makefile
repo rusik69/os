@@ -182,6 +182,7 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/usb_msc.c \
          src/drivers/usb_hid_joy.c \
          src/drivers/usb_hid_consumer.c \
+         src/drivers/usb_hid_sysctrl.c \
          src/drivers/usb_printer.c \
          src/drivers/usb_typec.c \
          src/drivers/usb_debug.c \
