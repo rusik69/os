@@ -65,7 +65,131 @@ struct drm_get_cap {
     uint64_t value;
 };
 
-/* ── Mode setting structures ──────────────────────────────────── */
+/* ── Display mode structures ───────────────────────────────────── */
+
+#define DRM_DISPLAY_MODE_FLAG_PHSYNC    (1U << 0)
+#define DRM_DISPLAY_MODE_FLAG_NHSYNC    (1U << 1)
+#define DRM_DISPLAY_MODE_FLAG_PVSYNC    (1U << 2)
+#define DRM_DISPLAY_MODE_FLAG_NVSYNC    (1U << 3)
+#define DRM_DISPLAY_MODE_FLAG_INTERLACE (1U << 4)
+#define DRM_DISPLAY_MODE_FLAG_DBLSCAN   (1U << 5)
+#define DRM_DISPLAY_MODE_FLAG_CSYNC     (1U << 6)
+
+/* Type flags for display modes */
+#define DRM_MODE_TYPE_BUILTIN   (1U << 0)
+#define DRM_MODE_TYPE_PREFERRED (1U << 1)
+#define DRM_MODE_TYPE_DEFAULT   (1U << 2)
+#define DRM_MODE_TYPE_USERDEF   (1U << 3)
+#define DRM_MODE_TYPE_DRIVER    (1U << 4)
+
+/* Max display modes per connector */
+#define DRM_MAX_DISPLAY_MODES 64
+
+struct drm_display_mode {
+    int      in_use;
+    /* Horizontal timing (pixels) */
+    uint32_t clock;            /* pixel clock in kHz */
+    uint16_t hdisplay;         /* horizontal active pixels */
+    uint16_t hsync_start;      /* hdisplay + hfront_porch */
+    uint16_t hsync_end;        /* hdisplay + hfront_porch + hsync_width */
+    uint16_t htotal;           /* total horizontal pixels */
+    /* Vertical timing (lines) */
+    uint16_t vdisplay;         /* vertical active lines */
+    uint16_t vsync_start;      /* vdisplay + vfront_porch */
+    uint16_t vsync_end;        /* vdisplay + vfront_porch + vsync_width */
+    uint16_t vtotal;           /* total vertical lines */
+    uint32_t vrefresh;         /* vertical refresh rate in mHz */
+    uint32_t flags;            /* DRM_DISPLAY_MODE_FLAG_* */
+    uint32_t type;             /* DRM_MODE_TYPE_* */
+    char     name[32];         /* human-readable mode name */
+};
+
+/* ── CVT/EDID mode generation API ───────────────────────────── */
+
+/* Forward declarations */
+struct drm_connector;
+struct drm_device;
+struct drm_file;
+
+/*
+ * drm_display_init / drm_display_exit — Initialise display mode subsystem.
+ */
+int  drm_display_init(void);
+void drm_display_exit(void);
+
+/*
+ * drm_display_add_mode — Add a display mode to a connector's mode list.
+ * Returns 0 on success, negative errno on failure.
+ */
+int  drm_display_add_mode(struct drm_connector *conn,
+                          const struct drm_display_mode *mode);
+
+/*
+ * drm_display_clear_modes — Clear all modes from a connector.
+ */
+void drm_display_clear_modes(struct drm_connector *conn);
+
+/*
+ * drm_display_cvt_mode — Generate a CVT-RB (reduced blanking) mode
+ *                        for the given resolution and refresh rate.
+ *
+ * @width:   Horizontal active pixels (e.g. 1920)
+ * @height:  Vertical active lines (e.g. 1080)
+ * @refresh: Refresh rate in Hz (e.g. 60)
+ * @reduced: 1 == reduced blanking (CVT-RB), 0 == standard CVT
+ * @out:     Output mode structure filled with computed timings.
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int  drm_display_cvt_mode(uint32_t width, uint32_t height,
+                           uint32_t refresh, int reduced,
+                           struct drm_display_mode *out);
+
+/*
+ * drm_display_edid_parse — Parse a 128-byte EDID block and add all
+ *                          valid modes to the given connector.
+ *
+ * @conn:  Connector to add modes to.
+ * @edid:  Pointer to 128-byte EDID block data.
+ *
+ * Returns number of modes added, or negative errno on failure.
+ */
+int  drm_display_edid_parse(struct drm_connector *conn,
+                             const uint8_t *edid);
+
+/*
+ * drm_display_fill_modes — Populate a connector with standard modes
+ *                          (used when no EDID is available).
+ *
+ * Generates a set of common resolutions from VGA to 4K.
+ * Returns number of modes added.
+ */
+int  drm_display_fill_modes(struct drm_connector *conn,
+                             int max_width, int max_height);
+
+/* ── Mode setting structures (ioctl-facing) ──────────────────── */
+
+/*
+ * DRM userspace mode info — the structure returned via
+ * DRM_IOCTL_MODE_GETCONNECTOR for each display mode.
+ */
+struct drm_mode_modeinfo {
+    uint32_t clock;       /* pixel clock in kHz */
+    uint16_t hdisplay;
+    uint16_t hsync_start;
+    uint16_t hsync_end;
+    uint16_t htotal;
+    uint16_t hskew;
+    uint16_t vdisplay;
+    uint16_t vsync_start;
+    uint16_t vsync_end;
+    uint16_t vtotal;
+    uint16_t vscan;
+    uint32_t vrefresh;    /* vertical refresh rate in mHz */
+    uint32_t flags;       /* DRM_MODE_FLAG_* (same as DRM_DISPLAY_MODE_FLAG_*) */
+    uint32_t type;        /* DRM_MODE_TYPE_* (same as above) */
+    char     name[32];
+};
 
 struct drm_mode_card_res {
     uint64_t fb_id_ptr;
@@ -198,6 +322,9 @@ struct drm_connector {
     int      connected;
     int      mm_width;
     int      mm_height;
+    /* Display modes */
+    struct drm_display_mode modes[DRM_MAX_DISPLAY_MODES];
+    int                    num_modes;
 };
 
 struct drm_device {

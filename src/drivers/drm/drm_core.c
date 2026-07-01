@@ -195,14 +195,44 @@ static int drm_ioctl_mode_getconnector(struct drm_device *dev,
             conn->connection = dev->connectors[i].connected;
             conn->mm_width = dev->connectors[i].mm_width;
             conn->mm_height = dev->connectors[i].mm_height;
-            conn->count_modes = 0;
             conn->count_encoders = 0;
             conn->count_props = 0;
             conn->encoder_id = 0;
+
+            /* Copy display modes to userspace */
+            int num_modes = dev->connectors[i].num_modes;
+            conn->count_modes = (uint32_t)num_modes;
+
+            if (conn->modes_ptr && num_modes > 0) {
+                /* Write a drm_mode_modeinfo for each mode */
+                struct drm_mode_modeinfo *km =
+                    (struct drm_mode_modeinfo *)(uintptr_t)conn->modes_ptr;
+                for (int j = 0; j < num_modes && j < DRM_MAX_DISPLAY_MODES; j++) {
+                    struct drm_display_mode *src = &dev->connectors[i].modes[j];
+                    if (!src->in_use)
+                        continue;
+                    km[j].clock    = src->clock;
+                    km[j].hdisplay = src->hdisplay;
+                    km[j].hsync_start = src->hsync_start;
+                    km[j].hsync_end   = src->hsync_end;
+                    km[j].htotal      = src->htotal;
+                    km[j].hskew       = 0;
+                    km[j].vdisplay    = src->vdisplay;
+                    km[j].vsync_start = src->vsync_start;
+                    km[j].vsync_end   = src->vsync_end;
+                    km[j].vtotal      = src->vtotal;
+                    km[j].vscan       = 0;
+                    km[j].vrefresh    = src->vrefresh;
+                    km[j].flags       = src->flags;
+                    km[j].type        = src->type;
+                    memcpy(km[j].name, src->name, 32);
+                }
+            }
+
             return 0;
         }
     }
-    return -1;
+    return -ENOENT;
 }
 
 static int drm_ioctl_addfb(struct drm_device *dev, struct drm_file *fp,
@@ -349,6 +379,7 @@ int drm_init(void)
 
     /* Initialise sub-systems */
     drm_atomic_init();
+    drm_display_init();
 
     kprintf("[DRM] core initialised\n");
     return 0;
@@ -357,6 +388,7 @@ int drm_init(void)
 void drm_exit(void)
 {
     drm_atomic_exit();
+    drm_display_exit();
 
     for (int i = 0; i < g_drm_device_count; i++) {
         if (g_drm_devices[i]) {
