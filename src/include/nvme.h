@@ -155,6 +155,51 @@ struct nvme_lba_format {
     uint8_t  rp;
 };
 
+/* ── NVMe Power Management (PS Profiles) ──────────────────────────── */
+
+/* Maximum number of power state descriptors per NVMe spec */
+#define NVME_MAX_POWER_STATES     32
+
+/* Power management feature identifiers */
+#define NVME_FEAT_POWER_MANAGEMENT              0x02
+#define NVME_FEAT_AUTO_POWER_STATE_TRANSITION   0x0C
+
+/* Offsets in Identify Controller data (4096-byte buffer) */
+#define NVME_ID_CTRL_NPSS_OFFSET        512   /* Number of Power States Supported (u8) */
+#define NVME_ID_CTRL_PSDESC_OFFSET      968   /* Power State Descriptors start at 0x3C8 */
+
+/* Power State Descriptor (32 bytes, one per supported power state).
+ * Array starts at offset 0x3C8 in Identify Controller data, 32 entries max. */
+struct nvme_power_state_desc {
+    uint16_t mp;              /* Maximum Power (centiwatts = 0.01 W).
+                               * Bit 15 = Non-Operational State (NOS). */
+    uint16_t reserved0;
+    uint32_t enlat;           /* Entry Latency (microseconds). 0xFFFFFFFF = unspecified. */
+    uint32_t exlat;           /* Exit Latency (microseconds).  0xFFFFFFFF = unspecified. */
+    uint8_t  rrt;             /* Relative Read Throughput (0 = best) */
+    uint8_t  rrl;             /* Relative Read Latency   (0 = best) */
+    uint8_t  rwt;             /* Relative Write Throughput (0 = best) */
+    uint8_t  rwl;             /* Relative Write Latency   (0 = best) */
+    uint16_t idle_power;      /* Bits [15:6] Idle Power (centiwatts or watts)
+                               * Bit  5    Idle Scale (0: centiwatts, 1: watts)
+                               * Bits [4:0] Idle Time (100 ms units) */
+    uint8_t  active_power_scale; /* Bits [6:5] AP Scale
+                                  *   (0: centiwatts, 1: watts)
+                                  * Bits [4:0] AP Time (100 ms units) */
+    uint8_t  active_power;       /* Bits [7]   AP Workload hint
+                                  * Bits [6:0] Active Power */
+    uint16_t reserved1;
+    uint8_t  reserved2[4];
+} __attribute__((packed));
+
+/* Autonomous Power State Transition (APST) entry (8 bytes) */
+struct nvme_apst_entry {
+    uint32_t idle_time;       /* Idle time prior to transition (ms).
+                               * 0 = no timeout transition from this condition. */
+    uint32_t idle_ps;         /* Power state to transition to (bits [4:0]).
+                               * Upper bits reserved. */
+} __attribute__((packed));
+
 /* Per-CPU I/O queue pair */
 struct nvme_io_queue {
     uint8_t   valid;
@@ -213,6 +258,11 @@ struct nvme_ctrl {
     /* Controller capabilities (Item 328: bio splitting) */
     uint8_t  mdts;           /* Maximum Data Transfer Size (log2 units of MPS) */
     uint8_t  mpsmin;         /* Minimum Memory Page Size (exponent, base 4096 = 0) */
+
+    /* Power state descriptors (cached from Identify Controller) */
+    uint8_t  npss;                                    /* Number of Power States Supported */
+    int      power_states_parsed;                      /* Non-zero once parsed */
+    struct nvme_power_state_desc power_states[32];     /* PS descriptors (max 32 per spec) */
 };
 
 /* API */
@@ -253,6 +303,34 @@ struct nvme_sanitize_status {
  * Fills in the provided nvme_sanitize_status structure with progress and
  * status information.  Returns 0 on success, negative errno on failure. */
 int  nvme_sanitize_get_status(struct nvme_sanitize_status *status);
+
+/* ── NVMe Power Management API (PS Profiles) ──────────────────────── */
+
+/* Get the number of power states supported by the controller.
+ * Returns 0 if power state info is not yet available (identify not run). */
+int  nvme_get_power_state_count(void);
+
+/* Get a power state descriptor by index (0..npss-1).
+ * Returns 0 on success, -EINVAL if index out of range. */
+int  nvme_get_power_state_desc(int ps_index, struct nvme_power_state_desc *desc);
+
+/* Transition the controller to a specific power state via Set Features (FID 0x02).
+ * @ps_index: power state number to transition to (0..npss-1).
+ * Returns 0 on success, negative errno on failure. */
+int  nvme_set_power_state(int ps_index);
+
+/* Get the current power state via Get Features (FID 0x02).
+ * Returns the current PS number (0..npss-1) on success, negative errno on failure. */
+int  nvme_get_current_power_state(void);
+
+/* Enable or disable Autonomous Power State Transition (APST, FID 0x0C).
+ * When enabling, an APST table with @nr_entries is provided.  Pass @table=NULL
+ * and @nr_entries=0 to disable APST.
+ * Returns 0 on success, negative errno on failure. */
+int  nvme_set_apst(int enable, struct nvme_apst_entry *table, int nr_entries);
+
+/* Print all power state descriptors to the console for diagnostics. */
+void nvme_print_power_states(void);
 
 /* I/O queue submit function (called from blockdev layer) */
 int nvme_submit_request(int ns_id, int is_write, uint64_t lba,

@@ -453,6 +453,33 @@ int nvme_submit_admin_cmd(struct nvme_sq_entry *cmd, struct nvme_cq_entry *cqe)
     return -EINVAL;
 }
 
+/* ── Parse power state descriptors from identify controller data ──── */
+
+/** Parse NPSS and power state descriptors from raw Identify Controller data.
+ *  Called from nvme_identify_ctrl() after a successful Identify command.
+ *  @id_ctrl_data  Pointer to the 4096-byte Identify Controller data buffer. */
+static void nvme_parse_power_states(const void *id_ctrl_data)
+{
+    const uint8_t *data = (const uint8_t *)id_ctrl_data;
+    uint8_t npss;
+
+    npss = data[NVME_ID_CTRL_NPSS_OFFSET];
+    if (npss > NVME_MAX_POWER_STATES)
+        npss = NVME_MAX_POWER_STATES;
+
+    g_nvme_ctrl.npss = npss;
+
+    for (int i = 0; i < (int)npss; i++) {
+        const struct nvme_power_state_desc *src =
+            (const struct nvme_power_state_desc *)
+                (data + NVME_ID_CTRL_PSDESC_OFFSET + i * (int)sizeof(struct nvme_power_state_desc));
+        memcpy(&g_nvme_ctrl.power_states[i], src,
+               sizeof(struct nvme_power_state_desc));
+    }
+
+    g_nvme_ctrl.power_states_parsed = 1;
+}
+
 /* ── Identify controller ──────────────────────────────────────────── */
 
 int nvme_identify_ctrl(struct nvme_identify_ctrl *id) {
@@ -482,6 +509,9 @@ int nvme_identify_ctrl(struct nvme_identify_ctrl *id) {
         g_nvme_ctrl.nn = id->nn;
         g_nvme_ctrl.sq_entry_size = 1U << (id->sqes & 0x0F);
         g_nvme_ctrl.cq_entry_size = 1U << ((id->cqes >> 4) & 0x0F);
+
+        /* Parse power state descriptors from raw identify data */
+        nvme_parse_power_states(data_virt);
     } else {
         kprintf("[NVME] Identify controller command failed\n");
     }
@@ -1406,6 +1436,194 @@ void nvme_exit(void)
     g_nvme_init_done = 0;
 
     kprintf("[NVME] Driver shut down\n");
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  Power Management API (PS Profiles)
+ *
+ *  Implements NVMe power management via Get/Set Features (FID 0x02)
+ *  and Autonomous Power State Transition (FID 0x0C).
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Get number of supported power states ──────────────────────────── */
+
+int nvme_get_power_state_count(void)
+{
+    if (!g_nvme_ctrl.present || !g_nvme_ctrl.power_states_parsed)
+        return 0;
+    return (int)g_nvme_ctrl.npss;
+}
+
+/* ── Get a power state descriptor by index ─────────────────────────── */
+
+int nvme_get_power_state_desc(int ps_index, struct nvme_power_state_desc *desc)
+{
+    if (!g_nvme_ctrl.present || !g_nvme_ctrl.power_states_parsed || !desc)
+        return -EINVAL;
+    if (ps_index < 0 || ps_index >= (int)g_nvme_ctrl.npss)
+        return -EINVAL;
+    memcpy(desc, &g_nvme_ctrl.power_states[ps_index],
+           sizeof(struct nvme_power_state_desc));
+    return 0;
+}
+
+/* ── Transition to a specific power state via Set Features (FID 0x02) ── */
+
+int nvme_set_power_state(int ps_index)
+{
+    if (!g_nvme_ctrl.present || !g_nvme_ctrl.power_states_parsed)
+        return -EIO;
+    if (ps_index < 0 || ps_index >= (int)g_nvme_ctrl.npss)
+        return -EINVAL;
+
+    struct nvme_sq_entry cmd;
+    struct nvme_cq_entry cqe;
+    memset(&cmd, 0, sizeof(cmd));
+    memset(&cqe, 0, sizeof(cqe));
+
+    cmd.cdw0 = NVME_ADMIN_SET_FEATURES;
+    cmd.nsid = 0;
+    cmd.prp1 = 0;                               /* No data transfer */
+    cmd.cdw10 = NVME_FEAT_POWER_MANAGEMENT;     /* Feature Identifier */
+    cmd.cdw11 = (uint32_t)(ps_index & 0x1F);    /* Bits [4:0] = PS number */
+
+    int ret = nvme_submit_admin_cmd(&cmd, &cqe);
+    if (ret == 0) {
+        uint16_t status = cqe.status;
+        if (status & 0x0001)
+            return -EIO;
+        kprintf("[NVME] Power state transition to PS%d requested\n", ps_index);
+        return 0;
+    }
+    return ret;
+}
+
+/* ── Get current power state via Get Features (FID 0x02) ────────────── */
+
+int nvme_get_current_power_state(void)
+{
+    if (!g_nvme_ctrl.present)
+        return -EIO;
+
+    struct nvme_sq_entry cmd;
+    struct nvme_cq_entry cqe;
+    memset(&cmd, 0, sizeof(cmd));
+    memset(&cqe, 0, sizeof(cqe));
+
+    cmd.cdw0 = NVME_ADMIN_GET_FEATURES;
+    cmd.nsid = 0;
+    cmd.prp1 = 0;                               /* No data transfer */
+    cmd.cdw10 = NVME_FEAT_POWER_MANAGEMENT;     /* Feature Identifier */
+    cmd.cdw11 = 0;                               /* SEL = 0 (current value) */
+
+    int ret = nvme_submit_admin_cmd(&cmd, &cqe);
+    if (ret == 0) {
+        uint16_t status = cqe.status;
+        if (status & 0x0001)
+            return -EIO;
+        /* Current power state number is in bits [4:0] of cdw0 */
+        return (int)(cqe.cdw0 & 0x1F);
+    }
+    return ret;
+}
+
+/* ── Enable/disable Autonomous Power State Transition (FID 0x0C) ────── */
+
+int nvme_set_apst(int enable, struct nvme_apst_entry *table, int nr_entries)
+{
+    if (!g_nvme_ctrl.present)
+        return -EIO;
+
+    struct nvme_sq_entry cmd;
+    struct nvme_cq_entry cqe;
+    memset(&cmd, 0, sizeof(cmd));
+    memset(&cqe, 0, sizeof(cqe));
+
+    cmd.cdw0 = NVME_ADMIN_SET_FEATURES;
+    cmd.nsid = 0;
+    cmd.cdw10 = NVME_FEAT_AUTO_POWER_STATE_TRANSITION;
+
+    if (enable && table && nr_entries > 0) {
+        /* Allocate a page for the APST table (max 32 × 8 bytes = 256 bytes) */
+        uint64_t data_frame = pmm_alloc_frame();
+        if (unlikely(!data_frame))
+            return -ENOMEM;
+
+        uint64_t data_phys = data_frame * 4096;
+        struct nvme_apst_entry *apst =
+            (struct nvme_apst_entry *)PHYS_TO_VIRT((void*)(uintptr_t)data_phys);
+        memset(apst, 0, 4096);
+
+        int n = nr_entries < 32 ? nr_entries : 32;
+        for (int i = 0; i < n; i++)
+            apst[i] = table[i];
+
+        __sync_synchronize();
+
+        cmd.prp1 = data_phys;
+        cmd.cdw11 = 1;          /* APSTE = 1 (enable) */
+
+        int ret = nvme_submit_admin_cmd(&cmd, &cqe);
+        pmm_free_frame(data_frame);
+
+        if (ret == 0) {
+            kprintf("[NVME] APST enabled (%d entries)\n", n);
+            return 0;
+        }
+        return ret;
+    }
+
+    /* Disable APST — no data transfer needed */
+    cmd.prp1 = 0;
+    cmd.cdw11 = 0;              /* APSTE = 0 (disable) */
+
+    int ret = nvme_submit_admin_cmd(&cmd, &cqe);
+    if (ret == 0) {
+        kprintf("[NVME] APST disabled\n");
+        return 0;
+    }
+    return ret;
+}
+
+/* ── Print all power state descriptors for diagnostics ──────────────── */
+
+void nvme_print_power_states(void)
+{
+    if (!g_nvme_ctrl.present || !g_nvme_ctrl.power_states_parsed) {
+        kprintf("NVMe: Power states not available\n");
+        return;
+    }
+
+    kprintf("NVMe Power States (%d supported):\n", g_nvme_ctrl.npss);
+    for (int i = 0; i < (int)g_nvme_ctrl.npss; i++) {
+        const struct nvme_power_state_desc *ps = &g_nvme_ctrl.power_states[i];
+        int non_op = (ps->mp & 0x8000) ? 1 : 0;
+        uint16_t mp_mw = (uint16_t)(ps->mp & 0x7FFF);  /* Max Power in centiwatts */
+
+        kprintf("  PS%2d: %s  max_pwr=%u.%02uW  enlat=%uus  exlat=%uus  "
+                "rrt=%u rrl=%u rwt=%u rwl=%u\n",
+                i,
+                non_op ? "NON-OP" : "ACTIVE",
+                (unsigned)(mp_mw / 100), (unsigned)(mp_mw % 100),
+                ps->enlat, ps->exlat,
+                (unsigned)ps->rrt, (unsigned)ps->rrl,
+                (unsigned)ps->rwt, (unsigned)ps->rwl);
+
+        /* Idle power information */
+        if (ps->idle_power & 0x0020) {
+            /* Scale = watts */
+            uint16_t idle_mw = (uint16_t)((ps->idle_power >> 6) * 100);
+            unsigned idle_time = (unsigned)(ps->idle_power & 0x1F) * 100; /* ms */
+            kprintf("       idle_pwr=%u.%02uW  idle_time=%ums\n",
+                    idle_mw / 100, idle_mw % 100, idle_time);
+        } else if (ps->idle_power & 0xFC00) {
+            /* Scale = centiwatts */
+            unsigned idle_cmw = (unsigned)(ps->idle_power >> 6);
+            unsigned idle_time = (unsigned)(ps->idle_power & 0x1F) * 100; /* ms */
+            kprintf("       idle_pwr=%u.%02uW  idle_time=%ums\n",
+                    idle_cmw / 100, idle_cmw % 100, idle_time);
+        }
+    }
 }
 
 /* ── Module entry/exit points ─────────────────────────────────────── */
