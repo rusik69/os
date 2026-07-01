@@ -189,6 +189,7 @@ struct virtio_net_rss_config {
 #define VIRTIO_BLK_F_DISCARD        (1u << 12) /* discard command */
 #define VIRTIO_BLK_F_WRITE_ZEROES   (1u << 13) /* write zeroes command */
 #define VIRTIO_BLK_F_MQ             (1u << 14) /* multi-queue (virtio 1.1+) */
+#define VIRTIO_BLK_F_LIFETIME       (1u << 17) /* life-time fields in config */
 
 /* ── Feature bits / name table for human-readable diagnostics ── */
 #define VIRTIO_FEATURE_NAME(f)  (f & 1u) /* sentinel: caller must mask bit */
@@ -241,6 +242,7 @@ static const struct virtio_feature_entry virtio_blk_features[] = {
     VIRTIO_FEATURE(VIRTIO_BLK_F_DISCARD),
     VIRTIO_FEATURE(VIRTIO_BLK_F_WRITE_ZEROES),
     VIRTIO_FEATURE(VIRTIO_BLK_F_MQ),
+    VIRTIO_FEATURE(VIRTIO_BLK_F_LIFETIME),
     { .bit = 0, .name = NULL }
 };
 

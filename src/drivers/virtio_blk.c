@@ -32,6 +32,36 @@
 #define VIRTIO_BLK_CAPACITY_LO  0x14
 #define VIRTIO_BLK_CAPACITY_HI  0x18
 
+/* Extended config offsets (legacy PCI, after capacity at 0x14):
+ * capacity(8) @ 0x14-0x1B, size_max(4) @ 0x1C, seg_max(4) @ 0x20,
+ * geometry(4) @ 0x24, blk_size(4) @ 0x28, topology(8) @ 0x2C,
+ * writeback(1) @ 0x34, unused0(1) @ 0x35, num_queues(2) @ 0x36,
+ * max_discard_sectors(4) @ 0x38, max_discard_seg(4) @ 0x3C,
+ * discard_sector_alignment(4) @ 0x40, max_write_zeroes_sectors(4) @ 0x44,
+ * max_write_zeroes_seg(4) @ 0x48, write_zeroes_may_unmap(1) @ 0x4C,
+ * unused1(3) @ 0x4D, max_lifetime_discard_sectors(4) @ 0x50,
+ * max_segment_lifetime(4) @ 0x54, max_total_lifetime(4) @ 0x58,
+ * iops_max(4) @ 0x5C, iops_min(4) @ 0x60, iops_wr_max(4) @ 0x64,
+ * iops_wr_min(4) @ 0x68
+ */
+#define VIRTIO_BLK_CFG_SIZE_MAX         0x1C
+#define VIRTIO_BLK_CFG_SEG_MAX          0x20
+#define VIRTIO_BLK_CFG_BLK_SIZE         0x28
+#define VIRTIO_BLK_CFG_NUM_QUEUES       0x36
+#define VIRTIO_BLK_CFG_MAX_DISCARD      0x38
+#define VIRTIO_BLK_CFG_MAX_DISCARD_SEG  0x3C
+#define VIRTIO_BLK_CFG_DISCARD_ALIGN    0x40
+#define VIRTIO_BLK_CFG_MAX_WZ           0x44
+#define VIRTIO_BLK_CFG_MAX_WZ_SEG       0x48
+#define VIRTIO_BLK_CFG_WZ_UNMAP         0x4C
+#define VIRTIO_BLK_CFG_MAX_LIFE_DISCARD 0x50
+#define VIRTIO_BLK_CFG_MAX_SEG_LIFE     0x54
+#define VIRTIO_BLK_CFG_MAX_TOTAL_LIFE   0x58
+#define VIRTIO_BLK_CFG_IOPS_MAX         0x5C
+#define VIRTIO_BLK_CFG_IOPS_MIN         0x60
+#define VIRTIO_BLK_CFG_IOPS_WR_MAX      0x64
+#define VIRTIO_BLK_CFG_IOPS_WR_MIN      0x68
+
 /* Maximum number of virtqueues we support (must be <= device max_queues) */
 #define VBLK_MAX_QUEUES        8
 /* Size of each virtqueue (power of 2) */
@@ -56,7 +86,8 @@
 /* Features the driver supports */
 #define VBLK_SUPPORTED_FEATURES (VIRTIO_BLK_F_MQ | \
                                  VIRTIO_BLK_F_DISCARD | \
-                                 VIRTIO_BLK_F_WRITE_ZEROES)
+                                 VIRTIO_BLK_F_WRITE_ZEROES | \
+                                 VIRTIO_BLK_F_LIFETIME)
 /* Features the driver REQUIRES from the device */
 #define VBLK_REQUIRED_FEATURES  0u
 
@@ -135,6 +166,21 @@ static int            vblk_num_cpus = 1;  /* detected CPU count */
 
 /* Per-queue state — indexed by queue_idx (0..num_qs-1) */
 static struct vblk_queue vblk_queues[VBLK_MAX_QUEUES];
+
+/* Extended config values (life-time / IOPS) */
+static uint32_t vblk_max_discard_sectors;
+static uint32_t vblk_max_discard_seg;
+static uint32_t vblk_discard_sector_alignment;
+static uint32_t vblk_max_write_zeroes_sectors;
+static uint32_t vblk_max_write_zeroes_seg;
+static uint8_t  vblk_write_zeroes_may_unmap;
+static uint32_t vblk_max_lifetime_discard_sectors;
+static uint32_t vblk_max_segment_lifetime;
+static uint32_t vblk_max_total_lifetime;
+static uint32_t vblk_iops_max;
+static uint32_t vblk_iops_min;
+static uint32_t vblk_iops_wr_max;
+static uint32_t vblk_iops_wr_min;
 
 /* ── I/O port helpers ───────────────────────────────────────────── */
 static inline void vb_outb(uint8_t off, uint8_t v)  { outb(vblk_iobase + off, v); }
@@ -246,6 +292,21 @@ int __init virtio_blk_init(void) {
     uint64_t cap_hi = vb_inl(VIRTIO_BLK_CAPACITY_HI);
     vblk_sectors = (cap_hi << 32) | cap_lo;
 
+    /* Read extended config values (life-time / IOPS) */
+    vblk_max_discard_sectors        = vb_inl(VIRTIO_BLK_CFG_MAX_DISCARD);
+    vblk_max_discard_seg            = vb_inl(VIRTIO_BLK_CFG_MAX_DISCARD_SEG);
+    vblk_discard_sector_alignment   = vb_inl(VIRTIO_BLK_CFG_DISCARD_ALIGN);
+    vblk_max_write_zeroes_sectors   = vb_inl(VIRTIO_BLK_CFG_MAX_WZ);
+    vblk_max_write_zeroes_seg       = vb_inl(VIRTIO_BLK_CFG_MAX_WZ_SEG);
+    vblk_write_zeroes_may_unmap     = vb_inb(VIRTIO_BLK_CFG_WZ_UNMAP);
+    vblk_max_lifetime_discard_sectors = vb_inl(VIRTIO_BLK_CFG_MAX_LIFE_DISCARD);
+    vblk_max_segment_lifetime       = vb_inl(VIRTIO_BLK_CFG_MAX_SEG_LIFE);
+    vblk_max_total_lifetime         = vb_inl(VIRTIO_BLK_CFG_MAX_TOTAL_LIFE);
+    vblk_iops_max                   = vb_inl(VIRTIO_BLK_CFG_IOPS_MAX);
+    vblk_iops_min                   = vb_inl(VIRTIO_BLK_CFG_IOPS_MIN);
+    vblk_iops_wr_max                = vb_inl(VIRTIO_BLK_CFG_IOPS_WR_MAX);
+    vblk_iops_wr_min                = vb_inl(VIRTIO_BLK_CFG_IOPS_WR_MIN);
+
     /* Detect number of CPUs */
     vblk_num_cpus = smp_get_cpu_count();
     if (vblk_num_cpus < 1) vblk_num_cpus = 1;
@@ -281,9 +342,20 @@ int __init virtio_blk_init(void) {
     vblk_present = 1;
 
     kprintf("virtio-blk: initialized (iobase=0x%x, sectors=%llu, "
-            "queues=%d, cpus=%d)\n",
+            "queues=%d, cpus=%d, discard=%uK, wz=%uK, "
+            "life_discard=%u, seg_life=%u, total_life=%u, "
+            "iops_rw=%u/%u/%u/%u)\n",
             (unsigned int)vblk_iobase, vblk_sectors,
-            vblk_num_qs, vblk_num_cpus);
+            vblk_num_qs, vblk_num_cpus,
+            (unsigned int)(vblk_max_discard_sectors * 512 / 1024),
+            (unsigned int)(vblk_max_write_zeroes_sectors * 512 / 1024),
+            (unsigned int)vblk_max_lifetime_discard_sectors,
+            (unsigned int)vblk_max_segment_lifetime,
+            (unsigned int)vblk_max_total_lifetime,
+            (unsigned int)vblk_iops_min,
+            (unsigned int)vblk_iops_max,
+            (unsigned int)vblk_iops_wr_min,
+            (unsigned int)vblk_iops_wr_max);
     return 0;
 }
 
@@ -468,6 +540,59 @@ int virtio_blk_write_zeroes_sectors(uint64_t lba, uint32_t count) {
 
 uint64_t virtio_blk_sector_count(void) {
     return vblk_sectors;
+}
+
+/* ── Life-time / IOPS config getters ─────────────────────────────── */
+uint32_t virtio_blk_get_max_discard_sectors(void) {
+    return vblk_max_discard_sectors;
+}
+
+uint32_t virtio_blk_get_max_discard_seg(void) {
+    return vblk_max_discard_seg;
+}
+
+uint32_t virtio_blk_get_discard_sector_alignment(void) {
+    return vblk_discard_sector_alignment;
+}
+
+uint32_t virtio_blk_get_max_write_zeroes_sectors(void) {
+    return vblk_max_write_zeroes_sectors;
+}
+
+uint32_t virtio_blk_get_max_write_zeroes_seg(void) {
+    return vblk_max_write_zeroes_seg;
+}
+
+uint8_t virtio_blk_get_write_zeroes_may_unmap(void) {
+    return vblk_write_zeroes_may_unmap;
+}
+
+uint32_t virtio_blk_get_max_lifetime_discard_sectors(void) {
+    return vblk_max_lifetime_discard_sectors;
+}
+
+uint32_t virtio_blk_get_max_segment_lifetime(void) {
+    return vblk_max_segment_lifetime;
+}
+
+uint32_t virtio_blk_get_max_total_lifetime(void) {
+    return vblk_max_total_lifetime;
+}
+
+uint32_t virtio_blk_get_iops_max(void) {
+    return vblk_iops_max;
+}
+
+uint32_t virtio_blk_get_iops_min(void) {
+    return vblk_iops_min;
+}
+
+uint32_t virtio_blk_get_iops_wr_max(void) {
+    return vblk_iops_wr_max;
+}
+
+uint32_t virtio_blk_get_iops_wr_min(void) {
+    return vblk_iops_wr_min;
 }
 
 /* ── Block-device layer submit function ──────────────────────────
