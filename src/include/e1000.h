@@ -70,4 +70,68 @@ int e1000_rss_set_reta(const uint8_t table[128]);
 int e1000_rss_get_queue_hash(const uint8_t *buf, uint16_t len,
                              uint32_t *hash_out);
 
+/* ── Interrupt Moderation API ────────────────────────────────────── */
+
+/* ITR rate presets (written to ITR register as interval in 256ns units).
+ * ITR_OFF:    0      — no throttling (interrupt per packet)
+ * ITR_HIGH:   122    — ~31 us interval  (~32,000 int/s, high throughput)
+ * ITR_BALANCED: 488  — ~125 us interval (~8,000 int/s, balanced)
+ * ITR_LOW:    1953   — ~500 us interval (~2,000 int/s, low CPU)
+ * ITR_MINIMAL: 8000  — ~2 ms interval   (~500 int/s, very low CPU)
+ */
+#define E1000_ITR_OFF       0
+#define E1000_ITR_HIGH      122
+#define E1000_ITR_BALANCED  488
+#define E1000_ITR_LOW       1953
+#define E1000_ITR_MINIMAL   8000
+
+/* Interrupt moderation feature flags */
+#define E1000_INTR_MOD_ITR      (1U << 0)  /* Global ITR available */
+#define E1000_INTR_MOD_EITR     (1U << 1)  /* Per-queue EITR available (82576+) */
+#define E1000_INTR_MOD_RDTR     (1U << 2)  /* RDTR/RADV available */
+#define E1000_INTR_MOD_TIDV     (1U << 3)  /* TIDV/TADV available */
+#define E1000_INTR_MOD_ADAPTIVE (1U << 4)  /* Adaptive mode available */
+
+/* Interrupt moderation capabilities and current settings per queue */
+struct e1000_intr_mod_config {
+    uint32_t capabilities;  /* Bitmask of E1000_INTR_MOD_* */
+    uint32_t itr_value;     /* Current ITR value (queue 0 = global ITR, others = EITR) */
+    uint32_t rdtr;          /* RX Delay Timer (us) */
+    uint32_t radv;          /* RX Absolute Delay (us) */
+    uint32_t tidv;          /* TX Interrupt Delay Value (us) */
+    uint32_t tadv;          /* TX Absolute Delay Value (us) */
+};
+
+/* Get interrupt moderation capabilities and current settings.
+ * @config: output struct to fill.
+ * Returns 0 on success, negative errno if NIC not present. */
+int e1000_intr_mod_get_config(struct e1000_intr_mod_config *config);
+
+/* Set global ITR value.
+ * @value: ITR interval in 256ns units (0 = off, max 0xFFFF).
+ * Returns 0 on success, negative errno on error. */
+int e1000_intr_mod_set_global_itr(uint32_t value);
+
+/* Get current global ITR value.
+ * Returns the current ITR value, or 0 if NIC not present. */
+uint32_t e1000_intr_mod_get_global_itr(void);
+
+/* Set per-queue EITR value (meaningful on 82576+ with per-queue EITR).
+ * @q: queue index (0..num_queues-1).
+ * @value: EITR interval in 256ns units.
+ * Returns 0 on success, negative errno if queue invalid or EITR not supported. */
+int e1000_intr_mod_set_queue_itr(int q, uint32_t value);
+
+/* Enable or disable adaptive interrupt moderation.
+ * @enable: non-zero to enable, 0 to disable.
+ * Returns 0 on success, negative errno on error. */
+int e1000_intr_mod_set_adaptive(int enable);
+
+/* Check whether adaptive interrupt moderation is currently enabled.
+ * Returns 1 if enabled, 0 otherwise. */
+int e1000_intr_mod_is_adaptive(void);
+
+/* Dump current interrupt moderation settings to console (debug). */
+void e1000_intr_mod_dump(void);
+
 #endif

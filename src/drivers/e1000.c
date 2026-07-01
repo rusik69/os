@@ -31,7 +31,38 @@
 #define REG_RAH        0x5404  /* Receive Address High */
 #define REG_MTA        0x5200  /* Multicast Table Array */
 
-/* Multi-queue / RSS registers (82574 specific) */
+/* ── Interrupt moderation registers ───────────────────────────────── */
+/* RDTR  — Receive Delay Timer (per-queue): delays RX interrupt generation
+ *         after receiving a packet, allowing more packets to arrive and
+ *         be coalesced into a single interrupt.
+ *         Value in microseconds (82540EM: 1-65535, 0 = no delay).
+ * RADV  — Receive Absolute Delay (per-queue): absolute maximum time
+ *         (microseconds) before an RX interrupt is generated, regardless
+ *         of RDTR (prevents starvation on low-traffic flows).
+ * TIDV  — Transmit Interrupt Delay Value (per-queue): delays TX completion
+ *         interrupt after a descriptor is transmitted.
+ * TADV  — Transmit Absolute Delay (per-queue): absolute maximum time
+ *         before a TX completion interrupt fires.
+ *
+ * EITR  — Extended Interrupt Throttling Rate (82576+, per-queue).
+ *         82576 has per-queue EITR registers that override the global
+ *         ITR for each individual queue, enabling fine-grained per-queue
+ *         interrupt moderation.  Same encoding as ITR (256 ns units).
+ */
+#define REG_RDTR(q)  (0x2820 + (q) * 0x400)  /* per-queue RX delay timer */
+#define REG_RADV(q)  (0x282C + (q) * 0x400)  /* per-queue RX absolute delay */
+#define REG_TIDV(q)  (0x3820 + (q) * 0x400)  /* per-queue TX delay timer */
+#define REG_TADV(q)  (0x382C + (q) * 0x400)  /* per-queue TX absolute delay */
+#define REG_EITR(q)  (0x01680 + (q) * 4)     /* per-queue EITR (82576) */
+
+/* Default interrupt moderation values */
+#define INTR_RDTR_DEFAULT  100    /* 100 us RX delay */
+#define INTR_RADV_DEFAULT  500    /* 500 us absolute RX max */
+#define INTR_TIDV_DEFAULT  250    /* 250 us TX delay */
+#define INTR_TADV_DEFAULT  1000   /* 1 ms absolute TX max */
+#define INTR_EITR_DEFAULT  ITR_BALANCED  /* same as global ITR */
+
+/* ── Multi-queue / RSS registers (82574 specific) */
 #define REG_MRQC       0x5818  /* Multiple Receive Queues Command */
 #define REG_RSSRK(n)   (0x5C80 + (n) * 4)  /* RSS Random Key (4 dwords) */
 #define REG_RETA(i)    (0x5C00 + (i) * 4)  /* RSS Redirection Table (32 dwords, 4 entries per dword) */
@@ -175,6 +206,15 @@ struct e1000_queue {
     int tx_cur;
     struct e1000_queue_stats stats;   /* per-queue statistics */
     int irq_vector;                    /* MSI-X vector (-1 if legacy) */
+
+    /* ── Per-queue interrupt moderation state ───────────────────── */
+    uint32_t itr_value;    /* Current ITR/EITR value for this queue */
+    uint32_t rdtr;         /* RX Delay Timer (us) */
+    uint32_t radv;         /* RX Absolute Delay (us) */
+    uint32_t tidv;         /* TX Interrupt Delay Value (us) */
+    uint32_t tadv;         /* TX Absolute Delay Value (us) */
+    uint32_t itr_pkt_count; /* Packet count for adaptive ITR sampling */
+    uint64_t itr_last_tick; /* Last RDTSC tick for adaptive ITR */
 };
 
 /* ── Global state ──────────────────────────────────────────────────── */
@@ -863,6 +903,216 @@ static void e1000_itr_adaptive(void) {
     itr_pkt_count = 0;
 }
 
+/* ── Per-queue interrupt moderation initialization ────────────────── */
+
+/* e1000_intr_mod_queue_init - Initialize per-queue interrupt moderation
+ * for a single queue.  Programs RDTR, RADV, TIDV, TADV registers and,
+ * on 82576, the per-queue EITR.
+ * @q: queue index to initialise.
+ *
+ * On 82540EM, only queue 0 RDTR/RADV/TIDV/TADV registers exist.
+ * On 82574L, queues 0 and 1 have these registers.
+ * On 82576, all 4 queues have these registers plus per-queue EITR. */
+static void e1000_intr_mod_queue_init(int q)
+{
+    struct e1000_queue *qp = &queues[q];
+
+    if (!nic_present || q >= num_queues)
+        return;
+
+    /* Initialize per-queue moderation state with defaults */
+    qp->itr_value = itr_current;
+    qp->rdtr      = INTR_RDTR_DEFAULT;
+    qp->radv      = INTR_RADV_DEFAULT;
+    qp->tidv      = INTR_TIDV_DEFAULT;
+    qp->tadv      = INTR_TADV_DEFAULT;
+
+    /* Only program RDTR/RADV on hardware that supports them.
+     * 82540EM supports these only for queue 0.
+     * 82574L supports them for queues 0 and 1.
+     * 82576 supports them for all queues. */
+    if (q == 0 || is_82574 || is_82576) {
+        e1000_write(REG_RDTR(q), qp->rdtr);
+        e1000_write(REG_RADV(q), qp->radv);
+    }
+
+    /* Same for TIDV/TADV */
+    if (q == 0 || is_82574 || is_82576) {
+        e1000_write(REG_TIDV(q), qp->tidv);
+        e1000_write(REG_TADV(q), qp->tadv);
+    }
+
+    /* Program per-queue EITR on 82576 */
+    if (is_82576) {
+        e1000_write(REG_EITR(q), qp->itr_value);
+    }
+
+    kprintf("  e1000: queue %d intr_mod: ITR=%u RDTR=%u RADV=%u "
+            "TIDV=%u TADV=%u\n",
+            q, (unsigned)qp->itr_value,
+            (unsigned)qp->rdtr, (unsigned)qp->radv,
+            (unsigned)qp->tidv, (unsigned)qp->tadv);
+}
+
+/* e1000_intr_mod_init - Initialize interrupt moderation for all queues.
+ * Called during e1000_init() after per-queue RX/TX rings are set up
+ * and the global ITR has been configured. */
+static void e1000_intr_mod_init(void)
+{
+    if (!nic_present)
+        return;
+
+    kprintf("  e1000: initializing per-queue interrupt moderation"
+            " (%d queue(s))\n", num_queues);
+
+    for (int q = 0; q < num_queues; q++)
+        e1000_intr_mod_queue_init(q);
+
+    kprintf("  e1000: interrupt moderation enabled"
+            " (RDTR=%uus RADV=%uus TIDV=%uus TADV=%uus)\n",
+            (unsigned)INTR_RDTR_DEFAULT, (unsigned)INTR_RADV_DEFAULT,
+            (unsigned)INTR_TIDV_DEFAULT, (unsigned)INTR_TADV_DEFAULT);
+}
+
+/* ── Interrupt Moderation Public API ─────────────────────────────────── */
+
+/* e1000_intr_mod_get_config - Return capabilities and current settings. */
+int e1000_intr_mod_get_config(struct e1000_intr_mod_config *config)
+{
+    if (!config)
+        return -EINVAL;
+    if (!nic_present)
+        return -EIO;
+
+    memset(config, 0, sizeof(*config));
+
+    config->capabilities = E1000_INTR_MOD_ITR | E1000_INTR_MOD_RDTR
+                         | E1000_INTR_MOD_TIDV | E1000_INTR_MOD_ADAPTIVE;
+    if (is_82576)
+        config->capabilities |= E1000_INTR_MOD_EITR;
+
+    config->itr_value = itr_current;
+    config->rdtr      = INTR_RDTR_DEFAULT;
+    config->radv      = INTR_RADV_DEFAULT;
+    config->tidv      = INTR_TIDV_DEFAULT;
+    config->tadv      = INTR_TADV_DEFAULT;
+
+    return 0;
+}
+
+/* e1000_intr_mod_set_global_itr - Program the global ITR register.
+ * @value: interval in 256 ns units (0 = off, 0xFFFF = max).
+ *
+ * On 82576+, writes the same value to all per-queue EITR registers
+ * to maintain consistency. */
+int e1000_intr_mod_set_global_itr(uint32_t value)
+{
+    if (!nic_present)
+        return -EIO;
+
+    if (value > 0xFFFF)
+        value = 0xFFFF;
+
+    e1000_set_itr(value);
+
+    /* On 82576, also update per-queue EITR registers and state */
+    if (is_82576) {
+        for (int q = 0; q < num_queues; q++) {
+            e1000_write(REG_EITR(q), value);
+            queues[q].itr_value = value;
+        }
+    }
+
+    kprintf("[E1000] Global ITR set to %u (256ns units, ~%u int/s)\n",
+            (unsigned)value,
+            (unsigned)(1000000000ULL / ((uint64_t)value * 256ULL + 1)));
+    return 0;
+}
+
+/* e1000_intr_mod_get_global_itr - Return current global ITR value. */
+uint32_t e1000_intr_mod_get_global_itr(void)
+{
+    if (!nic_present)
+        return 0;
+    return itr_current;
+}
+
+/* e1000_intr_mod_set_queue_itr - Set per-queue EITR on 82576.
+ * @q: queue index.
+ * @value: EITR interval in 256 ns units. */
+int e1000_intr_mod_set_queue_itr(int q, uint32_t value)
+{
+    if (!nic_present)
+        return -EIO;
+    if (q < 0 || q >= num_queues)
+        return -EINVAL;
+    if (!is_82576)
+        return -EOPNOTSUPP;  /* per-queue EITR requires 82576 */
+
+    if (value > 0xFFFF)
+        value = 0xFFFF;
+
+    e1000_write(REG_EITR(q), value);
+    queues[q].itr_value = value;
+
+    kprintf("[E1000] Queue %d EITR set to %u (256ns units, ~%u int/s)\n",
+            q, (unsigned)value,
+            (unsigned)(1000000000ULL / ((uint64_t)value * 256ULL + 1)));
+    return 0;
+}
+
+/* e1000_intr_mod_set_adaptive - Enable or disable adaptive ITR. */
+int e1000_intr_mod_set_adaptive(int enable)
+{
+    if (!nic_present)
+        return -EIO;
+
+    itr_enabled = !!enable;
+    kprintf("[E1000] Adaptive interrupt moderation %s\n",
+            itr_enabled ? "enabled" : "disabled");
+    return 0;
+}
+
+/* e1000_intr_mod_is_adaptive - Return adaptive ITR state. */
+int e1000_intr_mod_is_adaptive(void)
+{
+    return itr_enabled ? 1 : 0;
+}
+
+/* e1000_intr_mod_dump - Log current interrupt moderation configuration. */
+void e1000_intr_mod_dump(void)
+{
+    if (!nic_present) {
+        kprintf("[E1000] NIC not present\n");
+        return;
+    }
+
+    kprintf("[E1000] Interrupt Moderation Configuration:\n");
+    kprintf("  Global ITR: %u (256ns units) ~%u int/s%s\n",
+            (unsigned)itr_current,
+            (unsigned)(1000000000ULL / ((uint64_t)itr_current * 256ULL + 1)),
+            itr_enabled ? " [adaptive]" : "");
+
+    if (is_82576) {
+        for (int q = 0; q < num_queues; q++) {
+            uint32_t eitr = e1000_read(REG_EITR(q));
+            kprintf("  Queue %d EITR: %u ~%u int/s\n",
+                    q, (unsigned)eitr,
+                    (unsigned)(1000000000ULL / ((uint64_t)eitr * 256ULL + 1)));
+        }
+    }
+
+    for (int q = 0; q < num_queues; q++) {
+        uint32_t rdtr = e1000_read(REG_RDTR(q));
+        uint32_t radv = e1000_read(REG_RADV(q));
+        uint32_t tidv = e1000_read(REG_TIDV(q));
+        uint32_t tadv = e1000_read(REG_TADV(q));
+        kprintf("  Queue %d: RDTR=%uus RADV=%uus TIDV=%uus TADV=%uus\n",
+                q, (unsigned)rdtr, (unsigned)radv,
+                (unsigned)tidv, (unsigned)tadv);
+    }
+}
+
 static void e1000_read_mac(void) {
     uint32_t ral = e1000_read(REG_RAL);
     uint32_t rah = e1000_read(REG_RAH);
@@ -980,6 +1230,13 @@ int e1000_init(void) {
     for (int q = 0; q < E1000_MAX_QUEUES; q++) {
         queues[q].irq_vector = -1;
         memset(&queues[q].stats, 0, sizeof(queues[q].stats));
+        queues[q].itr_value = 0;
+        queues[q].rdtr = 0;
+        queues[q].radv = 0;
+        queues[q].tidv = 0;
+        queues[q].tadv = 0;
+        queues[q].itr_pkt_count = 0;
+        queues[q].itr_last_tick = 0;
     }
 
     /* Copy default RSS key into runtime key */
@@ -1068,6 +1325,9 @@ int e1000_init(void) {
                 (unsigned)ITR_BALANCED,
                 (unsigned)(1000000000ULL / (ITR_BALANCED * 256ULL + 1)));
     }
+
+    /* Initialize per-queue interrupt moderation (RDTR, RADV, TIDV, TADV, EITR) */
+    e1000_intr_mod_init();
 
     /* Configure VLAN offloading (VME, VFTA, VET) */
     e1000_vlan_offload_init();
