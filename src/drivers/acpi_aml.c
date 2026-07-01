@@ -49,6 +49,10 @@
 #define AML_EXT_BANK_FIELD_OP   0x87
 
 /* Additional opcodes used in method execution */
+#define AML_IF_OP               0xA0    /* If(…) control flow */
+#define AML_ELSE_OP             0xA1    /* Else clause inside If */
+#define AML_WHILE_OP            0xA2    /* While(…) loop */
+#define AML_BREAK_OP            0xA3    /* Break from While loop */
 #define AML_RETURN_OP           0xA4    /* Return from method body */
 #define AML_ONES_OP             0xFF    /* Ones constant (all bits set) */
 
@@ -1190,6 +1194,7 @@ struct aml_exec_context {
 	struct aml_object  own_return;    /* Stack-allocated return buffer */
 	struct aml_object *return_value;  /* Points to return value */
 	int  has_returned;                /* Method has executed Return */
+	int  break_flag;                  /* Set by BreakOp, checked by While */
 	int  error;                       /* Execution error occurred */
 };
 
@@ -2356,6 +2361,237 @@ static int aml_exec_arith(struct aml_exec_context *ctx, uint8_t opcode)
 	return 0;
 }
 
+/* Forward declaration for aml_exec_one_term (used by control flow) */
+static uint32_t aml_exec_one_term(struct aml_exec_context *ctx);
+
+/* ── Control Flow Implementations ────────────────────────────────── */
+
+/*
+ * Execute an If/Else construct.
+ *
+ * Encoding: IfOp(0xA0) PkgLength Predicate TermList [ElseOp(0xA1) PkgLength TermList]
+ *
+ * If Predicate evaluates to non-zero, the Then TermList is executed.
+ * Otherwise, if an ElseOp follows, its TermList is executed.
+ *
+ * Returns 0 on success, -1 on error.
+ */
+static int aml_exec_if(struct aml_exec_context *ctx)
+{
+	uint32_t o = ctx->offset - 1;  /* Points to IfOp */
+	uint32_t pkg_bytes;
+	uint32_t pkg_len;
+	uint32_t body_start;
+	uint32_t body_end;
+	uint64_t predicate_val;
+	int predicate_true;
+	uint32_t walk_offset;
+
+	/* Decode PkgLength (ctx->offset points past IfOp byte) */
+	pkg_len = aml_decode_pkg_length(ctx->aml, ctx->aml_len,
+					ctx->offset, &pkg_bytes);
+	if (pkg_len == 0)
+		return -1;
+
+	body_start = ctx->offset + pkg_bytes;
+	body_end = body_start + pkg_len;
+	if (body_end > ctx->aml_len || body_start >= body_end)
+		return -1;
+
+	/* Parse Predicate (first element inside the body) */
+	ctx->offset = body_start;
+	predicate_val = aml_read_arith_operand(ctx);
+	if (ctx->error)
+		return -1;
+	predicate_true = (predicate_val != 0);
+
+	walk_offset = ctx->offset;
+
+	if (predicate_true) {
+		/* Execute the Then clause until ElseOp or end of body */
+		while (walk_offset < body_end) {
+			/* Check for ElseOp at the current level */
+			if (ctx->aml[walk_offset] == AML_ELSE_OP) {
+				/* Skip the ElseOp construct completely */
+				uint32_t else_pkg_bytes2;
+				uint32_t else_pkg_len2;
+
+				walk_offset++; /* skip ElseOp */
+				else_pkg_len2 = aml_decode_pkg_length(
+					ctx->aml, ctx->aml_len,
+					walk_offset, &else_pkg_bytes2);
+				if (else_pkg_len2 > 0)
+					walk_offset += else_pkg_bytes2 +
+						       else_pkg_len2;
+				if (walk_offset > body_end)
+					walk_offset = body_end;
+				break;
+			}
+
+			ctx->offset = walk_offset;
+			{
+				uint32_t consumed = aml_exec_one_term(ctx);
+
+				if (consumed == 0)
+					break;
+				walk_offset = ctx->offset;
+			}
+
+			/* Propagate break, return, and error conditions */
+			if (ctx->break_flag || ctx->has_returned ||
+			    ctx->error)
+				break;
+		}
+	} else {
+		/* Predicate is false: find ElseOp or skip everything */
+		while (walk_offset < body_end) {
+			if (ctx->aml[walk_offset] == AML_ELSE_OP) {
+				uint32_t else_pkg_bytes2;
+				uint32_t else_pkg_len2;
+				uint32_t else_body;
+				uint32_t else_end;
+
+				walk_offset++; /* skip ElseOp */
+				else_pkg_len2 = aml_decode_pkg_length(
+					ctx->aml, ctx->aml_len,
+					walk_offset, &else_pkg_bytes2);
+				if (else_pkg_len2 == 0)
+					break;
+
+				else_body = walk_offset + else_pkg_bytes2;
+				else_end = else_body + else_pkg_len2;
+				if (else_end > body_end)
+					else_end = body_end;
+
+				/* Execute the Else clause */
+				while (else_body < else_end) {
+					ctx->offset = else_body;
+					{
+						uint32_t consumed =
+							aml_exec_one_term(ctx);
+
+						if (consumed == 0 ||
+						    ctx->error ||
+						    ctx->has_returned ||
+						    ctx->break_flag)
+							break;
+						else_body = ctx->offset;
+					}
+				}
+				break;
+			}
+
+			/* Skip this term in the Then clause */
+			ctx->offset = walk_offset;
+			{
+				uint32_t consumed = aml_exec_one_term(ctx);
+
+				if (consumed == 0)
+					break;
+				walk_offset = ctx->offset;
+			}
+		}
+	}
+
+	/* Advance past the entire IfOp construct */
+	ctx->offset = o + 1 + pkg_bytes + pkg_len;
+	return ctx->error ? -1 : 0;
+}
+
+/*
+ * Execute a While loop construct.
+ *
+ * Encoding: WhileOp(0xA2) PkgLength Predicate TermList
+ *
+ * Repeatedly evaluates Predicate.  If non-zero, executes the TermList
+ * and loops.  Exits when Predicate evaluates to zero, a BreakOp is
+ * encountered, or a ReturnOp/error occurs.
+ *
+ * Returns 0 on success, -1 on error.
+ */
+static int aml_exec_while(struct aml_exec_context *ctx)
+{
+	uint32_t o = ctx->offset - 1;  /* Points to WhileOp */
+	uint32_t pkg_bytes;
+	uint32_t pkg_len;
+	uint32_t body_start;
+	uint32_t body_end;
+	uint32_t predicate_start;
+
+	/* Decode PkgLength */
+	pkg_len = aml_decode_pkg_length(ctx->aml, ctx->aml_len,
+					ctx->offset, &pkg_bytes);
+	if (pkg_len == 0)
+		return -1;
+
+	body_start = ctx->offset + pkg_bytes;
+	body_end = body_start + pkg_len;
+	if (body_end > ctx->aml_len || body_start >= body_end)
+		return -1;
+
+	/* Predicate is at the start of the body */
+	predicate_start = body_start;
+
+	/* Loop: evaluate predicate, execute body if true */
+	while (1) {
+		uint32_t after_predicate;
+
+		ctx->offset = predicate_start;
+		{
+			uint64_t predicate_val = aml_read_arith_operand(ctx);
+
+			if (ctx->error)
+				return -1;
+
+			/* Exit loop if predicate is false */
+			if (predicate_val == 0)
+				break;
+		}
+
+		after_predicate = ctx->offset;
+
+		/* Execute the TermList */
+		ctx->offset = after_predicate;
+		ctx->break_flag = 0;
+
+		while (ctx->offset < body_end &&
+		       !ctx->has_returned && !ctx->error && !ctx->break_flag) {
+			uint32_t consumed = aml_exec_one_term(ctx);
+
+			if (consumed == 0)
+				break;
+		}
+
+		/* BreakOp was encountered — exit the loop */
+		if (ctx->break_flag) {
+			ctx->break_flag = 0;
+			break;
+		}
+
+		/* Return or error exits the loop too */
+		if (ctx->has_returned || ctx->error)
+			break;
+	}
+
+	/* Advance past the entire WhileOp construct */
+	ctx->offset = o + 1 + pkg_bytes + pkg_len;
+	return ctx->error ? -1 : 0;
+}
+
+/*
+ * Execute a BreakOp (0xA3).
+ *
+ * Sets the break_flag in the execution context, which causes the
+ * innermost While loop to exit.  No operands.
+ *
+ * Returns 0 on success.
+ */
+static int aml_exec_break(struct aml_exec_context *ctx)
+{
+	ctx->break_flag = 1;
+	return 0;
+}
+
 /* ── Term Executor ──────────────────────────────────────────────── */
 
 /*
@@ -2540,6 +2776,56 @@ static uint32_t aml_exec_one_term(struct aml_exec_context *ctx)
 		}
 		ctx->offset = o + 2;
 		return 2;
+
+	/* ── Control flow ──────────────────────────────────────── */
+
+	/* IfOp (0xA0) */
+	case AML_IF_OP:
+		ctx->offset++;
+		if (aml_exec_if(ctx) < 0) {
+			kprintf("[AML] IfOp failed at offset %u\n",
+				(unsigned int)(o));
+			ctx->error = 1;
+		}
+		return ctx->offset - o;
+
+	/* ElseOp (0xA1) — should only appear inside an IfOp handler;
+	 * if seen here, skip the ElseOp construct gracefully. */
+	case AML_ELSE_OP:
+	{
+		uint32_t else_pkg_bytes;
+		uint32_t else_pkg_len;
+
+		ctx->offset++;  /* skip ElseOp */
+		else_pkg_len = aml_decode_pkg_length(ctx->aml, ctx->aml_len,
+						     ctx->offset,
+						     &else_pkg_bytes);
+		if (else_pkg_len > 0)
+			ctx->offset += else_pkg_bytes + else_pkg_len;
+		kprintf("[AML] Unexpected ElseOp at offset %u (skipped)\n",
+			(unsigned int)o);
+		return ctx->offset - o;
+	}
+
+	/* WhileOp (0xA2) */
+	case AML_WHILE_OP:
+		ctx->offset++;
+		if (aml_exec_while(ctx) < 0) {
+			kprintf("[AML] WhileOp failed at offset %u\n",
+				(unsigned int)(o));
+			ctx->error = 1;
+		}
+		return ctx->offset - o;
+
+	/* BreakOp (0xA3) */
+	case AML_BREAK_OP:
+		ctx->offset++;
+		if (aml_exec_break(ctx) < 0) {
+			kprintf("[AML] BreakOp failed at offset %u\n",
+				(unsigned int)(o));
+			ctx->error = 1;
+		}
+		return ctx->offset - o;
 
 	/* ── Default: Unknown opcode ────────────────────────────── */
 	default:
