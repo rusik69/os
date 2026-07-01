@@ -60,6 +60,7 @@ extern int usb_hub_init(void);
 #include "fstab.h"
 #include "pipe.h"
 #include "blockdev.h"
+#include "genhd.h"
 #include "dm.h"
 #include "shm.h"
 #include "swap.h"
@@ -814,6 +815,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* Block device registry */
     blockdev_init();
+
+    /* Generic disk layer (gendisk) — above blockdev, below partitions/filesystems */
+    genhd_init();
 
     /* Device mapper framework — virtual block device layer */
     dm_init();

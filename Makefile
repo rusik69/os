@@ -157,6 +157,7 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/ata_power.c \
          src/drivers/pci.c \
          src/drivers/blockdev.c \
+         src/drivers/genhd.c \
          src/drivers/e1000.c \
          src/drivers/intel_gpu.c \
          src/drivers/rtc.c \
