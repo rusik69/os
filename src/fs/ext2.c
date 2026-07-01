@@ -1588,6 +1588,9 @@ static int ext2_readdir_legacy(void *priv, const char *path) {
     return n;
 }
 
+/* Forward declaration: BGD scan (defined later, called from mount) */
+int ext2_scan_block_groups(struct ext2_priv *ep);
+
 static struct vfs_ops ext2_ops = {
     .read    = ext2_read,
     .stat    = ext2_stat,
@@ -1671,6 +1674,16 @@ int ext2_mount(const char *mountpoint, uint8_t dev_id) {
         if (copy_size > ep->block_size) copy_size = ep->block_size;
         memcpy((uint8_t *)ep->bgd_cache + bytes_read, block_buf, copy_size);
         bytes_read += copy_size;
+    }
+
+    /* ── Validate the block group descriptor table ──────────────────── */
+    {
+        int scan_ret = ext2_scan_block_groups(ep);
+        if (scan_ret < 0) {
+            kprintf("[ext2] BGD scan found errors, "
+                    "mounting in degraded mode\n");
+            /* Continue anyway — read-only operations may still work */
+        }
     }
 
     /* ── Detect and log feature flags ────────────────────────────── */
@@ -1842,6 +1855,334 @@ static int ext2_sync_bgd(struct ext2_priv *ep)
 
     kfree(block_buf);
     return 0;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  Block Group Descriptor scanning and validation
+ *
+ *  Validates the block group descriptor table by checking backup copies
+ *  across the filesystem and cross-referencing against the superblock.
+ *  Detects corruption, mismatches, and structural issues in the BGD data.
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* Validate a single block group descriptor entry against superblock
+ * limits and structural invariants.
+ *
+ * Checks:
+ *  - block bitmap pointer is within the group's block range
+ *  - inode bitmap pointer is within the group's block range
+ *  - inode table pointer is within the group's block range
+ *  - inode table does not overlap with block bitmap
+ *  - free counts do not exceed group capacity
+ *  - used directories count does not exceed inodes per group
+ *
+ * Returns 0 if the entry looks valid, -EFSCORRUPTED on corruption. */
+static int ext2_validate_bgd_entry(struct ext2_priv *ep,
+                                    uint32_t group,
+                                    const struct ext2_bg_desc *bgd)
+{
+	uint32_t blocks_in_group = ep->blocks_per_group;
+	uint32_t inodes_in_group = ep->inodes_per_group;
+	uint32_t group_start = group * ep->blocks_per_group;
+
+	/* Last group may be smaller — compute actual size */
+	if (group == ep->num_block_groups - 1) {
+		uint32_t brem = ep->sb.s_blocks_count
+		                - group * ep->blocks_per_group;
+		if (brem > 0 && brem < blocks_in_group)
+			blocks_in_group = brem;
+		uint32_t irem = ep->sb.s_inodes_count
+		                - group * ep->inodes_per_group;
+		if (irem > 0 && irem < inodes_in_group)
+			inodes_in_group = irem;
+	}
+
+	uint32_t group_end = group_start + blocks_in_group;
+
+	/* Block bitmap must be within the group's block range */
+	if (bgd->bg_block_bitmap < group_start ||
+	    bgd->bg_block_bitmap >= group_end) {
+		kprintf("[ext2] BGD[%u]: block bitmap %u outside "
+		        "group [%u, %u)\n",
+		        group, bgd->bg_block_bitmap,
+		        group_start, group_end);
+		return -EFSCORRUPTED;
+	}
+
+	/* Inode bitmap must be within the group's block range */
+	if (bgd->bg_inode_bitmap < group_start ||
+	    bgd->bg_inode_bitmap >= group_end) {
+		kprintf("[ext2] BGD[%u]: inode bitmap %u outside "
+		        "group [%u, %u)\n",
+		        group, bgd->bg_inode_bitmap,
+		        group_start, group_end);
+		return -EFSCORRUPTED;
+	}
+
+	/* Inode table must be within the group's block range */
+	if (bgd->bg_inode_table < group_start ||
+	    bgd->bg_inode_table >= group_end) {
+		kprintf("[ext2] BGD[%u]: inode table %u outside "
+		        "group [%u, %u)\n",
+		        group, bgd->bg_inode_table,
+		        group_start, group_end);
+		return -EFSCORRUPTED;
+	}
+
+	/* Inode table must not be before or overlap with bitmaps */
+	if (bgd->bg_inode_table <= bgd->bg_inode_bitmap) {
+		kprintf("[ext2] BGD[%u]: inode table %u <= "
+		        "inode bitmap %u\n",
+		        group, bgd->bg_inode_table,
+		        bgd->bg_inode_bitmap);
+		return -EFSCORRUPTED;
+	}
+
+	/* Free block count must not exceed the group's block count */
+	if (bgd->bg_free_blocks_count > blocks_in_group) {
+		kprintf("[ext2] BGD[%u]: free blocks %u > max %u\n",
+		        group, bgd->bg_free_blocks_count,
+		        blocks_in_group);
+		return -EFSCORRUPTED;
+	}
+
+	/* Free inode count must not exceed the group's inode count */
+	if (bgd->bg_free_inodes_count > inodes_in_group) {
+		kprintf("[ext2] BGD[%u]: free inodes %u > max %u\n",
+		        group, bgd->bg_free_inodes_count,
+		        inodes_in_group);
+		return -EFSCORRUPTED;
+	}
+
+	/* Used directories count must not exceed total inodes in group */
+	if (bgd->bg_used_dirs_count > inodes_in_group) {
+		kprintf("[ext2] BGD[%u]: used dirs %u > max inodes %u\n",
+		        group, bgd->bg_used_dirs_count,
+		        inodes_in_group);
+		return -EFSCORRUPTED;
+	}
+
+	return 0;
+}
+
+/* Verify that the number of block groups in the BGD cache matches the
+ * count derived from the superblock (s_blocks_count / s_blocks_per_group).
+ *
+ * Returns 0 if consistent, -EFSCORRUPTED on mismatch. */
+static int ext2_validate_bgd_count(struct ext2_priv *ep)
+{
+	uint32_t expected = (ep->sb.s_blocks_count + ep->blocks_per_group
+	                     - 1) / ep->blocks_per_group;
+
+	if (!ep->bgd_cache || ep->num_block_groups == 0) {
+		kprintf("[ext2] BGD cache not initialized\n");
+		return -EFSCORRUPTED;
+	}
+
+	if (ep->num_block_groups != expected) {
+		kprintf("[ext2] BGD count mismatch: cache has %u groups, "
+		        "superblock implies %u (blocks=%u, bpg=%u)\n",
+		        ep->num_block_groups, expected,
+		        ep->sb.s_blocks_count, ep->blocks_per_group);
+		return -EFSCORRUPTED;
+	}
+
+	return 0;
+}
+
+/* Read the block group descriptor table from a specific block group.
+ *
+ * For groups that have a superblock backup (according to the sparse
+ * layout), the BGD table is located just after the superblock copy.
+ * Groups without a superblock backup have no BGD table to read.
+ *
+ * Parameters:
+ *   ep           — ext2 private data
+ *   group        — block group number to read from
+ *   sparse       — non-zero if EXT2_FEATURE_RO_COMPAT_SPARSE_SUPER
+ *   bgd_buf      — output buffer (must hold num_entries descriptors)
+ *   num_entries  — number of BGD entries to read
+ *
+ * Returns 0 on success, -ENOENT if the group has no BGD backup,
+ * -EIO on read error, -EINVAL on invalid arguments. */
+static int ext2_read_bgd_at(struct ext2_priv *ep, uint32_t group,
+                              int sparse, struct ext2_bg_desc *bgd_buf,
+                              uint32_t num_entries)
+{
+	if (!ep || !bgd_buf || num_entries == 0)
+		return -EINVAL;
+
+	/* Groups without a superblock backup have no BGD table */
+	if (!ext2_group_has_super(sparse, group))
+		return -ENOENT;
+
+	uint32_t gstart = group * ep->blocks_per_group;
+	uint32_t bgd_first_block = gstart
+	                          + ((ep->block_size == 1024) ? 2 : 1);
+
+	uint64_t bgd_bytes = (uint64_t)num_entries
+	                     * sizeof(struct ext2_bg_desc);
+	uint32_t bgd_blocks = (uint32_t)(
+	    (bgd_bytes + ep->block_size - 1) / ep->block_size);
+
+	uint8_t block_buf[4096];
+	uint32_t bytes_read = 0;
+
+	for (uint32_t i = 0; i < bgd_blocks; i++) {
+		if (ext2_read_block(ep, bgd_first_block + i,
+		                    block_buf) < 0)
+			return -EIO;
+
+		uint32_t copy = (uint32_t)bgd_bytes - bytes_read;
+		if (copy > ep->block_size)
+			copy = ep->block_size;
+		memcpy((uint8_t *)bgd_buf + bytes_read,
+		       block_buf, copy);
+		bytes_read += copy;
+	}
+
+	return 0;
+}
+
+/* Scan backup BGD copies across all block groups that have superblock
+ * backups, comparing each entry against the primary cache.
+ *
+ * Reports mismatches via kprintf.  If @repair is non-zero, writes the
+ * primary BGD table to each corrupt backup location.
+ *
+ * Returns the number of groups with mismatches (0 = all clean).
+ * Returns negative errno on I/O error. */
+static int ext2_scan_bgd_backups(struct ext2_priv *ep, int repair)
+{
+	int sparse = (ep->sb.s_feature_ro_compat
+	              & EXT2_FEATURE_RO_COMPAT_SPARSE_SUPER) ? 1 : 0;
+	uint32_t num_groups = ep->num_block_groups;
+	uint64_t bgd_bytes = (uint64_t)num_groups
+	                     * sizeof(struct ext2_bg_desc);
+	int mismatches = 0;
+
+	/* Allocate temporary buffer for reading backup BGD tables */
+	struct ext2_bg_desc *backup_bgd;
+	backup_bgd = (struct ext2_bg_desc *)kmalloc(bgd_bytes);
+	if (!backup_bgd)
+		return -ENOMEM;
+
+	/* Check each group that has a superblock backup */
+	for (uint32_t g = 1; g < num_groups; g++) {
+		if (!ext2_group_has_super(sparse, g))
+			continue;
+
+		memset(backup_bgd, 0, bgd_bytes);
+		int ret = ext2_read_bgd_at(ep, g, sparse,
+		                           backup_bgd, num_groups);
+		if (ret < 0) {
+			if (ret == -ENOENT)
+				continue;
+			kprintf("[ext2] BGD scan: failed to read "
+			        "backup in group %u: %d\n", g, ret);
+			kfree(backup_bgd);
+			return ret;
+		}
+
+		/* Compare each entry with the primary cache */
+		for (uint32_t e = 0; e < num_groups; e++) {
+			if (memcmp(&ep->bgd_cache[e],
+			           &backup_bgd[e],
+			           sizeof(struct ext2_bg_desc)) != 0) {
+				kprintf("[ext2] BGD scan: backup "
+				        "mismatch in group %u, "
+				        "entry %u:\n", g, e);
+				kprintf("  primary:  bitmap=%u "
+				        "ibitmap=%u itable=%u "
+				        "free_blk=%u free_ino=%u "
+				        "dirs=%u\n",
+				        ep->bgd_cache[e].bg_block_bitmap,
+				        ep->bgd_cache[e].bg_inode_bitmap,
+				        ep->bgd_cache[e].bg_inode_table,
+				        ep->bgd_cache[e].bg_free_blocks_count,
+				        ep->bgd_cache[e].bg_free_inodes_count,
+				        ep->bgd_cache[e].bg_used_dirs_count);
+				kprintf("  backup:   bitmap=%u "
+				        "ibitmap=%u itable=%u "
+				        "free_blk=%u free_ino=%u "
+				        "dirs=%u\n",
+				        backup_bgd[e].bg_block_bitmap,
+				        backup_bgd[e].bg_inode_bitmap,
+				        backup_bgd[e].bg_inode_table,
+				        backup_bgd[e].bg_free_blocks_count,
+				        backup_bgd[e].bg_free_inodes_count,
+				        backup_bgd[e].bg_used_dirs_count);
+
+				if (repair) {
+					/* Write primary copy over backup */
+					ext2_sync_bgd(ep);
+					kprintf("[ext2] BGD scan: "
+					        "repaired backup "
+					        "in group %u\n", g);
+				}
+				mismatches++;
+			}
+		}
+	}
+
+	kfree(backup_bgd);
+
+	if (mismatches > 0) {
+		kprintf("[ext2] BGD scan: %d backup mismatch(es) %s\n",
+		        mismatches,
+		        repair ? "repaired" : "found");
+	} else {
+		kprintf("[ext2] BGD scan: all backup copies match "
+		        "primary\n");
+	}
+
+	return mismatches;
+}
+
+/* Comprehensive block group descriptor scan.
+ *
+ * Performs three stages of validation:
+ *  1. Verify BGD count matches superblock
+ *  2. Validate each BGD entry's fields for consistency
+ *  3. Read backup BGD copies and compare against primary
+ *
+ * Call this after the BGD cache is populated (e.g. at mount time).
+ *
+ * Returns 0 on success, -EFSCORRUPTED if any consistency errors
+ * are found, or negative errno on I/O error. */
+int ext2_scan_block_groups(struct ext2_priv *ep)
+{
+	int total_errors = 0;
+	int ret;
+
+	kprintf("[ext2] Scanning block group descriptors...\n");
+
+	/* 1. Validate the number of block groups */
+	ret = ext2_validate_bgd_count(ep);
+	if (ret < 0) {
+		kprintf("[ext2] BGD count validation failed\n");
+		total_errors++;
+	}
+
+	/* 2. Validate each individual BGD entry */
+	for (uint32_t g = 0; g < ep->num_block_groups; g++) {
+		ret = ext2_validate_bgd_entry(ep, g,
+		                               &ep->bgd_cache[g]);
+		if (ret < 0)
+			total_errors++;
+	}
+
+	/* 3. Scan backup copies (read-only, no repair) */
+	ret = ext2_scan_bgd_backups(ep, 0);
+	if (ret < 0) {
+		kprintf("[ext2] BGD backup scan failed: %d\n", ret);
+	} else if (ret > 0) {
+		total_errors += ret;
+	}
+
+	kprintf("[ext2] BGD scan complete: %d error(s) found\n",
+	        total_errors);
+	return total_errors > 0 ? -EFSCORRUPTED : 0;
 }
 
 /* Initialize a new block group's metadata (bitmaps + inode table).
