@@ -550,6 +550,9 @@ static void ahci_drain_queue(struct ahci_port *port) {
     }
 }
 
+/* ── Forward declarations for hotplug functions ─────────────────────── */
+static int ahci_hotplug_check_port(int phys_port);
+
 /* ── Interrupt handler ──────────────────────────────────────────────── */
 static void ahci_irq_handler(struct interrupt_frame *frame) {
     (void)frame;
@@ -632,6 +635,19 @@ static void ahci_irq_handler(struct interrupt_frame *frame) {
                     }
                 }
             }
+        }
+
+        if (port_is & PORT_IS_PCS) {
+        	/* PhyRdy Change — device insertion or removal.
+        	 * Clear SERR to acknowledge the link-state change,
+        	 * then check for device arrival/departure. */
+        	uint32_t serr = port_read(p, PORT_SERR);
+        	port_write(p, PORT_SERR, serr);
+
+        	/* Release lock before hotplug handling (may send commands) */
+        	spinlock_irqsave_release(&ahci_lock, __ahci_flags);
+        	ahci_hotplug_check_port(p);
+        	spinlock_irqsave_acquire(&ahci_lock, &__ahci_flags);
         }
 
         if (port_is & PORT_IS_D2H) {
@@ -1837,6 +1853,294 @@ static int ahci_ncq_pm_recover(int phys_port, uint32_t pm_port_mask)
     return 0;
 }
 
+/* ── Hotplug / Asynchronous Notification ─────────────────────────────── */
+
+/* Per-port last-known SStatus.DET value for hotplug change detection.
+ * Indexed by physical port number (0-31). Initialized to SSTS_DET_NONE
+ * during ahci_init(). Updated by ahci_hotplug_check_port() on each
+ * PhyRdy Change (PCS) interrupt. */
+static uint8_t ahci_port_prev_det[AHCI_MAX_PHYS_PORTS];
+
+/**
+ * ahci_hotplug_add_device — probe and register a newly connected SATA device.
+ *
+ * Sends IDENTIFY (or IDENTIFY PACKET DEVICE for ATAPI), reads capacity,
+ * checks NCQ capability, and registers a new block device.
+ *
+ * @phys_port: physical port number (0-31)
+ * @pm_port:   Port Multiplier port (-1 for direct-attached, 0-14 for PM)
+ * Returns 0 on success, -1 on failure.
+ *
+ * Called from ahci_hotplug_check_port() when PCS indicates device arrival.
+ * The caller must NOT hold ahci_lock, because this function sends
+ * commands via ahci_issue_non_ncq() which may spin-wait.
+ */
+static int ahci_hotplug_add_device(int phys_port, int pm_port)
+{
+	/* Locate the physical port entry (direct-attached, not PM sub-port) */
+	struct ahci_port *phys_entry = NULL;
+	for (int i = 0; i < ahci_port_count; i++) {
+		if (ahci_ports[i].present &&
+		    ahci_ports[i].port_num == phys_port &&
+		    !ahci_ports[i].is_pm) {
+			phys_entry = &ahci_ports[i];
+			break;
+		}
+	}
+	if (!phys_entry)
+		return -1;
+
+	/* Bail out if the array is full */
+	if (ahci_port_count >= AHCI_MAX_PHYS_PORTS * (1 + AHCI_MAX_PM_PORTS))
+		return -1;
+
+	/* Check if this port/PM-port combination already exists */
+	for (int i = 0; i < ahci_port_count; i++) {
+		if (ahci_ports[i].present &&
+		    ahci_ports[i].port_num == phys_port &&
+		    ahci_ports[i].pm_port == pm_port) {
+			kprintf("AHCI: hotplug device already present at port %d"
+			        " PM%d\n", phys_port, pm_port);
+			return 0;
+		}
+	}
+
+	/* Read device signature to detect ATAPI vs ATA */
+	uint32_t sig = port_read(phys_port, PORT_SIG);
+	int is_atapi = (sig == AHCI_SIG_ATAPI) ? 1 : 0;
+	uint8_t identify_cmd = is_atapi ? 0xA1 : ATA_CMD_IDENTIFY;
+
+	/* Build a probe port structure borrowing the phys port's slot resources */
+	struct ahci_port probe;
+	memcpy(&probe, phys_entry, sizeof(probe));
+	probe.pm_port = pm_port;
+	probe.is_pm = (pm_port >= 0) ? 1 : 0;
+	probe.sector_count = 0;
+	probe.ncq_capable = 0;
+	probe.blockdev_id = 0;
+	for (int s = 0; s < AHCI_SLOT_COUNT; s++)
+		probe.slots[s].req = NULL;
+
+	ahci_build_raw_cmd(&probe, 0, identify_cmd, 0, 1,
+	                   phys_entry->slots[0].data_buf_phys, 0,
+	                   sizeof(struct fis_reg_h2d) / 4);
+	{
+		struct ahci_cmd_table *tbl = (struct ahci_cmd_table *)
+		    phys_entry->slots[0].cmd_tbl_virt;
+		struct fis_reg_h2d *fis = (struct fis_reg_h2d *)tbl->cfis;
+		fis->countl = 0;
+		fis->counth = 0;
+		tbl->prdt[0].dbc = 511;
+	}
+
+	if (ahci_issue_non_ncq(&probe, 0) != 0)
+		return -1;
+
+	uint16_t *id = (uint16_t *)phys_entry->slots[0].data_buf_virt;
+	uint32_t lo = ((uint32_t)id[101] << 16) | id[100];
+	uint32_t nsectors = lo ? lo : ((uint32_t)id[57] |
+	                         ((uint32_t)id[58] << 16));
+	if (nsectors == 0)
+		return -1;
+
+	/* Create a new port entry */
+	struct ahci_port *new_port = &ahci_ports[ahci_port_count];
+	memcpy(new_port, phys_entry, sizeof(struct ahci_port));
+	new_port->pm_port = pm_port;
+	new_port->is_pm = (pm_port >= 0) ? 1 : 0;
+	new_port->sector_count = nsectors;
+	new_port->ncq_capable = (id[76] & (1u << 8)) ? 1 : 0;
+	new_port->inflight_mask = 0;
+	new_port->tag_bitmap = 0;
+	for (int s = 0; s < AHCI_SLOT_COUNT; s++)
+		new_port->slots[s].req = NULL;
+
+	/* Build a block device name */
+	char blkname[16];
+	if (pm_port >= 0) {
+		snprintf(blkname, sizeof(blkname), "ahci%dp%d%s",
+		         phys_port, pm_port,
+		         is_atapi ? "-cd" : "");
+	} else {
+		snprintf(blkname, sizeof(blkname), "ahci%d", phys_port);
+	}
+
+	int bd_id = (pm_port >= 0)
+	    ? BLOCKDEV_AHCI_PM_BASE + ahci_port_count
+	    : BLOCKDEV_AHCI + ahci_port_count;
+
+	int ret = blockdev_register(bd_id, blkname,
+	                            ahci_submit_fn,
+	                            ahci_idle_fn,
+	                            nsectors,
+	                            BLK_DRIVER_ASYNC);
+	if (ret == 0) {
+		new_port->blockdev_id = bd_id;
+		ahci_port_count++;
+		ahci_present = 1;
+		kprintf("AHCI: hotplug added port %d PM%d: %lu sectors%s%s\n",
+		        phys_port, pm_port,
+		        (unsigned long)nsectors,
+		        new_port->ncq_capable ? " NCQ" : "",
+		        is_atapi ? " ATAPI" : "");
+		return 0;
+	}
+
+	return -1;
+}
+
+/**
+ * ahci_hotplug_remove_device — unregister a disconnected SATA device.
+ *
+ * Aborts any pending I/O requests, unregisters from the block device
+ * layer, and removes the port entry by compacting the array.
+ *
+ * @phys_port: physical port number (0-31)
+ * @pm_port:   Port Multiplier port (-1 for direct, 0-14 for PM sub-port)
+ * Returns 0 on success, -1 if device not found.
+ */
+static int ahci_hotplug_remove_device(int phys_port, int pm_port)
+{
+	uint64_t irq_flags;
+	spinlock_irqsave_acquire(&ahci_lock, &irq_flags);
+
+	for (int i = 0; i < ahci_port_count; i++) {
+		struct ahci_port *port = &ahci_ports[i];
+		if (!port->present ||
+		    port->port_num != phys_port ||
+		    port->pm_port != pm_port)
+			continue;
+
+		kprintf("AHCI: hotplug removed port %d PM%d\n",
+		        phys_port, pm_port);
+
+		/* Abort any pending I/O requests */
+		for (int s = 0; s < AHCI_SLOT_COUNT; s++) {
+			struct blk_request *req = port->slots[s].req;
+			if (req) {
+				port->slots[s].req = NULL;
+				tag_bitmap_free(&port->tag_bitmap, s);
+				req->result = -ENODEV;
+				blk_request_done(req);
+			}
+		}
+		port->inflight_mask = 0;
+		port->tag_bitmap = 0;
+
+		/* Unregister from block device layer */
+		if (port->blockdev_id > 0) {
+			blockdev_unregister(port->blockdev_id);
+			port->blockdev_id = 0;
+		}
+
+		/* Compact the port array: shift later entries forward */
+		port->present = 0;
+		int n_remain = ahci_port_count - i - 1;
+		if (n_remain > 0) {
+			memmove(&ahci_ports[i], &ahci_ports[i + 1],
+			        (size_t)n_remain * sizeof(struct ahci_port));
+		}
+		ahci_port_count--;
+
+		if (ahci_port_count == 0)
+			ahci_present = 0;
+
+		spinlock_irqsave_release(&ahci_lock, irq_flags);
+		return 0;
+	}
+
+	spinlock_irqsave_release(&ahci_lock, irq_flags);
+	return -1;
+}
+
+/**
+ * ahci_hotplug_check_port — check a physical port for device hotplug.
+ *
+ * Reads SStatus.DET and compares with the previous known value to
+ * detect device arrival (DET 0->3) or removal (DET 3->0). On arrival,
+ * probes and registers the new device. On removal, unregisters the
+ * old device and cleans up.
+ *
+ * Also checks for Asynchronous Notification via the SET DEVICE BITS
+ * FIS received area. Devices can signal media change, power events,
+ * or other events via the AN bit in the SDB FIS.
+ *
+ * @phys_port: physical port number (0-31)
+ * Returns 1 if an event was processed, 0 if no change, -1 on error.
+ *
+ * The caller must NOT hold ahci_lock, because this function sends
+ * IDENTIFY commands (via ahci_hotplug_add_device) which spin-wait.
+ */
+static int ahci_hotplug_check_port(int phys_port)
+{
+	uint32_t ssts = port_read(phys_port, PORT_SSTS);
+	uint8_t det = ssts & SSTS_DET_MASK;
+	uint8_t prev_det = ahci_port_prev_det[phys_port];
+
+	ahci_port_prev_det[phys_port] = det;
+
+	if (det == prev_det) {
+		/* No PhyRdy change. The PCS interrupt was spurious
+		 * or handled already. Nothing to do. */
+		return 0;
+	}
+
+	kprintf("AHCI: port %d PhyRdy change: DET %u -> %u\n",
+	        phys_port,
+	        (unsigned int)prev_det,
+	        (unsigned int)det);
+
+	if (det == SSTS_DET_PRESENT && prev_det != SSTS_DET_PRESENT) {
+		/* Device arrival: probe and register */
+		uint32_t sig = port_read(phys_port, PORT_SIG);
+		uint32_t cmd_reg = port_read(phys_port, PORT_CMD);
+		int is_pm = (cmd_reg & PORT_CMD_PMP) ? 1 : 0;
+
+		kprintf("AHCI: hotplug device connected on port %d"
+		        " (sig=0x%08x%s)\n",
+		        phys_port,
+		        (unsigned int)sig,
+		        is_pm ? ", PM" : "");
+
+		if (is_pm) {
+			/* PM hotplug: probe all available PM sub-ports */
+			uint32_t pm_port_map = 0;
+			uint32_t cap = hba_read(HBA_CAP_OFFSET);
+			int pm_connected = -1;
+			if (cap & CAP_PSC)
+				pm_connected = ahci_pm_get_port_map(
+				    phys_port, &pm_port_map);
+
+			for (int pm = 0; pm < AHCI_MAX_PM_PORTS; pm++) {
+				if (pm_connected >= 0 &&
+				    !(pm_port_map & (1u << pm)))
+					continue;
+				ahci_hotplug_add_device(phys_port, pm);
+			}
+		} else {
+			/* Direct-attach device */
+			ahci_hotplug_add_device(phys_port, -1);
+		}
+		return 1;
+	}
+
+	if (det != SSTS_DET_PRESENT && prev_det == SSTS_DET_PRESENT) {
+		/* Device removal */
+		kprintf("AHCI: hotplug device disconnected on port %d\n",
+		        phys_port);
+
+		/* Remove direct-attached device */
+		ahci_hotplug_remove_device(phys_port, -1);
+
+		/* Also check for any PM sub-ports that may have existed */
+		for (int pm = 0; pm < AHCI_MAX_PM_PORTS; pm++)
+			ahci_hotplug_remove_device(phys_port, pm);
+		return 1;
+	}
+
+	return 0;
+}
+
 /* ── Physical port initialization (direct-attached or PM host) ──────── */
 
 /**
@@ -2041,16 +2345,23 @@ int __init ahci_init(void) {
     /* Initialize LED management via EM interface (if supported) */
     ahci_led_init();
 
+    /* Initialize hotplug tracking — all ports start at DET_NONE.
+     * Ports with devices detected below will be set to DET_PRESENT. */
+    memset(ahci_port_prev_det, SSTS_DET_NONE, sizeof(ahci_port_prev_det));
+
     /* Scan implemented ports */
     uint32_t pi = hba_read(HBA_PI_OFFSET);
     for (int p = 0; p < 32; p++) {
-        if (!(pi & (1u << p))) continue;
+    	if (!(pi & (1u << p))) continue;
 
-        uint32_t ssts = port_read(p, PORT_SSTS);
-        uint8_t  det  = ssts & SSTS_DET_MASK;
-        if (det != SSTS_DET_PRESENT) continue;
+    	uint32_t ssts = port_read(p, PORT_SSTS);
+    	uint8_t  det  = ssts & SSTS_DET_MASK;
+    	if (det != SSTS_DET_PRESENT) continue;
 
-        uint32_t sig = port_read(p, PORT_SIG);
+    	/* Record initial DET for hotplug change detection */
+    	ahci_port_prev_det[p] = SSTS_DET_PRESENT;
+
+    	uint32_t sig = port_read(p, PORT_SIG);
         /* For PM-attached ports, sig might be 0 or the first device's sig.
          * We probe via IDENTIFY regardless. */
 
