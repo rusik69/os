@@ -1161,6 +1161,7 @@ kernel: $(BUILDDIR)/kernel.elf
         run run-smp run-gdb run-uefi run-virtio qemu qemu-gdb \
         help debug clean deps \
         test test-kernel test-serial test-cli test-clean test-coverage clean-all \
+        nic-test \
         check check-full check-clean check-app-boundary check-debug doom-test \
         format format-check check-whitespace lint lint-full cppcheck-check \
         ccache-stats count build-info count-lines count-funcs count-headers \
@@ -1437,6 +1438,18 @@ test: $(BUILDDIR)/disk.img
 	@echo "============================================"
 	@echo "  make test completed"
 	@echo "============================================"
+
+# ── Multi-NIC QEMU boot test ─────────────────────────────────
+# Boots the kernel with each supported NIC model and verifies
+# the kernel boots and the NIC driver initialises successfully.
+nic-test: $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
+	@echo "=== Running multi-NIC QEMU boot test ==="
+	python3 src/test/multi_nic_test.py \
+		--kernel $(BUILDDIR)/kernel.bin \
+		--disk $(BUILDDIR)/disk.img \
+		--timeout 45 \
+		--verbose
+	@echo ""
 
 # ── Test CLI utilities ────────────────────────────────────────
 # Builds everything, injects test script into rootfs, boots QEMU with

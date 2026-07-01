@@ -11,8 +11,8 @@
 #include "netdevice.h"
 #include "err.h"
 #include "spinlock.h"
-#ifdef MODULE
 #include "module.h"
+#ifdef MODULE
 #endif
 
 /* ── Static driver state ─────────────────────────────────────────── */
@@ -547,8 +547,12 @@ void rtl8139_exit(void)
 }
 
 #ifdef MODULE
+#endif
+
 module_init(rtl8139_init);
 module_exit(rtl8139_exit);
+
+#ifdef MODULE
 MODULE_LICENSE("GPL");
 MODULE_VERSION("1.0");
 MODULE_DESCRIPTION("Realtek RTL8139 Fast Ethernet driver (TX/RX ring buffer, link state detection)");

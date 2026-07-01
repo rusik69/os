@@ -28,8 +28,8 @@
 #include "err.h"
 #include "kernel.h"
 
-#ifdef MODULE
 #include "module.h"
+#ifdef MODULE
 #endif
 
 /* ── Static driver state ──────────────────────────────────────────── */
@@ -717,14 +717,17 @@ void mlx4_exit(void)
 }
 
 #ifdef MODULE
+#endif
+
 module_init(mlx4_init);
 module_exit(mlx4_exit);
+
+#ifdef MODULE
 MODULE_LICENSE("GPL");
 MODULE_VERSION("1.0");
-MODULE_DESCRIPTION("Mellanox ConnectX-3 PF driver with firmware command interface");
+MODULE_DESCRIPTION("Mellanox ConnectX-3 (mlx4) Ethernet driver (firmware command interface)");
 MODULE_AUTHOR("1000 Changes Project");
-MODULE_ALIAS("pci:v000015B3d00001003*");
-MODULE_ALIAS("pci:v000015B3d00001007*");
+MODULE_ALIAS("pci:v000014E4d00001007*");
 MODULE_ALIAS("pci:v000015B3d00001004*");
 MODULE_ALIAS("pci:v000015B3d00001013*");
 #endif

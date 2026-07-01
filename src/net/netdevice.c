@@ -18,6 +18,7 @@
 #include "printf.h"
 #include "string.h"
 #include "heap.h"
+#include "initcall.h"
 
 /* ── Global registration table ──────────────────────────────────── */
 
@@ -193,3 +194,7 @@ int netdevice_stop(void *dev)
     (void)dev;
     return 0;
 }
+
+/* Register netdevice_init early (subsys = level 4) so that NIC drivers
+ * which initialise via device_initcall (level 5) can call netif_register. */
+subsys_initcall(netdevice_init);

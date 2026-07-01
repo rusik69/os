@@ -30,8 +30,8 @@
 #include "err.h"
 #include "kernel.h"
 
-#ifdef MODULE
 #include "module.h"
+#ifdef MODULE
 #endif
 
 /* ── Static driver state ──────────────────────────────────────────── */
@@ -1190,13 +1190,16 @@ void igb_exit(void)
 }
 
 #ifdef MODULE
+#endif
+
 module_init(igb_init);
 module_exit(igb_exit);
+
+#ifdef MODULE
 MODULE_LICENSE("GPL");
 MODULE_VERSION("1.0");
-MODULE_DESCRIPTION("Intel Gigabit Ethernet (igb) multi-queue driver (82576/I350)");
+MODULE_DESCRIPTION("Intel Gigabit Ethernet (i350/i210/i211) driver (multi-queue, per-queue IRQ)");
 MODULE_AUTHOR("1000 Changes Project");
 MODULE_ALIAS("pci:v00008086d000010C9*");
-MODULE_ALIAS("pci:v00008086d00001521*");
 MODULE_ALIAS("pci:v00008086d00001533*");
 #endif

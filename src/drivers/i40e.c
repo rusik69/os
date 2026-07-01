@@ -40,8 +40,8 @@ extern int sriov_probe_pf(int bus, int dev, int func);
 extern int sriov_enable_vfs(int bus, int dev, int func, int num_vfs);
 extern int sriov_disable_vfs(int bus, int dev, int func);
 
-#ifdef MODULE
 #include "module.h"
+#ifdef MODULE
 #endif
 
 /* ── Static driver state ──────────────────────────────────────────── */
@@ -1807,14 +1807,18 @@ int i40e_sriov_init(void)
 
     return ret;
 }
+
 #ifdef MODULE
+#endif
+
 module_init(i40e_init);
 module_exit(i40e_exit);
+
+#ifdef MODULE
 MODULE_LICENSE("GPL");
 MODULE_VERSION("1.0");
-MODULE_DESCRIPTION("Intel XL710/X710 40GbE PF driver with MSI-X");
+MODULE_DESCRIPTION("Intel Ethernet 700 Series (i40e) PF driver with SR-IOV VF support");
 MODULE_AUTHOR("1000 Changes Project");
 MODULE_ALIAS("pci:v00008086d00001572*");
-MODULE_ALIAS("pci:v00008086d00001581*");
 MODULE_ALIAS("pci:v00008086d00001580*");
 #endif

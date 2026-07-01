@@ -13,6 +13,7 @@
 #include "err.h"
 #include "crc.h"
 #include "vlan.h"
+#include "initcall.h"
 #ifdef MODULE
 #include "module.h"
 #endif
@@ -1170,6 +1171,12 @@ static int e1000_netdev_receive(struct net_device *dev,
 int e1000_init(void) {
     struct pci_device dev;
 
+    /* Guard against double-init: device_initcall runs first during
+     * do_initcalls(), then kernel_main() calls e1000_init() again
+     * explicitly to print the MAC/link status message. */
+    if (nic_present)
+        return 0;
+
     /* Try 82540EM first, then 82574, then 82576 */
     if (pci_find_device(E1000_VENDOR, E1000_DEVICE, &dev) >= 0) {
         is_82574 = 0;
@@ -1728,6 +1735,14 @@ MODULE_DESCRIPTION("Intel PRO/1000 (E1000/E1000E) PCI Ethernet driver with multi
 MODULE_ALIAS("pci:v00008086d0000100Esv*sd*bc*sc*i*");
 MODULE_ALIAS("pci:v00008086d000010D3sv*sd*bc*sc*i*");
 #endif /* MODULE */
+
+/* Register via device_initcall when built-in so the NIC is probed
+ * during do_initcalls(), before the kernel reaches the explicit
+ * e1000_init() call in kernel_main().  The kernel.c call provides
+ * the [OK] e1000 NIC: status message and MAC display. */
+#ifndef MODULE
+device_initcall(e1000_init);
+#endif
 
 /* ── e1000_open: Enable RX/TX, set up interrupts ──────────── */
 int e1000_open(void *dev)

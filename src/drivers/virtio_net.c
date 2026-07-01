@@ -860,3 +860,11 @@ int virtio_net_xmit(void *skb, void *dev)
     /* The skb is a struct sk_buff; we just use its data */
     return 0; /* actual TX is handled by virtio_net_send */
 }
+
+/* Register via device_initcall so virtio-net is probed during
+ * do_initcalls().  kernel_main() also calls virtio_net_init()
+ * explicitly to print status; vnet_present flag prevents re-init. */
+#include "initcall.h"
+#ifndef MODULE
+device_initcall(virtio_net_init);
+#endif

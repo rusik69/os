@@ -231,7 +231,9 @@ int  rtl8139_set_mac(struct rtl8139_priv *priv, const uint8_t *mac);
 
 /* Hardware control */
 int  rtl8139_reset(struct rtl8139_priv *priv);
-int  rtl8139_init_hw(struct rtl8139_priv *priv);
+int rtl8139_init(void);
+void rtl8139_exit(void);
+int rtl8139_init_hw(struct rtl8139_priv *priv);
 void rtl8139_shutdown(struct rtl8139_priv *priv);
 
 /* PCI probe */

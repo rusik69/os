@@ -20,8 +20,8 @@
 #include "pmm.h"
 #include "errno.h"
 
-#ifdef MODULE
 #include "module.h"
+#ifdef MODULE
 #endif
 
 /* ── Static driver state ─────────────────────────────────────────── */
@@ -633,11 +633,15 @@ void vmxnet3_exit(void)
 }
 
 #ifdef MODULE
+#endif
+
 module_init(vmxnet3_init);
 module_exit(vmxnet3_exit);
+
+#ifdef MODULE
 MODULE_LICENSE("GPL");
 MODULE_VERSION("1.0");
-MODULE_DESCRIPTION("VMware vmxnet3 Ethernet driver (TX/RX descriptor rings)");
+MODULE_DESCRIPTION("VMware vmxnet3 paravirtualized NIC driver (TX/RX descriptor rings)");
 MODULE_AUTHOR("1000 Changes Project");
 MODULE_ALIAS("pci:v000015ADd000007B0*");
 #endif
