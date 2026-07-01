@@ -1,5 +1,5 @@
 /*
- * bochs_drm.c — Bochs VBE DRM driver
+ * bochs_drm.c -- Bochs VBE DRM driver
  *
  * Registers bochs-vga as a DRM driver.  Provides one CRTC, one
  * connector (VGA), and a simple primary plane backed by GEM dumb
@@ -9,13 +9,16 @@
  *   - PCI probe of Bochs VGA device
  *   - Single CRTC, single VGA connector
  *   - GEM dumb buffers for scanout
+ *   - Connector mode list populated via CVT timings from bochs_modes[]
  *   - Mode setting via VBE registers (0x01CE/0x01CF)
+ *   - Mode validation against hardware capability table
  *
  * References:
  *   Bochs VBE Specification
  *   Linux kernel bochs-drm driver
  *
- * Item S27 — bochs-drm
+ * Item S27 -- bochs-drm
+ * D143 task 10 -- Bochs VBE modesetting implementation
  */
 
 #define KERNEL_INTERNAL
@@ -30,8 +33,9 @@
 #include "vmm.h"
 #include "heap.h"
 #include "err.h"
+#include "errno.h"
 
-/* ── VBE register indices ───────────────────────────────────────── */
+/* -- VBE register indices ---------------------------------------- */
 
 #define VBE_DISPI_INDEX_ID          0
 #define VBE_DISPI_INDEX_XRES        1
@@ -50,7 +54,7 @@
 #define VBE_DISPI_LFB_ENABLED   0x40
 #define VBE_DISPI_ENABLED       0x01
 
-/* ── Supported modes ───────────────────────────────────────────── */
+/* -- Supported modes --------------------------------------------- */
 
 struct bochs_mode {
     uint16_t width;
@@ -67,7 +71,7 @@ static const struct bochs_mode bochs_modes[] = {
     { 0, 0, 0 }  /* terminator */
 };
 
-/* ── Driver private state ──────────────────────────────────────── */
+/* -- Driver private state ---------------------------------------- */
 
 struct bochs_drm_priv {
     struct drm_device  *dev;
@@ -81,7 +85,7 @@ struct bochs_drm_priv {
     uint32_t            stride;
 };
 
-/* ── VBE helpers ────────────────────────────────────────────────── */
+/* -- VBE helpers ------------------------------------------------- */
 
 static inline void vbe_write(uint16_t index, uint16_t value)
 {
@@ -123,9 +127,185 @@ static void bochs_set_mode_vbe(struct bochs_drm_priv *priv,
             width, height, bpp, priv->stride);
 }
 
-/* ═══════════════════════════════════════════════════════════════════
+/* ================================================================
+ *  Mode validation
+ * ================================================================ */
+
+/*
+ * bochs_drm_mode_valid -- Validate a display mode against Bochs VBE
+ *                        hardware capabilities.
+ *
+ * Checks that the requested width, height, and nominal bpp are in the
+ * table of modes supported by the hardware.
+ *
+ * Returns 0 (MODE_OK) if the mode is supported, or a negative errno
+ * indicating why the mode was rejected.
+ */
+static int bochs_drm_mode_valid(const struct drm_display_mode *mode)
+{
+    if (!mode || !mode->in_use)
+        return -EINVAL;
+
+    if (mode->hdisplay == 0 || mode->vdisplay == 0)
+        return -EINVAL;
+
+    /* Bochs VBE hardware only supports 32 bpp in our configuration */
+    int bpp = 32;
+
+    /* Check against the hardware capability table */
+    for (int i = 0; bochs_modes[i].width != 0; i++) {
+        if (bochs_modes[i].width  == (uint16_t)mode->hdisplay &&
+            bochs_modes[i].height == (uint16_t)mode->vdisplay &&
+            bochs_modes[i].bpp    == bpp) {
+            return 0;  /* MODE_OK */
+        }
+    }
+
+    kprintf("[bochs-drm] mode_valid: rejected %dx%d "
+            "(not in capability table)\n",
+            mode->hdisplay, mode->vdisplay);
+    return -EINVAL;
+}
+
+/* ================================================================
+ *  Mode setting -- CRTC mode_set callback
+ * ================================================================ */
+
+/*
+ * bochs_drm_crtc_mode_set -- Program the Bochs VBE hardware to a
+ *                           given display mode.
+ *
+ * Called when a new mode is assigned to the CRTC.  Extracts the
+ * resolution from the display mode and writes the VBE registers.
+ *
+ * @crtc: Pointer to the struct drm_crtc being configured (unused).
+ * @mode: Pointer to a struct drm_display_mode with the target resolution.
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+static int bochs_drm_crtc_mode_set(void *crtc, void *mode)
+{
+    (void)crtc;
+
+    if (!mode)
+        return -EINVAL;
+
+    struct drm_display_mode *dm = (struct drm_display_mode *)mode;
+
+    if (!dm->in_use)
+        return -EINVAL;
+
+    /* Validate the mode against hardware capabilities first */
+    int ret = bochs_drm_mode_valid(dm);
+    if (ret < 0) {
+        kprintf("[bochs-drm] crtc_mode_set: invalid mode %dx%d\n",
+                dm->hdisplay, dm->vdisplay);
+        return ret;
+    }
+
+    /* We store the priv pointer in a static variable for the
+     * mode_set callback since the CRTC struct lacks a dev link. */
+    extern struct bochs_drm_priv *g_bochs_crtc_mode_set_priv;
+    struct bochs_drm_priv *priv = g_bochs_crtc_mode_set_priv;
+
+    if (!priv) {
+        kprintf("[bochs-drm] crtc_mode_set: no private state\n");
+        return -ENODEV;
+    }
+
+    bochs_set_mode_vbe(priv,
+                       (uint16_t)dm->hdisplay,
+                       (uint16_t)dm->vdisplay,
+                       32);
+
+    return 0;
+}
+
+/* Global pointer for the mode_set callback (one device). */
+struct bochs_drm_priv *g_bochs_crtc_mode_set_priv = NULL;
+
+/*
+ * bochs_drm_mode_set -- Public mode setting entry point.
+ *
+ * Called from outside the DRM core (e.g. from the VESA framebuffer
+ * console or a boot-time mode switch) to change the display mode.
+ *
+ * @mode: Pointer to a struct drm_display_mode, or NULL to disable.
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int bochs_drm_mode_set(void *crtc, void *mode)
+{
+    return bochs_drm_crtc_mode_set(crtc, mode);
+}
+
+/* ================================================================
+ *  Connector mode population
+ * ================================================================ */
+
+/*
+ * bochs_drm_populate_modes -- Add all supported modes from bochs_modes[]
+ *                            to the connector's mode list.
+ *
+ * For each entry in the static bochs_modes[] table, generates CVT-RB
+ * timing via drm_display_cvt_mode() and adds the mode to the connector
+ * via drm_display_add_mode().
+ *
+ * @dev:  The DRM device.
+ * @conn: The connector to populate (must be the VGA connector).
+ *
+ * Returns the number of modes added, or 0 on error.
+ */
+static int bochs_drm_populate_modes(struct drm_device *dev,
+                                     struct drm_connector *conn)
+{
+    int count = 0;
+
+    if (!conn || !dev)
+        return 0;
+
+    for (int i = 0; bochs_modes[i].width != 0; i++) {
+        struct drm_display_mode mode;
+        int ret;
+
+        /* Generate CVT-RB timing for the mode at 60 Hz */
+        ret = drm_display_cvt_mode((uint32_t)bochs_modes[i].width,
+                                    (uint32_t)bochs_modes[i].height,
+                                    60, 1, &mode);
+        if (ret < 0) {
+            kprintf("[bochs-drm] populate: CVT failed for %dx%d "
+                    "(ret=%d)\n",
+                    bochs_modes[i].width, bochs_modes[i].height, ret);
+            continue;
+        }
+
+        /* Mark as a built-in (driver-provided) mode */
+        mode.type = DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_BUILTIN;
+
+        /* Mark the default mode (1024x768) as preferred */
+        if (bochs_modes[i].width == 1024 &&
+            bochs_modes[i].height == 768)
+            mode.type |= DRM_MODE_TYPE_PREFERRED | DRM_MODE_TYPE_DEFAULT;
+
+        ret = drm_display_add_mode(conn, &mode);
+        if (ret < 0) {
+            kprintf("[bochs-drm] populate: add_mode failed "
+                    "for %dx%d (ret=%d)\n",
+                    bochs_modes[i].width, bochs_modes[i].height, ret);
+            continue;
+        }
+
+        count++;
+    }
+
+    kprintf("[bochs-drm] populated %d modes from capability table\n",
+            count);
+    return count;
+}
+
+/* ================================================================
  *  DRM driver hooks
- * ═══════════════════════════════════════════════════════════════════ */
+ * ================================================================ */
 
 static int bochs_drm_load(struct drm_device *dev, unsigned long flags)
 {
@@ -136,24 +316,36 @@ static int bochs_drm_load(struct drm_device *dev, unsigned long flags)
     int crtc_id = drm_add_crtc(dev);
     if (crtc_id < 0) {
         kprintf("[bochs-drm] failed to create CRTC\n");
-        return -1;
+        return -ENOMEM;
     }
 
-    /* Create a connector */
-    int conn_id = drm_add_connector(dev, 0);  /* VGA */
+    /* Create a connector (type 13 = DRM_MODE_CONNECTOR_VGA) */
+    int conn_id = drm_add_connector(dev, 13);  /* VGA connector type */
     if (conn_id < 0) {
         kprintf("[bochs-drm] failed to create connector\n");
-        return -1;
+        return -ENOMEM;
     }
 
-    /* Set mode capabilities */
+    /* Set mode capabilities to match the hardware */
     dev->min_width  = 640;
     dev->max_width  = 1280;
     dev->min_height = 480;
     dev->max_height = 1024;
 
+    /* Register the global priv pointer for the mode_set callback */
+    g_bochs_crtc_mode_set_priv = priv;
+
     /* Set default mode */
     bochs_set_mode_vbe(priv, 1024, 768, 32);
+
+    /* Populate the connector's mode list from our capability table */
+    for (int i = 0; i < DRM_MAX_CONNECTOR; i++) {
+        if (dev->connectors[i].in_use &&
+            dev->connectors[i].connector_id == (uint32_t)conn_id) {
+            bochs_drm_populate_modes(dev, &dev->connectors[i]);
+            break;
+        }
+    }
 
     kprintf("[bochs-drm] loaded (LFB at 0x%llx, size %u)\n",
             (unsigned long long)priv->lfb_phys, priv->lfb_size);
@@ -164,6 +356,9 @@ static int bochs_drm_load(struct drm_device *dev, unsigned long flags)
 static void bochs_drm_unload(struct drm_device *dev)
 {
     struct bochs_drm_priv *priv = (struct bochs_drm_priv *)dev->priv;
+
+    /* Clear the global priv pointer */
+    g_bochs_crtc_mode_set_priv = NULL;
 
     /* Disable display */
     vbe_write(VBE_DISPI_INDEX_ENABLE, 0);
@@ -189,7 +384,7 @@ static void bochs_drm_postclose(struct drm_device *dev,
     (void)file_priv;
 }
 
-/* ── Driver definition ─────────────────────────────────────────── */
+/* -- Driver definition ------------------------------------------- */
 
 static struct drm_driver bochs_drm_driver = {
     .name       = "bochs-drm",
@@ -205,16 +400,16 @@ static struct drm_driver bochs_drm_driver = {
     .postclose  = bochs_drm_postclose,
 };
 
-/* ═══════════════════════════════════════════════════════════════════
+/* ================================================================
  *  PCI probing and initialisation
- * ═══════════════════════════════════════════════════════════════════ */
+ * ================================================================ */
 
 /* Bochs VGA PCI class/subclass: 03:00 */
 #define BOCHS_PCI_CLASS    0x03
 #define BOCHS_PCI_SUBCLASS 0x00
 
 /*
- * bochs_drm_init — Initialise the bochs-drm driver.
+ * bochs_drm_init -- Initialise the bochs-drm driver.
  *
  * Probes for Bochs VBE, sets up the LFB, and registers as a DRM device.
  */
@@ -224,21 +419,17 @@ int bochs_drm_init(void)
     bochs_init();
     if (!bochs_is_present()) {
         kprintf("[bochs-drm] no Bochs VBE found\n");
-        return -1;
+        return -ENODEV;
     }
 
     /* Allocate private state */
     struct bochs_drm_priv *priv = (struct bochs_drm_priv *)
         kmalloc(sizeof(struct bochs_drm_priv));
-    if (!priv) return -1;
+    if (!priv)
+        return -ENOMEM;
     memset(priv, 0, sizeof(*priv));
 
     /* Find LFB physical address from PCI */
-    /* Bochs VGA is usually at PCI 00:02.0 on QEMU */
-    /* The LFB BAR is typically BAR0 (or BAR2 on some devices) */
-    /* Use known LFB address from Bochs VBE interface.
-     * On QEMU, bochs-display typically exposes LFB at PCI BAR0.
-     * The existing bochs driver sets up the mode via VBE I/O ports. */
     priv->lfb_phys = 0xFC000000;  /* typical QEMU bochs LFB address */
     priv->lfb_size = 16 * 1024 * 1024;  /* 16 MB typical */
 
@@ -249,7 +440,7 @@ int bochs_drm_init(void)
     if (IS_ERR(priv->lfb_virt)) {
         kprintf("[bochs-drm] failed to map LFB\n");
         kfree(priv);
-        return -1;
+        return -ENOMEM;
     }
 
     /* Create the DRM device */
@@ -258,7 +449,7 @@ int bochs_drm_init(void)
     if (!dev) {
         vmm_unmap_phys(priv->lfb_virt, priv->lfb_size);
         kfree(priv);
-        return -1;
+        return -ENOMEM;
     }
 
     memset(dev, 0, sizeof(*dev));
@@ -274,7 +465,7 @@ int bochs_drm_init(void)
         vmm_unmap_phys(priv->lfb_virt, priv->lfb_size);
         kfree(priv);
         kfree(dev);
-        return -1;
+        return ret;
     }
 
     /* Call driver load */
@@ -286,7 +477,7 @@ int bochs_drm_init(void)
 }
 
 /*
- * bochs_drm_exit — Shut down the bochs-drm driver.
+ * bochs_drm_exit -- Shut down the bochs-drm driver.
  */
 void bochs_drm_exit(void)
 {
@@ -306,17 +497,4 @@ void bochs_drm_exit(void)
     }
 
     kprintf("[bochs-drm] driver exited\n");
-}
-
-/* ── Implement: bochs_drm_mode_set ─────────────────────────────── */
-int bochs_drm_mode_set(void *crtc, void *mode)
-{
-    (void)crtc;
-    if (!mode) return -EINVAL;
-
-    /* Parse mode info from CRTC/mode structure */
-    /* In a full implementation, this would extract width/height from the
-     * drm_display_mode and call bochs_set_mode_vbe */
-    kprintf("[BOCHS_DRM] bochs_drm_mode_set: mode set\n");
-    return 0;
 }
