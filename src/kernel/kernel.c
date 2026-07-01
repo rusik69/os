@@ -21,6 +21,7 @@
 #include "fs.h"
 #include "pci.h"
 #include "e1000.h"
+#include "vmxnet3.h"
 #include "net.h"
 #include "dhcp.h"
 #include "netfilter.h"
@@ -1073,6 +1074,15 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
                 mac[3], mac[4], mac[5]);
     } else {
         kprintf("[--] e1000 NIC not found\n");
+    }
+
+    /* VMware vmxnet3 NIC — will succeed under VMware / Fusion */
+    {
+        int vmxnet3_ok;
+        vmxnet3_ok = (vmxnet3_init() == 0) ? 1 : 0;
+        if (vmxnet3_ok) {
+            /* vmxnet3_init() has already printed identification details */
+        }
     }
 
     /* Enable interrupts — needed for timer_get_ticks() in DHCP timeout */
