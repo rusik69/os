@@ -42,4 +42,32 @@ int e1000_set_multicast(void *dev, void *addr, int count);
 int e1000_vlan_rx_add_vid(struct net_device *dev, uint16_t vid);
 int e1000_vlan_rx_kill_vid(struct net_device *dev, uint16_t vid);
 
+/* ── RSS control API ─────────────────────────────────────────────── */
+
+/* Set the RSS hash key (4 dwords, 128 bits total).  Written to HW immediately. */
+void e1000_rss_set_key(const uint32_t key[4]);
+
+/* Read back the current RSS hash key. */
+void e1000_rss_get_key(uint32_t key[4]);
+
+/* Set which RSS hash types are enabled (bitmask of E1000_RSS_HASH_*).
+ * Returns 0 on success, negative errno on invalid types. */
+int e1000_rss_set_hash_types(uint32_t types);
+
+/* Get the current RSS hash type bitmask. */
+uint32_t e1000_rss_get_hash_types(void);
+
+/* Re-program the RSS Redirection Table (128 entries).
+ * If @table is NULL, a round-robin mapping across active queues is used.
+ * Returns 0 on success, negative errno on error. */
+int e1000_rss_set_reta(const uint8_t table[128]);
+
+/* Compute the RSS hash and queue index for a received Ethernet frame.
+ * @buf:    received frame (including Ethernet header).
+ * @len:    frame length in bytes.
+ * @hash_out: if non-NULL, receives the 32-bit RSS hash.
+ * Returns the target queue index (0..num_queues-1). */
+int e1000_rss_get_queue_hash(const uint8_t *buf, uint16_t len,
+                             uint32_t *hash_out);
+
 #endif

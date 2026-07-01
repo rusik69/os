@@ -201,6 +201,15 @@ static const uint32_t rss_key[4] = {
     0x6D5A56DA, 0xBF914C5B, 0xF4A3FCF1, 0x3BB06F25
 };
 
+/* Runtime RSS hash key (mutable — defaults to rss_key above, but can be
+ * overridden via the RSS control API).  For multi-queue without per-queue
+ * affinity, clients can leave this as the default. */
+static uint32_t rss_key_runtime[4];
+
+/* Current RSS hash type bitmask (default: TCP/IPv4 + IPv4) */
+static uint32_t rss_hash_types = E1000_RSS_HASH_TCP_IPV4
+                               | E1000_RSS_HASH_IPV4;
+
 /* ITR adaptive state (per queue — queue 0 ITR used as global) */
 static uint32_t itr_current = ITR_BALANCED;
 static uint32_t itr_pkt_count = 0;
@@ -235,10 +244,10 @@ static void e1000_q_write_tx(int q, int reg_idx, uint32_t val) {
 /* ── RSS helpers ───────────────────────────────────────────────────── */
 
 /* Write the RSS random key (4 dwords) to the hardware */
-static void e1000_rss_write_key(void) {
-    if (!is_82574) return;
+static void e1000_rss_write_key(const uint32_t key[4]) {
+    if (!is_82574 && !is_82576) return;
     for (int i = 0; i < 4; i++)
-        e1000_write(REG_RSSRK(i), rss_key[i]);
+        e1000_write(REG_RSSRK(i), key[i]);
 }
 
 /* Write the RSS Redirection Table.
@@ -246,8 +255,8 @@ static void e1000_rss_write_key(void) {
  * Entry i maps to queue (i % num_queues) for a simple round-robin
  * distribution across available queues. */
 static void e1000_rss_write_reta(void) {
-    if (!is_82574) return;
-    uint32_t reta[32];
+    if (!is_82574 && !is_82576) return;
+    uint32_t reta[32] = {0};
 
     for (int i = 0; i < 128; i++) {
         int word = i / 4;
@@ -261,24 +270,369 @@ static void e1000_rss_write_reta(void) {
         e1000_write(REG_RETA(i), reta[i]);
 }
 
-/* Configure RSS on hardware that supports it (82574).
- * Enables RSS with TCP/IPv4 and IPv4 hashing. */
-static void e1000_rss_init(void) {
-    if (!is_82574) return;
+/* ── Toeplitz hash (software RSS hash) ─────────────────────────────── */
 
-    /* Write RSS key */
-    e1000_rss_write_key();
+/* e1000_rss_toeplitz - Compute the Toeplitz hash for RSS.
+ * @key:  40-byte RSS key (the 4 dword key, expanded byte-wise).
+ * @data: input data to hash (typically a 4-tuple of IP+port).
+ * @len:  length of input data in bytes.
+ *
+ * Returns the 32-bit RSS hash value.
+ *
+ * The Toeplitz hash is computed by XORing the input data bits with
+ * the key bits in a Toeplitz matrix arrangement.  The algorithm below
+ * matches the hardware RSS hash computation for IPv4/TCP tuples. */
+static uint32_t e1000_rss_toeplitz(const uint8_t key[40],
+                                   const uint8_t *data, size_t len)
+{
+    uint32_t hash = 0;
+    int i, j;
+
+    for (i = 0; i < 32; i++) {
+        uint8_t bit = 0;
+        for (j = 0; j < (int)len * 8; j++) {
+            int data_byte = j / 8;
+            int data_bit  = j % 8;
+            int key_byte  = (i + j) / 8;
+            int key_bit   = (i + j) % 8;
+
+            if ((data[data_byte] >> (7 - data_bit)) & 1) {
+                if ((key[key_byte] >> (7 - key_bit)) & 1) {
+                    bit ^= 1;
+                }
+            }
+        }
+        hash = (hash << 1) | (bit & 1);
+    }
+
+    return hash;
+}
+
+/* e1000_rss_compute_ipv4_tcp - Compute the RSS hash for an IPv4/TCP packet.
+ * @iph:  pointer to the IPv4 header (20 bytes).
+ * @th:   pointer to the TCP header (after IP header).
+ *
+ * The input for the Toeplitz hash is a 4-tuple:
+ *   src_addr (4 bytes) || dst_addr (4 bytes) || src_port (2 bytes) || dst_port (2 bytes)
+ * This is 12 bytes total. */
+static uint32_t e1000_rss_compute_ipv4_tcp(const uint8_t *iph,
+                                           const uint8_t *th)
+{
+    uint8_t input[12];
+    int i;
+
+    /* src IP (4 bytes) */
+    for (i = 0; i < 4; i++)
+        input[i] = iph[12 + i];   /* offset 12 = src IP in IPv4 hdr */
+    /* dst IP (4 bytes) */
+    for (i = 0; i < 4; i++)
+        input[4 + i] = iph[16 + i];
+    /* src port (2 bytes, big-endian) */
+    input[8] = th[0];
+    input[9] = th[1];
+    /* dst port (2 bytes) */
+    input[10] = th[2];
+    input[11] = th[3];
+
+    /* Build 40-byte key from the 4 dword runtime key */
+    uint8_t key_bytes[40];
+    for (i = 0; i < 4; i++) {
+        key_bytes[i * 4 + 0] = (uint8_t)( rss_key_runtime[i]        & 0xFF);
+        key_bytes[i * 4 + 1] = (uint8_t)((rss_key_runtime[i] >> 8)  & 0xFF);
+        key_bytes[i * 4 + 2] = (uint8_t)((rss_key_runtime[i] >> 16) & 0xFF);
+        key_bytes[i * 4 + 3] = (uint8_t)((rss_key_runtime[i] >> 24) & 0xFF);
+    }
+    /* Zero out remaining key bytes (for IPv6 support) */
+    for (i = 16; i < 40; i++)
+        key_bytes[i] = 0;
+
+    return e1000_rss_toeplitz(key_bytes, input, sizeof(input));
+}
+
+/* e1000_rss_compute_ipv4 - Compute RSS hash for IPv4-only (non-TCP).
+ * @iph:  pointer to the IPv4 header (20 bytes).
+ *
+ * Input: src_addr (4 bytes) || dst_addr (4 bytes) = 8 bytes. */
+static uint32_t e1000_rss_compute_ipv4(const uint8_t *iph)
+{
+    uint8_t input[8];
+    int i;
+
+    for (i = 0; i < 4; i++)
+        input[i] = iph[12 + i];   /* src IP */
+    for (i = 0; i < 4; i++)
+        input[4 + i] = iph[16 + i]; /* dst IP */
+
+    uint8_t key_bytes[40];
+    for (i = 0; i < 4; i++) {
+        key_bytes[i * 4 + 0] = (uint8_t)( rss_key_runtime[i]        & 0xFF);
+        key_bytes[i * 4 + 1] = (uint8_t)((rss_key_runtime[i] >> 8)  & 0xFF);
+        key_bytes[i * 4 + 2] = (uint8_t)((rss_key_runtime[i] >> 16) & 0xFF);
+        key_bytes[i * 4 + 3] = (uint8_t)((rss_key_runtime[i] >> 24) & 0xFF);
+    }
+    for (i = 16; i < 40; i++)
+        key_bytes[i] = 0;
+
+    return e1000_rss_toeplitz(key_bytes, input, sizeof(input));
+}
+
+/* Forward declaration for e1000_rss_init (defined later) */
+static void e1000_rss_init(void);
+
+/* ── RSS control API ───────────────────────────────────────────────── */
+
+/* e1000_rss_set_key - Override the runtime RSS hash key.
+ * @key: 4 dwords (128 bits total) of the new RSS key.
+ *
+ * The new key is written to hardware immediately and also used for
+ * any subsequent software hash computation. */
+void e1000_rss_set_key(const uint32_t key[4])
+{
+    int i;
+    for (i = 0; i < 4; i++)
+        rss_key_runtime[i] = key[i];
+
+    if (nic_present && (is_82574 || is_82576))
+        e1000_rss_write_key(rss_key_runtime);
+
+    kprintf("[E1000] RSS key updated\\n");
+}
+
+/* e1000_rss_get_key - Read back the current runtime RSS key.
+ * @key: output buffer for 4 dwords. */
+void e1000_rss_get_key(uint32_t key[4])
+{
+    int i;
+    for (i = 0; i < 4; i++)
+        key[i] = rss_key_runtime[i];
+}
+
+/* e1000_rss_set_hash_types - Set which RSS hash types are enabled.
+ * @types: bitmask of E1000_RSS_HASH_* values.
+ *
+ * Re-programs the MRQC register if the NIC is active. */
+int e1000_rss_set_hash_types(uint32_t types)
+{
+    /* Validate: at least one hash type */
+    uint32_t valid = E1000_RSS_HASH_TCP_IPV4 | E1000_RSS_HASH_IPV4
+                   | E1000_RSS_HASH_TCP_IPV6 | E1000_RSS_HASH_IPV6
+                   | E1000_RSS_HASH_IPV6_EX | E1000_RSS_HASH_TCP_IPV6_EX;
+    if (types & ~valid)
+        return -EINVAL;
+
+    rss_hash_types = types & valid;
+
+    /* Re-init RSS on hardware if NIC is active.
+     * This re-writes MRQC with the new hash type mask. */
+    if (nic_present && (is_82574 || is_82576))
+        e1000_rss_init();
+
+    kprintf("[E1000] RSS hash types set to 0x%x\\n", (unsigned)rss_hash_types);
+    return 0;
+}
+
+/* e1000_rss_get_hash_types - Read current RSS hash type bitmask. */
+uint32_t e1000_rss_get_hash_types(void)
+{
+    return rss_hash_types;
+}
+
+/* e1000_rss_set_reta - Re-program the RSS Redirection Table.
+ * @table: array of 128 uint8_t entries, each giving the target queue
+ *         (0..num_queues-1) for the corresponding RETA entry.
+ *
+ * If @table is NULL, reconstructs a round-robin mapping
+ * (same as e1000_rss_write_reta). */
+int e1000_rss_set_reta(const uint8_t table[128])
+{
+    if (!nic_present || (!is_82574 && !is_82576))
+        return -EIO;
+
+    uint32_t reta[32] = {0};
+    int i;
+
+    if (table == NULL) {
+        /* Round-robin across available queues */
+        for (i = 0; i < 128; i++) {
+            int word = i / 4;
+            int shift = (i % 4) * 8;
+            uint8_t q = (uint8_t)(i % num_queues);
+            reta[word] &= ~(0xFFu << shift);
+            reta[word] |= ((uint32_t)q << shift);
+        }
+    } else {
+        /* Use caller-provided mapping */
+        for (i = 0; i < 128; i++) {
+            int word = i / 4;
+            int shift = (i % 4) * 8;
+            uint8_t q = table[i];
+            if (q >= (uint8_t)num_queues)
+                q = (uint8_t)(q % (uint8_t)num_queues);
+            reta[word] &= ~(0xFFu << shift);
+            reta[word] |= ((uint32_t)q << shift);
+        }
+    }
+
+    for (i = 0; i < 32; i++)
+        e1000_write(REG_RETA(i), reta[i]);
+
+    kprintf("[E1000] RSS redirection table updated\\n");
+    return 0;
+}
+
+/* ── RSS receive side helpers ──────────────────────────────────────── */
+
+/* e1000_rss_get_rx_queue - Determine which RX queue a packet was delivered to,
+ * based on the RSS hash queue mapping stored in the RETA.
+ *
+ * For the legacy receive path, we compute the queue from the packet's
+ * IP/TCP headers using software RSS, matching what the hardware did.
+ *
+ * Returns the queue index (0..num_queues-1). */
+static int e1000_rss_get_rx_queue(const uint8_t *buf, uint16_t len)
+{
+    if (num_queues <= 1 || !nic_present)
+        return 0;
+
+    if (len < 34)  /* minimum: eth(14) + IPv4(20) */
+        return 0;
+
+    /* Check for IPv4 ethertype */
+    if (buf[12] != 0x08 || buf[13] != 0x00)
+        return 0;
+
+    const uint8_t *iph = buf + 14;
+    uint8_t ip_proto = iph[9];
+    uint32_t hash = 0;
+
+    if (ip_proto == 6 && len >= 54) {
+        /* TCP - use 4-tuple hash */
+        const uint8_t *th = iph + 20;
+        hash = e1000_rss_compute_ipv4_tcp(iph, th);
+    } else {
+        /* Non-TCP IPv4 - use 2-tuple hash */
+        hash = e1000_rss_compute_ipv4(iph);
+    }
+
+    /* Map hash to queue via RETA (entries 0-127, hash >> 24 selects entry) */
+    uint32_t reta_idx = (hash >> 24) & 0x7F;
+    if (reta_idx >= 128) reta_idx = 0;
+
+    /* Compute which queue the RETA maps this entry to (round-robin by default) */
+    return (int)(reta_idx % (uint32_t)num_queues);
+}
+
+/* e1000_rss_get_queue_hash - Compute the RSS hash for a received packet
+ * and the queue it maps to.
+ * @buf: received Ethernet frame.
+ * @len: frame length.
+ * @hash_out: output pointer for the 32-bit RSS hash (may be NULL).
+ *
+ * Returns the target queue index from the RETA. */
+int e1000_rss_get_queue_hash(const uint8_t *buf, uint16_t len,
+                              uint32_t *hash_out)
+{
+    uint32_t hash = 0;
+    int q = 0;
+
+    if (num_queues <= 1 || !nic_present) {
+        if (hash_out) *hash_out = 0;
+        return 0;
+    }
+
+    if (len < 34)
+        goto done;
+
+    /* Check for IPv4 ethertype */
+    if (buf[12] != 0x08 || buf[13] != 0x00)
+        goto done;
+
+    const uint8_t *iph = buf + 14;
+    uint8_t ip_proto = iph[9];
+
+    if (ip_proto == 6 && len >= 54) {
+        /* TCP */
+        const uint8_t *th = iph + 20;
+        hash = e1000_rss_compute_ipv4_tcp(iph, th);
+    } else {
+        /* Non-TCP IPv4 */
+        hash = e1000_rss_compute_ipv4(iph);
+    }
+
+done:
+    uint32_t reta_idx = (hash >> 24) & 0x7F;
+    if (reta_idx >= 128) reta_idx = 0;
+    q = (int)(reta_idx % (uint32_t)num_queues);
+
+    if (hash_out) *hash_out = hash;
+    return q;
+}
+
+/* Configure RSS on hardware that supports it (82574, 82576).
+ * Enables RSS with TCP/IPv4 and IPv4 hashing.
+ *
+ * MRQC (Multiple Receive Queues Command, 0x5818):
+ *   82574: bits[1:0] = number of queues - 1 (0=1q, 1=2q),
+ *          bits[2]   = HASH_IPV4,
+ *          bits[3]   = HASH_TCP_IPV4,
+ *          bit[7]    = RSS enable.
+ *   82576: bits[2:0] = number of queues - 1,
+ *          bits[6:4] = RSS hash type. */
+static void e1000_rss_init(void) {
+    if (!is_82574 && !is_82576) return;
+
+    uint32_t mrqc = 0;
+    int nq = num_queues;
+
+    if (nq < 1) nq = 1;
+    if (nq > E1000_MAX_QUEUES) nq = E1000_MAX_QUEUES;
+
+    /* Write RSS key (use runtime key which is initialised to default) */
+    e1000_rss_write_key(rss_key_runtime);
 
     /* Write RETA (redirection table) */
     e1000_rss_write_reta();
 
-    /* MRQC: enable RSS with TCP/IPv4 and IPv4 hash types.
-     * MRQC bits [2:0] = 001 (RSS enabled) */
-    uint32_t mrqc = 1;  /* bit 0: RSS enable */
-    mrqc |= E1000_RSS_HASH_TCP_IPV4 | E1000_RSS_HASH_IPV4;  /* hash types */
+    if (is_82576) {
+        /* 82576 MRQC:
+         *   bits[2:0] = (num_queues - 1) & 7
+         *   bits[6:4] = hash type mask
+         *     bit 4 = HASH_IPV4
+         *     bit 5 = HASH_TCP_IPV4
+         *     bit 6 = HASH_IPV6 / TCP_IPV6 */
+        uint32_t nq_bits = (uint32_t)(nq - 1) & 0x07;
+        mrqc = nq_bits;
+
+        /* Hash types: select based on rss_hash_types bitmask.
+         * 82576 maps hash types to bits[6:4] differently from 82574. */
+        if (rss_hash_types & E1000_RSS_HASH_IPV4)
+            mrqc |= (1U << 4);
+        if (rss_hash_types & E1000_RSS_HASH_TCP_IPV4)
+            mrqc |= (1U << 5);
+        if (rss_hash_types & (E1000_RSS_HASH_IPV6 | E1000_RSS_HASH_TCP_IPV6))
+            mrqc |= (1U << 6);
+    } else {
+        /* 82574 MRQC:
+         *   bit[0]  = RSS enable
+         *   bit[1]  = HASH_IPV4
+         *   bit[2]  = HASH_TCP_IPV4
+         *   bit[3]  = HASH_IPV6
+         *   bit[4]  = HASH_TCP_IPV6 */
+        mrqc = 1;  /* RSS enable */
+
+        if (rss_hash_types & E1000_RSS_HASH_IPV4)
+            mrqc |= (1U << 1);
+        if (rss_hash_types & E1000_RSS_HASH_TCP_IPV4)
+            mrqc |= (1U << 2);
+        if (rss_hash_types & E1000_RSS_HASH_IPV6)
+            mrqc |= (1U << 3);
+        if (rss_hash_types & E1000_RSS_HASH_TCP_IPV6)
+            mrqc |= (1U << 4);
+    }
+
     e1000_write(REG_MRQC, mrqc);
 
-    kprintf("  e1000: RSS enabled (%d queues, hash TCPv4|IPv4)\n", num_queues);
+    kprintf("  e1000: RSS enabled (%d queues, MRQC=0x%x)\\n", nq, (unsigned)mrqc);
 }
 
 /* ── VLAN offload helpers ────────────────────────────────────────────── */
@@ -628,24 +982,50 @@ int e1000_init(void) {
         memset(&queues[q].stats, 0, sizeof(queues[q].stats));
     }
 
+    /* Copy default RSS key into runtime key */
+    for (int i = 0; i < 4; i++)
+        rss_key_runtime[i] = rss_key[i];
+
     /* Configure per-queue interrupt vectors via IVAR (82574/82576).
-     * Each queue gets a separate MSI-X-style vector if MSI-X is available,
-     * otherwise they share the legacy IRQ. */
+     * Each queue gets its own MSI-X-style vector if available,
+     * otherwise they all share the legacy IRQ.
+     *
+     * On 82576 with MSI-X, each queue can interrupt on a separate CPU,
+     * enabling true RSS interrupt steering.
+     * On 82574 (2 queues), we map both queues to the same legacy IRQ
+     * unless MSI-X is available. */
     if (is_82574 || is_82576) {
-        /* For now, use a single legacy IRQ for all queues.
-         * On real hardware with MSI-X, each queue would get its own vector. */
+        int have_msix = (apic_is_init_complete() != 0);  /* MSI-X requires APIC */
+
         for (int q = 0; q < num_queues; q++) {
-            uint32_t ivar_reg;
             uint32_t ivar_val;
             int reg_idx = q / 2;  /* two entries per IVAR register */
             int byte_shift = (q % 2) * 8;
-            /* Each queue entry in IVAR: bits[7:0] = vector, bit[7] = valid */
-            ivar_val = IVAR_ENTRY(e1000_irq_line);
-            ivar_reg = e1000_read(REG_IVAR + reg_idx * 4);
+
+            if (have_msix) {
+                /* Use a unique vector per queue for MSI-X.
+                 * Vector pool: start at a safe offset from the legacy IRQ.
+                 * On real hardware this would be allocated from the MSI-X
+                 * vector allocator. */
+                int vector = e1000_irq_line + q;
+                if (vector > 23) vector = 23;  /* stay within ISA-safe range */
+                queues[q].irq_vector = vector;
+                ivar_val = IVAR_ENTRY(vector);
+            } else {
+                /* Legacy: all queues share the same IRQ */
+                queues[q].irq_vector = -1;
+                ivar_val = IVAR_ENTRY(e1000_irq_line);
+            }
+
+            uint32_t ivar_reg = e1000_read(REG_IVAR + reg_idx * 4);
             ivar_reg &= ~(0xFFu << byte_shift);
             ivar_reg |= (ivar_val << byte_shift);
             e1000_write(REG_IVAR + reg_idx * 4, ivar_reg);
         }
+
+        kprintf("  e1000: IVAR configured for %d queue(s)%s\\n",
+                num_queues,
+                have_msix ? " (MSI-X per-queue)" : " (shared IRQ)");
     }
 
     /* Clear multicast table */
@@ -906,6 +1286,17 @@ static int e1000_netdev_receive(struct net_device *dev,
         uint16_t len = qp->rx_descs[idx].length;
         if (len > max_len) len = max_len;
         memcpy(buf, qp->rx_buffers[idx], len);
+
+        /* If RSS is active, compute the software RSS hash for logging */
+        if (num_queues > 1) {
+            uint32_t rss_hash = 0;
+            int rss_q = e1000_rss_get_queue_hash(buf, len, &rss_hash);
+            (void)rss_q;
+            kprintf("[E1000] RX: queue=%d len=%u RSS_hash=0x%08x "
+                    "RETA_idx=%u\\n",
+                    rss_q, (unsigned)len, (unsigned)rss_hash,
+                    (unsigned)((rss_hash >> 24) & 0x7F));
+        }
 
         /* If VLAN offload is enabled, the hardware may have stripped a
          * VLAN tag from the frame and placed it in the RX descriptor's
