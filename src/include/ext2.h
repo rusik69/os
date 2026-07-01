@@ -249,10 +249,155 @@ static inline uint32_t ext2_bgd_table_size_blocks(uint32_t num_groups,
     return (uint32_t)((bgd_bytes + block_size - 1) / block_size);
 }
 
-/* ── ext2_priv forward declaration ────────────────────────────────────
- * The full struct definition is in ext2.c to keep the header clean.
- * Mount/unmount functions use this opaque pointer. */
+/* ── Extended attribute (EA) on-disk structures ───────────────────────
+ *
+ * Extended attributes are stored in a separate block pointed to by the
+ * i_file_acl field of the inode.  The EA block has a header followed by
+ * packed entries, with entry names stored inline and values packed
+ * backwards from the end of the block.
+ *
+ * Entry names are stored WITHOUT the namespace prefix — the e_name_index
+ * field encodes which namespace the entry belongs to (user, system,
+ * security, or trusted).
+ *
+ * The on-disk format is compatible with Linux's ext2/3 EA layout.
+ * ═══════════════════════════════════════════════════════════════════════ */
+#define EXT2_EXT_ATTR_MAGIC        0xEA020000  /* EA block magic number */
+
+#define EXT2_XATTR_INDEX_USER        0   /* user. namespace */
+#define EXT2_XATTR_INDEX_SYSTEM      1   /* system. namespace */
+#define EXT2_XATTR_INDEX_SECURITY    2   /* security. namespace */
+#define EXT2_XATTR_INDEX_TRUSTED     3   /* trusted. namespace */
+
+/* Round up to 4-byte alignment */
+#define EXT2_EXT_ATTR_ROUND         3U
+#define EXT2_EXT_ATTR_ALIGN(len)    (((len) + EXT2_EXT_ATTR_ROUND) & ~EXT2_EXT_ATTR_ROUND)
+
+/* Size of an entry including the name (rounded up to 4 bytes) */
+#define EXT2_EXT_ATTR_ENTRY_LEN(namelen) \
+    EXT2_EXT_ATTR_ALIGN(sizeof(struct ext2_ext_attr_entry) + (namelen))
+
+/* Advance to the next entry in the EA block */
+#define EXT2_EXT_ATTR_NEXT(entry) \
+    ((struct ext2_ext_attr_entry *)((uint8_t *)(entry) + \
+      EXT2_EXT_ATTR_ENTRY_LEN((entry)->e_name_len)))
+
+/* EA block header */
+struct ext2_ext_attr_header {
+    uint32_t h_magic;        /* 0xEA020000 */
+    uint32_t h_refcount;     /* Number of inodes sharing this block */
+    uint32_t h_blocks;       /* Number of blocks used (must be 1) */
+    uint32_t h_hash;         /* Hash of all attributes */
+    uint32_t h_checksum;     /* Checksum (ext4, unused for ext2) */
+    uint32_t h_reserved[3];  /* Reserved */
+} __attribute__((packed));
+
+/* EA entry (followed by name bytes, no null terminator) */
+struct ext2_ext_attr_entry {
+    uint8_t  e_name_len;      /* Length of name (without namespace prefix) */
+    uint8_t  e_name_index;    /* Namespace index (EXT2_XATTR_INDEX_*) */
+    uint16_t e_value_offs;    /* Byte offset of value from block start */
+    uint32_t e_value_block;   /* Disk block for value (0 = same block) */
+    uint32_t e_value_size;    /* Size of value in bytes */
+    uint32_t e_hash;          /* Hash of entry name */
+} __attribute__((packed));
+
+/* ── Extended attribute function declarations ─────────────────────── */
+
+/* Forward declaration of ext2_priv (defined later in this header) */
 struct ext2_priv;
+
+/* Get an extended attribute value from an ext2 inode.
+ * @ep: ext2 private data
+ * @inode: ext2 inode (on-disk format)
+ * @name: full xattr name including namespace prefix
+ * @buf: output buffer for the value
+ * @size: size of output buffer
+ * Returns: number of bytes read on success, negative errno on failure */
+int ext2_ea_get(struct ext2_priv *ep, uint32_t ino,
+                struct ext2_inode *inode,
+                const char *name, void *buf, size_t size);
+
+/* Set an extended attribute on an ext2 inode.
+ * If name already exists, its value is replaced.
+ * If the inode has no EA block, one is allocated.
+ * @ep: ext2 private data
+ * @inode: ext2 inode (modified in-place; caller must write back via
+ *         ext2_write_inode if the function returns 0)
+ * @name: full xattr name including namespace prefix
+ * @value: value to store
+ * @size: size of value in bytes
+ * Returns: 0 on success, negative errno on failure */
+int ext2_ea_set(struct ext2_priv *ep, uint32_t ino,
+                struct ext2_inode *inode,
+                const char *name, const void *value, size_t size);
+
+/* List extended attribute names on an ext2 inode.
+ * Names are written as null-terminated strings into @buf.
+ * @ep: ext2 private data
+ * @inode: ext2 inode
+ * @buf: output buffer
+ * @size: size of output buffer
+ * Returns: total bytes written (sum of null-terminated name lengths)
+ *         on success, negative errno on failure.
+ *         If @buf is NULL, returns the total bytes needed. */
+int ext2_ea_list(struct ext2_priv *ep, struct ext2_inode *inode,
+                 char *buf, size_t size);
+
+/* Remove an extended attribute from an ext2 inode.
+ * If this was the last EA, the EA block is freed and i_file_acl is
+ * cleared in @inode.  Caller must write the inode back afterwards.
+ * @ep: ext2 private data
+ * @inode: ext2 inode (modified in-place)
+ * @name: full xattr name including namespace prefix
+ * Returns: 0 on success, -ENODATA if not found, negative errno on error */
+int ext2_ea_remove(struct ext2_priv *ep, uint32_t ino,
+                   struct ext2_inode *inode,
+                   const char *name);
+
+/* ── ext2 private data (per-mount) ─────────────────────────────────────
+ * The full struct is defined here so that filesystem utility modules
+ * (e.g. ext2_ea.c) can access the members directly. */
+struct ext2_priv {
+    uint8_t  dev_id;
+    uint32_t block_size;
+    uint32_t blocks_per_group;
+    uint32_t inodes_per_group;
+    uint32_t inode_size;
+    uint32_t num_block_groups;
+    struct ext2_superblock sb;
+    char     mountpoint[64];
+
+    /* Cached block group descriptor table */
+    struct ext2_bg_desc *bgd_cache;
+    uint32_t             bgd_cache_size;
+};
+
+/* ── Internal block I/O (used by ext2_ea.c and ext2.c) ────────────── */
+
+/* Mark a filesystem as corrupted (remounts read-only) */
+int ext2_corrupt(struct ext2_priv *ep, const char *reason);
+
+/* Read one block from the block device */
+int ext2_read_block(struct ext2_priv *ep, uint32_t block_num, uint8_t *buf);
+
+/* Write one block to the block device */
+int ext2_write_block(struct ext2_priv *ep, uint32_t block_num,
+                     const uint8_t *buf);
+
+/* Read an inode from disk */
+int ext2_read_inode(struct ext2_priv *ep, uint32_t ino,
+                    struct ext2_inode *inode);
+
+/* Write an inode back to disk */
+int ext2_write_inode(struct ext2_priv *ep, uint32_t ino,
+                     const struct ext2_inode *inode);
+
+/* Allocate one free block */
+int ext2_alloc_block(struct ext2_priv *ep, uint32_t *block_out);
+
+/* Free a previously allocated block (marks bitmap, updates superblock) */
+int ext2_free_block(struct ext2_priv *ep, uint32_t block_num);
 
 /* Mount an ext2 filesystem from a block device */
 int ext2_mount(const char *mountpoint, uint8_t dev_id);

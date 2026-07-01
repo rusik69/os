@@ -27,25 +27,8 @@
 #include "module.h"
 #endif
 
-struct ext2_priv {
-    uint8_t  dev_id;
-    uint32_t block_size;
-    uint32_t blocks_per_group;
-    uint32_t inodes_per_group;
-    uint32_t inode_size;
-    uint32_t num_block_groups;
-    struct ext2_superblock sb;
-    char     mountpoint[64];   /* for vfs_force_readonly() on corruption */
-
-    /* Cached block group descriptor table — loaded at mount time.
-     * This allows correct inode lookup across ALL block groups,
-     * not just group 0.  Allocated dynamically from kmalloc. */
-    struct ext2_bg_desc *bgd_cache;       /* array of num_block_groups entries */
-    uint32_t             bgd_cache_size;  /* total bytes allocated for bgd_cache */
-};
-
 /* Corrupt filesystem error helper: remounts read-only and returns -EFSCORRUPTED */
-static int ext2_corrupt(struct ext2_priv *ep, const char *reason)
+int ext2_corrupt(struct ext2_priv *ep, const char *reason)
 {
     if (!ep)
         return -EFSCORRUPTED;
@@ -54,7 +37,7 @@ static int ext2_corrupt(struct ext2_priv *ep, const char *reason)
 }
 
 /* Read one block from the block device */
-static int ext2_read_block(struct ext2_priv *ep, uint32_t block_num, uint8_t *buf) {
+int ext2_read_block(struct ext2_priv *ep, uint32_t block_num, uint8_t *buf) {
     uint64_t lba = (uint64_t)block_num * (ep->block_size / 512);
     uint32_t sectors = ep->block_size / 512;
     for (uint32_t i = 0; i < sectors; i++) {
@@ -81,7 +64,7 @@ static int ext2_load_super(struct ext2_priv *ep) {
 
 /* Read inode — uses cached block group descriptor table for correct
  * group lookup across multi-group filesystems (Item 331). */
-static int ext2_read_inode(struct ext2_priv *ep, uint32_t ino, struct ext2_inode *inode) {
+int ext2_read_inode(struct ext2_priv *ep, uint32_t ino, struct ext2_inode *inode) {
     if (ino == 0)
         return ext2_corrupt(ep, "inode 0 is invalid");
     if (ino > ep->sb.s_inodes_count)
@@ -436,7 +419,7 @@ static int ext2_read_inode_block(struct ext2_priv *ep, struct ext2_inode *inode,
 /* ── Write helpers ──────────────────────────────────────────── */
 
 /* Write one block to the block device */
-static int ext2_write_block(struct ext2_priv *ep, uint32_t block_num,
+int ext2_write_block(struct ext2_priv *ep, uint32_t block_num,
                              const uint8_t *buf)
 {
 	uint64_t lba = (uint64_t)block_num * (ep->block_size / 512);
@@ -451,7 +434,7 @@ static int ext2_write_block(struct ext2_priv *ep, uint32_t block_num,
 
 /* Write an inode back to disk.
  * Reads the containing block, patches the inode slot, writes back. */
-static int ext2_write_inode(struct ext2_priv *ep, uint32_t ino,
+int ext2_write_inode(struct ext2_priv *ep, uint32_t ino,
                              const struct ext2_inode *inode)
 {
 	if (ino == 0 || ino > ep->sb.s_inodes_count)
@@ -688,7 +671,7 @@ static int ext2_alloc_blocks(struct ext2_priv *ep,
  * bitmap scanning for efficiency).
  *
  * Returns 0 on success with @block_out set, -ENOSPC on failure. */
-static int ext2_alloc_block(struct ext2_priv *ep, uint32_t *block_out)
+int ext2_alloc_block(struct ext2_priv *ep, uint32_t *block_out)
 {
 	if (ep->sb.s_feature_incompat & EXT2_FEATURE_INCOMPAT_FLEX_BG) {
 		/* Flex_bg: prefer the group with the most free blocks
@@ -3207,6 +3190,40 @@ int64_t ext2_resize(struct ext2_priv *ep, uint64_t new_total_blocks)
             ep->num_block_groups, ep->sb.s_blocks_count);
 
     return (int64_t)ep->sb.s_blocks_count;
+}
+
+/* ── Free a previously allocated block ───────────────────────────────
+ * Marks the block's bit in the block group bitmap as free, updates
+ * the free block counts in the bgd cache and superblock.
+ *
+ * Returns 0 on success, negative errno on error.
+ * If the block number is 0 (hole), returns 0 without doing anything. */
+int ext2_free_block(struct ext2_priv *ep, uint32_t block_num)
+{
+    if (block_num == 0)
+        return 0;  /* Hole — nothing to free */
+    if (block_num >= ep->sb.s_blocks_count)
+        return -EINVAL;
+
+    uint32_t group = block_num / ep->blocks_per_group;
+    if (group >= ep->num_block_groups)
+        return -EINVAL;
+
+    uint32_t bit = block_num % ep->blocks_per_group;
+    uint8_t bitmap[4096];
+    struct ext2_bg_desc *bgd = &ep->bgd_cache[group];
+
+    if (ext2_read_block(ep, bgd->bg_block_bitmap, bitmap) < 0)
+        return -EIO;
+
+    bitmap[bit / 8] |= (1U << (bit % 8));
+
+    if (ext2_write_block(ep, bgd->bg_block_bitmap, bitmap) < 0)
+        return -EIO;
+
+    bgd->bg_free_blocks_count++;
+    ep->sb.s_free_blocks_count++;
+    return 0;
 }
 
 int __init ext2_init(void) {

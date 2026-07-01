@@ -247,6 +247,7 @@ C_SRCS = src/kernel/kernel.c \
          src/fs/iosched.c \
          src/fs/luks.c \
          src/fs/ext2.c \
+         src/fs/ext2_ea.c \
          src/fs/ext4.c \
          src/fs/cifs.c \
          src/fs/nfsd.c \
