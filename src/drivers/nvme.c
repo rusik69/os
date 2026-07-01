@@ -34,6 +34,11 @@
 static struct nvme_ctrl g_nvme_ctrl;
 static int g_nvme_init_done = 0;
 
+/* Saved PCI device for interrupt setup (MSI-X / MSI / INTx) */
+static struct pci_device g_nvme_pci_dev;
+static struct pci_interrupt_config g_nvme_int_cfg;
+static int g_nvme_pci_saved = 0;
+
 /* ── Multipath support ──────────────────────────────────────────────── */
 
 /* Maximum number of paths per namespace */
@@ -184,6 +189,11 @@ static int nvme_probe_pci(void) {
             g_nvme_ctrl.max_q_depth, g_nvme_ctrl.doorbell_stride);
 
     g_nvme_ctrl.present = 1;
+
+    /* Save PCI device for MSI-X / interrupt setup */
+    g_nvme_pci_dev = pci;
+    g_nvme_pci_saved = 1;
+
     return 0;
 }
 
@@ -430,24 +440,19 @@ static int nvme_identify_ns(uint32_t nsid, struct nvme_identify_ns *id) {
 /* ── Set features: Number of Queues ────────────────────────────────── */
 
 static int nvme_set_num_queues(uint32_t nr_queues) {
-    uint64_t data_frame = pmm_alloc_frame();
-    if (unlikely(!data_frame)) return -ENOMEM;
-
-    memset(PHYS_TO_VIRT((void*)(uintptr_t)(data_frame * 4096)), 0, 4096);
-
     struct nvme_sq_entry cmd;
+    struct nvme_cq_entry cqe;
     memset(&cmd, 0, sizeof(cmd));
+    memset(&cqe, 0, sizeof(cqe));
+
     cmd.cdw0 = NVME_ADMIN_SET_FEATURES;
     cmd.nsid = 0;
-    cmd.prp1 = data_frame * 4096;
-    /* cdw10: feature identifier (NumberOfQueues) */
+    cmd.prp1 = 0;               /* No data transfer for NumberOfQueues */
     cmd.cdw10 = NVME_FEAT_NUMBER_OF_QUEUES;
     /* cdw11: number of I/O submission queues requested (lower 16 bits) */
     /*         and completion queues (upper 16 bits) — 0-based values. */
-    uint32_t queues = (nr_queues << 16) | nr_queues;
-    cmd.cdw11 = queues;
+    cmd.cdw11 = (nr_queues << 16) | nr_queues;
 
-    struct nvme_cq_entry cqe;
     int ret = nvme_submit_admin_cmd(&cmd, &cqe);
 
     if (ret == 0) {
@@ -466,7 +471,6 @@ static int nvme_set_num_queues(uint32_t nr_queues) {
         ret = (int)actual;
     }
 
-    pmm_free_frame(data_frame);
     return ret;
 }
 
@@ -578,7 +582,11 @@ static int nvme_setup_io_queues(void) {
         q->sq_size  = NVME_IO_QUEUE_SIZE;
         q->cq_size  = NVME_IO_QUEUE_SIZE;
         q->stride   = g_nvme_ctrl.doorbell_stride;
-        q->irq_vector = i;  /* use distinct IRQ vectors for MSI-X */
+        /* IRQ vector: for MSI-X, use entry index i; for MSI/INTx, use 0 */
+        if (g_nvme_int_cfg.type == 2)
+            q->irq_vector = i;
+        else
+            q->irq_vector = 0;
 
         /* Create completion queue first (SQ depends on CQ) */
         if (nvme_create_io_cq(q) < 0) {
@@ -1167,8 +1175,16 @@ int __init nvme_init(void) {
         g_nvme_ctrl.mdts = id.mdts;
     }
 
-    /* Register IRQ handler */
-    idt_register_handler((uint8_t)(32 + g_nvme_ctrl.irq), nvme_irq_handler);
+    /* Set up interrupts: try MSI-X multi-vector, then MSI, then INTx */
+    memset(&g_nvme_int_cfg, 0, sizeof(g_nvme_int_cfg));
+    if (g_nvme_pci_saved) {
+        pci_setup_interrupts(&g_nvme_pci_dev, &g_nvme_int_cfg, nvme_irq_handler);
+        kprintf("[NVME] Interrupts: type=%d, %d vector(s), base=%d\n",
+                g_nvme_int_cfg.type, g_nvme_int_cfg.n_vectors, g_nvme_int_cfg.vector);
+    } else {
+        /* Fallback: register legacy INTx handler directly */
+        idt_register_handler((uint8_t)(32 + g_nvme_ctrl.irq), nvme_irq_handler);
+    }
 
     /* Set up per-CPU I/O queue pairs */
     if (nvme_setup_io_queues() < 0) {
@@ -1230,6 +1246,15 @@ void nvme_exit(void)
         return;
 
     kprintf("[NVME] Shutting down...\n");
+
+    /* Disable PCI interrupts based on active type */
+    if (g_nvme_pci_saved) {
+        if (g_nvme_int_cfg.type == 2)
+            pci_disable_msix(&g_nvme_pci_dev);
+        else if (g_nvme_int_cfg.type == 1)
+            pci_disable_msi(&g_nvme_pci_dev);
+        /* INTx (type 0) has no disable needed at the PCI level */
+    }
 
     /* Disable the controller: clear CC.EN */
     uint32_t cc = nvme_read32(&g_nvme_ctrl, NVME_REG_CC);
@@ -1381,12 +1406,13 @@ int nvme_create_cq(uint16_t cqid, uint64_t addr, uint16_t size, uint16_t iv)
     struct nvme_sq_entry cmd;
     struct nvme_cq_entry cqe;
     memset(&cmd, 0, sizeof(cmd));
+    memset(&cqe, 0, sizeof(cqe));
 
-    cmd.cdw0 = NVME_ADMIN_CREATE_CQ | (0 << 8);  /* opcode + fuse */
-    cmd.cdw10 = (uint32_t)(cqid & 0xFFFF) |
-                ((uint32_t)(size - 1) << 16);  /* queue size - 1 */
-    cmd.cdw11 = (1U << 0) |                     /* physically contiguous */
-                ((uint32_t)(iv & 0xFFFF) << 16); /* interrupt vector */
+    cmd.cdw0 = NVME_ADMIN_CREATE_CQ;
+    /* cdw10: bits [31] PC=1 (physically contiguous), [16] IEN=1 (IRQ enabled), [15:0] CQID */
+    cmd.cdw10 = (1u << 31) | (1u << 16) | (uint32_t)(cqid & 0xFFFF);
+    /* cdw11: bits [31:16] queue size (1-based), [15:0] interrupt vector */
+    cmd.cdw11 = ((uint32_t)((size - 1) & 0xFFFF) << 16) | (iv & 0xFFFF);
     cmd.prp1 = addr;
 
     return nvme_submit_admin_cmd(&cmd, &cqe);
@@ -1398,15 +1424,47 @@ int nvme_create_sq(uint16_t sqid, uint64_t addr, uint16_t size, uint16_t cqid)
     struct nvme_sq_entry cmd;
     struct nvme_cq_entry cqe;
     memset(&cmd, 0, sizeof(cmd));
+    memset(&cqe, 0, sizeof(cqe));
 
-    cmd.cdw0 = NVME_ADMIN_CREATE_SQ | (0 << 8);
-    cmd.cdw10 = (uint32_t)(sqid & 0xFFFF) |
-                ((uint32_t)(size - 1) << 16);
-    cmd.cdw11 = (1U << 0) |                     /* physically contiguous */
-                ((uint32_t)(cqid & 0xFFFF) << 16); /* completion queue ID */
+    cmd.cdw0 = NVME_ADMIN_CREATE_SQ;
+    /* cdw10: bits [31] PC=1 (physically contiguous), [15:0] SQID */
+    cmd.cdw10 = (1u << 31) | (uint32_t)(sqid & 0xFFFF);
+    /* cdw11: bits [31:16] queue size (1-based), [15:0] CQID */
+    cmd.cdw11 = ((uint32_t)((size - 1) & 0xFFFF) << 16) | (cqid & 0xFFFF);
     cmd.prp1 = addr;
 
     return nvme_submit_admin_cmd(&cmd, &cqe);
+}
+
+/* ── Create I/O queue pair (CQ + SQ) ────────────────── */
+/* Forward declarations for queue delete admin commands */
+int nvme_delete_cq(uint16_t cqid);
+int nvme_delete_sq(uint16_t sqid);
+
+int nvme_create_io_queue_pair(uint16_t qid, uint64_t cq_addr, uint64_t sq_addr,
+                               uint16_t cq_size, uint16_t sq_size,
+                               uint16_t irq_vector)
+{
+    /* Create I/O Completion Queue first */
+    int ret = nvme_create_cq(qid, cq_addr, cq_size, irq_vector);
+    if (ret < 0) {
+        kprintf("[NVME] nvme_create_io_queue_pair: failed to create CQ %u\n",
+                (unsigned int)qid);
+        return ret;
+    }
+
+    /* Create I/O Submission Queue (associated with the same CQID) */
+    ret = nvme_create_sq(qid, sq_addr, sq_size, qid);
+    if (ret < 0) {
+        kprintf("[NVME] nvme_create_io_queue_pair: failed to create SQ %u, ",
+                (unsigned int)qid);
+        kprintf("rolling back CQ %u\n", (unsigned int)qid);
+        /* Rollback: delete the CQ on SQ creation failure */
+        nvme_delete_cq(qid);
+        return ret;
+    }
+
+    return 0;
 }
 
 /* ── Delete completion queue (admin command) ──────────── */
