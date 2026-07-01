@@ -155,4 +155,58 @@ int  ahci_pm_get_info(int phys_port, uint32_t *revision,
 /* Print PM diagnostic information to the kernel log. */
 void ahci_pm_dump_info(int phys_port);
 
+/* ── ALPM (Aggressive Link Power Management) API ────────────────────── */
+
+/* Link power management policies for ahci_alpm_set_policy */
+#define AHCI_ALPM_POLICY_PERFORMANCE    0   /* No power saving, disable Partial & Slumber */
+#define AHCI_ALPM_POLICY_ALLOW_PARTIAL  1   /* Allow Partial state only */
+#define AHCI_ALPM_POLICY_ALLOW_SLUMBER  2   /* Allow Slumber state only */
+#define AHCI_ALPM_POLICY_ALLOW_BOTH     3   /* Allow both Partial and Slumber */
+#define AHCI_ALPM_POLICY_AGGRESSIVE     4   /* Allow both + aggressive transitions */
+
+/* Current link power state returned by ahci_alpm_get_state */
+#define AHCI_ALPM_STATE_ACTIVE      0   /* Device active (D0) */
+#define AHCI_ALPM_STATE_PARTIAL     1   /* Partial power state */
+#define AHCI_ALPM_STATE_SLUMBER     2   /* Slumber power state */
+#define AHCI_ALPM_STATE_DEVSLEEP    3   /* Device Sleep */
+
+/* Check if the controller supports Partial and/or Slumber power states.
+ * Returns bitmask: bit 0 = Partial supported, bit 1 = Slumber supported. */
+int  ahci_alpm_is_supported(void);
+
+/* Set the ALPM policy for a physical port (0-31).
+ * @policy: one of AHCI_ALPM_POLICY_* constants.
+ * Returns 0 on success, -1 if port invalid or policy unsupported. */
+int  ahci_alpm_set_policy(int port_num, int policy);
+
+/* Get the current ALPM policy for a physical port (0-31).
+ * Returns the policy constant on success, -1 on error. */
+int  ahci_alpm_get_policy(int port_num);
+
+/* Get the current link power state for a physical port.
+ * Returns AHCI_ALPM_STATE_* on success, -1 on error. */
+int  ahci_alpm_get_state(int port_num);
+
+/* Enable or disable aggressive link power transitions (ASP bit).
+ * When enabled, the HBA can transition the link to Partial/Slumber
+ * autonomously during idle periods.
+ * @port_num: physical port number
+ * @enable:   1=enable ASP, 0=disable ASP
+ * Returns 0 on success, -1 on error. */
+int  ahci_alpm_set_aggressive(int port_num, int enable);
+
+/* Wake the link from Partial/Slumber to active.
+ * @port_num: physical port number
+ * Returns 0 if already active or wake successful, -1 on error. */
+int  ahci_alpm_wake(int port_num);
+
+/* Check if the controller supports Device Sleep (CAP.SXS).
+ * Returns 1 if supported, 0 if not. */
+int  ahci_alpm_has_devsleep(void);
+
+/* Initialize ALPM during port setup — set default policy.
+ * @port_num: physical port number
+ * Returns 0 on success, -1 on error. */
+int  ahci_alpm_init_port(int port_num);
+
 #endif /* AHCI_H */

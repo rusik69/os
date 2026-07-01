@@ -1386,6 +1386,238 @@ void ahci_pm_dump_info(int phys_port)
     }
 }
 
+/* ── ALPM (Aggressive Link Power Management) ─────────────────────────── */
+
+/* CAP register bits for power management */
+#define CAP_SPS         (1u << 28)  /* Supports Partial State */
+#define CAP_SSS         (1u << 27)  /* Supports Slumber State */
+#define CAP_SXS         (1u << 19)  /* Supports Device Sleep */
+
+/* SCTL.IPM — Interface Power Management (bits 8-9) */
+#define SCTL_IPM_SHIFT  8
+#define SCTL_IPM_MASK   ((uint32_t)0x03 << SCTL_IPM_SHIFT)
+#define SCTL_IPM_NONE      ((uint32_t)0x00 << SCTL_IPM_SHIFT) /* No restriction */
+#define SCTL_IPM_NOPARTIAL ((uint32_t)0x01 << SCTL_IPM_SHIFT) /* Disable Partial */
+#define SCTL_IPM_NOSLUMBER ((uint32_t)0x02 << SCTL_IPM_SHIFT) /* Disable Slumber */
+#define SCTL_IPM_NOBOTH    ((uint32_t)0x03 << SCTL_IPM_SHIFT) /* Disable both */
+
+/* SCTL.ASP — Aggressive Slumber/Partial (bit 10) */
+#define SCTL_ASP        (1u << 10)
+
+/* SSTS.IPM — Interface Power Management status (bits 8-11) */
+#define SSTS_IPM_SHIFT  8
+#define SSTS_IPM_MASK   ((uint32_t)0x0F << SSTS_IPM_SHIFT)
+#define SSTS_IPM_ACTIVE   (0x01u << SSTS_IPM_SHIFT)
+#define SSTS_IPM_PARTIAL  (0x02u << SSTS_IPM_SHIFT)
+#define SSTS_IPM_SLUMBER  (0x06u << SSTS_IPM_SHIFT)
+#define SSTS_IPM_DEVSLEEP (0x08u << SSTS_IPM_SHIFT)
+
+/* Policy-to-SCTL.IPM lookup */
+static const uint32_t alpm_policy_ipm[] = {
+    [AHCI_ALPM_POLICY_PERFORMANCE]   = SCTL_IPM_NOBOTH,
+    [AHCI_ALPM_POLICY_ALLOW_PARTIAL] = SCTL_IPM_NOSLUMBER,
+    [AHCI_ALPM_POLICY_ALLOW_SLUMBER] = SCTL_IPM_NOPARTIAL,
+    [AHCI_ALPM_POLICY_ALLOW_BOTH]    = SCTL_IPM_NONE,
+    [AHCI_ALPM_POLICY_AGGRESSIVE]    = SCTL_IPM_NONE,
+};
+
+/**
+ * ahci_alpm_is_supported — check if the controller supports Partial/Slumber.
+ * Returns bitmask: bit 0 = Partial supported, bit 1 = Slumber supported.
+ */
+int ahci_alpm_is_supported(void)
+{
+    uint32_t cap = hba_read(HBA_CAP_OFFSET);
+    int support = 0;
+    if (cap & CAP_SPS)
+        support |= 1;
+    if (cap & CAP_SSS)
+        support |= 2;
+    return support;
+}
+
+/**
+ * ahci_alpm_has_devsleep — check if the controller supports Device Sleep.
+ * Returns 1 if supported, 0 if not.
+ */
+int ahci_alpm_has_devsleep(void)
+{
+    uint32_t cap = hba_read(HBA_CAP_OFFSET);
+    return (cap & CAP_SXS) ? 1 : 0;
+}
+
+/**
+ * ahci_alpm_set_policy — set the ALPM policy for a physical port.
+ * @port_num: physical port number (0-31)
+ * @policy:   one of AHCI_ALPM_POLICY_* constants
+ * Returns 0 on success, -1 if port invalid or policy unsupported.
+ */
+int ahci_alpm_set_policy(int port_num, int policy)
+{
+    if (port_num < 0 || port_num > 31)
+        return -1;
+    if (policy < AHCI_ALPM_POLICY_PERFORMANCE ||
+        policy > AHCI_ALPM_POLICY_AGGRESSIVE)
+        return -1;
+
+    uint32_t sctl = port_read(port_num, PORT_SCTL);
+
+    /* Clear IPM field + ASP bit */
+    sctl &= ~(SCTL_IPM_MASK | SCTL_ASP);
+
+    if (policy == AHCI_ALPM_POLICY_AGGRESSIVE) {
+        /* Aggressive: no IPM restriction + enable ASP */
+        sctl |= SCTL_IPM_NONE | SCTL_ASP;
+    } else {
+        sctl |= alpm_policy_ipm[policy];
+    }
+
+    port_write(port_num, PORT_SCTL, sctl);
+    __asm__ volatile("mfence" ::: "memory");
+    return 0;
+}
+
+/**
+ * ahci_alpm_get_policy — get the current ALPM policy for a physical port.
+ * Returns the policy constant on success, -1 on error.
+ */
+int ahci_alpm_get_policy(int port_num)
+{
+    if (port_num < 0 || port_num > 31)
+        return -1;
+
+    uint32_t sctl = port_read(port_num, PORT_SCTL);
+    uint32_t ipm = sctl & SCTL_IPM_MASK;
+    uint32_t asp = sctl & SCTL_ASP;
+
+    /* Reverse lookup: match IPM field to policy constant */
+    for (int p = AHCI_ALPM_POLICY_PERFORMANCE; p <= AHCI_ALPM_POLICY_AGGRESSIVE; p++) {
+        if (p == AHCI_ALPM_POLICY_AGGRESSIVE) {
+            /* Aggressive = no IPM restriction + ASP set */
+            if (ipm == SCTL_IPM_NONE && asp)
+                return AHCI_ALPM_POLICY_AGGRESSIVE;
+        } else if (ipm == alpm_policy_ipm[p]) {
+            return p;
+        }
+    }
+    return AHCI_ALPM_POLICY_PERFORMANCE;  /* default if no match */
+}
+
+/**
+ * ahci_alpm_get_state — get the current link power state for a physical port.
+ * Returns AHCI_ALPM_STATE_* on success, -1 on error.
+ */
+int ahci_alpm_get_state(int port_num)
+{
+    if (port_num < 0 || port_num > 31)
+        return -1;
+
+    uint32_t ssts = port_read(port_num, PORT_SSTS);
+    uint32_t ipm = ssts & SSTS_IPM_MASK;
+
+    if (ipm == SSTS_IPM_ACTIVE)
+        return AHCI_ALPM_STATE_ACTIVE;
+    if (ipm == SSTS_IPM_PARTIAL)
+        return AHCI_ALPM_STATE_PARTIAL;
+    if (ipm == SSTS_IPM_SLUMBER)
+        return AHCI_ALPM_STATE_SLUMBER;
+    if (ipm == SSTS_IPM_DEVSLEEP)
+        return AHCI_ALPM_STATE_DEVSLEEP;
+
+    /* If DET shows no device, report active as safe default */
+    return AHCI_ALPM_STATE_ACTIVE;
+}
+
+/**
+ * ahci_alpm_set_aggressive — enable/disable aggressive link power transitions.
+ * @port_num: physical port number
+ * @enable:   1 = enable ASP, 0 = disable ASP
+ * Returns 0 on success, -1 on error.
+ */
+int ahci_alpm_set_aggressive(int port_num, int enable)
+{
+    if (port_num < 0 || port_num > 31)
+        return -1;
+
+    uint32_t sctl = port_read(port_num, PORT_SCTL);
+    if (enable)
+        sctl |= SCTL_ASP;
+    else
+        sctl &= ~SCTL_ASP;
+    port_write(port_num, PORT_SCTL, sctl);
+    __asm__ volatile("mfence" ::: "memory");
+    return 0;
+}
+
+/**
+ * ahci_alpm_wake — wake the link from Partial/Slumber to active.
+ * Sets the policy to PERFORMANCE (disable power saving) and waits
+ * for the link to report active state.
+ * @port_num: physical port number
+ * Returns 0 if already active or wake successful, -1 on timeout.
+ */
+int ahci_alpm_wake(int port_num)
+{
+    if (port_num < 0 || port_num > 31)
+        return -1;
+
+    /* Check if already active */
+    int state = ahci_alpm_get_state(port_num);
+    if (state == AHCI_ALPM_STATE_ACTIVE)
+        return 0;
+
+    /* Set PERFORMANCE policy (disable both Partial and Slumber) */
+    ahci_alpm_set_policy(port_num, AHCI_ALPM_POLICY_PERFORMANCE);
+
+    /* Wake the link by toggling DET via SCTL */
+    uint32_t sctl = port_read(port_num, PORT_SCTL);
+    sctl &= ~(SCTL_IPM_MASK | SCTL_ASP);
+    sctl |= SCTL_IPM_NOBOTH;  /* disable all power saving */
+    sctl |= (uint32_t)SCTL_DET_INIT;  /* initiate COMRESET to wake */
+    port_write(port_num, PORT_SCTL, sctl);
+    __asm__ volatile("mfence" ::: "memory");
+
+    /* Wait for link to wake */
+    for (int i = 0; i < 10000; i++) {
+        uint32_t ssts = port_read(port_num, PORT_SSTS);
+        uint8_t det = ssts & SSTS_DET_MASK;
+        if (det == SSTS_DET_PRESENT) {
+            /* Now clear DET back to normal operation */
+            uint32_t cur = port_read(port_num, PORT_SCTL);
+            cur &= ~(uint32_t)0x0F;  /* clear DET field */
+            port_write(port_num, PORT_SCTL, cur);
+            __asm__ volatile("mfence" ::: "memory");
+            return 0;
+        }
+        __asm__ volatile("pause");
+    }
+    return -1;
+}
+
+/**
+ * ahci_alpm_init_port — initialize ALPM for a physical port during setup.
+ * Sets a sensible default policy (PERFORMANCE = no power saving by default).
+ * @port_num: physical port number
+ * Returns 0 on success, -1 on error.
+ */
+int ahci_alpm_init_port(int port_num)
+{
+    if (port_num < 0 || port_num > 31)
+        return -1;
+
+    /* Default to PERFORMANCE policy — disable power saving during init
+     * to ensure reliable device detection and IDENTIFY. The policy
+     * can be changed later at runtime. */
+    if (ahci_alpm_set_policy(port_num, AHCI_ALPM_POLICY_PERFORMANCE) < 0)
+        return -1;
+
+    /* Clear any pending interrupt status that might have been set
+     * during power state transitions */
+    port_write(port_num, PORT_SERR, 0xFFFFFFFF);
+    port_write(port_num, PORT_IS, PORT_IS_PCS);  /* PhyRdy change */
+    return 0;
+}
+
 /* ── PM-enhanced NCQ error handling ─────────────────────────────────── */
 
 /**
@@ -1512,6 +1744,10 @@ static int ahci_init_phys_port(int p, int irq, int *is_pm) {
     port_write(p, PORT_FBU,  (uint32_t)(port->recv_fis_phys >> 32));
     port_write(p, PORT_SERR, 0xFFFFFFFF);
     port_write(p, PORT_IS,   0xFFFFFFFF);
+
+    /* Initialize ALPM — default to PERFORMANCE (no power saving)
+     * to ensure reliable device detection during IDENTIFY. */
+    ahci_alpm_init_port(p);
 
     /* Enable interrupts — mask SDBS and D2H */
     port_write(p, PORT_IE, PORT_IS_D2H | PORT_IS_SDBS | PORT_IS_PCS | PORT_IS_ERR);
