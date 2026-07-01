@@ -60,6 +60,11 @@
 #define ACPI_ALERT_AC8    "_AC8"   /* Active cooling 8 */
 #define ACPI_ALERT_AC9    "_AC9"   /* Active cooling 9 */
 
+/* ── ACPI thermal passive cooling constants ─────────────────────────── */
+#define ACPI_ALERT_TC1    "_TC1"   /* Thermal Constant 1 */
+#define ACPI_ALERT_TC2    "_TC2"   /* Thermal Constant 2 */
+#define ACPI_ALERT_TSP    "_TSP"   /* Thermal Sampling Period */
+
 /* ── Trip point types ──────────────────────────────────────────────── */
 #define TRIP_POINT_CRITICAL  0
 #define TRIP_POINT_HOT       1
@@ -237,6 +242,20 @@ static int thermal_evaluate_method(int zone_idx, const char *method, int *result
     if (strcmp(method, "_AC8") == 0) { *result = 3681; return 0; } /* ~95°C */
     if (strcmp(method, "_AC9") == 0) { *result = 3701; return 0; } /* ~97°C */
 
+    /* Passive cooling parameters (ACPI spec 11.4.2) */
+    if (strcmp(method, "_TC1") == 0) {
+        *result = 2;  /* Default TC1 = 2 */
+        return 0;
+    }
+    if (strcmp(method, "_TC2") == 0) {
+        *result = 3;  /* Default TC2 = 3 (represents 0.3 after division) */
+        return 0;
+    }
+    if (strcmp(method, "_TSP") == 0) {
+        *result = 10; /* Default TSP = 10 (1.0 second in 0.1s units) */
+        return 0;
+    }
+
     return -1; /* Method not found */
 }
 
@@ -354,6 +373,41 @@ static void thermal_init_trip_points(struct thermal_zone_ext *tze)
     tze->passive_cooling_active = 0;
 }
 
+/*
+ * Compute the passive cooling performance limit using the ACPI _TC1/_TC2
+ * formula (ACPI 6.3 spec, section 11.4.2.1):
+ *
+ *   Performance Limit = _TC1 × (T - _PSV) + _TC2 × (T - _PSV)²
+ *
+ * The result represents the percentage of performance reduction needed
+ * (0% = no throttling, 100% = full throttle).
+ *
+ * _TC2 is stored as-is but represents a decimal value (e.g., 3 = 0.3),
+ * so the quadratic term is scaled by _TC2/10.
+ */
+static int thermal_compute_passive_performance(struct acpi_thermal_zone *z)
+{
+    if (!z || !z->present || z->passive_temp <= 0)
+        return 0;
+
+    int diff = z->temp - z->passive_temp;
+    if (diff <= 0)
+        return 0;  /* Below passive threshold — no throttling */
+
+    /* Performance Limit = _TC1 × diff + (_TC2/10) × diff × diff */
+    int limit = z->tc1 * diff;
+    /* Add quadratic term: _TC2 × diff × diff / 10 */
+    limit += z->tc2 * diff * diff / 10;
+
+    /* Clamp to [0, 100] */
+    if (limit > 100)
+        limit = 100;
+    if (limit < 0)
+        limit = 0;
+
+    return limit;
+}
+
 int __init acpi_thermal_init(void)
 {
     if (g_thermal_init_done)
@@ -376,17 +430,37 @@ int __init acpi_thermal_init(void)
     z->trend = TREND_STABLE;
     z->consecutive_samples = 0;
 
+    /* Read ACPI passive cooling parameters (_TC1, _TC2, _TSP) */
+    int acpi_val;
+    if (thermal_evaluate_method(0, "_TC1", &acpi_val) == 0)
+        z->tc1 = acpi_val;
+    else
+        z->tc1 = 2;  /* Default _TC1 = 2 (ACPI spec typical) */
+
+    if (thermal_evaluate_method(0, "_TC2", &acpi_val) == 0)
+        z->tc2 = acpi_val;
+    else
+        z->tc2 = 3;  /* Default _TC2 = 3 (represents 0.3) */
+
+    if (thermal_evaluate_method(0, "_TSP", &acpi_val) == 0)
+        z->tsp = acpi_val;
+    else
+        z->tsp = 10; /* Default _TSP = 10 (1.0 second) */
+
     /* Initialize trip points from ACPI thermal methods */
     thermal_init_trip_points(tze);
 
     g_thermal_zone_count = 1;
 
     kprintf("[ACPI_TZ] Initialized: zone 0 \"%s\" temp=%d (%d.%d°C) "
-            "poll=[%d..%d]ms, %d trip points\n",
+            "poll=[%d..%d]ms, %d trip points, "
+            "_TC1=%d _TC2=%d _TSP=%d (passive perf=%d%%)\n",
             z->name, z->temp,
             z->temp / 10 - 273, (z->temp % 10) ? (z->temp % 10) : 0,
             z->polling_ms_min, z->polling_ms_max,
-            tze->num_trip_points);
+            tze->num_trip_points,
+            z->tc1, z->tc2, z->tsp,
+            thermal_compute_passive_performance(z));
 
     /* Start periodic timer for thermal polling */
     g_thermal_timer_id = timer_schedule(thermal_timer_cb, NULL,
@@ -441,10 +515,14 @@ static void thermal_timer_cb(void *arg)
         }
     }
 
-    /* Reschedule */
+    /* Reschedule — respect _TSP as minimum sampling period */
     struct acpi_thermal_zone *z = &g_thermal_zones_ext[0].base;
+    int effective_poll_ms = z->polling_ms;
+    int tsp_ms = z->tsp * 100;  /* _TSP is in tenths of seconds */
+    if (tsp_ms > effective_poll_ms)
+        effective_poll_ms = tsp_ms;
     g_thermal_timer_id = timer_schedule(thermal_timer_cb, NULL,
-                                         (uint64_t)(z->polling_ms * TIMER_FREQ / 1000));
+                                         (uint64_t)(effective_poll_ms * TIMER_FREQ / 1000));
 }
 
 int acpi_thermal_get_temp(int zone_idx, int *temp_k)
@@ -534,7 +612,21 @@ void acpi_thermal_print_info(void)
         kprintf("    Active cooling level: %d, Passive cooling: %s\n",
                 tze->active_cooling_level,
                 tze->passive_cooling_active ? "YES" : "no");
+        kprintf("    ACPI params: _TC1=%d _TC2=%d _TSP=%d (tsp=%dms) "
+                "passive_perf=%d%%\n",
+                z->tc1, z->tc2, z->tsp, z->tsp * 100,
+                thermal_compute_passive_performance(z));
     }
+}
+
+/* Get the passive cooling performance limit for a zone (0-100%) */
+int acpi_thermal_get_passive_performance(int zone_idx)
+{
+    if (!g_thermal_init_done || zone_idx < 0 || zone_idx >= MAX_THERMAL_ZONES)
+        return -1;
+    if (!g_thermal_zones_ext[zone_idx].base.present)
+        return -1;
+    return thermal_compute_passive_performance(&g_thermal_zones_ext[zone_idx].base);
 }
 
 /* ── Stub: acpi_thermal_set_policy ─────────────────────────────── */

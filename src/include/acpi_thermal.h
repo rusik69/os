@@ -21,6 +21,9 @@ struct acpi_thermal_zone {
     int   polling_ms_max; /* Maximum polling interval (e.g. 10000ms when cool) */
     int   trend;          /* Temperature trend: -1 falling, 0 stable, +1 rising */
     int   consecutive_samples; /* Count of samples in current trend direction */
+    int   tc1;            /* Thermal Constant 1 (passive cooling equation) */
+    int   tc2;            /* Thermal Constant 2 (passive cooling equation) */
+    int   tsp;            /* Thermal Sampling Period (tenths of seconds) */
 };
 
 /* API */
@@ -30,5 +33,6 @@ int  acpi_thermal_get_state(int zone);
 int  acpi_thermal_get_polling_ms(int zone);
 void acpi_thermal_print_info(void);
 int  acpi_thermal_zone_count(void);
+int  acpi_thermal_get_passive_performance(int zone);
 
 #endif /* ACPI_THERMAL_H */
