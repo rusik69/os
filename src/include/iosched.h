@@ -4,6 +4,7 @@
 #include "types.h"
 #include "blockdev.h"
 #include "list.h"
+#include "hrtimer.h"
 
 /*
  * I/O Scheduler (Elevator) — B15
@@ -27,10 +28,17 @@
 #define DEADLINE_STARVE_LIMIT   2   /* read-batch count before writes dispatched */
 
 /* CFQ constants */
-#define CFQ_SLICE_MS      100    /* time slice per process queue (ms) */
-#define CFQ_QUEUES_MAX     16    /* max per-process queues */
+#define CFQ_SLICE_MS         100    /* base time slice per process queue (ms) */
+#define CFQ_QUEUES_MAX        16    /* max per-process queues */
+#define CFQ_IDLE_DELAY_NS  8000000ULL  /* 8ms idle delay in ns for anticipatory scheduling */
+#define CFQ_WRITE_STARVE_NS  2000000000ULL /* 2s write starvation threshold in ns */
 
-/* Forward declaration */
+/* CFQ priority class weights (relative slice length multiplier) */
+#define CFQ_WEIGHT_RT        400   /* RT gets 4x default slice */
+#define CFQ_WEIGHT_BE_DEF    100   /* BE default weight */
+#define CFQ_WEIGHT_IDLE        1   /* IDLE gets minimum slice */
+
+/* Forward declarations */
 struct iosched_queue;
 struct iosched_cfq_data;
 
@@ -86,21 +94,42 @@ struct iosched_deadline_data {
 /* ── CFQ scheduler data ──────────────────────────────────────────── */
 
 struct cfq_queue {
-    struct list_head      list;        /* link in cfq_data->active_queues */
+    struct list_head      list;        /* link in priority-class list (rt/be/idle) */
     struct blk_request   *head;
     struct blk_request   *tail;
     int                   count;
     uint64_t              pid;         /* owning process PID */
     uint64_t              slice_start; /* tick when slice started */
     int                   dispatched;  /* requests dispatched in current slice */
+    /* Enhanced CFQ fields */
+    uint16_t              ioprio;      /* I/O priority from submitting process */
+    uint32_t              slice_quota; /* time slice quota (ms, based on priority) */
+    uint64_t              last_fetch;  /* last fetch time for think time estimation */
+    uint8_t               is_sync;     /* 1 = queue serves synchronous I/O */
+    uint8_t               seek_count;  /* number of seeks detected (sequential vs random) */
+    uint64_t              last_lba;    /* last LBA for seek detection */
 };
 
 struct iosched_cfq_data {
     struct cfq_queue  queues[CFQ_QUEUES_MAX];
     int               queue_count;
-    struct list_head  active_queues;  /* queues with pending requests */
+    /* Per-priority-class active queue lists */
+    struct list_head  rt_queues;      /* IOPRIO_CLASS_RT queues with pending requests */
+    struct list_head  be_queues;      /* IOPRIO_CLASS_BE queues with pending requests */
+    struct list_head  idle_queues;    /* IOPRIO_CLASS_IDLE queues with pending requests */
     struct cfq_queue *current_q;      /* queue currently being served */
-    int               current_index;  /* index for round-robin */
+    int               current_class;  /* current priority class being served */
+    /* Idle timer for anticipatory scheduling */
+    struct hrtimer    idle_timer;
+    struct cfq_queue *idle_q;         /* queue being idled for (or NULL) */
+    int               idle_expired;   /* set by timer callback when idle timeout fires */
+    /* Write starvation tracking */
+    uint64_t          read_dispatched;   /* read requests dispatched since last write */
+    uint64_t          last_write_tick;   /* timer tick of last write dispatch */
+    /* Statistics */
+    uint64_t          idle_waits;     /* times we entered idle state */
+    uint64_t          idle_hits;      /* process submitted more during idle window */
+    uint64_t          queue_starved;  /* write starvation events triggered */
 };
 
 /* ── Per-device I/O scheduler queue ───────────────────────────────── */

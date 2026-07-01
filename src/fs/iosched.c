@@ -22,6 +22,8 @@
 #include "errno.h"
 #include "process.h"
 #include "module.h"
+#include "hrtimer.h"
+#include "ioprio.h"
 
 /* ── Per-device iosched queue table ───────────────────────────────── */
 
@@ -171,7 +173,9 @@ int iosched_set_policy(int dev_id, int policy)
     case IOSCHED_CFQ:
         iq->ops = &g_cfq_ops;
         memset(&iq->cfq, 0, sizeof(iq->cfq));
-        INIT_LIST_HEAD(&iq->cfq.active_queues);
+        INIT_LIST_HEAD(&iq->cfq.rt_queues);
+        INIT_LIST_HEAD(&iq->cfq.be_queues);
+        INIT_LIST_HEAD(&iq->cfq.idle_queues);
         break;
     default:
         iq->ops = &g_noop_ops;
@@ -600,12 +604,80 @@ static void deadline_free(struct iosched_queue *iq)
 
 /* ════════════════════════════════════════════════════════════════════
  * CFQ scheduler (Complete Fair Queueing)
+ *
+ * Dispatch algorithm:
+ *   1. Select priority class: RT (real-time) → BE (best-effort) → IDLE
+ *   2. Within each class, round-robin between per-process queues
+ *   3. Each queue gets a priority-weighted time slice; lower ioprio
+ *      (within class) yields a proportionally larger slice
+ *   4. After dispatching from a queue that serves synchronous I/O,
+ *      if the queue empties, idle for CFQ_IDLE_DELAY_NS (8ms)
+ *      waiting for more requests from the same process (anticipatory
+ *      scheduling).  If the process submits more within the idle
+ *      window, serve them immediately — otherwise move on.
+ *   5. Write starvation: if read dispatch dominates for more than
+ *      CFQ_WRITE_STARVE_NS, force a write queue next.
+ *   6. IDLE-class queues only dispatch when no RT or BE work exists.
  * ════════════════════════════════════════════════════════════════════ */
 
-/* Find or create a per-process queue */
-static struct cfq_queue *cfq_get_queue(struct iosched_cfq_data *cfq,
-                                        uint64_t pid)
+/* ── Idle timer callback ───────────────────────────────────────── */
+
+static void cfq_idle_timer_cb(void *arg)
 {
+    struct iosched_queue *iq = (struct iosched_queue *)arg;
+    iq->cfq.idle_expired = 1;
+}
+
+/* ── Helper: get the class list for a given priority class ──────── */
+
+static struct list_head *cfq_class_list(struct iosched_cfq_data *cfq,
+                                         unsigned int ioprio_class)
+{
+    switch (ioprio_class) {
+    case IOPRIO_CLASS_RT:
+        return &cfq->rt_queues;
+    case IOPRIO_CLASS_BE:
+        return &cfq->be_queues;
+    case IOPRIO_CLASS_IDLE:
+        return &cfq->idle_queues;
+    default:
+        return &cfq->be_queues;
+    }
+}
+
+/* ── Helper: priority weight for time slice scaling ─────────────── */
+
+static uint32_t cfq_class_weight(unsigned int ioprio_class,
+                                  unsigned int ioprio_data)
+{
+    switch (ioprio_class) {
+    case IOPRIO_CLASS_RT:
+        return CFQ_WEIGHT_RT;
+    case IOPRIO_CLASS_BE:
+        /* Scale BE weight by priority level (0=highest=more weight) */
+        return CFQ_WEIGHT_BE_DEF * (8 - (ioprio_data & 0x7));
+    case IOPRIO_CLASS_IDLE:
+        return CFQ_WEIGHT_IDLE;
+    default:
+        return CFQ_WEIGHT_BE_DEF;
+    }
+}
+
+/* ── Helper: is request synchronous? ────────────────────────────── */
+
+static inline int cfq_req_is_sync(struct blk_request *req)
+{
+    return (req->flags & BLK_REQ_SYNC) != 0;
+}
+
+/* ── Find or create a per-process queue ─────────────────────────── */
+
+static struct cfq_queue *cfq_get_queue(struct iosched_cfq_data *cfq,
+                                        struct blk_request *req)
+{
+    struct process *proc = process_get_current();
+    uint64_t pid = proc ? (uint64_t)(proc->pid) : 0;
+
     /* Look for existing queue for this PID */
     for (int i = 0; i < cfq->queue_count; i++) {
         if (cfq->queues[i].pid == pid && cfq->queues[i].count >= 0)
@@ -621,29 +693,49 @@ static struct cfq_queue *cfq_get_queue(struct iosched_cfq_data *cfq,
     q->pid = pid;
     q->count = 0;
     q->dispatched = 0;
+    q->ioprio = req->ioprio;
+    q->is_sync = cfq_req_is_sync(req);
+    /* Compute priority-weighted slice quota */
+    unsigned int cls = IOPRIO_PRIO_CLASS(req->ioprio);
+    unsigned int dat = IOPRIO_PRIO_DATA(req->ioprio);
+    q->slice_quota = CFQ_SLICE_MS * cfq_class_weight(cls, dat) / CFQ_WEIGHT_BE_DEF;
+    if (q->slice_quota < 10)
+        q->slice_quota = 10;  /* minimum 10ms slice */
     cfq->queue_count++;
 
     return q;
 }
 
+/* ── cfq_submit — submit a request to CFQ ──────────────────────── */
+
 static int cfq_submit(struct iosched_queue *iq, struct blk_request *req)
 {
     struct iosched_cfq_data *cfq = &iq->cfq;
-    uint64_t pid;
 
-    /* Get the PID of the submitting process */
-    struct process *proc = process_get_current();
-    pid = proc ? (uint64_t)(proc->pid) : 0;
-
-    struct cfq_queue *q = cfq_get_queue(cfq, pid);
+    struct cfq_queue *q = cfq_get_queue(cfq, req);
     if (!q) {
         /* Fall back to queue 0 if max queues reached */
         q = &cfq->queues[0];
+        if (!q) return -ENOMEM;
     }
 
-    /* Try to merge with last request in this per-process queue */
-    if (q->tail && same_dir(q->tail, req) &&
-        q->tail->lba + q->tail->count == req->lba) {
+    /* Update sync/async tracking */
+    if (cfq_req_is_sync(req))
+        q->is_sync = 1;
+
+    /* If we are idling for this queue and the process submitted more,
+     * cancel the idle timer — we can serve this immediately. */
+    if (cfq->idle_q == q && q->count == 0 &&
+        hrtimer_active(&cfq->idle_timer)) {
+        hrtimer_cancel(&cfq->idle_timer);
+        cfq->idle_expired = 0;
+        cfq->idle_q = NULL;
+        cfq->idle_hits++;
+    }
+
+    /* Try to merge with the last request in this per-process queue */
+    if (q->tail && q->tail->lba + q->tail->count == req->lba &&
+        ((q->tail->flags ^ req->flags) & (BLK_REQ_READ | BLK_REQ_WRITE)) == 0) {
         q->tail->count += req->count;
         return 0;
     }
@@ -659,55 +751,186 @@ static int cfq_submit(struct iosched_queue *iq, struct blk_request *req)
     req->next = NULL;
     q->count++;
 
-    /* Add to active list if first request */
-    if (q->count == 1 && list_empty(&q->list))
-        list_add_tail(&q->list, &cfq->active_queues);
+    /* Add to appropriate class list if this is the first request */
+    if (q->count == 1 && list_empty(&q->list)) {
+        unsigned int cls = IOPRIO_PRIO_CLASS(q->ioprio);
+        if (cls == 0) cls = IOPRIO_CLASS_BE; /* NONE → BE */
+        list_add_tail(&q->list, cfq_class_list(cfq, cls));
+    }
 
     return 0;
 }
+
+/* ── Helper: pick the next priority class that has work ─────────── */
+
+static int cfq_pick_class(struct iosched_cfq_data *cfq)
+{
+    if (!list_empty(&cfq->rt_queues))
+        return IOPRIO_CLASS_RT;
+    if (!list_empty(&cfq->be_queues))
+        return IOPRIO_CLASS_BE;
+    if (!list_empty(&cfq->idle_queues))
+        return IOPRIO_CLASS_IDLE;
+    return -1;
+}
+
+/* ── cfq_fetch — fetch the next request from CFQ ───────────────── */
 
 static struct blk_request *cfq_fetch(struct iosched_queue *iq)
 {
     struct iosched_cfq_data *cfq = &iq->cfq;
     uint64_t now = timer_get_ms();
 
-    /* If we have a current queue, check if its slice expired */
+    /* ── Phase 1: Check idle timer state ── */
+    if (cfq->idle_q && cfq->idle_expired) {
+        /* Idle timed out — move off this queue */
+        cfq->idle_q = NULL;
+        cfq->idle_expired = 0;
+        cfq->current_q = NULL;
+    }
+
+    if (cfq->idle_q) {
+        /* Still within the idle window — check if the queue has requests */
+        struct cfq_queue *iqidle = cfq->idle_q;
+        if (iqidle->head) {
+            /* Process submitted more during idle window — serve it */
+            hrtimer_cancel(&cfq->idle_timer);
+            cfq->idle_expired = 0;
+            struct blk_request *req = iqidle->head;
+            iqidle->head = req->next;
+            if (!iqidle->head)
+                iqidle->tail = NULL;
+            req->next = NULL;
+            iqidle->count--;
+            iqidle->dispatched++;
+            if (iqidle->count > 0)
+                iqidle->last_fetch = timer_get_ns();
+            cfq->current_q = iqidle;
+            return req;
+        }
+        /* Queue is still empty during idle window — return NULL,
+         * the caller will retry or a new submission will trigger. */
+        return NULL;
+    }
+
+    /* ── Phase 2: Check current queue — is its slice still valid? ── */
     if (cfq->current_q) {
         uint64_t elapsed = now - cfq->current_q->slice_start;
-        /* Allow a bit of slack (10 ms) before switching */
-        if (elapsed >= CFQ_SLICE_MS + 10 || cfq->current_q->count == 0) {
-            /* Move current queue to end of round-robin */
-            if (cfq->current_q->count > 0) {
-                list_del(&cfq->current_q->list);
-                list_add_tail(&cfq->current_q->list, &cfq->active_queues);
+
+        /* Allow a bit of slack (10% of quota) before switching */
+        uint32_t slack = cfq->current_q->slice_quota / 10;
+        if (slack < 5) slack = 5;
+
+        if (elapsed >= cfq->current_q->slice_quota + slack ||
+            cfq->current_q->count == 0) {
+
+            /* Slice expired or queue empty — move to next */
+            struct cfq_queue *old_q = cfq->current_q;
+
+            if (old_q->count > 0) {
+                /* Still has requests but slice expired — re-queue */
+                unsigned int cls = IOPRIO_PRIO_CLASS(old_q->ioprio);
+                if (cls == 0) cls = IOPRIO_CLASS_BE;
+                list_add_tail(&old_q->list, cfq_class_list(cfq, cls));
             } else {
-                list_del(&cfq->current_q->list);
-                INIT_LIST_HEAD(&cfq->current_q->list);
+                /* Queue empty — check if we should idle */
+                if (old_q->is_sync && old_q->dispatched > 0) {
+                    /* Start anticipatory idle — wait for more I/O */
+                    cfq->idle_q = old_q;
+                    cfq->idle_expired = 0;
+                    hrtimer_init(&cfq->idle_timer, cfq_idle_timer_cb, iq);
+                    hrtimer_start(&cfq->idle_timer, CFQ_IDLE_DELAY_NS);
+                    cfq->idle_waits++;
+                    /* Current queue becomes the idle one */
+                    cfq->current_q = old_q;
+                    return NULL;
+                }
+                /* Not sync — remove from active list */
+                INIT_LIST_HEAD(&old_q->list);
             }
             cfq->current_q = NULL;
+        } else {
+            /* Slice still valid — dispatch from current queue */
+            struct cfq_queue *q = cfq->current_q;
+            if (!q || !q->head)
+                return NULL;
+
+            struct blk_request *req = q->head;
+            q->head = req->next;
+            if (!q->head)
+                q->tail = NULL;
+            req->next = NULL;
+            q->count--;
+            q->dispatched++;
+            q->last_fetch = timer_get_ns();
+
+            /* Track sync/async */
+            if (cfq_req_is_sync(req))
+                q->is_sync = 1;
+
+            return req;
         }
     }
 
-    /* Pick the next queue in round-robin */
-    if (!cfq->current_q) {
-        if (list_empty(&cfq->active_queues))
-            return NULL;
+    /* ── Phase 3: Select next priority class and queue ── */
 
-        struct list_head *first = cfq->active_queues.next;
-        struct cfq_queue *q = list_entry(first, struct cfq_queue, list);
+    /* Check write starvation: if reads have dominated for too long,
+     * force a write dispatch by temporarily ignoring reads. */
+    if (!list_empty(&cfq->be_queues) &&
+        cfq->read_dispatched > 64) {
+        uint64_t now_ns = timer_get_ns();
+        if (now_ns - cfq->last_write_tick >= CFQ_WRITE_STARVE_NS) {
+            /* Force write dispatch: scan BE queues for writes */
+            struct list_head *pos;
+            list_for_each(pos, &cfq->be_queues) {
+                struct cfq_queue *wq = list_entry(pos, struct cfq_queue, list);
+                if (wq->head &&
+                    (wq->head->flags & BLK_REQ_WRITE)) {
+                    /* Found a write queue — serve it now */
+                    list_del(&wq->list);
+                    INIT_LIST_HEAD(&wq->list);
+                    wq->slice_start = now;
+                    wq->dispatched = 0;
+                    cfq->current_q = wq;
+                    cfq->queue_starved++;
+                    cfq->read_dispatched = 0;
+                    cfq->last_write_tick = now_ns;
 
-        /* Remove from active list (will re-add if still has requests later) */
-        list_del(&q->list);
-        INIT_LIST_HEAD(&q->list);
-
-        q->slice_start = now;
-        q->dispatched = 0;
-        cfq->current_q = q;
+                    struct blk_request *req = wq->head;
+                    wq->head = req->next;
+                    if (!wq->head)
+                        wq->tail = NULL;
+                    req->next = NULL;
+                    wq->count--;
+                    wq->dispatched++;
+                    wq->last_fetch = timer_get_ns();
+                    return req;
+                }
+            }
+        }
     }
 
-    /* Dispatch from the current queue */
-    struct cfq_queue *q = cfq->current_q;
-    if (!q || !q->head)
+    /* Pick the next priority class with pending work */
+    int cls = cfq_pick_class(cfq);
+    if (cls < 0)
+        return NULL;
+
+    /* Pick the first queue from this class's list (round-robin) */
+    struct list_head *class_list = cfq_class_list(cfq, cls);
+    struct list_head *first = class_list->next;
+    struct cfq_queue *q = list_entry(first, struct cfq_queue, list);
+
+    /* Remove from class list for service */
+    list_del(&q->list);
+    INIT_LIST_HEAD(&q->list);
+
+    q->slice_start = now;
+    q->dispatched = 0;
+    q->last_fetch = timer_get_ns();
+    cfq->current_q = q;
+    cfq->current_class = cls;
+
+    if (!q->head)
         return NULL;
 
     struct blk_request *req = q->head;
@@ -718,25 +941,36 @@ static struct blk_request *cfq_fetch(struct iosched_queue *iq)
     q->count--;
     q->dispatched++;
 
-    /* If queue is now empty, we'll pick a new one next time */
-    if (q->count == 0) {
-        cfq->current_q = NULL;  /* will pick next on next fetch */
-    }
+    /* Track read/write counters for starvation detection */
+    if (req->flags & BLK_REQ_READ)
+        cfq->read_dispatched++;
+    else
+        cfq->read_dispatched = 0;
 
     return req;
 }
 
+/* ── cfq_free — clean up CFQ data ──────────────────────────────── */
+
 static void cfq_free(struct iosched_queue *iq)
 {
     struct iosched_cfq_data *cfq = &iq->cfq;
+
+    /* Cancel any pending idle timer */
+    if (hrtimer_active(&cfq->idle_timer))
+        hrtimer_cancel(&cfq->idle_timer);
+
+    /* Clean up all queue lists */
     for (int i = 0; i < cfq->queue_count; i++) {
         struct cfq_queue *q = &cfq->queues[i];
         if (!list_empty(&q->list))
             list_del(&q->list);
-        /* Note: requests themselves are freed by the caller */
     }
+
     cfq->queue_count = 0;
     cfq->current_q = NULL;
+    cfq->idle_q = NULL;
+    cfq->idle_expired = 0;
 }
 
 /* ── iosched_try_merge ────────────────────────────────────────────

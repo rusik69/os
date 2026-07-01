@@ -220,7 +220,7 @@ int blk_submit_sync(int dev_id, uint64_t lba, uint32_t count,
             req->lba = cur_lba;
             req->count = chunk;
             req->buf = cur_buf;
-            req->flags = flags;
+            req->flags = flags | BLK_REQ_SYNC;
 
             struct wait_queue wq;
             wait_queue_init(&wq);
@@ -263,7 +263,7 @@ int blk_submit_sync(int dev_id, uint64_t lba, uint32_t count,
     req->lba = lba;
     req->count = count;
     req->buf = buf;
-    req->flags = flags;
+    req->flags = flags | BLK_REQ_SYNC;
 
     struct wait_queue wq;
     wait_queue_init(&wq);

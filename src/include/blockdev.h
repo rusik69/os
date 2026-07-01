@@ -26,6 +26,7 @@
 #define BLK_REQ_FUA       (1ULL << 3)  /* Force Unit Access */
 #define BLK_REQ_PREFLUSH  (1ULL << 4)
 #define BLK_REQ_DISCARD   (1ULL << 5)  /* Deallocate/TRIM — data not written */
+#define BLK_REQ_SYNC      (1ULL << 6)  /* Synchronous I/O — process waits for completion */
 
 /* Driver flags */
 #define BLK_DRIVER_ASYNC  1   /* Driver handles completion asynchronously via blk_request_done() */
