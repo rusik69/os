@@ -236,6 +236,31 @@ int nvme_submit_request(int ns_id, int is_write, uint64_t lba,
  * Returns 0 on success, -1 on failure. */
 int nvme_deallocate(int ns_id, uint64_t lba, uint32_t count);
 
+/* ── NVMe Asynchronous Event Request (AER) ────────────────────────── */
+
+/* Asynchronous Event types (completion cdw0 bits [7:0]) */
+#define NVME_AER_TYPE_ERROR                 0x01
+#define NVME_AER_TYPE_SMART                 0x02
+#define NVME_AER_TYPE_CMDSET                0x03
+#define NVME_AER_TYPE_VENDOR                0x04
+
+/* Error event information (for NVME_AER_TYPE_ERROR) */
+#define NVME_AER_ERR_SQ                     0x00
+#define NVME_AER_ERR_INVALID_DB             0x01
+#define NVME_AER_ERR_DIAG_FAIL              0x02
+#define NVME_AER_ERR_PERSIST_INTERNAL       0x03
+#define NVME_AER_ERR_VENDOR_SPECIFIC        0x04
+
+/* SMART / Health event information (for NVME_AER_TYPE_SMART) */
+#define NVME_AER_SMART_RELIABILITY          0x00
+#define NVME_AER_SMART_TEMP_THRESH          0x01
+#define NVME_AER_SMART_SPARE_THRESH         0x02
+
+/* AER functions — init/poll/exit for continuous async event monitoring */
+int  nvme_aer_init(void);
+void nvme_aer_poll(void);
+void nvme_aer_exit(void);
+
 /* ── NVMe Multipath API ────────────────────────────────────────────── */
 
 /* Per-path statistics (exported for sysfs/debugfs) */

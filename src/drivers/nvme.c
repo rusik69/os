@@ -7,7 +7,7 @@
  *   - Block device registration via blockdev layer
  *   - Proper doorbell stride handling
  *   - NVMe multipath: round-robin across paths, per-path statistics
- *   - ANA-less multipath (simple: same NSID → multipath device)
+ *   - ANA-less multipath (simple: same NSID -> multipath device)
  *
  * Architecture:
  *   Admin queue (qid 0): controller configuration, queue creation
@@ -329,9 +329,24 @@ int nvme_sanitize(int action, int overwrite_pass_count) {
 
 /* ── Admin command submit ──────────────────────────────────────────── */
 
-int nvme_submit_admin_cmd(struct nvme_sq_entry *cmd, struct nvme_cq_entry *cqe) {
+/* CID counter for admin commands, used to distinguish AER completions */
+static uint16_t g_admin_cid_counter = 0;
+
+/* Forward declarations for AER (defined below) */
+static int  g_aer_pending = 0;
+static void nvme_aer_handle_event(uint32_t cdw0, uint16_t status);
+static int  nvme_aer_submit(void);
+
+int nvme_submit_admin_cmd(struct nvme_sq_entry *cmd, struct nvme_cq_entry *cqe)
+{
     if (!g_nvme_ctrl.present || !g_nvme_ctrl.admin_sq)
         return -EIO;
+
+    /* Assign a CID (Command Identifier) in bits 31:16 of cdw0.
+     * This lets us distinguish our completion from any AER completions
+     * that may arrive before the sync command completes. */
+    uint16_t cid = g_admin_cid_counter++;
+    cmd->cdw0 = (cmd->cdw0 & 0x0000FFFF) | ((uint32_t)cid << 16);
 
     struct nvme_sq_entry *sq = (struct nvme_sq_entry *)g_nvme_ctrl.admin_sq;
     uint16_t tail = g_nvme_ctrl.admin_sq_tail;
@@ -341,9 +356,11 @@ int nvme_submit_admin_cmd(struct nvme_sq_entry *cmd, struct nvme_cq_entry *cqe) 
     tail = (uint16_t)((tail + 1) % 64);
     g_nvme_ctrl.admin_sq_tail = tail;
 
+    __sync_synchronize();
+
     /* Ring the admin SQ doorbell (qid=0) */
-    uint32_t doorbell_offset = (uint32_t)nvme_sq_doorbell(&g_nvme_ctrl, 0);
-    nvme_write32(&g_nvme_ctrl, doorbell_offset, tail);
+    uint32_t sq_doorbell = (uint32_t)nvme_sq_doorbell(&g_nvme_ctrl, 0);
+    nvme_write32(&g_nvme_ctrl, sq_doorbell, tail);
 
     /* Spin-wait for completion */
     struct nvme_cq_entry *cq = (struct nvme_cq_entry *)g_nvme_ctrl.admin_cq;
@@ -351,7 +368,18 @@ int nvme_submit_admin_cmd(struct nvme_sq_entry *cmd, struct nvme_cq_entry *cqe) 
     uint32_t timeout = 1000000;
     while (timeout--) {
         if (cq[head].status != 0xFFFF) {
-            /* Got completion */
+            /* Drain any AER completions that arrived before our command */
+            if (cq[head].cid != cid) {
+                /* Consume and re-arm for the unexpected completion */
+                cq[head].status = 0xFFFF;
+                head = (uint16_t)((head + 1) % 64);
+                g_nvme_ctrl.admin_cq_head = head;
+                nvme_write32(&g_nvme_ctrl,
+                             nvme_cq_doorbell(&g_nvme_ctrl, 0), head);
+                continue;
+            }
+
+            /* Got our completion */
             if (cqe)
                 memcpy(cqe, &cq[head], sizeof(struct nvme_cq_entry));
             /* Mark as consumed */
@@ -360,7 +388,8 @@ int nvme_submit_admin_cmd(struct nvme_sq_entry *cmd, struct nvme_cq_entry *cqe) 
             g_nvme_ctrl.admin_cq_head = head;
 
             /* Ring the admin CQ doorbell to re-arm */
-            nvme_write32(&g_nvme_ctrl, nvme_cq_doorbell(&g_nvme_ctrl, 0), head);
+            nvme_write32(&g_nvme_ctrl,
+                         nvme_cq_doorbell(&g_nvme_ctrl, 0), head);
 
             return 0;
         }
@@ -680,6 +709,8 @@ static int nvme_poll_io_cq(struct nvme_io_queue *q, uint32_t timeout_loops) {
             if (sct != 0 || sc != 0) {
                 return -EIO;
             }
+            /* Also check for AER completions on the admin CQ */
+            nvme_aer_poll();
             return 0;
         }
         __asm__ volatile("pause");
@@ -882,6 +913,10 @@ static int nvme_blk_submit(struct blk_request *req) {
     for (uint32_t i = 0; i < nr_pages; i++)
         pmm_free_frame(frames[i]);
     kfree(frames);
+
+    /* Check for AER completions on admin CQ after block I/O */
+    nvme_aer_poll();
+
     return ret;
 }
 
@@ -1202,6 +1237,10 @@ int __init nvme_init(void) {
 
     g_nvme_init_done = 1;
     kprintf("[NVME] Driver initialized\n");
+
+    /* Start AER monitoring for asynchronous events */
+    nvme_aer_init();
+
     return 0;
 }
 
@@ -1246,6 +1285,9 @@ void nvme_exit(void)
         return;
 
     kprintf("[NVME] Shutting down...\n");
+
+    /* Stop AER monitoring */
+    nvme_aer_exit();
 
     /* Disable PCI interrupts based on active type */
     if (g_nvme_pci_saved) {
@@ -1333,9 +1375,181 @@ MODULE_ALIAS("pci:v00001AF4d00005842sv*sd*bc*sc*i*");
 MODULE_VERSION("1.0");
 #endif /* MODULE */
 
-/* ═══════════════════════════════════════════════════════════════
+/* ═══════════════════════════════════════════════════════════════════════
+ *  Asynchronous Event Request (AER) — Continuous event monitoring
+ *
+ *  AER allows the NVMe controller to asynchronously notify the host of
+ *  events (errors, SMART thresholds, vendor-specific notifications, etc.)
+ *  without polling.  The host submits an AER admin command; the controller
+ *  holds it outstanding and completes it when an event occurs.  The host
+ *  must re-submit after each completion for continuous monitoring.
+ *
+ *  Per NVMe Base Spec Revision 1.4, Figure 107 — Event types:
+ *    0x01  Error Events
+ *    0x02  SMART / Health Events
+ *    0x03  Command Set Dependent Notifications
+ *    0x04  Vendor Specific Events
+ *
+ *  We use CID 0xAAAA to identify AER completions on the shared admin CQ.
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+#define NVME_AER_CID        0xAAAA
+
+/* ── Non-blocking AER submission ───────────────────────────────────── */
+
+static int nvme_aer_submit(void)
+{
+    if (!g_nvme_ctrl.present || !g_nvme_ctrl.admin_sq)
+        return -EIO;
+
+    struct nvme_sq_entry *sq = (struct nvme_sq_entry *)g_nvme_ctrl.admin_sq;
+    uint16_t tail = g_nvme_ctrl.admin_sq_tail;
+
+    struct nvme_sq_entry cmd;
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.cdw0 = NVME_ADMIN_ASYNC_EVENT | ((uint32_t)NVME_AER_CID << 16);
+
+    memcpy(&sq[tail], &cmd, sizeof(cmd));
+    tail = (uint16_t)((tail + 1) % 64);
+    g_nvme_ctrl.admin_sq_tail = tail;
+
+    __sync_synchronize();
+    nvme_write32(&g_nvme_ctrl, nvme_sq_doorbell(&g_nvme_ctrl, 0), tail);
+
+    g_aer_pending = 1;
+    kprintf("[NVME] AER submitted (SQ tail=%u)\n", tail);
+    return 0;
+}
+
+/* ── Handle an AER completion event ────────────────────────────────── */
+
+static void nvme_aer_handle_event(uint32_t cdw0, uint16_t status)
+{
+    uint8_t event_type = (uint8_t)(cdw0 & 0xFF);
+    uint16_t event_info = (uint16_t)((cdw0 >> 8) & 0x7FFF);
+    int log_page = (int)((cdw0 >> 23) & 1);
+    uint8_t sc = (uint8_t)((status >> 1) & 0xFF);
+    uint8_t sct = (uint8_t)((status >> 9) & 0x7);
+
+    kprintf("[NVME] AER completion: type=0x%02X info=0x%04X "
+            "log_page=%d SCT=%u SC=%u\n",
+            event_type, event_info, log_page,
+            (unsigned)sct, (unsigned)sc);
+
+    switch (event_type) {
+    case NVME_AER_TYPE_ERROR:
+        switch (event_info) {
+        case NVME_AER_ERR_SQ:
+            kprintf("[NVME]   -> Submission Queue error\n");
+            break;
+        case NVME_AER_ERR_INVALID_DB:
+            kprintf("[NVME]   -> Invalid Doorbell Write\n");
+            break;
+        case NVME_AER_ERR_DIAG_FAIL:
+            kprintf("[NVME]   -> Diagnostic Failure\n");
+            break;
+        case NVME_AER_ERR_PERSIST_INTERNAL:
+            kprintf("[NVME]   -> Persistent Internal Error\n");
+            break;
+        default:
+            kprintf("[NVME]   -> Error event (info=0x%04X)\n", event_info);
+            break;
+        }
+        break;
+
+    case NVME_AER_TYPE_SMART:
+        switch (event_info) {
+        case NVME_AER_SMART_RELIABILITY:
+            kprintf("[NVME]   -> NVM Subsystem Reliability warning\n");
+            break;
+        case NVME_AER_SMART_TEMP_THRESH:
+            kprintf("[NVME]   -> Temperature threshold exceeded\n");
+            break;
+        case NVME_AER_SMART_SPARE_THRESH:
+            kprintf("[NVME]   -> Spare capacity below threshold\n");
+            break;
+        default:
+            kprintf("[NVME]   -> SMART event (info=0x%04X)\n", event_info);
+            break;
+        }
+        break;
+
+    case NVME_AER_TYPE_CMDSET:
+        kprintf("[NVME]   -> Command Set Dependent notification\n");
+        break;
+
+    case NVME_AER_TYPE_VENDOR:
+        kprintf("[NVME]   -> Vendor Specific event\n");
+        break;
+
+    default:
+        kprintf("[NVME]   -> Unknown event type 0x%02X\n", event_type);
+        break;
+    }
+}
+
+/* ── Check admin CQ for AER completion ─────────────────────────────── */
+
+void nvme_aer_poll(void)
+{
+    if (!g_aer_pending || !g_nvme_ctrl.present)
+        return;
+
+    struct nvme_cq_entry *cq = (struct nvme_cq_entry *)g_nvme_ctrl.admin_cq;
+    uint16_t head = g_nvme_ctrl.admin_cq_head;
+
+    /* Check if a completion is available at head */
+    if (cq[head].status == 0xFFFF)
+        return;
+
+    /* Read completion entry */
+    uint32_t cdw0 = cq[head].cdw0;
+    uint16_t cid = cq[head].cid;
+    uint16_t status = cq[head].status;
+
+    /* Only consume if this is our AER completion */
+    if (cid != NVME_AER_CID)
+        return;
+
+    /* Mark completion as consumed */
+    cq[head].status = 0xFFFF;
+    head = (uint16_t)((head + 1) % 64);
+    g_nvme_ctrl.admin_cq_head = head;
+
+    /* Re-arm admin CQ doorbell */
+    nvme_write32(&g_nvme_ctrl, nvme_cq_doorbell(&g_nvme_ctrl, 0), head);
+
+    g_aer_pending = 0;
+
+    /* Handle the event */
+    nvme_aer_handle_event(cdw0, status);
+
+    /* Re-submit AER for continuous event monitoring */
+    nvme_aer_submit();
+}
+
+/* ── Initialize AER monitoring ─────────────────────────────────────── */
+
+int __init nvme_aer_init(void)
+{
+    if (!g_nvme_ctrl.present)
+        return -EIO;
+
+    kprintf("[NVME] Starting asynchronous event requests (AER)...\n");
+    return nvme_aer_submit();
+}
+
+/* ── Shut down AER monitoring ──────────────────────────────────────── */
+
+void nvme_aer_exit(void)
+{
+    g_aer_pending = 0;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════
  *  Stub functions for future implementation
- * ═══════════════════════════════════════════════════════════════ */
+ * ═══════════════════════════════════════════════════════════════════════ */
 
 /* ── Submit command to a queue ──────────────────────────── */
 int nvme_submit_cmd(void *q, struct nvme_sq_entry *cmd)
