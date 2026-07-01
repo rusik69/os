@@ -21,6 +21,7 @@
 #include "export.h"
 #include "errno.h"
 #include "process.h"
+#include "module.h"
 
 /* ── Per-device iosched queue table ───────────────────────────────── */
 
@@ -161,6 +162,7 @@ int iosched_set_policy(int dev_id, int policy)
     switch (policy) {
     case IOSCHED_NOOP:
         iq->ops = &g_noop_ops;
+        memset(&iq->noop, 0, sizeof(iq->noop));
         break;
     case IOSCHED_DEADLINE:
         iq->ops = &g_deadline_ops;
@@ -199,18 +201,65 @@ void iosched_request_complete(int dev_id, struct blk_request *req)
 
 /* ════════════════════════════════════════════════════════════════════
  * NOOP scheduler (FIFO)
+ *
+ * The NOOP scheduler maintains a simple FIFO queue with full back-merge
+ * and front-merge support.  On submission the scheduler scans the queue
+ * for merge opportunities:
+ *   1. Fast path: back-merge with tail (most common)
+ *   2. Fast path: front-merge with head
+ *   3. Slow path: walk the full queue looking for any merge candidate
+ *   4. Fallback: append to tail
+ *
+ * This approach captures the maximum number of merge opportunities while
+ * maintaining O(n) worst-case (which is acceptable because NOOP targets
+ * SSDs / NVMe where queue depths are bounded).
  * ════════════════════════════════════════════════════════════════════ */
 
 static int noop_submit(struct iosched_queue *iq, struct blk_request *req)
 {
-    /* Attempt back-merge with last request in queue */
+    /* ── 1. Fast path: back-merge with tail ── */
     if (iq->tail && same_dir(iq->tail, req) &&
         iq->tail->lba + iq->tail->count == req->lba) {
         iq->tail->count += req->count;
+        iq->noop.back_merges++;
+        iq->noop.total_merges++;
         return 0;
     }
 
-    /* Append to tail (FIFO) */
+    /* ── 2. Fast path: front-merge with head ── */
+    if (iq->head && same_dir(iq->head, req) &&
+        req->lba + req->count == iq->head->lba) {
+        iq->head->lba = req->lba;
+        iq->head->count += req->count;
+        iq->noop.front_merges++;
+        iq->noop.total_merges++;
+        return 0;
+    }
+
+    /* ── 3. Full queue scan for mid-queue merges ── */
+    struct blk_request *cur = iq->head;
+    while (cur) {
+        if (same_dir(cur, req)) {
+            /* Back merge: cur immediately precedes req */
+            if (cur->lba + cur->count == req->lba) {
+                cur->count += req->count;
+                iq->noop.back_merges++;
+                iq->noop.total_merges++;
+                return 0;
+            }
+            /* Front merge: req immediately precedes cur */
+            if (req->lba + req->count == cur->lba) {
+                cur->lba = req->lba;
+                cur->count += req->count;
+                iq->noop.front_merges++;
+                iq->noop.total_merges++;
+                return 0;
+            }
+        }
+        cur = cur->next;
+    }
+
+    /* ── 4. No merge found — append to tail ── */
     if (iq->tail) {
         iq->tail->next = req;
         iq->tail = req;
@@ -220,6 +269,7 @@ static int noop_submit(struct iosched_queue *iq, struct blk_request *req)
     }
     req->next = NULL;
     iq->queued_count++;
+    iq->noop.submitted++;
     return 0;
 }
 
@@ -232,13 +282,13 @@ static struct blk_request *noop_fetch(struct iosched_queue *iq)
     if (!iq->head) iq->tail = NULL;
     req->next = NULL;
     iq->queued_count--;
+    iq->noop.fetched++;
     return req;
 }
 
 static void noop_free(struct iosched_queue *iq)
 {
-    (void)iq;
-    /* Nothing to free for NOOP */
+    memset(&iq->noop, 0, sizeof(iq->noop));
 }
 
 /* ════════════════════════════════════════════════════════════════════
@@ -640,3 +690,9 @@ int iosched_complete(void *req)
     (void)req;
     return 0;
 }
+
+/* ── Module metadata ─────────────────────────────────────────────── */
+MODULE_LICENSE("GPL");
+MODULE_VERSION("2.0");
+MODULE_DESCRIPTION("Block I/O scheduler (elevator) — NOOP/DEADLINE/CFQ with enhanced merging");
+MODULE_AUTHOR("Rusik69 OS Kernel");

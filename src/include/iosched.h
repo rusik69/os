@@ -32,6 +32,16 @@
 struct iosched_queue;
 struct iosched_cfq_data;
 
+/* ── NOOP scheduler data ──────────────────────────────────────────── */
+
+struct iosched_noop_data {
+    uint64_t submitted;     /* total requests submitted (excluding merges) */
+    uint64_t fetched;       /* total requests fetched */
+    uint64_t front_merges;  /* front merges performed */
+    uint64_t back_merges;   /* back merges performed */
+    uint64_t total_merges;  /* total merges performed (front + back) */
+};
+
 /* ── Per-scheduler operations ────────────────────────────────────── */
 
 struct iosched_ops {
@@ -98,6 +108,7 @@ struct iosched_queue {
 
     /* Policy-specific private data */
     union {
+        struct iosched_noop_data     noop;
         struct iosched_deadline_data deadline;
         struct iosched_cfq_data     cfq;
     };
