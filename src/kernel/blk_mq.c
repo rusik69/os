@@ -132,6 +132,13 @@ struct blk_mq_sw_queue {
     int head;
     int tail;
     spinlock_t lock;
+    int plug_count;       /* > 0 means plugged — hold requests, don't flush */
+    int occupancy;        /* current number of requests in queue */
+    int peak_occupancy;   /* maximum occupancy ever reached */
+    uint64_t enqueued;    /* total requests enqueued (including merged) */
+    uint64_t dequeued;    /* total requests removed by flush/drain */
+    uint64_t merged;      /* total requests merged into existing ones */
+    uint64_t flushed;     /* total requests dispatched to HW queues */
 };
 
 /* Tag set — manages pre-allocated request pool */
@@ -746,6 +753,339 @@ static int blk_mq_batch_dispatch(struct blk_mq_request **reqs, int count,
 }
 
 /* ════════════════════════════════════════════════════════════════════
+ * Software staging queue — request merging
+ * ════════════════════════════════════════════════════════════════════ */
+
+/* Block size in bytes for sector adjacency calculation */
+#define BLOCK_SIZE 512
+
+/*
+ * Check whether @new_req can be back-merged into @existing.
+ *
+ * Back-merge: new_req's start sector == existing's end sector,
+ * both in the same direction (read or write).
+ *
+ * Returns 1 if mergeable, 0 if not.
+ */
+static int blk_mq_can_back_merge(const struct blk_mq_request *existing,
+                                  const struct blk_mq_request *new_req)
+{
+    uint64_t existing_end;
+
+    if (!existing || !new_req)
+        return 0;
+    if (existing->write != new_req->write)
+        return 0;
+
+    existing_end = existing->sector + (existing->count / BLOCK_SIZE);
+    if (existing->count % BLOCK_SIZE != 0)
+        existing_end++;
+
+    return (new_req->sector == existing_end) ? 1 : 0;
+}
+
+/*
+ * Check whether @new_req can be front-merged into @existing.
+ *
+ * Front-merge: new_req's end sector == existing's start sector,
+ * both in the same direction (read or write).
+ *
+ * Returns 1 if mergeable, 0 if not.
+ */
+static int blk_mq_can_front_merge(const struct blk_mq_request *existing,
+                                   const struct blk_mq_request *new_req)
+{
+    uint64_t new_end;
+
+    if (!existing || !new_req)
+        return 0;
+    if (existing->write != new_req->write)
+        return 0;
+
+    new_end = new_req->sector + (new_req->count / BLOCK_SIZE);
+    if (new_req->count % BLOCK_SIZE != 0)
+        new_end++;
+
+    return (new_end == existing->sector) ? 1 : 0;
+}
+
+/*
+ * Try to back-merge @new_req into the last request in the SW queue.
+ *
+ * On success: extends @tail_req to cover @new_req's range, frees
+ * @new_req back to the tag pool, and updates the merge counter.
+ * Returns 1 if merged, 0 if not.
+ */
+static int blk_mq_sw_queue_back_merge(struct blk_mq_sw_queue *swq,
+                                       struct blk_mq_request *new_req)
+{
+    struct blk_mq_request *tail_req;
+    int tail_idx;
+
+    if (swq->head == swq->tail)
+        return 0;  /* queue is empty */
+
+    /* Last valid entry is one before tail */
+    tail_idx = (swq->tail - 1 + BLK_MQ_DEPTH) % BLK_MQ_DEPTH;
+    tail_req = swq->queue[tail_idx];
+    if (!tail_req)
+        return 0;
+
+    if (!blk_mq_can_back_merge(tail_req, new_req))
+        return 0;
+
+    /* Extend the existing request */
+    tail_req->count = (size_t)((new_req->sector + (new_req->count / BLOCK_SIZE)
+                                - tail_req->sector) * BLOCK_SIZE);
+
+    /* Free the merged request back to the tag pool */
+    blk_mq_free_request(new_req);
+    swq->merged++;
+
+    return 1;
+}
+
+/*
+ * Try to front-merge @new_req into the first request in the SW queue.
+ *
+ * On success: adjusts @head_req's sector and extends @head_req's
+ * buffer to cover @new_req's range, frees @new_req, updates merge
+ * counter.  Returns 1 if merged, 0 if not.
+ */
+static int blk_mq_sw_queue_front_merge(struct blk_mq_sw_queue *swq,
+                                        struct blk_mq_request *new_req)
+{
+    struct blk_mq_request *head_req;
+    uint64_t old_head_end;
+    size_t extend_bytes;
+
+    if (swq->head == swq->tail)
+        return 0;
+
+    head_req = swq->queue[swq->head];
+    if (!head_req)
+        return 0;
+
+    if (!blk_mq_can_front_merge(head_req, new_req))
+        return 0;
+
+    /* Adjust sector backward and extend count to cover new range */
+    old_head_end = head_req->sector + (head_req->count / BLOCK_SIZE);
+    if (head_req->count % BLOCK_SIZE != 0)
+        old_head_end++;
+
+    extend_bytes = (size_t)((old_head_end - new_req->sector) * BLOCK_SIZE);
+    head_req->sector = new_req->sector;
+    head_req->count = extend_bytes;
+
+    blk_mq_free_request(new_req);
+    swq->merged++;
+
+    return 1;
+}
+
+/*
+ * Elevator-based insertion: add request to the SW queue with
+ * front-merge and back-merge opportunities.
+ *
+ * Returns 0 on success, -EAGAIN if the SW queue is full.
+ */
+static int blk_mq_sw_queue_insert(struct blk_mq_sw_queue *swq,
+                                   struct blk_mq_request *req)
+{
+    int next;
+
+    /* Try back-merge first (most common in sequential workloads) */
+    if (blk_mq_sw_queue_back_merge(swq, req))
+        return 0;
+
+    /* Then try front-merge */
+    if (blk_mq_sw_queue_front_merge(swq, req))
+        return 0;
+
+    /* No merge possible — enqueue at tail */
+    next = (swq->tail + 1) % BLK_MQ_DEPTH;
+    if (next == swq->head)
+        return -EAGAIN;
+
+    swq->queue[swq->tail] = req;
+    swq->tail = next;
+    swq->occupancy++;
+    swq->enqueued++;
+
+    if (swq->occupancy > swq->peak_occupancy)
+        swq->peak_occupancy = swq->occupancy;
+
+    return 0;
+}
+
+/* ════════════════════════════════════════════════════════════════════
+ * Software staging queue — plug / unplug API
+ * ════════════════════════════════════════════════════════════════════ */
+
+/*
+ * Plug a software staging queue.
+ *
+ * While plugged, new requests are still enqueued but blk_mq_flush
+ * will skip this queue.  This allows batching of multiple requests
+ * before flushing them to hardware dispatch queues.
+ *
+ * @cpu: CPU index identifying the SW queue
+ */
+void blk_mq_plug_sw_queue(int cpu)
+{
+    if (cpu < 0 || cpu >= BLK_MQ_MAX_SW_QUEUES)
+        return;
+
+    uint64_t irq_flags;
+    struct blk_mq_sw_queue *swq = &blk_mq_sw_queues[cpu];
+
+    spinlock_irqsave_acquire(&swq->lock, &irq_flags);
+    swq->plug_count++;
+    spinlock_irqsave_release(&swq->lock, irq_flags);
+}
+
+/*
+ * Unplug a software staging queue.
+ *
+ * Decrements the plug count.  If the count reaches zero, the queue
+ * is eligible for flushing again.  Callers should trigger a flush
+ * after unplugging.
+ *
+ * @cpu: CPU index identifying the SW queue
+ */
+void blk_mq_unplug_sw_queue(int cpu)
+{
+    if (cpu < 0 || cpu >= BLK_MQ_MAX_SW_QUEUES)
+        return;
+
+    uint64_t irq_flags;
+    struct blk_mq_sw_queue *swq = &blk_mq_sw_queues[cpu];
+
+    spinlock_irqsave_acquire(&swq->lock, &irq_flags);
+    if (swq->plug_count > 0)
+        swq->plug_count--;
+    spinlock_irqsave_release(&swq->lock, irq_flags);
+}
+
+/*
+ * Check whether a software queue is currently plugged.
+ *
+ * Returns 1 if plugged, 0 if not.
+ */
+int blk_mq_sw_queue_is_plugged(int cpu)
+{
+    if (cpu < 0 || cpu >= BLK_MQ_MAX_SW_QUEUES)
+        return 0;
+
+    return (blk_mq_sw_queues[cpu].plug_count > 0) ? 1 : 0;
+}
+
+/*
+ * Plug all software staging queues.
+ *
+ * Useful for batch I/O submission where the caller wants to defer
+ * flushing until all requests are queued.
+ */
+void blk_mq_plug_all_sw_queues(void)
+{
+    for (int i = 0; i < BLK_MQ_MAX_SW_QUEUES; i++) {
+        uint64_t irq_flags;
+        spinlock_irqsave_acquire(&blk_mq_sw_queues[i].lock, &irq_flags);
+        blk_mq_sw_queues[i].plug_count++;
+        spinlock_irqsave_release(&blk_mq_sw_queues[i].lock, irq_flags);
+    }
+}
+
+/*
+ * Unplug all software staging queues.
+ *
+ * After unplugging, call blk_mq_flush() to drain the queues.
+ */
+void blk_mq_unplug_all_sw_queues(void)
+{
+    for (int i = 0; i < BLK_MQ_MAX_SW_QUEUES; i++) {
+        uint64_t irq_flags;
+        spinlock_irqsave_acquire(&blk_mq_sw_queues[i].lock, &irq_flags);
+        if (blk_mq_sw_queues[i].plug_count > 0)
+            blk_mq_sw_queues[i].plug_count--;
+        spinlock_irqsave_release(&blk_mq_sw_queues[i].lock, irq_flags);
+    }
+}
+
+/* ════════════════════════════════════════════════════════════════════
+ * Software staging queue — statistics
+ * ════════════════════════════════════════════════════════════════════ */
+
+/**
+ * blk_mq_get_sw_queue_stats - Retrieve statistics for a software queue.
+ *
+ * @cpu:        CPU index identifying the SW queue
+ * @occupancy:  Output: current number of requests in the queue
+ * @peak:       Output: maximum occupancy ever reached
+ * @enqueued:   Output: total requests enqueued
+ * @dequeued:   Output: total requests dequeued by flush/drain
+ * @merged:     Output: total requests merged into existing ones
+ * @flushed:    Output: total requests dispatched to HW queues
+ *
+ * Returns 0 on success, -EINVAL if @cpu is out of range.
+ */
+int blk_mq_get_sw_queue_stats(int cpu, int *occupancy, int *peak,
+                                uint64_t *enqueued, uint64_t *dequeued,
+                                uint64_t *merged, uint64_t *flushed)
+{
+    if (cpu < 0 || cpu >= BLK_MQ_MAX_SW_QUEUES)
+        return -EINVAL;
+
+    struct blk_mq_sw_queue *swq = &blk_mq_sw_queues[cpu];
+
+    if (occupancy) *occupancy = swq->occupancy;
+    if (peak)      *peak      = swq->peak_occupancy;
+    if (enqueued)  *enqueued  = swq->enqueued;
+    if (dequeued)  *dequeued  = swq->dequeued;
+    if (merged)    *merged    = swq->merged;
+    if (flushed)   *flushed   = swq->flushed;
+
+    return 0;
+}
+
+/* ════════════════════════════════════════════════════════════════════
+ * Helper: collect flushed requests from a single SW queue
+ * ════════════════════════════════════════════════════════════════════ */
+
+/*
+ * Drain a single SW queue into a temporary buffer.
+ *
+ * Returns the number of requests drained (0 if plugged or empty).
+ * The caller must release the SW queue lock before dispatching the
+ * drained requests.
+ */
+static int blk_mq_drain_sw_queue_locked(struct blk_mq_sw_queue *swq,
+                                         struct blk_mq_request **buf,
+                                         int buf_size)
+{
+    int drained = 0;
+
+    if (swq->plug_count > 0)
+        return 0;
+    if (swq->head == swq->tail)
+        return 0;
+
+    while (swq->head != swq->tail && drained < buf_size) {
+        struct blk_mq_request *req = swq->queue[swq->head];
+        swq->queue[swq->head] = NULL;
+        swq->head = (swq->head + 1) % BLK_MQ_DEPTH;
+        if (req) {
+            buf[drained++] = req;
+            swq->occupancy--;
+            swq->dequeued++;
+        }
+    }
+
+    return drained;
+}
+
+/* ════════════════════════════════════════════════════════════════════
  * Public API
  * ════════════════════════════════════════════════════════════════════ */
 
@@ -776,8 +1116,8 @@ int blk_mq_submit_request(uint64_t sector, uint8_t *buffer,
     struct blk_mq_request *req;
     int cpu = smp_get_cpu_id();
     int hw_idx;
+    int ret = 0;
     uint64_t irq_flags;
-    int next;
 
     req = blk_mq_alloc_request();
     if (!req)
@@ -811,16 +1151,14 @@ int blk_mq_submit_request(uint64_t sector, uint8_t *buffer,
 
     spinlock_irqsave_acquire(&blk_mq_sw_queues[cpu].lock, &irq_flags);
 
-    next = (blk_mq_sw_queues[cpu].tail + 1) % BLK_MQ_DEPTH;
-    if (next == blk_mq_sw_queues[cpu].head) {
-        spinlock_irqsave_release(&blk_mq_sw_queues[cpu].lock, irq_flags);
-        blk_mq_free_request(req);
-        return -EAGAIN;
-    }
-    blk_mq_sw_queues[cpu].queue[blk_mq_sw_queues[cpu].tail] = req;
-    blk_mq_sw_queues[cpu].tail = next;
+    ret = blk_mq_sw_queue_insert(&blk_mq_sw_queues[cpu], req);
 
     spinlock_irqsave_release(&blk_mq_sw_queues[cpu].lock, irq_flags);
+
+    if (ret < 0) {
+        blk_mq_free_request(req);
+        return ret;
+    }
 
     return 0;
 }
@@ -828,25 +1166,36 @@ int blk_mq_submit_request(uint64_t sector, uint8_t *buffer,
 /**
  * blk_mq_flush - Flush software staging queues to hardware dispatch queues
  *
- * Iterates over all software staging queues and drains each pending
- * request into a hardware dispatch queue using the sector hash
- * assignment.  If a hardware queue is stopped or full, the request
+ * Iterates over all software staging queues, drains each pending
+ * request using merge-aware drain helper, and dispatches them to
+ * the correct hardware dispatch queue based on sector hash.
+ *
+ * Plugged SW queues are skipped — they will be flushed when
+ * unplugged.  If a hardware queue is stopped or full, the request
  * is freed back to the tag pool.
  */
 void blk_mq_flush(void)
 {
+    struct blk_mq_request *batch[BLK_MQ_DEPTH];
+
     for (int sw = 0; sw < BLK_MQ_MAX_SW_QUEUES; sw++) {
         struct blk_mq_sw_queue *swq = &blk_mq_sw_queues[sw];
         uint64_t irq_flags;
+        int drained;
 
         spinlock_irqsave_acquire(&swq->lock, &irq_flags);
 
-        while (swq->head != swq->tail) {
-            struct blk_mq_request *req = swq->queue[swq->head];
-            swq->head = (swq->head + 1) % BLK_MQ_DEPTH;
+        drained = blk_mq_drain_sw_queue_locked(swq, batch, BLK_MQ_DEPTH);
+        swq->flushed += drained;
 
-            if (!req) continue;
+        spinlock_irqsave_release(&swq->lock, irq_flags);
 
+        if (drained == 0)
+            continue;
+
+        /* Dispatch each drained request to its HW queue */
+        for (int i = 0; i < drained; i++) {
+            struct blk_mq_request *req = batch[i];
             int hw_idx = blk_mq_get_hw_queue(req->sector);
 
             if (hw_idx >= blk_mq_num_hw_queues) {
@@ -881,8 +1230,6 @@ void blk_mq_flush(void)
 
             spinlock_irqsave_release(&hwq->lock, irq_flags2);
         }
-
-        spinlock_irqsave_release(&swq->lock, irq_flags);
     }
 }
 
@@ -1011,8 +1358,20 @@ void __init blk_mq_init(void)
     if (blk_mq_num_hw_queues < 1)
         blk_mq_num_hw_queues = 1;
 
-    for (int i = 0; i < BLK_MQ_MAX_SW_QUEUES; i++)
+    for (int i = 0; i < BLK_MQ_MAX_SW_QUEUES; i++) {
         spinlock_init(&blk_mq_sw_queues[i].lock);
+        blk_mq_sw_queues[i].head = 0;
+        blk_mq_sw_queues[i].tail = 0;
+        blk_mq_sw_queues[i].plug_count = 0;
+        blk_mq_sw_queues[i].occupancy = 0;
+        blk_mq_sw_queues[i].peak_occupancy = 0;
+        blk_mq_sw_queues[i].enqueued = 0;
+        blk_mq_sw_queues[i].dequeued = 0;
+        blk_mq_sw_queues[i].merged = 0;
+        blk_mq_sw_queues[i].flushed = 0;
+        for (int j = 0; j < BLK_MQ_DEPTH; j++)
+            blk_mq_sw_queues[i].queue[j] = NULL;
+    }
 
     for (int i = 0; i < BLK_MQ_MAX_HW_QUEUES; i++)
         blk_mq_hw_queue_init(i);
