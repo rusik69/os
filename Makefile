@@ -174,6 +174,7 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/acpi_ec.c \
          src/drivers/acpi_cpufreq.c \
          src/drivers/acpi_power_button.c \
+         src/drivers/acpi_ac_adapter.c \
          src/power/suspend.c \
          src/power/pm_qos.c \
          src/power/wakeup.c \
