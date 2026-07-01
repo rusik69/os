@@ -153,6 +153,7 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/ata.c \
          src/drivers/ata_pio.c \
          src/drivers/ata_identify.c \
+         src/drivers/ata_opal.c \
          src/drivers/pci.c \
          src/drivers/blockdev.c \
          src/drivers/e1000.c \
