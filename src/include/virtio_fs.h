@@ -220,6 +220,11 @@ struct fuse_init_out {
 #define VIRTIO_FS_CONFIG_NUM_REQ_QUEUES  1
 #define VIRTIO_FS_CONFIG_NUM_EVT_QUEUES  0
 
+/* ── Notification coalescing constants ────────────────────────────────── */
+#define VIRTIO_FS_COALESCE_DEFAULT_MAX    8u   /* Default max completions before notify */
+#define VIRTIO_FS_COALESCE_MAX_MAX        256u /* Max coalescing batch size */
+#define VIRTIO_FS_COALESCE_DEFAULT_DEADLINE_MS 5u /* Default deadline (ms) */
+
 /* ── Virtio FS device state ─────────────────────────────────────────── */
 struct virtio_fs_device {
     uint16_t   iobase;           /* PCI I/O base */
@@ -239,6 +244,12 @@ int virtio_fs_init(void);
 int virtio_fs_mount(const char *host_dir, const char *mount_point);
 int virtio_fs_handle_request(int vq_idx);
 void virtio_fs_cleanup(void);
+
+/* ── Notification coalescing API ──────────────────────────────────────── */
+int virtio_fs_enable_coalescing(int vq_idx, uint16_t max_completed);
+int virtio_fs_disable_coalescing(int vq_idx);
+int virtio_fs_flush_notifications(void);
+int virtio_fs_get_coalesce_pending(int vq_idx);
 
 /* ── Additional FUSE structs (defined here if fuse.h not included) ── */
 #ifndef HAVE_FUSE_FSYNC_IN

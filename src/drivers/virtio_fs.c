@@ -61,6 +61,12 @@ struct virtio_fs_vq {
     struct vring_used  *used;
 
     uint16_t last_used_idx;
+
+    /* Notification coalescing state */
+    int      coalescing_enabled;
+    uint16_t coalesce_max_completed;   /* Threshold (# of completions) before notify */
+    uint16_t coalesce_pending;         /* Completions since last notification */
+    uint8_t  coalesce_deadline_ms;     /* Max time before forced notify (unused here) */
 };
 
 /* ── Device state ──────────────────────────────────────────────────── */
@@ -722,6 +728,76 @@ static void fuse_init_handlers(void)
     g_fuse_handlers[FUSE_MAP_FILE] = fusex_map_file;
 }
 
+/* ── Notification coalescing helpers ────────────────────────────────── */
+
+/**
+ * vq_should_notify - Check if we should send a notification to the device
+ * @vq: virtqueue to check
+ *
+ * Returns 1 if the pending count has reached the threshold (coalescing may
+ * be enabled), or 1 if coalescing is disabled (notify every completion).
+ */
+static int vq_should_notify(struct virtio_fs_vq *vq)
+{
+    if (!vq->coalescing_enabled)
+        return 1;
+
+    /* Always notify if we've hit the threshold */
+    if (vq->coalesce_pending >= vq->coalesce_max_completed)
+        return 1;
+
+    return 0;
+}
+
+/**
+ * vq_send_notify - Actually write the queue notify register
+ * @vq_idx: queue index to notify
+ */
+static void vq_send_notify(int vq_idx)
+{
+    __asm__ volatile("" ::: "memory");
+    outw(virtio_fs_dev.iobase + VIRTIO_PCI_QUEUE_NOTIFY, (uint16_t)vq_idx);
+    __asm__ volatile("" ::: "memory");
+}
+
+/**
+ * vq_account_completion - Record a completion and conditionally notify
+ * @vq: virtqueue whose used ring was just advanced
+ * @vq_idx: queue index for the notify register
+ *
+ * Tracks the coalescing counter. Sends a notification if the threshold is
+ * reached or if coalescing is disabled.
+ * Returns 1 if a notification was sent, 0 otherwise.
+ */
+static int vq_account_completion(struct virtio_fs_vq *vq, int vq_idx)
+{
+    vq->coalesce_pending++;
+
+    if (vq_should_notify(vq)) {
+        vq->coalesce_pending = 0;
+        vq_send_notify(vq_idx);
+        return 1;
+    }
+
+    return 0;
+}
+
+/**
+ * vq_flush_notify - Force-flush any pending notification
+ * @vq: virtqueue to flush
+ * @vq_idx: queue index for the notify register
+ *
+ * Sends the notification immediately, regardless of threshold.
+ * Resets the pending counter.
+ */
+static void vq_flush_notify(struct virtio_fs_vq *vq, int vq_idx)
+{
+    if (vq->coalesce_pending > 0 || !vq->coalescing_enabled) {
+        vq->coalesce_pending = 0;
+        vq_send_notify(vq_idx);
+    }
+}
+
 /* Response buffer size (max FUSE response payload) */
 #define FUSE_RESP_BUF_SIZE 8192
 static uint8_t g_response_buf[FUSE_RESP_BUF_SIZE];
@@ -799,12 +875,15 @@ next:
         vq->used->idx++;
         __asm__ volatile("" ::: "memory");
 
-        /* Notify the device that we've used the buffer */
-        outw(virtio_fs_dev.iobase + VIRTIO_PCI_QUEUE_NOTIFY, (uint16_t)vq_idx);
+        /* Notify the device that we've used the buffer (may be batched) */
+        vq_account_completion(vq, vq_idx);
 
         /* Re-read avail index in case more requests arrived */
         avail_idx = vq->avail->idx;
     }
+
+    /* Safety flush: ensure any remaining batched notifications go out */
+    vq_flush_notify(vq, vq_idx);
 
     return 0;
 }
@@ -911,6 +990,12 @@ int virtio_fs_init(void)
             memset(vq, 0, sizeof(*vq));
             vq->queue_idx = (uint16_t)i;
 
+            /* Initialize notification coalescing with sane defaults */
+            vq->coalescing_enabled    = 1;
+            vq->coalesce_max_completed = VIRTIO_FS_COALESCE_DEFAULT_MAX;
+            vq->coalesce_pending      = 0;
+            vq->coalesce_deadline_ms  = VIRTIO_FS_COALESCE_DEFAULT_DEADLINE_MS;
+
             /* Point device at our queue memory */
             uint64_t phys = (uint64_t)(uintptr_t)vq->mem;
             vfs_outl(VIRTIO_PCI_QUEUE_PFN, (uint32_t)(phys >> 12));
@@ -1001,6 +1086,86 @@ int virtio_fs_init(void)
 }
 #include "module.h"
 module_init(virtio_fs_init);
+
+/* ── Notification coalescing public API ─────────────────────────────── */
+
+int virtio_fs_enable_coalescing(int vq_idx, uint16_t max_completed)
+{
+    if (!virtio_fs_initialized)
+        return -1;
+    if (vq_idx < 0 || vq_idx >= VIRTIO_FS_NUM_VQS)
+        return -EINVAL;
+
+    struct virtio_fs_vq *vq = &g_fs_vqs[vq_idx];
+    if (!vq->initialized)
+        return -EINVAL;
+
+    /* Clamp to reasonable bounds */
+    if (max_completed == 0 || max_completed > VIRTIO_FS_COALESCE_MAX_MAX)
+        return -EINVAL;
+
+    /* Flush any pending completions before reconfiguring */
+    vq_flush_notify(vq, vq_idx);
+
+    vq->coalescing_enabled    = 1;
+    vq->coalesce_max_completed = max_completed;
+    vq->coalesce_pending      = 0;
+
+    kprintf("[VIRTIO-FS] coalescing enabled on vq %d: max=%u\n",
+            vq_idx, (unsigned int)max_completed);
+    return 0;
+}
+
+int virtio_fs_disable_coalescing(int vq_idx)
+{
+    if (!virtio_fs_initialized)
+        return -1;
+    if (vq_idx < 0 || vq_idx >= VIRTIO_FS_NUM_VQS)
+        return -EINVAL;
+
+    struct virtio_fs_vq *vq = &g_fs_vqs[vq_idx];
+    if (!vq->initialized)
+        return -EINVAL;
+
+    /* Flush any pending completions */
+    vq_flush_notify(vq, vq_idx);
+
+    vq->coalescing_enabled    = 0;
+    vq->coalesce_max_completed = 0;
+    vq->coalesce_pending      = 0;
+
+    kprintf("[VIRTIO-FS] coalescing disabled on vq %d\n", vq_idx);
+    return 0;
+}
+
+int virtio_fs_flush_notifications(void)
+{
+    if (!virtio_fs_initialized)
+        return -1;
+
+    int flushed = 0;
+    for (int i = 0; i < VIRTIO_FS_NUM_VQS; i++) {
+        struct virtio_fs_vq *vq = &g_fs_vqs[i];
+        if (vq->initialized && vq->coalesce_pending > 0) {
+            vq_flush_notify(vq, i);
+            flushed++;
+        }
+    }
+
+    return flushed;
+}
+
+int virtio_fs_get_coalesce_pending(int vq_idx)
+{
+    if (!virtio_fs_initialized)
+        return -1;
+    if (vq_idx < 0 || vq_idx >= VIRTIO_FS_NUM_VQS)
+        return -EINVAL;
+    if (!g_fs_vqs[vq_idx].initialized)
+        return -EINVAL;
+
+    return (int)g_fs_vqs[vq_idx].coalesce_pending;
+}
 
 /* ── Stub: virtio_fs_read ─────────────────────────────── */
 int virtio_fs_read(void *dev, void *buf, size_t count, uint64_t offset)
