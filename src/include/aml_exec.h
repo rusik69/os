@@ -19,6 +19,20 @@
 /* Maximum number of local variables (Local0-Local7 = 8) */
 #define AML_MAX_LOCALS 8
 
+/* Maximum number of method-local named objects (NameOp inside method body) */
+#define AML_MAX_LOCAL_NAMES 16
+
+/* ── Method-Local Named Object ────────────────────────────────────── */
+
+/*
+ * Represents a named object created by NameOp inside a method body.
+ * These are temporary names that exist only for the method's duration.
+ */
+struct aml_local_name_entry {
+    char name[4];               /* 4-byte NameSeg */
+    struct aml_object *value;   /* The evaluated value */
+};
+
 /* ── AML Object Structure ───────────────────────────────────────── */
 
 /*

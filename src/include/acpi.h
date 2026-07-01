@@ -3,6 +3,9 @@
 
 #include "types.h"
 
+/* Forward declaration for AML object (defined in aml_exec.h) */
+struct aml_object;
+
 /* ACPI table signatures */
 #define RSDP_SIG "RSD PTR "
 #define FADT_SIG "FACP"
@@ -310,6 +313,7 @@ struct aml_ns_node {
 	uint8_t  *aml_start;          /* Pointer to start of AML for this node */
 	uint32_t aml_length;          /* Length of AML bytecode for this node */
 	uint8_t  from_ssdt;           /* Source SSDT index (0 = DSDT) */
+	struct aml_object *value;     /* Evaluated value (set during method exec) */
 };
 
 /* ── AML Namespace Construction API ─────────────────────────────── */

@@ -345,6 +345,7 @@ static int aml_add_node(const char name[4], uint8_t type, uint16_t parent,
 	node->aml_start = (uint8_t *)aml_start;
 	node->aml_length = aml_length;
 	node->from_ssdt = ssdt_index;
+	node->value = NULL;
 
 	g_ns.count++;
 
@@ -1196,6 +1197,13 @@ struct aml_exec_context {
 	int  has_returned;                /* Method has executed Return */
 	int  break_flag;                  /* Set by BreakOp, checked by While */
 	int  error;                       /* Execution error occurred */
+
+	/* Name resolution scope */
+	int  scope_parent;               /* Namespace node index for relative name resolution (0xFFFF = root) */
+
+	/* Method-local named objects (created by NameOp inside method body) */
+	struct aml_local_name_entry local_names[AML_MAX_LOCAL_NAMES];
+	int  local_name_count;
 };
 
 /* ── Method Header Parser ───────────────────────────────────────── */
@@ -1654,6 +1662,484 @@ static struct aml_object *aml_clone_object(const struct aml_object *src)
 	return dst;
 }
 
+/* ── Named Object Helpers ────────────────────────────────────────── */
+
+/*
+ * Check if a byte value starts a NameString in the AML byte stream.
+ * NameStrings begin with:
+ *   - RootPrefix (0x5C)
+ *   - ParentPrefix (0x5E)
+ *   - DualNamePrefix (0x2E)
+ *   - MultiNamePrefix (0x2F)
+ *   - A NameSeg lead character: 'A'-'Z' or '_' (0x41-0x5A, 0x5F)
+ */
+static int aml_is_name_string_start(uint8_t byte)
+{
+	if (byte == AML_ROOT_PREFIX || byte == AML_PARENT_PREFIX ||
+	    byte == AML_DUAL_NAME_PREFIX || byte == AML_MULTI_NAME_PREFIX)
+		return 1;
+	if ((byte >= 'A' && byte <= 'Z') || byte == '_')
+		return 1;
+	return 0;
+}
+
+/*
+ * Find a method-local named object by its 4-byte NameSeg.
+ * Returns the index into local_names[], or -1 if not found.
+ */
+static int aml_find_local_name(struct aml_exec_context *ctx, const char name[4])
+{
+	for (int i = 0; i < ctx->local_name_count; i++) {
+		if (memcmp(ctx->local_names[i].name, name, 4) == 0)
+			return i;
+	}
+	return -1;
+}
+
+/*
+ * Store a value in the method-local name table.
+ * If the name already exists, updates the value (freeing the old one).
+ * If not, adds a new entry (up to AML_MAX_LOCAL_NAMES).
+ * Takes ownership of the value pointer.
+ * Returns 0 on success, -1 on error (table full).
+ */
+static int aml_store_local_name(struct aml_exec_context *ctx,
+				const char name[4],
+				struct aml_object *value)
+{
+	int idx = aml_find_local_name(ctx, name);
+
+	if (idx >= 0) {
+		/* Update existing entry */
+		if (ctx->local_names[idx].value)
+			aml_free_object(ctx->local_names[idx].value);
+		ctx->local_names[idx].value = value;
+		return 0;
+	}
+
+	/* Add new entry */
+	if (ctx->local_name_count >= AML_MAX_LOCAL_NAMES) {
+		kprintf("[AML] Local name table full (%d entries)\n",
+			AML_MAX_LOCAL_NAMES);
+		return -1;
+	}
+
+	idx = ctx->local_name_count;
+	memcpy(ctx->local_names[idx].name, name, 4);
+	ctx->local_names[idx].value = value;
+	ctx->local_name_count++;
+	return 0;
+}
+
+/*
+ * Resolve a NameString to a value by looking up the name in:
+ *   1. Method-local name table
+ *   2. Global ACPI namespace
+ *
+ * The NameString is read starting at ctx->offset.  If resolve_scope
+ * is provided (non-NULL), it is set to the namespace node index of
+ * the scope for relative name resolution.
+ *
+ * Returns a pointer to the aml_object value, or NULL if not found.
+ * Does NOT advance ctx->offset.
+ */
+static struct aml_object *aml_resolve_namestring_value(
+	struct aml_exec_context *ctx, uint32_t offset, int *scope_used)
+{
+	const uint8_t *aml = ctx->aml;
+	uint32_t max_len = ctx->aml_len;
+	uint32_t o = offset;
+	char name_seg[4];
+	int has_name = 0;
+	int found = 0;
+
+	/* Default to the context's scope parent */
+	int current_scope = ctx->scope_parent;
+
+	if (scope_used)
+		*scope_used = -1;
+
+	if (o >= max_len)
+		return NULL;
+
+	/* Handle root and parent prefixes */
+	while (o < max_len) {
+		if (aml[o] == AML_ROOT_PREFIX) {
+			current_scope = 0;  /* Root scope */
+			o++;
+		} else if (aml[o] == AML_PARENT_PREFIX) {
+			/* Move to parent scope */
+			if (current_scope >= 0 && current_scope < g_ns.count) {
+				current_scope = g_ns.nodes[current_scope].parent;
+			}
+			o++;
+		} else {
+			break;
+		}
+	}
+
+	if (o >= max_len)
+		return NULL;
+
+	/* Walk NameSegments */
+	while (o < max_len && has_name < 4) {
+		uint8_t prefix = aml[o];
+
+		if (prefix == AML_DUAL_NAME_PREFIX || prefix == AML_MULTI_NAME_PREFIX) {
+			/* Skip the first segment's naming - we walk to the last */
+			if (prefix == AML_DUAL_NAME_PREFIX) {
+				o++;
+				/* Read first NameSeg to resolve scope */
+				if (o + 4 > max_len)
+					break;
+				uint32_t so = o;
+				if (current_scope >= 0) {
+					struct aml_ns_node *p = &g_ns.nodes[current_scope];
+					int child = p->first_child;
+					while (child != 0xFFFF) {
+						if (memcmp(g_ns.nodes[child].name,
+							   &aml[so], 4) == 0) {
+							current_scope = child;
+							break;
+						}
+						child = g_ns.nodes[child].next_sibling;
+					}
+				}
+				o += 4;
+				/* Read second NameSeg - this is the target */
+				if (o + 4 > max_len)
+					break;
+				memcpy(name_seg, &aml[o], 4);
+				has_name = 1;
+				o += 4;
+				break;
+			} else {
+				/* MultiNamePrefix: skip to last segment */
+				o++;
+				if (o + 1 > max_len)
+					break;
+				uint8_t count = aml[o];
+				o++;
+				if (count == 0 || o + (uint32_t)count * 4 > max_len)
+					break;
+				/* Resolve scope through intermediate segments */
+				for (uint8_t i = 0; i < count - 1; i++) {
+					if (current_scope >= 0 && current_scope < g_ns.count) {
+						struct aml_ns_node *p = &g_ns.nodes[current_scope];
+						int child = p->first_child;
+						while (child != 0xFFFF) {
+							if (memcmp(g_ns.nodes[child].name,
+								   &aml[o], 4) == 0) {
+								current_scope = child;
+								break;
+							}
+							child = g_ns.nodes[child].next_sibling;
+						}
+					}
+					o += 4;
+				}
+				/* Last segment is the actual name */
+				memcpy(name_seg, &aml[o], 4);
+				has_name = 1;
+				break;
+			}
+		}
+
+		/* Single NameSeg */
+		if (o + 4 > max_len)
+			break;
+		memcpy(name_seg, &aml[o], 4);
+		has_name = 1;
+		o += 4;
+		break;
+	}
+
+	if (!has_name)
+		return NULL;
+
+	if (scope_used)
+		*scope_used = current_scope;
+
+	/* Step 1: Check method-local names */
+	if (current_scope == ctx->scope_parent || current_scope == 0xFFFF) {
+		int idx = aml_find_local_name(ctx, name_seg);
+
+		if (idx >= 0)
+			return ctx->local_names[idx].value;
+	}
+
+	/* Step 2: Check global namespace at current scope */
+	if (current_scope >= 0 && current_scope < g_ns.count) {
+		struct aml_ns_node *p = &g_ns.nodes[current_scope];
+		int child = p->first_child;
+
+		while (child != 0xFFFF) {
+			if (memcmp(g_ns.nodes[child].name, name_seg, 4) == 0) {
+				found = child;
+				break;
+			}
+			child = g_ns.nodes[child].next_sibling;
+		}
+
+		if (found && g_ns.nodes[found].type == AML_NS_NAME) {
+			/* If the namespace node has a value, return it */
+			if (g_ns.nodes[found].value)
+				return g_ns.nodes[found].value;
+		}
+	}
+
+	return NULL;
+}
+
+/*
+ * Evaluate a DataRefObject at ctx->offset and return a newly allocated
+ * aml_object.  Advances ctx->offset past the DataRefObject.
+ * Returns NULL on error.
+ *
+ * Handles: ZeroOp, OneOp, OnesOp, BytePrefix, WordPrefix, DWordPrefix,
+ * QWordPrefix, StringPrefix, BufferOp, PackageOp, LocalX, ArgX, and
+ * NameString references.
+ */
+static struct aml_object *aml_eval_data_ref_object(
+	struct aml_exec_context *ctx)
+{
+	uint8_t op;
+	struct aml_object *obj = NULL;
+
+	if (ctx->offset >= ctx->aml_len)
+		return NULL;
+
+	op = ctx->aml[ctx->offset];
+
+	switch (op) {
+	case AML_ZERO_OP:
+		ctx->offset++;
+		obj = aml_create_integer(0);
+		break;
+
+	case AML_ONE_OP:
+		ctx->offset++;
+		obj = aml_create_integer(1);
+		break;
+
+	case AML_ONES_OP:
+		ctx->offset++;
+		obj = aml_create_integer((uint64_t)-1);
+		break;
+
+	case AML_BYTE_PREFIX:
+		if (ctx->offset + 2 <= ctx->aml_len) {
+			ctx->offset++;
+			obj = aml_create_integer(ctx->aml[ctx->offset]);
+			ctx->offset++;
+		}
+		break;
+
+	case AML_WORD_PREFIX:
+		if (ctx->offset + 3 <= ctx->aml_len) {
+			ctx->offset++;
+			obj = aml_create_integer(
+				aml_read_le64(ctx->aml, ctx->aml_len,
+					      ctx->offset, 2));
+			ctx->offset += 2;
+		}
+		break;
+
+	case AML_DWORD_PREFIX:
+		if (ctx->offset + 5 <= ctx->aml_len) {
+			ctx->offset++;
+			obj = aml_create_integer(
+				aml_read_le64(ctx->aml, ctx->aml_len,
+					      ctx->offset, 4));
+			ctx->offset += 4;
+		}
+		break;
+
+	case AML_QWORD_PREFIX:
+		if (ctx->offset + 9 <= ctx->aml_len) {
+			ctx->offset++;
+			obj = aml_create_integer(
+				aml_read_le64(ctx->aml, ctx->aml_len,
+					      ctx->offset, 8));
+			ctx->offset += 8;
+		}
+		break;
+
+	case AML_STRING_PREFIX: {
+		uint32_t start = ctx->offset + 1;
+		uint32_t end = start;
+
+		while (end < ctx->aml_len && ctx->aml[end] != 0)
+			end++;
+		if (end < ctx->aml_len) {
+			char *s = (char *)kmalloc(end - start + 1);
+
+			if (s) {
+				memcpy(s, &ctx->aml[start], end - start);
+				s[end - start] = '\0';
+				obj = aml_create_string(s);
+				kfree(s);
+			}
+			ctx->offset = end + 1;
+		}
+		break;
+	}
+
+	case AML_BUFFER_OP:
+		obj = aml_parse_buffer_from_aml(ctx);
+		break;
+
+	case AML_PACKAGE_OP:
+	case AML_VAR_PACKAGE_OP:
+		obj = aml_parse_package_from_aml(ctx);
+		break;
+
+	case AML_LOCAL0: case AML_LOCAL1: case AML_LOCAL2:
+	case AML_LOCAL3: case AML_LOCAL4: case AML_LOCAL5:
+	case AML_LOCAL6: case AML_LOCAL7: {
+		int idx = op - AML_LOCAL0;
+
+		ctx->offset++;
+		if (ctx->locals[idx])
+			obj = aml_clone_object(ctx->locals[idx]);
+		else
+			obj = aml_create_integer(0);
+		break;
+	}
+
+	case AML_ARG0: case AML_ARG1: case AML_ARG2:
+	case AML_ARG3: case AML_ARG4: case AML_ARG5:
+	case AML_ARG6: {
+		int idx = op - AML_ARG0;
+
+		ctx->offset++;
+		if (ctx->args[idx])
+			obj = aml_clone_object(ctx->args[idx]);
+		else
+			obj = aml_create_integer(0);
+		break;
+	}
+
+	default:
+		/* Check if this is a NameString referencing a named object */
+		if (aml_is_name_string_start(op)) {
+			uint32_t saved_offset = ctx->offset;
+			struct aml_object *val;
+
+			/* Skip the NameString to see what's after it */
+			uint32_t name_bytes = aml_skip_name_string(
+				ctx->aml, ctx->aml_len, ctx->offset);
+
+			if (name_bytes > 0) {
+				/* Resolve the named value */
+				val = aml_resolve_namestring_value(
+					ctx, saved_offset, NULL);
+				if (val) {
+					obj = aml_clone_object(val);
+					ctx->offset = saved_offset + name_bytes;
+				}
+			}
+		}
+		break;
+	}
+
+	return obj;
+}
+
+/*
+ * Execute a NameOp at execution time.
+ *
+ * NameOp encoding: NameOp(0x08) NameString DataRefObject
+ *
+ * Evaluates the DataRefObject and stores the result in the namespace
+ * node (if the name exists in the global namespace) or in the method-
+ * local name table.
+ *
+ * Advances ctx->offset past the entire NameOp construct.
+ * Returns 0 on success, -1 on error.
+ */
+static int aml_exec_name_op(struct aml_exec_context *ctx)
+{
+	uint32_t o = ctx->offset;
+	uint32_t name_bytes;
+	char name_seg[4];
+	uint32_t name_offset;
+	struct aml_object *value = NULL;
+	struct aml_object *existing;
+	int stored = 0;
+
+	if (o >= ctx->aml_len || ctx->aml[o] != AML_NAME_OP)
+		return -1;
+
+	ctx->offset++;  /* skip NameOp */
+
+	name_offset = ctx->offset;
+	name_bytes = aml_read_last_nameseg(ctx->aml, ctx->aml_len,
+					   ctx->offset, name_seg);
+	if (name_bytes == 0)
+		return -1;
+
+	/* Skip the full NameString */
+	{
+		uint32_t skip = aml_skip_name_string(ctx->aml, ctx->aml_len,
+						     ctx->offset);
+
+		if (skip == 0)
+			return -1;
+		ctx->offset += skip;
+	}
+
+	/* Evaluate the DataRefObject */
+	value = aml_eval_data_ref_object(ctx);
+	if (!value) {
+		kprintf("[AML] NameOp: failed to evaluate DataRefObject "
+			"at offset %u\n", (unsigned int)o);
+		return -1;
+	}
+
+	/* Step 1: Try to store in method-local name table */
+	if (ctx->local_name_count < AML_MAX_LOCAL_NAMES ||
+	    aml_find_local_name(ctx, name_seg) >= 0) {
+		if (aml_store_local_name(ctx, name_seg, value) == 0)
+			stored = 1;
+	}
+
+	/* Step 2: Also try to update in global namespace */
+	if (!stored) {
+		int scope = ctx->scope_parent;
+		int found = 0;
+
+		if (scope >= 0 && scope < g_ns.count) {
+			struct aml_ns_node *p = &g_ns.nodes[scope];
+			int child = p->first_child;
+
+			while (child != 0xFFFF) {
+				if (memcmp(g_ns.nodes[child].name,
+					   name_seg, 4) == 0) {
+					found = child;
+					break;
+				}
+				child = g_ns.nodes[child].next_sibling;
+			}
+		}
+
+		if (found) {
+			existing = g_ns.nodes[found].value;
+			if (existing)
+				aml_free_object(existing);
+			g_ns.nodes[found].value = value;
+			stored = 1;
+		}
+	}
+
+	if (!stored) {
+		/* Free the value if we couldn't store it anywhere */
+		aml_free_object(value);
+	}
+
+	return 0;
+}
+
 /* ── Store Implementation ───────────────────────────────────────── */
 
 /*
@@ -1888,7 +2374,90 @@ static int aml_exec_store(struct aml_exec_context *ctx)
 			break;
 		}
 
+		/* ── NameString target: Store to a named object ─── */
 		default:
+			if (aml_is_name_string_start(op)) {
+				uint32_t name_offset = ctx->offset;
+				uint32_t name_bytes;
+				char name_seg[4];
+				int scope;
+				struct aml_object *val;
+
+				name_bytes = aml_skip_name_string(
+					ctx->aml, ctx->aml_len, ctx->offset);
+				if (name_bytes == 0)
+					goto done;
+
+				ctx->offset += name_bytes;
+
+				/* Read name_seg */
+				aml_read_last_nameseg(ctx->aml, ctx->aml_len,
+						      name_offset, name_seg);
+
+				/* Check method-local names first */
+				{
+					int li = aml_find_local_name(ctx,
+								     name_seg);
+
+					if (li >= 0) {
+						if (operand) {
+							val = aml_clone_object(
+								operand);
+							if (val) {
+								if (ctx->local_names[li].value)
+									aml_free_object(ctx->local_names[li].value);
+								ctx->local_names[li].value = val;
+							}
+						}
+						ret = 0;
+						goto done;
+					}
+				}
+
+				/* Check global namespace */
+				scope = ctx->scope_parent;
+				{
+					int found = 0;
+
+					if (scope >= 0 && scope < g_ns.count) {
+						struct aml_ns_node *p = &g_ns.nodes[scope];
+						int child = p->first_child;
+
+						while (child != 0xFFFF) {
+							if (memcmp(g_ns.nodes[child].name,
+								   name_seg, 4) == 0) {
+								found = child;
+								break;
+							}
+							child = g_ns.nodes[child].next_sibling;
+						}
+					}
+
+					if (found && operand) {
+						val = aml_clone_object(operand);
+						if (val) {
+							if (g_ns.nodes[found].value)
+								aml_free_object(g_ns.nodes[found].value);
+							g_ns.nodes[found].value = val;
+						}
+						ret = 0;
+						goto done;
+					}
+				}
+
+				/* Name not found — create method-local entry */
+				if (operand) {
+					val = aml_clone_object(operand);
+					if (val) {
+						aml_store_local_name(ctx, name_seg,
+								     val);
+						ret = 0;
+						goto done;
+					}
+				}
+				goto done;
+			}
+
 			kprintf("[AML] Store: unsupported target "
 				"opcode 0x%02x at offset %u\n",
 				op, (unsigned int)ctx->offset);
@@ -2091,6 +2660,44 @@ static int aml_exec_return(struct aml_exec_context *ctx)
 	}
 
 	default:
+		/* Check if this is a NameString referencing a named object */
+		if (aml_is_name_string_start(op)) {
+			uint32_t name_offset = ctx->offset;
+			uint32_t name_bytes;
+			struct aml_object *val;
+
+			name_bytes = aml_skip_name_string(
+				ctx->aml, ctx->aml_len, ctx->offset);
+			if (name_bytes > 0) {
+				ctx->offset += name_bytes;
+				val = aml_resolve_namestring_value(
+					ctx, name_offset, NULL);
+				if (val) {
+					ctx->return_value = &ctx->own_return;
+					memset(ctx->return_value, 0,
+					       sizeof(*ctx->return_value));
+					if (val->type == AML_OBJ_INTEGER) {
+						ctx->return_value->type = AML_OBJ_INTEGER;
+						ctx->return_value->value.integer =
+							val->value.integer;
+					} else {
+						struct aml_object *clone;
+
+						clone = aml_clone_object(val);
+						if (clone) {
+							memcpy(ctx->return_value,
+							       clone,
+							       sizeof(*clone));
+							ctx->return_value->from_heap = 1;
+							kfree(clone);
+						}
+					}
+					break;
+				}
+			}
+			/* Fall through to default error if resolution fails */
+		}
+
 		kprintf("[AML] Return: unsupported opcode 0x%02x "
 			"at offset %u\n",
 			op, (unsigned int)ctx->offset);
@@ -2207,6 +2814,29 @@ static uint64_t aml_read_arith_operand(struct aml_exec_context *ctx)
 	}
 
 	default:
+		/* Check if this is a NameString referencing a named integer */
+		if (aml_is_name_string_start(op)) {
+			uint32_t name_offset = ctx->offset - 1;
+			struct aml_object *val;
+
+			/* Skip the NameString to advance past it */
+			{
+				uint32_t skip = aml_skip_name_string(
+					ctx->aml, ctx->aml_len, ctx->offset - 1);
+
+				if (skip > 0) {
+					/* Advance ctx->offset past the NameString */
+					ctx->offset = (ctx->offset - 1) + skip;
+				}
+			}
+
+			val = aml_resolve_namestring_value(
+				ctx, name_offset, NULL);
+			if (val && val->type == AML_OBJ_INTEGER)
+				return val->value.integer;
+			return 0;
+		}
+
 		kprintf("[AML] Arithmetic: unsupported operand "
 			"0x%02x at offset %u\n",
 			op, (unsigned int)(ctx->offset - 1));
@@ -2691,91 +3321,84 @@ static uint32_t aml_exec_one_term(struct aml_exec_context *ctx)
 		return ctx->offset - o;
 	}
 
-	/* ── Minimally skip over NameOp (0x08) ──────────────────── */
+	/* ── NameOp (0x08): Create/update a named object ────────── */
 	case AML_NAME_OP: {
 		uint32_t start_ofs = ctx->offset;
-		uint32_t name_bytes;
 
 		ctx->offset++;  /* skip NameOp */
-		name_bytes = aml_skip_name_string(ctx->aml, ctx->aml_len,
-						   ctx->offset);
-		if (name_bytes == 0)
-			return 1;
-		ctx->offset += name_bytes;
-
-		/* Skip the DataRefObject that follows the name */
-		if (ctx->offset < ctx->aml_len) {
-			uint8_t d_op = ctx->aml[ctx->offset];
-
-			switch (d_op) {
-			case AML_ZERO_OP:
-			case AML_ONE_OP:
-			case AML_ONES_OP:
-				ctx->offset++;
-				break;
-			case AML_BYTE_PREFIX:
-				ctx->offset += (ctx->offset + 2 <=
-						ctx->aml_len) ? 2 : 1;
-				break;
-			case AML_WORD_PREFIX:
-				ctx->offset += (ctx->offset + 3 <=
-						ctx->aml_len) ? 3 : 1;
-				break;
-			case AML_DWORD_PREFIX:
-				ctx->offset += (ctx->offset + 5 <=
-						ctx->aml_len) ? 5 : 1;
-				break;
-			case AML_QWORD_PREFIX:
-				ctx->offset += (ctx->offset + 9 <=
-						ctx->aml_len) ? 9 : 1;
-				break;
-			case AML_STRING_PREFIX: {
-				uint32_t end2 = ctx->offset + 1;
-
-				while (end2 < ctx->aml_len &&
-				       ctx->aml[end2] != 0)
-					end2++;
-				ctx->offset = (end2 < ctx->aml_len) ?
-					      end2 + 1 : end2;
-				break;
-			}
-			case AML_BUFFER_OP: {
-				uint32_t buf_bytes, buf_len;
-
-				buf_len = aml_decode_pkg_length(
-					ctx->aml, ctx->aml_len,
-					ctx->offset + 1, &buf_bytes);
-				ctx->offset += (buf_len > 0) ?
-					(1 + buf_bytes + buf_len) : 2;
-				break;
-			}
-			case AML_PACKAGE_OP: {
-				uint32_t pkg_bytes2, pkg_len2;
-
-				pkg_len2 = aml_decode_pkg_length(
-					ctx->aml, ctx->aml_len,
-					ctx->offset + 1, &pkg_bytes2);
-				ctx->offset += (pkg_len2 > 0) ?
-					(1 + pkg_bytes2 + pkg_len2) : 2;
-				break;
-			}
-			default:
-				ctx->offset++;  /* Unknown data type, skip 1 */
-				break;
-			}
+		if (aml_exec_name_op(ctx) < 0) {
+			kprintf("[AML] NameOp failed at offset %u\n",
+				(unsigned int)start_ofs);
+			ctx->error = 1;
 		}
 		return ctx->offset - start_ofs;
 	}
 
+	/* ── ScopeOp (0x10): Enter a new scope ────────────────── */
+	case AML_SCOPE_OP: {
+		/*
+		 * ScopeOp at execution time enters a new scope for
+		 * name resolution.  We change scope_parent to the
+		 * resolved namespace child, then skip the body since
+		 * the method body handles its own terms.
+		 * For simplicity, skip the entire ScopeOp.
+		 */
+		uint32_t pkg_bytes;
+		uint32_t pkg_len;
+
+		ctx->offset++;  /* skip ScopeOp */
+		pkg_len = aml_decode_pkg_length(ctx->aml, ctx->aml_len,
+						ctx->offset, &pkg_bytes);
+		if (pkg_len > 0)
+			ctx->offset += pkg_bytes + pkg_len;
+		else
+			ctx->offset++;
+		return ctx->offset - o;
+	}
+
 	/* ── Extended opcode prefix (0x5B) ──────────────────────── */
-	case AML_EXT_OP_PREFIX:
-		/* Skip ext prefix + ext opcode = 2 bytes */
+	case AML_EXT_OP_PREFIX: {
+		/*
+		 * Extended opcodes may appear inside method bodies in
+		 * rare cases (Device, Processor, etc.).  We skip them
+		 * gracefully by parsing the PkgLength if available.
+		 */
+		uint8_t ext_op;
+
 		if (o + 2 > ctx->aml_len) {
 			ctx->offset = ctx->aml_len;
 			return 1;
 		}
-		ctx->offset = o + 2;
-		return 2;
+
+		ext_op = ctx->aml[o + 1];
+
+		/* Extended opcodes that use PkgLength encoding */
+		switch (ext_op) {
+		case AML_EXT_DEVICE_OP:
+		case AML_EXT_PROCESSOR_OP:
+		case AML_EXT_POWERRESOURCE_OP:
+		case AML_EXT_THERMAL_ZONE_OP:
+		case AML_EXT_OPREGION_OP:
+		case AML_EXT_FIELD_OP:
+		case AML_EXT_INDEX_FIELD_OP:
+		case AML_EXT_BANK_FIELD_OP: {
+			uint32_t pkg_bytes;
+			uint32_t pkg_len;
+
+			ctx->offset = o + 2;
+			pkg_len = aml_decode_pkg_length(ctx->aml, ctx->aml_len,
+							ctx->offset, &pkg_bytes);
+			if (pkg_len > 0)
+				ctx->offset += pkg_bytes + pkg_len;
+			else
+				ctx->offset = o + 2;
+			return ctx->offset - o;
+		}
+		default:
+			ctx->offset = o + 2;
+			return 2;
+		}
+	}
 
 	/* ── Control flow ──────────────────────────────────────── */
 
@@ -2909,6 +3532,15 @@ static void aml_exec_context_cleanup(struct aml_exec_context *ctx)
 		}
 	}
 
+	/* Clean up method-local named objects */
+	for (int i = 0; i < ctx->local_name_count; i++) {
+		if (ctx->local_names[i].value) {
+			aml_free_object(ctx->local_names[i].value);
+			ctx->local_names[i].value = NULL;
+		}
+	}
+	ctx->local_name_count = 0;
+
 	/* Clean up return value heap allocations */
 	if (ctx->return_value == &ctx->own_return &&
 	    ctx->return_value->from_heap) {
@@ -2973,6 +3605,7 @@ struct aml_object *aml_evaluate_method(const char *path,
 	ctx.return_value = NULL;
 	ctx.has_returned = 0;
 	ctx.error = 0;
+	ctx.scope_parent = node->parent;  /* Name resolution scope is the method's parent */
 
 	/* Set up method arguments */
 	if (num_args > AML_MAX_ARGS)
