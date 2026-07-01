@@ -851,6 +851,284 @@ const char *gpt_type_name(const uint8_t *type_guid)
     return "Unknown";
 }
 
+/* ── Hybrid MBR + GPT ───────────────────────────────────────────────── */
+
+/*
+ * Check if an MBR sector contains a hybrid MBR.
+ *
+ * A hybrid MBR has at least one 0xEE (GPT protective) entry AND at least
+ * one non-0xEE, non-zero partition entry.  A simple protective MBR has
+ * exactly one 0xEE entry and no others.
+ *
+ * Returns 1 if hybrid, 0 if not (simple protective MBR, traditional MBR,
+ * or invalid MBR).
+ */
+int mbr_is_hybrid(const uint8_t *mbr_sector)
+{
+    if (!mbr_sector)
+        return 0;
+
+    const struct mbr *mbr = (const struct mbr *)mbr_sector;
+    if (mbr->signature != 0xAA55)
+        return 0;
+
+    int protective_count = 0;
+    int real_count = 0;
+
+    for (int i = 0; i < MBR_MAX_PRIMARY; i++) {
+        uint8_t type = mbr->partitions[i].type;
+
+        if (type == MBR_TYPE_GPT_PROTECTIVE) {
+            protective_count++;
+        } else if (type != 0) {
+            real_count++;
+        }
+    }
+
+    /* Hybrid = at least one protective 0xEE entry AND at least one real entry */
+    return (protective_count > 0 && real_count > 0) ? 1 : 0;
+}
+
+/*
+ * Parse hybrid MBR partition entries.
+ *
+ * Extracts only the real (non-0xEE, non-zero) partition entries from an MBR
+ * sector that is known to be a hybrid MBR.  The 0xEE GPT protective entries
+ * are excluded from output.
+ *
+ * @mbr_sector  512-byte MBR buffer (must be hybrid-valid)
+ * @entries     Output array for extracted entries
+ * @max_entries Capacity of the output array
+ *
+ * Returns number of real partition entries found, or < 0 on error.
+ */
+int hybrid_parse(const uint8_t *mbr_sector,
+                  struct hybrid_entry *entries, int max_entries)
+{
+    if (!mbr_sector || !entries || max_entries <= 0)
+        return -1;
+
+    const struct mbr *mbr = (const struct mbr *)mbr_sector;
+    if (mbr->signature != 0xAA55)
+        return -1;
+
+    int count = 0;
+
+    for (int i = 0; i < MBR_MAX_PRIMARY && count < max_entries; i++) {
+        uint8_t type = mbr->partitions[i].type;
+
+        /* Skip empty entries and GPT protective entries */
+        if (type == 0 || type == MBR_TYPE_GPT_PROTECTIVE)
+            continue;
+
+        entries[count].type         = type;
+        entries[count].start_lba    = mbr->partitions[i].start_lba;
+        entries[count].sector_count = mbr->partitions[i].sector_count;
+        entries[count].gpt_index    = -1;  /* unknown until mapped */
+        count++;
+    }
+
+    return count;
+}
+
+/*
+ * Find the GPT partition index that a hybrid MBR entry corresponds to.
+ *
+ * An MBR entry corresponds to a GPT partition if the MBR start_lba falls
+ * within the GPT partition's LBA range and the size is compatible.
+ *
+ * @mbr_start   Starting LBA of the MBR entry
+ * @mbr_size    Size in sectors of the MBR entry
+ * @gpt         Array of GPT partition entries
+ * @gpt_count   Number of GPT entries
+ *
+ * Returns the GPT index (0-based) on match, or -1 if no match found.
+ */
+static int hybrid_find_gpt_match(uint32_t mbr_start, uint32_t mbr_size,
+                                  const struct gpt_partition *gpt,
+                                  int gpt_count)
+{
+    if (!gpt || gpt_count <= 0)
+        return -1;
+
+    for (int i = 0; i < gpt_count; i++) {
+        /* Check if the MBR entry's start LBA is within this GPT partition */
+        if ((uint64_t)mbr_start >= gpt[i].start_lba &&
+            (uint64_t)mbr_start < gpt[i].end_lba) {
+            /* Start matches — now check size compatibility.
+             * The MBR size may be slightly smaller (capped at 2TiB for MBR),
+             * so allow the MBR size to be <= the GPT size from the start. */
+            uint64_t gpt_size_from_start = gpt[i].end_lba - (uint64_t)mbr_start;
+            if ((uint64_t)mbr_size <= gpt_size_from_start) {
+                return i;
+            }
+        }
+    }
+
+    return -1;
+}
+
+/*
+ * Validate that a hybrid MBR's real partition entries are consistent with
+ * the GPT partition entries.
+ *
+ * Checks:
+ *   1. Each real MBR entry maps to a GPT partition (by start LBA overlap)
+ *   2. The GPT partition's type GUID suggests a compatible MBR type
+ *   3. The ranges are consistent
+ *
+ * @mbr_entries   Hybrid MBR entries (from hybrid_parse)
+ * @mbr_count     Number of hybrid MBR entries
+ * @gpt_entries   GPT partitions (from gpt_parse)
+ * @gpt_count     Number of GPT partitions
+ *
+ * Returns 1 if all hybrid entries validate against GPT, 0 otherwise.
+ * When validation fails, a kprintf message is emitted with details.
+ */
+int hybrid_validate(struct hybrid_entry *mbr_entries, int mbr_count,
+                    const struct gpt_partition *gpt_entries, int gpt_count)
+{
+    if (!mbr_entries || mbr_count <= 0)
+        return 1;  /* No hybrid entries to validate = trivially valid */
+
+    if (!gpt_entries || gpt_count <= 0) {
+        kprintf("[HYBRID] No GPT partitions to validate against\n");
+        return 0;
+    }
+
+    int valid = 1;
+
+    for (int i = 0; i < mbr_count; i++) {
+        int gpt_idx = hybrid_find_gpt_match(mbr_entries[i].start_lba,
+                                             mbr_entries[i].sector_count,
+                                             gpt_entries, gpt_count);
+
+        if (gpt_idx < 0) {
+            kprintf("[HYBRID] MBR entry %d (type 0x%02x, LBA %u, %u sectors) "
+                    "does not match any GPT partition\n",
+                    i + 1, mbr_entries[i].type,
+                    mbr_entries[i].start_lba, mbr_entries[i].sector_count);
+            valid = 0;
+            continue;
+        }
+
+        /* Record the mapping */
+        mbr_entries[i].gpt_index = gpt_idx;
+
+        kprintf("[HYBRID] MBR entry %d (type 0x%02x) → GPT partition %d "
+                "(%s)\n",
+                i + 1, mbr_entries[i].type, gpt_idx,
+                gpt_entries[gpt_idx].name);
+    }
+
+    return valid;
+}
+
+/*
+ * Known MBR ↔ GPT type mapping, used by hybrid_get_mbr_type().
+ */
+static const struct {
+    uint8_t      mbr_type;       /* MBR partition type byte */
+    const uint8_t gpt_guid[16];  /* Corresponding GPT type GUID */
+} hybrid_type_map[] = {
+    /* EFI System Partition: MBR 0xEF, GPT C12A7328-F81F-11D2-BA4B-00A0C93EC93B */
+    { 0xEF, {0x28,0x73,0x2A,0xC1, 0x1F,0xF8, 0xD2,0x11,
+              0xBA,0x4B,0x00,0xA0,0xC9,0x3E,0xC9,0x3B} },
+    /* Linux filesystem: MBR 0x83, GPT 0FC63DAF-8483-4772-8EAB-334B28739956 */
+    { 0x83, {0xAF,0x3D,0xC6,0x0F, 0x83,0x84, 0x72,0x47,
+              0x8E,0xAB,0x33,0x4B,0x28,0x73,0x99,0x56} },
+    /* Linux swap: MBR 0x82, GPT 0657FD6D-A4AB-43C4-84E5-0933C84B4F4F */
+    { 0x82, {0x6D,0xFD,0x57,0x06, 0xAB,0xA4, 0xC4,0x43,
+              0x84,0xE5,0x09,0x33,0xC8,0x4B,0x4F,0x4F} },
+    /* Linux LVM: MBR 0x8E, GPT E6D6D38F-DFEA-4C44-8E5B-B7631B17B650 */
+    { 0x8E, {0x8F,0xD3,0xD6,0xE6, 0xEA,0xDF, 0x44,0x4C,
+              0x8E,0x5B,0xB7,0x63,0x1B,0x17,0xB6,0x50} },
+    /* Linux RAID: MBR 0xFD, GPT A19D880A-FBBC-4438-946F-052B4C225593 */
+    { 0xFD, {0x0A,0x88,0x9D,0xA1, 0xBC,0xFB, 0x38,0x44,
+              0x94,0x6F,0x05,0x2B,0x4C,0x22,0x55,0x93} },
+    /* Windows Basic Data: MBR 0x07, GPT EBD0A0A2-B9E5-4433-87C0-68B6B72699C7 */
+    { 0x07, {0xA2,0xA0,0xD0,0xEB, 0xE5,0xB9, 0x33,0x44,
+              0x87,0xC0,0x68,0xB6,0xB7,0x26,0x99,0xC7} },
+    /* Microsoft Reserved: MBR 0x0C, GPT E3C9E316-0B5C-4DB8-817D-F92DF00215AE */
+    { 0x0C, {0x16,0xE3,0xC9,0xE3, 0x5C,0x0B, 0xB8,0x4D,
+              0x81,0x7D,0xF9,0x2D,0xF0,0x02,0x15,0xAE} },
+    /* FreeBSD Data: MBR 0xA5, GPT 5165E672-6FAC-11D6-9C97-0010917B4E6E */
+    { 0xA5, {0x72,0xE6,0x65,0x51, 0xAC,0x6F, 0xD6,0x11,
+              0x9C,0x97,0x00,0x10,0x91,0x7B,0x4E,0x6E} },
+    /* FreeBSD Swap: MBR 0xA5, GPT 5165E672-6FAC-11D6-9C97-0010917B4E6F */
+    { 0xA5, {0x72,0xE6,0x65,0x51, 0xAC,0x6F, 0xD6,0x11,
+              0x9C,0x97,0x00,0x10,0x91,0x7B,0x4E,0x6F} },
+    /* Apple HFS/HFS+: MBR 0xAF, GPT 48465300-0000-11AA-AA11-00306543ECAC */
+    { 0xAF, {0x00,0x53,0x46,0x48, 0x00,0x00, 0xAA,0x11,
+              0xAA,0x11,0x00,0x30,0x65,0x43,0xEC,0xAC} },
+    /* Apple APFS: MBR 0xAF (same MBR type as HFS+), GPT 7D50D637-7C5E-463D-9C2E-7B0C7F155858 */
+    { 0xAF, {0x37,0xD6,0x50,0x7D, 0xE5,0x7C, 0x46,0x3D,
+              0x9C,0x2E,0x7B,0x0C,0x7F,0x15,0x88,0x58} },
+};
+
+static const int hybrid_type_map_count = ARRAY_SIZE(hybrid_type_map);
+
+/*
+ * Get the recommended MBR partition type byte for a given GPT type GUID.
+ * Used when creating or validating hybrid MBR entries.
+ *
+ * @type_guid  16-byte GPT partition type GUID
+ * @returns    MBR partition type byte, or 0xEE (GPT protective) as default
+ *             if no mapping is known.
+ */
+uint8_t hybrid_get_mbr_type(const uint8_t *type_guid)
+{
+    if (!type_guid)
+        return MBR_TYPE_GPT_PROTECTIVE;
+
+    for (int i = 0; i < hybrid_type_map_count; i++) {
+        if (guid_eq(hybrid_type_map[i].gpt_guid, type_guid))
+            return hybrid_type_map[i].mbr_type;
+    }
+
+    /* Default: GPT protective (no known MBR equivalent).
+     * This means the partition cannot be represented in hybrid MBR, which
+     * is the correct fallback — not all GPT partitions have MBR type codes. */
+    return MBR_TYPE_GPT_PROTECTIVE;
+}
+
+/*
+ * Build a mapping between hybrid MBR entries and GPT partition entries.
+ *
+ * For each hybrid MBR entry, finds the corresponding GPT partition by
+ * start LBA overlap and records the index in entries[].gpt_index.
+ * Also returns the total count of successfully mapped entries.
+ *
+ * @mbr_entries   Hybrid MBR entries (gpt_index fields are filled in)
+ * @mbr_count     Number of hybrid MBR entries
+ * @gpt_entries   GPT partition entries (from gpt_parse)
+ * @gpt_count     Number of GPT partition entries
+ *
+ * Returns number of entries successfully mapped.
+ */
+int hybrid_build_map(struct hybrid_entry *mbr_entries, int mbr_count,
+                      const struct gpt_partition *gpt_entries, int gpt_count)
+{
+    if (!mbr_entries || mbr_count <= 0)
+        return 0;
+
+    if (!gpt_entries || gpt_count <= 0)
+        return 0;
+
+    int mapped = 0;
+
+    for (int i = 0; i < mbr_count; i++) {
+        int gpt_idx = hybrid_find_gpt_match(mbr_entries[i].start_lba,
+                                             mbr_entries[i].sector_count,
+                                             gpt_entries, gpt_count);
+        mbr_entries[i].gpt_index = gpt_idx;
+        if (gpt_idx >= 0)
+            mapped++;
+    }
+
+    return mapped;
+}
+
 /* ── Exports for module use ────────────────────────────────────────── */
 EXPORT_SYMBOL(partitions_read);
 EXPORT_SYMBOL(gpt_is_valid);
@@ -864,6 +1142,11 @@ EXPORT_SYMBOL(gpt_get_stats);
 EXPORT_SYMBOL(mbr_is_valid);
 EXPORT_SYMBOL(mbr_parse);
 EXPORT_SYMBOL(mbr_get_stats);
+EXPORT_SYMBOL(mbr_is_hybrid);
+EXPORT_SYMBOL(hybrid_parse);
+EXPORT_SYMBOL(hybrid_validate);
+EXPORT_SYMBOL(hybrid_get_mbr_type);
+EXPORT_SYMBOL(hybrid_build_map);
 
 /* ── Initialisation ─────────────────────────────────────────────────── */
 

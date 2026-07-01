@@ -302,4 +302,95 @@ struct mbr_stats {
 /* Get MBR parse statistics from the most recent mbr_parse() call. */
 void mbr_get_stats(struct mbr_stats *stats);
 
+/* ── Hybrid MBR + GPT ──────────────────────────────────────────────── */
+
+/*
+ * Maximum real entries in a hybrid MBR (beyond the 0xEE protective entry).
+ * A hybrid MBR has at most 3 real partition entries + 1 protective 0xEE.
+ */
+#define HYBRID_MAX_ENTRIES     3
+
+/*
+ * Hybrid MBR partition entry — a real partition entry duplicated from GPT.
+ */
+struct hybrid_entry {
+    uint8_t   type;            /* MBR partition type (e.g., 0x83, 0xEF) */
+    uint32_t  start_lba;       /* Starting LBA (absolute) */
+    uint32_t  sector_count;    /* Size in sectors */
+    int       gpt_index;       /* Index of corresponding GPT partition
+                                *  (-1 if unknown / not yet mapped) */
+};
+
+/*
+ * Check if an MBR sector is a hybrid MBR.
+ *
+ * A hybrid MBR has at least one 0xEE (GPT protective) entry AND at least
+ * one non-0xEE, non-zero partition entry.  A simple protective MBR has
+ * exactly one 0xEE entry and no others.
+ *
+ * Returns 1 if hybrid, 0 if not (simple protective, traditional MBR, or
+ * invalid signature).
+ */
+int mbr_is_hybrid(const uint8_t *mbr_sector);
+
+/*
+ * Parse real partition entries from a hybrid MBR sector.
+ *
+ * Extracts only the non-0xEE, non-zero partition entries.  The 0xEE
+ * GPT protective entries are excluded from the output.
+ *
+ * @mbr_sector  512-byte MBR buffer (must have valid 0xAA55 signature)
+ * @entries     Output array for hybrid entries (up to HYBRID_MAX_ENTRIES)
+ * @max_entries Capacity of the output array
+ *
+ * Returns number of real partition entries found, or < 0 on error.
+ */
+int hybrid_parse(const uint8_t *mbr_sector,
+                  struct hybrid_entry *entries, int max_entries);
+
+/*
+ * Validate that hybrid MBR entries are consistent with GPT partition entries.
+ *
+ * For each hybrid MBR entry, checks that its start LBA falls within a GPT
+ * partition and that the MBR size is compatible with the GPT range.  The
+ * gpt_index field of each entry is set to the matching GPT index on success.
+ *
+ * @mbr_entries    Hybrid MBR entries (from hybrid_parse).  gpt_index fields
+ *                 are filled in for matched entries.
+ * @mbr_count      Number of hybrid MBR entries
+ * @gpt_entries    GPT partition entries (from gpt_parse)
+ * @gpt_count      Number of GPT partition entries
+ *
+ * Returns 1 if all entries are consistent, 0 if any mismatch is found.
+ */
+int hybrid_validate(struct hybrid_entry *mbr_entries, int mbr_count,
+                    const struct gpt_partition *gpt_entries, int gpt_count);
+
+/*
+ * Get the recommended MBR partition type byte for a given GPT type GUID.
+ * Used when creating or validating hybrid MBR configurations.
+ *
+ * @type_guid  16-byte GPT partition type GUID
+ * @returns    MBR partition type byte (e.g., 0x83 for Linux data, 0xEF for
+ *             EFI System), or 0xEE (GPT protective) if no mapping is known.
+ */
+uint8_t hybrid_get_mbr_type(const uint8_t *type_guid);
+
+/*
+ * Build a mapping between hybrid MBR entries and GPT partition entries.
+ *
+ * For each hybrid MBR entry, finds the corresponding GPT partition by
+ * checking start LBA overlap and fills in the gpt_index field.  Returns
+ * the number of entries successfully mapped.
+ *
+ * @mbr_entries   Hybrid MBR entries (gpt_index fields are filled)
+ * @mbr_count     Number of hybrid MBR entries
+ * @gpt_entries   GPT partition entries (from gpt_parse)
+ * @gpt_count     Number of GPT partition entries
+ *
+ * Returns number of entries successfully mapped (0..mbr_count).
+ */
+int hybrid_build_map(struct hybrid_entry *mbr_entries, int mbr_count,
+                      const struct gpt_partition *gpt_entries, int gpt_count);
+
 #endif /* PARTITIONS_H */
