@@ -21,8 +21,10 @@
 #define IOSCHED_CFQ      2
 
 /* Deadline constants */
-#define DEADLINE_READ_MS   500   /* read deadline in milliseconds */
-#define DEADLINE_WRITE_MS 5000   /* write deadline in milliseconds */
+#define DEADLINE_READ_MS      500   /* read deadline in milliseconds */
+#define DEADLINE_WRITE_MS    5000   /* write deadline in milliseconds */
+#define DEADLINE_FIFO_BATCH    16   /* requests per direction batch */
+#define DEADLINE_STARVE_LIMIT   2   /* read-batch count before writes dispatched */
 
 /* CFQ constants */
 #define CFQ_SLICE_MS      100    /* time slice per process queue (ms) */
@@ -70,7 +72,15 @@ struct iosched_deadline_data {
     int                 fifo_count[DD_QUEUE_COUNT];
     int                 current_queue;             /* read or write batch */
     uint64_t            last_tick;                 /* last batch switch time */
-    int                 starved;                   /* write starvation counter */
+    int                 starved;                   /* read-batches since last write dispatch */
+    int                 batches;                   /* batches dispatched in current direction */
+    /* Statistics */
+    uint64_t            submitted;
+    uint64_t            fetched;
+    uint64_t            expired;
+    uint64_t            front_merges;
+    uint64_t            back_merges;
+    uint64_t            total_merges;
 };
 
 /* ── CFQ scheduler data ──────────────────────────────────────────── */

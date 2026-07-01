@@ -292,13 +292,26 @@ static void noop_free(struct iosched_queue *iq)
 }
 
 /* ════════════════════════════════════════════════════════════════════
- * Deadline scheduler
+ * Deadline scheduler — read-biased with per-request deadlines
+ *
+ * Dispatch algorithm (enhanced with fifo_batch batching):
+ *   1. Check FIFO expiry lists — drain any expired requests first
+ *   2. Determine current dispatch direction via current_queue
+ *   3. Dispatch up to DEADLINE_FIFO_BATCH (16) requests in that direction
+ *   4. After a batch, check write starvation — if starved >= STARVE_LIMIT,
+ *      switch to writes (serve a batch of writes)
+ *   5. On direction switch, increment batches counter, reset starved as
+ *      appropriate, and note last_tick for accounting
+ *   6. Request sorting by LBA within each direction queue enables sector
+ *      ordering for better disk head movement
  * ════════════════════════════════════════════════════════════════════ */
+
+/* ── Internal helpers ──────────────────────────────────────────── */
 
 static void deadline_enqueue_fifo(struct iosched_deadline_data *dd,
                                    struct blk_request *req, int qid)
 {
-    /* Insert into FIFO list sorted by expiry */
+    /* Insert into FIFO list sorted by expiry (earliest first) */
     struct blk_request **pp = &dd->fifo_list[qid];
     while (*pp) {
         if (req->expiry < (*pp)->expiry)
@@ -325,6 +338,76 @@ static struct blk_request *deadline_dequeue_fifo(struct iosched_deadline_data *d
     return req;
 }
 
+/* Remove a request from the LBA-sorted queue for the given direction.
+ * Returns the request or NULL if not found. */
+static struct blk_request *deadline_remove_from_sorted(
+    struct iosched_deadline_data *dd, struct blk_request *req, int qid)
+{
+    struct blk_request **pp = &dd->queues[qid].head;
+    while (*pp) {
+        if (*pp == req) {
+            *pp = req->next;
+            if (!req->next)
+                dd->queues[qid].tail = NULL;
+            req->next = NULL;
+            dd->queues[qid].count--;
+            return req;
+        }
+        pp = &(*pp)->next;
+    }
+    return NULL;
+}
+
+/* Drain all expired requests from a direction's FIFO list.
+ * Returns the first expired request found (or NULL if none expired).
+ * Expired requests are removed from BOTH the FIFO list and the sorted queue. */
+static struct blk_request *deadline_drain_expired(
+    struct iosched_deadline_data *dd, int qid, uint64_t now)
+{
+    struct blk_request *fifo = dd->fifo_list[qid];
+    while (fifo && fifo->expiry <= now) {
+        struct blk_request *expired = deadline_dequeue_fifo(dd, qid);
+        deadline_remove_from_sorted(dd, expired, qid);
+        expired->next = NULL;
+        dd->expired++;
+        return expired;
+    }
+    return NULL;
+}
+
+/* Dispatch one request from the LBA-sorted queue for the given direction.
+ * Also removes the request from the FIFO list.
+ * Returns the request or NULL if the queue is empty. */
+static struct blk_request *deadline_dispatch_from_queue(
+    struct iosched_deadline_data *dd, int qid)
+{
+    struct blk_request *req = dd->queues[qid].head;
+    if (!req) return NULL;
+
+    /* Remove from sorted queue */
+    dd->queues[qid].head = req->next;
+    if (!req->next)
+        dd->queues[qid].tail = NULL;
+    req->next = NULL;
+    dd->queues[qid].count--;
+
+    /* Remove from FIFO list */
+    struct blk_request **pp = &dd->fifo_list[qid];
+    while (*pp && *pp != req)
+        pp = &(*pp)->next;
+    if (*pp == req) {
+        *pp = req->next;
+        if (!req->next)
+            dd->fifo_tail[qid] = NULL;
+        req->next = NULL;
+        dd->fifo_count[qid]--;
+    }
+
+    return req;
+}
+
+/* ── deadline_submit ───────────────────────────────────────────── */
+
 static int deadline_submit(struct iosched_queue *iq, struct blk_request *req)
 {
     struct iosched_deadline_data *dd = &iq->deadline;
@@ -340,37 +423,47 @@ static int deadline_submit(struct iosched_queue *iq, struct blk_request *req)
         qid = DD_WRITE_QUEUE;
     }
 
+    dd->submitted++;
+
     /* Try to merge with existing requests in the per-direction queue */
     struct blk_request *cur = dd->queues[qid].head;
     while (cur) {
         if (same_dir(cur, req)) {
-            /* Back merge */
+            /* Back merge: cur immediately precedes req */
             if (cur->lba + cur->count == req->lba) {
                 cur->count += req->count;
+                dd->back_merges++;
+                dd->total_merges++;
                 return 0;
             }
-            /* Front merge */
+            /* Front merge: req immediately precedes cur */
             if (req->lba + req->count == cur->lba) {
                 req->count += cur->count;
-                cur->lba = req->lba;
-                /* Replace cur's data in the queue with merged request */
-                req->next = cur->next;
-                if (cur == dd->queues[qid].head) {
-                    dd->queues[qid].head = req;
+                /* Remove cur from sorted queue */
+                deadline_remove_from_sorted(dd, cur, qid);
+                /* Remove cur from FIFO list */
+                struct blk_request **fp = &dd->fifo_list[qid];
+                while (*fp && *fp != cur)
+                    fp = &(*fp)->next;
+                if (*fp == cur) {
+                    *fp = cur->next;
+                    if (!cur->next)
+                        dd->fifo_tail[qid] = NULL;
+                    cur->next = NULL;
+                    dd->fifo_count[qid]--;
                 }
-                if (cur == dd->queues[qid].tail) {
-                    dd->queues[qid].tail = req;
-                }
-                /* Free the old request (who owns it? caller still does) */
-                cur->count = 0; /* mark as invalid */
-                dd->queues[qid].count--;
-                return 0;
+                blk_request_free(cur);
+                dd->front_merges++;
+                dd->total_merges++;
+                /* Fall through to insert the merged request */
+                break;
             }
         }
         cur = cur->next;
     }
 
-    /* Add to the per-direction sorted queue (sort by LBA for better merging) */
+    /* Insert into the per-direction sorted queue (sort by LBA for
+     * better disk head movement and merge opportunities) */
     struct blk_request **pp = &dd->queues[qid].head;
     while (*pp) {
         if (req->lba < (*pp)->lba)
@@ -389,106 +482,120 @@ static int deadline_submit(struct iosched_queue *iq, struct blk_request *req)
     return 0;
 }
 
+/* ── deadline_fetch ────────────────────────────────────────────── */
+
 static struct blk_request *deadline_fetch(struct iosched_queue *iq)
 {
     struct iosched_deadline_data *dd = &iq->deadline;
     uint64_t now = timer_get_ms();
-    int i;
+    struct blk_request *req;
+    int qid;
 
-    /* Check for expired requests — prioritize those */
-    for (i = 0; i < DD_QUEUE_COUNT; i++) {
-        struct blk_request *fifo = dd->fifo_list[i];
-        while (fifo && fifo->expiry <= now) {
-            /* Found expired request; remove from both queues */
-            struct blk_request *expired = deadline_dequeue_fifo(dd, i);
+    /* Phase 1: Check for expired requests in BOTH queues.
+     * Expired requests get absolute priority — return the first one found. */
+    req = deadline_drain_expired(dd, DD_READ_QUEUE, now);
+    if (req) return req;
 
-            /* Remove from sorted queue */
-            struct blk_request **pp = &dd->queues[i].head;
-            while (*pp && *pp != expired)
-                pp = &(*pp)->next;
-            if (*pp == expired) {
-                *pp = expired->next;
-                if (!expired->next)
-                    dd->queues[i].tail = NULL;
-                expired->next = NULL;
-                dd->queues[i].count--;
+    req = deadline_drain_expired(dd, DD_WRITE_QUEUE, now);
+    if (req) return req;
+
+    /* Phase 2: Determine dispatch direction with fifo_batch batching.
+     *
+     * The algorithm alternates between read and write directions
+     * in batches of DEADLINE_FIFO_BATCH (16) requests. After each
+     * batch completes, we check write starvation — if READS have been
+     * dispatched for DEADLINE_STARVE_LIMIT batches without WRITES,
+     * the next batch is forced to WRITE. */
+
+    if (dd->queues[DD_WRITE_QUEUE].count == 0 &&
+        dd->queues[DD_READ_QUEUE].count == 0)
+        return NULL;
+
+    /* Determine which direction to dispatch */
+    if (dd->queues[DD_READ_QUEUE].count == 0) {
+        /* No reads — must serve writes */
+        qid = DD_WRITE_QUEUE;
+    } else if (dd->queues[DD_WRITE_QUEUE].count == 0) {
+        /* No writes — serve reads */
+        qid = DD_READ_QUEUE;
+    } else {
+        /* Both queues have requests — apply batching policy */
+
+        /* If current_queue is uninitialized, start with reads */
+        if (dd->current_queue != DD_READ_QUEUE &&
+            dd->current_queue != DD_WRITE_QUEUE) {
+            dd->current_queue = DD_READ_QUEUE;
+            dd->batches = 0;
+            dd->last_tick = now;
+        }
+
+        /* Check write starvation: if reads have dominated for too many
+         * batches, force a write batch */
+        if (dd->current_queue == DD_READ_QUEUE &&
+            dd->starved >= DEADLINE_STARVE_LIMIT &&
+            dd->queues[DD_WRITE_QUEUE].count > 0) {
+            /* Switch to writes — serve a batch */
+            dd->current_queue = DD_WRITE_QUEUE;
+            dd->batches = 0;
+            dd->starved = 0;
+            dd->last_tick = now;
+        }
+
+        if (dd->current_queue == DD_WRITE_QUEUE) {
+            /* In a write batch — check if batch is done */
+            if (dd->batches >= DEADLINE_FIFO_BATCH ||
+                dd->queues[DD_WRITE_QUEUE].count == 0) {
+                /* Switch back to reads */
+                if (dd->queues[DD_READ_QUEUE].count > 0) {
+                    dd->current_queue = DD_READ_QUEUE;
+                    dd->batches = 0;
+                    dd->starved = 0;
+                    dd->last_tick = now;
+                }
             }
+        }
 
-            return expired;
+        /* Prefer current direction */
+        qid = dd->current_queue;
+
+        /* If the preferred queue is empty, fall back to the other */
+        if (dd->queues[qid].count == 0) {
+            qid = (qid == DD_READ_QUEUE) ? DD_WRITE_QUEUE : DD_READ_QUEUE;
+            dd->current_queue = qid;
+            dd->batches = 0;
+            dd->starved = 0;
+            dd->last_tick = now;
         }
     }
 
-    /* Alternate between read and write queues to prevent starvation.
-     * Priority is given to reads unless writes are starved. */
-    if (dd->queues[DD_READ_QUEUE].count > 0) {
-        /* Check if we should service writes to avoid starvation */
-        if (dd->queues[DD_WRITE_QUEUE].count > 0 &&
-            dd->starved >= 3) {
-            /* Service a write after 3 read dispatches */
-            dd->starved = 0;
-            goto serve_write;
-        }
+    /* Dispatch one request from the chosen queue */
+    req = deadline_dispatch_from_queue(dd, qid);
+    if (!req)
+        return NULL;
 
-        /* Serve a read */
-        struct blk_request *req = dd->queues[DD_READ_QUEUE].head;
-        if (req) {
-            dd->queues[DD_READ_QUEUE].head = req->next;
-            if (!req->next)
-                dd->queues[DD_READ_QUEUE].tail = NULL;
-            req->next = NULL;
-            dd->queues[DD_READ_QUEUE].count--;
+    dd->fetched++;
 
-            /* Remove from FIFO list */
-            struct blk_request **pp = &dd->fifo_list[DD_READ_QUEUE];
-            while (*pp && *pp != req)
-                pp = &(*pp)->next;
-            if (*pp == req) {
-                *pp = req->next;
-                if (!req->next)
-                    dd->fifo_tail[DD_READ_QUEUE] = NULL;
-                req->next = NULL;
-                dd->fifo_count[DD_READ_QUEUE]--;
-            }
-
+    /* Track batching */
+    if (qid == DD_READ_QUEUE) {
+        dd->batches++;
+        /* Only starve other direction if reads keep coming */
+        if (dd->queues[DD_READ_QUEUE].count > 0)
             dd->starved++;
-            return req;
-        }
+    } else {
+        dd->batches++;
+        if (dd->queues[DD_WRITE_QUEUE].count > 0)
+            dd->starved = 0; /* Reset starved on write dispatch */
     }
 
-serve_write:
-    if (dd->queues[DD_WRITE_QUEUE].count > 0) {
-        struct blk_request *req = dd->queues[DD_WRITE_QUEUE].head;
-        if (req) {
-            dd->queues[DD_WRITE_QUEUE].head = req->next;
-            if (!req->next)
-                dd->queues[DD_WRITE_QUEUE].tail = NULL;
-            req->next = NULL;
-            dd->queues[DD_WRITE_QUEUE].count--;
-
-            /* Remove from FIFO list */
-            struct blk_request **pp = &dd->fifo_list[DD_WRITE_QUEUE];
-            while (*pp && *pp != req)
-                pp = &(*pp)->next;
-            if (*pp == req) {
-                *pp = req->next;
-                if (!req->next)
-                    dd->fifo_tail[DD_WRITE_QUEUE] = NULL;
-                req->next = NULL;
-                dd->fifo_count[DD_WRITE_QUEUE]--;
-            }
-
-            dd->starved = 0;
-            return req;
-        }
-    }
-
-    return NULL;
+    return req;
 }
+
+/* ── deadline_free ─────────────────────────────────────────────── */
 
 static void deadline_free(struct iosched_queue *iq)
 {
-    (void)iq;
-    /* Deadline data is inline in the union, nothing to free */
+    /* Deadline data is inline in the iosched_queue union — just zero it */
+    memset(&iq->deadline, 0, sizeof(iq->deadline));
 }
 
 /* ════════════════════════════════════════════════════════════════════
