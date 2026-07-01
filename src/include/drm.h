@@ -172,6 +172,7 @@ struct drm_driver {
 
 struct drm_framebuffer {
     int      in_use;
+    int      refcount;  /* reference count — released when 0 */
     uint32_t fb_id;
     uint32_t handle;   /* GEM handle */
     uint32_t width;
@@ -244,6 +245,13 @@ int  drm_add_fb(struct drm_device *dev, uint32_t handle,
                 uint32_t pitch, uint32_t bpp, uint32_t depth);
 int  drm_remove_fb(struct drm_device *dev, uint32_t fb_id);
 struct drm_framebuffer *drm_fb_lookup(struct drm_device *dev, uint32_t fb_id);
+
+/* Framebuffer reference counting — protects against premature free
+ * while CRTCs or planes still reference the framebuffer.
+ * drm_fb_ref() increments the refcount; drm_fb_unref() decrements
+ * and frees the FB when refcount reaches 0. */
+void drm_fb_ref(struct drm_framebuffer *fb);
+void drm_fb_unref(struct drm_device *dev, struct drm_framebuffer *fb);
 
 /* CRTC management */
 int  drm_add_crtc(struct drm_device *dev);

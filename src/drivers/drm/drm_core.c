@@ -58,7 +58,12 @@ static struct drm_file *drm_file_alloc(void)
 
 static void drm_file_free(struct drm_file *f)
 {
-    if (f) f->in_use = 0;
+    if (f) {
+        /* Release any per-file framebuffer references here if
+         * we add per-file FB tracking in the future.  For now,
+         * the global FB table reference counting suffices. */
+        f->in_use = 0;
+    }
 }
 
 /* ── ioctl dispatch ────────────────────────────────────────────── */
@@ -440,6 +445,7 @@ int drm_add_fb(struct drm_device *dev, uint32_t handle,
     for (int i = 0; i < DRM_MAX_FB; i++) {
         if (!dev->framebuffers[i].in_use) {
             dev->framebuffers[i].in_use = 1;
+            dev->framebuffers[i].refcount = 1;
             dev->framebuffers[i].fb_id = ++dev->next_fb_id;
             dev->framebuffers[i].handle = handle;
             dev->framebuffers[i].width = width;
@@ -461,22 +467,28 @@ int drm_add_fb(struct drm_device *dev, uint32_t handle,
 
 int drm_remove_fb(struct drm_device *dev, uint32_t fb_id)
 {
-    if (!dev) return -1;
+    if (!dev) return -EINVAL;
 
     spinlock_acquire(&g_drm_lock);
 
     for (int i = 0; i < DRM_MAX_FB; i++) {
         if (dev->framebuffers[i].in_use &&
             dev->framebuffers[i].fb_id == fb_id) {
-            dev->framebuffers[i].in_use = 0;
+            struct drm_framebuffer *fb = &dev->framebuffers[i];
             dev->num_framebuffers--;
             spinlock_release(&g_drm_lock);
+            /* drm_fb_unref drops one reference; if it was the
+             * last reference, the FB slot is freed and the GEM
+             * handle released.  We release the lock first because
+             * drm_fb_unref -> drm_gem_handle_close may acquire
+             * the GEM lock. */
+            drm_fb_unref(dev, fb);
             return 0;
         }
     }
 
     spinlock_release(&g_drm_lock);
-    return -1;
+    return -ENOENT;
 }
 
 struct drm_framebuffer *drm_fb_lookup(struct drm_device *dev, uint32_t fb_id)
