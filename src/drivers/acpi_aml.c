@@ -52,6 +52,14 @@
 #define AML_RETURN_OP           0xA4    /* Return from method body */
 #define AML_ONES_OP             0xFF    /* Ones constant (all bits set) */
 
+/* AML arithmetic opcodes (ACPI v6.3, Section 19.6) */
+#define AML_ADD_OP              0x72    /* Add(Operand, Operand, Target) */
+#define AML_SUBTRACT_OP         0x73    /* Subtract(Operand, Operand, Target) */
+#define AML_MULTIPLY_OP         0x74    /* Multiply(Operand, Operand, Target) */
+#define AML_DIVIDE_OP           0x75    /* Divide(Operand, Operand, Target, Target) */
+#define AML_SHIFT_LEFT_OP       0x76    /* ShiftLeft(Operand, Count, Target) */
+#define AML_SHIFT_RIGHT_OP      0x77    /* ShiftRight(Operand, Count, Target) */
+
 /* LocalX and ArgX opcodes (inside method bodies) */
 #define AML_LOCAL0              0x60
 #define AML_LOCAL1              0x61
@@ -2090,6 +2098,264 @@ static int aml_exec_return(struct aml_exec_context *ctx)
 	return 0;
 }
 
+/* ── Arithmetic Execution Helpers ──────────────────────────────── */
+
+/*
+ * Read an integer operand from the AML byte stream at ctx->offset.
+ * Advances ctx->offset past the operand encoding bytes.
+ *
+ * Accepts:
+ *   - Integer constants: ZeroOp, OneOp, OnesOp, BytePrefix, WordPrefix,
+ *     DWordPrefix, QWordPrefix
+ *   - LocalX / ArgX references (resolved to their current integer value;
+ *     0 if uninitialized or non-integer)
+ *
+ * On error, sets ctx->error and returns 0.
+ */
+static uint64_t aml_read_arith_operand(struct aml_exec_context *ctx)
+{
+	uint8_t op;
+
+	if (ctx->offset >= ctx->aml_len) {
+		ctx->error = 1;
+		return 0;
+	}
+
+	op = ctx->aml[ctx->offset];
+	ctx->offset++;
+
+	switch (op) {
+	case AML_ZERO_OP:
+		return 0;
+
+	case AML_ONE_OP:
+		return 1;
+
+	case AML_ONES_OP:
+		return (uint64_t)-1;
+
+	case AML_BYTE_PREFIX:
+		if (ctx->offset + 1 > ctx->aml_len)
+			goto error;
+		{
+			uint64_t v = ctx->aml[ctx->offset];
+
+			ctx->offset++;
+			return v;
+		}
+
+	case AML_WORD_PREFIX:
+		if (ctx->offset + 2 > ctx->aml_len)
+			goto error;
+		{
+			uint64_t v = aml_read_le64(ctx->aml, ctx->aml_len,
+						   ctx->offset, 2);
+
+			ctx->offset += 2;
+			return v;
+		}
+
+	case AML_DWORD_PREFIX:
+		if (ctx->offset + 4 > ctx->aml_len)
+			goto error;
+		{
+			uint64_t v = aml_read_le64(ctx->aml, ctx->aml_len,
+						   ctx->offset, 4);
+
+			ctx->offset += 4;
+			return v;
+		}
+
+	case AML_QWORD_PREFIX:
+		if (ctx->offset + 8 > ctx->aml_len)
+			goto error;
+		{
+			uint64_t v = aml_read_le64(ctx->aml, ctx->aml_len,
+						   ctx->offset, 8);
+
+			ctx->offset += 8;
+			return v;
+		}
+
+	case AML_LOCAL0: case AML_LOCAL1: case AML_LOCAL2:
+	case AML_LOCAL3: case AML_LOCAL4: case AML_LOCAL5:
+	case AML_LOCAL6: case AML_LOCAL7:
+	{
+		int idx = op - AML_LOCAL0;
+
+		if (ctx->locals[idx] &&
+		    ctx->locals[idx]->type == AML_OBJ_INTEGER)
+			return ctx->locals[idx]->value.integer;
+		return 0;
+	}
+
+	case AML_ARG0: case AML_ARG1: case AML_ARG2:
+	case AML_ARG3: case AML_ARG4: case AML_ARG5:
+	case AML_ARG6:
+	{
+		int idx = op - AML_ARG0;
+
+		if (ctx->args[idx] &&
+		    ctx->args[idx]->type == AML_OBJ_INTEGER)
+			return ctx->args[idx]->value.integer;
+		return 0;
+	}
+
+	default:
+		kprintf("[AML] Arithmetic: unsupported operand "
+			"0x%02x at offset %u\n",
+			op, (unsigned int)(ctx->offset - 1));
+		ctx->error = 1;
+		return 0;
+	}
+
+error:
+	ctx->error = 1;
+	return 0;
+}
+
+/*
+ * Write a 64-bit integer result to a target location (LocalX or ArgX).
+ * Advances ctx->offset past the target encoding.
+ * Returns 0 on success, -1 on error (sets ctx->error).
+ */
+static int aml_write_arith_result(struct aml_exec_context *ctx,
+				  uint64_t value)
+{
+	uint8_t op;
+
+	if (ctx->offset >= ctx->aml_len) {
+		ctx->error = 1;
+		return -1;
+	}
+
+	op = ctx->aml[ctx->offset];
+	ctx->offset++;
+
+	switch (op) {
+	case AML_LOCAL0: case AML_LOCAL1: case AML_LOCAL2:
+	case AML_LOCAL3: case AML_LOCAL4: case AML_LOCAL5:
+	case AML_LOCAL6: case AML_LOCAL7:
+	{
+		int idx = op - AML_LOCAL0;
+
+		if (ctx->locals[idx]) {
+			aml_free_object(ctx->locals[idx]);
+			ctx->locals[idx] = NULL;
+		}
+		ctx->locals[idx] = aml_create_integer(value);
+		return 0;
+	}
+
+	case AML_ARG0: case AML_ARG1: case AML_ARG2:
+	case AML_ARG3: case AML_ARG4: case AML_ARG5:
+	case AML_ARG6:
+	{
+		int idx = op - AML_ARG0;
+
+		if (ctx->args[idx]) {
+			aml_free_object(ctx->args[idx]);
+			ctx->args[idx] = NULL;
+		}
+		ctx->args[idx] = aml_create_integer(value);
+		return 0;
+	}
+
+	default:
+		kprintf("[AML] Arithmetic: unsupported target "
+			"0x%02x at offset %u\n",
+			op, (unsigned int)(ctx->offset - 1));
+		ctx->error = 1;
+		return -1;
+	}
+}
+
+/*
+ * Execute an AML arithmetic operation.
+ *
+ * Three-operand forms (Add, Subtract, Multiply, ShiftLeft, ShiftRight):
+ *   Opcode(1) Operand1 Operand2 Target
+ *
+ * Four-operand form (Divide):
+ *   DivideOp(1) Dividend Divisor Remainder Quotient
+ *
+ * Returns 0 on success, -1 on error.
+ */
+static int aml_exec_arith(struct aml_exec_context *ctx, uint8_t opcode)
+{
+	uint64_t operand1;
+	uint64_t operand2;
+	uint64_t result = 0;
+
+	/* Read the first operand */
+	operand1 = aml_read_arith_operand(ctx);
+	if (ctx->error)
+		return -1;
+
+	/* Read the second operand */
+	operand2 = aml_read_arith_operand(ctx);
+	if (ctx->error)
+		return -1;
+
+	switch (opcode) {
+	case AML_ADD_OP:
+		result = operand1 + operand2;
+		break;
+
+	case AML_SUBTRACT_OP:
+		result = operand1 - operand2;
+		break;
+
+	case AML_MULTIPLY_OP:
+		result = operand1 * operand2;
+		break;
+
+	case AML_DIVIDE_OP:
+	{
+		/*
+		 * Divide has a 4-operand form:
+		 *   Remainder = Dividend % Divisor
+		 *   Quotient  = Dividend / Divisor
+		 * Dividend=operand1, Divisor=operand2,
+		 * then Remainder target, then Quotient target.
+		 */
+		if (operand2 == 0) {
+			kprintf("[AML] Divide by zero\n");
+			ctx->error = 1;
+			return -1;
+		}
+		/* Write remainder */
+		if (aml_write_arith_result(ctx,
+		    operand1 % operand2) < 0)
+			return -1;
+		/* Write quotient */
+		if (aml_write_arith_result(ctx,
+		    operand1 / operand2) < 0)
+			return -1;
+		return 0;
+	}
+
+	case AML_SHIFT_LEFT_OP:
+		result = operand1 << (operand2 & 0x3F);
+		break;
+
+	case AML_SHIFT_RIGHT_OP:
+		result = operand1 >> (operand2 & 0x3F);
+		break;
+
+	default:
+		kprintf("[AML] Unknown arithmetic opcode 0x%02x\n", opcode);
+		ctx->error = 1;
+		return -1;
+	}
+
+	/* Write result to target */
+	if (aml_write_arith_result(ctx, result) < 0)
+		return -1;
+
+	return 0;
+}
+
 /* ── Term Executor ──────────────────────────────────────────────── */
 
 /*
@@ -2277,7 +2543,19 @@ static uint32_t aml_exec_one_term(struct aml_exec_context *ctx)
 
 	/* ── Default: Unknown opcode ────────────────────────────── */
 	default:
-		/* Many AML arithmetic/comparison opcodes (0x70-0x7F).
+		/* AML arithmetic operations (0x72-0x77) */
+		if (opcode >= AML_ADD_OP && opcode <= AML_SHIFT_RIGHT_OP) {
+			ctx->offset++;
+			if (aml_exec_arith(ctx, opcode) < 0) {
+				kprintf("[AML] Arithmetic opcode 0x%02x "
+					"failed at offset %u\n",
+					opcode, (unsigned int)(o));
+				ctx->error = 1;
+			}
+			return ctx->offset - o;
+		}
+
+		/* Many AML comparison opcodes (0x70-0x7F).
 		 * Best-effort skip: opcode + 3 bytes for operands. */
 		if (opcode >= 0x70 && opcode <= 0x7F) {
 			ctx->offset = o + 4;
