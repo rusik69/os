@@ -257,6 +257,15 @@ struct drm_mode_destroy_dumb {
     uint32_t handle;
 };
 
+struct drm_mode_fb_dirty_cmd {
+    uint32_t fb_id;
+    uint32_t flags;
+    uint32_t color;
+    uint32_t num_clips;
+    uint64_t clips_ptr;
+    uint32_t pad;
+};
+
 /* ── DRM device flags ─────────────────────────────────────────── */
 
 #define DRIVER_HAVE_DUMB      (1U << 0)
@@ -285,6 +294,16 @@ struct drm_driver {
     void (*postclose)(struct drm_device *dev, struct drm_file *file_priv);
     int (*ioctl_dispatch)(struct drm_device *dev, struct drm_file *file_priv,
                           uint32_t cmd, void *arg);
+
+    /* Dumb buffer callbacks — drivers may override these to use
+     * driver-specific backing memory (e.g. LFB for bochs).
+     * When NULL, the default drm_dumb_{create,map_offset,destroy} is used. */
+    int (*dumb_create)(struct drm_device *dev,
+                       struct drm_mode_create_dumb *args);
+    int (*dumb_map_offset)(struct drm_device *dev,
+                           struct drm_mode_map_dumb *args);
+    int (*dumb_destroy)(struct drm_device *dev,
+                        struct drm_mode_destroy_dumb *args);
 };
 
 /* ── DRM device ───────────────────────────────────────────────── */
@@ -418,5 +437,8 @@ int  drm_dumb_map_offset(struct drm_device *dev,
                          struct drm_mode_map_dumb *args);
 int  drm_dumb_destroy(struct drm_device *dev,
                       struct drm_mode_destroy_dumb *args);
+int  drm_dumb_mmap(struct drm_gem_object *obj, void **vaddr);
+int  drm_dumb_dirtyfb(struct drm_device *dev,
+                      struct drm_mode_fb_dirty_cmd *args);
 
 #endif /* DRM_H */

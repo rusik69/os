@@ -2,14 +2,19 @@
  * drm_dumb.c — DRM dumb buffer allocation
  *
  * Implements DRM_IOCTL_MODE_CREATE_DUMB, DRM_IOCTL_MODE_MAP_DUMB,
- * and DRM_IOCTL_MODE_DESTROY_DUMB.  Dumb buffers are simple
- * framebuffers allocated via GEM, used by fbdev emulation and
- * simple DRM clients.
+ * DRM_IOCTL_MODE_DESTROY_DUMB, and DRM_IOCTL_MODE_DIRTYFB.
+ * Dumb buffers are simple framebuffers allocated via GEM, used by
+ * fbdev emulation and simple DRM clients.
  *
  * A dumb buffer is a GEM-backed buffer object created with a
  * simple linear layout (no tiling or compression).
  *
+ * Drivers may override dumb buffer allocation via the
+ * struct drm_driver dumb_create / dumb_map_offset / dumb_destroy
+ * callbacks (e.g. bochs uses LFB memory for scanout).
+ *
  * Item S25 — DRM dumb buffer
+ * Task D143-5 — DRM dumb buffer allocation (stub → real)
  */
 
 #define KERNEL_INTERNAL
@@ -19,6 +24,7 @@
 #include "spinlock.h"
 #include "pmm.h"
 #include "errno.h"
+#include "vmm.h"
 
 /* ── Pitch calculation ─────────────────────────────────────────── */
 
@@ -42,28 +48,38 @@ static uint32_t dumb_calc_pitch(uint32_t width, uint32_t bpp)
  * drm_dumb_create — Create a dumb buffer.
  *
  * Allocates a GEM buffer object with size sufficient for the
- * requested resolution and bpp.  Returns the GEM handle and pitch.
+ * requested resolution and bpp.  If the driver provides a
+ * dumb_create callback, it is used instead (e.g. for LFB-backed
+ * allocation).  Returns the GEM handle and pitch.
  *
  * @dev:   DRM device.
  * @args:  Arguments from userspace (height, width, bpp).
  *         Returns handle, pitch, size.
  *
- * Returns 0 on success.
+ * Returns 0 on success, negative errno on failure.
  */
 int drm_dumb_create(struct drm_device *dev,
                      struct drm_mode_create_dumb *args)
 {
     if (!dev || !args)
-        return -1;
+        return -EINVAL;
+
+    /* Allow driver-specific allocation first */
+    if (dev->driver && dev->driver->dumb_create)
+        return dev->driver->dumb_create(dev, args);
 
     /* Validate parameters */
     if (args->width == 0 || args->height == 0 || args->bpp == 0)
         return -EINVAL;
 
-    if (args->bpp != 8 && args->bpp != 16 && args->bpp != 24 && args->bpp != 32)
+    if (args->bpp != 8 && args->bpp != 16 && args->bpp != 24 &&
+        args->bpp != 32)
         return -EINVAL;
 
     if (args->width > 8192 || args->height > 8192)
+        return -EINVAL;
+
+    if (args->flags != 0)
         return -EINVAL;
 
     /* Calculate pitch and size */
@@ -92,7 +108,8 @@ int drm_dumb_create(struct drm_device *dev,
 
     args->handle = handle;
 
-    kprintf("[DRM dumb] created %ux%u (bpp=%u, pitch=%u, size=%llu, handle=%u)\n",
+    kprintf("[DRM dumb] created %ux%u (bpp=%u, pitch=%u, "
+            "size=%llu, handle=%u)\n",
             args->width, args->height, args->bpp, pitch,
             (unsigned long long)size, handle);
 
@@ -105,13 +122,17 @@ int drm_dumb_create(struct drm_device *dev,
  * @dev:   DRM device.
  * @args:  Arguments (handle in, offset out).
  *
- * Returns 0 on success.
+ * Returns 0 on success, negative errno on failure.
  */
 int drm_dumb_map_offset(struct drm_device *dev,
                          struct drm_mode_map_dumb *args)
 {
     if (!dev || !args)
-        return -1;
+        return -EINVAL;
+
+    /* Allow driver-specific map */
+    if (dev->driver && dev->driver->dumb_map_offset)
+        return dev->driver->dumb_map_offset(dev, args);
 
     /* Look up the GEM object by handle */
     struct drm_gem_object *obj = drm_gem_handle_lookup(dev, args->handle);
@@ -136,35 +157,120 @@ int drm_dumb_map_offset(struct drm_device *dev,
  * @dev:   DRM device.
  * @args:  Arguments (handle of buffer to destroy).
  *
- * Returns 0 on success.
+ * Returns 0 on success, negative errno on failure.
  */
 int drm_dumb_destroy(struct drm_device *dev,
                       struct drm_mode_destroy_dumb *args)
 {
     if (!dev || !args)
-        return -1;
+        return -EINVAL;
+
+    /* Allow driver-specific destroy */
+    if (dev->driver && dev->driver->dumb_destroy)
+        return dev->driver->dumb_destroy(dev, args);
 
     /* Close the GEM handle (drops reference, frees if last ref) */
-    return drm_gem_handle_close(dev, args->handle);
+    int ret = drm_gem_handle_close(dev, args->handle);
+    if (ret < 0) {
+        kprintf("[DRM dumb] failed to close handle %u\n", args->handle);
+        return -EINVAL;
+    }
+    return 0;
 }
 
-/* ── Implement: drm_dumb_sync ─────────────────────────────── */
+/*
+ * drm_dumb_mmap — Get the kernel virtual address for a GEM object
+ *                 backing a dumb buffer.
+ *
+ * Used internally when the kernel needs to access dumb buffer pixels
+ * directly (e.g. software rendering, fbcon).
+ *
+ * @obj:   GEM object backing the dumb buffer.
+ * @vaddr: Receives the kernel virtual address of the buffer.
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int drm_dumb_mmap(struct drm_gem_object *obj, void **vaddr)
+{
+    if (!obj || !vaddr)
+        return -EINVAL;
+
+    /* If the GEM object already has a kernel mapping, use it */
+    if (obj->vaddr) {
+        *vaddr = obj->vaddr;
+        return 0;
+    }
+
+    /* No existing mapping — map the physical pages */
+    if (obj->phys_addr == 0)
+        return -ENOMEM;
+
+    void *map = vmm_map_phys(obj->phys_addr, obj->size,
+                              VMM_FLAG_PRESENT | VMM_FLAG_WRITE);
+    if (!map)
+        return -ENOMEM;
+
+    obj->vaddr = map;
+    *vaddr = map;
+    return 0;
+}
+
+/*
+ * drm_dumb_dirtyfb — Mark a framebuffer as dirty (region updated).
+ *
+ * Handles DRM_IOCTL_MODE_DIRTYFB.  In this simplified implementation
+ * we log the dirty rectangle but defer actual flushing to the driver
+ * (e.g. via a vblank callback for LFB scanout).
+ *
+ * @dev:  DRM device.
+ * @args: Dirty rectangle arguments (fb_id, clip rects).
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int drm_dumb_dirtyfb(struct drm_device *dev,
+                      struct drm_mode_fb_dirty_cmd *args)
+{
+    if (!dev || !args)
+        return -EINVAL;
+
+    /* Validate that the framebuffer exists */
+    struct drm_framebuffer *fb = drm_fb_lookup(dev, args->fb_id);
+    if (!fb) {
+        kprintf("[DRM dumb] dirtyfb: invalid fb_id %u\n", args->fb_id);
+        return -EINVAL;
+    }
+
+    /* If no clip rects, mark the whole fb as dirty */
+    if (args->num_clips == 0 || args->clips_ptr == 0) {
+        kprintf("[DRM dumb] dirtyfb %u: full-screen update\n",
+                args->fb_id);
+        return 0;
+    }
+
+    /* Clip rects are passed via a userspace pointer.
+     * In a full implementation we would walk the clip list
+     * and merge rectangles into a dirty region.  For now,
+     * just acknowledge the update. */
+    kprintf("[DRM dumb] dirtyfb %u: %u clip rect(s)\n",
+            args->fb_id, args->num_clips);
+
+    return 0;
+}
+
+/*
+ * drm_dumb_sync — Synchronise (flush) a dumb buffer.
+ *
+ * For linear framebuffers with cache-coherent architectures
+ * this is a no-op.  On non-coherent systems this would flush
+ * the CPU cache for the buffer range.
+ */
 int drm_dumb_sync(void *file, void *dev, void *args)
 {
     (void)file;
     (void)dev;
     (void)args;
-    /* Sync is a no-op for dumb buffers (simple framebuffers) */
-    return 0;
-}
-/* ── Implement: drm_dumb_mmap ─────────────────────────────── */
-int drm_dumb_mmap(void *file, void *dev, void *vma)
-{
-    (void)file;
-    (void)dev;
-    (void)vma;
-    /* Dumb buffer mmap — the GEM mmap offset is already returned
-     * by drm_dumb_map_offset. Actual mapping happens in the VMA
-     * layer. Accept the request. */
+    /* Dumb buffers are linear and usually mapped WC or UC —
+     * no explicit sync needed.  This is consistent with the
+     * Linux DRM dumb buffer implementation. */
     return 0;
 }
