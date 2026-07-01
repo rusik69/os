@@ -71,6 +71,7 @@
      VIRTIO_NET_F_HOST_ECN | VIRTIO_NET_F_HOST_UFO | \
      VIRTIO_NET_F_CSUM | VIRTIO_NET_F_GSO | \
      VIRTIO_NET_F_MRG_RXBUF | \
+     VIRTIO_NET_F_CTRL_VQ | VIRTIO_NET_F_CTRL_RX | VIRTIO_NET_F_CTRL_VLAN | \
      VIRTIO_F_NOTIFY_ON_EMPTY)
 
 /* Features this driver REQUIRES from the device:
@@ -124,6 +125,18 @@ struct virtio_net_hdr {
     uint16_t num_buffers;  /* only if VIRTIO_NET_F_MRG_RXBUF */
 };
 #pragma pack(pop)
+
+/* ── Control VQ message structures ────────────────────────────────── *
+ * These are used to communicate with the device via the control
+ * virtqueue (VIRTIO_NET_F_CTRL_VQ). */
+#pragma pack(push, 1)
+struct virtio_net_ctrl_hdr {
+    uint8_t class;    /* VIRTIO_NET_CTRL_* class */
+    uint8_t command;  /* class-specific command */
+};
+#pragma pack(pop)
+
+#define VIRTIO_NET_CTRL_ACK_SIZE  1    /* single-byte ack status */
 
 /* ── RX buffer size ────────────────────────────────────────────────
  * Standard MTU (1500) needs ~1.5KB per packet.  With LRO/TSO the
@@ -236,8 +249,10 @@ static uint16_t vnet_iobase  = 0;
 
 #define RX_QUEUE_IDX 0
 #define TX_QUEUE_IDX 1
+#define CTRL_QUEUE_IDX 2
 static uint8_t  __attribute__((aligned(4096))) rx_queue_mem[4096];
 static uint8_t  __attribute__((aligned(4096))) tx_queue_mem[4096];
+static uint8_t  __attribute__((aligned(4096))) ctrl_queue_mem[4096];
 static uint8_t  rx_pkt_bufs[VRING_SIZE][RX_BUF_SIZE];
 static uint16_t rx_last_used = 0;
 static uint8_t  vnet_irq = 0;
@@ -247,6 +262,11 @@ static uint16_t tx_last_used = 0;
 
 /* ── Negotiated feature flags (set during init) ──────────────────── */
 static uint32_t vnet_negotiated_features = 0;
+
+/* ── Control VQ state ────────────────────────────────────────────── */
+static int     ctrl_vq_available = 0;   /* 1 if control VQ was negotiated and set up */
+static uint8_t ctrl_ack_buf[16];        /* ACK status from device (first byte used) */
+static uint8_t ctrl_data_buf[1024];     /* Scatter buffer for control command data */
 
 /* ── GRO flow table ──────────────────────────────────────────────── */
 static struct gro_flow gro_flows[GRO_MAX_FLOWS];
@@ -1672,6 +1692,196 @@ void virtio_net_rss_get_stats(struct virtio_net_rss_stats *stats)
         memcpy(stats, &rss_state.stats, sizeof(*stats));
 }
 
+/* ══════════════════════════════════════════════════════════════════
+ *  Control VQ — MAC Filtering & Promiscuous/Allmulti Control
+ * ══════════════════════════════════════════════════════════════════ */
+
+/* ── Send a control command via the control virtqueue ───────────────
+ *
+ * Sends a control VQ message: ctrl_hdr [optional data] → ack.
+ *
+ * class:       VIRTIO_NET_CTRL_* class identifier
+ * command:     class-specific command
+ * data:        optional command-specific data (may be NULL if data_len == 0)
+ * data_len:    number of bytes in data
+ *
+ * Returns 0 on success (device returned VIRTIO_NET_OK),
+ *         -ENOSYS if control VQ not available,
+ *         -EIO if device returned VIRTIO_NET_ERR or communication failed.
+ */
+static int virtio_net_ctrl_send(uint8_t class, uint8_t command,
+                                 const void *data, size_t data_len)
+{
+    struct vring_desc  *descs = (struct vring_desc  *)ctrl_queue_mem;
+    struct vring_avail *avail = vring_avail_ptr(ctrl_queue_mem);
+    struct vring_used  *used  = vring_used_ptr(ctrl_queue_mem);
+    struct virtio_net_ctrl_hdr *hdr;
+    int desc_count = 0;
+
+    if (!ctrl_vq_available)
+        return -ENOSYS;
+
+    /* Build descriptor chain:
+     *   desc 0: ctrl_hdr (OUT) — always present
+     *   desc 1: data payload (OUT) — optional
+     *   desc 2: ack buffer (IN) — always present
+     */
+    hdr = (struct virtio_net_ctrl_hdr *)ctrl_data_buf;
+    hdr->class   = class;
+    hdr->command = command;
+
+    /* Place the header in descriptor 0 */
+    descs[0].addr  = VIRT_TO_PHYS(hdr);
+    descs[0].len   = sizeof(struct virtio_net_ctrl_hdr);
+    descs[0].flags = VRING_DESC_F_NEXT;  /* chained */
+    desc_count = 1;
+
+    /* If there's data payload, put it in descriptor 1 */
+    if (data && data_len > 0) {
+        /* Copy data into the control data buffer after the header */
+        size_t copy_len = data_len;
+        if (copy_len > sizeof(ctrl_data_buf) - sizeof(struct virtio_net_ctrl_hdr))
+            copy_len = sizeof(ctrl_data_buf) - sizeof(struct virtio_net_ctrl_hdr);
+
+        memcpy(ctrl_data_buf + sizeof(struct virtio_net_ctrl_hdr), data, copy_len);
+
+        descs[1].addr  = VIRT_TO_PHYS(ctrl_data_buf + sizeof(struct virtio_net_ctrl_hdr));
+        descs[1].len   = (uint32_t)copy_len;
+        descs[1].flags = VRING_DESC_F_NEXT;
+        descs[1].next  = 2;
+        desc_count = 2;
+    }
+
+    /* ACK descriptor (device writes status byte here) */
+    ctrl_ack_buf[0] = VIRTIO_NET_ERR;  /* pre-fill with error */
+    {
+        int ack_desc_idx = desc_count;
+        descs[ack_desc_idx].addr  = VIRT_TO_PHYS(ctrl_ack_buf);
+        descs[ack_desc_idx].len   = VIRTIO_NET_CTRL_ACK_SIZE;
+        descs[ack_desc_idx].flags = VRING_DESC_F_WRITE;  /* device writes */
+        descs[ack_desc_idx].next  = 0;
+
+        /* Wire up previous descriptor to point to ack */
+        if (desc_count >= 1) {
+            /* Link desc 0 (or the last data desc) to the ack desc */
+            if (desc_count == 1) {
+                /* Only header + ack */
+                descs[0].next = 1;
+            }
+            /* descs[1].next already set to 2 above if data was present */
+            descs[desc_count].flags = VRING_DESC_F_WRITE; /* ack is write-only */
+            descs[desc_count].next  = 0;
+        }
+        desc_count++;  /* now we have 2 or 3 descriptors */
+    }
+
+    /* Place the chain head into the avail ring */
+    uint16_t slot = avail->idx & (VRING_SIZE - 1);
+    avail->ring[slot] = 0;  /* descriptor 0 is always the chain head */
+    __asm__ volatile("" ::: "memory");
+    avail->idx++;
+    __asm__ volatile("" ::: "memory");
+
+    /* Notify the device */
+    vio_outw(VIRTIO_PCI_QUEUE_NOTIFY, CTRL_QUEUE_IDX);
+
+    /* Wait for device to process the control command */
+    uint64_t spin = 0;
+    uint16_t last_used = used->idx;
+    while (used->idx == last_used && spin++ < 1000000)
+        __asm__ volatile("" ::: "memory");
+
+    if (used->idx == last_used)
+        return -EIO;  /* Device did not process command in time */
+
+    /* Check ACK status */
+    if (ctrl_ack_buf[0] == VIRTIO_NET_OK)
+        return 0;
+
+    return -EIO;  /* Device rejected the command */
+}
+
+/* ── Set promiscuous mode ──────────────────────────────────────────
+ * 1 = accept all packets (promiscuous), 0 = filter per MAC table.
+ * Returns 0 on success, negative errno on failure.
+ */
+int virtio_net_ctrl_set_promisc(int on)
+{
+    return virtio_net_ctrl_send(VIRTIO_NET_CTRL_RX,
+                                on ? VIRTIO_NET_CTRL_RX_PROMISC
+                                   : VIRTIO_NET_CTRL_RX_NO_UCAST,
+                                NULL, 0);
+}
+
+/* ── Set all-multicast mode ─────────────────────────────────────────
+ * 1 = accept all multicast, 0 = filter per MAC table.
+ * Returns 0 on success, negative errno on failure.
+ */
+int virtio_net_ctrl_set_allmulti(int on)
+{
+    return virtio_net_ctrl_send(VIRTIO_NET_CTRL_RX,
+                                on ? VIRTIO_NET_CTRL_RX_ALLMULTI
+                                   : VIRTIO_NET_CTRL_RX_NO_MCAST,
+                                NULL, 0);
+}
+
+/* ── Set MAC address filtering table ────────────────────────────────
+ * Sends the full MAC address table to the device via the control VQ.
+ * The device will only accept packets matching the listed MACs
+ * (unless promiscuous or all-multicast mode is active).
+ *
+ * uc_macs:  array of 6-byte unicast MAC addresses (may be NULL if num_uc==0)
+ * num_uc:   number of unicast MAC entries
+ * mc_macs:  array of 6-byte multicast MAC addresses (may be NULL if num_mc==0)
+ * num_mc:   number of multicast MAC entries
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int virtio_net_ctrl_set_mac_table(const uint8_t *uc_macs, uint16_t num_uc,
+                                   const uint8_t *mc_macs, uint16_t num_mc)
+{
+    /* Build the MAC table payload in ctrl_data_buf after the header:
+     *   le32 num_unicast
+     *   uc_macs[0..num_uc-1] (each 6 bytes)
+     *   le32 num_multicast
+     *   mc_macs[0..num_mc-1] (each 6 bytes)
+     */
+    size_t offset = 0;
+    uint8_t *buf = ctrl_data_buf + sizeof(struct virtio_net_ctrl_hdr);
+    size_t max_data = sizeof(ctrl_data_buf) - sizeof(struct virtio_net_ctrl_hdr);
+
+    /* Calculate total payload size */
+    size_t total_len = sizeof(uint32_t) + (size_t)num_uc * 6
+                     + sizeof(uint32_t) + (size_t)num_mc * 6;
+
+    if (total_len > max_data)
+        return -EINVAL;
+
+    /* Write unicast count */
+    *(uint32_t *)(buf + offset) = (uint32_t)num_uc;
+    offset += sizeof(uint32_t);
+
+    /* Write unicast MAC addresses */
+    if (uc_macs && num_uc > 0) {
+        memcpy(buf + offset, uc_macs, (size_t)num_uc * 6);
+        offset += (size_t)num_uc * 6;
+    }
+
+    /* Write multicast count */
+    *(uint32_t *)(buf + offset) = (uint32_t)num_mc;
+    offset += sizeof(uint32_t);
+
+    /* Write multicast MAC addresses */
+    if (mc_macs && num_mc > 0) {
+        memcpy(buf + offset, mc_macs, (size_t)num_mc * 6);
+        offset += (size_t)num_mc * 6;
+    }
+
+    return virtio_net_ctrl_send(VIRTIO_NET_CTRL_MAC,
+                                VIRTIO_NET_CTRL_MAC_TABLE_SET,
+                                buf, offset);
+}
+
 /* ── Init ────────────────────────────────────────────────────────── */
 int virtio_net_init(void) {
     struct pci_device dev;
@@ -1778,6 +1988,31 @@ int virtio_net_init(void) {
         used->idx = 0;
     }
     vio_outl(VIRTIO_PCI_QUEUE_PFN, (uint32_t)(VIRT_TO_PHYS(tx_queue_mem) >> 12));
+
+    /* Control VQ (2) — only if CTRL_VQ was negotiated */
+    if (vnet_negotiated_features & VIRTIO_NET_F_CTRL_VQ) {
+        vio_outw(VIRTIO_PCI_QUEUE_SEL, CTRL_QUEUE_IDX);
+        uint16_t ctrl_qsz = vio_inw(VIRTIO_PCI_QUEUE_SIZE);
+        if (ctrl_qsz != 0 && ctrl_qsz < VRING_SIZE) {
+            kprintf("virtio-net: control queue size %u < %u, disabling control VQ\n",
+                    (unsigned int)ctrl_qsz, (unsigned int)VRING_SIZE);
+            /* Non-fatal — continue without control VQ */
+        } else {
+            struct vring_avail *avail = vring_avail_ptr(ctrl_queue_mem);
+            struct vring_used  *used  = vring_used_ptr(ctrl_queue_mem);
+            avail->flags = 0;
+            avail->idx = 0;
+            used->flags = 0;
+            used->idx = 0;
+            vio_outl(VIRTIO_PCI_QUEUE_PFN,
+                     (uint32_t)(VIRT_TO_PHYS(ctrl_queue_mem) >> 12));
+            ctrl_vq_available = 1;
+            kprintf("virtio-net: control VQ enabled (queue %u)\n",
+                    (unsigned int)CTRL_QUEUE_IDX);
+        }
+    } else {
+        kprintf("virtio-net: control VQ not negotiated (no CTRL_VQ)\n");
+    }
 
     /* Driver OK, then kick RX so the device picks up buffers */
     vio_outb(VIRTIO_PCI_STATUS,

@@ -160,6 +160,23 @@ struct virtio_net_rss_config {
 #define VIRTIO_NET_CTRL_MQ_VQ_PAIRS_SET   0x01  /* set # of active queue pairs */
 #define VIRTIO_NET_CTRL_MQ_RSS_CONFIG     0x02  /* set RSS configuration */
 
+/* ── Control VQ: RX filtering class (requires VIRTIO_NET_F_CTRL_RX) ── */
+#define VIRTIO_NET_CTRL_RX                 0x01
+#define VIRTIO_NET_CTRL_RX_PROMISC         0   /* toggle promiscuous mode */
+#define VIRTIO_NET_CTRL_RX_ALLMULTI        1   /* toggle all-multicast mode */
+#define VIRTIO_NET_CTRL_RX_NO_MCAST        2   /* disable multicast */
+#define VIRTIO_NET_CTRL_RX_NO_UCAST        3   /* disable unicast */
+#define VIRTIO_NET_CTRL_RX_NOMCAST         4   /* disable multicast (alt name) */
+
+/* ── Control VQ: MAC table class ──────────────────────────────────── */
+#define VIRTIO_NET_CTRL_MAC                0x03
+#define VIRTIO_NET_CTRL_MAC_TABLE_SET      0   /* set unicast/multicast MAC filter table */
+#define VIRTIO_NET_CTRL_MAC_ADDR_SET       1   /* set default MAC address */
+
+/* ── Control VQ: ACK status values ───────────────────────────────── */
+#define VIRTIO_NET_OK                      0
+#define VIRTIO_NET_ERR                     1
+
 /* ── Virtio-blk feature bits ────────────────────────────────────── */
 #define VIRTIO_BLK_F_SIZE_MAX       (1u << 1)  /* max segment size */
 #define VIRTIO_BLK_F_SEG_MAX        (1u << 2)  /* max segments per request */

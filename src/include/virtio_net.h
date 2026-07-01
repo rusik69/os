@@ -93,4 +93,28 @@ void virtio_net_rss_get_stats(struct virtio_net_rss_stats *stats);
 uint32_t virtio_net_rss_hash_packet(const uint8_t *pkt, uint32_t len,
                                      uint8_t *hash_type_out);
 
+/* ── Control VQ (MAC filtering) ──────────────────────────────────────
+ * Requires VIRTIO_NET_F_CTRL_VQ and VIRTIO_NET_F_CTRL_RX negotiated.
+ * These functions control promiscuous/allmulti mode and MAC address
+ * filtering via the control virtqueue. */
+
+/* Set promiscuous mode: 1 = accept all packets, 0 = filter per MAC table.
+ * Returns 0 on success, -1 if control vq not available or device rejected. */
+int virtio_net_ctrl_set_promisc(int on);
+
+/* Set all-multicast mode: 1 = accept all multicast, 0 = filter per MAC table.
+ * Returns 0 on success, -1 if control vq not available or device rejected. */
+int virtio_net_ctrl_set_allmulti(int on);
+
+/* Set MAC address filtering table.
+ * uc_macs: array of 6-byte unicast MAC addresses to accept (may be NULL if num_uc==0).
+ * num_uc: number of unicast MACs in uc_macs.
+ * mc_macs: array of 6-byte multicast MAC addresses to accept (may be NULL if num_mc==0).
+ * num_mc: number of multicast MACs in mc_macs.
+ * Pass num_uc=0 and uc_macs=NULL to accept no unicast (when promisc off).
+ * Pass num_mc=0 and mc_macs=NULL to accept no multicast (when allmulti off).
+ * Returns 0 on success, -1 if control vq not available or device rejected. */
+int virtio_net_ctrl_set_mac_table(const uint8_t *uc_macs, uint16_t num_uc,
+                                   const uint8_t *mc_macs, uint16_t num_mc);
+
 #endif
