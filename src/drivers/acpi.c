@@ -6,6 +6,11 @@
 #include "cpuidle.h"
 #include "cpupstate.h"
 
+/* Forward declarations for DSDT/SSDT parsing defined below */
+struct fadt;
+static int acpi_parse_dsdt(struct fadt *fadt);
+static int acpi_load_ssdts(void);
+
 /* AML method signatures for dock detection */
 /* "_DCK" as little-endian uint32_t: 'D' 'C' 'K' '_' */
 #define AML_DCK_SIG  0x5f4b4344
@@ -131,6 +136,15 @@ static struct {
 uint8_t *g_dsdt_base = NULL;
 /* Total length of the DSDT table (including header) */
 uint32_t g_dsdt_length = 0;
+
+/* Pointer to AML bytecode within the DSDT (after the header) */
+uint8_t *g_dsdt_aml_base = NULL;
+/* Length of AML bytecode within the DSDT */
+uint32_t g_dsdt_aml_length = 0;
+
+/* SSDT table tracking */
+int g_acpi_ssdt_count = 0;
+struct acpi_ssdt_info g_acpi_ssdt_tables[ACPI_MAX_SSDT];
 
 /* Power button flag */
 static volatile int g_power_button_pressed = 0;
@@ -902,10 +916,7 @@ void __init acpi_init(void) {
             kprintf("[OK] ACPI: DMAR (DMA Remapping) table found\n");
             /* IOMMU driver will parse this on iommu_init() */
         }
-        /* SSDT — Secondary System Description Table */
-        if (memcmp(hdr->signature, "SSDT", 4) == 0) {
-            kprintf("  ACPI: SSDT table (%s) found, skipping AML\n", sig);
-        }
+        /* SSDT — Secondary System Description Table (loaded below) */
         /* SLIT — System Locality Information Table */
         if (memcmp(hdr->signature, "SLIT", 4) == 0) {
             kprintf("  ACPI: SLIT (NUMA) table found\n");
@@ -1010,17 +1021,13 @@ void __init acpi_init(void) {
     /* Parse DSDT for sleep states */
     parse_dsdt_for_sleep(fadt);
 
-    /* Export DSDT base/length for ACPI drivers (acpi_cpufreq, etc.) */
-    if (fadt && fadt->dsdt) {
-        uint8_t *dsdt = (uint8_t *)PHYS_TO_VIRT((uint64_t)fadt->dsdt);
-        if (dsdt && memcmp(dsdt, "DSDT", 4) == 0) {
-            struct acpi_header *hdr = (struct acpi_header *)dsdt;
-            g_dsdt_base = dsdt;
-            g_dsdt_length = hdr->length;
-            kprintf("  ACPI: DSDT at %p, length %u\n",
-                    (void *)g_dsdt_base, g_dsdt_length);
-        }
+    /* Proper DSDT table validation (signature, checksum, AML extraction) */
+    if (acpi_parse_dsdt(fadt) < 0) {
+        kprintf("[--] ACPI: DSDT validation failed, ACPI features limited\n");
     }
+
+    /* Load SSDT tables (additional AML definition blocks) */
+    acpi_load_ssdts();
 
     /* Parse DSDT for dock station (Item 106) */
     parse_dsdt_for_dock(fadt);
@@ -1576,6 +1583,204 @@ uint32_t acpi_read_gpe_status(void)
     /* Read GPE0 status register (assumes it's at a known offset) */
     /* Actual implementation would use the FADT GPE0 block address */
     return 0;  /* Placeholder — real GPE base not parsed yet */
+}
+
+/* ── DSDT & SSDT Parsing ───────────────────────────────────────── */
+
+/* Forward declaration for checksum validation used below */
+static int acpi_verify_checksum(const void *table, uint32_t length);
+
+/*
+ * Validate the DSDT table header and extract the AML bytecode region.
+ * Returns 0 on success, -1 on failure.
+ */
+static int acpi_parse_dsdt(struct fadt *fadt)
+{
+    if (!fadt || !fadt->dsdt) {
+        kprintf("[ACPI] DSDT: FADT has no DSDT address\n");
+        return -1;
+    }
+
+    uint8_t *dsdt = (uint8_t *)PHYS_TO_VIRT((uint64_t)fadt->dsdt);
+    if (!dsdt) {
+        kprintf("[ACPI] DSDT: cannot map DSDT at physical 0x%x\n",
+                (unsigned int)fadt->dsdt);
+        return -1;
+    }
+
+    struct acpi_header *hdr = (struct acpi_header *)dsdt;
+
+    /* Validate DSDT signature */
+    if (memcmp(hdr->signature, "DSDT", 4) != 0) {
+        kprintf("[ACPI] DSDT: invalid signature '%.4s' at 0x%x\n",
+                hdr->signature, (unsigned int)fadt->dsdt);
+        return -1;
+    }
+
+    /* Validate length */
+    if (hdr->length < sizeof(struct acpi_header)) {
+        kprintf("[ACPI] DSDT: too short (%u bytes, need %zu)\n",
+                (unsigned int)hdr->length, sizeof(struct acpi_header));
+        return -1;
+    }
+
+    /* Validate checksum */
+    if (acpi_verify_checksum(hdr, hdr->length) < 0) {
+        kprintf("[ACPI] DSDT: checksum failed\n");
+        return -1;
+    }
+
+    /* Set exported globals */
+    g_dsdt_base = dsdt;
+    g_dsdt_length = hdr->length;
+    g_dsdt_aml_base = dsdt + sizeof(struct acpi_header);
+    g_dsdt_aml_length = (uint32_t)(hdr->length - sizeof(struct acpi_header));
+
+    kprintf("  ACPI: DSDT at %p, length %u, AML %u bytes, OEM='%.6s' "
+            "Table='%.8s' Rev=%u\n",
+            (void *)g_dsdt_base,
+            (unsigned int)g_dsdt_length,
+            (unsigned int)g_dsdt_aml_length,
+            hdr->oem_id,
+            hdr->oem_table_id,
+            (unsigned int)hdr->oem_revision);
+
+    return 0;
+}
+
+/*
+ * Load all SSDT (Secondary System Description Table) entries from the
+ * XSDT/RSDT table list.  SSDTs contain additional AML bytecode that
+ * extends the DSDT definition block.
+ *
+ * We walk the same XSDT/RSDT table list used during acpi_init() to
+ * find every table with the "SSDT" signature, validate each, and
+ * store the pointers for later AML interpretation.
+ *
+ * Returns the number of SSDTs loaded, or 0 if none found.
+ */
+static int acpi_load_ssdts(void)
+{
+    if (!g_rsdp_cache.valid) {
+        kprintf("[ACPI] SSDT: RSDP not cached\n");
+        return 0;
+    }
+
+    struct acpi_header *sdt_header = NULL;
+    uint32_t entry_count = 0;
+    int entry_size = 0;  /* 8 for XSDT, 4 for RSDT */
+
+    /* Prefer XSDT (64-bit physical addresses) */
+    if (g_rsdp_cache.revision >= 2 && g_rsdp_cache.xsdt_addr != 0) {
+        sdt_header = (struct acpi_header *)PHYS_TO_VIRT(g_rsdp_cache.xsdt_addr);
+        if (!sdt_header) {
+            kprintf("[ACPI] SSDT: cannot map XSDT at 0x%llx\n",
+                    (unsigned long long)g_rsdp_cache.xsdt_addr);
+            return 0;
+        }
+        if (memcmp(sdt_header->signature, "XSDT", 4) != 0) {
+            kprintf("[ACPI] SSDT: expected XSDT signature\n");
+            return 0;
+        }
+        entry_count = (sdt_header->length - sizeof(struct acpi_header)) / 8;
+        entry_size  = 8;
+    } else if (g_rsdp_cache.rsdt_addr != 0) {
+        sdt_header = (struct acpi_header *)PHYS_TO_VIRT((uint64_t)g_rsdp_cache.rsdt_addr);
+        if (!sdt_header) return 0;
+        if (memcmp(sdt_header->signature, "RSDT", 4) != 0) return 0;
+        entry_count = (sdt_header->length - sizeof(struct acpi_header)) / 4;
+        entry_size  = 4;
+    }
+
+    if (!sdt_header || entry_count == 0)
+        return 0;
+
+    g_acpi_ssdt_count = 0;
+    const uint8_t *entries = (const uint8_t *)sdt_header + sizeof(struct acpi_header);
+
+    for (uint32_t i = 0; i < entry_count; i++) {
+        uint64_t table_phys;
+
+        if (entry_size == 8) {
+            const uint64_t *xsdt_ents = (const uint64_t *)entries;
+            table_phys = xsdt_ents[i];
+        } else {
+            const uint32_t *rsdt_ents = (const uint32_t *)entries;
+            table_phys = rsdt_ents[i];
+        }
+
+        if (table_phys == 0)
+            continue;
+
+        struct acpi_header *hdr = (struct acpi_header *)PHYS_TO_VIRT(table_phys);
+        if (!hdr)
+            continue;
+
+        /* Check for SSDT signature */
+        if (memcmp(hdr->signature, "SSDT", 4) != 0)
+            continue;
+
+        if (g_acpi_ssdt_count >= ACPI_MAX_SSDT) {
+            kprintf("[ACPI] SSDT: max tables reached (%d), ignoring "
+                    "remaining\n", ACPI_MAX_SSDT);
+            break;
+        }
+
+        /* Validate SSDT header length */
+        if (hdr->length < sizeof(struct acpi_header)) {
+            kprintf("[ACPI] SSDT[%d] at 0x%llx: too short (%u bytes), "
+                    "skipping\n",
+                    g_acpi_ssdt_count,
+                    (unsigned long long)table_phys,
+                    (unsigned int)hdr->length);
+            continue;
+        }
+
+        /* Validate checksum (non-fatal — log warning but still load) */
+        if (acpi_verify_checksum(hdr, hdr->length) < 0) {
+            kprintf("[ACPI] SSDT[%d] at 0x%llx: checksum failed, "
+                    "loading anyway\n",
+                    g_acpi_ssdt_count,
+                    (unsigned long long)table_phys);
+        }
+
+        int idx = g_acpi_ssdt_count;
+        g_acpi_ssdt_tables[idx].base      = (uint8_t *)hdr;
+        g_acpi_ssdt_tables[idx].length    = hdr->length;
+        g_acpi_ssdt_tables[idx].aml_base  = (uint8_t *)hdr + sizeof(struct acpi_header);
+        g_acpi_ssdt_tables[idx].aml_length = (uint32_t)(hdr->length - sizeof(struct acpi_header));
+        g_acpi_ssdt_count++;
+
+        kprintf("  ACPI: SSDT[%d] at %p, length %u, AML %u bytes, "
+                "OEM='%.6s' Table='%.8s' Rev=%u\n",
+                idx,
+                (void *)g_acpi_ssdt_tables[idx].base,
+                (unsigned int)g_acpi_ssdt_tables[idx].length,
+                (unsigned int)g_acpi_ssdt_tables[idx].aml_length,
+                hdr->oem_id,
+                hdr->oem_table_id,
+                (unsigned int)hdr->oem_revision);
+    }
+
+    kprintf("[ACPI] SSDT: loaded %d table(s), total AML %u bytes\n",
+            g_acpi_ssdt_count,
+            (unsigned int)acpi_get_total_aml_size());
+
+    return g_acpi_ssdt_count;
+}
+
+/*
+ * Compute the total size of all AML bytecode across DSDT and all SSDTs.
+ * Used by the AML interpreter to allocate a unified namespace.
+ */
+uint32_t acpi_get_total_aml_size(void)
+{
+    uint32_t total = g_dsdt_aml_length;
+
+    for (int i = 0; i < g_acpi_ssdt_count; i++)
+        total += g_acpi_ssdt_tables[i].aml_length;
+
+    return total;
 }
 
 /* ── ACPI table checksum validation ──────────────────────────── */

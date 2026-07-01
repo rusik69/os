@@ -61,13 +61,37 @@ int acpi_dock_get_state(void);
  * hotplug events when no ACPI notification mechanism is available. */
 void acpi_dock_poll(void);
 
-/* ── DSDT global information (exported for ACPI drivers) ──────────── */
+/* ── DSDT / SSDT global information (exported for ACPI drivers) ──── */
 
 /* Virtual address of DSDT base (mapped via PHYS_TO_VIRT).
  * Set during acpi_init() after the FADT is parsed. */
 extern uint8_t *g_dsdt_base;
 /* Total length of the DSDT table (including ACPI header) in bytes. */
 extern uint32_t g_dsdt_length;
+
+/* Pointer to the AML bytecode region within the DSDT (after the header). */
+extern uint8_t *g_dsdt_aml_base;
+/* Length of the AML bytecode (DSDT length minus header). */
+extern uint32_t g_dsdt_aml_length;
+
+/* Maximum number of SSDT tables we can track. */
+#define ACPI_MAX_SSDT  16
+
+/* Per-SSDT table information. */
+struct acpi_ssdt_info {
+    uint8_t  *base;      /* Virtual address of the SSDT table header */
+    uint32_t  length;    /* Total length including header */
+    uint8_t  *aml_base;  /* Pointer to AML bytecode (after header) */
+    uint32_t  aml_length;/* Length of AML bytecode */
+};
+
+/* Number of SSDT tables found and loaded. */
+extern int g_acpi_ssdt_count;
+/* Array of SSDT table information. */
+extern struct acpi_ssdt_info g_acpi_ssdt_tables[ACPI_MAX_SSDT];
+
+/* Compute total AML size across DSDT + all SSDTs (for AML interpreter). */
+uint32_t acpi_get_total_aml_size(void);
 
 /* ── ACPI table header (common to all ACPI tables) ────────────────── */
 
