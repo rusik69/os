@@ -697,4 +697,80 @@ int virtio_packed_wait_buf(struct virtio_packed_vq *vq, uint32_t timeout);
 void virtio_packed_enable_event(struct virtio_packed_vq *vq);
 void virtio_packed_disable_event(struct virtio_packed_vq *vq);
 
+/* ── Virtio-input feature bits (spec §5.10) ──────────────────────── */
+#define VIRTIO_INPUT_F_EVENTS       (1u << 0)  /* event virtqueue available */
+#define VIRTIO_INPUT_F_STATUS       (1u << 1)  /* status virtqueue available */
+
+/* ── Virtio input config selectors (spec §5.10.4) ───────────────── */
+#define VIRTIO_INPUT_CFG_UNSET      0x00
+#define VIRTIO_INPUT_CFG_ID_NAME    0x01
+#define VIRTIO_INPUT_CFG_ID_SERIAL  0x02
+#define VIRTIO_INPUT_CFG_ID_DEVIDS  0x03
+#define VIRTIO_INPUT_CFG_PROP_BITS  0x10
+#define VIRTIO_INPUT_CFG_EV_BITS    0x11
+#define VIRTIO_INPUT_CFG_ABS_INFO   0x12
+
+/* ── Absolute axis information (virtio-input spec §5.10.4) ──────── */
+#pragma pack(push, 1)
+struct virtio_input_absinfo {
+	uint32_t min;
+	uint32_t max;
+	uint32_t fuzz;
+	uint32_t flat;
+	uint32_t res;
+};
+#pragma pack(pop)
+
+/* ── Device IDs (virtio-input spec §5.10.4) ──────────────────────── */
+#pragma pack(push, 1)
+struct virtio_input_devids {
+	uint16_t bustype;
+	uint16_t vendor;
+	uint16_t product;
+	uint16_t version;
+};
+#pragma pack(pop)
+
+/* ── Virtio input configuration structure (spec §5.10.4) ──────────── */
+#pragma pack(push, 1)
+struct virtio_input_config {
+	uint8_t  select;
+	uint8_t  subsel;
+	uint8_t  size;
+	uint8_t  reserved[5];
+	union {
+		char    string[128];
+		uint8_t bits[128];
+		struct virtio_input_absinfo abs;
+		struct virtio_input_devids ids;
+	} u;
+};
+#pragma pack(pop)
+
+/* ── Virtio input event structure (spec §5.10.5) ──────────────────── */
+#pragma pack(push, 1)
+struct virtio_input_event {
+	uint16_t type;
+	uint16_t code;
+	uint32_t value;
+};
+#pragma pack(pop)
+
+/* ── Multi-touch ABS codes (ABS_MT_*) ──────────────────────────────── */
+#define ABS_MT_SLOT          0x2f  /* MT slot being updated */
+#define ABS_MT_TOUCH_MAJOR   0x30  /* Major axis of touching ellipse */
+#define ABS_MT_TOUCH_MINOR   0x31  /* Minor axis of touching ellipse */
+#define ABS_MT_WIDTH_MAJOR   0x32  /* Major axis of approaching ellipse */
+#define ABS_MT_WIDTH_MINOR   0x33  /* Minor axis of approaching ellipse */
+#define ABS_MT_ORIENTATION   0x34  /* Ellipse orientation */
+#define ABS_MT_POSITION_X    0x35  /* Center X of touching ellipse */
+#define ABS_MT_POSITION_Y    0x36  /* Center Y of touching ellipse */
+#define ABS_MT_TOOL_TYPE     0x37  /* Type of approaching tool */
+#define ABS_MT_BLOB_ID       0x38  /* Group a set of contacts as a blob */
+#define ABS_MT_TRACKING_ID   0x39  /* Unique ID of initiated contact */
+#define ABS_MT_PRESSURE      0x3a  /* Pressure on the contact area */
+#define ABS_MT_DISTANCE      0x3b  /* Distance from touch surface */
+#define ABS_MT_TOOL_X        0x3c  /* Center X for the approaching tool */
+#define ABS_MT_TOOL_Y        0x3d  /* Center Y for the approaching tool */
+
 #endif /* VIRTIO_H */
