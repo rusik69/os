@@ -13,6 +13,8 @@
 #include "acpi.h"
 #include "string.h"
 #include "printf.h"
+#include "heap.h"
+#include "aml_exec.h"
 
 /* ── AML Opcodes (subset relevant to namespace construction) ────── */
 
@@ -45,6 +47,28 @@
 #define AML_EXT_THERMAL_ZONE_OP 0x85
 #define AML_EXT_INDEX_FIELD_OP  0x86
 #define AML_EXT_BANK_FIELD_OP   0x87
+
+/* Additional opcodes used in method execution */
+#define AML_RETURN_OP           0xA4    /* Return from method body */
+#define AML_ONES_OP             0xFF    /* Ones constant (all bits set) */
+
+/* LocalX and ArgX opcodes (inside method bodies) */
+#define AML_LOCAL0              0x60
+#define AML_LOCAL1              0x61
+#define AML_LOCAL2              0x62
+#define AML_LOCAL3              0x63
+#define AML_LOCAL4              0x64
+#define AML_LOCAL5              0x65
+#define AML_LOCAL6              0x66
+#define AML_LOCAL7              0x67
+
+#define AML_ARG0                0x68
+#define AML_ARG1                0x69
+#define AML_ARG2                0x6A
+#define AML_ARG3                0x6B
+#define AML_ARG4                0x6C
+#define AML_ARG5                0x6D
+#define AML_ARG6                0x6E
 
 /* Data type names used by AML NameOp values */
 #define AML_DATA_TYPE_INTEGER   0
@@ -958,4 +982,1082 @@ void aml_dump_namespace(void)
 	}
 
 	kprintf("[AML] End of namespace dump\n");
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+ * AML Method Invocation (Control Method Evaluation)
+ *
+ * Implements a minimal AML bytecode interpreter that can evaluate
+ * ACPI control methods. Supports:
+ *   - Local0-Local7 and Arg0-Arg6 variable access
+ *   - Store (0x14) to locals and args
+ *   - Return (0xA4) with integer, string, buffer, or package values
+ *   - Constants: Zero, One, Ones, Byte, Word, DWord, QWord, String
+ *   - Name (0x08) for creating named integer/string/buffer/package objects
+ *
+ * Reference: ACPI v6.3, Sections 19-20
+ */
+
+/* ── Object Lifecycle Helpers ───────────────────────────────────── */
+
+static struct aml_object *aml_alloc_object(void)
+{
+	struct aml_object *obj;
+
+	obj = (struct aml_object *)kmalloc(sizeof(struct aml_object));
+	if (!obj)
+		return NULL;
+
+	memset(obj, 0, sizeof(struct aml_object));
+	obj->type = AML_OBJ_UNDEFINED;
+	obj->from_heap = 1;
+	return obj;
+}
+
+void aml_free_object(struct aml_object *obj)
+{
+	if (!obj)
+		return;
+
+	/* Free owned resources based on type */
+	switch (obj->type) {
+	case AML_OBJ_STRING:
+		if (obj->value.string.ptr && obj->from_heap)
+			kfree(obj->value.string.ptr);
+		break;
+	case AML_OBJ_BUFFER:
+		if (obj->value.buffer.data && obj->from_heap)
+			kfree(obj->value.buffer.data);
+		break;
+	case AML_OBJ_PACKAGE:
+		if (obj->value.package.elements && obj->from_heap) {
+			for (uint32_t i = 0; i < obj->value.package.count; i++)
+				aml_free_object(&obj->value.package.elements[i]);
+			kfree(obj->value.package.elements);
+		}
+		break;
+	default:
+		break;
+	}
+
+	if (obj->from_heap)
+		kfree(obj);
+}
+
+struct aml_object *aml_create_integer(uint64_t value)
+{
+	struct aml_object *obj = aml_alloc_object();
+
+	if (!obj)
+		return NULL;
+	obj->type = AML_OBJ_INTEGER;
+	obj->value.integer = value;
+	return obj;
+}
+
+struct aml_object *aml_create_string(const char *str)
+{
+	struct aml_object *obj;
+	size_t slen;
+
+	if (!str)
+		return NULL;
+
+	obj = aml_alloc_object();
+	if (!obj)
+		return NULL;
+
+	slen = strlen(str);
+	obj->type = AML_OBJ_STRING;
+	obj->value.string.ptr = (char *)kmalloc(slen + 1);
+	if (!obj->value.string.ptr) {
+		kfree(obj);
+		return NULL;
+	}
+	memcpy(obj->value.string.ptr, str, slen + 1);
+	obj->value.string.len = (uint32_t)slen;
+	return obj;
+}
+
+struct aml_object *aml_create_buffer(const uint8_t *data, uint32_t length)
+{
+	struct aml_object *obj;
+
+	obj = aml_alloc_object();
+	if (!obj)
+		return NULL;
+
+	obj->type = AML_OBJ_BUFFER;
+	if (length > 0 && data) {
+		obj->value.buffer.data = (uint8_t *)kmalloc(length);
+		if (!obj->value.buffer.data) {
+			kfree(obj);
+			return NULL;
+		}
+		memcpy(obj->value.buffer.data, data, length);
+		obj->value.buffer.length = length;
+	}
+	return obj;
+}
+
+struct aml_object *aml_create_reference(int node_index)
+{
+	struct aml_object *obj = aml_alloc_object();
+
+	if (!obj)
+		return NULL;
+	obj->type = AML_OBJ_REFERENCE;
+	obj->value.ref.node_index = node_index;
+	return obj;
+}
+
+/* ── Execution Context ──────────────────────────────────────────── */
+
+struct aml_exec_context {
+	const uint8_t *aml;           /* Current AML bytecode */
+	uint32_t       aml_len;       /* Total AML length */
+	uint32_t       offset;        /* Current execution offset */
+
+	/* Local variables (Local0-Local7) */
+	struct aml_object *locals[AML_MAX_LOCALS];
+	/* Method arguments (Arg0-Arg6) */
+	struct aml_object *args[AML_MAX_ARGS];
+
+	/* Return value and execution state */
+	struct aml_object  own_return;    /* Stack-allocated return buffer */
+	struct aml_object *return_value;  /* Points to return value */
+	int  has_returned;                /* Method has executed Return */
+	int  error;                       /* Execution error occurred */
+};
+
+/* ── Method Header Parser ───────────────────────────────────────── */
+
+/*
+ * Skip past the method definition header to reach the TermList.
+ * Method encoding: MethodOp PkgLength NameString MethodFlags TermList
+ *
+ * Returns the byte offset of the TermList start, or 0 on error.
+ * If num_args_out is non-NULL, stores the argument count from MethodFlags.
+ */
+static uint32_t aml_skip_method_header(const uint8_t *aml, uint32_t aml_len,
+				       uint8_t *num_args_out)
+{
+	uint32_t o = 0;
+	uint32_t pkg_bytes;
+	uint32_t pkg_len;
+
+	if (!aml || aml_len < 6)
+		return 0;  /* Minimum: Op(1) + PkgLen(1) + NameSeg(4) = 6 */
+
+	if (aml[o] != AML_METHOD_OP)
+		return 0;
+	o++;  /* Skip MethodOp */
+
+	/* Decode PkgLength */
+	pkg_len = aml_decode_pkg_length(aml, aml_len, o, &pkg_bytes);
+	if (pkg_len == 0 || pkg_len < 5)
+		return 0;  /* PkgLen must cover NameSeg(4) + Flags(1) minimum */
+	if (o + pkg_bytes > aml_len)
+		return 0;
+	o += pkg_bytes;
+
+	/* Skip NameString */
+	{
+		uint32_t name_bytes = aml_skip_name_string(aml, aml_len, o);
+
+		if (name_bytes == 0)
+			return 0;
+		o += name_bytes;
+	}
+
+	/* Read MethodFlags */
+	if (o >= aml_len)
+		return 0;
+
+	if (num_args_out)
+		*num_args_out = aml[o] & 0x07;  /* Bits[2:0] = ArgCount */
+	o++;  /* Skip MethodFlags */
+
+	/* o now points to the start of the TermList */
+	return o;
+}
+
+/* ── AML Byte Decoding Helpers ──────────────────────────────────── */
+
+/*
+ * Read a little-endian unsigned value from the AML byte stream.
+ * Returns 0 on bounds error (offset too large).
+ */
+static uint64_t aml_read_le64(const uint8_t *data, uint32_t max_len,
+			      uint32_t offset, int bytes)
+{
+	uint64_t val = 0;
+
+	if (offset + (uint32_t)bytes > max_len)
+		return 0;
+
+	for (int i = 0; i < bytes && i < 8; i++)
+		val |= (uint64_t)data[offset + i] << (i * 8);
+
+	return val;
+}
+
+/* ── Object Copy / Clone ────────────────────────────────────────── */
+
+/*
+ * Deep-copy an AML object.  The caller owns the returned object.
+ * Returns NULL on allocation failure.
+ */
+static struct aml_object *aml_clone_object(const struct aml_object *src)
+{
+	struct aml_object *dst;
+
+	if (!src)
+		return NULL;
+
+	dst = aml_alloc_object();
+	if (!dst)
+		return NULL;
+
+	dst->type = src->type;
+
+	switch (src->type) {
+	case AML_OBJ_INTEGER:
+		dst->value.integer = src->value.integer;
+		break;
+
+	case AML_OBJ_STRING:
+		if (src->value.string.ptr) {
+			dst->value.string.ptr = (char *)kmalloc(
+				src->value.string.len + 1);
+			if (!dst->value.string.ptr) {
+				kfree(dst);
+				return NULL;
+			}
+			memcpy(dst->value.string.ptr, src->value.string.ptr,
+			       src->value.string.len + 1);
+			dst->value.string.len = src->value.string.len;
+		}
+		break;
+
+	case AML_OBJ_BUFFER:
+		if (src->value.buffer.length > 0 && src->value.buffer.data) {
+			dst->value.buffer.data = (uint8_t *)kmalloc(
+				src->value.buffer.length);
+			if (!dst->value.buffer.data) {
+				kfree(dst);
+				return NULL;
+			}
+			memcpy(dst->value.buffer.data,
+			       src->value.buffer.data,
+			       src->value.buffer.length);
+			dst->value.buffer.length = src->value.buffer.length;
+		}
+		break;
+
+	case AML_OBJ_PACKAGE:
+		if (src->value.package.count > 0 &&
+		    src->value.package.elements) {
+			uint32_t count = src->value.package.count;
+
+			dst->value.package.elements =
+				(struct aml_object *)kmalloc(
+					count * sizeof(struct aml_object));
+			if (!dst->value.package.elements) {
+				kfree(dst);
+				return NULL;
+			}
+			memset(dst->value.package.elements, 0,
+			       count * sizeof(struct aml_object));
+			dst->value.package.count = count;
+
+			for (uint32_t i = 0; i < count; i++) {
+				struct aml_object *elem;
+
+				elem = aml_clone_object(
+					&src->value.package.elements[i]);
+				if (!elem) {
+					for (uint32_t j = 0; j < i; j++)
+						aml_free_object(
+							&dst->value.package.
+							elements[j]);
+					kfree(dst->value.package.elements);
+					kfree(dst);
+					return NULL;
+				}
+				memcpy(&dst->value.package.elements[i],
+				       elem, sizeof(struct aml_object));
+				kfree(elem);
+			}
+		}
+		break;
+
+	default:
+		break;
+	}
+
+	return dst;
+}
+
+/* ── Store Implementation ───────────────────────────────────────── */
+
+/*
+ * Store a value to a target.
+ * In AML, Store(Source, Target) copies the value to the target location.
+ * Encoding: StoreOp(0x14) Operand SuperName
+ *
+ * The caller has already consumed the StoreOp byte; ctx->offset points
+ * to the Operand.  Returns 0 on success, -1 on error.
+ */
+static int aml_exec_store(struct aml_exec_context *ctx)
+{
+	struct aml_object operand_buf;    /* Stack buffer for operand */
+	struct aml_object *operand = NULL;
+	int ret = -1;
+
+	memset(&operand_buf, 0, sizeof(operand_buf));
+
+	/* Parse the Operand (source value) */
+	{
+		uint8_t op = (ctx->offset < ctx->aml_len)
+			     ? ctx->aml[ctx->offset] : 0;
+
+		switch (op) {
+		case AML_ZERO_OP:
+			ctx->offset++;
+			operand = &operand_buf;
+			operand->type = AML_OBJ_INTEGER;
+			operand->value.integer = 0;
+			break;
+
+		case AML_ONE_OP:
+			ctx->offset++;
+			operand = &operand_buf;
+			operand->type = AML_OBJ_INTEGER;
+			operand->value.integer = 1;
+			break;
+
+		case AML_ONES_OP:
+			ctx->offset++;
+			operand = &operand_buf;
+			operand->type = AML_OBJ_INTEGER;
+			operand->value.integer = (uint64_t)-1;
+			break;
+
+		case AML_BYTE_PREFIX:
+			if (ctx->offset + 2 > ctx->aml_len)
+				goto done;
+			ctx->offset++;
+			operand = &operand_buf;
+			operand->type = AML_OBJ_INTEGER;
+			operand->value.integer = ctx->aml[ctx->offset];
+			ctx->offset++;
+			break;
+
+		case AML_WORD_PREFIX:
+			if (ctx->offset + 3 > ctx->aml_len)
+				goto done;
+			ctx->offset++;
+			operand = &operand_buf;
+			operand->type = AML_OBJ_INTEGER;
+			operand->value.integer = aml_read_le64(
+				ctx->aml, ctx->aml_len, ctx->offset, 2);
+			ctx->offset += 2;
+			break;
+
+		case AML_DWORD_PREFIX:
+			if (ctx->offset + 5 > ctx->aml_len)
+				goto done;
+			ctx->offset++;
+			operand = &operand_buf;
+			operand->type = AML_OBJ_INTEGER;
+			operand->value.integer = aml_read_le64(
+				ctx->aml, ctx->aml_len, ctx->offset, 4);
+			ctx->offset += 4;
+			break;
+
+		case AML_QWORD_PREFIX:
+			if (ctx->offset + 9 > ctx->aml_len)
+				goto done;
+			ctx->offset++;
+			operand = &operand_buf;
+			operand->type = AML_OBJ_INTEGER;
+			operand->value.integer = aml_read_le64(
+				ctx->aml, ctx->aml_len, ctx->offset, 8);
+			ctx->offset += 8;
+			break;
+
+		case AML_STRING_PREFIX: {
+			uint32_t end;
+
+			ctx->offset++;
+			end = ctx->offset;
+			while (end < ctx->aml_len && ctx->aml[end] != 0)
+				end++;
+			if (end >= ctx->aml_len)
+				goto done;
+
+			operand = &operand_buf;
+			operand->type = AML_OBJ_STRING;
+			operand->value.string.len = end - ctx->offset;
+			operand->from_heap = 0;
+			ctx->offset = end + 1;
+			break;
+		}
+
+		case AML_LOCAL0: case AML_LOCAL1: case AML_LOCAL2:
+		case AML_LOCAL3: case AML_LOCAL4: case AML_LOCAL5:
+		case AML_LOCAL6: case AML_LOCAL7: {
+			int idx = op - AML_LOCAL0;
+
+			ctx->offset++;
+			if (ctx->locals[idx]) {
+				struct aml_object *clone;
+
+				clone = aml_clone_object(ctx->locals[idx]);
+				if (!clone)
+					goto done;
+				memcpy(&operand_buf, clone,
+				       sizeof(operand_buf));
+				kfree(clone);
+			} else {
+				operand = &operand_buf;
+				operand->type = AML_OBJ_INTEGER;
+				operand->value.integer = 0;
+			}
+			operand = &operand_buf;
+			break;
+		}
+
+		case AML_ARG0: case AML_ARG1: case AML_ARG2:
+		case AML_ARG3: case AML_ARG4: case AML_ARG5:
+		case AML_ARG6: {
+			int idx = op - AML_ARG0;
+
+			ctx->offset++;
+			if (ctx->args[idx]) {
+				struct aml_object *clone;
+
+				clone = aml_clone_object(ctx->args[idx]);
+				if (!clone)
+					goto done;
+				memcpy(&operand_buf, clone,
+				       sizeof(operand_buf));
+				kfree(clone);
+			} else {
+				operand = &operand_buf;
+				operand->type = AML_OBJ_INTEGER;
+				operand->value.integer = 0;
+			}
+			operand = &operand_buf;
+			break;
+		}
+
+		default:
+			kprintf("[AML] Store: unsupported operand "
+				"opcode 0x%02x at offset %u\n",
+				op, (unsigned int)ctx->offset);
+			goto done;
+		}
+	}
+
+	/* Parse the Target (destination: where to store) */
+	{
+		uint8_t op = (ctx->offset < ctx->aml_len)
+			     ? ctx->aml[ctx->offset] : 0;
+
+		switch (op) {
+		case AML_LOCAL0: case AML_LOCAL1: case AML_LOCAL2:
+		case AML_LOCAL3: case AML_LOCAL4: case AML_LOCAL5:
+		case AML_LOCAL6: case AML_LOCAL7: {
+			int idx = op - AML_LOCAL0;
+
+			ctx->offset++;
+
+			if (ctx->locals[idx]) {
+				aml_free_object(ctx->locals[idx]);
+				ctx->locals[idx] = NULL;
+			}
+			if (operand) {
+				struct aml_object *clone;
+
+				clone = aml_clone_object(operand);
+				if (clone)
+					ctx->locals[idx] = clone;
+			}
+			ret = 0;
+			break;
+		}
+
+		case AML_ARG0: case AML_ARG1: case AML_ARG2:
+		case AML_ARG3: case AML_ARG4: case AML_ARG5:
+		case AML_ARG6: {
+			int idx = op - AML_ARG0;
+
+			ctx->offset++;
+			if (ctx->args[idx]) {
+				aml_free_object(ctx->args[idx]);
+				ctx->args[idx] = NULL;
+			}
+			if (operand) {
+				struct aml_object *clone;
+
+				clone = aml_clone_object(operand);
+				if (clone)
+					ctx->args[idx] = clone;
+			}
+			ret = 0;
+			break;
+		}
+
+		default:
+			kprintf("[AML] Store: unsupported target "
+				"opcode 0x%02x at offset %u\n",
+				op, (unsigned int)ctx->offset);
+			goto done;
+		}
+	}
+
+done:
+	/* operand and target are stack buffers; no heap cleanup needed */
+	return ret;
+}
+
+/* ── Return Implementation ──────────────────────────────────────── */
+
+/*
+ * Execute a Return term.
+ * Encoding: ReturnOp(0xA4) TermArg
+ * Returns 0 on success, -1 on error.
+ */
+static int aml_exec_return(struct aml_exec_context *ctx)
+{
+	uint8_t op;
+
+	if (ctx->has_returned)
+		return 0;  /* Already returned, ignore subsequent */
+
+	if (ctx->offset >= ctx->aml_len)
+		return 0;
+
+	op = ctx->aml[ctx->offset];
+
+	/* Initialize return value buffer */
+	ctx->return_value = &ctx->own_return;
+	memset(ctx->return_value, 0, sizeof(*ctx->return_value));
+
+	/* Parse the return value operand */
+	switch (op) {
+	case AML_ZERO_OP:
+		ctx->offset++;
+		ctx->return_value->type = AML_OBJ_INTEGER;
+		ctx->return_value->value.integer = 0;
+		break;
+
+	case AML_ONE_OP:
+		ctx->offset++;
+		ctx->return_value->type = AML_OBJ_INTEGER;
+		ctx->return_value->value.integer = 1;
+		break;
+
+	case AML_ONES_OP:
+		ctx->offset++;
+		ctx->return_value->type = AML_OBJ_INTEGER;
+		ctx->return_value->value.integer = (uint64_t)-1;
+		break;
+
+	case AML_BYTE_PREFIX:
+		if (ctx->offset + 2 > ctx->aml_len)
+			return -1;
+		ctx->offset++;
+		ctx->return_value->type = AML_OBJ_INTEGER;
+		ctx->return_value->value.integer = ctx->aml[ctx->offset];
+		ctx->offset++;
+		break;
+
+	case AML_WORD_PREFIX:
+		if (ctx->offset + 3 > ctx->aml_len)
+			return -1;
+		ctx->offset++;
+		ctx->return_value->type = AML_OBJ_INTEGER;
+		ctx->return_value->value.integer = aml_read_le64(
+			ctx->aml, ctx->aml_len, ctx->offset, 2);
+		ctx->offset += 2;
+		break;
+
+	case AML_DWORD_PREFIX:
+		if (ctx->offset + 5 > ctx->aml_len)
+			return -1;
+		ctx->offset++;
+		ctx->return_value->type = AML_OBJ_INTEGER;
+		ctx->return_value->value.integer = aml_read_le64(
+			ctx->aml, ctx->aml_len, ctx->offset, 4);
+		ctx->offset += 4;
+		break;
+
+	case AML_QWORD_PREFIX:
+		if (ctx->offset + 9 > ctx->aml_len)
+			return -1;
+		ctx->offset++;
+		ctx->return_value->type = AML_OBJ_INTEGER;
+		ctx->return_value->value.integer = aml_read_le64(
+			ctx->aml, ctx->aml_len, ctx->offset, 8);
+		ctx->offset += 8;
+		break;
+
+	case AML_STRING_PREFIX: {
+		uint32_t start;
+
+		ctx->offset++;
+		start = ctx->offset;
+		while (ctx->offset < ctx->aml_len &&
+		       ctx->aml[ctx->offset] != 0)
+			ctx->offset++;
+		if (ctx->offset >= ctx->aml_len)
+			return -1;
+
+		ctx->return_value->type = AML_OBJ_STRING;
+		ctx->return_value->value.string.len =
+			ctx->offset - start;
+		ctx->return_value->value.string.ptr =
+			(char *)kmalloc(ctx->return_value->value.string.len + 1);
+		if (!ctx->return_value->value.string.ptr)
+			return -1;
+		memcpy(ctx->return_value->value.string.ptr,
+		       &ctx->aml[start],
+		       ctx->return_value->value.string.len);
+		ctx->return_value->value.string.ptr[
+			ctx->return_value->value.string.len] = '\0';
+		ctx->return_value->from_heap = 1;
+		ctx->offset++;  /* skip null terminator */
+		break;
+	}
+
+	case AML_LOCAL0: case AML_LOCAL1: case AML_LOCAL2:
+	case AML_LOCAL3: case AML_LOCAL4: case AML_LOCAL5:
+	case AML_LOCAL6: case AML_LOCAL7: {
+		int idx = op - AML_LOCAL0;
+
+		ctx->offset++;
+		if (ctx->locals[idx]) {
+			struct aml_object *clone;
+
+			clone = aml_clone_object(ctx->locals[idx]);
+			if (clone) {
+				memcpy(ctx->return_value, clone,
+				       sizeof(*clone));
+				kfree(clone);
+			}
+		} else {
+			ctx->return_value->type = AML_OBJ_INTEGER;
+			ctx->return_value->value.integer = 0;
+		}
+		break;
+	}
+
+	case AML_ARG0: case AML_ARG1: case AML_ARG2:
+	case AML_ARG3: case AML_ARG4: case AML_ARG5:
+	case AML_ARG6: {
+		int idx = op - AML_ARG0;
+
+		ctx->offset++;
+		if (ctx->args[idx]) {
+			struct aml_object *clone;
+
+			clone = aml_clone_object(ctx->args[idx]);
+			if (clone) {
+				memcpy(ctx->return_value, clone,
+				       sizeof(*clone));
+				kfree(clone);
+			}
+		} else {
+			ctx->return_value->type = AML_OBJ_INTEGER;
+			ctx->return_value->value.integer = 0;
+		}
+		break;
+	}
+
+	default:
+		kprintf("[AML] Return: unsupported opcode 0x%02x "
+			"at offset %u\n",
+			op, (unsigned int)ctx->offset);
+		ctx->return_value->type = AML_OBJ_INTEGER;
+		ctx->return_value->value.integer = 0;
+		break;
+	}
+
+	ctx->has_returned = 1;
+	return 0;
+}
+
+/* ── Term Executor ──────────────────────────────────────────────── */
+
+/*
+ * Execute a single AML term within a method body.
+ * Returns the number of AML bytes consumed, or 0 on error.
+ * This is the core of the AML interpreter loop.
+ */
+static uint32_t aml_exec_one_term(struct aml_exec_context *ctx)
+{
+	uint32_t o = ctx->offset;
+	uint8_t opcode;
+
+	if (o >= ctx->aml_len)
+		return 0;
+
+	opcode = ctx->aml[o];
+
+	switch (opcode) {
+	/* ── StoreOp (0x14 = MethodOp in namespace, StoreOp in body) ─ */
+	case AML_METHOD_OP:
+		ctx->offset++;
+		if (aml_exec_store(ctx) < 0) {
+			kprintf("[AML] Store failed at offset %u\n",
+				(unsigned int)(o));
+			ctx->error = 1;
+		}
+		return ctx->offset - o;
+
+	/* ── ReturnOp (0xA4) ─────────────────────────────────────── */
+	case AML_RETURN_OP:
+		ctx->offset++;
+		if (aml_exec_return(ctx) < 0) {
+			kprintf("[AML] Return failed at offset %u\n",
+				(unsigned int)(o));
+			ctx->error = 1;
+		}
+		return ctx->offset - o;
+
+	/* ── Constants ──────────────────────────────────────────── */
+	case AML_ZERO_OP:
+	case AML_ONE_OP:
+	case AML_ONES_OP:
+		ctx->offset++;
+		return ctx->offset - o;
+
+	case AML_BYTE_PREFIX:
+		ctx->offset += (o + 2 <= ctx->aml_len) ? 2 : 1;
+		return ctx->offset - o;
+
+	case AML_WORD_PREFIX:
+		ctx->offset += (o + 3 <= ctx->aml_len) ? 3 : 1;
+		return ctx->offset - o;
+
+	case AML_DWORD_PREFIX:
+		ctx->offset += (o + 5 <= ctx->aml_len) ? 5 : 1;
+		return ctx->offset - o;
+
+	case AML_QWORD_PREFIX:
+		ctx->offset += (o + 9 <= ctx->aml_len) ? 9 : 1;
+		return ctx->offset - o;
+
+	case AML_STRING_PREFIX: {
+		uint32_t end = o + 1;
+
+		while (end < ctx->aml_len && ctx->aml[end] != 0)
+			end++;
+		if (end < ctx->aml_len)
+			end++;
+		ctx->offset = end;
+		return ctx->offset - o;
+	}
+
+	/* ── LocalX / ArgX References ───────────────────────────── */
+	case AML_LOCAL0: case AML_LOCAL1: case AML_LOCAL2:
+	case AML_LOCAL3: case AML_LOCAL4: case AML_LOCAL5:
+	case AML_LOCAL6: case AML_LOCAL7:
+	case AML_ARG0:   case AML_ARG1:   case AML_ARG2:
+	case AML_ARG3:   case AML_ARG4:   case AML_ARG5:
+	case AML_ARG6:
+		ctx->offset++;
+		return ctx->offset - o;
+
+	/* ── Buffer / Package ───────────────────────────────────── */
+	case AML_BUFFER_OP:
+	case AML_PACKAGE_OP:
+	case AML_VAR_PACKAGE_OP: {
+		uint32_t pkg_bytes;
+		uint32_t pkg_len;
+
+		pkg_len = aml_decode_pkg_length(ctx->aml, ctx->aml_len,
+						o + 1, &pkg_bytes);
+		if (pkg_len == 0)
+			return 1;
+		ctx->offset = o + 1 + pkg_bytes + pkg_len;
+		if (ctx->offset > ctx->aml_len)
+			ctx->offset = ctx->aml_len;
+		return ctx->offset - o;
+	}
+
+	/* ── Minimally skip over NameOp (0x08) ──────────────────── */
+	case AML_NAME_OP: {
+		uint32_t start_ofs = ctx->offset;
+		uint32_t name_bytes;
+
+		ctx->offset++;  /* skip NameOp */
+		name_bytes = aml_skip_name_string(ctx->aml, ctx->aml_len,
+						   ctx->offset);
+		if (name_bytes == 0)
+			return 1;
+		ctx->offset += name_bytes;
+
+		/* Skip the DataRefObject that follows the name */
+		if (ctx->offset < ctx->aml_len) {
+			uint8_t d_op = ctx->aml[ctx->offset];
+
+			switch (d_op) {
+			case AML_ZERO_OP:
+			case AML_ONE_OP:
+			case AML_ONES_OP:
+				ctx->offset++;
+				break;
+			case AML_BYTE_PREFIX:
+				ctx->offset += (ctx->offset + 2 <=
+						ctx->aml_len) ? 2 : 1;
+				break;
+			case AML_WORD_PREFIX:
+				ctx->offset += (ctx->offset + 3 <=
+						ctx->aml_len) ? 3 : 1;
+				break;
+			case AML_DWORD_PREFIX:
+				ctx->offset += (ctx->offset + 5 <=
+						ctx->aml_len) ? 5 : 1;
+				break;
+			case AML_QWORD_PREFIX:
+				ctx->offset += (ctx->offset + 9 <=
+						ctx->aml_len) ? 9 : 1;
+				break;
+			case AML_STRING_PREFIX: {
+				uint32_t end2 = ctx->offset + 1;
+
+				while (end2 < ctx->aml_len &&
+				       ctx->aml[end2] != 0)
+					end2++;
+				ctx->offset = (end2 < ctx->aml_len) ?
+					      end2 + 1 : end2;
+				break;
+			}
+			case AML_BUFFER_OP: {
+				uint32_t buf_bytes, buf_len;
+
+				buf_len = aml_decode_pkg_length(
+					ctx->aml, ctx->aml_len,
+					ctx->offset + 1, &buf_bytes);
+				ctx->offset += (buf_len > 0) ?
+					(1 + buf_bytes + buf_len) : 2;
+				break;
+			}
+			case AML_PACKAGE_OP: {
+				uint32_t pkg_bytes2, pkg_len2;
+
+				pkg_len2 = aml_decode_pkg_length(
+					ctx->aml, ctx->aml_len,
+					ctx->offset + 1, &pkg_bytes2);
+				ctx->offset += (pkg_len2 > 0) ?
+					(1 + pkg_bytes2 + pkg_len2) : 2;
+				break;
+			}
+			default:
+				ctx->offset++;  /* Unknown data type, skip 1 */
+				break;
+			}
+		}
+		return ctx->offset - start_ofs;
+	}
+
+	/* ── Extended opcode prefix (0x5B) ──────────────────────── */
+	case AML_EXT_OP_PREFIX:
+		/* Skip ext prefix + ext opcode = 2 bytes */
+		if (o + 2 > ctx->aml_len) {
+			ctx->offset = ctx->aml_len;
+			return 1;
+		}
+		ctx->offset = o + 2;
+		return 2;
+
+	/* ── Default: Unknown opcode ────────────────────────────── */
+	default:
+		/* Many AML arithmetic/comparison opcodes (0x70-0x7F).
+		 * Best-effort skip: opcode + 3 bytes for operands. */
+		if (opcode >= 0x70 && opcode <= 0x7F) {
+			ctx->offset = o + 4;
+			return 4;
+		}
+
+		/* Logical comparison opcodes */
+		if (opcode == 0x90 || opcode == 0x91 || opcode == 0x92 ||
+		    opcode == 0x93 || opcode == 0x94) {
+			ctx->offset = o + 3;
+			return 3;
+		}
+
+		/* For anything unknown, advance 1 byte to avoid loop */
+		ctx->offset = o + 1;
+		kprintf("[AML] Skipping unknown opcode 0x%02x at offset %u\n",
+			opcode, (unsigned int)o);
+		return 1;
+	}
+}
+
+/* ── Method Evaluator ───────────────────────────────────────────── */
+
+/*
+ * Evaluate a method's AML TermList.
+ *
+ * @param ctx  Initialized execution context.
+ * @return 0 on success, -1 on error.
+ */
+static int aml_exec_method_body(struct aml_exec_context *ctx)
+{
+	while (ctx->offset < ctx->aml_len &&
+	       !ctx->has_returned && !ctx->error) {
+		uint32_t consumed = aml_exec_one_term(ctx);
+
+		if (consumed == 0) {
+			kprintf("[AML] Term execution stuck at offset %u\n",
+				(unsigned int)ctx->offset);
+			ctx->error = 1;
+			break;
+		}
+	}
+
+	return ctx->error ? -1 : 0;
+}
+
+/* ── Cleanup Context ────────────────────────────────────────────── */
+
+static void aml_exec_context_cleanup(struct aml_exec_context *ctx)
+{
+	if (!ctx)
+		return;
+
+	for (int i = 0; i < AML_MAX_LOCALS; i++) {
+		if (ctx->locals[i]) {
+			aml_free_object(ctx->locals[i]);
+			ctx->locals[i] = NULL;
+		}
+	}
+
+	for (int i = 0; i < AML_MAX_ARGS; i++) {
+		if (ctx->args[i]) {
+			aml_free_object(ctx->args[i]);
+			ctx->args[i] = NULL;
+		}
+	}
+
+	/* Clean up return value heap allocations */
+	if (ctx->return_value == &ctx->own_return &&
+	    ctx->return_value->from_heap) {
+		if (ctx->return_value->type == AML_OBJ_STRING &&
+		    ctx->return_value->value.string.ptr) {
+			kfree(ctx->return_value->value.string.ptr);
+			ctx->return_value->value.string.ptr = NULL;
+		} else if (ctx->return_value->type == AML_OBJ_BUFFER &&
+			   ctx->return_value->value.buffer.data) {
+			kfree(ctx->return_value->value.buffer.data);
+			ctx->return_value->value.buffer.data = NULL;
+		} else if (ctx->return_value->type == AML_OBJ_PACKAGE &&
+			   ctx->return_value->value.package.elements) {
+			for (uint32_t i = 0;
+			     i < ctx->return_value->value.package.count; i++)
+				aml_free_object(
+					&ctx->return_value->value.package.
+					elements[i]);
+			kfree(ctx->return_value->value.package.elements);
+			ctx->return_value->value.package.elements = NULL;
+		}
+	}
+}
+
+/* ── Public API: Evaluate a Control Method ───────────────────────── */
+
+struct aml_object *aml_evaluate_method(const char *path,
+				       struct aml_object *args[],
+				       int num_args)
+{
+	struct aml_ns_node *node;
+	struct aml_exec_context ctx;
+	struct aml_object *result = NULL;
+	uint32_t termlist_offset;
+	uint8_t method_arg_count = 0;
+
+	/* Look up the method in the namespace */
+	node = aml_ns_lookup(path);
+	if (!node) {
+		kprintf("[AML] Method not found in namespace: %s\n",
+			path ? path : "(null)");
+		return NULL;
+	}
+
+	if (node->type != AML_NS_METHOD) {
+		kprintf("[AML] '%s' is not a method (type %u)\n",
+			path ? path : "(null)",
+			(unsigned int)node->type);
+		return NULL;
+	}
+
+	if (!node->aml_start || node->aml_length == 0) {
+		kprintf("[AML] Method '%s' has no AML bytecode\n",
+			path ? path : "(null)");
+		return NULL;
+	}
+
+	/* Initialize execution context */
+	memset(&ctx, 0, sizeof(ctx));
+	ctx.aml = node->aml_start;
+	ctx.aml_len = node->aml_length;
+	ctx.return_value = NULL;
+	ctx.has_returned = 0;
+	ctx.error = 0;
+
+	/* Set up method arguments */
+	if (num_args > AML_MAX_ARGS)
+		num_args = AML_MAX_ARGS;
+
+	for (int i = 0; i < num_args; i++) {
+		if (args && args[i]) {
+			ctx.args[i] = aml_clone_object(args[i]);
+		}
+	}
+
+	/* Skip past the method header to the TermList */
+	termlist_offset = aml_skip_method_header(ctx.aml, ctx.aml_len,
+						 &method_arg_count);
+	if (termlist_offset == 0) {
+		kprintf("[AML] Failed to parse method header for '%s'\n",
+			path ? path : "(null)");
+		goto done;
+	}
+
+	/* Validate argument count */
+	if (num_args > (int)method_arg_count) {
+		kprintf("[AML] Method '%s' takes %u args, got %d "
+			"(continuing anyway)\n",
+			path ? path : "(null)",
+			(unsigned int)method_arg_count, num_args);
+	}
+
+	kprintf("[AML] Evaluating method '%s' (%u AML bytes, %u args)\n",
+		path ? path : "(null)",
+		(unsigned int)ctx.aml_len,
+		(unsigned int)method_arg_count);
+
+	/* Execute the method body */
+	ctx.offset = termlist_offset;
+	if (aml_exec_method_body(&ctx) < 0) {
+		kprintf("[AML] Method '%s' execution failed\n",
+			path ? path : "(null)");
+		goto done;
+	}
+
+	/* Extract the return value */
+	if (ctx.has_returned && ctx.return_value) {
+		result = aml_clone_object(ctx.return_value);
+	} else {
+		result = aml_create_integer(0);
+	}
+
+done:
+	aml_exec_context_cleanup(&ctx);
+	return result;
 }
