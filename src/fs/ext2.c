@@ -3334,21 +3334,19 @@ static int ext2_init_new_group(struct ext2_priv *ep, uint32_t group)
     if (!zero_buf) return -ENOMEM;
     memset(zero_buf, 0, block_size);
 
+    /* Calculate total metadata blocks within this group */
+    uint32_t metadata_blocks = sb_blocks + bgd_blocks + 2 + inode_table_blocks;
+    if (metadata_blocks > blocks_per_group)
+        metadata_blocks = blocks_per_group;
+
     /* Write block bitmap: all blocks in the group are free (except metadata) */
     {
         uint8_t *bitmap = (uint8_t *)kmalloc(block_size);
         if (!bitmap) { kfree(zero_buf); return -ENOMEM; }
         memset(bitmap, 0xFF, block_size); /* start all free */
 
-        uint32_t total_blocks_in_group = blocks_per_group;
-
         /* Mark used: superblock, BGD, bitmaps, inode table */
-        uint32_t used_start = 0;
-        uint32_t used_end = inode_table_block + inode_table_blocks;
-        if (used_end > total_blocks_in_group)
-            used_end = total_blocks_in_group;
-
-        for (uint32_t b = used_start; b < used_end && b < total_blocks_in_group; b++) {
+        for (uint32_t b = 0; b < metadata_blocks && b < blocks_per_group; b++) {
             bitmap[b / 8] &= ~(1U << (b % 8)); /* mark as used */
         }
 
@@ -3405,13 +3403,14 @@ static int ext2_init_new_group(struct ext2_priv *ep, uint32_t group)
 
     /* Update BGD cache entry */
     uint32_t num_inodes = inodes_per_group;
-    uint32_t num_blocks = blocks_per_group - (inode_table_block + inode_table_blocks);
-    if (sb_blocks > 0) num_blocks -= sb_blocks;
+    /* Free blocks = blocks_per_group - metadata overhead (sb + bgd + bitmaps + inode table) */
+    uint32_t num_free = (metadata_blocks < blocks_per_group) ?
+                        (blocks_per_group - metadata_blocks) : 0;
 
     ep->bgd_cache[group].bg_block_bitmap     = block_bitmap_block;
     ep->bgd_cache[group].bg_inode_bitmap     = inode_bitmap_block;
     ep->bgd_cache[group].bg_inode_table      = inode_table_block;
-    ep->bgd_cache[group].bg_free_blocks_count = (uint16_t)num_blocks;
+    ep->bgd_cache[group].bg_free_blocks_count = (uint16_t)num_free;
     ep->bgd_cache[group].bg_free_inodes_count = (uint16_t)num_inodes;
     ep->bgd_cache[group].bg_used_dirs_count  = 0;
 
@@ -3465,11 +3464,15 @@ int64_t ext2_resize(struct ext2_priv *ep, uint64_t new_total_blocks)
     /* Update superblock */
     uint32_t added_blocks = (new_groups_needed - current_groups) * blocks_per_group;
     ep->sb.s_blocks_count += added_blocks;
-    ep->sb.s_free_blocks_count += added_blocks; /* approximate — all new blocks are free */
 
-    /* Add free inodes for the new groups */
-    uint32_t added_inodes = (new_groups_needed - current_groups) * ep->inodes_per_group;
-    ep->sb.s_free_inodes_count += added_inodes;
+    /* Recalculate free blocks and inodes from BGD entries
+     * (metadata blocks subtracted already in ext2_init_new_group) */
+    ep->sb.s_free_blocks_count = 0;
+    ep->sb.s_free_inodes_count = 0;
+    for (uint32_t g = 0; g < new_groups_needed; g++) {
+        ep->sb.s_free_blocks_count += ep->bgd_cache[g].bg_free_blocks_count;
+        ep->sb.s_free_inodes_count += ep->bgd_cache[g].bg_free_inodes_count;
+    }
 
     ep->num_block_groups = new_groups_needed;
 
