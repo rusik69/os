@@ -30,4 +30,9 @@ void e1000_exit(void);
 /* Return the number of RX queues active */
 int e1000_rx_queue_count(void);
 
+/* Promiscuous mode and multicast filter control */
+int e1000_set_promisc(int enable);
+int e1000_set_allmulti(int enable);
+int e1000_set_multicast(void *dev, void *addr, int count);
+
 #endif

@@ -11,6 +11,7 @@
 #include "netdevice.h"
 #include "smp.h"
 #include "err.h"
+#include "crc.h"
 #ifdef MODULE
 #include "module.h"
 #endif
@@ -550,8 +551,12 @@ int e1000_init(void) {
             ndev.transmit = e1000_netdev_transmit;
             ndev.receive  = e1000_netdev_receive;
             ndev.mtu      = 1500;
-            ndev.flags    = 1; /* IFF_UP */
+            ndev.flags    = IFF_UP | IFF_BROADCAST | IFF_MULTICAST;
             ndev.priv     = NULL;
+
+            /* Wire up multicast and feature-change callbacks */
+            ndev.set_multicast_list = (void *)(void *)e1000_set_multicast;
+            ndev.set_features = NULL;  /* not yet used */
 
             int ifindex = netif_register(&ndev);
             if (ifindex >= 0) {
@@ -906,31 +911,162 @@ int e1000_stop(void *dev)
     return 0;
 }
 
+/* ── Multicast hash filtering (MTA) ──────────────────────────────── */
+
+/*
+ * e1000_hash_mc_addr - Compute 12-bit hash for multicast MAC address.
+ * @addr: 6-byte destination MAC address (should be multicast).
+ *
+ * The e1000 uses CRC-32 over the 6-byte MAC to produce a 12-bit index
+ * into the 128-dword Multicast Table Array (MTA).  The hash matches
+ * the computation performed in QEMU's e1000 emulation.
+ *
+ * Return: hash value where bits [11:5] select the MTA register (0-127)
+ *         and bits [4:0] select the bit within that register (0-31).
+ */
+static uint32_t e1000_hash_mc_addr(const uint8_t *addr)
+{
+	uint32_t hash = crc32(~0U, addr, 6);
+	return hash;
+}
+
+/*
+ * e1000_mta_add - Program one multicast MAC address into the MTA.
+ * @addr: 6-byte destination MAC address.
+ *
+ * Computes the hash and sets the corresponding bit in the hardware
+ * Multicast Table Array.
+ */
+static void e1000_mta_add(const uint8_t *addr)
+{
+	uint32_t hash = e1000_hash_mc_addr(addr);
+	uint32_t reg_idx = (hash >> 25) & 0x7F;
+	uint32_t bit     = (hash >> 16) & 0x1F;
+	uint32_t val;
+
+	val = e1000_read(REG_MTA + reg_idx * 4);
+	val |= (1U << bit);
+	e1000_write(REG_MTA + reg_idx * 4, val);
+}
+
+/*
+ * e1000_mta_clear - Clear the entire Multicast Table Array.
+ */
+static void e1000_mta_clear(void)
+{
+	for (int i = 0; i < 128; i++)
+		e1000_write(REG_MTA + i * 4, 0);
+}
+
+/* ── Promiscuous mode ─────────────────────────────────────────────── */
+
+/*
+ * e1000_set_promisc - Enable or disable unicast promiscuous mode.
+ * @enable: non-zero to enable, 0 to disable.
+ *
+ * When enabled, the NIC accepts all unicast packets regardless of
+ * destination MAC address (RCTL bit 3 = UPE).
+ *
+ * Return: 0 on success, negative errno on error.
+ */
+int e1000_set_promisc(int enable)
+{
+	if (!nic_present)
+		return -EIO;
+
+	uint32_t rctl = e1000_read(REG_RCTL);
+	if (enable)
+		rctl |= RCTL_UPE;
+	else
+		rctl &= ~RCTL_UPE;
+	e1000_write(REG_RCTL, rctl);
+
+	kprintf("[E1000] %s promiscuous mode\n",
+		enable ? "enabled" : "disabled");
+	return 0;
+}
+
+/*
+ * e1000_set_allmulti - Enable or disable multicast-all mode.
+ * @enable: non-zero to accept all multicast, 0 for hash-filtered.
+ *
+ * When enabled, the NIC accepts all multicast packets bypassing the
+ * MTA filter (RCTL bit 4 = MPE).
+ *
+ * Return: 0 on success, negative errno on error.
+ */
+int e1000_set_allmulti(int enable)
+{
+	if (!nic_present)
+		return -EIO;
+
+	uint32_t rctl = e1000_read(REG_RCTL);
+	if (enable)
+		rctl |= RCTL_MPE;
+	else
+		rctl &= ~RCTL_MPE;
+	e1000_write(REG_RCTL, rctl);
+
+	kprintf("[E1000] all-multicast mode %s\n",
+		enable ? "enabled" : "disabled");
+	return 0;
+}
+
 /* ── e1000_set_multicast: Update multicast filters ──────────── */
+
+/*
+ * e1000_set_multicast - Program multicast address filter list.
+ * @dev:   opaque device pointer (unused, for future compat).
+ * @addr:  pointer to an array of 6-byte multicast MAC addresses
+ *         (may be NULL if count == 0).
+ * @count: number of addresses in the list.
+ *
+ * When a multicast address list is provided (count > 0), each address
+ * is hashed into the MTA hash table.  If the list is empty, the MTA
+ * is cleared and multicast-promiscuous mode is disabled.
+ *
+ * When more than MULTICAST_HASH_LIMIT addresses are present, falls
+ * back to multicast-promiscuous mode (MPE) for simplicity.
+ *
+ * Return: 0 on success, negative errno on error.
+ */
+#define MULTICAST_HASH_LIMIT 16
+
 int e1000_set_multicast(void *dev, void *addr, int count)
 {
-    (void)dev;
-    if (!nic_present) return -EIO;
+	(void)dev;
 
-    if (count == 0) {
-        /* Disable multicast promiscuous, clear MTA */
-        uint32_t rctl = e1000_read(REG_RCTL);
-        rctl &= ~RCTL_MPE;
-        e1000_write(REG_RCTL, rctl);
-        for (int i = 0; i < 128; i++)
-            e1000_write(REG_MTA + i * 4, 0);
-        return 0;
-    }
+	if (!nic_present)
+		return -EIO;
 
-    /* Enable multicast promiscuous for simplicity */
-    uint32_t rctl = e1000_read(REG_RCTL);
-    rctl |= RCTL_MPE;
-    e1000_write(REG_RCTL, rctl);
+	if (count == 0) {
+		/* Clear all multicast filters */
+		e1000_mta_clear();
+		e1000_set_allmulti(0);
+		kprintf("[E1000] Multicast filter cleared\n");
+		return 0;
+	}
 
-    /* If we had a hash table, we'd program MTA entries here */
-    (void)addr;
-    (void)count;
+	/* For large lists, fall back to multicast-promiscuous mode */
+	if (count > MULTICAST_HASH_LIMIT) {
+		e1000_mta_clear();
+		e1000_set_allmulti(1);
+		kprintf("[E1000] Multicast list too large (%d), "
+			"enabling all-multicast mode\n", count);
+		return 0;
+	}
 
-    kprintf("[E1000] Multicast filter set: %d address(es)\n", count);
-    return 0;
+	/* Program each address into the MTA hash table */
+	e1000_mta_clear();
+
+	const uint8_t (*mc_list)[6] = (const uint8_t (*)[6])addr;
+	for (int i = 0; i < count; i++) {
+		e1000_mta_add(mc_list[i]);
+	}
+
+	/* Disable multicast promiscuous mode — rely on MTA filtering */
+	e1000_set_allmulti(0);
+
+	kprintf("[E1000] Multicast filter set: %d address(es)\n", count);
+	return 0;
 }

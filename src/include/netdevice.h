@@ -64,6 +64,20 @@ struct net_device {
     int           mtu;                     /* maximum transmission unit */
     int           flags;                   /* IFF_UP, etc. */
     void         *priv;                    /* driver-private data */
+
+    /* ── Optional callbacks ────────────────────────────────────────── */
+
+    /* Called when the interface flags are changed (IFF_PROMISC, etc.).
+     * The driver should update hardware filters to match.
+     * Returns 0 on success, negative errno on error. */
+    int (*set_features)(struct net_device *dev, int old_flags, int new_flags);
+
+    /* Called when the multicast address list changes.
+     * @addr points to an array of 6-byte MAC addresses (may be NULL if
+     * @count == 0).  The driver should program hardware multicast filters.
+     * Returns 0 on success, negative errno on error. */
+    int (*set_multicast_list)(struct net_device *dev,
+                              const void *addr, int count);
 };
 
 /* ── API ────────────────────────────────────────────────────────── */
