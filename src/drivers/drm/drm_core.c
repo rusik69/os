@@ -303,6 +303,15 @@ static __attribute__((unused)) int drm_ioctl_dispatch(struct drm_device *dev, st
         case DRM_IOCTL_MODE_DIRTYFB:
             return drm_dumb_dirtyfb(dev,
                        (struct drm_mode_fb_dirty_cmd *)arg);
+        case DRM_IOCTL_GEM_CLOSE:
+            return drm_gem_close_ioctl(dev, fp,
+                       *(uint32_t *)arg);
+        case DRM_IOCTL_GEM_FLINK:
+            return drm_gem_flink_ioctl(dev, fp,
+                       (struct drm_gem_flink *)arg);
+        case DRM_IOCTL_GEM_OPEN:
+            return drm_gem_open_ioctl(dev, fp,
+                       (struct drm_gem_open *)arg);
         default:
             return -ENOTTY;
     }

@@ -40,6 +40,10 @@
 #define DRM_IOCTL_MODE_GETPROPBLOB  DRM_IOWR(0xAC, struct drm_mode_get_blob)
 #define DRM_IOCTL_MODE_ATOMIC       DRM_IOWR(0xBC, struct drm_mode_atomic)
 
+#define DRM_IOCTL_GEM_CLOSE     DRM_IOWR(0x09, uint32_t)
+#define DRM_IOCTL_GEM_FLINK     DRM_IOWR(0x0A, struct drm_gem_flink)
+#define DRM_IOCTL_GEM_OPEN      DRM_IOWR(0x0B, struct drm_gem_open)
+
 #define DRM_CAP_DUMB_BUFFER    0x01
 #define DRM_CAP_VBLANK_HIGH_CRTC 0x02
 #define DRM_CAP_PRIME          0x05
@@ -407,6 +411,12 @@ int  drm_add_connector(struct drm_device *dev, uint32_t type);
  *  GEM API
  * ═══════════════════════════════════════════════════════════════════ */
 
+/* GEM object flags */
+#define DRM_GEM_OBJECT_IMPORTED  (1U << 0)  /* imported via prime/dma-buf */
+#define DRM_GEM_OBJECT_EXPORTED  (1U << 1)  /* exported via prime */
+#define DRM_GEM_OBJECT_NO_MMAP   (1U << 2)  /* no mmap allowed */
+#define DRM_GEM_OBJECT_VMAPPED   (1U << 3)  /* currently mmap'd */
+
 struct drm_gem_object {
     uint32_t handle;
     size_t   size;
@@ -414,6 +424,22 @@ struct drm_gem_object {
     uint64_t phys_addr;   /* physical address (for contiguous) */
     int      is_contig;   /* 1 = physically contiguous */
     int      refcount;
+    uint32_t flags;       /* DRM_GEM_OBJECT_* flags */
+    uint32_t name;        /* global flink name (0 = none) */
+    uint32_t num_pages;   /* number of physical pages backing this object */
+    uint32_t vm_count;    /* number of active mmap mappings */
+};
+
+/* Global name (flink) support */
+struct drm_gem_flink {
+    uint32_t handle;
+    uint32_t name;
+};
+
+struct drm_gem_open {
+    uint32_t name;
+    uint32_t handle;
+    uint64_t size;
 };
 
 int  drm_gem_init(void);
@@ -429,6 +455,36 @@ struct drm_gem_object *drm_gem_handle_lookup(struct drm_device *dev,
                                               uint32_t handle);
 int  drm_gem_handle_close(struct drm_device *dev, uint32_t handle);
 int  drm_gem_mmap(struct drm_gem_object *obj, uint64_t *offset);
+
+/* Enhanced GEM API */
+struct drm_gem_object *drm_gem_object_lookup(struct drm_device *dev,
+                                              struct drm_file *file_priv,
+                                              uint32_t handle);
+int  drm_gem_flink(struct drm_device *dev,
+                   struct drm_gem_object *obj,
+                   uint32_t *name);
+int  drm_gem_open(struct drm_device *dev,
+                  struct drm_file *file_priv,
+                  uint32_t name,
+                  uint32_t *handle,
+                  uint64_t *size);
+int  drm_gem_get_pages(struct drm_gem_object *obj,
+                       uint64_t **pages_out,
+                       uint32_t *num_pages_out);
+int  drm_gem_put_pages(struct drm_gem_object *obj);
+void drm_gem_vm_open(struct drm_gem_object *obj);
+void drm_gem_vm_close(struct drm_gem_object *obj);
+
+/* GEM ioctl handlers */
+int  drm_gem_close_ioctl(struct drm_device *dev,
+                         struct drm_file *file_priv,
+                         uint32_t handle);
+int  drm_gem_flink_ioctl(struct drm_device *dev,
+                         struct drm_file *file_priv,
+                         struct drm_gem_flink *args);
+int  drm_gem_open_ioctl(struct drm_device *dev,
+                        struct drm_file *file_priv,
+                        struct drm_gem_open *args);
 
 /* Dumb buffer helpers */
 int  drm_dumb_create(struct drm_device *dev,
