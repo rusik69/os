@@ -111,6 +111,20 @@ static int acpi_ready = 0;
 static int s3_supported = 0;
 static int has_s4 = 0;
 
+/* ── Cached RSDP for runtime ACPI table lookups ───────────────── */
+
+/* Cache of the Root System Description Pointer discovered during
+ * acpi_init().  Used by acpi_find_table() and acpi_get_table() to
+ * walk the XSDT/RSDT entries at runtime with proper PHYS_TO_VIRT
+ * mapping (unlike the boot-time acpi_find_table which uses direct
+ * physical addresses). */
+static struct {
+    int      valid;      /* 1 after acpi_init() caches the RSDP */
+    int      revision;   /* RSDP revision (0=v1, 2=v2+) */
+    uint64_t xsdt_addr;  /* XSDT physical address (v2+) */
+    uint32_t rsdt_addr;  /* RSDT physical address (v1) */
+} g_rsdp_cache;
+
 /* ── Exported DSDT info for ACPI drivers (acpi_cpufreq, etc.) ────── */
 
 /* Virtual address of DSDT base (mapped via PHYS_TO_VIRT) */
@@ -761,6 +775,12 @@ void __init acpi_init(void) {
     kprintf("[OK] ACPI: RSDP at %p, revision %d\n",
             (void *)PHYS_TO_VIRT((unsigned long)rsdp),
             (int)rsdp->revision);
+
+    /* Cache RSDP for runtime table lookups via acpi_get_table() */
+    g_rsdp_cache.valid = 1;
+    g_rsdp_cache.revision = rsdp->revision;
+    g_rsdp_cache.xsdt_addr = rsdp->xsdt_addr;
+    g_rsdp_cache.rsdt_addr = rsdp->rsdt_addr;
 
     /* Report OEM info from RSDP */
     {
@@ -1558,10 +1578,144 @@ uint32_t acpi_read_gpe_status(void)
     return 0;  /* Placeholder — real GPE base not parsed yet */
 }
 
-/* ── Stub: acpi_get_table ─────────────────────────────── */
-void* acpi_get_table(const char *sig)
+/* ── ACPI table checksum validation ──────────────────────────── */
+
+/* Standard ACPI checksum: sum of all bytes must be 0 (mod 256).
+ * Returns 0 on valid checksum, -1 on failure. */
+static int acpi_verify_checksum(const void *table, uint32_t length)
 {
-    (void)sig;
-    kprintf("[ACPI] acpi_get_table: not yet implemented\n");
+    const uint8_t *bytes = (const uint8_t *)table;
+    uint8_t sum = 0;
+    for (uint32_t i = 0; i < length; i++)
+        sum += bytes[i];
+    return (sum == 0) ? 0 : -1;
+}
+
+/* ── ACPI table lookup ────────────────────────────────────────── */
+
+/* Walk the XSDT (preferred) or RSDT (fallback) to find an ACPI
+ * table by its 4-byte signature.  Uses PHYS_TO_VIRT to map table
+ * physical addresses into the kernel's virtual address space.
+ *
+ * This is the runtime equivalent of the boot-time ACPI table walker
+ * in boot/acpi.c, but uses proper PHYS_TO_VIRT mapping and relies
+ * on the RSDP cache populated by acpi_init().
+ *
+ * Returns a PHYS_TO_VIRT-mapped pointer to the table header on
+ * success, or NULL if the table is not found or checksum fails. */
+static void *acpi_find_table(const char signature[4])
+{
+    if (!g_rsdp_cache.valid) {
+        kprintf("[ACPI] find_table('%.4s'): RSDP not cached\n", signature);
+        return NULL;
+    }
+
+    struct acpi_header *sdt_header = NULL;
+    uint32_t entry_count = 0;
+    int entry_size = 0;  /* 8 for XSDT, 4 for RSDT */
+
+    /* Prefer XSDT (64-bit physical addresses) */
+    if (g_rsdp_cache.revision >= 2 && g_rsdp_cache.xsdt_addr != 0) {
+        sdt_header = (struct acpi_header *)PHYS_TO_VIRT(g_rsdp_cache.xsdt_addr);
+        if (!sdt_header) {
+            kprintf("[ACPI] find_table: cannot map XSDT at 0x%llx\n",
+                    (unsigned long long)g_rsdp_cache.xsdt_addr);
+            return NULL;
+        }
+        if (memcmp(sdt_header->signature, "XSDT", 4) != 0) {
+            kprintf("[ACPI] find_table: expected XSDT signature at 0x%llx\n",
+                    (unsigned long long)g_rsdp_cache.xsdt_addr);
+            return NULL;
+        }
+        /* Validate XSDT checksum */
+        if (acpi_verify_checksum(sdt_header, sdt_header->length) < 0) {
+            kprintf("[ACPI] find_table: XSDT checksum failed\n");
+            return NULL;
+        }
+        entry_count = (sdt_header->length - sizeof(struct acpi_header)) / 8;
+        entry_size  = 8;
+    } else if (g_rsdp_cache.rsdt_addr != 0) {
+        /* Fall back to RSDT (32-bit physical addresses) */
+        sdt_header = (struct acpi_header *)PHYS_TO_VIRT((uint64_t)g_rsdp_cache.rsdt_addr);
+        if (!sdt_header) {
+            kprintf("[ACPI] find_table: cannot map RSDT at 0x%x\n",
+                    (unsigned int)g_rsdp_cache.rsdt_addr);
+            return NULL;
+        }
+        if (memcmp(sdt_header->signature, "RSDT", 4) != 0) {
+            kprintf("[ACPI] find_table: expected RSDT signature at 0x%x\n",
+                    (unsigned int)g_rsdp_cache.rsdt_addr);
+            return NULL;
+        }
+        /* Validate RSDT checksum */
+        if (acpi_verify_checksum(sdt_header, sdt_header->length) < 0) {
+            kprintf("[ACPI] find_table: RSDT checksum failed\n");
+            return NULL;
+        }
+        entry_count = (sdt_header->length - sizeof(struct acpi_header)) / 4;
+        entry_size  = 4;
+    }
+
+    if (!sdt_header || entry_count == 0) {
+        kprintf("[ACPI] find_table('%.4s'): no RSDT/XSDT found\n", signature);
+        return NULL;
+    }
+
+    /* Walk the entry list */
+    const uint8_t *entries = (const uint8_t *)sdt_header + sizeof(struct acpi_header);
+
+    for (uint32_t i = 0; i < entry_count; i++) {
+        uint64_t table_phys;
+
+        if (entry_size == 8) {
+            const uint64_t *xsdt_ents = (const uint64_t *)entries;
+            table_phys = xsdt_ents[i];
+        } else {
+            const uint32_t *rsdt_ents = (const uint32_t *)entries;
+            table_phys = rsdt_ents[i];
+        }
+
+        if (table_phys == 0)
+            continue;
+
+        /* Map the table physical address to virtual address space */
+        struct acpi_header *hdr = (struct acpi_header *)PHYS_TO_VIRT(table_phys);
+        if (!hdr)
+            continue;
+
+        /* Check signature match */
+        if (memcmp(hdr->signature, signature, 4) == 0) {
+            /* Validate table checksum */
+            if (acpi_verify_checksum(hdr, hdr->length) < 0) {
+                kprintf("[ACPI] find_table('%.4s'): table at 0x%llx "
+                        "checksum failed\n",
+                        signature, (unsigned long long)table_phys);
+                return NULL;
+            }
+            return (void *)hdr;
+        }
+    }
+
     return NULL;
+}
+
+/* ── acpi_get_table (Public API) ────────────────────────────────── */
+
+/* Find the first ACPI table with the given signature.
+ * Returns a PHYS_TO_VIRT-mapped pointer, or NULL if not found. */
+void *acpi_get_table(const char *sig)
+{
+    if (!sig) {
+        kprintf("[ACPI] acpi_get_table: NULL signature\n");
+        return NULL;
+    }
+
+    void *table = acpi_find_table(sig);
+    if (!table) {
+        kprintf("[ACPI] acpi_get_table: table '%.4s' not found\n", sig);
+        return NULL;
+    }
+
+    kprintf("[ACPI] acpi_get_table: found '%.4s' at %p\n", sig, table);
+    return table;
 }
