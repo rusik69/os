@@ -8,6 +8,10 @@ int  virtio_blk_init(void);
 /* Read/write full 512-byte sectors.  Returns 0 on success, -1 on error. */
 int  virtio_blk_read_sectors(uint64_t lba, uint32_t count, void *buf);
 int  virtio_blk_write_sectors(uint64_t lba, uint32_t count, const void *buf);
+/* Discard/deallocate a range of sectors (TRIM).  Returns 0 on success, -1 on error. */
+int  virtio_blk_discard_sectors(uint64_t lba, uint32_t count);
+/* Write zeroes to a range of sectors.  Returns 0 on success, -1 on error. */
+int  virtio_blk_write_zeroes_sectors(uint64_t lba, uint32_t count);
 /* Returns total sector count, or 0 if device absent. */
 uint64_t virtio_blk_sector_count(void);
 
