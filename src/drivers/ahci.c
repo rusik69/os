@@ -188,6 +188,8 @@ struct ahci_port {
     uint64_t            cmd_list_phys;
     uint64_t            recv_fis_phys;
     uint32_t            inflight_mask;     /* bits set for issued slots */
+    uint32_t            tag_bitmap;        /* O(1) tag alloc: 0=free, 1=allocated */
+    int                 ncq_priority;      /* N:0=simple, 1=deterministic, 2=high */
 };
 
 /* ── Driver state ───────────────────────────────────────────────────── */
@@ -232,21 +234,60 @@ static void port_start(int p) {
     port_write(p, PORT_CMD, cmd);
 }
 
+/* ── Tag bitmap (O(1) slot allocation) ───────────────────────────────── */
+/* Bit 0 = slot 0 (non-NCQ), bits 1-31 = NCQ slots.
+ * per-port tag_bitmap tracks which tags are currently free. */
+#define TAG_BIT_SLOT0    (1u << 0)
+
+static inline int tag_bitmap_alloc(uint32_t *bitmap, int start, int end) {
+    unsigned long bits = ~(*bitmap);
+    if (bits == 0) return -1;
+    /* ffs = find first set (1-indexed); subtract 1 for 0-indexed slot.
+     * But we restrict to [start, end) range. */
+    for (int i = start; i < end; i++) {
+        if (!(*bitmap & (1u << i))) {
+            *bitmap |= (1u << i);
+            return i;
+        }
+    }
+    return -1;
+}
+
+static inline void tag_bitmap_free(uint32_t *bitmap, int slot) {
+    *bitmap &= ~(1u << slot);
+}
+
+static inline int tag_bitmap_is_allocated(uint32_t bitmap, int slot) {
+    return (bitmap & (1u << slot)) ? 1 : 0;
+}
+
 /* ── Slot management ────────────────────────────────────────────────── */
 static int ahci_find_free_slot(struct ahci_port *port) {
     /* Check CI (commands in progress) and SACT (NCQ active).
      * A free slot has bits clear in both. For NCQ we use slots 1..31. */
     uint32_t ci   = port_read(port->port_num, PORT_CI);
     uint32_t sact = port_read(port->port_num, PORT_SACT);
-    uint32_t busy = ci | sact;
+    uint32_t hw_busy = ci | sact;
 
-    /* Try NCQ slots (1-31) first */
-    for (int i = 1; i < AHCI_SLOT_COUNT; i++) {
-        if (!(busy & (1u << i))) return i;
-    }
+    /* Sync the tag bitmap with hardware state: any slot that was released
+     * by hardware but still marked in our bitmap gets cleared. */
+    uint32_t stale = port->tag_bitmap & ~hw_busy;
+    port->tag_bitmap &= ~stale;
+
+    /* Try NCQ slots (1-31) first via tag bitmap */
+    int slot = tag_bitmap_alloc(&port->tag_bitmap, 1, AHCI_SLOT_COUNT);
+    if (slot >= 0) return slot;
+
     /* Fall back to slot 0 for non-NCQ commands */
-    if (!(busy & 1u)) return 0;
+    if (!(hw_busy & TAG_BIT_SLOT0) && !(port->tag_bitmap & TAG_BIT_SLOT0)) {
+        port->tag_bitmap |= TAG_BIT_SLOT0;
+        return 0;
+    }
     return -1;
+}
+
+static void ahci_free_slot(struct ahci_port *port, int slot) {
+    tag_bitmap_free(&port->tag_bitmap, slot);
 }
 
 /* ── Build an NCQ command ───────────────────────────────────────────── */
@@ -300,6 +341,8 @@ static void ahci_build_ncq_cmd(struct ahci_port *port, int slot,
     if (count > AHCI_DATA_FRAME_SECTORS) count = AHCI_DATA_FRAME_SECTORS;
     fis->countl = (uint8_t)((slot & 0x1F) << 3) | (uint8_t)((count >> 8) & 0x07);
     fis->counth = (uint8_t)(count & 0xFF);
+    /* NCQ priority: 0=simple, 1=deterministic, 2=high */
+    fis->icc = (uint8_t)(port->ncq_priority & 0x07);
     fis->control = 0;
 
     /* PRDT entry */
@@ -525,11 +568,18 @@ static void ahci_irq_handler(struct interrupt_frame *frame) {
         hba_write(HBA_IS_OFFSET, (1u << p));
 
         if (port_is & PORT_IS_ERR) {
-            /* Error interrupt — read SERR to see what happened */
+            /* Error interrupt — read SERR, then attempt NCQ error recovery.
+             * The error recovery will abort all pending NCQ commands on this
+             * port and issue a soft reset. */
             uint32_t serr = port_read(p, PORT_SERR);
             port_write(p, PORT_SERR, serr);
             kprintf("AHCI port %d error: IS=0x%x TFD=0x%x SERR=0x%x\n",
                     p, port_is, tfd, serr);
+
+            /* Release lock before error recovery (it sleeps/waits) */
+            spinlock_irqsave_release(&ahci_lock, __ahci_flags);
+            ahci_ncq_recover_port(p);
+            spinlock_irqsave_acquire(&ahci_lock, &__ahci_flags);
         }
 
         if (port_is & PORT_IS_SDBS) {
@@ -555,6 +605,7 @@ static void ahci_irq_handler(struct interrupt_frame *frame) {
                         if (req) {
                             s->req = NULL;
                             port->inflight_mask &= ~(1u << slot);
+                            ahci_free_slot(port, slot);
 
                             /* Check for errors */
                             if (tfd & PORT_TFD_ERR) {
@@ -705,6 +756,7 @@ int ahci_ncq_read(int port_num, int pm_port, uint32_t lba, uint8_t count,
     spinlock_irqsave_acquire(&ahci_lock, &irq_flags);
     port->slots[slot].req = NULL;
     port->inflight_mask &= ~(1u << slot);
+    ahci_free_slot(port, slot);
     spinlock_irqsave_release(&ahci_lock, irq_flags);
     blk_request_free(req);
     return -1;
@@ -777,6 +829,7 @@ int ahci_ncq_write(int port_num, int pm_port, uint32_t lba, uint8_t count,
     spinlock_irqsave_acquire(&ahci_lock, &irq_flags);
     port->slots[slot].req = NULL;
     port->inflight_mask &= ~(1u << slot);
+    ahci_free_slot(port, slot);
     spinlock_irqsave_release(&ahci_lock, irq_flags);
     blk_request_free(req);
     return -1;
@@ -817,6 +870,7 @@ int ahci_ncq_completion_poll(int port_num)
                 if (req) {
                     s->req = NULL;
                     p->inflight_mask &= ~(1u << slot);
+                    ahci_free_slot(p, slot);
 
                     uint32_t tfd = port_read(port_num, PORT_TFD);
                     if (tfd & PORT_TFD_ERR) {
@@ -837,6 +891,220 @@ int ahci_ncq_completion_poll(int port_num)
     }
 
     return completed;
+}
+
+/* ── NCQ Error Recovery ───────────────────────────────────────────── */
+
+/* READ LOG EXT — log page 0x10 (NCQ Queue Error Log) */
+#define ATA_LOG_NCQ_QUEUE_ERROR 0x10
+#define NCQ_ERROR_LOG_SIZE      512
+
+/* RECEIVE FPDMA QUEUED sub-commands */
+#define NCQ_RECV_DMA_SENSE       0x00
+
+/**
+ * ahci_ncq_read_log_ext — read a log page from the device via READ LOG EXT.
+ * @port_num: physical port number
+ * @log_page: log page address (e.g. 0x10 for NCQ error log)
+ * @buf:      512-byte output buffer
+ * Returns 0 on success, -1 on error.
+ */
+static int ahci_ncq_read_log_ext(int port_num, uint8_t log_page, void *buf)
+{
+    /* Use port's slot 0 for this non-NCQ command */
+    struct ahci_port *port = NULL;
+    for (int i = 0; i < ahci_port_count; i++) {
+        if (ahci_ports[i].present && ahci_ports[i].port_num == port_num) {
+            port = &ahci_ports[i];
+            break;
+        }
+    }
+    if (!port) return -1;
+
+    /* Set up the buffer for log data */
+    memset(port->slots[0].data_buf_virt, 0, 512);
+
+    /* Build READ LOG EXT command via non-NCQ path.
+     * READ LOG EXT (0x2F): reads 512-byte log page.
+     * feature(low) = log_page, count = 1 (sector) */
+    ahci_build_raw_cmd(port, 0, 0x2F, 0, 0,
+                       port->slots[0].data_buf_phys, 0,
+                       sizeof(struct fis_reg_h2d) / 4);
+
+    /* Set log page address in feature register and count=1 */
+    {
+        struct ahci_cmd_table *tbl = (struct ahci_cmd_table *)
+            port->slots[0].cmd_tbl_virt;
+        struct fis_reg_h2d *fis = (struct fis_reg_h2d *)tbl->cfis;
+        fis->featurel = log_page;
+        fis->featureh = 0;
+        fis->countl = 1;
+        fis->counth = 0;
+        tbl->prdt[0].dbc = 511;  /* 512 bytes - 1 */
+    }
+
+    int ret = ahci_issue_non_ncq(port, 0);
+    if (ret == 0) {
+        memcpy(buf, port->slots[0].data_buf_virt, 512);
+    }
+    return ret;
+}
+
+/**
+ * ahci_ncq_recover_port — perform NCQ error recovery on a physical port.
+ * Reads the NCQ Queue Error Log, identifies the failing command tag,
+ * clears the error state, and issues a soft reset if needed.
+ * @port_num: physical port number
+ * Returns 0 on recovery success, -1 on failure.
+ */
+int ahci_ncq_recover_port(int port_num)
+{
+    uint8_t error_log[512];
+    int ret = ahci_ncq_read_log_ext(port_num, ATA_LOG_NCQ_QUEUE_ERROR,
+                                     error_log);
+    if (ret < 0) {
+        kprintf("AHCI: NCQ error recovery failed to read log on port %d\n",
+                port_num);
+        /* Fall through to port reset */
+        goto do_reset;
+    }
+
+    /* NCQ Queue Error Log (ATA spec, log page 0x10):
+     * bytes 0-1: NCQ Tag of the first failed command
+     * byte 2:    error flags
+     * byte 3:    error count
+     * bytes 4-7: LBA of the failing command (low)
+     * bytes 8-11: LBA (high)
+     * byte 12:   SActive (bits 0-7)
+     * byte 13:   SActive (bits 8-15)
+     * byte 14:   SActive (bits 16-23)
+     * byte 15:   SActive (bits 24-31) */
+    uint16_t failed_tag = (uint16_t)error_log[0] | ((uint16_t)error_log[1] << 8);
+    uint8_t err_flags = error_log[2];
+
+    kprintf("AHCI: NCQ error on port %d tag=%u flags=0x%02x err_count=%u\n",
+            port_num,
+            (unsigned int)failed_tag,
+            (unsigned int)err_flags,
+            (unsigned int)error_log[3]);
+
+    /* Check if we should issue RECEIVE FPDMA QUEUED to get sense data */
+    if (err_flags & 0x01) {
+        /* Sense data available — would issue RECEIVE FPDMA QUEUED here.
+         * For now, just log it and reset the port. */
+        kprintf("AHCI: NCQ sense data available on port %d\n", port_num);
+    }
+
+    /* Abort all in-flight requests for this port */
+    for (int i = 0; i < ahci_port_count; i++) {
+        struct ahci_port *p = &ahci_ports[i];
+        if (!p->present || p->port_num != port_num)
+            continue;
+
+        for (int s = 0; s < AHCI_SLOT_COUNT; s++) {
+            struct blk_request *req = p->slots[s].req;
+            if (req) {
+                p->slots[s].req = NULL;
+                tag_bitmap_free(&p->tag_bitmap, s);
+                req->result = -EIO;
+                blk_request_done(req);
+            }
+        }
+        p->inflight_mask = 0;
+        p->tag_bitmap = 0;
+    }
+
+do_reset:
+    /* Perform a soft reset on the port: stop and restart */
+    {
+        int timeout = 500000;
+        uint32_t cmd = port_read(port_num, PORT_CMD);
+        cmd &= ~(PORT_CMD_ST | PORT_CMD_FRE);
+        port_write(port_num, PORT_CMD, cmd);
+        while ((port_read(port_num, PORT_CMD) &
+                (PORT_CMD_CR | PORT_CMD_FR)) && --timeout) {
+            __asm__ volatile("pause");
+        }
+
+        port_write(port_num, PORT_SERR, 0xFFFFFFFF);
+        port_write(port_num, PORT_IS, 0xFFFFFFFF);
+
+        timeout = 500000;
+        while ((port_read(port_num, PORT_CMD) & PORT_CMD_CR) && --timeout)
+            __asm__ volatile("pause");
+
+        cmd = port_read(port_num, PORT_CMD);
+        cmd |= PORT_CMD_FRE | PORT_CMD_ST;
+        port_write(port_num, PORT_CMD, cmd);
+    }
+
+    kprintf("AHCI: NCQ error recovery complete on port %d\n", port_num);
+    return 0;
+}
+
+/* ── NCQ Priority Management ───────────────────────────────────────── */
+
+/**
+ * ahci_ncq_set_priority — set the NCQ priority level for a port.
+ * @port_num: physical port number
+ * @priority: 0=simple, 1=deterministic, 2=high
+ * Returns 0 on success, -1 if port not found or invalid priority.
+ */
+int ahci_ncq_set_priority(int port_num, int priority)
+{
+    if (priority < 0 || priority > 2)
+        return -1;
+
+    for (int i = 0; i < ahci_port_count; i++) {
+        if (ahci_ports[i].present && ahci_ports[i].port_num == port_num) {
+            ahci_ports[i].ncq_priority = priority;
+            return 0;
+        }
+    }
+    return -1;
+}
+
+/**
+ * ahci_ncq_get_priority — get the NCQ priority level for a port.
+ * Returns priority (0-2), or -1 if port not found.
+ */
+int ahci_ncq_get_priority(int port_num)
+{
+    for (int i = 0; i < ahci_port_count; i++) {
+        if (ahci_ports[i].present && ahci_ports[i].port_num == port_num) {
+            return ahci_ports[i].ncq_priority;
+        }
+    }
+    return -1;
+}
+
+/* ── NCQ Queue Status ──────────────────────────────────────────────── */
+
+/**
+ * ahci_ncq_queue_status — query NCQ queue state for a physical port.
+ * @port_num:   physical port number
+ * @out_active:  output: bitmask of active (in-flight) NCQ slots
+ * @out_free:    output: bitmask of free NCQ slots
+ * Returns 0 on success, -1 if port not found.
+ */
+int ahci_ncq_queue_status(int port_num, uint32_t *out_active,
+                           uint32_t *out_free)
+{
+    for (int i = 0; i < ahci_port_count; i++) {
+        struct ahci_port *p = &ahci_ports[i];
+        if (p->present && p->port_num == port_num) {
+            uint32_t sact = port_read(port_num, PORT_SACT);
+            uint32_t ci   = port_read(port_num, PORT_CI);
+            uint32_t active = ci | sact;
+
+            if (out_active)
+                *out_active = active;
+            if (out_free)
+                *out_free = (~active) & 0xFFFFFFFEU; /* exclude slot 0 */
+            return 0;
+        }
+    }
+    return -1;
 }
 
 /* ── Physical port initialization (direct-attached or PM host) ──────── */

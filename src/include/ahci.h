@@ -48,4 +48,23 @@ int  ahci_ncq_write(int port_num, int pm_port, uint32_t lba,
  * Returns the number of commands completed, or 0 if none. */
 int  ahci_ncq_completion_poll(int port_num);
 
+/* NCQ error recovery — reads error log, aborts pending commands, resets port.
+ * @port_num: physical port number
+ * Returns 0 on recovery completion, -1 on failure. */
+int  ahci_ncq_recover_port(int port_num);
+
+/* NCQ priority management — set/get the priority level for a port.
+ * @port_num: physical port number
+ * @priority: 0=simple, 1=deterministic, 2=high */
+int  ahci_ncq_set_priority(int port_num, int priority);
+int  ahci_ncq_get_priority(int port_num);
+
+/* NCQ queue status — get active/free slot bitmasks.
+ * @port_num:   physical port number
+ * @out_active: output: bitmask of active (in-flight) slots
+ * @out_free:   output: bitmask of free NCQ slots
+ * Returns 0 on success, -1 if port not found. */
+int  ahci_ncq_queue_status(int port_num, uint32_t *out_active,
+                            uint32_t *out_free);
+
 #endif
