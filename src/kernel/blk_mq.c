@@ -90,6 +90,11 @@ struct blk_mq_request {
     int error;        /* filled by driver on completion */
     int hw_queue_idx; /* which HW queue this request was submitted to */
     void (*complete)(struct blk_mq_request *req, int error);
+
+    /* Polling fields */
+    int       poll_mode;     /* 1 = submitted via poll path, 0 = IRQ path */
+    uint64_t  poll_cookie;   /* opaque driver cookie for matching completions */
+    volatile int poll_done;  /* set to 1 by poll completion path (busy-wait flag) */
 };
 
 /* ── Hardware dispatch queue ─────────────────────────────────────── */
@@ -124,6 +129,12 @@ struct blk_mq_hw_queue {
     uint64_t errors;        /* total error completions */
     uint64_t pending;       /* requests dispatched but not completed */
     uint64_t batch_count;   /* batch dispatch counter */
+    uint64_t poll_completed; /* requests completed via poll path */
+
+    /* Poll completion ring — completed requests waiting to be harvested */
+    struct blk_mq_request *poll_completions[BLK_MQ_DEPTH];
+    int poll_head;
+    int poll_tail;
 };
 
 /* Software staging queue (per-CPU index) */
@@ -186,6 +197,9 @@ static void blk_mq_tags_init(struct blk_mq_tags *tags)
         tags->requests[i].error = 0;
         tags->requests[i].hw_queue_idx = -1;
         tags->requests[i].complete = NULL;
+        tags->requests[i].poll_mode = 0;
+        tags->requests[i].poll_cookie = 0;
+        tags->requests[i].poll_done = 0;
     }
 }
 
@@ -259,6 +273,9 @@ static struct blk_mq_request *blk_mq_alloc_request(void)
     req->error = 0;
     req->hw_queue_idx = -1;
     req->complete = NULL;
+    req->poll_mode = 0;
+    req->poll_cookie = 0;
+    req->poll_done = 0;
 
     return req;
 }
@@ -332,6 +349,120 @@ void blk_mq_complete(struct blk_mq_request *req, int error)
         req->error = error;
         blk_mq_complete_request(req);
     }
+}
+
+/**
+ * blk_mq_poll_complete - Signal poll-mode completion from a driver.
+ *
+ * Called by a device driver's poll_fn (or interrupt handler in poll-assisted
+ * mode) to indicate that @req has completed.  The request is placed on the
+ * owning HW queue's poll completion ring so it can be harvested by
+ * blk_mq_run_poll() or blk_mq_harvest_poll_completions().
+ *
+ * For requests submitted through the regular (IRQ) path, the completion
+ * callback is invoked directly (same as blk_mq_complete_request).
+ *
+ * Returns 0 on success, -EAGAIN if the poll completion ring is full.
+ */
+int blk_mq_poll_complete(struct blk_mq_request *req)
+{
+    int hw_idx;
+    struct blk_mq_hw_queue *hwq;
+    uint64_t irq_flags;
+    int next;
+
+    if (!req)
+        return -EINVAL;
+
+    /* If the request was not submitted via poll path, complete directly */
+    if (!req->poll_mode) {
+        blk_mq_complete_request(req);
+        return 0;
+    }
+
+    hw_idx = req->hw_queue_idx;
+    if (hw_idx < 0 || hw_idx >= blk_mq_num_hw_queues)
+        return -EINVAL;
+
+    hwq = &blk_mq_hw_queues[hw_idx];
+
+    spinlock_irqsave_acquire(&hwq->lock, &irq_flags);
+
+    next = (hwq->poll_tail + 1) % BLK_MQ_DEPTH;
+    if (next == hwq->poll_head) {
+        /* Ring full — cannot queue completion */
+        spinlock_irqsave_release(&hwq->lock, irq_flags);
+        return -EAGAIN;
+    }
+
+    hwq->poll_completions[hwq->poll_tail] = req;
+    hwq->poll_tail = next;
+    hwq->poll_completed++;
+
+    /* Mark the request as done so busy-wait polls can observe it */
+    req->poll_done = 1;
+
+    spinlock_irqsave_release(&hwq->lock, irq_flags);
+
+    return 0;
+}
+
+/**
+ * blk_mq_harvest_poll_completions - Drain completed requests from a HW queue's
+ *                                   poll completion ring.
+ *
+ * Invokes the completion callback for each request on the poll completion ring.
+ * After the callback, the request is marked as no longer in use (but the tag
+ * is NOT freed — caller must call blk_mq_free_request() when ready).
+ *
+ * @hw_idx:  Hardware queue index to harvest
+ * Returns the number of completions processed.
+ */
+int blk_mq_harvest_poll_completions(int hw_idx)
+{
+    struct blk_mq_hw_queue *hwq;
+    uint64_t irq_flags;
+    int harvested = 0;
+
+    if (hw_idx < 0 || hw_idx >= blk_mq_num_hw_queues)
+        return -EINVAL;
+
+    hwq = &blk_mq_hw_queues[hw_idx];
+
+    spinlock_irqsave_acquire(&hwq->lock, &irq_flags);
+
+    while (hwq->poll_head != hwq->poll_tail) {
+        struct blk_mq_request *req = hwq->poll_completions[hwq->poll_head];
+        hwq->poll_completions[hwq->poll_head] = NULL;
+        hwq->poll_head = (hwq->poll_head + 1) % BLK_MQ_DEPTH;
+
+        if (!req)
+            continue;
+
+        /* Release lock while calling the callback, then re-acquire */
+        spinlock_irqsave_release(&hwq->lock, irq_flags);
+
+        if (req->complete)
+            req->complete(req, req->error);
+
+        req->in_use = 0;
+        req->poll_mode = 0;
+        req->poll_done = 0;
+        harvested++;
+
+        spinlock_irqsave_acquire(&hwq->lock, &irq_flags);
+
+        /* Update HW queue completion stats */
+        hwq->completed++;
+        if (req->error != 0)
+            hwq->errors++;
+        if (hwq->pending > 0)
+            hwq->pending--;
+    }
+
+    spinlock_irqsave_release(&hwq->lock, irq_flags);
+
+    return harvested;
 }
 
 /* ════════════════════════════════════════════════════════════════════
@@ -435,6 +566,10 @@ static void blk_mq_hw_queue_init(int hw_idx)
     hwq->queue_idx = hw_idx;
     hwq->state = BLK_MQ_HW_RUNNING;
     hwq->dispatch_mode = BLK_MQ_DISPATCH_STAGED;
+    hwq->poll_head = 0;
+    hwq->poll_tail = 0;
+    for (int j = 0; j < BLK_MQ_DEPTH; j++)
+        hwq->poll_completions[j] = NULL;
 }
 
 /*
@@ -1309,30 +1444,202 @@ int blk_mq_hw_queue_poll(int hw_idx)
     return hwq->poll_fn(NULL, hwq->poll_priv);
 }
 
+/* ════════════════════════════════════════════════════════════════════
+ * Poll-mode I/O API
+ * ════════════════════════════════════════════════════════════════════ */
+
+/**
+ * blk_mq_poll_request - Submit an I/O request in polling mode.
+ *
+ * Allocates a tagged request, fills it with the given parameters, submits
+ * it to the appropriate hardware queue, and busy-waits for completion by
+ * repeatedly calling the driver's poll_fn.  The completion callback is
+ * invoked during the busy-wait loop (via blk_mq_harvest_poll_completions).
+ *
+ * @sector:    Starting sector number
+ * @buffer:    Data buffer (read/write payload)
+ * @count:     Number of bytes to transfer
+ * @write:     Operation direction (0 = read, 1 = write)
+ * @cookie:    Opaque driver cookie for matching the completion
+ * @timeout_ms: Max milliseconds to busy-wait before returning -ETIME
+ *
+ * Return: 0 on success, negative errno on failure.
+ */
+int blk_mq_poll_request(uint64_t sector, uint8_t *buffer, size_t count,
+                         int write, uint64_t cookie, int timeout_ms)
+{
+    struct blk_mq_request *req;
+    int hw_idx;
+    int ret = 0;
+    int elapsed = 0;
+    uint64_t irq_flags;
+    struct blk_mq_hw_queue *hwq;
+
+    req = blk_mq_alloc_request();
+    if (!req)
+        return -ENOMEM;
+
+    req->sector = sector;
+    req->buffer = buffer;
+    req->count = count;
+    req->write = write;
+    req->complete = NULL;  /* caller uses the return value, not a callback */
+    req->error = 0;
+    req->in_use = 1;
+    req->poll_mode = 1;
+    req->poll_cookie = cookie;
+    req->poll_done = 0;
+
+    hw_idx = blk_mq_get_hw_queue(sector);
+    req->hw_queue_idx = hw_idx;
+
+    if (hw_idx >= blk_mq_num_hw_queues) {
+        blk_mq_free_request(req);
+        return -EINVAL;
+    }
+
+    hwq = &blk_mq_hw_queues[hw_idx];
+
+    /* Ensure the HW queue supports polling */
+    if (!hwq->use_polling || !hwq->poll_fn) {
+        blk_mq_free_request(req);
+        return -EOPNOTSUPP;
+    }
+
+    /* Enqueue the request in the HW ring */
+    spinlock_irqsave_acquire(&hwq->lock, &irq_flags);
+
+    if (hwq->state != BLK_MQ_HW_RUNNING) {
+        spinlock_irqsave_release(&hwq->lock, irq_flags);
+        blk_mq_free_request(req);
+        return -EIO;
+    }
+
+    int next = (hwq->tail + 1) % BLK_MQ_DEPTH;
+    if (next == hwq->head) {
+        spinlock_irqsave_release(&hwq->lock, irq_flags);
+        blk_mq_free_request(req);
+        return -EAGAIN;
+    }
+
+    hwq->queue[hwq->tail] = req;
+    hwq->tail = next;
+    hwq->submitted++;
+    hwq->pending++;
+
+    spinlock_irqsave_release(&hwq->lock, irq_flags);
+
+    /* Submit to the device via the driver callback */
+    if (hwq->submit_fn) {
+        ret = hwq->submit_fn(req, hwq->submit_priv);
+        if (ret < 0) {
+            req->error = ret;
+            blk_mq_complete_request(req);
+            blk_mq_free_request(req);
+            return ret;
+        }
+    }
+
+    /* Busy-wait for completion via polling */
+    while (!req->poll_done) {
+        /* Call the driver's poll_fn with this specific request */
+        hwq->poll_fn(req, hwq->poll_priv);
+
+        /* Harvest any completions queued by the driver */
+        blk_mq_harvest_poll_completions(hw_idx);
+
+        if (req->poll_done)
+            break;
+
+        /* If request was not found in the poll completion ring, it may have
+         * been completed via blk_mq_complete_request() (fallback path).
+         * Check req->in_use as an alternative indicator. */
+        if (!req->in_use)
+            break;
+
+        elapsed++;
+        if (timeout_ms > 0 && elapsed >= timeout_ms) {
+            /* Timeout — complete with error */
+            req->error = -ETIME;
+            blk_mq_complete_request(req);
+            blk_mq_free_request(req);
+            return -ETIME;
+        }
+
+        /* Brief pause to avoid busy-waiting at full CPU speed */
+        for (volatile int spin = 0; spin < 100; spin++);
+    }
+
+    ret = req->error;
+    blk_mq_free_request(req);
+    return ret;
+}
+
+/**
+ * blk_mq_run_poll - Run a poll cycle on all poll-mode hardware queues.
+ *
+ * For each HW queue that has use_polling enabled and a poll_fn registered,
+ * the driver's poll_fn(NULL) is called to scan the device for completed
+ * requests.  Completed requests are harvested from the poll completion ring
+ * and their callbacks are invoked.
+ *
+ * This function is safe to call from any context (timer tick, idle loop,
+ * explicit I/O completion check).  Returns the total number of completions
+ * processed across all poll-mode queues.
+ */
+int blk_mq_run_poll(void)
+{
+    int total = 0;
+
+    if (!blk_mq_initialized)
+        return 0;
+
+    for (int hw = 0; hw < blk_mq_num_hw_queues; hw++) {
+        struct blk_mq_hw_queue *hwq = &blk_mq_hw_queues[hw];
+
+        if (!hwq->use_polling || !hwq->poll_fn)
+            continue;
+
+        /* Ask the driver to scan for completions */
+        hwq->poll_fn(NULL, hwq->poll_priv);
+
+        /* Harvest whatever completed */
+        total += blk_mq_harvest_poll_completions(hw);
+    }
+
+    return total;
+}
+
+/* ════════════════════════════════════════════════════════════════════
+ * Updated HW queue stats with poll counter
+ * ════════════════════════════════════════════════════════════════════ */
+
 /**
  * blk_mq_get_hw_queue_stats - Retrieve statistics for a hardware queue.
  *
  * @hw_idx: Queue index
- * @submitted:  Output: total requests submitted
- * @completed:  Output: total requests completed
- * @errors:     Output: total error completions
- * @pending:    Output: requests dispatched but not completed
+ * @submitted:       Output: total requests submitted
+ * @completed:       Output: total requests completed
+ * @errors:          Output: total error completions
+ * @pending:         Output: requests dispatched but not completed
+ * @poll_completed:  Output: requests completed via poll path
  *
  * Returns 0 on success, -EINVAL if out of range.
  */
 int blk_mq_get_hw_queue_stats(int hw_idx, uint64_t *submitted,
                                uint64_t *completed, uint64_t *errors,
-                               uint64_t *pending)
+                               uint64_t *pending, uint64_t *poll_completed)
 {
     if (hw_idx < 0 || hw_idx >= blk_mq_num_hw_queues)
         return -EINVAL;
 
     struct blk_mq_hw_queue *hwq = &blk_mq_hw_queues[hw_idx];
 
-    if (submitted) *submitted = hwq->submitted;
-    if (completed) *completed = hwq->completed;
-    if (errors)    *errors    = hwq->errors;
-    if (pending)   *pending   = hwq->pending;
+    if (submitted)      *submitted      = hwq->submitted;
+    if (completed)      *completed      = hwq->completed;
+    if (errors)         *errors         = hwq->errors;
+    if (pending)        *pending        = hwq->pending;
+    if (poll_completed) *poll_completed = hwq->poll_completed;
 
     return 0;
 }
@@ -1377,7 +1684,7 @@ void __init blk_mq_init(void)
         blk_mq_hw_queue_init(i);
 
     blk_mq_initialized = 1;
-    kprintf("[OK] blk-mq: multi-queue block I/O layer (%d HW queues, %d tagged requests, direct/staged/batch dispatch)\n",
+    kprintf("[OK] blk-mq: multi-queue block I/O layer (%d HW queues, %d tagged requests, direct/staged/batch dispatch, poll completion)\n",
             blk_mq_num_hw_queues, BLK_MQ_DEPTH);
 }
 
