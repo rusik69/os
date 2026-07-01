@@ -128,6 +128,265 @@ int partitions_read(const uint8_t *mbr_sector, struct partition_entry *entries)
     return count;
 }
 
+/* ── MBR validity ────────────────────────────────────────────────── */
+
+int mbr_is_valid(const uint8_t *sector_buf)
+{
+    if (!sector_buf)
+        return 0;
+
+    const struct mbr *mbr = (const struct mbr *)sector_buf;
+    return (mbr->signature == 0xAA55) ? 1 : 0;
+}
+
+/* ── EBR chain traversal ─────────────────────────────────────────── */
+
+/* Check if a partition type is an extended partition marker */
+static int is_extended_type(uint8_t type)
+{
+    return (type == MBR_TYPE_EXTENDED_CHS ||
+            type == MBR_TYPE_EXTENDED_LBA ||
+            type == MBR_TYPE_EXTENDED_LINUX);
+}
+
+/* Read one EBR sector and extract the logical partition entry + next EBR pointer.
+ *
+ * @ebr_lba        Absolute LBA of the EBR sector to read.
+ * @disk_read      Disk read callback.
+ * @logical_out    Output for the logical partition entry (may be NULL).
+ * @next_ebr_lba   Output for the next EBR's absolute LBA (pointer from entry 1),
+ *                 set to 0 if no further EBRs exist (may be NULL).
+ *
+ * Returns 1 if a valid EBR with a logical partition was found,
+ *         0 if the EBR signature is invalid or no logical partition exists,
+ *         < 0 on I/O error.
+ */
+static int read_ebr_entry(uint64_t ebr_lba,
+                          disk_read_callback_t disk_read,
+                          struct partition_entry *logical_out,
+                          uint64_t *next_ebr_lba)
+{
+    uint8_t sector[512];
+    int ret;
+
+    memset(sector, 0, sizeof(sector));
+    ret = disk_read(ebr_lba, sector, 1);
+    if (ret < 0)
+        return ret;
+
+    const struct ebr *ebr = (const struct ebr *)sector;
+    if (ebr->signature != 0xAA55)
+        return 0;  /* Not a valid EBR */
+
+    /* Entry 0: the logical partition itself.
+     * start_lba is relative to the EBR's LBA. */
+    if (logical_out && ebr->entries[0].type != 0) {
+        logical_out->bootable    = ebr->entries[0].bootable;
+        logical_out->start_head  = ebr->entries[0].start_head;
+        logical_out->start_sector = ebr->entries[0].start_sector;
+        logical_out->start_cyl   = ebr->entries[0].start_cyl;
+        logical_out->type        = ebr->entries[0].type;
+        logical_out->end_head    = ebr->entries[0].end_head;
+        logical_out->end_sector  = ebr->entries[0].end_sector;
+        logical_out->end_cyl     = ebr->entries[0].end_cyl;
+        logical_out->start_lba   = ebr->entries[0].start_lba;
+        logical_out->sector_count = ebr->entries[0].sector_count;
+    }
+
+    /* Entry 1: pointer to the next EBR in the chain (if any).
+     * type=0x05/0x0F/0x85 and start_lba is the relative offset from
+     * the original extended partition's start.  We store the absolute
+     * LBA only if the entry is valid. */
+    if (next_ebr_lba) {
+        if (ebr->entries[1].type != 0 &&
+            is_extended_type(ebr->entries[1].type)) {
+            /* The start_lba in entry 1 is relative to the EBR's base.
+             * The absolute LBA is ebr_lba + start_lba. */
+            *next_ebr_lba = ebr_lba + ebr->entries[1].start_lba;
+        } else {
+            *next_ebr_lba = 0;
+        }
+    }
+
+    return (ebr->entries[0].type != 0) ? 1 : 0;
+}
+
+/* ── Full MBR parser with EBR chain ──────────────────────────────── */
+
+/* Global MBR parse statistics (last mbr_parse() call) */
+static struct mbr_stats mbr_last_stats;
+
+int mbr_parse(disk_read_callback_t disk_read, uint64_t disk_sectors,
+              struct mbr_partition *mbr_entries, int max_entries)
+{
+    uint8_t mbr_sector[512];
+    int total_partitions = 0;
+
+    /* Clear stats */
+    memset(&mbr_last_stats, 0, sizeof(mbr_last_stats));
+
+    if (!disk_read || !mbr_entries || max_entries <= 0)
+        return -1;
+
+    /* Read the MBR (sector 0) */
+    memset(mbr_sector, 0, sizeof(mbr_sector));
+    if (disk_read(0, mbr_sector, 1) < 0) {
+        kprintf("[MBR] Failed to read MBR sector\n");
+        return -1;
+    }
+
+    /* Validate MBR signature */
+    if (!mbr_is_valid(mbr_sector)) {
+        kprintf("[MBR] Invalid MBR signature (no 0xAA55)\n");
+        mbr_last_stats.signature_valid = 0;
+        return 0;
+    }
+    mbr_last_stats.signature_valid = 1;
+
+    /* Parse the MBR structure */
+    const struct mbr *mbr = (const struct mbr *)mbr_sector;
+
+    /* Track the extended partition's base LBA for EBR traversal.
+     * The first extended partition entry we encounter provides the base
+     * from which all EBR chain offsets are computed. */
+    uint64_t ext_base_lba = 0;
+
+    /* ── Step 1: Extract primary partitions ────────────────────────── */
+    for (int i = 0; i < MBR_MAX_PRIMARY; i++) {
+        const struct partition_entry *raw = &mbr->partitions[i];
+
+        if (raw->type == 0)
+            continue;  /* Unused entry */
+
+        /* If this is an extended partition, record the base LBA and
+         * skip adding it as a regular partition entry.  Extended
+         * partitions themselves are not mountable — they contain
+         * logical partitions. */
+        if (is_extended_type(raw->type)) {
+            mbr_last_stats.has_extended = 1;
+            ext_base_lba = raw->start_lba;
+
+            /* Optionally record the extended partition as a slot,
+             * but skip adding to the output for now.  Callers that
+             * want the extended partition entry can look at the
+             * has_extended flag and ext_base_lba. */
+            continue;
+        }
+
+        /* Validate partition boundaries */
+        if (raw->start_lba > disk_sectors ||
+            raw->sector_count == 0 ||
+            (uint64_t)raw->start_lba + raw->sector_count > disk_sectors) {
+            kprintf("[MBR] Primary partition %d: invalid bounds "
+                    "(start=%u count=%u, disk=%llu sectors)\n",
+                    i + 1, raw->start_lba, raw->sector_count,
+                    (unsigned long long)disk_sectors);
+            continue;
+        }
+
+        /* Valid primary partition */
+        if (total_partitions < max_entries) {
+            mbr_entries[total_partitions].bootable     = raw->bootable;
+            mbr_entries[total_partitions].type         = raw->type;
+            mbr_entries[total_partitions].start_lba    = raw->start_lba;
+            mbr_entries[total_partitions].sector_count = raw->sector_count;
+            mbr_entries[total_partitions].is_logical   = 0;
+            mbr_entries[total_partitions].index        = i + 1;
+        }
+        total_partitions++;
+    }
+
+    mbr_last_stats.primary_count = total_partitions;
+
+    /* ── Step 2: Follow the EBR chain for logical partitions ───────── */
+    if (mbr_last_stats.has_extended && ext_base_lba > 0) {
+        uint64_t ebr_lba = ext_base_lba;  /* First EBR is at the extended partition start */
+        int ebr_depth = 0;
+
+        while (ebr_lba > 0 && ebr_lba < disk_sectors) {
+            struct partition_entry logical_raw;
+            uint64_t next_ebr_lba = 0;
+            int ret;
+
+            memset(&logical_raw, 0, sizeof(logical_raw));
+
+            ret = read_ebr_entry(ebr_lba, disk_read,
+                                 &logical_raw, &next_ebr_lba);
+            if (ret < 0) {
+                kprintf("[MBR] I/O error reading EBR at LBA %llu\n",
+                        (unsigned long long)ebr_lba);
+                break;
+            }
+            if (ret == 0)
+                break;  /* Reached end of EBR chain */
+
+            ebr_depth++;
+
+            /* Validate the logical partition's bounds */
+            uint32_t abs_start = ebr_lba + logical_raw.start_lba;
+
+            if (abs_start > disk_sectors ||
+                logical_raw.sector_count == 0 ||
+                (uint64_t)abs_start + logical_raw.sector_count > disk_sectors) {
+                kprintf("[MBR] Logical partition at EBR %llu: "
+                        "invalid bounds (abs_start=%u count=%u)\n",
+                        (unsigned long long)ebr_lba,
+                        abs_start, logical_raw.sector_count);
+                ebr_lba = next_ebr_lba;
+                continue;
+            }
+
+            /* Valid logical partition */
+            if (total_partitions < max_entries) {
+                mbr_entries[total_partitions].bootable     = logical_raw.bootable;
+                mbr_entries[total_partitions].type         = logical_raw.type;
+                mbr_entries[total_partitions].start_lba    = abs_start;
+                mbr_entries[total_partitions].sector_count = logical_raw.sector_count;
+                mbr_entries[total_partitions].is_logical   = 1;
+                /* Logical partition numbering: starts at 5 (sda5, sda6, ...) */
+                mbr_entries[total_partitions].index        = MBR_MAX_PRIMARY + ebr_depth;
+            }
+            total_partitions++;
+
+            /* Cap the EBR chain depth to prevent infinite loops */
+            if (ebr_depth >= MBR_MAX_LOGICAL) {
+                kprintf("[MBR] EBR chain exceeds maximum depth (%d), stopping\n",
+                        MBR_MAX_LOGICAL);
+                break;
+            }
+
+            /* Move to the next EBR in the chain */
+            ebr_lba = next_ebr_lba;
+
+            /* Safety: if the next EBR points to the same LBA, break
+             * to avoid an infinite loop on corrupt partition tables. */
+            if (ebr_lba == next_ebr_lba && ebr_lba != 0) {
+                kprintf("[MBR] EBR chain loop detected at LBA %llu, aborting\n",
+                        (unsigned long long)ebr_lba);
+                break;
+            }
+        }
+
+        mbr_last_stats.logical_count = total_partitions - mbr_last_stats.primary_count;
+        mbr_last_stats.ebr_chain_depth = ebr_depth;
+    }
+
+    /* Check for truncation */
+    if (total_partitions > max_entries) {
+        mbr_last_stats.truncated = 1;
+        kprintf("[MBR] Warning: %d partitions found but only %d slots available\n",
+                total_partitions, max_entries);
+    }
+
+    return (total_partitions < max_entries) ? total_partitions : max_entries;
+}
+
+void mbr_get_stats(struct mbr_stats *stats)
+{
+    if (stats)
+        memcpy(stats, &mbr_last_stats, sizeof(mbr_last_stats));
+}
+
 /* ── GPT Parsing ───────────────────────────────────────────────────── */
 
 /*
@@ -602,17 +861,33 @@ EXPORT_SYMBOL(partition_type_name);
 EXPORT_SYMBOL(gpt_type_name);
 EXPORT_SYMBOL(gpt_validate_header_crc);
 EXPORT_SYMBOL(gpt_get_stats);
+EXPORT_SYMBOL(mbr_is_valid);
+EXPORT_SYMBOL(mbr_parse);
+EXPORT_SYMBOL(mbr_get_stats);
 
-/* ── Stub: partitions_init ─────────────────────────────── */
+/* ── Initialisation ─────────────────────────────────────────────────── */
+
 int partitions_init(void)
 {
-    kprintf("[PARTITIONS] partitions_init: not yet implemented\n");
+    kprintf("[OK] Partitions: MBR/GPT partition parser initialised\n");
     return 0;
 }
-/* ── Stub: partitions_scan ─────────────────────────────── */
+
+/* ── Partition scanning from a gendisk ──────────────────────────────── */
+
+/* The partitions_scan function is called during disk discovery to
+ * parse the partition table of a gendisk and register partition
+ * entries.  Currently a placeholder that auto-detects MBR vs GPT
+ * and logs the result.  Integration with blockdev/gendisk partition
+ * registration is done in genhd.c / blockdev.c. */
 int partitions_scan(void *dev)
 {
+    /* In the current architecture, partition scanning is driven by the
+     * gendisk layer which calls mbr_parse() or gpt_parse() directly
+     * with the appropriate disk_read callback.
+     *
+     * This function exists as a future hook for scanning all disks
+     * from a single entry point. */
     (void)dev;
-    kprintf("[PARTITIONS] partitions_scan: not yet implemented\n");
     return 0;
 }
