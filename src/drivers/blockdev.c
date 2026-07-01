@@ -96,23 +96,45 @@ static struct blk_request *queue_pop(struct blk_request_queue *q) {
 
 /* ── Statistics API ───────────────────────────────────────────────── */
 
-void blockdev_stats_update(int dev_id, int is_write, uint64_t sectors, uint64_t duration_ms) {
+void blockdev_stats_update(int dev_id, int is_write, int is_discard,
+                           int is_flush, uint64_t sectors, uint64_t duration_ms)
+{
     if (dev_id < 0 || dev_id >= BLOCKDEV_MAX_DEVICES || !g_blockdevs[dev_id].active)
         return;
 
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&g_dev_lock, &irq_flags);
 
-    if (is_write) {
-        g_blockdevs[dev_id].stats.write_ops++;
-        g_blockdevs[dev_id].stats.write_sectors += sectors;
-        g_blockdevs[dev_id].stats.write_ms += duration_ms;
+    struct blockdev_stats *s = &g_blockdevs[dev_id].stats;
+
+    if (is_discard) {
+        s->discard_ops++;
+        s->discard_sectors += sectors;
+        s->discard_ms += duration_ms;
+    } else if (is_flush) {
+        s->flush_ops++;
+        s->flush_ms += duration_ms;
+    } else if (is_write) {
+        s->write_ops++;
+        s->write_sectors += sectors;
+        s->write_ms += duration_ms;
     } else {
-        g_blockdevs[dev_id].stats.read_ops++;
-        g_blockdevs[dev_id].stats.read_sectors += sectors;
-        g_blockdevs[dev_id].stats.read_ms += duration_ms;
+        s->read_ops++;
+        s->read_sectors += sectors;
+        s->read_ms += duration_ms;
     }
 
+    spinlock_irqsave_release(&g_dev_lock, irq_flags);
+}
+
+void blockdev_stats_reset(int dev_id)
+{
+    if (dev_id < 0 || dev_id >= BLOCKDEV_MAX_DEVICES)
+        return;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_dev_lock, &irq_flags);
+    memset(&g_blockdevs[dev_id].stats, 0, sizeof(struct blockdev_stats));
     spinlock_irqsave_release(&g_dev_lock, irq_flags);
 }
 
@@ -128,6 +150,118 @@ int blockdev_get_stats(int dev, struct blockdev_stats *s) {
     spinlock_irqsave_release(&g_dev_lock, irq_flags);
 
     return 0;
+}
+
+/* Track I/O in-flight counts and cumulative time for proper iostat metrics.
+ * Called when a request is dispatched to the driver (increment) or completed
+ * (decrement). Updates io_ticks (jiffies with at least one I/O in flight) and
+ * weighted_io_ticks (sum of io_in_flight * elapsed time). */
+static void blockdev_track_inflight(int dev_id, int delta)
+{
+    if (dev_id < 0 || dev_id >= BLOCKDEV_MAX_DEVICES || !g_blockdevs[dev_id].active)
+        return;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_dev_lock, &irq_flags);
+
+    struct blockdev_stats *s = &g_blockdevs[dev_id].stats;
+    uint64_t now = timer_get_ticks();
+
+    if (delta > 0 && s->io_in_flight > 0) {
+        /* We already had I/O in flight; accumulate the weighted time
+         * based on the current queue depth during this interval.
+         * This is a coarse approximation — ideally we'd track per-request
+         * start/stop times, but this gives reasonable iostat-style metrics. */
+        uint64_t elapsed = now - s->weighted_io_ticks;
+        s->weighted_io_ticks += elapsed * (uint64_t)s->io_in_flight;
+    }
+
+    if (delta > 0) {
+        s->io_ticks = now;  /* Mark start of busy period */
+    }
+
+    if (delta > 0) {
+        s->io_in_flight++;
+    } else if (s->io_in_flight > 0) {
+        s->io_in_flight--;
+    }
+
+    if (s->io_in_flight == 0) {
+        /* I/O period just ended; accumulate io_ticks */
+        uint64_t busy = now - s->io_ticks;
+        s->io_ticks = busy;  /* Now holds total busy jiffies */
+        s->weighted_io_ticks = now;  /* Reset marker for next busy period */
+    } else {
+        /* I/O still in flight; update weighted sum */
+        uint64_t elapsed = now - s->weighted_io_ticks;
+        s->weighted_io_ticks += elapsed * (uint64_t)s->io_in_flight;
+        s->io_ticks = now;  /* Keep as timestamp, we'll compute at end */
+    }
+
+    spinlock_irqsave_release(&g_dev_lock, irq_flags);
+}
+
+/* ── Proc/diskstats-style formatting ──────────────────────────────── */
+
+int blockdev_stats_format(char *buf, int size, int dev)
+{
+    if (!buf || size <= 0 || dev < 0 || dev >= BLOCKDEV_MAX_DEVICES)
+        return 0;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_dev_lock, &irq_flags);
+
+    if (!g_blockdevs[dev].active) {
+        spinlock_irqsave_release(&g_dev_lock, irq_flags);
+        return 0;
+    }
+
+    const struct blockdev_stats *s = &g_blockdevs[dev].stats;
+
+    /* Linux /sys/block/<dev>/stat format (15 fields):
+     *   reads completed   = read_ops
+     *   reads merged      = read_merges
+     *   sectors read      = read_sectors
+     *   time reading (ms) = read_ms
+     *   writes completed  = write_ops
+     *   writes merged     = write_merges
+     *   sectors written   = write_sectors
+     *   time writing (ms) = write_ms
+     *   I/Os in progress  = io_in_flight
+     *   time doing I/O(ms)= io_ticks (stored as jiffies * 10 = ms)
+     *   weighted I/O time = weighted_io_ticks
+     *   discards completed= discard_ops
+     *   discard sectors   = discard_sectors
+     *   discard time (ms) = discard_ms
+     *   flush completions = flush_ops
+     *   flush time (ms)   = flush_ms
+     */
+
+    int n = snprintf(buf, size,
+        "%llu %llu %llu %llu "
+        "%llu %llu %llu %llu "
+        "%u %llu %llu "
+        "%llu %llu %llu "
+        "%llu %llu",
+        (unsigned long long)s->read_ops,
+        (unsigned long long)s->read_merges,
+        (unsigned long long)s->read_sectors,
+        (unsigned long long)s->read_ms,
+        (unsigned long long)s->write_ops,
+        (unsigned long long)s->write_merges,
+        (unsigned long long)s->write_sectors,
+        (unsigned long long)s->write_ms,
+        s->io_in_flight,
+        (unsigned long long)s->io_ticks,
+        (unsigned long long)s->weighted_io_ticks,
+        (unsigned long long)s->discard_ops,
+        (unsigned long long)s->discard_sectors,
+        (unsigned long long)s->discard_ms,
+        (unsigned long long)s->flush_ops,
+        (unsigned long long)s->flush_ms);
+
+    spinlock_irqsave_release(&g_dev_lock, irq_flags);
+    return n;
 }
 
 /* ── Core submission path ─────────────────────────────────────────── */
@@ -152,11 +286,13 @@ int blk_submit_async(struct blk_request *req) {
     if (q->inflight_count == 0 && q->queued_count == 0) {
         req->inflight = 1;
         q->inflight_count++;
+        blockdev_track_inflight(dev_id, 1);  /* Track I/O dispatch */
         spinlock_irqsave_release(&q->lock, irq_flags);
 
         if (!g_blockdevs[dev_id].submit_fn) {
             req->inflight = 0;
             q->inflight_count--;
+            blockdev_track_inflight(dev_id, -1);  /* Undo the dispatch tracking */
             req->result = -1;
             req->done = 1;
             if (req->done_wq) {
@@ -171,15 +307,20 @@ int blk_submit_async(struct blk_request *req) {
         uint64_t elapsed_ms = elapsed_ticks * 1000 / TIMER_FREQ;
 
         if (g_blockdevs[dev_id].flags & BLK_DRIVER_ASYNC) {
+            /* Driver will call blk_request_done() asynchronously */
             return ret < 0 ? ret : 0;
         }
 
         q->inflight_count--;
+        blockdev_track_inflight(dev_id, -1);
         req->done = 1;
 
-        /* Update stats */
-        blockdev_stats_update(dev_id, !(req->flags & BLK_REQ_READ),
-                              req->count, elapsed_ms);
+        /* Update stats for synchronous completion */
+        blockdev_stats_update(dev_id,
+            !(req->flags & BLK_REQ_READ),           /* is_write */
+            (req->flags & BLK_REQ_DISCARD) ? 1 : 0, /* is_discard */
+            (req->flags & (BLK_REQ_FLUSH | BLK_REQ_PREFLUSH | BLK_REQ_FUA)) ? 1 : 0, /* is_flush */
+            req->count, elapsed_ms);
 
         if (req->done_wq) {
             wait_queue_wake(req->done_wq);
@@ -396,6 +537,7 @@ void blk_request_done(struct blk_request *req) {
         return;
     }
 
+    uint64_t elapsed_ticks = timer_get_ticks();
     req->done = 1;
     req->inflight = 0;
 
@@ -405,6 +547,9 @@ void blk_request_done(struct blk_request *req) {
     spinlock_irqsave_acquire(&q->lock, &irq_flags);
     q->inflight_count--;
     spinlock_irqsave_release(&q->lock, irq_flags);
+
+    /* Track I/O completion for statistics */
+    blockdev_track_inflight(req->dev_id, -1);
 
     if (req->done_wq) {
         wait_queue_wake(req->done_wq);
@@ -534,8 +679,11 @@ static int legacy_submit_fn_adapter(struct blk_request *req) {
     }
 
     uint64_t elapsed_ms = (timer_get_ticks() - start_ticks) * 1000 / TIMER_FREQ;
-    blockdev_stats_update(dev_id, !(req->flags & BLK_REQ_READ),
-                          req->count, elapsed_ms);
+    blockdev_stats_update(dev_id,
+        !(req->flags & BLK_REQ_READ), /* is_write */
+        0, /* is_discard */
+        0, /* is_flush */
+        req->count, elapsed_ms);
 
     return req->result;
 }
@@ -699,6 +847,10 @@ EXPORT_SYMBOL(blk_submit_sync);
 EXPORT_SYMBOL(blockdev_discard);
 EXPORT_SYMBOL(blockdev_set_max_transfer);
 EXPORT_SYMBOL(blockdev_get_max_transfer);
+EXPORT_SYMBOL(blockdev_get_stats);
+EXPORT_SYMBOL(blockdev_stats_update);
+EXPORT_SYMBOL(blockdev_stats_reset);
+EXPORT_SYMBOL(blockdev_stats_format);
 
 /* ── Stub: blockdev_read ─────────────────────────────── */
 int blockdev_read(void *buf, size_t count, uint64_t offset)

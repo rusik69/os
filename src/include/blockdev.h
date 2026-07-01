@@ -39,15 +39,34 @@ enum blk_scheduler {
     BLK_SCHED_COUNT
 };
 
-/* Block I/O statistics */
+/* Block I/O statistics — Linux /sys/block/<dev>/stat compatible */
 struct blockdev_stats {
+    /* Basic I/O */
     uint64_t read_ops;       /* number of read requests completed */
     uint64_t write_ops;      /* number of write requests completed */
     uint64_t read_sectors;   /* total sectors read */
     uint64_t write_sectors;  /* total sectors written */
     uint64_t read_ms;        /* total time spent reading (ms) */
     uint64_t write_ms;       /* total time spent writing (ms) */
-};
+
+    /* Merge statistics */
+    uint64_t read_merges;    /* adjacent read requests merged */
+    uint64_t write_merges;   /* adjacent write requests merged */
+
+    /* In-flight / queue depth tracking */
+    uint32_t io_in_flight;   /* current number of I/Os in flight */
+    uint64_t io_ticks;       /* cumulative jiffies with at least one I/O in flight */
+    uint64_t weighted_io_ticks; /* cumulative (io_in_flight * elapsed) ms */
+
+    /* Discard (TRIM) statistics */
+    uint64_t discard_ops;      /* number of discard requests completed */
+    uint64_t discard_sectors;  /* total sectors discarded */
+    uint64_t discard_ms;       /* total time spent discarding (ms) */
+
+    /* Flush / FUA statistics */
+    uint64_t flush_ops;        /* number of flush requests completed */
+    uint64_t flush_ms;         /* total time spent flushing (ms) */
+} __cacheline_aligned;
 
 /* Block I/O request */
 struct blk_request {
@@ -179,13 +198,32 @@ static inline int blockdev_write_sectors(int id, uint32_t lba, uint8_t count, co
 /* Block device statistics */
 int blockdev_get_stats(int dev, struct blockdev_stats *s);
 
+/* Reset block device statistics to zero */
+void blockdev_stats_reset(int dev_id);
+
+/* Internal: update statistics (called by drivers when a request completes)
+ * @dev_id:     device ID
+ * @is_write:   nonzero for write, zero for read (ignored for discard/flush)
+ * @is_discard: nonzero for discard/TRIM operations
+ * @is_flush:   nonzero for flush/preflush/FUA operations
+ * @sectors:    number of sectors transferred/discarded
+ * @duration_ms: time taken in milliseconds
+ */
+void blockdev_stats_update(int dev_id, int is_write, int is_discard,
+                           int is_flush, uint64_t sectors, uint64_t duration_ms);
+
+/* Format block device statistics into a string (for /proc/diskstats style output).
+ * Returns the number of characters written (excluding NUL).
+ * @buf:   output buffer
+ * @size:  buffer size
+ * @dev:   device ID
+ */
+int blockdev_stats_format(char *buf, int size, int dev);
+
 /* Find a block device by name (e.g., "sda", "nvme0n1").
  * Strips "/dev/" prefix if present.
  * Returns device ID on success, -1 on not found. */
 int blockdev_find_by_name(const char *name);
-
-/* Internal: update statistics (called by drivers when a request completes) */
-void blockdev_stats_update(int dev_id, int is_write, uint64_t sectors, uint64_t duration_ms);
 
 /* Transfer limit configuration (Item 328: bio splitting for large requests) */
 int  blockdev_set_max_transfer(int dev_id, uint32_t max_sectors);
