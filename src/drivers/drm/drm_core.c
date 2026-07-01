@@ -125,7 +125,7 @@ static int drm_ioctl_get_cap(struct drm_device *dev, struct drm_file *fp,
             gc->value = 0;  /* not supported */
             return 0;
         case DRM_CAP_PRIME:
-            gc->value = 0;  /* not supported */
+            gc->value = DRM_PRIME_CAP_EXPORT | DRM_PRIME_CAP_IMPORT;
             return 0;
         default:
             return -1;
@@ -312,6 +312,12 @@ static __attribute__((unused)) int drm_ioctl_dispatch(struct drm_device *dev, st
         case DRM_IOCTL_GEM_OPEN:
             return drm_gem_open_ioctl(dev, fp,
                        (struct drm_gem_open *)arg);
+        case DRM_IOCTL_PRIME_HANDLE_TO_FD:
+            return drm_gem_prime_handle_to_fd(dev, fp,
+                       (struct drm_prime_handle *)arg);
+        case DRM_IOCTL_PRIME_FD_TO_HANDLE:
+            return drm_gem_prime_fd_to_handle(dev, fp,
+                       (struct drm_prime_handle *)arg);
         default:
             return -ENOTTY;
     }
@@ -392,6 +398,7 @@ int drm_init(void)
     /* Initialise sub-systems */
     drm_atomic_init();
     drm_display_init();
+    drm_prime_init();
 
     kprintf("[DRM] core initialised\n");
     return 0;
@@ -401,6 +408,7 @@ void drm_exit(void)
 {
     drm_atomic_exit();
     drm_display_exit();
+    drm_prime_exit();
 
     for (int i = 0; i < g_drm_device_count; i++) {
         if (g_drm_devices[i]) {

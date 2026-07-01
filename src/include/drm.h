@@ -44,9 +44,17 @@
 #define DRM_IOCTL_GEM_FLINK     DRM_IOWR(0x0A, struct drm_gem_flink)
 #define DRM_IOCTL_GEM_OPEN      DRM_IOWR(0x0B, struct drm_gem_open)
 
-#define DRM_CAP_DUMB_BUFFER    0x01
+/* DRM PRIME FD sharing */
+#define DRM_IOCTL_PRIME_HANDLE_TO_FD DRM_IOWR(0x0D, struct drm_prime_handle)
+#define DRM_IOCTL_PRIME_FD_TO_HANDLE DRM_IOWR(0x0E, struct drm_prime_handle)
+
+#define DRM_CAP_DUMB_BUFFER      0x01
 #define DRM_CAP_VBLANK_HIGH_CRTC 0x02
-#define DRM_CAP_PRIME          0x05
+#define DRM_CAP_PRIME            0x05
+
+/* PRIME capability flags (returned in DRM_CAP_PRIME value) */
+#define DRM_PRIME_CAP_EXPORT    1
+#define DRM_PRIME_CAP_IMPORT    2
 
 /* ── DRM version ──────────────────────────────────────────────── */
 
@@ -270,11 +278,20 @@ struct drm_mode_fb_dirty_cmd {
     uint32_t pad;
 };
 
+/* ── DRM PRIME FD sharing structure ─────────────────────────── */
+
+struct drm_prime_handle {
+    uint32_t handle;    /* GEM handle (for export) / returned handle (for import) */
+    uint32_t flags;     /* DRM_CLOEXEC etc. (reserved for future use) */
+    int      prime_fd;  /* returned prime FD (for export) / input prime FD (for import) */
+};
+
 /* ── DRM device flags ─────────────────────────────────────────── */
 
 #define DRIVER_HAVE_DUMB      (1U << 0)
 #define DRIVER_MODESET        (1U << 1)
 #define DRIVER_GEM            (1U << 2)
+#define DRIVER_PRIME          (1U << 3)  /* PRIME FD sharing supported */
 
 /* ═══════════════════════════════════════════════════════════════════
  *  DRM driver interface
@@ -428,6 +445,7 @@ struct drm_gem_object {
     uint32_t name;        /* global flink name (0 = none) */
     uint32_t num_pages;   /* number of physical pages backing this object */
     uint32_t vm_count;    /* number of active mmap mappings */
+    int      prime_fd;    /* PRIME export FD (-1 = not exported) */
 };
 
 /* Global name (flink) support */
@@ -485,6 +503,19 @@ int  drm_gem_flink_ioctl(struct drm_device *dev,
 int  drm_gem_open_ioctl(struct drm_device *dev,
                         struct drm_file *file_priv,
                         struct drm_gem_open *args);
+
+/* DRM PRIME FD sharing */
+int  drm_gem_prime_handle_to_fd(struct drm_device *dev,
+                                struct drm_file *file_priv,
+                                struct drm_prime_handle *args);
+int  drm_gem_prime_fd_to_handle(struct drm_device *dev,
+                                struct drm_file *file_priv,
+                                struct drm_prime_handle *args);
+int  drm_prime_init(void);
+void drm_prime_exit(void);
+
+/* Called by drm_gem_free_object to release any PRIME FD reference */
+void drm_prime_gem_destroy(struct drm_gem_object *obj);
 
 /* Dumb buffer helpers */
 int  drm_dumb_create(struct drm_device *dev,

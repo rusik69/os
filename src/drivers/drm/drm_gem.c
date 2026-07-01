@@ -111,6 +111,7 @@ int drm_gem_create_object(size_t size, int is_contig,
 
     struct drm_gem_object *obj = &g_gem_objects[obj_idx];
     memset(obj, 0, sizeof(*obj));
+    obj->prime_fd = -1;  /* not exported */
     obj->size = size;
     obj->is_contig = is_contig;
     obj->refcount = 1;
@@ -169,6 +170,9 @@ int drm_gem_create_object(size_t size, int is_contig,
 void drm_gem_free_object(struct drm_gem_object *obj)
 {
     if (!obj) return;
+
+    /* Release any PRIME FD reference */
+    drm_prime_gem_destroy(obj);
 
     /* Release any flink name if one was assigned */
     if (obj->name != 0) {
@@ -353,6 +357,7 @@ int drm_gem_object_init(void *dev, void *obj, size_t size)
      * Zero the object header and set the size. */
     struct drm_gem_object *gem_obj = (struct drm_gem_object *)obj;
     memset(gem_obj, 0, sizeof(*gem_obj));
+    gem_obj->prime_fd = -1;
     gem_obj->size = size;
     gem_obj->refcount = 1;
     return 0;
