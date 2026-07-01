@@ -96,4 +96,13 @@ struct aml_object *aml_create_buffer(const uint8_t *data, uint32_t length);
  */
 struct aml_object *aml_create_reference(int node_index);
 
+/*
+ * Create a package AML object containing an array of sub-objects.
+ * The elements array is deep-copied; the caller may free the source
+ * array after calling.  Returns NULL on allocation failure (partial
+ * cleanup is performed so no elements are leaked).
+ */
+struct aml_object *aml_create_package(const struct aml_object *elements,
+                                      uint32_t count);
+
 #endif /* AML_EXEC_H */

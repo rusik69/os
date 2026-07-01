@@ -1111,6 +1111,61 @@ struct aml_object *aml_create_reference(int node_index)
 	return obj;
 }
 
+/* Forward declaration for aml_clone_object (defined later in this file
+ * in the "Object Copy / Clone" section).  Used by aml_create_package
+ * and the AML bytecode parsing helpers. */
+static struct aml_object *aml_clone_object(const struct aml_object *src);
+
+struct aml_object *aml_create_package(const struct aml_object *elements,
+				      uint32_t count)
+{
+	struct aml_object *obj;
+
+	if (count > 0 && !elements)
+		return NULL;
+
+	obj = aml_alloc_object();
+	if (!obj)
+		return NULL;
+
+	obj->type = AML_OBJ_PACKAGE;
+	obj->value.package.count = count;
+
+	if (count == 0) {
+		obj->value.package.elements = NULL;
+		return obj;
+	}
+
+	obj->value.package.elements = (struct aml_object *)
+		kmalloc(count * sizeof(struct aml_object));
+	if (!obj->value.package.elements) {
+		kfree(obj);
+		return NULL;
+	}
+
+	memset(obj->value.package.elements, 0,
+	       count * sizeof(struct aml_object));
+
+	/* Deep-copy each element */
+	for (uint32_t i = 0; i < count; i++) {
+		struct aml_object *clone = aml_clone_object(&elements[i]);
+
+		if (!clone) {
+			/* Partial cleanup: free elements [0..i-1] */
+			for (uint32_t j = 0; j < i; j++)
+				aml_free_object(&obj->value.package.elements[j]);
+			kfree(obj->value.package.elements);
+			kfree(obj);
+			return NULL;
+		}
+		memcpy(&obj->value.package.elements[i], clone,
+		       sizeof(struct aml_object));
+		kfree(clone);
+	}
+
+	return obj;
+}
+
 /* ── Execution Context ──────────────────────────────────────────── */
 
 struct aml_exec_context {
@@ -1203,6 +1258,293 @@ static uint64_t aml_read_le64(const uint8_t *data, uint32_t max_len,
 }
 
 /* ── Object Copy / Clone ────────────────────────────────────────── */
+
+/*
+ * Parse a BufferOp (0x11) from AML bytecode and return a heap-allocated
+ * aml_object of type AML_OBJ_BUFFER.
+ *
+ * Encoding: BufferOp PkgLength BufferSize ByteList
+ *   - BufferSize is a ByteConst/WordConst/DWordConst that declares the
+ *     intended size of the buffer.  The actual ByteList data follows.
+ *
+ * On success, advances ctx->offset past the entire BufferOp and returns
+ * the new object (caller owns it).  On error returns NULL.
+ */
+static struct aml_object *aml_parse_buffer_from_aml(
+	struct aml_exec_context *ctx)
+{
+	uint32_t o = ctx->offset;
+	uint32_t buf_bytes;
+	uint32_t pkg_len;
+	uint32_t data_offset;
+	uint32_t size_field_bytes = 0;
+	uint32_t declared_size = 0;
+	struct aml_object *obj = NULL;
+
+	if (o + 2 > ctx->aml_len)
+		return NULL;
+
+	if (ctx->aml[o] != AML_BUFFER_OP)
+		return NULL;
+
+	/* Decode PkgLength */
+	pkg_len = aml_decode_pkg_length(ctx->aml, ctx->aml_len,
+					o + 1, &buf_bytes);
+	if (pkg_len == 0 || pkg_len < 2)
+		return NULL;
+
+	data_offset = o + 1 + buf_bytes;
+	if (data_offset >= ctx->aml_len)
+		return NULL;
+
+	/* Parse BufferSize prefix */
+	if (ctx->aml[data_offset] == AML_BYTE_PREFIX &&
+	    data_offset + 2 <= ctx->aml_len) {
+		declared_size = ctx->aml[data_offset + 1];
+		size_field_bytes = 2;
+	} else if (ctx->aml[data_offset] == AML_WORD_PREFIX &&
+		   data_offset + 3 <= ctx->aml_len) {
+		declared_size = (uint32_t)ctx->aml[data_offset + 1] |
+			((uint32_t)ctx->aml[data_offset + 2] << 8);
+		size_field_bytes = 3;
+	} else if (ctx->aml[data_offset] == AML_DWORD_PREFIX &&
+		   data_offset + 5 <= ctx->aml_len) {
+		declared_size = (uint32_t)ctx->aml[data_offset + 1] |
+			((uint32_t)ctx->aml[data_offset + 2] << 8) |
+			((uint32_t)ctx->aml[data_offset + 3] << 16) |
+			((uint32_t)ctx->aml[data_offset + 4] << 24);
+		size_field_bytes = 5;
+	} else {
+		/* Assume raw size byte (no prefix — rare but valid) */
+		declared_size = ctx->aml[data_offset];
+		size_field_bytes = 1;
+	}
+
+	if (declared_size == 0) {
+		/* Zero-length buffer is valid */
+		obj = aml_create_buffer(NULL, 0);
+		if (obj)
+			ctx->offset = o + 1 + buf_bytes + pkg_len;
+		return obj;
+	}
+
+	/* Check that declared_size fits within the PkgLength */
+	if (data_offset + size_field_bytes + declared_size >
+	    o + 1 + buf_bytes + pkg_len)
+		return NULL;
+
+	/* Read the raw byte data */
+	obj = aml_create_buffer(&ctx->aml[data_offset + size_field_bytes],
+				declared_size);
+	if (obj)
+		ctx->offset = o + 1 + buf_bytes + pkg_len;
+
+	return obj;
+}
+
+/*
+ * Parse a PackageOp (0x12) or VarPackageOp (0x13) from AML bytecode
+ * and return a heap-allocated aml_object of type AML_OBJ_PACKAGE.
+ *
+ * Encoding: PackageOp PkgLength NumElements PackageElementList
+ *   - NumElements is a ByteData containing the element count.
+ *   - PackageElementList is a list of DataRefObject entries.
+ *
+ * For VarPackageOp the NumElements is computed from remaining bytes
+ * once the fixed-length header is consumed, but we use the declared
+ * NumElements from the byte stream.
+ *
+ * On success, advances ctx->offset past the entire PackageOp and
+ * returns the new object (caller owns it).  On error returns NULL.
+ */
+static struct aml_object *aml_parse_package_from_aml(
+	struct aml_exec_context *ctx)
+{
+	uint32_t o = ctx->offset;
+	uint32_t pkg_bytes;
+	uint32_t pkg_len;
+	int is_var;
+	uint32_t num_elements;
+	uint32_t data_offset;
+	uint32_t element_end;
+	struct aml_object *obj = NULL;
+	struct aml_object *elements = NULL;
+	struct aml_object *saved_return;
+	int saved_has_returned;
+	int saved_error;
+
+	if (o + 2 > ctx->aml_len)
+		return NULL;
+
+	if (ctx->aml[o] != AML_PACKAGE_OP &&
+	    ctx->aml[o] != AML_VAR_PACKAGE_OP)
+		return NULL;
+
+	is_var = (ctx->aml[o] == AML_VAR_PACKAGE_OP);
+
+	/* Decode PkgLength */
+	pkg_len = aml_decode_pkg_length(ctx->aml, ctx->aml_len,
+					o + 1, &pkg_bytes);
+	if (pkg_len == 0 || pkg_len < 2)
+		return NULL;
+
+	data_offset = o + 1 + pkg_bytes;
+	if (data_offset >= ctx->aml_len)
+		return NULL;
+
+	/* Read NumElements (ByteData) */
+	uint8_t num_elems_byte = ctx->aml[data_offset];
+	num_elements = (uint32_t)num_elems_byte;
+	data_offset++;
+
+	if (is_var && num_elements == 0)
+		num_elements = 0; /* VarPackage with zero elements */
+
+	element_end = o + 1 + pkg_bytes + pkg_len;
+	if (element_end > ctx->aml_len)
+		element_end = ctx->aml_len;
+
+	if (num_elements == 0) {
+		obj = aml_create_package(NULL, 0);
+		if (obj)
+			ctx->offset = element_end;
+		return obj;
+	}
+
+	/* Allocate temporary array for element parsing */
+	elements = (struct aml_object *)
+		kmalloc(num_elements * sizeof(struct aml_object));
+	if (!elements)
+		return NULL;
+	memset(elements, 0, num_elements * sizeof(struct aml_object));
+
+	/* Save and reset the execution context so our element parsing
+	 * doesn't clobber the parent context's state */
+	saved_return = ctx->return_value;
+	saved_has_returned = ctx->has_returned;
+	saved_error = ctx->error;
+	ctx->return_value = NULL;
+	ctx->has_returned = 0;
+	ctx->error = 0;
+
+	/* Parse each element from the AML byte stream */
+	uint32_t parse_ok = 1;
+
+	for (uint32_t i = 0; i < num_elements && data_offset < element_end; i++) {
+		struct aml_object *elem = NULL;
+		uint8_t op = ctx->aml[data_offset];
+
+		switch (op) {
+		case AML_ZERO_OP:
+			data_offset++;
+			elem = aml_create_integer(0);
+			break;
+		case AML_ONE_OP:
+			data_offset++;
+			elem = aml_create_integer(1);
+			break;
+		case AML_ONES_OP:
+			data_offset++;
+			elem = aml_create_integer((uint64_t)-1);
+			break;
+		case AML_BYTE_PREFIX:
+			if (data_offset + 2 <= ctx->aml_len) {
+				data_offset++;
+				elem = aml_create_integer(ctx->aml[data_offset]);
+				data_offset++;
+			}
+			break;
+		case AML_WORD_PREFIX:
+			if (data_offset + 3 <= ctx->aml_len) {
+				data_offset++;
+				elem = aml_create_integer(
+					aml_read_le64(ctx->aml, ctx->aml_len,
+						      data_offset, 2));
+				data_offset += 2;
+			}
+			break;
+		case AML_DWORD_PREFIX:
+			if (data_offset + 5 <= ctx->aml_len) {
+				data_offset++;
+				elem = aml_create_integer(
+					aml_read_le64(ctx->aml, ctx->aml_len,
+						      data_offset, 4));
+				data_offset += 4;
+			}
+			break;
+		case AML_QWORD_PREFIX:
+			if (data_offset + 9 <= ctx->aml_len) {
+				data_offset++;
+				elem = aml_create_integer(
+					aml_read_le64(ctx->aml, ctx->aml_len,
+						      data_offset, 8));
+				data_offset += 8;
+			}
+			break;
+		case AML_STRING_PREFIX: {
+			uint32_t start = data_offset + 1;
+			uint32_t end = start;
+
+			while (end < ctx->aml_len && ctx->aml[end] != 0)
+				end++;
+			if (end < ctx->aml_len) {
+				char *s = (char *)kmalloc(end - start + 1);
+
+				if (s) {
+					memcpy(s, &ctx->aml[start], end - start);
+					s[end - start] = '\0';
+					elem = aml_create_string(s);
+					kfree(s);
+				}
+				data_offset = end + 1;
+			}
+			break;
+		}
+		case AML_BUFFER_OP:
+			ctx->offset = data_offset;
+			elem = aml_parse_buffer_from_aml(ctx);
+			if (elem)
+				data_offset = ctx->offset;
+			break;
+		case AML_PACKAGE_OP:
+		case AML_VAR_PACKAGE_OP:
+			ctx->offset = data_offset;
+			elem = aml_parse_package_from_aml(ctx);
+			if (elem)
+				data_offset = ctx->offset;
+			break;
+		default:
+			/* Skip unknown element by advancing past it */
+			data_offset++;
+			break;
+		}
+
+		if (elem) {
+			memcpy(&elements[i], elem, sizeof(struct aml_object));
+			kfree(elem);
+		} else {
+			parse_ok = 0;
+			break;
+		}
+	}
+
+	/* Restore execution context */
+	ctx->return_value = saved_return;
+	ctx->has_returned = saved_has_returned;
+	ctx->error = saved_error;
+
+	if (parse_ok) {
+		obj = aml_create_package(elements, num_elements);
+		ctx->offset = element_end;
+	}
+
+	/* Free temporary element array */
+	for (uint32_t i = 0; i < num_elements; i++)
+		aml_free_object(&elements[i]);
+	kfree(elements);
+
+	return obj;
+}
 
 /*
  * Deep-copy an AML object.  The caller owns the returned object.
@@ -1453,6 +1795,29 @@ static int aml_exec_store(struct aml_exec_context *ctx)
 			break;
 		}
 
+		/* ── BufferOp: create buffer from AML bytecode ── */
+		case AML_BUFFER_OP: {
+			struct aml_object *buf_obj;
+
+			buf_obj = aml_parse_buffer_from_aml(ctx);
+			if (!buf_obj)
+				goto done;
+			operand = buf_obj;
+			break;
+		}
+
+		/* ── PackageOp: create package from AML bytecode ── */
+		case AML_PACKAGE_OP:
+		case AML_VAR_PACKAGE_OP: {
+			struct aml_object *pkg_obj;
+
+			pkg_obj = aml_parse_package_from_aml(ctx);
+			if (!pkg_obj)
+				goto done;
+			operand = pkg_obj;
+			break;
+		}
+
 		default:
 			kprintf("[AML] Store: unsupported operand "
 				"opcode 0x%02x at offset %u\n",
@@ -1519,7 +1884,9 @@ static int aml_exec_store(struct aml_exec_context *ctx)
 	}
 
 done:
-	/* operand and target are stack buffers; no heap cleanup needed */
+	/* Free heap-allocated operands (Buffer/Package objects) */
+	if (operand && operand != &operand_buf)
+		aml_free_object(operand);
 	return ret;
 }
 
@@ -1670,6 +2037,39 @@ static int aml_exec_return(struct aml_exec_context *ctx)
 				       sizeof(*clone));
 				kfree(clone);
 			}
+		} else {
+			ctx->return_value->type = AML_OBJ_INTEGER;
+			ctx->return_value->value.integer = 0;
+		}
+		break;
+	}
+
+	/* ── BufferOp: return buffer from AML bytecode ── */
+	case AML_BUFFER_OP: {
+		struct aml_object *buf_obj;
+
+		buf_obj = aml_parse_buffer_from_aml(ctx);
+		if (buf_obj) {
+			memcpy(ctx->return_value, buf_obj,
+			       sizeof(*buf_obj));
+			kfree(buf_obj);
+		} else {
+			ctx->return_value->type = AML_OBJ_INTEGER;
+			ctx->return_value->value.integer = 0;
+		}
+		break;
+	}
+
+	/* ── PackageOp: return package from AML bytecode ── */
+	case AML_PACKAGE_OP:
+	case AML_VAR_PACKAGE_OP: {
+		struct aml_object *pkg_obj;
+
+		pkg_obj = aml_parse_package_from_aml(ctx);
+		if (pkg_obj) {
+			memcpy(ctx->return_value, pkg_obj,
+			       sizeof(*pkg_obj));
+			kfree(pkg_obj);
 		} else {
 			ctx->return_value->type = AML_OBJ_INTEGER;
 			ctx->return_value->value.integer = 0;
