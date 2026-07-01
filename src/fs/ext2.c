@@ -1389,6 +1389,127 @@ err_free_inode:
 	return ret;
 }
 
+/* ── Hard link creation ───────────────────────────────────────────── */
+
+/*
+ * Create a hard link (additional directory entry pointing to the same
+ * inode, with incremented link count).
+ *
+ * Parameters:
+ *   priv    — ext2 private data
+ *   oldpath — path to the existing file
+ *   newpath — path for the new link (must not exist)
+ *
+ * Returns 0 on success, negative errno on failure.
+ * Hard links to directories are not permitted (standard ext2 limitation).
+ */
+static int ext2_link(void *priv, const char *oldpath, const char *newpath)
+{
+	struct ext2_priv *ep = (struct ext2_priv *)priv;
+
+	/* ── Resolve old path to its inode ──────────────────────────── */
+	uint32_t target_ino;
+	if (ext2_path_to_ino(ep, oldpath, &target_ino) < 0)
+		return -ENOENT;
+
+	struct ext2_inode target_inode;
+	if (ext2_read_inode(ep, target_ino, &target_inode) < 0)
+		return -EIO;
+
+	/* Directories cannot be hard-linked (would create loops) */
+	if (target_inode.i_mode & S_IFDIR)
+		return -EPERM;
+
+	/* ── Extract parent directory path and basename from newpath ── */
+	const char *slash = strrchr(newpath, '/');
+	const char *basename;
+	char parent_path[128];
+
+	if (slash && slash != newpath) {
+		size_t plen = (size_t)(slash - newpath);
+		if (plen >= sizeof(parent_path))
+			return -ENAMETOOLONG;
+		memcpy(parent_path, newpath, plen);
+		parent_path[plen] = '\0';
+		basename = slash + 1;
+	} else if (slash && slash == newpath) {
+		/* Root directory, e.g. "/hardlink" */
+		parent_path[0] = '/';
+		parent_path[1] = '\0';
+		basename = newpath + 1;
+	} else {
+		/* No slash — relative path, parent is current directory.
+		 * Use root as default. */
+		strncpy(parent_path, "/", sizeof(parent_path) - 1);
+		parent_path[sizeof(parent_path) - 1] = '\0';
+		basename = newpath;
+	}
+
+	if (*basename == '\0')
+		return -EINVAL;
+
+	/* ── Look up the parent directory inode ──────────────────────── */
+	uint32_t parent_ino;
+	if (ext2_path_to_ino(ep, parent_path, &parent_ino) < 0)
+		return -ENOENT;
+
+	/* Check if an entry with the same name already exists */
+	{
+		struct ext2_inode check_dir;
+		if (ext2_read_inode(ep, parent_ino, &check_dir) < 0)
+			return -EIO;
+		uint32_t check_ino;
+		if (ext2_find_in_dir(ep, &check_dir, basename,
+		                      &check_ino) == 0)
+			return -EEXIST;
+	}
+
+	/* Verify parent is a directory */
+	struct ext2_inode dir_inode;
+	if (ext2_read_inode(ep, parent_ino, &dir_inode) < 0)
+		return -EIO;
+	if (!(dir_inode.i_mode & S_IFDIR))
+		return -ENOTDIR;
+
+	/* Determine the file type for the directory entry */
+	uint8_t file_type;
+	switch (target_inode.i_mode & S_IFMT) {
+	case S_IFREG:     file_type = EXT2_FT_REG_FILE;  break;
+	case S_IFDIR:     file_type = EXT2_FT_DIR;       break;
+	case S_IFLNK:     file_type = EXT2_FT_SYMLINK;   break;
+	case S_IFCHR:     file_type = EXT2_FT_CHRDEV;    break;
+	case S_IFBLK:     file_type = EXT2_FT_BLKDEV;    break;
+	case S_IFIFO:     file_type = EXT2_FT_FIFO;      break;
+	case S_IFSOCK:    file_type = EXT2_FT_SOCK;      break;
+	default:          file_type = EXT2_FT_UNKNOWN;   break;
+	}
+
+	/* ── Add directory entry in parent ────────────────────────────── */
+	int ret = ext2_add_dirent(ep, &dir_inode, parent_ino, basename,
+	                           target_ino, file_type);
+	if (ret < 0)
+		return ret;
+
+	/* ── Increment link count on the target inode ─────────────────── */
+	uint32_t now = (uint32_t)(timer_get_ticks() / TIMER_FREQ);
+	target_inode.i_links_count++;
+	target_inode.i_ctime = now;
+	ret = ext2_write_inode(ep, target_ino, &target_inode);
+	if (ret < 0)
+		return ret;
+
+	/* Update parent directory timestamps */
+	dir_inode.i_mtime = now;
+	ret = ext2_write_inode(ep, parent_ino, &dir_inode);
+	if (ret < 0)
+		return ret;
+
+	/* Update superblock write time */
+	ep->sb.s_wtime = now;
+
+	return 0;
+}
+
 /* ── VFS operations ──────────────────────────────────────────────── */
 
 static int ext2_read(void *priv, const char *path, void *buf,
@@ -1443,6 +1564,8 @@ static int ext2_stat(void *priv, const char *path, struct vfs_stat *st) {
     st->gid  = inode.i_gid;
     st->mode = (uint16_t)(inode.i_mode & 0xFFFF);
     st->mtime = inode.i_mtime;
+    st->nlink = inode.i_links_count;
+    st->ino   = ino;
     return 0;
 }
 
@@ -1470,6 +1593,7 @@ static struct vfs_ops ext2_ops = {
     .stat    = ext2_stat,
     .readdir_names = ext2_readdir,
     .readdir = ext2_readdir_legacy,
+    .link    = ext2_link,
     .symlink = ext2_symlink,
     .readlink = ext2_readlink,
 };
