@@ -520,6 +520,9 @@ static void ahci_drain_queue(struct ahci_port *port) {
                 port->slots[slot].req = req;
                 spinlock_irqsave_release(&ahci_lock, irq_flags);
 
+                /* Signal activity LED for this port */
+                ahci_led_activity(port->port_num);
+
                 /* Non-NCQ: issue synchronously (will poll briefly), then complete */
                 int ret = ahci_issue_non_ncq(port, slot);
 
@@ -538,6 +541,9 @@ static void ahci_drain_queue(struct ahci_port *port) {
             ahci_build_ncq_cmd(port, slot, req);
             port->inflight_mask |= (1u << slot);
             spinlock_irqsave_release(&ahci_lock, irq_flags);
+
+            /* Signal activity LED for this port */
+            ahci_led_activity(port->port_num);
 
             ahci_issue_ncq(port, slot);
         }
@@ -606,6 +612,9 @@ static void ahci_irq_handler(struct interrupt_frame *frame) {
                             s->req = NULL;
                             port->inflight_mask &= ~(1u << slot);
                             ahci_free_slot(port, slot);
+
+                            /* Signal activity LED */
+                            ahci_led_activity(port->port_num);
 
                             /* Check for errors */
                             if (tfd & PORT_TFD_ERR) {
@@ -871,6 +880,9 @@ int ahci_ncq_completion_poll(int port_num)
                     s->req = NULL;
                     p->inflight_mask &= ~(1u << slot);
                     ahci_free_slot(p, slot);
+
+                    /* Signal activity LED on completion */
+                    ahci_led_activity(port_num);
 
                     uint32_t tfd = port_read(port_num, PORT_TFD);
                     if (tfd & PORT_TFD_ERR) {
@@ -1618,6 +1630,156 @@ int ahci_alpm_init_port(int port_num)
     return 0;
 }
 
+/* ── AHCI LED Management (External Message Interface) ───────────────── */
+
+/* CAP bit for LED management support (AHCI 1.3, Section 3.1.1) */
+#define CAP_LED         (1u << 7)
+
+/* External Message Interface registers (AHCI 1.3, Section 10.9) */
+#define HBA_EM_LOC_OFFSET  0x40    /* EM Location */
+#define HBA_EM_CTL_OFFSET  0x44    /* EM Control */
+
+/* EM_LOC bit definitions */
+#define EM_LOC_MSG_TYPE_MASK   0xFF000000
+#define EM_LOC_MSG_TYPE_SHIFT  24
+#define EM_LOC_SMB             (1u << 23)  /* 1 = SMBIOS, 0 = memory buffer */
+#define EM_LOC_ADDR_MASK       0x007FFFFF  /* buffer address / SMBIOS handle */
+
+/* EM_CTL bit definitions */
+#define EM_CTL_MR       (1u << 0)  /* Message Received */
+#define EM_CTL_TM       (1u << 1)  /* Transmit Message */
+#define EM_CTL_RST      (1u << 9)  /* Reset */
+
+/* EM message types */
+#define EM_MSG_TYPE_LED     1  /* LED message */
+
+/* Static EM state */
+static int              ahci_led_em_type = 0;   /* EM message type (0 = none) */
+static volatile uint32_t *ahci_led_msg_buf = NULL;  /* EM message buffer VA */
+
+/**
+ * ahci_led_is_supported — check if the HBA supports LED management.
+ * Returns 1 if LED management via EM interface is available, 0 otherwise.
+ */
+int ahci_led_is_supported(void)
+{
+    return (ahci_led_em_type == EM_MSG_TYPE_LED) ? 1 : 0;
+}
+
+/**
+ * ahci_led_init — probe the EM (External Message Interface) for LED support.
+ * Checks CAP.LED and configures the EM message buffer for LED control.
+ * Returns 0 on success, -1 if LED management is not available.
+ */
+int ahci_led_init(void)
+{
+    uint32_t cap = hba_read(HBA_CAP_OFFSET);
+    if (!(cap & CAP_LED)) {
+        ahci_led_em_type = 0;
+        return -1;
+    }
+
+    uint32_t em_loc = hba_read(HBA_EM_LOC_OFFSET);
+    int msg_type = (int)((em_loc & EM_LOC_MSG_TYPE_MASK) >> EM_LOC_MSG_TYPE_SHIFT);
+
+    if (msg_type != EM_MSG_TYPE_LED) {
+        ahci_led_em_type = 0;
+        return -1;
+    }
+
+    ahci_led_em_type = msg_type;
+
+    /* If the EM buffer is in system memory (not SMBIOS), map it */
+    if (!(em_loc & EM_LOC_SMB)) {
+        uint64_t buf_paddr = (uint64_t)(em_loc & EM_LOC_ADDR_MASK);
+        if (buf_paddr != 0) {
+            ahci_led_msg_buf = (volatile uint32_t *)
+                PHYS_TO_VIRT((void *)(uintptr_t)buf_paddr);
+        }
+    }
+
+    /* Reset the EM interface to a known state */
+    uint32_t em_ctl = hba_read(HBA_EM_CTL_OFFSET);
+    hba_write(HBA_EM_CTL_OFFSET, em_ctl | EM_CTL_RST);
+    __asm__ volatile("mfence" ::: "memory");
+    hba_write(HBA_EM_CTL_OFFSET, em_ctl & ~EM_CTL_RST);
+    __asm__ volatile("mfence" ::: "memory");
+
+    /* Clear any pending message-received flag */
+    hba_write(HBA_EM_CTL_OFFSET, hba_read(HBA_EM_CTL_OFFSET) & ~EM_CTL_MR);
+    __asm__ volatile("mfence" ::: "memory");
+
+    kprintf("  AHCI: LED management via EM interface (type %d) %s\n",
+            msg_type,
+            ahci_led_msg_buf ? "memory-buffer" : "SMBIOS");
+
+    return 0;
+}
+
+/**
+ * ahci_led_set — turn a port's activity LED on or off via EM message.
+ * @port_num: physical port number (0-31)
+ * @on:        1 = LED on, 0 = LED off
+ * Returns 0 on success, -1 if LED management not available or port invalid.
+ */
+int ahci_led_set(int port_num, int on)
+{
+    if (ahci_led_em_type != EM_MSG_TYPE_LED)
+        return -1;
+    if (port_num < 0 || port_num > 31)
+        return -1;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&ahci_lock, &irq_flags);
+
+    if (ahci_led_msg_buf) {
+        uint32_t led_state = *ahci_led_msg_buf;
+        if (on)
+            led_state |= (1u << port_num);
+        else
+            led_state &= ~(1u << port_num);
+        *ahci_led_msg_buf = led_state;
+        __asm__ volatile("mfence" ::: "memory");
+
+        /* Trigger EM message transmission */
+        hba_write(HBA_EM_CTL_OFFSET, EM_CTL_TM);
+        __asm__ volatile("mfence" ::: "memory");
+    }
+
+    spinlock_irqsave_release(&ahci_lock, irq_flags);
+    return 0;
+}
+
+/**
+ * ahci_led_activity — pulse the activity LED for a port to indicate I/O.
+ * Sets the port's LED bit in the EM message buffer and triggers
+ * transmission. The LED will stay lit until the next EM message
+ * clears it, providing visual activity indication.
+ * @port_num: physical port number (0-31)
+ * Returns 0 on success, -1 if LED management not available.
+ */
+int ahci_led_activity(int port_num)
+{
+    if (ahci_led_em_type != EM_MSG_TYPE_LED)
+        return -1;
+    if (port_num < 0 || port_num > 31)
+        return -1;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&ahci_lock, &irq_flags);
+
+    if (ahci_led_msg_buf) {
+        uint32_t led_state = *ahci_led_msg_buf;
+        led_state |= (1u << port_num);    /* turn on */
+        *ahci_led_msg_buf = led_state;
+        __asm__ volatile("mfence" ::: "memory");
+        hba_write(HBA_EM_CTL_OFFSET, EM_CTL_TM);
+    }
+
+    spinlock_irqsave_release(&ahci_lock, irq_flags);
+    return 0;
+}
+
 /* ── PM-enhanced NCQ error handling ─────────────────────────────────── */
 
 /**
@@ -1875,6 +2037,9 @@ int __init ahci_init(void) {
     hba_write(HBA_GHC_OFFSET, ghc | GHC_AE | GHC_IE);
 
     spinlock_init(&ahci_lock);
+
+    /* Initialize LED management via EM interface (if supported) */
+    ahci_led_init();
 
     /* Scan implemented ports */
     uint32_t pi = hba_read(HBA_PI_OFFSET);

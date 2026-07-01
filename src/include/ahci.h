@@ -209,4 +209,27 @@ int  ahci_alpm_has_devsleep(void);
  * Returns 0 on success, -1 on error. */
 int  ahci_alpm_init_port(int port_num);
 
+/* ── LED Management API (External Message Interface) ────────────────── */
+
+/* Check if the HBA supports LED management via EM interface.
+ * Returns 1 if supported, 0 if not. */
+int  ahci_led_is_supported(void);
+
+/* Initialize LED management — probe EM interface for LED support.
+ * Called automatically during ahci_init(). Can also be called
+ * at runtime to re-probe. Returns 0 on success, -1 if not supported. */
+int  ahci_led_init(void);
+
+/* Set a port's activity LED on or off via EM message.
+ * @port_num: physical port number (0-31)
+ * @on:       1 = LED on, 0 = LED off
+ * Returns 0 on success, -1 if LED management not available. */
+int  ahci_led_set(int port_num, int on);
+
+/* Signal I/O activity on a port — pulses the activity LED.
+ * Sets the port's LED bit in the EM message and triggers transmission.
+ * @port_num: physical port number (0-31)
+ * Returns 0 on success, -1 if LED management not available. */
+int  ahci_led_activity(int port_num);
+
 #endif /* AHCI_H */
