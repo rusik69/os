@@ -326,6 +326,19 @@ static int bochs_drm_load(struct drm_device *dev, unsigned long flags)
         return -ENOMEM;
     }
 
+    /* Create a second CRTC and connector for multi-head support.
+     * This enables clone/extend modes when multiple connectors
+     * are available. */
+    int crtc2_id = drm_add_crtc(dev);
+    if (crtc2_id < 0) {
+        kprintf("[bochs-drm] warning: second CRTC not created\n");
+    }
+
+    int conn2_id = drm_add_connector(dev, 14);  /* DRM_MODE_CONNECTOR_DVI */
+    if (conn2_id < 0) {
+        kprintf("[bochs-drm] warning: second connector not created\n");
+    }
+
     /* Set mode capabilities to match the hardware */
     dev->min_width  = 640;
     dev->max_width  = 1280;
@@ -347,8 +360,22 @@ static int bochs_drm_load(struct drm_device *dev, unsigned long flags)
         }
     }
 
-    kprintf("[bochs-drm] loaded (LFB at 0x%llx, size %u)\n",
-            (unsigned long long)priv->lfb_phys, priv->lfb_size);
+    /* Populate modes for the second connector too (if created) */
+    if (conn2_id >= 0) {
+        for (int i = 0; i < DRM_MAX_CONNECTOR; i++) {
+            if (dev->connectors[i].in_use &&
+                dev->connectors[i].connector_id == (uint32_t)conn2_id) {
+                bochs_drm_populate_modes(dev, &dev->connectors[i]);
+                break;
+            }
+        }
+    }
+
+    kprintf("[bochs-drm] loaded (LFB at 0x%llx, size %u) "
+            "dual-head: crtcs=%d conn2=%d\n",
+            (unsigned long long)priv->lfb_phys, priv->lfb_size,
+            crtc2_id >= 0 ? 2 : 1,
+            conn2_id >= 0 ? conn2_id : -1);
 
     return 0;
 }

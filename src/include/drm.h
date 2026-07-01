@@ -28,6 +28,7 @@
 #define DRM_IOCTL_GET_CAP       DRM_IOWR(0x0C, struct drm_get_cap)
 #define DRM_IOCTL_MODE_GETRESOURCES DRM_IOWR(0xA0, struct drm_mode_card_res)
 #define DRM_IOCTL_MODE_GETCONNECTOR DRM_IOWR(0xA7, struct drm_mode_get_connector)
+#define DRM_IOCTL_MODE_GETCRTC     DRM_IOWR(0xA1, struct drm_mode_crtc)
 #define DRM_IOCTL_MODE_ADDFB    DRM_IOWR(0xAE, struct drm_mode_fb_cmd)
 #define DRM_IOCTL_MODE_RMFB     DRM_IOWR(0xAF, uint32_t)
 #define DRM_IOCTL_MODE_PAGE_FLIP DRM_IOWR(0xB0, struct drm_mode_crtc_page_flip)
@@ -278,6 +279,28 @@ struct drm_mode_fb_dirty_cmd {
     uint32_t pad;
 };
 
+/* ── CRTC page flip structure ──────────────────────────────────── */
+
+struct drm_mode_crtc_page_flip {
+    uint32_t crtc_id;
+    uint32_t fb_id;
+    uint32_t flags;
+    uint32_t reserved;
+    uint64_t user_data;
+};
+
+/* ── CRTC query structure ──────────────────────────────────────── */
+
+struct drm_mode_crtc {
+    uint64_t set_connectors_ptr;
+    uint32_t count_connectors;
+    uint32_t crtc_id;
+    uint32_t fb_id;
+    uint32_t gamma_size;
+    uint32_t mode_valid;
+    struct drm_mode_modeinfo mode;
+};
+
 /* ── DRM PRIME FD sharing structure ─────────────────────────── */
 
 struct drm_prime_handle {
@@ -359,6 +382,7 @@ struct drm_crtc {
     uint32_t fb_id;     /* current framebuffer */
     uint32_t x, y;
     uint32_t mode_valid;
+    uint32_t connector_mask;  /* bitmask: bit N = drives dev->connectors[N] */
 };
 
 struct drm_connector {
@@ -368,6 +392,7 @@ struct drm_connector {
     int      connected;
     int      mm_width;
     int      mm_height;
+    uint32_t crtc_id;          /* CRTC driving this connector (0 = unassigned) */
     /* Display modes */
     struct drm_display_mode modes[DRM_MAX_DISPLAY_MODES];
     int                    num_modes;
@@ -429,6 +454,68 @@ void drm_fb_unref(struct drm_device *dev, struct drm_framebuffer *fb);
 /* CRTC management */
 int  drm_add_crtc(struct drm_device *dev);
 int  drm_add_connector(struct drm_device *dev, uint32_t type);
+
+/* ── Multi-display support: CRTC ↔ connector routing ──────────── */
+
+/*
+ * drm_crtc_assign_connector — Assign/reassign a connector to a CRTC.
+ *
+ * Sets @connector's crtc_id to @crtc_id and updates the CRTC's
+ * connector_mask accordingly.  If the connector was previously
+ * assigned to a different CRTC, that CRTC's mask is cleared.
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int  drm_crtc_assign_connector(struct drm_device *dev,
+                                uint32_t crtc_id,
+                                uint32_t connector_id);
+
+/*
+ * drm_connector_get_crtc — Return the CRTC id driving @connector_id.
+ * Returns 0 if the connector is unassigned, or negative errno on error.
+ */
+int  drm_connector_get_crtc(struct drm_device *dev,
+                             uint32_t connector_id);
+
+/*
+ * drm_crtc_connector_mask — Return the connector bitmask for a CRTC.
+ * Returns non-negative mask on success, negative errno if CRTC not found.
+ */
+int  drm_crtc_connector_mask(struct drm_device *dev,
+                              uint32_t crtc_id);
+
+/* ── Multi-display helpers: clone / extend ──────────────────── */
+
+/*
+ * drm_display_clone_config — Configure clone mode for a set of connectors.
+ *
+ * Assigns all connectors identified by @connector_ids (count = @num_connectors)
+ * to the same CRTC (@crtc_id), so they all display identical content.
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int  drm_display_clone_config(struct drm_device *dev,
+                               uint32_t crtc_id,
+                               const uint32_t *connector_ids,
+                               int num_connectors);
+
+/*
+ * drm_display_extend_config — Configure extend mode for a set of
+ *                             CRTC–connector pairs.
+ *
+ * Each entry in @pairs assigns @crtc_id to @connector_id, creating an
+ * extended desktop across all configured displays.
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+struct crtc_connector_pair {
+    uint32_t crtc_id;
+    uint32_t connector_id;
+};
+
+int  drm_display_extend_config(struct drm_device *dev,
+                                const struct crtc_connector_pair *pairs,
+                                int num_pairs);
 
 /* ═══════════════════════════════════════════════════════════════════
  *  Damage tracking API
@@ -601,5 +688,51 @@ int  drm_dumb_destroy(struct drm_device *dev,
 int  drm_dumb_mmap(struct drm_gem_object *obj, void **vaddr);
 int  drm_dumb_dirtyfb(struct drm_device *dev,
                       struct drm_mode_fb_dirty_cmd *args);
+
+/* CRTC query / page flip ioctl handlers for multi-display support */
+int  drm_ioctl_mode_getcrtc(struct drm_device *dev,
+                             struct drm_file *fp, void *arg);
+int  drm_ioctl_mode_page_flip(struct drm_device *dev,
+                               struct drm_file *fp, void *arg);
+
+/* ═══════════════════════════════════════════════════════════════════
+ *  Multi-display layout ioctl (clone / extend)
+ * ═══════════════════════════════════════════════════════════════════ */
+
+#define DRM_MODE_LAYOUT_CLONE   0
+#define DRM_MODE_LAYOUT_EXTEND  1
+#define DRM_MODE_LAYOUT_SINGLE  2   /* restore single-display */
+
+#define DRM_IOCTL_MODE_SET_LAYOUT DRM_IOWR(0xBD, struct drm_mode_set_layout)
+
+/*
+ * Layout configuration from userspace for clone / extend modes.
+ *
+ * For clone mode: all connectors in @connector_ids_ptr are assigned to
+ * the same @crtc_id, so they all display identical content.
+ *
+ * For extend mode: @crtc_id and the connectors in @connector_ids_ptr
+ * form a 1:1 assignment — the i-th connector is assigned to
+ * (crtc_id + i) mod the number of available CRTCs, enabling independent
+ * per-display content across an extended desktop.
+ *
+ * For restore single mode: restores the default layout where each
+ * connector maps to CRTC with the same index.
+ */
+struct drm_mode_set_layout {
+    uint32_t layout_type;           /* DRM_MODE_LAYOUT_CLONE / EXTEND / SINGLE */
+    uint32_t crtc_id;               /* CRTC id for clone (or base CRTC for extend) */
+    uint64_t connector_ids_ptr;     /* pointer to uint32_t connector ID array */
+    uint32_t count_connectors;      /* number of connectors in the array */
+    uint32_t pad;                   /* reserved, must be 0 */
+};
+
+/* Multi-display management module API */
+int  drm_multi_init(void);
+void drm_multi_exit(void);
+int  drm_multi_set_layout(struct drm_device *dev,
+                          const struct drm_mode_set_layout *layout);
+int  drm_ioctl_mode_setlayout(struct drm_device *dev,
+                              struct drm_file *fp, void *arg);
 
 #endif /* DRM_H */

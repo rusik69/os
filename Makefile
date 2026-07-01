@@ -585,6 +585,7 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/drm/simplefb_drm.c \
          src/drivers/drm/drm_prime.c \
          src/drivers/drm/drm_damage.c \
+         src/drivers/drm/drm_multi.c \
          src/kernel/live_patch.c \
          src/kernel/cgroup.c \
          src/kernel/kaslr.c \
