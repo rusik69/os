@@ -32,4 +32,9 @@ void virtio_net_irq_rearm(void);
 int  virtio_net_lro_enabled(void);
 void virtio_net_get_lro_stats(struct virtio_net_lro_stats *stats);
 
+/* GRO (Generic Receive Offload) — merge received packets per-flow */
+int virtio_net_gro_receive(const uint8_t *pkt, uint32_t len,
+                            uint8_t *merged_buf, uint16_t *merged_len,
+                            uint64_t current_ticks);
+
 #endif
