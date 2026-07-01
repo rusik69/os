@@ -354,48 +354,224 @@ static int ext2_read_inode_block_pbn(struct ext2_priv *ep,
 	return ext2_read_block(ep, *pbn, buf);
 }
 
-/* Allocate a free data block from the block bitmap.
- * Returns 0 on success with @block_out set, negative on failure. */
-static int ext2_alloc_block(struct ext2_priv *ep, uint32_t *block_out)
+/* ── Flex block group helpers ──────────────────────────────────────
+ *
+ * When EXT2_FEATURE_INCOMPAT_FLEX_BG is set, consecutive block groups
+ * are grouped into "flexible block groups" whose metadata (bitmaps and
+ * inode tables) is packed together in the first group's data block area.
+ * This improves locality and reduces seeks.
+ *
+ * The standard flex group size is 16 block groups.
+ * ═══════════════════════════════════════════════════════════════════ */
+
+static inline uint32_t ext2_flex_group_size(struct ext2_priv *ep)
+{
+	(void)ep;
+	return 16;  /* Standard flex_bg group size (16 block groups) */
+}
+
+static inline uint32_t ext2_flex_group_of(uint32_t block_group,
+                                           uint32_t flex_size)
+{
+	return block_group / flex_size;
+}
+
+/* ── Bitmap scanning helpers (64-bit word-level) ────────────────────
+ *
+ * Instead of scanning bit-by-bit, these functions use 64-bit word
+ * operations and __builtin_ctzll for O(1) bit position lookup,
+ * dramatically speeding up bitmap scanning on large filesystems.
+ * ═══════════════════════════════════════════════════════════════════ */
+
+/* Find the first free (set) bit in a bitmap using word-level scanning.
+ * Returns the bit index on success, -1 if no free bit found.
+ * @bitmap: pointer to the bitmap data
+ * @num_bits: number of valid bits in the bitmap */
+static int ext2_bitmap_find_free(const uint8_t *bitmap, uint32_t num_bits)
+{
+	uint32_t num_words = num_bits / 64;
+	const uint64_t *words = (const uint64_t *)bitmap;
+
+	/* Scan full 64-bit words */
+	for (uint32_t w = 0; w < num_words; w++) {
+		if (words[w] != 0) {
+			int bit = __builtin_ctzll(words[w]);
+			return (int)(w * 64 + (uint32_t)bit);
+		}
+	}
+
+	/* Scan remaining bits (if num_bits not a multiple of 64) */
+	uint32_t start = num_words * 64;
+	for (uint32_t b = start; b < num_bits; b++) {
+		if (bitmap[b / 8] & (1U << (b % 8)))
+			return (int)b;
+	}
+
+	return -1;
+}
+
+/* Find a contiguous run of @cluster_size free bits in a bitmap.
+ * Returns the start bit index on success, -1 if not found.
+ * @bitmap: pointer to the bitmap data
+ * @num_bits: number of valid bits in the bitmap
+ * @cluster_size: required number of contiguous free bits */
+static int ext2_bitmap_find_cluster(const uint8_t *bitmap,
+                                     uint32_t num_bits,
+                                     uint32_t cluster_size)
+{
+	uint32_t run = 0;
+	uint32_t start = 0;
+
+	for (uint32_t b = 0; b < num_bits; b++) {
+		if (bitmap[b / 8] & (1U << (b % 8))) {
+			if (run == 0)
+				start = b;
+			run++;
+			if (run >= cluster_size)
+				return (int)start;
+		} else {
+			run = 0;
+		}
+	}
+
+	return -1;
+}
+
+/* ── Clustered block allocator with flex_bg awareness ───────────────
+ *
+ * Allocates @num_blocks contiguous free blocks, preferring the flex
+ * block group containing @prefer_group for locality.
+ *
+ * Algorithm:
+ *  1. If flex_bg is enabled, compute the preferred flex group from
+ *     @prefer_group.  Otherwise treat each block group as its own flex
+ *     group (flex_size = 1).
+ *  2. Scan flex groups starting with the preferred one, searching for
+ *     a group with enough free blocks and a contiguous cluster.
+ *  3. Use word-level bitmap scanning for efficiency.
+ *  4. Mark the cluster as used, zero the blocks, update counts.
+ *
+ * Returns 0 on success with @first_block_out set, -ENOSPC on failure. */
+static int ext2_alloc_blocks(struct ext2_priv *ep,
+                              uint32_t *first_block_out,
+                              uint32_t num_blocks,
+                              uint32_t prefer_group)
 {
 	uint8_t bitmap[4096];
-	for (uint32_t g = 0; g < ep->num_block_groups; g++) {
-		struct ext2_bg_desc *bgd = &ep->bgd_cache[g];
-		if (bgd->bg_free_blocks_count == 0)
-			continue;
-		if (ext2_read_block(ep, bgd->bg_block_bitmap, bitmap) < 0)
-			continue;
-		uint32_t blocks_in_group = ep->blocks_per_group;
-		if (g == ep->num_block_groups - 1) {
-			uint32_t rem = ep->sb.s_blocks_count -
-			               g * ep->blocks_per_group;
-			if (rem < blocks_in_group)
-				blocks_in_group = rem;
-		}
-		for (uint32_t b = 0; b < blocks_in_group; b++) {
-			if (!(bitmap[b / 8] & (1U << (b % 8))))
+	int has_flexbg = (ep->sb.s_feature_incompat &
+	                  EXT2_FEATURE_INCOMPAT_FLEX_BG) ? 1 : 0;
+	uint32_t flex_size = has_flexbg ? ext2_flex_group_size(ep) : 1;
+	uint32_t prefer_fg = ext2_flex_group_of(prefer_group, flex_size);
+	uint32_t flex_group_count =
+	    (ep->num_block_groups + flex_size - 1) / flex_size;
+
+	for (uint32_t f = 0; f < flex_group_count; f++) {
+		/* Start from the preferred flex group and wrap around */
+		uint32_t actual_fg = (prefer_fg + f) % flex_group_count;
+		uint32_t start_g = actual_fg * flex_size;
+		uint32_t end_g = start_g + flex_size;
+		if (end_g > ep->num_block_groups)
+			end_g = ep->num_block_groups;
+
+		for (uint32_t g = start_g; g < end_g; g++) {
+			struct ext2_bg_desc *bgd = &ep->bgd_cache[g];
+
+			/* Quick skip — not enough free blocks */
+			if (bgd->bg_free_blocks_count < num_blocks)
 				continue;
-			/* Free bit found — mark as used */
-			bitmap[b / 8] &= ~(1U << (b % 8));
+
+			if (ext2_read_block(ep, bgd->bg_block_bitmap,
+			                    bitmap) < 0)
+				continue;
+
+			uint32_t blocks_in_group = ep->blocks_per_group;
+			if (g == ep->num_block_groups - 1) {
+				uint32_t rem = ep->sb.s_blocks_count
+				               - g * ep->blocks_per_group;
+				if (rem < blocks_in_group)
+					blocks_in_group = rem;
+			}
+
+			/* Find free cluster */
+			int bit;
+			if (num_blocks == 1) {
+				bit = ext2_bitmap_find_free(bitmap,
+				                            blocks_in_group);
+			} else {
+				bit = ext2_bitmap_find_cluster(bitmap,
+				                blocks_in_group, num_blocks);
+			}
+
+			if (bit < 0)
+				continue;
+
+			/* ── Mark cluster as used in bitmap ── */
+			for (uint32_t b = (uint32_t)bit;
+			     b < (uint32_t)bit + num_blocks
+			     && b < blocks_in_group; b++) {
+				bitmap[b / 8] &= ~(1U << (b % 8));
+			}
+
 			if (ext2_write_block(ep, bgd->bg_block_bitmap,
-			                     bitmap) < 0)
+			                    bitmap) < 0)
 				return -EIO;
-			uint32_t block_num = g * ep->blocks_per_group + b;
-			bgd->bg_free_blocks_count--;
-			ep->sb.s_free_blocks_count--;
-			/* Zero the newly allocated block */
+
+			uint32_t base_block =
+			    g * ep->blocks_per_group + (uint32_t)bit;
+
+			/* Update free counts */
+			bgd->bg_free_blocks_count -= (uint16_t)num_blocks;
+			ep->sb.s_free_blocks_count -= num_blocks;
+
+			/* Zero the newly allocated blocks */
 			{
 				uint8_t zero[4096];
 				memset(zero, 0, ep->block_size);
-				if (ext2_write_block(ep, block_num,
-				                     zero) < 0)
-					return -EIO;
+				for (uint32_t b = 0; b < num_blocks; b++) {
+					if (ext2_write_block(ep,
+					    base_block + b, zero) < 0)
+						return -EIO;
+				}
 			}
-			*block_out = block_num;
+
+			*first_block_out = base_block;
 			return 0;
 		}
 	}
+
 	return -ENOSPC;
+}
+
+/* Single-block allocator (backward compatible).
+ *
+ * With flex_bg enabled, prefers the block group that has the most free
+ * blocks for better load distribution across groups.  Without flex_bg,
+ * falls back to the original sequential group scan (but using word-level
+ * bitmap scanning for efficiency).
+ *
+ * Returns 0 on success with @block_out set, -ENOSPC on failure. */
+static int ext2_alloc_block(struct ext2_priv *ep, uint32_t *block_out)
+{
+	if (ep->sb.s_feature_incompat & EXT2_FEATURE_INCOMPAT_FLEX_BG) {
+		/* Flex_bg: prefer the group with the most free blocks
+		 * for better distribution across flex groups. */
+		uint32_t prefer_group = 0;
+		uint32_t most_free = 0;
+
+		for (uint32_t g = 0; g < ep->num_block_groups; g++) {
+			if (ep->bgd_cache[g].bg_free_blocks_count
+			    > most_free) {
+				most_free =
+				    ep->bgd_cache[g].bg_free_blocks_count;
+				prefer_group = g;
+			}
+		}
+
+		return ext2_alloc_blocks(ep, block_out, 1, prefer_group);
+	}
+
+	/* Non-flex_bg: sequential scan, word-level bitmap scanning */
+	return ext2_alloc_blocks(ep, block_out, 1, 0);
 }
 
 /* Allocate a free inode from the inode bitmap.
