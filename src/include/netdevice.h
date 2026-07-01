@@ -38,6 +38,11 @@
 #define IFF_ALLMULTI    0x0200  /* Receive all multicast packets */
 #define IFF_MULTICAST   0x1000  /* Supports multicast */
 
+/* Net device features (NETIF_F_*) — hardware offload capabilities */
+#define NETIF_F_HW_VLAN_CTAG_TX     0x00000001U  /* HW VLAN CTAG insertion (TX) */
+#define NETIF_F_HW_VLAN_CTAG_RX     0x00000002U  /* HW VLAN CTAG stripping (RX) */
+#define NETIF_F_HW_VLAN_CTAG_FILTER 0x00000004U  /* HW VLAN CTAG filtering (VFTA) */
+
 /* Forward declaration */
 struct net_device;
 
@@ -78,6 +83,20 @@ struct net_device {
      * Returns 0 on success, negative errno on error. */
     int (*set_multicast_list)(struct net_device *dev,
                               const void *addr, int count);
+
+    /* ── VLAN offload callbacks ─────────────────────────────────────── */
+
+    /* Called when a new VLAN ID should be added to the device's filter.
+     * The driver should program hardware VLAN filter tables.
+     * Returns 0 on success, negative errno on error. */
+    int (*vlan_rx_add_vid)(struct net_device *dev, uint16_t vid);
+
+    /* Called when a VLAN ID should be removed from the device's filter.
+     * Returns 0 on success, negative errno on error. */
+    int (*vlan_rx_kill_vid)(struct net_device *dev, uint16_t vid);
+
+    /* ── Features / offload capabilities ────────────────────────────── */
+    uint32_t features;  /* bitmask of NETIF_F_* */
 };
 
 /* ── API ────────────────────────────────────────────────────────── */

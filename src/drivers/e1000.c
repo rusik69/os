@@ -12,6 +12,7 @@
 #include "smp.h"
 #include "err.h"
 #include "crc.h"
+#include "vlan.h"
 #ifdef MODULE
 #include "module.h"
 #endif
@@ -102,10 +103,27 @@ static const uint32_t TX_Q_REGS[E1000_MAX_QUEUES][5] = {
 #define TCTL_EN     (1U << 1)
 #define TCTL_PSP    (1U << 3)
 
+/* CTRL VLAN bits */
+#define CTRL_VME    (1U << 19)   /* VLAN Mode Enable */
+
+/* VLAN registers */
+#define REG_VET     0x5200       /* VLAN EtherType (default 0x8100) */
+#define REG_VFTA    0x5600       /* VLAN Filter Table Array (128 dwords) */
+
+/* VFTA layout: 128 dwords indexed by VID[11:5], bit within word by VID[4:0] */
+#define VFTA_SIZE   128
+
+/* RX descriptor special field when VME is enabled (VLAN stripping):
+ *   bits [15:13] = PCP (Priority Code Point)
+ *   bit  [12]   = DEI (Drop Eligible Indicator)
+ *   bits [11:0]  = VID (VLAN Identifier)
+ */
+
 /* TX descriptor command bits */
 #define TDESC_CMD_EOP  (1U << 0)
 #define TDESC_CMD_IFCS (1U << 1)
 #define TDESC_CMD_RS   (1U << 3)
+#define TDESC_CMD_VLE  (1U << 6)  /* VLAN Insertion Enable */
 
 /* TX/RX descriptor status */
 #define TDESC_STA_DD   (1U << 0)
@@ -189,6 +207,9 @@ static uint32_t itr_pkt_count = 0;
 static uint64_t itr_last_tick = 0;
 static int      itr_enabled = 0;
 
+/* VLAN offload state */
+static int      vlan_offload_enabled = 0;
+
 /* ── MMIO helpers ──────────────────────────────────────────────────── */
 static void e1000_write(uint32_t reg, uint32_t val) {
     *(volatile uint32_t *)(mmio_base + reg) = val;
@@ -258,6 +279,135 @@ static void e1000_rss_init(void) {
     e1000_write(REG_MRQC, mrqc);
 
     kprintf("  e1000: RSS enabled (%d queues, hash TCPv4|IPv4)\n", num_queues);
+}
+
+/* ── VLAN offload helpers ────────────────────────────────────────────── */
+
+/*
+ * e1000_vfta_set - Set a VLAN ID bit in the VFTA (VLAN Filter Table Array).
+ * @vid: VLAN identifier (0-4095).
+ *
+ * The VFTA is a 128-dword bit array.  Each bit corresponds to one VLAN.
+ * Register index = (vid >> 5), bit within register = (vid & 0x1F).
+ */
+static void e1000_vfta_set(uint16_t vid)
+{
+    uint32_t reg_idx = ((uint32_t)vid >> 5) & 0x7F;
+    uint32_t bit     = (uint32_t)vid & 0x1F;
+    uint32_t val;
+
+    val = e1000_read(REG_VFTA + reg_idx * 4);
+    val |= (1U << bit);
+    e1000_write(REG_VFTA + reg_idx * 4, val);
+}
+
+/*
+ * e1000_vfta_clear_vid - Clear a VLAN ID bit in the VFTA.
+ * @vid: VLAN identifier (0-4095).
+ */
+static void e1000_vfta_clear_vid(uint16_t vid)
+{
+    uint32_t reg_idx = ((uint32_t)vid >> 5) & 0x7F;
+    uint32_t bit     = (uint32_t)vid & 0x1F;
+    uint32_t val;
+
+    val = e1000_read(REG_VFTA + reg_idx * 4);
+    val &= ~(1U << bit);
+    e1000_write(REG_VFTA + reg_idx * 4, val);
+}
+
+/* e1000_vfta_clear - Zero out the entire VFTA (reject all VLANs). */
+static void e1000_vfta_clear(void)
+{
+    for (int i = 0; i < VFTA_SIZE; i++)
+        e1000_write(REG_VFTA + i * 4, 0);
+}
+
+/*
+ * e1000_vlan_offload_init - Enable hardware VLAN offloading.
+ *
+ * Configures the NIC for hardware VLAN tag stripping on RX and tag
+ * insertion on TX via the VLE descriptor bit.  Initialises the VLAN
+ * filter table (VFTA) with the default VLAN ID.
+ */
+static void e1000_vlan_offload_init(void)
+{
+    if (!nic_present)
+        return;
+
+    /* Set VLAN EtherType (default 0x8100) */
+    e1000_write(REG_VET, htons(VLAN_TPID));
+
+    /* Clear VFTA and add default VLAN 1 */
+    e1000_vfta_clear();
+    e1000_vfta_set(VLAN_DEFAULT_VID);
+
+    /* Set CTRL.VME — enable VLAN Mode.
+     * When VME is set:
+     *  - RX: hardware strips the 4-byte VLAN tag, writes it to the
+     *    RX descriptor's special field.
+     *  - TX: when the VLE bit is set in the TX descriptor's cmd byte,
+     *    hardware inserts the VLAN tag from the special field. */
+    {
+        uint32_t ctrl = e1000_read(REG_CTRL);
+        ctrl |= CTRL_VME;
+        e1000_write(REG_CTRL, ctrl);
+    }
+
+    vlan_offload_enabled = 1;
+
+    kprintf("  e1000: VLAN offloading enabled (VET=0x%04x, default VID=1)\n",
+            VLAN_TPID);
+}
+
+/*
+ * e1000_vlan_rx_add_vid - Add a VLAN ID to the hardware filter table.
+ * @dev: net_device (unused).
+ * @vid: VLAN identifier to add.
+ *
+ * Programs one entry in the VFTA so the NIC accepts frames tagged with
+ * this VLAN.
+ *
+ * Return: 0 on success, negative errno on error.
+ */
+int e1000_vlan_rx_add_vid(struct net_device *dev, uint16_t vid)
+{
+    (void)dev;
+
+    if (!nic_present)
+        return -EIO;
+    if (vid >= VLAN_MAX_VID)
+        return -EINVAL;
+
+    e1000_vfta_set(vid);
+    kprintf("[E1000] VLAN %u added to filter table\n", (unsigned)vid);
+    return 0;
+}
+
+/*
+ * e1000_vlan_rx_kill_vid - Remove a VLAN ID from the hardware filter table.
+ * @dev: net_device (unused).
+ * @vid: VLAN identifier to remove.
+ *
+ * Clears the corresponding bit in the VFTA.  The default VLAN 1 cannot
+ * be removed.
+ *
+ * Return: 0 on success, negative errno on error.
+ */
+int e1000_vlan_rx_kill_vid(struct net_device *dev, uint16_t vid)
+{
+    (void)dev;
+
+    if (!nic_present)
+        return -EIO;
+    if (vid >= VLAN_MAX_VID)
+        return -EINVAL;
+    if (vid == VLAN_DEFAULT_VID)
+        return -EINVAL;  /* cannot remove default VLAN */
+
+    e1000_vfta_clear_vid(vid);
+    kprintf("[E1000] VLAN %u removed from filter table\n", (unsigned)vid);
+    return 0;
 }
 
 /* ── Interrupt handler ─────────────────────────────────────────────── */
@@ -539,6 +689,9 @@ int e1000_init(void) {
                 (unsigned)(1000000000ULL / (ITR_BALANCED * 256ULL + 1)));
     }
 
+    /* Configure VLAN offloading (VME, VFTA, VET) */
+    e1000_vlan_offload_init();
+
     /* ── Register with netdevice layer ──────────────────────────── */
     {
         static struct net_device ndev;
@@ -557,6 +710,15 @@ int e1000_init(void) {
             /* Wire up multicast and feature-change callbacks */
             ndev.set_multicast_list = (void *)(void *)e1000_set_multicast;
             ndev.set_features = NULL;  /* not yet used */
+
+            /* VLAN offload callbacks */
+            ndev.vlan_rx_add_vid  = e1000_vlan_rx_add_vid;
+            ndev.vlan_rx_kill_vid = e1000_vlan_rx_kill_vid;
+
+            /* Advertise VLAN offload capabilities */
+            ndev.features = NETIF_F_HW_VLAN_CTAG_TX
+                          | NETIF_F_HW_VLAN_CTAG_RX
+                          | NETIF_F_HW_VLAN_CTAG_FILTER;
 
             int ifindex = netif_register(&ndev);
             if (ifindex >= 0) {
@@ -650,9 +812,44 @@ static int e1000_netdev_transmit(struct net_device *dev,
     uint64_t __e1k_flags;
     spinlock_irqsave_acquire(&e1000_lock, &__e1k_flags);
 
-    memcpy(qp->tx_buffers[idx], data, len);
-    qp->tx_descs[idx].length = len;
-    qp->tx_descs[idx].cmd = TDESC_CMD_EOP | TDESC_CMD_IFCS | TDESC_CMD_RS;
+    const uint8_t *tx_data = data;
+    uint16_t tx_len = len;
+    uint8_t vlan_buf[RX_BUF_SIZE];  /* for VLAN-offloaded frame rebuild */
+
+    /* VLAN offload: detect 802.1Q tagged frames and offload tag
+     * insertion to hardware via the VLE (VLAN Insertion Enable) bit.
+     *
+     * When a frame has TPID 0x8100 at bytes 12-13, a 4-byte VLAN
+     * header follows (TPID + TCI).  We strip these 4 bytes from the
+     * frame body and write the TCI into the descriptor's special field
+     * with VLE set — the hardware re-inserts the tag on the wire. */
+    if (vlan_offload_enabled && len >= 18 &&
+        data[12] == 0x81 && data[13] == 0x00) {
+        uint16_t vlan_tci;
+
+        /* Extract TCI from original frame (bytes 14-15) */
+        vlan_tci = ((uint16_t)data[14] << 8) | data[15];
+
+        /* Rebuild frame without the 4-byte VLAN header:
+         *   bytes 0-11: DA + SA (unchanged)
+         *   bytes 12+:  ethertype (was bytes 16-17) + payload */
+        memcpy(vlan_buf, data, 12);
+        if (len > 16)
+            memcpy(vlan_buf + 12, data + 16, len - 16);
+        tx_len = len - 4;
+        tx_data = vlan_buf;
+
+        /* Set VLE bit and write VLAN TCI into special field */
+        qp->tx_descs[idx].special = vlan_tci;
+        qp->tx_descs[idx].cmd = TDESC_CMD_EOP | TDESC_CMD_IFCS
+                              | TDESC_CMD_RS | TDESC_CMD_VLE;
+    } else {
+        qp->tx_descs[idx].special = 0;
+        qp->tx_descs[idx].cmd = TDESC_CMD_EOP | TDESC_CMD_IFCS | TDESC_CMD_RS;
+    }
+
+    memcpy(qp->tx_buffers[idx], tx_data, tx_len);
+    qp->tx_descs[idx].length = tx_len;
     qp->tx_descs[idx].status = 0;
 
     qp->tx_cur = (qp->tx_cur + 1) % NUM_TX_DESC;
@@ -709,6 +906,22 @@ static int e1000_netdev_receive(struct net_device *dev,
         uint16_t len = qp->rx_descs[idx].length;
         if (len > max_len) len = max_len;
         memcpy(buf, qp->rx_buffers[idx], len);
+
+        /* If VLAN offload is enabled, the hardware may have stripped a
+         * VLAN tag from the frame and placed it in the RX descriptor's
+         * special field.  Log extracted VLAN info for debugging. */
+        if (vlan_offload_enabled) {
+            uint16_t rx_vlan_tag = qp->rx_descs[idx].special;
+            if (rx_vlan_tag != 0) {
+                uint16_t rx_vid = rx_vlan_tag & VLAN_VID_MASK;
+                (void)rx_vid;
+                kprintf("[E1000] RX: VLAN tag stripped, VID=%u "
+                        "PCP=%u DEI=%u\n",
+                        (unsigned)rx_vid,
+                        (unsigned)((rx_vlan_tag >> 13) & 7),
+                        (unsigned)((rx_vlan_tag >> 12) & 1));
+            }
+        }
 
         qp->rx_descs[idx].status = 0;
         int old_cur = qp->rx_cur;

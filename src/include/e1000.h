@@ -3,6 +3,9 @@
 
 #include "types.h"
 
+/* Forward declaration for VLAN offload callbacks that take net_device */
+struct net_device;
+
 #define E1000_VENDOR    0x8086
 #define E1000_DEVICE    0x100E  /* 82540EM - QEMU default */
 #define E1000_DEV_82574 0x10D3  /* 82574L - supports multi-queue RSS (2 queues) */
@@ -34,5 +37,9 @@ int e1000_rx_queue_count(void);
 int e1000_set_promisc(int enable);
 int e1000_set_allmulti(int enable);
 int e1000_set_multicast(void *dev, void *addr, int count);
+
+/* VLAN offload control */
+int e1000_vlan_rx_add_vid(struct net_device *dev, uint16_t vid);
+int e1000_vlan_rx_kill_vid(struct net_device *dev, uint16_t vid);
 
 #endif
