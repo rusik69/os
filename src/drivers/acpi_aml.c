@@ -15,6 +15,17 @@
 #include "printf.h"
 #include "heap.h"
 #include "aml_exec.h"
+#include "smbus.h"
+#include "errno.h"
+
+/* ── Forward declarations ────────────────────────────────────────── */
+
+/* Read a little-endian value from AML byte stream (defined later) */
+static uint64_t aml_read_le64(const uint8_t *data, uint32_t max_len,
+                              uint32_t offset, int bytes);
+
+/* Initialize operation region handlers (defined at end of file) */
+static void aml_opregion_init(void);
 
 /* ── AML Opcodes (subset relevant to namespace construction) ────── */
 
@@ -87,6 +98,17 @@
 #define AML_DATA_TYPE_STRING    1
 #define AML_DATA_TYPE_BUFFER    2
 #define AML_DATA_TYPE_PACKAGE   3
+
+/* Operation region handler table entry */
+struct opregion_handler_entry {
+    uint8_t                space_id;
+    aml_opregion_handler_t handler;
+    void                  *context;
+};
+
+/* Global operation region handler table */
+static struct opregion_handler_entry g_opregion_handlers[AML_OPREGION_MAX_HANDLERS];
+static int g_opregion_handler_count;
 
 /* ── Namespace Storage ──────────────────────────────────────────── */
 
@@ -432,6 +454,12 @@ static uint32_t aml_process_object(struct aml_parse_state *state,
 	int is_named_object = 0;
 	int is_container = 0;
 
+	/* Variables for OpRegion parsing */
+	uint8_t opregion_space = 0;
+	uint64_t opregion_offset = 0;
+	uint64_t opregion_length = 0;
+	int opregion_parsed = 0;
+
 	/*
 	 * Determine the node type and parse the structure based on opcode.
 	 * Most namespace-creating opcodes follow:
@@ -616,6 +644,85 @@ static uint32_t aml_process_object(struct aml_parse_state *state,
 			total_size = 2 + pkg_bytes + pkg_len;
 			break;
 
+		case AML_EXT_OPREGION_OP:
+		{
+			/*
+			 * OpRegion: 0x5B 0x80 PkgLength NameString RegionSpace Offset Length
+			 *   - RegionSpace: ByteConst (space ID: 0=Memory, 1=IO, 4=SMBus, etc.)
+			 *   - Offset: Integer (Byte/Word/DWord/QWord)
+			 *   - Length: Integer (Byte/Word/DWord/QWord)
+			 *
+			 * We create a namespace node of type AML_NS_NAME and store
+			 * the region parameters in the value field as an opregion object.
+			 */
+			int parse_ok = 1;
+
+			node_type = AML_NS_NAME;  /* OpRegion acts as a named value */
+			is_named_object = 1;
+			is_container = 0;
+
+			o += 2;  /* skip EXT_PREFIX + OpRegion opcode */
+			pkg_len = aml_decode_pkg_length(aml, max_len, o, &pkg_bytes);
+			if (pkg_len == 0 || pkg_len < 6)
+				return 0;
+			o += pkg_bytes;
+			name_bytes = aml_read_last_nameseg(aml, max_len, o, name);
+			if (name_bytes == 0)
+				return 0;
+			o += name_bytes;
+
+			/* RegionSpace */
+			if (o >= max_len) {
+				parse_ok = 0;
+			} else if (aml[o] == AML_BYTE_PREFIX && o + 2 <= max_len) {
+				opregion_space = aml[o + 1];
+				o += 2;
+			} else {
+				opregion_space = aml[o];  /* raw byte */
+				o++;
+			}
+
+			/* Offset */
+			if (o >= max_len) {
+				parse_ok = 0;
+			} else if (aml[o] == AML_BYTE_PREFIX && o + 2 <= max_len) {
+				opregion_offset = aml[o + 1];
+				o += 2;
+			} else if (aml[o] == AML_WORD_PREFIX && o + 3 <= max_len) {
+				opregion_offset = aml_read_le64(aml, max_len, o + 1, 2);
+				o += 3;
+			} else if (aml[o] == AML_DWORD_PREFIX && o + 5 <= max_len) {
+				opregion_offset = aml_read_le64(aml, max_len, o + 1, 4);
+				o += 5;
+			} else {
+				/* Raw integer byte */
+				opregion_offset = aml[o];
+				o++;
+			}
+
+			/* Length */
+			if (o >= max_len) {
+				parse_ok = 0;
+			} else if (aml[o] == AML_BYTE_PREFIX && o + 2 <= max_len) {
+				opregion_length = aml[o + 1];
+				o += 2;
+			} else if (aml[o] == AML_WORD_PREFIX && o + 3 <= max_len) {
+				opregion_length = aml_read_le64(aml, max_len, o + 1, 2);
+				o += 3;
+			} else if (aml[o] == AML_DWORD_PREFIX && o + 5 <= max_len) {
+				opregion_length = aml_read_le64(aml, max_len, o + 1, 4);
+				o += 5;
+			} else {
+				opregion_length = aml[o];
+				o++;
+			}
+
+			/* Total size: 2 (ext prefix + op) + pkg_bytes + pkg_len */
+			total_size = 2 + pkg_bytes + pkg_len;
+			opregion_parsed = (parse_ok) ? 1 : 0;
+			break;
+		}
+
 		default:
 			/* Unknown extended opcode — skip 2 bytes (prefix + ext) and return */
 			return 2;
@@ -691,6 +798,18 @@ static uint32_t aml_process_object(struct aml_parse_state *state,
 		}
 
 		*state = saved;
+	}
+
+	/* If an OpRegion was parsed, store the region info in the node's value */
+	if (opregion_parsed && node_idx >= 0) {
+		struct aml_object *oreg;
+
+		oreg = aml_create_opregion(opregion_space, opregion_offset, opregion_length);
+		if (oreg) {
+			if (g_ns.nodes[node_idx].value)
+				aml_free_object(g_ns.nodes[node_idx].value);
+			g_ns.nodes[node_idx].value = oreg;
+		}
 	}
 
 	return total_size;
@@ -807,6 +926,9 @@ static uint32_t aml_walk_terms(struct aml_parse_state *state, uint32_t max_offse
 
 int aml_build_namespace(void)
 {
+	/* Initialize operation region handlers (idempotent if called multiple times) */
+	aml_opregion_init();
+
 	/* Reset namespace */
 	memset(&g_ns, 0, sizeof(g_ns));
 
@@ -3657,4 +3779,216 @@ struct aml_object *aml_evaluate_method(const char *path,
 done:
 	aml_exec_context_cleanup(&ctx);
 	return result;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+ * Operation Region Handlers
+ *
+ * Implements the OpRegion handler mechanism and the SMBus handler.
+ * ═══════════════════════════════════════════════════════════════════ */
+
+/* ── Create OpRegion AML Object ─────────────────────────────────── */
+
+struct aml_object *aml_create_opregion(uint8_t space_id,
+                                       uint64_t region_offset,
+                                       uint64_t region_length)
+{
+	struct aml_object *obj;
+
+	obj = aml_alloc_object();
+	if (!obj)
+		return NULL;
+
+	obj->type = AML_OBJ_OPREGION;
+	obj->value.opregion.space_id = space_id;
+	obj->value.opregion.region_offset = region_offset;
+	obj->value.opregion.region_length = region_length;
+	return obj;
+}
+
+/* ── Handler Registry ───────────────────────────────────────────── */
+
+int aml_opregion_register_handler(uint8_t space_id,
+                                  aml_opregion_handler_t handler,
+                                  void *context)
+{
+	int i;
+
+	if (!handler)
+		return -1;
+
+	/* Check if this space_id already has a handler (replace it) */
+	for (i = 0; i < g_opregion_handler_count; i++) {
+		if (g_opregion_handlers[i].space_id == space_id) {
+			g_opregion_handlers[i].handler = handler;
+			g_opregion_handlers[i].context = context;
+			return 0;
+		}
+	}
+
+	/* Add new handler entry */
+	if (g_opregion_handler_count >= AML_OPREGION_MAX_HANDLERS)
+		return -1;
+
+	i = g_opregion_handler_count;
+	g_opregion_handlers[i].space_id = space_id;
+	g_opregion_handlers[i].handler = handler;
+	g_opregion_handlers[i].context = context;
+	g_opregion_handler_count++;
+	return 0;
+}
+
+void aml_opregion_unregister_handler(uint8_t space_id)
+{
+	int i;
+
+	for (i = 0; i < g_opregion_handler_count; i++) {
+		if (g_opregion_handlers[i].space_id == space_id) {
+			/* Shift remaining entries */
+			for (int j = i; j < g_opregion_handler_count - 1; j++)
+				g_opregion_handlers[j] = g_opregion_handlers[j + 1];
+			g_opregion_handler_count--;
+			return;
+		}
+	}
+}
+
+int aml_opregion_access(const struct aml_opregion_info *region,
+                        uint64_t offset, uint8_t *buf,
+                        uint32_t length, int write)
+{
+	struct aml_opregion_access access;
+	int i;
+
+	if (!region || !buf || length == 0)
+		return -EINVAL;
+
+	/* Find a handler for this region's space_id */
+	for (i = 0; i < g_opregion_handler_count; i++) {
+		if (g_opregion_handlers[i].space_id == region->space_id) {
+			access.buf = buf;
+			access.length = length;
+			access.offset = offset;
+			access.write = write;
+			return g_opregion_handlers[i].handler(region, &access,
+			                                       g_opregion_handlers[i].context);
+		}
+	}
+
+	/* No handler registered for this address space */
+	kprintf("[AML] No handler for opregion space_id %u\n",
+	        (unsigned int)region->space_id);
+	return -ENOENT;
+}
+
+/* ── SMBus Operation Region Handler ─────────────────────────────── */
+
+/*
+ * Handle read/write access to an SMBus operation region.
+ *
+ * In ACPI, an SMBus OpRegion declaration uses:
+ *   OpRegion (XXXX, SMBus, Offset, Length)
+ * where Offset[31:24] contains the SMBus slave address (7-bit << 1).
+ *
+ * When AML code accesses a field in this region, the field's byte
+ * offset within the region maps to the SMBus command/register offset.
+ *
+ * For each access:
+ *   - Byte reads/writes use smbus_read_byte / smbus_write_byte
+ *   - The slave address is extracted from region->region_offset[31:24]
+ *   - The command/register is the access offset within the region
+ *
+ * This handler supports 1-byte and 2-byte (word) accesses. Larger
+ * accesses are broken into individual byte operations.
+ */
+static int aml_smbus_handler(const struct aml_opregion_info *region,
+                             struct aml_opregion_access *access,
+                             void *context)
+{
+	uint8_t slave_addr;
+	uint8_t cmd;
+	uint32_t remaining;
+	uint32_t buf_off;
+	int ret;
+
+	(void)context;  /* unused */
+
+	if (!region || !access || !access->buf)
+		return -EIO;
+
+	/* Extract SMBus slave address from bits [31:24] of region offset */
+	slave_addr = (uint8_t)((region->region_offset >> 24) & 0xFF);
+	/* If not encoded in the high byte, default to the low byte */
+	if (slave_addr == 0)
+		slave_addr = (uint8_t)(region->region_offset & 0xFF);
+
+	cmd = (uint8_t)(access->offset & 0xFF);
+	remaining = access->length;
+	buf_off = 0;
+
+	if (!smbus_is_present()) {
+		kprintf("[AML] SMBus opregion: controller not present\n");
+		return -ENODEV;
+	}
+
+	while (remaining > 0) {
+		if (remaining >= 2 && (access->offset & 1) == 0) {
+			/* Word-aligned: do word access */
+			if (access->write) {
+				uint16_t wval = (uint16_t)access->buf[buf_off] |
+				                ((uint16_t)access->buf[buf_off + 1] << 8);
+				ret = smbus_write_word(slave_addr, cmd, wval);
+			} else {
+				uint16_t wval = 0;
+				ret = smbus_read_word(slave_addr, cmd, &wval);
+				if (ret == 0) {
+					access->buf[buf_off] = (uint8_t)(wval & 0xFF);
+					access->buf[buf_off + 1] = (uint8_t)(wval >> 8);
+				}
+			}
+			if (ret < 0)
+				return -EIO;
+			remaining -= 2;
+			buf_off += 2;
+			cmd++;
+		} else {
+			/* Byte access */
+			if (access->write) {
+				ret = smbus_write_byte(slave_addr, cmd, access->buf[buf_off]);
+			} else {
+				uint8_t bval = 0;
+				ret = smbus_read_byte(slave_addr, cmd, &bval);
+				if (ret == 0)
+					access->buf[buf_off] = bval;
+			}
+			if (ret < 0)
+				return -EIO;
+			remaining -= 1;
+			buf_off += 1;
+			cmd++;
+		}
+	}
+
+	return 0;
+}
+
+/* ── Initialize Operation Region Handlers ───────────────────────── */
+
+static void aml_opregion_init(void)
+{
+	int ret;
+
+	kprintf("[AML] Initializing operation region handlers...\n");
+
+	/* Register the SMBus handler */
+	ret = aml_opregion_register_handler(AML_OPREGION_SMBUS,
+	                                    aml_smbus_handler, NULL);
+	if (ret < 0) {
+		kprintf("[AML] Failed to register SMBus opregion handler\n");
+	} else {
+		kprintf("[AML] SMBus operation region handler registered\n");
+	}
+
+	/* Additional handlers (SystemMemory, SystemIO, etc.) can be
+	 * registered here or from their respective driver modules. */
 }
