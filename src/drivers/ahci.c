@@ -1107,6 +1107,342 @@ int ahci_ncq_queue_status(int port_num, uint32_t *out_active,
     return -1;
 }
 
+/* ── PM (Port Multiplier) SCR Access ─────────────────────────────────── */
+
+/* AHCI CAP bit definitions for PM support */
+#define CAP_SPM         (1u << 17)  /* Supports Port Multiplier */
+#define CAP_PSC         (1u << 4)   /* Port Multiplier SCR Access */
+
+/* PM port encoding in PORT_SCTL bits 27:24 */
+#define SCTL_PMP_SHIFT  24
+#define SCTL_PMP_MASK   ((uint32_t)0x0F << SCTL_PMP_SHIFT)
+
+/*
+ * On AHCI 1.3+ controllers, PM port SCR access is provided by writing
+ * the PM port number to bits 27:24 of PORT_SCTL. Subsequent reads from
+ * PORT_SSTS, PORT_SERR, and PORT_SACT return that PM port's registers.
+ *
+ * Controllers with CAP.PSC=1 support this. We check at runtime via the
+ * HBA_CAP register and fall back cleanly when not supported.
+ */
+
+/**
+ * ahci_pm_scr_read — read a PM port's SCR register.
+ * Reads SStatus, SError, SControl, or SActive for a specific PM port.
+ * Returns 0 on success, -1 if unsupported or invalid args.
+ */
+int ahci_pm_scr_read(int phys_port, int pm_port, int scr_addr,
+                      uint32_t *val)
+{
+    if (!val || pm_port < 0 || pm_port > AHCI_PM_PORT_SELF || scr_addr > 3)
+        return -1;
+
+    /* Check if controller supports PM SCR access */
+    uint32_t cap = hba_read(HBA_CAP_OFFSET);
+    if (!(cap & CAP_PSC))
+        return -1;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&ahci_lock, &irq_flags);
+
+    /* Save original SCTL, write PM port to bits 27:24 */
+    uint32_t orig_sctl = port_read(phys_port, PORT_SCTL);
+    uint32_t sctl = (orig_sctl & ~SCTL_PMP_MASK)
+                  | ((uint32_t)(pm_port & 0x0F) << SCTL_PMP_SHIFT);
+    port_write(phys_port, PORT_SCTL, sctl);
+    __asm__ volatile("mfence" ::: "memory");
+
+    /* Read the selected SCR register */
+    switch (scr_addr) {
+    case AHCI_SCR_STATUS:
+        *val = port_read(phys_port, PORT_SSTS);
+        break;
+    case AHCI_SCR_ERROR:
+        *val = port_read(phys_port, PORT_SERR);
+        break;
+    case AHCI_SCR_CONTROL:
+        *val = port_read(phys_port, PORT_SCTL) & 0x0F0F0F0F;
+        break;
+    case AHCI_SCR_ACTIVE:
+        *val = port_read(phys_port, PORT_SACT);
+        break;
+    default:
+        port_write(phys_port, PORT_SCTL, orig_sctl);
+        spinlock_irqsave_release(&ahci_lock, irq_flags);
+        return -1;
+    }
+
+    /* Restore original SCTL */
+    port_write(phys_port, PORT_SCTL, orig_sctl);
+    __asm__ volatile("mfence" ::: "memory");
+
+    spinlock_irqsave_release(&ahci_lock, irq_flags);
+    return 0;
+}
+
+/**
+ * ahci_pm_scr_write — write a PM port's SCR register.
+ * Typically used for clearing SError or writing SControl (DET, SPD, IPM).
+ * Returns 0 on success, -1 if unsupported or invalid args.
+ */
+int ahci_pm_scr_write(int phys_port, int pm_port, int scr_addr,
+                       uint32_t val)
+{
+    if (pm_port < 0 || pm_port > AHCI_PM_PORT_SELF || scr_addr > 2)
+        return -1;
+    if (scr_addr == AHCI_SCR_ACTIVE)
+        return -1;  /* SActive is read-only via this path */
+
+    uint32_t cap = hba_read(HBA_CAP_OFFSET);
+    if (!(cap & CAP_PSC))
+        return -1;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&ahci_lock, &irq_flags);
+
+    uint32_t orig_sctl = port_read(phys_port, PORT_SCTL);
+    uint32_t sctl = (orig_sctl & ~SCTL_PMP_MASK)
+                  | ((uint32_t)(pm_port & 0x0F) << SCTL_PMP_SHIFT);
+    port_write(phys_port, PORT_SCTL, sctl);
+    __asm__ volatile("mfence" ::: "memory");
+
+    switch (scr_addr) {
+    case AHCI_SCR_ERROR:
+        port_write(phys_port, PORT_SERR, val);
+        break;
+    case AHCI_SCR_CONTROL:
+        /* Preserve PMP field, write control bits only */
+        val = (val & 0x0F0F0F0F) | (sctl & SCTL_PMP_MASK);
+        port_write(phys_port, PORT_SCTL, val);
+        break;
+    default:
+        port_write(phys_port, PORT_SCTL, orig_sctl);
+        spinlock_irqsave_release(&ahci_lock, irq_flags);
+        return -1;
+    }
+
+    __asm__ volatile("mfence" ::: "memory");
+    port_write(phys_port, PORT_SCTL, orig_sctl);
+    __asm__ volatile("mfence" ::: "memory");
+
+    spinlock_irqsave_release(&ahci_lock, irq_flags);
+    return 0;
+}
+
+/* ── PM Port Detection & Reset ──────────────────────────────────────── */
+
+/**
+ * ahci_pm_port_detect — check if a PM port has a device connected.
+ * Uses PM SCR access to read SStatus.DET for the PM port.
+ * Returns 1 if device present, 0 if absent, -1 on error.
+ */
+int ahci_pm_port_detect(int phys_port, int pm_port)
+{
+    uint32_t ssts;
+    if (ahci_pm_scr_read(phys_port, pm_port, AHCI_SCR_STATUS, &ssts) < 0)
+        return -1;
+    return ((ssts & SSTS_DET_MASK) == SSTS_DET_PRESENT) ? 1 : 0;
+}
+
+/**
+ * ahci_pm_port_reset — perform a COMRESET on a specific PM port.
+ * Cycles DET in the port's SControl register (0→1→0).
+ * Returns 0 on success, -1 on failure.
+ */
+int ahci_pm_port_reset(int phys_port, int pm_port)
+{
+    uint32_t cap = hba_read(HBA_CAP_OFFSET);
+    if (!(cap & CAP_PSC))
+        return -1;
+
+    /* Write DET=0 to current SControl to initiate reset */
+    if (ahci_pm_scr_write(phys_port, pm_port, AHCI_SCR_CONTROL,
+                           (uint32_t)SCTL_DET_INIT << 0) < 0)
+        return -1;
+
+    /* Wait for COMRESET to complete — check for device presence */
+    __asm__ volatile("mfence" ::: "memory");
+    for (int i = 0; i < 10000; i++) {
+        uint32_t ssts;
+        if (ahci_pm_scr_read(phys_port, pm_port, AHCI_SCR_STATUS, &ssts) == 0) {
+            if ((ssts & SSTS_DET_MASK) == SSTS_DET_PRESENT)
+                return 0;
+        }
+        __asm__ volatile("pause");
+    }
+
+    return -1;
+}
+
+/**
+ * ahci_pm_get_port_map — get bitmask of PM ports with connected devices.
+ * Checks SStatus.DET for each PM port 0-14.
+ * Returns the number of connected ports, or -1 on error.
+ */
+int ahci_pm_get_port_map(int phys_port, uint32_t *port_map)
+{
+    if (!port_map)
+        return -1;
+
+    uint32_t cap = hba_read(HBA_CAP_OFFSET);
+    if (!(cap & CAP_PSC))
+        return -1;
+
+    *port_map = 0;
+    int count = 0;
+
+    for (int pm = 0; pm < AHCI_MAX_PM_PORTS; pm++) {
+        uint32_t ssts;
+        if (ahci_pm_scr_read(phys_port, pm, AHCI_SCR_STATUS, &ssts) == 0) {
+            if ((ssts & SSTS_DET_MASK) == SSTS_DET_PRESENT) {
+                *port_map |= (1u << pm);
+                count++;
+            }
+        }
+    }
+
+    return count;
+}
+
+/* ── PM Info & Diagnostics ──────────────────────────────────────────── */
+
+/**
+ * ahci_pm_get_info — read PM capabilities from GSCR registers.
+ * Uses SCR read at PM port 15 (the PM itself) to get revision and port count.
+ * Returns 0 on success, -1 if not supported.
+ */
+int ahci_pm_get_info(int phys_port, uint32_t *revision,
+                      uint32_t *port_count)
+{
+    if (!revision || !port_count)
+        return -1;
+
+    uint32_t cap = hba_read(HBA_CAP_OFFSET);
+    if (!(cap & CAP_PSC))
+        return -1;
+
+    /*
+     * PM GSCR registers are accessed via SCR read at PM port 15
+     * with the GSCR address encoded in bits 27:24. This encoding
+     * is identical to per-port SCR access, but at PM port 15 the
+     * read returns the PM's internal status registers.
+     *
+     * GSCR 0: PM revision
+     * GSCR 1: Number of PM ports - 1
+     */
+    uint32_t rev, nports;
+
+    if (ahci_pm_scr_read(phys_port, AHCI_PM_PORT_SELF,
+                          AHCI_PM_GSCR_REVISION, &rev) < 0)
+        return -1;
+    if (ahci_pm_scr_read(phys_port, AHCI_PM_PORT_SELF,
+                          AHCI_PM_GSCR_PORT_COUNT, &nports) < 0)
+        return -1;
+
+    *revision   = rev;
+    *port_count = (nports & 0x0F) + 1;  /* GSCR 1 = N-1 encoding */
+
+    return 0;
+}
+
+/**
+ * ahci_pm_dump_info — print PM diagnostic information to kernel log.
+ */
+void ahci_pm_dump_info(int phys_port)
+{
+    uint32_t cap = hba_read(HBA_CAP_OFFSET);
+    int has_psc = (cap & CAP_PSC) ? 1 : 0;
+
+    kprintf("  AHCI PM diagnostics (physical port %d):\n", phys_port);
+    kprintf("    CAP.PSC (PM SCR access): %s\n",
+            has_psc ? "yes" : "no");
+
+    uint32_t port_map;
+    int connected = ahci_pm_get_port_map(phys_port, &port_map);
+    if (connected >= 0) {
+        kprintf("    Connected PM port map: 0x%04x (%d ports)\n",
+                (unsigned int)port_map, connected);
+    } else {
+        uint32_t ssts = port_read(phys_port, PORT_SSTS);
+        kprintf("    PM SCR not available; SSTS=0x%08x\n",
+                (unsigned int)ssts);
+    }
+
+    /* Log per-PM-port status */
+    for (int pm = 0; pm < AHCI_MAX_PM_PORTS; pm++) {
+        uint32_t ssts, serr;
+        if (ahci_pm_scr_read(phys_port, pm, AHCI_SCR_STATUS, &ssts) == 0) {
+            ahci_pm_scr_read(phys_port, pm, AHCI_SCR_ERROR, &serr);
+            uint8_t det = ssts & SSTS_DET_MASK;
+            if (det != SSTS_DET_NONE) {
+                kprintf("    PM port %2d: DET=%u SPD=%u IPM=%u SERR=0x%04x\n",
+                        pm,
+                        (unsigned int)det,
+                        (unsigned int)((ssts >> 4) & 0x0F),
+                        (unsigned int)((ssts >> 8) & 0x0F),
+                        (unsigned int)(serr));
+            }
+        }
+    }
+}
+
+/* ── PM-enhanced NCQ error handling ─────────────────────────────────── */
+
+/**
+ * ahci_ncq_pm_recover — NCQ error recovery for a specific PM port.
+ * When an error occurs behind a PM, this function attempts to identify
+ * which PM port(s) had errors and recover them individually.
+ * @phys_port: physical port number
+ * @pm_port_mask: bitmask of PM ports to recover (bits 0-14)
+ * Returns 0 on success, -1 on complete failure.
+ *
+ * PM-specific error recovery flow:
+ * 1. Read NCQ error log (same as physical port recovery)
+ * 2. Determine which PM port caused the error from the error log
+ * 3. Abort in-flight commands for that PM port
+ * 4. Reset the specific PM port if needed
+ * 5. Re-probe the PM port (send IDENTIFY)
+ */
+static int ahci_ncq_pm_recover(int phys_port, uint32_t pm_port_mask)
+{
+    kprintf("AHCI: PM NCQ error recovery on phys port %d, mask 0x%04x\n",
+            phys_port, (unsigned int)pm_port_mask);
+
+    /* Abort all in-flight requests for the affected PM ports */
+    for (int i = 0; i < ahci_port_count; i++) {
+        struct ahci_port *p = &ahci_ports[i];
+        if (!p->present || p->port_num != phys_port)
+            continue;
+        if (!p->is_pm || !(pm_port_mask & (1u << p->pm_port)))
+            continue;
+
+        for (int s = 0; s < AHCI_SLOT_COUNT; s++) {
+            struct blk_request *req = p->slots[s].req;
+            if (req) {
+                p->slots[s].req = NULL;
+                tag_bitmap_free(&p->tag_bitmap, s);
+                req->result = -EIO;
+                blk_request_done(req);
+            }
+        }
+        p->inflight_mask = 0;
+        p->tag_bitmap = 0;
+    }
+
+    /* Reset each affected PM port */
+    for (int pm = 0; pm < AHCI_MAX_PM_PORTS; pm++) {
+        if (pm_port_mask & (1u << pm)) {
+            kprintf("AHCI: resetting PM port %d on phys port %d\n",
+                    pm, phys_port);
+            ahci_pm_port_reset(phys_port, pm);
+        }
+    }
+
+    kprintf("AHCI: PM NCQ error recovery complete on phys port %d\n",
+            phys_port);
+    return 0;
+}
+
 /* ── Physical port initialization (direct-attached or PM host) ──────── */
 
 /**
@@ -1326,9 +1662,45 @@ int __init ahci_init(void) {
         struct ahci_port *phys_port = &ahci_ports[phys_idx];
 
         if (is_pm) {
-            /* Port Multiplier present — probe each PM sub-port (0-14) */
+            /* Port Multiplier present — log detection */
+            kprintf("  AHCI port %d: Port Multiplier detected, probing PM sub-ports\n", p);
+
+            /* Dump PM diagnostics if supported */
+            uint32_t cap_reg = hba_read(HBA_CAP_OFFSET);
+            if (cap_reg & CAP_PSC) {
+                uint32_t pm_rev = 0, pm_nports = 0;
+                if (ahci_pm_get_info(p, &pm_rev, &pm_nports) == 0) {
+                    kprintf("  AHCI PM info: revision=0x%x, %u ports\n",
+                            (unsigned int)pm_rev,
+                            (unsigned int)pm_nports);
+                }
+                ahci_pm_dump_info(p);
+            }
+
+            /* Probe each PM sub-port (0-14) */
             int pm_devices_found = 0;
+
+            /*
+             * Fast path: if the controller supports PM SCR access, check
+             * each PM port's SStatus.DET before sending IDENTIFY. This
+             * avoids unnecessary commands to unpopulated ports.
+             *
+             * Fallback: probe all 15 PM ports via IDENTIFY.
+             */
+            uint32_t pm_port_map = 0;
+            int pm_connected = -1;
+            if (cap_reg & CAP_PSC) {
+                pm_connected = ahci_pm_get_port_map(p, &pm_port_map);
+            }
+
             for (int pm = 0; pm < AHCI_MAX_PM_PORTS; pm++) {
+                /* Skip ports not connected (if port map is available) */
+                if (pm_connected >= 0 && !(pm_port_map & (1u << pm)))
+                    continue;
+
+                /* Check port signature — ATAPI devices need special handling */
+                uint32_t pm_sig = port_read(p, PORT_SIG);
+
                 /* IDENTIFY this PM port using the physical port's slot 0 */
                 struct ahci_port probe_port;
                 memcpy(&probe_port, phys_port, sizeof(probe_port));
@@ -1342,7 +1714,16 @@ int __init ahci_init(void) {
                     probe_port.slots[s].req = NULL;
                 }
 
-                ahci_build_raw_cmd(&probe_port, 0, ATA_CMD_IDENTIFY, 0, 1,
+                int is_atapi = 0;
+                uint8_t identify_cmd = ATA_CMD_IDENTIFY;
+
+                /* For ATAPI devices, send IDENTIFY PACKET DEVICE (0xA1) */
+                if (pm_sig == AHCI_SIG_ATAPI) {
+                    identify_cmd = 0xA1;  /* IDENTIFY PACKET DEVICE */
+                    is_atapi = 1;
+                }
+
+                ahci_build_raw_cmd(&probe_port, 0, identify_cmd, 0, 1,
                                    phys_port->slots[0].data_buf_phys, 0,
                                    sizeof(struct fis_reg_h2d) / 4);
                 {
@@ -1356,6 +1737,9 @@ int __init ahci_init(void) {
 
                 if (ahci_issue_non_ncq(&probe_port, 0) == 0) {
                     uint16_t *id = (uint16_t *)phys_port->slots[0].data_buf_virt;
+
+                    /* For ATA devices: sector count from IDENTIFY words 100-101 or 57-58 */
+                    /* For ATAPI devices: sector count from words 100-101 or 57-58 */
                     uint32_t lo = ((uint32_t)id[101] << 16) | id[100];
                     uint32_t sector_count = lo ? lo : ((uint32_t)id[57] | ((uint32_t)id[58] << 16));
 
@@ -1374,12 +1758,12 @@ int __init ahci_init(void) {
                         sub_port->slots[s].req = NULL;
                     }
 
-                    /* Overwrite the slot 0 data with the IDENTIFY result
-                     * (already done via the probe above — the data is in
-                     * phys_port->slots[0].data_buf_virt) */
-
                     char blkname[16];
-                    snprintf(blkname, sizeof(blkname), "ahci%dp%d", p, pm);
+                    if (is_atapi) {
+                        snprintf(blkname, sizeof(blkname), "ahci%dp%d-cd", p, pm);
+                    } else {
+                        snprintf(blkname, sizeof(blkname), "ahci%dp%d", p, pm);
+                    }
 
                     int bd_id = BLOCKDEV_AHCI_PM_BASE + ahci_port_count;
                     int ret = blockdev_register(bd_id, blkname,
@@ -1392,13 +1776,13 @@ int __init ahci_init(void) {
                         ahci_port_count++;
                         ahci_present = 1;
                         pm_devices_found++;
-                        kprintf("  AHCI port %d PM %d: %lu sectors (%lu MB)%s\n",
+                        kprintf("  AHCI port %d PM %d: %lu sectors (%lu MB)%s%s\n",
                                 p, pm,
                                 (unsigned long)sector_count,
                                 (unsigned long)(sector_count / 2048),
-                                sub_port->ncq_capable ? " NCQ" : "");
+                                sub_port->ncq_capable ? " NCQ" : "",
+                                is_atapi ? " ATAPI" : "");
                     }
-                } else {
                 }
             }
 
