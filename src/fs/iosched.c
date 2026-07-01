@@ -50,6 +50,10 @@ static int  kyber_submit(struct iosched_queue *iq, struct blk_request *req);
 static struct blk_request *kyber_fetch(struct iosched_queue *iq);
 static void kyber_free(struct iosched_queue *iq);
 
+static int  bfq_submit(struct iosched_queue *iq, struct blk_request *req);
+static struct blk_request *bfq_fetch(struct iosched_queue *iq);
+static void bfq_free(struct iosched_queue *iq);
+
 static const struct iosched_ops g_noop_ops = {
     .name   = "noop",
     .submit = noop_submit,
@@ -78,6 +82,13 @@ static const struct iosched_ops g_kyber_ops = {
     .free   = kyber_free,
 };
 
+static const struct iosched_ops g_bfq_ops = {
+    .name   = "bfq",
+    .submit = bfq_submit,
+    .fetch  = bfq_fetch,
+    .free   = bfq_free,
+};
+
 /* ── Helpers ─────────────────────────────────────────────────────── */
 
 static inline int is_read(struct blk_request *req)
@@ -102,7 +113,7 @@ void iosched_init(void)
         g_iosched_queues[i].ops    = &g_noop_ops;
     }
     g_iosched_initialized = 1;
-    kprintf("[OK] iosched: I/O scheduler initialized (NOOP/DEADLINE/CFQ/KYBER)\n");
+    kprintf("[OK] iosched: I/O scheduler initialized (NOOP/DEADLINE/CFQ/KYBER/BFQ)\n");
 }
 
 /* ── iosched_get_queue ───────────────────────────────────────────── */
@@ -155,7 +166,7 @@ int iosched_set_policy(int dev_id, int policy)
 {
     struct iosched_queue *iq = iosched_get_queue(dev_id);
     if (!iq) return -ENODEV;
-    if (policy != IOSCHED_NOOP && policy != IOSCHED_DEADLINE && policy != IOSCHED_CFQ && policy != IOSCHED_KYBER)
+    if (policy != IOSCHED_NOOP && policy != IOSCHED_DEADLINE && policy != IOSCHED_CFQ && policy != IOSCHED_KYBER && policy != IOSCHED_BFQ)
         return -EINVAL;
 
     uint64_t irq_flags;
@@ -208,6 +219,14 @@ int iosched_set_policy(int dev_id, int policy)
         iq->kyber.domains[KYBER_OTHER_DOMAIN].tokens_min = KYBER_OTHER_TOKENS_MIN;
         iq->kyber.domains[KYBER_OTHER_DOMAIN].tokens_max = KYBER_OTHER_TOKENS_MAX;
         iq->kyber.domains[KYBER_OTHER_DOMAIN].target_ns  = KYBER_OTHER_TARGET_NS;
+        break;
+    case IOSCHED_BFQ:
+        iq->ops = &g_bfq_ops;
+        memset(&iq->bfq, 0, sizeof(iq->bfq));
+        INIT_LIST_HEAD(&iq->bfq.rt_queues);
+        INIT_LIST_HEAD(&iq->bfq.be_queues);
+        INIT_LIST_HEAD(&iq->bfq.idle_queues);
+        iq->bfq.low_latency = 1;  /* Enable low-latency mode by default */
         break;
     default:
         iq->ops = &g_noop_ops;
@@ -1016,6 +1035,425 @@ static void cfq_free(struct iosched_queue *iq)
     cfq->idle_expired = 0;
 }
 
+/* ════════════════════════════════════════════════════════════════════
+ * BFQ scheduler (Budget Fair Queuing)
+ *
+ * BFQ extends the per-process queue model of CFQ with a budget-based
+ * scheduling discipline.  Each process queue receives a "budget" of
+ * sectors to transfer.  Scheduling decisions use a simplified
+ * B-WF2Q+ (Budget Weighted Fair Queuing) approach:
+ *
+ *   1. Queues are grouped by priority class: RT → BE → IDLE
+ *   2. Each queue has a weight; higher-weight queues get larger budgets
+ *      (budget = default_budget * weight / 8)
+ *   3. Within a class, queues are served in round-robin order, each
+ *      dispatching up to its remaining budget
+ *   4. When a queue exhausts its budget, its budget is reset and it
+ *      goes to the back of the class list
+ *   5. Low-latency mode: queues performing small I/Os (< BFQ_SMALL_REQ_THRESH
+ *      sectors) get a budget bonus to reduce latency for interactive tasks
+ *   6. Anticipatory idle: after draining a sync queue, idle briefly
+ *      waiting for more I/O from the same process (if think-time suggests
+ *      it's interactive)
+ *   7. Write starvation: if reads dominate for 2s without writes,
+ *      force a write queue dispatch
+ * ════════════════════════════════════════════════════════════════════ */
+
+/* ── Idle timer callback ───────────────────────────────────────── */
+
+static void bfq_idle_timer_cb(void *arg)
+{
+    struct iosched_queue *iq = (struct iosched_queue *)arg;
+    iq->bfq.idle_expired = 1;
+}
+
+/* ── Helper: get the class list for a given priority class ──────── */
+
+static struct list_head *bfq_class_list(struct iosched_bfq_data *bfq,
+                                         unsigned int ioprio_class)
+{
+    switch (ioprio_class) {
+    case IOPRIO_CLASS_RT:
+        return &bfq->rt_queues;
+    case IOPRIO_CLASS_BE:
+        return &bfq->be_queues;
+    case IOPRIO_CLASS_IDLE:
+        return &bfq->idle_queues;
+    default:
+        return &bfq->be_queues;
+    }
+}
+
+/* ── Helper: compute priority weight ───────────────────────────── */
+
+static unsigned int bfq_class_weight(unsigned int ioprio_class,
+                                      unsigned int ioprio_data)
+{
+    switch (ioprio_class) {
+    case IOPRIO_CLASS_RT:
+        return BFQ_WEIGHT_RT;
+    case IOPRIO_CLASS_BE:
+        /* Scale BE weight by priority level (0=highest=more weight) */
+        return BFQ_WEIGHT_BE_DEF * (8 - (ioprio_data & 0x7));
+    case IOPRIO_CLASS_IDLE:
+        return BFQ_WEIGHT_IDLE;
+    default:
+        return BFQ_WEIGHT_BE_DEF;
+    }
+}
+
+/* ── Helper: compute initial budget from weight ────────────────── */
+
+static int bfq_budget_from_weight(unsigned int weight)
+{
+    int budget = (int)(BFQ_DEFAULT_BUDGET * weight / BFQ_BUDGET_WEIGHT_SCALE);
+    if (budget < BFQ_BUDGET_MIN)
+        budget = BFQ_BUDGET_MIN;
+    if (budget > BFQ_BUDGET_MAX)
+        budget = BFQ_BUDGET_MAX;
+    return budget;
+}
+
+/* ── Helper: is request synchronous? ───────────────────────────── */
+
+static inline int bfq_req_is_sync(struct blk_request *req)
+{
+    return (req->flags & BLK_REQ_SYNC) != 0;
+}
+
+/* ── Helper: is request "small" (interactive indicator) ────────── */
+
+static inline int bfq_req_is_small(struct blk_request *req)
+{
+    return req->count <= BFQ_SMALL_REQ_THRESH;
+}
+
+/* ── Find or create a per-process queue ─────────────────────────── */
+
+static struct bfq_queue *bfq_get_queue(struct iosched_bfq_data *bfq,
+                                        struct blk_request *req)
+{
+    struct process *proc = process_get_current();
+    uint64_t pid = proc ? (uint64_t)(proc->pid) : 0;
+
+    /* Look for existing queue for this PID */
+    for (int i = 0; i < bfq->queue_count; i++) {
+        if (bfq->queues[i].pid == pid && bfq->queues[i].count >= 0)
+            return &bfq->queues[i];
+    }
+
+    /* Create a new queue if space allows */
+    if (bfq->queue_count >= BFQ_QUEUES_MAX)
+        return NULL;
+
+    struct bfq_queue *q = &bfq->queues[bfq->queue_count];
+    memset(q, 0, sizeof(*q));
+    q->pid = pid;
+    q->count = 0;
+    q->ioprio = req->ioprio;
+    q->is_sync = bfq_req_is_sync(req);
+    /* Compute priority weight */
+    unsigned int cls = IOPRIO_PRIO_CLASS(req->ioprio);
+    unsigned int dat = IOPRIO_PRIO_DATA(req->ioprio);
+    q->weight = bfq_class_weight(cls, dat);
+    q->initial_budget = bfq_budget_from_weight(q->weight);
+    q->budget = q->initial_budget;
+
+    /* Low-latency mode: boost budget for small-I/O processes */
+    if (bfq->low_latency && bfq_req_is_small(req)) {
+        q->budget = (q->budget * 3) / 2;
+        if (q->budget > BFQ_BUDGET_MAX)
+            q->budget = BFQ_BUDGET_MAX;
+    }
+
+    bfq->queue_count++;
+    return q;
+}
+
+/* ── bfq_submit — submit a request to BFQ ──────────────────────── */
+
+static int bfq_submit(struct iosched_queue *iq, struct blk_request *req)
+{
+    struct iosched_bfq_data *bfq = &iq->bfq;
+
+    struct bfq_queue *q = bfq_get_queue(bfq, req);
+    if (!q) {
+        /* Fall back to queue 0 if max queues reached */
+        q = &bfq->queues[0];
+        if (!q) return -ENOMEM;
+    }
+
+    /* Update sync/async tracking */
+    if (bfq_req_is_sync(req))
+        q->is_sync = 1;
+
+    /* If we are idling for this queue and the process submitted more,
+     * cancel the idle timer — we can serve this immediately. */
+    if (bfq->idle_q == q && q->count == 0 &&
+        hrtimer_active(&bfq->idle_timer)) {
+        hrtimer_cancel(&bfq->idle_timer);
+        bfq->idle_expired = 0;
+        bfq->idle_q = NULL;
+        bfq->idle_hits++;
+    }
+
+    /* Try to merge with the last request in this per-process queue */
+    if (q->tail && q->tail->lba + q->tail->count == req->lba &&
+        ((q->tail->flags ^ req->flags) & (BLK_REQ_READ | BLK_REQ_WRITE)) == 0) {
+        q->tail->count += req->count;
+        return 0;
+    }
+
+    /* Append to per-process queue */
+    if (q->tail) {
+        q->tail->next = req;
+        q->tail = req;
+    } else {
+        q->head = req;
+        q->tail = req;
+    }
+    req->next = NULL;
+    q->count++;
+
+    /* Add to appropriate class list if this is the first request */
+    if (q->count == 1 && list_empty(&q->list)) {
+        unsigned int cls = IOPRIO_PRIO_CLASS(q->ioprio);
+        if (cls == 0) cls = IOPRIO_CLASS_BE; /* NONE → BE */
+        list_add_tail(&q->list, bfq_class_list(bfq, cls));
+    }
+
+    return 0;
+}
+
+/* ── Helper: pick the next priority class that has work ─────────── */
+
+static int bfq_pick_class(struct iosched_bfq_data *bfq)
+{
+    if (!list_empty(&bfq->rt_queues))
+        return IOPRIO_CLASS_RT;
+    if (!list_empty(&bfq->be_queues))
+        return IOPRIO_CLASS_BE;
+    if (!list_empty(&bfq->idle_queues))
+        return IOPRIO_CLASS_IDLE;
+    return -1;
+}
+
+/* ── bfq_fetch — fetch the next request from BFQ ───────────────── */
+
+static struct blk_request *bfq_fetch(struct iosched_queue *iq)
+{
+    struct iosched_bfq_data *bfq = &iq->bfq;
+    uint64_t now_ns = timer_get_ns();
+
+    /* ── Phase 1: Check idle timer state ── */
+    if (bfq->idle_q && bfq->idle_expired) {
+        /* Idle timed out — move off this queue */
+        bfq->idle_q = NULL;
+        bfq->idle_expired = 0;
+        bfq->current_q = NULL;
+    }
+
+    if (bfq->idle_q) {
+        /* Still within the idle window — check if the queue has requests */
+        struct bfq_queue *iqidle = bfq->idle_q;
+        if (iqidle->head) {
+            /* Process submitted more during idle window — serve it */
+            hrtimer_cancel(&bfq->idle_timer);
+            bfq->idle_expired = 0;
+            struct blk_request *req = iqidle->head;
+            iqidle->head = req->next;
+            if (!iqidle->head)
+                iqidle->tail = NULL;
+            req->next = NULL;
+            iqidle->count--;
+            iqidle->last_fetch = now_ns;
+            bfq->current_q = iqidle;
+            return req;
+        }
+        /* Queue is still empty during idle window — return NULL,
+         * the caller will retry or a new submission will trigger. */
+        return NULL;
+    }
+
+    /* ── Phase 2: Check current queue — is its budget still valid? ── */
+    if (bfq->current_q) {
+        struct bfq_queue *q = bfq->current_q;
+
+        if (q->budget <= 0 || q->count == 0) {
+            /* Budget exhausted or queue empty — move to next */
+            struct bfq_queue *old_q = bfq->current_q;
+
+            if (old_q->count > 0) {
+                /* Still has requests but budget exhausted — reset budget
+                 * and re-queue at the back of the class list */
+                if (bfq->low_latency) {
+                    /* In low-latency mode, if the process is doing small
+                     * I/O, give a larger budget next time */
+                    if (old_q->is_sync) {
+                        old_q->initial_budget = bfq_budget_from_weight(old_q->weight);
+                        old_q->budget = (old_q->initial_budget * 3) / 2;
+                        if (old_q->budget > BFQ_BUDGET_MAX)
+                            old_q->budget = BFQ_BUDGET_MAX;
+                    } else {
+                        old_q->budget = bfq_budget_from_weight(old_q->weight);
+                    }
+                } else {
+                    old_q->budget = bfq_budget_from_weight(old_q->weight);
+                }
+                bfq->budget_reassignments++;
+                unsigned int cls = IOPRIO_PRIO_CLASS(old_q->ioprio);
+                if (cls == 0) cls = IOPRIO_CLASS_BE;
+                list_add_tail(&old_q->list, bfq_class_list(bfq, cls));
+            } else {
+                /* Queue empty — check if we should idle */
+                if (old_q->is_sync && old_q->last_fetch > 0) {
+                    /* Start anticipatory idle — wait for more I/O */
+                    bfq->idle_q = old_q;
+                    bfq->idle_expired = 0;
+                    hrtimer_init(&bfq->idle_timer, bfq_idle_timer_cb, iq);
+                    hrtimer_start(&bfq->idle_timer, BFQ_SLICE_IDLE_NS);
+                    bfq->idle_waits++;
+                    bfq->current_q = old_q;
+                    return NULL;
+                }
+                /* Not sync — remove from active list */
+                INIT_LIST_HEAD(&old_q->list);
+            }
+            bfq->current_q = NULL;
+        } else {
+            /* Budget still valid — dispatch from current queue */
+            if (!q || !q->head)
+                return NULL;
+
+            struct blk_request *req = q->head;
+            q->head = req->next;
+            if (!q->head)
+                q->tail = NULL;
+            req->next = NULL;
+            q->count--;
+            q->last_fetch = now_ns;
+
+            /* Deduct from budget (sectors) */
+            q->budget -= (int)req->count;
+            if (q->budget < 0)
+                q->budget = 0;
+
+            /* Track sync/async */
+            if (bfq_req_is_sync(req))
+                q->is_sync = 1;
+
+            return req;
+        }
+    }
+
+    /* ── Phase 3: Select next priority class and queue ── */
+
+    /* Check write starvation: if reads have dominated for too long,
+     * force a write dispatch by temporarily ignoring reads. */
+    if (!list_empty(&bfq->be_queues) &&
+        bfq->read_dispatched > 64) {
+        if (now_ns - bfq->last_write_tick >= BFQ_WRITE_STARVE_NS) {
+            /* Force write dispatch: scan BE queues for writes */
+            struct list_head *pos;
+            list_for_each(pos, &bfq->be_queues) {
+                struct bfq_queue *wq = list_entry(pos, struct bfq_queue, list);
+                if (wq->head &&
+                    (wq->head->flags & BLK_REQ_WRITE)) {
+                    /* Found a write queue — serve it now */
+                    list_del(&wq->list);
+                    INIT_LIST_HEAD(&wq->list);
+                    wq->last_fetch = now_ns;
+                    bfq->current_q = wq;
+                    bfq->read_dispatched = 0;
+                    bfq->last_write_tick = now_ns;
+
+                    struct blk_request *req = wq->head;
+                    wq->head = req->next;
+                    if (!wq->head)
+                        wq->tail = NULL;
+                    req->next = NULL;
+                    wq->count--;
+                    wq->budget -= (int)req->count;
+                    if (wq->budget < 0)
+                        wq->budget = 0;
+                    wq->last_fetch = now_ns;
+                    return req;
+                }
+            }
+        }
+    }
+
+    /* Pick the next priority class with pending work */
+    int cls = bfq_pick_class(bfq);
+    if (cls < 0)
+        return NULL;
+
+    /* Pick the first queue from this class's list (round-robin) */
+    struct list_head *class_list = bfq_class_list(bfq, cls);
+    struct list_head *first = class_list->next;
+    struct bfq_queue *q = list_entry(first, struct bfq_queue, list);
+
+    /* Remove from class list for service */
+    list_del(&q->list);
+    INIT_LIST_HEAD(&q->list);
+
+    q->last_fetch = now_ns;
+
+    /* Ensure budget is positive */
+    if (q->budget <= 0) {
+        q->budget = bfq_budget_from_weight(q->weight);
+        bfq->budget_reassignments++;
+    }
+
+    bfq->current_q = q;
+    bfq->current_class = cls;
+
+    if (!q->head)
+        return NULL;
+
+    struct blk_request *req = q->head;
+    q->head = req->next;
+    if (!q->head)
+        q->tail = NULL;
+    req->next = NULL;
+    q->count--;
+    q->budget -= (int)req->count;
+    if (q->budget < 0)
+        q->budget = 0;
+    q->last_fetch = now_ns;
+
+    /* Track read/write counters for starvation detection */
+    if (req->flags & BLK_REQ_READ)
+        bfq->read_dispatched++;
+    else
+        bfq->read_dispatched = 0;
+
+    return req;
+}
+
+/* ── bfq_free — clean up BFQ data ──────────────────────────────── */
+
+static void bfq_free(struct iosched_queue *iq)
+{
+    struct iosched_bfq_data *bfq = &iq->bfq;
+
+    /* Cancel any pending idle timer */
+    if (hrtimer_active(&bfq->idle_timer))
+        hrtimer_cancel(&bfq->idle_timer);
+
+    /* Clean up all queue lists */
+    for (int i = 0; i < bfq->queue_count; i++) {
+        struct bfq_queue *q = &bfq->queues[i];
+        if (!list_empty(&q->list))
+            list_del(&q->list);
+    }
+
+    bfq->queue_count = 0;
+    bfq->current_q = NULL;
+    bfq->idle_q = NULL;
+    bfq->idle_expired = 0;
+}
+
 /* ── Kyber helper: determine domain from request flags ──────────── */
 
 static inline int kyber_domain_from_req(struct blk_request *req)
@@ -1257,5 +1695,5 @@ int iosched_complete(void *req)
 /* ── Module metadata ─────────────────────────────────────────────── */
 MODULE_LICENSE("GPL");
 MODULE_VERSION("2.0");
-MODULE_DESCRIPTION("Block I/O scheduler (elevator) — NOOP/DEADLINE/CFQ/KYBER with enhanced merging");
+MODULE_DESCRIPTION("Block I/O scheduler (elevator) — NOOP/DEADLINE/CFQ/KYBER/BFQ with enhanced merging");
 MODULE_AUTHOR("Rusik69 OS Kernel");

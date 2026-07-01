@@ -21,6 +21,7 @@
 #define IOSCHED_DEADLINE 1
 #define IOSCHED_CFQ      2
 #define IOSCHED_KYBER    3
+#define IOSCHED_BFQ      4
 
 /* ── Kyber scheduler constants ─────────────────────────────────────── */
 
@@ -66,6 +67,19 @@
 #define CFQ_WEIGHT_RT        400   /* RT gets 4x default slice */
 #define CFQ_WEIGHT_BE_DEF    100   /* BE default weight */
 #define CFQ_WEIGHT_IDLE        1   /* IDLE gets minimum slice */
+
+/* BFQ (Budget Fair Queuing) constants */
+#define BFQ_QUEUES_MAX           16    /* max per-process queues */
+#define BFQ_DEFAULT_BUDGET       128   /* default budget in sectors (64KB) */
+#define BFQ_BUDGET_MIN           8     /* minimum budget */
+#define BFQ_BUDGET_MAX           1024  /* maximum budget */
+#define BFQ_WEIGHT_RT            400   /* RT gets 4x default weight */
+#define BFQ_WEIGHT_BE_DEF        100   /* BE default weight */
+#define BFQ_WEIGHT_IDLE          1     /* IDLE gets minimum weight */
+#define BFQ_BUDGET_WEIGHT_SCALE  8     /* budget = default * weight / weight_scale */
+#define BFQ_SLICE_IDLE_NS        8000000ULL  /* idle timeout for anticipatory (ns) */
+#define BFQ_WRITE_STARVE_NS      2000000000ULL /* 2s write starvation threshold (ns) */
+#define BFQ_SMALL_REQ_THRESH     4     /* sectors threshold for "small" I/O detection */
 
 /* Forward declarations */
 struct iosched_queue;
@@ -161,6 +175,47 @@ struct iosched_cfq_data {
     uint64_t          queue_starved;  /* write starvation events triggered */
 };
 
+/* ── BFQ scheduler data ──────────────────────────────────────────── */
+
+struct bfq_queue {
+    struct list_head      list;        /* link in priority-class list (rt/be/idle) */
+    struct blk_request   *head;
+    struct blk_request   *tail;
+    int                   count;
+    uint64_t              pid;         /* owning process PID */
+    uint16_t              ioprio;      /* I/O priority from submitting process */
+    int                   budget;      /* remaining budget (sectors) */
+    int                   initial_budget; /* starting budget for this queue */
+    unsigned int          weight;      /* scheduling weight */
+    uint8_t               is_sync;     /* 1 = serves synchronous I/O */
+    uint64_t              last_fetch;  /* last fetch time (ns) for think-time */
+    uint64_t              last_lba;    /* last LBA for seek detection */
+};
+
+struct iosched_bfq_data {
+    struct bfq_queue  queues[BFQ_QUEUES_MAX];
+    int               queue_count;
+    /* Per-priority-class active queue lists */
+    struct list_head  rt_queues;      /* IOPRIO_CLASS_RT */
+    struct list_head  be_queues;      /* IOPRIO_CLASS_BE */
+    struct list_head  idle_queues;    /* IOPRIO_CLASS_IDLE */
+    struct bfq_queue *current_q;      /* queue currently being served */
+    int               current_class;  /* current priority class */
+    /* Low-latency mode: prioritize processes doing small I/O */
+    int               low_latency;
+    /* Idle timer for anticipatory scheduling */
+    struct hrtimer    idle_timer;
+    struct bfq_queue *idle_q;         /* queue being idled for (or NULL) */
+    int               idle_expired;   /* set by timer callback on idle timeout */
+    /* Write starvation tracking */
+    uint64_t          read_dispatched; /* read requests since last write */
+    uint64_t          last_write_tick; /* monotonic ns of last write dispatch */
+    /* Statistics */
+    uint64_t          budget_reassignments; /* total budget reassignments */
+    uint64_t          idle_waits;
+    uint64_t          idle_hits;
+};
+
 /* ── Per-device I/O scheduler queue ───────────────────────────────── */
 
 struct iosched_kyber_domain {
@@ -187,7 +242,7 @@ struct iosched_kyber_data {
 struct iosched_queue {
     spinlock_t          lock;
     int                 dev_id;
-    int                 policy;          /* IOSCHED_NOOP, _DEADLINE, _CFQ, _KYBER */
+    int                 policy;          /* IOSCHED_NOOP, _DEADLINE, _CFQ, _KYBER, _BFQ */
     const struct iosched_ops *ops;
 
     /* Deadline / NOOP: simple linked list of pending requests */
@@ -201,6 +256,7 @@ struct iosched_queue {
         struct iosched_deadline_data deadline;
         struct iosched_cfq_data     cfq;
         struct iosched_kyber_data   kyber;
+        struct iosched_bfq_data     bfq;
     };
 } __cacheline_aligned;
 
