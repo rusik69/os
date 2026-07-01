@@ -159,6 +159,7 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/blockdev.c \
          src/drivers/genhd.c \
          src/drivers/e1000.c \
+         src/drivers/rtl8139.c \
          src/drivers/intel_gpu.c \
          src/drivers/rtc.c \
          src/drivers/mouse.c \
