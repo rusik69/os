@@ -574,32 +574,114 @@ static int ext2_alloc_block(struct ext2_priv *ep, uint32_t *block_out)
 	return ext2_alloc_blocks(ep, block_out, 1, 0);
 }
 
-/* Allocate a free inode from the inode bitmap.
- * Returns 0 on success with @ino_out set, negative on failure. */
+/* ── Inode allocator with flex_bg awareness ──────────────────────────
+ *
+ * Allocates one free inode from the inode bitmap.  When flex_bg is
+ * enabled (EXT2_FEATURE_INCOMPAT_FLEX_BG), prefers the flex group with
+ * the most free inodes for better load distribution across groups.
+ * Uses word-level bitmap scanning (ext2_bitmap_find_free) for
+ * efficiency instead of bit-by-bit traversal.
+ *
+ * Algorithm:
+ *  1. If flex_bg is enabled, compute the flex group with the most free
+ *     inodes across all block groups.  Otherwise treat each block group
+ *     as its own flex group (flex_size = 1).
+ *  2. Scan groups within the selected (flex) group for a free inode.
+ *  3. Use word-level FFS bitmap scanning for O(1) bit lookup.
+ *  4. Mark the bit as used, update free counts.
+ *
+ * Returns 0 on success with @ino_out set, -ENOSPC on failure.
+ * ═══════════════════════════════════════════════════════════════════ */
 static int ext2_alloc_inode(struct ext2_priv *ep, uint32_t *ino_out)
 {
 	uint8_t bitmap[4096];
-	for (uint32_t g = 0; g < ep->num_block_groups; g++) {
-		struct ext2_bg_desc *bgd = &ep->bgd_cache[g];
-		if (bgd->bg_free_inodes_count == 0)
-			continue;
-		if (ext2_read_block(ep, bgd->bg_inode_bitmap, bitmap) < 0)
-			continue;
-		uint32_t inodes_in_group = ep->inodes_per_group;
-		if (g == ep->num_block_groups - 1) {
-			uint32_t rem = ep->sb.s_inodes_count -
-			               g * ep->inodes_per_group;
-			if (rem < inodes_in_group)
-				inodes_in_group = rem;
+	int has_flexbg = (ep->sb.s_feature_incompat &
+	                  EXT2_FEATURE_INCOMPAT_FLEX_BG) ? 1 : 0;
+	uint32_t flex_size = has_flexbg ? ext2_flex_group_size(ep) : 1;
+	uint32_t flex_group_count =
+	    (ep->num_block_groups + flex_size - 1) / flex_size;
+
+	if (has_flexbg) {
+		/* Flex_bg: find the flex group with the most free inodes */
+		uint32_t best_flex = 0;
+		uint32_t most_free = 0;
+
+		for (uint32_t f = 0; f < flex_group_count; f++) {
+			uint32_t start_g = f * flex_size;
+			uint32_t end_g = start_g + flex_size;
+			if (end_g > ep->num_block_groups)
+				end_g = ep->num_block_groups;
+			uint32_t flex_free = 0;
+			for (uint32_t g = start_g; g < end_g; g++)
+				flex_free +=
+				    ep->bgd_cache[g].bg_free_inodes_count;
+			if (flex_free > most_free) {
+				most_free = flex_free;
+				best_flex = f;
+			}
 		}
-		for (uint32_t i = 0; i < inodes_in_group; i++) {
-			if (!(bitmap[i / 8] & (1U << (i % 8))))
+
+		/* Scan only within the best flex group */
+		uint32_t start_g = best_flex * flex_size;
+		uint32_t end_g = start_g + flex_size;
+		if (end_g > ep->num_block_groups)
+			end_g = ep->num_block_groups;
+
+		for (uint32_t g = start_g; g < end_g; g++) {
+			struct ext2_bg_desc *bgd = &ep->bgd_cache[g];
+			if (bgd->bg_free_inodes_count == 0)
 				continue;
-			bitmap[i / 8] &= ~(1U << (i % 8));
+			if (ext2_read_block(ep, bgd->bg_inode_bitmap,
+			                    bitmap) < 0)
+				continue;
+			uint32_t inodes_in_group = ep->inodes_per_group;
+			if (g == ep->num_block_groups - 1) {
+				uint32_t rem = ep->sb.s_inodes_count -
+				               g * ep->inodes_per_group;
+				if (rem < inodes_in_group)
+					inodes_in_group = rem;
+			}
+			int bit = ext2_bitmap_find_free(bitmap,
+			                                inodes_in_group);
+			if (bit < 0)
+				continue;
+			bitmap[bit / 8] &= ~(1U << ((uint32_t)bit % 8));
 			if (ext2_write_block(ep, bgd->bg_inode_bitmap,
 			                     bitmap) < 0)
 				return -EIO;
-			uint32_t ino = g * ep->inodes_per_group + i + 1;
+			uint32_t ino =
+			    g * ep->inodes_per_group + (uint32_t)bit + 1;
+			bgd->bg_free_inodes_count--;
+			ep->sb.s_free_inodes_count--;
+			*ino_out = ino;
+			return 0;
+		}
+	} else {
+		/* Non-flex_bg: sequential scan with word-level bitmap */
+		for (uint32_t g = 0; g < ep->num_block_groups; g++) {
+			struct ext2_bg_desc *bgd = &ep->bgd_cache[g];
+			if (bgd->bg_free_inodes_count == 0)
+				continue;
+			if (ext2_read_block(ep, bgd->bg_inode_bitmap,
+			                    bitmap) < 0)
+				continue;
+			uint32_t inodes_in_group = ep->inodes_per_group;
+			if (g == ep->num_block_groups - 1) {
+				uint32_t rem = ep->sb.s_inodes_count -
+				               g * ep->inodes_per_group;
+				if (rem < inodes_in_group)
+					inodes_in_group = rem;
+			}
+			int bit = ext2_bitmap_find_free(bitmap,
+			                                inodes_in_group);
+			if (bit < 0)
+				continue;
+			bitmap[bit / 8] &= ~(1U << ((uint32_t)bit % 8));
+			if (ext2_write_block(ep, bgd->bg_inode_bitmap,
+			                     bitmap) < 0)
+				return -EIO;
+			uint32_t ino =
+			    g * ep->inodes_per_group + (uint32_t)bit + 1;
 			bgd->bg_free_inodes_count--;
 			ep->sb.s_free_inodes_count--;
 			*ino_out = ino;
