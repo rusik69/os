@@ -539,6 +539,76 @@ int virtio_pci_modern_setup_queue(struct vpci_modern_device *vdev,
 	return 0;
 }
 
+int virtio_pci_modern_setup_packed_queue(struct vpci_modern_device *vdev,
+                                         uint16_t queue_idx, uint16_t queue_size,
+                                         uint64_t desc_paddr)
+{
+	if (!vdev || !vdev->caps.common)
+		return -1;
+
+	/* Select the queue */
+	vpci_cfg_writew(vdev, offsetof(struct virtio_pci_common_cfg,
+	                                queue_select), queue_idx);
+	__asm__ volatile("" ::: "memory");
+
+	/*
+	 * Check the maximum queue size the device supports.
+	 * If the device advertises a smaller size, use that.
+	 */
+	uint16_t dev_max_size = vpci_cfg_readw(vdev,
+		offsetof(struct virtio_pci_common_cfg, queue_size));
+	if (dev_max_size == 0) {
+		kprintf("[VPCI-MODERN] packed queue %u: device reports size 0\n",
+		        (unsigned int)queue_idx);
+		return -1;
+	}
+	if (queue_size > dev_max_size)
+		queue_size = dev_max_size;
+
+	/* Write the queue size */
+	vpci_cfg_writew(vdev, offsetof(struct virtio_pci_common_cfg,
+	                                queue_size), queue_size);
+	__asm__ volatile("" ::: "memory");
+
+	/*
+	 * For packed virtqueues (virtio 1.1), only queue_desc is used.
+	 * queue_driver and queue_device must be written as 0.
+	 */
+	vpci_cfg_writel(vdev, offsetof(struct virtio_pci_common_cfg,
+	                                queue_desc),
+	                (uint32_t)(desc_paddr & 0xFFFFFFFFu));
+	vpci_cfg_writel(vdev, offsetof(struct virtio_pci_common_cfg,
+	                                queue_desc) + 4,
+	                (uint32_t)(desc_paddr >> 32));
+
+	vpci_cfg_writel(vdev, offsetof(struct virtio_pci_common_cfg,
+	                                queue_driver), 0);
+	vpci_cfg_writel(vdev, offsetof(struct virtio_pci_common_cfg,
+	                                queue_driver) + 4, 0);
+
+	vpci_cfg_writel(vdev, offsetof(struct virtio_pci_common_cfg,
+	                                queue_device), 0);
+	vpci_cfg_writel(vdev, offsetof(struct virtio_pci_common_cfg,
+	                                queue_device) + 4, 0);
+	__asm__ volatile("" ::: "memory");
+
+	/* Enable the queue */
+	vpci_cfg_writew(vdev, offsetof(struct virtio_pci_common_cfg,
+	                                queue_enable), 1);
+	__asm__ volatile("" ::: "memory");
+
+	/* Verify queue was enabled */
+	uint16_t enabled = vpci_cfg_readw(vdev,
+		offsetof(struct virtio_pci_common_cfg, queue_enable));
+	if (!enabled) {
+		kprintf("[VPCI-MODERN] packed queue %u: failed to enable\n",
+		        (unsigned int)queue_idx);
+		return -1;
+	}
+
+	return 0;
+}
+
 void virtio_pci_modern_notify_queue(struct vpci_modern_device *vdev,
                                     uint16_t queue_idx)
 {

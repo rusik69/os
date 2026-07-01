@@ -693,6 +693,7 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/vfio.c \
          src/drivers/virtio_fs.c \
          src/drivers/virtio_iommu.c \
+         src/drivers/virtio_packed.c \
          src/drivers/vdpa.c \
          src/drivers/balloon.c
 

@@ -83,6 +83,7 @@ struct virtio_pci_notify_cap {
 #define VIRTIO_F_NOTIFY_ON_EMPTY    (1u << 24) /* notify when avail ring goes empty */
 #define VIRTIO_F_RING_INDIRECT_DESC (1u << 28) /* indirect descriptors */
 #define VIRTIO_F_RING_EVENT_IDX     (1u << 29) /* used ring event suppression */
+#define VIRTIO_F_RING_PACKED        (1u << 30) /* packed virtqueue format (virtio 1.1) */
 
 /* ── Virtio-net feature bits ────────────────────────────────────── */
 #define VIRTIO_NET_F_CSUM           (1u << 0)  /* host checksums */
@@ -486,6 +487,14 @@ int virtio_pci_modern_setup_queue(struct vpci_modern_device *vdev,
                                   uint64_t desc_paddr, uint64_t driver_paddr,
                                   uint64_t device_paddr);
 
+/* Set up a packed virtqueue for the modern transport (virtio 1.1+).
+ * Unlike the split-queue setup, packed virtqueues use only the desc_paddr
+ * field; driver_paddr and device_paddr are not used (write 0).
+ * Returns 0 on success, -1 on failure. */
+int virtio_pci_modern_setup_packed_queue(struct vpci_modern_device *vdev,
+                                         uint16_t queue_idx, uint16_t queue_size,
+                                         uint64_t desc_paddr);
+
 /* Notify the device that a new buffer has been added to a queue. */
 void virtio_pci_modern_notify_queue(struct vpci_modern_device *vdev,
                                     uint16_t queue_idx);
@@ -512,5 +521,106 @@ uint32_t virtio_pci_modern_read_cfg(struct vpci_modern_device *vdev,
 uint32_t virtio_pci_modern_write_cfg(struct vpci_modern_device *vdev,
                                      uint32_t offset, const void *buf,
                                      uint32_t len);
+
+/* ── Packed virtqueue definitions (VirtIO 1.1) ──────────────────── */
+
+/* Packed descriptor flags (additional, for VirtIO 1.1 packed mode) */
+#define PVIRTQ_DESC_F_AVAIL        (1u << 7)   /* descriptor is available for device */
+#define PVIRTQ_DESC_F_USED         (1u << 15)  /* descriptor has been used by device */
+
+/* Packed descriptor structure (16 bytes each) */
+#pragma pack(push, 1)
+struct pvirtq_desc {
+    uint64_t addr;
+    uint32_t len;
+    uint16_t flags;
+    uint16_t next;
+};
+#pragma pack(pop)
+
+/* Packed virtqueue ring layout in memory */
+struct pvirtq {
+    /* Descriptor ring: desc[queue_size] */
+    struct pvirtq_desc desc[0];
+
+    /*
+     * After desc[queue_size], at offset queue_size * sizeof(struct pvirtq_desc):
+     *   uint16_t avail_event;  -- Driver writes to control device notification
+     *   uint16_t used_event;   -- Device signals used buffers to driver
+     */
+};
+
+/* Driver-side packed virtqueue state */
+struct virtio_packed_vq {
+    void                      *mem;          /* allocated queue memory (page-aligned) */
+    uint64_t                   mem_phys;     /* physical address of queue memory */
+    size_t                     mem_size;     /* allocated size in bytes */
+
+    struct pvirtq             *ring;         /* pointer into mem for ring access */
+
+    uint16_t                   queue_idx;    /* queue index in the device */
+    uint16_t                   queue_size;   /* number of descriptors (power of 2) */
+    uint16_t                   free_count;   /* number of free descriptors */
+
+    uint16_t                   avail_wrap;   /* driver wrap counter (0 or 1) */
+    uint16_t                   used_wrap;    /* device wrap counter (0 or 1) */
+
+    uint16_t                   next_idx;     /* next descriptor index to submit */
+    uint16_t                   last_used;    /* last-seen used-scanned index */
+
+    int                        modern;       /* 1 = modern PCI transport */
+    struct vpci_modern_device *vdev;         /* modern transport state (if modern) */
+};
+
+/* ── Packed virtqueue API ──────────────────────────────────────── */
+
+/* Compute the total memory needed for a packed virtqueue of 'n' descriptors.
+ * Returns the size in bytes (page-aligned). */
+size_t virtio_packed_vq_size(uint16_t n);
+
+/* Allocate and initialize a packed virtqueue.
+ * If 'modern' is non-zero, the queue is also registered with the modern
+ * PCI transport via virtio_pci_modern_setup_packed_queue().
+ * Returns 0 on success, -1 on failure. */
+int virtio_packed_vq_init(struct virtio_packed_vq *vq,
+                          uint16_t queue_idx, uint16_t queue_size,
+                          struct vpci_modern_device *vdev);
+
+/* Tear down a packed virtqueue (release memory). */
+void virtio_packed_vq_cleanup(struct virtio_packed_vq *vq);
+
+/* Add a single descriptor to the packed ring (no chaining).
+ * 'addr' is the physical address of the buffer.
+ * 'len' is the buffer length.
+ * 'write' is non-zero for device-writable descriptors.
+ * Returns 0 on success, -1 if the ring is full. */
+int virtio_packed_add_buf(struct virtio_packed_vq *vq,
+                          uint64_t addr, uint32_t len, int write);
+
+/* Add a descriptor chain (scatter-gather) to the packed ring.
+ * 'addrs', 'lens', 'flags' are arrays of 'n' entries.
+ * 'n' is the number of descriptors in the chain.
+ * Returns 0 on success, -1 if not enough free descriptors. */
+int virtio_packed_add_buf_sg(struct virtio_packed_vq *vq,
+                             const uint64_t *addrs, const uint32_t *lens,
+                             const uint16_t *flags, int n);
+
+/* Notify the device that new buffers are available on this queue. */
+void virtio_packed_kick(struct virtio_packed_vq *vq);
+
+/* Poll for a completed buffer.
+ * Returns the descriptor index of a used buffer, or -1 if none available.
+ * If 'len_out' is non-NULL, it receives the length written by the device. */
+int virtio_packed_get_buf(struct virtio_packed_vq *vq, uint32_t *len_out);
+
+/* Poll until at least one buffer completes (with timeout in iterations).
+ * Returns 0 on success, -1 on timeout. */
+int virtio_packed_wait_buf(struct virtio_packed_vq *vq, uint32_t timeout);
+
+/* Enable/disable event suppression for this queue.
+ * When suppression is on, the device will not notify the driver for
+ * every used buffer (reduces interrupt rate). */
+void virtio_packed_enable_event(struct virtio_packed_vq *vq);
+void virtio_packed_disable_event(struct virtio_packed_vq *vq);
 
 #endif /* VIRTIO_H */
