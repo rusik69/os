@@ -3,6 +3,7 @@
 
 #include "types.h"
 #include "pci.h"
+#include "netdevice.h"
 
 /* ── PCI identifiers ──────────────────────────────────────────────── */
 #define RTL8139_VENDOR  0x10EC
@@ -153,8 +154,22 @@
 /* Maximum number of TX descriptors (RTL8139 has 4) */
 #define RTL8139_NUM_TX_DESC 4
 
+/* TX buffer size (max Ethernet frame, 1500 + 14 header + 4 VLAN tag + padding) */
+#define RTL8139_TX_BUF_SIZE 1536
+
 /* RX buffer size (64K max) */
 #define RTL8139_RX_BUF_SIZE (64 * 1024)
+
+/* ── Driver statistics ──────────────────────────────────────────────── */
+struct rtl8139_stats {
+    uint64_t tx_packets;       /* total packets transmitted */
+    uint64_t tx_bytes;         /* total bytes transmitted */
+    uint64_t tx_errors;        /* transmit errors */
+    uint64_t rx_packets;       /* total packets received */
+    uint64_t rx_bytes;         /* total bytes received */
+    uint64_t rx_errors;        /* receive errors */
+    uint64_t tx_busy;          /* transmit ring full count */
+};
 
 /* ── Driver state ─────────────────────────────────────────────────── */
 struct rtl8139_priv {
@@ -163,6 +178,20 @@ struct rtl8139_priv {
     int      irq_line;          /* IRQ line from PCI config */
     int      initialized;       /* 1 if hardware has been initialised */
     int      tx_cur;            /* next TX descriptor to use (0-3) */
+    int      rx_cur;            /* current read position in RX ring buffer (byte offset) */
+    struct rtl8139_stats stats; /* driver statistics */
+    int      ifindex;           /* netdevice index (-1 if not registered) */
+
+    /* TX buffers — one per descriptor, 16-byte aligned for DMA */
+    uint8_t tx_bufs[RTL8139_NUM_TX_DESC][RTL8139_TX_BUF_SIZE]
+        __attribute__((aligned(16)));
+
+    /* RX ring buffer — 64KB, physically contiguous for DMA */
+    uint8_t rx_buf[RTL8139_RX_BUF_SIZE]
+        __attribute__((aligned(16)));
+
+    /* Netdevice descriptor (registered if ifindex >= 0) */
+    struct net_device ndev;
 };
 
 /* ── API ────────────────────────────────────────────────────────── */
@@ -187,5 +216,9 @@ void rtl8139_shutdown(struct rtl8139_priv *priv);
 /* PCI probe */
 int  rtl8139_find_device(struct pci_device *pci_dev);
 int  rtl8139_probe(struct rtl8139_priv *priv);
+
+/* TX/RX ring buffer operations (netdevice callbacks) */
+int  rtl8139_transmit(struct net_device *dev, const uint8_t *data, uint16_t len);
+int  rtl8139_receive(struct net_device *dev, uint8_t *buf, uint16_t max_len);
 
 #endif /* RTL8139_H */
