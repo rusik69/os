@@ -15,6 +15,63 @@
 #define VIRTIO_PCI_STATUS         0x12  /* RW  device status          */
 #define VIRTIO_PCI_ISR            0x13  /* R   ISR status             */
 
+/* ── Virtio 1.0+ modern PCI capability IDs (capability type values) ── */
+#define VIRTIO_PCI_CAP_COMMON_CFG      1  /* Common configuration          */
+#define VIRTIO_PCI_CAP_NOTIFY_CFG      2  /* Notifications                 */
+#define VIRTIO_PCI_CAP_ISR_CFG         3  /* ISR status                    */
+#define VIRTIO_PCI_CAP_DEVICE_CFG      4  /* Device-specific configuration */
+#define VIRTIO_PCI_CAP_PCI_CFG         5  /* PCI config access (legacy)    */
+#define VIRTIO_PCI_CAP_SHARED_MEMORY_CFG 8  /* Shared memory region       */
+#define VIRTIO_PCI_CAP_VENDOR_CFG      9  /* Vendor-specific data          */
+
+/* Virtio vendor-specific PCI capability ID */
+#define VIRTIO_PCI_VENDOR_CAP_ID       0x09
+
+/* ── Virtio common configuration structure (MMIO) ───────────────── */
+#pragma pack(push, 1)
+struct virtio_pci_common_cfg {
+    uint32_t device_feature_select;  /* R/W: selects which 32 bits of dev features */
+    uint32_t device_feature;         /* RO:  selected device feature bits          */
+    uint32_t driver_feature_select;  /* R/W: selects which 32 bits of drv features */
+    uint32_t driver_feature;         /* R/W: driver feature bits to write          */
+    uint16_t msix_config;            /* R/W: MSI-X vector for config change        */
+    uint16_t num_queues;             /* RO:  number of virtqueues the device has   */
+    uint8_t  device_status;          /* R/W: device status register                */
+    uint8_t  config_generation;      /* RO:  generation count for config changes   */
+    uint16_t queue_select;           /* R/W: selects which queue to configure      */
+    uint16_t queue_size;             /* R/W: size of the selected queue            */
+    uint16_t queue_msix_vector;      /* R/W: MSI-X vector for this queue           */
+    uint16_t queue_enable;           /* R/W: enable/disable the selected queue     */
+    uint16_t queue_notify_off;       /* RO:  offset into notify region for this q  */
+    uint64_t queue_desc;             /* R/W: physical address of descriptor area   */
+    uint64_t queue_driver;           /* R/W: physical address of driver area       */
+    uint64_t queue_device;           /* R/W: physical address of device area       */
+    uint16_t queue_notify_data;      /* RO:  data to write for notification (opt)  */
+};
+#pragma pack(pop)
+
+/* ── Virtio PCI capability structure (in PCI config space) ──────── */
+#pragma pack(push, 1)
+struct virtio_pci_cap {
+    uint8_t  cap_vndr;       /* Generic PCI capability: vendor ID = 0x09         */
+    uint8_t  cap_next;       /* Generic PCI capability: next capability pointer   */
+    uint8_t  cap_len;        /* Generic PCI capability: length of this structure  */
+    uint8_t  cfg_type;       /* Virtio-specific: type of this capability          */
+    uint8_t  bar;            /* PCI BAR that contains the region                  */
+    uint8_t  padding[3];     /* Padding to align offset/length (spec requirement) */
+    uint32_t offset;         /* Offset within the BAR where this region starts    */
+    uint32_t length;         /* Length of the region                              */
+};
+#pragma pack(pop)
+
+/* ── Virtio notify capability (includes multiplier) ─────────────── */
+#pragma pack(push, 1)
+struct virtio_pci_notify_cap {
+    struct virtio_pci_cap cap;         /* Base capability structure              */
+    uint32_t notify_off_multiplier;    /* Multiplier for queue_notify_off value  */
+};
+#pragma pack(pop)
+
 /* ── Device status bits ─────────────────────────────────────────── */
 #define VIRTIO_STATUS_ACKNOWLEDGE  1
 #define VIRTIO_STATUS_DRIVER       2
@@ -363,5 +420,97 @@ static inline int virtio_negotiate_features(
     return virtio_negotiate_features_ex(readl, writel, writeb, readb,
                                          supported_features, 0, NULL, NULL);
 }
+
+/* ── Modern (virtio 1.0+) PCI transport declarations ──────────────
+ *
+ * The modern virtio PCI transport uses MMIO regions discovered via
+ * vendor-specific PCI capabilities.  These functions provide the
+ * transport layer that device-specific drivers (virtio-net, -blk, etc.)
+ * call during init.
+ *
+ * virtio_pci_modern_probe() discovers a modern virtio device by finding
+ * its PCI capabilities.  The caller must provide a struct pci_device that
+ * was obtained via pci_find_device().
+ *
+ * If successful, it fills in the vpci_modern structure with pointers to
+ * the mapped MMIO regions, which are then used with the inline helpers
+ * below.
+ */
+
+/* ── Modern virtio PCI device state ────────────────────────────── */
+struct vpci_modern_caps {
+    /* MMIO virtual addresses of each capability region (NULL if absent) */
+    volatile struct virtio_pci_common_cfg *common;
+    volatile void  *notify_base;       /* base of notification region     */
+    volatile uint8_t *isr;             /* ISR status (single byte)        */
+    volatile void  *device_cfg;        /* device-specific config region   */
+    uint32_t notify_off_multiplier;    /* multiplier for queue offsets    */
+    uint32_t notify_base_off;          /* offset of notify region in BAR  */
+};
+
+struct vpci_modern_device {
+    const struct pci_device  *pci_dev;     /* pointer to the probed PCI device */
+    struct vpci_modern_caps  caps;
+    int                      modern_found;  /* 1 if modern caps detected  */
+};
+
+/* ── Function declarations ─────────────────────────────────────── */
+
+/* Probe a PCI device for modern virtio capabilities.
+ * Checks for PCI revision >= 1 (transitional/modern) and scans
+ * for virtio vendor-specific capabilities.
+ * Returns 0 on success with caps populated, -1 if not modern. */
+int virtio_pci_modern_probe(struct pci_device *dev,
+                            struct vpci_modern_device *vdev);
+
+/* Initialize MMIO mapping for the caps using PHYS_TO_VIRT on the BAR.
+ * The kernel identity-maps all physical memory (KERNEL_VMA_OFFSET).
+ * Returns 0 on success, -1 on error. */
+int virtio_pci_modern_map_bars(struct vpci_modern_device *vdev);
+
+/* Full device initialization sequence (modern transport):
+ *   reset -> ACK -> feature negotiation -> DRIVER_OK
+ * 'supported' and 'required' work like virtio_negotiate_features_ex.
+ * Returns 0 on success, -1 on failure. */
+int virtio_pci_modern_init_device(struct vpci_modern_device *vdev,
+                                  uint32_t supported, uint32_t required,
+                                  const struct virtio_feature_entry *feat_table,
+                                  const char *driver_name);
+
+/* Set up a single virtqueue for the modern transport.
+ * 'vq_pfn' is the physical page number (address >> 12) of the queue memory.
+ * queue_size must be a power of 2.
+ * Returns 0 on success, -1 on failure. */
+int virtio_pci_modern_setup_queue(struct vpci_modern_device *vdev,
+                                  uint16_t queue_idx, uint16_t queue_size,
+                                  uint64_t desc_paddr, uint64_t driver_paddr,
+                                  uint64_t device_paddr);
+
+/* Notify the device that a new buffer has been added to a queue. */
+void virtio_pci_modern_notify_queue(struct vpci_modern_device *vdev,
+                                    uint16_t queue_idx);
+
+/* Enable MSI-X for the device.
+ * vectors:   array of interrupt vector numbers (one per MSI-X table entry)
+ * apic_ids:  array of destination APIC IDs
+ * n:         number of entries to program (<= MSI-X table size)
+ * Returns 0 on success, -1 on failure. */
+int virtio_pci_modern_enable_msix(struct vpci_modern_device *vdev,
+                                  const uint8_t *vectors,
+                                  const uint32_t *apic_ids, int n);
+
+/* Disable MSI-X and restore INTX operation. */
+void virtio_pci_modern_disable_msix(struct vpci_modern_device *vdev);
+
+/* Read device-specific config from the modern device config region.
+ * Returns number of bytes read (0 if no device cfg region). */
+uint32_t virtio_pci_modern_read_cfg(struct vpci_modern_device *vdev,
+                                    uint32_t offset, void *buf, uint32_t len);
+
+/* Write device-specific config to the modern device config region.
+ * Returns number of bytes written (0 if no device cfg region). */
+uint32_t virtio_pci_modern_write_cfg(struct vpci_modern_device *vdev,
+                                     uint32_t offset, const void *buf,
+                                     uint32_t len);
 
 #endif /* VIRTIO_H */

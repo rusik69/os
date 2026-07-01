@@ -315,6 +315,7 @@ C_SRCS = src/kernel/kernel.c \
          src/ipc/inotify.c \
          src/drivers/virtio_net.c \
          src/drivers/virtio_blk.c \
+         src/drivers/virtio_pci_modern.c \
          src/drivers/ac97.c \
          src/drivers/sound_core.c \
          src/drivers/sound_midi.c \
