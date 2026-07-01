@@ -2,14 +2,17 @@
  * src/drivers/virtio_balloon.c — VirtIO Balloon driver
  *
  * Implements the VirtIO memory balloon device (PCI vendor 0x1AF4,
- * device 0x1002) with free page reporting (VIRTIO_BALLOON_F_REPORTING).
+ * device 0x1002) with free page reporting (VIRTIO_BALLOON_F_REPORTING)
+ * and page poisoning hint (VIRTIO_BALLOON_F_PAGE_POISON).
  *
  * The balloon device permits the host to reclaim guest memory: inflating
  * the balloon pins physical pages on the guest side, returning them to
  * the host for reuse; deflating does the reverse.  Free page reporting
  * extends this by letting the guest proactively inform the host which
  * pages are free, which improves live-migration efficiency and host
- * memory overcommit.
+ * memory overcommit.  Page poisoning hint communicates the poison value
+ * this kernel uses for freed pages so the host can preserve it across
+ * balloon operations, enabling use-after-free detection on the host.
  *
  * Layout of virtqueues (indices):
  *   0 – inflateq       guest → host (pages the guest gives up)
@@ -21,6 +24,7 @@
  *   VIRTIO_BALLOON_F_MUST_TELL_HOST    (0) – must notify before using page
  *   VIRTIO_BALLOON_F_STATS_VQ          (1) – memory statistics virtqueue
  *   VIRTIO_BALLOON_F_DEFLATE_ON_OOM    (2) – deflate when OOM
+ *   VIRTIO_BALLOON_F_PAGE_POISON       (4) – page poisoning hint
  *   VIRTIO_BALLOON_F_REPORTING         (5) – free page reporting
  *
  * Uses the legacy PCI I/O transport pattern (matching virtio_rng).
@@ -35,6 +39,7 @@
 #include "pmm.h"
 #include "heap.h"
 #include "errno.h"
+#include "page_poison.h"
 
 #ifdef MODULE
 #include "module.h"
@@ -546,11 +551,13 @@ void virtio_balloon_init(void)
 	 *   MUST_TELL_HOST – required for correct inflate/deflate
 	 *   DEFLATE_ON_OOM – deflate balloon when guest runs low on mem
 	 *   STATS_VQ       – memory statistics (optional, wire it up)
+	 *   PAGE_POISON    – page poisoning hint (tell host our poison value)
 	 *   REPORTING      – free page reporting (the main addition)
 	 */
 	uint32_t supported = VIRTIO_BALLOON_F_MUST_TELL_HOST |
 			     VIRTIO_BALLOON_F_DEFLATE_ON_OOM |
 			     VIRTIO_BALLOON_F_STATS_VQ |
+			     VIRTIO_BALLOON_F_PAGE_POISON |
 			     VIRTIO_BALLOON_F_REPORTING;
 
 	ret = virtio_negotiate_features_ex(vbl_inl, vbl_outl,
@@ -565,6 +572,17 @@ void virtio_balloon_init(void)
 	/* Read back negotiated features. */
 	vbl_select_queue(0);
 	balloon_features = vbl_inl(VIRTIO_PCI_GUEST_FEAT);
+
+	/* If page poisoning hint was negotiated, tell the host what
+	 * poison value we use for freed pages.  This allows the host
+	 * to preserve the poison pattern across balloon operations so
+	 * the guest can detect use-after-free on returned pages. */
+	if (balloon_features & VIRTIO_BALLOON_F_PAGE_POISON) {
+		uint8_t poison_val = page_poison_get_freed_value();
+		vbl_write_config(BALLOON_CFG_POISON, (uint32_t)poison_val);
+		kprintf("[VIRTIO-BALLOON] page poison hint: 0x%02x\n",
+			(unsigned int)poison_val);
+	}
 
 	/* Initialise the virtqueues. */
 	vbl_init_queues();
@@ -609,6 +627,6 @@ void __exit cleanup_module(void)
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Hermes OS Kernel Team");
-MODULE_DESCRIPTION("VirtIO balloon — inflate/deflate, free page reporting");
-MODULE_VERSION("2.0");
+MODULE_DESCRIPTION("VirtIO balloon — inflate/deflate, free page reporting, page poisoning hint");
+MODULE_VERSION("2.1");
 #endif
