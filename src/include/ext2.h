@@ -170,6 +170,18 @@ struct ext2_dx_node {
     /* Followed by struct ext2_dx_entry entries[] */
 } __attribute__((packed));
 
+#define EXT2_INLINE_DATA_FL 0x10000000 /* Inode has inline data */
+
+/* Directory entry file type values (when FILETYPE incompat feature set) */
+#define EXT2_FT_UNKNOWN    0
+#define EXT2_FT_REG_FILE   1
+#define EXT2_FT_DIR        2
+#define EXT2_FT_CHRDEV     3
+#define EXT2_FT_BLKDEV     4
+#define EXT2_FT_FIFO       5
+#define EXT2_FT_SOCK       6
+#define EXT2_FT_SYMLINK    7
+
 /* ── Sparse superblock helpers ───────────────────────────────────────
  *
  * When EXT2_FEATURE_RO_COMPAT_SPARSE_SUPER is set, superblock backups
