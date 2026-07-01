@@ -25,9 +25,11 @@
 
 /* ── PCI identifiers ─────────────────────────────────────────────────── */
 #define I40E_VENDOR       0x8086  /* Intel */
-#define I40E_DEV_XL710    0x1572  /* XL710 40GbE */
-#define I40E_DEV_X710     0x1581  /* X710 10GbE */
-#define I40E_DEV_XL710_A  0x1580  /* XL710 alternate */
+#define I40E_DEV_XL710    0x1572  /* XL710 40GbE (PF) */
+#define I40E_DEV_X710     0x1581  /* X710 10GbE (PF) */
+#define I40E_DEV_XL710_A  0x1580  /* XL710 alternate (PF) */
+#define I40E_DEV_VF       0x154C  /* XL710/X710 Virtual Function */
+#define I40E_DEV_VF_HV    0x1570  /* XL710 VF for Hyper-V */
 
 /* ── Maximum queue configuration ─────────────────────────────────────── */
 #define I40E_MAX_TX_QUEUES   8
@@ -113,6 +115,44 @@
 #define I40E_PRT_SCTPL          0x000B0C8
 #define I40E_PRT_SRCRXE         0x000B0E0
 #define I40E_PRT_SRCRXE_ENA     (1U << 0)
+
+/* ── VF-specific registers (within VF's 16KB MMIO window) ───────────── */
+#define I40E_VFGEN_RSTAT        0x008800  /* VF reset / status */
+#define I40E_VFGEN_RSTAT_VFR_STATE  0x3U     /* VF reset status mask */
+
+/* VF reset status values */
+#define I40E_VFR_VFACTIVE         0       /* VF is active (post-reset) */
+#define I40E_VFR_COMPLETED        1       /* VF reset has completed */
+#define I40E_VFR_INPROGRESS       2       /* VF reset in progress */
+
+/* VF interrupt registers (same offsets as PF for VF's own MMIO) */
+#define I40E_VFINT_ICR0        0x000000  /* VF Interrupt Cause 0 */
+#define I40E_VFINT_DYN_CTLN(n) (0x002000 + (n) * 4)  /* VF dyn ctl */
+#define I40E_VFINT_ICR0_ENA    0x00E008  /* VF ICR0 Interrupt Enable */
+
+/* ── VF-PF Mailbox registers (PF MMIO space, per-VF) ────────────────── */
+/* At offset 0x002C00, each VF gets 16 bytes of mailbox registers */
+#define I40E_PF_VF_MBX_REGION  0x002C00
+#define I40E_VF_MBX_STRIDE     16
+/* Each VF mailbox block: */
+#define I40E_VF_MBX_CTL(n)     (I40E_PF_VF_MBX_REGION + (n) * I40E_VF_MBX_STRIDE + 0x00)
+#define I40E_VF_MBX_DATA0(n)   (I40E_PF_VF_MBX_REGION + (n) * I40E_VF_MBX_STRIDE + 0x04)
+#define I40E_VF_MBX_DATA1(n)   (I40E_PF_VF_MBX_REGION + (n) * I40E_VF_MBX_STRIDE + 0x08)
+#define I40E_VF_MBX_DATA2(n)   (I40E_PF_VF_MBX_REGION + (n) * I40E_VF_MBX_STRIDE + 0x0C)
+
+/* Mailbox control bits */
+#define I40E_MBX_CTL_VF2PF      (1U << 0)  /* VF → PF message pending */
+#define I40E_MBX_CTL_PF2VF      (1U << 1)  /* PF → VF message pending */
+#define I40E_MBX_CTL_ACK        (1U << 2)  /* Acknowledge (cleared by receiver) */
+
+/* Mailbox message types (written to DATA0) */
+#define I40E_MBX_MSG_NONE        0        /* No message */
+#define I40E_MBX_MSG_VERSION     1        /* VF version exchange */
+#define I40E_MBX_MSG_GET_MAC     2        /* VF requests MAC address */
+#define I40E_MBX_MSG_SET_MAC     3        /* VF sets MAC address */
+#define I40E_MBX_MSG_LINK_STATUS 4        /* Link status update */
+#define I40E_MBX_MSG_RESET       5        /* VF reset request */
+#define I40E_MBX_MSG_STATS       6        /* Statistics request */
 
 /* ── MAC address registers ──────────────────────────────────────────── */
 #define I40E_PF_HENA(n)         (0x00B010 + (n) * 4)
@@ -245,6 +285,56 @@ struct i40e_priv {
     int             msix_vector_base;        /* base IRQ vector number */
     volatile uint32_t *msix_table;           /* virtual addr of MSI-X table */
     struct pci_interrupt_config int_cfg;     /* interrupt configuration */
+
+    /* ── SR-IOV VF state ────────────────────────────────────────── */
+    int             num_vfs;                 /* number of enabled VFs */
+    int             vf_bus[I40E_MAX_TX_QUEUES];   /* VF PCI bus numbers */
+    int             vf_dev[I40E_MAX_TX_QUEUES];   /* VF PCI device numbers */
+    uint8_t         vf_macs[I40E_MAX_TX_QUEUES][6]; /* VF MAC addresses */
+};
+
+/* ── VF (Virtual Function) private data ───────────────────────────────── */
+struct i40e_vf_priv {
+    int             present;         /* VF device found and initialised */
+    uintptr_t       mmio_base;       /* virtual addr of VF BAR0 MMIO */
+    uint64_t        mmio_phys;       /* physical addr of VF BAR0 */
+    int             irq_line;        /* legacy IRQ line */
+    int             ifindex;         /* registered netdevice index */
+    int             vf_number;       /* VF index (0-based, assigned by PF) */
+
+    /* PF information — for mailbox communication */
+    int             pf_bus, pf_dev, pf_func;
+
+    /* MAC address (assigned by PF) */
+    uint8_t         mac[6];
+
+    /* Device identification */
+    uint16_t        device_id;
+
+    /* Queue configuration */
+    int             num_tx_queues;
+    int             num_rx_queues;
+    struct i40e_txq txq[I40E_MAX_TX_QUEUES];
+    struct i40e_rxq rxq[I40E_MAX_RX_QUEUES];
+
+    /* Statistics */
+    uint64_t        tx_packets, rx_packets;
+    uint64_t        tx_bytes, rx_bytes;
+    uint64_t        tx_errors, rx_errors;
+
+    /* Netdevice descriptor */
+    struct net_device ndev;
+
+    /* Interrupt configuration */
+    struct pci_interrupt_config int_cfg;
+};
+
+/* ── Mailbox message (VF↔PF) ─────────────────────────────────────────── */
+struct i40e_mbx_msg {
+    uint32_t type;       /* I40E_MBX_MSG_* */
+    uint32_t data0;      /* type-specific payload */
+    uint32_t data1;      /* type-specific payload */
+    uint32_t data2;      /* type-specific payload */
 };
 
 /* ── MMIO accessors ────────────────────────────────────────────────── */
@@ -295,5 +385,28 @@ void i40e_irq_handler(struct interrupt_frame *frame);
 
 /* Statistics */
 void i40e_print_stats(struct i40e_priv *priv);
+
+/* ── VF (Virtual Function) driver API ─────────────────────────────────── */
+int  i40e_vf_find_device(struct pci_device *pci_dev);
+int  i40e_vf_probe(struct i40e_vf_priv *priv);
+int  i40e_vf_init_hw(struct i40e_vf_priv *priv);
+void i40e_vf_shutdown_hw(struct i40e_vf_priv *priv);
+int  i40e_vf_init(void);
+void i40e_vf_exit(void);
+void i40e_vf_irq_handler(struct interrupt_frame *frame);
+
+/* ── SR-IOV management (PF side) ─────────────────────────────────────── */
+int  i40e_sriov_configure(struct i40e_priv *priv, int num_vfs);
+int  i40e_sriov_init(void);
+
+/* ── Mailbox (PF ↔ VF) ────────────────────────────────────────────────── */
+int  i40e_mbx_send_to_vf(struct i40e_priv *priv, int vf_number,
+                          const struct i40e_mbx_msg *msg);
+int  i40e_mbx_recv_from_vf(struct i40e_priv *priv, int vf_number,
+                            struct i40e_mbx_msg *msg);
+int  i40e_vf_mbx_send_to_pf(struct i40e_vf_priv *priv,
+                              const struct i40e_mbx_msg *msg);
+int  i40e_vf_mbx_recv_from_pf(struct i40e_vf_priv *priv,
+                                struct i40e_mbx_msg *msg);
 
 #endif /* I40E_H */
