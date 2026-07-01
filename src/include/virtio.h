@@ -103,7 +103,62 @@ struct virtio_pci_notify_cap {
 #define VIRTIO_NET_F_CTRL_VQ        (1u << 17) /* control channel */
 #define VIRTIO_NET_F_CTRL_RX        (1u << 18) /* rx filtering */
 #define VIRTIO_NET_F_CTRL_VLAN      (1u << 19) /* VLAN filtering */
-#define VIRTIO_NET_F_GUEST_ANNOUNCE (1u << 21) /* guest announces changes */
+#define VIRTIO_NET_F_GUEST_ANNOUNCE (1u << 21)
+
+/* ── Virtio-net 64-bit feature bits (not negotiable via legacy 32-bit transport) ── */
+/* Defined as 64-bit constants for reference; the modern transport supports 64-bit
+ * feature negotiation through the common cfg structure (device_feature_select). */
+#define VIRTIO_NET_F_HASH_REPORT  (1ULL << 58)  /* device reports packet hash */
+#define VIRTIO_NET_F_RSS          (1ULL << 60)  /* RSS receive-side steering */
+
+/* ── RSS hash report type constants ──────────────────────────────── */
+#define VIRTIO_NET_HASH_REPORT_NONE      0
+#define VIRTIO_NET_HASH_REPORT_IPv4      1
+#define VIRTIO_NET_HASH_REPORT_TCPv4     2
+#define VIRTIO_NET_HASH_REPORT_UDPv4     3
+#define VIRTIO_NET_HASH_REPORT_IPv6      4
+#define VIRTIO_NET_HASH_REPORT_TCPv6     5
+#define VIRTIO_NET_HASH_REPORT_UDPv6     6
+#define VIRTIO_NET_HASH_REPORT_IPv6_EX   7
+#define VIRTIO_NET_HASH_REPORT_TCPv6_EX  8
+#define VIRTIO_NET_HASH_REPORT_UDPv6_EX  9
+
+/* ── RSS hash type enable bitmask ────────────────────────────────── */
+#define VIRTIO_NET_HASH_TYPE_IPv4         (1u << 0)
+#define VIRTIO_NET_HASH_TYPE_TCPv4        (1u << 1)
+#define VIRTIO_NET_HASH_TYPE_UDPv4        (1u << 2)
+#define VIRTIO_NET_HASH_TYPE_IPv6         (1u << 3)
+#define VIRTIO_NET_HASH_TYPE_TCPv6        (1u << 4)
+#define VIRTIO_NET_HASH_TYPE_UDPv6        (1u << 5)
+#define VIRTIO_NET_HASH_TYPE_IPv6_EX      (1u << 6)
+#define VIRTIO_NET_HASH_TYPE_TCPv6_EX     (1u << 7)
+#define VIRTIO_NET_HASH_TYPE_UDPv6_EX     (1u << 8)
+
+/* ── RSS configuration structure (virtio 1.1 spec §5.1.3.6) ──────── *
+ * The indirection table and hash key follow the fixed header in memory:
+ *   struct virtio_net_rss_config cfg;
+ *   uint16_t indirection_table[indirection_table_length];
+ *   uint8_t  key[40];
+ */
+#pragma pack(push, 1)
+struct virtio_net_rss_config {
+    uint32_t hash_types;              /* bitmask of VIRTIO_NET_HASH_TYPE_* */
+    uint16_t indirection_table_length; /* number of entries in indirection table */
+    uint16_t indirection_table_start;  /* placeholder: first entry of indir table follow */
+    uint16_t max_tx_vq;               /* max TX virtqueue index */
+    uint16_t unclassified_queue;       /* queue for packets that don't match hash types */
+    /* Followed by:
+     *   uint16_t indirection_table[indirection_table_length];
+     *   uint8_t  key[40];
+     */
+};
+#pragma pack(pop)
+
+/* ── Control VQ classes / commands ──────────────────────────────── *
+ * VIRTIO_NET_F_CTRL_VQ must be negotiated for these to be available. */
+#define VIRTIO_NET_CTRL_MQ                0x02  /* MQ class */
+#define VIRTIO_NET_CTRL_MQ_VQ_PAIRS_SET   0x01  /* set # of active queue pairs */
+#define VIRTIO_NET_CTRL_MQ_RSS_CONFIG     0x02  /* set RSS configuration */
 
 /* ── Virtio-blk feature bits ────────────────────────────────────── */
 #define VIRTIO_BLK_F_SIZE_MAX       (1u << 1)  /* max segment size */

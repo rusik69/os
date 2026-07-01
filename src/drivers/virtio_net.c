@@ -1242,6 +1242,436 @@ int virtio_net_gro_receive(const uint8_t *pkt, uint32_t len,
  *  End TSO/GRO/GSO offload functions
  * ══════════════════════════════════════════════════════════════════ */
 
+/* ══════════════════════════════════════════════════════════════════
+ *  RSS (Receive Side Steering) — Software Toeplitz Hash & Steering
+ * ══════════════════════════════════════════════════════════════════ */
+
+/* ── RSS constants ──────────────────────────────────────────────── */
+#define RSS_HASH_KEY_LEN      40   /* Toeplitz hash key length in bytes */
+#define RSS_INDIR_TABLE_SIZE  128  /* Default indirection table entries */
+#define RSS_DEFAULT_KEY_HASH  0x6D5A  /* CRC16 of default key for verification */
+
+/* ── Default RSS hash key (symmetric, from Microsoft RNDIS spec) ── */
+static const uint8_t rss_default_key[RSS_HASH_KEY_LEN] = {
+    0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
+    0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
+    0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
+    0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
+    0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
+};
+
+/* ── RSS state ──────────────────────────────────────────────────── */
+struct virtio_net_rss_state {
+    int                initialized;      /* 1 after virtio_net_rss_init() */
+    uint8_t            hash_key[RSS_HASH_KEY_LEN]; /* 40-byte Toeplitz key */
+    uint16_t           indir_table[RSS_INDIR_TABLE_SIZE]; /* queue indirection */
+    uint16_t           indir_len;        /* actual indirection table length */
+    uint32_t           hash_types;       /* enabled VIRTIO_NET_HASH_TYPE_* flags */
+    uint16_t           unclassified_q;   /* fallback queue */
+    struct virtio_net_rss_stats stats;    /* operational statistics */
+};
+
+static struct virtio_net_rss_state rss_state;
+
+/* ── RSS Toeplitz hash computation ──────────────────────────────────
+ *
+ * Computes the symmetric Toeplitz hash over 'data' of 'data_len' bytes
+ * using the 40-byte 'key'.  Implements the standard RSS hash algorithm
+ * as used by network hardware for receive-side scaling.
+ *
+ * The hash is computed bit-by-bit: for each bit position of the input
+ * data (processed MSB first), if the bit is 1, a 32-bit window of the
+ * key starting at that bit position is XOR-accumulated into the hash.
+ *
+ * Returns the 32-bit Toeplitz hash value.
+ */
+static uint32_t rss_toeplitz_hash(const uint8_t *key, size_t key_len,
+                                   const void *data, size_t data_len)
+{
+    uint32_t hash = 0;
+    size_t total_bits = data_len * 8;
+    size_t bit_pos;
+
+    if (!key || key_len < 4 || !data || data_len == 0)
+        return 0;
+
+    for (bit_pos = 0; bit_pos < total_bits; bit_pos++) {
+        size_t byte_idx = bit_pos / 8;
+        size_t bit_idx = 7 - (bit_pos % 8); /* MSB first */
+        uint8_t input_byte = ((const uint8_t *)data)[byte_idx];
+
+        if (input_byte & (1u << bit_idx)) {
+            /* Extract 32-bit window from key starting at key byte (bit_pos/8) */
+            size_t kofs = bit_pos / 8;
+            uint32_t key_window;
+            if (kofs + 3 < key_len) {
+                key_window = ((uint32_t)key[kofs] << 24)
+                           | ((uint32_t)key[kofs + 1] << 16)
+                           | ((uint32_t)key[kofs + 2] << 8)
+                           | ((uint32_t)key[kofs + 3]);
+            } else {
+                /* Pad with zeros at the end of the key */
+                key_window = 0;
+                if (kofs < key_len)
+                    key_window |= (uint32_t)key[kofs] << 24;
+                if (kofs + 1 < key_len)
+                    key_window |= (uint32_t)key[kofs + 1] << 16;
+                if (kofs + 2 < key_len)
+                    key_window |= (uint32_t)key[kofs + 2] << 8;
+                if (kofs + 3 < key_len)
+                    key_window |= (uint32_t)key[kofs + 3];
+            }
+            hash ^= key_window;
+        }
+    }
+
+    return hash;
+}
+
+/* ── Determine RSS hash tuple from a received Ethernet frame ────────
+ *
+ * Given a full Ethernet frame (including eth header), extracts the
+ * 4-tuple (or 2-tuple for non-TCP/UDP) for RSS hash computation.
+ * Returns the tuple data pointer and length via output parameters.
+ *
+ * Returns the VIRTIO_NET_HASH_REPORT_* type, or VIRTIO_NET_HASH_REPORT_NONE
+ * if the packet type is not recognized/hashable.
+ *
+ * The hash_tuples are extracted in network byte order.
+ */
+static uint8_t rss_get_hash_tuple(const uint8_t *pkt, uint32_t len,
+                                   const void **tuple_out, size_t *tuple_len_out)
+{
+    /* Default: no tuple extracted */
+    if (tuple_out)   *tuple_out   = NULL;
+    if (tuple_len_out) *tuple_len_out = 0;
+
+    if (!pkt || len < sizeof(struct eth_header))
+        return VIRTIO_NET_HASH_REPORT_NONE;
+
+    const struct eth_header *eth = (const struct eth_header *)pkt;
+    uint16_t eth_type = ntohs(eth->type);
+
+    if (eth_type == ETH_TYPE_IP) {
+        /* ── IPv4 ── */
+        if (len < sizeof(struct eth_header) + sizeof(struct ip_header))
+            return VIRTIO_NET_HASH_REPORT_NONE;
+
+        const struct ip_header *ip = (const struct ip_header *)
+            (pkt + sizeof(struct eth_header));
+        int ip_hdr_len = (ip->version_ihl & 0x0F) * 4;
+        if (ip_hdr_len < 20 || (uint32_t)(sizeof(struct eth_header) + ip_hdr_len) > len)
+            return VIRTIO_NET_HASH_REPORT_NONE;
+
+        if (ip->protocol == IP_PROTO_TCP) {
+            /* TCPv4 tuple: src_ip(4) + dst_ip(4) + src_port(2) + dst_port(2) = 12 bytes */
+            if (len < sizeof(struct eth_header) + ip_hdr_len + sizeof(struct tcp_header))
+                return VIRTIO_NET_HASH_REPORT_NONE;
+
+            if (tuple_out) *tuple_out = pkt + sizeof(struct eth_header); /* starts at IP */
+            if (tuple_len_out) *tuple_len_out = 12; /* IP src + dst + TCP ports */
+            return VIRTIO_NET_HASH_REPORT_TCPv4;
+        } else if (ip->protocol == IP_PROTO_UDP) {
+            /* UDPv4 tuple: src_ip(4) + dst_ip(4) + src_port(2) + dst_port(2) = 12 bytes */
+            if (len < sizeof(struct eth_header) + ip_hdr_len + sizeof(struct udp_header))
+                return VIRTIO_NET_HASH_REPORT_NONE;
+
+            if (tuple_out) *tuple_out = pkt + sizeof(struct eth_header);
+            if (tuple_len_out) *tuple_len_out = 12;
+            return VIRTIO_NET_HASH_REPORT_UDPv4;
+        } else {
+            /* IPv4-only tuple: src_ip(4) + dst_ip(4) = 8 bytes */
+            if (tuple_out) *tuple_out = pkt + sizeof(struct eth_header);
+            if (tuple_len_out) *tuple_len_out = 8; /* IP src + dst only */
+            return VIRTIO_NET_HASH_REPORT_IPv4;
+        }
+
+    } else if (eth_type == ETH_TYPE_IPV6) {
+        /* ── IPv6 ── */
+        if (len < sizeof(struct eth_header) + sizeof(struct ipv6_header))
+            return VIRTIO_NET_HASH_REPORT_NONE;
+
+        const struct ipv6_header *ip6 = (const struct ipv6_header *)
+            (pkt + sizeof(struct eth_header));
+
+        /* Check for extension headers (simplified: detect by non-standard next_header) */
+        int has_exthdr = 0;
+        uint8_t next_hdr = ip6->next_header;
+
+        /* Scan extension headers if present (limited depth) */
+        const uint8_t *ext_ptr;
+        uint32_t ext_offset = sizeof(struct eth_header) + sizeof(struct ipv6_header);
+        int ext_depth = 0;
+
+        while (ext_depth < 8 && ext_offset < len) {
+            if (next_hdr == 0 || next_hdr == 43 || next_hdr == 44 ||
+                next_hdr == 50 || next_hdr == 51 || next_hdr == 60 ||
+                next_hdr == 135) {
+                /* Hop-by-Hop(0), Routing(43), Fragment(44),
+                 * ESP(50), AH(51), DestOpts(60), Mobility(135) */
+                has_exthdr = 1;
+                if (ext_offset + 2 > len)
+                    break;
+                ext_ptr = pkt + ext_offset;
+                next_hdr = ext_ptr[0];
+                uint8_t ext_hdr_len = ext_ptr[1];
+                ext_offset += (uint32_t)(ext_hdr_len + 1) * 8;
+                ext_depth++;
+            } else {
+                break;
+            }
+        }
+
+        if (next_hdr == IP_PROTO_TCP) {
+            if (ext_offset + sizeof(struct tcp_header) > len)
+                return VIRTIO_NET_HASH_REPORT_NONE;
+            if (has_exthdr) {
+                if (tuple_out) *tuple_out = pkt + sizeof(struct eth_header);
+                if (tuple_len_out) *tuple_len_out = 36; /* IPv6 src(16) + dst(16) + ports(4) */
+                return VIRTIO_NET_HASH_REPORT_TCPv6_EX;
+            } else {
+                if (tuple_out) *tuple_out = pkt + sizeof(struct eth_header);
+                if (tuple_len_out) *tuple_len_out = 36;
+                return VIRTIO_NET_HASH_REPORT_TCPv6;
+            }
+        } else if (next_hdr == IP_PROTO_UDP) {
+            if (ext_offset + sizeof(struct udp_header) > len)
+                return VIRTIO_NET_HASH_REPORT_NONE;
+            if (has_exthdr) {
+                if (tuple_out) *tuple_out = pkt + sizeof(struct eth_header);
+                if (tuple_len_out) *tuple_len_out = 36;
+                return VIRTIO_NET_HASH_REPORT_UDPv6_EX;
+            } else {
+                if (tuple_out) *tuple_out = pkt + sizeof(struct eth_header);
+                if (tuple_len_out) *tuple_len_out = 36;
+                return VIRTIO_NET_HASH_REPORT_UDPv6;
+            }
+        } else {
+            /* IPv6-only: src(16) + dst(16) = 32 bytes */
+            if (has_exthdr) {
+                if (tuple_out) *tuple_out = pkt + sizeof(struct eth_header);
+                if (tuple_len_out) *tuple_len_out = 32;
+                return VIRTIO_NET_HASH_REPORT_IPv6_EX;
+            } else {
+                if (tuple_out) *tuple_out = pkt + sizeof(struct eth_header);
+                if (tuple_len_out) *tuple_len_out = 32;
+                return VIRTIO_NET_HASH_REPORT_IPv6;
+            }
+        }
+    }
+
+    return VIRTIO_NET_HASH_REPORT_NONE;
+}
+
+/* ── Select queue from RSS hash value ───────────────────────────────
+ * Uses the indirection table: hash low N bits map to a table entry,
+ * and the entry value is the queue index.
+ * N = ceil(log2(indir_len)).
+ */
+static uint16_t rss_select_queue(uint32_t hash, const uint16_t *table,
+                                  uint16_t table_len)
+{
+    if (!table || table_len == 0)
+        return 0;
+
+    /* Compute mask: smallest power-of-2 >= table_len */
+    uint16_t mask = 1;
+    while (mask < table_len)
+        mask <<= 1;
+    mask--;
+
+    uint16_t idx = (uint16_t)(hash & mask);
+    if (idx >= table_len)
+        idx = table_len - 1;
+    return table[idx];
+}
+
+/* ── Compute RSS hash for a received Ethernet packet ────────────────
+ *
+ * Determines the hash type from the packet, checks if it is enabled
+ * in the current RSS configuration, computes the Toeplitz hash over
+ * the appropriate tuple (src/dst IP + ports), and returns the hash.
+ *
+ * Returns the 32-bit hash value (0 if packet can't be hashed or hash
+ * type is not enabled).  *hash_type_out is set to the
+ * VIRTIO_NET_HASH_REPORT_* constant.
+ */
+uint32_t virtio_net_rss_hash_packet(const uint8_t *pkt, uint32_t len,
+                                     uint8_t *hash_type_out)
+{
+    uint8_t htype = VIRTIO_NET_HASH_REPORT_NONE;
+    uint32_t hash = 0;
+
+    if (!hash_type_out)
+        return 0;
+
+    /* Get the hash tuple and determine the hash type */
+    const void *tuple = NULL;
+    size_t tuple_len = 0;
+
+    htype = rss_get_hash_tuple(pkt, len, &tuple, &tuple_len);
+    *hash_type_out = htype;
+
+    if (htype == VIRTIO_NET_HASH_REPORT_NONE || !tuple || tuple_len == 0)
+        return 0;
+
+    /* Check if this hash type is enabled */
+    uint32_t type_bit = 0;
+    switch (htype) {
+    case VIRTIO_NET_HASH_REPORT_IPv4:     type_bit = VIRTIO_NET_HASH_TYPE_IPv4;   break;
+    case VIRTIO_NET_HASH_REPORT_TCPv4:    type_bit = VIRTIO_NET_HASH_TYPE_TCPv4;  break;
+    case VIRTIO_NET_HASH_REPORT_UDPv4:    type_bit = VIRTIO_NET_HASH_TYPE_UDPv4;  break;
+    case VIRTIO_NET_HASH_REPORT_IPv6:     type_bit = VIRTIO_NET_HASH_TYPE_IPv6;   break;
+    case VIRTIO_NET_HASH_REPORT_TCPv6:    type_bit = VIRTIO_NET_HASH_TYPE_TCPv6;  break;
+    case VIRTIO_NET_HASH_REPORT_UDPv6:    type_bit = VIRTIO_NET_HASH_TYPE_UDPv6;  break;
+    case VIRTIO_NET_HASH_REPORT_IPv6_EX:  type_bit = VIRTIO_NET_HASH_TYPE_IPv6_EX; break;
+    case VIRTIO_NET_HASH_REPORT_TCPv6_EX: type_bit = VIRTIO_NET_HASH_TYPE_TCPv6_EX; break;
+    case VIRTIO_NET_HASH_REPORT_UDPv6_EX: type_bit = VIRTIO_NET_HASH_TYPE_UDPv6_EX; break;
+    default:                              type_bit = 0;                            break;
+    }
+
+    if (type_bit == 0 || !(rss_state.hash_types & type_bit)) {
+        /* Hash type not enabled — count as unhashed */
+        rss_state.stats.packets_unhashed++;
+        return 0;
+    }
+
+    /* Compute the Toeplitz hash */
+    hash = rss_toeplitz_hash(rss_state.hash_key, RSS_HASH_KEY_LEN,
+                              tuple, tuple_len);
+
+    /* Update statistics */
+    rss_state.stats.packets_hashed++;
+    switch (htype) {
+    case VIRTIO_NET_HASH_REPORT_IPv4:     rss_state.stats.hash_ipv4++;     break;
+    case VIRTIO_NET_HASH_REPORT_TCPv4:    rss_state.stats.hash_tcpv4++;    break;
+    case VIRTIO_NET_HASH_REPORT_UDPv4:    rss_state.stats.hash_udpv4++;    break;
+    case VIRTIO_NET_HASH_REPORT_IPv6:     rss_state.stats.hash_ipv6++;     break;
+    case VIRTIO_NET_HASH_REPORT_TCPv6:    rss_state.stats.hash_tcpv6++;    break;
+    case VIRTIO_NET_HASH_REPORT_UDPv6:    rss_state.stats.hash_udpv6++;    break;
+    case VIRTIO_NET_HASH_REPORT_IPv6_EX:  rss_state.stats.hash_ipv6_ex++;  break;
+    case VIRTIO_NET_HASH_REPORT_TCPv6_EX: rss_state.stats.hash_tcpv6_ex++; break;
+    case VIRTIO_NET_HASH_REPORT_UDPv6_EX: rss_state.stats.hash_udpv6_ex++; break;
+    default: break;
+    }
+
+    return hash;
+}
+
+/* ── Initialize RSS subsystem ────────────────────────────────────────
+ *
+ * Sets the default symmetric hash key, creates a default indirection
+ * table (round-robin across available RX queues), and enables all
+ * standard hash types.
+ *
+ * For the legacy transport (2 queues: RX/TX), the indirection table
+ * maps all entries to queue 0.  When the modern transport with
+ * multiple RX queues is available, the indirection table distributes
+ * across all available queues.
+ *
+ * Returns 0 on success.
+ */
+int virtio_net_rss_init(void)
+{
+    /* If already initialized, just reset stats */
+    if (rss_state.initialized) {
+        memset(&rss_state.stats, 0, sizeof(rss_state.stats));
+        return 0;
+    }
+
+    /* Copy default hash key */
+    memcpy(rss_state.hash_key, rss_default_key, RSS_HASH_KEY_LEN);
+
+    /* Build default indirection table.
+     * With legacy transport we have 1 RX queue (RX_QUEUE_IDX=0).
+     * When multi-queue is available (modern transport), the caller
+     * can call rss_set_config to redistribute. */
+    {
+        uint16_t num_rx_queues = 1; /* fixed for legacy transport */
+        for (uint16_t i = 0; i < RSS_INDIR_TABLE_SIZE; i++)
+            rss_state.indir_table[i] = (uint16_t)(i % num_rx_queues);
+        rss_state.indir_len = RSS_INDIR_TABLE_SIZE;
+    }
+
+    /* Enable all hash types by default */
+    rss_state.hash_types =
+        VIRTIO_NET_HASH_TYPE_IPv4   | VIRTIO_NET_HASH_TYPE_TCPv4  |
+        VIRTIO_NET_HASH_TYPE_UDPv4  | VIRTIO_NET_HASH_TYPE_IPv6   |
+        VIRTIO_NET_HASH_TYPE_TCPv6  | VIRTIO_NET_HASH_TYPE_UDPv6  |
+        VIRTIO_NET_HASH_TYPE_IPv6_EX | VIRTIO_NET_HASH_TYPE_TCPv6_EX |
+        VIRTIO_NET_HASH_TYPE_UDPv6_EX;
+
+    rss_state.unclassified_q = 0;
+    memset(&rss_state.stats, 0, sizeof(rss_state.stats));
+    rss_state.initialized = 1;
+
+    kprintf("virtio-net: RSS initialized (indir_len=%u, hash_types=0x%08X)\n",
+            (unsigned int)rss_state.indir_len,
+            (unsigned int)rss_state.hash_types);
+
+    return 0;
+}
+
+/* ── Set RSS configuration ──────────────────────────────────────────
+ *
+ * Updates the RSS hash key, indirection table, enabled hash types,
+ * and unclassified queue.  The indirection table is limited to
+ * RSS_INDIR_TABLE_SIZE entries.
+ *
+ * Returns 0 on success, -1 on invalid arguments.
+ */
+int virtio_net_rss_set_config(const uint8_t *key, size_t key_len,
+                               const uint16_t *indir_table, uint16_t indir_len,
+                               uint32_t hash_types, uint16_t unclassified_q)
+{
+    if (!rss_state.initialized) {
+        if (virtio_net_rss_init() < 0)
+            return -1;
+    }
+
+    /* Validate key length */
+    if (key && key_len > 0) {
+        size_t copy_len = key_len < RSS_HASH_KEY_LEN ? key_len : RSS_HASH_KEY_LEN;
+        memset(rss_state.hash_key, 0, RSS_HASH_KEY_LEN);
+        memcpy(rss_state.hash_key, key, copy_len);
+    }
+
+    /* Validate and copy indirection table */
+    if (indir_table && indir_len > 0) {
+        uint16_t copy_len = indir_len < RSS_INDIR_TABLE_SIZE ? indir_len : RSS_INDIR_TABLE_SIZE;
+        for (uint16_t i = 0; i < copy_len; i++)
+            rss_state.indir_table[i] = indir_table[i];
+        rss_state.indir_len = copy_len;
+    }
+
+    /* Store hash types and unclassified queue */
+    rss_state.hash_types = hash_types;
+    rss_state.unclassified_q = unclassified_q;
+
+    kprintf("virtio-net: RSS config updated (hash_types=0x%08X, indir_len=%u, unclass_q=%u)\n",
+            (unsigned int)rss_state.hash_types,
+            (unsigned int)rss_state.indir_len,
+            (unsigned int)rss_state.unclassified_q);
+
+    return 0;
+}
+
+/* ── Get current RSS configuration ─────────────────────────────────── */
+void virtio_net_rss_get_config(uint32_t *hash_types, uint16_t *unclassified_q)
+{
+    if (hash_types)
+        *hash_types = rss_state.hash_types;
+    if (unclassified_q)
+        *unclassified_q = rss_state.unclassified_q;
+}
+
+/* ── Get RSS statistics ───────────────────────────────────────────── */
+void virtio_net_rss_get_stats(struct virtio_net_rss_stats *stats)
+{
+    if (stats)
+        memcpy(stats, &rss_state.stats, sizeof(*stats));
+}
+
 /* ── Init ────────────────────────────────────────────────────────── */
 int virtio_net_init(void) {
     struct pci_device dev;
@@ -1262,6 +1692,9 @@ int virtio_net_init(void) {
     /* Initialize LRO stats */
     memset(&lro_stats, 0, sizeof(lro_stats));
     memset(&lro_seg, 0, sizeof(lro_seg));
+
+    /* Initialize RSS subsystem */
+    virtio_net_rss_init();
 
     /* Negotiate features: accept only what we support, validate
      * required features (VIRTIO_NET_F_MAC is mandatory), then

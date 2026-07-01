@@ -37,4 +37,60 @@ int virtio_net_gro_receive(const uint8_t *pkt, uint32_t len,
                             uint8_t *merged_buf, uint16_t *merged_len,
                             uint64_t current_ticks);
 
+/* ── RSS statistics structure ────────────────────────────────────── */
+struct virtio_net_rss_stats {
+    uint64_t packets_hashed;       /* Total packets where RSS hash was computed */
+    uint64_t packets_unhashed;     /* Packets where no hash type matched */
+    uint64_t hash_ipv4;            /* Hash computed for IPv4 (no L4) */
+    uint64_t hash_tcpv4;           /* Hash computed for TCPv4 */
+    uint64_t hash_udpv4;           /* Hash computed for UDPv4 */
+    uint64_t hash_ipv6;            /* Hash computed for IPv6 (no L4) */
+    uint64_t hash_tcpv6;           /* Hash computed for TCPv6 */
+    uint64_t hash_udpv6;           /* Hash computed for UDPv6 */
+    uint64_t hash_ipv6_ex;         /* Hash computed for IPv6 with extension hdrs */
+    uint64_t hash_tcpv6_ex;        /* Hash computed for TCPv6 with extension hdrs */
+    uint64_t hash_udpv6_ex;        /* Hash computed for UDPv6 with extension hdrs */
+};
+
+/* ── RSS hash report structure ───────────────────────────────────── */
+struct virtio_net_rss_hash_report {
+    uint32_t hash_value;           /* RSS Toeplitz hash value */
+    uint8_t  hash_type;            /* VIRTIO_NET_HASH_REPORT_* type */
+    uint16_t queue;                /* Selected queue index (if steered) */
+};
+
+/* ── RSS functions ────────────────────────────────────────────────── *
+ * RSS (Receive Side Steering) infrastructure: compute Toeplitz hash
+ * on received packets, configure hash types and indirection table,
+ * and query RSS statistics.
+ *
+ * RSS is implemented in software for the legacy transport; the modern
+ * transport path may additionally negotiate VIRTIO_NET_F_RSS with the
+ * device for hardware-accelerated steering. */
+
+/* Initialize RSS subsystem: set default hash key and indirection table. */
+int  virtio_net_rss_init(void);
+
+/* Set RSS configuration: hash key (40 bytes), indirection table,
+ * hash type enable mask, and fallback queue index for unclassified pkts.
+ * Returns 0 on success, -1 on invalid arguments.
+ * If a control virtqueue is available, also sends the config to the device. */
+int  virtio_net_rss_set_config(const uint8_t *key, size_t key_len,
+                                const uint16_t *indir_table, uint16_t indir_len,
+                                uint32_t hash_types, uint16_t unclassified_q);
+
+/* Get current RSS configuration. Pointers may be NULL to skip. */
+void virtio_net_rss_get_config(uint32_t *hash_types, uint16_t *unclassified_q);
+
+/* Copy current RSS statistics into the provided structure. */
+void virtio_net_rss_get_stats(struct virtio_net_rss_stats *stats);
+
+/* Compute the RSS Toeplitz hash for a received Ethernet packet.
+ * Returns the 32-bit hash value and sets *hash_type_out to the
+ * corresponding VIRTIO_NET_HASH_REPORT_* constant (NONE if the
+ * packet type is not configured for RSS hashing).
+ * The caller must provide the full Ethernet frame in 'pkt'. */
+uint32_t virtio_net_rss_hash_packet(const uint8_t *pkt, uint32_t len,
+                                     uint8_t *hash_type_out);
+
 #endif
