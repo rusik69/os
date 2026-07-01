@@ -20,6 +20,35 @@
 #define IOSCHED_NOOP     0
 #define IOSCHED_DEADLINE 1
 #define IOSCHED_CFQ      2
+#define IOSCHED_KYBER    3
+
+/* ── Kyber scheduler constants ─────────────────────────────────────── */
+
+#define KYBER_MAX_DOMAINS         4
+#define KYBER_READ_DOMAIN         0
+#define KYBER_WRITE_DOMAIN        1
+#define KYBER_DISCARD_DOMAIN      2
+#define KYBER_OTHER_DOMAIN        3
+
+/* Default token limits */
+#define KYBER_READ_TOKENS_MIN     128
+#define KYBER_READ_TOKENS_MAX     512
+#define KYBER_WRITE_TOKENS_MIN    16
+#define KYBER_WRITE_TOKENS_MAX    128
+#define KYBER_DISCARD_TOKENS_MIN  1
+#define KYBER_DISCARD_TOKENS_MAX  32
+#define KYBER_OTHER_TOKENS_MIN    8
+#define KYBER_OTHER_TOKENS_MAX    64
+
+/* Target latencies (ns) */
+#define KYBER_READ_TARGET_NS      2000000ULL    /* 2ms */
+#define KYBER_WRITE_TARGET_NS     10000000ULL   /* 10ms */
+#define KYBER_DISCARD_TARGET_NS   40000000ULL   /* 40ms */
+#define KYBER_OTHER_TARGET_NS     20000000ULL   /* 20ms */
+
+/* Token adjustment */
+#define KYBER_TOKEN_INTERVAL_NS   1000000ULL    /* 1ms between adjustments */
+#define KYBER_TOKEN_ADJUST_STEP   1              /* tokens to adjust per interval */
 
 /* Deadline constants */
 #define DEADLINE_READ_MS      500   /* read deadline in milliseconds */
@@ -134,10 +163,31 @@ struct iosched_cfq_data {
 
 /* ── Per-device I/O scheduler queue ───────────────────────────────── */
 
+struct iosched_kyber_domain {
+    struct blk_request *head;
+    struct blk_request *tail;
+    int                 count;          /* pending requests in this domain */
+    int                 tokens;         /* current available token budget */
+    int                 tokens_min;     /* minimum token budget */
+    int                 tokens_max;     /* maximum token budget */
+    uint64_t            target_ns;      /* latency target in ns */
+    uint64_t            last_token_tune;/* monotonic ns of last token adjustment */
+    uint64_t            submitted;      /* total submissions */
+    uint64_t            fetched;        /* total fetches from this domain */
+    uint64_t            lat_avg;        /* average latency in ns (exponential smoothing) */
+    uint64_t            lat_samples;    /* latency sample count for statistics */
+};
+
+struct iosched_kyber_data {
+    struct iosched_kyber_domain domains[KYBER_MAX_DOMAINS];
+    int                total_queued;    /* total pending across all domains */
+    int                next_domain;     /* domain index for round-robin start */
+};
+
 struct iosched_queue {
     spinlock_t          lock;
     int                 dev_id;
-    int                 policy;          /* IOSCHED_NOOP, _DEADLINE, _CFQ */
+    int                 policy;          /* IOSCHED_NOOP, _DEADLINE, _CFQ, _KYBER */
     const struct iosched_ops *ops;
 
     /* Deadline / NOOP: simple linked list of pending requests */
@@ -150,6 +200,7 @@ struct iosched_queue {
         struct iosched_noop_data     noop;
         struct iosched_deadline_data deadline;
         struct iosched_cfq_data     cfq;
+        struct iosched_kyber_data   kyber;
     };
 } __cacheline_aligned;
 

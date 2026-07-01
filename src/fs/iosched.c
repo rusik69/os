@@ -46,6 +46,10 @@ static int  cfq_submit(struct iosched_queue *iq, struct blk_request *req);
 static struct blk_request *cfq_fetch(struct iosched_queue *iq);
 static void cfq_free(struct iosched_queue *iq);
 
+static int  kyber_submit(struct iosched_queue *iq, struct blk_request *req);
+static struct blk_request *kyber_fetch(struct iosched_queue *iq);
+static void kyber_free(struct iosched_queue *iq);
+
 static const struct iosched_ops g_noop_ops = {
     .name   = "noop",
     .submit = noop_submit,
@@ -65,6 +69,13 @@ static const struct iosched_ops g_cfq_ops = {
     .submit = cfq_submit,
     .fetch  = cfq_fetch,
     .free   = cfq_free,
+};
+
+static const struct iosched_ops g_kyber_ops = {
+    .name   = "kyber",
+    .submit = kyber_submit,
+    .fetch  = kyber_fetch,
+    .free   = kyber_free,
 };
 
 /* ── Helpers ─────────────────────────────────────────────────────── */
@@ -91,7 +102,7 @@ void iosched_init(void)
         g_iosched_queues[i].ops    = &g_noop_ops;
     }
     g_iosched_initialized = 1;
-    kprintf("[OK] iosched: I/O scheduler initialized (NOOP/DEADLINE/CFQ)\n");
+    kprintf("[OK] iosched: I/O scheduler initialized (NOOP/DEADLINE/CFQ/KYBER)\n");
 }
 
 /* ── iosched_get_queue ───────────────────────────────────────────── */
@@ -144,7 +155,7 @@ int iosched_set_policy(int dev_id, int policy)
 {
     struct iosched_queue *iq = iosched_get_queue(dev_id);
     if (!iq) return -ENODEV;
-    if (policy != IOSCHED_NOOP && policy != IOSCHED_DEADLINE && policy != IOSCHED_CFQ)
+    if (policy != IOSCHED_NOOP && policy != IOSCHED_DEADLINE && policy != IOSCHED_CFQ && policy != IOSCHED_KYBER)
         return -EINVAL;
 
     uint64_t irq_flags;
@@ -177,6 +188,27 @@ int iosched_set_policy(int dev_id, int policy)
         INIT_LIST_HEAD(&iq->cfq.be_queues);
         INIT_LIST_HEAD(&iq->cfq.idle_queues);
         break;
+    case IOSCHED_KYBER:
+        iq->ops = &g_kyber_ops;
+        memset(&iq->kyber, 0, sizeof(iq->kyber));
+        /* Initialize Kyber domain token budgets */
+        iq->kyber.domains[KYBER_READ_DOMAIN].tokens    = KYBER_READ_TOKENS_MAX;
+        iq->kyber.domains[KYBER_READ_DOMAIN].tokens_min = KYBER_READ_TOKENS_MIN;
+        iq->kyber.domains[KYBER_READ_DOMAIN].tokens_max = KYBER_READ_TOKENS_MAX;
+        iq->kyber.domains[KYBER_READ_DOMAIN].target_ns  = KYBER_READ_TARGET_NS;
+        iq->kyber.domains[KYBER_WRITE_DOMAIN].tokens    = KYBER_WRITE_TOKENS_MAX;
+        iq->kyber.domains[KYBER_WRITE_DOMAIN].tokens_min = KYBER_WRITE_TOKENS_MIN;
+        iq->kyber.domains[KYBER_WRITE_DOMAIN].tokens_max = KYBER_WRITE_TOKENS_MAX;
+        iq->kyber.domains[KYBER_WRITE_DOMAIN].target_ns  = KYBER_WRITE_TARGET_NS;
+        iq->kyber.domains[KYBER_DISCARD_DOMAIN].tokens    = KYBER_DISCARD_TOKENS_MAX;
+        iq->kyber.domains[KYBER_DISCARD_DOMAIN].tokens_min = KYBER_DISCARD_TOKENS_MIN;
+        iq->kyber.domains[KYBER_DISCARD_DOMAIN].tokens_max = KYBER_DISCARD_TOKENS_MAX;
+        iq->kyber.domains[KYBER_DISCARD_DOMAIN].target_ns  = KYBER_DISCARD_TARGET_NS;
+        iq->kyber.domains[KYBER_OTHER_DOMAIN].tokens    = KYBER_OTHER_TOKENS_MAX;
+        iq->kyber.domains[KYBER_OTHER_DOMAIN].tokens_min = KYBER_OTHER_TOKENS_MIN;
+        iq->kyber.domains[KYBER_OTHER_DOMAIN].tokens_max = KYBER_OTHER_TOKENS_MAX;
+        iq->kyber.domains[KYBER_OTHER_DOMAIN].target_ns  = KYBER_OTHER_TARGET_NS;
+        break;
     default:
         iq->ops = &g_noop_ops;
         break;
@@ -195,12 +227,23 @@ int iosched_get_policy(int dev_id)
 
 /* ── iosched_request_complete ────────────────────────────────────── */
 
+/* Forward declaration for Kyber latency tracking */
+static void kyber_record_latency(struct iosched_kyber_data *kd,
+                                  struct blk_request *req);
+
 void iosched_request_complete(int dev_id, struct blk_request *req)
 {
-    (void)dev_id;
-    (void)req;
-    /* CFQ uses completion to re-arm slices; for now this is a no-op
-     * as the existing block layer handles completion. */
+    struct iosched_queue *iq = iosched_get_queue(dev_id);
+    if (!iq || !req) return;
+
+    /* Kyber uses completion to track I/O latency for token adjustment */
+    if (iq->policy == IOSCHED_KYBER) {
+        uint64_t irq_flags;
+        spinlock_irqsave_acquire(&iq->lock, &irq_flags);
+        kyber_record_latency(&iq->kyber, req);
+        spinlock_irqsave_release(&iq->lock, irq_flags);
+    }
+    /* CFQ uses completion to re-arm slices */
 }
 
 /* ════════════════════════════════════════════════════════════════════
@@ -973,6 +1016,185 @@ static void cfq_free(struct iosched_queue *iq)
     cfq->idle_expired = 0;
 }
 
+/* ── Kyber helper: determine domain from request flags ──────────── */
+
+static inline int kyber_domain_from_req(struct blk_request *req)
+{
+    if (req->flags & BLK_REQ_READ)
+        return KYBER_READ_DOMAIN;
+    if (req->flags & BLK_REQ_WRITE)
+        return KYBER_WRITE_DOMAIN;
+    if (req->flags & BLK_REQ_DISCARD)
+        return KYBER_DISCARD_DOMAIN;
+    return KYBER_OTHER_DOMAIN;
+}
+
+/* ── Kyber helper: tune token budget for a domain ──────────────── */
+
+static void kyber_tune_tokens(struct iosched_kyber_domain *kd, uint64_t now_ns)
+{
+    /* Only tune at the configured interval */
+    if (now_ns < kd->last_token_tune + KYBER_TOKEN_INTERVAL_NS)
+        return;
+    kd->last_token_tune = now_ns;
+
+    /* If we have latency samples, adjust based on target vs actual */
+    if (kd->lat_samples > 0 && kd->lat_avg > 0) {
+        if (kd->lat_avg > kd->target_ns) {
+            /* Over target — reduce tokens to back-pressure */
+            if (kd->tokens > kd->tokens_min)
+                kd->tokens -= KYBER_TOKEN_ADJUST_STEP;
+        } else if (kd->lat_avg < (kd->target_ns * 8ULL / 10ULL)) {
+            /* Under target by more than 20% — increase tokens */
+            if (kd->tokens < kd->tokens_max)
+                kd->tokens += KYBER_TOKEN_ADJUST_STEP;
+        }
+    } else {
+        /* No latency data yet — if queue is deep, increase tokens */
+        if (kd->count > 0 && kd->tokens < kd->tokens_max)
+            kd->tokens += KYBER_TOKEN_ADJUST_STEP;
+    }
+
+    /* Clamp to [tokens_min, tokens_max] */
+    if (kd->tokens < kd->tokens_min)
+        kd->tokens = kd->tokens_min;
+    if (kd->tokens > kd->tokens_max)
+        kd->tokens = kd->tokens_max;
+}
+
+/* ════════════════════════════════════════════════════════════════════
+ * Kyber I/O scheduler — latency-optimized via token-based admission
+ *
+ * Kyber divides requests into domains (READ, WRITE, DISCARD, OTHER)
+ * and uses a token-bucket admission scheme to control concurrency per
+ * domain.  Token budgets are dynamically adjusted based on observed
+ * I/O latencies vs. configurable targets:
+ *   - READ:   2ms target, 128–512 tokens
+ *   - WRITE:  10ms target, 16–128 tokens
+ *   - DISCARD: 40ms target, 1–32 tokens
+ *   - OTHER:  20ms target, 8–64 tokens
+ *
+ * When a domain's average latency exceeds its target, tokens are
+ * reduced to create back-pressure.  When latency is below the target,
+ * tokens are increased to allow more concurrency.
+ *
+ * Dispatch uses round-robin across domains (starting at next_domain)
+ * to ensure fairness even under mixed workloads.
+ * ════════════════════════════════════════════════════════════════════ */
+
+/* ── kyber_submit ──────────────────────────────────────────────── */
+
+static int kyber_submit(struct iosched_queue *iq, struct blk_request *req)
+{
+    struct iosched_kyber_data *kd = &iq->kyber;
+    int domain = kyber_domain_from_req(req);
+    struct iosched_kyber_domain *d = &kd->domains[domain];
+
+    /* Append to the domain's FIFO queue */
+    d->submitted++;
+    if (d->tail) {
+        d->tail->next = req;
+        d->tail = req;
+    } else {
+        d->head = req;
+        d->tail = req;
+    }
+    req->next = NULL;
+    d->count++;
+    kd->total_queued++;
+
+    return 0;
+}
+
+/* ── kyber_fetch ───────────────────────────────────────────────── */
+
+static struct blk_request *kyber_fetch(struct iosched_queue *iq)
+{
+    struct iosched_kyber_data *kd = &iq->kyber;
+    uint64_t now_ns = timer_get_ns();
+
+    /* Round-robin across domains starting from next_domain */
+    for (int i = 0; i < KYBER_MAX_DOMAINS; i++) {
+        int d_idx = (kd->next_domain + i) % KYBER_MAX_DOMAINS;
+        struct iosched_kyber_domain *d = &kd->domains[d_idx];
+
+        /* Skip empty domains */
+        if (!d->head)
+            continue;
+
+        /* Token-admission: check if tokens are available */
+        if (d->tokens <= 0)
+            continue;
+
+        /* Tune token budget if enough time has passed */
+        kyber_tune_tokens(d, now_ns);
+
+        /* Re-check after tuning */
+        if (d->tokens <= 0)
+            continue;
+
+        /* Dispatch the next request from this domain */
+        struct blk_request *req = d->head;
+        d->head = req->next;
+        if (!d->head)
+            d->tail = NULL;
+        req->next = NULL;
+        d->count--;
+        kd->total_queued--;
+
+        /* Record dispatch timestamp in expiry field for latency tracking
+         * (Kyber does not use expiry — this field is deadline-specific) */
+        req->expiry = timer_get_ns();
+
+        /* Consume a token */
+        d->tokens--;
+        d->fetched++;
+
+        /* Set next domain start for fairness */
+        kd->next_domain = (d_idx + 1) % KYBER_MAX_DOMAINS;
+
+        return req;
+    }
+
+    /* No domain has both requests and tokens */
+    return NULL;
+}
+
+/* ── kyber_free ────────────────────────────────────────────────── */
+
+static void kyber_free(struct iosched_queue *iq)
+{
+    memset(&iq->kyber, 0, sizeof(iq->kyber));
+}
+
+/* ── Kyber latency tracking (called from iosched_request_complete) ─ */
+
+static void kyber_record_latency(struct iosched_kyber_data *kd,
+                                  struct blk_request *req)
+{
+    if (!req) return;
+
+    int domain = kyber_domain_from_req(req);
+    struct iosched_kyber_domain *d = &kd->domains[domain];
+
+    /* Compute latency using the dispatch timestamp stored in expiry */
+    uint64_t now_ns = timer_get_ns();
+    uint64_t lat;
+
+    if (req->expiry > 0 && now_ns > req->expiry)
+        lat = now_ns - req->expiry;
+    else
+        lat = 0;
+
+    /* Exponentially weighted moving average (α ≈ 1/8) */
+    if (d->lat_samples == 0) {
+        d->lat_avg = lat;
+    } else {
+        d->lat_avg = (d->lat_avg * 7ULL + lat) / 8ULL;
+    }
+    d->lat_samples++;
+}
+
 /* ── iosched_try_merge ────────────────────────────────────────────
  * Try to merge a request with the last request in the queue.
  * Returns 1 if merged (req was consumed), 0 otherwise.
@@ -1035,5 +1257,5 @@ int iosched_complete(void *req)
 /* ── Module metadata ─────────────────────────────────────────────── */
 MODULE_LICENSE("GPL");
 MODULE_VERSION("2.0");
-MODULE_DESCRIPTION("Block I/O scheduler (elevator) — NOOP/DEADLINE/CFQ with enhanced merging");
+MODULE_DESCRIPTION("Block I/O scheduler (elevator) — NOOP/DEADLINE/CFQ/KYBER with enhanced merging");
 MODULE_AUTHOR("Rusik69 OS Kernel");
