@@ -182,6 +182,19 @@ int rtl8139_init_hw(struct rtl8139_priv *priv)
     kprintf("  rtl8139: hardware initialized (TX rings: %d slots, RX ring: %d bytes)\n",
             RTL8139_NUM_TX_DESC, RTL8139_RX_BUF_SIZE);
     priv->initialized = 1;
+
+    /* Step 12: Check initial link state */
+    {
+        int ls = rtl8139_check_link(priv);
+        kprintf("  rtl8139: link %s\n", rtl8139_link_state_name(ls));
+        if (ls == RTL_LINK_UP) {
+            uint16_t bmsr = rtl8139_readw(priv, RTL_REG_BMSR);
+            unsigned an_complete = (bmsr & RTL_BMSR_AN_COMPLETE) ? 1 : 0;
+            kprintf("  rtl8139: auto-negotiation %s\n",
+                    an_complete ? "complete" : "in progress");
+        }
+    }
+
     return 0;
 }
 
@@ -446,6 +459,40 @@ int rtl8139_receive(struct net_device *dev,
     return 0;
 }
 
+/* ── Link state detection ──────────────────────────────────────────── */
+
+int rtl8139_check_link(struct rtl8139_priv *priv)
+{
+    uint16_t bmsr;
+    int link_state;
+
+    /* BMSR bit 2 (Link Status) is latching per IEEE 802.3 — it stays
+     * cleared after a link fault until the register is read.  Read
+     * once to clear the latch, then again for the current status. */
+    bmsr = rtl8139_readw(priv, RTL_REG_BMSR);
+    (void)bmsr;
+
+    bmsr = rtl8139_readw(priv, RTL_REG_BMSR);
+    link_state = (bmsr & RTL_BMSR_LINK_STATUS) ? RTL_LINK_UP : RTL_LINK_DOWN;
+
+    /* Reflect the current link state in the netdevice flags so the
+     * network stack knows whether this interface is operational. */
+    if (link_state == RTL_LINK_UP)
+        priv->ndev.flags |= IFF_RUNNING;
+    else
+        priv->ndev.flags &= ~(unsigned)IFF_RUNNING;
+
+    return link_state;
+}
+
+const char *rtl8139_link_state_name(int link_state)
+{
+    if (link_state == RTL_LINK_UP)
+        return "up";
+    else
+        return "down";
+}
+
 /* ── Module / device init entry point ────────────────────────────── */
 
 int rtl8139_init(void)
@@ -504,7 +551,7 @@ module_init(rtl8139_init);
 module_exit(rtl8139_exit);
 MODULE_LICENSE("GPL");
 MODULE_VERSION("1.0");
-MODULE_DESCRIPTION("Realtek RTL8139 Fast Ethernet driver (TX/RX ring buffer)");
+MODULE_DESCRIPTION("Realtek RTL8139 Fast Ethernet driver (TX/RX ring buffer, link state detection)");
 MODULE_AUTHOR("1000 Changes Project");
 MODULE_ALIAS("pci:v000010ECd00008139*");
 #endif

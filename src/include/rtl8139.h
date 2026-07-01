@@ -151,6 +151,27 @@
 #define RTL_BMCR_SPEED      (1U << 13) /* 0 = 10Mbps, 1 = 100Mbps */
 #define RTL_BMCR_DUPLEX     (1U << 8)  /* 0 = half, 1 = full */
 
+/* ── PHY BMSR bits (at PIO offset 0xE2) ──────────────────────────── */
+#define RTL_BMSR_EXTENDED_CAP   0x0001  /* Extended register set capable */
+#define RTL_BMSR_JABBER         0x0002  /* Jabber detect */
+#define RTL_BMSR_LINK_STATUS    0x0004  /* Link up (latched — read twice for current) */
+#define RTL_BMSR_AN_ABILITY     0x0008  /* Auto-negotiation supported */
+#define RTL_BMSR_REMOTE_FAULT   0x0010  /* Remote fault */
+#define RTL_BMSR_AN_COMPLETE    0x0020  /* Auto-negotiation complete */
+#define RTL_BMSR_EXT_STATUS     0x0040  /* Extended status present */
+#define RTL_BMSR_100T2_HD       0x0100  /* 100BASE-T2 half duplex capable */
+#define RTL_BMSR_100T2_FD       0x0200  /* 100BASE-T2 full duplex capable */
+#define RTL_BMSR_10T_HD         0x0400  /* 10BASE-T half duplex capable */
+#define RTL_BMSR_10T_FD         0x0800  /* 10BASE-T full duplex capable */
+#define RTL_BMSR_100TX_HD       0x1000  /* 100BASE-TX half duplex capable */
+#define RTL_BMSR_100TX_FD       0x2000  /* 100BASE-TX full duplex capable */
+#define RTL_BMSR_100T4          0x4000  /* 100BASE-T4 capable */
+#define RTL_BMSR_PAUSE          0x8000  /* PAUSE operation supported */
+
+/* Link state codes returned by rtl8139_check_link() */
+#define RTL_LINK_DOWN   0
+#define RTL_LINK_UP     1
+
 /* Maximum number of TX descriptors (RTL8139 has 4) */
 #define RTL8139_NUM_TX_DESC 4
 
@@ -220,5 +241,9 @@ int  rtl8139_probe(struct rtl8139_priv *priv);
 /* TX/RX ring buffer operations (netdevice callbacks) */
 int  rtl8139_transmit(struct net_device *dev, const uint8_t *data, uint16_t len);
 int  rtl8139_receive(struct net_device *dev, uint8_t *buf, uint16_t max_len);
+
+/* Link state detection */
+int  rtl8139_check_link(struct rtl8139_priv *priv);
+const char *rtl8139_link_state_name(int link_state);
 
 #endif /* RTL8139_H */
