@@ -25,6 +25,7 @@
 #include "spinlock.h"
 #include "errno.h"
 #include "kernel.h"
+#include "edid.h"
 
 /* ═══════════════════════════════════════════════════════════════════
  *  CVT (Coordinated Video Timings) — Reduced Blanking v1.2
@@ -272,7 +273,212 @@ int drm_display_cvt_mode(uint32_t width, uint32_t height,
 }
 
 /* ═══════════════════════════════════════════════════════════════════
- *  EDID Parsing (block 0 — 128-byte Base EDID)
+ *  EDID Extension Block Parsing (CEA-861 Block 1+)
+ * ═══════════════════════════════════════════════════════════════════ */
+
+/* CEA extension block tag */
+#define CEA_EXT_TAG      0x02
+
+/* CEA data block tags */
+#define CEA_DB_VIDEO     1   /* Short Video Descriptor */
+#define CEA_DB_AUDIO     2   /* Short Audio Descriptor */
+#define CEA_DB_SPEAKER   3   /* Speaker Allocation */
+
+/*
+ * cea_svd_to_cvt — Convert a CEA short video descriptor to a display mode
+ * using CVT timing generation.
+ *
+ * Returns 0 on success, -1 if VIC is unknown.
+ */
+static int cea_svd_to_cvt(struct drm_connector *conn,
+                           uint8_t vic, int native)
+{
+    const struct edid_cea_svd_entry *svd = edid_cea_get_svd(vic);
+
+    if (!svd)
+        return -1;
+
+    struct drm_display_mode mode;
+
+    if (drm_display_cvt_mode(svd->h_pixels, svd->v_lines,
+                              svd->refresh, 1, &mode) != 0)
+        return -1;
+
+    mode.type = DRM_MODE_TYPE_BUILTIN | DRM_MODE_TYPE_DRIVER;
+    if (native)
+        mode.type |= DRM_MODE_TYPE_PREFERRED;
+
+    return drm_display_add_mode(conn, &mode);
+}
+
+/*
+ * edid_parse_cea_dtd — Parse a DTD from a CEA extension block.
+ * Returns 0 on success, -1 on failure.
+ */
+static int edid_parse_cea_dtd(struct drm_connector *conn,
+                               const uint8_t *dtd)
+{
+    uint16_t clk = (uint16_t)(dtd[0]) | ((uint16_t)(dtd[1]) << 8);
+    if (clk == 0)
+        return -1;
+
+    struct drm_display_mode mode;
+    memset(&mode, 0, sizeof(mode));
+
+    mode.clock = (uint32_t)clk * 10; /* 10 kHz units → kHz */
+
+    /* Horizontal timing */
+    uint16_t h_active_lo   = dtd[2];
+    uint16_t h_blank_lo    = dtd[3];
+    uint8_t  h_active_hi   = (dtd[4] >> 4) & 0x0F;
+    uint8_t  h_blank_hi    = dtd[4] & 0x0F;
+
+    mode.hdisplay = (uint16_t)((h_active_hi << 8) | h_active_lo);
+    uint16_t h_blank = (uint16_t)((h_blank_hi << 8) | h_blank_lo);
+    mode.htotal   = mode.hdisplay + h_blank;
+
+    uint16_t h_sync_off_lo = dtd[5];
+    uint16_t h_sync_width_lo = dtd[6];
+    uint8_t  h_sync_off_hi = (dtd[7] >> 6) & 0x03;
+    uint8_t  h_sync_width_hi = (dtd[7] >> 4) & 0x03;
+
+    uint16_t h_sync_off = (uint16_t)((h_sync_off_hi << 8) | h_sync_off_lo);
+    mode.hsync_start = mode.hdisplay + h_sync_off;
+
+    uint16_t h_sync_wid = (uint16_t)((h_sync_width_hi << 8) | h_sync_width_lo);
+    mode.hsync_end = mode.hsync_start + h_sync_wid;
+
+    /* Vertical timing */
+    uint16_t v_active_lo   = dtd[7] & 0x0F;
+    v_active_lo |= ((uint16_t)(dtd[8] & 0xF0)) << 4;
+    uint16_t v_blank_lo    = dtd[8] & 0x0F;
+    v_blank_lo |= ((uint16_t)(dtd[9] & 0xF0)) << 4;
+    uint8_t  v_active_hi   = (dtd[10] >> 4) & 0x0F;
+    uint8_t  v_blank_hi    = dtd[10] & 0x0F;
+
+    mode.vdisplay = (uint16_t)((v_active_hi << 8) | v_active_lo);
+    uint16_t v_blank = (uint16_t)((v_blank_hi << 8) | v_blank_lo);
+    mode.vtotal   = mode.vdisplay + v_blank;
+
+    uint16_t v_sync_off_lo  = dtd[11];
+    uint8_t  v_sync_width_lo = dtd[12];
+    uint8_t  v_sync_off_hi  = (dtd[13] >> 6) & 0x03;
+    uint8_t  v_sync_width_hi = (dtd[13] >> 4) & 0x03;
+
+    uint16_t v_sync_off = (uint16_t)((v_sync_off_hi << 8) | v_sync_off_lo);
+    uint16_t v_sync_wid = (uint16_t)((v_sync_width_hi << 8) | v_sync_width_lo);
+
+    mode.vsync_start = mode.vdisplay + v_sync_off;
+    mode.vsync_end   = mode.vsync_start + v_sync_wid;
+
+    /* Sync polarity, interlace flags */
+    uint8_t flags = dtd[17];
+    if (flags & 0x80)
+        mode.flags |= DRM_DISPLAY_MODE_FLAG_INTERLACE;
+    if (flags & 0x08)
+        mode.flags |= DRM_DISPLAY_MODE_FLAG_PHSYNC;
+    else
+        mode.flags |= DRM_DISPLAY_MODE_FLAG_NHSYNC;
+    if (flags & 0x10)
+        mode.flags |= DRM_DISPLAY_MODE_FLAG_PVSYNC;
+    else
+        mode.flags |= DRM_DISPLAY_MODE_FLAG_NVSYNC;
+
+    /* Compute vrefresh */
+    if (mode.htotal > 0 && mode.vtotal > 0) {
+        uint64_t refresh_mhz = (uint64_t)mode.clock * 1000000ULL
+                             / ((uint64_t)mode.htotal * (uint64_t)mode.vtotal);
+        mode.vrefresh = (uint32_t)refresh_mhz;
+    }
+
+    mode.type  = DRM_MODE_TYPE_BUILTIN | DRM_MODE_TYPE_DRIVER;
+    mode.in_use = 1;
+
+    snprintf(mode.name, sizeof(mode.name),
+             "%dx%d", mode.hdisplay, mode.vdisplay);
+
+    return drm_display_add_mode(conn, &mode);
+}
+
+/*
+ * drm_display_edid_parse_extensions — Parse EDID extension blocks
+ * (CEA-861 block 1 and beyond) and add additional modes.
+ *
+ * @conn:  Connector to add modes to.
+ * @edid:  Pointer to full EDID data (block 0 followed by extensions).
+ * @ext_count: Number of extension blocks.
+ *
+ * Returns number of modes added from extensions.
+ */
+static int drm_display_edid_parse_extensions(struct drm_connector *conn,
+                                              const uint8_t *raw,
+                                              int ext_count)
+{
+    int total = 0;
+
+    if (!conn || !raw || ext_count <= 0)
+        return 0;
+
+    for (int ext = 0; ext < ext_count; ext++) {
+        const uint8_t *blk = &raw[(ext + 1) * EDID_EXT_SIZE];
+
+        /* Only parse CEA-861 extension blocks */
+        if (blk[0] != CEA_EXT_TAG)
+            continue;
+
+        uint8_t dtd_offset = blk[2] & 0x3F;
+
+        /* ── Parse SVDs from data block collection ───────────── */
+        int data_len = (dtd_offset > 4) ? (dtd_offset - 4) : 0;
+        int data_off = 4;
+
+        while (data_off + 1 < 4 + data_len) {
+            uint8_t hdr = blk[data_off];
+            uint8_t tag = (hdr >> 5) & 0x07;
+            uint8_t db_len = hdr & 0x1F;
+
+            if (db_len == 0) {
+                data_off++;
+                continue;
+            }
+            if (data_off + 1 + db_len > 4 + data_len)
+                break;
+
+            if (tag == CEA_DB_VIDEO) {
+                /* Parse short video descriptors */
+                for (int i = 0; i < (int)db_len; i++) {
+                    uint8_t svd_byte = blk[data_off + 1 + i];
+                    uint8_t vic = svd_byte & 0x7F;
+                    int native = (svd_byte & 0x80) ? 1 : 0;
+
+                    if (cea_svd_to_cvt(conn, vic, native) == 0)
+                        total++;
+                }
+            }
+            /* Skip audio, speaker, and other blocks */
+
+            data_off += 1 + db_len;
+        }
+
+        /* ── Parse additional DTDs after dtd_offset ──────────── */
+        if (dtd_offset >= 4 && dtd_offset < EDID_EXT_SIZE) {
+            int dtd_avail = (EDID_EXT_SIZE - dtd_offset) / 18;
+            for (int i = 0; i < dtd_avail; i++) {
+                const uint8_t *desc = &blk[dtd_offset + i * 18];
+                if (edid_parse_cea_dtd(conn, desc) == 0)
+                    total++;
+            }
+        }
+
+        kprintf("[DRM display] EDID ext %d (CEA): +%d modes so far\n",
+                ext + 1, total);
+    }
+
+    return total;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+ *  EDID Block 0 Parsing
  * ═══════════════════════════════════════════════════════════════════ */
 
 /*
@@ -606,6 +812,15 @@ int drm_display_edid_parse(struct drm_connector *conn,
     int det = edid_parse_detailed_descriptors(conn, edid);
     total += det;
     kprintf("[DRM display] EDID: %d detailed timings\n", det);
+
+    /* Parse extension blocks (byte 126 = extension count) */
+    int ext_count = edid[0x7E];
+    if (ext_count > 0) {
+        int ext = drm_display_edid_parse_extensions(conn, edid, ext_count);
+        total += ext;
+        kprintf("[DRM display] EDID: %d modes from %d extension block(s)\n",
+                ext, ext_count);
+    }
 
     kprintf("[DRM display] EDID: parsed %d modes total\n", total);
     return total;
