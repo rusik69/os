@@ -17,6 +17,7 @@
 #include "vmm.h"
 #include "heap.h"
 #include "errno.h"
+#include "drm_fence.h"
 
 #ifdef MODULE
 #include "module.h"
@@ -57,6 +58,10 @@
 #define VIRTIO_GPU_CMD_CTX_ATTACH_RESOURCE 0x0202
 #define VIRTIO_GPU_CMD_CTX_DETACH_RESOURCE 0x0203
 #define VIRTIO_GPU_CMD_SUBMIT_3D           0x0204
+#define VIRTIO_GPU_CMD_FENCE_RETIRE        0x0206
+
+/* ── Fence flags ──────────────────────────────────────────────── */
+#define VIRTIO_GPU_FLAG_FENCE              (1u << 0)
 
 /* Responses */
 #define VIRTIO_GPU_RESP_OK_NODATA          0x1100
@@ -291,6 +296,24 @@ static struct gpu_resource gpu_resources[MAX_GPU_RESOURCES];
 static uint32_t gpu_next_ctx_id = 1;
 static uint32_t gpu_next_resource_id = 1;
 
+/* ── Fence tracking ────────────────────────────────────────────── */
+
+#define MAX_GPU_FENCES    64
+
+struct gpu_fence {
+    uint32_t id;               /* Local fence tracking ID */
+    int      active;           /* Slot in use */
+    int      signaled;         /* 1 = fence has been signaled */
+    uint32_t ctx_id;           /* Owning context (0 = global) */
+    uint64_t fence_id;         /* Host-side fence identifier from device */
+    uint64_t seqno;            /* Monotonically increasing sequence number */
+    struct dma_fence *dma;     /* DRM dma_fence for external synchronization */
+};
+
+static struct gpu_fence gpu_fences[MAX_GPU_FENCES];
+static uint32_t gpu_next_fence_id = 1;
+static uint64_t gpu_fence_seqno = 0;
+
 /* ── I/O helpers ──────────────────────────────────────────────── */
 
 static inline void vgpu_outb(uint8_t off, uint8_t v)  { outb(gpu_iobase + off, v); }
@@ -507,6 +530,296 @@ static void gpu_free_resource(struct gpu_resource *res)
     if (!res)
         return;
     res->active = 0;
+}
+
+/* ── Fence helpers ──────────────────────────────────────────────── */
+
+static struct gpu_fence *gpu_find_fence(uint32_t id)
+{
+    for (int i = 0; i < MAX_GPU_FENCES; i++) {
+        if (gpu_fences[i].active && gpu_fences[i].id == id)
+            return &gpu_fences[i];
+    }
+    return NULL;
+}
+
+static struct gpu_fence *gpu_alloc_fence(void)
+{
+    struct gpu_fence *f = NULL;
+    for (int i = 0; i < MAX_GPU_FENCES; i++) {
+        if (!gpu_fences[i].active) {
+            f = &gpu_fences[i];
+            break;
+        }
+    }
+    if (!f)
+        return NULL;
+
+    memset(f, 0, sizeof(*f));
+    f->id = gpu_next_fence_id++;
+    f->active = 1;
+    f->seqno = ++gpu_fence_seqno;
+    return f;
+}
+
+static void gpu_free_fence(struct gpu_fence *f)
+{
+    if (!f || !f->active)
+        return;
+    if (f->dma)
+        dma_fence_put(f->dma);
+    f->active = 0;
+    f->dma = NULL;
+}
+
+/* After a command response is received, check whether the fence_id
+ * in the response matches any pending fence and signal it. */
+static int gpu_check_response_fence(const struct virtio_gpu_ctrl_hdr *resp)
+{
+    struct gpu_fence *f;
+    int ret;
+
+    if (!resp || resp->fence_id == 0 || !gpu_present)
+        return -ENOENT;
+
+    for (int i = 0; i < MAX_GPU_FENCES; i++) {
+        if (!gpu_fences[i].active || gpu_fences[i].signaled)
+            continue;
+        if (gpu_fences[i].fence_id != resp->fence_id)
+            continue;
+
+        f = &gpu_fences[i];
+
+        /* Determine fence status from response type */
+        if (resp->type == VIRTIO_GPU_RESP_ERR_UNSPEC ||
+            resp->type == VIRTIO_GPU_RESP_ERR_OUT_OF_MEMORY ||
+            resp->type == VIRTIO_GPU_RESP_ERR_INVALID_SCANOUT ||
+            resp->type == VIRTIO_GPU_RESP_ERR_INVALID_RESOURCE_ID ||
+            resp->type == VIRTIO_GPU_RESP_ERR_INVALID_CONTEXT_ID ||
+            resp->type == VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER) {
+            /* Fence completed with error */
+            f->signaled = 1;
+            if (f->dma) {
+                ret = dma_fence_signal_error(f->dma, -EIO);
+                (void)ret;
+            }
+            return 1;
+        }
+
+        /* Normal completion — response type indicates success */
+        f->signaled = 1;
+        if (f->dma) {
+            ret = dma_fence_signal(f->dma);
+            (void)ret;
+        }
+        return 1;
+    }
+    return 0;
+}
+
+/* ── Public API: fence management ──────────────────────────────── */
+
+uint32_t virtio_gpu_fence_create(uint32_t ctx_id)
+{
+    struct gpu_fence *f;
+
+    if (!gpu_present)
+        return 0;
+
+    f = gpu_alloc_fence();
+    if (!f)
+        return 0;
+
+    f->ctx_id = ctx_id;
+    f->signaled = 0;
+    f->fence_id = 0;
+
+    /* Create a DRM dma_fence for external synchronization */
+    uint64_t dma_ctx = dma_fence_context_alloc();
+    f->dma = dma_fence_create(dma_ctx, f->seqno);
+    if (!f->dma) {
+        kprintf("[VIRTIO-GPU] fence_create: dma_fence allocation failed\n");
+    }
+
+    kprintf("[VIRTIO-GPU] fence %u created (ctx=%u, seqno=%llu)\n",
+            (unsigned int)f->id, (unsigned int)ctx_id,
+            (unsigned long long)f->seqno);
+
+    return f->id;
+}
+
+int virtio_gpu_fence_destroy(uint32_t fence_id)
+{
+    struct gpu_fence *f;
+
+    if (!gpu_present)
+        return -ENODEV;
+
+    f = gpu_find_fence(fence_id);
+    if (!f)
+        return -ENOENT;
+
+    if (!f->signaled) {
+        kprintf("[VIRTIO-GPU] fence_destroy: fence %u still pending, forcing\n",
+                (unsigned int)fence_id);
+    }
+
+    gpu_free_fence(f);
+    return 0;
+}
+
+int virtio_gpu_fence_wait(uint32_t fence_id, uint64_t timeout_ms)
+{
+    struct gpu_fence *f;
+
+    if (!gpu_present)
+        return -ENODEV;
+
+    f = gpu_find_fence(fence_id);
+    if (!f)
+        return -ENOENT;
+
+    if (f->signaled)
+        return 0;
+
+    /* If we have a dma_fence, use its wait mechanism */
+    if (f->dma) {
+        if (timeout_ms == 0)
+            return dma_fence_wait(f->dma);
+        else
+            return dma_fence_wait_timeout(f->dma, timeout_ms * 1000000ULL);
+    }
+
+    /* Fallback: busy-wait with timeout */
+    uint32_t timeout = 10000000;
+    while (!f->signaled && timeout--) {
+        __asm__ volatile("pause");
+    }
+
+    if (timeout == 0) {
+        kprintf("[VIRTIO-GPU] fence_wait(%u) timeout after %llu ms\n",
+                (unsigned int)fence_id, (unsigned long long)timeout_ms);
+        return -ETIME;
+    }
+
+    return 0;
+}
+
+int virtio_gpu_fence_poll(uint32_t fence_id)
+{
+    struct gpu_fence *f;
+
+    if (!gpu_present)
+        return -ENODEV;
+
+    f = gpu_find_fence(fence_id);
+    if (!f)
+        return -ENOENT;
+
+    if (f->signaled) {
+        /* If we have a dma_fence, also check its status */
+        if (f->dma) {
+            int status = dma_fence_get_status(f->dma);
+            if (status < 0)
+                return status;  /* Signaled with error */
+        }
+        return 1;  /* Signaled successfully */
+    }
+
+    /* Check the dma_fence directly */
+    if (f->dma && dma_fence_is_signaled(f->dma)) {
+        f->signaled = 1;
+        return 1;
+    }
+
+    return 0;  /* Not yet signaled */
+}
+
+int virtio_gpu_fence_signal(uint32_t fence_id)
+{
+    struct gpu_fence *f;
+
+    if (!gpu_present)
+        return -ENODEV;
+
+    f = gpu_find_fence(fence_id);
+    if (!f)
+        return -ENOENT;
+
+    if (f->signaled)
+        return 0;  /* Already signaled, idempotent */
+
+    f->signaled = 1;
+    if (f->dma) {
+        int ret = dma_fence_signal(f->dma);
+        (void)ret;
+    }
+
+    return 0;
+}
+
+/* ── Public API: 3D submission with fence support ──────────────── */
+
+int virtio_gpu_submit_3d(uint32_t ctx_id,
+                          const void *cmd_buf, uint32_t cmd_size,
+                          uint32_t nr_resources,
+                          const uint32_t *resource_ids,
+                          uint32_t fence_id)
+{
+    struct virtio_gpu_ctrl_hdr cmd;
+    struct virtio_gpu_ctrl_hdr resp;
+    struct gpu_fence *f;
+    int ret;
+
+    if (!gpu_present)
+        return -ENODEV;
+
+    if (!cmd_buf || cmd_size == 0)
+        return -EINVAL;
+
+    if (cmd_size > GPU_CMD_BUF_SIZE - sizeof(cmd))
+        return -EINVAL;
+
+    /* Look up fence if provided */
+    if (fence_id != 0) {
+        f = gpu_find_fence(fence_id);
+        if (!f)
+            return -ENOENT;
+        if (f->signaled) {
+            /* Reuse: reset signaled state for re-submission */
+            f->signaled = 0;
+        }
+    } else {
+        f = NULL;
+    }
+
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.type  = VIRTIO_GPU_CMD_SUBMIT_3D;
+    cmd.flags = (fence_id != 0) ? VIRTIO_GPU_FLAG_FENCE : 0;
+    cmd.ctx_id = ctx_id;
+    cmd.fence_id = fence_id;
+
+    kprintf("[VIRTIO-GPU] submit_3d ctx=%u cmd_size=%u nr_res=%u",
+            (unsigned int)ctx_id, (unsigned int)cmd_size,
+            (unsigned int)nr_resources);
+    if (fence_id != 0)
+        kprintf(" fence=%u", (unsigned int)fence_id);
+    kprintf("\n");
+
+    /* Send command — the cmd_buf immediately follows the header */
+    ret = gpu_send_cmd(&cmd, cmd_size, cmd_buf, &resp, 0);
+    if (ret < 0) {
+        kprintf("[VIRTIO-GPU] submit_3d failed: %d\n", ret);
+        return ret;
+    }
+
+    /* The device may have written back the fence_id in the response.
+     * Check if this completes any pending fence. */
+    if (fence_id != 0 && resp.fence_id != 0) {
+        gpu_check_response_fence(&resp);
+    }
+
+    return 0;
 }
 
 /* ── Public API: context management ───────────────────────────── */
@@ -988,11 +1301,14 @@ void __init virtio_gpu_init(void)
     gpu_scanout_w = 1024;
     gpu_scanout_h = 768;
 
-    /* Initialize context and resource tracking */
+    /* Initialize context, resource, and fence tracking */
     memset(gpu_contexts, 0, sizeof(gpu_contexts));
     memset(gpu_resources, 0, sizeof(gpu_resources));
+    memset(gpu_fences, 0, sizeof(gpu_fences));
     gpu_next_ctx_id = 1;
     gpu_next_resource_id = 1;
+    gpu_next_fence_id = 1;
+    gpu_fence_seqno = 0;
 
     kprintf("[VIRTIO-GPU] VirtIO GPU at %02x:%02x.%d, I/O 0x%04x, "
             "scanout %ux%u, queue=%u\n",
@@ -1006,6 +1322,6 @@ int __init init_module(void) { virtio_gpu_init(); return 0; }
 void cleanup_module(void) {}
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Hermes OS Kernel Team");
-MODULE_DESCRIPTION("VirtIO GPU — 2D/3D modesetting, scanout, cursor, 3D resource mgmt");
+MODULE_DESCRIPTION("VirtIO GPU — 2D/3D modesetting, scanout, cursor, 3D resource mgmt, fence sync");
 MODULE_VERSION("1.0");
 #endif
