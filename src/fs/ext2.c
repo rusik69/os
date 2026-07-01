@@ -136,6 +136,43 @@ static uint64_t ext2_inode_get_size(struct ext2_priv *ep,
     return size;
 }
 
+/* Set the 64-bit file size on an inode.
+ *
+ * When the size exceeds 4GB (2^32 - 1), the LARGE_FILE read-only compatible
+ * feature flag is set in the superblock and the i_dir_acl field is used for
+ * the upper 32 bits of the file size.  For non-regular files (directories,
+ * symlinks) the upper bits are not used.
+ *
+ * Returns 0 on success.  Does NOT write the inode or superblock to disk;
+ * the caller must do that. */
+static int ext2_inode_set_size(struct ext2_priv *ep,
+                                struct ext2_inode *inode,
+                                uint64_t size)
+{
+    inode->i_size = (uint32_t)(size & 0xFFFFFFFFULL);
+
+    if (size > 0xFFFFFFFFULL) {
+        /* File exceeds 4GB — need the LARGE_FILE feature */
+        if (!(ep->sb.s_feature_ro_compat &
+              EXT2_FEATURE_RO_COMPAT_LARGE_FILE)) {
+            ep->sb.s_feature_ro_compat |=
+                EXT2_FEATURE_RO_COMPAT_LARGE_FILE;
+        }
+        /* Store upper 32 bits in i_dir_acl (repurposed field) */
+        inode->i_dir_acl = (uint32_t)(size >> 32);
+        /* Track 512-byte sector count.  For files > 2TB the 32-bit
+         * i_blocks field wraps; for practical filesystem sizes we
+         * store the full count modulo 2^32. */
+        inode->i_blocks = (uint32_t)((size + 511) / 512);
+    } else {
+        /* File fits in 32 bits — no special handling needed */
+        inode->i_dir_acl = 0;
+        inode->i_blocks = (uint32_t)((size + 511) / 512);
+    }
+
+    return 0;
+}
+
 /* Read block from inode (handles indirect blocks) */
 /*
  * ext2_get_block_num — resolve logical block index to physical block number.
@@ -280,6 +317,107 @@ static int64_t ext2_extent_get_block(struct ext2_priv *ep,
             return 0; /* hole */
         }
     }
+}
+
+/* ── Extent tree creation helpers (for writing) ────────────────────── */
+
+/* Initialize an empty extent tree root in i_block[].
+ * After this call, the inode is ready for extent-based block mappings.
+ * The root has depth 0 and capacity for 4 extents (the standard maximum
+ * within the 60-byte i_block[] array). */
+static void ext2_extent_init(struct ext2_inode *inode)
+{
+    struct ext4_extent_header eh_storage;
+    struct ext4_extent_header *eh = &eh_storage;
+    memset(inode->i_block, 0, sizeof(inode->i_block));
+    eh->eh_magic = EXT4_EXTENT_MAGIC;
+    eh->eh_entries = 0;
+    eh->eh_max = (uint16_t)((sizeof(inode->i_block)
+                  - sizeof(struct ext4_extent_header))
+                  / sizeof(struct ext4_extent));
+    eh->eh_depth = 0;
+    eh->eh_generation = 0;
+    memcpy(inode->i_block, eh, sizeof(*eh));
+}
+
+/* Push a block mapping into the depth-0 extent tree.
+ *
+ * Finds the last extent and tries to extend it if the new block is
+ * physically contiguous with the last extent.  Otherwise adds a new
+ * extent entry if the root node has capacity (4 extents maximum).
+ *
+ * For sequentially-written files this almost always extends the last
+ * extent, which is very efficient.  If the root node is full, returns
+ * -ENOSPC and the caller should fall back to indirect block pointers.
+ *
+ * Parameters:
+ *   inode   — inode whose extent tree to update (in-memory copy)
+ *   iblock  — logical block number (0-based within the file)
+ *   pblock  — physical block number on disk
+ *
+ * Returns 0 on success, -ENOSPC if the root node is full. */
+static int ext2_extent_push_block(struct ext2_inode *inode,
+                                   uint32_t iblock,
+                                   uint32_t pblock)
+{
+    struct ext4_extent_header eh_storage;
+    struct ext4_extent_header *eh = &eh_storage;
+    struct ext4_extent exts_storage[4];
+    struct ext4_extent *exts;
+
+    /* Read extent header from packed inode via memcpy */
+    memcpy(eh, inode->i_block, sizeof(*eh));
+
+    if (eh->eh_magic != EXT4_EXTENT_MAGIC)
+        return -EINVAL;
+
+    /* We only support depth-0 (single leaf node) for writes */
+    if (eh->eh_depth != 0)
+        return -ENOSPC;
+
+    /* Read extent entries from packed inode */
+    uint16_t max = eh->eh_max;
+    uint16_t count = eh->eh_entries;
+    size_t exts_size = (size_t)max * sizeof(struct ext4_extent);
+    if (exts_size > sizeof(exts_storage))
+        exts_size = sizeof(exts_storage);
+    memcpy(exts_storage, (uint8_t *)inode->i_block + sizeof(*eh), exts_size);
+    exts = exts_storage;
+
+    if (count > 0) {
+        /* Try to extend the last extent */
+        struct ext4_extent *last = &exts[count - 1];
+        uint32_t last_end = last->ee_block
+                          + (last->ee_len & 0x7FFF);
+
+        if (iblock == last_end &&
+            pblock == (uint32_t)(last->ee_start_lo
+                       + (last->ee_len & 0x7FFF))) {
+            /* Physically contiguous — extend the length */
+            if ((last->ee_len & 0x7FFF) < 0x7FFF) {
+                last->ee_len++;
+                return 0;
+            }
+            /* Max extent length (32768 blocks) reached */
+        }
+    }
+
+    /* Need a new extent entry */
+    if (count >= eh->eh_max)
+        return -ENOSPC;  /* Root node full (4 extents) */
+
+    struct ext4_extent *ext = &exts[count];
+    ext->ee_block = iblock;
+    ext->ee_len = 1;
+    ext->ee_start_lo = pblock;
+    ext->ee_start_hi = 0;
+    eh->eh_entries = count + 1;
+
+    /* Write back extent header and entries to packed inode */
+    memcpy(inode->i_block, eh, sizeof(*eh));
+    memcpy((uint8_t *)inode->i_block + sizeof(*eh), exts, exts_size);
+
+    return 0;
 }
 
 static int ext2_read_inode_block(struct ext2_priv *ep, struct ext2_inode *inode,
@@ -1849,9 +1987,443 @@ static int ext2_readdir_legacy(void *priv, const char *path) {
 /* Forward declaration: BGD scan (defined later, called from mount) */
 int ext2_scan_block_groups(struct ext2_priv *ep);
 
+/* ── File data write helper ─────────────────────────────────────── */
+
+/* Write data to a file, extending it if needed.
+ *
+ * Handles both indirect-block and extent-based files.  For writes
+ * beyond the current file size, allocates blocks, writes data, and
+ * updates the inode's block pointers.
+ *
+ * Returns 0 on success, negative errno on error. */
+static int ext2_write_file_data(struct ext2_priv *ep,
+                                 uint32_t ino,
+                                 struct ext2_inode *inode,
+                                 const uint8_t *data,
+                                 uint32_t offset,
+                                 uint32_t size)
+{
+	uint64_t new_size = (uint64_t)offset + size;
+	int uses_extents = (ep->sb.s_feature_incompat &
+	                    EXT2_FEATURE_INCOMPAT_EXTENTS) ? 1 : 0;
+
+	uint32_t start_block = offset / ep->block_size;
+	uint32_t end_block = (offset + size + ep->block_size - 1)
+	                     / ep->block_size;
+	uint32_t data_off = offset;
+
+	for (uint32_t ib = start_block; ib < end_block; ib++) {
+		uint8_t block_buf[4096];
+		uint32_t block_off = (ib == start_block)
+		                    ? offset % ep->block_size : 0;
+		uint32_t copy_size = ep->block_size - block_off;
+		if (copy_size > size - (data_off - offset))
+			copy_size = size - (data_off - offset);
+
+		int64_t pbn = ext2_get_block_num(ep, inode, ib);
+		uint32_t phys_block = 0;
+
+		if (pbn == 0) {
+			/* Hole or sparse — allocate new block */
+			int ret = ext2_alloc_block(ep, &phys_block);
+			if (ret < 0)
+				return ret;
+
+			memset(block_buf, 0, ep->block_size);
+			memcpy(block_buf + block_off,
+			       data + (data_off - offset), copy_size);
+			if (ext2_write_block(ep, phys_block,
+			                     block_buf) < 0)
+				return -EIO;
+
+			if (uses_extents) {
+				ret = ext2_extent_push_block(inode, ib,
+				                              phys_block);
+				if (ret < 0) {
+					/* Fallback to direct block */
+					if (ib < 12)
+						inode->i_block[ib] = phys_block;
+					else
+						return ret;
+				}
+			} else {
+				if (ib < 12) {
+					inode->i_block[ib] = phys_block;
+				} else {
+					return -ENOSPC;
+				}
+			}
+		} else if (pbn > 0) {
+			phys_block = (uint32_t)pbn;
+			if (ext2_read_block(ep, phys_block,
+			                    block_buf) < 0)
+				return -EIO;
+			memcpy(block_buf + block_off,
+			       data + (data_off - offset), copy_size);
+			if (ext2_write_block(ep, phys_block,
+			                     block_buf) < 0)
+				return -EIO;
+		} else {
+			return (int)pbn; /* error from ext2_get_block_num */
+		}
+
+		data_off += copy_size;
+	}
+
+	ext2_inode_set_size(ep, inode, new_size);
+	inode->i_mtime = (uint32_t)(timer_get_ticks() / TIMER_FREQ);
+
+	return 0;
+}
+
+/* ── VFS operations (write, create, unlink, truncate) ───────────── */
+
+static int ext2_write(void *priv, const char *path,
+                       const void *data, uint32_t size)
+{
+	struct ext2_priv *ep = (struct ext2_priv *)priv;
+	uint32_t ino;
+	int ret = ext2_path_to_ino(ep, path, &ino);
+	if (ret < 0)
+		return ret;
+
+	struct ext2_inode inode;
+	ret = ext2_read_inode(ep, ino, &inode);
+	if (ret < 0)
+		return ret;
+
+	uint64_t old_size = ext2_inode_get_size(ep, &inode);
+
+	ret = ext2_write_file_data(ep, ino, &inode,
+	                            (const uint8_t *)data,
+	                            (uint32_t)old_size, size);
+	if (ret < 0)
+		return ret;
+
+	return ext2_write_inode(ep, ino, &inode);
+}
+
+static int ext2_truncate(void *priv, const char *path, uint32_t len)
+{
+	struct ext2_priv *ep = (struct ext2_priv *)priv;
+	uint32_t ino;
+	int ret = ext2_path_to_ino(ep, path, &ino);
+	if (ret < 0)
+		return ret;
+
+	struct ext2_inode inode;
+	ret = ext2_read_inode(ep, ino, &inode);
+	if (ret < 0)
+		return ret;
+
+	uint64_t old_size = ext2_inode_get_size(ep, &inode);
+	if ((uint64_t)len >= old_size)
+		return 0;
+
+	uint32_t old_blocks = (uint32_t)((old_size + ep->block_size - 1)
+	                                 / ep->block_size);
+	uint32_t new_blocks = (len + ep->block_size - 1)
+	                      / ep->block_size;
+
+	/* Free excess blocks (best-effort — errors don't abort) */
+	for (uint32_t ib = new_blocks; ib < old_blocks; ib++) {
+		int64_t pbn = ext2_get_block_num(ep, &inode, ib);
+		if (pbn > 0) {
+			uint32_t p = (uint32_t)pbn;
+			uint32_t group = p / ep->blocks_per_group;
+			if (group < ep->num_block_groups) {
+				uint32_t bit = p % ep->blocks_per_group;
+				uint8_t bitmap[4096];
+				struct ext2_bg_desc *bgd = &ep->bgd_cache[group];
+				if (ext2_read_block(ep, bgd->bg_block_bitmap,
+				                    bitmap) == 0) {
+					bitmap[bit / 8] |= (1U << (bit % 8));
+					ext2_write_block(ep,
+					    bgd->bg_block_bitmap, bitmap);
+					bgd->bg_free_blocks_count++;
+					ep->sb.s_free_blocks_count++;
+				}
+			}
+		}
+	}
+
+	ext2_inode_set_size(ep, &inode, len);
+	inode.i_mtime = (uint32_t)(timer_get_ticks() / TIMER_FREQ);
+
+	return ext2_write_inode(ep, ino, &inode);
+}
+
+/* Create a regular file (or other type) on the ext2 filesystem.
+ *
+ * Allocates a new inode, initializes it, and adds a directory entry
+ * in the parent directory.  If the EXTENTS feature is set, the new
+ * inode is initialised with an extent tree root. */
+static int ext2_create(void *priv, const char *path, uint8_t type)
+{
+	struct ext2_priv *ep = (struct ext2_priv *)priv;
+	(void)type;
+
+	/* ── Extract parent dir and basename ───────────────────── */
+	const char *slash = strrchr(path, '/');
+	const char *basename;
+	char parent_path[128];
+
+	if (slash && slash != path) {
+		size_t plen = (size_t)(slash - path);
+		if (plen >= sizeof(parent_path))
+			return -ENAMETOOLONG;
+		memcpy(parent_path, path, plen);
+		parent_path[plen] = '\0';
+		basename = slash + 1;
+	} else if (slash && slash == path) {
+		parent_path[0] = '/';
+		parent_path[1] = '\0';
+		basename = path + 1;
+	} else {
+		strncpy(parent_path, "/", sizeof(parent_path) - 1);
+		parent_path[sizeof(parent_path) - 1] = '\0';
+		basename = path;
+	}
+
+	if (*basename == '\0')
+		return -EINVAL;
+
+	uint32_t parent_ino;
+	int ret = ext2_path_to_ino(ep, parent_path, &parent_ino);
+	if (ret < 0)
+		return -ENOENT;
+
+	/* Check parent is a directory */
+	struct ext2_inode dir_inode;
+	ret = ext2_read_inode(ep, parent_ino, &dir_inode);
+	if (ret < 0)
+		return ret;
+	if (!(dir_inode.i_mode & 0x4000)) /* S_IFDIR */
+		return -ENOTDIR;
+
+	/* Check entry doesn't already exist */
+	{
+		uint32_t check_ino;
+		if (ext2_find_in_dir(ep, &dir_inode, basename,
+		                     &check_ino) == 0)
+			return -EEXIST;
+	}
+
+	/* Allocate inode */
+	uint32_t new_ino;
+	ret = ext2_alloc_inode(ep, &new_ino);
+	if (ret < 0)
+		return ret;
+
+	struct ext2_inode inode;
+	memset(&inode, 0, sizeof(inode));
+	inode.i_mode = S_IFREG | 0644;
+	inode.i_uid = 0;
+	inode.i_gid = 0;
+	inode.i_size = 0;
+	inode.i_atime = (uint32_t)(timer_get_ticks() / TIMER_FREQ);
+	inode.i_ctime = inode.i_atime;
+	inode.i_mtime = inode.i_atime;
+	inode.i_links_count = 1;
+	inode.i_blocks = 0;
+	inode.i_flags = 0;
+
+	/* If EXTENTS feature is set, initialise extent tree root */
+	if (ep->sb.s_feature_incompat & EXT2_FEATURE_INCOMPAT_EXTENTS)
+		ext2_extent_init(&inode);
+
+	ret = ext2_write_inode(ep, new_ino, &inode);
+	if (ret < 0)
+		return ret;
+
+	/* Add directory entry */
+	ret = ext2_add_dirent(ep, &dir_inode, parent_ino, basename,
+	                       new_ino, EXT2_FT_REG_FILE);
+	if (ret < 0)
+		return ret;
+
+	/* Update parent directory times */
+	dir_inode.i_mtime = inode.i_atime;
+	dir_inode.i_links_count++;
+	ret = ext2_write_inode(ep, parent_ino, &dir_inode);
+	if (ret < 0)
+		return ret;
+
+	return 0;
+}
+
+static int ext2_unlink(void *priv, const char *path)
+{
+	struct ext2_priv *ep = (struct ext2_priv *)priv;
+
+	/* ── Extract parent dir and basename ───────────────────── */
+	const char *slash = strrchr(path, '/');
+	const char *basename;
+	char parent_path[128];
+
+	if (slash && slash != path) {
+		size_t plen = (size_t)(slash - path);
+		if (plen >= sizeof(parent_path))
+			return -ENAMETOOLONG;
+		memcpy(parent_path, path, plen);
+		parent_path[plen] = '\0';
+		basename = slash + 1;
+	} else if (slash && slash == path) {
+		parent_path[0] = '/';
+		parent_path[1] = '\0';
+		basename = path + 1;
+	} else {
+		strncpy(parent_path, "/", sizeof(parent_path) - 1);
+		parent_path[sizeof(parent_path) - 1] = '\0';
+		basename = path;
+	}
+
+	if (*basename == '\0')
+		return -EINVAL;
+
+	uint32_t parent_ino;
+	int ret = ext2_path_to_ino(ep, parent_path, &parent_ino);
+	if (ret < 0)
+		return -ENOENT;
+
+	struct ext2_inode dir_inode;
+	ret = ext2_read_inode(ep, parent_ino, &dir_inode);
+	if (ret < 0)
+		return ret;
+
+	/* Find the entry to unlink */
+	uint32_t target_ino;
+	ret = ext2_find_in_dir(ep, &dir_inode, basename, &target_ino);
+	if (ret < 0)
+		return -ENOENT;
+
+	/* Read target inode and decrement link count */
+	struct ext2_inode target;
+	ret = ext2_read_inode(ep, target_ino, &target);
+	if (ret < 0)
+		return ret;
+
+	if (target.i_links_count > 0)
+		target.i_links_count--;
+
+	if (target.i_links_count == 0) {
+		/* Free all data blocks (best-effort) */
+		uint64_t file_size = ext2_inode_get_size(ep, &target);
+		uint32_t num_blocks = (uint32_t)((file_size
+		                     + ep->block_size - 1)
+		                     / ep->block_size);
+		for (uint32_t ib = 0; ib < num_blocks; ib++) {
+			int64_t pbn = ext2_get_block_num(ep, &target, ib);
+			if (pbn > 0) {
+				uint32_t p = (uint32_t)pbn;
+				uint32_t g = p / ep->blocks_per_group;
+				if (g < ep->num_block_groups) {
+					uint32_t bit = p
+					    % ep->blocks_per_group;
+					uint8_t bm[4096];
+					struct ext2_bg_desc *bgd =
+					    &ep->bgd_cache[g];
+					if (ext2_read_block(ep,
+					    bgd->bg_block_bitmap,
+					    bm) == 0) {
+						bm[bit / 8] |=
+						    (1U << (bit % 8));
+						ext2_write_block(ep,
+						    bgd->bg_block_bitmap,
+						    bm);
+						bgd->bg_free_blocks_count++;
+						ep->sb.s_free_blocks_count++;
+					}
+				}
+			}
+		}
+
+		/* Free the inode itself (mark bitmap bit as free) */
+		uint32_t group = (target_ino - 1) / ep->inodes_per_group;
+		uint32_t index = (target_ino - 1) % ep->inodes_per_group;
+		if (group < ep->num_block_groups) {
+			uint8_t ibm[4096];
+			struct ext2_bg_desc *bgd = &ep->bgd_cache[group];
+			if (ext2_read_block(ep, bgd->bg_inode_bitmap,
+			                    ibm) == 0) {
+				ibm[index / 8] |= (1U << (index % 8));
+				ext2_write_block(ep,
+				    bgd->bg_inode_bitmap, ibm);
+				bgd->bg_free_inodes_count++;
+				ep->sb.s_free_inodes_count++;
+			}
+		}
+
+		memset(&target, 0, sizeof(target));
+	}
+
+	target.i_ctime = (uint32_t)(timer_get_ticks() / TIMER_FREQ);
+	ret = ext2_write_inode(ep, target_ino, &target);
+	if (ret < 0)
+		return ret;
+
+	/* Remove the directory entry (set inode to 0) */
+	{
+		uint32_t dir_size = (uint32_t)ext2_inode_get_size(ep,
+		                       &dir_inode);
+		uint32_t iblock = 0;
+		uint32_t offset = 0;
+
+		while (offset < dir_size) {
+			uint8_t block_buf[4096];
+			uint32_t pbn;
+			if (ext2_read_inode_block_pbn(ep, &dir_inode,
+			    iblock, block_buf, &pbn) < 0)
+				break;
+			if (pbn == 0) {
+				iblock++;
+				offset += ep->block_size;
+				continue;
+			}
+
+			uint32_t pos = 0;
+			while (pos + 8 <= ep->block_size &&
+			       offset + pos < dir_size) {
+				struct {
+					uint32_t inode;
+					uint16_t rec_len;
+					uint8_t  name_len;
+					uint8_t  file_type;
+					char     name[255];
+				} *de = (void *)(block_buf + pos);
+
+				if (de->rec_len == 0) break;
+
+				if (de->inode == target_ino) {
+					de->inode = 0;
+					ext2_write_block(ep, pbn,
+					    block_buf);
+					goto entry_removed;
+				}
+				pos += de->rec_len;
+			}
+			iblock++;
+			offset += ep->block_size;
+		}
+	}
+entry_removed:
+
+	dir_inode.i_mtime = (uint32_t)(timer_get_ticks() / TIMER_FREQ);
+	dir_inode.i_links_count--;
+	ret = ext2_write_inode(ep, parent_ino, &dir_inode);
+	if (ret < 0)
+		return ret;
+
+	return 0;
+}
+
 static struct vfs_ops ext2_ops = {
     .read    = ext2_read,
+    .write   = ext2_write,
     .stat    = ext2_stat,
+    .create  = ext2_create,
+    .unlink  = ext2_unlink,
+    .truncate = ext2_truncate,
     .readdir_names = ext2_readdir,
     .readdir = ext2_readdir_legacy,
     .link    = ext2_link,
@@ -1971,7 +2543,9 @@ int ext2_mount(const char *mountpoint, uint8_t dev_id) {
          * FLEX_BG: flex block groups — handled transparently. */
         uint32_t supp_incompat = EXT2_FEATURE_INCOMPAT_FILETYPE
                                | EXT2_FEATURE_INCOMPAT_RECOVER
-                               | EXT2_FEATURE_INCOMPAT_FLEX_BG;
+                               | EXT2_FEATURE_INCOMPAT_FLEX_BG
+                               | EXT2_FEATURE_INCOMPAT_EXTENTS
+                               | EXT2_FEATURE_INCOMPAT_64BIT;
         uint32_t unsup = ep->sb.s_feature_incompat & ~supp_incompat;
         if (unsup) {
             kprintf("[ext2] Unsupported incompatible features: 0x%x, refusing mount\n", unsup);
