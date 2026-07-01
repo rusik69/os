@@ -403,6 +403,60 @@ int ext2_free_block(struct ext2_priv *ep, uint32_t block_num);
 int ext2_mount(const char *mountpoint, uint8_t dev_id);
 int ext2_init(void);
 
+/* ── POSIX ACL operations (ext2_acl.c) ──────────────────────────────── */
+
+/* Set a POSIX ACL on an ext2 inode via the extended attribute block.
+ * @ep: ext2 private data
+ * @ino: inode number
+ * @inode: ext2 inode (updated if EA block allocated)
+ * @name: "system.posix_acl_access" or "system.posix_acl_default"
+ * @acl: ACL to store
+ * Returns 0 on success, negative errno on failure. */
+int ext2_acl_set(struct ext2_priv *ep, uint32_t ino,
+                  struct ext2_inode *inode,
+                  const char *name, const struct posix_acl *acl);
+
+/* Get a POSIX ACL from an ext2 inode via the extended attribute block.
+ * @ep: ext2 private data
+ * @ino: inode number
+ * @inode: ext2 inode
+ * @name: "system.posix_acl_access" or "system.posix_acl_default"
+ * @acl: output buffer for the ACL
+ * Returns 0 on success, -ENODATA if no ACL, negative errno on error. */
+int ext2_acl_get(struct ext2_priv *ep, uint32_t ino,
+                  struct ext2_inode *inode,
+                  const char *name, struct posix_acl *acl);
+
+/* Remove a POSIX ACL from an ext2 inode.
+ * @ep: ext2 private data
+ * @ino: inode number
+ * @inode: ext2 inode (updated if EA block freed)
+ * @name: "system.posix_acl_access" or "system.posix_acl_default"
+ * Returns 0 on success, -ENODATA if not found, negative errno on error. */
+int ext2_acl_remove(struct ext2_priv *ep, uint32_t ino,
+                     struct ext2_inode *inode,
+                     const char *name);
+
+/* Check permission on an ext2 inode with ACL support.
+ * Consults the POSIX ACL from the EA block first, then falls back
+ * to traditional mode bits.
+ * @ep: ext2 private data
+ * @path: path (for VFS-level fallback, may be NULL)
+ * @ino: inode number
+ * @inode: ext2 inode
+ * @uid: requesting user
+ * @gid: requesting group
+ * @mode: file mode bits (i_mode)
+ * @file_uid: file owner
+ * @file_gid: file group
+ * @op: required permission (4=read, 2=write, 1=execute)
+ * Returns 0 (allowed) or -EACCES. */
+int ext2_acl_permission(struct ext2_priv *ep, const char *path,
+                         uint32_t ino, struct ext2_inode *inode,
+                         uint16_t uid, uint16_t gid,
+                         uint16_t mode, uint16_t file_uid,
+                         uint16_t file_gid, uint16_t op);
+
 /* Online resize: add block groups while mounted.
  * @ep: ext2 private data (from mount)
  * @new_total_blocks: desired total blocks after resize
