@@ -327,6 +327,60 @@ int nvme_sanitize(int action, int overwrite_pass_count) {
     return 0;
 }
 
+/* ── Sanitize status query (via Get Features) ─────────────────────── */
+
+/**
+ * nvme_sanitize_get_status — Query sanitize progress via Get Features (FID 0x81).
+ *
+ * Sends a Get Features admin command with Feature Identifier 0x81
+ * (Sanitize Status) and populates the provided @status structure with
+ * the controller's sanitize progress, current status, and estimated
+ * time to completion.
+ *
+ * @status   Pointer to a struct nvme_sanitize_status to receive the data.
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int nvme_sanitize_get_status(struct nvme_sanitize_status *status)
+{
+    if (!g_nvme_ctrl.present || !status)
+        return -EINVAL;
+
+    /* Allocate a page for the Get Features data buffer */
+    uint64_t data_frame = pmm_alloc_frame();
+    if (unlikely(!data_frame))
+        return -ENOMEM;
+
+    uint64_t data_phys = data_frame * 4096;
+    void *data_virt = PHYS_TO_VIRT((void*)(uintptr_t)data_phys);
+    memset(data_virt, 0, 4096);
+
+    struct nvme_sq_entry cmd;
+    struct nvme_cq_entry cqe;
+    memset(&cmd, 0, sizeof(cmd));
+    memset(&cqe, 0, sizeof(cqe));
+
+    cmd.cdw0 = NVME_ADMIN_GET_FEATURES;
+    cmd.nsid = 0;                              /* not namespace-specific */
+    cmd.prp1 = data_phys;
+    cmd.cdw10 = NVME_FEAT_SANITIZE_STATUS;     /* Feature Identifier 0x81 */
+    /* cdw11: SEL=0 (current), no data structure for Sanitize Status select */
+    cmd.cdw11 = 0;
+
+    int ret = nvme_submit_admin_cmd(&cmd, &cqe);
+    if (ret == 0) {
+        /* Copy sanitize status data from the returned buffer.
+         * The struct nvme_sanitize_status is packed and matches the
+         * NVMe-specified layout at offset 0 of the data buffer. */
+        memcpy(status, data_virt, sizeof(struct nvme_sanitize_status));
+    } else {
+        kprintf("[NVME] Get Features (Sanitize Status) command failed: %d\n", ret);
+    }
+
+    pmm_free_frame(data_frame);
+    return ret;
+}
+
 /* ── Admin command submit ──────────────────────────────────────────── */
 
 /* CID counter for admin commands, used to distinguish AER completions */

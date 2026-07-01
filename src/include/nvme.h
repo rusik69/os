@@ -228,6 +228,32 @@ int  nvme_sanitize(int action, int overwrite_pass_count);
 #define NVME_SANITIZE_ACTION_OVERWRITE      2
 #define NVME_SANITIZE_ACTION_CRYPTO_ERASE   3
 
+/* Sanitize status feature (FID 0x81) */
+#define NVME_FEAT_SANITIZE_STATUS           0x81
+
+/* Sanitize status values (SSTAT byte) */
+#define NVME_SANITIZE_STATUS_NEVER          0x00  /* Never been sanitized */
+#define NVME_SANITIZE_STATUS_COMPLETE       0x01  /* Sanitize completed */
+#define NVME_SANITIZE_STATUS_IN_PROGRESS    0x02  /* Sanitize in progress */
+#define NVME_SANITIZE_STATUS_FAILED         0x03  /* Sanitize failed */
+#define NVME_SANITIZE_STATUS_FRMT           0x10  /* Sanitize via Format NVM */
+#define NVME_SANITIZE_STATUS_FRMT_IN_PROG   0x11  /* Format NVM in progress */
+#define NVME_SANITIZE_STATUS_NEVER_NC       0x20  /* Never sanitized (no-cleanup) */
+
+/* Sanitize status data returned by Get Features (FID 0x81) */
+struct nvme_sanitize_status {
+    uint16_t progress;          /* SCPROG: 0–65535 completion progress */
+    uint8_t  reserved1[6];
+    uint32_t estimated_time;    /* Estimated time to complete sanitize (seconds) */
+    uint32_t estimated_time_er; /* Estimated time after reset/restart (seconds) */
+    uint8_t  reserved2[16];
+} __attribute__((packed));
+
+/* Query the sanitize status of the controller via Get Features (FID 0x81).
+ * Fills in the provided nvme_sanitize_status structure with progress and
+ * status information.  Returns 0 on success, negative errno on failure. */
+int  nvme_sanitize_get_status(struct nvme_sanitize_status *status);
+
 /* I/O queue submit function (called from blockdev layer) */
 int nvme_submit_request(int ns_id, int is_write, uint64_t lba,
                         uint64_t count, void *buf);
