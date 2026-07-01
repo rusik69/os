@@ -162,6 +162,7 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/rtl8139.c \
          src/drivers/vmxnet3.c \
          src/drivers/igb.c \
+         src/drivers/i40e.c \
          src/drivers/intel_gpu.c \
          src/drivers/rtc.c \
          src/drivers/mouse.c \
