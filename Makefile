@@ -626,6 +626,7 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/virtio_gpu.c \
          src/drivers/virtio_input.c \
          src/drivers/virtio_rng.c \
+         src/drivers/virtio_balloon.c \
          src/drivers/virtio_scsi.c \
          src/drivers/virtio_console.c \
          src/drivers/pvpanic.c \
