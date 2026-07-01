@@ -19,6 +19,9 @@ int  acpi_find_reset_register(void);
 /* Power button */
 int  acpi_power_button_read(void);  /* returns 1 if pressed, clears flag */
 
+/* ACPI table lookup — returns PHYS_TO_VIRT-mapped pointer or NULL */
+void *acpi_get_table(const char *sig);
+
 /* Sleep states */
 #define ACPI_S0  0
 #define ACPI_S1  1
