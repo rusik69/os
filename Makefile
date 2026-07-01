@@ -570,6 +570,7 @@ C_SRCS = src/kernel/kernel.c \
          src/power/rapl.c \
          src/drivers/sndstat.c \
          src/drivers/acpi_platform_profile.c \
+         src/drivers/acpi_fan.c \
          src/fs/overlay_enhance.c \
          src/net/ntp.c \
          src/net/smtp.c \
