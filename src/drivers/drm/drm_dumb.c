@@ -218,9 +218,11 @@ int drm_dumb_mmap(struct drm_gem_object *obj, void **vaddr)
 /*
  * drm_dumb_dirtyfb — Mark a framebuffer as dirty (region updated).
  *
- * Handles DRM_IOCTL_MODE_DIRTYFB.  In this simplified implementation
- * we log the dirty rectangle but defer actual flushing to the driver
- * (e.g. via a vblank callback for LFB scanout).
+ * Handles DRM_IOCTL_MODE_DIRTYFB.  When clip rectangles are
+ * provided, each is merged into the framebuffer's accumulated
+ * damage region.  When no clips are given, the entire framebuffer
+ * is marked damaged.  Display drivers query the accumulated damage
+ * via drm_damage_get_rect() to flush only changed regions.
  *
  * @dev:  DRM device.
  * @args: Dirty rectangle arguments (fb_id, clip rects).
@@ -242,17 +244,48 @@ int drm_dumb_dirtyfb(struct drm_device *dev,
 
     /* If no clip rects, mark the whole fb as dirty */
     if (args->num_clips == 0 || args->clips_ptr == 0) {
-        kprintf("[DRM dumb] dirtyfb %u: full-screen update\n",
+        kprintf("[DRM damage] dirtyfb %u: full-screen update\n",
                 args->fb_id);
+        drm_damage_mark_whole(fb);
         return 0;
     }
 
-    /* Clip rects are passed via a userspace pointer.
-     * In a full implementation we would walk the clip list
-     * and merge rectangles into a dirty region.  For now,
-     * just acknowledge the update. */
-    kprintf("[DRM dumb] dirtyfb %u: %u clip rect(s)\n",
-            args->fb_id, args->num_clips);
+    /* Walk the clip rectangle list from userspace and accumulate
+     * damage.  Each clip rect is a struct drm_clip_rect:
+     *   { uint16_t x1, y1, x2, y2; }
+     * where (x1,y1) is the upper-left inclusive corner and
+     * (x2,y2) is the lower-right exclusive corner.
+     */
+    uint32_t num_clips = args->num_clips;
+    if (num_clips > 1024)
+        num_clips = 1024;  /* sanity cap */
+
+    for (uint32_t i = 0; i < num_clips; i++) {
+        /* Read clip rect from userspace one at a time.
+         * Using a simple struct copy from userspace. */
+        struct {
+            uint16_t x1, y1, x2, y2;
+        } clip;
+        uint64_t addr = args->clips_ptr + (uint64_t)i * sizeof(clip);
+
+        /* Copy from userspace — in a real kernel this would use
+         * copy_from_user().  For our kernel memory model with
+         * identity-mapped userspace, a direct dereference works. */
+        const struct { uint16_t x1, y1, x2, y2; } *src =
+            (const void *)(uintptr_t)addr;
+        clip.x1 = src->x1;
+        clip.y1 = src->y1;
+        clip.x2 = src->x2;
+        clip.y2 = src->y2;
+
+        /* Merge this clip into the accumulated damage region */
+        drm_damage_mark(fb,
+                         (int)clip.x1, (int)clip.y1,
+                         (int)clip.x2, (int)clip.y2);
+    }
+
+    kprintf("[DRM damage] dirtyfb %u: %u clip rect(s) accumulated\n",
+            args->fb_id, num_clips);
 
     return 0;
 }

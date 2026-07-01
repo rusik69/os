@@ -344,6 +344,12 @@ struct drm_framebuffer {
     uint32_t pitch;
     uint32_t bpp;
     uint32_t depth;
+    /* Damage tracking — accumulated dirty region for efficient updates */
+    int      damage_x1;     /* top-left x of dirty region (inclusive) */
+    int      damage_y1;     /* top-left y of dirty region (inclusive) */
+    int      damage_x2;     /* bottom-right x of dirty region (exclusive) */
+    int      damage_y2;     /* bottom-right y of dirty region (exclusive) */
+    int      damage_valid;  /* 1 if damage region has been set */
 };
 
 struct drm_crtc {
@@ -423,6 +429,74 @@ void drm_fb_unref(struct drm_device *dev, struct drm_framebuffer *fb);
 /* CRTC management */
 int  drm_add_crtc(struct drm_device *dev);
 int  drm_add_connector(struct drm_device *dev, uint32_t type);
+
+/* ═══════════════════════════════════════════════════════════════════
+ *  Damage tracking API
+ * ═══════════════════════════════════════════════════════════════════ */
+
+/*
+ * drm_damage_init — Initialise the damage tracking subsystem.
+ * Returns 0 on success, negative errno on failure.
+ */
+int  drm_damage_init(void);
+
+/*
+ * drm_damage_exit — Tear down the damage tracking subsystem.
+ */
+void drm_damage_exit(void);
+
+/*
+ * drm_damage_init_fb — Initialise damage tracking for a framebuffer.
+ * Sets damage_valid to 0 (no damage recorded yet).
+ */
+void drm_damage_init_fb(struct drm_framebuffer *fb);
+
+/*
+ * drm_damage_mark — Mark a rectangular region of the framebuffer as
+ *                   damaged / needing refresh.
+ *
+ * The rectangle is clipped to the framebuffer dimensions.  When the
+ * new rectangle is merged with existing damage, the accumulated
+ * damage region expands to cover both.
+ *
+ * @fb:  Target framebuffer.
+ * @x1:  Left edge (inclusive, pixels).
+ * @y1:  Top edge (inclusive, pixels).
+ * @x2:  Right edge (exclusive, pixels).
+ * @y2:  Bottom edge (exclusive, pixels).
+ */
+void drm_damage_mark(struct drm_framebuffer *fb,
+                      int x1, int y1, int x2, int y2);
+
+/*
+ * drm_damage_mark_whole — Mark the entire framebuffer as damaged.
+ * Equivalent to drm_damage_mark(fb, 0, 0, fb->width, fb->height).
+ */
+void drm_damage_mark_whole(struct drm_framebuffer *fb);
+
+/*
+ * drm_damage_get_rect — Retrieve the accumulated damage rectangle.
+ *
+ * Returns 1 if damage has been recorded, 0 if clean.
+ * The rectangle is written to the output pointers only on
+ * non-NULL pointers and when damage_valid is set.
+ *
+ * @fb:   Target framebuffer.
+ * @x1:   Receives left edge (may be NULL).
+ * @y1:   Receives top edge (may be NULL).
+ * @x2:   Receives right edge (may be NULL).
+ * @y2:   Receives bottom edge (may be NULL).
+ *
+ * Returns 1 if damage recorded, 0 if clean, negative errno on error.
+ */
+int  drm_damage_get_rect(struct drm_framebuffer *fb,
+                          int *x1, int *y1, int *x2, int *y2);
+
+/*
+ * drm_damage_clear — Clear (reset) damage tracking for a framebuffer.
+ * After calling this, the fb is considered clean.
+ */
+void drm_damage_clear(struct drm_framebuffer *fb);
 
 /* ═══════════════════════════════════════════════════════════════════
  *  GEM API

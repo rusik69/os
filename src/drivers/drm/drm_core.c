@@ -396,6 +396,7 @@ int drm_init(void)
     g_drm_device_count = 0;
 
     /* Initialise sub-systems */
+    drm_damage_init();
     drm_atomic_init();
     drm_display_init();
     drm_prime_init();
@@ -406,6 +407,7 @@ int drm_init(void)
 
 void drm_exit(void)
 {
+    drm_damage_exit();
     drm_atomic_exit();
     drm_display_exit();
     drm_prime_exit();
@@ -506,6 +508,7 @@ int drm_add_fb(struct drm_device *dev, uint32_t handle,
             dev->framebuffers[i].bpp = bpp;
             dev->framebuffers[i].depth = depth;
             dev->num_framebuffers++;
+            drm_damage_init_fb(&dev->framebuffers[i]);
 
             uint32_t fb_id = dev->framebuffers[i].fb_id;
             spinlock_release(&g_drm_lock);
