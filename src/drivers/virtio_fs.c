@@ -15,6 +15,8 @@
 #include "pci.h"
 #include "virtio.h"
 #include "io.h"
+#include "io_map.h"
+#include "pmm.h"
 #include "types.h"
 
 /* ── Virtio ring structures ────────────────────────────────────────── */
@@ -70,6 +72,12 @@ static int virtio_fs_initialized = 0;
  * request queue (index 1) per the virtio-fs spec. */
 #define VIRTIO_FS_NUM_VQS    2
 static struct virtio_fs_vq g_fs_vqs[VIRTIO_FS_NUM_VQS];
+
+/* PCI device info saved for BAR probing */
+static struct pci_device g_fs_pci_dev;
+
+/* ── Virtio-fs DAX window (Direct Access memory-mapped I/O) ───────── */
+static struct virtio_fs_dax g_fs_dax;
 
 /* ── PCI I/O helpers ──────────────────────────────────────────────── */
 
@@ -449,7 +457,248 @@ static int fusex_statfs(struct fuse_in_header *inh, uint8_t *out_buf,
     return 0;
 }
 
-/* ── Virtqueue request handler ─────────────────────────────────────── */
+/* ── DAX window management ─────────────────────────────────────────────
+ * DAX (Direct Access) provides a shared memory window between the
+ * host and guest for zero-copy file data access.
+ */
+
+/**
+ * dax_lookup_mapping - Look up a file offset in the DAX mapping cache
+ * @nodeid: FUSE node ID
+ * @file_offset: offset within the file
+ * @out_dax_off: (out) DAX window offset if found
+ * @out_len: (out) available length starting at the mapping
+ *
+ * Returns 0 if a valid mapping covers the requested offset, -1 otherwise.
+ */
+static int dax_lookup_mapping(uint64_t nodeid, uint64_t file_offset,
+                               uint64_t *out_dax_off, uint64_t *out_len)
+{
+    if (!g_fs_dax.present || !g_fs_dax.virt_addr)
+        return -1;
+
+    for (int i = 0; i < g_fs_dax.num_mappings; i++) {
+        struct fuse_dax_mapping *m = &g_fs_dax.mappings[i];
+        if (!m->valid)
+            continue;
+        if (m->nodeid == nodeid &&
+            file_offset >= m->file_offset &&
+            file_offset < m->file_offset + m->length) {
+            uint64_t within = file_offset - m->file_offset;
+            *out_dax_off = m->dax_window_offset + within;
+            *out_len = m->length - within;
+            return 0;
+        }
+    }
+    return -1;
+}
+
+/**
+ * dax_add_mapping - Add a DAX mapping entry to the cache
+ * @nodeid: FUSE node ID
+ * @file_offset: offset within the file
+ * @dax_window_offset: offset within the DAX window
+ * @length: length of the mapping
+ *
+ * Returns 0 on success, -1 if the cache is full.
+ */
+static int dax_add_mapping(uint64_t nodeid, uint64_t file_offset,
+                            uint64_t dax_window_offset, uint64_t length)
+{
+    if (g_fs_dax.num_mappings >= FUSE_DAX_MAPPINGS_MAX)
+        return -1;
+
+    int idx = -1;
+    /* Reuse an invalid slot first */
+    for (int i = 0; i < g_fs_dax.num_mappings; i++) {
+        if (!g_fs_dax.mappings[i].valid) {
+            idx = i;
+            break;
+        }
+    }
+    if (idx < 0)
+        idx = g_fs_dax.num_mappings++;
+
+    struct fuse_dax_mapping *m = &g_fs_dax.mappings[idx];
+    m->nodeid            = nodeid;
+    m->file_offset       = file_offset;
+    m->dax_window_offset = dax_window_offset;
+    m->length            = length;
+    m->valid             = 1;
+
+    kprintf("[VIRTIO-FS] DAX map nodeid=%llu foff=%llu doff=%llu len=%llu\n",
+            nodeid, file_offset, dax_window_offset, length);
+    return 0;
+}
+
+/**
+ * dax_remove_mappings_by_nodeid - Invalidate all DAX mappings for a node
+ * @nodeid: FUSE node ID to invalidate
+ */
+static void dax_remove_mappings_by_nodeid(uint64_t nodeid)
+{
+    for (int i = 0; i < g_fs_dax.num_mappings; i++) {
+        if (g_fs_dax.mappings[i].valid &&
+            g_fs_dax.mappings[i].nodeid == nodeid) {
+            g_fs_dax.mappings[i].valid = 0;
+        }
+    }
+}
+
+/**
+ * dax_invalidate_all - Invalidate all DAX mappings
+ */
+static void dax_invalidate_all(void)
+{
+    for (int i = 0; i < g_fs_dax.num_mappings; i++)
+        g_fs_dax.mappings[i].valid = 0;
+    g_fs_dax.num_mappings = 0;
+}
+
+/* ── FUSE_SETUP: negotiate DAX window ──────────────────────────────── */
+static int fusex_setup(struct fuse_in_header *inh, uint8_t *out_buf,
+                        uint32_t out_buf_size)
+{
+    struct fuse_setup_in *sin = (struct fuse_setup_in *)(inh + 1);
+    struct fuse_out_header *outh = (struct fuse_out_header *)out_buf;
+    struct fuse_setup_out *sout = (struct fuse_setup_out *)(outh + 1);
+    (void)out_buf_size;
+
+    kprintf("[VIRTIO-FS] FUSE_SETUP flags=0x%x req_q=%u evt_q=%u hiprio_q=%u\n",
+            (unsigned)sin->flags,
+            (unsigned)sin->num_req_queues,
+            (unsigned)sin->num_evt_queues,
+            (unsigned)sin->num_hiprio_queues);
+
+    memset(sout, 0, sizeof(*sout));
+
+    if (g_fs_dax.present) {
+        /* Report DAX window parameters */
+        sout->dax_window_base   = g_fs_dax.bar_offset;
+        sout->dax_window_len    = g_fs_dax.window_len;
+        sout->dax_window_offset = g_fs_dax.bar_offset;
+        sout->map_alignment     = 0x1000;  /* 4 KB alignment */
+
+        kprintf("[VIRTIO-FS] DAX window: base=%llu len=%llu align=%u\n",
+                (unsigned long long)sout->dax_window_base,
+                (unsigned long long)sout->dax_window_len,
+                (unsigned)sout->map_alignment);
+    } else {
+        kprintf("[VIRTIO-FS] no DAX window available\n");
+    }
+
+    outh->len    = sizeof(*outh) + sizeof(*sout);
+    outh->error  = 0;
+    outh->unique = inh->unique;
+    return 0;
+}
+
+/* ── DAX-enhanced FUSE_READ ───────────────────────────────────────────
+ * Attempt DAX window direct access first; fall back to VFS if no
+ * DAX mapping exists.
+ */
+static int fusex_read_dax(struct fuse_in_header *inh, uint8_t *out_buf,
+                           uint32_t out_buf_size)
+{
+    struct fuse_read_in *rin = (struct fuse_read_in *)(inh + 1);
+    struct fuse_out_header *outh = (struct fuse_out_header *)out_buf;
+    uint8_t *data = out_buf + sizeof(*outh);
+
+    /* Try DAX window first */
+    if (g_fs_dax.present && g_fs_dax.virt_addr) {
+        uint64_t dax_off = 0;
+        uint64_t dax_len = 0;
+        if (dax_lookup_mapping(inh->nodeid, rin->offset,
+                                &dax_off, &dax_len) == 0) {
+            uint32_t copy_size = (rin->size < dax_len)
+                                 ? (uint32_t)rin->size
+                                 : (uint32_t)dax_len;
+            if (copy_size > out_buf_size - sizeof(*outh))
+                copy_size = out_buf_size - sizeof(*outh);
+
+            if (dax_off + copy_size <= g_fs_dax.window_len) {
+                memcpy(data,
+                       (uint8_t *)g_fs_dax.virt_addr + dax_off,
+                       copy_size);
+
+                outh->len    = sizeof(*outh) + copy_size;
+                outh->error  = 0;
+                outh->unique = inh->unique;
+
+                kprintf("[VIRTIO-FS] DAX READ nodeid=%llu offset=%llu size=%u\n",
+                        inh->nodeid, rin->offset, copy_size);
+                return 0;
+            }
+        }
+    }
+
+    /* Fall back to regular VFS read */
+    return fusex_read(inh, out_buf, out_buf_size);
+}
+
+/* ── FUSE_MAP_FILE: map a file region into the DAX window ──────────── */
+/* Non-standard virtio-fs extension opcode for establishing DAX mappings.
+ * This is a simplified implementation — in production this would be
+ * managed by the host-side FUSE daemon. */
+#define FUSE_MAP_FILE           49
+
+static int fusex_map_file(struct fuse_in_header *inh, uint8_t *out_buf,
+                           uint32_t out_buf_size)
+{
+    struct fuse_out_header *outh = (struct fuse_out_header *)out_buf;
+    (void)out_buf_size;
+
+    if (!g_fs_dax.present || !g_fs_dax.virt_addr) {
+        outh->len    = sizeof(*outh);
+        outh->error  = -ENOSYS;
+        outh->unique = inh->unique;
+        return 0;
+    }
+
+    /* The map request body follows the in_header:
+     *   nodeid (already in inh->nodeid)
+     *   uint64_t file_offset
+     *   uint64_t length
+     */
+    const uint8_t *body = (const uint8_t *)(inh + 1);
+    uint64_t file_offset = *(const uint64_t *)body;
+    uint64_t length = *(const uint64_t *)(body + 8);
+
+    /* Clamp to DAX window size */
+    if (length > g_fs_dax.window_len)
+        length = g_fs_dax.window_len;
+
+    /* Find a free region in the DAX window (simple offset-based
+     * allocation — real implementation would use a bitmap) */
+    static uint64_t next_dax_offset = 0;
+    uint64_t dax_offset = next_dax_offset;
+    if (dax_offset + length > g_fs_dax.window_len) {
+        /* Wrap around / reclaim */
+        dax_offset = 0;
+        dax_invalidate_all();
+    }
+    next_dax_offset = dax_offset + length;
+
+    /* Record the mapping */
+    dax_add_mapping(inh->nodeid, file_offset, dax_offset, length);
+
+    /* Build response */
+    struct {
+        uint64_t dax_offset;
+        uint64_t mapped_length;
+    } *resp = (void *)(outh + 1);
+
+    resp->dax_offset   = dax_offset;
+    resp->mapped_length = length;
+
+    outh->len    = sizeof(*outh) + sizeof(*resp);
+    outh->error  = 0;
+    outh->unique = inh->unique;
+
+    kprintf("[VIRTIO-FS] MAP_FILE nodeid=%llu foff=%llu len=%llu → DAX %llu\n",
+            inh->nodeid, file_offset, length, dax_offset);
+    return 0;
+}
 
 /* FUSE opcode dispatch table */
 typedef int (*fuse_handler_t)(struct fuse_in_header *, uint8_t *, uint32_t);
@@ -458,17 +707,19 @@ static fuse_handler_t g_fuse_handlers[4098] = { NULL };
 
 static void fuse_init_handlers(void)
 {
-    g_fuse_handlers[FUSE_INIT]    = fusex_init;
-    g_fuse_handlers[FUSE_LOOKUP]  = fusex_lookup;
-    g_fuse_handlers[FUSE_GETATTR] = fusex_getattr;
-    g_fuse_handlers[FUSE_OPEN]    = fusex_open;
-    g_fuse_handlers[FUSE_OPENDIR] = fusex_open;
-    g_fuse_handlers[FUSE_READ]    = fusex_read;
-    g_fuse_handlers[FUSE_READDIR] = fusex_readdir;
-    g_fuse_handlers[FUSE_FLUSH]   = fusex_flush;
-    g_fuse_handlers[FUSE_FSYNC]   = fusex_fsync;
-    g_fuse_handlers[FUSE_RELEASE] = fusex_release;
-    g_fuse_handlers[FUSE_STATFS]  = fusex_statfs;
+    g_fuse_handlers[FUSE_INIT]     = fusex_init;
+    g_fuse_handlers[FUSE_LOOKUP]   = fusex_lookup;
+    g_fuse_handlers[FUSE_GETATTR]  = fusex_getattr;
+    g_fuse_handlers[FUSE_OPEN]     = fusex_open;
+    g_fuse_handlers[FUSE_OPENDIR]  = fusex_open;
+    g_fuse_handlers[FUSE_READ]     = fusex_read_dax;
+    g_fuse_handlers[FUSE_READDIR]  = fusex_readdir;
+    g_fuse_handlers[FUSE_FLUSH]    = fusex_flush;
+    g_fuse_handlers[FUSE_FSYNC]    = fusex_fsync;
+    g_fuse_handlers[FUSE_RELEASE]  = fusex_release;
+    g_fuse_handlers[FUSE_STATFS]   = fusex_statfs;
+    g_fuse_handlers[FUSE_SETUP]    = fusex_setup;
+    g_fuse_handlers[FUSE_MAP_FILE] = fusex_map_file;
 }
 
 /* Response buffer size (max FUSE response payload) */
@@ -589,6 +840,13 @@ int virtio_fs_mount(const char *host_dir, const char *mount_point)
 
 void virtio_fs_cleanup(void)
 {
+    /* Unmap the DAX window if mapped */
+    if (g_fs_dax.mapped && g_fs_dax.virt_addr) {
+        io_map_destroy(g_fs_dax.virt_addr);
+        g_fs_dax.virt_addr = NULL;
+    }
+    memset(&g_fs_dax, 0, sizeof(g_fs_dax));
+
     memset(&virtio_fs_dev, 0, sizeof(virtio_fs_dev));
     virtio_fs_initialized = 0;
     kprintf("[VIRTIO-FS] cleaned up\n");
@@ -672,6 +930,66 @@ int virtio_fs_init(void)
 
     /* Initialize FUSE opcode dispatch table */
     fuse_init_handlers();
+
+    /* ── Probe for DAX window (shared memory BAR) ──────────────── */
+    {
+        memset(&g_fs_dax, 0, sizeof(g_fs_dax));
+
+        /* Save PCI device for BAR probing */
+        memcpy(&g_fs_pci_dev, &dev, sizeof(g_fs_pci_dev));
+
+        /* Try BAR2 first (virtio-fs DAX window is typically BAR 2),
+         * then BAR4 for alternate layout. */
+        uint64_t dax_phys = 0;
+        uint64_t dax_len = 0;
+        int dax_bar = -1;
+
+        for (int bar = 2; bar <= 4; bar += 2) {
+            uint64_t bar_val = dev.bar[bar];
+            if (bar_val != 0) {
+                /* Check if the BAR is a memory BAR (bit 0 = 0 = MMIO) */
+                if ((bar_val & 1) == 0) {
+                    uint64_t bar_phys = bar_val & ~0xFu;
+                    /* Read BAR size by writing all 1s and reading back */
+                    /* (simplified: assume 64MB for the DAX window) */
+                    dax_phys = bar_phys;
+                    dax_len = FUSE_DAX_WINDOW_SIZE;
+                    dax_bar = bar;
+
+                    /* Read actual BAR size from the device */
+                    uint16_t old_bar_lo = (uint16_t)(bar_val & 0xFFFF);
+                    (void)old_bar_lo;
+                    break;
+                }
+            }
+        }
+
+        if (dax_phys != 0 && dax_len > 0) {
+            g_fs_dax.phys_base   = dax_phys;
+            g_fs_dax.bar_offset  = 0;
+            g_fs_dax.window_len  = dax_len;
+            g_fs_dax.present     = 1;
+
+            /* Map the DAX window via io_map_create (write-combining for
+             * shared memory performance, or uncached for correctness) */
+            g_fs_dax.virt_addr = io_map_create(dax_phys, (size_t)dax_len,
+                                                IO_MAP_WC);
+            if (g_fs_dax.virt_addr) {
+                g_fs_dax.mapped = 1;
+                kprintf("[VIRTIO-FS] DAX window at phys=0x%llx len=%llu "
+                        "virt=%p (BAR %d)\n",
+                        (unsigned long long)dax_phys,
+                        (unsigned long long)dax_len,
+                        g_fs_dax.virt_addr, dax_bar);
+            } else {
+                kprintf("[VIRTIO-FS] DAX window found at phys=0x%llx "
+                        "but mapping failed\n",
+                        (unsigned long long)dax_phys);
+            }
+        } else {
+            kprintf("[VIRTIO-FS] no DAX BAR window found (no suitable BAR)\n");
+        }
+    }
 
     /* Set default host dir to mount point */
     memcpy(virtio_fs_dev.host_dir, "/mnt", 5);

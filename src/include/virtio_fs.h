@@ -30,6 +30,55 @@
 #define FUSE_INIT             4096
 #define FUSE_DESTROY          4097
 
+/* ── FUSE opcodes for virtio-fs extensions ──────────────────────────── */
+#define FUSE_SETUP              48      /* Setup virtio-fs DAX window */
+#define FUSE_SETUP_FLAGS_FUSE_DAX   (1u << 0)  /* Enable FUSE DAX */
+#define FUSE_SETUP_FLAGS_PCI_MMIO   (1u << 1)  /* Use PCI MMIO BAR for DAX */
+
+/* FUSE_SETUP request: negotiate DAX window parameters */
+struct fuse_setup_in {
+    uint32_t flags;
+    uint32_t num_req_queues;
+    uint32_t num_evt_queues;
+    uint32_t num_hiprio_queues;
+    uint32_t padding;
+};
+
+/* FUSE_SETUP response: DAX window description */
+struct fuse_setup_out {
+    uint64_t dax_window_base;      /* Physical address / offset in BAR */
+    uint64_t dax_window_len;       /* Total DAX window length in bytes */
+    uint64_t dax_window_offset;    /* Offset within DAX BAR */
+    uint32_t map_alignment;        /* Alignment requirement for mappings */
+    uint32_t padding;
+};
+
+/* ── FUSE_DAX mapping entry ─────────────────────────────────────────── */
+#define FUSE_DAX_MAPPINGS_MAX   64
+#define FUSE_DAX_WINDOW_SIZE    0x4000000   /* 64 MB default DAX window */
+
+struct fuse_dax_mapping {
+    uint64_t nodeid;               /* FUSE node ID of the mapped file */
+    uint64_t file_offset;          /* Offset within the file */
+    uint64_t dax_window_offset;    /* Offset within the DAX window */
+    uint64_t length;               /* Length of mapping in bytes */
+    int      valid;                /* 1 if this mapping slot is active */
+};
+
+/* ── DAX window state ──────────────────────────────────────────────── */
+struct virtio_fs_dax {
+    uint64_t  phys_base;           /* Physical address of DAX window BAR */
+    uint64_t  bar_offset;          /* Offset within the BAR */
+    uint64_t  window_len;          /* Length of DAX window */
+    void     *virt_addr;           /* Kernel virtual address (mapped) */
+    int       present;             /* DAX window is available */
+    int       mapped;              /* DAX window is mapped */
+
+    /* Mapping cache: inode → DAX offset translation */
+    struct fuse_dax_mapping mappings[FUSE_DAX_MAPPINGS_MAX];
+    int num_mappings;
+};
+
 /* ── FUSE request/response header (wire format) ─────────────────────── */
 #pragma pack(push, 1)
 struct fuse_in_header {
