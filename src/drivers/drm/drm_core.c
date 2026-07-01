@@ -25,6 +25,7 @@
 #include "errno.h"
 #include "heap.h"
 #include "drm_atomic.h"
+#include "drm_irq.h"
 
 /* ── Global state ──────────────────────────────────────────────── */
 
@@ -324,6 +325,8 @@ static __attribute__((unused)) int drm_ioctl_dispatch(struct drm_device *dev, st
                        (struct drm_prime_handle *)arg);
         case DRM_IOCTL_MODE_SET_LAYOUT:
             return drm_ioctl_mode_setlayout(dev, fp, arg);
+        case DRM_IOCTL_WAIT_VBLANK:
+            return drm_wait_vblank_ioctl(dev, fp, arg);
         default:
             return -ENOTTY;
     }
@@ -404,6 +407,7 @@ int drm_init(void)
     /* Initialise sub-systems */
     drm_damage_init();
     drm_atomic_init();
+    drm_irq_init();
     drm_display_init();
     drm_prime_init();
     drm_multi_init();
@@ -416,6 +420,7 @@ void drm_exit(void)
 {
     drm_damage_exit();
     drm_atomic_exit();
+    drm_irq_exit();
     drm_display_exit();
     drm_prime_exit();
     drm_multi_exit();

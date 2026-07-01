@@ -735,4 +735,47 @@ int  drm_multi_set_layout(struct drm_device *dev,
 int  drm_ioctl_mode_setlayout(struct drm_device *dev,
                               struct drm_file *fp, void *arg);
 
+/* ═══════════════════════════════════════════════════════════════════
+ *  DRM IRQ / vblank handling
+ * ═══════════════════════════════════════════════════════════════════ */
+
+/* WAIT_VBLANK ioctl — the standard DRM vblank synchronisation ioctl */
+#define DRM_IOCTL_WAIT_VBLANK   DRM_IOWR(0x3A, union drm_wait_vblank)
+
+/* VBLANK flags for drm_wait_vblank.request.type */
+#define DRM_VBLANK_CRTC_MASK    0x000000FF  /* mask for CRTC index */
+#define DRM_VBLANK_SIGNAL       0x10000000  /* deliver signal on vblank */
+#define DRM_VBLANK_EVENT        0x20000000  /* deliver event on vblank */
+#define DRM_VBLANK_HIGH_CRTC_MASK 0x0000003F
+
+#define DRM_VBLANK_SECONDARY    0x20000000  /* secondary display */
+#define DRM_VBLANK_NEXTONMISS   0x10000000  /* if missed seq, wait for next */
+
+/* Type values for drm_wait_vblank.request.type & ~DRM_VBLANK_CRTC_MASK
+ * (one of these OR'd with the CRTC index) */
+#define _DRM_VBLANK_RELATIVE    0x00000000  /* seq is relative */
+#define _DRM_VBLANK_ABSOLUTE    0x00000100  /* seq is absolute count */
+
+struct drm_wait_vblank_request {
+	uint32_t type;         /* DRM_VBLANK_* flags */
+	uint32_t sequence;     /* requested sequence number */
+	uint64_t signal;       /* reserved (signalling) */
+};
+
+struct drm_wait_vblank_reply {
+	uint32_t type;         /* copy of request type */
+	uint32_t sequence;     /* vblank count at time of reply */
+	uint32_t tstamp_sec;   /* timestamp, seconds */
+	uint32_t tstamp_usec;  /* timestamp, microseconds */
+};
+
+union drm_wait_vblank {
+	struct drm_wait_vblank_request request;
+	struct drm_wait_vblank_reply   reply;
+};
+
+/* Add TODO comment for IRQ lifecycle — these are called from drm_core.c */
+int  drm_irq_init(void);
+void drm_irq_exit(void);
+
 #endif /* DRM_H */
