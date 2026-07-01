@@ -285,4 +285,53 @@ struct dmar_device_scope {
     /* Followed by variable-length array of path entries (dev, func pairs) */
 } __attribute__((packed));
 
+/* ── AML Namespace Structures ───────────────────────────────────── */
+
+/* AML namespace node types */
+#define AML_NS_ROOT          0
+#define AML_NS_SCOPE         1
+#define AML_NS_DEVICE        2
+#define AML_NS_PROCESSOR     3
+#define AML_NS_POWERRESOURCE 4
+#define AML_NS_THERMAL_ZONE  5
+#define AML_NS_NAME          6
+#define AML_NS_METHOD        7
+
+/* Maximum number of namespace nodes */
+#define ACPI_NS_MAX_NODES    2048
+
+/* AML namespace node — each represents a named object in the ACPI namespace */
+struct aml_ns_node {
+	char     name[4];            /* 4-byte NameSeg (e.g. "_SB_", "PCI0") */
+	uint8_t  type;                /* AML_NS_* type */
+	uint16_t parent;              /* Index of parent (0xFFFF = root) */
+	uint16_t first_child;         /* Index of first child (0xFFFF = none) */
+	uint16_t next_sibling;        /* Index of next sibling (0xFFFF = none) */
+	uint8_t  *aml_start;          /* Pointer to start of AML for this node */
+	uint32_t aml_length;          /* Length of AML bytecode for this node */
+	uint8_t  from_ssdt;           /* Source SSDT index (0 = DSDT) */
+};
+
+/* ── AML Namespace Construction API ─────────────────────────────── */
+
+/* Build the ACPI namespace by walking DSDT + SSDT AML bytecode.
+ * Called after acpi_init() has loaded DSDT/SSDT tables.
+ * Returns 0 on success, negative on error. */
+int aml_build_namespace(void);
+
+/* Dump the AML namespace tree to the kernel log (debugging).
+ * Logs each node with its type, name, parent, and AML range. */
+void aml_dump_namespace(void);
+
+/* Look up a namespace node by its full path (e.g. "\\_SB_.PCI0").
+ * Returns pointer to the node, or NULL if not found.
+ * Path format: absolute paths start with '\\', segments separated by '.'. */
+struct aml_ns_node *aml_ns_lookup(const char *path);
+
+/* Get the number of namespace nodes. */
+int aml_ns_get_count(void);
+
+/* Get a namespace node by index. Returns NULL if index out of range. */
+struct aml_ns_node *aml_ns_get_node(int index);
+
 #endif

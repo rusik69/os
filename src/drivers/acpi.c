@@ -1029,6 +1029,9 @@ void __init acpi_init(void) {
     /* Load SSDT tables (additional AML definition blocks) */
     acpi_load_ssdts();
 
+    /* Build AML namespace from DSDT + SSDT bytecode */
+    aml_build_namespace();
+
     /* Parse DSDT for dock station (Item 106) */
     parse_dsdt_for_dock(fadt);
 

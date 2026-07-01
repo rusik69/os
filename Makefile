@@ -169,6 +169,7 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/mouse.c \
          src/drivers/speaker.c \
          src/drivers/acpi.c \
+         src/drivers/acpi_aml.c \
          src/drivers/acpi_thermal.c \
          src/drivers/acpi_ec.c \
          src/drivers/acpi_cpufreq.c \
