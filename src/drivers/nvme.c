@@ -1626,6 +1626,180 @@ void nvme_print_power_states(void)
     }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════
+ *  Predictable Latency Mode (FID 0x09, 0x0A)
+ *
+ *  NVMe Predictable Latency Mode allows the host to request deterministic
+ *  latency behavior from the controller.  When enabled with DTYPE=1
+ *  (deterministic), the controller provides bounded latency for I/O
+ *  operations at the cost of throughput.  When enabled with DTYPE=2
+ *  (non-deterministic), the controller optimises for throughput.
+ *
+ *  Feature IDs used:
+ *    0x09 — Predictable Latency Mode Config  (Get/Set Features)
+ *    0x0A — Predictable Latency Mode Window  (Get Features, read-only)
+ *
+ *  References:
+ *    NVMe Base Specification Revision 1.4, Sections 5.21.1.2–5.21.1.8
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Set predictable latency mode configuration (FID 0x09) ──────────── */
+
+int nvme_set_predictable_latency(int dtype)
+{
+    if (!g_nvme_ctrl.present)
+        return -EIO;
+
+    if (dtype < NVME_PLM_DTYPE_DISABLED || dtype > NVME_PLM_DTYPE_NON_DETERMINISTIC)
+        return -EINVAL;
+
+    struct nvme_sq_entry cmd;
+    struct nvme_cq_entry cqe;
+    memset(&cmd, 0, sizeof(cmd));
+    memset(&cqe, 0, sizeof(cqe));
+
+    cmd.cdw0 = NVME_ADMIN_SET_FEATURES;
+    cmd.nsid = 0;
+    cmd.prp1 = 0;                               /* No data transfer */
+    cmd.cdw10 = NVME_FEAT_PREDICTABLE_LATENCY_CONFIG;
+    cmd.cdw11 = (uint32_t)(dtype & 0x3);         /* DTYPE in bits [1:0] */
+
+    int ret = nvme_submit_admin_cmd(&cmd, &cqe);
+    if (ret == 0) {
+        uint16_t status = cqe.status;
+        if (status & 0x0001)
+            return -EIO;
+        const char *dtype_name;
+        switch (dtype) {
+        case NVME_PLM_DTYPE_DETERMINISTIC:
+            dtype_name = "deterministic";
+            break;
+        case NVME_PLM_DTYPE_NON_DETERMINISTIC:
+            dtype_name = "non-deterministic";
+            break;
+        default:
+            dtype_name = "disabled";
+            break;
+        }
+        kprintf("[NVME] Predictable latency mode set to '%s' (DTYPE=%d)\n",
+                dtype_name, dtype);
+        return 0;
+    }
+    return ret;
+}
+
+/* ── Get predictable latency mode configuration (FID 0x09) ──────────── */
+
+int nvme_get_predictable_latency(void)
+{
+    if (!g_nvme_ctrl.present)
+        return -EIO;
+
+    struct nvme_sq_entry cmd;
+    struct nvme_cq_entry cqe;
+    memset(&cmd, 0, sizeof(cmd));
+    memset(&cqe, 0, sizeof(cqe));
+
+    cmd.cdw0 = NVME_ADMIN_GET_FEATURES;
+    cmd.nsid = 0;
+    cmd.prp1 = 0;                               /* No data transfer */
+    cmd.cdw10 = NVME_FEAT_PREDICTABLE_LATENCY_CONFIG;
+    cmd.cdw11 = 0;                               /* SEL = 0 (current value) */
+
+    int ret = nvme_submit_admin_cmd(&cmd, &cqe);
+    if (ret == 0) {
+        uint16_t status = cqe.status;
+        if (status & 0x0001)
+            return -EIO;
+        /* Current DTYPE value is in bits [1:0] of cdw0 */
+        return (int)(cqe.cdw0 & 0x3);
+    }
+    return ret;
+}
+
+/* ── Get predictable latency window status (FID 0x0A) ───────────────── */
+
+int nvme_get_predictable_latency_window(void)
+{
+    if (!g_nvme_ctrl.present)
+        return -EIO;
+
+    struct nvme_sq_entry cmd;
+    struct nvme_cq_entry cqe;
+    memset(&cmd, 0, sizeof(cmd));
+    memset(&cqe, 0, sizeof(cqe));
+
+    cmd.cdw0 = NVME_ADMIN_GET_FEATURES;
+    cmd.nsid = 0;
+    cmd.prp1 = 0;                               /* No data transfer */
+    cmd.cdw10 = NVME_FEAT_PREDICTABLE_LATENCY_WINDOW;
+    cmd.cdw11 = 0;                               /* SEL = 0 (current value) */
+
+    int ret = nvme_submit_admin_cmd(&cmd, &cqe);
+    if (ret == 0) {
+        uint16_t status = cqe.status;
+        if (status & 0x0001)
+            return -EIO;
+        /* Window type is in bits [1:0] of cdw0 */
+        return (int)(cqe.cdw0 & 0x3);
+    }
+    return ret;
+}
+
+/* ── Print predictable latency mode diagnostics ─────────────────────── */
+
+void nvme_print_predictable_latency(void)
+{
+    if (!g_nvme_ctrl.present) {
+        kprintf("NVMe: Predictable latency mode — controller not present\n");
+        return;
+    }
+
+    int dtype = nvme_get_predictable_latency();
+    if (dtype < 0) {
+        kprintf("NVMe: Predictable latency mode — query failed (err=%d)\n", dtype);
+        return;
+    }
+
+    const char *dtype_name;
+    switch (dtype) {
+    case NVME_PLM_DTYPE_DETERMINISTIC:
+        dtype_name = "Deterministic";
+        break;
+    case NVME_PLM_DTYPE_NON_DETERMINISTIC:
+        dtype_name = "Non-Deterministic";
+        break;
+    default:
+        dtype_name = "Disabled";
+        break;
+    }
+
+    kprintf("NVMe: Predictable Latency Mode — %s (DTYPE=%d)\n", dtype_name, dtype);
+
+    int window = nvme_get_predictable_latency_window();
+    if (window >= 0) {
+        const char *window_name;
+        switch (window) {
+        case NVME_PLM_WINDOW_DETERMINISTIC:
+            window_name = "Deterministic";
+            break;
+        case NVME_PLM_WINDOW_NON_DETERMINISTIC:
+            window_name = "Non-Deterministic";
+            break;
+        default:
+            window_name = "None";
+            break;
+        }
+        kprintf("NVMe:   Current Window  — %s (type=%d)\n", window_name, window);
+    } else {
+        kprintf("NVMe:   Current Window  — query failed (err=%d)\n", window);
+    }
+
+    int ps = nvme_get_current_power_state();
+    if (ps >= 0)
+        kprintf("NVMe:   Power State    — PS%d\n", ps);
+}
+
 /* ── Module entry/exit points ─────────────────────────────────────── */
 
 #ifdef MODULE

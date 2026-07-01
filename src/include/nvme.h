@@ -62,6 +62,8 @@
 
 /* Feature identifiers */
 #define NVME_FEAT_NUMBER_OF_QUEUES 0x07
+#define NVME_FEAT_PREDICTABLE_LATENCY_CONFIG 0x09
+#define NVME_FEAT_PREDICTABLE_LATENCY_WINDOW 0x0A
 
 /* Queue configuration */
 #define NVME_IO_QUEUE_SIZE   64   /* entries per I/O SQ/CQ */
@@ -381,6 +383,37 @@ int nvme_mpath_get_stats(int mp_dev_id,
                           int *nr_paths,
                           struct nvme_path_stats *stats_out,
                           int max_paths);
+
+/* ── NVMe Predictable Latency Mode (FID 0x09, 0x0A) ────────────────── */
+
+/* DTYPE values for Predictable Latency Mode Config (FID 0x09, cdw11 bits [1:0]) */
+#define NVME_PLM_DTYPE_DISABLED         0x0  /* Predictable latency mode disabled */
+#define NVME_PLM_DTYPE_DETERMINISTIC    0x1  /* Deterministic (bounded latency) window */
+#define NVME_PLM_DTYPE_NON_DETERMINISTIC 0x2 /* Non-deterministic window */
+
+/* Window types returned by Predictable Latency Mode Window (FID 0x0A, cdw0 bits [1:0]) */
+#define NVME_PLM_WINDOW_NONE            0x0  /* No window active */
+#define NVME_PLM_WINDOW_DETERMINISTIC   0x1  /* Deterministic window active */
+#define NVME_PLM_WINDOW_NON_DETERMINISTIC 0x2 /* Non-deterministic window active */
+
+/* Set/Get the predictable latency mode configuration (FID 0x09).
+ * @dtype: NVME_PLM_DTYPE_DISABLED (0), NVME_PLM_DTYPE_DETERMINISTIC (1), or
+ *         NVME_PLM_DTYPE_NON_DETERMINISTIC (2).
+ * Returns 0 on success, negative errno on failure. */
+int nvme_set_predictable_latency(int dtype);
+
+/* Get the current predictable latency mode configuration (FID 0x09).
+ * Returns the current DTYPE value (0=disabled, 1=deterministic, 2=non-deterministic)
+ * on success, or negative errno on failure. */
+int nvme_get_predictable_latency(void);
+
+/* Get the current predictable latency window status (FID 0x0A).
+ * Returns the window type (NVME_PLM_WINDOW_*) on success,
+ * or negative errno on failure. */
+int nvme_get_predictable_latency_window(void);
+
+/* Print predictable latency mode status for diagnostics. */
+void nvme_print_predictable_latency(void);
 
 /* ── NVMe PMR (Persistent Memory Region) API ─────────────────────── */
 

@@ -5,8 +5,11 @@
  *   nvme sanitize <action>      — run sanitize operation (1=block, 2=overwrite, 3=crypto)
  *   nvme sanitize-crypto        — shortcut: crypto erase entire drive
  *   nvme sanitize-block         — shortcut: block erase entire drive
+ *   nvme sanitize-overwrite [p] — shortcut: overwrite erase entire drive
+ *   nvme plm [set <0|1|2>]     — predictable latency mode: query or set
  *
  * Item 187: NVMe sanitize operation (crypto erase).
+ * Item 10:  NVMe predictable latency mode (FID 0x09, 0x0A).
  */
 
 #include "shell_cmds.h"
@@ -144,6 +147,56 @@ static int cmd_nvme_sanitize(const char *action_str, const char *passes_str) {
 }
 
 /*
+ * Predictable Latency Mode (FID 0x09, 0x0A) subcommand.
+ *   nvme plm              — query current predictable latency mode status
+ *   nvme plm set <0|1|2> — set DTYPE (0=disabled, 1=det, 2=non-det)
+ */
+static void cmd_nvme_plm(const char *sub_args, int argc) {
+    if (!nvme_is_present()) {
+        kprintf("nvme: no NVMe controller present\n");
+        return;
+    }
+
+    if (argc >= 2 && strcmp(sub_args, "set") == 0) {
+        /* nvme plm set <dtype> */
+        const char *val_str = NULL;
+        /* Skip "set" in args to get next token */
+        const char *p = sub_args + 3;
+        while (*p == ' ') p++;
+        if (*p)
+            val_str = p;
+
+        if (!val_str) {
+            kprintf("nvme plm: missing DTYPE value (0=disabled, 1=deterministic, 2=non-deterministic)\n");
+            return;
+        }
+
+        char *end = NULL;
+        long val = strtol(val_str, &end, 10);
+        if (end == NULL || *end != '\0' || val < 0 || val > 2) {
+            kprintf("nvme plm: invalid DTYPE '%s' — use 0 (disabled), 1 (deterministic), or 2 (non-deterministic)\n",
+                    val_str);
+            return;
+        }
+
+        int ret = nvme_set_predictable_latency((int)val);
+        if (ret == 0) {
+            kprintf("nvme: predictable latency mode set successfully\n");
+        } else {
+            kprintf("nvme: failed to set predictable latency mode (err=%d)\n", ret);
+            if (ret == -EINVAL)
+                kprintf("  (controller may not support this feature)\n");
+            else if (ret == -EIO)
+                kprintf("  (command rejected by controller)\n");
+        }
+        return;
+    }
+
+    /* Query and display current predictable latency mode status */
+    nvme_print_predictable_latency();
+}
+
+/*
  * Main nvme command dispatcher (shell_cmd_fn signature).
  */
 void cmd_nvme(const char *args) {
@@ -158,6 +211,8 @@ void cmd_nvme(const char *args) {
         kprintf("  nvme sanitize-crypto              — crypto erase (shortcut)\n");
         kprintf("  nvme sanitize-block               — block erase (shortcut)\n");
         kprintf("  nvme sanitize-overwrite [passes]  — overwrite erase (shortcut)\n");
+        kprintf("  nvme plm                          — show predictable latency mode\n");
+        kprintf("  nvme plm set <0|1|2>              — set PLM (0=off, 1=det, 2=non-det)\n");
         return;
     }
 
@@ -213,6 +268,14 @@ void cmd_nvme(const char *args) {
         const char *action = (argc > 1) ? argv[1] : NULL;
         const char *passes = (argc > 2) ? argv[2] : NULL;
         cmd_nvme_sanitize(action, passes);
+        return;
+    }
+
+    if (strcmp(sub, "plm") == 0 || strcmp(sub, "predictable-latency") == 0) {
+        /* Remaining args after "plm" for subcommands like "set <dtype>" */
+        const char *plm_args = (argc > 1) ? args + (int)(argv[1] - args) : "";
+        while (*plm_args == ' ') plm_args++;
+        cmd_nvme_plm(plm_args, argc);
         return;
     }
 
