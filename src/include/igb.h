@@ -4,6 +4,7 @@
 #include "types.h"
 #include "pci.h"
 #include "netdevice.h"
+#include "idt.h"
 
 /*
  * src/include/igb.h — Intel Gigabit Ethernet (igb) driver header
@@ -218,6 +219,12 @@ struct igb_priv {
 
     /* Netdevice descriptor */
     struct net_device ndev;
+
+    /* ── MSI-X / interrupt state ───────────────────────────────────── */
+    int             msix_nvecs;             /* number of MSI-X vectors allocated */
+    int             msix_vector_base;       /* base IRQ vector number */
+    volatile uint32_t *msix_table;          /* virtual addr of MSI-X table */
+    struct pci_interrupt_config int_cfg;    /* interrupt configuration */
 };
 
 /* ── Control register bits ────────────────────────────────────────── */
@@ -261,6 +268,33 @@ struct igb_priv {
 #define IGB_RSS_HASH_IPV6         (1U << 4)
 #define IGB_RSS_HASH_IPV6_EX      (1U << 5)
 #define IGB_RSS_HASH_TCP_IPV6_EX  (1U << 6)
+
+/* ── EICR / EIMS / EIMC bit definitions (Extended Interrupt Cause) ──
+ *  These bits indicate which queue(s) caused an MSI-X interrupt.
+ *  Same layout in EICR (read to get pending causes), EIMS (write 1
+ *  to enable), EIMC (write 1 to mask), EIAC (write 1 to enable
+ *  auto-clear-on-read).
+ */
+#define IGB_EICR_TXQ0        (1U << 0)   /* TX queue 0 completion */
+#define IGB_EICR_TXQ1        (1U << 1)   /* TX queue 1 completion */
+#define IGB_EICR_TXQ2        (1U << 2)   /* TX queue 2 completion */
+#define IGB_EICR_TXQ3        (1U << 3)   /* TX queue 3 completion */
+#define IGB_EICR_RXQ0        (1U << 4)   /* RX queue 0 descriptor */
+#define IGB_EICR_RXQ1        (1U << 5)   /* RX queue 1 descriptor */
+#define IGB_EICR_RXQ2        (1U << 6)   /* RX queue 2 descriptor */
+#define IGB_EICR_RXQ3        (1U << 7)   /* RX queue 3 descriptor */
+#define IGB_EICR_LSC         (1U << 15)  /* Link Status Change */
+#define IGB_EICR_RXQ0_TMR    (1U << 20)  /* RX queue 0 timer */
+#define IGB_EICR_RXQ1_TMR    (1U << 21)  /* RX queue 1 timer */
+#define IGB_EICR_RXQ2_TMR    (1U << 22)  /* RX queue 2 timer */
+#define IGB_EICR_RXQ3_TMR    (1U << 23)  /* RX queue 3 timer */
+
+/* Mask of all TX queue interrupt bits */
+#define IGB_EICR_TX_ALL      (IGB_EICR_TXQ0 | IGB_EICR_TXQ1 | IGB_EICR_TXQ2 | IGB_EICR_TXQ3)
+/* Mask of all RX queue interrupt bits */
+#define IGB_EICR_RX_ALL      (IGB_EICR_RXQ0 | IGB_EICR_RXQ1 | IGB_EICR_RXQ2 | IGB_EICR_RXQ3)
+/* Mask of all queue-related interrupt bits (TX + RX) */
+#define IGB_EICR_Q_ALL       (IGB_EICR_TX_ALL | IGB_EICR_RX_ALL)
 
 /* ── IVAR entry format (per-queue bitfield within IVAR0/IVAR1) ──────
  *  Byte 0: RX queue 0 [7:0]=vector, [15]=valid
@@ -312,6 +346,14 @@ int  igb_receive_ring(struct igb_priv *priv, int q_idx,
 
 /* Statistics */
 void igb_print_stats(struct igb_priv *priv);
+
+/* Interrupt management */
+int  igb_setup_interrupts(struct igb_priv *priv, struct pci_device *pci_dev);
+void igb_teardown_interrupts(struct igb_priv *priv);
+void igb_irq_handler(struct interrupt_frame *frame);
+
+/* Per-queue interrupt rate limiting */
+void igb_set_eitr(struct igb_priv *priv, int q_idx, uint32_t rate);
 
 /* MMIO accessors */
 static inline uint32_t igb_readl(struct igb_priv *priv, uint32_t reg)

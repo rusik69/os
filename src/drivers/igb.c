@@ -380,10 +380,16 @@ void igb_rss_configure(struct igb_priv *priv)
 /* ── IVAR (Interrupt Vector Allocation) Configuration ─────────────── */
 
 /* Configure IVAR registers to map each TX/RX queue pair to a unique
- * MSI-X-like vector index.  Since we use legacy pin-based interrupt or
- * a single MSI vector, we map all queues to vector 0.  The IVAR is
- * still programmed so that the hardware knows which queues have
- * interrupts enabled. */
+ * MSI-X interrupt vector.
+ *
+ * IVAR0 (0x1700) covers queues 0-3 (4 entries, 8 bytes each):
+ *   Byte 0: RX queue 0 — bits[7:0]=vector, bit[7]=valid
+ *   Byte 1: TX queue 0 — bits[7:0]=vector, bit[7]=valid
+ *   ...  queue 1, 2, 3 similarly.
+ *
+ * Each queue's RX and TX share the same vector (NIC delivers separate
+ * EICR bits for RX vs TX even on the same vector).
+ */
 void igb_ivar_configure(struct igb_priv *priv)
 {
     uint32_t ivar0;
@@ -391,30 +397,53 @@ void igb_ivar_configure(struct igb_priv *priv)
 
     ivar0 = 0;
 
-    for (q = 0; q < priv->num_tx_queues && q < priv->num_rx_queues; q++) {
-        if (q < 4) {
-            /* Byte offset within IVAR0 for each queue:
-             *  Queue 0: RX at byte 0, TX at byte 1
-             *  Queue 1: RX at byte 2, TX at byte 3
-             *  Queue 2: RX at byte 4, TX at byte 5
-             *  Queue 3: RX at byte 6, TX at byte 7
-             */
+    for (q = 0; q < priv->num_tx_queues && q < priv->num_rx_queues && q < 4; q++) {
+        /* Calculate vector index for this queue.
+         * If we have MSI-X vectors, use them sequentially.
+         * Otherwise fall back to vector 0 (legacy INTx). */
+        int vec_idx;
+
+        if (priv->msix_nvecs > 0 && priv->msix_vector_base >= 0) {
+            vec_idx = priv->msix_vector_base + q;
+        } else {
+            vec_idx = 0;  /* no MSI-X — all queues on vector 0 */
+        }
+
+        /* Ensure vector fits in 7-bit IVAR field */
+        vec_idx = vec_idx & 0x7F;
+
+        /* Byte offset within IVAR0 for each queue:
+         *  Queue 0: RX at byte 0, TX at byte 1
+         *  Queue 1: RX at byte 2, TX at byte 3
+         *  Queue 2: RX at byte 4, TX at byte 5
+         *  Queue 3: RX at byte 6, TX at byte 7
+         */
+        {
             uint32_t rx_shift = (uint32_t)(q * 8);       /* RX entry start */
             uint32_t tx_shift = (uint32_t)(q * 8 + 4);   /* TX entry start */
 
-            /* Map all queues to vector 0 (we use a single interrupt) */
+            /* Clear and set RX entry */
             ivar0 &= ~(0xFFU << rx_shift);
-            ivar0 |= (IGB_IVAR_ENTRY(0) << rx_shift);
+            ivar0 |= (IGB_IVAR_ENTRY((uint32_t)vec_idx) << rx_shift);
 
+            /* Clear and set TX entry */
             ivar0 &= ~(0xFFU << tx_shift);
-            ivar0 |= (IGB_IVAR_ENTRY(0) << tx_shift);
+            ivar0 |= (IGB_IVAR_ENTRY((uint32_t)vec_idx) << tx_shift);
         }
     }
 
     igb_writel(priv, IGB_REG_IVAR0, ivar0);
 
-    kprintf("  igb: IVAR configured for %d queues (all mapped to vector 0)\n",
-            priv->num_tx_queues);
+    if (priv->msix_nvecs > 0 && priv->msix_vector_base >= 0) {
+        kprintf("  igb: IVAR configured for %d queues "
+                "(vectors %d..%d per-queue)\\n",
+                priv->num_tx_queues,
+                priv->msix_vector_base,
+                priv->msix_vector_base + (priv->num_tx_queues < 4 ? priv->num_tx_queues - 1 : 3));
+    } else {
+        kprintf("  igb: IVAR configured for %d queues (shared vector 0)\\n",
+                priv->num_tx_queues);
+    }
 }
 
 /* ── Hardware initialisation ──────────────────────────────────────── */
@@ -515,21 +544,33 @@ int igb_init_hw(struct igb_priv *priv)
     rctl &= ~IGB_RCTL_SZ_2048;   /* Buffer size = 2048 (default) */
     igb_writel(priv, IGB_REG_RCTL, rctl);
 
-    /* ── Enable interrupts (global) ───────────────────────────────── */
-    igb_writel(priv, IGB_REG_IMS,
-               (1U << 0)  |  /* TX Queue 0 */
-               (1U << 1)  |  /* TX Queue 1 */
-               (1U << 2)  |  /* TX Queue 2 */
-               (1U << 3)  |  /* TX Queue 3 */ 
-               (1U << 4)  |  /* RX Queue 0 */
-               (1U << 5)  |  /* RX Queue 1 */
-               (1U << 6)  |  /* RX Queue 2 */
-               (1U << 7)  |  /* RX Queue 3 */
-               (1U << 15) |  /* Link Status Change */
-               (1U << 21));  /* Receive Timer Interrupt */
+    /* ── Enable interrupts (per-queue via EIMS for MSI-X) ──────────── */
+    {
+        uint32_t eims_val;
+
+        /* Enable all TX and RX queue interrupt causes.
+         * In MSI-X mode, these EICR bits are delivered per-vector.
+         * In legacy mode, they all go through the same INTx line. */
+        eims_val = IGB_EICR_Q_ALL | IGB_EICR_LSC;
+
+        igb_writel(priv, IGB_REG_EIMS, eims_val);
+
+        /* Set EIAC (auto-clear on read) for the same bits.
+         * When EIAC is set, reading EICR automatically clears
+         * the cause bits, preventing double-interrupts. */
+        igb_writel(priv, IGB_REG_EIAC, eims_val);
+    }
+
+    /* Set initial per-queue interrupt throttling rates */
+    {
+        int q;
+        for (q = 0; q < priv->num_tx_queues && q < priv->num_rx_queues; q++)
+            igb_set_eitr(priv, q, 8000);  /* ~500 int/s per queue */
+    }
 
     /* Clear any pending interrupts */
     (void)igb_readl(priv, IGB_REG_ICR);
+    (void)igb_readl(priv, IGB_REG_EICR);
 
     kprintf("  igb: hardware initialised (%d TX, %d RX queues)\n",
             priv->num_tx_queues, priv->num_rx_queues);
@@ -569,7 +610,8 @@ void igb_shutdown_hw(struct igb_priv *priv)
 {
     int q;
 
-    /* Disable all interrupts */
+    /* Disable all interrupts via EIMC (Extended IMC) and legacy IMC */
+    igb_writel(priv, IGB_REG_EIMC, 0xFFFFFFFFU);
     igb_writel(priv, IGB_REG_IMC, 0xFFFFFFFFU);
 
     /* Disable transmitter and receiver */
@@ -595,6 +637,9 @@ void igb_shutdown_hw(struct igb_priv *priv)
 
     /* Reset the device */
     igb_reset_hw(priv);
+
+    /* Tear down MSI-X / interrupt configuration */
+    igb_teardown_interrupts(priv);
 
     kprintf("  igb: hardware shut down\n");
 }
@@ -821,6 +866,141 @@ void igb_print_stats(struct igb_priv *priv)
             (unsigned long long)priv->rx_errors);
 }
 
+/* ── Per-queue interrupt rate limiting (EITR) ────────────────────── */
+
+/* Set the Extended Interrupt Throttling Rate for queue @q_idx.
+ * @rate is in 256 ns units (same as the global ITR register).
+ * Values: 0   = no throttling (interrupt-per-packet)
+ *         488 = ~8000 int/s (low latency)
+ *         8000 = ~500 int/s (balanced)
+ *         65535 = ~60 int/s (bulk)
+ * The maximum value is 0xFFFF (about 16ms between interrupts).
+ */
+void igb_set_eitr(struct igb_priv *priv, int q_idx, uint32_t rate)
+{
+    if (q_idx < 0 || q_idx >= priv->num_tx_queues ||
+        q_idx >= priv->num_rx_queues)
+        return;
+
+    if (rate > 0xFFFF)
+        rate = 0xFFFF;
+
+    igb_writel(priv, IGB_REG_EITR(q_idx), rate);
+}
+
+/* ── Interrupt handler ────────────────────────────────────────────── */
+
+/* Main interrupt handler for the igb driver.
+ *
+ * Called for any MSI-X vector associated with this device.
+ * Reads EICR to determine which queue(s) caused the interrupt,
+ * then signals the network layer to poll for received packets.
+ *
+ * In MSI-X mode, each queue has its own vector (set via IVAR), but
+ * we use a single handler for simplicity — EICR tells us exactly
+ * which queues need service.
+ */
+void igb_irq_handler(struct interrupt_frame *frame)
+{
+    (void)frame;
+    struct igb_priv *priv;
+    uint32_t eicr;
+
+    priv = &igb_state;
+    if (!priv->present)
+        return;
+
+    /* Read EICR to determine which queue(s) caused the interrupt.
+     * Auto-clear is enabled via EIAC, so this single read both
+     * acknowledges the interrupt and clears the cause bits. */
+    eicr = igb_readl(priv, IGB_REG_EICR);
+
+    /* Update statistics from the cause bits */
+    if (eicr & IGB_EICR_TX_ALL) {
+        /* Count TX completions — one per TX queue bit set */
+        uint32_t tx_bits = eicr & IGB_EICR_TX_ALL;
+        priv->tx_packets += (uint64_t)__builtin_popcount(tx_bits);
+    }
+
+    if (eicr & IGB_EICR_RX_ALL) {
+        /* Count RX events — one per RX queue bit set */
+        uint32_t rx_bits = eicr & IGB_EICR_RX_ALL;
+        priv->rx_packets += (uint64_t)__builtin_popcount(rx_bits);
+    }
+
+    /* If a link status change occurred, re-check link state */
+    if (eicr & IGB_EICR_LSC) {
+        uint32_t status;
+        status = igb_readl(priv, IGB_REG_STATUS);
+        if (status & IGB_STATUS_LU)
+            kprintf("  igb: link up\n");
+        else
+            kprintf("  igb: link down\n");
+    }
+
+    /* Signal the network RX task that packets may be available.
+     * The net layer will call igb_netdev_receive() for each queue. */
+    net_rx_signal();
+}
+
+/* ── Interrupt setup / teardown ──────────────────────────────────── */
+
+/* Set up interrupts for the igb device.
+ *
+ * Strategy:
+ *  1. Try MSI-X via the PCI subsystem (best — per-queue vectors)
+ *  2. Fall back to legacy INTx if MSI-X is unavailable
+ *
+ * Returns 0 on success, negative errno on total failure. */
+int igb_setup_interrupts(struct igb_priv *priv, struct pci_device *pci_dev)
+{
+    int ret;
+
+    /* Use the PCI subsystem's best-effort interrupt setup */
+    memset(&priv->int_cfg, 0, sizeof(priv->int_cfg));
+    ret = pci_setup_interrupts(pci_dev, &priv->int_cfg, igb_irq_handler);
+    if (ret < 0) {
+        kprintf("  igb: interrupt setup failed (%d)\n", ret);
+        return ret;
+    }
+
+    /* Store the MSI-X vector info for IVAR configuration */
+    if (priv->int_cfg.type == 2) {
+        /* MSI-X mode — we have multiple vectors */
+        priv->msix_nvecs = priv->int_cfg.n_vectors;
+        priv->msix_vector_base = priv->int_cfg.vector;
+        kprintf("  igb: MSI-X with %d vector(s), base=%d\n",
+                priv->msix_nvecs, priv->msix_vector_base);
+    } else {
+        /* MSI (type=1) or INTx (type=0) — single vector */
+        priv->msix_nvecs = 0;
+        priv->msix_vector_base = -1;
+        kprintf("  igb: legacy interrupt (type=%d, vector=%d)\n",
+                priv->int_cfg.type, priv->int_cfg.vector);
+    }
+
+    return 0;
+}
+
+/* Tear down interrupts for the igb device.
+ * Disables MSI-X in hardware if active. */
+void igb_teardown_interrupts(struct igb_priv *priv)
+{
+    if (priv->int_cfg.type == 2) {
+        /* Disable MSI-X in PCI config space */
+        struct pci_device pci_dev;
+
+        memset(&pci_dev, 0, sizeof(pci_dev));
+        if (igb_find_device(&pci_dev) == 0)
+            pci_disable_msix(&pci_dev);
+
+        priv->msix_nvecs = 0;
+        priv->msix_vector_base = -1;
+    }
+
+    memset(&priv->int_cfg, 0, sizeof(priv->int_cfg));
+}
+
 /* ── PCI probe ────────────────────────────────────────────────────── */
 
 int igb_find_device(struct pci_device *pci_dev)
@@ -883,6 +1063,16 @@ int igb_probe(struct igb_priv *priv)
 
     /* Enable PCI bus mastering for DMA */
     pci_enable_bus_master(&pci_dev);
+
+    /* Set up interrupts: try MSI-X (per-queue vectors), fall back to INTx */
+    {
+        int irq_ret = igb_setup_interrupts(priv, &pci_dev);
+        if (irq_ret < 0) {
+            kprintf("  igb: interrupt setup failed (%d), continuing without interrupts\n",
+                    irq_ret);
+            /* Non-fatal — driver can run in polled mode */
+        }
+    }
 
     kprintf("  igb: found 0x%04x at %02x:%02x.%d, "
             "MMIO phys 0x%llx (virt 0x%lx), IRQ %d, %dTX/%dRX queues\n",
