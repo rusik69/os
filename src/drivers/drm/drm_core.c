@@ -26,6 +26,7 @@
 #include "heap.h"
 #include "drm_atomic.h"
 #include "drm_irq.h"
+#include "drm_fence.h"
 
 /* ── Global state ──────────────────────────────────────────────── */
 
@@ -408,6 +409,7 @@ int drm_init(void)
     drm_damage_init();
     drm_atomic_init();
     drm_irq_init();
+    drm_fence_init();
     drm_display_init();
     drm_prime_init();
     drm_multi_init();
@@ -421,6 +423,7 @@ void drm_exit(void)
     drm_damage_exit();
     drm_atomic_exit();
     drm_irq_exit();
+    drm_fence_exit();
     drm_display_exit();
     drm_prime_exit();
     drm_multi_exit();
