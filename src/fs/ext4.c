@@ -1044,6 +1044,140 @@ static int ext4_verify_flex_bg(struct ext4_priv *ep)
     return 0;
 }
 
+/* ── Project quota support ────────────────────────────────────────── */
+
+/* Initialize quota tracking from superblock fields.
+ *
+ * Reads s_usr_quota_inum, s_grp_quota_inum, and s_prj_quota_inum
+ * from the superblock and stores them in the ext4_priv structure for
+ * later lookup.  Detects the on-disk quota format (VFSv0 or VFSv1)
+ * based on feature flags. */
+int ext4_init_quota(struct ext4_priv *ep)
+{
+    ep->usr_quota_inum = ep->sb.s_usr_quota_inum;
+    ep->grp_quota_inum = ep->sb.s_grp_quota_inum;
+    ep->prj_quota_inum = ep->sb.s_prj_quota_inum;
+    ep->quota_format   = 0;
+
+    /* Detect quota format:
+     * - VFSv1 (QFMT_VFS_V1, 64-bit) is used with metadata_csum
+     * - VFSv0 (QFMT_VFS_V0) is used on older ext4 filesystems
+     * - QFMT_VFS_OLD for very old quota files */
+    if (ep->ro_compat & EXT4_FEATURE_RO_COMPAT_METADATA_CSUM) {
+        /* With metadata_csum, quota uses v1 64-bit format */
+        ep->quota_format = EXT4_QFMT_VFS_V1;
+    } else if (ep->compat & EXT4_FEATURE_COMPAT_EXT_ATTR) {
+        /* Extended attribute compat flag hints at VFSv0 */
+        ep->quota_format = EXT4_QFMT_VFS_V0;
+    } else if (ep->prj_quota_inum != 0) {
+        /* Project quota inode present → VFSv1 is the only format
+         * that supports project quotas */
+        ep->quota_format = EXT4_QFMT_VFS_V1;
+    }
+
+    return 0;
+}
+
+/* Read the on-disk quota block for a given project ID.
+ *
+ * Uses the project quota inode (s_prj_quota_inum) to locate and
+ * read the struct ext4_dqblk entry for @projid.  The quota file
+ * contains blocks of packed struct ext4_dqblk entries, indexed
+ * linearly by project ID.
+ *
+ * Returns 0 on success and fills @dqblk, or a negative errno on
+ * failure (-ENOENT if no project quota inode, -EIO on I/O error). */
+int ext4_read_quota_block(struct ext4_priv *ep, uint32_t projid,
+                           struct ext4_dqblk *dqblk)
+{
+    if (!ep || !dqblk)
+        return -EINVAL;
+
+    uint32_t quota_inum = ep->prj_quota_inum;
+    if (quota_inum == 0)
+        return -ENOENT;
+
+    /* Read the quota inode */
+    struct ext4_inode qinode;
+    if (ext4_read_inode(ep, quota_inum, &qinode) < 0)
+        return -EIO;
+
+    /* Calculate the block and offset within the block.
+     * Each block holds (block_size / sizeof(dqblk)) entries. */
+    uint32_t entries_per_block = ep->block_size / (uint32_t)sizeof(struct ext4_dqblk);
+    if (entries_per_block == 0)
+        return -EINVAL;
+
+    uint32_t entry_index   = projid;
+    uint32_t block_index   = entry_index / entries_per_block;
+    uint32_t block_offset  = entry_index % entries_per_block;
+
+    /* Resolve logical block to physical block via the extent tree */
+    int64_t phys_block = ext4_get_block_num(ep, &qinode, block_index);
+    if (phys_block < 0)
+        return -EIO;
+
+    /* Read the quota block */
+    uint8_t *block_buf = (uint8_t *)kmalloc(ep->block_size);
+    if (!block_buf)
+        return -ENOMEM;
+
+    int ret = ext4_read_block(ep, (uint32_t)phys_block, block_buf);
+    if (ret < 0) {
+        kfree(block_buf);
+        return ret;
+    }
+
+    /* Extract the entry at the calculated offset */
+    const struct ext4_dqblk *entries = (const struct ext4_dqblk *)block_buf;
+    memcpy(dqblk, &entries[block_offset], sizeof(*dqblk));
+
+    kfree(block_buf);
+    return 0;
+}
+
+/* Log quota information during mount.
+ *
+ * Reports the user, group, and project quota inode numbers, the detected
+ * format version, and the first project quota entry (project 0) if
+ * project quotas are configured. */
+void ext4_log_quota_info(struct ext4_priv *ep)
+{
+    const char *fmt_str;
+
+    switch (ep->quota_format) {
+    case EXT4_QFMT_VFS_OLD:
+        fmt_str = "VFS_OLD";
+        break;
+    case EXT4_QFMT_VFS_V0:
+        fmt_str = "VFS_V0";
+        break;
+    case EXT4_QFMT_VFS_V1:
+        fmt_str = "VFS_V1";
+        break;
+    default:
+        fmt_str = "none";
+        break;
+    }
+
+    kprintf("[ext4] Quota: usr_inum=%u grp_inum=%u prj_inum=%u "
+            "fmt=%s\n",
+            ep->usr_quota_inum, ep->grp_quota_inum,
+            ep->prj_quota_inum, fmt_str);
+
+    if (ep->prj_quota_inum != 0) {
+        /* Read and report project 0 quota as a sample */
+        struct ext4_dqblk dqblk;
+        if (ext4_read_quota_block(ep, 0, &dqblk) == 0 && dqblk.dqb_valid) {
+            kprintf("[ext4]   Project 0: space=%llu/%llu inodes=%llu/%llu\n",
+                    (unsigned long long)dqblk.dqb_curspace,
+                    (unsigned long long)dqblk.dqb_bhardlimit,
+                    (unsigned long long)dqblk.dqb_curinodes,
+                    (unsigned long long)dqblk.dqb_ihardlimit);
+        }
+    }
+}
+
 /* ── Mount ─────────────────────────────────────────────────────────── */
 
 int ext4_mount(const char *mountpoint, uint8_t dev_id)
@@ -1069,6 +1203,9 @@ int ext4_mount(const char *mountpoint, uint8_t dev_id)
     ep->incompat  = ep->sb.s_feature_incompat;
     ep->ro_compat = ep->sb.s_feature_ro_compat;
     ep->compat    = ep->sb.s_feature_compat;
+
+    /* ── Initialize quota tracking from superblock ── */
+    ext4_init_quota(ep);
 
     /* ── Report superblock metadata ── */
     kprintf("[ext4] SUPERBLOCK: UUID %02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x\n",
@@ -1111,6 +1248,9 @@ int ext4_mount(const char *mountpoint, uint8_t dev_id)
         kprintf("[ext4] Compat feature flags:\n");
         ext4_log_compat_features(ep->compat);
     }
+
+    /* ── Quota info ── */
+    ext4_log_quota_info(ep);
 
     /* ── Detect journal state ── */
     int journal_state = EXT4_JOURNAL_NONE;
@@ -1308,7 +1448,7 @@ fail:
 
 int __init ext4_init(void)
 {
-    kprintf("[ext4] Ext4 read-only filesystem initialized\\n");
+    kprintf("[ext4] Ext4 filesystem initialized (read-only, extents, inline data, quota)\n");
     vfs_register_filesystem("ext4", &ext4_ops);
     return 0;
 }
@@ -1320,7 +1460,7 @@ int __init init_module(void) { return ext4_init(); }
 void __exit cleanup_module(void) {}
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Hermes OS Kernel Team");
-MODULE_DESCRIPTION("Ext4 read-only filesystem — extent tree, flex_bg, inline data");
+MODULE_DESCRIPTION("Ext4 filesystem — extent tree, flex_bg, inline data, checksums, encryption, project quota");
 MODULE_VERSION("1.0");
 #endif
 

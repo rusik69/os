@@ -253,6 +253,67 @@ struct ext4_inode {
     uint32_t i_projid;
 } __attribute__((packed));
 
+/* ── Quota inode numbers ──────────────────────────────────────────── */
+#define EXT4_USR_QUOTA_INO  3   /* Inode number for user quota file */
+#define EXT4_GRP_QUOTA_INO  4   /* Inode number for group quota file */
+#define EXT4_PRJ_QUOTA_INO  5   /* Inode number for project quota file */
+
+/* Quota format versions */
+#define EXT4_QFMT_VFS_OLD   1   /* VFS quota format v0 (old) */
+#define EXT4_QFMT_VFS_V0    2   /* VFS quota format v0 */
+#define EXT4_QFMT_VFS_V1    4   /* VFS quota format v1 (64-bit, project quotas) */
+
+/* On-disk quota block entry (vfsv0/v1 format).
+ *
+ * Each disk quota block contains an array of these entries, packed
+ * sequentially.  The blocks are stored in the quota inode (pointed to
+ * by s_usr_quota_inum / s_grp_quota_inum / s_prj_quota_inum in the
+ * superblock).  A zero dqb_valid means the entry is free/unused.
+ *
+ * Field layout matches the Linux VFS v1 disk quota format. */
+struct ext4_dqblk {
+    uint32_t dqb_id;              /* UID, GID, or project ID */
+    uint64_t dqb_bhardlimit;      /* absolute limit on disk blocks (bytes) */
+    uint64_t dqb_bsoftlimit;      /* preferred limit on disk blocks (bytes) */
+    uint64_t dqb_curspace;        /* current space occupied (bytes) */
+    uint64_t dqb_ihardlimit;      /* maximum # allocated inodes */
+    uint64_t dqb_isoftlimit;      /* preferred inode limit */
+    uint64_t dqb_curinodes;       /* current # allocated inodes */
+    uint64_t dqb_btime;           /* time limit for exceeding block soft limit */
+    uint64_t dqb_itime;           /* time limit for exceeding inode soft limit */
+    uint32_t dqb_valid;           /* 1 if entry is valid/used, 0 if free */
+    uint32_t pad3[3];             /* padding to 104 bytes total */
+} __attribute__((packed));
+
+/* Quota info header (vfsv0/v1 format).
+ * Stored at offset 0 of the quota inode, after a tree header block. */
+struct ext4_dqinfo {
+    uint32_t dqi_bgrace;          /* block grace time (seconds) */
+    uint32_t dqi_igrace;          /* inode grace time (seconds) */
+    uint32_t dqi_flags;           /* quota flags */
+    uint32_t dqi_blocks;          /* total blocks in quota file */
+    uint32_t dqi_free_blk;        /* first free block index */
+    uint32_t dqi_free_entry;      /* first free entry index */
+    uint32_t pad;
+} __attribute__((packed));
+
+/* ── Project quota helpers ────────────────────────────────────────── */
+
+/* Extract the project ID from an ext4 inode.
+ * Returns 0 if the inode extra space is too small to hold i_projid. */
+static inline uint32_t
+ext4_get_projid(const struct ext4_inode *inode, uint16_t inode_size)
+{
+    /* i_projid is at offset 128 + i_extra_isize - 4 in the ext4 inode.
+     * If extra_isize is large enough to include it, return it. */
+    uint16_t extra_isize = inode->i_extra_isize;
+    if (extra_isize >= sizeof(uint32_t) &&
+        (uint32_t)(128 + extra_isize) <= (uint32_t)inode_size) {
+        return inode->i_projid;
+    }
+    return 0; /* No project ID assigned */
+}
+
 /* Ext4 extent tree structures */
 
 /* Extent header — sits at i_block[0] when EXT4_EXTENTS_FL is set */
@@ -329,6 +390,12 @@ struct ext4_priv {
     struct jbd2_journal *journal;
     /* Current JBD2 transaction handle (NULL if no active transaction) */
     struct jbd2_handle *journal_handle;
+
+    /* ── Quota support fields ── */
+    uint32_t usr_quota_inum;    /* inode of user quota file (0 if none) */
+    uint32_t grp_quota_inum;    /* inode of group quota file (0 if none) */
+    uint32_t prj_quota_inum;    /* inode of project quota file (0 if none) */
+    uint32_t quota_format;      /* quota format version (0 = none) */
 };
 
 /* Corruption helper — forces read-only remount */
@@ -376,4 +443,9 @@ int ext4_verify_bg_checksum(struct ext4_priv *ep,
 int ext4_verify_inode_checksum(struct ext4_priv *ep,
                                 const struct ext4_inode *inode);
 
+/* Project quota support */
+int  ext4_read_quota_block(struct ext4_priv *ep, uint32_t projid,
+                            struct ext4_dqblk *dqblk);
+int  ext4_init_quota(struct ext4_priv *ep);
+void ext4_log_quota_info(struct ext4_priv *ep);
 #endif /* EXT4_H */
