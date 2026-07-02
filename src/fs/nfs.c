@@ -148,12 +148,28 @@ struct nfs_mount_info {
 static struct nfs_mount_info nfs_mounts[NFS_MAX_MOUNTS];
 static int nfs_mount_count = 0;
 
+/* RPC record marking (fragmentation) constants for ONC RPC over UDP */
+#define RPC_LAST_FRAGMENT  0x80000000U
+#define RPC_FRAG_MASK      0x7FFFFFFFU
+
+/* RPC messages can span multiple UDP datagrams. Each datagram starts with
+ * a 4-byte fragment header: bit 31 = last-fragment flag, bits 30:0 = length.
+ * We send each RPC call as one fragment (bit 31 set) for standard NFS/UDP
+ * compatibility, and reassemble multi-fragment replies. */
+
+/* Maximum per-fragment payload we send over UDP.  We keep this at a
+ * safe value below the typical Ethernet path MTU so that IP fragmentation
+ * is rarely needed for the RPC layer itself.  NFS data up to NFS_MAX_DATA
+ * bytes is sent as a single RPC fragment; the IP layer handles MTU-size
+ * splitting. */
+#define NFS_UDP_FRAG_SIZE   1400
+
 /* ── UDP socket helpers ─────────────────────────────────────────── */
 
 /* Simple UDP state for RPC */
 static int rpc_udp_port = 0; /* our temporary port */
 
-/* Send UDP data and receive reply */
+/* Send UDP data and receive reply — handles RPC fragment reassembly */
 static int nfs_udp_rpc(uint32_t server_ip, uint16_t port,
                         const uint8_t *send_data, uint32_t send_len,
                         uint8_t *recv_buf, uint32_t *recv_len,
@@ -164,15 +180,32 @@ static int nfs_udp_rpc(uint32_t server_ip, uint16_t port,
         rpc_udp_port = 40000 + (timer_get_ticks() & 0x7FFF);
     }
 
-    /* Send via net_udp_send */
-    net_udp_send(server_ip, (uint16_t)rpc_udp_port, port, send_data, (uint16_t)send_len);
+    /* ── Send phase ────────────────────────────────────────────── */
+    /* For standard NFS/UDP, send the entire RPC message as a single
+     * UDP datagram.  The IP layer handles MTU-sized fragmentation.
+     * Each datagram is prefixed with a 4-byte RPC fragment header
+     * (last-fragment bit = 1, fragment length = send_len). */
+    {
+        uint8_t fragbuf[4 + NFS_MAX_DATA];
+        uint32_t hdr = send_len | RPC_LAST_FRAGMENT;
+        fragbuf[0] = (uint8_t)(hdr >> 24);
+        fragbuf[1] = (uint8_t)(hdr >> 16);
+        fragbuf[2] = (uint8_t)(hdr >> 8);
+        fragbuf[3] = (uint8_t)(hdr);
+        memcpy(fragbuf + 4, send_data, send_len);
+        net_udp_send(server_ip, (uint16_t)rpc_udp_port, port,
+                     fragbuf, (uint16_t)(4 + send_len));
+    }
 
+    /* ── Receive phase ─────────────────────────────────────────── */
     /* Listen on our port for reply */
     net_udp_listen((uint16_t)rpc_udp_port);
 
-    /* Wait for reply with timeout */
+    uint32_t total = 0;
+    int last_seen = 0;
     uint64_t start = timer_get_ticks();
-    for (;;) {
+
+    while (!last_seen) {
         uint64_t now = timer_get_ticks();
         if (timeout_ticks > 0 && (now - start) > timeout_ticks) {
             net_udp_unlisten((uint16_t)rpc_udp_port);
@@ -181,17 +214,46 @@ static int nfs_udp_rpc(uint32_t server_ip, uint16_t port,
 
         uint32_t src_ip = 0;
         uint16_t src_port = 0;
-        int n = net_udp_recv((uint16_t)rpc_udp_port, recv_buf, (uint16_t)*recv_len,
+
+        /* Receive one UDP datagram into a temporary buffer */
+        uint8_t raw[64 + NFS_MAX_DATA];
+        uint16_t raw_len = (uint16_t)sizeof(raw);
+        int n = net_udp_recv((uint16_t)rpc_udp_port, raw, raw_len,
                               &src_ip, &src_port, 1);
-        if (n > 0) {
-            *recv_len = (uint32_t)n;
-            net_udp_unlisten((uint16_t)rpc_udp_port);
-            return 0;
+        if (n <= 0) {
+            /* Yield to allow other processes */
+            extern void scheduler_yield(void);
+            scheduler_yield();
+            continue;
         }
-        /* Yield to allow other processes */
-        extern void scheduler_yield(void);
-        scheduler_yield();
+
+        /* The datagram carries at least a 4-byte fragment header */
+        if (n < 4) {
+            net_udp_unlisten((uint16_t)rpc_udp_port);
+            return -EIO;
+        }
+
+        /* Parse fragment header */
+        uint32_t fh = ((uint32_t)raw[0] << 24) |
+                      ((uint32_t)raw[1] << 16) |
+                      ((uint32_t)raw[2] << 8)  | raw[3];
+        last_seen = (fh & RPC_LAST_FRAGMENT) ? 1 : 0;
+        uint32_t flen = fh & RPC_FRAG_MASK;
+
+        /* Sanity check: fragment payload fits in received datagram */
+        if ((uint32_t)n < 4 + flen)
+            flen = (uint32_t)n - 4;
+        if (flen > *recv_len - total)
+            flen = *recv_len - total;
+
+        /* Copy fragment payload into the reply buffer */
+        memcpy(recv_buf + total, raw + 4, flen);
+        total += flen;
     }
+
+    net_udp_unlisten((uint16_t)rpc_udp_port);
+    *recv_len = total;
+    return 0;
 }
 
 /* ── RPC call/response ───────────────────────────────────────────── */

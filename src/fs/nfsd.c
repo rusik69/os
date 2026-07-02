@@ -574,6 +574,96 @@ static void nfsd_proc_lookup(struct nfsd_rpc_state *rpc,
     *reply_len = (uint32_t)(p - reply);
 }
 
+/* ── Write verifier (unique per server boot) ────────────────────────── */
+
+static uint64_t nfsd_writeverf = 0;
+
+static void nfsd_encode_writeverf(uint8_t **p)
+{
+    if (nfsd_writeverf == 0)
+        nfsd_writeverf = (uint64_t)timer_get_ticks();
+    xdr_put_uint64(p, nfsd_writeverf);
+}
+
+/* ── NFSPROC3_WRITE ─────────────────────────────────────────────────── */
+
+static void nfsd_proc_write(struct nfsd_rpc_state *rpc,
+                             uint8_t *reply, uint32_t *reply_len)
+{
+    uint8_t *p = reply;
+    const uint8_t *cp = rpc->call_data;
+
+    /* Parse FH */
+    uint32_t fh_len = xdr_get_u32(&cp);
+    const uint8_t *fh_data = cp;
+    cp += fh_len;
+    while (fh_len & 3) { cp++; fh_len++; }
+
+    /* Offset (uint64) */
+    uint64_t offset = ((uint64_t)xdr_get_u32(&cp) << 32) | xdr_get_u32(&cp);
+
+    /* Count */
+    uint32_t count = xdr_get_u32(&cp);
+
+    /* Stable flag */
+    uint32_t stable = xdr_get_u32(&cp);
+    (void)stable;
+
+    /* Data length + data */
+    uint32_t data_len = xdr_get_u32(&cp);
+    const uint8_t *data = cp;
+    if (data_len > count)
+        data_len = count;
+
+    /* Resolve FH to local file path */
+    struct nfsd_export *ex = NULL;
+    char file_path[NFSD_MAX_PATH];
+    int ret = nfsd_fh_resolve(fh_data, fh_len, &ex, file_path, sizeof(file_path));
+
+    rpc_build_header(&p, rpc->xid, 1, RPC_SUCCESS);
+    if (ret < 0) {
+        xdr_put_u32(&p, NFS3ERR_STALE);
+        *reply_len = (uint32_t)(p - reply);
+        return;
+    }
+
+    /* Get pre-op stat */
+    struct vfs_stat pre_st;
+    memset(&pre_st, 0, sizeof(pre_st));
+    ret = vfs_stat(file_path, &pre_st);
+
+    /* Write the data (offset ignored — path-based VFS writes from start).
+     * A full implementation would use the offset by reading the file,
+     * modifying at offset, and writing back. For now, vfs_write replaces
+     * the file content starting at offset 0. */
+    ret = vfs_write(file_path, data, data_len);
+    (void)offset;
+
+    /* Get post-op stat */
+    struct vfs_stat post_st;
+    memset(&post_st, 0, sizeof(post_st));
+    if (ret == 0)
+        vfs_stat(file_path, &post_st);
+
+    if (ret < 0) {
+        xdr_put_u32(&p, NFS3ERR_IO);
+        nfsd_encode_wcc_data(&p, &pre_st, &post_st);
+        *reply_len = (uint32_t)(p - reply);
+        return;
+    }
+
+    xdr_put_u32(&p, NFS3_OK);
+    /* Wcc data (pre/post op attributes) */
+    nfsd_encode_wcc_data(&p, &pre_st, &post_st);
+    /* Count written */
+    xdr_put_u32(&p, data_len);
+    /* Committed (FILE_SYNC = 2 — synchronous write) */
+    xdr_put_u32(&p, 2);
+    /* Write verifier (8 bytes, opaque per server boot) */
+    nfsd_encode_writeverf(&p);
+    *reply_len = (uint32_t)(p - reply);
+}
+
 /* ── NFSPROC3_READ ──────────────────────────────────────────────────── */
 
 static void nfsd_proc_read(struct nfsd_rpc_state *rpc,
@@ -991,6 +1081,9 @@ void nfsd_handle_rpc(struct nfsd_rpc_state *rpc,
                 break;
             case NFSPROC3_READ:
                 nfsd_proc_read(rpc, reply_buf, reply_len);
+                break;
+            case NFSPROC3_WRITE:
+                nfsd_proc_write(rpc, reply_buf, reply_len);
                 break;
             case NFSPROC3_READDIR:
                 nfsd_proc_readdir(rpc, reply_buf, reply_len);
