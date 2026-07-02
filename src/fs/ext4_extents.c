@@ -48,6 +48,117 @@ static int      ext4_ext_find_insert_position(struct ext4_extent_header *eh,
                                               struct ext4_extent *newext,
                                               int *pos);
 
+/* ── JBD2 journal helpers for extent metadata journaling ──────────── */
+
+/*
+ * ext4_ext_journal_init — associate a JBD2 journal with ext4 extents.
+ */
+void ext4_ext_journal_init(struct ext4_priv *ep,
+                           struct jbd2_journal *journal)
+{
+    if (!ep)
+        return;
+    ep->journal = journal;
+    ep->journal_handle = NULL;
+    kprintf("[ext4_ext] journal initialized for extent metadata journaling\n");
+}
+
+/*
+ * ext4_ext_journal_start — begin a JBD2 transaction for extent metadata.
+ */
+int ext4_ext_journal_start(struct ext4_priv *ep, uint32_t max_blocks)
+{
+    if (!ep)
+        return -EINVAL;
+
+    /* No journal — direct-write mode, no-op */
+    if (!ep->journal)
+        return 0;
+
+    ep->journal_handle = jbd2_journal_start(ep->journal, max_blocks);
+    if (!ep->journal_handle)
+        return -ENOMEM;
+
+    return 0;
+}
+
+/*
+ * ext4_ext_journal_commit — commit the current extent metadata transaction.
+ */
+int ext4_ext_journal_commit(struct ext4_priv *ep)
+{
+    struct jbd2_handle *handle;
+    int ret;
+
+    if (!ep || !ep->journal_handle)
+        return 0;
+
+    handle = ep->journal_handle;
+    ep->journal_handle = NULL;
+
+    ret = jbd2_commit_transaction(handle);
+    return ret;
+}
+
+/*
+ * ext4_ext_journal_stop — discard the current transaction without commit.
+ */
+void ext4_ext_journal_stop(struct ext4_priv *ep)
+{
+    struct jbd2_handle *handle;
+
+    if (!ep || !ep->journal_handle)
+        return;
+
+    handle = ep->journal_handle;
+    ep->journal_handle = NULL;
+    jbd2_journal_stop(handle);
+}
+
+/*
+ * ext4_ext_journal_get_write_access — register a block with the journal
+ *                                     BEFORE modification.
+ */
+int ext4_ext_journal_get_write_access(struct ext4_priv *ep,
+                                      uint32_t block_num,
+                                      const uint8_t *data)
+{
+    if (!ep || !ep->journal_handle)
+        return 0;
+
+    return jbd2_journal_get_write_access(ep->journal_handle,
+                                          block_num, data);
+}
+
+/*
+ * ext4_ext_journal_dirty_block — write a modified metadata block and
+ *                                mark it dirty in the journal.
+ */
+int ext4_ext_journal_dirty_block(struct ext4_priv *ep,
+                                 uint32_t block_num,
+                                 const uint8_t *data)
+{
+    int ret;
+
+    if (!ep)
+        return -EINVAL;
+
+    /* Always write the block to its on-disk location first */
+    ret = ext4_ext_write_block(ep, block_num, data);
+    if (ret < 0)
+        return ret;
+
+    /* If a JBD2 transaction is active, mark the block as dirty metadata */
+    if (ep->journal_handle) {
+        ret = jbd2_journal_dirty_metadata(ep->journal_handle,
+                                           block_num, data);
+        if (ret < 0)
+            return ret;
+    }
+
+    return 0;
+}
+
 /* ── Validation ────────────────────────────────────────────────────── */
 
 int ext4_ext_check_header(struct ext4_extent_header *eh, uint16_t max_depth)
@@ -184,18 +295,30 @@ static int ext4_ext_binsearch(struct ext4_extent_header *eh,
 /*
  * Write a single filesystem block (ep->block_size bytes) to disk.
  * Used to write back modified extent tree nodes.
+ * If a JBD2 transaction is active (ep->journal_handle != NULL), the
+ * block is also registered as dirty metadata for journaling.
  */
 static int ext4_ext_write_block(struct ext4_priv *ep, uint32_t block_num,
                                 const uint8_t *buf)
 {
     uint64_t lba = (uint64_t)block_num * (ep->block_size / 512);
     uint32_t sectors = ep->block_size / 512;
+    int ret;
 
     for (uint32_t i = 0; i < sectors; i++) {
         if (blockdev_write_sectors(ep->dev_id, lba + i, 1,
                                    buf + i * 512) != 0)
             return -EIO;
     }
+
+    /* If a JBD2 transaction is active, mark the block as dirty metadata */
+    if (ep->journal_handle) {
+        ret = jbd2_journal_dirty_metadata(ep->journal_handle,
+                                           block_num, buf);
+        if (ret < 0)
+            return ret;
+    }
+
     return 0;
 }
 
@@ -416,6 +539,17 @@ static int ext4_ext_split(struct ext4_priv *ep,
         return -ENOMEM;
 
     memset(new_buf, 0, ep->block_size);
+
+    /* If journaling, register the old block before modifying it */
+    {
+        int journal_ret = ext4_ext_journal_get_write_access(
+                              ep, old_block,
+                              (const uint8_t *)old_eh);
+        if (journal_ret < 0) {
+            kfree(new_buf);
+            return journal_ret;
+        }
+    }
 
     /* ── Set up the new node header ── */
     struct ext4_extent_header *new_header;
@@ -787,6 +921,14 @@ int ext4_ext_insert_extent(struct ext4_priv *ep,
     struct ext4_extent_header *leaf_eh =
         (struct ext4_extent_header *)node_data;
 
+    /* If journaling, register the leaf block before any modifications */
+    if (path_block[path_depth] != 0) {
+        ret = ext4_ext_journal_get_write_access(ep,
+                  path_block[path_depth], node_buf);
+        if (ret < 0)
+            return ret;
+    }
+
     /* ── Try to merge the new extent with existing extents ── */
     struct ext4_extent *exts = (struct ext4_extent *)(leaf_eh + 1);
     uint16_t leaf_entries = leaf_eh->eh_entries;
@@ -979,6 +1121,18 @@ int ext4_ext_insert_extent(struct ext4_priv *ep,
             struct ext4_extent_header *parent_eh = path_eh[path_depth - 1];
             uint32_t parent_block = path_block[path_depth - 1];
 
+            /* If journaling, register the parent block before modifying it */
+            {
+                uint8_t parent_buf[EXT4_MAX_BLOCK_SIZE];
+                ret = ext4_read_block(ep, parent_block, parent_buf);
+                if (ret < 0)
+                    return ret;
+                ret = ext4_ext_journal_get_write_access(ep, parent_block,
+                                                         parent_buf);
+                if (ret < 0)
+                    return ret;
+            }
+
             /* Build an index entry for the new node */
             struct ext4_extent_idx new_idx;
             memset(&new_idx, 0, sizeof(new_idx));
@@ -1123,6 +1277,14 @@ int ext4_ext_remove_space(struct ext4_priv *ep,
             leaf_eh = eh;
             break;
         }
+    }
+
+    /* If journaling, register the leaf block before modifying it */
+    if (leaf_block != 0) {
+        ret = ext4_ext_journal_get_write_access(ep, leaf_block,
+                                                 node_buf);
+        if (ret < 0)
+            return ret;
     }
 
     /* ── Process the leaf node ── */

@@ -3,6 +3,7 @@
 
 #include "types.h"
 #include "vfs.h"
+#include "jbd2.h"
 
 /* Ext4 is backward-compatible with ext2/3 — same magic */
 #define EXT4_SUPER_MAGIC   0xEF53
@@ -318,6 +319,11 @@ struct ext4_priv {
 
     /* flex_bg: number of block groups in a flex_bg group */
     uint32_t flex_bg_size; /* 0 if flex_bg not enabled */
+
+    /* JBD2 journal for metadata journaling (NULL if no journal) */
+    struct jbd2_journal *journal;
+    /* Current JBD2 transaction handle (NULL if no active transaction) */
+    struct jbd2_handle *journal_handle;
 };
 
 /* Corruption helper — forces read-only remount */

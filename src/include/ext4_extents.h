@@ -105,6 +105,85 @@ int ext4_ext_remove_space(struct ext4_priv *ep,
                           uint32_t start,
                           uint32_t end);
 
+/* ── Journaling for extent metadata ────────────────────────────────── */
+
+/*
+ * ext4_ext_journal_init — associate a JBD2 journal with ext4 extents.
+ *
+ * @ep:      ext4 private per-mount data
+ * @journal: initialized JBD2 journal structure
+ *
+ * Stores the journal pointer in ext4_priv for use by all extent
+ * manipulation functions.  After calling this, subsequent extent
+ * insert/remove operations will journal their metadata block writes.
+ */
+void ext4_ext_journal_init(struct ext4_priv *ep,
+                           struct jbd2_journal *journal);
+
+/*
+ * ext4_ext_journal_start — begin a JBD2 transaction for extent metadata.
+ *
+ * @ep:          ext4 private per-mount data
+ * @max_blocks:  maximum number of metadata blocks to be modified
+ *
+ * Stores the transaction handle in ep->journal_handle.
+ * Returns 0 on success, negative errno on failure.
+ * If ep->journal is NULL, returns 0 (no-op, direct-write mode).
+ */
+int ext4_ext_journal_start(struct ext4_priv *ep, uint32_t max_blocks);
+
+/*
+ * ext4_ext_journal_commit — commit the current extent metadata transaction.
+ *
+ * @ep: ext4 private per-mount data
+ *
+ * Commits and frees the handle, clears ep->journal_handle.
+ * Returns number of blocks committed on success (> 0),
+ *         0 if no journal or no active transaction,
+ *         negative errno on failure.
+ */
+int ext4_ext_journal_commit(struct ext4_priv *ep);
+
+/*
+ * ext4_ext_journal_stop — discard the current transaction without commit.
+ *
+ * @ep: ext4 private per-mount data
+ *
+ * Frees the handle without writing to the journal.
+ */
+void ext4_ext_journal_stop(struct ext4_priv *ep);
+
+/*
+ * ext4_ext_journal_get_write_access — register a block with the journal
+ *                                     before modification.
+ *
+ * @ep:         ext4 private per-mount data
+ * @block_num:  filesystem block number to register
+ * @data:       current block content (will be copied for journal)
+ *
+ * Must be called BEFORE modifying a metadata block.  Returns 0 on
+ * success or if no journal is present, negative errno on failure.
+ */
+int ext4_ext_journal_get_write_access(struct ext4_priv *ep,
+                                      uint32_t block_num,
+                                      const uint8_t *data);
+
+/*
+ * ext4_ext_journal_dirty_block — write a modified metadata block and
+ *                                mark it dirty in the journal.
+ *
+ * @ep:         ext4 private per-mount data
+ * @block_num:  filesystem block number that was modified
+ * @data:       modified block content
+ *
+ * Writes the block to its on-disk location and, if a transaction is
+ * active, logs it as dirty metadata so JBD2 records it atomically.
+ * Returns 0 on success, negative errno on failure.
+ */
+int ext4_ext_journal_dirty_block(struct ext4_priv *ep,
+                                 uint32_t block_num,
+                                 const uint8_t *data);
+
 /* ── Module init ───────────────────────────────────────────────────── */
 
 int ext4_ext_init(void);
