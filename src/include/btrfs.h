@@ -34,6 +34,8 @@
 #define BTRFS_SHARED_BLOCK_REF_KEY 177
 #define BTRFS_EXTENT_DATA_REF_KEY 178
 #define BTRFS_SHARED_DATA_REF_KEY 179
+#define BTRFS_ROOT_REF_KEY        156
+#define BTRFS_ROOT_BACKREF_KEY    144
 #define BTRFS_CHUNK_ITEM_KEY      228
 
 #define BTRFS_EXTENT_FLAG_DATA       (1ULL << 0)
@@ -249,6 +251,13 @@ struct btrfs_extent_data_ref {
 
 struct btrfs_shared_data_ref {
     uint32_t count;
+} __attribute__((packed));
+
+struct btrfs_root_ref {
+    uint64_t dirid;
+    uint64_t index;
+    uint16_t name_len;
+    /* Followed by variable-length name */
 } __attribute__((packed));
 #pragma pack(pop)
 

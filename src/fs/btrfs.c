@@ -1010,6 +1010,196 @@ static int btrfs_read_inode_data(struct btrfs_priv *bp, uint64_t ino,
     return 0;
 }
 
+/* ── Subvolume name lookup ─────────────────────────────────────── */
+
+/**
+ * btrfs_get_subvolume_name - Look up a subvolume's name via ROOT_REF
+ * @bp: Btrfs private data
+ * @subvol_id: Subvolume objectid to look up
+ * @name_buf: Output buffer for the name
+ * @buf_size: Size of name_buf
+ *
+ * Searches the root tree for a ROOT_REF_KEY item matching the given
+ * subvolume objectid.  ROOT_REF entries in Btrfs record the name of
+ * a subvolume as a variable-length string following the fixed-size
+ * btrfs_root_ref header.
+ *
+ * Returns: The length of the name on success, or 0 if no name was
+ *          found (e.g. the subvolume is the default FS_TREE which
+ *          has no ROOT_REF entry, or the item was not present).
+ */
+static int btrfs_get_subvolume_name(struct btrfs_priv *bp,
+                                     uint64_t subvol_id,
+                                     char *name_buf, int buf_size)
+{
+    uint8_t buf[4096];
+    uint32_t item_idx;
+    int exact;
+    int ret;
+
+    if (!bp || !name_buf || buf_size <= 0)
+        return 0;
+
+    /* Search for the first ROOT_REF_KEY item >= (subvol_id, ROOT_REF_KEY, 0) */
+    ret = btrfs_search_tree(bp, bp->root_bytenr, bp->root_level,
+                             subvol_id, BTRFS_ROOT_REF_KEY, 0,
+                             buf, sizeof(buf), &item_idx, &exact);
+    if (ret < 0)
+        return 0;
+
+    struct btrfs_header *hdr = (struct btrfs_header *)buf;
+    if (item_idx >= hdr->nritems)
+        return 0;
+
+    struct btrfs_item *items = (struct btrfs_item *)
+        (buf + sizeof(struct btrfs_header));
+
+    uint64_t cur_obj = items[item_idx].key.objectid;
+    uint8_t  cur_typ = items[item_idx].key.type;
+
+    /* Check that the found item belongs to our subvolume and is a ROOT_REF */
+    if (cur_obj != subvol_id || cur_typ != BTRFS_ROOT_REF_KEY)
+        return 0;
+
+    uint32_t off = items[item_idx].offset;
+    uint32_t sz  = items[item_idx].size;
+
+    if (off + sz > bp->nodesize ||
+        sz < sizeof(struct btrfs_root_ref))
+        return 0;
+
+    struct btrfs_root_ref *rr = (struct btrfs_root_ref *)(buf + off);
+    uint16_t name_len = rr->name_len;
+
+    if (name_len > 0 && name_len < (uint16_t)buf_size &&
+        (uint32_t)(sizeof(struct btrfs_root_ref) + name_len) <= sz) {
+        memcpy(name_buf, buf + off + sizeof(struct btrfs_root_ref),
+               name_len);
+        name_buf[name_len] = '\0';
+        return (int)name_len;
+    }
+
+    return 0;
+}
+
+/* ── Subvolume listing ─────────────────────────────────────────── */
+
+/**
+ * btrfs_list_subvolumes - Walk the root tree and log all subvolumes
+ * @bp: Btrfs private data (root_bytenr/level must be populated)
+ *
+ * Iterates all ROOT_ITEM_KEY entries in the root tree in key order
+ * by advancing the search objectid.  For each subvolume whose
+ * objectid >= BTRFS_FIRST_FREE_OBJECTID (256), reads the ROOT_ITEM
+ * and logs its objectid, UUID prefix, root_dirid, generation, and
+ * root_refs.  Also attempts to resolve the subvolume name from
+ * ROOT_REF items.
+ *
+ * The FS_TREE (objectid 5) is also listed as the default subvolume.
+ *
+ * Returns: The number of subvolumes listed, or negative errno on
+ *          failure.
+ */
+static int btrfs_list_subvolumes(struct btrfs_priv *bp)
+{
+    uint8_t buf[4096];
+    uint32_t item_idx;
+    int exact;
+    int ret;
+    int count;
+    uint64_t search_obj;
+    uint8_t  search_type;
+    uint64_t search_off;
+
+    if (!bp)
+        return -EINVAL;
+
+    kprintf("[btrfs] Subvolume listing:\n");
+
+    count = 0;
+    search_obj = 0;
+    search_type = BTRFS_ROOT_ITEM_KEY;
+    search_off = 0;
+
+    while (count < 256) {
+        ret = btrfs_search_tree(bp, bp->root_bytenr, bp->root_level,
+                                 search_obj, search_type, search_off,
+                                 buf, sizeof(buf),
+                                 &item_idx, &exact);
+        if (ret < 0)
+            break;
+
+        struct btrfs_header *hdr = (struct btrfs_header *)buf;
+        if (item_idx >= hdr->nritems)
+            break;
+
+        struct btrfs_item *items = (struct btrfs_item *)
+            (buf + sizeof(struct btrfs_header));
+
+        uint64_t cur_obj = items[item_idx].key.objectid;
+        uint8_t  cur_typ = items[item_idx].key.type;
+        uint64_t cur_off = items[item_idx].key.offset;
+
+        /* Past all ROOT_ITEM_KEY items in the tree */
+        if (cur_typ != BTRFS_ROOT_ITEM_KEY)
+            break;
+
+        uint32_t off = items[item_idx].offset;
+        uint32_t sz  = items[item_idx].size;
+
+        if (off + sz <= bp->nodesize &&
+            sz >= sizeof(struct btrfs_root_item)) {
+            struct btrfs_root_item *ri =
+                (struct btrfs_root_item *)(buf + off);
+
+            /* List subvolumes (objectid >= 256) and the FS_TREE root */
+            if (cur_obj >= BTRFS_FIRST_FREE_OBJECTID ||
+                cur_obj == BTRFS_FS_TREE_OBJECTID) {
+                char subvol_name[256];
+                int name_len;
+
+                name_len = btrfs_get_subvolume_name(bp, cur_obj,
+                                                     subvol_name,
+                                                     sizeof(subvol_name));
+
+                kprintf("[btrfs]   Subvol %llu",
+                        (unsigned long long)cur_obj);
+                if (cur_obj == BTRFS_FS_TREE_OBJECTID)
+                    kprintf(" (FS_TREE)");
+                kprintf(": UUID=%02x%02x%02x%02x... "
+                        "dirid=%llu gen=%llu refs=%u",
+                        (unsigned)ri->uuid[0],
+                        (unsigned)ri->uuid[1],
+                        (unsigned)ri->uuid[2],
+                        (unsigned)ri->uuid[3],
+                        (unsigned long long)ri->root_dirid,
+                        (unsigned long long)ri->generation,
+                        (unsigned)ri->root_refs);
+                if (name_len > 0)
+                    kprintf(" name=%s", subvol_name);
+                kprintf("\n");
+                count++;
+            }
+        }
+
+        /* Advance search to the next objectid to find more ROOT_ITEM entries.
+         * Skip current offset by incrementing it; if offset wraps, increment
+         * type; if type wraps, increment objectid. */
+        search_off = cur_off + 1;
+        if (search_off == 0) {
+            search_type = cur_typ + 1;
+            if (search_type == 0)
+                search_obj = cur_obj + 1;
+        } else {
+            search_type = cur_typ;
+            search_obj = cur_obj;
+        }
+    }
+
+    kprintf("[btrfs] Subvolume listing: %d subvolume(s) found\n", count);
+    return count;
+}
+
 /* ── VFS operations ────────────────────────────────────────────── */
 
 /**
@@ -1558,6 +1748,9 @@ int btrfs_mount(const char *source, const char *target,
 
     /* Parse checksum tree (non-fatal — informational walk + verification) */
     btrfs_parse_csum_tree(bp);
+
+    /* List subvolumes (non-fatal — informational) */
+    btrfs_list_subvolumes(bp);
 
     /* Register with VFS */
     ret = vfs_mount(target, &btrfs_ops, bp);
