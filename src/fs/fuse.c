@@ -212,6 +212,174 @@ static void fuse_entry_cache_invalidate(struct fuse_mount_info *mnt,
     }
 }
 
+/* ── Open file handle cache helpers ──────────────────────────────────── */
+
+/*
+ * Initialize the per-mount open file handle cache.
+ */
+static void fuse_open_fh_cache_init(struct fuse_mount_info *mnt)
+{
+    memset(mnt->open_fh_cache, 0, sizeof(mnt->open_fh_cache));
+}
+
+/*
+ * Look up a cached open file handle by nodeid.
+ * Returns 0 if found (fh written to @out_fh, offset to @out_offset),
+ * -ENOENT if not.
+ */
+static int fuse_open_fh_cache_lookup(struct fuse_mount_info *mnt,
+                                      uint64_t nodeid, uint64_t *out_fh,
+                                      uint64_t *out_offset)
+{
+    for (int i = 0; i < FUSE_OPEN_FH_CACHE_SIZE; i++) {
+        struct fuse_open_fh_entry *e = &mnt->open_fh_cache[i];
+        if (e->in_use && e->nodeid == nodeid) {
+            *out_fh = e->fh;
+            if (out_offset)
+                *out_offset = e->offset;
+            return 0;
+        }
+    }
+    return -ENOENT;
+}
+
+/*
+ * Add an open file handle to the cache.  Evicts the first slot (FIFO)
+ * if the cache is full.  Initializes offset to @initial_offset.
+ */
+static void fuse_open_fh_cache_add(struct fuse_mount_info *mnt,
+                                    uint64_t nodeid, uint64_t fh,
+                                    uint32_t open_flags,
+                                    uint64_t initial_offset)
+{
+    int slot = -1;
+
+    /* Look for an empty slot */
+    for (int i = 0; i < FUSE_OPEN_FH_CACHE_SIZE; i++) {
+        if (!mnt->open_fh_cache[i].in_use) {
+            slot = i;
+            break;
+        }
+    }
+
+    /* If full, evict the first slot (FIFO) */
+    if (slot < 0)
+        slot = 0;
+
+    mnt->open_fh_cache[slot].nodeid     = nodeid;
+    mnt->open_fh_cache[slot].fh         = fh;
+    mnt->open_fh_cache[slot].open_flags = open_flags;
+    mnt->open_fh_cache[slot].in_use     = 1;
+    mnt->open_fh_cache[slot].offset     = initial_offset;
+}
+
+/*
+ * fuse_do_open — Send FUSE_OPEN for a nodeid and return the file handle.
+ *
+ * @mnt     The FUSE mount info.
+ * @nodeid  Node ID of the file to open.
+ * @out_fh  On success, receives the file handle from the daemon.
+ *
+ * Returns 0 on success, or a negative errno on failure.
+ */
+static int fuse_do_open(struct fuse_mount_info *mnt, uint64_t nodeid,
+                         uint64_t *out_fh)
+{
+    struct fuse_open_in oi;
+    void *resp_arg = NULL;
+    int resp_arg_size = 0;
+    struct fuse_open_out *oo;
+    int ret;
+
+    if (!mnt || !out_fh)
+        return -EINVAL;
+
+    memset(&oi, 0, sizeof(oi));
+    oi.flags = O_RDWR;
+
+    ret = fuse_request_response(FUSE_OPEN, nodeid, &oi, sizeof(oi),
+                                 &resp_arg, &resp_arg_size);
+    if (ret < 0)
+        return ret;
+
+    if (!resp_arg || resp_arg_size < (int)sizeof(struct fuse_open_out)) {
+        kfree(resp_arg);
+        return -EIO;
+    }
+
+    oo = (struct fuse_open_out *)resp_arg;
+    *out_fh = oo->fh;
+    kfree(resp_arg);
+    return 0;
+}
+
+/*
+ * fuse_get_or_open_fh — Return a cached file handle or open the file.
+ *
+ * First checks the per-mount open file handle cache for an existing
+ * handle for @nodeid.  If not found, sends FUSE_OPEN to the daemon
+ * and caches the result.
+ *
+ * @mnt     The FUSE mount info.
+ * @nodeid  Node ID of the file.
+ * @out_fh  On success, receives the file handle.
+ *
+ * Returns 0 on success, or a negative errno on failure.
+ */
+static int fuse_get_or_open_fh(struct fuse_mount_info *mnt,
+                                uint64_t nodeid, uint64_t *out_fh,
+                                uint64_t *out_offset)
+{
+    int ret;
+
+    if (!mnt || !out_fh)
+        return -EINVAL;
+
+    /* Check cache first */
+    ret = fuse_open_fh_cache_lookup(mnt, nodeid, out_fh, out_offset);
+    if (ret == 0)
+        return 0;
+
+    /* Cache miss — send FUSE_OPEN */
+    ret = fuse_do_open(mnt, nodeid, out_fh);
+    if (ret < 0) {
+        kprintf("[fuse] FUSE_OPEN nodeid=%llu failed: %d\n",
+                (unsigned long long)nodeid, ret);
+        return ret;
+    }
+
+    /* Cache the handle with offset 0 */
+    fuse_open_fh_cache_add(mnt, nodeid, *out_fh, O_RDWR, 0);
+    if (out_offset)
+        *out_offset = 0;
+
+    return 0;
+}
+
+/*
+ * fuse_open_fh_cache_update_offset — Update the cached read/write offset
+ *                                      for a given nodeid.
+ *
+ * @mnt     The FUSE mount info.
+ * @nodeid  Node ID whose offset to update.
+ * @offset  New offset value.
+ *
+ * Returns 0 on success, -ENOENT if the nodeid is not in the cache.
+ */
+static int fuse_open_fh_cache_update_offset(struct fuse_mount_info *mnt,
+                                             uint64_t nodeid,
+                                             uint64_t offset)
+{
+    for (int i = 0; i < FUSE_OPEN_FH_CACHE_SIZE; i++) {
+        struct fuse_open_fh_entry *e = &mnt->open_fh_cache[i];
+        if (e->in_use && e->nodeid == nodeid) {
+            e->offset = offset;
+            return 0;
+        }
+    }
+    return -ENOENT;
+}
+
 /* ── FUSE_LOOKUP implementation ─────────────────────────────────────── */
 
 /*
@@ -372,6 +540,8 @@ static int fuse_read(void *priv, const char *path, void *buf,
 {
     struct fuse_mount_info *mnt;
     uint64_t nodeid;
+    uint64_t fh;
+    uint64_t offset;
     struct fuse_read_in ri;
     void *resp_arg = NULL;
     int resp_arg_size = 0;
@@ -386,11 +556,21 @@ static int fuse_read(void *priv, const char *path, void *buf,
 
     nodeid = fuse_path_to_nodeid(mnt, path);
 
-    /* Send FUSE_READ request and wait for response */
+    /* Get or create a file handle for this node via FUSE_OPEN.
+     * Also retrieves the current read/write position (offset). */
+    ret = fuse_get_or_open_fh(mnt, nodeid, &fh, &offset);
+    if (ret < 0)
+        return ret;
+
+    /* Send FUSE_READ request at the current offset */
     memset(&ri, 0, sizeof(ri));
-    ri.fh     = mnt->fh;
-    ri.offset = 0;
-    ri.size   = max_size;
+    ri.fh         = fh;
+    ri.offset     = offset;
+    ri.size       = max_size;
+    ri.read_flags = 0;
+    ri.lock_owner = 0;
+    ri.flags      = 0;
+    ri.padding    = 0;
 
     ret = fuse_request_response(FUSE_READ, nodeid, &ri, sizeof(ri),
                                  &resp_arg, &resp_arg_size);
@@ -398,15 +578,21 @@ static int fuse_read(void *priv, const char *path, void *buf,
         return ret;
 
     /* Copy response data to caller buffer */
+    uint32_t bytes_read = 0;
     if (resp_arg && resp_arg_size > 0) {
-        uint32_t copy_size = (uint32_t)resp_arg_size;
-        if (copy_size > max_size)
-            copy_size = max_size;
-        memcpy(buf, resp_arg, copy_size);
-        *out_size = copy_size;
+        bytes_read = (uint32_t)resp_arg_size;
+        if (bytes_read > max_size)
+            bytes_read = max_size;
+        memcpy(buf, resp_arg, bytes_read);
+        *out_size = bytes_read;
     }
 
     kfree(resp_arg);
+
+    /* Advance the cached offset by the number of bytes actually read */
+    if (bytes_read > 0)
+        fuse_open_fh_cache_update_offset(mnt, nodeid, offset + bytes_read);
+
     return 0;
 }
 
@@ -415,11 +601,14 @@ static int fuse_write(void *priv, const char *path,
 {
     struct fuse_mount_info *mnt;
     uint64_t nodeid;
+    uint64_t fh;
+    uint64_t offset;
     struct fuse_write_in wi;
-    void *resp_arg = NULL;
-    int resp_arg_size = 0;
+    struct fuse_write_out *wo;
     void *payload;
     uint32_t total_size;
+    void *resp_arg = NULL;
+    int resp_arg_size = 0;
     int ret;
 
     (void)priv;
@@ -429,6 +618,12 @@ static int fuse_write(void *priv, const char *path,
 
     nodeid = fuse_path_to_nodeid(mnt, path);
 
+    /* Get or create a file handle for this node via FUSE_OPEN.
+     * Also retrieves the current read/write position (offset). */
+    ret = fuse_get_or_open_fh(mnt, nodeid, &fh, &offset);
+    if (ret < 0)
+        return ret;
+
     /* FUSE wire format: fuse_write_in + data bytes */
     total_size = sizeof(wi) + size;
     payload = kmalloc(total_size);
@@ -436,9 +631,13 @@ static int fuse_write(void *priv, const char *path,
         return -ENOMEM;
 
     memset(&wi, 0, sizeof(wi));
-    wi.fh     = mnt->fh;
-    wi.offset = 0;
-    wi.size   = size;
+    wi.fh          = fh;
+    wi.offset      = offset;
+    wi.size        = size;
+    wi.write_flags = 0;
+    wi.lock_owner  = 0;
+    wi.flags       = 0;
+    wi.padding     = 0;
 
     memcpy(payload, &wi, sizeof(wi));
     memcpy((uint8_t *)payload + sizeof(wi), data, size);
@@ -450,8 +649,22 @@ static int fuse_write(void *priv, const char *path,
     if (ret < 0)
         return ret;
 
+    /* Parse the write response to get actual bytes written.
+     * Advance the cached offset accordingly. */
+    uint32_t bytes_written = size;
+    if (resp_arg && resp_arg_size >= (int)sizeof(struct fuse_write_out)) {
+        wo = (struct fuse_write_out *)resp_arg;
+        bytes_written = wo->size;
+    }
+
+    if (bytes_written > 0)
+        fuse_open_fh_cache_update_offset(mnt, nodeid,
+                                          offset + bytes_written);
+
     kfree(resp_arg);
-    return (int)size;
+
+    /* VFS contract: return 0 on success, negative errno on failure */
+    return 0;
 }
 
 static int fuse_stat(void *priv, const char *path, struct vfs_stat *st)
@@ -688,6 +901,7 @@ int fuse_mount(const char *mountpoint)
     memset(mnt, 0, sizeof(*mnt));
     strncpy(mnt->mountpoint, mountpoint, sizeof(mnt->mountpoint) - 1);
     fuse_entry_cache_init(mnt);
+    fuse_open_fh_cache_init(mnt);
 
     /* Parse FUSE_INIT response — validate version and store capabilities */
     if (resp_arg && resp_arg_size >= (int)sizeof(struct fuse_init_out)) {

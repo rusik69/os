@@ -261,6 +261,18 @@ struct fuse_entry_cache_entry {
     uint64_t generation;         /* generation from fuse_entry_out */
 } __attribute__((packed));
 
+/* ── Open file handle cache ─────────────────────────────────────────── */
+
+#define FUSE_OPEN_FH_CACHE_SIZE 16
+
+struct fuse_open_fh_entry {
+    uint64_t nodeid;             /* FUSE node ID of the opened file */
+    uint64_t fh;                 /* file handle returned by FUSE_OPEN */
+    uint32_t open_flags;         /* open flags used */
+    int      in_use;             /* 1 = entry valid */
+    uint64_t offset;             /* current read/write position within file */
+};
+
 /* ── Mount info with negotiated protocol state ──────────────────────── */
 
 struct fuse_mount_info {
@@ -277,6 +289,8 @@ struct fuse_mount_info {
     uint32_t    time_gran;          /* daemon's time granularity from INIT */
     /* Entry cache for path resolution */
     struct fuse_entry_cache_entry entry_cache[FUSE_ENTRY_CACHE_SIZE];
+    /* Open file handle cache (maps nodeid → fh from FUSE_OPEN) */
+    struct fuse_open_fh_entry open_fh_cache[FUSE_OPEN_FH_CACHE_SIZE];
 };
 
 /** fuse_has_cap — check if daemon supports a capability flag */
