@@ -54,6 +54,9 @@ static void sysfs_create_pci_bus(void)
 		return;
 	}
 
+	/* Populate /sys/bus/pci/drivers/<name>/ for known drivers */
+	sysfs_create_pci_driver_dirs();
+
 	/*
 	 * Populate /sys/bus/pci/devices/ with an entry for every
 	 * discovered PCI device.  Each entry is a small file whose

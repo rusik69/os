@@ -64,6 +64,13 @@ void sysfs_create_bus_dirs(void);
  * Called from sysfs_init() after /sys/class/ has been created. */
 void sysfs_create_class_dirs(void);
 
+/* Create per-driver directories under /sys/bus/pci/drivers/
+ * for every PCI driver known to the system.  Each driver gets
+ * a directory with a symbolic "driver" link back reference.
+ * Called from sysfs_create_pci_bus() after the /sys/bus/pci/drivers/
+ * directory exists. */
+void sysfs_create_pci_driver_dirs(void);
+
 /* Create a virtual file under /sys/<path> with static content */
 int sysfs_create_file(const char *path, const char *content);
 
