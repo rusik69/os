@@ -1041,19 +1041,117 @@ int nfs_readdir(int mount_id, const struct nfs_fhandle *fh,
             entry_count, eof ? " (EOF)" : "");
     return 0;
 }
-/* ── nfs_statfs ───────────────────────────────────────── */
+/* ── NFS FSSTAT (NFSPROC3_FSSTAT) ─────────────────────── */
+
+/*
+ * Perform an NFSv3 FSSTAT RPC call on the given file handle.
+ * Returns 0 on success with statfs info filled, or negative errno.
+ *
+ * The FSSTAT procedure (RFC 1813 Section 3.9) queries the server for
+ * filesystem-wide usage statistics: total/used/available space and
+ * total/used/available inode slots.
+ */
+int nfs_fsstat(int mount_id, const struct nfs_fhandle *fh,
+               struct vfs_statfs *st)
+{
+    if (mount_id < 0 || mount_id >= nfs_mount_count)
+        return -EINVAL;
+    if (!nfs_mounts[mount_id].mounted)
+        return -ENOTCONN;
+    if (!fh || !st)
+        return -EINVAL;
+
+    struct nfs_mount_info *mnt = &nfs_mounts[mount_id];
+
+    /* Build FSSTAT3args: just a file handle */
+    uint8_t args[NFS_MAX_DATA];
+    uint8_t *ap = args;
+    xdr_put_u32(&ap, fh->len);
+    xdr_put_bytes(&ap, fh->data, fh->len);
+    uint32_t args_len = (uint32_t)(ap - args);
+
+    uint8_t reply[NFS_MAX_DATA];
+    uint32_t reply_len = sizeof(reply);
+
+    int ret = nfs_rpc_call(mnt->server_ip, 100003, 3, NFSPROC3_FSSTAT,
+                            args, args_len, reply, &reply_len);
+    if (ret < 0)
+        return ret;
+
+    const uint8_t *rp = reply;
+    uint32_t status = xdr_get_u32(&rp);
+    if (status != 0) {
+        if (status == NFS3ERR_STALE)    return -ESTALE;
+        if (status == NFS3ERR_ACCES)    return -EACCES;
+        if (status == NFS3ERR_NOENT)    return -ENOENT;
+        if (status == NFS3ERR_SERVERFAULT) return -EREMOTEIO;
+        return -EIO;
+    }
+
+    /* Skip post-op object attributes (optional) */
+    uint32_t attr_present = xdr_get_u32(&rp);
+    if (attr_present) {
+        /* Skip 21 uint32 words of fattr3 */
+        for (int i = 0; i < 21; i++)
+            (void)xdr_get_u32(&rp);
+    }
+
+    /* Parse FSSTAT3resok fields */
+    uint64_t tbytes = ((uint64_t)xdr_get_u32(&rp) << 32) | xdr_get_u32(&rp);
+    uint64_t fbytes = ((uint64_t)xdr_get_u32(&rp) << 32) | xdr_get_u32(&rp);
+    uint64_t abytes = ((uint64_t)xdr_get_u32(&rp) << 32) | xdr_get_u32(&rp);
+    uint64_t tfiles = ((uint64_t)xdr_get_u32(&rp) << 32) | xdr_get_u32(&rp);
+    uint64_t ffiles = ((uint64_t)xdr_get_u32(&rp) << 32) | xdr_get_u32(&rp);
+    uint64_t afiles = ((uint64_t)xdr_get_u32(&rp) << 32) | xdr_get_u32(&rp);
+    uint32_t invarsec = xdr_get_u32(&rp);
+    (void)invarsec;
+
+    /* Convert to vfs_statfs format (block-based) */
+    memset(st, 0, sizeof(*st));
+    st->f_type    = 0x0000696e;  /* NFS super magic */
+    st->f_bsize   = 4096;
+    st->f_blocks  = tbytes / 4096;
+    st->f_bfree   = fbytes / 4096;
+    st->f_bavail  = abytes / 4096;
+    st->f_files   = tfiles;
+    st->f_ffree   = ffiles;
+    st->f_namelen = 255;
+
+    kprintf("[NFS] FSSTAT: total=%llu free=%llu files=%llu\n",
+            (unsigned long long)tbytes,
+            (unsigned long long)fbytes,
+            (unsigned long long)tfiles);
+    return 0;
+}
+
+/* ── nfs_statfs (VFS-compatible wrapper) ───────────────── */
 int nfs_statfs(void *sb, void *stat)
 {
     (void)sb;
     struct vfs_statfs *st = (struct vfs_statfs *)stat;
-    if (st) {
-        st->f_bsize = 4096;
-        st->f_blocks = 0;
-        st->f_bfree = 0;
-        st->f_files = 0;
-        st->f_ffree = 0;
-        st->f_namelen = 255;
+    if (!st)
+        return -EINVAL;
+
+    /* Try to use the first mounted NFS filesystem for real stats */
+    for (int i = 0; i < nfs_mount_count; i++) {
+        if (nfs_mounts[i].mounted) {
+            int ret = nfs_fsstat(i, &nfs_mounts[i].root_fh, st);
+            if (ret == 0)
+                return 0;
+            break;
+        }
     }
+
+    /* Fallback: return sensible defaults */
+    memset(st, 0, sizeof(*st));
+    st->f_type    = 0x0000696e;
+    st->f_bsize   = 4096;
+    st->f_blocks  = 0;
+    st->f_bfree   = 0;
+    st->f_bavail  = 0;
+    st->f_files   = 0;
+    st->f_ffree   = 0;
+    st->f_namelen = 255;
     return 0;
 }
 
