@@ -395,6 +395,10 @@ walk_susp:
                     out->rr_mode = px->mode_le;
                     out->rr_uid  = px->uid_le;
                     out->rr_gid  = px->gid_le;
+                    out->rr_nlink = px->nlink_le;
+                    out->rr_atime = px->atime_le;
+                    out->rr_mtime = px->mtime_le;
+                    out->rr_ctime = px->ctime_le;
                     rr_found |= RRIP_HAS_PX;
                 }
             }
@@ -450,6 +454,26 @@ walk_susp:
                 sl_buf[sl_buf_pos] = '\0';
                 memcpy(out->rr_symlink, sl_buf, sl_buf_pos + 1);
                 rr_found |= RRIP_HAS_SL;
+            }
+            /* TF (Timestamps) entry — POSIX timestamps from Rock Ridge */
+            else if (susp_sig_match(hdr, 'T', 'F')) {
+                const struct rrip_tf_entry *tf =
+                    (const struct rrip_tf_entry *)hdr;
+                uint32_t tf_len = (uint32_t)hdr->len;
+                if (tf_len >= 5) {
+                    uint32_t tf_atime = 0, tf_mtime = 0, tf_ctime = 0;
+                    uint8_t tf_flags = iso9660_rr_parse_tf(tf, tf_len,
+                                                            &tf_atime,
+                                                            &tf_mtime,
+                                                            &tf_ctime);
+                    if (tf_flags & RRIP_TF_ACCESS)
+                        out->rr_atime = tf_atime;
+                    if (tf_flags & RRIP_TF_MODIFY)
+                        out->rr_mtime = tf_mtime;
+                    if (tf_flags & RRIP_TF_ATTRIB)
+                        out->rr_ctime = tf_ctime;
+                    rr_found |= RRIP_HAS_TF;
+                }
             }
             /* CE (Continuation Entry) — more data elsewhere */
             else if (susp_sig_match(hdr, 'C', 'E')) {
@@ -1069,9 +1093,18 @@ static int iso9660_stat(void *priv, const char *path, struct vfs_stat *st)
         if (elen == nlen && memcmp(ename, name, nlen) == 0) {
             /* Use Rock Ridge POSIX attributes if available */
             if (entries[i].rr_flags & RRIP_HAS_PX) {
-                st->mode = entries[i].rr_mode & 07777;
-                st->uid  = entries[i].rr_uid;
-                st->gid  = entries[i].rr_gid;
+                st->mode   = entries[i].rr_mode & 07777;
+                st->uid    = entries[i].rr_uid;
+                st->gid    = entries[i].rr_gid;
+                st->nlink  = entries[i].rr_nlink ? entries[i].rr_nlink : 1;
+                /* Use TF timestamps if available, else fall back to PX timestamps */
+                if (entries[i].rr_flags & RRIP_HAS_TF) {
+                    st->atime = entries[i].rr_atime;
+                    st->mtime = entries[i].rr_mtime;
+                } else {
+                    st->atime = entries[i].rr_atime;
+                    st->mtime = entries[i].rr_mtime;
+                }
                 /* Determine type from mode:
                  * 1 = file, 2 = directory
                  * Symlinks and other types fall back to file */

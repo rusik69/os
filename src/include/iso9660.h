@@ -177,6 +177,23 @@ struct rrip_sl_component {
 #define RRIP_HAS_CL   0x08
 #define RRIP_HAS_PL   0x10
 #define RRIP_HAS_RE   0x20
+#define RRIP_HAS_TF   0x40
+
+/* RRIP TF (Timestamps) entry flags — which timestamps are present */
+#define RRIP_TF_CREATE  0x01  /* creation time */
+#define RRIP_TF_MODIFY  0x02  /* modification time */
+#define RRIP_TF_ACCESS  0x04  /* access time */
+#define RRIP_TF_ATTRIB  0x08  /* attribute change time */
+#define RRIP_TF_BACKUP  0x10  /* backup time */
+#define RRIP_TF_EXPIRE  0x20  /* expiration time */
+#define RRIP_TF_EFFECT  0x40  /* effective time */
+
+/* RRIP TF (Timestamps) SUSP entry (sig = "TF") */
+struct rrip_tf_entry {
+    struct susp_entry_header hdr;  /* sig = "TF", version = 1 */
+    uint8_t  flags;                /* RRIP_TF_* bitmask — which timestamps follow */
+    uint8_t  timestamps[1];        /* variable-length 7-byte ISO 9660 timestamps */
+} __attribute__((packed));
 
 /* Rock Ridge enhanced directory entry (fully parsed) */
 struct iso_rrip_entry {
@@ -187,6 +204,10 @@ struct iso_rrip_entry {
     uint32_t rr_mode;      /* POSIX mode from PX */
     uint32_t rr_uid;
     uint32_t rr_gid;
+    uint32_t rr_nlink;     /* number of hard links from PX */
+    uint32_t rr_atime;     /* access time (Unix time_t) from PX or TF */
+    uint32_t rr_mtime;     /* modification time (Unix time_t) from PX or TF */
+    uint32_t rr_ctime;     /* attribute change time (Unix time_t) from PX or TF */
     char     rr_name[256]; /* long file name from NM */
     char     rr_symlink[256]; /* symlink target from SL */
     uint8_t  rr_flags;     /* RRIP_HAS_* bitmask */
@@ -241,5 +262,26 @@ struct iso_session_info {
 
 int iso9660_mount(const char *mountpoint, uint8_t dev_id);
 int iso9660_init(void);
+
+/* ── Rock Ridge extension helpers (iso9660_rr.c) ──────────────── */
+
+/* Decode an ISO 9660 7-byte timestamp to Unix time_t (seconds since epoch).
+ * Returns 0 on success, -1 if the timestamp is invalid. */
+int iso9660_rr_decode_timestamp(const uint8_t iso_time[7], uint32_t *out_time);
+
+/* Parse TF (Timestamps) SUSP entry and extract timestamps.
+ * @tf       Pointer to TF entry
+ * @tf_len   Total length of the TF entry including header
+ * @atime    Output: access time
+ * @mtime    Output: modification time
+ * @ctime    Output: attribute change time
+ * Returns bitmask of RRIP_TF_* flags indicating which timestamps were parsed. */
+uint8_t iso9660_rr_parse_tf(const struct rrip_tf_entry *tf, uint32_t tf_len,
+                             uint32_t *atime, uint32_t *mtime, uint32_t *ctime);
+
+/* Apply Rock Ridge PX attributes to a vfs_stat structure.
+ * Fills in mode, uid, gid, nlink from the rrip entry if PX was present.
+ * Returns 0 if PX was applied, -1 if no PX data available. */
+int iso9660_rr_apply_px(const struct iso_rrip_entry *de, struct vfs_stat *st);
 
 #endif /* ISO9660_H */
