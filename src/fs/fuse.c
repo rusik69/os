@@ -20,6 +20,7 @@
 #include "errno.h"
 #include "spinlock.h"
 #include "timer.h"
+#include "page_cache.h"
 
 /* ── Mount info */
 #define FUSE_MAX_MOUNTS 4
@@ -123,6 +124,22 @@ static int fuse_request_response(uint32_t opcode, uint64_t nodeid,
         *out_resp_arg_size = resp_arg_size;
 
     return 0;
+}
+
+/* ── Page cache helpers ─────────────────────────────────────────────── */
+
+/*
+ * Invalidate page cache entries for a byte range of a FUSE node.
+ * Removes all page cache blocks that overlap [offset, offset + size).
+ */
+static void fuse_cache_invalidate_range(uint64_t nodeid,
+                                         uint64_t offset, uint32_t size)
+{
+    uint64_t start_block = offset / PAGE_SIZE;
+    uint64_t end_block = (offset + size + PAGE_SIZE - 1) / PAGE_SIZE;
+
+    for (uint64_t b = start_block; b < end_block; b++)
+        page_cache_remove((uint64_t)nodeid, b);
 }
 
 /* ── Entry cache helpers ────────────────────────────────────────────── */
@@ -852,14 +869,14 @@ static int fuse_read(void *priv, const char *path, void *buf,
     uint64_t nodeid;
     uint64_t fh;
     uint64_t offset;
-    struct fuse_read_in ri;
-    void *resp_arg = NULL;
-    int resp_arg_size = 0;
     int ret;
 
     (void)priv;
     if (!out_size) return -EINVAL;
     *out_size = 0;
+
+    if (!buf || max_size == 0)
+        return 0;
 
     mnt = fuse_find_mount(path);
     if (!mnt) return -ENOENT;
@@ -872,36 +889,90 @@ static int fuse_read(void *priv, const char *path, void *buf,
     if (ret < 0)
         return ret;
 
-    /* Send FUSE_READ request at the current offset */
-    memset(&ri, 0, sizeof(ri));
-    ri.fh         = fh;
-    ri.offset     = offset;
-    ri.size       = max_size;
-    ri.read_flags = 0;
-    ri.lock_owner = 0;
-    ri.flags      = 0;
-    ri.padding    = 0;
+    /* Read in page-sized chunks through the page cache */
+    uint32_t total_read = 0;
+    uint8_t *out = (uint8_t *)buf;
 
-    ret = fuse_request_response(FUSE_READ, nodeid, &ri, sizeof(ri),
-                                 &resp_arg, &resp_arg_size);
-    if (ret < 0)
-        return ret;
+    while (total_read < max_size) {
+        uint64_t block = (offset + total_read) / PAGE_SIZE;
+        uint32_t page_off = (uint32_t)((offset + total_read) % PAGE_SIZE);
+        uint32_t chunk = PAGE_SIZE - page_off;
+        if (chunk > max_size - total_read)
+            chunk = max_size - total_read;
 
-    /* Copy response data to caller buffer */
-    uint32_t bytes_read = 0;
-    if (resp_arg && resp_arg_size > 0) {
-        bytes_read = (uint32_t)resp_arg_size;
-        if (bytes_read > max_size)
-            bytes_read = max_size;
-        memcpy(buf, resp_arg, bytes_read);
-        *out_size = bytes_read;
+        /* Check the page cache first */
+        void *cached = page_cache_get_data((uint64_t)nodeid, block);
+        if (cached) {
+            memcpy(out + total_read, (uint8_t *)cached + page_off, chunk);
+            total_read += chunk;
+            continue;
+        }
+
+        /* Cache miss — fetch the full page from the daemon */
+        uint64_t block_start = block * PAGE_SIZE;
+        struct fuse_read_in ri;
+        void *resp_arg = NULL;
+        int resp_arg_size = 0;
+
+        memset(&ri, 0, sizeof(ri));
+        ri.fh         = fh;
+        ri.offset     = block_start;
+        ri.size       = PAGE_SIZE;
+        ri.read_flags = 0;
+        ri.lock_owner = 0;
+        ri.flags      = 0;
+        ri.padding    = 0;
+
+        ret = fuse_request_response(FUSE_READ, nodeid, &ri, sizeof(ri),
+                                     &resp_arg, &resp_arg_size);
+        if (ret < 0) {
+            /* If nothing was read yet, return the error.
+             * If partial data was read, return what we have. */
+            if (total_read > 0)
+                break;
+            return ret;
+        }
+
+        /* Cache the returned data (padded to PAGE_SIZE) */
+        uint8_t page_buf[PAGE_SIZE];
+        memset(page_buf, 0, PAGE_SIZE);
+        uint32_t daemon_bytes = 0;
+        if (resp_arg && resp_arg_size > 0) {
+            daemon_bytes = (uint32_t)resp_arg_size;
+            if (daemon_bytes > PAGE_SIZE)
+                daemon_bytes = PAGE_SIZE;
+            memcpy(page_buf, resp_arg, daemon_bytes);
+        }
+        kfree(resp_arg);
+
+        /* Store in page cache */
+        page_cache_add((uint64_t)nodeid, block, page_buf);
+
+        /* Copy requested portion to output */
+        uint32_t copy_bytes;
+        if (page_off < daemon_bytes)
+            copy_bytes = daemon_bytes - page_off;
+        else
+            copy_bytes = 0;
+
+        if (copy_bytes > chunk)
+            copy_bytes = chunk;
+
+        if (copy_bytes > 0) {
+            memcpy(out + total_read, page_buf + page_off, copy_bytes);
+            total_read += copy_bytes;
+        }
+
+        /* If daemon returned less than a full page, we've hit EOF */
+        if (daemon_bytes < PAGE_SIZE)
+            break;
     }
 
-    kfree(resp_arg);
+    *out_size = total_read;
 
-    /* Advance the cached offset by the number of bytes actually read */
-    if (bytes_read > 0)
-        fuse_open_fh_cache_update_offset(mnt, nodeid, offset + bytes_read);
+    /* Advance the cached offset by bytes actually read */
+    if (total_read > 0)
+        fuse_open_fh_cache_update_offset(mnt, nodeid, offset + total_read);
 
     return 0;
 }
@@ -970,6 +1041,11 @@ static int fuse_write(void *priv, const char *path,
     if (bytes_written > 0)
         fuse_open_fh_cache_update_offset(mnt, nodeid,
                                           offset + bytes_written);
+
+    /* Invalidate page cache entries for the written range so that
+     * subsequent reads re-fetch fresh data from the daemon. */
+    if (bytes_written > 0)
+        fuse_cache_invalidate_range(nodeid, offset, bytes_written);
 
     kfree(resp_arg);
 
@@ -1377,6 +1453,24 @@ int fuse_unmount(const char *mountpoint)
 
     return -ENOENT;
 }
+
+/* ── Page cache invalidation ─────────────────────────────────────────── */
+
+/*
+ * Invalidate ALL page cache entries for a given FUSE node.
+ * Called when the daemon sends an invalidation or forget notification.
+ *
+ * Since page_cache_remove() uses an O(n) scan internally, we call it
+ * for each block that might be cached.  The n is bounded by the total
+ * number of pages in the cache (PAGE_CACHE_MAX_PAGES), so this is
+ * effectively O(PAGE_CACHE_MAX_PAGES) per call.
+ */
+void fuse_page_cache_invalidate_node(uint64_t nodeid)
+{
+    for (int b = 0; b < PAGE_CACHE_MAX_PAGES; b++)
+        page_cache_remove((uint64_t)nodeid, (uint64_t)b);
+}
+
 #include "module.h"
 fs_initcall(fuse_init);
 

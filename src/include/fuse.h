@@ -396,4 +396,9 @@ int fuse_release_node(struct fuse_mount_info *mnt, uint64_t nodeid);
  * Returns 0 on success, or a negative errno on failure. */
 int fuse_release_dir_node(struct fuse_mount_info *mnt, uint64_t nodeid);
 
+/* Invalidate all page cache entries for a given FUSE node.
+ * Called from fuse_notify.c when the daemon sends a forget or
+ * invalidate notification. */
+void fuse_page_cache_invalidate_node(uint64_t nodeid);
+
 #endif /* FUSE_H */
