@@ -1056,3 +1056,225 @@ int nfs_statfs(void *sb, void *stat)
     }
     return 0;
 }
+
+/* ── NFS REMOVE (unlink) ──────────────────────────────────────── */
+
+int nfs_remove(int mount_id, const struct nfs_fhandle *dir_fh,
+               const char *name)
+{
+    if (mount_id < 0 || mount_id >= nfs_mount_count)
+        return -EINVAL;
+    if (!nfs_mounts[mount_id].mounted)
+        return -ENOTCONN;
+
+    struct nfs_mount_info *mnt = &nfs_mounts[mount_id];
+
+    uint8_t args[NFS_MAX_DATA];
+    uint8_t *ap = args;
+
+    /* Dir FH */
+    xdr_put_u32(&ap, dir_fh->len);
+    xdr_put_bytes(&ap, dir_fh->data, dir_fh->len);
+    /* Name */
+    xdr_put_string(&ap, name);
+
+    uint32_t args_len = (uint32_t)(ap - args);
+
+    uint8_t reply[NFS_MAX_DATA];
+    uint32_t reply_len = sizeof(reply);
+
+    int ret = nfs_rpc_call(mnt->server_ip, 100003, 3, NFSPROC3_REMOVE,
+                            args, args_len, reply, &reply_len);
+    if (ret < 0) return ret;
+
+    const uint8_t *rp = reply;
+    uint32_t status = xdr_get_u32(&rp);
+    if (status != 0) {
+        if (status == NFS3ERR_NOENT) return -ENOENT;
+        if (status == NFS3ERR_ACCES) return -EACCES;
+        if (status == NFS3ERR_ROFS)  return -EROFS;
+        return -EIO;
+    }
+
+    kprintf("[NFS] REMOVE: %s (in mount %d)\n", name, mount_id);
+    return 0;
+}
+
+/* ── NFS MKDIR ─────────────────────────────────────────────────── */
+
+int nfs_mkdir(int mount_id, const struct nfs_fhandle *dir_fh,
+              const char *name, struct nfs_fhandle *new_fh)
+{
+    if (mount_id < 0 || mount_id >= nfs_mount_count)
+        return -EINVAL;
+    if (!nfs_mounts[mount_id].mounted)
+        return -ENOTCONN;
+
+    struct nfs_mount_info *mnt = &nfs_mounts[mount_id];
+
+    uint8_t args[NFS_MAX_DATA];
+    uint8_t *ap = args;
+
+    /* Dir FH */
+    xdr_put_u32(&ap, dir_fh->len);
+    xdr_put_bytes(&ap, dir_fh->data, dir_fh->len);
+    /* Name */
+    xdr_put_string(&ap, name);
+    /* Attributes (sattr3) — set mode 0755 */
+    xdr_put_u32(&ap, 1); /* set_mode = true */
+    xdr_put_u32(&ap, 040755); /* mode */
+    xdr_put_u32(&ap, 0); /* set_uid = false */
+    xdr_put_u32(&ap, 0); /* uid (ignored) */
+    xdr_put_u32(&ap, 0); /* set_gid = false */
+    xdr_put_u32(&ap, 0); /* gid (ignored) */
+    xdr_put_u32(&ap, 0); /* set_size = false */
+    xdr_put_u32(&ap, 0); /* size_hi */
+    xdr_put_u32(&ap, 0); /* size_lo */
+    xdr_put_u32(&ap, 0); /* set_atime = false */
+    xdr_put_u32(&ap, 0); /* atime_how (ignored) */
+    xdr_put_u32(&ap, 0); /* atime_hi */
+    xdr_put_u32(&ap, 0); /* atime_lo */
+    xdr_put_u32(&ap, 0); /* atime_nsec */
+    xdr_put_u32(&ap, 0); /* set_mtime = false */
+    xdr_put_u32(&ap, 0); /* mtime_how (ignored) */
+    xdr_put_u32(&ap, 0); /* mtime_hi */
+    xdr_put_u32(&ap, 0); /* mtime_lo */
+    xdr_put_u32(&ap, 0); /* mtime_nsec */
+
+    uint32_t args_len = (uint32_t)(ap - args);
+
+    uint8_t reply[NFS_MAX_DATA];
+    uint32_t reply_len = sizeof(reply);
+
+    int ret = nfs_rpc_call(mnt->server_ip, 100003, 3, NFSPROC3_MKDIR,
+                            args, args_len, reply, &reply_len);
+    if (ret < 0) return ret;
+
+    const uint8_t *rp = reply;
+    uint32_t status = xdr_get_u32(&rp);
+    if (status != 0) {
+        if (status == NFS3ERR_EXIST) return -EEXIST;
+        if (status == NFS3ERR_ACCES) return -EACCES;
+        return -EIO;
+    }
+
+    /* Skip dir_wcc */
+    uint32_t pre_present = xdr_get_u32(&rp);
+    if (pre_present) {
+        for (int i = 0; i < 21; i++) xdr_get_u32(&rp);
+    }
+    uint32_t post_present = xdr_get_u32(&rp);
+    if (post_present) {
+        for (int i = 0; i < 21; i++) xdr_get_u32(&rp);
+    }
+
+    /* Read created directory handle (postop_fh3 — optional) */
+    uint32_t fh_present = xdr_get_u32(&rp);
+    if (new_fh && fh_present) {
+        new_fh->len = xdr_get_u32(&rp);
+        if (new_fh->len > sizeof(new_fh->data))
+            new_fh->len = sizeof(new_fh->data);
+        memcpy(new_fh->data, rp, new_fh->len);
+    }
+
+    kprintf("[NFS] MKDIR: %s (in mount %d)\n", name, mount_id);
+    return 0;
+}
+
+/* ── NFS RMDIR ─────────────────────────────────────────────────── */
+
+int nfs_rmdir(int mount_id, const struct nfs_fhandle *dir_fh,
+              const char *name)
+{
+    if (mount_id < 0 || mount_id >= nfs_mount_count)
+        return -EINVAL;
+    if (!nfs_mounts[mount_id].mounted)
+        return -ENOTCONN;
+
+    struct nfs_mount_info *mnt = &nfs_mounts[mount_id];
+
+    uint8_t args[NFS_MAX_DATA];
+    uint8_t *ap = args;
+
+    /* Dir FH */
+    xdr_put_u32(&ap, dir_fh->len);
+    xdr_put_bytes(&ap, dir_fh->data, dir_fh->len);
+    /* Name */
+    xdr_put_string(&ap, name);
+
+    uint32_t args_len = (uint32_t)(ap - args);
+
+    uint8_t reply[NFS_MAX_DATA];
+    uint32_t reply_len = sizeof(reply);
+
+    int ret = nfs_rpc_call(mnt->server_ip, 100003, 3, NFSPROC3_RMDIR,
+                            args, args_len, reply, &reply_len);
+    if (ret < 0) return ret;
+
+    const uint8_t *rp = reply;
+    uint32_t status = xdr_get_u32(&rp);
+    if (status != 0) {
+        if (status == NFS3ERR_NOENT)    return -ENOENT;
+        if (status == NFS3ERR_NOTEMPTY) return -ENOTEMPTY;
+        if (status == NFS3ERR_ACCES)    return -EACCES;
+        if (status == NFS3ERR_NOTDIR)   return -ENOTDIR;
+        if (status == NFS3ERR_ROFS)     return -EROFS;
+        return -EIO;
+    }
+
+    kprintf("[NFS] RMDIR: %s (in mount %d)\n", name, mount_id);
+    return 0;
+}
+
+/* ── NFS RENAME ───────────────────────────────────────────────── */
+
+int nfs_rename(int mount_id, const struct nfs_fhandle *from_dir_fh,
+               const char *from_name,
+               const struct nfs_fhandle *to_dir_fh,
+               const char *to_name)
+{
+    if (mount_id < 0 || mount_id >= nfs_mount_count)
+        return -EINVAL;
+    if (!nfs_mounts[mount_id].mounted)
+        return -ENOTCONN;
+
+    struct nfs_mount_info *mnt = &nfs_mounts[mount_id];
+
+    uint8_t args[NFS_MAX_DATA];
+    uint8_t *ap = args;
+
+    /* From: dir FH + name */
+    xdr_put_u32(&ap, from_dir_fh->len);
+    xdr_put_bytes(&ap, from_dir_fh->data, from_dir_fh->len);
+    xdr_put_string(&ap, from_name);
+    /* To: dir FH + name */
+    xdr_put_u32(&ap, to_dir_fh->len);
+    xdr_put_bytes(&ap, to_dir_fh->data, to_dir_fh->len);
+    xdr_put_string(&ap, to_name);
+
+    uint32_t args_len = (uint32_t)(ap - args);
+
+    uint8_t reply[NFS_MAX_DATA];
+    uint32_t reply_len = sizeof(reply);
+
+    int ret = nfs_rpc_call(mnt->server_ip, 100003, 3, NFSPROC3_RENAME,
+                            args, args_len, reply, &reply_len);
+    if (ret < 0) return ret;
+
+    const uint8_t *rp = reply;
+    uint32_t status = xdr_get_u32(&rp);
+    if (status != 0) {
+        if (status == NFS3ERR_NOENT)    return -ENOENT;
+        if (status == NFS3ERR_ACCES)    return -EACCES;
+        if (status == NFS3ERR_EXIST)    return -EEXIST;
+        if (status == NFS3ERR_NOTDIR)   return -ENOTDIR;
+        if (status == NFS3ERR_ISDIR)    return -EISDIR;
+        if (status == NFS3ERR_ROFS)     return -EROFS;
+        if (status == NFS3ERR_NOTEMPTY) return -ENOTEMPTY;
+        return -EIO;
+    }
+
+    kprintf("[NFS] RENAME: %s -> %s (in mount %d)\n",
+            from_name, to_name, mount_id);
+    return 0;
+}
