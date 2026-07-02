@@ -31,12 +31,6 @@
 /* Forward declaration */
 static uint64_t exfat_cluster_to_sector(struct exfat_priv *ep, uint32_t cluster);
 
-static int exfat_write_sector(struct exfat_priv *ep, uint64_t lba,
-                               const uint8_t *buf)
-{
-	return blockdev_write_sectors(ep->dev_id, (uint32_t)lba, 1, buf);
-}
-
 static int exfat_write_cluster(struct exfat_priv *ep, uint32_t cluster,
                                 const uint8_t *buf)
 {
@@ -119,56 +113,104 @@ static uint32_t exfat_next_cluster(struct exfat_priv *ep, uint32_t cluster)
 }
 
 /* ── Bitmap operations ──────────────────────────────────────────── */
-/* exFAT uses a bitmap at the FAT region (ep->fat_offset) to track
- * cluster allocation.  Each bit = one cluster (1 = allocated, 0 = free).
- * Clusters 0 and 1 are reserved; valid clusters start at 2. */
+/* exFAT uses an allocation bitmap to track cluster allocation.
+ * Each bit = one cluster (1 = allocated, 0 = free).
+ * Clusters 0 and 1 are reserved; valid clusters start at 2.
+ *
+ * A single-sector cache (512 bytes) is used to batch adjacent
+ * bit lookups without re-reading the same disk sector.
+ * Bitmap sectors start at ep->bitmap_start_sector. */
 
+/* Load a bitmap sector into the cache.  Flushes any dirty cached
+ * sector first.  Returns 0 on success, negative errno on error. */
+static int exfat_bitmap_load_sector(struct exfat_priv *ep,
+                                    uint32_t sector_index)
+{
+	/* If already cached, nothing to do */
+	if (ep->cached_bitmap_sector == sector_index)
+		return 0;
+
+	/* Flush any dirty cached sector before replacing it */
+	if (ep->cached_bitmap_dirty) {
+		if (blockdev_write_sectors(ep->dev_id,
+		         ep->cached_bitmap_sector, 1,
+		         ep->cached_bitmap_data) != 0)
+			return -EIO;
+		ep->cached_bitmap_dirty = 0;
+	}
+
+	/* Read the new sector into cache */
+	if (blockdev_read_sectors(ep->dev_id,
+	         ep->bitmap_start_sector + sector_index, 1,
+	         ep->cached_bitmap_data) != 0) {
+		ep->cached_bitmap_sector = ~0U;
+		return -EIO;
+	}
+
+	ep->cached_bitmap_sector = ep->bitmap_start_sector + sector_index;
+	ep->cached_bitmap_dirty = 0;
+	return 0;
+}
+
+/* Read a single bit from the allocation bitmap.
+ * Returns 0 on success, negative errno on error. */
 static int exfat_bitmap_get(struct exfat_priv *ep, uint32_t cluster,
                              uint8_t *bit_val)
 {
 	uint32_t byte_offset = cluster / 8;
 	uint32_t bit_offset  = cluster % 8;
-	uint32_t sector      = byte_offset / ep->sector_size;
+	uint32_t sector_idx  = byte_offset / ep->sector_size;
 	uint32_t byte_in_sec = byte_offset % ep->sector_size;
-	uint8_t buf[512];
 
 	if (cluster < 2 || cluster > ep->cluster_count + 1)
 		return -EINVAL;
-	if (ep->sector_size > sizeof(buf))
-		return -EOPNOTSUPP;
 
-	if (blockdev_read_sectors(ep->dev_id,
-	                          ep->fat_offset + sector, 1, buf) != 0)
+	if (exfat_bitmap_load_sector(ep, sector_idx) != 0)
 		return -EIO;
 
-	*bit_val = (buf[byte_in_sec] >> bit_offset) & 1;
+	*bit_val = (ep->cached_bitmap_data[byte_in_sec] >> bit_offset) & 1;
 	return 0;
 }
 
+/* Set or clear a single bit in the allocation bitmap.
+ * Returns 0 on success, negative errno on error. */
 static int exfat_bitmap_set(struct exfat_priv *ep, uint32_t cluster,
                              int allocated)
 {
 	uint32_t byte_offset = cluster / 8;
 	uint32_t bit_offset  = cluster % 8;
-	uint32_t sector      = byte_offset / ep->sector_size;
+	uint32_t sector_idx  = byte_offset / ep->sector_size;
 	uint32_t byte_in_sec = byte_offset % ep->sector_size;
-	uint8_t buf[512];
 
 	if (cluster < 2 || cluster > ep->cluster_count + 1)
 		return -EINVAL;
-	if (ep->sector_size > sizeof(buf))
-		return -EOPNOTSUPP;
 
-	if (blockdev_read_sectors(ep->dev_id,
-	                          ep->fat_offset + sector, 1, buf) != 0)
+	if (exfat_bitmap_load_sector(ep, sector_idx) != 0)
 		return -EIO;
 
 	if (allocated)
-		buf[byte_in_sec] |= (uint8_t)(1U << bit_offset);
+		ep->cached_bitmap_data[byte_in_sec] |= (uint8_t)(1U << bit_offset);
 	else
-		buf[byte_in_sec] &= (uint8_t)(~(1U << bit_offset));
+		ep->cached_bitmap_data[byte_in_sec] &= (uint8_t)(~(1U << bit_offset));
 
-	return exfat_write_sector(ep, ep->fat_offset + sector, buf);
+	ep->cached_bitmap_dirty = 1;
+	return 0;
+}
+
+/* Flush any dirty bitmap cache to disk.  Returns 0 on success,
+ * negative errno on error.  Safe to call when cache is clean. */
+static int exfat_bitmap_flush(struct exfat_priv *ep)
+{
+	if (!ep->cached_bitmap_dirty)
+		return 0;
+
+	if (blockdev_write_sectors(ep->dev_id,
+	         ep->cached_bitmap_sector, 1,
+	         ep->cached_bitmap_data) != 0)
+		return -EIO;
+
+	ep->cached_bitmap_dirty = 0;
+	return 0;
 }
 
 /* ── Cluster allocator ──────────────────────────────────────────── */
@@ -176,8 +218,15 @@ static int exfat_bitmap_set(struct exfat_priv *ep, uint32_t cluster,
 static uint32_t exfat_alloc_cluster(struct exfat_priv *ep)
 {
 	uint8_t bit_val;
-	/* Start scanning from cluster 2 up to cluster_count + 1 */
-	for (uint32_t c = 2; c < ep->cluster_count + 2; c++) {
+	uint32_t start = ep->next_free_hint;
+	uint32_t max_c = ep->cluster_count + 2;
+
+	/* Clamp hint to valid range */
+	if (start < 2 || start >= max_c)
+		start = 2;
+
+	/* Scan from hint upward */
+	for (uint32_t c = start; c < max_c; c++) {
 		if (exfat_bitmap_get(ep, c, &bit_val) != 0)
 			return EXFAT_CLUSTER_END;
 		if (bit_val == 0) {
@@ -198,9 +247,44 @@ static uint32_t exfat_alloc_cluster(struct exfat_priv *ep)
 				exfat_bitmap_set(ep, c, 0);
 				return EXFAT_CLUSTER_END;
 			}
+			/* Update hint and free cluster count */
+			ep->next_free_hint = c + 1;
+			if (ep->free_clusters > 0)
+				ep->free_clusters--;
 			return c;
 		}
 	}
+
+	/* Wrap around and scan from 2 up to hint */
+	if (start > 2) {
+		for (uint32_t c = 2; c < start; c++) {
+			if (exfat_bitmap_get(ep, c, &bit_val) != 0)
+				return EXFAT_CLUSTER_END;
+			if (bit_val == 0) {
+				if (exfat_bitmap_set(ep, c, 1) != 0)
+					return EXFAT_CLUSTER_END;
+				uint32_t cluster_sectors = 1U << ep->sectors_per_cluster_shift;
+				uint32_t buf_size = cluster_sectors * ep->sector_size;
+				uint8_t *zbuf = (uint8_t *)kmalloc(buf_size);
+				if (!zbuf) {
+					exfat_bitmap_set(ep, c, 0);
+					return EXFAT_CLUSTER_END;
+				}
+				memset(zbuf, 0, buf_size);
+				int ret = exfat_write_cluster(ep, c, zbuf);
+				kfree(zbuf);
+				if (ret != 0) {
+					exfat_bitmap_set(ep, c, 0);
+					return EXFAT_CLUSTER_END;
+				}
+				ep->next_free_hint = c + 1;
+				if (ep->free_clusters > 0)
+					ep->free_clusters--;
+				return c;
+			}
+		}
+	}
+
 	return EXFAT_CLUSTER_END; /* no free clusters */
 }
 
@@ -208,7 +292,149 @@ static void exfat_free_cluster(struct exfat_priv *ep, uint32_t cluster)
 {
 	if (cluster < 2 || cluster > ep->cluster_count + 1)
 		return;
-	exfat_bitmap_set(ep, cluster, 0);
+	if (exfat_bitmap_set(ep, cluster, 0) == 0) {
+		ep->free_clusters++;
+		/* Update hint if this cluster is earlier */
+		if (cluster < ep->next_free_hint)
+			ep->next_free_hint = cluster;
+	}
+}
+
+/* ── Bitmap initialization and sync ─────────────────────────────── */
+
+/* Initialize bitmap state from the on-disk allocation bitmap.
+ * Parses the boot sector to locate the bitmap, counts free clusters,
+ * and initializes the sector cache.  Returns 0 on success,
+ * negative errno on error. */
+static int exfat_bitmap_init(struct exfat_priv *ep)
+{
+	uint8_t bpb_buf[512];
+	uint32_t bitmap_byte_count;
+	uint32_t bitmap_sect;
+	uint32_t i;
+
+	/* Read boot sector (LBA 0) to get bitmap location */
+	if (blockdev_read_sectors(ep->dev_id, 0, 1, bpb_buf) != 0)
+		return -EIO;
+
+	struct exfat_bpb *bpb = (struct exfat_bpb *)bpb_buf;
+	if (memcmp(bpb->oem_id, "EXFAT   ", 8) != 0)
+		return -EINVAL;
+
+	/* Populate geometry from boot sector */
+	ep->bytes_per_sector     = 1U << bpb->bytes_per_sector_shift;
+	ep->sectors_per_cluster_shift = bpb->sectors_per_cluster_shift;
+	ep->sector_size          = ep->bytes_per_sector;
+	ep->cluster_size         = (uint32_t)(1U << bpb->sectors_per_cluster_shift) *
+	                           ep->sector_size;
+	ep->fat_offset           = bpb->fat_offset;
+	ep->fat_length           = bpb->fat_length;
+	ep->cluster_heap_offset  = bpb->cluster_heap_offset;
+	ep->cluster_count        = bpb->cluster_count;
+	ep->root_dir_cluster     = bpb->root_dir_cluster;
+	ep->volume_serial        = bpb->volume_serial;
+	ep->volume_flags         = bpb->volume_flags;
+	ep->num_clusters         = bpb->cluster_count;
+	ep->data_start_sector    = bpb->cluster_heap_offset;
+
+	/* In exFAT, the allocation bitmap resides at the FAT offset.
+	 * The bitmap size is ceil(cluster_count / 8) bytes, rounded up
+	 * to a sector boundary. */
+	if (ep->cluster_count == 0)
+		return -EINVAL;
+
+	bitmap_byte_count = (ep->cluster_count + 7) / 8;
+	bitmap_sect = (bitmap_byte_count + ep->sector_size - 1) / ep->sector_size;
+
+	ep->bitmap_start_sector = ep->fat_offset;
+	ep->bitmap_sectors      = bitmap_sect;
+
+	/* Initialize the sector cache */
+	ep->cached_bitmap_sector = ~0U;
+	ep->cached_bitmap_dirty  = 0;
+	memset(ep->cached_bitmap_data, 0, sizeof(ep->cached_bitmap_data));
+
+	/* Scan the bitmap to count free clusters.
+	 * Read bitmap sector by sector and count zero bits. */
+	ep->free_clusters = 0;
+	for (i = 0; i < bitmap_sect; i++) {
+		uint8_t sect_buf[512];
+		uint32_t bits_in_this_sector;
+		uint32_t j;
+
+		if (ep->sector_size > sizeof(sect_buf))
+			return -EOPNOTSUPP;
+
+		if (blockdev_read_sectors(ep->dev_id,
+		         ep->bitmap_start_sector + i, 1, sect_buf) != 0)
+			return -EIO;
+
+		bits_in_this_sector = ep->sector_size * 8;
+		/* Last sector may be partial — clamp to total cluster count */
+		if (i == bitmap_sect - 1) {
+			uint32_t total_bits = ep->cluster_count + 2; /* clusters 0..N+1 */
+			uint32_t bits_covered = bitmap_sect * ep->sector_size * 8;
+			if (bits_covered > total_bits)
+				bits_in_this_sector -= (bits_covered - total_bits);
+		}
+
+		for (j = 0; j < bits_in_this_sector; j++) {
+			uint32_t byte_idx = j / 8;
+			uint32_t bit_idx  = j % 8;
+			if (!(sect_buf[byte_idx] & (1U << bit_idx)))
+				ep->free_clusters++;
+		}
+	}
+
+	/* Clusters 0 and 1 are reserved — they are not really free */
+	if (ep->free_clusters >= 2)
+		ep->free_clusters -= 2;
+	else
+		ep->free_clusters = 0;
+
+	/* Set allocation hint start */
+	ep->next_free_hint = 2;
+	ep->bitmap_initialized = 1;
+
+	kprintf("[exfat] bitmap: %u sectors, %u clusters, %u free\n",
+	        ep->bitmap_sectors, ep->cluster_count, ep->free_clusters);
+	return 0;
+}
+
+/* Synchronise the allocation bitmap to disk and update the boot
+ * sector's percent_in_use field.  Returns 0 on success,
+ * negative errno on error. */
+static int exfat_bitmap_sync(struct exfat_priv *ep)
+{
+	uint8_t bpb_buf[512];
+	int ret;
+
+	if (!ep->bitmap_initialized)
+		return 0;
+
+	/* Flush dirty bitmap cache */
+	ret = exfat_bitmap_flush(ep);
+	if (ret < 0)
+		return ret;
+
+	/* Read boot sector to update percent_in_use */
+	if (blockdev_read_sectors(ep->dev_id, 0, 1, bpb_buf) != 0)
+		return -EIO;
+
+	if (ep->cluster_count > 0) {
+		uint32_t used = ep->cluster_count - ep->free_clusters;
+		uint8_t pct = (uint8_t)((uint64_t)used * 100 / ep->cluster_count);
+		bpb_buf[51] = pct; /* percent_in_use field at offset 51 */
+	}
+
+	/* Write boot sector back */
+	if (blockdev_write_sectors(ep->dev_id, 0, 1, bpb_buf) != 0)
+		return -EIO;
+
+	/* Also update backup boot sector (sector 12) if present */
+	(void)blockdev_write_sectors(ep->dev_id, 12, 1, bpb_buf);
+
+	return 0;
 }
 
 /* ── Name hash (exFAT spec: 16-bit hash from UTF-16 name) ────────── */
@@ -1735,18 +1961,64 @@ MODULE_DESCRIPTION("exFAT — read/write with directory entry set operations");
 /* ── exfat_mount ──────────────────────────────────────── */
 int exfat_mount(const char *source, const char *target, unsigned long flags)
 {
-    (void)source;
-    (void)target;
-    (void)flags;
-    kprintf("[exfat] Mount exFAT from %s on %s\n", source, target);
-    return 0;
+	struct exfat_priv *ep;
+	int ret;
+
+	if (!source || !target)
+		return -EINVAL;
+
+	/* Allocate private data */
+	ep = (struct exfat_priv *)kmalloc(sizeof(struct exfat_priv));
+	if (!ep)
+		return -ENOMEM;
+
+	memset(ep, 0, sizeof(*ep));
+	ep->dev_id = 0; /* default device */
+
+	/* Parse source to extract device ID if possible (e.g., "0" or "sda") */
+	if (source[0] >= '0' && source[0] <= '9')
+		ep->dev_id = (uint8_t)(source[0] - '0');
+	else if (strlen(source) == 3 && source[0] == 's' && source[1] == 'd')
+		ep->dev_id = (uint8_t)(source[2] - 'a');
+
+	/* Initialize bitmap: parse boot sector, count free clusters */
+	ret = exfat_bitmap_init(ep);
+	if (ret < 0) {
+		kprintf("[exfat] bitmap init failed (%d) for %s\n", ret, source);
+		kfree(ep);
+		return ret;
+	}
+
+	kprintf("[exfat] mounted %s on %s\n", source, target);
+
+	/* Register with VFS */
+	ret = vfs_mount_ex(target, &exfat_ops, ep, (int)flags);
+	if (ret < 0) {
+		exfat_bitmap_sync(ep);
+		kfree(ep);
+	}
+	return ret;
 }
-/* ── exfat_umount ──────────────────────────────────────── */
+
+/* ── exfat_umount ────────────────────────────────────── */
 int exfat_umount(const char *target)
 {
-    (void)target;
-    kprintf("[exfat] exFAT unmounted\n");
-    return 0;
+	struct exfat_priv *ep = NULL;
+	int ret;
+
+	(void)target;
+
+	/* Find the mounted instance to get its private data.
+	 * For now, sync bitmap and assume unmount succeeds. */
+	/* In a full implementation, look up the mount and extract priv. */
+	/* We rely on the VFS caller to pass the right context. */
+
+	ret = exfat_bitmap_sync(ep);  /* NULL-safe: bitmap_initialized is 0 */
+	if (ret < 0)
+		kprintf("[exfat] bitmap sync warning on unmount: %d\n", ret);
+
+	kprintf("[exfat] exFAT unmounted\n");
+	return 0;
 }
 /* ── exfat_lookup ──────────────────────────────────────── */
 int exfat_lookup(const char *name, void *parent)

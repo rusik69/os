@@ -149,6 +149,16 @@ struct exfat_priv {
     uint16_t volume_flags;
     uint32_t num_clusters;
     uint32_t data_start_sector;   /* first sector of cluster heap */
+
+    /* ── Allocation bitmap management ────────────────────────────── */
+    uint32_t bitmap_start_sector;   /* first sector of the allocation bitmap */
+    uint32_t bitmap_sectors;        /* number of sectors in the bitmap */
+    uint32_t next_free_hint;        /* cluster hint for next allocation scan */
+    uint32_t free_clusters;         /* running count of free clusters */
+    uint32_t cached_bitmap_sector;  /* bitmap sector in cache (~0 = invalid) */
+    uint8_t  cached_bitmap_data[512]; /* cached bitmap sector data */
+    int      cached_bitmap_dirty;   /* 1 = cache needs write-back */
+    int      bitmap_initialized;    /* 1 = bitmap has been initialized */
 };
 
 int exfat_probe(uint8_t dev_id);
