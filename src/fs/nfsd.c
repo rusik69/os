@@ -33,6 +33,16 @@ static struct nfsd_export nfsd_exports[NFSD_MAX_EXPORTS];
 static int nfsd_num_exports = 0;
 static int nfsd_server_running = 0;
 
+/* Active mount tracking (for MOUNTPROC3_DUMP) */
+#define NFSD_MAX_ACTIVE_MOUNTS 64
+struct nfsd_active_mount {
+    uint32_t client_ip;
+    char     export_path[NFSD_MAX_PATH];
+    int      active;
+};
+static struct nfsd_active_mount nfsd_active_mounts[NFSD_MAX_ACTIVE_MOUNTS];
+static int nfsd_num_active_mounts = 0;
+
 /* ── XDR helpers (big-endian) ───────────────────────────────────────── */
 
 static inline void xdr_put_u32(uint8_t **p, uint32_t v)
@@ -558,6 +568,58 @@ static void nfsd_proc_readdirplus(struct nfsd_rpc_state *rpc,
     nfsd_proc_readdir(rpc, reply, reply_len);
 }
 
+/* ── Active mount tracking helpers ───────────────────────────────────── */
+
+/* Track a client mount */
+static void nfsd_track_mount(uint32_t client_ip, const char *export_path)
+{
+    /* Check if already tracked */
+    for (int i = 0; i < nfsd_num_active_mounts; i++) {
+        if (nfsd_active_mounts[i].active &&
+            nfsd_active_mounts[i].client_ip == client_ip &&
+            strcmp(nfsd_active_mounts[i].export_path, export_path) == 0) {
+            return; /* Already tracked */
+        }
+    }
+
+    /* Find a free slot */
+    for (int i = 0; i < NFSD_MAX_ACTIVE_MOUNTS; i++) {
+        if (!nfsd_active_mounts[i].active) {
+            nfsd_active_mounts[i].client_ip = client_ip;
+            strncpy(nfsd_active_mounts[i].export_path, export_path,
+                    sizeof(nfsd_active_mounts[i].export_path) - 1);
+            nfsd_active_mounts[i].active = 1;
+            if (i >= nfsd_num_active_mounts)
+                nfsd_num_active_mounts = i + 1;
+            return;
+        }
+    }
+}
+
+/* Untrack a client mount */
+static void nfsd_untrack_mount(uint32_t client_ip, const char *export_path)
+{
+    for (int i = 0; i < nfsd_num_active_mounts; i++) {
+        if (nfsd_active_mounts[i].active &&
+            nfsd_active_mounts[i].client_ip == client_ip &&
+            strcmp(nfsd_active_mounts[i].export_path, export_path) == 0) {
+            nfsd_active_mounts[i].active = 0;
+            break;
+        }
+    }
+}
+
+/* Untrack all mounts from a client */
+static void nfsd_untrack_all_mounts(uint32_t client_ip)
+{
+    for (int i = 0; i < nfsd_num_active_mounts; i++) {
+        if (nfsd_active_mounts[i].active &&
+            nfsd_active_mounts[i].client_ip == client_ip) {
+            nfsd_active_mounts[i].active = 0;
+        }
+    }
+}
+
 /* ── MOUNT protocol handlers ────────────────────────────────────────── */
 
 static void mountd_proc_null(struct nfsd_rpc_state *rpc,
@@ -610,6 +672,9 @@ static void mountd_proc_mnt(struct nfsd_rpc_state *rpc,
         /* Flavor list (AUTH_NONE) */
         xdr_put_u32(&p, 1);
         xdr_put_u32(&p, RPC_AUTH_NONE);
+
+        /* Track the active mount */
+        nfsd_track_mount(rpc->client_ip, path);
     }
     *reply_len = (uint32_t)(p - reply);
 }
@@ -639,10 +704,68 @@ static void mountd_proc_dump(struct nfsd_rpc_state *rpc,
                               uint8_t *reply, uint32_t *reply_len)
 {
     uint8_t *p = reply;
+    (void)rpc;
     rpc_build_header(&p, rpc->xid, 1, RPC_SUCCESS);
 
-    /* List mounted exports (empty for now) */
-    xdr_put_u32(&p, 0); /* no entries */
+    /* List active mounts */
+    int count = 0;
+    for (int i = 0; i < nfsd_num_active_mounts; i++) {
+        if (nfsd_active_mounts[i].active) {
+            /* Export path */
+            xdr_put_string(&p, nfsd_active_mounts[i].export_path);
+            /* Filesystem path (same as export path for simplicity) */
+            xdr_put_string(&p, nfsd_active_mounts[i].export_path);
+            count++;
+        }
+    }
+    /* Terminate with empty string */
+    xdr_put_string(&p, "");
+    *reply_len = (uint32_t)(p - reply);
+
+    kprintf("[nfsd] DUMP: %d active mount(s)\n", count);
+}
+
+/* ── MOUNTPROC3_UMNT ─────────────────────────────────────────── */
+
+static void mountd_proc_umnt(struct nfsd_rpc_state *rpc,
+                              uint8_t *reply, uint32_t *reply_len)
+{
+    uint8_t *p = reply;
+    const uint8_t *cp = rpc->call_data;
+
+    /* Parse export path */
+    uint32_t path_len = xdr_get_u32(&cp);
+    char path[256];
+    if (path_len > 255) path_len = 255;
+    memcpy(path, cp, path_len);
+    path[path_len] = '\0';
+
+    /* Untrack this client's mount */
+    nfsd_untrack_mount(rpc->client_ip, path);
+
+    kprintf("[nfsd] UMNT: %s from client %d.%d.%d.%d\n",
+            path, NIPQUAD(rpc->client_ip));
+
+    /* UMNT returns nothing (just success reply header) */
+    rpc_build_header(&p, rpc->xid, 1, RPC_SUCCESS);
+    *reply_len = (uint32_t)(p - reply);
+}
+
+/* ── MOUNTPROC3_UMNTALL ──────────────────────────────────────── */
+
+static void mountd_proc_umntall(struct nfsd_rpc_state *rpc,
+                                 uint8_t *reply, uint32_t *reply_len)
+{
+    uint8_t *p = reply;
+
+    /* Untrack all mounts from this client */
+    nfsd_untrack_all_mounts(rpc->client_ip);
+
+    kprintf("[nfsd] UMNTALL from client %d.%d.%d.%d\n",
+            NIPQUAD(rpc->client_ip));
+
+    /* UMNTALL returns nothing (just success reply header) */
+    rpc_build_header(&p, rpc->xid, 1, RPC_SUCCESS);
     *reply_len = (uint32_t)(p - reply);
 }
 
@@ -705,6 +828,12 @@ void nfsd_handle_rpc(struct nfsd_rpc_state *rpc,
             case MOUNTPROC3_DUMP:
                 mountd_proc_dump(rpc, reply_buf, reply_len);
                 break;
+            case MOUNTPROC3_UMNT:
+                mountd_proc_umnt(rpc, reply_buf, reply_len);
+                break;
+            case MOUNTPROC3_UMNTALL:
+                mountd_proc_umntall(rpc, reply_buf, reply_len);
+                break;
             case MOUNTPROC3_EXPORT:
                 mountd_proc_export(rpc, reply_buf, reply_len);
                 break;
@@ -750,6 +879,13 @@ static void nfsd_handle_connection(int conn_id)
     const uint8_t *cp = buf;
     struct nfsd_rpc_state rpc;
     memset(&rpc, 0, sizeof(rpc));
+
+    /* Get client IP from TCP connection info */
+    {
+        struct tcp_conn_info conn_info;
+        if (net_tcp_get_info(conn_id, &conn_info) == 0)
+            rpc.client_ip = conn_info.remote_ip;
+    }
 
     /* Parse RPC call header */
     rpc.xid = xdr_get_u32(&cp);

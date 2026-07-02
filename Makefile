@@ -272,6 +272,7 @@ C_SRCS = src/kernel/kernel.c \
          src/fs/fuse.c \
          src/fs/fuse_dev.c \
          src/fs/fuse_notify.c \
+         src/fs/nfs_proc.c \
          src/net/net.c \
          src/net/net_tcp.c \
          src/net/net_udp.c \

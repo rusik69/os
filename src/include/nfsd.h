@@ -121,6 +121,7 @@ struct nfsd_rpc_state {
     uint32_t version;
     uint32_t procedure;
     uint8_t  auth_flavor;
+    uint32_t client_ip;          /* remote client IP for connection tracking */
     /* Call data */
     uint8_t  call_data[NFSD_MAX_DATA];
     uint32_t call_len;
