@@ -209,6 +209,16 @@ struct vfs_ops {
      * If not provided, the generic fallback returns file size
      * (treats the entire file as data, no holes). */
     int (*seek)(void *priv, const char *path, uint64_t offset, int whence);
+
+    /* Optional: extended attribute operations (user. namespace, etc.).
+     * If not provided, the VFS layer falls back to the global
+     * path-based xattr table. */
+    int (*setxattr)(void *priv, const char *path, const char *name,
+                    const void *value, size_t size, int flags);
+    int (*getxattr)(void *priv, const char *path, const char *name,
+                    void *value, size_t size);
+    int (*listxattr)(void *priv, const char *path, char *buf, size_t size);
+    int (*removexattr)(void *priv, const char *path, const char *name);
 };
 
 /* A mounted filesystem */

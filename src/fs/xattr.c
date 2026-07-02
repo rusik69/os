@@ -248,19 +248,122 @@ int xattr_remove(const char *path, const char *name) {
 
 /* ── VFS-level wrappers (S149) ─────────────────────────────────────── */
 
-int vfs_setxattr(const char *path, const char *name, const void *value, int size) {
+/*
+ * vfs_setxattr - Set an extended attribute on a file.
+ *
+ * Resolves the filesystem mount point and dispatches to the
+ * filesystem-specific handler if available.  Falls back to the
+ * global path-based xattr table otherwise.
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int vfs_setxattr(const char *path, const char *name, const void *value, int size)
+{
+    if (!path || !name || !value)
+        return -EINVAL;
+
+    char ap[128];
+    vfs_abs_path(path, ap, sizeof(ap));
+
+    /* Try filesystem-specific handler first */
+    for (int i = 0; i < num_mounts; i++) {
+        size_t mlen = strlen(mounts[i].mountpoint);
+        if (mlen == 0) continue;
+        if (strncmp(ap, mounts[i].mountpoint, mlen) == 0) {
+            if (ap[mlen] == '\0' || ap[mlen] == '/') {
+                if (mounts[i].ops->setxattr)
+                    return mounts[i].ops->setxattr(mounts[i].priv, ap, name,
+                                                   (const void *)value,
+                                                   (size_t)size, 0);
+                break;  /* filesystem mounted here but no handler - fall back */
+            }
+        }
+    }
     return xattr_set(path, name, value, (size_t)size);
 }
 
-int vfs_getxattr(const char *path, const char *name, void *value, int size) {
+/*
+ * vfs_getxattr - Get an extended attribute value from a file.
+ *
+ * Returns the number of bytes read on success, or negative errno.
+ */
+int vfs_getxattr(const char *path, const char *name, void *value, int size)
+{
+    if (!path || !name || !value)
+        return -EINVAL;
+
+    char ap[128];
+    vfs_abs_path(path, ap, sizeof(ap));
+
+    for (int i = 0; i < num_mounts; i++) {
+        size_t mlen = strlen(mounts[i].mountpoint);
+        if (mlen == 0) continue;
+        if (strncmp(ap, mounts[i].mountpoint, mlen) == 0) {
+            if (ap[mlen] == '\0' || ap[mlen] == '/') {
+                if (mounts[i].ops->getxattr)
+                    return mounts[i].ops->getxattr(mounts[i].priv, ap, name,
+                                                   value, (size_t)size);
+                break;
+            }
+        }
+    }
     return xattr_get(path, name, value, (size_t)size);
 }
 
-int vfs_listxattr(const char *path, char *buf, int size) {
+/*
+ * vfs_listxattr - List extended attribute names on a file.
+ *
+ * Returns the total bytes written (null-terminated names) on success,
+ * or negative errno.  Returns 0 if no xattrs exist (not an error).
+ */
+int vfs_listxattr(const char *path, char *buf, int size)
+{
+    if (!path || !buf)
+        return -EINVAL;
+
+    char ap[128];
+    vfs_abs_path(path, ap, sizeof(ap));
+
+    for (int i = 0; i < num_mounts; i++) {
+        size_t mlen = strlen(mounts[i].mountpoint);
+        if (mlen == 0) continue;
+        if (strncmp(ap, mounts[i].mountpoint, mlen) == 0) {
+            if (ap[mlen] == '\0' || ap[mlen] == '/') {
+                if (mounts[i].ops->listxattr)
+                    return mounts[i].ops->listxattr(mounts[i].priv, ap, buf,
+                                                    (size_t)size);
+                break;
+            }
+        }
+    }
     return xattr_list(path, buf, (size_t)size);
 }
 
-int vfs_removexattr(const char *path, const char *name) {
+/*
+ * vfs_removexattr - Remove an extended attribute from a file.
+ *
+ * Returns 0 on success, -ENOENT if the attribute doesn't exist,
+ * or other negative errno on error.
+ */
+int vfs_removexattr(const char *path, const char *name)
+{
+    if (!path || !name)
+        return -EINVAL;
+
+    char ap[128];
+    vfs_abs_path(path, ap, sizeof(ap));
+
+    for (int i = 0; i < num_mounts; i++) {
+        size_t mlen = strlen(mounts[i].mountpoint);
+        if (mlen == 0) continue;
+        if (strncmp(ap, mounts[i].mountpoint, mlen) == 0) {
+            if (ap[mlen] == '\0' || ap[mlen] == '/') {
+                if (mounts[i].ops->removexattr)
+                    return mounts[i].ops->removexattr(mounts[i].priv, ap, name);
+                break;
+            }
+        }
+    }
     return xattr_remove(path, name);
 }
 #include "module.h"

@@ -54,6 +54,9 @@ static int alloc_inode(void) {
             inodes[i].is_swapped = 0;
             inodes[i].ksm_registered = 0;
             inodes[i].swap_npages = 0;
+            inodes[i].xattrs = NULL;
+            inodes[i].xattr_count = 0;
+            inodes[i].xattr_capacity = 0;
             for (int j = 0; j < TMPFS_MAX_SWAP_PAGES; j++) {
                 inodes[i].swap_map[j].swap_dev = -1;
                 inodes[i].swap_map[j].swap_slot = 0;
@@ -94,6 +97,10 @@ static void free_inode(int idx) {
         tmpfs_free_pages_or_kmem(inodes[idx].data, inodes[idx].data_phys,
                                  inodes[idx].size);
     }
+
+    /* Free extended attribute storage before clearing the inode */
+    tmpfs_xattr_free(idx);
+
     inodes[idx].in_use = 0;
     inodes[idx].data = NULL;
     inodes[idx].data_phys = 0;
@@ -1182,6 +1189,61 @@ int tmpfs_ioctl(void *priv, const char *path, uint64_t cmd, uint64_t arg)
     }
 }
 
+/* ── Extended attribute VFS callbacks (user. namespace) ───────────── */
+
+/*
+ * tmpfs_setxattr() - VFS callback to set a user. xattr on a tmpfs file.
+ */
+static int tmpfs_setxattr(void *priv, const char *path, const char *name,
+                          const void *value, size_t size, int flags)
+{
+    (void)priv;
+    (void)flags;
+    int idx = find_inode(path);
+    if (idx < 0)
+        return -ENOENT;
+    return tmpfs_xattr_set(idx, name, value, size);
+}
+
+/*
+ * tmpfs_getxattr() - VFS callback to get a user. xattr from a tmpfs file.
+ */
+static int tmpfs_getxattr(void *priv, const char *path, const char *name,
+                          void *value, size_t size)
+{
+    (void)priv;
+    int idx = find_inode(path);
+    if (idx < 0)
+        return -ENOENT;
+    return tmpfs_xattr_get(idx, name, value, size);
+}
+
+/*
+ * tmpfs_listxattr() - VFS callback to list user. xattrs on a tmpfs file.
+ */
+static int tmpfs_listxattr(void *priv, const char *path, char *buf,
+                           size_t size)
+{
+    (void)priv;
+    int idx = find_inode(path);
+    if (idx < 0)
+        return -ENOENT;
+    return tmpfs_xattr_list(idx, buf, size);
+}
+
+/*
+ * tmpfs_removexattr() - VFS callback to remove a user. xattr from a
+ * tmpfs file.
+ */
+static int tmpfs_removexattr(void *priv, const char *path, const char *name)
+{
+    (void)priv;
+    int idx = find_inode(path);
+    if (idx < 0)
+        return -ENOENT;
+    return tmpfs_xattr_remove(idx, name);
+}
+
 struct vfs_ops tmpfs_vfs_ops = {
     .read        = tmpfs_read,
     .write       = tmpfs_write,
@@ -1197,6 +1259,10 @@ struct vfs_ops tmpfs_vfs_ops = {
     .rename      = tmpfs_rename,
     .tmpfile     = tmpfs_tmpfile,
     .ioctl       = tmpfs_ioctl,
+    .setxattr    = tmpfs_setxattr,
+    .getxattr    = tmpfs_getxattr,
+    .listxattr   = tmpfs_listxattr,
+    .removexattr = tmpfs_removexattr,
 };
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -1502,6 +1568,235 @@ int tmpfs_unregister_ksm(int idx)
     return 0;
 }
 
+/* ══════════════════════════════════════════════════════════════════════
+ * ── Extended attributes (user. namespace) ────────────────────────────
+ * ══════════════════════════════════════════════════════════════════════ */
+
+/*
+ * tmpfs_xattr_set() - Set a user. extended attribute on a tmpfs inode.
+ *
+ * @idx:   Inode index.
+ * @name:  Full xattr name including "user." prefix.
+ * @value: Value data to store.
+ * @size:  Size of value data in bytes.
+ *
+ * Allocates the per-inode xattr array on first use (up to
+ * TMPFS_XATTR_MAX_ENTRIES).  If the named attribute already exists,
+ * its value is replaced.
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int tmpfs_xattr_set(int idx, const char *name, const void *value, size_t size)
+{
+    if (idx < 0 || idx >= TMPFS_MAX_INODES)
+        return -EINVAL;
+    if (!inodes[idx].in_use)
+        return -ENOENT;
+    if (!name || !value)
+        return -EINVAL;
+
+    /* Must be in the user. namespace */
+    if (strncmp(name, "user.", 5) != 0)
+        return -EOPNOTSUPP;
+
+    /* Clamp value size */
+    size_t copy_size = size < TMPFS_XATTR_VALUE_MAX ? size : TMPFS_XATTR_VALUE_MAX;
+
+    /* Clamp name length */
+    size_t name_len = strlen(name);
+    if (name_len >= TMPFS_XATTR_NAME_MAX)
+        return -ENAMETOOLONG;
+
+    /* Try to find an existing entry to update */
+    struct tmpfs_xattr_entry *xattrs = inodes[idx].xattrs;
+    for (int i = 0; i < inodes[idx].xattr_count; i++) {
+        if (xattrs[i].in_use && strcmp(xattrs[i].name, name) == 0) {
+            memcpy(xattrs[i].value, value, copy_size);
+            xattrs[i].value_size = (uint16_t)copy_size;
+            return 0;
+        }
+    }
+
+    /* Need a new entry — check capacity */
+    if (inodes[idx].xattr_count >= inodes[idx].xattr_capacity) {
+        if (inodes[idx].xattr_capacity >= TMPFS_XATTR_MAX_ENTRIES)
+            return -ENOSPC;
+
+        int new_cap = (inodes[idx].xattr_capacity == 0)
+                          ? 2
+                          : inodes[idx].xattr_capacity * 2;
+        if (new_cap > TMPFS_XATTR_MAX_ENTRIES)
+            new_cap = TMPFS_XATTR_MAX_ENTRIES;
+
+        struct tmpfs_xattr_entry *new_arr =
+            (struct tmpfs_xattr_entry *)kmalloc(
+                (size_t)new_cap * sizeof(struct tmpfs_xattr_entry));
+        if (!new_arr)
+            return -ENOMEM;
+
+        memset(new_arr, 0, (size_t)new_cap * sizeof(struct tmpfs_xattr_entry));
+
+        /* Copy existing entries */
+        int old_count = inodes[idx].xattr_count;
+        if (old_count > 0 && inodes[idx].xattrs) {
+            memcpy(new_arr, inodes[idx].xattrs,
+                   (size_t)old_count * sizeof(struct tmpfs_xattr_entry));
+            kfree(inodes[idx].xattrs);
+        }
+
+        inodes[idx].xattrs = new_arr;
+        inodes[idx].xattr_capacity = new_cap;
+        xattrs = new_arr;
+    }
+
+    /* Find a free slot */
+    for (int i = 0; i < inodes[idx].xattr_capacity; i++) {
+        if (!xattrs[i].in_use) {
+            strncpy(xattrs[i].name, name, TMPFS_XATTR_NAME_MAX - 1);
+            xattrs[i].name[TMPFS_XATTR_NAME_MAX - 1] = '\0';
+            memcpy(xattrs[i].value, value, copy_size);
+            xattrs[i].value_size = (uint16_t)copy_size;
+            xattrs[i].in_use = 1;
+            inodes[idx].xattr_count++;
+            return 0;
+        }
+    }
+
+    return -ENOSPC;
+}
+
+/*
+ * tmpfs_xattr_get() - Get a user. extended attribute from a tmpfs inode.
+ *
+ * @idx:   Inode index.
+ * @name:  Full xattr name including "user." prefix.
+ * @value: Output buffer for the value.
+ * @size:  Size of the output buffer.
+ *
+ * Returns the number of bytes written on success, or negative errno.
+ */
+int tmpfs_xattr_get(int idx, const char *name, void *value, size_t size)
+{
+    if (idx < 0 || idx >= TMPFS_MAX_INODES)
+        return -EINVAL;
+    if (!inodes[idx].in_use)
+        return -ENOENT;
+    if (!name || !value)
+        return -EINVAL;
+
+    /* Must be in the user. namespace */
+    if (strncmp(name, "user.", 5) != 0)
+        return -EOPNOTSUPP;
+
+    struct tmpfs_xattr_entry *xattrs = inodes[idx].xattrs;
+    if (!xattrs)
+        return -ENODATA;
+
+    for (int i = 0; i < inodes[idx].xattr_capacity; i++) {
+        if (xattrs[i].in_use && strcmp(xattrs[i].name, name) == 0) {
+            size_t copy_size = size < (size_t)xattrs[i].value_size
+                                   ? size
+                                   : (size_t)xattrs[i].value_size;
+            memcpy(value, xattrs[i].value, copy_size);
+            return (int)xattrs[i].value_size;
+        }
+    }
+
+    return -ENODATA;
+}
+
+/*
+ * tmpfs_xattr_list() - List user. extended attribute names on a tmpfs inode.
+ *
+ * @idx:  Inode index.
+ * @buf:  Output buffer for null-terminated name strings.
+ * @size: Size of output buffer.
+ *
+ * Returns the total bytes written on success, or negative errno on error.
+ * Returns 0 if no xattrs exist (not an error).
+ */
+int tmpfs_xattr_list(int idx, char *buf, size_t size)
+{
+    if (idx < 0 || idx >= TMPFS_MAX_INODES)
+        return -EINVAL;
+    if (!inodes[idx].in_use)
+        return -ENOENT;
+    if (!buf)
+        return -EINVAL;
+
+    struct tmpfs_xattr_entry *xattrs = inodes[idx].xattrs;
+    if (!xattrs)
+        return 0;
+
+    size_t written = 0;
+    for (int i = 0; i < inodes[idx].xattr_capacity; i++) {
+        if (xattrs[i].in_use) {
+            size_t name_len = strlen(xattrs[i].name) + 1;  /* include null terminator */
+            if (written + name_len <= size) {
+                memcpy(buf + written, xattrs[i].name, name_len);
+                written += name_len;
+            } else {
+                return -ERANGE;
+            }
+        }
+    }
+
+    return (int)written;
+}
+
+/*
+ * tmpfs_xattr_remove() - Remove a user. extended attribute from a tmpfs inode.
+ *
+ * @idx:  Inode index.
+ * @name: Full xattr name including "user." prefix.
+ *
+ * Returns 0 on success, -ENODATA if not found, or negative errno.
+ */
+int tmpfs_xattr_remove(int idx, const char *name)
+{
+    if (idx < 0 || idx >= TMPFS_MAX_INODES)
+        return -EINVAL;
+    if (!inodes[idx].in_use)
+        return -ENOENT;
+    if (!name)
+        return -EINVAL;
+
+    /* Must be in the user. namespace */
+    if (strncmp(name, "user.", 5) != 0)
+        return -EOPNOTSUPP;
+
+    struct tmpfs_xattr_entry *xattrs = inodes[idx].xattrs;
+    if (!xattrs)
+        return -ENODATA;
+
+    for (int i = 0; i < inodes[idx].xattr_capacity; i++) {
+        if (xattrs[i].in_use && strcmp(xattrs[i].name, name) == 0) {
+            memset(&xattrs[i], 0, sizeof(struct tmpfs_xattr_entry));
+            inodes[idx].xattr_count--;
+            return 0;
+        }
+    }
+
+    return -ENODATA;
+}
+
+/*
+ * tmpfs_xattr_free() - Free all extended attribute storage for a tmpfs inode.
+ *
+ * Called automatically by free_inode().
+ */
+void tmpfs_xattr_free(int idx)
+{
+    if (idx < 0 || idx >= TMPFS_MAX_INODES)
+        return;
+    if (inodes[idx].xattrs) {
+        kfree(inodes[idx].xattrs);
+        inodes[idx].xattrs = NULL;
+    }
+    inodes[idx].xattr_count = 0;
+    inodes[idx].xattr_capacity = 0;
+}
+
 /* ── Public exports for KSM API ────────────────────────── */
 EXPORT_SYMBOL(tmpfs_register_ksm);
 EXPORT_SYMBOL(tmpfs_unregister_ksm);
@@ -1515,3 +1810,10 @@ EXPORT_SYMBOL(tmpfs_get_size_limit);
 EXPORT_SYMBOL(tmpfs_get_used_bytes);
 EXPORT_SYMBOL(tmpfs_set_quota);
 EXPORT_SYMBOL(tmpfs_statfs);
+
+/* ── Public exports for extended attribute API ────────── */
+EXPORT_SYMBOL(tmpfs_xattr_set);
+EXPORT_SYMBOL(tmpfs_xattr_get);
+EXPORT_SYMBOL(tmpfs_xattr_list);
+EXPORT_SYMBOL(tmpfs_xattr_remove);
+EXPORT_SYMBOL(tmpfs_xattr_free);

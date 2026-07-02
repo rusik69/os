@@ -97,6 +97,11 @@ struct tmpfs_inode {
     /* KSM (Kernel Same-page Merging) tracking: 1 = data pages are
      * registered with KSM for scanning and potential merging */
     int ksm_registered;
+
+    /* ── Extended attributes (user. namespace) ─────────────────────── */
+    struct tmpfs_xattr_entry *xattrs;  /* dynamically allocated array */
+    int xattr_count;                   /* number of used entries */
+    int xattr_capacity;                /* capacity of xattrs array */
 };
 
 /* Mount an empty tmpfs — returns 0 on success */
@@ -273,6 +278,54 @@ int tmpfs_register_ksm(int idx);
  * Returns 0 on success, negative errno on failure.
  */
 int tmpfs_unregister_ksm(int idx);
+
+/* ── Extended attributes (user. namespace) ──────────────────────────── */
+
+#define TMPFS_XATTR_NAME_MAX   64
+#define TMPFS_XATTR_VALUE_MAX  256
+#define TMPFS_XATTR_MAX_ENTRIES 4
+
+/* A single extended attribute entry stored per-inode */
+struct tmpfs_xattr_entry {
+    char   name[TMPFS_XATTR_NAME_MAX];
+    char   value[TMPFS_XATTR_VALUE_MAX];
+    uint16_t value_size;
+    int    in_use;
+};
+
+/* Set a user. extended attribute on a tmpfs inode.
+ * @idx: inode index
+ * @name: full xattr name including "user." prefix
+ * @value: value data
+ * @size: value size in bytes
+ * Returns 0 on success, negative errno on failure. */
+int tmpfs_xattr_set(int idx, const char *name, const void *value, size_t size);
+
+/* Get a user. extended attribute value from a tmpfs inode.
+ * @idx: inode index
+ * @name: full xattr name including "user." prefix
+ * @value: output buffer
+ * @size: size of output buffer
+ * Returns number of bytes written on success, negative errno on failure. */
+int tmpfs_xattr_get(int idx, const char *name, void *value, size_t size);
+
+/* List all user. extended attribute names on a tmpfs inode.
+ * @idx: inode index
+ * @buf: output buffer
+ * @size: size of output buffer
+ * Names are written as null-terminated strings.
+ * Returns total bytes written on success, or negative errno. */
+int tmpfs_xattr_list(int idx, char *buf, size_t size);
+
+/* Remove a user. extended attribute from a tmpfs inode.
+ * @idx: inode index
+ * @name: full xattr name including "user." prefix
+ * Returns 0 on success, -ENOENT if not found, negative errno on error. */
+int tmpfs_xattr_remove(int idx, const char *name);
+
+/* Free all extended attribute storage for a tmpfs inode.
+ * Called automatically by free_inode(). */
+void tmpfs_xattr_free(int idx);
 
 /* ── tmpfs ioctl commands ──────────────────────────────────────────── */
 
