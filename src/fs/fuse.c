@@ -21,14 +21,7 @@
 #include "spinlock.h"
 #include "timer.h"
 
-/* FUSE_READDIR request structure (local def to avoid virtio_fs.h conflict) */
-struct fuse_readdir_in {
-    uint64_t fh;
-    uint32_t offset;
-    uint32_t size;
-} __attribute__((packed));
-
-/* Mount info */
+/* ── Mount info */
 #define FUSE_MAX_MOUNTS 4
 /* fuse_mount_info now defined in fuse.h with negotiated fields */
 static struct fuse_mount_info g_fuse_mounts[FUSE_MAX_MOUNTS];
@@ -220,6 +213,14 @@ static void fuse_entry_cache_invalidate(struct fuse_mount_info *mnt,
 static void fuse_open_fh_cache_init(struct fuse_mount_info *mnt)
 {
     memset(mnt->open_fh_cache, 0, sizeof(mnt->open_fh_cache));
+}
+
+/*
+ * Initialize the per-mount directory handle cache.
+ */
+static void fuse_dir_cache_init(struct fuse_mount_info *mnt)
+{
+    memset(mnt->dir_fh_cache, 0, sizeof(mnt->dir_fh_cache));
 }
 
 /*
@@ -482,6 +483,209 @@ int fuse_release_node(struct fuse_mount_info *mnt, uint64_t nodeid)
 
     /* Remove from cache regardless of daemon response */
     fuse_open_fh_cache_remove(mnt, nodeid);
+
+    return 0;
+}
+
+/* ── Directory handle management ────────────────────────────────────── */
+
+/*
+ * fuse_dir_cache_lookup — Look up a cached directory handle by nodeid.
+ *
+ * @mnt       The FUSE mount info.
+ * @nodeid    Node ID to look up.
+ * @out_fh    On success, receives the cached file handle.
+ *
+ * Returns 0 if found in cache, -ENOENT if not.
+ */
+static int fuse_dir_cache_lookup(struct fuse_mount_info *mnt,
+                                  uint64_t nodeid, uint64_t *out_fh)
+{
+    for (int i = 0; i < FUSE_OPEN_FH_CACHE_SIZE; i++) {
+        struct fuse_open_fh_entry *e = &mnt->dir_fh_cache[i];
+        if (e->in_use && e->nodeid == nodeid) {
+            *out_fh = e->fh;
+            return 0;
+        }
+    }
+    return -ENOENT;
+}
+
+/*
+ * fuse_dir_cache_add — Add a directory handle to the per-mount cache.
+ *
+ * Evicts the first slot (FIFO) if the cache is full.
+ *
+ * @mnt            The FUSE mount info.
+ * @nodeid         Node ID of the directory.
+ * @fh             Directory handle from FUSE_OPENDIR.
+ * @open_flags     Open flags used.
+ * @initial_offset Initial readdir offset (usually 0).
+ */
+static void fuse_dir_cache_add(struct fuse_mount_info *mnt,
+                                uint64_t nodeid, uint64_t fh,
+                                uint32_t open_flags,
+                                uint64_t initial_offset)
+{
+    int slot = -1;
+
+    /* Look for an empty slot */
+    for (int i = 0; i < FUSE_OPEN_FH_CACHE_SIZE; i++) {
+        if (!mnt->dir_fh_cache[i].in_use) {
+            slot = i;
+            break;
+        }
+    }
+
+    /* If full, evict the first slot (FIFO) */
+    if (slot < 0)
+        slot = 0;
+
+    mnt->dir_fh_cache[slot].nodeid     = nodeid;
+    mnt->dir_fh_cache[slot].fh         = fh;
+    mnt->dir_fh_cache[slot].open_flags = open_flags;
+    mnt->dir_fh_cache[slot].in_use     = 1;
+    mnt->dir_fh_cache[slot].offset     = initial_offset;
+}
+
+/*
+ * fuse_dir_cache_remove — Remove a cached directory handle by nodeid.
+ *
+ * @mnt       The FUSE mount info.
+ * @nodeid    Node ID to remove from the cache.
+ *
+ * Returns 0 on success, -ENOENT if not in cache.
+ */
+static int fuse_dir_cache_remove(struct fuse_mount_info *mnt,
+                                  uint64_t nodeid)
+{
+    for (int i = 0; i < FUSE_OPEN_FH_CACHE_SIZE; i++) {
+        struct fuse_open_fh_entry *e = &mnt->dir_fh_cache[i];
+        if (e->in_use && e->nodeid == nodeid) {
+            e->in_use = 0;
+            e->nodeid = 0;
+            e->fh     = 0;
+            e->offset = 0;
+            return 0;
+        }
+    }
+    return -ENOENT;
+}
+
+/*
+ * fuse_do_opendir — Send FUSE_OPENDIR for a directory nodeid.
+ *
+ * @mnt       The FUSE mount info.
+ * @nodeid    Node ID of the directory to open.
+ * @out_fh    On success, receives the directory handle from the daemon.
+ *
+ * Returns 0 on success, or a negative errno on failure.
+ */
+static int fuse_do_opendir(struct fuse_mount_info *mnt, uint64_t nodeid,
+                            uint64_t *out_fh)
+{
+    struct fuse_open_in oi;
+    void *resp_arg = NULL;
+    int resp_arg_size = 0;
+    struct fuse_open_out *oo;
+    int ret;
+
+    if (!mnt || !out_fh)
+        return -EINVAL;
+
+    memset(&oi, 0, sizeof(oi));
+    oi.flags = 0; /* O_RDONLY = 0 */
+
+    ret = fuse_request_response(FUSE_OPENDIR, nodeid, &oi, sizeof(oi),
+                                 &resp_arg, &resp_arg_size);
+    if (ret < 0)
+        return ret;
+
+    if (!resp_arg || resp_arg_size < (int)sizeof(struct fuse_open_out)) {
+        kfree(resp_arg);
+        return -EIO;
+    }
+
+    oo = (struct fuse_open_out *)resp_arg;
+    *out_fh = oo->fh;
+    kfree(resp_arg);
+
+    kprintf("[fuse] FUSE_OPENDIR nodeid=%llu got fh=%llu\n",
+            (unsigned long long)nodeid,
+            (unsigned long long)*out_fh);
+    return 0;
+}
+
+/*
+ * fuse_do_releasedir — Send FUSE_RELEASEDIR to the daemon.
+ *
+ * @mnt       The FUSE mount info.
+ * @nodeid    Node ID of the directory.
+ * @fh        Directory handle from FUSE_OPENDIR.
+ *
+ * Returns 0 on success, or a negative errno on failure.
+ * Failure is logged but non-fatal.
+ */
+static int fuse_do_releasedir(struct fuse_mount_info *mnt, uint64_t nodeid,
+                               uint64_t fh)
+{
+    struct fuse_release_in ri;
+    int ret;
+
+    if (!mnt)
+        return -EINVAL;
+
+    memset(&ri, 0, sizeof(ri));
+    ri.fh            = fh;
+    ri.flags         = 0;
+    ri.release_flags = 0;
+    ri.lock_owner    = 0;
+
+    ret = fuse_request_response(FUSE_RELEASEDIR, nodeid, &ri, sizeof(ri),
+                                 NULL, NULL);
+    if (ret < 0) {
+        kprintf("[fuse] FUSE_RELEASEDIR nodeid=%llu fh=%llu failed: %d\n",
+                (unsigned long long)nodeid,
+                (unsigned long long)fh, ret);
+    } else {
+        kprintf("[fuse] FUSE_RELEASEDIR nodeid=%llu fh=%llu done\n",
+                (unsigned long long)nodeid,
+                (unsigned long long)fh);
+    }
+
+    return ret;
+}
+
+/*
+ * fuse_release_dir_node — Release an open FUSE directory node: send
+ *                          FUSE_RELEASEDIR and remove cached dir handle.
+ *
+ * @mnt       The FUSE mount info.
+ * @nodeid    Node ID of the directory to release.
+ *
+ * Returns 0 on success, or a negative errno on failure.
+ */
+int fuse_release_dir_node(struct fuse_mount_info *mnt, uint64_t nodeid)
+{
+    uint64_t fh;
+    int ret;
+
+    if (!mnt)
+        return -EINVAL;
+
+    /* Look up the cached directory handle for this node */
+    ret = fuse_dir_cache_lookup(mnt, nodeid, &fh);
+    if (ret < 0) {
+        kprintf("[fuse] release_dir nodeid %llu not in cache\n",
+                (unsigned long long)nodeid);
+        return ret;
+    }
+
+    /* Send FUSE_RELEASEDIR to daemon (errors logged, non-fatal) */
+    fuse_do_releasedir(mnt, nodeid, fh);
+
+    /* Remove from cache regardless of daemon response */
+    fuse_dir_cache_remove(mnt, nodeid);
 
     return 0;
 }
@@ -877,33 +1081,91 @@ static int fuse_readdir_names(void *priv, const char *path,
     void *resp_arg = NULL;
     int resp_arg_size = 0;
     int ret;
+    uint64_t nodeid;
+    uint64_t dir_fh;
+    int n;
+
+    (void)priv;
 
     mnt = fuse_find_mount(path);
-    if (!mnt) return -ENOENT;
+    if (!mnt)
+        return -ENOENT;
 
-    uint64_t nodeid = fuse_path_to_nodeid(mnt, path);
+    nodeid = fuse_path_to_nodeid(mnt, path);
 
+    /* Get or open a directory handle for this node */
+    ret = fuse_dir_cache_lookup(mnt, nodeid, &dir_fh);
+    if (ret < 0) {
+        /* Cache miss — send FUSE_OPENDIR */
+        ret = fuse_do_opendir(mnt, nodeid, &dir_fh);
+        if (ret < 0) {
+            kprintf("[fuse] OPENDIR nodeid=%llu failed: %d\n",
+                    (unsigned long long)nodeid, ret);
+            return ret;
+        }
+        /* Cache the directory handle with offset 0 */
+        fuse_dir_cache_add(mnt, nodeid, dir_fh, 0, 0);
+    }
+
+    /* Send FUSE_READDIR with offset=0 to read all entries */
     memset(&rdi, 0, sizeof(rdi));
-    rdi.fh = mnt->fh;
+    rdi.fh     = dir_fh;
     rdi.offset = 0;
-    rdi.size = 0;
+    rdi.size   = 0;
+    rdi.flags  = 0;
 
-    /* Send FUSE_READDIR request and wait for response */
     ret = fuse_request_response(FUSE_READDIR, nodeid, &rdi, sizeof(rdi),
                                  &resp_arg, &resp_arg_size);
-    if (ret < 0)
+    if (ret < 0) {
+        kprintf("[fuse] READDIR nodeid=%llu fh=%llu failed: %d\n",
+                (unsigned long long)nodeid,
+                (unsigned long long)dir_fh, ret);
         return ret;
+    }
 
-    /* Parse directory entries from response payload.
-     * For now, return basic . and .. entries until full readdir parsing
-     * is implemented in task 8. */
-    int n = 0;
-    if (max > 0 && names) {
-        if (n < max) { memcpy(names[n], ".", 2); n++; }
-        if (n < max) { memcpy(names[n], "..", 3); n++; }
+    /* Parse directory entries from the response payload.
+     * The response contains a stream of struct fuse_dirent entries,
+     * each aligned to an 8-byte boundary. */
+    n = 0;
+    if (resp_arg && resp_arg_size > 0 && names && max > 0) {
+        uint8_t *pos = (uint8_t *)resp_arg;
+        int remaining = resp_arg_size;
+
+        while (remaining >= (int)sizeof(struct fuse_dirent) && n < max) {
+            struct fuse_dirent *de = (struct fuse_dirent *)pos;
+
+            /* Sanity check: namelen must be plausible and must not
+             * extend past the response buffer. */
+            if (de->namelen == 0 ||
+                de->namelen > 255 ||
+                (int)(sizeof(struct fuse_dirent) + de->namelen) > remaining)
+                break;
+
+            /* Copy the entry name to the output buffer.
+             * FUSE dirent names are NOT null-terminated in the wire
+             * format, so we copy namelen bytes and add our own NUL. */
+            uint32_t copylen = de->namelen;
+            if (copylen > 63)
+                copylen = 63;
+            memcpy(names[n], de->name, copylen);
+            names[n][copylen] = '\0';
+            n++;
+
+            /* Advance to the next entry.
+             * Each entry is padded to an 8-byte boundary. */
+            uint32_t entry_size = (uint32_t)sizeof(struct fuse_dirent)
+                                  + de->namelen;
+            entry_size = (entry_size + 7) & ~7U;
+            pos += entry_size;
+            remaining -= (int)entry_size;
+        }
     }
 
     kfree(resp_arg);
+
+    kprintf("[fuse] READDIR nodeid=%llu: returned %d entries\n",
+            (unsigned long long)nodeid, n);
+
     return n;
 }
 
@@ -1008,6 +1270,7 @@ int fuse_mount(const char *mountpoint)
     strncpy(mnt->mountpoint, mountpoint, sizeof(mnt->mountpoint) - 1);
     fuse_entry_cache_init(mnt);
     fuse_open_fh_cache_init(mnt);
+    fuse_dir_cache_init(mnt);
 
     /* Parse FUSE_INIT response — validate version and store capabilities */
     if (resp_arg && resp_arg_size >= (int)sizeof(struct fuse_init_out)) {

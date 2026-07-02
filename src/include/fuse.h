@@ -239,6 +239,23 @@ struct fuse_release_in {
     uint64_t lock_owner;
 } __attribute__((packed));
 
+/* FUSE_READDIR request */
+struct fuse_readdir_in {
+    uint64_t fh;
+    uint64_t offset;
+    uint32_t size;
+    uint32_t flags;
+} __attribute__((packed));
+
+/* FUSE directory entry (wire format in READDIR response) */
+struct fuse_dirent {
+    uint64_t ino;       /* inode number */
+    uint64_t off;       /* offset of next directory entry */
+    uint32_t namelen;   /* length of the entry name */
+    uint32_t type;      /* file type (S_IF* bits) */
+    char     name[];    /* entry name (NOT null-terminated in wire format) */
+} __attribute__((packed));
+
 /* ── FUSE device state ──────────────────────────────────────────────── */
 
 struct fuse_dev {
@@ -291,6 +308,8 @@ struct fuse_mount_info {
     struct fuse_entry_cache_entry entry_cache[FUSE_ENTRY_CACHE_SIZE];
     /* Open file handle cache (maps nodeid → fh from FUSE_OPEN) */
     struct fuse_open_fh_entry open_fh_cache[FUSE_OPEN_FH_CACHE_SIZE];
+    /* Directory handle cache (maps nodeid → fh from FUSE_OPENDIR) */
+    struct fuse_open_fh_entry dir_fh_cache[FUSE_OPEN_FH_CACHE_SIZE];
 };
 
 /** fuse_has_cap — check if daemon supports a capability flag */
@@ -369,5 +388,12 @@ int fuse_unmount(const char *mountpoint);
  * @nodeid  Node ID of the file to release.
  * Returns 0 on success, or a negative errno on failure. */
 int fuse_release_node(struct fuse_mount_info *mnt, uint64_t nodeid);
+
+/* Release an open FUSE directory node — sends FUSE_RELEASEDIR to the daemon
+ * and removes the cached directory handle.
+ * @mnt     The FUSE mount info (from fuse_find_mount).
+ * @nodeid  Node ID of the directory to release.
+ * Returns 0 on success, or a negative errno on failure. */
+int fuse_release_dir_node(struct fuse_mount_info *mnt, uint64_t nodeid);
 
 #endif /* FUSE_H */
