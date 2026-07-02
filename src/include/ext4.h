@@ -7,9 +7,87 @@
 /* Ext4 is backward-compatible with ext2/3 — same magic */
 #define EXT4_SUPER_MAGIC   0xEF53
 #define EXT4_ROOT_INO      2
+#define EXT4_MAX_BLOCK_SIZE 4096
 
-/* Ext4 superblock (same as ext2 — first 120 bytes, then ext4 extensions) */
+/* Filesystem state flags (s_state) */
+#define EXT4_VALID_FS    0x0001  /* Unmounted cleanly */
+#define EXT4_ERROR_FS    0x0002  /* Errors detected */
+#define EXT4_ORPHAN_FS   0x0004  /* Orphans being recovered */
+
+/* Behaviour when errors detected (s_errors) */
+#define EXT4_ERRORS_CONTINUE 1  /* Continue execution */
+#define EXT4_ERRORS_RO       2  /* Remount read-only */
+#define EXT4_ERRORS_PANIC    3  /* Panic */
+
+/* Revision levels */
+#define EXT4_GOOD_OLD_REV 0
+#define EXT4_DYNAMIC_REV  1
+
+/* Incompat feature flags */
+#define EXT4_FEATURE_INCOMPAT_COMPRESSION   0x0001
+#define EXT4_FEATURE_INCOMPAT_FILETYPE      0x0002
+#define EXT4_FEATURE_INCOMPAT_RECOVER       0x0004
+#define EXT4_FEATURE_INCOMPAT_JOURNAL_DEV   0x0008
+#define EXT4_FEATURE_INCOMPAT_META_BG       0x0010
+#define EXT4_FEATURE_INCOMPAT_EXTENTS       0x0040
+#define EXT4_FEATURE_INCOMPAT_64BIT         0x0080
+#define EXT4_FEATURE_INCOMPAT_MMP           0x0100
+#define EXT4_FEATURE_INCOMPAT_FLEX_BG       0x0200
+#define EXT4_FEATURE_INCOMPAT_EA_INODE      0x0400
+#define EXT4_FEATURE_INCOMPAT_DIRDATA       0x1000
+#define EXT4_FEATURE_INCOMPAT_CSUM_SEED     0x2000
+#define EXT4_FEATURE_INCOMPAT_LARGEDIR      0x4000
+#define EXT4_FEATURE_INCOMPAT_INLINE_DATA   0x8000
+#define EXT4_FEATURE_INCOMPAT_ENCRYPT       0x10000
+
+/* Compat feature flags */
+#define EXT4_FEATURE_COMPAT_DIR_PREALLOC  0x0001
+#define EXT4_FEATURE_COMPAT_IMAGIC_INODES 0x0002
+#define EXT4_FEATURE_COMPAT_HAS_JOURNAL   0x0004
+#define EXT4_FEATURE_COMPAT_EXT_ATTR      0x0008
+#define EXT4_FEATURE_COMPAT_RESIZE_INO    0x0010
+#define EXT4_FEATURE_COMPAT_DIR_INDEX     0x0020
+
+/* RO compat feature flags */
+#define EXT4_FEATURE_RO_COMPAT_SPARSE_SUPER  0x0001
+#define EXT4_FEATURE_RO_COMPAT_LARGE_FILE    0x0002
+#define EXT4_FEATURE_RO_COMPAT_BTREE_DIR     0x0004
+#define EXT4_FEATURE_RO_COMPAT_HUGE_FILE     0x0008
+#define EXT4_FEATURE_RO_COMPAT_GDT_CSUM      0x0010
+#define EXT4_FEATURE_RO_COMPAT_DIR_NLINK     0x0020
+#define EXT4_FEATURE_RO_COMPAT_EXTRA_ISIZE   0x0040
+
+/* Inline data: data stored in i_block[0..14] (60 bytes max for ext4) */
+#define EXT4_INLINE_DATA_FL 0x10000000  /* Inode flag for inline data */
+#define EXT4_MAX_INLINE_DATA 60         /* bytes in i_block[0..14] for inline data */
+
+/* Extent flag on inode */
+#define EXT4_EXTENTS_FL 0x00080000
+
+/* Default mount options (s_default_mount_opts) */
+#define EXT4_DEFM_DEBUG        0x0001  /* Print debug messages */
+#define EXT4_DEFM_BSDGROUPS    0x0002  /* BSD group semantics */
+#define EXT4_DEFM_XATTR_USER   0x0004  /* User extended attributes */
+#define EXT4_DEFM_ACL          0x0008  /* POSIX ACL support */
+#define EXT4_DEFM_UID16        0x0010  /* 16-bit UIDs */
+#define EXT4_DEFM_JMODE_DATA   0x0020  /* Journal data mode */
+#define EXT4_DEFM_JMODE_ORDER  0x0040  /* Journal ordered mode (default) */
+#define EXT4_DEFM_JMODE_WBACK  0x0080  /* Journal writeback mode */
+#define EXT4_DEFM_NOBARRIER    0x0100  /* Disable barriers */
+#define EXT4_DEFM_BLOCK_VALIDITY 0x0200 /* Block validity checks */
+#define EXT4_DEFM_DISCARD      0x0400  /* Issue discards on free */
+#define EXT4_DEFM_NODELALLOC   0x0800  /* Disable delayed allocation */
+
+/* Journal states for ext4_priv */
+#define EXT4_JOURNAL_NONE    0  /* No journal present */
+#define EXT4_JOURNAL_PRESENT 1  /* Journal present, no recovery needed */
+#define EXT4_JOURNAL_RECOVER 2  /* Journal present, recovery needed */
+#define EXT4_JOURNAL_DEVICE  3  /* Journal on external device */
+
+/* Ext4 superblock (full 1024-byte on-disk structure, packed).
+ * First ~200 bytes are ext2-compatible, then ext4-specific fields follow. */
 struct ext4_superblock {
+    /* ── EXT2/3 compatible fields (0–83) ── */
     uint32_t s_inodes_count;
     uint32_t s_blocks_count;
     uint32_t s_r_blocks_count;
@@ -35,7 +113,8 @@ struct ext4_superblock {
     uint32_t s_rev_level;
     uint16_t s_def_resuid;
     uint16_t s_def_resgid;
-    /* EXT2 rev 1+ fields */
+
+    /* ── EXT2_DYNAMIC_REV fields (84–199) ── */
     uint32_t s_first_ino;
     uint16_t s_inode_size;
     uint16_t s_block_group_nr;
@@ -46,10 +125,82 @@ struct ext4_superblock {
     char     s_volume_name[16];
     char     s_last_mounted[64];
     uint32_t s_algo_bitmap;
-    /* Performance hints */
-    uint8_t  s_def_hash_version;
-    uint8_t  s_hash_seed[4];
-    uint32_t s_def_hash_seed[4];
+
+    /* ── Performance hints (200–223) ── */
+    uint8_t  s_prealloc_blocks;       /* 200 */
+    uint8_t  s_prealloc_dir_blocks;   /* 201 */
+    uint16_t s_reserved_gdt_blocks;   /* 202–203 */
+
+    /* ── Journaling info (204–231) ── */
+    uint8_t  s_journal_uuid[16];      /* 204–219: UUID of journal superblock */
+    uint32_t s_journal_inum;          /* 220–223: Journal inode number */
+    uint32_t s_journal_dev;           /* 224–227: Journal device number */
+    uint32_t s_last_orphan;           /* 228–231: Orphan inode list head */
+
+    /* ── Directory indexing (232–255) ── */
+    uint32_t s_hash_seed[4];          /* 232–247: HTree hash seed */
+    uint8_t  s_def_hash_version;      /* 248 */
+    uint8_t  s_jnl_backup_type;       /* 249 */
+    uint16_t s_desc_size;             /* 250–251: Group descriptor size */
+
+    /* ── Mount and block group info (252–267) ── */
+    uint32_t s_default_mount_opts;    /* 252–255: Default mount options */
+    uint32_t s_first_meta_bg;         /* 256–259: First meta block group */
+    uint32_t s_mkfs_time;             /* 260–263: Creation timestamp */
+    uint32_t s_jnl_blocks[17];        /* 264–331: Journal inode backup */
+
+    /* ── 64-bit block counts (332–347) ── */
+    uint32_t s_blocks_count_hi;       /* 332–335: Blocks count high 32 bits */
+    uint32_t s_r_blocks_count_hi;     /* 336–339: Reserved blocks high 32 bits */
+    uint32_t s_free_blocks_hi;        /* 340–343: Free blocks high 32 bits */
+    uint16_t s_min_extra_isize;       /* 344–345: Minimum inode extra size */
+    uint16_t s_want_extra_isize;      /* 346–347: Desired inode extra size */
+
+    /* ── Misc flags and RAID (348–371) ── */
+    uint32_t s_flags;                 /* 348–351: Miscellaneous flags */
+    uint16_t s_raid_stride;           /* 352–353: RAID stride */
+    uint16_t s_mmp_interval;          /* 354–355: MMP check interval (sec) */
+    uint64_t s_mmp_block;             /* 356–363: MMP block address */
+    uint32_t s_raid_stripe_width;     /* 364–367: RAID stripe width */
+    uint8_t  s_log_groups_per_flex;   /* 368: Flex groups per flex_bg (log2) */
+    uint8_t  s_checksum_type;         /* 369: Metadata checksum type */
+    uint16_t s_reserved_pad;          /* 370–371 */
+
+    /* ── Lifetime & snapshot (372–399) ── */
+    uint64_t s_kbytes_written;        /* 372–379: Lifetime KiB written */
+    uint32_t s_snapshot_inum;         /* 380–383: Snapshot inode */
+    uint32_t s_snapshot_id;           /* 384–387: Snapshot ID */
+    uint64_t s_snapshot_r_blocks_count; /* 388–395: Snapshot reserved blocks */
+    uint32_t s_snapshot_list;         /* 396–399: Snapshot list head */
+
+    /* ── Error tracking (400–511) ── */
+    uint32_t s_error_count;           /* 400–403 */
+    uint32_t s_first_error_time;      /* 404–407 */
+    uint32_t s_first_error_ino;       /* 408–411 */
+    uint64_t s_first_error_block;     /* 412–419 */
+    uint8_t  s_first_error_func[32];  /* 420–451 */
+    uint32_t s_first_error_line;      /* 452–455 */
+    uint32_t s_last_error_time;       /* 456–459 */
+    uint32_t s_last_error_ino;        /* 460–463 */
+    uint32_t s_last_error_line;       /* 464–467 */
+    uint64_t s_last_error_block;      /* 468–475 */
+    uint8_t  s_last_error_func[32];   /* 476–507 */
+    uint8_t  s_mount_opts[64];        /* 508–571 */
+
+    /* ── Quota & overlay (572–631) ── */
+    uint32_t s_usr_quota_inum;        /* 572–575 */
+    uint32_t s_grp_quota_inum;        /* 576–579 */
+    uint32_t s_overhead_blocks;       /* 580–583 */
+    uint32_t s_backup_bgs[2];         /* 584–591 */
+    uint8_t  s_encrypt_algos[4];      /* 592–595 */
+    uint8_t  s_encrypt_pw_salt[16];   /* 596–611 */
+    uint32_t s_lpf_ino;               /* 612–615: Lost+found inode */
+    uint32_t s_prj_quota_inum;        /* 616–619: Project quota inode */
+    uint32_t s_checksum_seed;         /* 620–623: Metadata checksum seed */
+
+    /* ── Padding and superblock checksum (624–1023) ── */
+    uint8_t  s_reserved[392];         /* 624–1015 */
+    uint32_t s_checksum;              /* 1016–1019: Superblock CRC32 */
 } __attribute__((packed));
 
 /* Ext4 block group descriptor (same as ext2, but with checksum in bg_reserved) */
@@ -144,44 +295,6 @@ struct ext4_dir_entry {
 #define EXT4_FT_SOCK      6
 #define EXT4_FT_SYMLINK   7
 #define EXT4_FT_MAX       8
-
-/* Incompat feature flags */
-#define EXT4_FEATURE_INCOMPAT_COMPRESSION   0x0001
-#define EXT4_FEATURE_INCOMPAT_FILETYPE      0x0002
-#define EXT4_FEATURE_INCOMPAT_RECOVER       0x0004
-#define EXT4_FEATURE_INCOMPAT_JOURNAL_DEV   0x0008
-#define EXT4_FEATURE_INCOMPAT_META_BG       0x0010
-#define EXT4_FEATURE_INCOMPAT_EXTENTS       0x0040
-#define EXT4_FEATURE_INCOMPAT_64BIT         0x0080
-#define EXT4_FEATURE_INCOMPAT_MMP           0x0100
-#define EXT4_FEATURE_INCOMPAT_FLEX_BG       0x0200
-#define EXT4_FEATURE_INCOMPAT_EA_INODE      0x0400
-#define EXT4_FEATURE_INCOMPAT_DIRDATA       0x1000
-#define EXT4_FEATURE_INCOMPAT_CSUM_SEED     0x2000
-#define EXT4_FEATURE_INCOMPAT_LARGEDIR      0x4000
-#define EXT4_FEATURE_INCOMPAT_INLINE_DATA   0x8000
-#define EXT4_FEATURE_INCOMPAT_ENCRYPT       0x10000
-
-/* Compat feature flags */
-#define EXT4_FEATURE_COMPAT_DIR_PREALLOC  0x0001
-#define EXT4_FEATURE_COMPAT_IMAGIC_INODES 0x0002
-#define EXT4_FEATURE_COMPAT_HAS_JOURNAL   0x0004
-#define EXT4_FEATURE_COMPAT_EXT_ATTR      0x0008
-#define EXT4_FEATURE_COMPAT_RESIZE_INO    0x0010
-#define EXT4_FEATURE_COMPAT_DIR_INDEX     0x0020
-
-/* RO compat feature flags */
-#define EXT4_FEATURE_RO_COMPAT_SPARSE_SUPER  0x0001
-#define EXT4_FEATURE_RO_COMPAT_LARGE_FILE    0x0002
-#define EXT4_FEATURE_RO_COMPAT_BTREE_DIR     0x0004
-#define EXT4_FEATURE_RO_COMPAT_HUGE_FILE     0x0008
-#define EXT4_FEATURE_RO_COMPAT_GDT_CSUM      0x0010
-#define EXT4_FEATURE_RO_COMPAT_DIR_NLINK     0x0020
-#define EXT4_FEATURE_RO_COMPAT_EXTRA_ISIZE   0x0040
-
-/* Inline data: data stored in i_block[0..14] (60 bytes max for ext4) */
-#define EXT4_INLINE_DATA_FL 0x10000000  /* Inode flag for inline data */
-#define EXT4_MAX_INLINE_DATA 60         /* bytes in i_block[0..14] for inline data */
 
 /* Forward declaration */
 struct ext4_priv;

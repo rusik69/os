@@ -34,9 +34,6 @@
 /* Maximum depth of extent tree (sanity check) */
 #define EXT4_EXTENT_MAX_DEPTH 5
 
-/* Maximum block size we support (needed for stack buffers) */
-#define EXT4_MAX_BLOCK_SIZE 4096
-
 struct ext4_priv {
     uint8_t  dev_id;
     uint32_t block_size;
@@ -618,6 +615,91 @@ static struct vfs_ops ext4_ops = {
     .readdir = ext4_readdir,
 };
 
+/* ── Feature compatibility logging ─────────────────────────────────── */
+
+static void ext4_log_incompat_features(uint32_t flags)
+{
+    if (flags & EXT4_FEATURE_INCOMPAT_COMPRESSION)
+        kprintf("[ext4]   INCOMPAT: compression\n");
+    if (flags & EXT4_FEATURE_INCOMPAT_FILETYPE)
+        kprintf("[ext4]   INCOMPAT: filetype\n");
+    if (flags & EXT4_FEATURE_INCOMPAT_RECOVER)
+        kprintf("[ext4]   INCOMPAT: needs journal recovery\n");
+    if (flags & EXT4_FEATURE_INCOMPAT_JOURNAL_DEV)
+        kprintf("[ext4]   INCOMPAT: journal device\n");
+    if (flags & EXT4_FEATURE_INCOMPAT_META_BG)
+        kprintf("[ext4]   INCOMPAT: meta block groups\n");
+    if (flags & EXT4_FEATURE_INCOMPAT_EXTENTS)
+        kprintf("[ext4]   INCOMPAT: extents\n");
+    if (flags & EXT4_FEATURE_INCOMPAT_64BIT)
+        kprintf("[ext4]   INCOMPAT: 64-bit\n");
+    if (flags & EXT4_FEATURE_INCOMPAT_MMP)
+        kprintf("[ext4]   INCOMPAT: MMP (multiple mount protection)\n");
+    if (flags & EXT4_FEATURE_INCOMPAT_FLEX_BG)
+        kprintf("[ext4]   INCOMPAT: flex block groups\n");
+    if (flags & EXT4_FEATURE_INCOMPAT_EA_INODE)
+        kprintf("[ext4]   INCOMPAT: EA inodes\n");
+    if (flags & EXT4_FEATURE_INCOMPAT_DIRDATA)
+        kprintf("[ext4]   INCOMPAT: data in directory entries\n");
+    if (flags & EXT4_FEATURE_INCOMPAT_CSUM_SEED)
+        kprintf("[ext4]   INCOMPAT: checksum seed\n");
+    if (flags & EXT4_FEATURE_INCOMPAT_LARGEDIR)
+        kprintf("[ext4]   INCOMPAT: large directories\n");
+    if (flags & EXT4_FEATURE_INCOMPAT_INLINE_DATA)
+        kprintf("[ext4]   INCOMPAT: inline data\n");
+    if (flags & EXT4_FEATURE_INCOMPAT_ENCRYPT)
+        kprintf("[ext4]   INCOMPAT: encryption\n");
+}
+
+static void ext4_log_ro_compat_features(uint32_t flags)
+{
+    if (flags & EXT4_FEATURE_RO_COMPAT_SPARSE_SUPER)
+        kprintf("[ext4]   RO_COMPAT: sparse superblock\n");
+    if (flags & EXT4_FEATURE_RO_COMPAT_LARGE_FILE)
+        kprintf("[ext4]   RO_COMPAT: large files\n");
+    if (flags & EXT4_FEATURE_RO_COMPAT_BTREE_DIR)
+        kprintf("[ext4]   RO_COMPAT: btree directories\n");
+    if (flags & EXT4_FEATURE_RO_COMPAT_HUGE_FILE)
+        kprintf("[ext4]   RO_COMPAT: huge files\n");
+    if (flags & EXT4_FEATURE_RO_COMPAT_GDT_CSUM)
+        kprintf("[ext4]   RO_COMPAT: group descriptor checksums\n");
+    if (flags & EXT4_FEATURE_RO_COMPAT_DIR_NLINK)
+        kprintf("[ext4]   RO_COMPAT: directory nlink\n");
+    if (flags & EXT4_FEATURE_RO_COMPAT_EXTRA_ISIZE)
+        kprintf("[ext4]   RO_COMPAT: extra inode size\n");
+}
+
+static void ext4_log_compat_features(uint32_t flags)
+{
+    if (flags & EXT4_FEATURE_COMPAT_DIR_PREALLOC)
+        kprintf("[ext4]   COMPAT: directory preallocation\n");
+    if (flags & EXT4_FEATURE_COMPAT_IMAGIC_INODES)
+        kprintf("[ext4]   COMPAT: imagic inodes\n");
+    if (flags & EXT4_FEATURE_COMPAT_HAS_JOURNAL)
+        kprintf("[ext4]   COMPAT: has journal\n");
+    if (flags & EXT4_FEATURE_COMPAT_EXT_ATTR)
+        kprintf("[ext4]   COMPAT: extended attributes\n");
+    if (flags & EXT4_FEATURE_COMPAT_RESIZE_INO)
+        kprintf("[ext4]   COMPAT: resize inode\n");
+    if (flags & EXT4_FEATURE_COMPAT_DIR_INDEX)
+        kprintf("[ext4]   COMPAT: directory index (HTree)\n");
+}
+
+/* ── Superblock state checking ────────────────────────────────────── */
+
+static const char *ext4_state_string(uint16_t state)
+{
+    if (state == 0)
+        return "clean (no VALID_FS flag)";
+    if (state & EXT4_ERROR_FS)
+        return "ERRORS DETECTED";
+    if (state & EXT4_ORPHAN_FS)
+        return "orphans pending recovery";
+    if (state & EXT4_VALID_FS)
+        return "clean";
+    return "unknown";
+}
+
 /* ── Mount ─────────────────────────────────────────────────────────── */
 
 int ext4_mount(const char *mountpoint, uint8_t dev_id)
@@ -630,25 +712,39 @@ int ext4_mount(const char *mountpoint, uint8_t dev_id)
     strncpy(ep->mountpoint, mountpoint, sizeof(ep->mountpoint) - 1);
 
     if (ext4_load_super(ep) < 0) {
-        kprintf("[ext4] failed to read superblock\\n");
+        kprintf("[ext4] failed to read superblock\n");
         goto fail;
     }
 
     if (ep->sb.s_magic != EXT4_SUPER_MAGIC) {
-        kprintf("[ext4] bad magic: 0x%04x\\n", ep->sb.s_magic);
+        kprintf("[ext4] bad magic: 0x%04x\n", ep->sb.s_magic);
         goto fail;
     }
 
+    /* ── Cache feature flags ── */
     ep->incompat  = ep->sb.s_feature_incompat;
     ep->ro_compat = ep->sb.s_feature_ro_compat;
     ep->compat    = ep->sb.s_feature_compat;
 
-    /* Log FS type */
+    /* ── Report superblock metadata ── */
+    kprintf("[ext4] SUPERBLOCK: UUID %02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x\n",
+        ep->sb.s_uuid[0],  ep->sb.s_uuid[1],  ep->sb.s_uuid[2],  ep->sb.s_uuid[3],
+        ep->sb.s_uuid[4],  ep->sb.s_uuid[5],  ep->sb.s_uuid[6],  ep->sb.s_uuid[7],
+        ep->sb.s_uuid[8],  ep->sb.s_uuid[9],  ep->sb.s_uuid[10], ep->sb.s_uuid[11],
+        ep->sb.s_uuid[12], ep->sb.s_uuid[13], ep->sb.s_uuid[14], ep->sb.s_uuid[15]);
+    kprintf("[ext4]   blocks=%u, inodes=%u, block_size=%u, inode_size=%u\n",
+        ep->sb.s_blocks_count, ep->sb.s_inodes_count,
+        1024u << ep->sb.s_log_block_size, ep->sb.s_inode_size);
+    kprintf("[ext4]   rev=%u, state=%s (0x%04x), errors=%u\n",
+        ep->sb.s_rev_level, ext4_state_string(ep->sb.s_state),
+        ep->sb.s_state, ep->sb.s_errors);
+
+    /* ── Log FS type ── */
     const char *fs_type = "ext4";
     if (!(ep->incompat & EXT4_FEATURE_INCOMPAT_EXTENTS) &&
         !(ep->incompat & EXT4_FEATURE_INCOMPAT_FLEX_BG) &&
         !(ep->incompat & EXT4_FEATURE_INCOMPAT_INLINE_DATA)) {
-        if (ep->sb.s_rev_level == 0)
+        if (ep->sb.s_rev_level == EXT4_GOOD_OLD_REV)
             fs_type = "ext2";
         else if (ep->compat & EXT4_FEATURE_COMPAT_HAS_JOURNAL)
             fs_type = "ext3";
@@ -656,59 +752,165 @@ int ext4_mount(const char *mountpoint, uint8_t dev_id)
             fs_type = "ext2/3";
     }
 
-    kprintf("[ext4] %s filesystem detected\\n", fs_type);
+    kprintf("[ext4] %s filesystem detected\n", fs_type);
 
-    /* Reject filesystems we cannot safely read */
+    /* ── Log all feature flags ── */
+    if (ep->incompat) {
+        kprintf("[ext4] Incompat feature flags:\n");
+        ext4_log_incompat_features(ep->incompat);
+    }
+    if (ep->ro_compat) {
+        kprintf("[ext4] RO compat feature flags:\n");
+        ext4_log_ro_compat_features(ep->ro_compat);
+    }
+    if (ep->compat) {
+        kprintf("[ext4] Compat feature flags:\n");
+        ext4_log_compat_features(ep->compat);
+    }
+
+    /* ── Detect journal state ── */
+    int journal_state = EXT4_JOURNAL_NONE;
+
+    if (ep->compat & EXT4_FEATURE_COMPAT_HAS_JOURNAL) {
+        if (ep->sb.s_journal_inum != 0) {
+            kprintf("[ext4] journal inode: %u\n", ep->sb.s_journal_inum);
+        }
+        if (ep->sb.s_journal_dev != 0) {
+            kprintf("[ext4] journal on external device: %u\n", ep->sb.s_journal_dev);
+            journal_state = EXT4_JOURNAL_DEVICE;
+        } else {
+            journal_state = EXT4_JOURNAL_PRESENT;
+        }
+
+        if (ep->incompat & EXT4_FEATURE_INCOMPAT_RECOVER) {
+            kprintf("[ext4] journal NEEDS RECOVERY — mounting read-only\n");
+            journal_state = EXT4_JOURNAL_RECOVER;
+        }
+
+        /* Orphan inodes indicate journal needs replay */
+        if (ep->sb.s_last_orphan != 0) {
+            kprintf("[ext4] orphan inode list: head=%u\n", ep->sb.s_last_orphan);
+            if (!(ep->incompat & EXT4_FEATURE_INCOMPAT_RECOVER)) {
+                kprintf("[ext4] orphans present but RECOVER flag not set\n");
+            }
+        }
+    }
+
+    /* ── Check superblock state ── */
+    if (ep->sb.s_state & EXT4_ERROR_FS) {
+        kprintf("[ext4] WARNING: filesystem has errors! s_errors policy=%u\n",
+            ep->sb.s_errors);
+    }
+
+    if (ep->sb.s_state & EXT4_ORPHAN_FS) {
+        kprintf("[ext4] WARNING: filesystem has orphan inodes pending\n");
+    }
+
+    /* ── Reject filesystems with incompatible features we cannot handle ── */
     if (ep->incompat & EXT4_FEATURE_INCOMPAT_JOURNAL_DEV) {
-        kprintf("[ext4] journal device not supported\\n");
+        /* We can't read journal on a separate device */
+        kprintf("[ext4] ERROR: journal on separate device not supported\n");
         goto fail;
     }
-    if (ep->incompat & EXT4_FEATURE_INCOMPAT_ENCRYPT) {
-        kprintf("[ext4] encryption not supported, but can read encrypted context\n");
-        /* We can still read the filesystem — encryption context (EXT4_ENCRYPT_FL
-         * inode flag) will be read per-inode and reported. Continue mounting. */
-    }
-    if (ep->incompat & EXT4_FEATURE_INCOMPAT_64BIT) {
-        /* 64-bit mode changes BGD structure; we support reading the
-         * larger block group descriptors now. */
-        kprintf("[ext4] 64-bit mode detected, using extended BGD format\n");
+
+    if (ep->incompat & EXT4_FEATURE_INCOMPAT_MMP) {
+        /* Multiple mount protection — we'd need to update MMP block periodically */
+        kprintf("[ext4] WARNING: MMP enabled, filesystem may be in use on another system\n");
+        /* Continue read-only is safe */
     }
 
-    /* Block size */
-    ep->block_size = 1024 << ep->sb.s_log_block_size;
+    if (ep->incompat & EXT4_FEATURE_INCOMPAT_META_BG) {
+        kprintf("[ext4] WARNING: meta block groups not fully supported\n");
+        /* Continue read-only for simple cases */
+    }
+
+    if (ep->incompat & EXT4_FEATURE_INCOMPAT_ENCRYPT) {
+        kprintf("[ext4] NOTE: encryption not supported, reading unencrypted data only\n");
+    }
+
+    if (ep->incompat & EXT4_FEATURE_INCOMPAT_CSUM_SEED) {
+        kprintf("[ext4] NOTE: checksum seed present (seed=0x%08x)\n", ep->sb.s_checksum_seed);
+    }
+
+    /* ── Block size ── */
+    ep->block_size = 1024u << ep->sb.s_log_block_size;
     if (ep->block_size < 1024 || ep->block_size > EXT4_MAX_BLOCK_SIZE) {
-        kprintf("[ext4] unsupported block size: %u\\n", ep->block_size);
+        kprintf("[ext4] ERROR: unsupported block size: %u\n", ep->block_size);
         goto fail;
     }
 
     ep->blocks_per_group = ep->sb.s_blocks_per_group;
     ep->inodes_per_group = ep->sb.s_inodes_per_group;
     ep->inode_size = ep->sb.s_inode_size;
-    if (ep->inode_size < 128) ep->inode_size = 128;
+    if (ep->inode_size < 128)
+        ep->inode_size = 128;
 
-    /* Number of block groups */
-    uint32_t total_groups = (ep->sb.s_blocks_count + ep->blocks_per_group - 1) /
-                             ep->blocks_per_group;
-    ep->num_block_groups = total_groups;
-
-    /* flex_bg size detection */
-    if (ep->incompat & EXT4_FEATURE_INCOMPAT_FLEX_BG) {
-        /* Default flex_bg size is 16; we use a reasonable heuristic */
-        ep->flex_bg_size = 16;
-        kprintf("[ext4] flex_bg enabled (group size=%u)\\n", ep->flex_bg_size);
+    /* If RO_COMPAT_EXTRA_ISIZE is set, inodes may have extended fields */
+    if (ep->ro_compat & EXT4_FEATURE_RO_COMPAT_EXTRA_ISIZE) {
+        uint16_t min_extra = ep->sb.s_min_extra_isize;
+        uint16_t want_extra = ep->sb.s_want_extra_isize;
+        kprintf("[ext4] inode extra size: min=%u, want=%u\n", min_extra, want_extra);
     }
 
-    /* Load block group descriptor cache */
+    /* ── Number of block groups ── */
+    {
+        /* Use 64-bit block count if available */
+        uint64_t total_blocks = ep->sb.s_blocks_count;
+        if (ep->incompat & EXT4_FEATURE_INCOMPAT_64BIT)
+            total_blocks |= (uint64_t)ep->sb.s_blocks_count_hi << 32;
+
+        uint32_t total_groups = (uint32_t)((total_blocks + ep->blocks_per_group - 1) /
+                                            ep->blocks_per_group);
+        ep->num_block_groups = total_groups;
+    }
+
+    /* ── flex_bg size detection ── */
+    if (ep->incompat & EXT4_FEATURE_INCOMPAT_FLEX_BG) {
+        if (ep->sb.s_log_groups_per_flex > 0) {
+            /* Use the value from superblock (log2 of flex group count) */
+            ep->flex_bg_size = 1u << ep->sb.s_log_groups_per_flex;
+        } else {
+            /* Default flex_bg size is 16 (Linux kernel default) */
+            ep->flex_bg_size = 16;
+        }
+        kprintf("[ext4] flex_bg enabled (group size=%u, log2=%u)\n",
+            ep->flex_bg_size, ep->sb.s_log_groups_per_flex);
+    }
+
+    /* ── Group descriptor size ── */
+    uint16_t desc_size = ep->sb.s_desc_size;
+    if (desc_size == 0)
+        desc_size = sizeof(struct ext4_bg_desc);
+    if (desc_size > 64)
+        desc_size = 64;
+
+    /* ── Load block group descriptor cache ── */
     if (ext4_load_bgd_cache(ep) < 0)
         goto fail;
 
-    /* Mount read-only */
+    /* ── Report journal state summary ── */
+    switch (journal_state) {
+    case EXT4_JOURNAL_NONE:
+        kprintf("[ext4] no journal present\n");
+        break;
+    case EXT4_JOURNAL_PRESENT:
+        kprintf("[ext4] journal present (not yet replayable)\n");
+        break;
+    case EXT4_JOURNAL_RECOVER:
+        kprintf("[ext4] journal requires recovery — JBD2 not yet implemented\n");
+        break;
+    case EXT4_JOURNAL_DEVICE:
+        kprintf("[ext4] journal on external device — not supported\n");
+        break;
+    }
+
+    /* ── Mount read-only ── */
     return vfs_mount_ex(mountpoint, &ext4_ops, ep, MS_RDONLY);
 
 fail:
     if (ep->bgd_cache) kfree(ep->bgd_cache);
     kfree(ep);
-    return -1;
+    return -EIO;
 }
 
 /* ── Init ──────────────────────────────────────────────────────────── */
