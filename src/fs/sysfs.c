@@ -654,6 +654,9 @@ void __init sysfs_init(void) {
     sysfs_create_dir("/sys/devices");
     sysfs_create_dir("/sys/kernel");
 
+    /* /sys/module/ — module parameters directory (populated dynamically) */
+    sysfs_create_dir("/sys/module");
+
     /* /sys/devices/system/cpu/ — CPU hotplug online/offline interface */
     sysfs_create_cpu_hotplug_files();
 
