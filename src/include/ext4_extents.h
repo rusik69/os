@@ -68,6 +68,43 @@ int ext4_ext_get_blocks(struct ext4_priv *ep,
  */
 int ext4_ext_check_header(struct ext4_extent_header *eh, uint16_t max_depth);
 
+/* ── Extent tree manipulation ──────────────────────────────────────── */
+
+/*
+ * ext4_ext_insert_extent — insert a new extent into the extent tree.
+ *
+ * @ep:     ext4 private per-mount data
+ * @inode:  inode to modify (must have EXT4_EXTENTS_FL set)
+ * @newext: the new extent to insert
+ *
+ * Handles merging with adjacent extents, leaf node insertion, and
+ * node splitting when the target leaf is full.
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int ext4_ext_insert_extent(struct ext4_priv *ep,
+                           struct ext4_inode *inode,
+                           struct ext4_extent *newext);
+
+/*
+ * ext4_ext_remove_space — remove blocks in [start, end) from the
+ *                         extent tree.
+ *
+ * @ep:     ext4 private per-mount data
+ * @inode:  inode to modify
+ * @start:  first logical block to remove
+ * @end:    first logical block NOT to remove
+ *
+ * Handles truncation, hole-punching.  Splits partially-overlapping
+ * extents and removes fully-covered extents.
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int ext4_ext_remove_space(struct ext4_priv *ep,
+                          struct ext4_inode *inode,
+                          uint32_t start,
+                          uint32_t end);
+
 /* ── Module init ───────────────────────────────────────────────────── */
 
 int ext4_ext_init(void);
