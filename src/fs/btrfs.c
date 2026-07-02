@@ -1012,13 +1012,198 @@ static int btrfs_read_inode_data(struct btrfs_priv *bp, uint64_t ino,
 
 /* ── VFS operations ────────────────────────────────────────────── */
 
+/**
+ * btrfs_read - Read file data through Btrfs extent tree
+ * @priv: Btrfs private data
+ * @path: VFS path to the file
+ * @buf: Output buffer
+ * @max_size: Maximum number of bytes to read
+ * @out_size: On success, populated with actual bytes read
+ *
+ * Btrfs stores file data as EXTENT_DATA_KEY items in the FS tree under
+ * the inode's objectid. Each such item is keyed by
+ *   (inode_objectid, BTRFS_EXTENT_DATA_KEY, file_offset)
+ * and its payload is a struct btrfs_file_extent_item.
+ *
+ * Two extent types are supported:
+ *   BTRFS_EXTENT_DATA_INLINE  (0) — data follows the 5-byte header
+ *                                    (type/compression/encryption/other_encoding)
+ *                                    directly inside the tree leaf.
+ *   BTRFS_EXTENT_DATA_REGULAR (1) — data lives at a logical disk address
+ *                                    (disk_bytenr) and is read sector by
+ *                                    sector after logical→physical translation
+ *                                    via the chunk map.
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
 static int btrfs_read(void *priv, const char *path,
                        void *buf, uint32_t max_size, uint32_t *out_size)
 {
     struct btrfs_priv *bp = (struct btrfs_priv *)priv;
-    (void)path; (void)buf; (void)max_size;
-    /* Stub - see readdir+lookup for path resolution */
-    if (out_size) *out_size = 0;
+    struct btrfs_inode_item inode;
+    uint64_t ino;
+    uint32_t inode_size;
+    int ret;
+    uint8_t sbuf[4096];
+    uint64_t file_size;
+    uint32_t to_read;
+    uint32_t done;
+
+    if (!bp || !path || !buf || !out_size)
+        return -EINVAL;
+
+    /* Resolve path to a Btrfs inode */
+    ret = btrfs_resolve_dirid(bp, path, &ino);
+    if (ret < 0)
+        return ret;
+
+    /* Read the inode item to obtain file size */
+    ret = btrfs_read_inode_data(bp, ino, &inode, &inode_size);
+    if (ret < 0)
+        return ret;
+
+    file_size = inode.size;
+    to_read = max_size;
+    if ((uint64_t)to_read > file_size)
+        to_read = (uint32_t)file_size;
+
+    *out_size = 0;
+    if (to_read == 0)
+        return 0;
+
+    done = 0;
+
+    /* Walk EXTENT_DATA_KEY items via repeated key search */
+    {
+        uint64_t search_obj = ino;
+        uint8_t  search_type = BTRFS_EXTENT_DATA_KEY;
+        uint64_t search_off = 0;
+
+        while (done < to_read) {
+            uint32_t item_idx;
+            int exact;
+
+            ret = btrfs_search_tree(bp, bp->fs_root_bytenr,
+                                     bp->fs_root_level,
+                                     search_obj, search_type, search_off,
+                                     sbuf, sizeof(sbuf),
+                                     &item_idx, &exact);
+            if (ret < 0)
+                break;
+
+            struct btrfs_header *hdr = (struct btrfs_header *)sbuf;
+            if (item_idx >= hdr->nritems)
+                break;
+
+            struct btrfs_item *items = (struct btrfs_item *)
+                (sbuf + sizeof(struct btrfs_header));
+
+            uint64_t cur_obj = items[item_idx].key.objectid;
+            uint8_t  cur_typ = items[item_idx].key.type;
+            uint64_t extent_off = items[item_idx].key.offset;
+
+            /* Past this inode's extent data items */
+            if (cur_obj != ino || cur_typ != BTRFS_EXTENT_DATA_KEY)
+                break;
+
+            uint32_t item_off = items[item_idx].offset;
+            uint32_t item_sz  = items[item_idx].size;
+
+            if (item_off + item_sz > bp->nodesize) {
+                /* Corrupt item — skip */
+                search_off = extent_off + 1;
+                goto wrap_search;
+            }
+
+            struct btrfs_file_extent_item *fe =
+                (struct btrfs_file_extent_item *)(sbuf + item_off);
+
+            /* Handle gap / hole between extents */
+            if ((uint64_t)done < extent_off)
+                done = (uint32_t)extent_off;
+
+            if (done >= to_read)
+                break;
+
+            if (fe->type == BTRFS_EXTENT_DATA_INLINE) {
+                /*
+                 * Inline extent: data starts at byte 5 of the item
+                 * (past type + compression + encryption + other_encoding).
+                 */
+                static const uint32_t inline_hdr = 5;
+                uint32_t inline_len =
+                    (item_sz > inline_hdr) ? (item_sz - inline_hdr) : 0;
+                uint32_t chunk = to_read - done;
+
+                if (chunk > inline_len)
+                    chunk = inline_len;
+
+                if (chunk > 0) {
+                    memcpy((uint8_t *)buf + done,
+                           sbuf + item_off + inline_hdr, chunk);
+                    done += chunk;
+                }
+
+                /* Inline extent is always the last extent for a file */
+                break;
+
+            } else if (fe->type == BTRFS_EXTENT_DATA_REGULAR &&
+                       fe->compression == BTRFS_COMPRESS_NONE) {
+                /*
+                 * Regular (non-inline, non-compressed) extent.
+                 * Data is stored at disk_bytenr on the block device.
+                 */
+                uint64_t disk_bytenr = fe->disk_bytenr;
+                uint64_t num_bytes   = fe->num_bytes;
+
+                if (disk_bytenr == 0)
+                    goto search_next;  /* hole — no backing store */
+
+                uint64_t ext_done = (uint64_t)done - extent_off;
+
+                if (ext_done < num_bytes) {
+                    uint64_t need = (uint64_t)to_read - (uint64_t)done;
+                    if (need > num_bytes - ext_done)
+                        need = num_bytes - ext_done;
+
+                    /* Translate logical disk address to physical */
+                    uint64_t physical;
+
+                    if (btrfs_chunk_map(bp, disk_bytenr, &physical) < 0)
+                        physical = disk_bytenr;
+
+                    uint64_t read_addr = physical + ext_done;
+                    uint64_t lba = read_addr / 512;
+                    uint32_t nsect = (uint32_t)((need + 511) / 512);
+                    uint8_t *dest = (uint8_t *)buf + done;
+
+                    for (uint32_t s = 0; s < nsect; s++) {
+                        if (blockdev_read_sectors(bp->dev_id, lba + s, 1,
+                                                   dest + s * 512) != 0) {
+                            /* I/O error — return what we have */
+                            goto read_done;
+                        }
+                    }
+
+                    done += (uint32_t)need;
+                }
+            }
+
+search_next:
+            /* Advance search past the current extent's key offset */
+            search_off = extent_off + 1;
+
+wrap_search:
+            if (search_off == 0) {
+                search_type = cur_typ + 1;
+                if (search_type == 0)
+                    search_obj = cur_obj + 1;
+            }
+        }
+    }
+
+read_done:
+    *out_size = done;
     return 0;
 }
 
