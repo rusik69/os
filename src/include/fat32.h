@@ -96,4 +96,18 @@ int vfat_mark_entry_deleted(void *entry);
 /* Build an 8.3 short name from a long filename (space-padded output) */
 void vfat_build_83_name(const char *long_name, char out_name[8], char out_ext[3]);
 
+/* Reconstruct a long filename from VFAT LFN directory entries.
+ * Entries are in on-disk physical order (highest ordinal first).
+ * Returns the name length on success, negative errno on error. */
+int vfat_reconstruct_name(const void *entries, int count,
+                           char *out, int out_max);
+
+/* Reconstruct a long filename with checksum validation against the
+ * associated 8.3 short name. Returns the name length on success,
+ * -EILSEQ if the checksum does not match, negative errno on error. */
+int vfat_reconstruct_name_checked(const void *entries, int count,
+                                   const char name83_8[8],
+                                   const char name83_3[3],
+                                   char *out, int out_max);
+
 #endif

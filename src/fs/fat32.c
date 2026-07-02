@@ -312,59 +312,6 @@ static int name_match_ci(const char *a, const char *b) {
     return 1;
 }
 
-static int lfn_build_name(const struct fat32_lfn *entries, int count, char *out, int out_max) {
-    int pos = 0;
-
-    /* Validate LFN ordering: entries[count-1] must have the LAST_LFN bit (0x40).
-     * This protects against crafted filesystems with missing or corrupted LFN
-     * ordering that could produce garbage names. */
-    if (count < 1 || count > 20) {
-        if (out_max > 0) out[0] = '\0';
-        return 0;
-    }
-    if (!(entries[count - 1].order & 0x40)) {
-        if (out_max > 0) out[0] = '\0';
-        return 0;
-    }
-
-    /* Verify contiguity: ord values should be 1..count without gaps.
-     * ord field is 6 bits (0x3F), with bit 7 (0x40) being the LAST_LFN marker. */
-    for (int i = 0; i < count; i++) {
-        int expected_ord = count - i; /* highest ord first in physical order */
-        int actual_ord = entries[i].order & 0x1F;
-        if (actual_ord != expected_ord) {
-            if (out_max > 0) out[0] = '\0';
-            return 0;
-        }
-        /* Only the highest ord (entries[count-1]) should have the 0x40 bit */
-        if ((entries[i].order & 0x40) && i != count - 1) {
-            if (out_max > 0) out[0] = '\0';
-            return 0;
-        }
-    }
-
-    for (int seq = count; seq >= 1; seq--) {
-        const struct fat32_lfn *e = &entries[seq - 1];
-        for (int i = 0; i < 5 && pos < out_max - 1; i++) {
-            uint16_t c = e->name1[i];
-            if (!c || c == 0xFFFF) continue;
-            out[pos++] = (char)((c >= 'A' && c <= 'Z') ? c + 32 : c);
-        }
-        for (int i = 0; i < 6 && pos < out_max - 1; i++) {
-            uint16_t c = e->name2[i];
-            if (!c || c == 0xFFFF) continue;
-            out[pos++] = (char)((c >= 'A' && c <= 'Z') ? c + 32 : c);
-        }
-        for (int i = 0; i < 2 && pos < out_max - 1; i++) {
-            uint16_t c = e->name3[i];
-            if (!c || c == 0xFFFF) continue;
-            out[pos++] = (char)((c >= 'A' && c <= 'Z') ? c + 32 : c);
-        }
-    }
-    out[pos] = '\0';
-    return pos;
-}
-
 /* Compute the 13-char checksum over an 8.3 name (11 bytes: 8 name + 3 ext) */
 static uint8_t lfn_checksum(const char *name83_8, const char *name83_3);
 
@@ -576,7 +523,7 @@ static uint32_t dir_find(uint32_t dir_cluster, const char *name,
                 int matched = 0;
                 if (lfn_n > 0) {
                     char lname[FAT32_MAX_NAME];
-                    lfn_build_name(lfn_parts, lfn_n, lname, FAT32_MAX_NAME);
+                    vfat_reconstruct_name(lfn_parts, lfn_n, lname, FAT32_MAX_NAME);
                     /* Validate LFN checksum against the 8.3 entry */
                     if (!lfn_validate_checksum(lfn_parts, lfn_n,
                                                entries[i].name, entries[i].ext)) {
@@ -632,7 +579,7 @@ static uint32_t dir_find(uint32_t dir_cluster, const char *name,
                 int matched = 0;
                 if (lfn_n > 0) {
                     char lname[FAT32_MAX_NAME];
-                    lfn_build_name(lfn_parts, lfn_n, lname, FAT32_MAX_NAME);
+                    vfat_reconstruct_name(lfn_parts, lfn_n, lname, FAT32_MAX_NAME);
                     /* Validate LFN checksum against the 8.3 entry */
                     if (!lfn_validate_checksum(lfn_parts, lfn_n,
                                                entries[i].name, entries[i].ext)) {
@@ -894,7 +841,7 @@ int fat32_list_dir(const char *path, char names[][FAT32_MAX_NAME], int max) {
                 if (entries[i].attr & FAT32_ATTR_VOLUME_ID) { lfn_n = 0; continue; }
                 char *out = names[count];
                 if (lfn_n > 0) {
-                    lfn_build_name(lfn_parts, lfn_n, out, FAT32_MAX_NAME);
+                    vfat_reconstruct_name(lfn_parts, lfn_n, out, FAT32_MAX_NAME);
                     lfn_n = 0;
                 } else {
                     int ni = 0;
@@ -957,7 +904,7 @@ int fat32_list_dir(const char *path, char names[][FAT32_MAX_NAME], int max) {
 
                 char *out = names[count];
                 if (lfn_n > 0) {
-                    lfn_build_name(lfn_parts, lfn_n, out, FAT32_MAX_NAME);
+                    vfat_reconstruct_name(lfn_parts, lfn_n, out, FAT32_MAX_NAME);
                     lfn_n = 0;
                 } else {
                     int ni = 0;
@@ -1530,7 +1477,7 @@ static int dir_remove_entry(uint32_t dir_cluster, const char *name) {
                 int matched = 0;
                 if (lfn_n > 0) {
                     char lname[FAT32_MAX_NAME];
-                    lfn_build_name(lfn_parts, lfn_n, lname, FAT32_MAX_NAME);
+                    vfat_reconstruct_name(lfn_parts, lfn_n, lname, FAT32_MAX_NAME);
                     matched = name_match_ci(lname, name);
                 } else {
                     matched = name83_match(entries[i].name, entries[i].ext, name);

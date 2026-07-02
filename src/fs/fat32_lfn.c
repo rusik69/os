@@ -552,6 +552,126 @@ void vfat_build_83_name(const char *long_name, char out_name[8], char out_ext[3]
     }
 }
 
+/* ── vfat_reconstruct_name ─────────────────────────────────────────────
+ *
+ * Reconstruct a long filename from VFAT LFN directory entries.
+ * Validates entry ordering and builds the null-terminated name string.
+ *
+ * The entries array follows the on-disk physical order: highest ordinal
+ * first, lowest ordinal last (entries[0] = ordinal N, entries[N-1] = 1).
+ *
+ * @entries:    array of 'count' LFN directory entries (32 bytes each)
+ * @count:      number of LFN entries (1-20)
+ * @out:        output buffer for the reconstructed name
+ * @out_max:    maximum output buffer size (including null terminator)
+ *
+ * Returns the length of the reconstructed name (excluding null),
+ * or negative errno on error.
+ */
+int vfat_reconstruct_name(const void *entries, int count,
+                           char *out, int out_max)
+{
+    const struct vfat_lfn *lfn = (const struct vfat_lfn *)entries;
+    int pos = 0;
+
+    if (!entries || !out || out_max <= 0)
+        return -EINVAL;
+    if (count < 1 || count > LFN_MAX_ENTRIES) {
+        if (out_max > 0) out[0] = '\0';
+        return -EINVAL;
+    }
+
+    /* Validate: the last entry (highest ordinal in physical order =
+     * entries[count-1]) must have the LAST_LFN bit (0x40) set */
+    if (!(lfn[count - 1].order & LFN_LAST_FLAG)) {
+        if (out_max > 0) out[0] = '\0';
+        return -EINVAL;
+    }
+
+    /* Verify contiguity: ordinal values should be count..1 without gaps.
+     * Entries are stored in reverse physical order (highest ordinal first).
+     * For 3 entries: lfn[0].order==3, lfn[1].order==2, lfn[2].order==1. */
+    for (int i = 0; i < count; i++) {
+        int actual_ord  = (int)(lfn[i].order & LFN_ORD_MASK);
+        int expected_ord = count - i; /* highest ord first */
+        if (actual_ord != expected_ord) {
+            if (out_max > 0) out[0] = '\0';
+            return -EINVAL;
+        }
+        /* Only the highest-ordered entry (entries[count-1]) should
+         * have the 0x40 LAST_LFN bit */
+        if ((lfn[i].order & LFN_LAST_FLAG) && i != count - 1) {
+            if (out_max > 0) out[0] = '\0';
+            return -EINVAL;
+        }
+    }
+
+    /* Reconstruct: iterate from highest ordinal (count) down to 1.
+     * Characters are stored as UTF-16LE; we handle the ASCII subset
+     * and convert uppercase to lowercase for readability. */
+    for (int seq = count; seq >= 1; seq--) {
+        const struct vfat_lfn *e = &lfn[seq - 1];
+        for (int i = 0; i < 5 && pos < out_max - 1; i++) {
+            uint16_t c = e->name1[i];
+            if (!c || c == 0xFFFF) continue;
+            out[pos++] = (char)((c >= 'A' && c <= 'Z') ? c + 32 : c);
+        }
+        for (int i = 0; i < 6 && pos < out_max - 1; i++) {
+            uint16_t c = e->name2[i];
+            if (!c || c == 0xFFFF) continue;
+            out[pos++] = (char)((c >= 'A' && c <= 'Z') ? c + 32 : c);
+        }
+        for (int i = 0; i < 2 && pos < out_max - 1; i++) {
+            uint16_t c = e->name3[i];
+            if (!c || c == 0xFFFF) continue;
+            out[pos++] = (char)((c >= 'A' && c <= 'Z') ? c + 32 : c);
+        }
+    }
+    out[pos] = '\0';
+    return pos;
+}
+
+/* ── vfat_reconstruct_name_checked ────────────────────────────────────
+ *
+ * Reconstruct a long filename from VFAT LFN entries, with checksum
+ * validation against the associated 8.3 short name.
+ *
+ * This is equivalent to vfat_reconstruct_name() followed by checksum
+ * verification, providing an extra integrity check against corrupted
+ * or maliciously crafted directory entries.
+ *
+ * @entries:    array of 'count' LFN directory entries (32 bytes each)
+ * @count:      number of LFN entries (1-20)
+ * @name83_8:   8-byte short name (space-padded, NOT null-terminated)
+ * @name83_3:   3-byte extension (space-padded, NOT null-terminated)
+ * @out:        output buffer for the reconstructed name
+ * @out_max:    maximum output buffer size (including null terminator)
+ *
+ * Returns the length of the reconstructed name on success,
+ * -EILSEQ if the checksum does not match,
+ * or another negative errno on other errors.
+ */
+int vfat_reconstruct_name_checked(const void *entries, int count,
+                                   const char name83_8[8],
+                                   const char name83_3[3],
+                                   char *out, int out_max)
+{
+    const struct vfat_lfn *lfn = (const struct vfat_lfn *)entries;
+    uint8_t stored_cksum;
+
+    if (count <= 0) {
+        /* No LFN entries — nothing to verify */
+        if (out_max > 0) out[0] = '\0';
+        return 0;
+    }
+
+    stored_cksum = lfn[0].checksum;
+    if (stored_cksum != vfat_checksum(name83_8, name83_3))
+        return -EILSEQ;
+
+    return vfat_reconstruct_name(entries, count, out, out_max);
+}
+
 /*
  * ── Module metadata (when built as a module) ──────────────────────────
  * MODULE_LICENSE, MODULE_AUTHOR, etc. are defined by the compilation
