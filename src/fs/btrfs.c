@@ -1029,13 +1029,71 @@ static int btrfs_write(void *priv, const char *path,
     return -EROFS;
 }
 
+/**
+ * btrfs_stat - Stat a file/directory by path, reading the inode item
+ * @priv: Btrfs private data
+ * @path: VFS path to the file or directory
+ * @st:   Output stat buffer
+ *
+ * Resolves the path to a Btrfs inode number via btrfs_resolve_dirid,
+ * reads the INODE_ITEM from the FS tree via btrfs_read_inode_data,
+ * and converts the Btrfs on-disk inode fields to the VFS stat format.
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
 static int btrfs_stat(void *priv, const char *path, struct vfs_stat *st)
 {
-    (void)priv;
+    struct btrfs_priv *bp = (struct btrfs_priv *)priv;
+    struct btrfs_inode_item inode;
+    uint32_t inode_size;
+    uint64_t ino;
+    int ret;
+
+    if (!bp || !path || !st)
+        return -EINVAL;
+
     memset(st, 0, sizeof(*st));
-    st->type = VFS_TYPE_FILE;
-    if (path[0] == '/' && path[1] == '\0')
+
+    /* Resolve path to a Btrfs inode number */
+    ret = btrfs_resolve_dirid(bp, path, &ino);
+    if (ret < 0)
+        return ret;
+
+    /* Read the INODE_ITEM from the FS tree */
+    ret = btrfs_read_inode_data(bp, ino, &inode, &inode_size);
+    if (ret < 0)
+        return ret;
+
+    /* Convert Btrfs on-disk mode to VFS type */
+    uint32_t btrfs_mode = (uint32_t)inode.mode;
+    switch (btrfs_mode & S_IFMT) {
+    case S_IFREG:
+        st->type = VFS_TYPE_FILE;
+        break;
+    case S_IFDIR:
         st->type = VFS_TYPE_DIR;
+        break;
+    case S_IFLNK:
+        st->type = VFS_TYPE_LINK;
+        break;
+    default:
+        /* Fallback: treat unknown types as regular files */
+        st->type = VFS_TYPE_FILE;
+        break;
+    }
+
+    /* Populate stat fields from the Btrfs inode item */
+    st->size      = inode.size;
+    st->uid       = (uint16_t)inode.uid;
+    st->gid       = (uint16_t)inode.gid;
+    st->mode      = (uint16_t)(btrfs_mode & 0xFFFFU);
+    st->nlink     = (uint32_t)inode.nlink;
+    st->ino       = (uint32_t)ino;
+    st->atime     = (uint32_t)inode.atime;
+    st->mtime     = (uint32_t)inode.mtime;
+    st->dev_major = 0;
+    st->dev_minor = 0;
+
     return 0;
 }
 
