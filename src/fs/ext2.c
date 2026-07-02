@@ -2590,54 +2590,23 @@ static int ext2_unlink(void *priv, const char *path)
 		target.i_links_count--;
 
 	if (target.i_links_count == 0) {
-		/* Free all data blocks (best-effort) */
-		uint64_t file_size = ext2_inode_get_size(ep, &target);
-		uint32_t num_blocks = (uint32_t)((file_size
-		                     + ep->block_size - 1)
-		                     / ep->block_size);
-		for (uint32_t ib = 0; ib < num_blocks; ib++) {
-			int64_t pbn = ext2_get_block_num(ep, &target, ib);
-			if (pbn > 0) {
-				uint32_t p = (uint32_t)pbn;
-				uint32_t g = p / ep->blocks_per_group;
-				if (g < ep->num_block_groups) {
-					uint32_t bit = p
-					    % ep->blocks_per_group;
-					uint8_t bm[4096];
-					struct ext2_bg_desc *bgd =
-					    &ep->bgd_cache[g];
-					if (ext2_read_block(ep,
-					    bgd->bg_block_bitmap,
-					    bm) == 0) {
-						bm[bit / 8] |=
-						    (1U << (bit % 8));
-						ext2_write_block(ep,
-						    bgd->bg_block_bitmap,
-						    bm);
-						bgd->bg_free_blocks_count++;
-						ep->sb.s_free_blocks_count++;
-					}
-				}
-			}
+		/* Add to orphan list instead of freeing immediately.
+		 * The data blocks and inode stay allocated until the
+		 * orphan is released (via ext2_orphan_cleanup on next
+		 * mount, or ext2_orphan_release when the last open
+		 * file descriptor is closed). */
+		int orphan_ret = ext2_orphan_add(ep, target_ino,
+		                                  &target);
+		if (orphan_ret < 0) {
+			kprintf("[ext2] unlink: failed to orphan"
+			        " inode %u: %d\n",
+			        target_ino, orphan_ret);
+			/* Continue — inode was freed anyway by the
+			 * old code path; with orphan handling we still
+			 * need to remove the directory entry.  We'll
+			 * orphan it as best-effort. */
+			return orphan_ret;
 		}
-
-		/* Free the inode itself (mark bitmap bit as free) */
-		uint32_t group = (target_ino - 1) / ep->inodes_per_group;
-		uint32_t index = (target_ino - 1) % ep->inodes_per_group;
-		if (group < ep->num_block_groups) {
-			uint8_t ibm[4096];
-			struct ext2_bg_desc *bgd = &ep->bgd_cache[group];
-			if (ext2_read_block(ep, bgd->bg_inode_bitmap,
-			                    ibm) == 0) {
-				ibm[index / 8] |= (1U << (index % 8));
-				ext2_write_block(ep,
-				    bgd->bg_inode_bitmap, ibm);
-				bgd->bg_free_inodes_count++;
-				ep->sb.s_free_inodes_count++;
-			}
-		}
-
-		memset(&target, 0, sizeof(target));
 	}
 
 	target.i_ctime = (uint32_t)(timer_get_ticks() / TIMER_FREQ);
@@ -2713,6 +2682,259 @@ static struct vfs_ops ext2_ops = {
     .symlink = ext2_symlink,
     .readlink = ext2_readlink,
 };
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  Orphan handling — track inodes whose i_links_count dropped to 0
+ *
+ *  When a file is unlinked but may still be referenced by an open file
+ *  descriptor, the inode is placed on the orphan list instead of being
+ *  freed immediately.  The orphan list is a singly-linked list rooted
+ *  at s_last_orphan in the superblock; each orphan inode's i_dtime
+ *  field stores the next orphan's inode number (0 = end of list).
+ *
+ *  During mount, ext2_orphan_cleanup() processes any orphans that were
+ *  left behind after a crash, freeing their data blocks and inodes.
+ * ══════════════════════════════════════════════════════════════════════ */
+
+/* Forward declarations for static helpers defined later in this file */
+static int ext2_sync_super(struct ext2_priv *ep);
+
+/* Add an inode to the orphan list.
+ * Sets i_dtime to the current timestamp and links the inode into the
+ * orphan list rooted at s_last_orphan.  The superblock is synced.
+ *
+ * The orphan list is a singly-linked list rooted at s_last_orphan in
+ * the superblock.  Each orphan inode's i_dtime field stores the next
+ * orphan's inode number (0 = end of list). */
+int ext2_orphan_add(struct ext2_priv *ep, uint32_t ino,
+                    struct ext2_inode *inode)
+{
+    uint32_t prev_head = ep->sb.s_last_orphan;
+
+    /* Record the previous orphan list head as the "next orphan" pointer
+     * in i_dtime.  When i_links_count == 0 and the inode is on the
+     * orphan list, i_dtime stores the next orphan inode number. */
+    inode->i_dtime = prev_head;
+    inode->i_ctime = (uint32_t)(timer_get_ticks() / TIMER_FREQ);
+
+    /* Write inode first, then update superblock */
+    int ret = ext2_write_inode(ep, ino, inode);
+    if (ret < 0)
+        return ret;
+
+    /* Link this inode as the new head of the orphan list */
+    ep->sb.s_last_orphan = ino;
+    ep->sb.s_wtime = (uint32_t)(timer_get_ticks() / TIMER_FREQ);
+
+    return ext2_sync_super(ep);
+}
+
+/* Remove an inode from the orphan list.
+ * Walks the singly-linked list and unlinks the matching inode.
+ * Returns 0 on success, -ENOENT if inode was not found on the list. */
+int ext2_orphan_del(struct ext2_priv *ep, uint32_t ino)
+{
+    uint32_t prev = 0;
+    uint32_t curr = ep->sb.s_last_orphan;
+
+    /* Walk the orphan list */
+    while (curr != 0) {
+        if (curr == ino) {
+            /* Found it — unlink by updating the previous node's
+             * i_dtime (or s_last_orphan if this is the head) */
+            if (prev == 0) {
+                /* Removing head — update superblock */
+                /* We need to read current orphan's i_dtime to know
+                 * what the new head should be */
+                struct ext2_inode orphan_inode;
+                int ret = ext2_read_inode(ep, curr, &orphan_inode);
+                if (ret < 0)
+                    return ret;
+                ep->sb.s_last_orphan = orphan_inode.i_dtime;
+            } else {
+                /* Update previous orphan's i_dtime to skip current */
+                struct ext2_inode prev_inode;
+                int ret = ext2_read_inode(ep, prev, &prev_inode);
+                if (ret < 0)
+                    return ret;
+                /* Read current orphan's i_dtime (the "next" pointer) */
+                struct ext2_inode curr_inode;
+                ret = ext2_read_inode(ep, curr, &curr_inode);
+                if (ret < 0)
+                    return ret;
+                prev_inode.i_dtime = curr_inode.i_dtime;
+                ret = ext2_write_inode(ep, prev, &prev_inode);
+                if (ret < 0)
+                    return ret;
+            }
+            ep->sb.s_wtime = (uint32_t)(timer_get_ticks() / TIMER_FREQ);
+            return ext2_sync_super(ep);
+        }
+        /* Read current orphan's i_dtime to find next */
+        struct ext2_inode orphan_inode;
+        int ret = ext2_read_inode(ep, curr, &orphan_inode);
+        if (ret < 0)
+            return ret;
+        prev = curr;
+        curr = orphan_inode.i_dtime;
+    }
+
+    return -ENOENT;
+}
+
+/* Internal: free all data blocks owned by an inode.
+ * Walks every logical block up to the file size and calls
+ * ext2_free_block for each allocated physical block.
+ * Returns 0 on success, negative errno on failure (best-effort:
+ * errors are logged but don't abort). */
+static int ext2_free_inode_blocks(struct ext2_priv *ep,
+                                  const struct ext2_inode *inode)
+{
+    uint64_t file_size = ext2_inode_get_size(ep, inode);
+    uint32_t num_blocks = (uint32_t)((file_size + ep->block_size - 1)
+                                     / ep->block_size);
+    int last_err = 0;
+
+    for (uint32_t ib = 0; ib < num_blocks; ib++) {
+        int64_t pbn = ext2_get_block_num(ep, (struct ext2_inode *)inode, ib);
+        if (pbn > 0) {
+            int ret = ext2_free_block(ep, (uint32_t)pbn);
+            if (ret < 0) {
+                kprintf("[ext2] orphan: failed to free block %llu: %d\n",
+                        (unsigned long long)pbn, ret);
+                last_err = ret;
+            }
+        }
+    }
+
+    return last_err;
+}
+
+/* Internal: mark an inode as free in the bitmap and update counts. */
+static int ext2_free_inode_bitmap(struct ext2_priv *ep, uint32_t ino)
+{
+    uint32_t group = (ino - 1) / ep->inodes_per_group;
+    uint32_t index = (ino - 1) % ep->inodes_per_group;
+
+    if (group >= ep->num_block_groups)
+        return -EINVAL;
+
+    uint8_t ibm[4096];
+    struct ext2_bg_desc *bgd = &ep->bgd_cache[group];
+
+    if (ext2_read_block(ep, bgd->bg_inode_bitmap, ibm) < 0)
+        return -EIO;
+
+    ibm[index / 8] |= (1U << (index % 8));
+
+    if (ext2_write_block(ep, bgd->bg_inode_bitmap, ibm) < 0)
+        return -EIO;
+
+    bgd->bg_free_inodes_count++;
+    ep->sb.s_free_inodes_count++;
+    return 0;
+}
+
+/* Fully release one orphaned inode: free its data blocks, free the
+ * inode, and remove it from the orphan list. */
+int ext2_orphan_release(struct ext2_priv *ep, uint32_t ino)
+{
+    struct ext2_inode inode;
+    int ret = ext2_read_inode(ep, ino, &inode);
+    if (ret < 0)
+        return ret;
+
+    /* Free all data blocks */
+    ret = ext2_free_inode_blocks(ep, &inode);
+    if (ret < 0) {
+        kprintf("[ext2] orphan: partial block free for inode %u\n", ino);
+        /* Continue anyway — best-effort */
+    }
+
+    /* Free the inode in the bitmap */
+    ret = ext2_free_inode_bitmap(ep, ino);
+    if (ret < 0)
+        return ret;
+
+    /* Remove from orphan list */
+    ret = ext2_orphan_del(ep, ino);
+    if (ret < 0 && ret != -ENOENT)
+        return ret;
+
+    /* Zero out the inode on disk */
+    memset(&inode, 0, sizeof(inode));
+    ret = ext2_write_inode(ep, ino, &inode);
+    if (ret < 0)
+        return ret;
+
+    kprintf("[ext2] orphan: released inode %u\n", ino);
+    return 0;
+}
+
+/* Process the entire orphan list, freeing every orphaned inode.
+ * Returns 0 on success, negative errno on failure. */
+int ext2_orphan_cleanup(struct ext2_priv *ep)
+{
+    uint32_t orphan = ep->sb.s_last_orphan;
+    uint32_t count = 0;
+
+    if (orphan == 0)
+        return 0;  /* No orphans */
+
+    kprintf("[ext2] orphan: processing orphan list (head=%u)\n", orphan);
+
+    while (orphan != 0) {
+        struct ext2_inode inode;
+        int ret = ext2_read_inode(ep, orphan, &inode);
+        if (ret < 0) {
+            kprintf("[ext2] orphan: failed to read inode %u, breaking\n",
+                    orphan);
+            break;
+        }
+
+        uint32_t next = inode.i_dtime;  /* Next orphan inode */
+        uint32_t this_ino = orphan;
+
+        /* Free blocks and inode */
+        ret = ext2_free_inode_blocks(ep, &inode);
+        if (ret < 0) {
+            kprintf("[ext2] orphan: partial block free for inode %u\n",
+                    this_ino);
+        }
+
+        ret = ext2_free_inode_bitmap(ep, this_ino);
+        if (ret < 0) {
+            kprintf("[ext2] orphan: failed to free inode bitmap %u\n",
+                    this_ino);
+            break;
+        }
+
+        /* Zero out the inode */
+        memset(&inode, 0, sizeof(inode));
+        ret = ext2_write_inode(ep, this_ino, &inode);
+        if (ret < 0) {
+            kprintf("[ext2] orphan: failed to zero inode %u\n", this_ino);
+            break;
+        }
+
+        count++;
+        orphan = next;
+    }
+
+    /* Clear orphan list head */
+    ep->sb.s_last_orphan = 0;
+    ep->sb.s_wtime = (uint32_t)(timer_get_ticks() / TIMER_FREQ);
+    int ret = ext2_sync_super(ep);
+    if (ret < 0) {
+        kprintf("[ext2] orphan: failed to sync superblock\n");
+        return ret;
+    }
+
+    if (count > 0) {
+        kprintf("[ext2] orphan: cleaned up %u orphaned inodes\n", count);
+    }
+    return 0;
+}
 
 int ext2_mount(const char *mountpoint, uint8_t dev_id) {
     struct ext2_priv *ep = (struct ext2_priv *)kmalloc(sizeof(struct ext2_priv));
@@ -2849,6 +3071,11 @@ int ext2_mount(const char *mountpoint, uint8_t dev_id) {
     if (has_extents) kprintf(", extents");
     if (has_64bit)   kprintf(", 64bit");
     kprintf("\n");
+
+    /* Process any orphaned inodes left from a previous unclean
+     * unmount.  This frees their data blocks and reclaims the
+     * inodes in the bitmap, preventing space leaks. */
+    ext2_orphan_cleanup(ep);
 
     return vfs_mount_ex(mountpoint, &ext2_ops, ep, 0);
 }

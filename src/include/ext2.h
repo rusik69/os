@@ -46,6 +46,7 @@ struct ext2_superblock {
     char     s_volume_name[16];
     char     s_last_mounted[64];
     uint32_t s_algo_bitmap;         /* Compression algorithm bitmap */
+    uint32_t s_last_orphan;         /* Inode number of head of orphan list (0 = none) */
     /* HTree-related fields */
     uint8_t  s_def_hash_version;    /* Default hash version for HTree */
     uint8_t  s_hash_seed[4];        /* Padding for hash seed alignment */
@@ -462,5 +463,42 @@ int ext2_acl_permission(struct ext2_priv *ep, const char *path,
  * @new_total_blocks: desired total blocks after resize
  * Returns new total blocks on success, negative errno on failure. */
 int64_t ext2_resize(struct ext2_priv *ep, uint64_t new_total_blocks);
+
+/* ── Orphan handling ──────────────────────────────────────────────────── */
+
+/* Add an inode to the orphan list.
+ * The orphan list is a singly-linked list rooted at s_last_orphan in the
+ * superblock; each orphan inode stores the next orphan's inode number in
+ * its i_dtime field (0 = end of list).  Called when i_links_count drops
+ * to 0 but the inode may still be referenced by open file descriptors.
+ * @ep: ext2 private data
+ * @ino: inode number of the orphaned inode
+ * @inode: the on-disk inode (i_dtime is updated to store timestamp)
+ * Returns 0 on success, negative errno on failure. */
+int ext2_orphan_add(struct ext2_priv *ep, uint32_t ino,
+                    struct ext2_inode *inode);
+
+/* Remove an inode from the orphan list.
+ * Walks the orphan linked list and unlinks @ino.  The inode's i_dtime
+ * is preserved (not cleared) — caller should zero it if desired.
+ * @ep: ext2 private data
+ * @ino: inode number to remove from orphan list
+ * Returns 0 on success, -ENOENT if inode was not on the list. */
+int ext2_orphan_del(struct ext2_priv *ep, uint32_t ino);
+
+/* Fully release an orphaned inode: remove from orphan list, free all
+ * data blocks, and free the inode itself.  The inode bitmap and block
+ * bitmaps are updated, and the superblock is synced.
+ * @ep: ext2 private data
+ * @ino: inode number to release
+ * Returns 0 on success, negative errno on failure. */
+int ext2_orphan_release(struct ext2_priv *ep, uint32_t ino);
+
+/* Process the entire orphan list: for each orphaned inode, free its
+ * data blocks, free the inode, and remove it from the list.  After
+ * cleanup, s_last_orphan is set to 0.
+ * @ep: ext2 private data
+ * Returns 0 on success, negative errno on failure. */
+int ext2_orphan_cleanup(struct ext2_priv *ep);
 
 #endif /* EXT2_H */
