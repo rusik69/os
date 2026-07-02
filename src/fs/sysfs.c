@@ -660,6 +660,9 @@ void __init sysfs_init(void) {
     /* /sys/devices/ per-device directories (PCI, etc.) */
     sysfs_create_device_dirs();
 
+    /* /sys/bus/ per-bus directories (PCI, platform, etc.) */
+    sysfs_create_bus_dirs();
+
     /* /sys/class/block/ - list block devices */
     sysfs_create_file("/sys/class/block", "sda\nsdb\n");
 

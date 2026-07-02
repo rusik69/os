@@ -53,6 +53,11 @@ void sysfs_init(void);
  * (PCI devices, platform devices, etc.).  Called from sysfs_init(). */
 void sysfs_create_device_dirs(void);
 
+/* Create per-bus sysfs directories under /sys/bus/
+ * (PCI bus, platform bus, etc. with devices/ and drivers/ subdirs).
+ * Called from sysfs_init(). */
+void sysfs_create_bus_dirs(void);
+
 /* Create a virtual file under /sys/<path> with static content */
 int sysfs_create_file(const char *path, const char *content);
 

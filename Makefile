@@ -345,6 +345,7 @@ C_SRCS = src/kernel/kernel.c \
          src/ipc/mqueue.c \
          src/fs/sysfs.c \
          src/fs/sysfs_devices.c \
+         src/fs/sysfs_bus.c \
          src/fs/debugfs.c \
          src/ipc/semaphore.c \
          src/kernel/audit.c \
