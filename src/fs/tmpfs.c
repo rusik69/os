@@ -11,6 +11,7 @@
 #include "cpu_topology.h"
 #include "page_allocator_ext.h"
 #include "swap.h"
+#include "hugetlb.h"
 
 static struct tmpfs_inode inodes[TMPFS_MAX_INODES];
 static int tmpfs_mounted = 0;
@@ -46,6 +47,7 @@ static int alloc_inode(void) {
     for (int i = 1; i < TMPFS_MAX_INODES; i++) {
         if (!inodes[i].in_use) {
             inodes[i].in_use = 1;
+            inodes[i].is_huge = 0;
             inodes[i].is_swapped = 0;
             inodes[i].swap_npages = 0;
             for (int j = 0; j < TMPFS_MAX_SWAP_PAGES; j++) {
@@ -88,6 +90,7 @@ static void free_inode(int idx) {
     inodes[idx].data_phys = 0;
     inodes[idx].size = 0;
     inodes[idx].numa_node = 0;
+    inodes[idx].is_huge = 0;
     inodes[idx].is_swapped = 0;
     inodes[idx].swap_npages = 0;
 
@@ -182,6 +185,21 @@ static uint8_t *tmpfs_alloc_pages_numa(uint32_t size, uint64_t *out_phys)
         return ptr;
     }
 
+    /*
+     * Large allocations (>= 2 MB): try a huge page (order-9 / 2 MB)
+     * first, which reduces TLB pressure and page-table overhead.
+     * Falls back to order-for-size pages on failure.
+     */
+    if (size >= HUGETLB_PAGE_SIZE) {
+        int node = numa_home_node();
+        uint64_t huge_phys = tmpfs_huge_alloc(node);
+        if (huge_phys != 0) {
+            *out_phys = huge_phys;
+            return (uint8_t *)PHYS_TO_VIRT(huge_phys);
+        }
+        /* Huge page allocation failed — fall through to 4KB-based alloc */
+    }
+
     /* Large allocations: use NUMA-aware page allocator */
     int node = numa_home_node();
     int order = order_for_size(size);
@@ -251,6 +269,15 @@ int tmpfs_swap_out_inode(int idx)
         return 0;                          /* already on swap */
     if (inodes[idx].data_phys == 0)
         return -EOPNOTSUPP;                /* kmalloc'd buffer, not swappable */
+
+    /* If the inode is backed by a huge page (2MB), split it into regular
+     * 4KB pages first so that the swap subsystem can handle each 4KB
+     * chunk individually.  This is a logical split — the physical memory
+     * stays in place until each 4KB fragment is swapped out below. */
+    if (inodes[idx].is_huge) {
+        inodes[idx].is_huge = 0;
+        tmpfs_huge_split(inodes[idx].data_phys);
+    }
 
     uint32_t npages = (inodes[idx].size + PAGE_SIZE - 1) / PAGE_SIZE;
     if (npages > TMPFS_MAX_SWAP_PAGES)
@@ -351,6 +378,7 @@ int tmpfs_swap_in_inode(int idx)
 
     inodes[idx].data       = (uint8_t *)PHYS_TO_VIRT(new_phys);
     inodes[idx].data_phys  = new_phys;
+    inodes[idx].is_huge    = (size >= HUGETLB_PAGE_SIZE) ? 1 : 0;
     inodes[idx].swap_npages = 0;
     inodes[idx].is_swapped  = 0;
 
@@ -614,6 +642,7 @@ static int tmpfs_write(void *priv, const char *path, const void *buf, uint32_t s
 
         inodes[idx].data = new;
         inodes[idx].data_phys = new_phys;
+        inodes[idx].is_huge = (size >= HUGETLB_PAGE_SIZE && new_phys != 0) ? 1 : 0;
         inodes[idx].numa_node = numa_home_node();
     }
     memcpy(inodes[idx].data, buf, size);
@@ -831,6 +860,7 @@ static int tmpfs_truncate(void *priv, const char *path, uint32_t len) {
             }
             inodes[idx].swap_npages = 0;
             inodes[idx].is_swapped  = 0;
+            inodes[idx].is_huge     = 0;
             inodes[idx].size = 0;
         } else {
             /* Truncate to non-zero: swap in first, then truncate */
@@ -847,6 +877,7 @@ do_truncate:
                                      inodes[idx].size);
             inodes[idx].data = NULL;
             inodes[idx].data_phys = 0;
+            inodes[idx].is_huge = 0;
             inodes[idx].size = 0;
         } else if (len < inodes[idx].size) {
             inodes[idx].size = len;

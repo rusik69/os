@@ -87,6 +87,9 @@ struct tmpfs_inode {
     uint32_t               swap_npages;   /* number of pages tracked in swap_map */
     int                    is_swapped;    /* 1 = data is entirely on swap device */
 
+    /* Huge page backing: 1 = data is a single 2MB huge page */
+    int is_huge;
+
     /* Per-directory O(1) hash lookup table (NULL for non-directories) */
     struct tmpfs_dir_htable *dir_htable;
 };
@@ -200,5 +203,47 @@ int tmpfs_swap_in_inode(int idx);
  * is low.
  */
 int tmpfs_try_evict(int target_pages);
+
+/* ── Huge page support API ──────────────────────────────────────────── */
+
+/**
+ * tmpfs_huge_get_enabled() - Check whether tmpfs huge page support is enabled.
+ * Returns 1 if enabled, 0 if disabled.
+ */
+int tmpfs_huge_get_enabled(void);
+
+/**
+ * tmpfs_set_huge_enabled() - Enable or disable tmpfs huge page support.
+ * @enabled:  1 to enable, 0 to disable.
+ */
+void tmpfs_set_huge_enabled(int enabled);
+
+/**
+ * tmpfs_huge_alloc() - Allocate a 2MB page for tmpfs data storage.
+ * @node:  NUMA node to allocate from.
+ *
+ * Returns physical address of the 2MB page (zeroed), or 0 on failure.
+ * Uses alloc_pages_node() with order-9 (2MB), falling back on failure.
+ */
+uint64_t tmpfs_huge_alloc(int node);
+
+/**
+ * tmpfs_huge_free() - Free a 2MB page previously allocated by tmpfs_huge_alloc().
+ * @phys:  Physical address of the 2MB page (may be 0, in which case this is a no-op).
+ */
+void tmpfs_huge_free(uint64_t phys);
+
+/**
+ * tmpfs_huge_split() - Mark that a huge page was split (statistics only).
+ * @phys:  Physical address of the 2MB page that was split.
+ */
+void tmpfs_huge_split(uint64_t phys);
+
+/* ── Huge page statistics ──────────────────────────────────────────── */
+
+uint64_t tmpfs_huge_get_alloc_count(void);
+uint64_t tmpfs_huge_get_free_count(void);
+uint64_t tmpfs_huge_get_split_count(void);
+uint64_t tmpfs_huge_get_fail_count(void);
 
 #endif /* TMPFS_H */

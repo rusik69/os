@@ -234,6 +234,7 @@ C_SRCS = src/kernel/kernel.c \
          src/fs/procfs.c \
          src/fs/devfs.c \
          src/fs/tmpfs.c \
+         src/fs/tmpfs_huge.c \
          src/ipc/shm.c \
          src/fs/fat32.c \
          src/fs/vfat_shortname.c \
