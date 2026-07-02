@@ -19,6 +19,10 @@ static int tmpfs_mounted = 0;
 static uint64_t tmpfs_size_limit  = TMPFS_SIZE_UNLIMITED; /* 0 = unlimited */
 static uint64_t tmpfs_used_bytes  = 0;                     /* total data bytes */
 
+/* ── Per-mount inode quota ─────────────────────────────────────────── */
+static uint32_t tmpfs_max_inodes  = TMPFS_INODE_UNLIMITED; /* 0 = unlimited */
+static uint32_t tmpfs_used_inodes = 0;                      /* total used inodes */
+
 /* ── NUMA-aware page allocation helpers (forward declarations) ────── */
 static uint8_t *tmpfs_alloc_pages_numa(uint32_t size, uint64_t *out_phys);
 static void tmpfs_free_pages_or_kmem(uint8_t *ptr, uint64_t phys,
@@ -27,6 +31,11 @@ static void tmpfs_free_pages_or_kmem(uint8_t *ptr, uint64_t phys,
 /* ── helpers ───────────────────────────────────────────────────── */
 
 static int alloc_inode(void) {
+    /* Check inode quota before allocating */
+    if (tmpfs_max_inodes != TMPFS_INODE_UNLIMITED &&
+        tmpfs_used_inodes >= tmpfs_max_inodes) {
+        return -ENOSPC;
+    }
     for (int i = 1; i < TMPFS_MAX_INODES; i++) {
         if (!inodes[i].in_use) {
             inodes[i].in_use = 1;
@@ -36,10 +45,11 @@ static int alloc_inode(void) {
                 inodes[i].swap_map[j].swap_dev = -1;
                 inodes[i].swap_map[j].swap_slot = 0;
             }
+            tmpfs_used_inodes++;
             return i;
         }
     }
-    return -EINVAL;
+    return -ENOSPC;
 }
 
 static void free_inode(int idx) {
@@ -73,6 +83,7 @@ static void free_inode(int idx) {
     inodes[idx].numa_node = 0;
     inodes[idx].is_swapped = 0;
     inodes[idx].swap_npages = 0;
+    tmpfs_used_inodes--;
 }
 
 static int find_inode(const char *path) {
@@ -831,6 +842,100 @@ struct vfs_ops tmpfs_vfs_ops = {
     .tmpfile     = tmpfs_tmpfile,
 };
 
+/* ══════════════════════════════════════════════════════════════════════
+ * ── Quota / size-limit API implementation ───────────────────────────
+ * ══════════════════════════════════════════════════════════════════════ */
+
+int tmpfs_set_inode_limit(uint32_t max_inodes)
+{
+    /* Clamp to the hard table limit */
+    if (max_inodes > TMPFS_MAX_INODES) {
+        return -EINVAL;
+    }
+    /* Cannot set limit below current usage */
+    if (max_inodes != TMPFS_INODE_UNLIMITED &&
+        tmpfs_used_inodes > max_inodes) {
+        return -EINVAL;
+    }
+    tmpfs_max_inodes = max_inodes;
+    return 0;
+}
+
+uint32_t tmpfs_get_inode_limit(void)
+{
+    return tmpfs_max_inodes;
+}
+
+uint32_t tmpfs_get_used_inodes(void)
+{
+    return tmpfs_used_inodes;
+}
+
+int tmpfs_set_size_limit(uint64_t max_bytes)
+{
+    /* Cannot set limit below current usage */
+    if (max_bytes != TMPFS_SIZE_UNLIMITED &&
+        tmpfs_used_bytes > max_bytes) {
+        return -ENOSPC;
+    }
+    tmpfs_size_limit = max_bytes;
+    return 0;
+}
+
+uint64_t tmpfs_get_size_limit(void)
+{
+    return tmpfs_size_limit;
+}
+
+uint64_t tmpfs_get_used_bytes(void)
+{
+    return tmpfs_used_bytes;
+}
+
+int tmpfs_set_quota(uint32_t max_inodes, uint64_t max_bytes)
+{
+    int ret;
+
+    /* Validate inode limit first */
+    ret = tmpfs_set_inode_limit(max_inodes);
+    if (ret < 0)
+        return ret;
+
+    /* Then validate size limit */
+    ret = tmpfs_set_size_limit(max_bytes);
+    if (ret < 0) {
+        /* Roll back inode limit */
+        tmpfs_max_inodes = TMPFS_INODE_UNLIMITED;
+        return ret;
+    }
+
+    return 0;
+}
+
+int tmpfs_statfs(struct vfs_statfs *buf)
+{
+    if (!buf)
+        return -EINVAL;
+
+    memset(buf, 0, sizeof(*buf));
+    buf->f_type    = 0x01021994;  /* tmpfs magic (same as generic ext2-ish) */
+    buf->f_bsize   = TMPFS_BLOCK_SIZE;
+    buf->f_blocks  = 0;  /* tmpfs has no backing store */
+    buf->f_bfree   = 0;
+    buf->f_bavail  = 0;
+    buf->f_namelen = TMPFS_MAX_NAME - 1;
+
+    /* Report inode quotas */
+    buf->f_files   = (tmpfs_max_inodes != TMPFS_INODE_UNLIMITED)
+                         ? (uint64_t)tmpfs_max_inodes
+                         : TMPFS_MAX_INODES;
+    buf->f_ffree   = (buf->f_files > (uint64_t)tmpfs_used_inodes)
+                         ? (buf->f_files - (uint64_t)tmpfs_used_inodes)
+                         : 0ULL;
+
+    return 0;
+}
+
 int tmpfs_mount(void) {
     if (tmpfs_mounted) return -EINVAL;
     /* Clear all inodes */
@@ -843,6 +948,9 @@ int tmpfs_mount(void) {
     /* Reset size accounting (unlimited) */
     tmpfs_size_limit = TMPFS_SIZE_UNLIMITED;
     tmpfs_used_bytes = 0;
+    /* Reset inode quota (unlimited) */
+    tmpfs_max_inodes = TMPFS_INODE_UNLIMITED;
+    tmpfs_used_inodes = 0;
     /* Create root directory */
     inodes[0].in_use = 1;
     inodes[0].type = TMPFS_TYPE_DIR;
@@ -860,6 +968,7 @@ int tmpfs_mount(void) {
         inodes[0].swap_map[j].swap_dev = -1;
         inodes[0].swap_map[j].swap_slot = 0;
     }
+    tmpfs_used_inodes = 1;  /* root dir inode */
     tmpfs_mounted = 1;
     return 0;
 }
@@ -917,3 +1026,13 @@ static int tmpfs_sync(void *file)
 EXPORT_SYMBOL(tmpfs_swap_out_inode);
 EXPORT_SYMBOL(tmpfs_swap_in_inode);
 EXPORT_SYMBOL(tmpfs_try_evict);
+
+/* ── Public exports for quota / size-limit API ────────── */
+EXPORT_SYMBOL(tmpfs_set_inode_limit);
+EXPORT_SYMBOL(tmpfs_get_inode_limit);
+EXPORT_SYMBOL(tmpfs_get_used_inodes);
+EXPORT_SYMBOL(tmpfs_set_size_limit);
+EXPORT_SYMBOL(tmpfs_get_size_limit);
+EXPORT_SYMBOL(tmpfs_get_used_bytes);
+EXPORT_SYMBOL(tmpfs_set_quota);
+EXPORT_SYMBOL(tmpfs_statfs);

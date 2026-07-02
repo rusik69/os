@@ -28,6 +28,9 @@
 /* Default size limit when none is specified (0 = unlimited). */
 #define TMPFS_SIZE_UNLIMITED 0ULL
 
+/* Default inode limit when none is specified (0 = unlimited). */
+#define TMPFS_INODE_UNLIMITED 0U
+
 /* Inode types */
 #define TMPFS_TYPE_FILE  1
 #define TMPFS_TYPE_DIR   2
@@ -87,6 +90,61 @@ extern struct vfs_ops tmpfs_vfs_ops;
 
 /* Initialize tmpfs subsystem */
 void tmpfs_init(void);
+
+/* ── Quota / size-limit API ────────────────────────────────────────── */
+
+/**
+ * tmpfs_set_inode_limit() - Set the per-mount inode count quota.
+ * @max_inodes:  Maximum number of inodes allowed (0 = unlimited).
+ *               Clamped to TMPFS_MAX_INODES.
+ * Returns 0 on success, -EINVAL if fewer inodes are currently in use.
+ */
+int tmpfs_set_inode_limit(uint32_t max_inodes);
+
+/**
+ * tmpfs_get_inode_limit() - Get the current inode quota.
+ * Returns the configured maximum inode count (0 = unlimited).
+ */
+uint32_t tmpfs_get_inode_limit(void);
+
+/**
+ * tmpfs_get_used_inodes() - Get the number of inodes currently in use.
+ */
+uint32_t tmpfs_get_used_inodes(void);
+
+/**
+ * tmpfs_set_size_limit() - Set the per-mount data size limit.
+ * @max_bytes:  Maximum data bytes allowed (0 = unlimited).
+ * Returns 0 on success, -ENOSPC if already over the new limit.
+ */
+int tmpfs_set_size_limit(uint64_t max_bytes);
+
+/**
+ * tmpfs_get_size_limit() - Get the current data size limit.
+ * Returns the configured maximum (0 = unlimited).
+ */
+uint64_t tmpfs_get_size_limit(void);
+
+/**
+ * tmpfs_get_used_bytes() - Get the number of data bytes currently stored.
+ */
+uint64_t tmpfs_get_used_bytes(void);
+
+/**
+ * tmpfs_set_quota() - Set both inode count and data size limits at once.
+ * @max_inodes:  Maximum inodes (0 = unlimited).
+ * @max_bytes:   Maximum data bytes (0 = unlimited).
+ * Existing inode/data counts are validated against the new limits.
+ * Returns 0 on success, negative errno on conflict.
+ */
+int tmpfs_set_quota(uint32_t max_inodes, uint64_t max_bytes);
+
+/**
+ * tmpfs_statfs() - Fill a vfs_statfs structure with tmpfs quota info.
+ * @buf:  Output buffer to populate.
+ * Returns 0 on success.
+ */
+int tmpfs_statfs(struct vfs_statfs *buf);
 
 /* ── Swap-backing API ──────────────────────────────────────────────── */
 
