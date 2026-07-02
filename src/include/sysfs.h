@@ -58,6 +58,12 @@ void sysfs_create_device_dirs(void);
  * Called from sysfs_init(). */
 void sysfs_create_bus_dirs(void);
 
+/* Create per-class sysfs directories under /sys/class/
+ * (block, net, input, sound, tty, misc, drm, video4linux,
+ * i2c-adapter, spi_master).
+ * Called from sysfs_init() after /sys/class/ has been created. */
+void sysfs_create_class_dirs(void);
+
 /* Create a virtual file under /sys/<path> with static content */
 int sysfs_create_file(const char *path, const char *content);
 
