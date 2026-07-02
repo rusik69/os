@@ -202,6 +202,44 @@ static int ucs2be_to_utf8(const char *ucs2, int ucs2_len_bytes,
 	return joliet_ucs2be_to_utf8(ucs2, ucs2_len_bytes, out, out_max);
 }
 
+/* ── Hybrid fallback chain: Rock Ridge → Joliet → ISO9660 ──────── */
+
+/* Fallback chain priority for entry names:
+ *   1. Rock Ridge NM (POSIX long filename) — if has_rrip and rr_name present
+ *   2. Joliet UCS-2→UTF-8 decoded name  — if iso_name was Joliet-decoded
+ *   3. Standard ISO9660 short name      — raw d-character + version suffix
+ * For Level 3, the ";1" version suffix is stripped from the returned length.
+ * Level 1 and Level 2 names never carry version suffixes.
+ *
+ * Returns pointer to the NUL-terminated name string (always valid).
+ * @out_len receives the byte length of the effective name (sans version). */
+static const char *iso9660_get_entry_name(struct iso9660_priv *ip,
+                                          const struct iso_rrip_entry *de,
+                                          size_t *out_len)
+{
+	const char *name;
+
+	/* Level 1: Rock Ridge NM — POSIX long filename */
+	if (ip->has_rrip && de->rr_name[0] != '\0')
+		name = de->rr_name;
+	else
+		name = de->iso_name;  /* Level 2 (Joliet) or Level 3 (ISO9660) */
+
+	size_t len = strlen(name);
+
+	/* Level 3 only: strip ";1" version suffix from plain ISO9660 names.
+	 * Level 1 (RR NM) and Level 2 (Joliet decoded) never have suffixes. */
+	if (!ip->has_joliet && !(ip->has_rrip && de->rr_name[0] != '\0')) {
+		if (len > 2 && name[len - 2] == ';')
+			len -= 2;
+	}
+
+	if (out_len)
+		*out_len = len;
+
+	return name;
+}
+
 /* ── Rock Ridge / SUSP parser ───────────────────────────────────── */
 
 /* Parse System Use entries following a directory record.
@@ -626,14 +664,10 @@ static int iso9660_resolve(struct iso9660_priv *ip, const char *path,
         int found = 0;
         for (int i = 0; i < n; i++) {
             const char *ename;
+            size_t elen;
 
-            /* Prefer Rock Ridge name if available */
-            if (ip->has_rrip && entries[i].rr_name[0] != '\0')
-                ename = entries[i].rr_name;
-            else
-                ename = entries[i].iso_name;
-
-            size_t elen = strlen(ename);
+            /* Hybrid fallback chain: RR name → Joliet UTF-8 → ISO name */
+            ename = iso9660_get_entry_name(ip, &entries[i], &elen);
 
             /* Skip dot entries */
             if (elen == 0) continue;
@@ -641,12 +675,9 @@ static int iso9660_resolve(struct iso9660_priv *ip, const char *path,
             if (elen == 1 && ename[0] == '.') continue;
             if (elen == 2 && ename[0] == '.' && ename[1] == '.') continue;
 
-            /* ISO names often have ;1 suffix for version.
-             * Joliet names do not have version suffixes. */
+            /* match_len already stripped of version suffix by helper */
             const char *match_name = ename;
             size_t match_len = elen;
-            if (!ip->has_joliet && match_len > 2 && match_name[match_len - 2] == ';')
-                match_len -= 2;
 
             if (match_len == clen && memcmp(match_name, p, clen) == 0) {
                 if (ip->has_rrip && (entries[i].rr_flags & RRIP_HAS_SL) &&
@@ -706,12 +737,9 @@ static int iso9660_resolve(struct iso9660_priv *ip, const char *path,
                         int sfound = 0;
                         for (int j = 0; j < n; j++) {
                             const char *sname;
-                            if (ip->has_rrip &&
-                                entries[j].rr_name[0] != '\0')
-                                sname = entries[j].rr_name;
-                            else
-                                sname = entries[j].iso_name;
-                            size_t snlen = strlen(sname);
+                            size_t snlen;
+                            sname = iso9660_get_entry_name(ip,
+                                &entries[j], &snlen);
                             if (snlen == 0) continue;
                             if (snlen == 1 && sname[0] == 0) continue;
                             if (snlen == 1 && sname[0] == '.') continue;
@@ -789,16 +817,19 @@ static int iso9660_resolve(struct iso9660_priv *ip, const char *path,
 
 /* ── Rock Ridge check at mount time ─────────────────────────────── */
 
-/* Check if the root directory record has Rock Ridge SUSP entries.
- * We directly scan the system use area of each root directory entry
- * for the SP signature (0xBE, 0xEF magic bytes). */
-static int check_rrip_present(struct iso9660_priv *ip)
+/* Check if a directory's records have Rock Ridge SUSP SP entries.
+ * Scans the system use area for the SP signature (0xBE, 0xEF magic bytes).
+ * @extent  LBA of the directory to scan
+ * @size    Byte size of the directory
+ * Returns 1 if RRIP is detected, 0 otherwise. */
+static int check_rrip_in_dir(struct iso9660_priv *ip,
+                              uint32_t extent, uint32_t size)
 {
     uint8_t buf[2048];
     uint32_t offset = 0;
 
-    while (offset < ip->root_size) {
-        uint32_t lba = ip->root_extent + offset / ip->block_size;
+    while (offset < size) {
+        uint32_t lba = extent + offset / ip->block_size;
         if (iso_read_block(ip, lba, buf) < 0) return 0;
 
         uint32_t pos = offset % ip->block_size;
@@ -959,12 +990,9 @@ static int iso9660_read(void *priv, const char *path, void *buf,
         size_t nlen = strlen(name);
 
         for (int i = 0; i < n; i++) {
-            const char *ename;
-            if (ip->has_rrip && entries[i].rr_name[0] != '\0')
-                ename = entries[i].rr_name;
-            else
-                ename = entries[i].iso_name;
-            size_t elen = strlen(ename);
+            size_t elen;
+            const char *ename = iso9660_get_entry_name(ip, &entries[i],
+                                                        &elen);
 
             if (elen == nlen && memcmp(ename, name, nlen) == 0) {
                 file_unit_size = entries[i].file_unit_size;
@@ -1028,12 +1056,9 @@ static int iso9660_stat(void *priv, const char *path, struct vfs_stat *st)
     size_t nlen = strlen(name);
 
     for (int i = 0; i < n; i++) {
-        const char *ename;
-        if (ip->has_rrip && entries[i].rr_name[0] != '\0')
-            ename = entries[i].rr_name;
-        else
-            ename = entries[i].iso_name;
-        size_t elen = strlen(ename);
+        size_t elen;
+        const char *ename = iso9660_get_entry_name(ip, &entries[i],
+                                                     &elen);
 
         if (elen == nlen && memcmp(ename, name, nlen) == 0) {
             /* Use Rock Ridge POSIX attributes if available */
@@ -1120,12 +1145,9 @@ static int iso9660_readlink(void *priv, const char *path,
     size_t nlen = strlen(name);
 
     for (int i = 0; i < n; i++) {
-        const char *ename;
-        if (ip->has_rrip && entries[i].rr_name[0] != '\0')
-            ename = entries[i].rr_name;
-        else
-            ename = entries[i].iso_name;
-        size_t elen = strlen(ename);
+        size_t elen;
+        const char *ename = iso9660_get_entry_name(ip, &entries[i],
+                                                     &elen);
 
         if (elen == nlen && memcmp(ename, name, nlen) == 0) {
             if (entries[i].rr_flags & RRIP_HAS_SL) {
@@ -1155,25 +1177,15 @@ static int iso9660_readdir_entries(void *priv, const char *path,
 
     for (int i = 0; i < n && count < max; i++) {
         const char *ename;
+        size_t elen;
 
-        /* Prefer Rock Ridge name if available */
-        if (ip->has_rrip && entries[i].rr_name[0] != '\0')
-            ename = entries[i].rr_name;
-        else
-            ename = entries[i].iso_name;
+        /* Hybrid fallback chain: RR name → Joliet UTF-8 → ISO name */
+        ename = iso9660_get_entry_name(ip, &entries[i], &elen);
 
-        size_t elen = strlen(ename);
         if (elen == 0) continue;
         if (elen == 1 && ename[0] == 0) continue;
         if (elen == 1 && ename[0] == '.') continue;
         if (elen == 2 && ename[0] == '.' && ename[1] == '.') continue;
-
-        /* Strip version number from ISO names if not using RR or Joliet.
-         * Joliet names do not have version suffixes. */
-        if (!(ip->has_rrip && entries[i].rr_name[0] != '\0') && !ip->has_joliet) {
-            if (elen > 2 && ename[elen - 2] == ';')
-                elen -= 2;
-        }
 
         if (elen > 63) elen = 63;
         memcpy(names[count], ename, elen);
@@ -1224,7 +1236,10 @@ int iso9660_mount(const char *mountpoint, uint8_t dev_id)
 
     /* Check for Rock Ridge presence by scanning the root directory
      * of the active session. */
-    ip->has_rrip = check_rrip_present(ip);
+    ip->has_rrip = check_rrip_in_dir(ip, ip->root_extent, ip->root_size);
+    if (!ip->has_rrip && ip->has_joliet)
+        ip->has_rrip = check_rrip_in_dir(ip, ip->joliet_root_extent,
+                                          ip->joliet_root_size);
 
     /* Build mount info string */
     char mount_info[128];
