@@ -143,6 +143,152 @@ static struct nfsd_export *nfsd_find_export(const char *path)
     return NULL;
 }
 
+/* ── File handle to vnode mapping ─────────────────────────────────────── */
+
+/*
+ * NFSv3 file handles embed an export index and a vnode ID.  The vnode ID
+ * is our internal handle into the path mapping cache, which resolves
+ * (export_idx, vnode_id) -> local filesystem path.
+ *
+ * FH wire format (12 bytes, but we transmit 8 for compatibility):
+ *   Bytes 0-3:  export index (big-endian uint32)
+ *   Bytes 4-7:  vnode ID     (big-endian uint32)
+ *
+ * On receipt we accept any FH_len >= 8.
+ */
+
+#define NFSD_FH_HANDLE_SIZE   8   /* bytes on the wire */
+#define NFSD_PATH_MAP_SIZE    512 /* entries in the path map */
+
+struct nfsd_path_entry {
+    int     used;
+    int     export_idx;
+    uint32_t vnode_id;
+    char    path[NFSD_MAX_PATH];
+};
+
+static struct nfsd_path_entry nfsd_path_map[NFSD_PATH_MAP_SIZE];
+static int  nfsd_path_map_count = 0;
+static uint32_t nfsd_next_vnode_id = 2; /* 0 = invalid, 1 = reserved for root */
+
+/* Encode an NFS file handle from export index + vnode ID */
+static void nfsd_fh_encode(uint8_t *fh, uint32_t *fh_len,
+                            int export_idx, uint32_t vnode_id)
+{
+    fh[0] = (uint8_t)(export_idx >> 24);
+    fh[1] = (uint8_t)(export_idx >> 16);
+    fh[2] = (uint8_t)(export_idx >> 8);
+    fh[3] = (uint8_t)(export_idx);
+    fh[4] = (uint8_t)(vnode_id >> 24);
+    fh[5] = (uint8_t)(vnode_id >> 16);
+    fh[6] = (uint8_t)(vnode_id >> 8);
+    fh[7] = (uint8_t)(vnode_id);
+    *fh_len = NFSD_FH_HANDLE_SIZE;
+}
+
+/* Decode a file handle into export index + vnode ID.
+ * Returns 0 on success, -ESTALE if handle is too short. */
+static int nfsd_fh_decode(const uint8_t *fh, uint32_t fh_len,
+                            int *export_idx, uint32_t *vnode_id)
+{
+    if (fh_len < NFSD_FH_HANDLE_SIZE)
+        return -ESTALE;
+
+    *export_idx = ((int)fh[0] << 24) | ((int)fh[1] << 16) |
+                  ((int)fh[2] << 8)  | fh[3];
+    *vnode_id   = ((uint32_t)fh[4] << 24) | ((uint32_t)fh[5] << 16) |
+                  ((uint32_t)fh[6] << 8)  | fh[7];
+    return 0;
+}
+
+/* Add (or update) a path mapping.  Returns 0 on success, -ENOMEM if full. */
+static int nfsd_path_map_add(int export_idx, uint32_t vnode_id,
+                              const char *path)
+{
+    /* Update if already exists */
+    for (int i = 0; i < nfsd_path_map_count; i++) {
+        struct nfsd_path_entry *e = &nfsd_path_map[i];
+        if (e->used && e->export_idx == export_idx &&
+            e->vnode_id == vnode_id) {
+            strncpy(e->path, path, sizeof(e->path) - 1);
+            e->path[sizeof(e->path) - 1] = '\0';
+            return 0;
+        }
+    }
+
+    if (nfsd_path_map_count >= NFSD_PATH_MAP_SIZE)
+        return -ENOMEM;
+
+    struct nfsd_path_entry *e = &nfsd_path_map[nfsd_path_map_count++];
+    e->used = 1;
+    e->export_idx = export_idx;
+    e->vnode_id = vnode_id;
+    strncpy(e->path, path, sizeof(e->path) - 1);
+    e->path[sizeof(e->path) - 1] = '\0';
+    return 0;
+}
+
+/* Look up a path by (export_idx, vnode_id).  Returns NULL if not found. */
+static const char *nfsd_path_map_lookup(int export_idx, uint32_t vnode_id)
+{
+    for (int i = 0; i < nfsd_path_map_count; i++) {
+        struct nfsd_path_entry *e = &nfsd_path_map[i];
+        if (e->used && e->export_idx == export_idx &&
+            e->vnode_id == vnode_id)
+            return e->path;
+    }
+    return NULL;
+}
+
+/* Remove a path mapping (e.g. after unlink/remove). */
+static void nfsd_path_map_remove(int export_idx, uint32_t vnode_id)
+{
+    for (int i = 0; i < nfsd_path_map_count; i++) {
+        struct nfsd_path_entry *e = &nfsd_path_map[i];
+        if (e->used && e->export_idx == export_idx &&
+            e->vnode_id == vnode_id) {
+            e->used = 0;
+            break;
+        }
+    }
+}
+
+/* Resolve an NFS file handle to an export pointer and a local filesystem
+ * path.  Returns 0 on success, -ESTALE if handle is invalid. */
+static int nfsd_fh_resolve(const uint8_t *fh_data, uint32_t fh_len,
+                            struct nfsd_export **ex,
+                            char *path, size_t path_size)
+{
+    int export_idx;
+    uint32_t vnode_id;
+    int ret;
+
+    ret = nfsd_fh_decode(fh_data, fh_len, &export_idx, &vnode_id);
+    if (ret < 0)
+        return ret;
+
+    if (export_idx < 0 || export_idx >= nfsd_num_exports ||
+        !nfsd_exports[export_idx].valid)
+        return -ESTALE;
+
+    *ex = &nfsd_exports[export_idx];
+
+    /* Vnode ID 1 is the export root */
+    if (vnode_id == 1) {
+        strncpy(path, nfsd_exports[export_idx].local_path, path_size - 1);
+        path[path_size - 1] = '\0';
+        return 0;
+    }
+
+    const char *rel_path = nfsd_path_map_lookup(export_idx, vnode_id);
+    if (!rel_path)
+        return -ESTALE;
+
+    strncpy(path, rel_path, path_size - 1);
+    path[path_size - 1] = '\0';
+    return 0;
+}
+
 /* ── RPC reply builder ──────────────────────────────────────────────── */
 
 static void rpc_build_header(uint8_t **p, uint32_t xid, int is_reply,
@@ -280,23 +426,31 @@ static void nfsd_proc_getattr(struct nfsd_rpc_state *rpc,
 
     /* Parse file handle */
     uint32_t fh_len = xdr_get_u32(&cp);
-    (void)fh_len;
-    /* Skip FH data (we use the export-based resolution for now) */
+    const uint8_t *fh_data = cp;
     cp += fh_len;
     while (fh_len & 3) { cp++; fh_len++; }
 
-    /* For now, return root stat */
+    /* Resolve FH to a path and stat it */
+    struct nfsd_export *ex = NULL;
+    char obj_path[NFSD_MAX_PATH];
+    int ret = nfsd_fh_resolve(fh_data, fh_len, &ex, obj_path, sizeof(obj_path));
+
     struct vfs_stat st;
-    if (nfsd_num_exports > 0) {
-        vfs_stat(nfsd_exports[0].local_path, &st);
+    if (ret == 0) {
+        vfs_stat(obj_path, &st);
     } else {
         memset(&st, 0, sizeof(st));
         st.type = VFS_TYPE_DIR;
     }
 
     rpc_build_header(&p, rpc->xid, 1, RPC_SUCCESS);
-    xdr_put_u32(&p, NFS3_OK);
-    nfsd_encode_fattr(&p, &st);
+
+    if (ret < 0) {
+        xdr_put_u32(&p, NFS3ERR_STALE);
+    } else {
+        xdr_put_u32(&p, NFS3_OK);
+        nfsd_encode_fattr(&p, &st);
+    }
     *reply_len = (uint32_t)(p - reply);
 }
 
@@ -310,23 +464,33 @@ static void nfsd_proc_access(struct nfsd_rpc_state *rpc,
 
     /* Parse FH */
     uint32_t fh_len = xdr_get_u32(&cp);
-    (void)fh_len;
+    const uint8_t *fh_data = cp;
     cp += fh_len;
     while (fh_len & 3) { cp++; fh_len++; }
 
     uint32_t access_bits = xdr_get_u32(&cp);
     (void)access_bits;
 
+    /* Resolve FH to path */
+    struct nfsd_export *ex = NULL;
+    char obj_path[NFSD_MAX_PATH];
+    int ret = nfsd_fh_resolve(fh_data, fh_len, &ex, obj_path, sizeof(obj_path));
+
     struct vfs_stat st;
-    if (nfsd_num_exports > 0)
-        vfs_stat(nfsd_exports[0].local_path, &st);
+    if (ret == 0)
+        vfs_stat(obj_path, &st);
     else
         memset(&st, 0, sizeof(st));
 
     rpc_build_header(&p, rpc->xid, 1, RPC_SUCCESS);
-    xdr_put_u32(&p, NFS3_OK);
-    nfsd_encode_postop_attr(&p, &st, 1);
-    xdr_put_u32(&p, 0x001f01ff); /* All access bits */
+
+    if (ret < 0) {
+        xdr_put_u32(&p, NFS3ERR_STALE);
+    } else {
+        xdr_put_u32(&p, NFS3_OK);
+        nfsd_encode_postop_attr(&p, &st, 1);
+        xdr_put_u32(&p, 0x001f01ff); /* All access bits */
+    }
     *reply_len = (uint32_t)(p - reply);
 }
 
@@ -340,7 +504,7 @@ static void nfsd_proc_lookup(struct nfsd_rpc_state *rpc,
 
     /* Parse dir FH */
     uint32_t fh_len = xdr_get_u32(&cp);
-    (void)fh_len;
+    const uint8_t *fh_data = cp;
     cp += fh_len;
     while (fh_len & 3) { cp++; fh_len++; }
 
@@ -351,39 +515,57 @@ static void nfsd_proc_lookup(struct nfsd_rpc_state *rpc,
     memcpy(name, cp, name_len);
     name[name_len] = '\0';
 
-    /* Look up the name relative to export's local root */
-    struct nfsd_export *ex = &nfsd_exports[0];
-    if (!ex->valid) {
-        rpc_build_header(&p, rpc->xid, 1, RPC_SUCCESS);
+    /* Resolve the dir FH to a local directory path */
+    struct nfsd_export *ex = NULL;
+    char dir_path[NFSD_MAX_PATH];
+    int export_idx = 0;
+    uint32_t dir_vnode = 0;
+    int ret = nfsd_fh_resolve(fh_data, fh_len, &ex, dir_path, sizeof(dir_path));
+    /* Also decode to get the export index for FH encoding */
+    nfsd_fh_decode(fh_data, fh_len, &export_idx, &dir_vnode);
+
+    rpc_build_header(&p, rpc->xid, 1, RPC_SUCCESS);
+    if (ret < 0 || !ex || !ex->valid) {
         xdr_put_u32(&p, NFS3ERR_NOENT);
+        if (ex && ex->valid)
+            nfsd_encode_postop_attr(&p, &ex->st, 1);
+        else
+            nfsd_encode_postop_attr(&p, &ex->st, 0);
+        *reply_len = (uint32_t)(p - reply);
+        return;
+    }
+
+    char full_path[NFSD_MAX_PATH];
+    int n = snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, name);
+    if (n < 0 || n >= (int)sizeof(full_path)) {
+        xdr_put_u32(&p, NFS3ERR_NAMETOOLONG);
         nfsd_encode_postop_attr(&p, &ex->st, 1);
         nfsd_encode_postop_attr(&p, &ex->st, 0);
         *reply_len = (uint32_t)(p - reply);
         return;
     }
 
-    char full_path[NFSD_MAX_PATH];
-    snprintf(full_path, sizeof(full_path), "%s/%s", ex->local_path, name);
-
     struct vfs_stat st;
-    int ret = vfs_stat(full_path, &st);
+    ret = vfs_stat(full_path, &st);
 
-    rpc_build_header(&p, rpc->xid, 1, RPC_SUCCESS);
     if (ret < 0) {
         xdr_put_u32(&p, NFS3ERR_NOENT);
         nfsd_encode_postop_attr(&p, &ex->st, 1);
         nfsd_encode_postop_attr(&p, &ex->st, 0);
     } else {
+        /* Allocate a new vnode ID for this entry */
+        uint32_t vnode_id = nfsd_next_vnode_id++;
+
+        /* Add path mapping */
+        nfsd_path_map_add(export_idx, vnode_id, full_path);
+
         xdr_put_u32(&p, NFS3_OK);
-        /* Object handle (simplified: just encode the path offset) */
-        uint32_t handle_data = (uint32_t)(uintptr_t)name; /* dummy */
-        (void)handle_data;
-        /* For simplicity, encode a 8-byte handle */
-        uint32_t obj_fh[2];
-        obj_fh[0] = 0; /* export index */
-        obj_fh[1] = st.ino; /* inode number */
-        xdr_put_u32(&p, 8);
-        xdr_put_bytes(&p, (const uint8_t *)obj_fh, 8);
+        /* Object handle */
+        uint8_t raw_fh[8];
+        uint32_t raw_fh_len = 0;
+        nfsd_fh_encode(raw_fh, &raw_fh_len, export_idx, vnode_id);
+        xdr_put_u32(&p, raw_fh_len);
+        xdr_put_bytes(&p, raw_fh, raw_fh_len);
         /* Object attributes */
         nfsd_encode_postop_attr(&p, &st, 1);
         /* Dir post-op attributes */
@@ -402,7 +584,7 @@ static void nfsd_proc_read(struct nfsd_rpc_state *rpc,
 
     /* Parse FH */
     uint32_t fh_len = xdr_get_u32(&cp);
-    (void)fh_len;
+    const uint8_t *fh_data = cp;
     cp += fh_len;
     while (fh_len & 3) { cp++; fh_len++; }
 
@@ -411,30 +593,32 @@ static void nfsd_proc_read(struct nfsd_rpc_state *rpc,
     /* Count */
     uint32_t count = xdr_get_u32(&cp);
 
-    /* Read from export's local path */
-    struct nfsd_export *ex = &nfsd_exports[0];
-    if (!ex->valid) {
-        rpc_build_header(&p, rpc->xid, 1, RPC_SUCCESS);
-        xdr_put_u32(&p, NFS3ERR_NOENT);
+    /* Resolve FH to file path */
+    struct nfsd_export *ex = NULL;
+    char file_path[NFSD_MAX_PATH];
+    int ret = nfsd_fh_resolve(fh_data, fh_len, &ex, file_path, sizeof(file_path));
+
+    rpc_build_header(&p, rpc->xid, 1, RPC_SUCCESS);
+    if (ret < 0) {
+        xdr_put_u32(&p, NFS3ERR_STALE);
         *reply_len = (uint32_t)(p - reply);
         return;
     }
 
     uint8_t data_buf[NFSD_MAX_DATA];
     uint32_t data_size = 0;
-    int ret = nfsd_read_local(ex->local_path, "",
-                               data_buf, &data_size, offset, count);
+    ret = vfs_read(file_path, data_buf, count, &data_size);
+
     if (ret < 0) {
-        rpc_build_header(&p, rpc->xid, 1, RPC_SUCCESS);
         xdr_put_u32(&p, NFS3ERR_IO);
+        nfsd_encode_postop_attr(&p, &ex->st, 1);
         *reply_len = (uint32_t)(p - reply);
         return;
     }
 
     struct vfs_stat st;
-    vfs_stat(ex->local_path, &st);
+    vfs_stat(file_path, &st);
 
-    rpc_build_header(&p, rpc->xid, 1, RPC_SUCCESS);
     xdr_put_u32(&p, NFS3_OK);
     /* Post-op attributes */
     nfsd_encode_postop_attr(&p, &st, 1);
@@ -458,7 +642,7 @@ static void nfsd_proc_readdir(struct nfsd_rpc_state *rpc,
 
     /* Parse FH */
     uint32_t fh_len = xdr_get_u32(&cp);
-    (void)fh_len;
+    const uint8_t *fh_data = cp;
     cp += fh_len;
     while (fh_len & 3) { cp++; fh_len++; }
 
@@ -476,22 +660,25 @@ static void nfsd_proc_readdir(struct nfsd_rpc_state *rpc,
     uint32_t maxcount = xdr_get_u32(&cp);
     (void)maxcount;
 
-    struct nfsd_export *ex = &nfsd_exports[0];
-    if (!ex->valid) {
-        rpc_build_header(&p, rpc->xid, 1, RPC_SUCCESS);
-        xdr_put_u32(&p, NFS3ERR_NOENT);
+    /* Resolve FH to directory path */
+    struct nfsd_export *ex = NULL;
+    char dir_path[NFSD_MAX_PATH];
+    int ret = nfsd_fh_resolve(fh_data, fh_len, &ex, dir_path, sizeof(dir_path));
+
+    rpc_build_header(&p, rpc->xid, 1, RPC_SUCCESS);
+    if (ret < 0) {
+        xdr_put_u32(&p, NFS3ERR_STALE);
         *reply_len = (uint32_t)(p - reply);
         return;
     }
 
     /* Get directory entries via vfs_readdir_names */
     char names[64][64];
-    int num_entries = vfs_readdir_names(ex->local_path, names, 64);
+    int num_entries = vfs_readdir_names(dir_path, names, 64);
 
     struct vfs_stat dir_st;
-    vfs_stat(ex->local_path, &dir_st);
+    vfs_stat(dir_path, &dir_st);
 
-    rpc_build_header(&p, rpc->xid, 1, RPC_SUCCESS);
     xdr_put_u32(&p, NFS3_OK);
     /* Dir post-op attributes */
     nfsd_encode_postop_attr(&p, &dir_st, 1);
@@ -521,32 +708,42 @@ static void nfsd_proc_fsstat(struct nfsd_rpc_state *rpc,
 
     /* Parse FH */
     uint32_t fh_len = xdr_get_u32(&cp);
-    (void)fh_len;
+    const uint8_t *fh_data = cp;
     cp += fh_len;
     while (fh_len & 3) { cp++; fh_len++; }
 
+    /* Resolve FH to get export */
+    struct nfsd_export *ex = NULL;
+    char obj_path[NFSD_MAX_PATH];
+    int ret = nfsd_fh_resolve(fh_data, fh_len, &ex, obj_path, sizeof(obj_path));
+
     struct vfs_stat st;
     memset(&st, 0, sizeof(st));
-    if (nfsd_num_exports > 0)
-        vfs_stat(nfsd_exports[0].local_path, &st);
+    if (ret == 0)
+        vfs_stat(obj_path, &st);
 
     rpc_build_header(&p, rpc->xid, 1, RPC_SUCCESS);
-    xdr_put_u32(&p, NFS3_OK);
-    nfsd_encode_postop_attr(&p, &st, 1);
-    /* Total blocks (1TB display) */
-    xdr_put_uint64(&p, 0x1000000);
-    /* Free blocks */
-    xdr_put_uint64(&p, 0x800000);
-    /* Available blocks */
-    xdr_put_uint64(&p, 0x800000);
-    /* Total files */
-    xdr_put_uint64(&p, 0x10000);
-    /* Free files */
-    xdr_put_uint64(&p, 0x8000);
-    /* Available files */
-    xdr_put_uint64(&p, 0x8000);
-    /* Invarsec (0 = no invariants) */
-    xdr_put_u32(&p, 0);
+
+    if (ret < 0) {
+        xdr_put_u32(&p, NFS3ERR_STALE);
+    } else {
+        xdr_put_u32(&p, NFS3_OK);
+        nfsd_encode_postop_attr(&p, &st, 1);
+        /* Total blocks (1TB display) */
+        xdr_put_uint64(&p, 0x1000000);
+        /* Free blocks */
+        xdr_put_uint64(&p, 0x800000);
+        /* Available blocks */
+        xdr_put_uint64(&p, 0x800000);
+        /* Total files */
+        xdr_put_uint64(&p, 0x10000);
+        /* Free files */
+        xdr_put_uint64(&p, 0x8000);
+        /* Available files */
+        xdr_put_uint64(&p, 0x8000);
+        /* Invarsec (0 = no invariants) */
+        xdr_put_u32(&p, 0);
+    }
     *reply_len = (uint32_t)(p - reply);
 }
 
@@ -663,12 +860,14 @@ static void mountd_proc_mnt(struct nfsd_rpc_state *rpc,
         xdr_put_u32(&p, RPC_AUTH_NONE);
     } else {
         xdr_put_u32(&p, NFS3_OK);
-        /* File handle (8 bytes, export index + 0) */
-        uint32_t fh[2];
-        fh[0] = (uint32_t)export_idx;
-        fh[1] = 1; /* root inode marker */
-        xdr_put_u32(&p, 8);
-        xdr_put_bytes(&p, (const uint8_t *)fh, 8);
+        /* File handle: encode with vnode_id=1 (reserved root) */
+        uint8_t raw_fh[8];
+        uint32_t raw_fh_len = 0;
+        nfsd_fh_encode(raw_fh, &raw_fh_len, export_idx, 1);
+        xdr_put_u32(&p, raw_fh_len);
+        xdr_put_bytes(&p, raw_fh, raw_fh_len);
+        /* Add root to path map */
+        nfsd_path_map_add(export_idx, 1, nfsd_exports[export_idx].local_path);
         /* Flavor list (AUTH_NONE) */
         xdr_put_u32(&p, 1);
         xdr_put_u32(&p, RPC_AUTH_NONE);
@@ -976,6 +1175,11 @@ int __init nfsd_init(void)
 {
     memset(nfsd_exports, 0, sizeof(nfsd_exports));
     nfsd_num_exports = 0;
+
+    /* Initialize the FH-to-vnode path map */
+    memset(nfsd_path_map, 0, sizeof(nfsd_path_map));
+    nfsd_path_map_count = 0;
+    nfsd_next_vnode_id = 2; /* 0 = invalid, 1 = reserved for export root */
 
     /* Parse /etc/exports to populate exports list */
     uint8_t exports_buf[4096];
