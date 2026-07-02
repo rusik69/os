@@ -880,8 +880,9 @@ static void nfsd_proc_readdir(struct nfsd_rpc_state *rpc,
     xdr_put_u32(&p, NFS3_OK);
     /* Dir post-op attributes */
     nfsd_encode_postop_attr(&p, &dir_st, 1);
-    /* Verifier */
-    xdr_put_uint64(&p, 0);
+    /* Verifier — derive from dir inode so changes are detectable */
+    xdr_put_uint64(&p, (uint64_t)dir_st.ino);
+
     /* Directory entries */
     for (int i = 0; i < num_entries; i++) {
         /* fileid */

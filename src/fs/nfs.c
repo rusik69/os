@@ -830,12 +830,145 @@ void nfs_init(void)
 #include "module.h"
 fs_initcall(nfs_init);
 
-/* ── nfs_readdir ──────────────────────────────────────── */
-int nfs_readdir(void *dir, void *filldir)
+/* ── nfs_readdir — NFSv3 READDIR with cookie verifier ── */
+/*
+ * Read directory entries via NFSPROC3_READDIR.
+ *
+ * Usage:
+ *   uint64_t cookie = 0, cookieverf = 0;
+ *   do {
+ *       ret = nfs_readdir(mount_id, &fh, &cookie, &cookieverf,
+ *                         my_callback, priv);
+ *       if (ret == -EAGAIN) {
+ *           cookie = 0;   // dir changed, restart
+ *           continue;
+ *       }
+ *   } while (ret == 0 && cookie != 0);
+ */
+int nfs_readdir(int mount_id, const struct nfs_fhandle *fh,
+                uint64_t *cookie, uint64_t *cookieverf,
+                int (*callback)(uint64_t fileid, const char *name,
+                                uint64_t entry_cookie, void *priv),
+                void *priv)
 {
-    (void)dir;
-    (void)filldir;
-    kprintf("[nfs] readdir (no more entries)\n");
+    if (mount_id < 0 || mount_id >= nfs_mount_count)
+        return -EINVAL;
+    if (!nfs_mounts[mount_id].mounted)
+        return -ENOTCONN;
+
+    struct nfs_mount_info *mnt = &nfs_mounts[mount_id];
+
+    /* Build READDIR3args */
+    uint8_t args[NFS_MAX_DATA];
+    uint8_t *ap = args;
+
+    /* Dir FH (nfs_fh3) */
+    xdr_put_u32(&ap, fh->len);
+    xdr_put_bytes(&ap, fh->data, fh->len);
+    /* Cookie (uint64) — 0 means start from beginning */
+    xdr_put_u32(&ap, (uint32_t)(*cookie >> 32));
+    xdr_put_u32(&ap, (uint32_t)(*cookie & 0xFFFFFFFF));
+    /* Cookie verifier (uint64) — 0 on first call */
+    xdr_put_u32(&ap, (uint32_t)(*cookieverf >> 32));
+    xdr_put_u32(&ap, (uint32_t)(*cookieverf & 0xFFFFFFFF));
+    /* Dircount — max bytes of directory info we want */
+    xdr_put_u32(&ap, 4096);
+    /* Maxcount — max total reply bytes */
+    xdr_put_u32(&ap, NFS_MAX_DATA - 256);
+
+    uint32_t args_len = (uint32_t)(ap - args);
+
+    uint8_t reply[NFS_MAX_DATA];
+    uint32_t reply_len = sizeof(reply);
+
+    int ret = nfs_rpc_call(mnt->server_ip, 100003, 3, NFSPROC3_READDIR,
+                            args, args_len, reply, &reply_len);
+    if (ret < 0)
+        return ret;
+
+    const uint8_t *rp = reply;
+
+    /* Parse NFS3 status */
+    uint32_t nfs_status = xdr_get_u32(&rp);
+    if (nfs_status != 0) {
+        if (nfs_status == NFS3ERR_NOENT)  return -ENOENT;
+        if (nfs_status == NFS3ERR_ACCES)  return -EACCES;
+        if (nfs_status == NFS3ERR_NOTDIR) return -ENOTDIR;
+        if (nfs_status == NFS3ERR_STALE)  return -ESTALE;
+        return -EIO;
+    }
+
+    /* Skip post-op dir attributes (optional) */
+    uint32_t attr_present = xdr_get_u32(&rp);
+    if (attr_present) {
+        /* Skip 21 uint32 fattr3 words (type, mode, nlink, uid, gid,
+         * size_hi, size_lo, used_hi, used_lo, rdev1, rdev2,
+         * fsid_hi, fsid_lo, fileid_hi, fileid_lo,
+         * atime_hi, atime_lo, atime_nsec,
+         * mtime_hi, mtime_lo, mtime_nsec,
+         * ctime_hi, ctime_lo, ctime_nsec) */
+        for (int i = 0; i < 21; i++) xdr_get_u32(&rp);
+    }
+
+    /* Read cookie verifier returned by server */
+    uint64_t new_verf = ((uint64_t)xdr_get_u32(&rp) << 32)
+                      | xdr_get_u32(&rp);
+
+    /* Detect directory change via verifier mismatch.
+     * Skip check on first call (*cookie == 0 && *cookieverf == 0). */
+    if (*cookie != 0 && *cookieverf != 0 && new_verf != *cookieverf) {
+        kprintf("[NFS] dir verifier changed, restart needed\n");
+        *cookieverf = new_verf;
+        *cookie = 0;
+        return -EAGAIN;
+    }
+    *cookieverf = new_verf;
+
+    /* Parse entry list (linked-list follow-pointer encoding) */
+    int entry_count = 0;
+    while (1) {
+        /* Boolean: 1 = entry follows, 0 = no more entries */
+        uint32_t has_entry = xdr_get_u32(&rp);
+        if (!has_entry)
+            break;
+
+        /* fileid (uint64) */
+        uint64_t fileid = ((uint64_t)xdr_get_u32(&rp) << 32)
+                        | xdr_get_u32(&rp);
+
+        /* name (filename3 = string) */
+        uint32_t name_len = xdr_get_u32(&rp);
+        char name[256];
+        if (name_len > 255)
+            name_len = 255;
+        memcpy(name, rp, name_len);
+        rp += name_len;
+        name[name_len] = '\0';
+        /* Pad to 4 bytes */
+        while (name_len & 3) { rp++; name_len++; }
+
+        /* cookie (uint64) — pass back for next page */
+        uint64_t entry_cookie = ((uint64_t)xdr_get_u32(&rp) << 32)
+                              | xdr_get_u32(&rp);
+
+        /* Use this entry's cookie as resume point */
+        *cookie = entry_cookie;
+
+        /* Skip . and .. in callback (VFS handles these) */
+        if (strcmp(name, ".") != 0 && strcmp(name, "..") != 0) {
+            if (callback && callback(fileid, name, entry_cookie, priv))
+                break;  /* callback signaled stop */
+        }
+        entry_count++;
+    }
+
+    /* EOF (uint32 — 1 = no more entries) */
+    uint32_t eof = xdr_get_u32(&rp);
+    if (eof)
+        *cookie = 0;  /* Signal end of directory */
+
+    kprintf("[NFS] READDIR: %d entries%s\n",
+            entry_count, eof ? " (EOF)" : "");
     return 0;
 }
 /* ── nfs_statfs ───────────────────────────────────────── */
