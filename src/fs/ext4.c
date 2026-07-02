@@ -16,6 +16,7 @@
 
 #define KERNEL_INTERNAL
 #include "ext4.h"
+#include "ext4_extents.h"
 #include "blockdev.h"
 #include "string.h"
 #include "printf.h"
@@ -27,35 +28,6 @@
 #ifdef MODULE
 #include "module.h"
 #endif
-
-/* Ext4 extent magic */
-#define EXT4_EXTENT_MAGIC 0xF30A
-
-/* Maximum depth of extent tree (sanity check) */
-#define EXT4_EXTENT_MAX_DEPTH 5
-
-struct ext4_priv {
-    uint8_t  dev_id;
-    uint32_t block_size;
-    uint32_t blocks_per_group;
-    uint32_t inodes_per_group;
-    uint32_t inode_size;
-    uint32_t num_block_groups;
-    struct ext4_superblock sb;
-    char     mountpoint[64];
-
-    /* Cached block group descriptor table */
-    struct ext4_bg_desc *bgd_cache;
-    uint32_t             bgd_cache_size;
-
-    /* Feature flags (cached for fast access) */
-    uint32_t incompat;
-    uint32_t ro_compat;
-    uint32_t compat;
-
-    /* flex_bg: number of block groups in a flex_bg group */
-    uint32_t flex_bg_size; /* 0 if flex_bg not enabled */
-};
 
 /* ── Flex block group helpers ──────────────────────────────────────── */
 /* These helpers are only valid once ep->flex_bg_size has been set.
@@ -110,7 +82,7 @@ static inline uint32_t ext4_flex_group_count(struct ext4_priv *ep, uint32_t grou
 
 /* ── Corruption helper ────────────────────────────────────────────── */
 
-static int ext4_corrupt(struct ext4_priv *ep, const char *reason)
+int ext4_corrupt(struct ext4_priv *ep, const char *reason)
 {
     if (!ep)
         return -EFSCORRUPTED;
@@ -120,7 +92,7 @@ static int ext4_corrupt(struct ext4_priv *ep, const char *reason)
 
 /* ── Block I/O ────────────────────────────────────────────────────── */
 
-static int ext4_read_block(struct ext4_priv *ep, uint32_t block_num, uint8_t *buf)
+int ext4_read_block(struct ext4_priv *ep, uint32_t block_num, uint8_t *buf)
 {
     uint64_t lba = (uint64_t)block_num * (ep->block_size / 512);
     uint32_t sectors = ep->block_size / 512;
@@ -240,100 +212,6 @@ static int ext4_read_inode(struct ext4_priv *ep, uint32_t ino, struct ext4_inode
     return 0;
 }
 
-/* ── Extent tree walker ────────────────────────────────────────────── */
-
-/* Given an inode with EXT4_EXTENTS_FL set, resolve logical block iblock
- * to a physical block number (or 0 for hole).  Returns -1 on error. */
-static int64_t ext4_get_extent_block(struct ext4_priv *ep,
-                                      struct ext4_inode *inode,
-                                      uint32_t iblock)
-{
-    /* The extent tree root is in i_block[0..14] as a struct ext4_extent_header
-     * followed by entries.  We treat the 15 32-bit words (60 bytes) as the
-     * root node of the extent tree. */
-    uint8_t root_buf[60];
-    memcpy(root_buf, inode->i_block, 60);
-
-    struct ext4_extent_header *eh = (struct ext4_extent_header *)root_buf;
-    if (eh->eh_magic != EXT4_EXTENT_MAGIC)
-        return ext4_corrupt(ep, "bad extent magic");
-
-    uint16_t depth = eh->eh_depth;
-    if (depth > EXT4_EXTENT_MAX_DEPTH)
-        return ext4_corrupt(ep, "extent tree too deep");
-
-    /* Walk the tree from root to leaf */
-    uint8_t node_buf[EXT4_MAX_BLOCK_SIZE];
-    uint8_t *node_data = root_buf;
-
-    for (;;) {
-        eh = (struct ext4_extent_header *)node_data;
-
-        if (depth > 0) {
-            /* Internal (index) node — find the right child */
-            struct ext4_extent_idx *idx = (struct ext4_extent_idx *)(eh + 1);
-            uint16_t num_entries = eh->eh_entries;
-            uint16_t i;
-
-            /* Binary search for the index entry covering iblock */
-            int lo = 0, hi = (int)num_entries - 1, found = -1;
-            while (lo <= hi) {
-                int mid = (lo + hi) / 2;
-                if (iblock >= idx[mid].ei_block) {
-                    found = mid;
-                    lo = mid + 1;
-                } else {
-                    hi = mid - 1;
-                }
-            }
-
-            if (found < 0) {
-                /* Before first block — hole or empty tree */
-                return 0;
-            }
-
-            /* Compute physical block of child node */
-            uint64_t child_block = ((uint64_t)idx[found].ei_leaf_hi << 32) |
-                                    idx[found].ei_leaf_lo;
-
-            /* Read child block */
-            if (ext4_read_block(ep, (uint32_t)child_block, node_buf) < 0)
-                return ext4_corrupt(ep, "failed to read extent index block");
-            node_data = node_buf;
-            depth--;
-        } else {
-            /* Leaf node — search extents */
-            struct ext4_extent *ext = (struct ext4_extent *)(eh + 1);
-            uint16_t num_entries = eh->eh_entries;
-
-            for (uint16_t i = 0; i < num_entries; i++) {
-                uint32_t start = ext[i].ee_block;
-                uint16_t len = ext[i].ee_len;
-
-                /* If ee_len > 0x8000, it's a set of uninitialized blocks (hole) */
-                int uninit = 0;
-                if (len & 0x8000) {
-                    uninit = 1;
-                    len &= ~0x8000;
-                }
-
-                if (iblock >= start && iblock < start + len) {
-                    if (uninit)
-                        return 0; /* uninitialized = hole, return zeros */
-
-                    uint64_t phys = ((uint64_t)ext[i].ee_start_hi << 32) |
-                                     ext[i].ee_start_lo;
-                    phys += (iblock - start);
-                    return (int64_t)phys;
-                }
-            }
-
-            /* Not found in any extent — hole */
-            return 0;
-        }
-    }
-}
-
 /* ── Block resolution (extent or legacy indirect) ─────────────────── */
 
 static int64_t ext4_get_block_num(struct ext4_priv *ep,
@@ -342,7 +220,7 @@ static int64_t ext4_get_block_num(struct ext4_priv *ep,
 {
     /* If EXTENTS flag is set, use extent tree */
     if (inode->i_flags & EXT4_EXTENTS_FL)
-        return ext4_get_extent_block(ep, inode, iblock);
+        return ext4_ext_find_extent(ep, inode, iblock);
 
     /* Otherwise fall back to legacy ext2 indirect block scheme.
      * This provides backward compatibility with ext2/ext3. */

@@ -296,8 +296,35 @@ struct ext4_dir_entry {
 #define EXT4_FT_SYMLINK   7
 #define EXT4_FT_MAX       8
 
-/* Forward declaration */
-struct ext4_priv;
+/* ── Private per-mount data (defined here for companion modules) ── */
+struct ext4_priv {
+    uint8_t  dev_id;
+    uint32_t block_size;
+    uint32_t blocks_per_group;
+    uint32_t inodes_per_group;
+    uint32_t inode_size;
+    uint32_t num_block_groups;
+    struct ext4_superblock sb;
+    char     mountpoint[64];
+
+    /* Cached block group descriptor table */
+    struct ext4_bg_desc *bgd_cache;
+    uint32_t             bgd_cache_size;
+
+    /* Feature flags (cached for fast access) */
+    uint32_t incompat;
+    uint32_t ro_compat;
+    uint32_t compat;
+
+    /* flex_bg: number of block groups in a flex_bg group */
+    uint32_t flex_bg_size; /* 0 if flex_bg not enabled */
+};
+
+/* Corruption helper — forces read-only remount */
+int ext4_corrupt(struct ext4_priv *ep, const char *reason);
+
+/* Block I/O — read one block from the backing device */
+int ext4_read_block(struct ext4_priv *ep, uint32_t block_num, uint8_t *buf);
 
 /* Public API */
 int ext4_mount(const char *mountpoint, uint8_t dev_id);
