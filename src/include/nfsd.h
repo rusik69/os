@@ -4,6 +4,7 @@
 #include "types.h"
 #include "vfs.h"
 #include "errno.h"
+#include "net.h"
 
 /* NFS server constants */
 #define NFSD_MAX_EXPORTS    16
@@ -12,6 +13,7 @@
 #define NFSD_MAX_PATH       1024
 #define NFSD_PORT           2049
 #define NFSD_MOUNT_PORT     1049
+#define NFSD_MAX_ACCESS     8   /* max per-export access entries */
 
 /* RPC protocol constants */
 #define RPC_CALL      0
@@ -103,6 +105,18 @@ struct nfs3_fhandle {
 #define NFSD_SQUASH_ROOT 1  /* squash root (UID 0) to anon_uid/anongid */
 #define NFSD_SQUASH_ALL  2  /* squash all users to anon_uid/anongid */
 
+/* Export access flags */
+#define NFSD_ACCESS_READ  0x01
+#define NFSD_ACCESS_WRITE 0x02
+#define NFSD_ACCESS_RW    0x03
+
+/* Per-export access control entry */
+struct nfsd_export_access {
+    uint32_t client_ip;      /* Client IP or network (net byte order) */
+    uint32_t client_mask;    /* Subnet mask (net byte order), 0 = any */
+    int      access_flags;   /* NFSD_ACCESS_* bitmask */
+};
+
 /* Export entry — maps an NFS path to a local directory */
 struct nfsd_export {
     int    valid;
@@ -112,6 +126,9 @@ struct nfsd_export {
     int    squash;                     /* NFSD_SQUASH_* */
     uint16_t anon_uid;
     uint16_t anon_gid;
+    int    read_only;                  /* 1 = read-only export, 0 = read-write */
+    int    num_access;                 /* number of entries in access_list */
+    struct nfsd_export_access access_list[NFSD_MAX_ACCESS];
 };
 
 /* NFSD RPC state (per TCP connection) */
@@ -129,7 +146,20 @@ struct nfsd_rpc_state {
 
 /* Public API */
 int  nfsd_add_export(const char *export_path, const char *local_path);
+int  nfsd_add_export_ex(const char *export_path, const char *local_path,
+                         int squash, uint16_t anon_uid, uint16_t anon_gid,
+                         int read_only,
+                         const struct nfsd_export_access *access_list,
+                         int num_access);
 int  nfsd_remove_export(const char *export_path);
+int  nfsd_update_export(const char *export_path, int squash_mask,
+                         uint16_t anon_uid, uint16_t anon_gid,
+                         int read_only);
+int  nfsd_reload_exports(void);
+int  nfsd_get_export_count(void);
+const struct nfsd_export *nfsd_get_export(int idx);
+int  nfsd_check_export_access(const struct nfsd_export *ex,
+                               uint32_t client_ip, int access_needed);
 void nfsd_handle_rpc(struct nfsd_rpc_state *rpc,
                      uint8_t *reply_buf, uint32_t *reply_len);
 void nfsd_server_task(void);

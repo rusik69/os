@@ -94,14 +94,30 @@ static inline void xdr_put_uint64(uint8_t **p, uint64_t v)
 
 int nfsd_add_export(const char *export_path, const char *local_path)
 {
+    return nfsd_add_export_ex(export_path, local_path,
+                              NFSD_SQUASH_NONE, 65534, 65534,
+                              0, NULL, 0);
+}
+
+int nfsd_add_export_ex(const char *export_path, const char *local_path,
+                        int squash, uint16_t anon_uid, uint16_t anon_gid,
+                        int read_only,
+                        const struct nfsd_export_access *access_list,
+                        int num_access)
+{
     if (nfsd_num_exports >= NFSD_MAX_EXPORTS)
         return -ENOMEM;
+
+    if (!export_path || !local_path)
+        return -EINVAL;
 
     struct nfsd_export *ex = &nfsd_exports[nfsd_num_exports];
     memset(ex, 0, sizeof(*ex));
 
     strncpy(ex->export_path, export_path, sizeof(ex->export_path) - 1);
     strncpy(ex->local_path, local_path, sizeof(ex->local_path) - 1);
+    ex->export_path[sizeof(ex->export_path) - 1] = '\0';
+    ex->local_path[sizeof(ex->local_path) - 1] = '\0';
 
     /* Stat the local path to verify it exists */
     struct vfs_stat st;
@@ -111,23 +127,413 @@ int nfsd_add_export(const char *export_path, const char *local_path)
     }
     ex->st = st;
 
+    /* Set options */
+    ex->squash = squash;
+    ex->anon_uid = anon_uid;
+    ex->anon_gid = anon_gid;
+    ex->read_only = read_only;
+
+    /* Copy access list */
+    ex->num_access = 0;
+    if (access_list && num_access > 0) {
+        int n = num_access;
+        if (n > NFSD_MAX_ACCESS)
+            n = NFSD_MAX_ACCESS;
+        memcpy(ex->access_list, access_list, n * sizeof(*access_list));
+        ex->num_access = n;
+    }
+
     ex->valid = 1;
     nfsd_num_exports++;
 
-    kprintf("[nfsd] Export added: %s -> %s\\n", export_path, local_path);
+    kprintf("[nfsd] Export added: %s -> %s (squash=%d, ro=%d, %d access rules)\\n",
+            export_path, local_path, squash, read_only, ex->num_access);
     return nfsd_num_exports - 1;
+}
+
+int nfsd_update_export(const char *export_path, int squash_mask,
+                        uint16_t anon_uid, uint16_t anon_gid,
+                        int read_only)
+{
+    if (!export_path)
+        return -EINVAL;
+
+    for (int i = 0; i < nfsd_num_exports; i++) {
+        if (strcmp(nfsd_exports[i].export_path, export_path) == 0) {
+            struct nfsd_export *ex = &nfsd_exports[i];
+            if (!ex->valid)
+                return -ENOENT;
+
+            /* Apply masked updates */
+            if (squash_mask >= 0)
+                ex->squash = squash_mask;
+            if (anon_uid != (uint16_t)-1)
+                ex->anon_uid = anon_uid;
+            if (anon_gid != (uint16_t)-1)
+                ex->anon_gid = anon_gid;
+            if (read_only >= 0)
+                ex->read_only = read_only;
+
+            /* Refresh cached stat */
+            vfs_stat(ex->local_path, &ex->st);
+
+            kprintf("[nfsd] Export updated: %s\\n", export_path);
+            return 0;
+        }
+    }
+    return -ENOENT;
 }
 
 int nfsd_remove_export(const char *export_path)
 {
+    if (!export_path)
+        return -EINVAL;
+
     for (int i = 0; i < nfsd_num_exports; i++) {
         if (strcmp(nfsd_exports[i].export_path, export_path) == 0) {
+            if (!nfsd_exports[i].valid)
+                return -ENOENT;
             nfsd_exports[i].valid = 0;
             kprintf("[nfsd] Export removed: %s\\n", export_path);
             return 0;
         }
     }
     return -ENOENT;
+}
+
+int nfsd_get_export_count(void)
+{
+    int count = 0;
+    for (int i = 0; i < nfsd_num_exports; i++) {
+        if (nfsd_exports[i].valid)
+            count++;
+    }
+    return count;
+}
+
+const struct nfsd_export *nfsd_get_export(int idx)
+{
+    if (idx < 0 || idx >= nfsd_num_exports)
+        return NULL;
+    if (!nfsd_exports[idx].valid)
+        return NULL;
+    return &nfsd_exports[idx];
+}
+
+int nfsd_check_export_access(const struct nfsd_export *ex,
+                              uint32_t client_ip, int access_needed)
+{
+    if (!ex || !ex->valid)
+        return -EACCES;
+
+    /* Read-only check: if read_only and access_needed includes WRITE */
+    if (ex->read_only && (access_needed & NFSD_ACCESS_WRITE))
+        return -EROFS;
+
+    /* If no access list defined, allow all */
+    if (ex->num_access == 0)
+        return 0;
+
+    /* Check each access entry */
+    for (int i = 0; i < ex->num_access; i++) {
+        const struct nfsd_export_access *a = &ex->access_list[i];
+
+        /* If mask is 0, match any IP */
+        uint32_t masked_client = client_ip;
+        uint32_t masked_entry = a->client_ip;
+        if (a->client_mask != 0) {
+            masked_client &= a->client_mask;
+            masked_entry &= a->client_mask;
+        }
+
+        if (masked_client == masked_entry) {
+            /* Check access flags */
+            if ((a->access_flags & access_needed) == access_needed)
+                return 0;
+            else
+                return -EACCES; /* IP matched but insufficient permissions */
+        }
+    }
+
+    /* No matching access entry found */
+    return -EACCES;
+}
+
+/* Clear all exports (used during reload) */
+static void nfsd_clear_all_exports(void)
+{
+    memset(nfsd_exports, 0, sizeof(nfsd_exports));
+    nfsd_num_exports = 0;
+}
+
+/* Reload exports from /etc/exports */
+int nfsd_reload_exports(void)
+{
+    /* Save current exports */
+    struct nfsd_export saved_exports[NFSD_MAX_EXPORTS];
+    int saved_count = nfsd_num_exports;
+    memcpy(saved_exports, nfsd_exports, sizeof(saved_exports));
+
+    /* Clear and re-parse */
+    nfsd_clear_all_exports();
+
+    uint8_t exports_buf[4096];
+    uint32_t exports_size = 0;
+    int ret = vfs_read("/etc/exports", exports_buf, sizeof(exports_buf), &exports_size);
+
+    if (ret < 0 || exports_size == 0) {
+        kprintf("[nfsd] No /etc/exports found on reload, restoring %d exports\\n",
+                saved_count);
+        /* Restore saved exports */
+        memcpy(nfsd_exports, saved_exports, sizeof(saved_exports));
+        nfsd_num_exports = saved_count;
+        return -ENOENT;
+    }
+
+    exports_buf[exports_size] = '\0';
+
+    /* Parse exports (same logic as nfsd_init, but using save/restore for safety) */
+    int parsed = 0;
+    char *line_start = (char *)exports_buf;
+    char *p = line_start;
+
+    while (*p && nfsd_num_exports < NFSD_MAX_EXPORTS) {
+        /* Skip whitespace and newlines */
+        while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')
+            p++;
+        if (*p == '\0') break;
+        if (*p == '#') {
+            while (*p && *p != '\n') p++;
+            continue;
+        }
+
+        line_start = p;
+        while (*p && *p != '\n') p++;
+        if (*p == '\n') *p++ = '\0';
+        else *p = '\0';
+
+        char export_path[256], local_path[256], options[256];
+        export_path[0] = '\0';
+        local_path[0] = '\0';
+        options[0] = '\0';
+
+        /* Parse: export_path local_path [options|access_spec...] */
+        int parsed_fields = sscanf(line_start, "%255s %255s %255[^\n]",
+                                    export_path, local_path, options);
+
+        if (parsed_fields >= 2 && export_path[0] == '/') {
+            struct nfsd_export_access access_entries[NFSD_MAX_ACCESS];
+            int num_access = 0;
+            int squash = NFSD_SQUASH_NONE;
+            uint16_t anon_uid = 65534;
+            uint16_t anon_gid = 65534;
+            int read_only = 0;
+
+            memset(access_entries, 0, sizeof(access_entries));
+
+            if (options[0] != '\0') {
+                char *opt = options;
+
+                while (*opt && num_access < NFSD_MAX_ACCESS) {
+                    /* Skip whitespace */
+                    while (*opt == ' ' || *opt == '\t') opt++;
+                    if (*opt == '\0') break;
+
+                    /* Check for IP-based access spec: X.X.X.X/M(rw,ro,...) */
+                    if ((*opt >= '0' && *opt <= '9') || *opt == '*') {
+                        struct nfsd_export_access acc;
+                        memset(&acc, 0, sizeof(acc));
+                        acc.access_flags = NFSD_ACCESS_RW;
+
+                        /* Parse IP/mask */
+                        if (*opt == '*') {
+                            /* Wildcard: all IPs */
+                            acc.client_ip = 0;
+                            acc.client_mask = 0;
+                            opt++;
+                        } else {
+                            /* Parse IPv4 quad */
+                            uint8_t ip_octets[4];
+                            int octets = 0;
+                            while (*opt >= '0' && *opt <= '9' && octets < 4) {
+                                int val = 0;
+                                while (*opt >= '0' && *opt <= '9') {
+                                    val = val * 10 + (*opt - '0');
+                                    opt++;
+                                }
+                                ip_octets[octets++] = (uint8_t)val;
+                                if (*opt == '.') opt++;
+                                else break;
+                            }
+                            if (octets == 4) {
+                                acc.client_ip = ((uint32_t)ip_octets[0] << 24) |
+                                                 ((uint32_t)ip_octets[1] << 16) |
+                                                 ((uint32_t)ip_octets[2] << 8)  |
+                                                 ip_octets[3];
+                                /* Default mask: /32 (exact IP) */
+                                acc.client_mask = 0xFFFFFFFF;
+
+                                /* Check for /mask suffix */
+                                if (*opt == '/') {
+                                    opt++;
+                                    int prefix = 0;
+                                    while (*opt >= '0' && *opt <= '9') {
+                                        prefix = prefix * 10 + (*opt - '0');
+                                        opt++;
+                                    }
+                                    if (prefix > 0 && prefix <= 32) {
+                                        acc.client_mask = htonl(
+                                            prefix == 0 ? 0 :
+                                            0xFFFFFFFF << (32 - prefix));
+                                    }
+                                }
+                            }
+                        }
+
+                        /* Parse options in parentheses: (rw,ro,root_squash,...) */
+                        if (*opt == '(') {
+                            opt++; /* skip '(' */
+                            const char *paren_start = opt;
+                            while (*opt && *opt != ')') opt++;
+
+                            char opts_buf[256];
+                            int olen = (int)(opt - paren_start);
+                            if (olen > 255) olen = 255;
+                            memcpy(opts_buf, paren_start, olen);
+                            opts_buf[olen] = '\0';
+
+                            if (*opt == ')') opt++;
+
+                            /* Parse comma-separated options */
+                            char *o = opts_buf;
+                            while (*o) {
+                                while (*o == ' ' || *o == ',') { o++; }
+                                if (*o == '\0') break;
+
+                                if (strncmp(o, "rw", 2) == 0 && (o[2] == ',' || o[2] == '\0')) {
+                                    acc.access_flags = NFSD_ACCESS_RW;
+                                    o += 2;
+                                } else if (strncmp(o, "ro", 2) == 0 && (o[2] == ',' || o[2] == '\0')) {
+                                    acc.access_flags = NFSD_ACCESS_READ;
+                                    read_only = 1;
+                                    o += 2;
+                                } else if (strncmp(o, "root_squash", 11) == 0) {
+                                    squash = NFSD_SQUASH_ROOT;
+                                    o += 11;
+                                } else if (strncmp(o, "all_squash", 10) == 0) {
+                                    squash = NFSD_SQUASH_ALL;
+                                    o += 10;
+                                } else if (strncmp(o, "no_root_squash", 14) == 0) {
+                                    squash = NFSD_SQUASH_NONE;
+                                    o += 14;
+                                } else if (strncmp(o, "anonuid", 7) == 0) {
+                                    o += 7;
+                                    if (*o == '=') o++;
+                                    int uid = 0;
+                                    while (*o >= '0' && *o <= '9') {
+                                        uid = uid * 10 + (*o - '0');
+                                        o++;
+                                    }
+                                    anon_uid = (uint16_t)uid;
+                                } else if (strncmp(o, "anongid", 7) == 0) {
+                                    o += 7;
+                                    if (*o == '=') o++;
+                                    int gid = 0;
+                                    while (*o >= '0' && *o <= '9') {
+                                        gid = gid * 10 + (*o - '0');
+                                        o++;
+                                    }
+                                    anon_gid = (uint16_t)gid;
+                                } else {
+                                    o++; /* skip unknown char */
+                                }
+                            }
+                        }
+
+                        access_entries[num_access++] = acc;
+                        continue;
+                    }
+
+                    /* Handle global options (no IP prefix) */
+                    if (*opt == '(') {
+                        opt++;
+                        while (*opt && *opt != ')') {
+                            if (strncmp(opt, "root_squash", 11) == 0) {
+                                squash = NFSD_SQUASH_ROOT;
+                                opt += 11;
+                            } else if (strncmp(opt, "all_squash", 10) == 0) {
+                                squash = NFSD_SQUASH_ALL;
+                                opt += 10;
+                            } else if (strncmp(opt, "no_root_squash", 14) == 0) {
+                                squash = NFSD_SQUASH_NONE;
+                                opt += 14;
+                            } else if (strncmp(opt, "anonuid", 7) == 0) {
+                                opt += 7;
+                                if (*opt == '=') opt++;
+                                anon_uid = 0;
+                                while (*opt >= '0' && *opt <= '9') {
+                                    anon_uid = anon_uid * 10 + (*opt - '0');
+                                    opt++;
+                                }
+                            } else if (strncmp(opt, "anongid", 7) == 0) {
+                                opt += 7;
+                                if (*opt == '=') opt++;
+                                anon_gid = 0;
+                                while (*opt >= '0' && *opt <= '9') {
+                                    anon_gid = anon_gid * 10 + (*opt - '0');
+                                    opt++;
+                                }
+                            } else if (strncmp(opt, "rw", 2) == 0) {
+                                read_only = 0;
+                                opt += 2;
+                            } else if (strncmp(opt, "ro", 2) == 0) {
+                                read_only = 1;
+                                opt += 2;
+                            } else {
+                                opt++;
+                            }
+                        }
+                        if (*opt == ')') opt++;
+                        continue;
+                    }
+
+                    /* Skip anything unrecognized */
+                    opt++;
+                }
+            }
+
+            /* Add the export with parsed info */
+            struct nfsd_export *new_ex = &nfsd_exports[nfsd_num_exports];
+            memset(new_ex, 0, sizeof(*new_ex));
+            strncpy(new_ex->export_path, export_path, sizeof(new_ex->export_path) - 1);
+            strncpy(new_ex->local_path, local_path, sizeof(new_ex->local_path) - 1);
+
+            struct vfs_stat st;
+            if (vfs_stat(local_path, &st) == 0) {
+                new_ex->st = st;
+                new_ex->valid = 1;
+                new_ex->squash = squash;
+                new_ex->anon_uid = anon_uid;
+                new_ex->anon_gid = anon_gid;
+                new_ex->read_only = read_only;
+                new_ex->num_access = num_access;
+                memcpy(new_ex->access_list, access_entries,
+                       num_access * sizeof(access_entries[0]));
+
+                nfsd_num_exports++;
+                parsed++;
+
+                kprintf("[nfsd] Export: %s -> %s (squash=%d, ro=%d, "
+                        "%d access rules)\\n",
+                        export_path, local_path, squash, read_only, num_access);
+            } else {
+                kprintf("[nfsd] Export path not accessible: %s\\n", local_path);
+            }
+        }
+    }
+
+    kprintf("[nfsd] Exports reloaded: %d parsed\\n", parsed);
+    return parsed > 0 ? 0 : -ENOENT;
 }
 
 /* Find an export by local path resolution */
@@ -1075,6 +1481,22 @@ static void mountd_proc_mnt(struct nfsd_rpc_state *rpc,
         xdr_put_u32(&p, 1);
         xdr_put_u32(&p, RPC_AUTH_NONE);
     } else {
+        /* Check client IP access */
+        int access_ok = nfsd_check_export_access(
+            &nfsd_exports[export_idx], rpc->client_ip, NFSD_ACCESS_READ);
+        if (access_ok < 0) {
+            kprintf("[nfsd] MNT denied for %s from client %d.%d.%d.%d: %d\\n",
+                    path, NIPQUAD(rpc->client_ip), access_ok);
+            xdr_put_u32(&p, NFS3ERR_ACCES);
+            /* No FH */
+            xdr_put_u32(&p, 0);
+            /* Flavor list (AUTH_NONE) */
+            xdr_put_u32(&p, 1);
+            xdr_put_u32(&p, RPC_AUTH_NONE);
+            *reply_len = (uint32_t)(p - reply);
+            return;
+        }
+
         xdr_put_u32(&p, NFS3_OK);
         /* File handle: encode with vnode_id=1 (reserved root) */
         uint8_t raw_fh[8];
@@ -1100,14 +1522,50 @@ static void mountd_proc_export(struct nfsd_rpc_state *rpc,
     uint8_t *p = reply;
     rpc_build_header(&p, rpc->xid, 1, RPC_SUCCESS);
 
-    /* List all exports */
+    /* List all exports with their access info */
     for (int i = 0; i < nfsd_num_exports; i++) {
         if (nfsd_exports[i].valid) {
             /* Export path */
             xdr_put_string(&p, nfsd_exports[i].export_path);
-            /* Group list (1 group, 0.0.0.0/0 = all) */
-            xdr_put_u32(&p, 1);
-            xdr_put_string(&p, "*");
+
+            /* If there are per-IP access entries, list each as a group */
+            if (nfsd_exports[i].num_access > 0) {
+                xdr_put_u32(&p, nfsd_exports[i].num_access);
+                for (int j = 0; j < nfsd_exports[i].num_access; j++) {
+                    const struct nfsd_export_access *a =
+                        &nfsd_exports[i].access_list[j];
+
+                    /* Format the IP/mask as a string */
+                    char host_str[64];
+                    if (a->client_mask == 0) {
+                        snprintf(host_str, sizeof(host_str), "*");
+                    } else if (a->client_mask == 0xFFFFFFFF) {
+                        snprintf(host_str, sizeof(host_str),
+                                 "%d.%d.%d.%d",
+                                 (a->client_ip >> 24) & 0xFF,
+                                 (a->client_ip >> 16) & 0xFF,
+                                 (a->client_ip >> 8) & 0xFF,
+                                 a->client_ip & 0xFF);
+                    } else {
+                        /* Convert mask to prefix length */
+                        int prefix = 0;
+                        uint32_t m = ntohl(a->client_mask);
+                        while (m & 0x80000000) { prefix++; m <<= 1; }
+                        snprintf(host_str, sizeof(host_str),
+                                 "%d.%d.%d.%d/%d",
+                                 (a->client_ip >> 24) & 0xFF,
+                                 (a->client_ip >> 16) & 0xFF,
+                                 (a->client_ip >> 8) & 0xFF,
+                                 a->client_ip & 0xFF,
+                                 prefix);
+                    }
+                    xdr_put_string(&p, host_str);
+                }
+            } else {
+                /* No per-IP rules — export to all */
+                xdr_put_u32(&p, 1);
+                xdr_put_string(&p, "*");
+            }
         }
     }
     /* Terminate with empty string */
@@ -1403,115 +1861,11 @@ int __init nfsd_init(void)
     nfsd_path_map_count = 0;
     nfsd_next_vnode_id = 2; /* 0 = invalid, 1 = reserved for export root */
 
+    /* Initialize write verifier */
+    nfsd_writeverf = 0;
+
     /* Parse /etc/exports to populate exports list */
-    uint8_t exports_buf[4096];
-    uint32_t exports_size = 0;
-    int ret = vfs_read("/etc/exports", exports_buf, sizeof(exports_buf), &exports_size);
-    if (ret == 0 && exports_size > 0) {
-        kprintf("[nfsd] Parsing /etc/exports (%u bytes)\n", exports_size);
-        exports_buf[exports_size] = '\0';
-
-        /* Simple line-based exports parser */
-        char *line_start = (char *)exports_buf;
-        char *p = line_start;
-        int in_line = 0;
-
-        while (*p && nfsd_num_exports < NFSD_MAX_EXPORTS) {
-            /* Skip whitespace and newlines */
-            while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')
-                p++;
-            if (*p == '\0') break;
-            if (*p == '#') {
-                /* Skip comment lines */
-                while (*p && *p != '\n') p++;
-                continue;
-            }
-
-            line_start = p;
-            /* Find end of line */
-            while (*p && *p != '\n') p++;
-            if (*p == '\n') *p++ = '\0';
-            else *p = '\0';
-
-            /* Format: /export/path /local/path (ro,no_root_squash,...) */
-            char export_path[256], local_path[256];
-            char options[256];
-            export_path[0] = '\0';
-            local_path[0] = '\0';
-            options[0] = '\0';
-
-            int parsed = sscanf(line_start, "%255s %255s %255[^\n]",
-                                export_path, local_path, options);
-            if (parsed >= 2 && export_path[0] == '/') {
-                struct nfsd_export *ex = &nfsd_exports[nfsd_num_exports];
-                memset(ex, 0, sizeof(*ex));
-                strncpy(ex->export_path, export_path, sizeof(ex->export_path) - 1);
-                strncpy(ex->local_path, local_path, sizeof(ex->local_path) - 1);
-
-                /* Parse squash options */
-                ex->squash = NFSD_SQUASH_NONE;
-                ex->anon_uid = 65534;
-                ex->anon_gid = 65534;
-
-                if (options[0] != '\0') {
-                    char *opt = options;
-                    /* Skip leading parentheses */
-                    if (*opt == '(') opt++;
-                    while (*opt) {
-                        if (*opt == ')' || *opt == ',' || *opt == ' ') {
-                            opt++;
-                            continue;
-                        }
-                        if (strncmp(opt, "root_squash", 11) == 0) {
-                            ex->squash = NFSD_SQUASH_ROOT;
-                            opt += 11;
-                        } else if (strncmp(opt, "all_squash", 10) == 0) {
-                            ex->squash = NFSD_SQUASH_ALL;
-                            opt += 10;
-                        } else if (strncmp(opt, "no_root_squash", 14) == 0) {
-                            ex->squash = NFSD_SQUASH_NONE;
-                            opt += 14;
-                        } else if (strncmp(opt, "anonuid", 7) == 0) {
-                            opt += 7;
-                            if (*opt == '=') opt++;
-                            int uid = 0;
-                            while (*opt >= '0' && *opt <= '9') {
-                                uid = uid * 10 + (*opt - '0');
-                                opt++;
-                            }
-                            ex->anon_uid = (uint16_t)uid;
-                        } else if (strncmp(opt, "anongid", 7) == 0) {
-                            opt += 7;
-                            if (*opt == '=') opt++;
-                            int gid = 0;
-                            while (*opt >= '0' && *opt <= '9') {
-                                gid = gid * 10 + (*opt - '0');
-                                opt++;
-                            }
-                            ex->anon_gid = (uint16_t)gid;
-                        } else {
-                            opt++; /* skip unknown char */
-                        }
-                    }
-                }
-
-                /* Verify the local path exists */
-                struct vfs_stat st;
-                if (vfs_stat(local_path, &st) == 0) {
-                    ex->st = st;
-                    ex->valid = 1;
-                    nfsd_num_exports++;
-                    kprintf("[nfsd] Export: %s -> %s (squash=%d, uid=%d, gid=%d)\n",
-                            export_path, local_path, ex->squash,
-                            ex->anon_uid, ex->anon_gid);
-                } else {
-                    kprintf("[nfsd] Export path not accessible: %s\n", local_path);
-                }
-            }
-        }
-    } else {
-        kprintf("[nfsd] No /etc/exports found, using defaults\n");
-    }
+    nfsd_reload_exports();
 
     kprintf("[nfsd] NFSv3 server initialized: %d exports\n", nfsd_num_exports);
     return 0;
