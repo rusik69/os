@@ -2947,14 +2947,54 @@ int ext2_mount(const char *mountpoint, uint8_t dev_id) {
     ep->mountpoint[sizeof(ep->mountpoint) - 1] = '\0';
 
     if (ext2_load_super(ep) < 0) {
-        kfree(ep);
-        return -EINVAL;
+        kprintf("[ext2] I/O error reading primary superblock\n");
+
+        /* ── Attempt to recover: scan backup superblocks ──────────────
+         * The primary superblock location may be corrupt due to a bad
+         * sector or accidental overwrite.  Scan backup copies in other
+         * block groups and try to restore.  We need enough information
+         * from the (failed) load to set up block_size and num_block_groups
+         * for the backup scan — use the default block size of 1024. */
+        ep->block_size = 1024;
+        ep->blocks_per_group = 8192; /* conservative default */
+        ep->inodes_per_group = 2048;
+        ep->num_block_groups = 1024; /* upper bound for scan */
+
+        if (ext2_restore_super_from_backup(ep) < 0) {
+            kfree(ep);
+            return -EINVAL;
+        }
+
+        /* Restore succeeded — re-derive geometry from the restored sb */
+        ep->block_size = 1024 << ep->sb.s_log_block_size;
+        ep->blocks_per_group = ep->sb.s_blocks_per_group;
+        ep->inodes_per_group = ep->sb.s_inodes_per_group;
+        uint32_t total_groups_r = (ep->sb.s_blocks_count + ep->blocks_per_group - 1)
+                                  / ep->blocks_per_group;
+        ep->num_block_groups = total_groups_r;
     }
 
     if (ep->sb.s_magic != EXT2_SUPER_MAGIC) {
         kprintf("[ext2] Bad superblock magic: 0x%x\n", ep->sb.s_magic);
-        kfree(ep);
-        return -EINVAL;
+
+        /* Attempt to restore from backup before giving up */
+        ep->block_size = 1024;
+        ep->blocks_per_group = 8192;
+        ep->inodes_per_group = 2048;
+        ep->num_block_groups = 1024;
+
+        if (ext2_restore_super_from_backup(ep) < 0) {
+            kfree(ep);
+            return -EINVAL;
+        }
+
+        /* Restore succeeded — re-derive geometry from the restored sb */
+        ep->block_size = 1024 << ep->sb.s_log_block_size;
+        ep->blocks_per_group = ep->sb.s_blocks_per_group;
+        ep->inodes_per_group = ep->sb.s_inodes_per_group;
+        uint32_t total_groups_r = (ep->sb.s_blocks_count + ep->blocks_per_group - 1)
+                                  / ep->blocks_per_group;
+        ep->num_block_groups = total_groups_r;
     }
 
     ep->block_size = 1024 << ep->sb.s_log_block_size;
@@ -3196,6 +3236,195 @@ static int ext2_sync_bgd(struct ext2_priv *ep)
     }
 
     kfree(block_buf);
+    return 0;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  Superblock backup/restore
+ *
+ *  Ext2 stores redundant copies of the superblock in block groups that
+ *  have a superblock backup (groups 0, 1, and powers of 3/5/7 when
+ *  SPARSE_SUPER is set; every group otherwise).  These functions read,
+ *  validate, and restore the primary superblock from a backup copy when
+ *  the primary is corrupt.
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* Read the superblock from a specific block group's backup location.
+ * @ep:   ext2 private data (dev_id, block_size used for I/O)
+ * @group: block group number whose backup to read
+ * @sb:   output buffer for the superblock
+ * Returns 0 on success, -ENOENT if group has no superblock, -EIO on I/O error. */
+static int ext2_read_super_from_group(struct ext2_priv *ep, uint32_t group,
+                                       struct ext2_superblock *sb)
+{
+    if (!ep || !sb || group >= ep->num_block_groups)
+        return -EINVAL;
+
+    int sparse = (ep->sb.s_feature_ro_compat &
+                  EXT2_FEATURE_RO_COMPAT_SPARSE_SUPER) ? 1 : 0;
+    if (!ext2_group_has_super(sparse, group))
+        return -ENOENT;
+
+    /* Superblock is at offset 1024 within the block group.
+     * For 1024-byte blocks, that's the second half of block 0 (sector 2).
+     * For larger blocks, it's at the start of block 1 (sector blocksize/512). */
+    uint64_t group_lba = (uint64_t)ext2_group_start(group, ep->blocks_per_group)
+                         * (ep->block_size / 512);
+    uint64_t sb_sector = group_lba + 2; /* offset 1024 = 2 sectors */
+
+    uint8_t buf[1024];
+    memset(buf, 0, sizeof(buf));
+
+    /* Read 2 sectors (1024 bytes) — covers entire superblock for all
+     * block sizes since the ext2 superblock is 1024 bytes (the last
+     * ~488 bytes are reserved). */
+    if (blockdev_read_sectors(ep->dev_id, sb_sector, 2, buf) != 0) {
+        /* Fallback: try reading one sector at a time */
+        if (blockdev_read_sectors(ep->dev_id, sb_sector, 1, buf) != 0 ||
+            blockdev_read_sectors(ep->dev_id, sb_sector + 1, 1,
+                                  buf + 512) != 0)
+            return -EIO;
+    }
+
+    memcpy(sb, buf, sizeof(*sb));
+    return 0;
+}
+
+/* Validate a superblock's fields for basic consistency.
+ * Checks magic number, non-zero geometry fields, and structural limits.
+ *
+ * @sb: superblock to validate
+ * Returns 0 if valid, -EFSCORRUPTED if fields are invalid, -EINVAL for NULL. */
+static int ext2_validate_superblock(const struct ext2_superblock *sb)
+{
+    if (!sb)
+        return -EINVAL;
+
+    /* Magic number check */
+    if (sb->s_magic != EXT2_SUPER_MAGIC)
+        return -EFSCORRUPTED;
+
+    /* Geometry must be sensible (non-zero) */
+    if (sb->s_inodes_count == 0 || sb->s_blocks_count == 0 ||
+        sb->s_blocks_per_group == 0 || sb->s_inodes_per_group == 0)
+        return -EFSCORRUPTED;
+
+    /* Block size: log_block_size 0..5 gives 1024..32768 bytes.
+     * Values > 5 are reserved (would exceed 32 KiB) */
+    if (sb->s_log_block_size > 5)
+        return -EFSCORRUPTED;
+
+    /* Inode size must be at least 128 bytes (standard ext2 inode size) */
+    if (sb->s_inode_size > 0 && sb->s_inode_size < 128)
+        return -EFSCORRUPTED;
+
+    /* Computed number of block groups must be non-zero.
+     * Use uint64_t for intermediate to avoid overflow. */
+    uint64_t computed_groups = ((uint64_t)sb->s_blocks_count +
+                                sb->s_blocks_per_group - 1)
+                               / sb->s_blocks_per_group;
+    if (computed_groups == 0 || computed_groups > 1048576ULL)
+        return -EFSCORRUPTED;
+
+    return 0;
+}
+
+/* Scans all backup superblock copies on the device and tries to restore
+ * the primary superblock from a valid backup.
+ *
+ * Iterates every block group that has a superblock backup according to
+ * the current (possibly corrupt) superblock's feature flags.  For each
+ * backup, reads the superblock and validates it.  The first valid backup
+ * found is written back to the primary superblock location.
+ *
+ * After restoration, the in-memory superblock in @ep is also updated.
+ *
+ * @ep: ext2 private data (may have a partially-loaded corrupt superblock)
+ * Returns 0 on successful restore, -EFSCORRUPTED if no valid backup found,
+ *         negative errno on I/O error. */
+int ext2_restore_super_from_backup(struct ext2_priv *ep)
+{
+    if (!ep)
+        return -EINVAL;
+
+    /* Feature flags may be corrupt — decode from the in-memory copy.
+     * If the flags are garbage (not just the primary superblock), we
+     * may still be able to detect a valid backup by trying every group
+     * regardless of sparse layout — see fallback below. */
+    int sparse = (ep->sb.s_feature_ro_compat &
+                  EXT2_FEATURE_RO_COMPAT_SPARSE_SUPER) ? 1 : 0;
+    struct ext2_superblock backup_sb;
+    uint32_t restored_from = 0;
+    int found = 0;
+
+    /* ── Pass 1: Scan groups that should have a backup ────────────── */
+    for (uint32_t g = 1; g < ep->num_block_groups; g++) {
+        /* Skip groups that don't have a superblock in sparse layout.
+         * For non-sparse filesystems every group qualifies. */
+        if (sparse && !ext2_group_has_super(1, g))
+            continue;
+
+        memset(&backup_sb, 0, sizeof(backup_sb));
+        if (ext2_read_super_from_group(ep, g, &backup_sb) < 0)
+            continue;
+
+        if (ext2_validate_superblock(&backup_sb) == 0) {
+            kprintf("[ext2] Found valid superblock backup in group %u\n", g);
+            ep->sb = backup_sb;
+            ep->sb.s_wtime = (uint32_t)(timer_get_ticks() / TIMER_FREQ);
+            restored_from = g;
+            found = 1;
+            break;
+        }
+    }
+
+    /* ── Pass 2 (fallback): If sparse layout wasn't detected correctly
+     *     due to a corrupt superblock, try every group. ───────────── */
+    if (!found && sparse) {
+        kprintf("[ext2] Sparse-super backup scan failed, trying all groups...\n");
+        for (uint32_t g = 1; g < ep->num_block_groups; g++) {
+            /* Skip groups we already checked in pass 1 */
+            if (ext2_group_has_super(1, g))
+                continue;
+
+            memset(&backup_sb, 0, sizeof(backup_sb));
+            struct ext2_superblock local_sb;
+            /* Read directly using raw I/O without the helper which
+             * checks ext2_group_has_super. */
+            uint64_t group_lba = (uint64_t)g * (uint64_t)ep->blocks_per_group
+                                 * (ep->block_size / 512);
+            uint8_t buf[1024];
+            memset(buf, 0, sizeof(buf));
+            if (blockdev_read_sectors(ep->dev_id, group_lba + 2, 2, buf) != 0)
+                continue;
+            memcpy(&local_sb, buf, sizeof(local_sb));
+
+            if (ext2_validate_superblock(&local_sb) == 0) {
+                kprintf("[ext2] Found valid superblock in group %u "
+                        "(sparse-fallback)\n", g);
+                ep->sb = local_sb;
+                ep->sb.s_wtime = (uint32_t)(timer_get_ticks() / TIMER_FREQ);
+                restored_from = g;
+                found = 1;
+                break;
+            }
+        }
+    }
+
+    if (!found) {
+        kprintf("[ext2] No valid superblock backup found\n");
+        return -EFSCORRUPTED;
+    }
+
+    /* Write the restored superblock to the primary location (and all
+     * backup locations to ensure consistency). */
+    int ret = ext2_sync_super(ep);
+    if (ret < 0) {
+        kprintf("[ext2] Failed to write restored superblock: %d\n", ret);
+        return ret;
+    }
+
+    kprintf("[ext2] Superblock restored from group %u backup\n", restored_from);
     return 0;
 }
 

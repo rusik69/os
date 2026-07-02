@@ -404,6 +404,12 @@ int ext2_free_block(struct ext2_priv *ep, uint32_t block_num);
 int ext2_mount(const char *mountpoint, uint8_t dev_id);
 int ext2_init(void);
 
+/* Restore the primary superblock from a backup copy.
+ * Scans all block groups that have superblock backups, finds the first
+ * valid one, and writes it to the primary location.
+ * Returns 0 on success, -EFSCORRUPTED if no valid backup found. */
+int ext2_restore_super_from_backup(struct ext2_priv *ep);
+
 /* ── POSIX ACL operations (ext2_acl.c) ──────────────────────────────── */
 
 /* Set a POSIX ACL on an ext2 inode via the extended attribute block.
