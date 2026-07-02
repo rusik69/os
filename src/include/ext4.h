@@ -50,13 +50,18 @@
 #define EXT4_FEATURE_COMPAT_DIR_INDEX     0x0020
 
 /* RO compat feature flags */
-#define EXT4_FEATURE_RO_COMPAT_SPARSE_SUPER  0x0001
-#define EXT4_FEATURE_RO_COMPAT_LARGE_FILE    0x0002
-#define EXT4_FEATURE_RO_COMPAT_BTREE_DIR     0x0004
-#define EXT4_FEATURE_RO_COMPAT_HUGE_FILE     0x0008
-#define EXT4_FEATURE_RO_COMPAT_GDT_CSUM      0x0010
-#define EXT4_FEATURE_RO_COMPAT_DIR_NLINK     0x0020
-#define EXT4_FEATURE_RO_COMPAT_EXTRA_ISIZE   0x0040
+#define EXT4_FEATURE_RO_COMPAT_SPARSE_SUPER    0x0001
+#define EXT4_FEATURE_RO_COMPAT_LARGE_FILE      0x0002
+#define EXT4_FEATURE_RO_COMPAT_BTREE_DIR       0x0004
+#define EXT4_FEATURE_RO_COMPAT_HUGE_FILE       0x0008
+#define EXT4_FEATURE_RO_COMPAT_GDT_CSUM        0x0010
+#define EXT4_FEATURE_RO_COMPAT_DIR_NLINK       0x0020
+#define EXT4_FEATURE_RO_COMPAT_EXTRA_ISIZE     0x0040
+#define EXT4_FEATURE_RO_COMPAT_METADATA_CSUM   0x0400
+
+/* Checksum type constants for s_checksum_type */
+#define EXT4_CRC32_CHKSUM   0
+#define EXT4_CRC32C_CHKSUM  1
 
 /* Inline data: data stored in i_block[0..14] (60 bytes max for ext4) */
 #define EXT4_INLINE_DATA_FL 0x10000000  /* Inode flag for inline data */
@@ -362,5 +367,13 @@ ext4_inode_get_blocks(const struct ext4_inode *inode, int huge_file)
 /* Public API */
 int ext4_mount(const char *mountpoint, uint8_t dev_id);
 int ext4_init(void);
+
+/* Checksum verification for ext4 metadata structures (CRC32C) */
+int ext4_verify_sb_checksum(struct ext4_priv *ep);
+int ext4_verify_bg_checksum(struct ext4_priv *ep,
+                             const struct ext4_bg_desc *bg,
+                             uint32_t bg_index);
+int ext4_verify_inode_checksum(struct ext4_priv *ep,
+                                const struct ext4_inode *inode);
 
 #endif /* EXT4_H */

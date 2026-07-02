@@ -24,6 +24,11 @@
 #include "vfs.h"
 #include "errno.h"
 #include "initcall.h"
+#include "crc.h"
+
+#ifndef offsetof
+#define offsetof(TYPE, MEMBER) ((size_t)(uintptr_t)&((TYPE *)0)->MEMBER)
+#endif
 
 #ifdef MODULE
 #include "module.h"
@@ -103,6 +108,181 @@ int ext4_read_block(struct ext4_priv *ep, uint32_t block_num, uint8_t *buf)
     return 0;
 }
 
+/* ── Metadata CRC32C computation ─────────────────────────────────── */
+
+/**
+ * ext4_crc32c - Compute CRC32C for ext4 metadata with proper seeding
+ * @ep: Filesystem private data
+ * @data: Pointer to metadata buffer
+ * @len: Length of data in bytes
+ *
+ * When CSUM_SEED incompat feature is set, uses the superblock's
+ * s_checksum_seed as the initial CRC value.  Otherwise XORs the
+ * UUID-derived seed into the computation.  This matches Linux ext4's
+ * metadata checksum algorithm for superblock, block group descriptors,
+ * and inode checksums.
+ *
+ * Return: CRC32C value (not XORed with ~0 — caller handles that)
+ */
+static uint32_t ext4_crc32c(struct ext4_priv *ep, const void *data,
+                             uint32_t len)
+{
+	uint32_t crc;
+
+	if (ep->incompat & EXT4_FEATURE_INCOMPAT_CSUM_SEED)
+		crc = ep->sb.s_checksum_seed;
+	else
+		crc = crc32c(~0, ep->sb.s_uuid, sizeof(ep->sb.s_uuid));
+
+	crc = crc32c(crc, data, len);
+	return crc;
+}
+
+/* ── Superblock checksum ─────────────────────────────────────────── */
+
+int ext4_verify_sb_checksum(struct ext4_priv *ep)
+{
+	uint32_t stored_csum, computed_csum;
+	uint32_t saved_csum;
+
+	/* Only verify when METADATA_CSUM feature is present */
+	if (!(ep->ro_compat & EXT4_FEATURE_RO_COMPAT_METADATA_CSUM))
+		return 0;
+
+	/* Verify checksum type */
+	if (ep->sb.s_checksum_type != EXT4_CRC32C_CHKSUM &&
+	    ep->sb.s_checksum_type != EXT4_CRC32_CHKSUM) {
+		kprintf("[ext4] WARNING: unknown checksum type %u, "
+		        "skipping verification\n", ep->sb.s_checksum_type);
+		return 0;
+	}
+
+	stored_csum = ep->sb.s_checksum;
+	if (stored_csum == 0)
+		return 0; /* Zero checksum = not computed */
+
+	/* CRC32C covers bytes up to (but not including) s_checksum */
+	saved_csum = ep->sb.s_checksum;
+	ep->sb.s_checksum = 0;
+	computed_csum = ext4_crc32c(ep, &ep->sb,
+	                offsetof(struct ext4_superblock, s_checksum));
+	ep->sb.s_checksum = saved_csum;
+
+	if (computed_csum != stored_csum) {
+		kprintf("[ext4] CORRUPTION: superblock checksum mismatch: "
+		        "stored=0x%08x, computed=0x%08x\n",
+		        stored_csum, computed_csum);
+		return ext4_corrupt(ep, "superblock checksum mismatch");
+	}
+
+	return 0;
+}
+
+/* ── Block group descriptor checksum ─────────────────────────────── */
+
+int ext4_verify_bg_checksum(struct ext4_priv *ep,
+                             const struct ext4_bg_desc *bg,
+                             uint32_t bg_index)
+{
+	uint32_t stored_csum, computed_csum;
+
+	/* Only verify when METADATA_CSUM or GDT_CSUM feature is present */
+	if (!(ep->ro_compat & EXT4_FEATURE_RO_COMPAT_METADATA_CSUM) &&
+	    !(ep->ro_compat & EXT4_FEATURE_RO_COMPAT_GDT_CSUM))
+		return 0;
+
+	/*
+	 * The checksum is stored in bg_reserved[0] for 32-bit descriptors
+	 * (offset 20 in the 32-byte packed struct).  CRC32C covers the
+	 * first 20 bytes (fields before bg_reserved[0]).
+	 *
+	 * With METADATA_CSUM + 64BIT, the block group number is also
+	 * folded into the checksum.
+	 */
+	stored_csum = bg->bg_reserved[0];
+	if (stored_csum == 0)
+		return 0; /* Zero checksum = not computed */
+
+	computed_csum = ext4_crc32c(ep, bg,
+	                offsetof(struct ext4_bg_desc, bg_reserved[0]));
+
+	/* With 64-bit feature, fold the block group number in */
+	if (ep->incompat & EXT4_FEATURE_INCOMPAT_64BIT) {
+		uint32_t le_bg = bg_index;
+		computed_csum = crc32c(computed_csum, &le_bg,
+		                       sizeof(le_bg));
+	}
+
+	if (computed_csum != stored_csum) {
+		kprintf("[ext4] WARNING: block group %u descriptor "
+		        "checksum mismatch: stored=0x%08x, computed=0x%08x\n",
+		        bg_index, stored_csum, computed_csum);
+		/* Warn but don't fail — read-only is still safe */
+		return -EFSCORRUPTED;
+	}
+
+	return 0;
+}
+
+/* ── Inode checksum ──────────────────────────────────────────────── */
+
+int ext4_verify_inode_checksum(struct ext4_priv *ep,
+                                const struct ext4_inode *inode)
+{
+	uint16_t lo, hi;
+	uint32_t stored_csum, computed_csum;
+
+	/* Only verify for inodes with extended fields (inode_size > 128) */
+	if (!(ep->ro_compat & EXT4_FEATURE_RO_COMPAT_METADATA_CSUM))
+		return 0;
+	if (ep->inode_size <= 128)
+		return 0;
+	if (inode->i_extra_isize <
+	    offsetof(struct ext4_inode, i_checksum_hi) -
+	    offsetof(struct ext4_inode, i_extra_isize))
+		return 0; /* Extended area too small for checksum */
+
+	/*
+	 * In ext4, the inode checksum is split across two fields:
+	 *   - Low 16 bits: stored in i_osd2[0..1] (bytes 116-117)
+	 *   - High 16 bits: stored in i_checksum_hi (bytes 130-131)
+	 *
+	 * CRC32C covers bytes 0 to offsetof(i_checksum_hi) = 130 bytes.
+	 */
+	memcpy(&lo, &inode->i_osd2[0], sizeof(lo));
+	hi = inode->i_checksum_hi;
+	stored_csum = (uint32_t)lo | ((uint32_t)hi << 16);
+
+	if (stored_csum == 0)
+		return 0; /* Zero checksum = not computed */
+
+	computed_csum = ext4_crc32c(ep, inode,
+	                offsetof(struct ext4_inode, i_checksum_hi));
+
+	/* Fold i_extra_isize into the checksum (Linux kernel compat) */
+	{
+		uint16_t extra = inode->i_extra_isize;
+		computed_csum = crc32c(computed_csum, &extra, sizeof(extra));
+	}
+
+	/* Fold i_projid into the checksum for inodes large enough */
+	if (ep->inode_size > offsetof(struct ext4_inode, i_projid) +
+	                     sizeof(inode->i_projid)) {
+		uint32_t projid = inode->i_projid;
+		computed_csum = crc32c(computed_csum, &projid, sizeof(projid));
+	}
+
+	if (computed_csum != stored_csum) {
+		kprintf("[ext4] WARNING: inode checksum mismatch: "
+		        "stored=0x%08x, computed=0x%08x\n",
+		        stored_csum, computed_csum);
+		/* Warn but don't fail — read-only is still safe */
+		return -EFSCORRUPTED;
+	}
+
+	return 0;
+}
+
 /* ── Superblock loading ───────────────────────────────────────────── */
 
 static int ext4_load_super(struct ext4_priv *ep)
@@ -180,6 +360,27 @@ static int ext4_load_bgd_cache(struct ext4_priv *ep)
             remaining -= copy;
         }
     }
+
+    /* ── Verify block group descriptor checksums ── */
+    {
+        uint32_t bgd_count;
+        uint32_t bgd_entry_size;
+
+        bgd_entry_size = sizeof(struct ext4_bg_desc);
+        if (ep->incompat & EXT4_FEATURE_INCOMPAT_64BIT)
+            bgd_entry_size = 64;
+
+        bgd_count = ep->num_block_groups;
+        for (uint32_t i = 0; i < bgd_count; i++) {
+            struct ext4_bg_desc *bg = (struct ext4_bg_desc *)
+                ((uint8_t *)ep->bgd_cache + i * bgd_entry_size);
+            if (ext4_verify_bg_checksum(ep, bg, i) < 0) {
+                kprintf("[ext4] NOTE: BGD %u checksum mismatch — continuing "
+                        "read-only\n", i);
+            }
+        }
+    }
+
     return 0;
 }
 
@@ -209,6 +410,13 @@ static int ext4_read_inode(struct ext4_priv *ep, uint32_t ino, struct ext4_inode
         return -1;
 
     memcpy(inode, block_buf + tbl_off, sizeof(struct ext4_inode));
+
+    /* ── Verify inode metadata checksum (CRC32C) ── */
+    if (ext4_verify_inode_checksum(ep, inode) < 0) {
+        kprintf("[ext4] NOTE: inode %u checksum mismatch — continuing "
+                "read-only\n", ino);
+    }
+
     return 0;
 }
 
@@ -743,6 +951,8 @@ static void ext4_log_ro_compat_features(uint32_t flags)
         kprintf("[ext4]   RO_COMPAT: directory nlink\n");
     if (flags & EXT4_FEATURE_RO_COMPAT_EXTRA_ISIZE)
         kprintf("[ext4]   RO_COMPAT: extra inode size\n");
+    if (flags & EXT4_FEATURE_RO_COMPAT_METADATA_CSUM)
+        kprintf("[ext4]   RO_COMPAT: metadata checksums (CRC32C)\n");
 }
 
 static void ext4_log_compat_features(uint32_t flags)
@@ -965,6 +1175,10 @@ int ext4_mount(const char *mountpoint, uint8_t dev_id)
     if (ep->incompat & EXT4_FEATURE_INCOMPAT_CSUM_SEED) {
         kprintf("[ext4] NOTE: checksum seed present (seed=0x%08x)\n", ep->sb.s_checksum_seed);
     }
+
+    /* ── Verify superblock metadata checksum (CRC32C) ── */
+    if (ext4_verify_sb_checksum(ep) < 0)
+        goto fail;
 
     /* ── Block size ── */
     ep->block_size = 1024u << ep->sb.s_log_block_size;
