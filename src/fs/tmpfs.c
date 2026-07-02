@@ -28,6 +28,13 @@ static uint8_t *tmpfs_alloc_pages_numa(uint32_t size, uint64_t *out_phys);
 static void tmpfs_free_pages_or_kmem(uint8_t *ptr, uint64_t phys,
                                      uint32_t size);
 
+/* ── Directory hash lookup helpers (forward declarations) ──────────── */
+static uint32_t tmpfs_hash_name(const char *name, int len);
+static int tmpfs_dir_htable_alloc(int dir_idx);
+static void tmpfs_dir_htable_free(int dir_idx);
+static int tmpfs_dir_insert(int dir_idx, int child_idx);
+static void tmpfs_dir_remove(int dir_idx, int child_idx);
+
 /* ── helpers ───────────────────────────────────────────────────── */
 
 static int alloc_inode(void) {
@@ -83,6 +90,11 @@ static void free_inode(int idx) {
     inodes[idx].numa_node = 0;
     inodes[idx].is_swapped = 0;
     inodes[idx].swap_npages = 0;
+
+    /* Free per-directory hash table if this was a directory */
+    if (inodes[idx].type == TMPFS_TYPE_DIR)
+        tmpfs_dir_htable_free(idx);
+
     tmpfs_used_inodes--;
 }
 
@@ -106,13 +118,24 @@ static int find_inode_in_dir(int dir_idx, const char *name) {
     if (dir_idx < 0 || dir_idx >= TMPFS_MAX_INODES) return -EINVAL;
     if (!inodes[dir_idx].in_use || inodes[dir_idx].type != TMPFS_TYPE_DIR)
         return -EINVAL;
+
+    struct tmpfs_dir_htable *ht = inodes[dir_idx].dir_htable;
+    if (!ht)
+        return -EINVAL;
+
     int len = (int)strlen(name);
-    for (int i = 0; i < TMPFS_MAX_INODES; i++) {
-        if (!inodes[i].in_use) continue;
-        if (inodes[i].parent != (uint32_t)dir_idx) continue;
-        if ((int)strlen(inodes[i].name) == len &&
-            memcmp(inodes[i].name, name, (size_t)len) == 0)
-            return i;
+    uint32_t hash = tmpfs_hash_name(name, len);
+    uint32_t bucket = hash & (TMPFS_HASH_BUCKETS - 1);
+
+    struct tmpfs_dirent *entry = ht->buckets[bucket];
+    while (entry) {
+        int idx = (int)entry->inode_idx;
+        if (idx >= 0 && idx < TMPFS_MAX_INODES && inodes[idx].in_use) {
+            if ((int)strlen(inodes[idx].name) == len &&
+                memcmp(inodes[idx].name, name, (size_t)len) == 0)
+                return idx;
+        }
+        entry = entry->next;
     }
     return -EINVAL;
 }
@@ -380,6 +403,156 @@ int tmpfs_try_evict(int target_pages)
     return total_evicted;
 }
 
+/* ══════════════════════════════════════════════════════════════════════
+ * ── Directory O(1) hash lookup ──────────────────────────────────────
+ * ══════════════════════════════════════════════════════════════════════ */
+
+/*
+ * tmpfs_hash_name() - DJB2 hash of a fixed-length name string.
+ * @name:  Pointer to the name.
+ * @len:   Length of the name in bytes.
+ *
+ * Returns a 32-bit hash value.
+ */
+static inline uint32_t tmpfs_hash_name(const char *name, int len)
+{
+    uint32_t hash = 5381;
+    for (int i = 0; i < len; i++)
+        hash = ((hash << 5) + hash) + (uint8_t)name[i];
+    return hash;
+}
+
+/*
+ * tmpfs_dir_htable_alloc() - Allocate and initialise a per-directory
+ * hash table for the given directory inode.
+ * @dir_idx:  Index of the directory inode.
+ *
+ * Returns 0 on success, -ENOMEM on allocation failure.
+ * If the directory already has a hash table, returns 0 (no-op).
+ */
+static int tmpfs_dir_htable_alloc(int dir_idx)
+{
+    if (dir_idx < 0 || dir_idx >= TMPFS_MAX_INODES)
+        return -EINVAL;
+    if (inodes[dir_idx].dir_htable)
+        return 0; /* already allocated */
+
+    struct tmpfs_dir_htable *ht = (struct tmpfs_dir_htable *)
+        kmalloc(sizeof(struct tmpfs_dir_htable));
+    if (!ht)
+        return -ENOMEM;
+
+    for (int i = 0; i < TMPFS_HASH_BUCKETS; i++)
+        ht->buckets[i] = NULL;
+
+    inodes[dir_idx].dir_htable = ht;
+    return 0;
+}
+
+/*
+ * tmpfs_dir_htable_free() - Free a directory's hash table and all its
+ * entries.
+ * @dir_idx:  Index of the directory inode.
+ */
+static void tmpfs_dir_htable_free(int dir_idx)
+{
+    if (dir_idx < 0 || dir_idx >= TMPFS_MAX_INODES)
+        return;
+    struct tmpfs_dir_htable *ht = inodes[dir_idx].dir_htable;
+    if (!ht)
+        return;
+
+    for (int i = 0; i < TMPFS_HASH_BUCKETS; i++) {
+        struct tmpfs_dirent *entry = ht->buckets[i];
+        while (entry) {
+            struct tmpfs_dirent *next = entry->next;
+            kfree(entry);
+            entry = next;
+        }
+        ht->buckets[i] = NULL;
+    }
+
+    kfree(ht);
+    inodes[dir_idx].dir_htable = NULL;
+}
+
+/*
+ * tmpfs_dir_insert() - Insert a child inode into its parent directory's
+ * hash table.
+ * @dir_idx:    Index of the parent directory.
+ * @child_idx:  Index of the child inode to insert.
+ *
+ * Returns 0 on success, -ENOMEM on allocation failure.
+ */
+static int tmpfs_dir_insert(int dir_idx, int child_idx)
+{
+    if (dir_idx < 0 || dir_idx >= TMPFS_MAX_INODES)
+        return -EINVAL;
+    if (!inodes[dir_idx].in_use || inodes[dir_idx].type != TMPFS_TYPE_DIR)
+        return -EINVAL;
+    if (child_idx < 0 || child_idx >= TMPFS_MAX_INODES)
+        return -EINVAL;
+    if (!inodes[child_idx].in_use)
+        return -EINVAL;
+
+    struct tmpfs_dir_htable *ht = inodes[dir_idx].dir_htable;
+    if (!ht)
+        return -EINVAL;
+
+    int len = (int)strlen(inodes[child_idx].name);
+    uint32_t hash = tmpfs_hash_name(inodes[child_idx].name, len);
+    uint32_t bucket = hash & (TMPFS_HASH_BUCKETS - 1);
+
+    struct tmpfs_dirent *entry = (struct tmpfs_dirent *)
+        kmalloc(sizeof(struct tmpfs_dirent));
+    if (!entry)
+        return -ENOMEM;
+
+    entry->inode_idx = (uint32_t)child_idx;
+    entry->next = ht->buckets[bucket];
+    ht->buckets[bucket] = entry;
+    return 0;
+}
+
+/*
+ * tmpfs_dir_remove() - Remove a child inode from its parent directory's
+ * hash table.
+ * @dir_idx:    Index of the parent directory.
+ * @child_idx:  Index of the child inode to remove.
+ *
+ * Safe to call even if the entry doesn't exist in the table.
+ */
+static void tmpfs_dir_remove(int dir_idx, int child_idx)
+{
+    if (dir_idx < 0 || dir_idx >= TMPFS_MAX_INODES)
+        return;
+    if (!inodes[dir_idx].in_use || inodes[dir_idx].type != TMPFS_TYPE_DIR)
+        return;
+
+    struct tmpfs_dir_htable *ht = inodes[dir_idx].dir_htable;
+    if (!ht)
+        return;
+
+    int len = (int)strlen(inodes[child_idx].name);
+    uint32_t hash = tmpfs_hash_name(inodes[child_idx].name, len);
+    uint32_t bucket = hash & (TMPFS_HASH_BUCKETS - 1);
+
+    struct tmpfs_dirent *entry = ht->buckets[bucket];
+    struct tmpfs_dirent *prev = NULL;
+    while (entry) {
+        if (entry->inode_idx == (uint32_t)child_idx) {
+            if (prev)
+                prev->next = entry->next;
+            else
+                ht->buckets[bucket] = entry->next;
+            kfree(entry);
+            return;
+        }
+        prev = entry;
+        entry = entry->next;
+    }
+}
+
 /* ── VFS operations ────────────────────────────────────────────── */
 
 static int tmpfs_read(void *priv, const char *path, void *buf, uint32_t max, uint32_t *out) {
@@ -486,6 +659,28 @@ static int tmpfs_mkdir(const char *path) {
     inodes[idx].numa_node = numa_home_node();
     inodes[idx].uid = 0; inodes[idx].gid = 0;
     inodes[idx].mode = FS_MODE_DIR;
+
+    /* Allocate per-directory hash table for the new subdirectory */
+    {
+        int hret = tmpfs_dir_htable_alloc(idx);
+        if (hret < 0) {
+            tmpfs_used_inodes--;
+            inodes[idx].in_use = 0;
+            return hret;
+        }
+    }
+
+    /* Insert into parent directory's hash table */
+    {
+        int iret = tmpfs_dir_insert(parent, idx);
+        if (iret < 0) {
+            tmpfs_dir_htable_free(idx);
+            tmpfs_used_inodes--;
+            inodes[idx].in_use = 0;
+            return iret;
+        }
+    }
+
     return 0;
 }
 
@@ -521,6 +716,17 @@ static int tmpfs_create(void *priv, const char *path, uint8_t type) {
     inodes[idx].uid = 0; inodes[idx].gid = 0;
     inodes[idx].mode = (type == FS_TYPE_LINK) ? 0777 : FS_MODE_FILE;
     memset(&inodes[idx].dev, 0, sizeof(inodes[idx].dev));
+
+    /* Insert into parent directory's hash table */
+    {
+        int iret = tmpfs_dir_insert(parent, idx);
+        if (iret < 0) {
+            inodes[idx].in_use = 0;
+            tmpfs_used_inodes--;
+            return iret;
+        }
+    }
+
     return 0;
 }
 
@@ -528,6 +734,14 @@ static int tmpfs_unlink(void *priv, const char *path) {
     (void)priv;
     int idx = find_inode(path);
     if (idx < 0) return -EINVAL;
+
+    /* Remove from parent directory's hash table */
+    int parent = (int)inodes[idx].parent;
+    if (parent >= 0 && parent < TMPFS_MAX_INODES &&
+        inodes[parent].in_use && inodes[parent].type == TMPFS_TYPE_DIR) {
+        tmpfs_dir_remove(parent, idx);
+    }
+
     free_inode(idx);
     return 0;
 }
@@ -741,6 +955,17 @@ static int tmpfs_mknod(void *priv, const char *path, uint16_t mode, uint16_t dev
     inodes[idx].mode = mode;
     inodes[idx].dev.major = dev_major;
     inodes[idx].dev.minor = dev_minor;
+
+    /* Insert into parent directory's hash table */
+    {
+        int iret = tmpfs_dir_insert(parent, idx);
+        if (iret < 0) {
+            inodes[idx].in_use = 0;
+            tmpfs_used_inodes--;
+            return iret;
+        }
+    }
+
     return 0;
 }
 
@@ -757,6 +982,9 @@ static int tmpfs_rename(void *priv, const char *old_path, const char *new_path)
     /* Find the old inode */
     int old_idx = find_inode(old_path);
     if (old_idx < 0) return -ENOENT;
+
+    /* Remember old parent before we modify anything */
+    int old_parent = (int)inodes[old_idx].parent;
 
     /* Ensure the new path doesn't already exist */
     if (find_inode(new_path) >= 0) return -EEXIST;
@@ -787,10 +1015,31 @@ static int tmpfs_rename(void *priv, const char *old_path, const char *new_path)
         new_parent = 0;
     }
 
+    /* Remove from old parent's hash table (using the old name) */
+    if (old_parent >= 0 && old_parent < TMPFS_MAX_INODES &&
+        inodes[old_parent].in_use &&
+        inodes[old_parent].type == TMPFS_TYPE_DIR) {
+        tmpfs_dir_remove(old_parent, old_idx);
+    }
+
     /* Update the inode */
     memcpy(inodes[old_idx].name, new_name, (size_t)name_len);
     inodes[old_idx].name[name_len] = '\0';
     inodes[old_idx].parent = (uint32_t)new_parent;
+
+    /* Insert into new parent's hash table (using the new name) */
+    if (new_parent >= 0 && new_parent < TMPFS_MAX_INODES &&
+        inodes[new_parent].in_use &&
+        inodes[new_parent].type == TMPFS_TYPE_DIR) {
+        int iret = tmpfs_dir_insert(new_parent, old_idx);
+        if (iret < 0) {
+            /* Roll back parent; the old name is lost in the single flat
+             * inode table but the inode is still reachable via old_path's
+             * caller retry. */
+            inodes[old_idx].parent = (uint32_t)old_parent;
+            return iret;
+        }
+    }
 
     return 0;
 }
@@ -944,6 +1193,7 @@ int tmpfs_mount(void) {
         inodes[i].data = NULL;
         inodes[i].data_phys = 0;
         inodes[i].numa_node = 0;
+        inodes[i].dir_htable = NULL;
     }
     /* Reset size accounting (unlimited) */
     tmpfs_size_limit = TMPFS_SIZE_UNLIMITED;
@@ -968,6 +1218,8 @@ int tmpfs_mount(void) {
         inodes[0].swap_map[j].swap_dev = -1;
         inodes[0].swap_map[j].swap_slot = 0;
     }
+    /* Allocate per-directory hash table for root */
+    tmpfs_dir_htable_alloc(0);
     tmpfs_used_inodes = 1;  /* root dir inode */
     tmpfs_mounted = 1;
     return 0;
@@ -1007,11 +1259,29 @@ static int tmpfs_umount(const char *target)
 static int tmpfs_lookup(const char *name, void *parent)
 {
     int ino = (int)(uintptr_t)parent;
-    for (int i = 0; i < TMPFS_MAX_INODES; i++) {
-        if (inodes[i].in_use && inodes[i].parent == (uint32_t)ino &&
-            strncmp(inodes[i].name, name, sizeof(inodes[i].name)) == 0) {
-            return i;
+
+    if (ino < 0 || ino >= TMPFS_MAX_INODES)
+        return -ENOENT;
+    if (!inodes[ino].in_use || inodes[ino].type != TMPFS_TYPE_DIR)
+        return -ENOENT;
+
+    struct tmpfs_dir_htable *ht = inodes[ino].dir_htable;
+    if (!ht)
+        return -ENOENT;
+
+    int len = (int)strlen(name);
+    uint32_t hash = tmpfs_hash_name(name, len);
+    uint32_t bucket = hash & (TMPFS_HASH_BUCKETS - 1);
+
+    struct tmpfs_dirent *entry = ht->buckets[bucket];
+    while (entry) {
+        int idx = (int)entry->inode_idx;
+        if (idx >= 0 && idx < TMPFS_MAX_INODES && inodes[idx].in_use &&
+            inodes[idx].parent == (uint32_t)ino &&
+            strncmp(inodes[idx].name, name, sizeof(inodes[idx].name)) == 0) {
+            return idx;
         }
+        entry = entry->next;
     }
     return -ENOENT;
 }

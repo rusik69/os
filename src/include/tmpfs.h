@@ -31,6 +31,20 @@
 /* Default inode limit when none is specified (0 = unlimited). */
 #define TMPFS_INODE_UNLIMITED 0U
 
+/* ── Directory O(1) hash lookup ─────────────────────────────────── */
+#define TMPFS_HASH_BUCKETS 16
+
+/* Entry in a directory's per-directory hash table (chained) */
+struct tmpfs_dirent {
+    uint32_t               inode_idx;   /* index of the child inode */
+    struct tmpfs_dirent   *next;        /* next entry in this bucket */
+};
+
+/* Per-directory hash table (allocated on demand for dir inodes) */
+struct tmpfs_dir_htable {
+    struct tmpfs_dirent   *buckets[TMPFS_HASH_BUCKETS];
+};
+
 /* Inode types */
 #define TMPFS_TYPE_FILE  1
 #define TMPFS_TYPE_DIR   2
@@ -72,6 +86,9 @@ struct tmpfs_inode {
     struct tmpfs_swap_slot swap_map[TMPFS_MAX_SWAP_PAGES];
     uint32_t               swap_npages;   /* number of pages tracked in swap_map */
     int                    is_swapped;    /* 1 = data is entirely on swap device */
+
+    /* Per-directory O(1) hash lookup table (NULL for non-directories) */
+    struct tmpfs_dir_htable *dir_htable;
 };
 
 /* Mount an empty tmpfs — returns 0 on success */
