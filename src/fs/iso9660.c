@@ -482,11 +482,14 @@ walk_susp:
                     (const struct rrip_tf_entry *)hdr;
                 uint32_t tf_len = (uint32_t)hdr->len;
                 if (tf_len >= 5) {
-                    uint32_t tf_atime = 0, tf_mtime = 0, tf_ctime = 0;
+                    uint32_t tf_atime = 0, tf_mtime = 0, tf_ctime = 0, tf_btime = 0;
                     uint8_t tf_flags = iso9660_rr_parse_tf(tf, tf_len,
                                                             &tf_atime,
                                                             &tf_mtime,
-                                                            &tf_ctime);
+                                                            &tf_ctime,
+                                                            &tf_btime);
+                    if (tf_flags & RRIP_TF_CREATE)
+                        out->rr_btime = tf_btime;
                     if (tf_flags & RRIP_TF_ACCESS)
                         out->rr_atime = tf_atime;
                     if (tf_flags & RRIP_TF_MODIFY)
@@ -1111,14 +1114,11 @@ static int iso9660_stat(void *priv, const char *path, struct vfs_stat *st)
                 st->uid    = entries[i].rr_uid;
                 st->gid    = entries[i].rr_gid;
                 st->nlink  = entries[i].rr_nlink ? entries[i].rr_nlink : 1;
-                /* Use TF timestamps if available, else fall back to PX timestamps */
-                if (entries[i].rr_flags & RRIP_HAS_TF) {
-                    st->atime = entries[i].rr_atime;
-                    st->mtime = entries[i].rr_mtime;
-                } else {
-                    st->atime = entries[i].rr_atime;
-                    st->mtime = entries[i].rr_mtime;
-                }
+                /* Timestamp fields already have TF values overlaying
+                 * PX values (TF is parsed after PX in the SUSP walk).
+                 * Use them directly — no conditional needed. */
+                st->atime = entries[i].rr_atime;
+                st->mtime = entries[i].rr_mtime;
                 /* Determine type from mode:
                  * 1 = file, 2 = directory, 4 = chrdev, 5 = blkdev
                  * Symlinks and other types fall back to file */

@@ -218,6 +218,7 @@ struct iso_rrip_entry {
     uint32_t rr_atime;     /* access time (Unix time_t) from PX or TF */
     uint32_t rr_mtime;     /* modification time (Unix time_t) from PX or TF */
     uint32_t rr_ctime;     /* attribute change time (Unix time_t) from PX or TF */
+    uint32_t rr_btime;     /* birth/creation time (Unix time_t) from TF bit 0 or PX */
     char     rr_name[256]; /* long file name from NM */
     char     rr_symlink[256]; /* symlink target from SL */
     /* Rock Ridge device node fields from PN */
@@ -288,9 +289,11 @@ int iso9660_rr_decode_timestamp(const uint8_t iso_time[7], uint32_t *out_time);
  * @atime    Output: access time
  * @mtime    Output: modification time
  * @ctime    Output: attribute change time
+ * @btime    Output: birth/creation time (TF bit 0), may be NULL
  * Returns bitmask of RRIP_TF_* flags indicating which timestamps were parsed. */
 uint8_t iso9660_rr_parse_tf(const struct rrip_tf_entry *tf, uint32_t tf_len,
-                             uint32_t *atime, uint32_t *mtime, uint32_t *ctime);
+                             uint32_t *atime, uint32_t *mtime, uint32_t *ctime,
+                             uint32_t *btime);
 
 /* Apply Rock Ridge PX attributes to a vfs_stat structure.
  * Fills in mode, uid, gid, nlink from the rrip entry if PX was present.

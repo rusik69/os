@@ -6,6 +6,7 @@
  *   - ISO 9660 7-byte timestamp → Unix time_t conversion
  *   - TF (Timestamps) SUSP entry parsing
  *   - PX helper for applying POSIX attributes to VFS stat
+ *   - PN helper for applying device node info to VFS stat
  */
 
 #define KERNEL_INTERNAL
@@ -17,8 +18,8 @@
 
 /* Days in each month for non-leap and leap years */
 static const uint16_t __month_days[2][12] = {
-    {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31},
-    {31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
+	{31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31},
+	{31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
 };
 
 /* Is @year a leap year?  Years are in full 4-digit form (e.g. 1970). */
@@ -108,15 +109,17 @@ int iso9660_rr_decode_timestamp(const uint8_t iso_time[7], uint32_t *out_time)
  * Parse a Rock Ridge TF entry.
  *
  * The TF entry follows the SUSP format and contains a flags byte followed
- * by 7-byte ISO 9660 timestamps for each flag bit that is set.  The order
- * of the timestamps is: creation, modify, access, attrib change, backup,
- * expiration, effective.
+ * by 7-byte ISO 9660 timestamps for each flag bit that is set.  Per the
+ * RRIP spec, only timestamps with set flags are physically present in the
+ * data, in order of their flag bit position (0 = creation, 1 = modify,
+ * 2 = access, 3 = attrib change, 4 = backup, 5 = expiration, 6 = effective).
  *
  * Returns a bitmask of RRIP_TF_* flags indicating which timestamps were
  * successfully parsed.
  */
 uint8_t iso9660_rr_parse_tf(const struct rrip_tf_entry *tf, uint32_t tf_len,
-                             uint32_t *atime, uint32_t *mtime, uint32_t *ctime)
+                             uint32_t *atime, uint32_t *mtime, uint32_t *ctime,
+                             uint32_t *btime)
 {
 	uint8_t flags = 0;
 	uint32_t offset = 5; /* skip header (4) + flags (1) */
@@ -128,20 +131,21 @@ uint8_t iso9660_rr_parse_tf(const struct rrip_tf_entry *tf, uint32_t tf_len,
 	uint8_t tf_flags = tf->flags;
 
 	/* TF timestamp order (per SUSP/RRIP spec):
-	 *   bit 0: creation time    (we ignore)
-	 *   bit 1: modification time
-	 *   bit 2: access time
-	 *   bit 3: attribute change time
-	 *   bit 4: backup time      (we ignore)
-	 *   bit 5: expiration time  (we ignore)
-	 *   bit 6: effective time   (we ignore)
+	 * Only timestamps with set flags appear in the data stream,
+	 * in order of their flag bit position:
+	 *   bit 0: creation time    (stored in btime)
+	 *   bit 1: modification time (stored in mtime)
+	 *   bit 2: access time       (stored in atime)
+	 *   bit 3: attribute change  (stored in ctime)
+	 *   bit 4: backup time       (consumed, not stored)
+	 *   bit 5: expiration time   (consumed, not stored)
+	 *   bit 6: effective time    (consumed, not stored)
 	 */
 	for (int i = 0; i < 7; i++) {
 		if (!(tf_flags & (1 << i))) {
-			/* Timestamp not present — skip slot in flag order but
-			 * don't advance the data offset.  Per RRIP, all 7
-			 * flags have a defined position in the timestamp
-			 * sequence regardless of whether they're set. */
+			/* Timestamp not present — per RRIP spec, only
+			 * timestamps with set flag bits are physically
+			 * present, so we skip without advancing offset. */
 			continue;
 		}
 
@@ -153,6 +157,13 @@ uint8_t iso9660_rr_parse_tf(const struct rrip_tf_entry *tf, uint32_t tf_len,
 
 		if (iso9660_rr_decode_timestamp(ts, &ts_val) == 0) {
 			switch (i) {
+			case 0: /* creation time (birth time) */
+				if (btime) {
+					*btime = ts_val;
+					flags |= RRIP_TF_CREATE;
+					parsed++;
+				}
+				break;
 			case 1: /* modify time */
 				*mtime = ts_val;
 				flags |= RRIP_TF_MODIFY;
@@ -169,9 +180,8 @@ uint8_t iso9660_rr_parse_tf(const struct rrip_tf_entry *tf, uint32_t tf_len,
 				parsed++;
 				break;
 			default:
-				/* creation(0), backup(4), expire(5),
-				 * effective(6) — not stored in outputs
-				 * but we still consume the bytes */
+				/* backup(4), expire(5), effective(6) —
+				 * consumed but not stored in outputs */
 				break;
 			}
 		}
@@ -190,7 +200,12 @@ uint8_t iso9660_rr_parse_tf(const struct rrip_tf_entry *tf, uint32_t tf_len,
  * Apply Rock Ridge PX attributes to a vfs_stat structure.
  *
  * Fills in mode, uid, gid, nlink, atime, mtime from the RRIP entry
- * when PX was present.  Returns 0 on success, -1 if no PX data.
+ * when PX was present.  The RRIP entry's timestamp fields already
+ * reflect the best available source (TF takes precedence over PX
+ * because TF is parsed after PX in the SUSP walk and overwrites
+ * the PX values).
+ *
+ * Returns 0 on success, -1 if no PX data.
  */
 int iso9660_rr_apply_px(const struct iso_rrip_entry *de, struct vfs_stat *st)
 {
@@ -205,14 +220,11 @@ int iso9660_rr_apply_px(const struct iso_rrip_entry *de, struct vfs_stat *st)
 	st->gid   = de->rr_gid;
 	st->nlink = de->rr_nlink ? de->rr_nlink : 1;
 
-	/* Timestamps: prefer TF if available, else use PX values */
-	if (de->rr_flags & RRIP_HAS_TF) {
-		st->atime = de->rr_atime;
-		st->mtime = de->rr_mtime;
-	} else {
-		st->atime = de->rr_atime;
-		st->mtime = de->rr_mtime;
-	}
+	/* Timestamp fields in the rrip entry already have TF values
+	 * overlaying PX values (TF is parsed after PX in the SUSP walk).
+	 * Use them directly — no conditional needed. */
+	st->atime = de->rr_atime;
+	st->mtime = de->rr_mtime;
 
 	return 0;
 }
