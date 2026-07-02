@@ -2244,6 +2244,260 @@ int fat32_truncate_file(const char *path, uint32_t new_size)
     return 0;
 }
 
+/* ── FAT32 boot sector repair ─────────────────────────────────────────── */
+
+/* Validate basic FAT32 BPB fields for reasonableness.
+ * Returns 0 if the BPB looks valid, or a negative errno describing the
+ * first fatal issue found. */
+static int fat32_validate_bpb(const uint8_t *boot)
+{
+	if (boot[510] != 0x55 || boot[511] != 0xAA)
+		return -EINVAL;		/* no boot signature */
+
+	const struct fat32_bpb *bpb = (const struct fat32_bpb *)boot;
+	uint16_t bps = bpb->bytes_per_sector;
+	if (bps == 0)
+		return -EINVAL;
+	/* bytes_per_sector must be a power of 2 and at least 512 */
+	if (bps < 512 || (bps & (bps - 1)) != 0)
+		return -EINVAL;
+
+	uint8_t spc_val = bpb->sectors_per_cluster;
+	if (spc_val == 0)
+		return -EINVAL;
+	/* sectors_per_cluster must be a power of 2 */
+	if ((spc_val & (spc_val - 1)) != 0)
+		return -EINVAL;
+
+	if (bpb->num_fats == 0 || bpb->num_fats > 4)
+		return -EINVAL;
+
+	if (bpb->fat_size_32 == 0 && bpb->fat_size_16 == 0)
+		return -EINVAL;
+
+	return 0;
+}
+
+/* Compare two 512-byte boot sector buffers and return the number of
+ * differing bytes. */
+static int fat32_boot_cmp(const uint8_t *a, const uint8_t *b)
+{
+	int diff = 0;
+	for (int i = 0; i < 512; i++) {
+		if (a[i] != b[i])
+			diff++;
+	}
+	return diff;
+}
+
+/* Validate the FSInfo sector signature markers.
+ * Returns 0 on success, negative on error. */
+static int fat32_validate_fsinfo(const uint8_t *buf)
+{
+	/* FSInfo signature at offset 0: 0x41615252 ("RRaA") */
+	if (buf[0] != 0x52 || buf[1] != 0x52 || buf[2] != 0x61 || buf[3] != 0x41)
+		return -EINVAL;
+	/* FSInfo signature at offset 484: 0x61417272 ("rrAa") */
+	if (buf[484] != 0x72 || buf[485] != 0x72 ||
+	    buf[486] != 0x41 || buf[487] != 0x61)
+		return -EINVAL;
+	/* Boot signature at offsets 508–509: 0xAA55 */
+	if (buf[508] != 0x55 || buf[509] != 0xAA)
+		return -EINVAL;
+	/* Signature at offsets 510–511: 0x0000 */
+	if (buf[510] != 0x00 || buf[511] != 0x00)
+		return -EINVAL;
+	return 0;
+}
+
+/* Repair the FSInfo sector by writing the standard signature markers and
+ * a plausible free-cluster hint. */
+static void fat32_repair_fsinfo(uint8_t *buf, uint32_t total_clusters)
+{
+	/* Clear everything first */
+	memset(buf, 0, 512);
+	/* Signature at offset 0: "RRaA" */
+	buf[0] = 0x52; buf[1] = 0x52; buf[2] = 0x61; buf[3] = 0x41;
+	/* Signature at offset 484: "rrAa" */
+	buf[484] = 0x72; buf[485] = 0x72;
+	buf[486] = 0x41; buf[487] = 0x61;
+	/* Last known free cluster count hint (offset 488–491) — set to cluster 2 */
+	buf[488] = 2; buf[489] = 0; buf[490] = 0; buf[491] = 0;
+	/* Free cluster count (offset 492–495) — set to total_clusters */
+	buf[492] = (uint8_t)(total_clusters & 0xFF);
+	buf[493] = (uint8_t)((total_clusters >> 8) & 0xFF);
+	buf[494] = (uint8_t)((total_clusters >> 16) & 0xFF);
+	buf[495] = (uint8_t)((total_clusters >> 24) & 0xFF);
+	/* Signature at offset 508–509: 0xAA55 */
+	buf[508] = 0x55; buf[509] = 0xAA;
+	/* Signature at offset 510–511: 0x0000 (already zeroed) */
+}
+
+/* Repair FAT32 boot sector structures.
+ *
+ * 1. Validates the primary boot sector BPB fields
+ * 2. Ensures the boot sector signature (0xAA55) is present
+ * 3. Compares primary with backup boot sector; repairs the corrupted copy
+ * 4. Validates and repairs the FSInfo sector
+ *
+ * Returns the number of repairs performed, or negative on error.
+ * 0 = everything is already correct.
+ */
+int fat32_repair_boot(void)
+{
+	if (!mounted || fat_type != FAT32)
+		return -EINVAL;
+
+	uint8_t primary[512];
+	uint8_t backup[512];
+	uint8_t fsinfo[512];
+	int repairs = 0;
+	int all_zero;
+
+	/* ── Step 1: Read and validate primary boot sector ── */
+	if (read_sector(part_start, primary) != 0)
+		return -EIO;
+
+	/* If the primary boot sector is completely zeroed, it's hopeless */
+	all_zero = 1;
+	for (int i = 0; i < 512; i++) {
+		if (primary[i] != 0) { all_zero = 0; break; }
+	}
+	if (all_zero)
+		return -EIO;
+
+	int primary_valid = (fat32_validate_bpb(primary) == 0);
+	const struct fat32_bpb *bpb = (const struct fat32_bpb *)primary;
+
+	/* ── Step 2: Read backup boot sector ── */
+	uint16_t backup_sec_num = bpb->backup_boot_sector;
+	int backup_valid = 0;
+
+	if (backup_sec_num > 0 && backup_sec_num != (uint16_t)part_start) {
+		uint32_t backup_lba = (uint32_t)backup_sec_num;
+		if (read_sector(backup_lba, backup) == 0) {
+			int bz = 1;
+			for (int i = 0; i < 512; i++) {
+				if (backup[i] != 0) { bz = 0; break; }
+			}
+			if (!bz)
+				backup_valid = (fat32_validate_bpb(backup) == 0);
+		}
+	}
+
+	/* ── Step 3: Repair boot sector ── */
+	if (!primary_valid && backup_valid) {
+		/* Restore primary from backup */
+		if (write_sector(part_start, backup) != 0)
+			return -EIO;
+		memcpy(primary, backup, 512);
+		repairs++;
+		kprintf("[fat32] Repaired primary boot sector from backup\n");
+		primary_valid = 1;
+	} else if (primary_valid && !backup_valid && backup_sec_num > 0) {
+		/* Restore backup from primary */
+		uint32_t backup_lba = (uint32_t)backup_sec_num;
+		if (write_sector(backup_lba, primary) != 0)
+			return -EIO;
+		repairs++;
+		kprintf("[fat32] Repaired backup boot sector from primary\n");
+		backup_valid = 1;
+	} else if (!primary_valid && !backup_valid) {
+		/* Both are bad — try repairing the primary signature at least
+		 * if the BPB fields look minimally plausible */
+		if (primary[510] != 0x55 || primary[511] != 0xAA) {
+			bpb = (const struct fat32_bpb *)primary;
+			if (bpb->bytes_per_sector == 512 &&
+			    bpb->sectors_per_cluster > 0 &&
+			    bpb->num_fats > 0 && bpb->fat_size_32 > 0) {
+				primary[510] = 0x55;
+				primary[511] = 0xAA;
+				if (write_sector(part_start, primary) != 0)
+					return -EIO;
+				repairs++;
+				kprintf("[fat32] Repaired boot sector signature (0xAA55)\n");
+			}
+		}
+	}
+
+	/* ── Step 4: Ensure 0xAA55 signature is present on primary ── */
+	if (primary_valid && (primary[510] != 0x55 || primary[511] != 0xAA)) {
+		primary[510] = 0x55;
+		primary[511] = 0xAA;
+		if (write_sector(part_start, primary) != 0)
+			return -EIO;
+		repairs++;
+		kprintf("[fat32] Fixed missing boot signature on primary boot sector\n");
+	}
+
+	/* ── Step 5: Validate and repair FSInfo sector ── */
+	uint32_t fsinfo_lba = fs_info_lba;
+	if (fsinfo_lba > 0) {
+		if (read_sector(fsinfo_lba, fsinfo) == 0) {
+			if (fat32_validate_fsinfo(fsinfo) != 0) {
+				/* FSInfo is corrupt — reconstruct it */
+				uint32_t total_sectors = bpb->total_sectors_16
+					? bpb->total_sectors_16
+					: bpb->total_sectors_32;
+				uint32_t total_clusters = 0;
+				if (bpb->sectors_per_cluster > 0 && bpb->bytes_per_sector > 0) {
+					uint32_t root_dir_bytes =
+						bpb->root_entry_count * 32;
+					uint32_t root_dir_sec =
+						(root_dir_bytes + bpb->bytes_per_sector - 1)
+							/ bpb->bytes_per_sector;
+					uint32_t data_sec = total_sectors
+						- bpb->reserved_sectors
+						- bpb->num_fats * bpb->fat_size_32
+						- root_dir_sec;
+					total_clusters = data_sec / bpb->sectors_per_cluster;
+				}
+				fat32_repair_fsinfo(fsinfo, total_clusters);
+				if (write_sector(fsinfo_lba, fsinfo) != 0)
+					return -EIO;
+				repairs++;
+				kprintf("[fat32] Repaired FSInfo sector at LBA %lu\n",
+					(unsigned long)fsinfo_lba);
+			}
+		} else {
+			/* FSInfo sector is unreadable — try to recreate it */
+			uint32_t total_sectors = bpb->total_sectors_16
+				? bpb->total_sectors_16
+				: bpb->total_sectors_32;
+			uint32_t total_clusters = 0;
+			if (bpb->sectors_per_cluster > 0 && bpb->bytes_per_sector > 0) {
+				uint32_t root_dir_bytes =
+					bpb->root_entry_count * 32;
+				uint32_t root_dir_sec =
+					(root_dir_bytes + bpb->bytes_per_sector - 1)
+						/ bpb->bytes_per_sector;
+				uint32_t data_sec = total_sectors
+					- bpb->reserved_sectors
+					- bpb->num_fats * bpb->fat_size_32
+					- root_dir_sec;
+				total_clusters = data_sec / bpb->sectors_per_cluster;
+			}
+			memset(fsinfo, 0, 512);
+			fat32_repair_fsinfo(fsinfo, total_clusters);
+			if (write_sector(fsinfo_lba, fsinfo) != 0)
+				return -EIO;
+			repairs++;
+			kprintf("[fat32] Recreated FSInfo sector at LBA %lu\n",
+				(unsigned long)fsinfo_lba);
+		}
+	}
+
+	/* ── Step 6: Sync cached label from boot sector ── */
+	bpb = (const struct fat32_bpb *)primary;
+	__builtin_memcpy(g_volume_label, bpb->volume_label, 11);
+	g_volume_label[11] = '\0';
+
+	if (repairs > 0)
+		kprintf("[fat32] Boot sector repair complete: %d repair(s) performed\n",
+			repairs);
+	return repairs;
+}
+
 /* ── VFS backend at /mnt ───────────────────────────────────────────────────── */
 
 static const char *fat32_vfs_rel(const char *path) {

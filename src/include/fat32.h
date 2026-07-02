@@ -68,6 +68,12 @@ int  fat32_get_volume_label(char *buf, int max);
 /* Set volume label (1-11 chars, uppercase recommended, returns 0 on success). */
 int  fat32_set_volume_label(const char *label);
 
+/* Repair FAT32 boot sector structures.
+ * Validates the BPB, boot signature, backup boot sector, and FSInfo sector.
+ * Restores corrupted copies from known-good ones.
+ * Returns the number of repairs performed, or negative on error. */
+int  fat32_repair_boot(void);
+
 extern struct vfs_ops fat32_vfs_ops;
 
 /* ── VFAT Long File Name API (fat32_lfn.c) ─────────────────────────── */
