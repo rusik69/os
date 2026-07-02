@@ -15,9 +15,25 @@
 #include "ksm.h"
 #include "ioctl.h"
 #include "syscall.h"
+#include "nfsd.h"
 
 static struct tmpfs_inode inodes[TMPFS_MAX_INODES];
 static int tmpfs_mounted = 0;
+
+/*
+ * Mountpoint tracking for NFS export.
+ *
+ * When tmpfs is mounted at a VFS path (e.g. "/dev/shm" or "/export"),
+ * this variable stores that mountpoint prefix.  The find_inode() function
+ * strips this prefix from incoming VFS paths before resolving the
+ * tmpfs-relative path component by component, enabling correct operation
+ * through arbitrary mountpoints.
+ *
+ * Default is "/" (tmpfs as root fs, or compatibility with legacy callers
+ * that pass paths without mountpoint prefix).
+ */
+static char tmpfs_mountpoint[64] = "/";
+static int  tmpfs_nfs_export_active = 0;
 
 /* ── Per-mount size accounting ──────────────────────────────────────── */
 static uint64_t tmpfs_size_limit  = TMPFS_SIZE_UNLIMITED; /* 0 = unlimited */
@@ -117,20 +133,145 @@ static void free_inode(int idx) {
     tmpfs_used_inodes--;
 }
 
-static int find_inode(const char *path) {
-    if (!path || path[0] != '/') return -EINVAL;
-    if (path[1] == '\0') return 0; /* root dir */
-    const char *name = path + 1;
-    /* skip trailing slash */
-    int len = (int)strlen(name);
-    if (len > 0 && name[len-1] == '/') len--;
-    for (int i = 0; i < TMPFS_MAX_INODES; i++) {
-        if (!inodes[i].in_use) continue;
-        if ((int)strlen(inodes[i].name) == len &&
-            memcmp(inodes[i].name, name, (size_t)len) == 0)
-            return i;
+/*
+ * find_inode_rel() - Resolve a tmpfs-relative path by component walk.
+ *
+ * @rel:  Path relative to the tmpfs root (leading "/" already stripped).
+ *
+ * Walks the path component by component starting from the root inode
+ * (index 0).  Returns the inode index on success, or a negative errno
+ * on failure.
+ */
+static int find_inode_rel(const char *rel)
+{
+    if (!rel || *rel == '\0')
+        return 0;
+
+    int current = 0;
+    const char *p = rel;
+
+    while (*p) {
+        /* Skip leading slashes */
+        while (*p == '/')
+            p++;
+        if (*p == '\0')
+            break;
+
+        const char *comp_start = p;
+        while (*p && *p != '/')
+            p++;
+        int comp_len = (int)(p - comp_start);
+        if (comp_len == 0)
+            break;
+
+        /* The current inode must be a directory with a hash table */
+        if (inodes[current].in_use == 0 ||
+            inodes[current].type != TMPFS_TYPE_DIR)
+            return -ENOTDIR;
+
+        struct tmpfs_dir_htable *ht = inodes[current].dir_htable;
+        if (!ht)
+            return -ENOENT;
+
+        uint32_t hash = tmpfs_hash_name(comp_start, comp_len);
+        uint32_t bucket = hash & (TMPFS_HASH_BUCKETS - 1);
+
+        struct tmpfs_dirent *entry = ht->buckets[bucket];
+        int found = 0;
+        while (entry) {
+            int idx = (int)entry->inode_idx;
+            if (idx >= 0 && idx < TMPFS_MAX_INODES &&
+                inodes[idx].in_use &&
+                inodes[idx].parent == (uint32_t)current &&
+                (int)strlen(inodes[idx].name) == comp_len &&
+                memcmp(inodes[idx].name, comp_start,
+                       (size_t)comp_len) == 0) {
+                current = idx;
+                found = 1;
+                break;
+            }
+            entry = entry->next;
+        }
+
+        if (!found)
+            return -ENOENT;
     }
-    return -EINVAL;
+
+    return current;
+}
+
+/*
+ * find_inode() - Resolve a VFS path to a tmpfs inode index.
+ *
+ * Uses a two-strategy approach:
+ *
+ *   1. Hierarchical walk with mountpoint stripping — when the
+ *      mountpoint is known (set via tmpfs_set_mountpoint()), the
+ *      mountpoint prefix is stripped and the remaining path is
+ *      resolved component by component from the tmpfs root.  This
+ *      is the primary strategy for NFS-exported mounts.
+ *
+ *   2. Legacy flat leaf-name lookup — if strategy 1 fails, the
+ *      last path component (leaf name) is extracted and matched
+ *      against all inode names.  This provides backward compatibility
+ *      for tmpfs mounts at arbitrary VFS paths (e.g. container
+ *      mounts) where the mountpoint may differ from the tracked
+ *      default.
+ *
+ * Returns the inode index on success, or a negative errno on failure.
+ */
+static int find_inode(const char *path)
+{
+    if (!path || path[0] != '/')
+        return -EINVAL;
+
+    /* ── Root ─────────────────────────────────────────────── */
+    if (path[1] == '\0')
+        return 0;
+
+    /* ── Strategy 1: Hierarchical walk with mountpoint stripping ── */
+    {
+        const char *rel = path;
+        size_t mplen = strlen(tmpfs_mountpoint);
+
+        if (mplen > 1) {
+            if (strncmp(path, tmpfs_mountpoint, mplen) == 0) {
+                rel = path + mplen;
+                while (*rel == '/')
+                    rel++;
+            }
+            /* Prefix mismatch — fall through to strategy 2 */
+        } else {
+            /* Mountpoint is "/" — strip the leading '/' */
+            rel = path + 1;
+        }
+
+        int ret = find_inode_rel(rel);
+        if (ret >= 0 || ret != -ENOENT)
+            return ret;
+        /* -ENOENT from rel walk: fall through to flat leaf lookup */
+    }
+
+    /* ── Strategy 2: Legacy flat leaf-name lookup ──────────────── */
+    {
+        const char *leaf = strrchr(path, '/');
+        if (leaf)
+            leaf++;
+        else
+            leaf = path + 1;
+
+        int leaf_len = (int)strlen(leaf);
+
+        for (int i = 1; i < TMPFS_MAX_INODES; i++) {
+            if (!inodes[i].in_use)
+                continue;
+            if ((int)strlen(inodes[i].name) == leaf_len &&
+                memcmp(inodes[i].name, leaf, (size_t)leaf_len) == 0)
+                return i;
+        }
+    }
+
+    return -ENOENT;
 }
 
 static int find_inode_in_dir(int dir_idx, const char *name) {
@@ -1406,6 +1547,108 @@ int tmpfs_mount_with_limit(uint64_t max_bytes) {
     return ret;
 }
 
+/* ══════════════════════════════════════════════════════════════════════
+ * ── NFS export support — make tmpfs accessible via NFSD ────────────
+ * ══════════════════════════════════════════════════════════════════════ */
+
+/*
+ * tmpfs_set_mountpoint() - Set the VFS mountpoint of this tmpfs instance.
+ *
+ * @mp:  The mountpoint path (e.g. "/dev/shm", "/export").
+ *
+ * The mountpoint is used by find_inode() to strip the VFS path prefix
+ * before resolving paths within tmpfs.  The default is "/".
+ *
+ * This should be called after vfs_mount() registers tmpfs at a specific
+ * mountpoint so that subsequent VFS calls (stat, read, write, etc.)
+ * resolve paths correctly.
+ */
+void tmpfs_set_mountpoint(const char *mp)
+{
+    if (!mp || mp[0] != '/')
+        return;
+    strncpy(tmpfs_mountpoint, mp, sizeof(tmpfs_mountpoint) - 1);
+    tmpfs_mountpoint[sizeof(tmpfs_mountpoint) - 1] = '\0';
+    /* Ensure trailing slash is stripped for clean prefix matching */
+    size_t len = strlen(tmpfs_mountpoint);
+    while (len > 1 && tmpfs_mountpoint[len - 1] == '/')
+        tmpfs_mountpoint[--len] = '\0';
+}
+
+/*
+ * tmpfs_nfs_export() - Mount tmpfs via VFS and register an NFS export.
+ *
+ * @mountpoint:   VFS path where tmpfs should be mounted (e.g. "/export").
+ * @export_path:  NFS export name visible to clients (e.g. "/tmpfs_share").
+ *
+ * This convenience function:
+ *   1. Mounts tmpfs at @mountpoint via vfs_mount() if not already
+ *      registered there.
+ *   2. Sets the mountpoint for correct path resolution.
+ *   3. Registers the NFS export via nfsd_add_export().
+ *
+ * Returns 0 on success, or a negative errno on failure.
+ */
+int tmpfs_nfs_export(const char *mountpoint, const char *export_path)
+{
+    int ret;
+
+    if (!mountpoint || !export_path)
+        return -EINVAL;
+
+    /* Mount tmpfs if not already mounted internally */
+    if (!tmpfs_mounted) {
+        ret = tmpfs_mount();
+        if (ret < 0) {
+            kprintf("[tmpfs] Failed to mount: %d\n", ret);
+            return ret;
+        }
+    }
+
+    /* Register with the VFS at the given mountpoint */
+    ret = vfs_mount(mountpoint, &tmpfs_vfs_ops, NULL);
+    if (ret < 0) {
+        kprintf("[tmpfs] Failed to register VFS mount at %s: %d\n",
+                mountpoint, ret);
+        return ret;
+    }
+
+    /* Record the mountpoint for path-resolution prefix stripping */
+    tmpfs_set_mountpoint(mountpoint);
+
+    /* Add the NFS export */
+    ret = nfsd_add_export(export_path, mountpoint);
+    if (ret < 0) {
+        kprintf("[tmpfs] Failed to add NFS export %s -> %s: %d\n",
+                export_path, mountpoint, ret);
+        return ret;
+    }
+
+    tmpfs_nfs_export_active = 1;
+    kprintf("[tmpfs] NFS export: %s -> %s\n", export_path, mountpoint);
+    return 0;
+}
+
+/*
+ * tmpfs_nfs_unexport() - Remove a tmpfs NFS export.
+ *
+ * @export_path:  The NFS export path previously passed to
+ *                tmpfs_nfs_export().
+ *
+ * Returns 0 on success, or a negative errno on failure.
+ */
+int tmpfs_nfs_unexport(const char *export_path)
+{
+    if (!export_path)
+        return -EINVAL;
+
+    int ret = nfsd_remove_export(export_path);
+    if (ret == 0)
+        tmpfs_nfs_export_active = 0;
+
+    return ret;
+}
+
 int tmpfs_unmount(void) {
     if (!tmpfs_mounted) return -EINVAL;
     for (int i = 0; i < TMPFS_MAX_INODES; i++) {
@@ -1817,3 +2060,8 @@ EXPORT_SYMBOL(tmpfs_xattr_get);
 EXPORT_SYMBOL(tmpfs_xattr_list);
 EXPORT_SYMBOL(tmpfs_xattr_remove);
 EXPORT_SYMBOL(tmpfs_xattr_free);
+
+/* ── Public exports for NFS export API ────────────────── */
+EXPORT_SYMBOL(tmpfs_set_mountpoint);
+EXPORT_SYMBOL(tmpfs_nfs_export);
+EXPORT_SYMBOL(tmpfs_nfs_unexport);

@@ -352,4 +352,37 @@ int tmpfs_madvise(int idx, int advice);
  */
 int tmpfs_ioctl(void *priv, const char *path, uint64_t cmd, uint64_t arg);
 
+/* ── NFS export support ──────────────────────────────────────────────── */
+
+/**
+ * tmpfs_set_mountpoint() - Set the VFS mountpoint for path resolution.
+ * @mp:  The VFS mountpoint path (e.g. "/dev/shm", "/export").
+ *
+ * This tells tmpfs where it is mounted in the VFS tree so that
+ * find_inode() can correctly strip the prefix from incoming paths.
+ * Default is "/".
+ */
+void tmpfs_set_mountpoint(const char *mp);
+
+/**
+ * tmpfs_nfs_export() - Mount tmpfs via VFS and register an NFS export.
+ * @mountpoint:   VFS path where tmpfs is/will-be mounted.
+ * @export_path:  NFS export name visible to clients.
+ *
+ * Mounts tmpfs (if not already mounted), registers with VFS at
+ * @mountpoint, sets the mountpoint for path resolution, and adds
+ * an NFS export via nfsd_add_export().
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int tmpfs_nfs_export(const char *mountpoint, const char *export_path);
+
+/**
+ * tmpfs_nfs_unexport() - Remove a tmpfs NFS export.
+ * @export_path:  The NFS export path previously registered.
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int tmpfs_nfs_unexport(const char *export_path);
+
 #endif /* TMPFS_H */
