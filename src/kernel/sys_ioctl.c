@@ -351,6 +351,8 @@ static int ioctl_file_dispatch(struct process *p, int fd, uint64_t cmd,
 	case FS_IOC_SETVERSION:
 	case TMPFS_IOC_MADVISE_MERGEABLE:
 	case TMPFS_IOC_UNMERGEABLE:
+	case TMPFS_IOC_STATFS:
+	case TMPFS_IOC_GET_INFO:
 		/* Dispatch filesystem-specific ioctls through VFS */
 		return vfs_ioctl(path, cmd, arg);
 

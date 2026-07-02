@@ -15,6 +15,7 @@
 #include "ksm.h"
 #include "ioctl.h"
 #include "syscall.h"
+#include "uaccess.h"
 #include "nfsd.h"
 
 static struct tmpfs_inode inodes[TMPFS_MAX_INODES];
@@ -1305,26 +1306,71 @@ int tmpfs_madvise(int idx, int advice)
  * @priv: Filesystem private data (unused).
  * @path: Absolute path to the file.
  * @cmd:  ioctl command number.
- * @arg:  ioctl argument (unused for MADVISE commands).
+ * @arg:  ioctl argument — for TMPFS_IOC_STATFS, a user-space pointer
+ *        to a struct vfs_statfs; for TMPFS_IOC_GET_INFO, a user-space
+ *        pointer to a struct tmpfs_ioc_get_info.
  *
  * Supported ioctls:
  *   TMPFS_IOC_MADVISE_MERGEABLE — register file pages with KSM
  *   TMPFS_IOC_UNMERGEABLE       — unregister file pages from KSM
+ *   TMPFS_IOC_STATFS            — get filesystem statistics
+ *   TMPFS_IOC_GET_INFO          — get extended tmpfs statistics
  */
 int tmpfs_ioctl(void *priv, const char *path, uint64_t cmd, uint64_t arg)
 {
     (void)priv;
-    (void)arg;
-
-    int idx = find_inode(path);
-    if (idx < 0)
-        return -ENOENT;
 
     switch (cmd) {
     case TMPFS_IOC_MADVISE_MERGEABLE:
-        return tmpfs_madvise(idx, MADV_MERGEABLE);
-    case TMPFS_IOC_UNMERGEABLE:
-        return tmpfs_madvise(idx, MADV_UNMERGEABLE);
+    case TMPFS_IOC_UNMERGEABLE: {
+        int idx = find_inode(path);
+        if (idx < 0)
+            return -ENOENT;
+        int advice = (cmd == TMPFS_IOC_MADVISE_MERGEABLE)
+                         ? MADV_MERGEABLE
+                         : MADV_UNMERGEABLE;
+        return tmpfs_madvise(idx, advice);
+    }
+
+    case TMPFS_IOC_STATFS: {
+        struct vfs_statfs st;
+        int ret = tmpfs_statfs(&st);
+        if (ret < 0)
+            return ret;
+        if (copy_to_user(arg, &st, sizeof(st)) < 0)
+            return -EFAULT;
+        return 0;
+    }
+
+    case TMPFS_IOC_GET_INFO: {
+        struct tmpfs_ioc_get_info info;
+        memset(&info, 0, sizeof(info));
+
+        info.size_limit  = tmpfs_size_limit;
+        info.used_bytes  = tmpfs_used_bytes;
+        info.max_inodes  = tmpfs_max_inodes;
+        info.used_inodes = tmpfs_used_inodes;
+
+        /* Scan inode table for per-inode feature counts */
+        info.huge_pages     = 0;
+        info.swapped_inodes = 0;
+        info.ksm_registered = 0;
+        for (int i = 0; i < TMPFS_MAX_INODES; i++) {
+            if (!inodes[i].in_use)
+                continue;
+            if (inodes[i].is_huge)
+                info.huge_pages++;
+            if (inodes[i].is_swapped)
+                info.swapped_inodes++;
+            if (inodes[i].ksm_registered)
+                info.ksm_registered++;
+        }
+
+        if (copy_to_user(arg, &info, sizeof(info)) < 0)
+            return -EFAULT;
+        return 0;
+    }
+
     default:
         return -ENOTTY;
     }
@@ -1484,10 +1530,23 @@ int tmpfs_statfs(struct vfs_statfs *buf)
     memset(buf, 0, sizeof(*buf));
     buf->f_type    = 0x01021994;  /* tmpfs magic (same as generic ext2-ish) */
     buf->f_bsize   = TMPFS_BLOCK_SIZE;
-    buf->f_blocks  = 0;  /* tmpfs has no backing store */
-    buf->f_bfree   = 0;
-    buf->f_bavail  = 0;
     buf->f_namelen = TMPFS_MAX_NAME - 1;
+
+    /* Report size/block limits based on the configured quota */
+    if (tmpfs_size_limit != TMPFS_SIZE_UNLIMITED) {
+        uint64_t limit_blocks = tmpfs_size_limit / TMPFS_BLOCK_SIZE;
+        uint64_t used_blocks  = tmpfs_used_bytes / TMPFS_BLOCK_SIZE;
+
+        buf->f_blocks = limit_blocks;
+        buf->f_bfree  = (limit_blocks > used_blocks)
+                            ? (limit_blocks - used_blocks)
+                            : 0ULL;
+        buf->f_bavail = buf->f_bfree;
+    } else {
+        buf->f_blocks = 0;
+        buf->f_bfree  = 0;
+        buf->f_bavail = 0;
+    }
 
     /* Report inode quotas */
     buf->f_files   = (tmpfs_max_inodes != TMPFS_INODE_UNLIMITED)

@@ -331,6 +331,20 @@ void tmpfs_xattr_free(int idx);
 
 #define TMPFS_IOC_MADVISE_MERGEABLE   _IO('t', 1)  /* Register file pages with KSM for merging */
 #define TMPFS_IOC_UNMERGEABLE         _IO('t', 2)  /* Unregister file pages from KSM */
+#define TMPFS_IOC_STATFS              _IOR('t', 3, struct vfs_statfs)  /* Get filesystem stats */
+#define TMPFS_IOC_GET_INFO            _IOR('t', 4, struct tmpfs_ioc_get_info)  /* Get extended tmpfs info */
+
+/** Extended tmpfs statistics for TMPFS_IOC_GET_INFO ioctl. */
+struct tmpfs_ioc_get_info {
+    uint64_t size_limit;        /* Maximum size in bytes (0 = unlimited) */
+    uint64_t used_bytes;        /* Current data bytes stored */
+    uint32_t max_inodes;        /* Maximum inode count (0 = unlimited) */
+    uint32_t used_inodes;       /* Current inode count */
+    uint32_t huge_pages;        /* Number of inodes using huge pages */
+    uint32_t swapped_inodes;    /* Number of inodes swapped out */
+    uint32_t ksm_registered;    /* Number of inodes registered with KSM */
+    uint32_t reserved[4];       /* Reserved for future expansion */
+};
 
 /**
  * tmpfs_madvise() - Apply madvise advice to a tmpfs inode's pages.
