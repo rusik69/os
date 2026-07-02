@@ -159,6 +159,11 @@ struct exfat_priv {
     uint8_t  cached_bitmap_data[512]; /* cached bitmap sector data */
     int      cached_bitmap_dirty;   /* 1 = cache needs write-back */
     int      bitmap_initialized;    /* 1 = bitmap has been initialized */
+
+    /* ── FAT table management ──────────────────────────────────── */
+    uint32_t cached_fat_sector;     /* FAT sector in cache (~0 = invalid) */
+    uint8_t  cached_fat_data[512];  /* cached FAT sector data */
+    int      cached_fat_dirty;      /* 1 = cache needs write-back */
 };
 
 int exfat_probe(uint8_t dev_id);

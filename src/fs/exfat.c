@@ -30,6 +30,10 @@
 
 /* Forward declaration */
 static uint64_t exfat_cluster_to_sector(struct exfat_priv *ep, uint32_t cluster);
+static int exfat_read_fat_entry(struct exfat_priv *ep, uint32_t cluster,
+                                 uint32_t *entry);
+static int exfat_write_fat_entry(struct exfat_priv *ep, uint32_t cluster,
+                                  uint32_t value);
 
 static int exfat_write_cluster(struct exfat_priv *ep, uint32_t cluster,
                                 const uint8_t *buf)
@@ -103,13 +107,32 @@ static int exfat_read_cluster(struct exfat_priv *ep, uint32_t cluster,
 
 static uint32_t exfat_next_cluster(struct exfat_priv *ep, uint32_t cluster)
 {
-    /* exFAT typically uses contiguous allocation. The next cluster is cluster+1.
-     * A proper implementation would read the FAT (which in exFAT is used only
-     * for cluster chaining, not for allocation). The FAT is at ep->fat_offset.
-     * For simplicity, assume contiguous. */
     if (cluster >= EXFAT_CLUSTER_END)
         return EXFAT_CLUSTER_END;
-    return cluster + 1; /* simplified: contiguous */
+
+    /* If no FAT table, assume contiguous allocation */
+    if (ep->fat_length == 0) {
+        return cluster + 1;
+    }
+
+    /* Read the FAT entry for this cluster to find the next one */
+    uint32_t next;
+    if (exfat_read_fat_entry(ep, cluster, &next) != 0)
+        return EXFAT_CLUSTER_END;
+
+    /* Check for end-of-chain markers (0xFFFFFFF8 through 0xFFFFFFFF) */
+    if (next >= 0xFFFFFFF8)
+        return EXFAT_CLUSTER_END;
+
+    /* Check for bad cluster marker (0xFFFFFFF7) */
+    if (next == 0xFFFFFFF7)
+        return EXFAT_CLUSTER_END;
+
+    /* Check for free marker (0x00000000) — should not happen for in-use cluster */
+    if (next == 0)
+        return EXFAT_CLUSTER_END;
+
+    return next;
 }
 
 /* ── Bitmap operations ──────────────────────────────────────────── */
@@ -211,6 +234,108 @@ static int exfat_bitmap_flush(struct exfat_priv *ep)
 
 	ep->cached_bitmap_dirty = 0;
 	return 0;
+}
+
+/* ── FAT table management ────────────────────────────────────────── */
+/* exFAT has an optional FAT table used for cluster chaining.
+ * It is present when fat_length > 0 in the boot sector.
+ * When absent, clusters are assumed contiguous.
+ * Each FAT entry is a 32-bit little-endian value:
+ *   0x00000000 = free cluster
+ *   0xFFFFFFF7 = bad cluster
+ *   0xFFFFFFF8..0xFFFFFFFF = end-of-chain */
+
+/* Load a FAT sector into the cache.  Flushes any dirty cached
+ * sector first.  Returns 0 on success, negative errno on error. */
+static int exfat_fat_load_sector(struct exfat_priv *ep,
+                                 uint32_t sector_index)
+{
+    if (sector_index >= ep->fat_length)
+        return -EINVAL;
+
+    /* If already cached, nothing to do */
+    if (ep->cached_fat_sector == sector_index)
+        return 0;
+
+    /* Flush any dirty cached sector before replacing it */
+    if (ep->cached_fat_dirty) {
+        if (blockdev_write_sectors(ep->dev_id,
+                 ep->fat_offset + ep->cached_fat_sector, 1,
+                 ep->cached_fat_data) != 0)
+            return -EIO;
+        ep->cached_fat_dirty = 0;
+    }
+
+    /* Read the new sector into cache */
+    if (blockdev_read_sectors(ep->dev_id,
+             ep->fat_offset + sector_index, 1,
+             ep->cached_fat_data) != 0) {
+        ep->cached_fat_sector = ~0U;
+        return -EIO;
+    }
+
+    ep->cached_fat_sector = sector_index;
+    ep->cached_fat_dirty = 0;
+    return 0;
+}
+
+/* Flush any dirty FAT cache to disk.  Returns 0 on success,
+ * negative errno on error.  Safe to call when cache is clean. */
+static int exfat_fat_flush(struct exfat_priv *ep)
+{
+    if (!ep->cached_fat_dirty)
+        return 0;
+
+    if (blockdev_write_sectors(ep->dev_id,
+             ep->fat_offset + ep->cached_fat_sector, 1,
+             ep->cached_fat_data) != 0)
+        return -EIO;
+
+    ep->cached_fat_dirty = 0;
+    return 0;
+}
+
+/* Read a FAT entry for the given cluster.
+ * Returns 0 on success with *entry set, negative errno on error. */
+static int exfat_read_fat_entry(struct exfat_priv *ep,
+                                uint32_t cluster, uint32_t *entry)
+{
+    uint32_t byte_offset = cluster * 4;
+    uint32_t sector_idx = byte_offset / ep->sector_size;
+    uint32_t byte_in_sec = byte_offset % ep->sector_size;
+
+    if (cluster < 2 || cluster > ep->cluster_count + 1)
+        return -EINVAL;
+
+    if (exfat_fat_load_sector(ep, sector_idx) != 0)
+        return -EIO;
+
+    *entry = r32(ep->cached_fat_data + byte_in_sec);
+    return 0;
+}
+
+/* Write a FAT entry for the given cluster.
+ * Returns 0 on success, negative errno on error. */
+static int exfat_write_fat_entry(struct exfat_priv *ep,
+                                 uint32_t cluster, uint32_t value)
+{
+    uint32_t byte_offset = cluster * 4;
+    uint32_t sector_idx = byte_offset / ep->sector_size;
+    uint32_t byte_in_sec = byte_offset % ep->sector_size;
+
+    if (cluster < 2 || cluster > ep->cluster_count + 1)
+        return -EINVAL;
+
+    if (exfat_fat_load_sector(ep, sector_idx) != 0)
+        return -EIO;
+
+    /* Write little-endian 32-bit value */
+    ep->cached_fat_data[byte_in_sec]     = (uint8_t)(value & 0xFF);
+    ep->cached_fat_data[byte_in_sec + 1] = (uint8_t)((value >> 8) & 0xFF);
+    ep->cached_fat_data[byte_in_sec + 2] = (uint8_t)((value >> 16) & 0xFF);
+    ep->cached_fat_data[byte_in_sec + 3] = (uint8_t)((value >> 24) & 0xFF);
+    ep->cached_fat_dirty = 1;
+    return 0;
 }
 
 /* ── Cluster allocator ──────────────────────────────────────────── */
@@ -337,7 +462,8 @@ static int exfat_bitmap_init(struct exfat_priv *ep)
 	ep->num_clusters         = bpb->cluster_count;
 	ep->data_start_sector    = bpb->cluster_heap_offset;
 
-	/* In exFAT, the allocation bitmap resides at the FAT offset.
+	/* In exFAT, the allocation bitmap resides at the FAT offset
+	 * when no FAT is present, or after the FAT when FAT is active.
 	 * The bitmap size is ceil(cluster_count / 8) bytes, rounded up
 	 * to a sector boundary. */
 	if (ep->cluster_count == 0)
@@ -346,13 +472,29 @@ static int exfat_bitmap_init(struct exfat_priv *ep)
 	bitmap_byte_count = (ep->cluster_count + 7) / 8;
 	bitmap_sect = (bitmap_byte_count + ep->sector_size - 1) / ep->sector_size;
 
-	ep->bitmap_start_sector = ep->fat_offset;
+	/* When FAT is present (fat_length > 0), the bitmap is stored
+	 * after the FAT to avoid overlap.  When no FAT, the bitmap uses
+	 * the offset directly. */
+	if (ep->fat_length > 0) {
+		ep->bitmap_start_sector = ep->fat_offset + ep->fat_length;
+		kprintf("[exfat] FAT enabled (%u sectors), bitmap at sector %u\n",
+		        ep->fat_length, ep->bitmap_start_sector);
+	} else {
+		ep->bitmap_start_sector = ep->fat_offset;
+		kprintf("[exfat] No FAT, bitmap at sector %u\n",
+		        ep->bitmap_start_sector);
+	}
 	ep->bitmap_sectors      = bitmap_sect;
 
 	/* Initialize the sector cache */
 	ep->cached_bitmap_sector = ~0U;
 	ep->cached_bitmap_dirty  = 0;
 	memset(ep->cached_bitmap_data, 0, sizeof(ep->cached_bitmap_data));
+
+	/* Initialize FAT cache state */
+	ep->cached_fat_sector = ~0U;
+	ep->cached_fat_dirty  = 0;
+	memset(ep->cached_fat_data, 0, sizeof(ep->cached_fat_data));
 
 	/* Scan the bitmap to count free clusters.
 	 * Read bitmap sector by sector and count zero bits. */
@@ -414,6 +556,11 @@ static int exfat_bitmap_sync(struct exfat_priv *ep)
 
 	/* Flush dirty bitmap cache */
 	ret = exfat_bitmap_flush(ep);
+	if (ret < 0)
+		return ret;
+
+	/* Flush dirty FAT cache if enabled */
+	ret = exfat_fat_flush(ep);
 	if (ret < 0)
 		return ret;
 
@@ -1295,25 +1442,49 @@ static uint32_t exfat_resolve_dir_cluster(struct exfat_priv *ep,
 	return parent_cluster;
 }
 
-/* Free a cluster chain (assumes contiguous allocation) */
+/* Free a cluster chain (contiguous or FAT-chained) */
 
 static void exfat_free_chain(struct exfat_priv *ep, uint32_t first_cluster,
                               uint64_t data_length)
 {
-	if (first_cluster < 2 || first_cluster >= EXFAT_CLUSTER_END)
-		return;
+    if (first_cluster < 2 || first_cluster >= EXFAT_CLUSTER_END)
+        return;
 
-	uint32_t cluster_size = (1U << ep->sectors_per_cluster_shift) *
-	                        ep->sector_size;
-	uint64_t num_clusters = (data_length + cluster_size - 1) / cluster_size;
-	if (num_clusters == 0) num_clusters = 1;
+    if (ep->fat_length == 0) {
+        /* No FAT: contiguous allocation */
+        uint32_t cluster_size = (1U << ep->sectors_per_cluster_shift) *
+                                ep->sector_size;
+        uint64_t num_clusters = (data_length + cluster_size - 1) / cluster_size;
+        if (num_clusters == 0) num_clusters = 1;
 
-	for (uint64_t i = 0; i < num_clusters; i++) {
-		uint32_t c = first_cluster + (uint32_t)i;
-		if (c >= EXFAT_CLUSTER_END)
-			break;
-		exfat_free_cluster(ep, c);
-	}
+        for (uint64_t i = 0; i < num_clusters; i++) {
+            uint32_t c = first_cluster + (uint32_t)i;
+            if (c >= EXFAT_CLUSTER_END)
+                break;
+            exfat_free_cluster(ep, c);
+        }
+    } else {
+        /* FAT present: traverse the FAT chain */
+        uint32_t c = first_cluster;
+        while (c >= 2 && c < EXFAT_CLUSTER_END) {
+            uint32_t next;
+            if (exfat_read_fat_entry(ep, c, &next) != 0)
+                break;
+
+            exfat_free_cluster(ep, c);
+
+            /* Mark FAT entry as free */
+            if (exfat_write_fat_entry(ep, c, 0) != 0)
+                break;
+
+            if (next >= 0xFFFFFFF8) /* End of chain */
+                break;
+            if (next == 0)          /* Shouldn't happen, but safe */
+                break;
+
+            c = next;
+        }
+    }
 }
 
 static int exfat_read(void *priv, const char *path,
@@ -1487,7 +1658,7 @@ read_done:
 			}
 			done += sec_size;
 		}
-		current_cluster++;
+		current_cluster = exfat_next_cluster(ep, current_cluster);
 	}
 
 	if (out_size) *out_size = (uint32_t)done;
@@ -1598,6 +1769,24 @@ static int exfat_write(void *priv, const char *path,
 			written += chunk;
 		}
 
+		/* Write FAT chain entries if FAT is enabled */
+		if (ep->fat_length > 0) {
+			for (uint32_t fi = 0; fi < num_clusters; fi++) {
+				uint32_t next_val;
+				if (fi < num_clusters - 1)
+					next_val = clusters[fi + 1];
+				else
+					next_val = EXFAT_CLUSTER_END;
+				if (exfat_write_fat_entry(ep, clusters[fi],
+				                           next_val) != 0) {
+					exfat_free_chain(ep, first_cluster, size);
+					kfree(clusters);
+					kfree(cbuf);
+					return -EIO;
+				}
+			}
+		}
+
 		kfree(clusters);
 
 		/* Update entry set with new cluster and size */
@@ -1657,6 +1846,23 @@ static int exfat_write(void *priv, const char *path,
 		exfat_write_cluster(ep, c, zbuf);
 		kfree(zbuf);
 		written += chunk;
+	}
+
+	/* Write FAT chain entries if FAT is enabled */
+	if (ep->fat_length > 0) {
+		for (uint32_t fi = 0; fi < num_clusters; fi++) {
+			uint32_t next_val;
+			if (fi < num_clusters - 1)
+				next_val = new_clusters[fi + 1];
+			else
+				next_val = EXFAT_CLUSTER_END;
+			if (exfat_write_fat_entry(ep, new_clusters[fi],
+			                           next_val) != 0) {
+				exfat_free_chain(ep, first_cluster, size);
+				kfree(new_clusters);
+				return -EIO;
+			}
+		}
 	}
 
 	kfree(new_clusters);
