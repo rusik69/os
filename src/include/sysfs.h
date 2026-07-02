@@ -71,6 +71,11 @@ void sysfs_create_class_dirs(void);
  * Called from sysfs_init() after /sys/devices/ has been populated. */
 void sysfs_create_firmware_dirs(void);
 
+/* Create NUMA node directories under /sys/devices/system/node/
+ * with per-node attributes (cpumap, cpulist, distance, meminfo, numastat).
+ * Called from sysfs_init() after /sys/devices/system/ exists. */
+void sysfs_create_numa_dirs(void);
+
 /* Create per-driver directories under /sys/bus/pci/drivers/
  * for every PCI driver known to the system.  Each driver gets
  * a directory with a symbolic "driver" link back reference.

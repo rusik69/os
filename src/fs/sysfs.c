@@ -673,6 +673,10 @@ void __init sysfs_init(void) {
      * and per-device of_node attributes under /sys/devices/.../of_node/ */
     sysfs_create_firmware_dirs();
 
+    /* /sys/devices/system/node/ — NUMA node attributes (cpumap, cpulist,
+     * distance, meminfo, numastat) for each detected NUMA node */
+    sysfs_create_numa_dirs();
+
     /* /sys/kernel/ files — kernel parameters with read/write callbacks */
     sysfs_create_file("/sys/kernel/version", "OS Kernel v1.0\n");
     sysfs_create_writable_file("/sys/kernel/panic_timeout", "30\n", NULL,
