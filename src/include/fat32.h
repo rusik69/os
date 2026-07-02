@@ -59,6 +59,9 @@ int  fat32_mkdir(const char *path);
 /* Remove file (not directories) */
 int  fat32_unlink(const char *path);
 
+/* Remove an empty subdirectory (frees cluster chain, removes parent entry) */
+int  fat32_rmdir(const char *path);
+
 /* Get volume label (returns 0 on success, -1 on error). */
 int  fat32_get_volume_label(char *buf, int max);
 

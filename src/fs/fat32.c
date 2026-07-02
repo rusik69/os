@@ -1541,6 +1541,103 @@ int fat32_unlink(const char *path) {
     return 0;
 }
 
+/* ── Subdirectory cluster chain management ──────────────────────────────────── */
+
+/* Check if a subdirectory contains only '.' and '..' entries.
+ * Returns 1 if empty (or only dot/dotdot), 0 if not empty, negative on error. */
+static int fat32_dir_is_empty(uint32_t dir_cluster)
+{
+	uint8_t buf[SECT_SIZE];
+	uint32_t eoc = FAT_EOC();
+
+	if (dir_cluster == 0 && fat_type != FAT32) {
+		/* FAT12/16 fixed root directory — not a subdirectory */
+		return 0;
+	}
+
+	uint32_t cluster = dir_cluster;
+	uint64_t _chain_cnt = 0;
+	while (cluster >= 2 && cluster < eoc) {
+		if (++_chain_cnt > FAT_MAX_CLUSTER())
+			break;
+		uint32_t lba = cluster_to_lba(cluster);
+		for (uint32_t s = 0; s < spc; s++) {
+			if (read_sector(lba + s, buf) != 0)
+				return -EIO;
+			struct fat32_dirent *entries = (struct fat32_dirent *)buf;
+			int n_entries = (int)(SECT_SIZE / sizeof(struct fat32_dirent));
+			for (int i = 0; i < n_entries; i++) {
+				uint8_t first = (uint8_t)entries[i].name[0];
+				if (first == 0x00)
+					goto done; /* end of directory */
+				if (first == 0xE5)
+					continue;
+				if (entries[i].attr == FAT32_ATTR_LFN)
+					continue;
+				if (entries[i].attr & FAT32_ATTR_VOLUME_ID)
+					continue;
+				/* Skip '.' and '..' entries */
+				if (entries[i].name[0] == '.') {
+					if (entries[i].name[1] == ' ' ||
+					    (entries[i].name[1] == '.' &&
+					     entries[i].name[2] == ' '))
+						continue;
+				}
+				/* Found a real entry — directory not empty */
+				return 0;
+			}
+		}
+		cluster = fat_next_cluster(cluster);
+	}
+done:
+	return 1;
+}
+
+/* Remove an empty subdirectory.
+ * Verifies the directory is empty (only '.' and '..'), frees its
+ * cluster chain, and removes the entry from the parent directory.
+ * Returns 0 on success, negative errno on failure. */
+int fat32_rmdir(const char *path)
+{
+	if (!mounted || !path || !*path)
+		return -EINVAL;
+
+	/* Prevent removing root directory */
+	const char *rp = path;
+	while (*rp == '/') rp++;
+	if (*rp == '\0')
+		return -EBUSY;
+
+	char leaf[FAT32_MAX_NAME];
+	uint32_t parent = path_parent_cluster(path, leaf, FAT32_MAX_NAME);
+	if (!parent)
+		return -ENOENT;
+
+	int is_dir = 0;
+	uint32_t fsize = 0;
+	uint32_t clus = dir_find(parent, leaf, &is_dir, &fsize);
+	if (!clus)
+		return -ENOENT;
+	if (!is_dir)
+		return -ENOTDIR;
+
+	/* Verify the directory is empty */
+	int empty = fat32_dir_is_empty(clus);
+	if (empty < 0)
+		return empty;
+	if (!empty)
+		return -ENOTEMPTY;
+
+	/* Free the directory's cluster chain */
+	fat_free_chain(clus);
+
+	/* Remove the directory entry from parent */
+	if (dir_remove_entry(parent, leaf) != 0)
+		return -EIO;
+
+	return 0;
+}
+
 /* ── Volume label read/write (Item 149) ──────────────────────────────────────── */
 
 int fat32_get_volume_label(char *buf, int max)
@@ -2196,9 +2293,13 @@ static int fat32_vfs_create(void *priv, const char *path, uint8_t type) {
 }
 
 static int fat32_vfs_unlink(void *priv, const char *path) {
-    (void)priv;
-    if (!mounted) return -EINVAL;
-    return fat32_unlink(fat32_vfs_rel(path));
+	(void)priv;
+	if (!mounted) return -EINVAL;
+	const char *rel = fat32_vfs_rel(path);
+	int ret = fat32_unlink(rel);
+	if (ret == -4) /* is a directory — try rmdir */
+		ret = fat32_rmdir(rel);
+	return ret;
 }
 
 static int fat32_vfs_readdir(void *priv, const char *path) {
