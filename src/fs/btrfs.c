@@ -870,6 +870,57 @@ static int btrfs_find_fs_root(struct btrfs_priv *bp)
 
 /* ── Path resolution ───────────────────────────────────────────── */
 
+/* Forward declaration — btrfs_lookup is defined below this block */
+static uint64_t btrfs_lookup(struct btrfs_priv *bp, uint64_t dir_id,
+                              const char *name, int namelen);
+
+/**
+ * btrfs_resolve_dirid - Walk a VFS path and resolve to a Btrfs dir_id
+ * @bp: Btrfs private data
+ * @path: Absolute VFS path (e.g. "/", "/subdir")
+ * @dir_id_out: On success, filled with the resolved directory objectid
+ *
+ * Starts at the fs tree root dirid and walks each path component
+ * through btrfs_lookup.  Returns 0 on success, negative errno on
+ * failure (typically -ENOENT for a missing component).
+ */
+static int btrfs_resolve_dirid(struct btrfs_priv *bp, const char *path,
+                                uint64_t *dir_id_out)
+{
+	uint64_t dir_id = bp->fs_root_dirid;
+
+	if (!path || path[0] != '/')
+		return -EINVAL;
+
+	/* Root path — no component walking needed */
+	if (path[1] == '\0') {
+		*dir_id_out = dir_id;
+		return 0;
+	}
+
+	/* Walk each path component */
+	const char *p = path + 1;
+	while (*p) {
+		const char *slash = strchr(p, '/');
+		int clen = slash ? (int)(slash - p) : (int)strlen(p);
+
+		if (clen <= 0 || clen >= 256)
+			return -ENOENT;
+
+		uint64_t next = btrfs_lookup(bp, dir_id, p, clen);
+		if (next == 0)
+			return -ENOENT;
+
+		dir_id = next;
+		if (!slash)
+			break;
+		p = slash + 1;
+	}
+
+	*dir_id_out = dir_id;
+	return 0;
+}
+
 /* Look up a directory entry by name in a given parent directory inode.
  * Returns objectid of the found entry, or 0 if not found. */
 static uint64_t btrfs_lookup(struct btrfs_priv *bp, uint64_t dir_id,
@@ -1000,77 +1051,167 @@ static int btrfs_unlink(void *priv, const char *path)
     return -EROFS;
 }
 
+/**
+ * btrfs_readdir_names - Read directory entries into a names array
+ * @priv: Btrfs private data
+ * @path: VFS path to the directory
+ * @names: Array of up to @max name buffers (each 64 bytes)
+ * @max: Maximum number of entries to return
+ *
+ * Walks all B-tree leaf nodes that contain directory items for the
+ * given directory, using the repeated-search pattern.  This correctly
+ * handles directories whose entries span multiple tree leaves.
+ *
+ * Returns: The number of entries written (positive), or negative errno.
+ */
+static int btrfs_readdir_names(void *priv, const char *path,
+                                char names[][64], int max)
+{
+	struct btrfs_priv *bp = (struct btrfs_priv *)priv;
+	uint64_t dir_id;
+	uint8_t buf[4096];
+	uint32_t item_idx;
+	int exact;
+	int ret;
+	int count;
+
+	if (!bp || !path || !names || max <= 0)
+		return -EINVAL;
+
+	/* Resolve path to a btrfs dir_id */
+	ret = btrfs_resolve_dirid(bp, path, &dir_id);
+	if (ret < 0)
+		return ret;
+
+	count = 0;
+
+	/* Add implicit "." and ".." entries */
+	if (count < max)
+		memcpy(names[count++], ".", 2);
+	if (count < max)
+		memcpy(names[count++], "..", 3);
+
+	/* Iterate DIR_ITEM_KEY (type 84) entries using repeated-search.
+	 * In Btrfs, each file has at least one DIR_ITEM_KEY entry whose
+	 * offset field is the crc32c hash of the filename.  A single tree
+	 * item may contain multiple btrfs_dir_item structs when two names
+	 * hash to the same value (a collision slot).
+	 *
+	 * By advancing search_off past the current item's offset after
+	 * each item, we naturally walk across leaf boundaries. */
+	{
+		uint64_t search_obj = dir_id;
+		uint8_t  search_type = BTRFS_DIR_ITEM_KEY;
+		uint64_t search_off = 0;
+
+		while (count < max) {
+			ret = btrfs_search_tree(bp, bp->fs_root_bytenr,
+						bp->fs_root_level,
+						search_obj, search_type,
+						search_off,
+						buf, sizeof(buf),
+						&item_idx, &exact);
+			if (ret < 0)
+				break;
+
+			struct btrfs_header *hdr = (struct btrfs_header *)buf;
+			if (item_idx >= hdr->nritems)
+				break;
+
+			struct btrfs_item *items = (struct btrfs_item *)
+				(buf + sizeof(struct btrfs_header));
+
+			uint64_t cur_obj = items[item_idx].key.objectid;
+			uint8_t  cur_typ = items[item_idx].key.type;
+			uint64_t cur_off = items[item_idx].key.offset;
+
+			/* Past the end of this directory's items */
+			if (cur_obj != dir_id)
+				break;
+
+			/* Skip non-directory-item types (e.g. INODE_ITEM,
+			 * INODE_REF) that may appear under the same objectid */
+			if (cur_typ != BTRFS_DIR_ITEM_KEY &&
+			    cur_typ != BTRFS_DIR_INDEX_KEY) {
+				search_off = cur_off + 1;
+				if (search_off == 0) {
+					search_type = cur_typ + 1;
+					if (search_type == 0)
+						search_obj = cur_obj + 1;
+				}
+				continue;
+			}
+
+			/* Parse each btrfs_dir_item inside this item */
+			uint32_t off = items[item_idx].offset;
+			uint32_t sz  = items[item_idx].size;
+			uint32_t consumed = 0;
+
+			while (consumed + sizeof(struct btrfs_dir_item) <= sz &&
+			       count < max) {
+				struct btrfs_dir_item *di =
+					(struct btrfs_dir_item *)(buf + off +
+								 consumed);
+				uint16_t name_len = di->name_len;
+				uint16_t total = sizeof(struct btrfs_dir_item) +
+						 name_len;
+
+				if (name_len > 0 &&
+				    consumed + total <= sz &&
+				    name_len <= 63) {
+					memcpy(names[count],
+					       buf + off + consumed +
+					       sizeof(struct btrfs_dir_item),
+					       name_len);
+					names[count][name_len] = '\0';
+					count++;
+				}
+
+				consumed += total;
+				/* Btrfs dir_item entries are 8-byte aligned */
+				consumed = (consumed + 7) & ~7;
+			}
+
+			/* Advance search past this item's key */
+			search_off = cur_off + 1;
+			if (search_off == 0) {
+				search_type = cur_typ + 1;
+				if (search_type == 0)
+					search_obj = cur_obj + 1;
+			}
+		}
+	}
+
+	return count;
+}
+
 static int btrfs_readdir(void *priv, const char *path)
 {
-    struct btrfs_priv *bp = (struct btrfs_priv *)priv;
-    if (!bp) return -1;
+	struct btrfs_priv *bp = (struct btrfs_priv *)priv;
+	char names[64][64];
+	int n;
 
-    uint64_t dir_id = bp->fs_root_dirid;
-    if (path[0] != '/' || path[1] != '\0') {
-        /* Walk path components */
-        const char *p = path + 1;
-        if (*p) {
-            char comp[256];
-            while (*p) {
-                const char *slash = strchr(p, '/');
-                int clen = slash ? (int)(slash - p) : (int)strlen(p);
-                if (clen == 0 || clen >= (int)sizeof(comp)) return -ENOENT;
-                memcpy(comp, p, clen);
-                comp[clen] = '\0';
-                uint64_t next = btrfs_lookup(bp, dir_id, comp, clen);
-                if (next == 0) return -ENOENT;
-                dir_id = next;
-                if (!slash) break;
-                p = slash + 1;
-            }
-        }
-    }
+	if (!bp)
+		return -EINVAL;
 
-    kprintf(".              <DIR>\n"
-            "..             <DIR>\n");
+	n = btrfs_readdir_names(priv, path, names, 64);
+	if (n < 0)
+		return n;
 
-    uint8_t buf[4096];
-    uint32_t item_idx;
-    int exact;
-    if (btrfs_search_tree(bp, bp->fs_root_bytenr, bp->fs_root_level,
-                           dir_id, BTRFS_DIR_ITEM_KEY, 0,
-                           buf, sizeof(buf), &item_idx, &exact) < 0)
-        return 0;
+	for (int i = 0; i < n; i++)
+		kprintf("  %s\n", names[i]);
 
-    struct btrfs_header *hdr = (struct btrfs_header *)buf;
-    struct btrfs_item *items = (struct btrfs_item *)(buf + sizeof(struct btrfs_header));
-
-    for (uint32_t i = item_idx; i < hdr->nritems; i++) {
-        if (items[i].key.objectid != dir_id) break;
-        if (items[i].key.type != BTRFS_DIR_ITEM_KEY &&
-            items[i].key.type != BTRFS_DIR_INDEX_KEY) continue;
-
-        uint32_t off = items[i].offset;
-        uint32_t sz = items[i].size;
-        uint32_t consumed = 0;
-        while (consumed + sizeof(struct btrfs_dir_item) <= sz) {
-            struct btrfs_dir_item *di = (struct btrfs_dir_item *)(buf + off + consumed);
-            uint16_t name_len = di->name_len;
-            if (name_len > 63) name_len = 63;
-            char name[64];
-            memcpy(name, buf + off + consumed + sizeof(struct btrfs_dir_item), name_len);
-            name[name_len] = '\0';
-            kprintf("  %-14s %s\n", name,
-                    (di->type == 2) ? "<DIR>" : "");
-            consumed += sizeof(struct btrfs_dir_item) + di->name_len;
-            consumed = (consumed + 7) & ~7;
-        }
-    }
-    return 0;
+	return 0;
 }
 
 static struct vfs_ops btrfs_ops = {
-    .read    = btrfs_read,
-    .write   = btrfs_write,
-    .stat    = btrfs_stat,
-    .create  = btrfs_create,
-    .unlink  = btrfs_unlink,
-    .readdir = btrfs_readdir,
+	.read          = btrfs_read,
+	.write         = btrfs_write,
+	.stat          = btrfs_stat,
+	.create        = btrfs_create,
+	.unlink        = btrfs_unlink,
+	.readdir       = btrfs_readdir,
+	.readdir_names = btrfs_readdir_names,
 };
 
 /* ── Probe ─────────────────────────────────────────────────────── */
