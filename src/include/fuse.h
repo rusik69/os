@@ -363,4 +363,11 @@ int fuse_mount(const char *mountpoint);
 /* Unmount a FUSE filesystem */
 int fuse_unmount(const char *mountpoint);
 
+/* Release an open FUSE node — sends FUSE_RELEASE to the daemon and
+ * removes the cached file handle.
+ * @mnt     The FUSE mount info (from fuse_find_mount).
+ * @nodeid  Node ID of the file to release.
+ * Returns 0 on success, or a negative errno on failure. */
+int fuse_release_node(struct fuse_mount_info *mnt, uint64_t nodeid);
+
 #endif /* FUSE_H */

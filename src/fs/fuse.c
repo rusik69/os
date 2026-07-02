@@ -380,6 +380,112 @@ static int fuse_open_fh_cache_update_offset(struct fuse_mount_info *mnt,
     return -ENOENT;
 }
 
+/*
+ * fuse_open_fh_cache_remove — Remove a cached open file handle by nodeid.
+ *
+ * @mnt     The FUSE mount info.
+ * @nodeid  Node ID to remove from the cache.
+ *
+ * Returns 0 on success, -ENOENT if the nodeid was not in the cache.
+ */
+static int fuse_open_fh_cache_remove(struct fuse_mount_info *mnt,
+                                      uint64_t nodeid)
+{
+    for (int i = 0; i < FUSE_OPEN_FH_CACHE_SIZE; i++) {
+        struct fuse_open_fh_entry *e = &mnt->open_fh_cache[i];
+        if (e->in_use && e->nodeid == nodeid) {
+            e->in_use = 0;
+            e->nodeid = 0;
+            e->fh     = 0;
+            e->offset = 0;
+            return 0;
+        }
+    }
+    return -ENOENT;
+}
+
+/*
+ * fuse_do_release — Send FUSE_RELEASE to the daemon for a file handle.
+ *
+ * @mnt     The FUSE mount info.
+ * @nodeid  Node ID of the file to release.
+ * @fh      File handle returned by FUSE_OPEN.
+ *
+ * Sends a FUSE_RELEASE request to the userspace daemon so that
+ * the daemon can decrement its reference count, flush buffers,
+ * and perform any other cleanup associated with this open.
+ *
+ * Returns 0 on success, or a negative errno on failure.
+ * Failure to release is logged but non-fatal; the daemon can
+ * GC stale handles when the mount is torn down.
+ */
+static int fuse_do_release(struct fuse_mount_info *mnt, uint64_t nodeid,
+                            uint64_t fh)
+{
+    struct fuse_release_in ri;
+    int ret;
+
+    if (!mnt)
+        return -EINVAL;
+
+    memset(&ri, 0, sizeof(ri));
+    ri.fh            = fh;
+    ri.flags         = O_RDWR;
+    ri.release_flags = 0;
+    ri.lock_owner    = 0;
+
+    ret = fuse_request_response(FUSE_RELEASE, nodeid, &ri, sizeof(ri),
+                                 NULL, NULL);
+    if (ret < 0) {
+        kprintf("[fuse] FUSE_RELEASE nodeid=%llu fh=%llu failed: %d\n",
+                (unsigned long long)nodeid,
+                (unsigned long long)fh, ret);
+    } else {
+        kprintf("[fuse] FUSE_RELEASE nodeid=%llu fh=%llu done\n",
+                (unsigned long long)nodeid,
+                (unsigned long long)fh);
+    }
+
+    return ret;
+}
+
+/*
+ * fuse_release_node — Release an open FUSE node: send FUSE_RELEASE to
+ *                      the daemon and remove the cached file handle.
+ *
+ * @mnt     The FUSE mount info.
+ * @nodeid  Node ID of the file to release.
+ *
+ * Returns 0 on success, or a negative errno on failure.
+ * The FUSE_RELEASE request is sent to the daemon so it can perform
+ * cleanup (flush buffers, decrement refcount, etc.).  The cached
+ * handle is removed regardless of the daemon's response.
+ */
+int fuse_release_node(struct fuse_mount_info *mnt, uint64_t nodeid)
+{
+    uint64_t fh;
+    int ret;
+
+    if (!mnt)
+        return -EINVAL;
+
+    /* Look up the cached file handle for this node */
+    ret = fuse_open_fh_cache_lookup(mnt, nodeid, &fh, NULL);
+    if (ret < 0) {
+        kprintf("[fuse] release nodeid %llu not in cache\n",
+                (unsigned long long)nodeid);
+        return ret;
+    }
+
+    /* Send FUSE_RELEASE to daemon (errors logged, non-fatal) */
+    fuse_do_release(mnt, nodeid, fh);
+
+    /* Remove from cache regardless of daemon response */
+    fuse_open_fh_cache_remove(mnt, nodeid);
+
+    return 0;
+}
+
 /* ── FUSE_LOOKUP implementation ─────────────────────────────────────── */
 
 /*
