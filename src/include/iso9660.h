@@ -190,6 +190,9 @@ struct iso_rrip_entry {
     char     rr_name[256]; /* long file name from NM */
     char     rr_symlink[256]; /* symlink target from SL */
     uint8_t  rr_flags;     /* RRIP_HAS_* bitmask */
+    /* ISO interleaving fields (ISO 9660 §7.4.5) */
+    uint8_t  file_unit_size;    /* blocks per interleave unit (0 = not interleaved) */
+    uint8_t  interleave_gap;    /* blocks of other files between units */
     /* ISO fields */
     char     iso_name[256];
 };

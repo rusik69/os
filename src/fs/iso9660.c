@@ -429,6 +429,8 @@ static int parse_one_dirent(struct iso9660_priv *ip,
     de->extent = rec->extent_loc_le;
     de->size   = rec->data_length_le;
     de->flags  = rec->flags;
+    de->file_unit_size = rec->file_unit_size;
+    de->interleave_gap = rec->interleave_gap;
 
     /* Extract name: use Joliet UCS-2BE decoding if available, else ISO9660 */
     uint8_t nlen = rec->name_len;
@@ -799,24 +801,11 @@ static int check_rrip_present(struct iso9660_priv *ip)
 
 /* ── VFS operations ─────────────────────────────────────────────── */
 
-static int iso9660_read(void *priv, const char *path, void *buf,
-                         uint32_t max_size, uint32_t *out_size)
+/* Read a contiguous (non-interleaved) file's data blocks sequentially. */
+static int iso9660_read_contiguous(struct iso9660_priv *ip, uint32_t extent,
+                                    uint32_t size, void *buf, uint32_t max_size,
+                                    uint32_t *out_size)
 {
-    struct iso9660_priv *ip = (struct iso9660_priv *)priv;
-    uint32_t extent, size;
-    if (iso9660_resolve(ip, path, &extent, &size) < 0)
-        return -ENOENT;
-
-    /* Check if resolved path is a directory — can't read dirs as files */
-    struct iso_rrip_entry entries[2];
-    int n = iso_read_dir_entries(ip, extent, size, entries, 1);
-    if (n >= 0) {
-        /* If it has children, it's a directory; reject reading */
-        /* Actually, extent points to data, which for a file is the content;
-         * for a directory it's the directory listing. We trust the caller
-         * to know the type. */
-    }
-
     uint32_t to_read = size;
     if (to_read > max_size) to_read = max_size;
 
@@ -834,6 +823,128 @@ static int iso9660_read(void *priv, const char *path, void *buf,
 
     *out_size = offset;
     return 0;
+}
+
+/*
+ * Read an interleaved file (ISO 9660 §7.4.5 Interleaved Mode).
+ *
+ * Interleaved files store data in a repeating pattern:
+ *   - file_unit_size consecutive logical blocks of this file's data
+ *   - interleave_gap  consecutive logical blocks of other files' data
+ *   - repeat
+ *
+ * This is used for CD-i, Video CD, and other multimedia formats where
+ * audio/video data must be interleaved for synchronized playback.
+ *
+ * The total physical space consumed on disc is:
+ *   ceil(data_length / (file_unit_size * block_size)) *
+ *   (file_unit_size + interleave_gap) * block_size
+ *
+ * But the file's logical data_length in the directory record represents
+ * only this file's data, not the interleave gaps.
+ */
+static int iso9660_read_interleaved(struct iso9660_priv *ip, uint32_t extent,
+                                     uint32_t size, uint8_t file_unit_size,
+                                     uint8_t interleave_gap, void *buf,
+                                     uint32_t max_size, uint32_t *out_size)
+{
+    uint32_t to_read = size;
+    if (to_read > max_size) to_read = max_size;
+    if (file_unit_size == 0)
+        file_unit_size = 1; /* safety: avoid division by zero */
+
+    uint32_t cycle_blocks = (uint32_t)file_unit_size + (uint32_t)interleave_gap;
+    uint32_t offset = 0;
+
+    while (offset < to_read) {
+        uint32_t block_num = offset / ip->block_size;
+        uint32_t block_offs = offset % ip->block_size;
+
+        /* Compute the LBA from the interleave pattern */
+        uint32_t cycle = block_num / (uint32_t)file_unit_size;
+        uint32_t block_in_unit = block_num % (uint32_t)file_unit_size;
+        uint32_t lba = extent + cycle * cycle_blocks + block_in_unit;
+
+        uint8_t block[2048];
+        if (iso_read_block(ip, lba, block) < 0) break;
+
+        uint32_t chunk = to_read - offset;
+        if (chunk > ip->block_size) chunk = ip->block_size;
+        memcpy((uint8_t *)buf + offset, block + block_offs, chunk);
+        offset += chunk;
+    }
+
+    *out_size = offset;
+    return 0;
+}
+
+static int iso9660_read(void *priv, const char *path, void *buf,
+                         uint32_t max_size, uint32_t *out_size)
+{
+    struct iso9660_priv *ip = (struct iso9660_priv *)priv;
+    uint32_t extent, size;
+    if (iso9660_resolve(ip, path, &extent, &size) < 0)
+        return -ENOENT;
+
+    /* Check if this is an interleaved file by finding the directory entry.
+     * Parse the parent directory to extract interleave fields. */
+    uint8_t file_unit_size = 0;
+    uint8_t interleave_gap = 0;
+
+    const char *p = path;
+    if (*p == '/') p++;
+    if (*p != '\0') {
+        /* Find parent directory */
+        const char *slash = NULL;
+        for (const char *s = p; *s; s++) {
+            if (*s == '/') slash = s;
+        }
+
+        uint32_t pextent = ip->root_extent;
+        uint32_t psize   = ip->root_size;
+
+        if (slash) {
+            char parent[256];
+            size_t plen = (size_t)(slash - p);
+            memcpy(parent, p, plen);
+            parent[plen] = '\0';
+            uint32_t dummy_ext, dummy_sz;
+            if (iso9660_resolve(ip, parent, &dummy_ext, &dummy_sz) < 0)
+                return -ENOENT;
+            pextent = dummy_ext;
+            psize = dummy_sz;
+        }
+
+        /* Search the parent directory for this file's entry */
+        struct iso_rrip_entry entries[256];
+        int n = iso_read_dir_entries(ip, pextent, psize, entries, 256);
+        const char *name = slash ? slash + 1 : p;
+        size_t nlen = strlen(name);
+
+        for (int i = 0; i < n; i++) {
+            const char *ename;
+            if (ip->has_rrip && entries[i].rr_name[0] != '\0')
+                ename = entries[i].rr_name;
+            else
+                ename = entries[i].iso_name;
+            size_t elen = strlen(ename);
+
+            if (elen == nlen && memcmp(ename, name, nlen) == 0) {
+                file_unit_size = entries[i].file_unit_size;
+                interleave_gap = entries[i].interleave_gap;
+                break;
+            }
+        }
+    }
+
+    /* Dispatch to the appropriate read function based on interleave mode */
+    if (file_unit_size > 0)
+        return iso9660_read_interleaved(ip, extent, size,
+                                        file_unit_size, interleave_gap,
+                                        buf, max_size, out_size);
+    else
+        return iso9660_read_contiguous(ip, extent, size,
+                                       buf, max_size, out_size);
 }
 
 static int iso9660_stat(void *priv, const char *path, struct vfs_stat *st)
