@@ -30,12 +30,7 @@ struct fuse_readdir_in {
 
 /* Mount info */
 #define FUSE_MAX_MOUNTS 4
-struct fuse_mount_info {
-    char        mountpoint[64];
-    int         active;
-    uint64_t    root_nodeid;   /* node ID of root (from INIT response) */
-    uint64_t    fh;            /* file handle for root (from OPEN response) */
-};
+/* fuse_mount_info now defined in fuse.h with negotiated fields */
 static struct fuse_mount_info g_fuse_mounts[FUSE_MAX_MOUNTS];
 static spinlock_t g_fuse_mount_lock;
 static int g_fuse_initialized = 0;
@@ -383,39 +378,106 @@ int fuse_mount(const char *mountpoint)
     }
     if (slot < 0) return -ENOMEM;
 
-    /* Prepare FUSE_INIT request */
+    /* Prepare FUSE_INIT request with our protocol version and capabilities */
     memset(&init_in, 0, sizeof(init_in));
     init_in.major = FUSE_KERNEL_VERSION;
     init_in.minor = FUSE_KERNEL_MINOR_VERSION;
-    init_in.max_readahead = 0;
-    init_in.flags = 0;
+    init_in.max_readahead = 128 * 1024; /* default 128KB readahead */
+    init_in.flags = FUSE_KERNEL_INIT_FLAGS; /* tell daemon what we support */
+
+    kprintf("[fuse] Sending INIT: kernel v%u.%u flags=0x%x max_readahead=%u\n",
+            (unsigned int)FUSE_KERNEL_VERSION,
+            (unsigned int)FUSE_KERNEL_MINOR_VERSION,
+            (unsigned int)init_in.flags,
+            (unsigned int)init_in.max_readahead);
 
     /* Send FUSE_INIT request and wait for response */
     ret = fuse_request_response(FUSE_INIT, 1, &init_in, sizeof(init_in),
                                  &resp_arg, &resp_arg_size);
-    if (ret < 0)
+    if (ret < 0) {
+        kprintf("[fuse] FUSE_INIT failed: ret=%d\n", ret);
         return ret;
-
-    /* Parse FUSE_INIT response to get daemon capabilities */
-    if (resp_arg && resp_arg_size >= (int)sizeof(struct fuse_init_out)) {
-        struct fuse_init_out *init_out = (struct fuse_init_out *)resp_arg;
-        kprintf("[fuse] Daemon: major=%u minor=%u max_readahead=%u "
-                "max_write=%u flags=0x%x\n",
-                (unsigned int)init_out->major,
-                (unsigned int)init_out->minor,
-                (unsigned int)init_out->max_readahead,
-                (unsigned int)init_out->max_write,
-                (unsigned int)init_out->flags);
     }
-    kfree(resp_arg);
-    resp_arg = NULL;
 
-    /* Register the mount */
+    /* Register the mount before parsing response (so we can store results) */
     mnt = &g_fuse_mounts[slot];
     memset(mnt, 0, sizeof(*mnt));
     strncpy(mnt->mountpoint, mountpoint, sizeof(mnt->mountpoint) - 1);
+
+    /* Parse FUSE_INIT response — validate version and store capabilities */
+    if (resp_arg && resp_arg_size >= (int)sizeof(struct fuse_init_out)) {
+        struct fuse_init_out *init_out = (struct fuse_init_out *)resp_arg;
+
+        kprintf("[fuse] Daemon response: v%u.%u flags=0x%x "
+                "max_readahead=%u max_write=%u time_gran=%u\n",
+                (unsigned int)init_out->major,
+                (unsigned int)init_out->minor,
+                (unsigned int)init_out->flags,
+                (unsigned int)init_out->max_readahead,
+                (unsigned int)init_out->max_write,
+                (unsigned int)init_out->time_gran);
+
+        /* Validate major version — must match (no cross-major compat) */
+        if (init_out->major != FUSE_KERNEL_VERSION) {
+            kprintf("[fuse] ERROR: daemon major=%u != kernel major=%u\n",
+                    (unsigned int)init_out->major,
+                    (unsigned int)FUSE_KERNEL_VERSION);
+            kfree(resp_arg);
+            return -EPROTONOSUPPORT;
+        }
+
+        /* Negotiate minor version — use minimum of kernel and daemon */
+        uint32_t negotiated_minor = init_out->minor;
+        if (negotiated_minor > FUSE_KERNEL_MINOR_VERSION)
+            negotiated_minor = FUSE_KERNEL_MINOR_VERSION;
+
+        kprintf("[fuse] Negotiated FUSE v%u.%u "
+                "(kernel=%u.%u daemon=%u.%u)\n",
+                (unsigned int)FUSE_KERNEL_VERSION,
+                (unsigned int)negotiated_minor,
+                (unsigned int)FUSE_KERNEL_VERSION,
+                (unsigned int)FUSE_KERNEL_MINOR_VERSION,
+                (unsigned int)init_out->major,
+                (unsigned int)init_out->minor);
+
+        /* Store all negotiated capabilities in mount info */
+        mnt->negotiated_major = FUSE_KERNEL_VERSION;
+        mnt->negotiated_minor = negotiated_minor;
+        mnt->daemon_flags     = init_out->flags;
+        mnt->max_readahead    = init_out->max_readahead;
+        mnt->max_write        = init_out->max_write;
+        mnt->time_gran        = init_out->time_gran;
+
+        /* Log feature flags that were negotiated */
+        if (fuse_has_cap(mnt, FUSE_CAP_ASYNC_READ))
+            kprintf("[fuse]   daemon supports ASYNC_READ\n");
+        if (fuse_has_cap(mnt, FUSE_CAP_POSIX_LOCKS))
+            kprintf("[fuse]   daemon supports POSIX_LOCKS\n");
+        if (fuse_has_cap(mnt, FUSE_CAP_FLOCK_LOCKS))
+            kprintf("[fuse]   daemon supports FLOCK_LOCKS\n");
+        if (fuse_has_cap(mnt, FUSE_CAP_READDIRPLUS))
+            kprintf("[fuse]   daemon supports READDIRPLUS\n");
+        if (fuse_has_cap(mnt, FUSE_CAP_WRITEBACK_CACHE))
+            kprintf("[fuse]   daemon supports WRITEBACK_CACHE\n");
+        if (fuse_has_cap(mnt, FUSE_CAP_HANDLE_KILLPRIV))
+            kprintf("[fuse]   daemon supports HANDLE_KILLPRIV\n");
+        if (fuse_has_cap(mnt, FUSE_CAP_AUTO_INVAL_DATA))
+            kprintf("[fuse]   daemon supports AUTO_INVAL_DATA\n");
+        if (fuse_has_cap(mnt, FUSE_CAP_EXPLICIT_INVAL_DATA))
+            kprintf("[fuse]   daemon supports EXPLICIT_INVAL_DATA\n");
+    } else {
+        kprintf("[fuse] WARNING: daemon returned incomplete INIT response "
+                "(size=%d, expected %zu)\n",
+                resp_arg_size, sizeof(struct fuse_init_out));
+        /* Still allow mount with defaults */
+        mnt->negotiated_major = FUSE_KERNEL_VERSION;
+        mnt->negotiated_minor = 0; /* minimal protocol */
+    }
+    kfree(resp_arg);
+
+    /* Set root node and file handle defaults */
     mnt->active = 1;
-    mnt->root_nodeid = 1; /* default root nodeid */
+    mnt->root_nodeid = 1; /* root nodeid per FUSE protocol convention */
     mnt->fh = 0;
 
     /* Mount via VFS */
@@ -425,7 +487,10 @@ int fuse_mount(const char *mountpoint)
         return ret;
     }
 
-    kprintf("[fuse] Mounted FUSE at %s\n", mountpoint);
+    kprintf("[fuse] Mounted FUSE at %s (v%u.%u)\n",
+            mountpoint,
+            (unsigned int)mnt->negotiated_major,
+            (unsigned int)mnt->negotiated_minor);
     return 0;
 }
 

@@ -66,6 +66,39 @@ enum fuse_opcode {
 #define FUSE_KERNEL_VERSION     7
 #define FUSE_KERNEL_MINOR_VERSION 23
 
+/* ── FUSE capability flags (for fuse_init_in.flags / fuse_init_out.flags) ── */
+#define FUSE_CAP_ASYNC_READ         (1 << 0)
+#define FUSE_CAP_POSIX_LOCKS        (1 << 1)
+#define FUSE_CAP_ATOMIC_O_TRUNC     (1 << 3)
+#define FUSE_CAP_EXPORT_SUPPORT     (1 << 4)
+#define FUSE_CAP_BIG_WRITES         (1 << 5)
+#define FUSE_CAP_DONT_MASK          (1 << 6)
+#define FUSE_CAP_SPLICE_WRITE       (1 << 7)
+#define FUSE_CAP_SPLICE_MOVE        (1 << 8)
+#define FUSE_CAP_SPLICE_READ        (1 << 9)
+#define FUSE_CAP_FLOCK_LOCKS        (1 << 10)
+#define FUSE_CAP_IOCTL_DIR          (1 << 11)
+#define FUSE_CAP_AUTO_INVAL_DATA    (1 << 12)
+#define FUSE_CAP_READDIRPLUS        (1 << 13)
+#define FUSE_CAP_READDIRPLUS_AUTO   (1 << 14)
+#define FUSE_CAP_ASYNC_DIO          (1 << 15)
+#define FUSE_CAP_WRITEBACK_CACHE    (1 << 16)
+#define FUSE_CAP_NO_OPEN_SUPPORT    (1 << 17)
+#define FUSE_CAP_PARALLEL_DIROPS    (1 << 18)
+#define FUSE_CAP_HANDLE_KILLPRIV    (1 << 19)
+#define FUSE_CAP_POSIX_ACL          (1 << 20)
+#define FUSE_CAP_CACHE_SYMLINKS     (1 << 23)
+#define FUSE_CAP_NO_OPENDIR_SUPPORT (1 << 24)
+#define FUSE_CAP_EXPLICIT_INVAL_DATA (1 << 25)
+
+/* Kernel-side feature flags we support in INIT request */
+#define FUSE_KERNEL_INIT_FLAGS                                      \
+    (FUSE_CAP_ASYNC_READ | FUSE_CAP_ATOMIC_O_TRUNC |                \
+     FUSE_CAP_BIG_WRITES | FUSE_CAP_DONT_MASK |                    \
+     FUSE_CAP_FLOCK_LOCKS | FUSE_CAP_AUTO_INVAL_DATA |             \
+     FUSE_CAP_HANDLE_KILLPRIV | FUSE_CAP_READDIRPLUS |             \
+     FUSE_CAP_PARALLEL_DIROPS | FUSE_CAP_EXPLICIT_INVAL_DATA)
+
 /* FUSE request header */
 struct fuse_in_header {
     uint32_t len;
@@ -198,6 +231,38 @@ struct fuse_dev {
     void                  *pending_arg;  /* additional request data */
     int pending_arg_size;
 };
+
+/* ── Mount info with negotiated protocol state ──────────────────────── */
+
+struct fuse_mount_info {
+    char        mountpoint[64];
+    int         active;
+    uint64_t    root_nodeid;   /* node ID of root (from INIT response) */
+    uint64_t    fh;            /* file handle for root (from OPEN response) */
+    /* Negotiated protocol version and capabilities */
+    uint32_t    negotiated_major;   /* negotiated FUSE protocol major */
+    uint32_t    negotiated_minor;   /* negotiated FUSE protocol minor */
+    uint32_t    daemon_flags;       /* daemon's capability flags from INIT */
+    uint32_t    max_readahead;      /* daemon's max readahead from INIT */
+    uint32_t    max_write;          /* daemon's max write size from INIT */
+    uint32_t    time_gran;          /* daemon's time granularity from INIT */
+};
+
+/** fuse_has_cap — check if daemon supports a capability flag */
+static inline int fuse_has_cap(const struct fuse_mount_info *mnt,
+                                uint32_t cap)
+{
+    return (mnt->daemon_flags & cap) != 0;
+}
+
+/** fuse_negotiated_version_at_least — check negotiated version >= given */
+static inline int fuse_negotiated_at_least(const struct fuse_mount_info *mnt,
+                                            uint32_t major, uint32_t minor)
+{
+    return mnt->negotiated_major > major ||
+           (mnt->negotiated_major == major &&
+            mnt->negotiated_minor >= minor);
+}
 
 /* ── FUSE dev (fuse_dev.c) API ───────────────────────────────────────── */
 
