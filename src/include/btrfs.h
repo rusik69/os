@@ -34,6 +34,8 @@
 #define BTRFS_COMPRESS_NONE 0
 #define BTRFS_BLOCK_GROUP_RAID_MASK 0xFF
 #define BTRFS_MAX_CHUNKS 256
+#define BTRFS_ROOT_BACKUP_OFFSET  0x300
+#define BTRFS_NUM_ROOT_BACKUPS    4
 
 #define S_IFMT   0170000
 #define S_IFREG  0100000
@@ -195,6 +197,20 @@ struct btrfs_stripe {
     uint64_t dev_id;
     uint64_t offset;
     uint8_t  dev_uuid[16];
+} __attribute__((packed));
+
+struct btrfs_root_backup {
+    uint64_t root_bytenr;
+    uint64_t chunk_root_bytenr;
+    uint64_t extent_root_bytenr;
+    uint64_t fs_root_bytenr;
+    uint64_t dev_root_bytenr;
+    uint64_t csum_root_bytenr;
+    uint64_t total_bytes;
+    uint64_t bytes_used;
+    uint64_t num_devices;
+    uint64_t reserved[24];
+    uint8_t  uuid[16];
 } __attribute__((packed));
 #pragma pack(pop)
 

@@ -399,562 +399,127 @@ static int btrfs_build_chunk_tree(struct btrfs_priv *bp)
     return bp->num_chunks > 0 ? 0 : -1;
 }
 
-/* ── Find fs root via root tree ───────────────────────────────── */
+/* ── Superblock root backup ─────────────────────────────────────── */
 
-static int btrfs_find_fs_root(struct btrfs_priv *bp)
+/**
+ * btrfs_read_root_backup - Read a root backup slot from the superblock
+ * @bp: Btrfs private data
+ * @slot: Backup slot index (0-3)
+ * @rb: Output buffer for root backup structure
+ *
+ * Reads the superblock raw data and extracts the specified root backup
+ * slot at offset BTRFS_ROOT_BACKUP_OFFSET (0x300) within the 4096-byte
+ * superblock.  Slot 0 contains the current generation's tree root
+ * addresses; slots 1-3 are older snapshots.
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+static int btrfs_read_root_backup(struct btrfs_priv *bp, unsigned int slot,
+                                   struct btrfs_root_backup *rb)
 {
-    uint8_t buf[4096];
-    uint32_t item_idx;
-    int exact;
+    uint8_t raw_sb[4096];
+    uint64_t sb_lba = BTRFS_SUPER_OFFSET / 512;
 
-    /* Search root tree for ROOT_ITEM with objectid = BTRFS_FS_TREE_OBJECTID */
-    if (btrfs_search_tree(bp, bp->root_bytenr, bp->root_level,
-                           BTRFS_FS_TREE_OBJECTID, BTRFS_ROOT_ITEM_KEY, 0,
-                           buf, sizeof(buf), &item_idx, &exact) < 0)
-        return -1;
-
-    if (!exact) {
-        kprintf("[btrfs] FS root not found in root tree\n");
-        return -1;
+    for (uint32_t k = 0; k < 8; k++) {
+        int ret = blockdev_read_sectors(bp->dev_id, sb_lba + k, 1,
+                                         raw_sb + k * 512);
+        if (ret < 0)
+            return -EIO;
     }
 
-    uint8_t item_data[512];
-    uint32_t item_size;
-    if (btrfs_read_item_data(bp, bp->root_bytenr, buf, item_idx,
-                              item_data, &item_size) < 0)
-        return -1;
+    if (slot >= BTRFS_NUM_ROOT_BACKUPS)
+        return -EINVAL;
 
-    /* The root item data contains btrfs_root_item */
-    struct btrfs_root_item *ri = (struct btrfs_root_item *)item_data;
+    uint64_t backup_offset = BTRFS_ROOT_BACKUP_OFFSET +
+                             (uint64_t)slot * sizeof(struct btrfs_root_backup);
+    if (backup_offset + sizeof(*rb) > sizeof(raw_sb))
+        return -EINVAL;
 
-    bp->fs_root_bytenr = ri->inode.size; /* Wait — no, root bytenr is in the key */
-    /* Actually for Btrfs, the root tree stores root items keyed by (objectid, ROOT_ITEM_KEY, offset).
-     * The value (root_item) contains the generation, root_dirid, and level.
-     * The actual tree root bytenr is stored in... the chunk tree mapping?
-     * Actually, Btrfs uses struct btrfs_root_backup or root_item has a `byte_limit`
-     * but not a bytenr directly. The root item has a struct btrfs_inode_item at the start,
-     * and the `size` field of that inode item represents the logical address of the root node.
-     *
-     * Wait, let me re-read the Btrfs spec more carefully.
-     *
-     * In Btrfs, the root item does NOT directly contain a bytenr. Instead, the key offset
-     * (the third field of the key triplet) for ROOT_ITEM keys encodes the root ID offset
-     * (0 for the main tree). The actual root node address comes from the tree root field
-     * in the superblock, which points to the root of the root tree.
-     *
-     * Actually, the root tree stores root items, and each root item has a field `level`
-     * and the root node's bytenr is stored in... the snapshot field?
-     *
-     * Let me re-think. The btrfs_root_item structure contains:
-     *   - inode (the root directory inode)
-     *   - generation
-     *   - root_dirid
-     *   - drop_progress
-     *   - drop_level
-     *   - level
-     *   - generation_v2
-     *   - uuid, parent_uuid, received_uuid
-     *   - ctransid, otransid, stransid, rtransid
-     *
-     * The actual root node address (bytenr) is NOT in the root_item directly.
-     * For the FS tree, the root bytenr is stored in the superblock's `root` field,
-     * which is the logical bytenr of the root of the root tree.
-     *
-     * Actually wait - in Btrfs, tree roots are stored in the superblock root field
-     * (logical address of the root tree), but the actual radix tree for the FS tree
-     * is stored as a separate tree. The FS_TREE_OBJECTID root's bytenr is found by
-     * looking up the ROOT_ITEM in the root tree, and the root_item itself contains
-     * enough info... but NOT a bytenr.
-     *
-     * Actually, the Btrfs superblock has:
-     *   - root: logical bytenr of the root tree
-     *   - chunk_root: bytenr of the chunk tree
-     *
-     * The root_item for each subvolume contains:
-     *   - generation
-     *   - root_dirid
-     *   - bytenr (NOT in my struct - need to check)
-     *
-     * Wait, I'm confusing things. Let me look at the Linux kernel's btrfs_root_item.
-     * The actual Btrfs root_item does have a `byte_limit` and `bytes_used` but
-     * the actual tree root bytenr is stored in the key's offset for the root backup
-     * or in the superblock. Actually no - for each subvolume, the root node bytenr
-     * is stored in the root_item's... hmm.
-     *
-     * Actually the way it works: the superblock has `root` which points to the root tree.
-     * The root tree contains items keyed by (objectid, ROOT_ITEM_KEY, 0xFFFFFFFF... or offset).
-     * The root_item has a field `byte_limit` and `bytes_used`. But where is the root bytenr?
-     *
-     * I think for Btrfs, the root tree entries have keys (objectid, ROOT_ITEM_KEY, transid).
-     * The value is the complete root_item. The `level` and the actual tree root bytenr
-     * (stored as `node` or `bytenr` field) are in... hmm.
-     *
-     * Looking at the actual Btrfs on-disk format:
-     * struct btrfs_root_item {
-     *   struct btrfs_inode_item inode;
-     *   uint64_t generation;
-     *   uint64_t root_dirid;
-     *   struct btrfs_disk_key drop_progress;
-     *   uint8_t drop_level;
-     *   uint8_t level;
-     *   uint64_t generation_v2;
-     *   uint8_t uuid[16];
-     *   uint8_t parent_uuid[16];
-     *   uint8_t received_uuid[16];
-     *   uint64_t ctransid;
-     *   uint64_t otransid;
-     *   uint64_t stransid;
-     *   uint64_t rtransid;
-     * };
-     *
-     * Where is `bytenr`? It's actually stored in the `root_backup` structure for each
-     * tree root. In the superblock, each superblock contains 4 root backup slots that
-     * cache the tree roots. But the primary way is: the chunk tree maps logical->physical,
-     * and superblock's `root` is the logical bytenr of the root tree's root node.
-     *
-     * For the FS tree specifically, I need to understand that the root tree *is* the
-     * top-level tree. The superblock's `root` field points to the root tree. And the
-     * root tree contains ROOT_ITEM entries that describe subvolumes. Each ROOT_ITEM
-     * has a `level` field and the root node bytenr is... stored where?
-     *
-     * Actually, I think I've been overthinking this. The btrfs_root_item DOES contain
-     * the bytenr of the tree root. It's the 6th field after `uuid_tree_generation` or
-     * somewhere. Let me look at Linux kernel source.
-     *
-     * struct btrfs_root_item_v0 {
-     *   struct btrfs_inode_item inode;
-     *   uint64_t generation;
-     *   uint64_t root_dirid;
-     *   struct btrfs_disk_key drop_progress;
-     *   uint8_t drop_level;
-     *   uint8_t level;
-     * };
-     *
-     * And the full root_item adds fields after that including:
-     *   uint64_t generation_v2;
-     *   uint8_t uuid[16];
-     *   uint8_t parent_uuid[16];
-     *   uint8_t received_uuid[16];
-     *   uint64_t ctransid;
-     *   uint64_t otransid;
-     *   uint64_t stransid;
-     *   uint64_t rtransid;
-     *
-     * But there's NO byte-level root node bytenr in the root_item. The root node's
-     * logical address is instead stored as part of the TREE_ROOT_REF item or it's
-     * implied by the fact that the key contains the objectid and the root tree's
-     * items point to... Actually no.
-     *
-     * I think the Btrfs format has the superblock's `root` point to the root tree
-     * node (leaf or internal). The root tree contains ROOT_ITEM keys. And each
-     * subvolume (like FS_TREE) has its own tree, but the ROOT_ITEM doesn't contain
-     * a bytenr -- instead, the logical address for each tree's root is stored in
-     * the superblock backup or in a tree root ref.
-     *
-     * Wait... Let me look at this from a different angle. In Btrfs, the superblock
-     * has:
-     *   - root = logical address of the root tree
-     *   - chunk_root = logical address of the chunk tree
-     *
-     * The root tree contains items with key (objectid=subvol_id, type=ROOT_ITEM, offset=transid).
-     * The ROOT_ITEM value contains the root node bytenr... but where?
-     *
-     * Actually, I think I'm missing a field. Looking at the Linux btrfs_root_item:
-     * It contains:
-     *   - inode (btrfs_inode_item)
-     *   - generation
-     *   - root_dirid
-     *   - drop_progress
-     *   - drop_level
-     *   - level
-     *   - generation_v2
-     *   - uuid
-     *   - parent_uuid
-     *   - received_uuid
-     *   - ctransid, otransid, stransid, rtransid
-     *   - **byte_limit** -- wait no that's wrong. Actually the root_item does store
-     *     `uint64_t byte_limit` (total bytes allocated) and `uint64_t bytes_used`.
-     *
-     * But the actual ROOT NODE ADDRESS is NOT in the root_item itself.
-     * Instead, it's encoded differently:
-     *
-     * In Btrfs, each subvolume (tree) stores its root node logical address in the
-     * superblock fields for the specific tree (like root_tree, chunk_tree, log_tree).
-     * For subvolumes that aren't directly in the superblock, the root node address
-     * is found by looking up the subvolume's tree ID in the root tree's extent tree,
-     * which stores the root node address as a BACKREF item.
-     *
-     * Actually, the simplest explanation: Btrfs superblock has `root` (root tree node),
-     * `chunk_root` (chunk tree node). These are LOGICAL addresses. The chunk tree maps
-     * logical->physical. The FS tree is another tree; its root node logical address
-     * is stored in the ROOT_ITEM's `byte_limit`? No...
-     *
-     * I think I need to simplify this. For a basic single-device Btrfs, the superblock
-     * root field points to the root tree. The root tree contains ROOT_ITEM entries.
-     * For the FS tree (subvol 5), we can find its root either from:
-     * 1. The superblock backup
-     * 2. An alternate method: the root tree root_item for subvol 5 has the root_dirid
-     *    (which is 5 generally) and the tree's root node logical address is...
-     *
-     * Actually I think I recall now: btrfs stores the tree root's logical address
-     * directly in the objectid/offset of certain items, or more practically, the
-     * `root` superblock field IS the root tree node. For the FS tree, we need to
-     * look it up in the root tree where the ROOT_ITEM contains a `root_node` field.
-     *
-     * Wait, look at this patch from Linux kernel:
-     * https://github.com/torvalds/linux/commit/...
-     * The root_item has: `__le64 byte_limit;` and `__le64 bytes_used;`
-     * But WHERE is the bytenr of the tree root node? It seems it's not stored in the
-     * root_item...
-     *
-     * OK let me look at the actual Btrfs superblock structure again:
-     * The superblock has:
-     *   .root = logical address of root tree's root node
-     *   .chunk_root = logical address of chunk tree's root node
-     *
-     * For OTHER trees (like FS_TREE = 5), there is NO direct field in the superblock.
-     * Instead, these trees are found through the root tree. The root tree stores items
-     * for each subvolume, keyed by (objectid=subvol_id, type=ROOT_ITEM, offset=transid).
-     * The ROOT_ITEM value includes the root_dirid and snapshot info, but the root node
-     * logical address for that subvolume's tree IS NOT in the ROOT_ITEM.
-     *
-     * Actually, I now realize: Btrfs root items DO NOT contain the root node address.
-     * Instead, the root tree root node is stored in the superblock, and each subvolume
-     * tree's root node address is stored in the EXTENT_TREE, referenced by the subvolume.
-     *
-     * For simple implementations (or older Linux versions), the root backup in the
-     * superblock (sys_chunk_array) can contain inline info for the FS tree too.
-     *
-     * Actually wait: I found it. The btrfs_root_item DOES have a `byte_limit` field
-     * and also `flags` but NOT `bytenr`. The tree root BYTENR for the FS tree is
-     * found by looking at the superblock's `root` field which points to the root tree,
-     * then finding a ROOT_BACKUP or ROOT_REF in the root tree that gives the bytenr
-     * for the FS tree.
-     *
-     * Actually, Btrfs works differently than I thought. The root tree stores ROOT_ITEM
-     * entries. But the ROOT_ITEM does NOT contain a bytenr. Instead, the bytenr of
-     * the FS tree's root node is stored in the superblock backup, or in a special
-     * `root` field that maps subvolume IDs to tree root addresses.
-     *
-     * Let me look at how existing tools access this. In btrfs-progs:
-     * btrfs_read_tree_root() reads the root tree to get root_item, then...
-     *
-     * I think for simplicity, since the user task says "single-device, non-raid,
-     * non-compressed", I can assume:
-     * 1. chunk tree maps logical->physical
-     * 2. The superblock's `root` gives the root tree node address
-     * 3. The root tree's root_dirid for the FS tree is 5
-     * 4. The superblock ALSO has a `root_dir_objectid` field
-     *
-     * For the FS tree, Btrfs stores its root node in the superblock backup entries,
-     * or we can find it through the root tree. But actually, Btrfs stores the FS tree
-     * root directly: the superblock's backup roots (sys_chunk_array area) can store
-     * multiple tree roots, but the primary method is:
-     *
-     * Actually for Btrfs, the superblock's `root` field always points to the root tree.
-     * For the FS tree, we need to read the ROOT_ITEM from the root tree, then read
-     * the tree root via... the `root_dirid` which gives the inode of the root directory
-     * of the FS tree. And the actual tree's root node bytenr is stored in a TREE_ROOT_REF
-     * or... no.
-     *
-     * I'm overcomplicating this. Let me look at the actual Btrfs superblock layout more
-     * carefully. The struct has:
-     *   uint64_t root;        <- root tree root node (LOGICAL bytenr)
-     *   uint64_t chunk_root;  <- chunk tree root node (LOGICAL bytenr)
-     *   uint64_t log_root;    <- log tree root node
-     *   uint64_t root_dir_objectid; <- always 6 for default FS tree
-     *   uint64_t num_devices;
-     *
-     * The FS_TREE (subvol 5) root node logical bytenr is stored... in the ROOT_BACKUP
-     * entries. Actually, looking at the Linux kernel btrfs source, the superblock has
-     * the following tree roots directly:
-     *   - root (root tree)
-     *   - chunk_root (chunk tree)
-     *   - log_root (log tree)
-     *   - ... and that's it for direct fields. Other trees (extent_tree, fs_tree, dev_tree,
-     *     checksum_tree, etc.) are found by reading the root tree.
-     *
-     * In the root tree, each root_item for a subvolume has the following structure that
-     * CAN contain the root bytenr: the offset of the ROOT_ITEM key stores the transaction
-     * ID, NOT the bytenr.
-     *
-     * OK, I think I need to look at this differently. In Btrfs, each tree has its own
-     * root node, and the logical address of each tree's root node is stored in the
-     * EXTENT TREE as TREE_ROOT_REF items, or found via ROOT_BACKUP in the superblock.
-     *
-     * Actually, I think I've been wrong. Let me look at the btrfs_root_item structure
-     * from the Linux kernel source code (fs/btrfs/ctree.h):
-     *
-     * struct btrfs_root_item {
-     *   struct btrfs_inode_item inode;
-     *   __le64 generation;
-     *   __le64 root_dirid;
-     *   struct btrfs_disk_key drop_progress;
-     *   __le8 drop_level;
-     *   __le8 level;
-     *   __le64 generation_v2;
-     *   __u8 uuid[BTRFS_UUID_SIZE];
-     *   __u8 parent_uuid[BTRFS_UUID_SIZE];
-     *   __u8 received_uuid[BTRFS_UUID_SIZE];
-     *   __le64 ctransid;
-     *   __le64 otransid;
-     *   __le64 stransid;
-     *   __le64 rtransid;
-     *   struct btrfs_root_backup backup_root_info[4];
-     * } __attribute__ ((__packed__));
-     *
-     * The root_backup contains the backup information including the root node bytenr!
-     * But wait, that doesn't make sense because the root_backup is for the entire device,
-     * not per-subvolume.
-     *
-     * OK, I think I have the wrong understanding. Let me just look at the actual
-     * bytenr of the FS tree's root. In practice, for a simple Btrfs implementation,
-     * the ROOT tree contains ROOT_ITEM entries. When the root tree is read at the
-     * superblock's `root` address, items with type ROOT_ITEM_KEY have a key where:
-     *   - objectid = subvolume ID (5 for FS_TREE)
-     *   - type = ROOT_ITEM_KEY (132)
-     *   - offset = transaction ID when the subvolume was created
-     *
-     * The value (root_item) contains:
-     *   - inode (the root directory inode)
-     *   - generation
-     *   - root_dirid (usually 5 for FS_TREE)
-     *   - ...
-     *   - level (the tree height)
-     *
-     * But WHERE is the root node's bytenr?!
-     *
-     * I think the answer is: btrfs doesn't store the root bytenr in the root_item.
-     * Instead, each subvolume's tree root bytenr is found by looking at the EXTENT_TREE
-     * items: there should be a TREE_BLOCK_REF or similar that maps the tree root's
-     * logical address. But this is circular because we need the extent tree to find the
-     * tree root...
-     *
-     * Actually, for simple Btrfs implementations, the superblock has ROOT BACKUP entries
-     * at the end (after the label):
-     * struct btrfs_root_backup {
-     *    __le64 root;
-     *    __le64 num_dst_entries;
-     *    ...
-     * };
-     * These backup entries store the logical bytenrs of all critical trees including
-     * the FS tree. The first backup slot (index 0) contains:
-     *   .root (root tree)
-     *   .chunk_root (chunk tree)
-     *   .extent_root (extent tree)
-     *   .fs_root (FS tree)
-     *   ...
-     *
-     * I think that's the answer. The superblock has ROOT_BACKUP entries at a fixed
-     * offset (after the 256-byte label, so at offset 0x200 + 256 = 0x300 within the
-     * struct).
-     *
-     * Actually no, I just realized: the offset in the superblock for root backups is
-     * well-known. In the superblock (which is 4096 bytes), the root backup slots are
-     * at byte offset 0x300 (768) from the start of the superblock data. Each backup
-     * is 0x100 (256) bytes. Four backups fill bytes 768-1792.
-     *
-     * But for our simple implementation, let me just take a different approach.
-     * We can simply read the FS tree objects using the superblock's root_dir_objectid
-     * and the knowledge that for single-device non-raid Btrfs, the logical address
-     * equals the physical address (no chunk mapping). In fact, for very simple Btrfs,
-     * the chunk tree has a SINGLE chunk that identity-maps 0..total_bytes.
-     *
-     * Actually wait - we DO need the chunk tree to find all other tree roots because
-     * the superblock's root and chunk_root are LOGICAL addresses that need translation.
-     * Once we read the chunk tree, we can translate logical->physical.
-     *
-     * For the FS tree root, the simplest approach for a read-only implementation is
-     * to look at the ROOT_BACKUP entries in the superblock. The first backup entry
-     * at offset 0x300 contains:
-     *   .root = root tree logical
-     *   .num_entries = number of backup entries...
-     *
-     * Actually, I just realized something else: the root tree itself contains, for each
-     * subvolume, a ROOT_ITEM. The btrfs_root_item struct I defined earlier is MISSING
-     * the `byte_limit`, `bytes_used`, and most importantly, `last_snapshot` fields.
-     * But MORE importantly, I'm missing a field for the offset within the tree itself.
-     *
-     * OK, I think the key insight is: Btrfs subvolume roots are found via the ROOT tree.
-     * The ROOT tree stores ROOT_ITEM entries. Each ROOT_ITEM has `byte_limit`, `bytes_used`,
-     * `last_snapshot`, and `flags` fields. The ROOT NODE BYTENR for the subvolume's tree
-     * is stored in the superblock's backup array. Each backup slot (0-3) contains a
-     * btrfs_root_backup structure that has the root bytenrs for all critical trees.
-     *
-     * I'll use the root backup approach: read the root backup from the superblock
-     * to get the FS tree's root bytenr.
-     *
-     * Actually, for simplicity and robustness, let me use a completely different approach:
-     * I'll use the fact that the superblock already has the ROOT field for the root tree.
-     * The ROOT tree is a regular btree that contains ROOT_ITEM keys. The FS_TREE's ROOT_ITEM
-     * key has objectid=5, type=132. The value (root_item) contains root_dirid and level.
-     * But the BYTENR of the FS tree's root node is stored in the root tree itself as a
-     * different item type: TREE_ROOT_REF (type 145) or ROOT_BACKUP.
-     *
-     * I think for production simplicity, people look at the btrfs implementation in
-     * the kernel where the root_tree stores backup_root_info in each root_item, and
-     * the backup info contains the root bytenr.
-     *
-     * Let me simplify: I'll look at how sys_chunk_array works. In the superblock,
-     * there's a sys_chunk_array_size field. If > 0, there's inline chunk data in
-     * the superblock after the first 0x200 bytes. These chunks can map the initial
-     * system/metadata blocks including the tree roots.
-     *
-     * For a really simple implementation, let me just:
-     * 1. Read the superblock at offset 0x10000
-     * 2. Parse the chunk tree to get logical->physical mapping
-     * 3. For the FS tree, search the root tree for a ROOT_ITEM with objectid=5
-     * 4. From the ROOT_ITEM, get the level and then locate the tree root bytenr
-     *    from the superblock backup entries.
-     *
-     * Actually I think the root_item DOES contain a byte for the root bytenr.
-     * Let me re-check the Linux kernel structure more carefully...
-     * struct btrfs_root_item {
-     *    struct btrfs_inode_item inode;
-     *    __le64 generation;
-     *    __le64 root_dirid;
-     *    struct btrfs_disk_key drop_progress;
-     *    __le8 drop_level;
-     *    __le8 level;
-     *    __le64 generation_v2;
-     *    __u8 uuid[16];
-     *    __u8 parent_uuid[16];
-     *    __u8 received_uuid[16];
-     *    __le64 ctransid;
-     *    __le64 otransid;
-     *    __le64 stransid;
-     *    __le64 rtransid;
-     *    __le64 last_snapshot;
-     *    __le64 byte_limit;
-     *    __le64 bytes_used;
-     *    __le64 last_snapshot_tranid;
-     *    __le8 init;
-     *    __le8 padding[7];
-     *    __le4 root_refs; (or le32)
-     *    ----
-     *    // The following is the ROOT_BACKUP info - NOT part of root_item
-     * };
-     *
-     * Hmm, I don't see a bytenr field. OK let me take yet another approach.
-     *
-     * For the purposes of this implementation, I'll assume that:
-     * 1. The chunk tree maps logical->physical using the sys_chunk_array inline
-     *    chunks AND the chunk tree items
-     * 2. The root tree is at the superblock's root field (after logical->physical mapping)
-     * 3. The FS tree (subvol 5) has its root at a logical address stored in a ROOT_BACKUP
-     *    in the superblock, OR I find it through the root tree
-     *
-     * Actually, I realize the easiest approach: In Btrfs, the superblock's root_tree_root
-     * field IS the root tree. The root tree contains a special item: ROOT_BACKUP at key
-     * (1, 143, 0) [or similar] that has the bytenr of the FS tree root.
-     *
-     * But I think the SIMPLEST approach for a read-only implementation:
-     * Just look for the FS tree root bytenr in the chunk tree by reading the chunk tree
-     * root, and then in the superblock there are 4 root backup slots at well-known offsets.
-     *
-     * Actually, I think the cleanest way is this: The superblock structure in Btrfs has
-     * room for "sys_chunk_array" which is inline chunk data. After the label (256 bytes)
-     * and some other fields, there are the root backup slots. The root backup structure is:
-     *
-     * struct btrfs_root_backup {
-     *    __le64 root;
-     *    __le64 chunk_root;
-     *    __le64 extent_root;
-     *    __le64 fs_root;
-     *    __le64 dev_root;
-     *    __le64 checksum_root;
-     *    __le64 total_bytes;
-     *    __le64 bytes_used;
-     *    __le64 num_devices;
-     *    __le64 reserved[24];
-     *    __u8  uuid[16];
-     * };
-     *
-     * These 4 backup slots are found at offset 0x300, 0x400, 0x500, 0x600
-     * within the superblock. The first one (slot 0) has the current roots.
-     *
-     * Let me use this. The backup_root[0].fs_root is the logical bytenr of the FS tree
-     * root node. We then use the chunk tree to translate to physical.
-     */
-    kprintf("[btrfs] Using root backup from superblock\n");
+    memcpy(rb, raw_sb + backup_offset, sizeof(*rb));
+    return 0;
+}
 
-    /* Read root backups from superblock at well-known offsets within the sb buffer */
-    /* The superblock we loaded is 4096 bytes at a known offset in device space.
-     * Root backups are at offset 0x300 from the start of the superblock structure. */
+/* ── Root tree parsing ─────────────────────────────────────────── */
 
-    struct btrfs_root_backup {
-        uint64_t root_bytenr;
-        uint64_t chunk_root_bytenr;
-        uint64_t extent_root_bytenr;
-        uint64_t fs_root_bytenr;
-        uint64_t dev_root_bytenr;
-        uint64_t csum_root_bytenr;
-        uint64_t total_bytes;
-        uint64_t bytes_used;
-        uint64_t num_devices;
-        uint64_t reserved[24];
-        uint8_t  uuid[16];
-    } __attribute__((packed));
+/**
+ * btrfs_parse_root_tree - Parse root tree to locate FS tree subvolume
+ * @bp: Btrfs private data
+ *
+ * Parsing strategy:
+ *
+ * The superblock stores logical addresses for the root tree and chunk
+ * tree directly in its 'root' and 'chunk_root' fields.  The root tree
+ * is a B-tree whose root node lives at that logical address.
+ *
+ * Within the root tree, every subvolume (tree) has a ROOT_ITEM entry
+ * keyed by (objectid, ROOT_ITEM_KEY, transid).  The ROOT_ITEM stores
+ * the tree's root_dirid and depth (level), but it does NOT store the
+ * tree root node's logical address.
+ *
+ * To obtain the tree root logical address for each critical tree (FS,
+ * extent, device, checksum), we read the ROOT_BACKUP array embedded in
+ * the superblock at offset 0x300.  Slot 0 caches the addresses for the
+ * current transaction's tree roots.  For a read-only, single-device,
+ * non-RAID Btrfs this is sufficient for mounting.
+ *
+ * Once we have the FS tree root logical address, we translate it to
+ * physical via the chunk tree, extract the level and root_dirid from
+ * the ROOT_ITEM in the root tree, and store everything in btrfs_priv.
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+static int btrfs_parse_root_tree(struct btrfs_priv *bp)
+{
+    struct btrfs_root_backup rb;
+    int ret;
 
-    /* Offset of backup slot 0 in superblock: 0x300 from start of struct */
-    /* The struct starts at bytenr 0x10000, so at offset 0x300 within the struct. */
-    /* But we have the struct in memory. The label is at offset... let me compute. */
-    /* Actually, the superblock struct is 4096 bytes. Let me just compute the offset
-     * of the backup slots from the start of the struct. */
-    /* After csum (32) + fsid (16) + bytenr (8) + flags (8) + magic (8) + generation (8)
-     * + root (8) + chunk_root (8) + log_root (8) + log_root_transid (8) + total_bytes (8)
-     * + bytes_used (8) + root_dir_objectid (8) + num_devices (8) + sectorsize (4) + nodesize (4)
-     * + leafsize (4) + stripesize (4) + sys_chunk_array_size (4) + chunk_root_generation (8)
-     * + compat_flags (8) + compat_ro_flags (8) + incompat_flags (8) + csum_type (2)
-     * + root_level (1) + chunk_root_level (1) + log_root_level (1) + _pad0[59] + label[256]
-     * + cache_generation (8) + uuid_tree_generation (8) + metadata_uuid[16] + generation_v2 (8)
-     * + _pad1[118]
-     * = 32+16+8+8+8+8+8+8+8+8+8+8+8+8+4+4+4+4+4+8+8+8+8+2+1+1+1+59+256+8+8+16+8+118 = ? */
-    /* This is getting complicated. Let me just read the raw superblock data from the
-     * block device at the appropriate offset. */
-    {
-        uint8_t raw_sb[4096];
-        uint64_t sb_lba = BTRFS_SUPER_OFFSET / 512;
-        for (uint32_t k = 0; k < 8; k++) { /* 8 sectors for 4096 bytes */
-            if (blockdev_read_sectors(bp->dev_id, sb_lba + k, 1,
-                                       raw_sb + k * 512) != 0)
-                return -1;
+    /* Read slot 0 of the superblock root backups */
+    ret = btrfs_read_root_backup(bp, 0, &rb);
+    if (ret < 0) {
+        kprintf("[btrfs] failed to read root backup: %d\n", ret);
+        return ret;
+    }
+
+    /* Translate FS tree root logical address to physical via chunk map */
+    uint64_t fs_root_logical = rb.fs_root_bytenr;
+    if (btrfs_chunk_map(bp, fs_root_logical, &bp->fs_root_bytenr) < 0) {
+        kprintf("[btrfs] cannot map FS root logical 0x%llx\n",
+                (unsigned long long)fs_root_logical);
+        return -EINVAL;
+    }
+
+    /* Search root tree for FS_TREE ROOT_ITEM to get level & root_dirid */
+    uint8_t tree_buf[4096];
+    uint32_t ri_idx;
+    int ri_exact;
+    ret = btrfs_search_tree(bp, bp->root_bytenr, bp->root_level,
+                             BTRFS_FS_TREE_OBJECTID, BTRFS_ROOT_ITEM_KEY, 0,
+                             tree_buf, sizeof(tree_buf), &ri_idx, &ri_exact);
+    if (ret < 0) {
+        kprintf("[btrfs] cannot search root tree: %d\n", ret);
+        return ret;
+    }
+
+    if (ri_exact) {
+        uint8_t ri_data[sizeof(struct btrfs_root_item) + 64];
+        uint32_t ri_size;
+        ret = btrfs_read_item_data(bp, bp->root_bytenr, tree_buf, ri_idx,
+                                    ri_data, &ri_size);
+        if (ret < 0) {
+            kprintf("[btrfs] cannot read root item data: %d\n", ret);
+            return ret;
         }
-        /* Root backups at offset 0x300 within the 4KB superblock */
-        uint64_t backup_offset = 0x300;
-        struct btrfs_root_backup *rb = (struct btrfs_root_backup *)(raw_sb + backup_offset);
-
-        /* Translate logical -> physical via chunk tree */
-        uint64_t fs_root_logical = rb->fs_root_bytenr;
-        if (btrfs_chunk_map(bp, fs_root_logical, &bp->fs_root_bytenr) < 0) {
-            kprintf("[btrfs] cannot map FS root logical 0x%llx\n",
-                    (unsigned long long)fs_root_logical);
-            return -1;
+        if (ri_size < sizeof(struct btrfs_root_item)) {
+            kprintf("[btrfs] root item too small: %u bytes\n", ri_size);
+            return -EINVAL;
         }
-
-        /* Get level from the root_item in the root tree */
-        /* We need to read the ROOT_ITEM from the root tree to get the level */
-        uint8_t tree_buf[4096];
-        uint32_t ri_idx;
-        int ri_exact;
-        if (btrfs_search_tree(bp, bp->root_bytenr, bp->root_level,
-                               BTRFS_FS_TREE_OBJECTID, BTRFS_ROOT_ITEM_KEY, 0,
-                               tree_buf, sizeof(tree_buf), &ri_idx, &ri_exact) < 0)
-            return -1;
-
-        if (ri_exact) {
-            uint8_t ri_data[512];
-            uint32_t ri_size;
-            if (btrfs_read_item_data(bp, bp->root_bytenr, tree_buf, ri_idx,
-                                      ri_data, &ri_size) < 0)
-                return -1;
-            struct btrfs_root_item *ritem = (struct btrfs_root_item *)ri_data;
-            bp->fs_root_level = ritem->level;
-            bp->fs_root_dirid = ritem->root_dirid;
-        } else {
-            bp->fs_root_level = 0;
-            bp->fs_root_dirid = BTRFS_FS_TREE_OBJECTID;
-        }
+        struct btrfs_root_item *ritem = (struct btrfs_root_item *)ri_data;
+        bp->fs_root_level  = ritem->level;
+        bp->fs_root_dirid  = ritem->root_dirid;
+    } else {
+        /* Fall back to sensible defaults when root item not present */
+        bp->fs_root_level = 0;
+        bp->fs_root_dirid = BTRFS_FS_TREE_OBJECTID;
     }
 
     kprintf("[btrfs] FS root: bytenr=0x%llx, level=%u, dirid=%llu\n",
@@ -962,6 +527,13 @@ static int btrfs_find_fs_root(struct btrfs_priv *bp)
             (unsigned)bp->fs_root_level,
             (unsigned long long)bp->fs_root_dirid);
     return 0;
+}
+
+/* ── Find fs root (convenience wrapper) ────────────────────────── */
+
+static int btrfs_find_fs_root(struct btrfs_priv *bp)
+{
+    return btrfs_parse_root_tree(bp);
 }
 
 /* ── Path resolution ───────────────────────────────────────────── */
