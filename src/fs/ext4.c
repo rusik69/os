@@ -258,15 +258,19 @@ static int64_t ext4_get_block_num(struct ext4_priv *ep,
  *
  * Returns number of bytes copied on success, or -1 if not inline.
  */
-static int ext4_read_inline_data(struct ext4_inode *inode,
+static int ext4_read_inline_data(struct ext4_priv *ep,
+                                  struct ext4_inode *inode,
                                   uint8_t *buf, uint32_t max_size)
 {
     if (!(inode->i_flags & EXT4_INLINE_DATA_FL))
         return -1;
 
     /* i_blocks counts 512-byte sectors.  For a pure inline file this
-     * must be 0 — the data lives entirely inside the inode. */
-    if (inode->i_blocks != 0)
+     * must be 0 — the data lives entirely inside the inode.
+     * With HUGE_FILE, use the full 48-bit block count. */
+    uint64_t inode_blocks = ext4_inode_get_blocks(inode,
+        !!(ep->ro_compat & EXT4_FEATURE_RO_COMPAT_HUGE_FILE));
+    if (inode_blocks != 0)
         return -1;
 
     uint32_t size = inode->i_size;
@@ -290,10 +294,13 @@ static uint32_t ext4_find_entry_inline(struct ext4_priv *ep,
                                         struct ext4_inode *dir_inode,
                                         const char *name)
 {
-    (void)ep;
     if (!(dir_inode->i_flags & EXT4_INLINE_DATA_FL))
         return 0;
-    if (dir_inode->i_blocks != 0)
+    /* Use full block count (HUGE_FILE aware) — inline files must have
+     * zero disk blocks allocated. */
+    uint64_t blocks = ext4_inode_get_blocks(dir_inode,
+        !!(ep->ro_compat & EXT4_FEATURE_RO_COMPAT_HUGE_FILE));
+    if (blocks != 0)
         return 0;
 
     uint32_t file_size = dir_inode->i_size;
@@ -382,7 +389,7 @@ static int ext4_read_file(struct ext4_priv *ep, struct ext4_inode *inode,
     /* Try inline data first */
     if (inode->i_flags & EXT4_INLINE_DATA_FL) {
         if (offset >= inode->i_size) return 0;
-        return ext4_read_inline_data(inode, buf, size);
+        return ext4_read_inline_data(ep, inode, buf, size);
     }
 
     uint32_t file_size = inode->i_size;

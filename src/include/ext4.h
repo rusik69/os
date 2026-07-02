@@ -332,6 +332,33 @@ int ext4_corrupt(struct ext4_priv *ep, const char *reason);
 /* Block I/O — read one block from the backing device */
 int ext4_read_block(struct ext4_priv *ep, uint32_t block_num, uint8_t *buf);
 
+/*
+ * ext4_inode_get_blocks — return the full 512-byte block count for an inode.
+ *
+ * Without HUGE_FILE, i_blocks is a plain 32-bit counter (max ~2TB of 512-byte
+ * sectors).  With HUGE_FILE, the upper 16 bits are stored in i_osd2[0..1]
+ * (Linux's l_i_blocks_high), forming a 48-bit counter that supports files
+ * far beyond 2TB.
+ *
+ * @inode:     on-disk inode
+ * @huge_file: non-zero if EXT4_FEATURE_RO_COMPAT_HUGE_FILE is set
+ *
+ * Returns the full block count in 512-byte units.
+ */
+static inline uint64_t
+ext4_inode_get_blocks(const struct ext4_inode *inode, int huge_file)
+{
+    uint64_t blocks = inode->i_blocks;
+
+    if (huge_file) {
+        uint16_t blocks_hi;
+        memcpy(&blocks_hi, &inode->i_osd2[0], sizeof(blocks_hi));
+        blocks |= ((uint64_t)blocks_hi << 32);
+    }
+
+    return blocks;
+}
+
 /* Public API */
 int ext4_mount(const char *mountpoint, uint8_t dev_id);
 int ext4_init(void);
