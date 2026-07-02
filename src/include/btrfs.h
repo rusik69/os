@@ -33,6 +33,7 @@
 
 #define BTRFS_COMPRESS_NONE 0
 #define BTRFS_BLOCK_GROUP_RAID_MASK 0xFF
+#define BTRFS_MAX_CHUNKS 256
 
 #define S_IFMT   0170000
 #define S_IFREG  0100000
@@ -215,7 +216,7 @@ struct btrfs_priv {
     uint8_t  fs_root_level;
     uint64_t fs_root_dirid;
     uint32_t num_chunks;
-    struct btrfs_chunk_map chunks[64];
+    struct btrfs_chunk_map chunks[BTRFS_MAX_CHUNKS];
 };
 
 int btrfs_probe(uint8_t dev_id);

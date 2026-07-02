@@ -173,7 +173,10 @@ static int btrfs_search_tree(struct btrfs_priv *bp, uint64_t root_bytenr,
                               uint8_t *buf, uint32_t buf_size,
                               uint32_t *item_idx, int *exact)
 {
-    uint64_t bytenr = root_bytenr;
+    uint64_t bytenr;
+    /* Translate logical -> physical for the root node */
+    if (btrfs_chunk_map(bp, root_bytenr, &bytenr) < 0)
+        bytenr = root_bytenr;
     uint8_t  level = root_level;
     *exact = 0;
 
@@ -299,92 +302,101 @@ static int btrfs_read_item_data(struct btrfs_priv *bp, uint64_t bytenr,
 
 static int btrfs_build_chunk_tree(struct btrfs_priv *bp)
 {
-    uint8_t buf[4096]; /* max node size */
-    uint32_t item_idx;
-    int exact;
+    uint8_t buf[4096]; /* must be >= nodesize */
+    uint64_t search_objectid = 0;
+    uint8_t  search_type = BTRFS_CHUNK_ITEM_KEY;
+    uint64_t search_offset = 0;
 
     bp->num_chunks = 0;
 
-    /* Read the chunk tree root node */
-    uint64_t phys;
-    if (btrfs_chunk_map(bp, bp->chunk_root_bytenr, &phys) < 0)
-        phys = bp->chunk_root_bytenr;
+    /* Iterate all items in the chunk tree via repeated key search.
+     *
+     * Btrfs nodes do not carry leaf sibling pointers, so we cannot
+     * simply walk a leaf chain. Instead, we use a repeated-search
+     * pattern: each call to btrfs_search_tree descends from the tree
+     * root and finds the item whose key is >= the requested key.
+     * By advancing the search key past every item we find, we
+     * naturally walk the entire tree in key-sorted order.
+     *
+     * The chunk tree is small (typically < 50 items), so the O(n·log n)
+     * cost of repeated searches is negligible.
+     *
+     * Bootstrapping: when the chunk map is still empty, btrfs_read_node
+     * inside btrfs_search_tree will attempt identity mapping (logical ==
+     * physical) via the fallback in btrfs_chunk_map.  For single-device,
+     * non-RAID Btrfs the SYSTEM block group that holds the chunk tree is
+     * identity-mapped, so this works. */
+    while (bp->num_chunks < BTRFS_MAX_CHUNKS) {
+        uint32_t item_idx;
+        int exact;
+        int ret;
 
-    /* Walk all items in chunk tree */
-    /* Simple approach: read leaf nodes of chunk tree */
-    uint64_t cur_bytenr = bp->chunk_root_bytenr;
-    uint8_t level = bp->chunk_root_level;
-
-    if (level > 0) {
-        /* Descend to leftmost leaf */
-        while (level > 0) {
-            uint64_t p;
-            if (btrfs_chunk_map(bp, cur_bytenr, &p) < 0) p = cur_bytenr;
-            if (btrfs_read_node(bp, p, buf) < 0) return -1;
-            struct btrfs_header *hdr = (struct btrfs_header *)buf;
-            if (hdr->nritems == 0) return -1;
-            struct btrfs_key_ptr *kptr = (struct btrfs_key_ptr *)
-                (buf + sizeof(struct btrfs_header));
-            cur_bytenr = kptr[0].blockptr;
-            level--;
-        }
-    }
-
-    /* Now at leaf level, walk all leaves via ptr list */
-    int done = 0;
-    while (!done) {
-        if (btrfs_chunk_map(bp, cur_bytenr, &phys) < 0)
-            phys = cur_bytenr;
-        if (btrfs_read_node(bp, phys, buf) < 0) break;
+        ret = btrfs_search_tree(bp, bp->chunk_root_bytenr,
+                                 bp->chunk_root_level,
+                                 search_objectid, search_type,
+                                 search_offset,
+                                 buf, sizeof(buf),
+                                 &item_idx, &exact);
+        if (ret < 0)
+            break;
 
         struct btrfs_header *hdr = (struct btrfs_header *)buf;
-        struct btrfs_item *items = (struct btrfs_item *)(buf + sizeof(struct btrfs_header));
+        if (item_idx >= hdr->nritems)
+            break;
 
-        for (uint32_t i = 0; i < hdr->nritems; i++) {
-            if (items[i].key.type == BTRFS_CHUNK_ITEM_KEY) {
-                uint32_t off = items[i].offset;
-                uint32_t sz = items[i].size;
-                struct btrfs_chunk *chunk = (struct btrfs_chunk *)(buf + off);
+        struct btrfs_item *items = (struct btrfs_item *)
+            (buf + sizeof(struct btrfs_header));
 
-                /* Only handle single-device chunks */
-                if (chunk->num_stripes != 1)
-                    continue;
-                if (chunk->type & BTRFS_BLOCK_GROUP_RAID_MASK)
-                    continue;
+        uint64_t cur_obj = items[item_idx].key.objectid;
+        uint8_t  cur_typ = items[item_idx].key.type;
+        uint64_t cur_off = items[item_idx].key.offset;
 
-                uint8_t *stripe_data = (uint8_t *)chunk + sizeof(struct btrfs_chunk);
-                struct btrfs_stripe *stripe = (struct btrfs_stripe *)stripe_data;
+        /* Process chunk items; skip any other item types silently */
+        if (cur_typ == BTRFS_CHUNK_ITEM_KEY) {
+            uint32_t chk_off = items[item_idx].offset;
+            uint32_t chk_sz  = items[item_idx].size;
 
-                if (bp->num_chunks < 64) {
-                    bp->chunks[bp->num_chunks].logical = items[i].key.offset;
-                    bp->chunks[bp->num_chunks].length = chunk->length;
+            if (chk_off + chk_sz <= bp->nodesize) {
+                struct btrfs_chunk *chunk =
+                    (struct btrfs_chunk *)(buf + chk_off);
+                uint16_t num_stripes = chunk->num_stripes;
+
+                /* Only single-device, non-RAID chunks */
+                if (num_stripes == 1 &&
+                    !(chunk->type & BTRFS_BLOCK_GROUP_RAID_MASK)) {
+                    struct btrfs_stripe *stripe =
+                        (struct btrfs_stripe *)
+                            ((uint8_t *)chunk +
+                             sizeof(struct btrfs_chunk));
+
+                    bp->chunks[bp->num_chunks].logical  = cur_off;
+                    bp->chunks[bp->num_chunks].length   = chunk->length;
                     bp->chunks[bp->num_chunks].physical = stripe->offset;
                     bp->num_chunks++;
                 }
             }
         }
 
-        /* Move to next leaf via forward link */
-        /* In Btrfs, leaves are linked via the header flags; we need to follow
-         * the leaf chain. For simplicity, we walk the tree sequentially by
-         * re-searching each chunk item range. But a simpler approach:
-         * just iterate the entire chunk tree. However, the chunk tree is
-         * small, so we can just do a sequential scan by walking the leaves
-         * using the first leaf position then following right links.
-         *
-         * The first leaf has no left neighbor. For simplicity, we simply
-         * search for chunks by repeatedly looking up the next key.
-         * Actually, for a proper implementation we need neighbor pointers.
-         * Btrfs doesn't have leaf sibling pointers like ext2.
-         *
-         * Let's use a different approach: iterate all items in the chunk tree
-         * by repeated search with incrementing keys.
-         */
-        done = 1; /* fallback: single leaf pass */
+        /* Advance search past the current key */
+        search_offset = cur_off + 1;
+        search_type   = cur_typ;
+        search_objectid = cur_obj;
+
+        /* Handle offset / type / objectid wraparound */
+        if (search_offset == 0) {
+            search_type = cur_typ + 1;
+            if (search_type == 0)
+                search_objectid = cur_obj + 1;
+        }
     }
 
-    kprintf("[btrfs] built chunk map: %u entries\n", bp->num_chunks);
-    return 0;
+    kprintf("[btrfs] built chunk map: %u entries (searched objectid=%llu "
+            "type=%u offset=%llu)\n",
+            bp->num_chunks,
+            (unsigned long long)search_objectid,
+            (unsigned)search_type,
+            (unsigned long long)search_offset);
+    return bp->num_chunks > 0 ? 0 : -1;
 }
 
 /* ── Find fs root via root tree ───────────────────────────────── */
@@ -1233,6 +1245,22 @@ int btrfs_mount(const char *source, const char *target,
     int ret = btrfs_parse_superblock(bp);
     if (ret < 0) {
         kprintf("[btrfs] mount failed: superblock parse error %d\n", ret);
+        kfree(bp);
+        return ret;
+    }
+
+    /* Build chunk tree for logical→physical address translation */
+    ret = btrfs_build_chunk_tree(bp);
+    if (ret < 0) {
+        kprintf("[btrfs] mount failed: chunk tree error %d\n", ret);
+        kfree(bp);
+        return ret;
+    }
+
+    /* Find FS tree root for the default subvolume */
+    ret = btrfs_find_fs_root(bp);
+    if (ret < 0) {
+        kprintf("[btrfs] mount failed: FS root error %d\n", ret);
         kfree(bp);
         return ret;
     }
