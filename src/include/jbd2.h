@@ -161,6 +161,11 @@ struct jbd2_journal {
     uint32_t incompat;           /* Incompat feature flags */
     uint32_t ro_compat;          /* Read-only compat feature flags */
     uint8_t  uuid[16];           /* Journal UUID */
+
+    /* Revocation tracking for recovery */
+    uint32_t *revoke_list;       /* Array of revoked block numbers */
+    uint32_t  revoke_count;      /* Number of entries in revoke_list */
+    uint32_t  revoke_capacity;   /* Allocated capacity of revoke_list */
 };
 
 /* ── Transaction commit ─────────────────────────────────────────────── */
@@ -175,6 +180,11 @@ struct jbd2_journal {
 #define JBD2_MAX_TAGS_PER_BLOCK \
     ((4096 - (int)sizeof(struct jbd2_header)) / (int)sizeof(struct jbd2_block_tag))
 
+/* Maximum revocation blocks that can fit in one journal block (V1, 32-bit) */
+#define JBD2_MAX_REVOKES_PER_BLOCK \
+    (((int)sizeof(struct jbd2_block_tag) <= 0) ? 0 : \
+     ((4096 - (int)sizeof(struct jbd2_revoke_header)) / (int)sizeof(uint32_t)))
+
 /* In-memory transaction handle.
  *
  * Created by jbd2_journal_start(), populated by jbd2_journal_get_write_access()
@@ -183,7 +193,9 @@ struct jbd2_journal {
  *
  * The handle tracks one atomic journal transaction.  During commit, a
  * descriptor block, all data blocks, and a commit block are written to the
- * journal device, atomically finalizing the transaction.
+ * journal device, atomically finalizing the transaction.  Optionally,
+ * revocation blocks are written before the commit block to record blocks
+ * that should not be replayed during recovery.
  */
 struct jbd2_handle {
     struct jbd2_journal *h_journal;   /* Owning journal */
@@ -195,6 +207,11 @@ struct jbd2_handle {
     /* Arrays of registered blocks (parallel arrays, length = h_capacity) */
     uint32_t  *h_fs_blocknrs;         /* Filesystem block numbers */
     uint8_t  **h_data;                /* Data block content to journal */
+
+    /* Revocation tracking */
+    uint32_t *h_revoke_blocks;       /* Blocks to revoke in this transaction */
+    uint32_t  h_revoke_count;        /* Number of revoked blocks */
+    uint32_t  h_revoke_capacity;     /* Allocated capacity of revoke array */
 };
 
 /* ── Return values / error codes ────────────────────────────────────── */
@@ -336,6 +353,22 @@ int jbd2_commit_transaction(struct jbd2_handle *handle);
  * anything to the journal.
  */
 void jbd2_journal_stop(struct jbd2_handle *handle);
+
+/*
+ * jbd2_journal_revoke — revoke a block in the current transaction.
+ *
+ * @handle:   active transaction handle
+ * @fs_blocknr: filesystem block number to revoke
+ *
+ * Revoked blocks are recorded in a revocation block written before the
+ * commit block.  During journal recovery, revoked blocks are NOT replayed,
+ * even if they appear in a descriptor block.  This is used when a block
+ * was allocated and then freed within the same transaction — replaying
+ * the old data would corrupt the filesystem.
+ *
+ * Returns: 0 on success, negative errno on failure.
+ */
+int jbd2_journal_revoke(struct jbd2_handle *handle, uint32_t fs_blocknr);
 
 /*
  * jbd2_init — initialize the JBD2 subsystem.

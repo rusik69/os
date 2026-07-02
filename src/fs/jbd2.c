@@ -301,17 +301,30 @@ struct jbd2_handle *jbd2_journal_start(struct jbd2_journal *journal,
         return NULL;
     }
 
+    /* Allocate revocation tracking array — same initial capacity */
+    handle->h_revoke_blocks = (uint32_t *)kmalloc(
+        max_blocks * sizeof(uint32_t));
+    if (!handle->h_revoke_blocks) {
+        kfree(handle->h_data);
+        kfree(handle->h_fs_blocknrs);
+        kfree(handle);
+        return NULL;
+    }
+
     memset(handle->h_fs_blocknrs, 0, max_blocks * sizeof(uint32_t));
     memset(handle->h_data, 0, max_blocks * sizeof(uint8_t *));
+    memset(handle->h_revoke_blocks, 0, max_blocks * sizeof(uint32_t));
 
     handle->h_journal = journal;
     handle->h_sequence = journal->sequence;
     handle->h_num_blocks = 0;
     handle->h_capacity = max_blocks;
+    handle->h_revoke_count = 0;
+    handle->h_revoke_capacity = max_blocks;
     handle->h_state = JBD2_T_STATE_ACTIVE;
 
-    kprintf("[jbd2]  transaction seq=%u started (max %u blocks)\n",
-            handle->h_sequence, max_blocks);
+    kprintf("[jbd2]  transaction seq=%u started (max %u blocks, %u revoke slots)\n",
+            handle->h_sequence, max_blocks, max_blocks);
 
     return handle;
 }
@@ -390,8 +403,53 @@ void jbd2_journal_stop(struct jbd2_handle *handle)
     if (handle->h_data)
         kfree(handle->h_data);
 
+    if (handle->h_revoke_blocks)
+        kfree(handle->h_revoke_blocks);
+
     handle->h_state = JBD2_T_STATE_DONE;
     kfree(handle);
+}
+
+/* ── Revocation API ────────────────────────────────────────────────── */
+
+int jbd2_journal_revoke(struct jbd2_handle *handle, uint32_t fs_blocknr)
+{
+    uint32_t i;
+
+    if (!handle)
+        return -EINVAL;
+
+    if (handle->h_state != JBD2_T_STATE_ACTIVE)
+        return -EINVAL;
+
+    /* Check if already revoked */
+    for (i = 0; i < handle->h_revoke_count; i++) {
+        if (handle->h_revoke_blocks[i] == fs_blocknr)
+            return 0;  /* Already revoked, not an error */
+    }
+
+    /* Check capacity, extend if needed */
+    if (handle->h_revoke_count >= handle->h_revoke_capacity) {
+        uint32_t new_capacity;
+        uint32_t *new_blocks;
+
+        new_capacity = handle->h_revoke_capacity * 2;
+        if (new_capacity < 16)
+            new_capacity = 16;
+
+        new_blocks = (uint32_t *)krealloc(handle->h_revoke_blocks,
+            new_capacity * sizeof(uint32_t));
+        if (!new_blocks)
+            return -ENOMEM;
+
+        handle->h_revoke_blocks = new_blocks;
+        handle->h_revoke_capacity = new_capacity;
+    }
+
+    handle->h_revoke_blocks[handle->h_revoke_count] = fs_blocknr;
+    handle->h_revoke_count++;
+
+    return 0;
 }
 
 /* ── Transaction descriptor writing ────────────────────────────────── */
@@ -461,6 +519,81 @@ static int jbd2_write_descriptor_block(
     ret = jbd2_write_journal_block(journal, journal_block, buf);
     if (ret != JBD2_OK)
         kprintf("[jbd2]  failed to write descriptor block at %u\n",
+                journal_block);
+
+    kfree(buf);
+    return ret;
+}
+
+/* ── Revocation block writing ──────────────────────────────────────── */
+
+/*
+ * Write one revocation block for the given handle.
+ *
+ * A revocation block records filesystem block numbers that should NOT
+ * be replayed during journal recovery.  This is necessary when a block
+ * was allocated and freed within the same transaction — if we replayed
+ * the old data, it would restore stale/corrupt data.
+ *
+ * @journal:      journal to write to
+ * @revoke_blocks: array of block numbers to revoke
+ * @revoke_count:  number of entries in the array
+ * @journal_block: block number in the journal to write the revocation to
+ *
+ * Returns: 0 on success, negative error code on failure.
+ */
+static int jbd2_write_revoke_block(const struct jbd2_journal *journal,
+                                    uint32_t sequence,
+                                    const uint32_t *revoke_blocks,
+                                    uint32_t revoke_count,
+                                    uint32_t journal_block)
+{
+    uint32_t block_size;
+    uint8_t *buf;
+    struct jbd2_revoke_header *r_hdr;
+    uint32_t max_revokes;
+    uint32_t i;
+    int ret;
+
+    block_size = journal->block_size;
+
+    if (revoke_count == 0 || !revoke_blocks)
+        return 0;
+
+    buf = (uint8_t *)kmalloc(block_size);
+    if (!buf)
+        return -ENOMEM;
+
+    memset(buf, 0, block_size);
+
+    /* Fill in the revocation block header */
+    r_hdr = (struct jbd2_revoke_header *)buf;
+    r_hdr->r_header.h_magic = JBD2_MAGIC_NUMBER;
+    r_hdr->r_header.h_blocktype = JBD2_REVOKE_BLOCK;
+    r_hdr->r_header.h_sequence = sequence;
+
+    /* Calculate how many revoke records fit */
+    max_revokes = (block_size - (uint32_t)sizeof(struct jbd2_revoke_header))
+                  / sizeof(uint32_t);
+    if (max_revokes > revoke_count)
+        max_revokes = revoke_count;
+
+    /* Write revoke records after the header */
+    {
+        uint32_t *revokes = (uint32_t *)(buf + sizeof(struct jbd2_revoke_header));
+        for (i = 0; i < max_revokes; i++)
+            revokes[i] = revoke_blocks[i];
+    }
+
+    /* Set the count field (bytes used in revoke data area) */
+    r_hdr->r_count = max_revokes * sizeof(uint32_t);
+
+    kprintf("[jbd2]  writing revoke block at %u: %u block(s)\n",
+            journal_block, max_revokes);
+
+    ret = jbd2_write_journal_block(journal, journal_block, buf);
+    if (ret != JBD2_OK)
+        kprintf("[jbd2]  failed to write revoke block at %u\n",
                 journal_block);
 
     kfree(buf);
@@ -597,6 +730,32 @@ int jbd2_commit_transaction(struct jbd2_handle *handle)
         }
     }
 
+    /* ── Write revocation blocks (if any) before the commit block ──── */
+    if (handle->h_revoke_count > 0) {
+        uint32_t revoke_block;
+
+        /* Handle circular wrap-around */
+        if (journal_pos >= total_blocks)
+            journal_pos = first_data;
+
+        revoke_block = journal_pos;
+
+        kprintf("[jbd2]  writing revoke block at %u: %u block(s)\n",
+                revoke_block, handle->h_revoke_count);
+
+        ret = jbd2_write_revoke_block(journal, handle->h_sequence,
+                                       handle->h_revoke_blocks,
+                                       handle->h_revoke_count,
+                                       revoke_block);
+        if (ret != JBD2_OK) {
+            kprintf("[jbd2]  failed to write revoke block at %u\n",
+                    revoke_block);
+            goto out_err;
+        }
+
+        journal_pos++; /* Past the revoke block */
+    }
+
     /* Write the commit block */
     if (journal_pos >= total_blocks)
         journal_pos = first_data;
@@ -697,6 +856,8 @@ int jbd2_commit_transaction(struct jbd2_handle *handle)
     }
     kfree(handle->h_fs_blocknrs);
     kfree(handle->h_data);
+    if (handle->h_revoke_blocks)
+        kfree(handle->h_revoke_blocks);
     handle->h_state = JBD2_T_STATE_DONE;
     kfree(handle);
 
@@ -715,6 +876,8 @@ out_err:
             kfree(handle->h_fs_blocknrs);
         if (handle->h_data)
             kfree(handle->h_data);
+        if (handle->h_revoke_blocks)
+            kfree(handle->h_revoke_blocks);
         handle->h_state = JBD2_T_STATE_DONE;
         kfree(handle);
     }
@@ -775,6 +938,11 @@ static int jbd2_write_fs_block(const struct jbd2_journal *journal,
  * Returns: number of blocks replayed on success,
  *          negative error code on failure.
  */
+
+/* Forward declarations for revocation helpers used during replay */
+static int jbd2_is_block_revoked(const struct jbd2_journal *journal,
+                                  uint32_t blocknr);
+
 static int jbd2_replay_descriptor(const struct jbd2_journal *journal,
                                    uint8_t *buf,
                                    uint32_t *current,
@@ -841,6 +1009,13 @@ static int jbd2_replay_descriptor(const struct jbd2_journal *journal,
             data_block_num = journal->first_data_block;
 
         if (!(tag->t_flags & JBD2_FLAG_DELETED)) {
+            /* Check if this block has been revoked */
+            if (jbd2_is_block_revoked(journal, target_block)) {
+                kprintf("[jbd2]    skipping revoked block %u\n",
+                        target_block);
+                goto skip_block;
+            }
+
             /* Read data block from the journal */
             ret = jbd2_read_block(journal, data_block_num, buf);
             if (ret != JBD2_OK) {
@@ -875,6 +1050,7 @@ static int jbd2_replay_descriptor(const struct jbd2_journal *journal,
             blocks_replayed++;
         }
 
+skip_block:
         data_current++;
         tag_offset += sizeof(struct jbd2_block_tag);
     }
@@ -882,6 +1058,113 @@ static int jbd2_replay_descriptor(const struct jbd2_journal *journal,
     /* Advance past all data blocks */
     *current = data_current;
     return blocks_replayed;
+}
+
+/* ── Helper: check if a block is in the revocation list ───────────── */
+
+/*
+ * jbd2_is_block_revoked — check if a block number is in the revoked list.
+ *
+ * @journal:   initialized journal structure (with revoke_list populated)
+ * @blocknr:   filesystem block number to check
+ *
+ * Returns: 1 if revoked, 0 if not.
+ */
+static int jbd2_is_block_revoked(const struct jbd2_journal *journal,
+                                  uint32_t blocknr)
+{
+    uint32_t i;
+
+    if (!journal || !journal->revoke_list)
+        return 0;
+
+    for (i = 0; i < journal->revoke_count; i++) {
+        if (journal->revoke_list[i] == blocknr)
+            return 1;
+    }
+    return 0;
+}
+
+/* ── Revocation block processing during recovery ──────────────────── */
+
+/*
+ * Process a revocation block during journal recovery.
+ *
+ * Reads the revocation block header and records all revoked block
+ * numbers in the journal's revoke_list.  During subsequent descriptor
+ * replay, blocks in this list will be skipped.
+ *
+ * @journal:   initialized journal structure
+ * @buf:       buffer containing the revocation block data
+ *
+ * Returns: 0 on success, negative error code on failure.
+ */
+static int jbd2_process_revoke_block(struct jbd2_journal *journal,
+                                      const uint8_t *buf)
+{
+    const struct jbd2_revoke_header *r_hdr;
+    uint32_t count;
+    uint32_t num_records;
+    const uint32_t *records;
+    uint32_t i;
+    uint32_t new_capacity;
+    uint32_t *new_list;
+
+    if (!journal || !buf)
+        return -EINVAL;
+
+    r_hdr = (const struct jbd2_revoke_header *)buf;
+
+    if (r_hdr->r_header.h_magic != JBD2_MAGIC_NUMBER)
+        return JBD2_ERR_BAD_MAGIC;
+
+    /* Number of bytes used in the revoke data area */
+    count = r_hdr->r_count;
+
+    if (count == 0 || count > journal->block_size - sizeof(*r_hdr)) {
+        kprintf("[jbd2]  invalid revoke count: %u\n", count);
+        return JBD2_ERR_BAD_MAGIC;
+    }
+
+    num_records = count / sizeof(uint32_t);
+    if (num_records == 0)
+        return 0;
+
+    records = (const uint32_t *)(buf + sizeof(*r_hdr));
+
+    kprintf("[jbd2]  processing revoke block: %u block(s)\n",
+            num_records);
+
+    /* Ensure capacity in the journal's revoke list */
+    if (journal->revoke_count + num_records > journal->revoke_capacity) {
+        new_capacity = journal->revoke_capacity + num_records + 64;
+        if (new_capacity < 128)
+            new_capacity = 128;
+
+        new_list = (uint32_t *)krealloc(journal->revoke_list,
+            new_capacity * sizeof(uint32_t));
+        if (!new_list)
+            return -ENOMEM;
+
+        journal->revoke_list = new_list;
+        journal->revoke_capacity = new_capacity;
+    }
+
+    /* Append revoked block numbers to the list */
+    for (i = 0; i < num_records; i++) {
+        uint32_t blk = records[i];
+
+        /* Avoid duplicates */
+        if (!jbd2_is_block_revoked(journal, blk)) {
+            journal->revoke_list[journal->revoke_count] = blk;
+            journal->revoke_count++;
+        }
+    }
+
+    kprintf("[jbd2]  revoke processed: total %u revoked block(s)\n",
+            journal->revoke_count);
+
+    return 0;
 }
 
 /* ── Journal clean marking ─────────────────────────────────────────── */
@@ -1030,7 +1313,14 @@ int jbd2_replay(struct jbd2_journal *journal)
             current++;
             continue;
         }
+        /* Handle revocation blocks during recovery */
         if (hdr->h_blocktype == JBD2_REVOKE_BLOCK) {
+            ret = jbd2_process_revoke_block(journal, buf);
+            if (ret != JBD2_OK) {
+                kprintf("[jbd2]  failed to process revoke block "
+                        "at %u\n", current);
+                goto out_err;
+            }
             current++;
             continue;
         }
@@ -1098,12 +1388,26 @@ int jbd2_replay(struct jbd2_journal *journal)
     }
 
     kfree(buf);
+    /* Free revocation list if allocated */
+    if (journal->revoke_list) {
+        kfree(journal->revoke_list);
+        journal->revoke_list = NULL;
+        journal->revoke_count = 0;
+        journal->revoke_capacity = 0;
+    }
     kprintf("[jbd2] journal recovery complete: %d transaction(s) "
             "replayed\n", transactions);
     return transactions;
 
 out_err:
     kfree(buf);
+    /* Free revocation list on error */
+    if (journal->revoke_list) {
+        kfree(journal->revoke_list);
+        journal->revoke_list = NULL;
+        journal->revoke_count = 0;
+        journal->revoke_capacity = 0;
+    }
     return ret;
 }
 
