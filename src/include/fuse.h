@@ -232,6 +232,17 @@ struct fuse_dev {
     int pending_arg_size;
 };
 
+/* ── Entry cache for path resolution ────────────────────────────────── */
+
+#define FUSE_ENTRY_CACHE_SIZE 16
+
+struct fuse_entry_cache_entry {
+    uint64_t parent;             /* parent directory nodeid */
+    char     name[64];           /* component name */
+    uint64_t nodeid;             /* resolved nodeid */
+    uint64_t generation;         /* generation from fuse_entry_out */
+} __attribute__((packed));
+
 /* ── Mount info with negotiated protocol state ──────────────────────── */
 
 struct fuse_mount_info {
@@ -246,6 +257,8 @@ struct fuse_mount_info {
     uint32_t    max_readahead;      /* daemon's max readahead from INIT */
     uint32_t    max_write;          /* daemon's max write size from INIT */
     uint32_t    time_gran;          /* daemon's time granularity from INIT */
+    /* Entry cache for path resolution */
+    struct fuse_entry_cache_entry entry_cache[FUSE_ENTRY_CACHE_SIZE];
 };
 
 /** fuse_has_cap — check if daemon supports a capability flag */

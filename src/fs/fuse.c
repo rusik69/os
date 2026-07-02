@@ -40,6 +40,8 @@ static int fuse_read(void *priv, const char *path, void *buf,
                       uint32_t max_size, uint32_t *out_size);
 static int fuse_write(void *priv, const char *path,
                        const void *data, uint32_t size);
+static int fuse_path_walk(struct fuse_mount_info *mnt, const char *path,
+                           uint64_t *out_nodeid);
 
 /*
  * Find which FUSE mount a path belongs to.
@@ -60,15 +62,11 @@ static struct fuse_mount_info *fuse_find_mount(const char *path)
 static uint64_t fuse_path_to_nodeid(struct fuse_mount_info *mnt,
                                      const char *path)
 {
-    size_t mplen = strlen(mnt->mountpoint);
-    const char *rel = path + mplen;
-
-    if (*rel == '\0' || (rel[0] == '/' && rel[1] == '\0'))
-        return mnt->root_nodeid; /* root */
-
-    /* In a full implementation, we'd do LOOKUP operations for each
-     * path component. For now, just return root. */
-    return mnt->root_nodeid;
+    uint64_t nodeid;
+    int ret = fuse_path_walk(mnt, path, &nodeid);
+    if (ret < 0)
+        return mnt->root_nodeid; /* fallback to root on error */
+    return nodeid;
 }
 
 /*
@@ -131,6 +129,237 @@ static int fuse_request_response(uint32_t opcode, uint64_t nodeid,
     if (out_resp_arg_size)
         *out_resp_arg_size = resp_arg_size;
 
+    return 0;
+}
+
+/* ── Entry cache helpers ────────────────────────────────────────────── */
+
+/*
+ * Initialize the per-mount entry cache.
+ */
+static void fuse_entry_cache_init(struct fuse_mount_info *mnt)
+{
+    memset(mnt->entry_cache, 0, sizeof(mnt->entry_cache));
+}
+
+/*
+ * Look up a cached entry by (parent, name).
+ * Returns 0 if found (nodeid written to @out_nodeid), -ENOENT if not.
+ */
+static int fuse_entry_cache_lookup(struct fuse_mount_info *mnt,
+                                    uint64_t parent, const char *name,
+                                    uint64_t *out_nodeid)
+{
+    for (int i = 0; i < FUSE_ENTRY_CACHE_SIZE; i++) {
+        const struct fuse_entry_cache_entry *e = &mnt->entry_cache[i];
+        if (e->nodeid != 0 && e->parent == parent &&
+            strcmp(e->name, name) == 0) {
+            *out_nodeid = e->nodeid;
+            return 0;
+        }
+    }
+    return -ENOENT;
+}
+
+/*
+ * Add an entry to the cache.  Evicts oldest if full (LRU-like: generation
+ * is used as LRU counter — we evict the entry with the smallest generation).
+ * The generation field from fuse_entry_out is stored for later invalidation.
+ */
+static void fuse_entry_cache_add(struct fuse_mount_info *mnt,
+                                  uint64_t parent, const char *name,
+                                  uint64_t nodeid, uint64_t generation)
+{
+    int slot = -1;
+    uint64_t oldest_gen = (uint64_t)-1;
+
+    /* Look for an empty slot or the oldest entry */
+    for (int i = 0; i < FUSE_ENTRY_CACHE_SIZE; i++) {
+        if (mnt->entry_cache[i].nodeid == 0) {
+            slot = i;
+            break;
+        }
+        if (mnt->entry_cache[i].generation < oldest_gen) {
+            oldest_gen = mnt->entry_cache[i].generation;
+            slot = i;
+        }
+    }
+
+    if (slot < 0)
+        return; /* cache full with all valid entries — skip insert */
+
+    mnt->entry_cache[slot].parent     = parent;
+    mnt->entry_cache[slot].nodeid     = nodeid;
+    mnt->entry_cache[slot].generation = generation;
+    strncpy(mnt->entry_cache[slot].name, name,
+            sizeof(mnt->entry_cache[slot].name) - 1);
+    mnt->entry_cache[slot].name[sizeof(mnt->entry_cache[slot].name) - 1] = '\0';
+}
+
+/*
+ * Invalidate all cache entries that have the given @nodeid as their
+ * parent or as their resolved nodeid.  Used when the daemon sends
+ * a forget or invalidate notification.
+ */
+static void fuse_entry_cache_invalidate(struct fuse_mount_info *mnt,
+                                         uint64_t nodeid)
+{
+    for (int i = 0; i < FUSE_ENTRY_CACHE_SIZE; i++) {
+        if (mnt->entry_cache[i].parent == nodeid ||
+            mnt->entry_cache[i].nodeid == nodeid) {
+            mnt->entry_cache[i].nodeid = 0;
+        }
+    }
+}
+
+/* ── FUSE_LOOKUP implementation ─────────────────────────────────────── */
+
+/*
+ * fuse_lookup_component — resolve a single path component within a
+ *                          directory via FUSE_LOOKUP.
+ *
+ * @parent_nodeid  Node ID of the parent directory.
+ * @name           Component name to look up (null-terminated).
+ * @out_nodeid     On success, receives the resolved node ID.
+ * @out_entry_attr On success, receives the full fuse_entry_out (may be NULL).
+ *
+ * Returns 0 on success, or a negative errno on failure.
+ */
+static int fuse_lookup_component(uint64_t parent_nodeid, const char *name,
+                                  uint64_t *out_nodeid,
+                                  struct fuse_entry_out *out_entry)
+{
+    struct fuse_entry_out *entry;
+    void *resp_arg = NULL;
+    int resp_arg_size = 0;
+    int ret;
+
+    if (!name || !out_nodeid)
+        return -EINVAL;
+
+    /* FUSE_LOOKUP request payload is just the filename (null-terminated) */
+    ret = fuse_request_response(FUSE_LOOKUP, parent_nodeid,
+                                 name, strlen(name) + 1,
+                                 &resp_arg, &resp_arg_size);
+    if (ret < 0)
+        return ret;
+
+    /* Parse the fuse_entry_out from the response */
+    if (!resp_arg || resp_arg_size < (int)sizeof(struct fuse_entry_out)) {
+        kfree(resp_arg);
+        return -EIO;
+    }
+
+    entry = (struct fuse_entry_out *)resp_arg;
+    *out_nodeid = entry->nodeid;
+
+    if (out_entry)
+        memcpy(out_entry, entry, sizeof(*out_entry));
+
+    kfree(resp_arg);
+    return 0;
+}
+
+/* ── Path resolution ────────────────────────────────────────────────── */
+
+/*
+ * fuse_path_walk — walk a path within a FUSE mount, resolving each
+ *                   component via FUSE_LOOKUP.
+ *
+ * Walks the path relative to the mountpoint, sending a FUSE_LOOKUP
+ * request for each path component.  Uses a per-mount entry cache to
+ * avoid redundant LOOKUP calls.
+ *
+ * @mnt         The FUSE mount info.
+ * @path        Absolute path within the mount.
+ * @out_nodeid  On success, receives the nodeid of the final component.
+ *
+ * Returns 0 on success, or a negative errno on failure.
+ */
+static int fuse_path_walk(struct fuse_mount_info *mnt, const char *path,
+                           uint64_t *out_nodeid)
+{
+    size_t mplen;
+    const char *rel;
+    uint64_t nodeid;
+    char component[256];
+    int comp_len;
+    int ret;
+
+    if (!mnt || !path || !out_nodeid)
+        return -EINVAL;
+
+    mplen = strlen(mnt->mountpoint);
+    rel = path + mplen;
+
+    /* Skip leading slashes */
+    while (*rel == '/')
+        rel++;
+
+    nodeid = mnt->root_nodeid;
+
+    /* Root path — nothing to resolve */
+    if (*rel == '\0') {
+        *out_nodeid = nodeid;
+        return 0;
+    }
+
+    /* Walk each path component */
+    while (*rel != '\0') {
+        /* Skip trailing/extra slashes */
+        while (*rel == '/')
+            rel++;
+
+        if (*rel == '\0')
+            break;
+
+        /* Extract component */
+        comp_len = 0;
+        while (*rel != '\0' && *rel != '/' &&
+               comp_len < (int)sizeof(component) - 1) {
+            component[comp_len++] = *(rel++);
+        }
+        component[comp_len] = '\0';
+
+        if (comp_len == 0)
+            continue;
+
+        /* Handle "." — stays on same node */
+        if (strcmp(component, ".") == 0)
+            continue;
+
+        /* Handle ".." — we don't keep parent info in the cache,
+         * so for now, return root.  Full ".." support would need
+         * to cache the parent nodeid alongside the entry. */
+        if (strcmp(component, "..") == 0) {
+            nodeid = mnt->root_nodeid;
+            continue;
+        }
+
+        /* Check cache first */
+        ret = fuse_entry_cache_lookup(mnt, nodeid, component, &nodeid);
+        if (ret == 0)
+            continue; /* cache hit */
+
+        /* Cache miss — send FUSE_LOOKUP to the daemon */
+        struct fuse_entry_out entry_out;
+        uint64_t resolved;
+
+        ret = fuse_lookup_component(nodeid, component, &resolved,
+                                     &entry_out);
+        if (ret < 0) {
+            kprintf("[fuse] LOOKUP '%s' under nodeid %llu failed: %d\n",
+                    component, (unsigned long long)nodeid, ret);
+            return ret;
+        }
+
+        /* Add to cache */
+        fuse_entry_cache_add(mnt, nodeid, component, resolved,
+                              entry_out.generation);
+        nodeid = resolved;
+    }
+
+    *out_nodeid = nodeid;
     return 0;
 }
 
@@ -403,6 +632,7 @@ int fuse_mount(const char *mountpoint)
     mnt = &g_fuse_mounts[slot];
     memset(mnt, 0, sizeof(*mnt));
     strncpy(mnt->mountpoint, mountpoint, sizeof(mnt->mountpoint) - 1);
+    fuse_entry_cache_init(mnt);
 
     /* Parse FUSE_INIT response — validate version and store capabilities */
     if (resp_arg && resp_arg_size >= (int)sizeof(struct fuse_init_out)) {
