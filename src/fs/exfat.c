@@ -413,6 +413,107 @@ static uint32_t exfat_alloc_cluster(struct exfat_priv *ep)
 	return EXFAT_CLUSTER_END; /* no free clusters */
 }
 
+/* ── Contiguous cluster allocation optimization ──────────────────── */
+/* Scan the allocation bitmap for N consecutive free clusters.
+ * Returns the first cluster of the first run found, or EXFAT_CLUSTER_END
+ * if no contiguous run of 'count' clusters exists.  Does NOT mark the
+ * bits as allocated; use exfat_alloc_contiguous_clusters() for that. */
+static uint32_t exfat_bitmap_find_contiguous(struct exfat_priv *ep,
+                                              uint32_t count)
+{
+    uint8_t bit_val;
+    uint32_t max_c = ep->cluster_count + 2;
+    uint32_t start = ep->next_free_hint;
+
+    if (count == 0 || count > ep->free_clusters + 2)
+        return EXFAT_CLUSTER_END;
+
+    /* Clamp hint to valid range */
+    if (start < 2 || start >= max_c)
+        start = 2;
+
+    /* Two-pass scan: first from hint upward, then wrap around */
+    for (int pass = 0; pass < 2; pass++) {
+        uint32_t begin = (pass == 0) ? start : 2;
+        uint32_t end   = (pass == 0) ? max_c : start;
+
+        uint32_t run_start = EXFAT_CLUSTER_END;
+        uint32_t run_len = 0;
+
+        for (uint32_t c = begin; c < end; c++) {
+            if (exfat_bitmap_get(ep, c, &bit_val) != 0)
+                return EXFAT_CLUSTER_END;
+
+            if (bit_val == 0) {
+                /* Free cluster — extend or start a run */
+                if (run_len == 0)
+                    run_start = c;
+                run_len++;
+                if (run_len >= count)
+                    return run_start;
+            } else {
+                /* Allocated — reset run tracking */
+                run_start = EXFAT_CLUSTER_END;
+                run_len = 0;
+            }
+        }
+    }
+
+    return EXFAT_CLUSTER_END; /* not enough contiguous space */
+}
+
+/* Allocate N contiguous clusters from the allocation bitmap.
+ * Uses exfat_bitmap_find_contiguous() to locate a suitable run.
+ * Returns the first cluster of the run on success, or EXFAT_CLUSTER_END
+ * on failure (no contiguous space available). */
+static uint32_t exfat_alloc_contiguous_clusters(struct exfat_priv *ep,
+                                                 uint32_t count)
+{
+    uint32_t first = exfat_bitmap_find_contiguous(ep, count);
+    if (first >= EXFAT_CLUSTER_END)
+        return EXFAT_CLUSTER_END;
+
+    /* Mark all N clusters as allocated in the bitmap */
+    for (uint32_t i = 0; i < count; i++) {
+        uint32_t c = first + i;
+        if (exfat_bitmap_set(ep, c, 1) != 0) {
+            /* Roll back on failure */
+            for (uint32_t j = 0; j < i; j++)
+                exfat_bitmap_set(ep, first + j, 0);
+            return EXFAT_CLUSTER_END;
+        }
+    }
+
+    /* Zero-initialize first cluster (preserves contiguous run for data) */
+    {
+        uint32_t cluster_sectors = 1U << ep->sectors_per_cluster_shift;
+        uint32_t buf_size = cluster_sectors * ep->sector_size;
+        uint8_t *zbuf = (uint8_t *)kmalloc(buf_size);
+        if (!zbuf) {
+            for (uint32_t i = 0; i < count; i++)
+                exfat_bitmap_set(ep, first + i, 0);
+            return EXFAT_CLUSTER_END;
+        }
+        memset(zbuf, 0, buf_size);
+        int ret = exfat_write_cluster(ep, first, zbuf);
+        kfree(zbuf);
+        if (ret != 0) {
+            for (uint32_t i = 0; i < count; i++)
+                exfat_bitmap_set(ep, first + i, 0);
+            return EXFAT_CLUSTER_END;
+        }
+    }
+
+    /* Update hint and free count */
+    ep->next_free_hint = first + count;
+    if ((uint32_t)count <= ep->free_clusters)
+        ep->free_clusters -= count;
+    else
+        ep->free_clusters = 0;
+
+    return first;
+}
+
 static void exfat_free_cluster(struct exfat_priv *ep, uint32_t cluster)
 {
 	if (cluster < 2 || cluster > ep->cluster_count + 1)
@@ -891,7 +992,8 @@ static int exfat_create_entry_set(struct exfat_priv *ep,
                                    const char *name,
                                    uint16_t attrs,
                                    uint32_t first_cluster,
-                                   uint64_t data_length)
+                                   uint64_t data_length,
+                                   int contiguous)
 {
 	uint32_t cluster_size = (1U << ep->sectors_per_cluster_shift) *
 	                        ep->sector_size;
@@ -921,7 +1023,7 @@ static int exfat_create_entry_set(struct exfat_priv *ep,
 	struct exfat_stream_ext *se =
 	    (struct exfat_stream_ext *)(entries + 32);
 	se->type = EXFAT_ENTRY_STREAM_EXT;
-	se->general_secondary_flags = 0;
+	se->general_secondary_flags = contiguous ? EXFAT_FLAG_NO_FAT_CHAIN : 0;
 	se->name_length = (uint8_t)name_units;
 	se->name_hash = name_hash;
 	se->valid_data_length = data_length;
@@ -1532,6 +1634,7 @@ static int exfat_read(void *priv, const char *path,
 	uint32_t found_cluster = EXFAT_CLUSTER_END;
 	uint64_t found_size = 0;
 	int found = 0;
+	int found_contiguous = 0;
 
 	/* Convert leaf name to UTF-16 for comparison */
 	uint16_t utf16_leaf[128];
@@ -1610,6 +1713,9 @@ static int exfat_read(void *priv, const char *path,
 					found_cluster = se->first_cluster;
 					found_size = se->data_length;
 					found = 1;
+					found_contiguous =
+					    (se->general_secondary_flags &
+					     EXFAT_FLAG_NO_FAT_CHAIN) ? 1 : 0;
 					goto read_done;
 				}
 			}
@@ -1626,7 +1732,7 @@ read_done:
 		return -ENOENT;
 	}
 
-	/* Read data clusters (assume contiguous) */
+	/* Read data clusters — optimized for contiguous files */
 	uint64_t to_read = max_size;
 	if (to_read > found_size)
 		to_read = found_size;
@@ -1635,14 +1741,72 @@ read_done:
 		return 0;
 	}
 
-	uint32_t current_cluster = found_cluster;
-	uint32_t bytes_per_cluster = cluster_size;
-	uint64_t done = 0;
+	if (found_contiguous || ep->fat_length == 0) {
+		/* ── Contiguous read: compute sequential sector range ── */
+		/* For contiguous files, clusters are known to be sequential.
+		 * Compute the total sector range and read in multi-sector I/O. */
+		uint32_t sectors_per_cluster = 1U << ep->sectors_per_cluster_shift;
+		uint32_t cluster_bytes = sectors_per_cluster * ep->sector_size;
+		uint64_t done = 0;
 
+		while (done < to_read) {
+			uint64_t rel_cluster = done / cluster_bytes;
+			uint64_t cluster = (uint64_t)found_cluster + rel_cluster;
+			if (cluster >= EXFAT_CLUSTER_END || cluster < 2)
+				break;
+
+			uint64_t start_sector = exfat_cluster_to_sector(ep,
+			    (uint32_t)cluster);
+			uint32_t byte_off_in_cluster = (uint32_t)(done % cluster_bytes);
+			if (byte_off_in_cluster > 0) {
+				/* Misaligned within cluster — read partial cluster */
+				uint32_t chunk = cluster_bytes - byte_off_in_cluster;
+				if (chunk > to_read - done)
+					chunk = (uint32_t)(to_read - done);
+				for (uint32_t si = 0; si < chunk;
+				     si += ep->sector_size) {
+					uint32_t sec_size = ep->sector_size;
+					if (sec_size > to_read - done)
+						sec_size = (uint32_t)(to_read - done);
+					if (blockdev_read_sectors(ep->dev_id,
+					    (uint32_t)(start_sector + si / ep->sector_size),
+					    1, (uint8_t *)buf + done) != 0) {
+						if (out_size) *out_size = (uint32_t)done;
+						return -EIO;
+					}
+					done += sec_size;
+				}
+			} else {
+				/* Cluster-aligned start — read full cluster(s)
+				 * in multi-sector batches for performance. */
+				uint32_t remaining = (uint32_t)(to_read - done);
+				uint32_t this_batch = cluster_bytes;
+				if (this_batch > remaining)
+					this_batch = remaining;
+				uint32_t num_sectors = this_batch / ep->sector_size;
+				if (num_sectors == 0) break;
+
+				if (blockdev_read_sectors(ep->dev_id,
+				    (uint32_t)start_sector,
+				    num_sectors,
+				    (uint8_t *)buf + done) != 0) {
+					if (out_size) *out_size = (uint32_t)done;
+					return -EIO;
+				}
+				done += this_batch;
+			}
+		}
+		if (out_size) *out_size = (uint32_t)done;
+		return 0;
+	}
+
+	/* ── Non-contiguous: FAT chain traversal, sector-by-sector ── */
+	uint32_t current_cluster = found_cluster;
+	uint64_t done = 0;
 	while (current_cluster >= 2 && current_cluster < EXFAT_CLUSTER_END &&
 	       done < to_read) {
 		uint64_t start_sector = exfat_cluster_to_sector(ep, current_cluster);
-		uint32_t chunk = bytes_per_cluster;
+		uint32_t chunk = cluster_size;
 		if (chunk > to_read - done)
 			chunk = (uint32_t)(to_read - done);
 
@@ -1711,50 +1875,64 @@ static int exfat_write(void *priv, const char *path,
 		/* Free old clusters */
 		exfat_free_chain(ep, old_cluster, old_size);
 
-		/* Allocate new clusters */
+		/* Allocate new clusters (try contiguous first for multi-cluster files) */
 		uint64_t needed = size ? (uint64_t)size : 1;
 		uint32_t num_clusters = (uint32_t)((needed + cluster_size - 1) /
 		                                   cluster_size);
 		if (num_clusters == 0) num_clusters = 1;
 
 		uint32_t first_cluster = EXFAT_CLUSTER_END;
-		uint32_t *clusters = (uint32_t *)kmalloc(
-		    num_clusters * sizeof(uint32_t));
-		if (!clusters) {
-			kfree(cbuf);
-			return -ENOMEM;
-		}
-		memset(clusters, 0, num_clusters * sizeof(uint32_t));
-
+		uint32_t *clusters = NULL;
+		int contiguous = 0;
 		int alloc_ok = 1;
-		for (uint32_t i = 0; i < num_clusters; i++) {
-			clusters[i] = exfat_alloc_cluster(ep);
-			if (clusters[i] >= EXFAT_CLUSTER_END) {
-				alloc_ok = 0;
-				break;
+
+		if (num_clusters > 1) {
+			first_cluster = exfat_alloc_contiguous_clusters(ep, num_clusters);
+			if (first_cluster < EXFAT_CLUSTER_END) {
+				contiguous = 1;
+				alloc_ok = 1;
 			}
-			if (i == 0) first_cluster = clusters[i];
+		}
+
+		if (!contiguous) {
+			contiguous = 0;
+			clusters = (uint32_t *)kmalloc(
+			    num_clusters * sizeof(uint32_t));
+			if (!clusters) {
+				kfree(cbuf);
+				return -ENOMEM;
+			}
+			memset(clusters, 0, num_clusters * sizeof(uint32_t));
+
+			for (uint32_t i = 0; i < num_clusters; i++) {
+				clusters[i] = exfat_alloc_cluster(ep);
+				if (clusters[i] >= EXFAT_CLUSTER_END) {
+					alloc_ok = 0;
+					break;
+				}
+				if (i == 0) first_cluster = clusters[i];
+			}
 		}
 
 		if (!alloc_ok) {
 			/* Free any allocated clusters */
 			for (uint32_t i = 0; i < num_clusters; i++) {
-				if (clusters[i] >= 2 && clusters[i] < EXFAT_CLUSTER_END)
+				if (clusters && clusters[i] >= 2 && clusters[i] < EXFAT_CLUSTER_END)
 					exfat_free_cluster(ep, clusters[i]);
 			}
-			kfree(clusters);
+			if (clusters) kfree(clusters);
 			kfree(cbuf);
 			return -ENOSPC;
 		}
 
-		/* Write data to clusters */
+		/* Write data to clusters (handle both contiguous and non-contiguous) */
 		uint64_t written = 0;
 		for (uint32_t i = 0; i < num_clusters && written < size; i++) {
-			uint32_t c = clusters[i];
+			uint32_t c = contiguous ? (first_cluster + i) : clusters[i];
 			uint8_t *zbuf = (uint8_t *)kmalloc(cluster_size);
 			if (!zbuf) {
 				exfat_free_chain(ep, first_cluster, size);
-				kfree(clusters);
+				if (clusters) kfree(clusters);
 				kfree(cbuf);
 				return -ENOMEM;
 			}
@@ -1769,25 +1947,29 @@ static int exfat_write(void *priv, const char *path,
 			written += chunk;
 		}
 
-		/* Write FAT chain entries if FAT is enabled */
+		/* Write FAT chain entries if FAT is enabled (even for contiguous files) */
 		if (ep->fat_length > 0) {
 			for (uint32_t fi = 0; fi < num_clusters; fi++) {
+				uint32_t c = contiguous ? (first_cluster + fi) : clusters[fi];
 				uint32_t next_val;
-				if (fi < num_clusters - 1)
-					next_val = clusters[fi + 1];
-				else
+				if (fi < num_clusters - 1) {
+					if (contiguous)
+						next_val = first_cluster + fi + 1;
+					else
+						next_val = clusters[fi + 1];
+				} else {
 					next_val = EXFAT_CLUSTER_END;
-				if (exfat_write_fat_entry(ep, clusters[fi],
-				                           next_val) != 0) {
+				}
+				if (exfat_write_fat_entry(ep, c, next_val) != 0) {
 					exfat_free_chain(ep, first_cluster, size);
-					kfree(clusters);
+					if (clusters) kfree(clusters);
 					kfree(cbuf);
 					return -EIO;
 				}
 			}
 		}
 
-		kfree(clusters);
+		if (clusters) kfree(clusters);
 
 		/* Update entry set with new cluster and size */
 		ret = exfat_update_entry_set(ep, dir_cluster, leaf,
@@ -1803,38 +1985,52 @@ static int exfat_write(void *priv, const char *path,
 	if (num_clusters == 0) num_clusters = 1;
 
 	uint32_t first_cluster = EXFAT_CLUSTER_END;
-	uint32_t *new_clusters = (uint32_t *)kmalloc(
-	    num_clusters * sizeof(uint32_t));
-	if (!new_clusters) return -ENOMEM;
-	memset(new_clusters, 0, num_clusters * sizeof(uint32_t));
-
+	uint32_t *new_clusters = NULL;
+	int contiguous = 0;
 	int alloc_ok = 1;
-	for (uint32_t i = 0; i < num_clusters; i++) {
-		new_clusters[i] = exfat_alloc_cluster(ep);
-		if (new_clusters[i] >= EXFAT_CLUSTER_END) {
-			alloc_ok = 0;
-			break;
+
+	/* Try contiguous allocation first (multi-cluster files benefit) */
+	if (num_clusters > 1) {
+		first_cluster = exfat_alloc_contiguous_clusters(ep, num_clusters);
+		if (first_cluster < EXFAT_CLUSTER_END) {
+			contiguous = 1;
+			alloc_ok = 1;
 		}
-		if (i == 0) first_cluster = new_clusters[i];
+	}
+
+	if (!contiguous) {
+		new_clusters = (uint32_t *)kmalloc(
+		    num_clusters * sizeof(uint32_t));
+		if (!new_clusters) return -ENOMEM;
+		memset(new_clusters, 0, num_clusters * sizeof(uint32_t));
+
+		for (uint32_t i = 0; i < num_clusters; i++) {
+			new_clusters[i] = exfat_alloc_cluster(ep);
+			if (new_clusters[i] >= EXFAT_CLUSTER_END) {
+				alloc_ok = 0;
+				break;
+			}
+			if (i == 0) first_cluster = new_clusters[i];
+		}
 	}
 
 	if (!alloc_ok) {
 		for (uint32_t i = 0; i < num_clusters; i++) {
-			if (new_clusters[i] >= 2 && new_clusters[i] < EXFAT_CLUSTER_END)
+			if (new_clusters && new_clusters[i] >= 2 && new_clusters[i] < EXFAT_CLUSTER_END)
 				exfat_free_cluster(ep, new_clusters[i]);
 		}
-		kfree(new_clusters);
+		if (new_clusters) kfree(new_clusters);
 		return -ENOSPC;
 	}
 
 	/* Write data to clusters */
 	uint64_t written = 0;
 	for (uint32_t i = 0; i < num_clusters && written < size; i++) {
-		uint32_t c = new_clusters[i];
+		uint32_t c = contiguous ? (first_cluster + i) : new_clusters[i];
 		uint8_t *zbuf = (uint8_t *)kmalloc(cluster_size);
 		if (!zbuf) {
 			exfat_free_chain(ep, first_cluster, size);
-			kfree(new_clusters);
+			if (new_clusters) kfree(new_clusters);
 			return -ENOMEM;
 		}
 		memset(zbuf, 0, cluster_size);
@@ -1851,26 +2047,31 @@ static int exfat_write(void *priv, const char *path,
 	/* Write FAT chain entries if FAT is enabled */
 	if (ep->fat_length > 0) {
 		for (uint32_t fi = 0; fi < num_clusters; fi++) {
+			uint32_t c = contiguous ? (first_cluster + fi) : new_clusters[fi];
 			uint32_t next_val;
-			if (fi < num_clusters - 1)
-				next_val = new_clusters[fi + 1];
-			else
+			if (fi < num_clusters - 1) {
+				if (contiguous)
+					next_val = first_cluster + fi + 1;
+				else
+					next_val = new_clusters[fi + 1];
+			} else {
 				next_val = EXFAT_CLUSTER_END;
-			if (exfat_write_fat_entry(ep, new_clusters[fi],
-			                           next_val) != 0) {
+			}
+			if (exfat_write_fat_entry(ep, c, next_val) != 0) {
 				exfat_free_chain(ep, first_cluster, size);
-				kfree(new_clusters);
+				if (new_clusters) kfree(new_clusters);
 				return -EIO;
 			}
 		}
 	}
 
-	kfree(new_clusters);
+	if (new_clusters) kfree(new_clusters);
 
 	/* Create entry set in directory */
 	ret = exfat_create_entry_set(ep, dir_cluster, leaf,
 	                              EXFAT_ATTR_ARCHIVE,
-	                              first_cluster, size);
+	                              first_cluster, size,
+	                              contiguous);
 	if (ret < 0) {
 		exfat_free_chain(ep, first_cluster, size);
 		return ret;
@@ -2043,7 +2244,8 @@ static int exfat_create(void *priv, const char *path, uint8_t type)
 	}
 
 	ret = exfat_create_entry_set(ep, dir_cluster, leaf,
-	                              attrs, first_cluster, data_length);
+	                              attrs, first_cluster, data_length,
+	                              0); /* directories: not contiguous */
 	if (ret < 0) {
 		if (first_cluster >= 2 && first_cluster < EXFAT_CLUSTER_END)
 			exfat_free_cluster(ep, first_cluster);

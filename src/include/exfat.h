@@ -24,6 +24,10 @@
 
 /* File attributes */
 #define EXFAT_ATTR_READONLY  0x0001
+
+/* Stream extension general_secondary_flags */
+#define EXFAT_FLAG_NO_FAT_CHAIN  0x01  /* clusters are contiguous, no FAT traversal needed */
+#define EXFAT_FLAG_FAT_MIRROR    0x02  /* FAT mirroring enabled */
 #define EXFAT_ATTR_HIDDEN    0x0002
 #define EXFAT_ATTR_SYSTEM    0x0004
 #define EXFAT_ATTR_DIRECTORY 0x0010
