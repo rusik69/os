@@ -420,57 +420,127 @@ int nfs_mount(const char *server, const char *export_path)
     return nfs_mount_count - 1;
 }
 
-/* ── NFS LOOKUP ──────────────────────────────────────────────────── */
+/* ── NFS LOOKUP (single-component helper) ───────────────────────── */
 
-/* Look up a path relative to a mount, filling the file handle */
+/* Perform an NFS LOOKUP RPC for a single component name relative
+ * to the given directory FH. Returns 0 on success with out_fh filled. */
+static int nfs_lookup_component(struct nfs_mount_info *mnt,
+                                 const struct nfs_fhandle *dir_fh,
+                                 const char *component,
+                                 struct nfs_fhandle *out_fh)
+{
+	uint8_t args[NFS_MAX_DATA];
+	uint8_t *ap = args;
+
+	/* Directory file handle */
+	xdr_put_u32(&ap, dir_fh->len);
+	xdr_put_bytes(&ap, dir_fh->data, dir_fh->len);
+	/* Component name */
+	xdr_put_string(&ap, component);
+
+	uint32_t args_len = (uint32_t)(ap - args);
+
+	uint8_t reply[NFS_MAX_DATA];
+	uint32_t reply_len = sizeof(reply);
+
+	int ret = nfs_rpc_call(mnt->server_ip, 100003, 3, NFSPROC3_LOOKUP,
+	                        args, args_len, reply, &reply_len);
+	if (ret < 0)
+		return ret;
+
+	const uint8_t *rp = reply;
+	uint32_t status = xdr_get_u32(&rp);
+	if (status != 0) {
+		if (status == NFS3ERR_NOENT)  return -ENOENT;
+		if (status == NFS3ERR_ACCES)  return -EACCES;
+		if (status == NFS3ERR_NOTDIR) return -ENOTDIR;
+		return -EIO;
+	}
+
+	/* Read object handle */
+	if (out_fh) {
+		out_fh->len = xdr_get_u32(&rp);
+		if (out_fh->len > sizeof(out_fh->data))
+			out_fh->len = sizeof(out_fh->data);
+		memcpy(out_fh->data, rp, out_fh->len);
+	}
+
+	kprintf("[NFS] LOOKUP: %s -> handle len=%u\n", component,
+	        out_fh ? out_fh->len : 0U);
+	return 0;
+}
+
+/* ── NFS path resolution (multi-component) ────────────────────── */
+
+/* Resolve a multi-component path relative to a mount point by
+ * iteratively looking up each path component (separated by '/').
+ * Returns 0 on success with the final entry's file handle in fh. */
+int nfs_path_resolve(int mount_id, const char *path,
+                      struct nfs_fhandle *fh)
+{
+	if (mount_id < 0 || mount_id >= nfs_mount_count)
+		return -EINVAL;
+	if (!nfs_mounts[mount_id].mounted)
+		return -ENOTCONN;
+	if (!path || !fh)
+		return -EINVAL;
+
+	struct nfs_mount_info *mnt = &nfs_mounts[mount_id];
+
+	/* Start from root FH */
+	struct nfs_fhandle current_fh;
+	memcpy(&current_fh, &mnt->root_fh, sizeof(current_fh));
+
+	/* Skip leading '/' */
+	const char *p = path;
+	while (*p == '/')
+		p++;
+
+	/* If path is empty or just "/", return root FH */
+	if (*p == '\0') {
+		memcpy(fh, &mnt->root_fh, sizeof(*fh));
+		return 0;
+	}
+
+	/* Walk path components */
+	char component[256];
+	while (*p) {
+		/* Extract next path component */
+		int ci = 0;
+		while (*p && *p != '/' && ci < (int)sizeof(component) - 1)
+			component[ci++] = *p++;
+		component[ci] = '\0';
+
+		/* Skip '/' separator */
+		while (*p == '/')
+			p++;
+
+		/* Look up this component relative to current FH */
+		struct nfs_fhandle next_fh;
+		int ret = nfs_lookup_component(mnt, &current_fh,
+		                                component, &next_fh);
+		if (ret < 0) {
+			kprintf("[NFS] path_resolve: failed at '%s': %d\n",
+			        component, ret);
+			return ret;
+		}
+
+		/* Advance to next FH for the next iteration */
+		memcpy(&current_fh, &next_fh, sizeof(current_fh));
+	}
+
+	/* Return the final entry's FH */
+	memcpy(fh, &current_fh, sizeof(*fh));
+	return 0;
+}
+
+/* ── NFS LOOKUP (legacy convenience wrapper) ──────────────────── */
+
+/* Look up a path relative to a mount, filling the file handle.
+ * Supports multi-component paths by delegating to nfs_path_resolve. */
 int nfs_lookup(int mount_id, const char *path, struct nfs_fhandle *fh)
 {
-    if (mount_id < 0 || mount_id >= nfs_mount_count)
-        return -EINVAL;
-    if (!nfs_mounts[mount_id].mounted)
-        return -ENOTCONN;
-
-    struct nfs_mount_info *mnt = &nfs_mounts[mount_id];
-
-    /* Build LOOKUP args: dir FH (root FH) + name */
-    uint8_t args[NFS_MAX_DATA];
-    uint8_t *ap = args;
-
-    /* Directory file handle */
-    xdr_put_u32(&ap, mnt->root_fh.len);
-    xdr_put_bytes(&ap, mnt->root_fh.data, mnt->root_fh.len);
-    /* Name */
-    xdr_put_string(&ap, path);
-
-    uint32_t args_len = (uint32_t)(ap - args);
-
-    uint8_t reply[NFS_MAX_DATA];
-    uint32_t reply_len = sizeof(reply);
-
-    int ret = nfs_rpc_call(mnt->server_ip, 100003, 3, NFSPROC3_LOOKUP,
-                            args, args_len, reply, &reply_len);
-    if (ret < 0) return ret;
-
-    const uint8_t *rp = reply;
-    uint32_t status = xdr_get_u32(&rp);
-    if (status != 0) {
-        /* Translate NFS3 error to errno */
-        if (status == NFS3ERR_NOENT) return -ENOENT;
-        if (status == NFS3ERR_ACCES) return -EACCES;
-        return -EIO;
-    }
-
-    /* Read object handle */
-    if (fh) {
-        fh->len = xdr_get_u32(&rp);
-        if (fh->len > sizeof(fh->data))
-            fh->len = sizeof(fh->data);
-        memcpy(fh->data, rp, fh->len);
-    }
-
-    kprintf("[NFS] LOOKUP: %s -> handle len=%u\n", path,
-            fh ? fh->len : 0U);
-    return 0;
+	return nfs_path_resolve(mount_id, path, fh);
 }
 
 /* ── NFS GETATTR ─────────────────────────────────────────────────── */

@@ -632,15 +632,32 @@ static void nfsd_proc_lookup(struct nfsd_rpc_state *rpc,
     /* Also decode to get the export index for FH encoding */
     nfsd_fh_decode(fh_data, fh_len, &export_idx, &dir_vnode);
 
+    /* Verify the dir FH resolves to an actual directory */
+    struct vfs_stat dir_check_st;
+    memset(&dir_check_st, 0, sizeof(dir_check_st));
+    int dir_ret = 0;
+    if (ret == 0)
+    	dir_ret = vfs_stat(dir_path, &dir_check_st);
+
     rpc_build_header(&p, rpc->xid, 1, RPC_SUCCESS);
+
     if (ret < 0 || !ex || !ex->valid) {
-        xdr_put_u32(&p, NFS3ERR_NOENT);
-        if (ex && ex->valid)
-            nfsd_encode_postop_attr(&p, &ex->st, 1);
-        else
-            nfsd_encode_postop_attr(&p, &ex->st, 0);
-        *reply_len = (uint32_t)(p - reply);
-        return;
+    	xdr_put_u32(&p, NFS3ERR_NOENT);
+    	if (ex && ex->valid)
+    		nfsd_encode_postop_attr(&p, &ex->st, 1);
+    	else
+    		nfsd_encode_postop_attr(&p, &ex->st, 0);
+    	*reply_len = (uint32_t)(p - reply);
+    	return;
+    }
+
+    /* Validate that the resolved path is a directory */
+    if (dir_ret < 0 || dir_check_st.type != VFS_TYPE_DIR) {
+    	xdr_put_u32(&p, NFS3ERR_NOTDIR);
+    	nfsd_encode_postop_attr(&p, &ex->st, 1);
+    	nfsd_encode_postop_attr(&p, &ex->st, 0);
+    	*reply_len = (uint32_t)(p - reply);
+    	return;
     }
 
     char full_path[NFSD_MAX_PATH];
