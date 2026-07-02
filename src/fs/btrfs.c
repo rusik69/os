@@ -1200,6 +1200,233 @@ static int btrfs_list_subvolumes(struct btrfs_priv *bp)
     return count;
 }
 
+/* ── Snapshot detection (read-only) ──────────────────────────────── */
+
+/**
+ * btrfs_detect_snapshots - Detect and report Btrfs snapshots (read-only)
+ * @bp: Btrfs private data (root_bytenr/level must be populated)
+ *
+ * Walks the root tree looking for ROOT_ITEM_KEY entries.  For each
+ * subvolume, examines the parent_uuid field: a non-zero parent_uuid
+ * indicates the subvolume is a snapshot (created via "btrfs subvolume
+ * snapshot").  Cross-references UUIDs to identify the parent subvolume
+ * by its objectid.
+ *
+ * The detection performs two passes over the root tree:
+ *   Pass 1: Collects all subvolume UUIDs into a local map.
+ *   Pass 2: For each subvolume with non-zero parent_uuid, looks up
+ *           the parent in the UUID map and logs the snapshot.
+ *
+ * Returns: The number of snapshots detected, or negative errno on
+ *          failure.
+ */
+static int btrfs_detect_snapshots(struct btrfs_priv *bp)
+{
+    uint8_t buf[4096];
+    uint32_t item_idx;
+    int exact;
+    int ret;
+    int snapshot_count;
+    int total_subvols;
+    uint64_t search_obj;
+    uint8_t  search_type;
+    uint64_t search_off;
+
+    /* Map UUID -> subvolume objectid (up to 256 subvolumes) */
+    struct {
+        uint64_t objectid;
+        uint8_t  uuid[16];
+    } uuid_map[256];
+    int num_uuid;
+
+    if (!bp)
+        return -EINVAL;
+
+    kprintf("[btrfs] Snapshot detection:\n");
+
+    num_uuid = 0;
+
+    /* Pass 1: collect all subvolume UUIDs */
+    search_obj = 0;
+    search_type = BTRFS_ROOT_ITEM_KEY;
+    search_off = 0;
+
+    while (num_uuid < 256) {
+        ret = btrfs_search_tree(bp, bp->root_bytenr, bp->root_level,
+                                 search_obj, search_type, search_off,
+                                 buf, sizeof(buf),
+                                 &item_idx, &exact);
+        if (ret < 0)
+            break;
+
+        struct btrfs_header *hdr = (struct btrfs_header *)buf;
+        if (item_idx >= hdr->nritems)
+            break;
+
+        struct btrfs_item *items = (struct btrfs_item *)
+            (buf + sizeof(struct btrfs_header));
+
+        uint64_t cur_obj = items[item_idx].key.objectid;
+        uint8_t  cur_typ = items[item_idx].key.type;
+        uint64_t cur_off = items[item_idx].key.offset;
+
+        /* Past all ROOT_ITEM_KEY items in the tree */
+        if (cur_typ != BTRFS_ROOT_ITEM_KEY)
+            break;
+
+        uint32_t off = items[item_idx].offset;
+        uint32_t sz  = items[item_idx].size;
+
+        if (off + sz <= bp->nodesize &&
+            sz >= sizeof(struct btrfs_root_item)) {
+            struct btrfs_root_item *ri =
+                (struct btrfs_root_item *)(buf + off);
+
+            /* Track subvolumes (objectid >= 256) and the FS_TREE root */
+            if (cur_obj >= BTRFS_FIRST_FREE_OBJECTID ||
+                cur_obj == BTRFS_FS_TREE_OBJECTID) {
+                uuid_map[num_uuid].objectid = cur_obj;
+                memcpy(uuid_map[num_uuid].uuid, ri->uuid, 16);
+                num_uuid++;
+            }
+        }
+
+        /* Advance search past this key to find next ROOT_ITEM_KEY */
+        search_off = cur_off + 1;
+        if (search_off == 0) {
+            search_type = cur_typ + 1;
+            if (search_type == 0)
+                search_obj = cur_obj + 1;
+        } else {
+            search_type = cur_typ;
+            search_obj = cur_obj;
+        }
+    }
+
+    kprintf("[btrfs]   Collected %d subvolume UUID(s)\n", num_uuid);
+
+    /* Pass 2: detect snapshots by checking parent_uuid */
+    snapshot_count = 0;
+    total_subvols = 0;
+
+    search_obj = 0;
+    search_type = BTRFS_ROOT_ITEM_KEY;
+    search_off = 0;
+
+    while (total_subvols < 256) {
+        uint8_t zero_uuid[16];
+        int resolved;
+        int i;
+
+        ret = btrfs_search_tree(bp, bp->root_bytenr, bp->root_level,
+                                 search_obj, search_type, search_off,
+                                 buf, sizeof(buf),
+                                 &item_idx, &exact);
+        if (ret < 0)
+            break;
+
+        struct btrfs_header *hdr = (struct btrfs_header *)buf;
+        if (item_idx >= hdr->nritems)
+            break;
+
+        struct btrfs_item *items = (struct btrfs_item *)
+            (buf + sizeof(struct btrfs_header));
+
+        uint64_t cur_obj = items[item_idx].key.objectid;
+        uint8_t  cur_typ = items[item_idx].key.type;
+        uint64_t cur_off = items[item_idx].key.offset;
+
+        if (cur_typ != BTRFS_ROOT_ITEM_KEY)
+            break;
+
+        uint32_t off = items[item_idx].offset;
+        uint32_t sz  = items[item_idx].size;
+
+        if (off + sz <= bp->nodesize &&
+            sz >= sizeof(struct btrfs_root_item)) {
+            struct btrfs_root_item *ri =
+                (struct btrfs_root_item *)(buf + off);
+
+            /* Consider only user-visible subvolumes */
+            if (cur_obj >= BTRFS_FIRST_FREE_OBJECTID) {
+                total_subvols++;
+
+                /* Check if parent_uuid is non-zero -> snapshot */
+                memset(zero_uuid, 0, 16);
+                if (memcmp(ri->parent_uuid, zero_uuid, 16) != 0) {
+                    /* Resolve parent subvolume by UUID cross-reference */
+                    resolved = 0;
+                    for (i = 0; i < num_uuid; i++) {
+                        if (memcmp(uuid_map[i].uuid,
+                                   ri->parent_uuid, 16) == 0) {
+                            kprintf("[btrfs]   Snapshot %llu "
+                                    "(parent=%llu otransid=%llu "
+                                    "stransid=%llu)\n",
+                                    (unsigned long long)cur_obj,
+                                    (unsigned long long)uuid_map[i].objectid,
+                                    (unsigned long long)ri->otransid,
+                                    (unsigned long long)ri->stransid);
+                            resolved = 1;
+                            break;
+                        }
+                    }
+                    if (!resolved) {
+                        kprintf("[btrfs]   Snapshot %llu "
+                                "(parent=unknown otransid=%llu "
+                                "stransid=%llu)\n",
+                                (unsigned long long)cur_obj,
+                                (unsigned long long)ri->otransid,
+                                (unsigned long long)ri->stransid);
+                    }
+                    snapshot_count++;
+                }
+            }
+
+            /* Also check FS_TREE for snapshot status */
+            if (cur_obj == BTRFS_FS_TREE_OBJECTID) {
+                memset(zero_uuid, 0, 16);
+                if (memcmp(ri->parent_uuid, zero_uuid, 16) != 0) {
+                    int resolved2;
+                    resolved2 = 0;
+                    for (i = 0; i < num_uuid; i++) {
+                        if (memcmp(uuid_map[i].uuid,
+                                   ri->parent_uuid, 16) == 0) {
+                            kprintf("[btrfs]   Snapshot %llu "
+                                    "(FS_TREE, parent=%llu)\n",
+                                    (unsigned long long)cur_obj,
+                                    (unsigned long long)uuid_map[i].objectid);
+                            resolved2 = 1;
+                            break;
+                        }
+                    }
+                    if (!resolved2) {
+                        kprintf("[btrfs]   Snapshot %llu "
+                                "(FS_TREE, parent=unknown)\n",
+                                (unsigned long long)cur_obj);
+                    }
+                    snapshot_count++;
+                }
+            }
+        }
+
+        /* Advance search past this key */
+        search_off = cur_off + 1;
+        if (search_off == 0) {
+            search_type = cur_typ + 1;
+            if (search_type == 0)
+                search_obj = cur_obj + 1;
+        } else {
+            search_type = cur_typ;
+            search_obj = cur_obj;
+        }
+    }
+
+    kprintf("[btrfs] Snapshot detection: %d snapshot(s) out of %d "
+            "subvolume(s) scanned\n",
+            snapshot_count, total_subvols);
+    return snapshot_count;
+}
+
 /* ── VFS operations ────────────────────────────────────────────── */
 
 /**
@@ -1751,6 +1978,9 @@ int btrfs_mount(const char *source, const char *target,
 
     /* List subvolumes (non-fatal — informational) */
     btrfs_list_subvolumes(bp);
+
+    /* Detect snapshots (non-fatal — informational) */
+    btrfs_detect_snapshots(bp);
 
     /* Register with VFS */
     ret = vfs_mount(target, &btrfs_ops, bp);
