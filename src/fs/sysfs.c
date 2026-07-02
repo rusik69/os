@@ -657,6 +657,9 @@ void __init sysfs_init(void) {
     /* /sys/devices/system/cpu/ — CPU hotplug online/offline interface */
     sysfs_create_cpu_hotplug_files();
 
+    /* /sys/devices/ per-device directories (PCI, etc.) */
+    sysfs_create_device_dirs();
+
     /* /sys/class/block/ - list block devices */
     sysfs_create_file("/sys/class/block", "sda\nsdb\n");
 

@@ -9,10 +9,10 @@
  * /sys/devices/, /sys/kernel/.
  *
  * Files can have static content or dynamic read/write callbacks.
- * Maximum: 64 entries.
+ * Maximum: 512 entries.
  */
 
-#define SYSFS_MAX_ENTRIES 64
+#define SYSFS_MAX_ENTRIES 512
 #define SYSFS_MAX_NAME    48
 
 /** Write callback for writable sysfs files. Returns 0 on success, -1 on error.
@@ -48,6 +48,10 @@ extern struct vfs_ops sysfs_vfs_ops;
 
 /* Initialise sysfs and pre-populate directories */
 void sysfs_init(void);
+
+/* Create per-device sysfs directories under /sys/devices/
+ * (PCI devices, platform devices, etc.).  Called from sysfs_init(). */
+void sysfs_create_device_dirs(void);
 
 /* Create a virtual file under /sys/<path> with static content */
 int sysfs_create_file(const char *path, const char *content);
