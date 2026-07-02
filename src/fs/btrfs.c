@@ -67,6 +67,77 @@ static int btrfs_read_node(struct btrfs_priv *bp, uint64_t bytenr,
     return 0;
 }
 
+/* ── Superblock parsing ───────────────────────────────────────── */
+
+/**
+ * btrfs_parse_superblock - Read, validate, and parse the Btrfs superblock
+ * @bp: Btrfs private data (dev_id must be set)
+ *
+ * Reads the primary superblock at offset BTRFS_SUPER_OFFSET (0x10000),
+ * validates the magic, performs sanity checks on key fields, and
+ * populates the btrfs_priv structure.
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+static int btrfs_parse_superblock(struct btrfs_priv *bp)
+{
+    uint8_t buf[BTRFS_SB_SIZE];
+    uint64_t sb_lba = BTRFS_SUPER_OFFSET / 512;
+    uint8_t dev_id = bp->dev_id;
+
+    /* Read 8 sectors (4096 bytes) for the primary superblock */
+    for (uint32_t i = 0; i < 8; i++) {
+        int ret = blockdev_read_sectors(dev_id, sb_lba + i, 1,
+                                         buf + i * 512);
+        if (ret < 0)
+            return -EIO;
+    }
+
+    /* Validate magic at offset 0x40 within the superblock */
+    static const uint8_t expected_magic[BTRFS_MAGIC_SIZE] = {
+        0x5F, 0x42, 0x48, 0x52, 0x66, 0x53, 0x5F, 0x4D  /* "_BHRfS_M" */
+    };
+    if (memcmp(buf + 0x40, expected_magic, BTRFS_MAGIC_SIZE) != 0)
+        return -EINVAL;
+
+    /* Cast to superblock structure */
+    struct btrfs_superblock *sb = (struct btrfs_superblock *)buf;
+
+    /* Sanity-check critical geometry fields */
+    if (sb->sectorsize == 0 || sb->nodesize == 0)
+        return -EINVAL;
+    if (sb->sectorsize > 65536 || sb->nodesize > 65536)
+        return -EINVAL;
+    if ((sb->sectorsize & (sb->sectorsize - 1U)) != 0U)
+        return -EINVAL;  /* not a power of 2 */
+    if ((sb->nodesize & (sb->nodesize - 1U)) != 0U)
+        return -EINVAL;
+
+    /* Check incompatible features — we only support MIXED_BACKREF (bit 0) */
+    if (sb->incompat_flags & ~(1ULL << 0))
+        return -EINVAL;
+
+    /* Populate btrfs_priv from superblock fields */
+    bp->sectorsize         = sb->sectorsize;
+    bp->nodesize           = sb->nodesize;
+    bp->chunk_root_bytenr  = sb->chunk_root;
+    bp->chunk_root_level   = sb->chunk_root_level;
+    bp->root_bytenr        = sb->root;
+    bp->root_level         = sb->root_level;
+    bp->num_chunks         = 0;
+
+    kprintf("[btrfs] superblock: gen=%llu, root=0x%llx, "
+            "chunk_root=0x%llx, total=%llu, "
+            "sectorsize=%u, nodesize=%u\n",
+            (unsigned long long)sb->generation,
+            (unsigned long long)sb->root,
+            (unsigned long long)sb->chunk_root,
+            (unsigned long long)sb->total_bytes,
+            sb->sectorsize, sb->nodesize);
+
+    return 0;
+}
+
 /* ── Logical to physical translation ──────────────────────────── */
 
 static int btrfs_chunk_map(struct btrfs_priv *bp, uint64_t logical,
@@ -1090,31 +1161,27 @@ static struct vfs_ops btrfs_ops = {
 
 int btrfs_probe(uint8_t dev_id)
 {
-    uint8_t buf[4096];
+    uint8_t buf[BTRFS_SB_SIZE];
     uint64_t sb_lba = BTRFS_SUPER_OFFSET / 512;
 
     /* Check device is at least 64KB */
     uint64_t total_sectors = blockdev_get_sectors(dev_id);
     if (total_sectors * 512 < BTRFS_MIN_DEV_SIZE)
-        return -1;
+        return -ENODEV;
 
-    /* Read first superblock copy at offset 0x10000 */
+    /* Read primary superblock copy at offset 0x10000 */
     for (uint32_t i = 0; i < 8; i++) {
         if (blockdev_read_sectors(dev_id, sb_lba + i, 1, buf + i * 512) != 0)
-            return -1;
+            return -EIO;
     }
 
-    /* Check magic (first 8 bytes of magic field at offset 0x40 in superblock) */
-    /* The magic field starts at byte 0x40 in the 4096-byte structure */
-    uint8_t *magic = buf + 0x40;
-    /* Expected magic: "_BHRfS_M" = {0x5F, 0x42, 0x48, 0x52, 0x66, 0x53, 0x5F, 0x4D} */
-    static const uint8_t expected_magic[8] = {
+    /* Check magic at offset 0x40: "_BHRfS_M" */
+    static const uint8_t expected_magic[BTRFS_MAGIC_SIZE] = {
         0x5F, 0x42, 0x48, 0x52, 0x66, 0x53, 0x5F, 0x4D
     };
-    if (memcmp(magic, expected_magic, 8) != 0)
-        return -1;
+    if (memcmp(buf + 0x40, expected_magic, BTRFS_MAGIC_SIZE) != 0)
+        return -EINVAL;
 
-    /* Also try second copy at offset 0x4000 (64MB) - simplified: just check first copy */
     kprintf("[btrfs] detected on dev %u\n", dev_id);
     return 0;
 }
@@ -1140,13 +1207,46 @@ MODULE_DESCRIPTION("Btrfs — read-only, single-device, non-raid");
 #endif
 
 /* ── btrfs_mount ─────────────────────────────────────── */
-int btrfs_mount(const char *source, const char *target, const char *type, unsigned long flags)
+int btrfs_mount(const char *source, const char *target,
+                const char *type, unsigned long flags)
 {
-    (void)source;
-    (void)target;
     (void)type;
     (void)flags;
-    kprintf("[btrfs] Mount Btrfs from %s on %s\n", source, target);
+
+    /* Determine device ID from source string ("dev0", "dev1", ...) */
+    uint8_t dev_id = 0;
+    if (source && source[0]) {
+        if (strncmp(source, "dev", 3) == 0 && source[3] >= '0' &&
+            source[3] <= '9')
+            dev_id = (uint8_t)(source[3] - '0');
+    }
+
+    /* Allocate and initialize private data */
+    struct btrfs_priv *bp = (struct btrfs_priv *)
+        kmalloc(sizeof(struct btrfs_priv));
+    if (!bp)
+        return -ENOMEM;
+    memset(bp, 0, sizeof(*bp));
+    bp->dev_id = dev_id;
+
+    /* Parse superblock into private data */
+    int ret = btrfs_parse_superblock(bp);
+    if (ret < 0) {
+        kprintf("[btrfs] mount failed: superblock parse error %d\n", ret);
+        kfree(bp);
+        return ret;
+    }
+
+    /* Register with VFS */
+    ret = vfs_mount(target, &btrfs_ops, bp);
+    if (ret < 0) {
+        kprintf("[btrfs] vfs_mount failed: %d\n", ret);
+        kfree(bp);
+        return ret;
+    }
+
+    kprintf("[btrfs] mounted %s on %s (nodesize=%u)\n",
+            source, target, bp->nodesize);
     return 0;
 }
 /* ── btrfs_umount ────────────────────────────────────── */
