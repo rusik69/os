@@ -30,6 +30,7 @@
 #include "netdevice.h"
 #include "vfs.h"
 #include "sound_oss.h"
+#include "tmpfs.h"
 
 MODULE_LICENSE("MIT");
 MODULE_VERSION("1.0");
@@ -348,6 +349,8 @@ static int ioctl_file_dispatch(struct process *p, int fd, uint64_t cmd,
 	case FS_IOC_SETFLAGS:
 	case FS_IOC_GETVERSION:
 	case FS_IOC_SETVERSION:
+	case TMPFS_IOC_MADVISE_MERGEABLE:
+	case TMPFS_IOC_UNMERGEABLE:
 		/* Dispatch filesystem-specific ioctls through VFS */
 		return vfs_ioctl(path, cmd, arg);
 

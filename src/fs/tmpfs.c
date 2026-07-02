@@ -12,6 +12,9 @@
 #include "page_allocator_ext.h"
 #include "swap.h"
 #include "hugetlb.h"
+#include "ksm.h"
+#include "ioctl.h"
+#include "syscall.h"
 
 static struct tmpfs_inode inodes[TMPFS_MAX_INODES];
 static int tmpfs_mounted = 0;
@@ -49,6 +52,7 @@ static int alloc_inode(void) {
             inodes[i].in_use = 1;
             inodes[i].is_huge = 0;
             inodes[i].is_swapped = 0;
+            inodes[i].ksm_registered = 0;
             inodes[i].swap_npages = 0;
             for (int j = 0; j < TMPFS_MAX_SWAP_PAGES; j++) {
                 inodes[i].swap_map[j].swap_dev = -1;
@@ -63,6 +67,11 @@ static int alloc_inode(void) {
 
 static void free_inode(int idx) {
     if (idx < 0 || idx >= TMPFS_MAX_INODES) return;
+
+    /* Unregister from KSM before freeing data pages */
+    if (inodes[idx].ksm_registered)
+        tmpfs_unregister_ksm(idx);
+
     /* Subtract freed data from the used-bytes counter */
     if (inodes[idx].data && inodes[idx].size > 0) {
         if (tmpfs_used_bytes >= inodes[idx].size)
@@ -627,6 +636,11 @@ static int tmpfs_write(void *priv, const char *path, const void *buf, uint32_t s
 
     /* Reallocate buffer if needed */
     if (inodes[idx].size < size || !inodes[idx].data) {
+        /* If KSM-registered, unregister old pages before freeing */
+        int was_ksm = inodes[idx].ksm_registered;
+        if (was_ksm)
+            tmpfs_unregister_ksm(idx);
+
         /* Free old allocation first (if any) */
         if (inodes[idx].data) {
             tmpfs_free_pages_or_kmem(inodes[idx].data, inodes[idx].data_phys,
@@ -644,6 +658,10 @@ static int tmpfs_write(void *priv, const char *path, const void *buf, uint32_t s
         inodes[idx].data_phys = new_phys;
         inodes[idx].is_huge = (size >= HUGETLB_PAGE_SIZE && new_phys != 0) ? 1 : 0;
         inodes[idx].numa_node = numa_home_node();
+
+        /* Re-register with KSM if the old pages were registered */
+        if (was_ksm)
+            tmpfs_register_ksm(idx);
     }
     memcpy(inodes[idx].data, buf, size);
     inodes[idx].size = size;
@@ -1106,6 +1124,64 @@ static int tmpfs_tmpfile(void *priv, uint32_t mode)
     return idx; /* return inode index as file handle */
 }
 
+/* ── tmpfs madvise — apply madvise advice to a tmpfs inode ──────── */
+
+/*
+ * tmpfs_madvise() - Apply madvise advice to a tmpfs inode's pages.
+ * @idx:    Index of the inode.
+ * @advice: madvise advice value (MADV_MERGEABLE or MADV_UNMERGEABLE).
+ *
+ * For MADV_MERGEABLE: registers the inode's page-allocated data pages
+ * with KSM for scanning and potential merging.
+ * For MADV_UNMERGEABLE: unregisters the inode's pages from KSM.
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int tmpfs_madvise(int idx, int advice)
+{
+    if (idx < 0 || idx >= TMPFS_MAX_INODES)
+        return -EINVAL;
+
+    switch (advice) {
+    case MADV_MERGEABLE:
+        return tmpfs_register_ksm(idx);
+    case MADV_UNMERGEABLE:
+        return tmpfs_unregister_ksm(idx);
+    default:
+        return -EINVAL;
+    }
+}
+
+/*
+ * tmpfs_ioctl() - Handle ioctl commands on tmpfs files.
+ * @priv: Filesystem private data (unused).
+ * @path: Absolute path to the file.
+ * @cmd:  ioctl command number.
+ * @arg:  ioctl argument (unused for MADVISE commands).
+ *
+ * Supported ioctls:
+ *   TMPFS_IOC_MADVISE_MERGEABLE — register file pages with KSM
+ *   TMPFS_IOC_UNMERGEABLE       — unregister file pages from KSM
+ */
+int tmpfs_ioctl(void *priv, const char *path, uint64_t cmd, uint64_t arg)
+{
+    (void)priv;
+    (void)arg;
+
+    int idx = find_inode(path);
+    if (idx < 0)
+        return -ENOENT;
+
+    switch (cmd) {
+    case TMPFS_IOC_MADVISE_MERGEABLE:
+        return tmpfs_madvise(idx, MADV_MERGEABLE);
+    case TMPFS_IOC_UNMERGEABLE:
+        return tmpfs_madvise(idx, MADV_UNMERGEABLE);
+    default:
+        return -ENOTTY;
+    }
+}
+
 struct vfs_ops tmpfs_vfs_ops = {
     .read        = tmpfs_read,
     .write       = tmpfs_write,
@@ -1120,6 +1196,7 @@ struct vfs_ops tmpfs_vfs_ops = {
     .mknod       = tmpfs_mknod,
     .rename      = tmpfs_rename,
     .tmpfile     = tmpfs_tmpfile,
+    .ioctl       = tmpfs_ioctl,
 };
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -1327,6 +1404,107 @@ static int tmpfs_sync(void *file)
 EXPORT_SYMBOL(tmpfs_swap_out_inode);
 EXPORT_SYMBOL(tmpfs_swap_in_inode);
 EXPORT_SYMBOL(tmpfs_try_evict);
+
+/* ── KSM (Kernel Same-page Merging) support ──────────── */
+
+/*
+ * tmpfs_register_ksm() - Register a tmpfs inode's data pages with KSM.
+ * @idx:  Index of the inode to register.
+ *
+ * Registers all page-allocated data pages of this inode with the KSM
+ * subsystem for scanning and potential merging.  Only works for
+ * physically-contiguous page allocations (data_phys != 0).
+ *
+ * Returns 0 on success, negative errno on failure.
+ * Returns 0 (no-op) if already registered or if the inode uses kmalloc'd
+ * buffers (which are not page-aligned for KSM).
+ */
+int tmpfs_register_ksm(int idx)
+{
+    if (idx < 0 || idx >= TMPFS_MAX_INODES)
+        return -EINVAL;
+    if (!inodes[idx].in_use)
+        return -ENOENT;
+    if (inodes[idx].type != TMPFS_TYPE_FILE)
+        return -EINVAL;
+    if (inodes[idx].ksm_registered)
+        return 0;  /* Already registered */
+    if (inodes[idx].is_swapped)
+        return -EOPNOTSUPP;  /* On swap — not in memory */
+    if (inodes[idx].data_phys == 0)
+        return -EOPNOTSUPP;  /* kmalloc'd buffer, not page-backed */
+
+    /* Compute page-aligned allocation size */
+    uint32_t alloc_size = inodes[idx].size;
+    if (alloc_size == 0)
+        return 0;  /* Empty file, nothing to register */
+
+    int order = order_for_size(alloc_size);
+    uint64_t alloc_bytes = (uint64_t)PAGE_SIZE << order;
+
+    /* Register with KSM using the kernel virtual address of the data */
+    uint64_t kaddr = (uint64_t)(uintptr_t)PHYS_TO_VIRT(inodes[idx].data_phys);
+    int numa = inodes[idx].numa_node;
+
+    int ret = ksm_register_region(kaddr, alloc_bytes, numa);
+    if (ret == 0)
+        inodes[idx].ksm_registered = 1;
+
+    return ret;
+}
+
+/*
+ * tmpfs_unregister_ksm() - Unregister a tmpfs inode's pages from KSM.
+ * @idx:  Index of the inode to unregister.
+ *
+ * Removes the data pages from KSM tracking.  Called automatically when
+ * the inode is freed or when data is reallocated (e.g., on write that
+ * changes the allocation size).
+ *
+ * Returns 0 on success, negative errno on failure.
+ * Returns 0 (no-op) if not currently registered.
+ */
+int tmpfs_unregister_ksm(int idx)
+{
+    if (idx < 0 || idx >= TMPFS_MAX_INODES)
+        return -EINVAL;
+    if (!inodes[idx].in_use)
+        return -ENOENT;
+    if (!inodes[idx].ksm_registered)
+        return 0;  /* Not registered, no-op */
+    if (inodes[idx].data_phys == 0)
+        return 0;  /* kmalloc'd, never registered */
+
+    /* Compute page-aligned allocation size */
+    uint32_t alloc_size = inodes[idx].size;
+    if (alloc_size == 0) {
+        inodes[idx].ksm_registered = 0;
+        return 0;
+    }
+
+    int order = order_for_size(alloc_size);
+    uint64_t alloc_bytes = (uint64_t)PAGE_SIZE << order;
+    uint64_t kaddr = (uint64_t)(uintptr_t)PHYS_TO_VIRT(inodes[idx].data_phys);
+
+    /* Unregister the entire region page-by-page */
+    uint64_t count = alloc_bytes / PAGE_SIZE;
+    int unreg_ok = 0;
+    for (uint64_t i = 0; i < count; i++) {
+        uint64_t page_kaddr = kaddr + i * PAGE_SIZE;
+        int r = ksm_unregister_region(page_kaddr);
+        if (r == 0)
+            unreg_ok++;
+    }
+
+    inodes[idx].ksm_registered = 0;
+    kprintf("[tmpfs] unregistered inode %d from KSM (%llu pages)\n",
+            idx, (unsigned long long)unreg_ok);
+    return 0;
+}
+
+/* ── Public exports for KSM API ────────────────────────── */
+EXPORT_SYMBOL(tmpfs_register_ksm);
+EXPORT_SYMBOL(tmpfs_unregister_ksm);
 
 /* ── Public exports for quota / size-limit API ────────── */
 EXPORT_SYMBOL(tmpfs_set_inode_limit);

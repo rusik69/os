@@ -305,6 +305,55 @@ int ksm_register_region_legacy(uint64_t addr, size_t size)
     return ksm_register_region(addr, size, 0);
 }
 
+/* ── Physical-address-based registration (with duplicate check) ────── */
+
+int ksm_register_phys(uint64_t phys, int numa_node)
+{
+    if (phys == 0 || (phys & 0xFFF) != 0)
+        return -EINVAL;
+
+    if (ksm_page_count >= KSM_MAX_PAGES)
+        return -ENOSPC;
+
+    /* Check for duplicates — the same physical page already tracked */
+    for (int i = 0; i < ksm_page_count; i++) {
+        if (ksm_pages[i].phys_addr == phys && !ksm_pages[i].merged)
+            return 0;  /* Already registered, no-op */
+    }
+
+    struct ksm_page *kp = &ksm_pages[ksm_page_count++];
+    kp->phys_addr = phys;
+    kp->hash      = ksm_hash_page(phys);
+    kp->merged    = 0;
+    kp->numa_node = (numa_node >= 0 && numa_node <= 127)
+                     ? (unsigned int)numa_node : 0;
+    kp->age       = 0;
+    kp->refcount  = 1;
+    return 0;
+}
+
+int ksm_unregister_phys(uint64_t phys)
+{
+    if (phys == 0 || (phys & 0xFFF) != 0)
+        return -EINVAL;
+
+    for (int i = 0; i < ksm_page_count; i++) {
+        if (ksm_pages[i].phys_addr == phys && !ksm_pages[i].merged) {
+            /* Remove by swapping with last element */
+            ksm_pages[i] = ksm_pages[--ksm_page_count];
+            /* Clear vacated slot */
+            memset(&ksm_pages[ksm_page_count], 0, sizeof(struct ksm_page));
+            /* Adjust scan position if needed */
+            if (ksm_scan_pos > i)
+                ksm_scan_pos--;
+            if (ksm_scan_pos >= ksm_page_count)
+                ksm_scan_pos = 0;
+            return 0;
+        }
+    }
+    return -ENOENT;
+}
+
 int ksm_unregister_region(uint64_t addr)
 {
     uint64_t phys = VIRT_TO_PHYS(addr);

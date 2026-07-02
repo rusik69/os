@@ -5,6 +5,8 @@
 #include "printf.h"
 #include "errno.h"
 #include "string.h"
+#include "cpu_topology.h"
+#include "ksm.h"
 
 /* ── Software-defined PTE bits (not in vmm.h) ────────────────────────── */
 #define PTE_COW      (1ULL << 9)   /* copy-on-write */
@@ -184,17 +186,40 @@ static void op_free(uint64_t phys, uint64_t *pte_ptr, uint64_t virt)
 
 /*
  * MADV_MERGEABLE: mark pages as candidates for KSM merging.
- * Since KSM scanning already checks for anonymous pages, we just
- * clear accessed/dirty to hint that they can be scanned.
+ * Clear accessed/dirty bits so the KSM scanner will consider them,
+ * and register the physical page with the KSM subsystem for scanning.
  */
 static void op_mergeable(uint64_t phys, uint64_t *pte_ptr, uint64_t virt)
 {
-    (void)phys;
     (void)virt;
+    if (!phys || phys == vmm_zero_page_frame)
+        return;
+
     /* Clear accessed/dirty to make them visible for KSM scanning */
     *pte_ptr &= ~(uint64_t)(PTE_ACCESSED | PTE_DIRTY);
     /* Ensure the pages are present and user-accessible */
     *pte_ptr |= PTE_PRESENT | PTE_USER;
+
+    /* Register the physical page with KSM for scanning and merging.
+     * ksm_register_phys() handles deduplication (same page won't be
+     * added twice), so it's safe to call on every madvise(). */
+    int numa = numa_home_node();
+    ksm_register_phys(phys, numa);
+}
+
+/*
+ * MADV_UNMERGEABLE: unmark pages as KSM mergeable candidates.
+ * Unregister the physical pages from KSM scanning so they will no
+ * longer be considered for merging.
+ */
+static void op_unmergeable(uint64_t phys, uint64_t *pte_ptr, uint64_t virt)
+{
+    (void)virt;
+    (void)pte_ptr;
+    if (!phys || phys == vmm_zero_page_frame)
+        return;
+
+    ksm_unregister_phys(phys);
 }
 
 /* ── State ─────────────────────────────────────────────────────────────── */
@@ -305,6 +330,11 @@ int madvise_free(uint64_t addr, uint64_t len)
 int madvise_mergeable(uint64_t addr, uint64_t len)
 {
     return walk_user_pages(addr, len, op_mergeable);
+}
+
+int madvise_unmergeable(uint64_t addr, uint64_t len)
+{
+    return walk_user_pages(addr, len, op_unmergeable);
 }
 
 /* ── Stub: madvise_remove ─────────────────────────────── */

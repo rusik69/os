@@ -8080,8 +8080,9 @@ static uint64_t sys_madvise(uint64_t addr, uint64_t len, uint64_t advice) {
             return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
         }
         case MADV_UNMERGEABLE: {
-            /* Unmark as KSM mergeable — no-op since we don't track merge state */
-            return 0;
+            /* Unmark as KSM mergeable — unregister from KSM */
+            int ret = madvise_unmergeable(addr, len);
+            return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
         }
         case MADV_NORMAL:
         case MADV_RANDOM:

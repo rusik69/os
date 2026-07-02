@@ -4,6 +4,7 @@
 #include "types.h"
 #include "vfs.h"
 #include "numa_mem.h"
+#include "ioctl.h"
 
 /*
  * tmpfs — RAM-backed filesystem for /tmp, /dev/shm, etc.
@@ -92,6 +93,10 @@ struct tmpfs_inode {
 
     /* Per-directory O(1) hash lookup table (NULL for non-directories) */
     struct tmpfs_dir_htable *dir_htable;
+
+    /* KSM (Kernel Same-page Merging) tracking: 1 = data pages are
+     * registered with KSM for scanning and potential merging */
+    int ksm_registered;
 };
 
 /* Mount an empty tmpfs — returns 0 on success */
@@ -245,5 +250,53 @@ uint64_t tmpfs_huge_get_alloc_count(void);
 uint64_t tmpfs_huge_get_free_count(void);
 uint64_t tmpfs_huge_get_split_count(void);
 uint64_t tmpfs_huge_get_fail_count(void);
+
+/* ── KSM (Kernel Same-page Merging) support ──────────────────────────── */
+
+/**
+ * tmpfs_register_ksm() - Register a tmpfs inode's data pages with KSM.
+ * @idx:  Index of the inode to register.
+ *
+ * Registers the pages backing this inode with the KSM subsystem so that
+ * identical pages across processes can be merged, saving memory.
+ * Only works for page-allocated inodes (data_phys != 0).
+ * Returns 0 on success, negative errno on failure.
+ */
+int tmpfs_register_ksm(int idx);
+
+/**
+ * tmpfs_unregister_ksm() - Unregister a tmpfs inode's pages from KSM.
+ * @idx:  Index of the inode to unregister.
+ *
+ * Removes the pages from KSM tracking, typically called when the inode's
+ * data is freed or reallocated.
+ * Returns 0 on success, negative errno on failure.
+ */
+int tmpfs_unregister_ksm(int idx);
+
+/* ── tmpfs ioctl commands ──────────────────────────────────────────── */
+
+#define TMPFS_IOC_MADVISE_MERGEABLE   _IO('t', 1)  /* Register file pages with KSM for merging */
+#define TMPFS_IOC_UNMERGEABLE         _IO('t', 2)  /* Unregister file pages from KSM */
+
+/**
+ * tmpfs_madvise() - Apply madvise advice to a tmpfs inode's pages.
+ * @idx:    Index of the inode.
+ * @advice: madvise advice value (MADV_MERGEABLE or MADV_UNMERGEABLE).
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int tmpfs_madvise(int idx, int advice);
+
+/**
+ * tmpfs_ioctl() - Handle ioctl commands on tmpfs files.
+ * @priv: Filesystem private data (unused).
+ * @path: Absolute path to the file.
+ * @cmd:  ioctl command number.
+ * @arg:  ioctl argument (unused for MADVISE commands).
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int tmpfs_ioctl(void *priv, const char *path, uint64_t cmd, uint64_t arg);
 
 #endif /* TMPFS_H */

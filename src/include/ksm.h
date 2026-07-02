@@ -27,6 +27,23 @@ int  ksm_is_enabled(void);
  */
 int ksm_register_region(uint64_t addr, size_t size, int numa_node);
 
+/* Register a single physical page for KSM scanning.
+ * @phys:      Physical address of the page (must be page-aligned, non-zero)
+ * @numa_node: NUMA node ID (0 for single-node systems)
+ * Returns 0 on success (or 0 if already registered), -EINVAL for bad addr,
+ * -ENOSPC if the tracking table is full.
+ *
+ * Unlike ksm_register_region(), this takes a physical address directly
+ * and checks for duplicates (same physical page won't be added twice).
+ */
+int ksm_register_phys(uint64_t phys, int numa_node);
+
+/* Unregister a single physical page from KSM scanning.
+ * @phys: Physical address of the page (must be page-aligned, non-zero)
+ * Returns 0 on success, -ENOENT if the page was not found.
+ */
+int ksm_unregister_phys(uint64_t phys);
+
 /* Legacy wrapper — registers with NUMA node 0 */
 int ksm_register_region_legacy(uint64_t addr, size_t size);
 
