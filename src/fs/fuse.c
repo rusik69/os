@@ -1471,6 +1471,39 @@ void fuse_page_cache_invalidate_node(uint64_t nodeid)
         page_cache_remove((uint64_t)nodeid, (uint64_t)b);
 }
 
+/*
+ * ── Notification dispatch across all mounts ──────────────────────────
+ *
+ * Iterates all active FUSE mounts and applies a daemon notification to
+ * each one.  Called from fuse_dev_write when oh.unique == 0.
+ *
+ * @notify_op: The notification opcode (FUSE_NOTIFY_CODE_*).
+ * @data:      Pointer to notification-specific payload.
+ * @len:       Length of the payload in bytes.
+ *
+ * Returns 0 on success, or a negative errno if no mounts were active.
+ * Per-mount errors are logged but the iteration continues.
+ */
+int fuse_process_notify(uint32_t notify_op,
+                         const void *data, int len)
+{
+    int handled = 0;
+
+    for (int i = 0; i < FUSE_MAX_MOUNTS; i++) {
+        if (g_fuse_mounts[i].active) {
+            int ret = fuse_notify_mount(&g_fuse_mounts[i],
+                                         notify_op, data, len);
+            if (ret == 0)
+                handled = 1;
+            else
+                kprintf("[fuse] Mount %d notification error: %d\n",
+                        i, ret);
+        }
+    }
+
+    return handled ? 0 : -ENOENT;
+}
+
 #include "module.h"
 fs_initcall(fuse_init);
 

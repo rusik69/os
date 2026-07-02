@@ -62,6 +62,40 @@ enum fuse_opcode {
     FUSE_FALLOCATE  = 43,
 };
 
+/* ── FUSE notification opcodes (daemon→kernel) ────────────────────── */
+enum fuse_notify_code {
+    FUSE_NOTIFY_CODE_POLL          = 1,
+    FUSE_NOTIFY_CODE_INVAL_INODE   = 2,
+    FUSE_NOTIFY_CODE_INVAL_ENTRY   = 3,
+    FUSE_NOTIFY_CODE_STORE         = 4,
+    FUSE_NOTIFY_CODE_RETRIEVE      = 5,
+    FUSE_NOTIFY_CODE_DELETE        = 6,
+};
+
+/* FUSE notify inode invalidation */
+struct fuse_notify_inval_inode_out {
+    uint64_t ino;
+    int64_t  off;
+    int64_t  len;
+} __attribute__((packed));
+
+/* FUSE notify entry invalidation */
+struct fuse_notify_inval_entry_out {
+    uint64_t parent;
+    uint32_t namelen;
+    uint32_t padding;
+    char     name[];
+} __attribute__((packed));
+
+/* FUSE notify delete */
+struct fuse_notify_delete_out {
+    uint64_t parent;
+    uint64_t child;
+    uint32_t namelen;
+    uint32_t padding;
+    char     name[];
+} __attribute__((packed));
+
 /* FUSE major/minor version */
 #define FUSE_KERNEL_VERSION     7
 #define FUSE_KERNEL_MINOR_VERSION 23
@@ -400,5 +434,35 @@ int fuse_release_dir_node(struct fuse_mount_info *mnt, uint64_t nodeid);
  * Called from fuse_notify.c when the daemon sends a forget or
  * invalidate notification. */
 void fuse_page_cache_invalidate_node(uint64_t nodeid);
+
+/* ── Notification handling (fuse_notify.c) ───────────────────────── */
+
+/**
+ * fuse_notify_mount — Process a FUSE notification for a single mount.
+ * @mnt:       The FUSE mount info.
+ * @notify_op: The notification opcode (FUSE_NOTIFY_CODE_*).
+ * @data:      Pointer to notification-specific payload.
+ * @len:       Length of the payload in bytes.
+ *
+ * Dispatches to the per-op handler for this mount.  Returns 0 on
+ * success, or a negative errno if the notification was unrecognised
+ * or malformed.
+ */
+int fuse_notify_mount(struct fuse_mount_info *mnt,
+                       uint32_t notify_op,
+                       const void *data, int len);
+
+/**
+ * fuse_process_notify — Process a FUSE notification across all mounts.
+ * @notify_op: The notification opcode (FUSE_NOTIFY_CODE_*).
+ * @data:      Pointer to notification-specific payload.
+ * @len:       Length of the payload in bytes.
+ *
+ * Iterates all active FUSE mounts and applies the notification to each.
+ * Called from fuse_dev_write when a notification (unique==0) arrives.
+ * Returns 0 on success, or a negative errno on error.
+ */
+int fuse_process_notify(uint32_t notify_op,
+                         const void *data, int len);
 
 #endif /* FUSE_H */

@@ -425,6 +425,45 @@ static int fuse_dev_write(void *priv, const void *data, uint32_t size)
     kprintf("[fuse_dev] WRITE: unique=%llu error=%d len=%u\n",
             (unsigned long long)unique, error, (unsigned int)total_len);
 
+    /*
+     * ── Notification detection ──────────────────────────────────────
+     *
+     * If unique == 0, this is a notification from the daemon, not a
+     * response to a pending request.  Notifications carry a notify
+     * opcode and payload in the write data after fuse_out_header.
+     *
+     * The daemon uses this path to push unsolicited events to the
+     * kernel — inode/entry invalidation, poll notifications, etc.
+     */
+    if (unique == 0) {
+        /* Extract the notification opcode from the payload */
+        uint32_t notify_op = 0;
+        const void *notify_data = NULL;
+        int notify_len = 0;
+
+        if (total_len > sizeof(struct fuse_out_header)) {
+            const uint8_t *payload =
+                (const uint8_t *)data + sizeof(struct fuse_out_header);
+            int payload_len = (int)(total_len - sizeof(struct fuse_out_header));
+
+            if (payload_len >= (int)sizeof(notify_op)) {
+                /* First 4 bytes are the notify opcode */
+                memcpy(&notify_op, payload, sizeof(notify_op));
+                notify_data = payload + sizeof(notify_op);
+                notify_len  = payload_len - (int)sizeof(notify_op);
+            }
+        }
+
+        kprintf("[fuse_dev] NOTIFICATION: op=0x%x data_len=%d\n",
+                (unsigned int)notify_op, notify_len);
+
+        /* Dispatch to the mount-level notification handler */
+        fuse_process_notify(notify_op, notify_data, notify_len);
+
+        /* Consume all bytes written by the daemon */
+        return (int)size;
+    }
+
     spinlock_irqsave_acquire(&g_fuse_dev.lock, &irq_flags);
 
     /* Find the matching request in the queue */
