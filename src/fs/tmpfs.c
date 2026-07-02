@@ -10,6 +10,7 @@
 #include "numa_mem.h"
 #include "cpu_topology.h"
 #include "page_allocator_ext.h"
+#include "swap.h"
 
 static struct tmpfs_inode inodes[TMPFS_MAX_INODES];
 static int tmpfs_mounted = 0;
@@ -29,6 +30,12 @@ static int alloc_inode(void) {
     for (int i = 1; i < TMPFS_MAX_INODES; i++) {
         if (!inodes[i].in_use) {
             inodes[i].in_use = 1;
+            inodes[i].is_swapped = 0;
+            inodes[i].swap_npages = 0;
+            for (int j = 0; j < TMPFS_MAX_SWAP_PAGES; j++) {
+                inodes[i].swap_map[j].swap_dev = -1;
+                inodes[i].swap_map[j].swap_slot = 0;
+            }
             return i;
         }
     }
@@ -45,13 +52,27 @@ static void free_inode(int idx) {
             tmpfs_used_bytes = 0;
     }
     /* Free data using the appropriate method */
-    tmpfs_free_pages_or_kmem(inodes[idx].data, inodes[idx].data_phys,
-                             inodes[idx].size);
+    if (inodes[idx].is_swapped) {
+        /* Inode is swapped out — free the swap slots instead */
+        for (uint32_t i = 0; i < inodes[idx].swap_npages; i++) {
+            if (inodes[idx].swap_map[i].swap_dev >= 0) {
+                swap_free_slot(inodes[idx].swap_map[i].swap_dev,
+                               inodes[idx].swap_map[i].swap_slot);
+                inodes[idx].swap_map[i].swap_dev  = -1;
+                inodes[idx].swap_map[i].swap_slot = 0;
+            }
+        }
+    } else {
+        tmpfs_free_pages_or_kmem(inodes[idx].data, inodes[idx].data_phys,
+                                 inodes[idx].size);
+    }
     inodes[idx].in_use = 0;
     inodes[idx].data = NULL;
     inodes[idx].data_phys = 0;
     inodes[idx].size = 0;
     inodes[idx].numa_node = 0;
+    inodes[idx].is_swapped = 0;
+    inodes[idx].swap_npages = 0;
 }
 
 static int find_inode(const char *path) {
@@ -164,6 +185,190 @@ static void tmpfs_free_pages_or_kmem(uint8_t *ptr, uint64_t phys,
     }
 }
 
+/* ══════════════════════════════════════════════════════════════════════
+ * ── Swap backing — page-out to swap device ──────────────────────────
+ * ══════════════════════════════════════════════════════════════════════ */
+
+/*
+ * tmpfs_swap_out_inode() - Evict all data pages of a file inode to the
+ * swap device.
+ *
+ * @idx:  Index of the inode to evict.
+ * Returns 0 on success, negative errno on failure.
+ *
+ * Each of the inode's page-sized chunks is written to the swap device
+ * via swap_out().  After all pages are safely on the swap device, the
+ * physical pages are freed and inodes[idx].is_swapped is set.
+ *
+ * Prerequisites:
+ *   - The inode must be a TMPFS_TYPE_FILE with page-allocated data
+ *     (data_phys != 0), and must NOT be already swapped out.
+ *   - The file size must not exceed TMPFS_MAX_SWAP_PAGES * PAGE_SIZE.
+ */
+int tmpfs_swap_out_inode(int idx)
+{
+    if (idx < 0 || idx >= TMPFS_MAX_INODES)
+        return -EINVAL;
+    if (!inodes[idx].in_use)
+        return -ENOENT;
+    if (inodes[idx].type != TMPFS_TYPE_FILE)
+        return -EINVAL;
+    if (inodes[idx].is_swapped)
+        return 0;                          /* already on swap */
+    if (inodes[idx].data_phys == 0)
+        return -EOPNOTSUPP;                /* kmalloc'd buffer, not swappable */
+
+    uint32_t npages = (inodes[idx].size + PAGE_SIZE - 1) / PAGE_SIZE;
+    if (npages > TMPFS_MAX_SWAP_PAGES)
+        return -ENOSPC;                    /* file too large for our swap map */
+
+    uint32_t i;
+    for (i = 0; i < npages; i++) {
+        uint64_t page_phys = inodes[idx].data_phys + (uint64_t)i * PAGE_SIZE;
+        uint32_t slot;
+        int dev;
+        int ret = swap_out(page_phys, &slot, &dev);
+        if (ret < 0) {
+            /* Roll back: free slots already allocated */
+            for (uint32_t j = 0; j < i; j++) {
+                swap_free_slot(inodes[idx].swap_map[j].swap_dev,
+                               inodes[idx].swap_map[j].swap_slot);
+                inodes[idx].swap_map[j].swap_dev  = -1;
+                inodes[idx].swap_map[j].swap_slot = 0;
+            }
+            inodes[idx].swap_npages = 0;
+            return ret;
+        }
+        inodes[idx].swap_map[i].swap_dev  = dev;
+        inodes[idx].swap_map[i].swap_slot = slot;
+    }
+
+    inodes[idx].swap_npages = npages;
+    inodes[idx].is_swapped  = 1;
+
+    /* Free the physical pages */
+    int order = order_for_size(inodes[idx].size);
+    free_node_pages(inodes[idx].data_phys, order);
+    inodes[idx].data      = NULL;
+    inodes[idx].data_phys = 0;
+
+    return 0;
+}
+
+/*
+ * tmpfs_swap_in_inode() - Restore a swapped-out inode's data from the
+ * swap device back into physical memory.
+ *
+ * @idx:  Index of the inode to restore.
+ * Returns 0 on success, negative errno on failure.
+ *
+ * Allocates fresh physically-contiguous pages, reads each swap slot
+ * back via swap_in(), frees the swap slots, and clears is_swapped.
+ * The inode is then ready for normal read/write access.
+ */
+int tmpfs_swap_in_inode(int idx)
+{
+    if (idx < 0 || idx >= TMPFS_MAX_INODES)
+        return -EINVAL;
+    if (!inodes[idx].in_use)
+        return -ENOENT;
+    if (!inodes[idx].is_swapped)
+        return 0;                          /* not swapped, nothing to do */
+    if (inodes[idx].swap_npages == 0)
+        return -EINVAL;                    /* swapped flag set but no swap map */
+
+    uint32_t size = inodes[idx].size;
+    int order = order_for_size(size);
+    uint64_t new_phys = 0;
+
+    /* Allocate fresh pages from the local NUMA node */
+    int node = numa_home_node();
+    new_phys = alloc_pages_node(node, GFP_KERNEL | GFP_ZERO, order);
+    if (new_phys == 0)
+        return -ENOMEM;
+
+    uint32_t npages = inodes[idx].swap_npages;
+    uint32_t i;
+    for (i = 0; i < npages; i++) {
+        int dev  = inodes[idx].swap_map[i].swap_dev;
+        uint32_t slot = inodes[idx].swap_map[i].swap_slot;
+        uint64_t page_phys = new_phys + (uint64_t)i * PAGE_SIZE;
+
+        int ret = swap_in(dev, slot, page_phys);
+        if (ret < 0) {
+            /* Free already-restored pages and the rest of the allocation */
+            if (i > 0)
+                free_node_pages(new_phys, order);
+            else
+                free_node_pages(new_phys, order);
+            return ret;
+        }
+    }
+
+    /* Free all swap slots now that data is back in memory */
+    for (i = 0; i < npages; i++) {
+        if (inodes[idx].swap_map[i].swap_dev >= 0) {
+            swap_free_slot(inodes[idx].swap_map[i].swap_dev,
+                           inodes[idx].swap_map[i].swap_slot);
+            inodes[idx].swap_map[i].swap_dev  = -1;
+            inodes[idx].swap_map[i].swap_slot = 0;
+        }
+    }
+
+    inodes[idx].data       = (uint8_t *)PHYS_TO_VIRT(new_phys);
+    inodes[idx].data_phys  = new_phys;
+    inodes[idx].swap_npages = 0;
+    inodes[idx].is_swapped  = 0;
+
+    return 0;
+}
+
+/*
+ * tmpfs_try_evict() - Try to evict idle tmpfs inodes under memory
+ * pressure.
+ *
+ * @target_pages:  Minimum number of pages to evict.
+ *
+ * Scans the inode table for page-allocated file inodes that are not
+ * already swapped out.  Evicts them until @target_pages have been
+ * freed.
+ *
+ * Returns the number of pages actually evicted (may be less than
+ * @target_pages if there aren't enough candidates), or negative errno.
+ *
+ * Designed to be called from the OOM / kswapd reclaim path.
+ */
+int tmpfs_try_evict(int target_pages)
+{
+    if (target_pages <= 0)
+        return 0;
+
+    int total_evicted = 0;
+
+    for (int i = 0; i < TMPFS_MAX_INODES && total_evicted < target_pages; i++) {
+        if (!inodes[i].in_use)
+            continue;
+        if (inodes[i].type != TMPFS_TYPE_FILE)
+            continue;
+        if (inodes[i].is_swapped)
+            continue;
+        if (inodes[i].data_phys == 0)
+            continue;                        /* kmalloc'd, can't be swapped */
+
+        uint32_t npages = (inodes[i].size + PAGE_SIZE - 1) / PAGE_SIZE;
+
+        int ret = tmpfs_swap_out_inode(i);
+        if (ret == 0) {
+            total_evicted += (int)npages;
+            kprintf("[tmpfs] evicted inode %d (%u pages) to swap\n",
+                    i, npages);
+        }
+        /* On error, try the next inode */
+    }
+
+    return total_evicted;
+}
+
 /* ── VFS operations ────────────────────────────────────────────── */
 
 static int tmpfs_read(void *priv, const char *path, void *buf, uint32_t max, uint32_t *out) {
@@ -171,6 +376,14 @@ static int tmpfs_read(void *priv, const char *path, void *buf, uint32_t max, uin
     int idx = find_inode(path);
     if (idx < 0 || inodes[idx].type != TMPFS_TYPE_FILE)
         return -EINVAL;
+
+    /* Transparently restore from swap if needed */
+    if (inodes[idx].is_swapped) {
+        int ret = tmpfs_swap_in_inode(idx);
+        if (ret < 0)
+            return ret;
+    }
+
     uint32_t copy = inodes[idx].size < max ? inodes[idx].size : max;
     if (copy > 0 && inodes[idx].data)
         memcpy(buf, inodes[idx].data, copy);
@@ -183,6 +396,13 @@ static int tmpfs_write(void *priv, const char *path, const void *buf, uint32_t s
     int idx = find_inode(path);
     if (idx < 0 || inodes[idx].type != TMPFS_TYPE_FILE)
         return -EINVAL;
+
+    /* Transparently restore from swap if needed */
+    if (inodes[idx].is_swapped) {
+        int ret = tmpfs_swap_in_inode(idx);
+        if (ret < 0)
+            return ret;
+    }
 
     /* ── Size-limit enforcement ──────────────────────────────────── */
     uint32_t old_size = inodes[idx].size;
@@ -373,12 +593,39 @@ static int tmpfs_truncate(void *priv, const char *path, uint32_t len) {
 
     uint32_t old_size = inodes[idx].size;
 
-    if (len == 0 && inodes[idx].data) {
-        kfree(inodes[idx].data);
-        inodes[idx].data = NULL;
-        inodes[idx].size = 0;
-    } else if (len < inodes[idx].size) {
-        inodes[idx].size = len;
+    if (inodes[idx].is_swapped) {
+        if (len == 0) {
+            /* Truncate to zero: free all swap slots */
+            for (uint32_t i = 0; i < inodes[idx].swap_npages; i++) {
+                if (inodes[idx].swap_map[i].swap_dev >= 0) {
+                    swap_free_slot(inodes[idx].swap_map[i].swap_dev,
+                                   inodes[idx].swap_map[i].swap_slot);
+                    inodes[idx].swap_map[i].swap_dev  = -1;
+                    inodes[idx].swap_map[i].swap_slot = 0;
+                }
+            }
+            inodes[idx].swap_npages = 0;
+            inodes[idx].is_swapped  = 0;
+            inodes[idx].size = 0;
+        } else {
+            /* Truncate to non-zero: swap in first, then truncate */
+            int ret = tmpfs_swap_in_inode(idx);
+            if (ret < 0)
+                return ret;
+            /* Fall through to normal truncate path below */
+            goto do_truncate;
+        }
+    } else {
+do_truncate:
+        if (len == 0 && inodes[idx].data) {
+            tmpfs_free_pages_or_kmem(inodes[idx].data, inodes[idx].data_phys,
+                                     inodes[idx].size);
+            inodes[idx].data = NULL;
+            inodes[idx].data_phys = 0;
+            inodes[idx].size = 0;
+        } else if (len < inodes[idx].size) {
+            inodes[idx].size = len;
+        }
     }
 
     /* Update used-bytes counter for shrinkage */
@@ -607,6 +854,12 @@ int tmpfs_mount(void) {
     inodes[0].numa_node = numa_home_node();
     inodes[0].uid = 0; inodes[0].gid = 0;
     inodes[0].mode = 0755;
+    inodes[0].is_swapped = 0;
+    inodes[0].swap_npages = 0;
+    for (int j = 0; j < TMPFS_MAX_SWAP_PAGES; j++) {
+        inodes[0].swap_map[j].swap_dev = -1;
+        inodes[0].swap_map[j].swap_slot = 0;
+    }
     tmpfs_mounted = 1;
     return 0;
 }
@@ -659,3 +912,8 @@ static int tmpfs_sync(void *file)
     (void)file;
     return 0;
 }
+
+/* ── Public exports for swap-backing API ──────────────── */
+EXPORT_SYMBOL(tmpfs_swap_out_inode);
+EXPORT_SYMBOL(tmpfs_swap_in_inode);
+EXPORT_SYMBOL(tmpfs_try_evict);

@@ -41,6 +41,14 @@ struct tmpfs_devno {
     uint16_t minor;
 };
 
+/* ── Swap-backing per-page tracking ──────────────────────────────── */
+#define TMPFS_MAX_SWAP_PAGES 32  /* covers files up to 128 KB */
+
+struct tmpfs_swap_slot {
+    int      swap_dev;       /* swap device index, -1 = slot unused */
+    uint32_t swap_slot;      /* slot index on swap_dev */
+};
+
 /* In-memory inode */
 struct tmpfs_inode {
     int      in_use;
@@ -56,6 +64,11 @@ struct tmpfs_inode {
     /* NUMA-aware page-based storage tracking */
     uint64_t data_phys;      /* physical addr of page allocation (0 = kmalloc'd) */
     int      numa_node;      /* NUMA node the data pages were allocated from */
+
+    /* Swap backing — page-out to swap device */
+    struct tmpfs_swap_slot swap_map[TMPFS_MAX_SWAP_PAGES];
+    uint32_t               swap_npages;   /* number of pages tracked in swap_map */
+    int                    is_swapped;    /* 1 = data is entirely on swap device */
 };
 
 /* Mount an empty tmpfs — returns 0 on success */
@@ -75,4 +88,42 @@ extern struct vfs_ops tmpfs_vfs_ops;
 /* Initialize tmpfs subsystem */
 void tmpfs_init(void);
 
-#endif
+/* ── Swap-backing API ──────────────────────────────────────────────── */
+
+/**
+ * tmpfs_swap_out_inode() - Evict a tmpfs inode's data pages to the swap device.
+ * @idx:  Index of the inode to evict.
+ * Returns 0 on success, negative errno on failure.
+ *
+ * Only works for TMPFS_TYPE_FILE inodes whose data was page-allocated
+ * (data_phys != 0).  Each page is written to the swap device via
+ * swap_out(), the physical pages are freed, and is_swapped is set to 1.
+ * On next read/write the pages are transparently restored.
+ */
+int tmpfs_swap_out_inode(int idx);
+
+/**
+ * tmpfs_swap_in_inode() - Restore a swapped-out tmpfs inode's data from swap.
+ * @idx:  Index of the inode to restore.
+ * Returns 0 on success, negative errno on failure.
+ *
+ * Allocates fresh physical pages and reads each swap slot back via
+ * swap_in().  Clears is_swapped and frees the swap slots.
+ */
+int tmpfs_swap_in_inode(int idx);
+
+/**
+ * tmpfs_try_evict() - Try to evict idle tmpfs inodes under memory pressure.
+ * @target_pages:  Try to evict at least this many pages worth of data.
+ *
+ * Scans the inode table for file inodes that are page-allocated and not
+ * already swapped, evicting the least-recently-written ones until
+ * @target_pages have been freed.  Returns the number of pages actually
+ * evicted, or negative errno.
+ *
+ * Designed to be called from the OOM / kswapd path when free memory
+ * is low.
+ */
+int tmpfs_try_evict(int target_pages);
+
+#endif /* TMPFS_H */
