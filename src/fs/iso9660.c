@@ -18,6 +18,10 @@
 #include "vfs.h"
 #include "errno.h"
 
+/* ISO9660 specifies a maximum directory nesting depth of 8 levels.
+ * This includes the root directory as level 0. */
+#define ISO9660_DIR_DEPTH_MAX 8
+
 struct iso9660_priv {
     uint8_t  dev_id;
     uint16_t block_size;       /* usually 2048 */
@@ -463,11 +467,15 @@ static int parse_one_dirent(struct iso9660_priv *ip,
     return (int)(rr_parsed & 0x7f); /* return RRIP_HAS_* flags (without 0x80 marker) */
 }
 
-/* Read all directory entries from a directory extent */
+/* Read all directory entries from a directory extent.
+ * Handles ISO9660 directory records correctly even when they span
+ * across sector boundaries (ISO 9660 §9.1.4 — records may cross
+ * logical sector boundaries and are logically contiguous). */
 static int iso_read_dir_entries(struct iso9660_priv *ip, uint32_t extent, uint32_t size,
                                  struct iso_rrip_entry *entries, int max)
 {
     uint8_t buf[2048];
+    uint8_t straddle_buf[2048];  /* buffer for cross-block records */
     uint32_t offset = 0;
     int count = 0;
 
@@ -477,12 +485,50 @@ static int iso_read_dir_entries(struct iso9660_priv *ip, uint32_t extent, uint32
 
         uint32_t pos = offset % ip->block_size;
         while (pos < ip->block_size && offset < size && count < max) {
-            struct iso_dir_record *rec = (struct iso_dir_record *)(buf + pos);
-            if (rec->length == 0) { pos++; offset++; continue; }
-            if (rec->length < 33) break;
+            const struct iso_dir_record *rec = (const struct iso_dir_record *)(buf + pos);
 
-            /* Parse this entry with Rock Ridge */
-            parse_one_dirent(ip, buf + pos, rec->length, &entries[count]);
+            if (rec->length == 0) {
+                /* Zero-length record means the rest of this block is padding.
+                 * Skip to the next block. */
+                uint32_t skip = ip->block_size - pos;
+                pos = ip->block_size;
+                offset += skip;
+                continue;
+            }
+
+            /* ISO 9660 §9.1.4: minimum directory record length is 33 bytes
+             * (fixed fields + 1-byte name).  Shorter records are invalid. */
+            if (rec->length < 33)
+                break;
+
+            /* Check if this record spans across the block boundary.
+             * If so, we need to copy both parts into a contiguous buffer. */
+            if (pos + rec->length > ip->block_size) {
+                /* Copy the part within the current block */
+                uint32_t first_part = ip->block_size - pos;
+                memcpy(straddle_buf, buf + pos, first_part);
+
+                /* Read the next block and copy the remainder */
+                if (offset + first_part < size) {
+                    uint32_t next_lba = extent + (offset + first_part) / ip->block_size;
+                    uint8_t next_buf[2048];
+                    if (iso_read_block(ip, next_lba, next_buf) < 0)
+                        break;
+
+                    uint32_t second_part = rec->length - first_part;
+                    if (second_part > ip->block_size)
+                        second_part = ip->block_size;
+                    memcpy(straddle_buf + first_part, next_buf, second_part);
+
+                    /* Parse from the combined buffer */
+                    parse_one_dirent(ip, straddle_buf, rec->length, &entries[count]);
+                } else {
+                    break;  /* truncated record */
+                }
+            } else {
+                /* Record fits entirely within this block — normal case */
+                parse_one_dirent(ip, buf + pos, rec->length, &entries[count]);
+            }
 
             count++;
             pos += rec->length;
@@ -495,7 +541,8 @@ static int iso_read_dir_entries(struct iso9660_priv *ip, uint32_t extent, uint32
 
 /* Resolve path to extent.
  * Uses Joliet root directory when Joliet (UCS-2) filenames are available,
- * falling back to the ISO9660 PVD root otherwise. */
+ * falling back to the ISO9660 PVD root otherwise.
+ * Enforces ISO 9660 directory depth limit of 8 levels. */
 static int iso9660_resolve(struct iso9660_priv *ip, const char *path,
                             uint32_t *extent, uint32_t *size)
 {
@@ -519,6 +566,10 @@ static int iso9660_resolve(struct iso9660_priv *ip, const char *path,
     /* Read root directory */
     n = iso_read_dir_entries(ip, *extent, *size, entries, 128);
     if (n <= 0) return -1;
+
+    /* ISO 9660 §6.8.2.1: directory depth shall not exceed 8 levels.
+     * Root is level 0, each '/' adds one level. */
+    int depth = 0;
 
     while (*p) {
         const char *end = p;
@@ -613,10 +664,10 @@ static int iso9660_resolve(struct iso9660_priv *ip, const char *path,
 
                 /* Resolve the symlink target recursively with depth limit.
                  * Linux allows max 40 symlink follows (SYMLOOP_MAX). */
-                int depth = 0;
+                int sdepth = 0;
                 const char *sp = link_target;
                 while (*sp) {
-                    if (depth++ > 40) {
+                    if (sdepth++ > 40) {
                         kprintf("iso9660: symlink depth limit exceeded\n");
                         return -ELOOP;
                     }
@@ -649,6 +700,13 @@ static int iso9660_resolve(struct iso9660_priv *ip, const char *path,
                     sp = send;
                     while (*sp == '/') sp++;
                     if (*sp) {
+                        /* Check directory depth limit before descending */
+                        if (depth >= ISO9660_DIR_DEPTH_MAX) {
+                            kprintf("iso9660: max directory depth (%d) exceeded "
+                                    "during symlink follow\n", ISO9660_DIR_DEPTH_MAX);
+                            return -ELOOP;
+                        }
+                        depth++;
                         /* Read next directory level */
                         n = iso_read_dir_entries(ip, *extent, *size, entries, 128);
                         if (n <= 0) return -1;
@@ -672,6 +730,15 @@ static int iso9660_resolve(struct iso9660_priv *ip, const char *path,
         p = end;
         while (*p == '/') p++;
         if (!*p) break;
+
+        /* Enforce ISO 9660 directory depth limit (max 8 levels).
+         * Root is at depth 0, each '/' traversal adds a level. */
+        depth++;
+        if (depth > ISO9660_DIR_DEPTH_MAX) {
+            kprintf("iso9660: max directory depth (%d) exceeded\n",
+                    ISO9660_DIR_DEPTH_MAX);
+            return -ELOOP;
+        }
 
         /* Read next level */
         n = iso_read_dir_entries(ip, *extent, *size, entries, 128);
