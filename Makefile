@@ -240,6 +240,7 @@ C_SRCS = src/kernel/kernel.c \
          src/fs/fat32_lfn.c \
          src/fs/iso9660.c \
          src/fs/iso9660_rr.c \
+         src/fs/iso9660_joliet.c \
          src/fs/bufcache.c \
          src/fs/page_cache.c \
          src/fs/fstab.c \

@@ -304,4 +304,33 @@ int iso9660_rr_apply_px(const struct iso_rrip_entry *de, struct vfs_stat *st);
  * Fills in dev_major and dev_minor if PN was present. */
 void iso9660_rr_apply_pn(const struct iso_rrip_entry *de, struct vfs_stat *st);
 
+/* ── Joliet extension helpers (iso9660_joliet.c) ─────────────────── */
+
+/* Convert a single UCS-2 Basic Multilingual Plane codepoint to UTF-8.
+ * @cp    UCS-2 codepoint value (0–0xFFFF)
+ * @out   Output buffer (must have at least 4 bytes of space)
+ * Returns the number of UTF-8 bytes written (1–3). */
+int joliet_ucs2_cp_to_utf8(uint16_t cp, char *out);
+
+/* Convert a UCS-2 Big Endian filename (Joliet format) to UTF-8.
+ * @ucs2           Pointer to UCS-2BE data (2 bytes per character)
+ * @ucs2_len_bytes Length of the UCS-2 data IN BYTES
+ * @out            Destination buffer for UTF-8 result
+ * @out_max        Size of destination buffer (including NUL terminator)
+ * Returns the number of characters written (excluding NUL), or 0. */
+int joliet_ucs2be_to_utf8(const char *ucs2, int ucs2_len_bytes,
+                           char *out, int out_max);
+
+/* Check if a Supplementary Volume Descriptor is a Joliet SVD.
+ * Returns 1 if the escape sequences indicate Joliet, 0 otherwise. */
+int joliet_is_joliet_svd(const struct iso_supplementary_desc *svd);
+
+/* Extract Joliet root directory from a Joliet SVD.
+ * @svd         Valid Joliet SVD (confirmed by joliet_is_joliet_svd)
+ * @extent      Output: root directory LBA
+ * @size        Output: root directory size in bytes
+ * Returns 0 on success, -1 on invalid arguments. */
+int joliet_get_joliet_root(const struct iso_supplementary_desc *svd,
+                            uint32_t *extent, uint32_t *size);
+
 #endif /* ISO9660_H */
