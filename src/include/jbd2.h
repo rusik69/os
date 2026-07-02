@@ -163,6 +163,40 @@ struct jbd2_journal {
     uint8_t  uuid[16];           /* Journal UUID */
 };
 
+/* ── Transaction commit ─────────────────────────────────────────────── */
+
+/* Transaction handle state */
+#define JBD2_T_STATE_ACTIVE     0
+#define JBD2_T_STATE_COMMITTING 1
+#define JBD2_T_STATE_DONE       2
+
+/* Maximum tags that fit in one descriptor block for 4096-byte blocks.
+ * Actual max depends on block_size; this is the upper bound. */
+#define JBD2_MAX_TAGS_PER_BLOCK \
+    ((4096 - (int)sizeof(struct jbd2_header)) / (int)sizeof(struct jbd2_block_tag))
+
+/* In-memory transaction handle.
+ *
+ * Created by jbd2_journal_start(), populated by jbd2_journal_get_write_access()
+ * and jbd2_journal_dirty_metadata(), and finalized by jbd2_commit_transaction()
+ * or jbd2_journal_stop().
+ *
+ * The handle tracks one atomic journal transaction.  During commit, a
+ * descriptor block, all data blocks, and a commit block are written to the
+ * journal device, atomically finalizing the transaction.
+ */
+struct jbd2_handle {
+    struct jbd2_journal *h_journal;   /* Owning journal */
+    uint32_t h_sequence;              /* Transaction sequence number */
+    uint32_t h_num_blocks;            /* Number of blocks currently registered */
+    uint32_t h_capacity;              /* Max blocks this handle can hold */
+    int      h_state;                 /* JBD2_T_STATE_* */
+
+    /* Arrays of registered blocks (parallel arrays, length = h_capacity) */
+    uint32_t  *h_fs_blocknrs;         /* Filesystem block numbers */
+    uint8_t  **h_data;                /* Data block content to journal */
+};
+
 /* ── Return values / error codes ────────────────────────────────────── */
 
 #define JBD2_OK              0  /* Success */
@@ -228,6 +262,80 @@ int jbd2_load_superblock(struct jbd2_journal *journal, uint8_t dev_id,
  *          JBD2_STATE_ERROR if journal error is recorded.
  */
 int jbd2_get_state(const struct jbd2_journal *journal);
+
+/* ── Transaction commit API ─────────────────────────────────────────── */
+
+/*
+ * jbd2_journal_start — begin a new journal transaction.
+ *
+ * @journal:   initialized journal structure
+ * @max_blocks: maximum number of blocks to be journaled in this transaction
+ *
+ * Allocates and returns a new transaction handle.  The caller must later
+ * call either jbd2_commit_transaction() to commit, or jbd2_journal_stop()
+ * to discard.
+ *
+ * Returns: pointer to handle on success, NULL on failure (allocation error).
+ */
+struct jbd2_handle *jbd2_journal_start(struct jbd2_journal *journal,
+                                        uint32_t max_blocks);
+
+/*
+ * jbd2_journal_get_write_access — register a block for journaling.
+ *
+ * @handle:      active transaction handle
+ * @fs_blocknr:  filesystem block number of the block being journaled
+ * @data:        pointer to the block's data content (will be copied)
+ *
+ * The block's data is copied to an internal buffer so it can be written
+ * to the journal during commit.  The caller may overwrite the original
+ * block after this call returns.
+ *
+ * Returns: 0 on success, negative errno on failure.
+ */
+int jbd2_journal_get_write_access(struct jbd2_handle *handle,
+                                   uint32_t fs_blocknr,
+                                   const uint8_t *data);
+
+/*
+ * jbd2_journal_dirty_metadata — mark a previously-registered block as dirty.
+ *
+ * @handle:      active transaction handle
+ * @fs_blocknr:  filesystem block number (must match a previously registered block)
+ * @data:        updated data content (will replace the saved copy)
+ *
+ * In this implementation, this is identical to get_write_access except
+ * that it updates the saved data for an already-registered block.
+ *
+ * Returns: 0 on success, negative errno on failure.
+ */
+int jbd2_journal_dirty_metadata(struct jbd2_handle *handle,
+                                 uint32_t fs_blocknr,
+                                 const uint8_t *data);
+
+/*
+ * jbd2_commit_transaction — commit the transaction to the journal.
+ *
+ * @handle: active transaction handle (freed by this call)
+ *
+ * Writes a descriptor block, all registered data blocks, and a commit
+ * block to the journal device.  On success the journal superblock is
+ * updated to reflect the new transaction.
+ *
+ * Returns: number of blocks committed on success (> 0),
+ *          negative errno on failure.
+ */
+int jbd2_commit_transaction(struct jbd2_handle *handle);
+
+/*
+ * jbd2_journal_stop — discard an uncommitted transaction handle.
+ *
+ * @handle: transaction handle to discard (freed by this call)
+ *
+ * Releases all resources associated with the handle without writing
+ * anything to the journal.
+ */
+void jbd2_journal_stop(struct jbd2_handle *handle);
 
 /*
  * jbd2_init — initialize the JBD2 subsystem.

@@ -237,9 +237,491 @@ int jbd2_get_state(const struct jbd2_journal *journal)
 /* ── Internal I/O helpers ──────────────────────────────────────────── */
 
 /*
- * Read one journal block (journal->block_size bytes) from the device.
- * Handles the block-size to 512-byte-sector conversion internally.
+ * Forward declarations for static helpers defined later in this file.
  */
+static int jbd2_read_block(const struct jbd2_journal *journal,
+                            uint32_t block_num, uint8_t *buf);
+static int jbd2_write_fs_block(const struct jbd2_journal *journal,
+                                uint32_t block_num, const uint8_t *buf);
+
+/*
+ * Write one journal block (journal->block_size bytes) to the journal
+ * area of the device.  The journal occupies blocks 0 through
+ * journal->total_blocks - 1.
+ */
+static int jbd2_write_journal_block(const struct jbd2_journal *journal,
+                                     uint32_t block_num,
+                                     const uint8_t *buf)
+{
+    uint32_t sectors_per_block = journal->block_size / 512;
+    uint64_t lba = (uint64_t)block_num * sectors_per_block;
+
+    for (uint32_t i = 0; i < sectors_per_block; i++) {
+        if (blockdev_write_sectors((int)journal->dev_id,
+                                    (uint32_t)(lba + i), 1,
+                                    buf + i * 512) != 0)
+            return JBD2_ERR_IO;
+    }
+    return JBD2_OK;
+}
+
+/* ── Transaction commit API ────────────────────────────────────────── */
+
+struct jbd2_handle *jbd2_journal_start(struct jbd2_journal *journal,
+                                        uint32_t max_blocks)
+{
+    struct jbd2_handle *handle;
+
+    if (!journal || max_blocks == 0)
+        return NULL;
+
+    /* Clamp to a reasonable maximum */
+    if (max_blocks > 2048)
+        max_blocks = 2048;
+
+    handle = (struct jbd2_handle *)kmalloc(sizeof(*handle));
+    if (!handle)
+        return NULL;
+
+    memset(handle, 0, sizeof(*handle));
+
+    /* Allocate parallel arrays for block tracking */
+    handle->h_fs_blocknrs = (uint32_t *)kmalloc(
+        max_blocks * sizeof(uint32_t));
+    if (!handle->h_fs_blocknrs) {
+        kfree(handle);
+        return NULL;
+    }
+
+    handle->h_data = (uint8_t **)kmalloc(
+        max_blocks * sizeof(uint8_t *));
+    if (!handle->h_data) {
+        kfree(handle->h_fs_blocknrs);
+        kfree(handle);
+        return NULL;
+    }
+
+    memset(handle->h_fs_blocknrs, 0, max_blocks * sizeof(uint32_t));
+    memset(handle->h_data, 0, max_blocks * sizeof(uint8_t *));
+
+    handle->h_journal = journal;
+    handle->h_sequence = journal->sequence;
+    handle->h_num_blocks = 0;
+    handle->h_capacity = max_blocks;
+    handle->h_state = JBD2_T_STATE_ACTIVE;
+
+    kprintf("[jbd2]  transaction seq=%u started (max %u blocks)\n",
+            handle->h_sequence, max_blocks);
+
+    return handle;
+}
+
+int jbd2_journal_get_write_access(struct jbd2_handle *handle,
+                                   uint32_t fs_blocknr,
+                                   const uint8_t *data)
+{
+    uint8_t *block_copy;
+
+    if (!handle || !data)
+        return -EINVAL;
+
+    if (handle->h_state != JBD2_T_STATE_ACTIVE)
+        return -EINVAL;
+
+    if (handle->h_num_blocks >= handle->h_capacity)
+        return -ENOSPC;
+
+    /* Allocate and copy the block data */
+    block_copy = (uint8_t *)kmalloc(handle->h_journal->block_size);
+    if (!block_copy)
+        return -ENOMEM;
+
+    memcpy(block_copy, data, handle->h_journal->block_size);
+
+    /* Register in the handle */
+    handle->h_fs_blocknrs[handle->h_num_blocks] = fs_blocknr;
+    handle->h_data[handle->h_num_blocks] = block_copy;
+    handle->h_num_blocks++;
+
+    return 0;
+}
+
+int jbd2_journal_dirty_metadata(struct jbd2_handle *handle,
+                                 uint32_t fs_blocknr,
+                                 const uint8_t *data)
+{
+    uint32_t i;
+
+    if (!handle || !data)
+        return -EINVAL;
+
+    if (handle->h_state != JBD2_T_STATE_ACTIVE)
+        return -EINVAL;
+
+    /* Find the previously-registered block and update its data */
+    for (i = 0; i < handle->h_num_blocks; i++) {
+        if (handle->h_fs_blocknrs[i] == fs_blocknr) {
+            memcpy(handle->h_data[i], data,
+                   handle->h_journal->block_size);
+            return 0;
+        }
+    }
+
+    /* Block not found — register it as a new block */
+    return jbd2_journal_get_write_access(handle, fs_blocknr, data);
+}
+
+void jbd2_journal_stop(struct jbd2_handle *handle)
+{
+    uint32_t i;
+
+    if (!handle)
+        return;
+
+    /* Free any data blocks that were allocated */
+    for (i = 0; i < handle->h_num_blocks; i++) {
+        if (handle->h_data[i])
+            kfree(handle->h_data[i]);
+    }
+
+    if (handle->h_fs_blocknrs)
+        kfree(handle->h_fs_blocknrs);
+
+    if (handle->h_data)
+        kfree(handle->h_data);
+
+    handle->h_state = JBD2_T_STATE_DONE;
+    kfree(handle);
+}
+
+/* ── Transaction descriptor writing ────────────────────────────────── */
+
+/*
+ * Write one descriptor block containing as many tags as will fit.
+ *
+ * @journal:      journal to write to
+ * @handle:       transaction handle
+ * @start_tag:    index of first tag to write in handle->h_fs_blocknrs[]
+ * @num_tags:     number of tags to include
+ * @journal_block: block number in the journal to write the descriptor to
+ * @data_start:   first block number in the journal for data blocks
+ *
+ * Returns: 0 on success, negative error code on failure.
+ */
+static int jbd2_write_descriptor_block(
+    const struct jbd2_journal *journal,
+    const struct jbd2_handle *handle,
+    uint32_t start_tag, uint32_t num_tags,
+    uint32_t journal_block, uint32_t data_start)
+{
+    uint32_t block_size;
+    uint8_t *buf;
+    struct jbd2_header *hdr;
+    struct jbd2_block_tag *tags;
+    uint32_t tag_offset;
+    uint32_t i;
+    int ret;
+
+    block_size = journal->block_size;
+
+    buf = (uint8_t *)kmalloc(block_size);
+    if (!buf)
+        return -ENOMEM;
+
+    memset(buf, 0, block_size);
+
+    /* Fill in the header */
+    hdr = (struct jbd2_header *)buf;
+    hdr->h_magic = JBD2_MAGIC_NUMBER;
+    hdr->h_blocktype = JBD2_DESCRIPTOR_BLOCK;
+    hdr->h_sequence = handle->h_sequence;
+
+    /* Fill in tags */
+    tag_offset = sizeof(struct jbd2_header);
+    for (i = 0; i < num_tags; i++) {
+        if (tag_offset + sizeof(struct jbd2_block_tag) > block_size)
+            break;
+
+        tags = (struct jbd2_block_tag *)(buf + tag_offset);
+        tags->t_blocknr = handle->h_fs_blocknrs[start_tag + i];
+        tags->t_flags = 0;
+
+        tag_offset += sizeof(struct jbd2_block_tag);
+    }
+
+    /* Set LAST_TAG on the final tag in this descriptor */
+    if (num_tags > 0) {
+        tags = (struct jbd2_block_tag *)(
+            buf + sizeof(struct jbd2_header)
+            + (num_tags - 1) * sizeof(struct jbd2_block_tag));
+        tags->t_flags |= JBD2_FLAG_LAST_TAG;
+    }
+
+    /* Write the descriptor block */
+    ret = jbd2_write_journal_block(journal, journal_block, buf);
+    if (ret != JBD2_OK)
+        kprintf("[jbd2]  failed to write descriptor block at %u\n",
+                journal_block);
+
+    kfree(buf);
+    return ret;
+}
+
+/* ── Transaction commit ────────────────────────────────────────────── */
+
+int jbd2_commit_transaction(struct jbd2_handle *handle)
+{
+    struct jbd2_journal *journal;
+    uint32_t block_size;
+    uint32_t total_blocks;
+    uint32_t first_data;
+    uint32_t i;
+    uint32_t j;
+    uint32_t tags_per_block;
+    uint32_t num_tags;
+    uint32_t desc_blocks;
+    uint32_t journal_pos;
+    uint32_t data_pos;
+    uint32_t start_pos;
+    uint8_t *commit_buf;
+    struct jbd2_header *commit_hdr;
+    int ret;
+
+    if (!handle || !handle->h_journal)
+        return -EINVAL;
+
+    if (handle->h_state != JBD2_T_STATE_ACTIVE)
+        return -EINVAL;
+
+    if (handle->h_num_blocks == 0) {
+        /* No blocks to journal — nothing to commit */
+        kprintf("[jbd2]  transaction seq=%u has zero blocks, "
+                "nothing to commit\n", handle->h_sequence);
+        jbd2_journal_stop(handle);
+        return 0;
+    }
+
+    journal = handle->h_journal;
+    handle->h_state = JBD2_T_STATE_COMMITTING;
+
+    block_size = journal->block_size;
+    total_blocks = journal->total_blocks;
+    first_data = journal->first_data_block;
+    num_tags = handle->h_num_blocks;
+
+    /* Calculate how many descriptor blocks we need */
+    tags_per_block = (block_size - sizeof(struct jbd2_header))
+                     / sizeof(struct jbd2_block_tag);
+    if (tags_per_block == 0) {
+        kprintf("[jbd2]  block size %u too small for tags\n",
+                block_size);
+        ret = JBD2_ERR_BLOCK_SIZE;
+        goto out_err;
+    }
+
+    desc_blocks = (num_tags + tags_per_block - 1) / tags_per_block;
+
+    /* Find a free location in the journal.
+     * We start writing at the current s_start or first_data_block,
+     * whichever is valid.  If the journal tail is at 0xFFFFFFFF (empty),
+     * start at first_data_block. */
+    if (journal->start_block == 0xFFFFFFFF ||
+        journal->start_block == 0)
+        journal_pos = first_data;
+    else
+        journal_pos = journal->start_block;
+
+    /* Move past any already-committed transactions to find free space.
+     * For simplicity, we append after the current start if it's valid,
+     * wrapping around as needed. */
+    start_pos = journal_pos;
+
+    kprintf("[jbd2]  committing seq=%u: %u block(s) at journal "
+            "block %u, %u desc block(s)\n",
+            handle->h_sequence, num_tags, journal_pos, desc_blocks);
+
+    /* Write descriptor blocks */
+    for (i = 0; i < desc_blocks; i++) {
+        uint32_t tags_this_desc;
+        uint32_t start_tag;
+        uint32_t desc_block;
+
+        start_tag = i * tags_per_block;
+        tags_this_desc = num_tags - start_tag;
+        if (tags_this_desc > tags_per_block)
+            tags_this_desc = tags_per_block;
+
+        desc_block = journal_pos;
+        data_pos = journal_pos + 1;
+
+        ret = jbd2_write_descriptor_block(
+            journal, handle,
+            start_tag, tags_this_desc,
+            desc_block, data_pos);
+        if (ret != JBD2_OK) {
+            kprintf("[jbd2]  descriptor write failed at block %u\n",
+                    desc_block);
+            goto out_err;
+        }
+
+        journal_pos++; /* Past the descriptor */
+
+        /* Write data blocks for this descriptor */
+        for (j = 0; j < tags_this_desc; j++) {
+            uint32_t data_block = journal_pos;
+            uint32_t idx = start_tag + j;
+
+            /* Handle circular wrap-around within journal area */
+            if (data_block >= total_blocks)
+                data_block = first_data;
+
+            if (data_block >= total_blocks) {
+                kprintf("[jbd2]  data block %u exceeds journal "
+                        "bounds\n", data_block);
+                ret = JBD2_ERR_BLOCK_SIZE;
+                goto out_err;
+            }
+
+            ret = jbd2_write_journal_block(
+                journal, data_block,
+                handle->h_data[idx]);
+            if (ret != JBD2_OK) {
+                kprintf("[jbd2]  data block write failed at %u "
+                        "(fs block %u)\n",
+                        data_block,
+                        handle->h_fs_blocknrs[idx]);
+                goto out_err;
+            }
+
+            journal_pos++;
+        }
+    }
+
+    /* Write the commit block */
+    if (journal_pos >= total_blocks)
+        journal_pos = first_data;
+
+    if (journal_pos >= total_blocks) {
+        kprintf("[jbd2]  commit block position %u invalid\n",
+                journal_pos);
+        ret = JBD2_ERR_BLOCK_SIZE;
+        goto out_err;
+    }
+
+    commit_buf = (uint8_t *)kmalloc(block_size);
+    if (!commit_buf) {
+        ret = -ENOMEM;
+        goto out_err;
+    }
+
+    memset(commit_buf, 0, block_size);
+    commit_hdr = (struct jbd2_header *)commit_buf;
+    commit_hdr->h_magic = JBD2_MAGIC_NUMBER;
+    commit_hdr->h_blocktype = JBD2_COMMIT_BLOCK;
+    commit_hdr->h_sequence = handle->h_sequence;
+
+    ret = jbd2_write_journal_block(journal, journal_pos, commit_buf);
+    kfree(commit_buf);
+
+    if (ret != JBD2_OK) {
+        kprintf("[jbd2]  failed to write commit block at %u\n",
+                journal_pos);
+        goto out_err;
+    }
+
+    kprintf("[jbd2]  commit block written at %u\n", journal_pos);
+
+    /* Advance past the commit block for next start position */
+    journal_pos++;
+    if (journal_pos >= total_blocks)
+        journal_pos = first_data;
+
+    /* Update the journal superblock with new start and sequence */
+    journal->start_block = start_pos;
+    journal->sequence = handle->h_sequence + 1;
+    journal->errno_val = 0;
+
+    /* Write the updated superblock */
+    {
+        uint8_t *sb_buf;
+        struct jbd2_superblock *sb;
+
+        sb_buf = (uint8_t *)kmalloc(JBD2_SUPERBLOCK_SIZE);
+        if (!sb_buf) {
+            ret = -ENOMEM;
+            goto out_err;
+        }
+
+        memset(sb_buf, 0, JBD2_SUPERBLOCK_SIZE);
+
+        /* Read current superblock */
+        ret = jbd2_read_block(journal, 0, sb_buf);
+        if (ret != JBD2_OK) {
+            kfree(sb_buf);
+            kprintf("[jbd2]  failed to read superblock for update\n");
+            goto out_err;
+        }
+
+        sb = (struct jbd2_superblock *)sb_buf;
+
+        if (sb->s_header.h_magic != JBD2_MAGIC_NUMBER) {
+            kfree(sb_buf);
+            kprintf("[jbd2]  invalid superblock during commit\n");
+            ret = JBD2_ERR_BAD_MAGIC;
+            goto out_err;
+        }
+
+        /* Update fields */
+        sb->s_start = start_pos;
+        sb->s_sequence = handle->h_sequence + 1;
+        sb->s_header.h_sequence = handle->h_sequence + 1;
+        sb->s_errno = 0;
+
+        /* Write back */
+        ret = jbd2_write_fs_block(journal, 0, sb_buf);
+        kfree(sb_buf);
+
+        if (ret != JBD2_OK) {
+            kprintf("[jbd2]  failed to write updated superblock\n");
+            goto out_err;
+        }
+
+        kprintf("[jbd2]  superblock updated: start=%u, seq=%u\n",
+                start_pos, handle->h_sequence + 1);
+    }
+
+    /* Free handle resources */
+    for (i = 0; i < handle->h_num_blocks; i++) {
+        if (handle->h_data[i])
+            kfree(handle->h_data[i]);
+    }
+    kfree(handle->h_fs_blocknrs);
+    kfree(handle->h_data);
+    handle->h_state = JBD2_T_STATE_DONE;
+    kfree(handle);
+
+    kprintf("[jbd2]  transaction seq=%u committed (%u block(s))\n",
+            handle->h_sequence, num_tags);
+    return (int)num_tags;
+
+out_err:
+    /* Free handle resources on error */
+    if (handle) {
+        for (i = 0; i < handle->h_num_blocks; i++) {
+            if (handle->h_data[i])
+                kfree(handle->h_data[i]);
+        }
+        if (handle->h_fs_blocknrs)
+            kfree(handle->h_fs_blocknrs);
+        if (handle->h_data)
+            kfree(handle->h_data);
+        handle->h_state = JBD2_T_STATE_DONE;
+        kfree(handle);
+    }
+    return ret;
+}
+
+/* ── Read one journal block ─────────────────────────────────────────── */
 static int jbd2_read_block(const struct jbd2_journal *journal,
                             uint32_t block_num, uint8_t *buf)
 {
