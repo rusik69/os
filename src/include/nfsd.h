@@ -127,6 +127,7 @@ struct nfsd_export {
     uint16_t anon_uid;
     uint16_t anon_gid;
     int    read_only;                  /* 1 = read-only export, 0 = read-write */
+    uint32_t generation;               /* export generation (invalidates old FHs) */
     int    num_access;                 /* number of entries in access_list */
     struct nfsd_export_access access_list[NFSD_MAX_ACCESS];
 };

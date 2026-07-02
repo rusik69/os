@@ -23,6 +23,7 @@
 #include "errno.h"
 #include "initcall.h"
 #include "fs.h"
+#include "crc.h"
 
 #ifdef MODULE
 #include "module.h"
@@ -33,6 +34,15 @@
 static struct nfsd_export nfsd_exports[NFSD_MAX_EXPORTS];
 static int nfsd_num_exports = 0;
 static int nfsd_server_running = 0;
+
+/* Server boot epoch — every nfsd_init() generates a new value.
+ * FHs from previous server instances are automatically rejected. */
+static uint32_t nfsd_server_epoch = 0;
+
+/* Monotonically increasing counter assigned to each new export.
+ * Every export add gets a unique generation; old FHs referencing a
+ * prior generation are stale. */
+static uint32_t nfsd_export_gen_counter = 1;
 
 /* Active mount tracking (for MOUNTPROC3_DUMP) */
 #define NFSD_MAX_ACTIVE_MOUNTS 64
@@ -132,6 +142,7 @@ int nfsd_add_export_ex(const char *export_path, const char *local_path,
     ex->anon_uid = anon_uid;
     ex->anon_gid = anon_gid;
     ex->read_only = read_only;
+    ex->generation = nfsd_export_gen_counter++;
 
     /* Copy access list */
     ex->num_access = 0;
@@ -553,18 +564,25 @@ static struct nfsd_export *nfsd_find_export(const char *path)
 /* ── File handle to vnode mapping ─────────────────────────────────────── */
 
 /*
- * NFSv3 file handles embed an export index and a vnode ID.  The vnode ID
- * is our internal handle into the path mapping cache, which resolves
- * (export_idx, vnode_id) -> local filesystem path.
+ * NFSv3 file handle format v1 (20 bytes on the wire):
+ *   byte  0:     magic = 0xFD
+ *   byte  1:     version = 0x01
+ *   bytes 2-3:   CRC16 (big-endian, of bytes 0..19 with CRC field = 0)
+ *   bytes 4-7:   server_epoch (big-endian uint32)
+ *   bytes 8-11:  export_generation (big-endian uint32)
+ *   bytes 12-15: export_idx (big-endian int32)
+ *   bytes 16-19: vnode_id (big-endian uint32)
  *
- * FH wire format (12 bytes, but we transmit 8 for compatibility):
- *   Bytes 0-3:  export index (big-endian uint32)
- *   Bytes 4-7:  vnode ID     (big-endian uint32)
+ * The epoch + generation pair prevents replay of handles from prior
+ * server instances or prior export lifecycles.  CRC16 provides basic
+ * wire-corruption and forgery detection.
  *
- * On receipt we accept any FH_len >= 8.
+ * Old 8-byte handles (export_idx + vnode_id only) are still accepted
+ * on decode for backward compatibility during upgrades.
  */
-
-#define NFSD_FH_HANDLE_SIZE   8   /* bytes on the wire */
+#define NFSD_FH_MAGIC         0xFD
+#define NFSD_FH_VERSION_1     0x01
+#define NFSD_FH_V1_SIZE       20
 #define NFSD_PATH_MAP_SIZE    512 /* entries in the path map */
 
 struct nfsd_path_entry {
@@ -578,27 +596,88 @@ static struct nfsd_path_entry nfsd_path_map[NFSD_PATH_MAP_SIZE];
 static int  nfsd_path_map_count = 0;
 static uint32_t nfsd_next_vnode_id = 2; /* 0 = invalid, 1 = reserved for root */
 
-/* Encode an NFS file handle from export index + vnode ID */
+/* Encode an NFS file handle from export index + vnode ID.
+ * Produces V1 format (20 bytes) with magic + CRC16 + epoch + generation. */
 static void nfsd_fh_encode(uint8_t *fh, uint32_t *fh_len,
                             int export_idx, uint32_t vnode_id)
 {
-    fh[0] = (uint8_t)(export_idx >> 24);
-    fh[1] = (uint8_t)(export_idx >> 16);
-    fh[2] = (uint8_t)(export_idx >> 8);
-    fh[3] = (uint8_t)(export_idx);
-    fh[4] = (uint8_t)(vnode_id >> 24);
-    fh[5] = (uint8_t)(vnode_id >> 16);
-    fh[6] = (uint8_t)(vnode_id >> 8);
-    fh[7] = (uint8_t)(vnode_id);
-    *fh_len = NFSD_FH_HANDLE_SIZE;
+    uint8_t tmp[NFSD_FH_V1_SIZE];
+
+    memset(tmp, 0, sizeof(tmp));
+
+    /* Get the export's generation (0 if invalid/out of range) */
+    uint32_t gen = 0;
+    if (export_idx >= 0 && export_idx < nfsd_num_exports &&
+        nfsd_exports[export_idx].valid)
+        gen = nfsd_exports[export_idx].generation;
+
+    /* byte 0: magic */
+    tmp[0] = NFSD_FH_MAGIC;
+    /* byte 1: version */
+    tmp[1] = NFSD_FH_VERSION_1;
+    /* bytes 2-3: CRC16 placeholder (filled in below) */
+
+    /* bytes 4-7: server_epoch */
+    tmp[4] = (uint8_t)(nfsd_server_epoch >> 24);
+    tmp[5] = (uint8_t)(nfsd_server_epoch >> 16);
+    tmp[6] = (uint8_t)(nfsd_server_epoch >> 8);
+    tmp[7] = (uint8_t)(nfsd_server_epoch);
+
+    /* bytes 8-11: export_generation */
+    tmp[8]  = (uint8_t)(gen >> 24);
+    tmp[9]  = (uint8_t)(gen >> 16);
+    tmp[10] = (uint8_t)(gen >> 8);
+    tmp[11] = (uint8_t)(gen);
+
+    /* bytes 12-15: export_idx */
+    tmp[12] = (uint8_t)(export_idx >> 24);
+    tmp[13] = (uint8_t)(export_idx >> 16);
+    tmp[14] = (uint8_t)(export_idx >> 8);
+    tmp[15] = (uint8_t)(export_idx);
+
+    /* bytes 16-19: vnode_id */
+    tmp[16] = (uint8_t)(vnode_id >> 24);
+    tmp[17] = (uint8_t)(vnode_id >> 16);
+    tmp[18] = (uint8_t)(vnode_id >> 8);
+    tmp[19] = (uint8_t)(vnode_id);
+
+    /* CRC16 over entire buffer (CRC field itself is zeroed) */
+    uint16_t crc = crc16(0, tmp, NFSD_FH_V1_SIZE);
+    tmp[2] = (uint8_t)(crc >> 8);
+    tmp[3] = (uint8_t)(crc);
+
+    memcpy(fh, tmp, NFSD_FH_V1_SIZE);
+    *fh_len = NFSD_FH_V1_SIZE;
 }
 
 /* Decode a file handle into export index + vnode ID.
- * Returns 0 on success, -ESTALE if handle is too short. */
+ * Returns 0 on success, -ESTALE if handle is invalid. */
 static int nfsd_fh_decode(const uint8_t *fh, uint32_t fh_len,
                             int *export_idx, uint32_t *vnode_id)
 {
-    if (fh_len < NFSD_FH_HANDLE_SIZE)
+    /* Try V1 format (20 bytes with magic) */
+    if (fh_len >= NFSD_FH_V1_SIZE && fh[0] == NFSD_FH_MAGIC) {
+        uint8_t tmp[NFSD_FH_V1_SIZE];
+        memcpy(tmp, fh, NFSD_FH_V1_SIZE);
+
+        /* Verify CRC16 */
+        uint16_t stored_crc = ((uint16_t)tmp[2] << 8) | tmp[3];
+        tmp[2] = 0;
+        tmp[3] = 0;
+        uint16_t calc_crc = crc16(0, tmp, NFSD_FH_V1_SIZE);
+        if (stored_crc != calc_crc)
+            return -ESTALE;
+
+        /* Extract fields */
+        *export_idx = ((int)tmp[12] << 24) | ((int)tmp[13] << 16) |
+                      ((int)tmp[14] << 8)  | tmp[15];
+        *vnode_id   = ((uint32_t)tmp[16] << 24) | ((uint32_t)tmp[17] << 16) |
+                      ((uint32_t)tmp[18] << 8)  | tmp[19];
+        return 0;
+    }
+
+    /* Fallback: old 8-byte format (legacy, for upgrade compatibility) */
+    if (fh_len < 8)
         return -ESTALE;
 
     *export_idx = ((int)fh[0] << 24) | ((int)fh[1] << 16) |
@@ -679,6 +758,23 @@ static int nfsd_fh_resolve(const uint8_t *fh_data, uint32_t fh_len,
         return -ESTALE;
 
     *ex = &nfsd_exports[export_idx];
+
+    /* V1-specific validation: check epoch and export generation */
+    if (fh_len >= NFSD_FH_V1_SIZE && fh_data[0] == NFSD_FH_MAGIC) {
+        /* Check server epoch */
+        uint32_t epoch = ((uint32_t)fh_data[4] << 24) |
+                         ((uint32_t)fh_data[5] << 16) |
+                         ((uint32_t)fh_data[6] << 8)  | fh_data[7];
+        if (epoch != nfsd_server_epoch)
+            return -ESTALE;
+
+        /* Check export generation */
+        uint32_t fh_gen = ((uint32_t)fh_data[8] << 24) |
+                          ((uint32_t)fh_data[9] << 16) |
+                          ((uint32_t)fh_data[10] << 8) | fh_data[11];
+        if (fh_gen != nfsd_exports[export_idx].generation)
+            return -ESTALE;
+    }
 
     /* Vnode ID 1 is the export root */
     if (vnode_id == 1) {
@@ -1092,7 +1188,7 @@ static void nfsd_proc_lookup(struct nfsd_rpc_state *rpc,
 
         xdr_put_u32(&p, NFS3_OK);
         /* Object handle */
-        uint8_t raw_fh[8];
+        uint8_t raw_fh[NFSD_FH_V1_SIZE];
         uint32_t raw_fh_len = 0;
         nfsd_fh_encode(raw_fh, &raw_fh_len, export_idx, vnode_id);
         xdr_put_u32(&p, raw_fh_len);
@@ -1499,7 +1595,7 @@ static void mountd_proc_mnt(struct nfsd_rpc_state *rpc,
 
         xdr_put_u32(&p, NFS3_OK);
         /* File handle: encode with vnode_id=1 (reserved root) */
-        uint8_t raw_fh[8];
+        uint8_t raw_fh[NFSD_FH_V1_SIZE];
         uint32_t raw_fh_len = 0;
         nfsd_fh_encode(raw_fh, &raw_fh_len, export_idx, 1);
         xdr_put_u32(&p, raw_fh_len);
@@ -1860,6 +1956,12 @@ int __init nfsd_init(void)
     memset(nfsd_path_map, 0, sizeof(nfsd_path_map));
     nfsd_path_map_count = 0;
     nfsd_next_vnode_id = 2; /* 0 = invalid, 1 = reserved for export root */
+
+    /* Initialize server epoch — all FHs from prior boot are now stale */
+    nfsd_server_epoch = (uint32_t)(timer_get_ticks() ^ 0xDEADBEEF);
+    if (nfsd_server_epoch == 0)
+        nfsd_server_epoch = 1;
+    nfsd_export_gen_counter = 1;
 
     /* Initialize write verifier */
     nfsd_writeverf = 0;
