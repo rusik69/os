@@ -215,6 +215,54 @@ int vfs_fallocate(const char *path, int mode, uint32_t offset, uint32_t len) {
 }
 
 /* ====================================================================
+ * 10b. Sparse file seek (SEEK_DATA / SEEK_HOLE)
+ * ==================================================================== */
+
+int vfs_seek(const char *path, uint64_t offset, int whence) {
+    char ap[128];
+    /* Simple abs-path resolution */
+    if (path[0] == '/') {
+        strncpy(ap, path, 127);
+    } else {
+        ap[0] = '/'; ap[1] = '\0';
+        strncat(ap, path, 126);
+    }
+    ap[127] = '\0';
+
+    struct vfs_mount *m = NULL;
+    /* Resolve mount */
+    extern struct vfs_mount mounts[VFS_MAX_MOUNTS];
+    extern int num_mounts;
+    size_t best_len = 0;
+    for (int i = 0; i < num_mounts; i++) {
+        size_t mlen = strlen(mounts[i].mountpoint);
+        if (mlen > best_len && strncmp(ap, mounts[i].mountpoint, mlen) == 0 &&
+            (ap[mlen] == '\0' || ap[mlen] == '/')) {
+            m = &mounts[i];
+            best_len = mlen;
+        }
+    }
+
+    if (!m) return -EOPNOTSUPP;
+
+    /* If the filesystem has a seek op, use it */
+    if (m->ops && m->ops->seek)
+        return m->ops->seek(m->priv, ap, offset, whence);
+
+    /* Fallback: for SEEK_DATA, return offset if within file;
+     * for SEEK_HOLE, return file size (no holes). */
+    struct vfs_stat st;
+    if (vfs_stat(ap, &st) < 0)
+        return -EINVAL;
+    if (offset >= st.size)
+        return st.size;
+    if (whence == 3) /* SEEK_DATA */
+        return (int)offset;
+    /* SEEK_HOLE — no holes, return file size */
+    return (int)st.size;
+}
+
+/* ====================================================================
  * 11. FS Encryption for SMTF (using crypto API)
  * ==================================================================== */
 

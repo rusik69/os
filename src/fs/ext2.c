@@ -22,6 +22,7 @@
 #include "heap.h"
 #include "vfs.h"
 #include "timer.h"
+#include "syscall.h"
 
 #ifdef MODULE
 #include "module.h"
@@ -143,15 +144,16 @@ static int ext2_inode_set_size(struct ext2_priv *ep,
         }
         /* Store upper 32 bits in i_dir_acl (repurposed field) */
         inode->i_dir_acl = (uint32_t)(size >> 32);
-        /* Track 512-byte sector count.  For files > 2TB the 32-bit
-         * i_blocks field wraps; for practical filesystem sizes we
-         * store the full count modulo 2^32. */
-        inode->i_blocks = (uint32_t)((size + 511) / 512);
     } else {
         /* File fits in 32 bits — no special handling needed */
         inode->i_dir_acl = 0;
-        inode->i_blocks = (uint32_t)((size + 511) / 512);
     }
+
+    /* NOTE: i_blocks is NOT updated here.  For sparse files,
+     * i_blocks must count ONLY the allocated 512-byte sectors,
+     * not the file size divided by 512.  The write, truncate,
+     * and fallocate paths update i_blocks directly as blocks
+     * are allocated or freed. */
 
     return 0;
 }
@@ -2354,6 +2356,7 @@ static int ext2_write_file_data(struct ext2_priv *ep,
 	uint32_t data_off = offset;
 
 	for (uint32_t ib = start_block; ib < end_block; ib++) {
+
 		uint8_t block_buf[4096];
 		uint32_t block_off = (ib == start_block)
 		                    ? offset % ep->block_size : 0;
@@ -2361,8 +2364,10 @@ static int ext2_write_file_data(struct ext2_priv *ep,
 		if (copy_size > size - (data_off - offset))
 			copy_size = size - (data_off - offset);
 
+
 		int64_t pbn = ext2_get_block_num(ep, inode, ib);
 		uint32_t phys_block = 0;
+
 
 		if (pbn == 0) {
 			/* Hole or sparse — allocate new block */
@@ -2370,12 +2375,14 @@ static int ext2_write_file_data(struct ext2_priv *ep,
 			if (ret < 0)
 				return ret;
 
+
 			memset(block_buf, 0, ep->block_size);
 			memcpy(block_buf + block_off,
 			       data + (data_off - offset), copy_size);
 			if (ext2_write_block(ep, phys_block,
 			                     block_buf) < 0)
 				return -EIO;
+
 
 			if (uses_extents) {
 				ret = ext2_extent_push_block(inode, ib,
@@ -2394,6 +2401,10 @@ static int ext2_write_file_data(struct ext2_priv *ep,
 					return -ENOSPC;
 				}
 			}
+
+
+			/* Track allocated 512-byte sectors for sparse accounting */
+			inode->i_blocks += ep->block_size / 512;
 		} else if (pbn > 0) {
 			phys_block = (uint32_t)pbn;
 			if (ext2_read_block(ep, phys_block,
@@ -2485,6 +2496,8 @@ static int ext2_truncate(void *priv, const char *path, uint32_t len)
 					ep->sb.s_free_blocks_count++;
 				}
 			}
+			/* Track sparse sector count */
+			inode.i_blocks -= ep->block_size / 512;
 		}
 	}
 
@@ -2729,6 +2742,187 @@ entry_removed:
 	return 0;
 }
 
+/* ── Sparse file operations: fallocate, seek ───────────────────── */
+
+/* Fallocate for ext2 files.
+ *
+ * Supports:
+ *   mode = 0 (preallocate): Allocate physical blocks for range [offset, offset+len)
+ *   FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE: Deallocate blocks, create holes
+ *
+ * Returns 0 on success, negative errno on failure. */
+static int ext2_fallocate(void *priv, const char *path,
+                           int mode, uint32_t offset, uint32_t len)
+{
+	struct ext2_priv *ep = (struct ext2_priv *)priv;
+	uint32_t ino;
+	int ret = ext2_path_to_ino(ep, path, &ino);
+	if (ret < 0)
+		return ret;
+
+	struct ext2_inode inode;
+	ret = ext2_read_inode(ep, ino, &inode);
+	if (ret < 0)
+		return ret;
+
+	uint32_t end = offset + len;
+	uint32_t start_block = offset / ep->block_size;
+	uint32_t end_block = (end + ep->block_size - 1) / ep->block_size;
+
+	/* ── Hole punch mode ── */
+	if (mode & FALLOC_FL_PUNCH_HOLE) {
+		for (uint32_t ib = start_block; ib < end_block; ib++) {
+			int64_t pbn = ext2_get_block_num(ep, &inode, ib);
+			if (pbn > 0) {
+				ret = ext2_free_block(ep, (uint32_t)pbn);
+				if (ret < 0)
+					return ret;
+
+				/* Clear block pointer */
+				if (ep->sb.s_feature_incompat &
+				    EXT2_FEATURE_INCOMPAT_EXTENTS) {
+					/* For extent-based files, we cannot
+					 * easily punch individual blocks from
+					 * the extent tree.  Set the inode to
+					 * store the block as 0 via direct ptr
+					 * if possible, or leave it allocated. */
+					if (ib < 12)
+						inode.i_block[ib] = 0;
+				} else {
+					if (ib < 12)
+						inode.i_block[ib] = 0;
+				}
+
+				/* Decrement sparse sector count */
+				inode.i_blocks -= ep->block_size / 512;
+			}
+		}
+
+		/* Update inode time and write back */
+		inode.i_mtime = (uint32_t)(timer_get_ticks() / TIMER_FREQ);
+		inode.i_ctime = inode.i_mtime;
+		return ext2_write_inode(ep, ino, &inode);
+	}
+
+	/* ── Preallocation mode (mode == 0) ── */
+	uint32_t uses_extents = (ep->sb.s_feature_incompat &
+	                         EXT2_FEATURE_INCOMPAT_EXTENTS) ? 1 : 0;
+
+	for (uint32_t ib = start_block; ib < end_block; ib++) {
+		int64_t pbn = ext2_get_block_num(ep, &inode, ib);
+		if (pbn == 0) {
+			/* Hole — allocate block */
+			uint32_t phys_block;
+			ret = ext2_alloc_block(ep, &phys_block);
+			if (ret < 0)
+				return ret;
+
+			/* Zero the block */
+			uint8_t zero[4096];
+			memset(zero, 0, ep->block_size);
+			if (ext2_write_block(ep, phys_block, zero) < 0)
+				return -EIO;
+
+			if (uses_extents) {
+				ret = ext2_extent_push_block(&inode, ib,
+				                              phys_block);
+				if (ret < 0) {
+					if (ib < 12)
+						inode.i_block[ib] = phys_block;
+					else
+						return ret;
+				}
+			} else {
+				if (ib < 12)
+					inode.i_block[ib] = phys_block;
+				else
+					return -ENOSPC;
+			}
+
+			/* Track allocated sectors */
+			inode.i_blocks += ep->block_size / 512;
+		}
+	}
+
+	/* Update size only if not keeping the old size */
+	if (!(mode & FALLOC_FL_KEEP_SIZE)) {
+		uint64_t old_size = ext2_inode_get_size(ep, &inode);
+		uint64_t new_size = (uint64_t)offset + len;
+		if (new_size > old_size)
+			ext2_inode_set_size(ep, &inode, new_size);
+	}
+
+	inode.i_mtime = (uint32_t)(timer_get_ticks() / TIMER_FREQ);
+	return ext2_write_inode(ep, ino, &inode);
+}
+
+/* SEEK_DATA / SEEK_HOLE for ext2 sparse files.
+ *
+ * SEEK_DATA (whence=3): Find the next allocated block starting from offset.
+ *   Returns the byte offset of the first data byte at or after offset.
+ *   If no data found, returns the file size.
+ *
+ * SEEK_HOLE (whence=4): Find the next hole starting from offset.
+ *   Returns the byte offset of the first hole at or after offset.
+ *   If no hole found, returns the file size. */
+static int ext2_seek(void *priv, const char *path,
+                      uint64_t offset, int whence)
+{
+	struct ext2_priv *ep = (struct ext2_priv *)priv;
+	uint32_t ino;
+	int ret = ext2_path_to_ino(ep, path, &ino);
+	if (ret < 0)
+		return ret;
+
+	struct ext2_inode inode;
+	ret = ext2_read_inode(ep, ino, &inode);
+	if (ret < 0)
+		return ret;
+
+	uint64_t file_size = ext2_inode_get_size(ep, &inode);
+
+	if (offset >= file_size)
+		return (int)file_size;
+
+	uint32_t start_block = (uint32_t)(offset / ep->block_size);
+	uint32_t max_block = (uint32_t)((file_size + ep->block_size - 1)
+	                     / ep->block_size);
+
+	if (whence == 3) {
+		/* SEEK_DATA — find next allocated block */
+		for (uint32_t ib = start_block; ib < max_block; ib++) {
+			int64_t pbn = ext2_get_block_num(ep, &inode, ib);
+			if (pbn > 0) {
+				/* Data found — return byte offset */
+				uint64_t byte_off = (uint64_t)ib * ep->block_size;
+				if (byte_off < offset)
+					byte_off = offset;
+				return (int)(byte_off > file_size
+				             ? (uint32_t)file_size
+				             : (uint32_t)byte_off);
+			}
+		}
+		/* No data found */
+		return (int)file_size;
+	} else {
+		/* SEEK_HOLE — find next hole */
+		for (uint32_t ib = start_block; ib < max_block; ib++) {
+			int64_t pbn = ext2_get_block_num(ep, &inode, ib);
+			if (pbn == 0) {
+				/* Hole found — return byte offset */
+				uint64_t byte_off = (uint64_t)ib * ep->block_size;
+				if (byte_off < offset)
+					byte_off = offset;
+				return (int)(byte_off > file_size
+				             ? (uint32_t)file_size
+				             : (uint32_t)byte_off);
+			}
+		}
+		/* No hole found */
+		return (int)file_size;
+	}
+}
+
 static struct vfs_ops ext2_ops = {
     .read    = ext2_read,
     .write   = ext2_write,
@@ -2741,6 +2935,8 @@ static struct vfs_ops ext2_ops = {
     .link    = ext2_link,
     .symlink = ext2_symlink,
     .readlink = ext2_readlink,
+    .fallocate = ext2_fallocate,
+    .seek    = ext2_seek,
 };
 
 /* ═══════════════════════════════════════════════════════════════════════

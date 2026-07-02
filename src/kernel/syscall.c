@@ -1105,7 +1105,12 @@ static uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence) {
         case 2: new_off = (int64_t)fsz + off; break; /* SEEK_END */
         case 3: /* SEEK_DATA */
         case 4: /* SEEK_HOLE */
-            new_off = (int64_t)fsz;
+            {
+                int seek_ret = vfs_seek(pfd->path, offset, (int)whence);
+                if (seek_ret < 0)
+                    return (uint64_t)(int64_t)seek_ret;
+                new_off = seek_ret;
+            }
             break;
         default: return (uint64_t)(int64_t)-EINVAL;
     }

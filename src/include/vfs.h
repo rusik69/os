@@ -198,6 +198,17 @@ struct vfs_ops {
      * FIGETBSZ directly via the VFS layer, and FS_IOC_* commands
      * return -ENOTTY. */
     int (*ioctl)(void *priv, const char *path, uint64_t cmd, uint64_t arg);
+    /* Optional: seek to data or hole boundary for sparse files.
+     * @priv: filesystem private data
+     * @path: path to the file
+     * @offset: starting offset for the search
+     * @whence: SEEK_DATA (3) or SEEK_HOLE (4)
+     * Returns: the offset of the next data/hole on success,
+     *          or the file size if no data/hole found,
+     *          or negative errno on error.
+     * If not provided, the generic fallback returns file size
+     * (treats the entire file as data, no holes). */
+    int (*seek)(void *priv, const char *path, uint64_t offset, int whence);
 };
 
 /* A mounted filesystem */
@@ -336,6 +347,11 @@ int generic_permission(const char *path, uint16_t uid, uint16_t gid,
 
 /* Fallocate: pre-allocate disk space */
 int vfs_fallocate(const char *path, int mode, uint32_t offset, uint32_t len);
+
+/* Seek to data or hole boundary in a sparse file.
+ * Returns the next data/hole offset, or the file size if none found,
+ * or negative errno on error. */
+int vfs_seek(const char *path, uint64_t offset, int whence);
 
 /* Flush / sync operations */
 int vfs_flush(const char *path);     /* flush a single filesystem by path */
