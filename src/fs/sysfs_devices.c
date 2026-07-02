@@ -14,6 +14,7 @@
 #include "printf.h"
 #include "string.h"
 #include "types.h"
+#include "heap.h"
 
 /* ── PCI driver name table ───────────────────────────────────────── */
 
@@ -129,6 +130,176 @@ static const char *pci_driver_for_device(uint8_t bus, uint8_t slot,
 	}
 
 	return NULL;
+}
+
+/* ── Power management attributes ──────────────────────────────────── */
+
+/*
+ * Per-device power state tracked in sysfs.
+ *
+ *   control: "on"  = device always powered, no runtime PM
+ *            "auto" = device may enter low-power states (default)
+ *   wakeup:  "enabled"  = device may wake the system
+ *            "disabled" = device may not wake the system (default)
+ */
+struct sysfs_power_state {
+	uint8_t bus;
+	uint8_t slot;
+	uint8_t func;
+	uint8_t control;   /* 0 = auto, 1 = on */
+	uint8_t wakeup;    /* 0 = disabled, 1 = enabled */
+};
+
+/*
+ * Read callback for power/control.
+ * Returns "on\n" or "auto\n" depending on the stored state.
+ */
+static int sysfs_read_power_control(char *buf, uint32_t max_sz, void *priv)
+{
+	struct sysfs_power_state *ps = (struct sysfs_power_state *)priv;
+	const char *val = ps->control ? "on\n" : "auto\n";
+	int n = snprintf(buf, max_sz, "%s", val);
+	if (n < 0)
+		return -EINVAL;
+	return (uint32_t)n < max_sz ? n : (int)(max_sz - 1);
+}
+
+/*
+ * Write callback for power/control.
+ * Accepts "on" (disable runtime PM) or "auto" (enable runtime PM).
+ */
+static int sysfs_write_power_control(const char *data, uint32_t size, void *priv)
+{
+	struct sysfs_power_state *ps = (struct sysfs_power_state *)priv;
+
+	if (size < 1)
+		return -EINVAL;
+
+	if (data[0] == 'o' && size >= 2 && data[1] == 'n') {
+		ps->control = 1;
+		return (int)size;
+	} else if (data[0] == 'a' && size >= 4 &&
+		   data[1] == 'u' && data[2] == 't' && data[3] == 'o') {
+		ps->control = 0;
+		return (int)size;
+	}
+
+	return -EINVAL;
+}
+
+/*
+ * Read callback for power/wakeup.
+ * Returns "enabled\n" or "disabled\n" depending on the stored state.
+ */
+static int sysfs_read_power_wakeup(char *buf, uint32_t max_sz, void *priv)
+{
+	struct sysfs_power_state *ps = (struct sysfs_power_state *)priv;
+	const char *val = ps->wakeup ? "enabled\n" : "disabled\n";
+	int n = snprintf(buf, max_sz, "%s", val);
+	if (n < 0)
+		return -EINVAL;
+	return (uint32_t)n < max_sz ? n : (int)(max_sz - 1);
+}
+
+/*
+ * Write callback for power/wakeup.
+ * Accepts "enabled" or "disabled".
+ */
+static int sysfs_write_power_wakeup(const char *data, uint32_t size, void *priv)
+{
+	struct sysfs_power_state *ps = (struct sysfs_power_state *)priv;
+
+	if (size < 1)
+		return -EINVAL;
+
+	if (data[0] == 'e' && size >= 7 &&
+	    data[1] == 'n' && data[2] == 'a' && data[3] == 'b' &&
+	    data[4] == 'l' && data[5] == 'e' && data[6] == 'd') {
+		ps->wakeup = 1;
+		return (int)size;
+	} else if (data[0] == 'd' && size >= 8 &&
+		   data[1] == 'i' && data[2] == 's' && data[3] == 'a' &&
+		   data[4] == 'b' && data[5] == 'l' && data[6] == 'e' &&
+		   data[7] == 'd') {
+		ps->wakeup = 0;
+		return (int)size;
+	}
+
+	return -EINVAL;
+}
+
+/*
+ * Create power management attributes under a PCI device directory.
+ *
+ * Creates a power/ subdirectory with:
+ *   control — writable, values "on" / "auto"
+ *   wakeup  — writable, values "enabled" / "disabled"
+ *
+ * @devpath:  full path to the device directory (e.g.
+ *            "/sys/devices/pci0000:00/0000:00:03.0")
+ * @bus:      PCI bus number
+ * @slot:     PCI slot number
+ * @func:     PCI function number
+ */
+static void sysfs_create_power_attrs(const char *devpath,
+				     uint8_t bus, uint8_t slot,
+				     uint8_t func)
+{
+	/* Allocate a per-device power state tracker (freed when the
+	 * sysfs entry is removed via the release callback). */
+	struct sysfs_power_state *ps =
+		(struct sysfs_power_state *)kmalloc(
+			sizeof(struct sysfs_power_state));
+	if (!ps) {
+		kprintf("[sysfs] Failed to allocate power state for %s\n",
+			devpath);
+		return;
+	}
+	ps->bus = bus;
+	ps->slot = slot;
+	ps->func = func;
+	ps->control = 0;  /* default: auto (runtime PM allowed) */
+	ps->wakeup = 0;   /* default: disabled */
+
+	/* Create power/ subdirectory */
+	char power_dir[96];
+	int n = snprintf(power_dir, sizeof(power_dir),
+			 "%s/power", devpath);
+	if (n < 0 || (uint32_t)n >= sizeof(power_dir)) {
+		kfree(ps);
+		return;
+	}
+	if (sysfs_create_dir(power_dir) < 0) {
+		kprintf("[sysfs] Failed to create %s\n", power_dir);
+		kfree(ps);
+		return;
+	}
+
+	/* Create power/control — writable, "on" or "auto" */
+	char ctrl_path[100];
+	n = snprintf(ctrl_path, sizeof(ctrl_path),
+		     "%s/power/control", devpath);
+	if (n > 0 && (uint32_t)n < sizeof(ctrl_path)) {
+		if (sysfs_create_writable_file(ctrl_path, "auto\n",
+					       ps,
+					       sysfs_read_power_control,
+					       sysfs_write_power_control) < 0) {
+			kprintf("[sysfs] Failed to create %s\n", ctrl_path);
+		}
+	}
+
+	/* Create power/wakeup — writable, "enabled" or "disabled" */
+	char wakeup_path[100];
+	n = snprintf(wakeup_path, sizeof(wakeup_path),
+		     "%s/power/wakeup", devpath);
+	if (n > 0 && (uint32_t)n < sizeof(wakeup_path)) {
+		if (sysfs_create_writable_file(wakeup_path, "disabled\n",
+					       ps,
+					       sysfs_read_power_wakeup,
+					       sysfs_write_power_wakeup) < 0) {
+			kprintf("[sysfs] Failed to create %s\n", wakeup_path);
+		}
+	}
 }
 
 /* ── PCI device directory creation ───────────────────────────────── */
@@ -317,6 +488,16 @@ static void sysfs_create_pci_device_dirs(void)
 								attr_c);
 					}
 				}
+
+				/*
+				 * Power management attributes:
+				 *   power/control — "on" or "auto"
+				 *   power/wakeup  — "enabled" or "disabled"
+				 */
+				sysfs_create_power_attrs(devpath,
+							(uint8_t)bus,
+							(uint8_t)slot,
+							(uint8_t)func);
 
 				count++;
 			}
