@@ -159,6 +159,71 @@ int joliet_is_joliet_svd(const struct iso_supplementary_desc *svd)
 }
 
 /*
+ * Convert a fixed-width UCS-2 Big Endian field from a Joliet
+ * Supplementary Volume Descriptor (SVD) to a NUL-terminated UTF-8
+ * string, trimming trailing spaces and null characters.
+ *
+ * Joliet SVD metadata fields (volume_id, system_id, volume_set_id,
+ * publisher_id, preparer_id, application_id) are fixed-width UCS-2BE
+ * buffers padded with spaces (U+0020) or nulls.  This function
+ * converts the meaningful content to clean UTF-8.
+ *
+ * @field         Pointer to UCS-2BE field buffer
+ * @field_bytes   Total byte length of the field (must be even)
+ * @out           Output UTF-8 buffer
+ * @out_max       Size of output buffer (including NUL terminator)
+ * Returns the number of UTF-8 bytes written (excluding NUL),
+ *         or 0 on invalid input or empty field.
+ */
+int joliet_convert_svd_field(const char *field, int field_bytes,
+                              char *out, int out_max)
+{
+	if (!field || field_bytes < 2 || !out || out_max < 2)
+		return 0;
+
+	int chars = field_bytes / 2;
+	int written = 0;
+
+	for (int i = 0; i < chars; i++) {
+		uint16_t cp = ((uint16_t)(uint8_t)field[i * 2] << 8) |
+		               (uint8_t)field[i * 2 + 1];
+
+		/* Stop at first null character */
+		if (cp == 0x0000)
+			break;
+
+		/* Skip trailing spaces */
+		if (cp == 0x0020 && i == chars - 1)
+			break;
+
+		/* Check if remaining chars are all spaces (trailing padding) */
+		if (cp == 0x0020) {
+			int all_spaces = 1;
+			for (int j = i + 1; j < chars; j++) {
+				uint16_t tmp = ((uint16_t)(uint8_t)field[j * 2] << 8) |
+				               (uint8_t)field[j * 2 + 1];
+				if (tmp != 0x0000 && tmp != 0x0020) {
+					all_spaces = 0;
+					break;
+				}
+			}
+			if (all_spaces)
+				break;
+		}
+
+		int nbytes = joliet_ucs2_cp_to_utf8(cp, out + written);
+		written += nbytes;
+		if (written >= out_max - 1) {
+			written = out_max - 1;
+			break;
+		}
+	}
+
+	out[written] = '\0';
+	return written;
+}
+
+/*
  * Extract Joliet root directory information from a Supplementary
  * Volume Descriptor that has already been confirmed as a Joliet SVD
  * (via joliet_is_joliet_svd()).

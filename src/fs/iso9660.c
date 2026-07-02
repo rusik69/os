@@ -94,16 +94,21 @@ static int iso9660_scan_session(struct iso9660_priv *ip,
             sess->root_size   = root->data_length_le;
             found_pvd = 1;
         } else if (type == 2) {
-            /* Supplementary Volume Descriptor — check for Joliet escape seqs */
-            struct iso_supplementary_desc *svd =
-                (struct iso_supplementary_desc *)buf;
-            if (joliet_is_joliet_svd(svd)) {
-                struct iso_dir_record *root =
-                    (struct iso_dir_record *)svd->root_dir;
-                sess->joliet_root_extent = root->extent_loc_le;
-                sess->joliet_root_size   = root->data_length_le;
-                sess->has_joliet = 1;
-            }
+        	/* Supplementary Volume Descriptor — check for Joliet escape seqs */
+        	struct iso_supplementary_desc *svd =
+        	    (struct iso_supplementary_desc *)buf;
+        	if (joliet_is_joliet_svd(svd)) {
+        	    struct iso_dir_record *root =
+        	        (struct iso_dir_record *)svd->root_dir;
+        	    sess->joliet_root_extent = root->extent_loc_le;
+        	    sess->joliet_root_size   = root->data_length_le;
+        	    sess->has_joliet = 1;
+        	    /* Extract Joliet volume name as UTF-8 */
+        	    joliet_convert_svd_field(svd->volume_id,
+        	        (int)sizeof(svd->volume_id),
+        	        sess->joliet_volume_name,
+        	        (int)sizeof(sess->joliet_volume_name));
+        	}
         }
         /* Types 0, 3–254 are skipped (boot record, partition, etc.) */
     }
@@ -1230,8 +1235,11 @@ int iso9660_mount(const char *mountpoint, uint8_t dev_id)
         mi_len += snprintf(mount_info + mi_len, sizeof(mount_info) - (size_t)mi_len,
                            ", Rock Ridge");
     if (ip->has_joliet)
-        mi_len += snprintf(mount_info + mi_len, sizeof(mount_info) - (size_t)mi_len,
-                           ", Joliet (UCS-2)");
+    	mi_len += snprintf(mount_info + mi_len, sizeof(mount_info) - (size_t)mi_len,
+    	                   ", Joliet");
+    if (ip->has_joliet && ip->sessions[ip->active_session].joliet_volume_name[0] != '\0')
+    	mi_len += snprintf(mount_info + mi_len, sizeof(mount_info) - (size_t)mi_len,
+    	                   " \"%s\"", ip->sessions[ip->active_session].joliet_volume_name);
     snprintf(mount_info + mi_len, sizeof(mount_info) - (size_t)mi_len, ")\n");
     kprintf("%s", mount_info);
 

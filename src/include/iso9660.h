@@ -272,6 +272,7 @@ struct iso_session_info {
     int      has_joliet;            /* Joliet SVD found in this session */
     uint32_t joliet_root_extent;    /* root dir from Joliet SVD */
     uint32_t joliet_root_size;
+    char     joliet_volume_name[64]; /* UTF-8 volume name from Joliet SVD */
 };
 
 int iso9660_mount(const char *mountpoint, uint8_t dev_id);
@@ -332,5 +333,15 @@ int joliet_is_joliet_svd(const struct iso_supplementary_desc *svd);
  * Returns 0 on success, -1 on invalid arguments. */
 int joliet_get_joliet_root(const struct iso_supplementary_desc *svd,
                             uint32_t *extent, uint32_t *size);
+
+/* Convert a fixed-width UCS-2BE metadata field from a Joliet SVD
+ * (volume_id, system_id, volume_set_id, etc.) to trimmed UTF-8.
+ * @field         Pointer to UCS-2BE field buffer
+ * @field_bytes   Total byte length of the field (must be even)
+ * @out           Output UTF-8 buffer
+ * @out_max       Size of output buffer (including NUL terminator)
+ * Returns UTF-8 byte length written (excluding NUL), or 0. */
+int joliet_convert_svd_field(const char *field, int field_bytes,
+                              char *out, int out_max);
 
 #endif /* ISO9660_H */
