@@ -161,6 +161,24 @@ struct fuse_attr {
     uint32_t padding;
 } __attribute__((packed));
 
+/* FUSE_GETATTR flags */
+#define FUSE_GETATTR_FH (1 << 0)
+
+/* FUSE_GETATTR request */
+struct fuse_getattr_in {
+    uint32_t getattr_flags;
+    uint32_t dummy;
+    uint64_t fh;
+} __attribute__((packed));
+
+/* FUSE_GETATTR response */
+struct fuse_attr_out {
+    uint64_t attr_valid;
+    uint32_t attr_valid_nsec;
+    uint32_t dummy;
+    struct fuse_attr attr;
+} __attribute__((packed));
+
 /* FUSE entry out (LOOKUP, CREATE, MKNOD, etc.) */
 struct fuse_entry_out {
     uint64_t nodeid;

@@ -457,12 +457,13 @@ static int fuse_write(void *priv, const char *path,
 static int fuse_stat(void *priv, const char *path, struct vfs_stat *st)
 {
     struct fuse_mount_info *mnt;
-    struct fuse_attr attr_buf;
+    struct fuse_getattr_in gi;
     void *resp_arg = NULL;
     int resp_arg_size = 0;
     int ret;
 
     (void)priv;
+    if (!st) return -EINVAL;
     memset(st, 0, sizeof(*st));
 
     mnt = fuse_find_mount(path);
@@ -470,20 +471,74 @@ static int fuse_stat(void *priv, const char *path, struct vfs_stat *st)
 
     uint64_t nodeid = fuse_path_to_nodeid(mnt, path);
 
-    /* Send FUSE_GETATTR request and wait for response */
-    ret = fuse_request_response(FUSE_GETATTR, nodeid, NULL, 0,
+    /* Send FUSE_GETATTR request with getattr_in */
+    memset(&gi, 0, sizeof(gi));
+    gi.getattr_flags = 0; /* no special flags */
+    gi.fh = 0;
+
+    ret = fuse_request_response(FUSE_GETATTR, nodeid, &gi, sizeof(gi),
                                  &resp_arg, &resp_arg_size);
     if (ret < 0)
         return ret;
 
-    /* Parse fuse_attr from response payload */
-    if (resp_arg && resp_arg_size >= (int)sizeof(attr_buf)) {
-        memcpy(&attr_buf, resp_arg, sizeof(attr_buf));
+    /* Parse fuse_attr_out from response */
+    if (resp_arg && resp_arg_size >= (int)sizeof(struct fuse_attr_out)) {
+        struct fuse_attr_out *attr_out = (struct fuse_attr_out *)resp_arg;
+        struct fuse_attr *attr = &attr_out->attr;
 
-        st->type = (attr_buf.mode & S_IFMT) == S_IFDIR
+        /* Map fuse_attr.mode to vfs_stat.type and mode */
+        switch (attr->mode & S_IFMT) {
+        case S_IFDIR:
+            st->type = VFS_TYPE_DIR;
+            break;
+        case S_IFREG:
+            st->type = VFS_TYPE_FILE;
+            break;
+        case S_IFLNK:
+            st->type = VFS_TYPE_LINK;
+            break;
+        case S_IFCHR:
+            st->type = VFS_TYPE_CHR;
+            break;
+        case S_IFBLK:
+            st->type = VFS_TYPE_BLK;
+            break;
+        case S_IFIFO:
+            st->type = VFS_TYPE_FIFO;
+            break;
+        default:
+            st->type = VFS_TYPE_FILE;
+            break;
+        }
+
+        st->size  = (uint64_t)attr->size;
+        st->uid   = (uint16_t)attr->uid;
+        st->gid   = (uint16_t)attr->gid;
+        st->mode  = attr->mode & 0777;
+        st->atime = (uint32_t)attr->atime;
+        st->mtime = (uint32_t)attr->mtime;
+        st->nlink = (uint32_t)attr->nlink;
+        st->ino   = (uint32_t)attr->ino;
+
+        /* Map RDEV for device nodes */
+        st->dev_major = (uint16_t)(attr->rdev >> 8);
+        st->dev_minor = (uint16_t)(attr->rdev & 0xFF);
+    } else if (resp_arg && resp_arg_size >= (int)sizeof(struct fuse_attr)) {
+        /* Fallback: daemon responded with raw fuse_attr (older daemon) */
+        struct fuse_attr *attr = (struct fuse_attr *)resp_arg;
+
+        st->type = (attr->mode & S_IFMT) == S_IFDIR
                      ? VFS_TYPE_DIR : VFS_TYPE_FILE;
-        st->size = (uint32_t)attr_buf.size;
-        st->mode = attr_buf.mode & 0777;
+        st->size = (uint64_t)attr->size;
+        st->uid  = (uint16_t)attr->uid;
+        st->gid  = (uint16_t)attr->gid;
+        st->mode = attr->mode & 0777;
+        st->atime = (uint32_t)attr->atime;
+        st->mtime = (uint32_t)attr->mtime;
+        st->nlink = (uint32_t)attr->nlink;
+        st->ino   = (uint32_t)attr->ino;
+        st->dev_major = (uint16_t)(attr->rdev >> 8);
+        st->dev_minor = (uint16_t)(attr->rdev & 0xFF);
     } else {
         /* Fallback if daemon returned no attr data */
         st->type = VFS_TYPE_FILE;
