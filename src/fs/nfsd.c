@@ -22,6 +22,7 @@
 #include "net.h"
 #include "errno.h"
 #include "initcall.h"
+#include "fs.h"
 
 #ifdef MODULE
 #include "module.h"
@@ -451,6 +452,113 @@ static void nfsd_proc_getattr(struct nfsd_rpc_state *rpc,
         xdr_put_u32(&p, NFS3_OK);
         nfsd_encode_fattr(&p, &st);
     }
+    *reply_len = (uint32_t)(p - reply);
+}
+
+/* ── NFSPROC3_SETATTR ────────────────────────────────────────────────── */
+
+static void nfsd_proc_setattr(struct nfsd_rpc_state *rpc,
+                               uint8_t *reply, uint32_t *reply_len)
+{
+    uint8_t *p = reply;
+    const uint8_t *cp = rpc->call_data;
+
+    /* Parse file handle */
+    uint32_t fh_len = xdr_get_u32(&cp);
+    const uint8_t *fh_data = cp;
+    cp += fh_len;
+    while (fh_len & 3) { cp++; fh_len++; }
+
+    /* Parse sattr3 (RFC 1813, Section 3.3) */
+    uint32_t set_mode   = xdr_get_u32(&cp);
+    uint32_t mode       = xdr_get_u32(&cp);
+    uint32_t set_uid    = xdr_get_u32(&cp);
+    uint32_t uid        = xdr_get_u32(&cp);
+    uint32_t set_gid    = xdr_get_u32(&cp);
+    uint32_t gid        = xdr_get_u32(&cp);
+    uint32_t set_size   = xdr_get_u32(&cp);
+    uint64_t new_size   = ((uint64_t)xdr_get_u32(&cp) << 32) | xdr_get_u32(&cp);
+    uint32_t set_atime  = xdr_get_u32(&cp);
+    uint32_t atime_how  = xdr_get_u32(&cp);
+    uint64_t atime_val  = ((uint64_t)xdr_get_u32(&cp) << 32) | xdr_get_u32(&cp);
+    uint32_t atime_nsec = xdr_get_u32(&cp);
+    uint32_t set_mtime  = xdr_get_u32(&cp);
+    uint32_t mtime_how  = xdr_get_u32(&cp);
+    uint64_t mtime_val  = ((uint64_t)xdr_get_u32(&cp) << 32) | xdr_get_u32(&cp);
+    uint32_t mtime_nsec = xdr_get_u32(&cp);
+
+    /* Resolve FH to a local path */
+    struct nfsd_export *ex = NULL;
+    char obj_path[NFSD_MAX_PATH];
+    int ret = nfsd_fh_resolve(fh_data, fh_len, &ex, obj_path, sizeof(obj_path));
+
+    rpc_build_header(&p, rpc->xid, 1, RPC_SUCCESS);
+    if (ret < 0) {
+        xdr_put_u32(&p, NFS3ERR_STALE);
+        *reply_len = (uint32_t)(p - reply);
+        return;
+    }
+
+    /* Get pre-op stat */
+    struct vfs_stat pre_st;
+    memset(&pre_st, 0, sizeof(pre_st));
+    vfs_stat(obj_path, &pre_st);
+
+    /* Apply requested attribute changes */
+    if (set_mode) {
+        fs_chmod(obj_path, (uint16_t)mode);
+    }
+
+    if (set_uid || set_gid) {
+        uint16_t new_uid = set_uid ? (uint16_t)uid : pre_st.uid;
+        uint16_t new_gid = set_gid ? (uint16_t)gid : pre_st.gid;
+        fs_chown(obj_path, new_uid, new_gid);
+    }
+
+    if (set_size) {
+        vfs_truncate(obj_path, (uint32_t)new_size);
+    }
+
+    if (set_atime || set_mtime) {
+        struct timespec ts[2];
+        ts[0].tv_sec  = 0;
+        ts[0].tv_nsec = UTIME_OMIT;
+        ts[1].tv_sec  = 0;
+        ts[1].tv_nsec = UTIME_OMIT;
+
+        if (set_atime) {
+            if (atime_how == 1) {
+                /* SET_TO_SERVER_TIME — use UTIME_NOW */
+                ts[0].tv_sec  = 0;
+                ts[0].tv_nsec = UTIME_NOW;
+            } else if (atime_how == 2) {
+                /* SET_TO_CLIENT_TIME — use client-provided time */
+                ts[0].tv_sec  = atime_val;
+                ts[0].tv_nsec = atime_nsec;
+            }
+        }
+
+        if (set_mtime) {
+            if (mtime_how == 1) {
+                ts[1].tv_sec  = 0;
+                ts[1].tv_nsec = UTIME_NOW;
+            } else if (mtime_how == 2) {
+                ts[1].tv_sec  = mtime_val;
+                ts[1].tv_nsec = mtime_nsec;
+            }
+        }
+
+        vfs_set_time(obj_path, ts);
+    }
+
+    /* Get post-op stat */
+    struct vfs_stat post_st;
+    memset(&post_st, 0, sizeof(post_st));
+    vfs_stat(obj_path, &post_st);
+
+    xdr_put_u32(&p, NFS3_OK);
+    /* Wcc data (pre-op attrs + post-op attrs) */
+    nfsd_encode_wcc_data(&p, &pre_st, &post_st);
     *reply_len = (uint32_t)(p - reply);
 }
 
@@ -1072,6 +1180,9 @@ void nfsd_handle_rpc(struct nfsd_rpc_state *rpc,
                 break;
             case NFSPROC3_GETATTR:
                 nfsd_proc_getattr(rpc, reply_buf, reply_len);
+                break;
+            case NFSPROC3_SETATTR:
+                nfsd_proc_setattr(rpc, reply_buf, reply_len);
                 break;
             case NFSPROC3_ACCESS:
                 nfsd_proc_access(rpc, reply_buf, reply_len);

@@ -520,6 +520,101 @@ int nfs_getattr(int mount_id, const struct nfs_fhandle *fh,
     return 0;
 }
 
+/* ── NFS SETATTR ──────────────────────────────────────────────────── */
+
+/* Set file attributes (sattr3 per RFC 1813) */
+struct nfs_sattr {
+    uint32_t set_mode;
+    uint32_t mode;
+    uint32_t set_uid;
+    uint32_t uid;
+    uint32_t set_gid;
+    uint32_t gid;
+    uint32_t set_size;
+    uint64_t size;
+    uint32_t set_atime;
+    uint32_t atime_how;  /* 0=DONT_CHANGE, 1=SET_TO_SERVER_TIME, 2=SET_TO_CLIENT_TIME */
+    uint64_t atime;
+    uint32_t atime_nsec;
+    uint32_t set_mtime;
+    uint32_t mtime_how;
+    uint64_t mtime;
+    uint32_t mtime_nsec;
+};
+
+int nfs_setattr(int mount_id, const struct nfs_fhandle *fh,
+                 const struct nfs_sattr *sattr)
+{
+    if (mount_id < 0 || mount_id >= nfs_mount_count)
+        return -EINVAL;
+    if (!nfs_mounts[mount_id].mounted)
+        return -ENOTCONN;
+    if (!sattr)
+        return -EINVAL;
+
+    struct nfs_mount_info *mnt = &nfs_mounts[mount_id];
+
+    uint8_t args[NFS_MAX_DATA];
+    uint8_t *ap = args;
+
+    /* File handle */
+    xdr_put_u32(&ap, fh->len);
+    xdr_put_bytes(&ap, fh->data, fh->len);
+    /* sattr3 fields */
+    xdr_put_u32(&ap, sattr->set_mode);
+    xdr_put_u32(&ap, sattr->mode);
+    xdr_put_u32(&ap, sattr->set_uid);
+    xdr_put_u32(&ap, sattr->uid);
+    xdr_put_u32(&ap, sattr->set_gid);
+    xdr_put_u32(&ap, sattr->gid);
+    xdr_put_u32(&ap, sattr->set_size);
+    xdr_put_u32(&ap, (uint32_t)(sattr->size >> 32));
+    xdr_put_u32(&ap, (uint32_t)(sattr->size & 0xFFFFFFFF));
+    xdr_put_u32(&ap, sattr->set_atime);
+    xdr_put_u32(&ap, sattr->atime_how);
+    xdr_put_u32(&ap, (uint32_t)(sattr->atime >> 32));
+    xdr_put_u32(&ap, (uint32_t)(sattr->atime & 0xFFFFFFFF));
+    xdr_put_u32(&ap, sattr->atime_nsec);
+    xdr_put_u32(&ap, sattr->set_mtime);
+    xdr_put_u32(&ap, sattr->mtime_how);
+    xdr_put_u32(&ap, (uint32_t)(sattr->mtime >> 32));
+    xdr_put_u32(&ap, (uint32_t)(sattr->mtime & 0xFFFFFFFF));
+    xdr_put_u32(&ap, sattr->mtime_nsec);
+
+    uint32_t args_len = (uint32_t)(ap - args);
+
+    uint8_t reply[NFS_MAX_DATA];
+    uint32_t reply_len = sizeof(reply);
+
+    int ret = nfs_rpc_call(mnt->server_ip, 100003, 3, NFSPROC3_SETATTR,
+                            args, args_len, reply, &reply_len);
+    if (ret < 0) return ret;
+
+    const uint8_t *rp = reply;
+    uint32_t status = xdr_get_u32(&rp);
+    if (status != 0) {
+        if (status == NFS3ERR_PERM) return -EPERM;
+        if (status == NFS3ERR_ACCES) return -EACCES;
+        if (status == NFS3ERR_ROFS)  return -EROFS;
+        if (status == NFS3ERR_STALE) return -ESTALE;
+        return -EIO;
+    }
+
+    /* Skip wcc_data (pre-op and post-op attributes — both optional) */
+    uint32_t pre_present = xdr_get_u32(&rp);
+    if (pre_present) {
+        /* Skip 21 words of fattr3 */
+        for (int i = 0; i < 21; i++) xdr_get_u32(&rp);
+    }
+    uint32_t post_present = xdr_get_u32(&rp);
+    if (post_present) {
+        for (int i = 0; i < 21; i++) xdr_get_u32(&rp);
+    }
+
+    kprintf("[NFS] SETATTR: success (fh len=%u)\n", fh->len);
+    return 0;
+}
+
 /* ── NFS READ ────────────────────────────────────────────────────── */
 
 int nfs_read(int mount_id, const struct nfs_fhandle *fh,
