@@ -529,6 +529,159 @@ static int btrfs_parse_root_tree(struct btrfs_priv *bp)
     return 0;
 }
 
+/* ── Extent tree parsing ──────────────────────────────────────── */
+
+/**
+ * btrfs_parse_extent_tree - Walk the extent tree and log extent items
+ * @bp: Btrfs private data
+ *
+ * Reads the extent tree root location from the root backup (slot 0),
+ * translates it through the chunk map, then walks the extent tree
+ * logging every EXTENT_ITEM_KEY and METADATA_ITEM_KEY entry.
+ *
+ * Btrfs extent items track physical block allocations.  Each item's
+ * key is (block_number, EXTENT_ITEM_KEY, length) for data extents or
+ * (block_number, METADATA_ITEM_KEY, level) for tree metadata blocks.
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+static int btrfs_parse_extent_tree(struct btrfs_priv *bp)
+{
+    struct btrfs_root_backup rb;
+    uint8_t buf[4096];
+    uint64_t extent_tree_logical;
+    uint32_t item_idx;
+    int exact;
+    int ret;
+    uint32_t extent_count;
+    uint32_t metadata_count;
+
+    ret = btrfs_read_root_backup(bp, 0, &rb);
+    if (ret < 0) {
+        kprintf("[btrfs] failed to read root backup for extent tree: %d\n",
+                ret);
+        return ret;
+    }
+
+    extent_tree_logical = rb.extent_root_bytenr;
+    if (btrfs_chunk_map(bp, extent_tree_logical,
+                         &bp->extent_root_bytenr) < 0) {
+        kprintf("[btrfs] cannot map extent root logical 0x%llx\n",
+                (unsigned long long)extent_tree_logical);
+        return -EINVAL;
+    }
+
+    /* Search root tree for EXTENT_TREE root item to get level */
+    ret = btrfs_search_tree(bp, bp->root_bytenr, bp->root_level,
+                             BTRFS_EXTENT_TREE_OBJECTID,
+                             BTRFS_ROOT_ITEM_KEY, 0,
+                             buf, sizeof(buf), &item_idx, &exact);
+    if (ret < 0) {
+        kprintf("[btrfs] cannot search root tree for extent root: %d\n",
+                ret);
+        return ret;
+    }
+
+    if (exact) {
+        uint8_t ri_data[sizeof(struct btrfs_root_item) + 64];
+        uint32_t ri_size;
+        ret = btrfs_read_item_data(bp, bp->root_bytenr, buf, item_idx,
+                                    ri_data, &ri_size);
+        if (ret == 0 &&
+            ri_size >= sizeof(struct btrfs_root_item)) {
+            struct btrfs_root_item *ritem =
+                (struct btrfs_root_item *)ri_data;
+            bp->extent_root_level = ritem->level;
+        } else {
+            bp->extent_root_level = 0;
+        }
+    } else {
+        bp->extent_root_level = 0;
+    }
+
+    kprintf("[btrfs] extent tree: bytenr=0x%llx, level=%u\n",
+            (unsigned long long)bp->extent_root_bytenr,
+            (unsigned)bp->extent_root_level);
+
+    /* Walk the extent tree and log extent items */
+    extent_count = 0;
+    metadata_count = 0;
+    {
+        uint64_t search_obj = 0;
+        uint8_t  search_type = 0;
+        uint64_t search_off = 0;
+
+        while (extent_count + metadata_count < 1000) {
+            ret = btrfs_search_tree(bp, bp->extent_root_bytenr,
+                                     bp->extent_root_level,
+                                     search_obj, search_type, search_off,
+                                     buf, sizeof(buf),
+                                     &item_idx, &exact);
+            if (ret < 0)
+                break;
+
+            struct btrfs_header *hdr = (struct btrfs_header *)buf;
+            if (item_idx >= hdr->nritems)
+                break;
+
+            struct btrfs_item *items = (struct btrfs_item *)
+                (buf + sizeof(struct btrfs_header));
+
+            uint64_t cur_obj = items[item_idx].key.objectid;
+            uint8_t  cur_typ = items[item_idx].key.type;
+            uint64_t cur_off = items[item_idx].key.offset;
+
+            if (cur_typ == BTRFS_EXTENT_ITEM_KEY) {
+                uint32_t off = items[item_idx].offset;
+                uint32_t sz  = items[item_idx].size;
+                if (off + sz <= bp->nodesize &&
+                    sz >= sizeof(struct btrfs_extent_item)) {
+                    struct btrfs_extent_item *ei =
+                        (struct btrfs_extent_item *)(buf + off);
+                    kprintf("[btrfs]   extent 0x%llx len=%llu "
+                            "refs=%llu gen=%llu flags=0x%llx\n",
+                            (unsigned long long)cur_obj,
+                            (unsigned long long)cur_off,
+                            (unsigned long long)ei->refs,
+                            (unsigned long long)ei->generation,
+                            (unsigned long long)ei->flags);
+                    extent_count++;
+                }
+            } else if (cur_typ == BTRFS_METADATA_ITEM_KEY) {
+                uint32_t off = items[item_idx].offset;
+                uint32_t sz  = items[item_idx].size;
+                if (off + sz <= bp->nodesize &&
+                    sz >= sizeof(struct btrfs_extent_item)) {
+                    struct btrfs_extent_item *ei =
+                        (struct btrfs_extent_item *)(buf + off);
+                    kprintf("[btrfs]   metadata 0x%llx "
+                            "level=%llu refs=%llu gen=%llu flags=0x%llx\n",
+                            (unsigned long long)cur_obj,
+                            (unsigned long long)cur_off,
+                            (unsigned long long)ei->refs,
+                            (unsigned long long)ei->generation,
+                            (unsigned long long)ei->flags);
+                    metadata_count++;
+                }
+            }
+
+            /* Advance search past this key */
+            search_obj = cur_obj;
+            search_type = cur_typ;
+            search_off = cur_off + 1;
+            if (search_off == 0) {
+                search_type++;
+                if (search_type == 0)
+                    search_obj++;
+            }
+        }
+    }
+
+    kprintf("[btrfs] extent tree walk: %u extents, %u metadata items\n",
+            extent_count, metadata_count);
+    return 0;
+}
+
 /* ── Find fs root (convenience wrapper) ────────────────────────── */
 
 static int btrfs_find_fs_root(struct btrfs_priv *bp)
@@ -836,6 +989,9 @@ int btrfs_mount(const char *source, const char *target,
         kfree(bp);
         return ret;
     }
+
+    /* Parse extent tree (non-fatal — informational walk) */
+    btrfs_parse_extent_tree(bp);
 
     /* Register with VFS */
     ret = vfs_mount(target, &btrfs_ops, bp);

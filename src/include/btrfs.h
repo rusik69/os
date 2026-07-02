@@ -26,7 +26,16 @@
 #define BTRFS_DIR_INDEX_KEY       96
 #define BTRFS_EXTENT_DATA_KEY     108
 #define BTRFS_ROOT_ITEM_KEY       132
+#define BTRFS_EXTENT_ITEM_KEY     168
+#define BTRFS_METADATA_ITEM_KEY   169
+#define BTRFS_TREE_BLOCK_REF_KEY  176
+#define BTRFS_SHARED_BLOCK_REF_KEY 177
+#define BTRFS_EXTENT_DATA_REF_KEY 178
+#define BTRFS_SHARED_DATA_REF_KEY 179
 #define BTRFS_CHUNK_ITEM_KEY      228
+
+#define BTRFS_EXTENT_FLAG_DATA       (1ULL << 0)
+#define BTRFS_EXTENT_FLAG_TREE_BLOCK (1ULL << 1)
 
 #define BTRFS_EXTENT_DATA_INLINE   0
 #define BTRFS_EXTENT_DATA_REGULAR  1
@@ -212,6 +221,33 @@ struct btrfs_root_backup {
     uint64_t reserved[24];
     uint8_t  uuid[16];
 } __attribute__((packed));
+
+struct btrfs_extent_item {
+    uint64_t refs;
+    uint64_t generation;
+    uint64_t flags;
+} __attribute__((packed));
+
+struct btrfs_extent_inline_ref {
+    uint8_t  type;
+    uint64_t offset;
+} __attribute__((packed));
+
+struct btrfs_tree_block_info {
+    struct btrfs_disk_key key;
+    uint8_t  level;
+} __attribute__((packed));
+
+struct btrfs_extent_data_ref {
+    uint64_t root;
+    uint64_t objectid;
+    uint64_t offset;
+    uint32_t count;
+} __attribute__((packed));
+
+struct btrfs_shared_data_ref {
+    uint32_t count;
+} __attribute__((packed));
 #pragma pack(pop)
 
 struct btrfs_chunk_map {
@@ -231,6 +267,8 @@ struct btrfs_priv {
     uint64_t fs_root_bytenr;
     uint8_t  fs_root_level;
     uint64_t fs_root_dirid;
+    uint64_t extent_root_bytenr;
+    uint8_t  extent_root_level;
     uint32_t num_chunks;
     struct btrfs_chunk_map chunks[BTRFS_MAX_CHUNKS];
 };
