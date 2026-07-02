@@ -247,25 +247,131 @@ static int64_t ext4_get_block_num(struct ext4_priv *ep,
 
 /* ── Inline data support ────────────────────────────────────────────── */
 
-/* If the inode has inline data, copy it to buf (up to max_size).
- * Returns bytes copied, or -1 if not inline. */
+/*
+ * ext4_read_inline_data — copy inline file data from inode to buffer.
+ *
+ * For inodes with EXT4_INLINE_DATA_FL set, file data is stored directly
+ * in i_block[0..EXT4_MAX_INLINE_DATA-1] rather than in separate disk
+ * blocks.  The i_blocks field (in 512-byte units) should be 0 for a
+ * purely inline file — if non-zero, the file has been expanded beyond
+ * the inline area and this function returns -1.
+ *
+ * Returns number of bytes copied on success, or -1 if not inline.
+ */
 static int ext4_read_inline_data(struct ext4_inode *inode,
                                   uint8_t *buf, uint32_t max_size)
 {
     if (!(inode->i_flags & EXT4_INLINE_DATA_FL))
         return -1;
-    /* Inline data is stored at the start of i_block[].
-     * For ext4, up to 60 bytes fit in i_block[0..14]. */
-    uint32_t size = inode->i_size;
-    uint32_t inline_max = (inode->i_blocks == 0) ? EXT4_MAX_INLINE_DATA : 0;
-    if (inline_max == 0)
-        return -1; /* should not happen for true inline files */
 
+    /* i_blocks counts 512-byte sectors.  For a pure inline file this
+     * must be 0 — the data lives entirely inside the inode. */
+    if (inode->i_blocks != 0)
+        return -1;
+
+    uint32_t size = inode->i_size;
     uint32_t copy = size;
     if (copy > max_size) copy = max_size;
     if (copy > EXT4_MAX_INLINE_DATA) copy = EXT4_MAX_INLINE_DATA;
     memcpy(buf, inode->i_block, copy);
     return (int)copy;
+}
+
+/* ── Inline directory helpers ────────────────────────────────────────── */
+
+/*
+ * ext4_find_entry_inline — search for a name in an inline-data directory.
+ *
+ * Directory entries are stored in i_block[] using the same ext4_dir_entry
+ * format as block-based directories.  Returns inode number on success,
+ * 0 if not found or not an inline directory.
+ */
+static uint32_t ext4_find_entry_inline(struct ext4_priv *ep,
+                                        struct ext4_inode *dir_inode,
+                                        const char *name)
+{
+    (void)ep;
+    if (!(dir_inode->i_flags & EXT4_INLINE_DATA_FL))
+        return 0;
+    if (dir_inode->i_blocks != 0)
+        return 0;
+
+    uint32_t file_size = dir_inode->i_size;
+    uint32_t name_len = (uint32_t)strlen(name);
+    uint32_t off = 0;
+
+    while (off + 8 <= file_size && off < EXT4_MAX_INLINE_DATA) {
+        struct ext4_dir_entry *de = (struct ext4_dir_entry *)
+            ((uint8_t *)dir_inode->i_block + off);
+
+        if (de->rec_len < 8)
+            break; /* corrupted entry */
+        if (de->rec_len == 0)
+            break; /* safety: zero-length entry causes infinite loop */
+
+        if (de->inode != 0 &&
+            de->name_len == name_len &&
+            memcmp(de->name, name, name_len) == 0) {
+            return de->inode;
+        }
+
+        off += de->rec_len;
+    }
+    return 0;
+}
+
+/*
+ * ext4_readdir_inline — list directory entries from an inline-data dir.
+ *
+ * Outputs entries using the same kprintf format as the block-based
+ * ext4_readdir.  Returns 0 on success, negative error code on failure.
+ */
+static int ext4_readdir_inline(struct ext4_priv *ep,
+                                struct ext4_inode *dir_inode)
+{
+    (void)ep;
+    if (!(dir_inode->i_flags & EXT4_INLINE_DATA_FL))
+        return -ENOTDIR;
+
+    uint32_t file_size = dir_inode->i_size;
+    uint32_t off = 0;
+
+    kprintf(".              <DIR>\n");
+    kprintf("..             <DIR>\n");
+
+    while (off + 8 <= file_size && off < EXT4_MAX_INLINE_DATA) {
+        struct ext4_dir_entry *de = (struct ext4_dir_entry *)
+            ((uint8_t *)dir_inode->i_block + off);
+
+        if (de->rec_len < 8)
+            break; /* corrupted */
+        if (de->rec_len == 0)
+            break; /* safety */
+
+        if (de->inode != 0 && de->name_len > 0) {
+            char fname[256];
+            uint32_t nlen = de->name_len;
+            if (nlen > 255) nlen = 255;
+            memcpy(fname, de->name, nlen);
+            fname[nlen] = '\0';
+
+            const char *type_str = "<FILE>";
+            switch (de->file_type) {
+            case EXT4_FT_DIR:      type_str = "<DIR>";  break;
+            case EXT4_FT_REG_FILE: type_str = "<FILE>"; break;
+            case EXT4_FT_SYMLINK:  type_str = "<LNK>";  break;
+            case EXT4_FT_CHRDEV:   type_str = "<CHR>";  break;
+            case EXT4_FT_BLKDEV:   type_str = "<BLK>";  break;
+            default:               type_str = "<?>";    break;
+            }
+
+            kprintf("%-16s %s\n", fname, type_str);
+        }
+
+        off += de->rec_len;
+    }
+
+    return 0;
 }
 
 /* ── File read ─────────────────────────────────────────────────────── */
@@ -323,6 +429,10 @@ static uint32_t ext4_find_entry(struct ext4_priv *ep, uint32_t dir_ino,
     struct ext4_inode dir_inode;
     if (ext4_read_inode(ep, dir_ino, &dir_inode) < 0)
         return 0;
+
+    /* Inline-data directory: entries are in i_block[] */
+    if (dir_inode.i_flags & EXT4_INLINE_DATA_FL)
+        return ext4_find_entry_inline(ep, &dir_inode, name);
 
     uint32_t file_size = dir_inode.i_size;
     uint32_t block_size = ep->block_size;
@@ -504,6 +614,10 @@ static int ext4_readdir(void *priv, const char *path)
 
     if (!(dir_inode.i_mode & 0x4000))
         return -ENOTDIR;
+
+    /* Inline-data directory: entries are in i_block[] */
+    if (dir_inode.i_flags & EXT4_INLINE_DATA_FL)
+        return ext4_readdir_inline(ep, &dir_inode);
 
     uint32_t file_size = dir_inode.i_size;
     uint32_t block_size = ep->block_size;
