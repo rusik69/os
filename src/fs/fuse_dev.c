@@ -89,7 +89,8 @@ static int fuse_dev_init_internal(void)
  * Returns 0 on success, or a negative errno on failure.
  */
 int fuse_dev_queue_request(uint32_t opcode, uint64_t nodeid,
-                            const void *arg, int arg_size)
+                            const void *arg, int arg_size,
+                            uint64_t *out_unique)
 {
     struct fuse_request_item *item;
     struct fuse_in_header *hdr;
@@ -134,6 +135,9 @@ int fuse_dev_queue_request(uint32_t opcode, uint64_t nodeid,
     spinlock_irqsave_acquire(&g_fuse_dev.lock, &irq_flags);
 
     unique = ++g_fuse_dev.unique;
+
+    if (out_unique)
+        *out_unique = unique;
 
     hdr->len     = sizeof(*hdr) + (uint32_t)(arg_size > 0 ? arg_size : 0);
     hdr->opcode  = opcode;

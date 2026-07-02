@@ -213,14 +213,18 @@ void fuse_dev_init(void);
  * @nodeid:   FUSE node ID of the target inode
  * @arg:      Pointer to request-specific argument data (may be NULL)
  * @arg_size: Size of argument data in bytes
+ * @out_unique: On success, receives the unique request ID (may be NULL)
  *
  * Allocates a request entry, fills the fuse_in_header, and queues it
  * for the daemon.  Wakes the daemon if it is blocked on /dev/fuse read.
  *
  * Returns 0 on success, or a negative errno on failure.
+ * On success, the unique ID for this request is written to @out_unique
+ * (if non-NULL), which should be passed to fuse_dev_wait_for_response.
  */
 int fuse_dev_queue_request(uint32_t opcode, uint64_t nodeid,
-                            const void *arg, int arg_size);
+                            const void *arg, int arg_size,
+                            uint64_t *out_unique);
 
 /**
  * fuse_dev_wait_for_response — Wait for the daemon's response.
