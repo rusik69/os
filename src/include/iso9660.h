@@ -224,6 +224,21 @@ static inline int susp_sig_match(const struct susp_entry_header *hdr,
     return hdr->sig[0] == (uint8_t)sig0 && hdr->sig[1] == (uint8_t)sig1;
 }
 
+/* ── Multi-session support ──────────────────────────────────────── */
+
+#define ISO9660_MAX_SESSIONS 16
+
+/* Information about one session's volume descriptor set.
+ * Each multi-session CD has its own PVD and optional Joliet SVD. */
+struct iso_session_info {
+    uint32_t session_lba;           /* LBA where this session's VDS begins */
+    uint32_t root_extent;           /* root dir extent from PVD */
+    uint32_t root_size;             /* root dir size from PVD */
+    int      has_joliet;            /* Joliet SVD found in this session */
+    uint32_t joliet_root_extent;    /* root dir from Joliet SVD */
+    uint32_t joliet_root_size;
+};
+
 int iso9660_mount(const char *mountpoint, uint8_t dev_id);
 int iso9660_init(void);
 

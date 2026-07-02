@@ -32,6 +32,10 @@ struct iso9660_priv {
     int      has_joliet;       /* 1 = Joliet (UCS-2) filenames available */
     uint32_t joliet_root_extent; /* root dir extent from Joliet SVD */
     uint32_t joliet_root_size;   /* root dir size from Joliet SVD */
+    /* Multi-session support */
+    int      num_sessions;          /* number of sessions found */
+    int      active_session;        /* index of the active (last) session */
+    struct iso_session_info sessions[ISO9660_MAX_SESSIONS];
 };
 
 /* Read a logical block from the ISO image */
@@ -46,80 +50,144 @@ static int iso_read_block(struct iso9660_priv *ip, uint32_t lba, uint8_t *buf)
     return 0;
 }
 
-/* Find the primary volume descriptor */
-static int iso9660_find_pvd(struct iso9660_priv *ip)
+/* ── Multi-session volume descriptor scanning ──────────────────── */
+
+#define ISO9660_DESC_SCAN_LIMIT 256   /* max descriptors to scan per session */
+
+/* Scan one session's volume descriptor set starting at @start_lba.
+ * Fills in @sess with PVD and Joliet SVD information.
+ * Stops at VDST (type 255) or after ISO9660_DESC_SCAN_LIMIT descriptors.
+ * Returns 0 on success (PVD found), -1 if no valid PVD found. */
+static int iso9660_scan_session(struct iso9660_priv *ip,
+                                 struct iso_session_info *sess,
+                                 uint32_t start_lba)
 {
     uint8_t buf[2048];
-    /* PVD is at sector 16 */
-    if (iso_read_block(ip, 16, buf) < 0) return -1;
+    int found_pvd = 0;
 
-    struct iso_primary_desc *pvd = (struct iso_primary_desc *)buf;
-    if (pvd->type != 1) return -1;
-    if (memcmp(pvd->id, "CD001", 5) != 0) return -1;
+    memset(sess, 0, sizeof(*sess));
+    sess->session_lba = start_lba;
 
-    ip->block_size = 2048; /* standard */
-
-    /* Parse root directory record (34 bytes at offset 156 in PVD) */
-    struct iso_dir_record *root = (struct iso_dir_record *)pvd->root_dir;
-    ip->root_extent = root->extent_loc_le;
-    ip->root_size   = root->data_length_le;
-
-    kprintf("[iso9660] Root dir at LBA %u, size %u\n",
-            ip->root_extent, ip->root_size);
-    return 0;
-}
-
-/*
- * Find the Supplementary Volume Descriptor (type 2) that contains
- * Joliet (UCS-2) filenames.  Returns 0 on success, -1 if not found.
- *
- * The SVD has the same basic structure as the PVD but with:
- *   - type = 2 instead of 1
- *   - escape sequences in the unused3 field (offset 88-119)
- *   - directory record filenames encoded in UCS-2 Big Endian
- *
- * Joliet is identified by escape sequences starting with %/ (0x25 0x2F):
- *   %/@ = UCS-2 level 1
- *   %/C = UCS-2 level 2
- *   %/E = UCS-2 level 3
- */
-static int iso9660_find_joliet_svd(struct iso9660_priv *ip)
-{
-    uint8_t buf[2048];
-    int sector = 16;
-
-    /* Scan volume descriptors (sectors 16.. up to 256 descriptors) */
-    for (int desc = 0; desc < 256; desc++) {
-        if (iso_read_block(ip, (uint32_t)(sector + desc), buf) < 0)
-            return -1;
-
-        struct iso_supplementary_desc *svd = (struct iso_supplementary_desc *)buf;
-
-        if (svd->type == 255)  /* volume descriptor set terminator */
+    for (int desc = 0; desc < ISO9660_DESC_SCAN_LIMIT; desc++) {
+        uint32_t block = start_lba + (uint32_t)desc;
+        if (iso_read_block(ip, block, buf) < 0)
             break;
-        if (svd->type == 2 && memcmp(svd->id, "CD001", 5) == 0) {
-            /* Check escape sequences for Joliet markers */
+
+        uint8_t type = buf[0];
+
+        /* Volume Descriptor Set Terminator (type 255) with "CD001"
+         * marks the end of this session's descriptor set. */
+        if (type == 255 && memcmp(buf + 1, "CD001", 5) == 0) {
+            if (found_pvd)
+                break;  /* end of this session */
+            continue;   /* stray terminator without a PVD — skip */
+        }
+
+        if (memcmp(buf + 1, "CD001", 5) != 0)
+            continue;  /* not an ISO9660 volume descriptor */
+
+        if (type == 1 && !found_pvd) {
+            /* Primary Volume Descriptor */
+            struct iso_primary_desc *pvd = (struct iso_primary_desc *)buf;
+            struct iso_dir_record *root = (struct iso_dir_record *)pvd->root_dir;
+            sess->root_extent = root->extent_loc_le;
+            sess->root_size   = root->data_length_le;
+            found_pvd = 1;
+        } else if (type == 2) {
+            /* Supplementary Volume Descriptor — check for Joliet escape seqs */
+            struct iso_supplementary_desc *svd =
+                (struct iso_supplementary_desc *)buf;
             if (svd->escape_sequences[0] == JOLIET_ESC_LEVEL1_0 &&
                 svd->escape_sequences[1] == JOLIET_ESC_LEVEL1_1 &&
                 (svd->escape_sequences[2] == JOLIET_ESC_LEVEL1_2 ||
                  svd->escape_sequences[2] == JOLIET_ESC_LEVEL2_2 ||
                  svd->escape_sequences[2] == JOLIET_ESC_LEVEL3_2)) {
-
                 struct iso_dir_record *root =
                     (struct iso_dir_record *)svd->root_dir;
-                ip->joliet_root_extent = root->extent_loc_le;
-                ip->joliet_root_size   = root->data_length_le;
-                ip->has_joliet = 1;
-
-                kprintf("[iso9660] Joliet (UCS-2) filenames available"
-                        " (root LBA %u, size %u)\n",
-                        ip->joliet_root_extent, ip->joliet_root_size);
-                return 0;
+                sess->joliet_root_extent = root->extent_loc_le;
+                sess->joliet_root_size   = root->data_length_le;
+                sess->has_joliet = 1;
             }
         }
+        /* Types 0, 3–254 are skipped (boot record, partition, etc.) */
     }
 
-    return -1;
+    return found_pvd ? 0 : -1;
+}
+
+/* Find all sessions on a multi-session ISO9660 disc.
+ * Replaces the previous iso9660_find_pvd() + iso9660_find_joliet_svd().
+ *
+ * Algorithm:
+ *   1. Start at LBA 16 (standard location of the first VDS).
+ *   2. Scan session descriptors until VDST (type 255).
+ *   3. Continue scanning past VDST for additional sessions.
+ *   4. Up to ISO9660_MAX_SESSIONS sessions, bounded by safety scan range.
+ *   5. Active session is always the LAST session found (most recent data).
+ *
+ * Legacy fields (root_extent, root_size, has_joliet, etc.) are
+ * populated from the active session for backward compatibility. */
+static int iso9660_find_sessions(struct iso9660_priv *ip)
+{
+    uint32_t search_lba = 16;
+    int nsessions = 0;
+
+    while (nsessions < ISO9660_MAX_SESSIONS) {
+        struct iso_session_info sess;
+
+        if (iso9660_scan_session(ip, &sess, search_lba) < 0) {
+            if (nsessions == 0)
+                return -1;  /* no valid session at all */
+            break;          /* no more sessions; at least one found */
+        }
+
+        ip->sessions[nsessions] = sess;
+        nsessions++;
+
+        /* Find the VDST block to advance past this session */
+        uint8_t buf[2048];
+        int found_vdst = 0;
+        for (int desc = 0; desc < ISO9660_DESC_SCAN_LIMIT; desc++) {
+            uint32_t block = search_lba + (uint32_t)desc;
+            if (iso_read_block(ip, block, buf) < 0)
+                break;
+            if (buf[0] == 255 && memcmp(buf + 1, "CD001", 5) == 0) {
+                search_lba = block + 1;
+                found_vdst = 1;
+                break;
+            }
+        }
+
+        if (!found_vdst)
+            break;  /* malformed session — no VDST found */
+
+        /* Safety: cap scan range to prevent runaway on large images */
+        if (search_lba > 65536)
+            break;
+    }
+
+    ip->num_sessions    = nsessions;
+    ip->active_session  = nsessions - 1;  /* last session is primary */
+
+    /* Populate legacy fields from the active (last) session */
+    {
+        const struct iso_session_info *as = &ip->sessions[ip->active_session];
+        ip->root_extent = as->root_extent;
+        ip->root_size   = as->root_size;
+        ip->has_joliet  = as->has_joliet;
+        ip->joliet_root_extent = as->joliet_root_extent;
+        ip->joliet_root_size   = as->joliet_root_size;
+
+        kprintf("[iso9660] %d session(s) found, active=%d "
+                "(root LBA %u, size %u)\n",
+                nsessions, ip->active_session,
+                ip->root_extent, ip->root_size);
+        if (ip->has_joliet)
+            kprintf("[iso9660] Active session has Joliet "
+                    "(UCS-2) filenames\n");
+    }
+
+    return 0;
 }
 
 /*
@@ -1155,19 +1223,21 @@ int iso9660_mount(const char *mountpoint, uint8_t dev_id)
     ip->dev_id = dev_id;
     ip->block_size = 2048;
     ip->has_rrip = 0;
+    ip->num_sessions = 0;
+    ip->active_session = 0;
 
-    if (iso9660_find_pvd(ip) < 0) {
+    /* Scan for all sessions and populate legacy fields from the
+     * active (last) session.  Handles both single-session and
+     * multi-session (photo CD, CD-Extra, etc.) discs. */
+    if (iso9660_find_sessions(ip) < 0) {
         kprintf("[iso9660] No primary volume descriptor found\n");
         kfree(ip);
         return -1;
     }
 
-    /* Check for Rock Ridge presence by scanning the root directory */
+    /* Check for Rock Ridge presence by scanning the root directory
+     * of the active session. */
     ip->has_rrip = check_rrip_present(ip);
-
-    /* Probe for Joliet (UCS-2) Supplementary Volume Descriptor */
-    ip->has_joliet = 0;
-    iso9660_find_joliet_svd(ip);
 
     /* Build mount info string */
     char mount_info[128];
