@@ -46,4 +46,54 @@ int  fat32_set_volume_label(const char *label);
 
 extern struct vfs_ops fat32_vfs_ops;
 
+/* ── VFAT Long File Name API (fat32_lfn.c) ─────────────────────────── */
+
+/* Compute VFAT checksum for an 8.3 name (8-byte name + 3-byte ext) */
+uint8_t vfat_checksum(const char name83_8[8], const char name83_3[3]);
+
+/* Determine if a filename needs VFAT long filename entries (1=yes, 0=no) */
+int vfat_needs_lfn(const char *name);
+
+/* Count VFAT LFN directory entries needed for a given name (0-20) */
+int vfat_count_lfn_entries(const char *name);
+
+/* Build a single VFAT LFN entry in a 32-byte buffer */
+void vfat_build_entry(void *entry_out, int ordinal, int is_last,
+                       const char *name, int name_offset,
+                       uint8_t checksum);
+
+/* Insert all VFAT LFN entries into a sector buffer at a given index */
+int vfat_insert_entries(uint8_t *sector_buf, int *entry_idx,
+                         const char *leaf,
+                         const char name83_8[8], const char name83_3[3]);
+
+/* Check if a directory entry is a VFAT LFN entry */
+int vfat_is_lfn_entry(const void *entry);
+
+/* Check if a directory entry is marked as deleted (0xE5) */
+int vfat_is_deleted_entry(const void *entry);
+
+/* Check if a directory entry is the end-of-directory marker (0x00) */
+int vfat_is_end_of_dir(const void *entry);
+
+/* Compare an entry's 8.3 name against a reference (case-insensitive) */
+int vfat_compare_83_name(const void *entry,
+                          const char name83_8[8], const char name83_3[3]);
+
+/* Extract the 8.3 name from a directory entry */
+void vfat_get_83_name(const void *entry, char name83_8[8], char name83_3[3]);
+
+/* Get the checksum from a VFAT LFN directory entry */
+uint8_t vfat_get_lfn_checksum(const void *entry);
+
+/* Delete VFAT LFN entries matching a checksum in a sector buffer */
+int vfat_delete_by_checksum(uint8_t *sector_buf, int start_idx, int end_idx,
+                             uint8_t checksum);
+
+/* Mark a single directory entry as deleted */
+int vfat_mark_entry_deleted(void *entry);
+
+/* Build an 8.3 short name from a long filename (space-padded output) */
+void vfat_build_83_name(const char *long_name, char out_name[8], char out_ext[3]);
+
 #endif

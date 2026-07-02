@@ -237,6 +237,7 @@ C_SRCS = src/kernel/kernel.c \
          src/ipc/shm.c \
          src/fs/fat32.c \
          src/fs/vfat_shortname.c \
+         src/fs/fat32_lfn.c \
          src/fs/iso9660.c \
          src/fs/bufcache.c \
          src/fs/page_cache.c \
