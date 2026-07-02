@@ -1171,7 +1171,7 @@ kernel: $(BUILDDIR)/kernel.elf
         help debug clean deps \
         test test-kernel test-serial test-cli test-clean test-coverage clean-all \
         nic-test \
-        check check-full check-clean check-app-boundary check-debug doom-test \
+        check check-full check-clean check-app-boundary check-debug fsck-test doom-test \
         format format-check check-whitespace lint lint-full cppcheck-check \
         ccache-stats count build-info count-lines count-funcs count-headers \
         run-test unit-test junit-test bench \
@@ -1229,6 +1229,14 @@ check-debug:
 	    done; \
 	fi
 	@echo "=== check-debug: All checks passed ==="
+
+# ── ext2 fsck validation test ─────────────────────────────────────────
+# Generates ext2 images with all feature combinations using
+# scripts/mkext2img.py and validates them structurally.
+fsck-test:
+	@echo "=== Running ext2 fsck validation tests ==="
+	@python3 scripts/test_ext2_fsck.py
+	@echo "=== fsck-test completed ==="
 
 # ── Precompiled headers (PCH, Item 258) ──────────────────────────────
 #
