@@ -234,6 +234,397 @@ int jbd2_get_state(const struct jbd2_journal *journal)
     return JBD2_STATE_CLEAN;
 }
 
+/* ── Internal I/O helpers ──────────────────────────────────────────── */
+
+/*
+ * Read one journal block (journal->block_size bytes) from the device.
+ * Handles the block-size to 512-byte-sector conversion internally.
+ */
+static int jbd2_read_block(const struct jbd2_journal *journal,
+                            uint32_t block_num, uint8_t *buf)
+{
+    uint32_t sectors_per_block = journal->block_size / 512;
+    uint64_t lba = (uint64_t)block_num * sectors_per_block;
+
+    for (uint32_t i = 0; i < sectors_per_block; i++) {
+        if (blockdev_read_sectors((int)journal->dev_id,
+                                   (uint32_t)(lba + i), 1,
+                                   buf + i * 512) != 0)
+            return JBD2_ERR_IO;
+    }
+    return JBD2_OK;
+}
+
+/*
+ * Write one filesystem block (journal->block_size bytes) to the device.
+ * Used during recovery to replay data blocks to their target locations.
+ */
+static int jbd2_write_fs_block(const struct jbd2_journal *journal,
+                                uint32_t block_num, const uint8_t *buf)
+{
+    uint32_t sectors_per_block = journal->block_size / 512;
+    uint64_t lba = (uint64_t)block_num * sectors_per_block;
+
+    for (uint32_t i = 0; i < sectors_per_block; i++) {
+        if (blockdev_write_sectors((int)journal->dev_id,
+                                    (uint32_t)(lba + i), 1,
+                                    buf + i * 512) != 0)
+            return JBD2_ERR_IO;
+    }
+    return JBD2_OK;
+}
+
+/* ── Descriptor block processing ───────────────────────────────────── */
+
+/*
+ * Process a single descriptor block and replay all its data blocks.
+ *
+ * Reads the descriptor block from @buf (which was already read at @current),
+ * iterates through its block tags, reads the corresponding data blocks
+ * from the journal, and writes them to their target filesystem locations.
+ *
+ * @journal:      initialized journal structure
+ * @buf:          buffer containing the descriptor block data
+ * @current:      [in/out] on entry: block number of the descriptor;
+ *                on exit:  block number after the last data block
+ *                (the caller expects to find the commit block here)
+ * @block_size:   journal block size in bytes
+ *
+ * Returns: number of blocks replayed on success,
+ *          negative error code on failure.
+ */
+static int jbd2_replay_descriptor(const struct jbd2_journal *journal,
+                                   uint8_t *buf,
+                                   uint32_t *current,
+                                   uint32_t block_size)
+{
+    uint32_t data_current;
+    int tags_per_block;
+    int num_tags;
+    uint32_t tag_offset;
+    int blocks_replayed;
+    int i;
+
+    /* Number of V1 tags that fit in a block */
+    tags_per_block = ((int)block_size - (int)sizeof(struct jbd2_header))
+                     / (int)sizeof(struct jbd2_block_tag);
+    if (tags_per_block <= 0)
+        return JBD2_ERR_BAD_MAGIC;
+
+    /* Count tags and find the data block start position */
+    num_tags = 0;
+    tag_offset = sizeof(struct jbd2_header);
+    data_current = *current + 1;
+
+    for (i = 0; i < tags_per_block; i++) {
+        const struct jbd2_block_tag *tag;
+
+        if (tag_offset + sizeof(struct jbd2_block_tag) > block_size)
+            break;
+
+        tag = (const struct jbd2_block_tag *)(buf + tag_offset);
+        num_tags++;
+        tag_offset += sizeof(struct jbd2_block_tag);
+
+        if (tag->t_flags & JBD2_FLAG_LAST_TAG)
+            break;
+    }
+
+    if (num_tags == 0) {
+        /* No tags means no data blocks — just advance past header */
+        kprintf("[jbd2]  transaction with zero blocks\n");
+        *current = data_current;
+        return 0;
+    }
+
+    kprintf("[jbd2]  descriptor at %u: %d block(s)\n",
+            *current, num_tags);
+
+    /* Replay each data block */
+    blocks_replayed = 0;
+    tag_offset = sizeof(struct jbd2_header);
+
+    for (i = 0; i < num_tags; i++) {
+        const struct jbd2_block_tag *tag;
+        uint32_t target_block;
+        uint32_t data_block_num;
+        int ret;
+
+        tag = (const struct jbd2_block_tag *)(buf + tag_offset);
+        target_block = tag->t_blocknr;
+        data_block_num = data_current;
+
+        /* Handle journal wrap-around */
+        if (data_block_num >= journal->total_blocks)
+            data_block_num = journal->first_data_block;
+
+        if (!(tag->t_flags & JBD2_FLAG_DELETED)) {
+            /* Read data block from the journal */
+            ret = jbd2_read_block(journal, data_block_num, buf);
+            if (ret != JBD2_OK) {
+                kprintf("[jbd2]  I/O error reading journal "
+                        "data block %u\n", data_block_num);
+                return ret;
+            }
+
+            /* Handle escaped blocks:
+             * If the file system data block happened to contain the
+             * JBD2 magic number, it was replaced with the magic + 0
+             * block type during commit.  Restore the original magic. */
+            if (tag->t_flags & JBD2_FLAG_ESCAPE) {
+                struct jbd2_header *data_hdr =
+                    (struct jbd2_header *)buf;
+                if (data_hdr->h_magic != JBD2_MAGIC_NUMBER) {
+                    /* The original block was replaced with a
+                     * JBD2_MAGIC_NUMBER + blocktype==0 block.
+                     * Restore the magic that was overwritten. */
+                    data_hdr->h_magic = JBD2_MAGIC_NUMBER;
+                }
+            }
+
+            /* Write the data block to its target filesystem location */
+            ret = jbd2_write_fs_block(journal, target_block, buf);
+            if (ret != JBD2_OK) {
+                kprintf("[jbd2]  failed to write block %u "
+                        "during recovery\n", target_block);
+                return ret;
+            }
+
+            blocks_replayed++;
+        }
+
+        data_current++;
+        tag_offset += sizeof(struct jbd2_block_tag);
+    }
+
+    /* Advance past all data blocks */
+    *current = data_current;
+    return blocks_replayed;
+}
+
+/* ── Journal clean marking ─────────────────────────────────────────── */
+
+/*
+ * Mark the journal as clean by updating the superblock in place.
+ *
+ * Sets s_start to 0xFFFFFFFF (clean marker) and advances
+ * s_sequence past the last replayed transaction.
+ */
+static int jbd2_clean_journal(struct jbd2_journal *journal,
+                               uint32_t next_sequence)
+{
+    uint8_t *buf;
+    struct jbd2_superblock *sb;
+    int ret;
+
+    buf = (uint8_t *)kmalloc(JBD2_SUPERBLOCK_SIZE);
+    if (!buf)
+        return -ENOMEM;
+
+    memset(buf, 0, JBD2_SUPERBLOCK_SIZE);
+
+    /* Read the current superblock */
+    ret = jbd2_read_block(journal, 0, buf);
+    if (ret != JBD2_OK) {
+        kprintf("[jbd2] failed to read superblock for "
+                "clean marking\n");
+        kfree(buf);
+        return ret;
+    }
+
+    sb = (struct jbd2_superblock *)buf;
+
+    /* Validate it's really our superblock */
+    if (sb->s_header.h_magic != JBD2_MAGIC_NUMBER) {
+        kprintf("[jbd2] invalid superblock during clean marking\n");
+        kfree(buf);
+        return JBD2_ERR_BAD_MAGIC;
+    }
+
+    /* Update fields */
+    journal->start_block = 0xFFFFFFFF;
+    journal->sequence = next_sequence;
+    journal->errno_val = 0;
+
+    sb->s_start = 0xFFFFFFFF;
+    sb->s_sequence = next_sequence;
+    sb->s_errno = 0;
+
+    /* Write the updated superblock back */
+    ret = jbd2_write_fs_block(journal, 0, buf);
+    if (ret != JBD2_OK) {
+        kprintf("[jbd2] failed to write clean superblock\n");
+        kfree(buf);
+        return ret;
+    }
+
+    kfree(buf);
+    kprintf("[jbd2] journal marked clean: sequence=%u\n", next_sequence);
+    return JBD2_OK;
+}
+
+/* ── Journal recovery (replay) ────────────────────────────────────── */
+
+int jbd2_replay(struct jbd2_journal *journal)
+{
+    uint8_t *buf;
+    uint32_t current;
+    uint32_t block_size;
+    int transactions;
+    int ret;
+
+    if (!journal)
+        return -EINVAL;
+
+    /* Check if there's anything to recover */
+    ret = jbd2_get_state(journal);
+    if (ret != JBD2_STATE_DIRTY) {
+        if (ret == JBD2_STATE_ERROR) {
+            kprintf("[jbd2] journal has recorded error %u, "
+                    "manual fsck required\n", journal->errno_val);
+            return JBD2_ERR_BAD_MAGIC;
+        }
+        kprintf("[jbd2] journal is clean, no recovery needed\n");
+        return 0;
+    }
+
+    block_size = journal->block_size;
+    if (block_size == 0 || block_size > JBD2_MAX_BLOCK_SIZE) {
+        kprintf("[jbd2] invalid block size %u for recovery\n",
+                block_size);
+        return JBD2_ERR_BLOCK_SIZE;
+    }
+
+    buf = (uint8_t *)kmalloc(block_size);
+    if (!buf)
+        return -ENOMEM;
+
+    current = journal->start_block;
+    transactions = 0;
+
+    kprintf("[jbd2] journal recovery: start_block=%u, "
+            "first_data=%u, total=%u, seq=%u\n",
+            current, journal->first_data_block,
+            journal->total_blocks, journal->sequence);
+
+    /* Scan the journal for committed transactions */
+    while (1) {
+        const struct jbd2_header *hdr;
+        uint32_t expected_seq;
+
+        /* Handle circular wrap-around */
+        if (current >= journal->total_blocks)
+            current = journal->first_data_block;
+
+        /* Read the next journal block */
+        ret = jbd2_read_block(journal, current, buf);
+        if (ret != JBD2_OK) {
+            kprintf("[jbd2] I/O error reading block %u "
+                    "during recovery\n", current);
+            goto out_err;
+        }
+
+        hdr = (const struct jbd2_header *)buf;
+
+        /* No magic number means end of recoverable data */
+        if (hdr->h_magic != JBD2_MAGIC_NUMBER) {
+            kprintf("[jbd2] no magic at block %u "
+                    "(recovered %d transactions)\n",
+                    current, transactions);
+            break;
+        }
+
+        /* Hit the superblock again → wrapped completely around */
+        if (hdr->h_blocktype == JBD2_SUPERBLOCK_V1 ||
+            hdr->h_blocktype == JBD2_SUPERBLOCK_V2) {
+            kprintf("[jbd2] reached superblock at block %u "
+                    "(recovered %d transactions)\n",
+                    current, transactions);
+            break;
+        }
+
+        /* Skip orphan commit/revocation blocks */
+        if (hdr->h_blocktype == JBD2_COMMIT_BLOCK) {
+            current++;
+            continue;
+        }
+        if (hdr->h_blocktype == JBD2_REVOKE_BLOCK) {
+            current++;
+            continue;
+        }
+
+        /* Must be a descriptor block to continue */
+        if (hdr->h_blocktype != JBD2_DESCRIPTOR_BLOCK) {
+            kprintf("[jbd2] unknown block type %u at %u "
+                    "(recovered %d transactions)\n",
+                    hdr->h_blocktype, current, transactions);
+            break;
+        }
+
+        /* Verify sequence number is contiguous */
+        expected_seq = journal->sequence + transactions;
+        if (hdr->h_sequence != expected_seq) {
+            kprintf("[jbd2] sequence mismatch at block %u: "
+                    "expected %u, got %u\n",
+                    current, expected_seq, hdr->h_sequence);
+            break;
+        }
+
+        /* Replay this descriptor's data blocks */
+        ret = jbd2_replay_descriptor(journal, buf,
+                                      &current, block_size);
+        if (ret < 0)
+            goto out_err;
+
+        /* Verify the commit block exists */
+        if (current >= journal->total_blocks)
+            current = journal->first_data_block;
+
+        ret = jbd2_read_block(journal, current, buf);
+        if (ret != JBD2_OK) {
+            kprintf("[jbd2] I/O error reading commit block "
+                    "at %u\n", current);
+            goto out_err;
+        }
+
+        hdr = (const struct jbd2_header *)buf;
+        if (hdr->h_magic != JBD2_MAGIC_NUMBER ||
+            hdr->h_blocktype != JBD2_COMMIT_BLOCK) {
+            kprintf("[jbd2] missing commit block for seq %u "
+                    "at block %u\n", expected_seq, current);
+            ret = JBD2_ERR_BAD_MAGIC;
+            goto out_err;
+        }
+
+        /* Advance past the commit block */
+        current++;
+        transactions++;
+
+        kprintf("[jbd2]  transaction seq=%u committed, "
+                "%d block(s) replayed\n",
+                expected_seq, ret);
+    }
+
+    if (transactions > 0) {
+        /* Mark the journal clean */
+        ret = jbd2_clean_journal(journal,
+                                  journal->sequence + transactions);
+        if (ret != JBD2_OK) {
+            kprintf("[jbd2] failed to mark journal clean\n");
+            goto out_err;
+        }
+    }
+
+    kfree(buf);
+    kprintf("[jbd2] journal recovery complete: %d transaction(s) "
+            "replayed\n", transactions);
+    return transactions;
+
+out_err:
+    kfree(buf);
+    return ret;
+}
+
 /* ── Module init ───────────────────────────────────────────────────── */
 
 int __init jbd2_init(void)

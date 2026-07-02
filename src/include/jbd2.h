@@ -171,6 +171,22 @@ struct jbd2_journal {
 #define JBD2_ERR_IO         -3  /* Block device I/O error */
 #define JBD2_ERR_CHECKSUM   -4  /* Superblock checksum mismatch */
 
+/* ── Journal replay ────────────────────────────────────────────────── */
+
+/*
+ * jbd2_replay — replay committed transactions from the journal.
+ *
+ * @journal: initialized journal structure (loaded via jbd2_load_superblock)
+ *
+ * Scans the journal from s_start, reads each committed transaction,
+ * replays data blocks to their target filesystem locations, and
+ * marks the journal clean upon successful completion.
+ *
+ * Returns: number of transactions replayed on success (0 = nothing to do),
+ *          negative error code (< 0) on failure.
+ */
+int jbd2_replay(struct jbd2_journal *journal);
+
 /* ── Public API ─────────────────────────────────────────────────────── */
 
 /*
