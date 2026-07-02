@@ -1273,6 +1273,113 @@ static int tmpfs_tmpfile(void *priv, uint32_t mode)
     return idx; /* return inode index as file handle */
 }
 
+/* ── tmpfs fallocate: hole punching ──────────────────────────────── */
+
+/*
+ * tmpfs_fallocate() - Pre-allocate or deallocate space for a tmpfs file.
+ * @priv:  Filesystem private data (unused).
+ * @path:  Absolute path to the file.
+ * @mode:  Fallocate mode flags (FALLOC_FL_PUNCH_HOLE, FALLOC_FL_KEEP_SIZE).
+ * @offset: Starting byte offset.
+ * @len:   Length of the range in bytes.
+ *
+ * For tmpfs:
+ *   - FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE: Punch a hole in the
+ *     file range [offset, offset+len).  The data in that range is
+ *     zeroed.  If the hole covers the entire file, the inode buffer
+ *     is freed (size set to 0).  Otherwise the file size is unchanged.
+ *   - Any other mode combination: No-op (tmpfs allocates on write).
+ *
+ * Returns 0 on success, or a negative errno on failure.
+ */
+static int tmpfs_fallocate(void *priv, const char *path, int mode,
+                           uint32_t offset, uint32_t len)
+{
+    (void)priv;
+
+    if (!path || len == 0)
+        return -EINVAL;
+
+    int idx = find_inode(path);
+    if (idx < 0)
+        return -ENOENT;
+
+    /* Only regular files support hole punching */
+    if (inodes[idx].type != TMPFS_TYPE_FILE)
+        return -EINVAL;
+
+    /* ── Hole punch mode ── */
+    if (mode & FALLOC_FL_PUNCH_HOLE) {
+        /* Linux convention: PUNCH_HOLE requires KEEP_SIZE */
+        if (!(mode & FALLOC_FL_KEEP_SIZE))
+            return -EOPNOTSUPP;
+
+        /* Need data in memory to punch */
+        if (inodes[idx].is_swapped) {
+            int ret = tmpfs_swap_in_inode(idx);
+            if (ret < 0)
+                return ret;
+        }
+
+        uint32_t file_size = inodes[idx].size;
+        if (offset >= file_size)
+            return 0;  /* Punching beyond EOF is a no-op */
+
+        /* Clamp the punch range to the file size */
+        uint32_t punch_end = offset + len;
+        if (punch_end > file_size)
+            punch_end = file_size;
+        uint32_t punch_len = punch_end - offset;
+
+        if (punch_len == 0)
+            return 0;
+
+        /* Zero the hole range */
+        if (inodes[idx].data) {
+            /* If KSM-registered, unregister before modifying pages */
+            int was_ksm = inodes[idx].ksm_registered;
+            if (was_ksm)
+                tmpfs_unregister_ksm(idx);
+
+            memset(inodes[idx].data + offset, 0, (size_t)punch_len);
+
+            /* Re-register with KSM if it was previously registered */
+            if (was_ksm)
+                tmpfs_register_ksm(idx);
+        }
+
+        /* If the hole covers the entire file, free the buffer completely */
+        if (offset == 0 && punch_len >= file_size) {
+            if (inodes[idx].data) {
+                tmpfs_free_pages_or_kmem(inodes[idx].data,
+                                         inodes[idx].data_phys,
+                                         inodes[idx].size);
+                inodes[idx].data = NULL;
+                inodes[idx].data_phys = 0;
+                inodes[idx].is_huge = 0;
+            }
+
+            /* Update the total used-bytes counter */
+            if (tmpfs_used_bytes >= (uint64_t)file_size)
+                tmpfs_used_bytes -= (uint64_t)file_size;
+            else
+                tmpfs_used_bytes = 0;
+
+            inodes[idx].size = 0;
+        }
+        /* else: hole in the middle or at the end — range is zeroed,
+         * but file size is preserved per KEEP_SIZE convention. */
+
+        return 0;
+    }
+
+    /* Without PUNCH_HOLE: no-op for tmpfs (space cannot be pre-allocated
+     * in a RAM-backed filesystem; allocation happens lazily on write). */
+    (void)offset;
+    (void)len;
+    return 0;
+}
+
 /* ── tmpfs madvise — apply madvise advice to a tmpfs inode ──────── */
 
 /*
@@ -1440,6 +1547,7 @@ struct vfs_ops tmpfs_vfs_ops = {
     .readdir     = tmpfs_readdir,
     .readdir_names = tmpfs_readdir_names,
     .truncate    = tmpfs_truncate,
+    .fallocate   = tmpfs_fallocate,
     .symlink     = tmpfs_symlink,
     .readlink    = tmpfs_readlink,
     .mknod       = tmpfs_mknod,
