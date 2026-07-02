@@ -302,6 +302,211 @@ static void sysfs_create_power_attrs(const char *devpath,
 	}
 }
 
+/* ── PCI config space access (config file) ──────────────────────────── */
+
+/*
+ * Private data for the PCI config space file callback.
+ * Stores the BDF address of the device so the read/write callbacks
+ * can access the correct configuration space registers.
+ */
+struct pci_config_priv {
+	uint8_t bus;
+	uint8_t slot;
+	uint8_t func;
+};
+
+/*
+ * Read callback for /sys/devices/.../config.
+ *
+ * Returns raw PCI configuration space bytes, starting from offset 0.
+ * For conventional PCI devices we return 256 bytes (standard config
+ * space).  For PCI Express devices we return the full extended 4 KB
+ * config space (offsets 0x000–0xFFF).
+ *
+ * Internally reads one DWORD at a time (the granularity of the PCI
+ * config access primitives) and extracts the requested byte(s).
+ *
+ * @buf     — caller-supplied output buffer
+ * @max_sz  — maximum number of bytes the caller can accept
+ * @priv    — pointer to a struct pci_config_priv
+ *
+ * Returns the number of bytes written to buf, or < 0 on error.
+ */
+static int sysfs_read_pci_config(char *buf, uint32_t max_sz, void *priv)
+{
+	struct pci_config_priv *cfg = (struct pci_config_priv *)priv;
+	uint32_t max_offset = 256;
+	int has_pcie;
+
+	if (!buf || !cfg)
+		return -EINVAL;
+
+	has_pcie = pcie_is_available();
+	if (has_pcie)
+		max_offset = 4096;
+
+	if (max_sz > max_offset)
+		max_sz = max_offset;
+
+	/*
+	 * Read DWORD-by-DWORD and unfold the bytes into the output
+	 * buffer.  The loop naturally stops at max_offset because
+	 * max_sz has already been clamped.
+	 */
+	for (uint32_t pos = 0; pos + 4 <= max_sz; pos += 4) {
+		uint32_t dword;
+
+		if (pos < 256) {
+			dword = pci_read(cfg->bus, cfg->slot, cfg->func,
+					 (uint8_t)(pos & (uint8_t)~3U));
+		} else if (has_pcie) {
+			dword = pcie_read(cfg->bus, cfg->slot, cfg->func,
+					  (uint16_t)(pos & (uint16_t)~3U));
+		} else {
+			break;
+		}
+
+		buf[pos + 0] = (char)( dword        & 0xFF);
+		buf[pos + 1] = (char)((dword >> 8)  & 0xFF);
+		buf[pos + 2] = (char)((dword >> 16) & 0xFF);
+		buf[pos + 3] = (char)((dword >> 24) & 0xFF);
+	}
+
+	return (int)max_sz;
+}
+
+/*
+ * Write callback for /sys/devices/.../config.
+ *
+ * Allows modifying individual bytes of the PCI configuration space.
+ * The write is performed as a read-modify-write of the enclosing
+ * DWORD so that neighbouring bytes are preserved.
+ *
+ * @data   — bytes to write
+ * @size   — number of bytes to write
+ * @priv   — pointer to a struct pci_config_priv
+ *
+ * Returns the number of bytes accepted on success, < 0 on error.
+ */
+static int sysfs_write_pci_config(const char *data, uint32_t size,
+				   void *priv)
+{
+	struct pci_config_priv *cfg = (struct pci_config_priv *)priv;
+	int has_pcie;
+
+	if (!data || !cfg)
+		return -EINVAL;
+
+	has_pcie = pcie_is_available();
+
+	for (uint32_t pos = 0; pos < size; pos++) {
+		uint32_t offset = pos;
+
+		if (offset >= 4096)
+			break;
+
+		/* Address of the enclosing DWORD */
+		uint32_t dword_offset = offset & (uint32_t)~3U;
+		int shift = (int)((offset & 3U) * 8U);
+
+		/* Read current DWORD */
+		uint32_t dword;
+		if (dword_offset < 256) {
+			dword = pci_read(cfg->bus, cfg->slot, cfg->func,
+					 (uint8_t)dword_offset);
+		} else if (has_pcie) {
+			dword = pcie_read(cfg->bus, cfg->slot, cfg->func,
+					  (uint16_t)dword_offset);
+		} else {
+			break;
+		}
+
+		/* Modify the target byte */
+		dword &= ~(0xFFU << shift);
+		dword |= ((uint32_t)(unsigned char)data[pos]) << shift;
+
+		/* Write back the DWORD */
+		if (dword_offset < 256) {
+			pci_write(cfg->bus, cfg->slot, cfg->func,
+				  (uint8_t)dword_offset, dword);
+		} else if (has_pcie) {
+			pcie_write(cfg->bus, cfg->slot, cfg->func,
+				   (uint16_t)dword_offset, dword);
+		} else {
+			break;
+		}
+	}
+
+	return (int)size;
+}
+
+/*
+ * Release callback for the PCI config file's private data.
+ * Frees the pci_config_priv struct when the sysfs entry is removed.
+ */
+static void sysfs_release_pci_config(void *priv)
+{
+	if (priv)
+		kfree(priv);
+}
+
+/*
+ * Create /sys/devices/.../config file for a discovered PCI device.
+ *
+ * Creates a writable binary file through which userspace can read
+ * and write the raw PCI configuration space.  The file is populated
+ * with dynamic read/write callbacks that translate byte-level access
+ * to the DWORD-oriented PCI config primitives.
+ *
+ * @devpath:  full path to the device directory (e.g.
+ *            "/sys/devices/pci0000:00/0000:00:03.0")
+ * @bus:      PCI bus number
+ * @slot:     PCI slot number
+ * @func:     PCI function number
+ */
+static void sysfs_create_pci_config_attrs(const char *devpath,
+					  uint8_t bus, uint8_t slot,
+					  uint8_t func)
+{
+	struct pci_config_priv *priv;
+
+	priv = (struct pci_config_priv *)kmalloc(
+			sizeof(struct pci_config_priv));
+	if (!priv) {
+		kprintf("[sysfs] Failed to allocate PCI config priv "
+			"for %s\n", devpath);
+		return;
+	}
+
+	priv->bus  = bus;
+	priv->slot = slot;
+	priv->func = func;
+
+	char config_path[96];
+	int n = snprintf(config_path, sizeof(config_path),
+			 "%s/config", devpath);
+	if (n < 0 || (uint32_t)n >= sizeof(config_path)) {
+		kfree(priv);
+		return;
+	}
+
+	if (sysfs_create_writable_file(config_path, "",
+				       priv,
+				       sysfs_read_pci_config,
+				       sysfs_write_pci_config) < 0) {
+		kprintf("[sysfs] Failed to create %s\n", config_path);
+		kfree(priv);
+		return;
+	}
+
+	/*
+	 * Install a release callback so the allocated pci_config_priv
+	 * is freed when the sysfs entry is removed (e.g. on driver
+	 * unbind or hot-unplug).
+	 */
+	sysfs_set_release_cb(config_path, sysfs_release_pci_config);
+}
+
 /* ── PCI device directory creation ───────────────────────────────── */
 
 /*
@@ -498,6 +703,16 @@ static void sysfs_create_pci_device_dirs(void)
 							(uint8_t)bus,
 							(uint8_t)slot,
 							(uint8_t)func);
+
+				/*
+				 * PCI config space access:
+				 *   config — raw PCI configuration space (256 bytes
+				 *            for conventional PCI, 4 KB for PCIe)
+				 */
+				sysfs_create_pci_config_attrs(devpath,
+							      (uint8_t)bus,
+							      (uint8_t)slot,
+							      (uint8_t)func);
 
 				count++;
 			}
