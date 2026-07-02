@@ -2,6 +2,7 @@
 #include "printf.h"
 #include "kernel.h"
 #include "smp.h"
+#include "numa_mem.h"
 
 /*
  * CPUID leaf 0xB (Intel x2APIC topology enumeration).
@@ -230,6 +231,9 @@ void numa_init(void)
         }
         kprintf("\n");
     }
+
+    /* Initialise per-node physical memory ranges */
+    numa_mem_init();
 }
 
 /*

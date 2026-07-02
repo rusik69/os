@@ -692,6 +692,7 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/early_serial.c \
          src/kernel/efi_runtime.c \
          src/memory/page_pool.c \
+         src/memory/numa_mem.c \
          src/drivers/dm-era.c \
          src/drivers/dma_buf.c \
          src/drivers/bonding.c \

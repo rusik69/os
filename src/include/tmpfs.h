@@ -3,6 +3,7 @@
 
 #include "types.h"
 #include "vfs.h"
+#include "numa_mem.h"
 
 /*
  * tmpfs — RAM-backed filesystem for /tmp, /dev/shm, etc.
@@ -46,11 +47,15 @@ struct tmpfs_inode {
     uint8_t  type;
     char     name[TMPFS_MAX_NAME];
     uint32_t size;
-    uint8_t  *data;          /* file content (kmalloc'd), or symlink target */
+    uint8_t  *data;          /* file content (virtual addr of kmalloc'd or page-allocated buffer) */
     uint8_t  uid, gid;
     uint16_t mode;
     uint32_t parent;         /* index of parent dir */
     struct tmpfs_devno dev;  /* device major/minor for device nodes */
+
+    /* NUMA-aware page-based storage tracking */
+    uint64_t data_phys;      /* physical addr of page allocation (0 = kmalloc'd) */
+    int      numa_node;      /* NUMA node the data pages were allocated from */
 };
 
 /* Mount an empty tmpfs — returns 0 on success */

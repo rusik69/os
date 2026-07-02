@@ -7,6 +7,9 @@
 #include "heap.h"
 #include "fs.h" /* for FS_MODE_FILE, FS_MODE_DIR etc */
 #include "errno.h"
+#include "numa_mem.h"
+#include "cpu_topology.h"
+#include "page_allocator_ext.h"
 
 static struct tmpfs_inode inodes[TMPFS_MAX_INODES];
 static int tmpfs_mounted = 0;
@@ -14,6 +17,11 @@ static int tmpfs_mounted = 0;
 /* ── Per-mount size accounting ──────────────────────────────────────── */
 static uint64_t tmpfs_size_limit  = TMPFS_SIZE_UNLIMITED; /* 0 = unlimited */
 static uint64_t tmpfs_used_bytes  = 0;                     /* total data bytes */
+
+/* ── NUMA-aware page allocation helpers (forward declarations) ────── */
+static uint8_t *tmpfs_alloc_pages_numa(uint32_t size, uint64_t *out_phys);
+static void tmpfs_free_pages_or_kmem(uint8_t *ptr, uint64_t phys,
+                                     uint32_t size);
 
 /* ── helpers ───────────────────────────────────────────────────── */
 
@@ -36,10 +44,14 @@ static void free_inode(int idx) {
         else
             tmpfs_used_bytes = 0;
     }
-    if (inodes[idx].data) kfree(inodes[idx].data);
+    /* Free data using the appropriate method */
+    tmpfs_free_pages_or_kmem(inodes[idx].data, inodes[idx].data_phys,
+                             inodes[idx].size);
     inodes[idx].in_use = 0;
     inodes[idx].data = NULL;
+    inodes[idx].data_phys = 0;
     inodes[idx].size = 0;
+    inodes[idx].numa_node = 0;
 }
 
 static int find_inode(const char *path) {
@@ -73,6 +85,85 @@ static int find_inode_in_dir(int dir_idx, const char *name) {
     return -EINVAL;
 }
 
+/* ── NUMA-aware page allocation helpers ───────────────────────────── */
+
+/*
+ * order_for_size() - Compute the page order for a given byte size.
+ * Returns the smallest order such that 2^order * PAGE_SIZE >= size.
+ * Clamped to MAX_ORDER-1 to avoid exceeding the maximum allocation.
+ */
+static inline int order_for_size(uint32_t size)
+{
+    int order = 0;
+    uint64_t page_capacity = PAGE_SIZE;
+    while (page_capacity < (uint64_t)size && order < MAX_ORDER - 1) {
+        order++;
+        page_capacity <<= 1;
+    }
+    return order;
+}
+
+/*
+ * tmpfs_alloc_pages_numa() - Allocate pages for file data from the
+ * local NUMA node.
+ *
+ * @size:     Required byte size.
+ * @out_phys: Output: physical address of the allocated region, or 0
+ *            on failure.  Only valid for contiguous page allocations.
+ *
+ * Returns a kernel virtual address pointer, or NULL on failure.
+ *
+ * For small allocations (< PAGE_SIZE), falls back to kmalloc.
+ * For larger allocations, uses alloc_pages_node() to allocate
+ * physically contiguous pages from the local NUMA node.
+ */
+static uint8_t *tmpfs_alloc_pages_numa(uint32_t size, uint64_t *out_phys)
+{
+    *out_phys = 0;
+
+    /* Small allocations: use kmalloc (no NUMA affinity needed) */
+    if (size < PAGE_SIZE / 4) {
+        uint8_t *ptr = (uint8_t *)kmalloc(size < 128 ? 128 : size);
+        return ptr;
+    }
+
+    /* Large allocations: use NUMA-aware page allocator */
+    int node = numa_home_node();
+    int order = order_for_size(size);
+    uint64_t phys = alloc_pages_node(node, GFP_KERNEL | GFP_ZERO, order);
+    if (phys == 0) {
+        /* Fall back to kmalloc if NUMA allocation fails */
+        return (uint8_t *)kmalloc(size < 128 ? 128 : size);
+    }
+
+    *out_phys = phys;
+    return (uint8_t *)PHYS_TO_VIRT(phys);
+}
+
+/*
+ * tmpfs_free_pages_or_kmem() - Free memory allocated by
+ * tmpfs_alloc_pages_numa().
+ *
+ * @ptr:   Virtual address to free (may be NULL).
+ * @phys:  Physical address of page allocation (0 if kmalloc'd).
+ * @size:  Original allocation size (used for order calculation).
+ */
+static void tmpfs_free_pages_or_kmem(uint8_t *ptr, uint64_t phys,
+                                     uint32_t size)
+{
+    if (ptr == NULL)
+        return;
+
+    if (phys != 0) {
+        /* Was page-allocated */
+        int order = order_for_size(size);
+        free_node_pages(phys, order);
+    } else {
+        /* Was kmalloc'd */
+        kfree(ptr);
+    }
+}
+
 /* ── VFS operations ────────────────────────────────────────────── */
 
 static int tmpfs_read(void *priv, const char *path, void *buf, uint32_t max, uint32_t *out) {
@@ -104,10 +195,22 @@ static int tmpfs_write(void *priv, const char *path, const void *buf, uint32_t s
 
     /* Reallocate buffer if needed */
     if (inodes[idx].size < size || !inodes[idx].data) {
-        uint8_t *new = kmalloc(size < 128 ? 128 : size);
+        /* Free old allocation first (if any) */
+        if (inodes[idx].data) {
+            tmpfs_free_pages_or_kmem(inodes[idx].data, inodes[idx].data_phys,
+                                     inodes[idx].size);
+            inodes[idx].data = NULL;
+            inodes[idx].data_phys = 0;
+        }
+
+        /* Allocate new buffer with NUMA-aware page allocation */
+        uint64_t new_phys = 0;
+        uint8_t *new = tmpfs_alloc_pages_numa(size, &new_phys);
         if (!new) return -ENOMEM;
-        if (inodes[idx].data) kfree(inodes[idx].data);
+
         inodes[idx].data = new;
+        inodes[idx].data_phys = new_phys;
+        inodes[idx].numa_node = numa_home_node();
     }
     memcpy(inodes[idx].data, buf, size);
     inodes[idx].size = size;
@@ -148,6 +251,8 @@ static int tmpfs_mkdir(const char *path) {
     memcpy(inodes[idx].name, name, (size_t)len + 1);
     inodes[idx].size = 0;
     inodes[idx].data = NULL;
+    inodes[idx].data_phys = 0;
+    inodes[idx].numa_node = numa_home_node();
     inodes[idx].uid = 0; inodes[idx].gid = 0;
     inodes[idx].mode = FS_MODE_DIR;
     return 0;
@@ -180,6 +285,8 @@ static int tmpfs_create(void *priv, const char *path, uint8_t type) {
     memcpy(inodes[idx].name, name, (size_t)len + 1);
     inodes[idx].size = 0;
     inodes[idx].data = NULL;
+    inodes[idx].data_phys = 0;
+    inodes[idx].numa_node = numa_home_node();
     inodes[idx].uid = 0; inodes[idx].gid = 0;
     inodes[idx].mode = (type == FS_TYPE_LINK) ? 0777 : FS_MODE_FILE;
     memset(&inodes[idx].dev, 0, sizeof(inodes[idx].dev));
@@ -370,6 +477,8 @@ static int tmpfs_mknod(void *priv, const char *path, uint16_t mode, uint16_t dev
     memcpy(inodes[idx].name, name, (size_t)len + 1);
     inodes[idx].size = 0;
     inodes[idx].data = NULL;
+    inodes[idx].data_phys = 0;
+    inodes[idx].numa_node = numa_home_node();
     inodes[idx].uid = 0; inodes[idx].gid = 0;
     inodes[idx].mode = mode;
     inodes[idx].dev.major = dev_major;
@@ -449,6 +558,8 @@ static int tmpfs_tmpfile(void *priv, uint32_t mode)
     inodes[idx].parent = (uint32_t)-1; /* no parent — not in any directory */
     inodes[idx].size = 0;
     inodes[idx].data = NULL;
+    inodes[idx].data_phys = 0;
+    inodes[idx].numa_node = numa_home_node();
     inodes[idx].uid = 0;
     inodes[idx].gid = 0;
     inodes[idx].mode = (uint16_t)(mode & 0777);
@@ -479,6 +590,8 @@ int tmpfs_mount(void) {
     for (int i = 0; i < TMPFS_MAX_INODES; i++) {
         inodes[i].in_use = 0;
         inodes[i].data = NULL;
+        inodes[i].data_phys = 0;
+        inodes[i].numa_node = 0;
     }
     /* Reset size accounting (unlimited) */
     tmpfs_size_limit = TMPFS_SIZE_UNLIMITED;
@@ -490,6 +603,8 @@ int tmpfs_mount(void) {
     inodes[0].parent = 0;
     inodes[0].size = 0;
     inodes[0].data = NULL;
+    inodes[0].data_phys = 0;
+    inodes[0].numa_node = numa_home_node();
     inodes[0].uid = 0; inodes[0].gid = 0;
     inodes[0].mode = 0755;
     tmpfs_mounted = 1;
