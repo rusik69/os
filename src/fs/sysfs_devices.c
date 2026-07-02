@@ -142,6 +142,10 @@ static const char *pci_driver_for_device(uint8_t bus, uint8_t slot,
  * For each device, a "driver" file is also created showing the name
  * of the kernel driver bound to this device (or "unknown" if no
  * driver is registered).
+ *
+ * Standard PCI attribute files (vendor, device, class) are created
+ * inside each device directory, exposing the PCI configuration space
+ * identifiers in the usual Linux sysfs format.
  */
 static void sysfs_create_pci_device_dirs(void)
 {
@@ -228,6 +232,89 @@ static void sysfs_create_pci_device_dirs(void)
 							sysfs_create_file(
 								drv_path,
 								drv_content);
+					}
+				}
+
+				/*
+				 * Create standard PCI attribute files:
+				 *   vendor — PCI vendor ID (hex)
+				 *   device — PCI device ID (hex)
+				 *   class  — PCI class code (24-bit, hex)
+				 */
+				uint16_t dev_id = (uint16_t)(reg0 >> 16);
+
+				/* Read class code register (config offset 0x08) */
+				uint32_t reg_class = pci_read(
+					(uint8_t)bus, (uint8_t)slot,
+					(uint8_t)func, 0x08);
+				uint32_t class_val = (reg_class >> 24) & 0xFF;
+				uint32_t subclass  = (reg_class >> 16) & 0xFF;
+				uint32_t prog_if   = (reg_class >> 8) & 0xFF;
+				uint32_t full_class = (class_val << 16) |
+						     (subclass << 8) |
+						     prog_if;
+
+				/* vendor file */
+				{
+					char attr_path[80];
+					int an = snprintf(attr_path,
+						sizeof(attr_path),
+						"%s/vendor", devpath);
+					if (an > 0 &&
+					    (uint32_t)an < sizeof(attr_path)) {
+						char attr_c[32];
+						int cn = snprintf(attr_c,
+							sizeof(attr_c),
+							"0x%04x\n", vid);
+						if (cn > 0 &&
+						    (uint32_t)cn <
+						    sizeof(attr_c))
+							sysfs_create_file(
+								attr_path,
+								attr_c);
+					}
+				}
+
+				/* device file */
+				{
+					char attr_path[80];
+					int an = snprintf(attr_path,
+						sizeof(attr_path),
+						"%s/device", devpath);
+					if (an > 0 &&
+					    (uint32_t)an < sizeof(attr_path)) {
+						char attr_c[32];
+						int cn = snprintf(attr_c,
+							sizeof(attr_c),
+							"0x%04x\n", dev_id);
+						if (cn > 0 &&
+						    (uint32_t)cn <
+						    sizeof(attr_c))
+							sysfs_create_file(
+								attr_path,
+								attr_c);
+					}
+				}
+
+				/* class file */
+				{
+					char attr_path[80];
+					int an = snprintf(attr_path,
+						sizeof(attr_path),
+						"%s/class", devpath);
+					if (an > 0 &&
+					    (uint32_t)an < sizeof(attr_path)) {
+						char attr_c[32];
+						int cn = snprintf(attr_c,
+							sizeof(attr_c),
+							"0x%06x\n",
+							full_class);
+						if (cn > 0 &&
+						    (uint32_t)cn <
+						    sizeof(attr_c))
+							sysfs_create_file(
+								attr_path,
+								attr_c);
 					}
 				}
 
