@@ -695,6 +695,10 @@ int ext2_alloc_block(struct ext2_priv *ep, uint32_t *block_out)
 	return ext2_alloc_blocks(ep, block_out, 1, 0);
 }
 
+/* Forward declaration for generation bump helper */
+static uint32_t ext2_bump_inode_generation(struct ext2_priv *ep,
+                                            uint32_t ino);
+
 /* ── Inode allocator with flex_bg awareness ──────────────────────────
  *
  * Allocates one free inode from the inode bitmap.  When flex_bg is
@@ -710,10 +714,15 @@ int ext2_alloc_block(struct ext2_priv *ep, uint32_t *block_out)
  *  2. Scan groups within the selected (flex) group for a free inode.
  *  3. Use word-level FFS bitmap scanning for O(1) bit lookup.
  *  4. Mark the bit as used, update free counts.
+ *  5. Read the old inode to extract and increment the generation number
+ *     (i_generation), then write back a zeroed inode with the new
+ *     generation set.  The generation is returned via @gen_out so
+ *     callers can preserve it when writing the rest of the inode.
  *
- * Returns 0 on success with @ino_out set, -ENOSPC on failure.
+ * Returns 0 on success with @ino_out and @gen_out set, -ENOSPC on failure.
  * ═══════════════════════════════════════════════════════════════════ */
-static int ext2_alloc_inode(struct ext2_priv *ep, uint32_t *ino_out)
+static int ext2_alloc_inode(struct ext2_priv *ep, uint32_t *ino_out,
+                             uint32_t *gen_out)
 {
 	uint8_t bitmap[4096];
 	int has_flexbg = (ep->sb.s_feature_incompat &
@@ -775,6 +784,11 @@ static int ext2_alloc_inode(struct ext2_priv *ep, uint32_t *ino_out)
 			bgd->bg_free_inodes_count--;
 			ep->sb.s_free_inodes_count--;
 			*ino_out = ino;
+			{
+				uint32_t __g = ext2_bump_inode_generation(ep, ino);
+				if (gen_out)
+					*gen_out = __g;
+			}
 			return 0;
 		}
 	} else {
@@ -806,10 +820,52 @@ static int ext2_alloc_inode(struct ext2_priv *ep, uint32_t *ino_out)
 			bgd->bg_free_inodes_count--;
 			ep->sb.s_free_inodes_count--;
 			*ino_out = ino;
+			{
+				uint32_t __g = ext2_bump_inode_generation(ep, ino);
+				if (gen_out)
+					*gen_out = __g;
+			}
 			return 0;
 		}
 	}
 	return -ENOSPC;
+}
+
+/* ── Inode versioning / generation helpers ──────────────────────────
+ *
+ * Inode versioning tracks a per-inode generation number (i_generation)
+ * that is incremented each time an inode slot is reused.  This allows
+ * NFS and other file-handle consumers to detect stale handles pointing
+ * to a recycled inode.
+ *
+ * When a free inode is allocated from the bitmap, ext2_bump_inode_generation
+ * reads the old inode contents, increments its generation (1 for first
+ * use, wrap 0xFFFFFFFF → 1), and writes back a zeroed inode with the
+ * new generation set.
+ * ═══════════════════════════════════════════════════════════════════ */
+
+/* Bump the generation number for a freshly allocated inode slot.
+ * Returns the new generation on success, or 1 as a safe fallback. */
+static uint32_t ext2_bump_inode_generation(struct ext2_priv *ep,
+                                            uint32_t ino)
+{
+	struct ext2_inode old_inode;
+	uint32_t gen;
+
+	if (ext2_read_inode(ep, ino, &old_inode) == 0) {
+		gen = old_inode.i_generation;
+		gen = (gen == 0xFFFFFFFF) ? 1 : gen + 1;
+	} else {
+		gen = 1;
+	}
+
+	/* Write a zeroed inode with just the generation set */
+	struct ext2_inode new_inode;
+	memset(&new_inode, 0, sizeof(new_inode));
+	new_inode.i_generation = gen;
+	ext2_write_inode(ep, ino, &new_inode);
+
+	return gen;
 }
 
 /* Round a value up to the next multiple of 4 */
@@ -1994,11 +2050,13 @@ static int ext2_symlink(void *priv, const char *target,
 
 	/* ── Allocate a new inode for the symlink ─────────────────── */
 	uint32_t new_ino;
-	int ret = ext2_alloc_inode(ep, &new_ino);
+	uint32_t sym_gen;
+	int ret = ext2_alloc_inode(ep, &new_ino, &sym_gen);
 	if (ret < 0) return ret;
 
 	struct ext2_inode sym_inode;
 	memset(&sym_inode, 0, sizeof(sym_inode));
+	sym_inode.i_generation = sym_gen;
 	sym_inode.i_mode   = S_IFLNK | 0777;  /* symlink with full perms */
 	sym_inode.i_uid    = 0;
 	sym_inode.i_gid    = 0;
@@ -2494,12 +2552,14 @@ static int ext2_create(void *priv, const char *path, uint8_t type)
 
 	/* Allocate inode */
 	uint32_t new_ino;
-	ret = ext2_alloc_inode(ep, &new_ino);
+	uint32_t file_gen;
+	ret = ext2_alloc_inode(ep, &new_ino, &file_gen);
 	if (ret < 0)
 		return ret;
 
 	struct ext2_inode inode;
 	memset(&inode, 0, sizeof(inode));
+	inode.i_generation = file_gen;
 	inode.i_mode = S_IFREG | 0644;
 	inode.i_uid = 0;
 	inode.i_gid = 0;
@@ -3006,7 +3066,9 @@ int ext2_mount(const char *mountpoint, uint8_t dev_id) {
 
     ep->blocks_per_group = ep->sb.s_blocks_per_group;
     ep->inodes_per_group = ep->sb.s_inodes_per_group;
-    ep->inode_size = 128; /* standard */
+    ep->inode_size = (ep->sb.s_rev_level >= EXT2_DYNAMIC_REV && ep->sb.s_inode_size > 0)
+                     ? (uint32_t)ep->sb.s_inode_size
+                     : EXT2_GOOD_OLD_INODE_SIZE;
 
     uint32_t total_groups = (ep->sb.s_blocks_count + ep->blocks_per_group - 1) / ep->blocks_per_group;
     ep->num_block_groups = total_groups;

@@ -8,6 +8,14 @@
 #define EXT2_SUPER_MAGIC 0xEF53
 #define EXT2_ROOT_INO    2
 
+/* Superblock revision levels */
+#define EXT2_GOOD_OLD_REV       0  /* Revision 0 — original ext2, 128-byte inodes */
+#define EXT2_DYNAMIC_REV        1  /* Revision 1 — variable inode size, features */
+
+/* Default values for GOOD_OLD_REV */
+#define EXT2_GOOD_OLD_INODE_SIZE    128
+#define EXT2_GOOD_OLD_FIRST_INO     11
+
 /* Ext2 superblock */
 struct ext2_superblock {
     uint32_t s_inodes_count;
