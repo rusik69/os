@@ -64,6 +64,13 @@ void sysfs_create_bus_dirs(void);
  * Called from sysfs_init() after /sys/class/ has been created. */
 void sysfs_create_class_dirs(void);
 
+/* Create firmware node directories under /sys/firmware/
+ * with ACPI table visibility and device-tree (placeholder) support.
+ * Also adds per-device firmware node (of_node) attributes to every
+ * PCI device directory under /sys/devices/.
+ * Called from sysfs_init() after /sys/devices/ has been populated. */
+void sysfs_create_firmware_dirs(void);
+
 /* Create per-driver directories under /sys/bus/pci/drivers/
  * for every PCI driver known to the system.  Each driver gets
  * a directory with a symbolic "driver" link back reference.

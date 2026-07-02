@@ -669,6 +669,10 @@ void __init sysfs_init(void) {
     /* /sys/class/ — per-class directories (block, net, input, sound, ...) */
     sysfs_create_class_dirs();
 
+    /* /sys/firmware/ — firmware node directories (ACPI tables, DT base)
+     * and per-device of_node attributes under /sys/devices/.../of_node/ */
+    sysfs_create_firmware_dirs();
+
     /* /sys/kernel/ files — kernel parameters with read/write callbacks */
     sysfs_create_file("/sys/kernel/version", "OS Kernel v1.0\n");
     sysfs_create_writable_file("/sys/kernel/panic_timeout", "30\n", NULL,
