@@ -199,6 +199,44 @@ struct fuse_dev {
     int pending_arg_size;
 };
 
+/* ── FUSE dev (fuse_dev.c) API ───────────────────────────────────────── */
+
+/**
+ * fuse_dev_init — Register /dev/fuse character device.
+ * Called once during fuse_init().
+ */
+void fuse_dev_init(void);
+
+/**
+ * fuse_dev_queue_request — Queue a FUSE request for the daemon.
+ * @opcode:   FUSE operation code (FUSE_LOOKUP, FUSE_READ, etc.)
+ * @nodeid:   FUSE node ID of the target inode
+ * @arg:      Pointer to request-specific argument data (may be NULL)
+ * @arg_size: Size of argument data in bytes
+ *
+ * Allocates a request entry, fills the fuse_in_header, and queues it
+ * for the daemon.  Wakes the daemon if it is blocked on /dev/fuse read.
+ *
+ * Returns 0 on success, or a negative errno on failure.
+ */
+int fuse_dev_queue_request(uint32_t opcode, uint64_t nodeid,
+                            const void *arg, int arg_size);
+
+/**
+ * fuse_dev_wait_for_response — Wait for the daemon's response.
+ * @unique:          The unique ID from fuse_dev_queue_request (returned in hdr->unique)
+ * @out_resp:        On success, receives allocated fuse_out_header (caller must kfree)
+ * @out_resp_arg:    On success, receives optional response data (caller must kfree)
+ * @out_resp_arg_size: On success, receives size of response arg data
+ *
+ * Blocks until the daemon writes a response matching @unique.
+ * Returns 0 on success, or a negative errno on timeout/error.
+ */
+int fuse_dev_wait_for_response(uint64_t unique,
+                                struct fuse_out_header **out_resp,
+                                void **out_resp_arg,
+                                int *out_resp_arg_size);
+
 /* ── Public API ─────────────────────────────────────────────────────── */
 
 /* Initialize FUSE subsystem */
