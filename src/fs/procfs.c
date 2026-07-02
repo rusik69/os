@@ -163,66 +163,8 @@ static int procfs_gen_interrupts(char *buf, int max) {
     return p;
 }
 
-static int procfs_gen_meminfo(char *buf, int max) {
-    int p = 0;
-    uint64_t pmm_total = pmm_get_total_frames() * 4096;
-    uint64_t pmm_free  = (pmm_get_total_frames() - pmm_get_used_frames()) * 4096;
-    uint64_t pmm_used  = pmm_get_used_frames() * 4096;
-    uint64_t heap_total = heap_get_total();
-    uint64_t heap_used = heap_get_used();
-    uint64_t heap_free = heap_get_free();
-    proc_kb_line("MemTotal:       ", pmm_total, buf, &p, max);
-    proc_kb_line("MemFree:        ", pmm_free, buf, &p, max);
-    proc_kb_line("MemAvailable:   ", pmm_free + heap_free, buf, &p, max);
-    proc_kb_line("Buffers:        ", 0, buf, &p, max);
-    proc_kb_line("Cached:         ", 0, buf, &p, max);
-    proc_kb_line("SwapCached:     ", 0, buf, &p, max);
-    proc_kb_line("Active:         ", pmm_used, buf, &p, max);
-    proc_kb_line("Inactive:       ", 0, buf, &p, max);
-    proc_kb_line("Active(anon):   ", pmm_used, buf, &p, max);
-    proc_kb_line("Inactive(anon): ", 0, buf, &p, max);
-    proc_kb_line("Active(file):   ", 0, buf, &p, max);
-    proc_kb_line("Inactive(file): ", 0, buf, &p, max);
-    proc_kb_line("Unevictable:    ", 0, buf, &p, max);
-    proc_kb_line("Mlocked:        ", 0, buf, &p, max);
-    proc_kb_line("SwapTotal:      ", 0, buf, &p, max);
-    proc_kb_line("SwapFree:       ", 0, buf, &p, max);
-    proc_kb_line("Dirty:          ", 0, buf, &p, max);
-    proc_kb_line("Writeback:      ", 0, buf, &p, max);
-    proc_kb_line("AnonPages:      ", 0, buf, &p, max);
-    proc_kb_line("Mapped:         ", 0, buf, &p, max);
-    proc_kb_line("Shmem:          ", 0, buf, &p, max);
-    proc_kb_line("Slab:           ", heap_used, buf, &p, max);
-    proc_kb_line("SReclaimable:   ", heap_free, buf, &p, max);
-    proc_kb_line("SUnreclaim:     ", heap_used, buf, &p, max);
-    proc_kb_line("KernelStack:    ", 0, buf, &p, max);
-    proc_kb_line("PageTables:     ", 0, buf, &p, max);
-    proc_kb_line("NFS_Unstable:   ", 0, buf, &p, max);
-    proc_kb_line("Bounce:         ", 0, buf, &p, max);
-    proc_kb_line("WritebackTmp:   ", 0, buf, &p, max);
-    proc_kb_line("CommitLimit:    ", pmm_total, buf, &p, max);
-    proc_kb_line("Committed_AS:   ", pmm_used, buf, &p, max);
-    proc_kb_line("VmallocTotal:   ", 0, buf, &p, max);
-    proc_kb_line("VmallocUsed:    ", 0, buf, &p, max);
-    proc_kb_line("VmallocChunk:   ", 0, buf, &p, max);
-    proc_kb_line("HardwareCorrupted: ", 0, buf, &p, max);
-    proc_kb_line("AnonHugePages:  ", 0, buf, &p, max);
-    proc_kb_line("ShmemHugePages: ", 0, buf, &p, max);
-    proc_kb_line("HugePages_Total: ", 0, buf, &p, max);
-    proc_kb_line("HugePages_Free:  ", 0, buf, &p, max);
-    proc_kb_line("HugePages_Rsvd:  ", 0, buf, &p, max);
-    proc_kb_line("HugePages_Surp:  ", 0, buf, &p, max);
-    proc_kb_line("Hugepagesize:    ", 0, buf, &p, max);
-    proc_kb_line("DirectMap4k:    ", pmm_total, buf, &p, max);
-    proc_kb_line("DirectMap2M:    ", 0, buf, &p, max);
-    proc_kb_line("DirectMap1G:    ", 0, buf, &p, max);
-    /* Heap info */
-    proc_kb_line("HeapTotal:      ", heap_total, buf, &p, max);
-    proc_kb_line("HeapUsed:       ", heap_used, buf, &p, max);
-    proc_kb_line("HeapFree:       ", heap_free, buf, &p, max);
-    buf[p] = '\0';
-    return p;
-}
+/* ── /proc/meminfo — defined in procfs_meminfo.c ───────────────────── */
+extern int procfs_gen_meminfo(char *buf, int max);
 
 /* ── /proc/cpuinfo — defined in procfs_cpuinfo.c ───────────────────── */
 extern int procfs_gen_cpuinfo(char *buf, int max);

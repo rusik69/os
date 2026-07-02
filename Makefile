@@ -233,6 +233,7 @@ C_SRCS = src/kernel/kernel.c \
          src/fs/fs.c \
          src/fs/procfs.c \
          src/fs/procfs_cpuinfo.c \
+         src/fs/procfs_meminfo.c \
          src/fs/devfs.c \
          src/fs/tmpfs.c \
          src/fs/tmpfs_huge.c \
@@ -803,7 +804,7 @@ obj-m += kernel/overlay.ko
 
 # ── Filesystem modules (production modularization) ──────────────────
 obj-m += fs/procfs.ko
-procfs-objs := fs/procfs fs/procfs_cpuinfo
+procfs-objs := fs/procfs fs/procfs_cpuinfo fs/procfs_meminfo
 obj-m += fs/tmpfs.ko
 obj-m += fs/ext4.ko
 obj-m += fs/squashfs.ko
