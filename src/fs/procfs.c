@@ -36,9 +36,9 @@
 extern struct ksym_entry __kallsyms_start[];
 extern struct ksym_entry __kallsyms_end[];
 
-/* ─── Tiny snprintf-like helper ────────────────────────────────────────────── */
+/* ─── Tiny snprintf-like helper (non-static for procfs_cpuinfo.c, procfs_meminfo.c, etc.) ─── */
 
-static void proc_u64_to_str(uint64_t v, char *buf, int *pos, int max) {
+void proc_u64_to_str(uint64_t v, char *buf, int *pos, int max) {
     if (v == 0) {
         if (*pos < max - 1) buf[(*pos)++] = '0';
         return;
@@ -48,7 +48,7 @@ static void proc_u64_to_str(uint64_t v, char *buf, int *pos, int max) {
     while (n-- > 0 && *pos < max - 1) buf[(*pos)++] = tmp[n];
 }
 
-static void proc_str(const char *s, char *buf, int *pos, int max) {
+void proc_str(const char *s, char *buf, int *pos, int max) {
     while (*s && *pos < max - 1) buf[(*pos)++] = *s++;
 }
 
@@ -224,198 +224,10 @@ static int procfs_gen_meminfo(char *buf, int max) {
     return p;
 }
 
-static int procfs_gen_cpuinfo(char *buf, int max) {
-    int p = 0;
-    uint32_t eax, ebx, ecx, edx;
-    char vendor[13];
-    uint32_t max_leaf;
+/* ── /proc/cpuinfo — defined in procfs_cpuinfo.c ───────────────────── */
+extern int procfs_gen_cpuinfo(char *buf, int max);
 
-    /* Leaf 0: vendor string */
-    __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(0));
-    max_leaf = eax;
-    *(uint32_t*)&vendor[0] = ebx;
-    *(uint32_t*)&vendor[4] = edx;
-    *(uint32_t*)&vendor[8] = ecx;
-    vendor[12] = 0;
-
-    /* Number of CPUs online */
-    int cpu_count = smp_get_cpu_count();
-    if (cpu_count < 1) cpu_count = 1;
-
-    for (int cpu = 0; cpu < cpu_count; cpu++) {
-        proc_str("processor\t: ", buf, &p, max);
-        proc_u64_to_str((uint64_t)cpu, buf, &p, max);
-        proc_str("\n", buf, &p, max);
-
-        proc_str("vendor_id\t: ", buf, &p, max);
-        proc_str(vendor, buf, &p, max);
-        proc_str("\n", buf, &p, max);
-
-        /* Leaf 0x80000002-4: brand string */
-        char brand[49];
-        memset(brand, 0, 49);
-        uint32_t max_ext;
-        uint32_t _dummy_ebx, _dummy_ecx, _dummy_edx;
-        __asm__ volatile("cpuid" : "=a"(max_ext), "=b"(_dummy_ebx), "=c"(_dummy_ecx), "=d"(_dummy_edx) : "a"(0x80000000));
-        if (max_ext >= 0x80000004) {
-            for (uint32_t i = 0; i < 3; i++) {
-                __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(0x80000002 + i));
-                *(uint32_t*)&brand[i*16+0] = eax;
-                *(uint32_t*)&brand[i*16+4] = ebx;
-                *(uint32_t*)&brand[i*16+8] = ecx;
-                *(uint32_t*)&brand[i*16+12] = edx;
-            }
-        }
-        if (brand[0]) {
-            proc_str("model name\t: ", buf, &p, max);
-            proc_str(brand, buf, &p, max);
-            proc_str("\n", buf, &p, max);
-        }
-
-        /* Leaf 1: family/model/stepping + features */
-        __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(1));
-        proc_str("cpu family\t: ", buf, &p, max);
-        proc_u64_to_str((eax >> 8) & 0xF, buf, &p, max);
-        proc_str("\n", buf, &p, max);
-        proc_str("model\t\t: ", buf, &p, max);
-        proc_u64_to_str((eax >> 4) & 0xF, buf, &p, max);
-        proc_str("\n", buf, &p, max);
-        proc_str("stepping\t: ", buf, &p, max);
-        proc_u64_to_str(eax & 0xF, buf, &p, max);
-        proc_str("\n", buf, &p, max);
-
-        /* Features from CPUID leaves */
-        proc_str("flags\t\t: ", buf, &p, max);
-        if (edx & (1U << 0))  proc_str("fpu ", buf, &p, max);
-        if (edx & (1U << 1))  proc_str("vme ", buf, &p, max);
-        if (edx & (1U << 2))  proc_str("de ", buf, &p, max);
-        if (edx & (1U << 3))  proc_str("pse ", buf, &p, max);
-        if (edx & (1U << 4))  proc_str("tsc ", buf, &p, max);
-        if (edx & (1U << 5))  proc_str("msr ", buf, &p, max);
-        if (edx & (1U << 6))  proc_str("pae ", buf, &p, max);
-        if (edx & (1U << 7))  proc_str("mce ", buf, &p, max);
-        if (edx & (1U << 8))  proc_str("cx8 ", buf, &p, max);
-        if (edx & (1U << 9))  proc_str("apic ", buf, &p, max);
-        if (edx & (1U << 11)) proc_str("sep ", buf, &p, max);
-        if (edx & (1U << 12)) proc_str("mtrr ", buf, &p, max);
-        if (edx & (1U << 13)) proc_str("pge ", buf, &p, max);
-        if (edx & (1U << 14)) proc_str("mca ", buf, &p, max);
-        if (edx & (1U << 15)) proc_str("cmov ", buf, &p, max);
-        if (edx & (1U << 16)) proc_str("pat ", buf, &p, max);
-        if (edx & (1U << 17)) proc_str("pse36 ", buf, &p, max);
-        if (edx & (1U << 18)) proc_str("pn ", buf, &p, max);
-        if (edx & (1U << 19)) proc_str("clflush ", buf, &p, max);
-        if (edx & (1U << 23)) proc_str("mmx ", buf, &p, max);
-        if (edx & (1U << 24)) proc_str("fxsr ", buf, &p, max);
-        if (edx & (1U << 25)) proc_str("sse ", buf, &p, max);
-        if (edx & (1U << 26)) proc_str("sse2 ", buf, &p, max);
-        if (ecx & (1U << 0))  proc_str("sse3 ", buf, &p, max);
-        if (ecx & (1U << 9))  proc_str("ssse3 ", buf, &p, max);
-        if (ecx & (1U << 19)) proc_str("sse4.1 ", buf, &p, max);
-        if (ecx & (1U << 20)) proc_str("sse4.2 ", buf, &p, max);
-        if (ecx & (1U << 29)) proc_str("f16c ", buf, &p, max);
-        if (edx & (1U << 28)) proc_str("ht ", buf, &p, max);
-        /* Extended features from leaf 0x80000001 */
-        if (max_ext >= 0x80000001) {
-            uint32_t ex_eax, ex_ebx, ex_ecx, ex_edx;
-            __asm__ volatile("cpuid" : "=a"(ex_eax), "=b"(ex_ebx), "=c"(ex_ecx), "=d"(ex_edx) : "a"(0x80000001));
-            (void)ex_eax; (void)ex_ebx; (void)ex_ecx;
-            if (ex_edx & (1u << 29)) proc_str("lm ", buf, &p, max);
-            if (ex_edx & (1u << 26)) proc_str("nx ", buf, &p, max);
-            if (ex_edx & (1u << 11)) proc_str("syscall ", buf, &p, max);
-            if (ex_edx & (1u << 27)) proc_str("rdtscp ", buf, &p, max);
-        }
-        proc_str("\n", buf, &p, max);
-
-        /* CPU frequency from leaf 0x16 (if available) */
-        {
-            uint32_t mhz_eax, mhz_ebx, mhz_ecx, mhz_edx;
-            __asm__ volatile("cpuid" : "=a"(max_leaf), "=b"(mhz_ebx), "=c"(mhz_ecx), "=d"(mhz_edx) : "a"(0));
-            (void)mhz_ebx; (void)mhz_ecx; (void)mhz_edx;
-            if (max_leaf >= 0x16) {
-                __asm__ volatile("cpuid" : "=a"(mhz_eax), "=b"(mhz_ebx), "=c"(mhz_ecx), "=d"(mhz_edx) : "a"(0x16));
-                (void)mhz_ecx; (void)mhz_edx;
-                if (mhz_eax) {
-                    proc_str("cpu MHz\t\t: ", buf, &p, max);
-                    proc_u64_to_str(mhz_eax, buf, &p, max);
-                    proc_str(".", buf, &p, max);
-                    uint32_t frac_mhz = (mhz_ebx * 100) / (mhz_eax ? mhz_eax : 1);
-                    if (frac_mhz < 10) proc_str("0", buf, &p, max);
-                    proc_u64_to_str(frac_mhz, buf, &p, max);
-                    proc_str("\n", buf, &p, max);
-                } else {
-                    proc_str("cpu MHz\t\t: 0.000\n", buf, &p, max);
-                }
-            } else {
-                proc_str("cpu MHz\t\t: 0.000\n", buf, &p, max);
-            }
-        }
-
-        /* Cache info from leaf 4 (deterministic cache params) */
-        if (max_leaf >= 4) {
-            for (int cache_type = 0; cache_type < 10; cache_type++) {
-                uint32_t ceax, cebx, cecx, cedx;
-                __asm__ volatile("cpuid" : "=a"(ceax), "=b"(cebx), "=c"(cecx), "=d"(cedx) : "a"(4), "c"(cache_type));
-                int type = ceax & 0x1F;
-                if (type == 0) break; /* no more caches */
-                int level = (ceax >> 5) & 0x7;
-                int ways = ((cebx >> 22) & 0x3FF) + 1;
-                int partitions = ((cebx >> 12) & 0x3FF) + 1;
-                int line_size = (cebx & 0xFFF) + 1;
-                int sets = cecx + 1;
-                uint64_t size = (uint64_t)ways * partitions * line_size * sets;
-                const char *type_str = "Unknown";
-                if (type == 1) type_str = "Data";
-                else if (type == 2) type_str = "Instruction";
-                else if (type == 3) type_str = "Unified";
-                proc_str("cache\t\t: L", buf, &p, max);
-                proc_u64_to_str(level, buf, &p, max);
-                proc_str(" ", buf, &p, max);
-                proc_str(type_str, buf, &p, max);
-                proc_str(" ", buf, &p, max);
-                proc_u64_to_str(size / 1024, buf, &p, max);
-                proc_str(" KB\n", buf, &p, max);
-            }
-        }
-
-        /* Physical id / core id (simplified: use APIC ID from leaf 1) */
-        uint32_t apic_ebx;
-        __asm__ volatile("cpuid" : "=a"(eax), "=b"(apic_ebx), "=c"(ecx), "=d"(edx) : "a"(1));
-        (void)eax; (void)ecx; (void)edx;
-        uint32_t apic_id = (apic_ebx >> 24) & 0xFF;
-        proc_str("physical id\t: 0\n", buf, &p, max);
-        proc_str("siblings\t: ", buf, &p, max);
-        proc_u64_to_str((uint64_t)cpu_count, buf, &p, max);
-        proc_str("\n", buf, &p, max);
-        proc_str("core id\t\t: ", buf, &p, max);
-        proc_u64_to_str(apic_id, buf, &p, max);
-        proc_str("\n", buf, &p, max);
-        proc_str("cpu cores\t: ", buf, &p, max);
-        proc_u64_to_str((uint64_t)cpu_count, buf, &p, max);
-        proc_str("\n", buf, &p, max);
-        proc_str("apicid\t\t: ", buf, &p, max);
-        proc_u64_to_str(apic_id, buf, &p, max);
-        proc_str("\n", buf, &p, max);
-
-        /* Initial APIC ID */
-        uint32_t ieax, iebx, iecx, iedx;
-        __asm__ volatile("cpuid" : "=a"(ieax), "=b"(iebx), "=c"(iecx), "=d"(iedx) : "a"(1));
-        (void)ieax; (void)iecx; (void)iedx;
-        uint32_t init_apic_id = (iebx >> 24) & 0xFF;
-        proc_str("initial apicid\t: ", buf, &p, max);
-        proc_u64_to_str(init_apic_id, buf, &p, max);
-        proc_str("\n", buf, &p, max);
-
-        /* TLB info from leaf 2 could be added */
-        proc_str("address sizes\t: 39 bits physical, 48 bits virtual\n", buf, &p, max);
-
-        proc_str("\n", buf, &p, max);
-    }
-
-    buf[p] = '\0';
-    return p;
-}
-
+/* ── /proc/version — kernel version string ─────────────────────────── */
 static int procfs_gen_version(char *buf, int max) {
     int p = 0;
     proc_str("OS Kernel v1.0 (gcc 13.3.0, x86_64)\n", buf, &p, max);
