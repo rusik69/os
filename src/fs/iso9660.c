@@ -410,6 +410,16 @@ walk_susp:
                 uint32_t sl_pos = 0;
                 char sl_buf[256];
                 uint32_t sl_buf_pos = 0;
+                int has_continue = (sl->flags & 1);
+
+                /* If CONTINUE flag is set and we have existing symlink
+                 * content, append to it from where we left off. */
+                if (has_continue && out->rr_symlink[0] != '\0') {
+                    sl_buf_pos = (uint32_t)strlen(out->rr_symlink);
+                    if (sl_buf_pos >= sizeof(sl_buf))
+                        sl_buf_pos = sizeof(sl_buf) - 1;
+                    memcpy(sl_buf, out->rr_symlink, sl_buf_pos);
+                }
 
                 while (sl_pos + 2 <= sl_data_len &&
                        sl_buf_pos < sizeof(sl_buf) - 1) {
@@ -437,7 +447,6 @@ walk_susp:
                         }
                     } else if (comp_flags == 8) {
                         /* root "/" */
-                        /* just reset */
                         sl_buf_pos = 0;
                     } else if (comp_flags == 0 && comp_len > 0) {
                         /* plain component */
@@ -453,7 +462,11 @@ walk_susp:
                 }
                 sl_buf[sl_buf_pos] = '\0';
                 memcpy(out->rr_symlink, sl_buf, sl_buf_pos + 1);
-                rr_found |= RRIP_HAS_SL;
+                /* Only mark complete on the final SL entry (no CONTINUE).
+                 * Intermediate entries with CONTINUE set append to the
+                 * existing buffer for the next SL entry in the chain. */
+                if (!has_continue)
+                    rr_found |= RRIP_HAS_SL;
             }
             /* TF (Timestamps) entry — POSIX timestamps from Rock Ridge */
             else if (susp_sig_match(hdr, 'T', 'F')) {
@@ -549,6 +562,7 @@ static int parse_one_dirent(struct iso9660_priv *ip,
 
     /* Parse Rock Ridge entries */
     uint8_t rr_parsed = parse_rrip_entries(ip, rec_buf, rec_len, de);
+    de->rr_flags = rr_parsed;  /* store for callers */
 
     /* If we got an NM entry, prefer the long name */
     if (rr_parsed & RRIP_HAS_NM) {
@@ -696,118 +710,110 @@ static int iso9660_resolve(struct iso9660_priv *ip, const char *path,
                 match_len -= 2;
 
             if (match_len == clen && memcmp(match_name, p, clen) == 0) {
-                *extent = entries[i].extent;
-                *size   = entries[i].size;
-                found = 1;
-                break;
-            }
+                if (ip->has_rrip && (entries[i].rr_flags & RRIP_HAS_SL) &&
+                    entries[i].rr_symlink[0] != '\0') {
+                    /* Rock Ridge symlink — follow the symlink target */
+                    char link_target[256];
+                    strncpy(link_target, entries[i].rr_symlink,
+                            sizeof(link_target) - 1);
+                    link_target[sizeof(link_target) - 1] = '\0';
 
-            /* If Rock Ridge symlink is available and name matches,
-             * follow the symlink target. */
-            if (ip->has_rrip && (entries[i].rr_flags & RRIP_HAS_SL) &&
-                match_len == clen && memcmp(match_name, p, clen) == 0) {
-                /* Read symlink target and resolve from that path */
-                char link_target[256];
-                strncpy(link_target, entries[i].rr_symlink, sizeof(link_target) - 1);
-                link_target[sizeof(link_target) - 1] = '\0';
+                    if (link_target[0] != '/') {
+                        /* Relative symlink: build full path by
+                         * prepending the parent directory. */
+                        char full_path[512];
+                        size_t parent_len = (size_t)(p - path);
+                        size_t fp_len = 0;
+                        if (parent_len > 0) {
+                            memcpy(full_path, path, parent_len);
+                            fp_len = parent_len;
+                            while (fp_len > 0 &&
+                                   full_path[fp_len - 1] == '/')
+                                fp_len--;
+                        }
+                        if (fp_len > 0)
+                            full_path[fp_len++] = '/';
+                        size_t tlen = strlen(link_target);
+                        if (fp_len + tlen + 1 > sizeof(full_path)) {
+                            kprintf("iso9660: symlink target too long\n");
+                            return -ENAMETOOLONG;
+                        }
+                        memcpy(full_path + fp_len, link_target, tlen);
+                        fp_len += tlen;
+                        full_path[fp_len] = '\0';
 
-                /* Prepend parent path if the symlink is relative */
-                if (link_target[0] != '/') {
-                    /* Relative symlink: build full path by prepending
-                     * the parent directory of the symlink. */
-                    char full_path[512];
-                    size_t parent_len = (size_t)(p - path);
-
-                    /* Copy parent directory path (strip trailing slash) */
-                    size_t fp_len = 0;
-                    if (parent_len > 0) {
-                        memcpy(full_path, path, parent_len);
-                        fp_len = parent_len;
-                        while (fp_len > 0 && full_path[fp_len - 1] == '/')
-                            fp_len--;
-                    }
-
-                    /* Append '/' separator */
-                    if (fp_len > 0)
-                        full_path[fp_len++] = '/';
-
-                    /* Append link target */
-                    size_t tlen = strlen(link_target);
-                    if (fp_len + tlen + 1 > sizeof(full_path)) {
-                        kprintf("iso9660: symlink target path too long\n");
-                        return -ENAMETOOLONG;
-                    }
-                    memcpy(full_path + fp_len, link_target, tlen);
-                    fp_len += tlen;
-                    full_path[fp_len] = '\0';
-
-                    /* Resolve the combined absolute path recursively.
-                     * Recursive depth is bounded by nesting of symlinks
-                     * (max 40 per the caller's absolute path depth guard). */
-                    uint32_t resolved_extent, resolved_size;
-                    if (iso9660_resolve(ip, full_path,
-                                        &resolved_extent,
-                                        &resolved_size) == 0) {
-                        *extent = resolved_extent;
-                        *size   = resolved_size;
-                        found = 1;
-                        break;
-                    }
-                    return -1;
-                }
-
-                /* Resolve the symlink target recursively with depth limit.
-                 * Linux allows max 40 symlink follows (SYMLOOP_MAX). */
-                int sdepth = 0;
-                const char *sp = link_target;
-                while (*sp) {
-                    if (sdepth++ > 40) {
-                        kprintf("iso9660: symlink depth limit exceeded\n");
-                        return -ELOOP;
-                    }
-                    const char *send = sp;
-                    while (*send && *send != '/') send++;
-                    size_t slen = (size_t)(send - sp);
-
-                    int sfound = 0;
-                    for (int j = 0; j < n; j++) {
-                        const char *sname;
-                        if (ip->has_rrip && entries[j].rr_name[0] != '\0')
-                            sname = entries[j].rr_name;
-                        else
-                            sname = entries[j].iso_name;
-                        size_t snlen = strlen(sname);
-                        if (snlen == 0) continue;
-                        if (snlen == 1 && sname[0] == 0) continue;
-                        if (snlen == 1 && sname[0] == '.') continue;
-                        if (snlen == 2 && sname[0] == '.' && sname[1] == '.') continue;
-                        const char *smatch = sname;
-                        size_t smlen = snlen;
-                        if (smlen == slen && memcmp(smatch, sp, slen) == 0) {
-                            *extent = entries[j].extent;
-                            *size   = entries[j].size;
-                            sfound = 1;
+                        uint32_t re, rs;
+                        if (iso9660_resolve(ip, full_path,
+                                            &re, &rs) == 0) {
+                            *extent = re;
+                            *size   = rs;
+                            found = 1;
                             break;
                         }
+                        return -1;
                     }
-                    if (!sfound) return -1;
-                    sp = send;
-                    while (*sp == '/') sp++;
-                    if (*sp) {
-                        /* Check directory depth limit before descending */
-                        if (depth >= ISO9660_DIR_DEPTH_MAX) {
-                            kprintf("iso9660: max directory depth (%d) exceeded "
-                                    "during symlink follow\n", ISO9660_DIR_DEPTH_MAX);
+
+                    /* Absolute symlink: resolve components */
+                    int sdepth = 0;
+                    const char *sp = link_target;
+                    while (*sp) {
+                        if (sdepth++ > 40) {
+                            kprintf("iso9660: symlink depth exceeded\n");
                             return -ELOOP;
                         }
-                        depth++;
-                        /* Read next directory level */
-                        n = iso_read_dir_entries(ip, *extent, *size, entries, 128);
-                        if (n <= 0) return -1;
+                        const char *send = sp;
+                        while (*send && *send != '/') send++;
+                        size_t slen = (size_t)(send - sp);
+                        int sfound = 0;
+                        for (int j = 0; j < n; j++) {
+                            const char *sname;
+                            if (ip->has_rrip &&
+                                entries[j].rr_name[0] != '\0')
+                                sname = entries[j].rr_name;
+                            else
+                                sname = entries[j].iso_name;
+                            size_t snlen = strlen(sname);
+                            if (snlen == 0) continue;
+                            if (snlen == 1 && sname[0] == 0) continue;
+                            if (snlen == 1 && sname[0] == '.') continue;
+                            if (snlen == 2 && sname[0] == '.' &&
+                                sname[1] == '.') continue;
+                            const char *smatch = sname;
+                            size_t smlen = snlen;
+                            if (smlen == slen &&
+                                memcmp(smatch, sp, slen) == 0) {
+                                *extent = entries[j].extent;
+                                *size   = entries[j].size;
+                                sfound = 1;
+                                break;
+                            }
+                        }
+                        if (!sfound) return -1;
+                        sp = send;
+                        while (*sp == '/') sp++;
+                        if (*sp) {
+                            if (depth >= ISO9660_DIR_DEPTH_MAX) {
+                                kprintf("iso9660: dir depth (%d) "
+                                        "exceeded following symlink\n",
+                                        ISO9660_DIR_DEPTH_MAX);
+                                return -ELOOP;
+                            }
+                            depth++;
+                            n = iso_read_dir_entries(ip, *extent,
+                                                     *size,
+                                                     entries, 128);
+                            if (n <= 0) return -1;
+                        }
                     }
+                    found = 1;
+                    break;
+                } else {
+                    /* Regular (non-symlink) entry */
+                    *extent = entries[i].extent;
+                    *size   = entries[i].size;
+                    found = 1;
+                    break;
                 }
-                found = 1;
-                break;
             }
 
             /* Also try without version number (ISO9660 fallback) */
