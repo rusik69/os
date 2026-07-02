@@ -216,3 +216,24 @@ int iso9660_rr_apply_px(const struct iso_rrip_entry *de, struct vfs_stat *st)
 
 	return 0;
 }
+
+/* ── PN helper ─────────────────────────────────────────────────── */
+
+/*
+ * Apply Rock Ridge PN (POSIX Device Node) entry to a vfs_stat structure.
+ *
+ * Fills in dev_major and dev_minor from the RRIP entry when PN was
+ * present.  Rock Ridge represents the device number as a (high, low)
+ * pair in the PN SUSP entry, where high = major and low = minor.
+ */
+void iso9660_rr_apply_pn(const struct iso_rrip_entry *de, struct vfs_stat *st)
+{
+	if (!de || !st)
+		return;
+
+	if (!(de->rr_flags & RRIP_HAS_PN))
+		return;
+
+	st->dev_major = (uint16_t)de->rr_dev_major;
+	st->dev_minor = (uint16_t)de->rr_dev_minor;
+}

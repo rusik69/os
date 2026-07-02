@@ -165,9 +165,18 @@ struct rrip_sl_entry {
 
 /* SL component header */
 struct rrip_sl_component {
-    uint8_t flags;                 /* 0 = plain, 1 = "." 2 = "..", 8 = root */
+    uint8_t flags;                 /* 0 = plain, 1 = ".", 2 = "..", 8 = root */
     uint8_t len;                   /* length of this component name */
     char    name[1];               /* variable-length name */
+} __attribute__((packed));
+
+/* RRIP PN (POSIX Device Node) entry */
+struct rrip_pn_entry {
+    struct susp_entry_header hdr;  /* sig = "PN", len = 20, version = 1 */
+    uint32_t dev_high_le;          /* device number high (major) */
+    uint32_t dev_high_be;
+    uint32_t dev_low_le;           /* device number low (minor) */
+    uint32_t dev_low_be;
 } __attribute__((packed));
 
 /* RRIP flags for what we've parsed */
@@ -178,6 +187,7 @@ struct rrip_sl_component {
 #define RRIP_HAS_PL   0x10
 #define RRIP_HAS_RE   0x20
 #define RRIP_HAS_TF   0x40
+#define RRIP_HAS_PN   0x0100
 
 /* RRIP TF (Timestamps) entry flags — which timestamps are present */
 #define RRIP_TF_CREATE  0x01  /* creation time */
@@ -210,7 +220,10 @@ struct iso_rrip_entry {
     uint32_t rr_ctime;     /* attribute change time (Unix time_t) from PX or TF */
     char     rr_name[256]; /* long file name from NM */
     char     rr_symlink[256]; /* symlink target from SL */
-    uint8_t  rr_flags;     /* RRIP_HAS_* bitmask */
+    /* Rock Ridge device node fields from PN */
+    uint32_t rr_dev_major;   /* device major number */
+    uint32_t rr_dev_minor;   /* device minor number */
+    uint16_t rr_flags;       /* RRIP_HAS_* bitmask */
     /* ISO interleaving fields (ISO 9660 §7.4.5) */
     uint8_t  file_unit_size;    /* blocks per interleave unit (0 = not interleaved) */
     uint8_t  interleave_gap;    /* blocks of other files between units */
@@ -283,5 +296,9 @@ uint8_t iso9660_rr_parse_tf(const struct rrip_tf_entry *tf, uint32_t tf_len,
  * Fills in mode, uid, gid, nlink from the rrip entry if PX was present.
  * Returns 0 if PX was applied, -1 if no PX data available. */
 int iso9660_rr_apply_px(const struct iso_rrip_entry *de, struct vfs_stat *st);
+
+/* Apply Rock Ridge PN (POSIX Device Node) entry to a vfs_stat structure.
+ * Fills in dev_major and dev_minor if PN was present. */
+void iso9660_rr_apply_pn(const struct iso_rrip_entry *de, struct vfs_stat *st);
 
 #endif /* ISO9660_H */

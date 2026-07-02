@@ -281,9 +281,9 @@ static int ucs2be_to_utf8(const char *ucs2, int ucs2_len_bytes,
  * Expects the full directory record (including name + system use) in @rec_buf,
  * with total record length @rec_len.
  */
-static uint8_t parse_rrip_entries(struct iso9660_priv *ip,
-                                   const uint8_t *rec_buf, uint32_t rec_len,
-                                   struct iso_rrip_entry *out)
+static uint16_t parse_rrip_entries(struct iso9660_priv *ip,
+                                    const uint8_t *rec_buf, uint32_t rec_len,
+                                    struct iso_rrip_entry *out)
 {
     /* If we already determined Rock Ridge is absent, skip parsing */
     if (!ip->has_rrip)
@@ -315,7 +315,7 @@ static uint8_t parse_rrip_entries(struct iso9660_priv *ip,
     uint32_t sus_len = rec_len - sus_offset;
     const uint8_t *sus_data = rec_buf + sus_offset;
 
-    uint8_t rr_found = 0;
+    uint16_t rr_found = 0;
 
     /* Walk through SUSP entries in this record, following CE chains */
     uint32_t ce_block = 0;
@@ -362,12 +362,10 @@ walk_susp:
 
             /* SP entry (must be first in root's system use) */
             if (susp_sig_match(hdr, 'S', 'P')) {
-                if (hdr->len >= 7) {
-                    /* Magic bytes 0xBE, 0xEF confirm Rock Ridge */
-                    const struct susp_sp_entry *sp =
-                        (const struct susp_sp_entry *)hdr;
-                    if (sp->magic_byte1 == 0xBE && sp->magic_byte2 == 0xEF)
-                        rr_found |= 0x80; /* mark RRIP as confirmed present */
+                /* Magic bytes 0xBE, 0xEF confirm Rock Ridge — skip bits
+                 * since ip->has_rrip already gates entry to this function */
+                if (hdr->len < 7) {
+                    return rr_found;
                 }
             }
             /* NM (Alternative Name) entry */
@@ -468,6 +466,16 @@ walk_susp:
                 if (!has_continue)
                     rr_found |= RRIP_HAS_SL;
             }
+            /* PN (POSIX Device Node) entry */
+            else if (susp_sig_match(hdr, 'P', 'N')) {
+                if (hdr->len >= 20) {
+                    const struct rrip_pn_entry *pn =
+                        (const struct rrip_pn_entry *)hdr;
+                    out->rr_dev_major = pn->dev_high_le;
+                    out->rr_dev_minor = pn->dev_low_le;
+                    rr_found |= RRIP_HAS_PN;
+                }
+            }
             /* TF (Timestamps) entry — POSIX timestamps from Rock Ridge */
             else if (susp_sig_match(hdr, 'T', 'F')) {
                 const struct rrip_tf_entry *tf =
@@ -561,7 +569,7 @@ static int parse_one_dirent(struct iso9660_priv *ip,
     de->iso_name[sizeof(de->iso_name) - 1] = '\0';
 
     /* Parse Rock Ridge entries */
-    uint8_t rr_parsed = parse_rrip_entries(ip, rec_buf, rec_len, de);
+    uint16_t rr_parsed = parse_rrip_entries(ip, rec_buf, rec_len, de);
     de->rr_flags = rr_parsed;  /* store for callers */
 
     /* If we got an NM entry, prefer the long name */
@@ -572,7 +580,7 @@ static int parse_one_dirent(struct iso9660_priv *ip,
         }
     }
 
-    return (int)(rr_parsed & 0x7f); /* return RRIP_HAS_* flags (without 0x80 marker) */
+    return (int)(rr_parsed); /* return RRIP_HAS_* flags */
 }
 
 /* Read all directory entries from a directory extent.
@@ -1112,7 +1120,7 @@ static int iso9660_stat(void *priv, const char *path, struct vfs_stat *st)
                     st->mtime = entries[i].rr_mtime;
                 }
                 /* Determine type from mode:
-                 * 1 = file, 2 = directory
+                 * 1 = file, 2 = directory, 4 = chrdev, 5 = blkdev
                  * Symlinks and other types fall back to file */
                 if (entries[i].rr_mode & RR_S_IFDIR)
                     st->type = 2;
@@ -1120,7 +1128,19 @@ static int iso9660_stat(void *priv, const char *path, struct vfs_stat *st)
                     st->type = 1;
                 else if (entries[i].rr_mode & RR_S_IFLNK)
                     st->type = 1; /* Symlinks reported as files (readlink provides target) */
-                else
+                else if (entries[i].rr_mode & RR_S_IFBLK) {
+                    st->type = 5; /* VFS_TYPE_BLK */
+                    if (entries[i].rr_flags & RRIP_HAS_PN) {
+                        st->dev_major = (uint16_t)entries[i].rr_dev_major;
+                        st->dev_minor = (uint16_t)entries[i].rr_dev_minor;
+                    }
+                } else if (entries[i].rr_mode & RR_S_IFCHR) {
+                    st->type = 4; /* VFS_TYPE_CHR */
+                    if (entries[i].rr_flags & RRIP_HAS_PN) {
+                        st->dev_major = (uint16_t)entries[i].rr_dev_major;
+                        st->dev_minor = (uint16_t)entries[i].rr_dev_minor;
+                    }
+                } else
                     st->type = entries[i].flags & ISO_FLAG_DIRECTORY ? 2 : 1;
             } else {
                 st->type = (entries[i].flags & ISO_FLAG_DIRECTORY) ? 2 : 1;
