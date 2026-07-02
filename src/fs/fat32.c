@@ -1737,6 +1737,416 @@ vol_label_done:
     return 0;
 }
 
+/* ── FAT32 fragmented file support: chain traversal helpers ─────────────── */
+
+/* fat32_chain_walk: follow a fragmented cluster chain N steps forward.
+ * Returns the cluster at that depth, or 0 if the chain ends early. */
+uint32_t fat32_chain_walk(uint32_t start, uint32_t steps)
+{
+    uint32_t cluster = start;
+    uint32_t eoc = FAT_EOC();
+    uint64_t _cnt = 0;
+
+    for (uint32_t i = 0; i < steps; i++) {
+        if (++_cnt > FAT_MAX_CLUSTER())
+            return 0;
+        if (cluster < 2 || cluster >= eoc)
+            return 0;
+        cluster = fat_next_cluster(cluster);
+    }
+    return cluster;
+}
+
+/* fat32_chain_length: count clusters in a chain starting at 'start'. */
+uint32_t fat32_chain_length(uint32_t start)
+{
+    uint32_t count = 0;
+    uint32_t cluster = start;
+    uint32_t eoc = FAT_EOC();
+    uint64_t _cnt = 0;
+
+    while (cluster >= 2 && cluster < eoc) {
+        if (++_cnt > FAT_MAX_CLUSTER())
+            break;
+        count++;
+        cluster = fat_next_cluster(cluster);
+    }
+    return count;
+}
+
+/* fat32_chain_extend: append 'num' clusters to an existing chain.
+ * Returns 0 on success, negative on error. */
+int fat32_chain_extend(uint32_t cluster, uint32_t num)
+{
+    uint32_t eoc = FAT_EOC();
+    uint64_t _cnt = 0;
+
+    /* Walk to the end of the existing chain */
+    if (cluster >= 2 && cluster < eoc) {
+        while (1) {
+            if (++_cnt > FAT_MAX_CLUSTER())
+                return -EIO;
+            uint32_t next = fat_next_cluster(cluster);
+            if (next >= eoc || next < 2)
+                break;
+            cluster = next;
+        }
+    }
+
+    /* Allocate and link new clusters */
+    for (uint32_t i = 0; i < num; i++) {
+        uint32_t newc = fat_alloc_cluster();
+        if (!newc)
+            return -ENOSPC;
+        if (cluster >= 2)
+            fat_write_entry(cluster, newc);
+        cluster = newc;
+    }
+
+    /* Mark last cluster as end-of-chain */
+    if (cluster >= 2)
+        fat_write_entry(cluster, eoc);
+
+    return 0;
+}
+
+/* ── Positioned read/write for fragmented files ────────────────────────── */
+
+/* Find and update a directory entry by leaf name (supports LFN + 8.3).
+ * Returns 0 on success, negative on error. */
+static int dir_update_by_leaf(uint32_t dir_cluster, const char *leaf,
+                               uint32_t first_cluster, uint32_t file_size)
+{
+    uint8_t buf[SECT_SIZE];
+    uint32_t eoc = FAT_EOC();
+
+    /* FAT12/16 fixed root directory */
+    if (dir_cluster == 0 && fat_type != FAT32) {
+        uint32_t first_lba = fat_start + num_fats * fat_sectors;
+        for (uint32_t s = 0; s < root_dir_sectors; s++) {
+            if (read_sector(first_lba + s, buf) != 0) return -EIO;
+            struct fat32_dirent *entries = (struct fat32_dirent *)buf;
+            int n_entries = (int)(SECT_SIZE / sizeof(struct fat32_dirent));
+            struct fat32_lfn lfn_parts[20];
+            memset(lfn_parts, 0, sizeof(lfn_parts));
+            int lfn_n = 0;
+            for (int i = 0; i < n_entries; i++) {
+                uint8_t firstb = (uint8_t)entries[i].name[0];
+                if (firstb == 0x00) return -EIO;
+                if (firstb == 0xE5) { lfn_n = 0; continue; }
+                if (entries[i].attr == FAT32_ATTR_LFN) {
+                    int ord = entries[i].name[0] & 0x1F;
+                    if (ord > 0 && ord <= 20)
+                        __builtin_memcpy(&lfn_parts[ord - 1], &entries[i],
+                                         sizeof(struct fat32_dirent));
+                    if (entries[i].name[0] & 0x40) lfn_n = ord;
+                    continue;
+                }
+                if (entries[i].attr & FAT32_ATTR_VOLUME_ID) { lfn_n = 0; continue; }
+                int matched = 0;
+                if (lfn_n > 0) {
+                    char lname[FAT32_MAX_NAME];
+                    vfat_reconstruct_name(lfn_parts, lfn_n, lname, FAT32_MAX_NAME);
+                    matched = name_match_ci(lname, leaf);
+                } else {
+                    matched = name83_match(entries[i].name, entries[i].ext, leaf);
+                }
+                if (matched) {
+                    entries[i].cluster_lo = (uint16_t)(first_cluster & 0xFFFF);
+                    entries[i].cluster_hi = (uint16_t)((first_cluster >> 16) & 0xFFFF);
+                    entries[i].file_size = file_size;
+                    return write_sector(first_lba + s, buf);
+                }
+                lfn_n = 0;
+            }
+        }
+        return -EIO;
+    }
+
+    /* Cluster-chain directory */
+    uint32_t cluster = dir_cluster;
+    uint64_t _chain_cnt = 0;
+    while (cluster >= 2 && cluster < eoc) {
+        if (++_chain_cnt > FAT_MAX_CLUSTER()) break;
+        uint32_t lba = cluster_to_lba(cluster);
+        for (uint32_t s = 0; s < spc; s++) {
+            if (read_sector(lba + s, buf) != 0) return -EIO;
+            struct fat32_dirent *entries = (struct fat32_dirent *)buf;
+            int n_entries = (int)(SECT_SIZE / sizeof(struct fat32_dirent));
+            struct fat32_lfn lfn_parts[20];
+            memset(lfn_parts, 0, sizeof(lfn_parts));
+            int lfn_n = 0;
+            for (int i = 0; i < n_entries; i++) {
+                uint8_t firstb = (uint8_t)entries[i].name[0];
+                if (firstb == 0x00) return -EIO;
+                if (firstb == 0xE5) { lfn_n = 0; continue; }
+                if (entries[i].attr == FAT32_ATTR_LFN) {
+                    int ord = entries[i].name[0] & 0x1F;
+                    if (ord > 0 && ord <= 20)
+                        __builtin_memcpy(&lfn_parts[ord - 1], &entries[i],
+                                         sizeof(struct fat32_dirent));
+                    if (entries[i].name[0] & 0x40) lfn_n = ord;
+                    continue;
+                }
+                if (entries[i].attr & FAT32_ATTR_VOLUME_ID) { lfn_n = 0; continue; }
+                int matched = 0;
+                if (lfn_n > 0) {
+                    char lname[FAT32_MAX_NAME];
+                    vfat_reconstruct_name(lfn_parts, lfn_n, lname, FAT32_MAX_NAME);
+                    matched = name_match_ci(lname, leaf);
+                } else {
+                    matched = name83_match(entries[i].name, entries[i].ext, leaf);
+                }
+                if (matched) {
+                    entries[i].cluster_lo = (uint16_t)(first_cluster & 0xFFFF);
+                    entries[i].cluster_hi = (uint16_t)((first_cluster >> 16) & 0xFFFF);
+                    entries[i].file_size = file_size;
+                    return write_sector(lba + s, buf);
+                }
+                lfn_n = 0;
+            }
+        }
+        cluster = fat_next_cluster(cluster);
+    }
+    return -EIO;
+}
+
+/* fat32_pread: positioned read at arbitrary byte offset within a fragmented
+ * file.  Follows the cluster chain from the given offset, skipping directly
+ * to the correct cluster without reading sequentially from the start. */
+int fat32_pread(const char *path, void *buf, uint32_t size, uint32_t offset)
+{
+    if (!mounted || !path || !buf)
+        return -EINVAL;
+
+    int is_dir = 0;
+    uint32_t fsize = 0;
+    uint32_t cluster = path_resolve(path, &is_dir, &fsize);
+    if (!cluster || is_dir)
+        return -EINVAL;
+
+    if (offset >= fsize)
+        return 0;
+    if (offset + size > fsize)
+        size = fsize - offset;
+    if (size == 0)
+        return 0;
+
+    uint32_t bpc = spc * bps;
+    uint32_t start_idx = offset / bpc;
+    uint32_t start_off = offset % bpc;
+    uint32_t eoc = FAT_EOC();
+
+    /* Walk the fragmented chain to the starting cluster */
+    uint32_t clus = fat32_chain_walk(cluster, start_idx);
+    if (clus < 2 || clus >= eoc)
+        return -EIO;
+
+    uint32_t done = 0;
+    uint8_t sect_buf[SECT_SIZE];
+    uint64_t _chain_cnt = 0;
+
+    while (clus >= 2 && clus < eoc && done < size) {
+        if (++_chain_cnt > FAT_MAX_CLUSTER())
+            return done > 0 ? (int)done : -EIO;
+        uint32_t lba = cluster_to_lba(clus);
+        uint32_t s_start = start_off / bps;
+        uint32_t b_start = start_off % bps;
+
+        for (uint32_t s = s_start; s < spc && done < size; s++) {
+            if (read_sector(lba + s, sect_buf) != 0)
+                return done > 0 ? (int)done : -EIO;
+            uint32_t chunk = bps - b_start;
+            if (chunk > size - done)
+                chunk = size - done;
+            __builtin_memcpy((uint8_t *)buf + done, sect_buf + b_start, chunk);
+            done += chunk;
+            b_start = 0;
+        }
+        start_off = 0;
+        clus = fat_next_cluster(clus);
+    }
+    return (int)done;
+}
+
+/* fat32_pwrite: positioned write at arbitrary byte offset within a fragmented
+ * or sparse file.  Extends the cluster chain if the write goes past the
+ * current allocation.  Creates the file if it does not exist. */
+int fat32_pwrite(const char *path, const void *data, uint32_t size, uint32_t offset)
+{
+    if (!mounted || !path || !data)
+        return -EINVAL;
+
+    char leaf[FAT32_MAX_NAME];
+    uint32_t parent = path_parent_cluster(path, leaf, FAT32_MAX_NAME);
+    if (!parent)
+        return -ENOENT;
+
+    int is_dir = 0;
+    uint32_t old_size = 0;
+    uint32_t old_clus = dir_find(parent, leaf, &is_dir, &old_size);
+    if (is_dir)
+        return -EISDIR;
+
+    uint32_t bpc = spc * bps;
+    uint32_t needed = offset + size;
+
+    if (!old_clus) {
+        /* ── File does not exist — create it ── */
+        char n8[8], n3[3];
+        fat32_generate_short_name(leaf, parent, n8, n3);
+
+        uint32_t clusters_needed = (needed + bpc - 1) / bpc;
+        if (clusters_needed == 0) clusters_needed = 1;
+
+        uint32_t first = 0, prev = 0;
+        for (uint32_t i = 0; i < clusters_needed; i++) {
+            uint32_t c = fat_alloc_cluster();
+            if (!c) { if (first) fat_free_chain(first); return -ENOSPC; }
+            if (!first) first = c;
+            if (prev) fat_write_entry(prev, c);
+            prev = c;
+        }
+        if (prev) fat_write_entry(prev, FAT_EOC());
+
+        /* Zero-fill gaps and write data at offset */
+        uint32_t done = 0;
+        uint32_t clus = fat32_chain_walk(first, offset / bpc);
+        uint32_t off_in_cluster = offset % bpc;
+        uint8_t sect_buf[SECT_SIZE];
+        uint64_t _chain_cnt = 0;
+
+        while (clus >= 2 && clus < FAT_EOC() && done < size) {
+            if (++_chain_cnt > FAT_MAX_CLUSTER()) {
+                fat_free_chain(first); return -EIO;
+            }
+            uint32_t lba = cluster_to_lba(clus);
+            uint32_t s_start = off_in_cluster / bps;
+            uint32_t b_start = off_in_cluster % bps;
+
+            for (uint32_t s = s_start; s < spc && done < size; s++) {
+                if (read_sector(lba + s, sect_buf) != 0) {
+                    fat_free_chain(first); return -EIO;
+                }
+                uint32_t chunk = bps - b_start;
+                if (chunk > size - done) chunk = size - done;
+                __builtin_memcpy(sect_buf + b_start,
+                                 (const uint8_t *)data + done, chunk);
+                if (write_sector(lba + s, sect_buf) != 0) {
+                    fat_free_chain(first); return -EIO;
+                }
+                done += chunk;
+                b_start = 0;
+            }
+            off_in_cluster = 0;
+            clus = fat_next_cluster(clus);
+        }
+
+        if (dir_add_entry(parent, n8, n3, first, needed, 0, leaf) != 0) {
+            fat_free_chain(first); return -EIO;
+        }
+        return (int)size;
+    }
+
+    /* ── File exists — extend fragmented chain if needed ── */
+    {
+        uint32_t old_clusters = (old_size + bpc - 1) / bpc;
+        if (old_clusters == 0) old_clusters = 1;
+        uint32_t new_clusters = (needed + bpc - 1) / bpc;
+        if (new_clusters == 0) new_clusters = 1;
+
+        if (new_clusters > old_clusters) {
+            uint32_t last = fat32_chain_walk(old_clus, old_clusters - 1);
+            if (last < 2) return -EIO;
+            int ext_ret = fat32_chain_extend(last, new_clusters - old_clusters);
+            if (ext_ret != 0) return ext_ret;
+        }
+    }
+
+    /* Walk to the start cluster and write data */
+    {
+        uint32_t done = 0;
+        uint32_t clus = fat32_chain_walk(old_clus, offset / bpc);
+        uint32_t off_in_cluster = offset % bpc;
+        uint8_t sect_buf[SECT_SIZE];
+        uint64_t _chain_cnt = 0;
+
+        while (clus >= 2 && clus < FAT_EOC() && done < size) {
+            if (++_chain_cnt > FAT_MAX_CLUSTER())
+                return done > 0 ? (int)done : -EIO;
+            uint32_t lba = cluster_to_lba(clus);
+            uint32_t s_start = off_in_cluster / bps;
+            uint32_t b_start = off_in_cluster % bps;
+
+            for (uint32_t s = s_start; s < spc && done < size; s++) {
+                if (read_sector(lba + s, sect_buf) != 0)
+                    return done > 0 ? (int)done : -EIO;
+                uint32_t chunk = bps - b_start;
+                if (chunk > size - done) chunk = size - done;
+                __builtin_memcpy(sect_buf + b_start,
+                                 (const uint8_t *)data + done, chunk);
+                if (write_sector(lba + s, sect_buf) != 0)
+                    return done > 0 ? (int)done : -EIO;
+                done += chunk;
+                b_start = 0;
+            }
+            off_in_cluster = 0;
+            clus = fat_next_cluster(clus);
+        }
+
+        if (needed > old_size)
+            dir_update_by_leaf(parent, leaf, old_clus, needed);
+
+        return (int)size;
+    }
+}
+
+/* fat32_truncate_file: truncate a file to a specified size.  Frees excess
+ * clusters and updates the directory entry.  If new_size is zero, all
+ * clusters are freed and the entry's cluster field is cleared. */
+int fat32_truncate_file(const char *path, uint32_t new_size)
+{
+    if (!mounted || !path || !*path)
+        return -EINVAL;
+
+    char leaf[FAT32_MAX_NAME];
+    uint32_t parent = path_parent_cluster(path, leaf, FAT32_MAX_NAME);
+    if (!parent)
+        return -ENOENT;
+
+    int is_dir = 0;
+    uint32_t old_size = 0;
+    uint32_t clus = dir_find(parent, leaf, &is_dir, &old_size);
+    if (!clus || is_dir)
+        return -EINVAL;
+
+    uint32_t bpc = spc * bps;
+
+    if (new_size == 0) {
+        fat_free_chain(clus);
+        dir_update_by_leaf(parent, leaf, 0, 0);
+        return 0;
+    }
+
+    uint32_t new_clusters = (new_size + bpc - 1) / bpc;
+    if (new_clusters == 0) new_clusters = 1;
+    uint32_t old_clusters = (old_size + bpc - 1) / bpc;
+    if (old_clusters == 0) old_clusters = 1;
+
+    if (new_clusters < old_clusters) {
+        uint32_t last_keep = fat32_chain_walk(clus, new_clusters - 1);
+        if (last_keep >= 2 && last_keep < FAT_EOC()) {
+            uint32_t free_start = fat_next_cluster(last_keep);
+            fat_write_entry(last_keep, FAT_EOC());
+            if (free_start >= 2 && free_start < FAT_EOC())
+                fat_free_chain(free_start);
+        }
+    }
+
+    dir_update_by_leaf(parent, leaf, clus, new_size);
+    return 0;
+}
+
 /* ── VFS backend at /mnt ───────────────────────────────────────────────────── */
 
 static const char *fat32_vfs_rel(const char *path) {

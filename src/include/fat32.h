@@ -32,6 +32,27 @@ int  fat32_write_file(const char *path, const void *data, uint32_t size);
 /* Flush FAT copies to disk */
 int  fat32_sync(void);
 
+/* Positioned read: read from a file at an arbitrary byte offset,
+ * following fragmented cluster chains.  Returns bytes read or negative. */
+int  fat32_pread(const char *path, void *buf, uint32_t size, uint32_t offset);
+
+/* Positioned write: write to a file at an arbitrary byte offset.
+ * Extends the cluster chain if needed.  Returns bytes written or negative. */
+int  fat32_pwrite(const char *path, const void *data, uint32_t size, uint32_t offset);
+
+/* Truncate a file to the specified size.  Returns 0 on success or negative. */
+int  fat32_truncate_file(const char *path, uint32_t new_size);
+
+/* Walk N steps forward in a fragmented cluster chain; returns the cluster
+ * at that depth or 0 if the chain ends before the target step. */
+uint32_t fat32_chain_walk(uint32_t start, uint32_t steps);
+
+/* Count the number of clusters in a chain starting at 'start'. */
+uint32_t fat32_chain_length(uint32_t start);
+
+/* Append 'num' clusters to an existing chain.  Returns 0 on success. */
+int  fat32_chain_extend(uint32_t cluster, uint32_t num);
+
 /* Create directory (8.3 path components) */
 int  fat32_mkdir(const char *path);
 
