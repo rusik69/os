@@ -65,7 +65,18 @@ static uint32_t crc32_be(uint32_t crc, const uint8_t *data, size_t len)
     return ~crc;
 }
 /* ── crc32c ─────────────────────────────── */
-static uint32_t crc32c(uint32_t crc, const uint8_t *data, size_t len)
+/**
+ * crc32c - Compute CRC-32C checksum (Castagnoli polynomial 0x82F63B78)
+ * @crc: Initial CRC value (typically 0 for new checksum)
+ * @buf: Pointer to input data
+ * @len: Length of input data in bytes
+ *
+ * Returns: CRC-32C checksum
+ *
+ * Uses the Castagnoli polynomial (0x82F63B78), which is the standard
+ * CRC-32C used by Btrfs and other storage/file systems.
+ */
+uint32_t crc32c(uint32_t crc, const void *buf, uint32_t len)
 {
     /* CRC32C uses polynomial 0x82F63B78 (Castagnoli) */
     static uint32_t crc32c_table[256];
@@ -79,8 +90,9 @@ static uint32_t crc32c(uint32_t crc, const uint8_t *data, size_t len)
         }
         c_initialized = 1;
     }
+    const uint8_t *p = (const uint8_t *)buf;
     crc = ~crc;
-    for (size_t i = 0; i < len; i++)
-        crc = crc32c_table[(crc ^ data[i]) & 0xFF] ^ (crc >> 8);
+    for (uint32_t i = 0; i < len; i++)
+        crc = crc32c_table[(crc ^ p[i]) & 0xFF] ^ (crc >> 8);
     return ~crc;
 }

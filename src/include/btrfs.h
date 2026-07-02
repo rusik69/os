@@ -17,6 +17,7 @@
 #define BTRFS_CHUNK_TREE_OBJECTID  3ULL
 #define BTRFS_DEV_TREE_OBJECTID    4ULL
 #define BTRFS_FS_TREE_OBJECTID     5ULL
+#define BTRFS_CSUM_TREE_OBJECTID   7ULL
 
 #define BTRFS_FIRST_FREE_OBJECTID  256ULL
 
@@ -24,6 +25,7 @@
 #define BTRFS_INODE_REF_KEY       12
 #define BTRFS_DIR_ITEM_KEY        84
 #define BTRFS_DIR_INDEX_KEY       96
+#define BTRFS_CSUM_ITEM_KEY       52
 #define BTRFS_EXTENT_DATA_KEY     108
 #define BTRFS_ROOT_ITEM_KEY       132
 #define BTRFS_EXTENT_ITEM_KEY     168
@@ -260,6 +262,7 @@ struct btrfs_priv {
     uint8_t  dev_id;
     uint32_t sectorsize;
     uint32_t nodesize;
+    uint16_t csum_type;
     uint64_t chunk_root_bytenr;
     uint8_t  chunk_root_level;
     uint64_t root_bytenr;
@@ -269,10 +272,21 @@ struct btrfs_priv {
     uint64_t fs_root_dirid;
     uint64_t extent_root_bytenr;
     uint8_t  extent_root_level;
+    uint64_t csum_root_bytenr;
+    uint8_t  csum_root_level;
     uint32_t num_chunks;
     struct btrfs_chunk_map chunks[BTRFS_MAX_CHUNKS];
 };
 
 int btrfs_probe(uint8_t dev_id);
 int btrfs_init(void);
+
+/* ── Checksum verification (btrfs_csum.c) ─────────────────────── */
+int btrfs_csum_size(uint16_t csum_type);
+int btrfs_csum_verify_node(uint8_t *node_buf, uint32_t nodesize,
+                            uint16_t csum_type);
+int btrfs_csum_verify_data(const uint8_t *csum_leaf_data,
+                            uint32_t num_csums, uint32_t block_index,
+                            const uint8_t *block_data,
+                            uint32_t block_size, uint16_t csum_type);
 #endif

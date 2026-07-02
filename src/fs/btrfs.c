@@ -14,6 +14,7 @@
 #include "errno.h"
 #include "blockdev.h"
 #include "btrfs.h"
+#include "crc.h"
 
 #ifdef MODULE
 #include "module.h"
@@ -120,6 +121,7 @@ static int btrfs_parse_superblock(struct btrfs_priv *bp)
     /* Populate btrfs_priv from superblock fields */
     bp->sectorsize         = sb->sectorsize;
     bp->nodesize           = sb->nodesize;
+    bp->csum_type          = sb->csum_type;
     bp->chunk_root_bytenr  = sb->chunk_root;
     bp->chunk_root_level   = sb->chunk_root_level;
     bp->root_bytenr        = sb->root;
@@ -526,6 +528,50 @@ static int btrfs_parse_root_tree(struct btrfs_priv *bp)
             (unsigned long long)bp->fs_root_bytenr,
             (unsigned)bp->fs_root_level,
             (unsigned long long)bp->fs_root_dirid);
+
+    /* ── Resolve checksum tree root ────────────────────────────── */
+    /* Translate csum root logical address from root backup */
+    uint64_t csum_logical = rb.csum_root_bytenr;
+    if (csum_logical != 0) {
+        if (btrfs_chunk_map(bp, csum_logical, &bp->csum_root_bytenr) < 0) {
+            kprintf("[btrfs] cannot map csum root logical 0x%llx\n",
+                    (unsigned long long)csum_logical);
+            bp->csum_root_bytenr = 0;
+        } else {
+            /* Look up CSUM_TREE root item in root tree for level */
+            ret = btrfs_search_tree(bp, bp->root_bytenr, bp->root_level,
+                                     BTRFS_CSUM_TREE_OBJECTID,
+                                     BTRFS_ROOT_ITEM_KEY, 0,
+                                     tree_buf, sizeof(tree_buf),
+                                     &ri_idx, &ri_exact);
+            if (ret == 0 && ri_exact) {
+                uint8_t csum_ri_data[sizeof(struct btrfs_root_item) + 64];
+                uint32_t csum_ri_size;
+                ret = btrfs_read_item_data(bp, bp->root_bytenr, tree_buf,
+                                            ri_idx, csum_ri_data,
+                                            &csum_ri_size);
+                if (ret == 0 &&
+                    csum_ri_size >= sizeof(struct btrfs_root_item)) {
+                    struct btrfs_root_item *csum_ritem =
+                        (struct btrfs_root_item *)csum_ri_data;
+                    bp->csum_root_level = csum_ritem->level;
+                } else {
+                    bp->csum_root_level = 0;
+                }
+            } else {
+                bp->csum_root_level = 0;
+            }
+
+            kprintf("[btrfs] csum tree: bytenr=0x%llx, level=%u\n",
+                    (unsigned long long)bp->csum_root_bytenr,
+                    (unsigned)bp->csum_root_level);
+        }
+    } else {
+        bp->csum_root_bytenr = 0;
+        bp->csum_root_level = 0;
+        kprintf("[btrfs] csum tree: not available\n");
+    }
+
     return 0;
 }
 
@@ -679,6 +725,139 @@ static int btrfs_parse_extent_tree(struct btrfs_priv *bp)
 
     kprintf("[btrfs] extent tree walk: %u extents, %u metadata items\n",
             extent_count, metadata_count);
+    return 0;
+}
+
+/* ── Checksum tree parsing ────────────────────────────────────── */
+
+/**
+ * btrfs_parse_csum_tree - Walk the checksum tree and log entries
+ * @bp: Btrfs private data (populated with csum_root_bytenr/level)
+ *
+ * Walks the checksum tree (CSUM_TREE_OBJECTID) in key order, logging
+ * each checksum item's logical block range and number of checksums.
+ * For each checksum item, verifies the first few blocks' CRC32C against
+ * the stored checksum values as a sanity check.
+ *
+ * Returns: 0 on success (even if tree is empty), negative errno on error
+ */
+static int btrfs_parse_csum_tree(struct btrfs_priv *bp)
+{
+    uint8_t buf[4096];
+    uint8_t verify_buf[4096];
+    uint32_t item_idx;
+    int exact;
+    int ret;
+    uint32_t csum_item_count;
+
+    if (bp->nodesize > sizeof(buf)) {
+        kprintf("[btrfs] csum tree: nodesize %u exceeds stack buffer\n",
+                bp->nodesize);
+        return -EINVAL;
+    }
+
+    if (bp->csum_root_bytenr == 0) {
+        kprintf("[btrfs] csum tree: root not available\n");
+        return 0;
+    }
+
+    kprintf("[btrfs] csum tree: root=0x%llx level=%u csum_type=%u\n",
+            (unsigned long long)bp->csum_root_bytenr,
+            (unsigned)bp->csum_root_level,
+            (unsigned)bp->csum_type);
+
+    csum_item_count = 0;
+
+    /* Walk the checksum tree by repeated key search */
+    {
+        uint64_t search_obj = 0;
+        uint8_t  search_type = 0;
+        uint64_t search_off = 0;
+
+        while (csum_item_count < 200) {
+            ret = btrfs_search_tree(bp, bp->csum_root_bytenr,
+                                     bp->csum_root_level,
+                                     search_obj, search_type, search_off,
+                                     buf, sizeof(buf),
+                                     &item_idx, &exact);
+            if (ret < 0)
+                break;
+
+            struct btrfs_header *hdr = (struct btrfs_header *)buf;
+            if (item_idx >= hdr->nritems)
+                break;
+
+            struct btrfs_item *items = (struct btrfs_item *)
+                (buf + sizeof(struct btrfs_header));
+
+            uint64_t cur_obj = items[item_idx].key.objectid;
+            uint8_t  cur_typ = items[item_idx].key.type;
+            uint64_t cur_off = items[item_idx].key.offset;
+
+            if (cur_typ == BTRFS_CSUM_ITEM_KEY) {
+                uint32_t off = items[item_idx].offset;
+                uint32_t sz  = items[item_idx].size;
+                uint32_t num_csums = sz / 4;  /* 4 bytes per CRC32C */
+                uint32_t block_size = bp->sectorsize ? bp->sectorsize : 4096;
+                uint64_t block_start = cur_obj * block_size;
+
+                kprintf("[btrfs]   csum item: logical=0x%llx count=%u "
+                        "num_csums=%u\n",
+                        (unsigned long long)cur_obj,
+                        (unsigned)cur_off, num_csums);
+
+                /* Verify the first checksum in this item if possible */
+                if (num_csums > 0 && sz >= 4 &&
+                    off + 4 <= bp->nodesize &&
+                    block_start + block_size <= (uint64_t)bp->nodesize * 1024) {
+                    /* Read the stored checksum from the item data */
+                    uint32_t stored_csum = le32(buf + off);
+
+                    /* Try to read the corresponding data block from disk
+                     * and verify its CRC32C.  Non-fatal if read fails. */
+                    uint64_t physical_addr;
+                    if (btrfs_chunk_map(bp, block_start,
+                                         &physical_addr) == 0) {
+                        uint64_t lba = physical_addr / 512;
+                        for (uint32_t k = 0; k < block_size / 512; k++) {
+                            if (blockdev_read_sectors(
+                                    bp->dev_id, lba + k, 1,
+                                    verify_buf + k * 512) != 0) {
+                                break;
+                            }
+                        }
+                        uint32_t actual_csum = crc32c(0, verify_buf,
+                                                       block_size);
+                        if (actual_csum != stored_csum) {
+                            kprintf("[btrfs]     block 0x%llx csum "
+                                    "MISMATCH: stored=0x%08x "
+                                    "actual=0x%08x\n",
+                                    (unsigned long long)block_start,
+                                    stored_csum, actual_csum);
+                        } else {
+                            kprintf("[btrfs]     block 0x%llx csum OK\n",
+                                    (unsigned long long)block_start);
+                        }
+                    }
+                }
+
+                csum_item_count++;
+            }
+
+            /* Advance search past this key */
+            search_obj = cur_obj;
+            search_type = cur_typ;
+            search_off = cur_off + 1;
+            if (search_off == 0) {
+                search_type++;
+                if (search_type == 0)
+                    search_obj++;
+            }
+        }
+    }
+
+    kprintf("[btrfs] csum tree walk: %u checksum items\n",
+            csum_item_count);
     return 0;
 }
 
@@ -992,6 +1171,9 @@ int btrfs_mount(const char *source, const char *target,
 
     /* Parse extent tree (non-fatal — informational walk) */
     btrfs_parse_extent_tree(bp);
+
+    /* Parse checksum tree (non-fatal — informational walk + verification) */
+    btrfs_parse_csum_tree(bp);
 
     /* Register with VFS */
     ret = vfs_mount(target, &btrfs_ops, bp);

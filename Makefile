@@ -638,6 +638,7 @@ C_SRCS = src/kernel/kernel.c \
          src/fs/adfs.c \
          src/fs/bfs.c \
          src/fs/btrfs.c \
+         src/fs/btrfs_csum.c \
          src/fs/ntfs.c \
          src/fs/exfat.c \
          src/fs/hfsplus.c \
