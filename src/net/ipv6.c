@@ -18,6 +18,7 @@
 #include "string.h"
 #include "printf.h"
 #include "timer.h"
+#include "rng.h"
 
 /* ── IPv6 state ──────────────────────────────────────────────────── */
 
@@ -908,55 +909,159 @@ void send_ipv6_atomic(const struct in6_addr *dst, uint8_t next_hdr,
                         payload, len, 0, 0, identification);
 }
 
-void send_ipv6(const struct in6_addr *dst, uint8_t next_hdr,
-                const void *payload, uint16_t len)
+/* ── IPv6 flow label (RFC 6437) ──────────────────────────────────────
+ *
+ * The flow label is a 20-bit field in the IPv6 header used to identify
+ * packets belonging to the same flow for QoS/classification.  Per RFC
+ * 6437 §3, the flow label should be a pseudo-random hash of the
+ * transport-layer 5-tuple (source address, destination address, source
+ * port, destination port, protocol) combined with a secret seed.
+ *
+ * The hash uses XOR-folding of a simple 32-bit hash to produce a
+ * uniform 20-bit value that is stable for the same 5-tuple but
+ * unpredictable off-path.
+ */
+
+/* Secret seed for flow label computation — initialized once at boot */
+static uint32_t flow_label_seed = 0;
+
+/* Initialize the flow label seed from the kernel RNG */
+void ipv6_flow_label_init(void)
 {
-	uint8_t buf[2048];
-	struct ipv6_header *ip6 = (struct ipv6_header *)buf;
-	struct ipv6_addr_entry *src_entry;
+    if (flow_label_seed == 0)
+        flow_label_seed = (uint32_t)rng_get_u64();
+}
 
-	/* Determine effective MTU for this destination using PMTU cache */
-	uint16_t effective_mtu = IPV6_DEFAULT_LINK_MTU;
-	uint16_t cached_pmtu = ipv6_pmtu_lookup(dst);
-	if (cached_pmtu > 0 && cached_pmtu < effective_mtu)
-		effective_mtu = cached_pmtu;
+/* Compute a 20-bit flow label from the transport-layer 5-tuple.
+ *
+ * Algorithm: 32-bit hash = Jenkins one-at-a-time over (src, dst, ports,
+ * protocol, seed), then fold to 20 bits by XORing upper and lower halves
+ * of the hash and masking to IPV6_FLOW_LABEL_MASK.
+ *
+ * Returns 0 when flow_label_seed is 0 (uninitialised) as a safety fallback.
+ */
+uint32_t ipv6_flow_label_calc(const struct in6_addr *src,
+                               const struct in6_addr *dst,
+                               uint16_t src_port, uint16_t dst_port,
+                               uint8_t protocol)
+{
+    uint32_t hash;
+    uint32_t h;
+    int i;
 
-	/* Fragment if payload exceeds the effective path MTU */
-	if (len > effective_mtu) {
-		uint32_t id = __sync_fetch_and_add(&ipv6_frag_id_counter, 1);
-		kprintf("[ipv6] fragmenting: payload %u bytes > mtu %u, id=%u\n",
-		        len, effective_mtu, id);
-		send_ipv6_fragmented(dst, next_hdr, payload, len, id, effective_mtu);
-		return;
-	}
+    if (flow_label_seed == 0)
+        return 0;
 
-	/* Build IPv6 header */
-	/* Version=6, Traffic Class=0, Flow Label=0 */
-	ip6->vcl_flow = htonl(0x60000000U);
-	ip6->payload_length = htons(len);
-	ip6->next_header = next_hdr;
-	ip6->hop_limit = 64;  /* default hop limit */
+    /* Jenkins one-at-a-time hash over the 5-tuple + seed */
+    h = 0;
 
-	/* Select source address based on destination */
-	src_entry = ipv6_addr_select_source(dst);
-	if (src_entry) {
-		memcpy(&ip6->src_ip, &src_entry->addr, sizeof(struct in6_addr));
-	} else {
-		/* Fallback: use link-local */
-		memcpy(&ip6->src_ip, &net_our_ipv6_ll, sizeof(struct in6_addr));
-	}
-	memcpy(&ip6->dst_ip, dst, sizeof(struct in6_addr));
+    /* Source address (16 bytes) */
+    for (i = 0; i < 16; i++) {
+        h += src->s6_addr[i];
+        h += (h << 10);
+        h ^= (h >> 6);
+    }
 
-	/* Copy payload after header */
-	if (len > 0)
-		memcpy(buf + sizeof(struct ipv6_header), payload, len);
+    /* Destination address (16 bytes) */
+    for (i = 0; i < 16; i++) {
+        h += dst->s6_addr[i];
+        h += (h << 10);
+        h ^= (h >> 6);
+    }
 
-	uint16_t total = sizeof(struct ipv6_header) + len;
+    /* Source + destination ports (network byte order) */
+    h += (uint32_t)(src_port >> 8) | ((uint32_t)(src_port & 0xFF) << 8);
+    h += (h << 10);
+    h ^= (h >> 6);
 
-	/* Resolve destination MAC and send */
-	uint8_t dst_mac[6];
-	ipv6_resolve_dst_mac(dst, dst_mac);
-	send_eth_ipv6(dst_mac, buf, total);
+    h += (uint32_t)(dst_port >> 8) | ((uint32_t)(dst_port & 0xFF) << 8);
+    h += (h << 10);
+    h ^= (h >> 6);
+
+    /* Protocol */
+    h += protocol;
+    h += (h << 10);
+    h ^= (h >> 6);
+
+    /* Secret seed */
+    h += flow_label_seed;
+    h += (h << 10);
+    h ^= (h >> 6);
+
+    /* Final avalanche */
+    h += (h << 3);
+    h ^= (h >> 11);
+    h += (h << 15);
+
+    /* Fold to 20 bits: XOR upper 12 bits with lower 20 bits */
+    hash = (h & IPV6_FLOW_LABEL_MASK) ^ ((h >> 20) & 0x00000FFFU);
+
+    /* Mask to exactly 20 bits (non-zero is preferred per RFC 6437 §6) */
+    if (hash == 0)
+        hash = 1;
+
+    return hash & IPV6_FLOW_LABEL_MASK;
+}
+
+void send_ipv6_flow(const struct in6_addr *dst, uint8_t next_hdr,
+                    const void *payload, uint16_t len,
+                    uint32_t flow_label)
+{
+    uint8_t buf[2048];
+    struct ipv6_header *ip6 = (struct ipv6_header *)buf;
+    struct ipv6_addr_entry *src_entry;
+
+    /* Determine effective MTU for this destination using PMTU cache */
+    uint16_t effective_mtu = IPV6_DEFAULT_LINK_MTU;
+    uint16_t cached_pmtu = ipv6_pmtu_lookup(dst);
+    if (cached_pmtu > 0 && cached_pmtu < effective_mtu)
+        effective_mtu = cached_pmtu;
+
+    /* Fragment if payload exceeds the effective path MTU */
+    if (len > effective_mtu) {
+        uint32_t id = __sync_fetch_and_add(&ipv6_frag_id_counter, 1);
+        kprintf("[ipv6] fragmenting: payload %u bytes > mtu %u, id=%u\n",
+                len, effective_mtu, id);
+        send_ipv6_fragmented(dst, next_hdr, payload, len, id, effective_mtu);
+        return;
+    }
+
+    /* Build IPv6 header */
+    /* Version=6, Traffic Class=0, Flow Label=flow_label */
+    ip6->vcl_flow = htonl(0x60000000U | (flow_label & IPV6_FLOW_LABEL_MASK));
+    ip6->payload_length = htons(len);
+    ip6->next_header = next_hdr;
+    ip6->hop_limit = 64;  /* default hop limit */
+
+    /* Select source address based on destination */
+    src_entry = ipv6_addr_select_source(dst);
+    if (src_entry) {
+        memcpy(&ip6->src_ip, &src_entry->addr, sizeof(struct in6_addr));
+    } else {
+        /* Fallback: use link-local */
+        memcpy(&ip6->src_ip, &net_our_ipv6_ll, sizeof(struct in6_addr));
+    }
+    memcpy(&ip6->dst_ip, dst, sizeof(struct in6_addr));
+
+    /* Copy payload after header */
+    if (len > 0)
+        memcpy(buf + sizeof(struct ipv6_header), payload, len);
+
+    uint16_t total = sizeof(struct ipv6_header) + len;
+
+    /* Resolve destination MAC and send */
+    {
+        uint8_t dst_mac[6];
+        ipv6_resolve_dst_mac(dst, dst_mac);
+        send_eth_ipv6(dst_mac, buf, total);
+    }
+}
+
+/* send_ipv6 — convenience wrapper with no flow label */
+void send_ipv6(const struct in6_addr *dst, uint8_t next_hdr,
+               const void *payload, uint16_t len)
+{
+    send_ipv6_flow(dst, next_hdr, payload, len, 0);
 }
 
 /* ── ICMPv6 Echo (ping6) ─────────────────────────────────────────── */

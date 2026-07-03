@@ -254,6 +254,13 @@ struct tcp_conn {
     /* ── TCP Hybla congestion control state ──────────────────────────────
      * RTT-normalised congestion control for satellite links. */
     struct hybla_data hybla;
+
+    /* ── IPv6 flow label (RFC 6437) ───────────────────────────────────
+     * Flow label is a 20-bit value identifying packets belonging to the
+     * same flow.  Computed once per TCP connection as a pseudo-random
+     * hash of the 5-tuple (src_addr, dst_addr, src_port, dst_port,
+     * protocol).  0 = not set / IPv4-only connection. */
+    uint32_t flow_label;
 };
 
 extern struct tcp_conn tcp_conns[MAX_TCP_CONNS];
@@ -298,8 +305,22 @@ void handle_ipv6(const uint8_t *data, uint16_t len);
 void handle_icmpv6(struct ipv6_header *ip6, const uint8_t *payload, uint16_t len);
 
 /* IPv6 send helpers */
-void send_ipv6(const struct in6_addr *dst, uint8_t next_hdr, const void *payload, uint16_t len);
+void send_ipv6(const struct in6_addr *dst, uint8_t next_hdr,
+               const void *payload, uint16_t len);
+void send_ipv6_flow(const struct in6_addr *dst, uint8_t next_hdr,
+                    const void *payload, uint16_t len,
+                    uint32_t flow_label);
 void send_eth_ipv6(const uint8_t *dst_mac, const void *payload, uint16_t len);
+
+/* IPv6 flow label (RFC 6437) — compute a 20-bit flow label from the
+ * transport-layer 5-tuple plus a secret seed.  Returns value masked
+ * to IPV6_FLOW_LABEL_MASK. */
+#define IPV6_FLOW_LABEL_MASK 0x000FFFFFU
+void ipv6_flow_label_init(void);
+uint32_t ipv6_flow_label_calc(const struct in6_addr *src,
+                               const struct in6_addr *dst,
+                               uint16_t src_port, uint16_t dst_port,
+                               uint8_t protocol);
 
 /* IPv6 internal helpers (ipv6_core.c) */
 int  ipv6_parse_exthdr(const uint8_t *data, uint16_t total_len,
@@ -392,6 +413,18 @@ void net_tcp_check_retransmit(void);
 void net_tcp_check_keepalive(void);
 uint16_t net_transport_checksum(uint32_t src_ip, uint32_t dst_ip, uint8_t protocol,
                                  const void *data, uint16_t data_len);
+
+/* TCP over IPv6 (tcp_ipv6.c) */
+void tcp_ipv6_init(void);
+void tcp_ipv6_compute_flow_label(struct tcp_conn *conn,
+                                  const struct in6_addr *src_addr,
+                                  const struct in6_addr *dst_addr);
+void send_tcp_ipv6(struct tcp_conn *conn,
+                    const struct in6_addr *dst_addr,
+                    uint8_t flags,
+                    const void *data, uint16_t data_len);
+void handle_tcp_ipv6(struct ipv6_header *ip6,
+                      const uint8_t *payload, uint16_t len);
 
 /* IP routing table (net.c) */
 #define RT_MAX_ENTRIES 16

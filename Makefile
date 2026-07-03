@@ -280,6 +280,7 @@ C_SRCS = src/kernel/kernel.c \
          src/net/ipv6_core.c \
          src/net/ipv6_ndisc.c \
          src/net/ipv6_pmtu.c \
+         src/net/tcp_ipv6.c \
          src/net/telnetd.c \
          src/net/httpd.c \
          src/net/socket.c \

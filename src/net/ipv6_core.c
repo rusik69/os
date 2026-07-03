@@ -595,8 +595,7 @@ void handle_ipv6_packet(const uint8_t *data, uint16_t total_len)
         break;
 
     case IP_PROTO_TCP:
-        kprintf("[ipv6_core] TCP over IPv6 not yet implemented (len=%u)\n",
-                payload_len);
+        handle_tcp_ipv6((struct ipv6_header *)data, payload, payload_len);
         break;
 
     case IP_PROTO_UDP:
