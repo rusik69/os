@@ -42,6 +42,38 @@ struct dccp_header {
 #define DCCP_CCID_2         2   /* TCP-like congestion control (RFC 4341) */
 #define DCCP_CCID_3         3   /* TFRC (RFC 4342) */
 
+/* DCCP states (RFC 4340 §8) */
+#define DCCP_CLOSED          0
+#define DCCP_LISTEN          1
+#define DCCP_REQUEST         2
+#define DCCP_RESPOND         3
+#define DCCP_ESTABLISHED     4
+#define DCCP_CLOSING         5
+
+/* Feature types for feature negotiation (RFC 4340 §6.4) */
+#define DCCP_FEAT_CCID              1
+#define DCCP_FEAT_SERVICE_CODE      2
+#define DCCP_FEAT_ACK_RATIO         3
+#define DCCP_FEAT_SEND_ACK_VEC      4
+#define DCCP_FEAT_SEND_NDP          5
+#define DCCP_FEAT_MIN_CSUM_COV      6
+#define DCCP_FEAT_DATA_CSUM         7
+
+/* Feature negotiation option types (RFC 4340 §6.1) */
+#define DCCP_OPT_CHANGE_L   32
+#define DCCP_OPT_CONFIRM_L  34
+#define DCCP_OPT_CHANGE_R   33
+#define DCCP_OPT_CONFIRM_R  35
+
+/* Service code option (RFC 4340 §15.4) */
+#define DCCP_OPT_SERVICE_CODE 15
+
+/* Acknowledgement number option (RFC 4340 §11.3) */
+#define DCCP_OPT_ACK_NUM    14
+
+/* Option padding */
+#define DCCP_OPT_PADDING    0
+
 /* DCCP socket state */
 struct dccp_sock {
     int         used;
@@ -64,8 +96,10 @@ struct dccp_sock {
     uint16_t    rcvlen;
     /* Socket options / state */
     uint32_t    service_code;   /* DCCP service code */
-    int         state;          /* 0=closed, 1=listening, 2=established */
+    int         state;          /* DCCP_CLOSED, DCCP_LISTEN, DCCP_REQUEST, ... */
     int         backlog;        /* Listen backlog */
+    /* Connection setup (RFC 4340 §5.1) */
+    uint32_t    iss;            /* Initial send sequence number */
 };
 
 /* DCCP options */
@@ -89,6 +123,7 @@ int  dccp_send(int fd, const void *data, uint16_t len);
 int  dccp_recv(int fd, void *buf, uint16_t maxlen);
 void dccp_close(int fd);
 int  dccp_is_valid_fd(int fd);
+int  dccp_send_ack(int fd);
 
 /* Called from IP layer */
 void handle_dccp(uint32_t src_ip, uint32_t dst_ip,
