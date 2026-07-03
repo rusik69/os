@@ -1083,6 +1083,31 @@ static int nft_expr_eval_lookup(const struct nft_expr *expr,
     return 1; /* not found → no match */
 }
 
+/* Eval an immediate expression — loads a constant value into a register.
+ * Copies the inline data from the expression into the destination register,
+ * respecting the data length (zero-extends shorter lengths).
+ * Always succeeds (the data is embedded in the expression, no runtime lookup). */
+static int nft_expr_eval_immediate(const struct nft_expr *expr,
+                                    struct nft_regs *regs)
+{
+    const struct nft_expr_immediate *imm =
+        (const struct nft_expr_immediate *)expr;
+
+    if (imm->dreg >= NFT_REG_COUNT || imm->len == 0)
+        return 1; /* bad register or empty → no match */
+
+    uint32_t val = imm->data[0];
+
+    /* For sub-word lengths, mask to the correct number of bytes */
+    if (imm->len < 4) {
+        uint32_t mask = (1UL << (imm->len * 8)) - 1;
+        val &= mask;
+    }
+
+    regs->data32[imm->dreg] = val;
+    return 0; /* always succeeds */
+}
+
 /* Evaluate the expression chain of a rule.
  * Returns 1 if ALL expressions matched (rule applies), 0 if any failed. */
 static int nft_expr_eval_chain(struct nft_rule *rule,
@@ -1117,6 +1142,12 @@ static int nft_expr_eval_chain(struct nft_rule *rule,
             ret = nft_expr_eval_lookup(expr, regs, ctx);
             if (ret != 0)
                 return 0; /* lookup failed → rule doesn't match */
+            break;
+
+        case NFT_EXPR_IMMEDIATE:
+            ret = nft_expr_eval_immediate(expr, regs);
+            if (ret != 0)
+                return 0;
             break;
 
         default:

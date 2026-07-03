@@ -169,6 +169,7 @@ struct nft_table {
 #define NFT_EXPR_PAYLOAD   1
 #define NFT_EXPR_CMP       2
 #define NFT_EXPR_LOOKUP    3
+#define NFT_EXPR_IMMEDIATE 4
 
 /* Meta keys for NFT_EXPR_META */
 #define NFT_META_LEN       0   /* packet length */
@@ -241,6 +242,17 @@ struct nft_expr_lookup {
     char               set_name[32]; /* name of set to look up in */
     uint8_t            sreg;       /* source register */
     uint8_t            pad[3];
+} __attribute__((packed));
+
+/* Immediate value expression — stores a constant value into a register.
+ * Used to load literal values (IP addresses, port numbers, marks, etc.)
+ * into a register for use by subsequent expressions like CMP or LOOKUP. */
+struct nft_expr_immediate {
+    struct nft_expr    hdr;        /* common header */
+    uint8_t            dreg;       /* destination register */
+    uint8_t            len;        /* data length (1-16 bytes) */
+    uint8_t            pad[2];
+    uint32_t           data[4];    /* immediate value (up to 16 bytes) */
 } __attribute__((packed));
 
 /* ── Expression evaluation context ───────────────────────────────── */
