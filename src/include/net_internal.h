@@ -348,6 +348,11 @@ void    ipv6_nd_handle_ra(struct ipv6_header *ip6,
 uint8_t *ipv6_nd_cache_lookup(const struct in6_addr *ip6);
 void    ipv6_nd_cache_dump(void);
 
+/* ── DAD (Duplicate Address Detection) — RFC 4862 §5.4 ────────── */
+void    ipv6_dad_start(const struct in6_addr *addr);
+void    ipv6_dad_poll(void);
+void    ipv6_dad_conflict(const struct in6_addr *addr);
+
 /* TCP internal helpers (net_tcp.c) */
 void send_tcp(struct tcp_conn *conn, uint8_t flags, const void *data, uint16_t data_len);
 void net_tcp_check_retransmit(void);

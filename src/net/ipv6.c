@@ -290,10 +290,14 @@ struct ipv6_addr_entry *ipv6_addr_select_source(const struct in6_addr *dst)
         return best;
 
 fallback:
-    /* Fallback: return first valid address (usually link-local) */
+    /* Fallback: return first valid non-tentative address (usually link-local) */
     for (i = 0; i < IPV6_ADDR_TABLE_SIZE; i++) {
-        if (ipv6_addr_table[i].valid)
-            return &ipv6_addr_table[i];
+        if (!ipv6_addr_table[i].valid)
+            continue;
+        if (ipv6_addr_table[i].state == IPV6_ADDR_STATE_TENTATIVE ||
+            ipv6_addr_table[i].state == IPV6_ADDR_STATE_DETACHED)
+            continue;
+        return &ipv6_addr_table[i];
     }
     return NULL;
 }
@@ -370,6 +374,273 @@ void ipv6_addr_dump(void)
 
         kprintf(" valid=%u pref=%u\n",
                 e->valid_lifetime, e->preferred_lifetime);
+    }
+}
+
+/* ── DAD (Duplicate Address Detection) — RFC 4862 §5.4 ──────────────
+ *
+ * Duplicate Address Detection verifies that a tentative IPv6 address
+ * is not already in use on the link before assigning it to the
+ * interface.
+ *
+ * Procedure:
+ *   1. Send DupAddrDetectTransmits (3) NS probes with source = ::
+ *      to the solicited-node multicast address.
+ *   2. If an NA is received for the address → conflict.
+ *   3. If an NS with source != :: is received for the address → conflict.
+ *   4. After all probes sent without detecting a conflict → address is
+ *      unique and transitions from TENTATIVE to PREFERRED/PERMANENT.
+ *   5. On conflict → address transitions to DETACHED state.
+ */
+
+#define IPV6_DUPADDR_DETECT_TRANSMITS  3   /* NS probes before declaring unique */
+#define DAD_RETRANS_TIMER              100  /* ticks between probes (1s at 100Hz) */
+
+struct ipv6_dad_slot {
+    struct in6_addr addr;
+    int             probe_count;        /* NS probes sent so far */
+    uint64_t        last_probe_tick;    /* tick when last NS was sent */
+    int             active;             /* 1 = DAD in progress for this address */
+    volatile int    conflict;           /* set by ipv6_dad_conflict() from NS/NA handlers */
+};
+
+static struct ipv6_dad_slot ipv6_dad_slots[IPV6_ADDR_TABLE_SIZE];
+
+/* Send a Neighbor Solicitation for DAD with source address = ::
+ * (the unspecified address).
+ *
+ * Per RFC 4861 §7.2.2, an NS sent for DAD MUST:
+ *  - Have source = ::
+ *  - Have hop limit = 255
+ *  - Be sent to the solicited-node multicast address of the target
+ *  - NOT include the Source Link-layer Address option
+ */
+static void dad_send_ns(const struct in6_addr *target)
+{
+    uint8_t buf[sizeof(struct ipv6_header) + sizeof(struct nd_neighbor)];
+    struct ipv6_header *ip6;
+    struct nd_neighbor *ns;
+    struct in6_addr mcast;
+    struct in6_addr unspecified;
+    uint8_t eth_dst[6];
+    uint16_t ns_len = sizeof(struct nd_neighbor);
+    uint16_t total = sizeof(struct ipv6_header) + ns_len;
+
+    if (!target)
+        return;
+
+    memset(buf, 0, sizeof(buf));
+    ip6 = (struct ipv6_header *)buf;
+
+    /* Build IPv6 header with source = :: (unspecified) */
+    ip6->vcl_flow = htonl(0x60000000U);
+    ip6->payload_length = htons(ns_len);
+    ip6->next_header = IP_PROTO_ICMPV6;
+    ip6->hop_limit = 255;  /* NDP requires hop limit 255 */
+
+    /* Source stays zeroed (::) — no memcpy needed since buf is zeroed */
+    ipv6_calc_solicited_node(target, &mcast);
+    memcpy(&ip6->dst_ip, &mcast, sizeof(struct in6_addr));
+
+    /* Build NS payload */
+    ns = (struct nd_neighbor *)(buf + sizeof(struct ipv6_header));
+    ns->icmp.type = ICMPV6_NS;
+    ns->icmp.code = 0;
+    ns->icmp.checksum = 0;
+    ns->reserved = 0;
+    memcpy(&ns->target, target, sizeof(struct in6_addr));
+
+    /* Compute ICMPv6 checksum with unspecified source address */
+    memset(&unspecified, 0, sizeof(unspecified));
+    ns->icmp.checksum = ipv6_checksum(&unspecified, &mcast,
+                                       IP_PROTO_ICMPV6,
+                                       buf + sizeof(struct ipv6_header),
+                                       ns_len);
+
+    /* Resolve Ethernet destination (solicited-node multicast MAC) */
+    eth_dst[0] = 0x33;
+    eth_dst[1] = 0x33;
+    eth_dst[2] = mcast.s6_addr[12];
+    eth_dst[3] = mcast.s6_addr[13];
+    eth_dst[4] = mcast.s6_addr[14];
+    eth_dst[5] = mcast.s6_addr[15];
+
+    send_eth_ipv6(eth_dst, buf, total);
+}
+
+/* Start DAD for a tentative address.
+ *
+ * The address MUST already be in the address table with state
+ * IPV6_ADDR_STATE_TENTATIVE.  This function sends the first NS
+ * probe and creates a DAD tracking entry.
+ */
+void ipv6_dad_start(const struct in6_addr *addr)
+{
+    int slot = -1;
+    int i;
+
+    if (!addr) return;
+
+    /* Verify the address exists and is tentative */
+    struct ipv6_addr_entry *entry = ipv6_addr_find(addr);
+    if (!entry) {
+        kprintf("[dad] ipv6_dad_start: address not in table\n");
+        return;
+    }
+    if (entry->state != IPV6_ADDR_STATE_TENTATIVE) {
+        /* Address already resolved — no DAD needed */
+        return;
+    }
+
+    /* Check if DAD is already active for this address */
+    for (i = 0; i < IPV6_ADDR_TABLE_SIZE; i++) {
+        if (ipv6_dad_slots[i].active &&
+            ipv6_addr_equal(&ipv6_dad_slots[i].addr, addr)) {
+            /* Already doing DAD — no-op */
+            return;
+        }
+    }
+
+    /* Find free slot */
+    for (i = 0; i < IPV6_ADDR_TABLE_SIZE; i++) {
+        if (!ipv6_dad_slots[i].active) {
+            slot = i;
+            break;
+        }
+    }
+
+    if (slot < 0) {
+        kprintf("[dad] no free DAD slot for ");
+        kprintf("%02x%02x:...\n", addr->s6_addr[0], addr->s6_addr[1]);
+        return;
+    }
+
+    /* Initialize DAD state */
+    memcpy(&ipv6_dad_slots[slot].addr, addr, sizeof(struct in6_addr));
+    ipv6_dad_slots[slot].probe_count = 0;
+    ipv6_dad_slots[slot].last_probe_tick = 0;
+    ipv6_dad_slots[slot].active = 1;
+    ipv6_dad_slots[slot].conflict = 0;
+
+    /* Send first NS probe */
+    dad_send_ns(addr);
+    ipv6_dad_slots[slot].probe_count = 1;
+    ipv6_dad_slots[slot].last_probe_tick = timer_get_ticks();
+
+    kprintf("[dad] started DAD for ");
+    {
+        const uint8_t *a = addr->s6_addr;
+        kprintf("%02x%02x:%02x%02x:%02x%02x:%02x%02x:"
+                "%02x%02x:%02x%02x:%02x%02x:%02x%02x\n",
+                a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7],
+                a[8], a[9], a[10], a[11], a[12], a[13], a[14], a[15]);
+    }
+}
+
+/* Mark a DAD conflict for an address.
+ *
+ * Called from ipv6_nd_handle_ns() and ipv6_nd_handle_na() when a
+ * duplicate is detected.  The actual state transition to DETACHED
+ * happens in ipv6_dad_poll() to avoid re-entrancy issues.
+ */
+void ipv6_dad_conflict(const struct in6_addr *addr)
+{
+    int i;
+    if (!addr) return;
+
+    for (i = 0; i < IPV6_ADDR_TABLE_SIZE; i++) {
+        if (ipv6_dad_slots[i].active &&
+            ipv6_addr_equal(&ipv6_dad_slots[i].addr, addr)) {
+            ipv6_dad_slots[i].conflict = 1;
+            kprintf("[dad] CONFLICT detected for ");
+            {
+                const uint8_t *a = addr->s6_addr;
+                kprintf("%02x%02x:%02x%02x:%02x%02x:%02x%02x:"
+                        "%02x%02x:%02x%02x:%02x%02x:%02x%02x\n",
+                        a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7],
+                        a[8], a[9], a[10], a[11], a[12], a[13], a[14], a[15]);
+            }
+            return;
+        }
+    }
+}
+
+/* Poll DAD state machine — called from ipv6_poll().
+ *
+ * For each active DAD entry:
+ *  - If conflict detected → mark address DETACHED, clean up DAD slot
+ *  - If retransmit timer expired → send next probe
+ *  - If all probes sent without conflict → address is unique:
+ *    transition from TENTATIVE to PREFERRED/PERMANENT
+ */
+void ipv6_dad_poll(void)
+{
+    uint64_t now = timer_get_ticks();
+    int i;
+
+    for (i = 0; i < IPV6_ADDR_TABLE_SIZE; i++) {
+        struct ipv6_dad_slot *dad = &ipv6_dad_slots[i];
+
+        if (!dad->active)
+            continue;
+
+        /* Check if conflict was flagged by NS/NA handler */
+        if (dad->conflict) {
+            struct ipv6_addr_entry *entry = ipv6_addr_find(&dad->addr);
+            if (entry) {
+                entry->state = IPV6_ADDR_STATE_DETACHED;
+                kprintf("[dad] address DETACHED due to duplicate\n");
+            }
+            memset(dad, 0, sizeof(*dad));
+            continue;
+        }
+
+        /* Check if it's time to retransmit */
+        if (now - dad->last_probe_tick < DAD_RETRANS_TIMER)
+            continue;
+
+        /* Send next probe */
+        if (dad->probe_count < IPV6_DUPADDR_DETECT_TRANSMITS) {
+            dad_send_ns(&dad->addr);
+            dad->probe_count++;
+            dad->last_probe_tick = now;
+            continue;
+        }
+
+        /* All probes sent without conflict → address is unique */
+        {
+            struct ipv6_addr_entry *entry = ipv6_addr_find(&dad->addr);
+            if (entry) {
+                int old_state = entry->state;
+
+                /* Determine new state based on flags */
+                if (entry->flags & IPV6_ADDR_F_AUTOCONF) {
+                    /* SLAAC address → PREFERRED */
+                    entry->state = IPV6_ADDR_STATE_PREFERRED;
+
+                    /* Set the global GUA if this is our SLAAC address */
+                    if (!net_ipv6_gua_valid) {
+                        memcpy(&net_our_ipv6_gua, &dad->addr,
+                               sizeof(struct in6_addr));
+                        net_ipv6_gua_valid = 1;
+                        kprintf("[dad] GUA %02x%02x:... now valid via DAD\n",
+                                dad->addr.s6_addr[0],
+                                dad->addr.s6_addr[1]);
+                    }
+                } else {
+                    /* Link-local or other → PERMANENT */
+                    entry->state = IPV6_ADDR_STATE_PERMANENT;
+                }
+
+                /* Clear the DAD flag — DAD completed */
+                entry->flags &= ~(uint32_t)IPV6_ADDR_F_DAD;
+
+                kprintf("[dad] DAD complete for address "
+                        "(state %d → %d, flags=0x%x)\n",
+                        old_state, entry->state, entry->flags);
+            }
+            memset(dad, 0, sizeof(*dad));
+        }
     }
 }
 
@@ -636,8 +907,9 @@ void ipv6_init(void)
     /* Initialise the NDISC module */
     ipv6_nd_init();
 
-    /* Register link-local address in the management table */
-    ipv6_addr_add(&net_our_ipv6_ll, 64, IPV6_ADDR_STATE_PERMANENT,
+    /* Register link-local address as TENTATIVE in the management table */
+    /* DAD will confirm it and transition to PERMANENT */
+    ipv6_addr_add(&net_our_ipv6_ll, 64, IPV6_ADDR_STATE_TENTATIVE,
                   0xFFFFFFFF, 0xFFFFFFFF, 0);
     /* Add all-nodes multicast address as a permanent entry */
     {
@@ -646,22 +918,25 @@ void ipv6_init(void)
                       0xFFFFFFFF, 0xFFFFFFFF, 0);
     }
 
-    kprintf("[IPv6] Link-local address configured\n");
+    kprintf("[IPv6] Link-local address configured, starting DAD\n");
+
+    /* Start DAD for link-local address */
+    ipv6_dad_start(&net_our_ipv6_ll);
 
     /* Send Router Solicitation to trigger SLAAC */
     rs_sent = 1;
     rs_retries = 0;
     rs_last_tick = timer_get_ticks();
     ipv6_send_rs();
-
-    /* Send Neighbor Solicitation for DAD (Duplicate Address Detection) */
-    /* For now, we assume the address is unique (no DAD). */
 }
 
 /* ── Periodic poll tasks ─────────────────────────────────────────── */
 
 void ipv6_poll(void)
 {
+    /* Run DAD (Duplicate Address Detection) state machine */
+    ipv6_dad_poll();
+
     /* Run NDISC reachability state machine */
     ipv6_nd_poll();
 

@@ -333,6 +333,25 @@ void ipv6_nd_handle_ns(struct ipv6_header *ip6,
 
 	ns = (const struct nd_neighbor *)payload;
 
+	/* ── DAD conflict detection ─────────────────────────────────────
+	 *
+	 * Per RFC 4862 §5.4.2:
+	 *  - If an NS with source != :: is received for a TENTATIVE address,
+	 *    the address is a duplicate (another node already owns it).
+	 *  - A node MUST NOT respond to an NS for a tentative address.
+	 */
+	{
+		struct ipv6_addr_entry *tgt_entry = ipv6_addr_find(&ns->target);
+		if (tgt_entry && tgt_entry->state == IPV6_ADDR_STATE_TENTATIVE) {
+			/* NS with non-unspecified source means another node owns it */
+			if (!ipv6_addr_is_unspecified(&ip6->src_ip)) {
+				ipv6_dad_conflict(&ns->target);
+			}
+			/* Per RFC 4862 §5.4.2: do NOT respond to NS for tentative addr */
+			return;
+		}
+	}
+
 	/* We only respond if the target is one of our addresses */
 	if (!net_ipv6_ll_ready)
 		return;
@@ -388,6 +407,18 @@ void ipv6_nd_handle_na(struct ipv6_header *ip6,
 		return;
 
 	na = (const struct nd_neighbor *)payload;
+
+	/* ── DAD conflict detection ─────────────────────────────────────
+	 * Per RFC 4862 §5.4.2: if an NA is received for a TENTATIVE address,
+	 * the address is a duplicate.  Transition to DETACHED state.
+	 */
+	{
+		struct ipv6_addr_entry *entry = ipv6_addr_find(&na->target);
+		if (entry && entry->state == IPV6_ADDR_STATE_TENTATIVE) {
+			ipv6_dad_conflict(&na->target);
+			/* Still update cache with the source MAC for completeness */
+		}
+	}
 
 	/* Extract target MAC from Target Link-layer Address option */
 	opt = (const struct nd_option *)(payload + sizeof(struct nd_neighbor));
@@ -891,15 +922,18 @@ void ipv6_nd_handle_ra(struct ipv6_header *ip6,
 						}
 
 						memcpy(&net_our_ipv6_gua, &gua,
-						       sizeof(struct in6_addr));
-						net_ipv6_gua_valid = 1;
+					               sizeof(struct in6_addr));
+						/* net_ipv6_gua_valid will be set by DAD */
 
 						ipv6_addr_add(&gua, prefix_len,
-						              IPV6_ADDR_STATE_PREFERRED,
+						              IPV6_ADDR_STATE_TENTATIVE,
 						              valid_lifetime, preferred_lifetime,
 						              IPV6_ADDR_F_AUTOCONF | IPV6_ADDR_F_DAD);
 
-						kprintf("[ndisc] SLAAC: configured GUA, "
+						ipv6_dad_start(&gua);
+
+						kprintf("[ndisc] SLAAC: configured GUA "
+						        "(tentative, DAD in progress) "
 						        "valid=%u preferred=%u\n",
 						        valid_lifetime, preferred_lifetime);
 					}
