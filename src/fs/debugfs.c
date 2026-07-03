@@ -690,6 +690,9 @@ MODULE_DESCRIPTION("Debugfs virtual filesystem — exposes kernel debug data via
 MODULE_VERSION("1.0");
 #else /* !MODULE — built-in, called directly from kernel boot path */
 
+/* Forward declarations */
+static void debugfs_create_subsystem_dirs(void);
+
 void __init debugfs_init(void)
 {
 	if (debugfs_mounted) return;
@@ -714,8 +717,38 @@ void __init debugfs_init(void)
 		kprintf("[OK] debugfs mounted on /sys/kernel/debug\n");
 	} else {
 		kprintf("[!!] debugfs mount failed\n");
+		return;
 	}
 
 	debugfs_mounted = 1;
+
+	/* Create standard per-subsystem directories */
+	debugfs_create_subsystem_dirs();
+}
+
+/* ── Per-subsystem standard directories ──────────────────────────── */
+
+static void debugfs_create_subsystem_dirs(void)
+{
+	/* Each of these creates a top-level directory under /sys/kernel/debug/.
+	 * Subsystem owners create their files under these directories. */
+	debugfs_create_dir("acpi", NULL);
+	debugfs_create_dir("pci", NULL);
+	debugfs_create_dir("memory", NULL);
+	debugfs_create_dir("gpio", NULL);
+	debugfs_create_dir("i2c", NULL);
+	debugfs_create_dir("spi", NULL);
+	debugfs_create_dir("usb", NULL);
+	debugfs_create_dir("block", NULL);
+	debugfs_create_dir("net", NULL);
+	debugfs_create_dir("scsi", NULL);
+	debugfs_create_dir("thermal", NULL);
+	debugfs_create_dir("power", NULL);
+	debugfs_create_dir("crypto", NULL);
+	debugfs_create_dir("irq", NULL);
+	debugfs_create_dir("dma", NULL);
+	debugfs_create_dir("kunit", NULL);
+	debugfs_create_dir("uprobes", NULL);
+	debugfs_create_dir("ras", NULL);
 }
 #endif /* MODULE */
