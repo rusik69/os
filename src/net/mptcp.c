@@ -61,6 +61,10 @@ int mptcp_create(void)
     memset(mc, 0, sizeof(*mc));
     mc->used = 1;
     mc->token = mptcp_next_token++;
+    mc->snd_data_seq = 0;
+    mc->snd_data_ack = 0;
+    mc->rcv_data_seq = 0;
+    mc->rcv_data_ack = 0;
 
     /* Generate random 64-bit key using RNG */
     uint64_t key = 0;
@@ -96,6 +100,10 @@ int mptcp_add_subflow(uint32_t token, int conn_id, uint32_t addr, uint16_t port)
     sf->snd_isn = 0;
     sf->rcv_isn = 0;
     memcpy(sf->key, mc->snd_key, 8);
+    /* Initialize DSS tracking fields */
+    sf->dss_data_seq = 0;
+    sf->dss_subflow_seq = 0;
+    sf->dss_mapped_len = 0;
 
     kprintf("[MPTCP] Added subflow conn_id=%d to token %u\n", conn_id, token);
     spinlock_release(&mptcp_lock);
@@ -140,8 +148,16 @@ int mptcp_send(uint32_t token, const void *data, uint32_t len)
     /* Find first active subflow to send on */
     for (int i = 0; i < mc->num_subflows; i++) {
         if (mc->subflows[i].used && !mc->subflows[i].backup) {
-            /* Send on this subflow — data sequence signal would be embedded
-             * in TCP options by the TCP stack */
+            /* Send on this subflow — record DSS mapping so the TCP
+             * stack can embed the DSS option on data segments. */
+            struct mptcp_subflow *sf = &mc->subflows[i];
+            sf->dss_data_seq = mc->snd_data_seq;
+            sf->dss_subflow_seq = sf->snd_isn;  /* subflow initial seq number */
+            sf->dss_mapped_len = (uint16_t)len;
+
+            /* Advance data-level sequence number */
+            mc->snd_data_seq += len;
+
             spinlock_release(&mptcp_lock);
             return len;
         }
@@ -654,14 +670,357 @@ int mptcp_handle_join(int conn_id, const uint8_t *opt, uint16_t optlen)
     return 0;
 }
 
+/* ── DSS build: Build a DSS option for a data segment ─────────────
+ * Per RFC 8684 §3.3, the DSS option carries:
+ *   - Optional Data ACK (4 or 8 bytes)
+ *   - Optional Data Sequence Number (4 or 8 bytes)
+ *   - Optional Subflow Sequence Number (2 or 4 bytes)
+ *   - Optional Data-Level Length (2 bytes) — present when DSN is present,
+ *     or standalone (but RFC says it's always with DSN or SSN)
+ *   - Optional Checksum (2 bytes)
+ *
+ * We always use 8-byte Data ACK, 8-byte DSN, 4-byte SSN for
+ * maximum compatibility (Linux MPTCP reference implementation
+ * also uses the full-width variants).
+ *
+ * Returns 0 on success, negative errno on failure.
+ * On success, *len is updated to the bytes written. */
+int mptcp_build_dss(uint8_t *buf, uint16_t *len,
+                     uint64_t data_ack, int data_ack_valid,
+                     uint64_t data_seq, int data_seq_valid,
+                     uint32_t subflow_seq, int subflow_seq_valid,
+                     uint16_t data_len, int include_checksum)
+{
+    uint8_t flags_lo = 0;
+    uint16_t opt_len = MPTCP_DSS_MIN_LEN;
+    int offset = MPTCP_DSS_MIN_LEN;  /* past the 4-byte header */
+
+    if (!buf || !len)
+        return -EINVAL;
+
+    /* Determine flags and option length */
+    if (data_ack_valid) {
+        flags_lo |= MPTCP_DSS_FLAG_A | MPTCP_DSS_FLAG_A8; /* 8-byte data ACK */
+        opt_len += 8;  /* 8 bytes for the data ACK */
+    }
+    if (data_seq_valid) {
+        flags_lo |= MPTCP_DSS_FLAG_M; /* 8-byte DSN */
+        opt_len += 8;  /* DSN = 8 bytes */
+    }
+    if (subflow_seq_valid) {
+        flags_lo |= MPTCP_DSS_FLAG_F; /* 4-byte SSN */
+        opt_len += 4;  /* SSN = 4 bytes */
+    }
+    if (data_seq_valid || subflow_seq_valid) {
+        /* Data-Level Length is 2 bytes, present when either DSN or SSN is present */
+        opt_len += 2;
+    }
+    if (include_checksum) {
+        flags_lo |= MPTCP_DSS_FLAG_C;
+        opt_len += MPTCP_DSS_CKSUM_LEN;
+    }
+
+    if (*len < opt_len)
+        return -ENOSPC;
+
+    /* Build the option */
+    buf[0] = TCPOPT_MPTCP;                              /* kind = 30 */
+    buf[1] = (uint8_t)opt_len;                          /* length */
+    buf[2] = (uint8_t)(MPTCP_DSS << 4);                 /* subtype = 2 */
+    buf[3] = flags_lo;                                  /* data flags */
+
+    /* Data ACK (8 bytes, network byte order) */
+    if (data_ack_valid && (flags_lo & MPTCP_DSS_FLAG_A)) {
+        buf[offset + 0] = (uint8_t)(data_ack >> 56);
+        buf[offset + 1] = (uint8_t)(data_ack >> 48);
+        buf[offset + 2] = (uint8_t)(data_ack >> 40);
+        buf[offset + 3] = (uint8_t)(data_ack >> 32);
+        buf[offset + 4] = (uint8_t)(data_ack >> 24);
+        buf[offset + 5] = (uint8_t)(data_ack >> 16);
+        buf[offset + 6] = (uint8_t)(data_ack >> 8);
+        buf[offset + 7] = (uint8_t)(data_ack & 0xFF);
+        offset += 8;
+    }
+
+    /* Data Sequence Number (8 bytes, network byte order) */
+    if (data_seq_valid && (flags_lo & MPTCP_DSS_FLAG_M)) {
+        buf[offset + 0] = (uint8_t)(data_seq >> 56);
+        buf[offset + 1] = (uint8_t)(data_seq >> 48);
+        buf[offset + 2] = (uint8_t)(data_seq >> 40);
+        buf[offset + 3] = (uint8_t)(data_seq >> 32);
+        buf[offset + 4] = (uint8_t)(data_seq >> 24);
+        buf[offset + 5] = (uint8_t)(data_seq >> 16);
+        buf[offset + 6] = (uint8_t)(data_seq >> 8);
+        buf[offset + 7] = (uint8_t)(data_seq & 0xFF);
+        offset += 8;
+    }
+
+    /* Subflow Sequence Number (4 bytes, network byte order) */
+    if (subflow_seq_valid && (flags_lo & MPTCP_DSS_FLAG_F)) {
+        buf[offset + 0] = (uint8_t)(subflow_seq >> 24);
+        buf[offset + 1] = (uint8_t)(subflow_seq >> 16);
+        buf[offset + 2] = (uint8_t)(subflow_seq >> 8);
+        buf[offset + 3] = (uint8_t)(subflow_seq & 0xFF);
+        offset += 4;
+    }
+
+    /* Data-Level Length (2 bytes, network byte order) — present when DSN or SSN */
+    if (data_seq_valid || subflow_seq_valid) {
+        buf[offset + 0] = (uint8_t)(data_len >> 8);
+        buf[offset + 1] = (uint8_t)(data_len & 0xFF);
+        offset += 2;
+    }
+
+    /* Checksum (2 bytes, network byte order) — zero placeholder */
+    if (include_checksum) {
+        buf[offset + 0] = 0;
+        buf[offset + 1] = 0;
+        offset += 2;
+    }
+
+    (void)offset; /* used for systematic tracking */
+
+    *len = opt_len;
+    return 0;
+}
+
+/* ── DSS parse: Parse a received DSS option ──────────────────────
+ * Parses the DSS option and extracts all present fields.
+ * Caller should zero the valid flags before calling; on success
+ * each valid flag is set to 1 if the corresponding field was
+ * present in the option.
+ * Returns 0 on success, negative errno on failure. */
+int mptcp_parse_dss(const uint8_t *opt, uint16_t optlen,
+                     uint64_t *data_ack_out, int *data_ack_valid,
+                     uint64_t *data_seq_out, int *data_seq_valid,
+                     uint32_t *subflow_seq_out, int *subflow_seq_valid,
+                     uint16_t *data_len_out, int *include_checksum)
+{
+    uint8_t flags_lo;
+    int offset = MPTCP_DSS_MIN_LEN;
+
+    if (!opt || !data_ack_valid || !data_seq_valid || !subflow_seq_valid)
+        return -EINVAL;
+    if (optlen < MPTCP_DSS_MIN_LEN)
+        return -EINVAL;
+    if (opt[0] != TCPOPT_MPTCP)
+        return -EINVAL;
+    if ((opt[2] >> 4) != MPTCP_DSS)
+        return -EINVAL;
+
+    /* Reset valid flags */
+    *data_ack_valid = 0;
+    *data_seq_valid = 0;
+    *subflow_seq_valid = 0;
+    if (include_checksum)
+        *include_checksum = 0;
+
+    flags_lo = opt[3];
+
+    /* Check if checksum is present (must account for it in option length) */
+    int ck = (flags_lo & MPTCP_DSS_FLAG_C) ? 1 : 0;
+    if (include_checksum)
+        *include_checksum = ck;
+
+    /* Data ACK (4 or 8 bytes) */
+    if (flags_lo & MPTCP_DSS_FLAG_A) {
+        int ack_bytes = (flags_lo & MPTCP_DSS_FLAG_A8) ? 8 : 4;
+        if ((int)optlen < offset + ack_bytes)
+            return -EINVAL;
+        if (data_ack_out) {
+            if (ack_bytes == 8) {
+                *data_ack_out = ((uint64_t)opt[offset + 0] << 56) |
+                                ((uint64_t)opt[offset + 1] << 48) |
+                                ((uint64_t)opt[offset + 2] << 40) |
+                                ((uint64_t)opt[offset + 3] << 32) |
+                                ((uint64_t)opt[offset + 4] << 24) |
+                                ((uint64_t)opt[offset + 5] << 16) |
+                                ((uint64_t)opt[offset + 6] << 8)  |
+                                (uint64_t)opt[offset + 7];
+            } else {
+                *data_ack_out = ((uint64_t)opt[offset + 0] << 24) |
+                                ((uint64_t)opt[offset + 1] << 16) |
+                                ((uint64_t)opt[offset + 2] << 8)  |
+                                (uint64_t)opt[offset + 3];
+            }
+        }
+        *data_ack_valid = 1;
+        offset += ack_bytes;
+    }
+
+    /* Data Sequence Number (4 or 8 bytes) */
+    if (flags_lo & MPTCP_DSS_FLAG_M) {
+        int dsn_bytes = (flags_lo & MPTCP_DSS_FLAG_M4) ? 4 : 8;
+        if ((int)optlen < offset + dsn_bytes)
+            return -EINVAL;
+        if (data_seq_out) {
+            if (dsn_bytes == 8) {
+                *data_seq_out = ((uint64_t)opt[offset + 0] << 56) |
+                                ((uint64_t)opt[offset + 1] << 48) |
+                                ((uint64_t)opt[offset + 2] << 40) |
+                                ((uint64_t)opt[offset + 3] << 32) |
+                                ((uint64_t)opt[offset + 4] << 24) |
+                                ((uint64_t)opt[offset + 5] << 16) |
+                                ((uint64_t)opt[offset + 6] << 8)  |
+                                (uint64_t)opt[offset + 7];
+            } else {
+                *data_seq_out = ((uint64_t)opt[offset + 0] << 24) |
+                                ((uint64_t)opt[offset + 1] << 16) |
+                                ((uint64_t)opt[offset + 2] << 8)  |
+                                (uint64_t)opt[offset + 3];
+            }
+        }
+        *data_seq_valid = 1;
+        offset += dsn_bytes;
+    }
+
+    /* Subflow Sequence Number (2 or 4 bytes) */
+    if (flags_lo & MPTCP_DSS_FLAG_F) {
+        int ssn_bytes = (flags_lo & MPTCP_DSS_FLAG_F2) ? 2 : 4;
+        if ((int)optlen < offset + ssn_bytes)
+            return -EINVAL;
+        if (subflow_seq_out) {
+            if (ssn_bytes == 4) {
+                *subflow_seq_out = ((uint32_t)opt[offset + 0] << 24) |
+                                   ((uint32_t)opt[offset + 1] << 16) |
+                                   ((uint32_t)opt[offset + 2] << 8)  |
+                                   (uint32_t)opt[offset + 3];
+            } else {
+                *subflow_seq_out = ((uint32_t)opt[offset + 0] << 8) |
+                                   (uint32_t)opt[offset + 1];
+            }
+        }
+        *subflow_seq_valid = 1;
+        offset += ssn_bytes;
+    }
+
+    /* Data-Level Length (2 bytes, present when DSN or SSN is present) */
+    if ((flags_lo & (MPTCP_DSS_FLAG_M | MPTCP_DSS_FLAG_F)) &&
+        data_len_out) {
+        if ((int)optlen < offset + 2)
+            return -EINVAL;
+        *data_len_out = ((uint16_t)opt[offset] << 8) |
+                        (uint16_t)opt[offset + 1];
+        offset += 2;
+    }
+
+    /* Skip checksum if present */
+    if (ck) {
+        if ((int)optlen < offset + MPTCP_DSS_CKSUM_LEN)
+            return -EINVAL;
+        offset += MPTCP_DSS_CKSUM_LEN;
+    }
+
+    (void)optlen;
+    (void)offset;
+
+    return 0;
+}
+
+/* ── Handle received DSS option ──────────────────────────────────
+ * Called from the TCP stack when a DSS option is received on an
+ * MPTCP subflow.  Performs two roles:
+ *
+ * 1. Data ACK processing: If the DSS carries a Data ACK, this
+ *    tells us how much MPTCP data the peer has received.  We
+ *    update snd_data_ack on the MPTCP connection.
+ *
+ * 2. Data sequence mapping: If the DSS carries a Data Sequence
+ *    Number + Subflow Sequence Number + Data Length, it maps
+ *    the subflow's bytes to the MPTCP data stream.  We record
+ *    this mapping on the subflow so the receiver can reassemble
+ *    data from multiple subflows in the correct order.
+ *
+ * Returns 0 on success, negative errno on failure. */
 int mptcp_handle_dss(int conn_id, const uint8_t *opt, uint16_t optlen,
                       uint32_t seq, uint32_t ack)
 {
-    (void)conn_id;
-    (void)opt;
-    (void)optlen;
-    (void)seq;
-    (void)ack;
+    int ret;
+    int data_ack_valid = 0, data_seq_valid = 0, subflow_seq_valid = 0;
+    int include_checksum = 0;
+    uint64_t data_ack = 0, data_seq = 0;
+    uint32_t subflow_seq = 0;
+    uint16_t data_len = 0;
+
+    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS)
+        return -EINVAL;
+    if (!opt || optlen < MPTCP_DSS_MIN_LEN)
+        return -EINVAL;
+    if (opt[0] != TCPOPT_MPTCP)
+        return -EINVAL;
+    if ((opt[2] >> 4) != MPTCP_DSS)
+        return -EINVAL;
+
+    ret = mptcp_parse_dss(opt, optlen,
+                           &data_ack, &data_ack_valid,
+                           &data_seq, &data_seq_valid,
+                           &subflow_seq, &subflow_seq_valid,
+                           &data_len, &include_checksum);
+    if (ret < 0)
+        return ret;
+
+    /* Look up the MPTCP connection via the TCP connection's token */
+    struct tcp_conn *c = &tcp_conns[conn_id];
+    uint32_t token = c->mptcp_token;
+
+    if (token == 0) {
+        /* Not an MPTCP subflow — ignore DSS */
+        return 0;
+    }
+
+    spinlock_acquire(&mptcp_lock);
+    struct mptcp_conn *mc = mptcp_find_by_token(token);
+    if (!mc) {
+        spinlock_release(&mptcp_lock);
+        return 0;  /* Not fatal — connection may have been closed */
+    }
+
+    /* Role 1: Process Data ACK — peer has acknowledged data-level
+     * bytes up to data_ack.  Update our send-side tracking. */
+    if (data_ack_valid) {
+        if (data_ack > mc->snd_data_ack) {
+            mc->snd_data_ack = data_ack;
+            kprintf("[MPTCP-DSS] Data ACK updated: token=%u data_ack=%lu\n",
+                    token, (unsigned long)data_ack);
+        }
+    }
+
+    /* Role 2: Process Data Sequence Mapping — this packet's data
+     * maps to data_seq (data-level) starting at subflow_seq on the
+     * subflow.  Find the subflow and record the mapping. */
+    if (data_seq_valid && subflow_seq_valid && data_len > 0) {
+        /* Find the subflow matching this TCP connection */
+        for (uint8_t i = 0; i < mc->num_subflows; i++) {
+            struct mptcp_subflow *sf = &mc->subflows[i];
+            if (!sf->used)
+                continue;
+            if (sf->conn_id == conn_id) {
+                /* Record the DSS mapping */
+                sf->dss_data_seq = data_seq;
+                sf->dss_subflow_seq = subflow_seq;
+                sf->dss_mapped_len = data_len;
+
+                /* Update receive data sequence tracking */
+                uint64_t expected_seq = mc->rcv_data_seq;
+                if (data_seq == expected_seq) {
+                    /* In-order data — advance rcv_data_seq */
+                    mc->rcv_data_seq = data_seq + data_len;
+                    mc->rcv_data_ack = mc->rcv_data_seq;
+                }
+
+                kprintf("[MPTCP-DSS] Mapping: token=%u conn_id=%d "
+                        "data_seq=%lu subflow_seq=%u len=%u "
+                        "(rcv_data_seq=%lu)\n",
+                        token, conn_id,
+                        (unsigned long)data_seq, subflow_seq,
+                        (unsigned)data_len,
+                        (unsigned long)mc->rcv_data_seq);
+                break;
+            }
+        }
+    }
+
+    spinlock_release(&mptcp_lock);
     return 0;
 }
 
@@ -702,6 +1061,10 @@ int mptcp_subflow_create(uint32_t token, uint32_t addr, uint16_t port)
     sf->token = token;
     sf->conn_id = slot;
     memcpy(sf->key, mc->snd_key, 8);
+    /* Initialize DSS tracking fields */
+    sf->dss_data_seq = 0;
+    sf->dss_subflow_seq = 0;
+    sf->dss_mapped_len = 0;
     kprintf("[mptcp] mptcp_subflow_create: token=%u addr=%u:%u (stub)\n",
             token, addr, (unsigned)port);
     spinlock_release(&mptcp_lock);
@@ -1405,9 +1768,25 @@ int mptcp_mp_join_ack(uint32_t token, uint32_t addr_id,
     return 0;
 }
 
-/* ── Implement: mptcp_dss ────────────────── */
+/* ── mptcp_dss: Record data sequence mapping for a send ─────────
+ * Called when the MPTCP layer or a kernel module sends data on
+ * an MPTCP connection.  Records the data-level sequence number
+ * mapping for the outgoing segment and returns the data-level
+ * sequence number (the DSN that should go in the DSS option).
+ *
+ * Parameters:
+ *   token - MPTCP connection token
+ *   seq   - subflow-level sequence number of this segment
+ *   ack   - subflow-level ACK number (unused in DSS send path)
+ *   data  - pointer to the data (used for length only)
+ *   len   - number of bytes in the segment
+ *
+ * Returns: data-level sequence number (>= 0) on success,
+ *          negative errno on failure. */
 int mptcp_dss(uint32_t token, uint32_t seq, uint32_t ack, const void *data, uint32_t len)
 {
+    (void)seq;
+    (void)ack;
     if (!mptcp_initialized) {
         kprintf("[mptcp] mptcp_dss: not initialized\n");
         return -ENOSYS;
@@ -1423,10 +1802,33 @@ int mptcp_dss(uint32_t token, uint32_t seq, uint32_t ack, const void *data, uint
         kprintf("[mptcp] mptcp_dss: token %u not found\n", token);
         return -EINVAL;
     }
-    kprintf("[mptcp] mptcp_dss: token=%u seq=%u ack=%u len=%u (stub)\n",
-            token, seq, ack, len);
+    if (!mc->established) {
+        spinlock_release(&mptcp_lock);
+        kprintf("[mptcp] mptcp_dss: token %u not established\n", token);
+        return -EINVAL;
+    }
+
+    /* Record the data-level sequence number for this segment.
+     * The TCP stack will embed a DSS option with this DSN. */
+    uint64_t data_seq = mc->snd_data_seq;
+    mc->snd_data_seq += len;
+
+    /* Try to find an active subflow and update its DSS mapping */
+    for (uint8_t i = 0; i < mc->num_subflows; i++) {
+        struct mptcp_subflow *sf = &mc->subflows[i];
+        if (sf->used && !sf->backup) {
+            sf->dss_data_seq = data_seq;
+            sf->dss_subflow_seq = seq;  /* subflow-level seq of this segment */
+            sf->dss_mapped_len = (uint16_t)len;
+            break;
+        }
+    }
+
+    kprintf("[MPTCP-DSS] Send mapping: token=%u data_seq=%lu len=%u\n",
+            token, (unsigned long)data_seq, len);
+
     spinlock_release(&mptcp_lock);
-    return -EOPNOTSUPP;
+    return (int)(data_seq & 0x7FFFFFFF); /* return lower 31 bits */
 }
 
 EXPORT_SYMBOL(mptcp_subflow_create);
@@ -1446,6 +1848,8 @@ EXPORT_SYMBOL(mptcp_reset);
 EXPORT_SYMBOL(mptcp_mp_join_syn);
 EXPORT_SYMBOL(mptcp_mp_join_synack);
 EXPORT_SYMBOL(mptcp_mp_join_ack);
+EXPORT_SYMBOL(mptcp_build_dss);
+EXPORT_SYMBOL(mptcp_parse_dss);
 EXPORT_SYMBOL(mptcp_dss);
 EXPORT_SYMBOL(mptcp_get_token);
 EXPORT_SYMBOL(mptcp_associate);

@@ -43,6 +43,24 @@
 #define MPTCP_ADD_ADDR4_LEN_PORT  12  /* IPv4 ADD_ADDR with port */
 #define MPTCP_REMOVE_ADDR_MIN_LEN  4  /* Minimum REMOVE_ADDR (1 addr_id) */
 
+/* DSS (Data Sequence Signal) flag bits — byte 3 of DSS option (RFC 8684 §3.3) */
+#define MPTCP_DSS_FLAG_A     0x80  /* Data ACK present */
+#define MPTCP_DSS_FLAG_A8    0x40  /* Data ACK is 8 bytes (vs 4 bytes when A=1 and a=0) */
+#define MPTCP_DSS_FLAG_M     0x20  /* Data Sequence Number (DSN) present */
+#define MPTCP_DSS_FLAG_M4    0x10  /* DSN is 4 bytes (vs 8 when M=1 and m=0) */
+#define MPTCP_DSS_FLAG_F     0x08  /* Subflow Sequence Number (SSN) present */
+#define MPTCP_DSS_FLAG_F2    0x04  /* SSN is 2 bytes (vs 4 when F=1 and f=0) */
+#define MPTCP_DSS_FLAG_C     0x01  /* Checksum present (2 bytes at end of option) */
+
+/* DSS option length variants (RFC 8684 §3.3)
+ * The option header is always 4 bytes: kind(1), len(1), subtype+flags(1), data_flags(1) */
+#define MPTCP_DSS_MIN_LEN           4   /* Minimal: just header, no data */
+#define MPTCP_DSS_ACK4_LEN          8   /* header(4) + data_ack(4) */
+#define MPTCP_DSS_ACK8_LEN         12   /* header(4) + data_ack(8) */
+#define MPTCP_DSS_DATA8_SSN4_LEN   18   /* header(4) + DSN(8) + SSN(4) + data_len(2) */
+#define MPTCP_DSS_DATA4_SSN2_LEN   11   /* header(4) + DSN(4) + SSN(2) + data_len(1) */
+#define MPTCP_DSS_CKSUM_LEN         2   /* Checksum always 2 bytes */
+
 /* Address advertisement table size */
 #define MPTCP_MAX_ADDRS           8
 
@@ -68,6 +86,11 @@ struct mptcp_subflow {
     uint8_t     join_id;        /* Peer's address ID during MP_JOIN */
     uint8_t     join_local_id;  /* Our address ID during MP_JOIN */
     uint8_t     join_hmac[8];   /* Saved HMAC for MP_JOIN validation */
+    /* DSS mapping state (RFC 8684 §3.3) — tracks current mapping between
+     * subflow sequence numbers and the MPTCP data-level sequence number. */
+    uint64_t    dss_data_seq;    /* Data-level sequence number of mapping start */
+    uint32_t    dss_subflow_seq; /* Subflow-level seq number of mapping start */
+    uint16_t    dss_mapped_len;  /* Bytes covered by current DSS mapping */
 };
 
 /* Address advertisement entry — tracks ADD_ADDR state per connection */
@@ -87,7 +110,9 @@ struct mptcp_conn {
     uint8_t     snd_key[8];          /* Local 64-bit key */
     uint8_t     rcv_key[8];          /* Remote 64-bit key */
     uint64_t    snd_data_seq;        /* Data-level sending sequence number */
+    uint64_t    snd_data_ack;        /* Highest data-level ACK received from peer */
     uint64_t    rcv_data_seq;        /* Data-level receiving sequence number */
+    uint64_t    rcv_data_ack;        /* Highest data-level ACK we have sent */
     uint8_t     num_subflows;
     struct mptcp_subflow subflows[MPTCP_MAX_SUBFLOWS];
     /* Receive reassembly buffer */
@@ -158,6 +183,34 @@ int  mptcp_handle_add_addr(int conn_id, const uint8_t *opt, uint16_t optlen);
 int  mptcp_handle_remove_addr(int conn_id, const uint8_t *opt, uint16_t optlen);
 
 /* ── MP_JOIN subflow setup (RFC 8684 §3.2) ─────────────────────── */
+
+/* ── DSS (Data Sequence Signal) — RFC 8684 §3.3 ───────────────── */
+
+/* Build a DSS option for a data segment.
+ * On entry, *len is the buffer capacity; on exit, *len is bytes written.
+ * Set data_ack_valid=0 to omit the Data ACK field.
+ * Set data_seq_valid=0 to omit the Data Sequence Number field.
+ * Set subflow_seq_valid=0 to omit the Subflow Sequence Number field.
+ * All three can be combined as needed (common: data_ack only for pure ACKs,
+ * or data_seq+subflow_seq+data_len for data packets).
+ * Returns 0 on success, negative errno on failure. */
+int  mptcp_build_dss(uint8_t *buf, uint16_t *len,
+                      uint64_t data_ack, int data_ack_valid,
+                      uint64_t data_seq, int data_seq_valid,
+                      uint32_t subflow_seq, int subflow_seq_valid,
+                      uint16_t data_len, int include_checksum);
+
+/* Parse a received DSS option.  Extracts all fields that are present.
+ * On entry, *data_ack_valid, *data_seq_valid, *subflow_seq_valid are
+ * assumed 0; on exit they are set to 1 if the corresponding field was
+ * present.  Fields are only written when the corresponding valid flag
+ * is set (caller can pre-initialise to zeros and check valid flags). */
+int  mptcp_parse_dss(const uint8_t *opt, uint16_t optlen,
+                      uint64_t *data_ack_out, int *data_ack_valid,
+                      uint64_t *data_seq_out, int *data_seq_valid,
+                      uint32_t *subflow_seq_out, int *subflow_seq_valid,
+                      uint16_t *data_len_out, int *include_checksum);
+
 
 /* Token derivation from key (truncated SHA-256 first 4 bytes) */
 uint32_t mptcp_token_from_key(const uint8_t key[8]);
