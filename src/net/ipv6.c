@@ -1076,26 +1076,91 @@ void send_ipv6(const struct in6_addr *dst, uint8_t next_hdr,
 
 static int ping6_reply_received = 0;
 
+/*
+ * Handle incoming ICMPv6 Echo Request (type 128).
+ *
+ * Per RFC 4443 §4.1, an Echo Reply must:
+ *  - Set Type = 129 (Echo Reply)
+ *  - Set Code = 0
+ *  - Copy the Identifier and Sequence Number from the request
+ *  - Compute the ICMPv6 Checksum using the correct source address
+ *    (the address the request was sent to)
+ *  - Include any data that was in the request body
+ */
 static void handle_icmpv6_echo_request(struct ipv6_header *ip6,
                                         const uint8_t *payload,
                                         uint16_t len)
 {
+    struct ipv6_addr_entry *src_entry;
+    struct in6_addr src_addr;
+
+    /* Validate minimum length: must have at least type+code+checksum+id+seq */
+    if (len < sizeof(struct icmpv6_echo))
+        return;
+
+    /* Code must be 0 for Echo Request (RFC 4443 §4.1) */
+    if (payload[1] != 0)
+        return;
+
+    /* Verify ICMPv6 checksum of incoming request before responding */
+    {
+        const struct icmpv6_header *req_hdr =
+            (const struct icmpv6_header *)payload;
+        uint16_t recv_csum = req_hdr->checksum;
+        uint16_t calc_csum = ipv6_checksum(&ip6->src_ip, &ip6->dst_ip,
+                                            IP_PROTO_ICMPV6,
+                                            payload, len);
+        if (recv_csum != calc_csum)
+            return;
+    }
+
+    /* Prepare reply buffer — limit to stack-allocated size */
     uint8_t reply_buf[1500];
     uint16_t reply_len = len < sizeof(reply_buf) ? len : sizeof(reply_buf);
     memcpy(reply_buf, payload, reply_len);
+
     struct icmpv6_header *icmp = (struct icmpv6_header *)reply_buf;
     icmp->type = 129; /* Echo Reply */
     icmp->code = 0;
+
+    /*
+     * Select the source address that send_ipv6() will use for the
+     * reply.  This ensures the ICMPv6 checksum is computed over the
+     * same source address that appears in the IPv6 header.
+     */
+    src_entry = ipv6_addr_select_source(&ip6->src_ip);
+    if (src_entry) {
+        memcpy(&src_addr, &src_entry->addr, sizeof(struct in6_addr));
+    } else {
+        memcpy(&src_addr, &net_our_ipv6_ll, sizeof(struct in6_addr));
+    }
+
     icmp->checksum = 0;
-    icmp->checksum = ipv6_checksum(&net_our_ipv6_ll, &ip6->src_ip,
+    icmp->checksum = ipv6_checksum(&src_addr, &ip6->src_ip,
                                     IP_PROTO_ICMPV6,
                                     reply_buf, reply_len);
+
     send_ipv6(&ip6->src_ip, IP_PROTO_ICMPV6, reply_buf, reply_len);
 }
 
-static void handle_icmpv6_echo_reply(void)
+/*
+ * Handle incoming ICMPv6 Echo Reply (type 129).
+ *
+ * Only accepts replies that match our expected identifier, preventing
+ * stray ICMPv6 packets from falsely completing a ping6() call.
+ */
+static void handle_icmpv6_echo_reply(const uint8_t *payload, uint16_t len)
 {
-    ping6_reply_received = 1;
+    /* Must have at least the echo header with id and seq */
+    if (len < sizeof(struct icmpv6_echo))
+        return;
+
+    const struct icmpv6_echo *reply =
+        (const struct icmpv6_echo *)payload;
+
+    /* Match against the identifier used by ipv6_ping6() */
+    if (reply->id == (uint16_t)htons(0x1234))
+        ping6_reply_received = 1;
 }
 
 /* ── NDP: Handled by ipv6_ndisc.c ────────────────────────────────── */
@@ -1121,7 +1186,7 @@ void handle_icmpv6(struct ipv6_header *ip6, const uint8_t *payload,
 		handle_icmpv6_echo_request(ip6, payload, len);
 		break;
 	case 129: /* Echo Reply */
-		handle_icmpv6_echo_reply();
+		handle_icmpv6_echo_reply(payload, len);
 		break;
 	case ICMPV6_PACKET_TOO_BIG: /* 2 — Packet Too Big (RFC 4443 §3.2) */
 	{
@@ -1201,7 +1266,20 @@ void handle_ipv6(const uint8_t *data, uint16_t len)
 
 int ipv6_ping6(const struct in6_addr *target)
 {
+    struct ipv6_addr_entry *src_entry;
+    struct in6_addr src_addr;
+
     if (!net_ipv6_ll_ready) return -1;
+
+    /* Pre-select the source address that send_ipv6() will use,
+     * so the ICMPv6 checksum is computed over the same source
+     * address that appears in the IPv6 header. */
+    src_entry = ipv6_addr_select_source(target);
+    if (src_entry) {
+        memcpy(&src_addr, &src_entry->addr, sizeof(struct in6_addr));
+    } else {
+        memcpy(&src_addr, &net_our_ipv6_ll, sizeof(struct in6_addr));
+    }
 
     uint8_t buf[128];
     struct icmpv6_echo *echo = (struct icmpv6_echo *)buf;
@@ -1221,7 +1299,7 @@ int ipv6_ping6(const struct in6_addr *target)
         uint16_t pkt_len = data_start + 32;
 
         echo->hdr.checksum = 0;
-        echo->hdr.checksum = ipv6_checksum(&net_our_ipv6_ll, target,
+        echo->hdr.checksum = ipv6_checksum(&src_addr, target,
                                         IP_PROTO_ICMPV6, buf, pkt_len);
 
         ping6_reply_received = 0;
