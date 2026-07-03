@@ -33,6 +33,16 @@
 /* Ticks-per-second for time conversion (timer runs at ~100 Hz) */
 #define TICKS_PER_SEC      100ULL
 
+/* ── Hybrid slow start thresholds (RFC 8312 §3) ──────────────────────
+ * With a 100 Hz timer (10 ms/tick), the thresholds are rounded up to
+ * 10 ms.  ACK train detection fires if the inter-ACK gap spans >= 1
+ * tick; delay detection fires if RTT increases by >= 1 tick over the
+ * session minimum.
+ */
+#define HYSTART_ACK_TRAIN_MS   10   /* max inter-ACK gap (ms) before exit */
+#define HYSTART_DELAY_MS       10   /* RTT increase (ms) before exit */
+#define HYSTART_MIN_SAMPLES    8    /* min RTT samples before delay exit */
+
 /* ── Fixed-point integer cube root (Newton-Raphson, rounds toward zero) ──
  * Returns floor(cbrt(a)) for a > 0.  Uses at most 12 iterations.
  */
@@ -87,6 +97,7 @@ void cubic_init(struct cubic_data *c)
     memset(c, 0, sizeof(*c));
     c->wmax = 0;
     c->use_cubic = 0;
+    cubic_hystart_reset(c);
 }
 
 /* ── CUBIC window growth computation ────────────────────────────
@@ -244,4 +255,90 @@ void cubic_set_wmax(struct cubic_data *c, uint32_t wmax)
 {
     if (!c) return;
     c->wmax = wmax;
+}
+
+/* ── Hybrid slow start (RFC 8312 §3) ──────────────────────────────────
+ *
+ * Two detection modes:
+ *
+ * 1. ACK train: measure the inter-ACK arrival gap.  If the gap exceeds
+ *    HYSTART_ACK_TRAIN_MS, the ACK train is spreading out, signalling
+ *    possible bufferbloat --- exit slow start.
+ *
+ * 2. Delay increase: track the minimum RTT observed in this slow-start
+ *    epoch.  If the current RTT exceeds the minimum by more than
+ *    HYSTART_DELAY_MS (with at least HYSTART_MIN_SAMPLES collected),
+ *    the bottleneck queue is growing --- exit slow start.
+ *
+ * Returns 1 if slow start should exit, 0 to stay in slow start.
+ */
+
+void cubic_hystart_reset(struct cubic_data *c)
+{
+    if (!c) return;
+    c->hystart_last_ack_ms = 0;
+    c->hystart_lowest_rtt_ms = 0;
+    c->hystart_curr_rtt_ms = 0;
+    c->hystart_round_cnt = 0;
+    c->hystart_samples = 0;
+    c->hystart_found = 0;
+    c->hystart_detect = 0;
+}
+
+int cubic_hystart_update(struct cubic_data *c, uint32_t rtt_ms,
+                         uint64_t now_ms)
+{
+    if (!c || c->hystart_found)
+        return 0;
+
+    /* ── ACK train detection ────────────────────────────────────────
+     * Track the delta between consecutive ACK arrivals.  If the ACK
+     * spacing exceeds the threshold, the sender is likely pushing data
+     * faster than the bottleneck can drain --- exit slow start.
+     */
+    if (c->hystart_last_ack_ms > 0) {
+        uint32_t delta_ms = (uint32_t)(now_ms - c->hystart_last_ack_ms);
+        if (delta_ms >= HYSTART_ACK_TRAIN_MS) {
+            c->hystart_found = 1;
+            c->hystart_detect = 1; /* ACK_TRAIN */
+            return 1;
+        }
+    }
+    c->hystart_last_ack_ms = now_ms;
+
+    /* ── Delay-based detection ──────────────────────────────────────
+     * Track the minimum RTT ever observed.  When the current RTT sample
+     * exceeds the minimum by the threshold, the bottleneck queue must
+     * be building --- exit slow start.
+     *
+     * We require at least HYSTART_MIN_SAMPLES to guard against spurious
+     * exit on the first few noisy RTT measurements.
+     */
+    if (rtt_ms > 0 && rtt_ms < 10000) {
+        c->hystart_samples++;
+
+        /* Track the overall minimum RTT */
+        if (c->hystart_lowest_rtt_ms == 0 ||
+            rtt_ms < c->hystart_lowest_rtt_ms) {
+            c->hystart_lowest_rtt_ms = rtt_ms;
+        }
+
+        /* Track minimum RTT in the current RTT round */
+        if (c->hystart_curr_rtt_ms == 0 ||
+            rtt_ms < c->hystart_curr_rtt_ms) {
+            c->hystart_curr_rtt_ms = rtt_ms;
+        }
+
+        /* Check if RTT has increased above the minimum */
+        if (c->hystart_lowest_rtt_ms > 0 &&
+            rtt_ms >= c->hystart_lowest_rtt_ms + HYSTART_DELAY_MS) {
+            if (c->hystart_samples >= HYSTART_MIN_SAMPLES) {
+                c->hystart_found = 1;
+                c->hystart_detect = 2; /* DELAY */
+                return 1;
+            }
+        }
+    }
+
+    return 0;
 }

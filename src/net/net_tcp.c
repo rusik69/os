@@ -878,7 +878,18 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
                         } else {
                             /* CUBIC congestion control */
                             if (c->cwnd < c->ssthresh) {
-                                /* Slow start: exponential growth */
+                                /* Slow start: exponential growth.
+                                 * CUBIC hybrid slow start (RFC 8312 §3): monitor
+                                 * ACK spacing and RTT to detect incipient
+                                 * congestion and exit slow start before loss. */
+                                uint64_t now_ms = timer_get_ms();
+                                uint32_t rtt_delta = (uint32_t)(timer_get_ticks() -
+                                                                c->last_send_tick);
+                                uint32_t rtt_ms = rtt_delta * 10;
+                                if (cubic_hystart_update(&c->cubic, rtt_ms,
+                                                         now_ms)) {
+                                    c->ssthresh = c->cwnd;
+                                }
                                 c->cwnd++;
                             } else {
                                 /* Congestion avoidance: use CUBIC cubic function */
