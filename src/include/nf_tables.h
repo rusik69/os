@@ -3,6 +3,7 @@
 
 #include "types.h"
 #include "netfilter.h"
+#include "hashtable.h"
 
 /* ── nftables rule (B5) ─────────────────────────────────────────── */
 
@@ -47,19 +48,55 @@ struct nft_set_elem {
     uint32_t timeout_ms;     /* 0 = permanent */
 };
 
+/* RB-tree set node for range-based matching */
+struct nft_rb_node {
+    struct nft_rb_node *left;
+    struct nft_rb_node *right;
+    struct nft_rb_node *parent;
+    uint32_t            ip_min;
+    uint32_t            ip_max;
+    uint16_t            port_min;
+    uint16_t            port_max;
+    uint8_t             protocol;
+    uint8_t             color;    /* 0=red, 1=black */
+};
+
 #define NFT_SET_MAX_ELEMS 256
 
 struct nft_set {
     char               name[32];
-    uint8_t            type;    /* NFT_SET_IPV4, NFT_SET_PORT, NFT_SET_IPV4_PORT */
+    uint8_t            type;       /* NFT_SET_IPV4, NFT_SET_PORT, NFT_SET_IPV4_PORT */
+    uint8_t            backend;    /* NFT_SET_BACKEND_* */
+    uint8_t            pad[2];
+
+    /* Array backend (original, default) */
     struct nft_set_elem elems[NFT_SET_MAX_ELEMS];
     uint32_t           n_elems;
+
+    /* Backend-specific data */
+    union {
+        struct hashtable hash;              /* NFT_SET_BACKEND_HASH */
+        struct {                             /* NFT_SET_BACKEND_RBTREE */
+            struct nft_rb_node *root;
+            int                count;
+        } rb;
+        struct {                             /* NFT_SET_BACKEND_BITMAP */
+            unsigned long    *bitmap;        /* dynamically allocated */
+            int               nbits;         /* number of bits */
+        } bmp;
+    } data;
 };
 
 /* Set types */
 #define NFT_SET_IPV4       1
 #define NFT_SET_PORT       2
 #define NFT_SET_IPV4_PORT  3
+
+/* Set backend types */
+#define NFT_SET_BACKEND_ARRAY   0  /* flat array (default) */
+#define NFT_SET_BACKEND_HASH    1  /* hash table backed */
+#define NFT_SET_BACKEND_RBTREE  2  /* red-black tree for ranges */
+#define NFT_SET_BACKEND_BITMAP  3  /* bitmap for port matching */
 
 /* Verdict types */
 #define NFT_VERDICT_ACCEPT   0
@@ -256,6 +293,8 @@ int  nft_apply(struct nft_table *old, struct nft_table *new);
 int  nft_set_add(struct nft_set *set, uint32_t ip, uint16_t port, uint8_t proto, uint32_t timeout_ms);
 int  nft_set_del(struct nft_set *set, uint32_t ip, uint16_t port, uint8_t proto);
 int  nft_set_lookup(struct nft_set *set, uint32_t ip, uint16_t port, uint8_t proto);
+int  nft_set_init(struct nft_set *set, uint8_t type, uint8_t backend, const char *name);
+void nft_set_destroy(struct nft_set *set);
 
 /* Packet evaluation against nftables rules */
 int  nft_evaluate(struct nft_table *table, void *skb,

@@ -220,10 +220,484 @@ int nft_apply(struct nft_table *old, struct nft_table *new) {
     return 0;
 }
 
-/* ── Set management ───────────────────────────────────────────────── */
+/* ── Set management ─────────────────────────────────────────────────── *
+ * Backend dispatch: nft_set_add, nft_set_del, nft_set_lookup,
+ * nft_set_init, nft_set_destroy, plus per-backend helpers.
+ * Supports four backends: array (original), hash, rbtree, bitmap.
+ * ─────────────────────────────────────────────────────────────────────── */
 
-int nft_set_add(struct nft_set *set, uint32_t ip, uint16_t port,
-                uint8_t proto, uint32_t timeout_ms) {
+/* ── Hash backend ────────────────────────────────────────────────── */
+
+static uint64_t nft_hash_key(uint32_t ip, uint16_t port, uint8_t proto)
+{
+    return ((uint64_t)ip << 32) | ((uint64_t)port << 16) | (uint64_t)proto;
+}
+
+static int nft_set_add_hash(struct nft_set *set, uint32_t ip,
+                             uint16_t port, uint8_t proto,
+                             uint32_t timeout_ms)
+{
+    uint64_t key = nft_hash_key(ip, port, proto);
+    struct nft_set_elem *e;
+
+    e = (struct nft_set_elem *)hashtable_lookup(&set->data.hash, key);
+    if (e) {
+        e->used = 1;
+        return 0;
+    }
+
+    e = (struct nft_set_elem *)kmalloc(sizeof(struct nft_set_elem));
+    if (!e)
+        return -ENOMEM;
+
+    e->ip = ip;
+    e->port = port;
+    e->protocol = proto;
+    e->used = 1;
+    e->timeout_ms = timeout_ms;
+
+    return hashtable_insert(&set->data.hash, key, e);
+}
+
+static int nft_set_del_hash(struct nft_set *set, uint32_t ip,
+                             uint16_t port, uint8_t proto)
+{
+    uint64_t key = nft_hash_key(ip, port, proto);
+    struct nft_set_elem *e;
+
+    e = (struct nft_set_elem *)hashtable_lookup(&set->data.hash, key);
+    if (e) {
+        kfree(e);
+        return hashtable_remove(&set->data.hash, key);
+    }
+    return -ENOENT;
+}
+
+static int nft_set_lookup_hash(struct nft_set *set, uint32_t ip,
+                                uint16_t port, uint8_t proto)
+{
+    uint64_t key = nft_hash_key(ip, port, proto);
+    return (hashtable_lookup(&set->data.hash, key) != NULL) ? 1 : 0;
+}
+
+/* ── RB-tree backend ──────────────────────────────────────────────── */
+/* Standard left-leaning red-black tree for range-based matching.
+ * Nodes store [ip_min, ip_max] and [port_min, port_max] for intervals.
+ * Lookup uses range matching; insert/delete use single-point keys. */
+
+#define NFT_RB_RED   0
+#define NFT_RB_BLACK 1
+
+/* Compare (ip, port, proto) against an RB node's interval.
+ * Returns 0 if within interval, <0 if below, >0 if above. */
+static int nft_rb_cmp(uint32_t ip, uint16_t port, uint8_t proto,
+                       const struct nft_rb_node *node)
+{
+    if (ip < node->ip_min) return -2;
+    if (ip > node->ip_max) return 2;
+    if (port < node->port_min) return -1;
+    if (port > node->port_max) return 1;
+    if (node->protocol != 0 && node->protocol != proto)
+        return (proto < node->protocol) ? -1 : 1;
+    return 0; /* match */
+}
+
+/* Strict ordering comparison for BST insert by (ip, port, proto). */
+static int nft_rb_lt(uint32_t ip, uint16_t port, uint8_t proto,
+                      const struct nft_rb_node *n)
+{
+    if (ip < n->ip_min) return 1;
+    if (ip > n->ip_min) return 0;
+    if (port < n->port_min) return 1;
+    if (port > n->port_min) return 0;
+    return (proto < n->protocol);
+}
+
+static void nft_rb_rotate_left(struct nft_rb_node **root,
+                                struct nft_rb_node *x)
+{
+    struct nft_rb_node *y = x->right;
+    x->right = y->left;
+    if (y->left) y->left->parent = x;
+    y->parent = x->parent;
+    if (!x->parent)
+        *root = y;
+    else if (x == x->parent->left)
+        x->parent->left = y;
+    else
+        x->parent->right = y;
+    y->left = x;
+    x->parent = y;
+}
+
+static void nft_rb_rotate_right(struct nft_rb_node **root,
+                                 struct nft_rb_node *y)
+{
+    struct nft_rb_node *x = y->left;
+    y->left = x->right;
+    if (x->right) x->right->parent = y;
+    x->parent = y->parent;
+    if (!y->parent)
+        *root = x;
+    else if (y == y->parent->left)
+        y->parent->left = x;
+    else
+        y->parent->right = x;
+    x->right = y;
+    y->parent = x;
+}
+
+static void nft_rb_insert_fixup(struct nft_rb_node **root,
+                                 struct nft_rb_node *z)
+{
+    while (z->parent && z->parent->color == NFT_RB_RED) {
+        if (z->parent == z->parent->parent->left) {
+            struct nft_rb_node *y = z->parent->parent->right;
+            if (y && y->color == NFT_RB_RED) {
+                z->parent->color = NFT_RB_BLACK;
+                y->color = NFT_RB_BLACK;
+                z->parent->parent->color = NFT_RB_RED;
+                z = z->parent->parent;
+            } else {
+                if (z == z->parent->right) {
+                    z = z->parent;
+                    nft_rb_rotate_left(root, z);
+                }
+                z->parent->color = NFT_RB_BLACK;
+                z->parent->parent->color = NFT_RB_RED;
+                nft_rb_rotate_right(root, z->parent->parent);
+            }
+        } else {
+            struct nft_rb_node *y = z->parent->parent->left;
+            if (y && y->color == NFT_RB_RED) {
+                z->parent->color = NFT_RB_BLACK;
+                y->color = NFT_RB_BLACK;
+                z->parent->parent->color = NFT_RB_RED;
+                z = z->parent->parent;
+            } else {
+                if (z == z->parent->left) {
+                    z = z->parent;
+                    nft_rb_rotate_right(root, z);
+                }
+                z->parent->color = NFT_RB_BLACK;
+                z->parent->parent->color = NFT_RB_RED;
+                nft_rb_rotate_left(root, z->parent->parent);
+            }
+        }
+    }
+    (*root)->color = NFT_RB_BLACK;
+}
+
+static int nft_rb_insert_node(struct nft_rb_node **root,
+                               uint32_t ip, uint16_t port,
+                               uint8_t protocol)
+{
+    struct nft_rb_node *z;
+
+    z = (struct nft_rb_node *)kmalloc(sizeof(struct nft_rb_node));
+    if (!z)
+        return -ENOMEM;
+
+    z->ip_min = ip;
+    z->ip_max = ip;
+    z->port_min = port;
+    z->port_max = port;
+    z->protocol = protocol;
+    z->left = NULL;
+    z->right = NULL;
+    z->parent = NULL;
+    z->color = NFT_RB_RED;
+
+    /* Standard BST insert */
+    {
+        struct nft_rb_node *y = NULL;
+        struct nft_rb_node *x = *root;
+
+        while (x) {
+            y = x;
+            if (nft_rb_lt(ip, port, protocol, x))
+                x = x->left;
+            else
+                x = x->right;
+        }
+
+        z->parent = y;
+        if (!y)
+            *root = z;
+        else if (nft_rb_lt(ip, port, protocol, y))
+            y->left = z;
+        else
+            y->right = z;
+    }
+
+    nft_rb_insert_fixup(root, z);
+    return 0;
+}
+
+static struct nft_rb_node *nft_rb_minimum(struct nft_rb_node *node)
+{
+    while (node && node->left)
+        node = node->left;
+    return node;
+}
+
+static void nft_rb_transplant(struct nft_rb_node **root,
+                               struct nft_rb_node *u,
+                               struct nft_rb_node *v)
+{
+    if (!u->parent)
+        *root = v;
+    else if (u == u->parent->left)
+        u->parent->left = v;
+    else
+        u->parent->right = v;
+    if (v)
+        v->parent = u->parent;
+}
+
+static void nft_rb_delete_fixup(struct nft_rb_node **root,
+                                 struct nft_rb_node *x)
+{
+    while (x != *root && (!x || x->color == NFT_RB_BLACK)) {
+        struct nft_rb_node *p = x ? x->parent : NULL;
+        if (!p) break;
+
+        if (x == p->left) {
+            struct nft_rb_node *w = p->right;
+            if (w && w->color == NFT_RB_RED) {
+                w->color = NFT_RB_BLACK;
+                p->color = NFT_RB_RED;
+                nft_rb_rotate_left(root, p);
+                w = p->right;
+            }
+            if (w && (!w->left || w->left->color == NFT_RB_BLACK) &&
+                (!w->right || w->right->color == NFT_RB_BLACK)) {
+                w->color = NFT_RB_RED;
+                x = p;
+            } else {
+                if (w && (!w->right || w->right->color == NFT_RB_BLACK)) {
+                    if (w->left) w->left->color = NFT_RB_BLACK;
+                    w->color = NFT_RB_RED;
+                    nft_rb_rotate_right(root, w);
+                    w = p->right;
+                }
+                if (w) w->color = p->color;
+                p->color = NFT_RB_BLACK;
+                if (w && w->right) w->right->color = NFT_RB_BLACK;
+                nft_rb_rotate_left(root, p);
+                x = *root;
+                break;
+            }
+        } else {
+            struct nft_rb_node *w = p->left;
+            if (w && w->color == NFT_RB_RED) {
+                w->color = NFT_RB_BLACK;
+                p->color = NFT_RB_RED;
+                nft_rb_rotate_right(root, p);
+                w = p->left;
+            }
+            if (w && (!w->right || w->right->color == NFT_RB_BLACK) &&
+                (!w->left || w->left->color == NFT_RB_BLACK)) {
+                w->color = NFT_RB_RED;
+                x = p;
+            } else {
+                if (w && (!w->left || w->left->color == NFT_RB_BLACK)) {
+                    if (w->right) w->right->color = NFT_RB_BLACK;
+                    w->color = NFT_RB_RED;
+                    nft_rb_rotate_left(root, w);
+                    w = p->left;
+                }
+                if (w) w->color = p->color;
+                p->color = NFT_RB_BLACK;
+                if (w && w->left) w->left->color = NFT_RB_BLACK;
+                nft_rb_rotate_right(root, p);
+                x = *root;
+                break;
+            }
+        }
+    }
+    if (x)
+        x->color = NFT_RB_BLACK;
+}
+
+static int nft_rb_delete_node(struct nft_rb_node **root,
+                               uint32_t ip, uint16_t port,
+                               uint8_t protocol)
+{
+    if (!*root)
+        return -ENOENT;
+
+    /* Find the node by (ip, port, proto) */
+    struct nft_rb_node *z = *root;
+    while (z) {
+        if (nft_rb_lt(ip, port, protocol, z))
+            z = z->left;
+        else if (ip == z->ip_min && port == z->port_min &&
+                 protocol == z->protocol)
+            break; /* found exact match */
+        else
+            z = z->right;
+    }
+    if (!z)
+        return -ENOENT;
+
+    {
+        struct nft_rb_node *x, *y;
+        uint8_t y_orig_color = z->color;
+
+        y = z;
+        if (!z->left) {
+            x = z->right;
+            nft_rb_transplant(root, z, z->right);
+            if (x) x->parent = z->parent;
+        } else if (!z->right) {
+            x = z->left;
+            nft_rb_transplant(root, z, z->left);
+            if (x) x->parent = z->parent;
+        } else {
+            y = nft_rb_minimum(z->right);
+            y_orig_color = y->color;
+            x = y->right;
+            if (y->parent == z) {
+                if (x) x->parent = y;
+            } else {
+                nft_rb_transplant(root, y, y->right);
+                y->right = z->right;
+                if (y->right) y->right->parent = y;
+            }
+            nft_rb_transplant(root, z, y);
+            y->left = z->left;
+            if (y->left) y->left->parent = y;
+            y->color = z->color;
+        }
+
+        kfree(z);
+
+        if (y_orig_color == NFT_RB_BLACK)
+            nft_rb_delete_fixup(root, x);
+    }
+
+    return 0;
+}
+
+static void nft_rb_free_subtree(struct nft_rb_node *node)
+{
+    if (!node) return;
+    nft_rb_free_subtree(node->left);
+    nft_rb_free_subtree(node->right);
+    kfree(node);
+}
+
+static int nft_set_add_rbtree(struct nft_set *set, uint32_t ip,
+                               uint16_t port, uint8_t proto,
+                               uint32_t timeout_ms)
+{
+    (void)timeout_ms;
+    return nft_rb_insert_node(&set->data.rb.root, ip, port, proto);
+}
+
+static int nft_set_del_rbtree(struct nft_set *set, uint32_t ip,
+                               uint16_t port, uint8_t proto)
+{
+    int ret = nft_rb_delete_node(&set->data.rb.root, ip, port, proto);
+    if (ret == 0)
+        set->data.rb.count--;
+    return ret;
+}
+
+static int nft_set_lookup_rbtree(struct nft_set *set, uint32_t ip,
+                                  uint16_t port, uint8_t proto)
+{
+    struct nft_rb_node *node = set->data.rb.root;
+    while (node) {
+        int cmp = nft_rb_cmp(ip, port, proto, node);
+        if (cmp == 0) return 1; /* match */
+        if (cmp < 0)
+            node = node->left;
+        else
+            node = node->right;
+    }
+    return 0;
+}
+
+/* ── Bitmap backend ───────────────────────────────────────────────── */
+
+#define NFT_BITMAP_NBITS  65536
+#define NFT_BITMAP_LONGS  (NFT_BITMAP_NBITS / (8 * (int)sizeof(unsigned long)))
+
+static int nft_set_init_bitmap_backend(struct nft_set *set)
+{
+    unsigned long *bmp;
+
+    bmp = (unsigned long *)kmalloc(
+        (size_t)NFT_BITMAP_LONGS * sizeof(unsigned long));
+    if (!bmp)
+        return -ENOMEM;
+
+    set->data.bmp.bitmap = bmp;
+    set->data.bmp.nbits = NFT_BITMAP_NBITS;
+
+    for (int i = 0; i < NFT_BITMAP_LONGS; i++)
+        bmp[i] = 0UL;
+
+    return 0;
+}
+
+static int nft_set_add_bitmap(struct nft_set *set, uint32_t ip,
+                               uint16_t port, uint8_t proto,
+                               uint32_t timeout_ms)
+{
+    (void)ip;
+    (void)proto;
+    (void)timeout_ms;
+
+    if (!set->data.bmp.bitmap || (int)port >= set->data.bmp.nbits)
+        return -EINVAL;
+
+    set->data.bmp.bitmap[port / (8 * (int)sizeof(unsigned long))] |=
+        (1UL << (port % (8 * (int)sizeof(unsigned long))));
+    set->n_elems++;
+    return 0;
+}
+
+static int nft_set_del_bitmap(struct nft_set *set, uint32_t ip,
+                               uint16_t port, uint8_t proto)
+{
+    (void)ip;
+    (void)proto;
+
+    if (!set->data.bmp.bitmap || (int)port >= set->data.bmp.nbits)
+        return -EINVAL;
+
+    if (!((set->data.bmp.bitmap[port / (8 * (int)sizeof(unsigned long))] >>
+            (port % (8 * (int)sizeof(unsigned long)))) & 1UL))
+        return -ENOENT;
+
+    set->data.bmp.bitmap[port / (8 * (int)sizeof(unsigned long))] &=
+        ~(1UL << (port % (8 * (int)sizeof(unsigned long))));
+    set->n_elems--;
+    return 0;
+}
+
+static int nft_set_lookup_bitmap(struct nft_set *set, uint32_t ip,
+                                  uint16_t port, uint8_t proto)
+{
+    (void)ip;
+    (void)proto;
+
+    if (!set->data.bmp.bitmap || (int)port >= set->data.bmp.nbits)
+        return 0;
+
+    return (int)((set->data.bmp.bitmap[port / (8 * (int)sizeof(unsigned long))] >>
+                   (port % (8 * (int)sizeof(unsigned long)))) & 1UL);
+}
+
+/* ── Array backend (original) ────────────────────────────────────── */
+
+static int nft_set_add_array(struct nft_set *set, uint32_t ip,
+                              uint16_t port, uint8_t proto,
+                              uint32_t timeout_ms)
+{
     if (!set || set->n_elems >= NFT_SET_MAX_ELEMS)
         return -ENOSPC;
 
@@ -237,14 +711,15 @@ int nft_set_add(struct nft_set *set, uint32_t ip, uint16_t port,
     return 0;
 }
 
-int nft_set_del(struct nft_set *set, uint32_t ip, uint16_t port, uint8_t proto) {
+static int nft_set_del_array(struct nft_set *set, uint32_t ip,
+                              uint16_t port, uint8_t proto)
+{
     if (!set) return -EINVAL;
 
     for (uint32_t i = 0; i < set->n_elems; i++) {
         struct nft_set_elem *e = &set->elems[i];
         if (e->used && e->ip == ip && e->port == port && e->protocol == proto) {
             e->used = 0;
-            /* Compact */
             for (uint32_t j = i; j < set->n_elems - 1; j++)
                 set->elems[j] = set->elems[j + 1];
             set->n_elems--;
@@ -254,7 +729,9 @@ int nft_set_del(struct nft_set *set, uint32_t ip, uint16_t port, uint8_t proto) 
     return -ENOENT;
 }
 
-int nft_set_lookup(struct nft_set *set, uint32_t ip, uint16_t port, uint8_t proto) {
+static int nft_set_lookup_array(struct nft_set *set, uint32_t ip,
+                                 uint16_t port, uint8_t proto)
+{
     if (!set) return 0;
 
     for (uint32_t i = 0; i < set->n_elems; i++) {
@@ -281,6 +758,129 @@ int nft_set_lookup(struct nft_set *set, uint32_t ip, uint16_t port, uint8_t prot
         }
     }
     return 0;
+}
+
+/* ── Generic backend dispatch ────────────────────────────────────── */
+
+int nft_set_add(struct nft_set *set, uint32_t ip, uint16_t port,
+                uint8_t proto, uint32_t timeout_ms)
+{
+    if (!set) return -EINVAL;
+
+    switch (set->backend) {
+    case NFT_SET_BACKEND_HASH:
+        return nft_set_add_hash(set, ip, port, proto, timeout_ms);
+    case NFT_SET_BACKEND_RBTREE:
+        return nft_set_add_rbtree(set, ip, port, proto, timeout_ms);
+    case NFT_SET_BACKEND_BITMAP:
+        return nft_set_add_bitmap(set, ip, port, proto, timeout_ms);
+    case NFT_SET_BACKEND_ARRAY:
+    default:
+        return nft_set_add_array(set, ip, port, proto, timeout_ms);
+    }
+}
+
+int nft_set_del(struct nft_set *set, uint32_t ip,
+                uint16_t port, uint8_t proto)
+{
+    if (!set) return -EINVAL;
+
+    switch (set->backend) {
+    case NFT_SET_BACKEND_HASH:
+        return nft_set_del_hash(set, ip, port, proto);
+    case NFT_SET_BACKEND_RBTREE:
+        return nft_set_del_rbtree(set, ip, port, proto);
+    case NFT_SET_BACKEND_BITMAP:
+        return nft_set_del_bitmap(set, ip, port, proto);
+    case NFT_SET_BACKEND_ARRAY:
+    default:
+        return nft_set_del_array(set, ip, port, proto);
+    }
+}
+
+int nft_set_lookup(struct nft_set *set, uint32_t ip,
+                   uint16_t port, uint8_t proto)
+{
+    if (!set) return 0;
+
+    switch (set->backend) {
+    case NFT_SET_BACKEND_HASH:
+        return nft_set_lookup_hash(set, ip, port, proto);
+    case NFT_SET_BACKEND_RBTREE:
+        return nft_set_lookup_rbtree(set, ip, port, proto);
+    case NFT_SET_BACKEND_BITMAP:
+        return nft_set_lookup_bitmap(set, ip, port, proto);
+    case NFT_SET_BACKEND_ARRAY:
+    default:
+        return nft_set_lookup_array(set, ip, port, proto);
+    }
+}
+
+int nft_set_init(struct nft_set *set, uint8_t type,
+                 uint8_t backend, const char *name)
+{
+    if (!set || !name) return -EINVAL;
+
+    memset(set, 0, sizeof(*set));
+    strncpy(set->name, name, sizeof(set->name) - 1);
+    set->name[sizeof(set->name) - 1] = '\0';
+    set->type = type;
+    set->backend = backend;
+
+    switch (backend) {
+    case NFT_SET_BACKEND_HASH:
+        hashtable_init(&set->data.hash);
+        break;
+    case NFT_SET_BACKEND_RBTREE:
+        set->data.rb.root = NULL;
+        set->data.rb.count = 0;
+        break;
+    case NFT_SET_BACKEND_BITMAP:
+        return nft_set_init_bitmap_backend(set);
+    case NFT_SET_BACKEND_ARRAY:
+    default:
+        /* Array backend — all zeroed by memset */
+        break;
+    }
+
+    return 0;
+}
+
+void nft_set_destroy(struct nft_set *set)
+{
+    if (!set) return;
+
+    switch (set->backend) {
+    case NFT_SET_BACKEND_HASH: {
+        int i;
+        struct list_head *pos, *n;
+        for (i = 0; i < HASH_TABLE_SIZE; i++) {
+            list_for_each_safe(pos, n, &set->data.hash.buckets[i]) {
+                struct hashtable_node *hn =
+                    list_entry(pos, struct hashtable_node, list);
+                if (hn->value)
+                    kfree(hn->value);
+            }
+        }
+        break;
+    }
+    case NFT_SET_BACKEND_RBTREE:
+        nft_rb_free_subtree(set->data.rb.root);
+        set->data.rb.root = NULL;
+        set->data.rb.count = 0;
+        break;
+    case NFT_SET_BACKEND_BITMAP:
+        if (set->data.bmp.bitmap) {
+            kfree(set->data.bmp.bitmap);
+            set->data.bmp.bitmap = NULL;
+        }
+        break;
+    case NFT_SET_BACKEND_ARRAY:
+    default:
+        break;
+    }
+
+    memset(set, 0, sizeof(*set));
 }
 
 /* ── Expression evaluation ────────────────────────────────────────── */
