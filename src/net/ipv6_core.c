@@ -19,6 +19,7 @@
 #include "string.h"
 #include "printf.h"
 #include "errno.h"
+#include "timer.h"
 
 /*
  * ── Extension header walker ───────────────────────────────────────
@@ -299,14 +300,235 @@ done:
 }
 
 /*
- * ── Fragment reassembly statistics ─────────────────────────────────
+ * ── Fragment reassembly (RFC 8200 §4.5) ─────────────────────────────
+ *
+ * IPv6 fragmentation on receive: when a Fragment Header is present with
+ * offset > 0 or More Fragments flag set, the packet is one of several
+ * fragments.  We reassemble them in a slot keyed by
+ * (src_addr, dst_addr, identification).
+ *
+ * Atomic fragments (offset=0, M=0) are not actually fragmented — they
+ * pass through to the upper-layer handler as-is.
  */
 
-struct ipv6_frag_stats ipv6_frag_stats;
+struct ipv6_frag_slot {
+    struct in6_addr src;                       /* source address */
+    struct in6_addr dst;                       /* destination address */
+    uint32_t        identification;            /* IP identification */
+    uint8_t         next_header;               /* upper-layer protocol from first frag */
+    uint32_t        reassembled_len;           /* total reassembled datagram length */
+    uint16_t        frag_end;                  /* highest byte offset received */
+    uint8_t         buf[IPV6_FRAG_BUF_SIZE];   /* reassembly data buffer */
+    uint8_t         frag_map[IPV6_FRAG_BUF_SIZE / 8]; /* bitmap: 1 = byte received */
+    uint64_t        tick;                      /* timestamp of last activity */
+    int             valid;                     /* 1 = slot in use */
+    int             first_frag;                /* 1 = first fragment (offset 0) received */
+};
 
+static struct ipv6_frag_slot ipv6_frag_slots[IPV6_FRAG_SLOTS];
+
+/* Clear a fragment slot */
+static void ipv6_frag_slot_clear(struct ipv6_frag_slot *slot)
+{
+    if (!slot) return;
+    memset(slot, 0, sizeof(*slot));
+}
+
+/* IPv6 fragment reassembly statistics — extension of ipv6_frag_stats */
+static struct ipv6_frag_stats frag_stats;
+
+/* Evict stale fragment reassembly slots (call from ipv6_frag_poll or
+ * before searching for a matching slot) */
+static void ipv6_frag_evict_stale(void)
+{
+    uint64_t now = timer_get_ticks();
+    int i;
+
+    for (i = 0; i < IPV6_FRAG_SLOTS; i++) {
+        struct ipv6_frag_slot *s = &ipv6_frag_slots[i];
+        if (!s->valid)
+            continue;
+        if (now - s->tick > IPV6_FRAG_TTL_TICKS) {
+            kprintf("[ipv6_core] frag timeout: id=%08x\n",
+                    s->identification);
+            ipv6_frag_slot_clear(s);
+            frag_stats.rx_timed_out++;
+        }
+    }
+}
+
+/* Find or allocate a fragment reassembly slot keyed by
+ * (src, dst, identification). Returns NULL if all slots exhausted. */
+static struct ipv6_frag_slot *ipv6_frag_find(
+    const struct in6_addr *src,
+    const struct in6_addr *dst,
+    uint32_t identification)
+{
+    int i;
+
+    ipv6_frag_evict_stale();
+
+    /* Return existing matching slot */
+    for (i = 0; i < IPV6_FRAG_SLOTS; i++) {
+        struct ipv6_frag_slot *s = &ipv6_frag_slots[i];
+        if (!s->valid)
+            continue;
+        if (s->identification == identification &&
+            ipv6_addr_equal(&s->src, src) &&
+            ipv6_addr_equal(&s->dst, dst))
+            return s;
+    }
+
+    /* Allocate new empty slot */
+    for (i = 0; i < IPV6_FRAG_SLOTS; i++) {
+        struct ipv6_frag_slot *s = &ipv6_frag_slots[i];
+        if (!s->valid) {
+            memset(s, 0, sizeof(*s));
+            s->valid = 1;
+            memcpy(&s->src, src, sizeof(struct in6_addr));
+            memcpy(&s->dst, dst, sizeof(struct in6_addr));
+            s->identification = identification;
+            s->tick = timer_get_ticks();
+            return s;
+        }
+    }
+
+    /* All slots exhausted */
+    frag_stats.rx_oom++;
+    kprintf("[ipv6_core] frag: all %d slots exhausted (id=%08x)\n",
+            IPV6_FRAG_SLOTS, identification);
+    return NULL;
+}
+
+/*
+ * Handle an incoming IPv6 fragment.
+ *
+ * Returns:
+ *   0 -> packet is not fragmented (no action needed)
+ *   1 -> fragment accepted, waiting for more
+ *  -1 -> error / fragment discarded
+ *
+ * On success (returns 1 and all fragments received), reassembles
+ * the full datagram and dispatches it via handle_ipv6_packet_reassembled().
+ */
+static int handle_ipv6_fragment(const struct ipv6_header *ip6,
+                                 const struct ipv6_fragment *fh,
+                                 const uint8_t *payload,
+                                 uint16_t payload_len)
+{
+    uint16_t frag_off = IPV6_FRAG_OFFSET(fh);
+    int      more     = IPV6_FRAG_MORE(fh);
+
+    /* Atomic fragment (offset=0, M=0): pass through as unfragmented */
+    if (frag_off == 0 && !more)
+        return 0;
+
+    frag_stats.rx_fragments++;
+
+    uint32_t id = ntohl(fh->identification);
+    struct ipv6_frag_slot *slot = ipv6_frag_find(&ip6->src_ip,
+                                                  &ip6->dst_ip, id);
+    if (!slot) {
+        frag_stats.rx_dropped++;
+        return -1;
+    }
+
+    /* Compute the data offset in the reassembled datagram */
+    uint32_t data_off = (uint32_t)frag_off * 8;
+    uint32_t data_end = data_off + (uint32_t)payload_len;
+
+    /* Validate fragment fits within the reassembly buffer */
+    if (data_end > IPV6_FRAG_BUF_SIZE) {
+        frag_stats.rx_dropped++;
+        kprintf("[ipv6_core] frag overflow: off=%lu part=%u limit=%d (id=%08x)\n",
+                (unsigned long)data_off, payload_len,
+                IPV6_FRAG_BUF_SIZE, id);
+        return -1;
+    }
+
+    /* Copy fragment payload into the reassembly buffer */
+    memcpy(slot->buf + data_off, payload, payload_len);
+
+    /* Mark bytes received in bitmap */
+    {
+        uint32_t b;
+        for (b = data_off; b < data_end; b++)
+            slot->frag_map[b / 8] |= (uint8_t)(1u << (b % 8));
+    }
+
+    if (data_end > slot->frag_end)
+        slot->frag_end = (uint16_t)data_end;
+
+    if (frag_off == 0) {
+        /* First fragment: record the next header for upper-layer dispatch */
+        slot->next_header = fh->next_header;
+        slot->first_frag = 1;
+    }
+
+    slot->tick = timer_get_ticks();
+
+    /* If more fragments are expected, stay in progress */
+    if (more)
+        return 1;
+
+    /* Last fragment: verify all bytes from 0..frag_end are received */
+    {
+        uint32_t b;
+        for (b = 0; b < slot->frag_end; b++) {
+            if (!(slot->frag_map[b / 8] & (uint8_t)(1u << (b % 8))))
+                return 1; /* gaps remain, keep waiting */
+        }
+    }
+
+    /* ---- Reassembly complete ---- */
+    slot->valid = 0;
+    frag_stats.rx_reassembled++;
+
+    /* Get the next header from the first fragment.  If we never got
+     * the first fragment (offset=0), we cannot determine the upper
+     * layer protocol — drop the packet. */
+    if (!slot->first_frag) {
+        frag_stats.rx_dropped++;
+        kprintf("[ipv6_core] frag reassembly failed: missing first fragment (id=%08x)\n",
+                id);
+        return -1;
+    }
+
+    /* Reconstruct the IPv6 header for dispatch */
+    struct ipv6_header reasm;
+    memset(&reasm, 0, sizeof(reasm));
+    reasm.vcl_flow       = ip6->vcl_flow;
+    reasm.payload_length = htons((uint16_t)slot->frag_end);
+    reasm.next_header    = slot->next_header;
+    reasm.hop_limit      = ip6->hop_limit;
+    memcpy(&reasm.src_ip, &slot->src, sizeof(struct in6_addr));
+    memcpy(&reasm.dst_ip, &slot->dst, sizeof(struct in6_addr));
+
+    kprintf("[ipv6_core] frag reassembled: id=%08x size=%u\n",
+            id, slot->frag_end);
+
+    /* Dispatch to upper-layer handler */
+    handle_ipv6_packet((const uint8_t *)&reasm,
+                       (uint16_t)(sizeof(struct ipv6_header) + slot->frag_end));
+
+    return 1;
+}
+
+/* Public: poll for expired fragment slots */
+void ipv6_frag_poll(void)
+{
+    ipv6_frag_evict_stale();
+}
+
+/* Public: update frag stats from internal counters */
 void ipv6_frag_stats_get(struct ipv6_frag_stats *out)
 {
-    if (out) memcpy(out, &ipv6_frag_stats, sizeof(ipv6_frag_stats));
+    if (!out) return;
+    out->rx_fragments   = frag_stats.rx_fragments;
+    out->rx_reassembled = frag_stats.rx_reassembled;
+    out->rx_timed_out   = frag_stats.rx_timed_out;
+    out->rx_dropped     = frag_stats.rx_dropped;
+    out->rx_oom         = frag_stats.rx_oom;
 }
 
 /*
@@ -346,6 +568,24 @@ void handle_ipv6_packet(const uint8_t *data, uint16_t total_len)
     if (ret < 0) {
         net_iface_stats.rx_errors++;
         return;
+    }
+
+    /* Check for fragmentation */
+    if (frag_hdr) {
+        int frag_ret = handle_ipv6_fragment(ip6, frag_hdr,
+                                             payload, payload_len);
+        if (frag_ret != 0) {
+            /* Fragment consumed (reassembling, reassembled, or error) */
+            net_iface_stats.rx_bytes += total_len;
+            return;
+        }
+        /* Atomic fragment (offset=0, M=0): fall through and dispatch
+         * the payload as a normal unfragmented packet.  The upper-layer
+         * handlers receive the payload starting after the Fragment Header,
+         * which is correct: atomic fragments carry the full upper-layer
+         * payload with the Fragment Header prepended. */
+        /* payload and payload_len already point past the Fragment Header
+         * (set by ipv6_parse_exthdr).  proto contains the final protocol. */
     }
 
     /* Dispatch to upper-layer handler */

@@ -317,6 +317,26 @@ struct ipv6_frag_stats {
 };
 void ipv6_frag_stats_get(struct ipv6_frag_stats *out);
 
+/* ── IPv6 fragmentation (RFC 8200 §4.5) ────────────────────────── */
+
+/* Fragment reassembly slot count and buffer size */
+#define IPV6_FRAG_SLOTS       8    /* max concurrent fragmented IPv6 datagrams */
+#define IPV6_FRAG_BUF_SIZE    4096 /* max reassembly buf */
+#define IPV6_FRAG_TTL_TICKS   3000 /* ~30 seconds at 100 Hz timer */
+
+/* Send fragmented IPv6 datagram */
+void send_ipv6_fragmented(const struct in6_addr *dst, uint8_t next_hdr,
+                          const void *payload, uint16_t len,
+                          uint32_t identification);
+
+/* Poll for expired fragment slots (call from net_poll or timer) */
+void ipv6_frag_poll(void);
+
+/* Send an atomic fragment (Fragment Header with offset=0, M=0) */
+void send_ipv6_atomic(const struct in6_addr *dst, uint8_t next_hdr,
+                      const void *payload, uint16_t len,
+                      uint32_t identification);
+
 void ipv6_calc_solicited_node(const struct in6_addr *addr, struct in6_addr *mcast);
 void ipv6_eui64_from_mac(const uint8_t *mac, struct in6_addr *out);
 int  ipv6_addr_is_multicast(const struct in6_addr *addr);

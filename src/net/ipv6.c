@@ -736,12 +736,180 @@ static void ipv6_resolve_dst_mac(const struct in6_addr *dst, uint8_t *mac_out)
     mac_out[5] = 0x01;
 }
 
+/*
+ * ── IPv6 fragmentation on send (RFC 8200 §4.5) ──────────────────────
+ *
+ * IPv6 fragmentation is done ONLY by the source node (routers never
+ * fragment).  When the payload exceeds the path MTU (typically 1460
+ * bytes for Ethernet), we split it into fragments carrying Fragment
+ * Headers.
+ *
+ * Each fragment's data length must be a multiple of 8 bytes for all
+ * fragments except the last.  The Fragment Header is 8 bytes.
+ */
+
+/* Ethernet MTU for IPv6: 1500 - 40 (IPv6 header) = 1460 payload max */
+#define IPV6_MAX_PAYLOAD  1460
+/* Per-fragment data payload (after Fragment Header), rounded to 8 */
+#define IPV6_FRAG_DATA    (uint16_t)(((IPV6_MAX_PAYLOAD - sizeof(struct ipv6_fragment)) / 8) * 8)
+
+/* Counter for IPv6 fragment identification */
+static uint32_t ipv6_frag_id_counter;
+
+/* Build and send an IPv6 fragment.
+ *
+ * Parameters:
+ *   dst          — destination IPv6 address
+ *   src          — source IPv6 address
+ *   next_hdr     — next header for this fragment (upper-layer protocol for
+ *                  the first fragment, IPV6_NEXTHDR_FRAGMENT for subsequent)
+ *   data         — fragment payload data (pointer into the original payload at offset)
+ *   data_len     — length of fragment data
+ *   frag_offset  — fragment offset in 8-octet units
+ *   more         — More Fragments flag
+ *   identification — fragment identification value
+ */
+static void send_ipv6_fragment(const struct in6_addr *dst,
+                                const struct in6_addr *src,
+                                uint8_t next_hdr,
+                                const void *data, uint16_t data_len,
+                                uint16_t frag_offset, int more,
+                                uint32_t identification)
+{
+    uint8_t buf[IPV6_MAX_PAYLOAD + sizeof(struct ipv6_header)];
+    struct ipv6_header *ip6 = (struct ipv6_header *)buf;
+    struct ipv6_fragment *fh;
+    uint16_t total;
+
+    memset(buf, 0, sizeof(buf));
+
+    /* Build IPv6 header */
+    ip6->vcl_flow = htonl(0x60000000U);
+    /* payload_length includes Fragment Header + fragment data */
+    ip6->payload_length = htons((uint16_t)(sizeof(struct ipv6_fragment) + data_len));
+    ip6->next_header = IPV6_NEXTHDR_FRAGMENT;  /* next is the Fragment Header */
+    ip6->hop_limit = 64;
+    memcpy(&ip6->src_ip, src, sizeof(struct in6_addr));
+    memcpy(&ip6->dst_ip, dst, sizeof(struct in6_addr));
+
+    /* Build Fragment Header */
+    fh = (struct ipv6_fragment *)(buf + sizeof(struct ipv6_header));
+    fh->next_header = next_hdr;  /* upper-layer protocol or next extension */
+    fh->reserved = 0;
+    fh->frag_off_more = htons((uint16_t)((frag_offset << 3) | (more ? 1 : 0)));
+    fh->identification = htonl(identification);
+
+    /* Copy fragment data */
+    if (data_len > 0)
+        memcpy(buf + sizeof(struct ipv6_header) + sizeof(struct ipv6_fragment),
+               data, data_len);
+
+    total = (uint16_t)(sizeof(struct ipv6_header) +
+                       sizeof(struct ipv6_fragment) + data_len);
+
+    /* Resolve destination MAC and send */
+    {
+        uint8_t dst_mac[6];
+        ipv6_resolve_dst_mac(dst, dst_mac);
+        send_eth_ipv6(dst_mac, buf, total);
+    }
+}
+
+/* Send an IPv6 datagram as fragments.
+ *
+ * Splits the payload into fragments of IPV6_FRAG_DATA bytes each,
+ * creates a unique identification value, and sends all fragments.
+ * The last fragment has More Fragments flag = 0.
+ */
+void send_ipv6_fragmented(const struct in6_addr *dst, uint8_t next_hdr,
+                           const void *payload, uint16_t len,
+                           uint32_t identification)
+{
+    struct ipv6_addr_entry *src_entry;
+    struct in6_addr src_addr;
+    uint16_t off = 0;
+    uint8_t frag_next_hdr;
+    int frag_num = 0;
+
+    /* Select source address */
+    src_entry = ipv6_addr_select_source(dst);
+    if (src_entry) {
+        memcpy(&src_addr, &src_entry->addr, sizeof(struct in6_addr));
+    } else {
+        memcpy(&src_addr, &net_our_ipv6_ll, sizeof(struct in6_addr));
+    }
+
+    while (off < len) {
+        uint16_t chunk = len - off;
+        int more = 1;
+
+        if (chunk > IPV6_FRAG_DATA) {
+            chunk = IPV6_FRAG_DATA;
+            more = 1;
+        } else {
+            more = 0;  /* last fragment */
+        }
+
+        /* First fragment carries the upper-layer protocol in next_header;
+         * subsequent fragments use IPV6_NEXTHDR_NONE (or the upper-layer
+         * protocol — RFC 8200 allows either but says the receiver should
+         * use the first fragment's next_header).  We follow the common
+         * practice: all fragments after the first use NONE. */
+        frag_next_hdr = (off == 0) ? next_hdr : IPV6_NEXTHDR_NONE;
+        (void)frag_num;
+
+        send_ipv6_fragment(dst, &src_addr,
+                            frag_next_hdr,
+                            (const uint8_t *)payload + off, chunk,
+                            off / 8, more, identification);
+
+        off = (uint16_t)(off + chunk);
+        frag_num++;
+    }
+}
+
+/* Send an atomic fragment: a packet with a Fragment Header but
+ * offset=0 and M=0, meaning the packet is not actually fragmented.
+ *
+ * Atomic fragments are used by Path MTU Discovery (RFC 4821) when the
+ * sender wants to include a Fragment Header with a non-zero
+ * identification for loss-detection purposes, or by IPsec ESP when
+ * the ESP encapsulation requires a Fragment Header to be present.
+ */
+void send_ipv6_atomic(const struct in6_addr *dst, uint8_t next_hdr,
+                       const void *payload, uint16_t len,
+                       uint32_t identification)
+{
+    struct ipv6_addr_entry *src_entry;
+    struct in6_addr src_addr;
+
+    /* Select source address */
+    src_entry = ipv6_addr_select_source(dst);
+    if (src_entry) {
+        memcpy(&src_addr, &src_entry->addr, sizeof(struct in6_addr));
+    } else {
+        memcpy(&src_addr, &net_our_ipv6_ll, sizeof(struct in6_addr));
+    }
+
+    send_ipv6_fragment(dst, &src_addr, next_hdr,
+                        payload, len, 0, 0, identification);
+}
+
 void send_ipv6(const struct in6_addr *dst, uint8_t next_hdr,
                 const void *payload, uint16_t len)
 {
     uint8_t buf[2048];
     struct ipv6_header *ip6 = (struct ipv6_header *)buf;
     struct ipv6_addr_entry *src_entry;
+
+    /* Fragment if payload exceeds the link MTU for IPv6 */
+    if (len > IPV6_MAX_PAYLOAD) {
+        uint32_t id = __sync_fetch_and_add(&ipv6_frag_id_counter, 1);
+        kprintf("[ipv6] fragmenting: payload %u bytes > MTU %d, id=%u\n",
+                len, IPV6_MAX_PAYLOAD, id);
+        send_ipv6_fragmented(dst, next_hdr, payload, len, id);
+        return;
+    }
 
     /* Build IPv6 header */
     /* Version=6, Traffic Class=0, Flow Label=0 */
