@@ -10,6 +10,7 @@
  */
 
 #include "tls.h"
+#include "tls_x509.h"
 #include "net.h"
 #include "string.h"
 #include "printf.h"
@@ -526,6 +527,64 @@ int tls_handshake_step(struct tls_conn *conn, enum tls_hs_state *new_state,
 			        "cipher 0x%04x\n",
 			        conn->rstate.cipher_suite);
 
+			*new_state = TLS_HS_SERVER_PARAMS_SENT;
+			return 0;
+		}
+
+		case TLS_HS_SERVER_PARAMS_SENT:
+		{
+			if (!in || in_len <= 0) {
+				/* No data — just skip to ticket state */
+				*new_state = TLS_HS_TICKET_SENT;
+				return 0;
+			}
+
+			/* Try to parse a Certificate message */
+			ret = tls_hs_parse_header(in, in_len,
+			                          &hs_msg_type, &hs_body_len);
+			if (ret < 0) {
+				/* Not a valid handshake message — skip */
+				*new_state = TLS_HS_TICKET_SENT;
+				return 0;
+			}
+
+			if (hs_msg_type == TLS_HT_CERTIFICATE) {
+				struct tls_cert_entry certs[TLS_MAX_CERT_CHAIN_DEPTH];
+				int num_certs = 0;
+
+				if (in_len < TLS_HANDSHAKE_HEADER_LEN + hs_body_len)
+					goto error;
+
+				ret = tls_parse_certificate_msg(
+					in + TLS_HANDSHAKE_HEADER_LEN,
+					hs_body_len,
+					certs, TLS_MAX_CERT_CHAIN_DEPTH,
+					&num_certs);
+				if (ret < 0) {
+					kprintf("[tls] client: failed to parse "
+					        "Certificate: %d\n", ret);
+					goto error;
+				}
+
+				kprintf("[tls] client: received %d certificate(s)"
+				        " from server\n", num_certs);
+
+				/* Parse first certificate for logging */
+				if (num_certs > 0) {
+					struct tls_x509_cert xcert;
+					ret = x509_parse_cert(
+						certs[0].data,
+						certs[0].data_len,
+						&xcert);
+					if (ret == 0)
+						x509_print_cert(&xcert, "server");
+				}
+			} else {
+				kprintf("[tls] client: expected Certificate, "
+				        "got msg_type %d — skipping\n",
+				        hs_msg_type);
+			}
+
 			*new_state = TLS_HS_TICKET_SENT;
 			return 0;
 		}
@@ -652,6 +711,41 @@ int tls_handshake_step(struct tls_conn *conn, enum tls_hs_state *new_state,
 			ret = tls_hs_build_frame(
 				TLS_HT_SERVER_HELLO,
 				srv_body, srv_body_len,
+				out, out_cap);
+			if (ret < 0)
+				goto error;
+
+			*new_state = TLS_HS_SERVER_PARAMS_SENT;
+			return ret;
+		}
+
+		case TLS_HS_SERVER_PARAMS_SENT:
+		{
+			/* Server sends Certificate message */
+			uint8_t body[4096];
+			int body_len;
+			struct tls_cert_entry dummy_cert;
+
+			kprintf("[tls] server: sending Certificate message\n");
+
+			/* For now, send a minimal empty certificate list.
+			 * In production, the server would load its real
+			 * certificate chain and build the message from that. */
+			dummy_cert.data       = NULL;
+			dummy_cert.data_len   = 0;
+			dummy_cert.extensions = NULL;
+			dummy_cert.ext_len    = 0;
+
+			/* Build an empty certificate list (just the 3-byte
+			 * length prefix with value 0) */
+			body[0] = 0;
+			body[1] = 0;
+			body[2] = 0;
+			body_len = 3;
+
+			ret = tls_hs_build_frame(
+				TLS_HT_CERTIFICATE,
+				body, body_len,
 				out, out_cap);
 			if (ret < 0)
 				goto error;

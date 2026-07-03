@@ -534,4 +534,36 @@ int tls_parse_psk_extension(const uint8_t *ext_body, int ext_len,
 int tls_build_psk_ke_modes_ext(int modes,
                                 uint8_t *out, int out_cap);
 
+/* ── X.509 Certificate Parsing ────────────────────────────────────── */
+
+/* Initialise the X.509 certificate parser (call once at boot) */
+int tls_x509_init(void);
+
+/* ── TLS Certificate Message (RFC 8446 §4.4.2) ─────────────────────── */
+
+/* Maximum certificate chain depth we support */
+#define TLS_MAX_CERT_CHAIN_DEPTH  8
+
+/* A single entry in the Certificate message's certificate_list */
+struct tls_cert_entry {
+	const uint8_t *data;        /* raw DER certificate data */
+	int            data_len;
+	const uint8_t *extensions;  /* extensions blob (may be NULL) */
+	int            ext_len;
+};
+
+/* Build a TLS Certificate message body (RFC 8446 §4.4.2).
+ * 'certs' is an array of certificate entries to include.
+ * Returns bytes written to 'out', or negative errno. */
+int tls_build_certificate_msg(const struct tls_cert_entry *certs,
+                               int num_certs,
+                               uint8_t *out, int out_cap);
+
+/* Parse a TLS Certificate message body.
+ * Fills 'certs' array with pointers into 'body' (caller must keep body alive).
+ * Returns 0 on success, or negative errno on parse failure. */
+int tls_parse_certificate_msg(const uint8_t *body, int body_len,
+                               struct tls_cert_entry *certs,
+                               int max_certs, int *num_certs);
+
 #endif /* TLS_H */

@@ -2,6 +2,7 @@
 
 #include "tls.h"
 #include "tls_aead.h"
+#include "tls_x509.h"
 #include "crypto.h"
 #include "net.h"
 #include "string.h"
@@ -34,6 +35,15 @@ int __init tls_init(void)
 		if (ticket_ret < 0) {
 			kprintf("[tls] warning: session ticket init "
 			        "failed: %d\n", ticket_ret);
+		}
+	}
+
+	/* Initialise X.509 certificate parser */
+	{
+		int x509_ret = tls_x509_init();
+		if (x509_ret < 0) {
+			kprintf("[tls] warning: X.509 init "
+			        "failed: %d\n", x509_ret);
 		}
 	}
 
