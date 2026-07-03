@@ -332,6 +332,209 @@ static int dns_resolver_parse_response_aaaa(const uint8_t *data, uint16_t len,
     return -ENOENT;  /* no AAAA record found */
 }
 
+/* ── CNAME resolution chain ─────────────────────────────────────────── */
+
+/**
+ * dns_name_to_string - Decode a compressed DNS name to a string
+ * @data:    raw DNS message buffer
+ * @len:     total message length
+ * @offset:  byte offset where the name starts
+ * @out:     output buffer for the decoded name (null-terminated)
+ * @out_max: size of output buffer
+ *
+ * Decodes length-prefixed labels with RFC 1035 compression pointer
+ * support (0xC0 + 14-bit offset).  Labels are written dot-separated
+ * into @out (e.g., "www.example.com").
+ *
+ * Returns: 0 on success, negative errno on failure:
+ *   -EIO   malformed name or buffer overrun
+ *   -ENOSPC output buffer too small
+ */
+static int dns_name_to_string(const uint8_t *data, int len, int offset,
+                               char *out, int out_max)
+{
+    int pos = offset;
+    int out_pos = 0;
+    int hops = 0;
+
+    if (!out || out_max <= 0)
+        return -EINVAL;
+
+    while (hops < 128) {
+        if (pos >= len)
+            return -EIO;
+
+        uint8_t label = data[pos];
+
+        /* Root label — end of name */
+        if (label == 0)
+            break;
+
+        /* Compression pointer (RFC 1035 §4.1.4) */
+        if ((label & 0xC0) == 0xC0) {
+            if (pos + 2 > len)
+                return -EIO;
+            int ptr = ((int)(label & 0x3F) << 8) | data[pos + 1];
+            if (ptr >= len)
+                return -EIO;
+            pos = ptr;
+            hops++;
+            continue;
+        }
+
+        /* Regular label */
+        int label_len = (int)label;
+        if (label_len > 63 || label_len == 0)
+            return -EIO;
+        if (pos + 1 + label_len > len)
+            return -EIO;
+        pos++;
+
+        /* Append label with dot separator */
+        if (out_pos + label_len + 1 >= out_max)
+            return -ENOSPC;
+        memcpy(out + out_pos, data + pos, (size_t)label_len);
+        out_pos += label_len;
+        out[out_pos++] = '.';
+        pos += label_len;
+        hops++;
+    }
+
+    /* Remove trailing dot and null-terminate */
+    if (out_pos > 0 && out[out_pos - 1] == '.')
+        out[out_pos - 1] = '\0';
+    else if (out_pos < out_max)
+        out[out_pos] = '\0';
+
+    return 0;
+}
+
+/**
+ * dns_parse_response_a_or_cname - Parse DNS response for A or CNAME
+ * @data:         raw DNS response data
+ * @len:          response length in bytes
+ * @txid:         expected transaction ID
+ * @out_ip:       receives IPv4 address if A record found (host byte order)
+ * @out_ttl:      receives TTL in seconds (may be NULL)
+ * @cname_buf:    buffer for CNAME target name (if CNAME found, no A)
+ * @cname_buf_sz: size of cname_buf
+ *
+ * Parses a DNS response looking for either an A record or a CNAME record
+ * in the answer section.  Use this for CNAME chain following.
+ *
+ * Returns:
+ *   0         A record found — *out_ip and *out_ttl are set
+ *   1         CNAME found, no A record — cname_buf contains canonical name
+ *   -EAGAIN   transaction ID mismatch
+ *   -ENOENT   NXDOMAIN or no matching records in answer section
+ *   -EIO      malformed response or server error
+ */
+static int dns_parse_response_a_or_cname(const uint8_t *data, uint16_t len,
+                                          uint16_t txid,
+                                          uint32_t *out_ip, uint32_t *out_ttl,
+                                          char *cname_buf, int cname_buf_sz)
+{
+    const struct dns_header *hdr;
+    uint16_t flags;
+    uint8_t rcode;
+    uint16_t qdcount, ancount;
+    int pos, ret;
+    uint16_t a;
+    int found_cname = 0;
+    uint32_t cname_ttl = 0;
+
+    if (!data || len < sizeof(struct dns_header))
+        return -EINVAL;
+
+    hdr = (const struct dns_header *)data;
+
+    /* Verify transaction ID */
+    if (ntohs(hdr->id) != txid)
+        return -EAGAIN;
+
+    /* Verify QR bit (must be a response) */
+    flags = ntohs(hdr->flags);
+    if (!(flags & DNS_QR_RESPONSE))
+        return -EIO;
+
+    /* Check RCODE */
+    rcode = (uint8_t)(flags & 0x0F);
+    if (rcode != DNS_RCODE_OK) {
+        if (rcode == DNS_RCODE_NX)
+            return -ENOENT;
+        return -EIO;
+    }
+
+    qdcount = ntohs(hdr->qdcount);
+    ancount = ntohs(hdr->ancount);
+
+    if (ancount == 0)
+        return -ENOENT;
+
+    pos = sizeof(struct dns_header);
+
+    /* Skip question section */
+    for (uint16_t q = 0; q < qdcount; q++) {
+        ret = dns_skip_name(data, (int)len, pos);
+        if (ret < 0) return ret;
+        pos = ret + 4;  /* skip QTYPE (2) + QCLASS (2) */
+        if (pos > (int)len) return -EIO;
+    }
+
+    /* Parse answer section */
+    for (a = 0; a < ancount && pos + 12 <= (int)len; a++) {
+        ret = dns_skip_name(data, (int)len, pos);
+        if (ret < 0) return ret;
+        pos = ret;
+
+        if (pos + 10 > (int)len)
+            return -EIO;
+
+        uint16_t rtype = ((uint16_t)data[pos] << 8) | data[pos + 1];
+        /* skip CLASS (2 bytes at pos+2, pos+3) */
+        uint32_t ttl   = ((uint32_t)data[pos + 4] << 24) |
+                         ((uint32_t)data[pos + 5] << 16) |
+                         ((uint32_t)data[pos + 6] << 8)  |
+                         data[pos + 7];
+        uint16_t rdlen = ((uint16_t)data[pos + 8] << 8) | data[pos + 9];
+        pos += 10;
+
+        if (rtype == DNS_TYPE_A && rdlen == 4 && pos + 4 <= (int)len) {
+            uint32_t ip = ((uint32_t)data[pos]     << 24) |
+                          ((uint32_t)data[pos + 1] << 16) |
+                          ((uint32_t)data[pos + 2] << 8)  |
+                          data[pos + 3];
+            *out_ip = ip;
+            if (out_ttl)
+                *out_ttl = ttl;
+            return 0;  /* A record found — immediate success */
+        }
+
+        if (rtype == DNS_TYPE_CNAME && rdlen > 0 && pos + rdlen <= (int)len) {
+            /* Decode the CNAME target (canonical name) */
+            if (cname_buf && cname_buf_sz > 0) {
+                ret = dns_name_to_string(data, (int)len, pos,
+                                          cname_buf, cname_buf_sz);
+                if (ret == 0) {
+                    found_cname = 1;
+                    cname_ttl   = ttl;
+                }
+            }
+        }
+
+        pos += rdlen;
+    }
+
+    /* No A record found — if we saw a CNAME, return it for chain following */
+    if (found_cname) {
+        if (out_ttl)
+            *out_ttl = cname_ttl;
+        return 1;
+    }
+
+    return -ENOENT;  /* no A or CNAME record in answer section */
+}
+
 /* ── Public API ─────────────────────────────────────────────────────── */
 
 int dns_resolver_init(void)
@@ -452,6 +655,174 @@ done:
                 (unsigned)((ip >>  8) & 0xFF),
                 (unsigned)( ip        & 0xFF),
                 (unsigned)ttl);
+    }
+
+    return ret;
+}
+
+/* ── CNAME chain following query ─────────────────────────────────────── */
+
+int dns_resolver_query_a_follow_cname(const char *hostname,
+                                       uint32_t *out_ip, uint32_t *out_ttl)
+{
+    char current_name[DNS_NAME_MAX];
+    char cname_buf[DNS_NAME_MAX];
+    uint8_t pkt[512];
+    uint8_t resp[512];
+    uint32_t srv_ip;
+    uint32_t ttl = 0;
+    uint32_t ip = 0;
+    int chain_len;
+    int ret;
+    uint16_t txid;
+    uint32_t src_ip;
+    uint16_t src_port;
+    int rlen;
+    int timeout;
+    int pkt_len;
+    int a_found;
+    uint64_t deadline;
+    size_t name_len;
+
+    if (!hostname || !out_ip)
+        return -EINVAL;
+
+    *out_ip = 0;
+    if (out_ttl)
+        *out_ttl = 0;
+
+    /* Get DNS server IP */
+    srv_ip = net_dns_server;
+    if (!srv_ip) {
+        kprintf("[dns_resolver] no DNS server configured\n");
+        return -EHOSTUNREACH;
+    }
+
+    /* Start listening for DNS responses */
+    ret = net_udp_listen(DNS_RESOLVER_SRC_PORT);
+    if (ret < 0) {
+        kprintf("[dns_resolver] failed to listen on port %d\n",
+                DNS_RESOLVER_SRC_PORT);
+        return ret;
+    }
+
+    /* Work with a copy of the hostname — we may modify it for CNAME follow */
+    name_len = strlen(hostname);
+    if (name_len >= sizeof(current_name))
+        name_len = sizeof(current_name) - 1;
+    memcpy(current_name, hostname, name_len);
+    current_name[name_len] = '\0';
+
+    a_found = 0;
+
+    for (chain_len = 0; chain_len < DNS_CNAME_MAX_CHAIN; chain_len++) {
+        /* Build query for A record of current name */
+        txid = (uint16_t)__sync_fetch_and_add(&dns_txid_counter, 1);
+        ret = dns_build_query(pkt, current_name, DNS_TYPE_A, txid);
+        if (ret < 0)
+            goto done;
+        pkt_len = ret;
+
+        /* Send query with retries */
+        for (int attempt = 0; attempt < DNS_RETRIES; attempt++) {
+            /* Use fresh TXID per attempt */
+            txid = (uint16_t)__sync_fetch_and_add(&dns_txid_counter, 1);
+            struct dns_header *hdr = (struct dns_header *)pkt;
+            hdr->id = htons(txid);
+
+            net_udp_send(srv_ip, DNS_RESOLVER_SRC_PORT, DNS_PORT,
+                         pkt, (uint16_t)pkt_len);
+
+            /* Wait for response with timeout */
+            deadline = timer_get_ticks() + DNS_TIMEOUT_TICKS;
+
+            while (1) {
+                uint64_t now = timer_get_ticks();
+                if (now >= deadline)
+                    break;
+
+                timeout = (int)(deadline - now);
+                if (timeout <= 0)
+                    break;
+
+                rlen = net_udp_recv(DNS_RESOLVER_SRC_PORT, resp, sizeof(resp),
+                                    &src_ip, &src_port, timeout);
+
+                if (rlen > 0) {
+                    ip = 0;
+                    cname_buf[0] = '\0';
+                    ret = dns_parse_response_a_or_cname(resp, (uint16_t)rlen,
+                                                        txid, &ip, &ttl,
+                                                        cname_buf,
+                                                        (int)sizeof(cname_buf));
+                    if (ret == 0) {
+                        /* A record found */
+                        a_found = 1;
+                        goto chain_done;
+                    }
+                    if (ret == 1 && cname_buf[0] != '\0') {
+                        /* CNAME found — follow the chain */
+                        goto chain_done;
+                    }
+                    if (ret != -EAGAIN) {
+                        /* Fatal error — no point retrying */
+                        goto done;
+                    }
+                    /* -EAGAIN: keep waiting for our TXID */
+                }
+            }
+        }
+
+        /* All retries exhausted for this chain step */
+        ret = -ETIMEDOUT;
+        goto done;
+
+chain_done:
+        if (a_found) {
+            ret = 0;
+            goto done;
+        }
+
+        /* Follow CNAME to next name */
+        if (cname_buf[0] == '\0') {
+            ret = -ENOENT;
+            goto done;
+        }
+
+        kprintf("[dns_resolver] CNAME: %s -> %s (chain step %d)\n",
+                current_name, cname_buf, chain_len + 1);
+
+        /* Update current name to CNAME target and re-query */
+        name_len = strlen(cname_buf);
+        if (name_len >= sizeof(current_name))
+            name_len = sizeof(current_name) - 1;
+        memcpy(current_name, cname_buf, name_len);
+        current_name[name_len] = '\0';
+    }
+
+    /* Exceeded maximum chain depth */
+    ret = -ELOOP;
+
+done:
+    net_udp_unlisten(DNS_RESOLVER_SRC_PORT);
+
+    if (ret == 0) {
+        *out_ip = ip;
+        if (out_ttl)
+            *out_ttl = ttl;
+
+        /* Cache result under the original hostname */
+        dns_cache_store(hostname, ip, ttl);
+
+        kprintf("[dns_resolver] %s -> %u.%u.%u.%u (ttl=%u, "
+                "cname_chain=%d)\n",
+                hostname,
+                (unsigned)((ip >> 24) & 0xFF),
+                (unsigned)((ip >> 16) & 0xFF),
+                (unsigned)((ip >>  8) & 0xFF),
+                (unsigned)( ip        & 0xFF),
+                (unsigned)ttl,
+                chain_len);
     }
 
     return ret;

@@ -19,6 +19,9 @@
 
 #define DNS_CLASS_IN    1
 
+/* ── CNAME resolution chain ─────────────────────────────────────────── */
+#define DNS_CNAME_MAX_CHAIN  5   /* max CNAME follow depth */
+
 /* ── Public API ─────────────────────────────────────────────────────── */
 
 /**
@@ -69,5 +72,27 @@ int dns_resolver_query_a(const char *hostname, uint32_t *out_ip, uint32_t *out_t
  */
 int dns_resolver_query_aaaa(const char *hostname, struct in6_addr *out_addr,
                             uint32_t *out_ttl);
+
+/**
+ * dns_resolver_query_a_follow_cname - Query A record following CNAME chain
+ *
+ * Like dns_resolver_query_a, but when the server returns only a CNAME
+ * (no A record), automatically follows the CNAME chain up to
+ * DNS_CNAME_MAX_CHAIN (5) levels deep.  Each step sends a new A-record
+ * query for the canonical name.
+ *
+ * @hostname: hostname to resolve (null-terminated)
+ * @out_ip:   receives resolved IPv4 address (host byte order)
+ * @out_ttl:  receives TTL in seconds from DNS reply (may be NULL)
+ *
+ * Returns: 0 on success, negative errno on failure
+ *   -EHOSTUNREACH  no DNS server configured
+ *   -ENOENT        domain name does not exist (NXDOMAIN)
+ *   -ELOOP         CNAME chain exceeded maximum depth
+ *   -ETIMEDOUT     no response after all retries
+ *   -EIO           server returned an error
+ */
+int dns_resolver_query_a_follow_cname(const char *hostname,
+                                       uint32_t *out_ip, uint32_t *out_ttl);
 
 #endif /* DNS_RESOLVER_H */
