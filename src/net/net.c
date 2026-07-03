@@ -1355,6 +1355,9 @@ void net_init(void) {
 
     /* Initialize ICMP rate limit sysctls */
     icmp_ratelimit_sysctl_init();
+
+    /* Initialize pluggable congestion control framework */
+    cc_framework_init();
 }
 
 /* --- ARP list --- */
