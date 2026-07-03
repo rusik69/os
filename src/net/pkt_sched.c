@@ -478,6 +478,8 @@ struct qdisc *fq_codel_create(void) {
 #define HTB_QUEUE_LIMIT        256     /* Per-class queue depth */
 #define HTB_PRIO_LEVELS        8       /* 0..7 priority levels */
 #define HTB_AUTO_QUANTUM       0       /* Flag: auto-compute quantum */
+#define HTB_MTU                1500    /* Default MTU (bytes) */
+#define HTB_MPU                64      /* Minimum packet unit for token accounting */
 
 /* HTB class — one node in the hierarchy */
 struct htb_class {
@@ -491,6 +493,8 @@ struct htb_class {
     uint32_t ceil;             /* max bytes per second */
     uint32_t burst;            /* max token accumulation (bytes) */
     uint32_t cburst;           /* ceil token accumulation (bytes) */
+    uint32_t mtu;              /* per-class MTU (for burst validation) */
+    uint32_t mpu;              /* minimum packet unit for token charge */
     int      quantum;          /* bytes to serve in one round */
 
     /* Token buckets — fixed-point with 8 fractional bits */
@@ -524,6 +528,14 @@ static inline struct htb_class *htb_class_by_id(struct htb_priv *hp, int cid) {
     if (cid < 0 || cid >= HTB_MAX_CLASSES) return NULL;
     if (!hp->classes[cid].in_use) return NULL;
     return &hp->classes[cid];
+}
+
+/* Compute the token charge length for a packet.  No packet is charged
+ * less than MPU bytes — this prevents tiny ACK packets from bypassing
+ * the rate limit and ensures fair token consumption across all packet
+ * sizes.  Returns the charged length in bytes. */
+static inline int htb_charged_len(struct htb_class *cl, int len) {
+    return (len < (int)cl->mpu) ? (int)cl->mpu : len;
 }
 
 /* Refill tokens for a single class based on elapsed time since
@@ -562,19 +574,29 @@ static void htb_refill_chain(struct htb_priv *hp, struct htb_class *cl, uint64_t
 
 /* Check whether a leaf can send a packet of @len bytes.
  * Returns 1 if allowed, 0 if throttled.  Refills must happen before
- * calling this function. */
+ * calling this function.
+ *
+ * Token accounting uses the charged length (max(actual_len, MPU)) to
+ * ensure small packets don't bypass the rate limit.  The ceil token
+ * bucket is the absolute limiter — even with borrowing, the class
+ * must not exceed its peak rate (cburst).
+ *
+ * Borrowing walks the ancestor chain checking each parent's rate
+ * tokens to see if they can lend. */
 static int htb_can_send(struct htb_priv *hp, struct htb_class *cl, int len) {
-    /* Check ceil first: can't exceed max rate even with borrowing */
-    if (cl->c_tokens < ((int64_t)len << 8))
-        return 0;  /* exceeded ceil */
+    int charge = htb_charged_len(cl, len);
+
+    /* Check ceil first: peak rate is the absolute limit */
+    if (cl->c_tokens < ((int64_t)charge << 8))
+        return 0;  /* exceeded ceil (peak rate limit) */
 
     /* Check own rate tokens */
-    if (cl->tokens >= ((int64_t)len << 8))
+    if (cl->tokens >= ((int64_t)charge << 8))
         return 1;  /* can send from own budget */
 
     /* Need to borrow from ancestors.  Walk the chain checking each
      * ancestor's rate tokens to see if they can lend. */
-    int64_t need = (int64_t)len << 8;
+    int64_t need = (int64_t)charge << 8;
     need -= cl->tokens;
     if (need <= 0) return 1;
 
@@ -597,10 +619,13 @@ static int htb_can_send(struct htb_priv *hp, struct htb_class *cl, int len) {
 }
 
 /* Internal: borrow tokens from ancestors.  Called after commit.
- * Charges the class's own tokens first, then walks the ancestor
- * chain charging their tokens (borrowing). */
+ * Charges the class's own tokens first (using charged length for MPU
+ * accounting), then walks the ancestor chain charging their tokens
+ * (borrowing).  Both rate and ceil tokens use the charged length to
+ * prevent small-packet bypass. */
 static void htb_borrow(struct htb_priv *hp, struct htb_class *cl, int len) {
-    int deficit = len;  /* bytes we need to cover */
+    int charge = htb_charged_len(cl, len);
+    int deficit = charge;  /* bytes we need to cover (using charged length) */
 
     /* Charge own tokens first */
     if (cl->tokens >= ((int64_t)deficit << 8)) {
@@ -611,9 +636,9 @@ static void htb_borrow(struct htb_priv *hp, struct htb_class *cl, int len) {
         cl->tokens = 0;
     }
 
-    /* Charge ceil tokens (always charged against the leaf) */
-    if (cl->c_tokens >= ((int64_t)len << 8))
-        cl->c_tokens -= (int64_t)len << 8;
+    /* Charge ceil tokens (using charged length) */
+    if (cl->c_tokens >= ((int64_t)charge << 8))
+        cl->c_tokens -= (int64_t)charge << 8;
     else
         cl->c_tokens = 0;
 
@@ -633,9 +658,9 @@ static void htb_borrow(struct htb_priv *hp, struct htb_class *cl, int len) {
             parent->tokens = 0;
         }
 
-        /* Charge ancestor's ceil tokens too */
-        if (parent->c_tokens >= ((int64_t)len << 8))
-            parent->c_tokens -= (int64_t)len << 8;
+        /* Charge ancestor's ceil tokens too (using charged length) */
+        if (parent->c_tokens >= ((int64_t)charge << 8))
+            parent->c_tokens -= (int64_t)charge << 8;
         else
             parent->c_tokens = 0;
 
@@ -753,14 +778,31 @@ static int htb_drop(struct qdisc *q) {
     return -1;
 }
 
-/* Compute auto-burst: rate / Hz * 2  (2 seconds worth of data) */
-static uint32_t htb_auto_burst(uint32_t rate, uint32_t ceil) {
-    (void)ceil;
-    /* Roughly rate * 2 seconds / 10 ticks/sec = rate / 5 */
-    uint32_t b = rate / 5;
-    if (b < 300) b = 300;     /* minimum 300 bytes */
-    if (b > 64000) b = 64000; /* maximum 64 KB */
+/* Enhanced auto-burst: compute a reasonable default burst in bytes
+ * based on the rate.
+ *
+ * Formula: rate / 10 + MTU (≈ 100ms of data at rate + 1 MTU headroom).
+ * The +MTU ensures the bucket can hold at least one full-sized packet
+ * even when the rate is very low (e.g. 10 Kbps).
+ * Caps at 128 KB to prevent excessive latency on very-high-rate links. */
+static uint32_t htb_auto_burst(uint32_t rate, uint32_t mtu) {
+    uint32_t b = rate / 10;   /* 100ms worth of data at rate */
+    if (b < mtu) b = mtu;     /* at least 1 MTU */
+    if (b > 128000) b = 128000; /* cap at 128 KB */
     return b;
+}
+
+/* Validate and adjust a burst value.
+ * Burst must be ≥ max(MPU, MTU) to allow at least one full-sized packet
+ * to fit in the token bucket.  Also imposes a sanity cap at 256 KB.
+ * Returns the (possibly adjusted) burst value. */
+static inline uint32_t htb_validate_burst(uint32_t burst, uint32_t mtu) {
+    uint32_t min_burst = (mtu > HTB_MPU) ? mtu : HTB_MPU;
+    if (burst < min_burst)
+        burst = min_burst;
+    if (burst > 256000)
+        burst = 256000;
+    return burst;
 }
 
 /* ── HTB public API ────────────────────────────────────────────── */
@@ -810,14 +852,16 @@ int htb_add_class(struct qdisc *q, const struct htb_class_spec *spec) {
     cl->prio       = spec->prio > 7 ? 7 : spec->prio;
     cl->rate       = spec->rate ? spec->rate : 1000000;   /* default 1 Mbps */
     cl->ceil       = spec->ceil ? spec->ceil : cl->rate * 2; /* default 2x rate */
+    cl->mtu        = HTB_MTU;
+    cl->mpu        = HTB_MPU;
     if (spec->burst)
-        cl->burst  = spec->burst;
+        cl->burst  = htb_validate_burst(spec->burst, cl->mtu);
     else
-        cl->burst  = htb_auto_burst(cl->rate, cl->ceil);
+        cl->burst  = htb_auto_burst(cl->rate, cl->mtu);
     if (spec->cburst)
-        cl->cburst = spec->cburst;
+        cl->cburst = htb_validate_burst(spec->cburst, cl->mtu);
     else
-        cl->cburst = htb_auto_burst(cl->ceil, cl->ceil);
+        cl->cburst = htb_auto_burst(cl->ceil, cl->mtu);
     cl->quantum    = spec->quantum ? spec->quantum : HTB_DEF_QUANTUM;
     cl->level      = 0;  /* leaf by default; user can add children later */
     cl->last_touched = timer_get_ticks();
