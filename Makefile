@@ -335,6 +335,7 @@ C_SRCS = src/kernel/kernel.c \
          src/net/tcp_hybla.c \
          src/net/tcp_cc.c \
          src/net/tls.c \
+         src/net/tls_handshake.c \
          src/kernel/service.c \
          src/kernel/ssh_crypto.c \
          src/kernel/ssh_client.c \
