@@ -51,6 +51,18 @@ struct wg_allowed_ip {
     int      active;     /* 1 if this entry is used */
 };
 
+/* WireGuard TX packet queue */
+#define WG_TX_QUEUE_MAX_DEPTH 64
+
+struct wg_tx_packet {
+    uint8_t             *data;      /* heap-allocated, complete WireGuard message */
+    int                  len;       /* total length of data */
+    uint32_t             dst_ip;    /* destination IP (network byte order) */
+    uint16_t             dst_port;  /* destination UDP port */
+    uint16_t             src_port;  /* source UDP port */
+    struct wg_tx_packet *next;      /* next in queue */
+};
+
 struct wg_peer {
     uint32_t endpoint_ip;       /* configured peer address */
     uint16_t endpoint_port;     /* configured peer port */
@@ -77,6 +89,11 @@ struct wg_peer {
     /* ── Allowed-IP routing table (implicit routing) ──────────── */
     struct wg_allowed_ip allowed_ips[WG_MAX_ALLOWED_IPS];
     int                  num_allowed_ips;
+
+    /* ── TX packet queue (encrypted, waiting to be sent via UDP) ──── */
+    struct wg_tx_packet *tx_head;
+    struct wg_tx_packet *tx_tail;
+    int                  tx_count;
 };
 
 /* WireGuard device state */
@@ -170,6 +187,10 @@ int  wireguard_encrypt(const uint8_t *plaintext, uint64_t plaintext_len,
                        uint8_t *ciphertext, const uint8_t *key, const uint8_t *nonce);
 int  wireguard_decrypt(const uint8_t *ciphertext, uint64_t ciphertext_len,
                        uint8_t *plaintext, const uint8_t *key, const uint8_t *nonce);
+
+/* WireGuard TX queue flush — sends all queued encrypted packets via UDP.
+ * Should be called periodically (e.g., from wg_poll() or a timer). */
+void wg_tx_flush(void);
 
 /* ── Generic Netlink family (userspace configuration) ──────────────── */
 

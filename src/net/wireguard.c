@@ -22,6 +22,7 @@
 #include "heap.h"
 #include "rng.h"
 #include "timer.h"
+#include "net.h"
 
 static struct wg_device g_wg;
 static int wg_initialized = 0;
@@ -41,6 +42,7 @@ static struct wg_rl_entry wg_rl[WG_RATELIMIT_ENTRIES];
 
 /* ── Forward declarations for static helpers ──────────────────────── */
 static int wg_peer_find_by_source(uint32_t src_ip);
+static int wg_tx_enqueue(struct wg_peer *peer, uint8_t *data, int len);
 
 /* WireGuard protocol identifier (must match the initiator hash input) */
 #define WG_PROTOCOL_ID "WireGuard v1 zx2c4 Jason@zx2c4.com"
@@ -867,6 +869,11 @@ int wg_create_peer(uint32_t endpoint_ip, uint16_t port) {
     peer->rx_counter = 0;
     peer->session_established = 0;
 
+    /* Initialize TX packet queue */
+    peer->tx_head = NULL;
+    peer->tx_tail = NULL;
+    peer->tx_count = 0;
+
     /* Generate a peer public key (simulating remote peer's key) */
     uint8_t peer_priv[32];
     for (int i = 0; i < 32; i++)
@@ -895,6 +902,99 @@ int wg_remove_peer(int index) {
         g_wg.peers[i] = g_wg.peers[i + 1];
     g_wg.num_peers--;
     return 0;
+}
+
+/* ── TX packet queue ────────────────────────────────────────────────── */
+
+/* Enqueue an encrypted packet for transmission via UDP.
+ * Takes ownership of @data (will kfree on failure).
+ * Returns @len on success, or negative errno. */
+static int wg_tx_enqueue(struct wg_peer *peer, uint8_t *data, int len)
+{
+    struct wg_tx_packet *pkt;
+
+    if (!peer || !data || len <= 0) {
+        if (data) kfree(data);
+        return -EINVAL;
+    }
+
+    /* Back-pressure: drop if queue is full */
+    if (peer->tx_count >= WG_TX_QUEUE_MAX_DEPTH) {
+        kprintf("[WG] TX queue full for peer %d.%d.%d.%d:%u (%d queued), dropping\n",
+                (uint8_t)(peer->endpoint_ip >> 24),
+                (uint8_t)(peer->endpoint_ip >> 16),
+                (uint8_t)(peer->endpoint_ip >> 8),
+                (uint8_t)peer->endpoint_ip,
+                peer->endpoint_port,
+                peer->tx_count);
+        kfree(data);
+        return -ENOBUFS;
+    }
+
+    pkt = (struct wg_tx_packet *)kmalloc(sizeof(struct wg_tx_packet));
+    if (!pkt) {
+        kfree(data);
+        return -ENOMEM;
+    }
+
+    pkt->data     = data;
+    pkt->len      = len;
+    pkt->dst_ip   = peer->endpoint_ip;
+    pkt->dst_port = peer->endpoint_port;
+    pkt->src_port = g_wg.listen_port;
+    pkt->next     = NULL;
+
+    /* Append to tail of queue */
+    if (peer->tx_tail) {
+        peer->tx_tail->next = pkt;
+    } else {
+        peer->tx_head = pkt;
+    }
+    peer->tx_tail = pkt;
+    peer->tx_count++;
+
+    return len;
+}
+
+/* Flush (send) all queued packets for a single peer via UDP.
+ * Frees each packet after sending. */
+static void wg_tx_flush_peer(struct wg_peer *peer)
+{
+    struct wg_tx_packet *pkt;
+
+    if (!peer || !peer->tx_head)
+        return;
+
+    pkt = peer->tx_head;
+    while (pkt) {
+        struct wg_tx_packet *next = pkt->next;
+
+        if (pkt->data && pkt->len > 0) {
+            net_udp_send(pkt->dst_ip, pkt->src_port,
+                         pkt->dst_port, pkt->data,
+                         (uint16_t)pkt->len);
+        }
+
+        kfree(pkt->data);
+        kfree(pkt);
+        pkt = next;
+    }
+
+    peer->tx_head = NULL;
+    peer->tx_tail = NULL;
+    peer->tx_count = 0;
+}
+
+/* Flush all peer TX queues — sends every queued encrypted packet. */
+void wg_tx_flush(void)
+{
+    if (!wg_initialized)
+        return;
+
+    for (int i = 0; i < g_wg.num_peers; i++) {
+        if (g_wg.peers[i].active)
+            wg_tx_flush_peer(&g_wg.peers[i]);
+    }
 }
 
 /* ── Core send-to-peer helper ──────────────────────────────────────── */
@@ -961,8 +1061,9 @@ static int wg_send_to_peer(struct wg_peer *peer, const uint8_t *data, int len)
     /* Update last transmit time for keepalive tracking */
     peer->last_tx_time = timer_get_ticks();
 
-    kfree(buf);
-    return total_len;
+    /* Enqueue the encrypted packet for actual UDP transmission.
+     * wg_tx_enqueue() takes ownership of buf and frees it on failure. */
+    return wg_tx_enqueue(peer, buf, total_len);
 }
 
 int wg_send(const uint8_t *data, int len) {
@@ -1110,20 +1211,25 @@ int wg_set_persistent_keepalive(int index, uint32_t interval) {
     return 0;
 }
 
-/* Send a keepalive (empty payload) packet to the given peer */
-static void wg_send_keepalive(struct wg_peer *peer) {
-    /* Use the existing encrypt path with zero-length payload.
-     * We build an empty message: header (16 bytes) + auth tag (16 bytes) = 32 bytes,
-     * with zero-length ciphertext. */
+/* Send a keepalive (empty payload) packet to the given peer
+ * Allocates and enqueues the encrypted keepalive message. */
+static void wg_send_keepalive(struct wg_peer *peer)
+{
     uint8_t session_key[32];
     uint8_t shared_secret[32];
 
     curve25519(shared_secret, g_wg.private_key, peer->public_key);
     wg_kdf(session_key, shared_secret, g_wg.private_key, peer->public_key);
 
-    uint8_t buf[64];  /* More than enough for header + tag */
+    /* Allocate buffer: header (16) + auth tag (16) = 32 bytes */
+    uint8_t *buf = (uint8_t *)kmalloc(64);
+    if (!buf) {
+        kprintf("[WG] keepalive: kmalloc failed\n");
+        return;
+    }
+
     memset(buf, 0, 16);
-    buf[0] = WG_MSG_KEEPALIVE;  /* Keepalive / transport message type */
+    buf[0] = WG_MSG_KEEPALIVE;
 
     uint8_t nonce[12] = {0};
     static uint64_t wg_ka_counter = 0;
@@ -1134,6 +1240,8 @@ static void wg_send_keepalive(struct wg_peer *peer) {
     uint8_t tag[16];
     chacha20poly1305_encrypt(tag, NULL, 0, buf, 16, session_key, nonce);
     memcpy(buf + 16, tag, 16);
+
+    int total_len = 32;  /* header + auth tag */
 
     kprintf("[WG] Sending keepalive to peer %d.%d.%d.%d:%u (counter=%llu)\n",
             (uint8_t)(peer->endpoint_ip >> 24),
@@ -1146,15 +1254,18 @@ static void wg_send_keepalive(struct wg_peer *peer) {
     /* Update last transmit time */
     peer->last_tx_time = timer_get_ticks();
 
-    /* In a full implementation this would enqueue the packet on the
-     * UDP socket.  For now we log the event — the underlying transport
-     * (net_udp_send) would be called by the integration layer. */
-    (void)buf;
+    /* Enqueue for transmission */
+    int ret = wg_tx_enqueue(peer, buf, total_len);
+    if (ret < 0) {
+        /* wg_tx_enqueue already freed buf on failure */
+        kprintf("[WG] keepalive: enqueue failed (%d)\n", ret);
+    }
 }
 
 /* Periodic poll: check if any peer needs a keepalive sent.
  * Should be called from a timer (e.g., every second or from the
- * scheduler tick). */
+ * scheduler tick).  Also flushes the TX queue so encrypted packets
+ * are sent via UDP. */
 void wg_poll(void) {
     if (!wg_initialized) return;
 
@@ -1189,6 +1300,9 @@ void wg_poll(void) {
             wg_send_keepalive(peer);
         }
     }
+
+    /* Flush any queued encrypted packets */
+    wg_tx_flush();
 }
 /* ── Handshake state tracking ─────────────────────────────────────── */
 
