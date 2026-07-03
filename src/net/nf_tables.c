@@ -14,6 +14,7 @@
 #include "string.h"
 #include "heap.h"
 #include "errno.h"
+#include "timer.h"
 
 /* ── Static state ────────────────────────────────────────────────── */
 
@@ -1264,6 +1265,59 @@ static int nft_expr_eval_log(const struct nft_expr *expr,
     return 0; /* always succeeds — log is side-effect only */
 }
 
+/* Eval a limit expression — token-bucket rate limiter.
+ * Tracks packet rate (or byte rate) using a token bucket algorithm.
+ * Tokens refill at 'rate' per second up to 'burst' capacity.
+ * Each packet consumes 1 token (packets/sec) or pkt_len tokens (bytes/sec).
+ *
+ * Returns 0 if within rate limit (pass), 1 if over limit (no match).
+ * If 'invert' is set, the return is flipped (1=pass, 0=over limit). */
+static int nft_expr_eval_limit(const struct nft_expr *expr,
+                                struct nft_regs *regs,
+                                const struct nft_eval_ctx *ctx)
+{
+    struct nft_expr_limit *l = (struct nft_expr_limit *)expr;
+    int over_limit = 0;
+
+    (void)regs;
+
+    uint64_t now = timer_get_ticks();
+    uint64_t elapsed = now - l->last_seen;
+
+    /* Refill tokens — rate is per second, TIMER_FREQ ticks per second */
+    if (elapsed > 0) {
+        uint64_t added = (l->rate * elapsed) / TIMER_FREQ;
+        uint64_t new_tokens = l->tokens + added;
+        if (new_tokens > l->burst)
+            new_tokens = l->burst;
+        l->tokens = (uint32_t)new_tokens;
+        l->last_seen = now;
+    }
+
+    /* Determine token cost of this packet */
+    uint64_t needed;
+    if (l->type == 0) {
+        /* packets/sec mode — each packet costs 1 token */
+        needed = 1;
+    } else {
+        /* bytes/sec mode — packet costs its length in bytes */
+        needed = ctx ? (uint64_t)ctx->pkt_len : 1500;
+    }
+
+    if (l->tokens >= needed) {
+        l->tokens -= (uint32_t)needed;
+        over_limit = 0;
+    } else {
+        over_limit = 1;
+    }
+
+    /* If invert flag is set, flip the result */
+    if (l->invert)
+        over_limit = over_limit ? 0 : 1;
+
+    return over_limit ? 1 : 0; /* 0 = pass, 1 = over limit */
+}
+
 /* Evaluate the expression chain of a rule.
  * Returns 1 if ALL expressions matched (rule applies), 0 if any failed. */
 static int nft_expr_eval_chain(struct nft_rule *rule,
@@ -1322,6 +1376,12 @@ static int nft_expr_eval_chain(struct nft_rule *rule,
             ret = nft_expr_eval_log(expr, regs, ctx);
             if (ret != 0)
                 return 0;
+            break;
+
+        case NFT_EXPR_LIMIT:
+            ret = nft_expr_eval_limit(expr, regs, ctx);
+            if (ret != 0)
+                return 0; /* rate limited → rule doesn't match */
             break;
 
         default:
