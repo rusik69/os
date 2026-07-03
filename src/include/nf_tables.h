@@ -25,6 +25,12 @@ struct nft_rule {
     uint32_t counter_packets;
     uint32_t counter_bytes;
 
+    /* Optional expression chain — when non-NULL, overrides the flat
+     * matching fields above (src_ip, src_mask, etc.) with composable
+     * expression-based evaluation.  Allocated with kmalloc per rule. */
+    struct nft_expr *exprs;
+    uint32_t        n_exprs;
+
     /* Linkage */
     struct nft_rule *next;
 };
@@ -103,7 +109,118 @@ struct nft_table {
 
 /* Table flags */
 #define NFT_TABLE_F_DORMANT    0x01
-#define NFT_TABLE_F_ACTIVE     0x02
+#define NFT_TABLE_F_ACTIVE    0x02
+
+/* ── Expression System ───────────────────────────────────────────── */
+
+/* Register numbers for expression evaluation */
+#define NFT_REG_VERDICT  0
+#define NFT_REG_1        1
+#define NFT_REG_2        2
+#define NFT_REG_3        3
+#define NFT_REG_COUNT    4
+
+/* Expression types */
+#define NFT_EXPR_META      0
+#define NFT_EXPR_PAYLOAD   1
+#define NFT_EXPR_CMP       2
+#define NFT_EXPR_LOOKUP    3
+
+/* Meta keys for NFT_EXPR_META */
+#define NFT_META_LEN       0   /* packet length */
+#define NFT_META_PROTOCOL  1   /* ethertype/L3 protocol */
+#define NFT_META_NFPROTO   2   /* netfilter protocol family */
+#define NFT_META_L4PROTO   3   /* L4 protocol number */
+#define NFT_META_IIF       4   /* input interface index */
+#define NFT_META_OIF       5   /* output interface index */
+#define NFT_META_PRIORITY  6   /* packet priority */
+#define NFT_META_MARK      7   /* packet mark */
+
+/* Payload bases for NFT_EXPR_PAYLOAD */
+#define NFT_PAYLOAD_NETWORK_HEADER    0
+#define NFT_PAYLOAD_TRANSPORT_HEADER  1
+
+/* Comparison operators for NFT_EXPR_CMP */
+#define NFT_CMP_EQ  0
+#define NFT_CMP_NEQ 1
+#define NFT_CMP_LT  2
+#define NFT_CMP_GT  3
+#define NFT_CMP_LTE 4
+#define NFT_CMP_GTE 5
+
+/* ── Expression structures ───────────────────────────────────────── */
+
+/* Generic expression header — every expression embeds this at offset 0.
+ * The type field determines which concrete struct follows, and next
+ * chains expressions within a single rule. */
+struct nft_expr {
+    uint8_t            type;       /* NFT_EXPR_* */
+    uint8_t            pad[3];     /* alignment padding */
+    struct nft_expr   *next;       /* next expression in chain */
+} __attribute__((packed));
+
+/* Meta expression — reads packet metadata into a register.
+ * Used to match on packet properties that aren't header fields:
+ * length, interface, protocol family, etc. */
+struct nft_expr_meta {
+    struct nft_expr    hdr;        /* common header */
+    uint8_t            key;        /* NFT_META_* */
+    uint8_t            dreg;       /* destination register */
+    uint8_t            pad[2];
+} __attribute__((packed));
+
+/* Payload expression — extracts header bytes into a register.
+ * Reads from the network or transport header at a given offset/len. */
+struct nft_expr_payload {
+    struct nft_expr    hdr;        /* common header */
+    uint8_t            base;       /* NFT_PAYLOAD_*_HEADER */
+    uint8_t            offset;     /* byte offset within header */
+    uint8_t            len;        /* number of bytes (1-4) */
+    uint8_t            dreg;       /* destination register */
+} __attribute__((packed));
+
+/* Comparison expression — compares register value against immediate data.
+ * If the comparison fails, the entire rule is skipped (no match). */
+struct nft_expr_cmp {
+    struct nft_expr    hdr;        /* common header */
+    uint8_t            op;         /* NFT_CMP_* */
+    uint8_t            sreg;       /* source register */
+    uint8_t            len;        /* data length (1-16) */
+    uint8_t            pad;
+    uint32_t           data[4];    /* inline comparison data (up to 16B) */
+} __attribute__((packed));
+
+/* Lookup expression — checks register value against an nft_set.
+ * The set is identified by name within the same table. */
+struct nft_expr_lookup {
+    struct nft_expr    hdr;        /* common header */
+    char               set_name[32]; /* name of set to look up in */
+    uint8_t            sreg;       /* source register */
+    uint8_t            pad[3];
+} __attribute__((packed));
+
+/* ── Expression evaluation context ───────────────────────────────── */
+/* Carries per-packet state through expression evaluation.  Filled in
+ * by nft_evaluate and passed to each expression's eval function. */
+struct nft_eval_ctx {
+    uint32_t           src_ip;
+    uint32_t           dst_ip;
+    uint16_t           src_port;
+    uint16_t           dst_port;
+    uint8_t            protocol;
+    int                hook;
+    uint32_t           pkt_len;
+    int                iif;        /* input interface index */
+    int                oif;        /* output interface index */
+    struct nft_table  *table;      /* current table for set lookups */
+};
+
+/* Register file for expression evaluation — scratch storage that
+ * expressions read from and write to during rule evaluation. */
+struct nft_regs {
+    uint32_t           data32[NFT_REG_COUNT];  /* general-purpose regs */
+    int                verdict;                /* last verdict */
+};
 
 /* Protocol families */
 #define NFPROTO_IPV4   2
@@ -120,6 +237,10 @@ void nft_unregister_table(struct nft_table *table);
 int  nft_add_rule(struct nft_chain *chain, const struct nft_rule *rule);
 int  nft_del_rule(struct nft_chain *chain, uint32_t index);
 void nft_flush_rules(struct nft_chain *chain);
+
+/* Expression management within a rule */
+int  nft_rule_add_expr(struct nft_rule *rule, struct nft_expr *expr);
+void nft_rule_free_exprs(struct nft_rule *rule);
 
 /* Atomic table swap — single-call update */
 int  nft_apply(struct nft_table *old, struct nft_table *new);

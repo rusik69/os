@@ -126,6 +126,8 @@ int nft_add_rule(struct nft_chain *chain, const struct nft_rule *rule) {
     memcpy(r, rule, sizeof(struct nft_rule));
     r->counter_packets = 0;
     r->counter_bytes = 0;
+    r->exprs = NULL;
+    r->n_exprs = 0;
     r->next = NULL;
 
     /* Append to chain's rule list */
@@ -174,6 +176,7 @@ void nft_flush_rules(struct nft_chain *chain) {
     struct nft_rule *cur = chain->rules;
     while (cur) {
         struct nft_rule *next = cur->next;
+        nft_rule_free_exprs(cur);
         kfree(cur);
         cur = next;
     }
@@ -278,7 +281,289 @@ int nft_set_lookup(struct nft_set *set, uint32_t ip, uint16_t port, uint8_t prot
     return 0;
 }
 
-/* ── Packet evaluation ────────────────────────────────────────────── */
+/* ── Expression evaluation ────────────────────────────────────────── */
+
+/* Eval a meta expression — reads packet metadata into a register. */
+static int nft_expr_eval_meta(const struct nft_expr *expr,
+                              struct nft_regs *regs,
+                              const struct nft_eval_ctx *ctx)
+{
+    const struct nft_expr_meta *m = (const struct nft_expr_meta *)expr;
+    uint32_t val = 0;
+
+    switch (m->key) {
+    case NFT_META_LEN:
+        val = ctx->pkt_len;
+        break;
+    case NFT_META_PROTOCOL:
+        val = (uint32_t)ctx->protocol;
+        break;
+    case NFT_META_NFPROTO:
+        val = NFPROTO_IPV4;
+        break;
+    case NFT_META_L4PROTO:
+        val = (uint32_t)ctx->protocol;
+        break;
+    case NFT_META_IIF:
+        val = (uint32_t)(ctx->iif >= 0 ? ctx->iif : 0);
+        break;
+    case NFT_META_OIF:
+        val = (uint32_t)(ctx->oif >= 0 ? ctx->oif : 0);
+        break;
+    case NFT_META_PRIORITY:
+        val = 0;
+        break;
+    case NFT_META_MARK:
+        val = 0;
+        break;
+    default:
+        val = 0;
+        break;
+    }
+
+    if (m->dreg < NFT_REG_COUNT)
+        regs->data32[m->dreg] = val;
+
+    return 0; /* always succeeds — meta reads cannot fail */
+}
+
+/* Eval a payload expression — extracts header bytes into a register.
+ * Given the limited packet context we have, this simulates IP/transport
+ * header field extraction from the tuple passed to nft_evaluate. */
+static int nft_expr_eval_payload(const struct nft_expr *expr,
+                                 struct nft_regs *regs,
+                                 const struct nft_eval_ctx *ctx)
+{
+    const struct nft_expr_payload *p = (const struct nft_expr_payload *)expr;
+    uint32_t val = 0;
+    int extracted = 0;
+
+    switch (p->base) {
+    case NFT_PAYLOAD_NETWORK_HEADER:
+        /* Simulated IP header field extraction */
+        if (p->offset == 12 && p->len == 4) {
+            /* IP source address at offset 12 */
+            val = ctx->src_ip;
+            extracted = 1;
+        } else if (p->offset == 16 && p->len == 4) {
+            /* IP destination address at offset 16 */
+            val = ctx->dst_ip;
+            extracted = 1;
+        } else if (p->offset == 9 && p->len == 1) {
+            /* IP protocol at offset 9 */
+            val = (uint32_t)ctx->protocol;
+            extracted = 1;
+        }
+        break;
+
+    case NFT_PAYLOAD_TRANSPORT_HEADER:
+        /* Simulated TCP/UDP header field extraction */
+        if (p->offset == 0 && p->len == 2) {
+            /* source port at offset 0 */
+            val = (uint32_t)ctx->src_port;
+            extracted = 1;
+        } else if (p->offset == 2 && p->len == 2) {
+            /* destination port at offset 2 */
+            val = (uint32_t)ctx->dst_port;
+            extracted = 1;
+        }
+        break;
+
+    default:
+        break;
+    }
+
+    if (extracted && p->dreg < NFT_REG_COUNT) {
+        /* Copy up to 4 bytes (matching uint32_t register width) */
+        if (p->len >= 4) {
+            regs->data32[p->dreg] = val;
+        } else {
+            /* For sub-word lengths, zero-extend */
+            regs->data32[p->dreg] = val & ((1UL << (p->len * 8)) - 1);
+        }
+    }
+
+    return 0;
+}
+
+/* Eval a comparison expression — compares register against immediate data.
+ * Returns 0 if the comparison matches (condition true), 1 if it fails. */
+static int nft_expr_eval_cmp(const struct nft_expr *expr,
+                             struct nft_regs *regs)
+{
+    const struct nft_expr_cmp *c = (const struct nft_expr_cmp *)expr;
+
+    if (c->sreg >= NFT_REG_COUNT)
+        return 1; /* bad register → no match */
+
+    uint32_t val = regs->data32[c->sreg];
+    uint32_t cmp_val = c->data[0];
+    int match = 0;
+
+    switch (c->op) {
+    case NFT_CMP_EQ:
+        match = (val == cmp_val);
+        break;
+    case NFT_CMP_NEQ:
+        match = (val != cmp_val);
+        break;
+    case NFT_CMP_LT:
+        match = (val < cmp_val);
+        break;
+    case NFT_CMP_GT:
+        match = (val > cmp_val);
+        break;
+    case NFT_CMP_LTE:
+        match = (val <= cmp_val);
+        break;
+    case NFT_CMP_GTE:
+        match = (val >= cmp_val);
+        break;
+    default:
+        break;
+    }
+
+    return match ? 0 : 1; /* 0 = match, 1 = no match */
+}
+
+/* Eval a lookup expression — checks register value against an nft_set.
+ * Returns 0 if the value is found in the set, 1 if not. */
+static int nft_expr_eval_lookup(const struct nft_expr *expr,
+                                struct nft_regs *regs,
+                                const struct nft_eval_ctx *ctx)
+{
+    const struct nft_expr_lookup *l = (const struct nft_expr_lookup *)expr;
+
+    if (l->sreg >= NFT_REG_COUNT || !ctx->table)
+        return 1;
+
+    uint32_t val = regs->data32[l->sreg];
+
+    /* Find the set by name in the current table */
+    struct nft_set *set = NULL;
+    for (uint32_t i = 0; i < ctx->table->n_sets; i++) {
+        if (ctx->table->sets[i].name[0] &&
+            strcmp(ctx->table->sets[i].name, l->set_name) == 0) {
+            set = &ctx->table->sets[i];
+            break;
+        }
+    }
+
+    if (!set)
+        return 1; /* set not found → no match */
+
+    /* Look up based on set type */
+    for (uint32_t i = 0; i < set->n_elems; i++) {
+        const struct nft_set_elem *e = &set->elems[i];
+        if (!e->used)
+            continue;
+
+        switch (set->type) {
+        case NFT_SET_IPV4:
+            if (e->ip == val)
+                return 0; /* found! */
+            break;
+        case NFT_SET_PORT:
+            if ((uint32_t)e->port == val)
+                return 0;
+            break;
+        case NFT_SET_IPV4_PORT:
+            /* For combined sets, the register holds a hash/combined value.
+             * Compare only IP for backward compat with existing set API. */
+            if (e->ip == val)
+                return 0;
+            break;
+        default:
+            break;
+        }
+    }
+
+    return 1; /* not found → no match */
+}
+
+/* Evaluate the expression chain of a rule.
+ * Returns 1 if ALL expressions matched (rule applies), 0 if any failed. */
+static int nft_expr_eval_chain(struct nft_rule *rule,
+                               struct nft_regs *regs,
+                               const struct nft_eval_ctx *ctx)
+{
+    struct nft_expr *expr = rule->exprs;
+
+    while (expr) {
+        int ret;
+
+        switch (expr->type) {
+        case NFT_EXPR_META:
+            ret = nft_expr_eval_meta(expr, regs, ctx);
+            if (ret != 0)
+                return 0;
+            break;
+
+        case NFT_EXPR_PAYLOAD:
+            ret = nft_expr_eval_payload(expr, regs, ctx);
+            if (ret != 0)
+                return 0;
+            break;
+
+        case NFT_EXPR_CMP:
+            ret = nft_expr_eval_cmp(expr, regs);
+            if (ret != 0)
+                return 0; /* comparison failed → rule doesn't match */
+            break;
+
+        case NFT_EXPR_LOOKUP:
+            ret = nft_expr_eval_lookup(expr, regs, ctx);
+            if (ret != 0)
+                return 0; /* lookup failed → rule doesn't match */
+            break;
+
+        default:
+            /* unknown expression type → treat as no-match for safety */
+            return 0;
+        }
+
+        expr = expr->next;
+    }
+
+    return 1; /* all expressions matched */
+}
+
+/* Allocate and add an expression to a rule's expression chain.
+ * Takes ownership of the expression memory. */
+int nft_rule_add_expr(struct nft_rule *rule, struct nft_expr *expr)
+{
+    if (!rule || !expr)
+        return -EINVAL;
+
+    if (!rule->exprs) {
+        rule->exprs = expr;
+    } else {
+        struct nft_expr *last = rule->exprs;
+        while (last->next)
+            last = last->next;
+        last->next = expr;
+    }
+
+    rule->n_exprs++;
+    return 0;
+}
+
+/* Free all expressions in a rule's expression chain. */
+void nft_rule_free_exprs(struct nft_rule *rule)
+{
+    if (!rule || !rule->exprs)
+        return;
+
+    struct nft_expr *cur = rule->exprs;
+    while (cur) {
+        struct nft_expr *next = cur->next;
+        kfree(cur);
+        cur = next;
+    }
+
+    rule->exprs = NULL;
+    rule->n_exprs = 0;
+}
 
 int nft_evaluate(struct nft_table *table, void *skb,
                  uint32_t src_ip, uint32_t dst_ip,
@@ -299,31 +584,57 @@ int nft_evaluate(struct nft_table *table, void *skb,
 
         /* Walk rules in this chain */
         for (struct nft_rule *r = chain->rules; r; r = r->next) {
-            /* Skip if protocol doesn't match */
-            if (r->protocol != 0 && r->protocol != protocol)
-                continue;
+            int rule_match = 0;
 
-            /* Check source IP */
-            if ((src_ip & r->src_mask) != (r->src_ip & r->src_mask))
-                continue;
+            if (r->exprs) {
+                /* ── Expression-based evaluation ──────────── */
+                struct nft_regs regs;
+                struct nft_eval_ctx ctx;
 
-            /* Check destination IP */
-            if ((dst_ip & r->dst_mask) != (r->dst_ip & r->dst_mask))
-                continue;
+                memset(&regs, 0, sizeof(regs));
+                ctx.src_ip  = src_ip;
+                ctx.dst_ip  = dst_ip;
+                ctx.src_port = src_port;
+                ctx.dst_port = dst_port;
+                ctx.protocol = protocol;
+                ctx.hook    = hook;
+                ctx.pkt_len = 1500;   /* default packet length */
+                ctx.iif     = 0;
+                ctx.oif     = 0;
+                ctx.table   = table;
 
-            /* Check ports (only for TCP/UDP) */
-            if (r->src_port != 0 && r->src_port != src_port)
-                continue;
-            if (r->dst_port != 0 && r->dst_port != dst_port)
-                continue;
+                rule_match = nft_expr_eval_chain(r, &regs, &ctx);
+            } else {
+                /* ── Legacy flat-field evaluation ──────────── */
+                /* Skip if protocol doesn't match */
+                if (r->protocol != 0 && r->protocol != protocol)
+                    continue;
 
-            /* Update counters */
-            r->counter_packets++;
-            /* Approximate byte count for typical packets */
-            r->counter_bytes += 1500;
+                /* Check source IP */
+                if ((src_ip & r->src_mask) != (r->src_ip & r->src_mask))
+                    continue;
 
-            /* Action determines the verdict */
-            return r->action;
+                /* Check destination IP */
+                if ((dst_ip & r->dst_mask) != (r->dst_ip & r->dst_mask))
+                    continue;
+
+                /* Check ports (only for TCP/UDP) */
+                if (r->src_port != 0 && r->src_port != src_port)
+                    continue;
+                if (r->dst_port != 0 && r->dst_port != dst_port)
+                    continue;
+
+                rule_match = 1;
+            }
+
+            if (rule_match) {
+                /* Update counters */
+                r->counter_packets++;
+                r->counter_bytes += 1500;
+
+                /* Action determines the verdict */
+                return r->action;
+            }
         }
     }
 
