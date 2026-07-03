@@ -356,6 +356,7 @@ C_SRCS = src/kernel/kernel.c \
          src/fs/sysfs_firmware.c \
          src/fs/sysfs_numa.c \
          src/fs/debugfs.c \
+         src/fs/tracefs.c \
          src/ipc/semaphore.c \
          src/kernel/audit.c \
          src/kernel/yama.c \

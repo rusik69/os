@@ -171,6 +171,7 @@ extern int usb_hub_init(void);
 #include "sysfs.h"
 #include "devfs.h"
 #include "debugfs.h"
+#include "tracefs.h"
 #include "dyndbg.h"
 #include "kunit.h"
 #include "fanotify.h"
@@ -778,6 +779,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* Debugfs — kernel debug data filesystem */
     debugfs_init();
+
+    /* Tracefs — kernel trace filesystem with per-CPU trace buffers */
+    tracefs_init();
 
     /* Dynamic debug — module/function-level pr_debug control via debugfs */
     dyndbg_init();
