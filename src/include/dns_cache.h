@@ -28,6 +28,7 @@ struct dns_cache_entry {
     char     name[DNS_NAME_MAX]; /* hostname (null-terminated) */
     uint32_t ip;                 /* IP address in host byte order */
     uint64_t expires;            /* absolute tick when this entry expires */
+    uint64_t last_access;        /* tick of most recent access (LRU ordering) */
     uint32_t ttl;                /* original TTL in seconds (from DNS reply) */
     int      valid;              /* 1 = slot occupied */
 };

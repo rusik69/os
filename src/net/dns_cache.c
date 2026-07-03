@@ -72,15 +72,18 @@ static int dns_cache_find_slot(const char *name) {
             return i;
     }
 
-    /* Cache is full — find the entry closest to expiry (LRU-evict) */
+    /* Cache is full — evict the least recently used entry */
     int slot = 0;
-    uint64_t oldest = dns_cache[0].expires;
+    uint64_t oldest = dns_cache[0].last_access;
     for (int i = 1; i < DNS_CACHE_SIZE; i++) {
-        if (dns_cache[i].expires < oldest) {
-            oldest = dns_cache[i].expires;
+        if (dns_cache[i].last_access < oldest) {
+            oldest = dns_cache[i].last_access;
             slot   = i;
         }
     }
+    kprintf("[dns_cache] LRU evicting slot %d (last_access=%lu, name=%s)\n",
+            slot, (unsigned long)dns_cache[slot].last_access,
+            dns_cache[slot].valid ? dns_cache[slot].name : "empty");
     dns_cache[slot].valid = 0;
     dns_stats.entries--;
     dns_stats.evictions++;
@@ -109,6 +112,7 @@ uint32_t dns_cache_lookup(const char *name) {
         if (dns_cache[i].valid && strcmp(dns_cache[i].name, name) == 0) {
             if (now < dns_cache[i].expires) {
                 dns_stats.hits++;
+                dns_cache[i].last_access = now;
                 return dns_cache[i].ip;
             }
             /* Expired — mark as invalid */
@@ -149,6 +153,7 @@ void dns_cache_store(const char *name, uint32_t ip, uint32_t ttl) {
     dns_cache[slot].ip        = ip;
     dns_cache[slot].ttl       = ttl_sec;
     dns_cache[slot].expires   = expires;
+    dns_cache[slot].last_access = timer_get_ticks();
     if (!was_valid)
         dns_stats.entries++;
     dns_cache[slot].valid     = 1;
@@ -185,11 +190,12 @@ void dns_cache_dump(void) {
     for (int i = 0; i < DNS_CACHE_SIZE; i++) {
         if (!dns_cache[i].valid) continue;
         uint32_t ip = dns_cache[i].ip;
-        kprintf("  [%2d] %s -> %u.%u.%u.%u (ttl=%u, expires=%lu)\n",
+        kprintf("  [%2d] %s -> %u.%u.%u.%u (ttl=%u, expires=%lu, last_access=%lu)\n",
                 i, dns_cache[i].name,
                 (unsigned)((ip >> 24) & 0xFF), (unsigned)((ip >> 16) & 0xFF),
                 (unsigned)((ip >>  8) & 0xFF), (unsigned)( ip        & 0xFF),
-                dns_cache[i].ttl, (unsigned long)dns_cache[i].expires);
+                dns_cache[i].ttl, (unsigned long)dns_cache[i].expires,
+                (unsigned long)dns_cache[i].last_access);
     }
 }
 
