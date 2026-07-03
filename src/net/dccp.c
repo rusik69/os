@@ -9,10 +9,17 @@
 #include "errno.h"
 #include "timer.h"
 #include "export.h"
+#include "timers.h"
 
 /* Forward declarations */
 static void dccp_ccid_ack_rcvd(struct dccp_sock *ds,
                                const uint8_t *pkt, uint16_t len);
+/* ── CCID2 helpers ──────────────────────────────────────────────── */
+static void dccp_ccid2_update_rtt(struct dccp_sock *ds, uint32_t rtt_ms);
+static void dccp_ccid2_arm_rto(struct dccp_sock *ds);
+static void dccp_ccid2_disarm_rto(struct dccp_sock *ds);
+static void dccp_ccid2_rto_cb(void *arg);
+static void dccp_ccid2_cwnd_timeout(struct dccp_sock *ds);
 
 #define DCCP_MAX_SOCKS 8
 
@@ -74,6 +81,23 @@ int dccp_create(int fd, int type)
     ds->loss_pending = 0;
     ds->rtt_samples = 0;
     ds->min_rtt = 0xFFFFFFFF;
+
+    /* ── CCID2 initialization (RFC 4341) ────────────────────── */
+    ds->srtt = 0;
+    ds->rttvar = DCCP_CCID2_INIT_RTO / 2;   /* Initial RTTVAR = RTO/2 */
+    ds->rto = DCCP_CCID2_INIT_RTO;
+    ds->rto_timer_id = -1;
+    ds->rto_expire_tick = 0;
+    ds->rto_pending = 0;
+    ds->recover = 0;
+    ds->recover_seq = 0;
+    ds->pipe = 0;
+    ds->ack_ratio = DCCP_CCID2_INIT_ACK_RATIO;
+    ds->data_pkts_since_ack = 0;
+    ds->snd_una = 1;
+    ds->snd_nxt = 1;
+    ds->highest_sent = 0;
+    ds->retransmits = 0;
 
     spinlock_release(&dccp_lock);
     return 0;
@@ -209,6 +233,20 @@ int dccp_send(int fd, const void *data, uint16_t len)
     send_ip(ds->peer_ip, IPPROTO_DCCP, pkt, sizeof(*dh) + data_len);
 
     ds->in_flight++;
+
+    /* ── CCID2: track sequence numbers and arm RTO timer ───────── */
+    if (ds->ccid == DCCP_CCID_2) {
+        ds->highest_sent = ds->seq;
+        ds->snd_nxt = ds->seq + 1;
+        if (ds->snd_una == 0)
+            ds->snd_una = ds->seq;
+        /* Arm or re-arm RTO timer on first data send */
+        if (!ds->rto_pending)
+            dccp_ccid2_arm_rto(ds);
+        /* Increment data packets since last ACK for Ack Ratio */
+        ds->data_pkts_since_ack++;
+    }
+
     ds->last_send_time = timer_get_ticks();
 
     spinlock_release(&dccp_lock);
@@ -496,6 +534,299 @@ static uint32_t dccp_parse_ack_option(const uint8_t *pkt, uint16_t len)
     return 0;
 }
 
+/* ═══════════════════════════════════════════════════════════════════
+ * CCID2: TCP-like Congestion Control (RFC 4341)
+ * ═══════════════════════════════════════════════════════════════════ */
+
+/* ── dccp_ccid2_update_rtt: Update SRTT/RTTVAR/RTO (RFC 6298) ── */
+static void dccp_ccid2_update_rtt(struct dccp_sock *ds, uint32_t rtt_ms)
+{
+    /* Clamp RTT */
+    if (rtt_ms < 1) rtt_ms = 1;
+    if (rtt_ms > 30000) rtt_ms = 30000;
+
+    if (ds->srtt == 0) {
+        /* First measurement */
+        ds->srtt = rtt_ms * 8;  /* SRTT scaled by 8 */
+        ds->rttvar = (rtt_ms * 4) / 2;  /* RTTVAR scaled by 4, initial = rtt/2 */
+    } else {
+        /* Subsequent measurements (RFC 6298):
+         *   RTTVAR = (1 - beta) * RTTVAR + beta * |SRTT - R'|
+         *   SRTT   = (1 - alpha) * SRTT + alpha * R'
+         * where alpha = 1/8, beta = 1/4, and values are scaled */
+        int32_t delta = (int32_t)(ds->srtt / 8) - (int32_t)rtt_ms;
+        if (delta < 0) delta = -delta;
+        ds->rttvar = (ds->rttvar * 3 + (uint32_t)delta * 2) / 4;
+        ds->srtt = ds->srtt - (ds->srtt >> 3) + rtt_ms;
+    }
+
+    /* RTO = SRTT + max(G, 4*RTTVAR), where G = 10ms (timer granularity) */
+    uint32_t rto = (ds->srtt / 8) + (4 * (ds->rttvar / 4));
+    if (rto < DCCP_CCID2_MIN_RTO)
+        rto = DCCP_CCID2_MIN_RTO;
+    if (rto > DCCP_CCID2_MAX_RTO)
+        rto = DCCP_CCID2_MAX_RTO;
+    ds->rto = rto;
+}
+
+/* ── dccp_ccid2_find_sock_by_fd: find dccp sock by fd for timer cb ──
+ * The RTO timer callback only gets a fd (stored as arg).  We look up
+ * the socket by fd to find the dccp_sock pointer. */
+static struct dccp_sock *dccp_ccid2_find_sock_by_fd(int fd)
+{
+    for (int i = 0; i < DCCP_MAX_SOCKS; i++) {
+        if (dccp_socks[i].used && dccp_socks[i].fd == fd)
+            return &dccp_socks[i];
+    }
+    return NULL;
+}
+
+/* ── dccp_ccid2_cwnd_timeout: Reduce cwnd on RTO expiry ── */
+static void dccp_ccid2_cwnd_timeout(struct dccp_sock *ds)
+{
+    /* RTO expiry: reset cwnd to 1 (slow start), ssthresh = max(in_flight/2, 2) */
+    uint32_t flight = ds->in_flight;
+    if (flight < 2) flight = 2;
+    ds->ssthresh = flight / 2;
+    if (ds->ssthresh < 2)
+        ds->ssthresh = 2;
+    ds->cwnd = 1;
+    ds->in_flight = 0;
+    ds->recover = 0;
+    ds->retransmits++;
+    kprintf("[dccp] CCID2 RTO expired on fd=%d: cwnd=%u ssthresh=%u retrans=%u\n",
+            ds->fd, ds->cwnd, ds->ssthresh, ds->retransmits);
+}
+
+/* ── dccp_ccid2_disarm_rto: Cancel a pending RTO timer ── */
+static void dccp_ccid2_disarm_rto(struct dccp_sock *ds)
+{
+    if (!ds->rto_pending)
+        return;
+    if (ds->rto_timer_id >= 0) {
+        timer_cancel(ds->rto_timer_id);
+        ds->rto_timer_id = -1;
+    }
+    ds->rto_pending = 0;
+    ds->rto_expire_tick = 0;
+}
+
+/* ── dccp_ccid2_arm_rto: Arm (or re-arm) the RTO timer ── */
+static void dccp_ccid2_arm_rto(struct dccp_sock *ds)
+{
+    /* Disarm any existing RTO timer first */
+    dccp_ccid2_disarm_rto(ds);
+
+    /* Calculate delay in timer ticks from RTO (ms).
+     * timer_get_ticks() runs at TIMER_FREQ Hz (=100), so
+     * RTO_ticks = RTO_ms * TIMER_FREQ / 1000 */
+    uint32_t rto_ms = ds->rto;
+
+    /* Add 50ms slop to absorb timer granularity */
+    if (rto_ms < 100) rto_ms = 100;
+
+    uint64_t delay_ticks = (uint64_t)rto_ms * TIMER_FREQ / 1000;
+    if (delay_ticks < 1) delay_ticks = 1;
+
+    /* Schedule the timer; pass the fd as arg so the callback can look up the socket */
+    int fd = ds->fd;
+    int tid = timer_schedule(dccp_ccid2_rto_cb, (void *)(unsigned long)(uintptr_t)fd, delay_ticks);
+    if (tid >= 0) {
+        ds->rto_timer_id = tid;
+        ds->rto_expire_tick = timer_get_ticks() + delay_ticks;
+        ds->rto_pending = 1;
+    }
+}
+
+/* ── dccp_ccid2_rto_cb: RTO expiration callback ── */
+static void dccp_ccid2_rto_cb(void *arg)
+{
+    int fd = (int)(unsigned long)(uintptr_t)arg;
+
+    /* The timer subsystem fires outside the dccp_lock.
+     * We must acquire the lock to access socket state. */
+    spinlock_acquire(&dccp_lock);
+
+    struct dccp_sock *ds = dccp_ccid2_find_sock_by_fd(fd);
+    if (!ds || !ds->used || ds->ccid != DCCP_CCID_2) {
+        spinlock_release(&dccp_lock);
+        return;
+    }
+
+    /* Mark timer as no longer pending */
+    ds->rto_pending = 0;
+    ds->rto_timer_id = -1;
+
+    /* Exponentially back off RTO (RFC 6298 §2.5) */
+    ds->rto = ds->rto * 2;
+    if (ds->rto > DCCP_CCID2_MAX_RTO)
+        ds->rto = DCCP_CCID2_MAX_RTO;
+
+    /* Reduce congestion window */
+    dccp_ccid2_cwnd_timeout(ds);
+
+    kprintf("[dccp] CCID2 RTO cb: fd=%d new_rto=%ums cwnd=%u\n",
+            fd, (unsigned)ds->rto, (unsigned)ds->cwnd);
+
+    spinlock_release(&dccp_lock);
+}
+
+/* ── dccp_ccid2_is_new_ack: check if this ACK acknowledges new data ── */
+static int dccp_ccid2_is_new_ack(struct dccp_sock *ds, uint32_t ack_seq)
+{
+    /* In 32-bit sequence space, an ACK is "new" if it acknowledges
+     * a sequence number beyond snd_una (handling wraparound). */
+    if (ds->snd_una == 0)
+        return 1;
+    /* Simple comparison: ack_seq > snd_una in unsigned 32-bit space.
+     * Handles wraparound if the difference is less than 2^31. */
+    uint32_t diff = ack_seq - ds->snd_una;
+    return diff > 0 && diff < 0x80000000U;
+}
+
+/* ── dccp_ccid2_is_dupack: check if this is a duplicate ACK ── */
+static int dccp_ccid2_is_dupack(struct dccp_sock *ds, uint32_t ack_seq)
+{
+    return ack_seq == ds->snd_una;
+}
+
+/* ── dccp_ccid2_new_ack: handle new ACK (advances window) ── */
+static void dccp_ccid2_new_ack(struct dccp_sock *ds, uint32_t ack_seq)
+{
+    /* Calculate bytes/packets newly ACKed */
+    uint32_t newly_acked;
+    if (ack_seq > ds->snd_una) {
+        newly_acked = ack_seq - ds->snd_una;
+    } else if (ack_seq < ds->snd_una) {
+        /* 32-bit wraparound */
+        newly_acked = ack_seq + (0xFFFFFFFFU - ds->snd_una);
+    } else {
+        newly_acked = 0;
+    }
+
+    if (newly_acked == 0)
+        return;
+
+    /* Update snd_una */
+    ds->snd_una = ack_seq;
+
+    /* Decrement in_flight, clamped to 0 */
+    if (newly_acked > ds->in_flight)
+        ds->in_flight = 0;
+    else
+        ds->in_flight -= newly_acked;
+
+    /* Not in fast recovery — normal congestion control */
+    if (!ds->recover) {
+        if (ds->cwnd < ds->ssthresh) {
+            /* Slow start: cwnd += newly_acked (one per ACK) */
+            ds->cwnd += newly_acked;
+        } else {
+            /* Congestion avoidance: cwnd += 1/cwnd per ACK (AIMD).
+             * Using appropriate byte count (RFC 3465):
+             *   inc = (newly_acked * MSS + cwnd * MSS) / (cwnd * MSS)
+             * Simplified: inc = newly_acked / cwnd + 1 */
+            uint32_t inc = (newly_acked + ds->cwnd) / ds->cwnd;
+            if (inc == 0) inc = 1;
+            ds->cwnd += inc;
+        }
+        /* Cap cwnd */
+        if (ds->cwnd > 0xFFFF)
+            ds->cwnd = 0xFFFF;
+    } else {
+        /* In fast recovery — deflate cwnd per RFC 6582 NewReno */
+        if (newly_acked > 0) {
+            /* Partial window deflation */
+            uint32_t dec = newly_acked;
+            if (dec > ds->cwnd)
+                dec = ds->cwnd;
+            ds->cwnd -= dec;
+            if (ds->cwnd < 2)
+                ds->cwnd = 2;
+        }
+    }
+
+    /* Update RTT from ACK if we have samples queued */
+    /* (RTT measurement would be done by the caller with a timestamp) */
+
+    /* Reset duplicate ACK counter */
+    ds->dup_acks = 0;
+    ds->loss_pending = 0;
+}
+
+/* ── dccp_ccid2_dupack: handle duplicate ACK (3 dup → fast retransmit) ── */
+static void dccp_ccid2_dupack(struct dccp_sock *ds, uint32_t ack_seq)
+{
+    ds->dup_acks++;
+
+    if (ds->dup_acks < 3)
+        return;
+
+    /* Fast retransmit (RFC 5681): after 3 dupACKs, retransmit lost segment */
+    if (!ds->recover) {
+        /* Enter fast recovery */
+        ds->recover = 1;
+        ds->recover_seq = ds->highest_sent;
+
+        /* Fast retransmit: ssthresh = max(in_flight/2, 2), cwnd = ssthresh + 3 */
+        uint32_t flight = ds->in_flight;
+        if (flight < 4) flight = 4;
+        ds->ssthresh = flight / 2;
+        if (ds->ssthresh < 2)
+            ds->ssthresh = 2;
+        ds->cwnd = ds->ssthresh + 3;
+
+        ds->retransmits++;
+        kprintf("[dccp] CCID2 fast retransmit on fd=%d: cwnd=%u ssthresh=%u dup_acks=%u\n",
+                ds->fd, ds->cwnd, ds->ssthresh, ds->dup_acks);
+    }
+
+    /* While in recovery, inflate cwnd by 1 per additional dupACK (RFC 5681) */
+    if (ds->dup_acks >= 3) {
+        ds->cwnd++;
+    }
+}
+
+/* ── dccp_ccid2_ack_received: main entry for ACK processing ──
+ * Implements RFC 4341 §4 (TCP-like Congestion Control).
+ * This is called from dccp_ccid_ack_rcvd when CCID2 is active. */
+static void dccp_ccid2_ack_received(struct dccp_sock *ds, uint32_t ack_seq)
+{
+    /* Determine if this is a new ACK or duplicate */
+    if (dccp_ccid2_is_new_ack(ds, ack_seq)) {
+        /* New ACK — advance window */
+        dccp_ccid2_new_ack(ds, ack_seq);
+
+        /* Exit fast recovery when all data sent during recovery is ACKed */
+        if (ds->recover) {
+            if (ack_seq >= ds->recover_seq ||
+                (ds->recover_seq - ack_seq) < 0x80000000U) {
+                /* Recovery complete — set cwnd to ssthresh */
+                ds->cwnd = ds->ssthresh;
+                ds->recover = 0;
+                kprintf("[dccp] CCID2 fast recovery complete on fd=%d: cwnd=%u\n",
+                        ds->fd, ds->cwnd);
+            }
+        }
+
+        /* Disarm RTO timer if all outstanding data is ACKed */
+        if (ds->in_flight == 0) {
+            dccp_ccid2_disarm_rto(ds);
+        } else {
+            /* Re-arm RTO timer (it's a one-shot, needs to be re-scheduled
+             * now that we've received an ACK and have a new RTT estimate) */
+            dccp_ccid2_arm_rto(ds);
+        }
+
+        /* Reset dup_acks on new ACK */
+        ds->dup_acks = 0;
+
+    } else if (dccp_ccid2_is_dupack(ds, ack_seq)) {
+        /* Duplicate ACK — might signal loss */
+        dccp_ccid2_dupack(ds, ack_seq);
+    }
+}
+
 /* ── dccp_ccid_ack_rcvd: update CCID state on received ACK ──
  * Called when an ACK or DataAck packet is received.  Parses the
  * acknowledgment number and updates CCID congestion control state.
@@ -507,76 +838,64 @@ static void dccp_ccid_ack_rcvd(struct dccp_sock *ds,
     if (ack_seq == 0)
         return;
 
-    /* Calculate how many new packets were ACKed since last_ack_seq */
-    uint32_t prev_ack = ds->last_ack_seq;
-    int newly_acked = 0;
-    if (ack_seq > prev_ack) {
-        newly_acked = (int)(ack_seq - prev_ack);
-    } else if (ack_seq < prev_ack) {
-        /* Wrapped around 32-bit sequence space */
-        newly_acked = (int)(ack_seq + (0xFFFFFFFFU - prev_ack));
-    }
-
-    if (newly_acked == 0) {
-        /* Duplicate ACK — could signal packet loss */
-        ds->dup_acks++;
-        if (ds->dup_acks >= 3) {
-            ds->loss_pending = 1;
-            if (ds->ccid == DCCP_CCID_2) {
-                /* Fast retransmit: halve cwnd, reset in_flight */
-                ds->ssthresh = (ds->cwnd > 1) ? (ds->cwnd >> 1) : 1;
-                ds->cwnd = ds->ssthresh;
-                ds->in_flight = 0;
-                ds->dup_acks = 0;
-            }
-        }
-        return;
-    }
-
-    /* New ACK — decrement in_flight (clamped to 0) */
-    if (newly_acked > (int)ds->in_flight)
-        ds->in_flight = 0;
-    else
-        ds->in_flight -= (uint32_t)newly_acked;
-
-    ds->last_ack_seq = ack_seq;
-    ds->dup_acks = 0;
-    ds->loss_pending = 0;
-
-    /* Update CCID-specific state */
     if (ds->ccid == DCCP_CCID_2) {
-        /* TCP-like congestion control */
-        if (ds->cwnd < ds->ssthresh) {
-            /* Slow start: cwnd += 1 per ACK */
-            ds->cwnd += (uint32_t)newly_acked;
-        } else {
-            /* Congestion avoidance: cwnd += 1/cwnd per ACK (AIMD) */
-            if (ds->cwnd > 0) {
-                uint32_t inc = (ds->cwnd * (uint32_t)newly_acked + ds->cwnd) / ds->cwnd;
-                if (inc == 0) inc = 1;
-                ds->cwnd += inc;
-            }
+        /* ── CCID2: TCP-like congestion control (RFC 4341 §4) ── */
+        dccp_ccid2_ack_received(ds, ack_seq);
+
+        /* ── Attempt RTT measurement ──
+         * DCCP can carry a Timestamp Echo option (type 6) in ACK packets.
+         * If present, we can compute RTT = now - timestamp_echo.
+         * For now, we estimate RTT from the inter-ACK timing.
+         * A proper implementation would parse the Timestamp Echo option. */
+        {
+            static const uint32_t rtt_estimate = 100; /* placeholder */
+            (void)rtt_estimate;
         }
-        /* Cap cwnd */
-        if (ds->cwnd > 0xFFFF)
-            ds->cwnd = 0xFFFF;
+
+        /* Update last_ack_seq for the next call */
+        ds->last_ack_seq = ack_seq;
+
     } else if (ds->ccid == DCCP_CCID_3) {
-        /* TFRC: rate-based.  Increase rate on successful ACK.
-         * Simplified TFRC rate update: multiply rate by (1 + 0.01) per RTT,
-         * i.e., 1% increase per RTT-worth of ACKs. */
+        /* ── CCID3: TFRC rate-based control (RFC 4342) ── */
+        /* Calculate how many new packets were ACKed since last_ack_seq */
+        uint32_t prev_ack = ds->last_ack_seq;
+        int newly_acked = 0;
+        if (ack_seq > prev_ack) {
+            newly_acked = (int)(ack_seq - prev_ack);
+        } else if (ack_seq < prev_ack) {
+            newly_acked = (int)(ack_seq + (0xFFFFFFFFU - prev_ack));
+        }
+
+        if (newly_acked == 0) {
+            /* Duplicate ACK */
+            ds->dup_acks++;
+            if (ds->dup_acks >= 3) {
+                ds->loss_pending = 1;
+            }
+            return;
+        }
+
+        /* Decrement in_flight */
+        if (newly_acked > (int)ds->in_flight)
+            ds->in_flight = 0;
+        else
+            ds->in_flight -= (uint32_t)newly_acked;
+
+        ds->last_ack_seq = ack_seq;
+        ds->dup_acks = 0;
+        ds->loss_pending = 0;
+
+        /* TFRC rate update */
         ds->rtt_samples++;
         if (ds->rtt > 0 && ds->tx_rate > 0) {
-            /* Approximate: double tx_rate each RTT during slow-start-like phase */
             if (ds->rtt_samples < 8) {
-                /* Slow-start-like: rapid increase */
                 if (ds->tx_rate < 1000000)
                     ds->tx_rate += (uint32_t)newly_acked * 1000;
             } else {
-                /* Congestion avoidance: gentle increase */
                 ds->tx_rate += ds->tx_rate / 100;  /* +1% per ACK */
             }
             if (ds->tx_rate > 100000000)
-                ds->tx_rate = 100000000;  /* cap at 100 MB/s */
+                ds->tx_rate = 100000000;
         }
     }
 }

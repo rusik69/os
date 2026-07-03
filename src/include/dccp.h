@@ -108,6 +108,28 @@ struct dccp_sock {
     int         backlog;        /* Listen backlog */
     /* Connection setup (RFC 4340 §5.1) */
     uint32_t    iss;            /* Initial send sequence number */
+    /* ── CCID2: TCP-like congestion control (RFC 4341) ─────────────── */
+    /* RTT estimation (RFC 6298) */
+    uint32_t    srtt;           /* Smoothed RTT (in ms, scaled by 8) */
+    uint32_t    rttvar;         /* RTT variance (in ms, scaled by 4) */
+    uint32_t    rto;            /* Retransmission timeout (in ms) */
+    /* Retransmission timer */
+    int         rto_timer_id;   /* timer_schedule() ID, -1 if not pending */
+    uint64_t    rto_expire_tick;/* tick at which RTO fires */
+    uint8_t     rto_pending;    /* 1 = RTO timer is armed */
+    /* Fast recovery state */
+    uint8_t     recover;        /* 1 = in fast recovery (RFC 6582) */
+    uint32_t    recover_seq;    /* Sequence # when recovery started */
+    uint32_t    pipe;           /* Estimated packets in pipe (RFC 6675) */
+    /* Ack Ratio (RFC 4341 §9) — DCCP-specific: ACKs per data window */
+    uint16_t    ack_ratio;      /* Send one ACK per ack_ratio data packets */
+    uint16_t    data_pkts_since_ack; /* Count of data packets since last ACK */
+    /* Data sequence tracking for retransmission */
+    uint32_t    snd_una;        /* Oldest unacknowledged sequence number */
+    uint32_t    snd_nxt;        /* Next sequence number to send */
+    uint32_t    highest_sent;   /* Highest sequence number sent */
+    /* Loss statistics */
+    uint32_t    retransmits;    /* Total retransmissions */
 };
 
 /* DCCP options */
@@ -121,6 +143,17 @@ struct dccp_sock {
 #define DCCP_OPT_ELAPSED_TIME    7
 #define DCCP_OPT_DATA_CHECKSUM   8
 #define DCCP_OPT_CCID_SPECIFIC   32
+
+/* ── CCID2 constants (RFC 4341) ──────────────────────────────── */
+#define DCCP_CCID2_INIT_CWND     2       /* Initial congestion window (packets) */
+#define DCCP_CCID2_INIT_SSTHRESH 16      /* Initial slow start threshold */
+#define DCCP_CCID2_INIT_RTO      3000    /* Initial RTO: 3 seconds (ms) */
+#define DCCP_CCID2_MIN_RTO       200     /* Minimum RTO: 200 ms */
+#define DCCP_CCID2_MAX_RTO       60000   /* Maximum RTO: 60 seconds */
+#define DCCP_CCID2_INIT_ACK_RATIO 2     /* Ack Ratio initial value */
+/* Scaling factors for SRTT/RTTVAR (RFC 6298) */
+#define DCCP_CCID2_RTO_ALPHA     1       /* 1/8 for SRTT update */
+#define DCCP_CCID2_RTO_BETA      1       /* 1/4 for RTTVAR update */
 
 /* API */
 void dccp_init(void);
