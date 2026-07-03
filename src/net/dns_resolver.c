@@ -1183,3 +1183,250 @@ done:
 
     return ret;
 }
+
+/* ── PTR record (reverse lookup) ──────────────────────────────────── */
+
+/**
+ * dns_ptr_ipv4_to_arpa - Convert IPv4 address to in-addr.arpa domain name
+ * @ip:   IPv4 address in host byte order
+ * @buf:  output buffer
+ * @sz:   size of output buffer
+ *
+ * RFC 1035 §3.5: IPv4 address a.b.c.d is encoded as d.c.b.a.in-addr.arpa.
+ *
+ * Returns: 0 on success, negative errno on failure.
+ */
+static int dns_ptr_ipv4_to_arpa(uint32_t ip, char *buf, int sz)
+{
+    if (!buf || sz <= 0)
+        return -EINVAL;
+
+    int n = snprintf(buf, (size_t)sz, "%u.%u.%u.%u.in-addr.arpa",
+                     (unsigned)( ip        & 0xFF),
+                     (unsigned)((ip >>  8) & 0xFF),
+                     (unsigned)((ip >> 16) & 0xFF),
+                     (unsigned)((ip >> 24) & 0xFF));
+    if (n < 0 || n >= sz)
+        return -ENOSPC;
+
+    return 0;
+}
+
+/**
+ * dns_resolver_parse_response_ptr - Parse DNS response for PTR record
+ * @data:        raw DNS response data
+ * @len:         length of response in bytes
+ * @txid:        expected transaction ID
+ * @out_hostname: buffer for the resolved hostname
+ * @out_max:     size of out_hostname
+ * @out_ttl:     receives TTL value in seconds (may be NULL)
+ *
+ * Parses the answer section looking for PTR (type 12) records.
+ * The first PTR record's RDATA (a domain name) is decoded into
+ * out_hostname.
+ *
+ * Returns: 0 on success, negative errno on failure:
+ *   -EAGAIN   transaction ID mismatch
+ *   -ENOENT   NXDOMAIN or no PTR record in response
+ *   -EIO      malformed response or server error
+ */
+static int dns_resolver_parse_response_ptr(const uint8_t *data, uint16_t len,
+                                            uint16_t txid,
+                                            char *out_hostname, int out_max,
+                                            uint32_t *out_ttl)
+{
+    const struct dns_header *hdr;
+    uint16_t flags;
+    uint8_t rcode;
+    uint16_t qdcount, ancount;
+    int pos, ret;
+    uint16_t a;
+
+    if (!data || len < sizeof(struct dns_header) || !out_hostname || out_max <= 0)
+        return -EINVAL;
+
+    hdr = (const struct dns_header *)data;
+
+    /* Verify transaction ID */
+    if (ntohs(hdr->id) != txid)
+        return -EAGAIN;
+
+    /* Verify QR bit (must be a response) */
+    flags = ntohs(hdr->flags);
+    if (!(flags & DNS_QR_RESPONSE))
+        return -EIO;
+
+    /* Check RCODE */
+    rcode = (uint8_t)(flags & 0x0F);
+    if (rcode != DNS_RCODE_OK) {
+        if (rcode == DNS_RCODE_NX)
+            return -ENOENT;
+        return -EIO;
+    }
+
+    qdcount = ntohs(hdr->qdcount);
+    ancount = ntohs(hdr->ancount);
+
+    if (ancount == 0)
+        return -ENOENT;
+
+    pos = sizeof(struct dns_header);
+
+    /* Skip question section */
+    for (uint16_t q = 0; q < qdcount; q++) {
+        ret = dns_skip_name(data, (int)len, pos);
+        if (ret < 0) return ret;
+        pos = ret + 4;  /* skip QTYPE (2) + QCLASS (2) */
+        if (pos > (int)len) return -EIO;
+    }
+
+    /* Parse answer section — look for the first PTR record */
+    for (a = 0; a < ancount && pos + 12 <= (int)len; a++) {
+        ret = dns_skip_name(data, (int)len, pos);
+        if (ret < 0) return ret;
+        pos = ret;
+
+        if (pos + 10 > (int)len)
+            return -EIO;
+
+        uint16_t rtype = ((uint16_t)data[pos] << 8) | data[pos + 1];
+        uint32_t ttl   = ((uint32_t)data[pos + 4] << 24) |
+                         ((uint32_t)data[pos + 5] << 16) |
+                         ((uint32_t)data[pos + 6] << 8)  |
+                         data[pos + 7];
+        uint16_t rdlen = ((uint16_t)data[pos + 8] << 8) | data[pos + 9];
+        pos += 10;
+
+        if (rtype == DNS_TYPE_PTR && rdlen > 0 && pos + rdlen <= (int)len) {
+            /* PTR RDATA is a domain name — decode it */
+            ret = dns_name_to_string(data, (int)len, pos,
+                                     out_hostname, out_max);
+            if (ret < 0)
+                return ret;
+
+            if (out_ttl)
+                *out_ttl = ttl;
+
+            return 0;
+        }
+
+        pos += rdlen;
+    }
+
+    return -ENOENT;  /* no PTR record found */
+}
+
+/* ── Public API: PTR reverse lookup (IPv4) ─────────────────────────── */
+
+int dns_resolver_query_ptr_ipv4(uint32_t ip, char *out_hostname,
+                                int out_max, uint32_t *out_ttl)
+{
+    char arpa_name[128];
+    uint8_t pkt[512];
+    uint8_t resp[512];
+    uint32_t srv_ip;
+    int ret, pkt_len;
+    uint16_t txid;
+    int attempt;
+    uint64_t deadline;
+    uint32_t src_ip;
+    uint16_t src_port;
+    int rlen;
+    int timeout;
+
+    if (!out_hostname || out_max <= 0)
+        return -EINVAL;
+
+    out_hostname[0] = '\0';
+    if (out_ttl)
+        *out_ttl = 0;
+
+    /* Convert IP to in-addr.arpa format */
+    ret = dns_ptr_ipv4_to_arpa(ip, arpa_name, (int)sizeof(arpa_name));
+    if (ret < 0)
+        return ret;
+
+    /* Get DNS server IP */
+    srv_ip = net_dns_server;
+    if (!srv_ip) {
+        kprintf("[dns_resolver] no DNS server configured for PTR query\n");
+        return -EHOSTUNREACH;
+    }
+
+    /* Build the PTR query packet */
+    txid = (uint16_t)__sync_fetch_and_add(&dns_txid_counter, 1);
+    ret = dns_build_query(pkt, arpa_name, DNS_TYPE_PTR, txid);
+    if (ret < 0)
+        return ret;
+    pkt_len = ret;
+
+    /* Start listening for DNS responses on our source port */
+    ret = net_udp_listen(DNS_RESOLVER_SRC_PORT);
+    if (ret < 0) {
+        kprintf("[dns_resolver] failed to listen on port %d for PTR\n",
+                DNS_RESOLVER_SRC_PORT);
+        return ret;
+    }
+
+    /* Send query with retries */
+    for (attempt = 0; attempt < DNS_RETRIES; attempt++) {
+        /* Use a fresh transaction ID for each attempt */
+        txid = (uint16_t)__sync_fetch_and_add(&dns_txid_counter, 1);
+        struct dns_header *hdr = (struct dns_header *)pkt;
+        hdr->id = htons(txid);
+
+        net_udp_send(srv_ip, DNS_RESOLVER_SRC_PORT, DNS_PORT,
+                     pkt, (uint16_t)pkt_len);
+
+        /* Wait for response with timeout */
+        deadline = timer_get_ticks() + DNS_TIMEOUT_TICKS;
+
+        while (1) {
+            uint64_t now = timer_get_ticks();
+            if (now >= deadline)
+                break;
+
+            timeout = (int)(deadline - now);
+            if (timeout <= 0)
+                break;
+
+            rlen = net_udp_recv(DNS_RESOLVER_SRC_PORT, resp, sizeof(resp),
+                                &src_ip, &src_port, timeout);
+
+            if (rlen > 0) {
+                out_hostname[0] = '\0';
+                ret = dns_resolver_parse_response_ptr(resp, (uint16_t)rlen,
+                                                       txid,
+                                                       out_hostname, out_max,
+                                                       out_ttl);
+                if (ret == 0) {
+                    /* Success — PTR record found */
+                    goto done;
+                }
+                if (ret != -EAGAIN) {
+                    /* Fatal error — no point retrying */
+                    goto done;
+                }
+                /* -EAGAIN: keep waiting for our TXID */
+            }
+        }
+    }
+
+    /* All retries exhausted */
+    ret = -ETIMEDOUT;
+
+done:
+    net_udp_unlisten(DNS_RESOLVER_SRC_PORT);
+
+    if (ret == 0) {
+        kprintf("[dns_resolver] PTR %u.%u.%u.%u -> %s (ttl=%u)\n",
+                (unsigned)((ip >> 24) & 0xFF),
+                (unsigned)((ip >> 16) & 0xFF),
+                (unsigned)((ip >>  8) & 0xFF),
+                (unsigned)( ip        & 0xFF),
+                out_hostname,
+                out_ttl ? (unsigned)*out_ttl : 0u);
+    }
+
+    return ret;
+}

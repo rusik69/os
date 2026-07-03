@@ -134,4 +134,26 @@ int dns_resolver_query_a_follow_cname(const char *hostname,
 int dns_resolver_query_srv(const char *hostname, struct dns_srv_record *records,
                            int *count, uint32_t *out_ttl);
 
+/**
+ * dns_resolver_query_ptr_ipv4 - Perform DNS PTR record reverse lookup (IPv4)
+ *
+ * Converts the IPv4 address to the in-addr.arpa format and performs a
+ * PTR record query (type 12) against the configured DNS server.
+ * The resolved hostname is written to @out_hostname.
+ *
+ * @ip:         IPv4 address in host byte order
+ * @out_hostname: buffer to receive the resolved hostname (null-terminated)
+ * @out_max:    size of @out_hostname buffer
+ * @out_ttl:    receives TTL in seconds from DNS reply (may be NULL)
+ *
+ * Returns: 0 on success, negative errno on failure
+ *   -EHOSTUNREACH  no DNS server configured
+ *   -ENOENT        no PTR record found (NXDOMAIN)
+ *   -ETIMEDOUT     no response after all retries
+ *   -ENOSPC        output buffer too small for hostname
+ *   -EIO           server returned an error or malformed response
+ */
+int dns_resolver_query_ptr_ipv4(uint32_t ip, char *out_hostname,
+                                int out_max, uint32_t *out_ttl);
+
 #endif /* DNS_RESOLVER_H */
