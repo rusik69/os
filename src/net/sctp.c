@@ -185,24 +185,52 @@ int sctp_send(int fd, const void *data, uint16_t len, uint16_t stream_id)
 
 int sctp_recv(int fd, void *buf, uint16_t maxlen, uint16_t *stream_id)
 {
-    (void)stream_id;
-    spinlock_acquire(&sctp_lock);
-    struct sctp_assoc *a = sctp_find_by_fd(fd);
-    if (!a) {
-        spinlock_release(&sctp_lock);
-        return -EINVAL;
-    }
+	spinlock_acquire(&sctp_lock);
+	struct sctp_assoc *a = sctp_find_by_fd(fd);
+	if (!a) {
+		spinlock_release(&sctp_lock);
+		return -EINVAL;
+	}
 
-    if (a->rcvlen == 0) {
-        spinlock_release(&sctp_lock);
-        return -EAGAIN;
-    }
+	/* Find stream with ready data */
+	int sid = -1;
+	if (stream_id && *stream_id < SCTP_MAX_STREAMS) {
+		/* Specific stream requested */
+		if (a->in_streams[*stream_id].ready)
+			sid = *stream_id;
+	} else {
+		/* Scan all streams for any pending data */
+		for (int i = 0; i < SCTP_MAX_STREAMS; i++) {
+			if (a->in_streams[i].ready) {
+				sid = i;
+				break;
+			}
+		}
+	}
 
-    int copy_len = (a->rcvlen < maxlen) ? a->rcvlen : maxlen;
-    memcpy(buf, a->rcvbuf, copy_len);
-    a->rcvlen = 0;
-    spinlock_release(&sctp_lock);
-    return copy_len;
+	if (sid < 0) {
+		/* Fall back to shared rcvbuf (legacy) */
+		if (a->rcvlen == 0) {
+			spinlock_release(&sctp_lock);
+			return -EAGAIN;
+		}
+		int copy_len = (a->rcvlen < maxlen) ? a->rcvlen : maxlen;
+		memcpy(buf, a->rcvbuf, copy_len);
+		a->rcvlen = 0;
+		spinlock_release(&sctp_lock);
+		return copy_len;
+	}
+
+	struct sctp_stream *s = &a->in_streams[sid];
+	int copy_len = (s->ready_len < maxlen) ? s->ready_len : maxlen;
+	memcpy(buf, s->ready_buf, copy_len);
+	if (stream_id)
+		*stream_id = (uint16_t)sid;
+	s->ready = 0;
+	s->ready_len = 0;
+
+	spinlock_release(&sctp_lock);
+	return copy_len;
 }
 
 void sctp_close(int fd)
@@ -369,10 +397,20 @@ EXPORT_SYMBOL(sctp_close);
 /* ── Implement: sctp_recvmsg ────────────────── */
 int sctp_recvmsg(int fd, void *buf, uint16_t maxlen, uint16_t *stream_id, uint16_t *ppid, int flags)
 {
-    (void)ppid;
-    (void)flags;
-    /* Delegate to sctp_recv */
-    return sctp_recv(fd, buf, maxlen, stream_id);
+	(void)flags;
+	/* Delegate to sctp_recv for stream_id delivery */
+	int ret = sctp_recv(fd, buf, maxlen, stream_id);
+	if (ret > 0 && ppid && stream_id && *stream_id < SCTP_MAX_STREAMS) {
+		/* Look up PPID from per-stream ready metadata.
+		 * sctp_recv consumed the ready flag, but the assoc
+		 * still has the last PPID cached for this stream. */
+		spinlock_acquire(&sctp_lock);
+		struct sctp_assoc *a = sctp_find_by_fd(fd);
+		if (a)
+			*ppid = (uint16_t)a->in_streams[*stream_id].ready_ppid;
+		spinlock_release(&sctp_lock);
+	}
+	return ret;
 }
 
 /* ── Implement: sctp_sendmsg ────────────────── */
@@ -524,7 +562,13 @@ int sctp_shutdown(int fd, int how)
         }
     }
     if (how == 0 || how == 2) {
-        a->rcvlen = 0; /* Discard pending data */
+    	a->rcvlen = 0; /* Discard pending data */
+    	/* Also clear per-stream ready state */
+    	for (int i = 0; i < SCTP_MAX_STREAMS; i++) {
+    		a->in_streams[i].ready = 0;
+    		a->in_streams[i].ready_len = 0;
+    		a->in_streams[i].frag_active = 0;
+    	}
     }
 
     spinlock_release(&sctp_lock);

@@ -215,11 +215,17 @@ int sctp_tsn_build_sack(struct sctp_assoc *a, uint32_t peer_ip,
 	return 0;
 }
 
-/* ── Handle incoming DATA chunk ─────────────────────────────────────────
+/* ── Reset per-stream state (used on close and init) ─────────────────── */
+void sctp_stream_reset(struct sctp_stream *s)
+{
+	memset(s, 0, sizeof(*s));
+}
+
+/* ── Handle incoming DATA chunk (RFC 4960 §3.3.1) ──────────────────────
  *
- * Called from handle_sctp() when a DATA chunk is encountered.
- * Tracks TSNs, updates gap blocks, copies payload to rcvbuf,
- * and sends a SACK.
+ * Processes stream sequence numbers for ordered delivery, handles
+ * unordered delivery (U bit), and reassembles fragmented messages
+ * (B/E bits). Completed messages are placed in per-stream ready_buf.
  */
 int sctp_tsn_rcv_data(struct sctp_assoc *a, uint32_t src_ip,
                        uint32_t peer_tag,
@@ -230,7 +236,19 @@ int sctp_tsn_rcv_data(struct sctp_assoc *a, uint32_t src_ip,
 		return -EINVAL;
 
 	uint32_t tsn = ntohl(dh->tsn);
+	uint16_t stream_id = ntohs(dh->stream_id);
+	uint16_t stream_seq = ntohs(dh->stream_seq);
 	uint16_t data_len = chunk_len - sizeof(struct sctp_data_hdr);
+	const uint8_t *data = (const uint8_t *)(dh + 1);
+
+	/* Clamp stream ID */
+	if (stream_id >= SCTP_MAX_STREAMS)
+		stream_id = 0;
+
+	struct sctp_stream *s = &a->in_streams[stream_id];
+
+	/* Check ordering flag */
+	int unordered = (dh->hdr.flags & SCTP_DATA_UNORDERED) ? 1 : 0;
 
 	/* Check for duplicate or stale TSN */
 	if (tsn_is_dup(a, tsn)) {
@@ -238,32 +256,106 @@ int sctp_tsn_rcv_data(struct sctp_assoc *a, uint32_t src_ip,
 		return 0;
 	}
 
-	/* Update gap tracking */
-	gap_add_tsn(a, tsn);
+	/* For ordered delivery, validate stream sequence number */
+	if (!unordered) {
+		if (stream_seq != s->in_seq) {
+			kprintf("sctp: stream %u seq mismatch: "
+			        "expected %u got %u (tsn=%u)\n",
+			        stream_id, s->in_seq, stream_seq, tsn);
+			/* Still track TSN for SACK even if stream is
+			 * out of order — stream-level and association-level
+			 * ordering are independent in SCTP */
+			gap_add_tsn(a, tsn);
+			if (tsn > a->last_rcvd_tsn)
+				a->last_rcvd_tsn = tsn;
+			a->rx_packets++;
+			sctp_tsn_build_sack(a, a->peer_ip, a->peer_port,
+			                    peer_tag, a->local_port);
+			return 0;
+		}
+	}
 
-	/* Track highest received TSN */
+	/* Parse fragmentation bits (B = beginning, E = ending) */
+	uint8_t b_bit = (dh->hdr.flags & SCTP_DATA_BEG) ? 1 : 0;
+	uint8_t e_bit = (dh->hdr.flags & SCTP_DATA_END) ? 1 : 0;
+
+	if (b_bit && e_bit) {
+		/* Unfragmented message (B=1, E=1) — deliver immediately */
+		uint16_t copy_len = data_len;
+		if (copy_len > sizeof(s->ready_buf))
+			copy_len = sizeof(s->ready_buf);
+		memcpy(s->ready_buf, data, copy_len);
+		s->ready_len = copy_len;
+		s->ready_ppid = ntohl(dh->ppid);
+		s->ready = 1;
+		if (!unordered)
+			s->in_seq++;
+	} else if (b_bit) {
+		/* Beginning fragment (B=1, E=0) — start reassembly */
+		s->frag_active = 1;
+		s->frag_len = 0;
+		s->frag_tsn = tsn;
+		s->frag_ppid = ntohl(dh->ppid);
+		uint16_t copy_len = data_len;
+		if (copy_len > sizeof(s->frag_buf))
+			copy_len = sizeof(s->frag_buf);
+		memcpy(s->frag_buf, data, copy_len);
+		s->frag_len = copy_len;
+	} else if (!b_bit && !e_bit) {
+		/* Middle fragment (B=0, E=0) — continue reassembly */
+		if (s->frag_active) {
+			uint16_t room = sizeof(s->frag_buf) - s->frag_len;
+			uint16_t copy_len = data_len;
+			if (copy_len > room)
+				copy_len = room;
+			memcpy(s->frag_buf + s->frag_len, data, copy_len);
+			s->frag_len += copy_len;
+		}
+	} else if (e_bit) {
+		/* Ending fragment (B=0, E=1) — complete reassembly */
+		if (s->frag_active) {
+			uint16_t room = sizeof(s->frag_buf) - s->frag_len;
+			uint16_t copy_len = data_len;
+			if (copy_len > room)
+				copy_len = room;
+			memcpy(s->frag_buf + s->frag_len, data, copy_len);
+			s->frag_len += copy_len;
+
+			/* Deliver complete reassembled message */
+			memcpy(s->ready_buf, s->frag_buf, s->frag_len);
+			s->ready_len = s->frag_len;
+			s->ready_ppid = s->frag_ppid;
+			s->ready = 1;
+			s->frag_active = 0;
+			if (!unordered)
+				s->in_seq++;
+		} else {
+			/* E=1 without prior B=1 — deliver as-is */
+			uint16_t copy_len = data_len;
+			if (copy_len > sizeof(s->ready_buf))
+				copy_len = sizeof(s->ready_buf);
+			memcpy(s->ready_buf, data, copy_len);
+			s->ready_len = copy_len;
+			s->ready_ppid = ntohl(dh->ppid);
+			s->ready = 1;
+			if (!unordered)
+				s->in_seq++;
+		}
+	}
+
+	/* Track TSN ordering (for SACK) */
+	gap_add_tsn(a, tsn);
 	if (tsn > a->last_rcvd_tsn)
 		a->last_rcvd_tsn = tsn;
 
-	/* Copy payload to receive buffer (if there's room) */
-	if (data_len > 0) {
-		size_t copy_len = data_len;
-		size_t rcvbuf_size = sizeof(a->rcvbuf);
-		if (copy_len > rcvbuf_size)
-			copy_len = rcvbuf_size;
-
-		memcpy(a->rcvbuf, (const uint8_t *)(dh + 1), copy_len);
-		a->rcvlen = (uint16_t)copy_len;
-	}
-
 	a->rx_packets++;
 
-	kprintf("sctp: DATA from " NIPQUAD_FMT " tsn=%u len=%u "
-	        "stream=%u\n",
-	        NIPQUAD(src_ip), tsn, data_len,
-	        ntohs(dh->stream_id));
+	kprintf("sctp: DATA from " NIPQUAD_FMT " tsn=%u stream=%u "
+	        "seq=%u len=%u %s\n",
+	        NIPQUAD(src_ip), tsn, stream_id, stream_seq, data_len,
+	        unordered ? "unordered" : "ordered");
 
-	/* Send SACK in response */
+	/* Send SACK */
 	sctp_tsn_build_sack(a, a->peer_ip, a->peer_port,
 	                    peer_tag, a->local_port);
 	return 0;
@@ -306,5 +398,6 @@ EXPORT_SYMBOL(sctp_tsn_alloc);
 EXPORT_SYMBOL(sctp_tsn_rcv_data);
 EXPORT_SYMBOL(sctp_tsn_build_sack);
 EXPORT_SYMBOL(sctp_tsn_process_sack);
+EXPORT_SYMBOL(sctp_stream_reset);
 #include "module.h"
 module_init(sctp_init);

@@ -87,6 +87,17 @@ struct sctp_stream {
     uint16_t id;
     uint16_t in_seq;
     uint16_t out_seq;
+    /* Fragment reassembly state (B/E bits) */
+    uint8_t  frag_active;       /* Currently reassembling fragments */
+    uint8_t  frag_buf[512];     /* Fragment accumulation buffer */
+    uint16_t frag_len;          /* Bytes accumulated */
+    uint32_t frag_tsn;          /* Starting TSN of fragment group */
+    uint32_t frag_ppid;         /* PPID from first fragment */
+    /* Completed message ready for delivery */
+    uint8_t  ready;             /* Complete message available */
+    uint8_t  ready_buf[512];    /* Completed message payload */
+    uint16_t ready_len;         /* Length of completed message */
+    uint32_t ready_ppid;        /* PPID of completed message */
 };
 
 /* DATA chunk payload header (RFC 4960 §3.3.1) */
@@ -210,5 +221,6 @@ int      sctp_tsn_build_sack(struct sctp_assoc *a, uint32_t peer_ip,
 int      sctp_tsn_process_sack(struct sctp_assoc *a,
                                const struct sctp_sack_hdr *sh,
                                uint16_t chunk_len);
+void     sctp_stream_reset(struct sctp_stream *s);
 
 #endif /* SCTP_H */
