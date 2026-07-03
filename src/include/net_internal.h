@@ -7,6 +7,7 @@
 #include "tcp_bbr3.h"  /* struct bbr3_data for inline embedding in tcp_conn */
 #include "tcp_cubic.h" /* struct cubic_data for inline embedding in tcp_conn */
 #include "tcp_newreno.h" /* struct newreno_data for inline embedding in tcp_conn */
+#include "tcp_westwood.h" /* struct westwood_data for inline embedding in tcp_conn */
 
 /* Shared network state — defined in net.c */
 extern uint8_t  net_our_mac[6];
@@ -194,6 +195,10 @@ struct tcp_conn {
     /* ── BBRv3 congestion control state ────────────────────────────────
      * Only valid when cc_algo == 2 (BBRv3 with ECN support). */
     struct bbr3_data bbr3;
+
+    /* ── TCP Westwood+ congestion control state ─────────────────────────
+     * Bandwidth-estimation based CC for lossy links. */
+    struct westwood_data westwood;
 };
 
 extern struct tcp_conn tcp_conns[MAX_TCP_CONNS];

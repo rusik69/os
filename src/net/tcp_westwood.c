@@ -1,5 +1,7 @@
-/* tcp_westwood.c — TCP Westwood+ (bandwidth estimation) */
+/* tcp_westwood.c — TCP Westwood+ (bandwidth estimation-based CC) */
 
+#include "tcp_westwood.h"
+#include "net_internal.h"   /* struct tcp_conn */
 #include "types.h"
 #include "printf.h"
 #include "string.h"
@@ -23,33 +25,6 @@
  * This gives better performance over wireless/lossy links where packet loss
  * is not congestion-related.
  */
-
-/* Westwood per-connection state */
-struct westwood_data {
-    /* Bandwidth estimation */
-    uint32_t bw_est;                /* estimated bandwidth (bytes/tick) */
-    uint32_t sample_bw;             /* current sample bandwidth */
-    uint64_t last_ack_tick;         /* tick of last ACK */
-    uint32_t acked_bytes;           /* bytes ACKed in current sample period */
-    uint32_t sample_count;          /* samples taken */
-
-    /* RTT */
-    uint32_t rtt_min;               /* minimum RTT in ticks */
-    uint32_t rtt;                   /* current RTT */
-
-    /* Filtering */
-    uint32_t bw_filtered;           /* exponentially filtered BW */
-#define BW_FILTER_SHIFT   3         /* weight = 1/8 for new sample */
-
-    /* Window */
-    uint32_t cwnd;
-    uint32_t ssthresh;
-
-    int initialised;
-};
-
-/* Filter coefficients */
-#define WESTWOOD_BW_WEIGHT      8   /* 1/8 for new sample, 7/8 for history */
 
 void westwood_init(struct westwood_data *w)
 {
@@ -158,17 +133,107 @@ void westwood_set_cwnd(struct westwood_data *w, uint32_t cwnd)
     w->cwnd = cwnd;
 }
 
-/* ── Implement: tcp_westwood_cong_avoid ────────────────── */
-int tcp_westwood_cong_avoid(void *sk) { (void)sk; return 0; }
-/* ── Implement: tcp_westwood_ssthresh ────────────────── */
-uint32_t tcp_westwood_ssthresh(void *sk) { (void)sk; return 2; }
-/* ── Implement: tcp_westwood_acked ────────────────── */
+/* ═══════════════════════════════════════════════════════════════════════
+ *  TCP congestion control callbacks
+ *
+ *  These are called by the TCP stack (or by a pluggable cc_ops framework)
+ *  during connection lifecycle.  The void *sk parameter is a pointer to
+ *  the corresponding struct tcp_conn.
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── tcp_westwood_init ──────────────────────────────────────────────
+ *
+ * Initialise the per-connection Westwood state when the connection is
+ * established or when the CC algorithm is switched to Westwood.
+ * Returns 0 on success, -EINVAL on NULL sk.
+ */
+int tcp_westwood_init(void *sk)
+{
+    if (!sk)
+        return -EINVAL;
+
+    struct tcp_conn *conn = (struct tcp_conn *)sk;
+    westwood_init(&conn->westwood);
+    return 0;
+}
+
+/* ── tcp_westwood_cong_avoid ────────────────────────────────────────
+ *
+ * Called per ACK during congestion avoidance to increase the congestion
+ * window.  Uses westwood_update() which applies slow-start (exponential)
+ * when below ssthresh and AIMD (linear) when above.
+ *
+ * Returns 0 on success, -EINVAL on NULL sk.
+ */
+int tcp_westwood_cong_avoid(void *sk)
+{
+    if (!sk)
+        return -EINVAL;
+
+    struct tcp_conn *conn = (struct tcp_conn *)sk;
+    conn->cwnd = westwood_update(&conn->westwood, conn->cwnd, 1);
+    return 0;
+}
+
+/* ── tcp_westwood_ssthresh ──────────────────────────────────────────
+ *
+ * Called when a loss event occurs (dupack or timeout) to compute the
+ * new slow-start threshold.  Uses the Westwood bandwidth estimate:
+ *
+ *   ssthresh = (BWE * RTT_min) / segment_size
+ *
+ * where segment_size defaults to the MSS.  If bandwidth estimation is
+ * unavailable (no samples yet), falls back to Reno halving (cwnd / 2).
+ *
+ * Returns the new ssthresh in segments (minimum 2).
+ */
+uint32_t tcp_westwood_ssthresh(void *sk)
+{
+    if (!sk)
+        return 2;
+
+    struct tcp_conn *conn = (struct tcp_conn *)sk;
+    struct westwood_data *w = &conn->westwood;
+
+    /* Default segment size: 1460 bytes (standard Ethernet MSS) */
+    uint32_t seg_size = 1460;
+
+    westwood_on_loss(w, conn->cwnd, seg_size);
+    return w->ssthresh;
+}
+
+/* ── tcp_westwood_acked ─────────────────────────────────────────────
+ *
+ * Called when an ACK arrives.  Updates the Westwood bandwidth estimate
+ * via westwood_on_ack() using the number of bytes ACKed and the current
+ * RTT sample.  Also advances the congestion window through
+ * westwood_update().
+ *
+ * @sk     Pointer to struct tcp_conn
+ * @acked  Number of bytes newly ACKed by this segment
+ * Returns 0 on success, -EINVAL on NULL sk.
+ */
 int tcp_westwood_acked(void *sk, uint32_t acked)
 {
-    if (!sk) {
-        kprintf("[tcp_westwood] tcp_westwood_acked: NULL sk\n");
+    if (!sk)
         return -EINVAL;
-    }
-    kprintf("[tcp_westwood] tcp_westwood_acked: sk=%p acked=%u (stub)\n", sk, acked);
-    return -EOPNOTSUPP;
+
+    struct tcp_conn *conn = (struct tcp_conn *)sk;
+    struct westwood_data *w = &conn->westwood;
+
+    /* Get the current tick for bandwidth timestamp */
+    uint64_t now_tick = timer_get_ticks();
+
+    /* Convert srtt from scaled value (scaled by 8) to ticks */
+    uint32_t rtt_ticks = 0;
+    if (conn->srtt > 0)
+        rtt_ticks = (uint32_t)((uint32_t)conn->srtt / 8);
+
+    /* Update bandwidth estimate */
+    westwood_on_ack(w, acked, now_tick, rtt_ticks);
+
+    /* Update congestion window */
+    conn->cwnd = westwood_update(w, conn->cwnd, 1);
+
+    return 0;
 }
