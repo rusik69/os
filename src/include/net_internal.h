@@ -414,6 +414,14 @@ void net_tcp_check_keepalive(void);
 uint16_t net_transport_checksum(uint32_t src_ip, uint32_t dst_ip, uint8_t protocol,
                                  const void *data, uint16_t data_len);
 
+/* UDP over IPv6 (udp_ipv6.c) */
+void udp_ipv6_init(void);
+void send_udp_ipv6(const struct in6_addr *dst,
+                   uint16_t src_port, uint16_t dst_port,
+                   const void *data, uint16_t data_len);
+void handle_udp_ipv6(struct ipv6_header *ip6,
+                      const uint8_t *payload, uint16_t len);
+
 /* TCP over IPv6 (tcp_ipv6.c) */
 void tcp_ipv6_init(void);
 void tcp_ipv6_compute_flow_label(struct tcp_conn *conn,
