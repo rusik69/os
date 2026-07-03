@@ -31,6 +31,12 @@
  * (fixed-point, denominator = 256, so 128 = 0.50 = halve) */
 #define BBR3_LOSS_BW_FACTOR     128   /* 0.50 in 8.8 fixed-point */
 
+/* Loss recovery duration in rounds — how many rounds to suppress bandwidth
+ * probing after a loss event.  During recovery the pacing gain is forced to
+ * 1.0 so the connection can drain queues and stabilise before resuming the
+ * bandwidth probing cycle. */
+#define BBR3_LOSS_RECOVERY_ROUNDS  3
+
 /* ── BBRv3 per-connection state ─────────────────────────────────────── */
 
 struct bbr3_data {
@@ -105,6 +111,15 @@ struct bbr3_data {
 	 */
 	uint32_t loss_round;
 	uint32_t loss_ewma;
+
+	/*
+	 * Loss recovery countdown.
+	 * After a loss event, this is set to BBR3_LOSS_RECOVERY_ROUNDS and
+	 * decremented each round boundary.  While > 0, the pacing gain is
+	 * forced to 1.0 (no bandwidth probing), allowing the connection to
+	 * drain queues and stabilise after the congestion event.
+	 */
+	uint8_t  loss_recovery_rounds;
 };
 
 /* ── BBRv3 public API ────────────────────────────────────────────────── */

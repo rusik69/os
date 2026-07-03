@@ -136,6 +136,7 @@ void bbr3_init(struct bbr3_data *b)
 	/* Loss tracking */
 	b->loss_round = 0;
 	b->loss_ewma = 0;
+	b->loss_recovery_rounds = 0;
 }
 
 /* ── Delivery rate sampling ──────────────────────────────────────────── */
@@ -204,6 +205,10 @@ static void bbr3_update_round(struct bbr3_data *b, uint32_t cwnd_segments,
 		/* Reset round-local counters */
 		b->ecn_round_ce = 0;
 		b->loss_round = 0;
+
+		/* Decrement loss recovery countdown */
+		if (b->loss_recovery_rounds > 0)
+			b->loss_recovery_rounds--;
 
 #ifdef BBR3_DEBUG
 		kprintf("[BBRv3] Round %d complete (cwnd=%u, bw=%u, "
@@ -371,6 +376,16 @@ void bbr3_update_pacing_rate(struct bbr3_data *b)
 	}
 
 	/*
+	 * During loss recovery, force gain to 1.0 regardless of state.
+	 * This suppresses bandwidth probing while the connection drains
+	 * queues and stabilises after a congestion event.  Without this,
+	 * BBR would immediately resume probing (gain > 1) after one round,
+	 * potentially causing another loss.
+	 */
+	if (b->loss_recovery_rounds > 0)
+		gain = BBR3_UNIT;
+
+	/*
 	 * BBRv3: use ECN-aware BW selection instead of raw max_bw.
 	 * This is the key difference from BBRv1 — the bandwidth
 	 * estimate used for pacing is reduced in response to ECN
@@ -467,14 +482,26 @@ void bbr3_on_ack(struct bbr3_data *b, uint32_t acked_bytes,
 	if (b->state == BBR3_PROBE_BW) {
 		if (b->round_count != b->probe_bw_last_round) {
 			b->probe_bw_last_round = b->round_count;
-			b->probe_bw_phase = (b->probe_bw_phase + 1)
-			                     % BBR3_PROBE_BW_CYCLE_LEN;
+
+			/*
+			 * During loss recovery, pause the probe phase
+			 * cycle.  We still track the round boundary
+			 * (probe_bw_last_round updated above) but do
+			 * not advance to the next gain phase.  When
+			 * recovery ends, probing resumes from the
+			 * current phase, avoiding a second probe burst
+			 * that could cause further loss.
+			 */
+			if (b->loss_recovery_rounds == 0) {
+				b->probe_bw_phase = (b->probe_bw_phase + 1)
+				                     % BBR3_PROBE_BW_CYCLE_LEN;
 
 #ifdef BBR3_DEBUG
-			kprintf("[BBRv3] PROBE_BW phase %d (gain=%u/256)\n",
-			        b->probe_bw_phase,
-			        bbr3_probe_bw_gains[b->probe_bw_phase]);
+				kprintf("[BBRv3] PROBE_BW phase %d (gain=%u/256)\n",
+				        b->probe_bw_phase,
+				        bbr3_probe_bw_gains[b->probe_bw_phase]);
 #endif
+			}
 		}
 
 		/* Check if it's time for PROBE_RTT */
@@ -633,6 +660,15 @@ void bbr3_on_loss(struct bbr3_data *b)
 	b->loss_round++;
 	b->packet_conservation = 1;
 
+	/*
+	 * Enter loss recovery for BBR3_LOSS_RECOVERY_ROUNDS rounds.
+	 * During recovery, pacing gain is forced to 1.0 (no probing,
+	 * see bbr3_update_pacing_rate) and the PROBE_BW phase cycle
+	 * is paused.  This gives the connection time to drain queues
+	 * and stabilise after the loss event.
+	 */
+	b->loss_recovery_rounds = BBR3_LOSS_RECOVERY_ROUNDS;
+
 	/* Force pacing rate update with loss backoff */
 	bbr3_update_pacing_rate(b);
 
@@ -685,12 +721,14 @@ void bbr3_dump(struct bbr3_data *b)
 	if (!b) return;
 	kprintf("[BBRv3] state=%s bw=%u bw_hi=%u max_bw=%u min_rtt=%u "
 	        "rtprop=%u pacer=%u tgt_cwnd=%u rounds=%u phase=%u "
-	        "ecn_marks=%u ecn_ewma=%u loss_ewma=%u ecn_backoff=%d\n",
+	        "ecn_marks=%u ecn_ewma=%u loss_ewma=%u loss_rec=%u "
+	        "ecn_backoff=%d\n",
 	        bbr3_state_str(b), b->bw, b->bw_hi, b->max_bw, b->min_rtt,
 	        b->rtprop_min_rtt,
 	        b->pacing_rate, b->target_cwnd, b->round_count,
 	        b->probe_bw_phase,
 	        b->ecn_marks, b->ecn_ewma, b->loss_ewma,
+	        b->loss_recovery_rounds,
 	        b->ecn_backoff_active);
 }
 
