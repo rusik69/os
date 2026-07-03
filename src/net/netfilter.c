@@ -3,6 +3,7 @@
 #define KERNEL_INTERNAL
 #include "netfilter.h"
 #include "conntrack_helper.h"
+#include "netfilter_hooks.h"
 #include "printf.h"
 #include "string.h"
 #include "timer.h"
@@ -209,6 +210,7 @@ void nf_init(void) {
     memset(nf_hooks, 0, sizeof(nf_hooks));
     memset(nf_rules, 0, sizeof(nf_rules));
     memset(nf_nat_rules, 0, sizeof(nf_nat_rules));
+    nf_hooks_init();
     nf_conntrack_init();
     nf_helper_init();
     kprintf("[OK] Netfilter initialized\n");

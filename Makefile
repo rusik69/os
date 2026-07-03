@@ -292,6 +292,7 @@ C_SRCS = src/kernel/kernel.c \
          src/net/can.c \
          src/net/netlink.c \
          src/net/netfilter.c \
+         src/net/netfilter_hooks.c \
          src/net/nf_tables.c \
          src/net/conntrack.c \
          src/net/conntrack_helpers.c \
@@ -891,6 +892,7 @@ obj-m += net/af_unix.ko
 obj-m += net/6lowpan.ko
 obj-m += net/ipoib.ko
 obj-m += net/netfilter.ko
+obj-m += net/netfilter_hooks.ko
 obj-m += net/nf_tables.ko
 obj-m += net/conntrack.ko
 obj-m += net/conntrack_helpers.ko

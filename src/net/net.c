@@ -1032,6 +1032,9 @@ static void handle_ip(const uint8_t *data, uint16_t len) {
             uint32_t fwd_gw;
             int fwd_iface;
             if (rt_lookup(dst_ip, &fwd_gw, &fwd_iface) == 0) {
+                /* Netfilter FORWARD hook — allows/denies forwarding */
+                if (nf_iterate_hooks(NF_INET_FORWARD, (void *)data) != NF_ACCEPT)
+                    return;
                 /* Decrement TTL, recompute checksum */
                 ip->ttl--;
                 if (ip->ttl > 0) {
