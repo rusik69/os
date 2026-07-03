@@ -904,7 +904,9 @@ int mptcp_build_dss(uint8_t *buf, uint16_t *len,
         offset += 2;
     }
 
-    /* Checksum (2 bytes, network byte order) — zero placeholder */
+    /* Checksum (2 bytes, network byte order) — zero placeholder.
+     * Call mptcp_update_dss_checksum() to fill the actual checksum
+     * after the full TCP segment has been constructed. */
     if (include_checksum) {
         buf[offset + 0] = 0;
         buf[offset + 1] = 0;
@@ -1066,7 +1068,8 @@ int mptcp_parse_dss(const uint8_t *opt, uint16_t optlen,
  *
  * Returns 0 on success, negative errno on failure. */
 int mptcp_handle_dss(int conn_id, const uint8_t *opt, uint16_t optlen,
-                      uint32_t seq, uint32_t ack)
+                      uint32_t seq, uint32_t ack,
+                      const void *tcp_data, uint16_t tcp_data_len)
 {
     int ret;
     int data_ack_valid = 0, data_seq_valid = 0, subflow_seq_valid = 0;
@@ -1091,6 +1094,36 @@ int mptcp_handle_dss(int conn_id, const uint8_t *opt, uint16_t optlen,
                            &data_len, &include_checksum);
     if (ret < 0)
         return ret;
+
+    /* Suppress unused-parameter warnings */
+    (void)seq;
+    (void)ack;
+
+    /* ── MPTCP checksum verification ──────────────────────────────
+     * If the DSS option includes a checksum (C flag set), verify it
+     * now.  The MPTCP data checksum covers the TCP payload using a
+     * pseudo-header with protocol=0 (RFC 8684 §3.3).  To verify the
+     * checksum we need the source and destination IP addresses from
+     * the TCP connection, plus the TCP payload data passed in by the
+     * caller.  If verification fails, log a warning and return -EBADMSG
+     * so the caller can drop the segment. */
+    if (include_checksum) {
+        /* For checksum verification of received packets:
+         * - source = remote_ip (the peer that sent this packet)
+         * - destination = net_our_ip (our own IP) */
+        uint32_t csum_src = tcp_conns[conn_id].remote_ip;
+        uint32_t csum_dst = net_our_ip;
+
+        int csum_ret = mptcp_verify_dss_checksum(opt, optlen,
+                                                   csum_src, csum_dst,
+                                                   tcp_data, tcp_data_len);
+        if (csum_ret < 0) {
+            kprintf("[MPTCP-DSS] Checksum verification FAILED on conn %d: "
+                    "err=%d (optlen=%u data_len=%u)\n",
+                    conn_id, csum_ret, optlen, tcp_data_len);
+            return -EBADMSG;
+        }
+    }
 
     /* Look up the MPTCP connection via the TCP connection's token */
     struct tcp_conn *c = &tcp_conns[conn_id];
@@ -2302,5 +2335,176 @@ EXPORT_SYMBOL(mptcp_build_join_ack);
 EXPORT_SYMBOL(mptcp_parse_join_syn);
 EXPORT_SYMBOL(mptcp_parse_join_synack);
 EXPORT_SYMBOL(mptcp_parse_join_ack);
+/* ── MPTCP Data Checksum Calculation (RFC 8684 §3.3) ──────────────
+ * The MPTCP data checksum is a standard Internet checksum (ones'
+ * complement, RFC 1071) computed over a pseudo-header + the TCP
+ * payload data.  The pseudo-header is identical to the TCP pseudo-
+ * header (RFC 793) except the protocol field is 0 instead of 6:
+ *
+ *   src_ip(4) dst_ip(4) zero(1) protocol(1,=0) data_len(2)
+ *
+ * This differentiates the MPTCP checksum from the TCP transport
+ * checksum, which uses protocol=6 (IP_PROTO_TCP).
+ *
+ * When the C flag is set in the DSS option (MPTCP_DSS_FLAG_C), the
+ * last 2 bytes of the DSS option carry this checksum.  See also
+ * mptcp_update_dss_checksum() and mptcp_verify_dss_checksum().
+ *
+ * Parameters:
+ *   src_ip   - source IPv4 address (host byte order)
+ *   dst_ip   - destination IPv4 address (host byte order)
+ *   data     - pointer to TCP payload data
+ *   data_len - length of TCP payload data in bytes
+ *
+ * Returns the 16-bit ones'-complement checksum in network byte order.
+ * A return value of 0x0000 is valid (the ~0 case becomes 0x0000 per
+ * Internet checksum convention, though virtually impossible here). */
+
+uint16_t mptcp_compute_data_checksum(uint32_t src_ip, uint32_t dst_ip,
+                                      const void *data, uint16_t data_len)
+{
+    /* Build the MPTCP pseudo-header (same layout as TCP pseudo-header
+     * but with protocol = 0 per RFC 8684 §3.3). */
+    struct mptcp_pseudo {
+        uint32_t src_ip;
+        uint32_t dst_ip;
+        uint8_t  zero;
+        uint8_t  protocol;   /* 0 = MPTCP data checksum */
+        uint16_t data_len;
+    } __attribute__((packed)) pseudo;
+
+    pseudo.src_ip   = htonl(src_ip);
+    pseudo.dst_ip   = htonl(dst_ip);
+    pseudo.zero     = 0;
+    pseudo.protocol = 0;        /* MPTCP data, not TCP */
+    pseudo.data_len = htons(data_len);
+
+    /* Standard Internet checksum (ones' complement, RFC 1071) over
+     * the concatenation of pseudo-header + data payload. */
+    uint32_t sum = 0;
+    const uint8_t *pb = (const uint8_t *)&pseudo;
+    int remaining = (int)sizeof(pseudo);
+    while (remaining > 1) {
+        uint16_t w;
+        __builtin_memcpy(&w, pb, 2);
+        sum += w;
+        pb += 2;
+        remaining -= 2;
+    }
+    if (remaining == 1)
+        sum += *pb;
+
+    pb = (const uint8_t *)data;
+    remaining = data_len;
+    while (remaining > 1) {
+        uint16_t w;
+        __builtin_memcpy(&w, pb, 2);
+        sum += w;
+        pb += 2;
+        remaining -= 2;
+    }
+    if (remaining == 1)
+        sum += *pb;
+
+    while (sum >> 16)
+        sum = (sum & 0xFFFF) + (sum >> 16);
+
+    return (uint16_t)(~sum & 0xFFFF);
+}
+EXPORT_SYMBOL(mptcp_compute_data_checksum);
+
+/* ── Update checksum field in a built DSS option ─────────────────
+ * After mptcp_build_dss() has written the DSS option header and
+ * data-placeholder fields (with zero in the checksum position),
+ * this function computes and fills the actual MPTCP data checksum.
+ *
+ * The checksum field is always the last 2 bytes of the DSS option
+ * when the C flag (MPTCP_DSS_FLAG_C, 0x01) is set in the flags byte
+ * (buf[3]).
+ *
+ * Parameters:
+ *   buf      - the built DSS option buffer (same buffer passed to
+ *              mptcp_build_dss())
+ *   src_ip   - source IPv4 address (host byte order)
+ *   dst_ip   - destination IPv4 address (host byte order)
+ *   data     - pointer to the TCP payload data being checksummed
+ *   data_len - length of the TCP payload data
+ *
+ * Returns 0 on success, negative errno on failure:
+ *   -EINVAL if buf is NULL, or flags byte has no C flag set, or
+ *           the option is too short to contain a checksum field. */
+
+int mptcp_update_dss_checksum(uint8_t *buf,
+                               uint32_t src_ip, uint32_t dst_ip,
+                               const void *data, uint16_t data_len)
+{
+    if (!buf)
+        return -EINVAL;
+
+    /* The C flag must be set (bit 0 of buf[3]) */
+    if (!(buf[3] & MPTCP_DSS_FLAG_C))
+        return -EINVAL;
+
+    uint8_t opt_len = buf[1];
+    if (opt_len < MPTCP_DSS_MIN_LEN + MPTCP_DSS_CKSUM_LEN)
+        return -EINVAL;
+
+    uint16_t csum = mptcp_compute_data_checksum(src_ip, dst_ip, data, data_len);
+    buf[opt_len - 2] = (uint8_t)(csum >> 8);
+    buf[opt_len - 1] = (uint8_t)(csum & 0xFF);
+
+    return 0;
+}
+EXPORT_SYMBOL(mptcp_update_dss_checksum);
+
+/* ── Verify the MPTCP data checksum from a received DSS option ────
+ * Called when a DSS option with the C flag (MPTCP_DSS_FLAG_C) is
+ * received.  Extracts the stored checksum from the last 2 bytes of
+ * the option, recomputes the expected checksum over the pseudo-header
+ * + TCP payload, and compares them.
+ *
+ * Parameters:
+ *   buf      - the received DSS option (starting with TCPOPT_MPTCP)
+ *   optlen   - total length of the TCP option in bytes
+ *   src_ip   - source IPv4 address of the packet (host byte order)
+ *   dst_ip   - destination IPv4 address of the packet (host byte order)
+ *   data     - pointer to the TCP payload data that was checksummed
+ *   data_len - length of the TCP payload data
+ *
+ * Returns 0 if the checksum is valid, negative errno on failure:
+ *   -EINVAL  on NULL pointer / invalid option length / wrong kind/subtype
+ *   -ENODATA if the C flag is not set (no checksum to verify)
+ *   -EBADMSG if the checksum field does not match the computed value */
+
+int mptcp_verify_dss_checksum(const uint8_t *buf, uint16_t optlen,
+                               uint32_t src_ip, uint32_t dst_ip,
+                               const void *data, uint16_t data_len)
+{
+    if (!buf)
+        return -EINVAL;
+    if (optlen < MPTCP_DSS_MIN_LEN + MPTCP_DSS_CKSUM_LEN)
+        return -EINVAL;
+    if (buf[0] != TCPOPT_MPTCP)
+        return -EINVAL;
+    if ((buf[2] >> 4) != MPTCP_DSS)
+        return -EINVAL;
+    /* C flag must be set, otherwise there's no checksum */
+    if (!(buf[3] & MPTCP_DSS_FLAG_C))
+        return -ENODATA;
+
+    uint8_t opt_len = buf[1];
+    if (opt_len < MPTCP_DSS_MIN_LEN + MPTCP_DSS_CKSUM_LEN)
+        return -EINVAL;
+
+    uint16_t stored_csum = ((uint16_t)buf[opt_len - 2] << 8) |
+                            (uint16_t)buf[opt_len - 1];
+    uint16_t expected = mptcp_compute_data_checksum(src_ip, dst_ip, data, data_len);
+
+    if (stored_csum != expected)
+        return -EBADMSG;
+
+    return 0;
+}
+EXPORT_SYMBOL(mptcp_verify_dss_checksum);
 #include "module.h"
 module_init(mptcp_init);

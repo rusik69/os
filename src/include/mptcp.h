@@ -162,8 +162,9 @@ int  mptcp_parse_capable(const uint8_t *opt, uint16_t optlen, uint8_t peer_key[8
 /* TCP option handlers — called from TCP stack */
 int  mptcp_handle_capable(int conn_id, const uint8_t *opt, uint16_t optlen);
 int  mptcp_handle_join(int conn_id, const uint8_t *opt, uint16_t optlen);
-int  mptcp_handle_dss(int conn_id, const uint8_t *opt, uint16_t optlen,
-                       uint32_t seq, uint32_t ack);
+int mptcp_handle_dss(int conn_id, const uint8_t *opt, uint16_t optlen,
+                       uint32_t seq, uint32_t ack,
+                       const void *tcp_data, uint16_t tcp_data_len);
 
 /* Address advertisement (ADD_ADDR / REMOVE_ADDR) */
 int  mptcp_has_addr(uint32_t token, uint32_t addr);
@@ -240,6 +241,27 @@ int  mptcp_parse_dss(const uint8_t *opt, uint16_t optlen,
                       uint64_t *data_seq_out, int *data_seq_valid,
                       uint32_t *subflow_seq_out, int *subflow_seq_valid,
                       uint16_t *data_len_out, int *include_checksum);
+
+/* ── MPTCP Data Checksum (RFC 8684 §3.3) ─────────────────────────── */
+
+/* Compute the MPTCP data checksum over pseudo-header + payload.
+ * The pseudo-header uses protocol=0 per RFC 8684 §3.3.
+ * Returns 16-bit Internet checksum in network byte order. */
+uint16_t mptcp_compute_data_checksum(uint32_t src_ip, uint32_t dst_ip,
+                                      const void *data, uint16_t data_len);
+
+/* Patch the checksum into a built DSS option buffer (replacing the
+ * zero placeholder written by mptcp_build_dss).  The C flag must be
+ * set in the DSS flags byte (buf[3] & MPTCP_DSS_FLAG_C). */
+int  mptcp_update_dss_checksum(uint8_t *buf,
+                                uint32_t src_ip, uint32_t dst_ip,
+                                const void *data, uint16_t data_len);
+
+/* Verify the checksum in a received DSS option.  Returns 0 if valid,
+ * -EBADMSG if mismatch, -ENODATA if no C flag, -EINVAL on bad args. */
+int  mptcp_verify_dss_checksum(const uint8_t *buf, uint16_t optlen,
+                                uint32_t src_ip, uint32_t dst_ip,
+                                const void *data, uint16_t data_len);
 
 
 /* Token derivation from key (truncated SHA-256 first 4 bytes) */
