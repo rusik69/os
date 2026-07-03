@@ -16,6 +16,7 @@
 #include "heap.h"
 #include "export.h"
 #include "errno.h"
+#include "ftrace.h"
 #include "smp.h"
 #include "spinlock.h"
 #include "timer.h"
@@ -287,16 +288,20 @@ static void tracefs_read_tracing_on(char *buf, int *len, void *priv)
 	*len = 2;
 }
 
-/* tracing_on write: parse 1/0 */
+/* tracing_on write: parse 1/0 and propagate to ftrace / trace events */
 static int tracefs_write_tracing_on(const char *buf, int len, void *priv)
 {
 	(void)priv;
 	for (int i = 0; i < len; i++) {
 		if (buf[i] == '1') {
 			tracing_global_enabled = 1;
+			ftrace_enable();
+			trace_events_v2_enable();
 			return len;
 		} else if (buf[i] == '0') {
 			tracing_global_enabled = 0;
+			ftrace_disable();
+			trace_events_v2_disable();
 			return len;
 		}
 	}
@@ -441,7 +446,20 @@ static void tracefs_read_marker(char *buf, int *len, void *priv)
 static void tracefs_read_current_tracer(char *buf, int *len, void *priv)
 {
 	(void)priv;
-	int n = snprintf(buf, 32, "nop\n");
+	int mode = ftrace_get_tracer();
+	const char *name;
+	switch (mode) {
+	case FTRACE_TRACER_FUNCTION:
+		name = "function";
+		break;
+	case FTRACE_TRACER_FUNCTION_GRAPH:
+		name = "function_graph";
+		break;
+	default:
+		name = "nop";
+		break;
+	}
+	int n = snprintf(buf, 32, "%s\n", name);
 	if (n < 0)
 		n = 0;
 	if (n > 31)
@@ -449,21 +467,157 @@ static void tracefs_read_current_tracer(char *buf, int *len, void *priv)
 	*len = n;
 }
 
-/* trace read: show aggregate per-CPU summary */
+/* current_tracer write: parse and switch tracer */
+static int tracefs_write_current_tracer(const char *buf, int len, void *priv)
+{
+	(void)priv;
+	/* Trim leading whitespace/newlines */
+	int start = 0;
+	while (start < len && (buf[start] == ' ' || buf[start] == '	' ||
+			       buf[start] == '\n' || buf[start] == '\r'))
+		start++;
+	/* Trim trailing whitespace/newlines */
+	int end = len - 1;
+	while (end >= start && (buf[end] == ' ' || buf[end] == '	' ||
+				buf[end] == '\n' || buf[end] == '\r'))
+		end--;
+	int name_len = end - start + 1;
+	if (name_len <= 0)
+		return -EINVAL;
+
+	if (name_len == 3 && memcmp(buf + start, "nop", 3) == 0)
+		return ftrace_set_tracer(FTRACE_TRACER_NOP);
+	if (name_len == 8 && memcmp(buf + start, "function", 8) == 0)
+		return ftrace_set_tracer(FTRACE_TRACER_FUNCTION);
+	if (name_len == 14 && memcmp(buf + start, "function_graph", 14) == 0)
+		return ftrace_set_tracer(FTRACE_TRACER_FUNCTION_GRAPH);
+
+	return -EINVAL;
+}
+
+/* trace read: show aggregate per-CPU summary with actual data */
 static void tracefs_read_trace(char *buf, int *len, void *priv)
 {
 	(void)priv;
 	int pos = 0;
+	int mode = ftrace_get_tracer();
+	const char *tname = "nop";
+	if (mode == FTRACE_TRACER_FUNCTION)
+		tname = "function";
+	else if (mode == FTRACE_TRACER_FUNCTION_GRAPH)
+		tname = "function_graph";
 
-	pos += snprintf(buf + pos, 128, "# tracer: nop\n");
-	pos += snprintf(buf + pos, 128, "#\n");
-	pos += snprintf(buf + pos, 128, "# entries-in-buffer/entries-written: ");
-	pos += snprintf(buf + pos, 64, "run \"cat per_cpu/cpu*/trace\" for per-CPU data\n");
+	pos += snprintf(buf + pos, 64, "# tracer: %s\n", tname);
 	pos += snprintf(buf + pos, 64, "#\n");
+
+	/* If function_graph tracer is active, read graph trace data */
+	if (mode == FTRACE_TRACER_FUNCTION_GRAPH) {
+		int ret = ftrace_graph_read_trace(buf + pos, 4096 - pos);
+		if (ret > 0) {
+			pos += ret;
+			if (pos > 4095)
+				pos = 4095;
+			*len = pos;
+			return;
+		}
+	}
+
+	/* Show per-CPU entry counts */
+	uint32_t total_entries = 0;
+	for (int i = 0; i < tracefs_nr_cpus; i++)
+		total_entries += tracefs_percpu_avail(i);
+
+	pos += snprintf(buf + pos, 128,
+			"# entries-in-buffer/entries-written: %u/??? (%d CPUs)\n",
+			total_entries, tracefs_nr_cpus);
+	pos += snprintf(buf + pos, 64, "#\n");
+
+	/* Read a snapshot from each per-CPU buffer */
+	for (int i = 0; i < tracefs_nr_cpus && pos < 4000; i++) {
+		uint32_t avail = tracefs_percpu_avail(i);
+		if (avail == 0)
+			continue;
+
+		pos += snprintf(buf + pos, 128, "# CPU:%d entries:\n", i);
+
+		/* Read directly from per-CPU buffer without consuming */
+		struct tracefs_percpu_buf *pb = &percpu_bufs[i];
+		spinlock_acquire(&pb->lock);
+
+		uint32_t rp = pb->read_pos;
+		uint32_t wp = pb->write_pos;
+		uint32_t max_copy = 256; /* Limit per-CPU to avoid overflow */
+
+		/* Copy data from read_pos to write_pos (snapshot, don't consume) */
+		if (wp > rp) {
+			uint32_t count = wp - rp;
+			if (count > max_copy)
+				count = max_copy;
+			int cpos = 0;
+			for (uint32_t j = 0; j < count && pos + cpos < 4095; j++) {
+				buf[pos + cpos] = pb->data[(rp + j) % pb->size];
+				cpos++;
+			}
+			pos += cpos;
+		} else if (wp < rp) {
+			/* Wrapped */
+			uint32_t first = pb->size - rp;
+			if (first > max_copy)
+				first = max_copy;
+			int cpos = 0;
+			for (uint32_t j = 0; j < first && pos + cpos < 4095; j++) {
+				buf[pos + cpos] = pb->data[rp + j];
+				cpos++;
+			}
+			pos += cpos;
+			if ((uint32_t)cpos >= max_copy) {
+				spinlock_release(&pb->lock);
+				continue;
+			}
+			uint32_t second = wp;
+			uint32_t remain = max_copy - (uint32_t)cpos;
+			if (second > remain)
+				second = remain;
+			for (uint32_t j = 0; j < second && pos < 4095; j++) {
+				buf[pos] = pb->data[j];
+				pos++;
+			}
+		}
+
+		spinlock_release(&pb->lock);
+
+		if (pos < 4095) {
+			pos += snprintf(buf + pos, 32, "\n");
+		}
+	}
 
 	if (pos > 4095)
 		pos = 4095;
+	buf[pos] = '\0';
 	*len = pos;
+}
+
+/* trace write: clear all trace buffers */
+static int tracefs_write_trace(const char *buf, int len, void *priv)
+{
+	(void)priv;
+	(void)buf;
+	(void)len;
+
+	/* Clear per-CPU buffers */
+	for (int i = 0; i < tracefs_nr_cpus; i++) {
+		struct tracefs_percpu_buf *pb = &percpu_bufs[i];
+		if (!pb->data)
+			continue;
+		spinlock_acquire(&pb->lock);
+		pb->read_pos = pb->write_pos;
+		spinlock_release(&pb->lock);
+	}
+
+	/* Clear function graph trace */
+	ftrace_graph_clear();
+
+	return len ? len : 1; /* echo "" > trace succeeds */
 }
 
 /* trace stats: CPU-by-CPU buffer fill levels */
@@ -715,14 +869,15 @@ void __init tracefs_init(void)
 			     tracefs_write_tracing_on, NULL);
 
 	tracefs_create_entry("trace", TRACEFS_TYPE_FILE, 0,
-			     tracefs_read_trace, NULL, NULL);
+			     tracefs_read_trace, tracefs_write_trace, NULL);
 
 	tracefs_create_entry("trace_marker", TRACEFS_TYPE_FILE, 0,
 			     tracefs_read_marker,
 			     tracefs_write_marker, NULL);
 
 	tracefs_create_entry("current_tracer", TRACEFS_TYPE_FILE, 0,
-			     tracefs_read_current_tracer, NULL, NULL);
+			     tracefs_read_current_tracer,
+			     tracefs_write_current_tracer, NULL);
 
 	tracefs_create_entry("trace_stats", TRACEFS_TYPE_FILE, 0,
 			     tracefs_read_trace_stats, NULL, NULL);
