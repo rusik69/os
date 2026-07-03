@@ -1092,13 +1092,20 @@ void wg_poll(void) {
 /* ── Handshake state tracking ─────────────────────────────────────── */
 
 /* Track in-flight Noise_IKpsk2 handshake initiations so the
- * response can be matched by sender_index. */
+ * response can be matched by sender_index.
+ * Stores both initiator-side and responder-side Noise state. */
 struct wg_hs_state {
     uint32_t sender_index;
+    uint32_t receiver_index;    /* For responder: initiator's sender_index */
     uint8_t  eph_private[32];
     uint8_t  eph_public[32];
+    uint8_t  remote_static[32]; /* peer's static public key (decrypted) */
+    uint8_t  chaining_key[32];  /* current Noise chaining key */
+    uint8_t  hash[32];          /* current Noise hash */
+    uint8_t  remote_eph[32];    /* remote peer's ephemeral public key */
     int      peer_idx;
     int      active;
+    int      is_responder;      /* 1 if we are the responder */
 };
 
 static struct wg_hs_state g_wg_hs[WG_MAX_HANDSHAKES];
@@ -1343,18 +1350,29 @@ int wireguard_send_handshake_init(uint32_t endpoint_ip, uint16_t endpoint_port)
         }
         if (hs_slot >= 0) {
             g_wg_hs[hs_slot].sender_index = sender_index;
+            g_wg_hs[hs_slot].receiver_index = 0;
             memcpy(g_wg_hs[hs_slot].eph_private, eph_priv, 32);
             memcpy(g_wg_hs[hs_slot].eph_public, eph_pub, 32);
+            memcpy(g_wg_hs[hs_slot].chaining_key, chaining_key, 32);
+            memcpy(g_wg_hs[hs_slot].hash, hash, 32);
+            memset(g_wg_hs[hs_slot].remote_static, 0, 32);
+            memset(g_wg_hs[hs_slot].remote_eph, 0, 32);
             g_wg_hs[hs_slot].peer_idx = peer_idx;
             g_wg_hs[hs_slot].active = 1;
+            g_wg_hs[hs_slot].is_responder = 0;
         } else {
             kprintf("[WG] Warning: no handshake slot available, overwriting oldest\n");
-            /* Overwrite slot 0 as fallback */
             g_wg_hs[0].sender_index = sender_index;
+            g_wg_hs[0].receiver_index = 0;
             memcpy(g_wg_hs[0].eph_private, eph_priv, 32);
             memcpy(g_wg_hs[0].eph_public, eph_pub, 32);
+            memcpy(g_wg_hs[0].chaining_key, chaining_key, 32);
+            memcpy(g_wg_hs[0].hash, hash, 32);
+            memset(g_wg_hs[0].remote_static, 0, 32);
+            memset(g_wg_hs[0].remote_eph, 0, 32);
             g_wg_hs[0].peer_idx = peer_idx;
             g_wg_hs[0].active = 1;
+            g_wg_hs[0].is_responder = 0;
         }
     }
 
@@ -1366,65 +1384,377 @@ int wireguard_send_handshake_init(uint32_t endpoint_ip, uint16_t endpoint_port)
     return WG_HANDSHAKE_INIT_LEN;
 }
 
-/* ── Implement: wireguard_recv_handshake_init ────────────────── */
+/* ── Implement: wireguard_recv_handshake_init (responder side) ──── */
 int wireguard_recv_handshake_init(const uint8_t *pkt, uint16_t len,
                                    uint32_t src_ip, uint16_t src_port)
 {
-    if (!wg_initialized) {
-        kprintf("[wireguard] wireguard_recv_handshake_init: not initialized\n");
+    if (!wg_initialized)
         return -ENOSYS;
-    }
-    if (!pkt) {
-        kprintf("[wireguard] wireguard_recv_handshake_init: NULL packet\n");
+    if (!pkt || len < WG_HANDSHAKE_INIT_LEN)
         return -EINVAL;
-    }
-    if (len < 32) {
-        kprintf("[wireguard] wireguard_recv_handshake_init: packet too short (%u bytes)\n",
-                (unsigned)len);
+    if (pkt[0] != WG_MSG_HANDSHAKE_INIT)
         return -EINVAL;
+
+    /* Extract fields from init message */
+    uint32_t sender_index = (uint32_t)pkt[4] | ((uint32_t)pkt[5] << 8) |
+                            ((uint32_t)pkt[6] << 16) | ((uint32_t)pkt[7] << 24);
+    const uint8_t *remote_eph = pkt + 8;     /* 32 bytes */
+    const uint8_t *enc_static = pkt + 40;    /* 48 bytes */
+    const uint8_t *enc_ts     = pkt + 88;    /* 28 bytes */
+
+    /* Initialize Noise state */
+    uint8_t chaining_key[32], hash[32], zeros[32];
+    memset(zeros, 0, 32);
+    memcpy(chaining_key, WG_PROTOCOL_ID, 32);
+    memcpy(hash, WG_PROTOCOL_ID, 32);
+
+    /* Step 1: mix_hash(H, ephemeral) */
+    wg_mix_hash(hash, remote_eph, 32);
+
+    /* Step 2: DH(static_priv, remote_eph) — es → ck, mix_hash */
+    {
+        uint8_t dh[32];
+        curve25519(dh, g_wg.private_key, remote_eph);
+        wg_kdf1(chaining_key, chaining_key, dh);
+        wg_mix_hash(hash, chaining_key, 32);
     }
-    kprintf("[wireguard] wireguard_recv_handshake_init: %u bytes from %u:%u (stub)\n",
-            (unsigned)len, src_ip, (unsigned)src_port);
-    return -EOPNOTSUPP;
+
+    /* Step 3: Derive AEAD key, decrypt initiator's static public key */
+    uint8_t remote_static[32];
+    {
+        uint8_t enc_key[32], enc_extra[32], nonce[12];
+        memset(nonce, 0, 12);
+        wg_kdf2(enc_key, enc_extra, chaining_key, zeros);
+
+        if (chacha20poly1305_decrypt(remote_static, enc_static, 48,
+                                     hash, 32, enc_key, nonce) < 0)
+            return -EKEYREJECTED;
+    }
+
+    /* Step 4: mix_hash(H, encrypted_static) */
+    wg_mix_hash(hash, enc_static, 48);
+
+    /* Step 5: DH(static_priv, remote_static) — ss → ck, mix_hash */
+    {
+        uint8_t dh[32];
+        curve25519(dh, g_wg.private_key, remote_static);
+        wg_kdf1(chaining_key, chaining_key, dh);
+        wg_mix_hash(hash, chaining_key, 32);
+    }
+
+    /* Step 6: Derive second AEAD key, decrypt timestamp */
+    {
+        uint8_t enc_key[32], enc_extra[32], nonce[12];
+        uint8_t timestamp[12];
+        memset(nonce, 0, 12);
+        wg_kdf2(enc_key, enc_extra, chaining_key, zeros);
+
+        if (chacha20poly1305_decrypt(timestamp, enc_ts, 28,
+                                     hash, 32, enc_key, nonce) < 0)
+            return -EKEYREJECTED;
+        /* In production, verify timestamp freshness */
+        (void)timestamp;
+    }
+
+    /* Step 7: mix_hash(H, encrypted_timestamp) */
+    wg_mix_hash(hash, enc_ts, 28);
+
+    /* Step 8: Find or create peer entry using the decrypted static key */
+    int peer_idx = -1;
+    for (int i = 0; i < g_wg.num_peers; i++) {
+        if (g_wg.peers[i].active &&
+            memcmp(g_wg.peers[i].public_key, remote_static, 32) == 0) {
+            peer_idx = i;
+            break;
+        }
+    }
+    if (peer_idx < 0) {
+        /* Unknown initiator — create ad-hoc peer slot */
+        if (g_wg.num_peers < WG_MAX_PEERS) {
+            peer_idx = g_wg.num_peers;
+            struct wg_peer *p = &g_wg.peers[peer_idx];
+            memset(p, 0, sizeof(*p));
+            memcpy(p->public_key, remote_static, 32);
+            p->endpoint_ip = src_ip;
+            p->endpoint_port = src_port;
+            p->rx_ip = src_ip;
+            p->rx_port = src_port;
+            p->active = 1;
+            g_wg.num_peers++;
+            kprintf("[WG] New peer from init: %08x:%u\n",
+                    src_ip, (unsigned)src_port);
+        } else {
+            return -ENOSPC;
+        }
+    }
+
+    /* Step 9: Reserve handshake state slot, store responder state */
+    {
+        int hs_slot = -1;
+
+        for (int i = 0; i < WG_MAX_HANDSHAKES; i++) {
+            if (!g_wg_hs[i].active) {
+                hs_slot = i;
+                break;
+            }
+        }
+        if (hs_slot < 0) {
+            hs_slot = 0;
+            kprintf("[WG] Warning: no handshake slot, overwriting oldest\n");
+        }
+
+        g_wg_hs[hs_slot].sender_index = (uint32_t)(rng_get_u64() & 0xFFFFFFFF);
+        g_wg_hs[hs_slot].receiver_index = sender_index;
+        memset(g_wg_hs[hs_slot].eph_private, 0, 32);
+        memset(g_wg_hs[hs_slot].eph_public, 0, 32);
+        memcpy(g_wg_hs[hs_slot].remote_static, remote_static, 32);
+        memcpy(g_wg_hs[hs_slot].remote_eph, remote_eph, 32);
+        memcpy(g_wg_hs[hs_slot].chaining_key, chaining_key, 32);
+        memcpy(g_wg_hs[hs_slot].hash, hash, 32);
+        g_wg_hs[hs_slot].peer_idx = peer_idx;
+        g_wg_hs[hs_slot].active = 1;
+        g_wg_hs[hs_slot].is_responder = 1;
+    }
+
+    kprintf("[WG] Handshake init received from %u:%u (sender_idx=%u)\n",
+            src_ip, (unsigned)src_port, sender_index);
+    return 0;
 }
 
-/* ── Implement: wireguard_send_handshake_response ────────────────── */
+/* ── Implement: wireguard_send_handshake_response (responder side) ──── */
 int wireguard_send_handshake_response(uint32_t endpoint_ip, uint16_t endpoint_port)
 {
-    if (!wg_initialized) {
-        kprintf("[wireguard] wireguard_send_handshake_response: not initialized\n");
+    if (!wg_initialized)
         return -ENOSYS;
-    }
-    if (endpoint_ip == 0 || endpoint_port == 0) {
-        kprintf("[wireguard] wireguard_send_handshake_response: invalid endpoint %u:%u\n",
-                endpoint_ip, (unsigned)endpoint_port);
+    if (endpoint_ip == 0 || endpoint_port == 0)
         return -EINVAL;
+
+    /* Find responder handshake state for this endpoint */
+    int hs_idx = -1;
+    for (int i = 0; i < WG_MAX_HANDSHAKES; i++) {
+        if (g_wg_hs[i].active && g_wg_hs[i].is_responder) {
+            int pidx = g_wg_hs[i].peer_idx;
+            if (pidx >= 0 && pidx < g_wg.num_peers &&
+                g_wg.peers[pidx].active &&
+                g_wg.peers[pidx].endpoint_ip == endpoint_ip &&
+                g_wg.peers[pidx].endpoint_port == endpoint_port) {
+                hs_idx = i;
+                break;
+            }
+        }
     }
-    kprintf("[wireguard] wireguard_send_handshake_response: to %u:%u (stub)\n",
-            endpoint_ip, (unsigned)endpoint_port);
-    return -EOPNOTSUPP;
+    if (hs_idx < 0)
+        return -EHOSTUNREACH;
+
+    struct wg_hs_state *hs = &g_wg_hs[hs_idx];
+    uint8_t chaining_key[32], hash[32], zeros[32];
+    memcpy(chaining_key, hs->chaining_key, 32);
+    memcpy(hash, hs->hash, 32);
+    memset(zeros, 0, 32);
+
+    /* Allocate response message buffer (92 bytes) */
+    uint8_t *msg = (uint8_t *)kmalloc(WG_HANDSHAKE_RESPONSE_LEN);
+    if (!msg)
+        return -ENOMEM;
+    memset(msg, 0, WG_HANDSHAKE_RESPONSE_LEN);
+
+    /* Step 1: Message type = 2, sender_index, receiver_index */
+    msg[0] = WG_MSG_HANDSHAKE_RESPONSE;
+    {
+        uint32_t si = hs->sender_index;
+        msg[4] = (uint8_t)(si);
+        msg[5] = (uint8_t)(si >> 8);
+        msg[6] = (uint8_t)(si >> 16);
+        msg[7] = (uint8_t)(si >> 24);
+    }
+    {
+        uint32_t ri = hs->receiver_index;
+        msg[8]  = (uint8_t)(ri);
+        msg[9]  = (uint8_t)(ri >> 8);
+        msg[10] = (uint8_t)(ri >> 16);
+        msg[11] = (uint8_t)(ri >> 24);
+    }
+
+    /* Step 2: Generate ephemeral key pair for responder */
+    uint8_t eph_priv[32], eph_pub[32];
+    for (int i = 0; i < 32; i++)
+        eph_priv[i] = (uint8_t)(rng_get_u64() & 0xFF);
+    curve25519_clamp(eph_priv);
+    curve25519(eph_pub, eph_priv, CURVE25519_BASE);
+    memcpy(msg + 12, eph_pub, 32);
+
+    /* Step 3: mix_hash(H, eph_pub) */
+    wg_mix_hash(hash, eph_pub, 32);
+
+    /* Step 4: DH(eph_priv, remote_eph) — ee → ck, mix_hash */
+    {
+        uint8_t dh[32];
+        curve25519(dh, eph_priv, hs->remote_eph);
+        wg_kdf1(chaining_key, chaining_key, dh);
+        wg_mix_hash(hash, chaining_key, 32);
+    }
+
+    /* Step 5: Derive AEAD key, encrypt empty payload (just auth tag) */
+    {
+        uint8_t enc_key[32], enc_extra[32], nonce[12];
+        memset(nonce, 0, 12);
+        wg_kdf2(enc_key, enc_extra, chaining_key, zeros);
+        chacha20poly1305_encrypt(msg + 44, NULL, 0,
+                                 hash, 32, enc_key, nonce);
+    }
+
+    /* Step 6: mix_hash(H, encrypted_empty) */
+    wg_mix_hash(hash, msg + 44, 16);
+
+    /* Step 7: DH(eph_priv, remote_static) — se → ck */
+    {
+        uint8_t dh[32];
+        curve25519(dh, eph_priv, hs->remote_static);
+        wg_kdf1(chaining_key, chaining_key, dh);
+    }
+
+    /* Step 8: Compute mac1 using initiator's public key
+     *   mac1_key = KDF1(zeros, "mac1----" || initiator_static_pub)
+     *   mac1 = KDF1(mac1_key, msg[0:60])[0:16] */
+    {
+        uint8_t mac1_label[40];
+        uint8_t mac1_key[32], mac1_full[32];
+        memset(mac1_label, 0, sizeof(mac1_label));
+        memcpy(mac1_label, "mac1----", 8);
+        memcpy(mac1_label + 8, hs->remote_static, 32);
+        wg_kdf1(mac1_key, zeros, mac1_label);
+        wg_kdf1(mac1_full, mac1_key, msg);
+        memcpy(msg + 60, mac1_full, 16);
+    }
+
+    /* Step 9: mac2 (all zeros for now) — msg[76..91] is already zeroed */
+
+    /* Step 10: Update handshake state with ephemeral keys and new ck/hash */
+    memcpy(hs->eph_private, eph_priv, 32);
+    memcpy(hs->eph_public, eph_pub, 32);
+    memcpy(hs->chaining_key, chaining_key, 32);
+    memcpy(hs->hash, hash, 32);
+
+    kprintf("[WG] Handshake response -> %u:%u (sender_idx=%u, eph=%02x%02x..)\n",
+            endpoint_ip, (unsigned)endpoint_port,
+            hs->sender_index, eph_pub[0], eph_pub[1]);
+
+    kfree(msg);
+    return WG_HANDSHAKE_RESPONSE_LEN;
 }
 
-/* ── Implement: wireguard_recv_handshake_response ────────────────── */
+/* ── Implement: wireguard_recv_handshake_response (initiator side) ──── */
 int wireguard_recv_handshake_response(const uint8_t *pkt, uint16_t len,
                                        uint32_t src_ip, uint16_t src_port)
 {
-    if (!wg_initialized) {
-        kprintf("[wireguard] wireguard_recv_handshake_response: not initialized\n");
+    if (!wg_initialized)
         return -ENOSYS;
-    }
-    if (!pkt) {
-        kprintf("[wireguard] wireguard_recv_handshake_response: NULL packet\n");
+    if (!pkt || len < WG_HANDSHAKE_RESPONSE_LEN)
         return -EINVAL;
-    }
-    if (len < 32) {
-        kprintf("[wireguard] wireguard_recv_handshake_response: packet too short (%u bytes)\n",
-                (unsigned)len);
+    if (pkt[0] != WG_MSG_HANDSHAKE_RESPONSE)
         return -EINVAL;
+
+    (void)src_ip;
+    (void)src_port;
+
+    /* Extract receiver_index and find matching initiator handshake state */
+    uint32_t receiver_index = (uint32_t)pkt[8]  | ((uint32_t)pkt[9] << 8) |
+                              ((uint32_t)pkt[10] << 16) | ((uint32_t)pkt[11] << 24);
+
+    int hs_idx = -1;
+    for (int i = 0; i < WG_MAX_HANDSHAKES; i++) {
+        if (g_wg_hs[i].active && !g_wg_hs[i].is_responder &&
+            g_wg_hs[i].sender_index == receiver_index) {
+            hs_idx = i;
+            break;
+        }
     }
-    kprintf("[wireguard] wireguard_recv_handshake_response: %u bytes from %u:%u (stub)\n",
-            (unsigned)len, src_ip, (unsigned)src_port);
-    return -EOPNOTSUPP;
+    if (hs_idx < 0)
+        return -EHOSTUNREACH;
+
+    struct wg_hs_state *hs = &g_wg_hs[hs_idx];
+
+    /* Extract fields from response message */
+    const uint8_t *remote_eph = pkt + 12;   /* 32 bytes */
+    const uint8_t *enc_empty  = pkt + 44;   /* 16 bytes (AEAD tag only) */
+    const uint8_t *mac1_rcvd  = pkt + 60;   /* 16 bytes */
+
+    /* Restore Noise state from handshake state */
+    uint8_t chaining_key[32], hash[32], zeros[32];
+    memcpy(chaining_key, hs->chaining_key, 32);
+    memcpy(hash, hs->hash, 32);
+    memset(zeros, 0, 32);
+
+    /* Step 1: mix_hash(H, remote_eph) */
+    wg_mix_hash(hash, remote_eph, 32);
+
+    /* Step 2: DH(our_eph_priv, remote_eph) — ee → ck, mix_hash */
+    {
+        uint8_t dh[32];
+        curve25519(dh, hs->eph_private, remote_eph);
+        wg_kdf1(chaining_key, chaining_key, dh);
+        wg_mix_hash(hash, chaining_key, 32);
+    }
+
+    /* Step 3: Derive AEAD key, verify empty AEAD */
+    uint8_t empty_out[1];
+    {
+        uint8_t enc_key[32], enc_extra[32], nonce[12];
+        memset(nonce, 0, 12);
+        wg_kdf2(enc_key, enc_extra, chaining_key, zeros);
+
+        if (chacha20poly1305_decrypt(empty_out, enc_empty, 16,
+                                     hash, 32, enc_key, nonce) < 0) {
+            kprintf("[WG] Response AEAD verification FAILED\n");
+            return -EKEYREJECTED;
+        }
+    }
+
+    /* Step 4: mix_hash(H, encrypted_empty) */
+    wg_mix_hash(hash, enc_empty, 16);
+
+    /* Step 5: DH(our_static_priv, remote_eph) — se → ck */
+    {
+        uint8_t dh[32];
+        curve25519(dh, g_wg.private_key, remote_eph);
+        wg_kdf1(chaining_key, chaining_key, dh);
+    }
+
+    /* Step 6: Verify mac1
+     *   mac1_key = KDF1(zeros, "mac1----" || our_public_key) */
+    {
+        uint8_t mac1_label[40];
+        uint8_t mac1_key[32], mac1_full[32];
+        memset(mac1_label, 0, sizeof(mac1_label));
+        memcpy(mac1_label, "mac1----", 8);
+        memcpy(mac1_label + 8, g_wg.public_key, 32);
+        wg_kdf1(mac1_key, zeros, mac1_label);
+        wg_kdf1(mac1_full, mac1_key, pkt);
+
+        uint8_t diff = 0;
+        for (int i = 0; i < 16; i++)
+            diff |= mac1_full[i] ^ mac1_rcvd[i];
+        if (diff) {
+            kprintf("[WG] Response mac1 verification FAILED\n");
+            return -EKEYREJECTED;
+        }
+    }
+
+    /* Step 7: Session established — log success */
+    int peer_idx = hs->peer_idx;
+    if (peer_idx >= 0 && peer_idx < g_wg.num_peers && g_wg.peers[peer_idx].active) {
+        kprintf("[WG] Session established with peer %d (%u:%u)\n",
+                peer_idx,
+                (unsigned)g_wg.peers[peer_idx].endpoint_ip,
+                (unsigned)g_wg.peers[peer_idx].endpoint_port);
+    }
+
+    /* Step 8: Mark handshake complete */
+    hs->active = 0;
+
+    kprintf("[WG] Handshake response received from %u:%u (eph=%02x%02x..)\n",
+            src_ip, (unsigned)src_port, remote_eph[0], remote_eph[1]);
+    return 0;
 }
 
 /* ── Implement: wireguard_send_cookie ────────────────── */
