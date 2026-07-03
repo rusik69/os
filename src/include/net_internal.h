@@ -4,6 +4,7 @@
 #include "net.h"
 #include "types.h"
 #include "tcp_bbr.h"   /* struct bbr_data for inline embedding in tcp_conn */
+#include "tcp_cubic.h" /* struct cubic_data for inline embedding in tcp_conn */
 
 /* Shared network state — defined in net.c */
 extern uint8_t  net_our_mac[6];
@@ -152,11 +153,8 @@ struct tcp_conn {
     /* TCP Fast Open (kind 34) */
     int     tfo_cookie_present;     /* 1 if TFO cookie was received */
     uint8_t tfo_cookie[8];          /* TFO cookie value */
-    /* CUBIC congestion control state */
-    uint32_t cubic_wmax;            /* W_max: cwnd at last congestion event */
-    uint64_t cubic_epoch_start;     /* tick when the current epoch started */
-    uint32_t cubic_origin_point;    /* origin point for cubic growth */
-    int      cubic_use_cubic;       /* 1 = using CUBIC algorithm */
+    /* CUBIC congestion control state (embedded struct) */
+    struct cubic_data cubic;
     /* RACK (Recent ACKnowledgment) loss detection — Item 156 */
     uint32_t rack_fwd_mark;         /* highest seq delivered (ACKed or SACKed) */
     uint64_t rack_fwd_tick;         /* tick when fwd_mark was last updated */
