@@ -1,5 +1,7 @@
 /* tcp_vegas.c — TCP Vegas (early congestion detection via RTT) */
 
+#include "tcp_vegas.h"
+#include "net_internal.h"   /* struct tcp_conn */
 #include "types.h"
 #include "printf.h"
 #include "string.h"
@@ -26,24 +28,6 @@
  *
  * where diff = (Expected - Actual) * BaseRTT ≈ cwnd * (RTT - BaseRTT) / RTT
  */
-
-/* Vegas thresholds (in segments) */
-#define VEGAS_ALPHA    2        /* low threshold */
-#define VEGAS_BETA     4        /* high threshold */
-#define VEGAS_GAMMA    1        /* slow-start threshold (exit threshold) */
-
-/* Vegas per-connection state */
-struct vegas_data {
-    uint32_t base_rtt;          /* minimum observed RTT (in ticks) */
-    uint32_t current_rtt;       /* latest RTT sample */
-    uint32_t cwnd;              /* current congestion window */
-    uint32_t ssthresh;          /* slow-start threshold */
-    uint64_t last_ack_tick;     /* tick when last ACK was processed */
-    int      initialised;
-};
-
-/* Phase of slow-start: detect first congestion via RTT increase */
-#define VEGAS_EXPECTED_RATE(cwnd, base_rtt)  ((cwnd) * 1000 / (base_rtt))
 
 void vegas_init(struct vegas_data *v)
 {
@@ -144,7 +128,99 @@ void vegas_set_cwnd(struct vegas_data *v, uint32_t cwnd)
     v->cwnd = cwnd;
 }
 
-/* ── Implement: tcp_vegas_cong_avoid ────────────────── */
-int tcp_vegas_cong_avoid(void *sk) { (void)sk; return 0; }
-/* ── Implement: tcp_vegas_ssthresh ────────────────── */
-uint32_t tcp_vegas_ssthresh(void *sk) { (void)sk; return 2; }
+/* ═══════════════════════════════════════════════════════════════════════
+ *  TCP congestion control callbacks
+ *
+ *  These are called by the TCP stack (or by a pluggable cc_ops framework)
+ *  during connection lifecycle.  The void *sk parameter is a pointer to
+ *  the corresponding struct tcp_conn.
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── tcp_vegas_init ──────────────────────────────────────────────────
+ *
+ * Initialise the per-connection Vegas state when the connection is
+ * established or when the CC algorithm is switched to Vegas.
+ * Returns 0 on success, -EINVAL on NULL sk.
+ */
+int tcp_vegas_init(void *sk)
+{
+    if (!sk)
+        return -EINVAL;
+
+    struct tcp_conn *conn = (struct tcp_conn *)sk;
+    vegas_init(&conn->vegas);
+    return 0;
+}
+
+/* ── tcp_vegas_cong_avoid ────────────────────────────────────────────
+ *
+ * Called per ACK during congestion avoidance to update the congestion
+ * window using the Vegas delay-based algorithm.  Compares expected
+ * throughput (cwnd/BaseRTT) with actual throughput (cwnd/RTT) and
+ * adjusts the window when the difference exceeds the α/β thresholds.
+ *
+ * Returns 0 on success, -EINVAL on NULL sk.
+ */
+int tcp_vegas_cong_avoid(void *sk)
+{
+    if (!sk)
+        return -EINVAL;
+
+    struct tcp_conn *conn = (struct tcp_conn *)sk;
+    conn->cwnd = vegas_update(&conn->vegas, conn->cwnd, 1, 0);
+    return 0;
+}
+
+/* ── tcp_vegas_ssthresh ──────────────────────────────────────────────
+ *
+ * Called when a loss event occurs (dupack or timeout) to compute the
+ * new slow-start threshold.  Vegas uses standard Reno halving:
+ *
+ *   ssthresh = max(cwnd / 2, 2)
+ *
+ * Returns the new ssthresh in segments (minimum 2).
+ */
+uint32_t tcp_vegas_ssthresh(void *sk)
+{
+    if (!sk)
+        return 2;
+
+    struct tcp_conn *conn = (struct tcp_conn *)sk;
+    struct vegas_data *v = &conn->vegas;
+
+    vegas_on_loss(v, conn->cwnd);
+    return v->ssthresh;
+}
+
+/* ── tcp_vegas_acked ─────────────────────────────────────────────────
+ *
+ * Called when an ACK arrives.  Updates the Vegas RTT measurement via
+ * vegas_update_rtt() using the current smoothed RTT from conn->srtt,
+ * then advances the congestion window through vegas_update().
+ *
+ * @sk     Pointer to struct tcp_conn
+ * @acked  Number of bytes newly ACKed by this segment (unused by Vegas)
+ * Returns 0 on success, -EINVAL on NULL sk.
+ */
+int tcp_vegas_acked(void *sk, uint32_t acked)
+{
+    (void)acked;
+    if (!sk)
+        return -EINVAL;
+
+    struct tcp_conn *conn = (struct tcp_conn *)sk;
+    struct vegas_data *v = &conn->vegas;
+
+    /* Convert srtt from scaled value (scaled by 8) to ticks */
+    uint32_t rtt_ticks = 0;
+    if (conn->srtt > 0)
+        rtt_ticks = (uint32_t)((uint32_t)conn->srtt / 8);
+
+    /* Update RTT measurement for Vegas expected/actual comparison */
+    vegas_update_rtt(v, rtt_ticks);
+
+    /* Update congestion window using Vegas delay-based algorithm */
+    conn->cwnd = vegas_update(v, conn->cwnd, 1, 0);
+
+    return 0;
+}

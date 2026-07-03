@@ -8,6 +8,7 @@
 #include "tcp_cubic.h" /* struct cubic_data for inline embedding in tcp_conn */
 #include "tcp_newreno.h" /* struct newreno_data for inline embedding in tcp_conn */
 #include "tcp_westwood.h" /* struct westwood_data for inline embedding in tcp_conn */
+#include "tcp_vegas.h"   /* struct vegas_data for inline embedding in tcp_conn */
 
 /* Shared network state — defined in net.c */
 extern uint8_t  net_our_mac[6];
@@ -199,6 +200,10 @@ struct tcp_conn {
     /* ── TCP Westwood+ congestion control state ─────────────────────────
      * Bandwidth-estimation based CC for lossy links. */
     struct westwood_data westwood;
+
+    /* ── TCP Vegas congestion control state ─────────────────────────────
+     * Delay-based congestion avoidance (Brakmo & Peterson, 1995). */
+    struct vegas_data vegas;
 };
 
 extern struct tcp_conn tcp_conns[MAX_TCP_CONNS];
