@@ -30,6 +30,18 @@
 #define MPTCP_CAPABLE_SYN_LEN     12  /* kind(1) + len(1) + sub/flags(1) + resv(1) + key(8) */
 #define MPTCP_CAPABLE_ACK_LEN    24  /* kind(1) + len(1) + sub/flags(1) + resv(1) + snd_key(8) + rcv_key(8) + hmac(8) */
 
+/* ADD_ADDR / REMOVE_ADDR option lengths (RFC 8684 §3.4) */
+#define MPTCP_ADD_ADDR4_LEN       10  /* IPv4 ADD_ADDR without port */
+#define MPTCP_ADD_ADDR4_LEN_PORT  12  /* IPv4 ADD_ADDR with port */
+#define MPTCP_REMOVE_ADDR_MIN_LEN  4  /* Minimum REMOVE_ADDR (1 addr_id) */
+
+/* Address advertisement table size */
+#define MPTCP_MAX_ADDRS           8
+
+/* Address entry flags */
+#define MPTCP_ADDR_FLAG_ECHO      0x01  /* E flag — echo of an ADD_ADDR received */
+#define MPTCP_ADDR_FLAG_IPV4      0x02  /* Address is IPv4 */
+
 /* Maximum subflows per MPTCP connection */
 #define MPTCP_MAX_SUBFLOWS  4
 
@@ -42,6 +54,15 @@ struct mptcp_subflow {
     uint32_t    rcv_isn;        /* Receiver's initial sequence number */
     uint8_t     key[8];         /* 64-bit key */
     uint8_t     backup;         /* 1 = backup subflow */
+};
+
+/* Address advertisement entry — tracks ADD_ADDR state per connection */
+struct mptcp_addr_entry {
+    int     used;
+    uint8_t addr_id;       /* Address ID (unique within connection) */
+    uint32_t addr;          /* IPv4 address (network byte order) */
+    uint16_t port;          /* Port (0 = use existing subflow port) */
+    uint8_t  flags;         /* MPTCP_ADDR_FLAG_* */
 };
 
 /* MPTCP connection — aggregates multiple subflows */
@@ -60,6 +81,9 @@ struct mptcp_conn {
     uint16_t    rcvlen;
     /* State */
     int         established;
+    /* Address advertisement table (ADD_ADDR/REMOVE_ADDR) */
+    uint8_t     num_addrs;
+    struct mptcp_addr_entry addrs[MPTCP_MAX_ADDRS];
 };
 
 /* API */
@@ -90,5 +114,33 @@ int  mptcp_handle_capable(int conn_id, const uint8_t *opt, uint16_t optlen);
 int  mptcp_handle_join(int conn_id, const uint8_t *opt, uint16_t optlen);
 int  mptcp_handle_dss(int conn_id, const uint8_t *opt, uint16_t optlen,
                        uint32_t seq, uint32_t ack);
+
+/* Address advertisement (ADD_ADDR / REMOVE_ADDR) */
+int  mptcp_has_addr(uint32_t token, uint32_t addr);
+int  mptcp_find_free_addr(uint32_t token, uint8_t *addr_id_out);
+
+/* Build ADD_ADDR option (IPv4) for TCP options */
+int  mptcp_build_add_addr_v4(uint8_t *buf, uint16_t *len,
+                              uint8_t addr_id, uint32_t addr,
+                              uint16_t port, uint8_t flags);
+
+/* Build REMOVE_ADDR option for TCP options */
+int  mptcp_build_remove_addr(uint8_t *buf, uint16_t *len,
+                              uint8_t addr_id);
+
+/* Parse received ADD_ADDR option */
+int  mptcp_parse_add_addr(const uint8_t *opt, uint16_t optlen,
+                           uint8_t *addr_id_out, uint32_t *addr_out,
+                           uint16_t *port_out, uint8_t *flags_out);
+
+/* Parse received REMOVE_ADDR option */
+int  mptcp_parse_remove_addr(const uint8_t *opt, uint16_t optlen,
+                              uint8_t *addr_id_out);
+
+/* Handle received ADD_ADDR on a connection */
+int  mptcp_handle_add_addr(int conn_id, const uint8_t *opt, uint16_t optlen);
+
+/* Handle received REMOVE_ADDR on a connection */
+int  mptcp_handle_remove_addr(int conn_id, const uint8_t *opt, uint16_t optlen);
 
 #endif /* MPTCP_H */
