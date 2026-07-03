@@ -1078,6 +1078,9 @@ static void handle_ip(const uint8_t *data, uint16_t len) {
                             IPPROTO_UDP, 0, payload_len);
         }
         handle_udp(ip, payload, payload_len);
+    } else if (ip->protocol == IP_PROTO_SCTP) {
+        handle_sctp(ntohl(ip->src_ip), ntohl(ip->dst_ip),
+                    (const uint8_t *)payload, payload_len);
     }
 }
 

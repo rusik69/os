@@ -230,17 +230,24 @@ void handle_sctp(uint32_t src_ip, uint32_t dst_ip,
 
         switch (chunk->type) {
         case SCTP_INIT:
-            /* Respond with INIT-ACK */
-            a->peer_ip = src_ip;
-            a->peer_port = ntohs(sh->src_port);
-            a->peer_tag = ntohl(*(const uint32_t *)(payload + sizeof(*sh) + sizeof(*chunk)));
-            a->state = SCTP_STATE_ESTABLISHED;
+            /* Delegate to state machine for proper INIT-ACK + cookie */
+            sctp_sm_handle_init(a, src_ip, sh, chunk,
+                                chunk_len);
             break;
 
         case SCTP_INIT_ACK:
-            /* INIT-ACK received: transition to ESTABLISHED */
-            a->peer_tag = ntohl(*(const uint32_t *)(payload + sizeof(*sh) + sizeof(*chunk)));
-            a->state = SCTP_STATE_ESTABLISHED;
+            /* Delegate to state machine for COOKIE-ECHO */
+            sctp_sm_handle_init_ack(a, src_ip, sh, chunk,
+                                    chunk_len);
+            break;
+
+        case SCTP_COOKIE_ECHO:
+            sctp_sm_handle_cookie_echo(a, src_ip, sh, chunk,
+                                       chunk_len);
+            break;
+
+        case SCTP_COOKIE_ACK:
+            sctp_sm_handle_cookie_ack(a, sh);
             break;
 
         case SCTP_HEARTBEAT: {

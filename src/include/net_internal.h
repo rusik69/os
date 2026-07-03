@@ -315,6 +315,10 @@ void handle_udp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len);
 void handle_ipv6(const uint8_t *data, uint16_t len);
 void handle_icmpv6(struct ipv6_header *ip6, const uint8_t *payload, uint16_t len);
 
+/* SCTP protocol handler (IPPROTO_SCTP = 132) */
+void handle_sctp(uint32_t src_ip, uint32_t dst_ip,
+                 const uint8_t *payload, uint16_t len);
+
 /* IPv6 send helpers */
 void send_ipv6(const struct in6_addr *dst, uint8_t next_hdr,
                const void *payload, uint16_t len);

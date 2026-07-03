@@ -64,6 +64,24 @@ struct sctp_chunk {
 /* SCTP association */
 #define SCTP_MAX_STREAMS     16
 #define SCTP_MAX_ASSOCS      8
+#define SCTP_COOKIE_SECRET_SIZE 32
+#define SCTP_MAX_COOKIE_SIZE 128
+
+/* State cookie (RFC 4960 §5.1.3) — contains parameters needed to
+ * recreate TCB when COOKIE-ECHO arrives back */
+struct sctp_cookie {
+    uint32_t    local_tag;      /* Responder's tag */
+    uint32_t    peer_tag;       /* Initiator's tag */
+    uint32_t    local_tsn;      /* Responder's initial TSN */
+    uint32_t    peer_tsn;       /* Initiator's initial TSN */
+    uint16_t    local_port;     /* Responder's port */
+    uint16_t    peer_port;      /* Initiator's port */
+    uint32_t    peer_ip;        /* Initiator's IP */
+    uint16_t    num_in_streams;
+    uint16_t    num_out_streams;
+    uint32_t    timestamp;      /* Creation time (ticks) */
+    uint32_t    crc;            /* Integrity check */
+} __attribute__((packed));
 
 struct sctp_stream {
     uint16_t id;
@@ -108,5 +126,28 @@ int  sctp_is_valid_fd(int fd);
 /* Called from IP layer when protocol=132 */
 void handle_sctp(uint32_t src_ip, uint32_t dst_ip,
                  const uint8_t *payload, uint16_t len);
+
+/* State machine: called from handle_sctp for individual chunk processing */
+int  sctp_sm_handle_init(struct sctp_assoc *a, uint32_t src_ip,
+                         const struct sctp_header *sh,
+                         const struct sctp_chunk *chunk, uint16_t chunk_len);
+int  sctp_sm_handle_init_ack(struct sctp_assoc *a, uint32_t src_ip,
+                             const struct sctp_header *sh,
+                             const struct sctp_chunk *chunk, uint16_t chunk_len);
+int  sctp_sm_handle_cookie_echo(struct sctp_assoc *a, uint32_t src_ip,
+                                const struct sctp_header *sh,
+                                const struct sctp_chunk *chunk, uint16_t chunk_len);
+int  sctp_sm_handle_cookie_ack(struct sctp_assoc *a,
+                               const struct sctp_header *sh);
+int  sctp_sm_send_init_ack(struct sctp_assoc *a, uint32_t peer_ip,
+                           uint16_t peer_port, uint32_t peer_tag,
+                           uint32_t peer_tsn, uint8_t num_in,
+                           uint8_t num_out);
+
+/* Cookie management */
+int  sctp_cookie_generate(const struct sctp_cookie *cookie_in,
+                          uint8_t *out_cookie, uint16_t *out_len);
+int  sctp_cookie_validate(const uint8_t *cookie_data, uint16_t cookie_len,
+                          struct sctp_cookie *cookie_out);
 
 #endif /* SCTP_H */
