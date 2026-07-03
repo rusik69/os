@@ -136,6 +136,12 @@ struct mptcp_conn {
     uint32_t    sched_epoch;        /* Scheduler epoch (increments on subflow add/remove) */
 };
 
+/* ── MPTCP sysctl knobs ──────────────────────────────────────────── */
+/* Global MPTCP enable/disable flag.  When 0, all MPTCP operations
+ * (create, add_subflow, send, etc.) return -EOPNOTSUPP.
+ * Read/write via sysctl "mptcp_enabled" under /proc/sys/kernel/. */
+extern int mptcp_enabled;
+
 /* API */
 void mptcp_init(void);
 int  mptcp_create(void);

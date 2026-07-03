@@ -11,6 +11,7 @@
 #include "timer.h"
 #include "sha256.h"
 #include "hmac.h"
+#include "sysctl.h"
 
 #define MPTCP_MAX_CONNS 8
 
@@ -18,6 +19,33 @@ static struct mptcp_conn mptcp_conns[MPTCP_MAX_CONNS];
 spinlock_t mptcp_lock;
 static int mptcp_initialized = 0;
 static uint32_t mptcp_next_token = 0x10000000;
+
+/* ── MPTCP sysctl knobs ───────────────────────────────────────────── */
+
+/* Global MPTCP enable/disable flag.
+ * When 0, all MPTCP operations are rejected (returns -EOPNOTSUPP).
+ * In a future per-netns model, this would be per-netns; for now it is
+ * a single global that acts as the "initial netns" knob. */
+int mptcp_enabled = 1;
+
+static int sysctl_read_mptcp_enabled(char *buf, int max)
+{
+	if (max < 3)
+		return 0;
+	buf[0] = '0' + (char)mptcp_enabled;
+	buf[1] = '\n';
+	buf[2] = '\0';
+	return 2;
+}
+
+static int sysctl_write_mptcp_enabled(const char *buf, int len)
+{
+	if (len > 0 && buf[0] >= '0' && buf[0] <= '1')
+		mptcp_enabled = buf[0] - '0';
+	return 0;
+}
+
+/* ── Initialisation ───────────────────────────────────────────────── */
 
 void mptcp_init(void)
 {
@@ -27,6 +55,12 @@ void mptcp_init(void)
     mptcp_initialized = 1;
     /* Seed token generation */
     mptcp_next_token = 0x10000000 + (uint32_t)(timer_get_ticks() & 0x0FFFFFFF);
+
+    /* Register sysctl knobs */
+    sysctl_register("mptcp_enabled",
+                    sysctl_read_mptcp_enabled,
+                    sysctl_write_mptcp_enabled);
+
     kprintf("[OK] MPTCP: Multipath TCP subflow management initialized\n");
 }
 
@@ -51,6 +85,10 @@ struct mptcp_conn *mptcp_find_by_token(uint32_t token)
 int mptcp_create(void)
 {
     spinlock_acquire(&mptcp_lock);
+    if (!mptcp_enabled) {
+        spinlock_release(&mptcp_lock);
+        return -EOPNOTSUPP;
+    }
     int slot = mptcp_find_free();
     if (slot < 0) {
         spinlock_release(&mptcp_lock);
