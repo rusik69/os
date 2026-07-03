@@ -1,5 +1,7 @@
 /* tcp_hybla.c — TCP Hybla (satellite links) */
 
+#include "tcp_hybla.h"
+#include "net_internal.h"   /* struct tcp_conn */
 #include "types.h"
 #include "printf.h"
 #include "string.h"
@@ -21,31 +23,6 @@
  *
  * Also implements RFC 3465 (Appropriate Byte Counting) integration.
  */
-
-/* Reference RTT for normalisation (25 ms in ticks at TIMER_FREQ=100) */
-#define HYBLA_RTT0          ((TIMER_FREQ * 25) / 1000)  /* 2.5 → 2 ticks */
-#define HYBLA_RTT0_MS       25      /* in milliseconds */
-
-/* Hybla per-connection state */
-struct hybla_data {
-    uint32_t rtt;                   /* current RTT (ticks) */
-    uint32_t rtt0;                  /* reference RTT (ticks) */
-    uint32_t rho;                   /* normalisation ratio = RTT / RTT0 (scaled) */
-    uint32_t rho2;                  /* ρ² (scaled) */
-
-    /* Window */
-    uint32_t cwnd;
-    uint32_t ssthresh;
-
-    /* RTT tracking */
-    uint32_t min_rtt;
-
-    int initialised;
-};
-
-/* Scaling factor for ρ to avoid floating point */
-#define HYBLA_SCALE_SHIFT   8
-#define HYBLA_SCALE         (1U << HYBLA_SCALE_SHIFT)  /* 256 */
 
 void hybla_init(struct hybla_data *h)
 {
@@ -136,7 +113,100 @@ void hybla_set_cwnd(struct hybla_data *h, uint32_t cwnd)
     h->cwnd = cwnd;
 }
 
-/* ── Implement: tcp_hybla_cong_avoid ────────────────── */
-int tcp_hybla_cong_avoid(void *sk) { (void)sk; return 0; }
-/* ── Implement: tcp_hybla_ssthresh ────────────────── */
-uint32_t tcp_hybla_ssthresh(void *sk) { (void)sk; return 2; }
+/* ═══════════════════════════════════════════════════════════════════════
+ *  TCP congestion control callbacks
+ *
+ *  These are called by the TCP stack (or by a pluggable cc_ops framework)
+ *  during connection lifecycle.  The void *sk parameter is a pointer to
+ *  the corresponding struct tcp_conn.
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── tcp_hybla_init ──────────────────────────────────────────────────
+ *
+ * Initialise the per-connection Hybla state when the connection is
+ * established or when the CC algorithm is switched to Hybla.
+ * Returns 0 on success, -EINVAL on NULL sk.
+ */
+int tcp_hybla_init(void *sk)
+{
+    if (!sk)
+        return -EINVAL;
+
+    struct tcp_conn *conn = (struct tcp_conn *)sk;
+    hybla_init(&conn->hybla);
+    return 0;
+}
+
+/* ── tcp_hybla_cong_avoid ────────────────────────────────────────────
+ *
+ * Called per ACK during congestion avoidance to increase the congestion
+ * window using the Hybla normalised rate.  Slow-start uses cwnd += ρ²
+ * per ACK (faster growth for satellite links); congestion avoidance uses
+ * cwnd += ρ² / cwnd per ACK (the normalised AIMD).
+ *
+ * Returns 0 on success, -EINVAL on NULL sk.
+ */
+int tcp_hybla_cong_avoid(void *sk)
+{
+    if (!sk)
+        return -EINVAL;
+
+    struct tcp_conn *conn = (struct tcp_conn *)sk;
+    conn->cwnd = hybla_update(&conn->hybla, conn->cwnd, 1);
+    return 0;
+}
+
+/* ── tcp_hybla_ssthresh ──────────────────────────────────────────────
+ *
+ * Called when a loss event occurs (dupack or timeout) to compute the
+ * new slow-start threshold.  Hybla uses standard multiplicative decrease
+ * (same as Reno):
+ *
+ *   ssthresh = max(cwnd / 2, 2)
+ *
+ * Returns the new ssthresh in segments (minimum 2).
+ */
+uint32_t tcp_hybla_ssthresh(void *sk)
+{
+    if (!sk)
+        return 2;
+
+    struct tcp_conn *conn = (struct tcp_conn *)sk;
+    struct hybla_data *h = &conn->hybla;
+
+    hybla_on_loss(h, conn->cwnd);
+    return h->ssthresh;
+}
+
+/* ── tcp_hybla_acked ─────────────────────────────────────────────────
+ *
+ * Called when an ACK arrives.  Updates the Hybla RTT measurement via
+ * hybla_update_rtt() using the current smoothed RTT from conn->srtt,
+ * then advances the congestion window through hybla_update().
+ *
+ * @sk     Pointer to struct tcp_conn
+ * @acked  Number of bytes newly ACKed by this segment
+ * Returns 0 on success, -EINVAL on NULL sk.
+ */
+int tcp_hybla_acked(void *sk, uint32_t acked)
+{
+    (void)acked;
+    if (!sk)
+        return -EINVAL;
+
+    struct tcp_conn *conn = (struct tcp_conn *)sk;
+    struct hybla_data *h = &conn->hybla;
+
+    /* Convert srtt from scaled value (scaled by 8) to ticks */
+    uint32_t rtt_ticks = 0;
+    if (conn->srtt > 0)
+        rtt_ticks = (uint32_t)((uint32_t)conn->srtt / 8);
+
+    /* Update RTT measurement for ρ normalisation */
+    hybla_update_rtt(h, rtt_ticks);
+
+    /* Update congestion window using Hybla normalised AIMD */
+    conn->cwnd = hybla_update(h, conn->cwnd, 1);
+
+    return 0;
+}

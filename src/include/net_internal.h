@@ -9,6 +9,7 @@
 #include "tcp_newreno.h" /* struct newreno_data for inline embedding in tcp_conn */
 #include "tcp_westwood.h" /* struct westwood_data for inline embedding in tcp_conn */
 #include "tcp_vegas.h"   /* struct vegas_data for inline embedding in tcp_conn */
+#include "tcp_hybla.h"   /* struct hybla_data for inline embedding in tcp_conn */
 
 /* Shared network state — defined in net.c */
 extern uint8_t  net_our_mac[6];
@@ -204,6 +205,10 @@ struct tcp_conn {
     /* ── TCP Vegas congestion control state ─────────────────────────────
      * Delay-based congestion avoidance (Brakmo & Peterson, 1995). */
     struct vegas_data vegas;
+
+    /* ── TCP Hybla congestion control state ──────────────────────────────
+     * RTT-normalised congestion control for satellite links. */
+    struct hybla_data hybla;
 };
 
 extern struct tcp_conn tcp_conns[MAX_TCP_CONNS];
