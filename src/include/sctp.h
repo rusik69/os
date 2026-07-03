@@ -89,6 +89,41 @@ struct sctp_stream {
     uint16_t out_seq;
 };
 
+/* DATA chunk payload header (RFC 4960 §3.3.1) */
+struct sctp_data_hdr {
+    struct sctp_chunk hdr;
+    uint32_t          tsn;
+    uint16_t          stream_id;
+    uint16_t          stream_seq;
+    uint32_t          ppid;
+    /* data follows */
+} __attribute__((packed));
+
+/* SACK chunk (RFC 4960 §3.3.4) */
+struct sctp_sack_hdr {
+    struct sctp_chunk hdr;
+    uint32_t          cum_tsn_ack;
+    uint32_t          a_rwnd;
+    uint16_t          num_gap_blocks;
+    uint16_t          num_dup_tsns;
+    /* gap_ack_blocks[] and dup_tsn[] follow */
+} __attribute__((packed));
+
+/* Single gap ack block (start/end offsets from cum_tsn_ack) */
+struct sctp_gap_block {
+    uint16_t start;
+    uint16_t end;
+} __attribute__((packed));
+
+/* DATA chunk flags */
+#define SCTP_DATA_UNORDERED  0x01  /* U bit */
+#define SCTP_DATA_BEG        0x02  /* B bit — beginning fragment */
+#define SCTP_DATA_END        0x04  /* E bit — ending fragment */
+#define SCTP_DATA_LAST_FRAG  (SCTP_DATA_BEG | SCTP_DATA_END) /* complete unfragmented */
+
+#define SCTP_MAX_GAP_BLOCKS  16
+#define SCTP_MAX_DUP_TSNS   16
+
 struct sctp_assoc {
     int         used;
     uint32_t    local_tag;
@@ -107,6 +142,19 @@ struct sctp_assoc {
     /* Transmit buffer */
     uint8_t     sndbuf[65536];
     uint16_t    sndlen;
+    /* TSN tracking */
+    uint32_t    initial_tsn;
+    uint32_t    next_tsn;
+    uint32_t    cum_tsn_ack;
+    uint32_t    last_rcvd_tsn;
+    uint32_t    rwnd;
+    uint32_t    peer_rwnd;
+    /* SACK gap tracking */
+    uint32_t    gap_ack_start[SCTP_MAX_GAP_BLOCKS];
+    uint32_t    gap_ack_end[SCTP_MAX_GAP_BLOCKS];
+    uint8_t     num_gap_blocks;
+    uint32_t    dup_tsns[SCTP_MAX_DUP_TSNS];
+    uint8_t     num_dup_tsns;
     /* Association statistics */
     uint64_t    rx_packets;
     uint64_t    tx_packets;
@@ -149,5 +197,18 @@ int  sctp_cookie_generate(const struct sctp_cookie *cookie_in,
                           uint8_t *out_cookie, uint16_t *out_len);
 int  sctp_cookie_validate(const uint8_t *cookie_data, uint16_t cookie_len,
                           struct sctp_cookie *cookie_out);
+
+/* TSN management */
+uint32_t sctp_tsn_alloc(struct sctp_assoc *a);
+int      sctp_tsn_rcv_data(struct sctp_assoc *a, uint32_t src_ip,
+                           uint32_t peer_tag,
+                           const struct sctp_data_hdr *dh,
+                           uint16_t chunk_len);
+int      sctp_tsn_build_sack(struct sctp_assoc *a, uint32_t peer_ip,
+                             uint16_t peer_port, uint32_t peer_tag,
+                             uint16_t local_port);
+int      sctp_tsn_process_sack(struct sctp_assoc *a,
+                               const struct sctp_sack_hdr *sh,
+                               uint16_t chunk_len);
 
 #endif /* SCTP_H */

@@ -318,6 +318,7 @@ C_SRCS = src/kernel/kernel.c \
          src/net/tcp_newreno.c \
          src/net/sctp.c \
          src/net/sctp_sm.c \
+         src/net/sctp_tsn.c \
          src/net/dccp.c \
          src/net/mptcp.c \
          src/net/mptcp_sched.c \

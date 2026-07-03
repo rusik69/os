@@ -60,6 +60,22 @@ int sctp_create(int fd, int type)
     a->local_port = (uint16_t)fd;
     a->num_in_streams = SCTP_MAX_STREAMS;
     a->num_out_streams = SCTP_MAX_STREAMS;
+    /* Initialize TSN tracking */
+    a->initial_tsn = 100;
+    a->next_tsn = 100;
+    a->cum_tsn_ack = 0;
+    a->last_rcvd_tsn = 0;
+    a->rwnd = 65536;
+    a->peer_rwnd = 65536;
+    /* Initialize stream sequence numbers */
+    for (int i = 0; i < SCTP_MAX_STREAMS; i++) {
+        a->in_streams[i].id = (uint16_t)i;
+        a->in_streams[i].in_seq = 0;
+        a->in_streams[i].out_seq = 0;
+        a->out_streams[i].id = (uint16_t)i;
+        a->out_streams[i].in_seq = 0;
+        a->out_streams[i].out_seq = 0;
+    }
 
     spinlock_release(&sctp_lock);
     return 0;
@@ -124,7 +140,6 @@ int sctp_connect(int fd, uint32_t ip, uint16_t port)
 
 int sctp_send(int fd, const void *data, uint16_t len, uint16_t stream_id)
 {
-    (void)stream_id;
     spinlock_acquire(&sctp_lock);
     struct sctp_assoc *a = sctp_find_by_fd(fd);
     if (!a || a->state != SCTP_STATE_ESTABLISHED) {
@@ -132,26 +147,40 @@ int sctp_send(int fd, const void *data, uint16_t len, uint16_t stream_id)
         return -EINVAL;
     }
 
-    /* Build DATA chunk */
-    uint8_t pkt[sizeof(struct sctp_header) + sizeof(struct sctp_chunk) + 65536];
+    if (stream_id >= SCTP_MAX_STREAMS)
+        stream_id = 0;
+
+    /* Build DATA chunk with TSN, stream info, and payload */
+    uint16_t data_chunk_size = sizeof(struct sctp_data_hdr) + len;
+    uint8_t pkt[sizeof(struct sctp_header) + data_chunk_size];
     struct sctp_header *sh = (struct sctp_header *)pkt;
     sh->src_port = htons(a->local_port);
     sh->dst_port = htons(a->peer_port);
     sh->vtag = htonl(a->peer_tag);
 
-    struct sctp_chunk *chunk = (struct sctp_chunk *)(pkt + sizeof(*sh));
-    chunk->type = SCTP_DATA;
-    chunk->flags = 0x07;  /* B=1, E=1, U=1 (unordered complete) */
-    chunk->length = htons(sizeof(*chunk) + len);
-    memcpy(pkt + sizeof(*sh) + sizeof(*chunk), data, len);
+    struct sctp_data_hdr *dh = (struct sctp_data_hdr *)(pkt + sizeof(*sh));
+    dh->hdr.type   = SCTP_DATA;
+    dh->hdr.flags  = SCTP_DATA_LAST_FRAG;  /* B=1, E=1, U=0 — complete msg */
+    dh->hdr.length = htons(data_chunk_size);
+    dh->tsn        = htonl(sctp_tsn_alloc(a));
+    dh->stream_id  = htons(stream_id);
+    dh->stream_seq = htons(a->out_streams[stream_id].out_seq);
+    dh->ppid       = 0;
+    memcpy(pkt + sizeof(*sh) + sizeof(*dh), data, len);
 
-    uint16_t pkt_len = sizeof(*sh) + sizeof(*chunk) + len;
+    a->out_streams[stream_id].out_seq++;
+    uint16_t pkt_len = sizeof(*sh) + data_chunk_size;
     sh->checksum = 0;  /* CRC32c would go here */
 
     send_ip(a->peer_ip, IPPROTO_SCTP, pkt, pkt_len);
     a->tx_packets++;
+
+    kprintf("sctp: sent DATA tsn=%u stream=%u seq=%u len=%u\n",
+            ntohl(dh->tsn), stream_id,
+            ntohs(dh->stream_seq), len);
+
     spinlock_release(&sctp_lock);
-    return len;
+    return (int)len;
 }
 
 int sctp_recv(int fd, void *buf, uint16_t maxlen, uint16_t *stream_id)
@@ -291,12 +320,12 @@ void handle_sctp(uint32_t src_ip, uint32_t dst_ip,
             break;
 
         case SCTP_DATA: {
-            uint16_t chunk_data_len = chunk_len - sizeof(*chunk);
-            size_t data_len = chunk_data_len;
-            size_t rcvbuf_size = sizeof(a->rcvbuf);
-            if (data_len > rcvbuf_size) data_len = rcvbuf_size;
-            memcpy(a->rcvbuf, (uint8_t *)(chunk + 1), data_len);
-            a->rcvlen = data_len;
+            /* Use TSN-aware DATA handler */
+            const struct sctp_data_hdr *dh =
+                (const struct sctp_data_hdr *)chunk;
+            sctp_tsn_rcv_data(a, src_ip,
+                              ntohl(sh->vtag),
+                              dh, chunk_len);
             break;
         }
 
@@ -312,13 +341,13 @@ void handle_sctp(uint32_t src_ip, uint32_t dst_ip,
             a->state = SCTP_STATE_CLOSED;
             break;
 
-        case SCTP_SACK:
-            /* Selective ACK — update congestion window */
-            kprintf("sctp: SACK from %d.%d.%d.%d:%u\n",
-                    (src_ip >> 24) & 0xFF, (src_ip >> 16) & 0xFF,
-                    (src_ip >> 8) & 0xFF, src_ip & 0xFF,
-                    ntohs(sh->src_port));
+        case SCTP_SACK: {
+            /* Process SACK to update cum_tsn_ack */
+            const struct sctp_sack_hdr *sack =
+                (const struct sctp_sack_hdr *)chunk;
+            sctp_tsn_process_sack(a, sack, chunk_len);
             break;
+        }
         default:
             break;
         }
