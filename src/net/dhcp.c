@@ -1187,30 +1187,214 @@ int dhcpv6_pd_get_prefix(uint8_t *prefix_out, uint8_t *length_out)
 #include "module.h"
 module_init(dhcp_init);
 
-/* ── Implement: dhcp_send_discover ────────────────── */
-int dhcp_send_discover(void *dev)
+/* ── dhcp_send_discover ───────────────────────────────────────────
+ * Build and send a DHCPDISCOVER packet via the specified network device.
+ * The caller is expected to have set dhcp_xid before calling.
+ * Returns 0 on success, negative errno on failure.
+ */
+int dhcp_send_discover(struct net_device *dev)
 {
-    if (!dev) {
-        kprintf("[dhcp] dhcp_send_discover: NULL dev\n");
-        return -EINVAL;
-    }
-    kprintf("[dhcp] dhcp_send_discover: dev=%p (stub)\n", dev);
-    return -EOPNOTSUPP;
+	uint8_t frame[1518];
+	uint8_t dhcp_buf[300];
+	struct eth_header *eth;
+	struct ip_header *ip;
+	struct udp_header *udp;
+	uint8_t *opt;
+	uint16_t dhcp_len;
+	uint16_t udp_len;
+	uint16_t frame_len;
+	int ret;
+
+	if (!dev || !dev->transmit) {
+		kprintf("[dhcp] dhcp_send_discover: NULL dev or no transmit\n");
+		return -EINVAL;
+	}
+
+	/* Build DHCP DISCOVER payload */
+	memset(dhcp_buf, 0, sizeof(dhcp_buf));
+	{
+		struct dhcp_packet *dhcp = (struct dhcp_packet *)dhcp_buf;
+		dhcp->op = 1;           /* BOOTREQUEST */
+		dhcp->htype = 1;        /* Ethernet */
+		dhcp->hlen = 6;
+		dhcp->xid = htonl(dhcp_xid);
+		dhcp->flags = htons(0x8000);  /* Broadcast flag */
+		dhcp->magic_cookie = htonl(DHCP_MAGIC);
+		memcpy(dhcp->chaddr, dev->mac, 6);
+	}
+
+	/* DHCP options */
+	opt = dhcp_buf + sizeof(struct dhcp_packet);
+	*opt++ = 53; *opt++ = 1; *opt++ = DHCP_DISCOVER;  /* Message type */
+	*opt++ = 55; *opt++ = 3;                            /* Parameter list */
+	*opt++ = 1;   /* Subnet mask */
+	*opt++ = 3;   /* Router */
+	*opt++ = 6;   /* DNS server */
+	*opt++ = 255; /* End option */
+	dhcp_len = (uint16_t)(opt - dhcp_buf);
+
+	/* Build IP header */
+	ip = (struct ip_header *)(frame + sizeof(struct eth_header));
+	memset(ip, 0, sizeof(*ip));
+	ip->version_ihl = 0x45;
+	ip->ttl = 64;
+	ip->protocol = IP_PROTO_UDP;
+	ip->src_ip = 0;           /* 0.0.0.0 before we have an IP */
+	ip->dst_ip = htonl(0xFFFFFFFFU);  /* 255.255.255.255 */
+
+	udp_len = sizeof(struct udp_header) + dhcp_len;
+	ip->total_len = htons((uint16_t)(sizeof(struct ip_header) + udp_len));
+	ip->id = htons((uint16_t)__sync_fetch_and_add(&net_ip_id_counter, 1));
+	ip->checksum = 0;
+
+	/* Build UDP header */
+	udp = (struct udp_header *)(frame + sizeof(struct eth_header) + sizeof(struct ip_header));
+	udp->src_port = htons(DHCP_CLIENT_PORT);
+	udp->dst_port = htons(DHCP_SERVER_PORT);
+	udp->length = htons(udp_len);
+	udp->checksum = 0;
+
+	/* Copy DHCP payload after UDP header */
+	memcpy(frame + sizeof(struct eth_header) + sizeof(struct ip_header) + sizeof(struct udp_header),
+	       dhcp_buf, dhcp_len);
+
+	/* Compute IP checksum */
+	ip->checksum = net_checksum(ip, sizeof(struct ip_header));
+
+	/* Build Ethernet header */
+	eth = (struct eth_header *)frame;
+	memset(eth->dst, 0xFF, 6);           /* Broadcast */
+	memcpy(eth->src, dev->mac, 6);
+	eth->type = htons(ETH_TYPE_IP);
+
+	frame_len = (uint16_t)(sizeof(struct eth_header) + sizeof(struct ip_header) + udp_len);
+
+	/* Send via device */
+	ret = dev->transmit(dev, frame, frame_len);
+	if (ret < 0) {
+		kprintf("[dhcp] dhcp_send_discover: transmit failed (%d)\n", ret);
+		return ret;
+	}
+
+	dhcp_state = 1;
+	kprintf("[dhcp] dhcp_send_discover: sent DISCOVER on %s (xid=0x%x)\n",
+	        dev->name, (uint32_t)dhcp_xid);
+	return 0;
 }
-/* ── Implement: dhcp_send_request ────────────────── */
-int dhcp_send_request(void *dev, uint32_t offered_ip)
+
+/* ── dhcp_send_request ────────────────────────────────────────────
+ * Build and send a DHCPREQUEST packet via the specified network device,
+ * requesting @offered_ip from the DHCP server identified by @dhcp_server_id.
+ * The caller is expected to have set dhcp_xid and dhcp_server_id before calling.
+ * Returns 0 on success, negative errno on failure.
+ */
+int dhcp_send_request(struct net_device *dev, uint32_t offered_ip)
 {
-    if (!dev) {
-        kprintf("[dhcp] dhcp_send_request: NULL dev\n");
-        return -EINVAL;
-    }
-    if (offered_ip == 0) {
-        kprintf("[dhcp] dhcp_send_request: invalid offered IP\n");
-        return -EINVAL;
-    }
-    kprintf("[dhcp] dhcp_send_request: dev=%p offered_ip=%u.%u.%u.%u (stub)\n",
-            dev,
-            (unsigned)((offered_ip >> 24) & 0xFF), (unsigned)((offered_ip >> 16) & 0xFF),
-            (unsigned)((offered_ip >> 8) & 0xFF), (unsigned)(offered_ip & 0xFF));
-    return -EOPNOTSUPP;
+	uint8_t frame[1518];
+	uint8_t dhcp_buf[300];
+	struct eth_header *eth;
+	struct ip_header *ip;
+	struct udp_header *udp;
+	uint8_t *opt;
+	uint16_t dhcp_len;
+	uint16_t udp_len;
+	uint16_t frame_len;
+	int ret;
+
+	if (!dev || !dev->transmit) {
+		kprintf("[dhcp] dhcp_send_request: NULL dev or no transmit\n");
+		return -EINVAL;
+	}
+	if (offered_ip == 0) {
+		kprintf("[dhcp] dhcp_send_request: invalid offered IP\n");
+		return -EINVAL;
+	}
+
+	/* Build DHCP REQUEST payload */
+	memset(dhcp_buf, 0, sizeof(dhcp_buf));
+	{
+		struct dhcp_packet *dhcp = (struct dhcp_packet *)dhcp_buf;
+		dhcp->op = 1;           /* BOOTREQUEST */
+		dhcp->htype = 1;        /* Ethernet */
+		dhcp->hlen = 6;
+		dhcp->xid = htonl(dhcp_xid);
+		dhcp->flags = htons(0x8000);  /* Broadcast flag */
+		dhcp->magic_cookie = htonl(DHCP_MAGIC);
+		memcpy(dhcp->chaddr, dev->mac, 6);
+	}
+
+	/* DHCP options */
+	opt = dhcp_buf + sizeof(struct dhcp_packet);
+	*opt++ = 53; *opt++ = 1; *opt++ = DHCP_REQUEST;  /* Message type */
+	/* Requested IP option (50) */
+	*opt++ = 50; *opt++ = 4;
+	*opt++ = (uint8_t)(offered_ip >> 24);
+	*opt++ = (uint8_t)(offered_ip >> 16);
+	*opt++ = (uint8_t)(offered_ip >> 8);
+	*opt++ = (uint8_t)(offered_ip);
+	/* Server identifier option (54) */
+	*opt++ = 54; *opt++ = 4;
+	*opt++ = (uint8_t)(dhcp_server_id >> 24);
+	*opt++ = (uint8_t)(dhcp_server_id >> 16);
+	*opt++ = (uint8_t)(dhcp_server_id >> 8);
+	*opt++ = (uint8_t)(dhcp_server_id);
+	/* Parameter request list (55) */
+	*opt++ = 55; *opt++ = 3;
+	*opt++ = 1;   /* Subnet mask */
+	*opt++ = 3;   /* Router */
+	*opt++ = 6;   /* DNS server */
+	*opt++ = 255; /* End option */
+	dhcp_len = (uint16_t)(opt - dhcp_buf);
+
+	/* Build IP header */
+	ip = (struct ip_header *)(frame + sizeof(struct eth_header));
+	memset(ip, 0, sizeof(*ip));
+	ip->version_ihl = 0x45;
+	ip->ttl = 64;
+	ip->protocol = IP_PROTO_UDP;
+	ip->src_ip = 0;           /* May not have an IP yet */
+	ip->dst_ip = htonl(0xFFFFFFFFU);  /* Broadcast */
+
+	udp_len = sizeof(struct udp_header) + dhcp_len;
+	ip->total_len = htons((uint16_t)(sizeof(struct ip_header) + udp_len));
+	ip->id = htons((uint16_t)__sync_fetch_and_add(&net_ip_id_counter, 1));
+	ip->checksum = 0;
+
+	/* Build UDP header */
+	udp = (struct udp_header *)(frame + sizeof(struct eth_header) + sizeof(struct ip_header));
+	udp->src_port = htons(DHCP_CLIENT_PORT);
+	udp->dst_port = htons(DHCP_SERVER_PORT);
+	udp->length = htons(udp_len);
+	udp->checksum = 0;
+
+	/* Copy DHCP payload after UDP header */
+	memcpy(frame + sizeof(struct eth_header) + sizeof(struct ip_header) + sizeof(struct udp_header),
+	       dhcp_buf, dhcp_len);
+
+	/* Compute IP checksum */
+	ip->checksum = net_checksum(ip, sizeof(struct ip_header));
+
+	/* Build Ethernet header */
+	eth = (struct eth_header *)frame;
+	memset(eth->dst, 0xFF, 6);           /* Broadcast */
+	memcpy(eth->src, dev->mac, 6);
+	eth->type = htons(ETH_TYPE_IP);
+
+	frame_len = (uint16_t)(sizeof(struct eth_header) + sizeof(struct ip_header) + udp_len);
+
+	/* Send via device */
+	ret = dev->transmit(dev, frame, frame_len);
+	if (ret < 0) {
+		kprintf("[dhcp] dhcp_send_request: transmit failed (%d)\n", ret);
+		return ret;
+	}
+
+	dhcp_state = 2;
+	kprintf("[dhcp] dhcp_send_request: sent REQUEST for %u.%u.%u.%u on %s\n",
+	        (unsigned)((offered_ip >> 24) & 0xFF),
+	        (unsigned)((offered_ip >> 16) & 0xFF),
+	        (unsigned)((offered_ip >> 8) & 0xFF),
+	        (unsigned)(offered_ip & 0xFF),
+	        dev->name);
+	return 0;
 }

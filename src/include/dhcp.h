@@ -1,6 +1,8 @@
 #ifndef DHCP_H
 #define DHCP_H
 #include "types.h"
+#include "netdevice.h"
+
 void dhcp_init(void);
 int dhcp_discover(void);
 int dhcp_renew(void);
@@ -8,6 +10,10 @@ int dhcp_has_lease_func(void);
 uint32_t dhcp_get_lease_time(void);
 void dhcp_set_server(uint32_t ip);
 uint32_t dhcp_get_server(void);
+
+/* Device-aware DHCP send functions */
+int dhcp_send_discover(struct net_device *dev);
+int dhcp_send_request(struct net_device *dev, uint32_t offered_ip);
 
 /* DHCP relay agent (RFC 3046) */
 void dhcp_relay_enable(uint32_t server_ip, uint32_t giaddr);
