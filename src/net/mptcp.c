@@ -186,6 +186,137 @@ int mptcp_recv(uint32_t token, void *buf, uint32_t maxlen)
     return copy_len;
 }
 
+/* ── MPTCP Data Acknowledgement (RFC 8684 §3.3) ────────────────── */
+
+/* Get the current receive-side Data ACK value.
+ * Returns 0 on success, negative errno on failure. */
+int mptcp_get_data_ack(uint32_t token, uint64_t *ack_out)
+{
+    if (!mptcp_initialized)
+        return -ENOSYS;
+    if (!ack_out)
+        return -EINVAL;
+
+    spinlock_acquire(&mptcp_lock);
+    struct mptcp_conn *mc = mptcp_find_by_token(token);
+    if (!mc) {
+        spinlock_release(&mptcp_lock);
+        return -EINVAL;
+    }
+    *ack_out = mc->rcv_data_ack;
+    spinlock_release(&mptcp_lock);
+    return 0;
+}
+
+/* Advance the receive-side Data ACK.
+ * ack is the new data-level ACK position.
+ * Returns 0 on success, negative errno on failure. */
+int mptcp_update_data_ack(uint32_t token, uint64_t ack)
+{
+    if (!mptcp_initialized)
+        return -ENOSYS;
+
+    spinlock_acquire(&mptcp_lock);
+    struct mptcp_conn *mc = mptcp_find_by_token(token);
+    if (!mc) {
+        spinlock_release(&mptcp_lock);
+        return -EINVAL;
+    }
+
+    /* Only advance — never go backward (prevents ACK regressions) */
+    if (ack > mc->rcv_data_ack)
+        mc->rcv_data_ack = ack;
+
+    spinlock_release(&mptcp_lock);
+    return 0;
+}
+
+/* Send a pure MPTCP Data ACK on the specified subflow.
+ * Builds a TCP pure ACK segment carrying a DSS option with only the
+ * Data ACK field (8 bytes, per the existing convention). */
+int mptcp_send_data_ack(uint32_t token, int conn_id)
+{
+    if (!mptcp_initialized)
+        return -ENOSYS;
+    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS)
+        return -EINVAL;
+
+    spinlock_acquire(&mptcp_lock);
+    struct mptcp_conn *mc = mptcp_find_by_token(token);
+    if (!mc) {
+        spinlock_release(&mptcp_lock);
+        return -EINVAL;
+    }
+
+    /* Find the subflow matching this TCP connection */
+    struct tcp_conn *c = &tcp_conns[conn_id];
+    if (c->state == TCP_CLOSED) {
+        spinlock_release(&mptcp_lock);
+        return -ECONNRESET;
+    }
+    if (c->mptcp_token != token) {
+        spinlock_release(&mptcp_lock);
+        return -EINVAL;
+    }
+
+    uint64_t data_ack = mc->rcv_data_ack;
+    spinlock_release(&mptcp_lock);
+
+    /* Build a TCP pure ACK segment with the DSS Data ACK option.
+     * We construct the segment manually to include the DSS option,
+     * since send_tcp() does not add MPTCP options on data/ACK segments. */
+    uint8_t buf[1500];
+    struct tcp_header *tcp = (struct tcp_header *)buf;
+    memset(tcp, 0, sizeof(*tcp));
+
+    tcp->src_port = htons(c->local_port);
+    tcp->dst_port = htons(c->remote_port);
+    tcp->seq_num  = htonl(c->our_seq);
+    tcp->ack_num  = htonl(c->their_seq);
+
+    /* Build the DSS option with only the Data ACK field */
+    uint8_t dss_buf[MPTCP_DSS_ACK8_LEN];
+    uint16_t dss_out_len = sizeof(dss_buf);
+    int ret = mptcp_build_dss(dss_buf, &dss_out_len,
+                               data_ack, 1,    /* Data ACK valid */
+                               0, 0,            /* No DSN */
+                               0, 0,            /* No SSN */
+                               0,               /* No data length */
+                               0);              /* No checksum */
+    if (ret < 0)
+        return ret;
+
+    /* Place options after the TCP header */
+    uint8_t *opts = buf + sizeof(struct tcp_header);
+    uint16_t opt_len = 0;
+
+    /* NOP padding for 4-byte alignment */
+    opts[opt_len++] = 1;  /* NOP */
+    memcpy(opts + opt_len, dss_buf, dss_out_len);
+    opt_len += dss_out_len;
+    /* Pad to multiple of 4 bytes */
+    while (opt_len % 4 != 0)
+        opts[opt_len++] = 1;  /* NOP */
+
+    uint16_t hdr_len = sizeof(struct tcp_header) + opt_len;
+    tcp->data_off = (uint8_t)((hdr_len / 4) << 4);
+    tcp->flags = TCP_ACK;
+    tcp->window = htons(8192);
+
+    /* Compute the TCP checksum (transport-level pseudo-header checksum) */
+    tcp->checksum = 0;
+    tcp->checksum = net_transport_checksum(net_our_ip, c->remote_ip,
+                                           IP_PROTO_TCP, buf, hdr_len);
+
+    /* Send via the IP layer */
+    send_ip(c->remote_ip, IP_PROTO_TCP, buf, hdr_len);
+
+    kprintf("[MPTCP-DSS] Sent Data ACK: token=%u conn_id=%d data_ack=%lu\n",
+            token, conn_id, (unsigned long)data_ack);
+
+    return 0;
+}
+
 void mptcp_close(uint32_t token)
 {
     spinlock_acquire(&mptcp_lock);
@@ -1831,6 +1962,10 @@ int mptcp_dss(uint32_t token, uint32_t seq, uint32_t ack, const void *data, uint
     return (int)(data_seq & 0x7FFFFFFF); /* return lower 31 bits */
 }
 
+EXPORT_SYMBOL(mptcp_handle_dss);
+EXPORT_SYMBOL(mptcp_get_data_ack);
+EXPORT_SYMBOL(mptcp_update_data_ack);
+EXPORT_SYMBOL(mptcp_send_data_ack);
 EXPORT_SYMBOL(mptcp_subflow_create);
 EXPORT_SYMBOL(mptcp_add_addr);
 EXPORT_SYMBOL(mptcp_remove_addr);

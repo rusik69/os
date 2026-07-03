@@ -186,6 +186,25 @@ int  mptcp_handle_remove_addr(int conn_id, const uint8_t *opt, uint16_t optlen);
 
 /* ── DSS (Data Sequence Signal) — RFC 8684 §3.3 ───────────────── */
 
+/* ── MPTCP Data Acknowledgement (RFC 8684 §3.3) ──────────────── */
+
+/* Get the current receive-side Data ACK value for the connection.
+ * This is the highest data-level byte that has been received in order.
+ * Returns 0 on success, negative errno on failure. */
+int  mptcp_get_data_ack(uint32_t token, uint64_t *ack_out);
+
+/* Advance the receive-side Data ACK after consuming data.
+ * ack is the new data-level ACK position (should be >= the current value).
+ * Returns 0 on success, negative errno on failure. */
+int  mptcp_update_data_ack(uint32_t token, uint64_t ack);
+
+/* Send a pure MPTCP Data ACK on the specified subflow.
+ * Builds a TCP pure ACK segment with the DSS option carrying only the
+ * Data ACK field (no Data Sequence Number, no Subflow Sequence Number).
+ * conn_id identifies the TCP subflow connection to send on.
+ * Returns 0 on success, negative errno on failure. */
+int  mptcp_send_data_ack(uint32_t token, int conn_id);
+
 /* Build a DSS option for a data segment.
  * On entry, *len is the buffer capacity; on exit, *len is bytes written.
  * Set data_ack_valid=0 to omit the Data ACK field.
