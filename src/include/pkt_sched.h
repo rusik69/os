@@ -10,6 +10,7 @@
 #define QDISC_TBF         3
 #define QDISC_FQ          4
 #define QDISC_RED         5
+#define QDISC_CAKE        6
 
 /* Maximum number of qdiscs */
 #define QDISC_MAX 16
@@ -129,5 +130,28 @@ void fq_get_pacing_stats(struct qdisc *q, uint64_t *pacing_idles);
 
 /* Init */
 void pkt_sched_init(void);
+
+/* ── CAKE (Common Applications Kept Enhanced) ──────────────────── */
+
+/* CAKE configuration */
+struct cake_spec {
+    uint32_t bandwidth;    /* total bandwidth (bytes/sec, 0 = default 100 Mbps) */
+    uint32_t limit;        /* per-flow queue depth (packets, 0 = default 64) */
+    int      ecn;          /* non-zero to enable ECN marking */
+};
+
+struct cake_stats {
+    uint32_t total_bandwidth;
+    int      limit;
+    int      ecn_enabled;
+    uint64_t tin_drops[8];
+    uint64_t tin_marks[8];
+    uint64_t tin_dequeued[8];
+    int      tin_flows[8];
+    int      tin_qlen[8];
+};
+
+/* Create a CAKE qdisc with the given spec (NULL = defaults) */
+struct qdisc *cake_create(const struct cake_spec *spec);
 
 #endif /* PKT_SCHED_H */
