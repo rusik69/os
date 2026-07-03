@@ -660,7 +660,8 @@ void send_ip(uint32_t dst_ip, uint8_t protocol, const void *payload, uint16_t le
     }
 
     /* Netfilter LOCAL_OUT */
-    if (nf_iterate_hooks(NF_INET_LOCAL_OUT, (void *)buf) != NF_ACCEPT)
+    if (nf_hook_traverse(NF_INET_LOCAL_OUT, (void *)buf, (void *)buf,
+                         sizeof(struct ip_header) + len) != 0)
         return;
 
     /* Track outgoing packets in conntrack */
@@ -689,7 +690,8 @@ void send_ip(uint32_t dst_ip, uint8_t protocol, const void *payload, uint16_t le
     }
 
     /* Netfilter POST_ROUTING */
-    if (nf_iterate_hooks(NF_INET_POST_ROUTING, (void *)buf) != NF_ACCEPT)
+    if (nf_hook_traverse(NF_INET_POST_ROUTING, (void *)buf, (void *)buf,
+                         sizeof(struct ip_header) + len) != 0)
         return;
 
     send_eth(dst_mac, ETH_TYPE_IP, buf, sizeof(struct ip_header) + len);
@@ -1033,7 +1035,8 @@ static void handle_ip(const uint8_t *data, uint16_t len) {
             int fwd_iface;
             if (rt_lookup(dst_ip, &fwd_gw, &fwd_iface) == 0) {
                 /* Netfilter FORWARD hook — allows/denies forwarding */
-                if (nf_iterate_hooks(NF_INET_FORWARD, (void *)data) != NF_ACCEPT)
+                if (nf_hook_traverse(NF_INET_FORWARD, (void *)data, (void *)data,
+                                     total) != 0)
                     return;
                 /* Decrement TTL, recompute checksum */
                 ip->ttl--;
@@ -1182,7 +1185,8 @@ void net_rx_dispatch(const uint8_t *pkt_buf, uint16_t len)
             if (src) arp_cache_add(src, eth->src);
 
             /* Netfilter PRE_ROUTING */
-            if (nf_iterate_hooks(NF_INET_PRE_ROUTING, (void *)pkt_buf) != NF_ACCEPT)
+            if (nf_hook_traverse(NF_INET_PRE_ROUTING, (void *)pkt_buf,
+                                 (void *)payload, payload_len) != 0)
                 return;
         }
         /* Netfilter LOCAL_IN for packets destined to us */
@@ -1190,7 +1194,8 @@ void net_rx_dispatch(const uint8_t *pkt_buf, uint16_t len)
             struct ip_header *ip = (struct ip_header *)payload;
             uint32_t dst_ip = ntohl(ip->dst_ip);
             if (dst_ip == net_our_ip || dst_ip == 0xFFFFFFFF) {
-                if (nf_iterate_hooks(NF_INET_LOCAL_IN, (void *)pkt_buf) != NF_ACCEPT)
+                if (nf_hook_traverse(NF_INET_LOCAL_IN, (void *)pkt_buf,
+                                     (void *)payload, payload_len) != 0)
                     return;
             }
         }

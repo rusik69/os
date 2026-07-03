@@ -8,6 +8,8 @@
 #include "string.h"
 #include "timer.h"
 #include "heap.h"
+#include "net_internal.h"   /* icmp_send_unreachable */
+#include "net.h"            /* ip_header, eth_header */
 
 /* ── Static state ────────────────────────────────────────────────── */
 
@@ -202,6 +204,52 @@ int nf_nat_apply_post_routing(uint32_t *ip, uint16_t *port) {
         }
     }
     return 0;
+}
+
+/* ── Verdict processing / packet traversal ────────────────────────── */
+
+/* Process a netfilter verdict and take appropriate action.
+ * For NF_REJECT, sends ICMP Destination Unreachable (admin prohibited).
+ * Returns 0 if packet should continue, -1 if dropped/rejected. */
+static int nf_process_verdict(int verdict, void *iph, uint16_t iph_len)
+{
+    switch (verdict) {
+    case NF_ACCEPT:
+        return 0;
+    case NF_DROP:
+        return -1;
+    case NF_REJECT:
+        /* Send ICMP Destination Unreachable (code 10 = admin prohibited) */
+        if (iph && iph_len >= sizeof(struct ip_header)) {
+            struct ip_header *iphdr = (struct ip_header *)iph;
+            uint32_t orig_src = ntohl(iphdr->src_ip);
+            icmp_send_unreachable(orig_src, 0, (uint8_t *)iph, iph_len);
+        }
+        return -1;
+    case NF_STOLEN:
+    case NF_QUEUE:
+    case NF_REPEAT:
+    default:
+        return -1;
+    }
+}
+
+/* Traverse hooks at a given hook point and process the verdict.
+ * This is the main entry point for packet traversal through the
+ * netfilter hook chain.  Wraps nf_iterate_hooks() with proper
+ * verdict handling including NF_REJECT → ICMP unreachable.
+ *
+ * @hook:    hook point (NF_INET_PRE_ROUTING, NF_INET_LOCAL_IN, etc.)
+ * @skb:     packet buffer (opaque, passed to hook callbacks)
+ * @iph:     pointer to IP header within skb (for ICMP unreachable)
+ * @iph_len: total length of IP packet from IP header (for ICMP)
+ *
+ * Returns 0 if packet is accepted, -1 if dropped/rejected/queued.
+ */
+int nf_hook_traverse(int hook, void *skb, void *iph, uint16_t iph_len)
+{
+    int verdict = nf_iterate_hooks(hook, skb);
+    return nf_process_verdict(verdict, iph, iph_len);
 }
 
 /* ── Init ────────────────────────────────────────────────────────── */

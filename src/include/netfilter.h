@@ -15,6 +15,9 @@
 #define NF_ACCEPT 0
 #define NF_DROP   1
 #define NF_REJECT 2
+#define NF_STOLEN   3   /* Packet taken over by hook (don't continue) */
+#define NF_QUEUE    4   /* Packet queued for userspace */
+#define NF_REPEAT   5   /* Re-run this hook for the packet */
 
 /* Hook function type: return NF_ACCEPT, NF_DROP, or NF_REJECT */
 typedef int (*nf_hookfn)(void *skb, int hook);
@@ -140,6 +143,10 @@ struct nf_conntrack_stats {
 int  nf_register_hook(int hook, nf_hookfn fn, int priority);
 void nf_unregister_hook(int hook, nf_hookfn fn);
 int  nf_iterate_hooks(int hook, void *skb);
+
+/* Traverse hooks and process verdict (handles NF_DROP/NF_REJECT/ICMP).
+ * Returns 0 if packet accepted, -1 if dropped/rejected. */
+int  nf_hook_traverse(int hook, void *skb, void *iph, uint16_t iph_len);
 
 /* Rule management */
 int  nf_add_rule(const struct nf_rule *rule);
