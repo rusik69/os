@@ -29,6 +29,10 @@ struct in6_addr net_ipv6_gateway;   /* default gateway (from RA) */
 struct in6_addr net_ipv6_dns;       /* DNS server (from RDNSS) */
 uint32_t net_ipv6_ns_count = 0;     /* NS counter for duplicate detection */
 
+/* ── IPv6 address table ───────────────────────────────────────── */
+struct ipv6_addr_entry ipv6_addr_table[IPV6_ADDR_TABLE_SIZE];
+int ipv6_addr_count = 0;
+
 /* RS retry state */
 static int  rs_sent = 0;            /* have we sent a Router Solicitation? */
 static int  rs_retries = 0;         /* RS retry count */
@@ -110,6 +114,296 @@ int ipv6_addr_is_unspecified(const struct in6_addr *addr)
 int ipv6_addr_equal(const struct in6_addr *a, const struct in6_addr *b)
 {
     return memcmp(a->s6_addr, b->s6_addr, 16) == 0;
+}
+
+/* ── Address scope ─────────────────────────────────────────────── */
+
+/* Determine the scope of an IPv6 address per RFC 6724 §3.1.
+ * Returns a scope value; lower means more specific. */
+int ipv6_addr_get_scope(const struct in6_addr *addr)
+{
+    if (!addr) return 0;
+
+    /* Unspecified (::) */
+    if (ipv6_addr_is_unspecified(addr))
+        return 0;
+
+    /* Loopback (::1) — interface-local */
+    if (addr->s6_addr[0] == 0 && addr->s6_addr[1] == 0 &&
+        addr->s6_addr[2] == 0 && addr->s6_addr[3] == 0 &&
+        addr->s6_addr[4] == 0 && addr->s6_addr[5] == 0 &&
+        addr->s6_addr[6] == 0 && addr->s6_addr[7] == 0 &&
+        addr->s6_addr[8] == 0 && addr->s6_addr[9] == 0 &&
+        addr->s6_addr[10] == 0 && addr->s6_addr[11] == 0 &&
+        addr->s6_addr[12] == 0 && addr->s6_addr[13] == 0 &&
+        addr->s6_addr[14] == 0 && addr->s6_addr[15] == 1)
+        return 0x01;
+
+    /* Link-local (FE80::/10) */
+    if ((addr->s6_addr[0] == 0xFE) && ((addr->s6_addr[1] & 0xC0) == 0x80))
+        return 0x02;
+
+    /* Multicast (FF00::/8) — scope is in bits 4-7 of byte 1 */
+    if (addr->s6_addr[0] == 0xFF)
+        return (addr->s6_addr[1] & 0x0F);
+
+    /* Unique-local (FC00::/7) */
+    if ((addr->s6_addr[0] & 0xFE) == 0xFC)
+        return 0x08;
+
+    /* Global unicast (the rest) */
+    return 0x0E;
+}
+
+/* ── Address management infrastructure ────────────────────────── */
+
+/* Add an IPv6 address to the address table.
+ * Returns 0 on success, negative errno on error. */
+int ipv6_addr_add(const struct in6_addr *addr, uint8_t prefix_len,
+                   int state, uint32_t valid_lifetime,
+                   uint32_t preferred_lifetime, uint32_t flags)
+{
+    struct ipv6_addr_entry *entry;
+    int slot = -1;
+    int i;
+
+    if (!addr)
+        return -EINVAL;
+
+    /* Check if address already exists — update instead */
+    entry = ipv6_addr_find(addr);
+    if (entry) {
+        entry->prefix_len = prefix_len;
+        entry->state = state;
+        entry->valid_lifetime = valid_lifetime;
+        entry->preferred_lifetime = preferred_lifetime;
+        entry->flags = flags;
+        entry->scope = ipv6_addr_get_scope(addr);
+        if (valid_lifetime == 0xFFFFFFFF)
+            entry->expiry_tick = UINT64_MAX;
+        else
+            entry->expiry_tick = timer_get_ticks() + (uint64_t)valid_lifetime * 100;
+        entry->valid = 1;
+        return 0;
+    }
+
+    /* Find free slot */
+    for (i = 0; i < IPV6_ADDR_TABLE_SIZE; i++) {
+        if (!ipv6_addr_table[i].valid) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot < 0)
+        return -ENOSPC;
+
+    /* Populate entry */
+    entry = &ipv6_addr_table[slot];
+    memcpy(&entry->addr, addr, sizeof(struct in6_addr));
+    entry->prefix_len = prefix_len;
+    entry->state = state;
+    entry->scope = ipv6_addr_get_scope(addr);
+    entry->valid_lifetime = valid_lifetime;
+    entry->preferred_lifetime = preferred_lifetime;
+    if (valid_lifetime == 0xFFFFFFFF)
+        entry->expiry_tick = UINT64_MAX;
+    else
+        entry->expiry_tick = timer_get_ticks() + (uint64_t)valid_lifetime * 100;
+    entry->flags = flags;
+    entry->valid = 1;
+    ipv6_addr_count++;
+    return 0;
+}
+
+/* Remove an IPv6 address from the table.
+ * Returns 0 on success, -ENOENT if not found. */
+int ipv6_addr_del(const struct in6_addr *addr)
+{
+    int i;
+
+    if (!addr)
+        return -EINVAL;
+
+    for (i = 0; i < IPV6_ADDR_TABLE_SIZE; i++) {
+        if (!ipv6_addr_table[i].valid)
+            continue;
+        if (ipv6_addr_equal(&ipv6_addr_table[i].addr, addr)) {
+            memset(&ipv6_addr_table[i], 0, sizeof(struct ipv6_addr_entry));
+            ipv6_addr_count--;
+            return 0;
+        }
+    }
+    return -ENOENT;
+}
+
+/* Find an address entry by address.
+ * Returns pointer to entry, or NULL if not found. */
+struct ipv6_addr_entry *ipv6_addr_find(const struct in6_addr *addr)
+{
+    int i;
+
+    if (!addr)
+        return NULL;
+
+    for (i = 0; i < IPV6_ADDR_TABLE_SIZE; i++) {
+        if (!ipv6_addr_table[i].valid)
+            continue;
+        if (ipv6_addr_equal(&ipv6_addr_table[i].addr, addr))
+            return &ipv6_addr_table[i];
+    }
+    return NULL;
+}
+
+/* Find first address entry with a given state.
+ * Returns pointer to entry, or NULL if none. */
+struct ipv6_addr_entry *ipv6_addr_find_by_state(int state)
+{
+    int i;
+
+    for (i = 0; i < IPV6_ADDR_TABLE_SIZE; i++) {
+        if (!ipv6_addr_table[i].valid)
+            continue;
+        if (ipv6_addr_table[i].state == state)
+            return &ipv6_addr_table[i];
+    }
+    return NULL;
+}
+
+/* Simplified source address selection (RFC 6724).
+ *
+ * Rules applied (simplified):
+ * 1. Prefer same scope as destination
+ * 2. Prefer preferred state over deprecated
+ * 3. Prefer permanent over temporary
+ *
+ * Returns pointer to selected entry, or NULL if none available. */
+struct ipv6_addr_entry *ipv6_addr_select_source(const struct in6_addr *dst)
+{
+    int dst_scope;
+    struct ipv6_addr_entry *best = NULL;
+    int best_score = -1;
+    int i;
+
+    if (!dst)
+        goto fallback;
+
+    dst_scope = ipv6_addr_get_scope(dst);
+
+    for (i = 0; i < IPV6_ADDR_TABLE_SIZE; i++) {
+        struct ipv6_addr_entry *e = &ipv6_addr_table[i];
+        int score = 0;
+
+        if (!e->valid)
+            continue;
+        if (e->state == IPV6_ADDR_STATE_TENTATIVE ||
+            e->state == IPV6_ADDR_STATE_DETACHED)
+            continue;
+
+        /* Rule 1: Prefer same scope */
+        if (e->scope == dst_scope)
+            score += 100;
+
+        /* Rule 2: Prefer preferred over deprecated */
+        if (e->state == IPV6_ADDR_STATE_PREFERRED)
+            score += 50;
+        else if (e->state == IPV6_ADDR_STATE_PERMANENT)
+            score += 40;
+
+        /* Rule 3: Deprecated is still usable but lower priority */
+        if (e->state == IPV6_ADDR_STATE_DEPRECATED)
+            score += 10;
+
+        if (score > best_score) {
+            best_score = score;
+            best = e;
+        }
+    }
+
+    if (best)
+        return best;
+
+fallback:
+    /* Fallback: return first valid address (usually link-local) */
+    for (i = 0; i < IPV6_ADDR_TABLE_SIZE; i++) {
+        if (ipv6_addr_table[i].valid)
+            return &ipv6_addr_table[i];
+    }
+    return NULL;
+}
+
+/* Check if an address belongs to us.
+ * Searches the address table. */
+int ipv6_addr_is_ours(const struct in6_addr *addr)
+{
+    if (!addr) return 0;
+    return ipv6_addr_find(addr) != NULL;
+}
+
+/* Get our link-local address.
+ * Returns 0 on success, -1 if not configured. */
+int ipv6_addr_get_ll(struct in6_addr *out)
+{
+    if (!out) return -1;
+    if (!net_ipv6_ll_ready) return -1;
+    memcpy(out, &net_our_ipv6_ll, sizeof(struct in6_addr));
+    return 0;
+}
+
+/* Get our global unicast address (if configured).
+ * Returns 0 on success, -1 if not configured. */
+int ipv6_addr_get_gua(struct in6_addr *out)
+{
+    if (!out) return -1;
+    if (!net_ipv6_gua_valid) return -1;
+    memcpy(out, &net_our_ipv6_gua, sizeof(struct in6_addr));
+    return 0;
+}
+
+/* Dump address table for debugging. */
+void ipv6_addr_dump(void)
+{
+    int i;
+
+    kprintf("[IPv6] Address table (%d entries):\n", ipv6_addr_count);
+    for (i = 0; i < IPV6_ADDR_TABLE_SIZE; i++) {
+        struct ipv6_addr_entry *e = &ipv6_addr_table[i];
+        if (!e->valid) continue;
+
+        kprintf("  [%d] ", i);
+        /* Print address in hex format */
+        {
+            const uint8_t *a = e->addr.s6_addr;
+            kprintf("%02x%02x:%02x%02x:%02x%02x:%02x%02x:"
+                    "%02x%02x:%02x%02x:%02x%02x:%02x%02x",
+                    a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7],
+                    a[8], a[9], a[10], a[11], a[12], a[13], a[14], a[15]);
+        }
+        kprintf("/%d", e->prefix_len);
+
+        /* State string */
+        switch (e->state) {
+        case IPV6_ADDR_STATE_TENTATIVE:  kprintf(" tentative"); break;
+        case IPV6_ADDR_STATE_PREFERRED:  kprintf(" preferred"); break;
+        case IPV6_ADDR_STATE_DEPRECATED: kprintf(" deprecated"); break;
+        case IPV6_ADDR_STATE_PERMANENT:  kprintf(" permanent"); break;
+        case IPV6_ADDR_STATE_DETACHED:   kprintf(" detached"); break;
+        default:                         kprintf(" state=%d", e->state); break;
+        }
+
+        /* Scope string */
+        switch (e->scope) {
+        case 0x01: kprintf(" iface"); break;
+        case 0x02: kprintf(" link"); break;
+        case 0x0E: kprintf(" global"); break;
+        default:   kprintf(" scope=%d", e->scope); break;
+        }
+
+        if (e->flags & IPV6_ADDR_F_AUTOCONF) kprintf(" [A]");
+        if (e->flags & IPV6_ADDR_F_DAD)      kprintf(" [DAD]");
+
+        kprintf(" valid=%u pref=%u\n",
+                e->valid_lifetime, e->preferred_lifetime);
+    }
 }
 
 /* ── Neighbor Cache ──────────────────────────────────────────────── */
@@ -246,6 +540,7 @@ void send_ipv6(const struct in6_addr *dst, uint8_t next_hdr,
 {
     uint8_t buf[2048];
     struct ipv6_header *ip6 = (struct ipv6_header *)buf;
+    struct ipv6_addr_entry *src_entry;
 
     /* Build IPv6 header */
     /* Version=6, Traffic Class=0, Flow Label=0 */
@@ -253,7 +548,15 @@ void send_ipv6(const struct in6_addr *dst, uint8_t next_hdr,
     ip6->payload_length = htons(len);
     ip6->next_header = next_hdr;
     ip6->hop_limit = 64;  /* default hop limit */
-    memcpy(&ip6->src_ip, &net_our_ipv6_ll, sizeof(struct in6_addr));
+
+    /* Select source address based on destination */
+    src_entry = ipv6_addr_select_source(dst);
+    if (src_entry) {
+        memcpy(&ip6->src_ip, &src_entry->addr, sizeof(struct in6_addr));
+    } else {
+        /* Fallback: use link-local */
+        memcpy(&ip6->src_ip, &net_our_ipv6_ll, sizeof(struct in6_addr));
+    }
     memcpy(&ip6->dst_ip, dst, sizeof(struct in6_addr));
 
     /* Copy payload after header */
@@ -488,6 +791,11 @@ static void nd_handle_ra(struct ipv6_header *ip6, const uint8_t *payload,
                 memcpy(&net_our_ipv6_gua, &gua, sizeof(struct in6_addr));
                 net_ipv6_gua_valid = 1;
 
+                /* Register GUA in the address management table */
+                ipv6_addr_add(&gua, prefix_len, IPV6_ADDR_STATE_PREFERRED,
+                              valid_lifetime, valid_lifetime,
+                              IPV6_ADDR_F_AUTOCONF | IPV6_ADDR_F_DAD);
+
                 kprintf("[IPv6] SLAAC: configured GUA, valid=%u\n",
                         valid_lifetime);
             }
@@ -536,14 +844,6 @@ void handle_icmpv6(struct ipv6_header *ip6, const uint8_t *payload,
 }
 
 /* ── IPv6 dispatcher ─────────────────────────────────────────────── */
-
-static int ipv6_addr_is_ours(const struct in6_addr *addr)
-{
-    if (!addr) return 0;
-    if (ipv6_addr_equal(addr, &net_our_ipv6_ll)) return 1;
-    if (net_ipv6_gua_valid && ipv6_addr_equal(addr, &net_our_ipv6_gua)) return 1;
-    return 0;
-}
 
 void handle_ipv6(const uint8_t *data, uint16_t len)
 {
@@ -607,6 +907,16 @@ void ipv6_init(void)
 
     net_ipv6_ll_ready = 1;
     memset(nd_cache, 0, sizeof(nd_cache));
+
+    /* Register link-local address in the management table */
+    ipv6_addr_add(&net_our_ipv6_ll, 64, IPV6_ADDR_STATE_PERMANENT,
+                  0xFFFFFFFF, 0xFFFFFFFF, 0);
+    /* Add all-nodes multicast address as a permanent entry */
+    {
+        struct in6_addr all_nodes = IPV6_ADDR_ALL_NODES;
+        ipv6_addr_add(&all_nodes, 128, IPV6_ADDR_STATE_PERMANENT,
+                      0xFFFFFFFF, 0xFFFFFFFF, 0);
+    }
 
     kprintf("[IPv6] Link-local address configured\n");
 

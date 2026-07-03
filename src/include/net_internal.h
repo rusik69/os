@@ -37,6 +37,47 @@ extern struct in6_addr net_ipv6_gateway;  /* default gateway (from RA) */
 extern struct in6_addr net_ipv6_dns;      /* DNS server (from RDNSS) */
 extern uint32_t        net_ipv6_ns_count; /* NS counter for NDP */
 
+/* ── IPv6 address management ──────────────────────────────────── */
+#define IPV6_ADDR_TABLE_SIZE 8
+
+#define IPV6_ADDR_STATE_TENTATIVE  0  /* DAD in progress */
+#define IPV6_ADDR_STATE_PREFERRED  1  /* usable for all communication */
+#define IPV6_ADDR_STATE_DEPRECATED 2  /* preferred lifetime expired */
+#define IPV6_ADDR_STATE_PERMANENT  3  /* never expires (link-local, loopback) */
+#define IPV6_ADDR_STATE_DETACHED   4  /* tentative but failed DAD */
+
+#define IPV6_ADDR_F_AUTOCONF  0x01   /* auto-configured via SLAAC */
+#define IPV6_ADDR_F_DAD       0x02   /* DAD completed */
+
+struct ipv6_addr_entry {
+    struct in6_addr addr;
+    uint8_t prefix_len;
+    int     state;              /* IPV6_ADDR_STATE_* */
+    int     scope;              /* IPV6_ADDR_SCOPE_* (determined by addr) */
+    uint32_t valid_lifetime;    /* seconds remaining (0xFFFFFFFF = infinite) */
+    uint32_t preferred_lifetime;
+    uint64_t expiry_tick;       /* tick when valid_lifetime expires */
+    uint32_t flags;
+    int     valid;              /* 1 = slot in use */
+};
+
+extern struct ipv6_addr_entry ipv6_addr_table[IPV6_ADDR_TABLE_SIZE];
+extern int ipv6_addr_count;
+
+/* Address management API */
+int  ipv6_addr_add(const struct in6_addr *addr, uint8_t prefix_len,
+                   int state, uint32_t valid_lifetime,
+                   uint32_t preferred_lifetime, uint32_t flags);
+int  ipv6_addr_del(const struct in6_addr *addr);
+struct ipv6_addr_entry *ipv6_addr_find(const struct in6_addr *addr);
+struct ipv6_addr_entry *ipv6_addr_find_by_state(int state);
+struct ipv6_addr_entry *ipv6_addr_select_source(const struct in6_addr *dst);
+int  ipv6_addr_get_scope(const struct in6_addr *addr);
+int  ipv6_addr_is_ours(const struct in6_addr *addr);
+int  ipv6_addr_get_ll(struct in6_addr *out);
+int  ipv6_addr_get_gua(struct in6_addr *out);
+void ipv6_addr_dump(void);
+
 /* ── ARP cache with timeout and retry ───────────────────────────── */
 #define ARP_CACHE_SIZE 16
 
