@@ -968,6 +968,9 @@ int tc_add_qdisc(const char *dev, int qdisc_type, void *params) {
         case QDISC_FQ:
             q = fq_create();
             break;
+        case QDISC_RED:
+            q = red_create((const struct red_spec *)params);
+            break;
         default:
             return -1;
     }

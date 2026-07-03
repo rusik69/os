@@ -9,6 +9,7 @@
 #define QDISC_HTB         2
 #define QDISC_TBF         3
 #define QDISC_FQ          4
+#define QDISC_RED         5
 
 /* Maximum number of qdiscs */
 #define QDISC_MAX 16
@@ -81,6 +82,21 @@ struct tbf_spec {
 
 /* Create a TBF qdisc with the given spec (NULL = defaults) */
 struct qdisc *tbf_create(const struct tbf_spec *spec);
+
+/* ── RED (Random Early Detection) ─────────────────────────────── */
+
+/* RED configuration */
+struct red_spec {
+    uint32_t min_th;       /* minimum threshold (packets, 0 = auto) */
+    uint32_t max_th;       /* maximum threshold (packets, 0 = auto) */
+    uint32_t max_p;        /* maximum dropping probability (1/red_maxp_div) */
+    uint32_t wq_div;       /* EWMA weight denominator (1/wq_div) — 0 = auto */
+    uint32_t limit;        /* max queue depth (packets, 0 = default 256) */
+    int      ecn;          /* non-zero to enable ECN marking */
+};
+
+/* Create a RED qdisc with the given spec (NULL = defaults) */
+struct qdisc *red_create(const struct red_spec *spec);
 
 /* ── FQ (Fair Queue) ────────────────────────────────────────────── */
 
