@@ -180,7 +180,17 @@ uint32_t cubic_update(struct cubic_data *c, uint32_t cwnd,
  *
  * Called on packet loss (dupack, RTO, timeout).
  * Records W_max for the cubic function, computes beta-reduced ssthresh,
- * and starts a new congestion epoch.
+ * implements fast convergence (RFC 8312 §4), and starts a new congestion
+ * epoch.
+ *
+ * Fast convergence: if cwnd < last_max_cwnd (the W_max from the previous
+ * congestion event), the flow reduces W_max more aggressively to help
+ * competing flows converge to fairness faster:
+ *
+ *   If cwnd < last_max_cwnd:
+ *       W_max = cwnd * (1 + beta_cubic) / 2
+ *   else:
+ *       W_max = cwnd
  *
  * Returns the new ssthresh (wmax * beta).
  */
@@ -189,13 +199,29 @@ uint32_t cubic_on_loss(struct cubic_data *c, uint32_t current_cwnd,
 {
     if (!c) return 2;
 
-    /* Record W_max at congestion point */
-    c->wmax = current_cwnd;
+    /*
+     * Fast convergence (RFC 8312 §4):
+     * Remember the previous epoch's W_max as last_max_cwnd, then
+     * apply the fast-convergence comparison.
+     */
+    uint32_t last_max_cwnd = c->wmax;
+
+    if (last_max_cwnd > 0 && current_cwnd < last_max_cwnd) {
+        /* W_max = cwnd * (1 + beta_cubic) / 2  — more aggressive reduction */
+        c->wmax = (uint32_t)(((uint64_t)current_cwnd *
+                     (uint64_t)(CUBIC_ONE + CUBIC_BETA_FIXED)) /
+                     (2ULL * CUBIC_ONE));
+    } else {
+        c->wmax = current_cwnd;
+    }
+
+    if (c->wmax < 2)
+        c->wmax = 2;
 
     /* Compute new ssthresh = wmax * beta (multiplicative decrease) */
     uint32_t ssthresh;
-    if (current_cwnd > 2)
-        ssthresh = (current_cwnd * CUBIC_BETA_FIXED) / CUBIC_ONE;
+    if (c->wmax > 2)
+        ssthresh = (c->wmax * CUBIC_BETA_FIXED) / CUBIC_ONE;
     else
         ssthresh = 2;
 
