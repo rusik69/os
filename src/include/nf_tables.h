@@ -171,6 +171,14 @@ struct nft_table {
 #define NFT_EXPR_LOOKUP    3
 #define NFT_EXPR_IMMEDIATE 4
 #define NFT_EXPR_COUNTER   5
+#define NFT_EXPR_NAT       6
+#define NFT_EXPR_LOG       7
+#define NFT_EXPR_LIMIT     8
+
+/* NAT types for NFT_EXPR_NAT */
+#define NFT_NAT_DNAT       0   /* Destination NAT (pre-routing) */
+#define NFT_NAT_SNAT       1   /* Source NAT (post-routing) */
+#define NFT_NAT_MASQUERADE 2   /* Masquerade (SNAT with dynamic address) */
 
 /* Meta keys for NFT_EXPR_META */
 #define NFT_META_LEN       0   /* packet length */
@@ -265,6 +273,46 @@ struct nft_expr_counter {
     uint32_t           bytes;      /* byte counter (accumulated) */
 } __attribute__((packed));
 
+/* NAT expression — performs DNAT, SNAT, or Masquerade translation.
+ * Modifies the source or destination address/port of a packet.
+ * Typically used in nat-type chains:
+ *   - DNAT:      PREROUTING / LOCAL_OUT chains
+ *   - SNAT:      POSTROUTING / LOCAL_IN chains
+ *   - MASQUERADE: POSTROUTING chain (uses outgoing interface address) */
+struct nft_expr_nat {
+    struct nft_expr    hdr;        /* common header */
+    uint8_t            nat_type;   /* NFT_NAT_DNAT, NFT_NAT_SNAT, NFT_NAT_MASQUERADE */
+    uint8_t            pad[3];
+    uint32_t           addr;       /* new address (0 = not specified / use iface addr) */
+    uint16_t           port_min;   /* port range start (0 = no port change) */
+    uint16_t           port_max;   /* port range end */
+} __attribute__((packed));
+
+/* Log expression — logs matching packets to kernel log.
+ * Always returns 0 (doesn't affect matching verdict). */
+struct nft_expr_log {
+    struct nft_expr    hdr;        /* common header */
+    char               prefix[32]; /* log prefix string */
+    uint8_t            level;      /* log level (0 = info) */
+    uint8_t            flags;      /* log flags */
+    uint8_t            group;      /* nflog group number */
+    uint8_t            snaplen;    /* snapshot length */
+} __attribute__((packed));
+
+/* Limit expression — rate-limits matching packets.
+ * Returns 0 if within rate limit, 1 if over (no match).
+ * Uses token bucket algorithm for average rate + burst control. */
+struct nft_expr_limit {
+    struct nft_expr    hdr;        /* common header */
+    uint64_t           rate;       /* average rate (packets or bytes per second) */
+    uint64_t           burst;      /* burst size */
+    uint32_t           tokens;     /* current token count */
+    uint64_t           last_seen;  /* last timestamp in ticks */
+    uint8_t            type;       /* 0 = packets/sec, 1 = bytes/sec */
+    uint8_t            invert;     /* 1 = invert matching */
+    uint8_t            pad[6];
+} __attribute__((packed));
+
 /* ── Expression evaluation context ───────────────────────────────── */
 /* Carries per-packet state through expression evaluation.  Filled in
  * by nft_evaluate and passed to each expression's eval function. */
@@ -281,11 +329,23 @@ struct nft_eval_ctx {
     struct nft_table  *table;      /* current table for set lookups */
 };
 
+/* NAT result communicated from expression evaluation to caller.
+ * When a NAT expression fires, the type and translation values are
+ * stored here for the caller to apply (modify skb address/port). */
+struct nft_nat_result {
+    uint8_t            type;       /* NFT_NAT_DNAT/SNAT/MASQUERADE */
+    uint8_t            active;     /* 1 if NAT action is pending */
+    uint8_t            pad[2];
+    uint32_t           addr;       /* new address */
+    uint16_t           port;       /* new port (0 = no port change) */
+} __attribute__((packed));
+
 /* Register file for expression evaluation — scratch storage that
  * expressions read from and write to during rule evaluation. */
 struct nft_regs {
     uint32_t           data32[NFT_REG_COUNT];  /* general-purpose regs */
     int                verdict;                /* last verdict */
+    struct nft_nat_result nat;                  /* NAT result from NAT expression */
 };
 
 /* Protocol families */

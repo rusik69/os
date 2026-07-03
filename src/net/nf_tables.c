@@ -1125,6 +1125,49 @@ static int nft_expr_eval_counter(const struct nft_expr *expr,
     return 0; /* always succeeds — counter is side-effect only */
 }
 
+/* Eval a NAT expression — performs DNAT/SNAT/MASQUERADE translation.
+ * Stores the NAT result in the register file for the caller to apply
+ * (the actual address/port modification happens at the network layer).
+ *
+ * DNAT (NFT_NAT_DNAT):
+ *   Modifies destination address (and optionally port). Used in
+ *   PREROUTING / LOCAL_OUT chains for port forwarding.
+ *
+ * SNAT (NFT_NAT_SNAT):
+ *   Modifies source address (and optionally port). Used in
+ *   POSTROUTING / LOCAL_IN chains for outbound NAT.
+ *
+ * MASQUERADE (NFT_NAT_MASQUERADE):
+ *   Like SNAT but dynamically uses the outgoing interface address.
+ *   addr field should be 0 in this case — the caller determines
+ *   the source address from the output interface.
+ *
+ * Always returns 0 (NAT is an action expression, not a match). */
+static int nft_expr_eval_nat(const struct nft_expr *expr,
+                             struct nft_regs *regs,
+                             const struct nft_eval_ctx *ctx)
+{
+    const struct nft_expr_nat *n = (const struct nft_expr_nat *)expr;
+
+    (void)ctx;
+
+    regs->nat.active = 1;
+    regs->nat.type = n->nat_type;
+
+    /* For MASQUERADE without explicit address, leave addr as 0.
+     * The caller will resolve the outgoing interface address. */
+    if (n->nat_type == NFT_NAT_MASQUERADE && n->addr == 0) {
+        regs->nat.addr = 0;
+    } else {
+        regs->nat.addr = n->addr;
+    }
+
+    /* Use port_min as the target port (or 0 for no port change) */
+    regs->nat.port = n->port_min;
+
+    return 0; /* always succeeds — NAT is an action, not a match */
+}
+
 /* Evaluate the expression chain of a rule.
  * Returns 1 if ALL expressions matched (rule applies), 0 if any failed. */
 static int nft_expr_eval_chain(struct nft_rule *rule,
@@ -1169,6 +1212,12 @@ static int nft_expr_eval_chain(struct nft_rule *rule,
 
         case NFT_EXPR_COUNTER:
             ret = nft_expr_eval_counter(expr, regs, ctx);
+            if (ret != 0)
+                return 0;
+            break;
+
+        case NFT_EXPR_NAT:
+            ret = nft_expr_eval_nat(expr, regs, ctx);
             if (ret != 0)
                 return 0;
             break;
