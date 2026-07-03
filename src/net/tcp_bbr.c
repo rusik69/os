@@ -63,8 +63,7 @@
  */
 #define BBR_DRAIN_GAIN_PACING  (BBR_UNIT * 347 / 1000)  /* 0.347 : drain queue */
 
-/* Legacy DRAIN gain for cwnd calculation (kept for compatibility) */
-#define BBR_DRAIN_GAIN         (3 * BBR_UNIT / 4)       /* 0.75 : drain cwnd */
+/* Legacy DRAIN comment — pacing gain handles drain */
 #define BBR_PROBE_BW_GAIN      (5 * BBR_UNIT / 4)       /* 1.25 : probe for more BW */
 #define BBR_PROBE_BW_GAIN_LOW  (3 * BBR_UNIT / 4)       /* 0.75 : drain after probe */
 #define BBR_PROBE_RTT_GAIN     (BBR_UNIT)               /* 1.0  : neutral */
@@ -510,25 +509,62 @@ void bbr_on_ack(struct bbr_data *b, uint32_t acked_bytes,
     /* ── Compute pacing rate ─────────────────────────────────────────── */
     bbr_update_pacing_rate(b);
 
-    /* ── Compute target cwnd ─────────────────────────────────────────── */
+    /* ── Compute target cwnd with per-state BBR v1 gains ──────────────── */
     if (b->state != BBR_PROBE_RTT) {
         uint32_t rtt_est = (b->rtprop_min_rtt > 0) ? b->rtprop_min_rtt : b->min_rtt;
         if (rtt_est > 0 && rtt_est != UINT32_MAX && b->bw > 0) {
             /* BDP in bytes = bw * rtprop */
             uint64_t bdp_bytes = (uint64_t)b->bw * rtt_est;
             uint32_t bdp_segments = (uint32_t)(bdp_bytes / 1400);
-            if (bdp_segments < BBR_MIN_CWND)
-                bdp_segments = BBR_MIN_CWND;
-            if (bdp_segments > BBR_MAX_CWND)
-                bdp_segments = BBR_MAX_CWND;
 
-            /* In PROBE_BW phase 0, use 2x BDP to allow probing */
-            if (b->state == BBR_PROBE_BW && b->probe_bw_phase == 0) {
-                bdp_segments = (bdp_segments < BBR_MAX_CWND / 2)
-                               ? bdp_segments * 2 : BBR_MAX_CWND;
+            /*
+             * BBR v1 per-state cwnd gains (BBR §4.5):
+             *
+             * STARTUP:  cwnd_gain = pacing_gain (2.885).
+             *   Allows inflight to grow exponentially alongside the pacing
+             *   rate so the sender can double its delivery rate each RTT.
+             *   Without this gain, the cwnd (at 1xBDP) caps inflight and
+             *   prevents the pacing gain from filling the pipe.
+             *
+             * DRAIN:    cwnd_gain = 2.0.
+             *   Keeps cwnd at 2x BDP during drain so the queue built by
+             *   STARTUP can actually be drained by the low pacing gain
+             *   (0.347).  A 1x BDP cwnd would cause under-utilization.
+             *
+             * PROBE_BW: cwnd_gain = 2.0.
+             *   Allows 2x BDP inflight so the ProbeUp phase (gain=1.25)
+             *   can detect available bandwidth without being capped by
+             *   the cwnd.  The extra inflight is temporary — the
+             *   ProbeDown phase (gain=0.75) drains any queue formed.
+             *
+             * PROBE_RTT: cwnd = BBR_MIN_CWND (4 segments), handled
+             *   by the `if (b->state != BBR_PROBE_RTT)` guard above.
+             */
+            uint32_t cwnd_gain;
+            switch (b->state) {
+            case BBR_STARTUP:
+                /* Match pacing gain for exponential inflight growth */
+                cwnd_gain = BBR_STARTUP_GAIN;       /* 2.885 */
+                break;
+            case BBR_DRAIN:
+                /* Keep pipe full while drain pacing empties queues */
+                cwnd_gain = 2 * BBR_UNIT;           /* 2.0 */
+                break;
+            case BBR_PROBE_BW:
+                /* Allow probing bursts without cwnd cap */
+                cwnd_gain = 2 * BBR_UNIT;           /* 2.0 */
+                break;
+            default:
+                cwnd_gain = BBR_UNIT;               /* 1.0 — fallback */
+                break;
             }
 
-            b->target_cwnd = bdp_segments;
+            /* Apply cwnd gain: target = BDP_segments × cwnd_gain / 256 */
+            uint32_t target = (uint32_t)(((uint64_t)bdp_segments * cwnd_gain)
+                                         >> BBR_GAIN_SCALE);
+            if (target < BBR_MIN_CWND) target = BBR_MIN_CWND;
+            if (target > BBR_MAX_CWND) target = BBR_MAX_CWND;
+            b->target_cwnd = target;
         } else {
             /* Not enough data yet — use default */
             b->target_cwnd = 32;
