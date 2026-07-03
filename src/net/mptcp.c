@@ -1636,13 +1636,108 @@ int mptcp_priority(uint32_t token, uint32_t addr_id, uint8_t backup)
     return -EOPNOTSUPP;
 }
 
-/* ── Implement: mptcp_fastclose ────────────────── */
+/* ── mptcp_send_subflow_rst: Send TCP RST + MP_FASTCLOSE on one subflow ──
+ * Builds a TCP RST segment on the given subflow, carrying the MP_FASTCLOSE
+ * option with the receiver's key from the MPTCP connection.
+ * The subflow's TCP connection is found via sf->conn_id. */
+static void mptcp_send_subflow_rst(struct mptcp_conn *mc,
+                                    const struct mptcp_subflow *sf)
+{
+    if (!mc || !sf || !sf->used)
+        return;
+
+    struct tcp_conn *c = &tcp_conns[sf->conn_id];
+    if (c->state == TCP_CLOSED)
+        return;
+
+    /* Build TCP RST segment with MP_FASTCLOSE option */
+    uint8_t buf[1500];
+    struct tcp_header *tcp = (struct tcp_header *)buf;
+    memset(tcp, 0, sizeof(*tcp));
+
+    tcp->src_port = htons(c->local_port);
+    tcp->dst_port = htons(c->remote_port);
+    tcp->seq_num  = htonl(c->our_seq);
+    tcp->ack_num  = htonl(c->their_seq);
+
+    /* Build the MP_FASTCLOSE option with the receiver's key */
+    uint8_t *opts = buf + sizeof(struct tcp_header);
+    uint16_t opt_len = 0;
+
+    opts[opt_len++] = 1;  /* NOP for alignment */
+
+    uint16_t fc_len = MPTCP_FASTCLOSE_LEN;
+    int ret = mptcp_build_fastclose(opts + opt_len, &fc_len, mc->rcv_key);
+    if (ret == 0) {
+        opt_len += fc_len;
+    }
+
+    /* Pad to multiple of 4 bytes */
+    while (opt_len % 4 != 0)
+        opts[opt_len++] = 1;  /* NOP */
+
+    uint16_t hdr_len = sizeof(struct tcp_header) + opt_len;
+    tcp->data_off = (uint8_t)((hdr_len / 4) << 4);
+    tcp->flags = TCP_RST;
+    tcp->window = htons(0);
+
+    tcp->checksum = 0;
+    tcp->checksum = net_transport_checksum(net_our_ip, c->remote_ip,
+                                           IP_PROTO_TCP, buf, hdr_len);
+
+    send_ip(c->remote_ip, IP_PROTO_TCP, buf, hdr_len);
+
+    /* Mark the TCP connection as closed */
+    c->state = TCP_CLOSED;
+    c->rx_fin = 1;
+
+    kprintf("[MPTCP-FC] Sent RST+MP_FASTCLOSE on subflow conn_id=%d "
+            "token=%u\n", sf->conn_id, mc->token);
+}
+
+/* ── mptcp_build_fastclose: Build MP_FASTCLOSE option (RFC 8684 §3.6) ────
+ * Format:
+ *   Byte 0: Kind = TCPOPT_MPTCP (30)
+ *   Byte 1: Length = 12
+ *   Byte 2: (subtype=7 << 4) | V_flag  (0x70 | 0x01 = 0x71)
+ *   Byte 3: Reserved = 0
+ *   Bytes 4-11: Receiver's Key (8 bytes)
+ *
+ * rcv_key is the receiver's 64-bit key (the key we received from the peer
+ * during the MP_CAPABLE handshake, i.e. mc->rcv_key).
+ * Returns 0 on success, negative errno on failure.
+ * On success, *len is updated to the bytes written. */
+int mptcp_build_fastclose(uint8_t *buf, uint16_t *len,
+                           const uint8_t rcv_key[8])
+{
+    if (!buf || !len || !rcv_key)
+        return -EINVAL;
+    if (*len < MPTCP_FASTCLOSE_LEN)
+        return -ENOSPC;
+
+    buf[0] = TCPOPT_MPTCP;                  /* kind = 30 */
+    buf[1] = (uint8_t)MPTCP_FASTCLOSE_LEN;  /* length = 12 */
+    buf[2] = (uint8_t)((MPTCP_FASTCLOSE << 4) | MPTCP_FASTCLOSE_FLAG_V);
+    buf[3] = 0;                              /* reserved */
+    memcpy(buf + 4, rcv_key, 8);             /* receiver's key */
+
+    *len = MPTCP_FASTCLOSE_LEN;
+    return 0;
+}
+
+/* ── mptcp_fastclose: Initiate fast close on an MPTCP connection ────
+ * Sends TCP RST + MP_FASTCLOSE on ALL active subflows, then destroys
+ * the MPTCP connection state.  This immediately terminates the entire
+ * MPTCP session without the normal 4-way FIN handshake on each subflow.
+ *
+ * Returns 0 on success, negative errno if the token is not found. */
 int mptcp_fastclose(uint32_t token)
 {
     if (!mptcp_initialized) {
         kprintf("[mptcp] mptcp_fastclose: not initialized\n");
         return -ENOSYS;
     }
+
     spinlock_acquire(&mptcp_lock);
     struct mptcp_conn *mc = mptcp_find_by_token(token);
     if (!mc) {
@@ -1650,10 +1745,214 @@ int mptcp_fastclose(uint32_t token)
         kprintf("[mptcp] mptcp_fastclose: token %u not found\n", token);
         return -EINVAL;
     }
-    kprintf("[mptcp] mptcp_fastclose: token=%u (stub)\n", token);
-    /* Close the connection via mptcp_close */
+
+    kprintf("[MPTCP-FC] Fast close initiated on token=%u, num_subflows=%u\n",
+            token, (unsigned)mc->num_subflows);
+
+    /* Snapshot subflow information before releasing the lock */
+    uint8_t num_subflows = mc->num_subflows;
+    struct {
+        int conn_id;
+        int used;
+    } sf_snapshot[MPTCP_MAX_SUBFLOWS];
+
+    for (uint8_t i = 0; i < num_subflows && i < MPTCP_MAX_SUBFLOWS; i++) {
+        sf_snapshot[i].conn_id = mc->subflows[i].conn_id;
+        sf_snapshot[i].used    = mc->subflows[i].used ? 1 : 0;
+    }
+
+    /* Copy the receiver's key before destroying the connection */
+    uint8_t rcv_key[8];
+    memcpy(rcv_key, mc->rcv_key, 8);
+
+    /* Destroy the MPTCP connection state */
     memset(mc, 0, sizeof(*mc));
     spinlock_release(&mptcp_lock);
+
+    /* Send RST + MP_FASTCLOSE on each active subflow.
+     * We iterate the snapshot because mc is now zeroed. */
+    for (uint8_t i = 0; i < num_subflows && i < MPTCP_MAX_SUBFLOWS; i++) {
+        if (!sf_snapshot[i].used)
+            continue;
+
+        struct tcp_conn *c = &tcp_conns[sf_snapshot[i].conn_id];
+        if (c->state == TCP_CLOSED)
+            continue;
+
+        /* Build and send RST + MP_FASTCLOSE on this subflow */
+        uint8_t buf[1500];
+        struct tcp_header *tcp = (struct tcp_header *)buf;
+        memset(tcp, 0, sizeof(*tcp));
+
+        tcp->src_port = htons(c->local_port);
+        tcp->dst_port = htons(c->remote_port);
+        tcp->seq_num  = htonl(c->our_seq);
+        tcp->ack_num  = htonl(c->their_seq);
+
+        uint8_t *opts = buf + sizeof(struct tcp_header);
+        uint16_t opt_len = 0;
+
+        opts[opt_len++] = 1;  /* NOP for alignment */
+
+        uint16_t fc_len = MPTCP_FASTCLOSE_LEN;
+        int ret = mptcp_build_fastclose(opts + opt_len, &fc_len, rcv_key);
+        if (ret == 0) {
+            opt_len += fc_len;
+        }
+
+        while (opt_len % 4 != 0)
+            opts[opt_len++] = 1;
+
+        uint16_t hdr_len = sizeof(struct tcp_header) + opt_len;
+        tcp->data_off = (uint8_t)((hdr_len / 4) << 4);
+        tcp->flags = TCP_RST;
+        tcp->window = htons(0);
+
+        tcp->checksum = 0;
+        tcp->checksum = net_transport_checksum(net_our_ip, c->remote_ip,
+                                               IP_PROTO_TCP, buf, hdr_len);
+
+        send_ip(c->remote_ip, IP_PROTO_TCP, buf, hdr_len);
+
+        c->state = TCP_CLOSED;
+        c->rx_fin = 1;
+
+        kprintf("[MPTCP-FC] Sent RST+MP_FASTCLOSE on subflow conn_id=%d\n",
+                sf_snapshot[i].conn_id);
+    }
+
+    kprintf("[MPTCP-FC] Fast close complete: token=%u\n", token);
+    return 0;
+}
+
+/* ── mptcp_handle_fastclose: Handle received MP_FASTCLOSE option ──
+ * Called from the TCP input path when an MP_FASTCLOSE option is
+ * detected on an established TCP connection (conn_id).
+ *
+ * Validates the key: the option carries the receiver's key, which
+ * should match our sender key (mc->snd_key, the key we sent during
+ * MP_CAPABLE).  If the key matches, we initiate fast close by sending
+ * RST on all subflows and destroying the MPTCP connection.
+ *
+ * Returns 0 on success, negative errno on failure. */
+int mptcp_handle_fastclose(int conn_id, const uint8_t *opt, uint16_t optlen)
+{
+    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS)
+        return -EINVAL;
+    if (!opt || optlen < MPTCP_FASTCLOSE_LEN)
+        return -EINVAL;
+    if (opt[0] != TCPOPT_MPTCP)
+        return -EINVAL;
+    if ((opt[2] >> 4) != MPTCP_FASTCLOSE)
+        return -EINVAL;
+
+    struct tcp_conn *c = &tcp_conns[conn_id];
+    if (c->state == TCP_CLOSED)
+        return -ECONNRESET;
+
+    uint32_t token = c->mptcp_token;
+    if (token == 0) {
+        kprintf("[MPTCP-FC] Fast close on non-MPTCP conn %d\n", conn_id);
+        return -EINVAL;
+    }
+
+    /* Extract the key from the option (bytes 4-11) */
+    uint8_t opt_key[8];
+    memcpy(opt_key, opt + 4, 8);
+
+    spinlock_acquire(&mptcp_lock);
+    struct mptcp_conn *mc = mptcp_find_by_token(token);
+    if (!mc) {
+        spinlock_release(&mptcp_lock);
+        kprintf("[MPTCP-FC] Token %u not found for fast close on conn %d\n",
+                token, conn_id);
+        return -ENOENT;
+    }
+
+    /* Verify the key: the option should contain the receiver's key,
+     * which from our perspective is our rcv_key (the key we received
+     * from the peer during MP_CAPABLE). */
+    if (memcmp(opt_key, mc->rcv_key, 8) != 0) {
+        spinlock_release(&mptcp_lock);
+        kprintf("[MPTCP-FC] Key mismatch on token %u: rejecting fast close\n",
+                token);
+        return -EPERM;
+    }
+
+    kprintf("[MPTCP-FC] Fast close validated: token=%u conn=%d\n",
+            token, conn_id);
+
+    /* Snapshot subflow information before releasing the lock */
+    uint8_t num_subflows = mc->num_subflows;
+    struct {
+        int conn_id;
+        int used;
+    } sf_snapshot[MPTCP_MAX_SUBFLOWS];
+
+    for (uint8_t i = 0; i < num_subflows && i < MPTCP_MAX_SUBFLOWS; i++) {
+        sf_snapshot[i].conn_id = mc->subflows[i].conn_id;
+        sf_snapshot[i].used    = mc->subflows[i].used ? 1 : 0;
+    }
+
+    /* Copy the receiver's key before destroying the connection */
+    uint8_t rcv_key[8];
+    memcpy(rcv_key, mc->rcv_key, 8);
+
+    /* Destroy the MPTCP connection state */
+    memset(mc, 0, sizeof(*mc));
+    spinlock_release(&mptcp_lock);
+
+    /* Send RST + MP_FASTCLOSE back on all active subflows */
+    for (uint8_t i = 0; i < num_subflows && i < MPTCP_MAX_SUBFLOWS; i++) {
+        if (!sf_snapshot[i].used)
+            continue;
+
+        struct tcp_conn *sc = &tcp_conns[sf_snapshot[i].conn_id];
+        if (sc->state == TCP_CLOSED)
+            continue;
+
+        uint8_t buf[1500];
+        struct tcp_header *tcp = (struct tcp_header *)buf;
+        memset(tcp, 0, sizeof(*tcp));
+
+        tcp->src_port = htons(sc->local_port);
+        tcp->dst_port = htons(sc->remote_port);
+        tcp->seq_num  = htonl(sc->our_seq);
+        tcp->ack_num  = htonl(sc->their_seq);
+
+        uint8_t *opts = buf + sizeof(struct tcp_header);
+        uint16_t opt_len = 0;
+
+        opts[opt_len++] = 1;  /* NOP */
+
+        uint16_t fc_len = MPTCP_FASTCLOSE_LEN;
+        int ret = mptcp_build_fastclose(opts + opt_len, &fc_len, rcv_key);
+        if (ret == 0) {
+            opt_len += fc_len;
+        }
+
+        while (opt_len % 4 != 0)
+            opts[opt_len++] = 1;
+
+        uint16_t hdr_len = sizeof(struct tcp_header) + opt_len;
+        tcp->data_off = (uint8_t)((hdr_len / 4) << 4);
+        tcp->flags = TCP_RST;
+        tcp->window = htons(0);
+
+        tcp->checksum = 0;
+        tcp->checksum = net_transport_checksum(net_our_ip, sc->remote_ip,
+                                               IP_PROTO_TCP, buf, hdr_len);
+
+        send_ip(sc->remote_ip, IP_PROTO_TCP, buf, hdr_len);
+
+        sc->state = TCP_CLOSED;
+        sc->rx_fin = 1;
+
+        kprintf("[MPTCP-FC] Sent RST+MP_FASTCLOSE on subflow conn_id=%d "
+                "(reply)\n", sf_snapshot[i].conn_id);
+    }
+
+    kprintf("[MPTCP-FC] Fast close handled: token=%u\n", token);
     return 0;
 }
 
@@ -1981,6 +2280,8 @@ EXPORT_SYMBOL(mptcp_handle_add_addr);
 EXPORT_SYMBOL(mptcp_handle_remove_addr);
 EXPORT_SYMBOL(mptcp_priority);
 EXPORT_SYMBOL(mptcp_fastclose);
+EXPORT_SYMBOL(mptcp_build_fastclose);
+EXPORT_SYMBOL(mptcp_handle_fastclose);
 EXPORT_SYMBOL(mptcp_reset);
 EXPORT_SYMBOL(mptcp_mp_join_syn);
 EXPORT_SYMBOL(mptcp_mp_join_synack);

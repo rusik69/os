@@ -539,8 +539,15 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
                     __builtin_memcpy(sc->tfo_cookie, payload + opt_offset + 2, cookie_len);
                 }
             } else if (kind == 30) { /* MPTCP option (kind 30, TCPOPT_MPTCP) */
-                /* Handle MP_CAPABLE option for MPTCP handshake */
-                mptcp_handle_capable(conn_id, payload + opt_offset, olen);
+                /* Determine MPTCP subtype and dispatch */
+                if (olen >= MPTCP_FASTCLOSE_LEN &&
+                    (payload[opt_offset + 2] >> 4) == MPTCP_FASTCLOSE) {
+                    /* Handle MP_FASTCLOSE — immediately close all subflows */
+                    mptcp_handle_fastclose(conn_id, payload + opt_offset, olen);
+                } else {
+                    /* Handle MP_CAPABLE option for MPTCP handshake */
+                    mptcp_handle_capable(conn_id, payload + opt_offset, olen);
+                }
             }
             opt_offset += olen;
         }

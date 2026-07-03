@@ -24,6 +24,12 @@
 #define MPTCP_FAIL          6   /* MP_FAIL fallback */
 #define MPTCP_FASTCLOSE     7   /* MP_FASTCLOSE */
 
+/* MP_FASTCLOSE option length (RFC 8684 §3.6)
+ * Format: kind(1) + len(1) + subtype+flags(1) + reserved(1) + rcv_key(8) = 12
+ * The V flag (0x01) indicates the key is included for verification. */
+#define MPTCP_FASTCLOSE_LEN      12  /* total option bytes */
+#define MPTCP_FASTCLOSE_FLAG_V   0x01  /* V flag: key verification present */
+
 /* MPTCP flags */
 #define MPTCP_CAPABLE_HMAC  0x01  /* MP_CAPABLE includes HMAC */
 
@@ -300,5 +306,28 @@ int  mptcp_sched_set_algo(uint32_t token, int alg);
 
 /* Get the current path scheduler algorithm for an MPTCP connection. */
 int  mptcp_sched_get_algo(uint32_t token);
+
+/* ── MPTCP Fast Close (RFC 8684 §3.6) ────────────────────────── */
+
+/* Build an MP_FASTCLOSE TCP option.
+ * On entry, *len is the buffer capacity; on exit, *len is bytes written.
+ * rcv_key is the receiver's 64-bit key (the key we received from the peer
+ * during the MP_CAPABLE handshake, stored in mc->rcv_key).
+ * Returns 0 on success, negative errno on failure. */
+int  mptcp_build_fastclose(uint8_t *buf, uint16_t *len,
+                            const uint8_t rcv_key[8]);
+
+/* Initiate fast close on an MPTCP connection.
+ * Sends TCP RST + MP_FASTCLOSE on ALL active subflows, then destroys
+ * the MPTCP connection state.  Returns 0 on success, negative errno
+ * if the token is not found or the connection is not established. */
+int  mptcp_fastclose(uint32_t token);
+
+/* Handle a received MP_FASTCLOSE option.
+ * Called from the TCP input path when an MP_FASTCLOSE option is
+ * detected on an established TCP connection (conn_id).
+ * Validates the key, sends RST on all subflows, and destroys the
+ * MPTCP connection.  Returns 0 on success, negative errno on failure. */
+int  mptcp_handle_fastclose(int conn_id, const uint8_t *opt, uint16_t optlen);
 
 #endif /* MPTCP_H */
