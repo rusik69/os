@@ -335,6 +335,7 @@ C_SRCS = src/kernel/kernel.c \
          src/net/lldp.c \
          src/net/tcp_bic.c \
          src/net/sch_tbf.c \
+         src/net/sch_fq.c \
          src/net/tcp_vegas.c \
          src/net/tcp_westwood.c \
          src/net/tcp_illinois.c \

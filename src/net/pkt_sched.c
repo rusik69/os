@@ -965,6 +965,9 @@ int tc_add_qdisc(const char *dev, int qdisc_type, void *params) {
         case QDISC_TBF:
             q = tbf_create((const struct tbf_spec *)params);
             break;
+        case QDISC_FQ:
+            q = fq_create();
+            break;
         default:
             return -1;
     }

@@ -8,6 +8,7 @@
 #define QDISC_FQ_CODEL    1
 #define QDISC_HTB         2
 #define QDISC_TBF         3
+#define QDISC_FQ          4
 
 /* Maximum number of qdiscs */
 #define QDISC_MAX 16
@@ -80,6 +81,11 @@ struct tbf_spec {
 
 /* Create a TBF qdisc with the given spec (NULL = defaults) */
 struct qdisc *tbf_create(const struct tbf_spec *spec);
+
+/* ── FQ (Fair Queue) ────────────────────────────────────────────── */
+
+/* Create an FQ qdisc with per-flow Deficit Round Robin */
+struct qdisc *fq_create(void);
 
 /* Init */
 void pkt_sched_init(void);
