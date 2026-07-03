@@ -3,12 +3,20 @@
 
 #include "types.h"
 
+/* Max BW filter length in rounds (BBR v1 windowed max filter) */
+#define BBR_MAX_BW_FILTER_LEN 10
+
 /* ── BBR per-connection state (embedded directly in struct tcp_conn) ── */
 
 struct bbr_data {
     /* Estimated bottleneck bandwidth (bytes per tick) */
     uint32_t bw;
     uint32_t bw_hi;
+
+    /* Max BW filter (windowed max over BBR_MAX_BW_FILTER_LEN rounds) */
+    uint32_t max_bw_filter[BBR_MAX_BW_FILTER_LEN];
+    int      max_bw_idx;
+    uint32_t max_bw;           /* windowed max bandwidth for pacing rate */
 
     /* Minimum round-trip time (in ticks) */
     uint32_t min_rtt;
@@ -60,6 +68,14 @@ uint32_t bbr_get_cwnd(struct bbr_data *b, uint32_t current_cwnd);
 
 /* Return pacing rate (bytes per tick) */
 uint32_t bbr_get_pacing_rate(struct bbr_data *b);
+
+/*
+ * Update pacing rate using the BBR v1 formula:
+ *   pacing_rate = max_bw_filter × pacing_gain / BBR_UNIT
+ * The gain depends on the current state (STARTUP/DRAIN/PROBE_BW/PROBE_RTT).
+ * Call this after each round or when the state changes.
+ */
+void     bbr_update_pacing_rate(struct bbr_data *b);
 
 /* Return BBR state as string */
 const char *bbr_state_str(struct bbr_data *b);

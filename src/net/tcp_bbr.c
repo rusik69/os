@@ -51,8 +51,20 @@
 #define BBR_GAIN_SCALE         8
 #define BBR_UNIT               (1U << BBR_GAIN_SCALE)   /* 256 = 1.0 */
 
-#define BBR_STARTUP_GAIN       (5 * BBR_UNIT / 4)       /* 1.25 : 25% growth per RTT */
-#define BBR_DRAIN_GAIN         (3 * BBR_UNIT / 4)       /* 0.75 : drain queue */
+/*
+ * STARTUP gain: 2/ln(2) ≈ 2.885 (RFC 8967 / BBR v1 paper)
+ * Each round, pacing at 2.885x the estimated BW doubles the delivery rate.
+ */
+#define BBR_STARTUP_GAIN       (BBR_UNIT * 2885 / 1000) /* 2.885 : 2x growth per RTT */
+
+/*
+ * DRAIN pacing gain: reciprocal of STARTUP gain ≈ 0.347.
+ * Drains the queue built during STARTUP in approximately one RTT.
+ */
+#define BBR_DRAIN_GAIN_PACING  (BBR_UNIT * 347 / 1000)  /* 0.347 : drain queue */
+
+/* Legacy DRAIN gain for cwnd calculation (kept for compatibility) */
+#define BBR_DRAIN_GAIN         (3 * BBR_UNIT / 4)       /* 0.75 : drain cwnd */
 #define BBR_PROBE_BW_GAIN      (5 * BBR_UNIT / 4)       /* 1.25 : probe for more BW */
 #define BBR_PROBE_BW_GAIN_LOW  (3 * BBR_UNIT / 4)       /* 0.75 : drain after probe */
 #define BBR_PROBE_RTT_GAIN     (BBR_UNIT)               /* 1.0  : neutral */
@@ -93,6 +105,10 @@ void bbr_init(struct bbr_data *b)
     b->packet_conservation = 0;
     b->probe_rtt_round_done = 0;
     b->probe_rtt_done_stamp = 0;
+
+    /* Max BW filter starts empty — will populate as rounds complete */
+    b->max_bw_idx = 0;
+    b->max_bw = 0;
 }
 
 /* ── Delivery rate sampling ──────────────────────────────────────────── */
@@ -144,6 +160,11 @@ static void bbr_sample_bw(struct bbr_data *b, uint32_t acked_bytes, uint64_t now
 /* ── Round detection ─────────────────────────────────────────────────── */
 
 /*
+ * Forward declaration for static helper defined below.
+ */
+static void bbr_update_bw_filter(struct bbr_data *b);
+
+/*
  * A "round" is an interval of time during which one RTT's worth of data
  * has been delivered (i.e., the delivery counter advances by the cwnd).
  * We detect the start of a new round when the delivery counter exceeds
@@ -171,7 +192,110 @@ static void bbr_update_round(struct bbr_data *b, uint32_t cwnd_segments,
         kprintf("[BBR] Round %d complete (cwnd=%u, bw=%u bytes/tick)\n",
                 b->round_count, cwnd_segments, b->bw);
 #endif
+
+        /* Update the windowed max BW filter when a round completes */
+        bbr_update_bw_filter(b);
     }
+}
+
+/* ── Max BW filter (windowed max, BBR v1 §4.1) ──────────────────────── */
+
+/*
+ * Update the windowed max bandwidth filter.
+ * Called at the end of each full round.
+ *
+ * Stores the current BW sample (the EWMA-smoothed bw) into a circular
+ * buffer, then recomputes max_bw as the maximum across the window.
+ * This gives a robust estimate of the bottleneck bandwidth, immune to
+ * transient dips caused by sender-idle periods or ACK aggregation.
+ */
+static void bbr_update_bw_filter(struct bbr_data *b)
+{
+    if (!b) return;
+
+    /* Store current BW into the circular filter */
+    b->max_bw_filter[b->max_bw_idx] = b->bw;
+    b->max_bw_idx = (b->max_bw_idx + 1) % BBR_MAX_BW_FILTER_LEN;
+
+    /* Recompute the windowed max */
+    uint32_t new_max = 0;
+    for (int i = 0; i < BBR_MAX_BW_FILTER_LEN; i++) {
+        if (b->max_bw_filter[i] > new_max)
+            new_max = b->max_bw_filter[i];
+    }
+    b->max_bw = new_max;
+
+#ifdef BBR_DEBUG
+    kprintf("[BBR] bw_filter: bw=%u max_bw=%u idx=%d\n",
+            b->bw, b->max_bw, b->max_bw_idx);
+#endif
+}
+
+/* ── Pacing rate estimation (BBR v1 §4.2) ──────────────────────────── */
+
+/*
+ * Update the pacing rate using the BBR v1 formula:
+ *
+ *   pacing_rate = max_bw_filter × pacing_gain / BBR_UNIT
+ *
+ * The gain is selected by current state:
+ *   STARTUP   → BBR_STARTUP_GAIN (2.885): exponential growth, ~2x per round
+ *   DRAIN     → BBR_DRAIN_GAIN_PACING (0.347): drain STARTUP queue
+ *   PROBE_BW  → cycles 1.25, 0.75, then 1.0 for rest
+ *   PROBE_RTT → 1.0 (neutral)
+ *
+ * Uses max_bw (windowed max over BBR_MAX_BW_FILTER_LEN rounds) so that
+ * transient dips from sender-idle or ACK aggregation do not collapse the
+ * pacing rate.  Falls back to the EWMA-smoothed bw if the filter is not
+ * yet populated.
+ */
+void bbr_update_pacing_rate(struct bbr_data *b)
+{
+    if (!b) return;
+
+    uint32_t gain = BBR_UNIT;  /* default gain = 1.0 */
+    uint32_t bw_for_pacing;
+
+    /* Select the pacing gain based on current state */
+    switch (b->state) {
+    case BBR_STARTUP:
+        gain = BBR_STARTUP_GAIN;           /* 2.885 : double each round */
+        break;
+    case BBR_DRAIN:
+        gain = BBR_DRAIN_GAIN_PACING;      /* 0.347 : drain queue */
+        break;
+    case BBR_PROBE_BW:
+        /* Phase 0: probe with 1.25; phase 1: drain with 0.75; rest: 1.0 */
+        if (b->probe_bw_phase == 0)
+            gain = BBR_PROBE_BW_GAIN;
+        else if (b->probe_bw_phase == 1)
+            gain = BBR_PROBE_BW_GAIN_LOW;
+        else
+            gain = BBR_UNIT;
+        break;
+    case BBR_PROBE_RTT:
+        gain = BBR_PROBE_RTT_GAIN;         /* 1.0 : neutral */
+        break;
+    default:
+        break;
+    }
+
+    /*
+     * Use the windowed max BW for pacing if available, otherwise fall
+     * back to the EWMA-smoothed bw.  The max filter is more robust:
+     * it remembers the highest bottleneck BW seen in recent rounds.
+     */
+    if (b->max_bw > 0)
+        bw_for_pacing = b->max_bw;
+    else if (b->bw > 0)
+        bw_for_pacing = b->bw;
+    else
+        bw_for_pacing = 100;  /* fallback initial rate */
+
+    /* pacing_rate = bw_for_pacing * gain / BBR_UNIT */
+    uint32_t rate = (uint32_t)(((uint64_t)bw_for_pacing * gain) >> BBR_GAIN_SCALE);
+    if (rate < 10) rate = 10;  /* minimum pacing: 10 bytes/tick */
+    b->pacing_rate = rate;
 }
 
 /* ── Main ACK processing ─────────────────────────────────────────────── */
@@ -273,39 +397,7 @@ void bbr_on_ack(struct bbr_data *b, uint32_t acked_bytes,
     }
 
     /* ── Compute pacing rate ─────────────────────────────────────────── */
-    {
-        uint32_t gain = BBR_UNIT;  /* default gain = 1.0 */
-
-        switch (b->state) {
-        case BBR_STARTUP:
-            gain = BBR_STARTUP_GAIN;
-            break;
-        case BBR_DRAIN:
-            gain = BBR_DRAIN_GAIN;
-            break;
-        case BBR_PROBE_BW:
-            /* Phase 0: probe gain, rest: drain or neutral */
-            if (b->probe_bw_phase == 0)
-                gain = BBR_PROBE_BW_GAIN;
-            else if (b->probe_bw_phase == 1)
-                gain = BBR_PROBE_BW_GAIN_LOW;
-            else
-                gain = BBR_UNIT;
-            break;
-        case BBR_PROBE_RTT:
-            gain = BBR_PROBE_RTT_GAIN;
-            break;
-        default:
-            break;
-        }
-
-        /* pacing_rate = bw * gain / UNIT */
-        if (b->bw > 0) {
-            uint32_t rate = (uint32_t)(((uint64_t)b->bw * gain) >> BBR_GAIN_SCALE);
-            if (rate < 10) rate = 10;  /* minimum pacing: 1 byte/tick */
-            b->pacing_rate = rate;
-        }
-    }
+    bbr_update_pacing_rate(b);
 
     /* ── Compute target cwnd ─────────────────────────────────────────── */
     if (b->state != BBR_PROBE_RTT) {
@@ -406,9 +498,9 @@ const char *bbr_state_str(struct bbr_data *b)
 void bbr_dump(struct bbr_data *b)
 {
     if (!b) return;
-    kprintf("[BBR] state=%s bw=%u bw_hi=%u min_rtt=%u pacer=%u "
+    kprintf("[BBR] state=%s bw=%u bw_hi=%u max_bw=%u min_rtt=%u pacer=%u "
             "tgt_cwnd=%u rounds=%u phase=%u\n",
-            bbr_state_str(b), b->bw, b->bw_hi, b->min_rtt, b->pacing_rate,
+            bbr_state_str(b), b->bw, b->bw_hi, b->max_bw, b->min_rtt, b->pacing_rate,
             b->target_cwnd, b->round_count, b->probe_bw_phase);
 }
 
