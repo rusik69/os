@@ -953,3 +953,233 @@ done:
 
     return ret;
 }
+
+/* ── SRV record query (RFC 2782) ────────────────────────────────────── */
+
+/**
+ * dns_resolver_parse_response_srv - Parse DNS response for SRV records
+ * @data:    raw DNS response data
+ * @len:     length of response in bytes
+ * @txid:    expected transaction ID
+ * @records: array to receive parsed SRV records
+ * @count:   on input: max records; on output: records parsed
+ * @out_ttl: receives TTL from the first SRV record (may be NULL)
+ *
+ * Parses the answer section and extracts all SRV (type 33) records.
+ * Each SRV record yields priority, weight, port, and target hostname.
+ *
+ * Returns: 0 on success, negative errno on failure:
+ *   -EAGAIN   transaction ID mismatch
+ *   -ENOENT   NXDOMAIN or no SRV record found
+ *   -EIO      malformed response or server error
+ *   -ENOSPC   more SRV records than *count allows
+ */
+static int dns_resolver_parse_response_srv(const uint8_t *data, uint16_t len,
+                                            uint16_t txid,
+                                            struct dns_srv_record *records,
+                                            int *count, uint32_t *out_ttl)
+{
+    const struct dns_header *hdr;
+    uint16_t flags;
+    uint8_t rcode;
+    uint16_t qdcount, ancount;
+    int pos, ret;
+    uint16_t a;
+    int max_records;
+    int found = 0;
+
+    if (!data || len < sizeof(struct dns_header) || !records || !count)
+        return -EINVAL;
+
+    max_records = *count;
+    *count = 0;
+
+    hdr = (const struct dns_header *)data;
+
+    /* Verify transaction ID */
+    if (ntohs(hdr->id) != txid)
+        return -EAGAIN;
+
+    /* Verify QR bit (must be a response) */
+    flags = ntohs(hdr->flags);
+    if (!(flags & DNS_QR_RESPONSE))
+        return -EIO;
+
+    /* Check RCODE */
+    rcode = (uint8_t)(flags & 0x0F);
+    if (rcode != DNS_RCODE_OK) {
+        if (rcode == DNS_RCODE_NX)
+            return -ENOENT;
+        return -EIO;
+    }
+
+    qdcount = ntohs(hdr->qdcount);
+    ancount = ntohs(hdr->ancount);
+
+    if (ancount == 0)
+        return -ENOENT;
+
+    pos = sizeof(struct dns_header);
+
+    /* Skip question section */
+    for (uint16_t q = 0; q < qdcount; q++) {
+        ret = dns_skip_name(data, (int)len, pos);
+        if (ret < 0) return ret;
+        pos = ret + 4;  /* skip QTYPE (2) + QCLASS (2) */
+        if (pos > (int)len) return -EIO;
+    }
+
+    /* Parse answer section — extract SRV records */
+    for (a = 0; a < ancount && pos + 12 <= (int)len; a++) {
+        ret = dns_skip_name(data, (int)len, pos);
+        if (ret < 0) return ret;
+        pos = ret;
+
+        if (pos + 10 > (int)len)
+            return -EIO;
+
+        uint16_t rtype = ((uint16_t)data[pos] << 8) | data[pos + 1];
+        uint32_t ttl   = ((uint32_t)data[pos + 4] << 24) |
+                         ((uint32_t)data[pos + 5] << 16) |
+                         ((uint32_t)data[pos + 6] << 8)  |
+                         data[pos + 7];
+        uint16_t rdlen = ((uint16_t)data[pos + 8] << 8) | data[pos + 9];
+        pos += 10;
+
+        if (rtype == DNS_TYPE_SRV && rdlen >= 7) {
+            /* SRV RDATA: Priority(2) Weight(2) Port(2) Target(variable) */
+            if (pos + 6 > (int)len)
+                return -EIO;
+
+            if (found >= max_records)
+                return -ENOSPC;
+
+            struct dns_srv_record *rec = &records[found];
+            rec->priority = ((uint16_t)data[pos] << 8) | data[pos + 1];
+            rec->weight   = ((uint16_t)data[pos + 2] << 8) | data[pos + 3];
+            rec->port     = ((uint16_t)data[pos + 4] << 8) | data[pos + 5];
+
+            /* Decode target name */
+            ret = dns_name_to_string(data, (int)len, pos + 6,
+                                      rec->target, (int)sizeof(rec->target));
+            if (ret < 0)
+                return ret;
+
+            if (out_ttl && found == 0)
+                *out_ttl = ttl;
+
+            found++;
+        }
+
+        pos += rdlen;
+    }
+
+    *count = found;
+
+    if (found == 0)
+        return -ENOENT;
+
+    return 0;
+}
+
+int dns_resolver_query_srv(const char *hostname, struct dns_srv_record *records,
+                           int *count, uint32_t *out_ttl)
+{
+    uint8_t pkt[512];
+    uint8_t resp[512];
+    uint32_t srv_ip;
+    int ret, pkt_len;
+    uint32_t ttl = 0;
+    uint16_t txid;
+    int attempt;
+    uint64_t deadline;
+    uint32_t src_ip;
+    uint16_t src_port;
+    int rlen;
+    int timeout;
+
+    if (!hostname || !records || !count || *count <= 0)
+        return -EINVAL;
+
+    /* Get DNS server IP */
+    srv_ip = net_dns_server;
+    if (!srv_ip) {
+        kprintf("[dns_resolver] no DNS server configured for SRV query\n");
+        return -EHOSTUNREACH;
+    }
+
+    if (out_ttl)
+        *out_ttl = 0;
+
+    /* Build the SRV query packet */
+    txid = (uint16_t)__sync_fetch_and_add(&dns_txid_counter, 1);
+    ret = dns_build_query(pkt, hostname, DNS_TYPE_SRV, txid);
+    if (ret < 0)
+        return ret;
+    pkt_len = ret;
+
+    /* Start listening for DNS responses on our source port */
+    ret = net_udp_listen(DNS_RESOLVER_SRC_PORT);
+    if (ret < 0) {
+        kprintf("[dns_resolver] failed to listen on port %d\n",
+                DNS_RESOLVER_SRC_PORT);
+        return ret;
+    }
+
+    /* Send query with retries */
+    for (attempt = 0; attempt < DNS_RETRIES; attempt++) {
+        /* Use a fresh transaction ID for each attempt */
+        txid = (uint16_t)__sync_fetch_and_add(&dns_txid_counter, 1);
+        struct dns_header *hdr = (struct dns_header *)pkt;
+        hdr->id = htons(txid);
+
+        net_udp_send(srv_ip, DNS_RESOLVER_SRC_PORT, DNS_PORT,
+                     pkt, (uint16_t)pkt_len);
+
+        /* Wait for response with timeout */
+        deadline = timer_get_ticks() + DNS_TIMEOUT_TICKS;
+
+        while (1) {
+            uint64_t now = timer_get_ticks();
+            if (now >= deadline)
+                break;
+
+            timeout = (int)(deadline - now);
+            if (timeout <= 0)
+                break;
+
+            rlen = net_udp_recv(DNS_RESOLVER_SRC_PORT, resp, sizeof(resp),
+                                &src_ip, &src_port, timeout);
+
+            if (rlen > 0) {
+                ret = dns_resolver_parse_response_srv(resp, (uint16_t)rlen,
+                                                       txid, records,
+                                                       count, &ttl);
+                if (ret == 0) {
+                    /* Success — SRV record(s) found */
+                    goto done;
+                }
+                if (ret != -EAGAIN) {
+                    /* Fatal error — no point retrying */
+                    goto done;
+                }
+            }
+        }
+    }
+
+    /* All retries exhausted */
+    ret = -ETIMEDOUT;
+
+done:
+    net_udp_unlisten(DNS_RESOLVER_SRC_PORT);
+
+    if (ret == 0) {
+        if (out_ttl)
+            *out_ttl = ttl;
+
+        kprintf("[dns_resolver] SRV %s -> %d records (ttl=%u)\n",
+                hostname, *count, (unsigned)ttl);
+    }
+
+    return ret;
+}

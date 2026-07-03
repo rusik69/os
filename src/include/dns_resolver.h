@@ -22,6 +22,22 @@
 /* ── CNAME resolution chain ─────────────────────────────────────────── */
 #define DNS_CNAME_MAX_CHAIN  5   /* max CNAME follow depth */
 
+/* ── SRV record (RFC 2782) ──────────────────────────────────────────── */
+
+/**
+ * struct dns_srv_record - A single SRV record (RFC 2782)
+ * @priority: lower values = higher priority
+ * @weight:   relative weight among same-priority records
+ * @port:     TCP/UDP port of the service
+ * @target:   canonical hostname providing the service
+ */
+struct dns_srv_record {
+    uint16_t priority;
+    uint16_t weight;
+    uint16_t port;
+    char target[256];       /* DNS name string, max 255 chars + NUL */
+};
+
 /* ── Public API ─────────────────────────────────────────────────────── */
 
 /**
@@ -94,5 +110,28 @@ int dns_resolver_query_aaaa(const char *hostname, struct in6_addr *out_addr,
  */
 int dns_resolver_query_a_follow_cname(const char *hostname,
                                        uint32_t *out_ip, uint32_t *out_ttl);
+
+/**
+ * dns_resolver_query_srv - Perform DNS SRV record lookup (RFC 2782)
+ *
+ * Sends a DNS SRV-record query to the configured DNS server, waits for
+ * the response, and parses all SRV records in the answer section.
+ * SRV records are used for service discovery — e.g., querying
+ * "_sip._tcp.example.com" returns the SIP servers for example.com.
+ *
+ * @hostname:   service name to query (e.g. "_sip._tcp.example.com")
+ * @records:    array to receive SRV records
+ * @count:      on input: max records; on output: number of records found
+ * @out_ttl:    receives TTL in seconds (may be NULL)
+ *
+ * Returns: 0 on success, negative errno on failure
+ *   -EHOSTUNREACH  no DNS server configured
+ *   -ENOENT        domain name does not exist (NXDOMAIN)
+ *   -ETIMEDOUT     no response after all retries
+ *   -EIO           server returned an error or malformed response
+ *   -ENOSPC        more SRV records than @count allows
+ */
+int dns_resolver_query_srv(const char *hostname, struct dns_srv_record *records,
+                           int *count, uint32_t *out_ttl);
 
 #endif /* DNS_RESOLVER_H */
