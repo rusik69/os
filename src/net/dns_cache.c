@@ -12,7 +12,10 @@
  *   - Fixed-size array (DNS_CACHE_SIZE = 32 entries)
  *   - Lookup: linear scan with TTL expiry check
  *   - Store: update existing entry, or LRU-evict oldest
- *   - TTL: uses value from DNS reply; falls back to DNS_CACHE_TTL (300s)
+ *   - TTL: uses value from DNS reply; falls back to runtime default (300s)
+ *   - Periodic timer evicts expired entries every 60s
+ *   - TTL jitter (±10%) prevents thundering herd on expiry
+ *   - TTL capped at configurable maximum (default 24h)
  *   - Statistics counters for observability
  */
 
@@ -22,6 +25,8 @@
 #include "string.h"
 #include "printf.h"
 #include "timer.h"
+#include "timers.h"
+#include "rng.h"
 #include "vfs.h"
 #include "net_internal.h"
 
@@ -31,6 +36,14 @@ static struct dns_cache_entry dns_cache[DNS_CACHE_SIZE];
 
 /* Statistics counters */
 static struct dns_cache_stats dns_stats;
+
+/* TTL configuration */
+static uint32_t dns_cache_default_ttl     = DNS_CACHE_TTL;
+static uint32_t dns_cache_max_ttl         = 86400;   /* 24 hours max */
+static uint32_t dns_cache_expiry_interval = 60;      /* scan every 60s */
+
+/* Periodic expiry timer (-1 = not running) */
+static int dns_cache_timer_id = -1;
 
 /* ── Internal helpers ───────────────────────────────────────────────── */
 
@@ -47,6 +60,19 @@ static void dns_cache_evict_expired(void) {
             dns_stats.expired++;
         }
     }
+}
+
+/**
+ * dns_cache_expiry_cb - Periodic timer callback to evict expired entries.
+ * Re-schedules itself at the configured interval.
+ */
+static void dns_cache_expiry_cb(void *arg)
+{
+    (void)arg;
+    dns_cache_evict_expired();
+    /* Re-schedule */
+    uint64_t interval_ticks = (uint64_t)dns_cache_expiry_interval * 100;
+    dns_cache_timer_id = timer_schedule(dns_cache_expiry_cb, NULL, interval_ticks);
 }
 
 /**
@@ -97,6 +123,15 @@ void dns_cache_init(void) {
         dns_cache[i].valid = 0;
     memset(&dns_stats, 0, sizeof(dns_stats));
     dns_stats.capacity = DNS_CACHE_SIZE;
+
+    /* Start periodic expiry timer */
+    if (dns_cache_timer_id < 0) {
+        uint64_t interval_ticks = (uint64_t)dns_cache_expiry_interval * 100;
+        dns_cache_timer_id = timer_schedule(dns_cache_expiry_cb, NULL, interval_ticks);
+        if (dns_cache_timer_id >= 0)
+            kprintf("[dns_cache] periodic expiry timer started (interval=%us)\n",
+                    dns_cache_expiry_interval);
+    }
 }
 
 uint32_t dns_cache_lookup(const char *name) {
@@ -133,7 +168,30 @@ void dns_cache_store(const char *name, uint32_t ip, uint32_t ttl) {
     dns_stats.stores++;
 
     /* Compute expiry time */
-    uint32_t ttl_sec = ttl > 0 ? ttl : DNS_CACHE_TTL;
+    uint32_t ttl_sec = ttl > 0 ? ttl : dns_cache_default_ttl;
+
+    /* Cap TTL to prevent excessively long-lived entries */
+    if (ttl_sec > dns_cache_max_ttl)
+        ttl_sec = dns_cache_max_ttl;
+
+    /* Add random jitter (±10% of TTL) to prevent thundering herd
+     * when many entries are inserted at the same time.  Entries
+     * with tiny TTLs (< 5s) skip jitter since the impact is noise. */
+    if (ttl_sec > 5) {
+        uint32_t max_jitter = ttl_sec / 10 + 1;
+        uint32_t jitter     = rng_get_u32() % max_jitter;
+        if (rng_get_u32() & 1) {
+            /* Subtract jitter */
+            if (ttl_sec > jitter)
+                ttl_sec -= jitter;
+        } else {
+            /* Add jitter (still capped) */
+            uint64_t plus_jitter = (uint64_t)ttl_sec + (uint64_t)jitter;
+            if (plus_jitter < (uint64_t)dns_cache_max_ttl)
+                ttl_sec = (uint32_t)plus_jitter;
+        }
+    }
+
     /* Convert seconds to ticks (timers use centiseconds ~10ms at 100Hz) */
     uint64_t ttl_ticks = (uint64_t)ttl_sec * 100;  /* 100 Hz timer */
     uint64_t expires   = timer_get_ticks() + ttl_ticks;
@@ -398,7 +456,7 @@ uint32_t dns_resolver_resolve(const char *hostname)
 }
 
 void net_dns_cache_set(const char *hostname, uint32_t ip) {
-    dns_cache_store(hostname, ip, DNS_CACHE_TTL);
+    dns_cache_store(hostname, ip, 0);  /* 0 = use runtime default TTL */
 }
 
 uint32_t net_dns_cache_get(const char *hostname) {
@@ -493,16 +551,90 @@ int dns_cache_set_size(int new_size)
 }
 
 /* ── Implement: dns_cache_set_ttl ────────────────── */
+uint32_t dns_cache_get_default_ttl(void)
+{
+    return dns_cache_default_ttl;
+}
+
 int dns_cache_set_ttl(uint32_t new_ttl)
 {
     if (new_ttl == 0) {
         kprintf("[dns_cache] dns_cache_set_ttl: TTL must be > 0\n");
         return -EINVAL;
     }
-    kprintf("[dns_cache] dns_cache_set_ttl: new_ttl=%u (stub — using existing TTL logic)\n", new_ttl);
-    /* The existing dns_cache_store already uses the ttl parameter, so this
-     * can work if we store a global default TTL */
+    if (new_ttl > dns_cache_max_ttl) {
+        kprintf("[dns_cache] dns_cache_set_ttl: TTL %u exceeds max %u, capping\n",
+                new_ttl, dns_cache_max_ttl);
+        new_ttl = dns_cache_max_ttl;
+    }
+    dns_cache_default_ttl = new_ttl;
+    kprintf("[dns_cache] dns_cache_set_ttl: default TTL set to %u seconds\n", new_ttl);
     return 0;
+}
+
+/* ── dns_cache_get_max_ttl / dns_cache_set_max_ttl ── */
+uint32_t dns_cache_get_max_ttl(void)
+{
+    return dns_cache_max_ttl;
+}
+
+int dns_cache_set_max_ttl(uint32_t new_max)
+{
+    if (new_max < 1 || new_max > 86400 * 365) {
+        kprintf("[dns_cache] dns_cache_set_max_ttl: invalid max TTL %u\n", new_max);
+        return -EINVAL;
+    }
+    if (new_max < dns_cache_default_ttl) {
+        kprintf("[dns_cache] dns_cache_set_max_ttl: max %u < default %u, "
+                "clamping default\n", new_max, dns_cache_default_ttl);
+        dns_cache_default_ttl = new_max;
+    }
+    dns_cache_max_ttl = new_max;
+    kprintf("[dns_cache] dns_cache_set_max_ttl: max TTL set to %u seconds\n", new_max);
+    return 0;
+}
+
+/* ── dns_cache_set_expiry_interval / dns_cache_get_expiry_interval ── */
+uint32_t dns_cache_get_expiry_interval(void)
+{
+    return dns_cache_expiry_interval;
+}
+
+int dns_cache_set_expiry_interval(uint32_t new_interval)
+{
+    if (new_interval < 1 || new_interval > 86400) {
+        kprintf("[dns_cache] dns_cache_set_expiry_interval: invalid interval %u\n",
+                new_interval);
+        return -EINVAL;
+    }
+    dns_cache_expiry_interval = new_interval;
+
+    /* Restart the timer with the new interval */
+    if (dns_cache_timer_id >= 0) {
+        timer_cancel(dns_cache_timer_id);
+        dns_cache_timer_id = -1;
+    }
+    uint64_t interval_ticks = (uint64_t)dns_cache_expiry_interval * 100;
+    dns_cache_timer_id = timer_schedule(dns_cache_expiry_cb, NULL, interval_ticks);
+    kprintf("[dns_cache] dns_cache_set_expiry_interval: interval set to %u seconds\n",
+            new_interval);
+    return 0;
+}
+
+/* ── dns_cache_get_expired_count ─────────────────── */
+int dns_cache_get_expired_count(void)
+{
+    return dns_stats.expired;
+}
+
+/* ── dns_cache_stop_expiry_timer ─────────────────── */
+void dns_cache_stop_expiry_timer(void)
+{
+    if (dns_cache_timer_id >= 0) {
+        timer_cancel(dns_cache_timer_id);
+        dns_cache_timer_id = -1;
+        kprintf("[dns_cache] periodic expiry timer stopped\n");
+    }
 }
 #include "module.h"
 module_init(net_dns_cache_init);

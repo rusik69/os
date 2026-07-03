@@ -77,6 +77,58 @@ void dns_cache_dump(void);
  */
 void dns_cache_foreach(int (*callback)(const struct dns_cache_entry *e, void *arg), void *arg);
 
+/* ── TTL management ───────────────────────────────────────────────── */
+
+/**
+ * dns_cache_set_ttl - Set the default TTL for cache entries
+ * @ttl: default TTL in seconds (must be > 0)
+ * Returns: 0 on success, -EINVAL for invalid TTL
+ */
+int dns_cache_set_ttl(uint32_t ttl);
+
+/**
+ * dns_cache_get_default_ttl - Get the current default TTL
+ * Returns: default TTL in seconds
+ */
+uint32_t dns_cache_get_default_ttl(void);
+
+/**
+ * dns_cache_set_max_ttl - Set the maximum allowed TTL
+ * @max_ttl: maximum TTL in seconds (1..86400*365)
+ * Returns: 0 on success, -EINVAL if out of range
+ */
+int dns_cache_set_max_ttl(uint32_t max_ttl);
+
+/**
+ * dns_cache_get_max_ttl - Get the current maximum TTL
+ * Returns: maximum TTL in seconds
+ */
+uint32_t dns_cache_get_max_ttl(void);
+
+/**
+ * dns_cache_set_expiry_interval - Set the periodic expiry scan interval
+ * @interval: scan interval in seconds (1..86400)
+ * Returns: 0 on success, -EINVAL if out of range
+ */
+int dns_cache_set_expiry_interval(uint32_t interval);
+
+/**
+ * dns_cache_get_expiry_interval - Get the current expiry scan interval
+ * Returns: scan interval in seconds
+ */
+uint32_t dns_cache_get_expiry_interval(void);
+
+/**
+ * dns_cache_get_expired_count - Get total expired entry count (cumulative)
+ * Returns: number of entries evicted due to TTL expiry
+ */
+int dns_cache_get_expired_count(void);
+
+/**
+ * dns_cache_stop_expiry_timer - Stop the periodic expiry timer
+ */
+void dns_cache_stop_expiry_timer(void);
+
 /* ── Compatibility wrappers (exported via net.h / net.c) ───────────── */
 
 /* These are used by existing consumers */
