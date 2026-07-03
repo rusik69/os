@@ -23,6 +23,7 @@
 #include "rng.h"
 #include "timer.h"
 #include "net.h"
+#include "netdevice.h"
 
 static struct wg_device g_wg;
 static int wg_initialized = 0;
@@ -821,6 +822,7 @@ int wg_init(void) {
     memset(&g_wg, 0, sizeof(g_wg));
     g_wg.listen_port = 51820;
     g_wg.mtu = WG_MTU;
+    g_wg.ifindex = -1;  /* Not yet registered as a net_device */
 
     /* Generate a real key pair using Curve25519 */
     uint8_t private_key[32];
@@ -2874,6 +2876,176 @@ int wg_set_mtu(int mtu)
     }
     g_wg.mtu = mtu;
     kprintf("[WG] MTU set to %d\n", g_wg.mtu);
+    return 0;
+}
+
+/* ── Interface lifecycle (virtual net_device) ───────────────────── */
+
+/*
+ * Transmit callback for the WireGuard virtual net_device.
+ * Takes an Ethernet frame, removes the Ethernet header, encrypts
+ * the inner IP packet via the WireGuard crypto layer, and enqueues
+ * the resulting UDP payload for transmission.
+ *
+ * Returns 0 on success, -1 on failure (net_device convention). */
+static int wg_transmit(struct net_device *dev,
+                        const uint8_t *data, uint16_t len)
+{
+    struct wg_device *wg;
+    const uint8_t *payload;
+    uint16_t payload_len;
+    int ret;
+
+    if (!dev || !data || len == 0)
+        return -1;
+
+    wg = (struct wg_device *)dev->priv;
+    if (!wg || !wg_initialized)
+        return -1;
+
+    /* Strip Ethernet header (14 bytes) to get the inner IP packet */
+    if (len <= 14) {
+        kprintf("[WG] iface xmit: frame too short (%u bytes)\n", (unsigned)len);
+        return -1;
+    }
+    payload = data + 14;
+    payload_len = len - 14;
+
+    /* Enforce tunnel MTU on the inner IP packet */
+    if (payload_len > (uint16_t)wg->mtu) {
+        kprintf("[WG] iface xmit: inner packet %u > MTU %d\n",
+                (unsigned)payload_len, wg->mtu);
+        return -1;
+    }
+
+    /* Encrypt and enqueue via the existing WireGuard data path */
+    ret = wg_send(payload, (int)payload_len);
+    if (ret < 0) {
+        kprintf("[WG] iface xmit: wg_send failed (%d)\n", ret);
+        return -1;
+    }
+
+    /* Flush the TX queue so the encrypted packet goes out immediately */
+    wg_tx_flush();
+
+    return 0;
+}
+
+int wg_iface_create(void)
+{
+    struct net_device nd;
+    int ifindex;
+
+    if (!wg_initialized)
+        return -ENOSYS;
+
+    /* Check if already registered */
+    if (g_wg.ifindex >= 0 && netif_valid(g_wg.ifindex))
+        return -EALREADY;
+
+    memset(&nd, 0, sizeof(nd));
+    memcpy(nd.name, "wg0", 4);  /* "wg0" + NUL */
+    nd.transmit = wg_transmit;
+    nd.receive  = NULL;          /* RX is handled via UDP receive path */
+    nd.mtu      = g_wg.mtu;
+    nd.flags    = 0;             /* Start down */
+    nd.priv     = (void *)&g_wg;
+
+    /* Generate a locally-administered MAC address from the public key */
+    {
+        uint8_t hash[32];
+        uint8_t zeros[32];
+
+        memset(zeros, 0, sizeof(zeros));
+        wg_kdf1(hash, zeros, g_wg.public_key);
+
+        nd.mac[0] = 0x8e;
+        nd.mac[1] = hash[0];
+        nd.mac[2] = hash[1];
+        nd.mac[3] = hash[2];
+        nd.mac[4] = hash[3];
+        nd.mac[5] = hash[4];
+    }
+
+    ifindex = netif_register(&nd);
+    if (ifindex < 0) {
+        kprintf("[WG] iface_create: netif_register failed\n");
+        return -ENOMEM;
+    }
+
+    g_wg.ifindex = ifindex;
+    kprintf("[OK] WireGuard interface wg0 created (ifindex=%d, MTU=%d)\n",
+            ifindex, g_wg.mtu);
+    return ifindex;
+}
+
+int wg_iface_destroy(void)
+{
+    int ifindex;
+
+    if (!wg_initialized)
+        return -ENOSYS;
+
+    ifindex = g_wg.ifindex;
+    if (ifindex < 0)
+        return -EALREADY;  /* Already destroyed */
+
+    /* Flush all pending TX queues */
+    wg_tx_flush();
+
+    /* Mark the interface index as invalid */
+    g_wg.ifindex = -1;
+
+    /* Unregister from the net_device layer */
+    if (netif_unregister(ifindex) < 0) {
+        kprintf("[WG] iface_destroy: netif_unregister(%d) failed\n", ifindex);
+        return -EIO;
+    }
+
+    kprintf("[WG] WireGuard interface wg0 destroyed (was ifindex=%d)\n", ifindex);
+    return 0;
+}
+
+int wg_iface_up(void)
+{
+    struct net_device *dev;
+
+    if (!wg_initialized)
+        return -ENOSYS;
+    if (g_wg.ifindex < 0)
+        return -ENODEV;
+
+    dev = netif_get(g_wg.ifindex);
+    if (!dev)
+        return -ENODEV;
+
+    /* Set UP and RUNNING flags */
+    dev->flags |= (IFF_UP | IFF_RUNNING);
+
+    kprintf("[WG] Interface wg0 is UP (ifindex=%d)\n", g_wg.ifindex);
+    return 0;
+}
+
+int wg_iface_down(void)
+{
+    struct net_device *dev;
+
+    if (!wg_initialized)
+        return -ENOSYS;
+    if (g_wg.ifindex < 0)
+        return -ENODEV;
+
+    dev = netif_get(g_wg.ifindex);
+    if (!dev)
+        return -ENODEV;
+
+    /* Clear UP and RUNNING flags */
+    dev->flags &= ~(IFF_UP | IFF_RUNNING);
+
+    /* Flush any pending TX packets */
+    wg_tx_flush();
+
+    kprintf("[WG] Interface wg0 is DOWN (ifindex=%d)\n", g_wg.ifindex);
     return 0;
 }
 

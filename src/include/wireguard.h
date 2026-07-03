@@ -112,6 +112,9 @@ struct wg_device {
 
     /* ── Device-level keepalive timer ──────────────────────────── */
     uint64_t last_poll_time;    /* last time wg_poll() ran */
+
+    /* ── Virtual interface (net_device) index ──────────────────── */
+    int      ifindex;           /* net_device ifindex, -1 if not registered */
 };
 
 /* ── API ────────────────────────────────────────────────────────── */
@@ -199,6 +202,26 @@ int  wireguard_decrypt(const uint8_t *ciphertext, uint64_t ciphertext_len,
 /* WireGuard TX queue flush — sends all queued encrypted packets via UDP.
  * Should be called periodically (e.g., from wg_poll() or a timer). */
 void wg_tx_flush(void);
+
+/* ── Interface lifecycle (virtual net_device) ───────────────────── */
+
+/* Create and register the WireGuard virtual network interface.
+ * Returns the ifindex (>= 0) on success, or negative errno. */
+int  wg_iface_create(void);
+
+/* Destroy and unregister the WireGuard virtual network interface.
+ * Flushes all TX queues and tears down peer sessions.
+ * Returns 0 on success, or negative errno. */
+int  wg_iface_destroy(void);
+
+/* Bring the WireGuard interface up (set IFF_UP | IFF_RUNNING).
+ * Returns 0 on success, or negative errno. */
+int  wg_iface_up(void);
+
+/* Bring the WireGuard interface down (clear IFF_UP | IFF_RUNNING).
+ * Flushes pending TX queues and stops the keepalive timer.
+ * Returns 0 on success, or negative errno. */
+int  wg_iface_down(void);
 
 /* ── Generic Netlink family (userspace configuration) ──────────────── */
 
