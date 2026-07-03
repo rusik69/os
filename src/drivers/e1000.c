@@ -249,7 +249,9 @@ static uint32_t rss_key_runtime[4];
 
 /* Current RSS hash type bitmask (default: TCP/IPv4 + IPv4) */
 static uint32_t rss_hash_types = E1000_RSS_HASH_TCP_IPV4
-                               | E1000_RSS_HASH_IPV4;
+                               | E1000_RSS_HASH_IPV4
+                               | E1000_RSS_HASH_TCP_IPV6
+                               | E1000_RSS_HASH_IPV6;
 
 /* ITR adaptive state (per queue — queue 0 ITR used as global) */
 static uint32_t itr_current = ITR_BALANCED;
@@ -417,6 +419,70 @@ static uint32_t e1000_rss_compute_ipv4(const uint8_t *iph)
     return e1000_rss_toeplitz(key_bytes, input, sizeof(input));
 }
 
+/* ── RSS key helper ─────────────────────────────────────────────────── */
+
+/* Build 40-byte RSS key from the 4-dword runtime key array.
+ * Expands rss_key_runtime[0..3] into 16 bytes, then zeros bytes 16-39
+ * (sufficient for both IPv4 and IPv6 Toeplitz computations). */
+static inline void e1000_rss_build_key(uint8_t key_bytes[40])
+{
+    int i;
+    for (i = 0; i < 4; i++) {
+        key_bytes[i * 4 + 0] = (uint8_t)( rss_key_runtime[i]        & 0xFF);
+        key_bytes[i * 4 + 1] = (uint8_t)((rss_key_runtime[i] >> 8)  & 0xFF);
+        key_bytes[i * 4 + 2] = (uint8_t)((rss_key_runtime[i] >> 16) & 0xFF);
+        key_bytes[i * 4 + 3] = (uint8_t)((rss_key_runtime[i] >> 24) & 0xFF);
+    }
+    for (i = 16; i < 40; i++)
+        key_bytes[i] = 0;
+}
+
+/* ── IPv6 RSS hash computation ──────────────────────────────────────── */
+
+/* e1000_rss_compute_ipv6_tcp - Compute the RSS hash for an IPv6/TCP packet.
+ * @ip6h: pointer to the IPv6 header (40 bytes, from Ethernet payload).
+ * @th:   pointer to the TCP header (after IPv6 header, 20+ bytes).
+ *
+ * Per Microsoft RSS specification (Section 2.2.4):
+ *   Input = src_addr(16) || dst_addr(16) || src_port(2) || dst_port(2)
+ * This is 36 bytes total. */
+static uint32_t e1000_rss_compute_ipv6_tcp(const uint8_t *ip6h,
+                                            const uint8_t *th)
+{
+    uint8_t input[36];
+    uint8_t key_bytes[40];
+
+    /* src addr at IPv6 header offset 8 */
+    memcpy(input, ip6h + 8, 16);
+    /* dst addr at IPv6 header offset 24 */
+    memcpy(input + 16, ip6h + 24, 16);
+    /* src port (2 bytes, big-endian) */
+    input[32] = th[0];
+    input[33] = th[1];
+    /* dst port (2 bytes) */
+    input[34] = th[2];
+    input[35] = th[3];
+
+    e1000_rss_build_key(key_bytes);
+    return e1000_rss_toeplitz(key_bytes, input, sizeof(input));
+}
+
+/* e1000_rss_compute_ipv6 - Compute RSS hash for IPv6-only (non-TCP).
+ * @ip6h: pointer to the IPv6 header (40 bytes).
+ *
+ * Input: src_addr(16) || dst_addr(16) = 32 bytes. */
+static uint32_t e1000_rss_compute_ipv6(const uint8_t *ip6h)
+{
+    uint8_t input[32];
+    uint8_t key_bytes[40];
+
+    memcpy(input, ip6h + 8, 16);      /* src addr */
+    memcpy(input + 16, ip6h + 24, 16); /* dst addr */
+
+    e1000_rss_build_key(key_bytes);
+    return e1000_rss_toeplitz(key_bytes, input, sizeof(input));
+}
+
 /* Forward declaration for e1000_rss_init (defined later) */
 static void e1000_rss_init(void);
 
@@ -535,24 +601,43 @@ static int e1000_rss_get_rx_queue(const uint8_t *buf, uint16_t len)
     if (num_queues <= 1 || !nic_present)
         return 0;
 
-    if (len < 34)  /* minimum: eth(14) + IPv4(20) */
-        return 0;
-
-    /* Check for IPv4 ethertype */
-    if (buf[12] != 0x08 || buf[13] != 0x00)
-        return 0;
-
-    const uint8_t *iph = buf + 14;
-    uint8_t ip_proto = iph[9];
     uint32_t hash = 0;
 
-    if (ip_proto == 6 && len >= 54) {
-        /* TCP - use 4-tuple hash */
-        const uint8_t *th = iph + 20;
-        hash = e1000_rss_compute_ipv4_tcp(iph, th);
+    /* Check for IPv4 ethertype (0x0800) */
+    if (buf[12] == 0x08 && buf[13] == 0x00) {
+        if (len < 34)  /* minimum: eth(14) + IPv4(20) */
+            return 0;
+
+        const uint8_t *iph = buf + 14;
+        uint8_t ip_proto = iph[9];
+
+        if (ip_proto == 6 && len >= 54) {
+            /* TCP - use 4-tuple hash */
+            const uint8_t *th = iph + 20;
+            hash = e1000_rss_compute_ipv4_tcp(iph, th);
+        } else {
+            /* Non-TCP IPv4 - use 2-tuple hash */
+            hash = e1000_rss_compute_ipv4(iph);
+        }
+
+    /* Check for IPv6 ethertype (0x86DD) */
+    } else if (buf[12] == 0x86 && buf[13] == 0xDD) {
+        if (len < 54)  /* minimum: eth(14) + IPv6(40) */
+            return 0;
+
+        const uint8_t *ip6h = buf + 14;
+        uint8_t next_hdr = ip6h[6];  /* next_header field in IPv6 header */
+
+        if (next_hdr == 6 && len >= 74) {
+            /* TCP over IPv6 - use 36-byte tuple hash */
+            const uint8_t *th = ip6h + 40;
+            hash = e1000_rss_compute_ipv6_tcp(ip6h, th);
+        } else {
+            /* Non-TCP IPv6 - use 32-byte tuple hash */
+            hash = e1000_rss_compute_ipv6(ip6h);
+        }
     } else {
-        /* Non-TCP IPv4 - use 2-tuple hash */
-        hash = e1000_rss_compute_ipv4(iph);
+        return 0;  /* non-IP, non-IPv6 — no RSS */
     }
 
     /* Map hash to queue via RETA (entries 0-127, hash >> 24 selects entry) */
@@ -581,23 +666,39 @@ int e1000_rss_get_queue_hash(const uint8_t *buf, uint16_t len,
         return 0;
     }
 
-    if (len < 34)
-        goto done;
+    /* Check for IPv4 ethertype (0x0800) */
+    if (buf[12] == 0x08 && buf[13] == 0x00) {
+        if (len < 34)
+            goto done;
 
-    /* Check for IPv4 ethertype */
-    if (buf[12] != 0x08 || buf[13] != 0x00)
-        goto done;
+        const uint8_t *iph = buf + 14;
+        uint8_t ip_proto = iph[9];
 
-    const uint8_t *iph = buf + 14;
-    uint8_t ip_proto = iph[9];
+        if (ip_proto == 6 && len >= 54) {
+            /* TCP IPv4 */
+            const uint8_t *th = iph + 20;
+            hash = e1000_rss_compute_ipv4_tcp(iph, th);
+        } else {
+            /* Non-TCP IPv4 */
+            hash = e1000_rss_compute_ipv4(iph);
+        }
 
-    if (ip_proto == 6 && len >= 54) {
-        /* TCP */
-        const uint8_t *th = iph + 20;
-        hash = e1000_rss_compute_ipv4_tcp(iph, th);
-    } else {
-        /* Non-TCP IPv4 */
-        hash = e1000_rss_compute_ipv4(iph);
+    /* Check for IPv6 ethertype (0x86DD) */
+    } else if (buf[12] == 0x86 && buf[13] == 0xDD) {
+        if (len < 54)
+            goto done;
+
+        const uint8_t *ip6h = buf + 14;
+        uint8_t next_hdr = ip6h[6];  /* next_header field in IPv6 header */
+
+        if (next_hdr == 6 && len >= 74) {
+            /* TCP IPv6 */
+            const uint8_t *th = ip6h + 40;
+            hash = e1000_rss_compute_ipv6_tcp(ip6h, th);
+        } else {
+            /* Non-TCP IPv6 */
+            hash = e1000_rss_compute_ipv6(ip6h);
+        }
     }
 
 done:
