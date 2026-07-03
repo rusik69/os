@@ -503,7 +503,7 @@ void handle_udp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
         handle_dhcp(data, data_len);
         return;
     }
-    if (src_port == DNS_PORT) {
+    if (src_port == DNS_PORT && dst_port == 1053) {
         handle_dns_reply(data, data_len);
         return;
     }

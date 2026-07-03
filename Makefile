@@ -297,6 +297,7 @@ C_SRCS = src/kernel/kernel.c \
          src/net/conntrack.c \
          src/net/conntrack_helpers.c \
          src/net/dns_cache.c \
+         src/net/dns_resolver.c \
          src/net/pkt_sched.c \
          src/net/bridge.c \
          src/net/stp.c \
