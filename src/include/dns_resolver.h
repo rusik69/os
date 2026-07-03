@@ -2,6 +2,7 @@
 #define DNS_RESOLVER_H
 
 #include "types.h"
+#include "net.h"
 
 /* ── DNS resolver configuration ────────────────────────────────────── */
 
@@ -48,5 +49,25 @@ int dns_resolver_init(void);
  *   -EIO           server returned an error
  */
 int dns_resolver_query_a(const char *hostname, uint32_t *out_ip, uint32_t *out_ttl);
+
+/**
+ * dns_resolver_query_aaaa - Perform DNS AAAA record lookup over UDP (port 53)
+ *
+ * Sends a DNS AAAA-record query to the configured IPv6 DNS server via
+ * UDP over IPv6, waits for the response, parses it, and returns the
+ * IPv6 address.
+ *
+ * @hostname: hostname to resolve (null-terminated)
+ * @out_addr: receives resolved IPv6 address (16 bytes, network byte order)
+ * @out_ttl:  receives TTL in seconds from DNS reply (may be NULL)
+ *
+ * Returns: 0 on success, negative errno on failure
+ *   -EHOSTUNREACH  no IPv6 DNS server configured
+ *   -ENOENT        domain name does not exist (NXDOMAIN)
+ *   -ETIMEDOUT     no response after all retries
+ *   -EIO           server returned an error
+ */
+int dns_resolver_query_aaaa(const char *hostname, struct in6_addr *out_addr,
+                            uint32_t *out_ttl);
 
 #endif /* DNS_RESOLVER_H */

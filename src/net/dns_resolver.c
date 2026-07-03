@@ -237,6 +237,101 @@ static int dns_resolver_parse_response(const uint8_t *data, uint16_t len,
     return -ENOENT;  /* no A record found */
 }
 
+/* ── AAAA record response parser ────────────────────────────────────── */
+
+/**
+ * dns_resolver_parse_response_aaaa - Parse DNS response for AAAA record
+ * @data:    raw DNS response data
+ * @len:     length of response in bytes
+ * @txid:    expected transaction ID
+ * @out_addr: receives IPv6 address (16 bytes, network byte order)
+ * @out_ttl: receives TTL value in seconds
+ *
+ * Returns: 0 on success, negative errno on failure:
+ *   -EAGAIN   transaction ID mismatch (response belongs to another query)
+ *   -ENOENT   NXDOMAIN or no AAAA record in response
+ *   -EIO      malformed response or server error
+ */
+static int dns_resolver_parse_response_aaaa(const uint8_t *data, uint16_t len,
+                                             uint16_t txid,
+                                             struct in6_addr *out_addr,
+                                             uint32_t *out_ttl)
+{
+    const struct dns_header *hdr;
+    uint16_t flags;
+    uint8_t rcode;
+    uint16_t qdcount, ancount;
+    int pos, ret;
+    uint16_t a;
+
+    if (!data || len < sizeof(struct dns_header) || !out_addr)
+        return -EINVAL;
+
+    hdr = (const struct dns_header *)data;
+
+    /* Verify transaction ID */
+    if (ntohs(hdr->id) != txid)
+        return -EAGAIN;
+
+    /* Verify QR bit (must be a response) */
+    flags = ntohs(hdr->flags);
+    if (!(flags & DNS_QR_RESPONSE))
+        return -EIO;
+
+    /* Check RCODE */
+    rcode = (uint8_t)(flags & 0x0F);
+    if (rcode != DNS_RCODE_OK) {
+        if (rcode == DNS_RCODE_NX)
+            return -ENOENT;
+        return -EIO;
+    }
+
+    qdcount = ntohs(hdr->qdcount);
+    ancount = ntohs(hdr->ancount);
+
+    if (ancount == 0)
+        return -ENOENT;
+
+    pos = sizeof(struct dns_header);
+
+    /* Skip question section */
+    for (uint16_t q = 0; q < qdcount; q++) {
+        ret = dns_skip_name(data, (int)len, pos);
+        if (ret < 0) return ret;
+        pos = ret + 4;  /* skip QTYPE (2) + QCLASS (2) */
+        if (pos > (int)len) return -EIO;
+    }
+
+    /* Parse answer section — look for the first AAAA record */
+    for (a = 0; a < ancount && pos + 12 <= (int)len; a++) {
+        ret = dns_skip_name(data, (int)len, pos);
+        if (ret < 0) return ret;
+        pos = ret;
+
+        if (pos + 10 > (int)len)
+            return -EIO;
+
+        uint16_t rtype = ((uint16_t)data[pos] << 8) | data[pos + 1];
+        uint32_t ttl   = ((uint32_t)data[pos + 4] << 24) |
+                         ((uint32_t)data[pos + 5] << 16) |
+                         ((uint32_t)data[pos + 6] << 8)  |
+                         data[pos + 7];
+        uint16_t rdlen = ((uint16_t)data[pos + 8] << 8) | data[pos + 9];
+        pos += 10;
+
+        if (rtype == DNS_TYPE_AAAA && rdlen == 16 && pos + 16 <= (int)len) {
+            memcpy(out_addr->s6_addr, data + pos, 16);
+            if (out_ttl)
+                *out_ttl = ttl;
+            return 0;
+        }
+
+        pos += rdlen;
+    }
+
+    return -ENOENT;  /* no AAAA record found */
+}
+
 /* ── Public API ─────────────────────────────────────────────────────── */
 
 int dns_resolver_init(void)
@@ -356,6 +451,132 @@ done:
                 (unsigned)((ip >> 16) & 0xFF),
                 (unsigned)((ip >>  8) & 0xFF),
                 (unsigned)( ip        & 0xFF),
+                (unsigned)ttl);
+    }
+
+    return ret;
+}
+
+/* ── AAAA record query (IPv6 DNS) ──────────────────────────────────── */
+
+int dns_resolver_query_aaaa(const char *hostname, struct in6_addr *out_addr,
+                            uint32_t *out_ttl)
+{
+    uint8_t pkt[512];
+    uint8_t resp[512];
+    int ret, pkt_len;
+    uint32_t ttl = 0;
+    uint16_t txid;
+    int attempt;
+    uint64_t deadline;
+    uint32_t src_ip;
+    uint16_t src_port;
+    int rlen;
+    int timeout;
+
+    if (!hostname || !out_addr)
+        return -EINVAL;
+
+    memset(out_addr, 0, sizeof(*out_addr));
+    if (out_ttl)
+        *out_ttl = 0;
+
+    /* Check if an IPv6 DNS server is configured */
+    if (ipv6_addr_is_unspecified(&net_ipv6_dns)) {
+        kprintf("[dns_resolver] no IPv6 DNS server configured\n");
+        return -EHOSTUNREACH;
+    }
+
+    /* Build the query packet for AAAA record */
+    txid = (uint16_t)__sync_fetch_and_add(&dns_txid_counter, 1);
+    ret = dns_build_query(pkt, hostname, DNS_TYPE_AAAA, txid);
+    if (ret < 0)
+        return ret;
+    pkt_len = ret;
+
+    /* Start listening for DNS responses on our source port */
+    ret = net_udp_listen(DNS_RESOLVER_SRC_PORT);
+    if (ret < 0) {
+        kprintf("[dns_resolver] failed to listen on port %d\n",
+                DNS_RESOLVER_SRC_PORT);
+        return ret;
+    }
+
+    /* Send query with retries */
+    for (attempt = 0; attempt < DNS_RETRIES; attempt++) {
+        /* Use a fresh transaction ID for each attempt */
+        txid = (uint16_t)__sync_fetch_and_add(&dns_txid_counter, 1);
+        pkt[0] = (uint8_t)(txid >> 8);
+        pkt[1] = (uint8_t)(txid & 0xFF);
+
+        /* Update the header ID in the packet */
+        struct dns_header *hdr = (struct dns_header *)pkt;
+        hdr->id = htons(txid);
+
+        /* Send via UDP over IPv6 to the DNS server */
+        send_udp_ipv6(&net_ipv6_dns, DNS_RESOLVER_SRC_PORT, DNS_PORT,
+                      pkt, (uint16_t)pkt_len);
+
+        /* Wait for response with timeout */
+        deadline = timer_get_ticks() + DNS_TIMEOUT_TICKS;
+
+        while (1) {
+            uint64_t now = timer_get_ticks();
+            if (now >= deadline)
+                break;
+
+            timeout = (int)(deadline - now);
+            if (timeout <= 0)
+                break;
+
+            rlen = net_udp_recv(DNS_RESOLVER_SRC_PORT, resp, sizeof(resp),
+                                &src_ip, &src_port, timeout);
+
+            if (rlen > 0) {
+                ret = dns_resolver_parse_response_aaaa(resp, (uint16_t)rlen,
+                                                       txid, out_addr, &ttl);
+                if (ret == 0) {
+                    /* Success — AAAA record found */
+                    goto done;
+                }
+                if (ret != -EAGAIN) {
+                    /* Fatal error — no point retrying */
+                    goto done;
+                }
+                /* -EAGAIN means wrong transaction ID — keep waiting */
+            }
+        }
+    }
+
+    /* All retries exhausted */
+    ret = -ETIMEDOUT;
+
+done:
+    net_udp_unlisten(DNS_RESOLVER_SRC_PORT);
+
+    if (ret == 0) {
+        if (out_ttl)
+            *out_ttl = ttl;
+
+        kprintf("[dns_resolver] AAAA %s -> %02x%02x:%02x%02x:%02x%02x:%02x%02x:"
+                "%02x%02x:%02x%02x:%02x%02x:%02x%02x (ttl=%u)\n",
+                hostname,
+                (unsigned)out_addr->s6_addr[0],
+                (unsigned)out_addr->s6_addr[1],
+                (unsigned)out_addr->s6_addr[2],
+                (unsigned)out_addr->s6_addr[3],
+                (unsigned)out_addr->s6_addr[4],
+                (unsigned)out_addr->s6_addr[5],
+                (unsigned)out_addr->s6_addr[6],
+                (unsigned)out_addr->s6_addr[7],
+                (unsigned)out_addr->s6_addr[8],
+                (unsigned)out_addr->s6_addr[9],
+                (unsigned)out_addr->s6_addr[10],
+                (unsigned)out_addr->s6_addr[11],
+                (unsigned)out_addr->s6_addr[12],
+                (unsigned)out_addr->s6_addr[13],
+                (unsigned)out_addr->s6_addr[14],
+                (unsigned)out_addr->s6_addr[15],
                 (unsigned)ttl);
     }
 
