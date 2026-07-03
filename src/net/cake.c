@@ -820,6 +820,9 @@ static int cake_dump_stats(struct qdisc *q, struct cake_stats *stats)
 
 /* ── qdisc create ───────────────────────────────────────────────── */
 
+/* Forward declaration of stats callback */
+static void cake_fill_stats(struct qdisc *q, struct tc_stats *st);
+
 struct qdisc *cake_create(const struct cake_spec *spec)
 {
     struct qdisc *q;
@@ -887,9 +890,33 @@ struct qdisc *cake_create(const struct cake_spec *spec)
     q->enqueue = cake_enqueue;
     q->dequeue = cake_dequeue;
     q->drop    = cake_drop;
+    q->get_stats      = cake_fill_stats;
+    q->get_class_stats = NULL;
 
     kprintf("[OK] CAKE qdisc — Common Applications Kept Enhanced\n");
     return q;
+}
+
+/* ── Statistics callback ────────────────────────────────────────── */
+
+static void cake_fill_stats(struct qdisc *q, struct tc_stats *st)
+{
+    struct cake_priv *priv = (struct cake_priv *)q->priv;
+    if (!priv || !st) return;
+    memset(st, 0, sizeof(*st));
+    uint32_t drops = 0, marks = 0;
+    uint32_t qlen = 0;
+    for (int t = 0; t < CAKE_TINS; t++) {
+        struct cake_tin *tin = &priv->tins[t];
+        drops += (uint32_t)tin->drops;
+        marks += (uint32_t)tin->marks;
+        for (int f = 0; f < CAKE_FLOWS_PER_TIN; f++)
+            qlen += (uint32_t)tin->flows[f].count;
+    }
+    st->drops      = drops;
+    st->overlimits = marks;
+    st->qlen       = qlen;
+    st->backlog    = qlen * 1500;
 }
 
 /* ── Module initialisation ──────────────────────────────────────── */

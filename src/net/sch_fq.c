@@ -70,6 +70,8 @@ struct fq_priv {
     uint64_t drops;
     uint64_t dequeues;
     uint64_t pacing_idles;      /* dequeue returned NULL, all flows idle */
+    uint64_t bytes;
+    uint64_t packets;
 };
 
 /* ── Flow hash — 5-tuple hash for fair distribution ─────────────── */
@@ -215,6 +217,8 @@ static int fq_enqueue(struct qdisc *q, void *pkt, int len)
     flow->pkt_len[flow->tail] = len;
     flow->tail = (flow->tail + 1) % FQ_LIMIT;
     flow->count++;
+    priv->bytes += len;
+    priv->packets++;
     return 0;
 }
 
@@ -459,6 +463,9 @@ void fq_get_pacing_stats(struct qdisc *q, uint64_t *pacing_idles)
 
 /* ── Create ──────────────────────────────────────────────────────── */
 
+/* Forward declaration of stats callback */
+static void fq_fill_stats(struct qdisc *q, struct tc_stats *st);
+
 struct qdisc *fq_create(void)
 {
     struct qdisc *q = (struct qdisc *)kmalloc(sizeof(struct qdisc));
@@ -494,8 +501,26 @@ struct qdisc *fq_create(void)
     q->enqueue = fq_enqueue;
     q->dequeue = fq_dequeue;
     q->drop    = fq_drop;
+    q->get_stats      = fq_fill_stats;
+    q->get_class_stats = NULL;
 
     return q;
+}
+
+/* ── Statistics callback ────────────────────────────────────────── */
+
+static void fq_fill_stats(struct qdisc *q, struct tc_stats *st)
+{
+    struct fq_priv *priv = (struct fq_priv *)q->priv;
+    if (!priv || !st) return;
+    memset(st, 0, sizeof(*st));
+    st->bytes   = priv->bytes;
+    st->packets = (uint32_t)priv->packets;
+    st->drops   = (uint32_t)priv->drops;
+    st->qlen    = 0;
+    for (int i = 0; i < FQ_FLOWS; i++)
+        st->qlen += (uint32_t)priv->flows[i].count;
+    st->backlog = st->qlen * 1500;
 }
 
 /* ── Module registration ────────────────────────────────────────── */

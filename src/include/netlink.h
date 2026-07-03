@@ -450,6 +450,10 @@ int nla_get_string(const struct nlattr *nla, const char **str);
 #define TCA_ACT_INDEX      3
 #define TCA_ACT_STATS      4
 
+/* TCA_STATS2 nested attribute types */
+#define TCA_STATS_BASIC    0   /* struct gnet_stats_basic */
+#define TCA_STATS_QUEUE    1   /* struct gnet_stats_queue */
+
 /* RTNETLINK route attributes and constants */
 #define RT_TABLE_MAIN   254
 #define RTN_UNICAST     1

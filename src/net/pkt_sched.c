@@ -23,6 +23,9 @@ struct pfifo_fast_priv {
     int   band_len[PFIFO_MAX_BANDS];
     int   band_head[PFIFO_MAX_BANDS];
     int   band_tail[PFIFO_MAX_BANDS];
+    uint64_t bytes;
+    uint64_t packets;
+    uint64_t drops;
 };
 
 static int pfifo_fast_classify(const void *pkt, int len) {
@@ -48,12 +51,16 @@ static int pfifo_fast_enqueue(struct qdisc *q, void *pkt, int len) {
     struct pfifo_fast_priv *priv = (struct pfifo_fast_priv *)q->priv;
     int band = pfifo_fast_classify(pkt, len);
 
-    if (priv->band_len[band] >= PFIFO_BAND_LIMIT)
+    if (priv->band_len[band] >= PFIFO_BAND_LIMIT) {
+        priv->drops++;
         return -1;  /* queue full */
+    }
 
     priv->bands[band][priv->band_tail[band]] = pkt;
     priv->band_tail[band] = (priv->band_tail[band] + 1) % PFIFO_BAND_LIMIT;
     priv->band_len[band]++;
+    priv->bytes += len;
+    priv->packets++;
     return 0;
 }
 
@@ -80,10 +87,25 @@ static int pfifo_fast_drop(struct qdisc *q) {
         if (priv->band_len[b] > 0) {
             priv->band_head[b] = (priv->band_head[b] + 1) % PFIFO_BAND_LIMIT;
             priv->band_len[b]--;
+            priv->drops++;
             return 0;
         }
     }
     return -1;
+}
+
+static void pfifo_fast_get_stats(struct qdisc *q, struct tc_stats *st)
+{
+    struct pfifo_fast_priv *priv = (struct pfifo_fast_priv *)q->priv;
+    if (!priv || !st) return;
+    memset(st, 0, sizeof(*st));
+    st->bytes   = priv->bytes;
+    st->packets = (uint32_t)priv->packets;
+    st->drops   = (uint32_t)priv->drops;
+    st->qlen    = 0;
+    for (int i = 0; i < PFIFO_MAX_BANDS; i++)
+        st->qlen += priv->band_len[i];
+    st->backlog = st->qlen * 1500;  /* approximate */
 }
 
 struct qdisc *pfifo_fast_create(void) {
@@ -103,6 +125,8 @@ struct qdisc *pfifo_fast_create(void) {
     q->enqueue = pfifo_fast_enqueue;
     q->dequeue = pfifo_fast_dequeue;
     q->drop    = pfifo_fast_drop;
+    q->get_stats      = pfifo_fast_get_stats;
+    q->get_class_stats = NULL;
     return q;
 }
 
@@ -432,6 +456,26 @@ void fq_codel_get_stats(struct qdisc *q, int *total_dropped, int *total_ecn_mark
     *total_ecn_marked = e;
 }
 
+static void fq_codel_fill_stats(struct qdisc *q, struct tc_stats *st)
+{
+    struct fq_codel_priv *priv = (struct fq_codel_priv *)q->priv;
+    if (!priv || !st) return;
+    memset(st, 0, sizeof(*st));
+    int d = 0, e = 0;
+    uint64_t b = 0;
+    int qlen = 0;
+    for (int i = 0; i < FQ_CODEL_QUEUES; i++) {
+        d += priv->flows[i].dropped;
+        e += priv->flows[i].ecn_marked;
+        qlen += priv->flows[i].count;
+    }
+    st->drops      = (uint32_t)d;
+    st->overlimits = (uint32_t)e;
+    st->qlen       = (uint32_t)qlen;
+    st->backlog    = qlen * 1500;
+    st->bytes      = b;
+}
+
 struct qdisc *fq_codel_create(void) {
     struct qdisc *q = (struct qdisc *)kmalloc(sizeof(struct qdisc));
     if (!q) return NULL;
@@ -452,6 +496,8 @@ struct qdisc *fq_codel_create(void) {
     q->enqueue = fq_codel_enqueue;
     q->dequeue = fq_codel_dequeue;
     q->drop    = fq_codel_drop;
+    q->get_stats      = fq_codel_fill_stats;
+    q->get_class_stats = NULL;
     return q;
 }
 
@@ -511,6 +557,11 @@ struct htb_class {
     void    *queue[HTB_QUEUE_LIMIT];
     int      pkt_len[HTB_QUEUE_LIMIT];  /* packet lengths for borrowing */
     int      head, tail, count;
+    /* Statistics */
+    uint64_t bytes;
+    uint64_t packets;
+    uint64_t drops;
+    uint64_t overlimits;
 };
 
 /* HTB private state for a qdisc instance */
@@ -691,17 +742,23 @@ static int htb_enqueue(struct qdisc *q, void *pkt, int len) {
     htb_refill_chain(hp, cl, now);
 
     /* Check if we can send (accounting for borrowing) */
-    if (!htb_can_send(hp, cl, len))
+    if (!htb_can_send(hp, cl, len)) {
+        cl->overlimits++;
         return -1;  /* throttle — drop for now */
+    }
 
     /* Queue the packet */
-    if (cl->count >= HTB_QUEUE_LIMIT)
+    if (cl->count >= HTB_QUEUE_LIMIT) {
+        cl->drops++;
         return -1;  /* queue full */
+    }
 
     cl->queue[cl->tail] = pkt;
     cl->pkt_len[cl->tail] = len;
     cl->tail = (cl->tail + 1) % HTB_QUEUE_LIMIT;
     cl->count++;
+    cl->bytes += len;
+    cl->packets++;
     return 0;
 }
 
@@ -772,6 +829,7 @@ static int htb_drop(struct qdisc *q) {
 
             cl->head = (cl->head + 1) % HTB_QUEUE_LIMIT;
             cl->count--;
+            cl->drops++;
             return 0;
         }
     }
@@ -805,6 +863,11 @@ static inline uint32_t htb_validate_burst(uint32_t burst, uint32_t mtu) {
     return burst;
 }
 
+/* ── HTB statistics callbacks (forward decls) ────────────────────── */
+static void htb_fill_stats(struct qdisc *q, struct tc_stats *st);
+static int  htb_get_class_stats(struct qdisc *q, int class_id,
+                                struct tc_class_stats *st);
+
 /* ── HTB public API ────────────────────────────────────────────── */
 
 struct qdisc *htb_create(void) {
@@ -827,6 +890,8 @@ struct qdisc *htb_create(void) {
     q->enqueue = htb_enqueue;
     q->dequeue = htb_dequeue;
     q->drop    = htb_drop;
+    q->get_stats      = htb_fill_stats;
+    q->get_class_stats = htb_get_class_stats;
     return q;
 }
 
@@ -942,6 +1007,78 @@ void htb_set_default_class(struct qdisc *q, int class_id) {
     if (!hp) return;
     if (class_id >= 0 && class_id < HTB_MAX_CLASSES && hp->classes[class_id].in_use)
         hp->default_class = class_id;
+}
+
+/* ── HTB statistics callbacks ───────────────────────────────────── */
+
+static void htb_fill_stats(struct qdisc *q, struct tc_stats *st)
+{
+    struct htb_priv *hp = (struct htb_priv *)q->priv;
+    if (!hp || !st) return;
+    memset(st, 0, sizeof(*st));
+    /* Aggregate across all classes */
+    uint64_t total_bytes = 0, total_packets = 0;
+    uint32_t total_drops = 0, total_overlimits = 0;
+    uint32_t total_qlen = 0;
+    for (int i = 0; i < HTB_MAX_CLASSES; i++) {
+        struct htb_class *cl = &hp->classes[i];
+        if (!cl->in_use) continue;
+        total_bytes    += cl->bytes;
+        total_packets  += cl->packets;
+        total_drops    += (uint32_t)cl->drops;
+        total_overlimits += (uint32_t)cl->overlimits;
+        total_qlen     += (uint32_t)cl->count;
+    }
+    st->bytes      = total_bytes;
+    st->packets    = (uint32_t)total_packets;
+    st->drops      = total_drops;
+    st->overlimits = total_overlimits;
+    st->qlen       = total_qlen;
+    st->backlog    = total_qlen * 1500;
+}
+
+static int htb_get_class_stats(struct qdisc *q, int class_id,
+                                struct tc_class_stats *st)
+{
+    struct htb_priv *hp = (struct htb_priv *)q->priv;
+    if (!hp || !st) return -1;
+    struct htb_class *cl = htb_class_by_id(hp, class_id);
+    if (!cl) return -1;
+    memset(st, 0, sizeof(*st));
+    st->bytes     = cl->bytes;
+    st->packets   = cl->packets;
+    st->drops     = cl->drops;
+    st->overlimits = cl->overlimits;
+    st->tokens    = (uint64_t)(cl->tokens >= 0 ? cl->tokens : 0);
+    st->c_tokens  = (uint64_t)(cl->c_tokens >= 0 ? cl->c_tokens : 0);
+    st->rate      = cl->rate;
+    st->ceil      = cl->ceil;
+    st->qlen      = (uint32_t)cl->count;
+    st->backlog   = (uint32_t)(cl->count * HTB_MTU);
+    return 0;
+}
+
+/* ── Generic statistics API ─────────────────────────────────────── */
+
+int tc_get_qdisc_stats(struct qdisc *q, struct tc_stats *st)
+{
+    if (!q || !st) return -1;
+    if (q->get_stats) {
+        q->get_stats(q, st);
+        return 0;
+    }
+    memset(st, 0, sizeof(*st));
+    return 0;
+}
+
+int tc_get_class_stats(struct qdisc *q, int class_id,
+                        struct tc_class_stats *st)
+{
+    if (!q || !st) return -1;
+    if (q->get_class_stats) {
+        return q->get_class_stats(q, class_id, st);
+    }
+    return -1;
 }
 
 /* ── Traffic control API ────────────────────────────────────────── */

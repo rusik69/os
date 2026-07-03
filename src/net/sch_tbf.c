@@ -71,6 +71,8 @@ struct tbf_priv {
     uint64_t drops;        /* packets dropped due to queue full */
     uint64_t throttles;    /* packets delayed/throttled (no tokens) */
     uint64_t dequeues;     /* packets successfully dequeued */
+    uint64_t bytes;        /* total bytes dequeued */
+    uint64_t packets;      /* total packets dequeued */
 };
 
 /* ── Token refill ─────────────────────────────────────────────── */
@@ -126,6 +128,8 @@ static int tbf_enqueue(struct qdisc *q, void *pkt, int len)
     tp->pkt_len[tp->tail] = len;
     tp->tail = (tp->tail + 1) % TBF_QUEUE_LIMIT;
     tp->count++;
+    tp->bytes += len;
+    tp->packets++;
     return 0;
 }
 
@@ -160,6 +164,8 @@ static void *tbf_dequeue(struct qdisc *q)
     tp->head = (tp->head + 1) % TBF_QUEUE_LIMIT;
     tp->count--;
     tp->dequeues++;
+    tp->bytes += head_len;
+    tp->packets++;
 
     return pkt;
 }
@@ -180,6 +186,9 @@ static int tbf_drop(struct qdisc *q)
 }
 
 /* ── Create ────────────────────────────────────────────────────── */
+
+/* Forward declaration of stats callback */
+static void tbf_fill_stats(struct qdisc *q, struct tc_stats *st);
 
 struct qdisc *tbf_create(const struct tbf_spec *spec)
 {
@@ -222,8 +231,24 @@ struct qdisc *tbf_create(const struct tbf_spec *spec)
     q->enqueue = tbf_enqueue;
     q->dequeue = tbf_dequeue;
     q->drop    = tbf_drop;
+    q->get_stats      = tbf_fill_stats;
+    q->get_class_stats = NULL;
 
     return q;
+}
+
+/* ── Statistics ────────────────────────────────────────────────── */
+
+static void tbf_fill_stats(struct qdisc *q, struct tc_stats *st)
+{
+    struct tbf_priv *tp = (struct tbf_priv *)q->priv;
+    if (!tp || !st) return;
+    memset(st, 0, sizeof(*st));
+    st->bytes   = tp->bytes;
+    st->packets = (uint32_t)tp->packets;
+    st->drops   = (uint32_t)tp->drops;
+    st->qlen    = (uint32_t)tp->count;
+    st->backlog = (uint32_t)(tp->count * 1500);
 }
 
 /* ── Module registration ──────────────────────────────────────── */

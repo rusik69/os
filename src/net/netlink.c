@@ -900,6 +900,55 @@ static void tc_send_done(int protocol, uint32_t src_pid, uint32_t seq)
     netlink_unicast(protocol, src_pid, &done, sizeof(done), 0);
 }
 
+/* Helper: append a TCA_STATS attribute (raw struct tc_stats) to a
+ * response buffer.  Returns the new nlmsg_len (unchanged on failure). */
+static uint32_t tc_nla_put_stats(uint8_t *buf, uint32_t nlmsg_len,
+                                  const struct tc_stats *st)
+{
+    if (!buf || !st) return nlmsg_len;
+    uint32_t offset = nlmsg_len;
+    struct nlattr *nla = (struct nlattr *)(buf + offset);
+    uint16_t payload_len = (uint16_t)sizeof(*st);
+    nla->nla_len = NLA_HDRLEN + payload_len;
+    nla->nla_type = TCA_STATS;
+    memcpy((uint8_t *)(nla + 1), st, payload_len);
+    return nlmsg_len + NLA_ALIGN(nla->nla_len);
+}
+
+/* Helper: append a TCA_STATS2 nested attribute with basic and queue
+ * sub-attributes.  Returns the new nlmsg_len. */
+static uint32_t tc_nla_put_stats2(uint8_t *buf, uint32_t nlmsg_len,
+                                   const struct gnet_stats_basic *basic,
+                                   const struct gnet_stats_queue *queue)
+{
+    if (!buf || !basic || !queue) return nlmsg_len;
+    uint32_t offset = nlmsg_len;
+
+    /* Nested TCA_STATS2 header */
+    struct nlattr *nla_stats2 = (struct nlattr *)(buf + offset);
+    nla_stats2->nla_len = NLA_HDRLEN;
+    nla_stats2->nla_type = TCA_STATS2 | NLA_F_NESTED;
+    uint32_t inner_offset = offset + NLA_HDRLEN;
+
+    /* Sub-attr: TCA_STATS_BASIC */
+    struct nlattr *nla_basic = (struct nlattr *)(buf + inner_offset);
+    nla_basic->nla_len = NLA_HDRLEN + (uint16_t)sizeof(*basic);
+    nla_basic->nla_type = TCA_STATS_BASIC;
+    memcpy((uint8_t *)(nla_basic + 1), basic, sizeof(*basic));
+    inner_offset += NLA_ALIGN(nla_basic->nla_len);
+
+    /* Sub-attr: TCA_STATS_QUEUE */
+    struct nlattr *nla_queue = (struct nlattr *)(buf + inner_offset);
+    nla_queue->nla_len = NLA_HDRLEN + (uint16_t)sizeof(*queue);
+    nla_queue->nla_type = TCA_STATS_QUEUE;
+    memcpy((uint8_t *)(nla_queue + 1), queue, sizeof(*queue));
+    inner_offset += NLA_ALIGN(nla_queue->nla_len);
+
+    /* Update outer nla len */
+    nla_stats2->nla_len = (uint16_t)(inner_offset - offset);
+    return nlmsg_len + NLA_ALIGN(nla_stats2->nla_len);
+}
+
 /* Handle RTM_GETQDISC — dump all registered qdiscs.
  * Supports NLM_F_ROOT (dump all) and handles individual qdisc lookup
  * via tcm_handle.  Returns multipart NEWQDISC messages + NLMSG_DONE. */
@@ -925,10 +974,9 @@ static int nl_tc_getqdisc(int protocol, const struct nlmsghdr *nlh,
         struct qdisc *q = tc_get_qdisc_by_index(idx, devname, sizeof(devname));
         if (!q) return -ENOENT;
 
-        uint8_t buf[256];
+        uint8_t buf[512];
         struct nlmsghdr *resp = (struct nlmsghdr *)buf;
         struct tcmsg *rtcm = (struct tcmsg *)(buf + NLMSG_HDRLEN);
-        struct nlattr *nla = (struct nlattr *)(buf + NLMSG_HDRLEN + sizeof(struct tcmsg));
 
         memset(buf, 0, sizeof(buf));
         resp->nlmsg_len = NLMSG_HDRLEN + sizeof(struct tcmsg);
@@ -943,13 +991,32 @@ static int nl_tc_getqdisc(int protocol, const struct nlmsghdr *nlh,
         rtcm->tcm_parent = TC_H_ROOT;
         rtcm->tcm_info = (uint32_t)q->type << 16;
 
+        /* TCA_KIND */
         const char *kind = tc_kind_name(q->type);
         int kind_len = strlen(kind) + 1;
+        struct nlattr *nla = (struct nlattr *)(buf + resp->nlmsg_len);
         nla->nla_len = NLA_HDRLEN + (uint16_t)kind_len;
         nla->nla_type = TCA_KIND;
         memcpy((uint8_t *)(nla + 1), kind, (size_t)kind_len);
-
         resp->nlmsg_len += NLA_ALIGN(nla->nla_len);
+
+        /* TCA_STATS + TCA_STATS2 */
+        struct tc_stats st;
+        tc_get_qdisc_stats(q, &st);
+        resp->nlmsg_len = tc_nla_put_stats(buf, resp->nlmsg_len, &st);
+
+        struct gnet_stats_basic gb;
+        struct gnet_stats_queue gq;
+        memset(&gb, 0, sizeof(gb));
+        memset(&gq, 0, sizeof(gq));
+        gb.bytes   = st.bytes;
+        gb.packets = st.packets;
+        gq.qlen    = st.qlen;
+        gq.backlog = st.backlog;
+        gq.drops   = st.drops;
+        gq.overlimits = st.overlimits;
+        resp->nlmsg_len = tc_nla_put_stats2(buf, resp->nlmsg_len, &gb, &gq);
+
         netlink_unicast(protocol, src_pid, buf, resp->nlmsg_len, 0);
         return 0;
     }
@@ -961,10 +1028,9 @@ static int nl_tc_getqdisc(int protocol, const struct nlmsghdr *nlh,
         struct qdisc *q = tc_get_qdisc_by_index(i, devname, sizeof(devname));
         if (!q) continue;
 
-        uint8_t buf[256];
+        uint8_t buf[512];
         struct nlmsghdr *resp = (struct nlmsghdr *)buf;
         struct tcmsg *rtcm = (struct tcmsg *)(buf + NLMSG_HDRLEN);
-        struct nlattr *nla = (struct nlattr *)(buf + NLMSG_HDRLEN + sizeof(struct tcmsg));
 
         memset(buf, 0, sizeof(buf));
         resp->nlmsg_len = NLMSG_HDRLEN + sizeof(struct tcmsg);
@@ -979,13 +1045,32 @@ static int nl_tc_getqdisc(int protocol, const struct nlmsghdr *nlh,
         rtcm->tcm_parent = TC_H_ROOT;
         rtcm->tcm_info = (uint32_t)q->type << 16;
 
+        /* TCA_KIND */
         const char *kind = tc_kind_name(q->type);
         int kind_len = strlen(kind) + 1;
+        struct nlattr *nla = (struct nlattr *)(buf + resp->nlmsg_len);
         nla->nla_len = NLA_HDRLEN + (uint16_t)kind_len;
         nla->nla_type = TCA_KIND;
         memcpy((uint8_t *)(nla + 1), kind, (size_t)kind_len);
-
         resp->nlmsg_len += NLA_ALIGN(nla->nla_len);
+
+        /* TCA_STATS + TCA_STATS2 */
+        struct tc_stats st;
+        tc_get_qdisc_stats(q, &st);
+        resp->nlmsg_len = tc_nla_put_stats(buf, resp->nlmsg_len, &st);
+
+        struct gnet_stats_basic gb;
+        struct gnet_stats_queue gq;
+        memset(&gb, 0, sizeof(gb));
+        memset(&gq, 0, sizeof(gq));
+        gb.bytes   = st.bytes;
+        gb.packets = st.packets;
+        gq.qlen    = st.qlen;
+        gq.backlog = st.backlog;
+        gq.drops   = st.drops;
+        gq.overlimits = st.overlimits;
+        resp->nlmsg_len = tc_nla_put_stats2(buf, resp->nlmsg_len, &gb, &gq);
+
         netlink_unicast(protocol, src_pid, buf, resp->nlmsg_len, 0);
     }
 
@@ -1081,17 +1166,109 @@ static int nl_tc_delqdisc(int protocol, const struct nlmsghdr *nlh,
     return 0;
 }
 
-/* Handle RTM_GETTCLASS — dump traffic classes (stub).
- * In a full implementation, returns HTB class hierarchy for classful qdiscs. */
+/* Helper: append class stats as TCA_STATS attribute to a response buffer.
+ * Returns the new nlmsg_len. */
+static uint32_t tc_nla_put_class_stats(uint8_t *buf, uint32_t nlmsg_len,
+                                        const struct tc_class_stats *st)
+{
+    if (!buf || !st) return nlmsg_len;
+    uint32_t offset = nlmsg_len;
+    struct nlattr *nla = (struct nlattr *)(buf + offset);
+    uint16_t payload_len = (uint16_t)sizeof(*st);
+    nla->nla_len = NLA_HDRLEN + payload_len;
+    nla->nla_type = TCA_STATS;
+    memcpy((uint8_t *)(nla + 1), st, payload_len);
+    return nlmsg_len + NLA_ALIGN(nla->nla_len);
+}
+
+/* Handle RTM_GETTCLASS — dump traffic classes for classful qdiscs.
+ * Walks all class IDs of an HTB qdisc and emits a RTM_NEWTCLASS
+ * message per class, with per-class TCA_STATS. */
 static int nl_tc_gettclass(int protocol, const struct nlmsghdr *nlh,
                             const struct nlattr **attr, uint32_t src_pid)
 {
-    (void)protocol;
-    (void)nlh;
     (void)attr;
-    (void)src_pid;
+    if (nlh->nlmsg_len < NLMSG_HDRLEN + sizeof(struct tcmsg))
+        return -EINVAL;
 
-    /* No TC classes registered yet — just send DONE */
+    const struct tcmsg *tcm = (const struct tcmsg *)((const char *)nlh + NLMSG_HDRLEN);
+
+    /* Find the qdisc on this ifindex */
+    char devname[32];
+    snprintf(devname, sizeof(devname), "dev%u", tcm->tcm_ifindex);
+    struct qdisc *q = tc_get_qdisc(devname);
+    if (!q) {
+        tc_send_done(protocol, src_pid, nlh->nlmsg_seq);
+        return 0;
+    }
+
+    /* Only classful qdiscs with get_class_stats can enumerate classes */
+    if (!q->get_class_stats) {
+        tc_send_done(protocol, src_pid, nlh->nlmsg_seq);
+        return 0;
+    }
+
+    int dump_all = (nlh->nlmsg_flags & NLM_F_ROOT) || (nlh->nlmsg_flags & NLM_F_DUMP);
+    uint32_t target_handle = tcm->tcm_handle;
+    const char *kind = tc_kind_name(q->type);
+
+    /* Iterate possible class IDs (HTB uses HTB_MAX_CLASSES = 32) */
+    for (int cid = 0; cid < HTB_MAX_CLASSES; cid++) {
+        struct tc_class_stats cs;
+        int ret = tc_get_class_stats(q, cid, &cs);
+        if (ret < 0) continue;  /* class not in use */
+
+        /* If not dumping all and handle doesn't match, skip */
+        if (!dump_all && target_handle != 0 &&
+            target_handle != (uint32_t)(TC_H_MAKE(1, cid + 1)))
+            continue;
+
+        uint8_t buf[512];
+        struct nlmsghdr *resp = (struct nlmsghdr *)buf;
+        struct tcmsg *rtcm = (struct tcmsg *)(buf + NLMSG_HDRLEN);
+
+        memset(buf, 0, sizeof(buf));
+        resp->nlmsg_len = NLMSG_HDRLEN + sizeof(struct tcmsg);
+        resp->nlmsg_type = RTM_NEWTCLASS;
+        resp->nlmsg_flags = dump_all ? NLM_F_MULTI : 0;
+        resp->nlmsg_seq = nlh->nlmsg_seq;
+        resp->nlmsg_pid = 0;
+
+        rtcm->tcm_family = AF_UNSPEC;
+        rtcm->tcm_ifindex = tcm->tcm_ifindex;
+        rtcm->tcm_handle = TC_H_MAKE(1, cid + 1);
+        /* parent handle: encode parent index, or TC_H_ROOT */
+        rtcm->tcm_parent = (cs.rate > 0) ? TC_H_MAKE(1, 1) : TC_H_ROOT;
+        rtcm->tcm_info = (uint32_t)q->type << 16;
+
+        /* TCA_KIND */
+        int kind_len = strlen(kind) + 1;
+        struct nlattr *nla = (struct nlattr *)(buf + resp->nlmsg_len);
+        nla->nla_len = NLA_HDRLEN + (uint16_t)kind_len;
+        nla->nla_type = TCA_KIND;
+        memcpy((uint8_t *)(nla + 1), kind, (size_t)kind_len);
+        resp->nlmsg_len += NLA_ALIGN(nla->nla_len);
+
+        /* TCA_OPTIONS — pack rate/ceil for informational purposes */
+        {
+            struct nlattr *nla_opt = (struct nlattr *)(buf + resp->nlmsg_len);
+            nla_opt->nla_len = NLA_HDRLEN + 8;
+            nla_opt->nla_type = TCA_OPTIONS;
+            uint8_t *opt = (uint8_t *)(nla_opt + 1);
+            memcpy(opt, &cs.rate, 4);
+            memcpy(opt + 4, &cs.ceil, 4);
+            resp->nlmsg_len += NLA_ALIGN(nla_opt->nla_len);
+        }
+
+        /* TCA_STATS with per-class stats */
+        resp->nlmsg_len = tc_nla_put_class_stats(buf, resp->nlmsg_len, &cs);
+
+        netlink_unicast(protocol, src_pid, buf, resp->nlmsg_len, 0);
+
+        if (!dump_all && target_handle != 0)
+            break;  /* single class lookup done */
+    }
+
     tc_send_done(protocol, src_pid, nlh->nlmsg_seq);
     return 0;
 }

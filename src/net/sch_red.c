@@ -413,6 +413,9 @@ static int red_qlen(struct qdisc *q)
 
 /* ── Create ────────────────────────────────────────────────────── */
 
+/* Forward declaration of stats callback */
+static void red_fill_stats(struct qdisc *q, struct tc_stats *st);
+
 struct qdisc *red_create(const struct red_spec *spec)
 {
 	struct qdisc *q = (struct qdisc *)kmalloc(sizeof(struct qdisc));
@@ -475,11 +478,26 @@ struct qdisc *red_create(const struct red_spec *spec)
 	q->enqueue = red_enqueue;
 	q->dequeue = red_dequeue;
 	q->drop    = red_drop;
+	q->get_stats      = red_fill_stats;
+	q->get_class_stats = NULL;
 
 	kprintf("[red] RED qdisc created: min_th=%u max_th=%u limit=%u ecn=%d\n",
-		rp->min_th, rp->max_th, rp->limit, rp->ecn_enabled);
+	    rp->min_th, rp->max_th, rp->limit, rp->ecn_enabled);
 
 	return q;
+}
+
+/* ── Stats callback ────────────────────────────────────────────── */
+
+static void red_fill_stats(struct qdisc *q, struct tc_stats *st)
+{
+	struct red_priv *rp = (struct red_priv *)q->priv;
+	if (!rp || !st) return;
+	memset(st, 0, sizeof(*st));
+	st->drops      = (uint32_t)(rp->drops + rp->early_drops);
+	st->overlimits = (uint32_t)rp->marks;
+	st->qlen       = (uint32_t)rp->qlen;
+	st->backlog    = rp->qlen * 1500;
 }
 
 /* ── Module registration ──────────────────────────────────────── */

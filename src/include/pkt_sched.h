@@ -21,6 +21,49 @@ struct pkt_meta {
     uint64_t dequeue_tick;
 };
 
+/* ── Statistics structures (Linux tc-compatible) ───────────────── */
+
+/* Generic TC stats (TCA_STATS) — matches Linux struct tc_stats */
+struct tc_stats {
+    uint64_t bytes;         /* total bytes seen */
+    uint32_t packets;       /* total packets seen */
+    uint32_t drops;         /* dropped packets */
+    uint32_t overlimits;    /* dropped/ecn due to overlimit */
+    uint32_t bps;           /* current bytes per second (est.) */
+    uint32_t pps;           /* current packets per second (est.) */
+    uint32_t qlen;          /* current queue length */
+    uint32_t backlog;       /* current backlog (bytes) */
+};
+
+/* GNet stats basic (TCA_STATS2) */
+struct gnet_stats_basic {
+    uint64_t bytes;
+    uint32_t packets;
+};
+
+/* GNet stats queue (TCA_STATS2) */
+struct gnet_stats_queue {
+    uint32_t qlen;
+    uint32_t backlog;
+    uint32_t drops;
+    uint32_t overlimits;
+    uint32_t requeues;
+};
+
+/* Per-class statistics (used by HTB and other classful qdiscs) */
+struct tc_class_stats {
+    uint64_t bytes;
+    uint64_t packets;
+    uint64_t drops;
+    uint64_t overlimits;
+    uint64_t tokens;        /* Q8 fixed-point */
+    uint64_t c_tokens;      /* Q8 fixed-point */
+    uint32_t rate;          /* configured rate (bytes/sec) */
+    uint32_t ceil;          /* configured ceil (bytes/sec) */
+    uint32_t qlen;
+    uint32_t backlog;
+};
+
 /* Qdisc operations */
 struct qdisc {
     int type;
@@ -28,6 +71,11 @@ struct qdisc {
     int (*enqueue)(struct qdisc *q, void *pkt, int len);
     void *(*dequeue)(struct qdisc *q);
     int (*drop)(struct qdisc *q);
+    /* Fill generic TC statistics for this qdisc */
+    void (*get_stats)(struct qdisc *q, struct tc_stats *st);
+    /* Fill per-class statistics (classful qdiscs only) */
+    int (*get_class_stats)(struct qdisc *q, int class_id,
+                           struct tc_class_stats *st);
 };
 
 /* ── API ────────────────────────────────────────────────────────── */
@@ -130,6 +178,17 @@ void fq_get_pacing_stats(struct qdisc *q, uint64_t *pacing_idles);
 
 /* Init */
 void pkt_sched_init(void);
+
+/* ── Statistics helpers ──────────────────────────────────────────── */
+
+/* Fill a generic tc_stats from a qdisc.  Calls q->get_stats if set,
+ * otherwise returns zeroed stats.  Returns -1 if q is NULL. */
+int tc_get_qdisc_stats(struct qdisc *q, struct tc_stats *st);
+
+/* Fill per-class stats from a classful qdisc.  Returns -1 if the
+ * qdisc does not support per-class stats or the class is invalid. */
+int tc_get_class_stats(struct qdisc *q, int class_id,
+                       struct tc_class_stats *st);
 
 /* ── CAKE (Common Applications Kept Enhanced) ──────────────────── */
 
