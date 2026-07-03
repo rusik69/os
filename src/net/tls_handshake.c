@@ -221,6 +221,27 @@ int tls_build_client_hello(struct tls_conn *conn,
 		}
 	}
 
+	/* ── SNI extension (RFC 6066) ────────────────────────────── */
+	if (conn->sni_hostname_len > 0) {
+		uint8_t ext_buf[2 + 2 + 2 + 1 + 2 + TLS_SNI_MAX_HOSTNAME_LEN];
+		int ext_len;
+		int needed;
+
+		ext_len = tls_build_sni_ext(
+			(const char *)conn->sni_hostname,
+			(int)conn->sni_hostname_len,
+			ext_buf, (int)sizeof(ext_buf));
+		if (ext_len > 0) {
+			needed = offset + 2 + ext_len;
+			if (needed <= out_cap) {
+				out[offset++] = (uint8_t)((ext_len >> 8) & 0xFF);
+				out[offset++] = (uint8_t)(ext_len & 0xFF);
+				memcpy(out + offset, ext_buf, (size_t)ext_len);
+				offset += ext_len;
+			}
+		}
+	}
+
 	return offset;
 }
 
@@ -353,6 +374,14 @@ int tls_parse_client_hello(struct tls_conn *conn,
 					body + offset + ext_offset + 4,
 					ext_data_len,
 					conn, NULL, NULL, 0);
+			}
+
+			/* ── SNI Extension (TLS_EXT_SERVER_NAME = 0x0000) ─── */
+			if (ext_type == TLS_EXT_SERVER_NAME && ext_data_len > 0) {
+				tls_parse_sni_ext(
+					body + offset + ext_offset + 4,
+					ext_data_len,
+					conn);
 			}
 
 			ext_offset += 4 + ext_data_len;
@@ -1745,6 +1774,167 @@ const uint8_t *tls_alpn_get_selected(const struct tls_conn *conn,
 
 	*len = conn->alpn_selected_len;
 	return conn->alpn_selected;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * SNI (RFC 6066 §3) — Server Name Indication
+ *
+ * The SNI extension (TLS_EXT_SERVER_NAME = 0x0000) allows the client to
+ * indicate the hostname it wishes to connect to before the server sends
+ * its Certificate — essential for virtual hosting (multiple HTTPS sites
+ * on the same IP).
+ *
+ * Wire format (RFC 6066 §3):
+ *
+ *   struct {
+ *     ServerName server_name_list[1..2^16-1];  // at least 1 entry
+ *   } ServerNameList;
+ *
+ *   struct {
+ *     NameType name_type;    // 0 = host_name (the only defined type)
+ *     uint16_t  length;      // length of name in bytes
+ *     uint8_t   name[length];
+ *   } ServerName;
+ *
+ * Extension wire format (same as all TLS extensions):
+ *   uint16_t ext_type    = 0x0000  // TLS_EXT_SERVER_NAME
+ *   uint16_t ext_length            // length of ext_body that follows
+ *   uint8_t  ext_body[]            // ServerNameList (as above)
+ *
+ * Reference: RFC 6066 §3 — Transport Layer Security (TLS) Extensions:
+ *            Extension Definitions
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+int tls_build_sni_ext(const char *hostname, int hostname_len,
+                      uint8_t *out, int out_cap)
+{
+	int offset = 0;
+	int body_len;
+
+	if (!out)
+		return -EINVAL;
+	if (!hostname || hostname_len <= 0)
+		return -EINVAL;
+	if (hostname_len > TLS_SNI_MAX_HOSTNAME_LEN)
+		return -EINVAL;
+
+	/* Total extension: ext_type(2) + ext_data_len(2) +
+	 *   list_len(2) + name_type(1) + name_len(2) + hostname */
+	body_len = 2 + 2 + 2 + 1 + 2 + hostname_len;
+	if (out_cap < body_len)
+		return -ENOSPC;
+
+	/* Extension type (TLS_EXT_SERVER_NAME = 0x0000, big-endian) */
+	out[offset++] = (uint8_t)((TLS_EXT_SERVER_NAME >> 8) & 0xFF);
+	out[offset++] = (uint8_t)(TLS_EXT_SERVER_NAME & 0xFF);
+
+	/* Extension data length (ServerNameList) */
+	{
+		uint16_t ext_data_len = (uint16_t)(2 + 1 + 2 + hostname_len);
+		out[offset++] = (uint8_t)((ext_data_len >> 8) & 0xFF);
+		out[offset++] = (uint8_t)(ext_data_len & 0xFF);
+	}
+
+	/* ServerNameList: 2-byte list length */
+	{
+		uint16_t list_len = (uint16_t)(1 + 2 + hostname_len);
+		out[offset++] = (uint8_t)((list_len >> 8) & 0xFF);
+		out[offset++] = (uint8_t)(list_len & 0xFF);
+	}
+
+	/* NameType (0 = host_name, the only defined type) */
+	out[offset++] = 0;
+
+	/* Name length (2 bytes, big-endian) */
+	{
+		uint16_t name_len = (uint16_t)hostname_len;
+		out[offset++] = (uint8_t)((name_len >> 8) & 0xFF);
+		out[offset++] = (uint8_t)(name_len & 0xFF);
+	}
+
+	/* Hostname itself */
+	memcpy(out + offset, hostname, (size_t)hostname_len);
+	offset += hostname_len;
+
+	return offset;
+}
+
+int tls_parse_sni_ext(const uint8_t *ext_body, int ext_body_len,
+                      struct tls_conn *conn)
+{
+	int offset = 0;
+	int list_len;
+	int name_type;
+	int name_len;
+
+	if (!ext_body || !conn)
+		return -EINVAL;
+	if (ext_body_len < 2)
+		return 0;  /* not an error — empty SNI list */
+
+	/* ServerNameList length (2 bytes, big-endian) */
+	list_len = ((int)ext_body[0] << 8) | (int)ext_body[1];
+	offset += 2;
+
+	if (list_len < 3 || list_len > ext_body_len - 2)
+		return -EINVAL;
+
+	/* ServerName entry: NameType(1) + length(2) + name */
+	if (offset + 3 > ext_body_len)
+		return -EINVAL;
+
+	name_type = ext_body[offset++];  /* 0 = host_name */
+
+	/* Name length (2 bytes, big-endian) */
+	name_len = ((int)ext_body[offset] << 8) | (int)ext_body[offset + 1];
+	offset += 2;
+
+	/* Validate the name */
+	if (name_len < 1 || name_len > TLS_SNI_MAX_HOSTNAME_LEN)
+		return -EINVAL;
+	if (offset + name_len > ext_body_len)
+		return -EINVAL;
+
+	/* Only host_name (type 0) is supported */
+	if (name_type == 0) {
+		conn->sni_hostname_len = (uint8_t)name_len;
+		memcpy(conn->sni_hostname, ext_body + offset,
+		       (size_t)name_len);
+		conn->sni_negotiated = 1;
+	}
+
+	return 0;
+}
+
+int tls_sni_set_hostname(struct tls_conn *conn,
+                         const char *hostname, int len)
+{
+	if (!conn)
+		return -EINVAL;
+	if (len < 0 || len > TLS_SNI_MAX_HOSTNAME_LEN)
+		return -EINVAL;
+	if (len > 0 && !hostname)
+		return -EINVAL;
+
+	if (len > 0) {
+		memcpy(conn->sni_hostname, hostname, (size_t)len);
+		conn->sni_hostname_len = (uint8_t)len;
+	} else {
+		conn->sni_hostname_len = 0;
+	}
+	conn->sni_negotiated = 0;
+
+	return 0;
+}
+
+const char *tls_sni_get_hostname(const struct tls_conn *conn)
+{
+	if (!conn)
+		return NULL;
+	if (!conn->sni_negotiated || conn->sni_hostname_len == 0)
+		return NULL;
+
+	return (const char *)conn->sni_hostname;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════

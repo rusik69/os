@@ -95,6 +95,11 @@ struct tls_handshake_header {
  *   } protocol_name_list[];
  */
 
+/* ── SNI (RFC 6066) — Server Name Indication ───────────────────────── */
+
+/* Maximum length of a single SNI hostname (must fit in uint16_t length field) */
+#define TLS_SNI_MAX_HOSTNAME_LEN      256
+
 /* ── TLS Hello Extensions (RFC 8446 §4.2, RFC 5246 §7.4.1) ───────── */
 
 /* Extension type codes */
@@ -230,6 +235,10 @@ struct tls_conn {
 	uint8_t  alpn_selected[TLS_ALPN_MAX_NAME_LEN];
 	uint8_t  alpn_selected_len;
 	int      alpn_negotiated;
+	/* ── SNI (RFC 6066) — Server Name Indication ──────────────── */
+	uint8_t  sni_hostname[TLS_SNI_MAX_HOSTNAME_LEN];
+	uint8_t  sni_hostname_len;
+	int      sni_negotiated;
 };
 
 /* ── TLS 1.3 Early Data Replay Protection Context ──────────────────────── */
@@ -719,5 +728,53 @@ int tls_alpn_set_protocols(struct tls_conn *conn,
  * or returns NULL if ALPN has not been negotiated. */
 const uint8_t *tls_alpn_get_selected(const struct tls_conn *conn,
                                      uint8_t *len);
+
+/* ── SNI (RFC 6066) — Server Name Indication API ────────────────────── */
+
+/* Build the SNI extension for a ClientHello.
+ *
+ * The SNI extension (type 0x0000) contains a ServerNameList with one
+ * host_name entry (NameType 0).  This function writes the full extension
+ * including the 4-byte extension header (type + data length).
+ *
+ * @hostname:     the server name (ASCII, e.g. "www.example.com")
+ * @hostname_len: length of the hostname string
+ * @out:          output buffer for the extension
+ * @out_cap:      capacity of output buffer
+ *
+ * Returns bytes written to 'out', or negative errno. */
+int tls_build_sni_ext(const char *hostname, int hostname_len,
+                      uint8_t *out, int out_cap);
+
+/* Parse the SNI extension from the extension body (after the
+ * 2-byte ext_type + 2-byte ext_data_len).
+ *
+ * On success, stores the first host_name entry into conn->sni_hostname.
+ *
+ * @ext_body:     the extension data (after ext_type and ext_data_len)
+ * @ext_body_len: length of extension data
+ * @conn:         TLS connection state (sni_hostname/len filled on match)
+ *
+ * Returns 0 on success, or negative errno on parse error.
+ * Sets conn->sni_negotiated = 1 when a hostname is extracted. */
+int tls_parse_sni_ext(const uint8_t *ext_body, int ext_body_len,
+                      struct tls_conn *conn);
+
+/* Set the SNI hostname on a TLS connection (client-side).
+ * This is called by the application before starting the handshake
+ * to indicate the desired server hostname.
+ *
+ * @conn:     TLS connection
+ * @hostname: the server name string (ASCII)
+ * @len:      length of the hostname string
+ *
+ * Returns 0 on success, or negative errno. */
+int tls_sni_set_hostname(struct tls_conn *conn,
+                         const char *hostname, int len);
+
+/* Get the SNI hostname from a TLS connection (server-side).
+ * Returns a pointer to the hostname string, or NULL if SNI was
+ * not received or is empty. */
+const char *tls_sni_get_hostname(const struct tls_conn *conn);
 
 #endif /* TLS_H */
