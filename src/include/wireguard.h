@@ -38,8 +38,18 @@
 /* Maximum number of tracked rate-limit entries */
 #define WG_RATELIMIT_ENTRIES        64
 
+/* Maximum allowed-IP entries per peer */
+#define WG_MAX_ALLOWED_IPS 16
+
 /* Maximum concurrent handshake states tracked */
 #define WG_MAX_HANDSHAKES 4
+
+/* WireGuard allowed-IP routing entry */
+struct wg_allowed_ip {
+    uint32_t addr;       /* Network address (network byte order) */
+    uint8_t  cidr;       /* CIDR prefix length (0-32) */
+    int      active;     /* 1 if this entry is used */
+};
 
 struct wg_peer {
     uint32_t endpoint_ip;       /* configured peer address */
@@ -63,6 +73,10 @@ struct wg_peer {
     /* ── Anti-DoS cookie state ──────────────────────────────────── */
     uint8_t  cookie_key[32];            /* expanded cookie key for KDF (32B) */
     int      has_cookie;                /* 1 if cookie is valid */
+
+    /* ── Allowed-IP routing table (implicit routing) ──────────── */
+    struct wg_allowed_ip allowed_ips[WG_MAX_ALLOWED_IPS];
+    int                  num_allowed_ips;
 };
 
 /* WireGuard device state */
@@ -123,6 +137,33 @@ int  wireguard_ratelimit(uint32_t src_ip);
 
 /* WireGuard peer expiry — marks peer inactive and tears down session. */
 int  wireguard_expire(int peer_idx);
+
+/* ── Allowed-IP routing API ─────────────────────────────────────── */
+
+/* Add an allowed-IP CIDR entry to a peer.
+ * @peer_idx: index of the peer (0..num_peers-1)
+ * @addr: network address in network byte order
+ * @cidr: prefix length (0-32)
+ * Returns 0 on success, or negative errno. */
+int  wg_peer_add_allowed_ip(int peer_idx, uint32_t addr, uint8_t cidr);
+
+/* Remove an allowed-IP CIDR entry from a peer.
+ * Returns 0 on success, or negative errno. */
+int  wg_peer_remove_allowed_ip(int peer_idx, uint32_t addr, uint8_t cidr);
+
+/* Find the peer with the most specific matching allowed-IP for a
+ * destination address.  Returns peer index (>= 0) on success, or
+ * -EHOSTUNREACH if no peer covers dest_ip. */
+int  wg_peer_lookup_by_dest(uint32_t dest_ip);
+
+/* Send data to a peer, routing by destination IP via allowed-IP lookup.
+ * Falls back to the first active peer if no specific route matches.
+ * Returns total bytes sent on success, or negative errno. */
+int  wg_send_to(uint32_t dest_ip, const uint8_t *data, int len);
+
+/* Check whether a source IP is allowed for a peer (matches allowed-IPs).
+ * Returns 1 if allowed, 0 if denied (or peer has no allowed-IPs). */
+int  wg_peer_check_source(int peer_idx, uint32_t src_ip);
 
 /* WireGuard encrypt/decrypt utility functions */
 int  wireguard_encrypt(const uint8_t *plaintext, uint64_t plaintext_len,

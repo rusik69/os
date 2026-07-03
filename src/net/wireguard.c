@@ -39,6 +39,9 @@ struct wg_rl_entry {
 };
 static struct wg_rl_entry wg_rl[WG_RATELIMIT_ENTRIES];
 
+/* ── Forward declarations for static helpers ──────────────────────── */
+static int wg_peer_find_by_source(uint32_t src_ip);
+
 /* WireGuard protocol identifier (must match the initiator hash input) */
 #define WG_PROTOCOL_ID "WireGuard v1 zx2c4 Jason@zx2c4.com"
 
@@ -868,6 +871,10 @@ int wg_create_peer(uint32_t endpoint_ip, uint16_t port) {
     curve25519_clamp(peer_priv);
     curve25519(peer->public_key, peer_priv, CURVE25519_BASE);
 
+    /* Initialize allowed-IP routing table */
+    memset(peer->allowed_ips, 0, sizeof(peer->allowed_ips));
+    peer->num_allowed_ips = 0;
+
     g_wg.num_peers++;
     kprintf("[WG] Added peer %d.%d.%d.%d:%u with Curve25519 public key\n",
             (uint8_t)(endpoint_ip >> 24), (uint8_t)(endpoint_ip >> 16),
@@ -887,16 +894,22 @@ int wg_remove_peer(int index) {
     return 0;
 }
 
-int wg_send(const uint8_t *data, int len) {
-    if (!wg_initialized || !data) return -1;
-    if (g_wg.num_peers == 0) return -1;
+/* ── Core send-to-peer helper ──────────────────────────────────────── */
 
-    struct wg_peer *peer = &g_wg.peers[0];
+/* Encrypt and format a transport data message for a specific peer.
+ * @peer: peer to send to (must be active, non-NULL)
+ * @data: plaintext payload
+ * @len: plaintext length in bytes
+ * Returns total wire bytes on success, or negative errno. */
+static int wg_send_to_peer(struct wg_peer *peer, const uint8_t *data, int len)
+{
+    uint8_t session_key[32];
+
+    if (!peer || !peer->active)
+        return -EINVAL;
 
     /* Use cached transport key if handshake has completed, otherwise
      * derive a session key fresh (legacy pre-handshake path). */
-    uint8_t session_key[32];
-
     if (peer->session_established) {
         memcpy(session_key, peer->transport_key, 32);
     } else {
@@ -908,7 +921,7 @@ int wg_send(const uint8_t *data, int len) {
     /* Allocate buffer: header(16) + ciphertext(max) + tag(16) */
     int buf_len = len + 16 + 64;
     uint8_t *buf = (uint8_t *)kmalloc(buf_len);
-    if (!buf) return -1;
+    if (!buf) return -ENOMEM;
 
     /* Build WireGuard transport message:
      * [type=4 (1 byte) | reserved(3) | receiver(4) | counter(8) | encrypted(stream) | authtag(16)] */
@@ -949,19 +962,45 @@ int wg_send(const uint8_t *data, int len) {
     return total_len;
 }
 
-int wg_receive(const uint8_t *data, int len, uint32_t src_ip, uint16_t src_port) {
-    if (!wg_initialized || !data) return -1;
-    if (len < 32) return -1;  /* Header + tag minimum */
+int wg_send(const uint8_t *data, int len) {
+    if (!wg_initialized || !data) return -EINVAL;
+    if (g_wg.num_peers == 0) return -EHOSTUNREACH;
 
     struct wg_peer *peer = NULL;
-    /* Find first active peer */
     for (int i = 0; i < g_wg.num_peers; i++) {
         if (g_wg.peers[i].active) {
             peer = &g_wg.peers[i];
             break;
         }
     }
-    if (!peer) return -1;
+    if (!peer) return -EHOSTUNREACH;
+
+    return wg_send_to_peer(peer, data, len);
+}
+
+int wg_receive(const uint8_t *data, int len, uint32_t src_ip, uint16_t src_port) {
+    if (!wg_initialized || !data) return -EINVAL;
+    if (len < 32) return -EINVAL;  /* Header + tag minimum */
+
+    struct wg_peer *peer = NULL;
+    /* Find peer by source IP matching its allowed-IP routing table.
+     * Uses wg_peer_find_by_source for longest-prefix match.  If no
+     * peer has allowed-IPs configured, falls back to first active peer. */
+    {
+        int pidx = wg_peer_find_by_source(src_ip);
+        if (pidx >= 0) {
+            peer = &g_wg.peers[pidx];
+        } else {
+            /* Fall back to first active peer (legacy path — no routing) */
+            for (int i = 0; i < g_wg.num_peers; i++) {
+                if (g_wg.peers[i].active) {
+                    peer = &g_wg.peers[i];
+                    break;
+                }
+            }
+        }
+    }
+    if (!peer) return -EHOSTUNREACH;
 
     /* ── Roaming detection ───────────────────────────────────────────
      * If the packet arrived from a different source address than what
@@ -1012,7 +1051,7 @@ int wg_receive(const uint8_t *data, int len, uint32_t src_ip, uint16_t src_port)
         kprintf("[WG] Receive: replay detected (counter %llu <= %llu), dropping\n",
                 (unsigned long long)pkt_counter,
                 (unsigned long long)peer->rx_counter);
-        return -1;
+        return -EBADMSG;
     }
     if (peer->session_established)
         peer->rx_counter = pkt_counter;
@@ -1031,7 +1070,7 @@ int wg_receive(const uint8_t *data, int len, uint32_t src_ip, uint16_t src_port)
     if (ret < 0) {
         kprintf("[WG] Receive: decryption/MAC verification FAILED\n");
         kfree(plaintext);
-        return -1;
+        return -EBADMSG;
     }
 
     int payload_len = ct_len - 16;
@@ -2360,6 +2399,234 @@ int wireguard_expire(int peer_idx)
             (unsigned)g_wg.peers[peer_idx].endpoint_port);
     g_wg.peers[peer_idx].active = 0;
     return 0;
+}
+
+/* ── Allowed-IP routing implementation ───────────────────────────── */
+
+/* Check if an IPv4 address matches a CIDR range.
+ * Returns 1 if dest_ip is within addr/cidr, 0 otherwise. */
+static int wg_allowed_ip_match(uint32_t addr, uint8_t cidr, uint32_t dest_ip)
+{
+    uint32_t mask;
+
+    if (cidr == 0)
+        return 1;  /* 0.0.0.0/0 matches all */
+
+    if (cidr >= 32)
+        return addr == dest_ip;
+
+    mask = (uint32_t)(0xFFFFFFFF << (32 - cidr));
+    return (addr & mask) == (dest_ip & mask);
+}
+
+/* Check whether a source IP is allowed for a peer (matches any allowed-IP).
+ * Returns 1 if allowed (or no allowed-IPs configured), 0 if denied. */
+static int wg_peer_source_allowed(struct wg_peer *peer, uint32_t src_ip)
+{
+    if (!peer || !peer->active)
+        return 0;
+    if (peer->num_allowed_ips == 0)
+        return 1;  /* No restrictions — allow all */
+
+    for (int i = 0; i < peer->num_allowed_ips; i++) {
+        if (peer->allowed_ips[i].active &&
+            wg_allowed_ip_match(peer->allowed_ips[i].addr,
+                                peer->allowed_ips[i].cidr, src_ip)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int wg_peer_check_source(int peer_idx, uint32_t src_ip)
+{
+    if (!wg_initialized)
+        return -ENOSYS;
+    if (peer_idx < 0 || peer_idx >= g_wg.num_peers)
+        return -EINVAL;
+    if (!g_wg.peers[peer_idx].active)
+        return -EINVAL;
+
+    return wg_peer_source_allowed(&g_wg.peers[peer_idx], src_ip) ? 1 : 0;
+}
+
+int wg_peer_add_allowed_ip(int peer_idx, uint32_t addr, uint8_t cidr)
+{
+    if (!wg_initialized)
+        return -ENOSYS;
+    if (peer_idx < 0 || peer_idx >= g_wg.num_peers)
+        return -EINVAL;
+    if (!g_wg.peers[peer_idx].active)
+        return -EINVAL;
+    if (cidr > 32)
+        return -EINVAL;
+
+    struct wg_peer *peer = &g_wg.peers[peer_idx];
+
+    if (peer->num_allowed_ips >= WG_MAX_ALLOWED_IPS)
+        return -ENOSPC;
+
+    /* Check for duplicate */
+    for (int i = 0; i < peer->num_allowed_ips; i++) {
+        if (peer->allowed_ips[i].active &&
+            peer->allowed_ips[i].addr == addr &&
+            peer->allowed_ips[i].cidr == cidr) {
+            return -EALREADY;
+        }
+    }
+
+    struct wg_allowed_ip *entry = &peer->allowed_ips[peer->num_allowed_ips];
+    entry->addr = addr;
+    entry->cidr = cidr;
+    entry->active = 1;
+    peer->num_allowed_ips++;
+
+    kprintf("[WG] Peer %d: added allowed-IP %u.%u.%u.%u/%u\n",
+            peer_idx,
+            (uint8_t)(addr >> 24), (uint8_t)(addr >> 16),
+            (uint8_t)(addr >> 8), (uint8_t)addr,
+            (unsigned)cidr);
+    return 0;
+}
+
+int wg_peer_remove_allowed_ip(int peer_idx, uint32_t addr, uint8_t cidr)
+{
+    if (!wg_initialized)
+        return -ENOSYS;
+    if (peer_idx < 0 || peer_idx >= g_wg.num_peers)
+        return -EINVAL;
+    if (!g_wg.peers[peer_idx].active)
+        return -EINVAL;
+
+    struct wg_peer *peer = &g_wg.peers[peer_idx];
+
+    for (int i = 0; i < peer->num_allowed_ips; i++) {
+        if (peer->allowed_ips[i].active &&
+            peer->allowed_ips[i].addr == addr &&
+            peer->allowed_ips[i].cidr == cidr) {
+            peer->allowed_ips[i].active = 0;
+
+            /* Compact the array */
+            for (int j = i; j < peer->num_allowed_ips - 1; j++)
+                peer->allowed_ips[j] = peer->allowed_ips[j + 1];
+            peer->num_allowed_ips--;
+
+            kprintf("[WG] Peer %d: removed allowed-IP %u.%u.%u.%u/%u\n",
+                    peer_idx,
+                    (uint8_t)(addr >> 24), (uint8_t)(addr >> 16),
+                    (uint8_t)(addr >> 8), (uint8_t)addr,
+                    (unsigned)cidr);
+            return 0;
+        }
+    }
+    return -ENOENT;
+}
+
+/* Find the peer whose allowed-IPs include src_ip, with best-prefix tiebreak.
+ * Returns peer index on success, or -EHOSTUNREACH if no match. */
+static int wg_peer_find_by_source(uint32_t src_ip)
+{
+    int best_peer = -1;
+    int best_prefix = -1;
+
+    for (int i = 0; i < g_wg.num_peers; i++) {
+        if (!g_wg.peers[i].active)
+            continue;
+
+        if (g_wg.peers[i].num_allowed_ips == 0) {
+            /* No allowed-IPs — match all but with lowest priority */
+            if (best_peer < 0 || best_prefix < 0) {
+                best_peer = i;
+                best_prefix = -1;
+            }
+            continue;
+        }
+
+        for (int j = 0; j < g_wg.peers[i].num_allowed_ips; j++) {
+            struct wg_allowed_ip *aip = &g_wg.peers[i].allowed_ips[j];
+            if (!aip->active)
+                continue;
+            if (wg_allowed_ip_match(aip->addr, aip->cidr, src_ip)) {
+                if ((int)aip->cidr > best_prefix) {
+                    best_prefix = (int)aip->cidr;
+                    best_peer = i;
+                }
+            }
+        }
+    }
+
+    if (best_peer < 0)
+        return -EHOSTUNREACH;
+    return best_peer;
+}
+
+int wg_peer_lookup_by_dest(uint32_t dest_ip)
+{
+    if (!wg_initialized)
+        return -ENOSYS;
+
+    int best_peer = -1;
+    int best_prefix = -1;
+
+    for (int i = 0; i < g_wg.num_peers; i++) {
+        if (!g_wg.peers[i].active)
+            continue;
+
+        struct wg_peer *peer = &g_wg.peers[i];
+
+        for (int j = 0; j < peer->num_allowed_ips; j++) {
+            if (!peer->allowed_ips[j].active)
+                continue;
+
+            uint8_t cidr = peer->allowed_ips[j].cidr;
+            uint32_t addr = peer->allowed_ips[j].addr;
+
+            if (wg_allowed_ip_match(addr, cidr, dest_ip)) {
+                if ((int)cidr > best_prefix) {
+                    best_prefix = (int)cidr;
+                    best_peer = i;
+                }
+            }
+        }
+    }
+
+    if (best_peer < 0)
+        return -EHOSTUNREACH;
+
+    return best_peer;
+}
+
+int wg_send_to(uint32_t dest_ip, const uint8_t *data, int len)
+{
+    int peer_idx;
+
+    if (!wg_initialized || !data)
+        return -EINVAL;
+    if (g_wg.num_peers == 0)
+        return -EHOSTUNREACH;
+
+    if (dest_ip == 0) {
+        /* No specific destination — use first active peer (legacy fallback) */
+        peer_idx = -1;
+        for (int i = 0; i < g_wg.num_peers; i++) {
+            if (g_wg.peers[i].active) {
+                peer_idx = i;
+                break;
+            }
+        }
+        if (peer_idx < 0)
+            return -EHOSTUNREACH;
+    } else {
+        peer_idx = wg_peer_lookup_by_dest(dest_ip);
+        if (peer_idx < 0) {
+            kprintf("[WG] Send_to: no route to %u.%u.%u.%u\n",
+                    (uint8_t)(dest_ip >> 24), (uint8_t)(dest_ip >> 16),
+                    (uint8_t)(dest_ip >> 8), (uint8_t)dest_ip);
+            return peer_idx;  /* Negative errno */
+        }
+    }
+
+    return wg_send_to_peer(&g_wg.peers[peer_idx], data, len);
 }
 
 #include "module.h"
