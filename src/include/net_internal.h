@@ -4,6 +4,7 @@
 #include "net.h"
 #include "types.h"
 #include "tcp_bbr.h"   /* struct bbr_data for inline embedding in tcp_conn */
+#include "tcp_bbr3.h"  /* struct bbr3_data for inline embedding in tcp_conn */
 #include "tcp_cubic.h" /* struct cubic_data for inline embedding in tcp_conn */
 
 /* Shared network state — defined in net.c */
@@ -184,6 +185,10 @@ struct tcp_conn {
     /* ── BBR congestion control state ─────────────────────────────────
      * Only valid when cc_algo == 1. */
     struct bbr_data bbr;
+
+    /* ── BBRv3 congestion control state ────────────────────────────────
+     * Only valid when cc_algo == 2 (BBRv3 with ECN support). */
+    struct bbr3_data bbr3;
 };
 
 extern struct tcp_conn tcp_conns[MAX_TCP_CONNS];

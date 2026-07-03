@@ -185,6 +185,16 @@ struct tcp_header {
 #define TCP_RST 0x04
 #define TCP_PSH 0x08
 #define TCP_ACK 0x10
+#define TCP_URG 0x20
+#define TCP_ECE 0x40
+#define TCP_CWR 0x80
+
+/* ECN field in IP TOS byte (lower 2 bits) */
+#define IP_ECN_MASK     0x03
+#define IP_ECN_NOT_ECT  0x00   /* Not ECN-Capable Transport */
+#define IP_ECN_ECT1     0x01   /* ECN-Capable Transport (1) */
+#define IP_ECN_ECT0     0x02   /* ECN-Capable Transport (0) */
+#define IP_ECN_CE       0x03   /* Congestion Experienced */
 
 /* TCP pseudo header for checksum */
 struct tcp_pseudo {

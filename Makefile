@@ -685,6 +685,7 @@ C_SRCS = src/kernel/kernel.c \
          src/net/fq_codel.c \
          src/net/cake.c \
          src/net/tcp_bbr2.c \
+         src/net/tcp_bbr3.c \
          src/drivers/pcie_aer.c \
          src/drivers/pcie_dpc.c \
          src/drivers/pcie_ptm.c \
@@ -878,6 +879,7 @@ obj-m += net/pkt_sched.ko
 obj-m += net/fq_codel.ko
 obj-m += net/cake.ko
 obj-m += net/tcp_bbr2.ko
+obj-m += net/tcp_bbr3.ko
 obj-m += net/netlink.ko
 obj-m += net/dns_server.ko
 obj-m += net/ntp.ko
