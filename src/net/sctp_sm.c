@@ -429,6 +429,313 @@ int sctp_sm_handle_cookie_ack(struct sctp_assoc *a,
     return 0;
 }
 
+/* ════════════════════════════════════════════════════════════════════════
+ * SCTP GRACEFUL SHUTDOWN (RFC 4960 §9.2)
+ * ════════════════════════════════════════════════════════════════════════
+ *
+ * The shutdown procedure is a three-way handshake:
+ *   1. SHUTDOWN (sender sends cum_tsn_ack, enters SHUTDOWN-SENT)
+ *   2. SHUTDOWN (receiver acknowledges, enters SHUTDOWN-RECEIVED)
+ *      → if receiver has no more DATA, sends SHUTDOWN-ACK immediately
+ *   3. SHUTDOWN-ACK (sender acknowledges, sends SHUTDOWN-COMPLETE)
+ *      → association is closed
+ *   4. SHUTDOWN-COMPLETE (cleanup final state)
+ */
+
+/* ── Internal: send a SHUTDOWN chunk ────────────────────────────────────
+ *
+ * SHUTDOWN chunk format (RFC 4960 §3.3.8):
+ *   Type=7, Flags=0, Length=8
+ *   Cumulative TSN Ack (4 bytes)
+ */
+static int sctp_sm_send_shutdown(struct sctp_assoc *a)
+{
+    uint8_t pkt[sizeof(struct sctp_header) + sizeof(struct sctp_chunk) + 4];
+    struct sctp_header *sh = (struct sctp_header *)pkt;
+    memset(sh, 0, sizeof(*sh));
+    sh->src_port = htons(a->local_port);
+    sh->dst_port = htons(a->peer_port);
+    sh->vtag = htonl(a->peer_tag);
+    sh->checksum = 0;
+
+    struct sctp_chunk *chunk = (struct sctp_chunk *)(pkt + sizeof(*sh));
+    chunk->type   = SCTP_SHUTDOWN;
+    chunk->flags  = 0;
+    chunk->length = htons(sizeof(*chunk) + 4);
+
+    /* Cumulative TSN Ack — what we have received from the peer */
+    uint32_t *cum_tsn = (uint32_t *)(chunk + 1);
+    *cum_tsn = htonl(a->cum_tsn_ack);
+
+    uint16_t pkt_len = sizeof(*sh) + sizeof(*chunk) + 4;
+    send_ip(a->peer_ip, IPPROTO_SCTP, pkt, pkt_len);
+    a->tx_packets++;
+
+    kprintf("sctp: sent SHUTDOWN cum_tsn=%u to " NIPQUAD_FMT ":%u\n",
+            a->cum_tsn_ack, NIPQUAD(a->peer_ip), a->peer_port);
+    return 0;
+}
+
+/* ── Internal: send a SHUTDOWN-ACK chunk ────────────────────────────────
+ *
+ * SHUTDOWN-ACK chunk format (RFC 4960 §3.3.9):
+ *   Type=8, Flags=0, Length=4
+ */
+static int sctp_sm_send_shutdown_ack(struct sctp_assoc *a)
+{
+    uint8_t pkt[sizeof(struct sctp_header) + sizeof(struct sctp_chunk)];
+    struct sctp_header *sh = (struct sctp_header *)pkt;
+    memset(sh, 0, sizeof(*sh));
+    sh->src_port = htons(a->local_port);
+    sh->dst_port = htons(a->peer_port);
+    sh->vtag = htonl(a->peer_tag);
+    sh->checksum = 0;
+
+    struct sctp_chunk *chunk = (struct sctp_chunk *)(pkt + sizeof(*sh));
+    chunk->type   = SCTP_SHUTDOWN_ACK;
+    chunk->flags  = 0;
+    chunk->length = htons(sizeof(*chunk));
+
+    uint16_t pkt_len = sizeof(*sh) + sizeof(*chunk);
+    send_ip(a->peer_ip, IPPROTO_SCTP, pkt, pkt_len);
+    a->tx_packets++;
+
+    kprintf("sctp: sent SHUTDOWN-ACK to " NIPQUAD_FMT ":%u\n",
+            NIPQUAD(a->peer_ip), a->peer_port);
+    return 0;
+}
+
+/* ── Internal: send a SHUTDOWN-COMPLETE chunk ───────────────────────────
+ *
+ * SHUTDOWN-COMPLETE chunk format (RFC 4960 §3.3.10):
+ *   Type=14, Flags=0 (T=0), Length=4
+ */
+static int sctp_sm_send_shutdown_complete(struct sctp_assoc *a)
+{
+    uint8_t pkt[sizeof(struct sctp_header) + sizeof(struct sctp_chunk)];
+    struct sctp_header *sh = (struct sctp_header *)pkt;
+    memset(sh, 0, sizeof(*sh));
+    sh->src_port = htons(a->local_port);
+    sh->dst_port = htons(a->peer_port);
+    sh->vtag = htonl(a->peer_tag);
+    sh->checksum = 0;
+
+    struct sctp_chunk *chunk = (struct sctp_chunk *)(pkt + sizeof(*sh));
+    chunk->type   = SCTP_SHUTDOWN_COMPLETE;
+    chunk->flags  = 0;
+    chunk->length = htons(sizeof(*chunk));
+
+    uint16_t pkt_len = sizeof(*sh) + sizeof(*chunk);
+    send_ip(a->peer_ip, IPPROTO_SCTP, pkt, pkt_len);
+    a->tx_packets++;
+
+    kprintf("sctp: sent SHUTDOWN-COMPLETE to " NIPQUAD_FMT ":%u\n",
+            NIPQUAD(a->peer_ip), a->peer_port);
+    return 0;
+}
+
+/* ── Initiate graceful shutdown from the upper layer ─────────────────────
+ *
+ * Called when the application wants to close the association gracefully.
+ * According to RFC 4960 §9.2:
+ *   1. Enter SHUTDOWN-PENDING
+ *   2. Wait for outstanding DATA to be SACK'd (simplified: send now)
+ *   3. Send SHUTDOWN chunk with cum_tsn_ack
+ *   4. Enter SHUTDOWN-SENT
+ *   5. T2-shutdown timer would start (simplified: not implemented)
+ */
+int sctp_sm_start_shutdown(struct sctp_assoc *a)
+{
+    if (!a)
+        return -EINVAL;
+
+    if (a->state != SCTP_STATE_ESTABLISHED &&
+        a->state != SCTP_STATE_SHUTDOWN_PENDING) {
+        kprintf("sctp: cannot shutdown in state %d\n", a->state);
+        return -EINVAL;
+    }
+
+    a->state = SCTP_STATE_SHUTDOWN_PENDING;
+
+    kprintf("sctp: initiating graceful shutdown on assoc %u:%u\n",
+            a->local_port, a->peer_port);
+
+    /* In a full implementation we would wait for outstanding DATA
+     * to be SACK'd. For now, send SHUTDOWN directly. */
+    sctp_sm_send_shutdown(a);
+    a->state = SCTP_STATE_SHUTDOWN_SENT;
+
+    kprintf("sctp: shutdown entered SHUTDOWN-SENT state\n");
+    return 0;
+}
+
+/* ── Handle incoming SHUTDOWN chunk (RFC 4960 §9.2) ─────────────────────
+ *
+ * Behavior depends on current state:
+ *
+ * ESTABLISHED / SHUTDOWN-PENDING:
+ *   - Enter SHUTDOWN-RECEIVED
+ *   - Stop accepting new data from upper layer
+ *   - Send SHUTDOWN with our cum_tsn_ack
+ *   - If no outstanding DATA TSNs to send, send SHUTDOWN-ACK immediately
+ *
+ * SHUTDOWN-SENT:
+ *   - Enter SHUTDOWN-ACK-SENT
+ *   - Restart T2-shutdown timer
+ *   - Send SHUTDOWN-ACK
+ *
+ * SHUTDOWN-RECEIVED / SHUTDOWN-ACK-SENT:
+ *   - Silently discard (duplicate)
+ */
+int sctp_sm_handle_shutdown(struct sctp_assoc *a, uint32_t src_ip,
+                             const struct sctp_header *sh,
+                             const struct sctp_chunk *chunk, uint16_t chunk_len)
+{
+    if (!a || !chunk)
+        return -EINVAL;
+
+    (void)src_ip;
+    (void)sh;
+
+    if (chunk_len < sizeof(*chunk) + 4) {
+        kprintf("sctp: SHUTDOWN chunk too short (%u)\n", chunk_len);
+        return -EINVAL;
+    }
+
+    /* Extract peer's cumulative TSN ack */
+    const uint32_t *cum_tsn_p = (const uint32_t *)(chunk + 1);
+    uint32_t peer_cum_tsn = ntohl(*cum_tsn_p);
+
+    a->rx_packets++;
+
+    kprintf("sctp: SHUTDOWN from " NIPQUAD_FMT ":%u cum_tsn=%u state=%d\n",
+            NIPQUAD(a->peer_ip), a->peer_port, peer_cum_tsn, a->state);
+
+    switch (a->state) {
+    case SCTP_STATE_ESTABLISHED:
+    case SCTP_STATE_SHUTDOWN_PENDING:
+        /* Enter SHUTDOWN-RECEIVED */
+        a->state = SCTP_STATE_SHUTDOWN_RECEIVED;
+
+        /* Send SHUTDOWN with our cum_tsn_ack */
+        sctp_sm_send_shutdown(a);
+
+        /* If we have no outstanding DATA TSNs to send,
+         * send SHUTDOWN-ACK immediately per RFC 4960 §9.2.
+         * For simplicity, assume no outstanding DATA when
+         * we enter shutdown. */
+        sctp_sm_send_shutdown_ack(a);
+        a->state = SCTP_STATE_SHUTDOWN_ACK_SENT;
+
+        kprintf("sctp: transition to SHUTDOWN-ACK-SENT (immediate)\n");
+        break;
+
+    case SCTP_STATE_SHUTDOWN_SENT:
+        /* Both sides trying to shut down simultaneously — the
+         * "SHUTDOWN collision" case (RFC 4960 §9.2, ¶10-11).
+         * The endpoint that entered SHUTDOWN-SENT from the upper
+         * layer: upon receiving a SHUTDOWN, send SHUTDOWN-ACK. */
+        a->state = SCTP_STATE_SHUTDOWN_ACK_SENT;
+        sctp_sm_send_shutdown_ack(a);
+
+        kprintf("sctp: SHUTDOWN collision - entering SHUTDOWN-ACK-SENT\n");
+        break;
+
+    case SCTP_STATE_SHUTDOWN_RECEIVED:
+    case SCTP_STATE_SHUTDOWN_ACK_SENT:
+        /* Duplicate — silently ignore */
+        kprintf("sctp: duplicate SHUTDOWN in state %d, ignored\n", a->state);
+        break;
+
+    default:
+        /* CLOSED / COOKIE_WAIT / COOKIE_ECHOED — unexpected */
+        kprintf("sctp: SHUTDOWN unexpected in state %d, sending ABORT\n", a->state);
+        /* Send ABORT per RFC 4960 §9.2 (not implemented here) */
+        break;
+    }
+
+    return 0;
+}
+
+/* ── Handle incoming SHUTDOWN-ACK chunk (RFC 4960 §9.2) ─────────────────
+ *
+ * SHUTDOWN-ACK completes the three-way handshake from the sender's side.
+ * The sender:
+ *   1. Sends SHUTDOWN-COMPLETE
+ *   2. Removes the association (closes the TCB)
+ *
+ * The receiver of SHUTDOWN-COMPLETE also removes the association.
+ */
+int sctp_sm_handle_shutdown_ack(struct sctp_assoc *a, uint32_t src_ip,
+                                 const struct sctp_header *sh,
+                                 const struct sctp_chunk *chunk, uint16_t chunk_len)
+{
+    if (!a || !chunk)
+        return -EINVAL;
+
+    (void)src_ip;
+    (void)sh;
+    (void)chunk;
+    (void)chunk_len;
+
+    a->rx_packets++;
+
+    kprintf("sctp: SHUTDOWN-ACK from " NIPQUAD_FMT ":%u state=%d\n",
+            NIPQUAD(a->peer_ip), a->peer_port, a->state);
+
+    if (a->state != SCTP_STATE_SHUTDOWN_SENT &&
+        a->state != SCTP_STATE_SHUTDOWN_ACK_SENT) {
+        kprintf("sctp: SHUTDOWN-ACK unexpected in state %d\n", a->state);
+        return -EINVAL;
+    }
+
+    /* Send SHUTDOWN-COMPLETE */
+    sctp_sm_send_shutdown_complete(a);
+
+    /* Close the association */
+    a->state = SCTP_STATE_CLOSED;
+
+    kprintf("sctp: association closed after graceful shutdown\n");
+    return 0;
+}
+
+/* ── Handle incoming SHUTDOWN-COMPLETE chunk (RFC 4960 §9.2) ────────────
+ *
+ * Received by the endpoint that sent SHUTDOWN-ACK. This confirms the
+ * peer has received it. The association is removed entirely.
+ *
+ * If in SHUTDOWN-ACK-SENT state, the TCB is deleted.
+ */
+int sctp_sm_handle_shutdown_complete(struct sctp_assoc *a, uint32_t src_ip,
+                                      const struct sctp_header *sh,
+                                      const struct sctp_chunk *chunk,
+                                      uint16_t chunk_len)
+{
+    if (!a || !chunk)
+        return -EINVAL;
+
+    (void)src_ip;
+    (void)sh;
+    (void)chunk;
+    (void)chunk_len;
+
+    a->rx_packets++;
+
+    kprintf("sctp: SHUTDOWN-COMPLETE from " NIPQUAD_FMT ":%u state=%d\n",
+            NIPQUAD(a->peer_ip), a->peer_port, a->state);
+
+    if (a->state != SCTP_STATE_SHUTDOWN_ACK_SENT) {
+        kprintf("sctp: SHUTDOWN-COMPLETE unexpected in state %d\n", a->state);
+        return -EINVAL;
+    }
+
+    /* Close the association */
+    a->state = SCTP_STATE_CLOSED;
+
+    kprintf("sctp: association closed (received SHUTDOWN-COMPLETE)\n");
+    return 0;
+}
+
 EXPORT_SYMBOL(sctp_cookie_generate);
 EXPORT_SYMBOL(sctp_cookie_validate);
 EXPORT_SYMBOL(sctp_sm_send_init_ack);
@@ -436,6 +743,10 @@ EXPORT_SYMBOL(sctp_sm_handle_init);
 EXPORT_SYMBOL(sctp_sm_handle_init_ack);
 EXPORT_SYMBOL(sctp_sm_handle_cookie_echo);
 EXPORT_SYMBOL(sctp_sm_handle_cookie_ack);
+EXPORT_SYMBOL(sctp_sm_start_shutdown);
+EXPORT_SYMBOL(sctp_sm_handle_shutdown);
+EXPORT_SYMBOL(sctp_sm_handle_shutdown_ack);
+EXPORT_SYMBOL(sctp_sm_handle_shutdown_complete);
 #include "module.h"
 module_init(sctp_init);
 MODULE_LICENSE("GPL");

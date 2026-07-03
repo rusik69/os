@@ -372,11 +372,18 @@ void handle_sctp(uint32_t src_ip, uint32_t dst_ip,
             break;
 
         case SCTP_SHUTDOWN:
-            a->state = SCTP_STATE_SHUTDOWN_RECEIVED;
+            sctp_sm_handle_shutdown(a, src_ip, sh, chunk,
+                                     chunk_len);
             break;
 
         case SCTP_SHUTDOWN_ACK:
-            a->state = SCTP_STATE_CLOSED;
+            sctp_sm_handle_shutdown_ack(a, src_ip, sh, chunk,
+                                        chunk_len);
+            break;
+
+        case SCTP_SHUTDOWN_COMPLETE:
+            sctp_sm_handle_shutdown_complete(a, src_ip, sh, chunk,
+                                             chunk_len);
             break;
 
         case SCTP_SACK: {
@@ -583,23 +590,11 @@ int sctp_shutdown(int fd, int how)
 
     /* how: 0=read, 1=write, 2=both */
     if (how == 1 || how == 2) {
-        /* Send SCTP_SHUTDOWN chunk if connected */
-        if (a->state == SCTP_STATE_ESTABLISHED) {
-            uint8_t pkt[sizeof(struct sctp_header) + sizeof(struct sctp_chunk)];
-            struct sctp_header *sh = (struct sctp_header *)pkt;
-            memset(sh, 0, sizeof(*sh));
-            sh->src_port = htons(a->local_port);
-            sh->dst_port = htons(a->peer_port);
-            sh->vtag = htonl(a->peer_tag);
-
-            struct sctp_chunk *chunk = (struct sctp_chunk *)(pkt + sizeof(*sh));
-            chunk->type = SCTP_SHUTDOWN;
-            chunk->flags = 0;
-            chunk->length = htons(sizeof(*chunk) + 4); /* + cumulative TSN ack */
-
-            send_ip(a->transports[a->primary_path].addr, IPPROTO_SCTP,
-                    pkt, sizeof(pkt));
-            a->state = SCTP_STATE_SHUTDOWN_SENT;
+        /* Initiate graceful shutdown via state machine */
+        int ret = sctp_sm_start_shutdown(a);
+        if (ret < 0) {
+            spinlock_release(&sctp_lock);
+            return ret;
         }
     }
     if (how == 0 || how == 2) {

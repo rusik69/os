@@ -198,6 +198,7 @@ int  sctp_connect(int fd, uint32_t ip, uint16_t port);
 int  sctp_send(int fd, const void *data, uint16_t len, uint16_t stream_id);
 int  sctp_recv(int fd, void *buf, uint16_t maxlen, uint16_t *stream_id);
 void sctp_close(int fd);
+int  sctp_shutdown(int fd, int how);
 int  sctp_is_valid_fd(int fd);
 
 /* Called from IP layer when protocol=132 */
@@ -209,6 +210,18 @@ int  sctp_transport_add(struct sctp_assoc *a, uint32_t ip, uint16_t port);
 int  sctp_transport_find(const struct sctp_assoc *a, uint32_t ip);
 int  sctp_transport_set_primary(struct sctp_assoc *a, uint32_t ip);
 void sctp_transport_remove_all(struct sctp_assoc *a);
+
+/* Shutdown procedure (RFC 4960 §9.2) */
+int  sctp_sm_start_shutdown(struct sctp_assoc *a);
+int  sctp_sm_handle_shutdown(struct sctp_assoc *a, uint32_t src_ip,
+                             const struct sctp_header *sh,
+                             const struct sctp_chunk *chunk, uint16_t chunk_len);
+int  sctp_sm_handle_shutdown_ack(struct sctp_assoc *a, uint32_t src_ip,
+                                 const struct sctp_header *sh,
+                                 const struct sctp_chunk *chunk, uint16_t chunk_len);
+int  sctp_sm_handle_shutdown_complete(struct sctp_assoc *a, uint32_t src_ip,
+                                      const struct sctp_header *sh,
+                                      const struct sctp_chunk *chunk, uint16_t chunk_len);
 
 /* ASCONF / ASCONF-ACK chunk handling (RFC 5061) */
 int  sctp_handle_asconf(struct sctp_assoc *a, uint32_t src_ip,
