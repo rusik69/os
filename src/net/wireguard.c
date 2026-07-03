@@ -820,6 +820,7 @@ static void wg_kdf(uint8_t *session_key, const uint8_t *shared_secret,
 int wg_init(void) {
     memset(&g_wg, 0, sizeof(g_wg));
     g_wg.listen_port = 51820;
+    g_wg.mtu = WG_MTU;
 
     /* Generate a real key pair using Curve25519 */
     uint8_t private_key[32];
@@ -1011,6 +1012,16 @@ static int wg_send_to_peer(struct wg_peer *peer, const uint8_t *data, int len)
     if (!peer || !peer->active)
         return -EINVAL;
 
+    /* ── MTU enforcement ─────────────────────────────────────────────
+     * The WireGuard tunnel MTU (default 1420) is the maximum size of an
+     * inner IP packet.  If the caller hands us a larger payload, reject
+     * it with -EMSGSIZE so the upper layer can fragment. */
+    if (len > g_wg.mtu) {
+        kprintf("[WG] Send_to_peer: inner packet %d bytes exceeds MTU %d, dropping\n",
+                len, g_wg.mtu);
+        return -EMSGSIZE;
+    }
+
     /* Use cached transport key if handshake has completed, otherwise
      * derive a session key fresh (legacy pre-handshake path). */
     if (peer->session_established) {
@@ -1085,6 +1096,14 @@ int wg_send(const uint8_t *data, int len) {
 int wg_receive(const uint8_t *data, int len, uint32_t src_ip, uint16_t src_port) {
     if (!wg_initialized || !data) return -EINVAL;
     if (len < 32) return -EINVAL;  /* Header + tag minimum */
+
+    /* Log a warning if received wire packet exceeds our MTU + overhead;
+     * this is not fatal — the peer may have a larger MTU — but it
+     * indicates a potential configuration mismatch. */
+    if (len > WG_MAX_WIRE_SIZE) {
+        kprintf("[WG] Receive: wire packet %d bytes exceeds max wire size %d (MTU %d)\n",
+                len, WG_MAX_WIRE_SIZE, g_wg.mtu);
+    }
 
     struct wg_peer *peer = NULL;
     /* Find peer by source IP matching its allowed-IP routing table.
@@ -2829,6 +2848,32 @@ int wg_get_peer_info(int idx, struct wg_peer *out)
         return -EINVAL;
 
     memcpy(out, &g_wg.peers[idx], sizeof(struct wg_peer));
+    return 0;
+}
+
+/* ── MTU accessors ───────────────────────────────────────────────── */
+
+int wg_get_mtu(void)
+{
+    if (!wg_initialized)
+        return -ENOSYS;
+    return g_wg.mtu;
+}
+
+int wg_set_mtu(int mtu)
+{
+    if (!wg_initialized)
+        return -ENOSYS;
+    if (mtu < 576) {
+        kprintf("[WG] set_mtu: %d too low, clamping to 576\n", mtu);
+        mtu = 576;
+    }
+    if (mtu > 1500) {
+        kprintf("[WG] set_mtu: %d too high, clamping to 1500\n", mtu);
+        mtu = 1500;
+    }
+    g_wg.mtu = mtu;
+    kprintf("[WG] MTU set to %d\n", g_wg.mtu);
     return 0;
 }
 

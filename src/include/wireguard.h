@@ -24,6 +24,11 @@
 #define WG_COOKIE_REPLY_LEN          80
 #define WG_COOKIE_LEN                16
 
+/* WireGuard MTU constants */
+#define WG_MTU                      1420   /* Default WireGuard tunnel MTU (inner packet) */
+#define WG_OVERHEAD                 32     /* Transport header (16) + Poly1305 auth tag (16) */
+#define WG_MAX_WIRE_SIZE            (WG_MTU + WG_OVERHEAD)  /* Maximum outer UDP payload */
+
 /* Cookie nonce length (24 bytes for XChaCha20 compatibility;
  * we use first 12 bytes for ChaCha20 and zero-pad the rest). */
 #define WG_COOKIE_NONCE_LEN         24
@@ -101,6 +106,7 @@ struct wg_device {
     uint8_t  private_key[32];
     uint8_t  public_key[32];
     uint16_t listen_port;
+    int      mtu;               /* Tunnel MTU (default WG_MTU, maximum inner packet size) */
     struct wg_peer peers[WG_MAX_PEERS];
     int      num_peers;
 
@@ -111,6 +117,8 @@ struct wg_device {
 /* ── API ────────────────────────────────────────────────────────── */
 
 int  wg_init(void);
+int  wg_get_mtu(void);
+int  wg_set_mtu(int mtu);
 int  wg_create_peer(uint32_t endpoint_ip, uint16_t port);
 int  wg_remove_peer(int index);
 int  wg_send(const uint8_t *data, int len);
