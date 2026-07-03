@@ -138,7 +138,12 @@ struct sctp_gap_block {
 #define SCTP_MAX_GAP_BLOCKS  16
 #define SCTP_MAX_DUP_TSNS   16
 
-/* ── SCTP transport address (RFC 4960 §6.4) ──────────────────────────── */
+/* Heartbeat (RFC 4960 §8.3) */
+#define SCTP_HB_INTERVAL_DEFAULT    3000    /* Default HB interval: 30s at 100 ticks/s */
+#define SCTP_HB_PROBES_MAX          4       /* Max missed HB before path declared inactive */
+#define SCTP_PARAM_HB_INFO          1       /* Heartbeat Info parameter type */
+
+/* SCTP transport address (RFC 4960 §6.4) */
 struct sctp_transport {
     uint32_t    addr;           /* IP address (host byte order) */
     uint16_t    port;           /* Port */
@@ -147,6 +152,10 @@ struct sctp_transport {
     uint16_t    rtt;            /* Smoothed RTT (milliseconds) */
     uint32_t    rto;            /* Retransmission timeout (ticks) */
     uint64_t    last_used;      /* Tick when last used for I/O */
+    /* Heartbeat (RFC 4960 §8.3) */
+    uint32_t    hb_last_sent;   /* Tick when last HEARTBEAT sent */
+    uint32_t    hb_timeout_count; /* Consecutive HEARTBEAT timeouts */
+    uint8_t     hb_pending;     /* 1 = HEARTBEAT outstanding */
 };
 
 struct sctp_assoc {
@@ -188,6 +197,9 @@ struct sctp_assoc {
     uint8_t     num_transports;
     uint8_t     primary_path;       /* Index into transports[] for primary */
     struct sctp_transport transports[SCTP_MAX_TRANSPORTS];
+    /* Heartbeat (RFC 4960 §8.3) */
+    uint64_t    hb_last_check;      /* Tick of last heartbeat check */
+    uint32_t    hb_interval;        /* Heartbeat period (ticks) */
 };
 
 /* API */
@@ -226,6 +238,11 @@ int  sctp_sm_handle_shutdown_complete(struct sctp_assoc *a, uint32_t src_ip,
 /* ASCONF / ASCONF-ACK chunk handling (RFC 5061) */
 int  sctp_handle_asconf(struct sctp_assoc *a, uint32_t src_ip,
                         const struct sctp_chunk *chunk, uint16_t chunk_len);
+
+/* Heartbeat (RFC 4960 §8.3) — reachability detection */
+void sctp_heartbeat_check(struct sctp_assoc *a);
+int  sctp_heartbeat_send(struct sctp_assoc *a, struct sctp_transport *tp);
+void sctp_heartbeat_init(struct sctp_assoc *a);
 
 /* State machine: called from handle_sctp for individual chunk processing */
 int  sctp_sm_handle_init(struct sctp_assoc *a, uint32_t src_ip,

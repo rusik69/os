@@ -78,6 +78,9 @@ int sctp_create(int fd, int type)
         a->out_streams[i].out_seq = 0;
     }
 
+    /* Initialize heartbeat reachability detection */
+    sctp_heartbeat_init(a);
+
     spinlock_release(&sctp_lock);
     return 0;
 }
@@ -182,6 +185,9 @@ int sctp_send(int fd, const void *data, uint16_t len, uint16_t stream_id)
     kprintf("sctp: sent DATA tsn=%u stream=%u seq=%u len=%u\n",
             ntohl(dh->tsn), stream_id,
             ntohs(dh->stream_seq), len);
+
+    /* Check if heartbeat is needed on idle transports */
+    sctp_heartbeat_check(a);
 
     spinlock_release(&sctp_lock);
     return (int)len;
@@ -348,14 +354,69 @@ void handle_sctp(uint32_t src_ip, uint32_t dst_ip,
             break;
         }
 
-        case SCTP_HEARTBEAT_ACK:
-            /* HEARTBEAT-ACK received — peer is alive */
-            a->rx_packets++;
-            kprintf("sctp: HEARTBEAT-ACK from %d.%d.%d.%d:%u\n",
-                    (src_ip >> 24) & 0xFF, (src_ip >> 16) & 0xFF,
-                    (src_ip >> 8) & 0xFF, src_ip & 0xFF,
-                    ntohs(sh->src_port));
+        case SCTP_HEARTBEAT_ACK: {
+            /* HEARTBEAT-ACK received — peer is alive on this path */
+            uint16_t hb_ack_total = chunk_len;
+            uint16_t hb_ack_data = hb_ack_total - sizeof(*chunk);
+            const uint8_t *hb_data = (const uint8_t *)(chunk + 1);
+
+            /* Parse Heartbeat Info parameter (Type=1) */
+            uint32_t sent_time = 0;
+            if (hb_ack_data >= 8 && hb_data[0] == 0 && hb_data[1] == SCTP_PARAM_HB_INFO) {
+                uint16_t param_len = ((uint16_t)hb_data[2] << 8) | hb_data[3];
+                if (param_len >= 8) {
+                    sent_time = ((uint32_t)hb_data[4] << 24) |
+                                ((uint32_t)hb_data[5] << 16) |
+                                ((uint32_t)hb_data[6] << 8)  |
+                                (uint32_t)hb_data[7];
+                }
+            }
+
+            /* Find transport by source IP */
+            int tp_idx = sctp_transport_find(a, src_ip);
+            if (tp_idx >= 0) {
+                struct sctp_transport *tp = &a->transports[tp_idx];
+
+                /* Calculate RTT if we have the sent timestamp */
+                if (sent_time > 0 && tp->hb_pending &&
+                    tp->hb_last_sent == sent_time) {
+                    uint64_t now = timer_get_ticks();
+                    uint32_t rtt_sample = (uint32_t)now - sent_time;
+                    /* Exponentially weighted moving average (alpha=0.125) */
+                    if (tp->rtt == 0) {
+                        tp->rtt = rtt_sample;
+                    } else {
+                        tp->rtt = (uint16_t)((uint32_t)tp->rtt * 7 / 8 +
+                                              rtt_sample / 8);
+                    }
+                    /* Update RTO: 2 * RTT (simplified RFC 4960 §6.3.1) */
+                    if (tp->rtt > 0) {
+                        tp->rto = (uint32_t)tp->rtt * 2;
+                        if (tp->rto < 1000) tp->rto = 1000;
+                    }
+                    tp->hb_pending = 0;
+
+                    kprintf("sctp: HEARTBEAT-ACK RTT %u ms on "
+                            NIPQUAD_FMT ":%u\n",
+                            rtt_sample / 100 * 10,
+                            NIPQUAD(tp->addr), tp->port);
+                }
+
+                /* Path recovery: mark transport active */
+                if (!tp->active) {
+                    tp->active = 1;
+                    kprintf("sctp: path " NIPQUAD_FMT ":%u "
+                            "RECOVERED (HEARTBEAT-ACK)\n",
+                            NIPQUAD(tp->addr), tp->port);
+                }
+                tp->hb_timeout_count = 0;
+                tp->last_used = timer_get_ticks();
+            }
+
+            kprintf("sctp: HEARTBEAT-ACK from " NIPQUAD_FMT ":%u\n",
+                    NIPQUAD(src_ip), ntohs(sh->src_port));
             break;
+        }
 
         case SCTP_DATA: {
             /* Use TSN-aware DATA handler */
@@ -419,6 +480,9 @@ void handle_sctp(uint32_t src_ip, uint32_t dst_ip,
         remaining -= chunk_len;
         chunk = (const struct sctp_chunk *)((const uint8_t *)chunk + chunk_len);
     }
+
+    /* Check all transports for heartbeat requirements */
+    sctp_heartbeat_check(a);
 
     spinlock_release(&sctp_lock);
 }
@@ -748,6 +812,175 @@ void sctp_transport_remove_all(struct sctp_assoc *a)
     a->num_transports = 0;
     a->primary_path = 0;
 }
+
+/* ════════════════════════════════════════════════════════════════════════
+ * SCTP HEARTBEAT — Reachability Detection (RFC 4960 §8.3)
+ * ════════════════════════════════════════════════════════════════════════
+ *
+ * HEARTBEAT is used to verify reachability of a destination transport
+ * address. A HEARTBEAT chunk carries a Heartbeat Info parameter (type=1)
+ * containing the sender's timestamp. The receiver echoes it back in a
+ * HEARTBEAT-ACK, allowing RTT measurement.
+ *
+ * Path failure: SCTP_HB_PROBES_MAX (4) consecutive unanswered HEARTBEATs
+ * cause the path to be marked inactive.
+ *
+ * Path recovery: Receiving a HEARTBEAT-ACK on an inactive path marks it
+ * active again.
+ */
+
+/* ── Initialize heartbeat fields for an association ────────────────────── */
+void sctp_heartbeat_init(struct sctp_assoc *a)
+{
+    if (!a)
+        return;
+    a->hb_last_check = timer_get_ticks();
+    a->hb_interval = SCTP_HB_INTERVAL_DEFAULT;
+    for (uint8_t i = 0; i < a->num_transports; i++) {
+        a->transports[i].hb_last_sent = 0;
+        a->transports[i].hb_timeout_count = 0;
+        a->transports[i].hb_pending = 0;
+    }
+}
+
+/* ── Send a HEARTBEAT chunk on a specific transport ──────────────────────
+ *
+ * Builds and sends a HEARTBEAT chunk (RFC 4960 §3.3.5):
+ *   Type=4, Flags=0, Length=16 (4 chunk hdr + 4 param hdr + 4 timestamp)
+ *   Heartbeat Info parameter (Type=1, Length=8): sender's timestamp
+ */
+int sctp_heartbeat_send(struct sctp_assoc *a, struct sctp_transport *tp)
+{
+    if (!a || !tp)
+        return -EINVAL;
+
+    /* HEARTBEAT chunk layout:
+     *   sctp_header (12)
+     *   sctp_chunk  (4)  type=4, len=16
+     *   param_type  (2)  type=1 (HB INFO)
+     *   param_len   (2)  len=8
+     *   timestamp   (4)  sender's time
+     */
+    uint8_t pkt[sizeof(struct sctp_header) + 16];
+    struct sctp_header *sh = (struct sctp_header *)pkt;
+    memset(sh, 0, sizeof(*sh));
+    sh->src_port = htons(a->local_port);
+    sh->dst_port = htons(tp->port);
+    sh->vtag = htonl(a->peer_tag);
+    sh->checksum = 0;
+
+    struct sctp_chunk *chunk = (struct sctp_chunk *)(pkt + sizeof(*sh));
+    chunk->type = SCTP_HEARTBEAT;
+    chunk->flags = 0;
+    chunk->length = htons(16);
+
+    /* Heartbeat Info parameter (Type=1, Length=8) */
+    uint8_t *param = (uint8_t *)(chunk + 1);
+    param[0] = 0;                    /* Param type high byte */
+    param[1] = SCTP_PARAM_HB_INFO;  /* Param type low byte = 1 */
+    param[2] = 0;                    /* Param length high byte */
+    param[3] = 8;                    /* Param length low byte = 8 */
+
+    /* Sender's timestamp (4 bytes) — used to calculate RTT on ACK */
+    uint64_t now = timer_get_ticks();
+    uint32_t timestamp = (uint32_t)now;
+    param[4] = (uint8_t)(timestamp >> 24);
+    param[5] = (uint8_t)(timestamp >> 16);
+    param[6] = (uint8_t)(timestamp >> 8);
+    param[7] = (uint8_t)(timestamp);
+
+    uint16_t pkt_len = sizeof(*sh) + 16;
+    send_ip(tp->addr, IPPROTO_SCTP, pkt, pkt_len);
+    a->tx_packets++;
+
+    /* Record when we sent this heartbeat */
+    tp->hb_last_sent = timestamp;
+    tp->hb_pending = 1;
+
+    kprintf("sctp: HEARTBEAT sent to " NIPQUAD_FMT ":%u ts=%u\n",
+            NIPQUAD(tp->addr), tp->port, timestamp);
+    return 0;
+}
+
+/* ── Check all transports and send HEARTBEAT if due ──────────────────────
+ *
+ * Called periodically from handle_sctp, sctp_send, sctp_recv while
+ * holding the SCTP lock. Sends HEARTBEAT to transports that have been
+ * idle longer than hb_interval and don't already have an outstanding HB.
+ *
+ * On path failure (too many consecutive missed heartbeats), marks the
+ * transport inactive and may trigger path switchover.
+ */
+void sctp_heartbeat_check(struct sctp_assoc *a)
+{
+    if (!a)
+        return;
+
+    uint64_t now = timer_get_ticks();
+    uint32_t now32 = (uint32_t)now;
+
+    /* Only check once per association per hb_interval/4 ticks minimum */
+    uint32_t min_check_interval = a->hb_interval / 4;
+    if (min_check_interval < 50)
+        min_check_interval = 50;  /* Minimum 500ms between checks */
+    if (now32 - (uint32_t)a->hb_last_check < min_check_interval)
+        return;
+
+    a->hb_last_check = now;
+
+    for (uint8_t i = 0; i < a->num_transports; i++) {
+        struct sctp_transport *tp = &a->transports[i];
+
+        /* ── Check for HEARTBEAT timeout ────────────────────────────── */
+        if (tp->hb_pending) {
+            uint32_t elapsed = now32 - tp->hb_last_sent;
+            if (elapsed >= tp->rto) {
+                /* HEARTBEAT timed out */
+                tp->hb_pending = 0;
+                tp->hb_timeout_count++;
+
+                kprintf("sctp: HEARTBEAT timeout on " NIPQUAD_FMT ":%u "
+                        "(timeout=%u/%u)\n",
+                        NIPQUAD(tp->addr), tp->port,
+                        tp->hb_timeout_count, SCTP_HB_PROBES_MAX);
+
+                if (tp->hb_timeout_count >= SCTP_HB_PROBES_MAX) {
+                    /* Path failure — mark transport inactive */
+                    tp->active = 0;
+                    kprintf("sctp: path " NIPQUAD_FMT ":%u INACTIVE "
+                            "(%u consecutive HB timeouts)\n",
+                            NIPQUAD(tp->addr), tp->port,
+                            tp->hb_timeout_count);
+
+                    /* If this was the primary path, try to switch */
+                    if (i == a->primary_path) {
+                        for (uint8_t j = 0; j < a->num_transports; j++) {
+                            if (j != i && a->transports[j].active) {
+                                sctp_transport_set_primary(a,
+                                    a->transports[j].addr);
+                                kprintf("sctp: switched primary from "
+                                        NIPQUAD_FMT " to " NIPQUAD_FMT "\n",
+                                        NIPQUAD(tp->addr),
+                                        NIPQUAD(a->transports[j].addr));
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        /* ── Send HEARTBEAT if transport is idle and due ────────────── */
+        uint32_t idle = now32 - (uint32_t)tp->last_used;
+        if (idle >= a->hb_interval && !tp->hb_pending && tp->active) {
+            sctp_heartbeat_send(a, tp);
+        }
+    }
+}
+
+EXPORT_SYMBOL(sctp_heartbeat_init);
+EXPORT_SYMBOL(sctp_heartbeat_send);
+EXPORT_SYMBOL(sctp_heartbeat_check);
 
 /* ── ASCONF / ASCONF-ACK Handling (RFC 5061) ────────────────────────── */
 
