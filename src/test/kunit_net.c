@@ -19,6 +19,7 @@
 #include "string.h"
 #include "printf.h"
 #include "process.h"
+#include "errno.h"
 
 /* ====================================================================
  *  1. Socket creation and state transitions
@@ -513,6 +514,236 @@ static void net_iface_stats_query_test(struct kunit *test)
 }
 
 /* ====================================================================
+ *  7. IPv6 address and protocol helper tests
+ * ==================================================================== */
+
+static void net_ipv6_addr_helpers_test(struct kunit *test)
+{
+    struct in6_addr mcast = {{0xFF, 0x02, 0,0,0,0,0,0,0,0,0,0,0,0,0,1}};
+    struct in6_addr linklocal = {{0xFE, 0x80, 0,0,0,0,0,0,0,0,0,0,0,0,0,1}};
+    struct in6_addr unspecified = {{0}};
+    struct in6_addr global = {{0x20, 0x01, 0,0,0,0,0,0,0,0,0,0,0,0,0,1}};
+    struct in6_addr a = {{1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16}};
+    struct in6_addr b = {{1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16}};
+    struct in6_addr c = {{1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,17}};
+
+    KUNIT_EXPECT_TRUE(test, ipv6_addr_is_multicast(&mcast));
+    KUNIT_EXPECT_FALSE(test, ipv6_addr_is_multicast(&linklocal));
+    KUNIT_EXPECT_FALSE(test, ipv6_addr_is_multicast(&unspecified));
+    KUNIT_EXPECT_FALSE(test, ipv6_addr_is_multicast(&global));
+
+    KUNIT_EXPECT_TRUE(test, ipv6_addr_is_linklocal(&linklocal));
+    KUNIT_EXPECT_FALSE(test, ipv6_addr_is_linklocal(&mcast));
+    KUNIT_EXPECT_FALSE(test, ipv6_addr_is_linklocal(&global));
+    KUNIT_EXPECT_FALSE(test, ipv6_addr_is_linklocal(&unspecified));
+
+    KUNIT_EXPECT_TRUE(test, ipv6_addr_is_unspecified(&unspecified));
+    KUNIT_EXPECT_FALSE(test, ipv6_addr_is_unspecified(&linklocal));
+    KUNIT_EXPECT_FALSE(test, ipv6_addr_is_unspecified(&global));
+
+    KUNIT_EXPECT_TRUE(test, ipv6_addr_equal(&a, &b));
+    KUNIT_EXPECT_FALSE(test, ipv6_addr_equal(&a, &c));
+    KUNIT_EXPECT_FALSE(test, ipv6_addr_equal(&a, &unspecified));
+}
+
+static void net_ipv6_addr_scope_test(struct kunit *test)
+{
+    struct in6_addr unspecified = {{0}};
+    struct in6_addr loopback = {{0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1}};
+    struct in6_addr linklocal = {{0xFE, 0x80, 0,0,0,0,0,0,0,0,0,0,0,0,0,1}};
+    struct in6_addr global = {{0x20, 0x01, 0,0,0,0,0,0,0,0,0,0,0,0,0,1}};
+    struct in6_addr multicast_link = {{0xFF, 0x02, 0,0,0,0,0,0,0,0,0,0,0,0,0,1}};
+    struct in6_addr ula = {{0xFD, 0x00, 0,0,0,0,0,0,0,0,0,0,0,0,0,1}};
+
+    KUNIT_EXPECT_EQ(test, (int64_t)ipv6_addr_get_scope(&unspecified), (int64_t)0);
+    KUNIT_EXPECT_EQ(test, (int64_t)ipv6_addr_get_scope(&loopback), (int64_t)0x01);
+    KUNIT_EXPECT_EQ(test, (int64_t)ipv6_addr_get_scope(&linklocal), (int64_t)0x02);
+    KUNIT_EXPECT_EQ(test, (int64_t)ipv6_addr_get_scope(&global), (int64_t)0x0E);
+    KUNIT_EXPECT_EQ(test, (int64_t)ipv6_addr_get_scope(&multicast_link), (int64_t)0x02);
+    KUNIT_EXPECT_EQ(test, (int64_t)ipv6_addr_get_scope(&ula), (int64_t)0x08);
+    KUNIT_EXPECT_EQ(test, (int64_t)ipv6_addr_get_scope(NULL), (int64_t)0);
+}
+
+static void net_ipv6_eui64_test(struct kunit *test)
+{
+    uint8_t mac[6] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55};
+    struct in6_addr out;
+    memset(&out, 0, sizeof(out));
+
+    ipv6_eui64_from_mac(mac, &out);
+
+    /* EUI-64: invert U/L bit (0x00->0x02), insert FF:FE in the middle */
+    KUNIT_EXPECT_EQ(test, (int)out.s6_addr[0], 0x02);
+    KUNIT_EXPECT_EQ(test, (int)out.s6_addr[1], 0x11);
+    KUNIT_EXPECT_EQ(test, (int)out.s6_addr[2], 0x22);
+    KUNIT_EXPECT_EQ(test, (int)out.s6_addr[3], 0xFF);
+    KUNIT_EXPECT_EQ(test, (int)out.s6_addr[4], 0xFE);
+    KUNIT_EXPECT_EQ(test, (int)out.s6_addr[5], 0x33);
+    KUNIT_EXPECT_EQ(test, (int)out.s6_addr[6], 0x44);
+    KUNIT_EXPECT_EQ(test, (int)out.s6_addr[7], 0x55);
+    /* Upper 64 bits preserved for caller to set prefix */
+    KUNIT_EXPECT_EQ(test, (int)out.s6_addr[8], 0);
+    KUNIT_EXPECT_EQ(test, (int)out.s6_addr[15], 0);
+}
+
+/* Helper: save/restore IPv6 address table for tests that modify globals */
+struct ipv6_addr_test_state {
+    struct ipv6_addr_entry table[IPV6_ADDR_TABLE_SIZE];
+    int count;
+};
+
+static void ipv6_addr_save_state(struct ipv6_addr_test_state *state)
+{
+    memcpy(state->table, ipv6_addr_table, sizeof(ipv6_addr_table));
+    state->count = ipv6_addr_count;
+}
+
+static void ipv6_addr_restore_state(const struct ipv6_addr_test_state *state)
+{
+    memcpy(ipv6_addr_table, state->table, sizeof(ipv6_addr_table));
+    ipv6_addr_count = state->count;
+}
+
+static void net_ipv6_addr_add_del_test(struct kunit *test)
+{
+    struct ipv6_addr_test_state saved;
+    struct in6_addr addr1 = {{0xFE, 0x80, 0,0,0,0,0,0,0,0,0,0,0,0,0,1}};
+    struct in6_addr addr2 = {{0x20, 0x01, 0,0,0,0,0,0,0,0,0,0,0,0,0,1}};
+    struct in6_addr nonexistent = {{0xFE, 0x80, 0,0,0,0,0,0,0,0,0,0,0,0,0xFF}};
+
+    ipv6_addr_save_state(&saved);
+
+    /* NULL safety */
+    KUNIT_EXPECT_EQ(test, (int64_t)ipv6_addr_add(NULL, 64, 0, 0, 0, 0),
+                    (int64_t)-EINVAL);
+    KUNIT_EXPECT_EQ(test, (int64_t)ipv6_addr_del(NULL), (int64_t)-EINVAL);
+    KUNIT_EXPECT_NULL(test, ipv6_addr_find(NULL));
+
+    /* Add link-local address */
+    int ret = ipv6_addr_add(&addr1, 64, IPV6_ADDR_STATE_PERMANENT,
+                             0xFFFFFFFF, 0xFFFFFFFF, 0);
+    KUNIT_EXPECT_EQ(test, ret, 0);
+
+    /* Find it and verify fields */
+    struct ipv6_addr_entry *entry = ipv6_addr_find(&addr1);
+    KUNIT_EXPECT_NOT_NULL(test, entry);
+    if (entry) {
+        KUNIT_EXPECT_EQ(test, (int64_t)entry->prefix_len, (int64_t)64);
+        KUNIT_EXPECT_EQ(test, (int64_t)entry->state,
+                        (int64_t)IPV6_ADDR_STATE_PERMANENT);
+        KUNIT_EXPECT_EQ(test, (int64_t)entry->scope, (int64_t)0x02);
+    }
+
+    /* Add global unicast address */
+    ret = ipv6_addr_add(&addr2, 64, IPV6_ADDR_STATE_PREFERRED,
+                         0xFFFFFFFF, 0xFFFFFFFF, IPV6_ADDR_F_AUTOCONF);
+    KUNIT_EXPECT_EQ(test, ret, 0);
+    KUNIT_EXPECT_EQ(test, (int64_t)ipv6_addr_count, (int64_t)2);
+
+    /* Find non-existent address */
+    KUNIT_EXPECT_NULL(test, ipv6_addr_find(&nonexistent));
+
+    /* Delete addr1 */
+    ret = ipv6_addr_del(&addr1);
+    KUNIT_EXPECT_EQ(test, ret, 0);
+    KUNIT_EXPECT_NULL(test, ipv6_addr_find(&addr1));
+    KUNIT_EXPECT_EQ(test, (int64_t)ipv6_addr_count, (int64_t)1);
+
+    /* Delete non-existent */
+    KUNIT_EXPECT_EQ(test, (int64_t)ipv6_addr_del(&nonexistent),
+                    (int64_t)-ENOENT);
+
+    ipv6_addr_restore_state(&saved);
+}
+
+static void net_ipv6_addr_find_by_state_test(struct kunit *test)
+{
+    struct ipv6_addr_test_state saved;
+    struct in6_addr addr1 = {{0xFE, 0x80, 0,0,0,0,0,0,0,0,0,0,0,0,0,1}};
+    struct in6_addr addr2 = {{0xFE, 0x80, 0,0,0,0,0,0,0,0,0,0,0,0,0,2}};
+
+    ipv6_addr_save_state(&saved);
+
+    ipv6_addr_add(&addr1, 64, IPV6_ADDR_STATE_PERMANENT,
+                  0xFFFFFFFF, 0xFFFFFFFF, 0);
+    ipv6_addr_add(&addr2, 64, IPV6_ADDR_STATE_PREFERRED,
+                  0xFFFFFFFF, 0xFFFFFFFF, 0);
+
+    struct ipv6_addr_entry *e;
+    e = ipv6_addr_find_by_state(IPV6_ADDR_STATE_PERMANENT);
+    KUNIT_EXPECT_NOT_NULL(test, e);
+    if (e)
+        KUNIT_EXPECT_TRUE(test, ipv6_addr_equal(&e->addr, &addr1));
+
+    e = ipv6_addr_find_by_state(IPV6_ADDR_STATE_PREFERRED);
+    KUNIT_EXPECT_NOT_NULL(test, e);
+    if (e)
+        KUNIT_EXPECT_TRUE(test, ipv6_addr_equal(&e->addr, &addr2));
+
+    KUNIT_EXPECT_NULL(test, ipv6_addr_find_by_state(IPV6_ADDR_STATE_DEPRECATED));
+
+    ipv6_addr_restore_state(&saved);
+}
+
+static void net_ipv6_addr_is_ours_test(struct kunit *test)
+{
+    struct ipv6_addr_test_state saved;
+    struct in6_addr our_addr = {{0xFE, 0x80, 0,0,0,0,0,0,0,0,0,0,0,0,0,1}};
+    struct in6_addr foreign = {{0xFE, 0x80, 0,0,0,0,0,0,0,0,0,0,0,0,0x42}};
+
+    ipv6_addr_save_state(&saved);
+
+    ipv6_addr_add(&our_addr, 64, IPV6_ADDR_STATE_PERMANENT,
+                  0xFFFFFFFF, 0xFFFFFFFF, 0);
+
+    KUNIT_EXPECT_TRUE(test, ipv6_addr_is_ours(&our_addr));
+    KUNIT_EXPECT_FALSE(test, ipv6_addr_is_ours(&foreign));
+    KUNIT_EXPECT_FALSE(test, ipv6_addr_is_ours(NULL));
+
+    ipv6_addr_restore_state(&saved);
+}
+
+static void net_ipv6_checksum_test(struct kunit *test)
+{
+    struct in6_addr src = {{0xFE, 0x80, 0,0,0,0,0,0,0,0,0,0,0,0,0,1}};
+    struct in6_addr dst = {{0xFF, 0x02, 0,0,0,0,0,0,0,0,0,0,0,0,0,1}};
+    uint8_t zero_data[8] = {0};
+
+    uint16_t csum = ipv6_checksum(&src, &dst, 58, zero_data, 8);
+    KUNIT_EXPECT_TRUE(test, csum != 0);
+
+    /* Deterministic: same input -> same checksum */
+    uint16_t csum2 = ipv6_checksum(&src, &dst, 58, zero_data, 8);
+    KUNIT_EXPECT_EQ(test, (int)csum, (int)csum2);
+
+    /* Different data -> different checksum */
+    uint8_t other_data[8] = {1,2,3,4,5,6,7,8};
+    uint16_t csum3 = ipv6_checksum(&src, &dst, 58, other_data, 8);
+    KUNIT_EXPECT_TRUE(test, csum != csum3);
+}
+
+static void net_ipv6_calc_solicited_node_test(struct kunit *test)
+{
+    struct in6_addr addr;
+    struct in6_addr sol_node;
+    memset(&addr, 0, sizeof(addr));
+    addr.s6_addr[13] = 0xAB;
+    addr.s6_addr[14] = 0xCD;
+    addr.s6_addr[15] = 0xEF;
+
+    ipv6_calc_solicited_node(&addr, &sol_node);
+
+    /* Expected: FF02::1:FFAB:CDEF (last 24 bits of addr appended to FF02::1:FF) */
+    KUNIT_EXPECT_EQ(test, (int)sol_node.s6_addr[0], 0xFF);
+    KUNIT_EXPECT_EQ(test, (int)sol_node.s6_addr[1], 0x02);
+    KUNIT_EXPECT_EQ(test, (int)sol_node.s6_addr[11], 0x01);
+    KUNIT_EXPECT_EQ(test, (int)sol_node.s6_addr[12], 0xFF);
+    KUNIT_EXPECT_EQ(test, (int)sol_node.s6_addr[13], 0xAB);
+    KUNIT_EXPECT_EQ(test, (int)sol_node.s6_addr[14], 0xCD);
+    KUNIT_EXPECT_EQ(test, (int)sol_node.s6_addr[15], 0xEF);
+}
+
+/* ====================================================================
  *  Test case list (terminated by {0})
  * ==================================================================== */
 
@@ -535,6 +766,14 @@ static const struct kunit_case net_test_cases[] = {
     KUNIT_CASE(net_socket_max_allocation_test),
     KUNIT_CASE(net_arp_list_dump_test),
     KUNIT_CASE(net_iface_stats_query_test),
+    KUNIT_CASE(net_ipv6_addr_helpers_test),
+    KUNIT_CASE(net_ipv6_addr_scope_test),
+    KUNIT_CASE(net_ipv6_eui64_test),
+    KUNIT_CASE(net_ipv6_addr_add_del_test),
+    KUNIT_CASE(net_ipv6_addr_find_by_state_test),
+    KUNIT_CASE(net_ipv6_addr_is_ours_test),
+    KUNIT_CASE(net_ipv6_checksum_test),
+    KUNIT_CASE(net_ipv6_calc_solicited_node_test),
     {0}
 };
 
