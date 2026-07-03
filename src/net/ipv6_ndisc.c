@@ -648,7 +648,7 @@ int ipv6_nd_send_ra(const struct in6_addr *dst)
 		opt->type = ND_OPT_MTU;
 		opt->len  = 1;
 		/* MTU value starts at offset 2 within option, 4 bytes */
-		uint32_t mtu = htonl(1500U);
+				uint32_t mtu = htonl(net_ipv6_link_mtu);
 		memcpy(buf + offset + 2, &mtu, 4);
 		offset += 8;
 	}
@@ -947,8 +947,8 @@ void ipv6_nd_handle_ra(struct ipv6_header *ip6,
 				               ((uint32_t)opt_data[3] << 16) |
 				               ((uint32_t)opt_data[4] << 8)  |
 				                (uint32_t)opt_data[5];
-				kprintf("[ndisc] RA MTU option: %u\n", mtu);
-				/* Could set interface MTU here */
+				kprintf("[ndisc] RA MTU option: %u (link MTU updated)\n", mtu);
+				net_ipv6_link_mtu = mtu;
 			}
 			break;
 

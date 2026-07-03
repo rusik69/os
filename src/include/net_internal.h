@@ -36,6 +36,7 @@ extern int             net_ipv6_gua_valid;/* 1 = GUA configured via SLAAC */
 extern struct in6_addr net_ipv6_gateway;  /* default gateway (from RA) */
 extern struct in6_addr net_ipv6_dns;      /* DNS server (from RDNSS) */
 extern uint32_t        net_ipv6_ns_count; /* NS counter for NDP */
+extern uint32_t        net_ipv6_link_mtu; /* link MTU (from RA MTU option or default 1500) */
 
 /* ── IPv6 address management ──────────────────────────────────── */
 #define IPV6_ADDR_TABLE_SIZE 8

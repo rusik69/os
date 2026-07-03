@@ -29,6 +29,7 @@ int  net_ipv6_gua_valid  = 0;       /* 1 = GUA configured via SLAAC */
 struct in6_addr net_ipv6_gateway;   /* default gateway (from RA) */
 struct in6_addr net_ipv6_dns;       /* DNS server (from RDNSS) */
 uint32_t net_ipv6_ns_count = 0;     /* NS counter for duplicate detection */
+uint32_t net_ipv6_link_mtu = 1500;  /* link MTU (Ethernet default = 1500) */
 
 /* ── IPv6 address table ───────────────────────────────────────── */
 struct ipv6_addr_entry ipv6_addr_table[IPV6_ADDR_TABLE_SIZE];
@@ -1020,7 +1021,10 @@ void send_ipv6_flow(const struct in6_addr *dst, uint8_t next_hdr,
     struct ipv6_addr_entry *src_entry;
 
     /* Determine effective MTU for this destination using PMTU cache */
-    uint16_t effective_mtu = IPV6_DEFAULT_LINK_MTU;
+    uint16_t link_payload_mtu = (net_ipv6_link_mtu > (uint32_t)sizeof(struct ipv6_header))
+        ? (uint16_t)(net_ipv6_link_mtu - sizeof(struct ipv6_header))
+        : IPV6_MIN_MTU;
+    uint16_t effective_mtu = link_payload_mtu;
     uint16_t cached_pmtu = ipv6_pmtu_lookup(dst);
     if (cached_pmtu > 0 && cached_pmtu < effective_mtu)
         effective_mtu = cached_pmtu;
