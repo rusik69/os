@@ -71,6 +71,18 @@ static uint32_t dhcp_result_dns = 0;
 static volatile int dhcp_state = 0;  /* 0=idle, 1=discover sent, 2=request sent, 3=done */
 static volatile int dhcp_done = 0;
 
+/* ── T1/T2 renewal timer state (RFC 2131 §4.4.5) ────────────────── */
+/* T1 = 0.5 × lease_time — unicast renewal to original server
+ * T2 = 0.875 × lease_time — broadcast rebind to any server */
+static uint64_t dhcp_t1_tick = 0;           /* Timer tick threshold for T1 */
+static uint64_t dhcp_t2_tick = 0;           /* Timer tick threshold for T2  */
+static int      dhcp_t1_triggered = 0;       /* 1 when T1 tick has been reached */
+static int      dhcp_t2_triggered = 0;       /* 1 when T2 tick has been reached */
+static int      dhcp_renewal_running = 0;    /* 1 while a renewal is in flight */
+
+/* Forward declarations */
+static void dhcp_schedule_timers(void);
+
 /* ── Low-level send ─────────────────────────────────────────────────── */
 
 static void send_udp_broadcast(uint16_t src_port, uint16_t dst_port,
@@ -330,6 +342,7 @@ static void handle_dhcp_response(const uint8_t *data, uint16_t len) {
         dhcp_has_lease = 1;
         dhcp_acquired_tick = timer_get_ticks();
         dhcp_lease_time = lease ? lease : 3600; /* default 1 hour */
+        dhcp_schedule_timers();
     }
 }
 
@@ -444,6 +457,11 @@ void dhcp_init(void) {
     dhcp_lease_time = 0;
     dhcp_acquired_tick = 0;
     dhcp_has_lease = 0;
+    dhcp_t1_tick = 0;
+    dhcp_t2_tick = 0;
+    dhcp_t1_triggered = 0;
+    dhcp_t2_triggered = 0;
+    dhcp_renewal_running = 0;
     kprintf("[OK] DHCP client initialized\n");
 }
 
@@ -582,6 +600,7 @@ int dhcp_renew(void)
     if (dhcp_state == 3) {
         kprintf("[dhcp] Lease renewed successfully\n");
         dhcp_acquired_tick = timer_get_ticks();
+        dhcp_schedule_timers();
         resolv_conf_write_nameserver(dhcp_result_dns);
         return 0;
     }
@@ -602,6 +621,256 @@ int dhcp_has_lease_func(void) {
  */
 uint32_t dhcp_get_lease_time(void) {
     return dhcp_lease_time;
+}
+
+/* ── T1/T2 renewal timer infrastructure (RFC 2131 §4.4.5) ────── */
+
+/* Schedule T1 and T2 timer thresholds based on current lease.
+ * T1 = 50% of lease time — unicast renewal to original server.
+ * T2 = 87.5% of lease time (7/8) — broadcast rebind to any server.
+ *
+ * Must be called after a lease is acquired or renewed (with dhcp_lease_time
+ * and dhcp_acquired_tick set correctly). */
+static void dhcp_schedule_timers(void)
+{
+    uint64_t now = timer_get_ticks();
+    uint32_t lease = dhcp_lease_time ? dhcp_lease_time : 3600; /* default 1 h */
+    uint64_t lease_ticks = (uint64_t)lease * 100; /* timer runs at 100 Hz */
+
+    /* T1 = 50% of lease. Clamp minimum to a few ticks so very short
+     * leases don't immediately expire. */
+    uint64_t t1_off = lease_ticks / 2;
+    if (t1_off < 5)
+        t1_off = 5;
+
+    /* T2 = 87.5% of lease (7/8).  Must always be > T1. */
+    uint64_t t2_off = (lease_ticks * 7) / 8;
+    if (t2_off <= t1_off)
+        t2_off = t1_off + 5;
+
+    dhcp_t1_tick = now + t1_off;
+    dhcp_t2_tick = now + t2_off;
+    dhcp_t1_triggered = 0;
+    dhcp_t2_triggered = 0;
+
+    kprintf("[dhcp] Timers: T1 in %llu ticks (tick %llu), T2 in %llu ticks (tick %llu)\n",
+            (unsigned long long)t1_off, (unsigned long long)dhcp_t1_tick,
+            (unsigned long long)t2_off, (unsigned long long)dhcp_t2_tick);
+}
+
+/* ── dhcp_rebind ─────────────────────────────────────────────────────
+ * Broadcast DHCPREQUEST to ANY available server — T2 rebinding phase.
+ *
+ * Per RFC 2131 §4.3.6, when T1 renewal fails the client broadcasts a
+ * DHCPREQUEST to any server that will extend the lease.  The ciaddr is
+ * set to our current IP.  Unlike dhcp_renew() we do NOT set the server
+ * identifier option so any server may respond.
+ *
+ * Returns 0 on success (lease extended), -1 on failure (lease expires).
+ */
+static int dhcp_rebind(void)
+{
+    int resends;
+    uint64_t start;
+    uint16_t pkt_len;
+    uint8_t buf[300];
+    uint8_t *opt;
+    struct dhcp_packet *dhcp;
+    struct eth_header *eth;
+    struct ip_header *ip;
+    struct udp_header *udp;
+
+    if (!dhcp_has_lease || dhcp_result_ip == 0) {
+        kprintf("[dhcp] dhcp_rebind: no active lease, starting full discover\n");
+        return dhcp_discover();
+    }
+
+    dhcp_xid = (uint32_t)(timer_get_ticks() ^ 0xC3C3C3C3u ^
+                          ((uint64_t)net_our_mac[2] << 24) ^
+                          ((uint64_t)net_our_mac[3] << 16) ^
+                          ((uint64_t)net_our_mac[4] << 8) ^
+                          net_our_mac[5]);
+    dhcp_state = 0;
+    dhcp_done = 0;
+
+    kprintf("[dhcp] T2 reached — rebinding %u.%u.%u.%u (broadcast)\n",
+            (uint32_t)((dhcp_result_ip >> 24) & 0xFF),
+            (uint32_t)((dhcp_result_ip >> 16) & 0xFF),
+            (uint32_t)((dhcp_result_ip >> 8) & 0xFF),
+            (uint32_t)(dhcp_result_ip & 0xFF));
+
+    /* Build broadcast DHCPREQUEST with ciaddr */
+    memset(buf, 0, sizeof(buf));
+    dhcp = (struct dhcp_packet *)buf;
+    dhcp->op = 1;
+    dhcp->htype = 1;
+    dhcp->hlen = 6;
+    dhcp->xid = htonl(dhcp_xid);
+    dhcp->flags = htons(0x8000);
+    dhcp->ciaddr = htonl(dhcp_result_ip);
+    dhcp->magic_cookie = htonl(DHCP_MAGIC);
+    memcpy(dhcp->chaddr, net_our_mac, 6);
+
+    opt = buf + sizeof(struct dhcp_packet);
+    *opt++ = 53; *opt++ = 1; *opt++ = DHCP_REQUEST;
+    *opt++ = 50; *opt++ = 4;  /* Requested IP */
+    *opt++ = (uint8_t)(dhcp_result_ip >> 24);
+    *opt++ = (uint8_t)(dhcp_result_ip >> 16);
+    *opt++ = (uint8_t)(dhcp_result_ip >> 8);
+    *opt++ = (uint8_t)(dhcp_result_ip);
+    /* No server identifier — any server can respond */
+    *opt++ = 55; *opt++ = 3;  /* Parameter request list */
+    *opt++ = 1;                 /* Subnet mask */
+    *opt++ = 3;                 /* Router */
+    *opt++ = 6;                 /* DNS server */
+    *opt++ = 255;               /* End */
+    pkt_len = (uint16_t)(opt - buf);
+
+    send_udp_broadcast(DHCP_CLIENT_PORT, DHCP_SERVER_PORT, buf, pkt_len);
+    dhcp_state = 2;
+
+    /* Wait for ACK with retries */
+    start = timer_get_ticks();
+    resends = 0;
+
+    while (dhcp_state != 3 && resends < 3) {
+        uint64_t now = timer_get_ticks();
+        uint64_t elapsed = now - start;
+
+        if (elapsed > 500) break; /* 5 second total timeout */
+
+        /* Poll all network interfaces */
+        if (e1000_is_present()) {
+            uint8_t pkt[2048];
+            int n = e1000_receive(pkt, sizeof(pkt));
+            if (n > 0) {
+                eth = (struct eth_header *)pkt;
+                if (ntohs(eth->type) == ETH_TYPE_IP
+                    && n >= (int)(sizeof(struct eth_header) + sizeof(struct ip_header))) {
+                    ip = (struct ip_header *)(pkt + sizeof(struct eth_header));
+                    if (ip->protocol == IP_PROTO_UDP) {
+                        int ip_hdr_len = (ip->version_ihl & 0x0F) * 4;
+                        int total_len = ntohs(ip->total_len);
+                        if (ip_hdr_len + (int)sizeof(struct udp_header) <= total_len
+                            && total_len <= n - (int)sizeof(struct eth_header)) {
+                            udp = (struct udp_header *)(pkt + sizeof(struct eth_header) + ip_hdr_len);
+                            if (ntohs(udp->dst_port) == DHCP_CLIENT_PORT) {
+                                uint16_t udp_len_val = ntohs(udp->length);
+                                int data_off = (int)(sizeof(struct eth_header) + ip_hdr_len + sizeof(struct udp_header));
+                                int data_len = (int)(udp_len_val - sizeof(struct udp_header));
+                                if (data_off + data_len <= n)
+                                    handle_dhcp_response(pkt + data_off, data_len);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (virtio_net_present()) {
+            uint8_t pkt[2048];
+            int n = virtio_net_receive(pkt, sizeof(pkt));
+            if (n > 0) {
+                eth = (struct eth_header *)pkt;
+                if (ntohs(eth->type) == ETH_TYPE_IP
+                    && n >= (int)(sizeof(struct eth_header) + sizeof(struct ip_header))) {
+                    ip = (struct ip_header *)(pkt + sizeof(struct eth_header));
+                    if (ip->protocol == IP_PROTO_UDP) {
+                        int ip_hdr_len = (ip->version_ihl & 0x0F) * 4;
+                        int total_len = ntohs(ip->total_len);
+                        if (ip_hdr_len + (int)sizeof(struct udp_header) <= total_len
+                            && total_len <= n - (int)sizeof(struct eth_header)) {
+                            udp = (struct udp_header *)(pkt + sizeof(struct eth_header) + ip_hdr_len);
+                            if (ntohs(udp->dst_port) == DHCP_CLIENT_PORT) {
+                                uint16_t udp_len_val = ntohs(udp->length);
+                                int data_off = (int)(sizeof(struct eth_header) + ip_hdr_len + sizeof(struct udp_header));
+                                int data_len = (int)(udp_len_val - sizeof(struct udp_header));
+                                if (data_off + data_len <= n)
+                                    handle_dhcp_response(pkt + data_off, data_len);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        /* Resend REBIND every ~1 second */
+        if (dhcp_state == 2 && elapsed > (uint64_t)(resends + 1) * 100) {
+            resends++;
+            kprintf("[dhcp] Resending REBIND (attempt %d/3)\n", resends);
+            send_udp_broadcast(DHCP_CLIENT_PORT, DHCP_SERVER_PORT, buf, pkt_len);
+        }
+    }
+
+    if (dhcp_state == 3) {
+        kprintf("[dhcp] Rebind succeeded — lease extended\n");
+        dhcp_acquired_tick = timer_get_ticks();
+        dhcp_has_lease = 1;
+        dhcp_schedule_timers();
+        resolv_conf_write_nameserver(dhcp_result_dns);
+        return 0;
+    }
+
+    kprintf("[dhcp] Rebind failed — lease has expired\n");
+    dhcp_has_lease = 0;
+    dhcp_state = 0;
+    return -1;
+}
+
+/* ── dhcp_process_timers ──────────────────────────────────────────────
+ * Check whether T1 or T2 has been reached and, if so, trigger the
+ * appropriate renewal action.  Must be called periodically from a safe
+ * (non-interrupt) context — identical contract to net_dhcp_renew_if_needed.
+ *
+ * T1 reached  → dhcp_renew()  (unicast to original server)
+ * T2 reached  → dhcp_rebind() (broadcast to any server)
+ *
+ * Returns 1 if a renewal/rebind was attempted, 0 otherwise.
+ */
+int dhcp_process_timers(void)
+{
+    uint64_t now;
+
+    /* Don't start a new renewal while one is already in flight */
+    if (dhcp_renewal_running) {
+        /* Check if the in-progress renewal finished */
+        if (dhcp_state == 3) {
+            dhcp_renewal_running = 0;
+            /* dhcp_renew already called dhcp_schedule_timers on success */
+        }
+        return 0;
+    }
+
+    /* No active lease — nothing to renew */
+    if (!dhcp_has_lease)
+        return 0;
+
+    now = timer_get_ticks();
+
+    /* Check T2 first (it supersedes T1 — if T2 fires, T1 is moot) */
+    if (dhcp_t2_tick > 0 && now >= dhcp_t2_tick && !dhcp_t2_triggered) {
+        dhcp_t2_triggered = 1;
+        dhcp_t1_triggered = 1; /* T1 moot once T2 fires */
+        dhcp_renewal_running = 1;
+        kprintf("[dhcp] T2 timer fired at tick %llu — rebinding\n",
+                (unsigned long long)now);
+        (void)dhcp_rebind();
+        dhcp_renewal_running = 0;
+        return 1;
+    }
+
+    /* Check T1 */
+    if (dhcp_t1_tick > 0 && now >= dhcp_t1_tick && !dhcp_t1_triggered) {
+        dhcp_t1_triggered = 1;
+        dhcp_renewal_running = 1;
+        kprintf("[dhcp] T1 timer fired at tick %llu — renewing\n",
+                (unsigned long long)now);
+        (void)dhcp_renew(); /* may fall through to T2 on failure */
+        dhcp_renewal_running = 0;
+        return 1;
+    }
+
+    return 0;
 }
 
 int dhcp_discover(void) {

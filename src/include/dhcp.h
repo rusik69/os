@@ -10,6 +10,7 @@ int dhcp_has_lease_func(void);
 uint32_t dhcp_get_lease_time(void);
 void dhcp_set_server(uint32_t ip);
 uint32_t dhcp_get_server(void);
+int dhcp_process_timers(void);
 
 /* Device-aware DHCP send functions */
 int dhcp_send_discover(struct net_device *dev);
