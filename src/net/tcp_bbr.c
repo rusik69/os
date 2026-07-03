@@ -75,6 +75,23 @@
 /* PROBE_BW cycle: 8 phases, gain=1.25 for first, 0.75 for next, 1.0 for rest */
 #define BBR_PROBE_BW_CYCLE_LEN 8
 
+/*
+ * BBR v1 PROBE_BW gain table — one entry per phase of the 8-round cycle.
+ *   phase 0 (ProbeUp):    gain=1.25  — probe for more bandwidth
+ *   phase 1 (ProbeDown):  gain=0.75  — drain queue from probe
+ *   phases 2-7 (Cruise):  gain=1.0   — neutral cruising
+ */
+static const uint32_t bbr_probe_bw_gains[BBR_PROBE_BW_CYCLE_LEN] = {
+    BBR_PROBE_BW_GAIN,       /* ProbeUp:   1.25  — send faster to fill available bw */
+    BBR_PROBE_BW_GAIN_LOW,   /* ProbeDown: 0.75  — drain any queue built up */
+    BBR_UNIT,                 /* Cruise:    1.0   */
+    BBR_UNIT,                 /* Cruise:    1.0   */
+    BBR_UNIT,                 /* Cruise:    1.0   */
+    BBR_UNIT,                 /* Cruise:    1.0   */
+    BBR_UNIT,                 /* Cruise:    1.0   */
+    BBR_UNIT,                 /* Cruise:    1.0   */
+};
+
 /* How often (in seconds) to enter PROBE_RTT to refresh min_rtt */
 #define BBR_PROBE_RTT_INTERVAL    10    /* seconds */
 #define BBR_PROBE_RTT_DURATION     0.2  /* 200 ms in ticks (20 ticks @ 100Hz) -- use int */
@@ -105,6 +122,7 @@ void bbr_init(struct bbr_data *b)
     b->packet_conservation = 0;
     b->probe_rtt_round_done = 0;
     b->probe_rtt_done_stamp = 0;
+    b->probe_bw_last_round = 0;
 
     /* Max BW filter starts empty — will populate as rounds complete */
     b->max_bw_idx = 0;
@@ -265,13 +283,9 @@ void bbr_update_pacing_rate(struct bbr_data *b)
         gain = BBR_DRAIN_GAIN_PACING;      /* 0.347 : drain queue */
         break;
     case BBR_PROBE_BW:
-        /* Phase 0: probe with 1.25; phase 1: drain with 0.75; rest: 1.0 */
-        if (b->probe_bw_phase == 0)
-            gain = BBR_PROBE_BW_GAIN;
-        else if (b->probe_bw_phase == 1)
-            gain = BBR_PROBE_BW_GAIN_LOW;
-        else
-            gain = BBR_UNIT;
+        /* Use the cyclic gain table for proper
+         * ProbeUp / ProbeDown / Cruise phases */
+        gain = bbr_probe_bw_gains[b->probe_bw_phase % BBR_PROBE_BW_CYCLE_LEN];
         break;
     case BBR_PROBE_RTT:
         gain = BBR_PROBE_RTT_GAIN;         /* 1.0 : neutral */
@@ -350,6 +364,7 @@ void bbr_on_ack(struct bbr_data *b, uint32_t acked_bytes,
             if (cwnd_segments <= bdp_segments + 4) {
                 b->state = BBR_PROBE_BW;
                 b->probe_bw_phase = 0;
+                b->probe_bw_last_round = b->round_count;
 #ifdef BBR_DEBUG
                 kprintf("[BBR] DRAIN→PROBE_BW (bdp=%u segs)\n", bdp_segments);
 #endif
@@ -359,12 +374,35 @@ void bbr_on_ack(struct bbr_data *b, uint32_t acked_bytes,
 
     /* ── PROBE_BW state ─────────────────────────────────────────────── */
     if (b->state == BBR_PROBE_BW) {
-        /* Cycle through probe phases.
-         * Phase 0: probe with gain=1.25 (one round)
-         * Phases 1-BBR_PROBE_BW_CYCLE_LEN-1: drain/neutral */
-        if (b->round_delivered >= b->delivered / 2) {
-            /* Advance phase at end of round */
+        /*
+         * BBR v1 bandwidth probing cycle.
+         *
+         * Phase advancement happens on round boundaries.  Each of the
+         * BBR_PROBE_BW_CYCLE_LEN (8) phases lasts exactly one round.
+         * Round completion is detected by bbr_update_round() above,
+         * which increments b->round_count when delivered_this_round
+         * exceeds the round_target.
+         *
+         * Phase 0 (ProbeUp):   gain=1.25 — send 25% faster to probe
+         *                       whether more bandwidth is available
+         * Phase 1 (ProbeDown): gain=0.75 — drain any queue formed by
+         *                       the probe burst
+         * Phases 2-7 (Cruise): gain=1.0  — neutral pacing until next
+         *                       probe opportunity
+         *
+         * BBR v1 cycles through these 8 phases continuously in steady
+         * state, and enters PROBE_RTT every BBR_PROBE_RTT_INTERVAL
+         * seconds to refresh the min_rtt estimate.
+         */
+        if (b->round_count != b->probe_bw_last_round) {
+            b->probe_bw_last_round = b->round_count;
             b->probe_bw_phase = (b->probe_bw_phase + 1) % BBR_PROBE_BW_CYCLE_LEN;
+
+#ifdef BBR_DEBUG
+            kprintf("[BBR] PROBE_BW phase %d (gain=%u/256)\n",
+                    b->probe_bw_phase,
+                    bbr_probe_bw_gains[b->probe_bw_phase]);
+#endif
         }
 
         /* Check if it's time for PROBE_RTT */
@@ -388,6 +426,7 @@ void bbr_on_ack(struct bbr_data *b, uint32_t acked_bytes,
             /* PROBE_RTT complete — return to PROBE_BW */
             b->state = BBR_PROBE_BW;
             b->probe_bw_phase = 0;
+            b->probe_bw_last_round = b->round_count;
             b->min_rtt_stamp = now;  /* reset the timer */
 #ifdef BBR_DEBUG
             kprintf("[BBR] PROBE_RTT done, returning to PROBE_BW (min_rtt=%u)\n",

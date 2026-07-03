@@ -34,6 +34,11 @@ struct bbr_data {
     uint8_t  probe_bw_phase;
     uint8_t  startup_rounds;
 
+    /* PROBE_BW round tracking — the round_count value when we last
+     * advanced the probe_bw_phase.  Phase advances at most once per
+     * round (i.e. when round_count differs from this saved value). */
+    uint16_t probe_bw_last_round;
+
     /* Pacing rate (bytes per tick) */
     uint32_t pacing_rate;
 
