@@ -195,6 +195,32 @@ int tls_build_client_hello(struct tls_conn *conn,
 	out[offset++] = 1;      /* length */
 	out[offset++] = 0;      /* null compression */
 
+	/* ── ALPN extension (RFC 7301) ────────────────────────────── */
+	if (conn->alpn_num_protos > 0) {
+		uint8_t ext_buf[2 + 2 + 2 +
+		                TLS_ALPN_MAX_PROTOCOLS *
+		                (1 + TLS_ALPN_MAX_NAME_LEN)];
+		int ext_len;
+		int needed;
+
+		ext_len = tls_build_alpn_ext(
+			(const uint8_t (*)[TLS_ALPN_MAX_NAME_LEN])
+				conn->alpn_protos,
+			conn->alpn_proto_lens,
+			conn->alpn_num_protos,
+			ext_buf, (int)sizeof(ext_buf));
+		if (ext_len > 0) {
+			/* 2-byte extensions length + ext data */
+			needed = offset + 2 + ext_len;
+			if (needed <= out_cap) {
+				out[offset++] = (uint8_t)((ext_len >> 8) & 0xFF);
+				out[offset++] = (uint8_t)(ext_len & 0xFF);
+				memcpy(out + offset, ext_buf, (size_t)ext_len);
+				offset += ext_len;
+			}
+		}
+	}
+
 	return offset;
 }
 
@@ -290,8 +316,48 @@ int tls_parse_client_hello(struct tls_conn *conn,
 	/* Skip compression methods — we only support null (0) */
 	offset += comp_len;
 
-	/* Extensions — skip for now; parsed in task 10+ */
-	/* (optional, may not be present) */
+	/* ── Extensions ──────────────────────────────────────────────── */
+	/* TLS extensions block: 2-byte length + zero or more extensions.
+	 * Each extension: 2-byte type + 2-byte data length + data. */
+	if (offset < body_len) {
+		int ext_total_len;
+		int ext_offset;
+
+		/* There might be a 2-byte extensions length field */
+		if (offset + 2 > body_len)
+			return -EINVAL;
+		ext_total_len = ((int)body[offset] << 8) |
+		                 (int)body[offset + 1];
+		offset += 2;
+
+		if (ext_total_len > body_len - offset)
+			ext_total_len = body_len - offset;
+
+		ext_offset = 0;
+		while (ext_offset + 4 <= ext_total_len) {
+			uint16_t ext_type;
+			int ext_data_len;
+
+			ext_type = ((uint16_t)body[offset + ext_offset] << 8) |
+			            (uint16_t)body[offset + ext_offset + 1];
+			ext_data_len = ((int)body[offset + ext_offset + 2] << 8) |
+			                (int)body[offset + ext_offset + 3];
+
+			if (ext_data_len < 0 ||
+			    ext_offset + 4 + ext_data_len > ext_total_len)
+				break;
+
+			/* ── ALPN Extension (TLS_EXT_ALPN = 0x0010) ─── */
+			if (ext_type == TLS_EXT_ALPN && ext_data_len > 0) {
+				tls_parse_alpn_ext(
+					body + offset + ext_offset + 4,
+					ext_data_len,
+					conn, NULL, NULL, 0);
+			}
+
+			ext_offset += 4 + ext_data_len;
+		}
+	}
 
 	(void)max_choices;
 
@@ -351,6 +417,29 @@ int tls_build_server_hello(struct tls_conn *conn,
 
 	/* Compression method (null only) */
 	out[offset++] = 0;
+
+	/* ── ALPN extension (RFC 7301) ────────────────────────────── */
+	if (conn->alpn_negotiated && conn->alpn_selected_len > 0) {
+		uint8_t ext_buf[2 + 2 + 2 + TLS_ALPN_MAX_NAME_LEN];
+		int ext_len;
+
+		ext_len = tls_build_alpn_ext(
+			(const uint8_t (*)[TLS_ALPN_MAX_NAME_LEN])
+				&conn->alpn_selected,
+			&conn->alpn_selected_len, 1,
+			ext_buf, (int)sizeof(ext_buf));
+		if (ext_len > 0) {
+			/* Need space for 2-byte ext block length + ext data */
+			int needed = offset + 2 + ext_len;
+
+			if (needed <= out_cap) {
+				out[offset++] = (uint8_t)((ext_len >> 8) & 0xFF);
+				out[offset++] = (uint8_t)(ext_len & 0xFF);
+				memcpy(out + offset, ext_buf, (size_t)ext_len);
+				offset += ext_len;
+			}
+		}
+	}
 
 	/* Store the negotiated cipher suite in the connection state */
 	conn->wstate.cipher_suite = selected_cipher;
@@ -531,6 +620,14 @@ int tls_handshake_step(struct tls_conn *conn, enum tls_hs_state *new_state,
 			kprintf("[tls] client: received ServerHello, "
 			        "cipher 0x%04x\n",
 			        conn->rstate.cipher_suite);
+
+			/* Log ALPN if server responded with one */
+			if (conn->alpn_negotiated && conn->alpn_selected_len > 0) {
+				kprintf("[tls] client: ALPN negotiated "
+				        "(%.*s)\n",
+				        (int)conn->alpn_selected_len,
+				        (const char *)conn->alpn_selected);
+			}
 
 			*new_state = TLS_HS_SERVER_PARAMS_SENT;
 			return 0;
@@ -734,6 +831,17 @@ int tls_handshake_step(struct tls_conn *conn, enum tls_hs_state *new_state,
 
 			kprintf("[tls] server: negotiated cipher suite "
 			        "0x%04x with client\n", selected);
+
+			/* ── ALPN negotiation ────────────────────────── */
+			/* ALPN was parsed from the ClientHello extension
+			 * inside tls_parse_client_hello().  If ALPN was
+			 * negotiated, log the result. */
+			if (conn->alpn_negotiated && conn->alpn_selected_len > 0) {
+				kprintf("[tls] server: ALPN negotiated "
+				        "(%.*s)\n",
+				        (int)conn->alpn_selected_len,
+				        (const char *)conn->alpn_selected);
+			}
 
 			/* Build ServerHello */
 			srv_body_len = tls_build_server_hello(
@@ -1442,6 +1550,203 @@ int tls_handle_renegotiation_client_hello(struct tls_conn *conn,
 	 */
 	return 0;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * TLS ALPN (RFC 7301) — Application-Layer Protocol Negotiation
+ *
+ * ALPN allows the application layer to negotiate a protocol (e.g.
+ * "http/1.1", "h2", "h3", "webrtc") inside the TLS handshake.
+ *
+ * The client sends a ProtocolNameList in its ClientHello's ALPN extension.
+ * The server selects the first protocol from the client's list that also
+ * appears in the server's list, and echoes it back in the ServerHello's
+ * ALPN extension.
+ *
+ * Wire format (RFC 7301 §3.1):
+ *   uint16_t list_length;           // big-endian
+ *   struct {
+ *       uint8_t name_length;        // 1..255
+ *       uint8_t name[name_length];
+ *   } protocol_name[];
+ *
+ * Extension wire format (same as all TLS extensions):
+ *   uint16_t ext_type    = 0x0010  // TLS_EXT_ALPN
+ *   uint16_t ext_length            // length of ext_body that follows
+ *   uint8_t  ext_body[]            // ProtocolNameList (as above)
+ *
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+int tls_build_alpn_ext(const uint8_t (*protos)[TLS_ALPN_MAX_NAME_LEN],
+                       const uint8_t *proto_lens, int num_protos,
+                       uint8_t *out, int out_cap)
+{
+	int offset = 0;
+	int body_len;
+	int list_len;
+	int i;
+
+	if (!out)
+		return -EINVAL;
+	if (!protos || !proto_lens)
+		return -EINVAL;
+	if (num_protos <= 0 || num_protos > TLS_ALPN_MAX_PROTOCOLS)
+		return -EINVAL;
+
+	/* Calculate the total body length (ProtocolNameList) */
+	list_len = 0;
+	for (i = 0; i < num_protos; i++) {
+		int nl = (int)proto_lens[i];
+		if (nl < 1 || nl > TLS_ALPN_MAX_NAME_LEN)
+			return -EINVAL;
+		list_len += 1 + nl;  /* 1 byte length + name bytes */
+	}
+
+	/* Total extension: ext_type(2) + ext_data_len(2) + list_len_16(2) + list */
+	body_len = 2 + 2 + 2 + list_len;
+	if (out_cap < body_len)
+		return -ENOSPC;
+
+	/* Extension type (TLS_EXT_ALPN = 0x0010, big-endian) */
+	out[offset++] = (uint8_t)((TLS_EXT_ALPN >> 8) & 0xFF);
+	out[offset++] = (uint8_t)(TLS_EXT_ALPN & 0xFF);
+
+	/* Extension data length (includes the 2-byte list length prefix) */
+	{
+		uint16_t ext_data_len = (uint16_t)(2 + list_len);
+		out[offset++] = (uint8_t)((ext_data_len >> 8) & 0xFF);
+		out[offset++] = (uint8_t)(ext_data_len & 0xFF);
+	}
+
+	/* ProtocolNameList: 2-byte length + entries */
+	out[offset++] = (uint8_t)((list_len >> 8) & 0xFF);
+	out[offset++] = (uint8_t)(list_len & 0xFF);
+
+	for (i = 0; i < num_protos; i++) {
+		uint8_t nl = proto_lens[i];
+		out[offset++] = nl;  /* name length (1 byte) */
+		memcpy(out + offset, protos[i], (size_t)nl);
+		offset += (int)nl;
+	}
+
+	return offset;
+}
+
+int tls_parse_alpn_ext(const uint8_t *ext_body, int ext_body_len,
+                       struct tls_conn *conn,
+                       const uint8_t (*server_protos)[TLS_ALPN_MAX_NAME_LEN],
+                       const uint8_t *server_lens, int num_server)
+{
+	int offset = 0;
+	int list_len;
+	int i;
+
+	if (!ext_body || !conn)
+		return -EINVAL;
+	if (ext_body_len < 2)
+		return 0;  /* not an error — just no ALPN data */
+
+	/* ProtocolNameList length (2 bytes, big-endian) */
+	list_len = ((int)ext_body[0] << 8) | (int)ext_body[1];
+	offset += 2;
+
+	if (list_len < 2 || list_len > ext_body_len - 2)
+		return -EINVAL;
+
+	/* Parse each protocol name in the client's list */
+	while (offset < 2 + list_len) {
+		uint8_t name_len;
+
+		/* Need at least 1 byte for name length */
+		if (offset >= ext_body_len)
+			break;
+
+		name_len = ext_body[offset++];
+		if (name_len < 1)
+			continue;  /* skip empty names */
+		if (offset + (int)name_len > ext_body_len)
+			return -EINVAL;
+
+		int cmp_len = (int)name_len;
+		/* If server_protos is NULL, accept the first protocol */
+		if (server_protos == NULL || num_server <= 0) {
+			if (cmp_len > TLS_ALPN_MAX_NAME_LEN)
+				cmp_len = TLS_ALPN_MAX_NAME_LEN;
+			conn->alpn_selected_len = (uint8_t)cmp_len;
+			memcpy(conn->alpn_selected, ext_body + offset,
+			       (size_t)cmp_len);
+			conn->alpn_negotiated = 1;
+			return 0;
+		}
+
+		/* Search for a match in the server's list */
+		for (i = 0; i < num_server; i++) {
+			uint8_t sl = server_lens[i];
+			if (sl == name_len &&
+			    memcmp(server_protos[i], ext_body + offset,
+			           (size_t)name_len) == 0) {
+				conn->alpn_selected_len = name_len;
+				memcpy(conn->alpn_selected,
+				       server_protos[i],
+				       (size_t)name_len);
+				conn->alpn_negotiated = 1;
+				return 0;
+			}
+		}
+
+		/* No match — skip this name and continue */
+		offset += (int)name_len;
+	}
+
+	/* No matching protocol found — not an error, ALPN is optional */
+	conn->alpn_negotiated = 0;
+	return 0;
+}
+
+int tls_alpn_set_protocols(struct tls_conn *conn,
+                           const uint8_t (*protos)[TLS_ALPN_MAX_NAME_LEN],
+                           const uint8_t *proto_lens, int num_protos)
+{
+	int i;
+
+	if (!conn)
+		return -EINVAL;
+	if (num_protos < 0 || num_protos > TLS_ALPN_MAX_PROTOCOLS)
+		return -EINVAL;
+	if (num_protos > 0 && (!protos || !proto_lens))
+		return -EINVAL;
+
+	conn->alpn_num_protos = 0;
+	conn->alpn_negotiated = 0;
+
+	for (i = 0; i < num_protos; i++) {
+		int nl = (int)proto_lens[i];
+
+		if (nl < 1 || nl > TLS_ALPN_MAX_NAME_LEN)
+			continue;
+
+		conn->alpn_proto_lens[i] = (uint8_t)nl;
+		memcpy(conn->alpn_protos[i], protos[i], (size_t)nl);
+		conn->alpn_num_protos = i + 1;
+	}
+
+	return 0;
+}
+
+const uint8_t *tls_alpn_get_selected(const struct tls_conn *conn,
+                                     uint8_t *len)
+{
+	if (!conn || !len)
+		return NULL;
+
+	if (!conn->alpn_negotiated) {
+		*len = 0;
+		return NULL;
+	}
+
+	*len = conn->alpn_selected_len;
+	return conn->alpn_selected;
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
  * TLS 1.3 0-RTT Early Data (RFC 8446 §2.3, §4.2.10)
  *
@@ -1884,6 +2189,10 @@ EXPORT_SYMBOL(tls_build_renegotiation_info_ext);
 EXPORT_SYMBOL(tls_parse_renegotiation_info_ext);
 EXPORT_SYMBOL(tls_conn_request_renegotiate);
 EXPORT_SYMBOL(tls_handle_renegotiation_client_hello);
+EXPORT_SYMBOL(tls_build_alpn_ext);
+EXPORT_SYMBOL(tls_parse_alpn_ext);
+EXPORT_SYMBOL(tls_alpn_set_protocols);
+EXPORT_SYMBOL(tls_alpn_get_selected);
 
 /* ── Cipher Suite Info Table (TLS 1.2 / 1.3) ────────────────────────── */
 

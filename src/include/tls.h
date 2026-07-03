@@ -77,6 +77,24 @@ struct tls_handshake_header {
 #define TLS_ECDHE_RSA_WITH_CHACHA20      0xCCA8
 #define TLS_DHE_RSA_WITH_AES_128_GCM     0x009E
 
+/* ── TLS ALPN (RFC 7301) — Application-Layer Protocol Negotiation ── */
+
+/* Maximum length of a single ALPN protocol name (RFC 7301 §3.1:
+ * protocol_name is 1..255 bytes) */
+#define TLS_ALPN_MAX_NAME_LEN      255
+/* Maximum number of ALPN protocols a client may offer */
+#define TLS_ALPN_MAX_PROTOCOLS     16
+
+/* ── ALPN wire format helpers (RFC 7301 §3.1) ───────────────────────
+ *
+ * ProtocolNameList wire format:
+ *   uint16_t list_length;  // big-endian, includes all ProtocolName entries
+ *   struct {
+ *     uint8_t name_length; // 1..255
+ *     uint8_t name[name_length];
+ *   } protocol_name_list[];
+ */
+
 /* ── TLS Hello Extensions (RFC 8446 §4.2, RFC 5246 §7.4.1) ───────── */
 
 /* Extension type codes */
@@ -203,8 +221,15 @@ struct tls_conn {
 	/* ── TLS renegotiation (RFC 5746) ─────────────────────────────── */
 	int      renego_in_progress;        /* 1 = renegotiation handshake active */
 	int      renego_allowed;            /* 0 = reject renegotiation requests */
-	uint8_t  renego_client_verify_data[TLS_RENEGO_VERIFY_DATA_LEN];  /* client's Finished verify_data */
-	uint8_t  renego_server_verify_data[TLS_RENEGO_VERIFY_DATA_LEN];  /* server's Finished verify_data */
+	uint8_t  renego_client_verify_data[TLS_RENEGO_VERIFY_DATA_LEN];
+	uint8_t  renego_server_verify_data[TLS_RENEGO_VERIFY_DATA_LEN];
+	/* ── ALPN (RFC 7301) — Application-Layer Protocol Negotiation ─── */
+	uint8_t  alpn_protos[TLS_ALPN_MAX_PROTOCOLS][TLS_ALPN_MAX_NAME_LEN];
+	uint8_t  alpn_proto_lens[TLS_ALPN_MAX_PROTOCOLS];
+	int      alpn_num_protos;
+	uint8_t  alpn_selected[TLS_ALPN_MAX_NAME_LEN];
+	uint8_t  alpn_selected_len;
+	int      alpn_negotiated;
 };
 
 /* ── TLS 1.3 Early Data Replay Protection Context ──────────────────────── */
@@ -635,5 +660,64 @@ static inline void tls_conn_set_renego_allowed(struct tls_conn *conn,
 	if (conn)
 		conn->renego_allowed = allowed;
 }
+
+/* ── ALPN (RFC 7301) API ────────────────────────────────────────────── */
+
+/* Build the ALPN extension (TLS_EXT_ALPN = 0x0010) for a ClientHello
+ * or ServerHello.  The extension body contains:
+ *   uint16_t list_length (big-endian)
+ *   for each protocol: uint8_t name_length + uint8_t name[name_length]
+ *
+ * @protos:       array of protocol name strings
+ * @proto_lens:   array of protocol name lengths (1..255 each)
+ * @num_protos:   number of protocols in the list
+ * @out:          output buffer for the extension (type + data length + body)
+ * @out_cap:      capacity of output buffer
+ *
+ * Returns bytes written to 'out', or negative errno. */
+int tls_build_alpn_ext(const uint8_t (*protos)[TLS_ALPN_MAX_NAME_LEN],
+                       const uint8_t *proto_lens, int num_protos,
+                       uint8_t *out, int out_cap);
+
+/* Parse the ALPN extension from the extension body (after the
+ * 2-byte ext_type + 2-byte ext_data_len).
+ *
+ * On success, stores the first protocol name matching `server_protos`
+ * (if non-NULL and num_server > 0) into conn->alpn_selected, or if
+ * server_protos is NULL stores the first protocol from the list.
+ *
+ * @ext_body:     the extension data (after the 2-byte ext_type and
+ *                2-byte ext_data_len)
+ * @ext_body_len: length of extension data
+ * @conn:         TLS connection state (alpn_selected/len filled on match)
+ * @server_protos:  server's supported protocol list (NULL = accept any)
+ * @num_server:     number of server protocols
+ *
+ * Returns 0 on success (protocol negotiated or no ALPN extension found),
+ * or negative errno on parse error.  Sets conn->alpn_negotiated = 1 when
+ * a protocol is successfully selected. */
+int tls_parse_alpn_ext(const uint8_t *ext_body, int ext_body_len,
+                       struct tls_conn *conn,
+                       const uint8_t (*server_protos)[TLS_ALPN_MAX_NAME_LEN],
+                       const uint8_t *server_lens, int num_server);
+
+/* Set the offered ALPN protocols on a TLS connection.
+ * This is called by the application before starting the handshake.
+ *
+ * @conn:         TLS connection
+ * @protos:       array of protocol name strings
+ * @proto_lens:   array of protocol name lengths
+ * @num_protos:   number of protocols
+ *
+ * Returns 0 on success, or negative errno. */
+int tls_alpn_set_protocols(struct tls_conn *conn,
+                           const uint8_t (*protos)[TLS_ALPN_MAX_NAME_LEN],
+                           const uint8_t *proto_lens, int num_protos);
+
+/* Get the negotiated ALPN protocol from a TLS connection.
+ * Returns a pointer to the selected protocol name and sets *len,
+ * or returns NULL if ALPN has not been negotiated. */
+const uint8_t *tls_alpn_get_selected(const struct tls_conn *conn,
+                                     uint8_t *len);
 
 #endif /* TLS_H */
