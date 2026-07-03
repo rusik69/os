@@ -335,9 +335,15 @@ int     ipv6_nd_send_na(const struct in6_addr *target,
                         const struct in6_addr *dst,
                         int solicited, int override,
                         const struct in6_addr *src_override);
+int     ipv6_nd_send_rs(void);
+int     ipv6_nd_send_ra(const struct in6_addr *dst);
 void    ipv6_nd_handle_ns(struct ipv6_header *ip6,
                           const uint8_t *payload, uint16_t len);
 void    ipv6_nd_handle_na(struct ipv6_header *ip6,
+                          const uint8_t *payload, uint16_t len);
+void    ipv6_nd_handle_rs(struct ipv6_header *ip6,
+                          const uint8_t *payload, uint16_t len);
+void    ipv6_nd_handle_ra(struct ipv6_header *ip6,
                           const uint8_t *payload, uint16_t len);
 uint8_t *ipv6_nd_cache_lookup(const struct in6_addr *ip6);
 void    ipv6_nd_cache_dump(void);

@@ -67,6 +67,45 @@ static void nd_send_na_internal(const struct in6_addr *target,
                                 int solicited, int override,
                                 const struct in6_addr *src_override);
 
+/* ── RA state management ────────────────────────────────────────────
+ *
+ * Tracks default routers and prefix information received via RA.
+ * Used for SLAAC, prefix lifetime expiry, and route selection.
+ */
+
+/* Default router list */
+#define ND_ROUTER_LIST_SIZE 4
+
+struct nd_router_entry {
+	struct in6_addr addr;            /* router IPv6 address */
+	uint16_t lifetime;               /* router lifetime in seconds (0 = not a default router) */
+	uint64_t expiry_tick;            /* tick when entry expires */
+	int      valid;                  /* 1 = slot in use */
+};
+
+static struct nd_router_entry nd_routers[ND_ROUTER_LIST_SIZE];
+static int nd_router_count = 0;
+
+/* Prefix list — tracks prefixes received via RA */
+#define ND_PREFIX_LIST_SIZE 8
+
+struct nd_prefix_entry {
+	struct in6_addr prefix;
+	uint8_t  prefix_len;
+	uint32_t valid_lifetime;         /* seconds */
+	uint32_t preferred_lifetime;
+	uint64_t expiry_tick;            /* tick when valid_lifetime expires */
+	uint8_t  flags;                  /* L=bit7, A=bit6 */
+	int      valid;
+};
+
+static struct nd_prefix_entry nd_prefixes[ND_PREFIX_LIST_SIZE];
+static int nd_prefix_count = 0;
+
+/* Forward declarations for RA prefix/router expiry */
+static void nd_expire_prefixes(void);
+static void nd_expire_routers(void);
+
 /* ── Solicited-node multicast ───────────────────────────────────── */
 
 void ipv6_calc_solicited_node(const struct in6_addr *addr,
@@ -402,6 +441,10 @@ void ipv6_nd_poll(void)
 	uint64_t now = timer_get_ticks();
 	int i;
 
+	/* Expire stale prefixes and router entries from RA */
+	nd_expire_prefixes();
+	nd_expire_routers();
+
 	for (i = 0; i < ND_CACHE_SIZE; i++) {
 		struct nd_cache_entry *e = &nd_cache[i];
 
@@ -478,10 +521,507 @@ void ipv6_nd_poll(void)
 void ipv6_nd_init(void)
 {
 	memset(nd_cache, 0, sizeof(nd_cache));
+	memset(nd_routers, 0, sizeof(nd_routers));
+	nd_router_count = 0;
+	memset(nd_prefixes, 0, sizeof(nd_prefixes));
+	nd_prefix_count = 0;
+	net_ipv6_gua_valid = 0;
 	kprintf("[ndisc] IPv6 Neighbor Discovery initialised\n");
 }
 
-/* ── Cache dump (debugging) ──────────────────────────────────────── */
+/* ── Router Solicitation (RFC 4861 §6.1.1) ──────────────────────────
+ *
+ * Sends a Router Solicitation to the all-routers multicast address
+ * (FF02::2) with our source link-layer address.
+ * Returns 0 on success, negative errno on failure. */
+
+int ipv6_nd_send_rs(void)
+{
+	uint8_t buf[64];
+	struct nd_router_solicit *rs;
+	struct nd_option *opt;
+	struct in6_addr all_routers = IPV6_ADDR_ALL_ROUTERS;
+	uint16_t rs_len;
+
+	if (!net_ipv6_ll_ready)
+		return -ENETDOWN;
+
+	memset(buf, 0, sizeof(buf));
+	rs = (struct nd_router_solicit *)buf;
+	rs->icmp.type = ICMPV6_RS;
+	rs->icmp.code = 0;
+	rs->icmp.checksum = 0;
+	rs->reserved = 0;
+
+	/* Source Link-layer Address option */
+	opt = (struct nd_option *)(buf + sizeof(struct nd_router_solicit));
+	opt->type = ND_OPT_SRC_LLADDR;
+	opt->len  = 1;
+	memcpy(buf + sizeof(struct nd_router_solicit) + 2, net_our_mac, 6);
+
+	rs_len = sizeof(struct nd_router_solicit) + 8;
+
+	/* Compute ICMPv6 checksum */
+	rs->icmp.checksum = ipv6_checksum(&net_our_ipv6_ll, &all_routers,
+	                                   IP_PROTO_ICMPV6, buf, rs_len);
+
+	send_ipv6(&all_routers, IP_PROTO_ICMPV6, buf, rs_len);
+	kprintf("[ndisc] Sent Router Solicitation\n");
+	return 0;
+}
+
+/* ── Router Advertisement (RFC 4861 §6.2.3) ──────────────────────────
+ *
+ * Sends a Router Advertisement to 'dst'.  Includes:
+ *  - Source Link-layer Address option
+ *  - MTU option (with the interface MTU)
+ *  - Prefix Information options for each known prefix
+ *
+ * Returns 0 on success, negative errno on failure. */
+
+int ipv6_nd_send_ra(const struct in6_addr *dst)
+{
+	uint8_t buf[512];
+	struct nd_router_advert *ra;
+	int offset;
+	int i;
+
+	if (!dst || !net_ipv6_ll_ready)
+		return -EINVAL;
+
+	memset(buf, 0, sizeof(buf));
+	ra = (struct nd_router_advert *)buf;
+	ra->icmp.type = ICMPV6_RA;
+	ra->icmp.code = 0;
+	ra->icmp.checksum = 0;
+	ra->cur_hop_limit = 64;   /* default hop limit */
+	ra->flags = 0;            /* M=0 (managed), O=0 (other) */
+	ra->router_lifetime = htons(1800); /* 30 minutes */
+	ra->reachable_time = htonl(30000); /* 30 seconds (milliseconds) */
+	ra->retrans_timer = htonl(1000);   /* 1 second (milliseconds) */
+
+	offset = sizeof(struct nd_router_advert);
+
+	/* Source Link-layer Address option */
+	{
+		struct nd_option *opt = (struct nd_option *)(buf + offset);
+		opt->type = ND_OPT_SRC_LLADDR;
+		opt->len  = 1;
+		memcpy(buf + offset + 2, net_our_mac, 6);
+		offset += 8;
+	}
+
+	/* MTU option */
+	{
+		struct nd_option *opt = (struct nd_option *)(buf + offset);
+		opt->type = ND_OPT_MTU;
+		opt->len  = 1;
+		/* MTU value starts at offset 2 within option, 4 bytes */
+		uint32_t mtu = htonl(1500U);
+		memcpy(buf + offset + 2, &mtu, 4);
+		offset += 8;
+	}
+
+	/* Prefix Information options for each known prefix */
+	for (i = 0; i < ND_PREFIX_LIST_SIZE; i++) {
+		struct nd_prefix_entry *pe = &nd_prefixes[i];
+
+		if (!pe->valid)
+			continue;
+
+		if (offset + 32 > (int)sizeof(buf))
+			break;
+
+		uint8_t *pi = buf + offset;
+		pi[0] = ND_OPT_PREFIX_INFO;    /* type */
+		pi[1] = 4;                      /* length in 8-octet units = 32 bytes */
+		pi[2] = pe->prefix_len;        /* prefix length */
+		pi[3] = pe->flags;             /* L=bit7, A=bit6 */
+		/* Valid lifetime (4 bytes) */
+		uint32_t vl = htonl(pe->valid_lifetime);
+		memcpy(pi + 4, &vl, 4);
+		/* Preferred lifetime (4 bytes) */
+		uint32_t pl = htonl(pe->preferred_lifetime);
+		memcpy(pi + 8, &pl, 4);
+		/* Reserved (4 bytes) */
+		pi[12] = pi[13] = pi[14] = pi[15] = 0;
+		/* Prefix (16 bytes) */
+		memcpy(pi + 16, &pe->prefix, 16);
+		offset += 32;
+	}
+
+	/* Compute ICMPv6 checksum over entire message */
+	{
+		uint16_t ra_len = (uint16_t)offset;
+		ra->icmp.checksum = ipv6_checksum(&net_our_ipv6_ll, dst,
+		                                   IP_PROTO_ICMPV6, buf, ra_len);
+		send_ipv6(dst, IP_PROTO_ICMPV6, buf, ra_len);
+	}
+
+	kprintf("[ndisc] Sent Router Advertisement to %02x%02x:...\n",
+	        dst->s6_addr[0], dst->s6_addr[1]);
+	return 0;
+}
+
+/* ── Handle incoming Router Solicitation (RFC 4861 §6.2.6) ──────────
+ *
+ * When we receive an RS (as a router), we respond with an RA.
+ * Extract the source MAC from the Source Link-layer Address option
+ * and add it to the neighbor cache. */
+
+void ipv6_nd_handle_rs(struct ipv6_header *ip6,
+                        const uint8_t *payload, uint16_t len)
+{
+	const struct nd_router_solicit *rs;
+	const struct nd_option *opt;
+	int opt_offset;
+
+	(void)rs;
+
+	if (!ip6 || !payload || len < sizeof(struct nd_router_solicit))
+		return;
+
+	rs = (const struct nd_router_solicit *)payload;
+
+	/* We only respond if we have a link-local address */
+	if (!net_ipv6_ll_ready)
+		return;
+
+	/* Extract source MAC from Source Link-layer Address option */
+	opt = (const struct nd_option *)(payload + sizeof(struct nd_router_solicit));
+	opt_offset = sizeof(struct nd_router_solicit);
+
+	while (opt_offset + 2 <= (int)len) {
+		if (opt->type == ND_OPT_SRC_LLADDR && opt->len == 1) {
+			ipv6_nd_cache_add(&ip6->src_ip,
+			                  payload + opt_offset + 2);
+			break;
+		}
+		opt_offset += (int)opt->len * 8;
+		if (opt_offset + 2 > (int)len)
+			break;
+		opt = (const struct nd_option *)(payload + opt_offset);
+	}
+
+	/* Respond with a Router Advertisement (unicast to the sender) */
+	if (!ipv6_addr_is_unspecified(&ip6->src_ip)) {
+		ipv6_nd_send_ra(&ip6->src_ip);
+	} else {
+		/* Src is unspecified — sender doing DAD, send to all-nodes */
+		struct in6_addr all_nodes = IPV6_ADDR_ALL_NODES;
+		ipv6_nd_send_ra(&all_nodes);
+	}
+}
+
+/* ── Handle incoming Router Advertisement (RFC 4861 §6.2.5) ─────────
+ *
+ * Processes Router Advertisements for SLAAC, default gateway
+ * discovery, route information, and DNS configuration.
+ * Supports:
+ *  - Prefix Information option (RFC 4861 §4.6.2)
+ *  - MTU option (RFC 4861 §4.6.4)
+ *  - Route Information option (RFC 4191 §2.3)
+ *  - RDNSS option (RFC 8106 §5.1) */
+
+void ipv6_nd_handle_ra(struct ipv6_header *ip6,
+                        const uint8_t *payload, uint16_t len)
+{
+	const struct nd_router_advert *ra;
+	struct nd_router_entry *re = NULL;
+	const uint8_t *opt_data;
+	int remaining;
+	int i;
+
+	if (!ip6 || !payload || len < sizeof(struct nd_router_advert))
+		return;
+
+	if (!net_ipv6_ll_ready)
+		return;
+
+	ra = (const struct nd_router_advert *)payload;
+
+	kprintf("[ndisc] Received Router Advertisement (lifetime=%u, "
+	        "reachable=%u, retrans=%u)\n",
+	        ntohs(ra->router_lifetime),
+	        ntohl(ra->reachable_time),
+	        ntohl(ra->retrans_timer));
+
+	/* Update or add default router entry */
+	for (i = 0; i < ND_ROUTER_LIST_SIZE; i++) {
+		if (nd_routers[i].valid &&
+		    ipv6_addr_equal(&nd_routers[i].addr, &ip6->src_ip)) {
+			re = &nd_routers[i];
+			break;
+		}
+	}
+
+	if (!re) {
+		/* Find free slot */
+		for (i = 0; i < ND_ROUTER_LIST_SIZE; i++) {
+			if (!nd_routers[i].valid) {
+				re = &nd_routers[i];
+				break;
+			}
+		}
+		/* Replace oldest if full */
+		if (!re) {
+			uint64_t oldest = UINT64_MAX;
+			for (i = 0; i < ND_ROUTER_LIST_SIZE; i++) {
+				if (nd_routers[i].expiry_tick < oldest) {
+					oldest = nd_routers[i].expiry_tick;
+					re = &nd_routers[i];
+				}
+			}
+		}
+	}
+
+	if (re) {
+		uint16_t lifetime = ntohs(ra->router_lifetime);
+		memcpy(&re->addr, &ip6->src_ip, sizeof(struct in6_addr));
+		re->lifetime = lifetime;
+		if (lifetime > 0)
+			re->expiry_tick = timer_get_ticks() + (uint64_t)lifetime * 100;
+		else
+			re->expiry_tick = 0;
+		re->valid = 1;
+		if (!nd_router_count)
+			nd_router_count++;
+	}
+
+	/* Update the global default gateway */
+	if (ntohs(ra->router_lifetime) > 0) {
+		memcpy(&net_ipv6_gateway, &ip6->src_ip, sizeof(struct in6_addr));
+		kprintf("[ndisc] Default gateway set to router %02x%02x:...\n",
+		        ip6->src_ip.s6_addr[0], ip6->src_ip.s6_addr[1]);
+	}
+
+	/* Process options */
+	opt_data = payload + sizeof(struct nd_router_advert);
+	remaining = len - sizeof(struct nd_router_advert);
+
+	while (remaining >= 2) {
+		const struct nd_option *opt;
+		int opt_len;
+
+		opt = (const struct nd_option *)opt_data;
+		opt_len = (int)opt->len * 8;
+
+		if (opt_len <= 0 || opt_len > remaining)
+			break;
+
+		switch (opt->type) {
+
+		case ND_OPT_PREFIX_INFO:
+			if (opt_len >= 32) {
+				uint8_t prefix_len = opt_data[2];
+				uint8_t prefix_flags = opt_data[3];
+				uint32_t valid_lifetime = ((uint32_t)opt_data[4] << 24) |
+				                          ((uint32_t)opt_data[5] << 16) |
+				                          ((uint32_t)opt_data[6] << 8)  |
+				                           (uint32_t)opt_data[7];
+				uint32_t preferred_lifetime = ((uint32_t)opt_data[8] << 24) |
+				                               ((uint32_t)opt_data[9] << 16) |
+				                               ((uint32_t)opt_data[10] << 8) |
+				                                (uint32_t)opt_data[11];
+				const uint8_t *prefix_bytes = opt_data + 16;
+
+				/* Add/update prefix in our prefix table */
+				struct nd_prefix_entry *pe = NULL;
+				int found = 0;
+
+				for (i = 0; i < ND_PREFIX_LIST_SIZE; i++) {
+					if (!nd_prefixes[i].valid)
+						continue;
+					if (nd_prefixes[i].prefix_len == prefix_len &&
+					    memcmp(&nd_prefixes[i].prefix, prefix_bytes, 16) == 0) {
+						pe = &nd_prefixes[i];
+						found = 1;
+						break;
+					}
+				}
+
+				if (!pe) {
+					for (i = 0; i < ND_PREFIX_LIST_SIZE; i++) {
+						if (!nd_prefixes[i].valid) {
+							pe = &nd_prefixes[i];
+							break;
+						}
+					}
+				}
+
+				if (pe) {
+					memcpy(&pe->prefix, prefix_bytes, 16);
+					pe->prefix_len = prefix_len;
+					pe->valid_lifetime = valid_lifetime;
+					pe->preferred_lifetime = preferred_lifetime;
+					pe->flags = prefix_flags;
+					if (valid_lifetime == 0xFFFFFFFF || valid_lifetime == 0)
+						pe->expiry_tick = UINT64_MAX;
+					else
+						pe->expiry_tick = timer_get_ticks() +
+						                  (uint64_t)valid_lifetime * 100;
+					pe->valid = 1;
+					if (!found)
+						nd_prefix_count++;
+
+					/* Autoconfigure GUA if A-flag is set */
+					if (prefix_flags & 0x40) {
+						struct in6_addr gua;
+						memset(&gua, 0, sizeof(gua));
+
+						if (prefix_len == 64) {
+							memcpy(gua.s6_addr, prefix_bytes, 8);
+							memcpy(gua.s6_addr + 8,
+							       net_our_ipv6_ll.s6_addr + 8, 8);
+						} else {
+							memcpy(&gua, prefix_bytes, 16);
+							if (prefix_len < 128) {
+								int byte = prefix_len / 8;
+								int bit  = prefix_len % 8;
+								if (byte < 16) {
+									gua.s6_addr[byte] &=
+									    (uint8_t)(0xFF << (8 - bit));
+									for (int j = byte + 1; j < 16; j++)
+										gua.s6_addr[j] = 0;
+								}
+							}
+							for (int j = 8; j < 16; j++)
+								gua.s6_addr[j] |=
+								    net_our_ipv6_ll.s6_addr[j];
+						}
+
+						memcpy(&net_our_ipv6_gua, &gua,
+						       sizeof(struct in6_addr));
+						net_ipv6_gua_valid = 1;
+
+						ipv6_addr_add(&gua, prefix_len,
+						              IPV6_ADDR_STATE_PREFERRED,
+						              valid_lifetime, preferred_lifetime,
+						              IPV6_ADDR_F_AUTOCONF | IPV6_ADDR_F_DAD);
+
+						kprintf("[ndisc] SLAAC: configured GUA, "
+						        "valid=%u preferred=%u\n",
+						        valid_lifetime, preferred_lifetime);
+					}
+				}
+			}
+			break;
+
+		case ND_OPT_MTU:
+			if (opt_len >= 8) {
+				uint32_t mtu = ((uint32_t)opt_data[2] << 24) |
+				               ((uint32_t)opt_data[3] << 16) |
+				               ((uint32_t)opt_data[4] << 8)  |
+				                (uint32_t)opt_data[5];
+				kprintf("[ndisc] RA MTU option: %u\n", mtu);
+				/* Could set interface MTU here */
+			}
+			break;
+
+		case ND_OPT_ROUTE_INFO:
+			if (opt_len >= 8) {
+				uint8_t prefix_len = opt_data[2];
+				uint8_t route_flags = opt_data[3];   /* prf (2 bits) */
+				uint32_t route_lifetime = ((uint32_t)opt_data[4] << 24) |
+				                          ((uint32_t)opt_data[5] << 16) |
+				                          ((uint32_t)opt_data[6] << 8)  |
+				                           (uint32_t)opt_data[7];
+				/* Prefix follows at offset 8, up to 16 bytes */
+				kprintf("[ndisc] RA Route Info: %d/%d lifetime=%u "
+				        "pref=%d\n",
+				        prefix_len, prefix_len, route_lifetime,
+				        (route_flags >> 6) & 0x03);
+			}
+			break;
+
+		case ND_OPT_RDNSS:
+			if (opt_len >= 8) {
+				/* RDNSS option format (RFC 8106 §5.1):
+				 *   type=25 (1 byte)
+				 *   len (1 byte)
+				 *   reserved (2 bytes)
+				 *   lifetime (4 bytes)
+				 *   addresses (variable, 16 bytes each) */
+				uint32_t lifetime = ((uint32_t)opt_data[4] << 24) |
+				                    ((uint32_t)opt_data[5] << 16) |
+				                    ((uint32_t)opt_data[6] << 8)  |
+				                     (uint32_t)opt_data[7];
+				int addr_count = (opt_len - 8) / 16;
+
+				if (addr_count >= 1) {
+					/* Take the first DNS server address */
+					memcpy(&net_ipv6_dns, opt_data + 8,
+					       sizeof(struct in6_addr));
+					kprintf("[ndisc] RA RDNSS: DNS server set, "
+					        "lifetime=%u\n", lifetime);
+				}
+			}
+			break;
+
+		default:
+			/* Unknown option — skip per RFC 4861 §4.1 */
+			break;
+		}
+
+		opt_data += opt_len;
+		remaining -= opt_len;
+	}
+}
+
+/* ── RA prefix lifetime expiry check ─────────────────────────────────
+ *
+ * Called from ipv6_nd_poll() to expire stale prefixes.
+ */
+static void nd_expire_prefixes(void)
+{
+	uint64_t now = timer_get_ticks();
+	int i;
+
+	for (i = 0; i < ND_PREFIX_LIST_SIZE; i++) {
+		struct nd_prefix_entry *pe = &nd_prefixes[i];
+
+		if (!pe->valid)
+			continue;
+		if (pe->expiry_tick == UINT64_MAX)
+			continue;
+		if (now >= pe->expiry_tick) {
+			kprintf("[ndisc] Prefix %02x%02x:.../%d expired\n",
+			        pe->prefix.s6_addr[0], pe->prefix.s6_addr[1],
+			        pe->prefix_len);
+			memset(pe, 0, sizeof(*pe));
+			nd_prefix_count--;
+		}
+	}
+}
+
+/* ── Default router expiry check ─────────────────────────────────────
+ *
+ * Called from ipv6_nd_poll() to expire stale router entries.
+ */
+static void nd_expire_routers(void)
+{
+	uint64_t now = timer_get_ticks();
+	int i;
+
+	for (i = 0; i < ND_ROUTER_LIST_SIZE; i++) {
+		struct nd_router_entry *re = &nd_routers[i];
+
+		if (!re->valid)
+			continue;
+		if (re->expiry_tick == 0)
+			continue;
+		if (now >= re->expiry_tick) {
+			kprintf("[ndisc] Default router %02x%02x:... expired\n",
+			        re->addr.s6_addr[0], re->addr.s6_addr[1]);
+			memset(re, 0, sizeof(*re));
+			nd_router_count--;
+		}
+	}
+}
+
+/* ── Update ipv6_nd_poll with RS/RA expiry checks ─────────────────── */
+
+/* The original ipv6_nd_poll now also checks prefix/router expiry */
 
 void ipv6_nd_cache_dump(void)
 {

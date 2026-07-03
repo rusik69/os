@@ -531,116 +531,10 @@ static void handle_icmpv6_echo_reply(void)
 
 void ipv6_send_rs(void)
 {
-    uint8_t buf[64];
-    struct nd_router_solicit *rs = (struct nd_router_solicit *)buf;
-    memset(rs, 0, sizeof(*rs));
-    rs->icmp.type = ICMPV6_RS;
-    rs->icmp.code = 0;
-
-    /* Source Link-layer Address option */
-    struct nd_option *opt = (struct nd_option *)(buf + sizeof(struct nd_router_solicit));
-    opt->type = ND_OPT_SRC_LLADDR;
-    opt->len  = 1;
-    memcpy(buf + sizeof(struct nd_router_solicit) + 2, net_our_mac, 6);
-
-    uint16_t rs_len = sizeof(struct nd_router_solicit) + 8;
-
-    /* Send to all-routers multicast */
-    struct in6_addr all_routers = IPV6_ADDR_ALL_ROUTERS;
-    rs->icmp.checksum = ipv6_checksum(&net_our_ipv6_ll, &all_routers,
-                                       IP_PROTO_ICMPV6, buf, rs_len);
-    send_ipv6(&all_routers, IP_PROTO_ICMPV6, buf, rs_len);
-    kprintf("[IPv6] Sent Router Solicitation\n");
+    ipv6_nd_send_rs();
 }
 
-/* ── SLAAC: Router Advertisement (RA) processing ─────────────────── */
-
-static void nd_handle_ra(struct ipv6_header *ip6, const uint8_t *payload,
-                          uint16_t len)
-{
-    if (len < sizeof(struct nd_router_advert))
-        return;
-
-    const struct nd_router_advert *ra = (const struct nd_router_advert *)payload;
-
-    kprintf("[IPv6] Received Router Advertisement (lifetime=%u)\n",
-            ntohs(ra->router_lifetime));
-
-    /* Record default gateway */
-    memcpy(&net_ipv6_gateway, &ip6->src_ip, sizeof(struct in6_addr));
-
-    /* Hop limit from RA */
-    uint8_t hop_limit = ra->cur_hop_limit;
-    (void)hop_limit;  /* could be used in send_ipv6 */
-
-    /* Process options */
-    const uint8_t *opt_data = payload + sizeof(struct nd_router_advert);
-    int remaining = len - sizeof(struct nd_router_advert);
-
-    while (remaining >= 2) {
-        const struct nd_option *opt = (const struct nd_option *)opt_data;
-        int opt_len = (int)opt->len * 8;
-
-        if (opt_len <= 0 || opt_len > remaining) break;
-
-        if (opt->type == ND_OPT_PREFIX_INFO && opt_len >= 32) {
-            /* Prefix Information option (RFC 4861, §4.6.2) */
-            uint8_t prefix_len = opt_data[2];           /* prefix length in bits */
-            uint8_t prefix_flags = opt_data[3];         /* L=bit7, A=bit6 */
-            uint32_t valid_lifetime = (uint32_t)opt_data[4] << 24 |
-                                      (uint32_t)opt_data[5] << 16 |
-                                      (uint32_t)opt_data[6] << 8  |
-                                      (uint32_t)opt_data[7];
-            /* Prefix is at offset 16 within this option */
-            const uint8_t *prefix = opt_data + 16;
-
-            /* Check A-flag (autonomous address-configuration) */
-            if (prefix_flags & 0x40) {
-                struct in6_addr gua;
-                memset(&gua, 0, sizeof(gua));
-                /* Use the prefix with our EUI-64 interface identifier */
-                if (prefix_len == 64) {
-                    memcpy(gua.s6_addr, prefix, 8);
-                    memcpy(gua.s6_addr + 8, net_our_ipv6_ll.s6_addr + 8, 8);
-                } else {
-                    /* For non-64 prefixes, zero out host bits beyond prefix */
-                    memcpy(&gua, prefix, 16);
-                    /* Mask off host bits beyond prefix_len */
-                    if (prefix_len < 128) {
-                        int byte = prefix_len / 8;
-                        int bit  = prefix_len % 8;
-                        if (byte < 16) {
-                            gua.s6_addr[byte] &= (uint8_t)(0xFF << (8 - bit));
-                            for (int i = byte + 1; i < 16; i++)
-                                gua.s6_addr[i] = 0;
-                        }
-                    }
-                    /* OR in interface ID (lower 64 bits from link-local) */
-                    for (int i = 8; i < 16; i++)
-                        gua.s6_addr[i] |= net_our_ipv6_ll.s6_addr[i];
-                }
-
-                memcpy(&net_our_ipv6_gua, &gua, sizeof(struct in6_addr));
-                net_ipv6_gua_valid = 1;
-
-                /* Register GUA in the address management table */
-                ipv6_addr_add(&gua, prefix_len, IPV6_ADDR_STATE_PREFERRED,
-                              valid_lifetime, valid_lifetime,
-                              IPV6_ADDR_F_AUTOCONF | IPV6_ADDR_F_DAD);
-
-                kprintf("[IPv6] SLAAC: configured GUA, valid=%u\n",
-                        valid_lifetime);
-            }
-        } else if (opt->type == ND_OPT_MTU && opt_len >= 8) {
-            /* MTU option — could be used to set interface MTU */
-            /* uint32_t mtu = ... */
-        }
-        /* RDNSS option (RFC 8106) could be added here for DNS */
-
-        opt_data += opt_len;
-        remaining -= opt_len;
-    }
-}
+/* ── SLAAC: RA processing moved to ipv6_ndisc.c ──────────────────── */
 
 /* ── ICMPv6 dispatcher ───────────────────────────────────────────── */
 
@@ -665,10 +559,10 @@ void handle_icmpv6(struct ipv6_header *ip6, const uint8_t *payload,
         ipv6_nd_handle_na(ip6, payload, len);
         break;
     case ICMPV6_RS: /* Router Solicitation */
-        /* We're not a router, so ignore */
+        ipv6_nd_handle_rs(ip6, payload, len);
         break;
     case ICMPV6_RA: /* Router Advertisement */
-        nd_handle_ra(ip6, payload, len);
+        ipv6_nd_handle_ra(ip6, payload, len);
         break;
     default:
         break;

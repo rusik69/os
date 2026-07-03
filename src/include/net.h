@@ -139,6 +139,8 @@ struct nd_option {
 #define ND_OPT_TGT_LLADDR   2   /* target link-layer address */
 #define ND_OPT_PREFIX_INFO  3   /* prefix information */
 #define ND_OPT_MTU          5   /* MTU option */
+#define ND_OPT_ROUTE_INFO  24   /* route information (RFC 4191) */
+#define ND_OPT_RDNSS       25   /* recursive DNS server (RFC 8106) */
 
 #define ICMPV6_RS           133 /* Router Solicitation */
 #define ICMPV6_RA           134 /* Router Advertisement */
