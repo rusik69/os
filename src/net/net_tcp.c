@@ -476,6 +476,19 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
                     }
                 }
                 sc->sack_pending = 1;
+                /* ── NewReno SACK scoreboard update (RFC 6675) ──────────
+                 * If this connection uses NewReno congestion control,
+                 * update the SACK scoreboard with the newly parsed blocks.
+                 * The scoreboard tracks high_sacked, pipe, and scoring
+                 * state for enhanced loss detection during recovery. */
+                if (sc->cc_algo == 3) {
+                    newreno_sack_scoreboard_update(&sc->newreno,
+                                                   sc->sack_blocks,
+                                                   num_blocks,
+                                                   sc->last_ack,
+                                                   sc->tx_unacked_len,
+                                                   sc->tx_unacked_seq);
+                }
                 /* ── RACK: update fwd_mark from highest SACK right edge ──
                  * SACK informs us that the receiver has data beyond the
                  * cumulative ACK.  Track the highest SACK-reported delivery
@@ -1040,6 +1053,13 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
                             /* NewReno: fast retransmit + fast recovery */
                             newreno_on_3dupacks(&c->newreno, &c->cwnd,
                                                 &c->ssthresh, c->our_seq);
+                            /* Initialise SACK scoreboard for this recovery
+                             * episode (RFC 6675 §4).  Records the starting
+                             * outstanding range and enables SACK-based scoring
+                             * for loss detection below the 3-dupACK threshold. */
+                            newreno_sack_scoreboard_init(&c->newreno,
+                                                         c->last_ack,
+                                                         c->our_seq);
                         } else {
                             /* CUBIC: handle congestion event */
                             c->ssthresh = cubic_on_loss(&c->cubic, c->cwnd, timer_get_ticks());
