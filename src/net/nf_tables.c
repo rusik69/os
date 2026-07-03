@@ -1168,6 +1168,102 @@ static int nft_expr_eval_nat(const struct nft_expr *expr,
     return 0; /* always succeeds — NAT is an action, not a match */
 }
 
+/* Eval a log expression — logs matching packet info to kernel log.
+ * Constructs a log message containing the user-defined prefix and
+ * optional packet metadata fields controlled by the flags bitmask.
+ * Always returns 0 (log is a side-effect only, never blocks a match). */
+static int nft_expr_eval_log(const struct nft_expr *expr,
+                             struct nft_regs *regs,
+                             const struct nft_eval_ctx *ctx)
+{
+    const struct nft_expr_log *l = (const struct nft_expr_log *)expr;
+    char logbuf[256];
+    int pos = 0;
+
+    (void)regs;
+
+    /* Build the log message in a local buffer.
+     * Start with the prefix (always included). */
+    if ((l->flags & NFT_LOG_FLAGS_PREFIX) || l->prefix[0]) {
+        pos = snprintf(logbuf, sizeof(logbuf), "%s", l->prefix);
+        if (pos < 0 || pos >= (int)sizeof(logbuf))
+            pos = 0;
+    } else {
+        logbuf[0] = '\0';
+    }
+
+    /* Add packet metadata fields based on flags */
+    if ((l->flags & NFT_LOG_FLAGS_SADDR) && ctx) {
+        int n = snprintf(logbuf + pos, sizeof(logbuf) - (size_t)pos,
+                         " SRC=%u.%u.%u.%u",
+                         (unsigned)((ctx->src_ip >> 24) & 0xFF),
+                         (unsigned)((ctx->src_ip >> 16) & 0xFF),
+                         (unsigned)((ctx->src_ip >> 8) & 0xFF),
+                         (unsigned)(ctx->src_ip & 0xFF));
+        if (n > 0) pos += n;
+        if (pos >= (int)sizeof(logbuf) - 1) pos = (int)sizeof(logbuf) - 1;
+    }
+
+    if ((l->flags & NFT_LOG_FLAGS_DADDR) && ctx) {
+        int n = snprintf(logbuf + pos, sizeof(logbuf) - (size_t)pos,
+                         " DST=%u.%u.%u.%u",
+                         (unsigned)((ctx->dst_ip >> 24) & 0xFF),
+                         (unsigned)((ctx->dst_ip >> 16) & 0xFF),
+                         (unsigned)((ctx->dst_ip >> 8) & 0xFF),
+                         (unsigned)(ctx->dst_ip & 0xFF));
+        if (n > 0) pos += n;
+        if (pos >= (int)sizeof(logbuf) - 1) pos = (int)sizeof(logbuf) - 1;
+    }
+
+    if ((l->flags & NFT_LOG_FLAGS_PORTS) && ctx) {
+        int n = snprintf(logbuf + pos, sizeof(logbuf) - (size_t)pos,
+                         " SPORT=%u DPORT=%u",
+                         (unsigned)ctx->src_port,
+                         (unsigned)ctx->dst_port);
+        if (n > 0) pos += n;
+        if (pos >= (int)sizeof(logbuf) - 1) pos = (int)sizeof(logbuf) - 1;
+    }
+
+    if ((l->flags & NFT_LOG_FLAGS_PROTOCOL) && ctx) {
+        static const char *proto_names[] = {
+            [0]   = "HOPOPTS",
+            [1]   = "ICMP",
+            [2]   = "IGMP",
+            [6]   = "TCP",
+            [17]  = "UDP",
+            [58]  = "ICMPv6",
+            [132] = "SCTP",
+        };
+        const char *pname = "UNKNOWN";
+        if (ctx->protocol < sizeof(proto_names) / sizeof(proto_names[0]) &&
+            proto_names[ctx->protocol]) {
+            pname = proto_names[ctx->protocol];
+        }
+        int n = snprintf(logbuf + pos, sizeof(logbuf) - (size_t)pos,
+                         " PROTO=%s(%u)", pname, (unsigned)ctx->protocol);
+        if (n > 0) pos += n;
+        if (pos >= (int)sizeof(logbuf) - 1) pos = (int)sizeof(logbuf) - 1;
+    }
+
+    /* Log using kprintf_level to respect the configured log level.
+     * Map nftables log level (0=emerg..3=err) to kernel log level. */
+    {
+        static const uint8_t klevel_map[] = {
+            KERN_EMERG,   /* level 0 */
+            KERN_ALERT,   /* level 1 */
+            KERN_CRIT,    /* level 2 */
+            KERN_ERR,     /* level 3 */
+        };
+        int klevel = KERN_INFO; /* default */
+        if (l->level < sizeof(klevel_map))
+            klevel = klevel_map[l->level];
+
+        kprintf_level(klevel, "[nft-log]%s\n", logbuf);
+    }
+
+    return 0; /* always succeeds — log is side-effect only */
+}
+
 /* Evaluate the expression chain of a rule.
  * Returns 1 if ALL expressions matched (rule applies), 0 if any failed. */
 static int nft_expr_eval_chain(struct nft_rule *rule,
@@ -1218,6 +1314,12 @@ static int nft_expr_eval_chain(struct nft_rule *rule,
 
         case NFT_EXPR_NAT:
             ret = nft_expr_eval_nat(expr, regs, ctx);
+            if (ret != 0)
+                return 0;
+            break;
+
+        case NFT_EXPR_LOG:
+            ret = nft_expr_eval_log(expr, regs, ctx);
             if (ret != 0)
                 return 0;
             break;

@@ -288,6 +288,15 @@ struct nft_expr_nat {
     uint16_t           port_max;   /* port range end */
 } __attribute__((packed));
 
+/* Log flags for NFT_EXPR_LOG */
+#define NFT_LOG_FLAGS_PREFIX    (1 << 0)  /* include configured prefix */
+#define NFT_LOG_FLAGS_SADDR     (1 << 1)  /* log source IP address */
+#define NFT_LOG_FLAGS_DADDR     (1 << 2)  /* log destination IP address */
+#define NFT_LOG_FLAGS_PORTS     (1 << 3)  /* log source/destination ports */
+#define NFT_LOG_FLAGS_PROTOCOL  (1 << 4)  /* log L4 protocol number */
+#define NFT_LOG_FLAGS_ALL       (NFT_LOG_FLAGS_SADDR | NFT_LOG_FLAGS_DADDR | \
+                                 NFT_LOG_FLAGS_PORTS | NFT_LOG_FLAGS_PROTOCOL)
+
 /* Log expression — logs matching packets to kernel log.
  * Always returns 0 (doesn't affect matching verdict). */
 struct nft_expr_log {
