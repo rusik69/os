@@ -26,6 +26,10 @@
 /* MPTCP flags */
 #define MPTCP_CAPABLE_HMAC  0x01  /* MP_CAPABLE includes HMAC */
 
+/* MP_CAPABLE option lengths (RFC 8684 §3.1) */
+#define MPTCP_CAPABLE_SYN_LEN     12  /* kind(1) + len(1) + sub/flags(1) + resv(1) + key(8) */
+#define MPTCP_CAPABLE_ACK_LEN    24  /* kind(1) + len(1) + sub/flags(1) + resv(1) + snd_key(8) + rcv_key(8) + hmac(8) */
+
 /* Maximum subflows per MPTCP connection */
 #define MPTCP_MAX_SUBFLOWS  4
 
@@ -67,6 +71,19 @@ int  mptcp_send(uint32_t token, const void *data, uint32_t len);
 int  mptcp_recv(uint32_t token, void *buf, uint32_t maxlen);
 void mptcp_close(uint32_t token);
 int  mptcp_get_token(void);
+
+/* Associate a TCP connection with an MPTCP token (copies key from mptcp_conn) */
+int  mptcp_associate(int conn_id, uint32_t token);
+
+/* Build MP_CAPABLE option for SYN (client side) */
+int  mptcp_build_capable_syn(uint8_t *buf, uint16_t *len, const uint8_t snd_key[8]);
+/* Build MP_CAPABLE option for SYN+ACK (server side) */
+int  mptcp_build_capable_synack(uint8_t *buf, uint16_t *len, const uint8_t snd_key[8]);
+/* Build MP_CAPABLE option for 3rd ACK (both keys + HMAC) */
+int  mptcp_build_capable_ack(uint8_t *buf, uint16_t *len,
+                              const uint8_t snd_key[8], const uint8_t rcv_key[8]);
+/* Parse MP_CAPABLE option, extract peer's key.  Returns 0 on success. */
+int  mptcp_parse_capable(const uint8_t *opt, uint16_t optlen, uint8_t peer_key[8]);
 
 /* TCP option handlers — called from TCP stack */
 int  mptcp_handle_capable(int conn_id, const uint8_t *opt, uint16_t optlen);

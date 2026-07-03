@@ -257,6 +257,15 @@ struct tcp_conn {
      * RTT-normalised congestion control for satellite links. */
     struct hybla_data hybla;
 
+    /* ── MPTCP (Multipath TCP) state (RFC 8684) ───────────────────────
+     * Token 0 = not an MPTCP subflow; non-zero = MPTCP metadata below
+     * is valid.  snd_key is our key for this subflow; rcv_key is the
+     * peer's key received via MP_CAPABLE exchangeduring the handshake. */
+    uint32_t mptcp_token;       /* 0 = not MPTCP */
+    uint8_t  mptcp_snd_key[8];  /* sender's 64-bit key */
+    uint8_t  mptcp_rcv_key[8];  /* receiver's 64-bit key (from peer) */
+    uint8_t  mptcp_rcv_key_valid; /* 1 = peer key received */
+
     /* ── IPv6 flow label (RFC 6437) ───────────────────────────────────
      * Flow label is a 20-bit value identifying packets belonging to the
      * same flow.  Computed once per TCP connection as a pseudo-random

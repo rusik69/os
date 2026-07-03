@@ -11,6 +11,7 @@
 #include "tcp_bbr.h"   /* BBR congestion control (Item 157) */
 #include "spinlock.h"  /* spinlock_t, SPINLOCK_INIT */
 #include "socket.h"    /* struct sockaddr_in */
+#include "mptcp.h"     /* MPTCP options, MP_CAPABLE handling */
 
 /* TCP connection table lock — protects tcp_conns[] */
 static spinlock_t tcp_lock = SPINLOCK_INIT;
@@ -388,6 +389,21 @@ void send_tcp(struct tcp_conn *conn, uint8_t flags, const void *data, uint16_t d
             memcpy(opts + opt_len, conn->tfo_cookie, 8);
             opt_len += 8;
         }
+
+        /* ── MPTCP MP_CAPABLE option ──────────────────────────────
+         * If this connection is MPTCP-associated, include the
+         * MP_CAPABLE option with our 64-bit key on both SYN (client)
+         * and SYN-ACK (server).  The option kind is 30 (TCPOPT_MPTCP),
+         * subtype 0 (MPTCP_CAPABLE). */
+        if (conn->mptcp_token != 0) {
+            uint16_t mptcp_opt_len = MPTCP_CAPABLE_SYN_LEN;
+            int ret = mptcp_build_capable_syn(opts + opt_len,
+                                               &mptcp_opt_len,
+                                               conn->mptcp_snd_key);
+            if (ret == 0) {
+                opt_len += mptcp_opt_len;
+            }
+        }
     }
 
     uint16_t hdr_len = sizeof(struct tcp_header) + opt_len;
@@ -522,6 +538,9 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
                 if (cookie_len > 0 && opt_offset + 2 + cookie_len <= (int)hdr_len) {
                     __builtin_memcpy(sc->tfo_cookie, payload + opt_offset + 2, cookie_len);
                 }
+            } else if (kind == 30) { /* MPTCP option (kind 30, TCPOPT_MPTCP) */
+                /* Handle MP_CAPABLE option for MPTCP handshake */
+                mptcp_handle_capable(conn_id, payload + opt_offset, olen);
             }
             opt_offset += olen;
         }
@@ -544,6 +563,8 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
         uint16_t client_mss = 1460; /* default MSS for Ethernet */
         int syn_has_tfo = 0;
         uint8_t syn_tfo_cookie[8];
+        int syn_has_mptcp = 0;
+        uint8_t syn_mptcp_key[8];
         {
             int opt_off = sizeof(struct tcp_header);
             while (opt_off + 1 < (int)hdr_len) {
@@ -565,6 +586,14 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
                         syn_has_tfo = 1;
                         memset(syn_tfo_cookie, 0, 8);
                         memcpy(syn_tfo_cookie, payload + opt_off + 2, cookie_len);
+                    }
+                } else if (kind == 30) {
+                    /* MPTCP option (kind 30, TCPOPT_MPTCP) — MP_CAPABLE on SYN */
+                    if (olen >= MPTCP_CAPABLE_SYN_LEN &&
+                        (payload[opt_off + 2] >> 4) == MPTCP_CAPABLE) {
+                        syn_has_mptcp = 1;
+                        memset(syn_mptcp_key, 0, 8);
+                        memcpy(syn_mptcp_key, payload + opt_off + 4, 8);
                     }
                 }
                 opt_off += olen;
@@ -640,6 +669,29 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
         /* Nagle / Delayed ACK initialization */
         c->delayed_ack_pending = 0;
         c->nagle_buf_len = 0;
+
+        /* MPTCP initialization */
+        c->mptcp_token = 0;
+        c->mptcp_rcv_key_valid = 0;
+        memset(c->mptcp_snd_key, 0, 8);
+        memset(c->mptcp_rcv_key, 0, 8);
+
+        /* ── MPTCP MP_CAPABLE on SYN ─────────────────────────────────
+         * If the client included MP_CAPABLE in the SYN, we are dealing
+         * with an MPTCP-capable connection.  Store the peer's key and
+         * create an MPTCP connection so the SYN-ACK includes our key. */
+        if (syn_has_mptcp) {
+            memcpy(c->mptcp_rcv_key, syn_mptcp_key, 8);
+            c->mptcp_rcv_key_valid = 1;
+            int mptcp_token = mptcp_create();
+            if (mptcp_token >= 0) {
+                int ret = mptcp_associate(conn_id, (uint32_t)mptcp_token);
+                if (ret == 0) {
+                    kprintf("[TCP] MP_CAPABLE SYN on conn %d, MPTCP token=%d\n",
+                            conn_id, mptcp_token);
+                }
+            }
+        }
 
         /* ── TCP Fast Open: validate cookie and process data-in-SYN ────
          * If the client provided a valid TFO cookie AND payload data,
@@ -1296,6 +1348,12 @@ int net_tcp_connect(uint32_t ip, uint16_t port) {
     /* Nagle / Delayed ACK initialization */
     c->delayed_ack_pending = 0;
     c->nagle_buf_len = 0;
+
+    /* MPTCP initialization */
+    c->mptcp_token = 0;
+    c->mptcp_rcv_key_valid = 0;
+    memset(c->mptcp_snd_key, 0, 8);
+    memset(c->mptcp_rcv_key, 0, 8);
 
     /* PRR (Proportional Rate Reduction) initialization — Item 158 */
     c->in_recovery   = 0;
