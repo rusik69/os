@@ -19,8 +19,24 @@
 #define WG_MSG_KEEPALIVE WG_MSG_TRANSPORT_DATA  /* zero-length payload */
 
 /* WireGuard message lengths */
-#define WG_HANDSHAKE_INIT_LEN     148
-#define WG_HANDSHAKE_RESPONSE_LEN  92
+#define WG_HANDSHAKE_INIT_LEN       148
+#define WG_HANDSHAKE_RESPONSE_LEN    92
+#define WG_COOKIE_REPLY_LEN          80
+#define WG_COOKIE_LEN                16
+
+/* Cookie nonce length (24 bytes for XChaCha20 compatibility;
+ * we use first 12 bytes for ChaCha20 and zero-pad the rest). */
+#define WG_COOKIE_NONCE_LEN         24
+
+/* Cookie secret rotation interval (~120 seconds at 100 Hz) */
+#define WG_COOKIE_SECRET_ROTATION   12000
+
+/* Rate limit: max handshake initiations per second per IP */
+#define WG_RATELIMIT_MAX_BURST      20
+#define WG_RATELIMIT_WINDOW_TICKS   100  /* 1 second at 100 Hz */
+
+/* Maximum number of tracked rate-limit entries */
+#define WG_RATELIMIT_ENTRIES        64
 
 /* Maximum concurrent handshake states tracked */
 #define WG_MAX_HANDSHAKES 4
@@ -43,6 +59,10 @@ struct wg_peer {
     uint32_t persistent_keepalive_interval; /* seconds, 0 = disabled */
     uint32_t rx_ip;             /* last observed source IP (for roaming) */
     uint16_t rx_port;           /* last observed source port (for roaming) */
+
+    /* ── Anti-DoS cookie state ──────────────────────────────────── */
+    uint8_t  cookie_key[32];            /* expanded cookie key for KDF (32B) */
+    int      has_cookie;                /* 1 if cookie is valid */
 };
 
 /* WireGuard device state */

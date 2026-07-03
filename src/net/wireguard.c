@@ -26,6 +26,19 @@
 static struct wg_device g_wg;
 static int wg_initialized = 0;
 
+/* ── Cookie secret (rotates every ~120 seconds) ──────────────── */
+static uint8_t  wg_cookie_secret[32];
+static uint64_t wg_cookie_secret_time;
+
+/* ── Rate limiting: per-source-IP handshake tracking ─────────── */
+struct wg_rl_entry {
+    uint32_t src_ip;
+    uint32_t count;
+    uint64_t window_start;
+    int      active;
+};
+static struct wg_rl_entry wg_rl[WG_RATELIMIT_ENTRIES];
+
 /* WireGuard protocol identifier (must match the initiator hash input) */
 #define WG_PROTOCOL_ID "WireGuard v1 zx2c4 Jason@zx2c4.com"
 
@@ -816,6 +829,13 @@ int wg_init(void) {
     wg_initialized = 1;
     kprintf("[OK] WireGuard initialized (listen port %u) with Curve25519 keypair\n",
             (uint32_t)g_wg.listen_port);
+
+    /* Initialize cookie secret with random bytes */
+    for (int i = 0; i < 32; i++)
+        wg_cookie_secret[i] = (uint8_t)(rng_get_u64() & 0xFF);
+    wg_cookie_secret_time = timer_get_ticks();
+    memset(wg_rl, 0, sizeof(wg_rl));
+
     return 0;
 }
 
@@ -1145,6 +1165,10 @@ struct wg_hs_state {
     int      peer_idx;
     int      active;
     int      is_responder;      /* 1 if we are the responder */
+
+    /* ── Cookie challenge state ──────────────────────────────── */
+    int      cookie_challenge_sent;     /* 1 if we sent a cookie challenge */
+    uint64_t cookie_challenge_time;     /* when the challenge was sent */
 };
 
 static struct wg_hs_state g_wg_hs[WG_MAX_HANDSHAKES];
@@ -1164,6 +1188,165 @@ static void wg_mix_hash(uint8_t *hash, const uint8_t *data, uint32_t len)
     }
     wg_kdf1(buf, hash, input);
     memcpy(hash, buf, 32);
+}
+
+/* ── Cookie helper functions ────────────────────────────────────── */
+
+/* Rotate the cookie secret (called periodically or when under load) */
+static void wg_cookie_rotate_secret(void)
+{
+    uint64_t ticks = timer_get_ticks();
+
+    if (ticks - wg_cookie_secret_time < WG_COOKIE_SECRET_ROTATION)
+        return;
+
+    for (int i = 0; i < 32; i++)
+        wg_cookie_secret[i] = (uint8_t)(rng_get_u64() & 0xFF);
+    wg_cookie_secret_time = ticks;
+    kprintf("[WG] Cookie secret rotated\n");
+}
+
+/* Derive a cookie value for a given source IP.
+ * cookie = KDF1(cookie_secret, src_ip_bytes) truncated to WG_COOKIE_LEN.
+ * @cookie: output buffer (at least WG_COOKIE_LEN bytes)
+ * @src_ip: source IP address in network byte order */
+static void wg_cookie_get(uint8_t *cookie, uint32_t src_ip)
+{
+    uint8_t input[4];
+
+    input[0] = (uint8_t)(src_ip);
+    input[1] = (uint8_t)(src_ip >> 8);
+    input[2] = (uint8_t)(src_ip >> 16);
+    input[3] = (uint8_t)(src_ip >> 24);
+    wg_kdf1(cookie, wg_cookie_secret, input);
+}
+
+/* Rate-limit check: returns 0 to allow the handshake, -EBUSY to
+ * trigger a cookie challenge.  Uses a sliding-window counter per
+ * source IP. */
+static int wg_rl_check(uint32_t src_ip)
+{
+    uint64_t now = timer_get_ticks();
+    int slot = -1;
+    int free_slot = -1;
+
+    for (int i = 0; i < WG_RATELIMIT_ENTRIES; i++) {
+        if (!wg_rl[i].active) {
+            if (free_slot < 0)
+                free_slot = i;
+            continue;
+        }
+
+        /* Expired entry — reclaim */
+        if (now - wg_rl[i].window_start > WG_RATELIMIT_WINDOW_TICKS) {
+            wg_rl[i].active = 0;
+            if (free_slot < 0)
+                free_slot = i;
+            continue;
+        }
+
+        if (wg_rl[i].src_ip == src_ip) {
+            slot = i;
+            break;
+        }
+    }
+
+    if (slot < 0) {
+        /* New source IP — start tracking */
+        if (free_slot < 0) {
+            /* All slots full — evict oldest */
+            uint64_t oldest = now;
+            int oldest_slot = 0;
+            for (int i = 0; i < WG_RATELIMIT_ENTRIES; i++) {
+                if (wg_rl[i].window_start < oldest) {
+                    oldest = wg_rl[i].window_start;
+                    oldest_slot = i;
+                }
+            }
+            free_slot = oldest_slot;
+        }
+
+        wg_rl[free_slot].src_ip = src_ip;
+        wg_rl[free_slot].count = 1;
+        wg_rl[free_slot].window_start = now;
+        wg_rl[free_slot].active = 1;
+        return 0;  /* Allow first initiation */
+    }
+
+    /* Existing entry — increment count */
+    wg_rl[slot].count++;
+
+    if (wg_rl[slot].count > WG_RATELIMIT_MAX_BURST) {
+        kprintf("[WG] Rate limit exceeded for %u.%u.%u.%u (%u in window)\n",
+                (uint8_t)(src_ip >> 24), (uint8_t)(src_ip >> 16),
+                (uint8_t)(src_ip >> 8), (uint8_t)src_ip,
+                (unsigned)wg_rl[slot].count);
+        return -EBUSY;  /* Trigger cookie challenge */
+    }
+
+    return 0;  /* Allow */
+}
+
+/* ── mac2 helpers ───────────────────────────────────────────────────── */
+
+/* Compute mac2 = KDF1(cookie, msg[0:mac2_offset])[0:16]
+ * Used by the initiator/responder to prove possession of a valid
+ * cookie when the peer is under load.
+ * @mac2_out: output buffer (exactly 16 bytes)
+ * @cookie: 16-byte cookie value derived from peer's cookie secret + our IP
+ * @msg: the handshake message buffer (initiation or response)
+ * @mac2_offset: offset where mac2 field begins (132 for init, 76 for resp) */
+static void wg_compute_mac2(uint8_t mac2_out[16], const uint8_t cookie[WG_COOKIE_LEN],
+                             const uint8_t *msg, uint16_t mac2_offset)
+{
+    uint8_t full[32];
+    wg_kdf1(full, cookie, msg);
+    memcpy(mac2_out, full, 16);
+
+    /* Write mac2 into the message buffer too */
+    memcpy((uint8_t *)msg + mac2_offset, mac2_out, 16);
+}
+
+/* Verify mac2 in a received handshake message.
+ * @cookie: 16-byte cookie we sent to this peer in a cookie reply
+ * @msg: the received handshake message
+ * @mac2_offset: offset where mac2 field begins
+ * Returns 0 on match, -EBADMSG on mismatch. */
+static int wg_verify_mac2(const uint8_t cookie[WG_COOKIE_LEN],
+                           const uint8_t *msg, uint16_t mac2_offset)
+{
+    uint8_t expected[16];
+    uint8_t full[32];
+    int diff;
+
+    /* Compute expected mac2 over the entire message (with current mac2 as zeros) */
+    uint8_t msg_copy[WG_HANDSHAKE_INIT_LEN];
+    uint16_t copy_len = (mac2_offset == 132) ? WG_HANDSHAKE_INIT_LEN : WG_HANDSHAKE_RESPONSE_LEN;
+    memcpy(msg_copy, msg, copy_len);
+    memset(msg_copy + mac2_offset, 0, 16);
+
+    wg_kdf1(full, cookie, msg_copy);
+    memcpy(expected, full, 16);
+
+    diff = 0;
+    for (int i = 0; i < 16; i++)
+        diff |= (int)(expected[i] ^ msg[mac2_offset + i]);
+    if (diff) {
+        kprintf("[WG] mac2 verification FAILED\n");
+        return -EBADMSG;
+    }
+    return 0;
+}
+
+/* Check if mac2 field is all zeros (no cookie presented).
+ * Returns 1 if all zeros, 0 otherwise. */
+static int wg_mac2_is_zero(const uint8_t *msg, uint16_t mac2_offset)
+{
+    for (int i = 0; i < 16; i++) {
+        if (msg[mac2_offset + i] != 0)
+            return 0;
+    }
+    return 1;
 }
 
 /* ── Implement: wireguard_encrypt ────────────────── */
@@ -1384,8 +1567,11 @@ int wireguard_send_handshake_init(uint32_t endpoint_ip, uint16_t endpoint_port)
         memcpy(msg + 116, mac1_full, 16);
     }
 
-    /* ── Step 12: mac2 (all zeros for first initiation) ──────────── */
-    /* msg[132..147] already zeroed by memset */
+    /* ── Step 12: mac2 (from stored cookie if available) ────────────── */
+    if (peer->has_cookie) {
+        wg_compute_mac2(msg + 132, peer->cookie_key, msg, 132);
+    }
+    /* else msg[132..147] stays zeroed from memset */
 
     /* ── Store handshake state for response matching ─────────────── */
     {
@@ -1409,6 +1595,8 @@ int wireguard_send_handshake_init(uint32_t endpoint_ip, uint16_t endpoint_port)
             g_wg_hs[hs_slot].peer_idx = peer_idx;
             g_wg_hs[hs_slot].active = 1;
             g_wg_hs[hs_slot].is_responder = 0;
+            g_wg_hs[hs_slot].cookie_challenge_sent = 0;
+            g_wg_hs[hs_slot].cookie_challenge_time = 0;
         } else {
             kprintf("[WG] Warning: no handshake slot available, overwriting oldest\n");
             g_wg_hs[0].sender_index = sender_index;
@@ -1422,6 +1610,8 @@ int wireguard_send_handshake_init(uint32_t endpoint_ip, uint16_t endpoint_port)
             g_wg_hs[0].peer_idx = peer_idx;
             g_wg_hs[0].active = 1;
             g_wg_hs[0].is_responder = 0;
+            g_wg_hs[0].cookie_challenge_sent = 0;
+            g_wg_hs[0].cookie_challenge_time = 0;
         }
     }
 
@@ -1450,6 +1640,97 @@ int wireguard_recv_handshake_init(const uint8_t *pkt, uint16_t len,
     const uint8_t *remote_eph = pkt + 8;     /* 32 bytes */
     const uint8_t *enc_static = pkt + 40;    /* 48 bytes */
     const uint8_t *enc_ts     = pkt + 88;    /* 28 bytes */
+    const uint8_t *mac1_rcvd  = pkt + 116;   /* 16 bytes */
+
+    /* ── Step A: Verify mac1 ───────────────────────────────────────── */
+    {
+        uint8_t zeros[32];
+        uint8_t mac1_label[40];
+        uint8_t mac1_key[32], mac1_full[32];
+        uint8_t diff;
+
+        memset(zeros, 0, 32);
+        memset(mac1_label, 0, sizeof(mac1_label));
+        memcpy(mac1_label, "mac1----", 8);
+        memcpy(mac1_label + 8, g_wg.public_key, 32);
+        wg_kdf1(mac1_key, zeros, mac1_label);
+        wg_kdf1(mac1_full, mac1_key, pkt);
+
+        diff = 0;
+        for (int i = 0; i < 16; i++)
+            diff |= mac1_full[i] ^ mac1_rcvd[i];
+        if (diff) {
+            kprintf("[WG] Init: mac1 verification FAILED from %u:%u\n",
+                    src_ip, (unsigned)src_port);
+            return -EBADMSG;
+        }
+    }
+
+    /* ── Step B: Rate limit check & cookie challenge ───────────────── */
+    {
+        int rl_ret;
+        uint8_t cookie_for_ip[WG_COOKIE_LEN];
+
+        /* Rotate cookie secret before checking */
+        wg_cookie_rotate_secret();
+
+        rl_ret = wg_rl_check(src_ip);
+        if (rl_ret < 0) {
+            /* Rate limit exceeded — issue cookie challenge */
+
+            /* Derive the cookie this IP should use */
+            wg_cookie_get(cookie_for_ip, src_ip);
+
+            /* Check mac2 — if peer has presented a valid cookie, allow */
+            if (!wg_mac2_is_zero(pkt, 132)) {
+                if (wg_verify_mac2(cookie_for_ip, pkt, 132) == 0) {
+                    /* Valid mac2 — allow handshake to proceed */
+                    kprintf("[WG] Init: rate limited but valid mac2 from %u:%u, allowing\n",
+                            src_ip, (unsigned)src_port);
+                } else {
+                    /* Invalid mac2 — drop */
+                    kprintf("[WG] Init: rate limited with INVALID mac2 from %u:%u\n",
+                            src_ip, (unsigned)src_port);
+                    return -EBADMSG;
+                }
+            } else {
+                /* No mac2 — send cookie reply, reject initiation */
+                kprintf("[WG] Init: rate limited from %u:%u, sending cookie challenge\n",
+                        src_ip, (unsigned)src_port);
+
+                wireguard_send_cookie(src_ip, src_port,
+                                      cookie_for_ip, WG_COOKIE_LEN);
+
+                /* Store cookie challenge in handshake state tracking */
+                {
+                    int hs_slot = -1;
+                    for (int i = 0; i < WG_MAX_HANDSHAKES; i++) {
+                        if (!g_wg_hs[i].active) {
+                            hs_slot = i;
+                            break;
+                        }
+                    }
+                    if (hs_slot >= 0) {
+                        g_wg_hs[hs_slot].sender_index = sender_index;
+                        g_wg_hs[hs_slot].receiver_index = 0;
+                        memset(g_wg_hs[hs_slot].eph_private, 0, 32);
+                        memset(g_wg_hs[hs_slot].eph_public, 0, 32);
+                        memset(g_wg_hs[hs_slot].remote_static, 0, 32);
+                        memset(g_wg_hs[hs_slot].remote_eph, 0, 32);
+                        memset(g_wg_hs[hs_slot].chaining_key, 0, 32);
+                        memset(g_wg_hs[hs_slot].hash, 0, 32);
+                        g_wg_hs[hs_slot].peer_idx = -1;
+                        g_wg_hs[hs_slot].active = 1;
+                        g_wg_hs[hs_slot].is_responder = 1;
+                        g_wg_hs[hs_slot].cookie_challenge_sent = 1;
+                        g_wg_hs[hs_slot].cookie_challenge_time = timer_get_ticks();
+                    }
+                }
+
+                return -EBUSY;  /* Tell caller to retry with cookie */
+            }
+        }
+    }
 
     /* Initialize Noise state */
     uint8_t chaining_key[32], hash[32], zeros[32];
@@ -1563,6 +1844,8 @@ int wireguard_recv_handshake_init(const uint8_t *pkt, uint16_t len,
         g_wg_hs[hs_slot].peer_idx = peer_idx;
         g_wg_hs[hs_slot].active = 1;
         g_wg_hs[hs_slot].is_responder = 1;
+        g_wg_hs[hs_slot].cookie_challenge_sent = 0;
+        g_wg_hs[hs_slot].cookie_challenge_time = 0;
     }
 
     kprintf("[WG] Handshake init received from %u:%u (sender_idx=%u)\n",
@@ -1676,7 +1959,14 @@ int wireguard_send_handshake_response(uint32_t endpoint_ip, uint16_t endpoint_po
         memcpy(msg + 60, mac1_full, 16);
     }
 
-    /* Step 9: mac2 (all zeros for now) — msg[76..91] is already zeroed */
+    /* Step 9: mac2 (from stored cookie if available) — msg[76..91] */
+    {
+        int pidx = hs->peer_idx;
+        if (pidx >= 0 && pidx < g_wg.num_peers && g_wg.peers[pidx].active &&
+            g_wg.peers[pidx].has_cookie) {
+            wg_compute_mac2(msg + 76, g_wg.peers[pidx].cookie_key, msg, 76);
+        }
+    }
 
     /* Step 10: Update handshake state with ephemeral keys and new ck/hash */
     memcpy(hs->eph_private, eph_priv, 32);
@@ -1830,6 +2120,14 @@ int wireguard_recv_handshake_response(const uint8_t *pkt, uint16_t len,
 int wireguard_send_cookie(uint32_t endpoint_ip, uint16_t endpoint_port,
                            const uint8_t *cookie, uint16_t cookie_len)
 {
+    uint8_t zeros[32];
+    uint8_t key_label[40];
+    uint8_t enc_key[32];
+    uint8_t nonce[12];
+    uint8_t mac1_label[40];
+    uint8_t mac1_key[32], mac1_full[32];
+    uint8_t *msg;
+
     if (!wg_initialized) {
         kprintf("[wireguard] wireguard_send_cookie: not initialized\n");
         return -ENOSYS;
@@ -1844,15 +2142,82 @@ int wireguard_send_cookie(uint32_t endpoint_ip, uint16_t endpoint_port,
                 (const void *)cookie, (unsigned)cookie_len);
         return -EINVAL;
     }
-    kprintf("[wireguard] wireguard_send_cookie: %u bytes to %u:%u (stub)\n",
-            (unsigned)cookie_len, endpoint_ip, (unsigned)endpoint_port);
-    return -EOPNOTSUPP;
+
+    /* Rotate secret if needed */
+    wg_cookie_rotate_secret();
+
+    msg = (uint8_t *)kmalloc(WG_COOKIE_REPLY_LEN);
+    if (!msg)
+        return -ENOMEM;
+    memset(msg, 0, WG_COOKIE_REPLY_LEN);
+
+    /* Message type and reserved */
+    msg[0] = WG_MSG_COOKIE_REPLY;
+
+    /* receiver_index — look up from handshake state matching endpoint */
+    {
+        uint32_t rx_idx = 0;
+        for (int i = 0; i < WG_MAX_HANDSHAKES; i++) {
+            if (g_wg_hs[i].active) {
+                int pidx = g_wg_hs[i].peer_idx;
+                if (pidx >= 0 && pidx < g_wg.num_peers &&
+                    g_wg.peers[pidx].active &&
+                    g_wg.peers[pidx].endpoint_ip == endpoint_ip &&
+                    g_wg.peers[pidx].endpoint_port == endpoint_port) {
+                    rx_idx = g_wg_hs[i].sender_index;
+                    break;
+                }
+            }
+        }
+        *(uint32_t *)(msg + 4) = rx_idx;
+    }
+
+    /* Generate random nonce (24 bytes; we use first 12 for ChaCha20) */
+    for (int i = 0; i < WG_COOKIE_NONCE_LEN; i++)
+        msg[8 + i] = (uint8_t)(rng_get_u64() & 0xFF);
+
+    /* Derive encryption key: KDF1(zeros, "cookie--" || our_public_key) */
+    memset(zeros, 0, 32);
+    memset(key_label, 0, sizeof(key_label));
+    memcpy(key_label, "cookie--", 8);
+    memcpy(key_label + 8, g_wg.public_key, 32);
+    wg_kdf1(enc_key, zeros, key_label);
+
+    /* Encrypt cookie: nonce uses first 12 bytes of the 24-byte field */
+    memcpy(nonce, msg + 8, 12);
+    chacha20poly1305_encrypt(msg + 32, cookie, cookie_len,
+                              msg, 32, enc_key, nonce);
+
+    /* Compute mac1 over the entire message up to (but not including) mac1.
+     * mac1_key = KDF1(zeros, "mac1----" || our_public_key) */
+    memset(mac1_label, 0, sizeof(mac1_label));
+    memcpy(mac1_label, "mac1----", 8);
+    memcpy(mac1_label + 8, g_wg.public_key, 32);
+    wg_kdf1(mac1_key, zeros, mac1_label);
+    wg_kdf1(mac1_full, mac1_key, msg);
+    memcpy(msg + 64, mac1_full, 16);
+
+    kprintf("[WG] Sending cookie reply to %u:%u (%u bytes cookie)\n",
+            endpoint_ip, (unsigned)endpoint_port, (unsigned)cookie_len);
+
+    kfree(msg);
+    return WG_COOKIE_REPLY_LEN;
 }
 
 /* ── Implement: wireguard_recv_cookie ────────────────── */
 int wireguard_recv_cookie(const uint8_t *pkt, uint16_t len,
                            uint8_t *cookie_out, uint16_t *cookie_len)
 {
+    uint8_t zeros[32];
+    uint8_t key_label[40];
+    uint8_t enc_key[32];
+    uint8_t nonce[12];
+    uint8_t mac1_label[40];
+    uint8_t mac1_key[32], mac1_full[32];
+    int diff;
+    int ret;
+    uint8_t raw_cookie[16];
+
     if (!wg_initialized) {
         kprintf("[wireguard] wireguard_recv_cookie: not initialized\n");
         return -ENOSYS;
@@ -1861,13 +2226,98 @@ int wireguard_recv_cookie(const uint8_t *pkt, uint16_t len,
         kprintf("[wireguard] wireguard_recv_cookie: invalid parameter (NULL pointer)\n");
         return -EINVAL;
     }
-    if (len < 16) {
+    if (len < WG_COOKIE_REPLY_LEN) {
         kprintf("[wireguard] wireguard_recv_cookie: packet too short (%u bytes)\n",
                 (unsigned)len);
         return -EINVAL;
     }
-    kprintf("[wireguard] wireguard_recv_cookie: %u bytes (stub)\n", (unsigned)len);
-    return -EOPNOTSUPP;
+    if (pkt[0] != WG_MSG_COOKIE_REPLY) {
+        kprintf("[wireguard] wireguard_recv_cookie: bad message type %u\n",
+                (unsigned)pkt[0]);
+        return -EINVAL;
+    }
+
+    /* Verify mac1:
+     * mac1_key = KDF1(zeros, "mac1----" || our_public_key)
+     * mac1 covers msg[0..63] */
+    memset(zeros, 0, 32);
+    memset(mac1_label, 0, sizeof(mac1_label));
+    memcpy(mac1_label, "mac1----", 8);
+    memcpy(mac1_label + 8, g_wg.public_key, 32);
+    wg_kdf1(mac1_key, zeros, mac1_label);
+    wg_kdf1(mac1_full, mac1_key, pkt);
+
+    diff = 0;
+    for (int i = 0; i < 16; i++)
+        diff |= (int)(mac1_full[i] ^ pkt[64 + i]);
+    if (diff) {
+        kprintf("[wireguard] wireguard_recv_cookie: mac1 verification FAILED\n");
+        return -EBADMSG;
+    }
+
+    /* Derive decryption key (same as encryption key) */
+    memset(key_label, 0, sizeof(key_label));
+    memcpy(key_label, "cookie--", 8);
+    memcpy(key_label + 8, g_wg.public_key, 32);
+    wg_kdf1(enc_key, zeros, key_label);
+
+    /* Decrypt cookie: nonce is first 12 bytes of the 24-byte field */
+    memcpy(nonce, pkt + 8, 12);
+    ret = chacha20poly1305_decrypt(raw_cookie, pkt + 32, WG_COOKIE_REPLY_LEN - 64,
+                                    pkt, 32, enc_key, nonce);
+    if (ret < 0) {
+        kprintf("[wireguard] wireguard_recv_cookie: decryption FAILED\n");
+        return -EBADMSG;
+    }
+
+    /* Return length of decrypted cookie (wire value is 16 bytes) */
+    *cookie_len = WG_COOKIE_LEN;
+    if (cookie_out)
+        memcpy(cookie_out, raw_cookie, WG_COOKIE_LEN);
+
+    /* ── Store expanded cookie key in the matching peer ──────────── */
+    {
+        uint32_t receiver_index;
+
+        receiver_index = (uint32_t)pkt[4] | ((uint32_t)pkt[5] << 8) |
+                         ((uint32_t)pkt[6] << 16) | ((uint32_t)pkt[7] << 24);
+
+        /* Find the handshake state by receiver_index (our sender_index from init) */
+        for (int i = 0; i < WG_MAX_HANDSHAKES; i++) {
+            if (g_wg_hs[i].active) {
+                uint32_t our_idx;
+                if (g_wg_hs[i].is_responder) {
+                    our_idx = g_wg_hs[i].sender_index;
+                } else {
+                    our_idx = g_wg_hs[i].sender_index;
+                }
+
+                /* The cookie reply's receiver_index should match our sender_index */
+                if (our_idx == receiver_index) {
+                    int pidx = g_wg_hs[i].peer_idx;
+
+                    if (pidx >= 0 && pidx < g_wg.num_peers &&
+                        g_wg.peers[pidx].active) {
+                        /* Expand 16-byte wire cookie to 32-byte KDF key:
+                         * use raw_cookie as first 16 bytes, zero-pad the rest */
+                        memset(g_wg.peers[pidx].cookie_key, 0, 32);
+                        memcpy(g_wg.peers[pidx].cookie_key, raw_cookie, WG_COOKIE_LEN);
+                        g_wg.peers[pidx].has_cookie = 1;
+
+                        kprintf("[WG] Cookie stored for peer %d (%u:%u)\n",
+                                pidx,
+                                (unsigned)g_wg.peers[pidx].endpoint_ip,
+                                (unsigned)g_wg.peers[pidx].endpoint_port);
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    kprintf("[WG] Received cookie reply (receiver_idx=%u)\n",
+            *(uint32_t *)(pkt + 4));
+    return 0;
 }
 
 /* ── Implement: wireguard_ratelimit ────────────────── */
@@ -1881,9 +2331,12 @@ int wireguard_ratelimit(uint32_t src_ip)
         kprintf("[wireguard] wireguard_ratelimit: invalid source IP\n");
         return -EINVAL;
     }
-    kprintf("[wireguard] wireguard_ratelimit: src_ip=0x%08x (stub — allowing)\n", src_ip);
-    /* Ratelimit stub: always allow */
-    return 0;
+
+    /* Rotate cookie secret if needed */
+    wg_cookie_rotate_secret();
+
+    /* Delegate to the internal rate-limit check */
+    return wg_rl_check(src_ip);
 }
 
 /* ── Implement: wireguard_expire ────────────────── */
