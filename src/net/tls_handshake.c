@@ -536,7 +536,6 @@ int tls_handshake_step(struct tls_conn *conn, enum tls_hs_state *new_state,
 		{
 			uint16_t cipher_choices[64];
 			int num_choices;
-			int i;
 			uint16_t selected;
 			uint8_t srv_body[512];
 			int srv_body_len;
@@ -570,17 +569,18 @@ int tls_handshake_step(struct tls_conn *conn, enum tls_hs_state *new_state,
 			if (ret < 0)
 				goto error;
 
-			/* Pick the first supported cipher
-			 * (prefer TLS 1.3 suites) */
-			selected = cipher_choices[0];
-			for (i = 0; i < num_choices; i++) {
-				uint16_t cs = cipher_choices[i];
-				if (cs == TLS_AES_128_GCM_SHA256 ||
-				    cs == TLS_CHACHA20_POLY1305_SHA256) {
-					selected = cs;
-					break;
-				}
+			/* Negotiate cipher suite using server preference order */
+			ret = tls_negotiate_cipher_suite(
+				cipher_choices, num_choices, NULL, 0);
+			if (ret < 0) {
+				kprintf("[tls] server: no mutually supported "
+				        "cipher suite\n");
+				goto error;
 			}
+			selected = (uint16_t)ret;
+
+			kprintf("[tls] server: negotiated cipher suite "
+			        "0x%04x with client\n", selected);
 
 			/* Build ServerHello */
 			srv_body_len = tls_build_server_hello(
@@ -636,3 +636,195 @@ EXPORT_SYMBOL(tls_parse_client_hello);
 EXPORT_SYMBOL(tls_build_server_hello);
 EXPORT_SYMBOL(tls_parse_server_hello);
 EXPORT_SYMBOL(tls_handshake_step);
+
+/* ── Cipher Suite Info Table (TLS 1.2 / 1.3) ────────────────────────── */
+
+static const struct tls_cipher_suite_info tls_cipher_suites[] = {
+	/* TLS 1.3 cipher suites — AEAD only */
+	{
+		.cipher_suite  = TLS_AES_128_GCM_SHA256,
+		.kx_algo       = TLS_KX_ECDHE,
+		.auth_algo     = TLS_AUTH_RSA,
+		.enc_algo      = TLS_ENC_AES_128_GCM,
+		.mac_algo      = TLS_MAC_AEAD,
+		.enc_key_len   = 16,
+		.fixed_iv_len  = 4,
+		.tag_len       = 16,
+		.is_aead       = 1,
+	},
+	{
+		.cipher_suite  = TLS_AES_256_GCM_SHA384,
+		.kx_algo       = TLS_KX_ECDHE,
+		.auth_algo     = TLS_AUTH_RSA,
+		.enc_algo      = TLS_ENC_AES_256_GCM,
+		.mac_algo      = TLS_MAC_AEAD,
+		.enc_key_len   = 32,
+		.fixed_iv_len  = 4,
+		.tag_len       = 16,
+		.is_aead       = 1,
+	},
+	{
+		.cipher_suite  = TLS_CHACHA20_POLY1305_SHA256,
+		.kx_algo       = TLS_KX_ECDHE,
+		.auth_algo     = TLS_AUTH_RSA,
+		.enc_algo      = TLS_ENC_CHACHA20_POLY1305,
+		.mac_algo      = TLS_MAC_AEAD,
+		.enc_key_len   = 32,
+		.fixed_iv_len  = 4,
+		.tag_len       = 16,
+		.is_aead       = 1,
+	},
+	/* TLS 1.2 AEAD cipher suites */
+	{
+		.cipher_suite  = TLS_ECDHE_ECDSA_WITH_AES_128_GCM,
+		.kx_algo       = TLS_KX_ECDHE,
+		.auth_algo     = TLS_AUTH_ECDSA,
+		.enc_algo      = TLS_ENC_AES_128_GCM,
+		.mac_algo      = TLS_MAC_AEAD,
+		.enc_key_len   = 16,
+		.fixed_iv_len  = 4,
+		.tag_len       = 16,
+		.is_aead       = 1,
+	},
+	{
+		.cipher_suite  = TLS_ECDHE_RSA_WITH_AES_128_GCM,
+		.kx_algo       = TLS_KX_ECDHE,
+		.auth_algo     = TLS_AUTH_RSA,
+		.enc_algo      = TLS_ENC_AES_128_GCM,
+		.mac_algo      = TLS_MAC_AEAD,
+		.enc_key_len   = 16,
+		.fixed_iv_len  = 4,
+		.tag_len       = 16,
+		.is_aead       = 1,
+	},
+	{
+		.cipher_suite  = TLS_ECDHE_RSA_WITH_CHACHA20,
+		.kx_algo       = TLS_KX_ECDHE,
+		.auth_algo     = TLS_AUTH_RSA,
+		.enc_algo      = TLS_ENC_CHACHA20_POLY1305,
+		.mac_algo      = TLS_MAC_AEAD,
+		.enc_key_len   = 32,
+		.fixed_iv_len  = 4,
+		.tag_len       = 16,
+		.is_aead       = 1,
+	},
+	{
+		.cipher_suite  = TLS_DHE_RSA_WITH_AES_128_GCM,
+		.kx_algo       = TLS_KX_DHE,
+		.auth_algo     = TLS_AUTH_RSA,
+		.enc_algo      = TLS_ENC_AES_128_GCM,
+		.mac_algo      = TLS_MAC_AEAD,
+		.enc_key_len   = 16,
+		.fixed_iv_len  = 4,
+		.tag_len       = 16,
+		.is_aead       = 1,
+	},
+	/* TLS 1.2 CBC-HMAC cipher suites */
+	{
+		.cipher_suite  = TLS_RSA_WITH_AES_128_CBC_SHA,
+		.kx_algo       = TLS_KX_RSA,
+		.auth_algo     = TLS_AUTH_RSA,
+		.enc_algo      = TLS_ENC_AES_128_CBC,
+		.mac_algo      = TLS_MAC_SHA,
+		.enc_key_len   = 16,
+		.fixed_iv_len  = 16,
+		.tag_len       = 20,   /* SHA-1 HMAC length */
+		.is_aead       = 0,
+	},
+	{
+		.cipher_suite  = TLS_RSA_WITH_AES_256_CBC_SHA,
+		.kx_algo       = TLS_KX_RSA,
+		.auth_algo     = TLS_AUTH_RSA,
+		.enc_algo      = TLS_ENC_AES_256_CBC,
+		.mac_algo      = TLS_MAC_SHA,
+		.enc_key_len   = 32,
+		.fixed_iv_len  = 16,
+		.tag_len       = 20,
+		.is_aead       = 0,
+	},
+};
+
+#define NUM_CIPHER_SUITES  \
+	((int)(sizeof(tls_cipher_suites) / sizeof(tls_cipher_suites[0])))
+
+/* ── Cipher Suite Lookup ──────────────────────────────────────────────── */
+
+const struct tls_cipher_suite_info *
+tls_cipher_suite_lookup(uint16_t cipher_suite)
+{
+	for (int i = 0; i < NUM_CIPHER_SUITES; i++) {
+		if (tls_cipher_suites[i].cipher_suite == cipher_suite)
+			return &tls_cipher_suites[i];
+	}
+	return NULL;
+}
+EXPORT_SYMBOL(tls_cipher_suite_lookup);
+
+/* ── Server Preference Table ─────────────────────────────────────────────
+ *
+ * Priority-ordered list of cipher suites the server is willing to
+ * negotiate.  Ordered from most preferred to least preferred.
+ * Forward-secrecy + AEAD suites are ranked highest.
+ */
+
+const uint16_t tls_default_server_prefs[] = {
+	/* TLS 1.3 (highest security) */
+	TLS_AES_128_GCM_SHA256,
+	TLS_AES_256_GCM_SHA384,
+	TLS_CHACHA20_POLY1305_SHA256,
+	/* TLS 1.2 ECDHE + AEAD (forward secrecy) */
+	TLS_ECDHE_ECDSA_WITH_AES_128_GCM,
+	TLS_ECDHE_RSA_WITH_AES_128_GCM,
+	TLS_ECDHE_RSA_WITH_CHACHA20,
+	/* TLS 1.2 DHE + AEAD (forward secrecy, no ECC) */
+	TLS_DHE_RSA_WITH_AES_128_GCM,
+	/* TLS 1.2 RSA + CBC-HMAC (no forward secrecy) */
+	TLS_RSA_WITH_AES_128_CBC_SHA,
+	TLS_RSA_WITH_AES_256_CBC_SHA,
+};
+
+const int tls_default_server_prefs_count =
+	(int)(sizeof(tls_default_server_prefs) / sizeof(tls_default_server_prefs[0]));
+
+/* ── Cipher Suite Negotiation ────────────────────────────────────────────
+ *
+ * tls_negotiate_cipher_suite — Find the best mutually-supported suite.
+ *
+ * Iterates through the server's preference order and returns the first
+ * cipher suite that appears in the client's offered list.  If no match
+ * is found, returns -ENOENT.
+ *
+ * Returns the selected cipher suite (positive uint16_t) on success,
+ * or negative errno on failure.
+ */
+int tls_negotiate_cipher_suite(const uint16_t *client_suites, int num_client,
+                               const uint16_t *server_prefs, int num_server)
+{
+	const uint16_t *prefs;
+	int             num_prefs;
+	int             i, j;
+
+	if (!client_suites || num_client <= 0)
+		return -EINVAL;
+
+	/* Use default server preferences if none supplied */
+	if (server_prefs && num_server > 0) {
+		prefs     = server_prefs;
+		num_prefs = num_server;
+	} else {
+		prefs     = tls_default_server_prefs;
+		num_prefs = tls_default_server_prefs_count;
+	}
+
+	for (i = 0; i < num_prefs; i++) {
+		uint16_t server_cs = prefs[i];
+
+		for (j = 0; j < num_client; j++) {
+			if (client_suites[j] == server_cs)
+				return (int)server_cs;
+		}
+	}
+
+	return -ENOENT;
+}
+EXPORT_SYMBOL(tls_negotiate_cipher_suite);

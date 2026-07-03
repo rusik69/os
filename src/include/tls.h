@@ -263,4 +263,82 @@ int tls_record_decrypt(struct tls_cipher_state *cs,
                        const uint8_t *cipher, int cipher_len,
                        uint8_t *data, int data_cap);
 
+/* ── Cipher Suite Negotiation (TLS 1.2) ───────────────────────────────── */
+
+/* Key exchange algorithm identifiers */
+enum tls_kx_algorithm {
+	TLS_KX_NONE    = 0,
+	TLS_KX_RSA     = 1,   /* RSA key transport (RFC 5246 §7.4.7.1) */
+	TLS_KX_DHE     = 2,   /* Ephemeral Diffie-Hellman (RFC 5246 §7.4.7.2) */
+	TLS_KX_ECDHE   = 3,   /* Ephemeral ECDH   (RFC 4492 §5.4) */
+};
+
+/* Authentication algorithm identifiers */
+enum tls_auth_algorithm {
+	TLS_AUTH_NONE  = 0,
+	TLS_AUTH_RSA   = 1,
+	TLS_AUTH_DSS   = 2,
+	TLS_AUTH_ECDSA = 3,
+	TLS_AUTH_PSK   = 4,
+};
+
+/* Encryption algorithm identifiers */
+enum tls_enc_algorithm {
+	TLS_ENC_NONE           = 0,
+	TLS_ENC_NULL           = 1,
+	TLS_ENC_AES_128_CBC    = 2,
+	TLS_ENC_AES_256_CBC    = 3,
+	TLS_ENC_AES_128_GCM    = 4,
+	TLS_ENC_AES_256_GCM    = 5,
+	TLS_ENC_CHACHA20_POLY1305 = 6,
+};
+
+/* MAC / PRF algorithm identifiers */
+enum tls_mac_algorithm {
+	TLS_MAC_NULL   = 0,
+	TLS_MAC_SHA    = 1,   /* HMAC-SHA1   (RFC 5246) */
+	TLS_MAC_SHA256 = 2,   /* HMAC-SHA256 (RFC 5246) */
+	TLS_MAC_SHA384 = 3,   /* HMAC-SHA384 (RFC 5246) */
+	TLS_MAC_AEAD   = 4,   /* AEAD — no separate MAC (RFC 5288) */
+};
+
+/* Cipher suite descriptor */
+struct tls_cipher_suite_info {
+	uint16_t        cipher_suite;      /* IANA code point */
+	enum tls_kx_algorithm   kx_algo;       /* key exchange */
+	enum tls_auth_algorithm auth_algo;      /* authentication */
+	enum tls_enc_algorithm  enc_algo;       /* encryption */
+	enum tls_mac_algorithm  mac_algo;       /* MAC / PRF */
+	int             enc_key_len;     /* symmetric key size (bytes) */
+	int             fixed_iv_len;    /* implicit IV / nonce size */
+	int             tag_len;         /* AEAD auth tag (0 for non-AEAD) */
+	int             is_aead;         /* 1 = AEAD cipher, 0 = CBC+HMAC */
+};
+
+/* ── Negotiation API ──────────────────────────────────────────────────── */
+
+/* Look up cipher suite info by IANA code point.
+ * Returns a pointer to the info struct, or NULL if unknown. */
+const struct tls_cipher_suite_info *
+tls_cipher_suite_lookup(uint16_t cipher_suite);
+
+/* Negotiate a cipher suite between client-offered and server-preferred sets.
+ *
+ * 'client_suites' — cipher suites offered by the client (from ClientHello).
+ * 'num_client'    — number of entries in client_suites.
+ * 'server_prefs'  — server's preference list (NULL = use default).
+ * 'num_server'    — number of entries in server_prefs (0 = use default).
+ *
+ * Returns the cipher suite code point on success, or negative errno
+ * if no mutually-supported suite is found (-ENOENT) or on invalid args. */
+int tls_negotiate_cipher_suite(const uint16_t *client_suites, int num_client,
+                               const uint16_t *server_prefs, int num_server);
+
+/* ── Server Preference Table (default priority-ordered list) ────────── */
+
+/* Default TLS 1.2 server cipher suite preference order.
+ * Highest security / forward secrecy first. */
+extern const uint16_t tls_default_server_prefs[];
+extern const int      tls_default_server_prefs_count;
+
 #endif /* TLS_H */
