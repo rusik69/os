@@ -823,13 +823,26 @@ static void send_ipv6_fragment(const struct in6_addr *dst,
  */
 void send_ipv6_fragmented(const struct in6_addr *dst, uint8_t next_hdr,
                            const void *payload, uint16_t len,
-                           uint32_t identification)
+                           uint32_t identification, uint16_t effective_mtu)
 {
-    struct ipv6_addr_entry *src_entry;
-    struct in6_addr src_addr;
-    uint16_t off = 0;
-    uint8_t frag_next_hdr;
-    int frag_num = 0;
+	struct ipv6_addr_entry *src_entry;
+	struct in6_addr src_addr;
+	uint16_t off = 0;
+	uint8_t frag_next_hdr;
+	int frag_num = 0;
+
+	/* Compute per-fragment data size based on effective MTU.
+	 * Each fragment: IPv6 header (40) + Fragment Header (8) + data.
+	 * The data size is rounded down to a multiple of 8 per RFC 8200. */
+	uint16_t frag_data;
+	if (effective_mtu >= sizeof(struct ipv6_header) +
+	                       sizeof(struct ipv6_fragment) + 8) {
+		frag_data = (uint16_t)(((effective_mtu -
+			sizeof(struct ipv6_header) -
+			sizeof(struct ipv6_fragment)) / 8) * 8);
+	} else {
+		frag_data = IPV6_FRAG_DATA; /* fallback */
+	}
 
     /* Select source address */
     src_entry = ipv6_addr_select_source(dst);
@@ -839,33 +852,33 @@ void send_ipv6_fragmented(const struct in6_addr *dst, uint8_t next_hdr,
         memcpy(&src_addr, &net_our_ipv6_ll, sizeof(struct in6_addr));
     }
 
-    while (off < len) {
-        uint16_t chunk = len - off;
-        int more = 1;
+	while (off < len) {
+		uint16_t chunk = len - off;
+		int more = 1;
 
-        if (chunk > IPV6_FRAG_DATA) {
-            chunk = IPV6_FRAG_DATA;
-            more = 1;
-        } else {
-            more = 0;  /* last fragment */
-        }
+		if (chunk > frag_data) {
+			chunk = frag_data;
+			more = 1;
+		} else {
+			more = 0;  /* last fragment */
+		}
 
-        /* First fragment carries the upper-layer protocol in next_header;
-         * subsequent fragments use IPV6_NEXTHDR_NONE (or the upper-layer
-         * protocol — RFC 8200 allows either but says the receiver should
-         * use the first fragment's next_header).  We follow the common
-         * practice: all fragments after the first use NONE. */
-        frag_next_hdr = (off == 0) ? next_hdr : IPV6_NEXTHDR_NONE;
-        (void)frag_num;
+		/* First fragment carries the upper-layer protocol in next_header;
+		 * subsequent fragments use IPV6_NEXTHDR_NONE (or the upper-layer
+		 * protocol — RFC 8200 allows either but says the receiver should
+		 * use the first fragment's next_header).  We follow the common
+		 * practice: all fragments after the first use NONE. */
+		frag_next_hdr = (off == 0) ? next_hdr : IPV6_NEXTHDR_NONE;
+		(void)frag_num;
 
-        send_ipv6_fragment(dst, &src_addr,
-                            frag_next_hdr,
-                            (const uint8_t *)payload + off, chunk,
-                            off / 8, more, identification);
+		send_ipv6_fragment(dst, &src_addr,
+		                    frag_next_hdr,
+		                    (const uint8_t *)payload + off, chunk,
+		                    off / 8, more, identification);
 
-        off = (uint16_t)(off + chunk);
-        frag_num++;
-    }
+		off = (uint16_t)(off + chunk);
+		frag_num++;
+	}
 }
 
 /* Send an atomic fragment: a packet with a Fragment Header but
@@ -898,46 +911,52 @@ void send_ipv6_atomic(const struct in6_addr *dst, uint8_t next_hdr,
 void send_ipv6(const struct in6_addr *dst, uint8_t next_hdr,
                 const void *payload, uint16_t len)
 {
-    uint8_t buf[2048];
-    struct ipv6_header *ip6 = (struct ipv6_header *)buf;
-    struct ipv6_addr_entry *src_entry;
+	uint8_t buf[2048];
+	struct ipv6_header *ip6 = (struct ipv6_header *)buf;
+	struct ipv6_addr_entry *src_entry;
 
-    /* Fragment if payload exceeds the link MTU for IPv6 */
-    if (len > IPV6_MAX_PAYLOAD) {
-        uint32_t id = __sync_fetch_and_add(&ipv6_frag_id_counter, 1);
-        kprintf("[ipv6] fragmenting: payload %u bytes > MTU %d, id=%u\n",
-                len, IPV6_MAX_PAYLOAD, id);
-        send_ipv6_fragmented(dst, next_hdr, payload, len, id);
-        return;
-    }
+	/* Determine effective MTU for this destination using PMTU cache */
+	uint16_t effective_mtu = IPV6_DEFAULT_LINK_MTU;
+	uint16_t cached_pmtu = ipv6_pmtu_lookup(dst);
+	if (cached_pmtu > 0 && cached_pmtu < effective_mtu)
+		effective_mtu = cached_pmtu;
 
-    /* Build IPv6 header */
-    /* Version=6, Traffic Class=0, Flow Label=0 */
-    ip6->vcl_flow = htonl(0x60000000U);
-    ip6->payload_length = htons(len);
-    ip6->next_header = next_hdr;
-    ip6->hop_limit = 64;  /* default hop limit */
+	/* Fragment if payload exceeds the effective path MTU */
+	if (len > effective_mtu) {
+		uint32_t id = __sync_fetch_and_add(&ipv6_frag_id_counter, 1);
+		kprintf("[ipv6] fragmenting: payload %u bytes > mtu %u, id=%u\n",
+		        len, effective_mtu, id);
+		send_ipv6_fragmented(dst, next_hdr, payload, len, id, effective_mtu);
+		return;
+	}
 
-    /* Select source address based on destination */
-    src_entry = ipv6_addr_select_source(dst);
-    if (src_entry) {
-        memcpy(&ip6->src_ip, &src_entry->addr, sizeof(struct in6_addr));
-    } else {
-        /* Fallback: use link-local */
-        memcpy(&ip6->src_ip, &net_our_ipv6_ll, sizeof(struct in6_addr));
-    }
-    memcpy(&ip6->dst_ip, dst, sizeof(struct in6_addr));
+	/* Build IPv6 header */
+	/* Version=6, Traffic Class=0, Flow Label=0 */
+	ip6->vcl_flow = htonl(0x60000000U);
+	ip6->payload_length = htons(len);
+	ip6->next_header = next_hdr;
+	ip6->hop_limit = 64;  /* default hop limit */
 
-    /* Copy payload after header */
-    if (len > 0)
-        memcpy(buf + sizeof(struct ipv6_header), payload, len);
+	/* Select source address based on destination */
+	src_entry = ipv6_addr_select_source(dst);
+	if (src_entry) {
+		memcpy(&ip6->src_ip, &src_entry->addr, sizeof(struct in6_addr));
+	} else {
+		/* Fallback: use link-local */
+		memcpy(&ip6->src_ip, &net_our_ipv6_ll, sizeof(struct in6_addr));
+	}
+	memcpy(&ip6->dst_ip, dst, sizeof(struct in6_addr));
 
-    uint16_t total = sizeof(struct ipv6_header) + len;
+	/* Copy payload after header */
+	if (len > 0)
+		memcpy(buf + sizeof(struct ipv6_header), payload, len);
 
-    /* Resolve destination MAC and send */
-    uint8_t dst_mac[6];
-    ipv6_resolve_dst_mac(dst, dst_mac);
-    send_eth_ipv6(dst_mac, buf, total);
+	uint16_t total = sizeof(struct ipv6_header) + len;
+
+	/* Resolve destination MAC and send */
+	uint8_t dst_mac[6];
+	ipv6_resolve_dst_mac(dst, dst_mac);
+	send_eth_ipv6(dst_mac, buf, total);
 }
 
 /* ── ICMPv6 Echo (ping6) ─────────────────────────────────────────── */
@@ -980,32 +999,72 @@ void ipv6_send_rs(void)
 void handle_icmpv6(struct ipv6_header *ip6, const uint8_t *payload,
                     uint16_t len)
 {
-    if (len < sizeof(struct icmpv6_header)) return;
+	if (len < sizeof(struct icmpv6_header)) return;
 
-    const struct icmpv6_header *icmp = (const struct icmpv6_header *)payload;
+	const struct icmpv6_header *icmp = (const struct icmpv6_header *)payload;
 
-    switch (icmp->type) {
-    case 128: /* Echo Request */
-        handle_icmpv6_echo_request(ip6, payload, len);
-        break;
-    case 129: /* Echo Reply */
-        handle_icmpv6_echo_reply();
-        break;
-    case ICMPV6_NS: /* Neighbor Solicitation */
-        ipv6_nd_handle_ns(ip6, payload, len);
-        break;
-    case ICMPV6_NA: /* Neighbor Advertisement */
-        ipv6_nd_handle_na(ip6, payload, len);
-        break;
-    case ICMPV6_RS: /* Router Solicitation */
-        ipv6_nd_handle_rs(ip6, payload, len);
-        break;
-    case ICMPV6_RA: /* Router Advertisement */
-        ipv6_nd_handle_ra(ip6, payload, len);
-        break;
-    default:
-        break;
-    }
+	switch (icmp->type) {
+	case 128: /* Echo Request */
+		handle_icmpv6_echo_request(ip6, payload, len);
+		break;
+	case 129: /* Echo Reply */
+		handle_icmpv6_echo_reply();
+		break;
+	case ICMPV6_PACKET_TOO_BIG: /* 2 — Packet Too Big (RFC 4443 §3.2) */
+	{
+		/*
+		 * ICMPv6 Packet Too Big body:
+		 *   struct icmpv6_header (4 bytes)
+		 *   uint32_t mtu          (4 bytes)
+		 *   uint8_t  offending[]  (portion of original packet)
+		 *
+		 * We extract the MTU and update the PMTU cache for the
+		 * original packet's destination.
+		 */
+		if (len < sizeof(struct icmpv6_header) + sizeof(uint32_t))
+			break;
+
+		const uint32_t *mtu_field = (const uint32_t *)(payload +
+			sizeof(struct icmpv6_header));
+		uint32_t mtu = ntohl(*mtu_field);
+
+		/* Clamp to valid IPv6 MTU range */
+		if (mtu < IPV6_MIN_MTU)
+			mtu = IPV6_MIN_MTU;
+		if (mtu > IPV6_DEFAULT_LINK_MTU)
+			mtu = IPV6_DEFAULT_LINK_MTU;
+
+		kprintf("[ipv6] ICMPv6 Packet Too Big: MTU=%u\n", mtu);
+
+		/*
+		 * Update PMTU cache for the destination of the offending
+		 * packet.  The offending IPv6 header is embedded in the
+		 * ICMPv6 payload after the MTU field.
+		 */
+		uint16_t data_off = (uint16_t)(sizeof(struct icmpv6_header) +
+		                                sizeof(uint32_t));
+		if (len >= data_off + (uint16_t)sizeof(struct ipv6_header)) {
+			const struct ipv6_header *offending =
+				(const struct ipv6_header *)(payload + data_off);
+			ipv6_pmtu_update(&offending->dst_ip, (uint16_t)mtu);
+		}
+		break;
+	}
+	case ICMPV6_NS: /* Neighbor Solicitation */
+		ipv6_nd_handle_ns(ip6, payload, len);
+		break;
+	case ICMPV6_NA: /* Neighbor Advertisement */
+		ipv6_nd_handle_na(ip6, payload, len);
+		break;
+	case ICMPV6_RS: /* Router Solicitation */
+		ipv6_nd_handle_rs(ip6, payload, len);
+		break;
+	case ICMPV6_RA: /* Router Advertisement */
+		ipv6_nd_handle_ra(ip6, payload, len);
+		break;
+	default:
+		break;
+	}
 }
 
 /* ── IPv6 dispatcher ─────────────────────────────────────────────── */
@@ -1064,59 +1123,65 @@ int ipv6_ping6(const struct in6_addr *target)
 
 void ipv6_init(void)
 {
-    /* Generate link-local address from MAC */
-    struct in6_addr ll_prefix = IPV6_ADDR_LINKLOCAL_PFX;
-    ipv6_eui64_from_mac(net_our_mac, &net_our_ipv6_ll);
-    /* Set FE80:: prefix (first 10 bits) */
-    memcpy(net_our_ipv6_ll.s6_addr, ll_prefix.s6_addr, 8);
+	/* Generate link-local address from MAC */
+	struct in6_addr ll_prefix = IPV6_ADDR_LINKLOCAL_PFX;
+	ipv6_eui64_from_mac(net_our_mac, &net_our_ipv6_ll);
+	/* Set FE80:: prefix (first 10 bits) */
+	memcpy(net_our_ipv6_ll.s6_addr, ll_prefix.s6_addr, 8);
 
-    net_ipv6_ll_ready = 1;
+	net_ipv6_ll_ready = 1;
 
-    /* Initialise the NDISC module */
-    ipv6_nd_init();
+	/* Initialise the NDISC module */
+	ipv6_nd_init();
 
-    /* Register link-local address as TENTATIVE in the management table */
-    /* DAD will confirm it and transition to PERMANENT */
-    ipv6_addr_add(&net_our_ipv6_ll, 64, IPV6_ADDR_STATE_TENTATIVE,
-                  0xFFFFFFFF, 0xFFFFFFFF, 0);
-    /* Add all-nodes multicast address as a permanent entry */
-    {
-        struct in6_addr all_nodes = IPV6_ADDR_ALL_NODES;
-        ipv6_addr_add(&all_nodes, 128, IPV6_ADDR_STATE_PERMANENT,
-                      0xFFFFFFFF, 0xFFFFFFFF, 0);
-    }
+	/* Initialise the PMTU Discovery module */
+	ipv6_pmtu_init();
 
-    kprintf("[IPv6] Link-local address configured, starting DAD\n");
+	/* Register link-local address as TENTATIVE in the management table */
+	/* DAD will confirm it and transition to PERMANENT */
+	ipv6_addr_add(&net_our_ipv6_ll, 64, IPV6_ADDR_STATE_TENTATIVE,
+	              0xFFFFFFFF, 0xFFFFFFFF, 0);
+	/* Add all-nodes multicast address as a permanent entry */
+	{
+		struct in6_addr all_nodes = IPV6_ADDR_ALL_NODES;
+		ipv6_addr_add(&all_nodes, 128, IPV6_ADDR_STATE_PERMANENT,
+		              0xFFFFFFFF, 0xFFFFFFFF, 0);
+	}
 
-    /* Start DAD for link-local address */
-    ipv6_dad_start(&net_our_ipv6_ll);
+	kprintf("[IPv6] Link-local address configured, starting DAD\n");
 
-    /* Send Router Solicitation to trigger SLAAC */
-    rs_sent = 1;
-    rs_retries = 0;
-    rs_last_tick = timer_get_ticks();
-    ipv6_send_rs();
+	/* Start DAD for link-local address */
+	ipv6_dad_start(&net_our_ipv6_ll);
+
+	/* Send Router Solicitation to trigger SLAAC */
+	rs_sent = 1;
+	rs_retries = 0;
+	rs_last_tick = timer_get_ticks();
+	ipv6_send_rs();
 }
 
 /* ── Periodic poll tasks ─────────────────────────────────────────── */
 
 void ipv6_poll(void)
 {
-    /* Run DAD (Duplicate Address Detection) state machine */
-    ipv6_dad_poll();
+	/* Run DAD (Duplicate Address Detection) state machine */
+	ipv6_dad_poll();
 
-    /* Run NDISC reachability state machine */
-    ipv6_nd_poll();
+	/* Run NDISC reachability state machine */
+	ipv6_nd_poll();
 
-    /* Retry RS if we haven't received an RA yet */
-    if (rs_sent && !net_ipv6_gua_valid && rs_retries < RS_MAX_RETRIES) {
-        uint64_t now = timer_get_ticks();
-        if (now - rs_last_tick >= RS_RETRY_INTERVAL) {
-            rs_retries++;
-            rs_last_tick = now;
-            ipv6_send_rs();
-        }
-    }
+	/* Run PMTU cache expiry */
+	ipv6_pmtu_poll();
+
+	/* Retry RS if we haven't received an RA yet */
+	if (rs_sent && !net_ipv6_gua_valid && rs_retries < RS_MAX_RETRIES) {
+		uint64_t now = timer_get_ticks();
+		if (now - rs_last_tick >= RS_RETRY_INTERVAL) {
+			rs_retries++;
+			rs_last_tick = now;
+			ipv6_send_rs();
+		}
+	}
 }
 
 /* ── Public API ──────────────────────────────────────────────────── */

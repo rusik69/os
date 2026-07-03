@@ -142,6 +142,7 @@ struct nd_option {
 #define ND_OPT_ROUTE_INFO  24   /* route information (RFC 4191) */
 #define ND_OPT_RDNSS       25   /* recursive DNS server (RFC 8106) */
 
+#define ICMPV6_PACKET_TOO_BIG    2   /* Packet Too Big (RFC 4443 §3.2) */
 #define ICMPV6_RS           133 /* Router Solicitation */
 #define ICMPV6_RA           134 /* Router Advertisement */
 #define ICMPV6_NS           135 /* Neighbor Solicitation */

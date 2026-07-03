@@ -327,7 +327,7 @@ void ipv6_frag_stats_get(struct ipv6_frag_stats *out);
 /* Send fragmented IPv6 datagram */
 void send_ipv6_fragmented(const struct in6_addr *dst, uint8_t next_hdr,
                           const void *payload, uint16_t len,
-                          uint32_t identification);
+                          uint32_t identification, uint16_t effective_mtu);
 
 /* Poll for expired fragment slots (call from net_poll or timer) */
 void ipv6_frag_poll(void);
@@ -372,6 +372,19 @@ void    ipv6_nd_cache_dump(void);
 void    ipv6_dad_start(const struct in6_addr *addr);
 void    ipv6_dad_poll(void);
 void    ipv6_dad_conflict(const struct in6_addr *addr);
+
+/* ── IPv6 Path MTU Discovery (RFC 1981) — ipv6_pmtu.c ─────────── */
+#define IPV6_DEFAULT_LINK_MTU   1460   /* 1500 - 40 (IPv6 hdr) */
+#define IPV6_MIN_MTU            1280   /* RFC 8200 §5 minimum */
+void    ipv6_pmtu_init(void);
+uint16_t ipv6_pmtu_lookup(const struct in6_addr *dst);
+void    ipv6_pmtu_update(const struct in6_addr *dst, uint16_t pmtu);
+void    ipv6_pmtu_poll(void);
+void    ipv6_send_pmtu(const struct in6_addr *src,
+                       const struct in6_addr *dst,
+                       const struct ipv6_header *offending,
+                       uint16_t offending_len,
+                       uint32_t next_hop_mtu);
 
 /* TCP internal helpers (net_tcp.c) */
 void send_tcp(struct tcp_conn *conn, uint8_t flags, const void *data, uint16_t data_len);
