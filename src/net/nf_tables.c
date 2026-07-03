@@ -1108,6 +1108,23 @@ static int nft_expr_eval_immediate(const struct nft_expr *expr,
     return 0; /* always succeeds */
 }
 
+/* Eval a counter expression — counts packets and bytes passing through.
+ * Increments packet counter by 1 and byte counter by packet length.
+ * Always returns 0 (counter is a side-effect only, never blocks a match). */
+static int nft_expr_eval_counter(const struct nft_expr *expr,
+                                 struct nft_regs *regs,
+                                 const struct nft_eval_ctx *ctx)
+{
+    struct nft_expr_counter *c = (struct nft_expr_counter *)expr;
+
+    (void)regs;
+
+    c->packets++;
+    c->bytes += ctx->pkt_len;
+
+    return 0; /* always succeeds — counter is side-effect only */
+}
+
 /* Evaluate the expression chain of a rule.
  * Returns 1 if ALL expressions matched (rule applies), 0 if any failed. */
 static int nft_expr_eval_chain(struct nft_rule *rule,
@@ -1146,6 +1163,12 @@ static int nft_expr_eval_chain(struct nft_rule *rule,
 
         case NFT_EXPR_IMMEDIATE:
             ret = nft_expr_eval_immediate(expr, regs);
+            if (ret != 0)
+                return 0;
+            break;
+
+        case NFT_EXPR_COUNTER:
+            ret = nft_expr_eval_counter(expr, regs, ctx);
             if (ret != 0)
                 return 0;
             break;

@@ -170,6 +170,7 @@ struct nft_table {
 #define NFT_EXPR_CMP       2
 #define NFT_EXPR_LOOKUP    3
 #define NFT_EXPR_IMMEDIATE 4
+#define NFT_EXPR_COUNTER   5
 
 /* Meta keys for NFT_EXPR_META */
 #define NFT_META_LEN       0   /* packet length */
@@ -253,6 +254,15 @@ struct nft_expr_immediate {
     uint8_t            len;        /* data length (1-16 bytes) */
     uint8_t            pad[2];
     uint32_t           data[4];    /* immediate value (up to 16 bytes) */
+} __attribute__((packed));
+
+/* Counter expression — counts packets and bytes passing through.
+ * Increments both counters on each evaluation.
+ * Always returns 0 (doesn't affect matching verdict). */
+struct nft_expr_counter {
+    struct nft_expr    hdr;        /* common header */
+    uint32_t           packets;    /* packet counter */
+    uint32_t           bytes;      /* byte counter (accumulated) */
 } __attribute__((packed));
 
 /* ── Expression evaluation context ───────────────────────────────── */
