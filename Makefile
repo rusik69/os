@@ -336,6 +336,7 @@ C_SRCS = src/kernel/kernel.c \
          src/net/tcp_cc.c \
          src/net/tls.c \
          src/net/tls_handshake.c \
+         src/net/tls_aead.c \
          src/kernel/service.c \
          src/kernel/ssh_crypto.c \
          src/kernel/ssh_client.c \
@@ -674,6 +675,7 @@ C_SRCS = src/kernel/kernel.c \
          src/lib/chacha20.c \
          src/lib/poly1305.c \
          src/lib/chacha20poly1305.c \
+         src/lib/aes_gcm.c \
          src/lib/ecc.c \
          src/lib/rsa.c \
          src/kernel/execshield.c \
