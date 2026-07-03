@@ -57,6 +57,7 @@ struct ipv6_addr_entry {
     uint32_t valid_lifetime;    /* seconds remaining (0xFFFFFFFF = infinite) */
     uint32_t preferred_lifetime;
     uint64_t expiry_tick;       /* tick when valid_lifetime expires */
+    uint64_t preferred_expiry_tick; /* tick when preferred_lifetime expires */
     uint32_t flags;
     int     valid;              /* 1 = slot in use */
 };

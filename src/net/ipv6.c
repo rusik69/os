@@ -151,6 +151,10 @@ int ipv6_addr_add(const struct in6_addr *addr, uint8_t prefix_len,
             entry->expiry_tick = UINT64_MAX;
         else
             entry->expiry_tick = timer_get_ticks() + (uint64_t)valid_lifetime * 100;
+        if (preferred_lifetime == 0xFFFFFFFF || preferred_lifetime == 0)
+            entry->preferred_expiry_tick = UINT64_MAX;
+        else
+            entry->preferred_expiry_tick = timer_get_ticks() + (uint64_t)preferred_lifetime * 100;
         entry->valid = 1;
         return 0;
     }
@@ -177,6 +181,10 @@ int ipv6_addr_add(const struct in6_addr *addr, uint8_t prefix_len,
         entry->expiry_tick = UINT64_MAX;
     else
         entry->expiry_tick = timer_get_ticks() + (uint64_t)valid_lifetime * 100;
+    if (preferred_lifetime == 0xFFFFFFFF || preferred_lifetime == 0)
+        entry->preferred_expiry_tick = UINT64_MAX;
+    else
+        entry->preferred_expiry_tick = timer_get_ticks() + (uint64_t)preferred_lifetime * 100;
     entry->flags = flags;
     entry->valid = 1;
     ipv6_addr_count++;
@@ -1224,6 +1232,73 @@ int ipv6_ping6(const struct in6_addr *target)
     return -1;
 }
 
+/* ── SLAAC address lifetime management (RFC 4862 §5.5.4) ──────────── */
+
+/* Poll SLAAC address lifetimes.
+ *
+ * Called from ipv6_poll() once per timer tick.  Manages:
+ *  - PREFERRED → DEPRECATED transition when preferred_lifetime expires
+ *  - Address removal when valid_lifetime expires (dereferencing
+ *    net_our_ipv6_gua / net_ipv6_gua_valid)
+ *  - Cleanup of the global GUA pointers when the SLAAC address dies
+ *
+ * Per RFC 4862 §5.5.4:
+ *   An address transitions from PREFERRED to DEPRECATED when its
+ *   preferred_lifetime expires.  A deprecated address SHOULD NOT
+ *   be used as a source for new communications, but existing
+ *   connections may continue (the state allows outbound but
+ *   deprioritises it via ipv6_addr_select_source).
+ *
+ *   When the valid_lifetime expires the address MUST be removed
+ *   from the interface entirely.
+ */
+static void ipv6_slaac_poll(void)
+{
+	uint64_t now = timer_get_ticks();
+	int i;
+
+	for (i = 0; i < IPV6_ADDR_TABLE_SIZE; i++) {
+		struct ipv6_addr_entry *e = &ipv6_addr_table[i];
+
+		if (!e->valid)
+			continue;
+
+		/* Only manage SLAAC-autoconfigured addresses */
+		if (!(e->flags & IPV6_ADDR_F_AUTOCONF))
+			continue;
+
+		/* ── preferred_lifetime expired → DEPRECATED ────────────── */
+		if (e->state == IPV6_ADDR_STATE_PREFERRED &&
+		    e->preferred_expiry_tick != UINT64_MAX &&
+		    now >= e->preferred_expiry_tick) {
+			e->state = IPV6_ADDR_STATE_DEPRECATED;
+			kprintf("[slaac] address %02x%02x:... "
+			        "DEPRECATED (preferred lifetime expired)\n",
+			        e->addr.s6_addr[0], e->addr.s6_addr[1]);
+		}
+
+		/* ── valid_lifetime expired → remove ──────────────────── */
+		if (e->expiry_tick != UINT64_MAX &&
+		    now >= e->expiry_tick) {
+			/* If this was the tracked GUA, clear the pointer */
+			if (net_ipv6_gua_valid &&
+			    ipv6_addr_equal(&e->addr, &net_our_ipv6_gua)) {
+				net_ipv6_gua_valid = 0;
+				memset(&net_our_ipv6_gua, 0,
+				       sizeof(struct in6_addr));
+				kprintf("[slaac] GUA removed (valid lifetime "
+				        "expired)\n");
+			}
+
+			kprintf("[slaac] address %02x%02x:... "
+			        "removed (valid lifetime expired)\n",
+			        e->addr.s6_addr[0], e->addr.s6_addr[1]);
+			memset(e, 0, sizeof(*e));
+			ipv6_addr_count--;
+		}
+	}
+}
+
 /* ── Initialization ──────────────────────────────────────────────── */
 
 void ipv6_init(void)
@@ -1269,6 +1344,9 @@ void ipv6_init(void)
 
 void ipv6_poll(void)
 {
+	/* Run SLAAC address lifetime management */
+	ipv6_slaac_poll();
+
 	/* Run DAD (Duplicate Address Detection) state machine */
 	ipv6_dad_poll();
 
