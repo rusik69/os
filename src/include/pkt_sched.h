@@ -84,8 +84,32 @@ struct qdisc *tbf_create(const struct tbf_spec *spec);
 
 /* ── FQ (Fair Queue) ────────────────────────────────────────────── */
 
+/* FQ pacing configuration */
+struct fq_pacing_spec {
+    uint32_t pacing_rate;     /* bytes per second (0 = unlimited) */
+    uint32_t max_credit;      /* max credit accumulation (bytes, 0 = default) */
+};
+
 /* Create an FQ qdisc with per-flow Deficit Round Robin */
 struct qdisc *fq_create(void);
+
+/* Set per-flow pacing rate.  @bucket is the flow index (0..255).
+ * If @rate_bps is 0, pacing is disabled for that flow.
+ * Returns 0 on success, -EINVAL on invalid bucket. */
+int fq_set_pacing_rate(struct qdisc *q, int bucket, uint32_t rate_bps);
+
+/* Set the default pacing rate applied to all new flows.
+ * If @rate_bps is 0, pacing defaults to unlimited. */
+void fq_set_default_pacing_rate(struct qdisc *q, uint32_t rate_bps);
+
+/* Enable or disable pacing globally.  When disabled (0), the DRR
+ * scheduler runs without rate checks, preserving the previous
+ * per-flow rates for when pacing is re-enabled. */
+void fq_set_pacing_enabled(struct qdisc *q, int enabled);
+
+/* Return pacing statistics: number of times dequeue returned NULL
+ * because all active flows were credit-starved (pacing-induced idle). */
+void fq_get_pacing_stats(struct qdisc *q, uint64_t *pacing_idles);
 
 /* Init */
 void pkt_sched_init(void);
