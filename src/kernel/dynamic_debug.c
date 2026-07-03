@@ -174,20 +174,135 @@ void __init dynamic_debug_init(void)
     kprintf("[OK] dynamic_debug: Dynamic debug control initialised\n");
 }
 
-/* ── Stub: dynamic_debug_query ─────────────────────────────── */
+/* ── Command parser: dynamic_debug_query ──────────────────────── */
+/*
+ * Parse a single dynamic debug control command and apply it.
+ *
+ * Command syntax (one line):
+ *   all +p            — enable all debug sites
+ *   all -p            — disable all debug sites
+ *   module <name> +p  — enable all sites in module <name>
+ *   module <name> -p  — disable all sites in module <name>
+ *   file   <name> +p  — enable all sites in source file <name>
+ *   file   <name> -p  — disable all sites in source file <name>
+ *   func   <name> +p  — enable all sites in function <name>
+ *   func   <name> -p  — disable all sites in function <name>
+ *
+ * Match-type mapping: func=0, file=1, module=2
+ *
+ * Return: 0 on success, -EINVAL on parse error
+ */
+static int dyndbg_parse_query(const char *query)
+{
+    const char *p = query;
+
+    /* Skip leading whitespace */
+    while (*p == ' ' || *p == '\t')
+        p++;
+
+    /* Empty / comment lines */
+    if (*p == '\0' || *p == '#' || *p == '\n')
+        return 0;
+
+    char buf[128];
+    size_t qlen = strlen(query);
+    size_t blen = (qlen < sizeof(buf) - 1) ? qlen : sizeof(buf) - 1;
+    memcpy(buf, query, blen);
+    buf[blen] = '\0';
+
+    /* Tokenise: we need keyword [name] <op> */
+    char *cp = buf;
+    while (*cp == ' ') cp++;
+    if (*cp == '\0') return 0;
+
+    char *keyword = cp;
+    while (*cp && *cp != ' ') cp++;
+    int kw_len = (int)(cp - keyword);
+    if (kw_len == 0) return 0;
+
+    /* End-of-string after keyword? (bare "all" — default to show status) */
+    if (*cp == '\0') {
+        /* Just the keyword — query is valid but no-op when parsed alone */
+        return 0;
+    }
+
+    /* Skip to name token */
+    while (*cp == ' ') cp++;
+    char *name = cp;
+    while (*cp && *cp != ' ') cp++;
+    int name_len = (int)(cp - name);
+
+    /* End-of-string after name? (no op token) */
+    if (*cp == '\0')
+        return -EINVAL;
+
+    /* Skip to op token */
+    while (*cp == ' ') cp++;
+    char *op = cp;
+    int op_len = (int)strlen(op);
+
+    /* Null-terminate tokens */
+    keyword[kw_len] = '\0';
+    if (name_len > 0) name[name_len] = '\0';
+
+    /* Strip trailing whitespace/newline from op */
+    while (op_len > 0 && (op[op_len - 1] == ' ' ||
+           op[op_len - 1] == '\t' || op[op_len - 1] == '\n' ||
+           op[op_len - 1] == '\r'))
+        op[--op_len] = '\0';
+
+    if (op_len < 2 || (op[0] != '+' && op[0] != '-') || op[1] != 'p')
+        return -EINVAL;
+
+    int enable = (op[0] == '+');
+    int matched;
+
+    /* Handle "all" keyword — disable/enable all sites */
+    if (kw_len == 3 && memcmp(keyword, "all", 3) == 0) {
+        matched = enable
+            ? dynamic_debug_enable(NULL, 0)
+            : dynamic_debug_disable(NULL, 0);
+        return 0;
+    }
+
+    /* Remaining keywords need a name */
+    if (name_len == 0)
+        return -EINVAL;
+
+    int match_type;
+    if (kw_len == 4 && memcmp(keyword, "func", 4) == 0) {
+        match_type = 0;         /* function */
+    } else if (kw_len == 4 && memcmp(keyword, "file", 4) == 0) {
+        match_type = 1;         /* file */
+    } else if (kw_len == 6 && memcmp(keyword, "module", 6) == 0) {
+        match_type = 2;         /* module */
+    } else {
+        return -EINVAL;         /* unknown keyword */
+    }
+
+    /* Apply */
+    name[name_len] = '\0';
+    matched = enable
+        ? dynamic_debug_enable(name, match_type)
+        : dynamic_debug_disable(name, match_type);
+
+    kprintf("[dyndbg] %s '%s' %s (%d site(s))\n",
+            keyword, name, enable ? "enabled" : "disabled", matched);
+    return 0;
+}
+
 /**
  * dynamic_debug_query - Parse and execute a dynamic debug control command
- * @query: Command string (e.g., \"module ahci +p\", \"func probe -p\")
+ * @query: Command string (e.g., "module ahci +p", "func probe -p")
  *
  * Processes a single dynamic debug control command.  The command
- * syntax follows the standard \"func|file|module <name> +p|-p\" format.
- * Currently a stub — full implementation is in the dyndbg.c driver.
+ * syntax follows the standard "func|file|module <name> +p|-p" format.
  *
  * Return: 0 on success, negative on parse error
  */
 int dynamic_debug_query(const char *query)
 {
-    (void)query;
-    kprintf("[dyndbg] dynamic_debug_query: not yet implemented\n");
-    return 0;
+    if (!query)
+        return -EINVAL;
+    return dyndbg_parse_query(query);
 }
