@@ -2,6 +2,7 @@
 #define MPTCP_H
 
 #include "types.h"
+#include "spinlock.h"
 
 /* Multipath TCP (MPTCP) — RFC 8684
  * AF_MPTCP pseudo-family for subflow management.
@@ -123,6 +124,10 @@ struct mptcp_conn {
     /* Address advertisement table (ADD_ADDR/REMOVE_ADDR) */
     uint8_t     num_addrs;
     struct mptcp_addr_entry addrs[MPTCP_MAX_ADDRS];
+    /* Path scheduler state — D204 task 6 */
+    uint8_t     sched_algo;         /* Current scheduler algorithm (MPTCP_SCHED_*) */
+    uint8_t     last_selected;      /* Index of last subflow selected for RR fallback */
+    uint32_t    sched_epoch;        /* Scheduler epoch (increments on subflow add/remove) */
 };
 
 /* API */
@@ -260,5 +265,40 @@ int  mptcp_parse_join_synack(const uint8_t *opt, uint16_t optlen,
 /* Parse received MP_JOIN ACK option */
 int  mptcp_parse_join_ack(const uint8_t *opt, uint16_t optlen,
                            uint8_t hmac_out[8]);
+
+/* ── MPTCP Path Scheduler (D204 task 6) ─────────────────────────── */
+
+/* Spinlock protecting MPTCP connection state — shared between
+ * mptcp.c and mptcp_sched.c.  Must be held when calling
+ * mptcp_find_by_token(). */
+extern spinlock_t mptcp_lock;
+
+/* Look up an MPTCP connection by token.  Caller must hold mptcp_lock.
+ * Returns pointer to mptcp_conn, or NULL if not found. */
+struct mptcp_conn *mptcp_find_by_token(uint32_t token);
+
+/* Path scheduler algorithms */
+#define MPTCP_SCHED_MIN_RTT   0   /* Min-RTT: pick subflow with lowest srtt */
+#define MPTCP_SCHED_REDUNDANT 1   /* Redundant: send on all active subflows */
+#define MPTCP_SCHED_DEFAULT   MPTCP_SCHED_MIN_RTT
+
+/* Select the best subflow index for sending data on the given MPTCP
+ * connection.  Returns the subflow index (0..num_subflows-1) on success,
+ * or negative errno (e.g. -ENETDOWN if no active subflows available).
+ * The selection is based on the configured path scheduler algorithm. */
+int  mptcp_sched_select(struct mptcp_conn *mc);
+
+/* Get the smoothed RTT (srtt from tcp_conns[].srtt) for the subflow
+ * at the given index in an MPTCP connection.  Returns the srtt value
+ * (scaled by 8, per Jacobson's algorithm), or 0 if the subflow has
+ * no RTT measurement yet. */
+int32_t mptcp_sched_get_rtt(const struct mptcp_conn *mc, int idx);
+
+/* Set the path scheduler algorithm for an MPTCP connection.
+ * alg: one of MPTCP_SCHED_* constants.  Returns 0 on success. */
+int  mptcp_sched_set_algo(uint32_t token, int alg);
+
+/* Get the current path scheduler algorithm for an MPTCP connection. */
+int  mptcp_sched_get_algo(uint32_t token);
 
 #endif /* MPTCP_H */

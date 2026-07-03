@@ -319,6 +319,7 @@ C_SRCS = src/kernel/kernel.c \
          src/net/sctp.c \
          src/net/dccp.c \
          src/net/mptcp.c \
+         src/net/mptcp_sched.c \
          src/net/macsec.c \
          src/net/6lowpan.c \
          src/net/ipoib.c \

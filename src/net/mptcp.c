@@ -15,7 +15,7 @@
 #define MPTCP_MAX_CONNS 8
 
 static struct mptcp_conn mptcp_conns[MPTCP_MAX_CONNS];
-static spinlock_t mptcp_lock;
+spinlock_t mptcp_lock;
 static int mptcp_initialized = 0;
 static uint32_t mptcp_next_token = 0x10000000;
 
@@ -39,7 +39,7 @@ static int mptcp_find_free(void)
     return -1;
 }
 
-static struct mptcp_conn *mptcp_find_by_token(uint32_t token)
+struct mptcp_conn *mptcp_find_by_token(uint32_t token)
 {
     for (int i = 0; i < MPTCP_MAX_CONNS; i++) {
         if (mptcp_conns[i].used && mptcp_conns[i].token == token)
@@ -145,25 +145,27 @@ int mptcp_send(uint32_t token, const void *data, uint32_t len)
         return -EINVAL;
     }
 
-    /* Find first active subflow to send on */
-    for (int i = 0; i < mc->num_subflows; i++) {
-        if (mc->subflows[i].used && !mc->subflows[i].backup) {
-            /* Send on this subflow — record DSS mapping so the TCP
-             * stack can embed the DSS option on data segments. */
-            struct mptcp_subflow *sf = &mc->subflows[i];
-            sf->dss_data_seq = mc->snd_data_seq;
-            sf->dss_subflow_seq = sf->snd_isn;  /* subflow initial seq number */
-            sf->dss_mapped_len = (uint16_t)len;
-
-            /* Advance data-level sequence number */
-            mc->snd_data_seq += len;
-
-            spinlock_release(&mptcp_lock);
-            return len;
-        }
+    /* Select subflow using the path scheduler (min-RTT or configured algo) */
+    int sched_idx = mptcp_sched_select(mc);
+    if (sched_idx < 0) {
+        spinlock_release(&mptcp_lock);
+        return (sched_idx == -ENETDOWN) ? -ENETDOWN : -EINVAL;
     }
+
+    /* Send on the selected subflow — record DSS mapping so the TCP
+     * stack can embed the DSS option on data segments. */
+    {
+        struct mptcp_subflow *sf = &mc->subflows[sched_idx];
+        sf->dss_data_seq = mc->snd_data_seq;
+        sf->dss_subflow_seq = sf->snd_isn;  /* subflow initial seq number */
+        sf->dss_mapped_len = (uint16_t)len;
+
+        /* Advance data-level sequence number */
+        mc->snd_data_seq += len;
+    }
+
     spinlock_release(&mptcp_lock);
-    return -ENETDOWN;
+    return (int)len;
 }
 
 int mptcp_recv(uint32_t token, void *buf, uint32_t maxlen)
