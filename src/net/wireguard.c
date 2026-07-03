@@ -839,6 +839,9 @@ int wg_init(void) {
     wg_cookie_secret_time = timer_get_ticks();
     memset(wg_rl, 0, sizeof(wg_rl));
 
+    /* Initialise WireGuard generic netlink configuration interface */
+    wg_netlink_init();
+
     return 0;
 }
 
@@ -2627,6 +2630,92 @@ int wg_send_to(uint32_t dest_ip, const uint8_t *data, int len)
     }
 
     return wg_send_to_peer(&g_wg.peers[peer_idx], data, len);
+}
+
+/* ── Accessor functions for wg_netlink.c ────────────────────────────── */
+
+int wg_set_private_key(const uint8_t key[32])
+{
+    if (!wg_initialized || !key)
+        return -EINVAL;
+
+    memcpy(g_wg.private_key, key, 32);
+
+    /* Clamp per Curve25519 spec */
+    g_wg.private_key[0] &= 248;
+    g_wg.private_key[31] &= 127;
+    g_wg.private_key[31] |= 64;
+
+    /* Derive public key = Curve25519(private, basepoint) */
+    curve25519(g_wg.public_key, g_wg.private_key, CURVE25519_BASE);
+
+    return 0;
+}
+
+void wg_get_device_pubkey(uint8_t out[32])
+{
+    if (wg_initialized && out)
+        memcpy(out, g_wg.public_key, 32);
+}
+
+uint16_t wg_get_listen_port(void)
+{
+    return g_wg.listen_port;
+}
+
+void wg_set_listen_port(uint16_t port)
+{
+    g_wg.listen_port = port;
+}
+
+int wg_find_peer_by_pubkey(const uint8_t pubkey[32])
+{
+    if (!wg_initialized || !pubkey)
+        return -EINVAL;
+
+    for (int i = 0; i < g_wg.num_peers; i++) {
+        if (!g_wg.peers[i].active)
+            continue;
+        if (memcmp(g_wg.peers[i].public_key, pubkey, 32) == 0)
+            return i;
+    }
+    return -ENOENT;
+}
+
+int wg_create_peer_with_key(const uint8_t pubkey[32])
+{
+    if (!wg_initialized || !pubkey)
+        return -EINVAL;
+    if (g_wg.num_peers >= WG_MAX_PEERS)
+        return -ENOSPC;
+
+    struct wg_peer *peer = &g_wg.peers[g_wg.num_peers];
+    memset(peer, 0, sizeof(*peer));
+    peer->active = 1;
+    memcpy(peer->public_key, pubkey, 32);
+    peer->persistent_keepalive_interval = WG_KEEPALIVE_DEFAULT_INTERVAL;
+    peer->session_established = 0;
+
+    g_wg.num_peers++;
+    return g_wg.num_peers - 1;
+}
+
+int wg_get_num_peers(void)
+{
+    return wg_initialized ? g_wg.num_peers : 0;
+}
+
+int wg_get_peer_info(int idx, struct wg_peer *out)
+{
+    if (!wg_initialized || !out)
+        return -EINVAL;
+    if (idx < 0 || idx >= g_wg.num_peers)
+        return -EINVAL;
+    if (!g_wg.peers[idx].active)
+        return -EINVAL;
+
+    memcpy(out, &g_wg.peers[idx], sizeof(struct wg_peer));
+    return 0;
 }
 
 #include "module.h"

@@ -307,6 +307,7 @@ C_SRCS = src/kernel/kernel.c \
          src/net/gre.c \
          src/net/vxlan.c \
          src/net/wireguard.c \
+         src/net/wg_netlink.c \
          src/net/ipvs.c \
          src/net/veth.c \
          src/net/netdevice.c \

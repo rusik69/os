@@ -171,4 +171,95 @@ int  wireguard_encrypt(const uint8_t *plaintext, uint64_t plaintext_len,
 int  wireguard_decrypt(const uint8_t *ciphertext, uint64_t ciphertext_len,
                        uint8_t *plaintext, const uint8_t *key, const uint8_t *nonce);
 
+/* ── Generic Netlink family (userspace configuration) ──────────────── */
+
+/* WireGuard generic netlink family name */
+#define WG_GENL_FAMILY_NAME  "wireguard"
+#define WG_GENL_VERSION      1
+
+/* WireGuard generic netlink commands */
+enum wg_cmd {
+    WG_CMD_UNSPEC       = 0,
+    WG_CMD_SET_DEVICE,      /* Configure the WireGuard device */
+    WG_CMD_GET_DEVICE,      /* Query WireGuard device and peer state */
+    WG_CMD_SET_PEER,        /* Add or update a peer */
+    WG_CMD_REMOVE_PEER,     /* Remove a peer */
+    __WG_CMD_MAX,
+};
+
+#define WG_CMD_MAX (__WG_CMD_MAX - 1)
+
+/* WireGuard generic netlink device attributes */
+enum wg_device_attr {
+    WG_DEVICE_A_UNSPEC         = 0,
+    WG_DEVICE_A_IFINDEX,           /* uint32_t — interface index */
+    WG_DEVICE_A_PRIVATE_KEY,       /* binary, 32 bytes */
+    WG_DEVICE_A_PUBLIC_KEY,        /* binary, 32 bytes (read-only) */
+    WG_DEVICE_A_LISTEN_PORT,       /* uint16_t */
+    WG_DEVICE_A_FWMARK,            /* uint32_t */
+    WG_DEVICE_A_PEERS,             /* nested — array of WG_PEER_A_* */
+    __WG_DEVICE_A_MAX,
+};
+
+#define WG_DEVICE_A_MAX (__WG_DEVICE_A_MAX - 1)
+
+/* WireGuard generic netlink peer attributes */
+enum wg_peer_attr {
+    WG_PEER_A_UNSPEC               = 0,
+    WG_PEER_A_PUBLIC_KEY,              /* binary, 32 bytes */
+    WG_PEER_A_PERSISTENT_KEEPALIVE_INTERVAL, /* uint32_t, seconds */
+    WG_PEER_A_ENDPOINT_IP,             /* uint32_t, network byte order */
+    WG_PEER_A_ENDPOINT_PORT,           /* uint16_t */
+    WG_PEER_A_ALLOWED_IPS,             /* nested — array of WG_ALLOWED_IP_A_* */
+    WG_PEER_A_REMOVE_ME,               /* flag — mark peer for removal */
+    __WG_PEER_A_MAX,
+};
+
+#define WG_PEER_A_MAX (__WG_PEER_A_MAX - 1)
+
+/* WireGuard allowed-IP attributes (nested inside WG_PEER_A_ALLOWED_IPS) */
+enum wg_allowed_ip_attr {
+    WG_ALLOWED_IP_A_UNSPEC  = 0,
+    WG_ALLOWED_IP_A_ADDR,        /* uint32_t, network byte order */
+    WG_ALLOWED_IP_A_CIDR,        /* uint8_t, 0-32 */
+    __WG_ALLOWED_IP_A_MAX,
+};
+
+#define WG_ALLOWED_IP_A_MAX (__WG_ALLOWED_IP_A_MAX - 1)
+
+/* ── Accessor functions for wg_netlink.c ───────────────────────────── */
+
+/* Set the device private key and derive the public key.
+ * Returns 0 on success. */
+int  wg_set_private_key(const uint8_t key[32]);
+
+/* Get the device public key (read-only).
+ * @out: 32-byte buffer to receive the public key. */
+void wg_get_device_pubkey(uint8_t out[32]);
+
+/* Get/set the listen port. */
+uint16_t wg_get_listen_port(void);
+void     wg_set_listen_port(uint16_t port);
+
+/* Find a peer by its Curve25519 public key.
+ * Returns peer index (>= 0) on success, or -ENOENT if not found. */
+int  wg_find_peer_by_pubkey(const uint8_t pubkey[32]);
+
+/* Create a peer with a specific public key (no auto-generation).
+ * Returns peer index on success, or negative errno. */
+int  wg_create_peer_with_key(const uint8_t pubkey[32]);
+
+/* Get the current number of active peers. */
+int  wg_get_num_peers(void);
+
+/* Copy peer state into the provided structure.
+ * @idx: peer index (0-based, must be active)
+ * @out: output buffer for peer state
+ * Returns 0 on success, negative errno on error. */
+int  wg_get_peer_info(int idx, struct wg_peer *out);
+
+/* Initialise the WireGuard generic netlink family.
+ * Called from wg_init(). */
+int  wg_netlink_init(void);
+
 #endif /* WIREGUARD_H */
