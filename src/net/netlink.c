@@ -26,6 +26,7 @@
 #include "scheduler.h"
 #include "waitqueue.h"
 #include "timer.h"
+#include "pkt_sched.h"
 
 /* ── Constants ─────────────────────────────────────────────────────── */
 
@@ -855,6 +856,281 @@ static int nl_rt_delroute(int protocol, const struct nlmsghdr *nlh,
     return 0;
 }
 
+/* ── TC (Traffic Control) netlink handlers ────────────────────────── */
+
+/* Qdisc kind name strings */
+static const char *tc_kind_name(int type)
+{
+    switch (type) {
+        case QDISC_PFIFO_FAST: return "pfifo_fast";
+        case QDISC_FQ_CODEL:   return "fq_codel";
+        case QDISC_HTB:        return "htb";
+        case QDISC_TBF:        return "tbf";
+        case QDISC_FQ:         return "fq";
+        case QDISC_RED:        return "red";
+        case QDISC_CAKE:       return "cake";
+        default:               return "unknown";
+    }
+}
+
+/* Map a qdisc kind string to QDISC_* value, or -1 if unknown */
+static int tc_kind_to_type(const char *kind)
+{
+    if (!kind) return -1;
+    if (strcmp(kind, "pfifo_fast") == 0) return QDISC_PFIFO_FAST;
+    if (strcmp(kind, "fq_codel") == 0)   return QDISC_FQ_CODEL;
+    if (strcmp(kind, "htb") == 0)        return QDISC_HTB;
+    if (strcmp(kind, "tbf") == 0)        return QDISC_TBF;
+    if (strcmp(kind, "fq") == 0)         return QDISC_FQ;
+    if (strcmp(kind, "red") == 0)        return QDISC_RED;
+    if (strcmp(kind, "cake") == 0)       return QDISC_CAKE;
+    return -1;
+}
+
+/* Send a NLMSG_DONE message to terminate a multipart RTNETLINK dump.
+ * Helper used by several TC handlers below. */
+static void tc_send_done(int protocol, uint32_t src_pid, uint32_t seq)
+{
+    struct nlmsghdr done;
+    memset(&done, 0, sizeof(done));
+    done.nlmsg_len = sizeof(done);
+    done.nlmsg_type = NLMSG_DONE;
+    done.nlmsg_seq = seq;
+    done.nlmsg_pid = 0;
+    netlink_unicast(protocol, src_pid, &done, sizeof(done), 0);
+}
+
+/* Handle RTM_GETQDISC — dump all registered qdiscs.
+ * Supports NLM_F_ROOT (dump all) and handles individual qdisc lookup
+ * via tcm_handle.  Returns multipart NEWQDISC messages + NLMSG_DONE. */
+static int nl_tc_getqdisc(int protocol, const struct nlmsghdr *nlh,
+                           const struct nlattr **attr, uint32_t src_pid)
+{
+    (void)attr;
+    int dump_all = (nlh->nlmsg_flags & NLM_F_ROOT) || (nlh->nlmsg_flags & NLM_F_DUMP);
+
+    if (nlh->nlmsg_len < NLMSG_HDRLEN + sizeof(struct tcmsg))
+        return -EINVAL;
+
+    const struct tcmsg *tcm = (const struct tcmsg *)((const char *)nlh + NLMSG_HDRLEN);
+
+    if (!dump_all && tcm->tcm_handle != 0) {
+        /* Single qdisc lookup requested — scan by handle.
+         * The handle is our encoding: maj=1, min=index+1 */
+        int idx = TC_H_MIN(tcm->tcm_handle);
+        if (idx < 1) return -ENOENT;
+        idx--;
+
+        char devname[32];
+        struct qdisc *q = tc_get_qdisc_by_index(idx, devname, sizeof(devname));
+        if (!q) return -ENOENT;
+
+        uint8_t buf[256];
+        struct nlmsghdr *resp = (struct nlmsghdr *)buf;
+        struct tcmsg *rtcm = (struct tcmsg *)(buf + NLMSG_HDRLEN);
+        struct nlattr *nla = (struct nlattr *)(buf + NLMSG_HDRLEN + sizeof(struct tcmsg));
+
+        memset(buf, 0, sizeof(buf));
+        resp->nlmsg_len = NLMSG_HDRLEN + sizeof(struct tcmsg);
+        resp->nlmsg_type = RTM_NEWQDISC;
+        resp->nlmsg_flags = 0;
+        resp->nlmsg_seq = nlh->nlmsg_seq;
+        resp->nlmsg_pid = 0;
+
+        rtcm->tcm_family = AF_UNSPEC;
+        rtcm->tcm_ifindex = 1;
+        rtcm->tcm_handle = TC_H_MAKE(1, idx + 1);
+        rtcm->tcm_parent = TC_H_ROOT;
+        rtcm->tcm_info = (uint32_t)q->type << 16;
+
+        const char *kind = tc_kind_name(q->type);
+        int kind_len = strlen(kind) + 1;
+        nla->nla_len = NLA_HDRLEN + (uint16_t)kind_len;
+        nla->nla_type = TCA_KIND;
+        memcpy((uint8_t *)(nla + 1), kind, (size_t)kind_len);
+
+        resp->nlmsg_len += NLA_ALIGN(nla->nla_len);
+        netlink_unicast(protocol, src_pid, buf, resp->nlmsg_len, 0);
+        return 0;
+    }
+
+    /* Dump all qdiscs */
+    int count = tc_get_qdisc_count();
+    for (int i = 0; i < count; i++) {
+        char devname[32];
+        struct qdisc *q = tc_get_qdisc_by_index(i, devname, sizeof(devname));
+        if (!q) continue;
+
+        uint8_t buf[256];
+        struct nlmsghdr *resp = (struct nlmsghdr *)buf;
+        struct tcmsg *rtcm = (struct tcmsg *)(buf + NLMSG_HDRLEN);
+        struct nlattr *nla = (struct nlattr *)(buf + NLMSG_HDRLEN + sizeof(struct tcmsg));
+
+        memset(buf, 0, sizeof(buf));
+        resp->nlmsg_len = NLMSG_HDRLEN + sizeof(struct tcmsg);
+        resp->nlmsg_type = RTM_NEWQDISC;
+        resp->nlmsg_flags = NLM_F_MULTI;
+        resp->nlmsg_seq = nlh->nlmsg_seq;
+        resp->nlmsg_pid = 0;
+
+        rtcm->tcm_family = AF_UNSPEC;
+        rtcm->tcm_ifindex = 1;  /* dummy ifindex — no real device binding yet */
+        rtcm->tcm_handle = TC_H_MAKE(1, i + 1);
+        rtcm->tcm_parent = TC_H_ROOT;
+        rtcm->tcm_info = (uint32_t)q->type << 16;
+
+        const char *kind = tc_kind_name(q->type);
+        int kind_len = strlen(kind) + 1;
+        nla->nla_len = NLA_HDRLEN + (uint16_t)kind_len;
+        nla->nla_type = TCA_KIND;
+        memcpy((uint8_t *)(nla + 1), kind, (size_t)kind_len);
+
+        resp->nlmsg_len += NLA_ALIGN(nla->nla_len);
+        netlink_unicast(protocol, src_pid, buf, resp->nlmsg_len, 0);
+    }
+
+    tc_send_done(protocol, src_pid, nlh->nlmsg_seq);
+    return 0;
+}
+
+/* Handle RTM_NEWQDISC — create a new qdisc.
+ * Parses TCA_KIND to determine qdisc type and calls tc_add_qdisc.
+ * Uses the ifindex from tcmsg as the device name (devN). */
+static int nl_tc_newqdisc(int protocol, const struct nlmsghdr *nlh,
+                           const struct nlattr **attr, uint32_t src_pid)
+{
+    (void)protocol;
+    (void)attr;
+    (void)src_pid;
+
+    if (nlh->nlmsg_len < NLMSG_HDRLEN + sizeof(struct tcmsg))
+        return -EINVAL;
+
+    const struct tcmsg *tcm = (const struct tcmsg *)((const char *)nlh + NLMSG_HDRLEN);
+
+    /* Parse TCA attributes following the tcmsg header */
+    struct nlattr *tca[16];
+    memset(tca, 0, sizeof(tca));
+    int tca_payload = (int)nlh->nlmsg_len - (int)NLMSG_HDRLEN - (int)sizeof(struct tcmsg);
+    if (tca_payload > 0) {
+        nla_parse((const struct nlattr *)(tcm + 1), (size_t)tca_payload,
+                  15, NULL, tca);
+    }
+
+    if (!tca[TCA_KIND])
+        return -EINVAL;
+
+    const char *kind;
+    if (nla_get_string(tca[TCA_KIND], &kind) < 0)
+        return -EINVAL;
+
+    int qdisc_type = tc_kind_to_type(kind);
+    if (qdisc_type < 0)
+        return -EOPNOTSUPP;
+
+    /* Build a device name from the ifindex.
+     * In a full implementation, this would resolve the net_device. */
+    char devname[32];
+    snprintf(devname, sizeof(devname), "dev%u", tcm->tcm_ifindex);
+
+    /* Check NLM_F_EXCL / NLM_F_CREATE flags. */
+    int exists = (tc_get_qdisc(devname) != NULL);
+    if (nlh->nlmsg_flags & NLM_F_EXCL) {
+        if (exists)
+            return -EEXIST;
+    }
+    if (!(nlh->nlmsg_flags & NLM_F_CREATE)) {
+        if (!exists)
+            return -ENOENT;
+    }
+
+    /* Delete existing if replacing */
+    if (nlh->nlmsg_flags & NLM_F_REPLACE) {
+        if (exists)
+            tc_del_qdisc(devname);
+    }
+
+    int ret = tc_add_qdisc(devname, qdisc_type, NULL);
+    if (ret < 0)
+        return -EINVAL;
+
+    return 0;
+}
+
+/* Handle RTM_DELQDISC — delete a qdisc.
+ * Parses the tcmsg header to find the ifindex and removes the qdisc. */
+static int nl_tc_delqdisc(int protocol, const struct nlmsghdr *nlh,
+                           const struct nlattr **attr, uint32_t src_pid)
+{
+    (void)protocol;
+    (void)attr;
+    (void)src_pid;
+
+    if (nlh->nlmsg_len < NLMSG_HDRLEN + sizeof(struct tcmsg))
+        return -EINVAL;
+
+    const struct tcmsg *tcm = (const struct tcmsg *)((const char *)nlh + NLMSG_HDRLEN);
+
+    char devname[32];
+    snprintf(devname, sizeof(devname), "dev%u", tcm->tcm_ifindex);
+
+    int ret = tc_del_qdisc(devname);
+    if (ret < 0)
+        return -ENOENT;
+
+    return 0;
+}
+
+/* Handle RTM_GETTCLASS — dump traffic classes (stub).
+ * In a full implementation, returns HTB class hierarchy for classful qdiscs. */
+static int nl_tc_gettclass(int protocol, const struct nlmsghdr *nlh,
+                            const struct nlattr **attr, uint32_t src_pid)
+{
+    (void)protocol;
+    (void)nlh;
+    (void)attr;
+    (void)src_pid;
+
+    /* No TC classes registered yet — just send DONE */
+    tc_send_done(protocol, src_pid, nlh->nlmsg_seq);
+    return 0;
+}
+
+/* Handle RTM_GETACTION — list TC actions (stub). */
+static int nl_tc_getaction(int protocol, const struct nlmsghdr *nlh,
+                            const struct nlattr **attr, uint32_t src_pid)
+{
+    (void)protocol;
+    (void)nlh;
+    (void)attr;
+    (void)src_pid;
+
+    tc_send_done(protocol, src_pid, nlh->nlmsg_seq);
+    return 0;
+}
+
+/* Handle RTM_NEWACTION — add a TC action (stub). */
+static int nl_tc_newaction(int protocol, const struct nlmsghdr *nlh,
+                            const struct nlattr **attr, uint32_t src_pid)
+{
+    (void)protocol;
+    (void)nlh;
+    (void)attr;
+    (void)src_pid;
+    return 0;
+}
+
+/* Handle RTM_DELACTION — delete a TC action (stub). */
+static int nl_tc_delaction(int protocol, const struct nlmsghdr *nlh,
+                            const struct nlattr **attr, uint32_t src_pid)
+{
+    (void)protocol;
+    (void)nlh;
+    (void)attr;
+    (void)src_pid;
+    return 0;
+}
+
 /* ── Enhanced kernel message handler with dispatch ──────────────── */
 
 /*
@@ -929,6 +1205,22 @@ void __init netlink_rtnl_init(void)
                               nl_rt_newroute, "rtnl_newroute");
     netlink_register_handler(NETLINK_ROUTE, RTM_DELROUTE,
                               nl_rt_delroute, "rtnl_delroute");
+
+    /* Register TC (Traffic Control) handlers */
+    netlink_register_handler(NETLINK_ROUTE, RTM_GETQDISC,
+                              nl_tc_getqdisc, "rtnl_getqdisc");
+    netlink_register_handler(NETLINK_ROUTE, RTM_NEWQDISC,
+                              nl_tc_newqdisc, "rtnl_newqdisc");
+    netlink_register_handler(NETLINK_ROUTE, RTM_DELQDISC,
+                              nl_tc_delqdisc, "rtnl_delqdisc");
+    netlink_register_handler(NETLINK_ROUTE, RTM_GETTCLASS,
+                              nl_tc_gettclass, "rtnl_gettclass");
+    netlink_register_handler(NETLINK_ROUTE, RTM_GETACTION,
+                              nl_tc_getaction, "rtnl_getaction");
+    netlink_register_handler(NETLINK_ROUTE, RTM_NEWACTION,
+                              nl_tc_newaction, "rtnl_newaction");
+    netlink_register_handler(NETLINK_ROUTE, RTM_DELACTION,
+                              nl_tc_delaction, "rtnl_delaction");
 
     kprintf("[OK] netlink: RTNETLINK handlers registered\\n");
 }

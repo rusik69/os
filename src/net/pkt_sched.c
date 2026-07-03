@@ -1013,6 +1013,21 @@ struct qdisc *tc_get_qdisc(const char *dev) {
     return NULL;
 }
 
+int tc_get_qdisc_count(void)
+{
+    return qdisc_count;
+}
+
+struct qdisc *tc_get_qdisc_by_index(int i, char *name_buf, int name_len)
+{
+    if (i < 0 || i >= qdisc_count) return NULL;
+    if (name_buf && name_len > 0) {
+        strncpy(name_buf, qdisc_names[i], (size_t)(name_len - 1));
+        name_buf[name_len - 1] = '\0';
+    }
+    return qdisc_table[i];
+}
+
 void pkt_sched_init(void) {
     memset(qdisc_table, 0, sizeof(qdisc_table));
     memset(qdisc_names, 0, sizeof(qdisc_names));

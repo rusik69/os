@@ -410,6 +410,46 @@ int nla_get_string(const struct nlattr *nla, const char **str);
 #define RTM_DELROUTE    25
 #define RTM_GETROUTE    26
 
+/* RTNETLINK TC (Traffic Control) message types */
+#define RTM_NEWQDISC    38
+#define RTM_DELQDISC    37
+#define RTM_GETQDISC    36
+#define RTM_NEWTCLASS   42
+#define RTM_DELTCLASS   41
+#define RTM_GETTCLASS   40
+#define RTM_NEWACTION   46
+#define RTM_DELACTION   45
+#define RTM_GETACTION   44
+
+/* TC handle macros */
+#define TC_H_ROOT       0xFFFFFFFFU
+#define TC_H_INGRESS    0xFFFFFFF1U
+#define TC_H_MIN_INGRESS 0xFFF2U
+#define TC_H_MAJ_MASK   0xFFFF0000U
+#define TC_H_MIN_MASK   0x0000FFFFU
+#define TC_H_MAJ(h)     ((h) & TC_H_MAJ_MASK)
+#define TC_H_MIN(h)     ((h) & TC_H_MIN_MASK)
+#define TC_H_MAKE(maj, min) ((maj) | ((min) & TC_H_MIN_MASK))
+
+/* TCA (Traffic Control Attribute) type constants */
+#define TCA_UNSPEC      0
+#define TCA_KIND        1
+#define TCA_OPTIONS     2
+#define TCA_STATS       3
+#define TCA_XSTATS      4
+#define TCA_RATE        5
+#define TCA_FCNT        6
+#define TCA_STATS2      7
+#define TCA_STAB        8
+#define TCA_PAD         9
+
+/* TCA_ACT (TC Action) attribute constants */
+#define TCA_ACT_UNSPEC     0
+#define TCA_ACT_KIND       1
+#define TCA_ACT_OPTIONS    2
+#define TCA_ACT_INDEX      3
+#define TCA_ACT_STATS      4
+
 /* RTNETLINK route attributes and constants */
 #define RT_TABLE_MAIN   254
 #define RTN_UNICAST     1
@@ -431,6 +471,17 @@ struct rtmsg {
     uint8_t  rtm_type;
     uint32_t rtm_flags;
 };
+
+/* TC (Traffic Control) message header — embedded after nlmsghdr */
+struct tcmsg {
+    uint8_t  tcm_family;
+    uint8_t  tcm__pad1;
+    uint16_t tcm__pad2;
+    uint32_t tcm_ifindex;
+    uint32_t tcm_handle;
+    uint32_t tcm_parent;
+    uint32_t tcm_info;
+} __attribute__((packed));
 
 /* rtattr is the same as nlattr */
 #define RTM_RTA(r)       ((struct nlattr *)(((char *)(r)) + NLMSG_ALIGN(sizeof(struct rtmsg))))

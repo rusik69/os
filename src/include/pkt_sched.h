@@ -154,4 +154,13 @@ struct cake_stats {
 /* Create a CAKE qdisc with the given spec (NULL = defaults) */
 struct qdisc *cake_create(const struct cake_spec *spec);
 
+/* ── Qdisc enumeration (for netlink interface) ──────────────────── */
+
+/* Return the number of currently registered qdiscs */
+int tc_get_qdisc_count(void);
+
+/* Get qdisc by index (0-based). Returns NULL if out of range.
+ * If name_buf is non-NULL and name_len > 0, copies the device name. */
+struct qdisc *tc_get_qdisc_by_index(int i, char *name_buf, int name_len);
+
 #endif /* PKT_SCHED_H */
