@@ -22,6 +22,7 @@
 
 #include "types.h"
 #include "netdevice.h"
+#include "tls.h"
 
 /* ── kTLS Offload Types ─────────────────────────────────────────────── */
 
@@ -149,5 +150,81 @@ int ktls_offload_unregister(struct net_device *dev);
 /* Check whether a network device supports HW TLS offload.
  * Returns 1 if HW offload is supported, 0 otherwise. */
 int ktls_offload_supported(const struct net_device *dev);
+
+/* ── kTLS Software Path API ──────────────────────────────────────────── */
+
+/* Encrypt a single TLS record using the kTLS software cipher state.
+ *
+ * Constructs the 5-byte record header, forms the AEAD nonce from the
+ * kTLS context's crypto info and sequence number, computes the AAD
+ * (version-dependent), and encrypts via the appropriate AEAD cipher.
+ *
+ * On success returns the total bytes written to 'out' (header +
+ * ciphertext + AEAD tag).  On failure returns a negative errno.
+ *
+ * @ctx:          kTLS context (must have offload_type == KTLS_OFFLOAD_SW)
+ * @content_type: TLS content type (TLS_CT_*)
+ * @version:      TLS protocol version (wire format, e.g. 0x0303)
+ * @plain:        plaintext payload to encrypt
+ * @plain_len:    length of plaintext (max TLS_MAX_PLAINTEXT_LEN)
+ * @out:          output buffer for the encrypted record
+ * @out_cap:      capacity of the output buffer
+ */
+int ktls_sw_encrypt(struct ktls_ctx *ctx,
+                    uint8_t content_type, uint16_t version,
+                    const uint8_t *plain, int plain_len,
+                    uint8_t *out, int out_cap);
+
+/* Decrypt a single TLS record using the kTLS software cipher state.
+ *
+ * Strips the 5-byte header, validates the AEAD authentication tag,
+ * and decrypts the payload.  On success returns the plaintext length
+ * (bytes written to 'data').  On failure returns a negative errno
+ * (including -EBADMSG on authentication failure).
+ *
+ * @ctx:          kTLS context (must have offload_type == KTLS_OFFLOAD_SW)
+ * @hdr:          TLS record header (5-byte wire format)
+ * @cipher:       ciphertext body (header already stripped)
+ * @cipher_len:   length of ciphertext including AEAD tag
+ * @data:         output buffer for decrypted payload
+ * @data_cap:     capacity of the output buffer
+ */
+int ktls_sw_decrypt(struct ktls_ctx *ctx,
+                    const struct tls_record_header *hdr,
+                    const uint8_t *cipher, int cipher_len,
+                    uint8_t *data, int data_cap);
+
+/* Encrypt and emit one or more TLS records from plaintext.
+ *
+ * If data_len exceeds TLS_MAX_PLAINTEXT_LEN (16384 B), the data is
+ * fragmented into multiple independent records, each encrypted with
+ * an independent sequence number.
+ *
+ * Returns the total number of bytes written to 'out', or negative errno.
+ *
+ * @ctx:          kTLS context (must have offload_type == KTLS_OFFLOAD_SW)
+ * @content_type: TLS content type (TLS_CT_*)
+ * @data:         plaintext data to fragment and encrypt
+ * @data_len:     length of plaintext
+ * @out:          output buffer for the encrypted records
+ * @out_cap:      capacity of the output buffer
+ */
+int ktls_sw_push(struct ktls_ctx *ctx,
+                 uint8_t content_type,
+                 const uint8_t *data, int data_len,
+                 uint8_t *out, int out_cap);
+
+/* Check whether kTLS SW crypto is active on a connection direction.
+ * Returns 1 if active, 0 otherwise. */
+int ktls_sw_is_active(const struct tls_conn *conn, int direction);
+
+/* Get the current record sequence number from a kTLS context.
+ * Returns 0 if no context is found. */
+uint64_t ktls_sw_get_seq(const struct tls_conn *conn, int direction);
+
+/* Find a kTLS context by owning TLS connection and direction.
+ * Returns a pointer to the context, or NULL if not found.
+ * This is an internal helper exposed for driver-level access. */
+struct ktls_ctx *ktls_ctx_find(const struct tls_conn *conn, int direction);
 
 #endif /* KTLS_H */
