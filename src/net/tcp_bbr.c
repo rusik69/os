@@ -124,6 +124,13 @@ void bbr_init(struct bbr_data *b)
     b->probe_rtt_done_stamp = 0;
     b->probe_bw_last_round = 0;
 
+    /* RTprop estimation */
+    b->rtprop_round_min = UINT32_MAX;
+    b->rtprop_min_rtt = 0;
+    b->rtprop_idx = 0;
+    b->rtprop_initialized = 0;
+    /* rtprop_filter[] zeroed by memset — zero entries are treated as empty */
+
     /* Max BW filter starts empty — will populate as rounds complete */
     b->max_bw_idx = 0;
     b->max_bw = 0;
@@ -249,6 +256,58 @@ static void bbr_update_bw_filter(struct bbr_data *b)
 #endif
 }
 
+/* ── RTprop estimation (BBR v1 §4.3) ──────────────────────────────────── */
+
+/*
+ * Update the windowed-minimum RTT filter (RTprop estimate).
+ * Called at each round completion.
+ *
+ * Stores the current round's minimum measured RTT as a sample into a
+ * circular buffer, then recomputes the windowed minimum across the
+ * buffer.  This yields a robust estimate of the propagation delay
+ * (RTprop) that is resilient to transient queue-induced RTT spikes.
+ *
+ * If no valid RTT sample was collected during the round (should not
+ * happen in normal operation), we fall back to the global min_rtt.
+ */
+static void bbr_update_rtprop(struct bbr_data *b)
+{
+    uint32_t sample;
+
+    if (!b)
+        return;
+
+    /* Use the current round's minimum RTT, or fall back to min_rtt */
+    sample = b->rtprop_round_min;
+    if (sample == 0 || sample == UINT32_MAX) {
+        if (b->min_rtt > 0 && b->min_rtt != UINT32_MAX)
+            sample = b->min_rtt;
+        else
+            return;  /* No valid RTT data yet */
+    }
+
+    /* Store sample in the ring buffer */
+    b->rtprop_filter[b->rtprop_idx] = sample;
+    b->rtprop_idx = (b->rtprop_idx + 1) % BBR_RTPROP_FILTER_LEN;
+    b->rtprop_initialized = 1;
+
+    /* Recompute windowed minimum — skip zero entries (uninitialized) */
+    {
+        uint32_t new_min = UINT32_MAX;
+        for (int i = 0; i < BBR_RTPROP_FILTER_LEN; i++) {
+            uint32_t val = b->rtprop_filter[i];
+            if (val > 0 && val < new_min)
+                new_min = val;
+        }
+        b->rtprop_min_rtt = (new_min == UINT32_MAX) ? 0 : new_min;
+    }
+
+#ifdef BBR_DEBUG
+    kprintf("[BBR] rtprop: round_min=%u win_min=%u idx=%d\n",
+            sample, b->rtprop_min_rtt, b->rtprop_idx);
+#endif
+}
+
 /* ── Pacing rate estimation (BBR v1 §4.2) ──────────────────────────── */
 
 /*
@@ -319,17 +378,29 @@ void bbr_on_ack(struct bbr_data *b, uint32_t acked_bytes,
 {
     if (!b) return;
 
-    /* Update min RTT */
+    /* Update min RTT — global absolute minimum */
     if (rtt_ticks > 0 && rtt_ticks < b->min_rtt) {
         b->min_rtt = rtt_ticks;
         b->min_rtt_stamp = now;
     }
 
+    /* Track per-round minimum RTT for RTprop windowed filter */
+    if (rtt_ticks > 0 && rtt_ticks < b->rtprop_round_min)
+        b->rtprop_round_min = rtt_ticks;
+
     /* Sample delivery rate */
     bbr_sample_bw(b, acked_bytes, now);
 
-    /* Update round tracking */
-    bbr_update_round(b, cwnd_segments, now);
+    /* Update round tracking — detect round boundaries */
+    {
+        uint16_t prev_round_count = b->round_count;
+        bbr_update_round(b, cwnd_segments, now);
+        /* If round_count changed, a round just completed */
+        if (b->round_count != prev_round_count) {
+            bbr_update_rtprop(b);
+            b->rtprop_round_min = UINT32_MAX;  /* reset for new round */
+        }
+    }
 
     /* ── STARTUP state ──────────────────────────────────────────────── */
     if (b->state == BBR_STARTUP) {
@@ -356,8 +427,9 @@ void bbr_on_ack(struct bbr_data *b, uint32_t acked_bytes,
     /* ── DRAIN state ────────────────────────────────────────────────── */
     if (b->state == BBR_DRAIN) {
         /* Transition to PROBE_BW once inflight is <= bandwidth-delay product */
-        if (b->min_rtt > 0 && b->bw > 0) {
-            uint32_t bdp_segments = (b->bw * b->min_rtt) / 1400;
+        uint32_t rtt_est = (b->rtprop_min_rtt > 0) ? b->rtprop_min_rtt : b->min_rtt;
+        if (rtt_est > 0 && rtt_est != UINT32_MAX && b->bw > 0) {
+            uint32_t bdp_segments = (b->bw * rtt_est) / 1400;
             if (bdp_segments < BBR_MIN_CWND) bdp_segments = BBR_MIN_CWND;
             /* DRAIN until cwnd <= BDP */
             b->target_cwnd = bdp_segments;
@@ -440,9 +512,10 @@ void bbr_on_ack(struct bbr_data *b, uint32_t acked_bytes,
 
     /* ── Compute target cwnd ─────────────────────────────────────────── */
     if (b->state != BBR_PROBE_RTT) {
-        if (b->min_rtt > 0 && b->bw > 0) {
-            /* BDP in bytes = bw * min_rtt */
-            uint64_t bdp_bytes = (uint64_t)b->bw * b->min_rtt;
+        uint32_t rtt_est = (b->rtprop_min_rtt > 0) ? b->rtprop_min_rtt : b->min_rtt;
+        if (rtt_est > 0 && rtt_est != UINT32_MAX && b->bw > 0) {
+            /* BDP in bytes = bw * rtprop */
+            uint64_t bdp_bytes = (uint64_t)b->bw * rtt_est;
             uint32_t bdp_segments = (uint32_t)(bdp_bytes / 1400);
             if (bdp_segments < BBR_MIN_CWND)
                 bdp_segments = BBR_MIN_CWND;
@@ -537,20 +610,21 @@ const char *bbr_state_str(struct bbr_data *b)
 void bbr_dump(struct bbr_data *b)
 {
     if (!b) return;
-    kprintf("[BBR] state=%s bw=%u bw_hi=%u max_bw=%u min_rtt=%u pacer=%u "
-            "tgt_cwnd=%u rounds=%u phase=%u\n",
-            bbr_state_str(b), b->bw, b->bw_hi, b->max_bw, b->min_rtt, b->pacing_rate,
-            b->target_cwnd, b->round_count, b->probe_bw_phase);
+    kprintf("[BBR] state=%s bw=%u bw_hi=%u max_bw=%u min_rtt=%u "
+            "rtprop=%u pacer=%u tgt_cwnd=%u rounds=%u phase=%u\n",
+            bbr_state_str(b), b->bw, b->bw_hi, b->max_bw, b->min_rtt,
+            b->rtprop_min_rtt,
+            b->pacing_rate, b->target_cwnd, b->round_count, b->probe_bw_phase);
 }
 
 /*
  * Check whether the connection is using BBR congestion control.
  * The caller can use this to decide which CC path to follow.
- * Returns 1 if BBR data is initialized (i.e. min_rtt != UINT32_MAX).
+ * Returns 1 if BBR data is initialized (RTprop filter populated).
  */
 int bbr_is_active(struct bbr_data *b)
 {
-    return b && b->bw_initialized && b->min_rtt != UINT32_MAX;
+    return b && b->rtprop_initialized && b->bw_initialized;
 }
 
 /* ── Implement: tcp_bbr_cong_avoid ────────────────── */

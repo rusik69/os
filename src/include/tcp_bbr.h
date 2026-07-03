@@ -6,6 +6,14 @@
 /* Max BW filter length in rounds (BBR v1 windowed max filter) */
 #define BBR_MAX_BW_FILTER_LEN 10
 
+/* RTprop (round-trip propagation) filter length in rounds.
+ * BBR maintains a windowed minimum RTT filter over the last N rounds
+ * to produce a robust RTprop estimate.  Each entry is the minimum RTT
+ * achieved during that round.  Taking the minimum across the window
+ * gives the current RTprop estimate, used for BDP calculation.
+ * A 10-round window at ~1 RTT per round covers roughly 10 seconds. */
+#define BBR_RTPROP_FILTER_LEN 10
+
 /* ── BBR per-connection state (embedded directly in struct tcp_conn) ── */
 
 struct bbr_data {
@@ -18,9 +26,25 @@ struct bbr_data {
     int      max_bw_idx;
     uint32_t max_bw;           /* windowed max bandwidth for pacing rate */
 
-    /* Minimum round-trip time (in ticks) */
+    /* Minimum round-trip time (in ticks) — global absolute minimum
+     * updated on every ACK when a lower RTT is observed.  Used for
+     * PROBE_RTT scheduling. */
     uint32_t min_rtt;
     uint64_t min_rtt_stamp;
+
+    /* RTprop (windowed min RTT) estimation — BBR v1 §4.3.
+     * rtprop_filter[]: ring buffer of per-round minimum RTT values.
+     * rtprop_min_rtt : minimum across the ring buffer = RTprop estimate.
+     * rtprop_round_min: smallest RTT seen in the current round.
+     * When a round completes, rtprop_round_min is stored into the
+     * ring buffer and rtprop_min_rtt is recomputed.
+     * Any stale entry (==0) is skipped when computing the windowed min.
+     * rtprop_initialized: set after the first round completes. */
+    uint32_t rtprop_filter[BBR_RTPROP_FILTER_LEN];
+    int      rtprop_idx;
+    uint32_t rtprop_min_rtt;
+    uint32_t rtprop_round_min;
+    int      rtprop_initialized;
 
     /* Round tracking */
     uint64_t round_start;
