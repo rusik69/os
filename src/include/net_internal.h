@@ -260,7 +260,22 @@ void handle_icmpv6(struct ipv6_header *ip6, const uint8_t *payload, uint16_t len
 void send_ipv6(const struct in6_addr *dst, uint8_t next_hdr, const void *payload, uint16_t len);
 void send_eth_ipv6(const uint8_t *dst_mac, const void *payload, uint16_t len);
 
-/* IPv6 internal helpers */
+/* IPv6 internal helpers (ipv6_core.c) */
+int  ipv6_parse_exthdr(const uint8_t *data, uint16_t total_len,
+                        uint8_t *out_proto,
+                        const uint8_t **out_payload,
+                        uint16_t *out_payload_len,
+                        const struct ipv6_fragment **out_frag_hdr);
+void handle_ipv6_packet(const uint8_t *data, uint16_t total_len);
+struct ipv6_frag_stats {
+    uint32_t rx_fragments;
+    uint32_t rx_reassembled;
+    uint32_t rx_timed_out;
+    uint32_t rx_dropped;
+    uint32_t rx_oom;
+};
+void ipv6_frag_stats_get(struct ipv6_frag_stats *out);
+
 void ipv6_calc_solicited_node(const struct in6_addr *addr, struct in6_addr *mcast);
 void ipv6_eui64_from_mac(const uint8_t *mac, struct in6_addr *out);
 int  ipv6_addr_is_multicast(const struct in6_addr *addr);

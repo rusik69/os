@@ -547,30 +547,8 @@ static int ipv6_addr_is_ours(const struct in6_addr *addr)
 
 void handle_ipv6(const uint8_t *data, uint16_t len)
 {
-    if (len < sizeof(struct ipv6_header)) return;
-
-    const struct ipv6_header *ip6 = (const struct ipv6_header *)data;
-
-    /* Verify we have the full header + payload */
-    uint16_t payload_len = ntohs(ip6->payload_length);
-    if (sizeof(struct ipv6_header) + payload_len > len) return;
-
-    /* Accept packets destined to us or to multicast addresses */
-    if (!ipv6_addr_is_ours(&ip6->dst_ip) &&
-        !ipv6_addr_is_multicast(&ip6->dst_ip))
-        return;
-
-    /* Update neighbor cache from source address (if link-local) */
-    if (ipv6_addr_is_linklocal(&ip6->src_ip)) {
-        /* We don't have the MAC here; it's added by net_poll before calling us */
-    }
-
-    const uint8_t *payload = data + sizeof(struct ipv6_header);
-
-    if (ip6->next_header == IP_PROTO_ICMPV6) {
-        handle_icmpv6((struct ipv6_header *)data, payload, payload_len);
-    }
-    /* Future: handle TCPv6, UDPv6, etc. */
+    /* Delegate to the full extension-header-aware handler in ipv6_core.c */
+    handle_ipv6_packet(data, len);
 }
 
 /* ── ping6 ────────────────────────────────────────────────────────── */

@@ -150,6 +150,81 @@ struct nd_option {
 #define IPV6_ADDR_ALL_ROUTERS   { { 0xFF,0x02,0,0,0,0,0,0,0,0,0,0,0,0,0,2 } }
 #define IPV6_ADDR_LINKLOCAL_PFX { { 0xFE,0x80,0,0,0,0,0,0,0,0,0,0,0,0,0,0 } }
 
+/* ── IPv6 Next Header constants ──────────────────────────────────── */
+#define IPV6_NEXTHDR_HOPOPT      0   /* Hop-by-Hop Option */
+#define IPV6_NEXTHDR_ICMP        58  /* ICMPv6 */
+#define IPV6_NEXTHDR_TCP         6   /* TCP */
+#define IPV6_NEXTHDR_UDP         17  /* UDP */
+#define IPV6_NEXTHDR_IPV6        41  /* IPv6 in IPv6 */
+#define IPV6_NEXTHDR_ROUTING     43  /* Routing */
+#define IPV6_NEXTHDR_FRAGMENT    44  /* Fragment */
+#define IPV6_NEXTHDR_ESP         50  /* Encapsulating Security Payload */
+#define IPV6_NEXTHDR_AUTH        51  /* Authentication Header */
+#define IPV6_NEXTHDR_NONE        59  /* No next header */
+#define IPV6_NEXTHDR_DEST        60  /* Destination Options */
+
+/* IPv6 Extension Header structures (RFC 8200) */
+
+/* Hop-by-Hop Options Header / Destination Options Header */
+struct ipv6_exthdr_opt {
+    uint8_t  next_header;
+    uint8_t  hdr_ext_len;   /* length in 8-octet units excluding first 8 octets */
+    uint8_t  options[0];    /* TLV-encoded options */
+} __attribute__((packed));
+
+/* Routing Header (type 0 deprecated, type 2 for mobility) */
+struct ipv6_routing {
+    uint8_t  next_header;
+    uint8_t  hdr_ext_len;
+    uint8_t  routing_type;
+    uint8_t  segments_left;
+    uint8_t  data[0];       /* type-specific data */
+} __attribute__((packed));
+
+/* Fragment Header (RFC 8200 §4.5) */
+struct ipv6_fragment {
+    uint8_t  next_header;
+    uint8_t  reserved;
+    uint16_t frag_off_more; /* bits 0-2: reserved, bit 3: M flag, bits 4-15: fragment offset (high bits) */
+    uint32_t identification;
+} __attribute__((packed));
+
+/* Fragment Offset and More flag extraction helpers */
+#define IPV6_FRAG_OFFSET(hdr) \
+    ((uint16_t)(ntohs((hdr)->frag_off_more) & 0xFFF8) >> 3)
+#define IPV6_FRAG_MORE(hdr) \
+    (!!(ntohs((hdr)->frag_off_more) & 0x0001))
+
+/* Authentication Header (RFC 4302) */
+struct ipv6_auth {
+    uint8_t  next_header;
+    uint8_t  payload_len;   /* length in 4-octet units minus 2 */
+    uint16_t reserved;
+    uint32_t spi;           /* Security Parameters Index */
+    uint32_t sequence_number;
+    uint8_t  icv[0];        /* Integrity Check Value */
+} __attribute__((packed));
+
+/* TLV Option format (used in Hop-by-Hop and Destination options) */
+struct ipv6_tlv_opt {
+    uint8_t  type;
+    uint8_t  len;           /* length of data (not including type+len) */
+    uint8_t  data[0];
+} __attribute__((packed));
+
+/* TLV option types */
+#define IPV6_TLV_PAD1        0   /* 1-byte padding (no len+data) */
+#define IPV6_TLV_PADN        1   /* padding */
+#define IPV6_TLV_ROUTER_ALERT 5  /* Router Alert (RFC 2711) */
+#define IPV6_TLV_JUMBO       0xC2 /* Jumbo Payload (RFC 2675) */
+#define IPV6_TLV_NSAP_ADDR   0xC3 /* NSAP Address (RFC 1888, deprecated) */
+#define IPV6_TLV_TUN_LIMIT   4   /* Tunnel Encapsulation Limit (RFC 2473) */
+
+/* Router Alert value meanings */
+#define IPV6_ROUTER_ALERT_MLD     0   /* Multicast Listener Discovery */
+#define IPV6_ROUTER_ALERT_RSVP    1   /* RSVP */
+#define IPV6_ROUTER_ALERT_ACTIVE  2   /* Active Networks */
+
 /* ICMP header */
 struct icmp_header {
     uint8_t  type;
