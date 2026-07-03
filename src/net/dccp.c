@@ -21,6 +21,16 @@ static void dccp_ccid2_disarm_rto(struct dccp_sock *ds);
 static void dccp_ccid2_rto_cb(void *arg);
 static void dccp_ccid2_cwnd_timeout(struct dccp_sock *ds);
 
+/* ── CCID3/TFRC forward declarations ────────────────────────── */
+static uint32_t int_sqrt64(uint64_t n);
+static void     tfrc_update_rtt(struct dccp_sock *ds, uint32_t rtt_sample_ms);
+static uint32_t tfrc_compute_x(struct dccp_sock *ds);
+static void     tfrc_update_loss_rate(struct dccp_sock *ds);
+static void     tfrc_handle_loss(struct dccp_sock *ds);
+static void     tfrc_nofeedback_cb(void *arg);
+static void     tfrc_arm_nofeedback(struct dccp_sock *ds);
+static void     tfrc_disarm_nofeedback(struct dccp_sock *ds);
+
 #define DCCP_MAX_SOCKS 8
 
 static struct dccp_sock dccp_socks[DCCP_MAX_SOCKS];
@@ -98,6 +108,18 @@ int dccp_create(int fd, int type)
     ds->snd_nxt = 1;
     ds->highest_sent = 0;
     ds->retransmits = 0;
+
+    /* ── CCID3: TFRC initialization (RFC 5348, RFC 4342) ────────── */
+    ds->tfrc_p = 0;
+    ds->tfrc_s = DCCP_CCID3_DEFAULT_S;
+    ds->tfrc_bytes_since_loss = 0;
+    ds->tfrc_interval_idx = 0;
+    ds->tfrc_nofeedback_pending = 0;
+    ds->tfrc_nofeedback_timer_id = -1;
+    ds->tfrc_last_feedback = 0;
+    ds->tfrc_nofeedback_count = 0;
+    ds->tfrc_X = 0;
+    memset(ds->tfrc_loss_interval, 0, sizeof(ds->tfrc_loss_interval));
 
     spinlock_release(&dccp_lock);
     return 0;
@@ -196,18 +218,14 @@ int dccp_send(int fd, const void *data, uint16_t len)
             return -EAGAIN;  /* Congestion-limited, retry later */
         }
     } else if (ds->ccid == DCCP_CCID_3) {
-        /* TFRC: rate-based pacing */
+        /* TFRC: rate-based pacing (RFC 5348 §4.1)
+         * Minimum inter-packet interval =
+         *   ceil(packet_len / (tx_rate / TIMER_FREQ)) ticks
+         * where TIMER_FREQ = 100 Hz, giving tx_rate/100 bytes/tick */
         if (ds->tx_rate > 0 && ds->last_send_time > 0) {
             uint64_t now = timer_get_ticks();
             uint64_t elapsed = now - ds->last_send_time;
-            /* Minimum interval between sends given tx_rate (bytes/sec):
-             *   interval = (data_len * TICK_HZ) / tx_rate  (in timer ticks)
-             * We use an approximate check: if less than 1 tick has elapsed
-             * and we're near the rate limit, pace.
-             * Convert tx_rate (bytes/s) to bytes per tick.
-             * TICK_HZ ≈ 1000 (kernel timer runs at ~1000 Hz typically)
-             * bytes_per_tick = tx_rate / 1000 */
-            uint32_t bytes_per_tick = ds->tx_rate / 100;
+            uint32_t bytes_per_tick = ds->tx_rate / TIMER_FREQ;
             if (bytes_per_tick == 0) bytes_per_tick = 1;
             uint32_t min_interval = (len + bytes_per_tick - 1) / bytes_per_tick;
             if (elapsed < (uint64_t)min_interval) {
@@ -278,6 +296,11 @@ void dccp_close(int fd)
     spinlock_acquire(&dccp_lock);
     for (int i = 0; i < DCCP_MAX_SOCKS; i++) {
         if (dccp_socks[i].used && dccp_socks[i].fd == fd) {
+            /* Disarm any pending CCID timers before freeing sock */
+            if (dccp_socks[i].ccid == DCCP_CCID_2)
+                dccp_ccid2_disarm_rto(&dccp_socks[i]);
+            else if (dccp_socks[i].ccid == DCCP_CCID_3)
+                tfrc_disarm_nofeedback(&dccp_socks[i]);
             memset(&dccp_socks[i], 0, sizeof(struct dccp_sock));
             break;
         }
@@ -827,6 +850,265 @@ static void dccp_ccid2_ack_received(struct dccp_sock *ds, uint32_t ack_seq)
     }
 }
 
+/* ═══════════════════════════════════════════════════════════════════
+ * CCID3: TFRC Rate Control (RFC 5348 / RFC 4342)
+ * ═══════════════════════════════════════════════════════════════════ */
+
+/* ── int_sqrt64: 64-bit integer square root (Newton's method) ── */
+static uint32_t int_sqrt64(uint64_t n)
+{
+    if (n == 0 || n == 1)
+        return (uint32_t)n;
+    uint64_t x = n;
+    uint64_t y = (x + 1) >> 1;
+    while (y < x) {
+        x = y;
+        y = (x + n / x) >> 1;
+    }
+    return (uint32_t)x;
+}
+
+/* ── tfrc_update_rtt: Update RTT estimate with EWMA ──
+ * Uses exponential weighted moving average with alpha = 1/4.
+ * Also tracks min_rtt. */
+static void tfrc_update_rtt(struct dccp_sock *ds, uint32_t rtt_sample_ms)
+{
+    if (rtt_sample_ms < 1)
+        rtt_sample_ms = 1;
+    if (rtt_sample_ms > 30000)
+        rtt_sample_ms = 30000;
+
+    if (ds->rtt_samples == 0) {
+        ds->rtt = rtt_sample_ms;
+        ds->min_rtt = rtt_sample_ms;
+    } else {
+        /* EWMA: rtt = 3/4 * rtt + 1/4 * sample */
+        ds->rtt = (ds->rtt * 3 + rtt_sample_ms) / 4;
+        if (ds->rtt < 1)
+            ds->rtt = 1;
+        if (rtt_sample_ms < ds->min_rtt)
+            ds->min_rtt = rtt_sample_ms;
+    }
+    ds->rtt_samples++;
+}
+
+/* ── tfrc_compute_x: Allowed rate via TCP throughput equation ──
+ *
+ * TCP throughput equation (RFC 5348 §3.1):
+ *   X = s / (R*sqrt(2p/3) + t_RTO*3*sqrt(3p/8)*p*(1+32p^2))
+ *
+ * where s = packet size (bytes), R = RTT (sec), p = loss event rate,
+ * t_RTO = 4*RTT (sec).  All computation uses Q16.16 fixed-point.
+ * Returns allowed rate in bytes/sec. */
+static uint32_t tfrc_compute_x(struct dccp_sock *ds)
+{
+    uint32_t s = ds->tfrc_s ? ds->tfrc_s : DCCP_CCID3_DEFAULT_S;
+    uint32_t rtt_ms = ds->rtt ? ds->rtt : 100;
+    uint32_t p_q16 = ds->tfrc_p;
+
+    if (p_q16 == 0) {
+        /* No loss: initial rate = 2 packets per RTT */
+        uint64_t rate = (uint64_t)s * 2000 / rtt_ms;
+        if (rate < DCCP_CCID3_MIN_X)
+            rate = DCCP_CCID3_MIN_X;
+        if (rate > DCCP_CCID3_MAX_X)
+            rate = DCCP_CCID3_MAX_X;
+        return (uint32_t)rate;
+    }
+
+    /* RTT in Q16.16 seconds: rtt_sec_q16 = rtt_ms * 65536 / 1000 */
+    uint64_t R_q16 = (uint64_t)rtt_ms * 65536 / 1000;
+    if (R_q16 < 1)
+        R_q16 = 1;
+
+    /* sqrt(2p/3) as Q16.16: sqrt(2 * p_q16 * 65536 / 3) */
+    uint64_t rad1 = (uint64_t)2 * p_q16 * 65536 / 3;
+    uint64_t sqrt_2p_3_q16 = int_sqrt64(rad1);
+
+    /* sqrt(3p/8) as Q16.16: sqrt(3 * p_q16 * 65536 / 8) */
+    uint64_t rad2 = (uint64_t)3 * p_q16 * 65536 / 8;
+    uint64_t sqrt_3p_8_q16 = int_sqrt64(rad2);
+
+    /* term1 = R * sqrt(2p/3) in Q16.16 seconds */
+    uint64_t term1_q16 = R_q16 * sqrt_2p_3_q16 / 65536;
+
+    /* inner = 3 * sqrt(3p/8) * p * (1+32p^2) in Q16.16 */
+    uint64_t p2_q16 = (uint64_t)p_q16 * p_q16 / 65536;
+    uint64_t one_plus_32p2_q16 = 65536ULL + (uint64_t)32 * p2_q16;
+
+    /* inner_q16 = 3*sqrt_3p_8_q16*p_q16*one_plus_32p2_q16 / (65536^2) */
+    uint64_t inner_q16 = (uint64_t)3 * sqrt_3p_8_q16 * p_q16;
+    inner_q16 = inner_q16 * one_plus_32p2_q16 / 65536 / 65536;
+
+    /* term2 = 4 * R * inner in Q16.16 seconds */
+    uint64_t term2_q16 = 4 * R_q16 * inner_q16 / 65536;
+
+    uint64_t denom_q16 = term1_q16 + term2_q16;
+    if (denom_q16 < 1)
+        denom_q16 = 1;
+
+    /* X = s / denom_seconds = s * 65536 / denom_q16 (bytes/sec) */
+    uint64_t rate = (uint64_t)s * 65536 / denom_q16;
+
+    if (rate < DCCP_CCID3_MIN_X)
+        rate = DCCP_CCID3_MIN_X;
+    if (rate > DCCP_CCID3_MAX_X)
+        rate = DCCP_CCID3_MAX_X;
+
+    return (uint32_t)rate;
+}
+
+/* ── tfrc_update_loss_rate: Compute average loss interval ──
+ * Uses a weighted average of the last N loss intervals (RFC 5348 §5).
+ * The loss event rate p = 1 / I_mean, returned as Q16.16. */
+static void tfrc_update_loss_rate(struct dccp_sock *ds)
+{
+    /* Weights double every 5 intervals (RFC 5348 §5.3) */
+    static const uint32_t weights[DCCP_CCID3_LOSS_INTERVALS] = {
+        1, 1, 2, 2, 2, 2, 4, 4
+    };
+
+    uint64_t sum_weighted = 0;
+    uint32_t sum_weights = 0;
+    uint32_t n = ds->tfrc_interval_idx;
+
+    if (n == 0) {
+        ds->tfrc_p = 0;
+        return;
+    }
+    if (n > DCCP_CCID3_LOSS_INTERVALS)
+        n = DCCP_CCID3_LOSS_INTERVALS;
+
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t w = (i < DCCP_CCID3_LOSS_INTERVALS) ? weights[i] : 8;
+        sum_weighted += (uint64_t)ds->tfrc_loss_interval[i] * w;
+        sum_weights += w;
+    }
+
+    if (sum_weights == 0) {
+        ds->tfrc_p = 0;
+        return;
+    }
+
+    /* I_mean = sum_weighted / sum_weights (in packets)
+     * p = 1 / I_mean, as Q16.16: p_q16 = 65536 / I_mean */
+    uint32_t i_mean_pkts = (uint32_t)(sum_weighted / sum_weights);
+    if (i_mean_pkts == 0)
+        i_mean_pkts = 1;
+
+    ds->tfrc_p = 65536U / i_mean_pkts;
+}
+
+/* ── tfrc_handle_loss: Process a loss event (RFC 5348 §5) ──
+ * Called when 3 duplicate ACKs are detected.  Completes the current
+ * loss interval and recalculates the loss event rate p. */
+static void tfrc_handle_loss(struct dccp_sock *ds)
+{
+    if (ds->tfrc_interval_idx < DCCP_CCID3_LOSS_INTERVALS) {
+        uint32_t interval_pkts = ds->tfrc_bytes_since_loss /
+            (ds->tfrc_s ? ds->tfrc_s : DCCP_CCID3_DEFAULT_S);
+        if (interval_pkts < 1)
+            interval_pkts = 1;
+
+        /* Shift intervals to make room for new one */
+        if (ds->tfrc_interval_idx > 0) {
+            for (uint32_t i = ds->tfrc_interval_idx; i > 0; i--)
+                ds->tfrc_loss_interval[i] = ds->tfrc_loss_interval[i - 1];
+        }
+        ds->tfrc_loss_interval[0] = interval_pkts;
+        ds->tfrc_interval_idx++;
+        if (ds->tfrc_interval_idx > DCCP_CCID3_LOSS_INTERVALS)
+            ds->tfrc_interval_idx = DCCP_CCID3_LOSS_INTERVALS;
+    }
+
+    ds->tfrc_bytes_since_loss = 0;
+    ds->loss_pending = 1;
+
+    /* Recompute loss rate and allowed rate */
+    tfrc_update_loss_rate(ds);
+    ds->tfrc_X = tfrc_compute_x(ds);
+    ds->tx_rate = ds->tfrc_X;
+
+    kprintf("[dccp] CCID3 TFRC loss: p=0x%08x X=%u rtt=%ums\n",
+            ds->tfrc_p, ds->tfrc_X, ds->rtt);
+}
+
+/* ── tfrc_nofeedback_cb: NoFeedback expiry callback (RFC 5348 §4.3) ──
+ * Halves the allowed rate and re-arms the timer. */
+static void tfrc_nofeedback_cb(void *arg)
+{
+    int fd = (int)(unsigned long)(uintptr_t)arg;
+
+    spinlock_acquire(&dccp_lock);
+    struct dccp_sock *ds = dccp_ccid2_find_sock_by_fd(fd);
+    if (!ds || !ds->used || ds->ccid != DCCP_CCID_3) {
+        spinlock_release(&dccp_lock);
+        return;
+    }
+
+    ds->tfrc_nofeedback_pending = 0;
+    ds->tfrc_nofeedback_timer_id = -1;
+    ds->tfrc_nofeedback_count++;
+
+    /* Halve rate per RFC 5348 §4.3 */
+    ds->tfrc_X /= 2;
+    if (ds->tfrc_X < DCCP_CCID3_MIN_X)
+        ds->tfrc_X = DCCP_CCID3_MIN_X;
+    ds->tx_rate = ds->tfrc_X;
+
+    kprintf("[dccp] CCID3 NoFeedback #%u fd=%d: X=%u\n",
+            ds->tfrc_nofeedback_count, fd, ds->tfrc_X);
+
+    /* Re-arm NoFeedback timer */
+    uint32_t nofeedback_ms = ds->rtt ? (ds->rtt * DCCP_CCID3_NOFEEDBACK_RTO) : 400;
+    uint64_t delay_ticks = (uint64_t)nofeedback_ms * TIMER_FREQ / 1000;
+    if (delay_ticks < 1) delay_ticks = 1;
+
+    int tid = timer_schedule(tfrc_nofeedback_cb,
+                             (void *)(unsigned long)(uintptr_t)fd,
+                             delay_ticks);
+    if (tid >= 0) {
+        ds->tfrc_nofeedback_timer_id = tid;
+        ds->tfrc_nofeedback_pending = 1;
+    }
+
+    spinlock_release(&dccp_lock);
+}
+
+/* ── tfrc_arm_nofeedback: Arm the NoFeedback timer ──
+ * NoFeedback timeout = 4 * RTT (RFC 5348 §4.3). */
+static void tfrc_arm_nofeedback(struct dccp_sock *ds)
+{
+    if (ds->tfrc_nofeedback_pending)
+        tfrc_disarm_nofeedback(ds);
+
+    uint32_t nofeedback_ms = ds->rtt ? (ds->rtt * DCCP_CCID3_NOFEEDBACK_RTO) : 400;
+    uint64_t delay_ticks = (uint64_t)nofeedback_ms * TIMER_FREQ / 1000;
+    if (delay_ticks < 1) delay_ticks = 1;
+
+    int fd = ds->fd;
+    int tid = timer_schedule(tfrc_nofeedback_cb,
+                             (void *)(unsigned long)(uintptr_t)fd,
+                             delay_ticks);
+    if (tid >= 0) {
+        ds->tfrc_nofeedback_timer_id = tid;
+        ds->tfrc_nofeedback_pending = 1;
+        ds->tfrc_nofeedback_count = 0;
+    }
+}
+
+/* ── tfrc_disarm_nofeedback: Cancel NoFeedback timer ── */
+static void tfrc_disarm_nofeedback(struct dccp_sock *ds)
+{
+    if (!ds->tfrc_nofeedback_pending)
+        return;
+    if (ds->tfrc_nofeedback_timer_id >= 0) {
+        timer_cancel(ds->tfrc_nofeedback_timer_id);
+        ds->tfrc_nofeedback_timer_id = -1;
+    }
+    ds->tfrc_nofeedback_pending = 0;
+}
+
 /* ── dccp_ccid_ack_rcvd: update CCID state on received ACK ──
  * Called when an ACK or DataAck packet is received.  Parses the
  * acknowledgment number and updates CCID congestion control state.
@@ -856,8 +1138,7 @@ static void dccp_ccid_ack_rcvd(struct dccp_sock *ds,
         ds->last_ack_seq = ack_seq;
 
     } else if (ds->ccid == DCCP_CCID_3) {
-        /* ── CCID3: TFRC rate-based control (RFC 4342) ── */
-        /* Calculate how many new packets were ACKed since last_ack_seq */
+        /* ── CCID3: TFRC rate control (RFC 4342, RFC 5348) ── */
         uint32_t prev_ack = ds->last_ack_seq;
         int newly_acked = 0;
         if (ack_seq > prev_ack) {
@@ -867,15 +1148,16 @@ static void dccp_ccid_ack_rcvd(struct dccp_sock *ds,
         }
 
         if (newly_acked == 0) {
-            /* Duplicate ACK */
+            /* Duplicate ACK: may indicate packet loss */
             ds->dup_acks++;
-            if (ds->dup_acks >= 3) {
+            if (ds->dup_acks >= 3 && !ds->loss_pending) {
                 ds->loss_pending = 1;
+                tfrc_handle_loss(ds);
             }
             return;
         }
 
-        /* Decrement in_flight */
+        /* New ACK received: update in_flight and reset dupACK counter */
         if (newly_acked > (int)ds->in_flight)
             ds->in_flight = 0;
         else
@@ -883,20 +1165,36 @@ static void dccp_ccid_ack_rcvd(struct dccp_sock *ds,
 
         ds->last_ack_seq = ack_seq;
         ds->dup_acks = 0;
-        ds->loss_pending = 0;
 
-        /* TFRC rate update */
-        ds->rtt_samples++;
-        if (ds->rtt > 0 && ds->tx_rate > 0) {
-            if (ds->rtt_samples < 8) {
-                if (ds->tx_rate < 1000000)
-                    ds->tx_rate += (uint32_t)newly_acked * 1000;
-            } else {
-                ds->tx_rate += ds->tx_rate / 100;  /* +1% per ACK */
-            }
-            if (ds->tx_rate > 100000000)
-                ds->tx_rate = 100000000;
+        /* Track bytes since last loss for loss interval calculation */
+        ds->tfrc_bytes_since_loss += (uint32_t)newly_acked *
+            (ds->tfrc_s ? ds->tfrc_s : DCCP_CCID3_DEFAULT_S);
+
+        /* Update RTT estimate from ACK timing */ {
+            uint64_t now = timer_get_ticks();
+            uint64_t rtt_ticks = now - ds->last_send_time;
+            uint32_t rtt_ms = (uint32_t)(rtt_ticks * 10);
+            tfrc_update_rtt(ds, rtt_ms);
         }
+
+        /* Recompute allowed rate using TCP throughput equation */
+        ds->tfrc_X = tfrc_compute_x(ds);
+
+        /* RFC 5348 §4.4: no more than doubling rate per RTT */
+        if (ds->tx_rate > 0) {
+            uint64_t max_rate = (uint64_t)ds->tx_rate * 2;
+            if ((uint64_t)ds->tfrc_X > max_rate)
+                ds->tfrc_X = (uint32_t)max_rate;
+        }
+
+        ds->tx_rate = ds->tfrc_X;
+
+        /* Re-arm NoFeedback timer on feedback receipt */
+        tfrc_disarm_nofeedback(ds);
+        tfrc_arm_nofeedback(ds);
+
+        kprintf("[dccp] CCID3 TFRC: X=%u rtt=%ums p=0x%08x in_flight=%u\n",
+                ds->tx_rate, ds->rtt, ds->tfrc_p, ds->in_flight);
     }
 }
 
@@ -1123,6 +1421,11 @@ int dccp_disconnect(int fd)
         spinlock_release(&dccp_lock);
         return -ENOTCONN;
     }
+    /* Disarm CCID timers before disconnect */
+    if (ds->ccid == DCCP_CCID_2)
+        dccp_ccid2_disarm_rto(ds);
+    else if (ds->ccid == DCCP_CCID_3)
+        tfrc_disarm_nofeedback(ds);
     /* Send DCCP-Close if connected */
     {
         uint8_t close_pkt[sizeof(struct dccp_header)];

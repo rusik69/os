@@ -74,6 +74,25 @@ struct dccp_header {
 /* Option padding */
 #define DCCP_OPT_PADDING    0
 
+/* ── CCID2 constants (RFC 4341) ──────────────────────────────── */
+#define DCCP_CCID2_INIT_CWND     2       /* Initial congestion window (packets) */
+#define DCCP_CCID2_INIT_SSTHRESH 16      /* Initial slow start threshold */
+#define DCCP_CCID2_INIT_RTO      3000    /* Initial RTO: 3 seconds (ms) */
+#define DCCP_CCID2_MIN_RTO       200     /* Minimum RTO: 200 ms */
+#define DCCP_CCID2_MAX_RTO       60000   /* Maximum RTO: 60 seconds */
+#define DCCP_CCID2_INIT_ACK_RATIO 2     /* Ack Ratio initial value */
+/* Scaling factors for SRTT/RTTVAR (RFC 6298) */
+#define DCCP_CCID2_RTO_ALPHA     1       /* 1/8 for SRTT update */
+#define DCCP_CCID2_RTO_BETA      1       /* 1/4 for RTTVAR update */
+
+/* ── CCID3: TFRC constants (RFC 5348, RFC 4342) ────────────────── */
+#define DCCP_CCID3_DEFAULT_S        1500    /* Default packet size (bytes) */
+#define DCCP_CCID3_INIT_X           20000   /* Initial allowed rate (bytes/sec) */
+#define DCCP_CCID3_MIN_X            240     /* Min rate ~1 pkt per 64 sec */
+#define DCCP_CCID3_MAX_X            100000000 /* Cap at 100 MB/s */
+#define DCCP_CCID3_LOSS_INTERVALS   8       /* Loss interval history length */
+#define DCCP_CCID3_NOFEEDBACK_RTO   4       /* NoFeedback timeout = 4 * RTT */
+
 /* DCCP socket state */
 struct dccp_sock {
     int         used;
@@ -130,6 +149,17 @@ struct dccp_sock {
     uint32_t    highest_sent;   /* Highest sequence number sent */
     /* Loss statistics */
     uint32_t    retransmits;    /* Total retransmissions */
+    /* ── CCID3: TFRC rate control (RFC 5348) ─────────────────────── */
+    uint32_t    tfrc_p;                     /* Loss event rate (Q16.16) */
+    uint32_t    tfrc_s;                     /* Packet size (bytes) */
+    uint32_t    tfrc_loss_interval[DCCP_CCID3_LOSS_INTERVALS]; /* Loss intervals */
+    uint32_t    tfrc_bytes_since_loss;      /* Bytes sent since last loss */
+    uint32_t    tfrc_interval_idx;          /* Current loss interval index */
+    uint8_t     tfrc_nofeedback_pending;    /* NoFeedback timer armed */
+    int         tfrc_nofeedback_timer_id;   /* NoFeedback timer ID */
+    uint64_t    tfrc_last_feedback;         /* Last feedback time (ticks) */
+    uint32_t    tfrc_nofeedback_count;      /* Consecutive NoFeedback timeouts */
+    uint32_t    tfrc_X;                     /* Computed rate from equation (bytes/sec) */
 };
 
 /* DCCP options */
@@ -143,17 +173,6 @@ struct dccp_sock {
 #define DCCP_OPT_ELAPSED_TIME    7
 #define DCCP_OPT_DATA_CHECKSUM   8
 #define DCCP_OPT_CCID_SPECIFIC   32
-
-/* ── CCID2 constants (RFC 4341) ──────────────────────────────── */
-#define DCCP_CCID2_INIT_CWND     2       /* Initial congestion window (packets) */
-#define DCCP_CCID2_INIT_SSTHRESH 16      /* Initial slow start threshold */
-#define DCCP_CCID2_INIT_RTO      3000    /* Initial RTO: 3 seconds (ms) */
-#define DCCP_CCID2_MIN_RTO       200     /* Minimum RTO: 200 ms */
-#define DCCP_CCID2_MAX_RTO       60000   /* Maximum RTO: 60 seconds */
-#define DCCP_CCID2_INIT_ACK_RATIO 2     /* Ack Ratio initial value */
-/* Scaling factors for SRTT/RTTVAR (RFC 6298) */
-#define DCCP_CCID2_RTO_ALPHA     1       /* 1/8 for SRTT update */
-#define DCCP_CCID2_RTO_BETA      1       /* 1/4 for RTTVAR update */
 
 /* API */
 void dccp_init(void);
