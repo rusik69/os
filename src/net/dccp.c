@@ -7,7 +7,12 @@
 #include "printf.h"
 #include "spinlock.h"
 #include "errno.h"
+#include "timer.h"
 #include "export.h"
+
+/* Forward declarations */
+static void dccp_ccid_ack_rcvd(struct dccp_sock *ds,
+                               const uint8_t *pkt, uint16_t len);
 
 #define DCCP_MAX_SOCKS 8
 
@@ -62,6 +67,13 @@ int dccp_create(int fd, int type)
     ds->cwnd = 2;
     ds->ssthresh = 16;
     ds->rtt = 100;  /* Initial RTT estimate: 100ms */
+    ds->in_flight = 0;
+    ds->last_ack_seq = 0;
+    ds->last_send_time = 0;
+    ds->dup_acks = 0;
+    ds->loss_pending = 0;
+    ds->rtt_samples = 0;
+    ds->min_rtt = 0xFFFFFFFF;
 
     spinlock_release(&dccp_lock);
     return 0;
@@ -143,11 +155,42 @@ int dccp_connect(int fd, uint32_t ip, uint16_t port)
 
 int dccp_send(int fd, const void *data, uint16_t len)
 {
+    if (!dccp_initialized) return -ENOSYS;
+
     spinlock_acquire(&dccp_lock);
     struct dccp_sock *ds = dccp_find_by_fd(fd);
     if (!ds || !ds->connected) {
         spinlock_release(&dccp_lock);
         return -EINVAL;
+    }
+
+    /* CCID congestion control check */
+    if (ds->ccid == DCCP_CCID_2) {
+        /* TCP-like: window-based (cwnd in packets) */
+        if (ds->in_flight >= ds->cwnd) {
+            spinlock_release(&dccp_lock);
+            return -EAGAIN;  /* Congestion-limited, retry later */
+        }
+    } else if (ds->ccid == DCCP_CCID_3) {
+        /* TFRC: rate-based pacing */
+        if (ds->tx_rate > 0 && ds->last_send_time > 0) {
+            uint64_t now = timer_get_ticks();
+            uint64_t elapsed = now - ds->last_send_time;
+            /* Minimum interval between sends given tx_rate (bytes/sec):
+             *   interval = (data_len * TICK_HZ) / tx_rate  (in timer ticks)
+             * We use an approximate check: if less than 1 tick has elapsed
+             * and we're near the rate limit, pace.
+             * Convert tx_rate (bytes/s) to bytes per tick.
+             * TICK_HZ ≈ 1000 (kernel timer runs at ~1000 Hz typically)
+             * bytes_per_tick = tx_rate / 1000 */
+            uint32_t bytes_per_tick = ds->tx_rate / 100;
+            if (bytes_per_tick == 0) bytes_per_tick = 1;
+            uint32_t min_interval = (len + bytes_per_tick - 1) / bytes_per_tick;
+            if (elapsed < (uint64_t)min_interval) {
+                spinlock_release(&dccp_lock);
+                return -EAGAIN;
+            }
+        }
     }
 
     /* Build DCCP-Data packet */
@@ -164,6 +207,10 @@ int dccp_send(int fd, const void *data, uint16_t len)
     memcpy(pkt + sizeof(*dh), data, data_len);
 
     send_ip(ds->peer_ip, IPPROTO_DCCP, pkt, sizeof(*dh) + data_len);
+
+    ds->in_flight++;
+    ds->last_send_time = timer_get_ticks();
+
     spinlock_release(&dccp_lock);
     return data_len;
 }
@@ -325,6 +372,9 @@ void handle_dccp(uint32_t src_ip, uint32_t dst_ip,
         memcpy(ds->rcvbuf, payload + data_offset, data_len);
         ds->rcvlen = data_len;
         ds->ack_seq = ntohl(dh->seq_low);
+        /* Call CCID ack processing for DataAck (which carries ACK info) */
+        if (pkt_type == DCCP_PKT_DATAACK)
+            dccp_ccid_ack_rcvd(ds, payload, len);
         break;
     }
     case DCCP_PKT_REQUEST:
@@ -362,6 +412,8 @@ void handle_dccp(uint32_t src_ip, uint32_t dst_ip,
             ds->state = DCCP_ESTABLISHED;
             kprintf("[dccp] DCCP-Ack received, connection established\n");
         }
+        /* Update CCID congestion control state */
+        dccp_ccid_ack_rcvd(ds, payload, len);
         break;
     case DCCP_PKT_CLOSEREQ: {
         /* DCCP-CloseReq: peer wants to close — send DCCP-Close */
@@ -390,6 +442,143 @@ void handle_dccp(uint32_t src_ip, uint32_t dst_ip,
     }
 
     spinlock_release(&dccp_lock);
+}
+
+/* ── dccp_parse_ack_option: find ACK option in DCCP options area ──
+ * Returns the acknowledgment sequence number, or 0 if not found.
+ * Options are between the fixed header end and the data_offset.
+ */
+static uint32_t dccp_parse_ack_option(const uint8_t *pkt, uint16_t len)
+{
+    if (len < sizeof(struct dccp_header))
+        return 0;
+
+    const struct dccp_header *dh = (const struct dccp_header *)pkt;
+    uint8_t data_off = (dh->data_offset >> 4) * 4;
+    if (data_off < sizeof(struct dccp_header))
+        data_off = sizeof(struct dccp_header);
+    if (data_off > len)
+        data_off = len;
+
+    /* Options start after fixed header */
+    uint16_t off = sizeof(struct dccp_header);
+    while (off + 1 < data_off) {
+        uint8_t opt_type = pkt[off];
+        uint8_t opt_len;
+        switch (opt_type) {
+        case DCCP_OPT_PADDING:
+            off++;
+            continue;
+        case DCCP_OPT_ACK_NUM:
+            /* type(1) + len(1) + high_byte(1) + reserved(1) + seq_low(4) = 8 */
+            if (off + 8 > data_off)
+                return 0;
+            opt_len = pkt[off + 1];
+            if (opt_len < 6)
+                return 0;
+            /* Sequence number is bytes [2..7], only low 32 bits returned
+             * (48-bit seq, high 16 bits in bytes 2-3, low 32 in bytes 4-7) */
+            return ((uint32_t)pkt[off + 4] << 24) |
+                   ((uint32_t)pkt[off + 5] << 16) |
+                   ((uint32_t)pkt[off + 6] << 8)  |
+                   (uint32_t)pkt[off + 7];
+        default:
+            /* Generic option: type(1) + len(1) + value(len-2) */
+            if (off + 1 >= data_off)
+                return 0;
+            opt_len = pkt[off + 1];
+            if (opt_len < 2)
+                opt_len = 2;
+            off += opt_len;
+            break;
+        }
+    }
+    return 0;
+}
+
+/* ── dccp_ccid_ack_rcvd: update CCID state on received ACK ──
+ * Called when an ACK or DataAck packet is received.  Parses the
+ * acknowledgment number and updates CCID congestion control state.
+ */
+static void dccp_ccid_ack_rcvd(struct dccp_sock *ds,
+                               const uint8_t *pkt, uint16_t len)
+{
+    uint32_t ack_seq = dccp_parse_ack_option(pkt, len);
+    if (ack_seq == 0)
+        return;
+
+    /* Calculate how many new packets were ACKed since last_ack_seq */
+    uint32_t prev_ack = ds->last_ack_seq;
+    int newly_acked = 0;
+    if (ack_seq > prev_ack) {
+        newly_acked = (int)(ack_seq - prev_ack);
+    } else if (ack_seq < prev_ack) {
+        /* Wrapped around 32-bit sequence space */
+        newly_acked = (int)(ack_seq + (0xFFFFFFFFU - prev_ack));
+    }
+
+    if (newly_acked == 0) {
+        /* Duplicate ACK — could signal packet loss */
+        ds->dup_acks++;
+        if (ds->dup_acks >= 3) {
+            ds->loss_pending = 1;
+            if (ds->ccid == DCCP_CCID_2) {
+                /* Fast retransmit: halve cwnd, reset in_flight */
+                ds->ssthresh = (ds->cwnd > 1) ? (ds->cwnd >> 1) : 1;
+                ds->cwnd = ds->ssthresh;
+                ds->in_flight = 0;
+                ds->dup_acks = 0;
+            }
+        }
+        return;
+    }
+
+    /* New ACK — decrement in_flight (clamped to 0) */
+    if (newly_acked > (int)ds->in_flight)
+        ds->in_flight = 0;
+    else
+        ds->in_flight -= (uint32_t)newly_acked;
+
+    ds->last_ack_seq = ack_seq;
+    ds->dup_acks = 0;
+    ds->loss_pending = 0;
+
+    /* Update CCID-specific state */
+    if (ds->ccid == DCCP_CCID_2) {
+        /* TCP-like congestion control */
+        if (ds->cwnd < ds->ssthresh) {
+            /* Slow start: cwnd += 1 per ACK */
+            ds->cwnd += (uint32_t)newly_acked;
+        } else {
+            /* Congestion avoidance: cwnd += 1/cwnd per ACK (AIMD) */
+            if (ds->cwnd > 0) {
+                uint32_t inc = (ds->cwnd * (uint32_t)newly_acked + ds->cwnd) / ds->cwnd;
+                if (inc == 0) inc = 1;
+                ds->cwnd += inc;
+            }
+        }
+        /* Cap cwnd */
+        if (ds->cwnd > 0xFFFF)
+            ds->cwnd = 0xFFFF;
+    } else if (ds->ccid == DCCP_CCID_3) {
+        /* TFRC: rate-based.  Increase rate on successful ACK.
+         * Simplified TFRC rate update: multiply rate by (1 + 0.01) per RTT,
+         * i.e., 1% increase per RTT-worth of ACKs. */
+        ds->rtt_samples++;
+        if (ds->rtt > 0 && ds->tx_rate > 0) {
+            /* Approximate: double tx_rate each RTT during slow-start-like phase */
+            if (ds->rtt_samples < 8) {
+                /* Slow-start-like: rapid increase */
+                if (ds->tx_rate < 1000000)
+                    ds->tx_rate += (uint32_t)newly_acked * 1000;
+            } else {
+                /* Congestion avoidance: gentle increase */
+                ds->tx_rate += ds->tx_rate / 100;  /* +1% per ACK */
+            }
+            if (ds->tx_rate > 100000000)
+                ds->tx_rate = 100000000;  /* cap at 100 MB/s */
+        }
+    }
 }
 
 EXPORT_SYMBOL(dccp_init);

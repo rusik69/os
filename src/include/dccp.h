@@ -85,6 +85,14 @@ struct dccp_sock {
     int         ccid;           /* Congestion control ID */
     uint32_t    seq;            /* Current sequence number */
     uint32_t    ack_seq;        /* Last ACKed sequence number */
+    /* CCID state */
+    uint32_t    in_flight;      /* Packets sent but not yet ACKed */
+    uint32_t    last_ack_seq;   /* Last sequence number ACKed by peer */
+    uint64_t    last_send_time; /* timer_get_ticks() of last data send */
+    uint32_t    dup_acks;       /* Duplicate ACK count (CCID2 fast retransmit) */
+    int         loss_pending;   /* Loss event flag */
+    uint32_t    rtt_samples;    /* RTT sample count (CCID3) */
+    uint32_t    min_rtt;        /* Minimum observed RTT in ms (CCID3) */
     /* TFRC state (CCID 3) */
     uint32_t    tx_rate;        /* Transmit rate (bytes/sec) */
     uint32_t    rtt;            /* Round-trip time estimate (ms) */
