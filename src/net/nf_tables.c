@@ -129,6 +129,8 @@ int nft_add_rule(struct nft_chain *chain, const struct nft_rule *rule) {
     r->exprs = NULL;
     r->n_exprs = 0;
     r->next = NULL;
+    r->verdict = NFT_VERDICT_CONTINUE;
+    r->target_chain[0] = '\0';
 
     /* Append to chain's rule list */
     if (!chain->rules) {
@@ -565,10 +567,187 @@ void nft_rule_free_exprs(struct nft_rule *rule)
     rule->n_exprs = 0;
 }
 
+/* ── Verdict processing ───────────────────────────────────────────── */
+
+/* Map a rule's verdict or action to the effective NFT_VERDICT_* value.
+ * When verdict is NFT_VERDICT_CONTINUE (default), falls back to legacy
+ * action field for backward compatibility. */
+static int nft_get_verdict(const struct nft_rule *rule)
+{
+    if (rule->verdict != NFT_VERDICT_CONTINUE)
+        return (int)rule->verdict;
+
+    switch (rule->action) {
+    case NF_DROP:    return NFT_VERDICT_DROP;
+    case NF_REJECT:  return NFT_VERDICT_REJECT;
+    default:         return NFT_VERDICT_ACCEPT;
+    }
+}
+
+/* Look up a chain by name within a table.
+ * Returns NULL if not found. */
+static struct nft_chain *nft_find_chain(struct nft_table *table,
+                                         const char *name)
+{
+    if (!table || !name || !name[0])
+        return NULL;
+
+    for (uint32_t i = 0; i < table->n_chains; i++) {
+        if (strcmp(table->chains[i].name, name) == 0)
+            return &table->chains[i];
+    }
+    return NULL;
+}
+
+/* Evaluate a single chain's rules with verdict processing support.
+ *
+ * Walks rules in order. For each matching rule:
+ *   - Updates counters
+ *   - Processes the verdict (ACCEPT, DROP, REJECT, QUEUE, JUMP, GOTO, RETURN)
+ *   - JUMP:  pushes return point, evaluates target chain, checks for RETURN
+ *   - GOTO:  evaluates target chain without pushing return point
+ *   - RETURN: returns NFT_VERDICT_RETURN if can_return is true
+ *   - CONTINUE: continues to the next rule
+ *
+ * @can_return: if 1, NFT_VERDICT_RETURN propagates up to the caller
+ *              (set for JUMP targets).  If 0, RETURN is treated as ACCEPT.
+ * @depth:     recursion depth limit to prevent infinite JUMP loops
+ *
+ * Returns: NF_ACCEPT, NF_DROP, NF_REJECT, NFT_VERDICT_RETURN, or NF_QUEUE.
+ */
+static int nft_evaluate_chain_rules(struct nft_chain *chain,
+                                     struct nft_table *table, void *skb,
+                                     uint32_t src_ip, uint32_t dst_ip,
+                                     uint16_t src_port, uint16_t dst_port,
+                                     uint8_t protocol, int hook,
+                                     int can_return, int depth)
+{
+    if (!chain || depth > NFT_JUMP_STACK_DEPTH)
+        return NF_ACCEPT;
+
+    for (struct nft_rule *r = chain->rules; r; r = r->next) {
+        int rule_match = 0;
+
+        if (r->exprs) {
+            /* ── Expression-based evaluation ──────────── */
+            struct nft_regs regs;
+            struct nft_eval_ctx ctx;
+
+            memset(&regs, 0, sizeof(regs));
+            ctx.src_ip  = src_ip;
+            ctx.dst_ip  = dst_ip;
+            ctx.src_port = src_port;
+            ctx.dst_port = dst_port;
+            ctx.protocol = protocol;
+            ctx.hook    = hook;
+            ctx.pkt_len = 1500;   /* default packet length */
+            ctx.iif     = 0;
+            ctx.oif     = 0;
+            ctx.table   = table;
+
+            rule_match = nft_expr_eval_chain(r, &regs, &ctx);
+        } else {
+            /* ── Legacy flat-field evaluation ──────────── */
+            if (r->protocol != 0 && r->protocol != protocol)
+                continue;
+
+            if ((src_ip & r->src_mask) != (r->src_ip & r->src_mask))
+                continue;
+
+            if ((dst_ip & r->dst_mask) != (r->dst_ip & r->dst_mask))
+                continue;
+
+            if (r->src_port != 0 && r->src_port != src_port)
+                continue;
+            if (r->dst_port != 0 && r->dst_port != dst_port)
+                continue;
+
+            rule_match = 1;
+        }
+
+        if (!rule_match)
+            continue;
+
+        /* Update counters */
+        r->counter_packets++;
+        r->counter_bytes += 1500;
+
+        /* ── Process the verdict ─────────────────────────── */
+        int verdict = nft_get_verdict(r);
+
+        switch (verdict) {
+        case NFT_VERDICT_ACCEPT:
+            return NF_ACCEPT;
+
+        case NFT_VERDICT_DROP:
+            return NF_DROP;
+
+        case NFT_VERDICT_REJECT:
+            return NF_REJECT;
+
+        case NFT_VERDICT_QUEUE:
+            kprintf("[nft] verdict: QUEUE (packet queued to userspace)\n");
+            return NF_QUEUE;
+
+        case NFT_VERDICT_JUMP:
+        case NFT_VERDICT_GOTO: {
+            if (depth >= NFT_JUMP_STACK_DEPTH) {
+                kprintf("[nft] verdict: jump stack overflow\n");
+                return NF_DROP;
+            }
+
+            struct nft_chain *target = nft_find_chain(table,
+                                                       r->target_chain);
+            if (!target) {
+                kprintf("[nft] verdict: target chain '%s' not found\n",
+                        r->target_chain);
+                return NF_DROP;
+            }
+
+            /* JUMP can return; GOTO cannot */
+            int jump_can_return = (verdict == NFT_VERDICT_JUMP) ? 1 : 0;
+
+            int ret = nft_evaluate_chain_rules(target, table, skb,
+                                                src_ip, dst_ip,
+                                                src_port, dst_port,
+                                                protocol, hook,
+                                                jump_can_return,
+                                                depth + 1);
+
+            if (ret == NFT_VERDICT_RETURN && verdict == NFT_VERDICT_JUMP)
+                continue; /* resume at the next rule in this chain */
+
+            return ret; /* DROP, REJECT, ACCEPT, etc. */
+        }
+
+        case NFT_VERDICT_RETURN:
+            if (can_return)
+                return NFT_VERDICT_RETURN;
+            return NF_ACCEPT; /* isolated RETURN = accept */
+
+        case NFT_VERDICT_CONTINUE:
+        default:
+            continue; /* try the next rule */
+        }
+    }
+
+    /* End of chain — no rule matched or all rules CONTINUE'd */
+    if (can_return)
+        return NFT_VERDICT_RETURN;
+    return NF_ACCEPT;
+}
+
+/* Evaluate all chains in a table that match the given hook point.
+ * Walks chains in insertion order.  Chains are independent — JUMP/GOTO
+ * between chains within the same table is supported, but the top-level
+ * evaluation uses each matching chain as a root.
+ *
+ * Returns NF_ACCEPT, NF_DROP, NF_REJECT, NF_QUEUE, or NFT_VERDICT_RETURN. */
 int nft_evaluate(struct nft_table *table, void *skb,
                  uint32_t src_ip, uint32_t dst_ip,
                  uint16_t src_port, uint16_t dst_port,
-                 uint8_t protocol, int hook) {
+                 uint8_t protocol, int hook)
+{
     (void)skb;
 
     if (!table || !table->active)
@@ -582,63 +761,73 @@ int nft_evaluate(struct nft_table *table, void *skb,
         if (chain->hook_num != (uint8_t)hook)
             continue;
 
-        /* Walk rules in this chain */
-        for (struct nft_rule *r = chain->rules; r; r = r->next) {
-            int rule_match = 0;
+        int result = nft_evaluate_chain_rules(chain, table, skb,
+                                               src_ip, dst_ip,
+                                               src_port, dst_port,
+                                               protocol, hook,
+                                               0, 0);
 
-            if (r->exprs) {
-                /* ── Expression-based evaluation ──────────── */
-                struct nft_regs regs;
-                struct nft_eval_ctx ctx;
+        /* NFT_VERDICT_RETURN at top-level = accept (no caller to return to) */
+        if (result == NFT_VERDICT_RETURN)
+            result = NF_ACCEPT;
 
-                memset(&regs, 0, sizeof(regs));
-                ctx.src_ip  = src_ip;
-                ctx.dst_ip  = dst_ip;
-                ctx.src_port = src_port;
-                ctx.dst_port = dst_port;
-                ctx.protocol = protocol;
-                ctx.hook    = hook;
-                ctx.pkt_len = 1500;   /* default packet length */
-                ctx.iif     = 0;
-                ctx.oif     = 0;
-                ctx.table   = table;
-
-                rule_match = nft_expr_eval_chain(r, &regs, &ctx);
-            } else {
-                /* ── Legacy flat-field evaluation ──────────── */
-                /* Skip if protocol doesn't match */
-                if (r->protocol != 0 && r->protocol != protocol)
-                    continue;
-
-                /* Check source IP */
-                if ((src_ip & r->src_mask) != (r->src_ip & r->src_mask))
-                    continue;
-
-                /* Check destination IP */
-                if ((dst_ip & r->dst_mask) != (r->dst_ip & r->dst_mask))
-                    continue;
-
-                /* Check ports (only for TCP/UDP) */
-                if (r->src_port != 0 && r->src_port != src_port)
-                    continue;
-                if (r->dst_port != 0 && r->dst_port != dst_port)
-                    continue;
-
-                rule_match = 1;
-            }
-
-            if (rule_match) {
-                /* Update counters */
-                r->counter_packets++;
-                r->counter_bytes += 1500;
-
-                /* Action determines the verdict */
-                return r->action;
-            }
-        }
+        if (result != NF_ACCEPT)
+            return result;
     }
 
     return NF_ACCEPT;
+}
+
+/* Public API: apply a rule's verdict to a packet.
+ * Useful for external callers (e.g., shell commands, test harness)
+ * who want to test verdict processing on a specific rule. */
+int nft_verdict_apply(struct nft_rule *rule,
+                      struct nft_table *table, void *skb,
+                      uint32_t src_ip, uint32_t dst_ip,
+                      uint16_t src_port, uint16_t dst_port,
+                      uint8_t protocol, int hook)
+{
+    if (!rule)
+        return NF_ACCEPT;
+
+    (void)skb;
+
+    /* For rules with expression chains, we must also evaluate them
+     * to reach verdict expressions.  For now, just use the stored
+     * verdict/action directly. */
+    int verdict = nft_get_verdict(rule);
+
+    switch (verdict) {
+    case NFT_VERDICT_ACCEPT:
+        return NF_ACCEPT;
+    case NFT_VERDICT_DROP:
+        return NF_DROP;
+    case NFT_VERDICT_REJECT:
+        return NF_REJECT;
+    case NFT_VERDICT_QUEUE:
+        return NF_QUEUE;
+    case NFT_VERDICT_JUMP:
+    case NFT_VERDICT_GOTO: {
+        if (!table) return NF_DROP;
+        struct nft_chain *target = nft_find_chain(table, rule->target_chain);
+        if (!target) {
+            kprintf("[nft] nft_verdict_apply: target '%s' not found\n",
+                    rule->target_chain);
+            return NF_DROP;
+        }
+        return nft_evaluate_chain_rules(target, table, skb,
+                                         src_ip, dst_ip,
+                                         src_port, dst_port,
+                                         protocol, hook,
+                                         (verdict == NFT_VERDICT_JUMP) ? 1 : 0,
+                                         1);
+    }
+    case NFT_VERDICT_RETURN:
+        return NF_ACCEPT; /* RETURN with no caller = accept */
+    case NFT_VERDICT_CONTINUE:
+    default:
+        return NF_ACCEPT;
+    }
 }
 
 /* ── Hook handler ─────────────────────────────────────────────────── */

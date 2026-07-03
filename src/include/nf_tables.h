@@ -25,6 +25,9 @@ struct nft_rule {
     uint32_t counter_packets;
     uint32_t counter_bytes;
 
+    /* Target chain name for JUMP/GOTO verdicts */
+    char     target_chain[32];
+
     /* Optional expression chain — when non-NULL, overrides the flat
      * matching fields above (src_ip, src_mask, etc.) with composable
      * expression-based evaluation.  Allocated with kmalloc per rule. */
@@ -66,6 +69,10 @@ struct nft_set {
 #define NFT_VERDICT_GOTO     4
 #define NFT_VERDICT_RETURN   5
 #define NFT_VERDICT_CONTINUE 6
+#define NFT_VERDICT_QUEUE    7
+
+/* Jump stack recursion limit (max nested chain jumps) */
+#define NFT_JUMP_STACK_DEPTH 8
 
 /* Chain type */
 #define NFT_CHAIN_FILTER   0
@@ -255,6 +262,13 @@ int  nft_evaluate(struct nft_table *table, void *skb,
                   uint32_t src_ip, uint32_t dst_ip,
                   uint16_t src_port, uint16_t dst_port,
                   uint8_t protocol, int hook);
+
+/* Verdict processing */
+int  nft_verdict_apply(struct nft_rule *rule,
+                       struct nft_table *table, void *skb,
+                       uint32_t src_ip, uint32_t dst_ip,
+                       uint16_t src_port, uint16_t dst_port,
+                       uint8_t protocol, int hook);
 
 /* Hook function for netfilter integration */
 int  nft_hook_handler(void *skb, int hook);
