@@ -617,7 +617,8 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
         c->time_wait_deadline = 0;
         /* Congestion control initialization */
         cubic_init(&c->cubic);
-        c->cc_algo = 0;  /* 0 = CUBIC (default), 1 = BBR */
+        newreno_init(&c->newreno);
+        c->cc_algo = 0;  /* 0 = CUBIC (default), 1 = BBR, 2 = BBRv3, 3 = NewReno */
         /* RACK (Recent ACKnowledgment) loss detection initialization */
         c->rack_fwd_mark    = 0;
         c->rack_fwd_tick    = 0;
@@ -804,8 +805,16 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
                         c->dupack_count = 0;
                         /* Exit PRR recovery when all pending data is ACKed */
                         if (c->in_recovery) {
-                            c->in_recovery = 0;
-                            c->cwnd = c->ssthresh;  /* RFC 6937: end recovery at ssthresh */
+                            if (c->cc_algo == 3) {
+                                /* NewReno: exit recovery with deflate */
+                                newreno_on_full_ack(&c->newreno,
+                                                     &c->cwnd,
+                                                     c->ssthresh);
+                                c->in_recovery = 0;
+                            } else {
+                                c->in_recovery = 0;
+                                c->cwnd = c->ssthresh;
+                            }
                         }
                         /* Flush any Nagle-accumulated data now */
                         tcp_flush_nagle(c);
@@ -826,6 +835,28 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
                         }
                         c->retrans_count = 0;
                         c->dupack_count = 0;
+                        /* ── NewReno: partial ACK during recovery ─────
+                         * If we're in NewReno recovery and this is a
+                         * partial ACK (doesn't cover all outstanding),
+                         * retransmit the first unacknowledged segment
+                         * (RFC 6582 §3.2 Step 3). */
+                        if (c->cc_algo == 3 &&
+                            c->in_recovery &&
+                            c->tx_unacked_len > 0 &&
+                            newreno_on_partial_ack(&c->newreno,
+                                                    &c->cwnd,
+                                                    c->ssthresh)) {
+                            /* Retransmit the first unacknowledged segment */
+                            uint32_t saved_seq = c->our_seq;
+                            c->our_seq = c->tx_unacked_seq;
+                            uint16_t chunk = c->tx_unacked_len > 1400
+                                             ? 1400 : c->tx_unacked_len;
+                            send_tcp(c, TCP_PSH | TCP_ACK,
+                                     c->tx_unacked_buf, chunk);
+                            c->our_seq += chunk;
+                            c->our_seq = saved_seq;
+                            c->last_send_tick = timer_get_ticks();
+                        }
                     }
                     c->last_ack = ack;
 
@@ -875,8 +906,12 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
                                 if (c->cwnd > paced_cwnd)
                                     c->cwnd = paced_cwnd;
                             }
+                        } else if (c->cc_algo == 3) {
+                            /* NewReno AIMD congestion control */
+                            newreno_on_ack(&c->newreno, &c->cwnd,
+                                           c->ssthresh);
                         } else {
-                            /* CUBIC congestion control */
+                            /* CUBIC congestion control (default) */
                             if (c->cwnd < c->ssthresh) {
                                 /* Slow start: exponential growth.
                                  * CUBIC hybrid slow start (RFC 8312 §3): monitor
@@ -1001,6 +1036,10 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
                                 c->ssthresh = c->cwnd / 2;
                             if (c->ssthresh < 2) c->ssthresh = 2;
                             c->cwnd = bbr_get_cwnd(&c->bbr, c->cwnd);
+                        } else if (c->cc_algo == 3) {
+                            /* NewReno: fast retransmit + fast recovery */
+                            newreno_on_3dupacks(&c->newreno, &c->cwnd,
+                                                &c->ssthresh, c->our_seq);
                         } else {
                             /* CUBIC: handle congestion event */
                             c->ssthresh = cubic_on_loss(&c->cubic, c->cwnd, timer_get_ticks());
@@ -1017,6 +1056,11 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
 
                         /* Exit recovery flag: when all pending data is ACKed */
                         (void)prr_recover_seq;  /* used implicitly via tx_unacked_len == 0 */
+                    } else if (c->dupack_count >= 3 && c->cc_algo == 3 && c->in_recovery) {
+                        /* ── NewReno: additional dupack during recovery ───
+                         * Inflate cwnd by 1 MSS per additional dupack
+                         * (RFC 6582 §3.2 Step 2). */
+                        newreno_on_dup_ack(&c->newreno, &c->cwnd);
                     }
                 }
             }
@@ -1222,7 +1266,8 @@ int net_tcp_connect(uint32_t ip, uint16_t port) {
 
     /* Congestion control initialization */
     cubic_init(&c->cubic);
-    c->cc_algo = 0;  /* 0 = CUBIC (default), 1 = BBR */
+    newreno_init(&c->newreno);
+    c->cc_algo = 0;  /* 0 = CUBIC (default), 1 = BBR, 2 = BBRv3, 3 = NewReno */
     /* RACK (Recent ACKnowledgment) loss detection initialization */
     c->rack_fwd_mark    = 0;
     c->rack_fwd_tick    = 0;
@@ -1653,9 +1698,19 @@ void net_tcp_check_retransmit(void) {
                     }
                 }
                 c->our_seq = saved_seq;
-                /* CUBIC congestion event: handle */
-                c->ssthresh = cubic_on_loss(&c->cubic, c->cwnd, timer_get_ticks());
-                c->cwnd = c->ssthresh + 3;
+                /* Congestion event: handle based on CC algorithm */
+                if (c->cc_algo == 3) {
+                    /* NewReno: fast retransmit */
+                    newreno_on_3dupacks(&c->newreno, &c->cwnd,
+                                        &c->ssthresh, c->our_seq);
+                    c->in_recovery = 1;
+                    c->prr_delivered = 0;
+                    c->prr_out = 0;
+                } else {
+                    /* CUBIC congestion event: handle */
+                    c->ssthresh = cubic_on_loss(&c->cubic, c->cwnd, timer_get_ticks());
+                    c->cwnd = c->ssthresh + 3;
+                }
                 c->dupack_count = 0;
                 c->last_send_tick = timer_get_ticks();
                 /* Advance RACK state — we retransmitted the earliest data,
@@ -1723,9 +1778,16 @@ void net_tcp_check_retransmit(void) {
         c->rto = (c->rto * 2 > 6400) ? 6400 : (uint16_t)(c->rto * 2);
         /* Exit PRR recovery on RTO — timeout is more severe than fast recovery */
         c->in_recovery = 0;
-        /* CUBIC congestion control: handle RTO timeout event */
-        c->ssthresh = cubic_on_loss(&c->cubic, c->cwnd, now);
-        if (c->ssthresh < 2) c->ssthresh = 2;
+        newreno_abort_recovery(&c->newreno);
+        if (c->cc_algo == 3) {
+            /* NewReno: undo any partial ACK tracking, standard RTO action */
+            c->ssthresh = c->cwnd / 2;
+            if (c->ssthresh < 2) c->ssthresh = 2;
+        } else {
+            /* CUBIC congestion control: handle RTO timeout event */
+            c->ssthresh = cubic_on_loss(&c->cubic, c->cwnd, now);
+            if (c->ssthresh < 2) c->ssthresh = 2;
+        }
         c->cwnd = 1;
     }
 }
@@ -1792,6 +1854,10 @@ void net_tcp_slow_start_after_idle(struct tcp_conn *c)
             /* Record W_max for CUBIC before reducing */
             if (c->cubic.use_cubic) {
                 c->cubic.wmax = c->cwnd;
+            }
+            /* Reset NewReno AIMD counter on idle */
+            if (c->cc_algo == 3) {
+                c->newreno.reno_ack_count = 0;
             }
             c->ssthresh = c->cwnd / 2;
             if (c->ssthresh < 2) c->ssthresh = 2;

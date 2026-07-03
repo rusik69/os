@@ -308,6 +308,7 @@ C_SRCS = src/kernel/kernel.c \
          src/net/sshd.c \
          src/net/tcp_bbr.c \
          src/net/tcp_cubic.c \
+         src/net/tcp_newreno.c \
          src/net/sctp.c \
          src/net/dccp.c \
          src/net/mptcp.c \

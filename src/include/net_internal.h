@@ -6,6 +6,7 @@
 #include "tcp_bbr.h"   /* struct bbr_data for inline embedding in tcp_conn */
 #include "tcp_bbr3.h"  /* struct bbr3_data for inline embedding in tcp_conn */
 #include "tcp_cubic.h" /* struct cubic_data for inline embedding in tcp_conn */
+#include "tcp_newreno.h" /* struct newreno_data for inline embedding in tcp_conn */
 
 /* Shared network state — defined in net.c */
 extern uint8_t  net_our_mac[6];
@@ -178,9 +179,13 @@ struct tcp_conn {
     uint8_t  in_recovery;           /* 1 if currently in fast recovery (PRR active) */
 
     /* ── Congestion control algorithm selection ───────────────────────
-     * 0 = CUBIC (default), 1 = BBR
+     * 0 = CUBIC (default), 1 = BBR, 2 = BBRv3, 3 = NewReno
      * Set via setsockopt(TCP_CONGESTION) or sysctl. */
     uint8_t  cc_algo;
+
+    /* ── NewReno fast retransmit + fast recovery state ─────────────────
+     * Only valid when cc_algo == 3. */
+    struct newreno_data newreno;
 
     /* ── BBR congestion control state ─────────────────────────────────
      * Only valid when cc_algo == 1. */
