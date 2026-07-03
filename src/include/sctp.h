@@ -60,12 +60,15 @@ struct sctp_chunk {
 #define SCTP_ECNE            12
 #define SCTP_CWR             13
 #define SCTP_SHUTDOWN_COMPLETE 14
+#define SCTP_ASCONF           0xC1  /* Address Configuration Change (RFC 5061) */
+#define SCTP_ASCONF_ACK       0x80  /* ASCONF Acknowledgment (RFC 5061) */
 
 /* SCTP association */
 #define SCTP_MAX_STREAMS     16
 #define SCTP_MAX_ASSOCS      8
 #define SCTP_COOKIE_SECRET_SIZE 32
 #define SCTP_MAX_COOKIE_SIZE 128
+#define SCTP_MAX_TRANSPORTS   4
 
 /* State cookie (RFC 4960 §5.1.3) — contains parameters needed to
  * recreate TCB when COOKIE-ECHO arrives back */
@@ -135,6 +138,17 @@ struct sctp_gap_block {
 #define SCTP_MAX_GAP_BLOCKS  16
 #define SCTP_MAX_DUP_TSNS   16
 
+/* ── SCTP transport address (RFC 4960 §6.4) ──────────────────────────── */
+struct sctp_transport {
+    uint32_t    addr;           /* IP address (host byte order) */
+    uint16_t    port;           /* Port */
+    uint8_t     primary;        /* 1 = this is the primary path */
+    uint8_t     active;         /* 1 = path is currently active/reachable */
+    uint16_t    rtt;            /* Smoothed RTT (milliseconds) */
+    uint32_t    rto;            /* Retransmission timeout (ticks) */
+    uint64_t    last_used;      /* Tick when last used for I/O */
+};
+
 struct sctp_assoc {
     int         used;
     uint32_t    local_tag;
@@ -170,6 +184,10 @@ struct sctp_assoc {
     uint64_t    rx_packets;
     uint64_t    tx_packets;
     uint32_t    rtt;
+    /* Multi-homing: transport addresses (RFC 4960 §6.4) */
+    uint8_t     num_transports;
+    uint8_t     primary_path;       /* Index into transports[] for primary */
+    struct sctp_transport transports[SCTP_MAX_TRANSPORTS];
 };
 
 /* API */
@@ -185,6 +203,16 @@ int  sctp_is_valid_fd(int fd);
 /* Called from IP layer when protocol=132 */
 void handle_sctp(uint32_t src_ip, uint32_t dst_ip,
                  const uint8_t *payload, uint16_t len);
+
+/* Multi-homing transport management (RFC 4960 §6.4) */
+int  sctp_transport_add(struct sctp_assoc *a, uint32_t ip, uint16_t port);
+int  sctp_transport_find(const struct sctp_assoc *a, uint32_t ip);
+int  sctp_transport_set_primary(struct sctp_assoc *a, uint32_t ip);
+void sctp_transport_remove_all(struct sctp_assoc *a);
+
+/* ASCONF / ASCONF-ACK chunk handling (RFC 5061) */
+int  sctp_handle_asconf(struct sctp_assoc *a, uint32_t src_ip,
+                        const struct sctp_chunk *chunk, uint16_t chunk_len);
 
 /* State machine: called from handle_sctp for individual chunk processing */
 int  sctp_sm_handle_init(struct sctp_assoc *a, uint32_t src_ip,

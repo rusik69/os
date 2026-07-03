@@ -17,6 +17,7 @@
 #include "printf.h"
 #include "errno.h"
 #include "export.h"
+#include "timer.h"
 
 /* ── Allocate the next TSN for a DATA chunk ──────────────────────────── */
 uint32_t sctp_tsn_alloc(struct sctp_assoc *a)

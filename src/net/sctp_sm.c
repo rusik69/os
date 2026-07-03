@@ -213,6 +213,9 @@ int sctp_sm_handle_init(struct sctp_assoc *a, uint32_t src_ip,
     a->peer_port = ntohs(sh->src_port);
     a->peer_tag  = peer_tag;
 
+    /* Register source address as a transport for multi-homing */
+    sctp_transport_add(a, src_ip, ntohs(sh->src_port));
+
     a->num_in_streams  = (uint8_t)((peer_num_in  < SCTP_MAX_STREAMS) ? peer_num_in  : SCTP_MAX_STREAMS);
     a->num_out_streams = (uint8_t)((peer_num_out < SCTP_MAX_STREAMS) ? peer_num_out : SCTP_MAX_STREAMS);
 
@@ -263,6 +266,9 @@ int sctp_sm_handle_init_ack(struct sctp_assoc *a, uint32_t src_ip,
     a->peer_ip   = src_ip;
     a->peer_port = ntohs(sh->src_port);
     a->peer_tag  = peer_tag;
+
+    /* Register source address as a transport for multi-homing */
+    sctp_transport_add(a, src_ip, ntohs(sh->src_port));
 
     a->num_in_streams  = (uint8_t)((peer_num_in  < SCTP_MAX_STREAMS) ? peer_num_in  : SCTP_MAX_STREAMS);
     a->num_out_streams = (uint8_t)((peer_num_out < SCTP_MAX_STREAMS) ? peer_num_out : SCTP_MAX_STREAMS);
@@ -371,6 +377,9 @@ int sctp_sm_handle_cookie_echo(struct sctp_assoc *a, uint32_t src_ip,
     a->peer_tag  = ntohl(cookie_out.peer_tag);
     a->num_in_streams  = ntohs(cookie_out.num_in_streams);
     a->num_out_streams = ntohs(cookie_out.num_out_streams);
+
+    /* Register source address as a transport for multi-homing */
+    sctp_transport_add(a, src_ip, ntohs(sh->src_port));
 
     a->rx_packets++;
     a->state = SCTP_STATE_ESTABLISHED;

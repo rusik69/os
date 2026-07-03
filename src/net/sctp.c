@@ -8,6 +8,7 @@
 #include "spinlock.h"
 #include "errno.h"
 #include "export.h"
+#include "timer.h"
 
 static struct sctp_assoc sctp_assocs[SCTP_MAX_ASSOCS];
 static spinlock_t sctp_lock;
@@ -108,6 +109,9 @@ int sctp_connect(int fd, uint32_t ip, uint16_t port)
     a->local_tag = 0xDEADBEEF;  /* Random tag */
     a->state = SCTP_STATE_COOKIE_WAIT;
 
+    /* Register initial transport for multi-homing */
+    sctp_transport_add(a, ip, port);
+
     /* Build and send SCTP INIT chunk */
     uint8_t pkt[256];
     struct sctp_header *sh = (struct sctp_header *)pkt;
@@ -172,7 +176,7 @@ int sctp_send(int fd, const void *data, uint16_t len, uint16_t stream_id)
     uint16_t pkt_len = sizeof(*sh) + data_chunk_size;
     sh->checksum = 0;  /* CRC32c would go here */
 
-    send_ip(a->peer_ip, IPPROTO_SCTP, pkt, pkt_len);
+    send_ip(a->transports[a->primary_path].addr, IPPROTO_SCTP, pkt, pkt_len);
     a->tx_packets++;
 
     kprintf("sctp: sent DATA tsn=%u stream=%u seq=%u len=%u\n",
@@ -238,6 +242,7 @@ void sctp_close(int fd)
     spinlock_acquire(&sctp_lock);
     for (int i = 0; i < SCTP_MAX_ASSOCS; i++) {
         if (sctp_assocs[i].used && sctp_assocs[i].local_port == (uint16_t)fd) {
+            sctp_transport_remove_all(&sctp_assocs[i]);
             memset(&sctp_assocs[i], 0, sizeof(struct sctp_assoc));
             break;
         }
@@ -328,9 +333,14 @@ void handle_sctp(uint32_t src_ip, uint32_t dst_ip,
             memcpy((uint8_t *)(ack_chunk + 1), (const uint8_t *)(chunk + 1), hb_info_len);
 
             uint16_t ack_pkt_len = sizeof(*hbo) + chunk_len;
-            send_ip(a->peer_ip, IPPROTO_SCTP, hb_ack_pkt, ack_pkt_len);
+            /* Send HEARTBEAT-ACK back to the source (may be alternate path) */
+            send_ip(src_ip, IPPROTO_SCTP, hb_ack_pkt, ack_pkt_len);
             a->tx_packets++;
 
+            /* Record activity on this transport */
+            int tp_idx = sctp_transport_find(a, src_ip);
+            if (tp_idx >= 0)
+                a->transports[tp_idx].last_used = timer_get_ticks();
             kprintf("sctp: HEARTBEAT-ACK sent to %d.%d.%d.%d:%u\n",
                     (src_ip >> 24) & 0xFF, (src_ip >> 16) & 0xFF,
                     (src_ip >> 8) & 0xFF, src_ip & 0xFF,
@@ -376,6 +386,25 @@ void handle_sctp(uint32_t src_ip, uint32_t dst_ip,
             sctp_tsn_process_sack(a, sack, chunk_len);
             break;
         }
+
+        case SCTP_ASCONF: {
+            sctp_handle_asconf(a, src_ip, chunk, chunk_len);
+            /* Update/receive source as a valid transport if not yet known */
+            if (a->peer_ip != src_ip) {
+                /* Record incoming packet from alternate address */
+                int tidx = sctp_transport_find(a, src_ip);
+                if (tidx < 0) {
+                    kprintf("sctp: ASCONF from new address " NIPQUAD_FMT "\n",
+                            NIPQUAD(src_ip));
+                }
+            }
+            break;
+        }
+
+        case SCTP_ASCONF_ACK:
+            kprintf("sctp: ASCONF-ACK from " NIPQUAD_FMT "\n",
+                    NIPQUAD(src_ip));
+            break;
         default:
             break;
         }
@@ -473,7 +502,18 @@ int sctp_setsockopt(int fd, int level, int optname, const void *optval, uint16_t
     case 0x07: /* SCTP_PRIMARY_ADDR */
         if (optlen >= sizeof(uint32_t)) {
             uint32_t addr = *(const uint32_t *)optval;
-            if (addr != 0) a->peer_ip = addr;
+            if (addr != 0) {
+                /* Try to switch primary via transport system */
+                int tp_ret = sctp_transport_set_primary(a, addr);
+                if (tp_ret == 0) {
+                    a->peer_ip = addr;
+                } else {
+                    /* If not in transport list, add it and promote */
+                    sctp_transport_add(a, addr, a->peer_port);
+                    sctp_transport_set_primary(a, addr);
+                    a->peer_ip = addr;
+                }
+            }
         }
         break;
     case 0x08: /* SCTP_ADAPTATION_LAYER */
@@ -557,7 +597,8 @@ int sctp_shutdown(int fd, int how)
             chunk->flags = 0;
             chunk->length = htons(sizeof(*chunk) + 4); /* + cumulative TSN ack */
 
-            send_ip(a->peer_ip, IPPROTO_SCTP, pkt, sizeof(pkt));
+            send_ip(a->transports[a->primary_path].addr, IPPROTO_SCTP,
+                    pkt, sizeof(pkt));
             a->state = SCTP_STATE_SHUTDOWN_SENT;
         }
     }
@@ -616,5 +657,258 @@ EXPORT_SYMBOL(sctp_shutdown);
 EXPORT_SYMBOL(sctp_bindx);
 EXPORT_SYMBOL(sctp_peeloff);
 EXPORT_SYMBOL(handle_sctp);
+/* ── Transport Management: Multi-Homing (RFC 4960 §6.4) ─────────────── */
+
+/* Find transport index by IP address. Returns -1 if not found. */
+int sctp_transport_find(const struct sctp_assoc *a, uint32_t ip)
+{
+    if (!a)
+        return -1;
+    for (uint8_t i = 0; i < a->num_transports; i++) {
+        if (a->transports[i].addr == ip)
+            return (int)i;
+    }
+    return -1;
+}
+
+/* Add a new transport address (or update if already present). */
+int sctp_transport_add(struct sctp_assoc *a, uint32_t ip, uint16_t port)
+{
+    if (!a)
+        return -EINVAL;
+
+    /* Check if already exists */
+    int idx = sctp_transport_find(a, ip);
+    if (idx >= 0) {
+        /* Update port and re-activate */
+        a->transports[idx].port = port;
+        a->transports[idx].active = 1;
+        a->transports[idx].last_used = timer_get_ticks();
+        kprintf("sctp: transport update for " NIPQUAD_FMT ": %s\n",
+                NIPQUAD(ip), a->transports[idx].primary ? "primary" : "secondary");
+        return 0;
+    }
+
+    /* Add new transport */
+    if (a->num_transports >= SCTP_MAX_TRANSPORTS) {
+        kprintf("sctp: max transports reached, cannot add " NIPQUAD_FMT "\n",
+                NIPQUAD(ip));
+        return -ENOSPC;
+    }
+
+    uint8_t slot = a->num_transports;
+    a->transports[slot].addr = ip;
+    a->transports[slot].port = port;
+    a->transports[slot].primary = (a->num_transports == 0) ? 1 : 0;
+    a->transports[slot].active = 1;
+    a->transports[slot].rtt = 0;
+    a->transports[slot].rto = 3000;  /* 3 seconds default RTO */
+    a->transports[slot].last_used = timer_get_ticks();
+    a->num_transports++;
+
+    /* If this is the first transport, set it as primary */
+    if (a->transports[slot].primary) {
+        a->primary_path = slot;
+    }
+
+    kprintf("sctp: transport added " NIPQUAD_FMT ": port=%u %s (total=%u)\n",
+            NIPQUAD(ip), port,
+            a->transports[slot].primary ? "primary" : "secondary",
+            a->num_transports);
+    return 0;
+}
+
+/* Set the primary path to the given IP address. */
+int sctp_transport_set_primary(struct sctp_assoc *a, uint32_t ip)
+{
+    if (!a)
+        return -EINVAL;
+
+    int idx = sctp_transport_find(a, ip);
+    if (idx < 0) {
+        kprintf("sctp: cannot set primary — " NIPQUAD_FMT " not in transport list\n",
+                NIPQUAD(ip));
+        return -EINVAL;
+    }
+
+    /* Clear primary flag on all transports */
+    for (uint8_t i = 0; i < a->num_transports; i++)
+        a->transports[i].primary = 0;
+
+    /* Set new primary */
+    a->transports[idx].primary = 1;
+    a->primary_path = (uint8_t)idx;
+
+    kprintf("sctp: primary path switched to " NIPQUAD_FMT ": port=%u\n",
+            NIPQUAD(ip), a->transports[idx].port);
+    return 0;
+}
+
+/* Remove all transports (called on assoc close/reset). */
+void sctp_transport_remove_all(struct sctp_assoc *a)
+{
+    if (!a)
+        return;
+    memset(a->transports, 0, sizeof(a->transports));
+    a->num_transports = 0;
+    a->primary_path = 0;
+}
+
+/* ── ASCONF / ASCONF-ACK Handling (RFC 5061) ────────────────────────── */
+
+/* ASCONF parameter types (RFC 5061 §4.2) */
+#define SCTP_PARAM_ADD_IP       0xC001  /* Add IP address */
+#define SCTP_PARAM_DEL_IP       0xC002  /* Delete IP address */
+#define SCTP_PARAM_SET_PRIMARY  0xC004  /* Set primary address */
+#define SCTP_PARAM_SUCCESS_CAUSE 0xC005 /* Success indication */
+#define SCTP_PARAM_ERR_CAUSE    0xC006  /* Error cause */
+
+/* Send an ASCONF-ACK chunk in response to an ASCONF. */
+static int sctp_send_asconf_ack(struct sctp_assoc *a, uint32_t src_ip,
+                                uint32_t serial, uint16_t num_params)
+{
+    if (!a)
+        return -EINVAL;
+
+    uint16_t result_list_size = num_params * 8;
+    uint16_t chunk_data_len = 4 + result_list_size;
+    uint16_t chunk_total = sizeof(struct sctp_chunk) + chunk_data_len;
+
+    uint8_t pkt[sizeof(struct sctp_header) + 256];
+    struct sctp_header *sh = (struct sctp_header *)pkt;
+    memset(sh, 0, sizeof(*sh));
+    sh->src_port = htons(a->local_port);
+    sh->dst_port = htons(a->transports[0].port);
+    sh->vtag = htonl(a->peer_tag);
+
+    struct sctp_chunk *chk = (struct sctp_chunk *)(pkt + sizeof(*sh));
+    chk->type = SCTP_ASCONF_ACK;
+    chk->flags = 0;
+    chk->length = htons(chunk_total);
+
+    uint32_t *serial_field = (uint32_t *)(chk + 1);
+    *serial_field = htonl(serial);
+
+    uint8_t *results = (uint8_t *)(serial_field + 1);
+    for (uint16_t i = 0; i < num_params; i++) {
+        uint16_t *result_hdr = (uint16_t *)(results + i * 8);
+        result_hdr[0] = htons(SCTP_PARAM_SUCCESS_CAUSE);
+        result_hdr[1] = htons(8);
+    }
+
+    uint16_t pkt_len = sizeof(*sh) + chunk_total;
+    uint32_t dst_ip = a->transports[a->primary_path].addr;
+    send_ip(dst_ip, IPPROTO_SCTP, pkt, pkt_len);
+    a->tx_packets++;
+
+    kprintf("sctp: ASCONF-ACK sent to " NIPQUAD_FMT " (serial=%u, %u params)\n",
+            NIPQUAD(dst_ip), serial, num_params);
+    return 0;
+}
+
+/* Handle incoming ASCONF chunk (RFC 5061 §4.1). */
+int sctp_handle_asconf(struct sctp_assoc *a, uint32_t src_ip,
+                        const struct sctp_chunk *chunk, uint16_t chunk_len)
+{
+    if (!a || !chunk)
+        return -EINVAL;
+    if (chunk_len < sizeof(*chunk) + 8)
+        return -EINVAL;
+
+    const uint8_t *data = (const uint8_t *)(chunk + 1);
+    uint16_t data_len = chunk_len - sizeof(*chunk);
+
+    uint32_t serial = ntohl(*(const uint32_t *)data);
+    uint16_t remaining = data_len - 4;
+    const uint8_t *ptr = data + 4;
+    uint16_t num_params = 0;
+
+    /* Count parameters for the ACK */
+    uint16_t count_remaining = remaining;
+    const uint8_t *count_ptr = ptr;
+    while (count_remaining >= 8) {
+        uint16_t ptype = ntohs(*(const uint16_t *)count_ptr);
+        uint16_t plen  = ntohs(*(const uint16_t *)(count_ptr + 2));
+        if (plen < 8 || plen > count_remaining)
+            break;
+        if (ptype < 0xC000) {
+            count_ptr += plen;
+            count_remaining -= plen;
+            continue;
+        }
+        num_params++;
+        count_ptr += plen;
+        count_remaining -= plen;
+    }
+
+    kprintf("sctp: ASCONF from " NIPQUAD_FMT " serial=%u params=%u\n",
+            NIPQUAD(src_ip), serial, num_params);
+
+    /* Process each ASCONF parameter */
+    remaining = data_len - 4;
+    ptr = data + 4;
+
+    while (remaining >= 8) {
+        uint16_t ptype = ntohs(*(const uint16_t *)ptr);
+        uint16_t plen  = ntohs(*(const uint16_t *)(ptr + 2));
+
+        if (plen < 8 || plen > remaining)
+            break;
+
+        if (ptype < 0xC000) {
+            ptr += plen;
+            remaining -= plen;
+            continue;
+        }
+
+        if (plen < 12) {
+            ptr += plen;
+            remaining -= plen;
+            continue;
+        }
+
+        uint32_t param_addr = ntohl(*(const uint32_t *)(ptr + 4));
+
+        switch (ptype) {
+        case SCTP_PARAM_ADD_IP:
+            kprintf("sctp: ASCONF ADD_IP " NIPQUAD_FMT "\n",
+                    NIPQUAD(param_addr));
+            sctp_transport_add(a, param_addr, a->peer_port);
+            break;
+
+        case SCTP_PARAM_DEL_IP:
+            kprintf("sctp: ASCONF DEL_IP " NIPQUAD_FMT "\n",
+                    NIPQUAD(param_addr));
+            {
+                int idx = sctp_transport_find(a, param_addr);
+                if (idx >= 0)
+                    a->transports[idx].active = 0;
+            }
+            break;
+
+        case SCTP_PARAM_SET_PRIMARY:
+            kprintf("sctp: ASCONF SET_PRIMARY " NIPQUAD_FMT "\n",
+                    NIPQUAD(param_addr));
+            sctp_transport_set_primary(a, param_addr);
+            break;
+
+        default:
+            kprintf("sctp: ASCONF unknown param type 0x%04x\n", ptype);
+            break;
+        }
+
+        ptr += plen;
+        remaining -= plen;
+    }
+
+    return sctp_send_asconf_ack(a, src_ip, serial, num_params);
+}
+
+EXPORT_SYMBOL(sctp_transport_find);
+EXPORT_SYMBOL(sctp_transport_add);
+EXPORT_SYMBOL(sctp_transport_set_primary);
+EXPORT_SYMBOL(sctp_transport_remove_all);
+EXPORT_SYMBOL(sctp_handle_asconf);
+
 #include "module.h"
 module_init(sctp_init);
