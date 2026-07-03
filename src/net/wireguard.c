@@ -771,6 +771,16 @@ static void wg_noise_ik_handshake(uint8_t *session_key,
     memcpy(session_key, rot_key, 32);
 }
 
+/* Derive transport encryption key from the Noise chaining key.
+ * Called after the full Noise_IKpsk2 handshake completes on both
+ * initiator and responder sides to produce the session key used
+ * for all subsequent transport data messages. */
+static void wg_derive_transport_key(uint8_t *transport_key, const uint8_t *chaining_key)
+{
+    wg_kdf1(transport_key, chaining_key,
+            (const uint8_t *)"WireGuard transport");
+}
+
 /* Backward-compatible wrapper — uses the full Noise IK handshake */
 static void wg_kdf(uint8_t *session_key, const uint8_t *shared_secret,
                     const uint8_t *private_key, const uint8_t *public_key)
@@ -825,6 +835,12 @@ int wg_create_peer(uint32_t endpoint_ip, uint16_t port) {
     peer->rx_port = port;
     peer->persistent_keepalive_interval = WG_KEEPALIVE_DEFAULT_INTERVAL;
 
+    /* Clear transport session state (set after handshake) */
+    memset(peer->transport_key, 0, 32);
+    peer->tx_counter = 0;
+    peer->rx_counter = 0;
+    peer->session_established = 0;
+
     /* Generate a peer public key (simulating remote peer's key) */
     uint8_t peer_priv[32];
     for (int i = 0; i < 32; i++)
@@ -857,39 +873,44 @@ int wg_send(const uint8_t *data, int len) {
 
     struct wg_peer *peer = &g_wg.peers[0];
 
-    /* Derive a session key using Curve25519 DH */
-    uint8_t shared_secret[32];
-    curve25519(shared_secret, g_wg.private_key, peer->public_key);
-
-    /* Derive session key from shared secret */
+    /* Use cached transport key if handshake has completed, otherwise
+     * derive a session key fresh (legacy pre-handshake path). */
     uint8_t session_key[32];
-    wg_kdf(session_key, shared_secret, g_wg.private_key, peer->public_key);
 
-    /* Allocate buffer: plaintext + tag (16 bytes) + overhead */
+    if (peer->session_established) {
+        memcpy(session_key, peer->transport_key, 32);
+    } else {
+        uint8_t shared_secret[32];
+        curve25519(shared_secret, g_wg.private_key, peer->public_key);
+        wg_kdf(session_key, shared_secret, g_wg.private_key, peer->public_key);
+    }
+
+    /* Allocate buffer: header(16) + ciphertext(max) + tag(16) */
     int buf_len = len + 16 + 64;
     uint8_t *buf = (uint8_t *)kmalloc(buf_len);
     if (!buf) return -1;
 
     /* Build WireGuard transport message:
-     * [type=4 (1 byte) | reserved(3) | receiver(4) | counter(8) | encrypted(stream) | authtag(16)]
-     * Simplified: just encrypt the payload with ChaCha20Poly1305
-     */
+     * [type=4 (1 byte) | reserved(3) | receiver(4) | counter(8) | encrypted(stream) | authtag(16)] */
     uint8_t nonce[12] = {0};
-    /* Use packet counter as nonce (in practice, this must be monotonic) */
-    static uint64_t wg_tx_counter = 0;
-    wg_tx_counter++;
-    *(uint64_t *)nonce = wg_tx_counter;
+    uint64_t counter;
 
-    /* Encrypt in place after the header */
-    uint8_t *enc_start = buf + 16;  /* Leave room for WG header */
-    /* AD (associated data) = WG header bytes */
+    if (peer->session_established) {
+        counter = peer->tx_counter++;
+    } else {
+        static uint64_t wg_tx_counter_fallback = 0;
+        counter = ++wg_tx_counter_fallback;
+    }
+    *(uint64_t *)nonce = counter;
+
+    /* Encrypt after the header */
+    uint8_t *enc_start = buf + 16;
     uint8_t *ad = buf;
     memset(buf, 0, 16);
-    buf[0] = 4;  /* Transport message type */
+    buf[0] = WG_MSG_TRANSPORT_DATA;
 
-    chacha20poly1305_encrypt(enc_start, data, len, ad, 16, session_key, nonce);
+    chacha20poly1305_encrypt(enc_start, data, (uint64_t)len, ad, 16, session_key, nonce);
 
-    /* Calculate total message length */
     int total_len = 16 + len + 16;  /* header + ciphertext + tag */
 
     kprintf("[WG] Send %d bytes encrypted to peer %d.%d.%d.%d:%u (counter=%llu)\n",
@@ -899,7 +920,7 @@ int wg_send(const uint8_t *data, int len) {
             (uint8_t)(peer->endpoint_ip >> 8),
             (uint8_t)peer->endpoint_ip,
             peer->endpoint_port,
-            (unsigned long long)wg_tx_counter);
+            (unsigned long long)counter);
 
     /* Update last transmit time for keepalive tracking */
     peer->last_tx_time = timer_get_ticks();
@@ -947,16 +968,34 @@ int wg_receive(const uint8_t *data, int len, uint32_t src_ip, uint16_t src_port)
         peer->endpoint_port = src_port;
     }
 
-    /* Derive session key */
-    uint8_t shared_secret[32];
-    curve25519(shared_secret, g_wg.private_key, peer->public_key);
-
+    /* Derive session key — use cached transport key if handshake completed */
     uint8_t session_key[32];
-    wg_kdf(session_key, shared_secret, g_wg.private_key, peer->public_key);
+    if (peer->session_established) {
+        memcpy(session_key, peer->transport_key, 32);
+    } else {
+        uint8_t shared_secret[32];
+        curve25519(shared_secret, g_wg.private_key, peer->public_key);
+        wg_kdf(session_key, shared_secret, g_wg.private_key, peer->public_key);
+    }
 
     /* Extract nonce from counter field */
     uint8_t nonce[12] = {0};
     memcpy(nonce, data + 4, 8);  /* Counter after type[1]+reserved[3] */
+
+    /* Validate monotonic counter — reject if counter <= last seen counter */
+    uint64_t pkt_counter;
+    pkt_counter = (uint64_t)nonce[0] | ((uint64_t)nonce[1] << 8) |
+                  ((uint64_t)nonce[2] << 16) | ((uint64_t)nonce[3] << 24) |
+                  ((uint64_t)nonce[4] << 32) | ((uint64_t)nonce[5] << 40) |
+                  ((uint64_t)nonce[6] << 48) | ((uint64_t)nonce[7] << 56);
+    if (peer->session_established && pkt_counter <= peer->rx_counter) {
+        kprintf("[WG] Receive: replay detected (counter %llu <= %llu), dropping\n",
+                (unsigned long long)pkt_counter,
+                (unsigned long long)peer->rx_counter);
+        return -1;
+    }
+    if (peer->session_established)
+        peer->rx_counter = pkt_counter;
 
     /* AD is the header (first 16 bytes) */
     const uint8_t *ad = data;
@@ -1144,16 +1183,19 @@ int wireguard_encrypt(const uint8_t *plaintext, uint64_t plaintext_len,
                 (unsigned long long)plaintext_len);
         return -EINVAL;
     }
-    kprintf("[wireguard] wireguard_encrypt: %llu bytes (stub)\n",
+    kprintf("[wireguard] wireguard_encrypt: %llu bytes\n",
             (unsigned long long)plaintext_len);
-    /* Real implementation calls chacha20poly1305_encrypt() */
-    return -EOPNOTSUPP;
+    /* Real ChaCha20Poly1305 encryption (no additional data) */
+    chacha20poly1305_encrypt(ciphertext, plaintext, plaintext_len, NULL, 0, key, nonce);
+    return (int)(plaintext_len + 16);  /* ciphertext includes 16-byte auth tag */
 }
 
 /* ── Implement: wireguard_decrypt ────────────────── */
 int wireguard_decrypt(const uint8_t *ciphertext, uint64_t ciphertext_len,
                        uint8_t *plaintext, const uint8_t *key, const uint8_t *nonce)
 {
+    int ret;
+
     if (!wg_initialized) {
         kprintf("[wireguard] wireguard_decrypt: not initialized\n");
         return -ENOSYS;
@@ -1167,9 +1209,16 @@ int wireguard_decrypt(const uint8_t *ciphertext, uint64_t ciphertext_len,
                 (unsigned long long)ciphertext_len);
         return -EINVAL;
     }
-    kprintf("[wireguard] wireguard_decrypt: %llu bytes (stub)\n",
+    /* Real ChaCha20Poly1305 decryption (no additional data) */
+    ret = chacha20poly1305_decrypt(plaintext, ciphertext, ciphertext_len,
+                                   NULL, 0, key, nonce);
+    if (ret < 0) {
+        kprintf("[wireguard] wireguard_decrypt: MAC verification FAILED\n");
+        return -EBADMSG;
+    }
+    kprintf("[wireguard] wireguard_decrypt: %llu bytes\n",
             (unsigned long long)ciphertext_len);
-    return -EOPNOTSUPP;
+    return (int)(ciphertext_len - 16);  /* plaintext excludes 16-byte auth tag */
 }
 
 /* ── WireGuard Noise_IKpsk2 handshake initiation ────────────────── */
@@ -1635,6 +1684,19 @@ int wireguard_send_handshake_response(uint32_t endpoint_ip, uint16_t endpoint_po
     memcpy(hs->chaining_key, chaining_key, 32);
     memcpy(hs->hash, hash, 32);
 
+    /* Derive transport key from final chaining key for the responder.
+     * Both sides derive the same key from the same Noise chaining key. */
+    {
+        int pidx = hs->peer_idx;
+
+        if (pidx >= 0 && pidx < g_wg.num_peers && g_wg.peers[pidx].active) {
+            wg_derive_transport_key(g_wg.peers[pidx].transport_key, chaining_key);
+            g_wg.peers[pidx].session_established = 1;
+            g_wg.peers[pidx].tx_counter = 0;
+            g_wg.peers[pidx].rx_counter = 0;
+        }
+    }
+
     kprintf("[WG] Handshake response -> %u:%u (sender_idx=%u, eph=%02x%02x..)\n",
             endpoint_ip, (unsigned)endpoint_port,
             hs->sender_index, eph_pub[0], eph_pub[1]);
@@ -1740,13 +1802,20 @@ int wireguard_recv_handshake_response(const uint8_t *pkt, uint16_t len,
         }
     }
 
-    /* Step 7: Session established — log success */
-    int peer_idx = hs->peer_idx;
-    if (peer_idx >= 0 && peer_idx < g_wg.num_peers && g_wg.peers[peer_idx].active) {
-        kprintf("[WG] Session established with peer %d (%u:%u)\n",
-                peer_idx,
-                (unsigned)g_wg.peers[peer_idx].endpoint_ip,
-                (unsigned)g_wg.peers[peer_idx].endpoint_port);
+    /* Step 7: Session established — derive transport key from chaining_key */
+    {
+        int pidx = hs->peer_idx;
+
+        if (pidx >= 0 && pidx < g_wg.num_peers && g_wg.peers[pidx].active) {
+            wg_derive_transport_key(g_wg.peers[pidx].transport_key, chaining_key);
+            g_wg.peers[pidx].session_established = 1;
+            g_wg.peers[pidx].tx_counter = 0;
+            g_wg.peers[pidx].rx_counter = 0;
+            kprintf("[WG] Session established with peer %d (%u:%u)\n",
+                    pidx,
+                    (unsigned)g_wg.peers[pidx].endpoint_ip,
+                    (unsigned)g_wg.peers[pidx].endpoint_port);
+        }
     }
 
     /* Step 8: Mark handshake complete */

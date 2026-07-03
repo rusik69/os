@@ -31,6 +31,12 @@ struct wg_peer {
     uint8_t  public_key[32];
     int      active;
 
+    /* ── Transport session state (derived from Noise handshake) ── */
+    uint8_t  transport_key[32];     /* ChaCha20Poly1305 session key */
+    uint64_t tx_counter;            /* monotonic counter for tx nonce */
+    uint64_t rx_counter;            /* expected counter for rx nonce */
+    int      session_established;   /* 1 = handshake done, transport ready */
+
     /* ── Keepalive and roaming state ──────────────────────────── */
     uint64_t last_tx_time;      /* timer_get_ticks() of last data send */
     uint64_t last_rx_time;      /* timer_get_ticks() of last data receive */
