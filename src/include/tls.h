@@ -98,6 +98,13 @@ struct tls_handshake_header {
 #define TLS_EXT_EARLY_DATA            0x002B
 #define TLS_EXT_COOKIE                0x002C
 
+/* ── Renegotiation Info Extension (RFC 5746) ───────────────────────── */
+#define TLS_EXT_RENEGOTIATION_INFO    0xFF01
+
+/* Verify data length for TLS 1.2 renegotiation (12 bytes per
+ * RFC 5746 §3.5 — 12 bytes of client_verify_data or server_verify_data) */
+#define TLS_RENEGO_VERIFY_DATA_LEN    12
+
 /* ── TLS 1.3 0-RTT early data limits */
 #define TLS_MAX_EARLY_DATA_SIZE       16384
 #define TLS_DEFAULT_TICKET_LIFETIME   7200
@@ -193,6 +200,11 @@ struct tls_conn {
 	int      has_psk;
 	int      early_data_active;
 	enum tls_early_data_state early_state;
+	/* ── TLS renegotiation (RFC 5746) ─────────────────────────────── */
+	int      renego_in_progress;        /* 1 = renegotiation handshake active */
+	int      renego_allowed;            /* 0 = reject renegotiation requests */
+	uint8_t  renego_client_verify_data[TLS_RENEGO_VERIFY_DATA_LEN];  /* client's Finished verify_data */
+	uint8_t  renego_server_verify_data[TLS_RENEGO_VERIFY_DATA_LEN];  /* server's Finished verify_data */
 };
 
 /* ── TLS 1.3 Early Data Replay Protection Context ──────────────────────── */
@@ -266,6 +278,7 @@ enum tls_hs_state {
 	TLS_HS_SERVER_FINISHED,
 	TLS_HS_TICKET_SENT,
 	TLS_HS_CONNECTED,
+	TLS_HS_RENEGO_WAIT_HELLO,   /* server: sent HelloRequest, awaiting client's new ClientHello */
 	TLS_HS_ERROR = -1,
 };
 
@@ -565,5 +578,62 @@ int tls_build_certificate_msg(const struct tls_cert_entry *certs,
 int tls_parse_certificate_msg(const uint8_t *body, int body_len,
                                struct tls_cert_entry *certs,
                                int max_certs, int *num_certs);
+
+/* ── TLS Renegotiation (RFC 5246 §7.4.1, RFC 5746) ──────────────────── */
+
+/* Build a HelloRequest handshake message (RFC 5246 §7.4.1.1).
+ * HelloRequest is a handshake message with msg_type = 0 and an empty body.
+ * Returns bytes written to 'out', or negative errno. */
+int tls_build_hello_request(uint8_t *out, int out_cap);
+
+/* Parse a HelloRequest handshake message.
+ * Returns 0 on success, or negative errno if the message is not a valid
+ * HelloRequest. */
+int tls_parse_hello_request(const uint8_t *in, int in_len);
+
+/* Build the renegotiation_info extension (RFC 5746 §3.2).
+ * The extension contains the client's verify_data from the previous
+ * Finished message(s) concatenated with the server's verify_data.
+ * Returns bytes written to 'out', or negative errno. */
+int tls_build_renegotiation_info_ext(const uint8_t *client_verify_data,
+                                     int client_verify_len,
+                                     const uint8_t *server_verify_data,
+                                     int server_verify_len,
+                                     uint8_t *out, int out_cap);
+
+/* Parse the renegotiation_info extension (RFC 5746 §3.3).
+ * On success returns the number of bytes of verify_data found,
+ * and sets *data / *data_len to point into the extension body.
+ * Returns negative errno on failure. */
+int tls_parse_renegotiation_info_ext(const uint8_t *ext_body, int ext_body_len,
+                                     const uint8_t **verify_data,
+                                     int *verify_data_len);
+
+/* Request TLS renegotiation from the application layer.
+ * For a server: builds a HelloRequest in 'out'.
+ * For a client: builds a new ClientHello with the renegotiation_info
+ * extension in 'out'.
+ * Returns bytes written to 'out' on success, negative errno on failure.
+ * The caller is responsible for sending the built data and continuing
+ * to call tls_handshake_step() for the renegotiation handshake. */
+int tls_conn_request_renegotiate(struct tls_conn *conn,
+                                  uint8_t *out, int out_cap);
+
+/* Check whether a renegotiation is currently in progress.
+ * Returns 1 if yes, 0 otherwise. */
+static inline int tls_conn_is_renegotiating(const struct tls_conn *conn)
+{
+	return conn ? conn->renego_in_progress : 0;
+}
+
+/* Enable or disable renegotiation support on a connection.
+ * By default renegotiation is enabled for TLS 1.2 and disabled for
+ * TLS 1.3 (TLS 1.3 does not support renegotiation per RFC 8446 §4.1.1). */
+static inline void tls_conn_set_renego_allowed(struct tls_conn *conn,
+                                                int allowed)
+{
+	if (conn)
+		conn->renego_allowed = allowed;
+}
 
 #endif /* TLS_H */
