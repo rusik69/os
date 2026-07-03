@@ -40,40 +40,7 @@ static uint64_t rs_last_tick = 0;   /* tick of last RS transmission */
 #define RS_MAX_RETRIES      3
 #define RS_RETRY_INTERVAL   50      /* 500 ms (at TIMER_FREQ=100 Hz) */
 
-/* Neighbor Cache: maps IPv6 → MAC */
-#define ND_CACHE_SIZE 8
-struct nd_cache_entry {
-    struct in6_addr ip6;
-    uint8_t  mac[6];
-    int      valid;
-    uint64_t last_seen;             /* tick when last confirmed */
-};
-static struct nd_cache_entry nd_cache[ND_CACHE_SIZE];
-
-/* ── Solicitated-node multicast prefix (FF02::1:FF00:0/104) ──────── */
-/* The lower 24 bits come from the target address. */
-
-void ipv6_calc_solicited_node(const struct in6_addr *addr,
-                               struct in6_addr *mcast)
-{
-    mcast->s6_addr[0]  = 0xFF;
-    mcast->s6_addr[1]  = 0x02;
-    mcast->s6_addr[2]  = 0x00;
-    mcast->s6_addr[3]  = 0x00;
-    mcast->s6_addr[4]  = 0x00;
-    mcast->s6_addr[5]  = 0x00;
-    mcast->s6_addr[6]  = 0x00;
-    mcast->s6_addr[7]  = 0x00;
-    mcast->s6_addr[8]  = 0x00;
-    mcast->s6_addr[9]  = 0x00;
-    mcast->s6_addr[10] = 0x00;
-    mcast->s6_addr[11] = 0x01;
-    mcast->s6_addr[12] = 0xFF;
-    /* Take last 3 bytes of address */
-    mcast->s6_addr[13] = addr->s6_addr[13];
-    mcast->s6_addr[14] = addr->s6_addr[14];
-    mcast->s6_addr[15] = addr->s6_addr[15];
-}
+/* Neighbor Cache uses ipv6_ndisc.c module */
 
 /* ── EUI-64 from MAC address (RFC 4291 appendix A) ───────────────── */
 /* MAC 00:11:22:33:44:55 → EUI-64 02:11:22:FF:FE:33:44:55
@@ -406,44 +373,7 @@ void ipv6_addr_dump(void)
     }
 }
 
-/* ── Neighbor Cache ──────────────────────────────────────────────── */
-
-void ipv6_nd_cache_add(const struct in6_addr *ip6, const uint8_t *mac)
-{
-    /* Check for existing entry */
-    for (int i = 0; i < ND_CACHE_SIZE; i++) {
-        if (nd_cache[i].valid && ipv6_addr_equal(&nd_cache[i].ip6, ip6)) {
-            memcpy(nd_cache[i].mac, mac, 6);
-            nd_cache[i].last_seen = timer_get_ticks();
-            return;
-        }
-    }
-    /* Find free slot (LRU replacement) */
-    int slot = -1;
-    uint64_t oldest = UINT64_MAX;
-    for (int i = 0; i < ND_CACHE_SIZE; i++) {
-        if (!nd_cache[i].valid) { slot = i; break; }
-        if (nd_cache[i].last_seen < oldest) {
-            oldest = nd_cache[i].last_seen;
-            slot = i;
-        }
-    }
-    if (slot >= 0) {
-        memcpy(&nd_cache[slot].ip6, ip6, sizeof(struct in6_addr));
-        memcpy(nd_cache[slot].mac, mac, 6);
-        nd_cache[slot].valid = 1;
-        nd_cache[slot].last_seen = timer_get_ticks();
-    }
-}
-
-static uint8_t *nd_cache_lookup(const struct in6_addr *ip6)
-{
-    for (int i = 0; i < ND_CACHE_SIZE; i++) {
-        if (nd_cache[i].valid && ipv6_addr_equal(&nd_cache[i].ip6, ip6))
-            return nd_cache[i].mac;
-    }
-    return NULL;
-}
+/* ── Neighbour Cache (managed by ipv6_ndisc.c) ───────────────────── */
 
 /* ── IPv6 pseudo-header checksum (RFC 8200, §8.1) ────────────────── */
 
@@ -521,7 +451,7 @@ static void ipv6_resolve_dst_mac(const struct in6_addr *dst, uint8_t *mac_out)
         mac_out[5] = dst->s6_addr[15];
         return;
     }
-    uint8_t *cached = nd_cache_lookup(dst);
+    uint8_t *cached = ipv6_nd_cache_lookup(dst);
     if (cached) {
         memcpy(mac_out, cached, 6);
         return;
@@ -597,105 +527,7 @@ static void handle_icmpv6_echo_reply(void)
     ping6_reply_received = 1;
 }
 
-/* ── NDP: Neighbor Solicitation (NS) handler ─────────────────────── */
-
-static void nd_send_na(const struct in6_addr *target,
-                        const struct in6_addr *dst,
-                        int solicited, int override)
-{
-    uint8_t buf[128];
-    struct nd_neighbor *na = (struct nd_neighbor *)buf;
-
-    memset(na, 0, sizeof(*na));
-    na->icmp.type = ICMPV6_NA;
-    na->icmp.code = 0;
-    /* Flags: R=0, S=solicited, O=override */
-    na->reserved = htonl((solicited ? 0x40000000U : 0) |
-                          (override ? 0x20000000U : 0));
-    memcpy(&na->target, target, sizeof(struct in6_addr));
-
-    /* Target Link-layer Address option */
-    struct nd_option *opt = (struct nd_option *)(buf + sizeof(struct nd_neighbor));
-    opt->type = ND_OPT_TGT_LLADDR;
-    opt->len  = 1;  /* 1 * 8 = 8 bytes (type + len + 6 bytes MAC) */
-    memcpy(buf + sizeof(struct nd_neighbor) + 2, net_our_mac, 6);
-
-    uint16_t nd_len = sizeof(struct nd_neighbor) + 8;
-
-    na->icmp.checksum = ipv6_checksum(&net_our_ipv6_ll, dst,
-                                       IP_PROTO_ICMPV6, buf, nd_len);
-    send_ipv6(dst, IP_PROTO_ICMPV6, buf, nd_len);
-}
-
-static void nd_handle_ns(struct ipv6_header *ip6, const uint8_t *payload,
-                          uint16_t len)
-{
-    if (len < sizeof(struct nd_neighbor))
-        return;
-
-    const struct nd_neighbor *ns = (const struct nd_neighbor *)payload;
-
-    /* We only respond if the target is our link-local address */
-    if (!net_ipv6_ll_ready) return;
-
-    int is_our_ll = ipv6_addr_equal(&ns->target, &net_our_ipv6_ll);
-    int is_our_gua = net_ipv6_gua_valid &&
-                     ipv6_addr_equal(&ns->target, &net_our_ipv6_gua);
-
-    if (!is_our_ll && !is_our_gua) return;
-
-    /* Extract source MAC from Source Link-layer Address option if present */
-    const struct nd_option *opt = (const struct nd_option *)(payload + sizeof(struct nd_neighbor));
-    int opt_offset = sizeof(struct nd_neighbor);
-    while (opt_offset + 2 <= (int)len) {
-        if (opt->type == ND_OPT_SRC_LLADDR && opt->len == 1) {
-            /* Source MAC is at payload + opt_offset + 2 */
-            ipv6_nd_cache_add(&ip6->src_ip, payload + opt_offset + 2);
-            break;
-        }
-        opt_offset += (int)opt->len * 8;
-        if (opt_offset + 2 > (int)len) break;
-        opt = (const struct nd_option *)(payload + opt_offset);
-    }
-
-    /* Send Neighbor Advertisement */
-    struct in6_addr dst;
-    if (ipv6_addr_is_unspecified(&ip6->src_ip)) {
-        /* Unsolicited NA to all-nodes multicast */
-        struct in6_addr all_nodes = IPV6_ADDR_ALL_NODES;
-        memcpy(&dst, &all_nodes, sizeof(dst));
-        nd_send_na(&ns->target, &dst, 0, 1);
-    } else {
-        nd_send_na(&ns->target, &ip6->src_ip, 1, 1);
-    }
-}
-
-/* ── NDP: Neighbor Advertisement (NA) handler ────────────────────── */
-
-static void nd_handle_na(struct ipv6_header *ip6, const uint8_t *payload,
-                          uint16_t len)
-{
-    (void)ip6;
-    if (len < sizeof(struct nd_neighbor))
-        return;
-
-    const struct nd_neighbor *na = (const struct nd_neighbor *)payload;
-
-    /* Extract target MAC from Target Link-layer Address option */
-    const struct nd_option *opt = (const struct nd_option *)(payload + sizeof(struct nd_neighbor));
-    int opt_offset = sizeof(struct nd_neighbor);
-    while (opt_offset + 2 <= (int)len) {
-        if (opt->type == ND_OPT_TGT_LLADDR && opt->len == 1) {
-            ipv6_nd_cache_add(&na->target, payload + opt_offset + 2);
-            break;
-        }
-        opt_offset += (int)opt->len * 8;
-        if (opt_offset + 2 > (int)len) break;
-        opt = (const struct nd_option *)(payload + opt_offset);
-    }
-}
-
-/* ── NDP: Router Solicitation (RS) ───────────────────────────────── */
+/* ── NDP: Handled by ipv6_ndisc.c ────────────────────────────────── */
 
 void ipv6_send_rs(void)
 {
@@ -827,10 +659,10 @@ void handle_icmpv6(struct ipv6_header *ip6, const uint8_t *payload,
         handle_icmpv6_echo_reply();
         break;
     case ICMPV6_NS: /* Neighbor Solicitation */
-        nd_handle_ns(ip6, payload, len);
+        ipv6_nd_handle_ns(ip6, payload, len);
         break;
     case ICMPV6_NA: /* Neighbor Advertisement */
-        nd_handle_na(ip6, payload, len);
+        ipv6_nd_handle_na(ip6, payload, len);
         break;
     case ICMPV6_RS: /* Router Solicitation */
         /* We're not a router, so ignore */
@@ -906,7 +738,9 @@ void ipv6_init(void)
     memcpy(net_our_ipv6_ll.s6_addr, ll_prefix.s6_addr, 8);
 
     net_ipv6_ll_ready = 1;
-    memset(nd_cache, 0, sizeof(nd_cache));
+
+    /* Initialise the NDISC module */
+    ipv6_nd_init();
 
     /* Register link-local address in the management table */
     ipv6_addr_add(&net_our_ipv6_ll, 64, IPV6_ADDR_STATE_PERMANENT,
@@ -934,6 +768,9 @@ void ipv6_init(void)
 
 void ipv6_poll(void)
 {
+    /* Run NDISC reachability state machine */
+    ipv6_nd_poll();
+
     /* Retry RS if we haven't received an RA yet */
     if (rs_sent && !net_ipv6_gua_valid && rs_retries < RS_MAX_RETRIES) {
         uint64_t now = timer_get_ticks();

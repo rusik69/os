@@ -327,6 +327,21 @@ uint16_t ipv6_checksum(const struct in6_addr *src, const struct in6_addr *dst,
                         uint8_t next_hdr, const void *data, uint16_t data_len);
 void ipv6_nd_cache_add(const struct in6_addr *ip6, const uint8_t *mac);
 
+/* IPv6 NDISC (Neighbor Discovery) module — ipv6_ndisc.c */
+void    ipv6_nd_init(void);
+void    ipv6_nd_poll(void);
+int     ipv6_nd_send_ns(const struct in6_addr *target);
+int     ipv6_nd_send_na(const struct in6_addr *target,
+                        const struct in6_addr *dst,
+                        int solicited, int override,
+                        const struct in6_addr *src_override);
+void    ipv6_nd_handle_ns(struct ipv6_header *ip6,
+                          const uint8_t *payload, uint16_t len);
+void    ipv6_nd_handle_na(struct ipv6_header *ip6,
+                          const uint8_t *payload, uint16_t len);
+uint8_t *ipv6_nd_cache_lookup(const struct in6_addr *ip6);
+void    ipv6_nd_cache_dump(void);
+
 /* TCP internal helpers (net_tcp.c) */
 void send_tcp(struct tcp_conn *conn, uint8_t flags, const void *data, uint16_t data_len);
 void net_tcp_check_retransmit(void);
