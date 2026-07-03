@@ -346,11 +346,311 @@ int mptcp_handle_capable(int conn_id, const uint8_t *opt, uint16_t optlen)
     return 0;
 }
 
+/* ── Helper: compute truncated HMAC-SHA256 for MP_JOIN authentication ──
+ * Per RFC 8684 §3.2.5, the message is:
+ *   send_nonce(4) || recv_nonce(4) || send_addr_id(1) || recv_addr_id(1)
+ * The key is the sender's 64-bit key.
+ * Result: first 8 bytes of HMAC-SHA256.
+ */
+static void mptcp_join_compute_hmac(const uint8_t key[8],
+                                     uint32_t send_nonce,
+                                     uint32_t recv_nonce,
+                                     uint8_t send_id,
+                                     uint8_t recv_id,
+                                     uint8_t hmac_out[8])
+{
+    uint8_t msg[10];
+    uint8_t full_hmac[HMAC_SHA256_DIGEST_SIZE];
+
+    /* Build message: send_nonce(4) || recv_nonce(4) || send_id(1) || recv_id(1) */
+    msg[0] = (uint8_t)(send_nonce >> 24);
+    msg[1] = (uint8_t)(send_nonce >> 16);
+    msg[2] = (uint8_t)(send_nonce >> 8);
+    msg[3] = (uint8_t)(send_nonce & 0xFF);
+    msg[4] = (uint8_t)(recv_nonce >> 24);
+    msg[5] = (uint8_t)(recv_nonce >> 16);
+    msg[6] = (uint8_t)(recv_nonce >> 8);
+    msg[7] = (uint8_t)(recv_nonce & 0xFF);
+    msg[8] = send_id;
+    msg[9] = recv_id;
+
+    hmac_sha256(key, 8, msg, 10, full_hmac);
+    memcpy(hmac_out, full_hmac, 8);
+}
+
+/* ── Token derivation from key (RFC 8684 §3.2.1) ──────────────────
+ * Per RFC 8684, the token is the first 4 bytes of SHA-1(peer_key).
+ * Since this kernel has no SHA-1 implementation, we use truncated
+ * SHA-256 instead, which gives equivalent uniqueness properties.
+ */
+uint32_t mptcp_token_from_key(const uint8_t key[8])
+{
+    uint8_t digest[SHA256_DIGEST_SIZE];
+    sha256_hash(digest, key, 8);
+    return ((uint32_t)digest[0] << 24) |
+           ((uint32_t)digest[1] << 16) |
+           ((uint32_t)digest[2] << 8)  |
+           (uint32_t)digest[3];
+}
+
+/* ── Build MP_JOIN option for SYN ─────────────────────────────────
+ * Format: kind=30, len=12, subtype=1, flags, addr_id, token(4), nonce(4)
+ */
+int mptcp_build_join_syn(uint8_t *buf, uint16_t *len,
+                          uint8_t addr_id, uint32_t token, uint32_t nonce)
+{
+    if (!buf || !len)
+        return -EINVAL;
+    if (*len < MPTCP_JOIN_SYN_LEN)
+        return -ENOSPC;
+
+    buf[0] = TCPOPT_MPTCP;
+    buf[1] = MPTCP_JOIN_SYN_LEN;
+    buf[2] = (uint8_t)(MPTCP_JOIN << 4); /* subtype=1, flags=0 */
+    buf[3] = addr_id;
+    /* Token (network byte order) */
+    buf[4] = (uint8_t)(token >> 24);
+    buf[5] = (uint8_t)(token >> 16);
+    buf[6] = (uint8_t)(token >> 8);
+    buf[7] = (uint8_t)(token & 0xFF);
+    /* Nonce (network byte order) */
+    buf[8] = (uint8_t)(nonce >> 24);
+    buf[9] = (uint8_t)(nonce >> 16);
+    buf[10] = (uint8_t)(nonce >> 8);
+    buf[11] = (uint8_t)(nonce & 0xFF);
+
+    *len = MPTCP_JOIN_SYN_LEN;
+    return 0;
+}
+
+/* ── Build MP_JOIN option for SYN+ACK ─────────────────────────────
+ * Format: kind=30, len=16, subtype=1, flags, addr_id, nonce(4), hmac(8)
+ */
+int mptcp_build_join_synack(uint8_t *buf, uint16_t *len,
+                             uint8_t addr_id, uint32_t nonce,
+                             const uint8_t hmac[8])
+{
+    if (!buf || !len || !hmac)
+        return -EINVAL;
+    if (*len < MPTCP_JOIN_SYNACK_LEN)
+        return -ENOSPC;
+
+    buf[0] = TCPOPT_MPTCP;
+    buf[1] = MPTCP_JOIN_SYNACK_LEN;
+    buf[2] = (uint8_t)(MPTCP_JOIN << 4); /* subtype=1, flags=0 */
+    buf[3] = addr_id;
+    /* Nonce (network byte order) */
+    buf[4] = (uint8_t)(nonce >> 24);
+    buf[5] = (uint8_t)(nonce >> 16);
+    buf[6] = (uint8_t)(nonce >> 8);
+    buf[7] = (uint8_t)(nonce & 0xFF);
+    /* Truncated HMAC */
+    memcpy(buf + 8, hmac, 8);
+
+    *len = MPTCP_JOIN_SYNACK_LEN;
+    return 0;
+}
+
+/* ── Build MP_JOIN option for the 3rd ACK ─────────────────────────
+ * Format: kind=30, len=12, subtype=1, flags, resv, hmac(8)
+ */
+int mptcp_build_join_ack(uint8_t *buf, uint16_t *len,
+                          const uint8_t hmac[8])
+{
+    if (!buf || !len || !hmac)
+        return -EINVAL;
+    if (*len < MPTCP_JOIN_ACK_LEN)
+        return -ENOSPC;
+
+    buf[0] = TCPOPT_MPTCP;
+    buf[1] = MPTCP_JOIN_ACK_LEN;
+    buf[2] = (uint8_t)(MPTCP_JOIN << 4); /* subtype=1, flags=0 */
+    buf[3] = 0; /* reserved */
+    /* Truncated HMAC */
+    memcpy(buf + 4, hmac, 8);
+
+    *len = MPTCP_JOIN_ACK_LEN;
+    return 0;
+}
+
+/* ── Parse received MP_JOIN SYN option ──────────────────────────── */
+int mptcp_parse_join_syn(const uint8_t *opt, uint16_t optlen,
+                          uint8_t *addr_id_out, uint32_t *token_out,
+                          uint32_t *nonce_out)
+{
+    if (!opt || !addr_id_out || !token_out || !nonce_out)
+        return -EINVAL;
+    if (optlen < MPTCP_JOIN_SYN_LEN)
+        return -EINVAL;
+    if (opt[0] != TCPOPT_MPTCP)
+        return -EINVAL;
+    if ((opt[2] >> 4) != MPTCP_JOIN)
+        return -EINVAL;
+
+    *addr_id_out = opt[3];
+    *token_out = ((uint32_t)opt[4] << 24) |
+                 ((uint32_t)opt[5] << 16) |
+                 ((uint32_t)opt[6] << 8)  |
+                 (uint32_t)opt[7];
+    *nonce_out = ((uint32_t)opt[8] << 24) |
+                 ((uint32_t)opt[9] << 16) |
+                 ((uint32_t)opt[10] << 8) |
+                 (uint32_t)opt[11];
+    return 0;
+}
+
+/* ── Parse received MP_JOIN SYN+ACK option ──────────────────────── */
+int mptcp_parse_join_synack(const uint8_t *opt, uint16_t optlen,
+                             uint8_t *addr_id_out, uint32_t *nonce_out,
+                             uint8_t hmac_out[8])
+{
+    if (!opt || !addr_id_out || !nonce_out || !hmac_out)
+        return -EINVAL;
+    if (optlen < MPTCP_JOIN_SYNACK_LEN)
+        return -EINVAL;
+    if (opt[0] != TCPOPT_MPTCP)
+        return -EINVAL;
+    if ((opt[2] >> 4) != MPTCP_JOIN)
+        return -EINVAL;
+
+    *addr_id_out = opt[3];
+    *nonce_out = ((uint32_t)opt[4] << 24) |
+                 ((uint32_t)opt[5] << 16) |
+                 ((uint32_t)opt[6] << 8)  |
+                 (uint32_t)opt[7];
+    memcpy(hmac_out, opt + 8, 8);
+    return 0;
+}
+
+/* ── Parse received MP_JOIN ACK option ──────────────────────────── */
+int mptcp_parse_join_ack(const uint8_t *opt, uint16_t optlen,
+                          uint8_t hmac_out[8])
+{
+    if (!opt || !hmac_out)
+        return -EINVAL;
+    if (optlen < MPTCP_JOIN_ACK_LEN)
+        return -EINVAL;
+    if (opt[0] != TCPOPT_MPTCP)
+        return -EINVAL;
+    if ((opt[2] >> 4) != MPTCP_JOIN)
+        return -EINVAL;
+
+    memcpy(hmac_out, opt + 4, 8);
+    return 0;
+}
+
+/* ── Handle received MP_JOIN option on a SYN (server side) ──────
+ * Called when an MP_JOIN option is received on a SYN packet.
+ * Looks up the MPTCP connection by token, stores the peer's nonce
+ * and addr_id, and records enough state so the TCP stack can
+ * include the correct MP_JOIN SYN+ACK response.
+ * Returns 0 on success, negative errno on error. */
 int mptcp_handle_join(int conn_id, const uint8_t *opt, uint16_t optlen)
 {
-    (void)conn_id;
-    (void)opt;
-    (void)optlen;
+    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS)
+        return -EINVAL;
+    if (!opt || optlen < MPTCP_JOIN_SYN_LEN)
+        return -EINVAL;
+    if (opt[0] != TCPOPT_MPTCP)
+        return -EINVAL;
+    if ((opt[2] >> 4) != MPTCP_JOIN)
+        return -EINVAL;
+
+    /* Parse the MP_JOIN SYN option */
+    uint8_t  cli_addr_id;
+    uint32_t join_token;
+    uint32_t cli_nonce;
+    int ret = mptcp_parse_join_syn(opt, optlen,
+                                    &cli_addr_id, &join_token, &cli_nonce);
+    if (ret < 0)
+        return ret;
+
+    /* Look up the MPTCP connection by token */
+    spinlock_acquire(&mptcp_lock);
+    struct mptcp_conn *mc = NULL;
+    for (int i = 0; i < MPTCP_MAX_CONNS; i++) {
+        if (mptcp_conns[i].used) {
+            uint32_t expected_token = mptcp_token_from_key(mptcp_conns[i].snd_key);
+            if (expected_token == join_token) {
+                mc = &mptcp_conns[i];
+                break;
+            }
+        }
+    }
+    if (!mc) {
+        spinlock_release(&mptcp_lock);
+        kprintf("[MPTCP] MP_JOIN SYN: token %u not found (connection lookup failed)\n",
+                join_token);
+        return -ENOENT;
+    }
+
+    /* Check we haven't exceeded the maximum number of subflows */
+    if (mc->num_subflows >= MPTCP_MAX_SUBFLOWS) {
+        spinlock_release(&mptcp_lock);
+        kprintf("[MPTCP] MP_JOIN SYN: token %u max subflows reached\n", join_token);
+        return -ENOSPC;
+    }
+
+    /* Find a free subflow slot */
+    int slot = -1;
+    for (int i = 0; i < MPTCP_MAX_SUBFLOWS; i++) {
+        if (!mc->subflows[i].used) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot < 0) {
+        spinlock_release(&mptcp_lock);
+        return -ENOMEM;
+    }
+
+    /* Generate our (server's) nonce using timer ticks */
+    uint32_t srv_nonce = (uint32_t)(timer_get_ticks() ^
+                         ((uint64_t)timer_get_ticks() >> 20));
+    srv_nonce ^= (uint32_t)((uint64_t)join_token >> 8);
+    srv_nonce ^= mptcp_next_token++;
+
+    /* Use the connection's number of subflows as the server's addr_id
+     * (simple scheme: each new subflow gets the next addr_id) */
+    uint8_t srv_addr_id = (uint8_t)(slot + 1);
+
+    /* Compute the HMAC for the SYN+ACK response.
+     * Server's perspective: key = our snd_key, send_nonce = srv_nonce,
+     * recv_nonce = cli_nonce, send_id = srv_addr_id, recv_id = cli_addr_id */
+    uint8_t join_hmac[8];
+    mptcp_join_compute_hmac(mc->snd_key,
+                            srv_nonce, cli_nonce,
+                            srv_addr_id, cli_addr_id,
+                            join_hmac);
+
+    /* Store the pending join state in the subflow slot */
+    struct mptcp_subflow *sf = &mc->subflows[slot];
+    memset(sf, 0, sizeof(*sf));
+    sf->used = 1;
+    sf->token = join_token;
+    sf->conn_id = conn_id;
+    sf->join_nonce = cli_nonce;       /* Peer's (client) nonce */
+    sf->join_local_nonce = srv_nonce; /* Our nonce */
+    sf->join_id = cli_addr_id;        /* Peer's addr_id */
+    sf->join_local_id = srv_addr_id;  /* Our addr_id */
+    memcpy(sf->join_hmac, join_hmac, 8);
+
+    /* Bump num_subflows to include this pending subflow */
+    mc->num_subflows++;
+
+    kprintf("[MPTCP] MP_JOIN SYN accepted: conn=%d join_token=%u "
+            "cli_nonce=%u srv_nonce=%u cli_addr_id=%u srv_addr_id=%u\n",
+            conn_id, join_token, cli_nonce, srv_nonce,
+            (unsigned)cli_addr_id, (unsigned)srv_addr_id);
+
+    spinlock_release(&mptcp_lock);
+
+    /* Also update the TCP connection's MPTCP metadata */
+    struct tcp_conn *c = &tcp_conns[conn_id];
+    c->mptcp_token = 0; /* This is a subflow, not primary */
+    memcpy(c->mptcp_rcv_key, mc->rcv_key, 8);
+    c->mptcp_rcv_key_valid = 1;
+
     return 0;
 }
 
@@ -880,9 +1180,17 @@ int mptcp_reset(uint32_t token, uint32_t addr_id)
     return -EOPNOTSUPP;
 }
 
-/* ── Implement: mptcp_mp_join_syn ────────────────── */
-int mptcp_mp_join_syn(uint32_t token, uint32_t addr, uint16_t port, uint8_t *opt_out, uint16_t *opt_len)
+/* ── mptcp_mp_join_syn: Build SYN with MP_JOIN option (client side) ──
+ * Called when the local MPTCP layer wants to add a new subflow to an
+ * existing MPTCP connection.  Builds the MP_JOIN SYN option with the
+ * connection token (derived from the peer's key), a random nonce, and
+ * an address ID identifying the local endpoint.
+ * Returns bytes written to opt_out on success, negative errno on error. */
+int mptcp_mp_join_syn(uint32_t token, uint32_t addr, uint16_t port,
+                       uint8_t *opt_out, uint16_t *opt_len)
 {
+    (void)addr;
+    (void)port;
     if (!mptcp_initialized) {
         kprintf("[mptcp] mptcp_mp_join_syn: not initialized\n");
         return -ENOSYS;
@@ -891,6 +1199,12 @@ int mptcp_mp_join_syn(uint32_t token, uint32_t addr, uint16_t port, uint8_t *opt
         kprintf("[mptcp] mptcp_mp_join_syn: NULL output pointer\n");
         return -EINVAL;
     }
+    if (*opt_len < MPTCP_JOIN_SYN_LEN) {
+        kprintf("[mptcp] mptcp_mp_join_syn: buffer too small (%u < %u)\n",
+                *opt_len, MPTCP_JOIN_SYN_LEN);
+        return -ENOSPC;
+    }
+
     spinlock_acquire(&mptcp_lock);
     struct mptcp_conn *mc = mptcp_find_by_token(token);
     if (!mc) {
@@ -898,15 +1212,48 @@ int mptcp_mp_join_syn(uint32_t token, uint32_t addr, uint16_t port, uint8_t *opt
         kprintf("[mptcp] mptcp_mp_join_syn: token %u not found\n", token);
         return -EINVAL;
     }
-    kprintf("[mptcp] mptcp_mp_join_syn: token=%u addr=%u:%u (stub)\n",
-            token, addr, (unsigned)port);
+    if (!mc->established) {
+        spinlock_release(&mptcp_lock);
+        kprintf("[mptcp] mptcp_mp_join_syn: token %u not yet established\n", token);
+        return -EINVAL;
+    }
+
+    /* Derive the connection token from our sender key (this is what the
+     * peer will look up) */
+    uint32_t join_token = mptcp_token_from_key(mc->snd_key);
+
+    /* Generate a random nonce using timer ticks and the MPTCP next-token counter */
+    uint32_t nonce = (uint32_t)(timer_get_ticks() ^
+                    ((uint64_t)timer_get_ticks() >> 16));
+    nonce ^= (uint32_t)((uint64_t)token >> 12);
+    nonce ^= mptcp_next_token++;
+
+    /* Use the number of existing subflows as the addr_id */
+    uint8_t addr_id = (uint8_t)mc->num_subflows;
+
+    /* Build the MP_JOIN SYN option */
+    int ret = mptcp_build_join_syn(opt_out, opt_len, addr_id, join_token, nonce);
+    if (ret == 0) {
+        kprintf("[MPTCP] MP_JOIN SYN built: token=%u join_token=%u "
+                "nonce=%u addr_id=%u addr=%u:%u\n",
+                token, join_token, nonce, (unsigned)addr_id,
+                addr, (unsigned)port);
+    }
+
     spinlock_release(&mptcp_lock);
-    return -EOPNOTSUPP;
+    return ret;
 }
 
-/* ── Implement: mptcp_mp_join_synack ────────────────── */
-int mptcp_mp_join_synack(uint32_t token, uint32_t addr, uint16_t port, uint8_t *opt_out, uint16_t *opt_len)
+/* ── mptcp_mp_join_synack: Build SYN+ACK with MP_JOIN option (server side) ──
+ * Called when the server has received an MP_JOIN SYN and needs to respond
+ * with a SYN+ACK containing the MP_JOIN option.  Retrieves the pending
+ * subflow state, computes the HMAC, and builds the response option.
+ * Returns bytes written to opt_out on success, negative errno on error. */
+int mptcp_mp_join_synack(uint32_t token, uint32_t addr, uint16_t port,
+                          uint8_t *opt_out, uint16_t *opt_len)
 {
+    (void)addr;
+    (void)port;
     if (!mptcp_initialized) {
         kprintf("[mptcp] mptcp_mp_join_synack: not initialized\n");
         return -ENOSYS;
@@ -915,6 +1262,10 @@ int mptcp_mp_join_synack(uint32_t token, uint32_t addr, uint16_t port, uint8_t *
         kprintf("[mptcp] mptcp_mp_join_synack: NULL output pointer\n");
         return -EINVAL;
     }
+    if (*opt_len < MPTCP_JOIN_SYNACK_LEN) {
+        return -ENOSPC;
+    }
+
     spinlock_acquire(&mptcp_lock);
     struct mptcp_conn *mc = mptcp_find_by_token(token);
     if (!mc) {
@@ -922,24 +1273,70 @@ int mptcp_mp_join_synack(uint32_t token, uint32_t addr, uint16_t port, uint8_t *
         kprintf("[mptcp] mptcp_mp_join_synack: token %u not found\n", token);
         return -EINVAL;
     }
-    kprintf("[mptcp] mptcp_mp_join_synack: token=%u addr=%u:%u (stub)\n",
-            token, addr, (unsigned)port);
+
+    /* Find the subflow with a pending MP_JOIN that has no response yet.
+     * We look for a subflow whose join_local_nonce was set by handle_join
+     * but whose join_hmac still matches the state from that call. */
+    struct mptcp_subflow *sf = NULL;
+    int slot = -1;
+    for (int i = 0; i < mc->num_subflows && i < MPTCP_MAX_SUBFLOWS; i++) {
+        if (mc->subflows[i].used &&
+            mc->subflows[i].join_local_nonce != 0 &&
+            mc->subflows[i].join_nonce != 0) {
+            sf = &mc->subflows[i];
+            slot = i;
+            break;
+        }
+    }
+    if (!sf) {
+        spinlock_release(&mptcp_lock);
+        kprintf("[mptcp] mptcp_mp_join_synack: no pending subflow for token %u\n",
+                token);
+        return -ENOENT;
+    }
+
+    /* Build the SYN+ACK option with the stored HMAC and our nonce */
+    int ret = mptcp_build_join_synack(opt_out, opt_len,
+                                       sf->join_local_id,
+                                       sf->join_local_nonce,
+                                       sf->join_hmac);
+    if (ret == 0) {
+        kprintf("[MPTCP] MP_JOIN SYN+ACK built: token=%u slot=%d "
+                "srv_nonce=%u srv_addr_id=%u\n",
+                token, slot,
+                sf->join_local_nonce,
+                (unsigned)sf->join_local_id);
+    }
+
     spinlock_release(&mptcp_lock);
-    return -EOPNOTSUPP;
+    return ret;
 }
 
-/* ── Implement: mptcp_mp_join_ack ────────────────── */
-int mptcp_mp_join_ack(uint32_t token, uint32_t addr_id, const uint8_t *opt, uint16_t opt_len)
+/* ── mptcp_mp_join_ack ──────────────────
+ * Called on the server side when the 3rd ACK of a MP_JOIN handshake
+ * arrives.  Parses the MP_JOIN ACK option, validates the HMAC, and
+ * marks the subflow as fully established.
+ * Returns 0 on success (subflow established), negative errno on failure. */
+int mptcp_mp_join_ack(uint32_t token, uint32_t addr_id,
+                       const uint8_t *opt, uint16_t opt_len)
 {
+    (void)addr_id;
     if (!mptcp_initialized) {
         kprintf("[mptcp] mptcp_mp_join_ack: not initialized\n");
         return -ENOSYS;
     }
-    if (!opt || opt_len < 4) {
+    if (!opt || opt_len < MPTCP_JOIN_ACK_LEN) {
         kprintf("[mptcp] mptcp_mp_join_ack: invalid option (ptr=%p len=%u)\n",
                 (const void *)opt, (unsigned)opt_len);
         return -EINVAL;
     }
+
+    /* Parse the client's HMAC from the ACK */
+    uint8_t cli_hmac[8];
+    int ret = mptcp_parse_join_ack(opt, opt_len, cli_hmac);
+    if (ret < 0)
+        return ret;
+
     spinlock_acquire(&mptcp_lock);
     struct mptcp_conn *mc = mptcp_find_by_token(token);
     if (!mc) {
@@ -947,10 +1344,65 @@ int mptcp_mp_join_ack(uint32_t token, uint32_t addr_id, const uint8_t *opt, uint
         kprintf("[mptcp] mptcp_mp_join_ack: token %u not found\n", token);
         return -EINVAL;
     }
-    kprintf("[mptcp] mptcp_mp_join_ack: token=%u addr_id=%u (stub)\n",
-            token, addr_id);
+
+    /* Find the subflow with a pending MP_JOIN that matches this ACK.
+     * The client sends HMAC-SHA256(snd_key, cli_nonce || srv_nonce || cli_id || srv_id)
+     * We need to compute the expected HMAC and compare. */
+    int found = 0;
+    for (int i = 0; i < mc->num_subflows && i < MPTCP_MAX_SUBFLOWS; i++) {
+        struct mptcp_subflow *sf = &mc->subflows[i];
+        if (!sf->used)
+            continue;
+
+        /* Compute the expected client HMAC:
+         * key = mc->rcv_key (the peer's key, since client uses its snd_key)
+         * send_nonce = cli_nonce (client's nonce = sf->join_nonce)
+         * recv_nonce = srv_nonce (server's nonce = sf->join_local_nonce)
+         * send_id = cli_addr_id (client's id = sf->join_id)
+         * recv_id = srv_addr_id (server's id = sf->join_local_id) */
+        uint8_t expected_hmac[8];
+        mptcp_join_compute_hmac(mc->rcv_key,
+                                sf->join_nonce,       /* client nonce */
+                                sf->join_local_nonce, /* server nonce */
+                                sf->join_id,          /* client addr_id */
+                                sf->join_local_id,    /* server addr_id */
+                                expected_hmac);
+
+        /* Compare */
+        if (memcmp(cli_hmac, expected_hmac, 8) == 0) {
+            /* HMAC matches — subflow is established */
+            kprintf("[MPTCP] MP_JOIN ACK validated: token=%u slot=%d "
+                    "subflow established\n", token, i);
+            /* The subflow's conn_id was set by mptcp_handle_join */
+            found = 1;
+
+            /* Clear join state since the handshake is complete */
+            sf->join_nonce = 0;
+            sf->join_local_nonce = 0;
+            sf->join_id = 0;
+            sf->join_local_id = 0;
+            memset(sf->join_hmac, 0, 8);
+
+            /* Mark the MPTCP connection for this subflow */
+            if (sf->conn_id >= 0 && sf->conn_id < MAX_TCP_CONNS) {
+                struct tcp_conn *c = &tcp_conns[sf->conn_id];
+                c->mptcp_token = token;
+            }
+
+            spinlock_release(&mptcp_lock);
+            return 0;
+        }
+    }
+
+    if (!found) {
+        kprintf("[mptcp] mptcp_mp_join_ack: token=%u no matching subflow "
+                "or HMAC mismatch\n", token);
+        spinlock_release(&mptcp_lock);
+        return -EPERM;
+    }
+
     spinlock_release(&mptcp_lock);
-    return -EOPNOTSUPP;
+    return 0;
 }
 
 /* ── Implement: mptcp_dss ────────────────── */
@@ -1001,5 +1453,12 @@ EXPORT_SYMBOL(mptcp_build_capable_syn);
 EXPORT_SYMBOL(mptcp_build_capable_synack);
 EXPORT_SYMBOL(mptcp_build_capable_ack);
 EXPORT_SYMBOL(mptcp_parse_capable);
+EXPORT_SYMBOL(mptcp_token_from_key);
+EXPORT_SYMBOL(mptcp_build_join_syn);
+EXPORT_SYMBOL(mptcp_build_join_synack);
+EXPORT_SYMBOL(mptcp_build_join_ack);
+EXPORT_SYMBOL(mptcp_parse_join_syn);
+EXPORT_SYMBOL(mptcp_parse_join_synack);
+EXPORT_SYMBOL(mptcp_parse_join_ack);
 #include "module.h"
 module_init(mptcp_init);

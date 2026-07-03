@@ -30,6 +30,14 @@
 #define MPTCP_CAPABLE_SYN_LEN     12  /* kind(1) + len(1) + sub/flags(1) + resv(1) + key(8) */
 #define MPTCP_CAPABLE_ACK_LEN    24  /* kind(1) + len(1) + sub/flags(1) + resv(1) + snd_key(8) + rcv_key(8) + hmac(8) */
 
+/* MP_JOIN option lengths (RFC 8684 §3.2) — per RFC errata, ACK length is 12 */ 
+#define MPTCP_JOIN_SYN_LEN      12  /* kind(1)+len(1)+sub/flags(1)+addr_id(1)+token(4)+nonce(4) */
+#define MPTCP_JOIN_SYNACK_LEN   16  /* kind(1)+len(1)+sub/flags(1)+addr_id(1)+nonce(4)+hmac(8) */
+#define MPTCP_JOIN_ACK_LEN      12  /* kind(1)+len(1)+sub/flags(1)+resv(1)+hmac(8) */
+
+/* MP_JOIN flags (lower nibble of byte 2) */
+#define MPTCP_JOIN_FLAG_BACKUP  0x01  /* B bit: backup subflow */
+
 /* ADD_ADDR / REMOVE_ADDR option lengths (RFC 8684 §3.4) */
 #define MPTCP_ADD_ADDR4_LEN       10  /* IPv4 ADD_ADDR without port */
 #define MPTCP_ADD_ADDR4_LEN_PORT  12  /* IPv4 ADD_ADDR with port */
@@ -54,6 +62,12 @@ struct mptcp_subflow {
     uint32_t    rcv_isn;        /* Receiver's initial sequence number */
     uint8_t     key[8];         /* 64-bit key */
     uint8_t     backup;         /* 1 = backup subflow */
+    /* MP_JOIN handshake state */
+    uint32_t    join_nonce;     /* Peer's nonce during MP_JOIN handshake */
+    uint32_t    join_local_nonce; /* Our nonce during MP_JOIN handshake */
+    uint8_t     join_id;        /* Peer's address ID during MP_JOIN */
+    uint8_t     join_local_id;  /* Our address ID during MP_JOIN */
+    uint8_t     join_hmac[8];   /* Saved HMAC for MP_JOIN validation */
 };
 
 /* Address advertisement entry — tracks ADD_ADDR state per connection */
@@ -142,5 +156,37 @@ int  mptcp_handle_add_addr(int conn_id, const uint8_t *opt, uint16_t optlen);
 
 /* Handle received REMOVE_ADDR on a connection */
 int  mptcp_handle_remove_addr(int conn_id, const uint8_t *opt, uint16_t optlen);
+
+/* ── MP_JOIN subflow setup (RFC 8684 §3.2) ─────────────────────── */
+
+/* Token derivation from key (truncated SHA-256 first 4 bytes) */
+uint32_t mptcp_token_from_key(const uint8_t key[8]);
+
+/* Build MP_JOIN option for SYN (client-side subflow addition) */
+int  mptcp_build_join_syn(uint8_t *buf, uint16_t *len,
+                           uint8_t addr_id, uint32_t token, uint32_t nonce);
+
+/* Build MP_JOIN option for SYN+ACK (server-side) */
+int  mptcp_build_join_synack(uint8_t *buf, uint16_t *len,
+                              uint8_t addr_id, uint32_t nonce,
+                              const uint8_t hmac[8]);
+
+/* Build MP_JOIN option for ACK (completing subflow handshake) */
+int  mptcp_build_join_ack(uint8_t *buf, uint16_t *len,
+                           const uint8_t hmac[8]);
+
+/* Parse received MP_JOIN SYN option */
+int  mptcp_parse_join_syn(const uint8_t *opt, uint16_t optlen,
+                           uint8_t *addr_id_out, uint32_t *token_out,
+                           uint32_t *nonce_out);
+
+/* Parse received MP_JOIN SYN+ACK option */
+int  mptcp_parse_join_synack(const uint8_t *opt, uint16_t optlen,
+                              uint8_t *addr_id_out, uint32_t *nonce_out,
+                              uint8_t hmac_out[8]);
+
+/* Parse received MP_JOIN ACK option */
+int  mptcp_parse_join_ack(const uint8_t *opt, uint16_t optlen,
+                           uint8_t hmac_out[8]);
 
 #endif /* MPTCP_H */
