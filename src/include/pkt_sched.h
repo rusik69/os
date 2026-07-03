@@ -7,6 +7,7 @@
 #define QDISC_PFIFO_FAST  0
 #define QDISC_FQ_CODEL    1
 #define QDISC_HTB         2
+#define QDISC_TBF         3
 
 /* Maximum number of qdiscs */
 #define QDISC_MAX 16
@@ -66,6 +67,19 @@ int htb_del_class(struct qdisc *q, int class_id);
 
 /* Set the default class for unclassified packets */
 void htb_set_default_class(struct qdisc *q, int class_id);
+
+/* ── TBF (Token Bucket Filter) ─────────────────────────────────── */
+
+/* TBF configuration */
+struct tbf_spec {
+    uint32_t rate;        /* sustained rate (bytes per second) */
+    uint32_t burst;       /* max burst (bytes) — 0 = auto */
+    uint32_t limit;       /* max queue depth (packets) — 0 = default 128 */
+    uint32_t mtu;         /* minimum packet unit — 0 = auto (64) */
+} __attribute__((packed));
+
+/* Create a TBF qdisc with the given spec (NULL = defaults) */
+struct qdisc *tbf_create(const struct tbf_spec *spec);
 
 /* Init */
 void pkt_sched_init(void);
