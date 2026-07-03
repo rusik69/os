@@ -48,6 +48,7 @@ extern void kunit_container_ext_register(void);
 extern void kunit_vfs_register(void);
 extern void kunit_net_register(void);
 extern void kunit_errno_register(void);
+extern void kunit_tls_register(void);
 extern void kunit_usb_register(void);
 
 /* ====================================================================
@@ -1560,6 +1561,9 @@ void kunit_register_builtin_tests(void)
 
     /* Register the errno constant test suites from kunit_errno.c */
     kunit_errno_register();
+
+    /* Register the TLS/HTTPS test suites from kunit_tls.c */
+    kunit_tls_register();
 
     /* Register the USB descriptor parsing test suites from kunit_usb.c */
     kunit_usb_register();
