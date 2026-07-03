@@ -425,6 +425,7 @@ C_SRCS = src/kernel/kernel.c \
          src/fs/freeze.c \
          src/fs/quota.c \
          src/net/dhcp.c \
+         src/net/dhcp6.c \
          src/kernel/irq_affinity.c \
          src/kernel/tpm_rng.c \
          src/kernel/trace.c \

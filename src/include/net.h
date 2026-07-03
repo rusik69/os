@@ -202,6 +202,8 @@ struct nd_option {
 /* IPv6 multicast addresses (network byte order) */
 #define IPV6_ADDR_ALL_NODES     { { 0xFF,0x02,0,0,0,0,0,0,0,0,0,0,0,0,0,1 } }
 #define IPV6_ADDR_ALL_ROUTERS   { { 0xFF,0x02,0,0,0,0,0,0,0,0,0,0,0,0,0,2 } }
+#define IPV6_ADDR_ALL_DHCP_SERVERS { { 0xFF,0x02,0,0,0,0,0,0,0,0,0,0,0x01,0,0x00,0x02 } }
+
 #define IPV6_ADDR_LINKLOCAL_PFX { { 0xFE,0x80,0,0,0,0,0,0,0,0,0,0,0,0,0,0 } }
 
 /* ── IPv6 Next Header constants ──────────────────────────────────── */
