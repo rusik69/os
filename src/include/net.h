@@ -128,6 +128,37 @@ struct nd_router_advert {
     /* Options follow */
 } __attribute__((packed));
 
+/* ── MLDv2 structures (RFC 3810) ────────────────────────────────── */
+
+/* MLDv2 Group Record (RFC 3810 §5.2.12) */
+struct mldv2_group_record {
+    uint8_t  record_type;                /* MLD2_MODE_IS_INCLUDE, etc. */
+    uint8_t  aux_data_len;              /* length of aux data in 4-octet units */
+    uint16_t num_sources;
+    struct in6_addr multicast_addr;
+    struct in6_addr sources[];           /* variable-length source list */
+} __attribute__((packed));
+
+/* MLDv2 Multicast Listener Query (ICMPv6 type 130, RFC 3810 §5.1) */
+struct mldv2_query {
+    struct icmpv6_header icmp;           /* type=130, code=0 */
+    uint16_t max_response_delay;         /* code (MLDv2), Max Resp Delay in .1ms units */
+    uint16_t reserved;
+    struct in6_addr multicast_address;   /* zero for General Query */
+    uint8_t  resv_s_qrv;                /* bits 0-2: QRV, 3: S flag, 4-7: reserved */
+    uint8_t  qqic;                      /* Querier's Query Interval Code */
+    uint16_t num_sources;
+    struct in6_addr sources[];           /* variable-length source addresses */
+} __attribute__((packed));
+
+/* MLDv2 Multicast Listener Report (ICMPv6 type 143, RFC 3810 §5.2) */
+struct mldv2_report {
+    struct icmpv6_header icmp;           /* type=143, code=0 */
+    uint16_t reserved;
+    uint16_t num_group_records;
+    struct mldv2_group_record records[];  /* variable-length */
+} __attribute__((packed));
+
 /* NDP Option header */
 struct nd_option {
     uint8_t type;
@@ -143,6 +174,24 @@ struct nd_option {
 #define ND_OPT_RDNSS       25   /* recursive DNS server (RFC 8106) */
 
 #define ICMPV6_PACKET_TOO_BIG    2   /* Packet Too Big (RFC 4443 §3.2) */
+
+/* MLDv1/v2 — Multicast Listener Discovery (RFC 3810) */
+#define ICMPV6_MLD_QUERY    130 /* Multicast Listener Query */
+#define ICMPV6_MLD_REPORT   131 /* Multicast Listener Report (v1) */
+#define ICMPV6_MLD_DONE     132 /* Multicast Listener Done (v1) */
+#define ICMPV6_MLD_REPORT_V2 143 /* Multicast Listener Report v2 */
+
+/* MLDv2 record types for group records (RFC 3810 §5.2.12) */
+#define MLD2_MODE_IS_INCLUDE        1
+#define MLD2_MODE_IS_EXCLUDE        2
+#define MLD2_CHANGE_TO_INCLUDE      3
+#define MLD2_CHANGE_TO_EXCLUDE      4
+#define MLD2_ALLOW_NEW_SOURCES      5
+#define MLD2_BLOCK_OLD_SOURCES      6
+
+/* MLDv2 group record flags */
+#define MLD2_SUPPRESS_JOIN  0x01  /* suppress join processing (per-interface flag) */
+
 #define ICMPV6_RS           133 /* Router Solicitation */
 #define ICMPV6_RA           134 /* Router Advertisement */
 #define ICMPV6_NS           135 /* Neighbor Solicitation */

@@ -1175,6 +1175,15 @@ void handle_icmpv6(struct ipv6_header *ip6, const uint8_t *payload,
 	case ICMPV6_RA: /* Router Advertisement */
 		ipv6_nd_handle_ra(ip6, payload, len);
 		break;
+	case ICMPV6_MLD_QUERY: /* Multicast Listener Query */
+		ipv6_mld_handle_query(ip6, payload, len);
+		break;
+	case ICMPV6_MLD_REPORT: /* MLDv1 Report */
+		ipv6_mld_handle_report_v1(ip6, payload, len);
+		break;
+	case ICMPV6_MLD_REPORT_V2: /* MLDv2 Report */
+		ipv6_mld_handle_report_v2(ip6, payload, len);
+		break;
 	default:
 		break;
 	}
@@ -1330,6 +1339,9 @@ void ipv6_init(void)
 
 	kprintf("[IPv6] Link-local address configured, starting DAD\n");
 
+	/* Initialise MLDv2 multicast group management */
+	ipv6_mld_init();
+
 	/* Start DAD for link-local address */
 	ipv6_dad_start(&net_our_ipv6_ll);
 
@@ -1352,6 +1364,9 @@ void ipv6_poll(void)
 
 	/* Run NDISC reachability state machine */
 	ipv6_nd_poll();
+
+	/* Run MLDv2 multicast listener timers */
+	ipv6_mld_poll();
 
 	/* Run PMTU cache expiry */
 	ipv6_pmtu_poll();

@@ -390,6 +390,44 @@ void    ipv6_nd_handle_ra(struct ipv6_header *ip6,
 uint8_t *ipv6_nd_cache_lookup(const struct in6_addr *ip6);
 void    ipv6_nd_cache_dump(void);
 
+/* ── MLDv2 Multicast Listener Discovery (RFC 3810) — ipv6_mld.c ──── */
+
+/* Max number of multicast groups we can join simultaneously */
+#define MLD_GROUP_TABLE_SIZE 8
+
+/* Filter mode for a multicast group (RFC 3810 §6.2) */
+#define MLD_FILTER_INCLUDE  0  /* listen only to listed sources */
+#define MLD_FILTER_EXCLUDE  1  /* listen to all except listed sources */
+
+/* Per-group state entry */
+struct mld_group_entry {
+    struct in6_addr group_addr;      /* multicast group IPv6 address */
+    int             filter_mode;    /* MLD_FILTER_INCLUDE or MLD_FILTER_EXCLUDE */
+    int             num_sources;   /* number of source addresses in list */
+    struct in6_addr sources[8];     /* source-specific filter list */
+    uint64_t        query_timer;   /* tick when report must be sent (response to query) */
+    uint64_t        report_timer;  /* tick for periodic unsolicited report */
+    int             valid;          /* 1 = slot in use */
+};
+
+extern struct mld_group_entry mld_group_table[MLD_GROUP_TABLE_SIZE];
+extern int mld_group_count;
+
+/* MLDv2 public API */
+void    ipv6_mld_init(void);
+void    ipv6_mld_poll(void);
+int     ipv6_mld_join(const struct in6_addr *group);
+int     ipv6_mld_leave(const struct in6_addr *group);
+int     ipv6_mld_is_member(const struct in6_addr *group);
+void    ipv6_mld_handle_query(struct ipv6_header *ip6,
+                              const uint8_t *payload, uint16_t len);
+void    ipv6_mld_handle_report_v1(struct ipv6_header *ip6,
+                                   const uint8_t *payload, uint16_t len);
+void    ipv6_mld_handle_report_v2(struct ipv6_header *ip6,
+                                   const uint8_t *payload, uint16_t len);
+int     ipv6_mld_send_report(const struct in6_addr *group);
+int     ipv6_mld_send_done(const struct in6_addr *group);
+
 /* ── DAD (Duplicate Address Detection) — RFC 4862 §5.4 ────────── */
 void    ipv6_dad_start(const struct in6_addr *addr);
 void    ipv6_dad_poll(void);
