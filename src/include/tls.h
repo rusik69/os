@@ -4,6 +4,7 @@
 #define TLS_H
 
 #include "types.h"
+#include "sha256.h"
 
 /* ── TLS Content Types (RFC 8446 §4, RFC 5246 §6.2.1) ─────────────── */
 #define TLS_CT_CHANGE_CIPHER_SPEC  20
@@ -94,6 +95,12 @@ struct tls_handshake_header {
 #define TLS_EXT_SUPPORTED_VERSIONS     0x002B
 #define TLS_EXT_PSK_KEY_EXCHANGE_MODES 0x002D
 #define TLS_EXT_PSK                    0x0029
+#define TLS_EXT_EARLY_DATA            0x002B
+#define TLS_EXT_COOKIE                0x002C
+
+/* TLS 1.3 0-RTT early data limits */
+#define TLS_MAX_EARLY_DATA_SIZE       16384
+#define TLS_DEFAULT_TICKET_LIFETIME   7200
 
 /* ── TLS Handshake Message Macros ────────────────────────────────────── */
 
@@ -112,6 +119,28 @@ static inline int tls_hs_get_length(const struct tls_handshake_header *hdr)
 	       ((int)hdr->length[1] <<  8) |
 	        (int)hdr->length[2];
 }
+
+/* ── TLS 1.3 Pre-Shared Key Structure (RFC 8446 §4.2.11) ────────────────── */
+struct tls_psk {
+	uint8_t  identity[256];
+	int      identity_len;
+	uint8_t  secret[32];
+	uint8_t  nonce[16];
+	int      nonce_len;
+	uint64_t ticket_age_add;
+	uint32_t lifetime;
+	uint32_t max_early_data;
+	uint32_t age;
+	int      valid;
+};
+
+/* ── TLS 1.3 Early Data States ─────────────────────────────────────────── */
+enum tls_early_data_state {
+	TLS_ED_NONE = 0,
+	TLS_ED_SENT,
+	TLS_ED_RECEIVING,
+	TLS_ED_DONE,
+};
 
 struct tls_cipher_state {
 	/* Encryption key material */
@@ -144,6 +173,25 @@ struct tls_conn {
 	uint8_t  random[32];              /* peer's ClientHello/ServerHello random */
 	uint8_t  session_id[32];          /* session ID (echoed by server) */
 	uint8_t  session_id_len;          /* length of session ID (0..32) */
+	/* TLS 1.3 early data (0-RTT) */
+	struct tls_cipher_state early_wstate;
+	struct tls_cipher_state early_rstate;
+	struct tls_psk psk;
+	uint32_t max_early_data;
+	uint8_t  transcript_hash[32];
+	int      transcript_hash_len;
+	int      has_psk;
+	int      early_data_active;
+	enum tls_early_data_state early_state;
+};
+
+/* ── TLS 1.3 Early Data Replay Protection Context ──────────────────────── */
+struct tls_early_data_ctx {
+	uint8_t  client_early_secret[32];
+	uint8_t  server_early_secret[32];
+	uint8_t  early_exporter_secret[32];
+	int      is_derived;
+	uint64_t earliest_allowed_time;
 };
 
 /* ── Handshake Protocol API ──────────────────────────────────────────── */
@@ -199,6 +247,8 @@ int tls_parse_server_hello(struct tls_conn *conn,
 enum tls_hs_state {
 	TLS_HS_IDLE = 0,
 	TLS_HS_CLIENT_HELLO_SENT,
+	TLS_HS_EARLY_DATA_SENT,
+	TLS_HS_WAITING_EARLY_DATA,
 	TLS_HS_SERVER_HELLO_SENT,
 	TLS_HS_SERVER_PARAMS_SENT,
 	TLS_HS_SERVER_DONE,
@@ -340,5 +390,37 @@ int tls_negotiate_cipher_suite(const uint16_t *client_suites, int num_client,
  * Highest security / forward secrecy first. */
 extern const uint16_t tls_default_server_prefs[];
 extern const int      tls_default_server_prefs_count;
+
+/* ── HKDF (RFC 5869) for TLS 1.3 Key Schedule ──────────────────────────── */
+void tls_hkdf_extract(const uint8_t *salt, int salt_len,
+                      const uint8_t *ikm, int ikm_len,
+                      uint8_t *prk);
+void tls_hkdf_expand(const uint8_t *prk, int prk_len,
+                     const uint8_t *info, int info_len,
+                     uint8_t *out, int out_len);
+void tls_hkdf_expand_label(const uint8_t *secret, int secret_len,
+                           const char *label,
+                           const uint8_t *context, int context_len,
+                           uint8_t *out, int out_len);
+void tls_derive_secret(const uint8_t *secret, const char *label,
+                       const uint8_t *transcript_hash,
+                       uint8_t *out);
+
+/* ── TLS 1.3 Early Data (0-RTT) API ───────────────────────────────────── */
+int tls_derive_early_traffic_keys(struct tls_conn *conn,
+                                  const struct tls_psk *psk,
+                                  const uint8_t *client_hello,
+                                  int client_hello_len);
+int tls_build_end_of_early_data(uint8_t *out, int out_cap);
+int tls_parse_end_of_early_data(const uint8_t *in, int in_len);
+int tls_build_early_data_ext(uint32_t max_early_data_size,
+                              uint8_t *out, int out_cap);
+int tls_early_data_encrypt(struct tls_conn *conn,
+                           const uint8_t *data, int data_len,
+                           uint8_t *out, int out_cap);
+int tls_early_data_decrypt(struct tls_conn *conn,
+                           const uint8_t *in, int in_len,
+                           uint8_t *data, int data_cap);
+void tls_early_data_init(struct tls_conn *conn);
 
 #endif /* TLS_H */

@@ -40,6 +40,7 @@ int tls_conn_init(struct tls_conn *conn, int is_client, uint16_t version)
 	conn->is_client = is_client;
 	conn->version   = version;
 	conn->recv_len  = 0;
+	tls_early_data_init(conn);
 	return 0;
 }
 
