@@ -189,15 +189,23 @@ static int mptcp_sched_min_rtt(struct mptcp_conn *mc)
 
 /* ── mptcp_sched_redundant: Redundant path selection ──────────────
  *
- * For redundant scheduling, we simply return the first active subflow
- * index so the caller can send on that path.  The *caller* is expected
- * to call mptcp_sched_select() multiple times per data segment if it
- * wants to send on all paths — the scheduler just picks one.
+ * Implements a redundant path scheduler that distributes outgoing data
+ * across ALL active subflows in a round-robin fashion.  Each call to
+ * mptcp_sched_select() with MPTCP_SCHED_REDUNDANT advances to the next
+ * active non-backup subflow, ensuring data is spread across all paths
+ * for redundancy.
  *
- * (A full redundant scheduler would return the same index for every
- *  call until num_subflows is exhausted; here we alternate to keep
- *  the implementation simple — the transport layer handles actual
- *  duplication.)
+ * Algorithm:
+ *   1. Start from last_selected + 1 (round-robin across indices).
+ *   2. Scan for the next active non-backup subflow.
+ *   3. If none found, scan for any active subflow (including backup).
+ *   4. Update last_selected and return the winning subflow index.
+ *   5. Return -ENETDOWN if no active subflows exist.
+ *
+ * This differs from min-RTT which picks the single best subflow;
+ * redundant scheduling uses all paths equally for scenarios where
+ * duplication or path diversity is desired (testing, failover, or
+ * applications that handle their own deduplication).
  */
 static int mptcp_sched_redundant(struct mptcp_conn *mc)
 {
@@ -205,20 +213,36 @@ static int mptcp_sched_redundant(struct mptcp_conn *mc)
 		return -EINVAL;
 	}
 
-	/* Return the first active non-backup subflow */
+	/* Round-robin starting from last_selected + 1 */
+	int start = (int)mc->last_selected + 1;
+	int first_active = -ENETDOWN;
+	int found = 0;
+
+	/* Phase 1: scan for next non-backup subflow from start position */
 	for (int i = 0; i < (int)mc->num_subflows; i++) {
-		if (mc->subflows[i].used && !mc->subflows[i].backup) {
-			mc->last_selected = (uint8_t)i;
-			return i;
+		int idx = (start + i) % (int)mc->num_subflows;
+		if (!mc->subflows[idx].used) {
+			continue;
+		}
+		if (first_active < 0) {
+			first_active = idx;  /* remember first active for fallback */
+		}
+		if (!mc->subflows[idx].backup && idx != (int)mc->last_selected && !found) {
+			mc->last_selected = (uint8_t)idx;
+			found = 1;
 		}
 	}
 
-	/* Fall back to any active subflow (including backup) */
-	for (int i = 0; i < (int)mc->num_subflows; i++) {
-		if (mc->subflows[i].used) {
-			mc->last_selected = (uint8_t)i;
-			return i;
-		}
+	/* If we found a non-backup different from last_selected, use it */
+	if (found) {
+		return (int)mc->last_selected;
+	}
+
+	/* Phase 2: if no non-backup found (or only one candidate), cycle
+	 * through any active subflow from start position */
+	if (first_active >= 0) {
+		mc->last_selected = (uint8_t)first_active;
+		return first_active;
 	}
 
 	return -ENETDOWN;
