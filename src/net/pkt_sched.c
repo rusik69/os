@@ -505,6 +505,7 @@ struct htb_class {
 
     /* Packet queue (leaf classes only) */
     void    *queue[HTB_QUEUE_LIMIT];
+    int      pkt_len[HTB_QUEUE_LIMIT];  /* packet lengths for borrowing */
     int      head, tail, count;
 };
 
@@ -560,8 +561,9 @@ static void htb_refill_chain(struct htb_priv *hp, struct htb_class *cl, uint64_t
 }
 
 /* Check whether a leaf can send a packet of @len bytes.
- * Returns 1 if allowed, 0 if throttled.  Refills tokens first. */
-static int htb_can_send(struct htb_class *cl, int len, struct htb_class *root) {
+ * Returns 1 if allowed, 0 if throttled.  Refills must happen before
+ * calling this function. */
+static int htb_can_send(struct htb_priv *hp, struct htb_class *cl, int len) {
     /* Check ceil first: can't exceed max rate even with borrowing */
     if (cl->c_tokens < ((int64_t)len << 8))
         return 0;  /* exceeded ceil */
@@ -570,21 +572,34 @@ static int htb_can_send(struct htb_class *cl, int len, struct htb_class *root) {
     if (cl->tokens >= ((int64_t)len << 8))
         return 1;  /* can send from own budget */
 
-    /* Need to borrow from parent — if parent has spare rate tokens, we can borrow.
-     * We check ancestors up to root by examining their tokens.
-     * Note: we don't have hp here, but we only need to check ceil of ancestors,
-     * which we can do bottom-up since the caller already refilled chains. */
-    if (!root) return 0;
+    /* Need to borrow from ancestors.  Walk the chain checking each
+     * ancestor's rate tokens to see if they can lend. */
+    int64_t need = (int64_t)len << 8;
+    need -= cl->tokens;
+    if (need <= 0) return 1;
 
-    /* If we reached root's ceil level, allow */
-    if (root->c_tokens >= ((int64_t)len << 8))
-        return 1;
+    int cid = cl->parent;
+    while (cid >= 0) {
+        struct htb_class *parent = htb_class_by_id(hp, cid);
+        if (!parent) break;
 
-    return 0;
+        if (parent->tokens >= need)
+            return 1;  /* this ancestor has enough tokens to lend */
+
+        /* Check if parent has at least some tokens to contribute */
+        if (parent->tokens > 0)
+            need -= parent->tokens;
+
+        cid = parent->parent;
+    }
+
+    return 0;  /* not enough tokens anywhere in the hierarchy */
 }
 
-/* Internal: borrow tokens from ancestors.  Called after commit. */
-static void htb_borrow(struct htb_class *cl, int len) {
+/* Internal: borrow tokens from ancestors.  Called after commit.
+ * Charges the class's own tokens first, then walks the ancestor
+ * chain charging their tokens (borrowing). */
+static void htb_borrow(struct htb_priv *hp, struct htb_class *cl, int len) {
     int deficit = len;  /* bytes we need to cover */
 
     /* Charge own tokens first */
@@ -596,15 +611,39 @@ static void htb_borrow(struct htb_class *cl, int len) {
         cl->tokens = 0;
     }
 
-    /* Charge ceil tokens */
+    /* Charge ceil tokens (always charged against the leaf) */
     if (cl->c_tokens >= ((int64_t)len << 8))
         cl->c_tokens -= (int64_t)len << 8;
     else
         cl->c_tokens = 0;
 
-    /* deficit is consumed from ancestors but since we don't have
-     * direct access to the hierarchy here, we simply allow the
-     * packet through and the next refill will catch up. */
+    /* Propagate deficit to ancestors — this is the borrowing step.
+     * Each ancestor lends from its own rate tokens, up the chain
+     * to the root. */
+    int cid = cl->parent;
+    while (deficit > 0 && cid >= 0) {
+        struct htb_class *parent = htb_class_by_id(hp, cid);
+        if (!parent) break;
+
+        if (parent->tokens >= ((int64_t)deficit << 8)) {
+            parent->tokens -= (int64_t)deficit << 8;
+            deficit = 0;
+        } else {
+            deficit -= (int)(parent->tokens >> 8);
+            parent->tokens = 0;
+        }
+
+        /* Charge ancestor's ceil tokens too */
+        if (parent->c_tokens >= ((int64_t)len << 8))
+            parent->c_tokens -= (int64_t)len << 8;
+        else
+            parent->c_tokens = 0;
+
+        cid = parent->parent;
+    }
+
+    /* If deficit remains after walking the full chain, the root
+     * covers it (HTB design — root has implicit tokens). */
     (void)deficit;
 }
 
@@ -627,8 +666,7 @@ static int htb_enqueue(struct qdisc *q, void *pkt, int len) {
     htb_refill_chain(hp, cl, now);
 
     /* Check if we can send (accounting for borrowing) */
-    struct htb_class *root = htb_class_by_id(hp, hp->root_class);
-    if (!htb_can_send(cl, len, root))
+    if (!htb_can_send(hp, cl, len))
         return -1;  /* throttle — drop for now */
 
     /* Queue the packet */
@@ -636,6 +674,7 @@ static int htb_enqueue(struct qdisc *q, void *pkt, int len) {
         return -1;  /* queue full */
 
     cl->queue[cl->tail] = pkt;
+    cl->pkt_len[cl->tail] = len;
     cl->tail = (cl->tail + 1) % HTB_QUEUE_LIMIT;
     cl->count++;
     return 0;
@@ -656,10 +695,13 @@ static struct htb_class *htb_select_leaf(struct htb_priv *hp, uint64_t now) {
             if (cl->prio != prio) continue;
             if (cl->count == 0) continue;
 
+            /* Use the actual head packet length for token checking */
+            int head_len = cl->pkt_len[cl->head];
+            if (head_len < 64) head_len = 64;  /* minimum packet */
+
             /* Refill and check tokens */
             htb_refill_chain(hp, cl, now);
-            struct htb_class *root = htb_class_by_id(hp, hp->root_class);
-            if (htb_can_send(cl, 64, root))  /* assume min packet */
+            if (htb_can_send(hp, cl, head_len))
                 return cl;
         }
     }
@@ -677,14 +719,14 @@ static void *htb_dequeue(struct qdisc *q) {
 
     /* Dequeue the packet */
     void *pkt = cl->queue[cl->head];
+    int len = cl->pkt_len[cl->head];
+    if (len < 64) len = 64;  /* minimum */
+
     cl->head = (cl->head + 1) % HTB_QUEUE_LIMIT;
     cl->count--;
 
-    /* Estimate packet length from metadata */
-    int len = 1500;  /* best-effort — caller should provide real len */
-
     /* Consume tokens and borrow from ancestors */
-    htb_borrow(cl, len);
+    htb_borrow(hp, cl, len);
 
     return pkt;
 }
