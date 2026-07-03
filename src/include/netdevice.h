@@ -42,6 +42,8 @@
 #define NETIF_F_HW_VLAN_CTAG_TX     0x00000001U  /* HW VLAN CTAG insertion (TX) */
 #define NETIF_F_HW_VLAN_CTAG_RX     0x00000002U  /* HW VLAN CTAG stripping (RX) */
 #define NETIF_F_HW_VLAN_CTAG_FILTER 0x00000004U  /* HW VLAN CTAG filtering (VFTA) */
+#define NETIF_F_HW_TLS_TX           0x00000008U  /* HW TLS offload (TX / encrypt) */
+#define NETIF_F_HW_TLS_RX           0x00000010U  /* HW TLS offload (RX / decrypt) */
 
 /* Forward declaration */
 struct net_device;
