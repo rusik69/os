@@ -27,6 +27,16 @@ int __init tls_init(void)
 		        "0x%04x–0x%04x)\n", TLS_VER_1_2, TLS_VER_1_3);
 	}
 	spinlock_release(&tls_lock);
+
+	/* Initialise session ticket subsystem */
+	{
+		int ticket_ret = tls_session_init();
+		if (ticket_ret < 0) {
+			kprintf("[tls] warning: session ticket init "
+			        "failed: %d\n", ticket_ret);
+		}
+	}
+
 	return 0;
 }
 

@@ -18,6 +18,12 @@
 #include "hmac.h"
 #include "sha256.h"
 
+/* ── State Forward Declarations ────────────────────────────────────── */
+
+/* Session ticket helper (defined below) */
+static int tls_send_new_session_ticket(struct tls_conn *conn,
+                                        uint8_t *out, int out_cap);
+
 /* ── Handshake Message Framing ─────────────────────────────────────── */
 
 /*
@@ -520,6 +526,56 @@ int tls_handshake_step(struct tls_conn *conn, enum tls_hs_state *new_state,
 			        "cipher 0x%04x\n",
 			        conn->rstate.cipher_suite);
 
+			*new_state = TLS_HS_TICKET_SENT;
+			return 0;
+		}
+
+		case TLS_HS_TICKET_SENT:
+		{
+			/* Client may receive a NewSessionTicket post-handshake */
+			if (in && in_len > 0) {
+				uint32_t ticket_lifetime;
+				uint32_t ticket_age_add;
+				const uint8_t *ticket_ptr;
+				int ticket_len;
+				const uint8_t *nonce_ptr;
+				int nonce_len;
+
+				ret = tls_hs_parse_header(in, in_len,
+				                          &hs_msg_type, &hs_body_len);
+				if (ret < 0)
+					goto error;
+
+				if (hs_msg_type != TLS_HT_NEW_SESSION_TICKET) {
+					/* Not a ticket — skip to connected */
+					*new_state = TLS_HS_CONNECTED;
+					return 0;
+				}
+
+				if (in_len < TLS_HANDSHAKE_HEADER_LEN + hs_body_len)
+					goto error;
+
+				ret = tls_parse_new_session_ticket(
+					in + TLS_HANDSHAKE_HEADER_LEN,
+					hs_body_len,
+					&ticket_lifetime,
+					&ticket_age_add,
+					&ticket_ptr, &ticket_len,
+					&nonce_ptr, &nonce_len);
+				if (ret < 0) {
+					kprintf("[tls] client: invalid "
+					        "NewSessionTicket, ignoring\n");
+				} else {
+					kprintf("[tls] client: received "
+					        "NewSessionTicket (%d bytes, "
+					        "lifetime %u)\n",
+					        ticket_len, ticket_lifetime);
+				}
+
+				*new_state = TLS_HS_CONNECTED;
+				return 0;
+			}
+
 			*new_state = TLS_HS_CONNECTED;
 			return 0;
 		}
@@ -599,6 +655,24 @@ int tls_handshake_step(struct tls_conn *conn, enum tls_hs_state *new_state,
 				out, out_cap);
 			if (ret < 0)
 				goto error;
+
+			*new_state = TLS_HS_TICKET_SENT;
+			return ret;
+		}
+
+		case TLS_HS_TICKET_SENT:
+		{
+			/* Server sends NewSessionTicket after main handshake */
+			kprintf("[tls] server: sending NewSessionTicket\n");
+
+			ret = tls_send_new_session_ticket(conn, out, out_cap);
+			if (ret < 0) {
+				kprintf("[tls] server: failed to build "
+				        "session ticket: %d\n", ret);
+				/* Non-fatal — proceed without ticket */
+				*new_state = TLS_HS_CONNECTED;
+				return 0;
+			}
 
 			*new_state = TLS_HS_CONNECTED;
 			return ret;
@@ -1140,6 +1214,93 @@ void tls_early_data_init(struct tls_conn *conn)
 	conn->early_data_active = 0;
 	conn->early_state      = TLS_ED_NONE;
 	conn->transcript_hash_len = 0;
+}
+
+/* ── Session Ticket Helper ──────────────────────────────────────────── */
+
+/*
+ * tls_send_new_session_ticket — Build a NewSessionTicket handshake frame
+ * from the current connection state.
+ *
+ * Creates a session ticket containing the negotiated parameters (cipher
+ * suite, PSK material) and wraps it in a TLS handshake frame ready to
+ * send as a TLS_CT_HANDSHAKE record.
+ *
+ * On success returns the number of bytes written to 'out' (the complete
+ * handshake frame).  On failure returns a negative errno (callers should
+ * treat non-fatal failures as "skip ticket" rather than handshake abort).
+ */
+static int tls_send_new_session_ticket(struct tls_conn *conn,
+                                        uint8_t *out, int out_cap)
+{
+	const struct tls_ticket_ctx *ticket_ctx;
+	struct tls_session_ticket_data sess_data;
+	uint8_t ticket_buf[TLS_MAX_TICKET_LEN];
+	int ticket_len;
+	uint32_t ticket_age_add;
+	uint32_t key_id;
+	uint8_t nonce_buf[TLS_TICKET_NONCE_LEN];
+	uint8_t nst_body[128 + TLS_MAX_TICKET_LEN];
+	int nst_body_len;
+	int ret;
+
+	if (!conn || !out)
+		return -EINVAL;
+
+	/* Generate a random nonce */
+	{
+		static uint64_t counter = 0;
+		uint32_t seed = (uint32_t)(counter++);
+		for (int i = 0; i < TLS_TICKET_NONCE_LEN; i++) {
+			seed = seed * 1103515245U + 12345U;
+			nonce_buf[i] = (uint8_t)(seed >> 16);
+		}
+	}
+
+	/* Build session data from the current connection state */
+	memset(&sess_data, 0, sizeof(sess_data));
+	sess_data.protocol_version = conn->version;
+	sess_data.cipher_suite = conn->wstate.cipher_suite;
+	sess_data.session_id_len = conn->session_id_len;
+	if (conn->session_id_len > 0)
+		memcpy(sess_data.session_id, conn->session_id,
+		       (size_t)conn->session_id_len);
+	/* Use the handshake transcript as PSK secret filler */
+	memcpy(sess_data.psk_secret, conn->transcript_hash,
+	       sizeof(sess_data.psk_secret));
+	sess_data.timestamp = 0;  /* placeholder */
+
+	/* Look up the global ticket context */
+	ticket_ctx = tls_get_ticket_ctx();
+	if (!ticket_ctx) {
+		/* Ticket subsystem not initialised — skip ticket */
+		return -ENOSYS;
+	}
+
+	/* Encrypt the session data into a ticket */
+	ticket_len = tls_ticket_create(ticket_ctx, &sess_data,
+	                               ticket_buf, sizeof(ticket_buf),
+	                               &ticket_age_add, &key_id);
+	if (ticket_len < 0)
+		return ticket_len;
+
+	(void)key_id;  /* key_id embedded in ticket, not needed separately */
+
+	/* Build the NewSessionTicket message body */
+	nst_body_len = tls_build_new_session_ticket(
+		ticket_buf, ticket_len,
+		TLS_TICKET_LIFETIME_DEFAULT,
+		ticket_age_add,
+		nonce_buf, TLS_TICKET_NONCE_LEN,
+		nst_body, sizeof(nst_body));
+	if (nst_body_len < 0)
+		return nst_body_len;
+
+	/* Wrap in handshake frame */
+	ret = tls_hs_build_frame(TLS_HT_NEW_SESSION_TICKET,
+	                         nst_body, nst_body_len,
+	                         out, out_cap);
+	return ret;
 }
 
 /* ── Initialisation ─────────────────────────────────────────────────── */

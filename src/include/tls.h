@@ -98,9 +98,19 @@ struct tls_handshake_header {
 #define TLS_EXT_EARLY_DATA            0x002B
 #define TLS_EXT_COOKIE                0x002C
 
-/* TLS 1.3 0-RTT early data limits */
+/* ── TLS 1.3 0-RTT early data limits */
 #define TLS_MAX_EARLY_DATA_SIZE       16384
 #define TLS_DEFAULT_TICKET_LIFETIME   7200
+
+/* ── Session Ticket Constants (RFC 5077, RFC 8446 §4.6.1) ──────────── */
+#define TLS_TICKET_KEY_LEN         16     /* AES-128 key for ticket encryption */
+#define TLS_TICKET_NONCE_LEN       16     /* per-ticket nonce */
+#define TLS_TICKET_AAD_LEN         8      /* Additional authenticated data: timestamp(8) */
+#define TLS_MAX_TICKET_LEN         1024   /* maximum encrypted ticket size */
+#define TLS_MAX_SESSION_DATA_LEN   256    /* max plaintext session data */
+#define TLS_TICKET_LIFETIME_DEFAULT 7200  /* default ticket lifetime (seconds) */
+#define TLS_TICKET_LIFETIME_MAX    86400  /* max ticket lifetime (24h) */
+#define TLS_NUM_TICKET_KEYS        4      /* rolling window of ticket keys */
 
 /* ── TLS Handshake Message Macros ────────────────────────────────────── */
 
@@ -254,6 +264,7 @@ enum tls_hs_state {
 	TLS_HS_SERVER_DONE,
 	TLS_HS_CLIENT_FINISHED,
 	TLS_HS_SERVER_FINISHED,
+	TLS_HS_TICKET_SENT,
 	TLS_HS_CONNECTED,
 	TLS_HS_ERROR = -1,
 };
@@ -422,5 +433,105 @@ int tls_early_data_decrypt(struct tls_conn *conn,
                            const uint8_t *in, int in_len,
                            uint8_t *data, int data_cap);
 void tls_early_data_init(struct tls_conn *conn);
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * TLS Session Resumption — Session Tickets (RFC 5077, RFC 8446 §4.6.1)
+ * ─────────────────────────────────────────────────────────────────────── */
+
+/* Session ticket encryption key */
+struct tls_ticket_key {
+	uint8_t  key[TLS_TICKET_KEY_LEN];  /* AES-128 key */
+	uint8_t  hmac_key[32];             /* HMAC-SHA256 key for integrity */
+	uint32_t key_id;                   /* key identifier (sent with ticket) */
+	uint64_t generation_time;          /* monotonic time of key generation */
+	int      active;                   /* 1 = currently active */
+};
+
+/* Session ticket key context (global, server-side) */
+struct tls_ticket_ctx {
+	struct tls_ticket_key keys[TLS_NUM_TICKET_KEYS];
+	int      num_keys;
+	int      current_key;             /* index into keys[] of active key */
+	uint64_t current_time;            /* approximate monotonic time */
+};
+
+/* Session data stored inside an encrypted ticket (not directly on the wire).
+ * When the ticket is decrypted/validated, the server reconstructs this
+ * from the AES-GCM plaintext. */
+struct tls_session_ticket_data {
+	uint16_t protocol_version;         /* TLS version of original session */
+	uint16_t cipher_suite;             /* negotiated cipher suite */
+	uint8_t  psk_secret[32];           /* PSK for TLS 1.3 resumption */
+	uint8_t  session_id[32];           /* session ID (TLS 1.2) */
+	uint8_t  session_id_len;
+	uint64_t timestamp;                /* ticket creation time */
+	uint8_t  resumption_master_secret[32]; /* TLS 1.2 resumption MS */
+};
+
+/* ── Session Ticket API ────────────────────────────────────────────── */
+
+/* Initialise the session ticket subsystem (call once at boot) */
+int tls_session_init(void);
+
+/* Get the global ticket key context */
+const struct tls_ticket_ctx *tls_get_ticket_ctx(void);
+
+/* Generate/rotate ticket keys */
+int tls_ticket_key_rotate(struct tls_ticket_ctx *ctx);
+int tls_ticket_key_init(struct tls_ticket_ctx *ctx);
+
+/* Create an encrypted session ticket from session data.
+ * Returns the ticket length (including AEAD tag), or negative errno. */
+int tls_ticket_create(const struct tls_ticket_ctx *ctx,
+                      const struct tls_session_ticket_data *data,
+                      uint8_t *ticket_out, int ticket_cap,
+                      uint32_t *ticket_age_add, uint32_t *key_id);
+
+/* Parse and validate an encrypted session ticket.
+ * On success returns 0 and populates *data. */
+int tls_ticket_parse(const struct tls_ticket_ctx *ctx,
+                     const uint8_t *ticket, int ticket_len,
+                     uint32_t key_id,
+                     struct tls_session_ticket_data *data);
+
+/* Build a TLS 1.3 NewSessionTicket handshake message body.
+ * Returns bytes written to 'out', or negative errno. */
+int tls_build_new_session_ticket(const uint8_t *ticket_data, int ticket_len,
+                                 uint32_t ticket_lifetime,
+                                 uint32_t ticket_age_add,
+                                 const uint8_t *ticket_nonce, int nonce_len,
+                                 uint8_t *out, int out_cap);
+
+/* Parse a NewSessionTicket message body.
+ * Returns 0 on success, negative errno on failure. */
+int tls_parse_new_session_ticket(const uint8_t *body, int body_len,
+                                 uint32_t *ticket_lifetime,
+                                 uint32_t *ticket_age_add,
+                                 const uint8_t **ticket, int *ticket_len,
+                                 const uint8_t **nonce, int *nonce_len);
+
+/* Build TLS 1.3 PSK extension for ClientHello (RFC 8446 §4.2.11).
+ * ticket  — the session ticket to present as a PSK identity
+ * ticket_len — length of the ticket
+ * obfuscated_age — client's view of ticket age (obfuscated_ticket_age)
+ * out/out_cap — output buffer
+ * Returns bytes written, or negative errno. */
+int tls_build_psk_extension(const uint8_t *ticket, int ticket_len,
+                            uint32_t obfuscated_age,
+                            uint8_t *out, int out_cap);
+
+/* Parse TLS 1.3 PSK extension from ClientHello.
+ * Extracts the first PSK identity (ticket) from the extension.
+ * On success returns 0 and sets *ticket/_len to point into body. */
+int tls_parse_psk_extension(const uint8_t *ext_body, int ext_len,
+                            const uint8_t **ticket, int *ticket_len);
+
+/* Build TLS 1.3 PSK key exchange modes extension (RFC 8446 §4.2.9).
+ * modes — bitmask of supported psk_key_exchange_mode values
+ *          (bit 0 = psk_ke, bit 1 = psk_dhe_ke)
+ * out/out_cap — output buffer
+ * Returns bytes written, or negative errno. */
+int tls_build_psk_ke_modes_ext(int modes,
+                                uint8_t *out, int out_cap);
 
 #endif /* TLS_H */
