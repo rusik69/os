@@ -66,6 +66,13 @@ int tls_conn_init(struct tls_conn *conn, int is_client, uint16_t version)
 	 * TLS 1.3 (RFC 8446 §4.1.1: "negotiation is only allowed at the
 	 * start of a connection"). */
 	conn->renego_allowed = (version <= TLS_VER_1_2) ? 1 : 0;
+	/* TLS 1.3 middlebox compatibility (RFC 8446 §5.1, Appendix D.4):
+	 * send a dummy ChangeCipherSpec record after the first flight
+	 * to make the connection more likely to pass through middleboxes.
+	 * Enabled by default for TLS 1.3; can be disabled by setting
+	 * conn->middlebox_compat = 0 after calling tls_conn_init(). */
+	if (version >= TLS_VER_1_3)
+		conn->middlebox_compat = 1;
 	tls_early_data_init(conn);
 	return 0;
 }
@@ -357,6 +364,17 @@ int tls_record_recv(struct tls_conn *conn,
 
 	*content_type = hdr->content_type;
 
+	/* TLS 1.3 middlebox compatibility (RFC 8446 §5.1):
+	 * ChangeCipherSpec records are sent in cleartext and MUST NOT
+	 * be decrypted.  Validate the payload and return immediately. */
+	if (hdr->content_type == TLS_CT_CHANGE_CIPHER_SPEC) {
+		ret = tls_handle_ccs(cipher_body, cipher_len);
+		if (ret < 0)
+			return ret;
+		/* Return 0 as payload length — no plaintext to deliver */
+		return 0;
+	}
+
 	ret = tls_record_decrypt(&conn->rstate, hdr,
 	                         cipher_body, cipher_len,
 	                         data, data_cap);
@@ -365,3 +383,95 @@ int tls_record_recv(struct tls_conn *conn,
 
 	return ret;
 }
+
+/* ── TLS 1.3 Middlebox Compatibility Mode (RFC 8446 §5.1, Appendix D.4) ── */
+
+/*
+ * tls_build_ccs_record — Build a dummy ChangeCipherSpec record.
+ *
+ * Per RFC 8446 §5.1 and Appendix D.4, a ChangeCipherSpec (CCS) record
+ * is sent as an unencrypted TLS record with:
+ *   content_type = 20 (TLS_CT_CHANGE_CIPHER_SPEC)
+ *   version      = 0x0303 (TLS 1.2 — the "common record version" for
+ *                          middlebox compatibility)
+ *   length       = 1
+ *   payload      = 0x01
+ *
+ * This makes the TLS 1.3 handshake look enough like TLS 1.2 to pass
+ * through middleboxes (firewalls, load balancers, etc.) that inspect
+ * the handshake for valid TLS patterns.
+ *
+ * The CCS record carries no cipher state and is sent in cleartext
+ * before encryption is enabled, so it is never AEAD-encrypted.
+ *
+ * On success returns the total bytes written to 'out' (always 6).
+ * On failure returns a negative errno.
+ */
+int tls_build_ccs_record(uint8_t *out, int out_cap)
+{
+	struct tls_record_header *hdr;
+
+	if (!out)
+		return -EINVAL;
+	if (out_cap < TLS_RECORD_HEADER_LEN + 1)
+		return -ENOSPC;
+
+	hdr = (struct tls_record_header *)out;
+	hdr->content_type = TLS_CT_CHANGE_CIPHER_SPEC;
+	hdr->version      = htons(TLS_VER_1_2);
+	hdr->length       = htons(1);
+
+	/* Single-byte CCS body: 0x01 (per TLS 1.0–1.3) */
+	out[TLS_RECORD_HEADER_LEN] = 0x01;
+
+	return TLS_RECORD_HEADER_LEN + 1;
+}
+
+/*
+ * tls_should_send_ccs — Check if a CCS record is pending.
+ *
+ * The caller should check this after each call to tls_handshake_step()
+ * and, if non-zero, send a CCS record (built via tls_build_ccs_record())
+ * before proceeding with the next handshake step.
+ */
+int tls_should_send_ccs(const struct tls_conn *conn)
+{
+	if (!conn)
+		return 0;
+	return conn->ccs_pending;
+}
+
+/*
+ * tls_clear_ccs — Clear the pending CCS flag after sending.
+ */
+void tls_clear_ccs(struct tls_conn *conn)
+{
+	if (conn)
+		conn->ccs_pending = 0;
+}
+
+/*
+ * tls_handle_ccs — Handle an incoming CCS record.
+ *
+ * Per RFC 8446 §5.1, a TLS 1.3 implementation that receives a CCS
+ * record MUST treat it as an unauthenticated notification that the
+ * peer is in middlebox compatibility mode, and MUST NOT abort the
+ * connection.  The CCS payload MUST be exactly 1 byte with value 0x01.
+ *
+ * Returns 0 on success, negative errno on invalid data.
+ */
+int tls_handle_ccs(const uint8_t *data, int data_len)
+{
+	if (!data)
+		return -EINVAL;
+	if (data_len != 1)
+		return -EINVAL;
+	if (data[0] != 0x01)
+		return -EINVAL;
+	return 0;
+}
+
+EXPORT_SYMBOL(tls_build_ccs_record);
+EXPORT_SYMBOL(tls_should_send_ccs);
+EXPORT_SYMBOL(tls_clear_ccs);
+EXPORT_SYMBOL(tls_handle_ccs);

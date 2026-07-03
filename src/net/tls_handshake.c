@@ -615,6 +615,12 @@ int tls_handshake_step(struct tls_conn *conn, enum tls_hs_state *new_state,
 			if (ret < 0)
 				goto error;
 
+			/* TLS 1.3 middlebox compatibility (RFC 8446 §5.1):
+			 * send a dummy ChangeCipherSpec record after ClientHello
+			 * so that middleboxes don't reject the connection. */
+			if (conn->middlebox_compat && conn->version >= TLS_VER_1_3)
+				conn->ccs_pending = 1;
+
 			*new_state = TLS_HS_CLIENT_HELLO_SENT;
 			return ret;
 		}
@@ -887,6 +893,11 @@ int tls_handshake_step(struct tls_conn *conn, enum tls_hs_state *new_state,
 				out, out_cap);
 			if (ret < 0)
 				goto error;
+
+			/* TLS 1.3 middlebox compatibility (RFC 8446 §5.1):
+			 * send a dummy ChangeCipherSpec record after ServerHello. */
+			if (conn->middlebox_compat && conn->version >= TLS_VER_1_3)
+				conn->ccs_pending = 1;
 
 			*new_state = TLS_HS_SERVER_PARAMS_SENT;
 			return ret;

@@ -239,6 +239,9 @@ struct tls_conn {
 	uint8_t  sni_hostname[TLS_SNI_MAX_HOSTNAME_LEN];
 	uint8_t  sni_hostname_len;
 	int      sni_negotiated;
+	/* ── TLS 1.3 Middlebox Compatibility Mode (RFC 8446 §5.1, Appendix D.4) ─ */
+	int      middlebox_compat;   /* 1 = enable middlebox compat mode */
+	int      ccs_pending;        /* 1 = a CCS record is pending to be sent */
 };
 
 /* ── TLS 1.3 Early Data Replay Protection Context ──────────────────────── */
@@ -480,6 +483,27 @@ int tls_early_data_decrypt(struct tls_conn *conn,
                            const uint8_t *in, int in_len,
                            uint8_t *data, int data_cap);
 void tls_early_data_init(struct tls_conn *conn);
+
+/* ── TLS 1.3 Middlebox Compatibility Mode (RFC 8446 §5.1, Appendix D.4) ── */
+
+/* Build a dummy ChangeCipherSpec record for middlebox compatibility.
+ * The CCS record is a plaintext TLS record with content_type = 20
+ * and a single-byte payload 0x01.
+ * Returns bytes written to 'out' on success, negative errno on failure. */
+int tls_build_ccs_record(uint8_t *out, int out_cap);
+
+/* Check whether a CCS record is pending to be sent on this connection.
+ * Returns 1 if the caller should send a CCS before the next handshake step. */
+int tls_should_send_ccs(const struct tls_conn *conn);
+
+/* Clear the pending CCS flag after sending. */
+void tls_clear_ccs(struct tls_conn *conn);
+
+/* Handle an incoming CCS record (middlebox compatibility).
+ * For TLS 1.3, incoming CCS records are authenticated but carry no
+ * data — they are simply ignored as per RFC 8446 §5.1.
+ * Returns 0 on success, negative errno on invalid data. */
+int tls_handle_ccs(const uint8_t *data, int data_len);
 
 /* ─────────────────────────────────────────────────────────────────────────
  * TLS Session Resumption — Session Tickets (RFC 5077, RFC 8446 §4.6.1)
