@@ -1432,7 +1432,9 @@ int __init cifs_init(void)
     return 0;
 }
 
+#ifndef MODULE
 device_initcall(cifs_init);
+#endif
 
 #ifdef MODULE
 int __init init_module(void) { return cifs_init(); }

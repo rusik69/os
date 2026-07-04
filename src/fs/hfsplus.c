@@ -554,7 +554,9 @@ int __init hfsplus_init(void)
     return 0;
 }
 
+#ifndef MODULE
 device_initcall(hfsplus_init);
+#endif
 
 #ifdef MODULE
 int __init init_module(void) { return hfsplus_init(); }
