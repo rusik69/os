@@ -158,3 +158,19 @@ int ntp_set_server(const char *host)
     kprintf("[ntp] ntp_set_server: host=%s (stub)\n", host);
     return -EOPNOTSUPP;
 }
+
+/* Module init */
+static int g_ntp_initialized = 0;
+
+void ntp_init(void)
+{
+    if (g_ntp_initialized)
+        return;
+    ntp_reply_received = 0;
+    ntp_txid = 0;
+    g_ntp_initialized = 1;
+    kprintf("[OK] NTP client initialized\n");
+}
+
+#include "module.h"
+module_init(ntp_init);

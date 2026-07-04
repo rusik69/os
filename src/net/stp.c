@@ -664,3 +664,14 @@ void stp_become_designated(int port_num)
     (void)port_num;
     kprintf("[STP] stp_become_designated: not yet implemented\n");
 }
+
+/* Module init — zero-arg wrapper for module loader */
+void stp_mod_init(void)
+{
+    if (g_initialized) return;
+    g_initialized = 1;
+    kprintf("[OK] STP module initialized\n");
+}
+
+#include "module.h"
+module_init(stp_mod_init);

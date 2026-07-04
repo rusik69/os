@@ -189,7 +189,7 @@ int smtp_send_auth(uint32_t server_ip, uint16_t port,
 int smtp_connect(const char *host, int port)
 {
     if (!host || !*host) {
-        kprintf("[smtp] smtp_connect: invalid host\n");
+        kprintf("[smtp] smtp_connect: invalid hostname\n");
         return -EINVAL;
     }
     if (port <= 0 || port > 65535) {
@@ -199,3 +199,12 @@ int smtp_connect(const char *host, int port)
     kprintf("[smtp] smtp_connect: %s:%d (stub)\n", host, port);
     return -EOPNOTSUPP;
 }
+
+/* Module init */
+void smtp_init(void)
+{
+    kprintf("[OK] SMTP client initialized\n");
+}
+
+#include "module.h"
+module_init(smtp_init);
