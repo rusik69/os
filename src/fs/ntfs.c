@@ -567,7 +567,9 @@ int __init ntfs_init(void)
     return 0;
 }
 
+#ifndef MODULE
 device_initcall(ntfs_init);
+#endif
 
 #ifdef MODULE
 int __init init_module(void) { return ntfs_init(); }

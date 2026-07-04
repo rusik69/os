@@ -2355,7 +2355,9 @@ int __init exfat_init(void)
     return 0;
 }
 
+#ifndef MODULE
 device_initcall(exfat_init);
+#endif
 
 #ifdef MODULE
 int __init init_module(void) { return exfat_init(); }
