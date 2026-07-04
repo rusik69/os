@@ -1,6 +1,6 @@
 /* depmod.c — generate module dependency files (D234 tasks 12-14)
  *
- * Scans /modules/*.ko files and generates:
+ * Scans /modules/ directory for .ko files and generates:
  *   - modules.dep:     dependency graph (module.ko: dep1.ko dep2.ko)
  *   - modules.alias:   alias patterns (alias pci:v... module_name)
  *   - modules.symbols: exported symbol list (symbol module_name)

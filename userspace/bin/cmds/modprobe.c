@@ -52,6 +52,7 @@ int main(int argc, char *argv[])
     int do_remove = 0;
     int do_show = 0;
     int opt_insmod_only = 0;
+    (void)opt_insmod_only;
 
     if (argc < 2) {
         printf("Usage: modprobe [-a] [-r] [--show-depends] <module> [param=value ...]\n");

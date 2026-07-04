@@ -85,6 +85,107 @@ static enum kunit_stress_level g_kunit_stress_level = KUNIT_STRESS_MODERATE;
 /* Buffer for the last run_suite command result */
 static char g_last_suite_result[256];
 
+/* ── Log buffer management ──────────────────────────────────────────── */
+
+/* Default / min / max log buffer size (bytes) */
+#define KUNIT_LOG_DEFAULT_SIZE  4096
+#define KUNIT_LOG_MIN_SIZE      256
+#define KUNIT_LOG_MAX_SIZE      65536
+
+/* Ring-buffer state for capturing KUnit test output.
+ * Log entries are written here on top of being sent to the serial
+ * console via kprintf, so they can be re-read later via debugfs. */
+static char    *g_kunit_log_buf = NULL;
+static int      g_kunit_log_size = 0;     /* allocated capacity */
+static int      g_kunit_log_head = 0;     /* next write position */
+static int      g_kunit_log_tail = 0;     /* oldest readable position */
+static bool     g_kunit_log_full = false; /* wrapped around at least once */
+
+/* Write @len bytes from @data into the ring buffer. */
+static void kunit_log_write_buf(const char *data, int len)
+{
+    if (!g_kunit_log_buf || g_kunit_log_size <= 0 || !data || len <= 0)
+        return;
+
+    for (int i = 0; i < len; i++) {
+        g_kunit_log_buf[g_kunit_log_head] = data[i];
+        g_kunit_log_head = (g_kunit_log_head + 1) % g_kunit_log_size;
+        if (g_kunit_log_head == g_kunit_log_tail) {
+            /* Buffer full — advance tail to make room */
+            g_kunit_log_tail = (g_kunit_log_tail + 1) % g_kunit_log_size;
+            g_kunit_log_full = true;
+        }
+    }
+}
+
+/* Format a message, write it to the log buffer AND to kprintf.
+ * This is the primary way KUnit code produces diagnostic output.
+ * Callers do NOT need to add a trailing newline — one is appended. */
+static void __printf(1, 2) kunit_log(const char *fmt, ...)
+{
+    char buf[256];
+    __builtin_va_list args;
+
+    __builtin_va_start(args, fmt);
+    int n = vsnprintf(buf, sizeof(buf), fmt, args);
+    __builtin_va_end(args);
+
+    if (n > (int)sizeof(buf) - 1)
+        n = (int)sizeof(buf) - 1;
+
+    /* Write to the ring buffer */
+    kunit_log_write_buf(buf, n);
+
+    /* Also emit to the serial console */
+    kprintf("%s", buf);
+}
+
+/* Clear the log ring buffer. */
+static void kunit_log_clear(void)
+{
+    if (!g_kunit_log_buf || g_kunit_log_size <= 0)
+        return;
+    g_kunit_log_head = 0;
+    g_kunit_log_tail = 0;
+    g_kunit_log_full = false;
+    memset(g_kunit_log_buf, 0, (uint32_t)g_kunit_log_size);
+}
+
+/* Allocate or reallocate the log buffer to @new_size bytes.
+ * Preserves as much of the current content as possible. */
+static int kunit_log_resize(int new_size)
+{
+    if (new_size < KUNIT_LOG_MIN_SIZE)
+        new_size = KUNIT_LOG_MIN_SIZE;
+    if (new_size > KUNIT_LOG_MAX_SIZE)
+        new_size = KUNIT_LOG_MAX_SIZE;
+
+    char *new_buf = (char *)kmalloc((uint32_t)new_size);
+    if (!new_buf)
+        return -1;
+
+    memset(new_buf, 0, (uint32_t)new_size);
+
+    spinlock_acquire(&g_kunit_lock);
+
+    char *old_buf = g_kunit_log_buf;
+    int   old_size = g_kunit_log_size;
+
+    /* Install the new buffer */
+    g_kunit_log_buf = new_buf;
+    g_kunit_log_size = new_size;
+    g_kunit_log_head = 0;
+    g_kunit_log_tail = 0;
+    g_kunit_log_full = false;
+
+    spinlock_release(&g_kunit_lock);
+
+    if (old_buf)
+        kfree(old_buf);
+
+    return 0;
+}
+
 /* ── Forward declarations ─────────────────────────────────────────── */
 static int  count_cases(struct kunit_suite *suite);
 static void kunit_run_all(void);
@@ -100,6 +201,12 @@ static void kunit_regression_read(char *buf, int *len);
 static int  kunit_regression_write(const char *buf, int len);
 static int  kunit_stress_level_write(const char *buf, int len);
 static void kunit_stress_level_read(char *buf, int *len);
+
+/* Log buffer callbacks */
+static void kunit_log_read(char *buf, int *len);
+static int  kunit_log_write(const char *buf, int len);
+static void kunit_log_size_read(char *buf, int *len);
+static int  kunit_log_size_write(const char *buf, int len);
 
 /* Fuzz mode callbacks */
 static int  kunit_fuzz_enable_write(const char *buf, int len);
@@ -197,7 +304,7 @@ static void kunit_run_case(struct kunit_suite *suite, struct kunit_case *kc)
      * the current global threshold. */
     if ((int)kc->stress_max > (int)g_kunit_stress_level) {
         if (g_kunit_verbose >= 1) {
-            kprintf("[KUNIT] SKIP:  %s.%s (stress %s > current %s)\n",
+            kunit_log("[KUNIT] SKIP:  %s.%s (stress %s > current %s)\n",
                     suite->name, test_ctx.name,
                     kunit_stress_level_name(kc->stress_max),
                     kunit_stress_level_name(g_kunit_stress_level));
@@ -216,17 +323,17 @@ static void kunit_run_case(struct kunit_suite *suite, struct kunit_case *kc)
         for (int p = 0; kc->params[p].name != NULL; p++) {
             test_ctx.priv = kc->params[p].value;
             if (g_kunit_verbose >= 2)
-                kprintf("[KUNIT] RUN:   %s.%s[%s]\n", suite->name,
+                kunit_log("[KUNIT] RUN:   %s.%s[%s]\n", suite->name,
                         test_ctx.name, kc->params[p].name);
             else if (g_kunit_verbose >= 1)
-                kprintf("[KUNIT] RUN:   %s.%s\n", suite->name,
+                kunit_log("[KUNIT] RUN:   %s.%s\n", suite->name,
                         test_ctx.name);
             kc->run(&test_ctx);
         }
     } else {
         /* Normal test */
         if (g_kunit_verbose >= 2)
-            kprintf("[KUNIT] RUN:   %s.%s\n", suite->name, test_ctx.name);
+            kunit_log("[KUNIT] RUN:   %s.%s\n", suite->name, test_ctx.name);
         kc->run(&test_ctx);
     }
 
@@ -237,10 +344,10 @@ static void kunit_run_case(struct kunit_suite *suite, struct kunit_case *kc)
     /* Record result for normal/non-fuzz run */
     if (test_ctx.status == KUNIT_SUCCESS) {
         atomic_inc(&g_total_tests_passed);
-        kprintf("[KUNIT] PASS:  %s.%s\n", suite->name, test_ctx.name);
+        kunit_log("[KUNIT] PASS:  %s.%s\n", suite->name, test_ctx.name);
     } else {
         atomic_inc(&g_total_tests_failed);
-        kprintf("[KUNIT] FAIL:  %s.%s (%d failures)\n",
+        kunit_log("[KUNIT] FAIL:  %s.%s (%d failures)\n",
                 suite->name, test_ctx.name, test_ctx.failures);
     }
 
@@ -279,11 +386,11 @@ static void kunit_run_case(struct kunit_suite *suite, struct kunit_case *kc)
             fuzz_ctx.priv = fp.value;
 
             if (g_kunit_verbose >= 2)
-                kprintf("[KUNIT] FUZZ:  %s.%s[iter=%d/%d,param=%s]\n",
+                kunit_log("[KUNIT] FUZZ:  %s.%s[iter=%d/%d,param=%s]\n",
                         suite->name, kc->name, fi + 1, fuzz_count,
                         fp.name ? fp.name : "unnamed");
             else if (g_kunit_verbose >= 1)
-                kprintf("[KUNIT] FUZZ:  %s.%s (iter %d/%d)\n",
+                kunit_log("[KUNIT] FUZZ:  %s.%s (iter %d/%d)\n",
                         suite->name, kc->name, fi + 1, fuzz_count);
 
             atomic_inc(&g_total_tests_run);
@@ -302,11 +409,11 @@ static void kunit_run_case(struct kunit_suite *suite, struct kunit_case *kc)
             /* Record fuzz iteration result */
             if (fuzz_ctx.status == KUNIT_SUCCESS) {
                 atomic_inc(&g_total_tests_passed);
-                kprintf("[KUNIT] PASS:  %s.%s (fuzz %d/%d)\n",
+                kunit_log("[KUNIT] PASS:  %s.%s (fuzz %d/%d)\n",
                         suite->name, kc->name, fi + 1, fuzz_count);
             } else {
                 atomic_inc(&g_total_tests_failed);
-                kprintf("[KUNIT] FAIL:  %s.%s (fuzz %d/%d, %d failures)\n",
+                kunit_log("[KUNIT] FAIL:  %s.%s (fuzz %d/%d, %d failures)\n",
                         suite->name, kc->name, fi + 1, fuzz_count,
                         fuzz_ctx.failures);
             }
@@ -319,7 +426,7 @@ static void kunit_run_suite(struct kunit_suite *suite)
 {
     if (!suite) return;
 
-    kprintf("[KUNIT] SUITE: %s (%d cases)\n", suite->name,
+    kunit_log("[KUNIT] SUITE: %s (%d cases)\n", suite->name,
             count_cases(suite));
 
     for (int i = 0; i < KUNIT_MAX_CASES; i++) {
@@ -358,16 +465,16 @@ static void kunit_run_all_sequential(void)
 {
     kunit_reset();
     kunit_coverage_reset();
-    kprintf("\n========================================\n");
-    kprintf("[KUNIT] Running all %d test suites", g_suite_count);
+    kunit_log("\n========================================\n");
+    kunit_log("[KUNIT] Running all %d test suites", g_suite_count);
     if (g_kunit_iterations > 1)
-        kprintf(" (%d iterations)", g_kunit_iterations);
-    kprintf("\n");
-    kprintf("========================================\n");
+        kunit_log(" (%d iterations)", g_kunit_iterations);
+    kunit_log("\n");
+    kunit_log("========================================\n");
 
     for (int iter = 0; iter < (int)g_kunit_iterations; iter++) {
         if (g_kunit_iterations > 1)
-            kprintf("[KUNIT] --- Iteration %d/%d ---\n",
+            kunit_log("[KUNIT] --- Iteration %d/%d ---\n",
                     iter + 1, g_kunit_iterations);
 
         for (int i = 0; i < g_suite_count; i++) {
@@ -376,17 +483,17 @@ static void kunit_run_all_sequential(void)
         }
     }
 
-    kprintf("========================================\n");
-    kprintf("[KUNIT] Results: %d passed, %d failed, "
+    kunit_log("========================================\n");
+    kunit_log("[KUNIT] Results: %d passed, %d failed, "
             "%d assertions (%d failures)\n",
             atomic_read(&g_total_tests_passed),
             atomic_read(&g_total_tests_failed),
             atomic_read(&g_total_assertions),
             atomic_read(&g_total_assertion_fails));
-    kprintf("[KUNIT] Coverage: %d active points, %u total hits\n",
+    kunit_log("[KUNIT] Coverage: %d active points, %u total hits\n",
             kunit_coverage_active_count(),
             kunit_coverage_total_hits());
-    kprintf("========================================\n\n");
+    kunit_log("========================================\n\n");
 }
 
 /* ── Parallel execution ──────────────────────────────────────────── */
@@ -429,32 +536,32 @@ static void kunit_run_all_parallel(void)
     }
 
     if (suite_count == 0) {
-        kprintf("[KUNIT] No suites registered\n");
+        kunit_log("[KUNIT] No suites registered\n");
         return;
     }
 
     /* Create unbound workqueue for parallel execution */
     struct workqueue_struct *wq = workqueue_create("kunit_parallel", WQ_UNBOUND);
     if (!wq) {
-        kprintf("[KUNIT] Failed to create parallel workqueue, "
+        kunit_log("[KUNIT] Failed to create parallel workqueue, "
                 "falling back to sequential\n");
         kunit_run_all_sequential();
         return;
     }
 
-    kprintf("\n========================================\n");
-    kprintf("[KUNIT] Running %d suites in PARALLEL", suite_count);
+    kunit_log("\n========================================\n");
+    kunit_log("[KUNIT] Running %d suites in PARALLEL", suite_count);
     if (g_kunit_iterations > 1)
-        kprintf(" (%d iterations)", g_kunit_iterations);
-    kprintf("\n");
-    kprintf("========================================\n");
+        kunit_log(" (%d iterations)", g_kunit_iterations);
+    kunit_log("\n");
+    kunit_log("========================================\n");
 
     /* Maximum items per batch limited by workqueue slot array */
     int max_batch = WORKQUEUE_MAX;
 
     for (int iter = 0; iter < (int)g_kunit_iterations; iter++) {
         if (g_kunit_iterations > 1)
-            kprintf("[KUNIT] --- Iteration %d/%d ---\n",
+            kunit_log("[KUNIT] --- Iteration %d/%d ---\n",
                     iter + 1, g_kunit_iterations);
 
         /* Dispatch suites in batches due to workqueue slot limits */
@@ -485,17 +592,17 @@ static void kunit_run_all_parallel(void)
 
     workqueue_destroy(wq);
 
-    kprintf("========================================\n");
-    kprintf("[KUNIT] Results: %d passed, %d failed, "
+    kunit_log("========================================\n");
+    kunit_log("[KUNIT] Results: %d passed, %d failed, "
             "%d assertions (%d failures)\n",
             atomic_read(&g_total_tests_passed),
             atomic_read(&g_total_tests_failed),
             atomic_read(&g_total_assertions),
             atomic_read(&g_total_assertion_fails));
-    kprintf("[KUNIT] Coverage: %d active points, %u total hits\n",
+    kunit_log("[KUNIT] Coverage: %d active points, %u total hits\n",
             kunit_coverage_active_count(),
             kunit_coverage_total_hits());
-    kprintf("========================================\n\n");
+    kunit_log("========================================\n\n");
 }
 
 /* ── Coverage tracking (gcov-style) ───────────────────────────── */
@@ -723,6 +830,14 @@ void kunit_init(void)
     g_filter_active = 0;
     g_filter[0] = '\0';
 
+    /* Allocate the default KUnit log buffer */
+    if (kunit_log_resize(KUNIT_LOG_DEFAULT_SIZE) == 0) {
+        kprintf("[KUNIT] Log buffer allocated (%d bytes)\n", KUNIT_LOG_DEFAULT_SIZE);
+    } else {
+        kprintf("[KUNIT] WARNING: Failed to allocate %d-byte log buffer. "
+                "Log capture disabled.\n", KUNIT_LOG_DEFAULT_SIZE);
+    }
+
     /* Register the built-in test suites.
      * Suites in kunit_tests.c use a forward-declaration + fill-later
      * pattern (FILL_CASES macro + name assignment), so the manual
@@ -778,6 +893,14 @@ void kunit_init(void)
     debugfs_create_rw_file("kunit/fuzz_seed",
                            kunit_fuzz_seed_read,
                            kunit_fuzz_seed_write);
+
+    /* Log buffer management */
+    debugfs_create_rw_file("kunit/log",
+                           kunit_log_read,
+                           kunit_log_write);
+    debugfs_create_rw_file("kunit/log_size",
+                           kunit_log_size_read,
+                           kunit_log_size_write);
 
     kprintf("[OK] KUnit: Kernel unit test framework initialized "
             "(%d suite slots, filter=%s, %d iterations, verbose=%d, parallel=%d)\n",
@@ -1268,6 +1391,109 @@ static int kunit_run_suite_write(const char *buf, int len)
     }
 
     kunit_run_suite_by_name(name);
+    return 0;
+}
+
+/* ── KUnit log buffer debugfs interface ──────────────────────────── */
+
+/* Read callback for /sys/kernel/debug/kunit/log.
+ * Dumps the ring buffer contents from oldest to newest.
+ * If the buffer is empty, returns an empty string. */
+static void kunit_log_read(char *buf, int *len)
+{
+    if (!buf || !len || !g_kunit_log_buf || g_kunit_log_size <= 0) {
+        if (len) *len = 0;
+        return;
+    }
+
+    int pos = 0;
+    int max = *len - 1; /* reserve one byte for NUL */
+    if (max < 0) max = 0;
+
+    if (g_kunit_log_full) {
+        /* Buffer has wrapped: read from tail to end, then 0 to head-1 */
+        for (int i = g_kunit_log_tail; i < g_kunit_log_size && pos < max; i++)
+            buf[pos++] = g_kunit_log_buf[i];
+        for (int i = 0; i < g_kunit_log_head && pos < max; i++)
+            buf[pos++] = g_kunit_log_buf[i];
+    } else {
+        /* Linear: read from 0 to head */
+        for (int i = 0; i < g_kunit_log_head && pos < max; i++)
+            buf[pos++] = g_kunit_log_buf[i];
+    }
+
+    buf[pos] = '\0';
+    *len = pos;
+}
+
+/* Write callback for /sys/kernel/debug/kunit/log.
+ * Supports: "clear" — clears the ring buffer. */
+static int kunit_log_write(const char *buf, int len)
+{
+    if (!buf || len <= 0)
+        return 0;
+
+    /* Copy and null-terminate */
+    char cmd[16];
+    int copy_len = len < (int)sizeof(cmd) - 1 ? len : (int)sizeof(cmd) - 1;
+    memcpy(cmd, buf, (size_t)copy_len);
+    cmd[copy_len] = '\0';
+
+    /* Strip trailing whitespace/newline */
+    while (copy_len > 0 && (cmd[copy_len - 1] == '\n' ||
+           cmd[copy_len - 1] == '\r' || cmd[copy_len - 1] == ' '))
+        cmd[--copy_len] = '\0';
+
+    if (strcmp(cmd, "clear") == 0) {
+        kunit_log_clear();
+        kprintf("[KUNIT] Log buffer cleared\n");
+    } else if (cmd[0] != '\0') {
+        kprintf("[KUNIT] Unknown log command: '%s'. Try: clear\n", cmd);
+    }
+
+    return 0;
+}
+
+/* Read callback for /sys/kernel/debug/kunit/log_size.
+ * Returns the current log buffer capacity in bytes. */
+static void kunit_log_size_read(char *buf, int *len)
+{
+    int pos = snprintf(buf, 64, "%d\n", g_kunit_log_size);
+    *len = pos;
+}
+
+/* Write callback for /sys/kernel/debug/kunit/log_size.
+ * Accepts a decimal integer and resizes the log buffer. */
+static int kunit_log_size_write(const char *buf, int len)
+{
+    if (!buf || len <= 0)
+        return 0;
+
+    char val[16];
+    int copy_len = len < (int)sizeof(val) - 1 ? len : (int)sizeof(val) - 1;
+    memcpy(val, buf, (size_t)copy_len);
+    val[copy_len] = '\0';
+
+    /* Strip trailing whitespace/newline */
+    while (copy_len > 0 && (val[copy_len - 1] == '\n' ||
+           val[copy_len - 1] == '\r' || val[copy_len - 1] == ' '))
+        val[--copy_len] = '\0';
+
+    int new_size = 0;
+    for (int i = 0; val[i] >= '0' && val[i] <= '9'; i++)
+        new_size = new_size * 10 + (val[i] - '0');
+
+    if (new_size <= 0) {
+        kprintf("[KUNIT] Invalid log size: '%s'. Use a positive integer.\n", val);
+        return 0;
+    }
+
+    int ret = kunit_log_resize(new_size);
+    if (ret == 0)
+        kprintf("[KUNIT] Log buffer resized to %d bytes\n", new_size);
+    else
+        kprintf("[KUNIT] Failed to resize log buffer to %d bytes\n", new_size);
+
     return 0;
 }
 
