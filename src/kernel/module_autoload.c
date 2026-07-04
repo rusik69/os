@@ -200,6 +200,13 @@ static int __request_module_internal(const char *name, const char *params, int f
         return -EEXIST;
     }
 
+    /* ── Step 0b: Check module blacklist ─────────────────────────── */
+    if (module_is_blacklisted(name)) {
+        kprintf("[MOD] request_module(%s): blacklisted — refusing to load\n",
+                name);
+        return -EPERM;
+    }
+
     /* ── Step 1: Build path ──────────────────────────────────────── */
     char path[MODULE_PATH_MAX];
     int plen = snprintf(path, sizeof(path), "%s%s%s",

@@ -150,6 +150,15 @@ void add_taint(unsigned int flag);
 /* Return the kernel taint mask.  Zero means untainted. */
 unsigned int kernel_tainted(void);
 
+/* ── Module blacklist (D232 task 14) ──────────────────────────────── */
+
+/* Check whether a module name is on the loading prohibition blacklist.
+ * Returns 1 if the module is blacklisted (must not be loaded),
+ * 0 if allowed.  The blacklist is populated from the kernel cmdline
+ * via modprobe.blacklist=mod1,mod2,...
+ * This check should be called before any module load attempt. */
+int module_is_blacklisted(const char *name);
+
 /* ── Module memory allocator (M10) ───────────────────────────────── */
 
 /* Allocate a block of the given size from the module virtual region.

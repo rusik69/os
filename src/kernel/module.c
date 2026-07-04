@@ -143,6 +143,68 @@ void add_taint(unsigned int flag) {
     spinlock_irqsave_release(&g_taint_lock, irq_flags);
 }
 
+/* ── Module blacklist (D232 task 14) ─────────────────────────────── */
+
+#define MODULE_BLACKLIST_MAX 16
+
+/* Names of modules prohibited from loading (parsed from cmdline or
+ * built-in).  Entries are NUL-terminated strings; empty slot = "".
+ * modprobe.blacklist=mod1,mod2 on the kernel cmdline populates this. */
+static char g_mod_blacklist[MODULE_BLACKLIST_MAX][32];
+static int g_mod_blacklist_parsed = 0;
+
+/* Parse modprobe.blacklist= from the kernel cmdline.
+ * Format: modprobe.blacklist=mod1,mod2,mod3  (no spaces).
+ * Called once from modules_init() after cmdline infrastructure is ready. */
+static void module_blacklist_parse_cmdline(void)
+{
+    const char *raw = cmdline_raw();
+    if (!raw || !raw[0])
+        return;
+
+    /* Find "modprobe.blacklist=" in the cmdline */
+    const char *p = raw;
+    while ((p = strstr(p, "modprobe.blacklist=")) != NULL) {
+        const char *val = p + 19; /* length of "modprobe.blacklist=" */
+        int idx = 0;
+        while (*val && *val != ' ' && *val != '\t' &&
+               idx < MODULE_BLACKLIST_MAX) {
+            /* Copy up to the next comma or end */
+            int clen = 0;
+            while (val[clen] && val[clen] != ',' &&
+                   val[clen] != ' ' && val[clen] != '\t' && clen < 31)
+                clen++;
+            if (clen > 0) {
+                memcpy(g_mod_blacklist[idx], val, (size_t)clen);
+                g_mod_blacklist[idx][clen] = '\0';
+                kprintf("[MOD] Blacklisted module: %s\n",
+                        g_mod_blacklist[idx]);
+                idx++;
+            }
+            if (val[clen] == ',')
+                clen++; /* skip comma */
+            val += clen;
+        }
+        p = val; /* continue scanning */
+    }
+    g_mod_blacklist_parsed = 1;
+}
+
+/* Check whether a module name is on the blacklist.
+ * Returns 1 if blacklisted, 0 if allowed. */
+int module_is_blacklisted(const char *name)
+{
+    if (!name || !name[0] || !g_mod_blacklist_parsed)
+        return 0;
+
+    for (int i = 0; i < MODULE_BLACKLIST_MAX; i++) {
+        if (g_mod_blacklist[i][0] != '\0' &&
+            strcmp(g_mod_blacklist[i], name) == 0)
+            return 1;
+    }
+    return 0;
+}
+
 /* ── Module memory region state (M10) ──────────────────────────────
  *
  * We manage a simple bump allocator within the 64 MB virtual region
@@ -191,6 +253,9 @@ void __init modules_init(void) {
 
     /* Scan the kernel cmdline for module.param=value entries */
     module_scan_cmdline_params();
+
+    /* Parse modprobe.blacklist= from the kernel cmdline */
+    module_blacklist_parse_cmdline();
 
     /* Create /sys/kernel/module_verify sysfs file */
     module_verify_sysfs_init();
@@ -452,6 +517,13 @@ void module_apply_cmdline_params(struct kernel_module *mod)
 
 int module_load(const char *name, module_entry_t entry) {
     if (!name || !entry || !g_mod_initialized) return -EINVAL;
+
+    /* ── Check blacklist before attempting to load ──────────────── */
+    if (module_is_blacklisted(name)) {
+        kprintf("[MOD] module_load(%s): blacklisted — refusing to load\n",
+                name);
+        return -EPERM;
+    }
 
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&g_mod_lock, &irq_flags);
