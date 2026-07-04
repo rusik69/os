@@ -348,6 +348,45 @@ static void slab_stress_rapid_test(struct kunit *test)
     }
 }
 
+/* High-iteration alloc/free stress — 10000 cycles with data-integrity checks.
+ * Exercises the slab fast path, per-CPU cache refill/drain, and lock contention
+ * under repeated same-size allocation.  Marked HEAVY because 10000 iterations
+ * is too expensive for smoke-test runs. */
+static void slab_stress_tenk_test(struct kunit *test)
+{
+    const int N      = 10000;
+    const size_t sz  = 64;
+    int ok           = 1;
+
+    for (int i = 0; i < N; i++) {
+        void *p = kmalloc(sz);
+        KUNIT_EXPECT_NOT_NULL(test, p);
+        if (!p) {
+            ok = 0;
+            break;
+        }
+        /* Write a distinct pattern */
+        memset(p, (int)(i & 0xFF), sz);
+
+        /* Verify every 1000-th iteration */
+        if ((i % 1000) == 0) {
+            uint8_t expected = (uint8_t)(i & 0xFF);
+            uint8_t *buf     = (uint8_t *)p;
+            for (size_t j = 0; j < sz; j++) {
+                if (buf[j] != expected) {
+                    ok = 0;
+                    break;
+                }
+            }
+            if (!ok)
+                break;
+        }
+
+        kfree(p);
+    }
+    KUNIT_EXPECT_TRUE(test, ok);
+}
+
 /* ====================================================================
  *  6. Cache constructor test
  * ==================================================================== */
@@ -422,6 +461,7 @@ static const struct kunit_case slab_full_test_cases[] = {
     KUNIT_CASE(slab_kasan_underflow_test),
     KUNIT_CASE(slab_stress_mix_test),
     KUNIT_CASE(slab_stress_rapid_test),
+    KUNIT_CASE(slab_stress_tenk_test),
     KUNIT_CASE(slab_cache_ctor_test),
     KUNIT_CASE(slab_aligned_cache_test),
     {0}
