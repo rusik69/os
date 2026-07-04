@@ -1329,8 +1329,10 @@ int __init nvme_init(void) {
 }
 
 /* ── Utility functions ─────────────────────────────────────────────── */
+#ifndef MODULE
 #include "initcall.h"
 device_initcall(nvme_init);
+#endif
 
 int nvme_is_present(void) {
     return g_nvme_ctrl.present;
