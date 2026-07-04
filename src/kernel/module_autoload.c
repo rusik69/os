@@ -26,6 +26,7 @@
 #include "types.h"
 #include "module.h"
 #include "module_elf.h"
+#include "module_compress.h"
 #include "printf.h"
 #include "vfs.h"
 #include "heap.h"
@@ -235,15 +236,40 @@ static int __request_module_internal(const char *name, const char *params, int f
         return -EIO;
     }
 
+    /* ── Step 3b: Decompress if compressed (gzip/xz) ──────────────── */
+    uint8_t *elf_data = (uint8_t *)buf;
+    uint64_t elf_size = file_size;
+    int was_compressed = 0;
+
+    {
+        int comp_ret = module_decompress((const uint8_t *)buf, file_size,
+                                          &elf_data, &elf_size);
+        if (comp_ret < 0) {
+            kprintf("[MOD] request_module(%s): decompression failed (%d)\n",
+                    name, comp_ret);
+            kfree(buf);
+            return -EIO;
+        }
+        was_compressed = comp_ret;  /* 1 = buffer was allocated by decompress */
+        if (was_compressed) {
+            kprintf("[MOD] request_module(%s): decompressed (%llu -> %llu bytes)\n",
+                    name, (unsigned long long)file_size,
+                    (unsigned long long)elf_size);
+            /* Free the original compressed buffer; elf_data is now
+             * the decompressed module. */
+            kfree(buf);
+        }
+    }
+
     /* ── Step 4: Run the ELF module loader ───────────────────────── */
     struct module_elf_context ctx;
     int result = -1;
 
     /* Validate ELF header */
-    if (module_elf_validate(&ctx, (const uint8_t *)buf, file_size) < 0) {
+    if (module_elf_validate(&ctx, (const uint8_t *)elf_data, elf_size) < 0) {
         kprintf("[MOD] request_module(%s): ELF validation failed: %s\n",
                 name, ctx.error_msg);
-        kfree(buf);
+        module_decompress_free(elf_data, was_compressed);
         return -EINVAL;
     }
 
@@ -251,14 +277,14 @@ static int __request_module_internal(const char *name, const char *params, int f
     if (module_elf_parse(&ctx) < 0) {
         kprintf("[MOD] request_module(%s): ELF parse failed: %s\n",
                 name, ctx.error_msg);
-        kfree(buf);
+        module_decompress_free(elf_data, was_compressed);
         return -EINVAL;
     }
 
     /* Finalize: resolve symbols, apply relocations, set perms, call init */
     result = module_elf_finalize(&ctx, name);
     module_elf_free(&ctx);
-    kfree(buf);
+    module_decompress_free(elf_data, was_compressed);
 
     if (result < 0) {
         kprintf("[MOD] request_module(%s): finalize failed: %s\n",
