@@ -24,6 +24,9 @@
 #include "syscall.h"
 #include "export.h"
 #include "process.h"
+#ifdef MODULE
+#include "module.h"
+#endif
 
 /* ── POSIX file type macros (stat.h equivalent) ────────────────────── */
 #ifndef S_ISREG
@@ -211,3 +214,33 @@ int readdir_emit(void *dir, const char *name, int namlen, uint64_t ino, unsigned
     kprintf("[readdir] emit: %s\n", name);
     return 0;
 }
+
+/* Module init — called by the module ELF loader on insmod */
+int __init readdir_module_init(void)
+{
+    kprintf("[readdir] getdents64 directory traversal module loaded\n");
+    return 0;
+}
+
+/* Module exit — called by the module ELF loader on rmmod */
+void __exit readdir_module_exit(void)
+{
+    kprintf("[readdir] module unloaded\n");
+}
+
+#ifdef MODULE
+int __init init_module(void)
+{
+    return readdir_module_init();
+}
+
+void __exit cleanup_module(void)
+{
+    readdir_module_exit();
+}
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Hermes OS Kernel Team");
+MODULE_DESCRIPTION("getdents64 syscall for directory traversal");
+MODULE_VERSION("1.0");
+#endif /* MODULE */

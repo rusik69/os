@@ -29,6 +29,7 @@
 #include "heap.h"
 #include "errno.h"
 #include "export.h"
+#include "module.h"
 
 /* ── Constants ─────────────────────────────────────────────────────── */
 
@@ -506,10 +507,6 @@ int fsverity_disable(uint64_t ino)
     return 0;
 }
 EXPORT_SYMBOL(fsverity_disable);
-#include "module.h"
-#ifndef MODULE
-fs_initcall(fsverity_init);
-#endif
 
 /* ═══════════════════════════════════════════════════════════════════════
  *  fs-verity measurement and verification API
@@ -583,3 +580,28 @@ int verity_close(uint64_t ino)
 {
     return fsverity_disable(ino);
 }
+
+#ifndef MODULE
+fs_initcall(fsverity_init);
+#endif
+
+#ifdef MODULE
+/* Module entry point — called by the module ELF loader on insmod */
+int __init init_module(void)
+{
+    fsverity_init();
+    kprintf("[fs-verity] module loaded\n");
+    return 0;
+}
+
+/* Module exit point — called by the module ELF loader on rmmod */
+void __exit cleanup_module(void)
+{
+    kprintf("[fs-verity] module unloaded\n");
+}
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Hermes OS Kernel Team");
+MODULE_DESCRIPTION("fs-verity: Merkle tree per-file integrity verification");
+MODULE_VERSION("1.0");
+#endif /* MODULE */
