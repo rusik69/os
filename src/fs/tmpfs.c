@@ -1833,6 +1833,22 @@ void __init tmpfs_init(void) {
 #include "module.h"
 #ifndef MODULE
 fs_initcall(tmpfs_init);
+#else
+/* Module entry point — called by the module ELF loader on insmod */
+int init_module(void) {
+    tmpfs_init();
+    return 0;
+}
+
+/* Module exit point — called by the module ELF loader on rmmod */
+void __exit cleanup_module(void) {
+    kprintf("[tmpfs] Module unloaded\n");
+}
+
+MODULE_LICENSE("GPL v2");
+MODULE_VERSION("1.0");
+MODULE_AUTHOR("Hermes OS Kernel Team");
+MODULE_DESCRIPTION("tmpfs — temporary filesystem (loadable module)");
 #endif
 
 /* ── tmpfs_umount ──────────────────────────────────────── */
