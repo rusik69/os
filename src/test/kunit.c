@@ -19,6 +19,7 @@
  */
 
 #include "kunit.h"
+#include "kunit_coverage.h"
 #include "debugfs.h"
 #include "string.h"
 #include "printf.h"
@@ -242,6 +243,7 @@ static void kunit_run_all(void)
 static void kunit_run_all_sequential(void)
 {
     kunit_reset();
+    kunit_coverage_reset();
     kprintf("\n========================================\n");
     kprintf("[KUNIT] Running all %d test suites", g_suite_count);
     if (g_kunit_iterations > 1)
@@ -267,6 +269,9 @@ static void kunit_run_all_sequential(void)
             atomic_read(&g_total_tests_failed),
             atomic_read(&g_total_assertions),
             atomic_read(&g_total_assertion_fails));
+    kprintf("[KUNIT] Coverage: %d active points, %u total hits\n",
+            kunit_coverage_active_count(),
+            kunit_coverage_total_hits());
     kprintf("========================================\n\n");
 }
 
@@ -297,6 +302,7 @@ static void kunit_run_all_parallel(void)
     int suite_count = 0;
 
     kunit_reset();
+    kunit_coverage_reset();
 
     /* Collect non-NULL suites and init completions */
     for (int i = 0; i < g_suite_count; i++) {
@@ -372,7 +378,52 @@ static void kunit_run_all_parallel(void)
             atomic_read(&g_total_tests_failed),
             atomic_read(&g_total_assertions),
             atomic_read(&g_total_assertion_fails));
+    kprintf("[KUNIT] Coverage: %d active points, %u total hits\n",
+            kunit_coverage_active_count(),
+            kunit_coverage_total_hits());
     kprintf("========================================\n\n");
+}
+
+/* ── Coverage tracking (gcov-style) ───────────────────────────── */
+
+/* Read callback for /sys/kernel/debug/kunit/coverage — shows report */
+static void kunit_coverage_read(char *buf, int *len)
+{
+    if (!buf || !len)
+        return;
+    *len = kunit_coverage_report(buf, 4096);
+}
+
+/* Write callback for /sys/kernel/debug/kunit/coverage — accepts "reset" */
+static int kunit_coverage_write(const char *buf, int len)
+{
+    if (!buf || len <= 0)
+        return 0;
+
+    /* Copy and null-terminate */
+    char cmd[64];
+    int copy_len = len < (int)sizeof(cmd) - 1 ? len : (int)sizeof(cmd) - 1;
+    memcpy(cmd, buf, (size_t)copy_len);
+    cmd[copy_len] = '\0';
+
+    /* Strip trailing whitespace/newline */
+    while (copy_len > 0 && (cmd[copy_len - 1] == '\n' ||
+           cmd[copy_len - 1] == '\r' || cmd[copy_len - 1] == ' '))
+        cmd[--copy_len] = '\0';
+
+    if (strcmp(cmd, "reset") == 0) {
+        kunit_coverage_reset();
+        kprintf("[KUNIT] Coverage counters reset\n");
+    } else if (strcmp(cmd, "status") == 0) {
+        kprintf("[KUNIT] Coverage: %d active points, %u total hits\n",
+                kunit_coverage_active_count(),
+                kunit_coverage_total_hits());
+    } else if (cmd[0] != '\0') {
+        kprintf("[KUNIT] Unknown coverage command: '%s'. "
+                "Try: reset, status\n", cmd);
+    }
+
+    return 0;
 }
 
 /* ── Results tracking ─────────────────────────────────────────────── */
@@ -553,6 +604,7 @@ void kunit_init(void)
 {
     spinlock_init(&g_kunit_lock);
     kunit_reset();
+    kunit_coverage_init();
     g_filter_active = 0;
     g_filter[0] = '\0';
 
@@ -589,6 +641,9 @@ void kunit_init(void)
     debugfs_create_u32("kunit/verbose", &g_kunit_verbose);
     debugfs_create_u32("kunit/timeout_ms", &g_kunit_timeout_ms);
     debugfs_create_u32("kunit/parallel", &g_kunit_parallel);
+    debugfs_create_rw_file("kunit/coverage",
+                           kunit_coverage_read,
+                           kunit_coverage_write);
 
     kprintf("[OK] KUnit: Kernel unit test framework initialized "
             "(%d suite slots, filter=%s, %d iterations, verbose=%d, parallel=%d)\n",
@@ -662,6 +717,7 @@ static void kunit_run_suite_by_name(const char *name)
     spinlock_acquire(&g_kunit_lock);
 
     kunit_reset();
+    kunit_coverage_reset();
 
     /* Find the suite by name (exact match) */
     int found = -1;
@@ -697,6 +753,9 @@ static void kunit_run_suite_by_name(const char *name)
             "%d assertions (%d failures)\n",
             name, atomic_read(&g_total_tests_passed), atomic_read(&g_total_tests_failed),
             atomic_read(&g_total_assertions), atomic_read(&g_total_assertion_fails));
+    kprintf("[KUNIT] Suite coverage: %d active points, %u total hits\n",
+            kunit_coverage_active_count(),
+            kunit_coverage_total_hits());
     kprintf("========================================\n\n");
 
     snprintf(g_last_suite_result, sizeof(g_last_suite_result),
@@ -726,6 +785,7 @@ static void kunit_control_read(char *buf, int *len)
                     "  timeout_ms - Per-test timeout in ms (0=no timeout)\n"
                     "  run_suite  - Write suite name to run that suite\n"
                     "  parallel   - 0=sequential (default), 1=parallel via workqueue\n"
+                    "  coverage   - Write 'reset' to clear or 'status' to view\n"
                     "\n"
                     "Current status: %d suites registered, "
                     "%d tests run, %d passed, %d failed\n",
