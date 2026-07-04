@@ -107,9 +107,22 @@ int cap_capable_audit(uint32_t cap, const char *audit_msg)
     if (word >= PROCESS_SYSCALL_CAP_WORDS)
         return -EPERM;
 
-    if (p->syscall_caps[word] & (1ULL << bit))
-        return 0;  /* granted */
+    if (!(p->syscall_caps[word] & (1ULL << bit)))
+        goto deny;
 
+    /* Also check the per-process bounding set (cap_bset).
+     * In Linux, capable() ANDs the effective set with the bounding set:
+     * a capability dropped from the bounding set via PR_CAPBSET_DROP
+     * cannot be used even if still present in the effective set.
+     * Without this check, a process that dropped CAP_SYS_MODULE from
+     * its bounding set could still load modules if the capability
+     * lingered in its effective set. */
+    if (!(p->cap_bset[word] & (1ULL << bit)))
+        goto deny;
+
+    return 0;  /* granted */
+
+deny:
     /* Denied — log audit event */
     audit_log_denial(audit_msg ? audit_msg : "unknown",
                      "capability", "want_cap");
