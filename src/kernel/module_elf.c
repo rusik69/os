@@ -737,6 +737,47 @@ uint64_t module_elf_load_sections(struct module_elf_context *ctx,
         return 0;
     }
 
+    /* ── GOT area sizing ─────────────────────────────────────────────
+     *
+     * Scan relocation groups for any relocation types that require
+     * a GOT entry.  We count all GOT-using relocations as a generous
+     * upper bound; actual dedup (multiple relocs referencing the same
+     * symbol sharing one GOT slot) happens during apply_rela.
+     *
+     * For each such relocation, we pre-allocate an 8-byte GOT slot
+     * in the module memory region, right after the loaded sections. */
+    ctx->num_got_entries = 0;
+    ctx->got_base = 0;
+    ctx->got_size = 0;
+
+    for (int r = 0; r < ctx->num_rela_sections; r++) {
+        int count = ctx->relas[r].count;
+        for (int j = 0; j < count; j++) {
+            switch (ctx->relas[r].entries[j].type) {
+            case R_X86_64_GOTPCREL:
+            case R_X86_64_GOT64:
+            case R_X86_64_GOTPLT64:
+            case R_X86_64_GOTPCREL64:
+            case R_X86_64_PLTOFF64:
+                ctx->num_got_entries++;
+                break;
+            default:
+                break;
+            }
+        }
+    }
+
+    if (ctx->num_got_entries > 0) {
+        if (ctx->num_got_entries > MODULE_ELF_MAX_GOT_ENTRIES)
+            ctx->num_got_entries = MODULE_ELF_MAX_GOT_ENTRIES;
+        ctx->got_size = (uint64_t)ctx->num_got_entries * 8;
+        total += ctx->got_size;
+    }
+
+    /* Initialize GOT dedup table to "all slots free" */
+    for (int i = 0; i < MODULE_ELF_MAX_GOT_ENTRIES; i++)
+        ctx->got_sym_idx[i] = ~0U;
+
     if (total > MODULES_SIZE) {
         snprintf(ctx->error_msg, sizeof(ctx->error_msg),
                  "module_elf: module too large (%llu bytes, max %llu)",
@@ -814,6 +855,18 @@ uint64_t module_elf_load_sections(struct module_elf_context *ctx,
     if (total_out)
         *total_out = total;
 
+    /* Set GOT base address right after the last loaded section.
+     * The GOT region is writable (will be populated during apply_rela). */
+    if (ctx->got_size > 0) {
+        ctx->got_base = base_vaddr + offset;
+        memset((void *)(unsigned long)ctx->got_base, 0,
+               (size_t)ctx->got_size);
+        kprintf("[MOD_ELF] GOT at 0x%llx, %d entries (%llu bytes)\n",
+                (unsigned long long)ctx->got_base,
+                ctx->num_got_entries,
+                (unsigned long long)ctx->got_size);
+    }
+
     kprintf("[MOD_ELF] Loaded %d sections, total %llu bytes at 0x%llx\n",
             loadable_count, (unsigned long long)total,
             (unsigned long long)base_vaddr);
@@ -823,6 +876,40 @@ uint64_t module_elf_load_sections(struct module_elf_context *ctx,
 /* ══════════════════════════════════════════════════════════════════════
  *  M14 — Relocation applier
  * ══════════════════════════════════════════════════════════════════════ */
+
+/* ── GOT entry allocator ──────────────────────────────────────────
+ *
+ * Allocate or find a GOT entry for the given symbol.  If a GOT entry
+ * already exists for this sym_idx (from a prior relocation in the same
+ * module), we reuse it — multiple relocations to the same symbol share
+ * a single GOT slot.
+ *
+ * On success, returns the GOT slot index (0-based).  The caller can
+ * compute the GOT entry address as:  ctx->got_base + slot * 8.
+ * On failure (GOT exhausted), returns -1 and sets error_msg. */
+static int got_alloc_entry(struct module_elf_context *ctx,
+                           uint32_t sym_idx, uint64_t sym_value)
+{
+    /* Check if there is already a GOT entry for this symbol */
+    for (int i = 0; i < ctx->num_got_entries; i++) {
+        if (ctx->got_sym_idx[i] == sym_idx)
+            return i;  /* reuse */
+    }
+
+    /* Find a free slot */
+    for (int i = 0; i < ctx->num_got_entries; i++) {
+        if (ctx->got_sym_idx[i] == ~0U) {
+            ctx->got_sym_idx[i] = sym_idx;
+            *(volatile uint64_t *)(ctx->got_base + (uint64_t)i * 8) = sym_value;
+            return i;
+        }
+    }
+
+    snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+             "module_elf: GOT exhausted (%d entries)",
+             ctx->num_got_entries);
+    return -1;
+}
 
 int module_elf_apply_rela(struct module_elf_context *ctx)
 {
@@ -954,6 +1041,109 @@ int module_elf_apply_rela(struct module_elf_context *ctx)
                 break;
             }
 
+            /* ══════════════════════════════════════════════════════
+             *  GOT / PLT based relocations (x86-64)
+             *
+             *  GOT entries are created during load_sections and
+             *  resolved here.  For relocation types that require a
+             *  per-symbol GOT entry, we call got_alloc_entry() which
+             *  deduplicates by symbol index and stores the resolved
+             *  address in the GOT slot.
+             *
+             *  Relocation types that only need the GOT base address
+             *  (GOTPC32, GOTPC64, GOTOFF64) use ctx->got_base
+             *  directly without allocating a per-symbol entry.
+             * ══════════════════════════════════════════════════════ */
+
+            case R_X86_64_GOTPCREL: {
+                /* G + GOT + A - P: PC-relative offset to GOT entry */
+                if (ctx->got_size == 0) { goto unsupported_got; }
+                int slot = got_alloc_entry(ctx, rel->sym_idx, S);
+                if (slot < 0) return -1;
+                uint64_t got_entry = ctx->got_base + (uint64_t)slot * 8;
+                int64_t value = (int64_t)(got_entry + (uint64_t)A - P);
+                if (value < INT32_MIN || value > INT32_MAX) {
+                    snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+                             "module_elf: R_X86_64_GOTPCREL overflow at "
+                             "0x%llx (value=%lld, sym='%s')",
+                             (unsigned long long)patch_addr,
+                             (long long)value,
+                             sym->name ? sym->name : "?");
+                    return -1;
+                }
+                *(volatile int32_t *)patch_addr = (int32_t)value;
+                break;
+            }
+
+            case R_X86_64_GOT64:
+            case R_X86_64_GOTPLT64: {
+                /* G + A: offset of GOT entry within the GOT table */
+                if (ctx->got_size == 0) { goto unsupported_got; }
+                int slot = got_alloc_entry(ctx, rel->sym_idx, S);
+                if (slot < 0) return -1;
+                uint64_t value = (uint64_t)slot * 8 + (uint64_t)A;
+                *(volatile uint64_t *)patch_addr = value;
+                break;
+            }
+
+            case R_X86_64_GOTOFF64: {
+                /* S + A - GOT: offset from GOT base to the symbol */
+                if (ctx->got_size == 0) { goto unsupported_got; }
+                int64_t value = (int64_t)(S + (uint64_t)A - ctx->got_base);
+                *(volatile int64_t *)patch_addr = value;
+                break;
+            }
+
+            case R_X86_64_GOTPCREL64: {
+                /* G + GOT + A - P: 64-bit PC-relative offset to GOT entry */
+                if (ctx->got_size == 0) { goto unsupported_got; }
+                int slot = got_alloc_entry(ctx, rel->sym_idx, S);
+                if (slot < 0) return -1;
+                uint64_t got_entry = ctx->got_base + (uint64_t)slot * 8;
+                int64_t value = (int64_t)(got_entry + (uint64_t)A - P);
+                *(volatile int64_t *)patch_addr = value;
+                break;
+            }
+
+            case R_X86_64_GOTPC32: {
+                /* GOT + A - P: 32-bit PC-relative offset to GOT base */
+                if (ctx->got_size == 0) { goto unsupported_got; }
+                int64_t value = (int64_t)(ctx->got_base + (uint64_t)A - P);
+                if (value < INT32_MIN || value > INT32_MAX) {
+                    snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+                             "module_elf: R_X86_64_GOTPC32 overflow at "
+                             "0x%llx (value=%lld)",
+                             (unsigned long long)patch_addr,
+                             (long long)value);
+                    return -1;
+                }
+                *(volatile int32_t *)patch_addr = (int32_t)value;
+                break;
+            }
+
+            case R_X86_64_GOTPC64: {
+                /* GOT + A - P: 64-bit PC-relative offset to GOT base */
+                if (ctx->got_size == 0) { goto unsupported_got; }
+                int64_t value = (int64_t)(ctx->got_base + (uint64_t)A - P);
+                *(volatile int64_t *)patch_addr = value;
+                break;
+            }
+
+            case R_X86_64_PLTOFF64: {
+                /* L + A - GOT: offset from GOT base to PLT entry.
+                 * For kernel modules without dynamic PLT, L = S. */
+                if (ctx->got_size == 0) { goto unsupported_got; }
+                int64_t value = (int64_t)(S + (uint64_t)A - ctx->got_base);
+                *(volatile int64_t *)patch_addr = value;
+                break;
+            }
+
+            unsupported_got:
+                /* Fall through: GOT-type relocation encountered with no
+                 * GOT region allocated.  This should only happen if the
+                 * module binary contains a GOT relocation type that was
+                 * not present during the load_sections counting pass
+                 * (a counting-pass bug or corrupted module). */
             default:
                 snprintf(ctx->error_msg, sizeof(ctx->error_msg),
                          "module_elf: unsupported relocation type %d "

@@ -100,6 +100,38 @@ struct module_elf_context {
     struct module_elf_rela_group relas[MODULE_ELF_MAX_SECTIONS];
     int num_rela_sections;
 
+    /* ── GOT (Global Offset Table) for x86-64 GOT-based relocations ──
+     *
+     * Some modules (especially those compiled with -fpic or -mcmodel=large)
+     * use GOT-based addressing to access global symbols.  The module loader
+     * creates a GOT in module memory, stores resolved symbol addresses
+     * there, and adjusts GOTPCREL / GOT64 / GOTOFF64 relocations to point
+     * into this GOT.
+     *
+     * Each GOT entry is 8 bytes (64-bit pointer).  GOT entries are
+     * allocated lazily: one per unique symbol referenced by a GOT-using
+     * relocation.  Multiple relocations for the same symbol share one GOT
+     * entry.
+     */
+#define MODULE_ELF_MAX_GOT_ENTRIES 128
+
+    /* Number of GOT entries allocated during load_sections */
+    int                     num_got_entries;
+
+    /* Virtual address of the GOT region within module memory.
+     * Set by module_elf_load_sections() after allocating module space. */
+    uint64_t                got_base;
+
+    /* Total size of the GOT region in bytes (num_got_entries * 8, page-aligned) */
+    uint64_t                got_size;
+
+    /* Dedup table: for each GOT slot i, got_sym_idx[i] stores the
+     * symbol-table index of the symbol whose address lives in that GOT
+     * entry.  ~0U means the slot is free (not yet allocated).
+     * Used during apply_rela to share GOT entries among multiple
+     * relocations that reference the same symbol. */
+    uint32_t                got_sym_idx[MODULE_ELF_MAX_GOT_ENTRIES];
+
     /* Name string for the module (derived from .modinfo or filename) */
     char name[64];
 
@@ -192,15 +224,25 @@ int module_elf_resolve(struct module_elf_context *ctx, int gpl_ok);
 
 /*
  * module_elf_apply_rela - Apply all RELA relocations to the loaded
- * section data.
+ * section data, including GOT-based relocations.
  *
  * @ctx: Parsed and loaded module context with symbols resolved.
  *
  * Handles: R_X86_64_NONE, R_X86_64_64, R_X86_64_PC32, R_X86_64_PLT32,
- * R_X86_64_32, R_X86_64_32S, R_X86_64_PC64.
+ * R_X86_64_32, R_X86_64_32S, R_X86_64_PC64,
+ * R_X86_64_GOTPCREL, R_X86_64_GOT64, R_X86_64_GOTOFF64,
+ * R_X86_64_GOTPCREL64, R_X86_64_GOTPC32, R_X86_64_GOTPC64,
+ * R_X86_64_GOTPLT64, R_X86_64_PLTOFF64.
+ *
+ * For GOT-using relocations, this function allocates GOT entries in
+ * the module's GOT region (created during load_sections), stores
+ * the resolved symbol address in each GOT entry, and patches the
+ * instruction with the PC-relative offset to the corresponding GOT
+ * entry.  Multiple relocations referencing the same symbol share a
+ * single GOT entry.
  *
  * Returns 0 on success, -1 with error_msg on failure (e.g. unresolved
- * symbol, overflow on 32-bit relocation).
+ * symbol, overflow on 32-bit relocation, GOT exhaustion).
  */
 int module_elf_apply_rela(struct module_elf_context *ctx);
 

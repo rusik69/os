@@ -95,6 +95,13 @@
 #define R_X86_64_32       10 /* S + A (32-bit absolute, zero-extend) */
 #define R_X86_64_32S      11 /* S + A (32-bit absolute, sign-extend) */
 #define R_X86_64_PC64     24 /* S + A - P (64-bit relative) */
+#define R_X86_64_PLTOFF64 34 /* L + A - GOT (PLT entry offset from GOT base) */
+#define R_X86_64_GOTPC64  41 /* GOT + A - P (GOT base PC-relative, large model) */
+#define R_X86_64_GOT64    42 /* G + A (GOT entry 64-bit address) */
+#define R_X86_64_GOTOFF64 43 /* S + A - GOT (offset from GOT base) */
+#define R_X86_64_GOTPCREL64 44 /* G + GOT + A - P (GOT PC-relative 64-bit) */
+#define R_X86_64_GOTPC32   45 /* GOT + A - P (GOT base 32-bit PC-relative) */
+#define R_X86_64_GOTPLT64  46 /* G + A (GOT/PLT entry 64-bit) */
 
 struct elf64_header {
     uint8_t  e_ident[16];
