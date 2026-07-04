@@ -14,6 +14,7 @@
  */
 
 #include "module.h"
+#include "export.h"
 #include "printf.h"
 #include "spinlock.h"
 #include "string.h"
@@ -39,6 +40,29 @@ static const char *test_name = "test_module";
 module_param(test_int, INT, 0644);
 module_param(test_debug, BOOL, 0644);
 module_param_string(test_string, test_string, sizeof(test_string), 0644);
+
+/* ── Exported symbols (D233 task 3) ────────────────────────────────
+ *
+ * These symbols are exported for testing module-to-module symbol
+ * resolution.  A test dependency module (test_mod_deps) uses them
+ * to verify that the module loader correctly resolves exported
+ * symbols between loaded modules.
+ *
+ * test_mod_add(int a, int b) — simple arithmetic (public export)
+ * test_mod_mul(int a, int b) — multiplication      (GPL-only export)
+ */
+
+int test_mod_add(int a, int b)
+{
+    return a + b;
+}
+EXPORT_SYMBOL(test_mod_add);
+
+int test_mod_mul(int a, int b)
+{
+    return a * b;
+}
+EXPORT_SYMBOL_GPL(test_mod_mul);
 
 /* ── State tracking ─────────────────────────────────────────────── */
 
