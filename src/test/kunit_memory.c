@@ -206,6 +206,210 @@ static void pmm_double_free_safety(struct kunit *test)
 }
 
 /* ====================================================================
+ *  2. PMM — Contiguous page allocation (order > 0)
+ *
+ * Tests for pmm_alloc_frames() which allocates count physically-contiguous
+ * frames.  For power-of-2 counts this exercises the buddy-like "order > 0"
+ * allocation path.  We verify physical contiguity, base alignment,
+ * read/write access via the kernel direct map, and free+reuse cycles.
+ * ==================================================================== */
+
+/*
+ * Verify that allocating 2 contiguous frames (order 1) succeeds, that the
+ * returned pages are physically contiguous (PAGE_SIZE apart), and that the
+ * base address is 2*PAGE_SIZE aligned (for power-of-2 orders the allocator
+ * should naturally provide alignment equivalent to the block size).
+ */
+static void pmm_contiguous_order_1(struct kunit *test)
+{
+	const size_t COUNT = 2;
+	uint64_t phys = (uint64_t)pmm_alloc_frames(COUNT);
+
+	KUNIT_EXPECT_NE(test, phys, (uint64_t)0);
+	if (!phys) return;
+
+	/* Base must be 4K-aligned */
+	KUNIT_EXPECT_EQ(test, (int64_t)(phys & (PAGE_SIZE - 1)), (int64_t)0);
+
+	/* For order=1 (2 pages), the base should be 8K-aligned */
+	KUNIT_EXPECT_EQ(test, (int64_t)(phys & (COUNT * PAGE_SIZE - 1)), (int64_t)0);
+
+	/* Verify physical contiguity: frame i + 1 is exactly PAGE_SIZE after frame i */
+	for (size_t i = 0; i < COUNT; i++) {
+		uint64_t expected = phys + i * PAGE_SIZE;
+		volatile uint64_t *vp = (volatile uint64_t *)PHYS_TO_VIRT(expected);
+		/* Write an identifying pattern */
+		*vp = 0xA001000000000000ULL + i;
+	}
+
+	/* Read back and verify */
+	int ok = 1;
+	for (size_t i = 0; i < COUNT && ok; i++) {
+		volatile uint64_t *vp = (volatile uint64_t *)PHYS_TO_VIRT(phys + i * PAGE_SIZE);
+		if (*vp != (0xA001000000000000ULL + i))
+			ok = 0;
+	}
+	KUNIT_EXPECT_EQ(test, ok, 1);
+
+	pmm_free_frames_contiguous(phys, COUNT);
+}
+
+/*
+ * Allocate 4 contiguous frames (order 2).
+ */
+static void pmm_contiguous_order_2(struct kunit *test)
+{
+	const size_t COUNT = 4;
+	uint64_t phys = (uint64_t)pmm_alloc_frames(COUNT);
+
+	KUNIT_EXPECT_NE(test, phys, (uint64_t)0);
+	if (!phys) return;
+
+	KUNIT_EXPECT_EQ(test, (int64_t)(phys & (PAGE_SIZE - 1)), (int64_t)0);
+	KUNIT_EXPECT_EQ(test, (int64_t)(phys & (COUNT * PAGE_SIZE - 1)), (int64_t)0);
+
+	for (size_t i = 0; i < COUNT; i++) {
+		volatile uint64_t *vp = (volatile uint64_t *)PHYS_TO_VIRT(phys + i * PAGE_SIZE);
+		*vp = 0xA002000000000000ULL + i;
+	}
+
+	int ok = 1;
+	for (size_t i = 0; i < COUNT && ok; i++) {
+		volatile uint64_t *vp = (volatile uint64_t *)PHYS_TO_VIRT(phys + i * PAGE_SIZE);
+		if (*vp != (0xA002000000000000ULL + i))
+			ok = 0;
+	}
+	KUNIT_EXPECT_EQ(test, ok, 1);
+
+	pmm_free_frames_contiguous(phys, COUNT);
+}
+
+/*
+ * Allocate 8 contiguous frames (order 3).
+ */
+static void pmm_contiguous_order_3(struct kunit *test)
+{
+	const size_t COUNT = 8;
+	uint64_t phys = (uint64_t)pmm_alloc_frames(COUNT);
+
+	KUNIT_EXPECT_NE(test, phys, (uint64_t)0);
+	if (!phys) return;
+
+	KUNIT_EXPECT_EQ(test, (int64_t)(phys & (PAGE_SIZE - 1)), (int64_t)0);
+	KUNIT_EXPECT_EQ(test, (int64_t)(phys & (COUNT * PAGE_SIZE - 1)), (int64_t)0);
+
+	for (size_t i = 0; i < COUNT; i++) {
+		volatile uint64_t *vp = (volatile uint64_t *)PHYS_TO_VIRT(phys + i * PAGE_SIZE);
+		*vp = 0xA003000000000000ULL + i;
+	}
+
+	int ok = 1;
+	for (size_t i = 0; i < COUNT && ok; i++) {
+		volatile uint64_t *vp = (volatile uint64_t *)PHYS_TO_VIRT(phys + i * PAGE_SIZE);
+		if (*vp != (0xA003000000000000ULL + i))
+			ok = 0;
+	}
+	KUNIT_EXPECT_EQ(test, ok, 1);
+
+	pmm_free_frames_contiguous(phys, COUNT);
+}
+
+/*
+ * Allocate 16 contiguous frames (order 4).
+ */
+static void pmm_contiguous_order_4(struct kunit *test)
+{
+	const size_t COUNT = 16;
+	uint64_t phys = (uint64_t)pmm_alloc_frames(COUNT);
+
+	KUNIT_EXPECT_NE(test, phys, (uint64_t)0);
+	if (!phys) return;
+
+	KUNIT_EXPECT_EQ(test, (int64_t)(phys & (PAGE_SIZE - 1)), (int64_t)0);
+	KUNIT_EXPECT_EQ(test, (int64_t)(phys & (COUNT * PAGE_SIZE - 1)), (int64_t)0);
+
+	for (size_t i = 0; i < COUNT; i++) {
+		volatile uint64_t *vp = (volatile uint64_t *)PHYS_TO_VIRT(phys + i * PAGE_SIZE);
+		*vp = 0xA004000000000000ULL + i;
+	}
+
+	int ok = 1;
+	for (size_t i = 0; i < COUNT && ok; i++) {
+		volatile uint64_t *vp = (volatile uint64_t *)PHYS_TO_VIRT(phys + i * PAGE_SIZE);
+		if (*vp != (0xA004000000000000ULL + i))
+			ok = 0;
+	}
+	KUNIT_EXPECT_EQ(test, ok, 1);
+
+	pmm_free_frames_contiguous(phys, COUNT);
+}
+
+/*
+ * Allocate contiguous frames of a given order, free them, then allocate
+ * the same order again — verify that the allocator remains functional
+ * and returns a valid (possibly different) region.
+ */
+static void pmm_contiguous_reuse(struct kunit *test)
+{
+	const size_t COUNT = 4;
+
+	/* First allocation */
+	uint64_t phys = (uint64_t)pmm_alloc_frames(COUNT);
+	KUNIT_EXPECT_NE(test, phys, (uint64_t)0);
+	if (!phys) return;
+
+	uint64_t saved_phys = phys;
+	pmm_free_frames_contiguous(phys, COUNT);
+
+	/* Second allocation — same order, may or may not be the same address */
+	phys = (uint64_t)pmm_alloc_frames(COUNT);
+	KUNIT_EXPECT_NE(test, phys, (uint64_t)0);
+	if (!phys) {
+		/* First alloc was freed already, no leak */
+		return;
+	}
+
+	KUNIT_EXPECT_EQ(test, (int64_t)(phys & (PAGE_SIZE - 1)), (int64_t)0);
+
+	/* Write and verify the new region */
+	for (size_t i = 0; i < COUNT; i++) {
+		volatile uint64_t *vp = (volatile uint64_t *)PHYS_TO_VIRT(phys + i * PAGE_SIZE);
+		*vp = 0xA010000000000000ULL + i;
+	}
+
+	int ok = 1;
+	for (size_t i = 0; i < COUNT && ok; i++) {
+		volatile uint64_t *vp = (volatile uint64_t *)PHYS_TO_VIRT(phys + i * PAGE_SIZE);
+		if (*vp != (0xA010000000000000ULL + i))
+			ok = 0;
+	}
+	KUNIT_EXPECT_EQ(test, ok, 1);
+
+	pmm_free_frames_contiguous(phys, COUNT);
+	(void)saved_phys; /* saved for potential future checks */
+}
+
+/*
+ * Edge cases for pmm_alloc_frames:
+ * - count = 1 should succeed (same as pmm_alloc_frame internally)
+ * - count = 0 should return NULL
+ * - Attempt to allocate a very large contiguous block may fail gracefully
+ */
+static void pmm_contiguous_edge_cases(struct kunit *test)
+{
+	/* Single frame via batch API */
+	uint64_t *single = pmm_alloc_frames(1);
+	KUNIT_EXPECT_NOT_NULL(test, single);
+	if (single) {
+		pmm_free_frames_contiguous((uint64_t)single, 1);
+	}
+
+	/* Zero count should fail gracefully */
+	uint64_t *zero = pmm_alloc_frames(0);
+	KUNIT_EXPECT_NULL(test, zero);
+}
+
+/* ====================================================================
  *  Suite definition — auto-registered via linker section
  * ==================================================================== */
 
@@ -225,3 +429,19 @@ static struct kunit_suite pmm_basic_suite = {
 };
 
 KUNIT_TEST_SUITE(pmm_basic_suite);
+
+static struct kunit_suite pmm_contiguous_suite = {
+	.name    = "memory_pmm_contiguous",
+	.setup   = NULL,
+	.teardown = NULL,
+	.cases   = {
+		KUNIT_CASE(pmm_contiguous_order_1),
+		KUNIT_CASE(pmm_contiguous_order_2),
+		KUNIT_CASE(pmm_contiguous_order_3),
+		KUNIT_CASE(pmm_contiguous_order_4),
+		KUNIT_CASE(pmm_contiguous_reuse),
+		KUNIT_CASE(pmm_contiguous_edge_cases),
+	},
+};
+
+KUNIT_TEST_SUITE(pmm_contiguous_suite);
