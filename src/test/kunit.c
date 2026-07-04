@@ -20,6 +20,7 @@
 
 #include "kunit.h"
 #include "kunit_coverage.h"
+#include "kunit_regression.h"
 #include "debugfs.h"
 #include "string.h"
 #include "printf.h"
@@ -75,6 +76,8 @@ static void kunit_control_read(char *buf, int *len);
 static int  kunit_control_write(const char *buf, int len);
 static void kunit_run_suite_read(char *buf, int *len);
 static int  kunit_run_suite_write(const char *buf, int len);
+static void kunit_regression_read(char *buf, int *len);
+static int  kunit_regression_write(const char *buf, int len);
 
 /* ── Registration ─────────────────────────────────────────────────── */
 
@@ -605,6 +608,7 @@ void kunit_init(void)
     spinlock_init(&g_kunit_lock);
     kunit_reset();
     kunit_coverage_init();
+    kunit_regression_init();
     g_filter_active = 0;
     g_filter[0] = '\0';
 
@@ -644,6 +648,9 @@ void kunit_init(void)
     debugfs_create_rw_file("kunit/coverage",
                            kunit_coverage_read,
                            kunit_coverage_write);
+    debugfs_create_rw_file("kunit/regression",
+                           kunit_regression_read,
+                           kunit_regression_write);
 
     kprintf("[OK] KUnit: Kernel unit test framework initialized "
             "(%d suite slots, filter=%s, %d iterations, verbose=%d, parallel=%d)\n",
@@ -871,6 +878,94 @@ static int kunit_run_suite_write(const char *buf, int len)
     }
 
     kunit_run_suite_by_name(name);
+    return 0;
+}
+
+/* ── Regression database debugfs interface ────────────────────── */
+
+/* Read callback for /sys/kernel/debug/kunit/regression.
+ * Shows the last comparison report, or the baseline list if no
+ * comparison has been done yet. */
+static void kunit_regression_read(char *buf, int *len)
+{
+    if (!buf || !len)
+        return;
+
+    int pos = 0;
+    int max = 4096;
+
+    if (kunit_regression_has_report()) {
+        /* Show the cached comparison report */
+        pos += kunit_regression_last_report(buf + pos, max - pos);
+    } else {
+        /* No comparison yet — show baseline list */
+        pos += kunit_regression_list(buf + pos, max - pos);
+    }
+
+    *len = (pos < max) ? pos : (max - 1);
+    if (*len < 0) *len = 0;
+}
+
+/* Write callback for /sys/kernel/debug/kunit/regression.
+ * Supports: save <label>, compare <label>, list, clear */
+static int kunit_regression_write(const char *buf, int len)
+{
+    if (!buf || len <= 0)
+        return 0;
+
+    /* Copy and null-terminate */
+    char cmd[KUNIT_REGRESSION_LABEL_LEN + 16];
+    int copy_len = len < (int)sizeof(cmd) - 1 ? len : (int)sizeof(cmd) - 1;
+    memcpy(cmd, buf, (size_t)copy_len);
+    cmd[copy_len] = '\0';
+
+    /* Strip trailing whitespace/newline */
+    while (copy_len > 0 && (cmd[copy_len - 1] == '\n' ||
+           cmd[copy_len - 1] == '\r' || cmd[copy_len - 1] == ' '))
+        cmd[--copy_len] = '\0';
+
+    /* Parse command */
+    if (strncmp(cmd, "save ", 5) == 0) {
+        const char *label = cmd + 5;
+        int ret = kunit_regression_save(label);
+        if (ret == 0) {
+            kprintf("[KUNIT] Baseline '%s' saved\n", label);
+        } else if (ret == -1) {
+            kprintf("[KUNIT] Cannot save baseline '%s': "
+                    "table full (max %d)\n",
+                    label, KUNIT_REGRESSION_MAX_BASELINES);
+        } else if (ret == -2) {
+            kprintf("[KUNIT] Cannot save baseline '%s': "
+                    "label too long (max %d chars)\n",
+                    label, KUNIT_REGRESSION_LABEL_LEN - 1);
+        } else if (ret == -3) {
+            kprintf("[KUNIT] Cannot save baseline '%s': "
+                    "label already exists\n", label);
+        }
+    } else if (strncmp(cmd, "compare ", 8) == 0) {
+        const char *label = cmd + 8;
+        char report[KUNIT_REGRESSION_REPORT_MAX];
+        int ret = kunit_regression_compare(report, sizeof(report), label);
+        if (ret < 0) {
+            kprintf("[KUNIT] Baseline '%s' not found for comparison\n",
+                    label);
+        } else {
+            /* Print report to console */
+            kprintf("%s", report);
+        }
+    } else if (strcmp(cmd, "list") == 0) {
+        char report[2048];
+        kunit_regression_list(report, sizeof(report));
+        kprintf("%s", report);
+    } else if (strcmp(cmd, "clear") == 0) {
+        kunit_regression_clear();
+        kprintf("[KUNIT] All regression baselines cleared\n");
+    } else if (cmd[0] != '\0') {
+        kprintf("[KUNIT] Unknown regression command: '%s'. "
+                "Try: save <label>, compare <label>, list, clear\n",
+                cmd);
+    }
+
     return 0;
 }
 
