@@ -4,6 +4,32 @@
 #include "types.h"
 #include "printf.h"
 
+/* ── Stress level control ──────────────────────────────────────────── */
+
+/**
+ * enum kunit_stress_level — Stress (intensity) level for KUnit tests.
+ *
+ * Each test case can declare the maximum stress level at which it should
+ * still be executed by setting the &stress_max field of %struct kunit_case.
+ * The global stress level (set via debugfs or API) acts as a threshold:
+ *
+ *   light    — Only tests with stress_max == KUNIT_STRESS_LIGHT run.
+ *              Quick smoke tests, 1 iteration, no heavy workloads.
+ *   moderate — Tests with stress_max up to KUNIT_STRESS_MODERATE run.
+ *              Standard test suite with nominal iteration count.
+ *   heavy    — All tests run regardless of stress_max.
+ *              Exhaustive tests, stress scenarios, many iterations.
+ *
+ * New test cases default to KUNIT_STRESS_MODERATE (suitable for normal
+ * test runs).  Mark deliberately expensive or long-running tests with
+ * KUNIT_STRESS_HEAVY so they are skipped during quick smoke-test cycles.
+ */
+enum kunit_stress_level {
+	KUNIT_STRESS_LIGHT     = 0,   /* smoke tests, always run */
+	KUNIT_STRESS_MODERATE  = 1,   /* standard test intensity (default) */
+	KUNIT_STRESS_HEAVY     = 2,   /* exhaustive / stress tests */
+};
+
 /*
  * KUnit — lightweight in-kernel unit test framework.
  *
@@ -71,9 +97,10 @@ struct kunit {
 
 /* A single test case */
 struct kunit_case {
-    const char *name;                       /* test name (NULL-terminated) */
-    void      (*run)(struct kunit *test);   /* test function */
-    struct kunit_param *params;             /* optional: parameter array (NULL-terminated) */
+	const char *name;                       /* test name (NULL-terminated) */
+	void      (*run)(struct kunit *test);   /* test function */
+	struct kunit_param *params;             /* optional: parameter array (NULL-terminated) */
+	enum kunit_stress_level stress_max;     /* max stress level at which this test runs */
 };
 
 /* A test suite — group of related tests with optional setup/teardown */
@@ -106,6 +133,38 @@ void kunit_set_filter(const char *pattern);
 /* Get the current filter pattern, or NULL if none. */
 const char *kunit_get_filter(void);
 
+/* ── Stress level control ──────────────────────────────────────────── */
+
+/**
+ * Set the global stress level threshold.
+ *
+ * When the global stress level is set to a given value, only test cases
+ * whose %stress_max <= global_level will execute.  A test case with
+ * stress_max == KUNIT_STRESS_HEAVY will be skipped unless the global
+ * level is at least KUNIT_STRESS_HEAVY.
+ *
+ * @param level  One of KUNIT_STRESS_LIGHT, KUNIT_STRESS_MODERATE,
+ *               KUNIT_STRESS_HEAVY.
+ */
+void kunit_set_stress_level(enum kunit_stress_level level);
+
+/**
+ * Get the current global stress level threshold.
+ *
+ * Returns the value most recently set via kunit_set_stress_level()
+ * or written to the debugfs 'stress_level' file.  Default is
+ * KUNIT_STRESS_MODERATE.
+ */
+enum kunit_stress_level kunit_get_stress_level(void);
+
+/**
+ * Return a human-readable name for the given stress level.
+ *
+ * Returns "light", "moderate", or "heavy".  For invalid values,
+ * returns "unknown".
+ */
+const char *kunit_stress_level_name(enum kunit_stress_level level);
+
 /* ── Parameterized test support ────────────────────────────────────── */
 
 /* A parameter generator provides an array of values to run a test with.
@@ -120,9 +179,10 @@ struct kunit_param {
 
 /* Declare a parameterized test case.
  * The test function will be called once per parameter.
- * 'params' must be a NULL-terminated array of struct kunit_param. */
+ * 'params' must be a NULL-terminated array of struct kunit_param.
+ * Defaults to KUNIT_STRESS_MODERATE. */
 #define KUNIT_CASE_PARAM(test_fn, params) \
-    { .name = #test_fn, .run = test_fn, .params = params }
+    { .name = #test_fn, .run = test_fn, .params = params, .stress_max = KUNIT_STRESS_MODERATE }
 
 /* ── Test result tracking ──────────────────────────────────────────── */
 
@@ -231,8 +291,22 @@ void kunit_do_pass(struct kunit *test);
     }                                                                      \
 } while (0)
 
-/* Convenience macro to define a single-case suite quickly */
-#define KUNIT_CASE(test_fn) { .name = #test_fn, .run = test_fn }
+/* Convenience macro to define a single-case suite quickly.
+ * Defaults to KUNIT_STRESS_MODERATE. */
+#define KUNIT_CASE(test_fn) \
+    { .name = #test_fn, .run = test_fn, .stress_max = KUNIT_STRESS_MODERATE }
+
+/* Declare a test case that runs at all stress levels (smoke test). */
+#define KUNIT_CASE_LIGHT(test_fn) \
+    { .name = #test_fn, .run = test_fn, .stress_max = KUNIT_STRESS_LIGHT }
+
+/* Declare a test case that only runs during heavy (exhaustive) stress. */
+#define KUNIT_CASE_HEAVY(test_fn) \
+    { .name = #test_fn, .run = test_fn, .stress_max = KUNIT_STRESS_HEAVY }
+
+/* Declare a parameterized test case (default stress = moderate). */
+#define KUNIT_CASE_PARAM_DEFAULT(test_fn, params) \
+    { .name = #test_fn, .run = test_fn, .params = params, .stress_max = KUNIT_STRESS_MODERATE }
 
 /* ── Auto-registration via linker section ────────────────────────── */
 

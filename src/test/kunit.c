@@ -62,6 +62,12 @@ static uint32_t g_kunit_timeout_ms = 0;
 /* Parallel execution flag: 0=sequential (default), 1=parallel via workqueue */
 static uint32_t g_kunit_parallel = 0;
 
+/* ── Stress level control ──────────────────────────────────────────── */
+/* Global stress level threshold.  Test cases with stress_max > this
+ * value are skipped.  Default: KUNIT_STRESS_MODERATE (run all standard
+ * tests, skip heavy/stress-only tests). */
+static enum kunit_stress_level g_kunit_stress_level = KUNIT_STRESS_MODERATE;
+
 /* Buffer for the last run_suite command result */
 static char g_last_suite_result[256];
 
@@ -78,6 +84,8 @@ static void kunit_run_suite_read(char *buf, int *len);
 static int  kunit_run_suite_write(const char *buf, int len);
 static void kunit_regression_read(char *buf, int *len);
 static int  kunit_regression_write(const char *buf, int len);
+static int  kunit_stress_level_write(const char *buf, int len);
+static void kunit_stress_level_read(char *buf, int *len);
 
 /* ── Registration ─────────────────────────────────────────────────── */
 
@@ -161,6 +169,18 @@ static void kunit_run_case(struct kunit_suite *suite, struct kunit_case *kc)
     if (!kunit_name_matches_filter(test_ctx.name) &&
         !kunit_name_matches_filter(suite->name)) {
         return; /* skip */
+    }
+
+    /* Check stress level — skip tests whose required stress is above
+     * the current global threshold. */
+    if ((int)kc->stress_max > (int)g_kunit_stress_level) {
+        if (g_kunit_verbose >= 1) {
+            kprintf("[KUNIT] SKIP:  %s.%s (stress %s > current %s)\n",
+                    suite->name, test_ctx.name,
+                    kunit_stress_level_name(kc->stress_max),
+                    kunit_stress_level_name(g_kunit_stress_level));
+        }
+        return;
     }
 
     atomic_inc(&g_total_tests_run);
@@ -648,9 +668,14 @@ void kunit_init(void)
     debugfs_create_rw_file("kunit/coverage",
                            kunit_coverage_read,
                            kunit_coverage_write);
+    /* Regression database */
     debugfs_create_rw_file("kunit/regression",
                            kunit_regression_read,
                            kunit_regression_write);
+    /* Stress level control — write commands via callback */
+    debugfs_create_rw_file("kunit/stress_level",
+                           kunit_stress_level_read,
+                           kunit_stress_level_write);
 
     kprintf("[OK] KUnit: Kernel unit test framework initialized "
             "(%d suite slots, filter=%s, %d iterations, verbose=%d, parallel=%d)\n",
@@ -710,6 +735,77 @@ static int kunit_filter_write(const char *buf, int len)
     }
 
     return 0;
+}
+
+/* ── Stress level control ─────────────────────────────────────────── */
+
+void kunit_set_stress_level(enum kunit_stress_level level)
+{
+    spinlock_acquire(&g_kunit_lock);
+    if (level > KUNIT_STRESS_HEAVY)
+        level = KUNIT_STRESS_MODERATE; /* clamp to valid range */
+    g_kunit_stress_level = level;
+    spinlock_release(&g_kunit_lock);
+}
+
+enum kunit_stress_level kunit_get_stress_level(void)
+{
+    enum kunit_stress_level level;
+    spinlock_acquire(&g_kunit_lock);
+    level = g_kunit_stress_level;
+    spinlock_release(&g_kunit_lock);
+    return level;
+}
+
+const char *kunit_stress_level_name(enum kunit_stress_level level)
+{
+    switch (level) {
+    case KUNIT_STRESS_LIGHT:    return "light";
+    case KUNIT_STRESS_MODERATE: return "moderate";
+    case KUNIT_STRESS_HEAVY:    return "heavy";
+    default:                    return "unknown";
+    }
+}
+
+/* Write callback for /sys/kernel/debug/kunit/stress_level */
+static int kunit_stress_level_write(const char *buf, int len)
+{
+    if (!buf || len <= 0)
+        return 0;
+
+    /* Copy and null-terminate */
+    char cmd[16];
+    int copy_len = len < (int)sizeof(cmd) - 1 ? len : (int)sizeof(cmd) - 1;
+    memcpy(cmd, buf, (size_t)copy_len);
+    cmd[copy_len] = '\0';
+
+    /* Strip trailing whitespace/newline */
+    while (copy_len > 0 && (cmd[copy_len - 1] == '\n' ||
+           cmd[copy_len - 1] == '\r' || cmd[copy_len - 1] == ' '))
+        cmd[--copy_len] = '\0';
+
+    if (strcmp(cmd, "light") == 0) {
+        kunit_set_stress_level(KUNIT_STRESS_LIGHT);
+        kprintf("[KUNIT] Stress level set to 'light': smoke tests only\n");
+    } else if (strcmp(cmd, "moderate") == 0) {
+        kunit_set_stress_level(KUNIT_STRESS_MODERATE);
+        kprintf("[KUNIT] Stress level set to 'moderate': standard tests\n");
+    } else if (strcmp(cmd, "heavy") == 0) {
+        kunit_set_stress_level(KUNIT_STRESS_HEAVY);
+        kprintf("[KUNIT] Stress level set to 'heavy': exhaustive tests\n");
+    } else if (cmd[0] != '\0') {
+        kprintf("[KUNIT] Unknown stress level: '%s'. Try: light, moderate, heavy\n", cmd);
+    }
+
+    return 0;
+}
+
+/* Read callback for /sys/kernel/debug/kunit/stress_level — shows current level */
+static void kunit_stress_level_read(char *buf, int *len)
+{
+    int pos = snprintf(buf, 64, "%s\n",
+                       kunit_stress_level_name(g_kunit_stress_level));
+    *len = pos;
 }
 
 /* ── kunit_run_suite_by_name — run a specific suite ──────────────── */
@@ -786,19 +882,23 @@ static void kunit_control_read(char *buf, int *len)
                     "  run_all   - Run all registered tests\n"
                     "  status    - Show current test status\n"
                     "\n"
+                    "\n"
                     "Settings files:\n"
-                    "  iterations - Test repeat count (u32, default 1)\n"
-                    "  verbose    - Verbosity 0=quiet 1=normal 2=verbose\n"
-                    "  timeout_ms - Per-test timeout in ms (0=no timeout)\n"
-                    "  run_suite  - Write suite name to run that suite\n"
-                    "  parallel   - 0=sequential (default), 1=parallel via workqueue\n"
-                    "  coverage   - Write 'reset' to clear or 'status' to view\n"
+                    "  iterations   - Test repeat count (u32, default 1)\n"
+                    "  verbose      - Verbosity 0=quiet 1=normal 2=verbose\n"
+                    "  timeout_ms   - Per-test timeout in ms (0=no timeout)\n"
+                    "  run_suite    - Write suite name to run that suite\n"
+                    "  parallel     - 0=sequential (default), 1=parallel via workqueue\n"
+                    "  coverage     - Write 'reset' to clear or 'status' to view\n"
+                    "  stress_level - Write 'light', 'moderate', or 'heavy'\n"
                     "\n"
                     "Current status: %d suites registered, "
-                    "%d tests run, %d passed, %d failed\n",
+                    "%d tests run, %d passed, %d failed\n"
+                    "Stress level: %s\n",
                     g_suite_count,
                     atomic_read(&g_total_tests_run), atomic_read(&g_total_tests_passed),
-                    atomic_read(&g_total_tests_failed));
+                    atomic_read(&g_total_tests_failed),
+                    kunit_stress_level_name(g_kunit_stress_level));
     *len = (pos < max) ? pos : (max - 1);
     if (*len < 0) *len = 0;
 }
