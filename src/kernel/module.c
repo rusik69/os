@@ -1442,6 +1442,14 @@ int module_sysfs_add_params(struct kernel_module *mod)
         sysfs_create_file(version_path, "1.0");
     }
 
+    /* srcversion — source version (kernel version string as proxy) */
+    {
+        char srcver_path[160];
+        snprintf(srcver_path, sizeof(srcver_path),
+                 "/sys/module/%s/srcversion", mod->name);
+        sysfs_create_file(srcver_path, KVERSION);
+    }
+
     /* holders — list of modules that depend on this one */
     {
         char holders_path[160];
