@@ -410,6 +410,150 @@ static void pmm_contiguous_edge_cases(struct kunit *test)
 }
 
 /* ====================================================================
+ *  3. PMM — Reference counting (pmm_ref_frame / pmm_unref_frame)
+ *
+ * Tests for the frame reference-counting API used by COW (copy-on-write)
+ * in the VMM layer.  A freshly allocated frame has refcount 1.
+ * pmm_ref_frame() increments, pmm_unref_frame() decrements and frees
+ * the frame when the count reaches zero.
+ * ==================================================================== */
+
+/*
+ * Basic refcount lifecycle:
+ *   alloc → refcount=1 → ref → count=2 → unref → count=1 → unref → count=0 (freed)
+ */
+static void pmm_refcount_basic(struct kunit *test)
+{
+	uint64_t frame = pmm_alloc_frame();
+
+	KUNIT_EXPECT_NE(test, frame, (uint64_t)0);
+	if (!frame) return;
+
+	/* Initial refcount must be 1 after allocation */
+	KUNIT_EXPECT_EQ(test, (int64_t)pmm_refcount(frame), (int64_t)1);
+
+	/* Take a reference → refcount 2 */
+	pmm_ref_frame(frame);
+	KUNIT_EXPECT_EQ(test, (int64_t)pmm_refcount(frame), (int64_t)2);
+
+	/* Drop first reference → refcount 1 (not freed) */
+	KUNIT_EXPECT_EQ(test, (int64_t)pmm_unref_frame(frame), (int64_t)1);
+
+	/* Drop last reference → refcount 0 (frame freed, page returns to pool) */
+	KUNIT_EXPECT_EQ(test, (int64_t)pmm_unref_frame(frame), (int64_t)0);
+
+	/* After being freed, refcount should be 0 */
+	KUNIT_EXPECT_EQ(test, (int64_t)pmm_refcount(frame), (int64_t)0);
+}
+
+/*
+ * Take multiple references on the same frame and verify the counter
+ * tracks correctly through several increments and decrements.
+ */
+static void pmm_refcount_multiple_refs(struct kunit *test)
+{
+	uint64_t frame = pmm_alloc_frame();
+
+	KUNIT_EXPECT_NE(test, frame, (uint64_t)0);
+	if (!frame) return;
+
+	/* Initial: 1 */
+	KUNIT_EXPECT_EQ(test, (int64_t)pmm_refcount(frame), (int64_t)1);
+
+	/* Take 5 extra refs → expected 6 */
+	for (int i = 0; i < 5; i++)
+		pmm_ref_frame(frame);
+	KUNIT_EXPECT_EQ(test, (int64_t)pmm_refcount(frame), (int64_t)6);
+
+	/* Drop 3 → expected 3 */
+	KUNIT_EXPECT_EQ(test, (int64_t)pmm_unref_frame(frame), (int64_t)5);
+	KUNIT_EXPECT_EQ(test, (int64_t)pmm_unref_frame(frame), (int64_t)4);
+	KUNIT_EXPECT_EQ(test, (int64_t)pmm_unref_frame(frame), (int64_t)3);
+
+	/* Drop 2 more → expected 1 (not freed yet) */
+	KUNIT_EXPECT_EQ(test, (int64_t)pmm_unref_frame(frame), (int64_t)2);
+	KUNIT_EXPECT_EQ(test, (int64_t)pmm_unref_frame(frame), (int64_t)1);
+
+	/* Drop final reference → freed */
+	KUNIT_EXPECT_EQ(test, (int64_t)pmm_unref_frame(frame), (int64_t)0);
+}
+
+/*
+ * Querying refcount on unallocated frame addresses returns 0.
+ * This includes the null physical address and a high address that
+ * should not be allocated at this point in boot.
+ */
+static void pmm_refcount_unallocated(struct kunit *test)
+{
+	/* phys = 0 is never a valid allocated frame */
+	KUNIT_EXPECT_EQ(test, (int64_t)pmm_refcount(0), (int64_t)0);
+
+	/* A high address unlikely to be allocated */
+	KUNIT_EXPECT_EQ(test, (int64_t)pmm_refcount(0x100000000ULL), (int64_t)0);
+}
+
+/*
+ * Verify that used_frames correctly decreases when refcount drops to 0
+ * and the frame is freed.
+ */
+static void pmm_refcount_used_frames_check(struct kunit *test)
+{
+	uint64_t before = pmm_get_used_frames();
+	uint64_t frame = pmm_alloc_frame();
+
+	KUNIT_EXPECT_NE(test, frame, (uint64_t)0);
+	if (!frame) return;
+
+	/* One more frame in use */
+	KUNIT_EXPECT_EQ(test, (int64_t)pmm_get_used_frames(),
+	                (int64_t)(before + 1));
+
+	/* Take a second reference */
+	pmm_ref_frame(frame);
+	KUNIT_EXPECT_EQ(test, (int64_t)pmm_refcount(frame), (int64_t)2);
+
+	/* Still one frame in use (refcount hasn't hit 0 yet) */
+	KUNIT_EXPECT_EQ(test, (int64_t)pmm_get_used_frames(),
+	                (int64_t)(before + 1));
+
+	/* Drop first reference — still one, frame not freed */
+	pmm_unref_frame(frame);
+	KUNIT_EXPECT_EQ(test, (int64_t)pmm_get_used_frames(),
+	                (int64_t)(before + 1));
+
+	/* Drop last reference — frame freed */
+	pmm_unref_frame(frame);
+	KUNIT_EXPECT_EQ(test, (int64_t)pmm_get_used_frames(),
+	                (int64_t)before);
+}
+
+/*
+ * Calling pmm_unref_frame on a frame with refcount 0 is harmless
+ * (returns 0, does not corrupt the allocator).
+ */
+static void pmm_refcount_unref_zero(struct kunit *test)
+{
+	/* Unref on a never-allocated address is a no-op */
+	int rc = pmm_unref_frame(0);
+	KUNIT_EXPECT_EQ(test, (int64_t)rc, (int64_t)0);
+
+	/* Allocate, free, then unref again after free */
+	uint64_t frame = pmm_alloc_frame();
+	KUNIT_EXPECT_NE(test, frame, (uint64_t)0);
+	if (!frame) return;
+
+	/* Free via unref */
+	pmm_unref_frame(frame);
+
+	/* Refcount should be 0 now */
+	KUNIT_EXPECT_EQ(test, (int64_t)pmm_refcount(frame), (int64_t)0);
+
+	/* Unref again — must not crash, returns 0 */
+	rc = pmm_unref_frame(frame);
+	KUNIT_EXPECT_EQ(test, (int64_t)rc, (int64_t)0);
+}
+
+/* ====================================================================
  *  Suite definition — auto-registered via linker section
  * ==================================================================== */
 
@@ -445,3 +589,18 @@ static struct kunit_suite pmm_contiguous_suite = {
 };
 
 KUNIT_TEST_SUITE(pmm_contiguous_suite);
+
+static struct kunit_suite pmm_refcount_suite = {
+	.name    = "memory_pmm_refcount",
+	.setup   = NULL,
+	.teardown = NULL,
+	.cases   = {
+		KUNIT_CASE(pmm_refcount_basic),
+		KUNIT_CASE(pmm_refcount_multiple_refs),
+		KUNIT_CASE(pmm_refcount_unallocated),
+		KUNIT_CASE(pmm_refcount_used_frames_check),
+		KUNIT_CASE(pmm_refcount_unref_zero),
+	},
+};
+
+KUNIT_TEST_SUITE(pmm_refcount_suite);
