@@ -703,8 +703,10 @@ void __init sysfs_init(void) {
 
     sysfs_mounted = 1;
 }
+#ifndef MODULE
 #include "initcall.h"
 fs_initcall(sysfs_init);
+#endif /* !MODULE */
 
 /* ── sysfs_remove_dir ──────────────────────────────────── */
 int sysfs_remove_dir(const char *name)
