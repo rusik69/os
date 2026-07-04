@@ -138,6 +138,11 @@ int kunit_total_failures(void);
 /* Reset all test results. */
 void kunit_reset(void);
 
+/* Export test results as JSON into the given buffer.
+ * @buf: output buffer
+ * @len: in — max buffer size, out — bytes written */
+void kunit_export_json(char *buf, int *len);
+
 /* ── Assertion macros ──────────────────────────────────────────────── */
 
 /* Internal helper — records a failure with file/line info */

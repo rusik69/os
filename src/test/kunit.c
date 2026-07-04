@@ -316,6 +316,67 @@ static void kunit_results_read(char *buf, int *len)
     if (*len < 0) *len = 0;
 }
 
+/* ── JSON export ───────────────────────────────────────────────────── */
+
+void kunit_export_json(char *buf, int *len)
+{
+    int pos = 0;
+    int max = 4096;
+
+    pos += snprintf(buf + pos, (size_t)(max - pos),
+        "{\n");
+    pos += snprintf(buf + pos, (size_t)(max - pos),
+        "  \"kunit\": {\n");
+    pos += snprintf(buf + pos, (size_t)(max - pos),
+        "    \"summary\": {\n");
+    pos += snprintf(buf + pos, (size_t)(max - pos),
+        "      \"suites_total\": %d,\n", g_suite_count);
+    pos += snprintf(buf + pos, (size_t)(max - pos),
+        "      \"tests_run\": %d,\n", g_total_tests_run);
+    pos += snprintf(buf + pos, (size_t)(max - pos),
+        "      \"passed\": %d,\n", g_total_tests_passed);
+    pos += snprintf(buf + pos, (size_t)(max - pos),
+        "      \"failed\": %d,\n", g_total_tests_failed);
+    pos += snprintf(buf + pos, (size_t)(max - pos),
+        "      \"assertions\": %d,\n", g_total_assertions);
+    pos += snprintf(buf + pos, (size_t)(max - pos),
+        "      \"assertion_failures\": %d\n", g_total_assertion_fails);
+    pos += snprintf(buf + pos, (size_t)(max - pos),
+        "    },\n");
+    pos += snprintf(buf + pos, (size_t)(max - pos),
+        "    \"suites\": [\n");
+
+    for (int i = 0; i < g_suite_count; i++) {
+        if (!g_suites[i])
+            continue;
+        pos += snprintf(buf + pos, (size_t)(max - pos),
+            "      {\n");
+        pos += snprintf(buf + pos, (size_t)(max - pos),
+            "        \"name\": \"%s\",\n", g_suites[i]->name);
+        pos += snprintf(buf + pos, (size_t)(max - pos),
+            "        \"case_count\": %d\n", count_cases(g_suites[i]));
+        pos += snprintf(buf + pos, (size_t)(max - pos),
+            "      }%s\n",
+            (i < g_suite_count - 1) ? "," : "");
+    }
+
+    pos += snprintf(buf + pos, (size_t)(max - pos),
+        "    ]\n");
+    pos += snprintf(buf + pos, (size_t)(max - pos),
+        "  }\n");
+    pos += snprintf(buf + pos, (size_t)(max - pos),
+        "}\n");
+
+    *len = (pos < max) ? pos : (max - 1);
+    if (*len < 0) *len = 0;
+}
+
+/* Read callback for /sys/kernel/debug/kunit/results_json */
+static void kunit_results_json_read(char *buf, int *len)
+{
+    kunit_export_json(buf, len);
+}
+
 /* Write callback for /sys/kernel/debug/kunit/run_all */
 static int kunit_run_all_write(const char *buf, int len)
 {
@@ -354,6 +415,7 @@ void kunit_init(void)
 
     /* Create debugfs entries under /sys/kernel/debug/kunit/ */
     debugfs_create_file("kunit/results",  kunit_results_read);
+    debugfs_create_file("kunit/results_json", kunit_results_json_read);
     debugfs_create_rw_file("kunit/run_all",
                            NULL,
                            kunit_run_all_write);
