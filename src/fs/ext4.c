@@ -1453,9 +1453,9 @@ int __init ext4_init(void)
     return 0;
 }
 
+#ifndef MODULE
 device_initcall(ext4_init);
-
-#ifdef MODULE
+#else
 int __init init_module(void) { return ext4_init(); }
 void __exit cleanup_module(void) {}
 MODULE_LICENSE("GPL");

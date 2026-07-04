@@ -634,9 +634,9 @@ int __init squashfs_init(void)
     return 0;
 }
 #include "initcall.h"
+#ifndef MODULE
 fs_initcall(squashfs_init);
-
-#ifdef MODULE
+#else
 #include "module.h"
 
 int init_module(void) {
