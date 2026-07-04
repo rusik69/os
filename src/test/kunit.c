@@ -30,6 +30,7 @@
 #include "atomic.h"
 #include "completion.h"
 #include "workqueue.h"
+#include "rng.h"
 
 /* Internal state */
 
@@ -62,6 +63,19 @@ static uint32_t g_kunit_timeout_ms = 0;
 /* Parallel execution flag: 0=sequential (default), 1=parallel via workqueue */
 static uint32_t g_kunit_parallel = 0;
 
+/* ── Fuzz mode settings ──────────────────────────────────────────────────── */
+/* Fuzz mode enabled flag.  When non-zero, test cases with a fuzz generator
+ * run additional iterations with random parameters. */
+static int      g_kunit_fuzz_enabled = 0;
+
+/* Default number of fuzz iterations per test case.
+ * Individual test cases can override via the fuzz_iters field. */
+static int      g_kunit_fuzz_iterations = 10;
+
+/* Deterministic seed for fuzz PRNG.  The same seed produces the same
+ * parameter sequence for the same test, enabling reproducible fuzzing. */
+static uint32_t g_kunit_fuzz_seed = 42;
+
 /* ── Stress level control ──────────────────────────────────────────── */
 /* Global stress level threshold.  Test cases with stress_max > this
  * value are skipped.  Default: KUNIT_STRESS_MODERATE (run all standard
@@ -86,6 +100,14 @@ static void kunit_regression_read(char *buf, int *len);
 static int  kunit_regression_write(const char *buf, int len);
 static int  kunit_stress_level_write(const char *buf, int len);
 static void kunit_stress_level_read(char *buf, int *len);
+
+/* Fuzz mode callbacks */
+static int  kunit_fuzz_enable_write(const char *buf, int len);
+static void kunit_fuzz_enable_read(char *buf, int *len);
+static int  kunit_fuzz_iterations_write(const char *buf, int len);
+static void kunit_fuzz_iterations_read(char *buf, int *len);
+static int  kunit_fuzz_seed_write(const char *buf, int len);
+static void kunit_fuzz_seed_read(char *buf, int *len);
 
 /* ── Registration ─────────────────────────────────────────────────── */
 
@@ -212,7 +234,7 @@ static void kunit_run_case(struct kunit_suite *suite, struct kunit_case *kc)
     if (suite->teardown)
         suite->teardown(&test_ctx);
 
-    /* Record result */
+    /* Record result for normal/non-fuzz run */
     if (test_ctx.status == KUNIT_SUCCESS) {
         atomic_inc(&g_total_tests_passed);
         kprintf("[KUNIT] PASS:  %s.%s\n", suite->name, test_ctx.name);
@@ -220,6 +242,75 @@ static void kunit_run_case(struct kunit_suite *suite, struct kunit_case *kc)
         atomic_inc(&g_total_tests_failed);
         kprintf("[KUNIT] FAIL:  %s.%s (%d failures)\n",
                 suite->name, test_ctx.name, test_ctx.failures);
+    }
+
+    /* ── Fuzz mode iterations ──────────────────────────────────────── */
+    /* When fuzz mode is enabled and the test case provides a fuzz
+     * generator, run additional iterations with random parameters.
+     * Each fuzz iteration is a full test lifecycle (setup → run →
+     * teardown → result) and is counted independently. */
+    if (g_kunit_fuzz_enabled && kc->fuzz) {
+        int fuzz_count = (kc->fuzz_iters > 0) ? kc->fuzz_iters : g_kunit_fuzz_iterations;
+        if (fuzz_count < 1)
+            fuzz_count = 1;
+
+        /* Compute a per-test seed from the global seed and test/suite names.
+         * This ensures the same fuzz seed always produces the same parameter
+         * sequence for a given test case (reproducible fuzzing). */
+        uint32_t base_seed = g_kunit_fuzz_seed;
+        for (const char *p = suite->name; *p; p++)
+            base_seed = (base_seed * 33) ^ (uint8_t)*p;
+        for (const char *p = kc->name; *p; p++)
+            base_seed = (base_seed * 33) ^ (uint8_t)*p;
+
+        for (int fi = 0; fi < fuzz_count; fi++) {
+            struct kunit fuzz_ctx;
+            struct kunit_param fp;
+            memset(&fuzz_ctx, 0, sizeof(fuzz_ctx));
+            memset(&fp, 0, sizeof(fp));
+
+            fuzz_ctx.name = kc->name ? kc->name : "unnamed";
+            fuzz_ctx.status = KUNIT_SUCCESS;
+            fuzz_ctx.failures = 0;
+            fuzz_ctx.priv = NULL;
+
+            /* Generate the fuzz parameter */
+            kc->fuzz(&fuzz_ctx, fi, &fp);
+            fuzz_ctx.priv = fp.value;
+
+            if (g_kunit_verbose >= 2)
+                kprintf("[KUNIT] FUZZ:  %s.%s[iter=%d/%d,param=%s]\n",
+                        suite->name, kc->name, fi + 1, fuzz_count,
+                        fp.name ? fp.name : "unnamed");
+            else if (g_kunit_verbose >= 1)
+                kprintf("[KUNIT] FUZZ:  %s.%s (iter %d/%d)\n",
+                        suite->name, kc->name, fi + 1, fuzz_count);
+
+            atomic_inc(&g_total_tests_run);
+
+            /* Suite-level setup */
+            if (suite->setup)
+                suite->setup(&fuzz_ctx);
+
+            /* Run the test function with the fuzz parameter */
+            kc->run(&fuzz_ctx);
+
+            /* Suite-level teardown */
+            if (suite->teardown)
+                suite->teardown(&fuzz_ctx);
+
+            /* Record fuzz iteration result */
+            if (fuzz_ctx.status == KUNIT_SUCCESS) {
+                atomic_inc(&g_total_tests_passed);
+                kprintf("[KUNIT] PASS:  %s.%s (fuzz %d/%d)\n",
+                        suite->name, kc->name, fi + 1, fuzz_count);
+            } else {
+                atomic_inc(&g_total_tests_failed);
+                kprintf("[KUNIT] FAIL:  %s.%s (fuzz %d/%d, %d failures)\n",
+                        suite->name, kc->name, fi + 1, fuzz_count,
+                        fuzz_ctx.failures);
+            }
+        }
     }
 }
 
@@ -677,6 +768,17 @@ void kunit_init(void)
                            kunit_stress_level_read,
                            kunit_stress_level_write);
 
+    /* Fuzz mode — random parameter generation */
+    debugfs_create_rw_file("kunit/fuzz_enable",
+                           kunit_fuzz_enable_read,
+                           kunit_fuzz_enable_write);
+    debugfs_create_rw_file("kunit/fuzz_iterations",
+                           kunit_fuzz_iterations_read,
+                           kunit_fuzz_iterations_write);
+    debugfs_create_rw_file("kunit/fuzz_seed",
+                           kunit_fuzz_seed_read,
+                           kunit_fuzz_seed_write);
+
     kprintf("[OK] KUnit: Kernel unit test framework initialized "
             "(%d suite slots, filter=%s, %d iterations, verbose=%d, parallel=%d)\n",
             KUNIT_MAX_SUITES,
@@ -808,6 +910,187 @@ static void kunit_stress_level_read(char *buf, int *len)
     *len = pos;
 }
 
+/* ── Fuzz mode API ────────────────────────────────────────────────────── */
+
+void kunit_set_fuzz_enabled(int enabled)
+{
+    spinlock_acquire(&g_kunit_lock);
+    g_kunit_fuzz_enabled = enabled ? 1 : 0;
+    spinlock_release(&g_kunit_lock);
+}
+
+int kunit_get_fuzz_enabled(void)
+{
+    int val;
+    spinlock_acquire(&g_kunit_lock);
+    val = g_kunit_fuzz_enabled;
+    spinlock_release(&g_kunit_lock);
+    return val;
+}
+
+void kunit_set_fuzz_iterations(int iters)
+{
+    spinlock_acquire(&g_kunit_lock);
+    if (iters < 1)
+        iters = 1;
+    if (iters > 10000)
+        iters = 10000;
+    g_kunit_fuzz_iterations = iters;
+    spinlock_release(&g_kunit_lock);
+}
+
+int kunit_get_fuzz_iterations(void)
+{
+    int val;
+    spinlock_acquire(&g_kunit_lock);
+    val = g_kunit_fuzz_iterations;
+    spinlock_release(&g_kunit_lock);
+    return val;
+}
+
+void kunit_set_fuzz_seed(uint32_t seed)
+{
+    spinlock_acquire(&g_kunit_lock);
+    g_kunit_fuzz_seed = seed;
+    spinlock_release(&g_kunit_lock);
+}
+
+uint32_t kunit_get_fuzz_seed(void)
+{
+    uint32_t val;
+    spinlock_acquire(&g_kunit_lock);
+    val = g_kunit_fuzz_seed;
+    spinlock_release(&g_kunit_lock);
+    return val;
+}
+
+/* ── Fuzz helper functions ────────────────────────────────────────────── */
+
+uint32_t kunit_fuzz_rand_u32(uint32_t max_val)
+{
+    if (max_val == 0)
+        return 0;
+    return rng_get_u32() % max_val;
+}
+
+void kunit_fuzz_fill_buf(void *buf, uint32_t len)
+{
+    rng_fill_buf(buf, len);
+}
+
+/* ── Fuzz debugfs callbacks ─────────────────────────────────────────────── */
+
+/* Write callback for /sys/kernel/debug/kunit/fuzz_enable */
+static int kunit_fuzz_enable_write(const char *buf, int len)
+{
+    if (!buf || len <= 0)
+        return 0;
+
+    char val[8];
+    int copy_len = len < (int)sizeof(val) - 1 ? len : (int)sizeof(val) - 1;
+    memcpy(val, buf, (size_t)copy_len);
+    val[copy_len] = '\0';
+
+    /* Strip trailing whitespace/newline */
+    while (copy_len > 0 && (val[copy_len - 1] == '\n' ||
+           val[copy_len - 1] == '\r' || val[copy_len - 1] == ' '))
+        val[--copy_len] = '\0';
+
+    if (strcmp(val, "1") == 0 || strcmp(val, "on") == 0 || strcmp(val, "yes") == 0) {
+        kunit_set_fuzz_enabled(1);
+        kprintf("[KUNIT] Fuzz mode ENABLED (%d iterations default)\n",
+                g_kunit_fuzz_iterations);
+    } else if (strcmp(val, "0") == 0 || strcmp(val, "off") == 0 || strcmp(val, "no") == 0) {
+        kunit_set_fuzz_enabled(0);
+        kprintf("[KUNIT] Fuzz mode DISABLED\n");
+    } else if (val[0] != '\0') {
+        kprintf("[KUNIT] Unknown fuzz_enable value: '%s'. Try: 0/1, on/off, yes/no\n", val);
+    }
+
+    return 0;
+}
+
+/* Read callback for /sys/kernel/debug/kunit/fuzz_enable — shows current state */
+static void kunit_fuzz_enable_read(char *buf, int *len)
+{
+    int pos = snprintf(buf, 32, "%d\n", g_kunit_fuzz_enabled);
+    *len = pos;
+}
+
+/* Write callback for /sys/kernel/debug/kunit/fuzz_iterations */
+static int kunit_fuzz_iterations_write(const char *buf, int len)
+{
+    if (!buf || len <= 0)
+        return 0;
+
+    char val[16];
+    int copy_len = len < (int)sizeof(val) - 1 ? len : (int)sizeof(val) - 1;
+    memcpy(val, buf, (size_t)copy_len);
+    val[copy_len] = '\0';
+
+    /* Strip trailing whitespace/newline */
+    while (copy_len > 0 && (val[copy_len - 1] == '\n' ||
+           val[copy_len - 1] == '\r' || val[copy_len - 1] == ' '))
+        val[--copy_len] = '\0';
+
+    int iters = 0;
+    for (int i = 0; val[i] >= '0' && val[i] <= '9'; i++)
+        iters = iters * 10 + (val[i] - '0');
+
+    if (iters > 0) {
+        kunit_set_fuzz_iterations(iters);
+        kprintf("[KUNIT] Fuzz iterations set to %d\n", iters);
+    } else {
+        kprintf("[KUNIT] Invalid fuzz iterations value: '%s'. Use a positive integer.\n", val);
+    }
+
+    return 0;
+}
+
+/* Read callback for /sys/kernel/debug/kunit/fuzz_iterations — shows current value */
+static void kunit_fuzz_iterations_read(char *buf, int *len)
+{
+    int pos = snprintf(buf, 32, "%d\n", g_kunit_fuzz_iterations);
+    *len = pos;
+}
+
+/* Write callback for /sys/kernel/debug/kunit/fuzz_seed */
+static int kunit_fuzz_seed_write(const char *buf, int len)
+{
+    if (!buf || len <= 0)
+        return 0;
+
+    char val[16];
+    int copy_len = len < (int)sizeof(val) - 1 ? len : (int)sizeof(val) - 1;
+    memcpy(val, buf, (size_t)copy_len);
+    val[copy_len] = '\0';
+
+    /* Strip trailing whitespace/newline */
+    while (copy_len > 0 && (val[copy_len - 1] == '\n' ||
+           val[copy_len - 1] == '\r' || val[copy_len - 1] == ' '))
+        val[--copy_len] = '\0';
+
+    uint32_t seed = 42;
+    uint32_t acc = 0;
+    int ci;
+    for (ci = 0; val[ci] >= '0' && val[ci] <= '9'; ci++)
+        acc = acc * 10 + (uint32_t)(val[ci] - '0');
+    if (ci > 0)
+        seed = acc;
+
+    kunit_set_fuzz_seed(seed);
+    kprintf("[KUNIT] Fuzz seed set to %u\n", seed);
+
+    return 0;
+}
+
+/* Read callback for /sys/kernel/debug/kunit/fuzz_seed — shows current seed */
+static void kunit_fuzz_seed_read(char *buf, int *len)
+{
+    int pos = snprintf(buf, 32, "%u\n", g_kunit_fuzz_seed);
+    *len = pos;
+}
+
 /* ── kunit_run_suite_by_name — run a specific suite ──────────────── */
 
 static void kunit_run_suite_by_name(const char *name)
@@ -891,14 +1174,21 @@ static void kunit_control_read(char *buf, int *len)
                     "  parallel     - 0=sequential (default), 1=parallel via workqueue\n"
                     "  coverage     - Write 'reset' to clear or 'status' to view\n"
                     "  stress_level - Write 'light', 'moderate', or 'heavy'\n"
+                    "  fuzz_enable  - Write 1/0, on/off, yes/no to enable/disable fuzz mode\n"
+                    "  fuzz_iterations - Default fuzz iterations per test (u32, default 10)\n"
+                    "  fuzz_seed    - Deterministic seed for fuzz PRNG (u32, default 42)\n"
                     "\n"
                     "Current status: %d suites registered, "
                     "%d tests run, %d passed, %d failed\n"
-                    "Stress level: %s\n",
+                    "Stress level: %s\n"
+                    "Fuzz mode: %s (seed=%u, %d iterations)\n",
                     g_suite_count,
                     atomic_read(&g_total_tests_run), atomic_read(&g_total_tests_passed),
                     atomic_read(&g_total_tests_failed),
-                    kunit_stress_level_name(g_kunit_stress_level));
+                    kunit_stress_level_name(g_kunit_stress_level),
+                    g_kunit_fuzz_enabled ? "enabled" : "disabled",
+                    g_kunit_fuzz_seed,
+                    g_kunit_fuzz_iterations);
     *len = (pos < max) ? pos : (max - 1);
     if (*len < 0) *len = 0;
 }
