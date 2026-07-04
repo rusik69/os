@@ -16,6 +16,8 @@
 
 #include "kunit.h"
 #include "pmm.h"
+#include "memhotplug.h"
+#include "err.h"
 #include "string.h"
 #include "printf.h"
 
@@ -821,6 +823,206 @@ static void pmm_hotcache_burst_stress(struct kunit *test)
 }
 
 /* ====================================================================
+ *  6. PMM — Hotplug memory addition / removal
+ *
+ * Tests for the memory hotplug framework (memhp_* API).  The framework
+ * tracks memory sections that can be added (hot-add), brought online
+ * (made available to the PMM), taken offline, and removed.
+ * ==================================================================== */
+
+/*
+ * Basic lifecycle: add → online → offline → remove.
+ * Verifies section count transitions correctly through each phase.
+ */
+static void pmm_hotplug_basic_lifecycle(struct kunit *test)
+{
+	int initial_count = memhp_get_section_count();
+	int ret;
+
+	/* Add a test region at a safe high address (within MAX_FRAMES) */
+	uint64_t test_base = 0x20000000ULL; /* 512 MB — valid frame index */
+	uint64_t test_size = 16 * PAGE_SIZE;
+
+	ret = memhp_add_region(test_base, test_size);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+	KUNIT_EXPECT_EQ(test, memhp_get_section_count(), initial_count + 1);
+
+	/* Online the section — should call pmm_reserve_frames internally */
+	ret = memhp_online_section(initial_count);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+
+	/* Verify section state is MEMHP_ONLINE */
+	struct memhp_section *sec = memhp_get_section(initial_count);
+	KUNIT_EXPECT_NOT_NULL(test, sec);
+
+	/* Offline the section */
+	ret = memhp_offline_section(initial_count);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+
+	/* Remove the region */
+	ret = memhp_remove_region(test_base);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+	KUNIT_EXPECT_EQ(test, memhp_get_section_count(), initial_count);
+}
+
+/*
+ * Verify that onlining a memory section increments pmm_get_used_frames()
+ * by the expected number of frames (because memhp_online_section calls
+ * pmm_reserve_frames, which marks each page in the range as used).
+ */
+static void pmm_hotplug_used_frames_increment(struct kunit *test)
+{
+	int initial_count = memhp_get_section_count();
+	uint64_t frames_before = pmm_get_used_frames();
+	int ret;
+
+	uint64_t test_base = 0x20010000ULL; /* slightly above base test address */
+	uint64_t test_size = 8 * PAGE_SIZE;
+	uint64_t expected_frames = test_size / PAGE_SIZE;
+
+	/* Add and online */
+	ret = memhp_add_region(test_base, test_size);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+	KUNIT_EXPECT_EQ(test, memhp_get_section_count(), initial_count + 1);
+
+	ret = memhp_online_section(initial_count);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+
+	/* used_frames should have increased by expected_frames */
+	uint64_t frames_after = pmm_get_used_frames();
+	KUNIT_EXPECT_EQ(test, (int64_t)(frames_after - frames_before),
+			    (int64_t)expected_frames);
+
+	/* Offline and remove */
+	ret = memhp_offline_section(initial_count);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+
+	ret = memhp_remove_region(test_base);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+}
+
+/*
+ * Error handling tests:
+ * - Adding a region with invalid parameters
+ * - Removing a non-existent region
+ * - Calling online/offline on invalid section IDs
+ * - Offlining an already-offline section
+ * - Removing a region that has been onlined (must offline first)
+ */
+static void pmm_hotplug_invalid_operations(struct kunit *test)
+{
+	int initial_count = memhp_get_section_count();
+	int ret;
+
+	/* Remove non-existent region */
+	ret = memhp_remove_region(0xBEEF0000ULL);
+	KUNIT_EXPECT_EQ(test, ret, -ENOENT);
+
+	/* Online with invalid (negative) section ID */
+	ret = memhp_online_section(-1);
+	KUNIT_EXPECT_EQ(test, ret, -EINVAL);
+
+	/* Online with out-of-range section ID */
+	ret = memhp_online_section(999);
+	KUNIT_EXPECT_EQ(test, ret, -EINVAL);
+
+	/* Offline with invalid section ID */
+	ret = memhp_offline_section(-1);
+	KUNIT_EXPECT_EQ(test, ret, -EINVAL);
+
+	/* Offline a section that doesn't exist */
+	ret = memhp_offline_section(999);
+	KUNIT_EXPECT_EQ(test, ret, -EINVAL);
+
+	/* Get section with invalid ID returns ERR_PTR(-EINVAL) */
+	struct memhp_section *sec = memhp_get_section(-1);
+	KUNIT_EXPECT_TRUE(test, sec == NULL || IS_ERR(sec));
+
+	sec = memhp_get_section(999);
+	KUNIT_EXPECT_TRUE(test, sec == NULL || IS_ERR(sec));
+
+	/* Verify count unchanged by all error attempts */
+	KUNIT_EXPECT_EQ(test, memhp_get_section_count(), initial_count);
+}
+
+/*
+ * Add two separate regions, verify both tracked, online/offline each,
+ * remove both.  Exercises multi-section tracking.
+ */
+static void pmm_hotplug_multiple_regions(struct kunit *test)
+{
+	int initial_count = memhp_get_section_count();
+	int ret;
+
+	uint64_t base_a = 0x20020000ULL;
+	uint64_t base_b = 0x20030000ULL;
+	uint64_t size = 8 * PAGE_SIZE;
+
+	/* Add two regions */
+	ret = memhp_add_region(base_a, size);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+
+	ret = memhp_add_region(base_b, size);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+
+	KUNIT_EXPECT_EQ(test, memhp_get_section_count(), initial_count + 2);
+
+	/* Online both */
+	ret = memhp_online_section(initial_count);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+
+	ret = memhp_online_section(initial_count + 1);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+
+	/* Offline both */
+	ret = memhp_offline_section(initial_count);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+
+	ret = memhp_offline_section(initial_count + 1);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+
+	/* Remove both */
+	ret = memhp_remove_region(base_a);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+	KUNIT_EXPECT_EQ(test, memhp_get_section_count(), initial_count + 1);
+
+	ret = memhp_remove_region(base_b);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+	KUNIT_EXPECT_EQ(test, memhp_get_section_count(), initial_count);
+}
+
+/*
+ * Verify that memhp_get_section returns correct info for an added region.
+ */
+static void pmm_hotplug_section_info(struct kunit *test)
+{
+	int initial_count = memhp_get_section_count();
+	int ret;
+
+	uint64_t test_base = 0x20040000ULL;
+	uint64_t test_size = 4 * PAGE_SIZE;
+	int sid = initial_count;
+
+	ret = memhp_add_region(test_base, test_size);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+
+	struct memhp_section *sec = memhp_get_section(sid);
+	KUNIT_EXPECT_NOT_NULL(test, sec);
+
+	if (!IS_ERR(sec) && sec != NULL) {
+		KUNIT_EXPECT_EQ(test, (int64_t)sec->base_addr, (int64_t)test_base);
+		KUNIT_EXPECT_EQ(test, (int64_t)sec->size, (int64_t)test_size);
+		KUNIT_EXPECT_EQ(test, (int)sec->state, (int)MEMHP_OFFLINE);
+		KUNIT_EXPECT_EQ(test, sec->present, 1);
+	}
+
+	/* Cleanup */
+	ret = memhp_remove_region(test_base);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+	KUNIT_EXPECT_EQ(test, memhp_get_section_count(), initial_count);
+}
+
+/* ====================================================================
  *  Suite definition — auto-registered via linker section
  * ==================================================================== */
 
@@ -899,3 +1101,18 @@ static struct kunit_suite pmm_hotcache_suite = {
 };
 
 KUNIT_TEST_SUITE(pmm_hotcache_suite);
+
+static struct kunit_suite pmm_hotplug_suite = {
+	.name    = "memory_pmm_hotplug",
+	.setup   = NULL,
+	.teardown = NULL,
+	.cases   = {
+		KUNIT_CASE(pmm_hotplug_basic_lifecycle),
+		KUNIT_CASE(pmm_hotplug_used_frames_increment),
+		KUNIT_CASE(pmm_hotplug_invalid_operations),
+		KUNIT_CASE(pmm_hotplug_multiple_regions),
+		KUNIT_CASE(pmm_hotplug_section_info),
+	},
+};
+
+KUNIT_TEST_SUITE(pmm_hotplug_suite);

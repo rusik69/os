@@ -86,7 +86,7 @@ int memhp_get_section_count(void) {
 
 struct memhp_section *memhp_get_section(int section_id) {
     if (section_id < 0 || section_id >= section_count)
-        return ERR_PTR(-EINVAL);
+        return ERR_PTR(EINVAL);
     return &sections[section_id];
 }
 #include "module.h"
