@@ -559,6 +559,7 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/fault_inject.c \
          src/kernel/kpti.c \
          src/test/kunit.c \
+         src/test/kunit_memory.c \
          src/test/kunit_tests.c \
          src/test/kunit_pmm.c \
          src/test/kunit_slab.c \
