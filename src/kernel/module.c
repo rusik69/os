@@ -259,6 +259,15 @@ void __init modules_init(void) {
 
     /* Create /sys/kernel/module_verify sysfs file */
     module_verify_sysfs_init();
+
+    /* Create /sys/kernel/tainted — global kernel taint status */
+    {
+        sysfs_create_dir("/sys/kernel");
+        char taint_buf[16];
+        snprintf(taint_buf, sizeof(taint_buf), "%u",
+                 (unsigned int)g_kernel_taint_mask);
+        sysfs_create_file("/sys/kernel/tainted", taint_buf);
+    }
 }
 
 /* ── Module memory allocator (M10) ──────────────────────────────── */
@@ -1520,6 +1529,17 @@ int module_sysfs_add_params(struct kernel_module *mod)
         snprintf(srcver_path, sizeof(srcver_path),
                  "/sys/module/%s/srcversion", mod->name);
         sysfs_create_file(srcver_path, KVERSION);
+    }
+
+    /* taint — per-module taint flags (empty if module is clean) */
+    {
+        char taint_path[160];
+        snprintf(taint_path, sizeof(taint_path),
+                 "/sys/module/%s/taint", mod->name);
+        char taint_buf[32];
+        snprintf(taint_buf, sizeof(taint_buf), "0x%08x",
+                 (unsigned int)g_kernel_taint_mask);
+        sysfs_create_file(taint_path, taint_buf);
     }
 
     /* holders — list of modules that depend on this one */

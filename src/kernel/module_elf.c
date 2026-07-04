@@ -455,6 +455,20 @@ int module_elf_parse(struct module_elf_context *ctx)
                             ctx->aliases[cur_len + alen] = '\0';
                         }
                     }
+                } else if (strncmp(modinfo_data + pos, "license=", 8) == 0) {
+                    /* Check for proprietary license and taint if so.
+                     * Only GPL-compatible licenses are safe for the
+                     * kernel.  Proprietary modules taint the kernel. */
+                    const char *lic = modinfo_data + pos + 8;
+                    if (strncmp(lic, "GPL", 3) != 0 &&
+                        strncmp(lic, "BSD", 3) != 0 &&
+                        strncmp(lic, "MIT", 3) != 0 &&
+                        strncmp(lic, "MPL", 3) != 0 &&
+                        strncmp(lic, "Apache", 6) != 0 &&
+                        strncmp(lic, "Artistic", 8) != 0 &&
+                        strncmp(lic, "Public domain", 13) != 0) {
+                        add_taint(TAINT_MODULE_PROPRIETARY);
+                    }
                 }
                 /* Skip to next null terminator */
                 while (pos < modinfo_size && modinfo_data[pos] != '\0')

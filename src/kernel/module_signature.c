@@ -426,6 +426,9 @@ int module_verify_elf(const uint8_t *elf_data, uint64_t elf_size)
         }
         kprintf("[MOD_SIG] Module has no .module_sig section — "
                 "ALLOWED (warn-only mode)\n");
+        /* Loading an unsigned module taints the kernel even in
+         * warn-only mode. */
+        add_taint(TAINT_MODULE_UNSIGNED);
         return 0;
     }
 
