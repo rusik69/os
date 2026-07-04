@@ -318,8 +318,22 @@ EXPORT_SYMBOL(macsec_activate_sa);
 EXPORT_SYMBOL(macsec_encrypt);
 EXPORT_SYMBOL(macsec_decrypt);
 EXPORT_SYMBOL(macsec_handle_frame);
+/* ── Module cleanup ──────────────────────────────────────────── */
+static void __exit macsec_cleanup(void)
+{
+	spinlock_acquire(&macsec_lock);
+	macsec_initialized = 0;
+	spinlock_release(&macsec_lock);
+	kprintf("[macsec] module unloaded\n");
+}
+
 #include "module.h"
 module_init(macsec_init);
+module_exit(macsec_cleanup);
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Hermes OS Kernel Team");
+MODULE_DESCRIPTION("MACsec: 802.1AE link-layer encryption with GCM-AES");
+MODULE_VERSION("1.0");
 
 /* ═══════════════════════════════════════════════════════════════
  *  Stub functions for future implementation

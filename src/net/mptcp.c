@@ -2544,5 +2544,20 @@ int mptcp_verify_dss_checksum(const uint8_t *buf, uint16_t optlen,
     return 0;
 }
 EXPORT_SYMBOL(mptcp_verify_dss_checksum);
+
+/* ── Module cleanup ──────────────────────────────────────────── */
+static void __exit mptcp_cleanup(void)
+{
+	spinlock_acquire(&mptcp_lock);
+	mptcp_initialized = 0;
+	spinlock_release(&mptcp_lock);
+	kprintf("[mptcp] module unloaded\n");
+}
+
 #include "module.h"
 module_init(mptcp_init);
+module_exit(mptcp_cleanup);
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Hermes OS Kernel Team");
+MODULE_DESCRIPTION("MPTCP: Multipath TCP subflow management (RFC 8684)");
+MODULE_VERSION("1.0");
