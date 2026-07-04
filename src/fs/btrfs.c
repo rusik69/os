@@ -1912,7 +1912,9 @@ int __init btrfs_init(void)
     return 0;
 }
 
+#ifndef MODULE
 fs_initcall(btrfs_init);
+#endif
 
 #ifdef MODULE
 int init_module(void) { return btrfs_init(); }

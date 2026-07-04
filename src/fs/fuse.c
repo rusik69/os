@@ -1507,6 +1507,13 @@ int fuse_process_notify(uint32_t notify_op,
 #include "module.h"
 #ifndef MODULE
 fs_initcall(fuse_init);
+#else
+int init_module(void) { fuse_init(); return 0; }
+void __exit cleanup_module(void) {}
+MODULE_LICENSE("GPL");
+MODULE_VERSION("1.0");
+MODULE_AUTHOR("Hermes OS Kernel Team");
+MODULE_DESCRIPTION("FUSE — Filesystem in Userspace kernel side");
 #endif
 
 /* ── fuse_umount ─────────────────────────────────────── */
