@@ -25,6 +25,9 @@
 #include "heap.h"
 #include "spinlock.h"
 #include "export.h"
+#include "atomic.h"
+#include "completion.h"
+#include "workqueue.h"
 
 /* Internal state */
 
@@ -34,11 +37,11 @@ static int g_suite_count = 0;
 static spinlock_t g_kunit_lock;
 
 /* Result tracking */
-static int g_total_tests_run = 0;
-static int g_total_tests_passed = 0;
-static int g_total_tests_failed = 0;
-static int g_total_assertions = 0;
-static int g_total_assertion_fails = 0;
+static atomic_t g_total_tests_run = ATOMIC_INIT(0);
+static atomic_t g_total_tests_passed = ATOMIC_INIT(0);
+static atomic_t g_total_tests_failed = ATOMIC_INIT(0);
+static atomic_t g_total_assertions = ATOMIC_INIT(0);
+static atomic_t g_total_assertion_fails = ATOMIC_INIT(0);
 
 /* Filter pattern */
 static char g_filter[KUNIT_MAX_NAME];
@@ -54,12 +57,17 @@ static uint32_t g_kunit_verbose = 1;
 /* Per-test timeout in milliseconds (0 = no timeout) */
 static uint32_t g_kunit_timeout_ms = 0;
 
+/* Parallel execution flag: 0=sequential (default), 1=parallel via workqueue */
+static uint32_t g_kunit_parallel = 0;
+
 /* Buffer for the last run_suite command result */
 static char g_last_suite_result[256];
 
 /* ── Forward declarations ─────────────────────────────────────────── */
 static int  count_cases(struct kunit_suite *suite);
 static void kunit_run_all(void);
+static void kunit_run_all_parallel(void);
+static void kunit_run_all_sequential(void);
 static int  kunit_filter_write(const char *buf, int len);
 static void kunit_run_suite_by_name(const char *name);
 static void kunit_control_read(char *buf, int *len);
@@ -101,7 +109,7 @@ int kunit_register_suite(struct kunit_suite *suite)
 void kunit_do_pass(struct kunit *test)
 {
     (void)test;
-    g_total_assertions++;
+    atomic_inc(&g_total_assertions);
 }
 
 void __printf(4, 5)
@@ -111,8 +119,8 @@ kunit_do_fail(struct kunit *test, const char *file, int line,
     if (!test) return;
     test->status = KUNIT_FAILURE;
     test->failures++;
-    g_total_assertions++;
-    g_total_assertion_fails++;
+    atomic_inc(&g_total_assertions);
+    atomic_inc(&g_total_assertion_fails);
 
     /* Format and print the failure message */
     kprintf("[KUNIT] FAIL: %s:%d: ", file, line);
@@ -151,7 +159,7 @@ static void kunit_run_case(struct kunit_suite *suite, struct kunit_case *kc)
         return; /* skip */
     }
 
-    g_total_tests_run++;
+    atomic_inc(&g_total_tests_run);
 
     /* Run suite-level setup */
     if (suite->setup)
@@ -182,10 +190,10 @@ static void kunit_run_case(struct kunit_suite *suite, struct kunit_case *kc)
 
     /* Record result */
     if (test_ctx.status == KUNIT_SUCCESS) {
-        g_total_tests_passed++;
+        atomic_inc(&g_total_tests_passed);
         kprintf("[KUNIT] PASS:  %s.%s\n", suite->name, test_ctx.name);
     } else {
-        g_total_tests_failed++;
+        atomic_inc(&g_total_tests_failed);
         kprintf("[KUNIT] FAIL:  %s.%s (%d failures)\n",
                 suite->name, test_ctx.name, test_ctx.failures);
     }
@@ -224,6 +232,15 @@ static int count_cases(struct kunit_suite *suite)
 
 static void kunit_run_all(void)
 {
+    if (g_kunit_parallel)
+        kunit_run_all_parallel();
+    else
+        kunit_run_all_sequential();
+}
+
+/* Sequential execution (default): run suites one at a time */
+static void kunit_run_all_sequential(void)
+{
     kunit_reset();
     kprintf("\n========================================\n");
     kprintf("[KUNIT] Running all %d test suites", g_suite_count);
@@ -246,8 +263,115 @@ static void kunit_run_all(void)
     kprintf("========================================\n");
     kprintf("[KUNIT] Results: %d passed, %d failed, "
             "%d assertions (%d failures)\n",
-            g_total_tests_passed, g_total_tests_failed,
-            g_total_assertions, g_total_assertion_fails);
+            atomic_read(&g_total_tests_passed),
+            atomic_read(&g_total_tests_failed),
+            atomic_read(&g_total_assertions),
+            atomic_read(&g_total_assertion_fails));
+    kprintf("========================================\n\n");
+}
+
+/* ── Parallel execution ──────────────────────────────────────────── */
+
+/* Work item for dispatching a single suite on the workqueue */
+struct kunit_parallel_work {
+    struct kunit_suite *suite;
+    struct completion  *done;
+};
+
+/* Workqueue callback — runs one suite, signals completion */
+static void kunit_run_suite_parallel(void *arg)
+{
+    struct kunit_parallel_work *work = (struct kunit_parallel_work *)arg;
+    kunit_run_suite(work->suite);
+    completion_done(work->done);
+}
+
+/* Parallel execution: dispatch suites on an unbound workqueue.
+ * Each suite runs concurrently on its own worker thread.
+ * Due to WORKQUEUE_MAX slot limit, suites are dispatched in batches.
+ * Falls back to sequential if workqueue creation fails. */
+static void kunit_run_all_parallel(void)
+{
+    struct completion dones[KUNIT_MAX_SUITES];
+    struct kunit_parallel_work works[KUNIT_MAX_SUITES];
+    int suite_count = 0;
+
+    kunit_reset();
+
+    /* Collect non-NULL suites and init completions */
+    for (int i = 0; i < g_suite_count; i++) {
+        if (g_suites[i]) {
+            completion_init(&dones[suite_count]);
+            works[suite_count].suite = g_suites[i];
+            works[suite_count].done = &dones[suite_count];
+            suite_count++;
+        }
+    }
+
+    if (suite_count == 0) {
+        kprintf("[KUNIT] No suites registered\n");
+        return;
+    }
+
+    /* Create unbound workqueue for parallel execution */
+    struct workqueue_struct *wq = workqueue_create("kunit_parallel", WQ_UNBOUND);
+    if (!wq) {
+        kprintf("[KUNIT] Failed to create parallel workqueue, "
+                "falling back to sequential\n");
+        kunit_run_all_sequential();
+        return;
+    }
+
+    kprintf("\n========================================\n");
+    kprintf("[KUNIT] Running %d suites in PARALLEL", suite_count);
+    if (g_kunit_iterations > 1)
+        kprintf(" (%d iterations)", g_kunit_iterations);
+    kprintf("\n");
+    kprintf("========================================\n");
+
+    /* Maximum items per batch limited by workqueue slot array */
+    int max_batch = WORKQUEUE_MAX;
+
+    for (int iter = 0; iter < (int)g_kunit_iterations; iter++) {
+        if (g_kunit_iterations > 1)
+            kprintf("[KUNIT] --- Iteration %d/%d ---\n",
+                    iter + 1, g_kunit_iterations);
+
+        /* Dispatch suites in batches due to workqueue slot limits */
+        int dispatched = 0;
+        while (dispatched < suite_count) {
+            int batch_end = dispatched + max_batch;
+            if (batch_end > suite_count)
+                batch_end = suite_count;
+
+            /* Re-init completions for this batch */
+            for (int i = dispatched; i < batch_end; i++)
+                completion_init(&dones[i]);
+
+            /* Dispatch this batch */
+            for (int i = dispatched; i < batch_end; i++) {
+                workqueue_schedule_on(wq, kunit_run_suite_parallel,
+                                      &works[i]);
+            }
+
+            /* Wait for all suites in this batch */
+            for (int i = dispatched; i < batch_end; i++) {
+                completion_wait(&dones[i]);
+            }
+
+            dispatched = batch_end;
+        }
+    }
+
+    workqueue_destroy(wq);
+
+    kprintf("========================================\n");
+    kprintf("[KUNIT] Results: %d passed, %d failed, "
+            "%d assertions (%d failures)\n",
+            atomic_read(&g_total_tests_passed),
+            atomic_read(&g_total_tests_failed),
+            atomic_read(&g_total_assertions),
+            atomic_read(&g_total_assertion_fails));
     kprintf("========================================\n\n");
 }
 
@@ -255,26 +379,26 @@ static void kunit_run_all(void)
 
 int kunit_passed_count(void)
 {
-    return g_total_tests_passed;
+    return atomic_read(&g_total_tests_passed);
 }
 
 int kunit_failed_count(void)
 {
-    return g_total_tests_failed;
+    return atomic_read(&g_total_tests_failed);
 }
 
 int kunit_total_failures(void)
 {
-    return g_total_assertion_fails;
+    return atomic_read(&g_total_assertion_fails);
 }
 
 void kunit_reset(void)
 {
-    g_total_tests_run = 0;
-    g_total_tests_passed = 0;
-    g_total_tests_failed = 0;
-    g_total_assertions = 0;
-    g_total_assertion_fails = 0;
+    atomic_set(&g_total_tests_run, 0);
+    atomic_set(&g_total_tests_passed, 0);
+    atomic_set(&g_total_tests_failed, 0);
+    atomic_set(&g_total_assertions, 0);
+    atomic_set(&g_total_assertion_fails, 0);
 }
 
 /* ── Debugfs callbacks ────────────────────────────────────────────── */
@@ -291,15 +415,15 @@ static void kunit_results_read(char *buf, int *len)
     pos += snprintf(buf + pos, (size_t)(max - pos),
                     "Suites:    %d\n", g_suite_count);
     pos += snprintf(buf + pos, (size_t)(max - pos),
-                    "Run:       %d\n", g_total_tests_run);
+                    "Run:       %d\n", atomic_read(&g_total_tests_run));
     pos += snprintf(buf + pos, (size_t)(max - pos),
-                    "Passed:    %d\n", g_total_tests_passed);
+                    "Passed:    %d\n", atomic_read(&g_total_tests_passed));
     pos += snprintf(buf + pos, (size_t)(max - pos),
-                    "Failed:    %d\n", g_total_tests_failed);
+                    "Failed:    %d\n", atomic_read(&g_total_tests_failed));
     pos += snprintf(buf + pos, (size_t)(max - pos),
-                    "Assertions: %d\n", g_total_assertions);
+                    "Assertions: %d\n", atomic_read(&g_total_assertions));
     pos += snprintf(buf + pos, (size_t)(max - pos),
-                    "Assert Fails: %d\n", g_total_assertion_fails);
+                    "Assert Fails: %d\n", atomic_read(&g_total_assertion_fails));
     pos += snprintf(buf + pos, (size_t)(max - pos),
                     "\nRegistered suites:\n");
 
@@ -332,15 +456,15 @@ void kunit_export_json(char *buf, int *len)
     pos += snprintf(buf + pos, (size_t)(max - pos),
         "      \"suites_total\": %d,\n", g_suite_count);
     pos += snprintf(buf + pos, (size_t)(max - pos),
-        "      \"tests_run\": %d,\n", g_total_tests_run);
+        "      \"tests_run\": %d,\n", atomic_read(&g_total_tests_run));
     pos += snprintf(buf + pos, (size_t)(max - pos),
-        "      \"passed\": %d,\n", g_total_tests_passed);
+        "      \"passed\": %d,\n", atomic_read(&g_total_tests_passed));
     pos += snprintf(buf + pos, (size_t)(max - pos),
-        "      \"failed\": %d,\n", g_total_tests_failed);
+        "      \"failed\": %d,\n", atomic_read(&g_total_tests_failed));
     pos += snprintf(buf + pos, (size_t)(max - pos),
-        "      \"assertions\": %d,\n", g_total_assertions);
+        "      \"assertions\": %d,\n", atomic_read(&g_total_assertions));
     pos += snprintf(buf + pos, (size_t)(max - pos),
-        "      \"assertion_failures\": %d\n", g_total_assertion_fails);
+        "      \"assertion_failures\": %d\n", atomic_read(&g_total_assertion_fails));
     pos += snprintf(buf + pos, (size_t)(max - pos),
         "    },\n");
     pos += snprintf(buf + pos, (size_t)(max - pos),
@@ -394,9 +518,9 @@ static void kunit_status_read(char *buf, int *len)
     pos += snprintf(buf + pos, 256,
                     "tests_run=%d passed=%d failed=%d "
                     "assertions=%d fails=%d suites=%d\n",
-                    g_total_tests_run, g_total_tests_passed,
-                    g_total_tests_failed,
-                    g_total_assertions, g_total_assertion_fails,
+                    atomic_read(&g_total_tests_run), atomic_read(&g_total_tests_passed),
+                    atomic_read(&g_total_tests_failed),
+                    atomic_read(&g_total_assertions), atomic_read(&g_total_assertion_fails),
                     g_suite_count);
     *len = pos;
 }
@@ -464,12 +588,13 @@ void kunit_init(void)
     debugfs_create_u32("kunit/iterations", &g_kunit_iterations);
     debugfs_create_u32("kunit/verbose", &g_kunit_verbose);
     debugfs_create_u32("kunit/timeout_ms", &g_kunit_timeout_ms);
+    debugfs_create_u32("kunit/parallel", &g_kunit_parallel);
 
     kprintf("[OK] KUnit: Kernel unit test framework initialized "
-            "(%d suite slots, filter=%s, %d iterations, verbose=%d)\n",
+            "(%d suite slots, filter=%s, %d iterations, verbose=%d, parallel=%d)\n",
             KUNIT_MAX_SUITES,
             g_filter_active ? g_filter : "none",
-            g_kunit_iterations, g_kunit_verbose);
+            g_kunit_iterations, g_kunit_verbose, g_kunit_parallel);
 }
 
 /* ── Filter API ───────────────────────────────────────────────────── */
@@ -570,14 +695,14 @@ static void kunit_run_suite_by_name(const char *name)
     kprintf("========================================\n");
     kprintf("[KUNIT] Suite '%s': %d passed, %d failed, "
             "%d assertions (%d failures)\n",
-            name, g_total_tests_passed, g_total_tests_failed,
-            g_total_assertions, g_total_assertion_fails);
+            name, atomic_read(&g_total_tests_passed), atomic_read(&g_total_tests_failed),
+            atomic_read(&g_total_assertions), atomic_read(&g_total_assertion_fails));
     kprintf("========================================\n\n");
 
     snprintf(g_last_suite_result, sizeof(g_last_suite_result),
              "Suite '%s': %d passed, %d failed (%d assertions, %d failures)",
-             name, g_total_tests_passed, g_total_tests_failed,
-             g_total_assertions, g_total_assertion_fails);
+             name, atomic_read(&g_total_tests_passed), atomic_read(&g_total_tests_failed),
+             atomic_read(&g_total_assertions), atomic_read(&g_total_assertion_fails));
 }
 
 /* ── Debugfs: /sys/kernel/debug/kunit/control ────────────────────── */
@@ -600,12 +725,13 @@ static void kunit_control_read(char *buf, int *len)
                     "  verbose    - Verbosity 0=quiet 1=normal 2=verbose\n"
                     "  timeout_ms - Per-test timeout in ms (0=no timeout)\n"
                     "  run_suite  - Write suite name to run that suite\n"
+                    "  parallel   - 0=sequential (default), 1=parallel via workqueue\n"
                     "\n"
                     "Current status: %d suites registered, "
                     "%d tests run, %d passed, %d failed\n",
                     g_suite_count,
-                    g_total_tests_run, g_total_tests_passed,
-                    g_total_tests_failed);
+                    atomic_read(&g_total_tests_run), atomic_read(&g_total_tests_passed),
+                    atomic_read(&g_total_tests_failed));
     *len = (pos < max) ? pos : (max - 1);
     if (*len < 0) *len = 0;
 }
@@ -642,9 +768,9 @@ static int kunit_control_write(const char *buf, int len)
         kprintf("[KUNIT] Status: %d suites, %d tests run, "
                 "%d passed, %d failed, %d assertions (%d fails)\n",
                 g_suite_count,
-                g_total_tests_run, g_total_tests_passed,
-                g_total_tests_failed,
-                g_total_assertions, g_total_assertion_fails);
+                atomic_read(&g_total_tests_run), atomic_read(&g_total_tests_passed),
+                atomic_read(&g_total_tests_failed),
+                atomic_read(&g_total_assertions), atomic_read(&g_total_assertion_fails));
     } else if (strcmp(cmd, "run_all") == 0) {
         kunit_run_all();
     } else {
