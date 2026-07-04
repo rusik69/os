@@ -554,6 +554,90 @@ static void pmm_refcount_unref_zero(struct kunit *test)
 }
 
 /* ====================================================================
+ *  4. PMM — OOM return (NULL on exhaustion within bounds)
+ *
+ * Tests that the PMM allocator properly returns NULL/0 when memory
+ * cannot be allocated: impossibly large requests, zero-length requests,
+ * and that the allocator remains functional after an allocation failure.
+ * ==================================================================== */
+
+/*
+ * Request more contiguous frames than total_frames — must return NULL.
+ * This verifies that absurdly large batch allocations fail gracefully
+ * rather than looping forever or returning garbage.
+ */
+static void pmm_oom_impossible_count(struct kunit *test)
+{
+	uint64_t total = pmm_get_total_frames();
+	KUNIT_EXPECT_NE(test, total, (uint64_t)0);
+	if (total == 0) return;
+
+	/* Request total_frames + 1 contiguous frames — impossible */
+	uint64_t *huge = pmm_alloc_frames(total + 1);
+	KUNIT_EXPECT_NULL(test, huge);
+	/* Must also survive a really large request */
+	uint64_t *insane = pmm_alloc_frames(0xFFFFFFFFULL);
+	KUNIT_EXPECT_NULL(test, insane);
+
+	/* The allocator must still work after the failed requests */
+	uint64_t frame = pmm_alloc_frame();
+	KUNIT_EXPECT_NE(test, frame, (uint64_t)0);
+	if (frame)
+		pmm_free_frame(frame);
+}
+
+/*
+ * Zero-length batch allocation must return NULL.
+ * (Parallels the contiguous_edge_cases test but lives in the OOM suite
+ *  for conceptual grouping.)
+ */
+static void pmm_oom_zero_count(struct kunit *test)
+{
+	uint64_t *zero = pmm_alloc_frames(0);
+	KUNIT_EXPECT_NULL(test, zero);
+
+	/* Allocator must still function */
+	uint64_t frame = pmm_alloc_frame();
+	KUNIT_EXPECT_NE(test, frame, (uint64_t)0);
+	if (frame)
+		pmm_free_frame(frame);
+}
+
+/*
+ * Simulate memory pressure: allocate many frames, free them all,
+ * then allocate again.  This verifies that a cycle of near-exhaustion
+ * does not corrupt the allocator's internal state.
+ */
+static void pmm_oom_stress_then_recover(struct kunit *test)
+{
+	const int N = 1024;
+	uint64_t frames[1024];
+	int i;
+	int allocated = 0;
+
+	/* Allocate as many as we can (may not get all N on a small system) */
+	for (i = 0; i < N; i++) {
+		frames[i] = pmm_alloc_frame();
+		if (frames[i] == 0)
+			break;
+		allocated++;
+	}
+
+	/* We should have allocated at least a few */
+	KUNIT_EXPECT_TRUE(test, allocated > 0);
+
+	/* Free everything */
+	for (i = 0; i < allocated; i++)
+		pmm_free_frame(frames[i]);
+
+	/* After freeing, allocator should work again */
+	uint64_t frame = pmm_alloc_frame();
+	KUNIT_EXPECT_NE(test, frame, (uint64_t)0);
+	if (frame)
+		pmm_free_frame(frame);
+}
+
+/* ====================================================================
  *  Suite definition — auto-registered via linker section
  * ==================================================================== */
 
@@ -604,3 +688,16 @@ static struct kunit_suite pmm_refcount_suite = {
 };
 
 KUNIT_TEST_SUITE(pmm_refcount_suite);
+
+static struct kunit_suite pmm_oom_suite = {
+	.name    = "memory_pmm_oom",
+	.setup   = NULL,
+	.teardown = NULL,
+	.cases   = {
+		KUNIT_CASE(pmm_oom_impossible_count),
+		KUNIT_CASE(pmm_oom_zero_count),
+		KUNIT_CASE(pmm_oom_stress_then_recover),
+	},
+};
+
+KUNIT_TEST_SUITE(pmm_oom_suite);
