@@ -1973,7 +1973,9 @@ int __init nfsd_init(void)
     return 0;
 }
 
+#ifndef MODULE
 device_initcall(nfsd_init);
+#endif
 
 #ifdef MODULE
 int __init init_module(void) { return nfsd_init(); }

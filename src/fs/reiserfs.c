@@ -550,7 +550,9 @@ int __init reiserfs_init(void)
     return 0;
 }
 
+#ifndef MODULE
 device_initcall(reiserfs_init);
+#endif
 
 #ifdef MODULE
 int __init init_module(void) { return reiserfs_init(); }
