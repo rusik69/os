@@ -1332,7 +1332,10 @@ int module_elf_finalize(struct module_elf_context *ctx, const char *name)
         mod->size = total_size;
     }
 
-    /* Step 7: Call the init function */
+    /* Step 7: Call the init function.
+     * Dependency ordering is ensured by step 0 (module_dep_resolve_list)
+     * which recursively loads and initializes all dependencies before
+     * we reach this point. */
     kprintf("[MOD] Initializing '%s' (entry=0x%llx)...\n",
             mod_name, (unsigned long long)entry_addr);
 
@@ -1349,6 +1352,17 @@ int module_elf_finalize(struct module_elf_context *ctx, const char *name)
                  mod_name, init_ret);
         return -1;
     }
+
+    /* Mark the module as LIVE now that init succeeded.
+     * module_set_live() also triggers processing of any deferred
+     * inits that were waiting for this module (D232 task 3). */
+    module_set_live(mod);
+
+    /* Apply any boot-time cmdline parameters now that module is live */
+    module_apply_cmdline_params(mod);
+
+    /* Create sysfs entries for parameters */
+    module_sysfs_add_params(mod);
 
     /* Step 8: Register module aliases for autoloading (M38)
      * Parse the comma-separated alias list and register each pattern.

@@ -488,6 +488,39 @@ void module_alias_unregister(const char *module_name);
  * The returned pointer is valid until the next alias operation. */
 const char *module_alias_find(const char *modalias);
 
+/* ── Module init ordering (D232 task 3) ──────────────────────────── */
+
+/* Transition a module from MODULE_LOADING to MODULE_LIVE after its
+ * init function succeeds.  Also triggers deferred init processing
+ * (any modules waiting for this module will be re-checked).
+ * Returns 0 on success, -EINVAL if mod is NULL or state is wrong. */
+int module_set_live(struct kernel_module *mod);
+
+/* Check whether all dependencies of @mod are in MODULE_LIVE state
+ * (i.e., fully loaded and initialized).  Returns 1 if all deps are
+ * live, 0 if any dependency is missing or still in LOADING state. */
+int module_deps_all_live(struct kernel_module *mod);
+
+/* Try to call a module's init function after ensuring all its
+ * dependencies are in MODULE_LIVE state.
+ *
+ * If dependencies are not yet initialized, the module is queued
+ * for deferred init and -EAGAIN is returned.  init will be retried
+ * automatically when module_set_live() is called for a dependency.
+ *
+ * @mod:   The module to initialize (must be in MODULE_LOADING state)
+ * @entry: The module's init entry function
+ *
+ * Returns 0 on success, negative errno on init failure, or -EAGAIN
+ * if init was deferred (dependencies not yet ready). */
+int module_init_with_deps(struct kernel_module *mod, module_entry_t entry);
+
+/* Process all pending deferred inits.
+ * Scans the deferred-init queue and calls module_init_with_deps()
+ * for each entry whose dependencies are now all live.
+ * Safe to call after any successful module_set_live(). */
+void module_process_deferred_inits(void);
+
 /* ── Module signing (appended signature support) ──────────────── */
 
 /** Signature format appended to module binary (like Linux MODULE_SIG_STRING).

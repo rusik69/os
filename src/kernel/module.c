@@ -81,6 +81,22 @@ static void module_scan_cmdline_params(void);
 
 /* ── Global module table ────────────────────────────────────────── */
 
+/* ── Deferred init tracking (D232 task 3) ──────────────────────────── */
+/* Maximum number of modules that can be waiting for deferred init */
+#define MODULE_DEFERRED_INIT_MAX 16
+
+/* An entry in the deferred init queue */
+struct deferred_init_entry {
+    struct kernel_module *mod;
+    module_entry_t       entry_fn;
+};
+
+/* Static pool for deferred init tracking */
+static struct deferred_init_entry
+    g_deferred_init[MODULE_DEFERRED_INIT_MAX];
+static int g_deferred_init_count = 0;
+static spinlock_t g_deferred_lock;
+
 /* ── Module version magic (vermagic) ────────────────────────────────
  *
  * This string records the kernel version and build configuration at the
@@ -133,6 +149,7 @@ void __init modules_init(void) {
         g_modules[i].module_id = i;
     }
     spinlock_init(&g_mod_lock);
+    spinlock_init(&g_deferred_lock);
     module_region_allocated = 0;
 
     /* Compute a random base offset for KASLR of module addresses.
@@ -465,9 +482,8 @@ int module_load(const char *name, module_entry_t entry) {
     mod->module_id = slot;
     INIT_LIST_HEAD(&mod->params);
 
-    /* Transition to LIVE — the caller is expected to call the entry point.
-     * If the entry succeeds, the caller should call module_set_live(mod). */
-    mod->state = MODULE_LIVE;
+    /* Remain in MODULE_LOADING state — the caller is expected to call
+     * the entry point and then module_set_live(mod) if init succeeds. */
 
     spinlock_irqsave_release(&g_mod_lock, irq_flags);
 
@@ -1435,6 +1451,261 @@ int module_sysfs_remove_params(struct kernel_module *mod)
     /* Recursively remove the entire module directory in sysfs */
     sysfs_remove_recursive(mod_dir);
     return 0;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+ *  Module init ordering (D232 task 3)
+ *
+ *  Ensures module init functions are called in dependency order.
+ *  Supports deferred initialization: if a module's dependencies are
+ *  not yet in MODULE_LIVE state, its init is queued and retried
+ *  when a dependency transitions to LIVE.
+ * ══════════════════════════════════════════════════════════════════════ */
+
+/* ── module_deps_all_live ─────────────────────────────────────────
+ *
+ * Check whether every dependency of @mod is in MODULE_LIVE state.
+ *
+ * This differs from module_deps_resolved() in that it checks the
+ * actual state of each dependency module rather than just checking
+ * whether the dependency was previously resolved (the loaded flag).
+ *
+ * Returns 1 if all dependencies are LIVE, 0 otherwise.
+ */
+int module_deps_all_live(struct kernel_module *mod)
+{
+    if (!mod)
+        return 0;
+
+    if (mod->num_deps == 0)
+        return 1; /* no deps = trivially live */
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_mod_lock, &irq_flags);
+
+    for (int i = 0; i < mod->num_deps; i++) {
+        const char *dep_name = mod->deps[i].name;
+        if (!dep_name || !dep_name[0])
+            continue;
+
+        /* Search for the dependency by name */
+        int found = 0;
+        for (int j = 0; j < MODULE_MAX; j++) {
+            if (g_modules[j].state == MODULE_LIVE &&
+                strcmp(g_modules[j].name, dep_name) == 0) {
+                found = 1;
+                break;
+            }
+        }
+
+        if (!found) {
+            spinlock_irqsave_release(&g_mod_lock, irq_flags);
+            return 0;
+        }
+    }
+
+    spinlock_irqsave_release(&g_mod_lock, irq_flags);
+    return 1;
+}
+
+/* ── module_init_with_deps ────────────────────────────────────────
+ *
+ * Try to initialize a module.  If all dependencies are LIVE, call
+ * the init function immediately.  If not, queue for deferred init.
+ *
+ * On successful init, transitions the module to LIVE via
+ * module_set_live() which also triggers deferred init processing.
+ *
+ * Returns 0 on success, negative errno on init failure, or -EAGAIN
+ * if init was deferred (dependencies not yet initialized).
+ */
+int module_init_with_deps(struct kernel_module *mod, module_entry_t entry)
+{
+    if (!mod || !entry)
+        return -EINVAL;
+
+    if (mod->state != MODULE_LOADING)
+        return -EINVAL;
+
+    /* Check if all dependencies are initialized */
+    if (!module_deps_all_live(mod)) {
+        /* Queue for deferred init */
+        uint64_t irq_flags;
+        spinlock_irqsave_acquire(&g_deferred_lock, &irq_flags);
+
+        if (g_deferred_init_count >= MODULE_DEFERRED_INIT_MAX) {
+            spinlock_irqsave_release(&g_deferred_lock, irq_flags);
+            kprintf("[MOD] Deferred init queue full for '%s'\n", mod->name);
+            return -EAGAIN; /* caller should retry later */
+        }
+
+        /* Check if already queued */
+        for (int i = 0; i < g_deferred_init_count; i++) {
+            if (g_deferred_init[i].mod == mod) {
+                spinlock_irqsave_release(&g_deferred_lock, irq_flags);
+                return -EAGAIN; /* already queued */
+            }
+        }
+
+        g_deferred_init[g_deferred_init_count].mod = mod;
+        g_deferred_init[g_deferred_init_count].entry_fn = entry;
+        g_deferred_init_count++;
+
+        spinlock_irqsave_release(&g_deferred_lock, irq_flags);
+
+        kprintf("[MOD] Deferred init for '%s' (waiting for dependencies)\n",
+                mod->name);
+        return -EAGAIN;
+    }
+
+    /* All dependencies are live — call the init function */
+    kprintf("[MOD] Initializing '%s' (entry=%p)...\n",
+            mod->name, (void *)(uintptr_t)entry);
+
+    int ret = entry();
+
+    if (ret != 0) {
+        kprintf("[MOD] ERROR: '%s' init returned %d\n",
+                mod->name, ret);
+        return ret;
+    }
+
+    kprintf("[MOD] Init of '%s' succeeded, transitioning to LIVE\n",
+            mod->name);
+    return 0;
+}
+
+/* ── module_set_live ──────────────────────────────────────────────
+ *
+ * Transition a module from MODULE_LOADING to MODULE_LIVE state.
+ *
+ * Called after a module's init function has returned success.
+ * Triggers processing of any deferred inits that were waiting for
+ * this module to become live.
+ *
+ * Returns 0 on success, -EINVAL if mod is NULL or not in LOADING.
+ */
+int module_set_live(struct kernel_module *mod)
+{
+    if (!mod)
+        return -EINVAL;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_mod_lock, &irq_flags);
+
+    if (mod->state != MODULE_LOADING) {
+        spinlock_irqsave_release(&g_mod_lock, irq_flags);
+        kprintf("[MOD] module_set_live('%s'): not in LOADING state (%d)\n",
+                mod->name, (int)mod->state);
+        return -EINVAL;
+    }
+
+    mod->state = MODULE_LIVE;
+    spinlock_irqsave_release(&g_mod_lock, irq_flags);
+
+    kprintf("[MOD] Module '%s' is now LIVE\n", mod->name);
+
+    /* After any module becomes LIVE, check if deferred modules now
+     * have all their dependencies satisfied. */
+    module_process_deferred_inits();
+
+    return 0;
+}
+
+/* ── module_process_deferred_inits ────────────────────────────────
+ *
+ * Scan the deferred init queue and try to initialize any module
+ * whose dependencies are now all in MODULE_LIVE state.
+ *
+ * Safe to call after any successful module_set_live().
+ * Modules that are still blocked by uninitialized dependencies
+ * remain in the queue for retry on the next module_set_live().
+ */
+void module_process_deferred_inits(void)
+{
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_deferred_lock, &irq_flags);
+
+    if (g_deferred_init_count == 0) {
+        spinlock_irqsave_release(&g_deferred_lock, irq_flags);
+        return;
+    }
+
+    int processed = 0;
+    int i = 0;
+
+    while (i < g_deferred_init_count) {
+        struct kernel_module *mod = g_deferred_init[i].mod;
+        module_entry_t entry = g_deferred_init[i].entry_fn;
+
+        /* Release the deferred lock while we check deps and possibly
+         * call init, since module_deps_all_live acquires g_mod_lock. */
+        spinlock_irqsave_release(&g_deferred_lock, irq_flags);
+
+        /* Check if module is ready (all deps live) */
+        if (mod && mod->state == MODULE_LOADING &&
+            module_deps_all_live(mod)) {
+
+            kprintf("[MOD] Processing deferred init for '%s' "
+                    "(dependencies now live)\n", mod->name);
+
+            int ret = entry();
+
+            if (ret == 0) {
+                module_set_live(mod);
+
+                /* Apply boot-time cmdline parameters now that init is done */
+                module_apply_cmdline_params(mod);
+
+                /* Create sysfs entries */
+                module_sysfs_add_params(mod);
+
+                kprintf("[MOD] Deferred init for '%s' succeeded\n",
+                        mod->name);
+                processed++;
+            } else {
+                kprintf("[MOD] Deferred init for '%s' returned %d, "
+                        "unloading\n", mod->name, ret);
+                /* Init failed — unload the module */
+                int mid = mod->module_id;
+                spinlock_irqsave_acquire(&g_deferred_lock, &irq_flags);
+                /* Remove this entry from queue */
+                if (i < g_deferred_init_count - 1) {
+                    memmove(&g_deferred_init[i],
+                            &g_deferred_init[i + 1],
+                            (size_t)(g_deferred_init_count - i - 1) *
+                            sizeof(struct deferred_init_entry));
+                }
+                g_deferred_init_count--;
+                spinlock_irqsave_release(&g_deferred_lock, irq_flags);
+
+                module_unload(mid);
+
+                /* Start loop again from this index (already shifted) */
+                continue;
+            }
+        }
+
+        /* Re-acquire lock to remove processed entry or advance */
+        spinlock_irqsave_acquire(&g_deferred_lock, &irq_flags);
+
+        if (processed > 0) {
+            /* Remove this entry (it was processed successfully) */
+            if (i < g_deferred_init_count - 1) {
+                memmove(&g_deferred_init[i],
+                        &g_deferred_init[i + 1],
+                        (size_t)(g_deferred_init_count - i - 1) *
+                        sizeof(struct deferred_init_entry));
+            }
+            g_deferred_init_count--;
+            processed = 0;
+            /* Stay at same index (shifted down) */
+        } else {
+            i++; /* move to next entry */
+        }
+    }
+
+    spinlock_irqsave_release(&g_deferred_lock, irq_flags);
 }
 
 /* ── module_find_sym: Find a symbol by name in all modules ──────────── */

@@ -268,7 +268,11 @@ static int __request_module_internal(const char *name, const char *params, int f
 
     kprintf("[MOD] request_module(%s): loaded as id=%d\n", name, result);
 
-    /* ── Step 5: Parse module parameters (if any) ────────────────── */
+    /* ── Step 5: Parse user-supplied module parameters (if any) ──
+     * Boot-time cmdline parameters and sysfs entries were already
+     * created by module_elf_finalize().  User-supplied params
+     * (via request_module_params or the name=value in the alias
+     * path) are applied here to override defaults. */
     if (params && params[0]) {
         struct kernel_module *mod = module_get_by_id(result);
         if (mod) {
@@ -280,14 +284,7 @@ static int __request_module_internal(const char *name, const char *params, int f
                 return (pret == -ENOENT) ? -ENOENT :
                        (pret == -ENOMEM) ? -ENOMEM : -EINVAL;
             }
-            /* Create sysfs entries for parameters */
-            module_sysfs_add_params(mod);
         }
-    } else {
-        /* Even without parameters, create sysfs entries */
-        struct kernel_module *mod = module_get_by_id(result);
-        if (mod)
-            module_sysfs_add_params(mod);
     }
 
     return result;

@@ -113,7 +113,9 @@ void module_async_work_handler(void *arg)
     int ret = entry();
 
     if (ret == 0) {
-        mod->state = MODULE_LIVE;
+        /* Use module_set_live() to transition LIVE and trigger
+         * processing of any deferred inits waiting for this module. */
+        module_set_live(mod);
         mod->flags &= ~(uint32_t)MODULE_FLAG_ASYNC_PROBE;
         kprintf("[MOD_ASYNC] Async init for '%s' completed successfully\\n",
                 mod->name);

@@ -9818,16 +9818,10 @@ static uint64_t sys_init_module(uint64_t path_addr, uint64_t params_addr)
 
     kprintf("[MOD] init_module(%s): loaded as id=%d\n", path, result);
 
-    /* Apply any boot-time cmdline parameters that match this module (M33).
-     * These are applied before the user-supplied params so that user
-     * params override cmdline defaults. */
-    {
-        struct kernel_module *mod = module_get_by_id(result);
-        if (mod)
-            module_apply_cmdline_params(mod);
-    }
-
-    /* Parse module parameters if provided (M29) */
+    /* Parse user-supplied module parameters (M29).
+     * Boot-time cmdline params and sysfs entries were already handled
+     * by module_elf_finalize().  User params are applied here to
+     * override any boot-time defaults. */
     if (params && params[0]) {
         struct kernel_module *mod = module_get_by_id(result);
         if (mod) {
@@ -9841,13 +9835,6 @@ static uint64_t sys_init_module(uint64_t path_addr, uint64_t params_addr)
                                   (uint64_t)-EINVAL);
             }
         }
-    }
-
-    /* Create sysfs entries for module parameters (M30) */
-    {
-        struct kernel_module *mod = module_get_by_id(result);
-        if (mod)
-            module_sysfs_add_params(mod);
     }
 
     return (uint64_t)result;
