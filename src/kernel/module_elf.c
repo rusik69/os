@@ -1243,6 +1243,25 @@ static uint64_t find_module_entry(const struct module_elf_context *ctx)
     return 0;
 }
 
+/*
+ * Find the module exit (cleanup) function in the symbol table.
+ * Standard .ko files use the symbol name "cleanup_module".
+ * Unlike init_module, a missing cleanup_module is not an error —
+ * some modules have no cleanup to perform.
+ */
+static uint64_t find_module_exit(const struct module_elf_context *ctx)
+{
+    for (int i = 1; i < ctx->num_syms; i++) {
+        const struct module_elf_sym *sym = &ctx->syms[i];
+        if (sym->name && sym->resolved &&
+            sym->value != 0 &&
+            strcmp(sym->name, "cleanup_module") == 0) {
+            return sym->value;
+        }
+    }
+    return 0;
+}
+
 int module_elf_finalize(struct module_elf_context *ctx, const char *name)
 {
     if (!ctx || !ctx->file_data) {
@@ -1330,6 +1349,24 @@ int module_elf_finalize(struct module_elf_context *ctx, const char *name)
     if (mod) {
         mod->base_addr = base;
         mod->size = total_size;
+    }
+
+    /* Find and set the exit (cleanup) function for this module.
+     * Standard .ko files use the symbol name "cleanup_module".
+     * Unlike init_module, a missing cleanup_module is not an error —
+     * modules without cleanup are common (they just don't get called
+     * on unload). */
+    if (mod) {
+        uint64_t exit_addr = find_module_exit(ctx);
+        if (exit_addr != 0) {
+            mod->exit_fn = (module_exit_t)exit_addr;
+            kprintf("[MOD_ELF] Found cleanup_module for '%s' at 0x%llx\n",
+                    mod_name, (unsigned long long)exit_addr);
+        } else {
+            mod->exit_fn = NULL;
+            kprintf("[MOD_ELF] No cleanup_module for '%s' — module has no exit function\n",
+                    mod_name);
+        }
     }
 
     /* Step 7: Call the init function.
