@@ -26,6 +26,7 @@
 #include "export.h"
 #include "printf.h"
 #include "string.h"
+#include "spinlock.h"
 
 /* ── Sorting ──────────────────────────────────────────────────────────
  *
@@ -55,6 +56,28 @@ extern struct ksym_entry __kallsyms_end[];
 /* Number of entries in the comprehensive table */
 static int g_kallsyms_count = 0;
 static int g_kallsyms_sorted = 0;
+
+/* ── Dynamic symbol table (module-to-module exports) ──────────────────
+ *
+ * When a loadable module is loaded, any symbols it exports via
+ * EXPORT_SYMBOL() or EXPORT_SYMBOL_GPL() are registered here so
+ * that subsequently loaded modules can resolve references against them.
+ *
+ * The table is a fixed-size array.  Entries are kept sorted by name
+ * so that find_ksym() can use binary search on the dynamic table too.
+ */
+
+struct ksym_dynamic_entry {
+    char     name[64];      /* symbol name (copied) */
+    uint64_t addr;          /* symbol address */
+    int      gpl_only;      /* 1 = GPL-only export */
+    int      in_use;        /* 1 = slot occupied */
+};
+
+static struct ksym_dynamic_entry g_dynamic_syms[KSYM_DYNAMIC_MAX];
+static int g_dynamic_count = 0;         /* number of in-use entries */
+static int g_dynamic_sorted = 0;        /* 1 = table is sorted */
+static spinlock_t g_ksym_lock;
 
 /* ── Sort the table by name (simple insertion sort) ───────────────── */
 
@@ -110,6 +133,36 @@ static void kallsyms_sort(void)
     g_kallsyms_sorted = 1;
 }
 
+/* Sort the dynamic module symbol table by name.
+ * The dynamic table is typically much smaller than the static table
+ * (a few to a few dozen entries), so insertion sort is fine. */
+static void dynamic_syms_sort(void)
+{
+    int n = g_dynamic_count;
+    if (n <= 1) {
+        g_dynamic_sorted = 1;
+        return;
+    }
+
+    for (int i = 0; i < n - 1; i++) {
+        int min_idx = i;
+        for (int j = i + 1; j < n; j++) {
+            if (strcmp(g_dynamic_syms[j].name,
+                       g_dynamic_syms[min_idx].name) < 0) {
+                min_idx = j;
+            }
+        }
+        if (min_idx != i) {
+            struct ksym_dynamic_entry tmp;
+            memcpy(&tmp, &g_dynamic_syms[i], sizeof(tmp));
+            memcpy(&g_dynamic_syms[i], &g_dynamic_syms[min_idx], sizeof(tmp));
+            memcpy(&g_dynamic_syms[min_idx], &tmp, sizeof(tmp));
+        }
+    }
+
+    g_dynamic_sorted = 1;
+}
+
 /* ── Public API ────────────────────────────────────────────────────── */
 
 /* Initialise the symbol table: compute count and sort. */
@@ -140,11 +193,22 @@ void __init ksym_init(void)
             kprintf(" ... (%d more)", g_ksym_count - 8);
         kprintf("\n");
     }
+
+    /* Initialise the dynamic module symbol table */
+    spinlock_init(&g_ksym_lock);
+    memset(g_dynamic_syms, 0, sizeof(g_dynamic_syms));
+    g_dynamic_count = 0;
+    g_dynamic_sorted = 0;
+
+    kprintf("[OK] ksym: dynamic symbol table ready (%d slots)\n",
+            KSYM_DYNAMIC_MAX);
 }
 
 /* Binary search for a symbol by name.
  * Returns the address (value) if found, or 0 if not found.
- * If gpl_ok is 0, GPL-only symbols are skipped (return 0). */
+ * If gpl_ok is 0, GPL-only symbols are skipped (return 0).
+ * Searches both the static kernel export table and the dynamic
+ * module-to-module symbol table. */
 uint64_t find_ksym(const char *name, int gpl_ok)
 {
     if (!name || !g_sorted || g_ksym_count == 0)
@@ -170,15 +234,37 @@ uint64_t find_ksym(const char *name, int gpl_ok)
             hi = mid - 1;
     }
 
+    /* Not found in static exports — try dynamic table */
+    if (!g_dynamic_sorted || g_dynamic_count == 0)
+        return 0;
+
+    lo = 0;
+    hi = g_dynamic_count - 1;
+    while (lo <= hi) {
+        int mid = lo + (hi - lo) / 2;
+        int cmp = strcmp(g_dynamic_syms[mid].name, name);
+
+        if (cmp == 0) {
+            if (!gpl_ok && g_dynamic_syms[mid].gpl_only)
+                return 0;
+            return g_dynamic_syms[mid].addr;
+        }
+
+        if (cmp < 0)
+            lo = mid + 1;
+        else
+            hi = mid - 1;
+    }
+
     return 0; /* not found */
 }
 
 /*
- * find_ksym_all — Search all kernel symbols (exported + comprehensive).
+ * find_ksym_all — Search all kernel symbols (exported + comprehensive + dynamic).
  *
  * This is the fallback symbol resolution used by the module loader.
- * It first tries find_ksym() (exported symbols), then falls back to
- * the comprehensive kallsyms table (all global symbols).
+ * It first tries find_ksym() (exported + dynamic symbols), then falls
+ * back to the comprehensive kallsyms table (all global symbols).
  *
  * Returns the symbol address on success, 0 on failure.
  */
@@ -187,7 +273,7 @@ uint64_t find_ksym_all(const char *name)
     if (!name)
         return 0;
 
-    /* First try exported symbols */
+    /* First try exported + dynamic symbols (find_ksym now covers both) */
     uint64_t addr = find_ksym(name, 1);
     if (addr != 0)
         return addr;
@@ -258,32 +344,150 @@ void ksym_dump_all(void)
     }
 }
 
-/* ── Stub: ksym_lookup ─────────────────────────────── */
-static void* ksym_lookup(const char *name)
+/* ── Dynamic symbol operations ──────────────────────────── */
+
+/* ksym_lookup — Look up a symbol by name across all tables.
+ * Returns the address, or NULL if not found.
+ * This is a void*-returning convenience wrapper around find_ksym_all(). */
+void *ksym_lookup(const char *name)
 {
-    (void)name;
-    kprintf("[ksym] ksym_lookup: not yet implemented\n");
+    uint64_t addr = find_ksym_all(name);
+    if (addr == 0)
+        return NULL;
+    return (void *)(uintptr_t)addr;
+}
+
+/* ksym_resolve — Reverse lookup: address → symbol name.
+ * Scans static export, kallsyms, and dynamic tables linearly.
+ * Returns a pointer to the static name string, or NULL if not found.
+ * The returned pointer is valid until next ksym_register/unregister. */
+const char *ksym_resolve(void *addr)
+{
+    if (!addr)
+        return NULL;
+
+    uint64_t target = (uint64_t)(uintptr_t)addr;
+
+    /* Search static export table */
+    for (int i = 0; i < g_ksym_count; i++) {
+        const struct ksym_entry *e = &__ksymtab_start[i];
+        if (e->addr == target)
+            return e->sym_name;
+    }
+
+    /* Search comprehensive kallsyms table */
+    for (int i = 0; i < g_kallsyms_count; i++) {
+        const struct ksym_entry *e = &__kallsyms_start[i];
+        if (e->addr == target)
+            return e->sym_name;
+    }
+
+    /* Search dynamic module symbol table */
+    for (int i = 0; i < g_dynamic_count; i++) {
+        if (g_dynamic_syms[i].in_use &&
+            g_dynamic_syms[i].addr == target)
+            return g_dynamic_syms[i].name;
+    }
+
+    return NULL;
+}
+
+/* ksym_register — Register a dynamically exported symbol (from a module).
+ * The entry is added to the dynamic symbol table, which is then re-sorted.
+ * Returns 0 on success, -1 on error (full table or duplicate). */
+int ksym_register(const char *name, void *addr, int gpl_only)
+{
+    if (!name || !name[0] || !addr)
+        return -1;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_ksym_lock, &irq_flags);
+
+    /* Check for duplicate name */
+    for (int i = 0; i < g_dynamic_count; i++) {
+        if (g_dynamic_syms[i].in_use &&
+            strcmp(g_dynamic_syms[i].name, name) == 0) {
+            spinlock_irqsave_release(&g_ksym_lock, irq_flags);
+            kprintf("[ksym] ksym_register: duplicate symbol '%s' ignored\n",
+                    name);
+            return -1;
+        }
+    }
+
+    /* Find a free slot */
+    int slot = -1;
+    for (int i = 0; i < KSYM_DYNAMIC_MAX; i++) {
+        if (!g_dynamic_syms[i].in_use) {
+            slot = i;
+            break;
+        }
+    }
+
+    if (slot < 0) {
+        spinlock_irqsave_release(&g_ksym_lock, irq_flags);
+        kprintf("[ksym] ksym_register: dynamic symbol table full "
+                "(%d entries)\n", KSYM_DYNAMIC_MAX);
+        return -1;
+    }
+
+    /* Fill the entry */
+    strncpy(g_dynamic_syms[slot].name, name, sizeof(g_dynamic_syms[slot].name) - 1);
+    g_dynamic_syms[slot].name[sizeof(g_dynamic_syms[slot].name) - 1] = '\0';
+    g_dynamic_syms[slot].addr = (uint64_t)(uintptr_t)addr;
+    g_dynamic_syms[slot].gpl_only = gpl_only;
+    g_dynamic_syms[slot].in_use = 1;
+    g_dynamic_count++;
+
+    /* Re-sort the table for binary search */
+    dynamic_syms_sort();
+
+    spinlock_irqsave_release(&g_ksym_lock, irq_flags);
+
+    kprintf("[ksym] Registered dynamic symbol: %s -> 0x%llx%s\n",
+            name, (unsigned long long)(uintptr_t)addr,
+            gpl_only ? " (GPL)" : "");
     return 0;
 }
-/* ── Stub: ksym_resolve ─────────────────────────────── */
-static const char* ksym_resolve(void *addr)
+
+/* ksym_unregister — Remove a dynamically registered symbol.
+ * Called when a module is unloaded to clean up its exported symbols.
+ * Returns 0 on success, -1 if not found. */
+int ksym_unregister(const char *name)
 {
-    (void)addr;
-    kprintf("[ksym] ksym_resolve: not yet implemented\n");
-    return 0;
-}
-/* ── Stub: ksym_register ─────────────────────────────── */
-static int ksym_register(const char *name, void *addr)
-{
-    (void)name;
-    (void)addr;
-    kprintf("[ksym] ksym_register: not yet implemented\n");
-    return 0;
-}
-/* ── Stub: ksym_unregister ─────────────────────────────── */
-static int ksym_unregister(const char *name)
-{
-    (void)name;
-    kprintf("[ksym] ksym_unregister: not yet implemented\n");
+    if (!name || !name[0])
+        return -1;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_ksym_lock, &irq_flags);
+
+    int found = -1;
+    for (int i = 0; i < g_dynamic_count; i++) {
+        if (g_dynamic_syms[i].in_use &&
+            strcmp(g_dynamic_syms[i].name, name) == 0) {
+            found = i;
+            break;
+        }
+    }
+
+    if (found < 0) {
+        spinlock_irqsave_release(&g_ksym_lock, irq_flags);
+        kprintf("[ksym] ksym_unregister: symbol '%s' not in dynamic table\n",
+                name);
+        return -1;
+    }
+
+    /* Remove by shifting entries down, then decrement count */
+    for (int i = found; i < g_dynamic_count - 1; i++) {
+        memcpy(&g_dynamic_syms[i], &g_dynamic_syms[i + 1],
+               sizeof(struct ksym_dynamic_entry));
+    }
+    memset(&g_dynamic_syms[g_dynamic_count - 1], 0,
+           sizeof(struct ksym_dynamic_entry));
+    g_dynamic_count--;
+
+    /* Table is still sorted after removal */
+    spinlock_irqsave_release(&g_ksym_lock, irq_flags);
+
+    kprintf("[ksym] Unregistered dynamic symbol: %s\n", name);
     return 0;
 }

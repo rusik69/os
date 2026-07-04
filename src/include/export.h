@@ -106,4 +106,41 @@ const struct ksym_entry *ksym_get_entry(int i);
 /* Dump all exported symbols via kprintf (for boot-time debugging). */
 void ksym_dump_all(void);
 
+/*
+ * ── Dynamic symbol API (module-to-module exports) ──────────────────────
+ *
+ * When a loadable module exporting symbols via EXPORT_SYMBOL() is loaded,
+ * those symbols must be registered in a dynamic symbol table so that
+ * subsequently loaded modules can resolve references against them.
+ *
+ * ksym_register() adds a symbol to the dynamic table.
+ * ksym_unregister() removes it (called during module unload).
+ * ksym_lookup() returns the address of a symbol, or NULL if not found.
+ * ksym_resolve() returns the name of a symbol at a given address, or NULL.
+ */
+
+/* Maximum number of dynamically registered module symbols */
+#define KSYM_DYNAMIC_MAX 256
+
+/* Register a dynamically exported symbol from a loadable module.
+ * @name:    Symbol name (will be copied internally).
+ * @addr:    Symbol address.
+ * @gpl_only: 1 if this is a GPL-only export, 0 for unrestricted.
+ * Returns 0 on success, -1 if the table is full or duplicate name exists. */
+int ksym_register(const char *name, void *addr, int gpl_only);
+
+/* Unregister a dynamically registered symbol.
+ * Returns 0 on success, -1 if not found. */
+int ksym_unregister(const char *name);
+
+/* Look up a symbol by name (covers all tables: exports + kallsyms + dynamic).
+ * Returns the address, or NULL if not found. */
+void *ksym_lookup(const char *name);
+
+/* Resolve an address to a symbol name (reverse lookup).
+ * Searches all tables (exported, kallsyms, dynamic).
+ * Returns a pointer to the name string, or NULL if not found.
+ * The returned pointer is valid until the next ksym_register/unregister. */
+const char *ksym_resolve(void *addr);
+
 #endif /* EXPORT_H */
