@@ -1505,7 +1505,9 @@ int fuse_process_notify(uint32_t notify_op,
 }
 
 #include "module.h"
+#ifndef MODULE
 fs_initcall(fuse_init);
+#endif
 
 /* ── fuse_umount ─────────────────────────────────────── */
 int fuse_umount(const char *target)

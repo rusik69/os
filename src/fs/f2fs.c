@@ -305,7 +305,9 @@ void f2fs_init(void)
     kprintf("[OK] F2FS — Flash-Friendly File System with checkpoint/NAT/SIT\n");
 }
 #include "module.h"
+#ifndef MODULE
 fs_initcall(f2fs_init);
+#endif
 
 /* ── f2fs_lookup ─────────────────────────────────────── */
 int f2fs_lookup(const char *name, void *parent)

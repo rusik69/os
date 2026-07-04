@@ -277,7 +277,9 @@ void erofs_init(void)
     kprintf("[OK] EROFS — Enhanced Read-Only File System with extent support\n");
 }
 #include "module.h"
+#ifndef MODULE
 fs_initcall(erofs_init);
+#endif
 
 /* ── erofs_lookup ─────────────────────────────────────── */
 int erofs_lookup(const char *name, void *parent)

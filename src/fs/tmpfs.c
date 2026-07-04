@@ -1831,7 +1831,9 @@ void __init tmpfs_init(void) {
     kprintf("[OK] tmpfs initialized\n");
 }
 #include "module.h"
+#ifndef MODULE
 fs_initcall(tmpfs_init);
+#endif
 
 /* ── tmpfs_umount ──────────────────────────────────────── */
 static int tmpfs_umount(const char *target)

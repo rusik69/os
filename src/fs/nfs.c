@@ -898,7 +898,9 @@ void nfs_init(void)
     kprintf("[OK] NFSv3 — Client (RPC/XDR + mount protocol)\n");
 }
 #include "module.h"
+#ifndef MODULE
 fs_initcall(nfs_init);
+#endif
 
 /* ── nfs_readdir — NFSv3 READDIR with cookie verifier ── */
 /*

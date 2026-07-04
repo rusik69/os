@@ -314,7 +314,9 @@ void vfs_quota_dump(void)
         kprintf("  (no quota entries)\n");
 }
 #include "module.h"
+#ifndef MODULE
 fs_initcall(vfs_quota_init);
+#endif
 
 /* ═══════════════════════════════════════════════════════════════
  *  Stub functions for future implementation

@@ -95,7 +95,9 @@ void jffs2_init(void)
     kprintf("[OK] JFFS2 — Journalling Flash File System v2 (read support)\n");
 }
 #include "module.h"
+#ifndef MODULE
 fs_initcall(jffs2_init);
+#endif
 
 /* ── jffs2_umount ────────────────────────────────────── */
 int jffs2_umount(const char *target)
