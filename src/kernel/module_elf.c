@@ -471,15 +471,18 @@ int module_elf_parse(struct module_elf_context *ctx)
          * cause subtle ABI corruption. */
         if (mod_vermagic) {
             if (strcmp(mod_vermagic, VERMAGIC_STRING) != 0) {
-                snprintf(ctx->error_msg, sizeof(ctx->error_msg),
-                         "module_elf: vermagic mismatch for '%s': "
-                         "kernel has \"%s\", module has \"%s\"",
-                         name ? name : "?",
-                         VERMAGIC_STRING, mod_vermagic);
-                return -1;
+                kprintf("[MOD_ELF] WARNING: vermagic mismatch for '%s': "
+                        "kernel has \"%s\", module has \"%s\"\n",
+                        name ? name : "?",
+                        VERMAGIC_STRING, mod_vermagic);
+                /* Taint the kernel — loading a module built for a
+                 * different kernel version may cause subtle ABI
+                 * corruption.  The module is still loaded. */
+                add_taint(TAINT_MODULE_VERMAGIC_MISMATCH);
+            } else {
+                kprintf("[MOD_ELF] Vermagic OK for '%s' (%s)\n",
+                        name ? name : "?", VERMAGIC_STRING);
             }
-            kprintf("[MOD_ELF] Vermagic OK for '%s' (%s)\n",
-                    name ? name : "?", VERMAGIC_STRING);
         } else {
             /* Modules without vermagic are allowed but warned.
              * During transition, not all modules may have it yet. */

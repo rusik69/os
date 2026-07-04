@@ -124,6 +124,25 @@ static struct kernel_module g_modules[MODULE_MAX];
 static spinlock_t g_mod_lock;
 static int g_mod_initialized = 0;
 
+/* ── Kernel taint state (D232 task 12) ──────────────────────────── */
+static unsigned int g_kernel_taint_mask = 0;
+static spinlock_t g_taint_lock;
+
+unsigned int kernel_tainted(void) {
+    return g_kernel_taint_mask;
+}
+
+void add_taint(unsigned int flag) {
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_taint_lock, &irq_flags);
+    if ((g_kernel_taint_mask & flag) == 0) {
+        g_kernel_taint_mask |= flag;
+        kprintf("[TAINT] Kernel tainted (mask now 0x%08x)\n",
+                (unsigned int)g_kernel_taint_mask);
+    }
+    spinlock_irqsave_release(&g_taint_lock, irq_flags);
+}
+
 /* ── Module memory region state (M10) ──────────────────────────────
  *
  * We manage a simple bump allocator within the 64 MB virtual region
@@ -150,6 +169,7 @@ void __init modules_init(void) {
     }
     spinlock_init(&g_mod_lock);
     spinlock_init(&g_deferred_lock);
+    spinlock_init(&g_taint_lock);
     module_region_allocated = 0;
 
     /* Compute a random base offset for KASLR of module addresses.

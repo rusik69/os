@@ -134,6 +134,22 @@ struct kernel_module *module_get_by_id(int id);
 /* Return the number of currently loaded modules. */
 int module_count(void);
 
+/* ── Kernel taint tracking ───────────────────────────────────────── */
+
+/* Module-related taint flags */
+#define TAINT_MODULE_VERMAGIC_MISMATCH  0x00000001U
+#define TAINT_MODULE_UNSIGNED           0x00000002U
+#define TAINT_MODULE_FORCED_LOAD        0x00000004U
+#define TAINT_MODULE_PROPRIETARY        0x00000008U
+
+/* Mark the kernel as tainted with the given flag.
+ * Once set, a taint flag cannot be cleared.
+ * Multiple flags can be OR'd together. */
+void add_taint(unsigned int flag);
+
+/* Return the kernel taint mask.  Zero means untainted. */
+unsigned int kernel_tainted(void);
+
 /* ── Module memory allocator (M10) ───────────────────────────────── */
 
 /* Allocate a block of the given size from the module virtual region.
