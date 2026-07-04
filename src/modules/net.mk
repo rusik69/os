@@ -23,6 +23,7 @@ obj-m += net/bridge.ko
 
 # ── Additional network protocol modules ─────────────────────────────────────
 obj-m += net/sctp.ko
+sctp-objs := net/sctp net/sctp_sm net/sctp_tsn
 obj-m += net/dccp.ko
 obj-m += net/mptcp.ko
 obj-m += net/macsec.ko

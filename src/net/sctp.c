@@ -1139,4 +1139,29 @@ EXPORT_SYMBOL(sctp_transport_remove_all);
 EXPORT_SYMBOL(sctp_handle_asconf);
 
 #include "module.h"
-module_init(sctp_init);
+
+/* Built-in kernel init: register via initcall system */
+#ifndef MODULE
+device_initcall(sctp_init);
+#endif
+
+/* Loadable module entry/exit */
+#ifdef MODULE
+int __init init_module(void)
+{
+    sctp_init();
+    kprintf("[sctp] module loaded\n");
+    return 0;
+}
+
+void __exit cleanup_module(void)
+{
+    sctp_initialized = 0;
+    kprintf("[sctp] module unloaded\n");
+}
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Hermes OS Kernel Team");
+MODULE_DESCRIPTION("SCTP: Stream Control Transmission Protocol (RFC 4960)");
+MODULE_VERSION("1.0");
+#endif /* MODULE */

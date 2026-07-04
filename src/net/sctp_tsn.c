@@ -400,5 +400,5 @@ EXPORT_SYMBOL(sctp_tsn_rcv_data);
 EXPORT_SYMBOL(sctp_tsn_build_sack);
 EXPORT_SYMBOL(sctp_tsn_process_sack);
 EXPORT_SYMBOL(sctp_stream_reset);
-#include "module.h"
-module_init(sctp_init);
+
+/* Companion file — no module_init (provided by sctp.c) */

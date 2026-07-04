@@ -747,8 +747,5 @@ EXPORT_SYMBOL(sctp_sm_start_shutdown);
 EXPORT_SYMBOL(sctp_sm_handle_shutdown);
 EXPORT_SYMBOL(sctp_sm_handle_shutdown_ack);
 EXPORT_SYMBOL(sctp_sm_handle_shutdown_complete);
-#include "module.h"
-module_init(sctp_init);
-MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("SCTP State Machine — INIT/INIT-ACK/COOKIE handshake");
-MODULE_AUTHOR("OS Kernel Team");
+
+/* Companion file — no module_init (provided by sctp.c) */

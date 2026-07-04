@@ -1493,5 +1493,16 @@ int dccp_rcv_response(int fd, uint32_t src_ip, uint16_t src_port)
     return 0;
 }
 
+/* ── Module cleanup ──────────────────────────────────────────── */
+void __exit dccp_cleanup(void)
+{
+    spinlock_acquire(&dccp_lock);
+    memset(dccp_socks, 0, sizeof(dccp_socks));
+    dccp_initialized = 0;
+    spinlock_release(&dccp_lock);
+    kprintf("[dccp] module unloaded\n");
+}
+
 #include "module.h"
 module_init(dccp_init);
+module_exit(dccp_cleanup);
