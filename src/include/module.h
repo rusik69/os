@@ -221,14 +221,14 @@ int module_deps_resolved(struct kernel_module *mod);
  * section and registers each param via module_add_param() before calling
  * the module's init function, making parameters immediately available to
  * init code and sysfs. */
-#define module_param(name, type, perm) \
-    static struct kernel_param __module_param_##name \
+#define module_param(pname, ptype, pperm) \
+    static struct kernel_param __module_param_##pname \
     __attribute__((section(".kparamvals"), used)) = { \
-        .name = #name, \
-        .type = PARAM_TYPE_##type, \
-        .data = &name, \
-        .data_len = sizeof(name), \
-        .perm = (perm), \
+        .name = #pname, \
+        .type = PARAM_TYPE_##ptype, \
+        .data = &pname, \
+        .data_len = sizeof(pname), \
+        .perm = (pperm), \
         .set_fn = NULL, \
         .get_fn = NULL, \
     }
@@ -241,14 +241,14 @@ int module_deps_resolved(struct kernel_module *mod);
  * It uses PARAM_TYPE_STRING so that module_param_set_value() copies the
  * incoming string (truncating if necessary) and always NUL-terminates.
  */
-#define module_param_string(name, buf, size, perm) \
-    static struct kernel_param __module_param_str_##name \
+#define module_param_string(pname, buf, size, pperm) \
+    static struct kernel_param __module_param_str_##pname \
     __attribute__((section(".kparamvals"), used)) = { \
-        .name = #name, \
+        .name = #pname, \
         .type = PARAM_TYPE_STRING, \
         .data = (buf), \
         .data_len = (size), \
-        .perm = (perm), \
+        .perm = (pperm), \
         .set_fn = NULL, \
         .get_fn = NULL, \
     }
@@ -259,10 +259,10 @@ int module_deps_resolved(struct kernel_module *mod);
  *        static int my_arr_num;
  *        module_param_array(my_arr, int, &my_arr_num, 0644);
  *
- * @name:  parameter name (used as the sysfs entry name)
- * @type:  element type (int, uint, long, etc. — must match PARAM_TYPE_*)
+ * @pname:  parameter name (used as the sysfs entry name)
+ * @ptype:  element type (int, uint, long, etc. — must match PARAM_TYPE_*)
  * @nump:  pointer to an int that receives the number of elements parsed
- * @perm:  sysfs permissions (0444, 0644, etc.)
+ * @pperm:  sysfs permissions (0444, 0644, etc.)
  *
  * The macro declares a PARAM_TYPE_STRING parameter internally; the actual
  * parsing of comma-separated values is handled by a registration helper
@@ -272,8 +272,8 @@ int module_deps_resolved(struct kernel_module *mod);
  * NOTE: The array must be statically allocated with enough room; there is
  * no dynamic resizing.  The default max is 64 elements.
  */
-#define module_param_array(name, type, nump, perm) \
-    static int __module_param_array_##name##_parse(const char *val, \
+#define module_param_array(pname, ptype, nump, pperm) \
+    static int __module_param_array_##pname##_parse(const char *val, \
                                                     struct kernel_param *kp) \
     { \
         (void)kp; \
@@ -291,29 +291,29 @@ int module_deps_resolved(struct kernel_module *mod);
             while (*p >= '0' && *p <= '9') \
                 v = v * 10 + (*p++ - '0'); \
             if (neg) v = -v; \
-            ((type *)(name))[count++] = (type)v; \
+            ((ptype *)(pname))[count++] = (ptype)v; \
             while (*p == ' ' || *p == '\t') p++; \
             if (*p == ',') p++; \
         } \
         if ((nump)) *(nump) = count; \
         return 0; \
     } \
-    static struct kernel_param __module_param_arr_##name \
+    static struct kernel_param __module_param_arr_##pname \
     __attribute__((section(".kparamvals"), used)) = { \
-        .name = #name, \
+        .name = #pname, \
         .type = PARAM_TYPE_STRING, \
-        .data = (name), \
-        .data_len = sizeof(name), \
-        .perm = (perm), \
-        .set_fn = __module_param_array_##name##_parse, \
+        .data = (pname), \
+        .data_len = sizeof(pname), \
+        .perm = (pperm), \
+        .set_fn = __module_param_array_##pname##_parse, \
         .get_fn = NULL, \
     }
 
 /* Module parameter macro with callback functions */
-#define module_param_cb(name, set_fn, get_fn) \
-    static struct kernel_param __module_param_cb_##name \
+#define module_param_cb(pname, set_fn, get_fn) \
+    static struct kernel_param __module_param_cb_##pname \
     __attribute__((section(".kparamvals"), used)) = { \
-        .name = #name, \
+        .name = #pname, \
         .type = PARAM_TYPE_INT, \
         .data = NULL, \
         .data_len = 0, \

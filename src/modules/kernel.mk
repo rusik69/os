@@ -14,3 +14,7 @@ obj-m += kernel/perf_events.ko
 obj-m += kernel/perf_branch.ko
 obj-m += kernel/hwlat_detector.ko
 obj-m += kernel/kgdb_stub.ko
+
+# Test modules for module loading/unloading lifecycle (D233)
+obj-m += modules/test_module.ko
+obj-m += modules/test_mod_deps.ko
