@@ -1,0 +1,21 @@
+# src/modules/Makefile.modules — Master module build configuration
+#
+# This file is included by the top-level Makefile to load all category
+# sub-makefiles that define obj-m entries and per-module object lists.
+#
+# Each category sub-makefile uses obj-m ?= or obj-m += to populate the
+# global module build list.  The build rules (compile/link) remain in
+# the top-level Makefile after this include.
+#
+# Category sub-makefiles:
+include src/modules/drivers.mk
+include src/modules/net.mk
+include src/modules/fs.mk
+include src/modules/memory.mk
+include src/modules/security.mk
+include src/modules/kernel.mk
+include src/modules/power.mk
+include src/modules/container.mk
+include src/modules/orch.mk
+include src/modules/ipc.mk
+include src/modules/shell.mk
