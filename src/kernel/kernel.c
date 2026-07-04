@@ -1096,7 +1096,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
         /* Networking subsystem inits */
         nf_init();
         pkt_sched_init();
+#ifndef MODULE
         bridge_init();
+#endif
         vlan_init();
         tun_init();
         net_ns_init();
