@@ -5,10 +5,15 @@
  * and inspecting kernel unit tests.
  *
  * Debugfs entries:
+ *   control    - Read available commands, write 'reset'/'list'/'status'/'run_all'
  *   run_all    - Write "1" to execute all registered test suites
- *   run/<name> - Write "1" to execute a specific suite by name
+ *   run_suite  - Write a suite name to run a specific suite
  *   results    - Read to get a summary of all test results
  *   status     - Read to get the current pass/fail counts
+ *   filter     - Write a substring to filter tests, write empty to clear
+ *   iterations - Read/write u32 iteration count (default 1)
+ *   verbose    - Read/write u32 verbosity: 0=quiet, 1=normal, 2=verbose
+ *   timeout_ms - Read/write u32 per-test timeout in ms (0=no timeout)
  *
  * Item 266: KUnit — kernel unit test framework
  */
@@ -39,10 +44,28 @@ static int g_total_assertion_fails = 0;
 static char g_filter[KUNIT_MAX_NAME];
 static int g_filter_active = 0;
 
+/* ── Test control settings ───────────────────────────────────────── */
+/* Number of iterations to run each test (1 = run once) */
+static uint32_t g_kunit_iterations = 1;
+
+/* Verbosity level: 0=quiet (only failures), 1=normal (default), 2=verbose */
+static uint32_t g_kunit_verbose = 1;
+
+/* Per-test timeout in milliseconds (0 = no timeout) */
+static uint32_t g_kunit_timeout_ms = 0;
+
+/* Buffer for the last run_suite command result */
+static char g_last_suite_result[256];
+
 /* ── Forward declarations ─────────────────────────────────────────── */
 static int  count_cases(struct kunit_suite *suite);
 static void kunit_run_all(void);
 static int  kunit_filter_write(const char *buf, int len);
+static void kunit_run_suite_by_name(const char *name);
+static void kunit_control_read(char *buf, int *len);
+static int  kunit_control_write(const char *buf, int len);
+static void kunit_run_suite_read(char *buf, int *len);
+static int  kunit_run_suite_write(const char *buf, int len);
 
 /* ── Registration ─────────────────────────────────────────────────── */
 
@@ -138,13 +161,18 @@ static void kunit_run_case(struct kunit_suite *suite, struct kunit_case *kc)
         /* Parameterized test: run once per parameter */
         for (int p = 0; kc->params[p].name != NULL; p++) {
             test_ctx.priv = kc->params[p].value;
-            kprintf("[KUNIT] RUN:   %s.%s[%s]\n", suite->name,
-                    test_ctx.name, kc->params[p].name);
+            if (g_kunit_verbose >= 2)
+                kprintf("[KUNIT] RUN:   %s.%s[%s]\n", suite->name,
+                        test_ctx.name, kc->params[p].name);
+            else if (g_kunit_verbose >= 1)
+                kprintf("[KUNIT] RUN:   %s.%s\n", suite->name,
+                        test_ctx.name);
             kc->run(&test_ctx);
         }
     } else {
         /* Normal test */
-        kprintf("[KUNIT] RUN:   %s.%s\n", suite->name, test_ctx.name);
+        if (g_kunit_verbose >= 2)
+            kprintf("[KUNIT] RUN:   %s.%s\n", suite->name, test_ctx.name);
         kc->run(&test_ctx);
     }
 
@@ -198,12 +226,21 @@ static void kunit_run_all(void)
 {
     kunit_reset();
     kprintf("\n========================================\n");
-    kprintf("[KUNIT] Running all %d test suites\n", g_suite_count);
+    kprintf("[KUNIT] Running all %d test suites", g_suite_count);
+    if (g_kunit_iterations > 1)
+        kprintf(" (%d iterations)", g_kunit_iterations);
+    kprintf("\n");
     kprintf("========================================\n");
 
-    for (int i = 0; i < g_suite_count; i++) {
-        if (g_suites[i])
-            kunit_run_suite(g_suites[i]);
+    for (int iter = 0; iter < (int)g_kunit_iterations; iter++) {
+        if (g_kunit_iterations > 1)
+            kprintf("[KUNIT] --- Iteration %d/%d ---\n",
+                    iter + 1, g_kunit_iterations);
+
+        for (int i = 0; i < g_suite_count; i++) {
+            if (g_suites[i])
+                kunit_run_suite(g_suites[i]);
+        }
     }
 
     kprintf("========================================\n");
@@ -325,9 +362,22 @@ void kunit_init(void)
                            NULL,
                            kunit_filter_write);
 
+    /* Test control entries */
+    debugfs_create_rw_file("kunit/control",
+                           kunit_control_read,
+                           kunit_control_write);
+    debugfs_create_rw_file("kunit/run_suite",
+                           kunit_run_suite_read,
+                           kunit_run_suite_write);
+    debugfs_create_u32("kunit/iterations", &g_kunit_iterations);
+    debugfs_create_u32("kunit/verbose", &g_kunit_verbose);
+    debugfs_create_u32("kunit/timeout_ms", &g_kunit_timeout_ms);
+
     kprintf("[OK] KUnit: Kernel unit test framework initialized "
-            "(%d suite slots, filter=%s)\n", KUNIT_MAX_SUITES,
-            g_filter_active ? g_filter : "none");
+            "(%d suite slots, filter=%s, %d iterations, verbose=%d)\n",
+            KUNIT_MAX_SUITES,
+            g_filter_active ? g_filter : "none",
+            g_kunit_iterations, g_kunit_verbose);
 }
 
 /* ── Filter API ───────────────────────────────────────────────────── */
@@ -380,6 +430,169 @@ static int kunit_filter_write(const char *buf, int len)
         kprintf("[KUNIT] Filter set to: '%s'\n", pattern);
     }
 
+    return 0;
+}
+
+/* ── kunit_run_suite_by_name — run a specific suite ──────────────── */
+
+static void kunit_run_suite_by_name(const char *name)
+{
+    if (!name || !name[0]) {
+        kprintf("[KUNIT] No suite name specified\n");
+        return;
+    }
+
+    spinlock_acquire(&g_kunit_lock);
+
+    kunit_reset();
+
+    /* Find the suite by name (exact match) */
+    int found = -1;
+    for (int i = 0; i < g_suite_count; i++) {
+        if (g_suites[i] && strcmp(g_suites[i]->name, name) == 0) {
+            found = i;
+            break;
+        }
+    }
+
+    spinlock_release(&g_kunit_lock);
+
+    if (found < 0) {
+        kprintf("[KUNIT] Suite '%s' not found\n", name);
+        snprintf(g_last_suite_result, sizeof(g_last_suite_result),
+                 "ERROR: suite '%s' not found", name);
+        return;
+    }
+
+    kprintf("\n========================================\n");
+    kprintf("[KUNIT] Running suite: %s\n", name);
+    kprintf("========================================\n");
+
+    for (int iter = 0; iter < (int)g_kunit_iterations; iter++) {
+        if (g_kunit_iterations > 1)
+            kprintf("[KUNIT] --- Iteration %d/%d ---\n",
+                    iter + 1, g_kunit_iterations);
+        kunit_run_suite(g_suites[found]);
+    }
+
+    kprintf("========================================\n");
+    kprintf("[KUNIT] Suite '%s': %d passed, %d failed, "
+            "%d assertions (%d failures)\n",
+            name, g_total_tests_passed, g_total_tests_failed,
+            g_total_assertions, g_total_assertion_fails);
+    kprintf("========================================\n\n");
+
+    snprintf(g_last_suite_result, sizeof(g_last_suite_result),
+             "Suite '%s': %d passed, %d failed (%d assertions, %d failures)",
+             name, g_total_tests_passed, g_total_tests_failed,
+             g_total_assertions, g_total_assertion_fails);
+}
+
+/* ── Debugfs: /sys/kernel/debug/kunit/control ────────────────────── */
+
+static void kunit_control_read(char *buf, int *len)
+{
+    int pos = 0;
+    int max = 1024;
+    pos += snprintf(buf + pos, (size_t)(max - pos),
+                    "KUnit Control Interface\n"
+                    "=======================\n"
+                    "Commands (write one):\n"
+                    "  reset     - Reset all test results\n"
+                    "  list      - List registered suites\n"
+                    "  run_all   - Run all registered tests\n"
+                    "  status    - Show current test status\n"
+                    "\n"
+                    "Settings files:\n"
+                    "  iterations - Test repeat count (u32, default 1)\n"
+                    "  verbose    - Verbosity 0=quiet 1=normal 2=verbose\n"
+                    "  timeout_ms - Per-test timeout in ms (0=no timeout)\n"
+                    "  run_suite  - Write suite name to run that suite\n"
+                    "\n"
+                    "Current status: %d suites registered, "
+                    "%d tests run, %d passed, %d failed\n",
+                    g_suite_count,
+                    g_total_tests_run, g_total_tests_passed,
+                    g_total_tests_failed);
+    *len = (pos < max) ? pos : (max - 1);
+    if (*len < 0) *len = 0;
+}
+
+static int kunit_control_write(const char *buf, int len)
+{
+    if (!buf || len <= 0)
+        return 0;
+
+    /* Copy and null-terminate */
+    char cmd[64];
+    int copy_len = len < (int)sizeof(cmd) - 1 ? len : (int)sizeof(cmd) - 1;
+    memcpy(cmd, buf, copy_len);
+    cmd[copy_len] = '\0';
+
+    /* Strip trailing whitespace/newline */
+    while (copy_len > 0 && (cmd[copy_len - 1] == '\n' ||
+           cmd[copy_len - 1] == '\r' || cmd[copy_len - 1] == ' '))
+        cmd[--copy_len] = '\0';
+
+    if (strcmp(cmd, "reset") == 0) {
+        kunit_reset();
+        kprintf("[KUNIT] Test results reset\n");
+    } else if (strcmp(cmd, "list") == 0) {
+        kprintf("[KUNIT] Registered suites (%d):\n", g_suite_count);
+        for (int i = 0; i < g_suite_count; i++) {
+            if (g_suites[i]) {
+                kprintf("  %2d: %s (%d cases)\n",
+                        i, g_suites[i]->name,
+                        count_cases(g_suites[i]));
+            }
+        }
+    } else if (strcmp(cmd, "status") == 0) {
+        kprintf("[KUNIT] Status: %d suites, %d tests run, "
+                "%d passed, %d failed, %d assertions (%d fails)\n",
+                g_suite_count,
+                g_total_tests_run, g_total_tests_passed,
+                g_total_tests_failed,
+                g_total_assertions, g_total_assertion_fails);
+    } else if (strcmp(cmd, "run_all") == 0) {
+        kunit_run_all();
+    } else {
+        kprintf("[KUNIT] Unknown control command: '%s'. "
+                "Try: reset, list, status, run_all\n", cmd);
+    }
+
+    return 0;
+}
+
+/* ── Debugfs: /sys/kernel/debug/kunit/run_suite ───────────────────── */
+
+static void kunit_run_suite_read(char *buf, int *len)
+{
+    int pos = snprintf(buf, 256, "%s\n", g_last_suite_result);
+    *len = pos;
+}
+
+static int kunit_run_suite_write(const char *buf, int len)
+{
+    if (!buf || len <= 0)
+        return 0;
+
+    /* Copy and null-terminate */
+    char name[KUNIT_MAX_NAME];
+    int copy_len = len < (int)sizeof(name) - 1 ? len : (int)sizeof(name) - 1;
+    memcpy(name, buf, copy_len);
+    name[copy_len] = '\0';
+
+    /* Strip trailing whitespace/newline */
+    while (copy_len > 0 && (name[copy_len - 1] == '\n' ||
+           name[copy_len - 1] == '\r' || name[copy_len - 1] == ' '))
+        name[--copy_len] = '\0';
+
+    if (copy_len == 0) {
+        kprintf("[KUNIT] No suite name provided\n");
+        return 0;
+    }
+
+    kunit_run_suite_by_name(name);
     return 0;
 }
 

@@ -33,8 +33,16 @@
  *        kunit_register_suite(&my_suite);
  *
  *   3. Run from shell:
+ *        # echo run_all > /sys/kernel/debug/kunit/control
  *        # echo 1 > /sys/kernel/debug/kunit/run_all
+ *        # echo my_suite > /sys/kernel/debug/kunit/run_suite
  *        # cat /sys/kernel/debug/kunit/results
+ *        # echo reset > /sys/kernel/debug/kunit/control
+ *        # echo 2 > /sys/kernel/debug/kunit/verbose
+ *        # echo 5 > /sys/kernel/debug/kunit/iterations
+ *   4. Filter by suite/test name:
+ *        # echo pmm > /sys/kernel/debug/kunit/filter
+ *        # echo 1 > /sys/kernel/debug/kunit/run_all
  */
 
 /* Maximum number of test suites */
