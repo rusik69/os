@@ -18,6 +18,28 @@
 #include "spinlock.h"
 #include "string.h"
 
+/* ── Test module parameters (D233 task 2) ──────────────────────────
+ *
+ * These parameters are registered automatically by the ELF module
+ * loader via the .kparamvals section.  They can be set at load time
+ * via insmod param=value and read via /sys/module/test_module/parameters/.
+ *
+ * Supported types for testing:
+ *   - test_int:       plain integer
+ *   - test_debug:     boolean (0/1)
+ *   - test_string:    fixed-size string buffer
+ *   - test_name:      char pointer (read-only)
+ */
+
+static int test_int = 42;
+static int test_debug = 0;
+static char test_string[64] = "default";
+static const char *test_name = "test_module";
+
+module_param(test_int, INT, 0644);
+module_param(test_debug, BOOL, 0644);
+module_param_string(test_string, test_string, sizeof(test_string), 0644);
+
 /* ── State tracking ─────────────────────────────────────────────── */
 
 enum test_mod_state {
