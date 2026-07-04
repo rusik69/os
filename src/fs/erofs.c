@@ -279,6 +279,13 @@ void erofs_init(void)
 #include "module.h"
 #ifndef MODULE
 fs_initcall(erofs_init);
+#else
+int __init init_module(void) { erofs_init(); return 0; }
+void __exit cleanup_module(void) {}
+MODULE_LICENSE("GPL v2");
+MODULE_AUTHOR("Hermes OS Kernel Team");
+MODULE_DESCRIPTION("EROFS — Enhanced Read-Only File System with extent support");
+MODULE_VERSION("1.0");
 #endif
 
 /* ── erofs_lookup ─────────────────────────────────────── */
