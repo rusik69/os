@@ -1223,6 +1223,105 @@ int module_elf_set_perms(struct module_elf_context *ctx)
 }
 
 /* ══════════════════════════════════════════════════════════════════════
+ *  M29 — Module parameter discovery from .kparamvals section
+ * ══════════════════════════════════════════════════════════════════════ */
+
+/*
+ * module_elf_load_params — Scan the .kparamvals ELF section and register
+ * all declared module parameters with the module system.
+ *
+ * The module_param(), module_param_string(), module_param_array(), and
+ * module_param_cb() macros place struct kernel_param entries into a
+ * custom ELF section named ".kparamvals".  After the module sections
+ * are loaded to memory and relocated (so that the .data pointers in
+ * each kernel_param point to the correct variables in module memory),
+ * this function iterates those entries and calls module_add_param()
+ * for each one, making them available for parsing and sysfs.
+ *
+ * This must be called AFTER module_elf_load_sections() AND
+ * module_elf_apply_rela() (so that .data pointers are valid) but
+ * BEFORE calling the module's init function (so the init code can
+ * rely on its parameters having been set).
+ *
+ * @ctx:  Parsed and loaded/relocated module context.
+ * @mod:  The kernel_module struct (must already be registered via
+ *        module_load() so that module_add_param() can link params).
+ *
+ * Returns the number of parameters loaded, or 0 if none / no section.
+ * Never fails — a missing or empty .kparamvals section is normal
+ * for modules with no declared parameters.
+ */
+int module_elf_load_params(const struct module_elf_context *ctx,
+                            struct kernel_module *mod)
+{
+    if (!ctx || !mod)
+        return 0;
+
+    /* Find the .kparamvals section */
+    int kpv_idx = module_elf_find_section(ctx, ".kparamvals");
+    if (kpv_idx < 0)
+        return 0; /* No param section — not an error */
+
+    const struct module_elf_section *sec = &ctx->sections[kpv_idx];
+    if (!sec->loaded || sec->mem_addr == 0 || sec->file_size == 0)
+        return 0;
+
+    /* The section data resides at the loaded virtual address.
+     * struct kernel_param entries are laid out contiguously. */
+    uint64_t vaddr = sec->mem_addr;
+    uint64_t size = sec->file_size;  /* content size from the file */
+
+    /* Sanity: size must be a multiple of kernel_param */
+    if (size < sizeof(struct kernel_param) ||
+        size % sizeof(struct kernel_param) != 0) {
+        kprintf("[MOD_ELF] Warning: .kparamvals section size %llu is "
+                "not a multiple of kernel_param (%zu) in '%s'\n",
+                (unsigned long long)size,
+                sizeof(struct kernel_param),
+                ctx->name);
+        return 0;
+    }
+
+    int count = (int)(size / sizeof(struct kernel_param));
+    int registered = 0;
+
+    for (int i = 0; i < count; i++) {
+        const struct kernel_param *kp_src =
+            (const struct kernel_param *)(vaddr + (uint64_t)i *
+                                         sizeof(struct kernel_param));
+
+        if (kp_src->name[0] == '\0')
+            continue;
+
+        /* Register the parameter with the module system.
+         * module_add_param() kmemdup's the struct, so we pass all fields
+         * from the section-resident kernel_param. */
+        int ret = module_add_param(mod,
+                                   kp_src->name,
+                                   kp_src->type,
+                                   kp_src->data,
+                                   kp_src->data_len,
+                                   kp_src->perm,
+                                   kp_src->set_fn,
+                                   kp_src->get_fn);
+        if (ret < 0) {
+            kprintf("[MOD_ELF] Failed to register param '%s' for '%s': "
+                    "error %d\n",
+                    kp_src->name, ctx->name, ret);
+            continue;
+        }
+        registered++;
+    }
+
+    if (registered > 0) {
+        kprintf("[MOD_ELF] Registered %d parameter(s) from .kparamvals "
+                "for '%s'\n", registered, ctx->name);
+    }
+
+    return registered;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
  *  M16 — Module finalization (init + register)
  * ══════════════════════════════════════════════════════════════════════ */
 
@@ -1332,7 +1431,7 @@ int module_elf_finalize(struct module_elf_context *ctx, const char *name)
 
     module_entry_t entry_fn = (module_entry_t)entry_addr;
 
-    /* Step 6: Register with module system */
+    /* Step 7: Register with module system */
     const char *mod_name = name ? name : ctx->name;
     int mod_id = module_load(mod_name, entry_fn);
     if (mod_id < 0) {
@@ -1346,6 +1445,26 @@ int module_elf_finalize(struct module_elf_context *ctx, const char *name)
 
     /* Record the module's base address and size for later unload */
     struct kernel_module *mod = module_find(mod_name);
+
+    /* Step 7a: Discover and register module parameters from .kparamvals
+     * section (M29).  This must happen BEFORE calling the module's init
+     * function so that:
+     *   (a) init code can rely on parameters having been set already,
+     *   (b) boot-time cmdline parameters (module_apply_cmdline_params)
+     *       can find the registered kernel_param entries.
+     *
+     * This is called after sections are loaded and relocated (so that
+     * the .data pointers in each kernel_param are valid virtual addresses
+     * pointing to the correct variables in module memory). */
+    if (mod) {
+        int nparams = module_elf_load_params(ctx, mod);
+        if (nparams > 0) {
+            kprintf("[MOD_ELF] Auto-registered %d parameter(s) from "
+                    ".kparamvals section for '%s'\n", nparams, mod_name);
+        }
+    }
+
+    /* Step 8: Set base addr and exit function */
     if (mod) {
         mod->base_addr = base;
         mod->size = total_size;

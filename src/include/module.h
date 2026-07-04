@@ -182,9 +182,15 @@ int module_deps_resolved(struct kernel_module *mod);
 
 /* ── Convenience macros ──────────────────────────────────────────── */
 
-/* Simple integer module parameter macro */
+/* Simple integer module parameter macro — places the kernel_param struct
+ * into the .kparamvals ELF section for automatic discovery by the module
+ * loader.  When the module is loaded, module_elf_load_params() scans this
+ * section and registers each param via module_add_param() before calling
+ * the module's init function, making parameters immediately available to
+ * init code and sysfs. */
 #define module_param(name, type, perm) \
-    static struct kernel_param __module_param_##name = { \
+    static struct kernel_param __module_param_##name \
+    __attribute__((section(".kparamvals"), used)) = { \
         .name = #name, \
         .type = PARAM_TYPE_##type, \
         .data = &name, \
@@ -192,9 +198,6 @@ int module_deps_resolved(struct kernel_module *mod);
         .perm = (perm), \
         .set_fn = NULL, \
         .get_fn = NULL, \
-    }; \
-    __attribute__((constructor)) static void __register_param_##name(void) { \
-        (void)__module_param_##name; \
     }
 
 /* String module parameter — copies a string value into a fixed-size buffer.
@@ -206,7 +209,8 @@ int module_deps_resolved(struct kernel_module *mod);
  * incoming string (truncating if necessary) and always NUL-terminates.
  */
 #define module_param_string(name, buf, size, perm) \
-    static struct kernel_param __module_param_str_##name = { \
+    static struct kernel_param __module_param_str_##name \
+    __attribute__((section(".kparamvals"), used)) = { \
         .name = #name, \
         .type = PARAM_TYPE_STRING, \
         .data = (buf), \
@@ -214,9 +218,6 @@ int module_deps_resolved(struct kernel_module *mod);
         .perm = (perm), \
         .set_fn = NULL, \
         .get_fn = NULL, \
-    }; \
-    __attribute__((constructor)) static void __register_param_str_##name(void) { \
-        (void)__module_param_str_##name; \
     }
 
 /* Array module parameter — parses comma-separated values into a C array.
@@ -264,7 +265,8 @@ int module_deps_resolved(struct kernel_module *mod);
         if ((nump)) *(nump) = count; \
         return 0; \
     } \
-    static struct kernel_param __module_param_arr_##name = { \
+    static struct kernel_param __module_param_arr_##name \
+    __attribute__((section(".kparamvals"), used)) = { \
         .name = #name, \
         .type = PARAM_TYPE_STRING, \
         .data = (name), \
@@ -272,14 +274,12 @@ int module_deps_resolved(struct kernel_module *mod);
         .perm = (perm), \
         .set_fn = __module_param_array_##name##_parse, \
         .get_fn = NULL, \
-    }; \
-    __attribute__((constructor)) static void __register_param_arr_##name(void) { \
-        (void)__module_param_arr_##name; \
     }
 
 /* Module parameter macro with callback functions */
 #define module_param_cb(name, set_fn, get_fn) \
-    static struct kernel_param __module_param_cb_##name = { \
+    static struct kernel_param __module_param_cb_##name \
+    __attribute__((section(".kparamvals"), used)) = { \
         .name = #name, \
         .type = PARAM_TYPE_INT, \
         .data = NULL, \
@@ -287,9 +287,6 @@ int module_deps_resolved(struct kernel_module *mod);
         .perm = 0644, \
         .set_fn = set_fn, \
         .get_fn = get_fn, \
-    }; \
-    __attribute__((constructor)) static void __register_param_cb_##name(void) { \
-        (void)__module_param_cb_##name; \
     }
 
 /* Helper for token pasting with __LINE__ expansion */

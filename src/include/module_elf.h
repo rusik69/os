@@ -289,4 +289,22 @@ int module_elf_finalize(struct module_elf_context *ctx, const char *name);
 int module_elf_find_section(const struct module_elf_context *ctx,
                             const char *name);
 
+/*
+ * module_elf_load_params — Scan the .kparamvals ELF section and register
+ * all declared module parameters with the module system.
+ *
+ * This is called during module_elf_finalize() after sections are loaded
+ * and relocated but before the module's init function runs.  The .data
+ * pointers in each kernel_param entry must be valid (relocated) at this
+ * point so that module_add_param() captures the correct addresses.
+ *
+ * @ctx:  Parsed and loaded/relocated module context.
+ * @mod:  The kernel_module struct (must already be registered).
+ *
+ * Returns the number of parameters loaded, or 0 if none / no section.
+ */
+struct kernel_module; /* forward declaration */
+int module_elf_load_params(const struct module_elf_context *ctx,
+                            struct kernel_module *mod);
+
 #endif /* MODULE_ELF_H */
