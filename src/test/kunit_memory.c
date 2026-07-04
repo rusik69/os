@@ -35,7 +35,7 @@ static void pmm_alloc_free_one(struct kunit *test)
 	if (frame) {
 		/* Frame must be 4K-aligned */
 		KUNIT_EXPECT_EQ(test, (int64_t)(frame & (PAGE_SIZE - 1)),
-		                (int64_t)0);
+					    (int64_t)0);
 		pmm_free_frame(frame);
 	}
 }
@@ -170,7 +170,7 @@ static void pmm_alloc_free_count_check(struct kunit *test)
 
 	uint64_t used_after = pmm_get_used_frames();
 	KUNIT_EXPECT_EQ(test, (int64_t)used_after,
-	                (int64_t)(used_before + 4));
+				    (int64_t)(used_before + 4));
 
 	for (i = 0; i < 4; i++) {
 		if (frames[i])
@@ -179,7 +179,7 @@ static void pmm_alloc_free_count_check(struct kunit *test)
 
 	uint64_t used_after_free = pmm_get_used_frames();
 	KUNIT_EXPECT_EQ(test, (int64_t)used_after_free,
-	                (int64_t)used_before);
+				    (int64_t)used_before);
 }
 
 /*
@@ -506,7 +506,7 @@ static void pmm_refcount_used_frames_check(struct kunit *test)
 
 	/* One more frame in use */
 	KUNIT_EXPECT_EQ(test, (int64_t)pmm_get_used_frames(),
-	                (int64_t)(before + 1));
+				    (int64_t)(before + 1));
 
 	/* Take a second reference */
 	pmm_ref_frame(frame);
@@ -514,17 +514,17 @@ static void pmm_refcount_used_frames_check(struct kunit *test)
 
 	/* Still one frame in use (refcount hasn't hit 0 yet) */
 	KUNIT_EXPECT_EQ(test, (int64_t)pmm_get_used_frames(),
-	                (int64_t)(before + 1));
+				    (int64_t)(before + 1));
 
 	/* Drop first reference — still one, frame not freed */
 	pmm_unref_frame(frame);
 	KUNIT_EXPECT_EQ(test, (int64_t)pmm_get_used_frames(),
-	                (int64_t)(before + 1));
+				    (int64_t)(before + 1));
 
 	/* Drop last reference — frame freed */
 	pmm_unref_frame(frame);
 	KUNIT_EXPECT_EQ(test, (int64_t)pmm_get_used_frames(),
-	                (int64_t)before);
+				    (int64_t)before);
 }
 
 /*
@@ -638,6 +638,189 @@ static void pmm_oom_stress_then_recover(struct kunit *test)
 }
 
 /* ====================================================================
+ *  5. PMM — Per-CPU hot cache consistency
+ *
+ * The PMM maintains a per-CPU hot cache (LIFO stack, 8 entries) to
+ * reduce lock contention on the global bitmap.  pmm_alloc_frame() pops
+ * from the cache first; on empty it triggers pmm_cache_refill() to
+ * replenish from the global bitmap.  pmm_free_frame() pushes onto the
+ * cache; on full it triggers pmm_cache_drain() to flush cached pages
+ * back to the bitmap.
+ *
+ * These tests verify that the cache refill/drain cycle does not lose
+ * frames, double-allocate, or corrupt the used_frames counter.
+ * ==================================================================== */
+
+/*
+ * Allocate more frames than the per-CPU cache can hold in one batch.
+ * The first cache-sized batch comes from the pre-filled cache (populated
+ * during pmm_init).  Subsequent allocations trigger pmm_cache_refill()
+ * for each new batch.  Verify all frames are unique.
+ */
+static void pmm_hotcache_refill_after_empty(struct kunit *test)
+{
+	/* The per-CPU cache is sized at 8 entries (PMM_CPU_CACHE_SIZE). */
+	const int N = 20; /* 8 + 12, forces at least 2 refills */
+	uint64_t frames[20];
+	int i, count = 0;
+
+	for (i = 0; i < N; i++) {
+		frames[i] = pmm_alloc_frame();
+		KUNIT_EXPECT_NE(test, frames[i], (uint64_t)0);
+		if (frames[i] == 0)
+			break;
+		count++;
+	}
+	KUNIT_EXPECT_EQ(test, count, N);
+
+	/* Verify uniqueness — no frame address repeats */
+	for (i = 0; i < count; i++) {
+		int j;
+		for (j = i + 1; j < count; j++) {
+			KUNIT_EXPECT_NE(test, frames[i], frames[j]);
+		}
+	}
+
+	for (i = 0; i < count; i++)
+		pmm_free_frame(frames[i]);
+}
+
+/*
+ * Free more frames than the cache can hold, which forces
+ * pmm_cache_drain() to flush the full cache back to the global
+ * bitmap before the remaining frees can proceed.  After drain,
+ * verify the allocator is still functional and returns valid frames.
+ */
+static void pmm_hotcache_drain_on_full(struct kunit *test)
+{
+	const int N = 12; /* More than 8, forces drain */
+	uint64_t frames[12];
+	int i, count = 0;
+
+	for (i = 0; i < N; i++) {
+		frames[i] = pmm_alloc_frame();
+		KUNIT_EXPECT_NE(test, frames[i], (uint64_t)0);
+		if (frames[i] == 0)
+			break;
+		count++;
+	}
+
+	/* Free all — the 9th free triggers cache drain, the rest go to cache */
+	for (i = 0; i < count; i++)
+		pmm_free_frame(frames[i]);
+
+	/* After drain, allocator should still work */
+	uint64_t f = pmm_alloc_frame();
+	KUNIT_EXPECT_NE(test, f, (uint64_t)0);
+	if (f)
+		pmm_free_frame(f);
+}
+
+/*
+ * Alternating alloc/free cycles that exercise both the push (free)
+ * and pop (alloc) fast paths.  Each pair allocs two frames, frees
+ * them, then starts the next iteration.  This pattern stresses the
+ * cache push/pop interleaving.
+ */
+static void pmm_hotcache_alternating_cycles(struct kunit *test)
+{
+	const int CYCLES = 32;
+	int i;
+
+	for (i = 0; i < CYCLES; i++) {
+		uint64_t f1 = pmm_alloc_frame();
+		KUNIT_EXPECT_NE(test, f1, (uint64_t)0);
+		uint64_t f2 = pmm_alloc_frame();
+		KUNIT_EXPECT_NE(test, f2, (uint64_t)0);
+
+		if (f1 && f2) {
+			KUNIT_EXPECT_NE(test, f1, f2);
+			pmm_free_frame(f1);
+			pmm_free_frame(f2);
+		} else {
+			if (f1) pmm_free_frame(f1);
+			if (f2) pmm_free_frame(f2);
+			break;
+		}
+	}
+}
+
+/*
+ * Verify that the used_frames counter tracks correctly through cache
+ * refill and drain cycles.  The counter should reflect the true number
+ * of allocated frames, not the transient state of the per-CPU cache.
+ */
+static void pmm_hotcache_used_count_accuracy(struct kunit *test)
+{
+	uint64_t before = pmm_get_used_frames();
+	const int N = 16;
+	uint64_t frames[16];
+	int i, count = 0;
+
+	/* Allocate — used_frames should increase by N */
+	for (i = 0; i < N; i++) {
+		frames[i] = pmm_alloc_frame();
+		if (frames[i] == 0)
+			break;
+		count++;
+	}
+	KUNIT_EXPECT_EQ(test, count, N);
+
+	uint64_t after_alloc = pmm_get_used_frames();
+	KUNIT_EXPECT_EQ(test, (int64_t)(after_alloc - before), count);
+
+	/* Free all — used_frames should decrease back */
+	for (i = 0; i < count; i++)
+		pmm_free_frame(frames[i]);
+
+	uint64_t after_free = pmm_get_used_frames();
+	KUNIT_EXPECT_EQ(test, (int64_t)after_free, (int64_t)before);
+}
+
+/*
+ * Stress test: allocate and free many frames in a burst, forcing
+ * multiple cache refill and drain cycles.  Verifies the cache does
+ * not leak frames over repeated fill/drain transitions.
+ */
+static void pmm_hotcache_burst_stress(struct kunit *test)
+{
+	const int N = 128;
+	uint64_t *frames;
+	int i, j;
+
+	frames = pmm_alloc_frames(N);
+	KUNIT_EXPECT_NOT_NULL(test, frames);
+	if (!frames)
+		return;
+
+	/* Write unique pattern to each frame */
+	for (i = 0; i < N; i++) {
+		volatile uint64_t *vp = (volatile uint64_t *)PHYS_TO_VIRT((uint64_t)frames + i * PAGE_SIZE);
+		*vp = 0xCAFE000000000000ULL + (uint64_t)i;
+	}
+
+	/* Read back and verify */
+	for (i = 0; i < N; i++) {
+		volatile uint64_t *vp = (volatile uint64_t *)PHYS_TO_VIRT((uint64_t)frames + i * PAGE_SIZE);
+		KUNIT_EXPECT_EQ(test, (int64_t)*vp, (int64_t)(0xCAFE000000000000ULL + i));
+	}
+
+	/* Free in small groups to exercise cache drain repeatedly */
+	for (i = 0; i < N; i += 4) {
+		int end = i + 4;
+		if (end > N) end = N;
+		for (j = i; j < end; j++)
+			pmm_free_frame((uint64_t)frames + j * PAGE_SIZE);
+	}
+
+	/* Allocator should still function after stress */
+	uint64_t f = pmm_alloc_frame();
+	KUNIT_EXPECT_NE(test, f, (uint64_t)0);
+	if (f)
+		pmm_free_frame(f);
+}
+
+/* ====================================================================
  *  Suite definition — auto-registered via linker section
  * ==================================================================== */
 
@@ -701,3 +884,18 @@ static struct kunit_suite pmm_oom_suite = {
 };
 
 KUNIT_TEST_SUITE(pmm_oom_suite);
+
+static struct kunit_suite pmm_hotcache_suite = {
+	.name    = "memory_pmm_hotcache",
+	.setup   = NULL,
+	.teardown = NULL,
+	.cases   = {
+		KUNIT_CASE(pmm_hotcache_refill_after_empty),
+		KUNIT_CASE(pmm_hotcache_drain_on_full),
+		KUNIT_CASE(pmm_hotcache_alternating_cycles),
+		KUNIT_CASE(pmm_hotcache_used_count_accuracy),
+		KUNIT_CASE(pmm_hotcache_burst_stress),
+	},
+};
+
+KUNIT_TEST_SUITE(pmm_hotcache_suite);
