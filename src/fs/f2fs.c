@@ -304,9 +304,29 @@ void f2fs_init(void)
     memset(&f2fs_reg, 0, sizeof(f2fs_reg));
     kprintf("[OK] F2FS — Flash-Friendly File System with checkpoint/NAT/SIT\n");
 }
+#ifdef MODULE
 #include "module.h"
+#else
+#include "initcall.h"
+#endif
 #ifndef MODULE
 fs_initcall(f2fs_init);
+#else
+int __init init_module(void)
+{
+	f2fs_init();
+	return 0;
+}
+
+void __exit cleanup_module(void)
+{
+	f2fs_mounted = 0;
+}
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Hermes OS Kernel Team");
+MODULE_DESCRIPTION("Flash-Friendly File System (F2FS) — checkpoint/NAT/SIT read/write support");
+MODULE_VERSION("1.0");
 #endif
 
 /* ── f2fs_lookup ─────────────────────────────────────── */

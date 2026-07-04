@@ -94,9 +94,29 @@ void jffs2_init(void)
     jffs2_mounted = 0;
     kprintf("[OK] JFFS2 — Journalling Flash File System v2 (read support)\n");
 }
+#ifdef MODULE
 #include "module.h"
+#else
+#include "initcall.h"
+#endif
 #ifndef MODULE
 fs_initcall(jffs2_init);
+#else
+int __init init_module(void)
+{
+	jffs2_init();
+	return 0;
+}
+
+void __exit cleanup_module(void)
+{
+	jffs2_mounted = 0;
+}
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Hermes OS Kernel Team");
+MODULE_DESCRIPTION("Journalling Flash File System v2 (JFFS2) — read support with compression awareness");
+MODULE_VERSION("1.0");
 #endif
 
 /* ── jffs2_umount ────────────────────────────────────── */
