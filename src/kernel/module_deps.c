@@ -158,6 +158,9 @@ int module_dep_resolve(const char *mod_name, char *err_buf, int err_len)
         struct kernel_module *dep_mod = module_find(dep_name);
         if (dep_mod && dep_mod->state == MODULE_LIVE) {
             mod->deps[i].loaded = 1;
+            /* Hold a reference to the dependency so it cannot be
+             * unloaded while this module depends on it. */
+            module_get(dep_mod);
             continue;
         }
 
@@ -176,6 +179,14 @@ int module_dep_resolve(const char *mod_name, char *err_buf, int err_len)
 
         /* Dependency loaded successfully */
         mod->deps[i].loaded = 1;
+
+        /* Hold a reference to the auto-loaded dependency so it stays
+         * alive while this module depends on it. */
+        {
+            struct kernel_module *dep_mod = module_find(dep_name);
+            if (dep_mod)
+                module_get(dep_mod);
+        }
 
         /* Recursively resolve the dependency's own dependencies */
         if (module_dep_resolve(dep_name, err_buf, err_len) < 0)

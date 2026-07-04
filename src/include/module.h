@@ -156,6 +156,14 @@ void module_get(struct kernel_module *mod);
  * Returns 1 if the count reached 0, 0 otherwise. */
 int module_put(struct kernel_module *mod);
 
+/* Try to take a reference on a module.  Only succeeds if the module
+ * is in MODULE_LIVE state.  Returns 1 on success (reference taken),
+ * 0 on failure (module not live or already unloading).
+ *
+ * This is the standard kernel API used everywhere to prevent a module
+ * from being unloaded while its resources are in use. */
+int try_module_get(struct kernel_module *mod);
+
 /* ── Module parameter support ────────────────────────────────────── */
 
 /* Register a named parameter for a module. */

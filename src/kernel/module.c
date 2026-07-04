@@ -523,6 +523,26 @@ int module_unload(int module_id) {
     /* Unregister any aliases owned by this module (M38) */
     module_alias_unregister(mod->name);
 
+    /* Release references to all dependencies (matching refs
+     * acquired in module_dep_resolve()).  This must happen after
+     * the exit function has run (it may still use dependencies)
+     * but before the slot is cleared. */
+    for (int i = 0; i < mod->num_deps; i++) {
+        const char *dep_name = mod->deps[i].name;
+        if (!dep_name || !dep_name[0])
+            continue;
+        struct kernel_module *dep_mod = NULL;
+        for (int j = 0; j < MODULE_MAX; j++) {
+            if (g_modules[j].state == MODULE_LIVE &&
+                strcmp(g_modules[j].name, dep_name) == 0) {
+                dep_mod = &g_modules[j];
+                break;
+            }
+        }
+        if (dep_mod)
+            module_put(dep_mod);
+    }
+
     /* Free module memory region */
     if (mod->base_addr != 0 && mod->size > 0) {
         module_free_region(mod->base_addr, mod->size);
@@ -637,6 +657,22 @@ int module_put(struct kernel_module *mod) {
     int reached_zero = (mod->refcount == 0);
     spinlock_irqsave_release(&g_mod_lock, irq_flags);
     return reached_zero;
+}
+
+int try_module_get(struct kernel_module *mod) {
+    if (!mod) return 0;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_mod_lock, &irq_flags);
+
+    int ret = 0;
+    if (mod->state == MODULE_LIVE) {
+        mod->refcount++;
+        ret = 1;
+    }
+
+    spinlock_irqsave_release(&g_mod_lock, irq_flags);
+    return ret;
 }
 
 /* ── Module parameter support ───────────────────────────────────── */
