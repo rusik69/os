@@ -403,6 +403,28 @@ static void kunit_status_read(char *buf, int *len)
 
 /* ── Initialisation ───────────────────────────────────────────────── */
 
+/* Register all suites found in the .kunit_test_suites linker section.
+ * This enables automatic suite registration via the KUNIT_TEST_SUITE()
+ * macro — suites declared with the macro are collected by the linker
+ * and registered here without manual kunit_register_suite() calls. */
+static void kunit_register_section_suites(void)
+{
+    struct kunit_suite **ptr;
+    int count = 0;
+
+    for (ptr = (struct kunit_suite **)__kunit_suites_start;
+         ptr < (struct kunit_suite **)__kunit_suites_end;
+         ptr++) {
+        if (*ptr) {
+            kunit_register_suite(*ptr);
+            count++;
+        }
+    }
+
+    kprintf("[KUNIT] Auto-registered %d suite(s) from .kunit_test_suites section\n",
+            count);
+}
+
 void kunit_init(void)
 {
     spinlock_init(&g_kunit_lock);
@@ -410,8 +432,16 @@ void kunit_init(void)
     g_filter_active = 0;
     g_filter[0] = '\0';
 
-    /* Register the built-in test suites */
+    /* Register the built-in test suites.
+     * Suites in kunit_tests.c use a forward-declaration + fill-later
+     * pattern (FILL_CASES macro + name assignment), so the manual
+     * registration must run first. */
     kunit_register_builtin_tests();
+
+    /* Register any suites placed in the .kunit_test_suites linker section
+     * via the KUNIT_TEST_SUITE() macro.  These are typically fully
+     * static-initialized suites from dedicated test files. */
+    kunit_register_section_suites();
 
     /* Create debugfs entries under /sys/kernel/debug/kunit/ */
     debugfs_create_file("kunit/results",  kunit_results_read);

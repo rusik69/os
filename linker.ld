@@ -131,6 +131,16 @@ SECTIONS
         __modinfo_end = .;
     }
 
+    /* ── KUnit test suite auto-registration section ────────────────
+     * Pointers to struct kunit_suite placed here by the KUNIT_TEST_SUITE()
+     * macro are automatically registered during kunit_init().  This
+     * eliminates the need for manual kunit_register_suite() calls. */
+    .kunit_test_suites ALIGN(8) : AT(ADDR(.kunit_test_suites) - KERNEL_VMA_OFFSET) {
+        __kunit_suites_start = .;
+        KEEP(*(.kunit_test_suites))
+        __kunit_suites_end = .;
+    }
+
     _kernel_end = .;
 
     /DISCARD/ : {

@@ -234,4 +234,26 @@ void kunit_do_pass(struct kunit *test);
 /* Convenience macro to define a single-case suite quickly */
 #define KUNIT_CASE(test_fn) { .name = #test_fn, .run = test_fn }
 
+/* ── Auto-registration via linker section ────────────────────────── */
+
+/* Declare a suite for automatic registration at boot.
+ * Place this macro invocation after the suite definition in the same .c file.
+ * The suite pointer is placed in the .kunit_test_suites linker section and
+ * automatically registered during kunit_init().  This eliminates the need
+ * for manual kunit_register_suite() calls.
+ *
+ * Usage:
+ *   static struct kunit_suite my_suite = { ... };
+ *   KUNIT_TEST_SUITE(my_suite);
+ */
+#define KUNIT_TEST_SUITE(suite) \
+    static struct kunit_suite *__kunit_suite_ptr_##suite    \
+    __attribute__((__used__, __section__(".kunit_test_suites"))) = &suite
+
+/* Linker symbols for the .kunit_test_suites section boundaries.
+ * kunit_register_section_suites() iterates between start and end
+ * to register all suites placed in the section. */
+extern struct kunit_suite *__kunit_suites_start[];
+extern struct kunit_suite *__kunit_suites_end[];
+
 #endif /* KUNIT_H */
