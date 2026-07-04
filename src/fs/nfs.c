@@ -897,9 +897,30 @@ void nfs_init(void)
     nfs_mount_count = 0;
     kprintf("[OK] NFSv3 — Client (RPC/XDR + mount protocol)\n");
 }
+#ifdef MODULE
 #include "module.h"
+#else
+#include "initcall.h"
+#endif
 #ifndef MODULE
 fs_initcall(nfs_init);
+#else
+int __init init_module(void)
+{
+	nfs_init();
+	return 0;
+}
+
+void __exit cleanup_module(void)
+{
+	memset(nfs_mounts, 0, sizeof(nfs_mounts));
+	nfs_mount_count = 0;
+}
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Hermes OS Kernel Team");
+MODULE_DESCRIPTION("NFSv3 — Client (RPC/XDR + mount protocol)");
+MODULE_VERSION("1.0");
 #endif
 
 /* ── nfs_readdir — NFSv3 READDIR with cookie verifier ── */

@@ -207,9 +207,29 @@ void nilfs2_init(void)
     memset(&nilfs2_sb, 0, sizeof(nilfs2_sb));
     kprintf("[OK] NILFS2 — Continuous snapshotting FS with segment summary\n");
 }
+#ifdef MODULE
 #include "module.h"
+#else
+#include "initcall.h"
+#endif
 #ifndef MODULE
 fs_initcall(nilfs2_init);
+#else
+int __init init_module(void)
+{
+	nilfs2_init();
+	return 0;
+}
+
+void __exit cleanup_module(void)
+{
+	nilfs2_mounted = 0;
+}
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Hermes OS Kernel Team");
+MODULE_DESCRIPTION("NILFS2 — Continuous snapshotting FS with segment summary");
+MODULE_VERSION("1.0");
 #endif
 
 /* ── nilfs2_lookup ────────────────────────────────────── */
