@@ -1268,8 +1268,9 @@ void net_poll(void) {
                     /* Simplified: use IPv6 addresses for flow key */
                     key.proto = ip6->next_header;
                     /* Extract IPv6 addresses (first 4 bytes each for hash) */
-                    key.src_ip = *(const uint32_t *)&ip6->src_ip;
-                    key.dst_ip = *(const uint32_t *)&ip6->dst_ip;
+                    /* Use memcpy to avoid misaligned access on packed struct */
+                    memcpy(&key.src_ip, &ip6->src_ip, sizeof(key.src_ip));
+                    memcpy(&key.dst_ip, &ip6->dst_ip, sizeof(key.dst_ip));
                     if ((ip6->next_header == 6 || ip6->next_header == 17) &&
                         (int)(len - sizeof(struct eth_header)) >= 40 + 4) {
                         const uint8_t *l4 = pkt_buf + sizeof(struct eth_header) + 40;
