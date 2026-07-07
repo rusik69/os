@@ -143,7 +143,7 @@ static int               mt_num_contacts;    /* active contact count */
 /* ── Capability bitmaps (from device config) ────────────────────── */
 
 static uint8_t ev_bits[128 / 8];      /* supported event types (EV_*) */
-static uint8_t abs_bits[128 / 8];     /* supported ABS codes (ABS_*) */
+static uint8_t abs_bits[256 / 8];     /* supported ABS codes (ABS_*) — loop iterates i < 256 */
 static uint8_t key_bits[128 / 8];     /* supported key codes (KEY_*) */
 static uint8_t rel_bits[128 / 8];     /* supported relative axes (REL_*) */
 static uint8_t prop_bits[128 / 8];    /* device properties */

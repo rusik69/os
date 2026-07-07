@@ -298,10 +298,12 @@ walk_susp:
         const uint8_t *walk_data;
         uint32_t walk_len;
         uint32_t walk_off;
+        uint8_t ce_buf[2048];              /* lifted to outer scope to avoid
+                                             * use-after-scope when walk_data
+                                             * points to it across goto */
 
         if (in_continuation) {
             /* Read from continuation block */
-            uint8_t ce_buf[2048];
             memset(ce_buf, 0, sizeof(ce_buf));
             if (iso_read_block(ip, ce_block, ce_buf) < 0)
                 return rr_found;
