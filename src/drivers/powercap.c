@@ -41,6 +41,7 @@ int powercap_register_zone(const char *name, uint64_t max_power_uw)
 
     struct powercap_zone *zone = &powercap_zones[powercap_zone_count];
     strncpy(zone->name, name, sizeof(zone->name) - 1);
+    zone->name[sizeof(zone->name) - 1] = '\0';
     zone->max_power_range_uw = max_power_uw;
     zone->power_limit_uw = max_power_uw;
     zone->energy_counter = 0;

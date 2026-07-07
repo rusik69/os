@@ -436,6 +436,7 @@ int bonding_create(const char *name, int mode)
     struct bonding *bond = &g_bonding_masters[g_bonding_count];
     memset(bond, 0, sizeof(*bond));
     strncpy(bond->name, name, BONDING_NAME_MAX - 1);
+    bond->name[BONDING_NAME_MAX - 1] = '\0';
     bond->mode = mode;
     bond->rr_counter = 0;
     bond->active_slave = 0;
@@ -445,6 +446,7 @@ int bonding_create(const char *name, int mode)
     struct net_device nd;
     memset(&nd, 0, sizeof(nd));
     strncpy(nd.name, name, NETDEV_NAME_MAX - 1);
+    nd.name[NETDEV_NAME_MAX - 1] = '\0';
     nd.transmit = bonding_transmit;
     nd.receive = bonding_receive;
     nd.mtu = 1500;

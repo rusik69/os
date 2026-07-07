@@ -229,7 +229,9 @@ int udc_add_string(const char *lang, const char *value)
     struct udc_string *s = &g_udc_strings[g_num_strings++];
     s->id = g_next_string_id++;
     strncpy(s->lang, lang, sizeof(s->lang) - 1);
+    s->lang[sizeof(s->lang) - 1] = '\0';
     strncpy(s->value, value, sizeof(s->value) - 1);
+    s->value[sizeof(s->value) - 1] = '\0';
 
     spinlock_release(&g_udc_lock);
     return s->id;
@@ -252,6 +254,7 @@ int udc_add_config(struct usb_gadget *g, const char *name,
     struct usb_gadget_config *cfg = &g->configs[id];
     cfg->id = id + 1;
     strncpy(cfg->name, name, sizeof(cfg->name) - 1);
+    cfg->name[sizeof(cfg->name) - 1] = '\0';
     cfg->attributes = attributes;
     cfg->max_power = max_power;
     cfg->num_functions = 0;

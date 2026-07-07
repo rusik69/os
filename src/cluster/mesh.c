@@ -142,6 +142,7 @@ int mesh_set_bandwidth(const char *pod_id, uint64_t rate_bps,
         if (!bw_policies[i].in_use) {
             strncpy(bw_policies[i].pod_id, pod_id,
                     sizeof(bw_policies[i].pod_id) - 1);
+            bw_policies[i].pod_id[sizeof(bw_policies[i].pod_id) - 1] = '\0';
             bw_policies[i].rate_bps = rate_bps;
             bw_policies[i].burst_bytes = burst_bytes;
             bw_policies[i].qdisc_type = qdisc_type;
@@ -191,8 +192,10 @@ int mesh_inject_sidecar(const char *pod_id, const char *sidecar_id,
     spinlock_acquire(&mesh_lock);
     struct sidecar_proxy *sp = &sidecars[sidecar_count++];
     strncpy(sp->pod_id, pod_id, sizeof(sp->pod_id) - 1);
+    sp->pod_id[sizeof(sp->pod_id) - 1] = '\0';
     strncpy(sp->sidecar_container_id, sidecar_id,
             sizeof(sp->sidecar_container_id) - 1);
+    sp->sidecar_container_id[sizeof(sp->sidecar_container_id) - 1] = '\0';
     sp->proxy_ip = proxy_ip;
     sp->proxy_port = proxy_port;
     sp->mTLS_enabled = 0;
@@ -254,6 +257,7 @@ int mesh_get_spiffe_id(const char *pod_id, char *out, size_t maxlen)
     for (int i = 0; i < MESH_SIDECARS_MAX; i++) {
         if (sidecars[i].in_use && strcmp(sidecars[i].pod_id, pod_id) == 0) {
             strncpy(out, sidecars[i].spiffe_id, maxlen - 1);
+            out[maxlen - 1] = '\0';
             spinlock_release(&mesh_lock);
             return 0;
         }
@@ -291,8 +295,11 @@ int mesh_create_traffic_split(const char *service_name,
     spinlock_acquire(&mesh_lock);
     struct traffic_split *ts = &traffic_splits[split_count++];
     strncpy(ts->service_name, service_name, sizeof(ts->service_name) - 1);
+    ts->service_name[sizeof(ts->service_name) - 1] = '\0';
     strncpy(ts->backend_a, backend_a, sizeof(ts->backend_a) - 1);
+    ts->backend_a[sizeof(ts->backend_a) - 1] = '\0';
     strncpy(ts->backend_b, backend_b, sizeof(ts->backend_b) - 1);
+    ts->backend_b[sizeof(ts->backend_b) - 1] = '\0';
     ts->weight_a = weight_a;
     ts->split_mode = TRAFFIC_SPLIT_WEIGHT;
     ts->in_use = 1;

@@ -77,6 +77,7 @@ int firmware_class_register_device(const char *name)
             memset(&fw_class_devices[i], 0, sizeof(struct firmware_class_device));
             strncpy(fw_class_devices[i].name, name,
                     sizeof(fw_class_devices[i].name) - 1);
+            fw_class_devices[i].name[sizeof(fw_class_devices[i].name) - 1] = '\0';
             fw_class_devices[i].in_use = 1;
             fw_class_devices[i].fw = NULL;
             fw_class_devices[i].loading = 0;

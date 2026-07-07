@@ -199,6 +199,7 @@ int usb_wifi_connect(int dev_id, const char *ssid, const char *password)
 
     struct usb_wifi_device *dev = &usb_wifi_devs[dev_id];
     strncpy(dev->ssid, ssid, USB_WIFI_SSID_MAX);
+    dev->ssid[USB_WIFI_SSID_MAX] = '\0';
     dev->connected = 1;
     (void)password;
 

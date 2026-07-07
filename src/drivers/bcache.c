@@ -51,7 +51,9 @@ int bcache_register(const char *backing, const char *cache)
     spinlock_irqsave_acquire(&bc->lock, &irq_flags);
 
     strncpy(bc->backing_dev, backing, sizeof(bc->backing_dev) - 1);
+    bc->backing_dev[sizeof(bc->backing_dev) - 1] = '\0';
     strncpy(bc->cache_dev, cache, sizeof(bc->cache_dev) - 1);
+    bc->cache_dev[sizeof(bc->cache_dev) - 1] = '\0';
     bc->cache_size = BCACHE_CACHE_SIZE;
     bc->bucket_size = BCACHE_BUCKET_SIZE;
 

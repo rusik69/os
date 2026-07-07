@@ -278,6 +278,7 @@ int drbd_create_resource(const char *name, int local_dev_id)
 
     if (name)
         strncpy(res->name, name, sizeof(res->name) - 1);
+    res->name[sizeof(res->name) - 1] = '\0';
     res->local_dev_id = local_dev_id;
     res->conn_state = DRBD_STATE_STANDALONE;
     res->disk_state = DRBD_DISK_CONSISTENT;

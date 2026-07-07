@@ -48,7 +48,9 @@ int64_t dm_snapshot_create(const char *origin, const char *cow_dev,
     spinlock_irqsave_acquire(&snap->lock, &irq_flags);
 
     strncpy(snap->origin, origin, sizeof(snap->origin) - 1);
+    snap->origin[sizeof(snap->origin) - 1] = '\0';
     strncpy(snap->cow_dev, cow_dev, sizeof(snap->cow_dev) - 1);
+    snap->cow_dev[sizeof(snap->cow_dev) - 1] = '\0';
     snap->cow_size = cow_size;
     snap->chunk_size = DM_SNAP_CHUNK_SIZE;
     snap->snap_id = next_snap_id++;
