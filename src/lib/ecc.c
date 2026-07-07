@@ -134,7 +134,7 @@ static void bn_mul_mod_p(uint32_t *r, const uint32_t *a, const uint32_t *b)
     /* Simple reduction: mod p by repeated subtraction */
     /* For correctness, reduce the 512-bit result mod p */
     uint32_t tmp[ECC_NUM_WORDS * 2];
-    memcpy(tmp, product, sizeof(product));
+    memcpy(tmp, product, sizeof(tmp));
 
     /* Use the fact that p ≈ 2^256, so the high 256 bits need reduction */
     /* This is a simplified approach — full Montgomery reduction would be better */
