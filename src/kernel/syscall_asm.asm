@@ -140,8 +140,10 @@ syscall_entry:
 
 .normal_return:
     ; ── Zero kernel stack ────────────────────────────────────────────
+    push    rax                                 ; save syscall return value (clobbered by zero_kernel_stack_uapi)
     mov     rdi, [rel syscall_entry_rsp_saved]  ; arg0 = entry RSP
     call    zero_kernel_stack_uapi
+    pop     rax                                 ; restore syscall return value
 
     pop     r15
     pop     r14
@@ -221,8 +223,10 @@ syscall_linux_entry:
 
 .linux_normal_return:
     ; ── Zero kernel stack ────────────────────────────────────────────
+    push    rax                                 ; save syscall return value (clobbered by zero_kernel_stack_uapi)
     mov     rdi, [rel syscall_entry_rsp_saved]  ; arg0 = entry RSP
     call    zero_kernel_stack_uapi
+    pop     rax                                 ; restore syscall return value
 
     pop     r15
     pop     r14
@@ -310,8 +314,10 @@ syscall_entry_full:
 
 .full_normal_return:
     ; Zero kernel stack
+    push    rax                                 ; save syscall return value (clobbered by zero_kernel_stack_uapi)
     mov     rdi, [rel syscall_entry_rsp_saved]
     call    zero_kernel_stack_uapi
+    pop     rax                                 ; restore syscall return value
 
     pop     r15
     pop     r14
