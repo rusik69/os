@@ -861,6 +861,8 @@ void nft_set_destroy(struct nft_set *set)
                     list_entry(pos, struct hashtable_node, list);
                 if (hn->value)
                     kfree(hn->value);
+                list_del(&hn->list);
+                kfree(hn);
             }
         }
         break;
