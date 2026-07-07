@@ -285,17 +285,26 @@ int ovl_readdir(const char *dir_path, void *buf, uint32_t max_entries, uint32_t 
     if (max_entries > 512)
         max_entries = 512;
 
-    /* Temporary storage for de-duplication */
-    char names[512][64];
+    /* Temporary storage for de-duplication — heap-allocated to keep
+     * stack usage sane (512*64 = 32 KB exceeds the 16 KB kernel stack). */
+    char (*names)[64] = kmalloc(512 * sizeof(*names));
+    if (!names)
+        return -ENOMEM;
+
     uint32_t total = 0;
     char layer_path[128];
+    int ret;
 
     /* Upper layer first */
-    int ret = overlay_resolve(ovl, 0, dir_path, layer_path, sizeof(layer_path));
+    ret = overlay_resolve(ovl, 0, dir_path, layer_path, sizeof(layer_path));
     if (ret == 0) {
         struct vfs_stat st;
         if (vfs_stat(layer_path, &st) == 0 && st.type == VFS_TYPE_DIR) {
-            char layer_names[256][64];
+            char (*layer_names)[64] = kmalloc(256 * sizeof(*layer_names));
+            if (!layer_names) {
+                kfree(names);
+                return -ENOMEM;
+            }
             int count = vfs_readdir_names(layer_path, layer_names, 256);
             for (int i = 0; i < count && total < max_entries; i++) {
                 /* Skip . and .. */
@@ -305,6 +314,7 @@ int ovl_readdir(const char *dir_path, void *buf, uint32_t max_entries, uint32_t 
                 names[total][63] = '\0';
                 total++;
             }
+            kfree(layer_names);
         }
     }
 
@@ -317,7 +327,11 @@ int ovl_readdir(const char *dir_path, void *buf, uint32_t max_entries, uint32_t 
         if (vfs_stat(layer_path, &st) != 0 || st.type != VFS_TYPE_DIR)
             continue;
 
-        char layer_names[256][64];
+        char (*layer_names)[64] = kmalloc(256 * sizeof(*layer_names));
+        if (!layer_names) {
+            kfree(names);
+            return -ENOMEM;
+        }
         int count = vfs_readdir_names(layer_path, layer_names, 256);
         for (int i = 0; i < count && total < max_entries; i++) {
             if (strcmp(layer_names[i], ".") == 0 || strcmp(layer_names[i], "..") == 0)
@@ -336,6 +350,7 @@ int ovl_readdir(const char *dir_path, void *buf, uint32_t max_entries, uint32_t 
                 total++;
             }
         }
+        kfree(layer_names);
     }
 
     /* Copy to output buffer */
@@ -345,6 +360,7 @@ int ovl_readdir(const char *dir_path, void *buf, uint32_t max_entries, uint32_t 
     }
 
     *out_count = total;
+    kfree(names);
     return 0;
 }
 EXPORT_SYMBOL(ovl_readdir);

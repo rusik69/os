@@ -337,15 +337,16 @@ int image_pull(const char *image_ref, const char *registry)
     if (n < 0 || (size_t)n >= sizeof(blob_prefix)) return -ENAMETOOLONG;
 
     /* ── Step 2: Fetch manifest via HTTP GET ────────────────────────── */
-    char manifest_buf[MAX_MANIFEST_SIZE];
+    char *manifest_buf = kmalloc(MAX_MANIFEST_SIZE);
+    if (!manifest_buf) return -ENOMEM;
     uint32_t manifest_len = 0;
 
     int ret = http_get(reg, manifest_path, manifest_buf,
-                       sizeof(manifest_buf), &manifest_len);
+                       MAX_MANIFEST_SIZE, &manifest_len);
     if (ret < 0 || manifest_len == 0) {
         /* Simulate with a minimal OCI manifest when network unavailable */
         kprintf("[Images] Registry fetch not available; using simulated manifest\n");
-        n = snprintf(manifest_buf, sizeof(manifest_buf),
+        n = snprintf(manifest_buf, MAX_MANIFEST_SIZE,
             "{\n"
             "  \"schemaVersion\": 2,\n"
             "  \"mediaType\": \"application/vnd.docker.distribution.manifest.v2+json\",\n"
@@ -381,6 +382,7 @@ int image_pull(const char *image_ref, const char *registry)
     if (ret < 0) {
         kprintf("[Images] Failed to parse manifest for %s: err=%d\n",
                 image_ref, ret);
+        kfree(manifest_buf);
         return ret;
     }
 
@@ -391,15 +393,22 @@ int image_pull(const char *image_ref, const char *registry)
     char config_path_buf[256];
     n = snprintf(config_path_buf, sizeof(config_path_buf), "%s%s",
                  blob_prefix, config_digest);
-    if (n < 0 || (size_t)n >= sizeof(config_path_buf)) return -ENAMETOOLONG;
+    if (n < 0 || (size_t)n >= sizeof(config_path_buf)) {
+        kfree(manifest_buf);
+        return -ENAMETOOLONG;
+    }
 
-    char config_buf[MAX_CONFIG_SIZE];
+    char *config_buf = kmalloc(MAX_CONFIG_SIZE);
+    if (!config_buf) {
+        kfree(manifest_buf);
+        return -ENOMEM;
+    }
     uint32_t config_len = 0;
     ret = http_get(reg, config_path_buf, config_buf,
-                   sizeof(config_buf), &config_len);
+                   MAX_CONFIG_SIZE, &config_len);
     if (ret < 0 || config_len == 0) {
         /* Simulate config blob */
-        n = snprintf(config_buf, sizeof(config_buf),
+        n = snprintf(config_buf, MAX_CONFIG_SIZE,
             "{\"created\":\"2024-01-01T00:00:00Z\","
             "\"architecture\":\"amd64\",\"os\":\"linux\","
             "\"config\":{\"Cmd\":[\"/bin/sh\"],\"Env\":[\"PATH=/usr/local/sbin:...\"]}}");
@@ -426,11 +435,12 @@ int image_pull(const char *image_ref, const char *registry)
                      OCI_BLOBS_DIR, layer_digests[i]);
         if (n < 0 || (size_t)n >= sizeof(blob_path)) continue;
 
-        /* Try to download the blob */
+        /* Try to download the blob — heap-allocate to avoid 4 KB on stack */
+        char *blob_buf = kmalloc(4096);
+        if (!blob_buf) continue;
         uint32_t blob_len = 0;
-        char blob_buf[4096];
         ret = http_get(reg, layer_path_str, blob_buf,
-                       sizeof(blob_buf), &blob_len);
+                       4096, &blob_len);
         if (ret >= 0 && blob_len > 0) {
             fs_create(blob_path, FS_TYPE_FILE);
             fs_write_file(blob_path, blob_buf, blob_len);
@@ -439,6 +449,7 @@ int image_pull(const char *image_ref, const char *registry)
             fs_create(blob_path, FS_TYPE_FILE);
             fs_write_file(blob_path, "simulated", 9);
         }
+        kfree(blob_buf);
 
         kprintf("[Images]  Layer %d/%d: %s\n",
                 i + 1, num_layers, layer_digests[i]);
@@ -464,7 +475,11 @@ int image_pull(const char *image_ref, const char *registry)
     for (idx = 0; idx < MAX_IMAGES; idx++) {
         if (!image_table[idx].in_use) break;
     }
-    if (idx >= MAX_IMAGES) return -ENOSPC;
+    if (idx >= MAX_IMAGES) {
+        kfree(config_buf);
+        kfree(manifest_buf);
+        return -ENOSPC;
+    }
 
     struct image *img = &image_table[idx];
     memset(img, 0, sizeof(*img));
@@ -478,8 +493,11 @@ int image_pull(const char *image_ref, const char *registry)
     /* Store layer digests */
     img->num_layers = num_layers;
     if (num_layers > 0) {
-        if ((size_t)num_layers > SIZE_MAX / sizeof(char *))
+        if ((size_t)num_layers > SIZE_MAX / sizeof(char *)) {
+            kfree(config_buf);
+            kfree(manifest_buf);
             return -EOVERFLOW;
+        }
         img->layer_digests = (char **)kmalloc((size_t)num_layers * sizeof(char *));
         if (img->layer_digests) {
             for (int i = 0; i < num_layers; i++) {
@@ -491,6 +509,8 @@ int image_pull(const char *image_ref, const char *registry)
         }
     }
 
+    kfree(config_buf);
+    kfree(manifest_buf);
     kprintf("[Images] Pull of %s/%s:%s complete (ID=%s, %d layers)\n",
             reg, name, tag, img->image_id, num_layers);
     return 0;

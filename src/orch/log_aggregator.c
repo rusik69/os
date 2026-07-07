@@ -159,7 +159,8 @@ int aggregator_serve_http(const char *method, const char *uri,
         const char *q = strstr(uri, "query=");
         const char *query_str = q ? q + 6 : "";
 
-        char results[4096];
+        char *results = kmalloc(4096);
+        if (!results) return -ENOMEM;
         int count = aggregator_query(query_str, results, 50);
 
         int n = snprintf(response, resp_len,
@@ -171,6 +172,7 @@ int aggregator_serve_http(const char *method, const char *uri,
                          count > 0 ? (int)strlen(results) : 0,
                          count > 0 ? results : "");
         (void)n;
+        kfree(results);
         return 0;
     }
 

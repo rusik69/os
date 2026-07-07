@@ -146,13 +146,15 @@ int fstab_load(void) {
     fstab_count = 0;
     memset(fstab_table, 0, sizeof(fstab_table));
 
-    /* Read /etc/fstab via VFS */
-    char buf[4096];
+    /* Read /etc/fstab via VFS — heap-allocate to avoid a 4 KB stack buffer */
+    char *buf = kmalloc(4096);
+    if (!buf) return 0;
     uint32_t size = 0;
-    int ret = vfs_read("/etc/fstab", buf, sizeof(buf) - 1, &size);
+    int ret = vfs_read("/etc/fstab", buf, 4095, &size);
     if (ret < 0 || size == 0) {
         /* No fstab file — not an error, just nothing to mount */
         fstab_loaded = 1;
+        kfree(buf);
         return 0;
     }
     buf[size] = '\0';
@@ -172,6 +174,7 @@ int fstab_load(void) {
     }
 
     fstab_loaded = 1;
+    kfree(buf);
     kprintf("[fstab] Loaded %d entries from /etc/fstab\n", fstab_count);
     return fstab_count;
 }

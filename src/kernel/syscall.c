@@ -7701,12 +7701,17 @@ static uint64_t sys_readlinkat(uint64_t dirfd, uint64_t path_addr,
     if (bufsize == 0) return (uint64_t)(int64_t)-EINVAL;
     if (bufsize > 4096) bufsize = 4096;
     /* Read into kernel buffer, then copy out.
-     * Use the (clamped) bufsize so we don't overread the user's buffer. */
-    char kbuf[4096];
+     * Use the (clamped) bufsize so we don't overread the user's buffer.
+     * Heap-allocate to avoid a 4 KB stack buffer on the 16 KB kernel stack. */
+    char *kbuf = kmalloc(4096);
+    if (!kbuf) return (uint64_t)(int64_t)-ENOMEM;
     int n = vfs_readlink(path, kbuf, (int)bufsize);
-    if (n < 0) return (uint64_t)(int64_t)n;
-    if (copy_to_user(buf_addr, kbuf, (size_t)n) < 0)
+    if (n < 0) { kfree(kbuf); return (uint64_t)(int64_t)n; }
+    if (copy_to_user(buf_addr, kbuf, (size_t)n) < 0) {
+        kfree(kbuf);
         return (uint64_t)(int64_t)-EFAULT;
+    }
+    kfree(kbuf);
     return (uint64_t)n;
 }
 
@@ -7720,13 +7725,14 @@ static uint64_t sys_getdents64(uint64_t fd, uint64_t dirp_addr, uint64_t count) 
     if (syscall_is_user_process() && !syscall_user_write_ok(dirp_addr, count))
         return (uint64_t)(int64_t)-EFAULT;
 
-    char names[64][64];
+    char (*names)[64] = kmalloc(64 * sizeof(*names));
+    if (!names) return (uint64_t)(int64_t)-ENOMEM;
     int n = vfs_readdir_names(p->fd_table[fd].path, names, 64);
-    if (n < 0) return (uint64_t)(int64_t)n;
-    if (n == 0) return 0;
+    if (n < 0) { kfree(names); return (uint64_t)(int64_t)n; }
+    if (n == 0) { kfree(names); return 0; }
 
     int start = (int)p->fd_table[fd].offset;
-    if (start >= n) return 0;
+    if (start >= n) { kfree(names); return 0; }
 
     size_t total = 0;
 
@@ -7747,11 +7753,12 @@ static uint64_t sys_getdents64(uint64_t fd, uint64_t dirp_addr, uint64_t count) 
         memcpy(k_ent->d_name, names[i], (unsigned long)namelen + 1);
 
         if (copy_to_user(dirp_addr + total, kentry, (size_t)reclen) < 0)
-            return (uint64_t)-1;
+            { kfree(names); return (uint64_t)-1; }
         total += reclen;
         p->fd_table[fd].offset = (uint32_t)(i + 1);
     }
 
+    kfree(names);
     return (uint64_t)total;
 }
 

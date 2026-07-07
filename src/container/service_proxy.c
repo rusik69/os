@@ -166,8 +166,14 @@ int proxy_userspace_forward(struct service *svc, int client_fd)
     /* ── Bidirectional splice: client ↔ backend ────────────────────── */
     /* In production we'd use splice(2) or a poll/epoll loop for
      * zero-copy forwarding. Here we do a small-buffer read/write loop
-     * in each direction. */
-    char buf[4096];
+     * in each direction. Heap-allocate the I/O buffer to avoid a 4 KB
+     * stack buffer on the 16 KB kernel stack. */
+    char *buf = kmalloc(4096);
+    if (!buf) {
+        net_tcp_close(backend_fd);
+        net_tcp_close(client_fd);
+        return -ENOMEM;
+    }
     int client_closed = 0, backend_closed = 0;
     int total_sent = 0, total_recv = 0;
 
@@ -223,6 +229,7 @@ int proxy_userspace_forward(struct service *svc, int client_fd)
     /* Clean up */
     net_tcp_close(backend_fd);
     net_tcp_close(client_fd);
+    kfree(buf);
     return 0;
 }
 
