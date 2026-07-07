@@ -943,7 +943,7 @@ kernel: $(BUILDDIR)/kernel.elf
         help debug clean deps \
         test test-kernel test-serial test-cli test-clean test-coverage clean-all \
         nic-test \
-        check check-full check-clean check-app-boundary check-debug fsck-test doom-test \
+        check check-full check-padded check-clean check-app-boundary check-debug fsck-test doom-test \
         format format-check check-whitespace lint lint-full cppcheck-check \
         ccache-stats count build-info count-lines count-funcs count-headers \
         run-test unit-test junit-test bench \
@@ -1363,7 +1363,7 @@ check: $(BUILDDIR)/disk.img unit-test
 # ── check-full: build with ALL strict warning flags ───────────────
 CHECK_FULL_CFLAGS = $(CFLAGS) -Werror -Wpedantic -Wconversion -Wshadow \
                     -Wformat=2 -Wundef -Wcast-align -Wstrict-prototypes \
-                    -Wold-style-definition
+                    -Wold-style-definition -Wpadded -Wno-error=padded
 BUILDDIR_CHECK_FULL = build_check_full
 
 C_CHECK_FULL_SRCS  = $(C_SRCS) $(CMD_SRCS) $(COMPILER_SRCS) $(GUI_SRCS) $(DOOM_SRCS) src/test/test.c
@@ -1392,14 +1392,67 @@ $(BUILDDIR_CHECK_FULL)/kernel.bin: $(BUILDDIR_CHECK_FULL)/kernel.elf
 	cp $< $@
 
 check-full: $(BUILDDIR)/disk.img
-	@echo "=== check-full: building with ALL strict warning flags ==="
+	@echo "=== check-full: building with ALL strict warning flags (includes -Wpadded for struct alignment) ==="
 	$(MAKE) -j$(NPROCS) $(BUILDDIR_CHECK_FULL)/kernel.bin
 	@echo "=== check-full build complete (kernel.bin at $(BUILDDIR_CHECK_FULL)/kernel.bin) ==="
 	@rm -rf $(BUILDDIR_CHECK_FULL)
 
+# ── check-padded: detect struct alignment bugs with -Wpadded ─────────
+# Compiles a targeted set of key headers (from kernel_pch.h coverage)
+# with -Wpadded to identify struct padding issues.
+# Warnings are non-fatal and logged to build/check-padded-report.txt.
+# Run manually to review struct layouts that may benefit from reordering
+# to eliminate unnecessary padding or catch alignment bugs.
+#
+BUILDDIR_CHECK_PADDED = build_check_padded
+
+C_CHECK_PADDED_SRCS  = src/kernel/kernel.c src/kernel/gdt.c src/kernel/idt.c \
+                       src/kernel/process.c src/kernel/vfs.c \
+                       src/memory/pmm.c src/memory/vmm.c src/memory/heap.c \
+                       src/process/process.c src/process/scheduler.c \
+                       src/drivers/pci.c src/drivers/ata.c src/fs/fs.c \
+                       src/net/net.c src/net/socket.c src/ipc/pipe.c \
+                       src/ipc/mutex.c src/lib/string.c
+ASM_CHECK_PADDED_SRCS = $(ASM_SRCS)
+
+C_CHECK_PADDED_OBJS  = $(patsubst src/%.c,$(BUILDDIR_CHECK_PADDED)/%.o,$(C_CHECK_PADDED_SRCS))
+ASM_CHECK_PADDED_OBJS = $(patsubst src/%.asm,$(BUILDDIR_CHECK_PADDED)/%.o,$(ASM_CHECK_PADDED_SRCS))
+CHECK_PADDED_OBJS    = $(ASM_CHECK_PADDED_OBJS) $(C_CHECK_PADDED_OBJS)
+
+CHECK_PADDED_CFLAGS   = $(CFLAGS) -Wpadded -Wno-error=padded
+
+$(BUILDDIR_CHECK_PADDED)/%.o: src/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CHECK_PADDED_CFLAGS) -c $< -o $@
+
+$(BUILDDIR_CHECK_PADDED)/%.o: src/%.asm
+	@mkdir -p $(dir $@)
+	$(AS) $(ASFLAGS) $< -o $@
+
+# config_gz.o dependency for check-padded build
+$(BUILDDIR_CHECK_PADDED)/kernel/config_gz.o: $(BUILD_CONFIG_GZ_H_TEST)
+$(BUILDDIR_CHECK_PADDED)/kernel/config_gz.o: CHECK_PADDED_CFLAGS += -I$(BUILDDIR_CHECK_PADDED) -I$(BUILDDIR_TEST)
+
+$(BUILDDIR_CHECK_PADDED)/kernel.elf: check-app-boundary $(CHECK_PADDED_OBJS)
+	@mkdir -p $(BUILDDIR_CHECK_PADDED)
+	$(LD) $(LDFLAGS) -o $@ $(CHECK_PADDED_OBJS) $(LIBGCC)
+
+check-padded:
+	@echo "=== check-padded: Building with -Wpadded to detect struct alignment bugs ==="
+	@mkdir -p build
+	@$(MAKE) -j$(NPROCS) $(BUILDDIR_CHECK_PADDED)/kernel.elf 2>&1 | \
+	  tee build/check-padded-report.txt | \
+	  grep -E 'warning:.*padding|error:|===' || true
+	@echo ""
+	@echo "=== check-padded: Summary ==="
+	@padded_count=$$(grep -c 'warning: padding' build/check-padded-report.txt 2>/dev/null || echo 0); \
+	 echo "  $$padded_count struct(s) with padding warning(s)"; \
+	 echo "  Full padded report: build/check-padded-report.txt"
+	@rm -rf $(BUILDDIR_CHECK_PADDED)
+
 # Clean check and check-full build artifacts
 check-clean:
-	rm -rf $(BUILDDIR_CHECK) $(BUILDDIR_CHECK_FULL)
+	rm -rf $(BUILDDIR_CHECK) $(BUILDDIR_CHECK_FULL) $(BUILDDIR_CHECK_PADDED)
 
 # ── Host-side unit tests (compiled with host gcc, no kernel deps) ───
 unit-test:
@@ -1674,7 +1727,8 @@ help:
 	@echo "  check           - Strict build (-Werror) + tests + E2E smoke"
 	@echo "  check-full      - Ultra-strict build (-Werror + -Wpedantic + all warnings)"
 	@echo "  check-debug     - Build with all debug options enabled"
-	@echo "  check-clean     - Remove build_check/ and build_check_full/ artifacts"
+	@echo "  check-padded    - Detect struct alignment issues (-Wpadded, logged to build/check-padded-report.txt)"
+	@echo "  check-clean     - Remove build_check/, build_check_full/, and build_check_padded/ artifacts"
 	@echo "  check-app-boundary  - Verify app source includes only allowed headers"
 	@echo "  unit-test       - Run host-side unit tests"
 	@echo "  e2e             - Run E2E QEMU smoke tests"
@@ -2107,6 +2161,7 @@ sparse:
 #   - format-check (code style compliance via git-clang-format)
 #   - check-whitespace (trailing whitespace detection)
 #   - check-app-boundary (include hygiene for userspace)
+#   - check-padded (struct alignment warnings with -Wpadded)
 #
 # Tools that are not installed are gracefully skipped with a notice.
 # A consolidated report is written to /tmp/bug-scan-report.txt and
@@ -2125,7 +2180,7 @@ bug-scan:
 	echo "=========================================================" | tee -a $$REPORT; \
 	\
 	echo "" | tee -a $$REPORT; \
-	echo "=== [1/7] check-app-boundary (include hygiene) ===" | tee -a $$REPORT; \
+	echo "=== [1/8] check-app-boundary (include hygiene) ===" | tee -a $$REPORT; \
 	if $(MAKE) --no-print-directory check-app-boundary >> $$REPORT 2>&1; then \
 	    echo "  ✅ check-app-boundary passed" | tee -a $$REPORT; \
 	else \
@@ -2134,7 +2189,7 @@ bug-scan:
 	fi; \
 	\
 	echo "" | tee -a $$REPORT; \
-	echo "=== [2/7] check-whitespace ===" | tee -a $$REPORT; \
+	echo "=== [2/8] check-whitespace ===" | tee -a $$REPORT; \
 	if $(MAKE) --no-print-directory check-whitespace >> $$REPORT 2>&1; then \
 	    echo "  ✅ check-whitespace passed" | tee -a $$REPORT; \
 	else \
@@ -2143,7 +2198,7 @@ bug-scan:
 	fi; \
 	\
 	echo "" | tee -a $$REPORT; \
-	echo "=== [3/7] cppcheck static analysis ===" | tee -a $$REPORT; \
+	echo "=== [3/8] cppcheck static analysis ===" | tee -a $$REPORT; \
 	if command -v cppcheck >/dev/null 2>&1; then \
 	    if $(MAKE) --no-print-directory cppcheck-all >> $$REPORT 2>&1; then \
 	        echo "  ✅ cppcheck passed" | tee -a $$REPORT; \
@@ -2156,7 +2211,7 @@ bug-scan:
 	fi; \
 	\
 	echo "" | tee -a $$REPORT; \
-	echo "=== [4/7] GCC -fanalyzer ===" | tee -a $$REPORT; \
+	echo "=== [4/8] GCC -fanalyzer ===" | tee -a $$REPORT; \
 	if $(CC) -fanalyzer -x c -c /dev/null -o /dev/null 2>/dev/null; then \
 	    if $(MAKE) --no-print-directory analyze WERROR=$(WERROR) >> $$REPORT 2>&1; then \
 	        echo "  ✅ -fanalyzer passed" | tee -a $$REPORT; \
@@ -2169,7 +2224,7 @@ bug-scan:
 	fi; \
 	\
 	echo "" | tee -a $$REPORT; \
-	echo "=== [5/7] sparse semantic parser ===" | tee -a $$REPORT; \
+	echo "=== [5/8] sparse semantic parser ===" | tee -a $$REPORT; \
 	if command -v sparse >/dev/null 2>&1; then \
 	    if $(MAKE) --no-print-directory sparse >> $$REPORT 2>&1; then \
 	        echo "  ✅ sparse passed" | tee -a $$REPORT; \
@@ -2182,7 +2237,7 @@ bug-scan:
 	fi; \
 	\
 	echo "" | tee -a $$REPORT; \
-	echo "=== [6/7] clang-tidy (kernel sources) ===" | tee -a $$REPORT; \
+	echo "=== [6/8] clang-tidy (kernel sources) ===" | tee -a $$REPORT; \
 	if command -v clang-tidy >/dev/null 2>&1; then \
 	    if $(MAKE) --no-print-directory clang-tidy-check >> $$REPORT 2>&1; then \
 	        echo "  ✅ clang-tidy passed" | tee -a $$REPORT; \
@@ -2194,7 +2249,7 @@ bug-scan:
 	fi; \
 	\
 	echo "" | tee -a $$REPORT; \
-	echo "=== [7/7] format-check (code style) ===" | tee -a $$REPORT; \
+	echo "=== [7/8] format-check (code style) ===" | tee -a $$REPORT; \
 	if command -v git-clang-format >/dev/null 2>&1; then \
 	    if $(MAKE) --no-print-directory format-check >> $$REPORT 2>&1; then \
 	        echo "  ✅ format-check passed" | tee -a $$REPORT; \
@@ -2203,6 +2258,14 @@ bug-scan:
 	    fi; \
 	else \
 	    echo "  ⚠️  git-clang-format not installed — skipping" | tee -a $$REPORT; \
+	fi; \
+	\
+	echo "" | tee -a $$REPORT; \
+	echo "=== [8/8] check-padded (struct alignment -Wpadded) ===" | tee -a $$REPORT; \
+	if $(MAKE) --no-print-directory check-padded >> $$REPORT 2>&1; then \
+	    echo "  ✅ check-padded complete" | tee -a $$REPORT; \
+	else \
+	    echo "  ⚠️  check-padded produced warnings (see build/check-padded-report.txt)" | tee -a $$REPORT; \
 	fi; \
 	\
 	echo "" | tee -a $$REPORT; \
