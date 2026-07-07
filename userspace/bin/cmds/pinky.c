@@ -32,6 +32,7 @@ static char *get_passwd_field(const char *filename, const char *username, int fi
                 char*end=strchr(p,':');
                 if(end)*end=0;
                 char*ret=malloc(strlen(p)+1);
+                if(!ret) return 0;
                 strcpy(ret,p);
                 return ret;
             }

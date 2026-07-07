@@ -29,7 +29,9 @@ int main(int argc,char*argv[]){
     if(to_stdout||(argc>1&&strcmp(argv[1],"-c")==0)){write(1,out,out_pos);}
     else{
         unsigned long len=strlen(fn);
-        char *outname=malloc(len+1);memcpy(outname,fn,len);
+        char *outname=malloc(len+1);
+        if(!outname){printf("unlzma: out of memory\n");free(out);return 1;}
+        memcpy(outname,fn,len);
         if(len>5&&fn[len-5]=='.'&&fn[len-4]=='l'&&fn[len-3]=='z'&&fn[len-2]=='m'&&fn[len-1]=='a')
             outname[len-5]=0;
         else{outname[len]=0;}

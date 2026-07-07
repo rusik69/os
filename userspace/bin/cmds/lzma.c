@@ -21,6 +21,7 @@ int main(int argc,char*argv[]){
     /* LZMA header: 5 bytes properties + 4 bytes dict size + 8 bytes uncompressed size */
     unsigned long out_size=total+total/1000+64;
     unsigned char*out=malloc(out_size);unsigned long pos=0;
+    if(!out){printf("lzma: out of memory\n");free(buf);return 1;}
     out[pos++]=0x5d;/* lc=3,lp=0,pb=2 */
     out[pos++]=0;out[pos++]=0;out[pos++]=0x80;/* dict=8MB */
     for(int i=0;i<8;i++)out[pos++]=(unsigned char)(total>>(8*i));/* uncompressed size */
@@ -32,7 +33,9 @@ int main(int argc,char*argv[]){
     if(to_stdout){write(1,out,pos);}
     else{
         unsigned long len=strlen(fn);
-        char *outname=malloc(len+6);memcpy(outname,fn,len);outname[len]='.';outname[len+1]='l';outname[len+2]='z';outname[len+3]='m';outname[len+4]='a';outname[len+5]=0;
+        char *outname=malloc(len+6);
+        if(!outname){printf("lzma: out of memory\n");free(out);return 1;}
+        memcpy(outname,fn,len);outname[len]='.';outname[len+1]='l';outname[len+2]='z';outname[len+3]='m';outname[len+4]='a';outname[len+5]=0;
         int ofd=open(outname,O_WRONLY|O_CREAT,0644);if(ofd<0){printf("lzma: cannot create %s\n",outname);free(out);free(outname);return 1;}
         write(ofd,out,pos);close(ofd);free(outname);
         if(!keep)unlink(fn);

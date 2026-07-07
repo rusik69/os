@@ -658,6 +658,10 @@ int main(int argc, char **argv)
     pthread_mutex_init(&g_cluster.log_lock, NULL);
     g_cluster.log_capacity = 64;
     g_cluster.log = malloc(g_cluster.log_capacity * sizeof(*g_cluster.log));
+    if (!g_cluster.log) {
+        printf("clusterd: out of memory for log buffer\n");
+        return 1;
+    }
     g_cluster.nl_sock = netlink_sock_open();
 
     load_config();

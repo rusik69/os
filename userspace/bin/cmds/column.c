@@ -22,7 +22,14 @@ int main(int argc, char *argv[]) {
             char *nl = strchr(p, '\n');
             if (nl) *nl = '\0';
             lines[count] = malloc(strlen(p) + 1);
-            if (lines[count]) strcpy(lines[count], p);
+            if (lines[count]) {
+                strcpy(lines[count], p);
+            } else {
+                /* malloc failed — skip this line */
+                count++;
+                if (nl) { *nl = '\n'; p = nl + 1; } else break;
+                continue;
+            }
             count++;
             if (nl) {
                 *nl = '\n';

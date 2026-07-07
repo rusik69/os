@@ -20,6 +20,7 @@ int main(int argc,char*argv[]){
     while((n=read(fd,buf+total,sizeof(buf)-total))>0){total+=n;}close(fd);
     unsigned long out_size=total+total/1000+128;
     unsigned char*out=malloc(out_size);unsigned long pos=0;
+    if(!out){printf("xz: out of memory\n");free(buf);return 1;}
     /* Stream header: magic 0xFD, '7', 'z', 'X', 'Z', 0x00 */
     unsigned char sh[]={0xFD,0x37,0x7A,0x58,0x5A,0x00};memcpy(out+pos,sh,6);pos+=6;
     /* Stream flags: 0x00 (CRC32 check) */
@@ -80,7 +81,9 @@ int main(int argc,char*argv[]){
     if(to_stdout){write(1,out,pos);}
     else{
         unsigned long len=strlen(fn);
-        char *outname=malloc(len+4);memcpy(outname,fn,len);outname[len]='.';outname[len+1]='x';outname[len+2]='z';outname[len+3]=0;
+        char *outname=malloc(len+4);
+        if(!outname){printf("xz: out of memory\n");free(out);return 1;}
+        memcpy(outname,fn,len);outname[len]='.';outname[len+1]='x';outname[len+2]='z';outname[len+3]=0;
         int ofd=open(outname,O_WRONLY|O_CREAT,0644);if(ofd<0){printf("xz: cannot create %s\n",outname);free(out);free(outname);return 1;}
         write(ofd,out,pos);close(ofd);free(outname);
         if(!keep)unlink(fn);

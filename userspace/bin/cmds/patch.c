@@ -18,6 +18,7 @@ static char *slurp(const char *path, long *size) {
     }
     if (fd < 0) return NULL;
     char *data = malloc(BUF_SIZE);
+    if (!data) { if (fd != 0) close(fd); return NULL; }
     long cap = BUF_SIZE;
     long len = 0;
     int n;

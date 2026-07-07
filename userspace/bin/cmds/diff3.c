@@ -56,6 +56,12 @@ static char **read_lines(const char *path, int *num_lines) {
         }
         if (len > MAX_LINE_LEN) len = MAX_LINE_LEN;
         lines[idx] = malloc(len + 1);
+        if (!lines[idx]) {
+            /* malloc failed — stop reading */
+            free(data);
+            *num_lines = idx;
+            return lines;
+        }
         memcpy(lines[idx], p, len);
         lines[idx][len] = 0;
         idx++;

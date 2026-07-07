@@ -21,6 +21,7 @@ int main(int argc, char *argv[]) {
     int n;
     while ((n = read(fd, buf, sizeof(buf))) > 0) {
         char *newdata = malloc(total + n + 1);
+        if (!newdata) { free(data); close(fd); return 1; }
         if (total > 0 && data) {
             memcpy(newdata, data, total);
             free(data);

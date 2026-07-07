@@ -168,6 +168,11 @@ int main(int argc, char *argv[]) {
         unsigned short nlen = strlen(bname);
 
         names[i] = malloc(nlen + 1);
+        if (!names[i]) {
+            printf("zip: out of memory\n");
+            close(fd);
+            return 1;
+        }
         memcpy(names[i], bname, nlen + 1);
         name_lens[i] = nlen;
 

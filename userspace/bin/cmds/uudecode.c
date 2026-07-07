@@ -69,6 +69,7 @@ int main(int argc, char *argv[]) {
             if (*p == '\n') p++;
             /* Append decoded data */
             char *newdata = malloc(total + di);
+            if (!newdata) { free(data); if (fd != 0) close(fd); return 1; }
             if (total > 0 && data) {
                 memcpy(newdata, data, total);
                 free(data);

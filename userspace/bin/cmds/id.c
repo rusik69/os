@@ -29,6 +29,7 @@ static char *get_username(int uid) {
             int fuid=atoi(p);
             if(fuid==uid){
                 char *ret=malloc(strlen(line)+1);
+                if (!ret) return 0;
                 strcpy(ret,line);
                 return ret;
             }
@@ -62,6 +63,7 @@ static char *get_groupname(int gid) {
             int fgid=atoi(p);
             if(fgid==gid){
                 char *ret=malloc(strlen(line)+1);
+                if (!ret) return 0;
                 strcpy(ret,line);
                 return ret;
             }

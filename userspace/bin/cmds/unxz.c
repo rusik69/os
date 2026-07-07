@@ -25,6 +25,7 @@ int main(int argc,char*argv[]){
     /* Parse blocks: skip block header (variable), extract LZMA2 data */
     unsigned long out_size=total*4;/* generous */
     unsigned char*out=malloc(out_size);unsigned long out_pos=0;
+    if(!out){printf("unxz: out of memory\n");free(buf);return 1;}
     unsigned long max_out=out_size;
     while(pos<total){
         if(buf[pos]==0){pos++;break;}/* end of block headers */
@@ -49,7 +50,9 @@ int main(int argc,char*argv[]){
     if(to_stdout){write(1,out,out_pos);}
     else{
         unsigned long len=strlen(fn);
-        char *outname=malloc(len+1);memcpy(outname,fn,len);
+        char *outname=malloc(len+1);
+        if(!outname){printf("unxz: out of memory\n");free(out);return 1;}
+        memcpy(outname,fn,len);
         if(len>3&&fn[len-3]=='.'&&fn[len-2]=='x'&&fn[len-1]=='z')outname[len-3]=0;
         else{outname[len]=0;}
         int ofd=open(outname,O_WRONLY|O_CREAT,0644);

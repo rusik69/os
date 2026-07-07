@@ -9,6 +9,7 @@ static char *read_file(const char *path, long *size) {
     int fd = open(path, 0, 0);
     if (fd < 0) return NULL;
     char *data = malloc(BUF_SIZE);
+    if (!data) { if (fd != 0) close(fd); return NULL; }
     long cap = BUF_SIZE;
     long len = 0;
     int n;

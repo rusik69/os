@@ -30,7 +30,9 @@ int main(int argc,char*argv[]){
     if(expected_size>65536)expected_size=65536;
     if(to_stdout||fn[0]=='-'){write(1,buf+hdr,total-hdr-8);}
     else{
-        unsigned long len=strlen(fn);char*on=malloc(len+1);memcpy(on,fn,len);
+        unsigned long len=strlen(fn);char*on=malloc(len+1);
+        if(!on){printf("gunzip: out of memory\n");free(buf);return 1;}
+        memcpy(on,fn,len);
         if(len>3&&fn[len-3]=='.'&&fn[len-2]=='g'&&fn[len-1]=='z')on[len-3]=0;else on[len]=0;
         int ofd=open(on,O_WRONLY|O_CREAT,0644);
         if(ofd<0){printf("gunzip: cannot create %s\n",on);free(on);return 1;}

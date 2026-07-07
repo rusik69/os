@@ -32,6 +32,7 @@ int main(int argc,char*argv[]){
     /* Build output */
     unsigned long out_size=total+total/1000+64;
     unsigned char*out=malloc(out_size);unsigned long pos=0;
+    if(!out){printf("gzip: out of memory\n");free(buf);return 1;}
     /* Gzip header */
     out[pos++]=0x1f;out[pos++]=0x8b;out[pos++]=8;/* deflate */
     out[pos++]=0;/* flags */out[pos++]=0;out[pos++]=0;out[pos++]=0;out[pos++]=0;/* mtime */
@@ -58,7 +59,9 @@ int main(int argc,char*argv[]){
     if(to_stdout){write(1,out,pos);}
     else{
         unsigned long len=strlen(fn);
-        char *outname=malloc(len+4);memcpy(outname,fn,len);outname[len]='.';outname[len+1]='g';outname[len+2]='z';outname[len+3]=0;
+        char *outname=malloc(len+4);
+        if(!outname){printf("gzip: out of memory\n");free(out);return 1;}
+        memcpy(outname,fn,len);outname[len]='.';outname[len+1]='g';outname[len+2]='z';outname[len+3]=0;
         int ofd=open(outname,O_WRONLY|O_CREAT,0644);if(ofd<0){printf("gzip: cannot create %s\n",outname);free(out);free(outname);return 1;}
         write(ofd,out,pos);close(ofd);free(outname);
         if(!keep)unlink(fn);
