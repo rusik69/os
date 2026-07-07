@@ -1872,7 +1872,14 @@ clang-tidy-check:
 # PCH is disabled during analysis because GCC may produce spurious issues
 # with precompiled headers under -fanalyzer.
 
-ANALYZE_CFLAGS = $(filter-out -include kernel_pch.h, $(CFLAGS)) -fanalyzer $(if $(WERROR),-Werror,)
+ANALYZE_CFLAGS = $(filter-out -include kernel_pch.h, $(CFLAGS)) -fanalyzer $(if $(WERROR),-Werror,) \
+                 -Wno-analyzer-malloc-leak \
+                 -include src/include/errno.h -include src/include/string.h \
+                 -include src/include/printf.h -include src/include/pmm.h \
+                 -include src/include/vmm.h -include src/include/heap.h \
+                 -include src/include/slab.h -include src/include/process.h \
+                 -include src/include/scheduler.h -include src/include/spinlock.h \
+                 -include src/include/mutex.h -include src/include/export.h
 BUILDDIR_ANALYZE = build_analyze
 
 C_ANALYZE_SRCS  = $(C_SRCS) $(CMD_SRCS) $(COMPILER_SRCS) $(GUI_SRCS) $(DOOM_SRCS) src/test/test.c

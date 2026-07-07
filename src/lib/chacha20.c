@@ -55,8 +55,8 @@ static void chacha20_init(struct chacha20_ctx *ctx, const uint8_t key[32], const
 
 static void chacha20_block(struct chacha20_ctx *ctx, uint32_t output[16])
 {
+    uint32_t x[16] = {0};
     int i;
-    uint32_t x[16];
 
     for (i = 0; i < 16; i++)
         x[i] = ctx->state[i];

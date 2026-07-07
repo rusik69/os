@@ -423,7 +423,7 @@ int userfaultfd_set_features(int fd, uint64_t features)
 static int uffd_validate_ctx(int fd, struct uffd_context **out_ctx)
 {
     if (!uffd_initialised)
-        return 0;
+        return -ENODEV;
     if (fd < 0 || fd >= UFFD_MAX_CONTEXTS)
         return -EBADF;
     struct uffd_context *ctx = &uffd_table[fd];

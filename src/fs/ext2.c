@@ -41,6 +41,7 @@ int ext2_corrupt(struct ext2_priv *ep, const char *reason)
 int ext2_read_block(struct ext2_priv *ep, uint32_t block_num, uint8_t *buf) {
     uint64_t lba = (uint64_t)block_num * (ep->block_size / 512);
     uint32_t sectors = ep->block_size / 512;
+    if (sectors == 0) return ext2_corrupt(ep, "invalid block size");
     for (uint32_t i = 0; i < sectors; i++) {
         if (blockdev_read_sectors(ep->dev_id, lba + i, 1, buf + i * 512) != 0)
             return ext2_corrupt(ep, "block I/O error");
@@ -195,7 +196,7 @@ static int64_t ext2_get_block_num(struct ext2_priv *ep, struct ext2_inode *inode
     if (sind < entries_per_block) {
         if (inode->i_block[12] == 0)
             return 0; /* hole — indirect block not allocated */
-        uint8_t indir[4096];
+        uint8_t indir[4096] = {0};
         if (ext2_read_block(ep, inode->i_block[12], indir) < 0)
             return -EIO;
         uint32_t *ptrs = (uint32_t *)indir;
@@ -3075,7 +3076,7 @@ static int ext2_free_inode_bitmap(struct ext2_priv *ep, uint32_t ino)
     if (group >= ep->num_block_groups)
         return -EINVAL;
 
-    uint8_t ibm[4096];
+    uint8_t ibm[4096] = {0};
     struct ext2_bg_desc *bgd = &ep->bgd_cache[group];
 
     if (ext2_read_block(ep, bgd->bg_inode_bitmap, ibm) < 0)
@@ -4227,7 +4228,7 @@ int ext2_free_block(struct ext2_priv *ep, uint32_t block_num)
         return -EINVAL;
 
     uint32_t bit = block_num % ep->blocks_per_group;
-    uint8_t bitmap[4096];
+    uint8_t bitmap[4096] = {0};
     struct ext2_bg_desc *bgd = &ep->bgd_cache[group];
 
     if (ext2_read_block(ep, bgd->bg_block_bitmap, bitmap) < 0)

@@ -1088,7 +1088,7 @@ int pci_aer_check_device(uint8_t bus, uint8_t slot, uint8_t func) {
 
         if (active) {
             /* Read header log for diagnostics */
-            uint32_t hdr_log[4];
+            uint32_t hdr_log[4] = {0};
             for (int i = 0; i < 4; i++)
                 hdr_log[i] = pcie_read(bus, slot, func, (uint16_t)((uint16_t)aer_off + PCI_AER_HEADER_LOG + (uint16_t)(i * 4)));
 

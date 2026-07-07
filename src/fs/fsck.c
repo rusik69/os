@@ -679,7 +679,7 @@ static int fsck_ext2(struct vfs_mount *mnt, int flags, int *errors_out)
                 uint32_t blk = table_block + byte_off / block_size;
                 uint32_t blk_off = byte_off % block_size;
 
-                uint8_t inode_buf[512];
+                uint8_t inode_buf[512] = {0};
                 uint64_t lba = (uint64_t)blk * (block_size / 512);
                 uint32_t buf_off = 0;
                 uint32_t sectors_needed = (blk_off + inode_size + 511) / 512;

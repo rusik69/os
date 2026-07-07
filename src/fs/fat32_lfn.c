@@ -202,7 +202,7 @@ void vfat_build_entry(void *entry_out, int ordinal, int is_last,
                        uint8_t checksum)
 {
     struct vfat_lfn *entry = (struct vfat_lfn *)entry_out;
-    uint16_t buf[LFN_CHARS_PER_ENTRY];
+    uint16_t buf[LFN_CHARS_PER_ENTRY] = {0};
     int name_len;
 
     /* Zero-fill the entry */

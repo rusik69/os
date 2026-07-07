@@ -652,6 +652,8 @@ static int exfat_bitmap_sync(struct exfat_priv *ep)
 	uint8_t bpb_buf[512];
 	int ret;
 
+	if (!ep) return 0;
+
 	if (!ep->bitmap_initialized)
 		return 0;
 

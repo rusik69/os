@@ -2,6 +2,7 @@
 #define VMM_H
 
 #include "types.h"
+#include "errno.h"
 
 #define VMM_FLAG_PRESENT  (1ULL << 0)
 #define VMM_FLAG_WRITE    (1ULL << 1)

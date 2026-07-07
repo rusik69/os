@@ -139,7 +139,7 @@ static void slab_varied_sizes_test(struct kunit *test)
 {
     /* Test various allocation sizes */
     size_t sizes[] = {1, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096};
-    void *ptrs[12];
+    void *ptrs[12] = {0};
     int n = (int)(sizeof(sizes) / sizeof(sizes[0]));
 
     for (int i = 0; i < n; i++) {
@@ -397,7 +397,7 @@ static void vmm_multipage_test(struct kunit *test)
 static void slab_stress_large_alloc_test(struct kunit *test)
 {
     /* Allocate many large blocks */
-    void *ptrs[8];
+    void *ptrs[8] = {0};
     for (int i = 0; i < 8; i++) {
         ptrs[i] = kmalloc(8192);
         KUNIT_EXPECT_NOT_NULL(test, ptrs[i]);

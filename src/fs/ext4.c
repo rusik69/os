@@ -101,6 +101,7 @@ int ext4_read_block(struct ext4_priv *ep, uint32_t block_num, uint8_t *buf)
 {
     uint64_t lba = (uint64_t)block_num * (ep->block_size / 512);
     uint32_t sectors = ep->block_size / 512;
+    if (sectors == 0) return ext4_corrupt(ep, "invalid block size");
     for (uint32_t i = 0; i < sectors; i++) {
         if (blockdev_read_sectors(ep->dev_id, lba + i, 1, buf + i * 512) != 0)
             return ext4_corrupt(ep, "block I/O error");
@@ -443,7 +444,7 @@ static int64_t ext4_get_block_num(struct ext4_priv *ep,
     if (sind < entries_per_block) {
         if (inode->i_block[12] == 0)
             return 0; /* hole */
-        uint8_t indir[EXT4_MAX_BLOCK_SIZE];
+        uint8_t indir[EXT4_MAX_BLOCK_SIZE] = {0};
         if (ext4_read_block(ep, inode->i_block[12], indir) < 0)
             return -1;
         uint32_t *ptrs = (uint32_t *)indir;

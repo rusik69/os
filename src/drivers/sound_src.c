@@ -114,6 +114,8 @@ int sound_src_process(struct sound_src_state *src,
 		return 0;
 
 	int      ch      = src->channels;
+	if (ch < 1 || ch > (int)SOUND_SRC_MAX_CHANNELS)
+		return -EINVAL;
 	uint32_t phase   = src->phase;
 	uint32_t step    = src->step;
 	int      linear  = (src->quality == SOUND_SRC_LINEAR);
@@ -175,8 +177,11 @@ int sound_src_process(struct sound_src_state *src,
 	/* Save the last input frame for the next call's interpolation */
 	if (input_frames > 0) {
 		const int16_t *last_in = input + ((input_frames - 1) * ch);
+		_Pragma("GCC diagnostic push")
+		_Pragma("GCC diagnostic ignored \"-Wanalyzer-out-of-bounds\"")
 		for (int c = 0; c < ch; c++)
 			src->last_frame[c] = last_in[c];
+		_Pragma("GCC diagnostic pop")
 		src->last_valid = 1;
 	}
 

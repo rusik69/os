@@ -32,6 +32,7 @@
 #include "types.h"
 #include "process.h"
 #include "string.h"
+#include "printf.h"
 
 /* ── Stack zeroing helper ──────────────────────────────────────────── */
 

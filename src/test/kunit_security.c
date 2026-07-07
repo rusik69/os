@@ -850,7 +850,7 @@ static void landlock_check_path_denies(struct kunit *test)
     struct process *proc = process_get_current();
     if (!proc) return;
 
-    int saved[LANDLOCK_MAX_RULESETS_PER_PROC];
+    int saved[LANDLOCK_MAX_RULESETS_PER_PROC] = {0};
     for (int i = 0; i < LANDLOCK_MAX_RULESETS_PER_PROC; i++) {
         saved[i] = proc->landlock_ruleset_ids[i];
         proc->landlock_ruleset_ids[i] = -1;

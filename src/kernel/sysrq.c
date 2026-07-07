@@ -187,8 +187,11 @@ static void handle_crash(void)
     kprintf("Triggering kernel crash for kdump...\n");
     sysrq_footer();
     /* Dereference NULL to trigger page fault -> panic */
+    _Pragma("GCC diagnostic push")
+    _Pragma("GCC diagnostic ignored \"-Wanalyzer-null-dereference\"")
     volatile int *p = (volatile int *)0;
     *p = 0xDEAD;
+    _Pragma("GCC diagnostic pop")
 }
 
 static void handle_term(void)

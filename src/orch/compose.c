@@ -121,7 +121,7 @@ static const char *compose_find_key(const char *json, const char *key,
 
     while (p && *p) {
         p = compose_skip_ws(p);
-        if (!*p) break;
+        if (!p || !*p) break;
 
         /* Look for quoted key */
         if (*p == '"') {

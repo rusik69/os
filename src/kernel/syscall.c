@@ -6517,6 +6517,8 @@ static uint64_t sys_readdir(uint64_t fd, uint64_t buf_addr, uint64_t count) {
         if (total + reclen > (size_t)count) break;
 
         struct linux_dirent64 *entry = (struct linux_dirent64 *)(buf + total);
+        if (!entry)
+            break;  /* defensive: should not happen with validated buffer */
         entry->d_ino = 1; /* fake inode */
         entry->d_off = (int64_t)(i + 1 < n ? reclen : 0);
         entry->d_reclen = (unsigned short)reclen;

@@ -66,7 +66,7 @@ static const uint64_t K[80] = {
 static void sha512_transform(struct sha512_ctx *ctx,
                              const uint8_t block[SHA512_BLOCK_SIZE])
 {
-    uint64_t W[80], a, b, c, d, e, f, g, h;
+    uint64_t W[80] = {0}, a, b, c, d, e, f, g, h;
     int t;
 
     for (t = 0; t < 16; t++) {

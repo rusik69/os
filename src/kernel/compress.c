@@ -81,6 +81,8 @@ int lzss_compress(const uint8_t *input, int input_len,
     int hash_next[LZSS_MAX_INPUT]; /* collision chain */
     for (int i = 0; i < LZSS_HASH_SIZE; i++)
         hash_head[i] = -1;
+    for (int i = 0; i < LZSS_MAX_INPUT; i++)
+        hash_next[i] = -1;
 
     int in_pos  = 0;  /* current position in input */
     int out_pos = 0;  /* current position in output */

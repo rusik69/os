@@ -39,7 +39,7 @@ static const uint32_t K[64] = {
 
 static void sha256_transform(struct sha256_ctx *ctx, const uint8_t block[SHA256_BLOCK_SIZE])
 {
-    uint32_t W[64], a, b, c, d, e, f, g, h;
+    uint32_t W[64] = {0}, a, b, c, d, e, f, g, h;
     int t;
 
     for (t = 0; t < 16; t++) {

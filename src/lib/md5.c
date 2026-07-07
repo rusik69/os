@@ -74,7 +74,7 @@ static const uint32_t S[64] = {
 static void md5_transform(struct md5_ctx *ctx,
                           const uint8_t block[MD5_BLOCK_SIZE])
 {
-    uint32_t a, b, c, d, X[16];
+    uint32_t a, b, c, d, X[16] = {0};
 
     for (int i = 0; i < 16; i++) {
         X[i] = (uint32_t)block[4*i] |

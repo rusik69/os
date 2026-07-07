@@ -13,6 +13,7 @@
 
 #include "syscall.h"
 #include "module.h"
+#include "errno.h"
 
 /* Module metadata */
 MODULE_LICENSE("GPL v2");

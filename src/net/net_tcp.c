@@ -556,7 +556,7 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
     if (conn_id < 0 && (flags & TCP_SYN)) {
         struct tcp_listener *l = find_listener(dst_port);
         if (!l) {
-            struct tcp_conn tmp;
+            struct tcp_conn tmp = {0};
             tmp.remote_ip = remote_ip;
             tmp.remote_port = src_port;
             tmp.local_port = dst_port;
