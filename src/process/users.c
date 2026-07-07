@@ -859,7 +859,7 @@ int user_add(const char *username, uint32_t uid, const char *password) {
         user_table[i].pw_hash = djb2_hash(password);
         /* Shell and GECOS defaults */
         memcpy(user_table[i].shell, "/bin/sh", 8);
-        memcpy(user_table[i].gecos, username, USER_MAX_GECOS - 1);
+        strncpy(user_table[i].gecos, username, USER_MAX_GECOS - 1);
         /* Home directory */
         if (uid == 0)
             memcpy(user_table[i].home, "/root", 6);
