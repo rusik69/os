@@ -949,7 +949,7 @@ kernel: $(BUILDDIR)/kernel.elf
         run-test unit-test junit-test bench \
         e2e e2e-smoke e2e-test e2e-list \
         stress stress-help \
-        modules modules_install build-strict analyze cppcheck cppcheck-all \
+        modules modules_install build-strict analyze bug-scan cppcheck cppcheck-all \
         clang-tidy-check ctags etags doccheck sparse todo \
         release dist \
         install install-clean \
@@ -1694,6 +1694,7 @@ help:
 	@echo "  analyze         - GCC -fanalyzer static analysis"
 	@echo "  build-strict    - Alias for cppcheck"
 	@echo "  sparse          - Run sparse semantic parser on all C sources"
+	@echo "  bug-scan        - Run ALL static analysis tools (cppcheck, sparse, -fanalyzer, clang-tidy, ...)"
 	@echo "  format          - Run clang-format on all .c and .h files"
 	@echo "  format-check    - Check format compliance (via git-clang-format)"
 	@echo "  check-whitespace - Check for trailing whitespace in source files"
@@ -2096,6 +2097,125 @@ sparse:
 	else \
 	    echo "⚠️  sparse: $$errors file(s) produced warnings (see above)."; \
 	fi
+
+# ── bug-scan: Run ALL static analysis tools ──────────────────────────
+# Orchestrates every static analysis tool available in this project:
+#   - cppcheck (static analyzer for C/C++)
+#   - GCC -fanalyzer (compiler-based interprocedural analysis)
+#   - sparse (semantic parser, checks __user/__iomem annotations)
+#   - clang-tidy (linter for kernel sources)
+#   - format-check (code style compliance via git-clang-format)
+#   - check-whitespace (trailing whitespace detection)
+#   - check-app-boundary (include hygiene for userspace)
+#
+# Tools that are not installed are gracefully skipped with a notice.
+# A consolidated report is written to /tmp/bug-scan-report.txt and
+# the exit code reflects whether any discovered issues were found.
+#
+# Usage:
+#   make bug-scan                  # run all tools, report findings
+#   make bug-scan WERROR=1         # fail on -fanalyzer findings too
+#
+bug-scan:
+	@REPORT=/tmp/bug-scan-report.txt; \
+	errors=0; \
+	rm -f $$REPORT; \
+	echo "=========================================================" | tee -a $$REPORT; \
+	echo "  bug-scan: Running ALL static analysis & QA checks" | tee -a $$REPORT; \
+	echo "=========================================================" | tee -a $$REPORT; \
+	\
+	echo "" | tee -a $$REPORT; \
+	echo "=== [1/7] check-app-boundary (include hygiene) ===" | tee -a $$REPORT; \
+	if $(MAKE) --no-print-directory check-app-boundary >> $$REPORT 2>&1; then \
+	    echo "  ✅ check-app-boundary passed" | tee -a $$REPORT; \
+	else \
+	    echo "  ❌ check-app-boundary FAILED" | tee -a $$REPORT; \
+	    errors=$$((errors + 1)); \
+	fi; \
+	\
+	echo "" | tee -a $$REPORT; \
+	echo "=== [2/7] check-whitespace ===" | tee -a $$REPORT; \
+	if $(MAKE) --no-print-directory check-whitespace >> $$REPORT 2>&1; then \
+	    echo "  ✅ check-whitespace passed" | tee -a $$REPORT; \
+	else \
+	    echo "  ⚠️  check-whitespace found issues" | tee -a $$REPORT; \
+	    errors=$$((errors + 1)); \
+	fi; \
+	\
+	echo "" | tee -a $$REPORT; \
+	echo "=== [3/7] cppcheck static analysis ===" | tee -a $$REPORT; \
+	if command -v cppcheck >/dev/null 2>&1; then \
+	    if $(MAKE) --no-print-directory cppcheck-all >> $$REPORT 2>&1; then \
+	        echo "  ✅ cppcheck passed" | tee -a $$REPORT; \
+	    else \
+	        echo "  ❌ cppcheck found issues" | tee -a $$REPORT; \
+	        errors=$$((errors + 1)); \
+	    fi; \
+	else \
+	    echo "  ⚠️  cppcheck not installed — skipping" | tee -a $$REPORT; \
+	fi; \
+	\
+	echo "" | tee -a $$REPORT; \
+	echo "=== [4/7] GCC -fanalyzer ===" | tee -a $$REPORT; \
+	if $(CC) -fanalyzer -x c -c /dev/null -o /dev/null 2>/dev/null; then \
+	    if $(MAKE) --no-print-directory analyze WERROR=$(WERROR) >> $$REPORT 2>&1; then \
+	        echo "  ✅ -fanalyzer passed" | tee -a $$REPORT; \
+	    else \
+	        echo "  ❌ -fanalyzer found issues" | tee -a $$REPORT; \
+	        errors=$$((errors + 1)); \
+	    fi; \
+	else \
+	    echo "  ⚠️  -fanalyzer not supported by this compiler — skipping" | tee -a $$REPORT; \
+	fi; \
+	\
+	echo "" | tee -a $$REPORT; \
+	echo "=== [5/7] sparse semantic parser ===" | tee -a $$REPORT; \
+	if command -v sparse >/dev/null 2>&1; then \
+	    if $(MAKE) --no-print-directory sparse >> $$REPORT 2>&1; then \
+	        echo "  ✅ sparse passed" | tee -a $$REPORT; \
+	    else \
+	        echo "  ❌ sparse found issues" | tee -a $$REPORT; \
+	        errors=$$((errors + 1)); \
+	    fi; \
+	else \
+	    echo "  ⚠️  sparse not installed — skipping" | tee -a $$REPORT; \
+	fi; \
+	\
+	echo "" | tee -a $$REPORT; \
+	echo "=== [6/7] clang-tidy (kernel sources) ===" | tee -a $$REPORT; \
+	if command -v clang-tidy >/dev/null 2>&1; then \
+	    if $(MAKE) --no-print-directory clang-tidy-check >> $$REPORT 2>&1; then \
+	        echo "  ✅ clang-tidy passed" | tee -a $$REPORT; \
+	    else \
+	        echo "  ⚠️  clang-tidy found issues (review output)" | tee -a $$REPORT; \
+	    fi; \
+	else \
+	    echo "  ⚠️  clang-tidy not installed — skipping" | tee -a $$REPORT; \
+	fi; \
+	\
+	echo "" | tee -a $$REPORT; \
+	echo "=== [7/7] format-check (code style) ===" | tee -a $$REPORT; \
+	if command -v git-clang-format >/dev/null 2>&1; then \
+	    if $(MAKE) --no-print-directory format-check >> $$REPORT 2>&1; then \
+	        echo "  ✅ format-check passed" | tee -a $$REPORT; \
+	    else \
+	        echo "  ⚠️  format-check found style issues" | tee -a $$REPORT; \
+	    fi; \
+	else \
+	    echo "  ⚠️  git-clang-format not installed — skipping" | tee -a $$REPORT; \
+	fi; \
+	\
+	echo "" | tee -a $$REPORT; \
+	echo "=========================================================" | tee -a $$REPORT; \
+	if [ $$errors -eq 0 ]; then \
+	    echo "  ✅ bug-scan: All checks passed!" | tee -a $$REPORT; \
+	else \
+	    echo "  ❌ bug-scan: $$errors check(s) reported issues (see above)" | tee -a $$REPORT; \
+	fi; \
+	echo "=========================================================" | tee -a $$REPORT; \
+	echo ""; \
+	echo "Full report: $$REPORT"; \
+	exit $$errors
 
 # ── ctags (source tags) ─────────────────────────────────────────────────
 
