@@ -351,6 +351,49 @@ jobs:
           echo "## Lint (cppcheck)" >> $GITHUB_STEP_SUMMARY
           echo "- No cppcheck warnings found" >> $GITHUB_STEP_SUMMARY
 
+  # ── Comprehensive static analysis ─────────────────────────────────
+  static-analysis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install static analysis tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            cppcheck sparse clang-tidy-18
+          sudo ln -sf /usr/bin/clang-tidy-18 /usr/local/bin/clang-tidy
+
+      - name: cppcheck (static analysis with suppressions)
+        continue-on-error: true
+        run: make cppcheck-check
+
+      - name: clang-tidy (kernel sources)
+        continue-on-error: true
+        run: make clang-tidy-check
+
+      - name: clang-tidy (host-compilable test sources)
+        continue-on-error: true
+        run: make clang-tidy-host
+
+      - name: check-padded (struct alignment -Wpadded)
+        continue-on-error: true
+        run: make check-padded
+
+      - name: sparse (semantic parser for __user/__iomem annotations)
+        continue-on-error: true
+        run: make sparse
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Static Analysis" >> $GITHUB_STEP_SUMMARY
+          echo "- cppcheck: all-enabled analysis with suppressions" >> $GITHUB_STEP_SUMMARY
+          echo "- clang-tidy: kernel sources (first 20) + host test sources" >> $GITHUB_STEP_SUMMARY
+          echo "- check-padded: struct alignment warnings" >> $GITHUB_STEP_SUMMARY
+          echo "- sparse: semantic parser for kernel annotations" >> $GITHUB_STEP_SUMMARY
+
   # ── Fast pre-merge verification ────────────────────────────────────
   verify:
     runs-on: ubuntu-latest
