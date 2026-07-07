@@ -55,21 +55,21 @@ global kpti_trampoline_entry
 kpti_trampoline_entry:
     ; Save user RSP and RCX/R11 to the trampoline data area
     ; (RIP-relative addressing works because we're at a fixed VA)
-    mov     [rel KPTI_OFF_SAVED_RSP], rsp
-    mov     [rel KPTI_OFF_SAVED_RCX], rcx
-    mov     [rel KPTI_OFF_SAVED_R11], r11
+    mov     [KPTI_OFF_SAVED_RSP], rsp
+    mov     [KPTI_OFF_SAVED_RCX], rcx
+    mov     [KPTI_OFF_SAVED_R11], r11
 
     ; Switch to kernel page table
-    mov     rax, [rel KPTI_OFF_KERNEL_CR3]
+    mov     rax, [KPTI_OFF_KERNEL_CR3]
     mov     cr3, rax
 
     ; Switch to kernel stack
-    mov     rsp, [rel KPTI_OFF_KERNEL_RSP]
+    mov     rsp, [KPTI_OFF_KERNEL_RSP]
 
     ; Push user state onto kernel stack (same layout as original syscall_entry)
-    push    [rel KPTI_OFF_SAVED_RSP]       ; saved user RSP   (frame 1)
-    push    [rel KPTI_OFF_SAVED_RCX]       ; saved user RIP   (frame 2)
-    push    [rel KPTI_OFF_SAVED_R11]       ; saved user RFLAGS (frame 3)
+    push    qword [KPTI_OFF_SAVED_RSP]       ; saved user RSP   (frame 1)
+    push    qword [KPTI_OFF_SAVED_RCX]       ; saved user RIP   (frame 2)
+    push    qword [KPTI_OFF_SAVED_R11]       ; saved user RFLAGS (frame 3)
     push    rbp                             ; (4)
     push    rbx                             ; (5)
     push    r12                             ; (6)
@@ -158,7 +158,7 @@ kpti_switch_to_user_and_sysret:
     ; Read the per-CPU user CR3 from the trampoline data area.
     ; At this point, RCX = user RIP, R11 = user RFLAGS, RSP = user RSP
     ; (set by the code above or by the execve path).
-    mov     rax, [rel KPTI_OFF_USER_CR3]
+    mov     rax, [KPTI_OFF_USER_CR3]
     mov     cr3, rax                ; switch to user page table
     o64 sysret                      ; return to ring-3 user mode
 
@@ -178,17 +178,17 @@ kpti_switch_to_user_and_sysret:
 kpti_interrupt_entry:
     ; Save user CR3 to trampoline data area
     mov     rax, cr3
-    mov     [rel KPTI_OFF_SAVED_CR3], rax
+    mov     [KPTI_OFF_SAVED_CR3], rax
 
     ; Switch to kernel page table  
-    mov     rax, [rel KPTI_OFF_KERNEL_CR3]
+    mov     rax, [KPTI_OFF_KERNEL_CR3]
     mov     cr3, rax
 
     ; Switch to real kernel stack
     ; We need to save the current RSP (which points into the trampoline
     ; stack) and switch to the real kernel stack.
-    mov     [rel KPTI_OFF_SAVED_RSP], rsp
-    mov     rsp, [rel KPTI_OFF_KERNEL_RSP]
+    mov     [KPTI_OFF_SAVED_RSP], rsp
+    mov     rsp, [KPTI_OFF_KERNEL_RSP]
 
     ; Copy the interrupt frame from trampoline stack to kernel stack.
     ; The trampoline stack has (from top to bottom, growing downward):
@@ -232,7 +232,7 @@ kpti_interrupt_entry:
     ; Simple approach: just push the frame again on the kernel stack.
 
     ; Save the user CR3 (we'll need it for the return path)
-    push    [rel KPTI_OFF_SAVED_CR3]        ; save user CR3 for return
+    push    qword [KPTI_OFF_SAVED_CR3]        ; save user CR3 for return
 
     ; Copy the frame from trampoline stack to kernel stack.
     ; First copy the vector + error code + CPU-pushed frame.
@@ -241,14 +241,14 @@ kpti_interrupt_entry:
     ; But we saved it in KPTI_OFF_SAVED_RSP.
 
     ; Push the 7 frame elements in reverse order (SS first)
-    mov     rax, [rel KPTI_OFF_SAVED_RSP]
-    push    [rax + 48]   ; SS
-    push    [rax + 40]   ; user RSP
-    push    [rax + 32]   ; RFLAGS
-    push    [rax + 24]   ; CS
-    push    [rax + 16]   ; RIP
-    push    [rax + 8]    ; error code
-    push    [rax + 0]    ; vector number
+    mov     rax, [KPTI_OFF_SAVED_RSP]
+    push    qword [rax + 48]   ; SS
+    push    qword [rax + 40]   ; user RSP
+    push    qword [rax + 32]   ; RFLAGS
+    push    qword [rax + 24]   ; CS
+    push    qword [rax + 16]   ; RIP
+    push    qword [rax + 8]    ; error code
+    push    qword [rax + 0]    ; vector number
 
     ; Now the kernel stack has the full interrupt frame.
     ; But we also have the saved user CR3 on top.
@@ -279,20 +279,20 @@ kpti_interrupt_entry:
     add     rsp, 64     ; discard everything we just pushed (7 items + saved CR3)
 
     ; Now rebuild: first push the CR3 save, then the frame in correct order
-    push    [rel KPTI_OFF_SAVED_CR3]        ; saved user CR3
-    mov     rax, [rel KPTI_OFF_SAVED_RSP]
+    push    qword [KPTI_OFF_SAVED_CR3]        ; saved user CR3
+    mov     rax, [KPTI_OFF_SAVED_RSP]
 
     ; Push in order they will be popped by iretq:
     ; The iretq frame (from low to high): RIP, CS, RFLAGS, RSP, SS
     ; But the interrupt stubs add vector + error at the bottom.
     ; Let's just push in the same order as they appear on the trampoline stack.
-    push    [rax + 0]    ; vector number
-    push    [rax + 8]    ; error code
-    push    [rax + 16]   ; RIP
-    push    [rax + 24]   ; CS
-    push    [rax + 32]   ; RFLAGS
-    push    [rax + 40]   ; user RSP
-    push    [rax + 48]   ; SS
+    push    qword [rax + 0]    ; vector number
+    push    qword [rax + 8]    ; error code
+    push    qword [rax + 16]   ; RIP
+    push    qword [rax + 24]   ; CS
+    push    qword [rax + 32]   ; RFLAGS
+    push    qword [rax + 40]   ; user RSP
+    push    qword [rax + 48]   ; SS
 
     ; Now stack layout on kernel stack:
     ;   [rsp]   = SS
@@ -344,17 +344,17 @@ kpti_interrupt_entry:
     add     rsp, 64     ; discard again
 
     ; Push saved user CR3 (we'll need it for the return path)
-    push    [rel KPTI_OFF_SAVED_CR3]
+    push    qword [KPTI_OFF_SAVED_CR3]
 
     ; Now push the frame in isr stub order:
-    mov     rax, [rel KPTI_OFF_SAVED_RSP]
-    push    [rax + 0]    ; vector number
-    push    [rax + 8]    ; error code
-    push    [rax + 16]   ; RIP
-    push    [rax + 24]   ; CS
-    push    [rax + 32]   ; RFLAGS
-    push    [rax + 40]   ; user RSP
-    push    [rax + 48]   ; SS
+    mov     rax, [KPTI_OFF_SAVED_RSP]
+    push    qword [rax + 0]    ; vector number
+    push    qword [rax + 8]    ; error code
+    push    qword [rax + 16]   ; RIP
+    push    qword [rax + 24]   ; CS
+    push    qword [rax + 32]   ; RFLAGS
+    push    qword [rax + 40]   ; user RSP
+    push    qword [rax + 48]   ; SS
 
     ; Stack now:
     ;   [rsp]   = SS
@@ -409,15 +409,15 @@ kpti_interrupt_entry:
     ; Now [rsp] = saved user CR3
 
     ; Re-push in reverse order of what we want:
-    mov     rax, [rel KPTI_OFF_SAVED_RSP]
+    mov     rax, [KPTI_OFF_SAVED_RSP]
 
-    push    [rax + 48]   ; SS (pushed last -> highest addr)
-    push    [rax + 40]   ; user RSP
-    push    [rax + 32]   ; RFLAGS
-    push    [rax + 24]   ; CS
-    push    [rax + 16]   ; RIP
-    push    [rax + 8]    ; error code
-    push    [rax + 0]    ; vector number
+    push    qword [rax + 48]   ; SS (pushed last -> highest addr)
+    push    qword [rax + 40]   ; user RSP
+    push    qword [rax + 32]   ; RFLAGS
+    push    qword [rax + 24]   ; CS
+    push    qword [rax + 16]   ; RIP
+    push    qword [rax + 8]    ; error code
+    push    qword [rax + 0]    ; vector number
 
     ; Now stack:
     ;   [rsp]   = vector number
