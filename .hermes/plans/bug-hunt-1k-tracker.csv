@@ -1,0 +1,51 @@
+# Bug Hunt 1000 — Tracking Spreadsheet
+# 
+# Columns: File | Bug Class | Severity | Status | Item | Item Description
+# Status: Fixed / Open / Audited-Clean
+# Severity: Critical / High / Medium / Low / Info
+#
+# Last updated: 2026-07-07 (items 1-9 completed, 15 bugs fixed)
+
+## Found & Fixed Bugs
+
+src/kernel/syscall.c,Dead-store,Medium,Fixed,7,Raw buffer size clamped but never used in vfs_readlink
+src/kernel/syscall.c,Null-dereference,Medium,Fixed,2,sys_readdir entry buffer NULL guard added
+src/kernel/syscall.c,Unchecked-return-value,Low,Fixed,4,copy_to_user return ignored (clear_child_tid/AT_RANDOM)
+src/kernel/elf.c,Double-free,Critical,Fixed,7,buf freed twice via fail_cleanup path
+src/kernel/module_compress.c,Buffer-overflow,Critical,Fixed,4,LZMA match-literal index up to 2049 (max 768)
+src/kernel/module_compress.c,Type-overflow,Medium,Fixed,7,bh_size uint8_t compared against 1036
+src/kernel/aio.c,Dead-code,Low,Fixed,4,Dead bounds check after early exit
+src/kernel/cpuset.c,Undefined-behavior,Low,Fixed,4,1ULL<<64 in dead && branch
+src/kernel/compose.c,Null-dereference,Medium,Fixed,2,NULL check after compose_skip_ws missing
+src/kernel/exec.c,Unchecked-return-value,Low,Fixed,4,copy_to_user returns ignored
+src/kernel/uffd.c,Incorrect-error-return,Medium,Fixed,2,uffd_validate_ctx returns 0 instead of -ENODEV
+src/kernel/sys_process.c,Dead-code,Low,Fixed,7,have_info dead store
+src/kernel/sysrq.c,Compiler-compatibility,Low,Fixed,7,GCC diagnostic pragma unknown to clang
+src/fs/ext2.c,Uninitialized-data,Medium,Fixed,2,Zero-sector validation + stack buffer init
+src/fs/ext4.c,Uninitialized-data,Medium,Fixed,2,Zero-sector validation + stack buffer init
+src/fs/fat32_lfn.c,Uninitialized-stack,Medium,Fixed,2,buf[] uninitialized
+src/fs/fsck.c,Uninitialized-stack,Medium,Fixed,2,inode_buf uninitialized
+src/fs/iso9660.c,Use-after-scope,High,Fixed,3,ce_buf local to inner block but pointer used outside
+src/fs/exfat.c,Null-dereference,Medium,Fixed,2,exfat_bitmap_sync NULL check missing
+src/net/net_tcp.c,Uninitialized-struct,High,Fixed,2,Uninitialized tcp_conn in RST-ACK path
+src/drivers/pci.c,Uninitialized-stack,Medium,Fixed,2,hdr_log stack uninitialized
+src/drivers/virtio_input.c,Buffer-overflow,Critical,Fixed,3,abs_bits[16] accessed up to index 31
+src/drivers/sound_src.c,Out-of-bounds,Medium,Fixed,2,Channel bounds check missing
+src/container/security_scan.c,Out-of-bounds-read,High,Fixed,3,Array check after element access
+src/lib/ecc.c,Buffer-overflow,Critical,Fixed,4,memcpy sizeof mismatch (128→64 bytes)
+src/lib/compress.c,Uninitialized-data,Medium,Fixed,2,hash_next not initialized in LZSS
+src/lib/sha256.c,Uninitialized-data,Medium,Fixed,2,Crypto transform uninitialized
+src/lib/sha512.c,Uninitialized-data,Medium,Fixed,2,Crypto transform uninitialized
+src/lib/md5.c,Uninitialized-data,Medium,Fixed,2,Crypto transform uninitialized
+src/lib/chacha20.c,Uninitialized-data,Medium,Fixed,2,Crypto transform uninitialized
+src/lib/bitmap.c,Linking-error,Low,Fixed,8,bitmap_alloc/bitmap_free wrongly static
+src/lib/search.c,Linking-error,Low,Fixed,8,search_linear/search_binary wrongly static
+src/lib/crc16.c,Linking-error,Low,Fixed,8,crc16_byte wrongly static
+src/lib/find_bit.c,Linking-error,Low,Fixed,8,find_last_bit/find_next_bit wrongly static
+src/include/signal_libc.h,Undefined-behavior,Medium,Fixed,4,1ULL<<64 UB in sigaddset/sigdelset/sigismember
+
+## Audited Clean (no bugs found)
+
+src/lib/ecc.c,Sizeof-mismatch,Info,Audited-Clean,4,ECC256 audit: second memcpy pattern correct
+src/kernel/cmdline.c,String-safety,Info,Audited-Clean,2,cmdline parsing: no overflow paths found
+src/kernel/logbuf.c,Concurrency,Info,Audited-Clean,2,Log buffer serialization verified correct
