@@ -167,7 +167,7 @@ int vmxnet3_setup_rings(struct vmxnet3_priv *priv)
         for (i = 0; i < txq->size; i++) {
             struct vmxnet3_tx_desc *d = &txq->descs[i];
             memset(d, 0, sizeof(*d));
-            d->gen = txq->gen;
+            d->gen = (unsigned int)(txq->gen ? 1 : 0);
         }
     }
 
@@ -208,7 +208,7 @@ int vmxnet3_setup_rings(struct vmxnet3_priv *priv)
             d->addr = rxq->buf_phys[i];
             d->len  = VMXNET3_RX_BUF_SIZE;
             d->btype = 0;   /* single-buffer mode */
-            d->gen   = rxq->gen;
+            d->gen   = (unsigned int)(rxq->gen ? 1 : 0);
         }
     }
 
@@ -340,7 +340,7 @@ int vmxnet3_transmit(struct vmxnet3_priv *priv,
     desc->len  = (uint32_t)len;
     desc->eop  = 1;               /* end of packet (single-fragment frame) */
     desc->cq   = 1;               /* request completion notification */
-    desc->gen  = txq->gen;        /* current generation = driver owned */
+    desc->gen  = (unsigned int)(txq->gen ? 1 : 0);        /* current generation = driver owned */
 
     /* Advance the producer index */
     txq->next = (slot + 1) % txq->size;
@@ -429,7 +429,7 @@ int vmxnet3_receive(struct vmxnet3_priv *priv,
             rdesc->addr  = rxq->buf_phys[buf_idx];
             rdesc->len   = VMXNET3_RX_BUF_SIZE;
             rdesc->btype = 0;
-            rdesc->gen   = rxq->gen;
+            rdesc->gen   = (unsigned int)(rxq->gen ? 1 : 0);
         }
 
         /* Advance in the completion ring */

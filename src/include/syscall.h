@@ -500,7 +500,7 @@ struct __sysctl_args {
 struct file_handle {
     unsigned int handle_bytes;   /* size of f_handle[] */
     int          handle_type;    /* handle type identifier */
-    unsigned char f_handle[0];   /* variable-length handle data */
+    unsigned char f_handle[];   /* variable-length handle data */
 };
 #endif
 
@@ -581,7 +581,7 @@ struct itimerspec {
 #define EPOLL_CTL_DEL 2
 #define EPOLL_CTL_MOD 3
 
-enum EPOLL_EVENTS {
+__extension__ enum EPOLL_EVENTS {
     EPOLLIN       = 0x001,
     EPOLLPRI      = 0x002,
     EPOLLOUT      = 0x004,

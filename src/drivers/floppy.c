@@ -228,9 +228,9 @@ static void floppy_deselect_drive(int drive)
 {
     uint8_t dor = DOR_IRQ;
     if (drive == 0)
-        dor &= ~DOR_MOTA;
+        dor = (uint8_t)(dor & ~DOR_MOTA);
     else if (drive == 1)
-        dor &= ~DOR_MOTB;
+        dor = (uint8_t)(dor & ~DOR_MOTB);
     dor |= (uint8_t)(drive & 0x03);
     outb(g_fdc_base + FDC_DOR, dor);
     g_floppy_motor_on = 0;

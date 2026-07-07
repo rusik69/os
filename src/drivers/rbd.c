@@ -43,7 +43,7 @@ static inline uint64_t rbd_htonll(uint64_t v) {
 static int rbd_tcp_send(int conn_id, const void *data, uint32_t len)
 {
     if (!net_tcp_is_connected(conn_id)) return -ENOTCONN;
-    int sent = net_tcp_send(conn_id, data, len);
+    int sent = net_tcp_send(conn_id, data, (uint16_t)len);
     return (sent == (int)len) ? 0 : -EIO;
 }
 
@@ -52,7 +52,7 @@ static int rbd_tcp_recv(int conn_id, void *buf, uint32_t len, int timeout)
     uint8_t *p = (uint8_t *)buf;
     uint32_t remaining = len;
     while (remaining > 0) {
-        int n = net_tcp_recv(conn_id, p, remaining, timeout);
+        int n = net_tcp_recv(conn_id, p, (uint16_t)remaining, timeout);
         if (n <= 0) return -EIO;
         p += n;
         remaining -= (uint32_t)n;

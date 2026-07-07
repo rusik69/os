@@ -887,7 +887,7 @@ static int parse_uac2_control_desc(struct audio_device *dev,
 
 		/* iFeature is the last byte */
 		fu->feature_index = data[length - 1];
-		fu->num_channels = (num_controls > 0) ? num_controls - 1 : 0;
+		fu->num_channels = (uint8_t)((num_controls > 0) ? num_controls - 1 : 0);
 		if (fu->num_channels > AUDIO_MAX_CHANNELS)
 			fu->num_channels = AUDIO_MAX_CHANNELS;
 
@@ -1209,7 +1209,7 @@ static int parse_audio_control_desc(struct audio_device *dev,
 		fu->feature_index = data[length - 1];
 
 		/* Number of logical channels = num_controls - 1 (master) */
-		fu->num_channels = (num_controls > 0) ? num_controls - 1 : 0;
+		fu->num_channels = (uint8_t)((num_controls > 0) ? num_controls - 1 : 0);
 		if (fu->num_channels > AUDIO_MAX_CHANNELS)
 			fu->num_channels = AUDIO_MAX_CHANNELS;
 

@@ -613,5 +613,6 @@ int syscall_new_invoke(int nr, void *args)
      *   int handler(void *args)
      * Cast and call it. */
     typedef int (*syscall_handler_t)(void *);
-    return ((syscall_handler_t)handler)(args);
+    union { void *obj; syscall_handler_t func; } conv = { .obj = handler };
+    return conv.func(args);
 }

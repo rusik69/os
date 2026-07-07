@@ -147,7 +147,7 @@ struct nvme_identify_ns {
     uint16_t nabspf;
     uint16_t noiob;
     uint8_t  _rsv[80];
-    uint64_t lbbaf[0];
+    uint64_t lbbaf[];
 } __attribute__((packed));
 
 /* LBA format data */

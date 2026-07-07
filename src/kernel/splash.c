@@ -355,12 +355,12 @@ void __init splash_init(void)
 
         /* Draw 'O' */
         int o_x = cx - sub_sz - sub_sz / 4;
-        int bar_w = sub_sz / 5;
-        if (bar_w < 2) bar_w = 2;
-        fbcon_fill_rect(o_x, sub_y, sub_sz, bar_w, COL_LOGO_SEC);                     /* top */
-        fbcon_fill_rect(o_x, sub_y + sub_sz - bar_w, sub_sz, bar_w, COL_LOGO_SEC);    /* bottom */
-        fbcon_fill_rect(o_x, sub_y, bar_w, sub_sz, COL_LOGO_SEC);                     /* left */
-        fbcon_fill_rect(o_x + sub_sz - bar_w, sub_y, bar_w, sub_sz, COL_LOGO_SEC);    /* right */
+        int o_bar_w = sub_sz / 5;
+        if (o_bar_w < 2) o_bar_w = 2;
+        fbcon_fill_rect(o_x, sub_y, sub_sz, o_bar_w, COL_LOGO_SEC);                     /* top */
+        fbcon_fill_rect(o_x, sub_y + sub_sz - o_bar_w, sub_sz, o_bar_w, COL_LOGO_SEC);    /* bottom */
+        fbcon_fill_rect(o_x, sub_y, o_bar_w, sub_sz, COL_LOGO_SEC);                     /* left */
+        fbcon_fill_rect(o_x + sub_sz - o_bar_w, sub_y, o_bar_w, sub_sz, COL_LOGO_SEC);    /* right */
 
         /* Draw 'S' */
         int s_x = cx + sub_sz / 4;

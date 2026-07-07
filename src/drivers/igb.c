@@ -563,7 +563,6 @@ int igb_init_hw(struct igb_priv *priv)
 
     /* Set initial per-queue interrupt throttling rates */
     {
-        int q;
         for (q = 0; q < priv->num_tx_queues && q < priv->num_rx_queues; q++)
             igb_set_eitr(priv, q, 8000);  /* ~500 int/s per queue */
     }

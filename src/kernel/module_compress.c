@@ -221,7 +221,7 @@ static int huff_build(struct huff_table *ht,
     uint16_t next_code[HUFF_MAX_BITS + 1];
     uint16_t code = 0;
     for (int bits = 1; bits <= HUFF_MAX_BITS; bits++) {
-        code = (code + bl_count[bits - 1]) << 1;
+        code = (uint16_t)((code + bl_count[bits - 1]) << 1);
         next_code[bits] = code;
     }
 
@@ -744,12 +744,12 @@ static inline int lzma_rd_decode_bit(struct lzma_rd *rd, uint16_t *prob)
 
     if (rd->code < bound) {
         rd->range = bound;
-        *prob += (2048 - *prob) >> 5;
+        *prob = (uint16_t)(*prob + ((2048 - *prob) >> 5));
         bit = 0;
     } else {
         rd->range -= bound;
         rd->code -= bound;
-        *prob -= *prob >> 5;
+        *prob = (uint16_t)(*prob - (*prob >> 5));
         bit = 1;
     }
     return bit;
@@ -1208,7 +1208,7 @@ static int lzma_decode(struct lzma_state *ls, uint64_t uncomp_size)
             for (uint32_t i = 0; i < len; i++) {
                 if (ls->dict_pos < dist)
                     return -1;
-                uint32_t _dp = ls->dict_pos++;
+                uint32_t _dp = (uint32_t)ls->dict_pos++;
                 ls->dict[_dp] = ls->dict[_dp - dist];
             }
 
@@ -1308,7 +1308,7 @@ static int lzma2_decode_chunk(struct lzma_state *ls,
         uint32_t b2 = in[(*in_pos)++];
         uint32_t uncomp_size = b0 | (b1 << 8) | (b2 << 16);
         if (uncomp_size == 0xFFFFFFFF)
-            uncomp_size = uncomp_remaining; /* unknown size, use all remaining */
+            uncomp_size = (uint32_t)uncomp_remaining; /* unknown size, use all remaining */
         if (uncomp_size > uncomp_remaining)
             return -1;
 
@@ -1335,7 +1335,7 @@ static int lzma2_decode_chunk(struct lzma_state *ls,
         uint32_t u2 = in[(*in_pos)++];
         uint32_t uncomp_size = u0 | (u1 << 8) | (u2 << 16);
         if (uncomp_size == 0xFFFFFFFF)
-            uncomp_size = uncomp_remaining;
+            uncomp_size = (uint32_t)uncomp_remaining;
         if (uncomp_size > uncomp_remaining)
             return -1;
 

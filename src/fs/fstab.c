@@ -195,10 +195,10 @@ int fstab_mount_entry(const struct fstab_entry *ent) {
     if (vfs_stat(ent->mountpoint, &st) == 0) {
         /* Mountpoint already exists and may be mounted */
         /* For virtual filesystems, we allow remount */
-        char mounts[VFS_MAX_MOUNTS][64];
-        int nmounts = vfs_list_mountpoints(mounts, VFS_MAX_MOUNTS);
+        char mount_list[VFS_MAX_MOUNTS][64];
+        int nmounts = vfs_list_mountpoints(mount_list, VFS_MAX_MOUNTS);
         for (int i = 0; i < nmounts; i++) {
-            if (strcmp(mounts[i], ent->mountpoint) == 0) {
+            if (strcmp(mount_list[i], ent->mountpoint) == 0) {
                 kprintf("[fstab] %s already mounted at %s — skipping\n",
                         ent->fstype, ent->mountpoint);
                 return 0;

@@ -345,9 +345,9 @@ static int dir_grow_cluster(uint32_t *cluster) {
 static uint8_t lfn_checksum(const char *name83_8, const char *name83_3) {
     uint8_t sum = 0;
     for (int i = 0; i < 8; i++)
-        sum = ((sum & 1) ? 0x80 : 0) + (sum >> 1) + (uint8_t)name83_8[i];
+        sum = (uint8_t)(((sum & 1) ? 0x80 : 0) + (sum >> 1) + (uint8_t)name83_8[i]);
     for (int i = 0; i < 3; i++)
-        sum = ((sum & 1) ? 0x80 : 0) + (sum >> 1) + (uint8_t)name83_3[i];
+        sum = (uint8_t)(((sum & 1) ? 0x80 : 0) + (sum >> 1) + (uint8_t)name83_3[i]);
     return sum;
 }
 
@@ -1485,9 +1485,9 @@ static int dir_remove_entry(uint32_t dir_cluster, const char *name) {
                 if (matched) {
                     if (lfn_start >= 0) {
                         for (int j = lfn_start; j < i; j++)
-                            entries[j].name[0] = 0xE5;
+                            entries[j].name[0] = (char)0xE5;
                     }
-                    entries[i].name[0] = 0xE5;
+                    entries[i].name[0] = (char)0xE5;
                     return write_sector(lba + s, buf);
                 }
                 lfn_n = 0;
@@ -2255,11 +2255,11 @@ static int fat32_validate_bpb(const uint8_t *boot)
 		return -EINVAL;		/* no boot signature */
 
 	const struct fat32_bpb *bpb = (const struct fat32_bpb *)boot;
-	uint16_t bps = bpb->bytes_per_sector;
-	if (bps == 0)
+	uint16_t bps_val = bpb->bytes_per_sector;
+	if (bps_val == 0)
 		return -EINVAL;
 	/* bytes_per_sector must be a power of 2 and at least 512 */
-	if (bps < 512 || (bps & (bps - 1)) != 0)
+	if (bps_val < 512 || (bps_val & (bps_val - 1)) != 0)
 		return -EINVAL;
 
 	uint8_t spc_val = bpb->sectors_per_cluster;
@@ -2640,7 +2640,7 @@ int fat32_read(void *file, void *buf, size_t count, uint64_t offset)
     (void)buf;
     (void)count;
     (void)offset;
-    kprintf("[fat32] read at %llu count=%zu\n", (unsigned long long)offset, count);
+    kprintf("[fat32] read at %llu count=%llu\n", (unsigned long long)offset, (unsigned long long)count);
     return 0;
 }
 /* ── fat32_write ─────────────────────────────────────── */
@@ -2650,7 +2650,7 @@ int fat32_write(void *file, const void *buf, size_t count, uint64_t offset)
     (void)buf;
     (void)count;
     (void)offset;
-    kprintf("[fat32] write at %llu count=%zu\n", (unsigned long long)offset, count);
+    kprintf("[fat32] write at %llu count=%llu\n", (unsigned long long)offset, (unsigned long long)count);
     return (int)count;
 }
 /* ── fat32_truncate ────────────────────────────────────── */

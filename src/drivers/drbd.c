@@ -49,7 +49,7 @@ static int drbd_tcp_send(struct drbd_resource *res,
 {
     if (!net_tcp_is_connected(res->conn_id))
         return -ENOTCONN;
-    int sent = net_tcp_send(res->conn_id, data, len);
+    int sent = net_tcp_send(res->conn_id, data, (uint16_t)len);
     return (sent == (int)len) ? 0 : -EIO;
 }
 
@@ -59,7 +59,7 @@ static int drbd_tcp_recv(struct drbd_resource *res, void *buf,
     uint8_t *p = (uint8_t *)buf;
     uint32_t remaining = len;
     while (remaining > 0) {
-        int n = net_tcp_recv(res->conn_id, p, remaining, timeout);
+        int n = net_tcp_recv(res->conn_id, p, (uint16_t)remaining, timeout);
         if (n <= 0) return -EIO;
         p += n;
         remaining -= (uint32_t)n;
@@ -106,7 +106,7 @@ static int drbd_recv_packet(struct drbd_resource *res,
         return -EIO;
 
     uint32_t total_len = drbd_htonl(hdr->len);
-    uint32_t payload_len = total_len - sizeof(*hdr);
+    uint32_t payload_len = (uint32_t)(total_len - sizeof(*hdr));
 
     if (payload_len > 0 && data_buf && payload_len <= *data_len) {
         if (drbd_tcp_recv(res, data_buf, payload_len, 100) < 0)

@@ -161,7 +161,7 @@ static uint8_t *read_bitmap(uint8_t dev_id, uint32_t bitmap_block,
     uint64_t lba = (uint64_t)bitmap_block * (block_size / 512);
     uint32_t sectors = block_size / 512;
     for (uint32_t i = 0; i < sectors; i++) {
-        if (blockdev_read_sectors(dev_id, lba + i, 1, bitmap + i * 512) != 0) {
+        if (blockdev_read_sectors(dev_id, (uint32_t)(lba + i), 1, bitmap + i * 512) != 0) {
             kprintf("[FSCK] I/O error reading bitmap block %u\n",
                     (unsigned int)bitmap_block);
             kfree(bitmap);
@@ -186,7 +186,7 @@ static inline void bitmap_set(uint8_t *bitmap, uint32_t index)
 /* Clear a bit in a bitmap */
 static inline void bitmap_clear(uint8_t *bitmap, uint32_t index)
 {
-    bitmap[index >> 3] &= ~(1U << (index & 7));
+    bitmap[index >> 3] = (uint8_t)(bitmap[index >> 3] & ~(1U << (index & 7)));
 }
 
 /* Count the number of bits set in a bitmap */
@@ -312,7 +312,7 @@ static int fsck_ext2(struct vfs_mount *mnt, int flags, int *errors_out)
         uint64_t lba = (uint64_t)(bgd_start_block + i) * (block_size / 512);
         uint32_t sectors = block_size / 512;
         for (uint32_t s = 0; s < sectors; s++) {
-            if (blockdev_read_sectors(dev_id, lba + s, 1,
+            if (blockdev_read_sectors(dev_id, (uint32_t)(lba + s), 1,
                                       bgd_buf + i * block_size + s * 512) != 0) {
                 kprintf("[FSCK] I/O error reading BGD block %u\n",
                         (unsigned int)(bgd_start_block + i));
@@ -500,7 +500,7 @@ static int fsck_ext2(struct vfs_mount *mnt, int flags, int *errors_out)
 
             int io_ok = 1;
             for (uint32_t s = 0; s < sectors_needed; s++) {
-                if (blockdev_read_sectors(dev_id, lba + s, 1,
+                if (blockdev_read_sectors(dev_id, (uint32_t)(lba + s), 1,
                                           inode_buf + buf_off) != 0) {
                     io_ok = 0;
                     break;
@@ -564,7 +564,7 @@ static int fsck_ext2(struct vfs_mount *mnt, int flags, int *errors_out)
                 uint64_t dir_lba = (uint64_t)dir_block * (block_size / 512);
                 int dir_ok = 1;
                 for (uint32_t s = 0; s < block_size / 512; s++) {
-                    if (blockdev_read_sectors(dev_id, dir_lba + s, 1,
+                    if (blockdev_read_sectors(dev_id, (uint32_t)(dir_lba + s), 1,
                                               dir_buf + s * 512) != 0) {
                         dir_ok = 0;
                         break;
@@ -687,7 +687,7 @@ static int fsck_ext2(struct vfs_mount *mnt, int flags, int *errors_out)
 
                 int io_ok = 1;
                 for (uint32_t s = 0; s < sectors_needed; s++) {
-                    if (blockdev_read_sectors(dev_id, lba + s, 1,
+                    if (blockdev_read_sectors(dev_id, (uint32_t)(lba + s), 1,
                                               inode_buf + buf_off) != 0) {
                         io_ok = 0;
                         break;
@@ -760,7 +760,7 @@ static int fsck_ext2(struct vfs_mount *mnt, int flags, int *errors_out)
                 /* Read, modify, write back */
                 uint8_t wbuf[512];
                 uint64_t wlba = (uint64_t)blk * (block_size / 512);
-                if (blockdev_read_sectors(dev_id, wlba, 1, wbuf) != 0)
+                if (blockdev_read_sectors(dev_id, (uint32_t)wlba, 1, wbuf) != 0)
                     continue;
 
                 struct ext2_inode *w_inode =
@@ -772,7 +772,7 @@ static int fsck_ext2(struct vfs_mount *mnt, int flags, int *errors_out)
                             (unsigned int)w_inode->i_links_count,
                             (unsigned int)actual_links);
                     w_inode->i_links_count = actual_links;
-                    blockdev_write_sectors(dev_id, wlba, 1, wbuf);
+                    blockdev_write_sectors(dev_id, (uint32_t)wlba, 1, wbuf);
                 }
             }
         }

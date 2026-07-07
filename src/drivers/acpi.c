@@ -1685,13 +1685,13 @@ static int acpi_load_ssdts(void)
             kprintf("[ACPI] SSDT: expected XSDT signature\n");
             return 0;
         }
-        entry_count = (sdt_header->length - sizeof(struct acpi_header)) / 8;
+        entry_count = (uint32_t)((sdt_header->length - sizeof(struct acpi_header)) / 8);
         entry_size  = 8;
     } else if (g_rsdp_cache.rsdt_addr != 0) {
         sdt_header = (struct acpi_header *)PHYS_TO_VIRT((uint64_t)g_rsdp_cache.rsdt_addr);
         if (!sdt_header) return 0;
         if (memcmp(sdt_header->signature, "RSDT", 4) != 0) return 0;
-        entry_count = (sdt_header->length - sizeof(struct acpi_header)) / 4;
+        entry_count = (uint32_t)((sdt_header->length - sizeof(struct acpi_header)) / 4);
         entry_size  = 4;
     }
 
@@ -1840,7 +1840,7 @@ static void *acpi_find_table(const char signature[4])
             kprintf("[ACPI] find_table: XSDT checksum failed\n");
             return NULL;
         }
-        entry_count = (sdt_header->length - sizeof(struct acpi_header)) / 8;
+        entry_count = (uint32_t)((sdt_header->length - sizeof(struct acpi_header)) / 8);
         entry_size  = 8;
     } else if (g_rsdp_cache.rsdt_addr != 0) {
         /* Fall back to RSDT (32-bit physical addresses) */
@@ -1860,7 +1860,7 @@ static void *acpi_find_table(const char signature[4])
             kprintf("[ACPI] find_table: RSDT checksum failed\n");
             return NULL;
         }
-        entry_count = (sdt_header->length - sizeof(struct acpi_header)) / 4;
+        entry_count = (uint32_t)((sdt_header->length - sizeof(struct acpi_header)) / 4);
         entry_size  = 4;
     }
 

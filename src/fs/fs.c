@@ -79,7 +79,7 @@ static uint8_t *fs_bitmap(void) { return super.padding; }
 
 static int bitmap_idx(uint32_t sector) {
     if (sector < FS_DATA_START) return -EINVAL;
-    uint32_t idx = sector - FS_DATA_START;
+    uint32_t idx = (uint32_t)(sector - FS_DATA_START);
     if (idx >= FS_BITMAP_MAX_BLOCKS) return -EINVAL;
     return (int)idx;
 }
@@ -117,7 +117,7 @@ static void bitmap_rebuild_from_inodes(void) {
 
 static uint32_t bitmap_alloc_block(void) {
     uint32_t start = super.next_free_block > FS_DATA_START
-                   ? super.next_free_block - FS_DATA_START : 0;
+                   ? (uint32_t)(super.next_free_block - FS_DATA_START) : 0;
     for (uint32_t pass = 0; pass < FS_BITMAP_MAX_BLOCKS; pass++) {
         uint32_t idx = (start + pass) % FS_BITMAP_MAX_BLOCKS;
         if (bitmap_is_free((int)idx)) {

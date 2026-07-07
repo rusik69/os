@@ -259,9 +259,9 @@ int elf_exec(const char *path) {
 
     /* Check execute permission on the binary file (Item X10) */
     struct process *cur_proc = process_get_current();
-    uint16_t check_uid = cur_proc ? cur_proc->euid : 0;
-    uint16_t check_gid = cur_proc ? cur_proc->egid : 0;
-    if (process_check_exec_perms(path, check_uid, check_gid) < 0) {
+    if (process_check_exec_perms(path,
+            cur_proc ? cur_proc->euid : 0,
+            cur_proc ? cur_proc->egid : 0) < 0) {
         kprintf("elf: permission denied for %s\n", path);
         kfree(buf);
         kfree(name);

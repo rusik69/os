@@ -183,7 +183,7 @@ int module_dep_resolve(const char *mod_name, char *err_buf, int err_len)
         /* Hold a reference to the auto-loaded dependency so it stays
          * alive while this module depends on it. */
         {
-            struct kernel_module *dep_mod = module_find(dep_name);
+            dep_mod = module_find(dep_name);
             if (dep_mod)
                 module_get(dep_mod);
         }

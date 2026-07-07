@@ -36,7 +36,7 @@ int e1000_rx_queue_count(void);
 /* Promiscuous mode and multicast filter control */
 int e1000_set_promisc(int enable);
 int e1000_set_allmulti(int enable);
-int e1000_set_multicast(void *dev, void *addr, int count);
+int e1000_set_multicast(struct net_device *dev, const void *addr, int count);
 
 /* VLAN offload control */
 int e1000_vlan_rx_add_vid(struct net_device *dev, uint16_t vid);

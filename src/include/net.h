@@ -154,7 +154,7 @@ struct mldv2_query {
 } __attribute__((packed));
 
 /* MLDv2 Multicast Listener Report (ICMPv6 type 143, RFC 3810 §5.2) */
-struct mldv2_report {
+__extension__ struct mldv2_report {
     struct icmpv6_header icmp;           /* type=143, code=0 */
     uint16_t reserved;
     uint16_t num_group_records;
@@ -225,7 +225,7 @@ struct nd_option {
 struct ipv6_exthdr_opt {
     uint8_t  next_header;
     uint8_t  hdr_ext_len;   /* length in 8-octet units excluding first 8 octets */
-    uint8_t  options[0];    /* TLV-encoded options */
+    uint8_t  options[];     /* TLV-encoded options */
 } __attribute__((packed));
 
 /* Routing Header (type 0 deprecated, type 2 for mobility) */
@@ -234,7 +234,7 @@ struct ipv6_routing {
     uint8_t  hdr_ext_len;
     uint8_t  routing_type;
     uint8_t  segments_left;
-    uint8_t  data[0];       /* type-specific data */
+    uint8_t  data[];        /* type-specific data */
 } __attribute__((packed));
 
 /* Fragment Header (RFC 8200 §4.5) */
@@ -258,14 +258,14 @@ struct ipv6_auth {
     uint16_t reserved;
     uint32_t spi;           /* Security Parameters Index */
     uint32_t sequence_number;
-    uint8_t  icv[0];        /* Integrity Check Value */
+    uint8_t  icv[];         /* Integrity Check Value */
 } __attribute__((packed));
 
 /* TLV Option format (used in Hop-by-Hop and Destination options) */
 struct ipv6_tlv_opt {
     uint8_t  type;
     uint8_t  len;           /* length of data (not including type+len) */
-    uint8_t  data[0];
+    uint8_t  data[];
 } __attribute__((packed));
 
 /* TLV option types */

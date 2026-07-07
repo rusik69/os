@@ -42,7 +42,7 @@ static int nvmf_send_pdu(struct nvmf_target *tgt, const void *pdu, uint32_t len)
 {
     if (!tgt->connected || !net_tcp_is_connected(tgt->conn_id))
         return -ENOTCONN;
-    int sent = net_tcp_send(tgt->conn_id, pdu, len);
+    int sent = net_tcp_send(tgt->conn_id, pdu, (uint16_t)len);
     return (sent == (int)len) ? 0 : -EIO;
 }
 
@@ -51,7 +51,7 @@ static int nvmf_recv_exact(struct nvmf_target *tgt, void *buf, uint32_t len, int
     uint8_t *p = (uint8_t *)buf;
     uint32_t remaining = len;
     while (remaining > 0) {
-        int n = net_tcp_recv(tgt->conn_id, p, remaining, timeout);
+        int n = net_tcp_recv(tgt->conn_id, p, (uint16_t)remaining, timeout);
         if (n <= 0) return -EIO;
         p += n;
         remaining -= (uint32_t)n;
@@ -76,7 +76,7 @@ static int nvmf_handle_connect(struct nvmf_target *tgt,
         return -EIO;
 
     /* Read optional data segment containing host/target NQN */
-    dlen = req_hdr->len - sizeof(*req_hdr) - sizeof(conn_req);
+    dlen = (uint32_t)(req_hdr->len - sizeof(*req_hdr) - sizeof(conn_req));
     dlen = nvmf_htons((uint16_t)dlen);  /* len is big-endian */
     if (dlen > 0 && dlen <= sizeof(data_seg)) {
         if (nvmf_recv_exact(tgt, data_seg, dlen, 100) < 0)
@@ -205,7 +205,7 @@ static int nvmf_handle_capsule_cmd(struct nvmf_target *tgt,
         return -EIO;
 
     /* Read any extra data (for SGL etc.) */
-    uint32_t extra = total_len - sizeof(capsule);
+    uint32_t extra = (uint32_t)(total_len - sizeof(capsule));
     if (extra > sizeof(extra_data)) extra = sizeof(extra_data);
     if (extra > 0) {
         if (nvmf_recv_exact(tgt, extra_data, extra, 100) < 0)

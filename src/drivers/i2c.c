@@ -690,13 +690,13 @@ int i2c_read(void *dev, __maybe_unused uint8_t addr, __maybe_unused uint8_t reg,
 {
     if (!dev || !buf || count == 0) return -EINVAL;
     memset(buf, 0, count);
-    return count;
+    return (int)count;
 }
 
 int i2c_write(void *dev, __maybe_unused uint8_t addr, __maybe_unused uint8_t reg, __maybe_unused const uint8_t *buf, size_t count)
 {
     if (!dev) return -EINVAL;
-    return count;
+    return (int)count;
 }
 
 int i2c_transfer(void *dev, void *msgs, int num)

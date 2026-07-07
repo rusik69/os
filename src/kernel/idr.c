@@ -48,7 +48,7 @@ int idr_find(struct idr *idr, int id) {
     if (!idr || !idr->bitmap || id < 0 || id >= idr->max) return 0;
     int w = id / 64;
     int bit = id % 64;
-    return idr->bitmap[w] & (1ULL << bit);
+    return (idr->bitmap[w] & (1ULL << bit)) != 0;
 }
 
 /* ── Stub: idr_destroy ─────────────────────────────── */

@@ -60,7 +60,7 @@ int ps2_controller_init(void) {
 
     /* Step 5: Write config back (keep current settings but ensure ports enabled) */
     config |= PS2_CFG_P1_IRQ;
-    config &= ~PS2_CFG_P1_CLOCK;  /* enable clock for port 1 */
+    config = (uint8_t)(config & ~PS2_CFG_P1_CLOCK);  /* enable clock for port 1 */
 
     /* Check if dual-channel: read port 2 status */
     ps2_write_command(PS2_CMD_DISABLE_P2);
@@ -71,7 +71,7 @@ int ps2_controller_init(void) {
         /* Port 2 clock was held low — dual-channel controller present */
         has_port2 = 1;
         config |= PS2_CFG_P2_IRQ;
-        config &= ~PS2_CFG_P2_CLOCK;
+        config = (uint8_t)(config & ~PS2_CFG_P2_CLOCK);
     }
 
     /* Write config back */

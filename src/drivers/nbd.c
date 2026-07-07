@@ -34,7 +34,7 @@ static int nbd_tcp_send(int conn_id, const void *data, uint32_t len)
     if (!net_tcp_is_connected(conn_id))
         return -1;
 
-    int sent = net_tcp_send(conn_id, data, len);
+    int sent = net_tcp_send(conn_id, data, (uint16_t)len);
     if (sent != (int)len)
         return -1;
     return 0;
@@ -47,7 +47,7 @@ static int nbd_tcp_recv(int conn_id, void *buf, uint32_t len, int timeout_ticks)
     uint32_t remaining = len;
 
     while (remaining > 0) {
-        int n = net_tcp_recv(conn_id, p, remaining, timeout_ticks);
+        int n = net_tcp_recv(conn_id, p, (uint16_t)remaining, timeout_ticks);
         if (n <= 0)
             return -1;
         p += n;

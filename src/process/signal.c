@@ -420,7 +420,11 @@ int signal_handle(void *task, int sig)
 int signal_register_handler(int sig, void *handler)
 {
     if (sig <= 0 || sig >= SIG_MAX) return -EINVAL;
-    signal_register(sig, (signal_handler_t)handler);
+    /* ISO C does not allow direct cast from void* to function pointer;
+     * use union-based pun for pedantic compliance. */
+    union { void *obj; signal_handler_t fn; } u;
+    u.obj = handler;
+    signal_register(sig, u.fn);
     return 0;
 }
 

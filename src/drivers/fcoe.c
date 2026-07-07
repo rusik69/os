@@ -87,7 +87,7 @@ static int fcoe_xmit_frame(const uint8_t *dst_mac, const uint8_t *src_mac,
     (void)fcoe_open_socket();
     /* In real implementation: send with sock_sendto() on AF_PACKET socket */
     /* For now, use net_link_send to raw Ethernet frame */
-    net_link_send(buf, offset);
+    net_link_send(buf, (uint16_t)offset);
     kfree(buf);
     return 0;
 }

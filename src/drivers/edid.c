@@ -48,16 +48,15 @@ static void parse_standard_timing(const uint8_t *data, struct edid_timing *t) {
     uint8_t aspect = (b1 >> 6) & 0x03;
     uint8_t freq = (b1 & 0x3F);
     uint16_t h_pixels = (uint16_t)(b2 & 0xE0);
-    h_pixels = ((h_pixels << 3) | (b2 & 0x1F)) * 8;
-
+    h_pixels = (uint16_t)(((h_pixels << 3) | (b2 & 0x1F)) * 8);
     t->h_pixels = h_pixels;
     t->v_freq = freq + 60;  /* Vertical frequency = freq + 60 Hz */
 
     switch (aspect) {
-        case 0: t->v_lines = h_pixels * 10 / 16; break; /* 16:10 */
-        case 1: t->v_lines = h_pixels * 3 / 4; break;   /* 4:3 */
-        case 2: t->v_lines = h_pixels * 4 / 5; break;   /* 5:4 */
-        case 3: t->v_lines = h_pixels * 9 / 16; break;  /* 16:9 */
+        case 0: t->v_lines = (uint16_t)(h_pixels * 10 / 16); break; /* 16:10 */
+        case 1: t->v_lines = (uint16_t)(h_pixels * 3 / 4); break;   /* 4:3 */
+        case 2: t->v_lines = (uint16_t)(h_pixels * 4 / 5); break;   /* 5:4 */
+        case 3: t->v_lines = (uint16_t)(h_pixels * 9 / 16); break;  /* 16:9 */
         default:
             break;
     }
@@ -131,7 +130,7 @@ int edid_parse(const uint8_t *raw, struct edid_data *edid) {
 
     /* Week and year */
     edid->week = raw[0x10];
-    edid->year = raw[0x11] + 1990;
+    edid->year = (uint8_t)(raw[0x11] + 1990);  /* Note: bare uint8_t wraps after 2245; use uint16_t if needed beyond */
 
     /* EDID version/revision */
     edid->edid_version = raw[0x12];

@@ -323,7 +323,7 @@ int mbr_parse(disk_read_callback_t disk_read, uint64_t disk_sectors,
             ebr_depth++;
 
             /* Validate the logical partition's bounds */
-            uint32_t abs_start = ebr_lba + logical_raw.start_lba;
+            uint32_t abs_start = (uint32_t)(ebr_lba + logical_raw.start_lba);
 
             if (abs_start > disk_sectors ||
                 logical_raw.sector_count == 0 ||

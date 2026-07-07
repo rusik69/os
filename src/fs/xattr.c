@@ -381,7 +381,7 @@ int xattr_generic_set(void *inode, const char *name, const void *value, size_t s
     (void)inode;
     (void)flags;
     if (!name || !value) return -EINVAL;
-    kprintf("[xattr] set: %s size=%zu\n", name, size);
+    kprintf("[xattr] set: %s size=%llu\n", name, (unsigned long long)size);
     return 0;
 }
 /* ── xattr_generic_get ─────────────────────────────────── */

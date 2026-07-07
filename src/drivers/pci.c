@@ -368,7 +368,7 @@ int pci_enable_msi(struct pci_device *dev, uint8_t vector,
     uint16_t msg_ctrl = pci_read16(bus, slot, func, cap + 2);
 
     /* Disable MSI while configuring */
-    pci_write16(bus, slot, func, cap + 2, msg_ctrl & ~PCI_MSI_CTRL_ENABLE);
+    pci_write16(bus, slot, func, cap + 2, (uint16_t)(msg_ctrl & ~PCI_MSI_CTRL_ENABLE));
 
     /* Write message address */
     pci_write32(bus, slot, func, cap + 4, msg_addr);
@@ -416,7 +416,7 @@ void pci_disable_msi(struct pci_device *dev) {
         return;
 
     uint16_t msg_ctrl = pci_read16(dev->bus, dev->slot, dev->func, info.cap_offset + 2);
-    msg_ctrl &= ~PCI_MSI_CTRL_ENABLE;
+    msg_ctrl = (uint16_t)(msg_ctrl & ~PCI_MSI_CTRL_ENABLE);
     pci_write16(dev->bus, dev->slot, dev->func, info.cap_offset + 2, msg_ctrl);
 }
 

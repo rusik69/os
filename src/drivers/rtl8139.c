@@ -135,7 +135,7 @@ int rtl8139_init_hw(struct rtl8139_priv *priv)
 
     /* Step 4: Set CONFIG1 — turn off optional features */
     rtl8139_writeb(priv, RTL_REG_CONFIG1,
-                   rtl8139_readb(priv, RTL_REG_CONFIG1) & ~RTL_CFG1_PMEN);
+                   (uint8_t)(rtl8139_readb(priv, RTL_REG_CONFIG1) & ~RTL_CFG1_PMEN));
 
     /* Step 5: Initialize TX buffers and reset TX descriptor pointers */
     for (i = 0; i < RTL8139_NUM_TX_DESC; i++) {
@@ -294,13 +294,13 @@ int rtl8139_transmit(struct net_device *dev,
 
     /* Quick check: if the next descriptor is still owned by the NIC
      * (ring full), return BUSY so the upper layer can retry. */
-    tsd = rtl8139_readl(priv, RTL_REG_TDSTAT0 + slot * 4);
+    tsd = rtl8139_readl(priv, (uint16_t)(RTL_REG_TDSTAT0 + slot * 4));
     if (tsd & RTL_TSD_OWN) {
         /* Check if NIC has finished since we last looked */
         timeout = 1000;
         do {
             __asm__ volatile("pause");
-            tsd = rtl8139_readl(priv, RTL_REG_TDSTAT0 + slot * 4);
+            tsd = rtl8139_readl(priv, (uint16_t)(RTL_REG_TDSTAT0 + slot * 4));
             if (!(tsd & RTL_TSD_OWN))
                 break;
         } while (--timeout > 0);
@@ -321,12 +321,12 @@ int rtl8139_transmit(struct net_device *dev,
 
     /* Give NIC ownership of the descriptor by writing the packet
      * length with the OWN bit set to the Transmit Status register. */
-    rtl8139_writel(priv, RTL_REG_TDSTAT0 + slot * 4,
+    rtl8139_writel(priv, (uint16_t)(RTL_REG_TDSTAT0 + slot * 4),
                    (uint32_t)len | RTL_TSD_OWN);
 
     /* Write the physical buffer address to the TX Start Address
      * register — this kicks off the transmission. */
-    rtl8139_writel(priv, RTL_REG_TSAD0 + slot * 4,
+    rtl8139_writel(priv, (uint16_t)(RTL_REG_TSAD0 + slot * 4),
                    (uint32_t)VIRT_TO_PHYS(priv->tx_bufs[slot]));
 
     /* Advance to next descriptor slot (0-3 round-robin) */

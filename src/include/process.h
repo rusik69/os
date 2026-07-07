@@ -439,6 +439,6 @@ int process_set_user_process(uint64_t entry, uint64_t stack, uint64_t *pml4);
 /* Before executing a binary, verify that the inode has the necessary
  * execute permission bits (S_IXUSR, S_IXGRP, or S_IXOTH).
  * Returns 0 if execute is allowed, -EACCES if denied. */
-int process_check_exec_perms(const char *binary_path, uint16_t uid, uint16_t gid);
+int process_check_exec_perms(const char *binary_path, uint32_t uid, uint32_t gid);
 
 #endif

@@ -56,12 +56,12 @@ int cmos_get_time(void *time)
     /* Convert BCD to binary if needed */
     uint8_t status_b = cmos_read(0x0B);
     if (!(status_b & 0x04)) {
-        t->second = (t->second & 0x0F) + ((t->second / 16) * 10);
-        t->minute = (t->minute & 0x0F) + ((t->minute / 16) * 10);
-        t->hour   = (t->hour & 0x0F) + ((t->hour / 16) * 10);
-        t->day    = (t->day & 0x0F) + ((t->day / 16) * 10);
-        t->month  = (t->month & 0x0F) + ((t->month / 16) * 10);
-        t->year   = (uint16_t)(t->year & 0x0F) + (uint16_t)((t->year / 16) * 10) + 2000;
+        t->second = (uint8_t)((t->second & 0x0F) + ((t->second / 16) * 10));
+        t->minute = (uint8_t)((t->minute & 0x0F) + ((t->minute / 16) * 10));
+        t->hour   = (uint8_t)((t->hour & 0x0F) + ((t->hour / 16) * 10));
+        t->day    = (uint8_t)((t->day & 0x0F) + ((t->day / 16) * 10));
+        t->month  = (uint8_t)((t->month & 0x0F) + ((t->month / 16) * 10));
+        t->year   = (uint16_t)((t->year & 0x0F) + ((t->year / 16) * 10) + 2000);
     }
 
     return 0;

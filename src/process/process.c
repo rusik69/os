@@ -801,7 +801,7 @@ int cap_bset_has(uint32_t cap) {
     if (!p || cap >= PROCESS_SYSCALL_MAX) return 0;
     int word = cap / 64;
     int bit  = cap % 64;
-    return p->cap_bset[word] & (1ULL << bit);
+    return (p->cap_bset[word] & (1ULL << bit)) != 0;
 }
 
 void cap_bset_init(struct process *proc) {
@@ -1750,7 +1750,7 @@ EXPORT_SYMBOL(process_exit);
  *
  * Returns 0 if execute is allowed, -EACCES if denied.
  */
-int process_check_exec_perms(const char *binary_path, uint16_t uid, uint16_t gid)
+int process_check_exec_perms(const char *binary_path, uint32_t uid, uint32_t gid)
 {
     if (!binary_path) return -EINVAL;
 

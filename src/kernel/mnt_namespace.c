@@ -230,7 +230,7 @@ struct vfs_mount *mnt_ns_resolve(struct mnt_namespace *ns, const char *path)
     return best;
 }
 
-int mnt_ns_list_mounts(struct mnt_namespace *ns, char mounts[][64], int max)
+int mnt_ns_list_mounts(struct mnt_namespace *ns, char mount_list[][64], int max)
 {
     if (!ns)
         ns = root_ns;
@@ -239,8 +239,8 @@ int mnt_ns_list_mounts(struct mnt_namespace *ns, char mounts[][64], int max)
 
     int n = ns->num_mounts < max ? ns->num_mounts : max;
     for (int i = 0; i < n; i++) {
-        strncpy(mounts[i], ns->mounts[i].mountpoint, 63);
-        mounts[i][63] = '\0';
+        strncpy(mount_list[i], ns->mounts[i].mountpoint, 63);
+        mount_list[i][63] = '\0';
     }
     return n;
 }

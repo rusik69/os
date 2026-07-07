@@ -216,8 +216,8 @@ int iso9660_rr_apply_px(const struct iso_rrip_entry *de, struct vfs_stat *st)
 		return -1;
 
 	st->mode  = de->rr_mode & 07777;
-	st->uid   = de->rr_uid;
-	st->gid   = de->rr_gid;
+	st->uid   = (uint16_t)de->rr_uid;
+	st->gid   = (uint16_t)de->rr_gid;
 	st->nlink = de->rr_nlink ? de->rr_nlink : 1;
 
 	/* Timestamp fields in the rrip entry already have TF values

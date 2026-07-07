@@ -44,7 +44,7 @@ static int iso_read_block(struct iso9660_priv *ip, uint32_t lba, uint8_t *buf)
     uint64_t sector = (uint64_t)lba * (ip->block_size / 512);
     uint32_t sectors = ip->block_size / 512;
     for (uint32_t i = 0; i < sectors; i++) {
-        if (blockdev_read_sectors(ip->dev_id, sector + i, 1, buf + i * 512) != 0)
+        if (blockdev_read_sectors(ip->dev_id, (uint32_t)(sector + i), 1, buf + i * 512) != 0)
             return -1;
     }
     return 0;
@@ -1066,8 +1066,8 @@ static int iso9660_stat(void *priv, const char *path, struct vfs_stat *st)
             /* Use Rock Ridge POSIX attributes if available */
             if (entries[i].rr_flags & RRIP_HAS_PX) {
                 st->mode   = entries[i].rr_mode & 07777;
-                st->uid    = entries[i].rr_uid;
-                st->gid    = entries[i].rr_gid;
+                st->uid    = (uint16_t)entries[i].rr_uid;
+                st->gid    = (uint16_t)entries[i].rr_gid;
                 st->nlink  = entries[i].rr_nlink ? entries[i].rr_nlink : 1;
                 /* Timestamp fields already have TF values overlaying
                  * PX values (TF is parsed after PX in the SUSP walk).

@@ -209,7 +209,7 @@ int vfat_shortname_checksum(const char *short_name)
     if (!short_name) return 0;
     unsigned char sum = 0;
     for (int i = 0; short_name[i]; i++) {
-        sum = ((sum & 1) ? 0x80 : 0) + (sum >> 1) + (unsigned char)short_name[i];
+        sum = (unsigned char)(((sum & 1) ? 0x80 : 0) + (sum >> 1) + (unsigned char)short_name[i]);
     }
     return (int)sum;
 }

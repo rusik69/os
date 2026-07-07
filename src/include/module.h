@@ -413,7 +413,7 @@ int module_deps_resolved(struct kernel_module *mod);
  * built-in code cannot be unloaded at runtime. */
 #include "initcall.h"
 #define module_init(fn)    device_initcall(fn)
-#define module_exit(fn)
+#define module_exit(fn)    static initcall_t __module_exit_unused_##fn __attribute__((__unused__)) = (initcall_t)(fn)
 #endif /* MODULE */
 
 /* MODULE_DEPENDS — declare module dependencies.

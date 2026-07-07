@@ -220,7 +220,7 @@ int rtc_set_periodic(int enable, int rate_hz) {
     } else {
         /* Disable periodic interrupt */
         uint8_t regb = cmos_read(RTC_STATUS_B);
-        cmos_write(RTC_STATUS_B, regb & ~RTC_B_PER_INT);
+        cmos_write(RTC_STATUS_B, (uint8_t)(regb & ~RTC_B_PER_INT));
         g_periodic_enabled = 0;
     }
 
@@ -310,7 +310,7 @@ int rtc_alarm_enable(int enable) {
     if (enable) {
         cmos_write(RTC_STATUS_B, regb | RTC_B_ALRM_INT);
     } else {
-        cmos_write(RTC_STATUS_B, regb & ~RTC_B_ALRM_INT);
+        cmos_write(RTC_STATUS_B, (uint8_t)(regb & ~RTC_B_ALRM_INT));
     }
     return 0;
 }

@@ -702,6 +702,7 @@ int e1000_rss_get_queue_hash(const uint8_t *buf, uint16_t len,
     }
 
 done:
+    ;
     uint32_t reta_idx = (hash >> 24) & 0x7F;
     if (reta_idx >= 128) reta_idx = 0;
     q = (int)(reta_idx % (uint32_t)num_queues);
@@ -1456,7 +1457,7 @@ int e1000_init(void) {
             ndev.priv     = NULL;
 
             /* Wire up multicast and feature-change callbacks */
-            ndev.set_multicast_list = (void *)(void *)e1000_set_multicast;
+            ndev.set_multicast_list = e1000_set_multicast;
             ndev.set_features = NULL;  /* not yet used */
 
             /* VLAN offload callbacks */
@@ -2012,7 +2013,7 @@ int e1000_set_allmulti(int enable)
  */
 #define MULTICAST_HASH_LIMIT 16
 
-int e1000_set_multicast(void *dev, void *addr, int count)
+int e1000_set_multicast(struct net_device *dev, const void *addr, int count)
 {
 	(void)dev;
 
