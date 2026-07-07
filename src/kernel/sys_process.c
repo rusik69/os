@@ -356,11 +356,9 @@ uint64_t sys_rt_sigtimedwait(uint64_t set_addr, uint64_t info_addr,
                 /* Capture siginfo if available */
                 struct siginfo saved_info;
                 memset(&saved_info, 0, sizeof(saved_info));
-                int have_info = 0;
                 if (p->sig_info[signum].si_signo == signum) {
                     memcpy(&saved_info, &p->sig_info[signum], sizeof(saved_info));
                     memset(&p->sig_info[signum], 0, sizeof(struct siginfo));
-                    have_info = 1;
                 } else {
                     saved_info.si_signo = signum;
                     saved_info.si_code  = SI_USER;

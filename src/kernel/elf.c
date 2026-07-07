@@ -502,7 +502,7 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
         if (!map_ok) break;
     }
 
-    kfree(buf);
+    kfree(buf); buf = NULL;
     if (!map_ok) { vmm_destroy_user_pml4(new_pml4); return -ENOMEM; }
 
     /* Close all FD_CLOEXEC file descriptors before exec */

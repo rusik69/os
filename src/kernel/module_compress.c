@@ -1476,16 +1476,16 @@ int xz_dec(const uint8_t *in, uint64_t in_size,
 
         /* ── Block header ─────────────────────────────────────────── */
         if (in_pos + 1 > in_size) return -EINVAL;
-        uint8_t bh_size = in[in_pos++];
+        int bh_size = in[in_pos++];
         if (bh_size == 0) {
             /* Zero block header size = end of blocks marker */
             break;
         }
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wtype-limits"
+        /* Check block header size against maximum.
+         * bh_size is cast from uint8_t, but XZ_BLOCK_HEADER_MAX is > 255,
+         * so the comparison is meaningful for defensive validation. */
         if (bh_size > XZ_BLOCK_HEADER_MAX)
-#pragma GCC diagnostic pop
             return -EINVAL;
 
         /* Block header CRC32 */

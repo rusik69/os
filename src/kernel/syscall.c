@@ -7700,9 +7700,10 @@ static uint64_t sys_readlinkat(uint64_t dirfd, uint64_t path_addr,
     if (!path) return (uint64_t)(int64_t)-ENOENT;
     if (bufsize == 0) return (uint64_t)(int64_t)-EINVAL;
     if (bufsize > 4096) bufsize = 4096;
-    /* Read into kernel buffer, then copy out */
+    /* Read into kernel buffer, then copy out.
+     * Use the (clamped) bufsize so we don't overread the user's buffer. */
     char kbuf[4096];
-    int n = vfs_readlink(path, kbuf, (int)sizeof(kbuf));
+    int n = vfs_readlink(path, kbuf, (int)bufsize);
     if (n < 0) return (uint64_t)(int64_t)n;
     if (copy_to_user(buf_addr, kbuf, (size_t)n) < 0)
         return (uint64_t)(int64_t)-EFAULT;
