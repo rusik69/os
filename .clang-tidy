@@ -115,7 +115,6 @@ HeaderFilterRegex: ''
 WarningsAsErrors: '*'
 
 # Analysis options for a freestanding kernel environment
-AnalyzeTemporaryDtors: false
 CheckOptions:
   - key:             bugprone-suspicious-missing-comma.MaxThreshold
     value:           '10'

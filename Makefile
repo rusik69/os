@@ -1690,6 +1690,7 @@ help:
 	@echo "  cppcheck-check  - Run cppcheck with suppressions (called by lint)"
 	@echo "  lint            - Run cppcheck-check + clang-tidy-check"
 	@echo "  clang-tidy-check - Run clang-tidy on first 20 C sources"
+	@echo "  clang-tidy-host  - Run clang-tidy on host-compilable test sources (tests/unit/, tests/host_libc/)"
 	@echo "  analyze         - GCC -fanalyzer static analysis"
 	@echo "  build-strict    - Alias for cppcheck"
 	@echo "  sparse          - Run sparse semantic parser on all C sources"
@@ -1853,6 +1854,53 @@ clang-tidy-check:
 		  --extra-arg="-Iuserspace/kmods/doom" \
 		  $$SRCS 2>/dev/null | tail -20 || true; \
 		echo "clang-tidy finished (checked $$count files)"; \
+	else \
+		echo "clang-tidy not found. Install it (e.g., apt install clang-tidy) and try again."; \
+	fi
+
+# ── clang-tidy for host-compilable units (libc tests, unit tests) ────
+# Runs clang-tidy on tests/host_libc/ and tests/unit/ sources.
+# Uses a focused check set tuned for test code (avoids style noise).
+#
+clang-tidy-host:
+	@if command -v clang-tidy >/dev/null 2>&1; then \
+		echo "Running clang-tidy on host-compilable test sources..."; \
+		CHECKS="-*,"; \
+		CHECKS="$${CHECKS}clang-analyzer-core.*,clang-analyzer-deadcode.*,"; \
+		CHECKS="$${CHECKS}clang-analyzer-security.*,clang-analyzer-unix.*,"; \
+		CHECKS="$${CHECKS}bugprone-*,cert-*,misc-*,portability-*"; \
+		CHECKS="$${CHECKS},-clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling"; \
+		CHECKS="$${CHECKS},-clang-analyzer-security.insecureAPI.strcpy"; \
+		CHECKS="$${CHECKS},-cert-err33-c"; \
+		CHECKS="$${CHECKS},-cert-dcl37-c,-cert-dcl51-cpp"; \
+		CHECKS="$${CHECKS},-bugprone-reserved-identifier"; \
+		CHECKS="$${CHECKS},-bugprone-easily-swappable-parameters"; \
+		CHECKS="$${CHECKS},-bugprone-implicit-widening-of-multiplication-result"; \
+		CHECKS="$${CHECKS},-misc-include-cleaner"; \
+		CHECKS="$${CHECKS},-misc-no-recursion"; \
+		COUNT=0; \
+		echo "--- tests/unit/ ---"; \
+		for f in tests/unit/*.c; do \
+			if [ -f "$$f" ]; then \
+				clang-tidy --quiet --checks="$${CHECKS}" \
+				  --extra-arg="-std=gnu17" \
+				  "$$f" 2>/dev/null || true; \
+				COUNT=$$((COUNT + 1)); \
+			fi; \
+		done; \
+		echo "--- tests/host_libc/ ---"; \
+		for f in tests/host_libc/*.c; do \
+			if [ -f "$$f" ]; then \
+				clang-tidy --quiet --checks="$${CHECKS}" \
+				  --extra-arg="-std=gnu17" \
+				  --extra-arg="-DTEST_MODE_HOST" \
+				  --extra-arg="-isystem src/include" \
+				  --extra-arg="-isystem src" \
+				  "$$f" 2>/dev/null || true; \
+				COUNT=$$((COUNT + 1)); \
+			fi; \
+		done; \
+		echo "clang-tidy-host finished (checked $$COUNT files)"; \
 	else \
 		echo "clang-tidy not found. Install it (e.g., apt install clang-tidy) and try again."; \
 	fi
