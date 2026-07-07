@@ -65,8 +65,10 @@ int sched_setaffinity(uint32_t pid, const cpuset_t *cpuset)
         return -EINVAL;
 
     /* Validate no bits beyond max CPUs */
-    if (CPUSET_MAX_CPUS < 64 && (cpuset->bits & ~((1ULL << CPUSET_MAX_CPUS) - 1)))
+#if CPUSET_MAX_CPUS < 64
+    if (cpuset->bits & ~((1ULL << CPUSET_MAX_CPUS) - 1))
         return -EINVAL;
+#endif
 
     struct process *proc = process_get_by_pid(pid);
     if (!proc)

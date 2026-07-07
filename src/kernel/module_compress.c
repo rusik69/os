@@ -1070,8 +1070,7 @@ static int lzma_decode_literal(struct lzma_rd *rd,
         uint32_t bit_count = 8;
         do {
             uint32_t match_bit = (uint32_t)((match_byte >> (bit_count - 1)) & 1);
-            uint16_t *prob = &ls->literal[lit_state][((sym & 1) << 8)
-                                    + (bit_count - 1) * 0x100 + match_bit];
+            uint16_t *prob = &ls->literal[lit_state][sym + 0x100 + match_bit];
             int bit = lzma_rd_decode_bit(rd, prob);
             if (bit < 0) return -1;
             sym = (sym << 1) | (uint32_t)bit;

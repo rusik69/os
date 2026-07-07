@@ -289,7 +289,9 @@ int do_execve(const char *filename, const char **argv, const char **envp)
 
     /* ── Clear child TID (CLONE_CHILD_CLEARTID semantics) ───────────── */
     if (p->clear_child_tid) {
-        copy_to_user((uint64_t)p->clear_child_tid, "\x00\x00\x00\x00", 4);
+        if (copy_to_user((uint64_t)p->clear_child_tid, "\x00\x00\x00\x00", 4) < 0)
+            kprintf("[exec] warning: failed to clear child TID at 0x%lx\n",
+                    (unsigned long)p->clear_child_tid);
         p->clear_child_tid = NULL;
     }
 
@@ -497,7 +499,8 @@ int exec_setup_stack(void *bprm, uint64_t *sp)
         rand_bytes[i] ^= (uint8_t)((uint64_t)(uintptr_t)&rand_bytes[i] >> (i * 2));
     }
     /* Copy random bytes to user stack */
-    copy_to_user(random_area, rand_bytes, 16);
+    if (copy_to_user(random_area, rand_bytes, 16) < 0)
+        kprintf("[exec] warning: failed to copy AT_RANDOM to user stack\n");
 
     return 0;
 }

@@ -171,10 +171,6 @@ int aio_submit(struct aiocb *user_cb) {
     }
     if (idx < 0) return -EAGAIN;
 
-    /* Bounds check: ensure idx is within AIO_MAX_CTX (context table limit) */
-    if (idx < 0 || idx >= AIO_MAX_CTX)
-        return -EINVAL;
-
     /* Copy control block */
     memcpy(&aio_cbs[idx], user_cb, sizeof(struct aiocb));
     aio_cbs[idx].in_use = 1;

@@ -75,21 +75,21 @@ static inline void sigfillset(sigset_t *set) {
 
 /* Add a signal to the set */
 static inline int sigaddset(sigset_t *set, int signum) {
-    if (signum < 1 || signum > 64) return -1;
+    if (signum < 1 || signum > 63) return -1;
     set->__bits[0] |= (1ULL << (uint64_t)signum);
     return 0;
 }
 
 /* Remove a signal from the set */
 static inline int sigdelset(sigset_t *set, int signum) {
-    if (signum < 1 || signum > 64) return -1;
+    if (signum < 1 || signum > 63) return -1;
     set->__bits[0] &= ~(1ULL << (uint64_t)signum);
     return 0;
 }
 
 /* Test whether a signal is in the set */
 static inline int sigismember(const sigset_t *set, int signum) {
-    if (signum < 1 || signum > 64) return 0;
+    if (signum < 1 || signum > 63) return 0;
     return (set->__bits[0] & (1ULL << (uint64_t)signum)) != 0;
 }
 
