@@ -159,7 +159,11 @@ int sctp_send(int fd, const void *data, uint16_t len, uint16_t stream_id)
 
     /* Build DATA chunk with TSN, stream info, and payload */
     uint16_t data_chunk_size = sizeof(struct sctp_data_hdr) + len;
-    uint8_t pkt[sizeof(struct sctp_header) + data_chunk_size];
+    uint8_t *pkt = kmalloc(sizeof(struct sctp_header) + data_chunk_size);
+    if (!pkt) {
+        spinlock_release(&sctp_lock);
+        return -ENOMEM;
+    }
     struct sctp_header *sh = (struct sctp_header *)pkt;
     sh->src_port = htons(a->local_port);
     sh->dst_port = htons(a->peer_port);
@@ -185,6 +189,8 @@ int sctp_send(int fd, const void *data, uint16_t len, uint16_t stream_id)
     kprintf("sctp: sent DATA tsn=%u stream=%u seq=%u len=%u\n",
             ntohl(dh->tsn), stream_id,
             ntohs(dh->stream_seq), len);
+
+    kfree(pkt);
 
     /* Check if heartbeat is needed on idle transports */
     sctp_heartbeat_check(a);
@@ -324,7 +330,8 @@ void handle_sctp(uint32_t src_ip, uint32_t dst_ip,
             if (hb_info_len < 4) break; /* Need at least hb_time */
 
             /* Build HEARTBEAT-ACK chunk */
-            uint8_t hb_ack_pkt[sizeof(struct sctp_header) + chunk_len];
+            uint8_t *hb_ack_pkt = kmalloc(sizeof(struct sctp_header) + chunk_len);
+            if (!hb_ack_pkt) break;
             struct sctp_header *hbo = (struct sctp_header *)hb_ack_pkt;
             memset(hbo, 0, sizeof(*hbo));
             hbo->src_port = sh->dst_port; /* Swap ports */
@@ -351,6 +358,7 @@ void handle_sctp(uint32_t src_ip, uint32_t dst_ip,
                     (src_ip >> 24) & 0xFF, (src_ip >> 16) & 0xFF,
                     (src_ip >> 8) & 0xFF, src_ip & 0xFF,
                     ntohs(sh->src_port));
+            kfree(hb_ack_pkt);
             break;
         }
 

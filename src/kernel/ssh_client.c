@@ -112,11 +112,12 @@ static int cl_pkt(struct ssh_client *c, uint8_t type, const uint8_t *pl, int ple
     memcpy(enc,pkt,4);
     aes_cbc_encrypt(&c->send_ctx,c->send_iv,pkt+4,enc+4,total);
 
-    uint8_t mac[32],sb[4];
-    pc32(sb,c->seq_send);
-    uint8_t mi[4+4+total];
-    memcpy(mi,sb,4);memcpy(mi+4,pkt,4+total);
-    hmac_sha256(c->send_mac_key,32,mi,4+4+total,mac);
+    /* Compute MAC (use pkt as scratch: shift right by 4 to prepend seq_nr) */
+    uint8_t mac[32], sb[4];
+    pc32(sb, c->seq_send);
+    memmove(pkt + 4, pkt, 4 + total);
+    memcpy(pkt, sb, 4);
+    hmac_sha256(c->send_mac_key, 32, pkt, 4 + 4 + total, mac);
 
     cl_send(c,enc,4+total);
     cl_send(c,mac,32);

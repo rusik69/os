@@ -185,17 +185,17 @@ static void slab_cache_basic_test(struct kunit *test)
 /* Allocate many objects from the same cache to exercise slab growth. */
 static void slab_cache_multi_alloc_test(struct kunit *test)
 {
-    const int N = 64;
+#define SLAB_MULTI_N 64
     struct kmem_cache *cache = kmem_cache_create("test_multi",
                                                   sizeof(struct slab_test_obj),
                                                   0, NULL);
     KUNIT_EXPECT_NOT_NULL(test, cache);
     if (!cache) return;
 
-    struct slab_test_obj *objs[N];
+    struct slab_test_obj *objs[SLAB_MULTI_N];
     int success = 1;
 
-    for (int i = 0; i < N; i++) {
+    for (int i = 0; i < SLAB_MULTI_N; i++) {
         objs[i] = (struct slab_test_obj *)kmem_cache_alloc(cache);
         if (!objs[i]) {
             success = 0;
@@ -207,14 +207,14 @@ static void slab_cache_multi_alloc_test(struct kunit *test)
     KUNIT_EXPECT_TRUE(test, success);
 
     /* Verify each object */
-    for (int i = 0; i < N && i < 64; i++) {
+    for (int i = 0; i < SLAB_MULTI_N && i < 64; i++) {
         if (!objs[i]) continue;
         KUNIT_EXPECT_EQ(test, (int64_t)objs[i]->magic, (int64_t)0xCAFEBABE);
         KUNIT_EXPECT_EQ(test, (int64_t)objs[i]->id, (int64_t)i);
     }
 
     /* Free all */
-    for (int i = 0; i < N; i++) {
+    for (int i = 0; i < SLAB_MULTI_N; i++) {
         if (objs[i])
             kmem_cache_free(cache, objs[i]);
     }
@@ -296,11 +296,11 @@ static void slab_kasan_underflow_test(struct kunit *test)
 /* Alternating small and large allocations to stress the page/slab boundary. */
 static void slab_stress_mix_test(struct kunit *test)
 {
-    const int N = 200;
-    void *ptrs[N];
+#define SLAB_MIX_N 200
+    void *ptrs[SLAB_MIX_N];
     int count = 0;
 
-    for (int i = 0; i < N; i++) {
+    for (int i = 0; i < SLAB_MIX_N; i++) {
         /* Alternate between small and medium sizes */
         size_t sz = (i % 3 == 0) ? 8 :
                     (i % 3 == 1) ? 128 : 1024;
@@ -311,7 +311,7 @@ static void slab_stress_mix_test(struct kunit *test)
         }
     }
 
-    KUNIT_EXPECT_GT(test, (int64_t)count, (int64_t)(N / 2));
+    KUNIT_EXPECT_GT(test, (int64_t)count, (int64_t)(SLAB_MIX_N / 2));
 
     /* Free every other pointer (fragmentation exercise) */
     for (int i = 0; i < count; i += 2) {

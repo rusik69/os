@@ -213,9 +213,11 @@ void igmp_handle_report(struct ip_header *ip_hdr, uint16_t len)
                 /* For IGMPv3 queries, send IGMPv3 report if sources are specified */
                 if (n_srcs > 0 && src_list) {
                     /* Build IGMPv3 membership report */
-                    uint8_t v3_report[sizeof(struct igmp_header) +
-                                      sizeof(struct igmpv3_grec) +
-                                      n_srcs * 4];
+                    uint16_t v3_report_len = sizeof(struct igmp_header) +
+                                             sizeof(struct igmpv3_grec) +
+                                             n_srcs * 4;
+                    uint8_t *v3_report = kmalloc(v3_report_len);
+                    if (!v3_report) break;
                     struct igmp_header *v3_hdr = (struct igmp_header *)v3_report;
                     v3_hdr->type = IGMP_TYPE_V3_MEMBERSHIP_REPORT;
                     v3_hdr->max_resp_time = q->max_resp_code;
@@ -230,8 +232,9 @@ void igmp_handle_report(struct ip_header *ip_hdr, uint16_t len)
                     grec->group_addr = igmp_groups[i].multiaddr;
                     memcpy(grec + 1, src_list, n_srcs * 4);
 
-                    v3_hdr->checksum = net_checksum(v3_report, sizeof(v3_report));
-                    send_ip(igmp_groups[i].multiaddr, 2, v3_report, sizeof(v3_report));
+                    v3_hdr->checksum = net_checksum(v3_report, v3_report_len);
+                    send_ip(igmp_groups[i].multiaddr, 2, v3_report, v3_report_len);
+                    kfree(v3_report);
                 } else {
                     /* General IGMPv3 query — send current-mode report */
                     uint8_t v3_report[sizeof(struct igmp_header) +

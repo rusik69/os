@@ -40,25 +40,25 @@ static void pmm_alloc_free_one(struct kunit *test)
 /* Allocate multiple frames and free them all. */
 static void pmm_alloc_free_multi(struct kunit *test)
 {
-    const int N = 8;
-    uint64_t frames[N];
+#define PMM_TEST_N 8
+    uint64_t frames[PMM_TEST_N];
     int i;
 
     /* Allocate N frames */
-    for (i = 0; i < N; i++) {
+    for (i = 0; i < PMM_TEST_N; i++) {
         frames[i] = pmm_alloc_frame();
         KUNIT_EXPECT_NE(test, frames[i], (uint64_t)0);
     }
 
     /* All N frames must have unique addresses */
-    for (i = 0; i < N; i++) {
-        for (int j = i + 1; j < N; j++) {
+    for (i = 0; i < PMM_TEST_N; i++) {
+        for (int j = i + 1; j < PMM_TEST_N; j++) {
             KUNIT_EXPECT_NE(test, frames[i], frames[j]);
         }
     }
 
     /* Free in reverse order */
-    for (i = N - 1; i >= 0; i--) {
+    for (i = PMM_TEST_N - 1; i >= 0; i--) {
         if (frames[i])
             pmm_free_frame(frames[i]);
     }
@@ -212,17 +212,17 @@ static void pmm_alloc_zeroed(struct kunit *test)
 
 static void pmm_stress_alloc_free(struct kunit *test)
 {
-    const int ITERATIONS = 64;
-    uint64_t frames[ITERATIONS];
+#define PMM_STRESS_ITERATIONS 64
+    uint64_t frames[PMM_STRESS_ITERATIONS];
 
-    for (int i = 0; i < ITERATIONS; i++) {
+    for (int i = 0; i < PMM_STRESS_ITERATIONS; i++) {
         frames[i] = pmm_alloc_frame();
         KUNIT_EXPECT_NE(test, frames[i], (uint64_t)0);
         if (frames[i] == 0)
             break;
     }
 
-    for (int i = 0; i < ITERATIONS; i++) {
+    for (int i = 0; i < PMM_STRESS_ITERATIONS; i++) {
         if (frames[i])
             pmm_free_frame(frames[i]);
     }

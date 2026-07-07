@@ -202,14 +202,13 @@ static int ses_send_packet(struct ssh_session *s, uint8_t type,
     aes_cbc_encrypt(&s->send_cipher.ctx, s->send_cipher.iv,
                     pkt + 4, encrypted + 4, packet_len);
 
-    /* Compute MAC */
+    /* Compute MAC (use pkt as scratch: shift right by 4 to prepend seq_nr) */
     uint8_t mac[32];
     uint8_t seq_buf[4];
     p32(seq_buf, s->seq_nr_send);
-    uint8_t mac_input[4 + 4 + packet_len];
-    memcpy(mac_input, seq_buf, 4);
-    memcpy(mac_input + 4, pkt, 4 + packet_len);
-    hmac_sha256(s->send_mac_key, 32, mac_input, 4 + 4 + packet_len, mac);
+    memmove(pkt + 4, pkt, 4 + packet_len);
+    memcpy(pkt, seq_buf, 4);
+    hmac_sha256(s->send_mac_key, 32, pkt, 4 + 4 + packet_len, mac);
 
     ses_send_raw(s, encrypted, 4 + packet_len);
     ses_send_raw(s, mac, 32);
@@ -352,15 +351,12 @@ static void derive_keys(struct ssh_session *s,
 
 static void ses_flush(struct ssh_session *s) {
     if (s->out_len > 0) {
-        /* Send as SSH channel data */
-        uint8_t payload[4 + 4 + s->out_len];
-        int off = 0;
-        /* recipient channel (4 bytes) */
-        p32(payload + off, s->channel_id); off += 4;
-        /* data string */
-        p32(payload + off, s->out_len); off += 4;
-        memcpy(payload + off, s->out_buf, s->out_len); off += s->out_len;
-        ses_send_packet(s, SSH_MSG_CHANNEL_DATA, payload, off);
+        /* Send as SSH channel data — use out_buf as scratch space */
+        memmove(s->out_buf + 8, s->out_buf, s->out_len);
+        p32((uint8_t *)s->out_buf, s->channel_id);
+        p32((uint8_t *)s->out_buf + 4, s->out_len);
+        ses_send_packet(s, SSH_MSG_CHANNEL_DATA,
+                        (uint8_t *)s->out_buf, 8 + s->out_len);
         s->out_len = 0;
     }
 }
