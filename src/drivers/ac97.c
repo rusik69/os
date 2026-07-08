@@ -235,7 +235,7 @@ void ac97_play_pcm(const int16_t *samples, uint32_t len, uint32_t rate) {
         uint32_t chunk = remaining;
         if (chunk > sizeof(audio_buf[0])) chunk = sizeof(audio_buf[0]);
         memcpy(audio_buf[n_entries], (const uint8_t *)samples + src_off, chunk);
-        bdl[n_entries].addr    = (uint32_t)(uintptr_t)audio_buf[n_entries];
+        bdl[n_entries].addr    = (uint32_t)VIRT_TO_PHYS(audio_buf[n_entries]);
         bdl[n_entries].samples = (uint16_t)(chunk / 2); /* 16-bit samples */
         bdl[n_entries].ctrl    = (n_entries == (BDL_ENTRIES - 1) || remaining - chunk == 0)
                                  ? AC97_IOC : 0;
@@ -245,7 +245,7 @@ void ac97_play_pcm(const int16_t *samples, uint32_t len, uint32_t rate) {
     }
 
     /* Program BDL address and LVI */
-    nabm_out32(NABM_PCM_OUT_BDBAR, (uint32_t)(uintptr_t)bdl);
+    nabm_out32(NABM_PCM_OUT_BDBAR, (uint32_t)VIRT_TO_PHYS(bdl));
     nabm_out8 (NABM_PCM_OUT_LVI,   (uint8_t)(n_entries - 1));
 
     /* Start DMA */
@@ -351,7 +351,7 @@ int ac97_capture_read(int16_t *buf, uint32_t bytes, uint32_t rate)
         uint32_t chunk = remaining;
         if (chunk > sizeof(cap_audio_buf[0])) chunk = sizeof(cap_audio_buf[0]);
 
-        cap_bdl[n_entries].addr    = (uint32_t)(uintptr_t)cap_audio_buf[n_entries];
+        cap_bdl[n_entries].addr    = (uint32_t)VIRT_TO_PHYS(cap_audio_buf[n_entries]);
         cap_bdl[n_entries].samples = (uint16_t)(chunk / 2); /* 16-bit samples */
         cap_bdl[n_entries].ctrl    = (n_entries == (BDL_ENTRIES - 1) || remaining - chunk == 0)
                                      ? AC97_IOC : 0;
@@ -361,7 +361,7 @@ int ac97_capture_read(int16_t *buf, uint32_t bytes, uint32_t rate)
     }
 
     /* Program BDL address and LVI for capture */
-    nabm_out32(NABM_PCM_IN_BDBAR, (uint32_t)(uintptr_t)cap_bdl);
+    nabm_out32(NABM_PCM_IN_BDBAR, (uint32_t)VIRT_TO_PHYS(cap_bdl));
     nabm_out8 (NABM_PCM_IN_LVI,   (uint8_t)(n_entries - 1));
 
     /* Start capture DMA */
@@ -570,7 +570,7 @@ static void ac97_irq_handler(struct interrupt_frame *frame)
             memcpy(audio_buf[slot], frag_ptr, to_copy);
 
             /* Update BDL entry in-place (DMA wraps around) */
-            bdl[slot].addr    = (uint32_t)(uintptr_t)audio_buf[slot];
+            bdl[slot].addr    = (uint32_t)VIRT_TO_PHYS(audio_buf[slot]);
             bdl[slot].samples = (uint16_t)(to_copy / 2);
             bdl[slot].ctrl    = AC97_IOC;
 
@@ -622,7 +622,7 @@ static void ac97_irq_handler(struct interrupt_frame *frame)
 
             /* Reset the BDL entry so the DMA engine can re-fill it */
             memset(cap_audio_buf[slot], 0, sizeof(cap_audio_buf[0]));
-            cap_bdl[slot].addr    = (uint32_t)(uintptr_t)cap_audio_buf[slot];
+            cap_bdl[slot].addr    = (uint32_t)VIRT_TO_PHYS(cap_audio_buf[slot]);
             cap_bdl[slot].samples = (uint16_t)(sizeof(cap_audio_buf[0]) / 2);
             cap_bdl[slot].ctrl    = AC97_IOC;
         } else {
@@ -684,7 +684,7 @@ int ac97_playback_start(struct sound_pcm_stream *stream)
         memcpy(audio_buf[i], frag_ptr, to_copy);
         sound_pcm_dma_consume(stream);
 
-        bdl[i].addr    = (uint32_t)(uintptr_t)audio_buf[i];
+        bdl[i].addr    = (uint32_t)VIRT_TO_PHYS(audio_buf[i]);
         bdl[i].samples = (uint16_t)(to_copy / 2);
         bdl[i].ctrl    = AC97_IOC;  /* interrupt on every fragment */
 
@@ -697,7 +697,7 @@ int ac97_playback_start(struct sound_pcm_stream *stream)
     /* Pad remaining BDL entries with silence for a constant ring size */
     for (int i = filled; i < BDL_ENTRIES; i++) {
         memset(audio_buf[i], 0, sizeof(audio_buf[0]));
-        bdl[i].addr    = (uint32_t)(uintptr_t)audio_buf[i];
+        bdl[i].addr    = (uint32_t)VIRT_TO_PHYS(audio_buf[i]);
         bdl[i].samples = (uint16_t)(sizeof(audio_buf[0]) / 2);
         bdl[i].ctrl    = AC97_IOC;
     }
@@ -708,7 +708,7 @@ int ac97_playback_start(struct sound_pcm_stream *stream)
     ac97_pb.underrun    = 0;
 
     /* Program full BDL and start DMA */
-    nabm_out32(NABM_PCM_OUT_BDBAR, (uint32_t)(uintptr_t)bdl);
+    nabm_out32(NABM_PCM_OUT_BDBAR, (uint32_t)VIRT_TO_PHYS(bdl));
     nabm_out8(NABM_PCM_OUT_LVI,    (uint8_t)(BDL_ENTRIES - 1));
 
     /* Memory barrier: ensure BDL and BDBAR are visible before starting */
@@ -771,7 +771,7 @@ int ac97_capture_start(struct sound_pcm_stream *stream)
      * application to read via sound_pcm_read(). */
     for (int i = 0; i < BDL_ENTRIES; i++) {
         memset(cap_audio_buf[i], 0, sizeof(cap_audio_buf[0]));
-        cap_bdl[i].addr    = (uint32_t)(uintptr_t)cap_audio_buf[i];
+        cap_bdl[i].addr    = (uint32_t)VIRT_TO_PHYS(cap_audio_buf[i]);
         cap_bdl[i].samples = (uint16_t)(sizeof(cap_audio_buf[0]) / 2);
         cap_bdl[i].ctrl    = AC97_IOC;
     }
@@ -782,7 +782,7 @@ int ac97_capture_start(struct sound_pcm_stream *stream)
     ac97_cap.overrun     = 0;
 
     /* Program full BDL and start capture DMA */
-    nabm_out32(NABM_PCM_IN_BDBAR, (uint32_t)(uintptr_t)cap_bdl);
+    nabm_out32(NABM_PCM_IN_BDBAR, (uint32_t)VIRT_TO_PHYS(cap_bdl));
     nabm_out8(NABM_PCM_IN_LVI,    (uint8_t)(BDL_ENTRIES - 1));
 
     /* Memory barrier: ensure BDL and BDBAR are visible before starting */
