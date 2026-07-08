@@ -22,8 +22,10 @@ static volatile uint8_t kb_capslock = 0;
 static volatile uint8_t key_down[256];
 static volatile uint8_t kb_extend = 0;
 
-/* SysRq callback — invoked when Alt+SysRq+<key> is pressed */
-static sysrq_callback_t g_sysrq_cb = NULL;
+/* SysRq callback — invoked when Alt+SysRq+<key> is pressed.
+ * Declared volatile because it is set from process context and read from
+ * the keyboard IRQ handler without a spinlock. */
+static volatile sysrq_callback_t g_sysrq_cb = NULL;
 
 /* Volume of the keyboard click (not applicable to PS/2, but kept for compat) */
 static uint8_t kb_layout = KB_LAYOUT_US;
@@ -205,24 +207,27 @@ static void keyboard_handler(struct interrupt_frame *frame) {
      * The ASCII value is looked up and forwarded to the registered
      * SysRq callback (if any).
      */
-    if (kb_alt && kb_sysrq && g_sysrq_cb) {
-        /* Look up the ASCII value for this scancode */
-        const char *base_table = (kb_layout == KB_LAYOUT_UK) ? uk_scancode : us_scancode;
-        char c = (scancode < 128) ? base_table[scancode] : 0;
+    if (kb_alt && kb_sysrq) {
+        sysrq_callback_t cb = g_sysrq_cb;
+        if (cb) {
+            /* Look up the ASCII value for this scancode */
+            const char *base_table = (kb_layout == KB_LAYOUT_UK) ? uk_scancode : us_scancode;
+            char c = (scancode < 128) ? base_table[scancode] : 0;
 
-        /* With Shift held, use shifted table */
-        if (kb_shift && c) {
-            const char *shift_table = (kb_layout == KB_LAYOUT_UK) ? uk_shift : us_shift;
-            char shifted = (scancode < 128) ? shift_table[scancode] : 0;
-            if (shifted) c = shifted;
-        }
+            /* With Shift held, use shifted table */
+            if (kb_shift && c) {
+                const char *shift_table = (kb_layout == KB_LAYOUT_UK) ? uk_shift : us_shift;
+                char shifted = (scancode < 128) ? shift_table[scancode] : 0;
+                if (shifted) c = shifted;
+            }
 
-        if (c >= 'a' && c <= 'z') {
-            /* Invoke the SysRq callback with the command character */
-            g_sysrq_cb(c);
-            return; /* Consumed by SysRq — don't push to buffer */
+            if (c >= 'a' && c <= 'z') {
+                /* Invoke the SysRq callback with the command character */
+                cb(c);
+                return; /* Consumed by SysRq — don't push to buffer */
+            }
+            return; /* Non-letter keys are silently consumed */
         }
-        return; /* Non-letter keys are silently consumed */
     }
 
     if (scancode == 0x48) { kb_push(KEY_UP); return; }
@@ -328,8 +333,9 @@ char keyboard_getchar(void) {
                 serial_sysrq_state = 0;
                 if (c >= 'a' && c <= 'z') {
                     /* Invoke SysRq via serial trigger */
-                    if (g_sysrq_cb) {
-                        g_sysrq_cb(c);
+                    sysrq_callback_t cb = g_sysrq_cb;
+                    if (cb) {
+                        cb(c);
                     }
                     continue;
                 }

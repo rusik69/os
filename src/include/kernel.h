@@ -16,4 +16,16 @@
 #define mb()      __asm__ volatile("mfence" : : : "memory")
 #define rmb()     __asm__ volatile("lfence" : : : "memory")
 #define wmb()     __asm__ volatile("sfence" : : : "memory")
+
+/*
+ * READ_ONCE / WRITE_ONCE — prevent compiler from merging, tearing, or
+ * caching accesses to shared variables.  On x86-64, aligned loads and
+ * stores are naturally atomic; these macros add the volatile qualifier
+ * so the compiler emits exactly one load/store and re-fetches on every
+ * use.  Use for any global variable that is read or written in
+ * interrupt context without holding a spinlock that includes a
+ * compiler barrier.
+ */
+#define READ_ONCE(x)                    (*(volatile typeof(x) *)&(x))
+#define WRITE_ONCE(x, val)             ((*(volatile typeof(x) *)&(x)) = (val))
 #endif

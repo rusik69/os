@@ -66,7 +66,7 @@
 static uint16_t g_fdc_base = 0;    /* I/O base address of FDC */
 static int      g_fdc_irq  = 6;    /* IRQ 6 for FDC */
 static int      g_floppy_present = 0;
-static int      g_floppy_irq_received = 0;
+static volatile int g_floppy_irq_received = 0;
 static int      g_floppy_drive_type = 0;  /* 0=unknown, 1=360K, ... */
 static int      g_floppy_motor_on = 0;
 

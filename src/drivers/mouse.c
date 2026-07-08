@@ -9,13 +9,13 @@
 #define VGA_COLS 80
 #define VGA_ROWS 25
 
-static int mouse_x = 40;
-static int mouse_y = 12;
-static uint8_t mouse_buttons = 0;
+static volatile int mouse_x = 40;
+static volatile int mouse_y = 12;
+static volatile uint8_t mouse_buttons = 0;
 
 /* Pixel-space position for framebuffer GUI (1024x768) */
-static int mouse_px = 512;
-static int mouse_py = 384;
+static volatile int mouse_px = 512;
+static volatile int mouse_py = 384;
 #define FB_WIDTH  1024
 #define FB_HEIGHT 768
 #define MOUSE_SENSITIVITY 4
@@ -25,7 +25,7 @@ static uint8_t mouse_cycle = 0;
 static int8_t  mouse_bytes[4];
 
 /* Scroll wheel */
-static int mouse_wheel_delta = 0;
+static volatile int mouse_wheel_delta = 0;
 
 static void mouse_write(uint8_t cmd) {
     ps2_write_command(0xD4);  /* next byte goes to mouse */
