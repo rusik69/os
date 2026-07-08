@@ -123,7 +123,7 @@ static const char * const err_desc[] = {
  */
 char *strerror(int errnum) {
     if (errnum >= 0 && (size_t)errnum < ERR_DESC_COUNT && err_desc[errnum])
-        return (char *)err_desc[errnum];
+        return (char *)(uintptr_t)err_desc[errnum];
 
     /* Return a static buffer for unknown errors */
     static char unknown[32];

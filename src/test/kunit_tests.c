@@ -956,7 +956,7 @@ static void test_timer_schedule(struct kunit *test)
     g_timer_cb_fired = 0;
 
     /* Schedule a timer with delay=1 tick */
-    int id = timer_schedule(test_timer_callback, (void *)&g_timer_cb_fired, 1);
+    int id = timer_schedule(test_timer_callback, (void *)(uintptr_t)&g_timer_cb_fired, 1);
     KUNIT_EXPECT_TRUE(test, id >= 0);
     if (id < 0) return;
 

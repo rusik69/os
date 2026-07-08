@@ -33,7 +33,7 @@ static inline void refcount_set(struct refcount_struct *r, int n)
  */
 static inline int refcount_read(const struct refcount_struct *r)
 {
-    return atomic_read((atomic_t *)&r->refs);
+    return atomic_read((atomic_t *)(uintptr_t)&r->refs);
 }
 
 /*

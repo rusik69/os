@@ -93,7 +93,7 @@ void pstore_init(void)
     /* ── Format a fresh region header for this boot cycle ── */
     /* We keep the old records physically in memory (for post-mortem
      * analysis tools) but start writing new records at slot 0. */
-    memset((void *)pstore_hdr, 0, sizeof(*pstore_hdr));
+    memset((void *)(uintptr_t)pstore_hdr, 0, sizeof(*pstore_hdr));
     pstore_hdr->region_magic  = PSTORE_REGION_MAGIC;
     pstore_hdr->version       = 1;
     pstore_hdr->write_slot    = 0;
@@ -138,7 +138,7 @@ int pstore_write(uint8_t type, const uint8_t *data, int len)
     rec->timestamp = timer_get_ticks();
     rec->data[0]   = type;                   /* type as first byte */
     if (len > 0 && data)
-        memcpy((void *)rec->data + 1, data, (size_t)len);
+        memcpy((void *)(uintptr_t)rec->data + 1, data, (size_t)len);
 
     /* Advance the write slot (ring buffer) */
     pstore_hdr->write_slot = (slot + 1) % PSTORE_MAX_RECORDS;
@@ -188,7 +188,7 @@ int pstore_read(int index, uint8_t *buf, int len)
     if (data_len > (uint32_t)len)
         data_len = (uint32_t)len;
 
-    memcpy(buf, (void *)rec->data, data_len);
+    memcpy(buf, (void *)(uintptr_t)rec->data, data_len);
     spinlock_release(&pstore_lock);
     return (int)data_len;
 }
@@ -245,7 +245,7 @@ void pstore_recover(void)
             /* Null-terminate for safe printing */
             char print_buf[512];
             uint32_t copy = dlen < sizeof(print_buf) - 1 ? dlen : sizeof(print_buf) - 1;
-            memcpy(print_buf, (void *)rec->data + 1, copy);
+            memcpy(print_buf, (void *)(uintptr_t)rec->data + 1, copy);
             print_buf[copy] = '\0';
             kprintf("       %s\n", print_buf);
         }

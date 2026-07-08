@@ -152,9 +152,9 @@ int kexec_init(void)
     pmm_reserve_frames(KEXEC_RESERVE_PHYS, KEXEC_REGION_SIZE);
 
     /* Clear the state */
-    memset((void *)&kexec_state, 0, sizeof(kexec_state));
+    memset((void *)(uintptr_t)&kexec_state, 0, sizeof(kexec_state));
     memset((void *)&kexec_seg_state, 0, sizeof(kexec_seg_state));
-    memset((void *)&kexec_crash_state, 0, sizeof(kexec_crash_state));
+    memset((void *)(uintptr_t)&kexec_crash_state, 0, sizeof(kexec_crash_state));
 
     kexec_region_reserved = 1;
     kprintf("[OK] kexec: reserved %u MB at phys 0x%llx\n",

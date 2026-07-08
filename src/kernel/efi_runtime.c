@@ -209,7 +209,7 @@ int efi_set_variable(const char *name, uint8_t *guid,
     ucs2_name[i] = 0;
 
     efi_status_t st = g_efi_rt->set_variable(ucs2_name, guid,
-                                             attributes, data_size, (void *)data);
+                                             attributes, data_size, (void *)(uintptr_t)data);
     return (st == EFI_SUCCESS) ? 0 : -1;
 }
 
@@ -473,7 +473,7 @@ int efi_get_wakeup_time(uint8_t *enabled, uint8_t *pending,
     uint8_t buf[16];
     uint8_t en = 0, pen = 0;
 
-    if (efi_var_store_get_variable("WakeupAlarm", (uint8_t *)wakeup_guid,
+    if (efi_var_store_get_variable("WakeupAlarm", (uint8_t *)(uintptr_t)wakeup_guid,
                                     NULL, &data_size, buf) == 0 &&
         data_size >= 8) {
         en = buf[0];
@@ -521,7 +521,7 @@ int efi_set_wakeup_time(uint8_t enable, uint16_t year, uint8_t month, uint8_t da
     buf[7] = minute;
     buf[8] = second;
 
-    int ret = efi_var_store_set_variable("WakeupAlarm", (uint8_t *)wakeup_guid,
+    int ret = efi_var_store_set_variable("WakeupAlarm", (uint8_t *)(uintptr_t)wakeup_guid,
                                           EFI_VARIABLE_NON_VOLATILE |
                                           EFI_VARIABLE_BOOTSERVICE_ACCESS |
                                           EFI_VARIABLE_RUNTIME_ACCESS,

@@ -288,7 +288,7 @@ int usb_hid_set_report(uint8_t report_type, uint8_t report_id,
     uint8_t iface = g_keyboard_present ? g_kbd_intf : g_mouse_intf;
 
     return usb_control(g_op_base, HID_REQTYPE_SET, HID_REQ_SET_REPORT,
-                        w_val, iface, (uint16_t)len, (void *)buf, g_dev_addr);
+                        w_val, iface, (uint16_t)len, (void *)(uintptr_t)buf, g_dev_addr);
 }
 
 /*

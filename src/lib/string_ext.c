@@ -46,7 +46,7 @@ static const char * const sig_names[] = {
  */
 char *strcasestr(const char *haystack, const char *needle) {
     size_t nlen = strlen(needle);
-    if (nlen == 0) return (char *)haystack;
+    if (nlen == 0) return (char *)(uintptr_t)haystack;
     while (*haystack) {
         int match = 1;
         for (size_t i = 0; i < nlen; i++) {
@@ -55,7 +55,7 @@ char *strcasestr(const char *haystack, const char *needle) {
                 break;
             }
         }
-        if (match) return (char *)haystack;
+        if (match) return (char *)(uintptr_t)haystack;
         haystack++;
     }
     return (char *)0;
@@ -153,7 +153,7 @@ int strncasecmp(const char *s1, const char *s2, size_t n) {
  */
 char *strchrnul(const char *s, int c) {
     while (*s && *s != (char)c) s++;
-    return (char *)s;
+    return (char *)(uintptr_t)s;
 }
 
 /* ── strsignal — map signal number to human-readable name ───────── */
@@ -171,7 +171,7 @@ const char *strsignal(int signum) {
 void *memmem(const void *haystack, size_t haystacklen,
              const void *needle, size_t needlelen) {
     if (!haystack || !needle) return NULL;
-    if (needlelen == 0) return (void *)haystack;
+    if (needlelen == 0) return (void *)(uintptr_t)haystack;
     if (needlelen > haystacklen) return NULL;
 
     const unsigned char *h = (const unsigned char *)haystack;
@@ -183,7 +183,7 @@ void *memmem(const void *haystack, size_t haystacklen,
         for (j = 0; j < needlelen; j++) {
             if (h[i + j] != n[j]) break;
         }
-        if (j == needlelen) return (void *)(h + i);
+        if (j == needlelen) return (void *)(uintptr_t)(h + i);
     }
     return NULL;
 }

@@ -121,7 +121,7 @@ void io_map_destroy(void *virt_addr)
 uint32_t io_map_read(const volatile void *addr)
 {
     if (!addr) return 0;
-    return *(volatile uint32_t *)addr;
+    return *(const volatile uint32_t *)addr;
 }
 
 /**
@@ -140,7 +140,7 @@ void io_map_write(volatile void *addr, uint32_t value)
 uint8_t io_map_read8(const volatile void *addr)
 {
     if (!addr) return 0;
-    return *(volatile uint8_t *)addr;
+    return *(const volatile uint8_t *)addr;
 }
 
 void io_map_write8(volatile void *addr, uint8_t value)

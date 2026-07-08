@@ -55,7 +55,7 @@ void __init softirq_init(void)
     softirq_pending = 0;
     memset(softirq_recursion, 0, sizeof(softirq_recursion));
     memset((void *)ksoftirqd_proc, 0, sizeof(ksoftirqd_proc));
-    memset((void *)ksoftirqd_needed, 0, sizeof(ksoftirqd_needed));
+    memset((void *)(uintptr_t)ksoftirqd_needed, 0, sizeof(ksoftirqd_needed));
 
     for (int i = 0; i < SMP_MAX_CPUS; i++)
         spinlock_init(&ksoftirqd_lock[i]);

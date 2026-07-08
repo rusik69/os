@@ -156,7 +156,7 @@ static int fw_cache_insert(const char *name, const uint8_t *data, size_t size)
     fw_cache[target].name[name_len] = '\0';
 
     /* We keep a pointer to the caller's data — they transfer ownership */
-    fw_cache[target].data = (uint8_t *)data;
+    fw_cache[target].data = (uint8_t *)(uintptr_t)data;
     fw_cache[target].size = size;
     fw_cache[target].last_access = fw_cache_stamp++;
     fw_cache[target].in_use = 1;
@@ -318,7 +318,7 @@ void release_firmware(const struct firmware *fw)
      * We only free the lightweight descriptor allocated in request_firmware.
      * The cache entry persists for future requests.
      */
-    kfree((void *)fw);
+    kfree((void *)(uintptr_t)fw);
 }
 
 /* ── Async firmware loading ─────────────────────────────────────────── */
@@ -425,7 +425,7 @@ void firmware_release(struct firmware *fw)
      * so we always free it here.
      */
     if (fw->data) {
-        kfree((void *)fw->data);
+        kfree((void *)(uintptr_t)fw->data);
     }
 
     fw->data = NULL;

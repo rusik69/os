@@ -610,7 +610,7 @@ void kunit_do_pass(struct kunit *test);
 #define KUNIT_EXPECT_NULL(test, ptr) do {                                  \
     if ((ptr) != NULL) {                                                   \
         kunit_do_fail(test, __FILE__, __LINE__,                             \
-                      "Expected NULL, but ptr=%p", (void*)(ptr));          \
+                      "Expected NULL, but ptr=%p", (void *)(uintptr_t)(ptr));          \
     } else {                                                               \
         kunit_do_pass(test);                                                \
     }                                                                      \

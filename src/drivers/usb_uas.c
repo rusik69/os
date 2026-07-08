@@ -804,8 +804,8 @@ static int uas_write10(uint32_t lba, uint16_t count, const void *buf)
 	cdb[7] = (uint8_t)(count >> 8);
 	cdb[8] = (uint8_t)(count);
 
-	return uas_scsi_exec(cdb, 10, (void *)buf,
-			     (uint32_t)count * g_block_size, 0);
+		return uas_scsi_exec(cdb, 10, (void *)(uintptr_t)buf,
+				     (uint32_t)count * g_block_size, 0);
 }
 
 /* ── Block device callbacks ──────────────────────────────────────────────── */

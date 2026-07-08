@@ -67,7 +67,7 @@ void *bsearch_ext(const void *key, const void *base, size_t n, size_t sz,
     while (lo < hi) {
         const char *mid = lo + ((size_t)(hi - lo) / sz / 2) * sz;
         int r = cmp(key, mid);
-        if (r == 0) return (void *)mid;
+        if (r == 0) return (void *)(uintptr_t)mid;
         if (r < 0)  hi = mid;
         else        lo = mid + sz;
     }
@@ -84,7 +84,7 @@ void *lfind(const void *key, const void *base, size_t *nmemb, size_t size,
     const char *p = (const char *)base;
     for (size_t i = 0; i < *nmemb; i++) {
         if (compar(key, p + i * size) == 0)
-            return (void *)(p + i * size);
+            return (void *)(uintptr_t)(p + i * size);
     }
     return (void *)0;
 }
@@ -99,7 +99,7 @@ void *lsearch(const void *key, void *base, size_t *nmemb, size_t size,
     char *p = (char *)base;
     for (size_t i = 0; i < *nmemb; i++) {
         if (compar(key, p + i * size) == 0)
-            return (void *)(p + i * size);
+            return (void *)(uintptr_t)(p + i * size);
     }
     /* Not found — append */
     memcpy(p + (*nmemb) * size, key, size);

@@ -285,7 +285,7 @@ int pthread_mutex_lock(pthread_mutex_t *mutex)
         }
 
         /* Sleep on the futex (state == 2) */
-        futex((int *)&mutex->lock, FUTEX_WAIT, 2, NULL, NULL);
+        futex((int *)(uintptr_t)&mutex->lock, FUTEX_WAIT, 2, NULL, NULL);
         /* After wake, retry */
     }
 }
@@ -341,7 +341,7 @@ int pthread_mutex_unlock(pthread_mutex_t *mutex)
     int prev = atomic_xchg(&mutex->lock, 0);
     if (prev == 2) {
         /* There may be waiters — wake one */
-        futex((int *)&mutex->lock, FUTEX_WAKE, 1, NULL, NULL);
+        futex((int *)(uintptr_t)&mutex->lock, FUTEX_WAKE, 1, NULL, NULL);
     }
 
     return 0;
@@ -391,7 +391,7 @@ int pthread_cond_wait(pthread_cond_t *cond, pthread_mutex_t *mutex)
     }
 
     /* Wait for signal/broadcast */
-    futex((int *)&cond->signal_cnt, FUTEX_WAIT, signal_cnt, NULL, NULL);
+    futex((int *)(uintptr_t)&cond->signal_cnt, FUTEX_WAIT, signal_cnt, NULL, NULL);
 
     /* Decrement waiter count */
     __sync_fetch_and_sub(&cond->waiters, 1);
@@ -415,7 +415,7 @@ int pthread_cond_timedwait(pthread_cond_t *cond, pthread_mutex_t *mutex,
         return unlock_ret;
     }
 
-    int ret = futex((int *)&cond->signal_cnt, FUTEX_WAIT, signal_cnt,
+    int ret = futex((int *)(uintptr_t)&cond->signal_cnt, FUTEX_WAIT, signal_cnt,
                     abstime, NULL);
 
     __sync_fetch_and_sub(&cond->waiters, 1);
@@ -436,7 +436,7 @@ int pthread_cond_signal(pthread_cond_t *cond)
     __sync_fetch_and_add(&cond->signal_cnt, 1);
 
     /* Wake one waiter */
-    futex((int *)&cond->signal_cnt, FUTEX_WAKE, 1, NULL, NULL);
+    futex((int *)(uintptr_t)&cond->signal_cnt, FUTEX_WAKE, 1, NULL, NULL);
 
     return 0;
 }
@@ -449,7 +449,7 @@ int pthread_cond_broadcast(pthread_cond_t *cond)
     __sync_fetch_and_add(&cond->signal_cnt, 1);
 
     /* Wake all waiters */
-    futex((int *)&cond->signal_cnt, FUTEX_WAKE, 2147483647, NULL, NULL);
+    futex((int *)(uintptr_t)&cond->signal_cnt, FUTEX_WAKE, 2147483647, NULL, NULL);
 
     return 0;
 }
@@ -478,13 +478,13 @@ int pthread_barrier_wait(void *barrier)
         /* Last thread to arrive — reset and wake everyone */
         b[1] = count;
         __sync_fetch_and_add(&b[2], 1);
-        futex((int *)&b[2], FUTEX_WAKE, 2147483647, NULL, NULL);
+        futex((int *)(uintptr_t)&b[2], FUTEX_WAKE, 2147483647, NULL, NULL);
         return 1; /* PTHREAD_BARRIER_SERIAL_THREAD */
     }
     /* Wait for generation change */
     int gen = b[2];
     do {
-        futex((int *)&b[2], FUTEX_WAIT, gen, NULL, NULL);
+        futex((int *)(uintptr_t)&b[2], FUTEX_WAIT, gen, NULL, NULL);
     } while (b[2] == gen);
 
     return 0;
@@ -522,7 +522,7 @@ int pthread_rwlock_rdlock(void *rwlock)
     for (;;) {
         /* Wait until no writer */
         while (r[1])
-            futex((int *)&r[1], FUTEX_WAIT, 1, NULL, NULL);
+            futex((int *)(uintptr_t)&r[1], FUTEX_WAIT, 1, NULL, NULL);
         __sync_fetch_and_add(&r[0], 1);
         if (!r[1])
             return 0;
@@ -536,10 +536,10 @@ int pthread_rwlock_wrlock(void *rwlock)
     if (!rwlock) return EINVAL;
     volatile int *r = (volatile int *)rwlock;
     while (__sync_lock_test_and_set(&r[1], 1))
-        futex((int *)&r[1], FUTEX_WAIT, 1, NULL, NULL);
+        futex((int *)(uintptr_t)&r[1], FUTEX_WAIT, 1, NULL, NULL);
     /* Wait for readers to finish */
     while (r[0])
-        futex((int *)&r[0], FUTEX_WAIT, 0, NULL, NULL);
+        futex((int *)(uintptr_t)&r[0], FUTEX_WAIT, 0, NULL, NULL);
     return 0;
 }
 /* ── pthread_rwlock_unlock ─────────────────────────────── */
@@ -550,13 +550,13 @@ int pthread_rwlock_unlock(void *rwlock)
     if (r[1]) {
         /* Writer unlock */
         r[1] = 0;
-        futex((int *)&r[1], FUTEX_WAKE, 2147483647, NULL, NULL);
+        futex((int *)(uintptr_t)&r[1], FUTEX_WAKE, 2147483647, NULL, NULL);
     } else if (r[0] > 0) {
         /* Reader unlock */
         int rem = __sync_fetch_and_sub(&r[0], 1);
         if (rem == 1) {
             /* Last reader — wake writers */
-            futex((int *)&r[0], FUTEX_WAKE, 1, NULL, NULL);
+            futex((int *)(uintptr_t)&r[0], FUTEX_WAKE, 1, NULL, NULL);
         }
     }
     return 0;
@@ -601,7 +601,7 @@ int pthread_setspecific(void *key, const void *value)
     int idx = *(int *)key;
     if (idx < 0 || idx >= PTHREAD_KEYS_MAX || !pthread_key_slots[idx])
         return EINVAL;
-    pthread_key_values[idx] = (void *)value;
+    pthread_key_values[idx] = (void *)(uintptr_t)value;
     return 0;
 }
 /* ── pthread_getspecific ─────────────────────────────── */

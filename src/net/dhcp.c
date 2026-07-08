@@ -254,7 +254,7 @@ static int dhcp_has_lease = 0;
 
 static void handle_dhcp_response(const uint8_t *data, uint16_t len) {
     if (len < sizeof(struct dhcp_packet)) return;
-    struct dhcp_packet *dhcp = (struct dhcp_packet *)data;
+    const struct dhcp_packet *dhcp = (const struct dhcp_packet *)data;
     if (dhcp->op != 2) return;  /* BOOTREPLY */
     if (ntohl(dhcp->xid) != dhcp_xid) return;
     if (ntohl(dhcp->magic_cookie) != DHCP_MAGIC) return;

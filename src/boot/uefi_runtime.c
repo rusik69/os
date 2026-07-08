@@ -311,7 +311,7 @@ int uefi_set_variable(const char *name, uint8_t *guid,
     ucs2_name[i] = 0;
 
     efi_status st = g_efi_rt->set_variable(ucs2_name, guid,
-                                           attributes, data_size, (void*)data);
+                                           attributes, data_size, (void *)(uintptr_t)data);
     return (st == EFI_SUCCESS) ? 0 : -1;
 }
 

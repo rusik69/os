@@ -373,7 +373,7 @@ int fq_codel_enqueue(const void *pkt, size_t len,
     }
 
     /* Store the packet pointer and metadata */
-    flow->queue[flow->tail] = (void *)pkt;
+    flow->queue[flow->tail] = (void *)(uintptr_t)pkt;
     flow->pkt_len[flow->tail] = (int)len;
     flow->enq_tick[flow->tail] = timer_get_ticks();
     flow->tail = (flow->tail + 1) % FQ_CODEL_LIMIT;

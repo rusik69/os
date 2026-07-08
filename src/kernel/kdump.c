@@ -204,7 +204,7 @@ void kdump_init(void)
     }
 
     kdump_virt = (volatile struct kdump_header *)virt;
-    memset((void *)kdump_virt, 0, KDUMP_REGION_SIZE);
+    memset((void *)(uintptr_t)kdump_virt, 0, KDUMP_REGION_SIZE);
     kdump_initialized = 1;
 
     /* Reserve the crash kernel region (if crashkernel= parameter present) */
@@ -471,7 +471,7 @@ static uint64_t copy_segment_data(uint64_t dst_offset,
     if (!kdump_virt || size == 0)
         return 0;
 
-    uint8_t *base = (uint8_t *)kdump_virt;
+    uint8_t *base = (uint8_t *)(uintptr_t)kdump_virt;
     uint64_t copy_size = size;
 
     /* Clamp to region boundary */
@@ -509,10 +509,10 @@ void kdump_capture(const char *msg, uint64_t rip)
     struct process *cur = process_get_current();
 
     /* Zero the region to start fresh */
-    memset((void *)kdump_virt, 0, KDUMP_REGION_SIZE);
+    memset((void *)(uintptr_t)kdump_virt, 0, KDUMP_REGION_SIZE);
 
     /* ── Fill header ── */
-    struct kdump_header *hdr = (struct kdump_header *)kdump_virt;
+    struct kdump_header *hdr = (struct kdump_header *)(uintptr_t)kdump_virt;
     hdr->magic   = KDUMP_MAGIC;
     hdr->version = KDUMP_VERSION;
 
@@ -540,23 +540,23 @@ void kdump_capture(const char *msg, uint64_t rip)
 
     /* ── Register entries (right after header) ── */
     struct kdump_reg_entry *regs =
-        (struct kdump_reg_entry *)((uint8_t *)kdump_virt + sizeof(*hdr));
+        (struct kdump_reg_entry *)((uint8_t *)(uintptr_t)kdump_virt + sizeof(*hdr));
     int num_regs = capture_regs(regs, rip);
     hdr->num_regs = num_regs;
 
     /* ── Stack frames (right after registers) ── */
-    uint64_t *frames = (uint64_t *)((uint8_t *)kdump_virt + sizeof(*hdr)
+    uint64_t *frames = (uint64_t *)((uint8_t *)(uintptr_t)kdump_virt + sizeof(*hdr)
                                     + KDUMP_MAX_REGS * sizeof(struct kdump_reg_entry));
     int num_frames = capture_stack_frames(frames, KDUMP_MAX_FRAMES);
     hdr->num_frames = num_frames;
 
     /* ── Memory segment descriptors ── */
     struct kdump_mem_desc *segs =
-        (struct kdump_mem_desc *)((uint8_t *)kdump_virt + sizeof(*hdr)
+        (struct kdump_mem_desc *)((uint8_t *)(uintptr_t)kdump_virt + sizeof(*hdr)
                                   + KDUMP_MAX_REGS * sizeof(struct kdump_reg_entry)
                                   + KDUMP_MAX_FRAMES * sizeof(uint64_t));
 
-    uint64_t data_offset = (uint64_t)((uint8_t *)segs - (uint8_t *)kdump_virt)
+    uint64_t data_offset = (uint64_t)((uint8_t *)segs - (uint8_t *)(uintptr_t)kdump_virt)
                            + KDUMP_MAX_SEGMENTS * sizeof(struct kdump_mem_desc);
     /* Align to page boundary */
     data_offset = (data_offset + 0xFFF) & ~0xFFFULL;
@@ -669,7 +669,7 @@ const struct kdump_header *kdump_get_header(void)
 {
     if (!kdump_check())
         return NULL;
-    return (const struct kdump_header *)kdump_virt;
+    return (const struct kdump_header *)(uintptr_t)kdump_virt;
 }
 
 /* ── Stub: kdump_load ─────────────────────────────── */

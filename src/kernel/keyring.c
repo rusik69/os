@@ -129,7 +129,7 @@ static int keyring_decrypt(const uint8_t *cipher, uint32_t cipher_len,
     /* Decrypt */
     struct aes_ctx ctx;
     aes_init(&ctx, g_master_key, 16);
-    aes_cbc_decrypt(&ctx, (uint8_t *)iv, data, data, data_len);
+    aes_cbc_decrypt(&ctx, (uint8_t *)(uintptr_t)iv, data, data, data_len);
 
     /* Remove PKCS#7 padding */
     uint8_t pad_val = data[data_len - 1];

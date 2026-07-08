@@ -562,7 +562,7 @@ int dm_table_load(int dm_id, const char *table)
         ti->private = NULL;
 
         /* Construct the target */
-        ret = ops->ctr(ti, argc, (const char **)args);
+        ret = ops->ctr(ti, argc, (const char **)(uintptr_t)args);
         if (ret != 0) {
             kprintf("[DM] Table line %d: target '%s' ctr failed: %d\n",
                     line_num, type_str, ret);

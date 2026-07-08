@@ -26,7 +26,7 @@ static inline int test_bit(int bit, const volatile void *addr) {
     __asm__ volatile(
         "btq %2, %1; sbb %0, %0"
         : "=r" (old)
-        : "m" (*(volatile unsigned long *)addr),
+        : "m" (*(const volatile unsigned long *)addr),
           "Ir" ((unsigned long)bit)
         : "memory"
     );
@@ -79,7 +79,7 @@ static inline int test_bit32(int bit, const volatile void *addr) {
     __asm__ volatile(
         "btl %2, %1; sbb %0, %0"
         : "=r" (old)
-        : "m" (*(volatile unsigned int *)addr),
+        : "m" (*(const volatile unsigned int *)addr),
           "Ir" ((unsigned int)bit)
         : "memory"
     );

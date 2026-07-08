@@ -35,7 +35,7 @@ long long strtoll(const char *nptr, char **endptr, int base) {
         val = val * base + digit;
         nptr++;
     }
-    if (endptr) *endptr = (char *)nptr;
+    if (endptr) *endptr = (char *)(uintptr_t)nptr;
     return sign * val;
 }
 
@@ -63,7 +63,7 @@ unsigned long long strtoull(const char *nptr, char **endptr, int base) {
         val = val * (unsigned long long)base + digit;
         nptr++;
     }
-    if (endptr) *endptr = (char *)nptr;
+    if (endptr) *endptr = (char *)(uintptr_t)nptr;
     return val;
 }
 

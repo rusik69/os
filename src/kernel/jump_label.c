@@ -103,14 +103,14 @@ void __init jump_label_init(void)
         : "memory"
     );
     volatile uint8_t patch_test[5] __attribute__((aligned(1)));
-    __builtin_memset((void *)patch_test, 0x90, 5);
+    __builtin_memset((void *)(uintptr_t)patch_test, 0x90, 5);
 
     /* Patch a jmp to a known target (skip +2 bytes forward) */
-    text_patch_jmp((void *)patch_test, (void *)(patch_test + 2));
+    text_patch_jmp((void *)(uintptr_t)patch_test, (void *)(uintptr_t)(patch_test + 2));
     __asm__ volatile("mfence" : : : "memory");
 
     /* Patch back to NOP */
-    text_patch_nop((void *)patch_test);
+    text_patch_nop((void *)(uintptr_t)patch_test);
     __asm__ volatile("mfence" : : : "memory");
 
     if (!(flags & 0x200))

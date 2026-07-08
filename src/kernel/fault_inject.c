@@ -286,10 +286,10 @@ static void fault_inject_debugfs_init(void) {
     debugfs_init();
 
     /* Create debugfs entries under /sys/kernel/debug/ */
-    debugfs_create_u32("fault_inject_interval", (uint32_t*)&g_fail_kmalloc_interval);
-    debugfs_create_u32("fault_inject_probability", (uint32_t*)&g_fail_kmalloc_probability);
-    debugfs_create_u32("fault_inject_alloc_pages_interval", (uint32_t*)&g_fail_alloc_pages_interval);
-    debugfs_create_u32("fault_inject_vmalloc_interval", (uint32_t*)&g_fail_vmalloc_interval);
+    debugfs_create_u32("fault_inject_interval", (uint32_t *)(uintptr_t)&g_fail_kmalloc_interval);
+    debugfs_create_u32("fault_inject_probability", (uint32_t *)(uintptr_t)&g_fail_kmalloc_probability);
+    debugfs_create_u32("fault_inject_alloc_pages_interval", (uint32_t *)(uintptr_t)&g_fail_alloc_pages_interval);
+    debugfs_create_u32("fault_inject_vmalloc_interval", (uint32_t *)(uintptr_t)&g_fail_vmalloc_interval);
 
     kprintf("[FI] Debugfs interface registered\n");
 }

@@ -547,7 +547,7 @@ void usb_cdc_acm_poll(void) {
 int usb_cdc_acm_write(const uint8_t *data, int len) {
     if (!g_acm_initialized) return -ENODEV;
     if (!data || len <= 0) return -EINVAL;
-    return ehci_do_transfer(QTD_PID_OUT, g_bulk_out_ep, (void *)data,
+    return ehci_do_transfer(QTD_PID_OUT, g_bulk_out_ep, (void *)(uintptr_t)data,
                              (uint32_t)len, 0);
 }
 

@@ -39,8 +39,8 @@ int cmp_long(const void *a, const void *b)
 /* Comparison: string (via strcmp) */
 int cmp_str(const void *a, const void *b)
 {
-    const char *x = *(const char **)a;
-    const char *y = *(const char **)b;
+    const char *x = *(const char *const *)a;
+    const char *y = *(const char *const *)b;
     return strcmp(x, y);
 }
 
