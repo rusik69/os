@@ -7,7 +7,7 @@ CC = gcc
 KERNEL_CFLAGS = -DTEST_MODE_HOST \
                 -isystem ../../src/include \
                 -isystem ../../src \
-                -Wall -Werror -Wundef -Wmisleading-indentation -Wduplicated-branches \
+                -Wall -Werror -Wundef -Wmisleading-indentation -Wduplicated-branches -Wlogical-op \
                 -Wno-error=implicit-function-declaration \
                 -Wno-format-truncation \
                 -Wno-unused-but-set-variable \
@@ -17,7 +17,7 @@ KERNEL_CFLAGS = -DTEST_MODE_HOST \
 
 # Flags for test files (use system headers, NOT kernel headers)
 TEST_CFLAGS = -DTEST_MODE_HOST \
-              -Wall -Werror -Wundef -Wmisleading-indentation -Wduplicated-branches \
+              -Wall -Werror -Wundef -Wmisleading-indentation -Wduplicated-branches -Wlogical-op \
               -g -O0
 
 # Source files — only compile the pure-logic libc implementation files.
