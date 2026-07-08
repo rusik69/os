@@ -48,7 +48,7 @@ static int btrfs_read_blocks(struct btrfs_priv *bp, uint64_t bytenr,
     uint32_t sectors = count * 512 / 512; /* count is in 512-byte sectors */
     /* but count may be in nodesize/sectorsize units */
     for (uint32_t i = 0; i < count; i++) {
-        if (blockdev_read_sectors(bp->dev_id, lba + i, 1,
+        if (blockdev_read_sectors(bp->dev_id, (uint32_t)(lba + i), 1,
                                    buf + i * 512) != 0)
             return -1;
     }
@@ -61,7 +61,7 @@ static int btrfs_read_node(struct btrfs_priv *bp, uint64_t bytenr,
     uint32_t sectors = bp->nodesize / 512;
     uint64_t lba = bytenr / 512;
     for (uint32_t i = 0; i < sectors; i++) {
-        if (blockdev_read_sectors(bp->dev_id, lba + i, 1,
+        if (blockdev_read_sectors(bp->dev_id, (uint32_t)(lba + i), 1,
                                    buf + i * 512) != 0)
             return -1;
     }
@@ -88,7 +88,7 @@ static int btrfs_parse_superblock(struct btrfs_priv *bp)
 
     /* Read 8 sectors (4096 bytes) for the primary superblock */
     for (uint32_t i = 0; i < 8; i++) {
-        int ret = blockdev_read_sectors(dev_id, sb_lba + i, 1,
+        int ret = blockdev_read_sectors(dev_id, (uint32_t)(sb_lba + i), 1,
                                          buf + i * 512);
         if (ret < 0)
             return -EIO;
@@ -423,7 +423,7 @@ static int btrfs_read_root_backup(struct btrfs_priv *bp, unsigned int slot,
     uint64_t sb_lba = BTRFS_SUPER_OFFSET / 512;
 
     for (uint32_t k = 0; k < 8; k++) {
-        int ret = blockdev_read_sectors(bp->dev_id, sb_lba + k, 1,
+        int ret = blockdev_read_sectors(bp->dev_id, (uint32_t)(sb_lba + k), 1,
                                          raw_sb + k * 512);
         if (ret < 0)
             return -EIO;
@@ -821,7 +821,7 @@ static int btrfs_parse_csum_tree(struct btrfs_priv *bp)
                         uint64_t lba = physical_addr / 512;
                         for (uint32_t k = 0; k < block_size / 512; k++) {
                             if (blockdev_read_sectors(
-                                    bp->dev_id, lba + k, 1,
+                                    bp->dev_id, (uint32_t)(lba + k), 1,
                                     verify_buf + k * 512) != 0) {
                                 break;
                             }
@@ -970,7 +970,7 @@ static uint64_t btrfs_lookup(struct btrfs_priv *bp, uint64_t dir_id,
                 }
             }
 
-            consumed += sizeof(struct btrfs_dir_item) + name_len;
+            consumed += (uint32_t)(sizeof(struct btrfs_dir_item) + name_len);
             /* Align to 8 bytes */
             consumed = (consumed + 7) & ~7;
         }
@@ -1595,7 +1595,7 @@ static int btrfs_read(void *priv, const char *path,
                     uint8_t *dest = (uint8_t *)buf + done;
 
                     for (uint32_t s = 0; s < nsect; s++) {
-                        if (blockdev_read_sectors(bp->dev_id, lba + s, 1,
+                        if (blockdev_read_sectors(bp->dev_id, (uint32_t)(lba + s), 1,
                                                    dest + s * 512) != 0) {
                             /* I/O error — return what we have */
                             goto read_done;
@@ -1888,7 +1888,7 @@ int btrfs_probe(uint8_t dev_id)
 
     /* Read primary superblock copy at offset 0x10000 */
     for (uint32_t i = 0; i < 8; i++) {
-        if (blockdev_read_sectors(dev_id, sb_lba + i, 1, buf + i * 512) != 0)
+        if (blockdev_read_sectors(dev_id, (uint32_t)(sb_lba + i), 1, buf + i * 512) != 0)
             return -EIO;
     }
 

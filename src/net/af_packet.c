@@ -165,7 +165,7 @@ int packet_send(int fd, const void *buf, int len)
     if (len >= 14) {
         /* Full Ethernet frame — send via netdevice layer */
         if (netif_count() > 0 && ifindex < netif_count()) {
-            return netif_send(ifindex, (const uint8_t *)buf, len);
+            return netif_send(ifindex, (const uint8_t *)buf, (uint16_t)len);
         }
         return net_link_send(buf, (uint16_t)(len > 2048 ? 2048 : len));
     }
@@ -469,7 +469,7 @@ int packet_getsockname(int fd, struct sockaddr_ll *addr)
 
     memset(addr, 0, sizeof(struct sockaddr_ll));
     addr->sll_family   = AF_PACKET;
-    addr->sll_protocol = ps->protocol;
+    addr->sll_protocol = (uint16_t)ps->protocol;
     addr->sll_ifindex  = ps->ifindex;
     addr->sll_hatype   = 1;  /* ARPHRD_ETHER */
     addr->sll_pkttype  = PACKET_HOST;

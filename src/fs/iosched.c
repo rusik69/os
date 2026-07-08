@@ -756,7 +756,7 @@ static struct cfq_queue *cfq_get_queue(struct iosched_cfq_data *cfq,
     q->count = 0;
     q->dispatched = 0;
     q->ioprio = req->ioprio;
-    q->is_sync = cfq_req_is_sync(req);
+    q->is_sync = (uint8_t)cfq_req_is_sync(req);
     /* Compute priority-weighted slice quota */
     unsigned int cls = IOPRIO_PRIO_CLASS(req->ioprio);
     unsigned int dat = IOPRIO_PRIO_DATA(req->ioprio);
@@ -1151,7 +1151,7 @@ static struct bfq_queue *bfq_get_queue(struct iosched_bfq_data *bfq,
     q->pid = pid;
     q->count = 0;
     q->ioprio = req->ioprio;
-    q->is_sync = bfq_req_is_sync(req);
+    q->is_sync = (uint8_t)bfq_req_is_sync(req);
     /* Compute priority weight */
     unsigned int cls = IOPRIO_PRIO_CLASS(req->ioprio);
     unsigned int dat = IOPRIO_PRIO_DATA(req->ioprio);

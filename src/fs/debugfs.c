@@ -495,7 +495,7 @@ static int debugfs_vfs_read(void *priv, const char *path, void *buf,
 			tmp[pos++] = '0';
 		} else {
 			char rev[12]; int ri = 0;
-			while (v) { rev[ri++] = '0' + (int)(v % 10); v /= 10; }
+			while (v) { rev[ri++] = (char)('0' + (int)(v % 10)); v /= 10; }
 			while (ri > 0) tmp[pos++] = rev[--ri];
 		}
 		tmp[pos++] = '\n';

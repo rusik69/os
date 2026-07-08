@@ -984,7 +984,7 @@ static int nft_expr_eval_payload(const struct nft_expr *expr,
             regs->data32[p->dreg] = val;
         } else {
             /* For sub-word lengths, zero-extend */
-            regs->data32[p->dreg] = val & ((1UL << (p->len * 8)) - 1);
+            regs->data32[p->dreg] = (uint32_t)(val & ((1UL << (p->len * 8)) - 1));
         }
     }
 
@@ -1103,7 +1103,7 @@ static int nft_expr_eval_immediate(const struct nft_expr *expr,
 
     /* For sub-word lengths, mask to the correct number of bytes */
     if (imm->len < 4) {
-        uint32_t mask = (1UL << (imm->len * 8)) - 1;
+        uint32_t mask = (uint32_t)((1UL << (imm->len * 8)) - 1);
         val &= mask;
     }
 

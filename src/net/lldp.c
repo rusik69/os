@@ -313,7 +313,7 @@ int lldp_receive(const uint8_t *frame, uint16_t len)
             break;
         }
 
-        offset += 2 + tlv_len;
+        offset = (uint16_t)(offset + 2 + tlv_len);
     }
 
     if (!chassis_found || !port_found || !ttl_found) {

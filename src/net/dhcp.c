@@ -552,9 +552,9 @@ int dhcp_renew(void)
                             if (ntohs(udp->dst_port) == DHCP_CLIENT_PORT) {
                                 uint16_t udp_len_val = ntohs(udp->length);
                                 int data_off = sizeof(struct eth_header) + ip_hdr_len + sizeof(struct udp_header);
-                                int data_len = udp_len_val - sizeof(struct udp_header);
+                                int data_len = (int)(udp_len_val - sizeof(struct udp_header));
                                 if (data_off + data_len <= n) {
-                                    handle_dhcp_response(pkt + data_off, data_len);
+                                    handle_dhcp_response(pkt + data_off, (uint16_t)data_len);
                                 }
                             }
                         }
@@ -579,9 +579,9 @@ int dhcp_renew(void)
                             if (ntohs(udp->dst_port) == DHCP_CLIENT_PORT) {
                                 uint16_t udp_len_val = ntohs(udp->length);
                                 int data_off = sizeof(struct eth_header) + ip_hdr_len + sizeof(struct udp_header);
-                                int data_len = udp_len_val - sizeof(struct udp_header);
+                                int data_len = (int)(udp_len_val - sizeof(struct udp_header));
                                 if (data_off + data_len <= n) {
-                                    handle_dhcp_response(pkt + data_off, data_len);
+                                    handle_dhcp_response(pkt + data_off, (uint16_t)data_len);
                                 }
                             }
                         }
@@ -759,7 +759,7 @@ static int dhcp_rebind(void)
                                 int data_off = (int)(sizeof(struct eth_header) + ip_hdr_len + sizeof(struct udp_header));
                                 int data_len = (int)(udp_len_val - sizeof(struct udp_header));
                                 if (data_off + data_len <= n)
-                                    handle_dhcp_response(pkt + data_off, data_len);
+                                    handle_dhcp_response(pkt + data_off, (uint16_t)data_len);
                             }
                         }
                     }
@@ -786,7 +786,7 @@ static int dhcp_rebind(void)
                                 int data_off = (int)(sizeof(struct eth_header) + ip_hdr_len + sizeof(struct udp_header));
                                 int data_len = (int)(udp_len_val - sizeof(struct udp_header));
                                 if (data_off + data_len <= n)
-                                    handle_dhcp_response(pkt + data_off, data_len);
+                                    handle_dhcp_response(pkt + data_off, (uint16_t)data_len);
                             }
                         }
                     }
@@ -923,9 +923,9 @@ int dhcp_discover(void) {
                                 /* Extract DHCP payload */
                                 uint16_t udp_len_val = ntohs(udp->length);
                                 int data_off = sizeof(struct eth_header) + ip_hdr_len + sizeof(struct udp_header);
-                                int data_len = udp_len_val - sizeof(struct udp_header);
+                                int data_len = (int)(udp_len_val - sizeof(struct udp_header));
                                 if (data_off + data_len <= n) {
-                                    handle_dhcp_response(pkt + data_off, data_len);
+                                    handle_dhcp_response(pkt + data_off, (uint16_t)data_len);
                                 }
                             }
                         }
@@ -950,9 +950,9 @@ int dhcp_discover(void) {
                             if (ntohs(udp->dst_port) == DHCP_CLIENT_PORT) {
                                 uint16_t udp_len_val = ntohs(udp->length);
                                 int data_off = sizeof(struct eth_header) + ip_hdr_len + sizeof(struct udp_header);
-                                int data_len = udp_len_val - sizeof(struct udp_header);
+                                int data_len = (int)(udp_len_val - sizeof(struct udp_header));
                                 if (data_off + data_len <= n) {
-                                    handle_dhcp_response(pkt + data_off, data_len);
+                                    handle_dhcp_response(pkt + data_off, (uint16_t)data_len);
                                 }
                             }
                         }
@@ -1266,18 +1266,18 @@ int dhcp_relay_forward(const uint8_t *pkt, int len, int from_port)
     if (from_port == DHCP_CLIENT_PORT) {
         /* Client → Server: forward to DHCP server port */
         send_udp_unicast(dhcp_relay_server_ip, DHCP_SERVER_PORT,
-                         DHCP_SERVER_PORT, fwd_buf, new_len);
+                         DHCP_SERVER_PORT, fwd_buf, (uint16_t)new_len);
         kprintf("[dhcp-relay] Forwarded client msg to server\n");
     } else {
         /* Server → Client: forward to DHCP client port */
         uint32_t client_ip = ntohl(dhcp->yiaddr);
         if (client_ip) {
             send_udp_unicast(client_ip, DHCP_CLIENT_PORT,
-                             DHCP_CLIENT_PORT, fwd_buf, new_len);
+                             DHCP_CLIENT_PORT, fwd_buf, (uint16_t)new_len);
             kprintf("[dhcp-relay] Forwarded server reply to client\n");
         } else {
             send_udp_broadcast(DHCP_CLIENT_PORT, DHCP_CLIENT_PORT,
-                               fwd_buf, new_len);
+                               fwd_buf, (uint16_t)new_len);
             kprintf("[dhcp-relay] Broadcasted server reply\n");
         }
     }

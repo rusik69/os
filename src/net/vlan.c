@@ -28,7 +28,7 @@ int vlan_add_vid(uint16_t vid) {
 int vlan_remove_vid(uint16_t vid) {
     if (!vlan_initialized) return -1;
     if (vid >= VLAN_MAX_VID || vid == VLAN_DEFAULT_VID) return -1;
-    vlan_active[vid / 16] &= ~(1U << (vid % 16));
+    vlan_active[vid / 16] &= (uint16_t)(~(1U << (vid % 16)));
     return 0;
 }
 

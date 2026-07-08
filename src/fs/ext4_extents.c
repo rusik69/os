@@ -205,7 +205,7 @@ static uint16_t ext4_ext_max_entries(uint16_t depth, uint32_t block_size)
     else
         entry_size = sizeof(struct ext4_extent_idx);
 
-    uint32_t avail = block_size - sizeof(struct ext4_extent_header);
+    uint32_t avail = (uint32_t)(block_size - sizeof(struct ext4_extent_header));
     uint16_t max = (uint16_t)(avail / entry_size);
 
     if (max > 0x7FFF)
@@ -306,7 +306,7 @@ static int ext4_ext_write_block(struct ext4_priv *ep, uint32_t block_num,
     int ret;
 
     for (uint32_t i = 0; i < sectors; i++) {
-        if (blockdev_write_sectors(ep->dev_id, lba + i, 1,
+        if (blockdev_write_sectors(ep->dev_id, (uint32_t)(lba + i), 1,
                                    buf + i * 512) != 0)
             return -EIO;
     }
@@ -557,7 +557,7 @@ static int ext4_ext_split(struct ext4_priv *ep,
     new_header->eh_magic = EXT4_EXTENT_MAGIC;
     new_header->eh_depth = old_eh->eh_depth;
     new_header->eh_generation = old_eh->eh_generation;
-    new_header->eh_max = ext4_ext_max_entries(depth, ep->block_size);
+    new_header->eh_max = ext4_ext_max_entries((uint16_t)depth, ep->block_size);
 
     /* ── Split entries: move the second half to the new node ── */
     uint16_t split_point = entries / 2;

@@ -85,10 +85,10 @@ static int aes_gcm_encrypt(const uint8_t *key, int key_len,
     }
 
     uint8_t len_block[16] = {0};
-    len_block[8] = (aad_len * 8) >> 8;
-    len_block[9] = (aad_len * 8) & 0xFF;
-    len_block[14] = (plain_len * 8) >> 8;
-    len_block[15] = (plain_len * 8) & 0xFF;
+    len_block[8] = (uint8_t)((aad_len * 8) >> 8);
+    len_block[9] = (uint8_t)((aad_len * 8) & 0xFF);
+    len_block[14] = (uint8_t)((plain_len * 8) >> 8);
+    len_block[15] = (uint8_t)((plain_len * 8) & 0xFF);
 
     aes_gcm_ghash(h, aad, aad_len, cipher, plain_len, tag);
     for (int i = 0; i < 16; i++) tag[i] ^= len_block[i];
@@ -272,7 +272,7 @@ int macsec_decrypt(uint64_t sci, const uint8_t *cipher, uint16_t cipher_len,
             uint8_t an = mh->tci_an & MACSEC_AN_MASK;
             struct macsec_sa *sa = &sc->sa[an];
 
-            uint16_t data_len = cipher_len - sizeof(struct macsec_header) - MACSEC_ICV_LEN;
+            uint16_t data_len = (uint16_t)(cipher_len - sizeof(struct macsec_header) - MACSEC_ICV_LEN);
             const uint8_t *secdata = cipher + sizeof(struct macsec_header);
             const uint8_t *icv = secdata + data_len;
 

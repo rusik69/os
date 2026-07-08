@@ -239,7 +239,7 @@ int sctp_tsn_rcv_data(struct sctp_assoc *a, uint32_t src_ip,
 	uint32_t tsn = ntohl(dh->tsn);
 	uint16_t stream_id = ntohs(dh->stream_id);
 	uint16_t stream_seq = ntohs(dh->stream_seq);
-	uint16_t data_len = chunk_len - sizeof(struct sctp_data_hdr);
+	uint16_t data_len = (uint16_t)(chunk_len - sizeof(struct sctp_data_hdr));
 	const uint8_t *data = (const uint8_t *)(dh + 1);
 
 	/* Clamp stream ID */

@@ -178,7 +178,7 @@ uint32_t cubic_update(struct cubic_data *c, uint32_t cwnd,
 
     /* Clamp growth: never grow faster than 32 segments per RTT to avoid
      * excessive bursts when far from W_max */
-    uint32_t max_growth = (rtt_ticks > 0) ? (32 * elapsed_ticks / rtt_ticks) : 32;
+    uint32_t max_growth = (rtt_ticks > 0) ? (uint32_t)(32 * elapsed_ticks / rtt_ticks) : 32;
     if (max_growth < 2) max_growth = 2;
     uint32_t max_limit = c->wmax + max_growth;
     if (target > max_limit)

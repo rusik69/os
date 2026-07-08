@@ -257,7 +257,7 @@ int mrp_send_pdu(void)
 
         uint8_t pdu[256];
         int len = mrp_build_pdu(pdu, sizeof(pdu), &mrp_apps[i]);
-        send_eth(mrp_mac_addr, MRP_ETHER_TYPE, pdu, len);
+        send_eth(mrp_mac_addr, MRP_ETHER_TYPE, pdu, (uint16_t)len);
         return 0;
     }
     return -ENOENT;
@@ -352,7 +352,7 @@ int mrp_transmit(void *dev)
             uint8_t pdu[256];
             int len = mrp_build_pdu(pdu, sizeof(pdu), &mrp_apps[i]);
             if (len > 3) {
-                send_eth(mrp_mac_addr, MRP_ETHER_TYPE, pdu, len);
+                send_eth(mrp_mac_addr, MRP_ETHER_TYPE, pdu, (uint16_t)len);
             }
         }
     }

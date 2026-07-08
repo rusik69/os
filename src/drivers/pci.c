@@ -93,7 +93,7 @@ int pcie_is_available(void) {
     return ecam_base != 0;
 }
 
-uint32_t pcie_read(uint8_t bus, uint8_t slot, uint8_t func, uint16_t offset) {
+uint32_t pcie_read(int bus, int slot, int func, int offset) {
     if (!ecam_base) return pci_read(bus, slot, func, (uint8_t)(offset & 0xFF));
     uint64_t addr = ecam_base
                   | ((uint64_t)bus  << 20)
@@ -103,7 +103,7 @@ uint32_t pcie_read(uint8_t bus, uint8_t slot, uint8_t func, uint16_t offset) {
     return *(volatile uint32_t *)addr;
 }
 
-void pcie_write(uint8_t bus, uint8_t slot, uint8_t func, uint16_t offset, uint32_t val) {
+void pcie_write(int bus, int slot, int func, int offset, uint32_t val) {
     if (!ecam_base) { pci_write(bus, slot, func, (uint8_t)(offset & 0xFF), val); return; }
     uint64_t addr = ecam_base
                   | ((uint64_t)bus  << 20)
@@ -115,7 +115,7 @@ void pcie_write(uint8_t bus, uint8_t slot, uint8_t func, uint16_t offset, uint32
 
 /* ── PCI Express capability detection ─────────────────────────────── */
 
-int pci_find_pcie_cap(uint8_t bus, uint8_t slot, uint8_t func, uint8_t *cap_offset) {
+int pci_find_pcie_cap(int bus, int slot, int func, uint8_t *cap_offset) {
     /* PCI Express capability ID = 0x10 */
     /* Read status register at offset 0x06 to check Capabilities List bit */
     uint16_t status;
@@ -183,7 +183,7 @@ int pcie_is_present(void) {
     return 0;
 }
 
-uint8_t pcie_device_type(uint8_t bus, uint8_t slot, uint8_t func) {
+int pcie_device_type(int bus, int slot, int func) {
     uint8_t cap_off;
     if (pci_find_pcie_cap(bus, slot, func, &cap_off) < 0)
         return PCIE_DEV_TYPE_UNKNOWN;
@@ -663,14 +663,14 @@ static const char *pci_class_name(uint8_t cls, uint8_t sub) {
     }
 }
 
-uint32_t pci_read(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) {
+uint32_t pci_read(int bus, int slot, int func, int offset) {
     uint32_t addr = (1U << 31) | ((uint32_t)bus << 16) | ((uint32_t)slot << 11) |
                     ((uint32_t)func << 8) | (offset & 0xFC);
     outl(PCI_CONFIG_ADDR, addr);
     return inl(PCI_CONFIG_DATA);
 }
 
-void pci_write(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint32_t val) {
+void pci_write(int bus, int slot, int func, int offset, uint32_t val) {
     uint32_t addr = (1U << 31) | ((uint32_t)bus << 16) | ((uint32_t)slot << 11) |
                     ((uint32_t)func << 8) | (offset & 0xFC);
     outl(PCI_CONFIG_ADDR, addr);
@@ -769,7 +769,7 @@ void pci_list(void) {
             uint8_t cap_off;
             const char *extra = "";
             if (pci_find_pcie_cap((uint8_t)bus, (uint8_t)slot, 0, &cap_off) == 0) {
-                uint8_t dtype = pcie_device_type((uint8_t)bus, (uint8_t)slot, 0);
+                uint8_t dtype = (uint8_t)pcie_device_type(bus, slot, 0);
                 switch (dtype) {
                 case PCIE_DEV_TYPE_ENDPOINT:   extra = " [PCIe Endpoint]"; break;
                 case PCIE_DEV_TYPE_ROOT_PORT:  extra = " [PCIe Root Port]"; break;
@@ -1003,7 +1003,7 @@ int pci_vpd_read_field(struct pci_device *dev, uint8_t field_tag,
     return copy_len;
 }
 
-int pci_find_ext_cap(uint8_t bus, uint8_t slot, uint8_t func, uint16_t cap_id) {
+int pci_find_ext_cap(int bus, int slot, int func, uint16_t cap_id) {
     if (!ecam_base) return -EINVAL;  /* Extended caps require ECAM access */
 
     uint16_t offset = 0x100;  /* Start of extended config space */

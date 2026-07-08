@@ -185,7 +185,7 @@ static int parse_zone_file(const char *path) {
         }
 
         /* Normalize: remove trailing dot if present */
-        int nl = strlen(rr->name);
+        int nl = (int)strlen(rr->name);
         if (nl > 0 && rr->name[nl - 1] == '.')
             rr->name[nl - 1] = '\0';
 
@@ -262,8 +262,8 @@ static int build_dns_response(const uint8_t *query, int query_len,
     uint16_t ancount = (answer != NULL) ? 1 : 0;
 
     /* Set ANCOUNT */
-    resp[6] = (ancount >> 8) & 0xFF;
-    resp[7] = ancount & 0xFF;
+    resp[6] = (uint8_t)((ancount >> 8) & 0xFF);
+    resp[7] = (uint8_t)(ancount & 0xFF);
 
     /* NSCOUNT, ARCOUNT = 0 */
     resp[8] = resp[9] = resp[10] = resp[11] = 0;
@@ -297,21 +297,21 @@ static int build_dns_response(const uint8_t *query, int query_len,
 
         /* TYPE */
         if (pos + 2 > resp_size) return -1;
-        resp[pos++] = (answer->type >> 8) & 0xFF;
-        resp[pos++] = answer->type & 0xFF;
+        resp[pos++] = (uint8_t)((answer->type >> 8) & 0xFF);
+        resp[pos++] = (uint8_t)(answer->type & 0xFF);
 
         /* CLASS */
         if (pos + 2 > resp_size) return -1;
-        resp[pos++] = (answer->rr_class >> 8) & 0xFF;
-        resp[pos++] = answer->rr_class & 0xFF;
+        resp[pos++] = (uint8_t)((answer->rr_class >> 8) & 0xFF);
+        resp[pos++] = (uint8_t)(answer->rr_class & 0xFF);
 
         /* TTL */
         if (pos + 4 > resp_size) return -1;
         uint32_t ttl = answer->ttl;
-        resp[pos++] = (ttl >> 24) & 0xFF;
-        resp[pos++] = (ttl >> 16) & 0xFF;
-        resp[pos++] = (ttl >> 8) & 0xFF;
-        resp[pos++] = ttl & 0xFF;
+        resp[pos++] = (uint8_t)((ttl >> 24) & 0xFF);
+        resp[pos++] = (uint8_t)((ttl >> 16) & 0xFF);
+        resp[pos++] = (uint8_t)((ttl >> 8) & 0xFF);
+        resp[pos++] = (uint8_t)(ttl & 0xFF);
 
         /* RDLENGTH + RDATA */
         if (answer->type == DNS_TYPE_A) {
@@ -319,17 +319,17 @@ static int build_dns_response(const uint8_t *query, int query_len,
             resp[pos++] = 0;  /* RDLENGTH high byte */
             resp[pos++] = 4;  /* RDLENGTH low byte */
             uint32_t ip = answer->data.a_record;
-            resp[pos++] = (ip >> 24) & 0xFF;
-            resp[pos++] = (ip >> 16) & 0xFF;
-            resp[pos++] = (ip >> 8) & 0xFF;
-            resp[pos++] = ip & 0xFF;
+            resp[pos++] = (uint8_t)((ip >> 24) & 0xFF);
+            resp[pos++] = (uint8_t)((ip >> 16) & 0xFF);
+            resp[pos++] = (uint8_t)((ip >> 8) & 0xFF);
+            resp[pos++] = (uint8_t)(ip & 0xFF);
         } else if (answer->type == DNS_TYPE_CNAME) {
             char encoded[DNS_NAME_MAX_LEN * 2];
             int elen = dns_encode_name(encoded, sizeof(encoded), answer->data.cname);
             if (elen < 0) return -1;
             if (pos + 2 + elen > resp_size) return -1;
-            resp[pos++] = (elen >> 8) & 0xFF;
-            resp[pos++] = elen & 0xFF;
+            resp[pos++] = (uint8_t)((elen >> 8) & 0xFF);
+            resp[pos++] = (uint8_t)(elen & 0xFF);
             memcpy(resp + pos, encoded, elen);
             pos += elen;
         } else if (answer->type == DNS_TYPE_MX) {
@@ -337,11 +337,11 @@ static int build_dns_response(const uint8_t *query, int query_len,
             int elen = dns_encode_name(encoded, sizeof(encoded), answer->data.mx.exchange);
             if (elen < 0) return -1;
             if (pos + 2 + 2 + elen > resp_size) return -1;
-            uint16_t rdlen = 2 + elen;
-            resp[pos++] = (rdlen >> 8) & 0xFF;
-            resp[pos++] = rdlen & 0xFF;
-            resp[pos++] = (answer->data.mx.preference >> 8) & 0xFF;
-            resp[pos++] = answer->data.mx.preference & 0xFF;
+            uint16_t rdlen = (uint16_t)(2 + elen);
+            resp[pos++] = (uint8_t)((rdlen >> 8) & 0xFF);
+            resp[pos++] = (uint8_t)(rdlen & 0xFF);
+            resp[pos++] = (uint8_t)((answer->data.mx.preference >> 8) & 0xFF);
+            resp[pos++] = (uint8_t)(answer->data.mx.preference & 0xFF);
             memcpy(resp + pos, encoded, elen);
             pos += elen;
         } else if (answer->type == DNS_TYPE_SOA) {
@@ -352,8 +352,8 @@ static int build_dns_response(const uint8_t *query, int query_len,
             if (em < 0 || er < 0) return -1;
             int soa_len = em + er + 20;  /* 5 uint32 after names */
             if (pos + 2 + soa_len > resp_size) return -1;
-            resp[pos++] = (soa_len >> 8) & 0xFF;
-            resp[pos++] = soa_len & 0xFF;
+            resp[pos++] = (uint8_t)((soa_len >> 8) & 0xFF);
+            resp[pos++] = (uint8_t)(soa_len & 0xFF);
             memcpy(resp + pos, encoded_m, em); pos += em;
             memcpy(resp + pos, encoded_r, er); pos += er;
             /* serial, refresh, retry, expire, minimum */
@@ -425,7 +425,7 @@ static void handle_dns_query(uint32_t src_ip, uint16_t src_port,
     if (answer) {
         resp_len = build_dns_response(data, len, resp, sizeof(resp), answer);
         if (resp_len > 0) {
-            net_udp_send(src_ip, DNS_SERVER_PORT, src_port, resp, resp_len);
+            net_udp_send(src_ip, DNS_SERVER_PORT, src_port, resp, (uint16_t)resp_len);
         }
         return;
     }
@@ -443,7 +443,7 @@ static void handle_dns_query(uint32_t src_ip, uint16_t src_port,
             rr.data.a_record = htonl(resolved);
             resp_len = build_dns_response(data, len, resp, sizeof(resp), &rr);
             if (resp_len > 0) {
-                net_udp_send(src_ip, DNS_SERVER_PORT, src_port, resp, resp_len);
+                net_udp_send(src_ip, DNS_SERVER_PORT, src_port, resp, (uint16_t)resp_len);
             }
             return;
         }
@@ -453,7 +453,7 @@ static void handle_dns_query(uint32_t src_ip, uint16_t src_port,
     resp_len = build_dns_response(data, len, resp, sizeof(resp), NULL);
     if (resp_len > 0) {
         resp[3] |= 3;  /* NXDOMAIN */
-        net_udp_send(src_ip, DNS_SERVER_PORT, src_port, resp, resp_len);
+        net_udp_send(src_ip, DNS_SERVER_PORT, src_port, resp, (uint16_t)resp_len);
     }
 }
 

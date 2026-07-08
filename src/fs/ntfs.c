@@ -50,7 +50,7 @@ static int ntfs_read_sectors(struct ntfs_priv *np, uint64_t lba,
                               uint32_t count, uint8_t *buf)
 {
     for (uint32_t i = 0; i < count; i++) {
-        if (blockdev_read_sectors(np->dev_id, lba + i, 1,
+        if (blockdev_read_sectors(np->dev_id, (uint32_t)(lba + i), 1,
                                    buf + i * np->bytes_per_sector) != 0)
             return -1;
     }

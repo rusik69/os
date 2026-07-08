@@ -484,8 +484,13 @@ static int sn_uint(snbuf_t *b, uint64_t val, int base, int pad,
 static int sn_double_fixed(snbuf_t *b, double val, int precision) {
     int written = 0;
     if (val < 0) { sn_write(b, '-'); written++; val = -val; }
-    /* Extract integer part */
-    uint64_t int_part = (uint64_t)val;
+    /* Extract integer part — guard against NaN / overflow for safe conversion */
+    uint64_t int_part = 0;
+    if (val >= 0.0 && val <= (double)UINT64_MAX) {
+        int_part = (uint64_t)val;
+    } else if (val > (double)UINT64_MAX) {
+        int_part = UINT64_MAX;
+    }
     written += sn_uint(b, int_part, 10, 0, ' ', 0);
     if (precision > 0) {
         sn_write(b, '.'); written++;
@@ -493,6 +498,7 @@ static int sn_double_fixed(snbuf_t *b, double val, int precision) {
         for (int i = 0; i < precision; i++) {
             frac *= 10.0;
             int digit = (int)frac;
+            if (digit > 9) digit = 9;
             sn_write(b, '0' + (char)digit);
             written++;
             frac -= (double)digit;

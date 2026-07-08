@@ -58,7 +58,7 @@ static int hfsplus_read_blocks(struct hfsplus_priv *hp, uint64_t lba,
                                 uint32_t count, uint8_t *buf)
 {
     for (uint32_t i = 0; i < count; i++) {
-        if (blockdev_read_sectors(hp->dev_id, lba + i, 1,
+        if (blockdev_read_sectors(hp->dev_id, (uint32_t)(lba + i), 1,
                                    buf + i * HFSPLUS_SECTOR_SIZE) != 0)
             return -1;
     }
@@ -296,7 +296,7 @@ static int hfsplus_catalog_lookup(struct hfsplus_priv *hp,
     uint8_t key_buf[520];
     uint16_t name_len = (uint16_t)strlen(name);
 
-    uint16_t key_length = 4 + 2 + name_len * 2; /* key_length + parent_id + name_len + UTF-16BE name */
+    uint16_t key_length = (uint16_t)(4 + 2 + name_len * 2); /* key_length + parent_id + name_len + UTF-16BE name */
     key_buf[0] = (uint8_t)(key_length & 0xFF);
     key_buf[1] = (uint8_t)(key_length >> 8);
     key_buf[2] = (uint8_t)(parent_id & 0xFF);

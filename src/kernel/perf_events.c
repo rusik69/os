@@ -1017,9 +1017,12 @@ void perf_mux_tick(void)
     }
 
     /* Determine the scale factor: if we have more events than PMCs,
-     * each event gets (num_events / NUM_PMCS) times its raw count. */
-    float scale = (float)active_count / (float)MUX_NUM_PMCS;
-    if (scale < 1.0f) scale = 1.0f;
+     * each event gets (num_events / NUM_PMCS) times its raw count.
+     * Use fixed-point arithmetic to avoid float→int truncation UB
+     * (kernel is built with -mno-sse -mno-sse2 and has no FPU support). */
+    uint64_t scale_num = (active_count > MUX_NUM_PMCS)
+                             ? (uint64_t)active_count
+                             : (uint64_t)MUX_NUM_PMCS;
 
     /* Read current PMC values and accumulate scaled counts */
     for (int i = 0; i < MUX_NUM_PMCS; i++) {
@@ -1028,7 +1031,8 @@ void perf_mux_tick(void)
 
         if (g_mux_events[event_idx].active) {
             uint64_t delta = cur_val - g_mux_events[event_idx].raw_count;
-            g_mux_events[event_idx].scaled_count += (uint64_t)((float)delta * scale);
+            g_mux_events[event_idx].scaled_count +=
+                (delta * scale_num + MUX_NUM_PMCS / 2) / MUX_NUM_PMCS;
         }
         g_mux_events[event_idx].raw_count = 0;
     }

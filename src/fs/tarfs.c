@@ -142,7 +142,7 @@ static int tarfs_read(void *priv, const char *path, void *buf,
 
     uint8_t *base = (uint8_t *)(uint64_t)tp->base_addr;
     memcpy(buf, base + e->offset, to_read);
-    *out_size = to_read;
+    *out_size = (uint32_t)to_read;
     return 0;
 }
 

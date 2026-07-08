@@ -643,8 +643,8 @@ int jbd2_commit_transaction(struct jbd2_handle *handle)
     num_tags = handle->h_num_blocks;
 
     /* Calculate how many descriptor blocks we need */
-    tags_per_block = (block_size - sizeof(struct jbd2_header))
-                     / sizeof(struct jbd2_block_tag);
+    tags_per_block = (uint32_t)((block_size - sizeof(struct jbd2_header))
+                     / sizeof(struct jbd2_block_tag));
     if (tags_per_block == 0) {
         kprintf("[jbd2]  block size %u too small for tags\n",
                 block_size);

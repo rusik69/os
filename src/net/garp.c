@@ -264,7 +264,7 @@ int garp_send_pdu(uint16_t app_type)
         uint8_t pdu[256];
         int len = garp_build_pdu(pdu, sizeof(pdu), app);
         if (len > 2) {
-            send_eth(garp_mac_addr, ETH_TYPE_IP, pdu, len);
+            send_eth(garp_mac_addr, ETH_TYPE_IP, pdu, (uint16_t)len);
         }
         return 0;
     }

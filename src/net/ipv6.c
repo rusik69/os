@@ -672,8 +672,8 @@ uint16_t ipv6_checksum(const struct in6_addr *src,
     memcpy(pseudo + 16, dst, 16);
     pseudo[32] = (data_len >> 24) & 0xFF;
     pseudo[33] = (data_len >> 16) & 0xFF;
-    pseudo[34] = (data_len >> 8) & 0xFF;
-    pseudo[35] = data_len & 0xFF;
+    pseudo[34] = (uint8_t)((data_len >> 8) & 0xFF);
+    pseudo[35] = (uint8_t)(data_len & 0xFF);
     pseudo[36] = 0;
     pseudo[37] = 0;
     pseudo[38] = 0;

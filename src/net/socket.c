@@ -927,7 +927,7 @@ int sys_socketpair_impl(int domain, int type, int protocol, int sv[2]) {
         s0->local_port = 0; /* ephemeral */
 
         /* Bind to a random port */
-        s0->local_port = 30000 + ((uint32_t)(uintptr_t)s0 ^ (uint32_t)timer_get_ticks()) % 10000;
+        s0->local_port = (uint16_t)(30000 + ((uint32_t)(uintptr_t)s0 ^ (uint32_t)timer_get_ticks()) % 10000);
         s0->local_ip = htonl(0x7F000001); /* 127.0.0.1 */
 
         /* Listen */

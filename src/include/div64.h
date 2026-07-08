@@ -22,7 +22,7 @@
  */
 #define do_div(n, base)                                 \
     ({                                                  \
-        uint64_t __rem;                                 \
+        uint64_t __rem = 0;                             \
         uint64_t __base = (uint64_t)(base);             \
         if (__base != 0) {                              \
             __rem = (n) % __base;                       \

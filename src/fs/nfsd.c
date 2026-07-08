@@ -483,7 +483,7 @@ int nfsd_reload_exports(void)
                                 if (*opt == '=') opt++;
                                 anon_uid = 0;
                                 while (*opt >= '0' && *opt <= '9') {
-                                    anon_uid = anon_uid * 10 + (*opt - '0');
+                                    anon_uid = (uint16_t)(anon_uid * 10 + (*opt - '0'));
                                     opt++;
                                 }
                             } else if (strncmp(opt, "anongid", 7) == 0) {
@@ -491,7 +491,7 @@ int nfsd_reload_exports(void)
                                 if (*opt == '=') opt++;
                                 anon_gid = 0;
                                 while (*opt >= '0' && *opt <= '9') {
-                                    anon_gid = anon_gid * 10 + (*opt - '0');
+                                    anon_gid = (uint16_t)(anon_gid * 10 + (*opt - '0'));
                                     opt++;
                                 }
                             } else if (strncmp(opt, "rw", 2) == 0) {
@@ -1875,7 +1875,7 @@ static void nfsd_handle_connection(int conn_id)
     rpc.procedure = xdr_get_u32(&cp);
 
     /* Credential flavor */
-    rpc.auth_flavor = xdr_get_u32(&cp);
+    rpc.auth_flavor = (uint8_t)xdr_get_u32(&cp);
     uint32_t cred_len = xdr_get_u32(&cp);
     cp += cred_len;
     while (cred_len & 3) { cp++; cred_len++; }

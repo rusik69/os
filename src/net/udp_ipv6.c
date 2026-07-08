@@ -183,7 +183,7 @@ void handle_udp_ipv6(struct ipv6_header *ip6,
         return;
     }
 
-    data_len = udp_len - sizeof(struct udp_header);
+    data_len = (uint16_t)(udp_len - sizeof(struct udp_header));
 
     /*
      * Verify the mandatory IPv6 pseudo-header checksum.

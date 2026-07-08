@@ -993,7 +993,7 @@ static int nl_tc_getqdisc(int protocol, const struct nlmsghdr *nlh,
 
         /* TCA_KIND */
         const char *kind = tc_kind_name(q->type);
-        int kind_len = strlen(kind) + 1;
+        int kind_len = (int)(strlen(kind) + 1);
         struct nlattr *nla = (struct nlattr *)(buf + resp->nlmsg_len);
         nla->nla_len = NLA_HDRLEN + (uint16_t)kind_len;
         nla->nla_type = TCA_KIND;
@@ -1047,7 +1047,7 @@ static int nl_tc_getqdisc(int protocol, const struct nlmsghdr *nlh,
 
         /* TCA_KIND */
         const char *kind = tc_kind_name(q->type);
-        int kind_len = strlen(kind) + 1;
+        int kind_len = (int)(strlen(kind) + 1);
         struct nlattr *nla = (struct nlattr *)(buf + resp->nlmsg_len);
         nla->nla_len = NLA_HDRLEN + (uint16_t)kind_len;
         nla->nla_type = TCA_KIND;
@@ -1242,7 +1242,7 @@ static int nl_tc_gettclass(int protocol, const struct nlmsghdr *nlh,
         rtcm->tcm_info = (uint32_t)q->type << 16;
 
         /* TCA_KIND */
-        int kind_len = strlen(kind) + 1;
+        int kind_len = (int)(strlen(kind) + 1);
         struct nlattr *nla = (struct nlattr *)(buf + resp->nlmsg_len);
         nla->nla_len = NLA_HDRLEN + (uint16_t)kind_len;
         nla->nla_type = TCA_KIND;
@@ -1588,7 +1588,7 @@ static int genl_handle_ctrl(const void *buf, int len, uint32_t src_pid) {
 
             /* Family name (string) */
             struct nlattr *name_attr = (struct nlattr *)attr_ptr;
-            int name_len = strlen(genl_families[i].name) + 1;
+            int name_len = (int)(strlen(genl_families[i].name) + 1);
             name_attr->nla_len = NLA_HDRLEN + name_len;
             name_attr->nla_type = CTRL_ATTR_FAMILY_NAME;
             memcpy(NLA_DATA(name_attr), genl_families[i].name, name_len);

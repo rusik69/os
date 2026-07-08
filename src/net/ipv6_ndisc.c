@@ -828,7 +828,7 @@ void ipv6_nd_handle_ra(struct ipv6_header *ip6,
 
 	/* Process options */
 	opt_data = payload + sizeof(struct nd_router_advert);
-	remaining = len - sizeof(struct nd_router_advert);
+	remaining = (int)(len - sizeof(struct nd_router_advert));
 
 	while (remaining >= 2) {
 		const struct nd_option *opt;

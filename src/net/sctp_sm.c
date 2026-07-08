@@ -128,7 +128,7 @@ int sctp_sm_send_init_ack(struct sctp_assoc *a, uint32_t peer_ip,
         return ret;
 
     /* Pad cookie to 4-byte boundary */
-    uint16_t cookie_pad = (4 - (cookie_len % 4)) % 4;
+    uint16_t cookie_pad = (uint16_t)((4 - (cookie_len % 4)) % 4);
 
     /* Build INIT-ACK chunk
      * Fixed params: initiate_tag (4), a_rwnd (4),
@@ -137,7 +137,7 @@ int sctp_sm_send_init_ack(struct sctp_assoc *a, uint32_t peer_ip,
      * Then optional params: state cookie + padding
      */
     uint16_t fixed_params = 16;
-    uint16_t param_total  = fixed_params + 4 + cookie_len + cookie_pad;
+    uint16_t param_total  = (uint16_t)(fixed_params + 4 + cookie_len + cookie_pad);
     uint16_t chunk_len    = sizeof(struct sctp_chunk) + param_total;
 
     /* Build SCTP common header + INIT-ACK chunk */
@@ -250,7 +250,7 @@ int sctp_sm_handle_init_ack(struct sctp_assoc *a, uint32_t src_ip,
                              uint16_t chunk_len)
 {
     const uint8_t *params = (const uint8_t *)(chunk + 1);
-    uint16_t param_remaining = chunk_len - sizeof(*chunk);
+    uint16_t param_remaining = (uint16_t)(chunk_len - sizeof(*chunk));
     if (param_remaining < 16) {
         kprintf("sctp: INIT-ACK too short (%u)\n", param_remaining);
         return -EINVAL;
@@ -355,7 +355,7 @@ int sctp_sm_handle_cookie_echo(struct sctp_assoc *a, uint32_t src_ip,
                                 const struct sctp_chunk *chunk,
                                 uint16_t chunk_len)
 {
-    uint16_t cookie_len = chunk_len - sizeof(*chunk);
+    uint16_t cookie_len = (uint16_t)(chunk_len - sizeof(*chunk));
     const uint8_t *cookie_data = (const uint8_t *)(chunk + 1);
 
     if (cookie_len < sizeof(struct sctp_cookie)) {
@@ -375,8 +375,8 @@ int sctp_sm_handle_cookie_echo(struct sctp_assoc *a, uint32_t src_ip,
     a->peer_port = ntohs(sh->src_port);
     a->local_tag = ntohl(cookie_out.local_tag);
     a->peer_tag  = ntohl(cookie_out.peer_tag);
-    a->num_in_streams  = ntohs(cookie_out.num_in_streams);
-    a->num_out_streams = ntohs(cookie_out.num_out_streams);
+    a->num_in_streams  = (uint8_t)ntohs(cookie_out.num_in_streams);
+    a->num_out_streams = (uint8_t)ntohs(cookie_out.num_out_streams);
 
     /* Register source address as a transport for multi-homing */
     sctp_transport_add(a, src_ip, ntohs(sh->src_port));

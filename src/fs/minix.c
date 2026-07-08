@@ -128,7 +128,7 @@ static __attribute__((unused)) int minix_read_block(struct minix_priv *mp, uint3
     uint64_t lba = (uint64_t)block_num * (mp->block_size / 512);
     uint32_t sectors = mp->block_size / 512;
     for (uint32_t i = 0; i < sectors; i++) {
-        if (blockdev_read_sectors(mp->dev_id, lba + i, 1,
+        if (blockdev_read_sectors(mp->dev_id, (uint32_t)(lba + i), 1,
                                    buf + i * 512) != 0)
             return -1;
     }

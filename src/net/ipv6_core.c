@@ -140,7 +140,7 @@ int ipv6_parse_exthdr(const uint8_t *data, uint16_t total_len,
             if (next_hdr == IPV6_NEXTHDR_HOPOPT && hdr_len > sizeof(struct ipv6_exthdr_opt)) {
                 /* Walk TLV options in this header */
                 const uint8_t *opt_ptr = ptr + sizeof(struct ipv6_exthdr_opt);
-                uint16_t opt_remaining = hdr_len - sizeof(struct ipv6_exthdr_opt);
+                uint16_t opt_remaining = (uint16_t)(hdr_len - sizeof(struct ipv6_exthdr_opt));
                 while (opt_remaining > 0) {
                     uint8_t opt_type = opt_ptr[0];
                     if (opt_type == IPV6_TLV_PAD1) {
@@ -240,7 +240,7 @@ int ipv6_parse_exthdr(const uint8_t *data, uint16_t total_len,
             }
             next_hdr = fh->next_header;
             ptr += sizeof(struct ipv6_fragment);
-            remaining -= sizeof(struct ipv6_fragment);
+            remaining -= (uint16_t)sizeof(struct ipv6_fragment);
             break;
         }
 

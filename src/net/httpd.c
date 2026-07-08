@@ -37,7 +37,7 @@ static char *my_strstr(const char *h, const char *n) {
 /* Write a non-negative integer to buf, return ptr past last written char */
 static char *u64toa(uint64_t v, char *buf) {
     char tmp[20]; int n = 0;
-    do { tmp[n++] = '0' + (v % 10); v /= 10; } while (v);
+    do { tmp[n++] = (char)('0' + (v % 10)); v /= 10; } while (v);
     while (--n >= 0) *buf++ = tmp[n];
     return buf;
 }
@@ -96,7 +96,7 @@ static char *http_date(char *buf) {
     const char *d = days[dow];
     buf[0] = d[0]; buf[1] = d[1]; buf[2] = d[2]; buf += 3;
     *buf++ = ','; *buf++ = ' ';
-    *buf++ = '0' + (t.day / 10); *buf++ = '0' + (t.day % 10);
+    *buf++ = (char)('0' + (t.day / 10)); *buf++ = (char)('0' + (t.day % 10));
     *buf++ = ' ';
     const char *m = months[t.month - 1 < 11 ? t.month - 1 : 0];
     *buf++ = m[0]; *buf++ = m[1]; *buf++ = m[2];
@@ -105,16 +105,16 @@ static char *http_date(char *buf) {
     /* year (2000-2099) */
     uint16_t yr = (uint16_t)t.year;
     *buf++ = '2'; *buf++ = '0';
-    *buf++ = '0' + (yr / 100);
-    *buf++ = '0' + ((yr / 10) % 10);
-    *buf++ = '0' + (yr % 10);
+    *buf++ = (char)('0' + (yr / 100));
+    *buf++ = (char)('0' + ((yr / 10) % 10));
+    *buf++ = (char)('0' + (yr % 10));
 
     *buf++ = ' ';
-    *buf++ = '0' + (t.hour / 10); *buf++ = '0' + (t.hour % 10);
+    *buf++ = (char)('0' + (t.hour / 10)); *buf++ = (char)('0' + (t.hour % 10));
     *buf++ = ':';
-    *buf++ = '0' + (t.minute / 10); *buf++ = '0' + (t.minute % 10);
+    *buf++ = (char)('0' + (t.minute / 10)); *buf++ = (char)('0' + (t.minute % 10));
     *buf++ = ':';
-    *buf++ = '0' + (t.second / 10); *buf++ = '0' + (t.second % 10);
+    *buf++ = (char)('0' + (t.second / 10)); *buf++ = (char)('0' + (t.second % 10));
     *buf++ = ' '; *buf++ = 'G'; *buf++ = 'M'; *buf++ = 'T';
     *buf++ = '\r'; *buf++ = '\n';
     return buf;
@@ -249,7 +249,7 @@ static void handle_get(int conn_id, const char *path, int head_only) {
         uint32_t rlen = fsize - off;
         if (rlen > HTTPD_BODY_SIZE) rlen = HTTPD_BODY_SIZE;
         if (fs_read_file(full_path, chunk, rlen, 0) < 0) break;
-        net_tcp_send(conn_id, chunk, rlen);
+        net_tcp_send(conn_id, chunk, (uint16_t)rlen);
     }
 }
 

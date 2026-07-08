@@ -178,8 +178,8 @@ int dccp_connect(int fd, uint32_t ip, uint16_t port)
         opts[optlen++] = DCCP_OPT_PADDING;
     }
 
-    uint16_t total_hdr_len = sizeof(*dh) + optlen;
-    uint8_t words = (total_hdr_len + 3) / 4;
+    uint16_t total_hdr_len = (uint16_t)(sizeof(*dh) + optlen);
+    uint8_t words = (uint8_t)((total_hdr_len + 3) / 4);
     dh->data_offset = words << 4;
     dh->src_port = htons(ds->local_port);
     dh->dst_port = htons(port);
@@ -345,8 +345,8 @@ static int dccp_send_response(struct dccp_sock *ds, uint32_t dst_ip,
         opts[optlen++] = DCCP_OPT_PADDING;
     }
 
-    uint16_t total_hdr_len = sizeof(*rh) + optlen;
-    uint8_t words = (total_hdr_len + 3) / 4;
+    uint16_t total_hdr_len = (uint16_t)(sizeof(*rh) + optlen);
+    uint8_t words = (uint8_t)((total_hdr_len + 3) / 4);
     rh->data_offset = words << 4;
     rh->src_port = htons(ds->local_port);
     rh->dst_port = req_hdr->src_port;
@@ -372,8 +372,8 @@ static int dccp_send_ack_internal(struct dccp_sock *ds)
     opts[3] = 0;
     *(uint32_t *)(opts + 4) = htonl(ds->ack_seq);
 
-    uint16_t total_hdr_len = sizeof(*ah) + 8;
-    uint8_t words = (total_hdr_len + 3) / 4;
+    uint16_t total_hdr_len = (uint16_t)(sizeof(*ah) + 8);
+    uint8_t words = (uint8_t)((total_hdr_len + 3) / 4);
     ah->data_offset = words << 4;
     ah->src_port = htons(ds->local_port);
     ah->dst_port = htons(ds->peer_port);
@@ -519,7 +519,7 @@ static uint32_t dccp_parse_ack_option(const uint8_t *pkt, uint16_t len)
     if (data_off < sizeof(struct dccp_header))
         data_off = sizeof(struct dccp_header);
     if (data_off > len)
-        data_off = len;
+        data_off = (uint8_t)len;
 
     /* Options start after fixed header */
     uint16_t off = sizeof(struct dccp_header);

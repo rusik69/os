@@ -56,8 +56,8 @@ static int smtp_status_ok(const char *resp) {
 
 /* Send a command and check response */
 static int smtp_cmd(int conn_id, const char *cmd, char *resp, int resp_size) {
-    int len = strlen(cmd);
-    if (net_tcp_send(conn_id, cmd, len) < 0) return -1;
+    int len = (int)strlen(cmd);
+    if (net_tcp_send(conn_id, cmd, (uint16_t)len) < 0) return -1;
     smtp_read_response(conn_id, resp, resp_size);
     return smtp_status_ok(resp) ? 0 : -1;
 }
@@ -152,7 +152,7 @@ static int smtp_connect_and_send(uint32_t server_ip, uint16_t port,
                      ".\r\n",
                      from, to, subject, body);
 
-    if (net_tcp_send(conn_id, data_buf, n) < 0) goto out;
+    if (net_tcp_send(conn_id, data_buf, (uint16_t)n) < 0) goto out;
 
     /* Read response */
     smtp_read_response(conn_id, buf, sizeof(buf));
@@ -163,7 +163,7 @@ static int smtp_connect_and_send(uint32_t server_ip, uint16_t port,
 
     /* QUIT */
     snprintf(buf, sizeof(buf), "QUIT\r\n");
-    net_tcp_send(conn_id, buf, strlen(buf));
+    net_tcp_send(conn_id, buf, (uint16_t)strlen(buf));
 
     ret = 0;
 

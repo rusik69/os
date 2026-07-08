@@ -89,7 +89,7 @@ static void dhcp_send_discover(void) {
     *opt++ = 53; *opt++ = 1; *opt++ = DHCP_DISCOVER;
     *opt++ = 255;
 
-    uint16_t pkt_len = opt - buf;
+    uint16_t pkt_len = (uint16_t)(opt - buf);
     send_udp_broadcast(DHCP_CLIENT_PORT, DHCP_SERVER_PORT, 0, 0xFFFFFFFF, buf, pkt_len);
     dhcp_state = 1;
 }
@@ -109,18 +109,18 @@ static void dhcp_send_request(void) {
     uint8_t *opt = buf + sizeof(struct dhcp_packet);
     *opt++ = 53; *opt++ = 1; *opt++ = DHCP_REQUEST;
     *opt++ = 50; *opt++ = 4;
-    *opt++ = (dhcp_offered_ip >> 24) & 0xFF;
-    *opt++ = (dhcp_offered_ip >> 16) & 0xFF;
-    *opt++ = (dhcp_offered_ip >> 8) & 0xFF;
-    *opt++ = dhcp_offered_ip & 0xFF;
+    *opt++ = (uint8_t)((dhcp_offered_ip >> 24) & 0xFF);
+    *opt++ = (uint8_t)((dhcp_offered_ip >> 16) & 0xFF);
+    *opt++ = (uint8_t)((dhcp_offered_ip >> 8) & 0xFF);
+    *opt++ = (uint8_t)(dhcp_offered_ip & 0xFF);
     *opt++ = 54; *opt++ = 4;
-    *opt++ = (dhcp_server_ip >> 24) & 0xFF;
-    *opt++ = (dhcp_server_ip >> 16) & 0xFF;
-    *opt++ = (dhcp_server_ip >> 8) & 0xFF;
-    *opt++ = dhcp_server_ip & 0xFF;
+    *opt++ = (uint8_t)((dhcp_server_ip >> 24) & 0xFF);
+    *opt++ = (uint8_t)((dhcp_server_ip >> 16) & 0xFF);
+    *opt++ = (uint8_t)((dhcp_server_ip >> 8) & 0xFF);
+    *opt++ = (uint8_t)(dhcp_server_ip & 0xFF);
     *opt++ = 255;
 
-    uint16_t pkt_len = opt - buf;
+    uint16_t pkt_len = (uint16_t)(opt - buf);
     send_udp_broadcast(DHCP_CLIENT_PORT, DHCP_SERVER_PORT, 0, 0xFFFFFFFF, buf, pkt_len);
     dhcp_state = 2;
 }
@@ -497,7 +497,7 @@ void handle_udp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
     }
 
     const uint8_t *data = payload + sizeof(struct udp_header);
-    uint16_t data_len = udp_len - sizeof(struct udp_header);
+    uint16_t data_len = (uint16_t)(udp_len - sizeof(struct udp_header));
     uint32_t src_ip = ntohl(ip_hdr->src_ip);
 
     if (dst_port == DHCP_CLIENT_PORT) {
@@ -757,7 +757,7 @@ uint32_t net_dns_resolve(const char *hostname) {
     while (*p) {
         const char *dot = p;
         while (*dot && *dot != '.') dot++;
-        int lbl_len = dot - p;
+        int lbl_len = (int)(dot - p);
         if (lbl_len > 63) lbl_len = 63;
         pkt[pos++] = (uint8_t)lbl_len;
         for (int i = 0; i < lbl_len; i++) pkt[pos++] = p[i];
@@ -773,8 +773,8 @@ uint32_t net_dns_resolve(const char *hostname) {
 
     for (int attempt = 0; attempt < 3 && !dns_reply_received; attempt++) {
         dns_txid++;
-        pkt[0] = dns_txid >> 8; pkt[1] = dns_txid & 0xFF;
-        net_udp_send(srv, 1053, DNS_PORT, pkt, pos);
+        pkt[0] = (uint8_t)(dns_txid >> 8); pkt[1] = (uint8_t)(dns_txid & 0xFF);
+        net_udp_send(srv, 1053, DNS_PORT, pkt, (uint16_t)pos);
 
         uint64_t start = timer_get_ticks();
         while (!dns_reply_received) {
@@ -867,7 +867,7 @@ static void url_parse_absolute(const char *url, char *host, uint16_t *port, char
     if (*p == ':') {
         p++;
         *port = 0;
-        while (*p >= '0' && *p <= '9') { *port = *port * 10 + (*p - '0'); p++; }
+        while (*p >= '0' && *p <= '9') { *port = (uint16_t)(*port * 10 + (*p - '0')); p++; }
     }
     if (*p == '/') {
         int pi = 0;
@@ -921,11 +921,11 @@ int net_http_get_ex(const char *host_in, uint16_t port_in, const char *path_in,
         if (rlen >= (int)sizeof(req)) { net_tcp_close(conn); ret = -1; break; }
         req[rlen] = '\0';
 
-        net_tcp_send(conn, req, rlen);
+        net_tcp_send(conn, req, (uint16_t)rlen);
 
         int total = 0;
         while (total < 4096 - 1) {
-            int n = net_tcp_recv(conn, raw + total, 4096 - 1 - total, 300);
+            int n = net_tcp_recv(conn, raw + total, (uint16_t)(4096 - 1 - total), 300);
             if (n <= 0) break;
             total += n;
         }

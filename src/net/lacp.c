@@ -124,8 +124,8 @@ int lacp_add_port(uint16_t port_number, const uint8_t *mac)
             p->actor.key[1] = 0x01;
             p->actor.port_priority[0] = 0x80;
             p->actor.port_priority[1] = 0x00;
-            p->actor.port_number[0] = (port_number >> 8) & 0xFF;
-            p->actor.port_number[1] = port_number & 0xFF;
+            p->actor.port_number[0] = (uint8_t)((port_number >> 8) & 0xFF);
+            p->actor.port_number[1] = (uint8_t)(port_number & 0xFF);
             p->actor.state_flags = LACP_STATE_ACTIVE | LACP_STATE_AGGREGATING;
 
             p->state_flags = p->actor.state_flags;
@@ -419,7 +419,7 @@ int lacp_send(void *dev, const void *pdu, size_t len)
     if (!pdu || len < sizeof(struct lacp_pdu)) return -EINVAL;
 
     /* Send directly via Ethernet slow protocol */
-    send_eth(lacp_dmac, LACP_ETHER_TYPE, pdu, len);
+    send_eth(lacp_dmac, LACP_ETHER_TYPE, pdu, (uint16_t)len);
     kprintf("[lacp] lacp_send: sent %zu bytes\n", len);
     return 0;
 }

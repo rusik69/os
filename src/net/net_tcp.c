@@ -1195,7 +1195,7 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
                     return;
                 }
                 data = (const uint8_t *)data + skip;
-                data_len -= skip;
+                data_len -= (uint16_t)skip;
             }
             c->their_seq = expected + data_len;
             /*

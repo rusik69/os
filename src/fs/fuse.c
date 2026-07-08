@@ -734,7 +734,7 @@ static int fuse_lookup_component(uint64_t parent_nodeid, const char *name,
 
     /* FUSE_LOOKUP request payload is just the filename (null-terminated) */
     ret = fuse_request_response(FUSE_LOOKUP, parent_nodeid,
-                                 name, strlen(name) + 1,
+                                 name, (int)(strlen(name) + 1),
                                  &resp_arg, &resp_arg_size);
     if (ret < 0)
         return ret;

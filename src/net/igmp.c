@@ -213,9 +213,9 @@ void igmp_handle_report(struct ip_header *ip_hdr, uint16_t len)
                 /* For IGMPv3 queries, send IGMPv3 report if sources are specified */
                 if (n_srcs > 0 && src_list) {
                     /* Build IGMPv3 membership report */
-                    uint16_t v3_report_len = sizeof(struct igmp_header) +
+                    uint16_t v3_report_len = (uint16_t)(sizeof(struct igmp_header) +
                                              sizeof(struct igmpv3_grec) +
-                                             n_srcs * 4;
+                                             n_srcs * 4);
                     uint8_t *v3_report = kmalloc(v3_report_len);
                     if (!v3_report) break;
                     struct igmp_header *v3_hdr = (struct igmp_header *)v3_report;

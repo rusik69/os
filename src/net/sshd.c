@@ -37,8 +37,8 @@ extern const uint8_t *rsa_get_pubkey_blob(int *len);
 
 /* ── Pack/unpack helpers ────────────────────────────────────── */
 static void p32(uint8_t *b, uint32_t v) {
-    b[0] = (v >> 24) & 0xFF; b[1] = (v >> 16) & 0xFF;
-    b[2] = (v >> 8) & 0xFF; b[3] = v & 0xFF;
+    b[0] = (uint8_t)((v >> 24) & 0xFF); b[1] = (uint8_t)((v >> 16) & 0xFF);
+    b[2] = (uint8_t)((v >> 8) & 0xFF); b[3] = (uint8_t)(v & 0xFF);
 }
 static uint32_t g32(const uint8_t *b) {
     return ((uint32_t)b[0] << 24) | ((uint32_t)b[1] << 16) |
@@ -154,7 +154,7 @@ static struct ssh_session *alloc_session(int conn_id) {
 
 /* Send raw data over TCP */
 static int ses_send_raw(struct ssh_session *s, const uint8_t *data, int len) {
-    return net_tcp_send(s->conn_id, data, len);
+    return net_tcp_send(s->conn_id, data, (uint16_t)len);
 }
 
 /* Send an encrypted SSH packet (after key exchange) */
@@ -168,11 +168,11 @@ static int ses_send_packet(struct ssh_session *s, uint8_t type,
 
     int total = 1 + payload_len + pad_len; /* padding_length + payload + padding */
 
-    pkt[0] = (total >> 24) & 0xFF;
-    pkt[1] = (total >> 16) & 0xFF;
-    pkt[2] = (total >> 8) & 0xFF;
-    pkt[3] = total & 0xFF;
-    pkt[4] = pad_len;
+    pkt[0] = (uint8_t)((total >> 24) & 0xFF);
+    pkt[1] = (uint8_t)((total >> 16) & 0xFF);
+    pkt[2] = (uint8_t)((total >> 8) & 0xFF);
+    pkt[3] = (uint8_t)(total & 0xFF);
+    pkt[4] = (uint8_t)pad_len;
 
     int off = 5;
     /* Message type byte */
@@ -249,12 +249,12 @@ static int compute_exchange_hash(struct ssh_session *s,
 
     /* V_C: client version string (including \r\n) */
     const char *ver_c = "SSH-2.0-OSSSH\r\n";
-    int ver_c_len = strlen(ver_c);
+    int ver_c_len = (int)strlen(ver_c);
     memcpy(buf + off, ver_c, ver_c_len); off += ver_c_len;
 
     /* V_S: server version string (including \r\n) */
     const char *ver_s = "SSH-2.0-OSSSH\r\n";
-    int ver_s_len = strlen(ver_s);
+    int ver_s_len = (int)strlen(ver_s);
     memcpy(buf + off, ver_s, ver_s_len); off += ver_s_len;
 
     /* I_C: client KEXINIT payload (without length prefix) */
@@ -318,7 +318,7 @@ static void derive_keys(struct ssh_session *s,
         uint8_t K_prefixed[260];
         int kp_len = 0;
         K_prefixed[kp_len++] = 0; K_prefixed[kp_len++] = 0; K_prefixed[kp_len++] = 0;
-        K_prefixed[kp_len++] = K_len;
+        K_prefixed[kp_len++] = (uint8_t)K_len;
         memcpy(K_prefixed + kp_len, K_bytes, K_len);
         kp_len += K_len;
 
@@ -435,7 +435,7 @@ static void handle_channel_request(struct ssh_session *s, const uint8_t *data, i
     if (req_type_len == 4 && memcmp(req_type, "shell", 4) == 0) {
         /* Start shell */
         if (want_reply)
-            ses_send_packet(s, SSH_MSG_CHANNEL_SUCCESS, (uint8_t[]){ (recip >> 24) & 0xFF, (recip >> 16) & 0xFF, (recip >> 8) & 0xFF, recip & 0xFF }, 4);
+            ses_send_packet(s, SSH_MSG_CHANNEL_SUCCESS, (uint8_t[]){ (uint8_t)((recip >> 24) & 0xFF), (uint8_t)((recip >> 16) & 0xFF), (uint8_t)((recip >> 8) & 0xFF), (uint8_t)(recip & 0xFF) }, 4);
 
         s->phase = SSH_PHASE_SESSION;
 
@@ -451,15 +451,15 @@ static void handle_channel_request(struct ssh_session *s, const uint8_t *data, i
     } else if (req_type_len == 3 && memcmp(req_type, "pty", 3) == 0) {
         /* PTY allocation request - accept silently */
         if (want_reply)
-            ses_send_packet(s, SSH_MSG_CHANNEL_SUCCESS, (uint8_t[]){ (recip >> 24) & 0xFF, (recip >> 16) & 0xFF, (recip >> 8) & 0xFF, recip & 0xFF }, 4);
+            ses_send_packet(s, SSH_MSG_CHANNEL_SUCCESS, (uint8_t[]){ (uint8_t)((recip >> 24) & 0xFF), (uint8_t)((recip >> 16) & 0xFF), (uint8_t)((recip >> 8) & 0xFF), (uint8_t)(recip & 0xFF) }, 4);
     } else if (req_type_len == 7 && memcmp(req_type, "subsystem", 7) == 0) {
         /* Reject unknown subsystems */
         if (want_reply)
-            ses_send_packet(s, SSH_MSG_CHANNEL_FAILURE, (uint8_t[]){ (recip >> 24) & 0xFF, (recip >> 16) & 0xFF, (recip >> 8) & 0xFF, recip & 0xFF }, 4);
+            ses_send_packet(s, SSH_MSG_CHANNEL_FAILURE, (uint8_t[]){ (uint8_t)((recip >> 24) & 0xFF), (uint8_t)((recip >> 16) & 0xFF), (uint8_t)((recip >> 8) & 0xFF), (uint8_t)(recip & 0xFF) }, 4);
     } else {
         /* Unknown request - fail if reply wanted */
         if (want_reply)
-            ses_send_packet(s, SSH_MSG_CHANNEL_FAILURE, (uint8_t[]){ (recip >> 24) & 0xFF, (recip >> 16) & 0xFF, (recip >> 8) & 0xFF, recip & 0xFF }, 4);
+            ses_send_packet(s, SSH_MSG_CHANNEL_FAILURE, (uint8_t[]){ (uint8_t)((recip >> 24) & 0xFF), (uint8_t)((recip >> 16) & 0xFF), (uint8_t)((recip >> 8) & 0xFF), (uint8_t)(recip & 0xFF) }, 4);
     }
 }
 
@@ -541,7 +541,7 @@ static void handle_channel_data(struct ssh_session *s, const uint8_t *data, int 
 static void handle_version(struct ssh_session *s) {
     /* Version exchange - respond with our version */
     const char *ver = "SSH-2.0-OSSSH\r\n";
-    ses_send_raw(s, (const uint8_t *)ver, strlen(ver));
+    ses_send_raw(s, (const uint8_t *)ver, (int)strlen(ver));
     s->phase = SSH_PHASE_KEX_INIT;
 }
 
@@ -566,14 +566,14 @@ static void handle_kexinit(struct ssh_session *s, const uint8_t *data, int len) 
     const char *comp_algos = "none";
     const char *lang = "";
 
-    off += pstr(kex + off, (const uint8_t *)kex_algos, strlen(kex_algos));
-    off += pstr(kex + off, (const uint8_t *)hostkey_algos, strlen(hostkey_algos));
-    off += pstr(kex + off, (const uint8_t *)enc_algos, strlen(enc_algos));
-    off += pstr(kex + off, (const uint8_t *)enc_algos, strlen(enc_algos));
-    off += pstr(kex + off, (const uint8_t *)mac_algos, strlen(mac_algos));
-    off += pstr(kex + off, (const uint8_t *)mac_algos, strlen(mac_algos));
-    off += pstr(kex + off, (const uint8_t *)comp_algos, strlen(comp_algos));
-    off += pstr(kex + off, (const uint8_t *)comp_algos, strlen(comp_algos));
+    off += pstr(kex + off, (const uint8_t *)kex_algos, (int)strlen(kex_algos));
+    off += pstr(kex + off, (const uint8_t *)hostkey_algos, (int)strlen(hostkey_algos));
+    off += pstr(kex + off, (const uint8_t *)enc_algos, (int)strlen(enc_algos));
+    off += pstr(kex + off, (const uint8_t *)enc_algos, (int)strlen(enc_algos));
+    off += pstr(kex + off, (const uint8_t *)mac_algos, (int)strlen(mac_algos));
+    off += pstr(kex + off, (const uint8_t *)mac_algos, (int)strlen(mac_algos));
+    off += pstr(kex + off, (const uint8_t *)comp_algos, (int)strlen(comp_algos));
+    off += pstr(kex + off, (const uint8_t *)comp_algos, (int)strlen(comp_algos));
     off += pstr(kex + off, (const uint8_t *)lang, 0);
     off += pstr(kex + off, (const uint8_t *)lang, 0);
     /* First KEX packet follows flag */
@@ -595,19 +595,19 @@ static void handle_kexinit(struct ssh_session *s, const uint8_t *data, int len) 
     /* Build the full KEXINIT packet: packet_length || padding_length || SSH_MSG_KEXINIT || kex_data || padding */
     int kex_pkt_len = 1 + off + 16; /* enough for padding */
     uint8_t kex_pkt[512];
-    kex_pkt[0] = (kex_pkt_len >> 24) & 0xFF;
-    kex_pkt[1] = (kex_pkt_len >> 16) & 0xFF;
-    kex_pkt[2] = (kex_pkt_len >> 8) & 0xFF;
-    kex_pkt[3] = kex_pkt_len & 0xFF;
+    kex_pkt[0] = (uint8_t)((kex_pkt_len >> 24) & 0xFF);
+    kex_pkt[1] = (uint8_t)((kex_pkt_len >> 16) & 0xFF);
+    kex_pkt[2] = (uint8_t)((kex_pkt_len >> 8) & 0xFF);
+    kex_pkt[3] = (uint8_t)(kex_pkt_len & 0xFF);
 
     int pad_len = 16 - ((1 + off) % 16);
     if (pad_len < 4) pad_len += 16;
     int actual_len = 1 + off + pad_len;
-    kex_pkt[0] = (actual_len >> 24) & 0xFF;
-    kex_pkt[1] = (actual_len >> 16) & 0xFF;
-    kex_pkt[2] = (actual_len >> 8) & 0xFF;
-    kex_pkt[3] = actual_len & 0xFF;
-    kex_pkt[4] = pad_len;
+    kex_pkt[0] = (uint8_t)((actual_len >> 24) & 0xFF);
+    kex_pkt[1] = (uint8_t)((actual_len >> 16) & 0xFF);
+    kex_pkt[2] = (uint8_t)((actual_len >> 8) & 0xFF);
+    kex_pkt[3] = (uint8_t)(actual_len & 0xFF);
+    kex_pkt[4] = (uint8_t)pad_len;
     kex_pkt[5] = SSH_MSG_KEXINIT;
     memcpy(kex_pkt + 6, kex, off);
     rng_fill_buf(kex_pkt + 6 + off, pad_len);
@@ -882,7 +882,7 @@ static void on_connect(int conn_id) {
 
     /* Send SSH version string - the version exchange starts from server */
     const char *ver = "SSH-2.0-OSSSH\r\n";
-    ses_send_raw(s, (const uint8_t *)ver, strlen(ver));
+    ses_send_raw(s, (const uint8_t *)ver, (int)strlen(ver));
 }
 
 static void on_data(int conn_id, const void *data, uint16_t len) {

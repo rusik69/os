@@ -296,7 +296,7 @@ void handle_sctp(uint32_t src_ip, uint32_t dst_ip,
 
     a->rx_packets++;
     const struct sctp_chunk *chunk = (const struct sctp_chunk *)(payload + sizeof(*sh));
-    uint16_t remaining = len - sizeof(*sh);
+    uint16_t remaining = (uint16_t)(len - sizeof(*sh));
 
     while (remaining >= sizeof(*chunk)) {
         uint16_t chunk_len = ntohs(chunk->length);
@@ -326,7 +326,7 @@ void handle_sctp(uint32_t src_ip, uint32_t dst_ip,
 
         case SCTP_HEARTBEAT: {
             /* HEARTBEAT received — respond with HEARTBEAT-ACK */
-            uint16_t hb_info_len = chunk_len - sizeof(*chunk);
+            uint16_t hb_info_len = (uint16_t)(chunk_len - sizeof(*chunk));
             if (hb_info_len < 4) break; /* Need at least hb_time */
 
             /* Build HEARTBEAT-ACK chunk */
@@ -365,7 +365,7 @@ void handle_sctp(uint32_t src_ip, uint32_t dst_ip,
         case SCTP_HEARTBEAT_ACK: {
             /* HEARTBEAT-ACK received — peer is alive on this path */
             uint16_t hb_ack_total = chunk_len;
-            uint16_t hb_ack_data = hb_ack_total - sizeof(*chunk);
+            uint16_t hb_ack_data = (uint16_t)(hb_ack_total - sizeof(*chunk));
             const uint8_t *hb_data = (const uint8_t *)(chunk + 1);
 
             /* Parse Heartbeat Info parameter (Type=1) */
@@ -392,7 +392,7 @@ void handle_sctp(uint32_t src_ip, uint32_t dst_ip,
                     uint32_t rtt_sample = (uint32_t)now - sent_time;
                     /* Exponentially weighted moving average (alpha=0.125) */
                     if (tp->rtt == 0) {
-                        tp->rtt = rtt_sample;
+                        tp->rtt = (uint16_t)rtt_sample;
                     } else {
                         tp->rtt = (uint16_t)((uint32_t)tp->rtt * 7 / 8 +
                                               rtt_sample / 8);
@@ -1052,7 +1052,7 @@ int sctp_handle_asconf(struct sctp_assoc *a, uint32_t src_ip,
         return -EINVAL;
 
     const uint8_t *data = (const uint8_t *)(chunk + 1);
-    uint16_t data_len = chunk_len - sizeof(*chunk);
+    uint16_t data_len = (uint16_t)(chunk_len - sizeof(*chunk));
 
     uint32_t serial = ntohl(*(const uint32_t *)data);
     uint16_t remaining = data_len - 4;

@@ -715,7 +715,7 @@ static int unix_dgram_recvfrom(int idx, void *data, uint32_t len,
         src_addr->sun_family = AF_UNIX;
         int spl = (int)strlen(dg.peer_path);
         if (spl > 0) {
-            uint32_t slen = *addrlen - sizeof(uint16_t);
+            uint32_t slen = (uint32_t)(*addrlen - sizeof(uint16_t));
             if ((uint32_t)spl > slen) spl = (int)slen;
             memcpy(src_addr->sun_path, dg.peer_path, (size_t)spl);
         }

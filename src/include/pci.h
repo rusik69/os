@@ -15,8 +15,8 @@ struct pci_device {
     uint32_t bar[6];
 };
 
-uint32_t pci_read(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset);
-void pci_write(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint32_t val);
+uint32_t pci_read(int bus, int slot, int func, int offset);
+void pci_write(int bus, int slot, int func, int offset, uint32_t val);
 int pci_find_device(uint16_t vendor, uint16_t device, struct pci_device *out);
 int pci_find_class(uint8_t cls, uint8_t sub, struct pci_device *out);
 void pci_enable_bus_master(struct pci_device *dev);
@@ -25,12 +25,12 @@ void pci_init(void);
 
 /* PCIe ECAM (Memory-mapped config space) */
 void pcie_ecam_set_base(uint64_t base);   /* called from ACPI MCFG parser */
-uint32_t pcie_read(uint8_t bus, uint8_t slot, uint8_t func, uint16_t offset);
-void pcie_write(uint8_t bus, uint8_t slot, uint8_t func, uint16_t offset, uint32_t val);
+uint32_t pcie_read(int bus, int slot, int func, int offset);
+void pcie_write(int bus, int slot, int func, int offset, uint32_t val);
 int pcie_is_available(void);
 
 /* PCI Express capability detection */
-int pci_find_pcie_cap(uint8_t bus, uint8_t slot, uint8_t func, uint8_t *cap_offset);
+int pci_find_pcie_cap(int bus, int slot, int func, uint8_t *cap_offset);
 int pcie_is_present(void);
 
 /* PCI Express device type */
@@ -41,7 +41,7 @@ int pcie_is_present(void);
 #define PCIE_DEV_TYPE_SWITCH      4
 #define PCIE_DEV_TYPE_UNKNOWN     0xFF
 
-uint8_t pcie_device_type(uint8_t bus, uint8_t slot, uint8_t func);
+int pcie_device_type(int bus, int slot, int func);
 
 /* ── VPD (Vital Product Data) ───────────────────────────────────── */
 
@@ -247,7 +247,7 @@ void pci_aer_check_all(void);
 /* Walk the PCIe extended config space (offsets 0x100..0xFFF) looking for
  * the given extended capability ID.  Returns offset (>= 0x100) on success,
  * or < 0 if not found.  Requires ECAM access. */
-int pci_find_ext_cap(uint8_t bus, uint8_t slot, uint8_t func, uint16_t cap_id);
+int pci_find_ext_cap(int bus, int slot, int func, uint16_t cap_id);
 
 /* ── Access Control Services (ACS, ext cap ID 0x000D) ──────────────
  *

@@ -47,7 +47,7 @@ static int sock_set_rcvtimeo(struct socket *s, uint64_t timeout_usec) {
 
 static int sock_set_sndtimeo(struct socket *s, uint64_t timeout_usec) {
     if (!s) return -EINVAL;
-    s->max_pacing_rate = timeout_usec; /* reuse field */
+    s->max_pacing_rate = (uint32_t)timeout_usec; /* reuse field */
     return 0;
 }
 

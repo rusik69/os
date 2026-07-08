@@ -82,7 +82,7 @@ static void ses_write(struct telnet_session *s, const char *data, int len) {
 
 static void ses_flush(struct telnet_session *s) {
     if (s->out_len > 0) {
-        net_tcp_send(s->conn_id, s->out_buf, s->out_len);
+        net_tcp_send(s->conn_id, s->out_buf, (uint16_t)s->out_len);
         s->out_len = 0;
     }
 }

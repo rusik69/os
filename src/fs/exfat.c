@@ -85,7 +85,7 @@ static int exfat_read_cluster(struct exfat_priv *ep, uint32_t cluster,
     uint64_t start_sector = exfat_cluster_to_sector(ep, cluster);
     uint32_t sectors = 1U << ep->sectors_per_cluster_shift;
     for (uint32_t i = 0; i < sectors; i++) {
-        if (blockdev_read_sectors(ep->dev_id, start_sector + i, 1,
+        if (blockdev_read_sectors(ep->dev_id, (uint32_t)(start_sector + i), 1,
                                    buf + i * ep->sector_size) != 0)
             return -1;
     }
@@ -1790,7 +1790,7 @@ read_done:
 
 				if (blockdev_read_sectors(ep->dev_id,
 				    (uint32_t)start_sector,
-				    num_sectors,
+				    (uint8_t)num_sectors,
 				    (uint8_t *)buf + done) != 0) {
 					if (out_size) *out_size = (uint32_t)done;
 					return -EIO;

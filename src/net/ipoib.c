@@ -155,7 +155,7 @@ int ipoib_recv(int ifindex, uint8_t *buf, uint16_t maxlen,
     }
 
     const struct ipoib_header *ih = (const struct ipoib_header *)ii->rcvbuf[ii->rcv_tail];
-    uint16_t data_len = frame_len - sizeof(*ih);
+    uint16_t data_len = (uint16_t)(frame_len - sizeof(*ih));
     if (data_len > maxlen) data_len = maxlen;
 
     memcpy(buf, ii->rcvbuf[ii->rcv_tail] + sizeof(*ih), data_len);

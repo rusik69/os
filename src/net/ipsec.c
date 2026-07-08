@@ -197,7 +197,7 @@ int ipsec_output_ah(struct ip_header *outer_ip, uint8_t *buf, int *len, int max_
 
     struct ah_header *ah = (struct ah_header *)buf;
     ah->next_hdr = IP_PROTO_IPIP; /* or the actual next protocol */
-    ah->payload_len = (ah_hdr_size / 4) - 2;
+    ah->payload_len = (uint8_t)((ah_hdr_size / 4) - 2);
     ah->reserved = 0;
     ah->spi = htonl(sa->spi);
     ah->seq_no = htonl(++sa->last_seq);
@@ -246,11 +246,11 @@ int ipsec_output_esp(struct ip_header *outer_ip, uint8_t *buf, int *len, int max
     /* Add padding */
     uint8_t *payload_start = buf + esp_hdr_size;
     for (int i = 0; i < pad_len; i++)
-        payload_start[payload_len + i] = i + 1;
+        payload_start[payload_len + i] = (uint8_t)(i + 1);
 
     /* Trailer */
     struct esp_trailer *trailer = (struct esp_trailer *)(buf + esp_hdr_size + payload_len + pad_len);
-    trailer->pad_len = pad_len;
+    trailer->pad_len = (uint8_t)pad_len;
     trailer->next_hdr = IP_PROTO_IPIP;
 
     /* XOR encryption (simplified — real impl would use AES-CBC or similar) */
@@ -312,7 +312,7 @@ static int ipsec_input_esp(struct ip_header *ip_hdr, const uint8_t *payload, int
         return -EINVAL;
     }
 
-    int payload_len = len - sizeof(struct esp_header);
+    int payload_len = (int)(len - sizeof(struct esp_header));
     if (payload_len < 2) return -EINVAL;
 
     uint8_t *decrypted = (uint8_t *)kmalloc(payload_len);

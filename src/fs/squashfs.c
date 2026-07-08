@@ -106,7 +106,7 @@ static int lzma_decode_symbol(struct lzma_decomp_state *st,
         bound = (st->range >> 11) * (*prob);
         if (st->code < bound) {
             st->range = bound;
-            *prob += (2048 - *prob) >> 5;
+            *prob = (uint16_t)(*prob + ((2048 - *prob) >> 5));
             symbol <<= 1;
         } else {
             st->range -= bound;
