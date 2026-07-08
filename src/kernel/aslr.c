@@ -188,15 +188,14 @@ void aslr_add_entropy(uint64_t entropy) {
  * Context: Any context.
  * Return: Randomized address (currently 0, stub).
  */
-uint64_t aslr_randomize_addr(uint64_t base, uint64_t range)
+static uint64_t aslr_randomize_addr(uint64_t base, uint64_t range)
 {
     (void)base;
     (void)range;
     kprintf("[aslr] aslr_randomize_addr: not yet implemented\n");
     return 0;
 }
-/* ── Stub: aslr_randomize_stack ─────────────────────────────── */
-uint64_t aslr_randomize_stack(void)
+/* ── Stub: aslr_randomize_stack ─────────────────────────────── */\nstatic uint64_t aslr_randomize_stack(void)
 {
     kprintf("[aslr] aslr_randomize_stack: not yet implemented\n");
     return 0;

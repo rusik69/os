@@ -262,6 +262,10 @@ static void boot_timing_report(void)
 }
 uint64_t __stack_chk_guard = 0xDEADBEEFCAFEBABEULL;
 
+/* Prototypes for functions defined later in this file */
+void __attribute__((noreturn)) __stack_chk_fail(void);
+void kernel_main(uint32_t magic, uint64_t multiboot_info_phys);
+
 void __attribute__((noreturn)) __stack_chk_fail(void) {
     kprintf("\n*** KERNEL STACK SMASHING DETECTED ***\n");
     cli();
@@ -1324,25 +1328,25 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 }
 
 /* ── Stub: kernel_reboot ─────────────────────────────── */
-int kernel_reboot(void)
+static int kernel_reboot(void)
 {
     kprintf("[kernel] kernel_reboot: not yet implemented\n");
     return 0;
 }
 /* ── Stub: kernel_halt ─────────────────────────────── */
-int kernel_halt(void)
+static int kernel_halt(void)
 {
     kprintf("[kernel] kernel_halt: not yet implemented\n");
     return 0;
 }
 /* ── Stub: kernel_poweroff ─────────────────────────────── */
-int kernel_poweroff(void)
+static int kernel_poweroff(void)
 {
     kprintf("[kernel] kernel_poweroff: not yet implemented\n");
     return 0;
 }
 /* ── Stub: kernel_restart ─────────────────────────────── */
-int kernel_restart(const char *cmd)
+static int kernel_restart(const char *cmd)
 {
     (void)cmd;
     kprintf("[kernel] kernel_restart: not yet implemented\n");

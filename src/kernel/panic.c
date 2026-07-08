@@ -564,20 +564,20 @@ void __init panic_init(void) {
 }
 
 /* ── Stub: panic_smp_self_stop ─────────────────────────────────────── */
-void panic_smp_self_stop(void)
+static void panic_smp_self_stop(void)
 {
     kprintf("[PANIC] panic_smp_self_stop: not yet implemented\n");
 }
 
 /* ── Stub: panic_blink ─────────────────────────────────────────────── */
-void panic_blink(int state)
+static void panic_blink(int state)
 {
     (void)state;
     kprintf("[PANIC] panic_blink: not yet implemented\n");
 }
 
 /* ── oops_begin: Begin an OOPS (printk + lockup detection) ──────────── */
-int oops_begin(void)
+static int oops_begin(void)
 {
     /* In a minimal implementation, we just return 0 (no re-entrancy tracking).
      * A full implementation would increment an oops counter and potentially
@@ -587,7 +587,7 @@ int oops_begin(void)
 }
 
 /* ── oops_end: End an OOPS ──────────────────────────────────────────── */
-void oops_end(int die_flags)
+static void oops_end(int die_flags)
 {
     (void)die_flags;
     /* Just acknowledge. In a full implementation this would decrement
@@ -596,7 +596,7 @@ void oops_end(int die_flags)
 }
 
 /* ── emergency_restart: Emergency kernel restart ───────────────────── */
-void emergency_restart(void)
+static void emergency_restart(void)
 {
     /* Attempt a machine reset via keyboard controller (port 0x64).
      * This is a best-effort emergency restart when all else fails. */

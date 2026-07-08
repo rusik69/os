@@ -86,7 +86,7 @@ static const char *resolve_at(int dirfd, const char *path, char *buf, size_t buf
  * dup / dup2 / dup3
  * ==================================================================== */
 
-int do_dup(int old_fd)
+static int do_dup(int old_fd)
 {
     struct process *proc = process_get_current();
     if (!proc) return -1;
@@ -101,7 +101,7 @@ int do_dup(int old_fd)
     return new_fd;
 }
 
-int do_dup2(int old_fd, int new_fd)
+static int do_dup2(int old_fd, int new_fd)
 {
     struct process *proc = process_get_current();
     if (!proc) return -1;
@@ -119,7 +119,7 @@ int do_dup2(int old_fd, int new_fd)
     return new_fd;
 }
 
-int do_dup3(int old_fd, int new_fd, int flags)
+static int do_dup3(int old_fd, int new_fd, int flags)
 {
     if (flags & ~O_CLOEXEC)
         return -EINVAL;
@@ -156,7 +156,7 @@ int do_dup3(int old_fd, int new_fd, int flags)
  * pipe2
  * ==================================================================== */
 
-int do_pipe2(int fds[2], int flags)
+static int do_pipe2(int fds[2], int flags)
 {
     if (flags & ~(O_CLOEXEC | 04000)) /* O_NONBLOCK = 04000 */
         return -EINVAL;
@@ -200,7 +200,7 @@ int do_pipe2(int fds[2], int flags)
  * sysinfo
  * ==================================================================== */
 
-int do_sysinfo(struct sysinfo *info)
+static int do_sysinfo(struct sysinfo *info)
 {
     if (!info) return -EFAULT;
     memset(info, 0, sizeof(*info));
@@ -235,7 +235,7 @@ int do_sysinfo(struct sysinfo *info)
  * getrandom
  * ==================================================================== */
 
-ssize_t do_getrandom(void *buf, size_t count, unsigned int flags)
+static ssize_t do_getrandom(void *buf, size_t count, unsigned int flags)
 {
     (void)flags;
     if (!buf || count == 0) return 0;
@@ -315,7 +315,7 @@ ssize_t do_getrandom(void *buf, size_t count, unsigned int flags)
 #define SECBIT_LOCKED_MASK        (SECBIT_KEEP_CAPS_LOCKED | SECBIT_NO_SETUID_FIXUP_LOCKED | SECBIT_NOROOT_LOCKED)
 #endif
 
-int do_prctl(int option, unsigned long arg2, unsigned long arg3,
+static int do_prctl(int option, unsigned long arg2, unsigned long arg3,
              unsigned long arg4, unsigned long arg5)
 {
     (void)arg3; (void)arg4; (void)arg5;
@@ -400,7 +400,7 @@ int do_prctl(int option, unsigned long arg2, unsigned long arg3,
 #define UTIME_OMIT  ((1L << 30) - 2)
 #endif
 
-int do_utimensat(int dirfd, const char *pathname, const struct timespec times[2], int flags)
+static int do_utimensat(int dirfd, const char *pathname, const struct timespec times[2], int flags)
 {
     (void)flags;
     char path[256];
@@ -443,7 +443,7 @@ int do_utimensat(int dirfd, const char *pathname, const struct timespec times[2]
     return fs_set_mtime(path, new_mtime);
 }
 
-int do_futimens(int fd, const struct timespec times[2])
+static int do_futimens(int fd, const struct timespec times[2])
 {
     struct process *p = process_get_current();
     if (!p || fd >= PROCESS_FD_MAX || !p->fd_table[fd].used)
@@ -487,7 +487,7 @@ int do_futimens(int fd, const struct timespec times[2])
 #define POSIX_FADV_NOREUSE      5
 #endif
 
-int do_fadvise64(int fd, uint64_t offset, uint64_t len, int advice)
+static int do_fadvise64(int fd, uint64_t offset, uint64_t len, int advice)
 {
     if (advice > POSIX_FADV_NOREUSE)
         return -EINVAL;
@@ -511,7 +511,7 @@ int do_fadvise64(int fd, uint64_t offset, uint64_t len, int advice)
  * readlinkat / symlinkat
  * ==================================================================== */
 
-ssize_t do_readlinkat(int dirfd, const char *pathname, char *buf, size_t bufsiz)
+static ssize_t do_readlinkat(int dirfd, const char *pathname, char *buf, size_t bufsiz)
 {
     char kpath[256];
     char resolved[256];
@@ -533,7 +533,7 @@ ssize_t do_readlinkat(int dirfd, const char *pathname, char *buf, size_t bufsiz)
     return (ssize_t)copy_len;
 }
 
-int do_symlinkat(const char *target, int newdirfd, const char *linkpath)
+static int do_symlinkat(const char *target, int newdirfd, const char *linkpath)
 {
     char ktarget[256];
     char klinkpath[256];
@@ -551,7 +551,7 @@ int do_symlinkat(const char *target, int newdirfd, const char *linkpath)
 }
 
 /* ── syscall_new_register ──────────────────────────────────── */
-int syscall_new_register(int nr, void *handler)
+static int syscall_new_register(int nr, void *handler)
 {
     if (nr < 0 || nr > 255 || !handler)
         return -EINVAL;
@@ -577,7 +577,7 @@ int syscall_new_register(int nr, void *handler)
     return 0;
 }
 /* ── syscall_new_unregister ────────────────────────────────── */
-int syscall_new_unregister(int nr)
+static int syscall_new_unregister(int nr)
 {
     if (nr < 0 || nr > 255)
         return -EINVAL;
@@ -593,7 +593,7 @@ int syscall_new_unregister(int nr)
     return 0;
 }
 /* ── syscall_new_invoke ────────────────────────────────────── */
-int syscall_new_invoke(int nr, void *args)
+static int syscall_new_invoke(int nr, void *args)
 {
     if (nr < 0 || nr > 255)
         return -EINVAL;

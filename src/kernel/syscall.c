@@ -4953,7 +4953,7 @@ int sys_get_robust_list(int pid, struct robust_list_head **head_ptr,
 }
 
 /* On thread exit, walk robust list and wake waiters */
-void futex_robust_list_cleanup(struct process *proc)
+static void futex_robust_list_cleanup(struct process *proc)
 {
     if (!proc || !proc->ctid_ptr)
         return;
@@ -6713,7 +6713,7 @@ static uint64_t sys_sched_getattr(uint64_t pid, uint64_t attr_addr, uint64_t siz
 
 #include "coredump_core.h"
 
-void do_coredump(struct process *proc, int signo) {
+static void do_coredump(struct process *proc, int signo) {
     if (!proc || !proc->coredump_enabled) return;
     if (!proc->is_user || !proc->pml4) return;
 
@@ -8788,7 +8788,7 @@ static uint64_t sys_signalfd(uint64_t fd, uint64_t mask_addr, uint64_t flags) {
 
 /* Legacy signalfd_notify — called from signal_send().
  * Enqueues a basic siginfo with SI_KERNEL code for the given signal number. */
-void signalfd_notify(int signum) {
+static void signalfd_notify(int signum) {
     for (int i = 0; i < SIGNALFD_MAX; i++) {
         if (signalfd_table[i].in_use && (signalfd_table[i].sigmask & (1u << signum))) {
             struct signalfd_info *sf = &signalfd_table[i];
@@ -8838,7 +8838,7 @@ void signalfd_notify_ext(int signum, int si_code,
  * This mirrors the fd_table cloexec cleanup in process_exec_close_cloexec()
  * for virtual signalfd file descriptors.
  */
-void signalfd_exec_close(void) {
+static void signalfd_exec_close(void) {
     struct process *cur = process_get_current();
     if (!cur) return;
     uint32_t cur_pid = cur->pid;
@@ -11178,7 +11178,7 @@ void __init syscall_init(void) {
 }
 
 /* ── syscall_handle: Handle a syscall by number ─────────────────────── */
-int syscall_handle(int nr, void *args)
+static int syscall_handle(int nr, void *args)
 {
     if (nr < 0) return -EINVAL;
 
@@ -11198,7 +11198,7 @@ int syscall_handle(int nr, void *args)
     return (int)ret;
 }
 /* ── syscall_register: Register a custom syscall handler ────────────── */
-int syscall_register(int nr, void *handler)
+static int syscall_register(int nr, void *handler)
 {
     if (nr < 0 || nr > 1024 || !handler) return -EINVAL;
 
@@ -11225,7 +11225,7 @@ int syscall_register(int nr, void *handler)
     return 0;
 }
 /* ── syscall_unregister: Unregister a custom syscall handler ────────── */
-int syscall_unregister(int nr)
+static int syscall_unregister(int nr)
 {
     if (nr < 0 || nr > 1024) return -EINVAL;
 
@@ -11242,7 +11242,7 @@ int syscall_unregister(int nr)
     return 0;
 }
 /* ── syscall_table_lookup: Look up a syscall handler by number ──────── */
-void* syscall_table_lookup(int nr)
+static void* syscall_table_lookup(int nr)
 {
     if (nr < 0 || nr > 1024) return NULL;
 

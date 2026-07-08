@@ -64,4 +64,7 @@ void idt_set_vector_name(int vector, const char *name);
 
 extern void idt_load(struct idt_pointer *ptr);
 
+/* Common interrupt handler — called from assembly stubs (idt_asm.asm). */
+void isr_common_handler(struct interrupt_frame *frame);
+
 #endif /* IDT_H */

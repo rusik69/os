@@ -36,7 +36,7 @@
 
 /* ── Stack zeroing helper ──────────────────────────────────────────── */
 
-void zero_kernel_stack_uapi(uint64_t entry_rsp)
+static void zero_kernel_stack_uapi(uint64_t entry_rsp)
 {
     struct process *proc = process_get_current();
 
@@ -101,7 +101,7 @@ void zero_kernel_stack_uapi(uint64_t entry_rsp)
 }
 
 /* ── syscall_cleanup_init ──────────────────────────────────── */
-int __init syscall_cleanup_init(void)
+static int __init syscall_cleanup_init(void)
 {
     /* Stack zeroing at syscall exit is already wired into the asm
      * entry/exit path (zero_kernel_stack_uapi).  No additional
@@ -111,7 +111,7 @@ int __init syscall_cleanup_init(void)
     return 0;
 }
 /* ── syscall_cleanup_exit ──────────────────────────────────── */
-int syscall_cleanup_exit(void *task)
+static int syscall_cleanup_exit(void *task)
 {
     /* Called when a task exits.  The stack-zeroing subsystem
      * keeps no per-task state, so this is a no-op.
@@ -120,7 +120,7 @@ int syscall_cleanup_exit(void *task)
     return 0;
 }
 /* ── syscall_cleanup_fd ────────────────────────────────────── */
-int syscall_cleanup_fd(void *task, int fd)
+static int syscall_cleanup_fd(void *task, int fd)
 {
     /* Called when a file descriptor is closed.  No per-fd tracking
      * is maintained by the cleanup subsystem.

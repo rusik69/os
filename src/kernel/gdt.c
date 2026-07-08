@@ -153,7 +153,7 @@ void __init ist_init(void) {
 }
 
 /* ── Stub: gdt_get_entry ─────────────────────────────── */
-int gdt_get_entry(int idx, void *entry)
+static int gdt_get_entry(int idx, void *entry)
 {
     (void)idx;
     (void)entry;

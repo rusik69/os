@@ -142,7 +142,7 @@ int cmdline_nvram_restore(char *buf, int max_len) {
 }
 
 /* ── Stub: cmdline_parse ─────────────────────────────── */
-int cmdline_parse(const char *cmdline, void *callback)
+static int cmdline_parse(const char *cmdline, void *callback)
 {
     (void)cmdline;
     (void)callback;
@@ -150,7 +150,7 @@ int cmdline_parse(const char *cmdline, void *callback)
     return 0;
 }
 /* ── Stub: cmdline_find_option ─────────────────────────────── */
-int cmdline_find_option(const char *cmdline, const char *option, char *val, int len)
+static int cmdline_find_option(const char *cmdline, const char *option, char *val, int len)
 {
     (void)cmdline;
     (void)option;
