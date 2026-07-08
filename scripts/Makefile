@@ -6,7 +6,7 @@
 # These are compiled with the host CC (not the cross-compiler).
 
 HOST_CC ?= gcc
-HOST_CFLAGS ?= -Wall -Wextra -O2 -g
+HOST_CFLAGS ?= -Wall -Wextra -Wundef -O2 -g
 BUILDDIR ?= ../build/host_tools
 
 # ── mconf — Kconfig menuconfig ──────────────────────────────────────
