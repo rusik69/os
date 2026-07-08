@@ -64,8 +64,10 @@ void text_patch_nop(void *addr)
 /* Enable a static key: increment refcount and patch all jump sites */
 void static_key_enable(struct static_key *key)
 {
-    atomic_inc(&key->enabled);
-    if (atomic_read(&key->enabled) == 1) {
+    /* Use atomic_add_return so the increment and value-check are a single
+     * atomic RMW — no TOCTOU window for another concurrent enable/disable
+     * to race between the increment and the read. */
+    if (atomic_add_return(&key->enabled, 1) == 1) {
         /* First enable: all associated branches should be patched to jmp.
          * In a full implementation, we'd walk the __jump_table section.
          * For now, the key is just tracked. */
@@ -76,8 +78,9 @@ void static_key_enable(struct static_key *key)
 /* Disable: decrement refcount and patch back to nop if zero */
 void static_key_disable(struct static_key *key)
 {
-    atomic_dec(&key->enabled);
-    if (atomic_read(&key->enabled) == 0) {
+    /* Use atomic_sub_return so decrement and zero-check are a single
+     * atomic RMW — no TOCTOU window. */
+    if (atomic_sub_return(&key->enabled, 1) == 0) {
         /* All branches should be patched back to nop. */
         __asm__ volatile("mfence" : : : "memory");
     }
