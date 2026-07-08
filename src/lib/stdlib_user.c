@@ -497,8 +497,6 @@ void *realloc(void *ptr, size_t new_size) {
 /* ── strtok_r — reentrant tokenizer ──────────────────────────────────── */
 char *strtok_r(char *str, const char *delim, char **saveptr)
 {
-    if (!delim || !saveptr)
-        return NULL;
     if (str == NULL)
         str = *saveptr;
     if (str == NULL || *str == '\0') {

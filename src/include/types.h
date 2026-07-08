@@ -21,6 +21,7 @@ typedef uint64_t            uintptr_t;
 #define __init        __attribute__((section(".init.text")))
 #define __exit        /* nothing — module cleanup, no exit section */
 #define __printf(fmt, args) __attribute__((format(printf, fmt, args)))
+#define __nonnull     __attribute__((__nonnull__))
 
 #ifndef __must_check
 #define __must_check        __attribute__((warn_unused_result))
