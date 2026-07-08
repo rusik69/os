@@ -42,8 +42,10 @@ int process_spawn_kernel(const char *path) {
 
     /* Validate ELF header */
     const struct elf64_header *hdr = (const struct elf64_header *)buf;
+    unsigned int elf_magic;
+    __builtin_memcpy(&elf_magic, hdr->e_ident, sizeof(elf_magic));
     if (size < sizeof(struct elf64_header) ||
-        *(const uint32_t *)hdr->e_ident != ELF_MAGIC ||
+        elf_magic != ELF_MAGIC ||
         hdr->e_ident[4] != ELF_CLASS64) {
         kprintf("[spawn_kernel] Bad ELF header for: %s\n", path);
         kfree(buf);

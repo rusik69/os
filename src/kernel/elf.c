@@ -39,8 +39,10 @@ static uint64_t elf_validate(const uint8_t *data, uint64_t size, int *out_is_use
     const struct elf64_header *hdr = (const struct elf64_header *)data;
 
     /* Validate magic */
-    if (*(const uint32_t *)hdr->e_ident != ELF_MAGIC) {
-        kprintf("elf: bad magic\n");
+    unsigned int elf_magic;
+    __builtin_memcpy(&elf_magic, hdr->e_ident, sizeof(elf_magic));
+    if (elf_magic != ELF_MAGIC) {
+        kprintf("elf: bad magic 0x%08x\n", elf_magic);
         return 0;
     }
     if (hdr->e_ident[4] != ELF_CLASS64) {

@@ -196,11 +196,13 @@ static int detect_cpus_from_madt(void) {
     if (memcmp(rsdt_hdr->sig, "RSDT", 4) != 0) return 1;
 
     uint32_t entry_count = (uint32_t)((rsdt_hdr->len - sizeof(struct acpi_hdr)) / 4);
-    uint32_t *entries = (uint32_t *)((uint8_t *)rsdt_hdr + sizeof(struct acpi_hdr));
+    const uint8_t *entry_data = (const uint8_t *)rsdt_hdr + sizeof(struct acpi_hdr);
 
     struct acpi_hdr *madt = NULL;
     for (uint32_t i = 0; i < entry_count; i++) {
-        struct acpi_hdr *hdr = (struct acpi_hdr *)PHYS_TO_VIRT((uint64_t)entries[i]);
+        uint32_t entry_phys32;
+        __builtin_memcpy(&entry_phys32, entry_data + i * 4, sizeof(entry_phys32));
+        struct acpi_hdr *hdr = (struct acpi_hdr *)PHYS_TO_VIRT((uint64_t)entry_phys32);
         if (memcmp(hdr->sig, "APIC", 4) == 0) {
             madt = hdr;
             break;
@@ -215,7 +217,8 @@ static int detect_cpus_from_madt(void) {
     /* uint32_t *lapic_addr = (uint32_t *)madt_body; */
     uint8_t *entry_start = madt_body + 4;
     /* Next 4 bytes: flags */
-    uint32_t flags = *(uint32_t *)entry_start;
+    uint32_t flags;
+    __builtin_memcpy(&flags, entry_start, sizeof(flags));
     (void)flags;
     entry_start += 4;
 
@@ -234,7 +237,8 @@ static int detect_cpus_from_madt(void) {
             /* Processor Local APIC */
             uint8_t acpi_id = ptr[2];
             uint8_t apic_id = ptr[3];
-            uint32_t flags_entry = *(uint32_t *)(ptr + 4);
+            uint32_t flags_entry;
+            __builtin_memcpy(&flags_entry, ptr + 4, sizeof(flags_entry));
 
             if (flags_entry & 1) {  /* bit 0 = enabled */
                 if (local_apics < SMP_MAX_CPUS) {

@@ -50,7 +50,7 @@ static inline int list_empty(const struct list_head *head) {
 }
 
 #define list_entry(ptr, type, member) \
-    ((type *)((char *)(ptr) - (unsigned long)(&((type *)0)->member)))
+    ((type *)((unsigned long)(ptr) - (unsigned long)(&((type *)0)->member)))
 
 #define list_first_entry(ptr, type, member) \
     list_entry((ptr)->next, type, member)

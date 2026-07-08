@@ -848,8 +848,8 @@ void __init acpi_init(void) {
 
         if (use_xsdt) {
             /* XSDT entries are 8 bytes each (64-bit physical addresses) */
-            uint64_t *xsdt_entries = (uint64_t *)((uint8_t *)xsdt_hdr + sizeof(struct acpi_header));
-            uint64_t entry_phys = xsdt_entries[i];
+            uint64_t entry_phys;
+            __builtin_memcpy(&entry_phys, (const uint8_t *)xsdt_hdr + sizeof(struct acpi_header) + i * sizeof(uint64_t), sizeof(entry_phys));
             if (entry_phys == 0) continue;
             /* For ACPI tables, we map via PHYS_TO_VIRT */
             hdr = (struct acpi_header *)PHYS_TO_VIRT(entry_phys);
@@ -1528,7 +1528,8 @@ int acpi_enumerate_pstates(const uint8_t *pss_data, uint32_t pss_length)
     memset(states, 0, sizeof(states));
 
     for (int i = 0; i < num_states; i++) {
-        const uint32_t *entry = (const uint32_t *)(pss_data + i * ACPI_PSS_ENTRY_SIZE);
+        uint32_t entry[ACPI_PSS_ENTRY_SIZE / sizeof(uint32_t)];
+        __builtin_memcpy(entry, pss_data + i * ACPI_PSS_ENTRY_SIZE, sizeof(entry));
         states[i].core_freq          = entry[0] / 1000000;  /* Convert kHz to MHz */
         states[i].power              = entry[1] / 1000;     /* Convert uW to mW */
         states[i].transition_latency = (uint16_t)entry[2];
@@ -1705,11 +1706,11 @@ static int acpi_load_ssdts(void)
         uint64_t table_phys;
 
         if (entry_size == 8) {
-            const uint64_t *xsdt_ents = (const uint64_t *)entries;
-            table_phys = xsdt_ents[i];
+            __builtin_memcpy(&table_phys, entries + i * 8, 8);
         } else {
-            const uint32_t *rsdt_ents = (const uint32_t *)entries;
-            table_phys = rsdt_ents[i];
+            uint32_t entry32;
+            __builtin_memcpy(&entry32, entries + i * 4, 4);
+            table_phys = entry32;
         }
 
         if (table_phys == 0)
@@ -1876,11 +1877,11 @@ static void *acpi_find_table(const char signature[4])
         uint64_t table_phys;
 
         if (entry_size == 8) {
-            const uint64_t *xsdt_ents = (const uint64_t *)entries;
-            table_phys = xsdt_ents[i];
+            __builtin_memcpy(&table_phys, entries + i * 8, 8);
         } else {
-            const uint32_t *rsdt_ents = (const uint32_t *)entries;
-            table_phys = rsdt_ents[i];
+            uint32_t entry32;
+            __builtin_memcpy(&entry32, entries + i * 4, 4);
+            table_phys = entry32;
         }
 
         if (table_phys == 0)

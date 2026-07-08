@@ -114,9 +114,11 @@ static int scan_dsdt_for_pss(void)
     /* Scan for Name(_PSS, Package(...)) pattern */
     while (offset + 8 < dsdt_len) {
         /* Look for NAME op followed by _PSS signature */
+        uint32_t sig;
+        __builtin_memcpy(&sig, &dsdt[offset + 1], sizeof(sig));
         if (dsdt[offset] == AML_NAME_OP &&
             offset + 5 < dsdt_len &&
-            *(uint32_t *)&dsdt[offset + 1] == PSS_SIG) {
+            sig == PSS_SIG) {
 
             /* Found Name(_PSS, ...) — check for Package op */
             uint32_t pkg_offset = offset + 5;

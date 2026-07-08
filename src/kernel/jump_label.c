@@ -52,7 +52,9 @@ void text_patch_nop(void *addr)
     );
 
     /* Write the 5-byte NOP */
-    *(uint32_t *)&patch[0] = *(const uint32_t *)&nop5[0];
+    uint32_t nop32;
+    __builtin_memcpy(&nop32, &nop5[0], 4);
+    __builtin_memcpy(&patch[0], &nop32, 4);
     patch[4] = nop5[4];
 
     __asm__ volatile("mfence" : : : "memory");

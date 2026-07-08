@@ -33,8 +33,8 @@ static void gf128_mul_x(uint8_t *x)
     uint64_t lo, hi;
 
     /* Read as two 64-bit little-endian halves */
-    lo = *(const uint64_t *)&x[0];
-    hi = *(const uint64_t *)&x[8];
+    __builtin_memcpy(&lo, &x[0], 8);
+    __builtin_memcpy(&hi, &x[8], 8);
 
     /* Save MSB of the value for reduction */
     carry = (hi >> 63) & 1;
@@ -48,8 +48,8 @@ static void gf128_mul_x(uint8_t *x)
         lo ^= 0x87ULL;
 
     /* Write back */
-    *(uint64_t *)&x[0] = lo;
-    *(uint64_t *)&x[8] = hi;
+    __builtin_memcpy(&x[0], &lo, 8);
+    __builtin_memcpy(&x[8], &hi, 8);
 }
 
 /*

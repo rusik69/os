@@ -145,64 +145,72 @@ int tpm_attest_quote(uint32_t pcr_index, const uint8_t *nonce,
 
     uint8_t cmd[256];
     uint32_t cmd_pos = 0;
+    uint16_t tmp16;
+    uint32_t tmp32;
 
     /* Tag */
-    *(uint16_t *)(cmd + cmd_pos) = TPM2_ST_SESSIONS;
+    tmp16 = TPM2_ST_SESSIONS;
+    __builtin_memcpy(cmd + cmd_pos, &tmp16, 2);
     cmd_pos += 2;
 
     /* Total size placeholder (fill later) */
     uint32_t total_size_pos = cmd_pos;
-    *(uint32_t *)(cmd + cmd_pos) = 0;
+    tmp32 = 0;
+    __builtin_memcpy(cmd + cmd_pos, &tmp32, 4);
     cmd_pos += 4;
 
     /* Command code = TPM2_CC_QUOTE (0x00000158) */
-    *(uint32_t *)(cmd + cmd_pos) = TPM2_CC_QUOTE;
+    tmp32 = TPM2_CC_QUOTE;
+    __builtin_memcpy(cmd + cmd_pos, &tmp32, 4);
     cmd_pos += 4;
 
     /* Authorization handle: use TPM2_RS_PW (password session) */
-    *(uint32_t *)(cmd + cmd_pos) = TPM2_RS_PW;
+    tmp32 = TPM2_RS_PW;
+    __builtin_memcpy(cmd + cmd_pos, &tmp32, 4);
     cmd_pos += 4;
 
-    /* Authorization size: only handle area (no password auth for simplicity) */
-    /* But TPM2_ST_SESSIONS requires at least an auth handle + authSize = 0 */
-    /* For a true PW session we'd need: handle + authSize(2) + nonce(0) + hmode(1) + hmac(0) */
-    /* Simplify: use TPM2_ST_NO_SESSIONS and try the quote with TPM2_RH_NULL */
-    /* Actually let's rebuild with TPM2_ST_NO_SESSIONS if possible */
-    /* With TPM2_ST_NO_SESSIONS we can pass TPM2_RH_NULL as signHandle */
+    /* ... TPM2_ST_SESSIONS path abandoned, rebuild simpler below ... */
 
     /* Rebuild: use TPM2_ST_NO_SESSIONS for simplicity */
     cmd_pos = 0;
-    *(uint16_t *)(cmd + cmd_pos) = TPM2_ST_NO_SESSIONS;
+    tmp16 = TPM2_ST_NO_SESSIONS;
+    __builtin_memcpy(cmd + cmd_pos, &tmp16, 2);
     cmd_pos += 2;
 
     /* Total size placeholder */
     total_size_pos = cmd_pos;
-    *(uint32_t *)(cmd + cmd_pos) = 0;
+    tmp32 = 0;
+    __builtin_memcpy(cmd + cmd_pos, &tmp32, 4);
     cmd_pos += 4;
 
     /* Command code */
-    *(uint32_t *)(cmd + cmd_pos) = TPM2_CC_QUOTE;
+    tmp32 = TPM2_CC_QUOTE;
+    __builtin_memcpy(cmd + cmd_pos, &tmp32, 4);
     cmd_pos += 4;
 
     /* signHandle: use TPM2_RH_NULL (platform key) — in a real system
      * this would be the handle of the loaded AIK. */
-    *(uint32_t *)(cmd + cmd_pos) = TPM2_RH_NULL;
+    tmp32 = TPM2_RH_NULL;
+    __builtin_memcpy(cmd + cmd_pos, &tmp32, 4);
     cmd_pos += 4;
 
     /* qualifyingData (TPM2B_DATA) */
-    *(uint16_t *)(cmd + cmd_pos) = (uint16_t)nonce_len;
+    tmp16 = (uint16_t)nonce_len;
+    __builtin_memcpy(cmd + cmd_pos, &tmp16, 2);
     cmd_pos += 2;
     memcpy(cmd + cmd_pos, nonce, nonce_len);
     cmd_pos += nonce_len;
 
     /* inScheme (TPMS_SCHEME) = { scheme = TPM2_ALG_NULL, details = {} } */
-    *(uint16_t *)(cmd + cmd_pos) = TPM2_ALG_NULL;  /* scheme */
+    tmp16 = TPM2_ALG_NULL;  /* scheme */
+    __builtin_memcpy(cmd + cmd_pos, &tmp16, 2);
     cmd_pos += 2;
     /* For TPM2_ALG_NULL, no details follow (0 bytes) */
 
     /* PCRselect (TPML_PCR_SELECTION) */
     /* count = 1 selection */
-    *(uint32_t *)(cmd + cmd_pos) = 1;  /* count */
+    tmp32 = 1;  /* count */
+    __builtin_memcpy(cmd + cmd_pos, &tmp32, 4);
     cmd_pos += 4;
 
     /* TPMS_PCR_SELECTION:
@@ -210,7 +218,8 @@ int tpm_attest_quote(uint32_t pcr_index, const uint8_t *nonce,
      *   sizeOfSelect (1 byte) = 3
      *   pcrSelect (3 bytes)
      */
-    *(uint16_t *)(cmd + cmd_pos) = TPM2_ALG_SHA256;
+    tmp16 = TPM2_ALG_SHA256;
+    __builtin_memcpy(cmd + cmd_pos, &tmp16, 2);
     cmd_pos += 2;
 
     cmd[cmd_pos++] = 3;  /* sizeOfSelect = 3 bytes */
@@ -224,7 +233,8 @@ int tpm_attest_quote(uint32_t pcr_index, const uint8_t *nonce,
     cmd_pos += 3;
 
     /* Fill in total size */
-    *(uint32_t *)(cmd + total_size_pos) = cmd_pos;
+    tmp32 = cmd_pos;
+    __builtin_memcpy(cmd + total_size_pos, &tmp32, 4);
 
     /* ── Transmit and receive ────────────────────────────────────── */
     uint8_t *rsp = kmalloc(1024);

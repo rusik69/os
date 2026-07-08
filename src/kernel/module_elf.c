@@ -79,10 +79,12 @@ int module_elf_validate(struct module_elf_context *ctx,
     memcpy(&ctx->hdr, data, sizeof(ctx->hdr));
 
     /* Check magic */
-    if (*(const uint32_t *)ctx->hdr.e_ident != ELF_MAGIC) {
+    unsigned int elf_magic;
+    __builtin_memcpy(&elf_magic, ctx->hdr.e_ident, sizeof(elf_magic));
+    if (elf_magic != ELF_MAGIC) {
         snprintf(ctx->error_msg, sizeof(ctx->error_msg),
                  "module_elf: bad ELF magic 0x%08x",
-                 *(const uint32_t *)ctx->hdr.e_ident);
+                 elf_magic);
         return -1;
     }
 
