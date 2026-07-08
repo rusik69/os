@@ -286,7 +286,7 @@ void signal_check(void) {
             case SIGQUIT:
             case SIGABRT:
                 do_coredump(p, sig);
-                /* fall through */
+                __attribute__((fallthrough));
             case SIGKILL:
             case SIGTERM:
             case SIGPIPE:
