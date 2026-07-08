@@ -179,7 +179,7 @@ static void platform_profile_parse_supported(void)
     }
 }
 
-void acpi_platform_profile_init(void)
+static void acpi_platform_profile_init(void)
 {
     if (g_initialized) {
         kprintf("[platform_profile] Already initialized\n");
@@ -211,7 +211,7 @@ void acpi_platform_profile_init(void)
 module_init(acpi_platform_profile_init);
 
 /* ── Stub: acpi_platform_profile_get ─────────────────────────────── */
-int acpi_platform_profile_get(void *dev, int *profile)
+static int acpi_platform_profile_get(void *dev, int *profile)
 {
     (void)dev;
     (void)profile;
@@ -219,7 +219,7 @@ int acpi_platform_profile_get(void *dev, int *profile)
     return 0;
 }
 /* ── Stub: acpi_platform_profile_set ─────────────────────────────── */
-int acpi_platform_profile_set(void *dev, int profile)
+static int acpi_platform_profile_set(void *dev, int profile)
 {
     (void)dev;
     (void)profile;

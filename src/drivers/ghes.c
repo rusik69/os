@@ -396,7 +396,7 @@ EXPORT_SYMBOL(ghes_source_status);
 module_init(ghes_init);
 
 /* ── Stub: ghes_estatus_read ─────────────────────────────── */
-int ghes_estatus_read(void *estatus)
+static int ghes_estatus_read(void *estatus)
 {
     (void)estatus;
     kprintf("[GHES] ghes_estatus_read: not yet implemented\n");

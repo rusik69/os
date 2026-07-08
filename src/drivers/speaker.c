@@ -464,7 +464,7 @@ EXPORT_SYMBOL(speaker_set_mixer);
 #endif /* !MODULE */
 
 /* ── Turn speaker on (use last set frequency) ──────── */
-int speaker_on(void)
+static int speaker_on(void)
 {
     uint8_t tmp = inb(SPEAKER_PORT);
     outb(SPEAKER_PORT, tmp | 0x03);
@@ -472,7 +472,7 @@ int speaker_on(void)
 }
 
 /* ── Set speaker frequency via PIT channel 2 ───────── */
-int speaker_set_freq(int freq)
+static int speaker_set_freq(int freq)
 {
     if (freq <= 0) {
         speaker_off();

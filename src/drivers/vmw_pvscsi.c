@@ -117,7 +117,7 @@ static int pvscsi_setup_rings(void)
 
 /* ── Init ──────────────────────────────────────────────────────── */
 
-void vmw_pvscsi_init(void)
+static void vmw_pvscsi_init(void)
 {
     struct pci_device dev;
 
@@ -155,7 +155,7 @@ MODULE_VERSION("1.0");
 #endif
 
 /* ── Stub: vmw_pvscsi_queue_cmd ─────────────────────────────── */
-int vmw_pvscsi_queue_cmd(void *dev, void *cmd)
+static int vmw_pvscsi_queue_cmd(void *dev, void *cmd)
 {
     (void)dev;
     (void)cmd;
@@ -163,7 +163,7 @@ int vmw_pvscsi_queue_cmd(void *dev, void *cmd)
     return 0;
 }
 /* ── Stub: vmw_pvscsi_complete_cmd ─────────────────────────────── */
-int vmw_pvscsi_complete_cmd(void *dev)
+static int vmw_pvscsi_complete_cmd(void *dev)
 {
     (void)dev;
     kprintf("[vmw] vmw_pvscsi_complete_cmd: not yet implemented\n");

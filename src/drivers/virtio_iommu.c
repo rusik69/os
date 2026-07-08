@@ -183,7 +183,7 @@ int virtio_iommu_detach(uint32_t domain_id, uint32_t endpoint)
 
 /* Translate an IOVA to a physical address using the IOMMU mapping table.
  * Returns the physical address, or ~0ULL if no mapping found (identity). */
-uint64_t virtio_iommu_translate(uint64_t iova, uint32_t domain)
+static uint64_t virtio_iommu_translate(uint64_t iova, uint32_t domain)
 {
     /* Search mappings for this domain */
     for (int i = 0; i < virtio_iommu_num_mappings; i++) {
@@ -282,25 +282,25 @@ int virtio_iommu_init(void)
 module_init(virtio_iommu_init);
 
 /* ── Stub: virtio_iommu_probe ─────────────────────────────── */
-int virtio_iommu_probe(__maybe_unused void *dev)
+static int virtio_iommu_probe(__maybe_unused void *dev)
 {
     kprintf("[VIRTIO_IOMMU] virtio_iommu_probe: not yet implemented\n");
     return 0;
 }
 /* ── Stub: virtio_iommu_remove ─────────────────────────────── */
-int virtio_iommu_remove(__maybe_unused void *dev)
+static int virtio_iommu_remove(__maybe_unused void *dev)
 {
     kprintf("[VIRTIO_IOMMU] virtio_iommu_remove: not yet implemented\n");
     return 0;
 }
 /* ── Stub: virtio_iommu_iova_alloc ─────────────────────────────── */
-int virtio_iommu_iova_alloc(__maybe_unused void *domain, __maybe_unused size_t size, __maybe_unused void *iova)
+static int virtio_iommu_iova_alloc(__maybe_unused void *domain, __maybe_unused size_t size, __maybe_unused void *iova)
 {
     kprintf("[VIRTIO_IOMMU] virtio_iommu_iova_alloc: not yet implemented\n");
     return 0;
 }
 /* ── Stub: virtio_iommu_iova_free ─────────────────────────────── */
-int virtio_iommu_iova_free(__maybe_unused void *domain, __maybe_unused void *iova, __maybe_unused size_t size)
+static int virtio_iommu_iova_free(__maybe_unused void *domain, __maybe_unused void *iova, __maybe_unused size_t size)
 {
     kprintf("[VIRTIO_IOMMU] virtio_iommu_iova_free: not yet implemented\n");
     return 0;

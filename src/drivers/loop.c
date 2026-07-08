@@ -217,6 +217,6 @@ int loop_get_backing(int loop_dev_id, int *out_backing_dev_id,
 module_init(loop_init);
 
 /* stub: loop back-end ops placeholder */
-int loop_ops_stub(void) { return 0; }
+static int loop_ops_stub(void) { return 0; }
 
 

@@ -83,7 +83,7 @@ static int usb_wifi_count = 0;
  *
  * Returns 0 on success, negative on error.
  */
-int usb_wifi_probe(void)
+static int usb_wifi_probe(void)
 {
     /* Scan USB devices for Realtek Wi-Fi chipsets */
     int found = 0;
@@ -166,7 +166,7 @@ int usb_wifi_probe(void)
 }
 
 /* Register a USB Wi-Fi device (legacy API) */
-int usb_wifi_register(int dev_num, const uint8_t *mac)
+static int usb_wifi_register(int dev_num, const uint8_t *mac)
 {
     if (usb_wifi_count >= USB_WIFI_MAX_DEVS)
         return -ENOMEM;
@@ -192,7 +192,7 @@ int usb_wifi_register(int dev_num, const uint8_t *mac)
 }
 
 /* Connect to a Wi-Fi network */
-int usb_wifi_connect(int dev_id, const char *ssid, const char *password)
+static int usb_wifi_connect(int dev_id, const char *ssid, const char *password)
 {
     if (dev_id < 0 || dev_id >= usb_wifi_count || !usb_wifi_devs[dev_id].active)
         return -ENODEV;
@@ -208,7 +208,7 @@ int usb_wifi_connect(int dev_id, const char *ssid, const char *password)
 }
 
 /* Disconnect */
-int usb_wifi_disconnect(int dev_id)
+static int usb_wifi_disconnect(int dev_id)
 {
     if (dev_id < 0 || dev_id >= usb_wifi_count || !usb_wifi_devs[dev_id].active)
         return -ENODEV;
@@ -219,7 +219,7 @@ int usb_wifi_disconnect(int dev_id)
 }
 
 /* Send data frame */
-int usb_wifi_send(int dev_id, const uint8_t *data, int len)
+static int usb_wifi_send(int dev_id, const uint8_t *data, int len)
 {
     if (dev_id < 0 || dev_id >= usb_wifi_count || !usb_wifi_devs[dev_id].active)
         return -ENODEV;
@@ -235,7 +235,7 @@ int usb_wifi_send(int dev_id, const uint8_t *data, int len)
 }
 
 /* Receive data frame */
-int usb_wifi_recv(int dev_id, uint8_t *buf, int max)
+static int usb_wifi_recv(int dev_id, uint8_t *buf, int max)
 {
     if (dev_id < 0 || dev_id >= usb_wifi_count || !usb_wifi_devs[dev_id].active)
         return -ENODEV;
@@ -250,7 +250,7 @@ int usb_wifi_recv(int dev_id, uint8_t *buf, int max)
     return copy_len;
 }
 
-void __init usb_wifi_init(void)
+static void __init usb_wifi_init(void)
 {
     memset(usb_wifi_devs, 0, sizeof(usb_wifi_devs));
     usb_wifi_count = 0;
@@ -267,21 +267,21 @@ void __init usb_wifi_init(void)
 module_init(usb_wifi_init);
 
 /* ── Stub: usb_wifi_open ─────────────────────────────── */
-int usb_wifi_open(void *dev)
+static int usb_wifi_open(void *dev)
 {
     (void)dev;
     kprintf("[USB] usb_wifi_open: not yet implemented\n");
     return 0;
 }
 /* ── Stub: usb_wifi_stop ─────────────────────────────── */
-int usb_wifi_stop(void *dev)
+static int usb_wifi_stop(void *dev)
 {
     (void)dev;
     kprintf("[USB] usb_wifi_stop: not yet implemented\n");
     return 0;
 }
 /* ── Stub: usb_wifi_xmit ─────────────────────────────── */
-int usb_wifi_xmit(void *skb, void *dev)
+static int usb_wifi_xmit(void *skb, void *dev)
 {
     (void)skb;
     (void)dev;

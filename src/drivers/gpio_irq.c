@@ -36,7 +36,7 @@ static int g_gpio_irq_initialized = 0;
 /*
  * gpio_irq_init — initialize GPIO interrupt subsystem
  */
-int gpio_irq_init(void)
+static int gpio_irq_init(void)
 {
     if (g_gpio_irq_initialized) return 0;
 
@@ -60,7 +60,7 @@ int gpio_irq_init(void)
  *
  * Returns IRQ number that can be used with the GPIO IRQ subsystem, or <0 on error.
  */
-int gpio_irq_alloc(unsigned int gpio_pin)
+static int gpio_irq_alloc(unsigned int gpio_pin)
 {
     if (!g_gpio_irq_initialized) return -EAGAIN;
 
@@ -93,7 +93,7 @@ int gpio_irq_alloc(unsigned int gpio_pin)
  * @gpio_pin: GPIO pin number
  * @mode: 1=rising edge, 2=falling edge, 3=both edges, 4=low level, 5=high level
  */
-int gpio_irq_set_mode(unsigned int gpio_pin, int mode)
+static int gpio_irq_set_mode(unsigned int gpio_pin, int mode)
 {
     if (!g_gpio_irq_initialized) return -EAGAIN;
     if (mode < 1 || mode > 5) return -EINVAL;
@@ -117,7 +117,7 @@ int gpio_irq_set_mode(unsigned int gpio_pin, int mode)
  * Called by the GPIO chip's ISR when a GPIO pin triggers an interrupt.
  * Dispatches to the registered handler.
  */
-void gpio_irq_dispatch(int pin)
+static void gpio_irq_dispatch(int pin)
 {
     for (int i = 0; i < MAX_GPIO_IRQ_PINS; i++) {
         if (g_gpio_irqs[i].in_use && g_gpio_irqs[i].pin == pin) {
@@ -132,7 +132,7 @@ void gpio_irq_dispatch(int pin)
 /*
  * GPIO IRQ handler registration — called from request_irq path
  */
-int gpio_irq_register(int irq_num, void (*handler)(void *), void *arg)
+static int gpio_irq_register(int irq_num, void (*handler)(void *), void *arg)
 {
     for (int i = 0; i < MAX_GPIO_IRQ_PINS; i++) {
         if (g_gpio_irqs[i].in_use && g_gpio_irqs[i].irq_num == irq_num) {
@@ -147,7 +147,7 @@ int gpio_irq_register(int irq_num, void (*handler)(void *), void *arg)
 /*
  * gpio_irq_unregister — unregister GPIO IRQ handler
  */
-int gpio_irq_unregister(int irq_num)
+static int gpio_irq_unregister(int irq_num)
 {
     for (int i = 0; i < MAX_GPIO_IRQ_PINS; i++) {
         if (g_gpio_irqs[i].in_use && g_gpio_irqs[i].irq_num == irq_num) {
@@ -163,7 +163,7 @@ int gpio_irq_unregister(int irq_num)
 module_init(gpio_irq_init);
 
 /* ── gpio_irq_enable: Enable GPIO interrupt for a pin ──────── */
-int gpio_irq_enable(int gpio)
+static int gpio_irq_enable(int gpio)
 {
     if (gpio < 0 || gpio >= GPIO_MAX_PINS) return -EINVAL;
 
@@ -175,7 +175,7 @@ int gpio_irq_enable(int gpio)
 }
 
 /* ── gpio_irq_disable: Disable GPIO interrupt for a pin ──────── */
-int gpio_irq_disable(int gpio)
+static int gpio_irq_disable(int gpio)
 {
     if (gpio < 0 || gpio >= GPIO_MAX_PINS) return -EINVAL;
 

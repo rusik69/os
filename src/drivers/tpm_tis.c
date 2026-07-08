@@ -296,7 +296,7 @@ out:
  * into operational mode.  TPM2_SU_CLEAR starts the TPM with a clean
  * state (all PCRs reset).
  */
-int tpm2_startup(uint16_t startup_type) {
+static int tpm2_startup(uint16_t startup_type) {
     uint8_t cmd[12];  /* header + 2 bytes startup type */
     struct tpm_cmd_hdr *hdr = (struct tpm_cmd_hdr *)cmd;
 
@@ -318,7 +318,7 @@ int tpm2_startup(uint16_t startup_type) {
  * Requests the TPM to perform a self-test.  full_test=1 runs all tests;
  * full_test=0 runs only untested algorithms.
  */
-int tpm2_selftest(int full_test) {
+static int tpm2_selftest(int full_test) {
     uint8_t cmd[11];  /* header + 1 byte fullTest */
     struct tpm_cmd_hdr *hdr = (struct tpm_cmd_hdr *)cmd;
 
@@ -1696,14 +1696,14 @@ EXPORT_SYMBOL(tpm_nv_store_key);
 EXPORT_SYMBOL(tpm_nv_load_key);
 
 /* ── TIS init wrapper ────────────────────────────────── */
-int tpm_tis_init(void *dev)
+static int tpm_tis_init(void *dev)
 {
     (void)dev;
     return tpm_init();
 }
 
 /* ── TIS send wrapper ────────────────────────────────── */
-int tpm_tis_send(const void *cmd, size_t len)
+static int tpm_tis_send(const void *cmd, size_t len)
 {
     uint8_t rsp[128];
     uint32_t rsp_len = sizeof(rsp);
@@ -1711,7 +1711,7 @@ int tpm_tis_send(const void *cmd, size_t len)
 }
 
 /* ── TIS recv wrapper ────────────────────────────────── */
-int tpm_tis_recv(void *resp, size_t *len)
+static int tpm_tis_recv(void *resp, size_t *len)
 {
     /* For a real recv, we'd need a stored response buffer.
      * Since tpm_transmit is synchronous, this is a no-op. */
@@ -1721,7 +1721,7 @@ int tpm_tis_recv(void *resp, size_t *len)
 }
 
 /* ── TIS get_random wrapper ──────────────────────────── */
-int tpm_tis_get_random(void *buf, size_t count)
+static int tpm_tis_get_random(void *buf, size_t count)
 {
     return tpm2_get_random((uint8_t *)buf, (uint32_t)count);
 }

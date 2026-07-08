@@ -539,7 +539,7 @@ static struct usb_driver g_usb_printer_driver = {
 
 /* ── Public API for USB subsystem ────────────────────────────────── */
 
-int usb_printer_register(uint8_t dev_addr, uint16_t vid, uint16_t pid,
+static int usb_printer_register(uint8_t dev_addr, uint16_t vid, uint16_t pid,
 			  uint8_t bulk_out, uint8_t bulk_in, uint8_t protocol)
 {
 	if (g_printer_count >= MAX_PRINTERS)
@@ -575,7 +575,7 @@ int usb_printer_register(uint8_t dev_addr, uint16_t vid, uint16_t pid,
 	return idx;
 }
 
-void usb_printer_unregister(int idx)
+static void usb_printer_unregister(int idx)
 {
 	if (idx < 0 || idx >= g_printer_count)
 		return;
@@ -594,7 +594,7 @@ void usb_printer_unregister(int idx)
 
 /* ── Data transfer ───────────────────────────────────────────────── */
 
-int usb_printer_write(int idx, const uint8_t *data, uint32_t len)
+static int usb_printer_write(int idx, const uint8_t *data, uint32_t len)
 {
 	if (idx < 0 || idx >= g_printer_count)
 		return -ENODEV;
@@ -642,7 +642,7 @@ int usb_printer_write(int idx, const uint8_t *data, uint32_t len)
 	return (int)len;
 }
 
-int usb_printer_read_status(int idx)
+static int usb_printer_read_status(int idx)
 {
 	if (idx < 0 || idx >= g_printer_count)
 		return -ENODEV;
@@ -665,7 +665,7 @@ int usb_printer_read_status(int idx)
 	return (int)p->status;
 }
 
-int usb_printer_get_device_id(int idx, char *buf, int buf_size)
+static int usb_printer_get_device_id(int idx, char *buf, int buf_size)
 {
 	if (idx < 0 || idx >= g_printer_count)
 		return -ENODEV;
@@ -696,7 +696,7 @@ int usb_printer_get_device_id(int idx, char *buf, int buf_size)
 	return 0;
 }
 
-int usb_printer_soft_reset(int idx)
+static int usb_printer_soft_reset(int idx)
 {
 	if (idx < 0 || idx >= g_printer_count)
 		return -ENODEV;
@@ -721,7 +721,7 @@ int usb_printer_soft_reset(int idx)
 
 /* ── Utility ─────────────────────────────────────────────────────── */
 
-int usb_printer_get_count(void)
+static int usb_printer_get_count(void)
 {
 	return g_printer_count;
 }
@@ -736,7 +736,7 @@ int usb_printer_get_count(void)
  * Returns the number of bytes read on success,
  * 0 if no data available, negative errno on failure.
  */
-int usb_printer_read(void *dev, void *buf, size_t count)
+static int usb_printer_read(void *dev, void *buf, size_t count)
 {
 	if (!dev || !buf || count == 0)
 		return -EINVAL;
@@ -774,7 +774,7 @@ int usb_printer_read(void *dev, void *buf, size_t count)
  * Queries the printer via GET_STATUS class-specific request.
  * Returns the status byte on success, negative errno on failure.
  */
-int usb_printer_get_status(void *dev)
+static int usb_printer_get_status(void *dev)
 {
 	if (!dev)
 		return -EINVAL;
@@ -792,7 +792,7 @@ int usb_printer_get_status(void *dev)
 
 /* ── Init / Exit ─────────────────────────────────────────────────── */
 
-void __init usb_printer_init(void)
+static void __init usb_printer_init(void)
 {
 	if (g_initialized)
 		return;
@@ -806,7 +806,7 @@ void __init usb_printer_init(void)
 	kprintf("[printer] USB Printer Class driver registered\n");
 }
 
-void usb_printer_exit(void)
+static void usb_printer_exit(void)
 {
 	usb_deregister_driver(&g_usb_printer_driver);
 

@@ -209,7 +209,7 @@ static int nvme_pmr_find_bar(void) {
 
 /* ── Public API ──────────────────────────────────────────────────── */
 
-int nvme_pmr_enable(void)
+static int nvme_pmr_enable(void)
 {
     if (!g_pmr.present)
         return -EOPNOTSUPP;
@@ -245,7 +245,7 @@ int nvme_pmr_enable(void)
     return 0;
 }
 
-int nvme_pmr_disable(void)
+static int nvme_pmr_disable(void)
 {
     if (!g_pmr.enabled)
         return 0;
@@ -492,7 +492,7 @@ static int nvme_pmr_register_bdev(void)
 }
 
 /* ── nvme_pmr_flush: flush PMR data to persistence ── */
-int nvme_pmr_flush(void *dev)
+static int nvme_pmr_flush(void *dev)
 {
     (void)dev;
     if (!g_pmr.enabled || !g_pmr.pmr_virt)
@@ -514,7 +514,7 @@ int nvme_pmr_flush(void *dev)
 }
 
 /* ── nvme_pmr_secure_erase: securely erase a PMR range ── */
-int nvme_pmr_secure_erase(void *dev, uint64_t offset, size_t count)
+static int nvme_pmr_secure_erase(void *dev, uint64_t offset, size_t count)
 {
     (void)dev;
     if (!g_pmr.enabled || !g_pmr.pmr_virt)

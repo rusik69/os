@@ -31,7 +31,7 @@ MODULE_AUTHOR("OS Kernel Team");
  * Validate that a socket fd is an AF_NETLINK socket.
  * Returns the socket pointer on success, NULL on error (sets errno).
  */
-struct socket *sys_nl_get_sock(int sockfd)
+static struct socket *sys_nl_get_sock(int sockfd)
 {
 	struct socket *s = sock_get(sockfd);
 	if (!s) {
@@ -47,7 +47,7 @@ struct socket *sys_nl_get_sock(int sockfd)
  * Get the netlink protocol family for a socket fd.
  * Returns the NETLINK_* protocol number, or -EINVAL if not a netlink socket.
  */
-int sys_nl_get_protocol(int sockfd)
+static int sys_nl_get_protocol(int sockfd)
 {
 	struct socket *s = sys_nl_get_sock(sockfd);
 	if (!s)
@@ -62,7 +62,7 @@ int sys_nl_get_protocol(int sockfd)
  * Called once during kernel init.  Ensures the AF_NETLINK subsystem
  * is ready before any userspace process can create netlink sockets.
  */
-void __init sys_nl_init(void)
+static void __init sys_nl_init(void)
 {
 	af_netlink_init();
 	kprintf("[OK] sys_nl: netlink syscall layer initialized\n");

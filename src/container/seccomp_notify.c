@@ -204,7 +204,7 @@ static void notify_clear_response(uint64_t id)
  *
  * Returns 0 on success, negative errno on failure.
  */
-int seccomp_notify_init(void)
+static int seccomp_notify_init(void)
 {
     kprintf("[SeccompNotify] Initialising notification subsystem...\n");
 
@@ -251,7 +251,7 @@ int seccomp_notify_init(void)
  *
  * Returns 0 on success, -ENOSPC if the rule table is full.
  */
-int seccomp_notify_add_rule(int syscall_nr, int action, const char *name)
+static int seccomp_notify_add_rule(int syscall_nr, int action, const char *name)
 {
     if (syscall_nr < 0)
         return -EINVAL;
@@ -318,7 +318,7 @@ int seccomp_notify_add_rule(int syscall_nr, int action, const char *name)
  * Returns 0 on success with a valid request in @req, -EAGAIN if
  * the timeout expired with no request, -EINTR if interrupted.
  */
-int seccomp_notify_recv(struct seccomp_notify_request *req,
+static int seccomp_notify_recv(struct seccomp_notify_request *req,
                          int timeout_ms)
 {
     if (!req)
@@ -411,7 +411,7 @@ int seccomp_notify_recv(struct seccomp_notify_request *req,
  * Returns 0 on success, -ENOENT if no matching pending request was
  * found (possible if the process was killed while we were evaluating).
  */
-int seccomp_notify_respond(const struct seccomp_notify_response *resp)
+static int seccomp_notify_respond(const struct seccomp_notify_response *resp)
 {
     if (!resp)
         return -EINVAL;
@@ -457,7 +457,7 @@ int seccomp_notify_respond(const struct seccomp_notify_response *resp)
  *   SECCOMP_RET_KILL   — kill the process.
  *   Negative errno     — deny with the given errno.
  */
-int seccomp_notify_check_syscall(int syscall_nr, uint64_t *args,
+static int seccomp_notify_check_syscall(int syscall_nr, uint64_t *args,
                                   uint32_t pid)
 {
     int action;
@@ -582,7 +582,7 @@ int seccomp_notify_check_syscall(int syscall_nr, uint64_t *args,
  *
  * Returns 0 on success, -ENOENT if no matching rule was found.
  */
-int seccomp_notify_remove_rule(int syscall_nr)
+static int seccomp_notify_remove_rule(int syscall_nr)
 {
     spinlock_acquire(&seccomp_notify_lock);
 
@@ -619,7 +619,7 @@ int seccomp_notify_remove_rule(int syscall_nr)
  *
  * Returns the number of requests flushed.
  */
-int seccomp_notify_flush(uint32_t pid)
+static int seccomp_notify_flush(uint32_t pid)
 {
     int flushed = 0;
 
@@ -648,7 +648,7 @@ int seccomp_notify_flush(uint32_t pid)
  * Reports the number of active rules, pending requests, and the
  * next request ID.
  */
-void seccomp_notify_status(void)
+static void seccomp_notify_status(void)
 {
     spinlock_acquire(&seccomp_notify_lock);
 
@@ -679,14 +679,14 @@ void seccomp_notify_status(void)
 }
 
 /* ── Stub: seccomp_notify_register ─────────────────────────────── */
-int seccomp_notify_register(void *listener)
+static int seccomp_notify_register(void *listener)
 {
     (void)listener;
     kprintf("[container] seccomp_notify_register: not yet implemented\n");
     return 0;
 }
 /* ── Stub: seccomp_notify_unregister ─────────────────────────────── */
-int seccomp_notify_unregister(void *listener)
+static int seccomp_notify_unregister(void *listener)
 {
     (void)listener;
     kprintf("[container] seccomp_notify_unregister: not yet implemented\n");

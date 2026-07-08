@@ -1365,7 +1365,7 @@ void nvme_print_info(void) {
  * Disables the controller, frees all allocated DMA buffers (admin and I/O
  * queues), and resets driver state so the module can be safely unloaded.
  */
-void nvme_exit(void)
+static void nvme_exit(void)
 {
     if (!g_nvme_ctrl.present || !g_nvme_init_done)
         return;
@@ -2000,7 +2000,7 @@ void nvme_aer_exit(void)
  * ═══════════════════════════════════════════════════════════════════════ */
 
 /* ── Submit command to a queue ──────────────────────────── */
-int nvme_submit_cmd(void *q, struct nvme_sq_entry *cmd)
+static int nvme_submit_cmd(void *q, struct nvme_sq_entry *cmd)
 {
     if (!q || !cmd)
         return -EINVAL;
@@ -2024,7 +2024,7 @@ int nvme_submit_cmd(void *q, struct nvme_sq_entry *cmd)
 }
 
 /* ── Poll for command completion ───────────────────────── */
-int nvme_complete_cmd(void *q, struct nvme_cq_entry *cqe)
+static int nvme_complete_cmd(void *q, struct nvme_cq_entry *cqe)
 {
     if (!q || !cqe)
         return -EINVAL;
@@ -2063,7 +2063,7 @@ int nvme_complete_cmd(void *q, struct nvme_cq_entry *cqe)
 }
 
 /* ── Create completion queue (admin command) ──────────── */
-int nvme_create_cq(uint16_t cqid, uint64_t addr, uint16_t size, uint16_t iv)
+static int nvme_create_cq(uint16_t cqid, uint64_t addr, uint16_t size, uint16_t iv)
 {
     struct nvme_sq_entry cmd;
     struct nvme_cq_entry cqe;
@@ -2081,7 +2081,7 @@ int nvme_create_cq(uint16_t cqid, uint64_t addr, uint16_t size, uint16_t iv)
 }
 
 /* ── Create submission queue (admin command) ──────────── */
-int nvme_create_sq(uint16_t sqid, uint64_t addr, uint16_t size, uint16_t cqid)
+static int nvme_create_sq(uint16_t sqid, uint64_t addr, uint16_t size, uint16_t cqid)
 {
     struct nvme_sq_entry cmd;
     struct nvme_cq_entry cqe;
@@ -2103,7 +2103,7 @@ int nvme_create_sq(uint16_t sqid, uint64_t addr, uint16_t size, uint16_t cqid)
 int nvme_delete_cq(uint16_t cqid);
 int nvme_delete_sq(uint16_t sqid);
 
-int nvme_create_io_queue_pair(uint16_t qid, uint64_t cq_addr, uint64_t sq_addr,
+static int nvme_create_io_queue_pair(uint16_t qid, uint64_t cq_addr, uint64_t sq_addr,
                                uint16_t cq_size, uint16_t sq_size,
                                uint16_t irq_vector)
 {

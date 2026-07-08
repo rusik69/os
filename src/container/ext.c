@@ -382,7 +382,7 @@ int container_inspect(struct container *c, char *buf, int buf_size)
 }
 
 /* ── ext_mount ─────────────────────────────── */
-int ext_mount(const char *source, const char *target)
+static int ext_mount(const char *source, const char *target)
 {
     (void)source;
     (void)target;
@@ -391,7 +391,7 @@ int ext_mount(const char *source, const char *target)
     return 0;
 }
 /* ── ext_umount ─────────────────────────────── */
-int ext_umount(const char *target)
+static int ext_umount(const char *target)
 {
     (void)target;
     kprintf("[container] Unmount %s\n", target ? target : "?");

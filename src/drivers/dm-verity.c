@@ -436,7 +436,7 @@ void dm_verity_init(void)
 module_init(dm_verity_init);
 
 /* ── Stub: dm_verity_ctr ─────────────────────────────── */
-int dm_verity_ctr(void *ti, unsigned int argc, char **argv)
+static int dm_verity_ctr(void *ti, unsigned int argc, char **argv)
 {
     (void)ti;
     (void)argc;
@@ -445,7 +445,7 @@ int dm_verity_ctr(void *ti, unsigned int argc, char **argv)
     return 0;
 }
 /* ── Stub: dm_verity_map ─────────────────────────────── */
-int dm_verity_map(void *ti, void *bio)
+static int dm_verity_map(void *ti, void *bio)
 {
     (void)ti;
     (void)bio;

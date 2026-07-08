@@ -484,7 +484,7 @@ static int vmxnet3_netdev_receive(struct net_device *dev,
 
 /* ── PCI probe ───────────────────────────────────────────────────── */
 
-int vmxnet3_find_device(struct pci_device *pci_dev)
+static int vmxnet3_find_device(struct pci_device *pci_dev)
 {
     int ret;
 
@@ -495,7 +495,7 @@ int vmxnet3_find_device(struct pci_device *pci_dev)
     return 0;
 }
 
-int vmxnet3_probe(struct vmxnet3_priv *priv)
+static int vmxnet3_probe(struct vmxnet3_priv *priv)
 {
     struct pci_device pci_dev;
     uint64_t mmio_phys;

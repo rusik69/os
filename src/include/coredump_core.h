@@ -3,6 +3,9 @@
 
 #include "types.h"
 
+/* Forward declaration */
+struct process;
+
 /*
  * coredump_core.h — Core dump hook indirection for loadable modules.
  *
@@ -44,5 +47,14 @@ int coredump_register_handler(coredump_handler_fn handler);
  * Safe to call even if no handler is registered.
  */
 void coredump_unregister_handler(void);
+
+/*
+ * do_coredump — Initiate a core dump for a process that received a fatal signal.
+ * @proc: the process to dump.
+ * @signo: the signal that triggered the dump.
+ *
+ * Checked RLIMIT_CORE and dispatches to coredump_trigger().
+ */
+void do_coredump(struct process *proc, int signo);
 
 #endif /* COREDUMP_CORE_H */

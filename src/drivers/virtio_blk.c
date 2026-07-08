@@ -669,14 +669,14 @@ MODULE_ALIAS("pci:v00001AF4d00001001sv*sd*bc*sc*i*");
 struct block_device;
 
 /* ── Block-device layer read (delegates to sector API) ── */
-int virtio_blk_read(struct block_device *dev, uint64_t sector, void *buf, int count)
+static int virtio_blk_read(struct block_device *dev, uint64_t sector, void *buf, int count)
 {
     (void)dev;
     return virtio_blk_read_sectors(sector, (uint32_t)count, buf);
 }
 
 /* ── Block-device layer write (delegates to sector API) ─ */
-int virtio_blk_write(struct block_device *dev, uint64_t sector, const void *buf, int count)
+static int virtio_blk_write(struct block_device *dev, uint64_t sector, const void *buf, int count)
 {
     (void)dev;
     return virtio_blk_write_sectors(sector, (uint32_t)count, buf);

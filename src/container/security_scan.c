@@ -233,7 +233,7 @@ static int get_image_packages(const char *image_name, struct pkg_info *pkgs, int
 
 /* ── C192: Initialise vulnerability database ─────────────────────────── */
 
-int security_scan_init(void)
+static int security_scan_init(void)
 {
     memset(vuln_db, 0, sizeof(vuln_db));
     vuln_db_count = 0;
@@ -261,7 +261,7 @@ int security_scan_init(void)
 
 /* ── C192: Scan an image for vulnerabilities ─────────────────────────── */
 
-int security_scan_image(const char *image_name,
+static int security_scan_image(const char *image_name,
                         struct security_scan_result *result)
 {
     if (!image_name || !result || !scan_initialised)
@@ -327,7 +327,7 @@ int security_scan_image(const char *image_name,
 
 /* ── Add a CVE to the vulnerability database (runtime update) ────────── */
 
-int security_scan_add_cve(const char *cve_id, const char *severity,
+static int security_scan_add_cve(const char *cve_id, const char *severity,
                           const char *package, const char *fixed_version)
 {
     if (!cve_id || !severity || !package || !fixed_version || !scan_initialised)
@@ -360,14 +360,14 @@ int security_scan_add_cve(const char *cve_id, const char *severity,
 }
 
 /* ── Stub: security_scan_running ─────────────────────────────── */
-int security_scan_running(const char *cont)
+static int security_scan_running(const char *cont)
 {
     (void)cont;
     kprintf("[container] security_scan_running: not yet implemented\n");
     return 0;
 }
 /* ── Stub: security_scan_report ─────────────────────────────── */
-int security_scan_report(const char *cont, void *report)
+static int security_scan_report(const char *cont, void *report)
 {
     (void)cont;
     (void)report;

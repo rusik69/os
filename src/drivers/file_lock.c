@@ -306,7 +306,7 @@ int file_lock_check_mandatory(const char *path, int for_write)
 }
 
 /* ── Stub: file_lock_acquire ─────────────────────────────── */
-int file_lock_acquire(void *lock, int wait)
+static int file_lock_acquire(void *lock, int wait)
 {
     (void)lock;
     (void)wait;
@@ -314,7 +314,7 @@ int file_lock_acquire(void *lock, int wait)
     return 0;
 }
 /* ── Stub: file_lock_release ─────────────────────────────── */
-int file_lock_release(void *lock)
+static int file_lock_release(void *lock)
 {
     (void)lock;
     kprintf("[file_lock] file_lock_release: not yet implemented\n");

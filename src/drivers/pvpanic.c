@@ -67,7 +67,7 @@ static void pvpanic_detect_mmio(void)
 
 /* ── Public API: signal a panic event to the hypervisor ────────── */
 
-void pvpanic_send_event(uint8_t event)
+static void pvpanic_send_event(uint8_t event)
 {
     if (!pvpanic_detected) return;
 
@@ -88,7 +88,7 @@ void pvpanic_send_event(uint8_t event)
 
 /* ── Init ──────────────────────────────────────────────────────── */
 
-void pvpanic_init(void)
+static void pvpanic_init(void)
 {
     pvpanic_detect_isa();
     if (!pvpanic_detected)
@@ -110,7 +110,7 @@ MODULE_VERSION("1.0");
 #endif
 
 /* ── Stub: pvpanic_send ─────────────────────────────── */
-int pvpanic_send(uint8_t event)
+static int pvpanic_send(uint8_t event)
 {
     (void)event;
     kprintf("[PVPANIC] pvpanic_send: not yet implemented\n");

@@ -63,7 +63,7 @@ static inline void iv_outl(uint8_t off, uint32_t v) {
 
 /* ── Send doorbell to peer ─────────────────────────────────────── */
 
-void ivshmem_ring_doorbell(uint16_t peer, uint16_t vector)
+static void ivshmem_ring_doorbell(uint16_t peer, uint16_t vector)
 {
     if (!ivshmem_present) return;
     uint32_t bell = ((uint32_t)peer << 16) | vector;
@@ -72,7 +72,7 @@ void ivshmem_ring_doorbell(uint16_t peer, uint16_t vector)
 
 /* ── Probe ─────────────────────────────────────────────────────── */
 
-void ivshmem_init(void)
+static void ivshmem_init(void)
 {
     struct pci_device dev;
     if (pci_find_device(IVSHMEM_VENDOR, IVSHMEM_DEVICE, &dev) < 0)
@@ -115,7 +115,7 @@ MODULE_VERSION("1.0");
 #endif
 
 /* ── Stub: ivshmem_read ─────────────────────────────── */
-int ivshmem_read(void *dev, uint64_t offset, void *buf, size_t count)
+static int ivshmem_read(void *dev, uint64_t offset, void *buf, size_t count)
 {
     (void)dev;
     (void)offset;
@@ -125,7 +125,7 @@ int ivshmem_read(void *dev, uint64_t offset, void *buf, size_t count)
     return 0;
 }
 /* ── Stub: ivshmem_write ─────────────────────────────── */
-int ivshmem_write(void *dev, uint64_t offset, const void *buf, size_t count)
+static int ivshmem_write(void *dev, uint64_t offset, const void *buf, size_t count)
 {
     (void)dev;
     (void)offset;

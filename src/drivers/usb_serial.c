@@ -37,7 +37,7 @@ static struct usb_serial_device usb_ser_devs[USB_SERIAL_MAX_DEVS];
 static int usb_ser_count = 0;
 
 /* Register a USB serial device */
-int usb_serial_register(int chip_type, uint16_t vid, uint16_t pid)
+static int usb_serial_register(int chip_type, uint16_t vid, uint16_t pid)
 {
     if (usb_ser_count >= USB_SERIAL_MAX_DEVS)
         return -ENOMEM;
@@ -66,7 +66,7 @@ int usb_serial_register(int chip_type, uint16_t vid, uint16_t pid)
 }
 
 /* Set baud rate */
-int usb_serial_set_baud(int dev_id, uint32_t baud)
+static int usb_serial_set_baud(int dev_id, uint32_t baud)
 {
     if (dev_id < 0 || dev_id >= usb_ser_count || !usb_ser_devs[dev_id].active)
         return -ENODEV;
@@ -77,7 +77,7 @@ int usb_serial_set_baud(int dev_id, uint32_t baud)
 }
 
 /* Write data to USB serial */
-int usb_serial_write(int dev_id, const uint8_t *data, int len)
+static int usb_serial_write(int dev_id, const uint8_t *data, int len)
 {
     if (dev_id < 0 || dev_id >= usb_ser_count || !usb_ser_devs[dev_id].active)
         return -ENODEV;
@@ -91,7 +91,7 @@ int usb_serial_write(int dev_id, const uint8_t *data, int len)
 }
 
 /* Read data from USB serial */
-int usb_serial_read(int dev_id, uint8_t *buf, int max)
+static int usb_serial_read(int dev_id, uint8_t *buf, int max)
 {
     if (dev_id < 0 || dev_id >= usb_ser_count || !usb_ser_devs[dev_id].active)
         return -ENODEV;
@@ -103,7 +103,7 @@ int usb_serial_read(int dev_id, uint8_t *buf, int max)
     return copy_len;
 }
 
-void usb_serial_init(void)
+static void usb_serial_init(void)
 {
     memset(usb_ser_devs, 0, sizeof(usb_ser_devs));
     usb_ser_count = 0;
@@ -113,14 +113,14 @@ void usb_serial_init(void)
 module_init(usb_serial_init);
 
 /* ── Stub: usb_serial_open ─────────────────────────────── */
-int usb_serial_open(void *dev)
+static int usb_serial_open(void *dev)
 {
     (void)dev;
     kprintf("[USB] usb_serial_open: not yet implemented\n");
     return 0;
 }
 /* ── Stub: usb_serial_close ─────────────────────────────── */
-int usb_serial_close(void *dev)
+static int usb_serial_close(void *dev)
 {
     (void)dev;
     kprintf("[USB] usb_serial_close: not yet implemented\n");

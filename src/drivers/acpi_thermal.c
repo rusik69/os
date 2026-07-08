@@ -630,7 +630,7 @@ int acpi_thermal_get_passive_performance(int zone_idx)
 }
 
 /* ── Stub: acpi_thermal_set_policy ─────────────────────────────── */
-int acpi_thermal_set_policy(void *dev, int policy)
+static int acpi_thermal_set_policy(void *dev, int policy)
 {
     (void)dev;
     (void)policy;

@@ -488,14 +488,14 @@ void fbcon_dim_fb(int frac)
 }
 
 /* ── Exit fb console ────────────────────────────────── */
-int fbcon_exit(void)
+static int fbcon_exit(void)
 {
     kprintf("[FBCON] fbcon_exit called\n");
     return 0;
 }
 
 /* ── Set font (not yet implemented, uses default) ───── */
-int fbcon_set_font(const void *font, int w, int h)
+static int fbcon_set_font(const void *font, int w, int h)
 {
     (void)font;
     (void)w;
@@ -505,7 +505,7 @@ int fbcon_set_font(const void *font, int w, int h)
 }
 
 /* ── Toggle cursor visibility ───────────────────────── */
-int fbcon_cursor(int on)
+static int fbcon_cursor(int on)
 {
     (void)on;
     return 0;

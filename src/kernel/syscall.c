@@ -94,6 +94,7 @@
 #include "cpu_features.h" /* for MSR_FS_BASE / MSR_GS_BASE constants */
 #include "cpu.h"          /* for stac/clac (SMAP toggling) */
 #include "ioctl.h"        /* for sys_ioctl (extern from sys_ioctl.c) */
+#include "chroot.h"       /* for chroot_set */
 
 /* Module metadata */
 MODULE_LICENSE("GPL v2");
@@ -6464,9 +6465,6 @@ static uint64_t sys_pivot_root(uint64_t new_root_addr, uint64_t put_old_addr) {
 
 /* ── chroot (Item 117) ─────────────────────────────────────────── */
 
-/* Forward declaration — chroot_set() is implemented in chroot.c */
-extern int chroot_set(const char *path);
-
 static uint64_t sys_chroot(uint64_t path_addr) {
     char path[256];
 
@@ -6713,7 +6711,7 @@ static uint64_t sys_sched_getattr(uint64_t pid, uint64_t attr_addr, uint64_t siz
 
 #include "coredump_core.h"
 
-static void do_coredump(struct process *proc, int signo) {
+void do_coredump(struct process *proc, int signo) {
     if (!proc || !proc->coredump_enabled) return;
     if (!proc->is_user || !proc->pml4) return;
 

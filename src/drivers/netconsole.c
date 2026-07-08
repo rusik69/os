@@ -405,13 +405,13 @@ MODULE_DESCRIPTION("netconsole — kernel log over UDP (Item 391)");
 #endif /* MODULE */
 
 /* ── Stub: netconsole_send ─────────────────────────────── */
-int netconsole_send(__maybe_unused const void *data, __maybe_unused size_t len)
+static int netconsole_send(__maybe_unused const void *data, __maybe_unused size_t len)
 {
     kprintf("[NETCONSOLE] netconsole_send: not yet implemented\n");
     return 0;
 }
 /* ── Stub: netconsole_setup ─────────────────────────────── */
-int netconsole_setup(__maybe_unused const char *config)
+static int netconsole_setup(__maybe_unused const char *config)
 {
     kprintf("[NETCONSOLE] netconsole_setup: not yet implemented\n");
     return 0;

@@ -58,7 +58,7 @@ static int image_initialised = 0;
 
 /* ── Initialisation ─────────────────────────────────────────────────── */
 
-int image_init(void)
+static int image_init(void)
 {
     if (image_initialised) return 0;
 
@@ -83,7 +83,7 @@ int image_init(void)
 /* ── Constants ──────────────────────────────────────────────────────── */
 
 /* C31: Write OCI layout markers */
-int image_write_oci_layout(void)
+static int image_write_oci_layout(void)
 {
     char oci_layout[256];
     int ret;
@@ -107,7 +107,7 @@ int image_write_oci_layout(void)
 }
 
 /* C32: Parse OCI image manifest (JSON) */
-int image_parse_manifest(const char *json_data, char *config_digest,
+static int image_parse_manifest(const char *json_data, char *config_digest,
                           int config_digest_size,
                           char layer_digests[][64], int *num_layers)
 {
@@ -169,7 +169,7 @@ int image_parse_manifest(const char *json_data, char *config_digest,
 }
 
 /* C33: Parse image config for command/entrypoint/env */
-int image_parse_config(const char *json_data,
+static int image_parse_config(const char *json_data,
                         char cmd[][256], int *num_cmd,
                         char entrypoint[][256], int *num_ep,
                         char env[][256], int *num_env)
@@ -302,7 +302,7 @@ static int http_get(const char *host, const char *path,
 }
 
 /* C34: Pull image from registry (simplified HTTP v2) */
-int image_pull(const char *image_ref, const char *registry)
+static int image_pull(const char *image_ref, const char *registry)
 {
     if (!image_ref) return -EINVAL;
 
@@ -517,7 +517,7 @@ int image_pull(const char *image_ref, const char *registry)
 }
 
 /* C38: List images in table */
-int image_list(char out[][256], int max_out)
+static int image_list(char out[][256], int max_out)
 {
     int count = 0;
     for (int i = 0; i < MAX_IMAGES && count < max_out; i++) {
@@ -532,7 +532,7 @@ int image_list(char out[][256], int max_out)
 }
 
 /* C37: Tag an image */
-int image_tag(const char *image_id, const char *new_tag)
+static int image_tag(const char *image_id, const char *new_tag)
 {
     for (int i = 0; i < MAX_IMAGES; i++) {
         struct image *img = &image_table[i];
@@ -554,7 +554,7 @@ int image_tag(const char *image_id, const char *new_tag)
 }
 
 /* C39: Remove image */
-int image_remove(const char *image_id)
+static int image_remove(const char *image_id)
 {
     for (int i = 0; i < MAX_IMAGES; i++) {
         struct image *img = &image_table[i];
@@ -573,7 +573,7 @@ int image_remove(const char *image_id)
 }
 
 /* C40: Prune unused images */
-int image_prune(void)
+static int image_prune(void)
 {
     int removed = 0;
     for (int i = 0; i < MAX_IMAGES; i++) {
@@ -591,7 +591,7 @@ int image_prune(void)
 
 /* ── Lookup ─────────────────────────────────────────────────────────── */
 
-const char *image_find(const char *repo, const char *tag)
+static const char *image_find(const char *repo, const char *tag)
 {
     for (int i = 0; i < MAX_IMAGES; i++) {
         struct image *img = &image_table[i];
@@ -610,7 +610,7 @@ const char *image_find(const char *repo, const char *tag)
 /* Save an image as a tar archive.
  * Writes manifest, config, and layers into a single tar file.
  * Returns 0 on success, negative on error. */
-int image_save(const char *image_id, const char *output_path)
+static int image_save(const char *image_id, const char *output_path)
 {
     if (!image_id || !output_path) return -EINVAL;
 
@@ -645,7 +645,7 @@ int image_save(const char *image_id, const char *output_path)
 /* Load an image from a tar archive.
  * Reads manifest, config, and layers, registering the image.
  * Returns 0 on success, negative on error. */
-int image_load(const char *input_path)
+static int image_load(const char *input_path)
 {
     if (!input_path) return -EINVAL;
 
@@ -688,7 +688,7 @@ int image_load(const char *input_path)
 }
 
 /* ── image_push ─────────────────────────────── */
-int image_push(const char *ref)
+static int image_push(const char *ref)
 {
     (void)ref;
     kprintf("[container] Image push: %s\n", ref ? ref : "?");

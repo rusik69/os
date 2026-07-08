@@ -15,6 +15,7 @@
 #include "printf.h"
 #include "audit.h"
 #include "kptr_restrict.h"
+#include "signal_validate.h"
 
 /* Debug toggle — when set, kernel addresses in si_addr are preserved.
  * Controlled via sysctl / debugfs for testing/debugging only. */

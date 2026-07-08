@@ -124,7 +124,7 @@ void pelt_subsys_init(void)
 }
 
 /* ── pelt_accumulate ─────────────────────────────── */
-int pelt_accumulate(void *cfs_rq, void *se)
+static int pelt_accumulate(void *cfs_rq, void *se)
 {
     (void)cfs_rq;
     (void)se;
@@ -134,7 +134,7 @@ int pelt_accumulate(void *cfs_rq, void *se)
     return 0;
 }
 /* ── pelt_decay ─────────────────────────────── */
-int pelt_decay(void *cfs_rq)
+static int pelt_decay(void *cfs_rq)
 {
     (void)cfs_rq;
     /* Apply PELT decay to a CFS runqueue's load average.

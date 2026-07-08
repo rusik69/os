@@ -842,7 +842,7 @@ void usb_msc_exit(void)
 
 /* ── Public API: byte-level read/write/capacity (non-blockdev) ──── */
 
-int usb_msc_read(void *dev, void *buf, size_t count, uint64_t offset)
+static int usb_msc_read(void *dev, void *buf, size_t count, uint64_t offset)
 {
     (void)dev;
     if (!buf || count == 0) return 0;
@@ -855,7 +855,7 @@ int usb_msc_read(void *dev, void *buf, size_t count, uint64_t offset)
     return scsi_read10(lba, (uint8_t)nsec, buf);
 }
 
-int usb_msc_write(void *dev, const void *buf, size_t count, uint64_t offset)
+static int usb_msc_write(void *dev, const void *buf, size_t count, uint64_t offset)
 {
     (void)dev;
     if (!buf || count == 0) return 0;
@@ -867,7 +867,7 @@ int usb_msc_write(void *dev, const void *buf, size_t count, uint64_t offset)
     return scsi_write10(lba, (uint8_t)nsec, buf);
 }
 
-int usb_msc_capacity(void *dev, void *cap)
+static int usb_msc_capacity(void *dev, void *cap)
 {
     (void)dev;
     if (cap) {

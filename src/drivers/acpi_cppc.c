@@ -30,7 +30,7 @@ static struct cppc_domain cppc_domains[CPPC_MAX_DOMAINS];
 static int cppc_domain_count = 0;
 
 /* Register a CPPC domain */
-int cppc_register_domain(uint32_t domain_id,
+static int cppc_register_domain(uint32_t domain_id,
                           uint32_t highest, uint32_t nominal,
                           uint32_t lowest_nonlinear, uint32_t lowest)
 {
@@ -53,7 +53,7 @@ int cppc_register_domain(uint32_t domain_id,
 }
 
 /* Set desired performance */
-int cppc_set_desired_perf(int dom_idx, uint32_t perf)
+static int cppc_set_desired_perf(int dom_idx, uint32_t perf)
 {
     if (dom_idx < 0 || dom_idx >= cppc_domain_count || !cppc_domains[dom_idx].active)
         return -ENODEV;
@@ -67,7 +67,7 @@ int cppc_set_desired_perf(int dom_idx, uint32_t perf)
 }
 
 /* Get current performance */
-uint32_t cppc_get_desired_perf(int dom_idx)
+static uint32_t cppc_get_desired_perf(int dom_idx)
 {
     if (dom_idx < 0 || dom_idx >= cppc_domain_count || !cppc_domains[dom_idx].active)
         return 0;
@@ -76,7 +76,7 @@ uint32_t cppc_get_desired_perf(int dom_idx)
 }
 
 /* Get domain info */
-void cppc_get_info(int dom_idx, uint32_t *highest, uint32_t *nominal,
+static void cppc_get_info(int dom_idx, uint32_t *highest, uint32_t *nominal,
                     uint32_t *lowest_nonlinear, uint32_t *lowest)
 {
     if (dom_idx < 0 || dom_idx >= cppc_domain_count || !cppc_domains[dom_idx].active)
@@ -89,7 +89,7 @@ void cppc_get_info(int dom_idx, uint32_t *highest, uint32_t *nominal,
     if (lowest) *lowest = dom->lowest_perf;
 }
 
-void __init acpi_cppc_init(void)
+static void __init acpi_cppc_init(void)
 {
     memset(cppc_domains, 0, sizeof(cppc_domains));
     cppc_domain_count = 0;
@@ -101,13 +101,13 @@ void __init acpi_cppc_init(void)
 }
 
 /* ── Stub: cppc_init ─────────────────────────────── */
-int cppc_init(void)
+static int cppc_init(void)
 {
     kprintf("[acpi] cppc_init: not yet implemented\n");
     return 0;
 }
 /* ── Stub: cppc_get_perf_caps ─────────────────────────────── */
-int cppc_get_perf_caps(int cpu, void *caps)
+static int cppc_get_perf_caps(int cpu, void *caps)
 {
     (void)cpu;
     (void)caps;
@@ -115,7 +115,7 @@ int cppc_get_perf_caps(int cpu, void *caps)
     return -ENODATA;
 }
 /* ── Stub: cppc_set_perf ─────────────────────────────── */
-int cppc_set_perf(int cpu, uint64_t perf)
+static int cppc_set_perf(int cpu, uint64_t perf)
 {
     (void)cpu;
     (void)perf;

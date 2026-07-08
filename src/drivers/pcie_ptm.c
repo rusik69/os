@@ -39,7 +39,7 @@ struct ptm_state {
 static struct ptm_state ptm;
 
 /* Enable PTM on a device */
-int ptm_enable(int bus, int dev, int func)
+static int ptm_enable(int bus, int dev, int func)
 {
     /* Walk standard PCI capability list to find PTM (cap_id=0x1F) */
     uint16_t status = (uint16_t)(pci_read(bus, dev, func, 0x06) & 0xFFFF);
@@ -71,7 +71,7 @@ int ptm_enable(int bus, int dev, int func)
 }
 
 /* Perform a PTM dialog (time exchange) */
-int ptm_dialog(void)
+static int ptm_dialog(void)
 {
     /* Send PTM Request and get response */
     /* In real hardware, this involves a PTM dialog transaction */
@@ -89,7 +89,7 @@ int ptm_dialog(void)
 }
 
 /* Get corrected time */
-uint64_t ptm_get_corrected_time(uint64_t raw_time)
+static uint64_t ptm_get_corrected_time(uint64_t raw_time)
 {
     if (ptm.dialog_count == 0)
         return raw_time;
@@ -97,7 +97,7 @@ uint64_t ptm_get_corrected_time(uint64_t raw_time)
     return raw_time + ptm.correction;
 }
 
-void ptm_init(void)
+static void ptm_init(void)
 {
     memset(&ptm, 0, sizeof(ptm));
     kprintf("[OK] PCIe PTM — Precision Time Measurement\n");
@@ -106,25 +106,25 @@ void ptm_init(void)
 module_init(ptm_init);
 
 /* ── Stub: pcie_ptm_init ─────────────────────────────── */
-int pcie_ptm_init(__maybe_unused void *dev)
+static int pcie_ptm_init(__maybe_unused void *dev)
 {
     kprintf("[PCIE] pcie_ptm_init: not yet implemented\n");
     return 0;
 }
 /* ── Stub: pcie_ptm_enable ─────────────────────────────── */
-int pcie_ptm_enable(__maybe_unused void *dev)
+static int pcie_ptm_enable(__maybe_unused void *dev)
 {
     kprintf("[PCIE] pcie_ptm_enable: not yet implemented\n");
     return 0;
 }
 /* ── Stub: pcie_ptm_disable ─────────────────────────────── */
-int pcie_ptm_disable(__maybe_unused void *dev)
+static int pcie_ptm_disable(__maybe_unused void *dev)
 {
     kprintf("[PCIE] pcie_ptm_disable: not yet implemented\n");
     return 0;
 }
 /* ── Stub: pcie_ptm_read_time ─────────────────────────────── */
-int pcie_ptm_read_time(__maybe_unused void *dev, __maybe_unused uint64_t *time)
+static int pcie_ptm_read_time(__maybe_unused void *dev, __maybe_unused uint64_t *time)
 {
     kprintf("[PCIE] pcie_ptm_read_time: not yet implemented\n");
     return 0;

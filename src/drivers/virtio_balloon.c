@@ -523,7 +523,7 @@ static void vbl_init_queues(void)
 
 /* ── Initialise the balloon device ────────────────────────────────── */
 
-void virtio_balloon_init(void)
+static void virtio_balloon_init(void)
 {
 	struct pci_device dev;
 	int ret;

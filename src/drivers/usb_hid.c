@@ -777,7 +777,7 @@ int usb_hid_mouse_wheel_get(void)
     return w;
 }
 
-int usb_hid_read(struct usb_device *dev, void *buf, size_t count)
+static int usb_hid_read(struct usb_device *dev, void *buf, size_t count)
 {
     if (!dev || !buf || count == 0) return -EINVAL;
 

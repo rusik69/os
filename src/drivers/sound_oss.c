@@ -938,7 +938,7 @@ int sound_oss_ioctl(int cmd, uint64_t arg)
 
 /* ── Public API: devfs open / release stubs ──────────────────────── */
 
-int sound_oss_open(int dev, void *file)
+static int sound_oss_open(int dev, void *file)
 {
 	(void)dev;
 	(void)file;
@@ -967,7 +967,7 @@ int sound_oss_open(int dev, void *file)
 	return 0;
 }
 
-int sound_oss_release(int dev, void *file)
+static int sound_oss_release(int dev, void *file)
 {
 	(void)dev;
 	(void)file;
@@ -992,7 +992,7 @@ int sound_oss_release(int dev, void *file)
 	return 0;
 }
 
-int sound_oss_read(int dev, void *buf, size_t count)
+static int sound_oss_read(int dev, void *buf, size_t count)
 {
 	(void)dev;
 	(void)buf;
@@ -1003,7 +1003,7 @@ int sound_oss_read(int dev, void *buf, size_t count)
 	return 0;
 }
 
-int sound_oss_write(int dev, const void *buf, size_t count)
+static int sound_oss_write(int dev, const void *buf, size_t count)
 {
 	(void)dev;
 	(void)buf;

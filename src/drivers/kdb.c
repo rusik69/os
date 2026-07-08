@@ -221,7 +221,7 @@ static void kdb_execute(const char *cmd)
 
 /* ── Main loop ──────────────────────────────────────────────────── */
 
-void kdb_enter(void)
+static void kdb_enter(void)
 {
     if (kdb_active) return;
     kdb_active = 1;
@@ -277,13 +277,13 @@ void kdb_enter(void)
 }
 
 /* Check if KDB is active */
-int kdb_is_active(void)
+static int kdb_is_active(void)
 {
     return kdb_active;
 }
 
 /* Initialize KDB */
-void kdb_init(void)
+static void kdb_init(void)
 {
     kdb_active = 0;
     kdb_buf_pos = 0;
@@ -297,14 +297,14 @@ void kdb_init(void)
  * ═══════════════════════════════════════════════════════════════ */
 
 /* ── Stub: kdb_parse ───────────────────────────────── */
-int kdb_parse(const char *cmd)
+static int kdb_parse(const char *cmd)
 {
     (void)cmd;
     kprintf("[KDB] kdb_parse: not yet implemented\n");
     return 0;
 }
 /* ── Stub: kdb_exec ────────────────────────────────── */
-int kdb_exec(const char *cmd)
+static int kdb_exec(const char *cmd)
 {
     (void)cmd;
     kprintf("[KDB] kdb_exec: not yet implemented\n");
@@ -312,7 +312,7 @@ int kdb_exec(const char *cmd)
 }
 /* ── Stub: kdb_printf ──────────────────────────────── */
 __printf(1, 2)
-int kdb_printf(const char *fmt, ...)
+static int kdb_printf(const char *fmt, ...)
 {
     (void)fmt;
     kprintf("[KDB] kdb_printf: not yet implemented\n");
@@ -328,7 +328,7 @@ int kdb_register(const char *cmd, kdb_func_t func, const char *usage)
     return 0;
 }
 /* ── Stub: kdb_unregister ──────────────────────────── */
-int kdb_unregister(const char *cmd)
+static int kdb_unregister(const char *cmd)
 {
     (void)cmd;
     kprintf("[KDB] kdb_unregister: not yet implemented\n");

@@ -38,7 +38,7 @@
 static int dpc_triggered_count = 0;
 
 /* Enable DPC on a port */
-int dpc_enable(int bus, int dev, int func)
+static int dpc_enable(int bus, int dev, int func)
 {
     uint16_t dpc_cap = pci_find_ext_cap(bus, dev, func, 0x0017); /* PCI_EXT_CAP_ID_DPC */
     if (!dpc_cap)
@@ -52,7 +52,7 @@ int dpc_enable(int bus, int dev, int func)
 }
 
 /* Handle a DPC trigger event */
-int dpc_handle_trigger(int bus, int dev, int func)
+static int dpc_handle_trigger(int bus, int dev, int func)
 {
     uint16_t dpc_cap = pci_find_ext_cap(bus, dev, func, 0x0017); /* PCI_EXT_CAP_ID_DPC */
     if (!dpc_cap)
@@ -81,12 +81,12 @@ int dpc_handle_trigger(int bus, int dev, int func)
 }
 
 /* Get DPC statistics */
-int dpc_get_trigger_count(void)
+static int dpc_get_trigger_count(void)
 {
     return dpc_triggered_count;
 }
 
-void dpc_init(void)
+static void dpc_init(void)
 {
     dpc_triggered_count = 0;
     kprintf("[OK] PCIe DPC — Downstream Port Containment\n");
@@ -95,19 +95,19 @@ void dpc_init(void)
 module_init(dpc_init);
 
 /* ── Stub: pcie_dpc_init ─────────────────────────────── */
-int pcie_dpc_init(__maybe_unused void *dev)
+static int pcie_dpc_init(__maybe_unused void *dev)
 {
     kprintf("[PCIE] pcie_dpc_init: not yet implemented\n");
     return 0;
 }
 /* ── Stub: pcie_dpc_handler ─────────────────────────────── */
-int pcie_dpc_handler(__maybe_unused void *dev)
+static int pcie_dpc_handler(__maybe_unused void *dev)
 {
     kprintf("[PCIE] pcie_dpc_handler: not yet implemented\n");
     return 0;
 }
 /* ── Stub: pcie_dpc_reset ─────────────────────────────── */
-int pcie_dpc_reset(__maybe_unused void *dev)
+static int pcie_dpc_reset(__maybe_unused void *dev)
 {
     kprintf("[PCIE] pcie_dpc_reset: not yet implemented\n");
     return 0;

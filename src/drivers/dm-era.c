@@ -305,7 +305,7 @@ void dm_era_init(void)
 module_init(dm_era_init);
 
 /* ── Stub: dm_era_ctr ─────────────────────────────── */
-int dm_era_ctr(void *ti, unsigned int argc, char **argv)
+static int dm_era_ctr(void *ti, unsigned int argc, char **argv)
 {
     (void)ti;
     (void)argc;
@@ -314,7 +314,7 @@ int dm_era_ctr(void *ti, unsigned int argc, char **argv)
     return 0;
 }
 /* ── Stub: dm_era_map ─────────────────────────────── */
-int dm_era_map(void *ti, void *bio)
+static int dm_era_map(void *ti, void *bio)
 {
     (void)ti;
     (void)bio;

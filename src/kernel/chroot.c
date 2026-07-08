@@ -5,6 +5,7 @@
 #include "string.h"
 #include "vfs.h"
 #include "timer.h"
+#include "chroot.h"
 
 /* ── Chroot jail restrictions ────────────────────────────────────────── */
 

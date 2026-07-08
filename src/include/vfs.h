@@ -453,4 +453,7 @@ extern int num_mounts;
 int vfs_check_perms(const char *path, uint16_t uid, uint16_t gid,
                      uint16_t op);
 
+/* Close an open file handle */
+int vfs_close(void *file);
+
 #endif

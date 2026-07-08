@@ -25,7 +25,7 @@ const char *dmi_get_bios_vendor(void) { return dmi_bios_vendor; }
 const char *dmi_get_sys_vendor(void) { return dmi_sys_vendor; }
 
 /* ── Stub: dmi_match ─────────────────────────────── */
-int dmi_match(const char *slot, const char *value)
+static int dmi_match(const char *slot, const char *value)
 {
     (void)slot;
     (void)value;
@@ -33,7 +33,7 @@ int dmi_match(const char *slot, const char *value)
     return 0;
 }
 /* ── Stub: dmi_get_system_info ─────────────────────────────── */
-const char* dmi_get_system_info(int field)
+static const char* dmi_get_system_info(int field)
 {
     (void)field;
     kprintf("[DMI] dmi_get_system_info: not yet implemented\n");

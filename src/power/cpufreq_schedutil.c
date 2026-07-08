@@ -415,7 +415,7 @@ void cpufreq_schedutil_pelt_update(int cpu_id, uint32_t util_avg)
 }
 
 /* ── schedutil_init ─────────────────────────────── */
-int schedutil_init(int cpu)
+static int schedutil_init(int cpu)
 {
     (void)cpu;
     /* Per-CPU state is zero-initialized at compile time.
@@ -423,14 +423,14 @@ int schedutil_init(int cpu)
     return cpufreq_schedutil_start();
 }
 /* ── schedutil_exit ─────────────────────────────── */
-int schedutil_exit(int cpu)
+static int schedutil_exit(int cpu)
 {
     (void)cpu;
     cpufreq_schedutil_stop();
     return 0;
 }
 /* ── schedutil_target ─────────────────────────────── */
-int schedutil_target(int cpu, unsigned int target_freq)
+static int schedutil_target(int cpu, unsigned int target_freq)
 {
     (void)cpu;
     int count = cpupstate_get_count();

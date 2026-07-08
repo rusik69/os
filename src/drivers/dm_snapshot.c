@@ -33,7 +33,7 @@ static struct dm_snapshot dm_snapshots[DM_SNAP_MAX_SNAPSHOTS];
 static uint64_t next_snap_id;
 
 /* Create a snapshot of a device */
-int64_t dm_snapshot_create(const char *origin, const char *cow_dev,
+static int64_t dm_snapshot_create(const char *origin, const char *cow_dev,
                         uint64_t cow_size)
 {
     uint64_t irq_flags;
@@ -86,7 +86,7 @@ int64_t dm_snapshot_create(const char *origin, const char *cow_dev,
 }
 
 /* Read from snapshot (origin data, COW if modified) */
-ssize_t dm_snapshot_read(int snap_id, uint64_t sector,
+static ssize_t dm_snapshot_read(int snap_id, uint64_t sector,
                       uint8_t *buf, size_t len)
 {
     struct dm_snapshot *snap = NULL;
@@ -131,7 +131,7 @@ ssize_t dm_snapshot_read(int snap_id, uint64_t sector,
 }
 
 /* Write to snapshot (triggers COW) */
-ssize_t dm_snapshot_write(int snap_id, uint64_t sector,
+static ssize_t dm_snapshot_write(int snap_id, uint64_t sector,
                        const uint8_t *buf, size_t len)
 {
     struct dm_snapshot *snap = NULL;
@@ -176,7 +176,7 @@ ssize_t dm_snapshot_write(int snap_id, uint64_t sector,
     return (ssize_t)len;
 }
 
-void dm_snapshot_init(void)
+static void dm_snapshot_init(void)
 {
     memset(dm_snapshots, 0, sizeof(dm_snapshots));
     for (int i = 0; i < DM_SNAP_MAX_SNAPSHOTS; i++)
@@ -192,7 +192,7 @@ module_init(dm_snapshot_init);
  * ═══════════════════════════════════════════════════════════════ */
 
 /* ── Stub: snapshot_ctl_create ──────────────────────── */
-int snapshot_ctl_create(const char *name, const char *origin)
+static int snapshot_ctl_create(const char *name, const char *origin)
 {
     (void)name;
     (void)origin;
@@ -200,7 +200,7 @@ int snapshot_ctl_create(const char *name, const char *origin)
     return 0;
 }
 /* ── Stub: snapshot_ctl_delete ──────────────────────── */
-int snapshot_ctl_delete(const char *name)
+static int snapshot_ctl_delete(const char *name)
 {
     (void)name;
     kprintf("[DM-SNAPSHOT] snapshot_ctl_delete: not yet implemented\n");
@@ -227,7 +227,7 @@ int snapshot_write(struct dm_snapshot *snap, uint64_t sector, const void *buf, u
     return 0;
 }
 /* ── Stub: snapshot_merge ───────────────────────────── */
-int snapshot_merge(struct dm_snapshot *snap)
+static int snapshot_merge(struct dm_snapshot *snap)
 {
     (void)snap;
     kprintf("[DM-SNAPSHOT] snapshot_merge: not yet implemented\n");

@@ -65,7 +65,7 @@ static inline uint32_t vc_inl(uint8_t off) {
 
 /* ── Init ──────────────────────────────────────────────────────── */
 
-void __init virtio_console_init(void)
+static void __init virtio_console_init(void)
 {
     struct pci_device dev;
     if (pci_find_device(VIRTIO_VENDOR, VIRTIO_CONSOLE_DEVICE, &dev) < 0)
@@ -115,25 +115,25 @@ MODULE_VERSION("1.0");
 #endif
 
 /* ── Stub: virtio_console_open ─────────────────────────────── */
-int virtio_console_open(__maybe_unused void *dev)
+static int virtio_console_open(__maybe_unused void *dev)
 {
     kprintf("[VIRTIO] virtio_console_open: not yet implemented\n");
     return 0;
 }
 /* ── Stub: virtio_console_close ─────────────────────────────── */
-int virtio_console_close(__maybe_unused void *dev)
+static int virtio_console_close(__maybe_unused void *dev)
 {
     kprintf("[VIRTIO] virtio_console_close: not yet implemented\n");
     return 0;
 }
 /* ── Stub: virtio_console_write ─────────────────────────────── */
-int virtio_console_write(__maybe_unused void *dev, __maybe_unused const void *buf, __maybe_unused size_t count)
+static int virtio_console_write(__maybe_unused void *dev, __maybe_unused const void *buf, __maybe_unused size_t count)
 {
     kprintf("[VIRTIO] virtio_console_write: not yet implemented\n");
     return 0;
 }
 /* ── Stub: virtio_console_read ─────────────────────────────── */
-int virtio_console_read(__maybe_unused void *dev, __maybe_unused void *buf, __maybe_unused size_t count)
+static int virtio_console_read(__maybe_unused void *dev, __maybe_unused void *buf, __maybe_unused size_t count)
 {
     kprintf("[VIRTIO] virtio_console_read: not yet implemented\n");
     return 0;

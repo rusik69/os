@@ -679,7 +679,7 @@ static int cdc_ether_frame_rx(struct cdc_ether_device *dev,
  * Register a CDC Ethernet device with the given MAC address.
  * Returns the device ID (>= 0) on success, negative errno on failure.
  */
-int cdc_ether_register(const uint8_t *mac, int dev_num)
+static int cdc_ether_register(const uint8_t *mac, int dev_num)
 {
     if (!mac)
         return -EINVAL;
@@ -714,7 +714,7 @@ int cdc_ether_register(const uint8_t *mac, int dev_num)
  * For EEM: adds the 2-byte EEM header before transmission.
  * Returns the number of bytes transmitted on success, negative errno.
  */
-int cdc_ether_send(int dev_id, const uint8_t *frame, int len)
+static int cdc_ether_send(int dev_id, const uint8_t *frame, int len)
 {
     struct cdc_ether_device *dev = cdc_ether_get_dev(dev_id);
     if (!dev)
@@ -765,7 +765,7 @@ int cdc_ether_send(int dev_id, const uint8_t *frame, int len)
  * For EEM: strips the EEM header.
  * Returns the number of bytes received (0 = none), negative errno on error.
  */
-int cdc_ether_recv(int dev_id, uint8_t *frame, int max_len)
+static int cdc_ether_recv(int dev_id, uint8_t *frame, int max_len)
 {
     struct cdc_ether_device *dev = cdc_ether_get_dev(dev_id);
     if (!dev)
@@ -818,7 +818,7 @@ int cdc_ether_recv(int dev_id, uint8_t *frame, int max_len)
  * bulk IN completion handler, or simulation equivalent).
  * Returns 0 on success, negative errno on failure.
  */
-int cdc_ether_queue_rx(int dev_id, const uint8_t *data, int len)
+static int cdc_ether_queue_rx(int dev_id, const uint8_t *data, int len)
 {
     struct cdc_ether_device *dev = cdc_ether_get_dev(dev_id);
     if (!dev)
@@ -848,7 +848,7 @@ int cdc_ether_queue_rx(int dev_id, const uint8_t *data, int len)
  * Get device statistics.
  * Fills in the provided pointers with current counter values.
  */
-void cdc_ether_get_stats(int dev_id,
+static void cdc_ether_get_stats(int dev_id,
                           uint64_t *tx_pkts, uint64_t *rx_pkts,
                           uint64_t *tx_bytes, uint64_t *rx_bytes)
 {
@@ -875,7 +875,7 @@ void cdc_ether_get_stats(int dev_id,
  * Wrapper around cdc_get_ether_statistic.
  * Returns the 64-bit statistic value, or 0 on error.
  */
-uint64_t cdc_ether_query_stat(int dev_id, uint8_t selector)
+static uint64_t cdc_ether_query_stat(int dev_id, uint8_t selector)
 {
     struct cdc_ether_device *dev = cdc_ether_get_dev(dev_id);
     if (!dev)
@@ -899,7 +899,7 @@ uint64_t cdc_ether_query_stat(int dev_id, uint8_t selector)
  * @config_len: total length of the configuration descriptor
  * Returns 0 on success, negative errno on failure.
  */
-int cdc_ether_control_init(int dev_id,
+static int cdc_ether_control_init(int dev_id,
                            const uint8_t *config_data,
                            uint16_t config_len)
 {
@@ -940,7 +940,7 @@ int cdc_ether_control_init(int dev_id,
  * Called when the associated netdevice is brought up.
  * Returns 0 on success, negative errno on failure.
  */
-int cdc_ether_open(int dev_id)
+static int cdc_ether_open(int dev_id)
 {
     struct cdc_ether_device *dev = cdc_ether_get_dev(dev_id);
     if (!dev)
@@ -962,7 +962,7 @@ int cdc_ether_open(int dev_id)
  * Called when the associated netdevice is brought down.
  * Returns 0 on success, negative errno on failure.
  */
-int cdc_ether_stop(int dev_id)
+static int cdc_ether_stop(int dev_id)
 {
     struct cdc_ether_device *dev = cdc_ether_get_dev(dev_id);
     if (!dev)
@@ -984,7 +984,7 @@ int cdc_ether_stop(int dev_id)
  * @is_eem: 0 for ECM, 1 for EEM
  * Returns 0 on success, negative errno on failure.
  */
-int cdc_ether_set_model(int dev_id, int is_eem)
+static int cdc_ether_set_model(int dev_id, int is_eem)
 {
     struct cdc_ether_device *dev = cdc_ether_get_dev(dev_id);
     if (!dev)
@@ -1004,7 +1004,7 @@ int cdc_ether_set_model(int dev_id, int is_eem)
  * @len: frame length
  * Returns 0 on success, negative errno on failure.
  */
-int cdc_ether_xmit(int dev_id, const void *skb, int len)
+static int cdc_ether_xmit(int dev_id, const void *skb, int len)
 {
     return cdc_ether_send(dev_id, (const uint8_t *)skb, len);
 }
@@ -1014,7 +1014,7 @@ int cdc_ether_xmit(int dev_id, const void *skb, int len)
  * Scans the Communication interface's subclass.
  * Returns 0 for ECM, 1 for EEM, or -ENOENT if neither found.
  */
-int cdc_detect_ether_model(const uint8_t *config_data, uint16_t config_len)
+static int cdc_detect_ether_model(const uint8_t *config_data, uint16_t config_len)
 {
     int pos = 9; /* skip config descriptor header */
 
@@ -1050,7 +1050,7 @@ int cdc_detect_ether_model(const uint8_t *config_data, uint16_t config_len)
 
 /* ── Module initialisation ──────────────────────────────────────────── */
 
-void __init usb_cdc_ether_init(void)
+static void __init usb_cdc_ether_init(void)
 {
     if (g_initialized)
         return;
@@ -1065,7 +1065,7 @@ void __init usb_cdc_ether_init(void)
     kprintf("[OK] USB CDC ECM/EEM ethernet control model\n");
 }
 
-void usb_cdc_ether_exit(void)
+static void usb_cdc_ether_exit(void)
 {
     for (int i = 0; i < cdc_ether_count; i++) {
         struct cdc_ether_device *dev = &cdc_ether_devs[i];

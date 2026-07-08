@@ -290,13 +290,13 @@ static int dyndbg_control_file_write(const char *buf, int len)
 }
 
 /* ── Stub: dyndbg_clear ─────────────────────────────── */
-int dyndbg_clear(void)
+static int dyndbg_clear(void)
 {
     kprintf("[DYNDBG] dyndbg_clear: not yet implemented\n");
     return 0;
 }
 /* ── Stub: dyndbg_set_flags ─────────────────────────────── */
-int dyndbg_set_flags(const char *module, unsigned long flags)
+static int dyndbg_set_flags(const char *module, unsigned long flags)
 {
     (void)module;
     (void)flags;

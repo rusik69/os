@@ -197,12 +197,12 @@ void __init pmem_init(void) {
 }
 
 /* Return the number of registered PMEM devices */
-int pmem_get_device_count(void) {
+static int pmem_get_device_count(void) {
     return g_pmem_devices;
 }
 
 /* ── Stub: pmem_read ─────────────────────────────── */
-int pmem_read(void *buf, size_t count, uint64_t offset)
+static int pmem_read(void *buf, size_t count, uint64_t offset)
 {
     (void)buf;
     (void)count;
@@ -211,7 +211,7 @@ int pmem_read(void *buf, size_t count, uint64_t offset)
     return 0;
 }
 /* ── Stub: pmem_write ─────────────────────────────── */
-int pmem_write(const void *buf, size_t count, uint64_t offset)
+static int pmem_write(const void *buf, size_t count, uint64_t offset)
 {
     (void)buf;
     (void)count;

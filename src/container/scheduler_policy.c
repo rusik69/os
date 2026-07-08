@@ -46,7 +46,7 @@ struct resource_quota {
 static struct resource_quota quota_table[MAX_QUOTAS];
 
 /* C96: Set resource quota for a namespace */
-int quota_set(const char *namespace, uint64_t max_pods, uint64_t max_containers,
+static int quota_set(const char *namespace, uint64_t max_pods, uint64_t max_containers,
               uint64_t max_cpu_millicores, uint64_t max_memory_bytes,
               uint64_t max_volumes)
 {
@@ -91,7 +91,7 @@ int quota_set(const char *namespace, uint64_t max_pods, uint64_t max_containers,
 }
 
 /* C96: Check if creating a resource would exceed quota */
-int namespace_quota_check(const char *namespace, uint64_t cpu_millicores,
+static int namespace_quota_check(const char *namespace, uint64_t cpu_millicores,
                 uint64_t memory_bytes, int is_pod, int is_volume)
 {
     if (!namespace) return 0; /* No namespace = no quota */
@@ -131,7 +131,7 @@ int namespace_quota_check(const char *namespace, uint64_t cpu_millicores,
 }
 
 /* C96: Account for resource usage */
-int quota_account(const char *namespace, uint64_t cpu_millicores,
+static int quota_account(const char *namespace, uint64_t cpu_millicores,
                   uint64_t memory_bytes, int is_pod, int is_volume, int add)
 {
     if (!namespace) return 0;
@@ -155,7 +155,7 @@ int quota_account(const char *namespace, uint64_t cpu_millicores,
 }
 
 /* C96: Delete quota for a namespace */
-int quota_delete(const char *namespace)
+static int quota_delete(const char *namespace)
 {
     if (!namespace) return -EINVAL;
     for (int i = 0; i < MAX_QUOTAS; i++) {
@@ -188,7 +188,7 @@ static struct limit_range limit_ranges[MAX_LIMIT_RANGES];
 static int lr_count = 0;
 
 /* C97: Set limit range for a namespace */
-int limitrange_set(const char *namespace,
+static int limitrange_set(const char *namespace,
                    uint64_t def_cpu, uint64_t def_mem,
                    uint64_t min_cpu, uint64_t min_mem,
                    uint64_t max_cpu, uint64_t max_mem)
@@ -222,7 +222,7 @@ int limitrange_set(const char *namespace,
 }
 
 /* C97: Apply limit range to a container's resource spec */
-int limitrange_apply(const char *namespace,
+static int limitrange_apply(const char *namespace,
                      uint64_t *cpu_millicores, uint64_t *memory_bytes)
 {
     if (!namespace || !cpu_millicores || !memory_bytes) return -EINVAL;
@@ -266,7 +266,7 @@ static struct priority_class priority_classes[MAX_PRIORITY_CLASSES];
 static int priority_class_count = 0;
 
 /* C98: Register a priority class */
-int priority_class_register(const char *name, int value, int preemptible)
+static int priority_class_register(const char *name, int value, int preemptible)
 {
     if (!name) return -EINVAL;
 
@@ -288,7 +288,7 @@ int priority_class_register(const char *name, int value, int preemptible)
 }
 
 /* C98: Check priority level for a class */
-int priority_class_value(const char *name)
+static int priority_class_value(const char *name)
 {
     if (!name) return 0;
     for (int i = 0; i < priority_class_count; i++) {
@@ -299,7 +299,7 @@ int priority_class_value(const char *name)
 }
 
 /* C98: Preempt lower-priority pods to make room */
-int preempt_pods(const char *namespace, int priority_value)
+static int preempt_pods(const char *namespace, int priority_value)
 {
     /* Find and kill lower-priority pods in the same namespace */
     kprintf("[Scheduler] Preempting pods with priority < %d in namespace '%s'\n",
@@ -336,7 +336,7 @@ struct affinity_rule {
 };
 
 /* C99: Check affinity constraints for a pod on a candidate node */
-int affinity_check(struct affinity_rule *rules, int num_rules,
+static int affinity_check(struct affinity_rule *rules, int num_rules,
                    const char *candidate_node_labels,
                    int *score_out)
 {
@@ -398,7 +398,7 @@ static struct taint node_taints[MAX_TAINTS];
 static int taint_count = 0;
 
 /* C100: Add taint to a node */
-int taint_add(const char *key, const char *value, int effect)
+static int taint_add(const char *key, const char *value, int effect)
 {
     if (!key) return -EINVAL;
     if (taint_count >= MAX_TAINTS) return -ENOSPC;
@@ -420,7 +420,7 @@ int taint_add(const char *key, const char *value, int effect)
 }
 
 /* C100: Remove taint from a node */
-int taint_remove(const char *key)
+static int taint_remove(const char *key)
 {
     if (!key) return -EINVAL;
     for (int i = 0; i < taint_count; i++) {
@@ -435,7 +435,7 @@ int taint_remove(const char *key)
 }
 
 /* C100: Check if a pod tolerates all node taints */
-int taints_check_tolerations(struct toleration *tol, int num_tol, int *unschedulable)
+static int taints_check_tolerations(struct toleration *tol, int num_tol, int *unschedulable)
 {
     if (unschedulable) *unschedulable = 0;
 
@@ -467,7 +467,7 @@ int taints_check_tolerations(struct toleration *tol, int num_tol, int *unschedul
  *  Initialisation
  * ═══════════════════════════════════════════════════════════════════════ */
 
-int scheduler_policy_init(void)
+static int scheduler_policy_init(void)
 {
     memset(quota_table, 0, sizeof(quota_table));
     memset(limit_ranges, 0, sizeof(limit_ranges));
@@ -488,7 +488,7 @@ int scheduler_policy_init(void)
 }
 
 /* ── Stub: sched_policy_set ─────────────────────────────── */
-int sched_policy_set(const char *cont, const char *policy)
+static int sched_policy_set(const char *cont, const char *policy)
 {
     (void)cont;
     (void)policy;
@@ -496,7 +496,7 @@ int sched_policy_set(const char *cont, const char *policy)
     return 0;
 }
 /* ── Stub: sched_policy_get ─────────────────────────────── */
-int sched_policy_get(const char *cont, char *policy, size_t len)
+static int sched_policy_get(const char *cont, char *policy, size_t len)
 {
     (void)cont;
     (void)policy;

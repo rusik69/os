@@ -123,7 +123,7 @@ static int ipam_alloc(const char *subnet, uint32_t *ip, uint32_t *gw)
 }
 
 /* C51: Setup container networking — veth pair + IP */
-int cni_setup_network(struct container *c)
+static int cni_setup_network(struct container *c)
 {
     if (!c || !c->in_use) return -EINVAL;
 
@@ -153,7 +153,7 @@ int cni_setup_network(struct container *c)
 }
 
 /* C55: Port mapping — add DNAT-style redirect via netfilter rules */
-int cni_portmap(struct container *c, uint16_t host_port, uint16_t cont_port)
+static int cni_portmap(struct container *c, uint16_t host_port, uint16_t cont_port)
 {
     if (!c || !c->in_use) return -EINVAL;
 
@@ -186,7 +186,7 @@ int cni_portmap(struct container *c, uint16_t host_port, uint16_t cont_port)
 }
 
 /* Remove a port mapping */
-int cni_portmap_remove(struct container *c, uint16_t host_port)
+static int cni_portmap_remove(struct container *c, uint16_t host_port)
 {
     if (!c || !c->in_use) return -EINVAL;
 
@@ -225,7 +225,7 @@ int cni_portmap_remove(struct container *c, uint16_t host_port)
 }
 
 /* C58: Firewall setup — install default rules for container */
-int cni_firewall_setup(struct container *c)
+static int cni_firewall_setup(struct container *c)
 {
     if (!c || !c->in_use) return -EINVAL;
 
@@ -259,7 +259,7 @@ int cni_firewall_setup(struct container *c)
 }
 
 /* C61: Loopback setup */
-int cni_loopback(struct container *c)
+static int cni_loopback(struct container *c)
 {
     if (!c || !c->in_use) return -EINVAL;
     kprintf("[CNI] Loopback configured for %s\n", c->id);
@@ -267,7 +267,7 @@ int cni_loopback(struct container *c)
 }
 
 /* C59: Tuning — set MTU */
-int cni_tuning(struct container *c, int mtu)
+static int cni_tuning(struct container *c, int mtu)
 {
     if (!c || !c->in_use) return -EINVAL;
     kprintf("[CNI] MTU set to %d for %s\n", mtu > 0 ? mtu : 1500, c->id);
@@ -275,7 +275,7 @@ int cni_tuning(struct container *c, int mtu)
 }
 
 /* C63: Container netns lifecycle */
-int container_create_netns(struct container *c)
+static int container_create_netns(struct container *c)
 {
     if (!c || !c->in_use) return -EINVAL;
 
@@ -290,7 +290,7 @@ int container_create_netns(struct container *c)
     return 0;
 }
 
-int container_delete_netns(struct container *c)
+static int container_delete_netns(struct container *c)
 {
     if (!c || !c->in_use) return -EINVAL;
 
@@ -302,7 +302,7 @@ int container_delete_netns(struct container *c)
 }
 
 /* C64: Container DNS — write /etc/resolv.conf */
-int container_setup_dns(struct container *c, const char **nameservers,
+static int container_setup_dns(struct container *c, const char **nameservers,
                          int num_ns, const char *search_domain)
 {
     if (!c || !c->in_use) return -EINVAL;
@@ -335,7 +335,7 @@ int container_setup_dns(struct container *c, const char **nameservers,
 }
 
 /* C65: Container /etc/hosts management */
-int container_setup_hosts(struct container *c, const char *hostname,
+static int container_setup_hosts(struct container *c, const char *hostname,
                            const char **extra_hosts, int num_extra)
 {
     if (!c || !c->in_use) return -EINVAL;
@@ -390,7 +390,7 @@ static struct container_rule g_container_rules[MAX_CONTAINER_RULES];
 static int g_container_rule_count = 0;
 
 /* Add a container-specific firewall rule */
-int container_rule_add(const char *cont_id, const struct nf_rule *rule)
+static int container_rule_add(const char *cont_id, const struct nf_rule *rule)
 {
     if (!cont_id || !rule) return -EINVAL;
     if (g_container_rule_count >= MAX_CONTAINER_RULES)
@@ -415,7 +415,7 @@ int container_rule_add(const char *cont_id, const struct nf_rule *rule)
 }
 
 /* Remove all rules for a container */
-int container_rule_flush(const char *cont_id)
+static int container_rule_flush(const char *cont_id)
 {
     if (!cont_id) return -EINVAL;
     int removed = 0;
@@ -473,7 +473,7 @@ static int bridge_find_free(void)
 /* net_create_bridge: Create a virtual bridge with the given name.
  * Registers it in the bridge table.  Returns 0 on success.
  */
-int net_create_bridge(const char *name)
+static int net_create_bridge(const char *name)
 {
     if (!name || !name[0]) return -EINVAL;
 
@@ -498,7 +498,7 @@ int net_create_bridge(const char *name)
  * Only succeeds if no containers are attached.
  * Returns 0 on success.
  */
-int net_delete_bridge(const char *name)
+static int net_delete_bridge(const char *name)
 {
     if (!name) return -EINVAL;
 
@@ -521,7 +521,7 @@ int net_delete_bridge(const char *name)
  * Creates a veth pair between the bridge and the container.
  * Returns 0 on success.
  */
-int net_attach(const char *cont, const char *net)
+static int net_attach(const char *cont, const char *net)
 {
     if (!cont || !net) return -EINVAL;
 
@@ -564,7 +564,7 @@ int net_attach(const char *cont, const char *net)
  * Removes the veth pair and frees the attachment slot.
  * Returns 0 on success.
  */
-int net_detach(const char *cont, const char *net)
+static int net_detach(const char *cont, const char *net)
 {
     if (!cont || !net) return -EINVAL;
 

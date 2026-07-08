@@ -108,7 +108,7 @@ static int proxy_round_robin(struct service *svc)
 }
 
 /* C87: Update iptables DNAT targets to reflect current endpoints */
-int service_update_endpoints(struct service *svc)
+static int service_update_endpoints(struct service *svc)
 {
     if (!svc) return -EINVAL;
 
@@ -134,7 +134,7 @@ int service_update_endpoints(struct service *svc)
  * ═══════════════════════════════════════════════════════════════════════ */
 
 /* C88: Forward a TCP connection to a backend pod in userspace */
-int proxy_userspace_forward(struct service *svc, int client_fd)
+static int proxy_userspace_forward(struct service *svc, int client_fd)
 {
     if (!svc || client_fd < 0) return -EINVAL;
 
@@ -234,7 +234,7 @@ int proxy_userspace_forward(struct service *svc, int client_fd)
 }
 
 /* C88: Start a userspace proxy listener on a given address:port */
-int proxy_userspace_listen(uint32_t bind_ip, uint16_t port,
+static int proxy_userspace_listen(uint32_t bind_ip, uint16_t port,
                             struct service *svc)
 {
     if (!svc) return -EINVAL;
@@ -306,7 +306,7 @@ static int dns_num_records = 0;
 static spinlock_t dns_lock;
 
 /* C89: Register a DNS record for a service */
-int dns_register(const char *name, uint32_t ip, uint16_t port, int type)
+static int dns_register(const char *name, uint32_t ip, uint16_t port, int type)
 {
     if (!name || dns_num_records >= DNS_MAX_RECORDS) return -EINVAL;
 
@@ -324,7 +324,7 @@ int dns_register(const char *name, uint32_t ip, uint16_t port, int type)
 }
 
 /* C89: Resolve a service name to IP */
-int dns_resolve(const char *name, uint32_t *ip_out, uint16_t *port_out)
+static int dns_resolve(const char *name, uint32_t *ip_out, uint16_t *port_out)
 {
     if (!name || !ip_out) return -ENOENT;
 
@@ -342,7 +342,7 @@ int dns_resolve(const char *name, uint32_t *ip_out, uint16_t *port_out)
 }
 
 /* C89: Unregister a DNS record */
-int dns_unregister(const char *name)
+static int dns_unregister(const char *name)
 {
     if (!name) return -EINVAL;
 
@@ -362,7 +362,7 @@ int dns_unregister(const char *name)
 }
 
 /* C89: Format for cluster DNS query — <service>.<namespace>.svc.cluster.local */
-int dns_format_service_name(char *buf, size_t bufsz,
+static int dns_format_service_name(char *buf, size_t bufsz,
                             const char *service, const char *namespace)
 {
     if (!buf || !service || !namespace) return -EINVAL;
@@ -376,7 +376,7 @@ int dns_format_service_name(char *buf, size_t bufsz,
  * ═══════════════════════════════════════════════════════════════════════ */
 
 /* C90: Generate environment variables for a service (e.g., REDIS_PORT=tcp://...) */
-int service_generate_env(const struct service *svc,
+static int service_generate_env(const struct service *svc,
                          char *env_buf, size_t bufsz, int *offset)
 {
     if (!svc || !env_buf || !offset) return -EINVAL;
@@ -443,7 +443,7 @@ struct volume {
 static struct volume volume_table[MAX_VOLUMES];
 
 /* C91: Volume init */
-int volume_init(void)
+static int volume_init(void)
 {
     /* Ensure volumes directory exists */
     vfs_create(VOLUMES_DIR, VFS_TYPE_DIR);
@@ -453,7 +453,7 @@ int volume_init(void)
 }
 
 /* C91: Create a volume */
-int volume_create(const char *name, int driver, uint64_t size_limit)
+static int volume_create(const char *name, int driver, uint64_t size_limit)
 {
     if (!name) return -EINVAL;
 
@@ -492,7 +492,7 @@ int volume_create(const char *name, int driver, uint64_t size_limit)
 }
 
 /* C91: Delete a volume */
-int volume_delete(const char *name)
+static int volume_delete(const char *name)
 {
     if (!name) return -EINVAL;
 
@@ -507,7 +507,7 @@ int volume_delete(const char *name)
 }
 
 /* C92: Attach a volume to a container (bind-mount into rootfs) */
-int volume_attach(const char *name, const char *container_rootfs,
+static int volume_attach(const char *name, const char *container_rootfs,
                   const char *mountpoint)
 {
     if (!name || !container_rootfs || !mountpoint) return -EINVAL;
@@ -539,7 +539,7 @@ int volume_attach(const char *name, const char *container_rootfs,
 }
 
 /* C91: List all volumes */
-int volume_list(char *buf, size_t bufsz)
+static int volume_list(char *buf, size_t bufsz)
 {
     int pos = 0;
     for (int i = 0; i < MAX_VOLUMES; i++) {
@@ -583,7 +583,7 @@ struct configmap {
 static struct configmap configmap_table[MAX_CONFIGMAPS];
 
 /* C93: Create or update a ConfigMap */
-int configmap_create(const char *name)
+static int configmap_create(const char *name)
 {
     if (!name) return -EINVAL;
     for (int i = 0; i < MAX_CONFIGMAPS; i++) {
@@ -603,7 +603,7 @@ int configmap_create(const char *name)
 }
 
 /* C93: Set a ConfigMap key-value pair */
-int configmap_set(const char *name, const char *key, const char *value)
+static int configmap_set(const char *name, const char *key, const char *value)
 {
     if (!name || !key || !value) return -EINVAL;
 
@@ -636,7 +636,7 @@ int configmap_set(const char *name, const char *key, const char *value)
 }
 
 /* C93: Apply ConfigMap as files inside container at /etc/config/ */
-int configmap_apply_as_files(const char *cm_name, const char *container_rootfs)
+static int configmap_apply_as_files(const char *cm_name, const char *container_rootfs)
 {
     if (!cm_name || !container_rootfs) return -EINVAL;
 
@@ -664,7 +664,7 @@ int configmap_apply_as_files(const char *cm_name, const char *container_rootfs)
 }
 
 /* C93: Apply ConfigMap as environment variables */
-int configmap_apply_as_env(const char *cm_name,
+static int configmap_apply_as_env(const char *cm_name,
                            char *env_buf, size_t bufsz, int *offset)
 {
     if (!cm_name || !env_buf || !offset) return -EINVAL;
@@ -721,7 +721,7 @@ struct secret {
 static struct secret secret_table[MAX_SECRETS];
 
 /* C94: Initialize secrets subsystem with cluster master key */
-int secrets_init(const uint8_t *master_key, size_t key_len)
+static int secrets_init(const uint8_t *master_key, size_t key_len)
 {
     if (!master_key || key_len < 32) return -EINVAL;
 
@@ -733,7 +733,7 @@ int secrets_init(const uint8_t *master_key, size_t key_len)
 }
 
 /* C94: Create a secret */
-int secret_create(const char *name)
+static int secret_create(const char *name)
 {
     if (!name || !secrets_initialised) return -EINVAL;
 
@@ -754,7 +754,7 @@ int secret_create(const char *name)
 }
 
 /* C94: Set a secret key-value pair (encrypts the value) */
-int secret_set(const char *name, const char *key,
+static int secret_set(const char *name, const char *key,
                const uint8_t *value, size_t value_len)
 {
     if (!name || !key || !value || !secrets_initialised) return -EINVAL;
@@ -796,7 +796,7 @@ int secret_set(const char *name, const char *key,
 }
 
 /* C94: Get a secret value (decrypts if needed) */
-int secret_get(const char *name, const char *key,
+static int secret_get(const char *name, const char *key,
                uint8_t *value_out, size_t *value_len_out)
 {
     if (!name || !key || !value_out || !value_len_out || !secrets_initialised)
@@ -824,7 +824,7 @@ int secret_get(const char *name, const char *key,
 }
 
 /* C94: Apply secrets as tmpfs files inside container */
-int secrets_apply_as_files(const char *secret_name, const char *container_rootfs)
+static int secrets_apply_as_files(const char *secret_name, const char *container_rootfs)
 {
     if (!secret_name || !container_rootfs) return -EINVAL;
 
@@ -877,7 +877,7 @@ struct metadata {
 };
 
 /* C95: Add a label to a container/pod/service */
-int metadata_add_label(struct metadata *md, const char *key, const char *value)
+static int metadata_add_label(struct metadata *md, const char *key, const char *value)
 {
     if (!md || !key || !value) return -EINVAL;
 
@@ -896,7 +896,7 @@ int metadata_add_label(struct metadata *md, const char *key, const char *value)
 }
 
 /* C95: Get label value */
-const char *metadata_get_label(struct metadata *md, const char *key)
+static const char *metadata_get_label(struct metadata *md, const char *key)
 {
     if (!md || !key) return NULL;
     for (int i = 0; i < md->num_labels; i++) {
@@ -907,7 +907,7 @@ const char *metadata_get_label(struct metadata *md, const char *key)
 }
 
 /* C95: Add an annotation */
-int metadata_add_annotation(struct metadata *md, const char *key, const char *value)
+static int metadata_add_annotation(struct metadata *md, const char *key, const char *value)
 {
     if (!md || !key || !value) return -EINVAL;
 
@@ -926,7 +926,7 @@ int metadata_add_annotation(struct metadata *md, const char *key, const char *va
 }
 
 /* C95: Label selector matching — equality (=), inequality (!=), in(), notin() */
-int metadata_match_selector(struct metadata *md, const char *selector_key,
+static int metadata_match_selector(struct metadata *md, const char *selector_key,
                             const char *selector_val, int op)
 {
     if (!md || !selector_key) return 0;
@@ -945,7 +945,7 @@ int metadata_match_selector(struct metadata *md, const char *selector_key,
  *  Initialisation
  * ═══════════════════════════════════════════════════════════════════════ */
 
-int service_proxy_init(void)
+static int service_proxy_init(void)
 {
     if (services_initialised) return 0;
 
@@ -959,7 +959,7 @@ int service_proxy_init(void)
 }
 
 /* ── Stub: proxy_register ─────────────────────────────── */
-int proxy_register(const char *name, int port)
+static int proxy_register(const char *name, int port)
 {
     (void)name;
     (void)port;
@@ -967,14 +967,14 @@ int proxy_register(const char *name, int port)
     return 0;
 }
 /* ── Stub: proxy_unregister ─────────────────────────────── */
-int proxy_unregister(const char *name)
+static int proxy_unregister(const char *name)
 {
     (void)name;
     kprintf("[container] proxy_unregister: not yet implemented\n");
     return 0;
 }
 /* ── Stub: proxy_forward ─────────────────────────────── */
-int proxy_forward(void *req, void *resp)
+static int proxy_forward(void *req, void *resp)
 {
     (void)req;
     (void)resp;

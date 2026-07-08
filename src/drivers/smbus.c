@@ -148,7 +148,7 @@ int smbus_block_read(uint8_t addr, uint8_t cmd, uint8_t *buf, int len) {
 module_init(smbus_init);
 
 /* ── Stub: smbus_read_block ─────────────────────────────── */
-int smbus_read_block(__maybe_unused int addr, __maybe_unused int reg, __maybe_unused void *buf, __maybe_unused size_t len)
+static int smbus_read_block(__maybe_unused int addr, __maybe_unused int reg, __maybe_unused void *buf, __maybe_unused size_t len)
 {
     kprintf("[SMBUS] smbus_read_block: not yet implemented\n");
     return 0;

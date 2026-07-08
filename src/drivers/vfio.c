@@ -96,7 +96,7 @@ static int vfio_group_write(void *priv, const void *data, uint32_t size)
 
 /* ── VFIO ioctl handler (called from enhanced sys_ioctl) ───────────── */
 
-int vfio_ioctl(int container_id, int cmd, uint64_t arg)
+static int vfio_ioctl(int container_id, int cmd, uint64_t arg)
 {
     if (!vfio_initialized) return -1;
 
@@ -330,7 +330,7 @@ int vfio_init(void)
 struct vfio_info;
 
 /* ── Stub: vfio_dma_map ─────────────────────────────── */
-int vfio_dma_map(int container_id, uint64_t iova, uint64_t size, uint64_t phys_addr, int prot)
+static int vfio_dma_map(int container_id, uint64_t iova, uint64_t size, uint64_t phys_addr, int prot)
 {
     (void)container_id;
     (void)iova;
@@ -342,7 +342,7 @@ int vfio_dma_map(int container_id, uint64_t iova, uint64_t size, uint64_t phys_a
 }
 
 /* ── Stub: vfio_dma_unmap ─────────────────────────────── */
-int vfio_dma_unmap(int container_id, uint64_t iova, uint64_t size)
+static int vfio_dma_unmap(int container_id, uint64_t iova, uint64_t size)
 {
     (void)container_id;
     (void)iova;
@@ -352,7 +352,7 @@ int vfio_dma_unmap(int container_id, uint64_t iova, uint64_t size)
 }
 
 /* ── Stub: vfio_irq_set ─────────────────────────────── */
-int vfio_irq_set(int device_fd, unsigned int index, unsigned int start, unsigned int count, uint32_t flags, void *data)
+static int vfio_irq_set(int device_fd, unsigned int index, unsigned int start, unsigned int count, uint32_t flags, void *data)
 {
     (void)device_fd;
     (void)index;
@@ -365,7 +365,7 @@ int vfio_irq_set(int device_fd, unsigned int index, unsigned int start, unsigned
 }
 
 /* ── Stub: vfio_get_info ─────────────────────────────── */
-int vfio_get_info(int container_id, struct vfio_info *info)
+static int vfio_get_info(int container_id, struct vfio_info *info)
 {
     (void)container_id;
     (void)info;
@@ -374,7 +374,7 @@ int vfio_get_info(int container_id, struct vfio_info *info)
 }
 
 /* ── Stub: vfio_set_info ─────────────────────────────── */
-int vfio_set_info(int container_id, struct vfio_info *info)
+static int vfio_set_info(int container_id, struct vfio_info *info)
 {
     (void)container_id;
     (void)info;

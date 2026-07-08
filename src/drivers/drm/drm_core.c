@@ -939,7 +939,7 @@ int drm_ioctl_mode_page_flip(struct drm_device *dev,
 }
 
 /* ── Implement: drm_open ─────────────────────────────── */
-int drm_open(void *dev, void *file)
+static int drm_open(void *dev, void *file)
 {
     (void)dev;
     (void)file;
@@ -949,7 +949,7 @@ int drm_open(void *dev, void *file)
     return 0;
 }
 /* ── Implement: drm_release ─────────────────────────────── */
-int drm_release(void *dev, void *file)
+static int drm_release(void *dev, void *file)
 {
     (void)dev;
     (void)file;

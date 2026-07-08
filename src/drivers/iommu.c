@@ -429,15 +429,15 @@ int iommu_init(void)
 
 /* ── Public IOMMU status API ─────────────────────────────────────────── */
 
-int iommu_is_active(void) {
+static int iommu_is_active(void) {
     return g_iommu_initialized;
 }
 
-int iommu_unit_count(void) {
+static int iommu_unit_count(void) {
     return g_num_iommu_units;
 }
 
-int iommu_device_count(void) {
+static int iommu_device_count(void) {
     return g_num_iommu_devs;
 }
 
@@ -558,20 +558,20 @@ int iommu_is_enabled(void)
 struct device;
 
 /* ── Stub: iommu_enable ─────────────────────────────── */
-int iommu_enable(void)
+static int iommu_enable(void)
 {
     kprintf("[IOMMU] iommu_enable: not yet implemented\n");
     return 0;
 }
 
 /* ── Stub: iommu_disable ─────────────────────────────── */
-void iommu_disable(void)
+static void iommu_disable(void)
 {
     kprintf("[IOMMU] iommu_disable: not yet implemented\n");
 }
 
 /* ── Stub: iommu_attach_device ─────────────────────────────── */
-int iommu_attach_device(struct iommu_domain *domain, struct device *dev)
+static int iommu_attach_device(struct iommu_domain *domain, struct device *dev)
 {
     (void)domain;
     (void)dev;
@@ -580,7 +580,7 @@ int iommu_attach_device(struct iommu_domain *domain, struct device *dev)
 }
 
 /* ── Stub: iommu_detach_device ─────────────────────────────── */
-void iommu_detach_device(struct iommu_domain *domain, struct device *dev)
+static void iommu_detach_device(struct iommu_domain *domain, struct device *dev)
 {
     (void)domain;
     (void)dev;
@@ -588,7 +588,7 @@ void iommu_detach_device(struct iommu_domain *domain, struct device *dev)
 }
 
 /* ── Stub: iommu_set_fault_handler ─────────────────────────────── */
-int iommu_set_fault_handler(struct iommu_domain *domain, void *handler, void *data)
+static int iommu_set_fault_handler(struct iommu_domain *domain, void *handler, void *data)
 {
     (void)domain;
     (void)handler;
@@ -598,7 +598,7 @@ int iommu_set_fault_handler(struct iommu_domain *domain, void *handler, void *da
 }
 
 /* ── Stub: iommu_get_domain_for_dev ─────────────────────────────── */
-struct iommu_domain *iommu_get_domain_for_dev(struct device *dev)
+static struct iommu_domain *iommu_get_domain_for_dev(struct device *dev)
 {
     (void)dev;
     kprintf("[IOMMU] iommu_get_domain_for_dev: not yet implemented\n");
@@ -606,7 +606,7 @@ struct iommu_domain *iommu_get_domain_for_dev(struct device *dev)
 }
 
 /* ── Stub: iommu_iova_to_phys ─────────────────────────────── */
-uint64_t iommu_iova_to_phys(struct iommu_domain *domain, unsigned long iova)
+static uint64_t iommu_iova_to_phys(struct iommu_domain *domain, unsigned long iova)
 {
     (void)domain;
     (void)iova;
@@ -615,14 +615,14 @@ uint64_t iommu_iova_to_phys(struct iommu_domain *domain, unsigned long iova)
 }
 
 /* ── Stub: iommu_resume ─────────────────────────────── */
-int iommu_resume(void)
+static int iommu_resume(void)
 {
     kprintf("[IOMMU] iommu_resume: not yet implemented\n");
     return 0;
 }
 
 /* ── Stub: iommu_suspend ─────────────────────────────── */
-int iommu_suspend(void)
+static int iommu_suspend(void)
 {
     kprintf("[IOMMU] iommu_suspend: not yet implemented\n");
     return 0;

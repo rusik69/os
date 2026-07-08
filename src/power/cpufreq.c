@@ -321,7 +321,7 @@ int cpupstate_is_present(void)
 
 /* ─── Compute current actual frequency from APERF/MPERF ────────────── */
 
-uint32_t cpufreq_get_actual_freq_khz(void)
+static uint32_t cpufreq_get_actual_freq_khz(void)
 {
     if (!g_cpufreq.present || g_base_freq_khz == 0)
         return 0;
@@ -609,7 +609,7 @@ static int g_boost_enabled = 1;  /* enabled by default */
  * On Intel CPUs, bit 38 indicates whether turbo boost is available.
  * Returns 1 if boost is supported, 0 otherwise.
  */
-int cpufreq_detect_boost(void)
+static int cpufreq_detect_boost(void)
 {
     if (g_boost_supported)
         return 1;
@@ -636,7 +636,7 @@ int cpufreq_detect_boost(void)
  * Writes to IA32_PERF_CTL to re-enable IDA (Intel Dynamic Acceleration)
  * which allows the CPU to enter turbo states.
  */
-void cpufreq_boost_enable(void)
+static void cpufreq_boost_enable(void)
 {
     if (!g_boost_supported)
         return;
@@ -661,7 +661,7 @@ void cpufreq_boost_enable(void)
  * Writes to IA32_PERF_CTL to disable IDA, forcing the CPU to stay
  * at the maximum non-turbo P-state.
  */
-void cpufreq_boost_disable(void)
+static void cpufreq_boost_disable(void)
 {
     if (!g_boost_supported)
         return;
@@ -683,7 +683,7 @@ void cpufreq_boost_disable(void)
 /**
  * cpufreq_boost_is_enabled — Check if boost is currently enabled.
  */
-int cpufreq_boost_is_enabled(void)
+static int cpufreq_boost_is_enabled(void)
 {
     return g_boost_enabled;
 }
@@ -691,7 +691,7 @@ int cpufreq_boost_is_enabled(void)
 /**
  * cpufreq_boost_is_supported — Check if boost is supported.
  */
-int cpufreq_boost_is_supported(void)
+static int cpufreq_boost_is_supported(void)
 {
     return g_boost_supported;
 }
@@ -711,7 +711,7 @@ static int g_fast_switch_supported = 0;
  *
  * Returns 1 if supported, 0 otherwise.
  */
-int cpufreq_fast_switch_supported(void)
+static int cpufreq_fast_switch_supported(void)
 {
     return g_fast_switch_supported;
 }
@@ -722,7 +722,7 @@ int cpufreq_fast_switch_supported(void)
  * Checks for MSR_PERF_CTL support (present on most modern x86 CPUs).
  * This is assumed available if P-states were probed.
  */
-void cpufreq_detect_fast_switch(void)
+static void cpufreq_detect_fast_switch(void)
 {
     if (!g_cpufreq.present) {
         g_fast_switch_supported = 0;
@@ -747,7 +747,7 @@ void cpufreq_detect_fast_switch(void)
  *
  * Returns 0 on success, negative on error.
  */
-int cpufreq_fast_switch(uint32_t target_freq_khz)
+static int cpufreq_fast_switch(uint32_t target_freq_khz)
 {
     if (!g_fast_switch_supported)
         return -1;
@@ -786,20 +786,20 @@ struct cpufreq_driver;
 struct cpufreq_freqs;
 
 /* ── cpufreq_driver_init ─────────────────────────────── */
-int cpufreq_driver_init(void)
+static int cpufreq_driver_init(void)
 {
     /* cpupstate_init() already handles MSR-based P-state setup */
     return cpupstate_init();
 }
 
 /* ── cpufreq_driver_exit ─────────────────────────────── */
-void cpufreq_driver_exit(void)
+static void cpufreq_driver_exit(void)
 {
     /* Nothing to clean up — MSRs are reset on reboot */
 }
 
 /* ── cpufreq_register_driver ─────────────────────────────── */
-int cpufreq_register_driver(struct cpufreq_driver *driver)
+static int cpufreq_register_driver(struct cpufreq_driver *driver)
 {
     (void)driver;
     /* Single-driver system: we already have cpupstate */
@@ -809,14 +809,14 @@ int cpufreq_register_driver(struct cpufreq_driver *driver)
 }
 
 /* ── cpufreq_unregister_driver ─────────────────────────────── */
-int cpufreq_unregister_driver(struct cpufreq_driver *driver)
+static int cpufreq_unregister_driver(struct cpufreq_driver *driver)
 {
     (void)driver;
     return 0;
 }
 
 /* ── cpufreq_update_policy ─────────────────────────────── */
-int cpufreq_update_policy(unsigned int cpu)
+static int cpufreq_update_policy(unsigned int cpu)
 {
     (void)cpu;
     /* Re-apply current governor policy */
@@ -841,7 +841,7 @@ struct freq_notifier {
 static struct freq_notifier g_freq_notifiers[MAX_FREQ_NOTIFIERS];
 static int g_freq_notifier_count = 0;
 
-int cpufreq_register_transition_notifier(void (*fn)(struct cpufreq_freqs *))
+static int cpufreq_register_transition_notifier(void (*fn)(struct cpufreq_freqs *))
 {
     if (!fn) return -EINVAL;
     if (g_freq_notifier_count >= MAX_FREQ_NOTIFIERS)
@@ -852,7 +852,7 @@ int cpufreq_register_transition_notifier(void (*fn)(struct cpufreq_freqs *))
     return 0;
 }
 
-void cpufreq_notify_transition(struct cpufreq_freqs *freqs)
+static void cpufreq_notify_transition(struct cpufreq_freqs *freqs)
 {
     if (!freqs) return;
     for (int i = 0; i < g_freq_notifier_count; i++) {
@@ -875,7 +875,7 @@ struct cpufreq_stats {
 
 static struct cpufreq_stats g_cpufreq_stats;
 
-int cpufreq_stats_create_table(unsigned int cpu)
+static int cpufreq_stats_create_table(unsigned int cpu)
 {
     (void)cpu;
     memset(&g_cpufreq_stats, 0, sizeof(g_cpufreq_stats));
@@ -884,14 +884,14 @@ int cpufreq_stats_create_table(unsigned int cpu)
     return 0;
 }
 
-void cpufreq_stats_delete_table(unsigned int cpu)
+static void cpufreq_stats_delete_table(unsigned int cpu)
 {
     (void)cpu;
     memset(&g_cpufreq_stats, 0, sizeof(g_cpufreq_stats));
 }
 
 /* Update stats on frequency transition */
-void cpufreq_stats_record_transition(int old_state, int new_state)
+static void cpufreq_stats_record_transition(int old_state, int new_state)
 {
     (void)old_state;
     g_cpufreq_stats.total_transitions++;
@@ -902,7 +902,7 @@ void cpufreq_stats_record_transition(int old_state, int new_state)
  * Find the closest P-state index for a given target frequency.
  * Returns the index (0-based) on success, negative on error.
  */
-int cpufreq_freq_table_lookup(uint32_t target_freq_khz)
+static int cpufreq_freq_table_lookup(uint32_t target_freq_khz)
 {
     if (!g_cpufreq.present || g_cpufreq.num_states <= 0)
         return -1;
@@ -924,21 +924,21 @@ int cpufreq_freq_table_lookup(uint32_t target_freq_khz)
 }
 
 /* ── Min/max frequency helpers ─────────────────────────────────────── */
-uint32_t cpufreq_get_max_freq_khz(void)
+static uint32_t cpufreq_get_max_freq_khz(void)
 {
     if (!g_cpufreq.present || g_cpufreq.num_states <= 0)
         return 0;
     return g_cpufreq.states[0].core_freq * 1000;
 }
 
-uint32_t cpufreq_get_min_freq_khz(void)
+static uint32_t cpufreq_get_min_freq_khz(void)
 {
     if (!g_cpufreq.present || g_cpufreq.num_states <= 0)
         return 0;
     return g_cpufreq.states[g_cpufreq.num_states - 1].core_freq * 1000;
 }
 
-uint32_t cpufreq_get_transition_latency_us(void)
+static uint32_t cpufreq_get_transition_latency_us(void)
 {
     if (!g_cpufreq.present || g_cpufreq.num_states <= 0)
         return 0;

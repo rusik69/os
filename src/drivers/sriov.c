@@ -160,7 +160,7 @@ int sriov_disable_vfs(int bus, int dev, int func)
     return 0;
 }
 
-void sriov_init(void)
+static void sriov_init(void)
 {
     memset(sriov_pf_states, 0, sizeof(sriov_pf_states));
     sriov_pf_count = 0;
@@ -170,14 +170,14 @@ void sriov_init(void)
 module_init(sriov_init);
 
 /* ── Stub: sriov_enable ─────────────────────────────── */
-int sriov_enable(void *dev)
+static int sriov_enable(void *dev)
 {
     (void)dev;
     kprintf("[SRIOV] sriov_enable: not yet implemented\n");
     return 0;
 }
 /* ── Stub: sriov_disable ─────────────────────────────── */
-int sriov_disable(void *dev)
+static int sriov_disable(void *dev)
 {
     (void)dev;
     kprintf("[SRIOV] sriov_disable: not yet implemented\n");

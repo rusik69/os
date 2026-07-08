@@ -31,7 +31,7 @@ int aio_fsync(int fd)
     return 0;
 }
 /* ── Stub: aio_poll ─────────────────────────────── */
-int aio_poll(int fd, int events)
+static int aio_poll(int fd, int events)
 {
     (void)fd;
     (void)events;

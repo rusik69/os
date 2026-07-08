@@ -41,7 +41,7 @@ static int storage_initialised = 0;
  *  Initialisation
  * ═══════════════════════════════════════════════════════════════════════ */
 
-int storage_init(void)
+static int storage_init(void)
 {
     if (storage_initialised) return 0;
 
@@ -81,7 +81,7 @@ static int layer_find_by_hash(const char *hash)
  *  C19: Create a layer from a source directory
  * ═══════════════════════════════════════════════════════════════════════ */
 
-int storage_create_layer(const char *source_dir, const char *hash,
+static int storage_create_layer(const char *source_dir, const char *hash,
                          const char *parent_hash)
 {
     if (!source_dir || !hash) return -EINVAL;
@@ -125,7 +125,7 @@ int storage_create_layer(const char *source_dir, const char *hash,
  *  C22: Import a layer (register existing directory)
  * ═══════════════════════════════════════════════════════════════════════ */
 
-int storage_import_layer(const char *layer_dir, const char *hash,
+static int storage_import_layer(const char *layer_dir, const char *hash,
                          const char *parent_hash)
 {
     if (!layer_dir || !hash) return -EINVAL;
@@ -142,7 +142,7 @@ int storage_import_layer(const char *layer_dir, const char *hash,
  *  C23: Export a layer (indicate it's registered)
  * ═══════════════════════════════════════════════════════════════════════ */
 
-int storage_export_layer(const char *hash, const char *output_path)
+static int storage_export_layer(const char *hash, const char *output_path)
 {
     int idx = layer_find_by_hash(hash);
     if (idx < 0) return idx;
@@ -158,7 +158,7 @@ int storage_export_layer(const char *hash, const char *output_path)
  *  C24: Mount container rootfs from image layers via overlay
  * ═══════════════════════════════════════════════════════════════════════ */
 
-int storage_mount_rootfs(struct container *c, const char **layer_hashes,
+static int storage_mount_rootfs(struct container *c, const char **layer_hashes,
                           int num_layers)
 {
     if (!c || !c->in_use || !layer_hashes || num_layers <= 0)
@@ -208,7 +208,7 @@ int storage_mount_rootfs(struct container *c, const char **layer_hashes,
  *  C25: Commit container changes as new layer
  * ═══════════════════════════════════════════════════════════════════════ */
 
-int storage_commit_layer(struct container *c, const char *new_hash)
+static int storage_commit_layer(struct container *c, const char *new_hash)
 {
     if (!c || !c->in_use || !new_hash) return -EINVAL;
 
@@ -273,7 +273,7 @@ static void compute_chain_id(const char *parent_chain_id,
 }
 
 /* Store diff ID and compute chain ID for a layer */
-int storage_set_diff_id(const char *hash, const char *diff_id)
+static int storage_set_diff_id(const char *hash, const char *diff_id)
 {
     if (!hash || !diff_id) return -EINVAL;
     int idx = layer_find_by_hash(hash);
@@ -298,7 +298,7 @@ int storage_set_diff_id(const char *hash, const char *diff_id)
 }
 
 /* Retrieve chain ID for a layer */
-const char *storage_get_chain_id(const char *hash)
+static const char *storage_get_chain_id(const char *hash)
 {
     int idx = layer_find_by_hash(hash);
     if (idx < 0) return NULL;
@@ -306,7 +306,7 @@ const char *storage_get_chain_id(const char *hash)
 }
 
 /* Retrieve diff ID for a layer */
-const char *storage_get_diff_id(const char *hash)
+static const char *storage_get_diff_id(const char *hash)
 {
     int idx = layer_find_by_hash(hash);
     if (idx < 0) return NULL;
@@ -317,7 +317,7 @@ const char *storage_get_diff_id(const char *hash)
  *  C28: Layer deduplication — check if diff ID already exists
  * ═══════════════════════════════════════════════════════════════════════ */
 
-int storage_deduplicate_layer(const char *hash)
+static int storage_deduplicate_layer(const char *hash)
 {
     int idx = layer_find_by_hash(hash);
     if (idx < 0) return idx;
@@ -366,7 +366,7 @@ int storage_deduplicate_layer(const char *hash)
  *  C29: Garbage collect unreferenced layers
  * ═══════════════════════════════════════════════════════════════════════ */
 
-int storage_gc_layers(void)
+static int storage_gc_layers(void)
 {
     int removed = 0;
     for (int i = 0; i < MAX_LAYERS; i++) {
@@ -386,7 +386,7 @@ int storage_gc_layers(void)
  *  C30: Set storage quota (track in descriptor)
  * ═══════════════════════════════════════════════════════════════════════ */
 
-int storage_set_quota(struct container *c, uint64_t max_bytes)
+static int storage_set_quota(struct container *c, uint64_t max_bytes)
 {
     if (!c || !c->in_use) return -EINVAL;
     c->memory_limit = max_bytes;
@@ -399,12 +399,12 @@ int storage_set_quota(struct container *c, uint64_t max_bytes)
  *  Lookup
  * ═══════════════════════════════════════════════════════════════════════ */
 
-int storage_layer_exists(const char *hash)
+static int storage_layer_exists(const char *hash)
 {
     return layer_find_by_hash(hash) >= 0;
 }
 
-int storage_layer_refcount_inc(const char *hash)
+static int storage_layer_refcount_inc(const char *hash)
 {
     int idx = layer_find_by_hash(hash);
     if (idx < 0) return idx;
@@ -412,7 +412,7 @@ int storage_layer_refcount_inc(const char *hash)
     return 0;
 }
 
-int storage_layer_refcount_dec(const char *hash)
+static int storage_layer_refcount_dec(const char *hash)
 {
     int idx = layer_find_by_hash(hash);
     if (idx < 0) return idx;
@@ -458,7 +458,7 @@ static int volume_find_free(void)
  * The volume is backed by a directory under /var/lib/containers/volumes/.
  * Returns 0 on success, negative errno on failure.
  */
-int storage_create_volume(const char *name, size_t size)
+static int storage_create_volume(const char *name, size_t size)
 {
     if (!name || !name[0]) return -EINVAL;
     if (volume_find(name) >= 0) return -EEXIST;
@@ -508,7 +508,7 @@ int storage_create_volume(const char *name, size_t size)
  * Removes the backing directory and frees the volume slot.
  * Returns 0 on success, negative errno on failure.
  */
-int storage_delete_volume(const char *name)
+static int storage_delete_volume(const char *name)
 {
     if (!name) return -EINVAL;
 
@@ -538,7 +538,7 @@ int storage_delete_volume(const char *name)
  * Uses vfs bind-mount semantics (or symlink if bind not available).
  * Returns 0 on success, negative errno on failure.
  */
-int storage_mount_volume(const char *name, const char *target)
+static int storage_mount_volume(const char *name, const char *target)
 {
     if (!name || !target) return -EINVAL;
 
@@ -560,7 +560,7 @@ int storage_mount_volume(const char *name, const char *target)
 /* storage_unmount_volume: Unmount a volume from its target.
  * Returns 0 on success, negative errno on failure.
  */
-int storage_unmount_volume(const char *name)
+static int storage_unmount_volume(const char *name)
 {
     if (!name) return -EINVAL;
 

@@ -1176,7 +1176,7 @@ int process_spawn(const char *path, char *const argv[], char *const envp[])
 }
 
 /* ── Stub: elf_load_segment ─────────────────────────────── */
-int elf_load_segment(const void *elf, void *dest, size_t size)
+static int elf_load_segment(const void *elf, void *dest, size_t size)
 {
     (void)elf;
     (void)dest;
@@ -1185,7 +1185,7 @@ int elf_load_segment(const void *elf, void *dest, size_t size)
     return 0;
 }
 /* ── Stub: elf_parse_header ─────────────────────────────── */
-int elf_parse_header(const void *data, size_t size)
+static int elf_parse_header(const void *data, size_t size)
 {
     (void)data;
     (void)size;
@@ -1193,7 +1193,7 @@ int elf_parse_header(const void *data, size_t size)
     return 0;
 }
 /* ── Stub: elf_lookup_sym ─────────────────────────────── */
-void* elf_lookup_sym(const void *elf, const char *name)
+static void* elf_lookup_sym(const void *elf, const char *name)
 {
     (void)elf;
     (void)name;
@@ -1201,7 +1201,7 @@ void* elf_lookup_sym(const void *elf, const char *name)
     return NULL;
 }
 /* ── Stub: elf_relocate ─────────────────────────────── */
-int elf_relocate(const void *elf, const char *symname, void *addr)
+static int elf_relocate(const void *elf, const char *symname, void *addr)
 {
     (void)elf;
     (void)symname;

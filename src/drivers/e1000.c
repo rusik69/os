@@ -1847,7 +1847,7 @@ device_initcall(e1000_init);
 #endif
 
 /* ── e1000_open: Enable RX/TX, set up interrupts ──────────── */
-int e1000_open(void *dev)
+static int e1000_open(void *dev)
 {
     (void)dev;
     if (!nic_present) return -EIO;
@@ -1874,7 +1874,7 @@ int e1000_open(void *dev)
 }
 
 /* ── e1000_stop: Disable RX/TX, mask interrupts ──────────── */
-int e1000_stop(void *dev)
+static int e1000_stop(void *dev)
 {
     (void)dev;
     if (!nic_present) return -EIO;

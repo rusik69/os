@@ -297,7 +297,7 @@ int drm_dumb_dirtyfb(struct drm_device *dev,
  * this is a no-op.  On non-coherent systems this would flush
  * the CPU cache for the buffer range.
  */
-int drm_dumb_sync(void *file, void *dev, void *args)
+static int drm_dumb_sync(void *file, void *dev, void *args)
 {
     (void)file;
     (void)dev;

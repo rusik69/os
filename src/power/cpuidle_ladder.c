@@ -262,7 +262,7 @@ static const struct cpuidle_governor ladder_governor = {
 
 /* ── Public API ─────────────────────────────────────────────────────── */
 
-int cpuidle_ladder_init(void)
+static int cpuidle_ladder_init(void)
 {
     for (int i = 0; i < LADDER_MAX_CPUS; i++) {
         ladder_state[i].current_state_idx = 0;

@@ -158,7 +158,7 @@ static struct f_ms_config g_ms_config;
  *  LUN operations
  * ═══════════════════════════════════════════════════════════════════ */
 
-int f_ms_add_lun(uint32_t size_mb, int readonly)
+static int f_ms_add_lun(uint32_t size_mb, int readonly)
 {
     if (g_ms_config.num_luns >= MAX_LUNS)
         return -1;
@@ -438,7 +438,7 @@ static int handle_write10(struct f_ms_config *cfg,
  *  BOT command dispatch
  * ═══════════════════════════════════════════════════════════════════ */
 
-int f_ms_submit_command(const struct bot_cbw *cbw,
+static int f_ms_submit_command(const struct bot_cbw *cbw,
                          uint8_t *data_buf, uint32_t *data_len)
 {
     if (!cbw || !data_buf || !data_len)
@@ -511,7 +511,7 @@ int f_ms_submit_command(const struct bot_cbw *cbw,
  *  Module init/exit
  * ═══════════════════════════════════════════════════════════════════ */
 
-void f_mass_storage_init(void)
+static void f_mass_storage_init(void)
 {
     memset(&g_ms_config, 0, sizeof(g_ms_config));
     spinlock_init(&g_ms_config.lock);
@@ -522,7 +522,7 @@ void f_mass_storage_init(void)
     kprintf("[f_ms] USB gadget mass storage function initialised\n");
 }
 
-void f_mass_storage_exit(void)
+static void f_mass_storage_exit(void)
 {
     /* Free all LUN memory buffers */
     for (int i = 0; i < g_ms_config.num_luns; i++) {
@@ -537,7 +537,7 @@ void f_mass_storage_exit(void)
 }
 
 /* ── Implement: f_mass_storage_read ─────────────────────────────── */
-int f_mass_storage_read(void *file, void *buf, size_t count)
+static int f_mass_storage_read(void *file, void *buf, size_t count)
 {
     (void)file;
     if (!buf || count == 0) return -EINVAL;
@@ -556,7 +556,7 @@ int f_mass_storage_read(void *file, void *buf, size_t count)
     return (int)to_read;
 }
 /* ── Implement: f_mass_storage_write ─────────────────────────────── */
-int f_mass_storage_write(void *file, const void *buf, size_t count)
+static int f_mass_storage_write(void *file, const void *buf, size_t count)
 {
     (void)file;
     if (!buf || count == 0) return -EINVAL;

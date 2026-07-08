@@ -327,7 +327,7 @@ uint64_t dma_buf_phys(struct dma_buf *dmabuf)
  * ═══════════════════════════════════════════════════════════════ */
 
 /* ── Stub: dma_buf_begin_cpu_access ────────────────── */
-int dma_buf_begin_cpu_access(struct dma_buf *dmabuf, enum dma_data_direction dir)
+static int dma_buf_begin_cpu_access(struct dma_buf *dmabuf, enum dma_data_direction dir)
 {
     (void)dmabuf;
     (void)dir;

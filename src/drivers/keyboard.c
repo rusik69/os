@@ -374,21 +374,21 @@ EXPORT_SYMBOL(keyboard_is_down);
 EXPORT_SYMBOL(keyboard_init);
 
 /* ── Open keyboard device ────────────────────────────── */
-int keyboard_open(void *dev)
+static int keyboard_open(void *dev)
 {
     (void)dev;
     return 0;
 }
 
 /* ── Close keyboard device ──────────────────────────── */
-int keyboard_close(void *dev)
+static int keyboard_close(void *dev)
 {
     (void)dev;
     return 0;
 }
 
 /* ── Keyboard ioctl ─────────────────────────────────── */
-int keyboard_ioctl(int cmd, void *arg)
+static int keyboard_ioctl(int cmd, void *arg)
 {
     (void)cmd;
     (void)arg;

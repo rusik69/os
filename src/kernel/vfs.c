@@ -1426,7 +1426,7 @@ int vfs_fset_time(int fd, const struct timespec times[2])
 }
 
 /* ── vfs_utimes — set atime/mtime via set_time callback ────────── */
-int vfs_utimes(const char *path, const uint64_t atime, const uint64_t mtime)
+static int vfs_utimes(const char *path, const uint64_t atime, const uint64_t mtime)
 {
     struct timespec ts[2];
     ts[0].tv_sec = atime;
@@ -1910,7 +1910,7 @@ int vfs_check_perms(const char *path, uint16_t uid, uint16_t gid,
  * (other execute) bits based on the caller's identity.
  * Returns 0 if execute is allowed, -EACCES otherwise.
  * This is the low-level check used by the exec path. */
-int exec_check_binary_perms(const char *path, uint16_t uid, uint16_t gid)
+static int exec_check_binary_perms(const char *path, uint16_t uid, uint16_t gid)
 {
     return vfs_check_perms(path, uid, gid, VFS_X_OK);
 }

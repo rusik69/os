@@ -669,7 +669,7 @@ static void vi_read_capabilities(void)
 /*
  * virtio_input_has_event — returns 1 if a buffered event is available
  */
-int virtio_input_has_event(void)
+static int virtio_input_has_event(void)
 {
 	return event_head != event_tail;
 }
@@ -678,7 +678,7 @@ int virtio_input_has_event(void)
  * virtio_input_read_event — retrieve the next buffered input event
  * Returns 0 on success, -1 if no events available.
  */
-int virtio_input_read_event(struct virtio_input_event *ev)
+static int virtio_input_read_event(struct virtio_input_event *ev)
 {
 	int ret = -1;
 
@@ -702,7 +702,7 @@ int virtio_input_read_event(struct virtio_input_event *ev)
  * virtio_input_get_contact — get the current state of a touch slot
  * Returns 0 on success, -1 if slot is empty or out of range.
  */
-int virtio_input_get_contact(int slot, struct vi_contact *out)
+static int virtio_input_get_contact(int slot, struct vi_contact *out)
 {
 	if (!out || slot < 0 || slot >= MT_MAX_SLOTS)
 		return -EINVAL;
@@ -717,7 +717,7 @@ int virtio_input_get_contact(int slot, struct vi_contact *out)
 /*
  * virtio_input_num_contacts — returns number of active touch points
  */
-int virtio_input_num_contacts(void)
+static int virtio_input_num_contacts(void)
 {
 	return mt_num_contacts;
 }
@@ -726,7 +726,7 @@ int virtio_input_num_contacts(void)
  * virtio_input_read — legacy stub: reads raw event bytes into buf
  * (compatible with existing callers)
  */
-int virtio_input_read(void *dev, void *buf, size_t count)
+static int virtio_input_read(void *dev, void *buf, size_t count)
 {
 	struct virtio_input_event ev;
 
@@ -745,7 +745,7 @@ int virtio_input_read(void *dev, void *buf, size_t count)
 /*
  * virtio_input_ioctl — legacy stub for future ioctl support
  */
-int virtio_input_ioctl(void *dev, int cmd, void *arg)
+static int virtio_input_ioctl(void *dev, int cmd, void *arg)
 {
 	(void)dev;
 	(void)cmd;
@@ -756,7 +756,7 @@ int virtio_input_ioctl(void *dev, int cmd, void *arg)
 /*
  * virtio_input_poll — called periodically to collect events from device
  */
-void virtio_input_poll(void)
+static void virtio_input_poll(void)
 {
 	if (!input_present || !event_vq.initialized)
 		return;
@@ -766,7 +766,7 @@ void virtio_input_poll(void)
 
 /* ── Init / probe ──────────────────────────────────────────────── */
 
-void virtio_input_init(void)
+static void virtio_input_init(void)
 {
 	struct pci_device dev;
 	struct virtio_input_config cfg;

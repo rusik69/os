@@ -36,7 +36,7 @@ struct i6300esb_wdt {
 static struct i6300esb_wdt i6300esb;
 
 /* Initialize the watchdog */
-int i6300esb_init_wdt(uint16_t io_base)
+static int i6300esb_init_wdt(uint16_t io_base)
 {
     i6300esb.io_base = io_base;
     i6300esb.timeout_sec = 30; /* default 30s */
@@ -47,7 +47,7 @@ int i6300esb_init_wdt(uint16_t io_base)
 }
 
 /* Start the watchdog */
-int i6300esb_start(void)
+static int i6300esb_start(void)
 {
     if (i6300esb.running)
         return -EBUSY;
@@ -66,7 +66,7 @@ int i6300esb_start(void)
 }
 
 /* Pet the watchdog (prevent reset) */
-int i6300esb_pet(void)
+static int i6300esb_pet(void)
 {
     if (!i6300esb.running)
         return -EINVAL;
@@ -80,7 +80,7 @@ int i6300esb_pet(void)
 }
 
 /* Stop the watchdog */
-int i6300esb_stop(void)
+static int i6300esb_stop(void)
 {
     if (!i6300esb.running)
         return -EINVAL;
@@ -94,7 +94,7 @@ int i6300esb_stop(void)
 }
 
 /* Set timeout */
-int i6300esb_set_timeout(int seconds)
+static int i6300esb_set_timeout(int seconds)
 {
     if (seconds < 1) seconds = 1;
     if (seconds > 255) seconds = 255;
@@ -108,7 +108,7 @@ int i6300esb_set_timeout(int seconds)
 }
 
 /* Probe PCI device */
-int i6300esb_probe(int bus, int dev, int func)
+static int i6300esb_probe(int bus, int dev, int func)
 {
     uint16_t vendor = (uint16_t)(pci_read(bus, dev, func, 0) & 0xFFFF);
     uint16_t device = (uint16_t)(pci_read(bus, dev, func, 2) & 0xFFFF);
@@ -125,14 +125,14 @@ int i6300esb_probe(int bus, int dev, int func)
     return 0;
 }
 
-void i6300esb_init(void)
+static void i6300esb_init(void)
 {
     memset(&i6300esb, 0, sizeof(i6300esb));
     kprintf("[OK] Intel 6300ESB Watchdog Timer\n");
 }
 
 /* ── Keepalive (pet) the watchdog ───────────────────── */
-int i6300esb_keepalive(void *dev)
+static int i6300esb_keepalive(void *dev)
 {
     (void)dev;
     if (!i6300esb.running)
@@ -145,7 +145,7 @@ int i6300esb_keepalive(void *dev)
 }
 
 /* ── Get time left before watchdog reset ────────────── */
-int i6300esb_get_timeleft(void *dev, int *timeleft)
+static int i6300esb_get_timeleft(void *dev, int *timeleft)
 {
     (void)dev;
     if (!i6300esb.running || !timeleft)

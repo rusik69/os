@@ -40,7 +40,7 @@ void pagecache_store(uint64_t block, const uint8_t *data) {
 }
 
 /* ── Stub: pagecache_read ─────────────────────────────── */
-int pagecache_read(void *mapping, uint64_t index, void *page)
+static int pagecache_read(void *mapping, uint64_t index, void *page)
 {
     (void)mapping;
     (void)index;
@@ -49,7 +49,7 @@ int pagecache_read(void *mapping, uint64_t index, void *page)
     return 0;
 }
 /* ── Stub: pagecache_write ─────────────────────────────── */
-int pagecache_write(void *mapping, uint64_t index, const void *page)
+static int pagecache_write(void *mapping, uint64_t index, const void *page)
 {
     (void)mapping;
     (void)index;
@@ -58,7 +58,7 @@ int pagecache_write(void *mapping, uint64_t index, const void *page)
     return 0;
 }
 /* ── Stub: pagecache_evict ─────────────────────────────── */
-int pagecache_evict(void *mapping, uint64_t index)
+static int pagecache_evict(void *mapping, uint64_t index)
 {
     (void)mapping;
     (void)index;

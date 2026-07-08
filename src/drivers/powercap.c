@@ -29,7 +29,7 @@ static int powercap_zone_count = 0;
 static spinlock_t powercap_lock;
 
 /* Register a powercap zone */
-int powercap_register_zone(const char *name, uint64_t max_power_uw)
+static int powercap_register_zone(const char *name, uint64_t max_power_uw)
 {
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&powercap_lock, &irq_flags);
@@ -59,7 +59,7 @@ int powercap_register_zone(const char *name, uint64_t max_power_uw)
 }
 
 /* Set power limit */
-int powercap_set_limit_uw(int zone_id, uint64_t limit_uw)
+static int powercap_set_limit_uw(int zone_id, uint64_t limit_uw)
 {
     if (zone_id < 0 || zone_id >= powercap_zone_count || !powercap_zones[zone_id].active)
         return -ENODEV;
@@ -75,7 +75,7 @@ int powercap_set_limit_uw(int zone_id, uint64_t limit_uw)
 }
 
 /* Get power limit */
-uint64_t powercap_get_limit_uw(int zone_id)
+static uint64_t powercap_get_limit_uw(int zone_id)
 {
     if (zone_id < 0 || zone_id >= powercap_zone_count || !powercap_zones[zone_id].active)
         return 0;
@@ -84,7 +84,7 @@ uint64_t powercap_get_limit_uw(int zone_id)
 }
 
 /* Update energy counter (call from RAPL interrupt or polling) */
-void powercap_update_energy(int zone_id, uint64_t energy_uj)
+static void powercap_update_energy(int zone_id, uint64_t energy_uj)
 {
     if (zone_id < 0 || zone_id >= powercap_zone_count || !powercap_zones[zone_id].active)
         return;
@@ -96,7 +96,7 @@ void powercap_update_energy(int zone_id, uint64_t energy_uj)
 }
 
 /* Get energy consumed */
-uint64_t powercap_get_energy_uj(int zone_id)
+static uint64_t powercap_get_energy_uj(int zone_id)
 {
     if (zone_id < 0 || zone_id >= powercap_zone_count || !powercap_zones[zone_id].active)
         return 0;
@@ -104,7 +104,7 @@ uint64_t powercap_get_energy_uj(int zone_id)
     return powercap_zones[zone_id].energy_counter;
 }
 
-void powercap_init(void)
+static void powercap_init(void)
 {
     memset(powercap_zones, 0, sizeof(powercap_zones));
     powercap_zone_count = 0;
@@ -123,14 +123,14 @@ void powercap_init(void)
 }
 
 /* ── Stub: powercap_unregister_zone ─────────────────────────────── */
-int powercap_unregister_zone(void *zone)
+static int powercap_unregister_zone(void *zone)
 {
     (void)zone;
     kprintf("[powercap] powercap_unregister_zone: not yet implemented\n");
     return 0;
 }
 /* ── Stub: powercap_read_energy ─────────────────────────────── */
-uint64_t powercap_read_energy(void *zone)
+static uint64_t powercap_read_energy(void *zone)
 {
     (void)zone;
     kprintf("[powercap] powercap_read_energy: not yet implemented\n");

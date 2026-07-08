@@ -320,14 +320,14 @@ int vhost_scsi_init(void)
 module_init(vhost_scsi_init);
 
 /* ── Stub: vhost_scsi_start ─────────────────────────────── */
-int vhost_scsi_start(void *dev)
+static int vhost_scsi_start(void *dev)
 {
     (void)dev;
     kprintf("[vhost] vhost_scsi_start: not yet implemented\n");
     return 0;
 }
 /* ── Stub: vhost_scsi_stop ─────────────────────────────── */
-int vhost_scsi_stop(void *dev)
+static int vhost_scsi_stop(void *dev)
 {
     (void)dev;
     kprintf("[vhost] vhost_scsi_stop: not yet implemented\n");

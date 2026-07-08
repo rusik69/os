@@ -88,7 +88,7 @@ uint32_t ramdisk_get_sectors(void) {
 module_init(ramdisk_init);
 
 /* ── Byte-level read using sector-based backing store ─── */
-int ramdisk_read(void *buf, size_t count, uint64_t offset)
+static int ramdisk_read(void *buf, size_t count, uint64_t offset)
 {
     if (!buf || !count || !ramdisk_ready)
         return -EINVAL;
@@ -122,7 +122,7 @@ int ramdisk_read(void *buf, size_t count, uint64_t offset)
 }
 
 /* ── Byte-level write using sector-based backing store ─── */
-int ramdisk_write(const void *buf, size_t count, uint64_t offset)
+static int ramdisk_write(const void *buf, size_t count, uint64_t offset)
 {
     if (!buf || !count || !ramdisk_ready)
         return -EINVAL;
@@ -161,7 +161,7 @@ int ramdisk_write(const void *buf, size_t count, uint64_t offset)
 }
 
 /* ── ioctl stub (ramdisk does not support any ioctls) ─── */
-int ramdisk_ioctl(int cmd, void *arg)
+static int ramdisk_ioctl(int cmd, void *arg)
 {
     (void)cmd;
     (void)arg;

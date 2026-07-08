@@ -2312,7 +2312,7 @@ MODULE_ALIAS("pci:v00001AF4d00001000sv*sd*bc*sc*i*");
 #endif /* MODULE */
 
 /* ── virtio_net_open: Enable RX queue, set DRIVER_OK, start receiving ── */
-int virtio_net_open(void *dev)
+static int virtio_net_open(void *dev)
 {
     (void)dev;
     if (!vnet_present) return -EIO;
@@ -2334,7 +2334,7 @@ int virtio_net_open(void *dev)
 }
 
 /* ── virtio_net_stop: Reset device, stop interface ────────── */
-int virtio_net_stop(void *dev)
+static int virtio_net_stop(void *dev)
 {
     (void)dev;
     if (!vnet_present) return -EIO;
@@ -2349,7 +2349,7 @@ int virtio_net_stop(void *dev)
 }
 
 /* ── virtio_net_xmit: Send a packet via virtqueue TX ──────── */
-int virtio_net_xmit(void *skb, void *dev)
+static int virtio_net_xmit(void *skb, void *dev)
 {
     (void)dev;
     if (!vnet_present) return -EIO;

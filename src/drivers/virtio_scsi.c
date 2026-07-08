@@ -92,7 +92,7 @@ static inline uint32_t vs_inl(uint8_t off) {
 
 /* ── Init ──────────────────────────────────────────────────────── */
 
-void virtio_scsi_init(void)
+static void virtio_scsi_init(void)
 {
     struct pci_device dev;
     if (pci_find_device(VIRTIO_VENDOR, VIRTIO_SCSI_DEVICE, &dev) < 0)
@@ -133,7 +133,7 @@ MODULE_VERSION("1.0");
 #endif
 
 /* ── Stub: virtio_scsi_cmd ─────────────────────────────── */
-int virtio_scsi_cmd(void *dev, void *cmd)
+static int virtio_scsi_cmd(void *dev, void *cmd)
 {
     (void)dev;
     (void)cmd;
@@ -141,7 +141,7 @@ int virtio_scsi_cmd(void *dev, void *cmd)
     return 0;
 }
 /* ── Stub: virtio_scsi_task_mgt ─────────────────────────────── */
-int virtio_scsi_task_mgt(void *dev, void *tm)
+static int virtio_scsi_task_mgt(void *dev, void *tm)
 {
     (void)dev;
     (void)tm;

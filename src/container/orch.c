@@ -84,7 +84,7 @@ static int pod_create_pause(struct pod *p)
 }
 
 /* C81: Create a pod */
-int pod_create(const char *name, const char *uid)
+static int pod_create(const char *name, const char *uid)
 {
     if (!name) return -EINVAL;
 
@@ -113,7 +113,7 @@ int pod_create(const char *name, const char *uid)
 }
 
 /* C83: Start a pod — start all containers */
-int pod_start(const char *name)
+static int pod_start(const char *name)
 {
     for (int i = 0; i < MAX_PODS; i++) {
         struct pod *p = &pod_table[i];
@@ -133,7 +133,7 @@ int pod_start(const char *name)
 }
 
 /* C83: Stop a pod — stop all containers */
-int pod_stop(const char *name)
+static int pod_stop(const char *name)
 {
     for (int i = 0; i < MAX_PODS; i++) {
         struct pod *p = &pod_table[i];
@@ -152,7 +152,7 @@ int pod_stop(const char *name)
 }
 
 /* Add container to pod */
-int pod_add_container(const char *pod_name, struct container *c)
+static int pod_add_container(const char *pod_name, struct container *c)
 {
     if (!pod_name || !c) return -EINVAL;
 
@@ -186,7 +186,7 @@ struct service {
 #define MAX_SERVICES 32
 static struct service service_table[MAX_SERVICES];
 
-int service_create(const char *name, uint16_t port, uint16_t target_port,
+static int service_create(const char *name, uint16_t port, uint16_t target_port,
                     const char *selector)
 {
     int idx;
@@ -341,7 +341,7 @@ static int handle_container_inspect(const char *id, char *resp, int resp_size)
 }
 
 /* C66: Main API dispatcher */
-void orch_api_handle_request(const char *method, const char *path,
+static void orch_api_handle_request(const char *method, const char *path,
                               const char *body,
                               char *response, int resp_size)
 {
@@ -381,7 +381,7 @@ void orch_api_handle_request(const char *method, const char *path,
  *  C75: System info
  * ═══════════════════════════════════════════════════════════════════════ */
 
-int orch_system_info(char *buf, int buf_size)
+static int orch_system_info(char *buf, int buf_size)
 {
     int n = snprintf(buf, (size_t)buf_size,
         "{"
@@ -424,7 +424,7 @@ static const char *container_state_str(int state)
  * Returns 1 if the container is healthy (process running), 0 if unhealthy,
  * negative errno on error.
  */
-int container_health_check(struct container *c)
+static int container_health_check(struct container *c)
 {
     if (!c || !c->in_use) return -EINVAL;
 
@@ -464,7 +464,7 @@ int container_health_check(struct container *c)
  *
  * Returns 0 on successful restart, negative errno on failure.
  */
-int container_restart(struct container *c)
+static int container_restart(struct container *c)
 {
     if (!c || !c->in_use) return -EINVAL;
 
@@ -515,7 +515,7 @@ int container_restart(struct container *c)
  *
  * Returns the number of containers restarted.
  */
-int container_health_check_all(void)
+static int container_health_check_all(void)
 {
     int restarted = 0;
     int unhealthy = 0;
@@ -546,7 +546,7 @@ int container_health_check_all(void)
 
 /* ── Initialisation ─────────────────────────────────────────────────── */
 
-int orch_init(void)
+static int orch_init(void)
 {
     if (orch_initialised) return 0;
 
@@ -559,14 +559,14 @@ int orch_init(void)
 }
 
 /* ── orch_deploy ─────────────────────────────── */
-int orch_deploy(const char *spec)
+static int orch_deploy(const char *spec)
 {
     (void)spec;
     kprintf("[orch] Deploy: %s\n", spec ? spec : "default");
     return 0;
 }
 /* ── orch_scale ─────────────────────────────── */
-int orch_scale(const char *name, int replicas)
+static int orch_scale(const char *name, int replicas)
 {
     (void)name;
     (void)replicas;
@@ -574,7 +574,7 @@ int orch_scale(const char *name, int replicas)
     return 0;
 }
 /* ── orch_rollback ─────────────────────────────── */
-int orch_rollback(const char *name)
+static int orch_rollback(const char *name)
 {
     (void)name;
     kprintf("[orch] Rollback %s\n", name ? name : "?");

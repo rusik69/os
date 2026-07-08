@@ -46,7 +46,7 @@ static int g_num_stream_eps = 0;
 /*
  * xhci_streams_init — initialize stream subsystem
  */
-int xhci_streams_init(void)
+static int xhci_streams_init(void)
 {
     memset(g_ep_streams, 0, sizeof(g_ep_streams));
     g_num_stream_eps = 0;
@@ -57,7 +57,7 @@ int xhci_streams_init(void)
  * xhci_streams_capable — check controller supports streams
  * Returns: bit 0 = primary stream support, bit 1 = secondary
  */
-int xhci_streams_capable(struct xhci_controller *xhci)
+static int xhci_streams_capable(struct xhci_controller *xhci)
 {
     if (!xhci) return 0;
     uint32_t hccparams = xhci_read32(xhci, xhci->cap_regs, 0x10);  /* HCCPARAMS */
@@ -72,7 +72,7 @@ int xhci_streams_capable(struct xhci_controller *xhci)
  * @num_streams: number of streams to allocate
  * Returns: stream ID base, or <0 on error
  */
-int xhci_ep_alloc_streams(int ep_index, int num_streams)
+static int xhci_ep_alloc_streams(int ep_index, int num_streams)
 {
     if (ep_index < 1 || ep_index > 31) return -EINVAL;
     if (num_streams < 2 || num_streams > MAX_STREAMS_PER_EP) return -EINVAL;
@@ -105,7 +105,7 @@ int xhci_ep_alloc_streams(int ep_index, int num_streams)
 /*
  * xhci_ep_free_streams — free streams for endpoint
  */
-int xhci_ep_free_streams(int ep_index)
+static int xhci_ep_free_streams(int ep_index)
 {
     for (int i = 0; i < g_num_stream_eps; i++) {
         if (g_ep_streams[i].ep_index == ep_index) {
@@ -125,7 +125,7 @@ int xhci_ep_free_streams(int ep_index)
 }
 
 /* ── Stub: xhci_streams_alloc ─────────────────────────────── */
-int xhci_streams_alloc(void *dev, int count)
+static int xhci_streams_alloc(void *dev, int count)
 {
     (void)dev;
     (void)count;
@@ -133,7 +133,7 @@ int xhci_streams_alloc(void *dev, int count)
     return 0;
 }
 /* ── Stub: xhci_streams_free ─────────────────────────────── */
-int xhci_streams_free(void *dev)
+static int xhci_streams_free(void *dev)
 {
     (void)dev;
     kprintf("[XHCI] xhci_streams_free: not yet implemented\n");

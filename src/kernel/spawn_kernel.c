@@ -194,7 +194,7 @@ int process_spawn_kernel(const char *path) {
 }
 
 /* ── Stub: spawn_kernel_thread ─────────────────────────────── */
-int spawn_kernel_thread(void *fn, void *arg, const char *name)
+static int spawn_kernel_thread(void *fn, void *arg, const char *name)
 {
     (void)fn;
     (void)arg;
@@ -203,7 +203,7 @@ int spawn_kernel_thread(void *fn, void *arg, const char *name)
     return 0;
 }
 /* ── Stub: spawn_kernel_task ─────────────────────────────── */
-int spawn_kernel_task(void *fn, void *arg)
+static int spawn_kernel_task(void *fn, void *arg)
 {
     (void)fn;
     (void)arg;
@@ -211,7 +211,7 @@ int spawn_kernel_task(void *fn, void *arg)
     return 0;
 }
 /* ── Stub: spawn_kernel_wait ─────────────────────────────── */
-int spawn_kernel_wait(int pid)
+static int spawn_kernel_wait(int pid)
 {
     (void)pid;
     kprintf("[spawn] spawn_kernel_wait: not yet implemented\n");

@@ -6,6 +6,9 @@
 /* Forward declaration — process.h is included by calling code */
 struct process;
 
+/* Forward declaration — linux_binprm is only used opaquely via pointer */
+struct linux_binprm;
+
 /* System-wide capability bounding set management */
 
 /* Initialize the global bounding set (all caps allowed by default) */
@@ -98,5 +101,8 @@ int cap_sys_boot_check(void);
 
 /* Convenience: CAP_SYS_MODULE check for init_module/finit_module */
 int cap_sys_module_check(void);
+
+/* Set capabilities during exec (called from exec.c) */
+int cap_bprm_set_creds(struct linux_binprm *bprm);
 
 #endif /* CAPS_H */

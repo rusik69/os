@@ -466,7 +466,7 @@ void sched_deadline_dump(int cpu)
 }
 
 /* ── deadline_task_new ─────────────────────────────────── */
-int deadline_task_new(struct process *proc)
+static int deadline_task_new(struct process *proc)
 {
     if (!proc) return -EINVAL;
 
@@ -494,7 +494,7 @@ int deadline_task_new(struct process *proc)
 }
 
 /* ── deadline_task_delta ───────────────────────────────── */
-int deadline_task_delta(struct process *proc, int delta)
+static int deadline_task_delta(struct process *proc, int delta)
 {
     if (!proc || !proc->dl_active) return -EINVAL;
 
@@ -522,7 +522,7 @@ int deadline_task_delta(struct process *proc, int delta)
 }
 
 /* ── deadline_push_task ────────────────────────────────── */
-int deadline_push_task(struct process *proc)
+static int deadline_push_task(struct process *proc)
 {
     if (!proc) return -EINVAL;
 
@@ -533,7 +533,7 @@ int deadline_push_task(struct process *proc)
 }
 
 /* ── deadline_pull_task ────────────────────────────────── */
-struct process *deadline_pull_task(int cpu)
+static struct process *deadline_pull_task(int cpu)
 {
     (void)cpu;
     /* Try to pull a deadline task from another CPU's runqueue.
@@ -542,7 +542,7 @@ struct process *deadline_pull_task(int cpu)
 }
 
 /* ── deadline_task_tick ────────────────────────────────── */
-void deadline_task_tick(struct process *proc)
+static void deadline_task_tick(struct process *proc)
 {
     if (!proc || !proc->dl_active) return;
 

@@ -35,7 +35,7 @@ void cmos_init(void) {
 module_init(cmos_init);
 
 /* ── Get time from CMOS RTC ─────────────────────────── */
-int cmos_get_time(void *time)
+static int cmos_get_time(void *time)
 {
     struct rtc_time *t = (struct rtc_time *)time;
     if (!t)
@@ -68,7 +68,7 @@ int cmos_get_time(void *time)
 }
 
 /* ── Set time in CMOS RTC ───────────────────────────── */
-int cmos_set_time(const void *time)
+static int cmos_set_time(const void *time)
 {
     const struct rtc_time *t = (const struct rtc_time *)time;
     if (!t)

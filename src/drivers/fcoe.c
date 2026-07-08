@@ -407,31 +407,31 @@ void fcoe_poll(void)
  * ═══════════════════════════════════════════════════════════════ */
 
 /* ── Stub: fcoe_xmit ───────────────────────────────── */
-int fcoe_xmit(__maybe_unused void *skb, __maybe_unused void *dev)
+static int fcoe_xmit(__maybe_unused void *skb, __maybe_unused void *dev)
 {
     kprintf("[FCOE] fcoe_xmit: not yet implemented\n");
     return 0;
 }
 /* ── Stub: fcoe_recv ───────────────────────────────── */
-int fcoe_recv(__maybe_unused void *skb)
+static int fcoe_recv(__maybe_unused void *skb)
 {
     kprintf("[FCOE] fcoe_recv: not yet implemented\n");
     return 0;
 }
 /* ── Stub: fcoe_vlan_create ────────────────────────── */
-int fcoe_vlan_create(__maybe_unused void *dev, __maybe_unused uint16_t vlan_id)
+static int fcoe_vlan_create(__maybe_unused void *dev, __maybe_unused uint16_t vlan_id)
 {
     kprintf("[FCOE] fcoe_vlan_create: not yet implemented\n");
     return 0;
 }
 /* ── Stub: fcoe_vlan_destroy ───────────────────────── */
-int fcoe_vlan_destroy(__maybe_unused void *dev, __maybe_unused uint16_t vlan_id)
+static int fcoe_vlan_destroy(__maybe_unused void *dev, __maybe_unused uint16_t vlan_id)
 {
     kprintf("[FCOE] fcoe_vlan_destroy: not yet implemented\n");
     return 0;
 }
 /* ── Stub: fcoe_netdev_event ───────────────────────── */
-int fcoe_netdev_event(void *this, unsigned long event, void *ptr)
+static int fcoe_netdev_event(void *this, unsigned long event, void *ptr)
 {
     (void)this;
     (void)event;

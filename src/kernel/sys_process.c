@@ -8,6 +8,7 @@
  * Each function returns (uint64_t)(int64_t)-errno on error, or a
  * non-negative value on success.
  */
+#define KERNEL_INTERNAL
 #include "syscall.h"
 #include "process.h"
 #include "signal.h"

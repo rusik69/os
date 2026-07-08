@@ -619,7 +619,7 @@ static int gpu_check_response_fence(const struct virtio_gpu_ctrl_hdr *resp)
 
 /* ── Public API: fence management ──────────────────────────────── */
 
-uint32_t virtio_gpu_fence_create(uint32_t ctx_id)
+static uint32_t virtio_gpu_fence_create(uint32_t ctx_id)
 {
     struct gpu_fence *f;
 
@@ -648,7 +648,7 @@ uint32_t virtio_gpu_fence_create(uint32_t ctx_id)
     return f->id;
 }
 
-int virtio_gpu_fence_destroy(uint32_t fence_id)
+static int virtio_gpu_fence_destroy(uint32_t fence_id)
 {
     struct gpu_fence *f;
 
@@ -668,7 +668,7 @@ int virtio_gpu_fence_destroy(uint32_t fence_id)
     return 0;
 }
 
-int virtio_gpu_fence_wait(uint32_t fence_id, uint64_t timeout_ms)
+static int virtio_gpu_fence_wait(uint32_t fence_id, uint64_t timeout_ms)
 {
     struct gpu_fence *f;
 
@@ -705,7 +705,7 @@ int virtio_gpu_fence_wait(uint32_t fence_id, uint64_t timeout_ms)
     return 0;
 }
 
-int virtio_gpu_fence_poll(uint32_t fence_id)
+static int virtio_gpu_fence_poll(uint32_t fence_id)
 {
     struct gpu_fence *f;
 
@@ -735,7 +735,7 @@ int virtio_gpu_fence_poll(uint32_t fence_id)
     return 0;  /* Not yet signaled */
 }
 
-int virtio_gpu_fence_signal(uint32_t fence_id)
+static int virtio_gpu_fence_signal(uint32_t fence_id)
 {
     struct gpu_fence *f;
 
@@ -760,7 +760,7 @@ int virtio_gpu_fence_signal(uint32_t fence_id)
 
 /* ── Public API: 3D submission with fence support ──────────────── */
 
-int virtio_gpu_submit_3d(uint32_t ctx_id,
+static int virtio_gpu_submit_3d(uint32_t ctx_id,
                           const void *cmd_buf, uint32_t cmd_size,
                           uint32_t nr_resources,
                           const uint32_t *resource_ids,
@@ -824,7 +824,7 @@ int virtio_gpu_submit_3d(uint32_t ctx_id,
 
 /* ── Public API: context management ───────────────────────────── */
 
-int virtio_gpu_ctx_create(const char *name, uint32_t name_len)
+static int virtio_gpu_ctx_create(const char *name, uint32_t name_len)
 {
     struct virtio_gpu_ctx_create cmd;
     struct virtio_gpu_ctrl_hdr resp;
@@ -866,7 +866,7 @@ int virtio_gpu_ctx_create(const char *name, uint32_t name_len)
     return (int)ctx->id;
 }
 
-int virtio_gpu_ctx_destroy(uint32_t ctx_id)
+static int virtio_gpu_ctx_destroy(uint32_t ctx_id)
 {
     struct virtio_gpu_ctrl_hdr cmd;
     struct virtio_gpu_ctrl_hdr resp;
@@ -906,7 +906,7 @@ int virtio_gpu_ctx_destroy(uint32_t ctx_id)
     return 0;
 }
 
-int virtio_gpu_ctx_attach_resource(uint32_t ctx_id, uint32_t resource_id)
+static int virtio_gpu_ctx_attach_resource(uint32_t ctx_id, uint32_t resource_id)
 {
     struct virtio_gpu_ctx_resource cmd;
     struct virtio_gpu_ctrl_hdr resp;
@@ -943,7 +943,7 @@ int virtio_gpu_ctx_attach_resource(uint32_t ctx_id, uint32_t resource_id)
     return 0;
 }
 
-int virtio_gpu_ctx_detach_resource(uint32_t ctx_id, uint32_t resource_id)
+static int virtio_gpu_ctx_detach_resource(uint32_t ctx_id, uint32_t resource_id)
 {
     struct virtio_gpu_ctx_resource cmd;
     struct virtio_gpu_ctrl_hdr resp;
@@ -977,7 +977,7 @@ int virtio_gpu_ctx_detach_resource(uint32_t ctx_id, uint32_t resource_id)
 
 /* ── Public API: 3D resource management ───────────────────────── */
 
-int virtio_gpu_resource_create_3d(uint32_t resource_id,
+static int virtio_gpu_resource_create_3d(uint32_t resource_id,
                                    uint32_t target, uint32_t format,
                                    uint32_t bind,
                                    uint32_t width, uint32_t height,
@@ -1052,7 +1052,7 @@ int virtio_gpu_resource_create_3d(uint32_t resource_id,
     return (int)res->id;
 }
 
-int virtio_gpu_resource_create_blob(uint32_t resource_id,
+static int virtio_gpu_resource_create_blob(uint32_t resource_id,
                                      uint32_t blob_mem, uint32_t blob_flags,
                                      uint64_t blob_id, uint64_t size)
 {
@@ -1103,7 +1103,7 @@ int virtio_gpu_resource_create_blob(uint32_t resource_id,
     return (int)res->id;
 }
 
-int virtio_gpu_resource_attach_backing(uint32_t resource_id,
+static int virtio_gpu_resource_attach_backing(uint32_t resource_id,
                                         const struct virtio_gpu_mem_entry *entries,
                                         uint32_t nr_entries)
 {
@@ -1160,7 +1160,7 @@ int virtio_gpu_resource_attach_backing(uint32_t resource_id,
     return 0;
 }
 
-int virtio_gpu_resource_detach_backing(uint32_t resource_id)
+static int virtio_gpu_resource_detach_backing(uint32_t resource_id)
 {
     struct virtio_gpu_resource_detach_backing cmd;
     struct virtio_gpu_ctrl_hdr resp;
@@ -1192,7 +1192,7 @@ int virtio_gpu_resource_detach_backing(uint32_t resource_id)
     return 0;
 }
 
-int virtio_gpu_resource_unref(uint32_t resource_id)
+static int virtio_gpu_resource_unref(uint32_t resource_id)
 {
     struct virtio_gpu_resource_unref cmd;
     struct virtio_gpu_ctrl_hdr resp;
@@ -1226,7 +1226,7 @@ int virtio_gpu_resource_unref(uint32_t resource_id)
 
 /* ── 2D-mode API (unchanged from original) ────────────────────── */
 
-int virtio_gpu_set_mode(void *dev, int w, int h, int bpp)
+static int virtio_gpu_set_mode(void *dev, int w, int h, int bpp)
 {
     (void)dev;
     (void)w;
@@ -1239,7 +1239,7 @@ int virtio_gpu_set_mode(void *dev, int w, int h, int bpp)
     return 0;
 }
 
-int virtio_gpu_transfer(void *dev, void *buf, size_t count)
+static int virtio_gpu_transfer(void *dev, void *buf, size_t count)
 {
     (void)dev;
     (void)buf;
@@ -1250,7 +1250,7 @@ int virtio_gpu_transfer(void *dev, void *buf, size_t count)
 
 /* ── Init ──────────────────────────────────────────────────────── */
 
-void __init virtio_gpu_init(void)
+static void __init virtio_gpu_init(void)
 {
     struct pci_device dev;
 

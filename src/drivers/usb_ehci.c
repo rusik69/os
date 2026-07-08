@@ -357,7 +357,7 @@ static int g_iso_pool_count = 0;
  *
  * Returns pool_id (≥0) on success, negative on error.
  */
-int ehci_iso_pool_create(uint8_t dev_addr, uint8_t ep, uint32_t buf_size)
+static int ehci_iso_pool_create(uint8_t dev_addr, uint8_t ep, uint32_t buf_size)
 {
     if (g_iso_pool_count >= ISO_POOL_NUM_POOLS)
         return -1;
@@ -421,7 +421,7 @@ fail:
  *
  * Returns 0 on success, negative on error.
  */
-int ehci_iso_pool_submit(int pool_id, const void *data, uint32_t len)
+static int ehci_iso_pool_submit(int pool_id, const void *data, uint32_t len)
 {
     if (pool_id < 0 || pool_id >= g_iso_pool_count)
         return -1;
@@ -487,7 +487,7 @@ int ehci_iso_pool_submit(int pool_id, const void *data, uint32_t len)
  * Returns the number of bytes in the most recently completed buffer,
  * or 0 if none completed.
  */
-uint32_t ehci_iso_pool_reclaim(int pool_id)
+static uint32_t ehci_iso_pool_reclaim(int pool_id)
 {
     if (pool_id < 0 || pool_id >= g_iso_pool_count)
         return 0;
@@ -522,7 +522,7 @@ uint32_t ehci_iso_pool_reclaim(int pool_id)
  * ehci_iso_pool_destroy — Release all pool resources.
  * @pool_id:  Pool identifier.
  */
-void ehci_iso_pool_destroy(int pool_id)
+static void ehci_iso_pool_destroy(int pool_id)
 {
     if (pool_id < 0 || pool_id >= g_iso_pool_count)
         return;
@@ -1272,7 +1272,7 @@ static int ehci_process_async_qtd(uint64_t qtd_phys)
  *
  * Returns the number of qTDs processed, or negative on error.
  */
-int ehci_process_async_schedule(void)
+static int ehci_process_async_schedule(void)
 {
     int c = 0;
     if (ehci_count < 1)
@@ -1375,7 +1375,7 @@ int ehci_process_async_schedule(void)
  *
  * Returns 0 on success, negative on error.
  */
-int ehci_submit_async_qtd(uint8_t dev_addr, uint8_t ep,
+static int ehci_submit_async_qtd(uint8_t dev_addr, uint8_t ep,
                            void *buf, uint32_t len,
                            uint32_t pid, int toggle)
 {
@@ -2002,7 +2002,7 @@ MODULE_ALIAS("pci:v00001022d00007808sv0000*"); /* AMD Hudson EHCI */
 #endif /* MODULE */
 
 /* ── ehci_init: Initialise an EHCI controller from PCI device info ── */
-int ehci_init(void *dev)
+static int ehci_init(void *dev)
 {
     struct pci_device *pdev = (struct pci_device *)dev;
     if (!pdev) return -EINVAL;
@@ -2015,7 +2015,7 @@ int ehci_init(void *dev)
 }
 
 /* ── ehci_reset: Reset a specific EHCI controller ──────────── */
-int ehci_reset(void *dev)
+static int ehci_reset(void *dev)
 {
     (void)dev;
     /* Find and reset the first EHCI controller */
@@ -2036,7 +2036,7 @@ int ehci_reset(void *dev)
 }
 
 /* ── ehci_submit_urb: Submit a URB to an EHCI controller ──────────── */
-int ehci_submit_urb(void *urb)
+static int ehci_submit_urb(void *urb)
 {
     if (!urb) return -EINVAL;
     kprintf("[USB] ehci_submit_urb: URB submitted (stub processing)\n");
@@ -2051,7 +2051,7 @@ int ehci_submit_urb(void *urb)
 }
 
 /* ── ehci_irq: EHCI interrupt handler ──────────────────────── */
-void ehci_irq(struct interrupt_frame *frame)
+static void ehci_irq(struct interrupt_frame *frame)
 {
     (void)frame;
     if (ehci_count == 0) return;

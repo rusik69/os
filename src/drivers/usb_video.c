@@ -717,7 +717,7 @@ static int uvc_capture_frame(struct uvc_device *dev,
  *
  * Returns 0 on success, negative errno on failure.
  */
-int uvc_set_pu_control(uint8_t dev_addr, uint8_t iface,
+static int uvc_set_pu_control(uint8_t dev_addr, uint8_t iface,
 		       uint8_t unit_id, uint8_t selector,
 		       int16_t value)
 {
@@ -736,7 +736,7 @@ int uvc_set_pu_control(uint8_t dev_addr, uint8_t iface,
  *
  * Returns 0 on success, negative errno on failure.
  */
-int uvc_get_pu_control(uint8_t dev_addr, uint8_t iface,
+static int uvc_get_pu_control(uint8_t dev_addr, uint8_t iface,
 		       uint8_t unit_id, uint8_t selector,
 		       int16_t *out_value)
 {
@@ -769,7 +769,7 @@ int uvc_get_pu_control(uint8_t dev_addr, uint8_t iface,
  *
  * Returns 0 on success, negative errno on failure.
  */
-int uvc_get_pu_control_range(uint8_t dev_addr, uint8_t iface,
+static int uvc_get_pu_control_range(uint8_t dev_addr, uint8_t iface,
 			     uint8_t unit_id, uint8_t selector,
 			     int16_t *out_min, int16_t *out_max,
 			     int16_t *out_step, int16_t *out_def)
@@ -820,7 +820,7 @@ int uvc_get_pu_control_range(uint8_t dev_addr, uint8_t iface,
  *
  * Returns 0 on success, negative errno on failure.
  */
-int uvc_set_ct_control_32(uint8_t dev_addr, uint8_t iface,
+static int uvc_set_ct_control_32(uint8_t dev_addr, uint8_t iface,
 			  uint8_t term_id, uint8_t selector,
 			  int32_t value)
 {
@@ -839,7 +839,7 @@ int uvc_set_ct_control_32(uint8_t dev_addr, uint8_t iface,
  *
  * Returns 0 on success, negative errno on failure.
  */
-int uvc_get_ct_control_32(uint8_t dev_addr, uint8_t iface,
+static int uvc_get_ct_control_32(uint8_t dev_addr, uint8_t iface,
 			  uint8_t term_id, uint8_t selector,
 			  int32_t *out_value)
 {
@@ -1694,7 +1694,7 @@ static struct usb_driver g_usb_video_driver = {
 	.disconnect = usb_video_disconnect,
 };
 
-void __init usb_video_init(void)
+static void __init usb_video_init(void)
 {
 	if (g_initialized)
 		return;
@@ -1708,7 +1708,7 @@ void __init usb_video_init(void)
 	kprintf("[usb_video] USB Video Class 1.5 (UVC) driver registered\n");
 }
 
-void usb_video_exit(void)
+static void usb_video_exit(void)
 {
 	usb_deregister_driver(&g_usb_video_driver);
 

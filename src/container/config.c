@@ -988,7 +988,7 @@ int oci_config_read_file(struct oci_config *config, const char *path)
 }
 
 /* ── config_create ─────────────────────────────── */
-int config_create(const char *name, void *cfg)
+static int config_create(const char *name, void *cfg)
 {
     (void)name;
     (void)cfg;
@@ -996,7 +996,7 @@ int config_create(const char *name, void *cfg)
     return 0;
 }
 /* ── config_get ─────────────────────────────── */
-int config_get(const char *name, const char *key, void *val, size_t len)
+static int config_get(const char *name, const char *key, void *val, size_t len)
 {
     (void)name;
     (void)key;
@@ -1005,7 +1005,7 @@ int config_get(const char *name, const char *key, void *val, size_t len)
     return -ENOENT;
 }
 /* ── config_set ─────────────────────────────── */
-int config_set(const char *name, const char *key, const void *val)
+static int config_set(const char *name, const char *key, const void *val)
 {
     (void)name;
     (void)key;

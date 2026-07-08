@@ -849,7 +849,7 @@ int container_delete(struct container *c)
 }
 
 /* ── Stub: runtime_create ─────────────────────────────── */
-int runtime_create(const char *name, void *spec)
+static int runtime_create(const char *name, void *spec)
 {
     (void)name;
     (void)spec;
@@ -857,21 +857,21 @@ int runtime_create(const char *name, void *spec)
     return 0;
 }
 /* ── Stub: runtime_start ─────────────────────────────── */
-int runtime_start(const char *name)
+static int runtime_start(const char *name)
 {
     (void)name;
     kprintf("[container] runtime_start: not yet implemented\n");
     return 0;
 }
 /* ── Stub: runtime_stop ─────────────────────────────── */
-int runtime_stop(const char *name)
+static int runtime_stop(const char *name)
 {
     (void)name;
     kprintf("[container] runtime_stop: not yet implemented\n");
     return 0;
 }
 /* ── Stub: runtime_delete ─────────────────────────────── */
-int runtime_delete(const char *name)
+static int runtime_delete(const char *name)
 {
     (void)name;
     kprintf("[container] runtime_delete: not yet implemented\n");

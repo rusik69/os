@@ -173,7 +173,7 @@ static void balloon_adjust(void)
 /* Isolate a balloon page for migration.
  * Called during compaction scan to identify balloon-owned pages
  * that can be moved. */
-int balloon_page_isolate(uint64_t phys_addr)
+static int balloon_page_isolate(uint64_t phys_addr)
 {
     if (!balloon.compaction_enabled)
         return 0;
@@ -191,7 +191,7 @@ int balloon_page_isolate(uint64_t phys_addr)
 
 /* Migrate a balloon page: copy contents from old_phys to new_phys,
  * then update balloon tracking and re-inflate. */
-int balloon_page_migrate(uint64_t old_phys, uint64_t new_phys)
+static int balloon_page_migrate(uint64_t old_phys, uint64_t new_phys)
 {
     if (!balloon.compaction_enabled)
         return -1;
@@ -224,7 +224,7 @@ int balloon_page_migrate(uint64_t old_phys, uint64_t new_phys)
 
 /* Dequeue a balloon page for migration (called during compaction scan).
  * Returns 1 if the page was a balloon page and is now isolated. */
-int balloon_page_dequeue(uint64_t phys_addr)
+static int balloon_page_dequeue(uint64_t phys_addr)
 {
     if (!balloon.compaction_enabled)
         return 0;
@@ -269,7 +269,7 @@ static int balloon_sysfs_read(void *priv, void *buf,
 
 /* Called when the system detects memory pressure.
  * Inflates the balloon to reclaim pages and trigger compaction. */
-void balloon_memory_pressure(void)
+static void balloon_memory_pressure(void)
 {
     if (!balloon.present) return;
 
@@ -291,7 +291,7 @@ void balloon_memory_pressure(void)
 
 /* ── Init / Cleanup ────────────────────────────────────────────────── */
 
-void balloon_init(void)
+static void balloon_init(void)
 {
     struct pci_device dev;
 
@@ -353,14 +353,14 @@ void balloon_init(void)
 module_init(balloon_init);
 
 /* ── Stub: balloon_inflate ─────────────────────────────── */
-int balloon_inflate(size_t count)
+static int balloon_inflate(size_t count)
 {
     (void)count;
     kprintf("[BALLOON] balloon_inflate: not yet implemented\n");
     return 0;
 }
 /* ── Stub: balloon_deflate ─────────────────────────────── */
-int balloon_deflate(size_t count)
+static int balloon_deflate(size_t count)
 {
     (void)count;
     kprintf("[BALLOON] balloon_deflate: not yet implemented\n");

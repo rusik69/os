@@ -384,7 +384,7 @@ static struct container *checkpoint_find_container(const char *container_id)
  * should call container_restore() to resume, or container_stop()
  * to terminate.
  */
-int container_checkpoint(const char *container_id,
+static int container_checkpoint(const char *container_id,
                           struct checkpoint_state *state_out)
 {
     if (!container_id || !state_out)
@@ -489,7 +489,7 @@ int container_checkpoint(const char *container_id,
  *
  * Returns 0 on success, negative errno on failure.
  */
-int container_restore(const char *container_id,
+static int container_restore(const char *container_id,
                        const struct checkpoint_state *state)
 {
     if (!container_id || !state)
@@ -663,7 +663,7 @@ int container_checkpoint_save(const struct checkpoint_state *state,
  *
  * Returns 0 on success, negative errno on failure.
  */
-int container_checkpoint_load(const char *save_path,
+static int container_checkpoint_load(const char *save_path,
                                struct checkpoint_state *state_out)
 {
     if (!save_path || !state_out)
@@ -740,7 +740,7 @@ int container_checkpoint_load(const char *save_path,
  * Returns 0 on success (even if no checkpoints exist), negative
  * errno on error.
  */
-int container_checkpoint_list(const char *container_id)
+static int container_checkpoint_list(const char *container_id)
 {
     if (!container_id)
         return -EINVAL;
@@ -773,7 +773,7 @@ int container_checkpoint_list(const char *container_id)
 }
 
 /* ── checkpoint_create ─────────────────────────────── */
-int checkpoint_create(const char *name, void *task)
+static int checkpoint_create(const char *name, void *task)
 {
     (void)name;
     (void)task;
@@ -781,14 +781,14 @@ int checkpoint_create(const char *name, void *task)
     return 0;
 }
 /* ── checkpoint_restore ─────────────────────────────── */
-int checkpoint_restore(const char *name)
+static int checkpoint_restore(const char *name)
 {
     (void)name;
     kprintf("[checkpoint] Restored: %s\n", name ? name : "unknown");
     return 0;
 }
 /* ── checkpoint_delete ─────────────────────────────── */
-int checkpoint_delete(const char *name)
+static int checkpoint_delete(const char *name)
 {
     (void)name;
     kprintf("[checkpoint] Deleted: %s\n", name ? name : "unknown");

@@ -418,7 +418,7 @@ static void typec_run_state_machine(struct typec_port *port)
 
 /* ── Periodic poll (called from timer or workqueue) ──────────────── */
 
-void typec_poll(void)
+static void typec_poll(void)
 {
     if (!g_typec_initialized) return;
 
@@ -428,7 +428,7 @@ void typec_poll(void)
 
 /* ── Public API ──────────────────────────────────────────────────── */
 
-int typec_port_register(int port_id, enum pd_role supported_roles)
+static int typec_port_register(int port_id, enum pd_role supported_roles)
 {
     if (g_typec_port_count >= MAX_TYPEC_PORTS)
         return -ENOSPC;
@@ -449,7 +449,7 @@ int typec_port_register(int port_id, enum pd_role supported_roles)
     return g_typec_port_count - 1;
 }
 
-void typec_port_unregister(int port_id)
+static void typec_port_unregister(int port_id)
 {
     for (int i = 0; i < g_typec_port_count; i++) {
         if (g_typec_ports[i].id == port_id) {
@@ -464,7 +464,7 @@ void typec_port_unregister(int port_id)
     }
 }
 
-enum pd_role typec_get_role(int port_id)
+static enum pd_role typec_get_role(int port_id)
 {
     for (int i = 0; i < g_typec_port_count; i++) {
         if (g_typec_ports[i].id == port_id)
@@ -473,7 +473,7 @@ enum pd_role typec_get_role(int port_id)
     return PD_ROLE_SINK;
 }
 
-enum typec_state typec_get_state(int port_id)
+static enum typec_state typec_get_state(int port_id)
 {
     for (int i = 0; i < g_typec_port_count; i++) {
         if (g_typec_ports[i].id == port_id)
@@ -482,7 +482,7 @@ enum typec_state typec_get_state(int port_id)
     return TYPEC_STATE_UNATTACHED;
 }
 
-int typec_get_negotiated_voltage(int port_id)
+static int typec_get_negotiated_voltage(int port_id)
 {
     for (int i = 0; i < g_typec_port_count; i++) {
         if (g_typec_ports[i].id == port_id)
@@ -491,7 +491,7 @@ int typec_get_negotiated_voltage(int port_id)
     return 0;
 }
 
-int typec_get_negotiated_current(int port_id)
+static int typec_get_negotiated_current(int port_id)
 {
     for (int i = 0; i < g_typec_port_count; i++) {
         if (g_typec_ports[i].id == port_id)
@@ -502,7 +502,7 @@ int typec_get_negotiated_current(int port_id)
 
 /* ── Initialization ──────────────────────────────────────────────── */
 
-void typec_init(void)
+static void typec_init(void)
 {
     if (g_typec_initialized) return;
 
@@ -518,7 +518,7 @@ void typec_init(void)
 }
 
 /* ── Stub: typec_register_port ─────────────────────────────── */
-int typec_register_port(void *dev, void *cap)
+static int typec_register_port(void *dev, void *cap)
 {
     (void)dev;
     (void)cap;
@@ -526,14 +526,14 @@ int typec_register_port(void *dev, void *cap)
     return 0;
 }
 /* ── Stub: typec_unregister_port ─────────────────────────────── */
-int typec_unregister_port(void *dev)
+static int typec_unregister_port(void *dev)
 {
     (void)dev;
     kprintf("[USB] typec_unregister_port: not yet implemented\n");
     return 0;
 }
 /* ── Stub: typec_set_mode ─────────────────────────────── */
-int typec_set_mode(void *dev, int mode)
+static int typec_set_mode(void *dev, int mode)
 {
     (void)dev;
     (void)mode;

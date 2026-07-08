@@ -2653,14 +2653,14 @@ MODULE_VERSION("1.0");
 /* Forward declaration for block-device layer API */
 struct ahci_device;
 
-int ahci_read(struct ahci_device *dev, uint64_t sector, void *buf, int count)
+static int ahci_read(struct ahci_device *dev, uint64_t sector, void *buf, int count)
 {
     (void)dev;
     if (sector > 0xFFFFFFFFULL) return -EOVERFLOW;
     return ahci_read_sectors((uint32_t)sector, (uint8_t)count, buf);
 }
 
-int ahci_write(struct ahci_device *dev, uint64_t sector, const void *buf, int count)
+static int ahci_write(struct ahci_device *dev, uint64_t sector, const void *buf, int count)
 {
     (void)dev;
     if (sector > 0xFFFFFFFFULL) return -EOVERFLOW;

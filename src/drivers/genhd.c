@@ -304,7 +304,7 @@ struct gendisk *get_gendisk(int idx)
 
 /* Find a gendisk by its block device ID.
  * Returns a pointer with elevated refcount, or NULL. */
-struct gendisk *genhd_find_by_dev_id(int dev_id)
+static struct gendisk *genhd_find_by_dev_id(int dev_id)
 {
     for (int i = 0; i < GENHD_MAX_DISKS; i++) {
         if (g_disk_table[i].in_use && g_disk_table[i].dev_id == dev_id)
@@ -315,7 +315,7 @@ struct gendisk *genhd_find_by_dev_id(int dev_id)
 
 /* Find a gendisk by its devtmpfs / VFS name.
  * Returns a pointer with elevated refcount, or NULL. */
-struct gendisk *genhd_find_by_name(const char *name)
+static struct gendisk *genhd_find_by_name(const char *name)
 {
     if (!name || !name[0])
         return NULL;

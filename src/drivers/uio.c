@@ -15,21 +15,21 @@ int uio_register(uint64_t phys_addr, size_t size) {
 }
 
 /* ── Stub: uio_open ─────────────────────────────── */
-int uio_open(void *file)
+static int uio_open(void *file)
 {
     (void)file;
     kprintf("[UIO] uio_open: not yet implemented\n");
     return 0;
 }
 /* ── Stub: uio_release ─────────────────────────────── */
-int uio_release(void *file)
+static int uio_release(void *file)
 {
     (void)file;
     kprintf("[UIO] uio_release: not yet implemented\n");
     return 0;
 }
 /* ── Stub: uio_read ─────────────────────────────── */
-int uio_read(void *file, void *buf, size_t count)
+static int uio_read(void *file, void *buf, size_t count)
 {
     (void)file;
     (void)buf;
@@ -38,7 +38,7 @@ int uio_read(void *file, void *buf, size_t count)
     return 0;
 }
 /* ── Stub: uio_write ─────────────────────────────── */
-int uio_write(void *file, const void *buf, size_t count)
+static int uio_write(void *file, const void *buf, size_t count)
 {
     (void)file;
     (void)buf;
@@ -47,7 +47,7 @@ int uio_write(void *file, const void *buf, size_t count)
     return 0;
 }
 /* ── Stub: uio_mmap ─────────────────────────────── */
-int uio_mmap(void *file, void *vma)
+static int uio_mmap(void *file, void *vma)
 {
     (void)file;
     (void)vma;

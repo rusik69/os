@@ -171,7 +171,7 @@ static void conservative_timer_cb(void *arg)
 
 /* ── Public API ───────────────────────────────────────────────────── */
 
-int cpufreq_conservative_init(void)
+static int cpufreq_conservative_init(void)
 {
     if (!cpupstate_is_present()) {
         kprintf("[conservative] CPU freq scaling not present — disabled\n");
@@ -192,7 +192,7 @@ int cpufreq_conservative_init(void)
     return 0;
 }
 
-int cpufreq_conservative_start(void)
+static int cpufreq_conservative_start(void)
 {
     if (g_running) return 0;
     if (!cpupstate_is_present()) return -1;
@@ -204,7 +204,7 @@ int cpufreq_conservative_start(void)
     return 0;
 }
 
-void cpufreq_conservative_stop(void)
+static void cpufreq_conservative_stop(void)
 {
     if (!g_running) return;
     g_running = 0;
@@ -217,12 +217,12 @@ void cpufreq_conservative_stop(void)
     kprintf("[conservative] Sampling stopped\n");
 }
 
-int cpufreq_conservative_is_active(void)
+static int cpufreq_conservative_is_active(void)
 {
     return g_running;
 }
 
-void cpufreq_conservative_evaluate(void)
+static void cpufreq_conservative_evaluate(void)
 {
     if (!g_running || !cpupstate_is_present()) return;
     struct cons_cpu_state *state = this_cons_state();
@@ -231,8 +231,8 @@ void cpufreq_conservative_evaluate(void)
 }
 
 /* Tunable accessors */
-int conservative_get_sampling_rate(void) { return g_sampling_rate; }
-int conservative_set_sampling_rate(int ticks) {
+static int conservative_get_sampling_rate(void) { return g_sampling_rate; }
+static int conservative_set_sampling_rate(int ticks) {
     if (ticks < 1 || ticks > 1000) return -1;
     g_sampling_rate = ticks;
     if (g_running && g_timer_id >= 0) {
@@ -241,27 +241,27 @@ int conservative_set_sampling_rate(int ticks) {
     }
     return 0;
 }
-int conservative_get_up_threshold(void) { return g_up_threshold; }
-int conservative_set_up_threshold(int pct) {
+static int conservative_get_up_threshold(void) { return g_up_threshold; }
+static int conservative_set_up_threshold(int pct) {
     if (pct < 1 || pct > 100) return -1;
     g_up_threshold = pct;
     return 0;
 }
-int conservative_get_down_threshold(void) { return g_down_threshold; }
-int conservative_set_down_threshold(int pct) {
+static int conservative_get_down_threshold(void) { return g_down_threshold; }
+static int conservative_set_down_threshold(int pct) {
     if (pct < 1 || pct > 100) return -1;
     g_down_threshold = pct;
     return 0;
 }
-int conservative_get_freq_step(void) { return g_freq_step; }
-int conservative_set_freq_step(int pct) {
+static int conservative_get_freq_step(void) { return g_freq_step; }
+static int conservative_set_freq_step(int pct) {
     if (pct < 1 || pct > 100) return -1;
     g_freq_step = pct;
     return 0;
 }
 
 /* ── cs_speed_up ─────────────────────────────── */
-int cs_speed_up(int cpu)
+static int cs_speed_up(int cpu)
 {
     (void)cpu;
     int cur = cpupstate_get_state();
@@ -270,7 +270,7 @@ int cs_speed_up(int cpu)
     return cpupstate_set_state(cur - 1);
 }
 /* ── cs_slow_down ─────────────────────────────── */
-int cs_slow_down(int cpu)
+static int cs_slow_down(int cpu)
 {
     (void)cpu;
     int cur = cpupstate_get_state();
@@ -280,7 +280,7 @@ int cs_slow_down(int cpu)
     return cpupstate_set_state(cur + 1);
 }
 /* ── cs_target ─────────────────────────────── */
-int cs_target(int cpu, unsigned int target_freq)
+static int cs_target(int cpu, unsigned int target_freq)
 {
     (void)cpu;
     /* Find the P-state closest to the target frequency */

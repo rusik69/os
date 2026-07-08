@@ -234,7 +234,7 @@ struct bochs_drm_priv *g_bochs_crtc_mode_set_priv = NULL;
  *
  * Returns 0 on success, negative errno on failure.
  */
-int bochs_drm_mode_set(void *crtc, void *mode)
+static int bochs_drm_mode_set(void *crtc, void *mode)
 {
     return bochs_drm_crtc_mode_set(crtc, mode);
 }
@@ -440,7 +440,7 @@ static struct drm_driver bochs_drm_driver = {
  *
  * Probes for Bochs VBE, sets up the LFB, and registers as a DRM device.
  */
-int bochs_drm_init(void)
+static int bochs_drm_init(void)
 {
     /* Check Bochs VBE presence using existing bochs.c probe */
     bochs_init();
@@ -506,7 +506,7 @@ int bochs_drm_init(void)
 /*
  * bochs_drm_exit -- Shut down the bochs-drm driver.
  */
-void bochs_drm_exit(void)
+static void bochs_drm_exit(void)
 {
     struct drm_device *dev = NULL;
 

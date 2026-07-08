@@ -25,13 +25,13 @@ int caps_set_bounding(uint64_t cap, int drop) {
 }
 
 /* ── Stub: kaps_init ─────────────────────────────── */
-int kaps_init(void)
+static int kaps_init(void)
 {
     kprintf("[kaps] kaps_init: not yet implemented\n");
     return 0;
 }
 /* ── Stub: kaps_set_key ─────────────────────────────── */
-int kaps_set_key(const void *key, size_t len)
+static int kaps_set_key(const void *key, size_t len)
 {
     (void)key;
     (void)len;
@@ -39,7 +39,7 @@ int kaps_set_key(const void *key, size_t len)
     return 0;
 }
 /* ── Stub: kaps_encrypt ─────────────────────────────── */
-int kaps_encrypt(const void *plain, size_t plen, void *cipher, size_t *clen)
+static int kaps_encrypt(const void *plain, size_t plen, void *cipher, size_t *clen)
 {
     (void)plain;
     (void)plen;
@@ -49,7 +49,7 @@ int kaps_encrypt(const void *plain, size_t plen, void *cipher, size_t *clen)
     return 0;
 }
 /* ── Stub: kaps_decrypt ─────────────────────────────── */
-int kaps_decrypt(const void *cipher, size_t clen, void *plain, size_t *plen)
+static int kaps_decrypt(const void *cipher, size_t clen, void *plain, size_t *plen)
 {
     (void)cipher;
     (void)clen;

@@ -11,6 +11,7 @@
  * from kpti_asm.asm when the Linux ABI is active.
  */
 
+#define KERNEL_INTERNAL
 #include "syscall.h"
 #include "module.h"
 #include "errno.h"

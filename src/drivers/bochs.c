@@ -51,7 +51,7 @@ void bochs_set_mode(int w, int h, int bpp) {
 module_init(bochs_init);
 
 /* ── Stub: bochs_set_palette ─────────────────────────────── */
-int bochs_set_palette(const void *palette, int count)
+static int bochs_set_palette(const void *palette, int count)
 {
     (void)palette;
     (void)count;

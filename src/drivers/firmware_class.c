@@ -45,7 +45,7 @@ static int fw_class_initialized = 0;
 
 /* ── Initialization ─────────────────────────────────────────────────── */
 
-void firmware_class_init(void)
+static void firmware_class_init(void)
 {
     if (fw_class_initialized) return;
 
@@ -65,7 +65,7 @@ void firmware_class_init(void)
  * Register a device for firmware loading.
  * Returns a device ID (>= 0) on success, or -ENOMEM on failure.
  */
-int firmware_class_register_device(const char *name)
+static int firmware_class_register_device(const char *name)
 {
     if (!name || !fw_class_initialized)
         return -EINVAL;
@@ -95,7 +95,7 @@ int firmware_class_register_device(const char *name)
 /*
  * Unregister a firmware device.
  */
-void firmware_class_unregister_device(int dev_id)
+static void firmware_class_unregister_device(int dev_id)
 {
     if (dev_id < 0 || dev_id >= FW_CLASS_MAX_DEVICES || !fw_class_initialized)
         return;
@@ -116,7 +116,7 @@ void firmware_class_unregister_device(int dev_id)
  * Load firmware for a registered device via the core firmware subsystem.
  * Performs a synchronous load.
  */
-int firmware_class_request_firmware(int dev_id, const char *fw_name)
+static int firmware_class_request_firmware(int dev_id, const char *fw_name)
 {
     if (dev_id < 0 || dev_id >= FW_CLASS_MAX_DEVICES || !fw_class_initialized)
         return -EINVAL;
@@ -160,7 +160,7 @@ int firmware_class_request_firmware(int dev_id, const char *fw_name)
 /*
  * Release the firmware for a registered device.
  */
-void firmware_class_release_firmware(int dev_id)
+static void firmware_class_release_firmware(int dev_id)
 {
     if (dev_id < 0 || dev_id >= FW_CLASS_MAX_DEVICES || !fw_class_initialized)
         return;
@@ -179,7 +179,7 @@ void firmware_class_release_firmware(int dev_id)
  * Get the firmware blob for a device.
  * Returns NULL if not loaded yet.
  */
-const struct firmware *firmware_class_get_firmware(int dev_id)
+static const struct firmware *firmware_class_get_firmware(int dev_id)
 {
     if (dev_id < 0 || dev_id >= FW_CLASS_MAX_DEVICES || !fw_class_initialized)
         return NULL;
@@ -194,7 +194,7 @@ const struct firmware *firmware_class_get_firmware(int dev_id)
 /*
  * Wait for a firmware load to complete (simple spin-wait).
  */
-int firmware_class_wait_for_load(int dev_id, int timeout_ms)
+static int firmware_class_wait_for_load(int dev_id, int timeout_ms)
 {
     if (dev_id < 0 || dev_id >= FW_CLASS_MAX_DEVICES || !fw_class_initialized)
         return -EINVAL;
@@ -214,7 +214,7 @@ int firmware_class_wait_for_load(int dev_id, int timeout_ms)
 
 /* ── Status dump ────────────────────────────────────────────────────── */
 
-void firmware_class_dump(void)
+static void firmware_class_dump(void)
 {
     if (!fw_class_initialized) {
         kprintf("firmware_class: not initialized\n");
@@ -248,7 +248,7 @@ int firmware_request(__maybe_unused const char *name, __maybe_unused void *dev, 
     return 0;
 }
 /* ── Stub: firmware_class_register ─────────────────────────────── */
-int firmware_class_register(__maybe_unused void *class)
+static int firmware_class_register(__maybe_unused void *class)
 {
     kprintf("[FIRMWARE] firmware_class_register: not yet implemented\n");
     return 0;

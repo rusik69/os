@@ -1168,7 +1168,7 @@ int virtio_fs_get_coalesce_pending(int vq_idx)
 }
 
 /* ── Stub: virtio_fs_read ─────────────────────────────── */
-int virtio_fs_read(void *dev, void *buf, size_t count, uint64_t offset)
+static int virtio_fs_read(void *dev, void *buf, size_t count, uint64_t offset)
 {
     (void)dev;
     (void)buf;
@@ -1178,7 +1178,7 @@ int virtio_fs_read(void *dev, void *buf, size_t count, uint64_t offset)
     return 0;
 }
 /* ── Stub: virtio_fs_write ─────────────────────────────── */
-int virtio_fs_write(void *dev, const void *buf, size_t count, uint64_t offset)
+static int virtio_fs_write(void *dev, const void *buf, size_t count, uint64_t offset)
 {
     (void)dev;
     (void)buf;

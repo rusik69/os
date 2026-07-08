@@ -275,7 +275,7 @@ int __init acpi_cpufreq_init(void)
 }
 
 /* ── Stub: acpi_cpufreq_target ─────────────────────────────── */
-int acpi_cpufreq_target(void *policy, unsigned int target_freq)
+static int acpi_cpufreq_target(void *policy, unsigned int target_freq)
 {
     (void)policy;
     (void)target_freq;

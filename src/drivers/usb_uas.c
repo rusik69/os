@@ -810,17 +810,17 @@ static int uas_write10(uint32_t lba, uint16_t count, const void *buf)
 
 /* ── Block device callbacks ──────────────────────────────────────────────── */
 
-int uas_read_sectors(uint32_t lba, uint8_t count, void *buf)
+static int uas_read_sectors(uint32_t lba, uint8_t count, void *buf)
 {
 	return uas_read10(lba, count, buf);
 }
 
-int uas_write_sectors(uint32_t lba, uint8_t count, const void *buf)
+static int uas_write_sectors(uint32_t lba, uint8_t count, const void *buf)
 {
 	return uas_write10(lba, count, buf);
 }
 
-uint32_t uas_get_sectors(void)
+static uint32_t uas_get_sectors(void)
 {
 	return g_max_lba + 1;
 }
@@ -840,7 +840,7 @@ uint32_t uas_get_sectors(void)
  *
  * Returns 0 on success, negative on error.
  */
-int usb_uas_init(void)
+static int usb_uas_init(void)
 {
 	if (!usb_is_present()) {
 		kprintf("[USB] UAS: no USB host controller found\n");
@@ -972,7 +972,7 @@ int usb_uas_init(void)
 }
 
 /* Reverse usb_uas_init(): unregister block device and clear state */
-void usb_uas_exit(void)
+static void usb_uas_exit(void)
 {
 	if (blockdev_is_registered(BLOCKDEV_USB1))
 		blockdev_unregister(BLOCKDEV_USB1);

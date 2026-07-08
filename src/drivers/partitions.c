@@ -1150,7 +1150,7 @@ EXPORT_SYMBOL(hybrid_build_map);
 
 /* ── Initialisation ─────────────────────────────────────────────────── */
 
-int partitions_init(void)
+static int partitions_init(void)
 {
     kprintf("[OK] Partitions: MBR/GPT partition parser initialised\n");
     return 0;
@@ -1163,7 +1163,7 @@ int partitions_init(void)
  * entries.  Currently a placeholder that auto-detects MBR vs GPT
  * and logs the result.  Integration with blockdev/gendisk partition
  * registration is done in genhd.c / blockdev.c. */
-int partitions_scan(void *dev)
+static int partitions_scan(void *dev)
 {
     /* In the current architecture, partition scanning is driven by the
      * gendisk layer which calls mbr_parse() or gpt_parse() directly

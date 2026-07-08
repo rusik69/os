@@ -286,7 +286,7 @@ void ec_init(void)
 }
 
 /* ── Stub: acpi_ec_read ─────────────────────────────── */
-int acpi_ec_read(uint8_t addr, uint8_t *val)
+static int acpi_ec_read(uint8_t addr, uint8_t *val)
 {
     (void)addr;
     (void)val;
@@ -294,7 +294,7 @@ int acpi_ec_read(uint8_t addr, uint8_t *val)
     return 0;
 }
 /* ── Stub: acpi_ec_write ─────────────────────────────── */
-int acpi_ec_write(uint8_t addr, uint8_t val)
+static int acpi_ec_write(uint8_t addr, uint8_t val)
 {
     (void)addr;
     (void)val;
@@ -302,7 +302,7 @@ int acpi_ec_write(uint8_t addr, uint8_t val)
     return 0;
 }
 /* ── Stub: acpi_ec_init ─────────────────────────────── */
-int acpi_ec_init(void *dev)
+static int acpi_ec_init(void *dev)
 {
     (void)dev;
     kprintf("[acpi] acpi_ec_init: not yet implemented\n");

@@ -299,42 +299,42 @@ int vdpa_init(void)
 struct vdpa_vq_state;
 
 /* ── Stub: vdpa_set_status ─────────────────────────────── */
-int vdpa_set_status(__maybe_unused struct vdpa_device *dev, __maybe_unused uint8_t status)
+static int vdpa_set_status(__maybe_unused struct vdpa_device *dev, __maybe_unused uint8_t status)
 {
     kprintf("[VDPA] vdpa_set_status: not yet implemented\n");
     return 0;
 }
 
 /* ── Stub: vdpa_set_features ─────────────────────────────── */
-int vdpa_set_features(__maybe_unused struct vdpa_device *dev, __maybe_unused uint64_t features)
+static int vdpa_set_features(__maybe_unused struct vdpa_device *dev, __maybe_unused uint64_t features)
 {
     kprintf("[VDPA] vdpa_set_features: not yet implemented\n");
     return 0;
 }
 
 /* ── Stub: vdpa_set_config ─────────────────────────────── */
-int vdpa_set_config(__maybe_unused struct vdpa_device *dev, __maybe_unused uint32_t offset, __maybe_unused const void *buf, __maybe_unused uint32_t len)
+static int vdpa_set_config(__maybe_unused struct vdpa_device *dev, __maybe_unused uint32_t offset, __maybe_unused const void *buf, __maybe_unused uint32_t len)
 {
     kprintf("[VDPA] vdpa_set_config: not yet implemented\n");
     return 0;
 }
 
 /* ── Stub: vdpa_get_config ─────────────────────────────── */
-int vdpa_get_config(__maybe_unused struct vdpa_device *dev, __maybe_unused uint32_t offset, __maybe_unused void *buf, __maybe_unused uint32_t len)
+static int vdpa_get_config(__maybe_unused struct vdpa_device *dev, __maybe_unused uint32_t offset, __maybe_unused void *buf, __maybe_unused uint32_t len)
 {
     kprintf("[VDPA] vdpa_get_config: not yet implemented\n");
     return 0;
 }
 
 /* ── Stub: vdpa_get_vq_state ─────────────────────────────── */
-int vdpa_get_vq_state(__maybe_unused struct vdpa_device *dev, __maybe_unused uint16_t vq_idx, __maybe_unused struct vdpa_vq_state *state)
+static int vdpa_get_vq_state(__maybe_unused struct vdpa_device *dev, __maybe_unused uint16_t vq_idx, __maybe_unused struct vdpa_vq_state *state)
 {
     kprintf("[VDPA] vdpa_get_vq_state: not yet implemented\n");
     return 0;
 }
 
 /* ── Stub: vdpa_set_vq_state ─────────────────────────────── */
-int vdpa_set_vq_state(__maybe_unused struct vdpa_device *dev, __maybe_unused uint16_t vq_idx, __maybe_unused const struct vdpa_vq_state *state)
+static int vdpa_set_vq_state(__maybe_unused struct vdpa_device *dev, __maybe_unused uint16_t vq_idx, __maybe_unused const struct vdpa_vq_state *state)
 {
     kprintf("[VDPA] vdpa_set_vq_state: not yet implemented\n");
     return 0;

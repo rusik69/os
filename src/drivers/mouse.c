@@ -173,21 +173,21 @@ EXPORT_SYMBOL(mouse_get_wheel);
 EXPORT_SYMBOL(mouse_init);
 
 /* ── Open mouse device ──────────────────────────────── */
-int mouse_open(void *dev)
+static int mouse_open(void *dev)
 {
     (void)dev;
     return 0;
 }
 
 /* ── Close mouse device ─────────────────────────────── */
-int mouse_close(void *dev)
+static int mouse_close(void *dev)
 {
     (void)dev;
     return 0;
 }
 
 /* ── Mouse ioctl ────────────────────────────────────── */
-int mouse_ioctl(int cmd, void *arg)
+static int mouse_ioctl(int cmd, void *arg)
 {
     (void)cmd;
     (void)arg;

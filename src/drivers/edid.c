@@ -548,7 +548,7 @@ int edid_parse_extensions(const uint8_t *raw, int count,
 
 /* ── edid_find_mode — Find preferred mode matching resolution ─── */
 
-int edid_find_mode(const void *edid_ptr, int width, int height, void *mode)
+static int edid_find_mode(const void *edid_ptr, int width, int height, void *mode)
 {
     const struct edid_data *edid = (const struct edid_data *)edid_ptr;
     (void)mode;
@@ -591,7 +591,7 @@ int edid_find_mode(const void *edid_ptr, int width, int height, void *mode)
 
 /* ── edid_valid — Check if parsed EDID is valid ──────────────── */
 
-int edid_valid(const void *edid_ptr)
+static int edid_valid(const void *edid_ptr)
 {
     const struct edid_data *edid = (const struct edid_data *)edid_ptr;
 

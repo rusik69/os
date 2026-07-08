@@ -853,7 +853,7 @@ EXPORT_SYMBOL(blockdev_stats_reset);
 EXPORT_SYMBOL(blockdev_stats_format);
 
 /* ── Stub: blockdev_read ─────────────────────────────── */
-int blockdev_read(void *buf, size_t count, uint64_t offset)
+static int blockdev_read(void *buf, size_t count, uint64_t offset)
 {
     (void)buf;
     (void)count;
@@ -862,7 +862,7 @@ int blockdev_read(void *buf, size_t count, uint64_t offset)
     return 0;
 }
 /* ── Stub: blockdev_write ─────────────────────────────── */
-int blockdev_write(const void *buf, size_t count, uint64_t offset)
+static int blockdev_write(const void *buf, size_t count, uint64_t offset)
 {
     (void)buf;
     (void)count;
@@ -871,7 +871,7 @@ int blockdev_write(const void *buf, size_t count, uint64_t offset)
     return 0;
 }
 /* ── Stub: blockdev_open ─────────────────────────────── */
-int blockdev_open(const char *name, int flags)
+static int blockdev_open(const char *name, int flags)
 {
     (void)name;
     (void)flags;
@@ -879,7 +879,7 @@ int blockdev_open(const char *name, int flags)
     return 0;
 }
 /* ── Stub: blockdev_release ─────────────────────────────── */
-int blockdev_release(void *dev)
+static int blockdev_release(void *dev)
 {
     (void)dev;
     kprintf("[BLOCKDEV] blockdev_release: not yet implemented\n");

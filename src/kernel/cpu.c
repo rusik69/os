@@ -385,7 +385,7 @@ int cpu_idle(void)
     return 0;
 }
 /* ── cpu_die: Take a CPU offline ──────────────────────────────────────── */
-int cpu_die(int cpu_id)
+static int cpu_die(int cpu_id)
 {
     if (cpu_id < 0 || cpu_id >= CPUHP_MAX_CPUS) return -EINVAL;
 
@@ -401,7 +401,7 @@ int cpu_die(int cpu_id)
     return 0;
 }
 /* ── cpu_online: Check if a CPU is online ─────────────────────────────── */
-int cpu_online(int cpu_id)
+static int cpu_online(int cpu_id)
 {
     if (cpu_id < 0 || cpu_id >= CPUHP_MAX_CPUS) return 0;
     return cpuhp_is_online(cpu_id);

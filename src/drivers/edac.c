@@ -359,7 +359,7 @@ EXPORT_SYMBOL(edac_dump_status);
 module_init(edac_init);
 
 /* ── Stub: edac_report_error ─────────────────────────────── */
-int edac_report_error(void *dev, int type, const char *msg)
+static int edac_report_error(void *dev, int type, const char *msg)
 {
     (void)dev;
     (void)type;

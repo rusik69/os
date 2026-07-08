@@ -136,7 +136,7 @@ static struct drm_driver simplefb_drm_driver = {
  *
  * Returns 0 on success, negative errno on failure.
  */
-int simplefb_drm_init(void)
+static int simplefb_drm_init(void)
 {
 	/* Check if simplefb has been initialised by boot code */
 	if (!simplefb_is_active()) {

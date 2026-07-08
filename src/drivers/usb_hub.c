@@ -729,7 +729,7 @@ static int enumerate_hub(uint8_t dev_addr) {
 
 /* ── Periodic hub polling ──────────────────────────────────────────── */
 
-void usb_hub_poll(void) {
+static void usb_hub_poll(void) {
     if (!g_hub_initialized) return;
 
     /* Poll root hub ports for hotplug events */
@@ -865,7 +865,7 @@ int usb_hub_init(void) {
 }
 
 /* ── Hub port reset ────────────────────────────────────────── */
-int usb_hub_port_reset(void *hub_ptr, int port)
+static int usb_hub_port_reset(void *hub_ptr, int port)
 {
     struct hub_state *hub = (struct hub_state *)hub_ptr;
     if (!hub || port < 0 || port > hub->n_ports)
@@ -886,7 +886,7 @@ int usb_hub_port_reset(void *hub_ptr, int port)
 }
 
 /* ── Hub port enable/disable ───────────────────────────────── */
-int usb_hub_port_enable(void *hub_ptr, int port)
+static int usb_hub_port_enable(void *hub_ptr, int port)
 {
     struct hub_state *hub = (struct hub_state *)hub_ptr;
     if (!hub || port < 0 || port > hub->n_ports)
@@ -897,7 +897,7 @@ int usb_hub_port_enable(void *hub_ptr, int port)
 }
 
 /* ── Hub port disable ───────────────────────────────────────── */
-int usb_hub_port_disable(void *hub_ptr, int port)
+static int usb_hub_port_disable(void *hub_ptr, int port)
 {
     struct hub_state *hub = (struct hub_state *)hub_ptr;
     if (!hub || port < 0 || port > hub->n_ports)
@@ -908,7 +908,7 @@ int usb_hub_port_disable(void *hub_ptr, int port)
 }
 
 /* ── Hub port power control ─────────────────────────────────── */
-int usb_hub_port_power(void *hub_ptr, int port, int on)
+static int usb_hub_port_power(void *hub_ptr, int port, int on)
 {
     struct hub_state *hub = (struct hub_state *)hub_ptr;
     if (!hub || port < 0 || port > hub->n_ports)
@@ -990,7 +990,7 @@ static int hub_port_debounce(struct hub_state *hub, int port, uint16_t status)
 }
 
 /* ── Detect port status changes on all hubs ─────────────────── */
-int usb_hub_detect(void)
+static int usb_hub_detect(void)
 {
     int changes = 0;
 

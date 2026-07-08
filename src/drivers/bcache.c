@@ -34,7 +34,7 @@ static struct bcache_device bcache_devices[BCACHE_MAX_CACHES];
 static int bcache_count = 0;
 
 /* Register a cache device */
-int bcache_register(const char *backing, const char *cache)
+static int bcache_register(const char *backing, const char *cache)
 {
     uint64_t irq_flags;
     int idx = -1;
@@ -86,7 +86,7 @@ int bcache_register(const char *backing, const char *cache)
 }
 
 /* Look up a block in cache */
-int bcache_lookup(int cache_id, uint64_t block_no, uint8_t *buf, size_t len)
+static int bcache_lookup(int cache_id, uint64_t block_no, uint8_t *buf, size_t len)
 {
     if (cache_id < 0 || cache_id >= BCACHE_MAX_CACHES)
         return -EINVAL;
@@ -117,7 +117,7 @@ int bcache_lookup(int cache_id, uint64_t block_no, uint8_t *buf, size_t len)
 }
 
 /* Insert a block into cache */
-int bcache_insert(int cache_id, uint64_t block_no,
+static int bcache_insert(int cache_id, uint64_t block_no,
                    const uint8_t *buf, size_t len, int dirty)
 {
     if (cache_id < 0 || cache_id >= BCACHE_MAX_CACHES)
@@ -143,7 +143,7 @@ int bcache_insert(int cache_id, uint64_t block_no,
 }
 
 /* Get cache statistics */
-void bcache_get_stats(int cache_id, uint64_t *hits, uint64_t *misses)
+static void bcache_get_stats(int cache_id, uint64_t *hits, uint64_t *misses)
 {
     if (cache_id < 0 || cache_id >= BCACHE_MAX_CACHES)
         return;
@@ -154,7 +154,7 @@ void bcache_get_stats(int cache_id, uint64_t *hits, uint64_t *misses)
     if (misses) *misses = bc->misses;
 }
 
-void bcache_init(void)
+static void bcache_init(void)
 {
     memset(bcache_devices, 0, sizeof(bcache_devices));
     for (int i = 0; i < BCACHE_MAX_CACHES; i++)
@@ -171,7 +171,7 @@ module_init(bcache_init);
  * ═══════════════════════════════════════════════════════════════ */
 
 /* ── Stub: bcache_read ─────────────────────────────── */
-int bcache_read(struct bcache_device *dev, uint64_t sector, void *buf, uint32_t count)
+static int bcache_read(struct bcache_device *dev, uint64_t sector, void *buf, uint32_t count)
 {
     (void)dev;
     (void)sector;
@@ -181,7 +181,7 @@ int bcache_read(struct bcache_device *dev, uint64_t sector, void *buf, uint32_t 
     return 0;
 }
 /* ── Stub: bcache_write ────────────────────────────── */
-int bcache_write(struct bcache_device *dev, uint64_t sector, const void *buf, uint32_t count)
+static int bcache_write(struct bcache_device *dev, uint64_t sector, const void *buf, uint32_t count)
 {
     (void)dev;
     (void)sector;
@@ -191,20 +191,20 @@ int bcache_write(struct bcache_device *dev, uint64_t sector, const void *buf, ui
     return 0;
 }
 /* ── Stub: bcache_open ─────────────────────────────── */
-int bcache_open(struct bcache_device *dev)
+static int bcache_open(struct bcache_device *dev)
 {
     (void)dev;
     kprintf("[BCACHE] bcache_open: not yet implemented\n");
     return 0;
 }
 /* ── Stub: bcache_close ────────────────────────────── */
-void bcache_close(struct bcache_device *dev)
+static void bcache_close(struct bcache_device *dev)
 {
     (void)dev;
     kprintf("[BCACHE] bcache_close: not yet implemented\n");
 }
 /* ── Stub: bcache_flush ────────────────────────────── */
-int bcache_flush(struct bcache_device *dev)
+static int bcache_flush(struct bcache_device *dev)
 {
     (void)dev;
     kprintf("[BCACHE] bcache_flush: not yet implemented\n");

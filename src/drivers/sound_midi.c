@@ -158,7 +158,7 @@ static void midi_seq_tick_handler(void)
 
 /* We use a simple tick hook.  The timer subsystem calls this at
  * TIMER_FREQ / 100 Hz (approximately 10 ms resolution). */
-void midi_seq_timer_tick(void)
+static void midi_seq_timer_tick(void)
 {
     if (g_seq_initialized && g_seq_running)
         midi_seq_tick_handler();
@@ -308,7 +308,7 @@ static void midi_pitch_bend(uint8_t channel, uint16_t bend)
 
 /* ── Public API: queue events ────────────────────────────────────── */
 
-int midi_seq_queue_event(uint8_t status, uint8_t data1, uint8_t data2,
+static int midi_seq_queue_event(uint8_t status, uint8_t data1, uint8_t data2,
                           uint32_t delta_ticks)
 {
     if (!g_seq_initialized)
@@ -342,19 +342,19 @@ int midi_seq_note_on(uint8_t channel, uint8_t note, uint8_t velocity)
                                  note, velocity, 0);
 }
 
-int midi_seq_note_off(uint8_t channel, uint8_t note, uint8_t velocity)
+static int midi_seq_note_off(uint8_t channel, uint8_t note, uint8_t velocity)
 {
     return midi_seq_queue_event(MIDI_STATUS_NOTE_OFF | (channel & 0x0F),
                                  note, velocity, 0);
 }
 
-int midi_seq_program_change(uint8_t channel, uint8_t program)
+static int midi_seq_program_change(uint8_t channel, uint8_t program)
 {
     return midi_seq_queue_event(MIDI_STATUS_PROGRAM_CHANGE | (channel & 0x0F),
                                  program, 0, 0);
 }
 
-int midi_seq_control_change(uint8_t channel, uint8_t controller, uint8_t value)
+static int midi_seq_control_change(uint8_t channel, uint8_t controller, uint8_t value)
 {
     return midi_seq_queue_event(MIDI_STATUS_CONTROL_CHANGE | (channel & 0x0F),
                                  controller, value, 0);
@@ -474,7 +474,7 @@ static int seq_read(void *priv, void *buf, uint32_t max_size, uint32_t *out_size
 
 /* ── Sequencer tempo / start / stop ──────────────────────────────── */
 
-int midi_seq_start(void)
+static int midi_seq_start(void)
 {
     if (!g_seq_initialized) return -ENODEV;
     g_seq_running = 1;
@@ -482,7 +482,7 @@ int midi_seq_start(void)
     return 0;
 }
 
-int midi_seq_stop(void)
+static int midi_seq_stop(void)
 {
     g_seq_running = 0;
     /* All notes off */
@@ -492,7 +492,7 @@ int midi_seq_stop(void)
     return 0;
 }
 
-int midi_seq_set_tempo(uint32_t us_per_qn)
+static int midi_seq_set_tempo(uint32_t us_per_qn)
 {
     if (us_per_qn < 10000 || us_per_qn > 10000000)
         return -EINVAL;
@@ -502,7 +502,7 @@ int midi_seq_set_tempo(uint32_t us_per_qn)
 
 /* ── Initialization ──────────────────────────────────────────────── */
 
-void sound_midi_init(void)
+static void sound_midi_init(void)
 {
     if (g_seq_initialized)
         return;
@@ -564,7 +564,7 @@ static int g_midi_dev_open_count = 0;  /* How many times raw MIDI is opened */
  * Initializes per-open state for raw MIDI access.
  * Returns 0 on success.
  */
-int midi_raw_open(void)
+static int midi_raw_open(void)
 {
     if (!g_seq_initialized)
         return -ENODEV;
@@ -586,7 +586,7 @@ int midi_raw_open(void)
  * All notes off and release resources.
  * Returns 0 on success.
  */
-int midi_raw_close(void)
+static int midi_raw_close(void)
 {
     if (!g_seq_initialized)
         return -ENODEV;
@@ -615,7 +615,7 @@ int midi_raw_close(void)
  *
  * Returns number of bytes written, or negative on error.
  */
-int midi_raw_write(const uint8_t *data, uint32_t size)
+static int midi_raw_write(const uint8_t *data, uint32_t size)
 {
     if (!g_seq_initialized)
         return -ENODEV;
@@ -637,7 +637,7 @@ int midi_raw_write(const uint8_t *data, uint32_t size)
  *
  * Returns 0 on success.
  */
-int midi_raw_read(uint8_t *buf, uint32_t max_size, uint32_t *out_size)
+static int midi_raw_read(uint8_t *buf, uint32_t max_size, uint32_t *out_size)
 {
     if (!g_seq_initialized)
         return -ENODEV;
@@ -659,7 +659,7 @@ int midi_raw_read(uint8_t *buf, uint32_t max_size, uint32_t *out_size)
  *
  * Returns 0 on success, negative on error.
  */
-int midi_raw_ioctl(int cmd, void *arg)
+static int midi_raw_ioctl(int cmd, void *arg)
 {
     (void)arg;
 
@@ -685,21 +685,21 @@ int midi_raw_ioctl(int cmd, void *arg)
 module_init(sound_midi_init);
 
 /* ── Stub: midi_open ─────────────────────────────── */
-int midi_open(void *file)
+static int midi_open(void *file)
 {
     (void)file;
     kprintf("[midi] midi_open: not yet implemented\n");
     return 0;
 }
 /* ── Stub: midi_close ─────────────────────────────── */
-int midi_close(void *file)
+static int midi_close(void *file)
 {
     (void)file;
     kprintf("[midi] midi_close: not yet implemented\n");
     return 0;
 }
 /* ── Stub: midi_write ─────────────────────────────── */
-int midi_write(void *file, const void *buf, size_t count)
+static int midi_write(void *file, const void *buf, size_t count)
 {
     (void)file;
     (void)buf;
@@ -708,7 +708,7 @@ int midi_write(void *file, const void *buf, size_t count)
     return 0;
 }
 /* ── Stub: midi_ioctl ─────────────────────────────── */
-int midi_ioctl(void *file, int cmd, void *arg)
+static int midi_ioctl(void *file, int cmd, void *arg)
 {
     (void)file;
     (void)cmd;

@@ -323,32 +323,32 @@ static struct usb_driver g_usb_eth_driver = {
     .disconnect = usb_eth_disconnect,
 };
 
-void usb_eth_init(void)
+static void usb_eth_init(void)
 {
     usb_register_driver(&g_usb_eth_driver);
 }
 
-void usb_eth_exit(void)
+static void usb_eth_exit(void)
 {
     usb_deregister_driver(&g_usb_eth_driver);
 }
 
 /* ── Stub: usb_eth_open ─────────────────────────────── */
-int usb_eth_open(void *dev)
+static int usb_eth_open(void *dev)
 {
     (void)dev;
     kprintf("[USB] usb_eth_open: not yet implemented\n");
     return 0;
 }
 /* ── Stub: usb_eth_stop ─────────────────────────────── */
-int usb_eth_stop(void *dev)
+static int usb_eth_stop(void *dev)
 {
     (void)dev;
     kprintf("[USB] usb_eth_stop: not yet implemented\n");
     return 0;
 }
 /* ── Stub: usb_eth_xmit ─────────────────────────────── */
-int usb_eth_xmit(void *skb, void *dev)
+static int usb_eth_xmit(void *skb, void *dev)
 {
     (void)skb;
     (void)dev;

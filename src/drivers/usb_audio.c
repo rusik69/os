@@ -345,7 +345,7 @@ static int audio_feature_unit_request(uint8_t dev_addr, uint8_t iface,
  *
  * Returns 0 on success, negative errno on failure.
  */
-int audio_set_mute(uint8_t dev_addr, uint8_t iface,
+static int audio_set_mute(uint8_t dev_addr, uint8_t iface,
 		   uint8_t fu_id, uint8_t muted)
 {
 	uint8_t val = muted ? 1 : 0;
@@ -364,7 +364,7 @@ int audio_set_mute(uint8_t dev_addr, uint8_t iface,
  *
  * Returns 0 on success, negative errno on failure.
  */
-int audio_get_mute(uint8_t dev_addr, uint8_t iface,
+static int audio_get_mute(uint8_t dev_addr, uint8_t iface,
 		   uint8_t fu_id, uint8_t *out_muted)
 {
 	uint8_t val = 0;
@@ -398,7 +398,7 @@ int audio_get_mute(uint8_t dev_addr, uint8_t iface,
  *
  * Returns 0 on success, negative errno on failure.
  */
-int audio_set_volume(uint8_t dev_addr, uint8_t iface,
+static int audio_set_volume(uint8_t dev_addr, uint8_t iface,
 		     uint8_t fu_id, uint8_t channel, int16_t volume)
 {
 	return audio_feature_unit_request(dev_addr, iface, fu_id,
@@ -417,7 +417,7 @@ int audio_set_volume(uint8_t dev_addr, uint8_t iface,
  *
  * Returns 0 on success, negative errno on failure.
  */
-int audio_get_volume(uint8_t dev_addr, uint8_t iface,
+static int audio_get_volume(uint8_t dev_addr, uint8_t iface,
 		     uint8_t fu_id, uint8_t channel, int16_t *out_volume)
 {
 	int16_t val = 0;
@@ -449,7 +449,7 @@ int audio_get_volume(uint8_t dev_addr, uint8_t iface,
  *
  * Returns 0 on success, negative errno on failure.
  */
-int audio_get_volume_range(uint8_t dev_addr, uint8_t iface,
+static int audio_get_volume_range(uint8_t dev_addr, uint8_t iface,
 			   uint8_t fu_id, uint8_t channel,
 			   int16_t *out_min, int16_t *out_max,
 			   int16_t *out_res)
@@ -520,7 +520,7 @@ static int audio_feature_unit_request_uac2(uint8_t dev_addr, uint8_t iface,
  * Set the volume of a UAC2 feature unit (4-byte integer).
  * @volume:  Volume in 1/256 dB units (signed 32-bit)
  */
-int audio_set_volume_uac2(uint8_t dev_addr, uint8_t iface,
+static int audio_set_volume_uac2(uint8_t dev_addr, uint8_t iface,
 			   uint8_t fu_id, uint8_t channel, int32_t volume)
 {
 	return audio_feature_unit_request_uac2(dev_addr, iface, fu_id,
@@ -533,7 +533,7 @@ int audio_set_volume_uac2(uint8_t dev_addr, uint8_t iface,
  * Get the current volume of a UAC2 feature unit (4-byte integer).
  * @out_volume:  Receives volume in 1/256 dB units (signed 32-bit)
  */
-int audio_get_volume_uac2(uint8_t dev_addr, uint8_t iface,
+static int audio_get_volume_uac2(uint8_t dev_addr, uint8_t iface,
 			   uint8_t fu_id, uint8_t channel, int32_t *out_volume)
 {
 	int32_t val = 0;
@@ -556,7 +556,7 @@ int audio_get_volume_uac2(uint8_t dev_addr, uint8_t iface,
 /*
  * Get the volume range (min, max, resolution) of a UAC2 feature unit.
  */
-int audio_get_volume_range_uac2(uint8_t dev_addr, uint8_t iface,
+static int audio_get_volume_range_uac2(uint8_t dev_addr, uint8_t iface,
 				 uint8_t fu_id, uint8_t channel,
 				 int32_t *out_min, int32_t *out_max,
 				 int32_t *out_res)
@@ -1775,7 +1775,7 @@ static struct usb_driver g_usb_audio_driver = {
 	.disconnect = usb_audio_disconnect,
 };
 
-void __init usb_audio_init(void)
+static void __init usb_audio_init(void)
 {
 	if (g_initialized)
 		return;
@@ -1789,7 +1789,7 @@ void __init usb_audio_init(void)
 	kprintf("[usb_audio] USB Audio Class 1.0/2.0 driver registered\n");
 }
 
-void usb_audio_exit(void)
+static void usb_audio_exit(void)
 {
 	usb_deregister_driver(&g_usb_audio_driver);
 

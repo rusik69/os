@@ -94,7 +94,7 @@ static __attribute__((unused)) int v9p_send_recv(const void *tx, uint32_t txlen,
 
 /* ── Init ──────────────────────────────────────────────────────── */
 
-void v9pnet_virtio_init(void)
+static void v9pnet_virtio_init(void)
 {
     struct pci_device dev;
     if (pci_find_device(VIRTIO_VENDOR, VIRTIO_9P_DEVICE, &dev) < 0)
@@ -140,7 +140,7 @@ MODULE_VERSION("1.0");
 #endif
 
 /* ── p9_virtio_init: Probe and initialise the virtio-9p device ── */
-int p9_virtio_init(void)
+static int p9_virtio_init(void)
 {
     kprintf("[9p] Initialising virtio-9p transport...\n");
 
@@ -157,7 +157,7 @@ int p9_virtio_init(void)
 }
 
 /* ── p9_virtio_open: Open a 9P session to a device ────────── */
-int p9_virtio_open(void *dev)
+static int p9_virtio_open(void *dev)
 {
     (void)dev;
     if (!v9p_present) return -EIO;
@@ -169,7 +169,7 @@ int p9_virtio_open(void *dev)
 }
 
 /* ── p9_virtio_close: Close a 9P session ────────── */
-int p9_virtio_close(void *dev)
+static int p9_virtio_close(void *dev)
 {
     (void)dev;
     if (!v9p_present) return -EIO;
@@ -179,7 +179,7 @@ int p9_virtio_close(void *dev)
 }
 
 /* ── p9_virtio_request: Send a 9P request and receive response ── */
-int p9_virtio_request(void *dev, void *req)
+static int p9_virtio_request(void *dev, void *req)
 {
     (void)dev;
     if (!v9p_present) return -EIO;

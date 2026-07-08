@@ -1685,7 +1685,7 @@ static void cfs_wakeup_adjust_vruntime(struct process *proc)
 EXPORT_SYMBOL(scheduler_yield);
 
 /* ── scheduler_pick_next ─────────────────────────────── */
-void* scheduler_pick_next(__maybe_unused void *rq)
+static void* scheduler_pick_next(__maybe_unused void *rq)
 {
     /* Pick the next task from the current CPU's runqueue.
      * If EEVDF is enabled, use eevdf_pick_next(); otherwise use cfs_pick_next(). */
@@ -1694,7 +1694,7 @@ void* scheduler_pick_next(__maybe_unused void *rq)
     return (void*)cfs_pick_next();
 }
 /* ── scheduler_enqueue ─────────────────────────────── */
-int scheduler_enqueue(void *rq, void *task)
+static int scheduler_enqueue(void *rq, void *task)
 {
     (void)rq;
     if (!task) return -EINVAL;
@@ -1703,7 +1703,7 @@ int scheduler_enqueue(void *rq, void *task)
     return 0;
 }
 /* ── scheduler_dequeue ─────────────────────────────── */
-int scheduler_dequeue(void *rq, void *task)
+static int scheduler_dequeue(void *rq, void *task)
 {
     (void)rq;
     if (!task) return -EINVAL;

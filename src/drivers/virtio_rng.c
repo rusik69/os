@@ -208,14 +208,14 @@ static void virtio_rng_collect(void)
 
 /* ── Periodic re-seed helper (called from timer or RNG starvation) ── */
 
-void virtio_rng_reseed(void)
+static void virtio_rng_reseed(void)
 {
     virtio_rng_collect();
 }
 
 /* ── Init ──────────────────────────────────────────────────────── */
 
-void virtio_rng_init(void)
+static void virtio_rng_init(void)
 {
     struct pci_device dev;
     if (pci_find_device(VIRTIO_VENDOR, VIRTIO_RNG_DEVICE, &dev) < 0)
@@ -269,7 +269,7 @@ MODULE_VERSION("1.0");
 #endif
 
 /* ── Stub: virtio_rng_read ─────────────────────────────── */
-int virtio_rng_read(void *dev, void *buf, size_t count)
+static int virtio_rng_read(void *dev, void *buf, size_t count)
 {
     (void)dev;
     (void)buf;

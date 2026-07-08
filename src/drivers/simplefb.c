@@ -69,7 +69,7 @@ static const char *simplefb_format_name(enum simplefb_format fmt)
  *
  * Returns 0 on success, -1 on invalid parameters.
  */
-int simplefb_init(uint64_t fb_addr, uint32_t width, uint32_t height,
+static int simplefb_init(uint64_t fb_addr, uint32_t width, uint32_t height,
                   uint32_t stride, int format_enum)
 {
     /* Validate parameters */

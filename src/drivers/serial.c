@@ -295,7 +295,7 @@ void early_printdec(uint64_t val)
 }
 
 /* ── Open a serial port ──────────────────────────────── */
-int serial_open(int port)
+static int serial_open(int port)
 {
     if (port < 0 || port >= SERIAL_PORTS_MAX)
         return -EINVAL;
@@ -303,14 +303,14 @@ int serial_open(int port)
 }
 
 /* ── Close a serial port ────────────────────────────── */
-int serial_close(int port)
+static int serial_close(int port)
 {
     (void)port;
     return 0;
 }
 
 /* ── Set baud rate using DLAB divisor ───────────────── */
-int serial_set_baud(int port, int baud)
+static int serial_set_baud(int port, int baud)
 {
     if (port < 0 || port >= SERIAL_PORTS_MAX)
         return -EINVAL;
@@ -332,7 +332,7 @@ int serial_set_baud(int port, int baud)
 }
 
 /* ── Set line parameters (bits, parity, stop) ───────── */
-int serial_set_params(int port, int bits, int parity, int stop)
+static int serial_set_params(int port, int bits, int parity, int stop)
 {
     if (port < 0 || port >= SERIAL_PORTS_MAX)
         return -EINVAL;

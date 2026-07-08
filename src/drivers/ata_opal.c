@@ -407,7 +407,7 @@ int ata_opal_is_supported(int bus, int master)
  *  Print discovery info to kernel log
  * ==================================================================== */
 
-void ata_opal_print_discovery(const struct opal_discovery0 *info,
+static void ata_opal_print_discovery(const struct opal_discovery0 *info,
                               const char *prefix)
 {
     const char *pfx = prefix ? prefix : "";

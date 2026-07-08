@@ -131,7 +131,7 @@ int ps2_test_port2(void) {
 }
 
 /* ── Flush the PS/2 output buffer ──────────────────── */
-int ps2_flush(void)
+static int ps2_flush(void)
 {
     uint32_t timeout = 100000;
     while (timeout--) {
@@ -146,7 +146,7 @@ int ps2_flush(void)
 }
 
 /* ── Initialise a PS/2 device (reset and set defaults) ── */
-int ps2_init_device(int dev_type)
+static int ps2_init_device(int dev_type)
 {
     (void)dev_type;
 

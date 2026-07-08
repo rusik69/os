@@ -444,14 +444,14 @@ void iscsi_disconnect(int dev_id)
  * ═══════════════════════════════════════════════════════════════ */
 
 /* ── Stub: iscsi_logout ────────────────────────────── */
-int iscsi_logout(struct iscsi_session *sess)
+static int iscsi_logout(struct iscsi_session *sess)
 {
     (void)sess;
     kprintf("[ISCSI] iscsi_logout: not yet implemented\n");
     return 0;
 }
 /* ── Stub: iscsi_send ──────────────────────────────── */
-int iscsi_send(struct iscsi_session *sess, const uint8_t *data, uint32_t len)
+static int iscsi_send(struct iscsi_session *sess, const uint8_t *data, uint32_t len)
 {
     (void)sess;
     (void)data;
@@ -460,7 +460,7 @@ int iscsi_send(struct iscsi_session *sess, const uint8_t *data, uint32_t len)
     return 0;
 }
 /* ── Stub: iscsi_recv ──────────────────────────────── */
-int iscsi_recv(struct iscsi_session *sess, uint8_t *buf, uint32_t *len)
+static int iscsi_recv(struct iscsi_session *sess, uint8_t *buf, uint32_t *len)
 {
     (void)sess;
     (void)buf;
@@ -469,7 +469,7 @@ int iscsi_recv(struct iscsi_session *sess, uint8_t *buf, uint32_t *len)
     return 0;
 }
 /* ── Stub: iscsi_nop_out ───────────────────────────── */
-int iscsi_nop_out(struct iscsi_session *sess)
+static int iscsi_nop_out(struct iscsi_session *sess)
 {
     (void)sess;
     kprintf("[ISCSI] iscsi_nop_out: not yet implemented\n");

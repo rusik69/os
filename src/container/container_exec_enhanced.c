@@ -362,7 +362,7 @@ int container_exec_detach(struct exec_attach *ea)
 }
 
 /* ── exec_enhanced_run ─────────────────────────────── */
-int exec_enhanced_run(const char *cont, const char *cmd)
+static int exec_enhanced_run(const char *cont, const char *cmd)
 {
     (void)cont;
     (void)cmd;
@@ -370,14 +370,14 @@ int exec_enhanced_run(const char *cont, const char *cmd)
     return 0;
 }
 /* ── exec_enhanced_attach ─────────────────────────────── */
-int exec_enhanced_attach(const char *cont)
+static int exec_enhanced_attach(const char *cont)
 {
     (void)cont;
     kprintf("[container] Attach to: %s\n", cont ? cont : "?");
     return 0;
 }
 /* ── exec_enhanced_terminate ─────────────────────────────── */
-int exec_enhanced_terminate(const char *cont)
+static int exec_enhanced_terminate(const char *cont)
 {
     (void)cont;
     kprintf("[container] Terminate exec: %s\n", cont ? cont : "?");

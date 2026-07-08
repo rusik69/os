@@ -34,6 +34,7 @@
 #include "printf.h"
 #include "string.h"
 #include "spinlock.h"
+#include "module_deps.h"
 
 /* Maximum recursion depth for cycle detection */
 #define MODULE_DEP_MAX_DEPTH 32

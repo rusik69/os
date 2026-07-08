@@ -530,21 +530,21 @@ void bonding_init(void)
 }
 
 /* ── Stub: bond_open ─────────────────────────────── */
-int bond_open(void *dev)
+static int bond_open(void *dev)
 {
     (void)dev;
     kprintf("[BONDING] bond_open: not yet implemented\n");
     return 0;
 }
 /* ── Stub: bond_stop ─────────────────────────────── */
-int bond_stop(void *dev)
+static int bond_stop(void *dev)
 {
     (void)dev;
     kprintf("[BONDING] bond_stop: not yet implemented\n");
     return 0;
 }
 /* ── Stub: bond_xmit ─────────────────────────────── */
-int bond_xmit(void *skb, void *dev)
+static int bond_xmit(void *skb, void *dev)
 {
     (void)skb;
     (void)dev;
@@ -552,7 +552,7 @@ int bond_xmit(void *skb, void *dev)
     return 0;
 }
 /* ── Stub: bond_enslave ─────────────────────────────── */
-int bond_enslave(void *dev, void *slave_dev)
+static int bond_enslave(void *dev, void *slave_dev)
 {
     (void)dev;
     (void)slave_dev;
@@ -560,7 +560,7 @@ int bond_enslave(void *dev, void *slave_dev)
     return 0;
 }
 /* ── Stub: bond_release ─────────────────────────────── */
-int bond_release(void *dev, void *slave_dev)
+static int bond_release(void *dev, void *slave_dev)
 {
     (void)dev;
     (void)slave_dev;

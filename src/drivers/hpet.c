@@ -18,7 +18,7 @@ void hpet_init(void) {
 int hpet_is_present(void) { return hpet_present; }
 
 /* ── Stub: hpet_read ─────────────────────────────── */
-int hpet_read(void *buf, size_t count)
+static int hpet_read(void *buf, size_t count)
 {
     (void)buf;
     (void)count;
@@ -26,7 +26,7 @@ int hpet_read(void *buf, size_t count)
     return 0;
 }
 /* ── Stub: hpet_ioctl ─────────────────────────────── */
-int hpet_ioctl(int cmd, void *arg)
+static int hpet_ioctl(int cmd, void *arg)
 {
     (void)cmd;
     (void)arg;

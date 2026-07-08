@@ -390,13 +390,13 @@ void dm_crypt_init(void)
 module_init(dm_crypt_init);
 
 /* ── Stub: dm_crypt_ctr ─────────────────────────────── */
-int dm_crypt_ctr(__maybe_unused void *ti, __maybe_unused unsigned int argc, __maybe_unused char **argv)
+static int dm_crypt_ctr(__maybe_unused void *ti, __maybe_unused unsigned int argc, __maybe_unused char **argv)
 {
     kprintf("[DM_CRYPT] dm_crypt_ctr: not yet implemented\n");
     return 0;
 }
 /* ── Stub: dm_crypt_map ─────────────────────────────── */
-int dm_crypt_map(__maybe_unused void *ti, __maybe_unused void *bio)
+static int dm_crypt_map(__maybe_unused void *ti, __maybe_unused void *bio)
 {
     kprintf("[DM_CRYPT] dm_crypt_map: not yet implemented\n");
     return 0;

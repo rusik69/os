@@ -1787,7 +1787,7 @@ int process_check_exec_perms(const char *binary_path, uint32_t uid, uint32_t gid
 }
 
 /* ── process_wait ─────────────────────────────── */
-int process_wait(int pid, int *status, int options)
+static int process_wait(int pid, int *status, int options)
 {
     (void)options;
     struct process *cur = process_get_current();
@@ -1850,7 +1850,7 @@ int process_wait(int pid, int *status, int options)
 }
 
 /* ── process_kill ─────────────────────────────── */
-int process_kill(int pid, int sig)
+static int process_kill(int pid, int sig)
 {
     if (pid <= 0) return -EINVAL;
 

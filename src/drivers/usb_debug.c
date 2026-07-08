@@ -183,7 +183,7 @@ static void dbc_flush_output(struct dbc_device *dbc)
 
 /* ── Console output hook ─────────────────────────────────────────── */
 
-void dbc_console_write(const char *buf, int len)
+static void dbc_console_write(const char *buf, int len)
 {
     if (!g_dbc_initialized || !g_dbc.dbc_connected)
         return;
@@ -264,7 +264,7 @@ static int dbc_probe_xhci(struct dbc_device *dbc)
  *   4. Wait for connection
  *   5. Initialize TRB rings for bulk OUT/IN
  */
-int dbc_init(void)
+static int dbc_init(void)
 {
     if (g_dbc_initialized)
         return 0;
@@ -330,27 +330,27 @@ int dbc_init(void)
 
 /* ── Connection status ───────────────────────────────────────────── */
 
-int dbc_is_connected(void)
+static int dbc_is_connected(void)
 {
     if (!g_dbc_initialized)
         return 0;
     return g_dbc.dbc_connected ? 1 : 0;
 }
 
-int dbc_is_present(void)
+static int dbc_is_present(void)
 {
     return g_dbc_initialized;
 }
 
 /* ── Stub: usb_debug_init ─────────────────────────────── */
-int usb_debug_init(void *dev)
+static int usb_debug_init(void *dev)
 {
     (void)dev;
     kprintf("[USB] usb_debug_init: not yet implemented\n");
     return 0;
 }
 /* ── Stub: usb_debug_write ─────────────────────────────── */
-int usb_debug_write(void *dev, const void *buf, size_t count)
+static int usb_debug_write(void *dev, const void *buf, size_t count)
 {
     (void)dev;
     (void)buf;
@@ -359,7 +359,7 @@ int usb_debug_write(void *dev, const void *buf, size_t count)
     return 0;
 }
 /* ── Stub: usb_debug_read ─────────────────────────────── */
-int usb_debug_read(void *dev, void *buf, size_t count)
+static int usb_debug_read(void *dev, void *buf, size_t count)
 {
     (void)dev;
     (void)buf;

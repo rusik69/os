@@ -727,7 +727,7 @@ EXPORT_SYMBOL(dm_init);
 module_init(dm_init);
 
 /* ── Stub: dm_create ─────────────────────────────── */
-int dm_create(const char *name, const char *target)
+static int dm_create(const char *name, const char *target)
 {
     (void)name;
     (void)target;
@@ -735,21 +735,21 @@ int dm_create(const char *name, const char *target)
     return 0;
 }
 /* ── Stub: dm_remove ─────────────────────────────── */
-int dm_remove(const char *name)
+static int dm_remove(const char *name)
 {
     (void)name;
     kprintf("[DM] dm_remove: not yet implemented\n");
     return 0;
 }
 /* ── Stub: dm_suspend ─────────────────────────────── */
-int dm_suspend(const char *name)
+static int dm_suspend(const char *name)
 {
     (void)name;
     kprintf("[DM] dm_suspend: not yet implemented\n");
     return 0;
 }
 /* ── Stub: dm_resume ─────────────────────────────── */
-int dm_resume(const char *name)
+static int dm_resume(const char *name)
 {
     (void)name;
     kprintf("[DM] dm_resume: not yet implemented\n");

@@ -384,7 +384,7 @@ static int acm_poll_notification(void) {
 
 /* ── Initialisation ────────────────────────────────────────────────── */
 
-int __init usb_cdc_acm_init(void) {
+static int __init usb_cdc_acm_init(void) {
     if (g_acm_initialized) return 0;
     if (!usb_is_present()) return -1;
 
@@ -517,7 +517,7 @@ int __init usb_cdc_acm_init(void) {
 
 /* ── Poll for incoming serial data ─────────────────────────────────── */
 
-void usb_cdc_acm_poll(void) {
+static void usb_cdc_acm_poll(void) {
     if (!g_acm_initialized) return;
 
     /* Poll interrupt endpoint for serial state notifications */
@@ -544,14 +544,14 @@ void usb_cdc_acm_poll(void) {
 
 /* ── Public API ────────────────────────────────────────────────────── */
 
-int usb_cdc_acm_write(const uint8_t *data, int len) {
+static int usb_cdc_acm_write(const uint8_t *data, int len) {
     if (!g_acm_initialized) return -ENODEV;
     if (!data || len <= 0) return -EINVAL;
     return ehci_do_transfer(QTD_PID_OUT, g_bulk_out_ep, (void *)(uintptr_t)data,
                              (uint32_t)len, 0);
 }
 
-int usb_cdc_acm_read(uint8_t *buf, int maxlen) {
+static int usb_cdc_acm_read(uint8_t *buf, int maxlen) {
     if (!g_acm_initialized) return -ENODEV;
     if (!buf || maxlen <= 0) return -EINVAL;
     int count = 0;
@@ -562,14 +562,14 @@ int usb_cdc_acm_read(uint8_t *buf, int maxlen) {
     return count;
 }
 
-int usb_cdc_acm_available(void) {
+static int usb_cdc_acm_available(void) {
     if (!g_acm_initialized) return 0;
     return (g_acm_rx_tail - g_acm_rx_head + ACM_BUF_SIZE) % ACM_BUF_SIZE;
 }
 
 /* ── Control line management API ──────────────────────────────────── */
 
-int usb_cdc_acm_set_line_coding(uint32_t baud, uint8_t data_bits,
+static int usb_cdc_acm_set_line_coding(uint32_t baud, uint8_t data_bits,
                                  uint8_t parity, uint8_t stop_bits) {
     if (!g_acm_initialized) return -ENODEV;
     struct cdc_line_coding lc;
@@ -592,7 +592,7 @@ int usb_cdc_acm_set_line_coding(uint32_t baud, uint8_t data_bits,
     return (rc < 0) ? rc : 0;
 }
 
-int usb_cdc_acm_get_line_coding(uint32_t *baud, uint8_t *data_bits,
+static int usb_cdc_acm_get_line_coding(uint32_t *baud, uint8_t *data_bits,
                                  uint8_t *parity, uint8_t *stop_bits) {
     if (!g_acm_initialized) return -ENODEV;
     if (!baud || !data_bits || !parity || !stop_bits) return -EINVAL;
@@ -608,24 +608,24 @@ int usb_cdc_acm_get_line_coding(uint32_t *baud, uint8_t *data_bits,
     return 0;
 }
 
-int usb_cdc_acm_set_control_line_state(uint16_t state) {
+static int usb_cdc_acm_set_control_line_state(uint16_t state) {
     if (!g_acm_initialized) return -ENODEV;
     return cdc_set_control_line_state(state);
 }
 
-int usb_cdc_acm_get_control_line_state(uint16_t *state) {
+static int usb_cdc_acm_get_control_line_state(uint16_t *state) {
     if (!g_acm_initialized) return -ENODEV;
     if (!state) return -EINVAL;
     *state = g_control_line_state;
     return 0;
 }
 
-int usb_cdc_acm_send_break(uint16_t duration) {
+static int usb_cdc_acm_send_break(uint16_t duration) {
     if (!g_acm_initialized) return -ENODEV;
     return cdc_send_break(duration);
 }
 
-int usb_cdc_acm_get_serial_state(uint16_t *state) {
+static int usb_cdc_acm_get_serial_state(uint16_t *state) {
     if (!g_acm_initialized) return -ENODEV;
     if (!state) return -EINVAL;
     *state = g_serial_state;
@@ -640,14 +640,14 @@ int cdc_acm_init(void *dev) {
     return usb_cdc_acm_init();
 }
 
-int cdc_acm_open(void *dev) {
+static int cdc_acm_open(void *dev) {
     (void)dev;
     if (!g_acm_initialized) return -ENODEV;
     /* Assert DTR + RTS on open */
     return cdc_set_control_line_state(LINE_STATE_DTR | LINE_STATE_RTS);
 }
 
-int cdc_acm_close(void *dev) {
+static int cdc_acm_close(void *dev) {
     (void)dev;
     if (!g_acm_initialized) return -ENODEV;
     /* De-assert DTR + RTS on close */
@@ -666,7 +666,7 @@ int cdc_acm_read(void *dev, void *buf, size_t count) {
 
 /* ── Exit / cleanup ────────────────────────────────────────────────── */
 
-void usb_cdc_acm_exit(void) {
+static void usb_cdc_acm_exit(void) {
     if (!g_acm_initialized) return;
 
     /* De-assert control lines */

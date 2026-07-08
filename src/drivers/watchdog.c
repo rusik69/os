@@ -451,7 +451,7 @@ module_init(watchdog_sysfs_init);
 /* I6300ESB register base (hardware-specific, may need platform detection) */
 #define I6300ESB_BASE 0x0
 
-int watchdog_start(void)
+static int watchdog_start(void)
 {
     kprintf("[WATCHDOG] Starting\n");
     outb(I6300ESB_BASE + 0x05, 0x30);
@@ -459,7 +459,7 @@ int watchdog_start(void)
     return 0;
 }
 
-int watchdog_set_timeout(uint32_t seconds)
+static int watchdog_set_timeout(uint32_t seconds)
 {
     if (seconds == 0 || seconds > 255) return -EINVAL;
     outb(I6300ESB_BASE + 0x07, (uint8_t)seconds);

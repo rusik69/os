@@ -353,7 +353,7 @@ void cpufreq_ondemand_evaluate(void)
 }
 
 /* ── od_speed_up ─────────────────────────────── */
-int od_speed_up(int cpu)
+static int od_speed_up(int cpu)
 {
     (void)cpu;
     int cur = cpupstate_get_state();
@@ -361,7 +361,7 @@ int od_speed_up(int cpu)
     return cpupstate_set_state(cur - 1);
 }
 /* ── od_slow_down ─────────────────────────────── */
-int od_slow_down(int cpu)
+static int od_slow_down(int cpu)
 {
     (void)cpu;
     int cur = cpupstate_get_state();
@@ -370,7 +370,7 @@ int od_slow_down(int cpu)
     return cpupstate_set_state(cur + 1);
 }
 /* ── od_target ─────────────────────────────── */
-int od_target(int cpu, unsigned int target_freq)
+static int od_target(int cpu, unsigned int target_freq)
 {
     (void)cpu;
     int count = cpupstate_get_count();

@@ -87,7 +87,7 @@ void dm_error_init(void)
 module_init(dm_error_init);
 
 /* ── Stub: dm_error_ctr ─────────────────────────────── */
-int dm_error_ctr(void *ti, unsigned int argc, char **argv)
+static int dm_error_ctr(void *ti, unsigned int argc, char **argv)
 {
     (void)ti;
     (void)argc;
@@ -96,7 +96,7 @@ int dm_error_ctr(void *ti, unsigned int argc, char **argv)
     return 0;
 }
 /* ── Stub: dm_error_map ─────────────────────────────── */
-int dm_error_map(void *ti, void *bio)
+static int dm_error_map(void *ti, void *bio)
 {
     (void)ti;
     (void)bio;

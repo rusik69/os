@@ -1174,7 +1174,7 @@ static void acpi_dock_fire_callbacks(int new_state) {
 /* Manual dock state override flag: set to 1 once manual_transition is used */
 static int g_dock_manual_override = 0;
 
-void acpi_dock_manual_transition(int new_state) {
+static void acpi_dock_manual_transition(int new_state) {
     if (new_state != ACPI_DOCK_DOCKED && new_state != ACPI_DOCK_UNDOCKED)
         return;
     if (g_dock_state == new_state)
@@ -1348,7 +1348,7 @@ struct acpi_resource {
  *
  * Returns the number of resources found, or negative on error.
  */
-int acpi_parse_crs_buffer(const uint8_t *crs_buffer, uint32_t crs_length,
+static int acpi_parse_crs_buffer(const uint8_t *crs_buffer, uint32_t crs_length,
                            struct acpi_resource *resources, int max_count)
 {
     if (!crs_buffer || !resources || max_count <= 0)
@@ -1515,7 +1515,7 @@ int acpi_parse_crs_buffer(const uint8_t *crs_buffer, uint32_t crs_length,
  *
  * Returns the number of P-states registered, or negative on error.
  */
-int acpi_enumerate_pstates(const uint8_t *pss_data, uint32_t pss_length)
+static int acpi_enumerate_pstates(const uint8_t *pss_data, uint32_t pss_length)
 {
     if (!pss_data || pss_length < ACPI_PSS_ENTRY_SIZE)
         return -EINVAL;
@@ -1558,7 +1558,7 @@ int acpi_enumerate_pstates(const uint8_t *pss_data, uint32_t pss_length)
 /**
  * acpi_is_io_space — Check if an address range is I/O space.
  */
-int acpi_is_io_space(uint8_t space_id)
+static int acpi_is_io_space(uint8_t space_id)
 {
     switch (space_id) {
     case 0:  /* SystemMemory */
@@ -1577,7 +1577,7 @@ int acpi_is_io_space(uint8_t space_id)
  *
  * Returns the current GPE status bits.
  */
-uint32_t acpi_read_gpe_status(void)
+static uint32_t acpi_read_gpe_status(void)
 {
     /* GPE0 status is typically at the GPE0 block address */
     /* For simplicity, read from PM1a event block if available */

@@ -439,7 +439,7 @@ void rbd_disconnect(int dev_id)
 }
 
 /* ── Stub: rbd_read ─────────────────────────────── */
-int rbd_read(void *buf, size_t count, uint64_t offset)
+static int rbd_read(void *buf, size_t count, uint64_t offset)
 {
     (void)buf;
     (void)count;
@@ -448,7 +448,7 @@ int rbd_read(void *buf, size_t count, uint64_t offset)
     return 0;
 }
 /* ── Stub: rbd_write ─────────────────────────────── */
-int rbd_write(const void *buf, size_t count, uint64_t offset)
+static int rbd_write(const void *buf, size_t count, uint64_t offset)
 {
     (void)buf;
     (void)count;

@@ -490,7 +490,7 @@ int ac97_reset(void)
 }
 
 /* ── Set mixer channel level ────────────────────────── */
-int ac97_mixer_set(int channel, int level)
+static int ac97_mixer_set(int channel, int level)
 {
     if (!ac97_dev_present)
         return -ENODEV;

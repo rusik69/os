@@ -154,7 +154,7 @@ static int g_next_string_id = 1;
  *  UDC Core API
  * ═══════════════════════════════════════════════════════════════════ */
 
-void udc_init(void)
+static void udc_init(void)
 {
     spinlock_init(&g_udc_lock);
     memset(g_gadgets, 0, sizeof(g_gadgets));
@@ -164,7 +164,7 @@ void udc_init(void)
     kprintf("[UDC] core initialised\n");
 }
 
-int udc_register_gadget(struct usb_gadget *g)
+static int udc_register_gadget(struct usb_gadget *g)
 {
     if (!g || !g->name || !g->ops)
         return -1;
@@ -187,7 +187,7 @@ int udc_register_gadget(struct usb_gadget *g)
     return 0;
 }
 
-int udc_unregister_gadget(struct usb_gadget *g)
+static int udc_unregister_gadget(struct usb_gadget *g)
 {
     if (!g) return -1;
 
@@ -219,7 +219,7 @@ int udc_unregister_gadget(struct usb_gadget *g)
 
 /* ── ConfigFS-style configuration ──────────────────────────────── */
 
-int udc_add_string(const char *lang, const char *value)
+static int udc_add_string(const char *lang, const char *value)
 {
     if (!lang || !value || g_num_strings >= UDC_MAX_STRINGS)
         return -1;
@@ -237,7 +237,7 @@ int udc_add_string(const char *lang, const char *value)
     return s->id;
 }
 
-int udc_add_config(struct usb_gadget *g, const char *name,
+static int udc_add_config(struct usb_gadget *g, const char *name,
                    uint8_t attributes, uint16_t max_power)
 {
     if (!g || !name)
@@ -265,7 +265,7 @@ int udc_add_config(struct usb_gadget *g, const char *name,
     return cfg->id;
 }
 
-int udc_add_function(struct usb_gadget *g, int config_id,
+static int udc_add_function(struct usb_gadget *g, int config_id,
                      enum gadget_function_type type, const char *name)
 {
     if (!g || !name || config_id < 1 || config_id > g->num_configs)
@@ -316,7 +316,7 @@ int udc_add_function(struct usb_gadget *g, int config_id,
 
 /* ── Composite gadget creation helper ──────────────────────────── */
 
-struct usb_gadget *udc_create_gadget(const char *name,
+static struct usb_gadget *udc_create_gadget(const char *name,
                                       uint16_t vid, uint16_t pid)
 {
     struct usb_gadget *g = (struct usb_gadget *)
@@ -333,7 +333,7 @@ struct usb_gadget *udc_create_gadget(const char *name,
     return g;
 }
 
-void udc_destroy_gadget(struct usb_gadget *g)
+static void udc_destroy_gadget(struct usb_gadget *g)
 {
     if (!g) return;
 
@@ -382,7 +382,7 @@ static struct udc_ops g_dwc2_ops = {
     .ep_queue      = NULL,
 };
 
-struct usb_gadget *udc_create_dwc2_gadget(const char *name,
+static struct usb_gadget *udc_create_dwc2_gadget(const char *name,
                                             uint16_t vid, uint16_t pid)
 {
     struct usb_gadget *g = udc_create_gadget(name, vid, pid);
@@ -415,14 +415,14 @@ struct usb_gadget *udc_create_dwc2_gadget(const char *name,
 }
 
 /* ── Implement: udc_register ─────────────────────────────── */
-int udc_register(void *gadget)
+static int udc_register(void *gadget)
 {
     if (!gadget) return -EINVAL;
     struct usb_gadget *g = (struct usb_gadget *)gadget;
     return udc_register_gadget(g);
 }
 /* ── Implement: udc_unregister ─────────────────────────────── */
-int udc_unregister(void *gadget)
+static int udc_unregister(void *gadget)
 {
     if (!gadget) return -EINVAL;
     struct usb_gadget *g = (struct usb_gadget *)gadget;

@@ -734,7 +734,7 @@ int __init coredump_init_handler(void)
     return 0;
 }
 
-void coredump_exit_handler(void)
+static void coredump_exit_handler(void)
 {
     coredump_unregister_handler();
     kprintf("[COREDUMP] Core dump handler unregistered\n");
@@ -765,7 +765,7 @@ device_initcall(coredump_init_handler);
  * ═══════════════════════════════════════════════════════════════ */
 
 /* ── Stub: coredump_write ──────────────────────────── */
-int coredump_write(const void *data, size_t len)
+static int coredump_write(const void *data, size_t len)
 {
     (void)data;
     (void)len;
@@ -773,7 +773,7 @@ int coredump_write(const void *data, size_t len)
     return 0;
 }
 /* ── Stub: coredump_read ───────────────────────────── */
-int coredump_read(void *buf, size_t len)
+static int coredump_read(void *buf, size_t len)
 {
     (void)buf;
     (void)len;
@@ -781,14 +781,14 @@ int coredump_read(void *buf, size_t len)
     return 0;
 }
 /* ── Stub: coredump_file_open ──────────────────────── */
-int coredump_file_open(const char *path)
+static int coredump_file_open(const char *path)
 {
     (void)path;
     kprintf("[COREDUMP] coredump_file_open: not yet implemented\n");
     return 0;
 }
 /* ── Stub: coredump_note_write ─────────────────────── */
-int coredump_note_write(const void *note, size_t len)
+static int coredump_note_write(const void *note, size_t len)
 {
     (void)note;
     (void)len;
@@ -796,7 +796,7 @@ int coredump_note_write(const void *note, size_t len)
     return 0;
 }
 /* ── Stub: coredump_elf_headers ────────────────────── */
-int coredump_elf_headers(void *task, void *buf, size_t *len)
+static int coredump_elf_headers(void *task, void *buf, size_t *len)
 {
     (void)task;
     (void)buf;

@@ -42,7 +42,7 @@ static struct aer_error aer_errors[64];
 static int aer_error_count = 0;
 
 /* Log an AER error */
-void aer_log_error(int bus, int dev, int func,
+static void aer_log_error(int bus, int dev, int func,
                     uint32_t uncor_status, uint32_t cor_status)
 {
     if (aer_error_count < 64) {
@@ -59,7 +59,7 @@ void aer_log_error(int bus, int dev, int func,
 }
 
 /* Handle a correctable error */
-int aer_handle_correctable(int bus, int dev, int func, uint32_t status)
+static int aer_handle_correctable(int bus, int dev, int func, uint32_t status)
 {
     kprintf("[AER] Correctable: %02x:%02x.%x status=0x%08x\n",
             bus, dev, func, status);
@@ -75,7 +75,7 @@ int aer_handle_correctable(int bus, int dev, int func, uint32_t status)
 }
 
 /* Handle an uncorrectable error */
-int aer_handle_uncorrectable(int bus, int dev, int func, uint32_t status)
+static int aer_handle_uncorrectable(int bus, int dev, int func, uint32_t status)
 {
     kprintf("[AER] Uncorrectable: %02x:%02x.%x status=0x%08x\n",
             bus, dev, func, status);
@@ -89,7 +89,7 @@ int aer_handle_uncorrectable(int bus, int dev, int func, uint32_t status)
 }
 
 /* Scan for AER capability on a device */
-int aer_probe_device(int bus, int dev, int func)
+static int aer_probe_device(int bus, int dev, int func)
 {
     uint16_t aer_cap = pci_find_ext_cap(bus, dev, func, 0x0001); /* PCI_EXT_CAP_ID_AER */
     if (aer_cap) {
@@ -100,7 +100,7 @@ int aer_probe_device(int bus, int dev, int func)
     return 0;
 }
 
-void aer_init(void)
+static void aer_init(void)
 {
     memset(aer_errors, 0, sizeof(aer_errors));
     aer_error_count = 0;
@@ -110,14 +110,14 @@ void aer_init(void)
 module_init(aer_init);
 
 /* ── Stub: pcie_aer_init ─────────────────────────────── */
-int pcie_aer_init(void *dev)
+static int pcie_aer_init(void *dev)
 {
     (void)dev;
     kprintf("[PCIE] pcie_aer_init: not yet implemented\n");
     return 0;
 }
 /* ── Stub: pcie_aer_handler ─────────────────────────────── */
-int pcie_aer_handler(void *dev, uint32_t status)
+static int pcie_aer_handler(void *dev, uint32_t status)
 {
     (void)dev;
     (void)status;
@@ -125,14 +125,14 @@ int pcie_aer_handler(void *dev, uint32_t status)
     return 0;
 }
 /* ── Stub: pcie_aer_clear ─────────────────────────────── */
-int pcie_aer_clear(void *dev)
+static int pcie_aer_clear(void *dev)
 {
     (void)dev;
     kprintf("[PCIE] pcie_aer_clear: not yet implemented\n");
     return 0;
 }
 /* ── Stub: pcie_aer_print ─────────────────────────────── */
-int pcie_aer_print(void *dev)
+static int pcie_aer_print(void *dev)
 {
     (void)dev;
     kprintf("[PCIE] pcie_aer_print: not yet implemented\n");

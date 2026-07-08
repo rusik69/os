@@ -572,7 +572,7 @@ void __init rtc_sysfs_init(void) {
 #include "module.h"
 module_init(rtc_init);
 
-int rtc_read_time(struct rtc_time *tm)
+static int rtc_read_time(struct rtc_time *tm)
 {
     if (!tm) return -EINVAL;
     /* Use existing rtc_get_time which reads the CMOS RTC correctly */
@@ -580,7 +580,7 @@ int rtc_read_time(struct rtc_time *tm)
     return 0;
 }
 
-int rtc_set_time(const struct rtc_time *tm)
+static int rtc_set_time(const struct rtc_time *tm)
 {
     (void)tm;
     return 0;
@@ -591,7 +591,7 @@ int rtc_set_time(const struct rtc_time *tm)
 #define RTC_SET_TIME 0x4024700A  /* _IOW('p', 0x0A, struct rtc_time)  — set time */
 
 /* ── RTC ioctl handler ──────────────────────────────── */
-int rtc_ioctl(int cmd, void *arg)
+static int rtc_ioctl(int cmd, void *arg)
 {
     if (!arg)
         return -EINVAL;

@@ -13,12 +13,10 @@
 #include "errno.h"
 #include "signal_validate.h"
 #include "timer.h"
+#include "coredump_core.h"
 
 /* Maximum signal number (signals 1-64) — bounds all signal arrays */
 #define MAX_SIG  65
-
-/* Core dump handler */
-extern void do_coredump(struct process *proc, int signo);
 
 int signal_send(uint32_t pid, int signum) {
     if (signum == 0) {
@@ -377,7 +375,7 @@ void signal_unmask(uint64_t sigmask) {
 }
 
 /* ── signal_handle ─────────────────────────────── */
-int signal_handle(void *task, int sig)
+static int signal_handle(void *task, int sig)
 {
     (void)task;
     if (sig <= 0 || sig >= SIG_MAX) return -EINVAL;
@@ -417,7 +415,7 @@ int signal_handle(void *task, int sig)
 }
 
 /* ── signal_register_handler ─────────────────────────────── */
-int signal_register_handler(int sig, void *handler)
+static int signal_register_handler(int sig, void *handler)
 {
     if (sig <= 0 || sig >= SIG_MAX) return -EINVAL;
     /* ISO C does not allow direct cast from void* to function pointer;
@@ -429,7 +427,7 @@ int signal_register_handler(int sig, void *handler)
 }
 
 /* ── signal_block ─────────────────────────────── */
-int signal_block(int sig)
+static int signal_block(int sig)
 {
     if (sig <= 0 || sig >= SIG_MAX) return -EINVAL;
     /* Block a single signal by masking it */
@@ -442,7 +440,7 @@ int signal_block(int sig)
 }
 
 /* ── signal_unblock ─────────────────────────────── */
-int signal_unblock(int sig)
+static int signal_unblock(int sig)
 {
     if (sig <= 0 || sig >= SIG_MAX) return -EINVAL;
     uint64_t mask = (1ULL << sig);

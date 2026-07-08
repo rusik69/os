@@ -348,7 +348,7 @@ int drm_gem_mmap(struct drm_gem_object *obj, uint64_t *offset)
 }
 
 /* ── Implement: drm_gem_object_init ─────────────────────────────── */
-int drm_gem_object_init(void *dev, void *obj, size_t size)
+static int drm_gem_object_init(void *dev, void *obj, size_t size)
 {
     (void)dev;
     if (!obj || size == 0) return -EINVAL;
@@ -363,7 +363,7 @@ int drm_gem_object_init(void *dev, void *obj, size_t size)
     return 0;
 }
 /* ── Implement: drm_gem_object_free ─────────────────────────────── */
-int drm_gem_object_free(void *obj)
+static int drm_gem_object_free(void *obj)
 {
     if (!obj) return -EINVAL;
 
@@ -373,7 +373,7 @@ int drm_gem_object_free(void *obj)
     return 0;
 }
 /* ── Implement: drm_gem_handle_delete ─────────────────────────────── */
-int drm_gem_handle_delete(void *file, uint32_t handle)
+static int drm_gem_handle_delete(void *file, uint32_t handle)
 {
     (void)file;
     /* Delete a GEM handle — our handle table is global, so we can

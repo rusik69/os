@@ -97,7 +97,7 @@ void dm_zero_init(void)
 module_init(dm_zero_init);
 
 /* ── Stub: dm_zero_ctr ─────────────────────────────── */
-int dm_zero_ctr(void *ti, unsigned int argc, char **argv)
+static int dm_zero_ctr(void *ti, unsigned int argc, char **argv)
 {
     (void)ti;
     (void)argc;
@@ -106,7 +106,7 @@ int dm_zero_ctr(void *ti, unsigned int argc, char **argv)
     return 0;
 }
 /* ── Stub: dm_zero_map ─────────────────────────────── */
-int dm_zero_map(void *ti, void *bio)
+static int dm_zero_map(void *ti, void *bio)
 {
     (void)ti;
     (void)bio;

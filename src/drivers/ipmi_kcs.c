@@ -386,13 +386,13 @@ const struct ipmi_device *ipmi_get_device(void)
 }
 
 /* ── Stub: ipmi_kcs_init ─────────────────────────────── */
-int ipmi_kcs_init(void)
+static int ipmi_kcs_init(void)
 {
     kprintf("[ipmi] ipmi_kcs_init: not yet implemented\n");
     return 0;
 }
 /* ── Stub: ipmi_kcs_send ─────────────────────────────── */
-int ipmi_kcs_send(const void *msg, size_t len)
+static int ipmi_kcs_send(const void *msg, size_t len)
 {
     (void)msg;
     (void)len;
@@ -400,7 +400,7 @@ int ipmi_kcs_send(const void *msg, size_t len)
     return 0;
 }
 /* ── Stub: ipmi_kcs_recv ─────────────────────────────── */
-int ipmi_kcs_recv(void *msg, size_t *len)
+static int ipmi_kcs_recv(void *msg, size_t *len)
 {
     (void)msg;
     (void)len;
@@ -408,7 +408,7 @@ int ipmi_kcs_recv(void *msg, size_t *len)
     return 0;
 }
 /* ── Stub: ipmi_kcs_poll ─────────────────────────────── */
-int ipmi_kcs_poll(void)
+static int ipmi_kcs_poll(void)
 {
     kprintf("[ipmi] ipmi_kcs_poll: not yet implemented\n");
     return 0;

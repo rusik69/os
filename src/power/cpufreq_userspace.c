@@ -31,7 +31,7 @@ static int g_userspace_freq_state = -1;  /* -1 = not set, else P-state index */
 
 /* ── Public API ───────────────────────────────────────────────────── */
 
-int cpufreq_userspace_init(void)
+static int cpufreq_userspace_init(void)
 {
     if (!cpupstate_is_present()) {
         kprintf("[userspace] CPU freq scaling not present — disabled\n");
@@ -45,7 +45,7 @@ int cpufreq_userspace_init(void)
     return 0;
 }
 
-int cpufreq_userspace_start(void)
+static int cpufreq_userspace_start(void)
 {
     if (!cpupstate_is_present()) return -1;
     g_active = 1;
@@ -59,13 +59,13 @@ int cpufreq_userspace_start(void)
     return 0;
 }
 
-void cpufreq_userspace_stop(void)
+static void cpufreq_userspace_stop(void)
 {
     g_active = 0;
     kprintf("[userspace] Governor stopped\n");
 }
 
-int cpufreq_userspace_is_active(void)
+static int cpufreq_userspace_is_active(void)
 {
     return g_active;
 }
@@ -78,7 +78,7 @@ int cpufreq_userspace_is_active(void)
  * @state: P-state index (0 = highest frequency, num_states-1 = lowest)
  * Returns 0 on success, -1 if state is out of range.
  */
-int cpufreq_userspace_set_state(int state)
+static int cpufreq_userspace_set_state(int state)
 {
     int num_states = cpupstate_get_count();
     if (num_states <= 0)
@@ -101,7 +101,7 @@ int cpufreq_userspace_set_state(int state)
 /*
  * Get the currently set userspace frequency (P-state index).
  */
-int cpufreq_userspace_get_state(void)
+static int cpufreq_userspace_get_state(void)
 {
     return g_userspace_freq_state;
 }
@@ -110,7 +110,7 @@ int cpufreq_userspace_get_state(void)
  * Apply the userspace-set frequency immediately.
  * Called when switching to this governor.
  */
-void cpufreq_userspace_apply(void)
+static void cpufreq_userspace_apply(void)
 {
     if (!g_active || !cpupstate_is_present())
         return;
@@ -126,7 +126,7 @@ void cpufreq_userspace_apply(void)
  * Accepts frequencies in kHz or the strings "userspace", "ondemand", etc.
  * For kHz, we find the nearest P-state and apply it.
  */
-int cpufreq_userspace_setspeed_write(const char *buf, uint32_t size)
+static int cpufreq_userspace_setspeed_write(const char *buf, uint32_t size)
 {
     /* Parse the input — could be a frequency in kHz or "conservative"/"powersave" etc. */
     char tmp[64];
@@ -178,7 +178,7 @@ int cpufreq_userspace_setspeed_write(const char *buf, uint32_t size)
 }
 
 /* ── usr_setspeed ─────────────────────────────── */
-int usr_setspeed(int cpu, unsigned int freq)
+static int usr_setspeed(int cpu, unsigned int freq)
 {
     (void)cpu;
     /* Find the closest P-state to the requested frequency and set it */
@@ -202,7 +202,7 @@ int usr_setspeed(int cpu, unsigned int freq)
     return cpupstate_set_state(best);
 }
 /* ── usr_getspeed ─────────────────────────────── */
-unsigned int usr_getspeed(int cpu)
+static unsigned int usr_getspeed(int cpu)
 {
     (void)cpu;
     int cur = cpupstate_get_state();

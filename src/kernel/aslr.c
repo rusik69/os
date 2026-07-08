@@ -195,7 +195,8 @@ static uint64_t aslr_randomize_addr(uint64_t base, uint64_t range)
     kprintf("[aslr] aslr_randomize_addr: not yet implemented\n");
     return 0;
 }
-/* ── Stub: aslr_randomize_stack ─────────────────────────────── */\nstatic uint64_t aslr_randomize_stack(void)
+/* ── Stub: aslr_randomize_stack ─────────────────────────────── */
+static uint64_t aslr_randomize_stack(void)
 {
     kprintf("[aslr] aslr_randomize_stack: not yet implemented\n");
     return 0;

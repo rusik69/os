@@ -1023,7 +1023,7 @@ void xhci_print_info(void) {
 module_init(xhci_init);
 
 /* ── xhci_reset ─────────────────────────────────────────────── */
-int xhci_reset(void *dev)
+static int xhci_reset(void *dev)
 {
     (void)dev;
     /* Full controller reset followed by ring re-init */
@@ -1038,7 +1038,7 @@ int xhci_reset(void *dev)
 }
 
 /* ── xhci_submit_urb ─────────────────────────────────────────────── */
-int xhci_submit_urb(void *urb)
+static int xhci_submit_urb(void *urb)
 {
     /* Build and enqueue a Normal TRB on the default endpoint's transfer ring.
      * For now, use the command ring as a simple placeholder; full per-endpoint
@@ -1049,7 +1049,7 @@ int xhci_submit_urb(void *urb)
 }
 
 /* ── xhci_irq ───────────────────────────────────────────────── */
-void xhci_irq(struct interrupt_frame *frame)
+static void xhci_irq(struct interrupt_frame *frame)
 {
     (void)frame;
 

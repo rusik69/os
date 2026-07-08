@@ -357,7 +357,7 @@ uint8_t i2c_read_byte(int ack) {
 
 /* ── Convenience: combined master write with stop ───────────────────── */
 
-int i2c_master_write(uint8_t dev_addr, const uint8_t *data, int len, int send_stop) {
+static int i2c_master_write(uint8_t dev_addr, const uint8_t *data, int len, int send_stop) {
     if (!g_i2c_initialised || !data || len <= 0) return -1;
 
     i2c_start();
@@ -383,7 +383,7 @@ int i2c_master_write(uint8_t dev_addr, const uint8_t *data, int len, int send_st
     return 0;
 }
 
-int i2c_master_read(uint8_t dev_addr, uint8_t *buf, int len, int send_stop) {
+static int i2c_master_read(uint8_t dev_addr, uint8_t *buf, int len, int send_stop) {
     if (!g_i2c_initialised || !buf || len <= 0) return -1;
 
     /* Repeated start followed by address + read bit */
@@ -686,20 +686,20 @@ int i2c_slave_poll(void) {
     return 1;
 }
 
-int i2c_read(void *dev, __maybe_unused uint8_t addr, __maybe_unused uint8_t reg, uint8_t *buf, size_t count)
+static int i2c_read(void *dev, __maybe_unused uint8_t addr, __maybe_unused uint8_t reg, uint8_t *buf, size_t count)
 {
     if (!dev || !buf || count == 0) return -EINVAL;
     memset(buf, 0, count);
     return (int)count;
 }
 
-int i2c_write(void *dev, __maybe_unused uint8_t addr, __maybe_unused uint8_t reg, __maybe_unused const uint8_t *buf, size_t count)
+static int i2c_write(void *dev, __maybe_unused uint8_t addr, __maybe_unused uint8_t reg, __maybe_unused const uint8_t *buf, size_t count)
 {
     if (!dev) return -EINVAL;
     return (int)count;
 }
 
-int i2c_transfer(void *dev, void *msgs, int num)
+static int i2c_transfer(void *dev, void *msgs, int num)
 {
     if (!dev || !msgs || num <= 0) return -EINVAL;
     return 0;
