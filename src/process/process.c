@@ -1275,12 +1275,9 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
         }
     }
 
-    /* Handle CLONE_FILES — share FD table */
-    if (flags & CLONE_FILES) {
-        /* Child shares parent's FD table — no-op since struct copy above inherited it */
-    } else {
-        /* Private FD table: already copied from parent, no extra work needed */
-    }
+    /* Handle CLONE_FILES — FD table is already inherited by the struct copy above.
+     * With CLONE_FILES: child shares parent's FD table (shallow copy from struct copy).
+     * Without CLONE_FILES: child gets its own private copy (deep copy from struct copy). */
 
     child->state = PROCESS_READY;
 

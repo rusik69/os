@@ -72,9 +72,9 @@ static int ioctl_fionbio(struct process *p, int fd, uint64_t arg)
 	if (copy_from_user(&val, arg, sizeof(val)) < 0)
 		return -EFAULT;
 	if (val)
-		p->fd_table[fd].open_flags |= (uint8_t)04000;  /* O_NONBLOCK */
+		p->fd_table[fd].open_flags |= 04000;  /* O_NONBLOCK */
 	else
-		p->fd_table[fd].open_flags &= (uint8_t)~04000;
+		p->fd_table[fd].open_flags &= ~04000;
 	return 0;
 }
 
@@ -88,9 +88,9 @@ static int ioctl_fioasync(struct process *p, int fd, uint64_t arg)
 	if (copy_from_user(&val, arg, sizeof(val)) < 0)
 		return -EFAULT;
 	if (val)
-		p->fd_table[fd].open_flags |= (uint8_t)0x2000;  /* O_ASYNC */
+		p->fd_table[fd].open_flags |= 0x2000;  /* O_ASYNC */
 	else
-		p->fd_table[fd].open_flags &= (uint8_t)~0x2000;
+		p->fd_table[fd].open_flags &= ~0x2000;
 	return 0;
 }
 

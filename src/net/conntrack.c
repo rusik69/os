@@ -186,16 +186,9 @@ void nf_conntrack_update_tcp(struct nf_conn *conn, uint8_t tcp_flags,
             conn->proto_state = TCP_CONN_CLOSING;
             conn->timeout_ticks = tcp_timeout_ticks[TCP_CONN_CLOSING];
         } else if (is_ack && !is_syn && !is_fin) {
-            /* Our FIN was ACKed by responder */
-            if (from_originator) {
-                /* Originator got ACK of its FIN, now waiting for responder's FIN */
-                conn->proto_state = TCP_CONN_FIN_WAIT_2;
-            } else {
-                /* Responder ACKed originator's FIN while we were in FIN_WAIT_1
-                 * — actually from_originator=false here means the responder sent ACK
-                 *   for the originator's FIN.  The originator sees this ACK. */
-                conn->proto_state = TCP_CONN_FIN_WAIT_2;
-            }
+            /* Our FIN was ACKed — both originator and responder converge
+             * to FIN_WAIT_2; we await the responder's FIN. */
+            conn->proto_state = TCP_CONN_FIN_WAIT_2;
             conn->timeout_ticks = tcp_timeout_ticks[TCP_CONN_FIN_WAIT_2];
         } else if (is_fin && from_originator) {
             /* Another FIN from originator? stay in FIN_WAIT_1 */

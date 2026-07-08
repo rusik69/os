@@ -144,11 +144,8 @@ int eventfd_poll(int fd, struct poll_table *pt)
     if (efd->counter > 0)
         mask |= POLLIN;
 
-    /* Writable unless counter == UINT64_MAX */
-    if (efd->counter < 0xFFFFFFFFFFFFFFFFULL)
-        mask |= POLLOUT;
-    else
-        mask |= POLLOUT; /* technically still writable */
+    /* eventfd is always writable (write at UINT64_MAX fails with EAGAIN) */
+    mask |= POLLOUT;
 
     /* If nothing is ready and we have a poll_table, register the
      * eventfd's waitqueue so poll_schedule can block on it. */

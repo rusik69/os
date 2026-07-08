@@ -309,7 +309,7 @@ int madvise_willneed(uint64_t addr, uint64_t len)
         }
     }
 
-    return prefaulted > 0 ? 0 : 0; /* Success even if nothing to prefault */
+    return 0; /* Success even if nothing to prefault */
 }
 
 int madvise_cold(uint64_t addr, uint64_t len)

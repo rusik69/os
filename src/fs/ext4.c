@@ -1026,10 +1026,7 @@ static int ext4_verify_flex_bg(struct ext4_priv *ep)
         bgd_entry_size = 64;
     uint32_t bgd_bytes = ep->num_block_groups * bgd_entry_size;
     uint32_t bgd_offset_in_group;
-    if (ep->block_size == 1024)
-        bgd_offset_in_group = 2048 + (0 * 1024); /* block 2, byte 0 */
-    else
-        bgd_offset_in_group = 2048; /* byte 2048 of block 0 */
+    bgd_offset_in_group = 2048;
 
     /* With flex_bg, the BGD table can extend into subsequent groups'
      * reserved GDT blocks.  Warn if it overflows the first group. */

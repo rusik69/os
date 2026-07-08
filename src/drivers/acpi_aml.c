@@ -761,14 +761,7 @@ static uint32_t aml_process_object(struct aml_parse_state *state,
 
 	/* If this is a container (Scope, Device, etc.), recurse into body */
 	if (is_container) {
-		uint32_t body_len = total_size;
-
-		if (opcode == AML_EXT_OP_PREFIX) {
-			/* Body is after: ext_prefix(1) + ext_op(1) + pkg_len + name */
-			body_len = pkg_len;
-		} else {
-			body_len = pkg_len;
-		}
+		uint32_t body_len = pkg_len;
 
 		/*
 		 * The body starts after: opcode + pkg_length_bytes + name_string.

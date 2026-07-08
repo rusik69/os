@@ -184,8 +184,7 @@ static void fe25519_sub(uint64_t *r, const uint64_t *a, const uint64_t *b) {
     if (t[3] >> 63) {
         t[0] += P[0];
         t[1] += P[1] + (t[0] < P[0]);
-        t[2] += P[2] + (t[1] < P[1] && t[1] < t[0] ? 0 : (t[1] == 0 ? 0 : 0));
-        /* Simplified: just add and carry */
+        /* Carry is recomputed properly below — line 187 was dead ternary */
         uint64_t c = 0;
         t[0] += P[0]; c = t[0] < P[0] ? 1 : 0;
         t[1] += P[1] + c; c = t[1] < P[1] + c ? 1 : 0;
@@ -2462,12 +2461,7 @@ int wireguard_recv_cookie(const uint8_t *pkt, uint16_t len,
         /* Find the handshake state by receiver_index (our sender_index from init) */
         for (int i = 0; i < WG_MAX_HANDSHAKES; i++) {
             if (g_wg_hs[i].active) {
-                uint32_t our_idx;
-                if (g_wg_hs[i].is_responder) {
-                    our_idx = g_wg_hs[i].sender_index;
-                } else {
-                    our_idx = g_wg_hs[i].sender_index;
-                }
+                uint32_t our_idx = g_wg_hs[i].sender_index;
 
                 /* The cookie reply's receiver_index should match our sender_index */
                 if (our_idx == receiver_index) {

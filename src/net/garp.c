@@ -110,7 +110,8 @@ static int garp_register_application(uint16_t app_type)
             struct garp_application *app = &garp_apps[i];
             memset(app, 0, sizeof(*app));
             app->app_type = app_type;
-            app->attribute_type = (app_type == GVRP_APPLICATION) ? GVRP_ATTR_VID : GMRP_ATTR_MAC;
+            /* Both GVRP and GMRP define the same attribute type value (1) */
+            app->attribute_type = 1;
             app->leaveall_timer = GARP_LEAVEALL_TIMER;
             kprintf("garp: registered %s application\n",
                     app_type == GVRP_APPLICATION ? "GVRP" : "GMRP");

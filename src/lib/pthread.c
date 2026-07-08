@@ -227,7 +227,7 @@ int pthread_mutex_init(pthread_mutex_t *mutex, const pthread_mutexattr_t *attr)
     if (!mutex) return EINVAL;
 
     mutex->lock           = 0;
-    mutex->type           = (attr) ? 0 : 0;  /* default: PTHREAD_MUTEX_NORMAL */
+    mutex->type           = 0;  /* PTHREAD_MUTEX_NORMAL (default; attr handling is a TODO) */
     mutex->recursive_count = 0;
     mutex->owner          = 0;
     return 0;

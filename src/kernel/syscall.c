@@ -919,7 +919,7 @@ static uint64_t do_sys_open(const char *path, uint64_t flags, uint64_t mode) {
                 p->fd_table[i].offset = 0;
                 p->fd_table[i].used = true;
                 p->fd_table[i].flags = FD_TMPFILE;
-                p->fd_table[i].open_flags = (uint8_t)(flags & 0xFF);
+                p->fd_table[i].open_flags = (uint32_t)(flags & 0x3FFF); /* save relevant flags */
                 return (uint64_t)(i + 3);
             }
         }
@@ -955,7 +955,7 @@ static uint64_t do_sys_open(const char *path, uint64_t flags, uint64_t mode) {
             p->fd_table[i].path[63] = '\0';
             p->fd_table[i].offset = 0;
             p->fd_table[i].used = true;
-            p->fd_table[i].open_flags = (uint8_t)(flags & 0xFF); /* save O_APPEND, O_NONBLOCK etc. */
+            p->fd_table[i].open_flags = (uint32_t)(flags & 0x3FFF); /* save relevant flags */
             return (uint64_t)(i + 3);
         }
     }
@@ -3378,10 +3378,8 @@ static uint64_t sys_select(uint64_t nfds, uint64_t readfds_addr,
                         continue; /* closed socket is exceptional */
                     }
                     FD_CLR(i, &exceptfds);
-                } else if (i >= PROCESS_FD_MAX || !cur->fd_table[i].used) {
-                    FD_CLR(i, &exceptfds);
                 } else {
-                    FD_CLR(i, &exceptfds); /* no exception pending */
+                    FD_CLR(i, &exceptfds);
                 }
                 if (FD_ISSET(i, &exceptfds))
                     ready++;
@@ -6786,7 +6784,7 @@ int sys_socketpair_impl(int domain, int type, int protocol, int sv[2]);
 
 static uint64_t sys_socket(uint64_t domain, uint64_t type, uint64_t protocol) {
     int ret = sys_socket_impl((int)domain, (int)type, (int)protocol);
-    return ret >= 0 ? (uint64_t)ret : (uint64_t)(int64_t)ret;
+    return (uint64_t)(int64_t)ret;
 }
 
 static uint64_t sys_bind(uint64_t sockfd, uint64_t addr_addr, uint64_t addrlen) {
@@ -6814,7 +6812,7 @@ static uint64_t sys_accept(uint64_t sockfd, uint64_t addr_addr, uint64_t addrlen
     int fd = sys_accept_impl((int)sockfd,
                              (struct sockaddr_in *)addr_addr,
                              (uint32_t *)addrlen_addr);
-    return fd >= 0 ? (uint64_t)fd : (uint64_t)(int64_t)fd;
+    return (uint64_t)(int64_t)fd;
 }
 
 static uint64_t sys_connect(uint64_t sockfd, uint64_t addr_addr, uint64_t addrlen) {
@@ -7639,11 +7637,8 @@ static uint64_t sys_unlinkat(uint64_t dirfd, uint64_t path_addr, uint64_t flags)
         return (uint64_t)(int64_t)-EFAULT;
     const char *path = resolve_path_at((int)dirfd, kpath, kpath, sizeof(kpath));
     if (!path) return (uint64_t)(int64_t)-ENOENT;
-    int ret;
-    if (flags & AT_REMOVEDIR)
-        ret = vfs_unlink(path);
-    else
-        ret = vfs_unlink(path);
+    /* VFS uses unlink for both files and directory removal */
+    int ret = vfs_unlink(path);
     return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
 }
 

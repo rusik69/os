@@ -138,7 +138,8 @@ static int mrp_join(uint16_t app_protocol, uint32_t attr_value)
         struct mrp_participant *p = &app->participants[app->nparticipants++];
         memset(p, 0, sizeof(*p));
         p->in_use = 1;
-        p->attr_type = (app->app_protocol == MVRP_ATTR_VID) ? MVRP_ATTR_VID : MMRP_ATTR_MAC;
+        /* Both MVRP and MMRP use the same attribute type (1) */
+        p->attr_type = 1;
         p->attr_value = attr_value;
         p->declared = 1;
         /* Propagate to all ports */

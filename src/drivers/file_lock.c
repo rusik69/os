@@ -126,13 +126,9 @@ int file_lock_set(const char *path, struct file_lock *flk, int wait)
         return -EINVAL;
 
     char ap[128];
-    if (path[0] == '/') {
-        strncpy(ap, path, sizeof(ap) - 1);
-        ap[sizeof(ap) - 1] = '\0';
-    } else {
-        strncpy(ap, path, sizeof(ap) - 1);
-        ap[sizeof(ap) - 1] = '\0';
-    }
+    /* TODO: resolve relative paths against current working directory */
+    strncpy(ap, path, sizeof(ap) - 1);
+    ap[sizeof(ap) - 1] = '\0';
 
     for (;;) {
         spinlock_acquire(&lock_spinlock);

@@ -858,7 +858,8 @@ struct qdisc *cake_create(const struct cake_spec *spec)
         priv->limit = 64;
     }
 
-    priv->ecn_enabled = (spec && spec->ecn) ? 1 : CAKE_DEFAULT_ECN;
+    /* ECN is always enabled for now (both spec->ecn and default are 1) */
+    priv->ecn_enabled = 1;
 
     /* Initialise per-tin bandwidth allocation based on ratios */
     for (int t = 0; t < CAKE_TINS; t++) {

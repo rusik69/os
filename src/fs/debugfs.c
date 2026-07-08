@@ -615,8 +615,6 @@ static int debugfs_vfs_readdir(void *priv, const char *path)
 			kprintf("  [%s] %s (u32)\n", t, debugfs_entries[i].name);
 		else if (debugfs_entries[i].read_fn || debugfs_entries[i].write_fn)
 			kprintf("  [%s] %s (callback)\n", t, debugfs_entries[i].name);
-		else if (debugfs_entries[i].type == DEBUGFS_TYPE_DIR)
-			kprintf("  [%s] %s\n", t, debugfs_entries[i].name);
 		else
 			kprintf("  [%s] %s\n", t, debugfs_entries[i].name);
 	}

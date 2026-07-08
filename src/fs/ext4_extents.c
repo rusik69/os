@@ -198,12 +198,11 @@ int ext4_ext_check_header(struct ext4_extent_header *eh, uint16_t max_depth)
  */
 static uint16_t ext4_ext_max_entries(uint16_t depth, uint32_t block_size)
 {
-    uint32_t entry_size;
-
-    if (depth == 0)
-        entry_size = sizeof(struct ext4_extent);
-    else
-        entry_size = sizeof(struct ext4_extent_idx);
+    /* Leaf extents (ext4_extent) and index entries (ext4_extent_idx)
+     * are both 12 bytes packed — verified by build-time assertion. */
+    _Static_assert(sizeof(struct ext4_extent) == sizeof(struct ext4_extent_idx),
+                   "extent leaf and index must be same size (12 bytes)");
+    uint32_t entry_size = sizeof(struct ext4_extent);
 
     uint32_t avail = (uint32_t)(block_size - sizeof(struct ext4_extent_header));
     uint16_t max = (uint16_t)(avail / entry_size);
@@ -563,11 +562,9 @@ static int ext4_ext_split(struct ext4_priv *ep,
     uint16_t split_point = entries / 2;
     uint16_t right_count = entries - split_point;
 
-    size_t entry_size;
-    if (depth == 0)
-        entry_size = sizeof(struct ext4_extent);
-    else
-        entry_size = sizeof(struct ext4_extent_idx);
+    /* Leaf extents and index entries are same size (12 bytes packed) */
+    size_t entry_size = sizeof(struct ext4_extent);
+    (void)sizeof(struct ext4_extent_idx); /* prevented from diverging by _Static_assert above */
 
     /* Copy right half to new node */
     uint8_t *old_entries = (uint8_t *)(old_eh + 1);

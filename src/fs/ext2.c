@@ -2779,20 +2779,13 @@ static int ext2_fallocate(void *priv, const char *path,
 				if (ret < 0)
 					return ret;
 
-				/* Clear block pointer */
-				if (ep->sb.s_feature_incompat &
-				    EXT2_FEATURE_INCOMPAT_EXTENTS) {
-					/* For extent-based files, we cannot
-					 * easily punch individual blocks from
-					 * the extent tree.  Set the inode to
-					 * store the block as 0 via direct ptr
-					 * if possible, or leave it allocated. */
-					if (ib < 12)
-						inode.i_block[ib] = 0;
-				} else {
-					if (ib < 12)
-						inode.i_block[ib] = 0;
-				}
+				/* Clear block pointer.
+				 * For extent-based files, i_block is only cleared
+				 * for direct pointers (ib < 12); extent tree
+				 * truncation is a TODO — currently falls through
+				 * to same path. */
+				if (ib < 12)
+					inode.i_block[ib] = 0;
 
 				/* Decrement sparse sector count */
 				inode.i_blocks -= ep->block_size / 512;

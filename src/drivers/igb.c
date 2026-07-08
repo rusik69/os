@@ -1049,16 +1049,11 @@ int igb_probe(struct igb_priv *priv)
     priv->ifindex    = -1;
     priv->device_id  = pci_dev.device_id;
 
-    /* Determine queue count based on device */
-    if (pci_dev.device_id == IGB_DEV_I350) {
-        /* I350 supports up to 8 queues; use 4 for compatibility */
-        priv->num_tx_queues = 4;
-        priv->num_rx_queues = 4;
-    } else {
-        /* 82576 and I210 support up to 4 queues */
-        priv->num_tx_queues = 4;
-        priv->num_rx_queues = 4;
-    }
+    /* Determine queue count based on device.
+     * I350 supports up to 8 queues; use 4 for compatibility.
+     * 82576 and I210 support up to 4 queues. */
+    priv->num_tx_queues = 4;
+    priv->num_rx_queues = 4;
 
     /* Enable PCI bus mastering for DMA */
     pci_enable_bus_master(&pci_dev);

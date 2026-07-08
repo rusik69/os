@@ -515,11 +515,8 @@ int tmpfs_swap_in_inode(int idx)
 
         int ret = swap_in(dev, slot, page_phys);
         if (ret < 0) {
-            /* Free already-restored pages and the rest of the allocation */
-            if (i > 0)
-                free_node_pages(new_phys, order);
-            else
-                free_node_pages(new_phys, order);
+            /* Free allocated pages (swap slots are still valid for retry) */
+            free_node_pages(new_phys, order);
             return ret;
         }
     }

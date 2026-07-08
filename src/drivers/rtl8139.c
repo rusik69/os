@@ -441,13 +441,10 @@ int rtl8139_receive(struct net_device *dev,
 
     /* Update CAPR to tell the NIC we've consumed up to this point.
      * The Linux convention is CAPR = rx_cur - 16, which tells the
-     * NIC that it can write new packets up to that offset. */
+     * NIC that it can write new packets up to that offset.
+     * The uint16_t cast handles wraparound when rx_cur < 16. */
     {
-        uint16_t capr;
-        if (priv->rx_cur >= 16)
-            capr = (uint16_t)(priv->rx_cur - 16);
-        else
-            capr = (uint16_t)(RTL8139_RX_BUF_SIZE + priv->rx_cur - 16);
+        uint16_t capr = (uint16_t)(priv->rx_cur - 16);
         rtl8139_writew(priv, RTL_REG_CAPR, capr);
     }
 

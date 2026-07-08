@@ -247,14 +247,9 @@ static int eem_parse_header(uint16_t header, uint16_t *out_len, int *out_crc)
     int type = (header >> EEM_HEADER_TYPE_SHIFT) & 1;
     if (out_crc)
         *out_crc = (header & EEM_HEADER_CRC) ? 1 : 0;
-    if (type == EEM_HEADER_TYPE_DATA) {
-        if (out_len)
-            *out_len = header & EEM_DATA_LENGTH_MASK;
-    } else {
-        /* Command packet: bits 11-0 are command data */
-        if (out_len)
-            *out_len = header & EEM_DATA_LENGTH_MASK;
-    }
+    /* Both data and command packets encode payload info in bits 11-0 */
+    if (out_len)
+        *out_len = header & EEM_DATA_LENGTH_MASK;
     return type;
 }
 
