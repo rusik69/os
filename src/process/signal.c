@@ -14,6 +14,7 @@
 #include "signal_validate.h"
 #include "timer.h"
 #include "coredump_core.h"
+#include "signalfd.h"
 
 /* Maximum signal number (signals 1-64) — bounds all signal arrays */
 #define MAX_SIG  65
@@ -133,7 +134,6 @@ int signal_send(uint32_t pid, int signum) {
     }
 
     /* Notify signalfd listeners */
-    extern void signalfd_notify(int signum);
     signalfd_notify(signum);
 
     spinlock_irqsave_release(&p->sig_lock, __sig_flags);
@@ -212,12 +212,8 @@ int signal_send_info(uint32_t pid, int signum, struct siginfo *info) {
     spinlock_irqsave_release(&p->sig_lock, __sig_flags);
 
     /* Notify signalfd listeners */
-    extern void signalfd_notify(int signum);
     signalfd_notify(signum);
     if (info) {
-        extern void signalfd_notify_ext(int signum, int si_code,
-                                        uint32_t si_pid, uint32_t si_uid,
-                                        uint64_t si_addr, int si_status);
         signalfd_notify_ext(signum, info->si_code, info->si_pid, info->si_uid,
                            (uint64_t)(uintptr_t)info->si_addr, info->si_status);
     }

@@ -11,6 +11,7 @@
 #include "aslr.h"
 #include "auxv.h"
 #include "err.h"
+#include "signalfd.h"
 
 /* Max ELF binary we'll try to load from disk */
 #define ELF_MAX_SIZE (1024 * 1024)  /* 1MB — increased from 64KB to support real binaries */
@@ -510,7 +511,6 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
     /* Close all FD_CLOEXEC file descriptors before exec */
     process_exec_close_cloexec();
     /* Close signalfd fds marked with SFD_CLOEXEC */
-    extern void signalfd_exec_close(void);
     signalfd_exec_close();
 
     /* ── Check for setuid/setgid on the binary file ──────────────── */

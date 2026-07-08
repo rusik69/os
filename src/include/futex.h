@@ -76,6 +76,9 @@ int  futex_pi_lock(uint32_t *uaddr, uint32_t owner_pid);
 int  futex_pi_unlock(uint32_t *uaddr, uint32_t owner_pid);
 void futex_pi_boost_owner(uint32_t *uaddr);
 
+/* ── Robust list cleanup (called from process_cleanup) ──────────── */
+void futex_robust_list_cleanup(struct process *proc);
+
 /* ── Global futex state ──────────────────────────────────────────── */
 #define FUTEX_MAX_WAITERS 64
 

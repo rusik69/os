@@ -384,7 +384,7 @@ static int acm_poll_notification(void) {
 
 /* ── Initialisation ────────────────────────────────────────────────── */
 
-static int __init usb_cdc_acm_init(void) {
+int __init usb_cdc_acm_init(void) {
     if (g_acm_initialized) return 0;
     if (!usb_is_present()) return -1;
 

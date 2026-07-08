@@ -4952,7 +4952,7 @@ int sys_get_robust_list(int pid, struct robust_list_head **head_ptr,
 }
 
 /* On thread exit, walk robust list and wake waiters */
-static void futex_robust_list_cleanup(struct process *proc)
+void futex_robust_list_cleanup(struct process *proc)
 {
     if (!proc || !proc->ctid_ptr)
         return;
@@ -8781,7 +8781,7 @@ static uint64_t sys_signalfd(uint64_t fd, uint64_t mask_addr, uint64_t flags) {
 
 /* Legacy signalfd_notify — called from signal_send().
  * Enqueues a basic siginfo with SI_KERNEL code for the given signal number. */
-static void signalfd_notify(int signum) {
+void signalfd_notify(int signum) {
     for (int i = 0; i < SIGNALFD_MAX; i++) {
         if (signalfd_table[i].in_use && (signalfd_table[i].sigmask & (1u << signum))) {
             struct signalfd_info *sf = &signalfd_table[i];
@@ -8831,7 +8831,7 @@ void signalfd_notify_ext(int signum, int si_code,
  * This mirrors the fd_table cloexec cleanup in process_exec_close_cloexec()
  * for virtual signalfd file descriptors.
  */
-static void signalfd_exec_close(void) {
+void signalfd_exec_close(void) {
     struct process *cur = process_get_current();
     if (!cur) return;
     uint32_t cur_pid = cur->pid;

@@ -36,7 +36,7 @@
 
 /* ── Stack zeroing helper ──────────────────────────────────────────── */
 
-static void zero_kernel_stack_uapi(uint64_t entry_rsp)
+void zero_kernel_stack_uapi(uint64_t entry_rsp)
 {
     struct process *proc = process_get_current();
 

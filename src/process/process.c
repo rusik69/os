@@ -11,6 +11,7 @@
 #include "smp.h"
 #include "signal.h"
 #include "syscall.h"  /* for prng_rand64(), syscall_dispatch(), etc. */
+#include "futex.h"    /* for futex_robust_list_cleanup() */
 #include "cpu_topology.h"
 #include "caps.h"
 #include "sysctl.h"    /* for sysctl_get_hostname() */
@@ -1426,7 +1427,6 @@ uint32_t process_get_count(void) {
 
 void process_cleanup(struct process *proc) {
     /* Cleanup robust futex list */
-    extern void futex_robust_list_cleanup(struct process *proc);
     futex_robust_list_cleanup(proc);
     /* Cleanup KCOV coverage buffer (Item 208) */
     kcov_process_exit(proc);

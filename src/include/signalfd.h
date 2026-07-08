@@ -46,12 +46,18 @@ _Static_assert(sizeof(struct signalfd_siginfo) == 128,
 /* Initialise the signalfd subsystem */
 void signalfd_init(void);
 
+/* Called from signal delivery — enqueue basic siginfo for matching signalfds */
+void signalfd_notify(int signum);
+
 /* Called from signal delivery — enqueue siginfo for matching signalfds */
 void signalfd_notify_ext(int signum, int si_code,
                          uint32_t si_pid, uint32_t si_uid,
                          uint64_t si_addr, int si_status);
 
 int signalfd_create(uint64_t mask);
+
+/* Close signalfd fds with SFD_CLOEXEC on execve */
+void signalfd_exec_close(void);
 
 /* Read one signalfd_siginfo entry from the slot. Returns bytes read or -1. */
 int signalfd_read_info(int slot, struct signalfd_siginfo *out);
