@@ -242,7 +242,7 @@ static void firmware_class_dump(void)
 module_init(firmware_class_init);
 
 /* ── Stub: firmware_request ─────────────────────────────── */
-int firmware_request(__maybe_unused const char *name, __maybe_unused void *dev, __maybe_unused void *fw)
+static int firmware_request(__maybe_unused const char *name, __maybe_unused void *dev, __maybe_unused void *fw)
 {
     kprintf("[FIRMWARE] firmware_request: not yet implemented\n");
     return 0;

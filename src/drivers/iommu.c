@@ -340,7 +340,7 @@ static int iommu_setup_device_context(struct iommu_device *dev)
  *
  * Returns 0 on success, <0 on failure.
  */
-int iommu_init(void)
+static int iommu_init(void)
 {
     uint64_t flags;
     spinlock_irqsave_acquire(&iommu_lock, &flags);

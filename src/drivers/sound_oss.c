@@ -28,6 +28,9 @@
 
 #include "sound_pcm.h"
 #include "sound_oss.h"
+
+/* ── Forward declarations ─────────────────────────────────────────── */
+void __init sound_oss_init(void);
 #include "sound_core.h"
 #include "devfs.h"
 #include "ac97.h"

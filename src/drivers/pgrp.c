@@ -32,7 +32,7 @@ uint64_t pgrp_get_foreground(void)
 }
 
 /* ── Stub: pgrp_enter ─────────────────────────────── */
-int pgrp_enter(void *task, int pgrp)
+static int pgrp_enter(void *task, int pgrp)
 {
     (void)task;
     (void)pgrp;
@@ -40,14 +40,14 @@ int pgrp_enter(void *task, int pgrp)
     return 0;
 }
 /* ── Stub: pgrp_leave ─────────────────────────────── */
-int pgrp_leave(void *task)
+static int pgrp_leave(void *task)
 {
     (void)task;
     kprintf("[pgrp] pgrp_leave: not yet implemented\n");
     return 0;
 }
 /* ── Stub: pgrp_signal ─────────────────────────────── */
-int pgrp_signal(int pgrp, int sig)
+static int pgrp_signal(int pgrp, int sig)
 {
     (void)pgrp;
     (void)sig;

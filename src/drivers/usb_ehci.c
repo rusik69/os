@@ -23,6 +23,9 @@
 #include "printf.h"
 #include "io.h"
 
+/* ── Forward declarations ─────────────────────────────────────────── */
+int __init ehci_usb_init(void);
+
 /* ── EHCI Capability Register offsets ──────────────────────────────────────── */
 #define EHCI_CAPLENGTH   0x00   /* Capability registers length (1 byte) */
 #define EHCI_HCIVERSION  0x02   /* HC Interface Version */

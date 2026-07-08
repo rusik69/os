@@ -18,6 +18,9 @@
 #include "timer.h"
 #include "delay.h"
 
+/* ── Forward declarations ─────────────────────────────────────────── */
+int usb_hub_init(void);
+
 /* ── Hub class constants ───────────────────────────────────────────── */
 
 #define USB_CLASS_HUB 0x09

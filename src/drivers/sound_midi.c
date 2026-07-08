@@ -336,7 +336,7 @@ static int midi_seq_queue_event(uint8_t status, uint8_t data1, uint8_t data2,
     return 0;
 }
 
-int midi_seq_note_on(uint8_t channel, uint8_t note, uint8_t velocity)
+static int midi_seq_note_on(uint8_t channel, uint8_t note, uint8_t velocity)
 {
     return midi_seq_queue_event(MIDI_STATUS_NOTE_ON | (channel & 0x0F),
                                  note, velocity, 0);

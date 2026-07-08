@@ -58,7 +58,7 @@ int signalfd_create(uint64_t mask)
 }
 
 /* ── Stub: signalfd_read ─────────────────────────────── */
-int signalfd_read(__maybe_unused int fd, __maybe_unused void *buf, __maybe_unused size_t count)
+static int signalfd_read(__maybe_unused int fd, __maybe_unused void *buf, __maybe_unused size_t count)
 {
     kprintf("[SIGNALFD] signalfd_read: not yet implemented\n");
     return 0;

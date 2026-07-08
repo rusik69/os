@@ -16,6 +16,7 @@
 #include "string.h"
 #include "printf.h"
 #include "types.h"
+#include "sndstat.h"
 
 /* ── Forward declarations ──────────────────────────────────────────── */
 

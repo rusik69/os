@@ -250,7 +250,7 @@ int timerfd_poll(void *file, void *pt)
     return 0;
 }
 /* ── Stub: timerfd_show_fdinfo ─────────────────────────────── */
-int timerfd_show_fdinfo(void *file, void *m)
+static int timerfd_show_fdinfo(void *file, void *m)
 {
     (void)file;
     (void)m;

@@ -207,7 +207,7 @@ static int snapshot_ctl_delete(const char *name)
     return 0;
 }
 /* ── Stub: snapshot_read ────────────────────────────── */
-int snapshot_read(struct dm_snapshot *snap, uint64_t sector, void *buf, uint32_t count)
+static int snapshot_read(struct dm_snapshot *snap, uint64_t sector, void *buf, uint32_t count)
 {
     (void)snap;
     (void)sector;
@@ -217,7 +217,7 @@ int snapshot_read(struct dm_snapshot *snap, uint64_t sector, void *buf, uint32_t
     return 0;
 }
 /* ── Stub: snapshot_write ───────────────────────────── */
-int snapshot_write(struct dm_snapshot *snap, uint64_t sector, const void *buf, uint32_t count)
+static int snapshot_write(struct dm_snapshot *snap, uint64_t sector, const void *buf, uint32_t count)
 {
     (void)snap;
     (void)sector;

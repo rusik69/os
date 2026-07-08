@@ -24,7 +24,7 @@ ssize_t aio_write(int fd, const void *buf, size_t count, uint64_t offset) {
 }
 
 /* ── Stub: aio_fsync ─────────────────────────────── */
-int aio_fsync(int fd)
+static int aio_fsync(int fd)
 {
     (void)fd;
     kprintf("[aio] aio_fsync: not yet implemented\n");

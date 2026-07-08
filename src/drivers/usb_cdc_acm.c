@@ -18,6 +18,9 @@
 #include "errno.h"
 #include "module.h"
 
+/* ── Forward declarations ─────────────────────────────────────────── */
+int __init usb_cdc_acm_init(void);
+
 /* ── CDC ACM constants ─────────────────────────────────────────────── */
 
 #define CDC_CLASS_COMM    0x02
@@ -634,7 +637,7 @@ static int usb_cdc_acm_get_serial_state(uint16_t *state) {
 
 /* ── cdc_acm generic driver interface (wraps usb_cdc_acm_* API) ──── */
 
-int cdc_acm_init(void *dev) {
+static int cdc_acm_init(void *dev) {
     (void)dev;
     if (g_acm_initialized) return 0;
     return usb_cdc_acm_init();
@@ -654,12 +657,12 @@ static int cdc_acm_close(void *dev) {
     return cdc_set_control_line_state(0);
 }
 
-int cdc_acm_write(void *dev, const void *buf, size_t count) {
+static int cdc_acm_write(void *dev, const void *buf, size_t count) {
     (void)dev;
     return usb_cdc_acm_write((const uint8_t *)buf, (int)count);
 }
 
-int cdc_acm_read(void *dev, void *buf, size_t count) {
+static int cdc_acm_read(void *dev, void *buf, size_t count) {
     (void)dev;
     return usb_cdc_acm_read((uint8_t *)buf, (int)count);
 }

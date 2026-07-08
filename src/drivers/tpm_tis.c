@@ -28,6 +28,10 @@
 #include "spinlock.h"
 #include "module.h"
 #include "vmm.h"   /* vmm_map_phys, vmm_unmap_phys */
+
+/* ── Forward declarations ─────────────────────────────────────────── */
+int tpm_is_present(void);
+
 #include "errno.h"
 #include "err.h"
 #include "heap.h"

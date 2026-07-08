@@ -11,6 +11,11 @@
 #include "errno.h"
 #include "pci.h"
 
+/* ── Forward declarations ─────────────────────────────────────────── */
+int sriov_probe_pf(int bus, int dev, int func);
+int sriov_enable_vfs(int bus, int dev, int func, int num_vfs);
+int sriov_disable_vfs(int bus, int dev, int func);
+
 /* SR-IOV capability registers */
 #define PCI_SRIOV_CAP          0x00
 #define PCI_SRIOV_CTL          0x08
@@ -184,7 +189,7 @@ static int sriov_disable(void *dev)
     return 0;
 }
 /* ── Stub: sriov_configure ─────────────────────────────── */
-int sriov_configure(void *dev, int num_vfs)
+static int sriov_configure(void *dev, int num_vfs)
 {
     (void)dev;
     (void)num_vfs;

@@ -35,6 +35,9 @@
 #include "spinlock.h"
 #include "timer.h"
 
+/* ── Forward declarations ─────────────────────────────────────────── */
+void netconsole_init(void);
+
 /* ── Configuration ─────────────────────────────────────────────────── */
 
 /* Maximum length of a single log line we'll buffer */

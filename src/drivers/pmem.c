@@ -27,6 +27,9 @@
 #include "string.h"
 #include "pmm.h"        /* PHYS_TO_VIRT */
 
+/* ── Forward declarations ─────────────────────────────────────────── */
+void __init pmem_init(void);
+
 /* ── Constants ───────────────────────────────────────────────────── */
 
 /* Maximum number of PMEM devices we can register */

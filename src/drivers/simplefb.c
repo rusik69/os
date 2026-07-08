@@ -22,6 +22,14 @@
 #include "pmm.h"
 #include "uio.h"
 
+/* ── Forward declarations ─────────────────────────────────────────── */
+int  simplefb_init_from_multiboot2(uint64_t mboot_info_phys);
+int  simplefb_init_from_multiboot1(uint64_t mboot_info_phys);
+int  simplefb_get_info(uint64_t *fb_addr, uint32_t *width,
+                       uint32_t *height, uint32_t *stride);
+int  simplefb_is_active(void);
+int  simplefb_set_mode(int width, int height, int bpp);
+
 /* SimpleFB pixel format enum */
 enum simplefb_format {
     SIMPLEFB_FORMAT_RGBX_8888 = 0,

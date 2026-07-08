@@ -429,7 +429,7 @@ static int udc_unregister(void *gadget)
     return udc_unregister_gadget(g);
 }
 /* ── Implement: udc_start ─────────────────────────────── */
-int udc_start(void *gadget)
+static int udc_start(void *gadget)
 {
     if (!gadget) return -EINVAL;
     struct usb_gadget *g = (struct usb_gadget *)gadget;
@@ -438,7 +438,7 @@ int udc_start(void *gadget)
     return 0;
 }
 /* ── Implement: udc_stop ─────────────────────────────── */
-int udc_stop(void *gadget)
+static int udc_stop(void *gadget)
 {
     if (!gadget) return -EINVAL;
     struct usb_gadget *g = (struct usb_gadget *)gadget;

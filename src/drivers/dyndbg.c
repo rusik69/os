@@ -5,6 +5,7 @@
 #include "debugfs.h"
 #include "dynamic_debug.h"
 #include "errno.h"
+#include "dyndbg.h"
 
 /*
  * dyndbg.c — Dynamic debug control file interface
