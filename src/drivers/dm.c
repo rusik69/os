@@ -503,7 +503,7 @@ int dm_table_load(int dm_id, const char *table)
         while (*p == ' ' || *p == '\t') p++;
         while (*p && *p != '\n' && argc < 8) {
             /* Collect one arg */
-            static char argbufs[8][64];
+            char argbufs[8][64];
             size_t ai = 0;
             while (*p && *p != ' ' && *p != '\t' && *p != '\n' &&
                    ai < sizeof(argbufs[0]) - 1) {

@@ -8,6 +8,7 @@
 #include "spinlock.h"
 #include "socket.h"
 #include "sysctl.h"
+#include "heap.h"
 
 /* DHCP packet structure */
 struct dhcp_packet {
@@ -887,12 +888,15 @@ int net_http_get_ex(const char *host_in, uint16_t port_in, const char *path_in,
     i = 0;
     while (path_in[i] && i < 255) { path[i] = path_in[i]; i++; } path[i] = '\0';
 
-    static char raw[4096];
+    int ret = -1;
+    char *raw = kmalloc(4096);
+    if (!raw) return -1;
+
     int max_redir = follow_redirects ? 5 : 0;
 
     for (int redir = 0; redir <= max_redir; redir++) {
         uint32_t ip = net_dns_resolve(host);
-        if (!ip) { kprintf("DNS resolution failed for %s\n", host); return -1; }
+        if (!ip) { kprintf("DNS resolution failed for %s\n", host); ret = -1; break; }
         kprintf("Resolved %s -> %u.%u.%u.%u\n", host,
             (unsigned int)((ip>>24)&0xFF), (unsigned int)((ip>>16)&0xFF),
             (unsigned int)((ip>>8)&0xFF),  (unsigned int)(ip&0xFF));
@@ -900,7 +904,7 @@ int net_http_get_ex(const char *host_in, uint16_t port_in, const char *path_in,
         int conn = net_tcp_connect(ip, port);
         if (conn < 0) { kprintf("TCP connect to %u.%u.%u.%u:%u failed\n",
             (unsigned int)((ip>>24)&0xFF), (unsigned int)((ip>>16)&0xFF),
-            (unsigned int)((ip>>8)&0xFF),  (unsigned int)(ip&0xFF), (unsigned int)port); return -1; }
+            (unsigned int)((ip>>8)&0xFF),  (unsigned int)(ip&0xFF), (unsigned int)port); ret = -1; break; }
 
         char req[512];
         int rlen = 0;
@@ -914,14 +918,14 @@ int net_http_get_ex(const char *host_in, uint16_t port_in, const char *path_in,
         while (*h && rlen < (int)sizeof(req) - 1) req[rlen++] = *h++;
         const char *end = "\r\nConnection: close\r\n\r\n";
         while (*end && rlen < (int)sizeof(req) - 1) req[rlen++] = *end++;
-        if (rlen >= (int)sizeof(req)) { net_tcp_close(conn); return -1; }
+        if (rlen >= (int)sizeof(req)) { net_tcp_close(conn); ret = -1; break; }
         req[rlen] = '\0';
 
         net_tcp_send(conn, req, rlen);
 
         int total = 0;
-        while (total < (int)sizeof(raw) - 1) {
-            int n = net_tcp_recv(conn, raw + total, sizeof(raw) - 1 - total, 300);
+        while (total < 4096 - 1) {
+            int n = net_tcp_recv(conn, raw + total, 4096 - 1 - total, 300);
             if (n <= 0) break;
             total += n;
         }
@@ -950,7 +954,7 @@ int net_http_get_ex(const char *host_in, uint16_t port_in, const char *path_in,
                     break;
                 }
             }
-            if (!loc) { kprintf("Redirect with no Location header\n"); return -1; }
+            if (!loc) { kprintf("Redirect with no Location header\n"); ret = -1; break; }
             char locbuf[256];
             int li = 0;
             while (*loc && *loc != '\r' && *loc != '\n' && li < 255)
@@ -980,15 +984,20 @@ int net_http_get_ex(const char *host_in, uint16_t port_in, const char *path_in,
             if (bodylen > bufsize - 1) bodylen = bufsize - 1;
             memmove(buf, body, bodylen);
             buf[bodylen] = '\0';
-            return bodylen;
+            ret = bodylen;
+            break;
         }
         if (total > bufsize - 1) total = bufsize - 1;
         memmove(buf, raw, total);
         buf[total] = '\0';
-        return total;
+        ret = total;
+        break;
     }
-    kprintf("Too many redirects\n");
-    return -1;
+    if (ret < 0 && max_redir >= 5)
+        kprintf("Too many redirects\n");
+
+    kfree(raw);
+    return ret;
 }
 
 int net_http_get(const char *host, uint16_t port, const char *path,

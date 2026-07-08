@@ -6740,9 +6740,11 @@ void do_coredump(struct process *proc, int signo) {
 /* Resolve a path relative to a dirfd.  If path is absolute, it's used
  * verbatim.  If dirfd == AT_FDCWD, use current process cwd.  Otherwise
  * look up the fd in the fd table and use its directory as the base.
- * Returns a pointer to the resolved path (in a static buffer) or NULL. */
-static const char *resolve_path_at(int dirfd, const char *path) {
-    static char buf[256];
+ * The resolved path is written into @buf (caller-owned, @bufsize bytes)
+ * and a pointer to it is returned.  For absolute paths @buf is not
+ * touched and @path itself is returned.  Returns NULL on error. */
+static const char *resolve_path_at(int dirfd, const char *path,
+                                   char *buf, size_t bufsize) {
     if (!path) return NULL;
 
     if (path[0] == '/') return path; /* absolute */
@@ -6759,8 +6761,8 @@ static const char *resolve_path_at(int dirfd, const char *path) {
         return NULL;
     }
 
-    int n = snprintf(buf, sizeof(buf), "%s/%s", base, path);
-    if (n < 0 || (size_t)n >= sizeof(buf)) return NULL;
+    int n = snprintf(buf, bufsize, "%s/%s", base, path);
+    if (n < 0 || (size_t)n >= bufsize) return NULL;
     return buf;
 }
 
@@ -7124,7 +7126,7 @@ static uint64_t sys_utimensat(uint64_t dirfd, uint64_t path_addr,
         char kpath[256];
         if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
             return (uint64_t)-1;
-        const char *resolved = resolve_path_at((int)dirfd, kpath);
+        const char *resolved = resolve_path_at((int)dirfd, kpath, kpath, sizeof(kpath));
         if (!resolved) return (uint64_t)-1;
         strncpy(path, resolved, 255);
         path[255] = '\0';
@@ -7600,7 +7602,7 @@ static uint64_t sys_openat(uint64_t dirfd, uint64_t path_addr,
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
-    const char *path = resolve_path_at((int)dirfd, kpath);
+    const char *path = resolve_path_at((int)dirfd, kpath, kpath, sizeof(kpath));
     if (!path) return (uint64_t)(int64_t)-ENOENT;
     /* Delegate to core open logic with resolved path */
     return do_sys_open(path, flags, 0);
@@ -7611,7 +7613,7 @@ static uint64_t sys_mkdirat(uint64_t dirfd, uint64_t path_addr, uint64_t mode) {
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
-    const char *path = resolve_path_at((int)dirfd, kpath);
+    const char *path = resolve_path_at((int)dirfd, kpath, kpath, sizeof(kpath));
     if (!path) return (uint64_t)(int64_t)-ENOENT;
     int ret = vfs_create(path, VFS_TYPE_DIR);
     return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
@@ -7623,7 +7625,7 @@ static uint64_t sys_fstatat(uint64_t dirfd, uint64_t path_addr,
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
-    const char *resolved = resolve_path_at((int)dirfd, kpath);
+    const char *resolved = resolve_path_at((int)dirfd, kpath, kpath, sizeof(kpath));
     if (!resolved) return (uint64_t)(int64_t)-ENOENT;
 
     struct vfs_stat st;
@@ -7637,7 +7639,7 @@ static uint64_t sys_unlinkat(uint64_t dirfd, uint64_t path_addr, uint64_t flags)
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
-    const char *path = resolve_path_at((int)dirfd, kpath);
+    const char *path = resolve_path_at((int)dirfd, kpath, kpath, sizeof(kpath));
     if (!path) return (uint64_t)(int64_t)-ENOENT;
     int ret;
     if (flags & AT_REMOVEDIR)
@@ -7654,8 +7656,8 @@ static uint64_t sys_renameat(uint64_t olddirfd, uint64_t oldpath_addr,
         return (uint64_t)(int64_t)-EFAULT;
     if (strncpy_from_user(knewpath, newpath_addr, sizeof(knewpath)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
-    const char *oldpath = resolve_path_at((int)olddirfd, koldpath);
-    const char *newpath = resolve_path_at((int)newdirfd, knewpath);
+    const char *oldpath = resolve_path_at((int)olddirfd, koldpath, koldpath, sizeof(koldpath));
+    const char *newpath = resolve_path_at((int)newdirfd, knewpath, knewpath, sizeof(knewpath));
     if (!oldpath || !newpath) return (uint64_t)(int64_t)-ENOENT;
     /* For now, fall back to VFS operations: copy + delete */
     uint8_t *buf = kmalloc(4096);
@@ -7688,7 +7690,7 @@ static uint64_t sys_symlinkat(uint64_t target_addr, uint64_t newdirfd,
         kfree(ktarget);
         return (uint64_t)(int64_t)-EFAULT;
     }
-    const char *linkpath = resolve_path_at((int)newdirfd, klinkpath);
+    const char *linkpath = resolve_path_at((int)newdirfd, klinkpath, klinkpath, sizeof(klinkpath));
     if (!linkpath) {
         kfree(ktarget);
         return (uint64_t)(int64_t)-ENOENT;
@@ -7706,7 +7708,7 @@ static uint64_t sys_readlinkat(uint64_t dirfd, uint64_t path_addr,
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
-    const char *path = resolve_path_at((int)dirfd, kpath);
+    const char *path = resolve_path_at((int)dirfd, kpath, kpath, sizeof(kpath));
     if (!path) return (uint64_t)(int64_t)-ENOENT;
     if (bufsize == 0) return (uint64_t)(int64_t)-EINVAL;
     if (bufsize > 4096) bufsize = 4096;

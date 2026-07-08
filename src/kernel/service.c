@@ -281,8 +281,8 @@ int service_register(const char *name, int (*start)(void), void (*stop)(void)) {
 /* Rewrite /etc/services to reflect current enable/disable state of all
  * registered services.  Called after every start/stop. */
 static void write_etc_services(void) {
-    /* Build file content in a local buffer */
-    static char buf[512];
+    /* Build file content in a local (stack) buffer */
+    char buf[512];
     int pos = 0;
     const char *hdr =
         "# /etc/services — service configuration\n"
