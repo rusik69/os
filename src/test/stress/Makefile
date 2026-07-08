@@ -12,7 +12,7 @@ LIBC_A = $(LIBC_DIR)/libc.a
 LIBC_USER_LD = $(LIBC_DIR)/user.ld
 
 CFLAGS = -ffreestanding -nostdlib -nostdinc -fno-builtin -mno-red-zone \
-         -I$(LIBC_DIR)/include -Wall -Wextra -Wundef -O2 -g -MMD -MP
+         -I$(LIBC_DIR)/include -Wall -Wextra -Wundef -Wduplicated-branches -O2 -g -MMD -MP
 LDFLAGS = -T $(LIBC_USER_LD) -nostdlib -z max-page-size=0x1000 -z noexecstack
 
 STRESS_ELFS = stress_cpu.elf stress_memory.elf stress_disk.elf stress_runner.elf
