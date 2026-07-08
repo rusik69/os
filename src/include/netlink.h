@@ -168,7 +168,7 @@ struct nlattr {
     uint16_t nla_type;      /* Attribute type (subsystem-specific) */
 } __attribute__((packed));
 
-#define NLA_HDRLEN          ((int)sizeof(struct nlattr))
+#define NLA_HDRLEN          ((uint16_t)4)   /* sizeof(struct nlattr) = 4 bytes */
 #define NLA_ALIGNTO         4
 #define NLA_ALIGN(len)      (((len) + NLA_ALIGNTO - 1) & ~(NLA_ALIGNTO - 1))
 #define NLA_DATA(nla)       ((void *)(((char *)nla) + NLA_HDRLEN))

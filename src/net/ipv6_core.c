@@ -176,7 +176,7 @@ int ipv6_parse_exthdr(const uint8_t *data, uint16_t total_len,
                                     jumbo_payload);
                         }
                         break;
-                    default:
+                    default: {
                         /* Unknown option — check action bits (upper 2 bits) */
                         uint8_t action = (opt_type >> 6) & 0x03;
                         if (action == 0x02) {
@@ -186,6 +186,7 @@ int ipv6_parse_exthdr(const uint8_t *data, uint16_t total_len,
                             return -EINVAL;
                         }
                         break;
+                    }
                     }
                     opt_ptr += opt_total;
                     opt_remaining -= opt_total;

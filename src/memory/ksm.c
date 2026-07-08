@@ -291,8 +291,11 @@ int ksm_register_region(uint64_t addr, size_t size, int numa_node)
         kp->phys_addr = phys + (uint64_t)i * PAGE_SIZE;
         kp->hash      = ksm_hash_page(kp->phys_addr);
         kp->merged    = 0;
-        kp->numa_node = (numa_node >= 0 && numa_node <= 127)
-                         ? (unsigned int)numa_node : 0;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wconversion"
+        kp->numa_node = (uint8_t)((numa_node >= 0 && numa_node <= 127)
+                         ? (unsigned int)numa_node : 0);
+#pragma GCC diagnostic pop
         kp->age       = 0;
         kp->refcount  = 1;
     }
@@ -325,8 +328,11 @@ int ksm_register_phys(uint64_t phys, int numa_node)
     kp->phys_addr = phys;
     kp->hash      = ksm_hash_page(phys);
     kp->merged    = 0;
-    kp->numa_node = (numa_node >= 0 && numa_node <= 127)
-                     ? (unsigned int)numa_node : 0;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wconversion"
+    kp->numa_node = (uint8_t)((numa_node >= 0 && numa_node <= 127)
+                     ? (unsigned int)numa_node : 0);
+#pragma GCC diagnostic pop
     kp->age       = 0;
     kp->refcount  = 1;
     return 0;

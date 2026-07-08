@@ -128,8 +128,8 @@ int alerting_add_rule(const char *name, const char *metric,
     if (operator == ALERT_OP_LT) op_str = "<";
     else if (operator == ALERT_OP_EQ) op_str = "==";
 
-    kprintf("[Alerting] Rule added: %s (%s %s %lu for %lu ms)\n",
-            name, metric, op_str, threshold, duration_ms);
+    kprintf("[Alerting] Rule added: %s (%s %s %llu for %llu ms)\n",
+            name, metric, op_str, (unsigned long long)threshold, (unsigned long long)duration_ms);
     return 0;
 }
 
@@ -156,8 +156,8 @@ static int alerting_dispatch_fire(struct alert_fire *fire)
     if (!fire || !alerting_initialised) return -EINVAL;
 
     /* Log locally */
-    kprintf("[Alerting] ALERT: %s — value=%lu msg=\"%s\"\n",
-            fire->rule_name, fire->value, fire->message);
+    kprintf("[Alerting] ALERT: %s — value=%llu msg=\"%s\"\n",
+            fire->rule_name, (unsigned long long)fire->value, fire->message);
 
     /* Fire webhook if configured */
     if (webhook_configured) {
@@ -218,11 +218,11 @@ int alerting_evaluate(void)
         if (rule_evaluate(&alert_rules[i], metric_value)) {
             char msg[ALERT_MESSAGE_MAX];
             snprintf(msg, sizeof(msg),
-                     "Alert %s: %s is %lu (threshold=%lu)",
+                     "Alert %s: %s is %llu (threshold=%llu)",
                      alert_rules[i].name,
                      alert_rules[i].metric,
-                     metric_value,
-                     alert_rules[i].threshold);
+                     (unsigned long long)metric_value,
+                     (unsigned long long)alert_rules[i].threshold);
 
             struct alert_fire fire;
             memset(&fire, 0, sizeof(fire));

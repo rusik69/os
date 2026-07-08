@@ -256,7 +256,7 @@ int tpm_transmit(const uint8_t *cmd, uint32_t cmd_len,
 
     /* 9. Copy header to output buffer */
     memcpy(rsp, rsp_hdr_buf, sizeof(struct tpm_rsp_hdr));
-    uint32_t remaining = expected - sizeof(struct tpm_rsp_hdr);
+    uint32_t remaining = (uint32_t)(expected - sizeof(struct tpm_rsp_hdr));
     uint32_t rsp_pos = sizeof(struct tpm_rsp_hdr);
 
     while (remaining > 0) {

@@ -287,21 +287,21 @@ static void virtio_net_irq_handler(struct interrupt_frame *frame) {
 }
 
 /* ── Helpers ─────────────────────────────────────────────────────── */
-static inline void vio_outb(uint8_t off, uint8_t v)  { outb(vnet_iobase + off, v); }
-static inline void vio_outw(uint8_t off, uint16_t v) { outw(vnet_iobase + off, v); }
+static inline void vio_outb(uint8_t off, uint8_t v)  { outb((uint16_t)(vnet_iobase + off), v); }
+static inline void vio_outw(uint8_t off, uint16_t v) { outw((uint16_t)(vnet_iobase + off), v); }
 static inline void vio_outl(uint8_t off, uint32_t v) {
-    outb(vnet_iobase + off,     (uint8_t)(v));
-    outb(vnet_iobase + off + 1, (uint8_t)(v >> 8));
-    outb(vnet_iobase + off + 2, (uint8_t)(v >> 16));
-    outb(vnet_iobase + off + 3, (uint8_t)(v >> 24));
+    outb((uint16_t)(vnet_iobase + off),     (uint8_t)(v));
+    outb((uint16_t)(vnet_iobase + off + 1), (uint8_t)(v >> 8));
+    outb((uint16_t)(vnet_iobase + off + 2), (uint8_t)(v >> 16));
+    outb((uint16_t)(vnet_iobase + off + 3), (uint8_t)(v >> 24));
 }
 static inline uint8_t  vio_inb(uint8_t off)  { return inb(vnet_iobase + off); }
 static inline uint16_t vio_inw(uint8_t off)  { return inw(vnet_iobase + off); }
 static inline uint32_t vio_inl(uint8_t off) {
-    return (uint32_t)inb(vnet_iobase + off)
-         | ((uint32_t)inb(vnet_iobase + off + 1) << 8)
-         | ((uint32_t)inb(vnet_iobase + off + 2) << 16)
-         | ((uint32_t)inb(vnet_iobase + off + 3) << 24);
+    return (uint32_t)inb((uint16_t)(vnet_iobase + off))
+         | ((uint32_t)inb((uint16_t)(vnet_iobase + off + 1)) << 8)
+         | ((uint32_t)inb((uint16_t)(vnet_iobase + off + 2)) << 16)
+         | ((uint32_t)inb((uint16_t)(vnet_iobase + off + 3)) << 24);
 }
 
 static struct vring_avail *vring_avail_ptr(void *base) {
@@ -645,7 +645,7 @@ static int parse_packet_offload(const uint8_t *data, uint32_t len,
             (uint32_t)ip_total_len + sizeof(struct eth_header) > len)
             ip_total_len = (uint16_t)(len - sizeof(struct eth_header));
 
-        info->csum_start = sizeof(struct eth_header) + ip_hdr_len;
+        info->csum_start = (uint16_t)(sizeof(struct eth_header) + ip_hdr_len);
 
         /* Determine L4 protocol */
         if (ip->protocol == IP_PROTO_TCP && len >= info->csum_start + sizeof(struct tcp_header)) {
@@ -658,7 +658,7 @@ static int parse_packet_offload(const uint8_t *data, uint32_t len,
                 info->csum_start + (uint32_t)tcp_hdr_len > len)
                 return -1;
 
-            info->hdr_len = info->csum_start + tcp_hdr_len;
+            info->hdr_len = (uint16_t)(info->csum_start + tcp_hdr_len);
             info->csum_offset = 16; /* checksum offset in TCP header */
             info->payload_len = ip_total_len - ip_hdr_len - tcp_hdr_len;
 
@@ -672,9 +672,9 @@ static int parse_packet_offload(const uint8_t *data, uint32_t len,
 
         } else if (ip->protocol == IP_PROTO_UDP && len >= info->csum_start + sizeof(struct udp_header)) {
             /* UDP — potential UFO if large */
-            info->hdr_len = info->csum_start + sizeof(struct udp_header);
+            info->hdr_len = (uint16_t)(info->csum_start + sizeof(struct udp_header));
             info->csum_offset = 6; /* checksum offset in UDP header */
-            info->payload_len = ip_total_len - ip_hdr_len - sizeof(struct udp_header);
+            info->payload_len = (uint32_t)(ip_total_len - ip_hdr_len - sizeof(struct udp_header));
 
             if (info->payload_len > 512) {
                 info->gso_type = VIRTIO_NET_HDR_GSO_UDP;
@@ -686,7 +686,7 @@ static int parse_packet_offload(const uint8_t *data, uint32_t len,
         } else {
             /* Non-TCP/UDP: checksum offload only */
             info->gso_type = VIRTIO_NET_HDR_GSO_NONE;
-            info->hdr_len = sizeof(struct eth_header) + ip_hdr_len;
+            info->hdr_len = (uint16_t)(sizeof(struct eth_header) + ip_hdr_len);
             info->needs_csum = 1;
         }
 
@@ -699,7 +699,7 @@ static int parse_packet_offload(const uint8_t *data, uint32_t len,
             (data + sizeof(struct eth_header));
         uint16_t ip6_payload_len = ntohs(ip6->payload_length);
 
-        info->csum_start = sizeof(struct eth_header) + sizeof(struct ipv6_header);
+        info->csum_start = (uint16_t)(sizeof(struct eth_header) + sizeof(struct ipv6_header));
         info->hdr_len = info->csum_start;
 
         if (ip6->next_header == IP_PROTO_TCP &&
@@ -711,7 +711,7 @@ static int parse_packet_offload(const uint8_t *data, uint32_t len,
             if (tcp_hdr_len < 20)
                 return -1;
 
-            info->hdr_len = info->csum_start + tcp_hdr_len;
+            info->hdr_len = (uint16_t)(info->csum_start + tcp_hdr_len);
             info->csum_offset = 16;
             info->payload_len = ip6_payload_len - tcp_hdr_len;
 
@@ -805,7 +805,7 @@ static int virtio_net_sw_gso(const uint8_t *data, uint32_t len)
                 (seg_buf + sizeof(struct eth_header));
             int ip_hdr_len = (ip->version_ihl & 0x0F) * 4;
             uint32_t new_ip_len = (uint32_t)ip_hdr_len + seg_payload +
-                                  (oinfo.csum_start - sizeof(struct eth_header) - ip_hdr_len);
+                                  (uint32_t)(oinfo.csum_start - sizeof(struct eth_header) - ip_hdr_len);
             ip->total_len = htons((uint16_t)new_ip_len);
 
             struct tcp_header *tcp = (struct tcp_header *)
@@ -833,8 +833,8 @@ static int virtio_net_sw_gso(const uint8_t *data, uint32_t len)
         if (oinfo.gso_type == VIRTIO_NET_HDR_GSO_TCPV6) {
             struct ipv6_header *ip6 = (struct ipv6_header *)
                 (seg_buf + sizeof(struct eth_header));
-            uint32_t new_payload = seg_len - sizeof(struct eth_header) -
-                                   sizeof(struct ipv6_header);
+            uint32_t new_payload = (uint32_t)(seg_len - sizeof(struct eth_header) -
+                                   sizeof(struct ipv6_header));
             ip6->payload_length = htons((uint16_t)new_payload);
 
             struct tcp_header *tcp = (struct tcp_header *)
@@ -927,7 +927,7 @@ static int gro_flow_from_pkt(struct gro_flow *flow,
         flow->dst_ip[1] = 0; flow->dst_ip[2] = 0; flow->dst_ip[3] = 0;
         flow->ip_proto = ip->protocol;
         flow->ip_hdr_len = (uint16_t)ip_hdr_len;
-        flow->headroom = sizeof(struct eth_header) + ip_hdr_len;
+        flow->headroom = (uint32_t)(sizeof(struct eth_header) + ip_hdr_len);
 
         if (ip->protocol == IP_PROTO_TCP) {
             if (len < sizeof(struct eth_header) + ip_hdr_len + sizeof(struct tcp_header))

@@ -25,7 +25,7 @@ int cma_create_area(uint64_t base_pfn, uint64_t count, const char *name) {
     area->count = count;
 
     /* Allocate bitmap: one bit per page */
-    area->bitmap_size = (count + 7) / 8;
+    area->bitmap_size = (int)((count + 7) / 8);
     area->bitmap = (uint64_t *)pmm_alloc_frames((area->bitmap_size + PAGE_SIZE - 1) / PAGE_SIZE);
     if (!area->bitmap) return -ENOMEM;
 
@@ -149,8 +149,8 @@ static int cma_release(uint64_t pfn, size_t count)
     if (count == 0) return -EINVAL;
     /* Return CMA-allocated pages back to CMA pool */
     cma_free(pfn, count);
-    kprintf("[cma] cma_release: released %zu pages at PFN 0x%llx\n",
-            count, (unsigned long long)pfn);
+    kprintf("[cma] cma_release: released %llu pages at PFN 0x%llx\n",
+            (unsigned long long)count, (unsigned long long)pfn);
     return 0;
 }
 

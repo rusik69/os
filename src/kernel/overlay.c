@@ -144,7 +144,7 @@ found:
         return -ENOMEM;
 
     uint32_t bytes_read = 0;
-    ret = vfs_read(lower_path, buf, st.size, &bytes_read);
+    ret = vfs_read(lower_path, buf, (uint32_t)st.size, &bytes_read);
     if (ret != 0) {
         kfree(buf);
         return ret;

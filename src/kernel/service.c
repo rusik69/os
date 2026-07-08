@@ -60,7 +60,7 @@ void __init service_init(void) {
                 "# Format: <name> <enabled>\n"
                 "telnetd enabled\n"
                 "httpd   enabled\n";
-            fs_write_file(svcconf, cfg, strlen(cfg));
+            fs_write_file(svcconf, cfg, (uint32_t)strlen(cfg));
         }
     }
 
@@ -191,7 +191,7 @@ void __init service_init(void) {
                 "}\n"
                 "\n"
                 "#endif /* CCLIB_H */\n";
-            fs_write_file(cclib_path, cclib, strlen(cclib));
+            fs_write_file(cclib_path, cclib, (uint32_t)strlen(cclib));
         }
     }
 
@@ -204,7 +204,7 @@ void __init service_init(void) {
                 "<html><body><h1>OS Web Server</h1>"
                 "<p>This is the default page served by the built-in HTTP server.</p>"
                 "</body></html>\n";
-            fs_write_file(index, html, strlen(html));
+            fs_write_file(index, html, (uint32_t)strlen(html));
         }
     }
 }
@@ -221,19 +221,19 @@ static void log_line(struct service *svc, const char *msg) {
     {
         /* [HH:MM:SS] */
         line[pos++] = '[';
-        line[pos++] = '0' + t.hour / 10;
-        line[pos++] = '0' + t.hour % 10;
+        line[pos++] = (char)('0' + t.hour / 10);
+        line[pos++] = (char)('0' + t.hour % 10);
         line[pos++] = ':';
-        line[pos++] = '0' + t.minute / 10;
-        line[pos++] = '0' + t.minute % 10;
+        line[pos++] = (char)('0' + t.minute / 10);
+        line[pos++] = (char)('0' + t.minute % 10);
         line[pos++] = ':';
-        line[pos++] = '0' + t.second / 10;
-        line[pos++] = '0' + t.second % 10;
+        line[pos++] = (char)('0' + t.second / 10);
+        line[pos++] = (char)('0' + t.second % 10);
         line[pos++] = ']';
         line[pos++] = ' ';
     }
 
-    int mlen = strlen(msg);
+    int mlen = (int)strlen(msg);
     if (mlen > (int)(sizeof(line) - pos - 2))
         mlen = (int)(sizeof(line) - pos - 2);
     memcpy(line + pos, msg, mlen);
@@ -287,7 +287,7 @@ static void write_etc_services(void) {
     const char *hdr =
         "# /etc/services — service configuration\n"
         "# Format: <name> <enabled>\n";
-    int hlen = strlen(hdr);
+    int hlen = (int)strlen(hdr);
     if (hlen < (int)(sizeof(buf) - pos - 1)) {
         memcpy(buf + pos, hdr, hlen);
         pos += hlen;
@@ -295,11 +295,11 @@ static void write_etc_services(void) {
     for (int i = 0; i < nservices && pos < (int)(sizeof(buf) - 30); i++) {
         const char *state_str = (services[i].state == SERVICE_RUNNING)
                                 ? "enabled\n" : "disabled\n";
-        int nlen = strlen(services[i].name);
+        int nlen = (int)strlen(services[i].name);
         memcpy(buf + pos, services[i].name, nlen);
         pos += nlen;
         buf[pos++] = ' ';
-        int slen = strlen(state_str);
+        int slen = (int)strlen(state_str);
         memcpy(buf + pos, state_str, slen);
         pos += slen;
     }

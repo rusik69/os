@@ -321,7 +321,7 @@ static int crypt_map(struct dm_target *ti, struct blk_request *req,
         }
 
         /* Redirect to backing device */
-        req->dev_id = priv->backing_dev_id;
+        req->dev_id = (uint8_t)priv->backing_dev_id;
         req->lba    = target_lba;
 
         mapped[0] = req;

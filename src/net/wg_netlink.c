@@ -156,7 +156,7 @@ static int wg_nl_get_device(const struct nlmsghdr *nlh,
         wg_get_device_pubkey(pubkey);
 
         struct nlattr *nla = (struct nlattr *)attr_ptr;
-        nla->nla_len = NLA_HDRLEN + 32;
+        nla->nla_len = (uint16_t)(NLA_HDRLEN + 32);
         nla->nla_type = WG_DEVICE_A_PUBLIC_KEY;
         memcpy(NLA_DATA(nla), pubkey, 32);
         int aligned = (int)NLA_ALIGN(nla->nla_len);
@@ -170,7 +170,7 @@ static int wg_nl_get_device(const struct nlmsghdr *nlh,
         uint16_t port = wg_get_listen_port();
 
         struct nlattr *nla = (struct nlattr *)attr_ptr;
-        nla->nla_len = NLA_HDRLEN + sizeof(uint16_t);
+        nla->nla_len = (uint16_t)(NLA_HDRLEN + sizeof(uint16_t));
         nla->nla_type = WG_DEVICE_A_LISTEN_PORT;
         *(uint16_t *)NLA_DATA(nla) = port;
         int aligned = (int)NLA_ALIGN(nla->nla_len);
@@ -200,7 +200,7 @@ static int wg_nl_get_device(const struct nlmsghdr *nlh,
             /* Public key */
             if (peer_remaining >= (int)(NLA_HDRLEN + 32)) {
                 struct nlattr *nla = (struct nlattr *)peer_ptr;
-                nla->nla_len = NLA_HDRLEN + 32;
+                nla->nla_len = (uint16_t)(NLA_HDRLEN + 32);
                 nla->nla_type = WG_PEER_A_PUBLIC_KEY;
                 memcpy(NLA_DATA(nla), pstate.public_key, 32);
                 int al = (int)NLA_ALIGN(nla->nla_len);
@@ -212,7 +212,7 @@ static int wg_nl_get_device(const struct nlmsghdr *nlh,
             /* Endpoint IP */
             if (peer_remaining >= (int)(NLA_HDRLEN + sizeof(uint32_t))) {
                 struct nlattr *nla = (struct nlattr *)peer_ptr;
-                nla->nla_len = NLA_HDRLEN + sizeof(uint32_t);
+                nla->nla_len = (uint16_t)(NLA_HDRLEN + sizeof(uint32_t));
                 nla->nla_type = WG_PEER_A_ENDPOINT_IP;
                 *(uint32_t *)NLA_DATA(nla) = pstate.endpoint_ip;
                 int al = (int)NLA_ALIGN(nla->nla_len);
@@ -224,7 +224,7 @@ static int wg_nl_get_device(const struct nlmsghdr *nlh,
             /* Endpoint port */
             if (peer_remaining >= (int)(NLA_HDRLEN + sizeof(uint16_t))) {
                 struct nlattr *nla = (struct nlattr *)peer_ptr;
-                nla->nla_len = NLA_HDRLEN + sizeof(uint16_t);
+                nla->nla_len = (uint16_t)(NLA_HDRLEN + sizeof(uint16_t));
                 nla->nla_type = WG_PEER_A_ENDPOINT_PORT;
                 *(uint16_t *)NLA_DATA(nla) = pstate.endpoint_port;
                 int al = (int)NLA_ALIGN(nla->nla_len);
@@ -236,7 +236,7 @@ static int wg_nl_get_device(const struct nlmsghdr *nlh,
             /* Persistent keepalive interval */
             if (peer_remaining >= (int)(NLA_HDRLEN + sizeof(uint32_t))) {
                 struct nlattr *nla = (struct nlattr *)peer_ptr;
-                nla->nla_len = NLA_HDRLEN + sizeof(uint32_t);
+                nla->nla_len = (uint16_t)(NLA_HDRLEN + sizeof(uint32_t));
                 nla->nla_type = WG_PEER_A_PERSISTENT_KEEPALIVE_INTERVAL;
                 *(uint32_t *)NLA_DATA(nla) = pstate.persistent_keepalive_interval;
                 int al = (int)NLA_ALIGN(nla->nla_len);
@@ -262,7 +262,7 @@ static int wg_nl_get_device(const struct nlmsghdr *nlh,
 
                     /* Address */
                     struct nlattr *addr_nla = (struct nlattr *)entry_ptr;
-                    addr_nla->nla_len = NLA_HDRLEN + sizeof(uint32_t);
+                    addr_nla->nla_len = (uint16_t)(NLA_HDRLEN + sizeof(uint32_t));
                     addr_nla->nla_type = WG_ALLOWED_IP_A_ADDR;
                     *(uint32_t *)NLA_DATA(addr_nla) = pstate.allowed_ips[j].addr;
                     int al1 = (int)NLA_ALIGN(addr_nla->nla_len);
@@ -272,7 +272,7 @@ static int wg_nl_get_device(const struct nlmsghdr *nlh,
 
                     /* CIDR */
                     struct nlattr *cidr_nla = (struct nlattr *)entry_ptr;
-                    cidr_nla->nla_len = NLA_HDRLEN + sizeof(uint8_t);
+                    cidr_nla->nla_len = (uint16_t)(NLA_HDRLEN + sizeof(uint8_t));
                     cidr_nla->nla_type = WG_ALLOWED_IP_A_CIDR;
                     *(uint8_t *)NLA_DATA(cidr_nla) = pstate.allowed_ips[j].cidr;
                     int al2 = (int)NLA_ALIGN(cidr_nla->nla_len);
@@ -282,7 +282,7 @@ static int wg_nl_get_device(const struct nlmsghdr *nlh,
 
                 if (aip_used > 0) {
                     struct nlattr *aip_nla = (struct nlattr *)peer_ptr;
-                    aip_nla->nla_len = NLA_HDRLEN + aip_used;
+                    aip_nla->nla_len = (uint16_t)(NLA_HDRLEN + (uint16_t)aip_used);
                     aip_nla->nla_type = WG_PEER_A_ALLOWED_IPS | NLA_F_NESTED;
                     int al = (int)NLA_ALIGN(aip_nla->nla_len);
                     peer_used += al;
@@ -295,7 +295,7 @@ static int wg_nl_get_device(const struct nlmsghdr *nlh,
         /* Wrap the peer blob in a WG_DEVICE_A_PEERS nested attribute */
         if (peer_used > 0 && remaining >= (int)(NLA_HDRLEN + peer_used)) {
             struct nlattr *peers_nla = (struct nlattr *)attr_ptr;
-            peers_nla->nla_len = NLA_HDRLEN + peer_used;
+            peers_nla->nla_len = (uint16_t)(NLA_HDRLEN + (uint16_t)peer_used);
             peers_nla->nla_type = WG_DEVICE_A_PEERS | NLA_F_NESTED;
             memcpy(NLA_DATA(peers_nla), peer_buf, (size_t)peer_used);
             int al = (int)NLA_ALIGN(peers_nla->nla_len);

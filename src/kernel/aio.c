@@ -76,7 +76,7 @@ static int aio_read_submit(struct aiocb *cb) {
 
     /* Perform the read via VFS */
     uint32_t out_size = 0;
-    int ret = vfs_read(path, buf, cb->aio_nbytes, &out_size);
+    int ret = vfs_read(path, buf, (uint32_t)cb->aio_nbytes, &out_size);
     if (ret < 0) {
         kfree(buf);
         cb->aio_state = 3; /* error */
@@ -105,7 +105,7 @@ static int aio_write_submit(struct aiocb *cb) {
     /* In real impl, copy from userspace */
     memset(buf, 0, cb->aio_nbytes); /* stub data */
 
-    int ret = vfs_write(path, buf, cb->aio_nbytes);
+    int ret = vfs_write(path, buf, (uint32_t)cb->aio_nbytes);
     if (ret < 0) {
         kfree(buf);
         cb->aio_state = 3;

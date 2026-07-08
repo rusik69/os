@@ -148,8 +148,8 @@ int namespace_create(const char *name, const struct namespace_quota *quota)
     }
 
     namespace_count++;
-    kprintf("[Namespace] Created namespace '%s' (uid=%s, %d pods, %lu bytes mem)\n",
-            ns->name, ns->uid, ns->quota.max_pods, ns->quota.mem_limit);
+    kprintf("[Namespace] Created namespace '%s' (uid=%s, %d pods, %llu bytes mem)\n",
+            ns->name, ns->uid, ns->quota.max_pods, (unsigned long long)ns->quota.mem_limit);
 
     spinlock_release(&namespace_lock);
     return 0;

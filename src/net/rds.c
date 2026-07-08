@@ -258,7 +258,7 @@ static int rds_send(int sock, const uint8_t *data, size_t len, int flags)
     rds_send_pkt(c, data, len, RDS_FLAG_DATA);
     c->seq_no++;
 
-    kprintf("[RDS] send: sock=%d %zu bytes (seq=%u)\n", sock, len, c->pending_seq);
+    kprintf("[RDS] send: sock=%d %llu bytes (seq=%u)\n", sock, (unsigned long long)len, c->pending_seq);
     return (int)len;
 }
 

@@ -119,7 +119,7 @@ static void v9pnet_virtio_init(void)
     /* Read mount tag from config space (after PCI config, at offset 20) */
     memset(v9p_mount_tag, 0, sizeof(v9p_mount_tag));
     for (int i = 0; i < 63; i++) {
-        v9p_mount_tag[i] = (char)v9p_inb(0x14 + i);
+        v9p_mount_tag[i] = (char)v9p_inb((uint8_t)(0x14 + i));
         if (v9p_mount_tag[i] == '\0') break;
     }
 

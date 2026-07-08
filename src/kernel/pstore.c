@@ -138,7 +138,7 @@ int pstore_write(uint8_t type, const uint8_t *data, int len)
     rec->timestamp = timer_get_ticks();
     rec->data[0]   = type;                   /* type as first byte */
     if (len > 0 && data)
-        memcpy((void *)(uintptr_t)rec->data + 1, data, (size_t)len);
+        memcpy((uint8_t *)(uintptr_t)rec->data + 1, data, (size_t)len);
 
     /* Advance the write slot (ring buffer) */
     pstore_hdr->write_slot = (slot + 1) % PSTORE_MAX_RECORDS;
@@ -176,7 +176,7 @@ int pstore_read(int index, uint8_t *buf, int len)
         slot = pstore_hdr->write_slot - 1;
 
     /* Walk back `index` steps through the ring */
-    slot = (slot - (unsigned int)index + PSTORE_MAX_RECORDS) % PSTORE_MAX_RECORDS;
+    slot = (int)(((unsigned int)slot - (unsigned int)index + PSTORE_MAX_RECORDS) % PSTORE_MAX_RECORDS);
 
     volatile struct pstore_record *rec = pstore_slot(slot);
     if (!slot_valid(rec)) {
@@ -224,7 +224,7 @@ void pstore_recover(void)
         else
             slot = pstore_hdr->write_slot - 1;
 
-        slot = (slot - i + PSTORE_MAX_RECORDS) % PSTORE_MAX_RECORDS;
+        slot = (int)(((unsigned int)slot - i + PSTORE_MAX_RECORDS) % PSTORE_MAX_RECORDS);
 
         volatile struct pstore_record *rec = pstore_slot(slot);
         if (!slot_valid(rec))
@@ -245,7 +245,7 @@ void pstore_recover(void)
             /* Null-terminate for safe printing */
             char print_buf[512];
             uint32_t copy = dlen < sizeof(print_buf) - 1 ? dlen : sizeof(print_buf) - 1;
-            memcpy(print_buf, (void *)(uintptr_t)rec->data + 1, copy);
+            memcpy(print_buf, (uint8_t *)(uintptr_t)rec->data + 1, copy);
             print_buf[copy] = '\0';
             kprintf("       %s\n", print_buf);
         }

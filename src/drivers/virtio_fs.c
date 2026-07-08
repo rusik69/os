@@ -173,7 +173,7 @@ static int fusex_lookup(struct fuse_in_header *inh, uint8_t *out_buf,
 {
     /* FUSE_LOOKUP: The name follows the in header */
     const char *name = (const char *)(inh + 1);
-    uint32_t name_len = inh->len - sizeof(struct fuse_in_header);
+    uint32_t name_len = (uint32_t)(inh->len - sizeof(struct fuse_in_header));
 
     /* Build full host path */
     char full_path[512];
@@ -281,8 +281,8 @@ static int fusex_read(struct fuse_in_header *inh, uint8_t *out_buf,
     struct fuse_out_header *outh = (struct fuse_out_header *)out_buf;
     uint8_t *data = out_buf + sizeof(*outh);
 
-    uint32_t copy_size = (rin->size < out_buf_size - sizeof(*outh))
-                         ? rin->size : (out_buf_size - sizeof(*outh));
+    uint32_t copy_size = (uint32_t)((rin->size < out_buf_size - sizeof(*outh))
+                         ? rin->size : (out_buf_size - sizeof(*outh)));
 
     /* Read from host file system */
     char full_path[512];
@@ -310,7 +310,7 @@ static int fusex_readdir(struct fuse_in_header *inh, uint8_t *out_buf,
 
     /* Return a minimal directory listing with . and .. */
     uint8_t *pos = out_buf + sizeof(*outh);
-    uint32_t remaining = out_buf_size - sizeof(*outh);
+    uint32_t remaining = (uint32_t)(out_buf_size - sizeof(*outh));
     uint32_t total = 0;
 
     struct {
@@ -620,7 +620,7 @@ static int fusex_read_dax(struct fuse_in_header *inh, uint8_t *out_buf,
                                  ? (uint32_t)rin->size
                                  : (uint32_t)dax_len;
             if (copy_size > out_buf_size - sizeof(*outh))
-                copy_size = out_buf_size - sizeof(*outh);
+                copy_size = (uint32_t)(out_buf_size - sizeof(*outh));
 
             if (dax_off + copy_size <= g_fs_dax.window_len) {
                 memcpy(data,

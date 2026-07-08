@@ -136,8 +136,8 @@ int sound_mixer_sw_open_channel(struct sound_mixer_sw *mixer, uint8_t volume)
 	struct sound_mixer_sw_channel *ch = &mixer->channels[ch_idx];
 
 	/* Allocate the per-channel ring buffer */
-	uint32_t ch_buf_bytes = SOUND_MIXER_SW_CHAN_FRAMES *
-				mixer->pcm_channels * sizeof(int16_t);
+	uint32_t ch_buf_bytes = (uint32_t)(SOUND_MIXER_SW_CHAN_FRAMES *
+				mixer->pcm_channels * sizeof(int16_t));
 	ch->buffer = (int16_t *)kmalloc(ch_buf_bytes);
 	if (!ch->buffer) {
 		spinlock_irqsave_release(&mixer->lock, irq_flags);

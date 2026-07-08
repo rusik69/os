@@ -614,8 +614,8 @@ struct pvirtq_desc {
 
 /* Packed virtqueue ring layout in memory */
 struct pvirtq {
-    /* Descriptor ring: desc[queue_size] */
-    struct pvirtq_desc desc[0];
+    /* Descriptor ring: desc[queue_size] — sized at runtime via pointer cast */
+    struct pvirtq_desc desc[1];
 
     /*
      * After desc[queue_size], at offset queue_size * sizeof(struct pvirtq_desc):

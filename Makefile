@@ -1391,6 +1391,10 @@ $(BUILDDIR_CHECK_FULL)/kernel.elf: check-app-boundary $(CHECK_FULL_OBJS)
 $(BUILDDIR_CHECK_FULL)/kernel/config_gz.o: $(BUILD_CONFIG_GZ_H_TEST)
 $(BUILDDIR_CHECK_FULL)/kernel/config_gz.o: CHECK_FULL_CFLAGS += -I$(BUILDDIR_CHECK_FULL) -I$(BUILDDIR_TEST)
 
+# kpti.c needs the generated trampoline header
+$(BUILDDIR_CHECK_FULL)/kernel/kpti.o: CHECK_FULL_CFLAGS += -I$(BUILDDIR) -I$(BUILDDIR_CHECK_FULL)
+$(BUILDDIR_CHECK_FULL)/kernel/kpti.o: $(KPTI_TRAMP_H)
+
 $(BUILDDIR_CHECK_FULL)/kernel.bin: $(BUILDDIR_CHECK_FULL)/kernel.elf
 	cp $< $@
 

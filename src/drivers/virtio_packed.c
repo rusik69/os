@@ -132,8 +132,8 @@ int virtio_packed_vq_init(struct virtio_packed_vq *vq,
 
 	alloc_result = pmm_alloc_frames(num_pages);
 	if (!alloc_result) {
-		kprintf("[VIRTIO-PACKED] failed to allocate %zu pages for queue %u\n",
-		        num_pages, (unsigned int)queue_idx);
+		kprintf("[VIRTIO-PACKED] failed to allocate %llu pages for queue %u\n",
+		        (unsigned long long)num_pages, (unsigned int)queue_idx);
 		return -1;
 	}
 

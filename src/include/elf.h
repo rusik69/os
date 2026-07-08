@@ -180,7 +180,7 @@ struct elf64_rela {
 } __attribute__((packed));
 
 /* Extract symbol index and relocation type from r_info */
-#define ELF64_R_SYM(i)    ((i) >> 32)
+#define ELF64_R_SYM(i)    ((uint32_t)((i) >> 32))
 #define ELF64_R_TYPE(i)   ((uint32_t)(i))
 #define ELF64_R_INFO(s,t) ((((uint64_t)(s)) << 32) | (uint32_t)(t))
 

@@ -400,19 +400,19 @@ static int kvm_ioctl(int cmd, uint64_t arg)
         return 0;
     }
 
-    case KVM_GET_REGS: {
+    case (int)KVM_GET_REGS: {
         if (!kvm_vcpu.created) return -1;
         memcpy((void*)(uintptr_t)arg, &kvm_vcpu.regs, sizeof(struct kvm_regs));
         return 0;
     }
 
-    case KVM_SET_REGS: {
+    case (int)KVM_SET_REGS: {
         if (!kvm_vcpu.created) return -1;
         memcpy(&kvm_vcpu.regs, (void*)(uintptr_t)arg, sizeof(struct kvm_regs));
         return 0;
     }
 
-    case KVM_GET_SREGS: {
+    case (int)KVM_GET_SREGS: {
         if (!kvm_vcpu.created) return -1;
         memcpy((void*)(uintptr_t)arg, &kvm_vcpu.sregs, sizeof(struct kvm_sregs));
         return 0;

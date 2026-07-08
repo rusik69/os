@@ -57,7 +57,7 @@ struct vfs_stat {
 struct file_handle {
     unsigned int handle_bytes;
     int          handle_type;
-    unsigned char f_handle[0];
+    unsigned char f_handle[1];  /* variable-length (struct hack) */
 };
 #endif
 

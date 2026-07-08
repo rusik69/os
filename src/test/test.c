@@ -342,7 +342,7 @@ static void test_filesystem(void) {
 
     /* Write data */
     const char *content = "kernel test content 12345";
-    ASSERT("fs write_file", fs_write_file("/ktest", content, strlen(content)) == 0);
+    ASSERT("fs write_file", fs_write_file("/ktest", content, (uint32_t)strlen(content)) == 0);
 
     /* Read back */
     static char rbuf[256];
@@ -368,7 +368,7 @@ static void test_filesystem(void) {
     uint32_t used_before = 0, used_after = 0;
     fs_get_usage(NULL, NULL, &used_before, NULL);
     const char *content2 = "overwritten";
-    ASSERT("fs overwrite", fs_write_file("/ktest", content2, strlen(content2)) == 0);
+    ASSERT("fs overwrite", fs_write_file("/ktest", content2, (uint32_t)strlen(content2)) == 0);
     fs_get_usage(NULL, NULL, &used_after, NULL);
     ASSERT("fs overwrite no block leak", used_after <= used_before);
     memset(rbuf, 0, sizeof(rbuf));
@@ -448,7 +448,7 @@ static void test_vfs(void) {
     fs_format();
 
     const char *data = "vfs layer test data";
-    ASSERT("vfs write",   vfs_write("/vf", data, strlen(data)) == 0);
+    ASSERT("vfs write",   vfs_write("/vf", data, (uint32_t)strlen(data)) == 0);
 
     static char rbuf[256];
     uint32_t sz = 0;
@@ -487,7 +487,7 @@ static void test_pipe(void) {
     if (id < 0) return;
 
     const char *msg = "pipe test data";
-    int n = pipe_write(id, msg, strlen(msg));
+    int n = pipe_write(id, msg, (int)strlen(msg));
     ASSERT_EQ("pipe write count", n, (uint64_t)strlen(msg));
     ASSERT("pipe available > 0", pipe_available(id) > 0);
 
@@ -2091,7 +2091,7 @@ static void test_timers_cb(void *arg) {
 
 static void test_timers_dynamic(void) {
     /* Schedule a timer with delay=1 tick */
-    int id = timer_schedule(test_timers_cb, (void*)&test_timers_cb_fired, 1);
+    int id = timer_schedule(test_timers_cb, (void*)(uintptr_t)&test_timers_cb_fired, 1);
     ASSERT("timers schedule id >= 0", id >= 0);
     if (id >= 0) {
         timer_handler_soft();
@@ -2102,8 +2102,8 @@ static void test_timers_dynamic(void) {
 
     /* Multiple timers */
     volatile int f2a = 0, f2b = 0;
-    int id_a = timer_schedule(test_timers_cb, (void*)&f2a, 1);
-    int id_b = timer_schedule(test_timers_cb, (void*)&f2b, 1);
+    int id_a = timer_schedule(test_timers_cb, (void*)(uintptr_t)&f2a, 1);
+    int id_b = timer_schedule(test_timers_cb, (void*)(uintptr_t)&f2b, 1);
     ASSERT("timers multi a >= 0", id_a >= 0);
     ASSERT("timers multi b >= 0", id_b >= 0);
     if (id_a >= 0 && id_b >= 0) {
@@ -2119,7 +2119,7 @@ static void test_timers_dynamic(void) {
 
     /* Cancel before fire */
     volatile int fcancel = 0;
-    int id_c = timer_schedule(test_timers_cb, (void*)&fcancel, 10);
+    int id_c = timer_schedule(test_timers_cb, (void*)(uintptr_t)&fcancel, 10);
     ASSERT("timers cancel id >= 0", id_c >= 0);
     if (id_c >= 0) {
         timer_cancel(id_c);
@@ -2139,15 +2139,15 @@ static void test_wq_cb(void *arg) {
 static void test_workqueue(void) {
     /* Schedule a work item, drain, verify flag was set */
     test_wq_flag = 0;
-    int id = workqueue_schedule(test_wq_cb, (void*)&test_wq_flag);
+    int id = workqueue_schedule(test_wq_cb, (void*)(uintptr_t)&test_wq_flag);
     ASSERT("workqueue schedule >= 0", id >= 0);
     workqueue_drain();
     ASSERT("workqueue flag set", test_wq_flag > 0);
 
     /* Schedule multiple items, drain, verify all processed */
     volatile int f2 = 0, f3 = 0;
-    int id2 = workqueue_schedule(test_wq_cb, (void*)&f2);
-    int id3 = workqueue_schedule(test_wq_cb, (void*)&f3);
+    int id2 = workqueue_schedule(test_wq_cb, (void*)(uintptr_t)&f2);
+    int id3 = workqueue_schedule(test_wq_cb, (void*)(uintptr_t)&f3);
     ASSERT("workqueue multi id2 >= 0", id2 >= 0);
     ASSERT("workqueue multi id3 >= 0", id3 >= 0);
     if (id2 >= 0 && id3 >= 0) {
@@ -4581,6 +4581,8 @@ static void test_null_safety(void) {
     t_ok("kfree(NULL) no-op");
 
     /* memcpy with NULL and len=0 avoids dereference */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wnonnull"
     memcpy(buf, NULL, 0);
     ASSERT_EQ("memcpy NULL src len0 byte0", (uint8_t)buf[0], 0);
     memcpy(NULL, buf, 0);
@@ -4601,6 +4603,7 @@ static void test_null_safety(void) {
 
     /* strnlen(NULL, 0) returns 0 without crashing */
     ASSERT_EQ("strnlen NULL maxlen0", strnlen(NULL, 0), 0);
+#pragma GCC diagnostic pop
 
     /* kmalloc(0) round-trip: free the NULL and re-query */
     kfree(z);

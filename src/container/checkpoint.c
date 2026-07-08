@@ -724,7 +724,7 @@ static int container_checkpoint_load(const char *save_path,
 
     kprintf("[Checkpoint] Checkpoint state loaded from %s "
             "(%u bytes header + %zu bytes state)\n",
-            save_path, sizeof(hdr), sizeof(*state_out));
+            save_path, (unsigned int)sizeof(hdr), sizeof(*state_out));
     return 0;
 }
 

@@ -97,7 +97,7 @@ static int bcache_lookup(int cache_id, uint64_t block_no, uint8_t *buf, size_t l
     spinlock_irqsave_acquire(&bc->lock, &irq_flags);
 
     int num_buckets = (int)(bc->cache_size / bc->bucket_size);
-    uint32_t bucket = block_no % (uint32_t)num_buckets;
+    uint32_t bucket = (uint32_t)(block_no % (uint32_t)num_buckets);
 
     if (bc->bucket_map[bucket] == (uint32_t)block_no) {
         /* Cache hit */
@@ -129,7 +129,7 @@ static int bcache_insert(int cache_id, uint64_t block_no,
     spinlock_irqsave_acquire(&bc->lock, &irq_flags);
 
     int num_buckets = (int)(bc->cache_size / bc->bucket_size);
-    uint32_t bucket = block_no % (uint32_t)num_buckets;
+    uint32_t bucket = (uint32_t)(block_no % (uint32_t)num_buckets);
     uint64_t offset = (uint64_t)bucket * bc->bucket_size;
 
     if (offset + len <= bc->cache_size) {

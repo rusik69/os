@@ -909,7 +909,7 @@ static uint32_t tc_nla_put_stats(uint8_t *buf, uint32_t nlmsg_len,
     uint32_t offset = nlmsg_len;
     struct nlattr *nla = (struct nlattr *)(buf + offset);
     uint16_t payload_len = (uint16_t)sizeof(*st);
-    nla->nla_len = NLA_HDRLEN + payload_len;
+    nla->nla_len = (uint16_t)(NLA_HDRLEN + payload_len);
     nla->nla_type = TCA_STATS;
     memcpy((uint8_t *)(nla + 1), st, payload_len);
     return nlmsg_len + NLA_ALIGN(nla->nla_len);
@@ -932,14 +932,14 @@ static uint32_t tc_nla_put_stats2(uint8_t *buf, uint32_t nlmsg_len,
 
     /* Sub-attr: TCA_STATS_BASIC */
     struct nlattr *nla_basic = (struct nlattr *)(buf + inner_offset);
-    nla_basic->nla_len = NLA_HDRLEN + (uint16_t)sizeof(*basic);
+    nla_basic->nla_len = (uint16_t)(NLA_HDRLEN + (uint16_t)sizeof(*basic));
     nla_basic->nla_type = TCA_STATS_BASIC;
     memcpy((uint8_t *)(nla_basic + 1), basic, sizeof(*basic));
     inner_offset += NLA_ALIGN(nla_basic->nla_len);
 
     /* Sub-attr: TCA_STATS_QUEUE */
     struct nlattr *nla_queue = (struct nlattr *)(buf + inner_offset);
-    nla_queue->nla_len = NLA_HDRLEN + (uint16_t)sizeof(*queue);
+    nla_queue->nla_len = (uint16_t)(NLA_HDRLEN + (uint16_t)sizeof(*queue));
     nla_queue->nla_type = TCA_STATS_QUEUE;
     memcpy((uint8_t *)(nla_queue + 1), queue, sizeof(*queue));
     inner_offset += NLA_ALIGN(nla_queue->nla_len);
@@ -995,7 +995,7 @@ static int nl_tc_getqdisc(int protocol, const struct nlmsghdr *nlh,
         const char *kind = tc_kind_name(q->type);
         int kind_len = (int)(strlen(kind) + 1);
         struct nlattr *nla = (struct nlattr *)(buf + resp->nlmsg_len);
-        nla->nla_len = NLA_HDRLEN + (uint16_t)kind_len;
+        nla->nla_len = (uint16_t)(NLA_HDRLEN + (uint16_t)kind_len);
         nla->nla_type = TCA_KIND;
         memcpy((uint8_t *)(nla + 1), kind, (size_t)kind_len);
         resp->nlmsg_len += NLA_ALIGN(nla->nla_len);
@@ -1049,7 +1049,7 @@ static int nl_tc_getqdisc(int protocol, const struct nlmsghdr *nlh,
         const char *kind = tc_kind_name(q->type);
         int kind_len = (int)(strlen(kind) + 1);
         struct nlattr *nla = (struct nlattr *)(buf + resp->nlmsg_len);
-        nla->nla_len = NLA_HDRLEN + (uint16_t)kind_len;
+        nla->nla_len = (uint16_t)(NLA_HDRLEN + (uint16_t)kind_len);
         nla->nla_type = TCA_KIND;
         memcpy((uint8_t *)(nla + 1), kind, (size_t)kind_len);
         resp->nlmsg_len += NLA_ALIGN(nla->nla_len);
@@ -1175,7 +1175,7 @@ static uint32_t tc_nla_put_class_stats(uint8_t *buf, uint32_t nlmsg_len,
     uint32_t offset = nlmsg_len;
     struct nlattr *nla = (struct nlattr *)(buf + offset);
     uint16_t payload_len = (uint16_t)sizeof(*st);
-    nla->nla_len = NLA_HDRLEN + payload_len;
+    nla->nla_len = (uint16_t)(NLA_HDRLEN + payload_len);
     nla->nla_type = TCA_STATS;
     memcpy((uint8_t *)(nla + 1), st, payload_len);
     return nlmsg_len + NLA_ALIGN(nla->nla_len);
@@ -1244,7 +1244,7 @@ static int nl_tc_gettclass(int protocol, const struct nlmsghdr *nlh,
         /* TCA_KIND */
         int kind_len = (int)(strlen(kind) + 1);
         struct nlattr *nla = (struct nlattr *)(buf + resp->nlmsg_len);
-        nla->nla_len = NLA_HDRLEN + (uint16_t)kind_len;
+        nla->nla_len = (uint16_t)(NLA_HDRLEN + (uint16_t)kind_len);
         nla->nla_type = TCA_KIND;
         memcpy((uint8_t *)(nla + 1), kind, (size_t)kind_len);
         resp->nlmsg_len += NLA_ALIGN(nla->nla_len);
@@ -1252,7 +1252,7 @@ static int nl_tc_gettclass(int protocol, const struct nlmsghdr *nlh,
         /* TCA_OPTIONS — pack rate/ceil for informational purposes */
         {
             struct nlattr *nla_opt = (struct nlattr *)(buf + resp->nlmsg_len);
-            nla_opt->nla_len = NLA_HDRLEN + 8;
+            nla_opt->nla_len = (uint16_t)(NLA_HDRLEN + 8);
             nla_opt->nla_type = TCA_OPTIONS;
             uint8_t *opt = (uint8_t *)(nla_opt + 1);
             memcpy(opt, &cs.rate, 4);
@@ -1589,7 +1589,7 @@ static int genl_handle_ctrl(const void *buf, int len, uint32_t src_pid) {
             /* Family name (string) */
             struct nlattr *name_attr = (struct nlattr *)attr_ptr;
             int name_len = (int)(strlen(genl_families[i].name) + 1);
-            name_attr->nla_len = NLA_HDRLEN + name_len;
+            name_attr->nla_len = (uint16_t)(NLA_HDRLEN + name_len);
             name_attr->nla_type = CTRL_ATTR_FAMILY_NAME;
             memcpy(NLA_DATA(name_attr), genl_families[i].name, name_len);
             attr_len += NLA_ALIGN(name_attr->nla_len);

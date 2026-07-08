@@ -45,7 +45,7 @@ static void ul_to_str(uint64_t v, char *buf, int *pos, int max)
     char tmp[ULTOA_BUF];
     int n = 0;
     while (v > 0 && n < ULTOA_BUF) {
-        tmp[n++] = '0' + (int)(v % 10);
+        tmp[n++] = (char)('0' + (int)(v % 10));
         v /= 10;
     }
     while (n-- > 0 && *pos < max - 1)
@@ -490,7 +490,7 @@ int coredump_generate(struct process *proc, int signo) {
     ehdr.e_flags    = 0;
     ehdr.e_ehsize   = sizeof(struct elf64_header);
     ehdr.e_phentsize = sizeof(struct elf64_phdr);
-    ehdr.e_phnum    = 1 + num_segs;  /* PT_NOTE + PT_LOAD segments */
+    ehdr.e_phnum    = (uint16_t)(1 + num_segs);  /* PT_NOTE + PT_LOAD segments */
     ehdr.e_shentsize = 0;
     ehdr.e_shnum    = 0;
     ehdr.e_shstrndx = 0;
@@ -639,7 +639,7 @@ int coredump_generate(struct process *proc, int signo) {
     }
 
     /* Write the core file to the expanded path */
-    int ret = vfs_write(core_path, cb.data, cb.len);
+    int ret = vfs_write(core_path, cb.data, (uint32_t)cb.len);
     if (ret < 0) {
         kprintf("[COREDUMP] Failed to write %s (ret=%d)\n", core_path, ret);
         kfree(cb.data);

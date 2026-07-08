@@ -111,7 +111,7 @@ int audit_netlink_send(int event_type, const char *payload, int payload_len) {
         return -ENOMEM;
 
     if (!payload) payload = "";
-    if (payload_len <= 0) payload_len = strlen(payload);
+    if (payload_len <= 0) payload_len = (int)strlen(payload);
 
     /* Message layout: nlmsghdr | audit_msg_hdr | payload */
     int audit_hdr_len = (int)sizeof(struct audit_msg_hdr);

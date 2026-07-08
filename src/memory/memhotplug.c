@@ -99,8 +99,8 @@ static int memhotplug_add(uint64_t phys_addr, size_t size)
     if (phys_addr & (PAGE_SIZE - 1)) return -EINVAL;
     if (size & (PAGE_SIZE - 1)) return -EINVAL;
 
-    kprintf("[memhotplug] memhotplug_add: 0x%llx +%zu MB\n",
-            (unsigned long long)phys_addr, size / (1024 * 1024));
+    kprintf("[memhotplug] memhotplug_add: 0x%llx +%llu MB\n",
+            (unsigned long long)phys_addr, (unsigned long long)(size / (1024 * 1024)));
 
     /* Add to hotplug tracking */
     if (section_count >= MEMHP_MAX_SECTIONS) {
@@ -120,8 +120,8 @@ static int memhotplug_add(uint64_t phys_addr, size_t size)
     pmm_reserve_frames(phys_addr, size);
     sec->state = MEMHP_ONLINE;
 
-    kprintf("[memhotplug] memhotplug_add: region 0x%llx (+%zu MB) online\n",
-            (unsigned long long)phys_addr, size / (1024 * 1024));
+    kprintf("[memhotplug] memhotplug_add: region 0x%llx (+%llu MB) online\n",
+            (unsigned long long)phys_addr, (unsigned long long)(size / (1024 * 1024)));
     return 0;
 }
 
@@ -131,8 +131,8 @@ static int memhotplug_remove(uint64_t phys_addr, size_t size)
     if (size == 0) return -EINVAL;
     if (phys_addr & (PAGE_SIZE - 1)) return -EINVAL;
 
-    kprintf("[memhotplug] memhotplug_remove: 0x%llx +%zu MB\n",
-            (unsigned long long)phys_addr, size / (1024 * 1024));
+    kprintf("[memhotplug] memhotplug_remove: 0x%llx +%llu MB\n",
+            (unsigned long long)phys_addr, (unsigned long long)(size / (1024 * 1024)));
 
     /* Find and offline the region */
     for (int i = 0; i < section_count; i++) {

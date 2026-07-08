@@ -373,8 +373,8 @@ void ftrace_trace_page_alloc(uint64_t pfn, size_t order)
     static uint64_t alloc_count = 0;
     alloc_count++;
 
-    kprintf("[TRACE] page_alloc: pfn=0x%llx order=%zu total=%llu\n",
-            (unsigned long long)pfn, order, (unsigned long long)alloc_count);
+    kprintf("[TRACE] page_alloc: pfn=0x%llx order=%llu total=%llu\n",
+            (unsigned long long)pfn, (unsigned long long)order, (unsigned long long)alloc_count);
 }
 
 void ftrace_trace_page_free(uint64_t pfn, size_t order)
@@ -384,8 +384,8 @@ void ftrace_trace_page_free(uint64_t pfn, size_t order)
     static uint64_t free_count = 0;
     free_count++;
 
-    kprintf("[TRACE] page_free: pfn=0x%llx order=%zu total=%llu\n",
-            (unsigned long long)pfn, order, (unsigned long long)free_count);
+    kprintf("[TRACE] page_free: pfn=0x%llx order=%llu total=%llu\n",
+            (unsigned long long)pfn, (unsigned long long)order, (unsigned long long)free_count);
 }
 
 /* ── Global control for static trace events ──────────────────────────── */

@@ -893,7 +893,7 @@ int usb_hid_parse_report(void *dev, const void *report, size_t len,
     struct hid_local_state ls;
     hid_reset_local(&ls);
 
-    kprintf("[usb_hid] Parsing HID report descriptor (%zu bytes)...\n", len);
+    kprintf("[usb_hid] Parsing HID report descriptor (%llu bytes)...\n", (unsigned long long)len);
 
     while (pos < len && out->num_items < HID_REPORT_MAX_ITEMS) {
         uint8_t prefix = data[pos];
@@ -1220,14 +1220,14 @@ int usb_hid_parse_report_legacy(void *dev, const void *report, size_t len)
     if (has_consumer) {
         usb_hid_consumer_register(g_dev_addr, g_consumer_intf,
                                    g_consumer_int_in_ep,
-                                   (const uint8_t *)report, len);
+                                   (const uint8_t *)report, (int)len);
     }
 
     /* If system control detected, register with the sysctrl driver */
     if (has_sysctrl) {
         usb_hid_sysctrl_register(g_dev_addr, g_sysctrl_intf,
                                   g_sysctrl_int_in_ep,
-                                  (const uint8_t *)report, len);
+                                  (const uint8_t *)report, (int)len);
     }
 
     return 0;

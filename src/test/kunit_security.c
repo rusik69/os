@@ -1203,17 +1203,17 @@ static struct kunit_case pstore_test_cases[] = {
 static struct kunit_suite pstore_test_suite;
 
 /* Forward declarations for uffd test suite (defined below) */
-static struct kunit_case uffd_test_cases[];
+static struct kunit_case uffd_test_cases[7];
 static struct kunit_suite uffd_test_suite;
 
 /* Forward declarations for KASLR, W^X, mprotect test suites */
-static struct kunit_case kaslr_test_cases[];
+static struct kunit_case kaslr_test_cases[2];
 static struct kunit_suite kaslr_test_suite;
-static struct kunit_case wx_enforce_test_cases[];
+static struct kunit_case wx_enforce_test_cases[3];
 static struct kunit_suite wx_enforce_test_suite;
-static struct kunit_case mprotect_test_cases[];
+static struct kunit_case mprotect_test_cases[5];
 static struct kunit_suite mprotect_test_suite;
-static struct kunit_case dma_test_cases[];
+static struct kunit_case dma_test_cases[8];
 static struct kunit_suite dma_test_suite;
 
 /* ====================================================================
@@ -1362,13 +1362,13 @@ static void mprotect_invalid_range_test(struct kunit *test)
 
 static struct kunit_case kaslr_test_cases[] = {
     KUNIT_CASE(kaslr_get_offset_test),
-    {}
+    {0}
 };
 
 static struct kunit_case wx_enforce_test_cases[] = {
     KUNIT_CASE(wx_enforce_check_test),
     KUNIT_CASE(wx_enforce_prot_none_test),
-    {}
+    {0}
 };
 
 static struct kunit_case mprotect_test_cases[] = {
@@ -1376,7 +1376,7 @@ static struct kunit_case mprotect_test_cases[] = {
     KUNIT_CASE(mprotect_wx_denied_test),
     KUNIT_CASE(mprotect_wx_allowed_test),
     KUNIT_CASE(mprotect_invalid_range_test),
-    {}
+    {0}
 };
 
 /* ── Registration ────────────────────────────────────────────────── */
@@ -1500,7 +1500,7 @@ static struct kunit_case dma_test_cases[] = {
     KUNIT_CASE(dma_sync_cpu_test),
     KUNIT_CASE(dma_sync_device_test),
     KUNIT_CASE(dma_alloc_aligned_test),
-    {}
+    {0}
 };
 
 /* ====================================================================

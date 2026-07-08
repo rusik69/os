@@ -228,11 +228,26 @@ static int parse_zone_file(const char *path) {
             if (mname && rname) {
                 snprintf(rr->data.soa.mname, sizeof(rr->data.soa.mname), "%s", mname);
                 snprintf(rr->data.soa.rname, sizeof(rr->data.soa.rname), "%s", rname);
-                rr->data.soa.serial = (uint32_t)atoi(next_token(&tok) ?: "1");
-                rr->data.soa.refresh = (uint32_t)atoi(next_token(&tok) ?: "3600");
-                rr->data.soa.retry = (uint32_t)atoi(next_token(&tok) ?: "900");
-                rr->data.soa.expire = (uint32_t)atoi(next_token(&tok) ?: "86400");
-                rr->data.soa.minimum = (uint32_t)atoi(next_token(&tok) ?: "3600");
+                {
+                    const char *sv = next_token(&tok);
+                    rr->data.soa.serial = (uint32_t)atoi(sv ? sv : "1");
+                }
+                {
+                    const char *sv = next_token(&tok);
+                    rr->data.soa.refresh = (uint32_t)atoi(sv ? sv : "3600");
+                }
+                {
+                    const char *sv = next_token(&tok);
+                    rr->data.soa.retry = (uint32_t)atoi(sv ? sv : "900");
+                }
+                {
+                    const char *sv = next_token(&tok);
+                    rr->data.soa.expire = (uint32_t)atoi(sv ? sv : "86400");
+                }
+                {
+                    const char *sv = next_token(&tok);
+                    rr->data.soa.minimum = (uint32_t)atoi(sv ? sv : "3600");
+                }
                 zone_count++;
             }
         }
@@ -512,6 +527,6 @@ static int dns_server_handle_query(const void *query, size_t len, void *resp, si
         kprintf("[dns_server] dns_server_handle_query: invalid parameters\n");
         return -EINVAL;
     }
-    kprintf("[dns_server] dns_server_handle_query: len=%zu (stub)\n", len);
+    kprintf("[dns_server] dns_server_handle_query: len=%llu (stub)\n", (unsigned long long)len);
     return -EOPNOTSUPP;
 }

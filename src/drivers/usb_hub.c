@@ -705,7 +705,7 @@ static int enumerate_hub(uint8_t dev_addr) {
 
     /* Power up all ports */
     for (int p = 1; p <= hub->n_ports && p <= USB_MAX_PORTS_PER_HUB; p++) {
-        hub_set_port_feature(dev_addr, HUB_FEATURE_PORT_POWER, p);
+        hub_set_port_feature(dev_addr, HUB_FEATURE_PORT_POWER, (uint16_t)p);
         hub->port_powered[p - 1] = 1;
     }
 
@@ -715,10 +715,10 @@ static int enumerate_hub(uint8_t dev_addr) {
     /* Enumerate already-connected devices */
     for (int p = 1; p <= hub->n_ports; p++) {
         uint16_t status = 0, change = 0;
-        hub_get_port_status(dev_addr, p, &status, &change);
+        hub_get_port_status(dev_addr, (uint8_t)p, &status, &change);
 
         if (status & PORT_STATUS_CONNECTION) {
-            hub_enum_device(hub, p);
+            hub_enum_device(hub, (uint8_t)p);
         }
     }
 

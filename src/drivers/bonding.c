@@ -195,11 +195,11 @@ void bonding_link_monitor(void)
         for (int i = 0; i < bond->slave_count; i++) {
             struct net_device *slave = netif_get(bond->slaves[i].ifindex);
             if (slave) {
-                bond->slaves[i].state |= BOND_SLAVE_UP;
+                bond->slaves[i].state = (uint8_t)(bond->slaves[i].state | BOND_SLAVE_UP);
                 if (i == bond->active_slave)
                     active_up = 1;
             } else {
-                bond->slaves[i].state &= ~BOND_SLAVE_UP;
+                bond->slaves[i].state = (uint8_t)(bond->slaves[i].state & ~BOND_SLAVE_UP);
             }
         }
 

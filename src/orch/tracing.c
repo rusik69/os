@@ -143,9 +143,9 @@ int tracing_end_span(struct trace_span *span)
 
     spinlock_release(&trace_lock);
 
-    kprintf("[Tracing] Ended span %s/%s (duration=%lu ns)\n",
+    kprintf("[Tracing] Ended span %s/%s (duration=%llu ns)\n",
             span->trace_id, span->name,
-            span->end_ns - span->start_ns);
+            (unsigned long long)(span->end_ns - span->start_ns));
     return 0;
 }
 
@@ -187,15 +187,15 @@ int tracing_export(char *buf, size_t len)
             "\"spanId\":\"%s\","
             "\"parentSpanId\":\"%s\","
             "\"operationName\":\"%s\","
-            "\"startTime\":%lu,"
-            "\"duration\":%lu,"
+            "\"startTime\":%llu,"
+            "\"duration\":%llu,"
             "\"status\":\"%s\"}",
             trace_spans[i].trace_id,
             trace_spans[i].span_id,
             trace_spans[i].parent_span_id[0] ? trace_spans[i].parent_span_id : "0",
             trace_spans[i].name,
-            trace_spans[i].start_ns,
-            duration,
+            (unsigned long long)trace_spans[i].start_ns,
+            (unsigned long long)duration,
             trace_spans[i].status);
         if (n < 0) break;
         pos += n;

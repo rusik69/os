@@ -773,7 +773,7 @@ void *dlopen(const char *filename, int flags) {
 
     /* Store library name */
     {
-        int name_len = strlen(filename);
+        int name_len = (int)strlen(filename);
         if (name_len >= DL_OBJ_MAX_NAME) name_len = DL_OBJ_MAX_NAME - 1;
         int i;
         for (i = 0; i < name_len; i++)

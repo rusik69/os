@@ -294,10 +294,10 @@ static int mqueue_setattr(mqd_t mqdes, const struct mq_attr *attr, struct mq_att
 
         /* Changing maxmsg/msgsize requires an empty queue */
         if (attr->mq_maxmsg > 0 && attr->mq_maxmsg <= MQUEUE_MAX_MSG && q->msg_count == 0) {
-            q->msg_max = attr->mq_maxmsg;
+            q->msg_max = (int)attr->mq_maxmsg;
         }
         if (attr->mq_msgsize > 0 && attr->mq_msgsize <= MQUEUE_MAX_SIZE && q->msg_count == 0) {
-            q->msg_size_max = attr->mq_msgsize;
+            q->msg_size_max = (int)attr->mq_msgsize;
         }
     }
 

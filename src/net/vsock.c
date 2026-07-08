@@ -48,7 +48,7 @@ static int vsock_send(uint32_t dst_port, uint32_t src_port,
                const uint8_t *data, size_t len)
 {
     (void)src_port;
-    kprintf("[VSOCK] send: dst=%u len=%zu\n", dst_port, len);
+    kprintf("[VSOCK] send: dst=%u len=%llu\n", dst_port, (unsigned long long)len);
 
     if (dst_port < VSOCK_MAX_PORTS && vsock_ports[dst_port].in_use) {
         if (vsock_ports[dst_port].handler)

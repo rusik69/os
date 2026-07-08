@@ -68,16 +68,16 @@ static int hardened_copy_from_user(void *dst, uintptr_t src, size_t size)
 {
     /* Size limit enforcement */
     if (size > USERCOPY_MAX_SIZE) {
-        kprintf("[USERCOPY] copy_from_user size too large: %zu > %d\n",
-                size, USERCOPY_MAX_SIZE);
+        kprintf("[USERCOPY] copy_from_user size too large: %llu > %d\n",
+                (unsigned long long)size, USERCOPY_MAX_SIZE);
         return -EINVAL;
     }
 
     /* Validate source range */
     int ret = usercopy_validate_range(src, size, 1);
     if (ret < 0) {
-        kprintf("[USERCOPY] copy_from_user invalid src range: 0x%llx + %zu\n",
-                (unsigned long long)src, size);
+        kprintf("[USERCOPY] copy_from_user invalid src range: 0x%llx + %llu\n",
+                (unsigned long long)src, (unsigned long long)size);
         return ret;
     }
 
@@ -86,7 +86,7 @@ static int hardened_copy_from_user(void *dst, uintptr_t src, size_t size)
         /* Only warn once per boot */
         static int warned;
         if (!warned) {
-            kprintf("[USERCOPY] copy_from_user size %zu not whitelisted\n", size);
+            kprintf("[USERCOPY] copy_from_user size %llu not whitelisted\n", (unsigned long long)size);
             warned = 1;
         }
     }
@@ -101,16 +101,16 @@ static int hardened_copy_to_user(uintptr_t dst, const void *src, size_t size)
 {
     /* Size limit enforcement */
     if (size > USERCOPY_MAX_SIZE) {
-        kprintf("[USERCOPY] copy_to_user size too large: %zu > %d\n",
-                size, USERCOPY_MAX_SIZE);
+        kprintf("[USERCOPY] copy_to_user size too large: %llu > %d\n",
+                (unsigned long long)size, USERCOPY_MAX_SIZE);
         return -EINVAL;
     }
 
     /* Validate destination range */
     int ret = usercopy_validate_range(dst, size, 1);
     if (ret < 0) {
-        kprintf("[USERCOPY] copy_to_user invalid dst range: 0x%llx + %zu\n",
-                (unsigned long long)dst, size);
+        kprintf("[USERCOPY] copy_to_user invalid dst range: 0x%llx + %llu\n",
+                (unsigned long long)dst, (unsigned long long)size);
         return ret;
     }
 

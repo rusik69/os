@@ -49,7 +49,7 @@ void __init div64_init(void)
 {
     /* Validate do_div macro */
     uint64_t test = 1000000ULL;
-    uint32_t rem = do_div(test, 1000);
+    uint32_t rem = do_div(&test, 1000);
     (void)rem;
 
     kprintf("[OK] div64: 64-bit division support initialised\n");

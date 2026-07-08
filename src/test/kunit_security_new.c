@@ -246,22 +246,22 @@ static struct kunit_case icmp_ratelimit_cases[] = {
 
 static struct kunit_suite siginfo_validate_suite = {
     .name = "siginfo_validate",
-    .cases = {},
+    .cases = {{0}},
 };
 
 static struct kunit_suite perf_paranoid_suite = {
     .name = "perf_paranoid",
-    .cases = {},
+    .cases = {{0}},
 };
 
 static struct kunit_suite caps_audit_suite = {
     .name = "caps_audit",
-    .cases = {},
+    .cases = {{0}},
 };
 
 static struct kunit_suite icmp_ratelimit_suite = {
     .name = "icmp_ratelimit",
-    .cases = {},
+    .cases = {{0}},
 };
 
 /* Helper macro to populate a fixed-size array from a NULL-terminated list */

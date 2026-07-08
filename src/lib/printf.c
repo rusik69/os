@@ -337,7 +337,7 @@ int kprintf(const char *fmt, ...) {
                 if (v == 0 && val < 0) { dbuf[di++] = '1'; v = 0; }
                 uint64_t uv = val < 0 ? (uint64_t)v + 1 : (uint64_t)v;
                 if (uv == 0) dbuf[di++] = '0';
-                else while (uv > 0) { dbuf[di++] = '0' + uv % 10; uv /= 10; }
+                else while (uv > 0) { dbuf[di++] = (char)('0' + uv % 10); uv /= 10; }
                 while (di > 0) buf[bi++] = dbuf[--di];
                 for (int i = 0; i < bi; i++) { kputchar(buf[i]); count++; }
                 for (int i = bi; i < pad; i++) { kputchar(' '); count++; }
@@ -351,7 +351,7 @@ int kprintf(const char *fmt, ...) {
             if (left_align) {
                 char buf[32]; int bi = 0;
                 if (val == 0) buf[bi++] = '0';
-                else { char t[32]; int ti = 0; while (val > 0) { t[ti++] = '0' + val % 10; val /= 10; } while (ti > 0) buf[bi++] = t[--ti]; }
+                else { char t[32]; int ti = 0; while (val > 0) { t[ti++] = (char)('0' + val % 10); val /= 10; } while (ti > 0) buf[bi++] = t[--ti]; }
                 for (int i = 0; i < bi; i++) { kputchar(buf[i]); count++; }
                 for (int i = bi; i < pad; i++) { kputchar(' '); count++; }
             } else {
@@ -579,7 +579,7 @@ int vsnprintf(char *buf, size_t n, const char *fmt, va_list ap) {
                 if (v < 0) { tmp[ti++] = '-'; v = -v; }
                 char d2[32]; int di = 0;
                 if (v == 0) d2[di++] = '0';
-                else while (v > 0) { d2[di++] = '0' + (int)(v % 10); v /= 10; }
+                else while (v > 0) { d2[di++] = (char)('0' + (int)(v % 10)); v /= 10; }
                 while (di > 0) tmp[ti++] = d2[--di];
                 for (int i = 0; i < ti; i++) { sn_write(&b, tmp[i]); count++; }
                 for (int i = ti; i < pad; i++) { sn_write(&b, ' '); count++; }

@@ -79,8 +79,8 @@ int sndstat_generate(char *buf, int size)
 
     for (int ch = 0; ch < SOUND_MIXER_COUNT; ch++) {
         uint16_t vol = sound_mixer_read((enum sound_mixer_channel)ch);
-        uint8_t left  = vol & 0xFF;
-        uint8_t right = (vol >> 8) & 0xFF;
+        uint8_t left  = (uint8_t)(vol & 0xFF);
+        uint8_t right = (uint8_t)((vol >> 8) & 0xFF);
 
         static const char * const ch_names[] = {
             "Master", "PCM", "Mic", "LineIn", "CD", "Speaker"

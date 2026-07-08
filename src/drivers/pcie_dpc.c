@@ -40,7 +40,7 @@ static int dpc_triggered_count = 0;
 /* Enable DPC on a port */
 static int dpc_enable(int bus, int dev, int func)
 {
-    uint16_t dpc_cap = pci_find_ext_cap(bus, dev, func, 0x0017); /* PCI_EXT_CAP_ID_DPC */
+    uint16_t dpc_cap = (uint16_t)pci_find_ext_cap(bus, dev, func, 0x0017); /* PCI_EXT_CAP_ID_DPC */
     if (!dpc_cap)
         return -ENODEV;
 
@@ -54,7 +54,7 @@ static int dpc_enable(int bus, int dev, int func)
 /* Handle a DPC trigger event */
 static int dpc_handle_trigger(int bus, int dev, int func)
 {
-    uint16_t dpc_cap = pci_find_ext_cap(bus, dev, func, 0x0017); /* PCI_EXT_CAP_ID_DPC */
+    uint16_t dpc_cap = (uint16_t)pci_find_ext_cap(bus, dev, func, 0x0017); /* PCI_EXT_CAP_ID_DPC */
     if (!dpc_cap)
         return -ENODEV;
 

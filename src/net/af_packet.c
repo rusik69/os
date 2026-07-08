@@ -450,7 +450,7 @@ static uint16_t packet_get_protocol(int fd)
     struct packet_sock *ps = packet_find_by_fd(fd);
     if (!ps)
         return 0;
-    return ps->protocol;
+    return (uint16_t)ps->protocol;
 }
 
 /* ── getsockname ───────────────────────────────────────────────────── */
@@ -872,7 +872,7 @@ static int af_packet_send(void *sk, void *msg, size_t len)
         kprintf("[af_packet] af_packet_send: invalid parameter\n");
         return -EINVAL;
     }
-    kprintf("[af_packet] af_packet_send: sk=%p len=%zu (stub)\n", sk, len);
+    kprintf("[af_packet] af_packet_send: sk=%p len=%llu (stub)\n", sk, (unsigned long long)len);
     return -EOPNOTSUPP;
 }
 /* ── Implement: af_packet_recv ────────────────── */
@@ -882,7 +882,7 @@ static int af_packet_recv(void *sk, void *buf, size_t len)
         kprintf("[af_packet] af_packet_recv: invalid parameter\n");
         return -EINVAL;
     }
-    kprintf("[af_packet] af_packet_recv: sk=%p len=%zu (stub)\n", sk, len);
+    kprintf("[af_packet] af_packet_recv: sk=%p len=%llu (stub)\n", sk, (unsigned long long)len);
     return -EOPNOTSUPP;
 }
 /* ── Implement: af_packet_bind ────────────────── */

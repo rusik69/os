@@ -298,7 +298,7 @@ static void zs_unmap_object(void *pool, void *handle)
 static void* zs_malloc(void *pool, size_t size)
 {
     if (!pool || size == 0 || size > 2048) {
-        kprintf("[zsmalloc] zs_malloc: invalid args (size=%zu)\n", size);
+        kprintf("[zsmalloc] zs_malloc: invalid args (size=%llu)\n", (unsigned long long)size);
         return NULL;
     }
     int pool_id = -1;
@@ -310,7 +310,7 @@ static void* zs_malloc(void *pool, size_t size)
     }
     if (pool_id < 0) return NULL;
     void *obj = zsmalloc_alloc(pool_id, size);
-    if (obj) kprintf("[zsmalloc] zs_malloc: alloc'd %zu bytes\n", size);
+    if (obj) kprintf("[zsmalloc] zs_malloc: alloc'd %llu bytes\n", (unsigned long long)size);
     return obj;
 }
 /* ── Stub: zs_free ─────────────────────────────── */

@@ -29,7 +29,7 @@ extern void dh_compute_shared(bignum *shared, const bignum *their_pub, const big
 
 /* ── Pack helpers ───────────────────────────────────────────── */
 static void pc32(uint8_t *b, uint32_t v) {
-    b[0]=(v>>24)&0xFF;b[1]=(v>>16)&0xFF;b[2]=(v>>8)&0xFF;b[3]=v&0xFF;
+    b[0]=(uint8_t)((v>>24)&0xFF);b[1]=(uint8_t)((v>>16)&0xFF);b[2]=(uint8_t)((v>>8)&0xFF);b[3]=(uint8_t)(v&0xFF);
 }
 static uint32_t gc32(const uint8_t *b) {
     return ((uint32_t)b[0]<<24)|((uint32_t)b[1]<<16)|((uint32_t)b[2]<<8)|b[3];
@@ -85,7 +85,7 @@ struct ssh_client {
 
 /* Low-level send */
 static int cl_send(struct ssh_client *c, const void *d, int l) {
-    return net_tcp_send(c->conn_id, d, l);
+    return net_tcp_send(c->conn_id, d, (uint16_t)l);
 }
 
 /* Send SSH packet */
@@ -95,9 +95,9 @@ static int cl_pkt(struct ssh_client *c, uint8_t type, const uint8_t *pl, int ple
     if(pad<4)pad+=16;
     int total = 1+plen+pad;
 
-    pkt[0]=(total>>24)&0xFF;pkt[1]=(total>>16)&0xFF;
-    pkt[2]=(total>>8)&0xFF;pkt[3]=total&0xFF;
-    pkt[4]=pad;int off=5;
+    pkt[0]=(uint8_t)((total>>24)&0xFF);pkt[1]=(uint8_t)((total>>16)&0xFF);
+    pkt[2]=(uint8_t)((total>>8)&0xFF);pkt[3]=(uint8_t)(total&0xFF);
+    pkt[4]=(uint8_t)pad;int off=5;
     pkt[off++]=type;
     if(pl&&plen){memcpy(pkt+off,pl,plen);off+=plen;}
     rng_fill_buf(pkt+off,pad);off+=pad;
@@ -149,8 +149,8 @@ static void cl_hash(struct ssh_client *c, const uint8_t *hk, int hkl,
     int off=0;
     const char *vc="SSH-2.0-OSSSH\r\n";
     const char *vs="SSH-2.0-OSSSH\r\n";
-    memcpy(buf+off,vc,strlen(vc));off+=strlen(vc);
-    memcpy(buf+off,vs,strlen(vs));off+=strlen(vs);
+    memcpy(buf+off,vc,strlen(vc));off+=(int)strlen(vc);
+    memcpy(buf+off,vs,strlen(vs));off+=(int)strlen(vs);
     if(ck&&ckl){memcpy(buf+off,ck,ckl);off+=ckl;}
     if(sk&&skl){memcpy(buf+off,sk,skl);off+=skl;}
     if(hk&&hkl){memcpy(buf+off,hk,hkl);off+=hkl;}
@@ -170,7 +170,7 @@ static void cl_keys(struct ssh_client *c, const bignum *K,
     for(int i=0;i<6;i++){
         struct sha256_ctx ctx;sha256_init(&ctx);
         uint8_t kp[260];int kl=0;
-        kp[kl++]=0;kp[kl++]=0;kp[kl++]=0;kp[kl++]=Kl;
+        kp[kl++]=(uint8_t)0;kp[kl++]=(uint8_t)0;kp[kl++]=(uint8_t)0;kp[kl++]=(uint8_t)Kl;
         memcpy(kp+kl,Kb,Kl);kl+=Kl;
         sha256_update(&ctx,kp,kl);
         sha256_update(&ctx,H,Hl);
@@ -225,11 +225,11 @@ static void cl_dispatch(struct ssh_client *c, uint8_t type, uint8_t *pl, int ple
     case SSH_MSG_SERVICE_ACCEPT:
         {
             uint8_t auth[512];int ao=0;
-            ao+=pstr32(auth+ao,(const uint8_t*)c->user,strlen(c->user));
+            ao+=pstr32(auth+ao,(const uint8_t*)c->user,(int)strlen(c->user));
             ao+=pstr32(auth+ao,(const uint8_t*)"ssh-connection",14);
             ao+=pstr32(auth+ao,(const uint8_t*)"password",8);
             auth[ao++]=0;
-            ao+=pstr32(auth+ao,(const uint8_t*)c->pass,strlen(c->pass));
+            ao+=pstr32(auth+ao,(const uint8_t*)c->pass,(int)strlen(c->pass));
             cl_pkt(c,SSH_MSG_USERAUTH_REQUEST,auth,ao);
             c->phase=5;
         }

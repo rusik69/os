@@ -114,7 +114,7 @@ static int simplefb_init(uint64_t fb_addr, uint32_t width, uint32_t height,
 
     kprintf("[SIMPLEFB] %s framebuffer: %dx%d, %dbpp, stride=%d, addr=%p, size=%u\n",
             simplefb_format_name(g_simplefb.format),
-            width, height, bpp, stride, g_simplefb.fb_addr, fb_size);
+            width, height, bpp, stride, (void *)g_simplefb.fb_addr, fb_size);
 
     /* Register with fbcon */
     fbcon_init(g_simplefb.fb_addr, g_simplefb.width,

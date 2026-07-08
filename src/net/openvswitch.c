@@ -227,8 +227,8 @@ static int ovs_flow_execute(const struct ovs_flow_key *key,
                         uint8_t *eth = packet;
                         send_eth(eth + 6, 0x0800, packet + 14, (uint16_t)(len - 14));
                     }
-                    kprintf("[OVS] output to port %u (%zu bytes)\n",
-                            flow->actions[j].output_port, len);
+                    kprintf("[OVS] output to port %u (%llu bytes)\n",
+                            flow->actions[j].output_port, (unsigned long long)len);
                     break;
                 }
                 case OVS_ACTION_DROP:

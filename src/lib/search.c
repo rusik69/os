@@ -112,7 +112,9 @@ static int search_binary(const void *key, const void *base, size_t nmemb, size_t
 {
     if (!key || !base || !cmp)
         return -1;
-    int (*compar)(const void *, const void *) = (int (*)(const void *, const void *))cmp;
+    /* Union cast: void* → function ptr (ISO C forbids direct cast) */
+    union fptr { void *obj; int (*fn)(const void *, const void *); };
+    int (*compar)(const void *, const void *) = ((union fptr){.obj = cmp}).fn;
     const char *lo = (const char *)base;
     const char *hi = lo + nmemb * size;
     while (lo < hi) {
@@ -129,7 +131,9 @@ static int search_linear(const void *key, const void *base, size_t nmemb, size_t
 {
     if (!key || !base || !cmp)
         return -1;
-    int (*compar)(const void *, const void *) = (int (*)(const void *, const void *))cmp;
+    /* Union cast: void* → function ptr (ISO C forbids direct cast) */
+    union fptr { void *obj; int (*fn)(const void *, const void *); };
+    int (*compar)(const void *, const void *) = ((union fptr){.obj = cmp}).fn;
     const char *p = (const char *)base;
     for (size_t i = 0; i < nmemb; i++) {
         if (compar(key, p + i * size) == 0)

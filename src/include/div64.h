@@ -20,18 +20,22 @@
  *               uint32_t rem = do_div(n, 1000);
  *               // n is now 123456, rem is 789
  */
-#define do_div(n, base)                                 \
-    ({                                                  \
-        uint64_t __rem = 0;                             \
-        uint64_t __base = (uint64_t)(base);             \
-        if (__base != 0) {                              \
-            __rem = (n) % __base;                       \
-            (n) = (n) / __base;                         \
-        } else {                                        \
-            __rem = 0;                                  \
-        }                                               \
-        __rem;                                          \
-    })
+/* do_div  - Divide *n by @base, storing quotient in *n, returning remainder.
+ *
+ * Typical usage:
+ *     uint64_t n = 123456789ULL;
+ *     uint32_t rem = do_div(&n, 1000);
+ *     // n is now 123456, rem is 789
+ */
+static inline uint32_t do_div(uint64_t *n, uint64_t base)
+{
+    uint64_t __rem = 0;
+    if (base != 0) {
+        __rem = *n % base;
+        *n = *n / base;
+    }
+    return (uint32_t)__rem;
+}
 
 /*
  * div_s64  - Signed 64-bit division with proper rounding.

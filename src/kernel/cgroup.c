@@ -227,7 +227,7 @@ static int cgroup_v2_write(void *priv, const char *path, const void *buf,
     if (len > plen && memcmp(s, procs_prefix, plen) == 0) {
         /* cgroup.procs <pid> */
         pid = 0;
-        for (uint32_t i = plen; i < len; i++) {
+        for (uint32_t i = (uint32_t)plen; i < len; i++) {
             if (s[i] < '0' || s[i] > '9') return -EINVAL;
             pid = pid * 10 + (int)(s[i] - '0');
         }

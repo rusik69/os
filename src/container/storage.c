@@ -499,8 +499,8 @@ static int storage_create_volume(const char *name, size_t size)
         vfs_write(marker, size_str, (uint32_t)strlen(size_str));
     }
 
-    kprintf("[Storage] Created volume '%s' (size=%zu) at %s\n",
-            name, size, v->path);
+    kprintf("[Storage] Created volume '%s' (size=%llu) at %s\n",
+            name, (unsigned long long)size, v->path);
     return 0;
 }
 

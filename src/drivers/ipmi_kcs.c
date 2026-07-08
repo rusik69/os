@@ -225,7 +225,7 @@ int ipmi_send_cmd(struct ipmi_msg *msg)
         }
         msg->rsp[rsp_idx++] = byte;
     }
-    msg->rsp_len = rsp_idx;
+    msg->rsp_len = (uint8_t)rsp_idx;
 
     return 0;
 }

@@ -125,24 +125,24 @@ static struct ac97_capture_state ac97_cap;
 static void ac97_irq_handler(struct interrupt_frame *frame);
 
 /* ── Helpers ─────────────────────────────────────────────────────── */
-static inline void nam_out16(uint16_t reg, uint16_t v) { outw(ac97_nam_base  + reg, v); }
+static inline void nam_out16(uint16_t reg, uint16_t v) { outw((uint16_t)(ac97_nam_base  + reg), v); }
 static inline void nam_out32(uint16_t reg, uint32_t v) {
-    outw(ac97_nam_base + reg,     (uint16_t)v);
-    outw(ac97_nam_base + reg + 2, (uint16_t)(v >> 16));
+    outw((uint16_t)(ac97_nam_base + reg),     (uint16_t)v);
+    outw((uint16_t)(ac97_nam_base + reg + 2), (uint16_t)(v >> 16));
 }
-static inline uint16_t nam_in16(uint16_t reg) { return inw(ac97_nam_base + reg); }
+static inline uint16_t nam_in16(uint16_t reg) { return inw((uint16_t)(ac97_nam_base + reg)); }
 
-static inline void nabm_out8 (uint16_t reg, uint8_t  v) { outb(ac97_nabm_base + reg, v);  }
-static inline void nabm_out16(uint16_t reg, uint16_t v) { outw(ac97_nabm_base + reg, v);  }
+static inline void nabm_out8 (uint16_t reg, uint8_t  v) { outb((uint16_t)(ac97_nabm_base + reg), v);  }
+static inline void nabm_out16(uint16_t reg, uint16_t v) { outw((uint16_t)(ac97_nabm_base + reg), v);  }
 static inline void nabm_out32(uint16_t reg, uint32_t v) {
-    outw(ac97_nabm_base + reg,     (uint16_t)v);
-    outw(ac97_nabm_base + reg + 2, (uint16_t)(v >> 16));
+    outw((uint16_t)(ac97_nabm_base + reg),     (uint16_t)v);
+    outw((uint16_t)(ac97_nabm_base + reg + 2), (uint16_t)(v >> 16));
 }
-static inline uint8_t  nabm_in8 (uint16_t reg) { return inb(ac97_nabm_base + reg);  }
-static inline uint16_t nabm_in16(uint16_t reg) { return inw(ac97_nabm_base + reg);  }
+static inline uint8_t  nabm_in8 (uint16_t reg) { return inb((uint16_t)(ac97_nabm_base + reg));  }
+static inline uint16_t nabm_in16(uint16_t reg) { return inw((uint16_t)(ac97_nabm_base + reg));  }
 static inline uint32_t nabm_in32(uint16_t reg) {
-    return (uint32_t)inw(ac97_nabm_base + reg) |
-           ((uint32_t)inw(ac97_nabm_base + reg + 2) << 16);
+    return (uint32_t)inw((uint16_t)(ac97_nabm_base + reg)) |
+           ((uint32_t)inw((uint16_t)(ac97_nabm_base + reg + 2)) << 16);
 }
 
 /* ── Init ────────────────────────────────────────────────────────── */
@@ -1108,7 +1108,7 @@ void ac97_mixer_init_defaults(void)
 
         /* Initialise volume to default (75% == ~8 raw AC97) */
         uint8_t raw_default = pct_to_ac97_5bit(AC97_VOLUME_DEFAULT);
-        uint16_t val = (uint16_t)raw_default | ((uint16_t)raw_default << 8);
+        uint16_t val = (uint16_t)((uint16_t)raw_default | ((uint16_t)raw_default << 8));
 
         /* All stereo/mono volume registers are unmuted by default */
         outw(ac97_nam_base + reg, val);
@@ -1129,7 +1129,7 @@ void ac97_mixer_init_defaults(void)
 
     /* Set recording gain to default (75% of 0–15 = ~11, ~16.5dB) */
     uint8_t raw_gain = pct_to_ac97_4bit(AC97_VOLUME_DEFAULT);
-    outw(ac97_nam_base + AC97_REG_RECORD_GAIN, (uint16_t)raw_gain | ((uint16_t)raw_gain << 8));
+    outw(ac97_nam_base + AC97_REG_RECORD_GAIN, (uint16_t)((uint16_t)raw_gain | ((uint16_t)raw_gain << 8)));
 
     kprintf("[AC97] Mixer defaults applied (%d channels)\\n", AC97_MIXER_CHANNEL_COUNT);
 }
@@ -1464,7 +1464,7 @@ int ac97_set_amplifier_power(int on)
 
     if (on) {
         /* Power up: clear EAPD bit (EAPD=0 = amp on) */
-        pd &= ~AC97_PD_EAPD;
+        pd = (uint16_t)(pd & ~AC97_PD_EAPD);
     } else {
         /* Power down: set EAPD bit (EAPD=1 = amp off) */
         pd |= AC97_PD_EAPD;

@@ -245,8 +245,7 @@ static int proxy_userspace_listen(uint32_t bind_ip, uint16_t port,
 
     /* Use net_tcp_listen with NULL handlers — we'll accept connections
      * manually via net_tcp_accept. */
-    void *null_handler = NULL;
-    net_tcp_listen(port, null_handler, null_handler, null_handler);
+    net_tcp_listen(port, NULL, NULL, NULL);
 
     kprintf("[Proxy] Userspace proxy listening on port %d "
             "for service '%s'\n", port, svc->name);

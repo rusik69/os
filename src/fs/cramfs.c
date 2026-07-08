@@ -60,7 +60,7 @@ struct cramfs_dirent {
     uint32_t name_len:4,
              mode:4,
              padding:24;
-    char     name[0];        /* variable-length name */
+    char     name[1];        /* variable-length name (struct hack) */
 };
 #pragma pack(pop)
 

@@ -128,7 +128,7 @@ static int vfio_ioctl(int container_id, int cmd, uint64_t arg)
         return 0;
     }
 
-    case VFIO_GROUP_GET_STATUS: {
+    case (int)VFIO_GROUP_GET_STATUS: {
         /* Return group status */
         struct vfio_group_status status;
         status.argsz = sizeof(status);

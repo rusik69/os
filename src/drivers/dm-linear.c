@@ -122,7 +122,7 @@ static int linear_map(struct dm_target *ti, struct blk_request *req,
 
     /* Reuse the original request but adjust dev_id and lba.
      * The caller (dm_submit_request) will submit this to the block layer. */
-    req->dev_id = priv->backing_dev_id;
+    req->dev_id = (uint8_t)priv->backing_dev_id;
     req->lba    = target_lba;
 
     mapped[0] = req;

@@ -113,13 +113,13 @@ int dashboard_render_html(char *buf, size_t len)
         "</table>\n"
         "<h2>Resources</h2>\n"
         "<table><tr><th>CPU (m)</th><th>Memory</th><th>Disk</th></tr>\n"
-        "<tr><td>%lu</td><td>%lu MB</td><td>%lu GB</td></tr>\n"
+        "<tr><td>%llu</td><td>%llu MB</td><td>%llu GB</td></tr>\n"
         "</table>\n"
         "<h2>Summary</h2>\n"
         "<p>Recent events: %d</p>\n"
         "<p>Active alerts: %d</p>\n"
         "<hr>\n"
-        "<p><em>Last updated: %lu</em></p>\n"
+        "<p><em>Last updated: %llu</em></p>\n"
         "</body></html>\n",
         cached_stats.node_count,
         cached_stats.nodes_ready,
@@ -127,12 +127,12 @@ int dashboard_render_html(char *buf, size_t len)
         cached_stats.pods_running,
         cached_stats.pods_pending,
         cached_stats.pods_failed,
-        cached_stats.cpu_usage,
-        cached_stats.memory_usage / (1024 * 1024),
-        cached_stats.disk_usage / (1024 * 1024 * 1024),
+        (unsigned long long)cached_stats.cpu_usage,
+        (unsigned long long)(cached_stats.memory_usage / (1024 * 1024)),
+        (unsigned long long)(cached_stats.disk_usage / (1024 * 1024 * 1024)),
         cached_stats.recent_events,
         cached_stats.active_alerts,
-        timer_get_ms());
+        (unsigned long long)timer_get_ms());
 
     spinlock_release(&dash_lock);
     return pos;
@@ -149,10 +149,10 @@ int dashboard_render_json(char *buf, size_t len)
         "{\n"
         "  \"nodes\": {\"total\":%d,\"ready\":%d,\"notReady\":%d},\n"
         "  \"pods\": {\"running\":%d,\"pending\":%d,\"failed\":%d},\n"
-        "  \"resources\": {\"cpuMillicores\":%lu,\"memoryBytes\":%lu,\"diskBytes\":%lu},\n"
+        "  \"resources\": {\"cpuMillicores\":%llu,\"memoryBytes\":%llu,\"diskBytes\":%llu},\n"
         "  \"recentEvents\": %d,\n"
         "  \"activeAlerts\": %d,\n"
-        "  \"timestamp\": %lu\n"
+        "  \"timestamp\": %llu\n"
         "}\n",
         cached_stats.node_count,
         cached_stats.nodes_ready,
@@ -160,12 +160,12 @@ int dashboard_render_json(char *buf, size_t len)
         cached_stats.pods_running,
         cached_stats.pods_pending,
         cached_stats.pods_failed,
-        cached_stats.cpu_usage,
-        cached_stats.memory_usage,
-        cached_stats.disk_usage,
+        (unsigned long long)cached_stats.cpu_usage,
+        (unsigned long long)cached_stats.memory_usage,
+        (unsigned long long)cached_stats.disk_usage,
         cached_stats.recent_events,
         cached_stats.active_alerts,
-        timer_get_ms());
+        (unsigned long long)timer_get_ms());
 
     spinlock_release(&dash_lock);
     return pos;

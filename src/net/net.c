@@ -1047,9 +1047,9 @@ static void handle_ip(uint8_t *data, uint16_t len) {
                     fwd_ip->checksum = net_checksum(fwd_ip, ihl);
                     /* Forward via gateway if specified, otherwise directly to dest */
                     if (fwd_gw)
-                        send_ip(fwd_gw, ip->protocol, (void*)data + ihl, payload_len);
+                        send_ip(fwd_gw, ip->protocol, data + ihl, payload_len);
                     else
-                        send_ip(dst_ip, ip->protocol, (void*)data + ihl, payload_len);
+                        send_ip(dst_ip, ip->protocol, data + ihl, payload_len);
                 }
             }
         }

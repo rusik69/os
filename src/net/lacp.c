@@ -420,7 +420,7 @@ static int lacp_send(void *dev, const void *pdu, size_t len)
 
     /* Send directly via Ethernet slow protocol */
     send_eth(lacp_dmac, LACP_ETHER_TYPE, pdu, (uint16_t)len);
-    kprintf("[lacp] lacp_send: sent %zu bytes\n", len);
+    kprintf("[lacp] lacp_send: sent %llu bytes\n", (unsigned long long)len);
     return 0;
 }
 /* ── Implement: lacp_recv ────────────────── */

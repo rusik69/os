@@ -193,7 +193,7 @@ int metrics_export(char *buf, size_t len)
 
         /* VALUE line */
         n = snprintf(buf + pos, len - (size_t)pos,
-                     "%s %lu\n", metrics[i].name, metrics[i].value);
+                     "%s %llu\n", metrics[i].name, (unsigned long long)metrics[i].value);
         if (n < 0) break;
         pos += n;
     }
@@ -297,18 +297,34 @@ int metrics_trends_report(char *buf, size_t len)
 
     if ((size_t)pos < len) {
         int n = snprintf(buf + pos, len - (size_t)pos,
-            "1h             %-10lu %-10lu %-10lu %-8lu %-8lu %-10u\n"
-            "6h             %-10lu %-10lu %-10lu %-8lu %-8lu %-10u\n"
-            "24h            %-10lu %-10lu %-10lu %-8lu %-8lu %-10u\n"
-            "7d             %-10lu %-10lu %-10lu %-8lu %-8lu %-10u\n",
-            cpu_1h,  last->memory_usage, last->disk_usage,
-            last->network_rx, last->network_tx, last->container_count,
-            cpu_6h,  last->memory_usage, last->disk_usage,
-            last->network_rx, last->network_tx, last->container_count,
-            cpu_24h, last->memory_usage, last->disk_usage,
-            last->network_rx, last->network_tx, last->container_count,
-            cpu_7d,  last->memory_usage, last->disk_usage,
-            last->network_rx, last->network_tx, last->container_count);
+            "1h             %-10llu %-10llu %-10llu %-8llu %-8llu %-10u\n"
+            "6h             %-10llu %-10llu %-10llu %-8llu %-8llu %-10u\n"
+            "24h            %-10llu %-10llu %-10llu %-8llu %-8llu %-10u\n"
+            "7d             %-10llu %-10llu %-10llu %-8llu %-8llu %-10u\n",
+            (unsigned long long)cpu_1h,
+            (unsigned long long)last->memory_usage,
+            (unsigned long long)last->disk_usage,
+            (unsigned long long)last->network_rx,
+            (unsigned long long)last->network_tx,
+            last->container_count,
+            (unsigned long long)cpu_6h,
+            (unsigned long long)last->memory_usage,
+            (unsigned long long)last->disk_usage,
+            (unsigned long long)last->network_rx,
+            (unsigned long long)last->network_tx,
+            last->container_count,
+            (unsigned long long)cpu_24h,
+            (unsigned long long)last->memory_usage,
+            (unsigned long long)last->disk_usage,
+            (unsigned long long)last->network_rx,
+            (unsigned long long)last->network_tx,
+            last->container_count,
+            (unsigned long long)cpu_7d,
+            (unsigned long long)last->memory_usage,
+            (unsigned long long)last->disk_usage,
+            (unsigned long long)last->network_rx,
+            (unsigned long long)last->network_tx,
+            last->container_count);
         if (n > 0) pos += n;
     }
 
