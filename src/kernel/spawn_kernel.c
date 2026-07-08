@@ -163,7 +163,7 @@ int process_spawn_kernel(const char *path) {
         memcpy(pname, path, plen);
         pname[plen] = '\0';
     } else {
-        pname = (char *)path; /* fallback */
+        pname = (char *)(uintptr_t)path; /* fallback */
     }
 
     /* Create the user process */
@@ -183,7 +183,7 @@ int process_spawn_kernel(const char *path) {
 
     /* Copy name if we allocated it separately */
     if (pname && pname != path) {
-        kfree((void *)proc->name);
+        kfree((void *)(uintptr_t)proc->name);
         proc->name = pname;
     }
 

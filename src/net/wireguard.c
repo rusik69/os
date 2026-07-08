@@ -1474,7 +1474,7 @@ static int wg_rl_check(uint32_t src_ip)
  * @msg: the handshake message buffer (initiation or response)
  * @mac2_offset: offset where mac2 field begins (132 for init, 76 for resp) */
 static void wg_compute_mac2(uint8_t mac2_out[16], const uint8_t cookie[WG_COOKIE_LEN],
-                             const uint8_t *msg, uint16_t mac2_offset)
+                             uint8_t *msg, uint16_t mac2_offset)
 {
     uint8_t full[32];
     wg_kdf1(full, cookie, msg);
@@ -2493,7 +2493,7 @@ int wireguard_recv_cookie(const uint8_t *pkt, uint16_t len,
     }
 
     kprintf("[WG] Received cookie reply (receiver_idx=%u)\n",
-            *(uint32_t *)(pkt + 4));
+            *(const uint32_t *)(pkt + 4));
     return 0;
 }
 

@@ -1374,7 +1374,7 @@ int acpi_parse_crs_buffer(const uint8_t *crs_buffer, uint32_t crs_length,
             case ACPI_LARGE_32BIT_MEMORY: {
                 /* 32-bit Fixed Memory Range Descriptor */
                 if (len >= 9 && count < max_count) {
-                    uint8_t *d = (uint8_t *)&crs_buffer[data_off];
+                    const uint8_t *d = &crs_buffer[data_off];
                     int cache_attrs = (d[0] >> 1) & 0x03;
                     int write_comb = (d[0] >> 4) & 0x01;
                     int prefetch  = (d[0] >> 5) & 0x01;
@@ -1394,7 +1394,7 @@ int acpi_parse_crs_buffer(const uint8_t *crs_buffer, uint32_t crs_length,
             case ACPI_LARGE_EXT_IRQ: {
                 /* Extended IRQ Descriptor */
                 if (len >= 4 && count < max_count) {
-                    uint8_t *d = (uint8_t *)&crs_buffer[data_off];
+                    const uint8_t *d = &crs_buffer[data_off];
                     int producer = (d[0] >> 1) & 1;
                     int sharing  = (d[0] >> 3) & 1;  /* 0=exclusive, 1=shared */
                     int wake_cap = (d[0] >> 5) & 1;
@@ -1434,7 +1434,7 @@ int acpi_parse_crs_buffer(const uint8_t *crs_buffer, uint32_t crs_length,
             case ACPI_SMALL_IRQ: {
                 /* IRQ descriptor (2 bytes) */
                 if (len >= 2 && count < max_count) {
-                    uint8_t *d = (uint8_t *)&crs_buffer[data_off];
+                    const uint8_t *d = &crs_buffer[data_off];
                     int trigger = (d[0] >> 0) & 1;    /* 0=edge, 1=level */
                     int polarity = (d[0] >> 1) & 1;   /* 0=high, 1=low */
                     int sharing  = (d[0] >> 2) & 1;   /* 0=exclusive, 1=shared */
@@ -1457,7 +1457,7 @@ int acpi_parse_crs_buffer(const uint8_t *crs_buffer, uint32_t crs_length,
             case ACPI_SMALL_DMA: {
                 /* DMA descriptor (2 bytes) */
                 if (len >= 2 && count < max_count) {
-                    uint8_t *d = (uint8_t *)&crs_buffer[data_off];
+                    const uint8_t *d = &crs_buffer[data_off];
                     int bus_master = (d[0] >> 2) & 1;
                     int type_f = (d[0] >> 5) & 3;
                     uint8_t dma_mask = d[1];

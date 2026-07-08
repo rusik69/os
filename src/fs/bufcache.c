@@ -371,7 +371,7 @@ int bufcache_mark_dirty(uint64_t lba, uint8_t dev_id) {
 int bufcache_write(uint64_t lba, uint8_t dev_id, const void *data) {
     if (!g_active || !g_initialized) {
         /* Fallthrough: direct write */
-        return blk_submit_sync(dev_id, lba, 1, (void *)data, BLK_REQ_WRITE);
+        return blk_submit_sync(dev_id, lba, 1, (void *)(uintptr_t)data, BLK_REQ_WRITE);
     }
 
     uint64_t irq_flags;
@@ -402,7 +402,7 @@ int bufcache_write(uint64_t lba, uint8_t dev_id, const void *data) {
         if (victim < 0) {
             /* Cache full with dirty entries — write directly */
             spinlock_irqsave_release(&g_bc_lock, irq_flags);
-            return blk_submit_sync(dev_id, lba, 1, (void *)data, BLK_REQ_WRITE);
+            return blk_submit_sync(dev_id, lba, 1, (void *)(uintptr_t)data, BLK_REQ_WRITE);
         }
         lru_remove(victim);
     }

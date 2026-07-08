@@ -65,7 +65,7 @@ int cc_register(uint8_t algo, const struct cc_ops *ops)
     if (cc_table[algo] != NULL)
         return -EEXIST;  /* slot already taken by a different algorithm */
 
-    cc_table[algo] = (struct cc_ops *)ops;
+    cc_table[algo] = (struct cc_ops *)(uintptr_t)ops;
     return 0;
 }
 

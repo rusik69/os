@@ -45,13 +45,13 @@ size_t strlen(const char *s) {
 
 int strcmp(const char *s1, const char *s2) {
     while (*s1 && *s1 == *s2) { s1++; s2++; }
-    return *(unsigned char *)s1 - *(unsigned char *)s2;
+    return *(const unsigned char *)s1 - *(const unsigned char *)s2;
 }
 
 int strncmp(const char *s1, const char *s2, size_t n) {
     while (n && *s1 && *s1 == *s2) { s1++; s2++; n--; }
     if (n == 0) return 0;
-    return *(unsigned char *)s1 - *(unsigned char *)s2;
+    return *(const unsigned char *)s1 - *(const unsigned char *)s2;
 }
 
 char *strcpy(char *dest, const char *src) {
@@ -82,10 +82,10 @@ char *strncat(char *dest, const char *src, size_t n) {
 
 char *strchr(const char *s, int c) {
     while (*s) {
-        if (*s == (char)c) return (char *)s;
+        if (*s == (char)c) return (char *)(uintptr_t)s;
         s++;
     }
-    return (c == '\0') ? (char *)s : (char *)0;
+    return (c == '\0') ? (char *)(uintptr_t)s : (char *)0;
 }
 
 char *strrchr(const char *s, int c) {
@@ -94,14 +94,14 @@ char *strrchr(const char *s, int c) {
         if (*s == (char)c) found = s;
         s++;
     }
-    return (c == '\0') ? (char *)s : (char *)found;
+    return (c == '\0') ? (char *)(uintptr_t)s : (char *)(uintptr_t)found;
 }
 
 char *strstr(const char *haystack, const char *needle) {
     size_t nlen = strlen(needle);
-    if (nlen == 0) return (char *)haystack;
+    if (nlen == 0) return (char *)(uintptr_t)haystack;
     while (*haystack) {
-        if (strncmp(haystack, needle, nlen) == 0) return (char *)haystack;
+        if (strncmp(haystack, needle, nlen) == 0) return (char *)(uintptr_t)haystack;
         haystack++;
     }
     return (char *)0;
@@ -130,7 +130,7 @@ long strtol(const char *nptr, char **endptr, int base) {
         val = val * base + digit;
         nptr++;
     }
-    if (endptr) *endptr = (char *)nptr;
+    if (endptr) *endptr = (char *)(uintptr_t)nptr;
     return sign * val;
 }
 
@@ -155,7 +155,7 @@ unsigned long strtoul(const char *nptr, char **endptr, int base) {
         val = val * (unsigned long)base + digit;
         nptr++;
     }
-    if (endptr) *endptr = (char *)nptr;
+    if (endptr) *endptr = (char *)(uintptr_t)nptr;
     return val;
 }
 
@@ -173,7 +173,7 @@ char *strtrim(char *s) {
 void *memchr(const void *s, int c, size_t n) {
     const unsigned char *p = (const unsigned char *)s;
     while (n--) {
-        if (*p == (unsigned char)c) return (void *)p;
+        if (*p == (unsigned char)c) return (void *)(uintptr_t)p;
         p++;
     }
     return (void *)0;
@@ -235,7 +235,7 @@ size_t strcspn(const char *s, const char *reject) {
 /* strpbrk: find first occurrence in s of any char from accept; NULL if none */
 char *strpbrk(const char *s, const char *accept) {
     while (*s) {
-        if (strchr(accept, *s)) return (char *)s;
+        if (strchr(accept, *s)) return (char *)(uintptr_t)s;
         s++;
     }
     return (char *)0;

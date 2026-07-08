@@ -182,7 +182,7 @@ struct nlattr {
 /* Advance to the next attribute (updates remaining). */
 #define NLA_NEXT(nla, len)  do {                                    \
     (len) -= NLA_ALIGN((nla)->nla_len);                              \
-    (nla)  = (struct nlattr *)((char *)(nla) + NLA_ALIGN((nla)->nla_len)); \
+    (nla)  = (void *)(uintptr_t)((const char *)(nla) + NLA_ALIGN((nla)->nla_len)); \
 } while (0)
 #define NLA_OK(nla, len)    ((len) >= (int)sizeof(struct nlattr) && \
                              (nla)->nla_len >= sizeof(struct nlattr) && \
@@ -386,9 +386,9 @@ struct nlattr *nla_find(const struct nlattr *nla, size_t nla_len,
 /* ── Attribute payload accessors ─────────────────────────────────── */
 
 /* Return a pointer to the payload of an attribute. */
-static inline void *nla_data(const struct nlattr *nla)
+static inline const void *nla_data(const struct nlattr *nla)
 {
-    return (void *)((const char *)nla + NLA_HDRLEN);
+    return (const void *)((const char *)nla + NLA_HDRLEN);
 }
 
 /* Return the payload length of an attribute. */

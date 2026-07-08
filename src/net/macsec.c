@@ -277,7 +277,7 @@ int macsec_decrypt(uint64_t sci, const uint8_t *cipher, uint16_t cipher_len,
             const uint8_t *icv = secdata + data_len;
 
             aes_gcm_decrypt(sa->key, sa->key_len,
-                           (uint8_t *)&mh->packet_number, 4,
+                           (const uint8_t *)&mh->packet_number, 4,
                            cipher, 8,  /* AAD = SecTAG */
                            secdata, data_len, out, icv);
 

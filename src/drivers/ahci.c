@@ -831,7 +831,7 @@ int ahci_ncq_write(int port_num, int pm_port, uint32_t lba, uint8_t count,
 
     req->lba = lba;
     req->count = count;
-    req->buf = (void *)buf;
+    req->buf = (void *)(uintptr_t)buf;
     req->flags = BLK_REQ_WRITE;
 
     ahci_build_ncq_cmd(port, slot, req);
@@ -2626,7 +2626,7 @@ int ahci_read_sectors(uint32_t lba, uint8_t count, void *buf) {
 int ahci_write_sectors(uint32_t lba, uint8_t count, const void *buf) {
     if (!ahci_present || ahci_port_count == 0) return -1;
     if (count == 0 || count > AHCI_DATA_FRAME_SECTORS) return -1;
-    return blk_submit_sync(ahci_ports[0].blockdev_id, lba, count, (void*)buf, BLK_REQ_WRITE);
+    return blk_submit_sync(ahci_ports[0].blockdev_id, lba, count, (void *)(uintptr_t)buf, BLK_REQ_WRITE);
 }
 
 #ifdef MODULE

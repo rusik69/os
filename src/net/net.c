@@ -701,7 +701,7 @@ void send_ip(uint32_t dst_ip, uint8_t protocol, const void *payload, uint16_t le
 
 static void handle_arp(const uint8_t *data, uint16_t len) {
     if (len < sizeof(struct arp_packet)) return;
-    struct arp_packet *arp = (struct arp_packet *)data;
+    const struct arp_packet *arp = (const struct arp_packet *)data;
 
     uint32_t target = ntohl(arp->target_ip);
     uint32_t sender = ntohl(arp->sender_ip);
@@ -749,7 +749,7 @@ static void handle_arp(const uint8_t *data, uint16_t len) {
 
 static void handle_icmp(struct ip_header *ip, const uint8_t *payload, uint16_t len) {
     if (len < sizeof(struct icmp_header)) return;
-    struct icmp_header *icmp = (struct icmp_header *)payload;
+    const struct icmp_header *icmp = (const struct icmp_header *)payload;
 
     if (icmp->type == 8) {
         uint8_t reply_buf[1500];
@@ -807,7 +807,7 @@ struct ip_frag_slot {
 static struct ip_frag_slot ip_frags[IP_FRAG_SLOTS];
 
 /* Forward declaration for dispatching reassembled packets */
-static void handle_ip(const uint8_t *data, uint16_t len);
+static void handle_ip(uint8_t *data, uint16_t len);
 
 /* net_frag_stats: copy current fragment reassembly statistics to caller */
 void net_frag_stats(struct frag_stats *out) {
@@ -1006,7 +1006,7 @@ static int handle_ip_fragment(struct ip_header *ip, const uint8_t *data,
 
 /* --- IP dispatcher --- */
 
-static void handle_ip(const uint8_t *data, uint16_t len) {
+static void handle_ip(uint8_t *data, uint16_t len) {
     if (len < sizeof(struct ip_header)) return;
     struct ip_header *ip = (struct ip_header *)data;
 
@@ -1024,7 +1024,7 @@ static void handle_ip(const uint8_t *data, uint16_t len) {
     if (handle_ip_fragment(ip, data, len) != 0)
         return;
 
-    const uint8_t *payload = data + ihl;
+    uint8_t *payload = data + ihl;
     uint16_t payload_len = total - ihl;
     uint32_t dst_ip = ntohl(ip->dst_ip);
 
@@ -1135,7 +1135,7 @@ int net_ping(uint32_t target_ip) {
  * This function handles Ethernet type dispatch: ARP, IPv4, IPv6,
  * and runs netfilter hooks at PRE_ROUTING and LOCAL_IN.
  */
-void net_rx_dispatch(const uint8_t *pkt, uint16_t len)
+void net_rx_dispatch(uint8_t *pkt, uint16_t len)
 {
     if (len < (int)sizeof(struct eth_header))
         return;
@@ -1170,7 +1170,7 @@ void net_rx_dispatch(const uint8_t *pkt, uint16_t len)
 
     struct eth_header *eth = (struct eth_header *)pkt;
     uint16_t type = ntohs(eth->type);
-    const uint8_t *payload = pkt + sizeof(struct eth_header);
+    uint8_t *payload = pkt + sizeof(struct eth_header);
     uint16_t payload_len = (uint16_t)(len - sizeof(struct eth_header));
 
     net_iface_stats.rx_packets++;

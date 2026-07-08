@@ -3053,7 +3053,7 @@ static int ext2_free_inode_blocks(struct ext2_priv *ep,
     int last_err = 0;
 
     for (uint32_t ib = 0; ib < num_blocks; ib++) {
-        int64_t pbn = ext2_get_block_num(ep, (struct ext2_inode *)inode, ib);
+        int64_t pbn = ext2_get_block_num(ep, (struct ext2_inode *)(uintptr_t)inode, ib);
         if (pbn > 0) {
             int ret = ext2_free_block(ep, (uint32_t)pbn);
             if (ret < 0) {

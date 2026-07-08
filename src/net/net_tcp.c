@@ -443,7 +443,7 @@ static int alloc_conn(void) {
     return -1;
 }
 
-void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) {
+void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
     if (len < sizeof(struct tcp_header)) return;
     struct tcp_header *tcp = (struct tcp_header *)payload;
 

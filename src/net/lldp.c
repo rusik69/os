@@ -126,7 +126,7 @@ static int lldp_parse_tlv(const uint8_t *frame, uint16_t frame_len,
 {
     if (offset + 2 > frame_len) return -1;
 
-    struct lldp_tlv_header *hdr = (struct lldp_tlv_header *)&frame[offset];
+    const struct lldp_tlv_header *hdr = (const struct lldp_tlv_header *)&frame[offset];
     uint16_t tlv_raw = ntohs(hdr->type_len);
     uint8_t  type   = (tlv_raw >> 9) & 0x7F;
     uint16_t length = tlv_raw & 0x01FF;
@@ -294,7 +294,7 @@ int lldp_receive(const uint8_t *frame, uint16_t len)
 
         case LLDP_TLV_TTL:
             if (tlv_len >= 2) {
-                ttl = ntohs(*(uint16_t *)tlv_value);
+                ttl = ntohs(*(const uint16_t *)tlv_value);
                 ttl_found = 1;
             }
             break;

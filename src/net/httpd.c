@@ -20,16 +20,16 @@
 /* --- String helpers (no snprintf/strchr/strstr in freestanding) --- */
 
 static char *my_strchr(const char *s, int c) {
-    while (*s) { if (*s == (char)c) return (char *)s; s++; }
+    while (*s) { if (*s == (char)c) return (char *)(uintptr_t)s; s++; }
     return 0;
 }
 
 static char *my_strstr(const char *h, const char *n) {
-    if (!*n) return (char *)h;
+    if (!*n) return (char *)(uintptr_t)h;
     for (; *h; h++) {
         const char *a = h, *b = n;
         while (*a && *a == *b) { a++; b++; }
-        if (!*b) return (char *)h;
+        if (!*b) return (char *)(uintptr_t)h;
     }
     return 0;
 }
@@ -200,9 +200,9 @@ static void httpd_build_path(const char *path, char *full_path, int max) {
 
 /* --- File handler --- */
 
-static void handle_get(int conn_id, const char *path, int head_only) {
+static void handle_get(int conn_id, char *path, int head_only) {
     /* Strip query string */
-    char *q = my_strchr((char *)path, '?');
+    char *q = my_strchr(path, '?');
     if (q) *q = '\0';
 
     /* Root -> index.html */

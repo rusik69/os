@@ -1305,7 +1305,7 @@ int e1000_init(void) {
     /* Map MMIO region (128KB) into high-half VMA space */
     mmio_base = (volatile uint8_t *)vmm_map_phys(bar0, 0x20000,
                     VMM_FLAG_PRESENT | VMM_FLAG_WRITE);
-    if (IS_ERR((const void *)mmio_base)) {
+    if (IS_ERR((const void *)(uintptr_t)mmio_base)) {
         kprintf("  e1000: failed to map MMIO\n");
         return -1;
     }
@@ -1806,7 +1806,7 @@ void e1000_exit(void) {
 
     /* Unmap MMIO */
     if (mmio_base) {
-        vmm_unmap_phys((void *)mmio_base, 0x20000);
+        vmm_unmap_phys((void *)(uintptr_t)mmio_base, 0x20000);
         mmio_base = NULL;
     }
 
@@ -2040,7 +2040,7 @@ int e1000_set_multicast(struct net_device *dev, const void *addr, int count)
 	/* Program each address into the MTA hash table */
 	e1000_mta_clear();
 
-	const uint8_t (*mc_list)[6] = (const uint8_t (*)[6])addr;
+	const uint8_t (*mc_list)[6] = (const uint8_t (*)[6])(uintptr_t)addr;
 	for (int i = 0; i < count; i++) {
 		e1000_mta_add(mc_list[i]);
 	}

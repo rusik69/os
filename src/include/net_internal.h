@@ -308,11 +308,11 @@ void send_eth(const uint8_t *dst_mac, uint16_t type, const void *payload, uint16
 void send_ip(uint32_t dst_ip, uint8_t protocol, const void *payload, uint16_t len);
 
 /* Protocol handlers (called from net.c net_poll/handle_ip) */
-void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len);
-void handle_udp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len);
+void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len);
+void handle_udp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len);
 
 /* IPv6 protocol handlers (called from net.c net_poll) */
-void handle_ipv6(const uint8_t *data, uint16_t len);
+void handle_ipv6(uint8_t *data, uint16_t len);
 void handle_icmpv6(struct ipv6_header *ip6, const uint8_t *payload, uint16_t len);
 
 /* SCTP protocol handler (IPPROTO_SCTP = 132) */
@@ -343,7 +343,7 @@ int  ipv6_parse_exthdr(const uint8_t *data, uint16_t total_len,
                         const uint8_t **out_payload,
                         uint16_t *out_payload_len,
                         const struct ipv6_fragment **out_frag_hdr);
-void handle_ipv6_packet(const uint8_t *data, uint16_t total_len);
+void handle_ipv6_packet(uint8_t *data, uint16_t total_len);
 struct ipv6_frag_stats {
     uint32_t rx_fragments;
     uint32_t rx_reassembled;
@@ -473,7 +473,7 @@ void send_udp_ipv6(const struct in6_addr *dst,
                    uint16_t src_port, uint16_t dst_port,
                    const void *data, uint16_t data_len);
 void handle_udp_ipv6(struct ipv6_header *ip6,
-                      const uint8_t *payload, uint16_t len);
+                      uint8_t *payload, uint16_t len);
 
 /* TCP over IPv6 (tcp_ipv6.c) */
 void tcp_ipv6_init(void);

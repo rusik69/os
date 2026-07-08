@@ -1118,7 +1118,7 @@ static int nft_expr_eval_counter(const struct nft_expr *expr,
                                  struct nft_regs *regs,
                                  const struct nft_eval_ctx *ctx)
 {
-    struct nft_expr_counter *c = (struct nft_expr_counter *)expr;
+    struct nft_expr_counter *c = (struct nft_expr_counter *)(uintptr_t)expr;
 
     (void)regs;
 
@@ -1278,7 +1278,7 @@ static int nft_expr_eval_limit(const struct nft_expr *expr,
                                 struct nft_regs *regs,
                                 const struct nft_eval_ctx *ctx)
 {
-    struct nft_expr_limit *l = (struct nft_expr_limit *)expr;
+    struct nft_expr_limit *l = (struct nft_expr_limit *)(uintptr_t)expr;
     int over_limit = 0;
 
     (void)regs;

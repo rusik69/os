@@ -531,10 +531,10 @@ static int uvc_probe_transaction(uint8_t dev_addr, uint8_t vs_iface,
 static int uvc_commit_stream(uint8_t dev_addr, uint8_t vs_iface,
 			     const struct uvc_probe_commit *commit)
 {
-	return uvc_probe_commit_request(dev_addr, vs_iface,
-					UVC_REQ_SET_CUR, 1,
-					(void *)commit,
-					sizeof(struct uvc_probe_commit));
+		return uvc_probe_commit_request(dev_addr, vs_iface,
+						UVC_REQ_SET_CUR, 1,
+						(void *)(uintptr_t)commit,
+						sizeof(struct uvc_probe_commit));
 }
 
 /*

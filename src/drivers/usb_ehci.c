@@ -592,7 +592,7 @@ static int ehci_pool_init(void)
         g_qh_pool[i].phys   = phys;
         g_qh_pool[i].virt   = (volatile uint32_t *)PHYS_TO_VIRT(phys);
         g_qh_pool[i].in_use = 0;
-        memset((void *)g_qh_pool[i].virt, 0, 4096);
+        memset((void *)(uintptr_t)g_qh_pool[i].virt, 0, 4096);
         g_qh_pool_count++;
     }
 
@@ -605,7 +605,7 @@ static int ehci_pool_init(void)
         g_qtd_pool[i].phys   = phys;
         g_qtd_pool[i].virt   = (volatile uint32_t *)PHYS_TO_VIRT(phys);
         g_qtd_pool[i].in_use = 0;
-        memset((void *)g_qtd_pool[i].virt, 0, 4096);
+        memset((void *)(uintptr_t)g_qtd_pool[i].virt, 0, 4096);
         g_qtd_pool_count++;
         last_qtd = i;
     }
@@ -636,7 +636,7 @@ static int ehci_pool_alloc_qh(uint64_t *out_phys,
     for (int i = 0; i < g_qh_pool_count; i++) {
         if (!g_qh_pool[i].in_use) {
             g_qh_pool[i].in_use = 1;
-            memset((void *)g_qh_pool[i].virt, 0, 48);  /* QH is 48 B */
+            memset((void *)(uintptr_t)g_qh_pool[i].virt, 0, 48);  /* QH is 48 B */
             *out_phys = g_qh_pool[i].phys;
             *out_virt = g_qh_pool[i].virt;
             return 0;
@@ -670,7 +670,7 @@ static int ehci_pool_alloc_qtd(uint64_t *out_phys,
     for (int i = 0; i < g_qtd_pool_count; i++) {
         if (!g_qtd_pool[i].in_use) {
             g_qtd_pool[i].in_use = 1;
-            memset((void *)g_qtd_pool[i].virt, 0, 32);  /* qTD is 32 B */
+            memset((void *)(uintptr_t)g_qtd_pool[i].virt, 0, 32);  /* qTD is 32 B */
             *out_phys = g_qtd_pool[i].phys;
             *out_virt = g_qtd_pool[i].virt;
             return 0;
@@ -1389,7 +1389,7 @@ int ehci_submit_async_qtd(uint8_t dev_addr, uint8_t ep,
         return -2;
 
     volatile uint32_t *qtd = (volatile uint32_t *)PHYS_TO_VIRT(qtd_phys);
-    memset((void *)qtd, 0, 4096);
+    memset((void *)(uintptr_t)qtd, 0, 4096);
 
     /* Fill qTD */
     uint32_t buf_phys = (uint32_t)(uintptr_t)VIRT_TO_PHYS(buf);
@@ -1424,7 +1424,7 @@ int ehci_submit_async_qtd(uint8_t dev_addr, uint8_t ep,
     }
 
     volatile uint32_t *qh = (volatile uint32_t *)PHYS_TO_VIRT(qh_phys);
-    memset((void *)qh, 0, 4096);
+    memset((void *)(uintptr_t)qh, 0, 4096);
 
     /* QH: Horizontal link pointer -> terminate */
     qh[0] = EHCI_PTR_TERMINATE;
@@ -1496,7 +1496,7 @@ static int ehci_sync_submit(uint8_t dev_addr, uint8_t ep,
         return -ENOMEM;
 
     volatile uint32_t *qtd = (volatile uint32_t *)PHYS_TO_VIRT(qtd_phys);
-    memset((void *)qtd, 0, 4096);
+    memset((void *)(uintptr_t)qtd, 0, 4096);
 
     /* Fill qTD */
     uint32_t buf_phys = (uint32_t)(uintptr_t)VIRT_TO_PHYS(buf);
@@ -1533,7 +1533,7 @@ static int ehci_sync_submit(uint8_t dev_addr, uint8_t ep,
     }
 
     volatile uint32_t *qh = (volatile uint32_t *)PHYS_TO_VIRT(qh_phys);
-    memset((void *)qh, 0, 4096);
+    memset((void *)(uintptr_t)qh, 0, 4096);
 
     /* Save current async list head */
     uint32_t old_async_head = op_read(c, EHCI_ASYNCLISTADDR);
@@ -1631,7 +1631,7 @@ static int ehci_control_transfer(uint8_t dev_addr,
 
     /* Phase 1: SETUP stage — send the 8-byte setup packet */
     ret = ehci_sync_submit(dev_addr, 0,
-                           (void *)setup, sizeof(*setup),
+                           (void *)(uintptr_t)setup, sizeof(*setup),
                            QTD_TOKEN_PID_SETUP, 0);
     if (ret < 0) {
         kprintf("[EHCI] ctrl: SETUP failed (addr=%d ret=%d)\n",
@@ -1760,7 +1760,7 @@ static int ehci_interrupt_transfer(uint8_t dev_addr, uint8_t ep,
         return -ENOMEM;
 
     volatile uint32_t *qtd = (volatile uint32_t *)PHYS_TO_VIRT(qtd_phys);
-    memset((void *)qtd, 0, 4096);
+    memset((void *)(uintptr_t)qtd, 0, 4096);
 
     /* Fill qTD */
     uint32_t buf_phys = (uint32_t)(uintptr_t)VIRT_TO_PHYS(data);
@@ -1798,7 +1798,7 @@ static int ehci_interrupt_transfer(uint8_t dev_addr, uint8_t ep,
     }
 
     volatile uint32_t *qh = (volatile uint32_t *)PHYS_TO_VIRT(qh_phys);
-    memset((void *)qh, 0, 4096);
+    memset((void *)(uintptr_t)qh, 0, 4096);
 
     /* Horizontal link pointer: terminate */
     qh[0] = EHCI_PTR_TERMINATE;

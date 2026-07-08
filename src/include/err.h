@@ -32,7 +32,7 @@ static inline int IS_ERR_OR_NULL(const void *ptr) {
 
 /* Encode a negative error into a pointer, or return the pointer if no error */
 static inline void *ERR_CAST(const void *ptr) {
-    return (void *)ptr;
+    return (void *)(uintptr_t)ptr;
 }
 
 /* Return a pointer after encoding an error code */

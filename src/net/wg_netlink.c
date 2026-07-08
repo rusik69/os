@@ -497,9 +497,9 @@ static int wg_nl_handle(int protocol, const struct nlmsghdr *nlh,
         }
 
         if (cmd == WG_CMD_SET_DEVICE)
-            ret = wg_nl_set_device(nlh, (const struct nlattr **)dev_tb, src_pid);
+            ret = wg_nl_set_device(nlh, (const struct nlattr **)(uintptr_t)dev_tb, src_pid);
         else
-            ret = wg_nl_get_device(nlh, (const struct nlattr **)dev_tb, src_pid);
+            ret = wg_nl_get_device(nlh, (const struct nlattr **)(uintptr_t)dev_tb, src_pid);
         break;
     }
 
@@ -519,9 +519,9 @@ static int wg_nl_handle(int protocol, const struct nlmsghdr *nlh,
         }
 
         if (cmd == WG_CMD_SET_PEER)
-            ret = wg_nl_set_peer(nlh, (const struct nlattr **)peer_tb, src_pid);
+            ret = wg_nl_set_peer(nlh, (const struct nlattr **)(uintptr_t)peer_tb, src_pid);
         else
-            ret = wg_nl_remove_peer(nlh, (const struct nlattr **)peer_tb, src_pid);
+            ret = wg_nl_remove_peer(nlh, (const struct nlattr **)(uintptr_t)peer_tb, src_pid);
         break;
     }
 

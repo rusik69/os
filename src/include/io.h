@@ -51,11 +51,11 @@ static inline uint32_t inl(uint16_t port) {
 
 
 /* MMIO access */
-static inline uint32_t readl(const volatile void *addr) { return *(volatile uint32_t *)addr; }
+static inline uint32_t readl(const volatile void *addr) { return *(const volatile uint32_t *)addr; }
 static inline void writel(uint32_t v, volatile void *addr) { *(volatile uint32_t *)addr = v; }
-static inline uint16_t readw(const volatile void *addr) { return *(volatile uint16_t *)addr; }
+static inline uint16_t readw(const volatile void *addr) { return *(const volatile uint16_t *)addr; }
 static inline void writew(uint16_t v, volatile void *addr) { *(volatile uint16_t *)addr = v; }
-static inline uint8_t readb(const volatile void *addr) { return *(volatile uint8_t *)addr; }
+static inline uint8_t readb(const volatile void *addr) { return *(const volatile uint8_t *)addr; }
 static inline void writeb(uint8_t v, volatile void *addr) { *(volatile uint8_t *)addr = v; }
 /* String I/O */
 static inline void insl(uint16_t port, void *addr, int count) {

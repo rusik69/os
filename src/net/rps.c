@@ -146,7 +146,7 @@ int rps_process_backlog(void)
      * For now, we call the existing single-threaded path since
      * the stack process backlog re-entry.
      */
-    extern void net_rx_dispatch(const uint8_t *data, uint16_t len);
+    extern void net_rx_dispatch(uint8_t *data, uint16_t len);
     net_rx_dispatch(pkt, len);
 
     /* Clear the slot data (optional, helps debugging) */

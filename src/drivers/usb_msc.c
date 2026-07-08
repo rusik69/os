@@ -319,7 +319,7 @@ static int bot_recv_data(void *buf, uint32_t len)
 static int bot_send_data(const void *buf, uint32_t len)
 {
     return ehci_do_transfer(QTD_PID_OUT, g_bulk_out_ep,
-                            (void *)buf, len, 0);
+                            (void *)(uintptr_t)buf, len, 0);
 }
 
 static int bot_recv_csw(struct bot_csw *csw, struct bot_cbw *cbw)

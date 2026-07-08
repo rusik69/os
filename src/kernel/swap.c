@@ -68,7 +68,7 @@ static int swap_write_slot(int dev_id, uint64_t byte_offset, const void *buf)
 {
     uint64_t lba = byte_offset / SWAP_SECTOR_SIZE;
     uint32_t count = SWAP_SECTORS_PER_PAGE;  /* 8 sectors = 4K */
-    return blk_submit_sync(dev_id, lba, count, (void *)buf, BLK_REQ_WRITE);
+    return blk_submit_sync(dev_id, lba, count, (void *)(uintptr_t)buf, BLK_REQ_WRITE);
 }
 
 /* ── Initialisation ────────────────────────────────────────────────── */

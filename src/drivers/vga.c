@@ -148,11 +148,11 @@ static uint64_t vga_lookup_pci_fb(void) {
         /* Map the stdvga MMIO region for endianness setup (identity map removed) */
         volatile uint8_t *mmio_virt = (volatile uint8_t *)vmm_map_phys(mmio, 0x1000,
                     VMM_FLAG_PRESENT | VMM_FLAG_WRITE);
-        if (!IS_ERR((const void *)mmio_virt)) {
+        if (!IS_ERR((const void *)(uintptr_t)mmio_virt)) {
             volatile uint32_t *end_reg = (volatile uint32_t *)(mmio_virt + 0x604 / sizeof(uint8_t));
             *end_reg = 1; /* set little-endian */
             __asm__ volatile("mfence" ::: "memory");
-            vmm_unmap_phys((void *)mmio_virt, 0x1000);
+            vmm_unmap_phys((void *)(uintptr_t)mmio_virt, 0x1000);
         }
     }
 
@@ -196,7 +196,7 @@ static int vga_try_bochs_vbe(uint32_t width, uint32_t height, uint8_t bpp) {
     /* Map framebuffer in high-half VMA space (identity map removed) */
     fb_base = (volatile uint8_t *)vmm_map_phys(fb_addr, (uint64_t)fb_pitch * height,
                 VMM_FLAG_PRESENT | VMM_FLAG_WRITE);
-    if (IS_ERR((const void *)fb_base))
+    if (IS_ERR((const void *)(uintptr_t)fb_base))
         return -1;
 
     kprintf("[VGA] fb: addr=0x%x bpp=%u pitch=%u dims=%ux%u\n",
@@ -448,7 +448,7 @@ int vga_try_init_framebuffer(uint64_t multiboot_info_phys) {
     fb_base = (volatile uint8_t *)vmm_map_phys(fb_addr, fb_size,
                 VMM_FLAG_PRESENT | VMM_FLAG_WRITE);
 
-    if (IS_ERR((const void *)fb_base)) {
+    if (IS_ERR((const void *)(uintptr_t)fb_base)) {
         kprintf("[--] Failed to map framebuffer at 0x%x\n", (unsigned)fb_addr);
         return -1;
     }
@@ -636,7 +636,7 @@ void vga_refresh_console(void) {
 }
 
 void vga_get_framebuffer_ptr(uint8_t **ptr, uint32_t *width, uint32_t *height, uint32_t *pitch) {
-    if (ptr) *ptr = (uint8_t *)fb_base;
+    if (ptr) *ptr = (uint8_t *)(uintptr_t)fb_base;
     if (width) *width = fb_width;
     if (height) *height = fb_height;
     if (pitch) *pitch = fb_pitch;

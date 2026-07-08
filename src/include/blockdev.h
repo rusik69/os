@@ -192,7 +192,7 @@ static inline int blockdev_read_sectors(int id, uint64_t lba, uint8_t count, voi
     return blk_submit_sync(id, lba, count, buf, BLK_REQ_READ);
 }
 static inline int blockdev_write_sectors(int id, uint64_t lba, uint8_t count, const void *buf) {
-    return blk_submit_sync(id, lba, count, (void*)buf, BLK_REQ_WRITE);
+    return blk_submit_sync(id, lba, count, (void *)(uintptr_t)buf, BLK_REQ_WRITE);
 }
 
 /* Block device statistics */

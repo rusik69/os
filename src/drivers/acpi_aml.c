@@ -364,7 +364,7 @@ static int aml_add_node(const char name[4], uint8_t type, uint16_t parent,
 	node->parent = parent;
 	node->first_child = 0xFFFF;
 	node->next_sibling = 0xFFFF;
-	node->aml_start = (uint8_t *)aml_start;
+	node->aml_start = (uint8_t *)(uintptr_t)aml_start;
 	node->aml_length = aml_length;
 	node->from_ssdt = ssdt_index;
 	node->value = NULL;

@@ -1260,7 +1260,7 @@ void handle_icmpv6(struct ipv6_header *ip6, const uint8_t *payload,
 
 /* ── IPv6 dispatcher ─────────────────────────────────────────────── */
 
-void handle_ipv6(const uint8_t *data, uint16_t len)
+void handle_ipv6(uint8_t *data, uint16_t len)
 {
     /* Delegate to the full extension-header-aware handler in ipv6_core.c */
     handle_ipv6_packet(data, len);

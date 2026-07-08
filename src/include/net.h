@@ -339,7 +339,7 @@ struct tcp_pseudo {
 void net_init(void);
 void net_poll(void);
 void net_rx_signal(void);
-void net_rx_dispatch(const uint8_t *data, uint16_t len);
+void net_rx_dispatch(uint8_t *data, uint16_t len);
 int  net_rx_pending(void);
 /* Block until a network packet is available (waitqueue-based) */
 void net_wait_for_packet(void);

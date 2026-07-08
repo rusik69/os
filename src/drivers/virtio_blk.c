@@ -524,7 +524,7 @@ int virtio_blk_read_sectors(uint64_t lba, uint32_t count, void *buf) {
 
 int virtio_blk_write_sectors(uint64_t lba, uint32_t count, const void *buf) {
     int qid = vblk_current_queue();
-    return vblk_queue_request(qid, VIRTIO_BLK_T_OUT, lba, count, (void *)buf);
+    return vblk_queue_request(qid, VIRTIO_BLK_T_OUT, lba, count, (void *)(uintptr_t)buf);
 }
 
 int virtio_blk_discard_sectors(uint64_t lba, uint32_t count) {

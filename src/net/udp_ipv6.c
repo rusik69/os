@@ -149,7 +149,7 @@ void send_udp_ipv6(const struct in6_addr *dst,
  *   len     — total length of the UDP datagram (including UDP header)
  */
 void handle_udp_ipv6(struct ipv6_header *ip6,
-                      const uint8_t *payload, uint16_t len)
+                      uint8_t *payload, uint16_t len)
 {
     struct udp_header *udp;
     uint16_t dst_port;

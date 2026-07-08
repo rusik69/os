@@ -100,7 +100,7 @@ static int ext2_ea_find_entry(const uint8_t *block, uint32_t block_size,
         return -EFSCORRUPTED;
 
     struct ext2_ext_attr_entry *entry =
-        (struct ext2_ext_attr_entry *)(block + sizeof(*hdr));
+        (struct ext2_ext_attr_entry *)(uintptr_t)(block + sizeof(*hdr));
     struct ext2_ext_attr_entry *prev = NULL;
 
     while ((uint8_t *)entry + sizeof(*entry) <= block + block_size) {

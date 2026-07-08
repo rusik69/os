@@ -127,7 +127,7 @@ static void dhcp_send_request(void) {
 
 static void handle_dhcp(const uint8_t *data, uint16_t len) {
     if (len < sizeof(struct dhcp_packet)) return;
-    struct dhcp_packet *dhcp = (struct dhcp_packet *)data;
+    const struct dhcp_packet *dhcp = (const struct dhcp_packet *)data;
     if (dhcp->op != 2) return;
     if (ntohl(dhcp->xid) != dhcp_xid) return;
     if (ntohl(dhcp->magic_cookie) != DHCP_MAGIC) return;
@@ -479,7 +479,7 @@ void icmp_send_timeexceeded(uint32_t dst, uint32_t src, uint8_t *orig_pkt, uint1
     send_ip(dst, IP_PROTO_ICMP, buf, icmp_len);
 }
 
-void handle_udp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) {
+void handle_udp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
     if (len < sizeof(struct udp_header)) return;
     struct udp_header *udp = (struct udp_header *)payload;
     uint16_t dst_port = ntohs(udp->dst_port);

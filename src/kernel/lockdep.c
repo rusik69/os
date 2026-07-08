@@ -141,7 +141,7 @@ void spinlock_detect_lockup(spinlock_t *lock, uint64_t spin_count) {
     kprintf("=== SPINLOCK LOCKUP DETECTED ===\n");
     kprintf("============================================\n");
     kprintf("CPU %d spinning on lock %p (spin count: %llu)\n",
-            cpu, (void *)lock, (unsigned long long)spin_count);
+            cpu, (void *)(uintptr_t)lock, (unsigned long long)spin_count);
 
     /* Show elapsed time if timer is available */
     if (now > 0) {
@@ -248,7 +248,7 @@ void spinlock_release_all_on_panic(void) {
 
             kprintf("panic: releasing spinlock %p held by CPU %d "
                     "(acquired by %s at tick %llu)\n",
-                    (void *)lock, cpu,
+                    (void *)(uintptr_t)lock, cpu,
                     func ? func : "?",
                     (unsigned long long)spinlock_owners[i].acquire_tick);
 
@@ -682,7 +682,7 @@ void lockdep_dump(void)
         owner_count++;
         kprintf("    [%d] lock=%p CPU=%d PID=%u RIP=0x%llx tick=%llu\n",
                 i,
-                (void *)spinlock_owners[i].lock,
+                (void *)(uintptr_t)spinlock_owners[i].lock,
                 spinlock_owners[i].cpu_id,
                 (unsigned int)spinlock_owners[i].pid,
                 (unsigned long long)spinlock_owners[i].caller_rip,

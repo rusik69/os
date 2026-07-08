@@ -65,7 +65,7 @@ void *bsearch(const void *key, const void *base, size_t n, size_t sz,
     while (lo < hi) {
         const char *mid = lo + ((size_t)(hi - lo) / sz / 2) * sz;
         int r = cmp(key, mid);
-        if (r == 0) return (void *)mid;
+        if (r == 0) return (void *)(uintptr_t)mid;
         if (r < 0)  hi = mid;
         else        lo = mid + sz;
     }

@@ -83,7 +83,7 @@ int ipip_decapsulate(const uint8_t *outer_pkt, int outer_len,
     if (!outer_pkt || !inner_buf) return -1;
     if (outer_len < (int)sizeof(struct ip_header) + 20) return -1;
 
-    struct ip_header *outer = (struct ip_header *)outer_pkt;
+    const struct ip_header *outer = (const struct ip_header *)outer_pkt;
     if (outer->protocol != IPIP_PROTOCOL) return -1;
 
     int ihl = (outer->version_ihl & 0xF) * 4;

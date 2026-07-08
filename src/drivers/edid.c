@@ -144,7 +144,7 @@ int edid_parse(const uint8_t *raw, struct edid_data *edid) {
     edid->features = raw[0x18];
 
     /* Chromaticity coordinates */
-    uint8_t *chroma = (uint8_t *)&raw[0x19];
+    const uint8_t *chroma = &raw[0x19];
     edid->red_x   = (uint16_t)(chroma[0] << 2) | ((chroma[2] >> 6) & 0x03);
     edid->red_y   = (uint16_t)(chroma[1] << 2) | ((chroma[2] >> 4) & 0x03);
     edid->green_x = (uint16_t)(chroma[3] << 2) | ((chroma[2] >> 2) & 0x03);

@@ -40,7 +40,7 @@ int vlan_has_vid(uint16_t vid) {
 
 uint16_t vlan_parse_tci(const uint8_t *frame, int len) {
     if (!frame || len < 18) return 0;  /* eth(14) + vlan(4) */
-    struct vlan_header *vh = (struct vlan_header *)(frame + 12);
+    const struct vlan_header *vh = (const struct vlan_header *)(frame + 12);
     if (ntohs(vh->tpid) != VLAN_TPID) return 0;
     return ntohs(vh->tci) & VLAN_VID_MASK;
 }

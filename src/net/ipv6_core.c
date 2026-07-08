@@ -508,7 +508,7 @@ static int handle_ipv6_fragment(const struct ipv6_header *ip6,
             id, slot->frag_end);
 
     /* Dispatch to upper-layer handler */
-    handle_ipv6_packet((const uint8_t *)&reasm,
+    handle_ipv6_packet((uint8_t *)&reasm,
                        (uint16_t)(sizeof(struct ipv6_header) + slot->frag_end));
 
     return 1;
@@ -541,11 +541,11 @@ void ipv6_frag_stats_get(struct ipv6_frag_stats *out)
  * Called from net_poll() via net.c -> handle_ipv6().
  */
 
-void handle_ipv6_packet(const uint8_t *data, uint16_t total_len)
+void handle_ipv6_packet(uint8_t *data, uint16_t total_len)
 {
     if (!data || total_len < sizeof(struct ipv6_header)) return;
 
-    const struct ipv6_header *ip6 = (const struct ipv6_header *)data;
+    struct ipv6_header *ip6 = (struct ipv6_header *)data;
 
     /* Verify IPv6 version */
     uint32_t vcl = ntohl(ip6->vcl_flow);
@@ -599,7 +599,7 @@ void handle_ipv6_packet(const uint8_t *data, uint16_t total_len)
         break;
 
     case IP_PROTO_UDP:
-        handle_udp_ipv6((struct ipv6_header *)data, payload, payload_len);
+        handle_udp_ipv6((struct ipv6_header *)data, (uint8_t *)(uintptr_t)payload, payload_len);
         break;
 
     case IPV6_NEXTHDR_NONE:

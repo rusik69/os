@@ -276,7 +276,7 @@ int garp_receive_pdu(const uint8_t *data, uint16_t len)
 {
     if (!garp_initialised || !data || len < 2) return -EINVAL;
 
-    struct garp_pdu_header *hdr = (struct garp_pdu_header *)data;
+    const struct garp_pdu_header *hdr = (const struct garp_pdu_header *)data;
     if (ntohs(hdr->protocol_id) != GARP_PROTOCOL_ID)
         return -EINVAL;
 

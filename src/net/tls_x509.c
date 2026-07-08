@@ -796,7 +796,7 @@ int tls_parse_certificate_msg(const uint8_t *body, int body_len,
 			return -EINVAL;
 
 		/* Store pointer to certificate data */
-		certs[cert_count].data     = (uint8_t *)(body + offset);
+				certs[cert_count].data     = (uint8_t *)(uintptr_t)(body + offset);
 		certs[cert_count].data_len = cert_data_len;
 		offset += cert_data_len;
 
@@ -809,7 +809,7 @@ int tls_parse_certificate_msg(const uint8_t *body, int body_len,
 		if (ext_len > 0) {
 			if (offset + ext_len > body_len)
 				return -EINVAL;
-			certs[cert_count].extensions = (uint8_t *)(body + offset);
+						certs[cert_count].extensions = (uint8_t *)(uintptr_t)(body + offset);
 			certs[cert_count].ext_len    = ext_len;
 			offset += ext_len;
 		} else {

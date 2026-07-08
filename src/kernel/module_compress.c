@@ -1579,7 +1579,7 @@ int module_decompress(const uint8_t *input, uint64_t input_size,
     enum module_compress_type ctype;
     if (!module_is_compressed(input, input_size, &ctype)) {
         /* Not compressed — just reference the input directly */
-        *output = (uint8_t *)input;
+        *output = (uint8_t *)(uintptr_t)input;
         *output_size = input_size;
         return 0;
     }

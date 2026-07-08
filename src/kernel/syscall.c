@@ -2856,8 +2856,8 @@ static uint64_t sys_posix_spawn(uint64_t path_addr, uint64_t argv_addr, uint64_t
         return (uint64_t)(int64_t)-EFAULT;
 
     /* Validate argv and envp pointers (can be NULL) */
-    const char *const *k_argv = NULL;
-    const char *const *k_envp = NULL;
+    char *const *k_argv = NULL;
+    char *const *k_envp = NULL;
 
     uint64_t argv_ptr[256];
     uint64_t envp_ptr[256];
@@ -2878,7 +2878,7 @@ static uint64_t sys_posix_spawn(uint64_t path_addr, uint64_t argv_addr, uint64_t
             argv_ptr[argc] = ptr;
             argc++;
         }
-        k_argv = (const char *const *)argv_ptr;
+        k_argv = (char *const *)argv_ptr;
     }
 
     if (envp_addr) {
@@ -2895,10 +2895,10 @@ static uint64_t sys_posix_spawn(uint64_t path_addr, uint64_t argv_addr, uint64_t
             envp_ptr[envc] = ptr;
             envc++;
         }
-        k_envp = (const char *const *)envp_ptr;
+        k_envp = (char *const *)envp_ptr;
     }
 
-    int ret = process_spawn(kpath, (char *const *)k_argv, (char *const *)k_envp);
+    int ret = process_spawn(kpath, k_argv, k_envp);
     if (ret < 0)
         return (uint64_t)(int64_t)ret;
     return (uint64_t)(uint64_t)ret;

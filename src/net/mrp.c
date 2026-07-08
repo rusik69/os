@@ -268,7 +268,7 @@ int mrp_receive_pdu(const uint8_t *data, uint16_t len)
 {
     if (!mrp_initialised || !data || len < 3) return -EINVAL;
 
-    struct mrp_pdu_header *hdr = (struct mrp_pdu_header *)data;
+    const struct mrp_pdu_header *hdr = (const struct mrp_pdu_header *)data;
     if (ntohs(hdr->protocol_id) != MRP_PROTOCOL_ID)
         return -EINVAL;
 

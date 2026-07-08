@@ -374,47 +374,47 @@ int sys_setsockopt_impl(int sockfd, int level, int optname,
     if (level == SOL_SOCKET) {
         switch (optname) {
             case SO_REUSEADDR:
-                s->reuseaddr = *(int*)optval;
+                s->reuseaddr = *(const int*)optval;
                 return 0;
             case SO_KEEPALIVE: {
-                s->keepalive = *(int*)optval;
+                s->keepalive = *(const int*)optval;
                 if (s->conn_id >= 0)
                     net_tcp_set_keepalive(s->conn_id, s->keepalive);
                 return 0;
             }
             case SO_RCVBUF:
-                s->rcvbuf = *(int*)optval;
+                s->rcvbuf = *(const int*)optval;
                 if (s->rcvbuf < 256) s->rcvbuf = 256;
                 return 0;
             case SO_SNDBUF:
-                s->sndbuf = *(int*)optval;
+                s->sndbuf = *(const int*)optval;
                 if (s->sndbuf < 256) s->sndbuf = 256;
                 return 0;
             case SO_BROADCAST:
-                s->broadcast = *(int*)optval;
+                s->broadcast = *(const int*)optval;
                 return 0;
             case SO_PRIORITY:
-                s->priority = *(int*)optval;
+                s->priority = *(const int*)optval;
                 return 0;
             case SO_MARK:
-                s->sk_mark = *(uint32_t*)optval;
+                s->sk_mark = *(const uint32_t*)optval;
                 return 0;
             case SO_BUSY_POLL:
-                s->busy_poll_usecs = *(int*)optval;
+                s->busy_poll_usecs = *(const int*)optval;
                 return 0;
             case SO_MAX_PACING_RATE:
-                s->max_pacing_rate = *(uint32_t*)optval;
+                s->max_pacing_rate = *(const uint32_t*)optval;
                 return 0;
             case SO_NO_CHECK:
-                s->no_check = *(int*)optval;
+                s->no_check = *(const int*)optval;
                 return 0;
             case SO_RCVTIMEO: {
-                struct timeval *tv = (struct timeval *)optval;
+                const struct timeval *tv = (const struct timeval *)optval;
                 s->busy_poll_usecs = (int)(tv->tv_sec * 1000000 + tv->tv_usec);
                 return 0;
             }
             case SO_SNDTIMEO: {
-                struct timeval *tv = (struct timeval *)optval;
+                const struct timeval *tv = (const struct timeval *)optval;
                 s->max_pacing_rate = (uint32_t)(tv->tv_sec * 1000000 + tv->tv_usec);
                 return 0;
             }
@@ -424,14 +424,14 @@ int sys_setsockopt_impl(int sockfd, int level, int optname,
     } else if (level == SOL_TCP) {
         switch (optname) {
             case TCP_NODELAY: {
-                int val = *(int*)optval;
+                int val = *(const int*)optval;
                 s->tcp_nodelay = val;
                 if (s->conn_id >= 0)
                     tcp_conns[s->conn_id].tcp_nodelay = val;
                 return 0;
             }
             case TCP_CORK: {
-                int val = *(int*)optval;
+                int val = *(const int*)optval;
                 s->tcp_cork = val;
                 if (s->conn_id >= 0) {
                     struct tcp_conn *c = &tcp_conns[s->conn_id];
@@ -463,20 +463,20 @@ int sys_setsockopt_impl(int sockfd, int level, int optname,
     } else if (level == SOL_IP) {
         switch (optname) {
             case IP_TTL: {
-                int val = *(int*)optval;
+                int val = *(const int*)optval;
                 s->ip_ttl = val;
                 return 0;
             }
             case IP_RECVTTL: {
-                s->ip_recvttl = *(int*)optval;
+                s->ip_recvttl = *(const int*)optval;
                 return 0;
             }
             case IP_RECVDSTADDR: {
-                s->ip_recvdstaddr = *(int*)optval;
+                s->ip_recvdstaddr = *(const int*)optval;
                 return 0;
             }
             case IP_FREEBIND: {
-                s->broadcast = *(int*)optval;
+                s->broadcast = *(const int*)optval;
                 return 0;
             }
             default:

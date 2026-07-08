@@ -264,7 +264,7 @@ int ipsec_output_esp(struct ip_header *outer_ip, uint8_t *buf, int *len, int max
 
 static int ipsec_input_ah(struct ip_header *ip_hdr, const uint8_t *payload, int len)
 {
-    struct ah_header *ah = (struct ah_header *)payload;
+    const struct ah_header *ah = (const struct ah_header *)payload;
     int idx = sadb_find_by_spi(ah->spi, ip_hdr->src_ip);
     if (idx < 0) {
         kprintf("ipsec: no SA for inbound AH spi=0x%x\n", ah->spi);
@@ -298,7 +298,7 @@ static int ipsec_input_ah(struct ip_header *ip_hdr, const uint8_t *payload, int 
 
 static int ipsec_input_esp(struct ip_header *ip_hdr, const uint8_t *payload, int len)
 {
-    struct esp_header *esp = (struct esp_header *)payload;
+    const struct esp_header *esp = (const struct esp_header *)payload;
     int idx = sadb_find_by_spi(esp->spi, ip_hdr->src_ip);
     if (idx < 0) {
         kprintf("ipsec: no SA for inbound ESP spi=0x%x\n", esp->spi);
