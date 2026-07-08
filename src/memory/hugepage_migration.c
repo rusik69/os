@@ -40,9 +40,9 @@ void hugepage_inc_isolated(int anon, int nr_pages)
     uint64_t flags;
     spinlock_irqsave_acquire(&isolated_lock, &flags);
     if (anon)
-        nr_isolated_anon += nr_pages;
+        nr_isolated_anon += (uint64_t)nr_pages;
     else
-        nr_isolated_file += nr_pages;
+        nr_isolated_file += (uint64_t)nr_pages;
     spinlock_irqsave_release(&isolated_lock, flags);
 }
 
@@ -54,12 +54,12 @@ void hugepage_dec_isolated(int anon, int nr_pages)
         if ((uint64_t)nr_pages > nr_isolated_anon)
             nr_isolated_anon = 0;
         else
-            nr_isolated_anon -= nr_pages;
+            nr_isolated_anon -= (uint64_t)nr_pages;
     } else {
         if ((uint64_t)nr_pages > nr_isolated_file)
             nr_isolated_file = 0;
         else
-            nr_isolated_file -= nr_pages;
+            nr_isolated_file -= (uint64_t)nr_pages;
     }
     spinlock_irqsave_release(&isolated_lock, flags);
 }

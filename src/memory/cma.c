@@ -26,10 +26,10 @@ int cma_create_area(uint64_t base_pfn, uint64_t count, const char *name) {
 
     /* Allocate bitmap: one bit per page */
     area->bitmap_size = (int)((count + 7) / 8);
-    area->bitmap = (uint64_t *)pmm_alloc_frames((area->bitmap_size + PAGE_SIZE - 1) / PAGE_SIZE);
+    area->bitmap = (uint64_t *)pmm_alloc_frames((size_t)(area->bitmap_size + PAGE_SIZE - 1) / PAGE_SIZE);
     if (!area->bitmap) return -ENOMEM;
 
-    memset(area->bitmap, 0, area->bitmap_size);
+    memset(area->bitmap, 0, (size_t)area->bitmap_size);
     strncpy(area->name, name, sizeof(area->name) - 1);
     area->name[sizeof(area->name) - 1] = '\0';
     area->initialized = 1;

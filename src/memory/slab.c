@@ -173,8 +173,8 @@ void slab_get_stats(struct slab_stats *s) {
         while (slab) { total_in_cache += slab->total; free_in_cache += slab->free_count; s->memory_used += slab_size; slab = slab->next; }
         slab = cache->slabs_free;
         while (slab) { total_in_cache += slab->total; free_in_cache += slab->free_count; s->memory_used += slab_size; slab = slab->next; }
-        s->total_objects += total_in_cache;
-        s->used_objects += (total_in_cache - free_in_cache);
+        s->total_objects += (uint64_t)total_in_cache;
+        s->used_objects += (uint64_t)(total_in_cache - free_in_cache);
         spinlock_irqsave_release(&cache->lock, irq_flags);
         cache = cache->next;
     }
@@ -268,7 +268,7 @@ static int slab_grow(struct kmem_cache *cache) {
         uint64_t p = pmm_alloc_frame();
         if (!p) {
             for (int j = 0; j < i; j++)
-                pmm_free_frame(phys_base + j * PAGE_SIZE);
+                pmm_free_frame(phys_base + (uint64_t)j * PAGE_SIZE);
             return -ENOMEM;
         }
         if (i == 0) phys_base = p;
@@ -287,11 +287,11 @@ static int slab_grow(struct kmem_cache *cache) {
 
     /* Build an array of object pointers for shuffling */
     void *obj_base = (uint8_t *)virt + header;
-    void **obj_ptrs = (void **)kmalloc(sizeof(void *) * cache->num);
+    void **obj_ptrs = (void **)kmalloc(sizeof(void *) * (size_t)cache->num);
     if (!obj_ptrs) {
         /* Fall back to sequential order if we can't allocate the temp array */
         for (int i = 0; i < cache->num; i++) {
-            void *obj = (uint8_t *)obj_base + i * aligned;
+            void *obj = (uint8_t *)obj_base + (size_t)i * aligned;
             *(void **)obj = slab->free_list;
             slab->free_list = obj;
             if (cache->ctor)
@@ -303,7 +303,7 @@ static int slab_grow(struct kmem_cache *cache) {
 
     /* Collect all object pointers */
     for (int i = 0; i < cache->num; i++) {
-        obj_ptrs[i] = (uint8_t *)obj_base + i * aligned;
+        obj_ptrs[i] = (uint8_t *)obj_base + (size_t)i * aligned;
         if (cache->ctor)
             cache->ctor(obj_ptrs[i]);
     }

@@ -398,7 +398,7 @@ void ksm_scan_cycle(void)
 
     /* Scan at most `batch` pages */
     int scanned = ksm_scan_batch(batch);
-    ksm_total_scanned += scanned;
+    ksm_total_scanned += (uint64_t)scanned;
 }
 
 /* ── Statistics ─────────────────────────────────────────────────────── */

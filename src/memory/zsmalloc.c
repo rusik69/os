@@ -118,7 +118,7 @@ static void *zsmalloc_alloc(int pool_id, size_t size)
                 if (zp->obj_table && (zp->obj_table[o] == 0)) {
                     zp->obj_table[o] = 1;
                     zp->nr_free--;
-                    void *obj = zp->page + (size_t)o * pool->classes[class_idx].size;
+                    void *obj = zp->page + (size_t)o * (size_t)pool->classes[class_idx].size;
                     spinlock_irqsave_release(&pool->lock, irq_flags);
                     return obj;
                 }
@@ -189,7 +189,7 @@ static void zsmalloc_free(int pool_id, void *obj)
 
         if (obj_addr >= page_start && obj_addr < page_end) {
             int obj_idx = (int)((obj_addr - page_start) /
-                                (4096 / zp->nr_objs));
+                                (uintptr_t)(4096 / zp->nr_objs));
             if (obj_idx >= 0 && obj_idx < zp->nr_objs && zp->obj_table) {
                 if (zp->obj_table[obj_idx]) {
                     zp->obj_table[obj_idx] = 0;

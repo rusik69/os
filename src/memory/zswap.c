@@ -415,7 +415,7 @@ static int zswap_invalidate(uint64_t offset)
                     (uint64_t)e->dev_idx == (uint64_t)(int)(offset >> 32)) {
                     if (e->comp_data) {
                         kfree(e->comp_data);
-                        zswap_pool_used -= e->comp_len;
+                        zswap_pool_used -= (uint64_t)e->comp_len;
                     }
                     zswap_entry_count--;
                     e->in_use = 0;
@@ -460,7 +460,7 @@ static int zswap_shrink(int nr_to_reclaim)
             if (e->in_use) {
                 if (e->comp_data) {
                     kfree(e->comp_data);
-                    zswap_pool_used -= e->comp_len;
+                    zswap_pool_used -= (uint64_t)e->comp_len;
                 }
                 zswap_entry_count--;
                 e->in_use = 0;
@@ -519,7 +519,7 @@ found:
     victim->in_use = 0;
     victim->comp_data = NULL;
     zswap_entry_count--;
-    zswap_pool_used -= len;
+    zswap_pool_used -= (uint64_t)len;
 
     spinlock_release(&zswap_lock);
 

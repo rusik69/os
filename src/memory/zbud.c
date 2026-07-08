@@ -103,7 +103,7 @@ static int zbud_store(int pool_id, const uint8_t *compressed, size_t comp_len,
     /* Store compressed data */
     memcpy(page->data, compressed, comp_len);
     page->free_chunks = (uint16_t)(page->free_chunks & ~(1U << 0));
-    *handle = ((uint64_t)(pool->nr_pages - 1) << 16) | chunk_idx;
+    *handle = ((uint64_t)(pool->nr_pages - 1) << 16) | (uint64_t)chunk_idx;
 
     pool->compressed_size += comp_len;
     spinlock_irqsave_release(&pool->lock, irq_flags);
