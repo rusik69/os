@@ -2,7 +2,7 @@
 
 #include "string.h"
 
-void *memcpy(void *dest, const void *src, unsigned long n) {
+void *memcpy(void *restrict dest, const void *restrict src, unsigned long n) {
     unsigned char *d = (unsigned char *)dest;
     const unsigned char *s = (const unsigned char *)src;
     for (unsigned long i = 0; i < n; i++)
@@ -46,14 +46,14 @@ int strncmp(const char *s1, const char *s2, unsigned long n) {
     return 0;
 }
 
-char *strcpy(char *dest, const char *src) {
+char *strcpy(char *restrict dest, const char *restrict src) {
     char *d = dest;
     while ((*d++ = *src++))
         ;
     return dest;
 }
 
-char *strncpy(char *dest, const char *src, unsigned long n) {
+char *strncpy(char *restrict dest, const char *restrict src, unsigned long n) {
     char *d = dest;
     while (n > 0 && *src) {
         *d++ = *src++;
@@ -66,7 +66,7 @@ char *strncpy(char *dest, const char *src, unsigned long n) {
     return dest;
 }
 
-char *strcat(char *dest, const char *src) {
+char *strcat(char *restrict dest, const char *restrict src) {
     char *d = dest + strlen(dest);
     while ((*d++ = *src++))
         ;
