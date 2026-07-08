@@ -8,7 +8,7 @@ void *memset(void *s, int c, size_t n) {
     return s;
 }
 
-void *memcpy(void *dest, const void *src, size_t n) {
+void *memcpy(void *restrict dest, const void *restrict src, size_t n) {
     uint8_t *d = (uint8_t *)dest;
     const uint8_t *s = (const uint8_t *)src;
     while (n--) *d++ = *s++;
@@ -54,26 +54,26 @@ int strncmp(const char *s1, const char *s2, size_t n) {
     return *(const unsigned char *)s1 - *(const unsigned char *)s2;
 }
 
-char *strcpy(char *dest, const char *src) {
+char *strcpy(char *restrict dest, const char *restrict src) {
     char *d = dest;
     while ((*d++ = *src++));
     return dest;
 }
 
-char *strncpy(char *dest, const char *src, size_t n) {
+char *strncpy(char *restrict dest, const char *restrict src, size_t n) {
     size_t i;
     for (i = 0; i < n && src[i]; i++) dest[i] = src[i];
     for (; i < n; i++) dest[i] = '\0';
     return dest;
 }
 
-char *strcat(char *dest, const char *src) {
+char *strcat(char *restrict dest, const char *restrict src) {
     char *d = dest + strlen(dest);
     while ((*d++ = *src++));
     return dest;
 }
 
-char *strncat(char *dest, const char *src, size_t n) {
+char *strncat(char *restrict dest, const char *restrict src, size_t n) {
     char *d = dest + strlen(dest);
     while (n-- && *src) *d++ = *src++;
     *d = '\0';
@@ -256,7 +256,7 @@ size_t strnlen(const char *s, size_t maxlen) {
  * Returns pointer to byte after c in dest (if found), or NULL if c not found
  * within first n bytes.  POSIX.1-2001.
  */
-void *memccpy(void *dest, const void *src, int c, size_t n) {
+void *memccpy(void *restrict dest, const void *restrict src, int c, size_t n) {
     unsigned char *d = (unsigned char *)dest;
     const unsigned char *s = (const unsigned char *)src;
     unsigned char uc = (unsigned char)c;

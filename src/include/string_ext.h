@@ -15,8 +15,8 @@
 char *strcasestr(const char *haystack, const char *needle);
 char *strdup_km(const char *s);          /* allocates via kmalloc */
 char *strndup(const char *s, size_t n);
-size_t strlcat(char *dst, const char *src, size_t size);
-size_t strlcpy(char *dst, const char *src, size_t size);
+size_t strlcat(char *restrict dst, const char *restrict src, size_t size);
+size_t strlcpy(char *restrict dst, const char *restrict src, size_t size);
 int strcasecmp(const char *s1, const char *s2);
 int strncasecmp(const char *s1, const char *s2, size_t n);
 char *strchrnul(const char *s, int c);

@@ -93,7 +93,7 @@ char *strndup(const char *s, size_t n) {
  * If the return value >= size, truncation occurred.
  */
 #ifndef TEST_MODE_HOST
-size_t strlcat(char *dst, const char *src, size_t size) {
+size_t strlcat(char *restrict dst, const char *restrict src, size_t size) {
     size_t dlen = 0;
     while (dlen < size && dst[dlen]) dlen++;
     if (dlen == size) return dlen + strlen(src);
@@ -111,7 +111,7 @@ size_t strlcat(char *dst, const char *src, size_t size) {
  * Returns the length of src (like BSD strlcpy).
  * If the return value >= size, truncation occurred.
  */
-size_t strlcpy(char *dst, const char *src, size_t size) {
+size_t strlcpy(char *restrict dst, const char *restrict src, size_t size) {
     size_t slen = strlen(src);
     if (size == 0) return slen;
     size_t to_copy = slen < size - 1 ? slen : size - 1;
