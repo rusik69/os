@@ -1454,6 +1454,49 @@ check-padded:
 check-clean:
 	rm -rf $(BUILDDIR_CHECK) $(BUILDDIR_CHECK_FULL) $(BUILDDIR_CHECK_PADDED)
 
+# ── check-free-nonheap: detect free() on non-heap pointers ────────────
+# -Wfree-nonheap-object is suppressed by -ffreestanding/-fno-builtin.
+# This target compiles each C source without those flags but with selective
+# -fno-builtin-* for other builtins, letting GCC verify no free() is called
+# on a stack/global variable.  Skips files that don't compile standalone.
+# Run: make check-free-nonheap
+check-free-nonheap:
+	@echo "=== check-free-nonheap: Scanning for free() on non-heap pointers ==="; \
+	total=0; warned=0; fail=0; \
+	bld=build_check_fnh; mkdir -p $$bld; \
+	NOBUILTIN_FLAGS=""; \
+	for fn in memset memcpy memmove memcmp memchr strlen strcmp strncmp \
+	          strcpy strncpy strcat strncat strstr strchr strrchr strspn \
+	          strcspn strpbrk strtok printf sprintf snprintf vsnprintf puts \
+	          putchar abs exit abort malloc calloc realloc; do \
+	  NOBUILTIN_FLAGS="$$NOBUILTIN_FLAGS -fno-builtin-$$fn"; \
+	done; \
+	for f in $(shell find src -name '*.c' -type f | sort); do \
+	  result=$$($(CC) -std=c17 -O2 -Wall -Wextra -Isrc/include -Isrc \
+	    $$NOBUILTIN_FLAGS \
+	    -Wno-unused-function -Wno-unused-variable -Wno-unused-parameter \
+	    -Wno-unused-but-set-variable \
+	    -c "$$f" -o $$bld/check.o 2>&1); \
+	  rc=$$?; \
+	  if [ $$rc -eq 0 ]; then \
+	    if echo "$$result" | grep -qi "free.*nonheap\|free.*non-heap\|free.*unalloc"; then \
+	      warned=$$((warned + 1)); \
+	      echo "  [WARN] $$f"; \
+	      echo "$$result" | grep -i "free.*nonheap\|free.*non-heap\|free.*unalloc"; \
+	    fi; \
+	  else \
+	    fail=$$((fail + 1)); \
+	  fi; \
+	  total=$$((total + 1)); \
+	done; \
+	rm -rf $$bld; \
+	echo ""; \
+	echo "=== Summary ==="; \
+	echo "  Files scanned: $$total"; \
+	echo "  Compile failures (deferred): $$fail"; \
+	echo "  -Wfree-nonheap-object warnings: $$warned"; \
+	if [ $$warned -gt 0 ]; then exit 1; fi
+
 # ── Host-side unit tests (compiled with host gcc, no kernel deps) ───
 unit-test:
 	@echo "=== Host-side unit tests ==="
