@@ -455,8 +455,6 @@ static void consumer_process_report(const uint8_t *report, int len)
                     /* Multi-bit variable or array — skip */
                     report_bit_offset += bit_size * count;
                 }
-
-                report_bit_offset = report_bit_offset; /* silence unused */
                 break;
             }
             case 10: { /* Collection */
