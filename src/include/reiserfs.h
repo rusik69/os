@@ -83,7 +83,7 @@ struct reiserfs_stat_item {
 struct reiserfs_dir_entry {
     uint32_t de_dir_id;         /* directory ID */
     uint32_t de_objectid;       /* object ID (inode number) */
-    char     de_name[0];        /* variable-length name */
+    char     de_name[];        /* variable-length name */
 } __attribute__((packed));
 
 /* Item types */

@@ -266,7 +266,7 @@ static void hex_to_bytes(const char *hex, uint8_t *bytes, int *len) {
     while (hex[hlen]) hlen++;
     *len = hlen / 2;
     for (int i = 0; i < *len; i++) {
-        bytes[i] = (hex_char_to_val(hex[i*2]) << 4) | hex_char_to_val(hex[i*2+1]);
+        bytes[i] = (uint8_t)((hex_char_to_val(hex[i*2]) << 4) | hex_char_to_val(hex[i*2+1]));
     }
 }
 
@@ -368,7 +368,7 @@ static int rsa_sign(const uint8_t *hash, uint8_t *sig_out) {
 
     em[0] = 0x00;
     em[1] = 0x01;
-    int pad_len = em_len - 3 - sizeof(der_sha256) - 32;
+    int pad_len = (int)(em_len - 3 - sizeof(der_sha256) - 32);
     memset(em + 2, 0xFF, pad_len);
     em[2 + pad_len] = 0x00;
     memcpy(em + 2 + pad_len + 1, der_sha256, sizeof(der_sha256));
@@ -414,10 +414,10 @@ const uint8_t *rsa_get_pubkey_blob(int *len) {
 
 /* Pack a uint32 in network byte order */
 static void ssh_pack_u32(uint8_t *buf, uint32_t v) {
-    buf[0] = (v >> 24) & 0xFF;
-    buf[1] = (v >> 16) & 0xFF;
-    buf[2] = (v >> 8) & 0xFF;
-    buf[3] = v & 0xFF;
+    buf[0] = (uint8_t)((v >> 24) & 0xFF);
+    buf[1] = (uint8_t)((v >> 16) & 0xFF);
+    buf[2] = (uint8_t)((v >> 8) & 0xFF);
+    buf[3] = (uint8_t)(v & 0xFF);
 }
 
 /* Unpack uint32 */

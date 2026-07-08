@@ -493,8 +493,8 @@ void bbr3_on_ack(struct bbr3_data *b, uint32_t acked_bytes,
 			 * that could cause further loss.
 			 */
 			if (b->loss_recovery_rounds == 0) {
-				b->probe_bw_phase = (b->probe_bw_phase + 1)
-				                     % BBR3_PROBE_BW_CYCLE_LEN;
+				b->probe_bw_phase = (uint8_t)((b->probe_bw_phase + 1)
+				                     % BBR3_PROBE_BW_CYCLE_LEN);
 
 #ifdef BBR3_DEBUG
 				kprintf("[BBRv3] PROBE_BW phase %d (gain=%u/256)\n",

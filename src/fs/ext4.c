@@ -103,7 +103,7 @@ int ext4_read_block(struct ext4_priv *ep, uint32_t block_num, uint8_t *buf)
     uint32_t sectors = ep->block_size / 512;
     if (sectors == 0) return ext4_corrupt(ep, "invalid block size");
     for (uint32_t i = 0; i < sectors; i++) {
-        if (blockdev_read_sectors(ep->dev_id, lba + i, 1, buf + i * 512) != 0)
+        if (blockdev_read_sectors(ep->dev_id, (uint32_t)(lba + i), 1, buf + i * 512) != 0)
             return ext4_corrupt(ep, "block I/O error");
     }
     return 0;
@@ -291,7 +291,7 @@ static int ext4_load_super(struct ext4_priv *ep)
     uint8_t buf[1024];
     /* Superblock is at offset 1024 (sector 2 for 512-byte sectors) */
     uint64_t lba = 1024 / 512;
-    if (blockdev_read_sectors(ep->dev_id, lba, 2, buf) != 0)
+    if (blockdev_read_sectors(ep->dev_id, (uint32_t)lba, 2, buf) != 0)
         return -1;
     memcpy(&ep->sb, buf, sizeof(ep->sb));
     return 0;
@@ -365,7 +365,6 @@ static int ext4_load_bgd_cache(struct ext4_priv *ep)
     /* ── Verify block group descriptor checksums ── */
     {
         uint32_t bgd_count;
-        uint32_t bgd_entry_size;
 
         bgd_entry_size = sizeof(struct ext4_bg_desc);
         if (ep->incompat & EXT4_FEATURE_INCOMPAT_64BIT)

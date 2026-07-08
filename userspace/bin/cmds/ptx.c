@@ -70,10 +70,12 @@ static int read_lines(const char *path, char ***lines_out) {
         if (len > MAX_LINE_LEN) len = MAX_LINE_LEN;
         lines[idx] = malloc(len + 1);
         if (!lines[idx]) {
-            /* malloc failed — stop reading */
+            /* malloc failed — stop reading, clean up partial array */
+            for (int i = 0; i < idx; i++) free(lines[i]);
+            free(lines);
             free(data);
-            *num_lines = idx;
-            return lines;
+            *lines_out = NULL;
+            return -1;
         }
         memcpy(lines[idx], p, len);
         lines[idx][len] = 0;

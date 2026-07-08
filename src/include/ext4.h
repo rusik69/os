@@ -349,7 +349,7 @@ struct ext4_dir_entry {
     uint16_t rec_len;
     uint8_t  name_len;
     uint8_t  file_type;
-    char     name[0];       /* variable-length name (up to 255 bytes) */
+    char     name[];         /* variable-length name (up to 255 bytes) */
 } __attribute__((packed));
 
 /* File types for ext4 directory entries */

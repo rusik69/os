@@ -266,7 +266,7 @@ static int64_t ext2_extent_get_block(struct ext2_priv *ep,
             uint16_t best = 0;
 
             while (lo < hi) {
-                mid = lo + (hi - lo) / 2;
+                mid = (uint16_t)(lo + (hi - lo) / 2);
                 if (idx[mid].ei_block <= iblock) {
                     best = mid;
                     lo = mid + 1;
@@ -633,7 +633,7 @@ static int ext2_alloc_blocks(struct ext2_priv *ep,
 			for (uint32_t b = (uint32_t)bit;
 			     b < (uint32_t)bit + num_blocks
 			     && b < blocks_in_group; b++) {
-				bitmap[b / 8] &= ~(1U << (b % 8));
+				bitmap[b / 8] = (uint8_t)(bitmap[b / 8] & ~(1U << (b % 8)));
 			}
 
 			if (ext2_write_block(ep, bgd->bg_block_bitmap,
@@ -778,7 +778,7 @@ static int ext2_alloc_inode(struct ext2_priv *ep, uint32_t *ino_out,
 			                                inodes_in_group);
 			if (bit < 0)
 				continue;
-			bitmap[bit / 8] &= ~(1U << ((uint32_t)bit % 8));
+			bitmap[bit / 8] = (uint8_t)(bitmap[bit / 8] & ~(1U << ((uint32_t)bit % 8)));
 			if (ext2_write_block(ep, bgd->bg_inode_bitmap,
 			                     bitmap) < 0)
 				return -EIO;
@@ -814,7 +814,7 @@ static int ext2_alloc_inode(struct ext2_priv *ep, uint32_t *ino_out,
 			                                inodes_in_group);
 			if (bit < 0)
 				continue;
-			bitmap[bit / 8] &= ~(1U << ((uint32_t)bit % 8));
+			bitmap[bit / 8] = (uint8_t)(bitmap[bit / 8] & ~(1U << ((uint32_t)bit % 8)));
 			if (ext2_write_block(ep, bgd->bg_inode_bitmap,
 			                     bitmap) < 0)
 				return -EIO;
@@ -3291,7 +3291,7 @@ int ext2_mount(const char *mountpoint, uint8_t dev_id) {
         kfree(ep);
         return -ENOMEM;
     }
-    ep->bgd_cache_size = bgd_table_bytes;
+    ep->bgd_cache_size = (uint32_t)bgd_table_bytes;
     memset(ep->bgd_cache, 0, bgd_table_bytes);
 
     /* Read the bgd blocks one at a time into the cache */
@@ -3304,7 +3304,7 @@ int ext2_mount(const char *mountpoint, uint8_t dev_id) {
             kfree(ep);
             return -EIO;
         }
-        uint32_t copy_size = bgd_table_bytes - bytes_read;
+        uint32_t copy_size = (uint32_t)(bgd_table_bytes - bytes_read);
         if (copy_size > ep->block_size) copy_size = ep->block_size;
         memcpy((uint8_t *)ep->bgd_cache + bytes_read, block_buf, copy_size);
         bytes_read += copy_size;
@@ -3410,7 +3410,7 @@ static int ext2_resize_bgd_cache(struct ext2_priv *ep, uint32_t new_num_groups)
         kfree(ep->bgd_cache);
 
     ep->bgd_cache = new_cache;
-    ep->bgd_cache_size = new_size;
+    ep->bgd_cache_size = (uint32_t)new_size;
     return 0;
 }
 
@@ -3453,7 +3453,7 @@ static int ext2_sync_bgd(struct ext2_priv *ep)
     uint32_t offset = 0;
     for (uint32_t i = 0; i < bgd_blocks; i++) {
         memset(block_buf, 0, ep->block_size);
-        uint32_t copy = bgd_bytes - offset;
+        uint32_t copy = (uint32_t)(bgd_bytes - offset);
         if (copy > ep->block_size) copy = ep->block_size;
         memcpy(block_buf, (uint8_t *)ep->bgd_cache + offset, copy);
 
@@ -3478,7 +3478,7 @@ static int ext2_sync_bgd(struct ext2_priv *ep)
         offset = 0;
         for (uint32_t i = 0; i < bgd_blocks; i++) {
             memset(block_buf, 0, ep->block_size);
-            uint32_t copy = bgd_bytes - offset;
+            uint32_t copy = (uint32_t)(bgd_bytes - offset);
             if (copy > ep->block_size) copy = ep->block_size;
             memcpy(block_buf, (uint8_t *)ep->bgd_cache + offset, copy);
 
@@ -4062,7 +4062,7 @@ static int ext2_init_new_group(struct ext2_priv *ep, uint32_t group)
 
         /* Mark used: superblock, BGD, bitmaps, inode table */
         for (uint32_t b = 0; b < metadata_blocks && b < blocks_per_group; b++) {
-            bitmap[b / 8] &= ~(1U << (b % 8)); /* mark as used */
+            bitmap[b / 8] = (uint8_t)(bitmap[b / 8] & ~(1U << (b % 8))); /* mark as used */
         }
 
         /* Write the block bitmap */

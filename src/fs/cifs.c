@@ -587,7 +587,7 @@ static int cifs_smb2_create(struct cifs_mount_info *mnt, const char *path,
     uint16_t name_len = (uint16_t)strlen(path);
 
     /* We use ASCII name; SMB2 expects UTF-16 but we send ASCII with len*2 */
-    smb2_put16(&p, name_offset);
+    smb2_put16(&p, (uint16_t)name_offset);
     smb2_put16(&p, name_len);
 
     /* Create context offset (8 bytes) */
@@ -1452,6 +1452,6 @@ int cifs_write(void *file, const void *buf, size_t count, uint64_t offset)
     (void)buf;
     (void)count;
     (void)offset;
-    kprintf("[cifs] cifs_write: %zu bytes at %llu\n", count, (unsigned long long)offset);
+    kprintf("[cifs] cifs_write: %llu bytes at %llu\n", (unsigned long long)count, (unsigned long long)offset);
     return (int)count;
 }

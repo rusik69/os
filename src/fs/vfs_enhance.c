@@ -255,7 +255,7 @@ int vfs_seek(const char *path, uint64_t offset, int whence) {
     if (vfs_stat(ap, &st) < 0)
         return -EINVAL;
     if (offset >= st.size)
-        return st.size;
+        return (int)st.size;
     if (whence == 3) /* SEEK_DATA */
         return (int)offset;
     /* SEEK_HOLE — no holes, return file size */
@@ -533,7 +533,7 @@ int vfs_enhance_read(void *file, void *buf, size_t count, uint64_t offset)
     (void)buf;
     (void)count;
     (void)offset;
-    kprintf("[vfs_enhance] read at %llu count=%zu\n", (unsigned long long)offset, count);
+    kprintf("[vfs_enhance] read at %llu count=%llu\n", (unsigned long long)offset, count);
     return 0;
 }
 /* ── vfs_enhance_write ──────────────────────────────────── */
@@ -543,7 +543,7 @@ int vfs_enhance_write(void *file, const void *buf, size_t count, uint64_t offset
     (void)buf;
     (void)count;
     (void)offset;
-    kprintf("[vfs_enhance] write at %llu count=%zu\n", (unsigned long long)offset, count);
+    kprintf("[vfs_enhance] write at %llu count=%llu\n", (unsigned long long)offset, count);
     return (int)count;
 }
 /* ── vfs_enhance_open ───────────────────────────────────── */

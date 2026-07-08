@@ -254,8 +254,8 @@ static int helper_dispatch_hook(void *skb, int hook)
     if (l4_off < 0 || l4_off > 65535)
         return NF_ACCEPT;
 
-    uint16_t l4_payload_avail = (total_len > (uint16_t)ip_hdr_len)
-                                ? (total_len - ip_hdr_len) : 0;
+    uint16_t l4_payload_avail = (uint16_t)((total_len > (uint16_t)ip_hdr_len)
+                                ? (total_len - ip_hdr_len) : 0);
     (void)l4_payload_avail;  /* used implicitly below */
 
     int from_originator = 1;  /* direction relative to helper */
@@ -274,8 +274,8 @@ static int helper_dispatch_hook(void *skb, int hook)
             return NF_ACCEPT;
 
         int payload_off = l4_off + tcp_hdr_len;
-        uint16_t tcp_payload_len = (total_len > (uint16_t)(ip_hdr_len + tcp_hdr_len))
-                                   ? (total_len - ip_hdr_len - tcp_hdr_len) : 0;
+        uint16_t tcp_payload_len = (uint16_t)((total_len > (uint16_t)(ip_hdr_len + tcp_hdr_len))
+                                   ? (total_len - ip_hdr_len - tcp_hdr_len) : 0);
 
         /* Only inspect packets with data (non-empty payload) and PSH or ACK */
         if (tcp_payload_len == 0)

@@ -188,10 +188,10 @@ int  blockdev_discard(int dev_id, uint64_t lba, uint32_t count);
 int  blk_submit_async(struct blk_request *req);
 
 /* Legacy wrapper API (kept for compatibility) */
-static inline int blockdev_read_sectors(int id, uint32_t lba, uint8_t count, void *buf) {
+static inline int blockdev_read_sectors(int id, uint64_t lba, uint8_t count, void *buf) {
     return blk_submit_sync(id, lba, count, buf, BLK_REQ_READ);
 }
-static inline int blockdev_write_sectors(int id, uint32_t lba, uint8_t count, const void *buf) {
+static inline int blockdev_write_sectors(int id, uint64_t lba, uint8_t count, const void *buf) {
     return blk_submit_sync(id, lba, count, (void*)buf, BLK_REQ_WRITE);
 }
 

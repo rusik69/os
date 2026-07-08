@@ -196,7 +196,7 @@ int initramfs_extract(void) {
 /* ── initramfs_load ───────────────────────────────────── */
 int initramfs_load(const void *data, size_t size)
 {
-    kprintf("[initramfs] Loading initramfs data at %p size %zu\n", data, size);
+    kprintf("[initramfs] Loading initramfs data at %p size %llu\n", data, (unsigned long long)size);
     return cpio_extract_initramfs((uint32_t)(uintptr_t)data, (uint32_t)size);
 }
 /* ── initramfs_cleanup ─────────────────────────────────── */

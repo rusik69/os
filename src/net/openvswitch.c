@@ -264,8 +264,8 @@ int ovs_flow_execute(const struct ovs_flow_key *key,
                         uint32_t val = flow->actions[j].set_field_val;
                         uint8_t f_len = flow->actions[j].field_len;
                         if (f_len == 0) f_len = 4;
-                        uint32_t copy_len = (f_len < len - flow->actions[j].field_offset) ?
-                                             f_len : (len - flow->actions[j].field_offset);
+                        uint32_t copy_len = (uint32_t)((f_len < len - flow->actions[j].field_offset) ?
+                                             f_len : (len - flow->actions[j].field_offset));
                         memcpy(packet + flow->actions[j].field_offset, &val, copy_len);
                     }
                     break;
@@ -305,7 +305,7 @@ int ovs_flow_execute(const struct ovs_flow_key *key,
                         int total = sizeof(*outer) + 4 + inner_len;
 
                         /* Send encapsulated packet */
-                        send_eth(packet + 6, 0x0800, encap_buf, total);
+                        send_eth(packet + 6, 0x0800, encap_buf, (uint16_t)total);
                     }
                     break;
                 }
