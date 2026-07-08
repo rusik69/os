@@ -579,13 +579,14 @@ static int kmemleak_debugfs_write(const char *data, uint32_t size, void *priv)
     /* Check for "clear" command */
     if (size - pos >= 5 && p[0] == 'c' && p[1] == 'l' &&
         p[2] == 'e' && p[3] == 'a' && p[4] == 'r') {
-        spinlock_acquire(&g_lock);
+        uint64_t irq_flags;
+        spinlock_irqsave_acquire(&g_lock, &irq_flags);
         g_leak_count = 0;
         for (int i = 0; i < KMEMLEAK_MAX_TRACKED; i++) {
             if (g_entries[i].in_use)
                 g_entries[i].leaks_reported = 0;
         }
-        spinlock_release(&g_lock);
+        spinlock_irqsave_release(&g_lock, irq_flags);
         kprintf("[kmemleak] leak counters cleared\n");
         return 0;
     }
