@@ -646,14 +646,6 @@ static int unix_dgram_sendto(int idx, const void *data, uint32_t len,
                         dg.has_creds = 1;
                     }
                 }
-            } else if (cmsg->cmsg_level == SOL_UNIX) {
-                if (cmsg->cmsg_type == SCM_CREDENTIALS) {
-                    if (cmsg->cmsg_len >= CMSG_LEN(sizeof(struct ucred))) {
-                        struct ucred *uc = (struct ucred *)CMSG_DATA(cmsg);
-                        dg.creds = *uc;
-                        dg.has_creds = 1;
-                    }
-                }
             }
             cmsg = CMSG_NXTHDR(msg, cmsg);
         }
@@ -771,7 +763,7 @@ static int unix_process_cmsg_ancillary(struct unix_ep *ep,
 
     struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg);
     while (cmsg) {
-        if (cmsg->cmsg_level == SOL_SOCKET || cmsg->cmsg_level == SOL_UNIX) {
+        if (cmsg->cmsg_level == SOL_SOCKET) {
             if (cmsg->cmsg_type == SCM_CREDENTIALS &&
                 cmsg->cmsg_len >= CMSG_LEN(sizeof(struct ucred))) {
                 struct ucred *uc = (struct ucred *)CMSG_DATA(cmsg);

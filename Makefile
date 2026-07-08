@@ -66,7 +66,7 @@ VERMAGIC_FLAGS += -DCONFIG_SMP
 # __printf annotations are still present for documentation and static analysis.
 CFLAGS = -std=c17 -ffreestanding -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
          -fstack-protector-strong -fstack-clash-protection -mstack-protector-guard=global -fno-omit-frame-pointer -nostdlib -nostdinc -fno-builtin \
-         -Wall -Wextra -Werror -Wshadow -Wcast-qual -Wundef -Wduplicated-branches -Wno-format -Wno-sign-conversion -Wno-unused-function -Wno-unused-parameter -Wno-unused-variable -Wno-unused-but-set-variable -Isrc/include -Iuserspace/kmods/gui -Iuserspace/kmods/doom -mcmodel=large -g \
+         -Wall -Wextra -Werror -Wshadow -Wcast-qual -Wundef -Wduplicated-branches -Wduplicated-cond -Wno-format -Wno-sign-conversion -Wno-unused-function -Wno-unused-parameter -Wno-unused-variable -Wno-unused-but-set-variable -Isrc/include -Iuserspace/kmods/gui -Iuserspace/kmods/doom -mcmodel=large -g \
          -Wa,--noexecstack -O2 -MMD -MP \
          -include kernel_pch.h \
          -DKVERSION=\"$(KVERSION)\" \
