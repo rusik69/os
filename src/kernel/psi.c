@@ -279,16 +279,22 @@ int psi_gen_proc_file(int resource, char *buf, int max)
     psi_format_pct(full_300, full_avg300_fp);
 
     int pos = 0;
-    pos += snprintf(buf + pos, (size_t)(max - pos),
-                     "some avg10=%s avg60=%s avg300=%s total=%llu\n",
-                     some_10, some_60, some_300,
-                     (unsigned long long)some_total_us);
+    {
+        int n = snprintf(buf + pos, (size_t)(max - pos),
+                         "some avg10=%s avg60=%s avg300=%s total=%llu\n",
+                         some_10, some_60, some_300,
+                         (unsigned long long)some_total_us);
+        if (n > 0 && pos + n < max - 1) pos += n;
+    }
     if (pos >= max - 1) return max - 1;
 
-    pos += snprintf(buf + pos, (size_t)(max - pos),
+    {
+        int n = snprintf(buf + pos, (size_t)(max - pos),
                      "full avg10=%s avg60=%s avg300=%s total=%llu\n",
                      full_10, full_60, full_300,
                      (unsigned long long)full_total_us);
+        if (n > 0 && pos + n < max) pos += n;
+    }
     if (pos >= max) pos = max - 1;
     buf[pos] = '\0';
     return pos;

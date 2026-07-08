@@ -1365,7 +1365,7 @@ check: $(BUILDDIR)/disk.img unit-test
 
 # ── check-full: build with ALL strict warning flags ───────────────
 CHECK_FULL_CFLAGS = $(CFLAGS) -Werror -Wpedantic -Wconversion -Wshadow \
-                    -Wformat=2 -Wundef -Wcast-align -Wstrict-prototypes \
+                    -Wformat=2 -Wformat-truncation -Wundef -Wcast-align -Wstrict-prototypes \
                     -Wold-style-definition -Wpadded -Wno-error=padded
 BUILDDIR_CHECK_FULL = build_check_full
 

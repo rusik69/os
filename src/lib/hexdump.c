@@ -28,13 +28,19 @@ static int hexdump_to_buf(const void *buf, size_t len, char *out, size_t out_len
     const uint8_t *p = (const uint8_t *)buf;
     size_t pos = 0;
     for (size_t i = 0; i < len && pos + 5 < out_len; i += 16) {
-        pos += snprintf(out + pos, out_len - pos, "%04lx: ", (unsigned long)i);
+        {
+            int n = snprintf(out + pos, out_len - pos, "%04lx: ", (unsigned long)i);
+            if (n > 0 && pos + (size_t)n < out_len) pos += n;
+        }
         for (size_t j = 0; j < 16; j++) {
             if (pos + 3 >= out_len) break;
-            if (i + j < len)
-                pos += snprintf(out + pos, out_len - pos, "%02x ", p[i + j]);
-            else
-                pos += snprintf(out + pos, out_len - pos, "   ");
+            if (i + j < len) {
+                int n = snprintf(out + pos, out_len - pos, "%02x ", p[i + j]);
+                if (n > 0 && pos + (size_t)n < out_len) pos += n;
+            } else {
+                int n = snprintf(out + pos, out_len - pos, "   ");
+                if (n > 0 && pos + (size_t)n < out_len) pos += n;
+            }
             if (j == 7 && pos < out_len)
                 out[pos++] = ' ';
         }

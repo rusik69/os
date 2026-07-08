@@ -338,7 +338,7 @@ static int slaves_read_cb(char *buf, uint32_t max_size, void *priv)
         const char *name = slave_nd ? slave_nd->name : "?";
         int n = snprintf(buf + pos, (size_t)(max_size - (uint32_t)pos),
                          "%s\n", name);
-        if (n > 0) pos += n;
+        if (n > 0 && pos + n < (int)max_size) pos += n;
     }
 
     spinlock_irqsave_release(&g_bond_lock, irq_flags);

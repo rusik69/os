@@ -400,20 +400,26 @@ int mpath_status(int mpath_id, char *buf, int max)
     int pos = 0;
 
     spinlock_acquire(&mp->lock);
-    pos += snprintf(buf + pos, (size_t)(max - pos),
-                    "mpath '%s': %d paths, selector %d\n",
-                    mp->name, mp->num_paths, mp->selector);
+    {
+        int n = snprintf(buf + pos, (size_t)(max - pos),
+                        "mpath '%s': %d paths, selector %d\n",
+                        mp->name, mp->num_paths, mp->selector);
+        if (n > 0 && pos + n < max) pos += n;
+    }
     for (int i = 0; i < mp->num_paths && pos < max; i++) {
         struct mpath_path *p = &mp->paths[i];
         const char *state_str = "active";
         if (p->state == MPATH_PATH_FAILED) state_str = "FAILED";
         else if (p->state == MPATH_PATH_RECOVERING) state_str = "recovering";
-        pos += snprintf(buf + pos, (size_t)(max - pos),
-                        "  path %d: dev=%d state=%s out=%llu fails=%llu svc=%lluns\n",
-                        i, p->dev_id, state_str,
-                        (unsigned long long)p->outstanding,
-                        (unsigned long long)p->fail_count,
-                        (unsigned long long)p->service_time_ns);
+        {
+            int n = snprintf(buf + pos, (size_t)(max - pos),
+                            "  path %d: dev=%d state=%s out=%llu fails=%llu svc=%lluns\n",
+                            i, p->dev_id, state_str,
+                            (unsigned long long)p->outstanding,
+                            (unsigned long long)p->fail_count,
+                            (unsigned long long)p->service_time_ns);
+            if (n > 0 && pos + n < max) pos += n;
+        }
     }
     spinlock_release(&mp->lock);
     return pos;

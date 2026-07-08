@@ -100,23 +100,27 @@ static void dyndbg_control_file_read(char *buf, int *len)
     int pos = 0;
     int max = 1024;
 
-    pos += snprintf(buf + pos, (size_t)(max - pos),
-                    "# Dynamic debug control\n"
-                    "# Syntax: all <+p|-p>\n"
-                    "#         module <name> +p|-p\n"
-                    "#         file   <name> +p|-p\n"
-                    "#         func   <name> +p|-p\n"
-                    "\n"
-                    "all: %s\n",
-                    (dyndbg_all_enabled || dyndbg_all_funcs) ? "+p" : "-p");
+    {
+        int n = snprintf(buf + pos, (size_t)(max - pos),
+                        "# Dynamic debug control\n"
+                        "# Syntax: all <+p|-p>\n"
+                        "#         module <name> +p|-p\n"
+                        "#         file   <name> +p|-p\n"
+                        "#         func   <name> +p|-p\n"
+                        "\n"
+                        "all: %s\n",
+                        (dyndbg_all_enabled || dyndbg_all_funcs) ? "+p" : "-p");
+        if (n > 0 && pos + n < max) pos += n;
+    }
 
     /* Report legacy dyndbg-registered sites */
     for (int i = 0; i < debug_count; i++) {
-        pos += snprintf(buf + pos, (size_t)(max - pos),
+        int n = snprintf(buf + pos, (size_t)(max - pos),
                         "site:%s flags:%s (%s)\n",
                         debug_sites[i].name,
                         debug_sites[i].enabled ? "+p" : "-p",
                         debug_sites[i].enabled ? "enabled" : "disabled");
+        if (n > 0 && pos + n < max) pos += n;
         if (pos >= max - 64) break;
     }
 

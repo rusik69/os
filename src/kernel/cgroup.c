@@ -153,10 +153,13 @@ static int cgroup_v2_read(void *priv, const char *path, void *buf,
     /* Build hierarchy info listing all mounted cgroups and their controllers */
     char tmp[512];
     int pos = 0;
-    pos += snprintf(tmp + pos, sizeof(tmp) - (size_t)pos,
-        "# Cgroup v2 unified hierarchy\n"
-        "# Controllers: cpu memory io pids freezer\n"
-        "# /sys/fs/cgroup/ mounted\n\n");
+    {
+        int n = snprintf(tmp + pos, sizeof(tmp) - (size_t)pos,
+            "# Cgroup v2 unified hierarchy\n"
+            "# Controllers: cpu memory io pids freezer\n"
+            "# /sys/fs/cgroup/ mounted\n\n");
+        if (n > 0 && pos + n < (int)sizeof(tmp)) pos += n;
+    }
 
     spinlock_acquire(&g_cgroup_lock);
     for (int i = 0; i < CGROUP_MAX; i++) {
@@ -181,11 +184,14 @@ static int cgroup_v2_read(void *priv, const char *path, void *buf,
         if (ctrl[0] == '\0')
             strlcpy(ctrl, "-", sizeof(ctrl));
 
-        pos += snprintf(tmp + pos, sizeof(tmp) - (size_t)pos,
-            "  cgroup[%d]  parent=%d  pids=%lu  controllers=%s\n",
-            i, g_cgroups[i].parent_id,
-            (unsigned long)g_cgroups[i].pids.current,
-            ctrl);
+        {
+            int n = snprintf(tmp + pos, sizeof(tmp) - (size_t)pos,
+                "  cgroup[%d]  parent=%d  pids=%lu  controllers=%s\n",
+                i, g_cgroups[i].parent_id,
+                (unsigned long)g_cgroups[i].pids.current,
+                ctrl);
+            if (n > 0 && pos + n < (int)sizeof(tmp)) pos += n;
+        }
     }
     spinlock_release(&g_cgroup_lock);
 
