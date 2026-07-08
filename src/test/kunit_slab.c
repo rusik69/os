@@ -207,7 +207,7 @@ static void slab_cache_multi_alloc_test(struct kunit *test)
     KUNIT_EXPECT_TRUE(test, success);
 
     /* Verify each object */
-    for (int i = 0; i < SLAB_MULTI_N && i < 64; i++) {
+    for (int i = 0; i < SLAB_MULTI_N; i++) {
         if (!objs[i]) continue;
         KUNIT_EXPECT_EQ(test, (int64_t)objs[i]->magic, (int64_t)0xCAFEBABE);
         KUNIT_EXPECT_EQ(test, (int64_t)objs[i]->id, (int64_t)i);

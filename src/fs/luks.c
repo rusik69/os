@@ -94,7 +94,7 @@ static int luks2_parse_header(int dev_id, struct luks_header *hdr)
 
         /* Find keyslot names (e.g., "0": { ... }) */
         const char *slot_start = ks_key + 10;
-        for (int slot = 0; slot < LUKS_KEY_SLOTS && slot < 8; slot++) {
+        for (int slot = 0; slot < LUKS_KEY_SLOTS; slot++) {
             char slot_tag[8];
             snprintf(slot_tag, sizeof(slot_tag), "\"%d\":", slot);
             const char *s = strstr(slot_start, slot_tag);

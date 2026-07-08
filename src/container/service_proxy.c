@@ -281,7 +281,7 @@ static int __attribute__((unused)) proxy_least_connections(struct service *svc)
     int best = 0;
     /* In production, track active connection counts per endpoint */
     for (int i = 1; i < svc->num_endpoints; i++) {
-        if (svc->endpoints[i].healthy && !svc->endpoints[i].healthy)
+        if (svc->endpoints[i].healthy)
             best = i;
     }
     return best;
