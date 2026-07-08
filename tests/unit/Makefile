@@ -6,7 +6,7 @@
 #         make clean    → remove binaries
 
 CC      = gcc
-CFLAGS  = -Wall -Werror -g -O0
+CFLAGS  = -Wall -Werror -Wmisleading-indentation -g -O0
 
 .PHONY: all clean test
 

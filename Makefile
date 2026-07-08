@@ -69,7 +69,7 @@ VERMAGIC_FLAGS += -DCONFIG_SMP
 # target (-Wformat=2) catches any future format-security regressions.
 CFLAGS = -std=c17 -ffreestanding -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
          -fstack-protector-strong -fstack-clash-protection -mstack-protector-guard=global -fno-omit-frame-pointer -nostdlib -nostdinc -fno-builtin \
-         -Wall -Wextra -Werror -Wshadow -Wcast-qual -Wundef -Wimplicit-fallthrough=5 -Wtautological-compare -Wduplicated-branches -Wduplicated-cond -Wrestrict -Wstringop-truncation -Warray-bounds=2 -Wno-format -Wno-sign-conversion -Wno-unused-function -Wno-unused-parameter -Wno-unused-variable -Wno-unused-but-set-variable -Isrc/include -Iuserspace/kmods/gui -Iuserspace/kmods/doom -mcmodel=large -g \
+         -Wall -Wextra -Werror -Wmisleading-indentation -Wshadow -Wcast-qual -Wundef -Wimplicit-fallthrough=5 -Wtautological-compare -Wduplicated-branches -Wduplicated-cond -Wrestrict -Wstringop-truncation -Warray-bounds=2 -Wno-format -Wno-sign-conversion -Wno-unused-function -Wno-unused-parameter -Wno-unused-variable -Wno-unused-but-set-variable -Isrc/include -Iuserspace/kmods/gui -Iuserspace/kmods/doom -mcmodel=large -g \
          -Wa,--noexecstack -O2 -MMD -MP \
          -include kernel_pch.h \
          -DKVERSION=\"$(KVERSION)\" \
@@ -1366,7 +1366,7 @@ check: $(BUILDDIR)/disk.img unit-test
 # ── check-full: build with ALL strict warning flags ───────────────
 CHECK_FULL_CFLAGS = $(CFLAGS) -Werror -Wpedantic -Wconversion -Wshadow \
                     -Wformat=2 -Wformat-truncation -Wundef -Wcast-align -Wstrict-prototypes \
-                    -Wold-style-definition -Wpadded -Wno-error=padded
+                    -Wold-style-definition -Wpadded -Wno-error=padded -Wmisleading-indentation
 BUILDDIR_CHECK_FULL = build_check_full
 
 C_CHECK_FULL_SRCS  = $(C_SRCS) $(CMD_SRCS) $(COMPILER_SRCS) $(GUI_SRCS) $(DOOM_SRCS) src/test/test.c
