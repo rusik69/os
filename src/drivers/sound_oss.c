@@ -218,15 +218,17 @@ static void dma_transfer_simulate(void)
 
 	/* Apply volume scaling for 16-bit samples */
 	if (g_sample_format == AFMT_S16_LE) {
-		int16_t *samples = (int16_t *)tmp;
-		int nsamples = (int)(nread / 2);
-		for (int i = 0; i < nsamples; i++) {
-			int32_t s = samples[i];
-			s = (s * g_play_volume) / 255;
-			if (s > 32767) s = 32767;
-			if (s < -32768) s = -32768;
-			samples[i] = (int16_t)s;
-		}
+	    int nsamples = (int)(nread / 2);
+	    for (int i = 0; i < nsamples; i++) {
+	        int16_t s;
+	        memcpy(&s, tmp + (size_t)i * 2, sizeof(s));
+	        int32_t scaled = s;
+	        scaled = (scaled * g_play_volume) / 255;
+	        if (scaled > 32767) scaled = 32767;
+	        if (scaled < -32768) scaled = -32768;
+	        s = (int16_t)scaled;
+	        memcpy(tmp + (size_t)i * 2, &s, sizeof(s));
+	    }
 	} else if (g_sample_format == AFMT_U8) {
 		/* Scale for U8 samples */
 		for (uint32_t i = 0; i < nread; i++) {
@@ -254,7 +256,10 @@ static void dma_transfer_simulate(void)
 			ac97_play_pcm(s16_buf, (uint32_t)(nsamples * 2),
 				      (uint32_t)g_sample_rate);
 		} else {
-			ac97_play_pcm((int16_t *)tmp, nread,
+			/* Use a properly-aligned copy for unaligned source */
+			int16_t aligned_tmp[DMA_OUT_BUF_SIZE / 2];
+			memcpy(aligned_tmp, tmp, nread);
+			ac97_play_pcm(aligned_tmp, nread,
 				      (uint32_t)g_sample_rate);
 		}
 	}

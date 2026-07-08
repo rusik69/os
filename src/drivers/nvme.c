@@ -843,7 +843,10 @@ int nvme_deallocate(int ns_id, uint64_t lba, uint32_t count) {
      *   bytes 8-15: Starting LBA */
     range[0] = 0;                                      /* attributes */
     range[1] = count - 1;                               /* length (0-based) */
-    *(uint64_t *)&range[2] = lba;                       /* starting LBA */
+    {
+        uint64_t lba_tmp = lba;
+        memcpy(&range[2], &lba_tmp, sizeof(lba_tmp));  /* starting LBA */
+    }
 
     __sync_synchronize();
 

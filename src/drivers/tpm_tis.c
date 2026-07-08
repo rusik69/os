@@ -1507,7 +1507,10 @@ static int build_pcr_read_cmd(uint8_t *buf, uint32_t *buf_len,
     hdr->total_size = total;
 
     /* Update total size in header */
-    *(uint32_t *)(buf + 2) = total;
+    {
+        uint32_t total_be = total;
+        memcpy(buf + 2, &total_be, sizeof(total_be));
+    }
 
     *buf_len = total;
     return 0;
@@ -1533,19 +1536,28 @@ static int build_pcr_extend_cmd(uint8_t *buf, uint32_t *buf_len,
     uint8_t *p = buf + sizeof(struct tpm_cmd_hdr);
 
     /* PCR handle */
-    *(uint32_t *)p = pcr_index;
+    memcpy(p, &pcr_index, sizeof(pcr_index));
     p += 4;
 
     /* No authorization session (simplified — not using TPM2_RS_PW) */
-    *(uint32_t *)p = 0;  /* authorizationSize = 0 */
+    {
+        uint32_t zero = 0;
+        memcpy(p, &zero, sizeof(zero));
+    }
     p += 4;
 
     /* Digests count */
-    *(uint32_t *)p = 1;  /* count = 1 (SHA-256) */
+    {
+        uint32_t one = 1;
+        memcpy(p, &one, sizeof(one));
+    }
     p += 4;
 
     /* Hash algorithm (SHA-256) */
-    *(uint16_t *)p = TPM2_ALG_SHA256;  /* algorithm ID */
+    {
+        uint16_t alg = TPM2_ALG_SHA256;
+        memcpy(p, &alg, sizeof(alg));
+    }
     p += 2;
 
     /* Digest value */

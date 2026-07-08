@@ -374,7 +374,8 @@ static int usb_printer_probe(const struct usb_device *dev_desc)
 		return -ENODEV;
 	}
 
-	uint16_t total_len = *(const uint16_t *)(config_buf + 2);
+	uint16_t total_len;
+	memcpy(&total_len, config_buf + 2, sizeof(total_len));
 	if (total_len > sizeof(config_buf)) {
 		kprintf("[printer] config too large (%u), truncating\n",
 			total_len);

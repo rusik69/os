@@ -358,14 +358,17 @@ static uint16_t lro_tcp_csum4(uint32_t src_ip, uint32_t dst_ip,
     sum += htons((uint16_t)tcp_len);
 
     /* Add TCP segment data */
-    const uint16_t *p = (const uint16_t *)tcp_seg;
+    const uint8_t *seg_bytes = (const uint8_t *)tcp_seg;
     int len = tcp_len;
     while (len >= 2) {
-        sum += *p++;
+        uint16_t val;
+        memcpy(&val, seg_bytes, sizeof(val));
+        sum += val;
+        seg_bytes += 2;
         len -= 2;
     }
     if (len)
-        sum += *(const uint8_t *)p;
+        sum += *seg_bytes;
 
     while (sum >> 16)
         sum = (sum & 0xFFFF) + (sum >> 16);
@@ -1858,7 +1861,10 @@ int virtio_net_ctrl_set_mac_table(const uint8_t *uc_macs, uint16_t num_uc,
         return -EINVAL;
 
     /* Write unicast count */
-    *(uint32_t *)(buf + offset) = (uint32_t)num_uc;
+    {
+        uint32_t ucnt = (uint32_t)num_uc;
+        memcpy(buf + offset, &ucnt, sizeof(ucnt));
+    }
     offset += sizeof(uint32_t);
 
     /* Write unicast MAC addresses */
@@ -1868,7 +1874,10 @@ int virtio_net_ctrl_set_mac_table(const uint8_t *uc_macs, uint16_t num_uc,
     }
 
     /* Write multicast count */
-    *(uint32_t *)(buf + offset) = (uint32_t)num_mc;
+    {
+        uint32_t mcnt = (uint32_t)num_mc;
+        memcpy(buf + offset, &mcnt, sizeof(mcnt));
+    }
     offset += sizeof(uint32_t);
 
     /* Write multicast MAC addresses */

@@ -151,11 +151,14 @@ int simplefb_init_from_multiboot2(uint64_t mboot_info_phys)
                 goto skip;
 
             uint8_t *data = (uint8_t*)(uintptr_t)(mboot_info_phys + offset + 8);
-            uint64_t fb_addr   = *(uint32_t*)(data);
-            fb_addr           |= ((uint64_t)*(uint32_t*)(data + 4)) << 32;
-            uint32_t pitch    = *(uint32_t*)(data + 8);
-            uint32_t width    = *(uint32_t*)(data + 12);
-            uint32_t height   = *(uint32_t*)(data + 16);
+            uint64_t fb_addr;
+            memcpy(&fb_addr, data, sizeof(fb_addr));
+            uint32_t pitch;
+            memcpy(&pitch, data + 8, sizeof(pitch));
+            uint32_t width;
+            memcpy(&width, data + 12, sizeof(width));
+            uint32_t height;
+            memcpy(&height, data + 16, sizeof(height));
             uint8_t  bpp      = *(uint8_t*)(data + 24);
             uint8_t  fb_type  = *(uint8_t*)(data + 25);
             (void)bpp;

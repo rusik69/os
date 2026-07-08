@@ -275,8 +275,11 @@ static int iscsi_read_capacity_10(struct iscsi_session *sess)
     if (ret < 0) return ret;
 
     /* READ CAPACITY(10) returns 8 bytes: 4 bytes LBA (last), 4 bytes block length */
-    uint32_t last_lba = iscsi_htonl(*(uint32_t *)data);
-    uint32_t block_len = iscsi_htonl(*(uint32_t *)(data + 4));
+    uint32_t last_lba_raw, block_len_raw;
+    memcpy(&last_lba_raw, data, sizeof(last_lba_raw));
+    memcpy(&block_len_raw, data + 4, sizeof(block_len_raw));
+    uint32_t last_lba = iscsi_htonl(last_lba_raw);
+    uint32_t block_len = iscsi_htonl(block_len_raw);
 
     sess->sector_count = (uint64_t)last_lba + 1;
     sess->sector_size = block_len;

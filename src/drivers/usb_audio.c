@@ -787,11 +787,11 @@ static int parse_uac2_control_desc(struct audio_device *dev,
 
 		struct audio_terminal *t = &dev->terminals[dev->num_terminals];
 		t->id = data[3];
-		t->terminal_type = *(const uint16_t *)(data + 4);
+		memcpy(&t->terminal_type, data + 4, sizeof(t->terminal_type));
 		t->assoc_terminal = data[6];
 		/* bCSourceID at offset 7 */
 		t->nr_channels = data[8];
-		t->channel_config = *(const uint16_t *)(data + 9);
+		memcpy(&t->channel_config, data + 9, sizeof(t->channel_config));
 		t->is_input = 1;
 
 		uint8_t clock_id = data[7];
@@ -823,7 +823,7 @@ static int parse_uac2_control_desc(struct audio_device *dev,
 
 		struct audio_terminal *t = &dev->terminals[dev->num_terminals];
 		t->id = data[3];
-		t->terminal_type = *(const uint16_t *)(data + 4);
+		memcpy(&t->terminal_type, data + 4, sizeof(t->terminal_type));
 		t->assoc_terminal = data[6];
 		t->is_input = 0;
 
@@ -872,7 +872,8 @@ static int parse_uac2_control_desc(struct audio_device *dev,
 		int num_controls = 0;
 
 		while (offset + 4 + 1 <= length) {
-			uint32_t ctrl = *(const uint32_t *)(data + offset);
+			uint32_t ctrl;
+			memcpy(&ctrl, data + offset, sizeof(ctrl));
 
 			if (num_controls == 0) {
 				fu->master_controls = (uint16_t)(ctrl & 0xFFFF);
@@ -1101,10 +1102,10 @@ static int parse_audio_control_desc(struct audio_device *dev,
 
 		struct audio_terminal *t = &dev->terminals[dev->num_terminals];
 		t->id = data[3];
-		t->terminal_type = *(const uint16_t *)(data + 4);
+		memcpy(&t->terminal_type, data + 4, sizeof(t->terminal_type));
 		t->assoc_terminal = data[6];
 		t->nr_channels = data[7];
-		t->channel_config = *(const uint16_t *)(data + 8);
+		memcpy(&t->channel_config, data + 8, sizeof(t->channel_config));
 		t->is_input = 1;
 
 		kprintf("[usb_audio] Input Terminal id=%u type=0x%04X "
@@ -1133,7 +1134,7 @@ static int parse_audio_control_desc(struct audio_device *dev,
 
 		struct audio_terminal *t = &dev->terminals[dev->num_terminals];
 		t->id = data[3];
-		t->terminal_type = *(const uint16_t *)(data + 4);
+		memcpy(&t->terminal_type, data + 4, sizeof(t->terminal_type));
 		t->assoc_terminal = data[6];
 		t->is_input = 0;
 
@@ -1192,7 +1193,7 @@ static int parse_audio_control_desc(struct audio_device *dev,
 			if (cs == 1) {
 				ctrl = data[offset];
 			} else {
-				ctrl = *(const uint16_t *)(data + offset);
+				memcpy(&ctrl, data + offset, sizeof(ctrl));
 			}
 
 			if (num_controls == 0) {
@@ -1266,7 +1267,8 @@ static int parse_audio_streaming_desc(struct audio_device *dev,
 			return -EINVAL;
 
 		uint8_t term_link = data[3];
-		uint16_t fmt_tag = *(const uint16_t *)(data + 5);
+		uint16_t fmt_tag;
+		memcpy(&fmt_tag, data + 5, sizeof(fmt_tag));
 
 		kprintf("[usb_audio] AS General: terminal_link=%u "
 			"fmt_tag=0x%04X\n", term_link, fmt_tag);
@@ -1604,7 +1606,8 @@ static int usb_audio_probe(const struct usb_device *dev_desc)
 		return 0;
 	}
 
-	uint16_t total_len = *(const uint16_t *)(config_buf + 2);
+	uint16_t total_len;
+	memcpy(&total_len, config_buf + 2, sizeof(total_len));
 	if (total_len > sizeof(config_buf)) {
 		kprintf("[usb_audio] config too large (%u), truncating\n",
 			total_len);

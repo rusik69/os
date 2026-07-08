@@ -74,15 +74,16 @@ static int nbd_negotiate(int conn_id, struct nbd_device *dev)
         return -1;
     }
 
-    uint64_t magic = *(uint64_t *)buf;
+    uint64_t magic;
+    memcpy(&magic, buf, sizeof(magic));
     if (magic != NBD_MAGIC) {
         kprintf("[NBD] Bad magic: 0x%llx (expected 0x%llx)\n",
                 (unsigned long long)magic, (unsigned long long)NBD_MAGIC);
         return -1;
     }
 
-    dev->export_size = *(uint64_t *)(buf + 8);
-    dev->flags       = *(uint32_t *)(buf + 16);
+    memcpy(&dev->export_size, buf + 8, sizeof(dev->export_size));
+    memcpy(&dev->flags, buf + 16, sizeof(dev->flags));
 
     kprintf("[NBD] Export: %llu bytes, flags=0x%x\n",
             (unsigned long long)dev->export_size, dev->flags);

@@ -77,7 +77,10 @@ static int fcoe_xmit_frame(const uint8_t *dst_mac, const uint8_t *src_mac,
     offset += fc_frame_len;
 
     /* Append CRC (simplified: 0x00000000) */
-    *(uint32_t *)(buf + offset) = 0;
+    {
+        uint32_t crc = 0;
+        memcpy(buf + offset, &crc, sizeof(crc));
+    }
     offset += 4;
 
     /* Append EOF */
@@ -239,8 +242,11 @@ static int fcoe_read_capacity_10(struct fcoe_device *dev)
     int ret = fcoe_send_scsi_cmd(dev, cdb, 10, data, 8, 0);
     if (ret < 0) return ret;
 
-    uint32_t last_lba = fcoe_htonl(*(uint32_t *)data);
-    uint32_t block_len = fcoe_htonl(*(uint32_t *)(data + 4));
+    uint32_t last_lba_raw, block_len_raw;
+    memcpy(&last_lba_raw, data, sizeof(last_lba_raw));
+    memcpy(&block_len_raw, data + 4, sizeof(block_len_raw));
+    uint32_t last_lba = fcoe_htonl(last_lba_raw);
+    uint32_t block_len = fcoe_htonl(block_len_raw);
 
     dev->sector_count = (uint64_t)last_lba + 1;
     dev->sector_size = block_len;

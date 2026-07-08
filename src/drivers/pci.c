@@ -1468,13 +1468,15 @@ static int pci_match_modalias(const char *modalias, const struct pci_device_id *
     /* Parse the modalias to extract vendor, device, etc. */
     uint16_t vendor = 0, device = 0;
     uint16_t subsys_v = 0, subsys_d = 0;
-    uint8_t base_cl = 0, sub_cl = 0;
+    unsigned int base_cl_val = 0, sub_cl_val = 0;
 
     /* Parse: pci:vXXXXdXXXXsvXXXXsdXXXXbcXXccXX */
     if (sscanf(modalias, "pci:v%04hxd%04hxsv%04hxsd%04hxbc%02xcc%02x",
                &vendor, &device, &subsys_v, &subsys_d,
-               (unsigned int *)&base_cl, (unsigned int *)&sub_cl) < 4)
+               &base_cl_val, &sub_cl_val) < 4)
         return 0;
+    uint8_t base_cl = (uint8_t)base_cl_val;
+    uint8_t sub_cl = (uint8_t)sub_cl_val;
 
     /* Match against the ID table */
     for (const struct pci_device_id *id = id_table;

@@ -196,8 +196,9 @@ static int ghes_read_error_block(struct ghes_source *gs, uint8_t *buf,
 
     /* Check if the error status block indicates a valid error.
      * For simplicity we check if the first 4 bytes are non-zero. */
-    uint32_t *status = (uint32_t *)buf;
-    if (*status == 0)
+    uint32_t status;
+    memcpy(&status, buf, sizeof(status));
+    if (status == 0)
         return -1; /* no new error */
 
     return 0;

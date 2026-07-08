@@ -923,7 +923,8 @@ static int parse_uvc_control_desc(struct uvc_device *dev,
 			return -EINVAL;
 		}
 
-		uint16_t bcd_uvc = *(const uint16_t *)(data + 3);
+		uint16_t bcd_uvc;
+		memcpy(&bcd_uvc, data + 3, sizeof(bcd_uvc));
 		if (bcd_uvc >= 0x0150)
 			dev->uvc_version = UVC_VERSION_1_5;
 		else if (bcd_uvc >= 0x0110)
@@ -931,7 +932,8 @@ static int parse_uvc_control_desc(struct uvc_device *dev,
 		else
 			dev->uvc_version = UVC_VERSION_1_0;
 
-		uint32_t clock_freq = *(const uint32_t *)(data + 7);
+		uint32_t clock_freq;
+		memcpy(&clock_freq, data + 7, sizeof(clock_freq));
 
 		kprintf("[usb_video] VC_HEADER: bcdUVC=0x%04X clock=%u Hz\n",
 			bcd_uvc, clock_freq);
@@ -956,15 +958,15 @@ static int parse_uvc_control_desc(struct uvc_device *dev,
 		struct uvc_terminal *t = &dev->terminals[dev->num_terminals];
 		memset(t, 0, sizeof(*t));
 		t->id = data[3];
-		t->terminal_type = *(const uint16_t *)(data + 4);
+		memcpy(&t->terminal_type, data + 4, sizeof(t->terminal_type));
 		t->assoc_terminal = data[6];
 		t->is_input = 1;
 
 		/* Parse camera-specific controls if present */
 		if (t->terminal_type == VC_INPUT_CAMERA && length >= 15) {
-			t->focal_min = *(const uint16_t *)(data + 8);
-			t->focal_max = *(const uint16_t *)(data + 10);
-			t->ocal_focal = *(const uint16_t *)(data + 12);
+			memcpy(&t->focal_min, data + 8, sizeof(t->focal_min));
+			memcpy(&t->focal_max, data + 10, sizeof(t->focal_max));
+			memcpy(&t->ocal_focal, data + 12, sizeof(t->ocal_focal));
 			t->control_size = data[14];
 			if (length >= 15 + t->control_size && t->control_size <= 4) {
 				uint32_t ctrl = 0;
@@ -998,7 +1000,7 @@ static int parse_uvc_control_desc(struct uvc_device *dev,
 		struct uvc_terminal *t = &dev->terminals[dev->num_terminals];
 		memset(t, 0, sizeof(*t));
 		t->id = data[3];
-		t->terminal_type = *(const uint16_t *)(data + 4);
+		memcpy(&t->terminal_type, data + 4, sizeof(t->terminal_type));
 		t->assoc_terminal = data[6];
 		t->is_input = 0;
 
