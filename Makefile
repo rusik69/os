@@ -61,9 +61,12 @@ VERMAGIC_FLAGS += -DCONFIG_SMP
 # parameter names in function declarations (forward-compatibility stubs) and
 # has variables that are read by inline assembly or used only in certain
 # configs.  These suppressions keep the build clean while -Werror is active.
-# Note: format checking suppressed — the kernel defines size_t as uint64_t
-# (= unsigned long long) which conflicts with GCC's built-in size_t for %zu.
-# __printf annotations are still present for documentation and static analysis.
+# Note: -Wno-format retained because the kernel's size_t is uint64_t (= unsigned
+# long long), which GCC's built-in format checking flags with %zu vs unsigned
+# long mismatches (46+ instances). Item 103 confirmed that no
+# -Wformat-security violations exist — zero instances of non-constant format
+# strings without arguments were found across the entire kernel. The check-full
+# target (-Wformat=2) catches any future format-security regressions.
 CFLAGS = -std=c17 -ffreestanding -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
          -fstack-protector-strong -fstack-clash-protection -mstack-protector-guard=global -fno-omit-frame-pointer -nostdlib -nostdinc -fno-builtin \
          -Wall -Wextra -Werror -Wshadow -Wcast-qual -Wundef -Wtautological-compare -Wduplicated-branches -Wduplicated-cond -Wstringop-truncation -Warray-bounds=2 -Wno-format -Wno-sign-conversion -Wno-unused-function -Wno-unused-parameter -Wno-unused-variable -Wno-unused-but-set-variable -Isrc/include -Iuserspace/kmods/gui -Iuserspace/kmods/doom -mcmodel=large -g \
