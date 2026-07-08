@@ -390,10 +390,10 @@ static inline int virtio_check_dependencies(uint32_t negotiated,
  * ──────────────────────────────────────────────────────────────── */
 
 static inline int virtio_negotiate_features_ex(
-    uint32_t (*readl)(uint8_t off),
-    void     (*writel)(uint8_t off, uint32_t v),
-    void     (*writeb)(uint8_t off, uint8_t v),
-    uint8_t  (*readb)(uint8_t off),
+    uint32_t (*dev_readl)(uint8_t off),
+    void     (*dev_writel)(uint8_t off, uint32_t v),
+    void     (*dev_writeb)(uint8_t off, uint8_t v),
+    uint8_t  (*dev_readb)(uint8_t off),
     uint32_t supported,
     uint32_t required,
     const struct virtio_feature_entry *feat_table,
@@ -405,7 +405,7 @@ static inline int virtio_negotiate_features_ex(
         driver_name = "virtio";
 
     /* Step 1: Read host (device) features */
-    uint32_t host_feat = readl(VIRTIO_PCI_HOST_FEAT);
+    uint32_t host_feat = dev_readl(VIRTIO_PCI_HOST_FEAT);
 
     /* Log host features */
     buf[0] = '\0';
@@ -428,23 +428,23 @@ static inline int virtio_negotiate_features_ex(
     uint32_t guest_feat = host_feat & supported;
 
     /* Write guest features */
-    writel(VIRTIO_PCI_GUEST_FEAT, guest_feat);
+    dev_writel(VIRTIO_PCI_GUEST_FEAT, guest_feat);
 
     /* Memory barrier before status write */
     __asm__ volatile("" ::: "memory");
 
     /* Step 4: Set FEATURES_OK status bit (device validates features) */
-    uint8_t status = readb(VIRTIO_PCI_STATUS);
+    uint8_t status = dev_readb(VIRTIO_PCI_STATUS);
     status |= VIRTIO_STATUS_FEATURES_OK;
-    writeb(VIRTIO_PCI_STATUS, status);
+    dev_writeb(VIRTIO_PCI_STATUS, status);
 
     /* Memory barrier before reading status back */
     __asm__ volatile("" ::: "memory");
 
     /* Step 5: Verify device accepted the negotiated features */
-    status = readb(VIRTIO_PCI_STATUS);
+    status = dev_readb(VIRTIO_PCI_STATUS);
     if (!(status & VIRTIO_STATUS_FEATURES_OK)) {
-        uint8_t dev_status = readb(VIRTIO_PCI_STATUS);
+        uint8_t dev_status = dev_readb(VIRTIO_PCI_STATUS);
         buf[0] = '\0';
         virtio_format_features(buf, sizeof(buf), guest_feat, feat_table, virtio_common_features);
         kprintf("%s: ERROR: device rejected negotiated features (0x%08X, status=0x%02X): %s\n",
@@ -454,7 +454,7 @@ static inline int virtio_negotiate_features_ex(
     }
 
     /* Step 6: Read back guest features to confirm the device accepted them */
-    uint32_t guest_feat_readback = readl(VIRTIO_PCI_GUEST_FEAT);
+    uint32_t guest_feat_readback = dev_readl(VIRTIO_PCI_GUEST_FEAT);
     if (guest_feat_readback != guest_feat) {
         kprintf("%s: WARNING: guest features readback mismatch: wrote 0x%08X, read 0x%08X\n",
                 driver_name, (unsigned int)guest_feat, (unsigned int)guest_feat_readback);
@@ -486,13 +486,13 @@ static inline int virtio_negotiate_features_ex(
  */
 
 static inline int virtio_negotiate_features(
-    uint32_t (*readl)(uint8_t off),
-    void     (*writel)(uint8_t off, uint32_t v),
-    void     (*writeb)(uint8_t off, uint8_t v),
-    uint8_t  (*readb)(uint8_t off),
+    uint32_t (*dev_readl)(uint8_t off),
+    void     (*dev_writel)(uint8_t off, uint32_t v),
+    void     (*dev_writeb)(uint8_t off, uint8_t v),
+    uint8_t  (*dev_readb)(uint8_t off),
     uint32_t supported_features)
 {
-    return virtio_negotiate_features_ex(readl, writel, writeb, readb,
+    return virtio_negotiate_features_ex(dev_readl, dev_writel, dev_writeb, dev_readb,
                                          supported_features, 0, NULL, NULL);
 }
 

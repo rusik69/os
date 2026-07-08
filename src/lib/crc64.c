@@ -66,10 +66,10 @@ static uint64_t crc64_be(uint64_t crc, const uint8_t *data, size_t len)
     static int be_initialized = 0;
     if (!be_initialized) {
         for (uint32_t i = 0; i < 256; i++) {
-            uint64_t crc = (uint64_t)i << 56;
+            uint64_t crc_val = (uint64_t)i << 56;
             for (int j = 0; j < 8; j++)
-                crc = (crc << 1) ^ ((crc & (1ULL << 63)) ? CRC64_ECMA182_POLY : 0);
-            crc64_be_table[i] = crc;
+                crc_val = (crc_val << 1) ^ ((crc_val & (1ULL << 63)) ? CRC64_ECMA182_POLY : 0);
+            crc64_be_table[i] = crc_val;
         }
         be_initialized = 1;
     }

@@ -1135,7 +1135,7 @@ int net_ping(uint32_t target_ip) {
  * This function handles Ethernet type dispatch: ARP, IPv4, IPv6,
  * and runs netfilter hooks at PRE_ROUTING and LOCAL_IN.
  */
-void net_rx_dispatch(const uint8_t *pkt_buf, uint16_t len)
+void net_rx_dispatch(const uint8_t *pkt, uint16_t len)
 {
     if (len < (int)sizeof(struct eth_header))
         return;
@@ -1144,7 +1144,7 @@ void net_rx_dispatch(const uint8_t *pkt_buf, uint16_t len)
      * If the XDP program returns XDP_DROP, the packet is discarded.
      * XDP_TX bounces the packet back out the same interface.
      * XDP_PASS (default) continues normal processing. */
-    int xdp_act = xdp_run(pkt_buf, len, -1);
+    int xdp_act = xdp_run(pkt, len, -1);
     if (xdp_act == XDP_DROP || xdp_act == XDP_ABORTED) {
         net_iface_stats.rx_drops++;
         return;
@@ -1152,7 +1152,7 @@ void net_rx_dispatch(const uint8_t *pkt_buf, uint16_t len)
     if (xdp_act == XDP_TX) {
         /* Transmit the packet back out the same interface with
          * MAC addresses swapped (source becomes destination). */
-        struct eth_header *eth = (struct eth_header *)pkt_buf;
+        struct eth_header *eth = (struct eth_header *)pkt;
         uint8_t tmp_mac[6];
         memcpy(tmp_mac, eth->dst, 6);
         memcpy(eth->dst, eth->src, 6);
@@ -1160,17 +1160,17 @@ void net_rx_dispatch(const uint8_t *pkt_buf, uint16_t len)
 
         /* Send back via netdevice layer or direct link */
         if (netif_count() > 0) {
-            netif_send(0, pkt_buf, len);
+            netif_send(0, pkt, len);
         } else {
-            net_link_send(pkt_buf, len);
+            net_link_send(pkt, len);
         }
         net_iface_stats.tx_packets++;
         return;
     }
 
-    struct eth_header *eth = (struct eth_header *)pkt_buf;
+    struct eth_header *eth = (struct eth_header *)pkt;
     uint16_t type = ntohs(eth->type);
-    const uint8_t *payload = pkt_buf + sizeof(struct eth_header);
+    const uint8_t *payload = pkt + sizeof(struct eth_header);
     uint16_t payload_len = (uint16_t)(len - sizeof(struct eth_header));
 
     net_iface_stats.rx_packets++;
@@ -1185,7 +1185,7 @@ void net_rx_dispatch(const uint8_t *pkt_buf, uint16_t len)
             if (src) arp_cache_add(src, eth->src);
 
             /* Netfilter PRE_ROUTING */
-            if (nf_hook_traverse(NF_INET_PRE_ROUTING, (void *)pkt_buf,
+            if (nf_hook_traverse(NF_INET_PRE_ROUTING, (void *)pkt,
                                  (void *)payload, payload_len) != 0)
                 return;
         }
@@ -1194,7 +1194,7 @@ void net_rx_dispatch(const uint8_t *pkt_buf, uint16_t len)
             struct ip_header *ip = (struct ip_header *)payload;
             uint32_t dst_ip = ntohl(ip->dst_ip);
             if (dst_ip == net_our_ip || dst_ip == 0xFFFFFFFF) {
-                if (nf_hook_traverse(NF_INET_LOCAL_IN, (void *)pkt_buf,
+                if (nf_hook_traverse(NF_INET_LOCAL_IN, (void *)pkt,
                                      (void *)payload, payload_len) != 0)
                     return;
             }

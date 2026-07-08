@@ -993,7 +993,7 @@ int sock_poll(int sockfd, int events, struct poll_table *pt)
 
     /* AF_CAN: dispatch to CAN poll handler */
     if (s->domain == AF_CAN) {
-        int revents = can_poll(sockfd);
+        revents = can_poll(sockfd);
         return revents & events;
     }
 

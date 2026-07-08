@@ -52,10 +52,10 @@ static uint32_t crc32_be(uint32_t crc, const uint8_t *data, size_t len)
     static int be_initialized = 0;
     if (!be_initialized) {
         for (uint32_t i = 0; i < 256; i++) {
-            uint32_t crc = i << 24;
+            uint32_t crc_val = i << 24;
             for (int j = 0; j < 8; j++)
-                crc = (crc << 1) ^ ((crc & 0x80000000) ? 0x04C11DB7 : 0);
-            crc32_be_table[i] = crc;
+                crc_val = (crc_val << 1) ^ ((crc_val & 0x80000000) ? 0x04C11DB7 : 0);
+            crc32_be_table[i] = crc_val;
         }
         be_initialized = 1;
     }
@@ -83,10 +83,10 @@ uint32_t crc32c(uint32_t crc, const void *buf, uint32_t len)
     static int c_initialized = 0;
     if (!c_initialized) {
         for (uint32_t i = 0; i < 256; i++) {
-            uint32_t crc = i;
+            uint32_t crc_val = i;
             for (int j = 0; j < 8; j++)
-                crc = (crc >> 1) ^ (0x82F63B78UL & -(crc & 1));
-            crc32c_table[i] = crc;
+                crc_val = (crc_val >> 1) ^ (0x82F63B78UL & -(crc_val & 1));
+            crc32c_table[i] = crc_val;
         }
         c_initialized = 1;
     }

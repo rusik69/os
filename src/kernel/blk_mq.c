@@ -1272,7 +1272,7 @@ int blk_mq_submit_request(uint64_t sector, uint8_t *buffer,
     /* If the target HW queue uses direct dispatch, bypass SW queues */
     if (hw_idx < blk_mq_num_hw_queues &&
         blk_mq_hw_queues[hw_idx].dispatch_mode == BLK_MQ_DISPATCH_DIRECT) {
-        int ret = blk_mq_direct_dispatch(req, hw_idx);
+        ret = blk_mq_direct_dispatch(req, hw_idx);
         if (ret < 0) {
             blk_mq_free_request(req);
             return ret;

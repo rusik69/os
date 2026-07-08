@@ -102,15 +102,15 @@ static void vfs_mkdir_recursive_test(struct kunit *test)
 static void vfs_mount_test(struct kunit *test)
 {
     /* Query mounts — just ensure the API doesn't crash */
-    char mounts[VFS_MAX_MOUNTS][64];
-    int count = vfs_list_mountpoints(mounts, VFS_MAX_MOUNTS);
+    char mount_names[VFS_MAX_MOUNTS][64];
+    int count = vfs_list_mountpoints(mount_names, VFS_MAX_MOUNTS);
     KUNIT_EXPECT_TRUE(test, count >= 0);
     KUNIT_EXPECT_TRUE(test, count <= VFS_MAX_MOUNTS);
 
     /* Root mount (/) should always exist */
     int root_found = 0;
     for (int i = 0; i < count; i++) {
-        if (strcmp(mounts[i], "/") == 0) {
+        if (strcmp(mount_names[i], "/") == 0) {
             root_found = 1;
             break;
         }

@@ -1753,12 +1753,12 @@ read_done:
 
 		while (done < to_read) {
 			uint64_t rel_cluster = done / cluster_bytes;
-			uint64_t cluster = (uint64_t)found_cluster + rel_cluster;
-			if (cluster >= EXFAT_CLUSTER_END || cluster < 2)
+			uint64_t cl = (uint64_t)found_cluster + rel_cluster;
+			if (cl >= EXFAT_CLUSTER_END || cl < 2)
 				break;
-
+		
 			uint64_t start_sector = exfat_cluster_to_sector(ep,
-			    (uint32_t)cluster);
+			    (uint32_t)cl);
 			uint32_t byte_off_in_cluster = (uint32_t)(done % cluster_bytes);
 			if (byte_off_in_cluster > 0) {
 				/* Misaligned within cluster — read partial cluster */
