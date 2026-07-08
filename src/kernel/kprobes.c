@@ -446,7 +446,6 @@ void kprobe_int3_handler(struct interrupt_frame *frame) {
         kprintf("[KPROBES] Unhandled INT3 at 0x%llX (RIP=0x%llX)\n",
                 (unsigned long long)probe_addr, (unsigned long long)rip);
         panic("Unhandled INT3 in kernel");
-        return;
     }
 
     /* Call the pre-handler if set */

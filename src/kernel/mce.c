@@ -260,7 +260,6 @@ void mce_handler(struct interrupt_frame *frame)
         }
         panic("MACHINE CHECK (#MC) — Uncorrectable at RIP=0x%lx",
               (unsigned long)frame->rip);
-        break;
 
     case MCE_SEV_FATAL:
         /* fallthrough */
@@ -283,7 +282,6 @@ void mce_handler(struct interrupt_frame *frame)
         }
         panic("MACHINE CHECK (#MC) — Fatal at RIP=0x%lx",
               (unsigned long)frame->rip);
-        break;
     }
 
     /* Unreachable */
