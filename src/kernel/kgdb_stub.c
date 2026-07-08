@@ -105,6 +105,8 @@ static void kgdb_handle_read_mem(const char *args)
     uint64_t addr;
     int len;
     char *reply = kmalloc(1024);
+    if (!reply)
+        return;
     int pos = 0;
 
     addr = parse_hex_addr(&args);
