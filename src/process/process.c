@@ -22,6 +22,7 @@
 #include "kpti.h"
 #include "errno.h"
 #include "bug.h"
+#include "uaccess.h"
 
 /* ── Compile-time struct size assertions ────────────────────────────── */
 _Static_assert(sizeof(struct process) >= 2048, "struct process must be at least 2048 bytes for fixed-size table");
@@ -744,8 +745,11 @@ void process_exit_code(int code) {
 
     /* CLONE_CHILD_CLEARTID: write 0 to userspace CTID pointer and futex-wake */
     if (current_process->ctid_ptr && current_process->is_user) {
-        volatile uint32_t *ctid = (volatile uint32_t *)current_process->ctid_ptr;
-        *ctid = 0;
+        uint32_t zero = 0;
+        if (copy_to_user((uint64_t)current_process->ctid_ptr, &zero, sizeof(zero)) < 0) {
+            kprintf("[process] warning: failed to clear CTID at 0x%lx\n",
+                    (unsigned long)current_process->ctid_ptr);
+        }
     }
     /* Send SIGCHLD to parent with siginfo */
     struct process *parent = process_get_by_pid(current_process->parent_pid);

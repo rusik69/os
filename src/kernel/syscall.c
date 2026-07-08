@@ -92,6 +92,7 @@
 #include "pkey.h"        /* for sys_pkey_mprotect */
 #include "mem_policy.h"  /* for NUMA memory policy syscalls */
 #include "cpu_features.h" /* for MSR_FS_BASE / MSR_GS_BASE constants */
+#include "cpu.h"          /* for stac/clac (SMAP toggling) */
 #include "ioctl.h"        /* for sys_ioctl (extern from sys_ioctl.c) */
 
 /* Module metadata */
@@ -209,7 +210,9 @@ static inline void local_invlpg(uint64_t addr) {
 }
 
 /* EFER bits */
+#ifndef EFER_SCE
 #define EFER_SCE (1U << 0)  /* Syscall Enable */
+#endif
 
 extern void syscall_entry(void);
 extern uint64_t syscall_user_rip;
@@ -2768,13 +2771,14 @@ static uint64_t sys_thread_create(uint64_t fn_addr, uint64_t arg) {
 }
 
 static uint64_t sys_thread_join(uint64_t thread_pid, uint64_t retval_addr) {
-    void **retval_ptr = (void **)(uintptr_t)retval_addr;
     int ret;
-    if (retval_ptr) {
+    if (retval_addr) {
         void *retval;
         ret = process_thread_join((int)thread_pid, &retval);
-        if (ret == 0)
-            *retval_ptr = retval;
+        if (ret == 0) {
+            if (copy_to_user(retval_addr, &retval, sizeof(retval)) < 0)
+                return (uint64_t)(int64_t)-EFAULT;
+        }
     } else {
         ret = process_thread_join((int)thread_pid, NULL);
     }
@@ -4954,6 +4958,7 @@ void futex_robust_list_cleanup(struct process *proc)
     if (!proc || !proc->ctid_ptr)
         return;
 
+    stac();
     struct robust_list_head *head = (struct robust_list_head *)proc->ctid_ptr;
     struct robust_list *list;
     int max_entries = 1024; /* Prevent infinite loop on corrupted list */
@@ -4996,6 +5001,7 @@ void futex_robust_list_cleanup(struct process *proc)
         }
         list = list->next;
     }
+    clac();
 }
 
 static uint64_t sys_futex(uint64_t uaddr, uint64_t op, uint64_t val,
@@ -5012,7 +5018,8 @@ static uint64_t sys_futex(uint64_t uaddr, uint64_t op, uint64_t val,
 
             /* Check that *uaddr == val */
             uint32_t cur;
-            memcpy(&cur, addr, 4);
+            if (copy_from_user(&cur, uaddr, 4) < 0)
+                return (uint64_t)-1;
             if (cur != (uint32_t)val)
                 return (uint64_t)-1; /* EWOULDBLOCK — caller should retry */
 
@@ -5064,7 +5071,8 @@ static uint64_t sys_futex(uint64_t uaddr, uint64_t op, uint64_t val,
 
             /* Check that *uaddr == val */
             uint32_t cur;
-            memcpy(&cur, addr, 4);
+            if (copy_from_user(&cur, uaddr, 4) < 0)
+                return (uint64_t)-1;
             if (cur != (uint32_t)val)
                 return (uint64_t)-1; /* EWOULDBLOCK */
 
@@ -5192,7 +5200,8 @@ static uint64_t sys_futex(uint64_t uaddr, uint64_t op, uint64_t val,
             if (syscall_is_user_process() && !syscall_user_read_ok(uaddr, 4))
                 return (uint64_t)-1;
             uint32_t cur;
-            memcpy(&cur, addr, 4);
+            if (copy_from_user(&cur, uaddr, 4) < 0)
+                return (uint64_t)-1;
             if (cur != (uint32_t)val3)
                 return (uint64_t)-1; /* values don't match */
             return sys_futex(uaddr, FUTEX_REQUEUE, val, timeout, uaddr2, val3);
@@ -5429,7 +5438,8 @@ static uint64_t sys_futex(uint64_t uaddr, uint64_t op, uint64_t val,
             if (syscall_is_user_process() && !syscall_user_read_ok(uaddr, 4))
                 return (uint64_t)-1;
             uint32_t cur;
-            memcpy(&cur, addr, 4);
+            if (copy_from_user(&cur, uaddr, 4) < 0)
+                return (uint64_t)-1;
             if (cur != (uint32_t)val3)
                 return (uint64_t)-1;
 
