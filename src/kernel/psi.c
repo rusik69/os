@@ -455,7 +455,7 @@ void psi_timer_init(void)
 }
 
 /* ── Stub: psi_trigger ─────────────────────────────── */
-int psi_trigger(const char *event, int threshold, int win_size)
+static int psi_trigger(const char *event, int threshold, int win_size)
 {
     (void)event;
     (void)threshold;
@@ -464,7 +464,7 @@ int psi_trigger(const char *event, int threshold, int win_size)
     return 0;
 }
 /* ── Stub: psi_poll ─────────────────────────────── */
-int psi_poll(void)
+static int psi_poll(void)
 {
     kprintf("[psi] psi_poll: not yet implemented\n");
     return 0;

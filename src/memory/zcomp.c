@@ -183,7 +183,7 @@ struct zcomp_pool {
 };
 
 /* ── zcomp_compress — Compress data using a pool's algorithm ─── */
-int zcomp_compress(void *pool, const void *src, size_t slen, void *dst, size_t *dlen)
+static int zcomp_compress(void *pool, const void *src, size_t slen, void *dst, size_t *dlen)
 {
     if (!pool || !src || !dst || !dlen)
         return -EINVAL;
@@ -202,7 +202,7 @@ int zcomp_compress(void *pool, const void *src, size_t slen, void *dst, size_t *
 }
 
 /* ── zcomp_decompress — Decompress data using a pool's algorithm ─ */
-int zcomp_decompress(void *pool, const void *src, size_t slen, void *dst, size_t *dlen)
+static int zcomp_decompress(void *pool, const void *src, size_t slen, void *dst, size_t *dlen)
 {
     if (!pool || !src || !dst || !dlen)
         return -EINVAL;
@@ -221,7 +221,7 @@ int zcomp_decompress(void *pool, const void *src, size_t slen, void *dst, size_t
 }
 
 /* ── zcomp_create_pool — Create a compression pool ──────────── */
-void* zcomp_create_pool(const char *alg)
+static void* zcomp_create_pool(const char *alg)
 {
     if (!alg)
         return ERR_PTR(-EINVAL);
@@ -248,7 +248,7 @@ void* zcomp_create_pool(const char *alg)
 }
 
 /* ── zcomp_destroy_pool — Destroy a compression pool ────────── */
-int zcomp_destroy_pool(void *pool)
+static int zcomp_destroy_pool(void *pool)
 {
     if (!pool)
         return -EINVAL;

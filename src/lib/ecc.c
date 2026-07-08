@@ -319,7 +319,7 @@ static void ecc_scalar_mult(struct ecc_point *r, const uint32_t *k,
 }
 
 /* Public API: generate shared secret (ECDH) */
-int ecc_ecdh_shared_secret(uint8_t shared_secret[32],
+static int ecc_ecdh_shared_secret(uint8_t shared_secret[32],
                             const uint8_t private_key[32],
                             const uint8_t public_key[64])
 {
@@ -372,7 +372,7 @@ int ecc_ecdh_shared_secret(uint8_t shared_secret[32],
 }
 
 /* Public API: verify ECDSA signature (simplified) */
-int ecc_ecdsa_verify(const uint8_t pub_key[64],
+static int ecc_ecdsa_verify(const uint8_t pub_key[64],
                       const uint8_t hash[32],
                       const uint8_t signature[64])
 {
@@ -462,7 +462,7 @@ int ecc_ecdsa_verify(const uint8_t pub_key[64],
 }
 
 /* Public API: generate key pair */
-void ecc_generate_keypair(uint8_t private_key[32], uint8_t public_key[64])
+static void ecc_generate_keypair(uint8_t private_key[32], uint8_t public_key[64])
 {
     uint32_t priv[ECC_NUM_WORDS];
     struct ecc_point g;
@@ -512,7 +512,7 @@ void ecc_generate_keypair(uint8_t private_key[32], uint8_t public_key[64])
 }
 
 /* ── ecc_point_multiply ─────────────────────────────── */
-int ecc_point_multiply(const void *p, const void *k, void *r)
+static int ecc_point_multiply(const void *p, const void *k, void *r)
 {
     if (!p || !k || !r)
         return -1;
@@ -524,7 +524,7 @@ int ecc_point_multiply(const void *p, const void *k, void *r)
     return 0;
 }
 /* ── ecc_ecdsa_sign ─────────────────────────────── */
-int ecc_ecdsa_sign(const void *priv, const void *hash, size_t hlen, void *sig)
+static int ecc_ecdsa_sign(const void *priv, const void *hash, size_t hlen, void *sig)
 {
     if (!priv || !hash || !sig || hlen < 32)
         return -1;

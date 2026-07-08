@@ -340,7 +340,7 @@ MODULE_VERSION("1.0");
  * ═══════════════════════════════════════════════════════════════ */
 
 /* ── Implement: macsec_rx_handler ────────────────── */
-int macsec_rx_handler(void *skb)
+static int macsec_rx_handler(void *skb)
 {
     if (!skb) {
         kprintf("[macsec] macsec_rx_handler: NULL skb\n");
@@ -350,7 +350,7 @@ int macsec_rx_handler(void *skb)
     return -EOPNOTSUPP;
 }
 /* ── Implement: macsec_tx_handler ────────────────── */
-int macsec_tx_handler(void *skb, void *dev)
+static int macsec_tx_handler(void *skb, void *dev)
 {
     if (!skb || !dev) {
         kprintf("[macsec] macsec_tx_handler: NULL parameter\n");

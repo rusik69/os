@@ -144,7 +144,7 @@ void cma_reserve_default(void) {
 }
 
 /* ── cma_release ──────────────────────────────────────── */
-int cma_release(uint64_t pfn, size_t count)
+static int cma_release(uint64_t pfn, size_t count)
 {
     if (count == 0) return -EINVAL;
     /* Return CMA-allocated pages back to CMA pool */
@@ -155,7 +155,7 @@ int cma_release(uint64_t pfn, size_t count)
 }
 
 /* ── cma_isolate_page ─────────────────────────────────── */
-int cma_isolate_page(uint64_t pfn)
+static int cma_isolate_page(uint64_t pfn)
 {
     /* Isolate a page from CMA area for migration.
      * In a real kernel, this marks the page as MIGRATE_ISOLATE. */
@@ -180,7 +180,7 @@ int cma_isolate_page(uint64_t pfn)
 }
 
 /* ── cma_free_page — Free a single CMA page ──────────────── */
-void cma_free_page(uint64_t pfn)
+static void cma_free_page(uint64_t pfn)
 {
     /* Free a single page back to its CMA area */
     for (int i = 0; i < cma_area_count; i++) {
@@ -200,7 +200,7 @@ void cma_free_page(uint64_t pfn)
 }
 
 /* ── cma_debug_show_areas — Display all CMA areas ────────── */
-void cma_debug_show_areas(void)
+static void cma_debug_show_areas(void)
 {
     kprintf("[cma] CMA areas: %d total\n", cma_area_count);
     for (int i = 0; i < cma_area_count; i++) {

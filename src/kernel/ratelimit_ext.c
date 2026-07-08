@@ -47,7 +47,7 @@ void ratelimit_ext_init(void)
 }
 
 /* ── Stub: ratelimit_ext_check ─────────────────────────────── */
-int ratelimit_ext_check(void *rl)
+static int ratelimit_ext_check(void *rl)
 {
     (void)rl;
     kprintf("[ratelimit] ratelimit_ext_check: not yet implemented\n");

@@ -131,7 +131,7 @@ int cpio_init(void) {
 }
 
 /* ── cpio_mount ──────────────────────────────────────── */
-int cpio_mount(const char *source, const char *target, unsigned long flags)
+static int cpio_mount(const char *source, const char *target, unsigned long flags)
 {
     (void)source;
     (void)target;
@@ -140,14 +140,14 @@ int cpio_mount(const char *source, const char *target, unsigned long flags)
     return 0;
 }
 /* ── cpio_umount ─────────────────────────────────────── */
-int cpio_umount(const char *target)
+static int cpio_umount(const char *target)
 {
     (void)target;
     kprintf("[cpio] CPIO unmounted\n");
     return 0;
 }
 /* ── cpio_readdir ─────────────────────────────────────── */
-int cpio_readdir(void *dir, void *filldir)
+static int cpio_readdir(void *dir, void *filldir)
 {
     (void)dir;
     (void)filldir;
@@ -155,7 +155,7 @@ int cpio_readdir(void *dir, void *filldir)
     return 0;
 }
 /* ── cpio_lookup ─────────────────────────────────────── */
-int cpio_lookup(const char *name, void *parent)
+static int cpio_lookup(const char *name, void *parent)
 {
     (void)parent;
     kprintf("[cpio] lookup: %s\n", name);

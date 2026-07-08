@@ -401,7 +401,7 @@ static struct vfs_ops hfs_ops = {
 
 /* ── Init ──────────────────────────────────────────────────────── */
 
-int __init hfs_init(void)
+static int __init hfs_init(void)
 {
     kprintf("[hfs] Apple HFS filesystem initialized\n");
     vfs_register_filesystem("hfs", &hfs_ops);
@@ -418,7 +418,7 @@ MODULE_VERSION("1.0");
 #endif
 
 /* ── hfs_mount ──────────────────────────────────────── */
-int hfs_mount(const char *source, const char *target, unsigned long flags)
+static int hfs_mount(const char *source, const char *target, unsigned long flags)
 {
     (void)source;
     (void)target;
@@ -427,14 +427,14 @@ int hfs_mount(const char *source, const char *target, unsigned long flags)
     return 0;
 }
 /* ── hfs_umount ──────────────────────────────────────── */
-int hfs_umount(const char *target)
+static int hfs_umount(const char *target)
 {
     (void)target;
     kprintf("[hfs] HFS unmounted\n");
     return 0;
 }
 /* ── hfs_lookup ──────────────────────────────────────── */
-int hfs_lookup(const char *name, void *parent)
+static int hfs_lookup(const char *name, void *parent)
 {
     (void)parent;
     kprintf("[hfs] lookup: %s\n", name);

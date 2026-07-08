@@ -175,21 +175,21 @@ void early_printf(const char *fmt, ...)
 
 
 /* ── Stub: early_serial_putc ─────────────────────────────── */
-int early_serial_putc(char c)
+static int early_serial_putc(char c)
 {
     (void)c;
     kprintf("[early_serial] early_serial_putc: not yet implemented\n");
     return 0;
 }
 /* ── Stub: early_serial_getc ─────────────────────────────── */
-int early_serial_getc(char *c)
+static int early_serial_getc(char *c)
 {
     (void)c;
     kprintf("[early_serial] early_serial_getc: not yet implemented\n");
     return 0;
 }
 /* ── Stub: early_serial_write ─────────────────────────────── */
-int early_serial_write(const char *buf, size_t len)
+static int early_serial_write(const char *buf, size_t len)
 {
     (void)buf;
     (void)len;

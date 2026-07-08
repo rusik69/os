@@ -170,7 +170,7 @@ void ras_netlink_init(void)
 }
 
 /* ── Stub: ras_netlink_send ─────────────────────────────── */
-int ras_netlink_send(const void *msg, size_t len)
+static int ras_netlink_send(const void *msg, size_t len)
 {
     (void)msg;
     (void)len;
@@ -178,7 +178,7 @@ int ras_netlink_send(const void *msg, size_t len)
     return 0;
 }
 /* ── Stub: ras_netlink_recv ─────────────────────────────── */
-int ras_netlink_recv(void *buf, size_t *len)
+static int ras_netlink_recv(void *buf, size_t *len)
 {
     (void)buf;
     (void)len;

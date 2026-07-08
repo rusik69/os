@@ -198,7 +198,7 @@ void xts_decrypt(const struct xts_ctx *ctx, uint64_t start_sector,
 }
 
 /* ── aes_xts_encrypt ─────────────────────────────── */
-int aes_xts_encrypt(const void *key1, const void *key2, size_t key_len, const void *iv, const void *src, void *dst, size_t len)
+static int aes_xts_encrypt(const void *key1, const void *key2, size_t key_len, const void *iv, const void *src, void *dst, size_t len)
 {
     if (!key1 || !key2 || !src || !dst)
         return -1;
@@ -220,7 +220,7 @@ int aes_xts_encrypt(const void *key1, const void *key2, size_t key_len, const vo
     return 0;
 }
 /* ── aes_xts_decrypt ─────────────────────────────── */
-int aes_xts_decrypt(const void *key1, const void *key2, size_t key_len, const void *iv, const void *src, void *dst, size_t len)
+static int aes_xts_decrypt(const void *key1, const void *key2, size_t key_len, const void *iv, const void *src, void *dst, size_t len)
 {
     if (!key1 || !key2 || !src || !dst)
         return -1;

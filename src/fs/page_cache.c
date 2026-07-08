@@ -1111,7 +1111,7 @@ int page_cache_batch_readahead(uint64_t ino, uint64_t start_block,
 }
 
 /* ── page_cache_evict ──────────────────────────────────── */
-int page_cache_evict(void *mapping, uint64_t index)
+static int page_cache_evict(void *mapping, uint64_t index)
 {
     (void)mapping;
     (void)index;

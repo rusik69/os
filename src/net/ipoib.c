@@ -199,7 +199,7 @@ EXPORT_SYMBOL(ipoib_poll);
 module_init(ipoib_init);
 
 /* ── Implement: ipoib_open ────────────────── */
-int ipoib_open(void *dev)
+static int ipoib_open(void *dev)
 {
     if (!dev) {
         kprintf("[ipoib] ipoib_open: NULL dev\n");
@@ -209,7 +209,7 @@ int ipoib_open(void *dev)
     return -EOPNOTSUPP;
 }
 /* ── Implement: ipoib_stop ────────────────── */
-int ipoib_stop(void *dev)
+static int ipoib_stop(void *dev)
 {
     if (!dev) {
         kprintf("[ipoib] ipoib_stop: NULL dev\n");
@@ -219,7 +219,7 @@ int ipoib_stop(void *dev)
     return -EOPNOTSUPP;
 }
 /* ── Implement: ipoib_xmit ────────────────── */
-int ipoib_xmit(void *skb, void *dev)
+static int ipoib_xmit(void *skb, void *dev)
 {
     if (!skb || !dev) {
         kprintf("[ipoib] ipoib_xmit: NULL parameter\n");

@@ -668,7 +668,7 @@ void __init slab_init(void) {
 }
 
 /* ── Stub: slab_create ─────────────────────────────── */
-int slab_create(const char *name, size_t size, unsigned long align, void *ctor)
+static int slab_create(const char *name, size_t size, unsigned long align, void *ctor)
 {
     (void)name;
     (void)size;
@@ -678,14 +678,14 @@ int slab_create(const char *name, size_t size, unsigned long align, void *ctor)
     return 0;
 }
 /* ── Stub: slab_destroy ─────────────────────────────── */
-int slab_destroy(void *cache)
+static int slab_destroy(void *cache)
 {
     (void)cache;
     kprintf("[slab] slab_destroy: not yet implemented\n");
     return 0;
 }
 /* ── Stub: slab_alloc ─────────────────────────────── */
-void* slab_alloc(void *cache, int flags)
+static void* slab_alloc(void *cache, int flags)
 {
     (void)cache;
     (void)flags;
@@ -693,7 +693,7 @@ void* slab_alloc(void *cache, int flags)
     return 0;
 }
 /* ── Stub: slab_free ─────────────────────────────── */
-int slab_free(void *cache, void *obj)
+static int slab_free(void *cache, void *obj)
 {
     (void)cache;
     (void)obj;

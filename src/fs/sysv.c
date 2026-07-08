@@ -190,7 +190,7 @@ static struct vfs_ops sysv_ops = {
 
 /* ── Probe ──────────────────────────────────────────────────────── */
 
-int sysv_probe(uint8_t dev_id)
+static int sysv_probe(uint8_t dev_id)
 {
     uint8_t buf[1024];
     if (blockdev_read_sectors(dev_id, 0, 2, buf) != 0)
@@ -211,7 +211,7 @@ int sysv_probe(uint8_t dev_id)
 
 /* ── Init ──────────────────────────────────────────────────────── */
 
-int __init sysv_init(void)
+static int __init sysv_init(void)
 {
     kprintf("[sysv] System V FS (SYSV5, Coherent, Xenix variants) initialized\n");
     vfs_register_filesystem("sysv", &sysv_ops);
@@ -228,7 +228,7 @@ MODULE_VERSION("1.0");
 #endif
 
 /* ── sysv_mount ──────────────────────────────────────── */
-int sysv_mount(const char *source, const char *target, unsigned long flags)
+static int sysv_mount(const char *source, const char *target, unsigned long flags)
 {
     (void)source;
     (void)target;
@@ -237,14 +237,14 @@ int sysv_mount(const char *source, const char *target, unsigned long flags)
     return 0;
 }
 /* ── sysv_umount ──────────────────────────────────────── */
-int sysv_umount(const char *target)
+static int sysv_umount(const char *target)
 {
     (void)target;
     kprintf("[sysv] SYSV unmounted\n");
     return 0;
 }
 /* ── sysv_lookup ──────────────────────────────────────── */
-int sysv_lookup(const char *name, void *parent)
+static int sysv_lookup(const char *name, void *parent)
 {
     (void)parent;
     kprintf("[sysv] lookup: %s\n", name);

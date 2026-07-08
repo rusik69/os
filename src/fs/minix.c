@@ -264,7 +264,7 @@ static struct vfs_ops minix_ops = {
 
 /* ── Probe ──────────────────────────────────────────────────────── */
 
-int minix_probe(uint8_t dev_id)
+static int minix_probe(uint8_t dev_id)
 {
     uint8_t buf[1024];
     if (blockdev_read_sectors(dev_id, 0, 2, buf) != 0)
@@ -290,7 +290,7 @@ int minix_probe(uint8_t dev_id)
 
 /* ── Init ──────────────────────────────────────────────────────── */
 
-int __init minix_init(void)
+static int __init minix_init(void)
 {
     kprintf("[minix] MINIX filesystem (v1/v2/v3) initialized\n");
     vfs_register_filesystem("minix", &minix_ops);
@@ -307,7 +307,7 @@ MODULE_VERSION("1.0");
 #endif
 
 /* ── minix_mount ──────────────────────────────────────── */
-int minix_mount(const char *source, const char *target, unsigned long flags)
+static int minix_mount(const char *source, const char *target, unsigned long flags)
 {
     (void)source;
     (void)target;
@@ -316,14 +316,14 @@ int minix_mount(const char *source, const char *target, unsigned long flags)
     return 0;
 }
 /* ── minix_umount ──────────────────────────────────────── */
-int minix_umount(const char *target)
+static int minix_umount(const char *target)
 {
     (void)target;
     kprintf("[minix] Minix unmounted\n");
     return 0;
 }
 /* ── minix_lookup ─────────────────────────────────────── */
-int minix_lookup(const char *name, void *parent)
+static int minix_lookup(const char *name, void *parent)
 {
     (void)parent;
     kprintf("[minix] lookup: %s\n", name);

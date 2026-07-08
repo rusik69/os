@@ -42,7 +42,7 @@ struct bic_data {
 };
 
 /* Initialize BIC state */
-void bic_init(struct bic_data *b)
+static void bic_init(struct bic_data *b)
 {
     if (!b || b->initialised) return;
     memset(b, 0, sizeof(*b));
@@ -53,7 +53,7 @@ void bic_init(struct bic_data *b)
 }
 
 /* BIC congestion avoidance update (called per ACK in congestion avoidance) */
-uint32_t bic_update(struct bic_data *b, uint32_t cwnd, int acked_segments)
+static uint32_t bic_update(struct bic_data *b, uint32_t cwnd, int acked_segments)
 {
     if (!b || !b->initialised) return cwnd;
 
@@ -103,7 +103,7 @@ uint32_t bic_update(struct bic_data *b, uint32_t cwnd, int acked_segments)
 }
 
 /* BIC on loss event */
-void bic_on_loss(struct bic_data *b, uint32_t current_cwnd)
+static void bic_on_loss(struct bic_data *b, uint32_t current_cwnd)
 {
     if (!b || !b->initialised) return;
 
@@ -127,14 +127,14 @@ void bic_on_loss(struct bic_data *b, uint32_t current_cwnd)
 }
 
 /* Get current BIC cwnd */
-uint32_t bic_get_cwnd(struct bic_data *b)
+static uint32_t bic_get_cwnd(struct bic_data *b)
 {
     if (!b || !b->initialised) return 10;
     return b->current_cwnd;
 }
 
 /* Set cwnd */
-void bic_set_cwnd(struct bic_data *b, uint32_t cwnd)
+static void bic_set_cwnd(struct bic_data *b, uint32_t cwnd)
 {
     if (!b || !b->initialised) return;
     b->current_cwnd = cwnd;

@@ -197,7 +197,7 @@ static struct vfs_ops cramfs_ops = {
 
 /* ── Init ──────────────────────────────────────────────────────── */
 
-int __init cramfs_init(void)
+static int __init cramfs_init(void)
 {
     kprintf("[cramfs] Compressed ROM filesystem initialized\n");
     vfs_register_filesystem("cramfs", &cramfs_ops);
@@ -214,7 +214,7 @@ MODULE_VERSION("1.0");
 #endif
 
 /* ── cramfs_mount ────────────────────────────────────── */
-int cramfs_mount(const char *source, const char *target, unsigned long flags)
+static int cramfs_mount(const char *source, const char *target, unsigned long flags)
 {
     (void)source;
     (void)target;
@@ -223,14 +223,14 @@ int cramfs_mount(const char *source, const char *target, unsigned long flags)
     return 0;
 }
 /* ── cramfs_umount ────────────────────────────────────── */
-int cramfs_umount(const char *target)
+static int cramfs_umount(const char *target)
 {
     (void)target;
     kprintf("[cramfs] CramFS unmounted\n");
     return 0;
 }
 /* ── cramfs_lookup ────────────────────────────────────── */
-int cramfs_lookup(const char *name, void *parent)
+static int cramfs_lookup(const char *name, void *parent)
 {
     (void)parent;
     kprintf("[cramfs] lookup: %s\n", name);

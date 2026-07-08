@@ -28,21 +28,21 @@ void timeconst_init(void)
 }
 
 /* ── Stub: timeconst_jiffies_to_msecs ─────────────────────────────── */
-uint64_t timeconst_jiffies_to_msecs(uint64_t j)
+static uint64_t timeconst_jiffies_to_msecs(uint64_t j)
 {
     (void)j;
     kprintf("[timeconst] timeconst_jiffies_to_msecs: not yet implemented\n");
     return 0;
 }
 /* ── Stub: timeconst_msecs_to_jiffies ─────────────────────────────── */
-uint64_t timeconst_msecs_to_jiffies(uint64_t m)
+static uint64_t timeconst_msecs_to_jiffies(uint64_t m)
 {
     (void)m;
     kprintf("[timeconst] timeconst_msecs_to_jiffies: not yet implemented\n");
     return 0;
 }
 /* ── Stub: timeconst_nsecs_to_jiffies ─────────────────────────────── */
-uint64_t timeconst_nsecs_to_jiffies(uint64_t n)
+static uint64_t timeconst_nsecs_to_jiffies(uint64_t n)
 {
     (void)n;
     kprintf("[timeconst] timeconst_nsecs_to_jiffies: not yet implemented\n");

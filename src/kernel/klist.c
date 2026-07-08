@@ -117,14 +117,14 @@ void klist_init_global(void)
 }
 
 /* ── Stub: klist_del ─────────────────────────────── */
-int klist_del(void *n)
+static int klist_del(void *n)
 {
     (void)n;
     kprintf("[klist] klist_del: not yet implemented\n");
     return 0;
 }
 /* ── Stub: klist_iter_init ─────────────────────────────── */
-int klist_iter_init(void *k, void *i)
+static int klist_iter_init(void *k, void *i)
 {
     (void)k;
     (void)i;

@@ -79,7 +79,7 @@ void taskstats_init(void)
 }
 
 /* ── Stub: taskstats_collect ─────────────────────────────── */
-int taskstats_collect(int pid, void *stats)
+static int taskstats_collect(int pid, void *stats)
 {
     (void)pid;
     (void)stats;
@@ -87,14 +87,14 @@ int taskstats_collect(int pid, void *stats)
     return 0;
 }
 /* ── Stub: taskstats_clear ─────────────────────────────── */
-int taskstats_clear(int pid)
+static int taskstats_clear(int pid)
 {
     (void)pid;
     kprintf("[taskstats] taskstats_clear: not yet implemented\n");
     return 0;
 }
 /* ── Stub: taskstats_register ─────────────────────────────── */
-int taskstats_register(void *listener)
+static int taskstats_register(void *listener)
 {
     (void)listener;
     kprintf("[taskstats] taskstats_register: not yet implemented\n");

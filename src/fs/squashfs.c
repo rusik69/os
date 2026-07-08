@@ -653,14 +653,14 @@ MODULE_DESCRIPTION("SquashFS read-only compressed filesystem — loadable module
 #endif
 
 /* ── squashfs_umount ───────────────────────────────────── */
-int squashfs_umount(const char *target)
+static int squashfs_umount(const char *target)
 {
     (void)target;
     kprintf("[squashfs] SquashFS unmounted\n");
     return 0;
 }
 /* ── squashfs_readdir ──────────────────────────────────── */
-int squashfs_readdir(void *dir, void *filldir)
+static int squashfs_readdir(void *dir, void *filldir)
 {
     (void)dir;
     (void)filldir;
@@ -668,7 +668,7 @@ int squashfs_readdir(void *dir, void *filldir)
     return 0;
 }
 /* ── squashfs_lookup ───────────────────────────────────── */
-int squashfs_lookup(const char *name, void *parent)
+static int squashfs_lookup(const char *name, void *parent)
 {
     (void)parent;
     kprintf("[squashfs] lookup: %s\n", name);

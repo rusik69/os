@@ -318,7 +318,7 @@ struct igmp_group *igmp_get_groups(int *count)
 module_init(igmp_init);
 
 /* ── Implement: igmp_handle_query ─────────────────────── */
-int igmp_handle_query(void *dev, const void *query)
+static int igmp_handle_query(void *dev, const void *query)
 {
     if (!dev || !query) return -EINVAL;
     if (!igmp_initialised) return -ENOSYS;
@@ -339,7 +339,7 @@ int igmp_handle_query(void *dev, const void *query)
     return 0;
 }
 /* ── Implement: igmp_report_enhanced ──────────────────── */
-int igmp_report_enhanced(void *dev, uint32_t addr)
+static int igmp_report_enhanced(void *dev, uint32_t addr)
 {
     if (!dev) return -EINVAL;
     if (!igmp_initialised) return -ENOSYS;

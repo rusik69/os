@@ -60,7 +60,7 @@ struct jffs2_dirent {
 
 static int jffs2_mounted = 0;
 
-int jffs2_mount(const uint8_t *data, uint64_t size)
+static int jffs2_mount(const uint8_t *data, uint64_t size)
 {
     (void)data;
     (void)size;
@@ -69,7 +69,7 @@ int jffs2_mount(const uint8_t *data, uint64_t size)
     return 0;
 }
 
-int jffs2_read_inode(uint32_t ino, uint8_t *buf, uint32_t *len)
+static int jffs2_read_inode(uint32_t ino, uint8_t *buf, uint32_t *len)
 {
     if (!jffs2_mounted) return -ENODEV;
     (void)ino;
@@ -78,7 +78,7 @@ int jffs2_read_inode(uint32_t ino, uint8_t *buf, uint32_t *len)
     return 0;
 }
 
-int jffs2_readdir(uint32_t dir_ino, uint32_t *offset_out,
+static int jffs2_readdir(uint32_t dir_ino, uint32_t *offset_out,
                    char *name, uint32_t *name_len)
 {
     if (!jffs2_mounted) return -ENODEV;
@@ -89,7 +89,7 @@ int jffs2_readdir(uint32_t dir_ino, uint32_t *offset_out,
     return 0;
 }
 
-void jffs2_init(void)
+static void jffs2_init(void)
 {
     jffs2_mounted = 0;
     kprintf("[OK] JFFS2 — Journalling Flash File System v2 (read support)\n");
@@ -120,14 +120,14 @@ MODULE_VERSION("1.0");
 #endif
 
 /* ── jffs2_umount ────────────────────────────────────── */
-int jffs2_umount(const char *target)
+static int jffs2_umount(const char *target)
 {
     (void)target;
     kprintf("[jffs2] JFFS2 unmounted\n");
     return 0;
 }
 /* ── jffs2_lookup ────────────────────────────────────── */
-int jffs2_lookup(const char *name, void *parent)
+static int jffs2_lookup(const char *name, void *parent)
 {
     (void)parent;
     kprintf("[jffs2] lookup: %s\n", name);

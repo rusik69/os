@@ -275,22 +275,22 @@ void sync(void) {
 }
 
 /* ── syscall_read ─────────────────────────────── */
-int syscall_read(int fd, void *buf, size_t count)
+static int syscall_read(int fd, void *buf, size_t count)
 {
     return (int)do_syscall6(SYS_READ, (uint64_t)fd, (uint64_t)(uintptr_t)buf, (uint64_t)count, 0, 0);
 }
 /* ── syscall_write ─────────────────────────────── */
-int syscall_write(int fd, const void *buf, size_t count)
+static int syscall_write(int fd, const void *buf, size_t count)
 {
     return (int)do_syscall6(SYS_WRITE, (uint64_t)fd, (uint64_t)(uintptr_t)buf, (uint64_t)count, 0, 0);
 }
 /* ── syscall_open ─────────────────────────────── */
-int syscall_open(const char *path, int flags)
+static int syscall_open(const char *path, int flags)
 {
     return (int)do_syscall6(SYS_OPEN, (uint64_t)(uintptr_t)path, (uint64_t)flags, 0, 0, 0);
 }
 /* ── syscall_close ─────────────────────────────── */
-int syscall_close(int fd)
+static int syscall_close(int fd)
 {
     return (int)do_syscall(SYS_CLOSE);
 }

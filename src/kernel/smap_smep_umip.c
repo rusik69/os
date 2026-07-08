@@ -51,7 +51,7 @@ int umip_init(void) {
 }
 
 /* ── smap_enable ─────────────────────────────── */
-int smap_enable(void)
+static int smap_enable(void)
 {
     uint64_t cr4 = read_cr4();
     if (!(cr4 & CR4_SMAP)) {
@@ -63,7 +63,7 @@ int smap_enable(void)
 }
 
 /* ── smap_disable ─────────────────────────────── */
-int smap_disable(void)
+static int smap_disable(void)
 {
     uint64_t cr4 = read_cr4();
     if (cr4 & CR4_SMAP) {
@@ -75,7 +75,7 @@ int smap_disable(void)
 }
 
 /* ── smep_enable ─────────────────────────────── */
-int smep_enable(void)
+static int smep_enable(void)
 {
     uint64_t cr4 = read_cr4();
     if (!(cr4 & CR4_SMEP)) {
@@ -87,7 +87,7 @@ int smep_enable(void)
 }
 
 /* ── smep_disable ─────────────────────────────── */
-int smep_disable(void)
+static int smep_disable(void)
 {
     uint64_t cr4 = read_cr4();
     if (cr4 & CR4_SMEP) {
@@ -99,7 +99,7 @@ int smep_disable(void)
 }
 
 /* ── umip_handle_insn ─────────────────────────────── */
-int umip_handle_insn(void *regs)
+static int umip_handle_insn(void *regs)
 {
     (void)regs;
     /* UMIP traps #GP on certain instructions (SGDT, SIDT, SLDT, SMSW, STR)

@@ -121,21 +121,21 @@ int rlimit_check(uint32_t pid, int resource, uint64_t value)
 }
 
 /* ── Stub: rlimit_get_cur ─────────────────────────────── */
-uint64_t rlimit_get_cur(int resource)
+static uint64_t rlimit_get_cur(int resource)
 {
     (void)resource;
     kprintf("[rlimit] rlimit_get_cur: not yet implemented\n");
     return 0;
 }
 /* ── Stub: rlimit_get_max ─────────────────────────────── */
-uint64_t rlimit_get_max(int resource)
+static uint64_t rlimit_get_max(int resource)
 {
     (void)resource;
     kprintf("[rlimit] rlimit_get_max: not yet implemented\n");
     return 0;
 }
 /* ── Stub: rlimit_set_cur ─────────────────────────────── */
-int rlimit_set_cur(int resource, uint64_t val)
+static int rlimit_set_cur(int resource, uint64_t val)
 {
     (void)resource;
     (void)val;

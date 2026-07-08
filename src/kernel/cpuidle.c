@@ -856,7 +856,7 @@ int cpuidle_state_count(void)
 }
 
 /* ── Stub: cpuidle_select ──────────────────────────────────────────── */
-int cpuidle_select(void *dev)
+static int cpuidle_select(void *dev)
 {
     (void)dev;
     kprintf("[CPUIDLE] cpuidle_select: not yet implemented\n");
@@ -864,7 +864,7 @@ int cpuidle_select(void *dev)
 }
 
 /* ── Stub: cpuidle_enter ───────────────────────────────────────────── */
-int cpuidle_enter(void *dev, int state_index)
+static int cpuidle_enter(void *dev, int state_index)
 {
     (void)dev; (void)state_index;
     kprintf("[CPUIDLE] cpuidle_enter: not yet implemented\n");
@@ -872,7 +872,7 @@ int cpuidle_enter(void *dev, int state_index)
 }
 
 /* ── Stub: cpuidle_reflect ─────────────────────────────────────────── */
-void cpuidle_reflect(void *dev, int state_index)
+static void cpuidle_reflect(void *dev, int state_index)
 {
     (void)dev; (void)state_index;
     kprintf("[CPUIDLE] cpuidle_reflect: not yet implemented\n");

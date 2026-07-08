@@ -42,7 +42,7 @@ static int scs_setup_cpu(int cpu)
 }
 
 /* Push a return address onto the shadow stack */
-int __attribute__((used)) scs_push(uintptr_t return_addr)
+static int __attribute__((used)) scs_push(uintptr_t return_addr)
 {
     int cpu = smp_get_cpu_id();
     if (cpu < 0 || cpu >= SMP_MAX_CPUS || !scs_sp[cpu])
@@ -58,7 +58,7 @@ int __attribute__((used)) scs_push(uintptr_t return_addr)
 }
 
 /* Pop a return address from the shadow stack */
-uintptr_t __attribute__((used)) scs_pop(void)
+static uintptr_t __attribute__((used)) scs_pop(void)
 {
     int cpu = smp_get_cpu_id();
     if (cpu < 0 || cpu >= SMP_MAX_CPUS || !scs_sp[cpu])
@@ -74,7 +74,7 @@ uintptr_t __attribute__((used)) scs_pop(void)
 }
 
 /* Verify a return address matches the shadow stack */
-int scs_check_return(uintptr_t expected)
+static int scs_check_return(uintptr_t expected)
 {
     uintptr_t actual = scs_pop();
     if (actual != expected) {
@@ -90,7 +90,7 @@ int scs_check_return(uintptr_t expected)
 }
 
 /* Get current shadow stack pointer (for context switch) */
-uintptr_t *scs_get_sp(void)
+static uintptr_t *scs_get_sp(void)
 {
     int cpu = smp_get_cpu_id();
     if (cpu < 0 || cpu >= SMP_MAX_CPUS)
@@ -99,14 +99,14 @@ uintptr_t *scs_get_sp(void)
 }
 
 /* Set shadow stack pointer (for context switch) */
-void scs_set_sp(uintptr_t *sp)
+static void scs_set_sp(uintptr_t *sp)
 {
     int cpu = smp_get_cpu_id();
     if (cpu >= 0 && cpu < SMP_MAX_CPUS)
         scs_sp[cpu] = sp;
 }
 
-void __init scs_init(void)
+static void __init scs_init(void)
 {
     if (scs_initialized)
         return;
@@ -127,21 +127,21 @@ void __init scs_init(void)
 }
 
 /* ── Stub: scs_alloc ─────────────────────────────── */
-void* scs_alloc(void *task)
+static void* scs_alloc(void *task)
 {
     (void)task;
     kprintf("[scs] scs_alloc: not yet implemented\n");
     return 0;
 }
 /* ── Stub: scs_free ─────────────────────────────── */
-int scs_free(void *task)
+static int scs_free(void *task)
 {
     (void)task;
     kprintf("[scs] scs_free: not yet implemented\n");
     return 0;
 }
 /* ── Stub: scs_switch ─────────────────────────────── */
-int scs_switch(void *task, void *new_scs)
+static int scs_switch(void *task, void *new_scs)
 {
     (void)task;
     (void)new_scs;

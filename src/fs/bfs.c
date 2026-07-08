@@ -191,7 +191,7 @@ static struct vfs_ops bfs_ops = {
 
 /* ── Probe ──────────────────────────────────────────────────────── */
 
-int bfs_probe(uint8_t dev_id)
+static int bfs_probe(uint8_t dev_id)
 {
     uint8_t buf[512];
     if (blockdev_read_sectors(dev_id, 0, 1, buf) != 0)
@@ -206,7 +206,7 @@ int bfs_probe(uint8_t dev_id)
 
 /* ── Init ──────────────────────────────────────────────────────── */
 
-int __init bfs_init(void)
+static int __init bfs_init(void)
 {
     kprintf("[bfs] SCO BFS (Boot File System) initialized\n");
     vfs_register_filesystem("bfs", &bfs_ops);
@@ -223,7 +223,7 @@ MODULE_VERSION("1.0");
 #endif
 
 /* ── bfs_mount ──────────────────────────────────────── */
-int bfs_mount(const char *source, const char *target, unsigned long flags)
+static int bfs_mount(const char *source, const char *target, unsigned long flags)
 {
     (void)source;
     (void)target;
@@ -232,14 +232,14 @@ int bfs_mount(const char *source, const char *target, unsigned long flags)
     return 0;
 }
 /* ── bfs_umount ──────────────────────────────────────── */
-int bfs_umount(const char *target)
+static int bfs_umount(const char *target)
 {
     (void)target;
     kprintf("[bfs] BFS unmounted\n");
     return 0;
 }
 /* ── bfs_lookup ─────────────────────────────────────── */
-int bfs_lookup(const char *name, void *parent)
+static int bfs_lookup(const char *name, void *parent)
 {
     (void)parent;
     kprintf("[bfs] lookup: %s\n", name);

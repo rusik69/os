@@ -364,7 +364,7 @@ void sysctl_init(void) {
 }
 
 /* ── Stub: sysctl_unregister ─────────────────────────────── */
-int sysctl_unregister(void *table)
+static int sysctl_unregister(void *table)
 {
     (void)table;
     kprintf("[sysctl] sysctl_unregister: not yet implemented\n");

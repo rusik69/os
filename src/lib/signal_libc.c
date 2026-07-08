@@ -224,14 +224,14 @@ int raise(int sig)
 }
 
 /* ── signal_raise ─────────────────────────────── */
-int signal_raise(int sig)
+static int signal_raise(int sig)
 {
     /* raise(sig) = kill(getpid(), sig) */
     uint64_t pid = sc(SYS_GETPID, 0, 0, 0, 0, 0);
     return kill((uint32_t)pid, sig);
 }
 /* ── signal_sigaction ─────────────────────────────── */
-int signal_sigaction(int sig, const void *act, void *oldact)
+static int signal_sigaction(int sig, const void *act, void *oldact)
 {
     /* Delegate to the existing sigaction implementation */
     const struct sigaction *new_act = (const struct sigaction *)act;
@@ -239,7 +239,7 @@ int signal_sigaction(int sig, const void *act, void *oldact)
     return sigaction(sig, new_act, old_act);
 }
 /* ── signal_sigprocmask ─────────────────────────────── */
-int signal_sigprocmask(int how, const void *set, void *oldset)
+static int signal_sigprocmask(int how, const void *set, void *oldset)
 {
     /* Delegate to the existing sigprocmask implementation */
     const sigset_t *new_set = (const sigset_t *)set;

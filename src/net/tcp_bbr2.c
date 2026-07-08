@@ -51,7 +51,7 @@ struct bbr2_state {
 static struct bbr2_state bbr2;
 
 /* Initialize BBRv2 state for a connection */
-void bbr2_init(void)
+static void bbr2_init(void)
 {
     memset(&bbr2, 0, sizeof(bbr2));
     bbr2.min_rtt = ~0ULL;
@@ -64,7 +64,7 @@ void bbr2_init(void)
 }
 
 /* Update max bandwidth filter */
-void bbr2_update_bw(uint64_t bw_sample)
+static void bbr2_update_bw(uint64_t bw_sample)
 {
     bbr2.bw_filter[bbr2.bw_filter_idx] = bw_sample;
     bbr2.bw_filter_idx = (bbr2.bw_filter_idx + 1) % BBR2_MAX_BW_FILTER;
@@ -78,7 +78,7 @@ void bbr2_update_bw(uint64_t bw_sample)
 }
 
 /* Update min RTT */
-void bbr2_update_rtt(uint64_t rtt_sample)
+static void bbr2_update_rtt(uint64_t rtt_sample)
 {
     bbr2.rtt_filter[bbr2.rtt_filter_idx] = rtt_sample;
     bbr2.rtt_filter_idx = (bbr2.rtt_filter_idx + 1) % BBR2_MIN_RTT_FILTER;
@@ -92,7 +92,7 @@ void bbr2_update_rtt(uint64_t rtt_sample)
 }
 
 /* Process ECN CE mark */
-void bbr2_process_ecn_ce(void)
+static void bbr2_process_ecn_ce(void)
 {
     bbr2.ecn_marks++;
     if (bbr2.ecn_marks >= bbr2.ecn_ce_threshold) {
@@ -104,7 +104,7 @@ void bbr2_process_ecn_ce(void)
 }
 
 /* BBRv2 state machine */
-void bbr2_tick(uint64_t now)
+static void bbr2_tick(uint64_t now)
 {
     switch (bbr2.state) {
     case 0: /* STARTUP */
@@ -160,13 +160,13 @@ void bbr2_tick(uint64_t now)
 }
 
 /* ── BBRv2 public API ──────────────────────────────────────────────── */
-uint64_t bbr2_get_pacing_rate(void)
+static uint64_t bbr2_get_pacing_rate(void)
 {
     return bbr2.pacing_rate;
 }
 
 /* Get current congestion window */
-uint64_t bbr2_get_cwnd(void)
+static uint64_t bbr2_get_cwnd(void)
 {
     return bbr2.cwnd;
 }

@@ -310,7 +310,7 @@ void trace_v2_block_complete(uint32_t dev_id, uint64_t sector,
 }
 
 /* ── Stub: trace_event_register ─────────────────────────────── */
-int trace_event_register(const char *name, void *event)
+static int trace_event_register(const char *name, void *event)
 {
     (void)name;
     (void)event;
@@ -318,14 +318,14 @@ int trace_event_register(const char *name, void *event)
     return 0;
 }
 /* ── Stub: trace_event_unregister ─────────────────────────────── */
-int trace_event_unregister(const char *name)
+static int trace_event_unregister(const char *name)
 {
     (void)name;
     kprintf("[trace] trace_event_unregister: not yet implemented\n");
     return 0;
 }
 /* ── Stub: trace_event_write ─────────────────────────────── */
-int trace_event_write(const char *name, const void *data, size_t len)
+static int trace_event_write(const char *name, const void *data, size_t len)
 {
     (void)name;
     (void)data;
@@ -334,7 +334,7 @@ int trace_event_write(const char *name, const void *data, size_t len)
     return 0;
 }
 /* ── Stub: trace_event_read ─────────────────────────────── */
-int trace_event_read(const char *name, void *buf, size_t len)
+static int trace_event_read(const char *name, void *buf, size_t len)
 {
     (void)name;
     (void)buf;

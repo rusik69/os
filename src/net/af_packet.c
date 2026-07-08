@@ -247,7 +247,7 @@ int packet_recv(int fd, void *buf, int max_len, uint64_t *src_ifindex)
  *
  * Returns the number of sockets that received a copy.
  */
-int packet_deliver(uint16_t eth_type, int ifindex,
+static int packet_deliver(uint16_t eth_type, int ifindex,
                    const uint8_t *dst_mac, const uint8_t *src_mac,
                    const uint8_t *data, int len)
 {
@@ -310,7 +310,7 @@ void packet_close(int fd)
 
 /* ── Socket options ────────────────────────────────────────────────── */
 
-int packet_setsockopt(int fd, int optname, const void *optval, int optlen)
+static int packet_setsockopt(int fd, int optname, const void *optval, int optlen)
 {
     struct packet_sock *ps = packet_find_by_fd(fd);
     if (!ps || !optval)
@@ -417,7 +417,7 @@ int packet_setsockopt(int fd, int optname, const void *optval, int optlen)
     }
 }
 
-int packet_getsockopt(int fd, int optname, void *optval, int *optlen)
+static int packet_getsockopt(int fd, int optname, void *optval, int *optlen)
 {
     struct packet_sock *ps = packet_find_by_fd(fd);
     if (!ps || !optval || !optlen)
@@ -445,7 +445,7 @@ int packet_is_valid_fd(int fd)
     return packet_find_by_fd(fd) != NULL;
 }
 
-uint16_t packet_get_protocol(int fd)
+static uint16_t packet_get_protocol(int fd)
 {
     struct packet_sock *ps = packet_find_by_fd(fd);
     if (!ps)
@@ -619,7 +619,7 @@ static int bpf_run_filter(const struct sock_filter *prog, int prog_len,
     return BPF_PASS; /* Default: accept */
 }
 
-int packet_set_filter(int fd, const struct sock_fprog *fprog)
+static int packet_set_filter(int fd, const struct sock_fprog *fprog)
 {
     struct packet_sock *ps = packet_find_by_fd(fd);
     if (!ps)
@@ -661,7 +661,7 @@ int packet_set_filter(int fd, const struct sock_fprog *fprog)
 }
 
 /* Apply BPF filter to a frame.  Returns BPF_PASS (1) or BPF_KILL (0). */
-int packet_apply_filter(int fd, const uint8_t *frame, int len)
+static int packet_apply_filter(int fd, const uint8_t *frame, int len)
 {
     struct packet_sock *ps = packet_find_by_fd(fd);
     if (!ps || !frame || len <= 0)
@@ -775,7 +775,7 @@ int packet_mmap_setup(int fd, struct tpacket_req *req, int tx_ring)
     return 0;
 }
 
-int packet_mmap_poll(int fd, int rx)
+static int packet_mmap_poll(int fd, int rx)
 {
     struct packet_sock *ps = packet_find_by_fd(fd);
     if (!ps || !ps->mmap_enabled || !ps->mmap_ring.active)
@@ -792,7 +792,7 @@ int packet_mmap_poll(int fd, int rx)
     return 0;
 }
 
-int packet_mmap_get_frame(int fd, int rx, uint32_t *frame_id)
+static int packet_mmap_get_frame(int fd, int rx, uint32_t *frame_id)
 {
     if (!frame_id) return -EINVAL;
 
@@ -813,7 +813,7 @@ int packet_mmap_get_frame(int fd, int rx, uint32_t *frame_id)
     return -EAGAIN;
 }
 
-int packet_mmap_release_frame(int fd, int rx, uint32_t frame_id)
+static int packet_mmap_release_frame(int fd, int rx, uint32_t frame_id)
 {
     struct packet_sock *ps = packet_find_by_fd(fd);
     if (!ps || !ps->mmap_enabled || !ps->mmap_ring.active)
@@ -866,7 +866,7 @@ EXPORT_SYMBOL(packet_mmap_teardown);
 module_init(af_packet_init);
 
 /* ── Implement: af_packet_send ────────────────── */
-int af_packet_send(void *sk, void *msg, size_t len)
+static int af_packet_send(void *sk, void *msg, size_t len)
 {
     if (!sk || !msg || len == 0) {
         kprintf("[af_packet] af_packet_send: invalid parameter\n");
@@ -876,7 +876,7 @@ int af_packet_send(void *sk, void *msg, size_t len)
     return -EOPNOTSUPP;
 }
 /* ── Implement: af_packet_recv ────────────────── */
-int af_packet_recv(void *sk, void *buf, size_t len)
+static int af_packet_recv(void *sk, void *buf, size_t len)
 {
     if (!sk || !buf || len == 0) {
         kprintf("[af_packet] af_packet_recv: invalid parameter\n");
@@ -886,7 +886,7 @@ int af_packet_recv(void *sk, void *buf, size_t len)
     return -EOPNOTSUPP;
 }
 /* ── Implement: af_packet_bind ────────────────── */
-int af_packet_bind(void *sk, void *addr, int addr_len)
+static int af_packet_bind(void *sk, void *addr, int addr_len)
 {
     if (!sk || !addr || addr_len <= 0) {
         kprintf("[af_packet] af_packet_bind: invalid parameter\n");
@@ -896,7 +896,7 @@ int af_packet_bind(void *sk, void *addr, int addr_len)
     return -EOPNOTSUPP;
 }
 /* ── Implement: af_packet_setsockopt ────────────────── */
-int af_packet_setsockopt(void *sk, int level, int optname, void *optval, int optlen)
+static int af_packet_setsockopt(void *sk, int level, int optname, void *optval, int optlen)
 {
     if (!sk || !optval || optlen <= 0) {
         kprintf("[af_packet] af_packet_setsockopt: invalid parameter\n");

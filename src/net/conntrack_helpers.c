@@ -526,7 +526,7 @@ void nf_helper_init(void)
 module_init(nf_helper_init);
 
 /* ── Implement: conntrack_helper_register ────────────────── */
-int conntrack_helper_register(int proto, uint16_t port, void *helper)
+static int conntrack_helper_register(int proto, uint16_t port, void *helper)
 {
     if (!helper) {
         kprintf("[conntrack_helpers] conntrack_helper_register: NULL helper\n");
@@ -542,7 +542,7 @@ int conntrack_helper_register(int proto, uint16_t port, void *helper)
     return -EOPNOTSUPP;
 }
 /* ── Implement: conntrack_helper_unregister ────────────────── */
-int conntrack_helper_unregister(void *helper)
+static int conntrack_helper_unregister(void *helper)
 {
     if (!helper) {
         kprintf("[conntrack_helpers] conntrack_helper_unregister: NULL helper\n");

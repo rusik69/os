@@ -157,7 +157,7 @@ struct mm_struct;
  * Get the capability sets of a target process.
  * Returns 0 on success, -EINVAL on invalid parameters.
  */
-int cap_capget(struct task_struct *target, uint64_t *effective, uint64_t *inheritable, uint64_t *permitted)
+static int cap_capget(struct task_struct *target, uint64_t *effective, uint64_t *inheritable, uint64_t *permitted)
 {
     if (!target)
         return -EINVAL;
@@ -180,7 +180,7 @@ int cap_capget(struct task_struct *target, uint64_t *effective, uint64_t *inheri
  * Requires CAP_SETPCAP in the caller's effective set.
  * Returns 0 on success, -EPERM/‑EINVAL on error.
  */
-int cap_capset(struct task_struct *target, uint64_t *effective, uint64_t *inheritable, uint64_t *permitted)
+static int cap_capset(struct task_struct *target, uint64_t *effective, uint64_t *inheritable, uint64_t *permitted)
 {
     if (!target)
         return -EINVAL;
@@ -283,7 +283,7 @@ int cap_bprm_set_creds(struct linux_binprm *bprm)
  *
  * Returns 0 on success, -EINVAL for unknown options.
  */
-int cap_task_prctl(int option, unsigned long arg2, unsigned long arg3)
+static int cap_task_prctl(int option, unsigned long arg2, unsigned long arg3)
 {
     struct process *p = process_get_current();
     if (!p)
@@ -354,7 +354,7 @@ int cap_task_prctl(int option, unsigned long arg2, unsigned long arg3)
  * Check capability for setting scheduler parameters.
  * Requires CAP_SYS_NICE.
  */
-int cap_task_setscheduler(struct task_struct *p)
+static int cap_task_setscheduler(struct task_struct *p)
 {
     if (!p)
         return -EINVAL;
@@ -367,7 +367,7 @@ int cap_task_setscheduler(struct task_struct *p)
  * Check capability for setting I/O priority.
  * Requires CAP_SYS_ADMIN or CAP_SYS_NICE depending on target.
  */
-int cap_task_setioprio(struct task_struct *p, int ioprio)
+static int cap_task_setioprio(struct task_struct *p, int ioprio)
 {
     if (!p)
         return -EINVAL;
@@ -397,7 +397,7 @@ int cap_task_setioprio(struct task_struct *p, int ioprio)
  * Check capability for setting nice value.
  * Requires CAP_SYS_NICE.
  */
-int cap_task_setnice(struct task_struct *p, int nice)
+static int cap_task_setnice(struct task_struct *p, int nice)
 {
     if (!p)
         return -EINVAL;
@@ -433,7 +433,7 @@ int cap_task_setnice(struct task_struct *p, int nice)
  *
  * CAP_SYS_ADMIN allows overcommit to always succeed.
  */
-int cap_vm_enough_memory(struct mm_struct *mm, long pages)
+static int cap_vm_enough_memory(struct mm_struct *mm, long pages)
 {
     if (!mm)
         return -EINVAL;

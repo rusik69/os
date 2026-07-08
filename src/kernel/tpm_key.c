@@ -65,7 +65,7 @@ struct tpm_key {
  *
  * Returns 0 on success, -1 on failure.
  */
-int tpm_generate_key(uint32_t parent, const uint8_t *sealed_data,
+static int tpm_generate_key(uint32_t parent, const uint8_t *sealed_data,
                      uint32_t sealed_len, const uint8_t *auth,
                      uint32_t auth_len, struct tpm_key *out_key)
 {
@@ -128,7 +128,7 @@ int tpm_generate_key(uint32_t parent, const uint8_t *sealed_data,
  *
  * Returns 0 on success, sets out_key->object_handle and out_key->loaded=1.
  */
-int tpm_load_key(struct tpm_key *out_key)
+static int tpm_load_key(struct tpm_key *out_key)
 {
     if (!out_key || !out_key->priv_blob || !out_key->pub_blob)
         return -1;
@@ -154,7 +154,7 @@ int tpm_load_key(struct tpm_key *out_key)
 /*
  * tpm_unload_key — Flush a loaded TPM key from TPM memory.
  */
-void tpm_unload_key(struct tpm_key *key)
+static void tpm_unload_key(struct tpm_key *key)
 {
     if (!key || !key->loaded)
         return;
@@ -177,7 +177,7 @@ void tpm_unload_key(struct tpm_key *key)
  *
  * Returns 0 on success.
  */
-int tpm_seal_key_to_nv(uint32_t parent, uint32_t nv_index,
+static int tpm_seal_key_to_nv(uint32_t parent, uint32_t nv_index,
                        const uint8_t *auth, uint32_t auth_len,
                        struct tpm_key *out_key)
 {
@@ -232,7 +232,7 @@ int tpm_seal_key_to_nv(uint32_t parent, uint32_t nv_index,
  *
  * Returns 0 on success.
  */
-int tpm_load_key_from_nv(uint32_t nv_index, uint32_t parent,
+static int tpm_load_key_from_nv(uint32_t nv_index, uint32_t parent,
                          struct tpm_key *out_key)
 {
     if (!out_key)
@@ -318,7 +318,7 @@ int tpm_load_key_from_nv(uint32_t nv_index, uint32_t parent,
  *
  * Returns 0 on success.
  */
-int tpm_sign_hash(struct tpm_key *key, const uint8_t *digest,
+static int tpm_sign_hash(struct tpm_key *key, const uint8_t *digest,
                   uint32_t digest_len, uint8_t *signature,
                   uint32_t *sig_len)
 {
@@ -346,7 +346,7 @@ int tpm_sign_hash(struct tpm_key *key, const uint8_t *digest,
  *
  * Returns 0 on success.
  */
-int tpm_luks_seal_key(const uint8_t *luks_key, uint32_t luks_key_len,
+static int tpm_luks_seal_key(const uint8_t *luks_key, uint32_t luks_key_len,
                       const uint8_t *auth, uint32_t auth_len)
 {
     if (!luks_key || luks_key_len == 0)
@@ -380,7 +380,7 @@ int tpm_luks_seal_key(const uint8_t *luks_key, uint32_t luks_key_len,
  *
  * Returns 0 on success.
  */
-int tpm_luks_unseal_key(uint8_t *luks_key, uint32_t *luks_key_len,
+static int tpm_luks_unseal_key(uint8_t *luks_key, uint32_t *luks_key_len,
                         const uint8_t *auth, uint32_t auth_len)
 {
     if (!luks_key || !luks_key_len)
@@ -405,7 +405,7 @@ int tpm_luks_unseal_key(uint8_t *luks_key, uint32_t *luks_key_len,
  *  Initialisation
  * ═══════════════════════════════════════════════════════════════════ */
 
-int tpm_key_init(void)
+static int tpm_key_init(void)
 {
     if (!tpm_is_present()) {
         kprintf("[TPM_key] TPM not present, skipping key management init\n");
@@ -417,7 +417,7 @@ int tpm_key_init(void)
 }
 
 /* ── Stub: tpm_key_create ─────────────────────────────── */
-int tpm_key_create(const char *name, void *key)
+static int tpm_key_create(const char *name, void *key)
 {
     (void)name;
     (void)key;
@@ -425,7 +425,7 @@ int tpm_key_create(const char *name, void *key)
     return 0;
 }
 /* ── Stub: tpm_key_load ─────────────────────────────── */
-int tpm_key_load(const char *name, void *key)
+static int tpm_key_load(const char *name, void *key)
 {
     (void)name;
     (void)key;
@@ -433,7 +433,7 @@ int tpm_key_load(const char *name, void *key)
     return 0;
 }
 /* ── Stub: tpm_key_sign ─────────────────────────────── */
-int tpm_key_sign(const void *data, size_t dlen, void *sig, size_t *slen)
+static int tpm_key_sign(const void *data, size_t dlen, void *sig, size_t *slen)
 {
     (void)data;
     (void)dlen;

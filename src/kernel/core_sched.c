@@ -169,7 +169,7 @@ uint64_t sched_core_get_cookie(struct process *task)
 }
 
 /* ── Stub: sched_core_task_online ──────────────────────────────────────── */
-int sched_core_task_online(struct process *task, int cpu)
+static int sched_core_task_online(struct process *task, int cpu)
 {
     (void)task;
     (void)cpu;
@@ -178,7 +178,7 @@ int sched_core_task_online(struct process *task, int cpu)
 }
 
 /* ── Stub: sched_core_task_offline ─────────────────────────────────────── */
-int sched_core_task_offline(struct process *task, int cpu)
+static int sched_core_task_offline(struct process *task, int cpu)
 {
     (void)task;
     (void)cpu;
@@ -187,7 +187,7 @@ int sched_core_task_offline(struct process *task, int cpu)
 }
 
 /* ── Stub: sched_core_free ─────────────────────────────────────────────── */
-void sched_core_free(struct process *task)
+static void sched_core_free(struct process *task)
 {
     (void)task;
     kprintf("[SchedCore] sched_core_free not yet implemented\n");

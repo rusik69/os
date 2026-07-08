@@ -174,14 +174,14 @@ int signal_validate(int sig)
     return 0;
 }
 /* ── Stub: signal_valid_rt ─────────────────────────────── */
-int signal_valid_rt(int sig)
+static int signal_valid_rt(int sig)
 {
     (void)sig;
     kprintf("[signal] signal_valid_rt: not yet implemented\n");
     return 0;
 }
 /* ── Stub: signal_sendable ─────────────────────────────── */
-int signal_sendable(void *task, int sig)
+static int signal_sendable(void *task, int sig)
 {
     (void)task;
     (void)sig;

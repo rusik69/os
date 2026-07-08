@@ -165,7 +165,7 @@ static void inst_push_event(struct inotify_instance *inst,
 
 /* ── Initialization ──────────────────────────────────────────────── */
 
-void inotify_init_subsystem(void)
+static void inotify_init_subsystem(void)
 {
     if (g_inotify_initialized)
         return;
@@ -522,21 +522,21 @@ void inotify_subsystem_init(void)
 }
 
 /* ── inotify_add_to_dir ──────────────────────────────── */
-int inotify_add_to_dir(int fd, const char *path, uint32_t mask)
+static int inotify_add_to_dir(int fd, const char *path, uint32_t mask)
 {
     /* Convenience wrapper: calls sys_inotify_add_watch */
     return sys_inotify_add_watch(fd, (const char *)path, mask);
 }
 
 /* ── inotify_rm_from_dir ─────────────────────────────── */
-int inotify_rm_from_dir(int fd, int wd)
+static int inotify_rm_from_dir(int fd, int wd)
 {
     /* Convenience wrapper: calls sys_inotify_rm_watch */
     return sys_inotify_rm_watch(fd, wd);
 }
 
 /* ── inotify_handle_event ────────────────────────────── */
-void inotify_handle_event(const char *path, uint32_t mask, uint32_t cookie, const char *name)
+static void inotify_handle_event(const char *path, uint32_t mask, uint32_t cookie, const char *name)
 {
     /* For compatibility: call inotify_deliver with just the path and mask.
      * The cookie and name are not passed to deliver but this could be extended. */
@@ -546,7 +546,7 @@ void inotify_handle_event(const char *path, uint32_t mask, uint32_t cookie, cons
 }
 
 /* ── inotify_find_inode ──────────────────────────────── */
-int inotify_find_inode(const char *path, uint64_t *inode)
+static int inotify_find_inode(const char *path, uint64_t *inode)
 {
     if (!path || !inode) return -EINVAL;
 

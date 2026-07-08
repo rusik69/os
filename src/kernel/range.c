@@ -137,7 +137,7 @@ void range_init(void)
 }
 
 /* ── Stub: range_overlap ─────────────────────────────── */
-int range_overlap(const void *r1, const void *r2)
+static int range_overlap(const void *r1, const void *r2)
 {
     (void)r1;
     (void)r2;
@@ -145,7 +145,7 @@ int range_overlap(const void *r1, const void *r2)
     return 0;
 }
 /* ── Stub: range_merge ─────────────────────────────── */
-int range_merge(void *r1, const void *r2)
+static int range_merge(void *r1, const void *r2)
 {
     (void)r1;
     (void)r2;

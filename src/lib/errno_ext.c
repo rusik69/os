@@ -143,12 +143,12 @@ void perror(const char *s) {
 }
 
 /* ── errno_str ─────────────────────────────── */
-const char* errno_str(int err)
+static const char* errno_str(int err)
 {
     return strerror(err);
 }
 /* ── errno_set ─────────────────────────────── */
-int errno_set(int err)
+static int errno_set(int err)
 {
     __errno_value = err;
     return 0;

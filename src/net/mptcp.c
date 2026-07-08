@@ -1236,7 +1236,7 @@ EXPORT_SYMBOL(mptcp_send);
 EXPORT_SYMBOL(mptcp_recv);
 EXPORT_SYMBOL(mptcp_close);
 /* ── Implement: mptcp_subflow_create ────────────────── */
-int mptcp_subflow_create(uint32_t token, uint32_t addr, uint16_t port)
+static int mptcp_subflow_create(uint32_t token, uint32_t addr, uint16_t port)
 {
     if (!mptcp_initialized) {
         kprintf("[mptcp] mptcp_subflow_create: not initialized\n");
@@ -1282,7 +1282,7 @@ int mptcp_subflow_create(uint32_t token, uint32_t addr, uint16_t port)
  * from the peer for potential subflow creation.
  * Returns 0 on success, negative errno on failure.
  * If the address already exists, returns 0 (idempotent). */
-int mptcp_add_addr(uint32_t token, uint32_t addr, uint16_t port, uint8_t flags)
+static int mptcp_add_addr(uint32_t token, uint32_t addr, uint16_t port, uint8_t flags)
 {
     if (!mptcp_initialized) {
         kprintf("[mptcp] mptcp_add_addr: not initialized\n");
@@ -1353,7 +1353,7 @@ int mptcp_add_addr(uint32_t token, uint32_t addr, uint16_t port, uint8_t flags)
  * table by its address ID.  This is called when the peer sends
  * a REMOVE_ADDR option, or locally to stop advertising an address.
  * Returns 0 on success, negative errno on failure. */
-int mptcp_remove_addr(uint32_t token, uint32_t addr_id)
+static int mptcp_remove_addr(uint32_t token, uint32_t addr_id)
 {
     if (!mptcp_initialized) {
         kprintf("[mptcp] mptcp_remove_addr: not initialized\n");
@@ -1688,7 +1688,7 @@ int mptcp_handle_remove_addr(int conn_id, const uint8_t *opt, uint16_t optlen)
 }
 
 /* ── Implement: mptcp_priority ────────────────── */
-int mptcp_priority(uint32_t token, uint32_t addr_id, uint8_t backup)
+static int mptcp_priority(uint32_t token, uint32_t addr_id, uint8_t backup)
 {
     if (!mptcp_initialized) {
         kprintf("[mptcp] mptcp_priority: not initialized\n");
@@ -2028,7 +2028,7 @@ int mptcp_handle_fastclose(int conn_id, const uint8_t *opt, uint16_t optlen)
 }
 
 /* ── Implement: mptcp_reset ────────────────── */
-int mptcp_reset(uint32_t token, uint32_t addr_id)
+static int mptcp_reset(uint32_t token, uint32_t addr_id)
 {
     if (!mptcp_initialized) {
         kprintf("[mptcp] mptcp_reset: not initialized\n");
@@ -2052,7 +2052,7 @@ int mptcp_reset(uint32_t token, uint32_t addr_id)
  * connection token (derived from the peer's key), a random nonce, and
  * an address ID identifying the local endpoint.
  * Returns bytes written to opt_out on success, negative errno on error. */
-int mptcp_mp_join_syn(uint32_t token, uint32_t addr, uint16_t port,
+static int mptcp_mp_join_syn(uint32_t token, uint32_t addr, uint16_t port,
                        uint8_t *opt_out, uint16_t *opt_len)
 {
     (void)addr;
@@ -2115,7 +2115,7 @@ int mptcp_mp_join_syn(uint32_t token, uint32_t addr, uint16_t port,
  * with a SYN+ACK containing the MP_JOIN option.  Retrieves the pending
  * subflow state, computes the HMAC, and builds the response option.
  * Returns bytes written to opt_out on success, negative errno on error. */
-int mptcp_mp_join_synack(uint32_t token, uint32_t addr, uint16_t port,
+static int mptcp_mp_join_synack(uint32_t token, uint32_t addr, uint16_t port,
                           uint8_t *opt_out, uint16_t *opt_len)
 {
     (void)addr;
@@ -2183,7 +2183,7 @@ int mptcp_mp_join_synack(uint32_t token, uint32_t addr, uint16_t port,
  * arrives.  Parses the MP_JOIN ACK option, validates the HMAC, and
  * marks the subflow as fully established.
  * Returns 0 on success (subflow established), negative errno on failure. */
-int mptcp_mp_join_ack(uint32_t token, uint32_t addr_id,
+static int mptcp_mp_join_ack(uint32_t token, uint32_t addr_id,
                        const uint8_t *opt, uint16_t opt_len)
 {
     (void)addr_id;
@@ -2286,7 +2286,7 @@ int mptcp_mp_join_ack(uint32_t token, uint32_t addr_id,
  *
  * Returns: data-level sequence number (>= 0) on success,
  *          negative errno on failure. */
-int mptcp_dss(uint32_t token, uint32_t seq, uint32_t ack, const void *data, uint32_t len)
+static int mptcp_dss(uint32_t token, uint32_t seq, uint32_t ack, const void *data, uint32_t len)
 {
     (void)seq;
     (void)ack;

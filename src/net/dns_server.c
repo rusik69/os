@@ -496,7 +496,7 @@ void dns_server_stop(void) {
 module_init(dns_server_init);
 
 /* ── Implement: dns_server_start ────────────────── */
-int dns_server_start(int port)
+static int dns_server_start(int port)
 {
     if (port <= 0 || port > 65535) {
         kprintf("[dns_server] dns_server_start: invalid port %d\n", port);
@@ -506,7 +506,7 @@ int dns_server_start(int port)
     return -EOPNOTSUPP;
 }
 /* ── Implement: dns_server_handle_query ────────────────── */
-int dns_server_handle_query(const void *query, size_t len, void *resp, size_t *rlen)
+static int dns_server_handle_query(const void *query, size_t len, void *resp, size_t *rlen)
 {
     if (!query || !resp || !rlen || len < 12) {
         kprintf("[dns_server] dns_server_handle_query: invalid parameters\n");

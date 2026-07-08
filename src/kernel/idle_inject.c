@@ -287,7 +287,7 @@ void idle_inject_init(void)
 }
 
 /* ── Stub: idle_inject_set_rate ─────────────────────────────── */
-int idle_inject_set_rate(int cpu, unsigned int rate)
+static int idle_inject_set_rate(int cpu, unsigned int rate)
 {
     (void)cpu;
     (void)rate;

@@ -503,7 +503,7 @@ EXPORT_SYMBOL(sctp_send);
 EXPORT_SYMBOL(sctp_recv);
 EXPORT_SYMBOL(sctp_close);
 /* ── Implement: sctp_recvmsg ────────────────── */
-int sctp_recvmsg(int fd, void *buf, uint16_t maxlen, uint16_t *stream_id, uint16_t *ppid, int flags)
+static int sctp_recvmsg(int fd, void *buf, uint16_t maxlen, uint16_t *stream_id, uint16_t *ppid, int flags)
 {
 	(void)flags;
 	/* Delegate to sctp_recv for stream_id delivery */
@@ -522,7 +522,7 @@ int sctp_recvmsg(int fd, void *buf, uint16_t maxlen, uint16_t *stream_id, uint16
 }
 
 /* ── Implement: sctp_sendmsg ────────────────── */
-int sctp_sendmsg(int fd, const void *data, uint16_t len, uint32_t to_ip, uint16_t to_port, uint16_t stream_id, uint32_t ppid, int flags)
+static int sctp_sendmsg(int fd, const void *data, uint16_t len, uint32_t to_ip, uint16_t to_port, uint16_t stream_id, uint32_t ppid, int flags)
 {
     (void)to_ip;
     (void)to_port;
@@ -536,7 +536,7 @@ int sctp_sendmsg(int fd, const void *data, uint16_t len, uint32_t to_ip, uint16_
 }
 
 /* ── Implement: sctp_sendpage ────────────────── */
-int sctp_sendpage(int fd, const void *page, uint16_t offset, uint16_t len, uint16_t stream_id, int flags)
+static int sctp_sendpage(int fd, const void *page, uint16_t offset, uint16_t len, uint16_t stream_id, int flags)
 {
     (void)offset;
     (void)flags;
@@ -546,7 +546,7 @@ int sctp_sendpage(int fd, const void *page, uint16_t offset, uint16_t len, uint1
 }
 
 /* ── Implement: sctp_ioctl ────────────────── */
-int sctp_ioctl(int fd, unsigned long request, void *arg)
+static int sctp_ioctl(int fd, unsigned long request, void *arg)
 {
     (void)fd;
     (void)request;
@@ -556,7 +556,7 @@ int sctp_ioctl(int fd, unsigned long request, void *arg)
 }
 
 /* ── Implement: sctp_setsockopt ────────────────── */
-int sctp_setsockopt(int fd, int level, int optname, const void *optval, uint16_t optlen)
+static int sctp_setsockopt(int fd, int level, int optname, const void *optval, uint16_t optlen)
 {
     if (!sctp_initialized) return -ENOSYS;
     if (level != IPPROTO_SCTP) return -ENOPROTOOPT;
@@ -609,7 +609,7 @@ int sctp_setsockopt(int fd, int level, int optname, const void *optval, uint16_t
 }
 
 /* ── Implement: sctp_getsockopt ────────────────── */
-int sctp_getsockopt(int fd, int level, int optname, void *optval, uint16_t *optlen)
+static int sctp_getsockopt(int fd, int level, int optname, void *optval, uint16_t *optlen)
 {
     if (!sctp_initialized) return -ENOSYS;
     if (level != IPPROTO_SCTP) return -ENOPROTOOPT;
@@ -684,7 +684,7 @@ int sctp_shutdown(int fd, int how)
 }
 
 /* ── Implement: sctp_bindx ────────────────── */
-int sctp_bindx(int fd, uint32_t *addrs, uint16_t port, int addrcnt, int flags)
+static int sctp_bindx(int fd, uint32_t *addrs, uint16_t port, int addrcnt, int flags)
 {
     (void)addrcnt;
     (void)flags;
@@ -706,7 +706,7 @@ int sctp_bindx(int fd, uint32_t *addrs, uint16_t port, int addrcnt, int flags)
 }
 
 /* ── Implement: sctp_peeloff ────────────────── */
-int sctp_peeloff(int fd, uint32_t assoc_id)
+static int sctp_peeloff(int fd, uint32_t assoc_id)
 {
     (void)assoc_id;
     /* Peel off a sub-association — not supported, return the same fd */

@@ -726,7 +726,7 @@ static void mglru_sysfs_init(void)
 module_init(mglru_init);
 
 /* ── lru_gen_init_lruvec — Initialise an LRU vector ─────────── */
-void lru_gen_init_lruvec(void *lruvec)
+static void lru_gen_init_lruvec(void *lruvec)
 {
     (void)lruvec;
     struct mglru_state *st = &mglru_state[0];
@@ -750,7 +750,7 @@ void lru_gen_init_lruvec(void *lruvec)
 }
 
 /* ── lru_gen_look_around — Scan PTEs around a page for access info ── */
-void lru_gen_look_around(uint64_t addr)
+static void lru_gen_look_around(uint64_t addr)
 {
     if (addr == 0)
         return;
@@ -783,7 +783,7 @@ void lru_gen_look_around(uint64_t addr)
 }
 
 /* ── lru_gen_eviction ──────────────────────────────────────── */
-int lru_gen_eviction(int nr_to_reclaim)
+static int lru_gen_eviction(int nr_to_reclaim)
 {
     if (nr_to_reclaim <= 0)
         return 0;
@@ -792,7 +792,7 @@ int lru_gen_eviction(int nr_to_reclaim)
 }
 
 /* ── lru_gen_seg_strategy ──────────────────────────────────── */
-int lru_gen_seg_strategy(void)
+static int lru_gen_seg_strategy(void)
 {
     struct mglru_state *st = &mglru_state[0];
     if (!st->enabled)

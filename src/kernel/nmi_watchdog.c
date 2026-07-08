@@ -483,20 +483,20 @@ void nmi_watchdog_get_stats(struct nmi_watchdog_stats *stats) {
 }
 
 /* ── Stub: nmi_watchdog_enable ─────────────────────────────────────── */
-int nmi_watchdog_enable(void)
+static int nmi_watchdog_enable(void)
 {
     kprintf("[NMI_WATCHDOG] nmi_watchdog_enable: not yet implemented\n");
     return 0;
 }
 
 /* ── Stub: nmi_watchdog_disable ────────────────────────────────────── */
-void nmi_watchdog_disable(void)
+static void nmi_watchdog_disable(void)
 {
     kprintf("[NMI_WATCHDOG] nmi_watchdog_disable: not yet implemented\n");
 }
 
 /* ── Stub: nmi_watchdog_touch ──────────────────────────────────────── */
-void nmi_watchdog_touch(void)
+static void nmi_watchdog_touch(void)
 {
     kprintf("[NMI_WATCHDOG] nmi_watchdog_touch: not yet implemented\n");
 }

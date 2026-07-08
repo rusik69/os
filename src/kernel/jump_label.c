@@ -120,7 +120,7 @@ void __init jump_label_init(void)
 }
 
 /* ── Stub: jump_label_register ─────────────────────────────── */
-int jump_label_register(void *key, void *entry)
+static int jump_label_register(void *key, void *entry)
 {
     (void)key;
     (void)entry;
@@ -128,7 +128,7 @@ int jump_label_register(void *key, void *entry)
     return 0;
 }
 /* ── Stub: jump_label_update ─────────────────────────────── */
-int jump_label_update(void *key, int enabled)
+static int jump_label_update(void *key, int enabled)
 {
     (void)key;
     (void)enabled;

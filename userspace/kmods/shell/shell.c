@@ -478,7 +478,7 @@ static void var_expand(const char *src, char *dst, int dst_max) {
                 int sub_len = 0;
                 void (*sh_hook)(char, void *) = 0; void *sh_ctx = 0;
                 kprintf_get_hook(&sh_hook, &sh_ctx);
-                struct shell_capture_ctx sub_ctx = { sub_out, &sub_len, (int)sizeof(sub_out) - 1 };
+                struct shell_capture_ctx sub_ctx = { .buf = sub_out, .len = &sub_len, .max = (int)sizeof(sub_out) - 1 };
                 kprintf_set_hook(shell_capture_cb, &sub_ctx);
                 /* Parse and exec sub_cmd */
                 char sc_buf[256]; char *sc_cmd = sc_buf;
@@ -1219,7 +1219,7 @@ static void process_cmd(void) {
                 void (*saved_hook)(char, void *) = NULL;
                 void  *saved_ctx                  = NULL;
                 kprintf_get_hook(&saved_hook, &saved_ctx);
-                struct shell_capture_ctx cap_ctx = { pipe_xfer, &pipe_xfer_len, (int)sizeof(pipe_xfer) - 1 };
+                struct shell_capture_ctx cap_ctx = { .buf = pipe_xfer, .len = &pipe_xfer_len, .max = (int)sizeof(pipe_xfer) - 1 };
                 kprintf_set_hook(shell_capture_cb, &cap_ctx);
                 shell_exec_cmd(scmd, sargs);
                 kprintf_set_hook(saved_hook, saved_ctx);
@@ -1336,7 +1336,7 @@ static void process_cmd(void) {
         void (*saved_hook)(char, void*) = 0;
         void *saved_ctx = 0;
         kprintf_get_hook(&saved_hook, &saved_ctx);
-        struct shell_capture_ctx redir_ctx = { redir_buf, &redir_len, (int)sizeof(redir_buf) - 1 };
+        struct shell_capture_ctx redir_ctx = { .buf = redir_buf, .len = &redir_len, .max = (int)sizeof(redir_buf) - 1 };
         kprintf_set_hook(shell_capture_cb, &redir_ctx);
         shell_exec_cmd(lcmd, largs);
         kprintf_set_hook(saved_hook, saved_ctx);

@@ -1175,7 +1175,7 @@ void pkt_sched_init(void) {
 module_init(pkt_sched_init);
 
 /* ── Implement: pkt_sched_enqueue ────────────────── */
-int pkt_sched_enqueue(void *skb, void *sch)
+static int pkt_sched_enqueue(void *skb, void *sch)
 {
     if (!skb || !sch) {
         kprintf("[pkt_sched] pkt_sched_enqueue: NULL parameter\n");
@@ -1185,7 +1185,7 @@ int pkt_sched_enqueue(void *skb, void *sch)
     return -EOPNOTSUPP;
 }
 /* ── Implement: pkt_sched_dequeue ────────────────── */
-void* pkt_sched_dequeue(void *sch)
+static void* pkt_sched_dequeue(void *sch)
 {
     if (!sch) {
         kprintf("[pkt_sched] pkt_sched_dequeue: NULL sch\n");
@@ -1195,7 +1195,7 @@ void* pkt_sched_dequeue(void *sch)
     return NULL;
 }
 /* ── Implement: pkt_sched_register ────────────────── */
-int pkt_sched_register(const char *name, void *ops)
+static int pkt_sched_register(const char *name, void *ops)
 {
     if (!name || !ops) {
         kprintf("[pkt_sched] pkt_sched_register: NULL parameter\n");

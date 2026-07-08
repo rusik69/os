@@ -22,18 +22,18 @@ int rdpid_init(void) {
     return 0;
 }
 
-int rdpid_is_available(void) {
+static int rdpid_is_available(void) {
     return rdpid_available;
 }
 
 /* ── Stub: rdpid_read ─────────────────────────────── */
-uint64_t rdpid_read(void)
+static uint64_t rdpid_read(void)
 {
     kprintf("[RDPID] rdpid_read: not yet implemented\n");
     return 0;
 }
 /* ── Stub: rdpid_write ─────────────────────────────── */
-int rdpid_write(uint64_t val)
+static int rdpid_write(uint64_t val)
 {
     (void)val;
     kprintf("[RDPID] rdpid_write: not yet implemented\n");

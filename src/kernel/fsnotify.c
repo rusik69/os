@@ -175,21 +175,21 @@ int fsnotify_read_events(struct fsnotify_event *events, int max) {
 }
 
 /* ── Stub: fsnotify_register ─────────────────────────────── */
-int fsnotify_register(void *group)
+static int fsnotify_register(void *group)
 {
     (void)group;
     kprintf("[fsnotify] fsnotify_register: not yet implemented\n");
     return 0;
 }
 /* ── Stub: fsnotify_unregister ─────────────────────────────── */
-int fsnotify_unregister(void *group)
+static int fsnotify_unregister(void *group)
 {
     (void)group;
     kprintf("[fsnotify] fsnotify_unregister: not yet implemented\n");
     return 0;
 }
 /* ── Stub: fsnotify_send_event ─────────────────────────────── */
-int fsnotify_send_event(void *group, void *inode, void *event)
+static int fsnotify_send_event(void *group, void *inode, void *event)
 {
     (void)group;
     (void)inode;

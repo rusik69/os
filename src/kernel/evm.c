@@ -109,7 +109,7 @@ static int evm_compute_hmac(const char *path, uint8_t hmac_out[SHA256_DIGEST_SIZ
  *
  * Returns 0 on success, -1 on error.
  */
-int evm_set_xattr(const char *path)
+static int evm_set_xattr(const char *path)
 {
     if (!path || !g_evm_key_set)
         return -EINVAL;
@@ -132,7 +132,7 @@ int evm_set_xattr(const char *path)
  *   0  — HMAC mismatch (tampered).
  *  -1  — Error (no key, no EVM xattr, I/O error).
  */
-int evm_verify_xattr(const char *path)
+static int evm_verify_xattr(const char *path)
 {
     if (!path || !g_evm_key_set)
         return -EINVAL;
@@ -165,7 +165,7 @@ int evm_verify_xattr(const char *path)
  * evm_protect_file — Set or update the EVM HMAC on a file.
  * Should be called after any protected xattr changes.
  */
-int evm_protect_file(const char *path)
+static int evm_protect_file(const char *path)
 {
     return evm_set_xattr(path);
 }
@@ -174,7 +174,7 @@ int evm_protect_file(const char *path)
  * evm_check_file — Verify EVM integrity before allowing file access.
  * Returns 1 if allowed, 0 if denied, -1 on error.
  */
-int evm_check_file(const char *path)
+static int evm_check_file(const char *path)
 {
     int ret = evm_verify_xattr(path);
 
@@ -203,7 +203,7 @@ int evm_check_file(const char *path)
  * @key:   16-byte key.
  * @len:   Key length (must be EVM_KEY_SIZE).
  */
-int evm_set_key(const uint8_t *key, uint32_t len)
+static int evm_set_key(const uint8_t *key, uint32_t len)
 {
     if (!key || len < EVM_KEY_SIZE)
         return -EINVAL;
@@ -216,7 +216,7 @@ int evm_set_key(const uint8_t *key, uint32_t len)
 /*
  * evm_has_key — Returns 1 if the EVM key is configured.
  */
-int evm_has_key(void)
+static int evm_has_key(void)
 {
     return g_evm_key_set;
 }
@@ -224,7 +224,7 @@ int evm_has_key(void)
 /*
  * evm_set_enforce — Set enforcement mode.
  */
-void evm_set_enforce(int enforce)
+static void evm_set_enforce(int enforce)
 {
     g_evm_enforce = enforce ? 1 : 0;
 }
@@ -235,7 +235,7 @@ void evm_set_enforce(int enforce)
  * In a full implementation, the EVM key would be loaded from a TPM
  * or from the kernel keyring.  For now, we use a fixed test key.
  */
-void evm_init(void)
+static void evm_init(void)
 {
     if (g_evm_initialized) return;
 
@@ -256,7 +256,7 @@ void evm_init(void)
 module_init(evm_init);
 
 /* ── Stub: evm_verify ─────────────────────────────── */
-int evm_verify(void *dentry, void *xattr_name, void *xattr_value, size_t xattr_len)
+static int evm_verify(void *dentry, void *xattr_name, void *xattr_value, size_t xattr_len)
 {
     (void)dentry;
     (void)xattr_name;
@@ -266,7 +266,7 @@ int evm_verify(void *dentry, void *xattr_name, void *xattr_value, size_t xattr_l
     return 0;
 }
 /* ── Stub: evm_update ─────────────────────────────── */
-int evm_update(void *dentry)
+static int evm_update(void *dentry)
 {
     (void)dentry;
     kprintf("[evm] evm_update: not yet implemented\n");

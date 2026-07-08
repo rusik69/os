@@ -1887,7 +1887,7 @@ void net_tcp_check_retransmit(void) {
 #define TCP_MIN_RCV_WND  65536   /* start at 64KB */
 #define TCP_MAX_RCV_WND  262144  /* max 256KB */
 
-void net_tcp_auto_tune_rcv_wnd(struct tcp_conn *c)
+static void net_tcp_auto_tune_rcv_wnd(struct tcp_conn *c)
 {
     if (c->state != TCP_ESTABLISHED) return;
 
@@ -1926,7 +1926,7 @@ void net_tcp_auto_tune_rcv_wnd(struct tcp_conn *c)
  * (typically 10 segments per RFC 6928) to avoid bursting.
  * This is called before sending data on an idle connection.
  */
-void net_tcp_slow_start_after_idle(struct tcp_conn *c)
+static void net_tcp_slow_start_after_idle(struct tcp_conn *c)
 {
     if (!c || c->state != TCP_ESTABLISHED) return;
 
@@ -1953,7 +1953,7 @@ void net_tcp_slow_start_after_idle(struct tcp_conn *c)
 }
 
 /* ── Call the auto-tuning for all established connections ───────── */
-void net_tcp_auto_tune_all(void)
+static void net_tcp_auto_tune_all(void)
 {
     for (int i = 0; i < MAX_TCP_CONNS; i++) {
         struct tcp_conn *c = &tcp_conns[i];
@@ -2047,7 +2047,7 @@ int net_tcp_has_closed(int conn_id)
 }
 
 /* ── Implement: tcp_open ──────────────────────────────── */
-int tcp_open(void *sk)
+static int tcp_open(void *sk)
 {
     if (!sk) return -EINVAL;
     kprintf("[tcp] tcp_open: allocating TCP connection\n");
@@ -2066,7 +2066,7 @@ int tcp_open(void *sk)
     return -ENOMEM;
 }
 /* ── Implement: tcp_close ─────────────────────────────── */
-int tcp_close(void *sk)
+static int tcp_close(void *sk)
 {
     if (!sk) return -EINVAL;
     int conn_id = *(int *)sk;
@@ -2077,7 +2077,7 @@ int tcp_close(void *sk)
     return 0;
 }
 /* ── Implement: tcp_connect ───────────────────────────── */
-int tcp_connect(void *sk, void *addr)
+static int tcp_connect(void *sk, void *addr)
 {
     if (!sk || !addr) return -EINVAL;
     struct sockaddr_in *sin = (struct sockaddr_in *)addr;
@@ -2087,7 +2087,7 @@ int tcp_connect(void *sk, void *addr)
     return 0;
 }
 /* ── Implement: tcp_disconnect ────────────────────────── */
-int tcp_disconnect(void *sk)
+static int tcp_disconnect(void *sk)
 {
     if (!sk) return -EINVAL;
     int conn_id = *(int *)sk;
@@ -2100,7 +2100,7 @@ int tcp_disconnect(void *sk)
     return 0;
 }
 /* ── Implement: tcp_sendmsg ───────────────────────────── */
-int tcp_sendmsg(void *sk, void *msg, size_t len)
+static int tcp_sendmsg(void *sk, void *msg, size_t len)
 {
     if (!sk || !msg) return -EINVAL;
     int conn_id = *(int *)sk;
@@ -2110,7 +2110,7 @@ int tcp_sendmsg(void *sk, void *msg, size_t len)
     return net_tcp_send(conn_id, msg, send_len);
 }
 /* ── Implement: tcp_recvmsg ───────────────────────────── */
-int tcp_recvmsg(void *sk, void *msg, size_t len)
+static int tcp_recvmsg(void *sk, void *msg, size_t len)
 {
     if (!sk || !msg) return -EINVAL;
     int conn_id = *(int *)sk;

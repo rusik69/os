@@ -921,7 +921,7 @@ static void cake_fill_stats(struct qdisc *q, struct tc_stats *st)
 
 /* ── Module initialisation ──────────────────────────────────────── */
 
-void cake_init(void)
+static void cake_init(void)
 {
     kprintf("[OK] CAKE — Common Applications Kept Enhanced (comprehensive AQM)\n");
 }

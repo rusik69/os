@@ -91,7 +91,7 @@ static int garp_initialised = 0;
 /* GARP multicast MAC addresses */
 static const uint8_t garp_mac_addr[6] = { 0x01, 0x80, 0xC2, 0x00, 0x00, 0x21 };
 
-void garp_init(void)
+static void garp_init(void)
 {
     if (garp_initialised) return;
     memset(garp_apps, 0, sizeof(garp_apps));
@@ -101,7 +101,7 @@ void garp_init(void)
 }
 
 /* Register a GARP application (GVRP or GMRP) */
-int garp_register_application(uint16_t app_type)
+static int garp_register_application(uint16_t app_type)
 {
     if (!garp_initialised) return -ENOSYS;
 
@@ -121,7 +121,7 @@ int garp_register_application(uint16_t app_type)
 }
 
 /* Add an attribute (join) */
-int garp_join(uint16_t app_type, uint32_t attr_value)
+static int garp_join(uint16_t app_type, uint32_t attr_value)
 {
     if (!garp_initialised) return -ENOSYS;
 
@@ -165,7 +165,7 @@ int garp_join(uint16_t app_type, uint32_t attr_value)
 }
 
 /* Remove an attribute (leave) */
-int garp_leave(uint16_t app_type, uint32_t attr_value)
+static int garp_leave(uint16_t app_type, uint32_t attr_value)
 {
     if (!garp_initialised) return -ENOSYS;
 
@@ -253,7 +253,7 @@ static int garp_build_pdu(uint8_t *pdu, int pdu_max, struct garp_application *ap
 }
 
 /* Send a GARP PDU */
-int garp_send_pdu(uint16_t app_type)
+static int garp_send_pdu(uint16_t app_type)
 {
     if (!garp_initialised) return -ENOSYS;
 
@@ -272,7 +272,7 @@ int garp_send_pdu(uint16_t app_type)
 }
 
 /* Process a received GARP PDU with full parsing per 802.1D */
-int garp_receive_pdu(const uint8_t *data, uint16_t len)
+static int garp_receive_pdu(const uint8_t *data, uint16_t len)
 {
     if (!garp_initialised || !data || len < 2) return -EINVAL;
 
@@ -342,7 +342,7 @@ int garp_receive_pdu(const uint8_t *data, uint16_t len)
 }
 
 /* Timer tick for GARP state machines — call periodically */
-void garp_tick(void)
+static void garp_tick(void)
 {
     if (!garp_initialised) return;
 
@@ -417,17 +417,17 @@ void garp_tick(void)
 module_init(garp_init);
 
 /* ── garp_join_group: public wrapper around garp_join ── */
-int garp_join_group(uint16_t app_type, uint32_t attr_value)
+static int garp_join_group(uint16_t app_type, uint32_t attr_value)
 {
     return garp_join(app_type, attr_value);
 }
 /* ── garp_leave_group: public wrapper around garp_leave ── */
-int garp_leave_group(uint16_t app_type, uint32_t attr_value)
+static int garp_leave_group(uint16_t app_type, uint32_t attr_value)
 {
     return garp_leave(app_type, attr_value);
 }
 /* ── garp_handle_join: handle received Join PDU for an attribute ── */
-int garp_handle_join(uint16_t app_type, uint32_t attr_value)
+static int garp_handle_join(uint16_t app_type, uint32_t attr_value)
 {
     if (!garp_initialised) return -ENOSYS;
     kprintf("[garp] garp_handle_join: app_type=%u attr=0x%x\n", app_type, attr_value);
@@ -459,7 +459,7 @@ int garp_handle_join(uint16_t app_type, uint32_t attr_value)
     return -ENOENT;
 }
 /* ── garp_handle_leave: handle received Leave PDU for an attribute ── */
-int garp_handle_leave(uint16_t app_type, uint32_t attr_value)
+static int garp_handle_leave(uint16_t app_type, uint32_t attr_value)
 {
     if (!garp_initialised) return -ENOSYS;
     kprintf("[garp] garp_handle_leave: app_type=%u attr=0x%x\n", app_type, attr_value);
@@ -482,7 +482,7 @@ int garp_handle_leave(uint16_t app_type, uint32_t attr_value)
     return -ENOENT;
 }
 /* ── garp_unregister: remove application and all its attributes ── */
-int garp_unregister(uint16_t app_type)
+static int garp_unregister(uint16_t app_type)
 {
     if (!garp_initialised) return -ENOSYS;
     for (int i = 0; i < GARP_MAX_APPS; i++) {
@@ -496,7 +496,7 @@ int garp_unregister(uint16_t app_type)
 }
 
 /* ── garp_transmit ────────────────── */
-int garp_transmit(void *dev)
+static int garp_transmit(void *dev)
 {
     (void)dev;
     if (!garp_initialised) return -ENOSYS;

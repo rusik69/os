@@ -110,7 +110,7 @@ static int ioctl_tiocgwinsz(uint64_t arg)
 		unsigned short ws_col;
 		unsigned short ws_xpixel;
 		unsigned short ws_ypixel;
-	} ws = { 25, 80, 0, 0 };
+	} ws = { .ws_row = 25, .ws_col = 80, .ws_xpixel = 0, .ws_ypixel = 0 };
 
 	if (copy_to_user(arg, &ws, sizeof(ws)) < 0)
 		return -EFAULT;

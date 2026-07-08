@@ -271,7 +271,7 @@ int migrate_huge_page(uint64_t phys_addr, int target_node)
 }
 
 /* ── migrate_huge_pages ───────────────────────────────── */
-int migrate_huge_pages(uint64_t *pages, int nr_pages, int target_node)
+static int migrate_huge_pages(uint64_t *pages, int nr_pages, int target_node)
 {
     if (!pages || nr_pages <= 0)
         return 0;
@@ -305,7 +305,7 @@ void __init hugepage_migration_init(void)
 }
 
 /* ── hugepage_migration_supported — Check if supported ───── */
-int hugepage_migration_supported(void)
+static int hugepage_migration_supported(void)
 {
     /* Huge page migration is supported if THP is enabled */
     int supported = thp_is_enabled() ? 1 : 0;
@@ -315,7 +315,7 @@ int hugepage_migration_supported(void)
 }
 
 /* ── isolate_huge_page — Isolate a huge page for migration ── */
-int isolate_huge_page(uint64_t phys_addr)
+static int isolate_huge_page(uint64_t phys_addr)
 {
     if (!thp_is_enabled())
         return -ENOSYS;
@@ -339,7 +339,7 @@ int isolate_huge_page(uint64_t phys_addr)
 }
 
 /* ── putback_huge_page — Put back a previously isolated page ── */
-void putback_huge_page(uint64_t phys_addr)
+static void putback_huge_page(uint64_t phys_addr)
 {
     if (!thp_is_enabled())
         return;

@@ -577,18 +577,18 @@ void heap_stats(uint64_t *out_allocs, uint64_t *out_frees,
 }
 
 /* ── malloc_user ─────────────────────────────── */
-void* malloc_user(size_t size)
+static void* malloc_user(size_t size)
 {
     return malloc(size);
 }
 /* ── free_user ─────────────────────────────── */
-int free_user(void *ptr)
+static int free_user(void *ptr)
 {
     if (ptr) free(ptr);
     return 0;
 }
 /* ── realloc_user ─────────────────────────────── */
-void* realloc_user(void *ptr, size_t size)
+static void* realloc_user(void *ptr, size_t size)
 {
     return realloc(ptr, size);
 }

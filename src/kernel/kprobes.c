@@ -805,7 +805,7 @@ int kprobe_register_bpf(const char *symbol, int bpf_prog_fd)
 }
 
 /* kprobe_unregister_bpf — Detach a BPF program from its kprobe. */
-int kprobe_unregister_bpf(const char *symbol)
+static int kprobe_unregister_bpf(const char *symbol)
 {
     if (!symbol) return -EINVAL;
     /* In a full implementation, we'd track the kprobe by prog_fd

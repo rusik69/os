@@ -806,7 +806,7 @@ static int fsck_ext2(struct vfs_mount *mnt, int flags, int *errors_out)
  * ═══════════════════════════════════════════════════════════════ */
 
 /* ── fsck_repair ──────────────────────────────────────── */
-int fsck_repair(const char *mountpoint, int flags)
+static int fsck_repair(const char *mountpoint, int flags)
 {
     (void)mountpoint;
     (void)flags;
@@ -814,14 +814,14 @@ int fsck_repair(const char *mountpoint, int flags)
     return 0;
 }
 /* ── fsck_verify_superblock ───────────────────────────── */
-int fsck_verify_superblock(const char *mountpoint)
+static int fsck_verify_superblock(const char *mountpoint)
 {
     (void)mountpoint;
     kprintf("[FSCK] Superblock verified for %s\n", mountpoint);
     return 0;
 }
 /* ── fsck_check_inodes ────────────────────────────────── */
-int fsck_check_inodes(const char *mountpoint, int *errors)
+static int fsck_check_inodes(const char *mountpoint, int *errors)
 {
     (void)mountpoint;
     if (errors) *errors = 0;
@@ -829,7 +829,7 @@ int fsck_check_inodes(const char *mountpoint, int *errors)
     return 0;
 }
 /* ── fsck_check_blocks ────────────────────────────────── */
-int fsck_check_blocks(const char *mountpoint, int *errors)
+static int fsck_check_blocks(const char *mountpoint, int *errors)
 {
     (void)mountpoint;
     if (errors) *errors = 0;
@@ -837,7 +837,7 @@ int fsck_check_blocks(const char *mountpoint, int *errors)
     return 0;
 }
 /* ── fsck_check_dirs ──────────────────────────────────── */
-int fsck_check_dirs(const char *mountpoint, int *errors)
+static int fsck_check_dirs(const char *mountpoint, int *errors)
 {
     (void)mountpoint;
     if (errors) *errors = 0;

@@ -376,7 +376,7 @@ fs_initcall(xattr_init);
  * ═══════════════════════════════════════════════════════════════ */
 
 /* ── xattr_generic_set ─────────────────────────────────── */
-int xattr_generic_set(void *inode, const char *name, const void *value, size_t size, int flags)
+static int xattr_generic_set(void *inode, const char *name, const void *value, size_t size, int flags)
 {
     (void)inode;
     (void)flags;
@@ -385,7 +385,7 @@ int xattr_generic_set(void *inode, const char *name, const void *value, size_t s
     return 0;
 }
 /* ── xattr_generic_get ─────────────────────────────────── */
-int xattr_generic_get(void *inode, const char *name, void *value, size_t size)
+static int xattr_generic_get(void *inode, const char *name, void *value, size_t size)
 {
     (void)inode;
     (void)name;

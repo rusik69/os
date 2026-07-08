@@ -318,7 +318,7 @@ EXPORT_SYMBOL(veth_create_pair);
 EXPORT_SYMBOL(veth_destroy);
 
 /* ── Implement: veth_open ────────────────── */
-int veth_open(void *dev)
+static int veth_open(void *dev)
 {
     if (!dev) {
         kprintf("[veth] veth_open: NULL dev\n");
@@ -328,7 +328,7 @@ int veth_open(void *dev)
     return -EOPNOTSUPP;
 }
 /* ── Implement: veth_stop ────────────────── */
-int veth_stop(void *dev)
+static int veth_stop(void *dev)
 {
     if (!dev) {
         kprintf("[veth] veth_stop: NULL dev\n");
@@ -338,7 +338,7 @@ int veth_stop(void *dev)
     return -EOPNOTSUPP;
 }
 /* ── Implement: veth_xmit ────────────────── */
-int veth_xmit(void *skb, void *dev)
+static int veth_xmit(void *skb, void *dev)
 {
     if (!skb || !dev) {
         kprintf("[veth] veth_xmit: NULL parameter\n");

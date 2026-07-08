@@ -72,7 +72,7 @@ static int mrp_initialised = 0;
 /* MRP multicast MAC */
 static const uint8_t mrp_mac_addr[6] = { 0x01, 0x80, 0xC2, 0x00, 0x00, 0x20 };
 
-void mrp_init(void)
+static void mrp_init(void)
 {
     if (mrp_initialised) return;
     memset(mrp_apps, 0, sizeof(mrp_apps));
@@ -81,7 +81,7 @@ void mrp_init(void)
 }
 
 /* Register an MRP application */
-int mrp_register_application(uint16_t app_protocol)
+static int mrp_register_application(uint16_t app_protocol)
 {
     if (!mrp_initialised) return -ENOSYS;
 
@@ -102,7 +102,7 @@ int mrp_register_application(uint16_t app_protocol)
 }
 
 /* Set the number of bridge ports for this MRP application */
-int mrp_set_port_count(uint16_t app_protocol, int nports)
+static int mrp_set_port_count(uint16_t app_protocol, int nports)
 {
     if (nports < 0 || nports > 31) return -EINVAL;
     for (int i = 0; i < MRP_MAX_APPS; i++) {
@@ -115,7 +115,7 @@ int mrp_set_port_count(uint16_t app_protocol, int nports)
 }
 
 /* Declare an attribute (MVRP/MMRP join) */
-int mrp_join(uint16_t app_protocol, uint32_t attr_value)
+static int mrp_join(uint16_t app_protocol, uint32_t attr_value)
 {
     if (!mrp_initialised) return -ENOSYS;
 
@@ -155,7 +155,7 @@ int mrp_join(uint16_t app_protocol, uint32_t attr_value)
 }
 
 /* Withdraw an attribute (MVRP/MMRP leave) */
-int mrp_leave(uint16_t app_protocol, uint32_t attr_value)
+static int mrp_leave(uint16_t app_protocol, uint32_t attr_value)
 {
     if (!mrp_initialised) return -ENOSYS;
 
@@ -183,7 +183,7 @@ int mrp_leave(uint16_t app_protocol, uint32_t attr_value)
 }
 
 /* Propagate attribute declarations across ports */
-void mrp_propagate(uint16_t app_protocol)
+static void mrp_propagate(uint16_t app_protocol)
 {
     if (!mrp_initialised) return;
 
@@ -248,7 +248,7 @@ static int mrp_build_pdu(uint8_t *pdu, int pdu_max, struct mrp_application *app)
 }
 
 /* Send an MRP PDU */
-int mrp_send_pdu(void)
+static int mrp_send_pdu(void)
 {
     if (!mrp_initialised) return -ENOSYS;
 
@@ -264,7 +264,7 @@ int mrp_send_pdu(void)
 }
 
 /* Process a received MRP PDU — updates received flag and triggers propagation */
-int mrp_receive_pdu(const uint8_t *data, uint16_t len)
+static int mrp_receive_pdu(const uint8_t *data, uint16_t len)
 {
     if (!mrp_initialised || !data || len < 3) return -EINVAL;
 
@@ -311,7 +311,7 @@ int mrp_receive_pdu(const uint8_t *data, uint16_t len)
 }
 
 /* MRP timer tick */
-void mrp_tick(void)
+static void mrp_tick(void)
 {
     if (!mrp_initialised) return;
 
@@ -341,7 +341,7 @@ void mrp_tick(void)
 module_init(mrp_init);
 
 /* ── Implement: mrp_transmit ────────────────── */
-int mrp_transmit(void *dev)
+static int mrp_transmit(void *dev)
 {
     (void)dev;
     if (!mrp_initialised) return -ENOSYS;

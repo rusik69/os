@@ -182,7 +182,7 @@ int page_idle_bitmap_write(uint64_t start_pfn, uint64_t nr_pfns, const uint8_t *
  *
  * Returns 0 on success, negative on error.
  */
-int page_idle_clear_pte_refs_many(uint64_t *pfns, int nr_pfns)
+static int page_idle_clear_pte_refs_many(uint64_t *pfns, int nr_pfns)
 {
     if (!pfns || nr_pfns <= 0)
         return -EINVAL;
@@ -252,7 +252,7 @@ int page_idle_clear_pte_refs_many(uint64_t *pfns, int nr_pfns)
  * Returns the PFN (page frame number) of an idle page, or 0 if none found.
  * If 'cpu' is >= 0, prefer pages from the NUMA node associated with that CPU.
  */
-uint64_t page_idle_get_page(int cpu)
+static uint64_t page_idle_get_page(int cpu)
 {
     if (!page_idle_initialised)
         return 0;

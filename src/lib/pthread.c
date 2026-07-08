@@ -455,7 +455,7 @@ int pthread_cond_broadcast(pthread_cond_t *cond)
 }
 
 /* ── pthread_barrier_init ─────────────────────────────── */
-int pthread_barrier_init(void *barrier, const void *attr, unsigned int count)
+static int pthread_barrier_init(void *barrier, const void *attr, unsigned int count)
 {
     if (!barrier || count == 0) return EINVAL;
     (void)attr;
@@ -467,7 +467,7 @@ int pthread_barrier_init(void *barrier, const void *attr, unsigned int count)
     return 0;
 }
 /* ── pthread_barrier_wait ─────────────────────────────── */
-int pthread_barrier_wait(void *barrier)
+static int pthread_barrier_wait(void *barrier)
 {
     if (!barrier) return EINVAL;
     volatile int *b = (volatile int *)barrier;
@@ -490,7 +490,7 @@ int pthread_barrier_wait(void *barrier)
     return 0;
 }
 /* ── pthread_barrier_destroy ─────────────────────────────── */
-int pthread_barrier_destroy(void *barrier)
+static int pthread_barrier_destroy(void *barrier)
 {
     if (!barrier) return EINVAL;
     volatile int *b = (volatile int *)barrier;
@@ -499,7 +499,7 @@ int pthread_barrier_destroy(void *barrier)
     return 0;
 }
 /* ── pthread_rwlock_init ─────────────────────────────── */
-int pthread_rwlock_init(void *rwlock, const void *attr)
+static int pthread_rwlock_init(void *rwlock, const void *attr)
 {
     if (!rwlock) return EINVAL;
     (void)attr;
@@ -509,13 +509,13 @@ int pthread_rwlock_init(void *rwlock, const void *attr)
     return 0;
 }
 /* ── pthread_rwlock_destroy ─────────────────────────────── */
-int pthread_rwlock_destroy(void *rwlock)
+static int pthread_rwlock_destroy(void *rwlock)
 {
     if (!rwlock) return EINVAL;
     return 0;
 }
 /* ── pthread_rwlock_rdlock ─────────────────────────────── */
-int pthread_rwlock_rdlock(void *rwlock)
+static int pthread_rwlock_rdlock(void *rwlock)
 {
     if (!rwlock) return EINVAL;
     volatile int *r = (volatile int *)rwlock;
@@ -531,7 +531,7 @@ int pthread_rwlock_rdlock(void *rwlock)
     }
 }
 /* ── pthread_rwlock_wrlock ─────────────────────────────── */
-int pthread_rwlock_wrlock(void *rwlock)
+static int pthread_rwlock_wrlock(void *rwlock)
 {
     if (!rwlock) return EINVAL;
     volatile int *r = (volatile int *)rwlock;
@@ -543,7 +543,7 @@ int pthread_rwlock_wrlock(void *rwlock)
     return 0;
 }
 /* ── pthread_rwlock_unlock ─────────────────────────────── */
-int pthread_rwlock_unlock(void *rwlock)
+static int pthread_rwlock_unlock(void *rwlock)
 {
     if (!rwlock) return EINVAL;
     volatile int *r = (volatile int *)rwlock;
@@ -569,7 +569,7 @@ static void *pthread_key_values[PTHREAD_KEYS_MAX];
 static volatile int pthread_key_next = 0;
 
 /* ── pthread_key_create ─────────────────────────────── */
-int pthread_key_create(void *key, void *destructor)
+static int pthread_key_create(void *key, void *destructor)
 {
     if (!key) return EINVAL;
     (void)destructor;
@@ -586,7 +586,7 @@ int pthread_key_create(void *key, void *destructor)
     return EAGAIN;
 }
 /* ── pthread_key_delete ─────────────────────────────── */
-int pthread_key_delete(void *key)
+static int pthread_key_delete(void *key)
 {
     int idx = *(int *)key;
     if (idx < 0 || idx >= PTHREAD_KEYS_MAX || !pthread_key_slots[idx])
@@ -596,7 +596,7 @@ int pthread_key_delete(void *key)
     return 0;
 }
 /* ── pthread_setspecific ─────────────────────────────── */
-int pthread_setspecific(void *key, const void *value)
+static int pthread_setspecific(void *key, const void *value)
 {
     int idx = *(int *)key;
     if (idx < 0 || idx >= PTHREAD_KEYS_MAX || !pthread_key_slots[idx])
@@ -605,7 +605,7 @@ int pthread_setspecific(void *key, const void *value)
     return 0;
 }
 /* ── pthread_getspecific ─────────────────────────────── */
-void* pthread_getspecific(void *key)
+static void* pthread_getspecific(void *key)
 {
     int idx = *(int *)key;
     if (idx < 0 || idx >= PTHREAD_KEYS_MAX || !pthread_key_slots[idx])

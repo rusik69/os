@@ -1865,7 +1865,7 @@ void module_process_deferred_inits(void)
 }
 
 /* ── module_find_sym: Find a symbol by name in all modules ──────────── */
-void* module_find_sym(const char *name)
+static void* module_find_sym(const char *name)
 {
     if (!name) return NULL;
 

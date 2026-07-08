@@ -145,13 +145,13 @@ uint64_t page_allocator_ext_get_used(void)
 }
 
 /* ── Stub: page_alloc_ext_init ─────────────────────────────── */
-int page_alloc_ext_init(void)
+static int page_alloc_ext_init(void)
 {
     kprintf("[page_alloc] page_alloc_ext_init: not yet implemented\n");
     return 0;
 }
 /* ── Stub: page_alloc_bulk ─────────────────────────────── */
-int page_alloc_bulk(int flags, int nr, void **pages)
+static int page_alloc_bulk(int flags, int nr, void **pages)
 {
     (void)flags;
     (void)nr;
@@ -160,7 +160,7 @@ int page_alloc_bulk(int flags, int nr, void **pages)
     return 0;
 }
 /* ── Stub: page_free_bulk ─────────────────────────────── */
-int page_free_bulk(void **pages, int nr)
+static int page_free_bulk(void **pages, int nr)
 {
     (void)pages;
     (void)nr;

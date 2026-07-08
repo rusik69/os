@@ -500,7 +500,7 @@ void khugepaged_start(void)
 module_init(thp_init);
 
 /* ── split_huge_page ─────────────────────────────────────────── */
-int split_huge_page(uint64_t addr)
+static int split_huge_page(uint64_t addr)
 {
     if (!thp_enabled) return -ENODEV;
     if (addr & (THP_HPAGE_SIZE - 1)) {
@@ -525,7 +525,7 @@ int split_huge_page(uint64_t addr)
 }
 
 /* ── collapse_huge_page ──────────────────────────────────────── */
-int collapse_huge_page(uint64_t addr)
+static int collapse_huge_page(uint64_t addr)
 {
     if (!thp_enabled) return -ENODEV;
     if (addr & (THP_HPAGE_SIZE - 1)) {
@@ -555,7 +555,7 @@ int collapse_huge_page(uint64_t addr)
 }
 
 /* ── thp_restore_page ────────────────────────────────────────── */
-int thp_restore_page(uint64_t addr)
+static int thp_restore_page(uint64_t addr)
 {
     if (!thp_enabled) return -ENODEV;
     /* Write-back / restore a THP page from swap.
@@ -566,7 +566,7 @@ int thp_restore_page(uint64_t addr)
 }
 
 /* ── thp_get_unmapped_area — Return THP-aligned address ────── */
-uint64_t thp_get_unmapped_area(uint64_t addr, size_t len, unsigned long flags)
+static uint64_t thp_get_unmapped_area(uint64_t addr, size_t len, unsigned long flags)
 {
     (void)flags;
     if (!thp_enabled)
@@ -593,7 +593,7 @@ uint64_t thp_get_unmapped_area(uint64_t addr, size_t len, unsigned long flags)
 }
 
 /* ── deferred_split_huge_page — Queue a THP for deferred split ── */
-void deferred_split_huge_page(uint64_t addr)
+static void deferred_split_huge_page(uint64_t addr)
 {
     if (!thp_enabled)
         return;

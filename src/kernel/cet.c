@@ -201,7 +201,7 @@ void cet_switch_task(struct cet_shadow_stack *sstk) {
 }
 
 /* ── Stub: cet_shstk_status ───────────────────────────────────────────── */
-int cet_shstk_status(struct cet_shadow_stack *sstk)
+static int cet_shstk_status(struct cet_shadow_stack *sstk)
 {
     if (!sstk) {
         kprintf("[CET] cet_shstk_status: NULL sstk\n");
@@ -219,7 +219,7 @@ int cet_shstk_status(struct cet_shadow_stack *sstk)
 }
 
 /* ── cet_shstk_alloc ────────────────────────────────────────────── */
-int cet_shstk_alloc(struct cet_shadow_stack *sstk)
+static int cet_shstk_alloc(struct cet_shadow_stack *sstk)
 {
     if (!sstk) {
         kprintf("[CET] cet_shstk_alloc: NULL sstk\n");
@@ -235,7 +235,7 @@ int cet_shstk_alloc(struct cet_shadow_stack *sstk)
 }
 
 /* ── cet_ibt_status: check IBT (Indirect Branch Tracking) status ── */
-int cet_ibt_status(void)
+static int cet_ibt_status(void)
 {
     if (!g_cet_initialized) {
         if (cet_init() < 0)
@@ -249,7 +249,7 @@ int cet_ibt_status(void)
 }
 
 /* ── cet_ibt_enable: enable IBT for the current task ── */
-int cet_ibt_enable(void)
+static int cet_ibt_enable(void)
 {
     if (!g_cet_supported)
         return -EOPNOTSUPP;

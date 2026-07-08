@@ -1013,14 +1013,14 @@ void net_udp_list(void (*cb)(uint16_t port)) {
 }
 
 /* ── Implement: udp_open ──────────────────────────────── */
-int udp_open(void *sk)
+static int udp_open(void *sk)
 {
     if (!sk) return -EINVAL;
     kprintf("[udp] udp_open: UDP socket created\n");
     return 0;
 }
 /* ── Implement: udp_close ─────────────────────────────── */
-int udp_close(void *sk)
+static int udp_close(void *sk)
 {
     if (!sk) return -EINVAL;
     int listener = *(int *)sk;
@@ -1030,7 +1030,7 @@ int udp_close(void *sk)
     return 0;
 }
 /* ── Implement: udp_connect ───────────────────────────── */
-int udp_connect(void *sk, void *addr)
+static int udp_connect(void *sk, void *addr)
 {
     if (!sk || !addr) return -EINVAL;
     struct sockaddr_in *sin = (struct sockaddr_in *)addr;
@@ -1039,7 +1039,7 @@ int udp_connect(void *sk, void *addr)
     return 0;
 }
 /* ── Implement: udp_sendmsg ───────────────────────────── */
-int udp_sendmsg(void *sk, void *msg, size_t len)
+static int udp_sendmsg(void *sk, void *msg, size_t len)
 {
     if (!sk || !msg) return -EINVAL;
     struct msghdr *hdr = (struct msghdr *)msg;
@@ -1059,7 +1059,7 @@ int udp_sendmsg(void *sk, void *msg, size_t len)
     return (int)dlen;
 }
 /* ── Implement: udp_recvmsg ───────────────────────────── */
-int udp_recvmsg(void *sk, void *msg, size_t len)
+static int udp_recvmsg(void *sk, void *msg, size_t len)
 {
     if (!sk || !msg) return -EINVAL;
     struct msghdr *hdr = (struct msghdr *)msg;

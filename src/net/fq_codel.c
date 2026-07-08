@@ -525,7 +525,7 @@ int fq_codel_drop(void)
 /* ── Queue length query ────────────────────────────────────────────── */
 
 /* Return the total number of queued packets across all flows. */
-int fq_codel_qlen(void)
+static int fq_codel_qlen(void)
 {
     int total = 0;
     for (int i = 0; i < FQ_CODEL_FLOWS; i++)
@@ -534,7 +534,7 @@ int fq_codel_qlen(void)
 }
 
 /* Return the number of flows that currently have at least one packet. */
-int fq_codel_flow_count(void)
+static int fq_codel_flow_count(void)
 {
     int count = 0;
     for (int i = 0; i < FQ_CODEL_FLOWS; i++) {
@@ -565,7 +565,7 @@ void fq_codel_get_stats(uint64_t *dropped, uint64_t *ecn_marked,
 /* Reset the FQ-CoDel scheduler, clearing all flow queues and state.
  * This is the equivalent of qdisc reset — drops all queued packets
  * and reinitialises CoDel state without freeing resources. */
-int fq_codel_reset(void)
+static int fq_codel_reset(void)
 {
     for (int i = 0; i < FQ_CODEL_FLOWS; i++) {
         struct fq_codel_flow *flow = &fq_codel.flows[i];
@@ -586,7 +586,7 @@ int fq_codel_reset(void)
 /* Tear down the FQ-CoDel scheduler.  For this static instance,
  * this is equivalent to reset (the memory is not freed since it
  * is statically allocated).  Returns 0 on success. */
-int fq_codel_destroy(void)
+static int fq_codel_destroy(void)
 {
     return fq_codel_reset();
 }
@@ -604,7 +604,7 @@ int fq_codel_destroy(void)
  *   - uint32_t[3]: { quantum, limit, ecn_enabled }
  *
  * Returns 0 on success, -EINVAL on invalid input. */
-int fq_codel_change(const void *cfg, size_t cfg_len)
+static int fq_codel_change(const void *cfg, size_t cfg_len)
 {
     if (!cfg || cfg_len < sizeof(uint32_t))
         return -EINVAL;
@@ -638,7 +638,7 @@ int fq_codel_change(const void *cfg, size_t cfg_len)
  * @skb_len: maximum bytes to write
  *
  * Returns the number of bytes written, or 0 on error. */
-int fq_codel_dump(char *skb, size_t skb_len)
+static int fq_codel_dump(char *skb, size_t skb_len)
 {
     if (!skb || skb_len == 0)
         return 0;
@@ -670,7 +670,7 @@ int fq_codel_dump(char *skb, size_t skb_len)
 
 /* ── Initialisation ───────────────────────────────────────────────── */
 
-void fq_codel_init(void)
+static void fq_codel_init(void)
 {
     memset(&fq_codel, 0, sizeof(fq_codel));
     fq_codel.quantum = FQ_CODEL_QUANTUM;

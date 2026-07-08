@@ -237,7 +237,7 @@ uint32_t pid_ns_get_ns_pid(const struct process *proc)
 }
 
 /* ── Stub: pid_ns_delete ─────────────────────────────── */
-int pid_ns_delete(void *ns)
+static int pid_ns_delete(void *ns)
 {
     (void)ns;
     kprintf("[pid_ns] pid_ns_delete: not yet implemented\n");

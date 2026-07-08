@@ -176,7 +176,7 @@ int xdp_run(const uint8_t *data, uint16_t len, int ifindex)
 module_init(xdp_init);
 
 /* ── Implement: xdp_xmit ────────────────── */
-int xdp_xmit(void *skb)
+static int xdp_xmit(void *skb)
 {
     if (!skb) {
         kprintf("[xdp] xdp_xmit: NULL skb\n");

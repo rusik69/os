@@ -140,7 +140,7 @@ static void kcsan_set_watchpoint(uint64_t addr, uint64_t size,
 
 /* ── Public API ─────────────────────────────────────────────────────── */
 
-void __init kcsan_init(void)
+static void __init kcsan_init(void)
 {
     if (kcsan_initialized) return;
 
@@ -164,7 +164,7 @@ void __init kcsan_init(void)
  * @size:        Access size in bytes (1, 2, 4, 8).
  * @access_type: KCSAN_ACCESS_READ, KCSAN_ACCESS_WRITE, or KCSAN_ACCESS_ATOMIC.
  */
-void kcsan_check_access(uint64_t addr, uint64_t size, int access_type)
+static void kcsan_check_access(uint64_t addr, uint64_t size, int access_type)
 {
     if (!kcsan_initialized || !kcsan_enabled)
         return;
@@ -198,19 +198,19 @@ void kcsan_check_access(uint64_t addr, uint64_t size, int access_type)
 /*
  * Enable or disable KCSAN race detection.
  */
-void kcsan_enable(void)
+static void kcsan_enable(void)
 {
     kcsan_enabled = 1;
     kprintf("[KCSAN] Enabled\n");
 }
 
-void kcsan_disable(void)
+static void kcsan_disable(void)
 {
     kcsan_enabled = 0;
     kprintf("[KCSAN] Disabled\n");
 }
 
-int kcsan_is_enabled(void)
+static int kcsan_is_enabled(void)
 {
     return kcsan_enabled;
 }
@@ -218,7 +218,7 @@ int kcsan_is_enabled(void)
 /*
  * Get KCSAN statistics.
  */
-void kcsan_get_stats(uint64_t *races, uint64_t *tracked)
+static void kcsan_get_stats(uint64_t *races, uint64_t *tracked)
 {
     if (races)   *races   = kcsan_races_detected;
     if (tracked) *tracked = kcsan_accesses_tracked;
@@ -227,7 +227,7 @@ void kcsan_get_stats(uint64_t *races, uint64_t *tracked)
 /*
  * Reset KCSAN state (clear watchpoints and statistics).
  */
-void kcsan_reset(void)
+static void kcsan_reset(void)
 {
     spinlock_acquire(&kcsan_lock);
     memset(kcsan_watchpoints, 0, sizeof(kcsan_watchpoints));
@@ -240,7 +240,7 @@ void kcsan_reset(void)
 /*
  * Debugfs read callback: print KCSAN state.
  */
-void kcsan_debugfs_read(char *buf, int *len)
+static void kcsan_debugfs_read(char *buf, int *len)
 {
     uint64_t races, tracked;
     kcsan_get_stats(&races, &tracked);
@@ -253,13 +253,13 @@ void kcsan_debugfs_read(char *buf, int *len)
 }
 
 /* ── kcsan_check_read ─────────────────────────────────────────────────── */
-void kcsan_check_read(uint64_t addr, uint64_t size)
+static void kcsan_check_read(uint64_t addr, uint64_t size)
 {
     kcsan_check_access(addr, size, KCSAN_ACCESS_READ);
 }
 
 /* ── kcsan_check_write ────────────────────────────────────────────────── */
-void kcsan_check_write(uint64_t addr, uint64_t size)
+static void kcsan_check_write(uint64_t addr, uint64_t size)
 {
     kcsan_check_access(addr, size, KCSAN_ACCESS_WRITE);
 }
@@ -272,7 +272,7 @@ void kcsan_check_write(uint64_t addr, uint64_t size)
  * This function checks whether any existing watchpoint conflicts with
  * this atomic access.
  */
-void kcsan_atomic_check(uint64_t addr, uint64_t size, int is_write)
+static void kcsan_atomic_check(uint64_t addr, uint64_t size, int is_write)
 {
     if (!kcsan_initialized || !kcsan_enabled)
         return;

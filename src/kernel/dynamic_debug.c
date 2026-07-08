@@ -300,7 +300,7 @@ static int dyndbg_parse_query(const char *query)
  *
  * Return: 0 on success, negative on parse error
  */
-int dynamic_debug_query(const char *query)
+static int dynamic_debug_query(const char *query)
 {
     if (!query)
         return -EINVAL;

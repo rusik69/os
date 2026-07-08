@@ -1517,7 +1517,7 @@ MODULE_DESCRIPTION("FUSE — Filesystem in Userspace kernel side");
 #endif
 
 /* ── fuse_umount ─────────────────────────────────────── */
-int fuse_umount(const char *target)
+static int fuse_umount(const char *target)
 {
     kprintf("[fuse] FUSE unmounted from %s\n", target);
     return 0;

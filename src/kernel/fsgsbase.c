@@ -27,31 +27,31 @@ int fsgsbase_init(void) {
     return 0;
 }
 
-int fsgsbase_is_available(void) {
+static int fsgsbase_is_available(void) {
     return fsgsbase_available;
 }
 
 /* ── Stub: fsgsbase_read_gs ─────────────────────────────── */
-uint64_t fsgsbase_read_gs(void)
+static uint64_t fsgsbase_read_gs(void)
 {
     kprintf("[FSGSBASE] fsgsbase_read_gs: not yet implemented\n");
     return 0;
 }
 /* ── Stub: fsgsbase_write_gs ─────────────────────────────── */
-int fsgsbase_write_gs(uint64_t val)
+static int fsgsbase_write_gs(uint64_t val)
 {
     (void)val;
     kprintf("[FSGSBASE] fsgsbase_write_gs: not yet implemented\n");
     return 0;
 }
 /* ── Stub: fsgsbase_read_fs ─────────────────────────────── */
-uint64_t fsgsbase_read_fs(void)
+static uint64_t fsgsbase_read_fs(void)
 {
     kprintf("[FSGSBASE] fsgsbase_read_fs: not yet implemented\n");
     return 0;
 }
 /* ── Stub: fsgsbase_write_fs ─────────────────────────────── */
-int fsgsbase_write_fs(uint64_t val)
+static int fsgsbase_write_fs(uint64_t val)
 {
     (void)val;
     kprintf("[FSGSBASE] fsgsbase_write_fs: not yet implemented\n");

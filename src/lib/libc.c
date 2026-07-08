@@ -684,7 +684,7 @@ int libc_open_by_handle_at(int mount_fd, struct file_handle *handle,
 
 
 /* ── libc_init ─────────────────────────────── */
-int libc_init(void)
+static int libc_init(void)
 {
     kprintf("[libc] libc_init: library initialized\n");
     return 0;

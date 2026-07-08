@@ -84,7 +84,7 @@ void nf_hooks_init(void)
             " (PRE_ROUTING LOCAL_IN FORWARD LOCAL_OUT POST_ROUTING)\n");
 }
 
-void nf_hooks_exit(void)
+static void nf_hooks_exit(void)
 {
     kprintf("[nf-hooks] Netfilter 5-hook chain shutdown\n");
 }

@@ -58,14 +58,14 @@ int x2apic_is_active(void) {
 }
 
 /* ── Stub: x2apic_read ─────────────────────────────── */
-uint32_t x2apic_read(int reg)
+static uint32_t x2apic_read(int reg)
 {
     (void)reg;
     kprintf("[X2APIC] x2apic_read: not yet implemented\n");
     return 0;
 }
 /* ── Stub: x2apic_write ─────────────────────────────── */
-int x2apic_write(int reg, uint32_t val)
+static int x2apic_write(int reg, uint32_t val)
 {
     (void)reg;
     (void)val;
@@ -73,7 +73,7 @@ int x2apic_write(int reg, uint32_t val)
     return 0;
 }
 /* ── Stub: x2apic_send_ipi ─────────────────────────────── */
-int x2apic_send_ipi(int cpu, int vector)
+static int x2apic_send_ipi(int cpu, int vector)
 {
     (void)cpu;
     (void)vector;

@@ -338,7 +338,7 @@ int madvise_unmergeable(uint64_t addr, uint64_t len)
 }
 
 /* ── Stub: madvise_remove ─────────────────────────────── */
-int madvise_remove(uint64_t addr, size_t len)
+static int madvise_remove(uint64_t addr, size_t len)
 {
     (void)addr;
     (void)len;
@@ -346,7 +346,7 @@ int madvise_remove(uint64_t addr, size_t len)
     return 0;
 }
 /* ── Stub: madvise_hugepage ─────────────────────────────── */
-int madvise_hugepage(uint64_t addr, size_t len)
+static int madvise_hugepage(uint64_t addr, size_t len)
 {
     (void)addr;
     (void)len;
@@ -354,7 +354,7 @@ int madvise_hugepage(uint64_t addr, size_t len)
     return 0;
 }
 /* ── Stub: madvise_nohugepage ─────────────────────────────── */
-int madvise_nohugepage(uint64_t addr, size_t len)
+static int madvise_nohugepage(uint64_t addr, size_t len)
 {
     (void)addr;
     (void)len;

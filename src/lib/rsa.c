@@ -210,7 +210,7 @@ static void bn_to_bytes(uint8_t *bytes, const uint32_t *r, int nwords, int nbyte
 }
 
 /* RSA public encrypt / verify: ciphertext = plaintext^e mod n */
-int rsa_public_encrypt(uint8_t *out, size_t *out_len,
+static int rsa_public_encrypt(uint8_t *out, size_t *out_len,
                         const uint8_t *in, size_t in_len,
                         const uint8_t *n, size_t n_len,
                         uint32_t e)
@@ -239,7 +239,7 @@ int rsa_public_encrypt(uint8_t *out, size_t *out_len,
 }
 
 /* RSA private decrypt / sign: plaintext = ciphertext^d mod n */
-int rsa_private_decrypt(uint8_t *out, size_t *out_len,
+static int rsa_private_decrypt(uint8_t *out, size_t *out_len,
                          const uint8_t *in, size_t in_len,
                          const uint8_t *n, size_t n_len,
                          const uint8_t *d, size_t d_len)
@@ -301,7 +301,7 @@ int rsa_pkcs1_v15_verify(const uint8_t *sig, size_t sig_len,
 }
 
 /* PKCS#1 v1.5 signature generation */
-int rsa_pkcs1_v15_sign(uint8_t *sig, size_t *sig_len,
+static int rsa_pkcs1_v15_sign(uint8_t *sig, size_t *sig_len,
                          const uint8_t *hash, size_t hash_len,
                          const uint8_t *n, size_t n_len,
                          const uint8_t *d, size_t d_len,
@@ -330,7 +330,7 @@ int rsa_pkcs1_v15_sign(uint8_t *sig, size_t *sig_len,
 }
 
 /* ── rsa_encrypt ─────────────────────────────── */
-int rsa_encrypt(const void *pub, const void *plain, size_t plen, void *cipher, size_t *clen)
+static int rsa_encrypt(const void *pub, const void *plain, size_t plen, void *cipher, size_t *clen)
 {
     if (!pub || !plain || !cipher || !clen)
         return -1;
@@ -347,7 +347,7 @@ int rsa_encrypt(const void *pub, const void *plain, size_t plen, void *cipher, s
                                n_bytes, (size_t)nbytes, key->e);
 }
 /* ── rsa_decrypt ─────────────────────────────── */
-int rsa_decrypt(const void *priv, const void *cipher, size_t clen, void *plain, size_t *plen)
+static int rsa_decrypt(const void *priv, const void *cipher, size_t clen, void *plain, size_t *plen)
 {
     if (!priv || !cipher || !plain || !plen)
         return -1;

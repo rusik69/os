@@ -157,7 +157,7 @@ int memset_user(uint64_t __user dst_user, uint8_t val, size_t n) {
 }
 
 /* ── Stub: uaccess_copy_to_user ─────────────────────────────── */
-int uaccess_copy_to_user(void *dst, const void *src, size_t len)
+static int uaccess_copy_to_user(void *dst, const void *src, size_t len)
 {
     (void)dst;
     (void)src;
@@ -166,7 +166,7 @@ int uaccess_copy_to_user(void *dst, const void *src, size_t len)
     return 0;
 }
 /* ── Stub: uaccess_copy_from_user ─────────────────────────────── */
-int uaccess_copy_from_user(void *dst, const void *src, size_t len)
+static int uaccess_copy_from_user(void *dst, const void *src, size_t len)
 {
     (void)dst;
     (void)src;
@@ -175,7 +175,7 @@ int uaccess_copy_from_user(void *dst, const void *src, size_t len)
     return 0;
 }
 /* ── Stub: uaccess_strncpy_from_user ─────────────────────────────── */
-int uaccess_strncpy_from_user(char *dst, const char *src, size_t n)
+static int uaccess_strncpy_from_user(char *dst, const char *src, size_t n)
 {
     (void)dst;
     (void)src;

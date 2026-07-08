@@ -464,7 +464,7 @@ void httpd_task(void) {
 }
 
 /* ── Implement: httpd_handle_request ────────────────── */
-int httpd_handle_request(int conn_fd, const char *request)
+static int httpd_handle_request(int conn_fd, const char *request)
 {
     if (conn_fd < 0 || !request) {
         kprintf("[httpd] httpd_handle_request: invalid parameter\n");
@@ -474,7 +474,7 @@ int httpd_handle_request(int conn_fd, const char *request)
     return -EOPNOTSUPP;
 }
 /* ── Implement: httpd_register_handler ────────────────── */
-int httpd_register_handler(const char *path, void *handler)
+static int httpd_register_handler(const char *path, void *handler)
 {
     if (!path || !handler) {
         kprintf("[httpd] httpd_register_handler: NULL parameter\n");

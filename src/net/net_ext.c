@@ -12,11 +12,11 @@
 /* Current ARP cache maximum (default: 16 from net_internal.h) */
 static int arp_cache_max = ARP_CACHE_SIZE;
 
-int net_get_arp_cache_max(void) {
+static int net_get_arp_cache_max(void) {
     return arp_cache_max;
 }
 
-int net_set_arp_cache_max(int max) {
+static int net_set_arp_cache_max(int max) {
     if (max < 1 || max > 256) return -EINVAL;
     arp_cache_max = max;
     kprintf("[net] ARP cache max set to %d\n", max);
@@ -24,7 +24,7 @@ int net_set_arp_cache_max(int max) {
 }
 
 /* ── Implement: net_ext_ioctl ────────────────── */
-int net_ext_ioctl(int sock, int cmd, void *arg)
+static int net_ext_ioctl(int sock, int cmd, void *arg)
 {
     if (sock < 0 || !arg) {
         kprintf("[net_ext] net_ext_ioctl: invalid parameter (sock=%d arg=%p)\n", sock, arg);

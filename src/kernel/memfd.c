@@ -347,7 +347,7 @@ int memfd_set_size(struct memfd *mfd, uint64_t new_size)
 }
 
 /* ── Stub: memfd_seal ─────────────────────────────── */
-int memfd_seal(int fd, unsigned int seals)
+static int memfd_seal(int fd, unsigned int seals)
 {
     (void)fd;
     (void)seals;

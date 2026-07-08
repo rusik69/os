@@ -97,7 +97,7 @@ static int vfs_acl_check(struct posix_acl *acl, uint16_t uid, uint16_t gid, char
 }
 
 /* Enhanced vfs_read with ACL check */
-int vfs_acl_enforce_read(const char *path) {
+static int vfs_acl_enforce_read(const char *path) {
     char ap[128];
     /* resolve path etc. — called from enhanced VFS operations */
     struct posix_acl acl;
@@ -140,7 +140,7 @@ int vfs_bind_mount_recursive(const char *src, const char *target) {
 }
 
 /* Track bind mount (called from vfs_bind_mount via registration) */
-void vfs_enh_track_bind(const char *src, const char *target) {
+static void vfs_enh_track_bind(const char *src, const char *target) {
     for (int i = 0; i < VFS_MAX_BIND_MOUNTS; i++) {
         if (!vfs_enh_bind_mounts[i].in_use) {
             strncpy(vfs_enh_bind_mounts[i].source, src, 63);
@@ -307,7 +307,7 @@ int vfs_get_encryption(const char *path) {
 }
 
 /* Encrypt/decrypt file data using per-mount key */
-void vfs_encrypt_block(struct vfs_mount *m, uint8_t *data, uint32_t size) {
+static void vfs_encrypt_block(struct vfs_mount *m, uint8_t *data, uint32_t size) {
     if (!m || !m->encrypted) return;
     crypto_aes_set_key(m->enc_key);
     /* Encrypt in 16-byte blocks */
@@ -318,7 +318,7 @@ void vfs_encrypt_block(struct vfs_mount *m, uint8_t *data, uint32_t size) {
     }
 }
 
-void vfs_decrypt_block(struct vfs_mount *m, uint8_t *data, uint32_t size) {
+static void vfs_decrypt_block(struct vfs_mount *m, uint8_t *data, uint32_t size) {
     if (!m || !m->encrypted) return;
     crypto_aes_set_key(m->enc_key);
     for (uint32_t i = 0; i + 16 <= size; i += 16) {
@@ -527,7 +527,7 @@ void vfs_enhance_init(void) {
 }
 
 /* ── vfs_enhance_read ───────────────────────────────────── */
-int vfs_enhance_read(void *file, void *buf, size_t count, uint64_t offset)
+static int vfs_enhance_read(void *file, void *buf, size_t count, uint64_t offset)
 {
     (void)file;
     (void)buf;
@@ -537,7 +537,7 @@ int vfs_enhance_read(void *file, void *buf, size_t count, uint64_t offset)
     return 0;
 }
 /* ── vfs_enhance_write ──────────────────────────────────── */
-int vfs_enhance_write(void *file, const void *buf, size_t count, uint64_t offset)
+static int vfs_enhance_write(void *file, const void *buf, size_t count, uint64_t offset)
 {
     (void)file;
     (void)buf;
@@ -547,7 +547,7 @@ int vfs_enhance_write(void *file, const void *buf, size_t count, uint64_t offset
     return (int)count;
 }
 /* ── vfs_enhance_open ───────────────────────────────────── */
-int vfs_enhance_open(void *inode, void *file)
+static int vfs_enhance_open(void *inode, void *file)
 {
     (void)inode;
     (void)file;

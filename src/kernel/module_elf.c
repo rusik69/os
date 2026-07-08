@@ -1569,7 +1569,7 @@ int module_elf_finalize(struct module_elf_context *ctx, const char *name)
 }
 
 /* ── Stub: module_elf_load ─────────────────────────────── */
-int module_elf_load(const char *path, void *mod)
+static int module_elf_load(const char *path, void *mod)
 {
     (void)path;
     (void)mod;
@@ -1577,7 +1577,7 @@ int module_elf_load(const char *path, void *mod)
     return 0;
 }
 /* ── Stub: module_elf_relocate ─────────────────────────────── */
-int module_elf_relocate(void *mod, void *relocs)
+static int module_elf_relocate(void *mod, void *relocs)
 {
     (void)mod;
     (void)relocs;
@@ -1585,7 +1585,7 @@ int module_elf_relocate(void *mod, void *relocs)
     return 0;
 }
 /* ── Stub: module_elf_check ─────────────────────────────── */
-int module_elf_check(const void *data, size_t size)
+static int module_elf_check(const void *data, size_t size)
 {
     (void)data;
     (void)size;

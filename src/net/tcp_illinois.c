@@ -55,7 +55,7 @@ struct illinois_data {
     int initialised;
 };
 
-void illinois_init(struct illinois_data *d)
+static void illinois_init(struct illinois_data *d)
 {
     if (!d || d->initialised) return;
     memset(d, 0, sizeof(*d));
@@ -68,7 +68,7 @@ void illinois_init(struct illinois_data *d)
 }
 
 /* Update RTT and adapt α, β based on queueing delay */
-void illinois_update_rtt(struct illinois_data *d, uint32_t rtt_ticks)
+static void illinois_update_rtt(struct illinois_data *d, uint32_t rtt_ticks)
 {
     if (!d || !d->initialised || rtt_ticks == 0) return;
 
@@ -121,7 +121,7 @@ void illinois_update_rtt(struct illinois_data *d, uint32_t rtt_ticks)
 }
 
 /* Illinois congestion avoidance update (per ACK) */
-uint32_t illinois_update(struct illinois_data *d, uint32_t cwnd,
+static uint32_t illinois_update(struct illinois_data *d, uint32_t cwnd,
                          int acked_segments)
 {
     if (!d || !d->initialised) return cwnd;
@@ -143,7 +143,7 @@ uint32_t illinois_update(struct illinois_data *d, uint32_t cwnd,
 }
 
 /* Illinois on loss */
-void illinois_on_loss(struct illinois_data *d, uint32_t current_cwnd)
+static void illinois_on_loss(struct illinois_data *d, uint32_t current_cwnd)
 {
     if (!d || !d->initialised) return;
 
@@ -161,13 +161,13 @@ void illinois_on_loss(struct illinois_data *d, uint32_t current_cwnd)
     d->cwnd = d->ssthresh;
 }
 
-uint32_t illinois_get_cwnd(struct illinois_data *d)
+static uint32_t illinois_get_cwnd(struct illinois_data *d)
 {
     if (!d || !d->initialised) return 10;
     return d->cwnd;
 }
 
-void illinois_set_cwnd(struct illinois_data *d, uint32_t cwnd)
+static void illinois_set_cwnd(struct illinois_data *d, uint32_t cwnd)
 {
     if (!d || !d->initialised) return;
     d->cwnd = cwnd;

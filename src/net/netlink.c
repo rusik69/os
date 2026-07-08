@@ -1677,7 +1677,7 @@ int netlink_get_protocol(int fd) {
 module_init(af_netlink_init);
 
 /* ── Implement: netlink_register ──────────────────────── */
-int netlink_register(int proto)
+static int netlink_register(int proto)
 {
     (void)proto;
     kprintf("[netlink] netlink_register: protocol %d registered\n", proto);

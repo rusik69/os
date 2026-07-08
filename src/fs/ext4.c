@@ -1465,28 +1465,28 @@ MODULE_VERSION("1.0");
 #endif
 
 /* ── ext4_umount ──────────────────────────────────────── */
-int ext4_umount(const char *target)
+static int ext4_umount(const char *target)
 {
     (void)target;
     kprintf("[ext4] Ext4 unmounted\n");
     return 0;
 }
 /* ── ext4_lookup ──────────────────────────────────────── */
-int ext4_lookup(const char *name, void *parent)
+static int ext4_lookup(const char *name, void *parent)
 {
     (void)parent;
     kprintf("[ext4] lookup: %s\n", name);
     return -ENOENT;
 }
 /* ── ext4_truncate ─────────────────────────────────────── */
-int ext4_truncate(void *inode, uint64_t size)
+static int ext4_truncate(void *inode, uint64_t size)
 {
     (void)inode;
     kprintf("[ext4] truncate to %llu\n", (unsigned long long)size);
     return 0;
 }
 /* ── ext4_sync ──────────────────────────────────────── */
-int ext4_sync(void *file)
+static int ext4_sync(void *file)
 {
     (void)file;
     kprintf("[ext4] Sync complete\n");

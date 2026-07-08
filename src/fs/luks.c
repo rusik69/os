@@ -531,27 +531,27 @@ int luks_setup_dm_crypt(int dev_id, struct luks_header *hdr, const uint8_t *mk)
 }
 
 /* ── luks_open ────────────────────────────────────────── */
-int luks_open(const char *device, const char *passphrase)
+static int luks_open(const char *device, const char *passphrase)
 {
     (void)passphrase;
     kprintf("[luks] Opening LUKS device: %s\n", device);
     return 0;
 }
 /* ── luks_close ───────────────────────────────────────── */
-int luks_close(const char *device)
+static int luks_close(const char *device)
 {
     kprintf("[luks] Closing LUKS device: %s\n", device);
     return 0;
 }
 /* ── luks_format ──────────────────────────────────────── */
-int luks_format(const char *device, const char *passphrase)
+static int luks_format(const char *device, const char *passphrase)
 {
     (void)passphrase;
     kprintf("[luks] Formatting LUKS device: %s\n", device);
     return 0;
 }
 /* ── luks_add_key ─────────────────────────────────────── */
-int luks_add_key(const char *device, const char *old_pass, const char *new_pass)
+static int luks_add_key(const char *device, const char *old_pass, const char *new_pass)
 {
     (void)device;
     (void)old_pass;

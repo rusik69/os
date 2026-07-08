@@ -548,7 +548,7 @@ int64_t sys_io_uring_register(int fd, uint32_t opcode, void *arg,
  * ═══════════════════════════════════════════════════════════════════════ */
 
 /* ── io_uring_delete: delete an io_uring ring and free resources ── */
-int io_uring_delete(struct io_ring *ring)
+static int io_uring_delete(struct io_ring *ring)
 {
     if (!ring) {
         kprintf("[io_uring] io_uring_delete: NULL ring\n");
@@ -592,7 +592,7 @@ int io_uring_delete(struct io_ring *ring)
 }
 
 /* ── io_uring_cancel: cancel pending operations for a ring/pid ── */
-int io_uring_cancel(struct io_ring *ring, int pid)
+static int io_uring_cancel(struct io_ring *ring, int pid)
 {
     if (!ring) {
         kprintf("[io_uring] io_uring_cancel: NULL ring\n");
@@ -618,7 +618,7 @@ int io_uring_cancel(struct io_ring *ring, int pid)
 }
 
 /* ── io_uring_timeout: set a timeout on an io_uring ring ── */
-int io_uring_timeout(struct io_ring *ring, uint64_t timeout_ns)
+static int io_uring_timeout(struct io_ring *ring, uint64_t timeout_ns)
 {
     if (!ring) {
         kprintf("[io_uring] io_uring_timeout: NULL ring\n");
@@ -641,7 +641,7 @@ int io_uring_timeout(struct io_ring *ring, uint64_t timeout_ns)
 }
 
 /* ── io_uring_poll: poll an io_uring for completions ── */
-int io_uring_poll(struct io_ring *ring, uint32_t poll_mask)
+static int io_uring_poll(struct io_ring *ring, uint32_t poll_mask)
 {
     if (!ring) {
         kprintf("[io_uring] io_uring_poll: NULL ring\n");

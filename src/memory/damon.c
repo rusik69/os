@@ -36,7 +36,7 @@ struct damon_ctx {
 static struct damon_ctx damon_ctx;
 
 /* Add a region to monitor */
-int damon_add_region(uint64_t start, uint64_t end)
+static int damon_add_region(uint64_t start, uint64_t end)
 {
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&damon_ctx.lock, &irq_flags);
@@ -59,7 +59,7 @@ int damon_add_region(uint64_t start, uint64_t end)
 }
 
 /* Remove a region */
-int damon_remove_region(uint64_t start)
+static int damon_remove_region(uint64_t start)
 {
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&damon_ctx.lock, &irq_flags);
@@ -81,7 +81,7 @@ int damon_remove_region(uint64_t start)
 }
 
 /* Sample access patterns (check if pages are accessed via PTE A/D bits) */
-void damon_sample(void)
+static void damon_sample(void)
 {
     if (!damon_ctx.running)
         return;
@@ -106,7 +106,7 @@ void damon_sample(void)
 }
 
 /* Mark a page as accessed (called from page fault handler) */
-void damon_mark_accessed(uint64_t addr)
+static void damon_mark_accessed(uint64_t addr)
 {
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&damon_ctx.lock, &irq_flags);
@@ -123,7 +123,7 @@ void damon_mark_accessed(uint64_t addr)
 }
 
 /* Start monitoring */
-int damon_start(void)
+static int damon_start(void)
 {
     if (damon_ctx.running)
         return -EBUSY;
@@ -135,7 +135,7 @@ int damon_start(void)
 }
 
 /* Stop monitoring */
-int damon_stop(void)
+static int damon_stop(void)
 {
     damon_ctx.running = 0;
     kprintf("[DAMON] Data access monitoring stopped\n");
@@ -143,7 +143,7 @@ int damon_stop(void)
 }
 
 /* Get access statistics for a region */
-uint64_t damon_get_access_count(uint64_t start)
+static uint64_t damon_get_access_count(uint64_t start)
 {
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&damon_ctx.lock, &irq_flags);
@@ -160,7 +160,7 @@ uint64_t damon_get_access_count(uint64_t start)
     return 0;
 }
 
-void __init damon_init(void)
+static void __init damon_init(void)
 {
     memset(&damon_ctx, 0, sizeof(damon_ctx));
     spinlock_init(&damon_ctx.lock);
@@ -171,7 +171,7 @@ void __init damon_init(void)
 module_init(damon_init);
 
 /* ── damon_set_attrs ───────────────────────────────────── */
-int damon_set_attrs(uint64_t sample_interval, uint64_t aggr_interval, uint64_t min_nr_regions, uint64_t max_nr_regions)
+static int damon_set_attrs(uint64_t sample_interval, uint64_t aggr_interval, uint64_t min_nr_regions, uint64_t max_nr_regions)
 {
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&damon_ctx.lock, &irq_flags);
@@ -197,7 +197,7 @@ int damon_set_attrs(uint64_t sample_interval, uint64_t aggr_interval, uint64_t m
 }
 
 /* ── damon_set_targets ─────────────────────────────────── */
-int damon_set_targets(uint64_t *targets, int nr_targets)
+static int damon_set_targets(uint64_t *targets, int nr_targets)
 {
     if (!targets || nr_targets <= 0)
         return -EINVAL;
@@ -226,7 +226,7 @@ int damon_set_targets(uint64_t *targets, int nr_targets)
 }
 
 /* ── damon_set_schemes ─────────────────────────────────── */
-int damon_set_schemes(void *schemes, int nr_schemes)
+static int damon_set_schemes(void *schemes, int nr_schemes)
 {
     (void)schemes;
 
@@ -244,13 +244,13 @@ int damon_set_schemes(void *schemes, int nr_schemes)
 }
 
 /* ── damon_start_monitoring ────────────────────────────── */
-int damon_start_monitoring(void)
+static int damon_start_monitoring(void)
 {
     return damon_start();
 }
 
 /* ── damon_stop_monitoring ─────────────────────────────── */
-int damon_stop_monitoring(void)
+static int damon_stop_monitoring(void)
 {
     return damon_stop();
 }

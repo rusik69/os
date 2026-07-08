@@ -593,7 +593,7 @@ void nf_conntrack_init(void)
 module_init(nf_conntrack_init);
 
 /* ── conntrack_destroy: remove a conntrack entry ── */
-int conntrack_destroy(void *ct)
+static int conntrack_destroy(void *ct)
 {
     if (!ct) {
         kprintf("[conntrack] conntrack_destroy: NULL ct\n");
@@ -620,7 +620,7 @@ int conntrack_destroy(void *ct)
     return 0;
 }
 /* ── conntrack_lookup: find conntrack entry for an skb ── */
-void* conntrack_lookup(void *skb)
+static void* conntrack_lookup(void *skb)
 {
     if (!skb) {
         kprintf("[conntrack] conntrack_lookup: NULL skb\n");
@@ -645,7 +645,7 @@ void* conntrack_lookup(void *skb)
     return NULL;
 }
 /* ── conntrack_flush: remove all conntrack entries ── */
-int conntrack_flush(void)
+static int conntrack_flush(void)
 {
     int flushed = 0;
     for (int i = 0; i < NF_CONNTRACK_MAX; i++) {

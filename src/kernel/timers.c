@@ -108,7 +108,7 @@ void timer_handler_soft(void) {
 }
 
 /* ── timer_add: Add a timer to the dynamic timer list ──────────────── */
-int timer_add(void *timer)
+static int timer_add(void *timer)
 {
     if (!timer) return -EINVAL;
     if (!g_timers_initialized) return -EAGAIN;
@@ -119,7 +119,7 @@ int timer_add(void *timer)
     return timer_schedule(g_timers[0].fn, NULL, 1);
 }
 /* ── timer_del: Remove a pending timer ─────────────────────────────── */
-int timer_del(void *timer)
+static int timer_del(void *timer)
 {
     if (!timer) return -EINVAL;
     if (!g_timers_initialized) return -EAGAIN;
@@ -141,7 +141,7 @@ int timer_del(void *timer)
     return -ENOENT;
 }
 /* ── timer_mod: Modify a timer's expiration ─────────────────────────── */
-int timer_mod(void *timer, uint64_t expires)
+static int timer_mod(void *timer, uint64_t expires)
 {
     /* Cancel and re-add with new expiry */
     int ret = timer_del(timer);
@@ -153,7 +153,7 @@ int timer_mod(void *timer, uint64_t expires)
     return timer_schedule(g_timers[0].fn, timer, delay);
 }
 /* ── timer_list_init: Initialize a timer structure ──────────────────── */
-int timer_list_init(void *timer, void *func, unsigned long data)
+static int timer_list_init(void *timer, void *func, unsigned long data)
 {
     if (!timer || !func) return -EINVAL;
 

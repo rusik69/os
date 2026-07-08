@@ -232,7 +232,7 @@ void seccomp_bpf_release(void)
 struct bpf_prog;
 
 /* ── Stub: seccomp_bpf_attach ─────────────────────────────── */
-int seccomp_bpf_attach(struct process *proc, struct bpf_prog *prog)
+static int seccomp_bpf_attach(struct process *proc, struct bpf_prog *prog)
 {
     (void)proc;
     (void)prog;
@@ -241,7 +241,7 @@ int seccomp_bpf_attach(struct process *proc, struct bpf_prog *prog)
 }
 
 /* ── Stub: seccomp_bpf_detach ─────────────────────────────── */
-int seccomp_bpf_detach(struct process *proc, struct bpf_prog *prog)
+static int seccomp_bpf_detach(struct process *proc, struct bpf_prog *prog)
 {
     (void)proc;
     (void)prog;
@@ -250,7 +250,7 @@ int seccomp_bpf_detach(struct process *proc, struct bpf_prog *prog)
 }
 
 /* ── Stub: seccomp_bpf_prog_install ─────────────────────────────── */
-int seccomp_bpf_prog_install(struct process *proc, struct bpf_prog *prog)
+static int seccomp_bpf_prog_install(struct process *proc, struct bpf_prog *prog)
 {
     (void)proc;
     (void)prog;
@@ -259,7 +259,7 @@ int seccomp_bpf_prog_install(struct process *proc, struct bpf_prog *prog)
 }
 
 /* ── Stub: seccomp_bpf_prog_load ─────────────────────────────── */
-int seccomp_bpf_prog_load(const struct sock_fprog *fprog, struct bpf_prog **prog)
+static int seccomp_bpf_prog_load(const struct sock_fprog *fprog, struct bpf_prog **prog)
 {
     (void)fprog;
     (void)prog;
@@ -268,7 +268,7 @@ int seccomp_bpf_prog_load(const struct sock_fprog *fprog, struct bpf_prog **prog
 }
 
 /* ── Stub: seccomp_bpf_set_mode ─────────────────────────────── */
-int seccomp_bpf_set_mode(struct process *proc, int mode)
+static int seccomp_bpf_set_mode(struct process *proc, int mode)
 {
     (void)proc;
     (void)mode;
@@ -277,7 +277,7 @@ int seccomp_bpf_set_mode(struct process *proc, int mode)
 }
 
 /* ── Stub: seccomp_bpf_get_action_avail ─────────────────────────────── */
-int seccomp_bpf_get_action_avail(uint32_t action)
+static int seccomp_bpf_get_action_avail(uint32_t action)
 {
     (void)action;
     kprintf("[seccomp_bpf] seccomp_bpf_get_action_avail: not yet implemented\n");

@@ -293,7 +293,7 @@ void pstore_init_notifier(void)
 }
 
 /* ── Stub: pstore_erase ────────────────────────────────────────────── */
-int pstore_erase(int index)
+static int pstore_erase(int index)
 {
     (void)index;
     kprintf("[PSTORE] pstore_erase: not yet implemented\n");
@@ -301,14 +301,14 @@ int pstore_erase(int index)
 }
 
 /* ── Stub: pstore_open ─────────────────────────────────────────────── */
-int pstore_open(void)
+static int pstore_open(void)
 {
     kprintf("[PSTORE] pstore_open: not yet implemented\n");
     return 0;
 }
 
 /* ── Stub: pstore_close ────────────────────────────────────────────── */
-void pstore_close(void)
+static void pstore_close(void)
 {
     kprintf("[PSTORE] pstore_close: not yet implemented\n");
 }

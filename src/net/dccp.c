@@ -1207,7 +1207,7 @@ EXPORT_SYMBOL(dccp_recv);
 EXPORT_SYMBOL(dccp_close);
 EXPORT_SYMBOL(dccp_send_ack);
 /* ── Implement: dccp_recvmsg ────────────────── */
-int dccp_recvmsg(int fd, void *buf, uint16_t maxlen, int flags)
+static int dccp_recvmsg(int fd, void *buf, uint16_t maxlen, int flags)
 {
     (void)flags;
     /* Delegate to dccp_recv */
@@ -1215,7 +1215,7 @@ int dccp_recvmsg(int fd, void *buf, uint16_t maxlen, int flags)
 }
 
 /* ── Implement: dccp_sendmsg ────────────────── */
-int dccp_sendmsg(int fd, const void *data, uint16_t len, int flags)
+static int dccp_sendmsg(int fd, const void *data, uint16_t len, int flags)
 {
     (void)flags;
     /* Delegate to dccp_send */
@@ -1223,7 +1223,7 @@ int dccp_sendmsg(int fd, const void *data, uint16_t len, int flags)
 }
 
 /* ── Implement: dccp_ioctl ────────────────── */
-int dccp_ioctl(int fd, unsigned long request, void *arg)
+static int dccp_ioctl(int fd, unsigned long request, void *arg)
 {
     (void)fd;
     (void)request;
@@ -1233,7 +1233,7 @@ int dccp_ioctl(int fd, unsigned long request, void *arg)
 }
 
 /* ── Implement: dccp_setsockopt ────────────────── */
-int dccp_setsockopt(int fd, int level, int optname, const void *optval, uint16_t optlen)
+static int dccp_setsockopt(int fd, int level, int optname, const void *optval, uint16_t optlen)
 {
     if (!dccp_initialized) return -ENOSYS;
     if (level != IPPROTO_DCCP) return -ENOPROTOOPT;
@@ -1275,7 +1275,7 @@ int dccp_setsockopt(int fd, int level, int optname, const void *optval, uint16_t
 }
 
 /* ── Implement: dccp_getsockopt ────────────────── */
-int dccp_getsockopt(int fd, int level, int optname, void *optval, uint16_t *optlen)
+static int dccp_getsockopt(int fd, int level, int optname, void *optval, uint16_t *optlen)
 {
     if (!dccp_initialized) return -ENOSYS;
     if (level != IPPROTO_DCCP) return -ENOPROTOOPT;
@@ -1316,7 +1316,7 @@ int dccp_getsockopt(int fd, int level, int optname, void *optval, uint16_t *optl
 }
 
 /* ── Implement: dccp_shutdown ────────────────── */
-int dccp_shutdown(int fd, int how)
+static int dccp_shutdown(int fd, int how)
 {
     if (!dccp_initialized) return -ENOSYS;
 
@@ -1351,7 +1351,7 @@ int dccp_shutdown(int fd, int how)
 }
 
 /* ── Implement: dccp_listen ────────────────── */
-int dccp_listen(int fd, int backlog)
+static int dccp_listen(int fd, int backlog)
 {
     if (!dccp_initialized) return -ENOSYS;
     (void)backlog;
@@ -1372,7 +1372,7 @@ int dccp_listen(int fd, int backlog)
 }
 
 /* ── Implement: dccp_accept ────────────────── */
-int dccp_accept(int fd, uint32_t *peer_ip, uint16_t *peer_port)
+static int dccp_accept(int fd, uint32_t *peer_ip, uint16_t *peer_port)
 {
     if (!dccp_initialized) return -ENOSYS;
     if (!peer_ip || !peer_port) return -EINVAL;
@@ -1408,7 +1408,7 @@ EXPORT_SYMBOL(dccp_accept);
 EXPORT_SYMBOL(handle_dccp);
 
 /* ── dccp_disconnect: disconnect a DCCP socket ── */
-int dccp_disconnect(int fd)
+static int dccp_disconnect(int fd)
 {
     if (!dccp_initialized) return -ENOSYS;
     spinlock_acquire(&dccp_lock);
@@ -1446,7 +1446,7 @@ int dccp_disconnect(int fd)
 }
 
 /* ── dccp_send_request: send explicit DCCP-Request on a connected socket ── */
-int dccp_send_request(int fd)
+static int dccp_send_request(int fd)
 {
     if (!dccp_initialized) return -ENOSYS;
     spinlock_acquire(&dccp_lock);
@@ -1471,7 +1471,7 @@ int dccp_send_request(int fd)
 }
 
 /* ── dccp_rcv_response: process received DCCP-Response packet ── */
-int dccp_rcv_response(int fd, uint32_t src_ip, uint16_t src_port)
+static int dccp_rcv_response(int fd, uint32_t src_ip, uint16_t src_port)
 {
     if (!dccp_initialized) return -ENOSYS;
     spinlock_acquire(&dccp_lock);
@@ -1494,7 +1494,7 @@ int dccp_rcv_response(int fd, uint32_t src_ip, uint16_t src_port)
 }
 
 /* ── Module cleanup ──────────────────────────────────────────── */
-void __exit dccp_cleanup(void)
+static void __exit dccp_cleanup(void)
 {
     spinlock_acquire(&dccp_lock);
     memset(dccp_socks, 0, sizeof(dccp_socks));

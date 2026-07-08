@@ -292,7 +292,7 @@ void audit_log(const char *msg)
 }
 
 /* ── Stub: audit_log_start ─────────────────────────────────────────── */
-int audit_log_start(int type)
+static int audit_log_start(int type)
 {
     (void)type;
     kprintf("[AUDIT] audit_log_start: not yet implemented\n");
@@ -300,21 +300,21 @@ int audit_log_start(int type)
 }
 
 /* ── Stub: audit_log_end ───────────────────────────────────────────── */
-void audit_log_end(void)
+static void audit_log_end(void)
 {
     kprintf("[AUDIT] audit_log_end: not yet implemented\n");
 }
 
 /* ── Stub: audit_log_format ────────────────────────────────────────── */
 __printf(1, 2)
-void audit_log_format(const char *fmt, ...)
+static void audit_log_format(const char *fmt, ...)
 {
     (void)fmt;
     kprintf("[AUDIT] audit_log_format: not yet implemented\n");
 }
 
 /* ── Stub: audit_send_reply ────────────────────────────────────────── */
-int audit_send_reply(void *skb, int type, int done, int seq, const void *data, int len)
+static int audit_send_reply(void *skb, int type, int done, int seq, const void *data, int len)
 {
     (void)skb; (void)type; (void)done; (void)seq; (void)data; (void)len;
     kprintf("[AUDIT] audit_send_reply: not yet implemented\n");

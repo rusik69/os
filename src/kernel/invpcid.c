@@ -49,7 +49,7 @@ void invpcid_flush_all(void) {
         write_cr3(cr3);
         return;
     }
-    struct invpcid_desc desc = {0, 0};
+    struct invpcid_desc desc = {.addr = 0, .pcid = 0};
     /* Type 3: invalidate all entries, including global */
     __asm__ volatile("invpcid %0, %1"
                      :
@@ -63,7 +63,7 @@ void invpcid_flush_single(uint64_t addr) {
         __asm__ volatile("invlpg (%0)" : : "r"(addr) : "memory");
         return;
     }
-    struct invpcid_desc desc = {addr, 0};
+    struct invpcid_desc desc = {.addr = addr, .pcid = 0};
     /* Type 0: invalidate for single address (PCID=0) */
     __asm__ volatile("invpcid %0, %1"
                      :
@@ -71,7 +71,7 @@ void invpcid_flush_single(uint64_t addr) {
                      : "memory");
 }
 
-int invpcid_is_available(void) {
+static int invpcid_is_available(void) {
     return invpcid_available;
 }
 
@@ -82,7 +82,7 @@ void invpcid_flush_pcid(uint64_t pcid) {
         write_cr3(cr3);
         return;
     }
-    struct invpcid_desc desc = {0, pcid & 0xFFF};
+    struct invpcid_desc desc = {.addr = 0, .pcid = pcid & 0xFFF};
     /* Type 1: flush all entries for the given PCID */
     __asm__ volatile("invpcid %0, %1"
                      :
@@ -91,7 +91,7 @@ void invpcid_flush_pcid(uint64_t pcid) {
 }
 
 /* ── Stub: invpcid_flush_all_nonglobals ─────────────────────────────── */
-int invpcid_flush_all_nonglobals(void)
+static int invpcid_flush_all_nonglobals(void)
 {
     kprintf("[INVPCID] invpcid_flush_all_nonglobals: not yet implemented\n");
     return 0;

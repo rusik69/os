@@ -401,7 +401,7 @@ static volatile int wq_oom_reserve;      /* reserve worker available */
 /* Set workqueue OOM state based on available memory.
  * Called by the OOM handler when memory pressure is detected.
  * @available_pages: number of free pages remaining. */
-void workqueue_oom_notify(uint64_t available_pages)
+static void workqueue_oom_notify(uint64_t available_pages)
 {
     int prev_state = wq_oom_state;
 
@@ -424,13 +424,13 @@ void workqueue_oom_notify(uint64_t available_pages)
 }
 
 /* Check if we're in OOM state that should suppress new work. */
-int workqueue_oom_check(void)
+static int workqueue_oom_check(void)
 {
     return wq_oom_state >= 1;
 }
 
 /* Get the current workqueue OOM state. */
-int workqueue_oom_get_state(void)
+static int workqueue_oom_get_state(void)
 {
     return wq_oom_state;
 }
@@ -473,7 +473,7 @@ void __init workqueue_init(void)
 struct work_struct;
 struct delayed_work;
 
-int queue_work(struct workqueue_struct *wq, struct work_struct *work)
+static int queue_work(struct workqueue_struct *wq, struct work_struct *work)
 {
     (void)wq;
     (void)work;
@@ -486,7 +486,7 @@ int queue_work(struct workqueue_struct *wq, struct work_struct *work)
 }
 
 /* ── queue_delayed_work: Schedule delayed work on a workqueue ──────────── */
-int queue_delayed_work(struct workqueue_struct *wq, struct delayed_work *dwork,
+static int queue_delayed_work(struct workqueue_struct *wq, struct delayed_work *dwork,
                        unsigned long delay)
 {
     (void)wq;

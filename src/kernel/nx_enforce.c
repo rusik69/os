@@ -664,14 +664,14 @@ int nx_enforce(void *task)
     return 0;
 }
 /* ── Stub: nx_check_addr ─────────────────────────────── */
-int nx_check_addr(uint64_t addr)
+static int nx_check_addr(uint64_t addr)
 {
     (void)addr;
     kprintf("[NX] nx_check_addr: not yet implemented\n");
     return 0;
 }
 /* ── Stub: nx_set_prot ─────────────────────────────── */
-int nx_set_prot(uint64_t addr, size_t len, int prot)
+static int nx_set_prot(uint64_t addr, size_t len, int prot)
 {
     (void)addr;
     (void)len;

@@ -930,7 +930,7 @@ void sshd_task(void) {
 }
 
 /* ── Implement: sshd_handle_client ────────────────── */
-int sshd_handle_client(void *client)
+static int sshd_handle_client(void *client)
 {
     if (!client) {
         kprintf("[sshd] sshd_handle_client: NULL client\n");

@@ -504,21 +504,21 @@ EXPORT_SYMBOL(bridge_fdb_learn);
  * ═══════════════════════════════════════════════════════════════ */
 
 /* ── Implement: bridge_xmit ───────────────────────────── */
-int bridge_xmit(void *skb, void *dev)
+static int bridge_xmit(void *skb, void *dev)
 {
     (void)skb; (void)dev;
     kprintf("[BRIDGE] bridge_xmit: forwarding frame\n");
     return 0;
 }
 /* ── Implement: bridge_rcv ────────────────────────────── */
-int bridge_rcv(void *skb)
+static int bridge_rcv(void *skb)
 {
     (void)skb;
     kprintf("[BRIDGE] bridge_rcv: frame received\n");
     return 0;
 }
 /* ── Implement: bridge_fdb_add ────────────────────────── */
-int bridge_fdb_add(const uint8_t *mac, struct net_device *dev)
+static int bridge_fdb_add(const uint8_t *mac, struct net_device *dev)
 {
     if (!mac || !dev) return -EINVAL;
     kprintf("[BRIDGE] bridge_fdb_add: %02x:%02x:%02x:%02x:%02x:%02x\n",
@@ -526,7 +526,7 @@ int bridge_fdb_add(const uint8_t *mac, struct net_device *dev)
     return 0;
 }
 /* ── Implement: bridge_fdb_del ────────────────────────── */
-int bridge_fdb_del(const uint8_t *mac)
+static int bridge_fdb_del(const uint8_t *mac)
 {
     if (!mac) return -EINVAL;
     kprintf("[BRIDGE] bridge_fdb_del: %02x:%02x:%02x:%02x:%02x:%02x\n",

@@ -664,8 +664,8 @@ int bbr_is_active(struct bbr_data *b)
 }
 
 /* ── Implement: tcp_bbr_cong_avoid ────────────────── */
-int tcp_bbr_cong_avoid(void *sk) { (void)sk; return 0; }
+static int tcp_bbr_cong_avoid(void *sk) { (void)sk; return 0; }
 /* ── Implement: tcp_bbr_ssthresh ────────────────── */
-uint32_t tcp_bbr_ssthresh(void *sk) { (void)sk; return 2; }
+static uint32_t tcp_bbr_ssthresh(void *sk) { (void)sk; return 2; }
 /* ── Implement: tcp_bbr_init ────────────────── */
-int tcp_bbr_init(void *sk) { (void)sk; return 0; }
+static int tcp_bbr_init(void *sk) { (void)sk; return 0; }

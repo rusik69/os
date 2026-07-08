@@ -30,28 +30,28 @@ int tasklet_schedule(struct tasklet_struct *t) {
 }
 
 /* ── Stub: tasklet_hi_schedule ─────────────────────────────── */
-int tasklet_hi_schedule(void *t)
+static int tasklet_hi_schedule(void *t)
 {
     (void)t;
     kprintf("[tasklet] tasklet_hi_schedule: not yet implemented\n");
     return 0;
 }
 /* ── Stub: tasklet_kill ─────────────────────────────── */
-int tasklet_kill(void *t)
+static int tasklet_kill(void *t)
 {
     (void)t;
     kprintf("[tasklet] tasklet_kill: not yet implemented\n");
     return 0;
 }
 /* ── Stub: tasklet_enable ─────────────────────────────── */
-int tasklet_enable(void *t)
+static int tasklet_enable(void *t)
 {
     (void)t;
     kprintf("[tasklet] tasklet_enable: not yet implemented\n");
     return 0;
 }
 /* ── Stub: tasklet_disable ─────────────────────────────── */
-int tasklet_disable(void *t)
+static int tasklet_disable(void *t)
 {
     (void)t;
     kprintf("[tasklet] tasklet_disable: not yet implemented\n");

@@ -4270,14 +4270,14 @@ MODULE_DESCRIPTION("Second extended filesystem (ext2) — with symlinks, HTree d
 #endif
 
 /* ── ext2_umount ──────────────────────────────────────── */
-int ext2_umount(const char *target)
+static int ext2_umount(const char *target)
 {
     (void)target;
     kprintf("[ext2] Ext2 unmounted\n");
     return 0;
 }
 /* ── ext2_lookup ──────────────────────────────────────── */
-int ext2_lookup(const char *name, void *parent)
+static int ext2_lookup(const char *name, void *parent)
 {
     (void)parent;
     kprintf("[ext2] lookup: %s\n", name);

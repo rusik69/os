@@ -145,7 +145,7 @@ static int kfence_check_canary(struct kfence_object *obj)
 
 /* ── Public API ─────────────────────────────────────────────────────── */
 
-void kfence_init(void)
+static void kfence_init(void)
 {
     if (kfence_initialized) return;
 
@@ -191,7 +191,7 @@ void kfence_init(void)
  * @size: Requested allocation size (must be <= KFENCE_OBJECT_SIZE).
  * @returns Virtual address of the allocation, or NULL if no objects available.
  */
-void *kfence_alloc(uint64_t size)
+static void *kfence_alloc(uint64_t size)
 {
     if (!kfence_initialized || size == 0 || size > KFENCE_OBJECT_SIZE)
         return NULL;
@@ -240,7 +240,7 @@ void *kfence_alloc(uint64_t size)
  *
  * Returns 0 if the free was valid, negative if an error was detected.
  */
-int kfence_free(void *ptr)
+static int kfence_free(void *ptr)
 {
     if (!kfence_initialized || !ptr)
         return -EINVAL;
@@ -306,7 +306,7 @@ int kfence_free(void *ptr)
  * Returns 1 if KFENCE handled the fault (reported), 0 if it was not a
  * KFENCE-related fault.
  */
-int kfence_handle_fault(uint64_t addr, int write)
+static int kfence_handle_fault(uint64_t addr, int write)
 {
     if (!kfence_initialized)
         return 0;
@@ -354,7 +354,7 @@ int kfence_handle_fault(uint64_t addr, int write)
  * Should the current allocation be sampled by KFENCE?
  * Returns 1 if we should use kfence_alloc instead of kmalloc.
  */
-int kfence_should_sample(void)
+static int kfence_should_sample(void)
 {
     if (!kfence_initialized)
         return 0;
@@ -367,7 +367,7 @@ int kfence_should_sample(void)
 /*
  * Configure KFENCE sampling interval.
  */
-void kfence_set_sample_interval(int interval)
+static void kfence_set_sample_interval(int interval)
 {
     if (interval <= 0)
         interval = 1;
@@ -378,7 +378,7 @@ void kfence_set_sample_interval(int interval)
 /*
  * Get KFENCE statistics.
  */
-void kfence_get_stats(uint64_t *total_alloc, uint64_t *errors,
+static void kfence_get_stats(uint64_t *total_alloc, uint64_t *errors,
                        uint64_t *oob, uint64_t *uaf)
 {
     if (total_alloc) *total_alloc = kfence_total_allocations;
@@ -390,7 +390,7 @@ void kfence_get_stats(uint64_t *total_alloc, uint64_t *errors,
 /*
  * Print KFENCE status.
  */
-void kfence_dump(void)
+static void kfence_dump(void)
 {
     kprintf("KFENCE Status:\n");
     kprintf("  Pool: 0x%lx - 0x%lx (%llu bytes)\n",

@@ -169,26 +169,26 @@ int netif_count(void)
 }
 
 /* ── Implement: netdevice_register ────────────────────── */
-int netdevice_register(void *dev)
+static int netdevice_register(void *dev)
 {
     if (!dev) return -EINVAL;
     return 0;
 }
 /* ── Implement: netdevice_unregister ──────────────────── */
-int netdevice_unregister(void *dev)
+static int netdevice_unregister(void *dev)
 {
     if (!dev) return -EINVAL;
     return 0;
 }
 /* ── Implement: netdevice_open ────────────────────────── */
-int netdevice_open(void *dev)
+static int netdevice_open(void *dev)
 {
     if (!dev) return -EINVAL;
     (void)dev;
     return 0;
 }
 /* ── Implement: netdevice_stop ────────────────────────── */
-int netdevice_stop(void *dev)
+static int netdevice_stop(void *dev)
 {
     if (!dev) return -EINVAL;
     (void)dev;

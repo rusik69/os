@@ -36,7 +36,7 @@ static size_t chacha20poly1305_pad16(size_t len)
     return (16 - (len & 15)) & 15;
 }
 
-int lib_chacha20poly1305_encrypt(uint8_t *ciphertext, uint8_t mac[16],
+static int lib_chacha20poly1305_encrypt(uint8_t *ciphertext, uint8_t mac[16],
                               const uint8_t *plaintext, size_t pt_len,
                               const uint8_t *aad, size_t aad_len,
                               const uint8_t key[32], const uint8_t nonce[12])
@@ -100,7 +100,7 @@ int lib_chacha20poly1305_encrypt(uint8_t *ciphertext, uint8_t mac[16],
     return 0;
 }
 
-int lib_chacha20poly1305_decrypt(uint8_t *plaintext, const uint8_t *ciphertext,
+static int lib_chacha20poly1305_decrypt(uint8_t *plaintext, const uint8_t *ciphertext,
                               size_t ct_len, const uint8_t mac[16],
                               const uint8_t *aad, size_t aad_len,
                               const uint8_t key[32], const uint8_t nonce[12])

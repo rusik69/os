@@ -462,7 +462,7 @@ struct lowpan_ctx;
 struct lowpan_config;
 
 /* ── Implement: lowpan_process_data ────────────────── */
-int lowpan_process_data(int ifindex, const uint8_t *frame, uint16_t len)
+static int lowpan_process_data(int ifindex, const uint8_t *frame, uint16_t len)
 {
     if (!lowpan_initialized) {
         kprintf("[6lowpan] lowpan_process_data: not initialized\n");
@@ -489,7 +489,7 @@ int lowpan_process_data(int ifindex, const uint8_t *frame, uint16_t len)
 }
 
 /* ── Implement: lowpan_fragment ────────────────── */
-int lowpan_fragment(int ifindex, const uint8_t *data, uint16_t len,
+static int lowpan_fragment(int ifindex, const uint8_t *data, uint16_t len,
                      uint8_t *frames, uint16_t *frame_lens, int max_frames)
 {
     if (!lowpan_initialized) {
@@ -515,7 +515,7 @@ int lowpan_fragment(int ifindex, const uint8_t *data, uint16_t len,
 }
 
 /* ── Implement: lowpan_reassemble ────────────────── */
-int lowpan_reassemble(int ifindex, const uint8_t *frag, uint16_t frag_len,
+static int lowpan_reassemble(int ifindex, const uint8_t *frag, uint16_t frag_len,
                        uint8_t *out, uint16_t *out_len)
 {
     if (!lowpan_initialized) {
@@ -541,7 +541,7 @@ int lowpan_reassemble(int ifindex, const uint8_t *frag, uint16_t frag_len,
 }
 
 /* ── Implement: lowpan_header_compress ────────────────── */
-int lowpan_header_compress(const struct ipv6_header *ip6,
+static int lowpan_header_compress(const struct ipv6_header *ip6,
                             const struct lowpan_ctx *ctx, int ctx_id,
                             uint8_t *out, uint16_t *out_len)
 {
@@ -562,7 +562,7 @@ int lowpan_header_compress(const struct ipv6_header *ip6,
 }
 
 /* ── Implement: lowpan_header_decompress ────────────────── */
-int lowpan_header_decompress(const uint8_t *in, uint16_t in_len,
+static int lowpan_header_decompress(const uint8_t *in, uint16_t in_len,
                               struct ipv6_header *ip6,
                               const struct lowpan_ctx *ctx, int ctx_id)
 {
@@ -584,7 +584,7 @@ int lowpan_header_decompress(const uint8_t *in, uint16_t in_len,
 }
 
 /* ── Implement: lowpan_mesh_send ────────────────── */
-int lowpan_mesh_send(int ifindex, const uint8_t *data, uint16_t len,
+static int lowpan_mesh_send(int ifindex, const uint8_t *data, uint16_t len,
                       const uint8_t *mesh_dst, const uint8_t *mesh_src)
 {
     if (!lowpan_initialized) {
@@ -609,7 +609,7 @@ int lowpan_mesh_send(int ifindex, const uint8_t *data, uint16_t len,
 }
 
 /* ── Implement: lowpan_mesh_recv ────────────────── */
-int lowpan_mesh_recv(int ifindex, const uint8_t *frame, uint16_t len,
+static int lowpan_mesh_recv(int ifindex, const uint8_t *frame, uint16_t len,
                       uint8_t *mesh_src_out, uint8_t *mesh_dst_out)
 {
     if (!lowpan_initialized) {
@@ -634,7 +634,7 @@ int lowpan_mesh_recv(int ifindex, const uint8_t *frame, uint16_t len,
 }
 
 /* ── Implement: lowpan_broadcast ────────────────── */
-int lowpan_broadcast(int ifindex, const uint8_t *data, uint16_t len)
+static int lowpan_broadcast(int ifindex, const uint8_t *data, uint16_t len)
 {
     if (!lowpan_initialized) {
         kprintf("[6lowpan] lowpan_broadcast: not initialized\n");
@@ -659,7 +659,7 @@ int lowpan_broadcast(int ifindex, const uint8_t *data, uint16_t len)
 }
 
 /* ── Implement: lowpan_unicast ────────────────── */
-int lowpan_unicast(int ifindex, const uint8_t *data, uint16_t len,
+static int lowpan_unicast(int ifindex, const uint8_t *data, uint16_t len,
                     const struct in6_addr *dst)
 {
     if (!lowpan_initialized) {
@@ -684,7 +684,7 @@ int lowpan_unicast(int ifindex, const uint8_t *data, uint16_t len,
 }
 
 /* ── Implement: lowpan_setup ────────────────── */
-int lowpan_setup(int ifindex, const struct lowpan_config *cfg)
+static int lowpan_setup(int ifindex, const struct lowpan_config *cfg)
 {
     if (!lowpan_initialized) {
         kprintf("[6lowpan] lowpan_setup: not initialized\n");

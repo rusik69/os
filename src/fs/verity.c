@@ -343,7 +343,7 @@ EXPORT_SYMBOL(fsverity_ioctl_enable);
 
 /* fsverity_measure: return the Merkle tree root hash for a file.
  * Returns 0 on success with root_hash filled in, -ENOENT if verity not enabled. */
-int fsverity_measure(const char *path, uint8_t root_hash[VERITY_HASH_SIZE])
+static int fsverity_measure(const char *path, uint8_t root_hash[VERITY_HASH_SIZE])
 {
     if (!path || !root_hash)
         return -EINVAL;
@@ -524,7 +524,7 @@ EXPORT_SYMBOL(fsverity_disable);
  * Returns 0 if verification passes, -EIO on failure, -ENOENT if
  * fs-verity is not enabled on this file.
  */
-int verity_verify(uint64_t ino, const uint8_t *data, uint64_t size)
+static int verity_verify(uint64_t ino, const uint8_t *data, uint64_t size)
 {
     return fsverity_verify_file(ino, data, size);
 }
@@ -542,7 +542,7 @@ int verity_verify(uint64_t ino, const uint8_t *data, uint64_t size)
  *
  * Returns 0 on success, -ENOENT if verity not enabled.
  */
-int verity_metadata(uint64_t ino, void *buf, uint32_t *len)
+static int verity_metadata(uint64_t ino, void *buf, uint32_t *len)
 {
     if (!buf || !len) return -EINVAL;
 
@@ -576,7 +576,7 @@ int verity_metadata(uint64_t ino, void *buf, uint32_t *len)
  *
  * Returns 0 on success, -ENOENT if verity not enabled.
  */
-int verity_close(uint64_t ino)
+static int verity_close(uint64_t ino)
 {
     return fsverity_disable(ino);
 }

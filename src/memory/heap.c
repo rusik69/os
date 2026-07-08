@@ -255,7 +255,7 @@ int heap_stats(void *stats)
 }
 
 /* ── heap_check ─────────────────────────────── */
-int heap_check(void)
+static int heap_check(void)
 {
     struct heap_block *b = heap_start_block;
     int errors = 0;

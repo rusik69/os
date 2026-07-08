@@ -190,7 +190,7 @@ static void handle_rds_pkt(struct rds_conn *c, const uint8_t *data, size_t len)
     }
 }
 
-int rds_create_socket(void)
+static int rds_create_socket(void)
 {
     for (int i = 0; i < RDS_MAX_CONNECTIONS; i++) {
         if (!rds_conns[i].active)
@@ -199,7 +199,7 @@ int rds_create_socket(void)
     return -ENOMEM;
 }
 
-int rds_bind(int sock, uint32_t addr, uint16_t port)
+static int rds_bind(int sock, uint32_t addr, uint16_t port)
 {
     if (sock < 0 || sock >= RDS_MAX_CONNECTIONS)
         return -EINVAL;
@@ -212,7 +212,7 @@ int rds_bind(int sock, uint32_t addr, uint16_t port)
     return 0;
 }
 
-int rds_connect(int sock, uint32_t addr, uint16_t port)
+static int rds_connect(int sock, uint32_t addr, uint16_t port)
 {
     if (sock < 0 || sock >= RDS_MAX_CONNECTIONS)
         return -EINVAL;
@@ -241,7 +241,7 @@ int rds_connect(int sock, uint32_t addr, uint16_t port)
     return sock;
 }
 
-int rds_send(int sock, const uint8_t *data, size_t len, int flags)
+static int rds_send(int sock, const uint8_t *data, size_t len, int flags)
 {
     (void)flags;
     if (sock < 0 || sock >= RDS_MAX_CONNECTIONS || !rds_conns[sock].active)
@@ -262,7 +262,7 @@ int rds_send(int sock, const uint8_t *data, size_t len, int flags)
     return (int)len;
 }
 
-int rds_recv(int sock, uint8_t *buf, size_t max_len, int flags)
+static int rds_recv(int sock, uint8_t *buf, size_t max_len, int flags)
 {
     (void)flags;
     if (sock < 0 || sock >= RDS_MAX_CONNECTIONS || !rds_conns[sock].active)
@@ -280,7 +280,7 @@ int rds_recv(int sock, uint8_t *buf, size_t max_len, int flags)
 }
 
 /* Set up RDMA memory region for this connection */
-int rds_setup_rdma(int sock, uint64_t addr, uint32_t len, uint32_t lkey, uint32_t rkey)
+static int rds_setup_rdma(int sock, uint64_t addr, uint32_t len, uint32_t lkey, uint32_t rkey)
 {
     if (sock < 0 || sock >= RDS_MAX_CONNECTIONS || !rds_conns[sock].active)
         return -EINVAL;
@@ -301,7 +301,7 @@ int rds_setup_rdma(int sock, uint64_t addr, uint32_t len, uint32_t lkey, uint32_
 }
 
 /* Receive incoming RDS packet from network layer */
-void handle_rds(uint32_t src_ip, uint32_t dst_ip,
+static void handle_rds(uint32_t src_ip, uint32_t dst_ip,
                  const uint8_t *payload, uint16_t len)
 {
     (void)dst_ip;
@@ -327,7 +327,7 @@ void handle_rds(uint32_t src_ip, uint32_t dst_ip,
     handle_rds_pkt(c, payload, len);
 }
 
-void rds_init(void)
+static void rds_init(void)
 {
     memset(rds_conns, 0, sizeof(rds_conns));
     kprintf("[OK] RDS — Reliable Datagram Sockets protocol\n");
@@ -340,7 +340,7 @@ module_init(rds_init);
  * ═══════════════════════════════════════════════════════════════ */
 
 /* ── Implement: rds_disconnect ────────────────── */
-int rds_disconnect(struct rds_conn *conn)
+static int rds_disconnect(struct rds_conn *conn)
 {
     if (!conn) {
         kprintf("[rds] rds_disconnect: NULL conn\n");

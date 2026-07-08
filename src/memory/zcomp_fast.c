@@ -237,7 +237,7 @@ int __init zcomp_fast_init(void)
 }
 
 /* ── zcomp_fast_compress ─────────────────────────────── */
-int zcomp_fast_compress(const void *src, size_t slen, void *dst, size_t *dlen)
+static int zcomp_fast_compress(const void *src, size_t slen, void *dst, size_t *dlen)
 {
     if (!src || !dst || !dlen || slen == 0)
         return -EINVAL;
@@ -278,7 +278,7 @@ int zcomp_fast_compress(const void *src, size_t slen, void *dst, size_t *dlen)
 }
 
 /* ── zcomp_fast_decompress ─────────────────────────────── */
-int zcomp_fast_decompress(const void *src, size_t slen, void *dst, size_t *dlen)
+static int zcomp_fast_decompress(const void *src, size_t slen, void *dst, size_t *dlen)
 {
     if (!src || !dst || !dlen || slen == 0)
         return -EINVAL;

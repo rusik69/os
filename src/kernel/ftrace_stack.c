@@ -29,7 +29,7 @@ static struct stack_trace_state stack_state;
 static int stack_tracer_enabled = 0;
 
 /* Enable the stack tracer */
-void ftrace_stack_enable(void)
+static void ftrace_stack_enable(void)
 {
     stack_tracer_enabled = 1;
     stack_state.max_depth = 0;
@@ -38,13 +38,13 @@ void ftrace_stack_enable(void)
 }
 
 /* Disable the stack tracer */
-void ftrace_stack_disable(void)
+static void ftrace_stack_disable(void)
 {
     stack_tracer_enabled = 0;
 }
 
 /* Called at function entry (via instrumentation) */
-void __attribute__((used)) ftrace_stack_func_entry(uintptr_t return_addr,
+static void __attribute__((used)) ftrace_stack_func_entry(uintptr_t return_addr,
                                                      const char *func_name)
 {
     if (!stack_tracer_enabled)
@@ -62,7 +62,7 @@ void __attribute__((used)) ftrace_stack_func_entry(uintptr_t return_addr,
 }
 
 /* Called at function exit (via instrumentation) */
-void __attribute__((used)) ftrace_stack_func_exit(void)
+static void __attribute__((used)) ftrace_stack_func_exit(void)
 {
     if (!stack_tracer_enabled)
         return;
@@ -72,7 +72,7 @@ void __attribute__((used)) ftrace_stack_func_exit(void)
 }
 
 /* Record stack usage measurement */
-void ftrace_stack_record_usage(uint64_t usage)
+static void ftrace_stack_record_usage(uint64_t usage)
 {
     if (usage > stack_state.max_stack_usage) {
         stack_state.max_stack_usage = usage;
@@ -85,7 +85,7 @@ void ftrace_stack_record_usage(uint64_t usage)
 }
 
 /* Print stack tracer statistics */
-void ftrace_stack_print_stats(void)
+static void ftrace_stack_print_stats(void)
 {
     kprintf("Stack tracer: enabled=%d\n", stack_tracer_enabled);
     kprintf("  Max depth: %llu\n", (unsigned long long)stack_state.max_depth);
@@ -105,14 +105,14 @@ void ftrace_stack_print_stats(void)
     }
 }
 
-void ftrace_stack_init(void)
+static void ftrace_stack_init(void)
 {
     memset(&stack_state, 0, sizeof(stack_state));
     kprintf("[OK] Ftrace stack tracer — max stack usage tracker\n");
 }
 
 /* ── Stub: ftrace_stack_trace_save ─────────────────────────────────── */
-int ftrace_stack_trace_save(unsigned long *store, unsigned int size,
+static int ftrace_stack_trace_save(unsigned long *store, unsigned int size,
                             unsigned int skip)
 {
     (void)store; (void)size; (void)skip;
@@ -121,7 +121,7 @@ int ftrace_stack_trace_save(unsigned long *store, unsigned int size,
 }
 
 /* ── Stub: ftrace_stack_trace_snprint ──────────────────────────────── */
-int ftrace_stack_trace_snprint(char *buf, size_t size,
+static int ftrace_stack_trace_snprint(char *buf, size_t size,
                                unsigned long *entries, unsigned int nr_entries)
 {
     (void)buf; (void)size; (void)entries; (void)nr_entries;
@@ -130,7 +130,7 @@ int ftrace_stack_trace_snprint(char *buf, size_t size,
 }
 
 /* ── Stub: ftrace_stack_check ──────────────────────────────────────── */
-int ftrace_stack_check(unsigned long addr, size_t size)
+static int ftrace_stack_check(unsigned long addr, size_t size)
 {
     (void)addr; (void)size;
     kprintf("[FTRACE_STACK] ftrace_stack_check: not yet implemented\n");
@@ -138,7 +138,7 @@ int ftrace_stack_check(unsigned long addr, size_t size)
 }
 
 /* ── Stub: ftrace_stack_reserve ────────────────────────────────────── */
-void *ftrace_stack_reserve(size_t size)
+static void *ftrace_stack_reserve(size_t size)
 {
     (void)size;
     kprintf("[FTRACE_STACK] ftrace_stack_reserve: not yet implemented\n");

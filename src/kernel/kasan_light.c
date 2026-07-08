@@ -298,7 +298,7 @@ int kasan_extend_coverage(uint64_t start, uint64_t end)
 }
 
 /* ── Stub: kasan_alloc_pages ─────────────────────────────── */
-int kasan_alloc_pages(void *page, unsigned int order)
+static int kasan_alloc_pages(void *page, unsigned int order)
 {
     (void)page;
     (void)order;
@@ -306,7 +306,7 @@ int kasan_alloc_pages(void *page, unsigned int order)
     return 0;
 }
 /* ── Stub: kasan_free_pages ─────────────────────────────── */
-int kasan_free_pages(void *page, unsigned int order)
+static int kasan_free_pages(void *page, unsigned int order)
 {
     (void)page;
     (void)order;

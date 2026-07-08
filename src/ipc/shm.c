@@ -237,7 +237,7 @@ int shm_perm_get(int id, struct shm_perm *out)
 }
 
 /* ── shm_open ─────────────────────────────────────────── */
-int shm_open(const char *name, int oflag, ...)
+static int shm_open(const char *name, int oflag, ...)
 {
     (void)name;
     (void)oflag;
@@ -263,7 +263,7 @@ int shm_open(const char *name, int oflag, ...)
 }
 
 /* ── shm_unlink ───────────────────────────────────────── */
-int shm_unlink(const char *name)
+static int shm_unlink(const char *name)
 {
     (void)name;
     /* POSIX shared memory unlink: mark the segment for removal.
@@ -283,7 +283,7 @@ int shm_unlink(const char *name)
 }
 
 /* ── shm_mmap ─────────────────────────────────────────── */
-int shm_mmap(int id, uint64_t addr, size_t len, int prot, int flags)
+static int shm_mmap(int id, uint64_t addr, size_t len, int prot, int flags)
 {
     (void)addr;
     (void)len;
@@ -312,7 +312,7 @@ int shm_mmap(int id, uint64_t addr, size_t len, int prot, int flags)
 }
 
 /* ── shm_show_fdinfo ──────────────────────────────────── */
-int shm_show_fdinfo(int id, char *buf, size_t size)
+static int shm_show_fdinfo(int id, char *buf, size_t size)
 {
     if (!buf || size == 0) return -EINVAL;
 
@@ -352,7 +352,7 @@ struct shm_info {
 #endif
 
 /* ── shm_stat ─────────────────────────────────────────── */
-int shm_stat(struct shm_info *info)
+static int shm_stat(struct shm_info *info)
 {
     if (!info) return -EINVAL;
 

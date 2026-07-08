@@ -767,7 +767,7 @@ EXPORT_SYMBOL(ktls_disable);
 
 /* ── Resync Helper ──────────────────────────────────────────────────── */
 
-int ktls_resync_nic(struct net_device *dev, struct ktls_ctx *ctx,
+static int ktls_resync_nic(struct net_device *dev, struct ktls_ctx *ctx,
                     uint64_t seq)
 {
 	const struct ktls_offload_ops *ops;

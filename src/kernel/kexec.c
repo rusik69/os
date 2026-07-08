@@ -500,20 +500,20 @@ int kexec_crash_is_loaded(void)
 }
 
 /* ── Stub: kexec_unload ────────────────────────────────────────────── */
-int kexec_unload(void)
+static int kexec_unload(void)
 {
     kprintf("[KEXEC] kexec_unload: not yet implemented\n");
     return 0;
 }
 
 /* ── Stub: kexec_shutdown ──────────────────────────────────────────── */
-void kexec_shutdown(void)
+static void kexec_shutdown(void)
 {
     kprintf("[KEXEC] kexec_shutdown: not yet implemented\n");
 }
 
 /* ── Stub: kexec_jump ──────────────────────────────────────────────── */
-int kexec_jump(void)
+static int kexec_jump(void)
 {
     kprintf("[KEXEC] kexec_jump: not yet implemented\n");
     return 0;

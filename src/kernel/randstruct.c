@@ -23,7 +23,7 @@ static int randstruct_seed_count = 0;
 static int randstruct_initialized = 0;
 
 /* Register a type for layout randomization with a seed */
-int randstruct_register_seed(const char *type_name, uint32_t seed)
+static int randstruct_register_seed(const char *type_name, uint32_t seed)
 {
     if (randstruct_seed_count >= RANDSTRUCT_MAX_SEEDS)
         return -1;
@@ -35,7 +35,7 @@ int randstruct_register_seed(const char *type_name, uint32_t seed)
 }
 
 /* Get the randomization seed for a given type */
-uint32_t randstruct_get_seed(const char *type_name)
+static uint32_t randstruct_get_seed(const char *type_name)
 {
     for (int i = 0; i < randstruct_seed_count; i++) {
         if (strcmp(randstruct_seeds[i].type_name, type_name) == 0)
@@ -46,7 +46,7 @@ uint32_t randstruct_get_seed(const char *type_name)
 
 /* Generate a random permutation of struct member offsets
  * Used by the compile-time plugin to randomize layout */
-void randstruct_permute(uint32_t *perm, int n_members, uint32_t seed)
+static void randstruct_permute(uint32_t *perm, int n_members, uint32_t seed)
 {
     /* Fisher-Yates shuffle seeded by the per-type seed */
     uint32_t state = seed;
@@ -65,7 +65,7 @@ void randstruct_permute(uint32_t *perm, int n_members, uint32_t seed)
 }
 
 /* Initialize randstruct with entropy from kernel RNG */
-void randstruct_init(void)
+static void randstruct_init(void)
 {
     if (randstruct_initialized)
         return;
@@ -76,14 +76,14 @@ void randstruct_init(void)
 }
 
 /* ── Stub: randstruct_randomize ─────────────────────────────── */
-int randstruct_randomize(void *layout)
+static int randstruct_randomize(void *layout)
 {
     (void)layout;
     kprintf("[randstruct] randstruct_randomize: not yet implemented\n");
     return 0;
 }
 /* ── Stub: randstruct_apply ─────────────────────────────── */
-int randstruct_apply(void *layout)
+static int randstruct_apply(void *layout)
 {
     (void)layout;
     kprintf("[randstruct] randstruct_apply: not yet implemented\n");

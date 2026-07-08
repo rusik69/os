@@ -49,13 +49,13 @@ uint64_t tsc_deadline_get(void) {
 }
 
 /* ── Stub: tsc_deadline_cancel ─────────────────────────────── */
-int tsc_deadline_cancel(void)
+static int tsc_deadline_cancel(void)
 {
     kprintf("[TSC] tsc_deadline_cancel: not yet implemented\n");
     return 0;
 }
 /* ── Stub: tsc_deadline_read ─────────────────────────────── */
-uint64_t tsc_deadline_read(void)
+static uint64_t tsc_deadline_read(void)
 {
     kprintf("[TSC] tsc_deadline_read: not yet implemented\n");
     return 0;

@@ -317,7 +317,7 @@ module_init(zram_init);
 #define ZRAM_IOCTL_RESET      2
 
 /* ── zram_read ──────────────────────────────────────────── */
-int zram_read(uint64_t offset, void *buf, size_t count)
+static int zram_read(uint64_t offset, void *buf, size_t count)
 {
     if (!zram_dev.initialized)
         return -ENXIO;
@@ -335,7 +335,7 @@ int zram_read(uint64_t offset, void *buf, size_t count)
 }
 
 /* ── zram_write ────────────────────────────────────────── */
-int zram_write(uint64_t offset, const void *buf, size_t count)
+static int zram_write(uint64_t offset, const void *buf, size_t count)
 {
     if (!zram_dev.initialized)
         return -ENXIO;
@@ -352,7 +352,7 @@ int zram_write(uint64_t offset, const void *buf, size_t count)
 }
 
 /* ── zram_ioctl ─────────────────────────────────────────── */
-int zram_ioctl(unsigned int cmd, unsigned long arg)
+static int zram_ioctl(unsigned int cmd, unsigned long arg)
 {
     if (!zram_dev.initialized)
         return -ENXIO;
@@ -388,7 +388,7 @@ int zram_ioctl(unsigned int cmd, unsigned long arg)
 }
 
 /* ── zram_stats ────────────────────────────────────────── */
-int zram_stats(void *stats)
+static int zram_stats(void *stats)
 {
     if (!stats) return -EINVAL;
     /* Fill a zram_stat struct */
@@ -417,7 +417,7 @@ int zram_stats(void *stats)
 }
 
 /* ── zram_comp_read — Read and decompress a compressed page ── */
-int zram_comp_read(uint64_t offset, void *buf, size_t count)
+static int zram_comp_read(uint64_t offset, void *buf, size_t count)
 {
     if (!zram_dev.initialized)
         return -ENXIO;
@@ -467,7 +467,7 @@ int zram_comp_read(uint64_t offset, void *buf, size_t count)
 }
 
 /* ── zram_comp_write — Compress and store a page ────────────── */
-int zram_comp_write(uint64_t offset, const void *buf, size_t count)
+static int zram_comp_write(uint64_t offset, const void *buf, size_t count)
 {
     if (!zram_dev.initialized)
         return -ENXIO;
@@ -555,7 +555,7 @@ int zram_comp_write(uint64_t offset, const void *buf, size_t count)
 }
 
 /* ── zram_free_page — Free a compressed page slot ───────────── */
-void zram_free_page(uint64_t offset)
+static void zram_free_page(uint64_t offset)
 {
     if (!zram_dev.initialized)
         return;

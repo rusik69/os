@@ -952,7 +952,7 @@ int dlclose(void *handle) {
 }
 
 /* ── dlvsym — versioned symbol lookup (GNU extension) ────────────────── */
-void *dlvsym(void *handle, const char *symbol, const char *version)
+static void *dlvsym(void *handle, const char *symbol, const char *version)
 {
     (void)handle;
     (void)symbol;

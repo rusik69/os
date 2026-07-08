@@ -196,14 +196,14 @@ uint64_t cgroup_ns_inode(const struct cgroup_namespace *ns)
     return h;
 }
 
-int cgroup_ns_delete(void *ns)
+static int cgroup_ns_delete(void *ns)
 {
     (void)ns;
     kprintf("[cgroup_ns] cgroup_ns_delete: not yet implemented\n");
     return 0;
 }
 /* ── Stub: cgroup_ns_attach ─────────────────────────────── */
-int cgroup_ns_attach(void *ns, void *task)
+static int cgroup_ns_attach(void *ns, void *task)
 {
     (void)ns;
     (void)task;

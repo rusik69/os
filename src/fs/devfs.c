@@ -409,7 +409,7 @@ MODULE_ALIAS("devfs");
 #endif /* MODULE */
 
 /* ── devfs_register ───────────────────────────────────── */
-int devfs_register(const char *name, int major, int minor)
+static int devfs_register(const char *name, int major, int minor)
 {
     /* Register a device in devfs */
     int slot = -1;
@@ -426,7 +426,7 @@ int devfs_register(const char *name, int major, int minor)
     return 0;
 }
 /* ── devfs_unregister ─────────────────────────────────── */
-int devfs_unregister(const char *name)
+static int devfs_unregister(const char *name)
 {
     for (int i = 0; i < DEVFS_MAX_DEVICES; i++) {
         if (devfs_devices[i].in_use && strcmp(devfs_devices[i].name, name) == 0) {

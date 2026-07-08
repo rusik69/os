@@ -69,7 +69,7 @@ static int zsmalloc_find_class(struct zsmalloc_pool *pool, size_t size)
 }
 
 /* Create a new zsmalloc pool */
-int zsmalloc_create_pool(void)
+static int zsmalloc_create_pool(void)
 {
     if (zsmalloc_pool_count >= ZSMALLOC_MAX_POOLS)
         return -ENOMEM;
@@ -93,7 +93,7 @@ int zsmalloc_create_pool(void)
 }
 
 /* Allocate an object from zsmalloc pool */
-void *zsmalloc_alloc(int pool_id, size_t size)
+static void *zsmalloc_alloc(int pool_id, size_t size)
 {
     if (pool_id < 0 || pool_id >= zsmalloc_pool_count)
         return NULL;
@@ -168,7 +168,7 @@ void *zsmalloc_alloc(int pool_id, size_t size)
 }
 
 /* Free an object back to the pool */
-void zsmalloc_free(int pool_id, void *obj)
+static void zsmalloc_free(int pool_id, void *obj)
 {
     if (pool_id < 0 || pool_id >= zsmalloc_pool_count || !obj)
         return;
@@ -203,7 +203,7 @@ void zsmalloc_free(int pool_id, void *obj)
     spinlock_irqsave_release(&pool->lock, irq_flags);
 }
 
-void __init zsmalloc_init(void)
+static void __init zsmalloc_init(void)
 {
     memset(zsmalloc_pools, 0, sizeof(zsmalloc_pools));
     zsmalloc_pool_count = 0;
@@ -213,7 +213,7 @@ void __init zsmalloc_init(void)
 module_init(zsmalloc_init);
 
 /* ── zs_create_pool — Create a zsmalloc pool ─────────────── */
-void* zs_create_pool(const char *name)
+static void* zs_create_pool(const char *name)
 {
     if (zsmalloc_pool_count >= ZSMALLOC_MAX_POOLS)
         return NULL;
@@ -246,7 +246,7 @@ void* zs_create_pool(const char *name)
 }
 
 /* ── zs_destroy_pool — Destroy a zsmalloc pool ─────────────── */
-int zs_destroy_pool(void *pool)
+static int zs_destroy_pool(void *pool)
 {
     if (!pool)
         return -EINVAL;
@@ -275,7 +275,7 @@ int zs_destroy_pool(void *pool)
     return 0;
 }
 /* ── zs_map_object ───────────────────────────────────────────── */
-void* zs_map_object(void *pool, void *handle, enum zs_mapmode mm)
+static void* zs_map_object(void *pool, void *handle, enum zs_mapmode mm)
 {
     (void)pool;
     (void)handle;
@@ -287,7 +287,7 @@ void* zs_map_object(void *pool, void *handle, enum zs_mapmode mm)
 }
 
 /* ── zs_unmap_object ─────────────────────────────────────────── */
-void zs_unmap_object(void *pool, void *handle)
+static void zs_unmap_object(void *pool, void *handle)
 {
     (void)pool;
     (void)handle;
@@ -295,7 +295,7 @@ void zs_unmap_object(void *pool, void *handle)
      * A real implementation would flush caches / TLB if needed. */
     kprintf("[zsmalloc] zs_unmap_object: unmapping object\n");
 }
-void* zs_malloc(void *pool, size_t size)
+static void* zs_malloc(void *pool, size_t size)
 {
     if (!pool || size == 0 || size > 2048) {
         kprintf("[zsmalloc] zs_malloc: invalid args (size=%zu)\n", size);
@@ -314,7 +314,7 @@ void* zs_malloc(void *pool, size_t size)
     return obj;
 }
 /* ── Stub: zs_free ─────────────────────────────── */
-int zs_free(void *pool, void *ptr)
+static int zs_free(void *pool, void *ptr)
 {
     if (!pool || !ptr)
         return -EINVAL;

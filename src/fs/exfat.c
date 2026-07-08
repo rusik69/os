@@ -2371,7 +2371,7 @@ MODULE_DESCRIPTION("exFAT — read/write with directory entry set operations");
 #endif
 
 /* ── exfat_mount ──────────────────────────────────────── */
-int exfat_mount(const char *source, const char *target, unsigned long flags)
+static int exfat_mount(const char *source, const char *target, unsigned long flags)
 {
 	struct exfat_priv *ep;
 	int ret;
@@ -2413,7 +2413,7 @@ int exfat_mount(const char *source, const char *target, unsigned long flags)
 }
 
 /* ── exfat_umount ────────────────────────────────────── */
-int exfat_umount(const char *target)
+static int exfat_umount(const char *target)
 {
 	struct exfat_priv *ep = NULL;
 	int ret;
@@ -2433,7 +2433,7 @@ int exfat_umount(const char *target)
 	return 0;
 }
 /* ── exfat_lookup ──────────────────────────────────────── */
-int exfat_lookup(const char *name, void *parent)
+static int exfat_lookup(const char *name, void *parent)
 {
     (void)parent;
     kprintf("[exfat] lookup: %s\n", name);

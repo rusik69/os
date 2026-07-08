@@ -319,7 +319,7 @@ int generic_permission(const char *path, uint16_t uid, uint16_t gid,
  * ═══════════════════════════════════════════════════════════════ */
 
 /* ── posix_acl_create ───────────────────────────────────── */
-int posix_acl_create(const char *path, uint16_t mode, struct posix_acl *acl)
+static int posix_acl_create(const char *path, uint16_t mode, struct posix_acl *acl)
 {
     (void)mode;
     if (acl) {
@@ -329,7 +329,7 @@ int posix_acl_create(const char *path, uint16_t mode, struct posix_acl *acl)
     return 0;
 }
 /* ── posix_acl_chmod ───────────────────────────────────── */
-int posix_acl_chmod(const char *path, uint16_t mode)
+static int posix_acl_chmod(const char *path, uint16_t mode)
 {
     kprintf("[posix_acl] posix_acl_chmod: %s mode=%o (stub)\n", path, mode);
     (void)path; (void)mode;

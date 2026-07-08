@@ -103,7 +103,7 @@ int aio_ext_destroy(uint64_t ctx_id) {
  * Validates the timeout pointer and returns 0 (success).
  * The timeout is tracked as metadata on the context.
  */
-int aio_timeout(uint64_t ctx_id, const struct timespec *timeout)
+static int aio_timeout(uint64_t ctx_id, const struct timespec *timeout)
 {
     if (!timeout)
         return -EFAULT;
@@ -117,7 +117,7 @@ int aio_timeout(uint64_t ctx_id, const struct timespec *timeout)
  * aio_batch — batch-submit multiple I/O operations.
  * Validates the batch array. Returns 0 for an empty batch, -EINVAL otherwise.
  */
-int aio_batch(uint64_t ctx_id, struct iocb **iocbs, long nr)
+static int aio_batch(uint64_t ctx_id, struct iocb **iocbs, long nr)
 {
     (void)ctx_id;
     if (!iocbs || nr < 0)
@@ -144,7 +144,7 @@ void aio_enhanced_init(void) {
 }
 
 /* ── Stub: aio_enhanced_submit ─────────────────────────────── */
-int aio_enhanced_submit(void *ctx, void *iocb, int nr)
+static int aio_enhanced_submit(void *ctx, void *iocb, int nr)
 {
     (void)ctx;
     (void)iocb;
@@ -153,7 +153,7 @@ int aio_enhanced_submit(void *ctx, void *iocb, int nr)
     return 0;
 }
 /* ── Stub: aio_enhanced_getevents ─────────────────────────────── */
-int aio_enhanced_getevents(void *ctx, uint64_t min_nr, uint64_t max_nr, void *events)
+static int aio_enhanced_getevents(void *ctx, uint64_t min_nr, uint64_t max_nr, void *events)
 {
     (void)ctx;
     (void)min_nr;
@@ -163,7 +163,7 @@ int aio_enhanced_getevents(void *ctx, uint64_t min_nr, uint64_t max_nr, void *ev
     return 0;
 }
 /* ── Stub: aio_enhanced_cancel ─────────────────────────────── */
-int aio_enhanced_cancel(void *ctx, void *iocb)
+static int aio_enhanced_cancel(void *ctx, void *iocb)
 {
     (void)ctx;
     (void)iocb;

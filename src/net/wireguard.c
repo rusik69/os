@@ -613,7 +613,7 @@ static void poly1305_finish(poly1305_state *state, uint8_t mac[16]) {
     *(uint64_t *)(mac + 8) = mac_hi;
 }
 
-void poly1305_compute(uint8_t mac[16], const uint8_t key[32],
+static void poly1305_compute(uint8_t mac[16], const uint8_t key[32],
                        const uint8_t *data, uint64_t len) {
     poly1305_state state;
     poly1305_init(&state, key);

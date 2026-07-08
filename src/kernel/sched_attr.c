@@ -153,7 +153,7 @@ int sched_getattr(uint32_t pid, struct sched_attr *attr, size_t size, uint32_t f
 }
 
 /* ── Stub: sched_attr_set ─────────────────────────────── */
-int sched_attr_set(int pid, const void *attr)
+static int sched_attr_set(int pid, const void *attr)
 {
     (void)pid;
     (void)attr;
@@ -161,7 +161,7 @@ int sched_attr_set(int pid, const void *attr)
     return 0;
 }
 /* ── Stub: sched_attr_get ─────────────────────────────── */
-int sched_attr_get(int pid, void *attr)
+static int sched_attr_get(int pid, void *attr)
 {
     (void)pid;
     (void)attr;

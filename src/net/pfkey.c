@@ -104,7 +104,7 @@ struct pfkey_sock {
 static struct pfkey_sock pfkey_socks[PFKEY_MAX_SOCKS];
 static int pfkey_initialised = 0;
 
-void pfkey_init(void)
+static void pfkey_init(void)
 {
     if (pfkey_initialised) return;
     memset(pfkey_socks, 0, sizeof(pfkey_socks));
@@ -114,7 +114,7 @@ void pfkey_init(void)
 }
 
 /* Create a PF_KEY socket */
-int pfkey_create(int fd)
+static int pfkey_create(int fd)
 {
     (void)fd;
     if (!pfkey_initialised) return -ENOSYS;
@@ -131,7 +131,7 @@ int pfkey_create(int fd)
 }
 
 /* Close a PF_KEY socket */
-int pfkey_close(int fd)
+static int pfkey_close(int fd)
 {
     for (int i = 0; i < PFKEY_MAX_SOCKS; i++) {
         if (pfkey_socks[i].in_use && pfkey_socks[i].pid == (uint32_t)fd) {
@@ -143,7 +143,7 @@ int pfkey_close(int fd)
 }
 
 /* Send a SADB message (write to socket) */
-int pfkey_send_msg(int fd, const struct sadb_msg *msg, uint16_t len)
+static int pfkey_send_msg(int fd, const struct sadb_msg *msg, uint16_t len)
 {
     (void)fd;
     if (!pfkey_initialised) return -ENOSYS;
@@ -233,7 +233,7 @@ int pfkey_send_msg(int fd, const struct sadb_msg *msg, uint16_t len)
 }
 
 /* Receive a SADB message from socket */
-int pfkey_recv_msg(int fd, struct sadb_msg *buf, uint16_t maxlen)
+static int pfkey_recv_msg(int fd, struct sadb_msg *buf, uint16_t maxlen)
 {
     if (!pfkey_initialised) return -ENOSYS;
 
@@ -263,7 +263,7 @@ module_init(pfkey_init);
  * ═══════════════════════════════════════════════════════════════ */
 
 /* ── Implement: pfkey_send ────────────────── */
-int pfkey_send(void *sk, void *skb)
+static int pfkey_send(void *sk, void *skb)
 {
     if (!sk || !skb) {
         kprintf("[pfkey] pfkey_send: NULL parameter\n");
@@ -273,7 +273,7 @@ int pfkey_send(void *sk, void *skb)
     return -EOPNOTSUPP;
 }
 /* ── Implement: pfkey_recv ────────────────── */
-int pfkey_recv(void *sk, void *skb)
+static int pfkey_recv(void *sk, void *skb)
 {
     if (!sk || !skb) {
         kprintf("[pfkey] pfkey_recv: NULL parameter\n");
@@ -283,7 +283,7 @@ int pfkey_recv(void *sk, void *skb)
     return -EOPNOTSUPP;
 }
 /* ── Implement: pfkey_register ────────────────── */
-int pfkey_register(void *sk, void *skb)
+static int pfkey_register(void *sk, void *skb)
 {
     if (!sk || !skb) {
         kprintf("[pfkey] pfkey_register: NULL parameter\n");
@@ -293,7 +293,7 @@ int pfkey_register(void *sk, void *skb)
     return -EOPNOTSUPP;
 }
 /* ── Implement: pfkey_acquire ────────────────── */
-int pfkey_acquire(void *sk, void *skb)
+static int pfkey_acquire(void *sk, void *skb)
 {
     if (!sk || !skb) {
         kprintf("[pfkey] pfkey_acquire: NULL parameter\n");
@@ -303,7 +303,7 @@ int pfkey_acquire(void *sk, void *skb)
     return -EOPNOTSUPP;
 }
 /* ── Implement: pfkey_expire ────────────────── */
-int pfkey_expire(void *sk, void *skb)
+static int pfkey_expire(void *sk, void *skb)
 {
     if (!sk || !skb) {
         kprintf("[pfkey] pfkey_expire: NULL parameter\n");

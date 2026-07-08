@@ -38,7 +38,7 @@ static int ima_appraise_enforce = 1;   /* 1 = deny on mismatch */
  *   0  — File fails appraisal (hash mismatch)
  *  -1  — Error (file not found, no xattr, etc.)
  */
-int ima_appraise_file(const char *path)
+static int ima_appraise_file(const char *path)
 {
     if (!path)
         return -EINVAL;
@@ -110,7 +110,7 @@ int ima_appraise_file(const char *path)
  * ima_appraise_set_enforce — Set enforcement mode.
  * @enforce: 1 = deny on mismatch, 0 = warn only.
  */
-void ima_appraise_set_enforce(int enforce)
+static void ima_appraise_set_enforce(int enforce)
 {
     ima_appraise_enforce = enforce ? 1 : 0;
 }
@@ -118,7 +118,7 @@ void ima_appraise_set_enforce(int enforce)
 /*
  * ima_appraise_get_enforce — Get current enforcement mode.
  */
-int ima_appraise_get_enforce(void)
+static int ima_appraise_get_enforce(void)
 {
     return ima_appraise_enforce;
 }
@@ -126,7 +126,7 @@ int ima_appraise_get_enforce(void)
 /*
  * ima_appraise_init — Initialize the IMA appraisal subsystem.
  */
-void ima_appraise_init(void)
+static void ima_appraise_init(void)
 {
     ima_appraise_enforce = 1;
     kprintf("[OK] IMA appraisal initialized (%s enforcement)\n",
@@ -136,7 +136,7 @@ void ima_appraise_init(void)
 module_init(ima_appraise_init);
 
 /* ── Stub: ima_appraise_measurement ─────────────────────────────── */
-int ima_appraise_measurement(void *inode, void *file, void *xattr_value, int xattr_len)
+static int ima_appraise_measurement(void *inode, void *file, void *xattr_value, int xattr_len)
 {
     (void)inode;
     (void)file;
@@ -146,7 +146,7 @@ int ima_appraise_measurement(void *inode, void *file, void *xattr_value, int xat
     return 0;
 }
 /* ── Stub: ima_appraise_signature ─────────────────────────────── */
-int ima_appraise_signature(void *inode, void *file, void *sig)
+static int ima_appraise_signature(void *inode, void *file, void *sig)
 {
     (void)inode;
     (void)file;

@@ -45,7 +45,7 @@ static struct aiocb aio_cbs[AIO_MAX_IO];
 static struct aio_event aio_events[AIO_MAX_EVENTS];
 static int aio_initialized = 0;
 
-void aio_ext_init(void) {
+static void aio_ext_init(void) {
     if (aio_initialized) return;
     memset(aio_cbs, 0, sizeof(aio_cbs));
     memset(aio_events, 0, sizeof(aio_events));
@@ -158,7 +158,7 @@ static void aio_work_handler(void *arg)
 }
 
 /* Submit aio request */
-int aio_submit(struct aiocb *user_cb) {
+static int aio_submit(struct aiocb *user_cb) {
     if (!aio_initialized || !user_cb) return -EINVAL;
 
     /* Find free slot */
@@ -199,13 +199,13 @@ int aio_submit(struct aiocb *user_cb) {
 }
 
 /* Get return value of completed AIO request */
-int aio_return(uint64_t aiocb_ptr) {
+static int aio_return(uint64_t aiocb_ptr) {
     (void)aiocb_ptr;
     return 0;
 }
 
 /* Suspend until AIO completion */
-int aio_suspend(uint64_t *aiocb_list, int nent, uint64_t timeout) {
+static int aio_suspend(uint64_t *aiocb_list, int nent, uint64_t timeout) {
     (void)aiocb_list;
     (void)nent;
     (void)timeout;
@@ -213,7 +213,7 @@ int aio_suspend(uint64_t *aiocb_list, int nent, uint64_t timeout) {
 }
 
 /* Cancel an AIO request */
-int aio_cancel(int fd, uint64_t aiocb_ptr) {
+static int aio_cancel(int fd, uint64_t aiocb_ptr) {
     (void)fd;
     (void)aiocb_ptr;
     for (int i = 0; i < AIO_MAX_IO; i++) {
@@ -230,7 +230,7 @@ int aio_cancel(int fd, uint64_t aiocb_ptr) {
  * ═══════════════════════════════════════════════════════════════════════ */
 
 /* ── aio_cancel_all: Cancel all pending AIO requests for a given fd ───── */
-int aio_cancel_all(int fd)
+static int aio_cancel_all(int fd)
 {
     if (!aio_initialized) return -EINVAL;
 
@@ -250,7 +250,7 @@ int aio_cancel_all(int fd)
 }
 
 /* ── aio_get_events: Collect completed AIO events ──────────────────────── */
-int aio_get_events(uint64_t timeout_ms, struct aio_event *events, int max_events)
+static int aio_get_events(uint64_t timeout_ms, struct aio_event *events, int max_events)
 {
     if (!aio_initialized || !events || max_events <= 0) return -EINVAL;
 

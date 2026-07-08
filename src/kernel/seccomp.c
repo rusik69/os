@@ -377,7 +377,7 @@ int seccomp_filter_check(uint64_t num) {
 }
 
 /* ── seccomp_register_mode: Register a seccomp mode handler ────────── */
-int seccomp_register_mode(int mode, void *ops)
+static int seccomp_register_mode(int mode, void *ops)
 {
     (void)mode;
     (void)ops;
@@ -386,14 +386,14 @@ int seccomp_register_mode(int mode, void *ops)
     return 0;
 }
 /* ── seccomp_unregister_mode: Unregister a seccomp mode ────────────── */
-int seccomp_unregister_mode(int mode)
+static int seccomp_unregister_mode(int mode)
 {
     (void)mode;
     kprintf("[seccomp] seccomp_unregister_mode: mode=%d\n", mode);
     return 0;
 }
 /* ── seccomp_run_filters: Run seccomp filters for a syscall ────────── */
-int seccomp_run_filters(void *task, int syscall_nr, void *args)
+static int seccomp_run_filters(void *task, int syscall_nr, void *args)
 {
     (void)task;
     (void)args;

@@ -33,7 +33,7 @@
  *
  * Return: 0 if the combination is allowed, -EACCES if W+X is detected
  */
-int execshield_check_wx(uint64_t prot_flags)
+static int execshield_check_wx(uint64_t prot_flags)
 {
     /* Extract writable and executable bits from protection flags */
     int writable = (prot_flags & PROT_WRITE) ? 1 : 0;
@@ -60,7 +60,7 @@ int execshield_check_wx(uint64_t prot_flags)
  *
  * Return: 1 if READ_IMPLIES_EXEC should be set, 0 otherwise
  */
-int execshield_read_implies_exec(const struct elf64_header *ehdr,
+static int execshield_read_implies_exec(const struct elf64_header *ehdr,
                                   const struct elf64_phdr *phdrs,
                                   int phdr_count)
 {
@@ -87,7 +87,7 @@ int execshield_read_implies_exec(const struct elf64_header *ehdr,
 }
 
 /* Apply READ_IMPLIES_EXEC personality to a process */
-void execshield_apply_personality(struct process *proc, int read_implies_exec)
+static void execshield_apply_personality(struct process *proc, int read_implies_exec)
 {
     if (!proc)
         return;
@@ -115,7 +115,7 @@ void execshield_apply_personality(struct process *proc, int read_implies_exec)
  * Return: 0 if the protection change is allowed, -EINVAL if W^X would
  *         be violated
  */
-int execshield_mprotect_check(uint64_t addr, uint64_t len, uint64_t prot,
+static int execshield_mprotect_check(uint64_t addr, uint64_t len, uint64_t prot,
                                const struct process *proc)
 {
     (void)addr;
@@ -151,27 +151,27 @@ int execshield_mprotect_check(uint64_t addr, uint64_t len, uint64_t prot,
  * READ_IMPLIES_EXEC personality handling, and PT_GNU_STACK processing
  * are active.
  */
-void execshield_init(void)
+static void execshield_init(void)
 {
     kprintf("[OK] Exec Shield (W^X enforcement + READ_IMPLIES_EXEC + PT_GNU_STACK)\n");
 }
 
 /* ── Stub: execshield_enable ─────────────────────────────── */
-int execshield_enable(void *task)
+static int execshield_enable(void *task)
 {
     (void)task;
     kprintf("[execshield] execshield_enable: not yet implemented\n");
     return 0;
 }
 /* ── Stub: execshield_disable ─────────────────────────────── */
-int execshield_disable(void *task)
+static int execshield_disable(void *task)
 {
     (void)task;
     kprintf("[execshield] execshield_disable: not yet implemented\n");
     return 0;
 }
 /* ── Stub: execshield_check ─────────────────────────────── */
-int execshield_check(uint64_t addr, size_t size, int prot)
+static int execshield_check(uint64_t addr, size_t size, int prot)
 {
     (void)addr;
     (void)size;

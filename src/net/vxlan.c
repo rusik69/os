@@ -378,7 +378,7 @@ MODULE_LICENSE("GPL");
  * ═══════════════════════════════════════════════════════════════ */
 
 /* ── vxlan_xmit: transmit a packet through VXLAN tunnel ── */
-int vxlan_xmit(void *skb, void *dev)
+static int vxlan_xmit(void *skb, void *dev)
 {
     if (!skb || !dev) {
         kprintf("[vxlan] vxlan_xmit: NULL parameter\n");
@@ -416,7 +416,7 @@ int vxlan_xmit(void *skb, void *dev)
     return (ret < 0) ? ret : -EOPNOTSUPP;
 }
 /* ── vxlan_rcv: receive a VXLAN-encapsulated packet ── */
-int vxlan_rcv(void *skb)
+static int vxlan_rcv(void *skb)
 {
     if (!skb) {
         kprintf("[vxlan] vxlan_rcv: NULL skb\n");
@@ -444,7 +444,7 @@ int vxlan_rcv(void *skb)
     return -EINVAL;
 }
 /* ── Implement: vxlan_open ────────────────── */
-int vxlan_open(void *dev)
+static int vxlan_open(void *dev)
 {
     if (!dev) {
         kprintf("[vxlan] vxlan_open: NULL dev\n");
@@ -454,7 +454,7 @@ int vxlan_open(void *dev)
     return -EOPNOTSUPP;
 }
 /* ── Implement: vxlan_stop ────────────────── */
-int vxlan_stop(void *dev)
+static int vxlan_stop(void *dev)
 {
     if (!dev) {
         kprintf("[vxlan] vxlan_stop: NULL dev\n");

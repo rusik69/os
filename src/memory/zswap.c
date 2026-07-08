@@ -362,7 +362,7 @@ void zswap_stats(uint32_t *out_pages, uint32_t *out_size_kb)
 
 /* ── Debug dump (enabled via dynamic debug) ─────────────────────────── */
 
-void zswap_dump(void)
+static void zswap_dump(void)
 {
     if (!zswap_initialised) {
         kprintf("[zswap] not initialised\n");
@@ -397,7 +397,7 @@ void zswap_dump(void)
 module_init(zswap_init);
 
 /* ── zswap_invalidate — Invalidate a zswap entry ────────────── */
-int zswap_invalidate(uint64_t offset)
+static int zswap_invalidate(uint64_t offset)
 {
     (void)offset;
     spinlock_acquire(&zswap_lock);
@@ -442,7 +442,7 @@ int zswap_invalidate(uint64_t offset)
 }
 
 /* ── zswap_shrink — Shrink the zswap pool ──────────────────── */
-int zswap_shrink(int nr_to_reclaim)
+static int zswap_shrink(int nr_to_reclaim)
 {
     if (nr_to_reclaim <= 0)
         return 0;
@@ -489,7 +489,7 @@ int zswap_shrink(int nr_to_reclaim)
 }
 
 /* ── zswap_writeback_entry — Writeback a single entry ──────── */
-int zswap_writeback_entry(uint64_t offset)
+static int zswap_writeback_entry(uint64_t offset)
 {
     (void)offset;
     spinlock_acquire(&zswap_lock);

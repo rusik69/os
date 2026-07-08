@@ -1029,7 +1029,7 @@ EXPORT_SYMBOL(cgroup_init);
  * ═══════════════════════════════════════════════════════════════════════ */
 
 /* ── cgroup_fork: Initialize cgroup state for a new process ────────────── */
-int cgroup_fork(struct process *task)
+static int cgroup_fork(struct process *task)
 {
     if (!task) return -EINVAL;
     /* In a minimal implementation, the child inherits the parent's cgroup
@@ -1046,7 +1046,7 @@ int cgroup_fork(struct process *task)
 }
 
 /* ── cgroup_post_fork: Post-fork cgroup accounting ─────────────────────── */
-void cgroup_post_fork(struct process *task)
+static void cgroup_post_fork(struct process *task)
 {
     if (!task) return;
     /* Account this new process in the pids controller */
@@ -1055,7 +1055,7 @@ void cgroup_post_fork(struct process *task)
 }
 
 /* ── cgroup_exit: Clean up cgroup state on process exit ────────────────── */
-void cgroup_exit(struct process *task)
+static void cgroup_exit(struct process *task)
 {
     if (!task) return;
     /* Decrement the pids counter for this cgroup */
@@ -1064,7 +1064,7 @@ void cgroup_exit(struct process *task)
 }
 
 /* ── cgroup_can_fork: Check if cgroup allows forking ───────────────────── */
-int cgroup_can_fork(struct process *task)
+static int cgroup_can_fork(struct process *task)
 {
     if (!task) return -EINVAL;
     /* Check pids.max limit */

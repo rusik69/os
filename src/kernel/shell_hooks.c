@@ -17,7 +17,7 @@ void shell_register_script_exec(int (*fn)(const char *))
 }
 
 /* ── Stub: shell_hook_register ─────────────────────────────── */
-int shell_hook_register(const char *name, void *fn)
+static int shell_hook_register(const char *name, void *fn)
 {
     (void)name;
     (void)fn;
@@ -25,14 +25,14 @@ int shell_hook_register(const char *name, void *fn)
     return 0;
 }
 /* ── Stub: shell_hook_unregister ─────────────────────────────── */
-int shell_hook_unregister(const char *name)
+static int shell_hook_unregister(const char *name)
 {
     (void)name;
     kprintf("[shell] shell_hook_unregister: not yet implemented\n");
     return 0;
 }
 /* ── Stub: shell_hook_execute ─────────────────────────────── */
-int shell_hook_execute(const char *cmd, int argc, char **argv)
+static int shell_hook_execute(const char *cmd, int argc, char **argv)
 {
     (void)cmd;
     (void)argc;

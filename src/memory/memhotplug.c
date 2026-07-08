@@ -93,7 +93,7 @@ struct memhp_section *memhp_get_section(int section_id) {
 module_init(memhp_init);
 
 /* ── memhotplug_add ────────────────────────────────────── */
-int memhotplug_add(uint64_t phys_addr, size_t size)
+static int memhotplug_add(uint64_t phys_addr, size_t size)
 {
     if (size == 0) return -EINVAL;
     if (phys_addr & (PAGE_SIZE - 1)) return -EINVAL;
@@ -126,7 +126,7 @@ int memhotplug_add(uint64_t phys_addr, size_t size)
 }
 
 /* ── memhotplug_remove ─────────────────────────────────── */
-int memhotplug_remove(uint64_t phys_addr, size_t size)
+static int memhotplug_remove(uint64_t phys_addr, size_t size)
 {
     if (size == 0) return -EINVAL;
     if (phys_addr & (PAGE_SIZE - 1)) return -EINVAL;
@@ -154,14 +154,14 @@ int memhotplug_remove(uint64_t phys_addr, size_t size)
 }
 
 /* ── memhotplug_notify ─────────────────────────────────── */
-void memhotplug_notify(unsigned long event, void *data)
+static void memhotplug_notify(unsigned long event, void *data)
 {
     kprintf("[memhotplug] memhotplug_notify: event=%lu\n", event);
     (void)data;
 }
 
 /* ── memhotplug_status ─────────────────────────────────── */
-int memhotplug_status(char *buf, size_t bufsize)
+static int memhotplug_status(char *buf, size_t bufsize)
 {
     if (!buf || bufsize == 0) return -EINVAL;
 

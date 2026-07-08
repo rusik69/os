@@ -193,7 +193,7 @@ static int patch_verify_prologue(void *target, int expected_len)
  *
  * Returns 0 on success, -1 if parameters are invalid.
  */
-int live_patch_init(struct live_patch *lp, void *target,
+static int live_patch_init(struct live_patch *lp, void *target,
                     void *replacement, const char *name)
 {
     if (!lp || !target || !replacement)
@@ -217,7 +217,7 @@ int live_patch_init(struct live_patch *lp, void *target,
  * Returns 0 on success, -1 if validation fails or patch is already
  * applied.
  */
-int live_patch_apply(struct live_patch *lp)
+static int live_patch_apply(struct live_patch *lp)
 {
     if (!lp || !lp->target_func || !lp->replacement_func)
         return -1;
@@ -271,7 +271,7 @@ int live_patch_apply(struct live_patch *lp)
  *
  * Returns 0 on success, -1 if patch is not applied.
  */
-int live_patch_unapply(struct live_patch *lp)
+static int live_patch_unapply(struct live_patch *lp)
 {
     if (!lp || !lp->applied)
         return -1;
@@ -305,7 +305,7 @@ int live_patch_unapply(struct live_patch *lp)
 /*
  * Check if a live patch is currently applied.
  */
-int live_patch_is_applied(struct live_patch *lp)
+static int live_patch_is_applied(struct live_patch *lp)
 {
     return lp ? lp->applied : 0;
 }
@@ -315,7 +315,7 @@ int live_patch_is_applied(struct live_patch *lp)
  * Writes up to @max_names names into @names array.
  * Returns the number of patches listed.
  */
-int live_patch_list_applied(const char **names, int max_names)
+static int live_patch_list_applied(const char **names, int max_names)
 {
     int count = 0;
 
@@ -335,7 +335,7 @@ int live_patch_list_applied(const char **names, int max_names)
  * Initialize the live patching subsystem.
  * Called once at boot.
  */
-void live_patch_init_subsystem(void)
+static void live_patch_init_subsystem(void)
 {
     spinlock_init(&g_patch_lock);
     g_patch_count = 0;
@@ -351,7 +351,7 @@ void live_patch_init_subsystem(void)
  * A simple no-op replacement function for testing.
  * Replaces a target function with a function that just returns.
  */
-void live_patch_nop_replacement(void)
+static void live_patch_nop_replacement(void)
 {
     /* Intentionally empty — used for testing */
 }
@@ -362,13 +362,13 @@ void live_patch_nop_replacement(void)
  * The original function's purpose is lost unless the replacement
  * manually calls a trampoline.
  */
-void live_patch_trace_replacement(void)
+static void live_patch_trace_replacement(void)
 {
     kprintf("[livepatch-trace] Patched function called\n");
 }
 
 /* ── Stub: livepatch_enable ────────────────────────────────────────── */
-int livepatch_enable(const char *name)
+static int livepatch_enable(const char *name)
 {
     (void)name;
     kprintf("[LIVEPATCH] livepatch_enable: not yet implemented\n");
@@ -376,7 +376,7 @@ int livepatch_enable(const char *name)
 }
 
 /* ── Stub: livepatch_disable ───────────────────────────────────────── */
-int livepatch_disable(const char *name)
+static int livepatch_disable(const char *name)
 {
     (void)name;
     kprintf("[LIVEPATCH] livepatch_disable: not yet implemented\n");
@@ -384,7 +384,7 @@ int livepatch_disable(const char *name)
 }
 
 /* ── Stub: livepatch_replace ───────────────────────────────────────── */
-int livepatch_replace(const char *name, void *new_func, void *old_func)
+static int livepatch_replace(const char *name, void *new_func, void *old_func)
 {
     (void)name; (void)new_func; (void)old_func;
     kprintf("[LIVEPATCH] livepatch_replace: not yet implemented\n");
@@ -392,14 +392,14 @@ int livepatch_replace(const char *name, void *new_func, void *old_func)
 }
 
 /* ── Stub: klp_init ────────────────────────────────────────────────── */
-int klp_init(void)
+static int klp_init(void)
 {
     kprintf("[LIVEPATCH] klp_init: not yet implemented\n");
     return 0;
 }
 
 /* ── Stub: klp_load ────────────────────────────────────────────────── */
-int klp_load(const char *patch_module)
+static int klp_load(const char *patch_module)
 {
     (void)patch_module;
     kprintf("[LIVEPATCH] klp_load: not yet implemented\n");

@@ -440,7 +440,7 @@ int module_dep_topological_sort(struct kernel_module **sorted, int max)
 }
 
 /* ── Stub: module_deps_add ─────────────────────────────── */
-int module_deps_add(const char *mod, const char *dep)
+static int module_deps_add(const char *mod, const char *dep)
 {
     (void)mod;
     (void)dep;
@@ -448,7 +448,7 @@ int module_deps_add(const char *mod, const char *dep)
     return 0;
 }
 /* ── Stub: module_deps_remove ─────────────────────────────── */
-int module_deps_remove(const char *mod, const char *dep)
+static int module_deps_remove(const char *mod, const char *dep)
 {
     (void)mod;
     (void)dep;
@@ -456,7 +456,7 @@ int module_deps_remove(const char *mod, const char *dep)
     return 0;
 }
 /* ── Stub: module_deps_resolve ─────────────────────────────── */
-int module_deps_resolve(const char *mod, void *list)
+static int module_deps_resolve(const char *mod, void *list)
 {
     (void)mod;
     (void)list;

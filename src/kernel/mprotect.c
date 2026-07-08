@@ -103,7 +103,7 @@ int64_t sys_mprotect(uint64_t addr, uint64_t length, uint64_t prot) {
 }
 
 /* ── Stub: mprotect_check ─────────────────────────────── */
-int mprotect_check(uint64_t addr, size_t len, int prot)
+static int mprotect_check(uint64_t addr, size_t len, int prot)
 {
     (void)addr;
     (void)len;
@@ -112,7 +112,7 @@ int mprotect_check(uint64_t addr, size_t len, int prot)
     return 0;
 }
 /* ── Stub: mprotect_apply ─────────────────────────────── */
-int mprotect_apply(uint64_t addr, size_t len, int prot)
+static int mprotect_apply(uint64_t addr, size_t len, int prot)
 {
     (void)addr;
     (void)len;

@@ -351,7 +351,7 @@ out:
  * Return: 0 on success, -EINVAL if @cpu_id is out of range, or a negative
  *         error code from cpuhp_bring_cpu().
  */
-int cpu_init(int cpu_id)
+static int cpu_init(int cpu_id)
 {
     if (cpu_id < 0 || cpu_id >= CPUHP_MAX_CPUS) return -EINVAL;
 
@@ -378,7 +378,7 @@ int cpu_init(int cpu_id)
  *          before returning.
  * Return: 0 on success.
  */
-int cpu_idle(void)
+static int cpu_idle(void)
 {
     /* Enter halt state to conserve power while waiting for interrupts */
     __asm__ volatile("sti; hlt; cli");

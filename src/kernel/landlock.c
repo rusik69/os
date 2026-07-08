@@ -270,7 +270,7 @@ int landlock_check_path(const struct process *proc, const char *path,
 }
 
 /* ── Stub: landlock_enforce ─────────────────────────────── */
-int landlock_enforce(const char *path, uint64_t access_mask)
+static int landlock_enforce(const char *path, uint64_t access_mask)
 {
     (void)path;
     (void)access_mask;
@@ -279,7 +279,7 @@ int landlock_enforce(const char *path, uint64_t access_mask)
 }
 
 /* ── Stub: landlock_handle_ptrace ─────────────────────────────── */
-int landlock_handle_ptrace(struct process *tracer, struct process *tracee)
+static int landlock_handle_ptrace(struct process *tracer, struct process *tracee)
 {
     (void)tracer;
     (void)tracee;
@@ -288,7 +288,7 @@ int landlock_handle_ptrace(struct process *tracer, struct process *tracee)
 }
 
 /* ── Stub: landlock_handle_signal ─────────────────────────────── */
-int landlock_handle_signal(struct process *target, int sig)
+static int landlock_handle_signal(struct process *target, int sig)
 {
     (void)target;
     (void)sig;
@@ -297,7 +297,7 @@ int landlock_handle_signal(struct process *target, int sig)
 }
 
 /* ── Stub: landlock_handle_setprocattr ─────────────────────────────── */
-int landlock_handle_setprocattr(struct process *p, const char *attr, const char *value)
+static int landlock_handle_setprocattr(struct process *p, const char *attr, const char *value)
 {
     (void)p;
     (void)attr;
@@ -307,7 +307,7 @@ int landlock_handle_setprocattr(struct process *p, const char *attr, const char 
 }
 
 /* ── Stub: landlock_handle_getprocattr ─────────────────────────────── */
-int landlock_handle_getprocattr(struct process *p, const char *attr, char *buf, size_t size)
+static int landlock_handle_getprocattr(struct process *p, const char *attr, char *buf, size_t size)
 {
     (void)p;
     (void)attr;
@@ -318,7 +318,7 @@ int landlock_handle_getprocattr(struct process *p, const char *attr, char *buf, 
 }
 
 /* ── Stub: landlock_handle_unix_stream ─────────────────────────────── */
-int landlock_handle_unix_stream(struct process *src, struct process *dst)
+static int landlock_handle_unix_stream(struct process *src, struct process *dst)
 {
     (void)src;
     (void)dst;
@@ -327,7 +327,7 @@ int landlock_handle_unix_stream(struct process *src, struct process *dst)
 }
 
 /* ── Stub: landlock_handle_unix_dgram ─────────────────────────────── */
-int landlock_handle_unix_dgram(struct process *src, struct process *dst)
+static int landlock_handle_unix_dgram(struct process *src, struct process *dst)
 {
     (void)src;
     (void)dst;
@@ -336,7 +336,7 @@ int landlock_handle_unix_dgram(struct process *src, struct process *dst)
 }
 
 /* ── Stub: landlock_handle_socket_create ─────────────────────────────── */
-int landlock_handle_socket_create(struct process *p, int family, int type, int protocol)
+static int landlock_handle_socket_create(struct process *p, int family, int type, int protocol)
 {
     (void)p;
     (void)family;

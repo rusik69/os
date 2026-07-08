@@ -21,7 +21,7 @@ struct vsock_port {
 
 static struct vsock_port vsock_ports[VSOCK_MAX_PORTS];
 
-int vsock_register_port(uint32_t port, int (*handler)(const uint8_t *, size_t))
+static int vsock_register_port(uint32_t port, int (*handler)(const uint8_t *, size_t))
 {
     if (port >= VSOCK_MAX_PORTS)
         return -EINVAL;
@@ -34,7 +34,7 @@ int vsock_register_port(uint32_t port, int (*handler)(const uint8_t *, size_t))
     return 0;
 }
 
-int vsock_unregister_port(uint32_t port)
+static int vsock_unregister_port(uint32_t port)
 {
     if (port >= VSOCK_MAX_PORTS || !vsock_ports[port].in_use)
         return -EINVAL;
@@ -44,7 +44,7 @@ int vsock_unregister_port(uint32_t port)
     return 0;
 }
 
-int vsock_send(uint32_t dst_port, uint32_t src_port,
+static int vsock_send(uint32_t dst_port, uint32_t src_port,
                const uint8_t *data, size_t len)
 {
     (void)src_port;
@@ -57,7 +57,7 @@ int vsock_send(uint32_t dst_port, uint32_t src_port,
     return 0;
 }
 
-int vsock_recv(uint32_t port, uint8_t *buf, size_t max_len)
+static int vsock_recv(uint32_t port, uint8_t *buf, size_t max_len)
 {
     (void)port;
     (void)buf;
@@ -66,7 +66,7 @@ int vsock_recv(uint32_t port, uint8_t *buf, size_t max_len)
     return 0;
 }
 
-void vsock_init(void)
+static void vsock_init(void)
 {
     memset(vsock_ports, 0, sizeof(vsock_ports));
     kprintf("[OK] VSOCK — VM Sockets for host-guest communication\n");
@@ -79,7 +79,7 @@ module_init(vsock_init);
  * ═══════════════════════════════════════════════════════════════ */
 
 /* ── Implement: vsock_connect ────────────────── */
-int vsock_connect(uint32_t cid, uint32_t port)
+static int vsock_connect(uint32_t cid, uint32_t port)
 {
     if (cid == 0 || cid == 0xFFFFFFFF) {
         kprintf("[vsock] vsock_connect: invalid cid %u\n", cid);
@@ -93,7 +93,7 @@ int vsock_connect(uint32_t cid, uint32_t port)
     return -EOPNOTSUPP;
 }
 /* ── Implement: vsock_listen ────────────────── */
-int vsock_listen(uint32_t port, int backlog)
+static int vsock_listen(uint32_t port, int backlog)
 {
     if (port == 0 || port >= 1024) {
         kprintf("[vsock] vsock_listen: invalid port %u\n", port);
@@ -107,7 +107,7 @@ int vsock_listen(uint32_t port, int backlog)
     return -EOPNOTSUPP;
 }
 /* ── Implement: vsock_accept ────────────────── */
-int vsock_accept(uint32_t port)
+static int vsock_accept(uint32_t port)
 {
     if (port == 0 || port >= 1024) {
         kprintf("[vsock] vsock_accept: invalid port %u\n", port);

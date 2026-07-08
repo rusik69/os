@@ -1456,7 +1456,7 @@ uint64_t vmm_alloc(uint64_t addr, size_t size, int flags)
 }
 
 /* ── vmm_free — Free virtual memory pages ────────────────────── */
-int vmm_free(uint64_t addr, size_t size)
+static int vmm_free(uint64_t addr, size_t size)
 {
     if (addr == 0 || size == 0)
         return -EINVAL;
@@ -1474,7 +1474,7 @@ int vmm_free(uint64_t addr, size_t size)
 }
 
 /* ── vmm_protect — Change page protection ────────────────────── */
-int vmm_protect(uint64_t addr, size_t size, int new_flags)
+static int vmm_protect(uint64_t addr, size_t size, int new_flags)
 {
     if (addr == 0 || size == 0)
         return -EINVAL;
@@ -1498,7 +1498,7 @@ int vmm_protect(uint64_t addr, size_t size, int new_flags)
 }
 
 /* ── vmm_sync — Flush data cache for mapped pages ───────────── */
-int vmm_sync(uint64_t addr, size_t size)
+static int vmm_sync(uint64_t addr, size_t size)
 {
     (void)addr;
     (void)size;
@@ -1510,7 +1510,7 @@ int vmm_sync(uint64_t addr, size_t size)
 }
 
 /* ── vmm_flush_tlb — Flush TLB for a range of pages ─────────── */
-void vmm_flush_tlb(uint64_t addr, size_t size)
+static void vmm_flush_tlb(uint64_t addr, size_t size)
 {
     if (size == 0) {
         /* Full TLB flush */

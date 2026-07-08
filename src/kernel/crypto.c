@@ -178,7 +178,7 @@ static void key_expansion(const uint8_t key[16], uint8_t round_keys[11][16]) {
     }
 }
 
-void aes_ecb_encrypt(const uint8_t key[16], const uint8_t in[16], uint8_t out[16]) {
+static void aes_ecb_encrypt(const uint8_t key[16], const uint8_t in[16], uint8_t out[16]) {
     uint8_t state[16];
     uint8_t round_keys[11][16];
 
@@ -201,7 +201,7 @@ void aes_ecb_encrypt(const uint8_t key[16], const uint8_t in[16], uint8_t out[16
     memcpy(out, state, 16);
 }
 
-void aes_ecb_decrypt(const uint8_t key[16], const uint8_t in[16], uint8_t out[16]) {
+static void aes_ecb_decrypt(const uint8_t key[16], const uint8_t in[16], uint8_t out[16]) {
     uint8_t state[16];
     uint8_t round_keys[11][16];
 
@@ -223,7 +223,7 @@ void aes_ecb_decrypt(const uint8_t key[16], const uint8_t in[16], uint8_t out[16
     memcpy(out, state, 16);
 }
 
-uint32_t crypto_xor_checksum(const void *data, size_t len) {
+static uint32_t crypto_xor_checksum(const void *data, size_t len) {
     if (!data || len == 0) return 0;
     const uint8_t *bytes = (const uint8_t *)data;
     uint32_t checksum = 0;
@@ -292,7 +292,7 @@ void crypto_init(void) {
 }
 
 /* ── Stub: crypto_skcipher_encrypt ─────────────────────────────────── */
-int crypto_skcipher_encrypt(void *tfm, const uint8_t *src, uint8_t *dst,
+static int crypto_skcipher_encrypt(void *tfm, const uint8_t *src, uint8_t *dst,
                             size_t len, const uint8_t *iv)
 {
     (void)tfm; (void)src; (void)dst; (void)len; (void)iv;
@@ -301,7 +301,7 @@ int crypto_skcipher_encrypt(void *tfm, const uint8_t *src, uint8_t *dst,
 }
 
 /* ── Stub: crypto_skcipher_decrypt ─────────────────────────────────── */
-int crypto_skcipher_decrypt(void *tfm, const uint8_t *src, uint8_t *dst,
+static int crypto_skcipher_decrypt(void *tfm, const uint8_t *src, uint8_t *dst,
                             size_t len, const uint8_t *iv)
 {
     (void)tfm; (void)src; (void)dst; (void)len; (void)iv;
@@ -310,7 +310,7 @@ int crypto_skcipher_decrypt(void *tfm, const uint8_t *src, uint8_t *dst,
 }
 
 /* ── Stub: crypto_aead_encrypt ─────────────────────────────────────── */
-int crypto_aead_encrypt(void *tfm, const uint8_t *src, uint8_t *dst,
+static int crypto_aead_encrypt(void *tfm, const uint8_t *src, uint8_t *dst,
                         size_t len, const uint8_t *aad, size_t aad_len,
                         const uint8_t *iv)
 {
@@ -321,7 +321,7 @@ int crypto_aead_encrypt(void *tfm, const uint8_t *src, uint8_t *dst,
 }
 
 /* ── Stub: crypto_aead_decrypt ─────────────────────────────────────── */
-int crypto_aead_decrypt(void *tfm, const uint8_t *src, uint8_t *dst,
+static int crypto_aead_decrypt(void *tfm, const uint8_t *src, uint8_t *dst,
                         size_t len, const uint8_t *aad, size_t aad_len,
                         const uint8_t *iv)
 {
@@ -332,7 +332,7 @@ int crypto_aead_decrypt(void *tfm, const uint8_t *src, uint8_t *dst,
 }
 
 /* ── Stub: crypto_alloc_skcipher ───────────────────────────────────── */
-void *crypto_alloc_skcipher(const char *alg_name, uint32_t type, uint32_t mask)
+static void *crypto_alloc_skcipher(const char *alg_name, uint32_t type, uint32_t mask)
 {
     (void)alg_name; (void)type; (void)mask;
     kprintf("[CRYPTO] crypto_alloc_skcipher: not yet implemented\n");
@@ -340,7 +340,7 @@ void *crypto_alloc_skcipher(const char *alg_name, uint32_t type, uint32_t mask)
 }
 
 /* ── Stub: crypto_alloc_aead ───────────────────────────────────────── */
-void *crypto_alloc_aead(const char *alg_name, uint32_t type, uint32_t mask)
+static void *crypto_alloc_aead(const char *alg_name, uint32_t type, uint32_t mask)
 {
     (void)alg_name; (void)type; (void)mask;
     kprintf("[CRYPTO] crypto_alloc_aead: not yet implemented\n");

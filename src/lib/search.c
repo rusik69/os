@@ -108,7 +108,7 @@ void *lsearch(const void *key, void *base, size_t *nmemb, size_t size,
 }
 
 /* ── search_binary ─────────────────────────────── */
-int search_binary(const void *key, const void *base, size_t nmemb, size_t size, void *cmp)
+static int search_binary(const void *key, const void *base, size_t nmemb, size_t size, void *cmp)
 {
     if (!key || !base || !cmp)
         return -1;
@@ -125,7 +125,7 @@ int search_binary(const void *key, const void *base, size_t nmemb, size_t size, 
     return -1;
 }
 /* ── search_linear ─────────────────────────────── */
-int search_linear(const void *key, const void *base, size_t nmemb, size_t size, void *cmp)
+static int search_linear(const void *key, const void *base, size_t nmemb, size_t size, void *cmp)
 {
     if (!key || !base || !cmp)
         return -1;

@@ -315,7 +315,7 @@ int uprobe_handle_breakpoint(struct interrupt_frame *frame)
  * This should be called from the #DB handler.
  */
 
-void uprobe_debug_handler(struct interrupt_frame *frame)
+static void uprobe_debug_handler(struct interrupt_frame *frame)
 {
     (void)frame;
 
@@ -349,7 +349,7 @@ void uprobe_debug_handler(struct interrupt_frame *frame)
  * It logs (pid, address, timestamp) to the ring buffer and kprintf.
  */
 
-void uprobe_default_handler(uint32_t pid, uint64_t address,
+static void uprobe_default_handler(uint32_t pid, uint64_t address,
                              uint64_t timestamp)
 {
     kprintf("[uprobe] pid=%u addr=0x%llx tick=%llu\n",
@@ -518,14 +518,14 @@ int uprobe_register_write(const char *buf, int len)
 }
 
 /* ── Stub: uprobe_handle_swbp ─────────────────────────────── */
-int uprobe_handle_swbp(void *regs)
+static int uprobe_handle_swbp(void *regs)
 {
     (void)regs;
     kprintf("[uprobes] uprobe_handle_swbp: not yet implemented\n");
     return 0;
 }
 /* ── Stub: uprobe_handle_singlestep ─────────────────────────────── */
-int uprobe_handle_singlestep(void *regs)
+static int uprobe_handle_singlestep(void *regs)
 {
     (void)regs;
     kprintf("[uprobes] uprobe_handle_singlestep: not yet implemented\n");

@@ -1640,7 +1640,7 @@ static void kyber_record_latency(struct iosched_kyber_data *kd,
  *   Back merge:  existing.lba + existing.count == req.lba
  *   Front merge: req.lba + req.count == existing.lba
  */
-int iosched_try_merge(struct iosched_queue *iq, struct blk_request *req)
+static int iosched_try_merge(struct iosched_queue *iq, struct blk_request *req)
 {
     if (!iq || !req) return 0;
 
@@ -1673,20 +1673,20 @@ EXPORT_SYMBOL(iosched_request_complete);
 EXPORT_SYMBOL(iosched_get_queue);
 
 /* ── iosched_merge ────────────────────────────────────── */
-int iosched_merge(void *queue, void *req)
+static int iosched_merge(void *queue, void *req)
 {
     (void)queue;
     (void)req;
     return 0;
 }
 /* ── iosched_dispatch ──────────────────────────────────── */
-int iosched_dispatch(void *queue)
+static int iosched_dispatch(void *queue)
 {
     (void)queue;
     return 0;
 }
 /* ── iosched_complete ─────────────────────────────────── */
-int iosched_complete(void *req)
+static int iosched_complete(void *req)
 {
     (void)req;
     return 0;

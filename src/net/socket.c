@@ -1114,22 +1114,22 @@ EXPORT_SYMBOL(sys_getsockopt_impl);
 EXPORT_SYMBOL(sock_poll);
 
 /* ── Implement: socket_create ─────────────────────────── */
-int socket_create(int family, int type, int proto)
+static int socket_create(int family, int type, int proto)
 {
     return sys_socket_impl(family, type, proto);
 }
 /* ── Implement: socket_bind ───────────────────────────── */
-int socket_bind(int sock, const void *addr, int addrlen)
+static int socket_bind(int sock, const void *addr, int addrlen)
 {
     return sys_bind_impl(sock, (const struct sockaddr_in *)addr, addrlen);
 }
 /* ── Implement: socket_listen ─────────────────────────── */
-int socket_listen(int sock, int backlog)
+static int socket_listen(int sock, int backlog)
 {
     return sys_listen_impl(sock, backlog);
 }
 /* ── Implement: socket_accept ─────────────────────────── */
-int socket_accept(int sock, void *addr, void *addrlen)
+static int socket_accept(int sock, void *addr, void *addrlen)
 {
     return sys_accept_impl(sock, (struct sockaddr_in *)addr, (uint32_t *)addrlen);
 }

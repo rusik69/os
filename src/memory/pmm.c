@@ -1257,7 +1257,7 @@ EXPORT_SYMBOL(pmm_free_frame);
 EXPORT_SYMBOL(pmm_ref_frame);
 
 /* ── pmm_defrag ───────────────────────────────────────── */
-int pmm_defrag(void)
+static int pmm_defrag(void)
 {
     kprintf("[pmm] pmm_defrag: defragmenting physical memory\n");
     /* Compact physical memory, merge buddies.
@@ -1268,7 +1268,7 @@ int pmm_defrag(void)
 }
 
 /* ── pmm_reclaim ───────────────────────────────────────── */
-int pmm_reclaim(int nr_pages)
+static int pmm_reclaim(int nr_pages)
 {
     if (nr_pages <= 0)
         return 0;
@@ -1298,7 +1298,7 @@ int pmm_reclaim(int nr_pages)
     return (int)(free_pages < (uint64_t)nr_pages ? 0 : nr_pages);
 }
 /* ── pmm_alloc_pages ──────────────────────────── */
-void* pmm_alloc_pages(size_t count)
+static void* pmm_alloc_pages(size_t count)
 {
     if (count == 0)
         return NULL;
@@ -1313,7 +1313,7 @@ void* pmm_alloc_pages(size_t count)
 }
 
 /* ── pmm_free_pages ─────────────────────────────── */
-int pmm_free_pages(void *addr, size_t count)
+static int pmm_free_pages(void *addr, size_t count)
 {
     if (!addr || count == 0)
         return -EINVAL;

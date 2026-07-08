@@ -792,7 +792,7 @@ void ftrace_graph_clear(void)
 }
 
 /* ── Sysfs helper: write function addresses to set_graph_function ──── */
-int ftrace_graph_parse_and_set_func(const char *input)
+static int ftrace_graph_parse_and_set_func(const char *input)
 {
     if (!input)
         return -EINVAL;
@@ -843,7 +843,7 @@ int ftrace_graph_parse_and_set_func(const char *input)
  * Reads the kernel symbol table and returns a newline-separated list of
  * function names that could potentially be traced.
  */
-int ftrace_available_filter_functions(char *buf, int buf_size)
+static int ftrace_available_filter_functions(char *buf, int buf_size)
 {
     if (!buf || buf_size <= 0)
         return -EINVAL;
@@ -860,7 +860,7 @@ int ftrace_available_filter_functions(char *buf, int buf_size)
 
 /* ── Initialize trace.c / trace_events.c integration ───────────────── */
 /* This function is called from the kernel init to set up graph tracing */
-void __attribute__((used)) ftrace_late_init(void)
+static void __attribute__((used)) ftrace_late_init(void)
 {
     ftrace_graph_init();
 }
@@ -921,7 +921,7 @@ void trace_printk(const char *fmt, ...)
 
 /* Read trace_printk buffer — copies to user buffer.
  * Returns number of bytes read. */
-int trace_printk_read(char *buf, int buf_size)
+static int trace_printk_read(char *buf, int buf_size)
 {
     if (!buf || buf_size <= 0) return 0;
 
@@ -940,12 +940,12 @@ int trace_printk_read(char *buf, int buf_size)
     return count;
 }
 
-void trace_printk_enable(void) { trace_printk_enabled = 1; }
-void trace_printk_disable(void) { trace_printk_enabled = 0; }
-int  trace_printk_is_enabled(void) { return trace_printk_enabled; }
+static void trace_printk_enable(void) { trace_printk_enabled = 1; }
+static void trace_printk_disable(void) { trace_printk_enabled = 0; }
+static int  trace_printk_is_enabled(void) { return trace_printk_enabled; }
 
 /* ── Stub: ftrace_set_filter ───────────────────────────────────────── */
-int ftrace_set_filter(const char *filter_str)
+static int ftrace_set_filter(const char *filter_str)
 {
     (void)filter_str;
     kprintf("[FTRACE] ftrace_set_filter: not yet implemented\n");
@@ -953,7 +953,7 @@ int ftrace_set_filter(const char *filter_str)
 }
 
 /* ── Stub: ftrace_dyn_arch_init ────────────────────────────────────── */
-int ftrace_dyn_arch_init(void)
+static int ftrace_dyn_arch_init(void)
 {
     kprintf("[FTRACE] ftrace_dyn_arch_init: not yet implemented\n");
     return 0;

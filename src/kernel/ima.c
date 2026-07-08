@@ -480,7 +480,7 @@ int ima_bprm_check(struct linux_binprm *bprm)
  * Called when a file is opened for read/write/execute.
  * Performs IMA measurement on file open if appropriate.
  */
-int ima_file_check(struct file *file, int mask)
+static int ima_file_check(struct file *file, int mask)
 {
     if (!file)
         return -EINVAL;
@@ -502,7 +502,7 @@ int ima_file_check(struct file *file, int mask)
 /*
  * Measure a file that is being memory-mapped with executable protection.
  */
-int ima_file_mmap(struct file *file, unsigned long prot)
+static int ima_file_mmap(struct file *file, unsigned long prot)
 {
     if (!file)
         return -EINVAL;
@@ -523,7 +523,7 @@ int ima_file_mmap(struct file *file, unsigned long prot)
  * Called before reading a file into kernel memory (e.g., firmware,
  * kexec image, module loading).  Measures the file content.
  */
-int ima_read_file(struct file *file, kernel_read_file_id_t id)
+static int ima_read_file(struct file *file, kernel_read_file_id_t id)
 {
     if (!file)
         return -EINVAL;
@@ -540,7 +540,7 @@ int ima_read_file(struct file *file, kernel_read_file_id_t id)
  * Called after a file has been read into kernel memory.
  * Performs IMA appraisal on the buffer content.
  */
-int ima_post_read_file(struct file *file, void *buf, size_t size, kernel_read_file_id_t id)
+static int ima_post_read_file(struct file *file, void *buf, size_t size, kernel_read_file_id_t id)
 {
     if (!file || !buf)
         return -EINVAL;
@@ -562,7 +562,7 @@ int ima_post_read_file(struct file *file, void *buf, size_t size, kernel_read_fi
  * Measure the kernel command line passed to kexec.
  * This allows attestation to verify what command line was used.
  */
-int ima_kexec_cmdline(const char *cmdline)
+static int ima_kexec_cmdline(const char *cmdline)
 {
     if (!cmdline)
         return -EINVAL;
@@ -602,7 +602,7 @@ int ima_kexec_cmdline(const char *cmdline)
 /*
  * Measure a critical data buffer (e.g., SELinux policy, IMA policy itself).
  */
-int ima_measure_critical_data(const char *name, const void *data, size_t len)
+static int ima_measure_critical_data(const char *name, const void *data, size_t len)
 {
     if (!name || !data)
         return -EINVAL;
@@ -638,7 +638,7 @@ int ima_measure_critical_data(const char *name, const void *data, size_t len)
  * Determine the IMA action to take for a given inode and mask.
  * Returns: 0 = measure, 1 = appraise, -1 = nothing.
  */
-int ima_get_action(struct inode *inode, int mask, int func)
+static int ima_get_action(struct inode *inode, int mask, int func)
 {
     (void)inode;
     (void)mask;

@@ -1427,7 +1427,7 @@ static uint32_t xz_crc32(const uint8_t *buf, uint32_t len, uint32_t crc)
  *
  * Returns 0 on success, negative on error.
  */
-int xz_dec(const uint8_t *in, uint64_t in_size,
+static int xz_dec(const uint8_t *in, uint64_t in_size,
            uint8_t *out, uint64_t out_size,
            uint64_t *decomp_size)
 {
@@ -1647,13 +1647,13 @@ void module_decompress_free(uint8_t *buf, int was_compressed)
 }
 
 /* ── module_compress_init: initialize decompression subsystem ── */
-int module_compress_init(void)
+static int module_compress_init(void)
 {
     kprintf("[modcompress] module_compress_init: gzip and xz decompression available\n");
     return 0;
 }
 /* ── module_compress_decompress: generic decompression dispatch ── */
-int module_compress_decompress(const void *src, size_t slen, void *dst, size_t *dlen)
+static int module_compress_decompress(const void *src, size_t slen, void *dst, size_t *dlen)
 {
     if (!src || !dst || !dlen) {
         kprintf("[modcompress] module_compress_decompress: NULL parameter\n");

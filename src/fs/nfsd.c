@@ -1987,19 +1987,19 @@ MODULE_VERSION("1.0");
 #endif
 
 /* ── nfsd_start ───────────────────────────────────────── */
-int nfsd_start(int port)
+static int nfsd_start(int port)
 {
     kprintf("[nfsd] NFS daemon started on port %d\n", port);
     return 0;
 }
 /* ── nfsd_stop ────────────────────────────────────────── */
-int nfsd_stop(void)
+static int nfsd_stop(void)
 {
     kprintf("[nfsd] NFS daemon stopped\n");
     return 0;
 }
 /* ── nfsd_handle_request ───────────────────────────────── */
-int nfsd_handle_request(void *req, void *resp)
+static int nfsd_handle_request(void *req, void *resp)
 {
     (void)req;
     (void)resp;

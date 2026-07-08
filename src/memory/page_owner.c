@@ -66,7 +66,7 @@ void page_owner_dump(void) {
 }
 
 /* ── page_owner_start — Start page owner tracking ──────────── */
-int page_owner_start(void)
+static int page_owner_start(void)
 {
     if (!page_owner_initialized)
         page_owner_init();
@@ -79,7 +79,7 @@ int page_owner_start(void)
 }
 
 /* ── page_owner_stop — Stop page owner tracking ─────────────── */
-int page_owner_stop(void)
+static int page_owner_stop(void)
 {
     if (!page_owner_initialized)
         return -EINVAL;
@@ -89,7 +89,7 @@ int page_owner_stop(void)
 }
 
 /* ── page_owner_fetch — Fetch page owner records ────────────── */
-int page_owner_fetch(uint64_t *buf, size_t count)
+static int page_owner_fetch(uint64_t *buf, size_t count)
 {
     if (!buf || count == 0)
         return -EINVAL;

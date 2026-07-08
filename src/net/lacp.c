@@ -95,7 +95,7 @@ static int lacp_enabled = 0;
 /* LACP multicast MAC (01:80:C2:00:00:02) */
 static const uint8_t lacp_dmac[6] = { 0x01, 0x80, 0xC2, 0x00, 0x00, 0x02 };
 
-void lacp_init(void)
+static void lacp_init(void)
 {
     if (lacp_enabled) return;
     memset(lacp_ports, 0, sizeof(lacp_ports));
@@ -105,7 +105,7 @@ void lacp_init(void)
 }
 
 /* Add a port to LACP control */
-int lacp_add_port(uint16_t port_number, const uint8_t *mac)
+static int lacp_add_port(uint16_t port_number, const uint8_t *mac)
 {
     if (!lacp_enabled) return -ENOSYS;
 
@@ -140,7 +140,7 @@ int lacp_add_port(uint16_t port_number, const uint8_t *mac)
 }
 
 /* Remove a port from LACP control */
-int lacp_remove_port(uint16_t port_number)
+static int lacp_remove_port(uint16_t port_number)
 {
     for (int i = 0; i < LACP_MAX_PORTS; i++) {
         if (lacp_ports[i].in_use && lacp_ports[i].port_number == port_number) {
@@ -153,7 +153,7 @@ int lacp_remove_port(uint16_t port_number)
 }
 
 /* Build and send an LACP PDU */
-int lacp_send_pdu(uint16_t port_number)
+static int lacp_send_pdu(uint16_t port_number)
 {
     if (!lacp_enabled) return -ENOSYS;
 
@@ -200,7 +200,7 @@ int lacp_send_pdu(uint16_t port_number)
 }
 
 /* Process a received LACP PDU */
-int lacp_receive_pdu(uint16_t port_number, const struct lacp_pdu *pdu, uint16_t len)
+static int lacp_receive_pdu(uint16_t port_number, const struct lacp_pdu *pdu, uint16_t len)
 {
     if (!lacp_enabled || !pdu || len < sizeof(struct lacp_pdu))
         return -EINVAL;
@@ -273,7 +273,7 @@ int lacp_receive_pdu(uint16_t port_number, const struct lacp_pdu *pdu, uint16_t 
 }
 
 /* Periodic LACP tick — call from timer */
-void lacp_tick(void)
+static void lacp_tick(void)
 {
     if (!lacp_enabled) return;
 
@@ -297,7 +297,7 @@ void lacp_tick(void)
 module_init(lacp_init);
 
 /* ── lacp_actor_running: check if LACP actor is running on a port ── */
-int lacp_actor_running(void *port)
+static int lacp_actor_running(void *port)
 {
     if (!lacp_enabled) return -ENOSYS;
     if (!port) return -EINVAL;
@@ -310,7 +310,7 @@ int lacp_actor_running(void *port)
 }
 
 /* ── lacp_partner_running: check if LACP partner is running ── */
-int lacp_partner_running(void *port)
+static int lacp_partner_running(void *port)
 {
     if (!lacp_enabled) return -ENOSYS;
     if (!port) return -EINVAL;
@@ -326,7 +326,7 @@ int lacp_partner_running(void *port)
 }
 
 /* ── lacp_aggregator_oper_state: get operational state of LAG ── */
-int lacp_aggregator_oper_state(void *port)
+static int lacp_aggregator_oper_state(void *port)
 {
     if (!lacp_enabled) return -ENOSYS;
     if (!port) return -EINVAL;
@@ -342,7 +342,7 @@ int lacp_aggregator_oper_state(void *port)
 }
 
 /* ── lacp_mux_machine: LACP MUX state machine ── */
-int lacp_mux_machine(void *port, int event)
+static int lacp_mux_machine(void *port, int event)
 {
     if (!lacp_enabled) return -ENOSYS;
     if (!port) return -EINVAL;
@@ -378,7 +378,7 @@ int lacp_mux_machine(void *port, int event)
 }
 
 /* ── lacp_rx_machine: LACP Receive state machine ── */
-int lacp_rx_machine(void *port, int event)
+static int lacp_rx_machine(void *port, int event)
 {
     if (!lacp_enabled) return -ENOSYS;
     if (!port) return -EINVAL;
@@ -412,7 +412,7 @@ int lacp_rx_machine(void *port, int event)
 }
 
 /* ── lacp_send ────────────────── */
-int lacp_send(void *dev, const void *pdu, size_t len)
+static int lacp_send(void *dev, const void *pdu, size_t len)
 {
     if (!lacp_enabled) return -ENOSYS;
     (void)dev;
@@ -424,7 +424,7 @@ int lacp_send(void *dev, const void *pdu, size_t len)
     return 0;
 }
 /* ── Implement: lacp_recv ────────────────── */
-int lacp_recv(void *dev, const void *pdu, size_t len)
+static int lacp_recv(void *dev, const void *pdu, size_t len)
 {
     if (!lacp_enabled) return -ENOSYS;
     (void)dev;
@@ -437,7 +437,7 @@ int lacp_recv(void *dev, const void *pdu, size_t len)
     return lacp_receive_pdu(port_number, lacp, (uint16_t)len);
 }
 /* ── Implement: lacp_update_state ────────────────── */
-int lacp_update_state(void *port, int state)
+static int lacp_update_state(void *port, int state)
 {
     if (!lacp_enabled) return -ENOSYS;
     if (!port) return -EINVAL;

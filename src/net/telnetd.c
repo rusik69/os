@@ -279,7 +279,7 @@ void telnetd_task(void) {
 }
 
 /* ── Implement: telnetd_handle_client ────────────────── */
-int telnetd_handle_client(void *client)
+static int telnetd_handle_client(void *client)
 {
     if (!client) {
         kprintf("[telnetd] telnetd_handle_client: NULL client\n");

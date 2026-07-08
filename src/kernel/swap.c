@@ -528,7 +528,7 @@ EXPORT_SYMBOL(swap_in);
 EXPORT_SYMBOL(swap_free_slot);
 
 /* ── Stub: swap_readpage ───────────────────────────────────────────── */
-int swap_readpage(void *page)
+static int swap_readpage(void *page)
 {
     (void)page;
     kprintf("[SWAP] swap_readpage: not yet implemented\n");
@@ -536,7 +536,7 @@ int swap_readpage(void *page)
 }
 
 /* ── Stub: swap_writepage ──────────────────────────────────────────── */
-int swap_writepage(void *page)
+static int swap_writepage(void *page)
 {
     (void)page;
     kprintf("[SWAP] swap_writepage: not yet implemented\n");
@@ -544,14 +544,14 @@ int swap_writepage(void *page)
 }
 
 /* ── Stub: swap_activate ───────────────────────────────────────────── */
-int swap_activate(void)
+static int swap_activate(void)
 {
     kprintf("[SWAP] swap_activate: not yet implemented\n");
     return 0;
 }
 
 /* ── Stub: swap_deactivate ─────────────────────────────────────────── */
-void swap_deactivate(void)
+static void swap_deactivate(void)
 {
     kprintf("[SWAP] swap_deactivate: not yet implemented\n");
 }

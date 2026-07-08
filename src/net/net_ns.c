@@ -385,7 +385,7 @@ void net_ns_sync_routes(void)
 }
 
 /* ── Implement: net_ns_delete ─────────────────────────── */
-int net_ns_delete(const char *name)
+static int net_ns_delete(const char *name)
 {
     if (!name) return -EINVAL;
     kprintf("[net_ns] net_ns_delete: '%s'\n", name);

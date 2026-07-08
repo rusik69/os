@@ -38,7 +38,7 @@ int notifier_call_chain(int type, unsigned long v, void *data) {
 }
 
 /* ── notifier_register_priority: Register notifier with priority ───── */
-int notifier_register_priority(void *nl, void *n, int priority)
+static int notifier_register_priority(void *nl, void *n, int priority)
 {
     (void)priority;
     if (!nl || !n) return -EINVAL;
@@ -54,7 +54,7 @@ int notifier_register_priority(void *nl, void *n, int priority)
     return notifier_chain_register(type, nb);
 }
 /* ── notifier_set_priority: Update notifier priority ────────────────── */
-int notifier_set_priority(void *n, int priority)
+static int notifier_set_priority(void *n, int priority)
 {
     (void)n;
     (void)priority;

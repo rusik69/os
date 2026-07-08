@@ -36,7 +36,7 @@ static struct zbud_pool zbud_pools[ZBUD_MAX_POOLS];
 static int zbud_pool_count = 0;
 
 /* Allocate a new zbud pool */
-int zbud_create_pool(void)
+static int zbud_create_pool(void)
 {
     if (zbud_pool_count >= ZBUD_MAX_POOLS)
         return -ENOMEM;
@@ -51,7 +51,7 @@ int zbud_create_pool(void)
 }
 
 /* Store compressed data in zbud pool */
-int zbud_store(int pool_id, const uint8_t *compressed, size_t comp_len,
+static int zbud_store(int pool_id, const uint8_t *compressed, size_t comp_len,
                 uint64_t *handle)
 {
     if (pool_id < 0 || pool_id >= zbud_pool_count)
@@ -111,7 +111,7 @@ int zbud_store(int pool_id, const uint8_t *compressed, size_t comp_len,
 }
 
 /* Load compressed data from zbud */
-int zbud_load(int pool_id, uint64_t handle, uint8_t *buf, size_t *len)
+static int zbud_load(int pool_id, uint64_t handle, uint8_t *buf, size_t *len)
 {
     if (pool_id < 0 || pool_id >= zbud_pool_count)
         return -EINVAL;
@@ -142,7 +142,7 @@ int zbud_load(int pool_id, uint64_t handle, uint8_t *buf, size_t *len)
 }
 
 /* Free compressed data */
-int zbud_free(int pool_id, uint64_t handle)
+static int zbud_free(int pool_id, uint64_t handle)
 {
     if (pool_id < 0 || pool_id >= zbud_pool_count)
         return -EINVAL;
@@ -154,7 +154,7 @@ int zbud_free(int pool_id, uint64_t handle)
     return 0;
 }
 
-void __init zbud_init(void)
+static void __init zbud_init(void)
 {
     memset(zbud_pools, 0, sizeof(zbud_pools));
     zbud_pool_count = 0;
@@ -164,7 +164,7 @@ void __init zbud_init(void)
 module_init(zbud_init);
 
 /* ── Stub: zbud_alloc ────────────────────────────────────────── */
-int zbud_alloc(int pool_id, size_t size, uint64_t *handle)
+static int zbud_alloc(int pool_id, size_t size, uint64_t *handle)
 {
     (void)pool_id;
     (void)size;
@@ -174,7 +174,7 @@ int zbud_alloc(int pool_id, size_t size, uint64_t *handle)
 }
 
 /* ── Stub: zbud_reclaim ──────────────────────────────────────── */
-int zbud_reclaim(int pool_id, int nr_to_reclaim)
+static int zbud_reclaim(int pool_id, int nr_to_reclaim)
 {
     (void)pool_id;
     (void)nr_to_reclaim;
@@ -183,7 +183,7 @@ int zbud_reclaim(int pool_id, int nr_to_reclaim)
 }
 
 /* ── Stub: zbud_pool_destroy ─────────────────────────────────── */
-int zbud_pool_destroy(int pool_id)
+static int zbud_pool_destroy(int pool_id)
 {
     (void)pool_id;
     kprintf("[zbud] zbud_pool_destroy: not yet implemented\n");
@@ -193,7 +193,7 @@ int zbud_pool_destroy(int pool_id)
 /* ── Stub: zbud_pool_create also known as zbud_create_pool ──── */
 /* zbud_create_pool already exists; adding zbud_pool_create alias */
 
-int zbud_pool_create(const char *name, int gfp_mask)
+static int zbud_pool_create(const char *name, int gfp_mask)
 {
     (void)name;
     (void)gfp_mask;

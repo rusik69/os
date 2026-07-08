@@ -1926,7 +1926,7 @@ MODULE_DESCRIPTION("Btrfs — read-only, single-device, non-raid");
 #endif
 
 /* ── btrfs_mount ─────────────────────────────────────── */
-int btrfs_mount(const char *source, const char *target,
+static int btrfs_mount(const char *source, const char *target,
                 const char *type, unsigned long flags)
 {
     (void)type;
@@ -1997,14 +1997,14 @@ int btrfs_mount(const char *source, const char *target,
     return 0;
 }
 /* ── btrfs_umount ────────────────────────────────────── */
-int btrfs_umount(const char *target)
+static int btrfs_umount(const char *target)
 {
     (void)target;
     kprintf("[btrfs] Btrfs unmounted\n");
     return 0;
 }
 /* ── btrfs_statfs ────────────────────────────────────── */
-int btrfs_statfs(void *stat)
+static int btrfs_statfs(void *stat)
 {
     struct vfs_statfs *st = (struct vfs_statfs *)stat;
     if (st) {
@@ -2018,7 +2018,7 @@ int btrfs_statfs(void *stat)
     return 0;
 }
 /* ── btrfs_sync ──────────────────────────────────────── */
-int btrfs_sync(void *file)
+static int btrfs_sync(void *file)
 {
     (void)file;
     kprintf("[btrfs] Sync complete\n");

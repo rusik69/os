@@ -23,7 +23,7 @@ void print_stack_trace(void) {
 }
 
 /* ── Stub: stacktrace_print ─────────────────────────────── */
-int stacktrace_print(void *stack, size_t size)
+static int stacktrace_print(void *stack, size_t size)
 {
     (void)stack;
     (void)size;
@@ -31,7 +31,7 @@ int stacktrace_print(void *stack, size_t size)
     return 0;
 }
 /* ── Stub: stacktrace_save ─────────────────────────────── */
-int stacktrace_save(void *trace, size_t max)
+static int stacktrace_save(void *trace, size_t max)
 {
     (void)trace;
     (void)max;
@@ -39,7 +39,7 @@ int stacktrace_save(void *trace, size_t max)
     return 0;
 }
 /* ── Stub: stacktrace_snprint ─────────────────────────────── */
-int stacktrace_snprint(char *buf, size_t size, void *trace, int count)
+static int stacktrace_snprint(char *buf, size_t size, void *trace, int count)
 {
     (void)buf;
     (void)size;

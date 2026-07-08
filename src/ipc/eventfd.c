@@ -165,7 +165,7 @@ int eventfd_syscall(uint32_t initval, int flags) {
 }
 
 /* ── eventfd_show_fdinfo ─────────────────────────────── */
-int eventfd_show_fdinfo(int fd, char *buf, size_t size)
+static int eventfd_show_fdinfo(int fd, char *buf, size_t size)
 {
     if (!buf || size == 0) return -EINVAL;
 
@@ -187,7 +187,7 @@ int eventfd_show_fdinfo(int fd, char *buf, size_t size)
 }
 
 /* ── eventfd_signal ──────────────────────────────────── */
-int eventfd_signal(int fd, uint64_t val)
+static int eventfd_signal(int fd, uint64_t val)
 {
     /* eventfd_signal() is an alias for eventfd_write() with semantics
      * similar to eventfd_write().  If val is 0, write 1 (default signal). */

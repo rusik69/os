@@ -147,7 +147,7 @@ static int nilfs2_read_checkpoint_metadata(void)
     return 0;
 }
 
-int nilfs2_mount(const uint8_t *data, uint64_t size)
+static int nilfs2_mount(const uint8_t *data, uint64_t size)
 {
     if (size < sizeof(struct nilfs2_superblock))
         return -EINVAL;
@@ -172,7 +172,7 @@ int nilfs2_mount(const uint8_t *data, uint64_t size)
     return 0;
 }
 
-int nilfs2_umount(void)
+static int nilfs2_umount(void)
 {
     nilfs2_mounted = 0;
     nilfs2_data_base = NULL;
@@ -180,7 +180,7 @@ int nilfs2_umount(void)
     return 0;
 }
 
-int nilfs2_read(uint64_t ino, uint64_t offset, uint8_t *buf, size_t len)
+static int nilfs2_read(uint64_t ino, uint64_t offset, uint8_t *buf, size_t len)
 {
     if (!nilfs2_mounted) return -ENODEV;
     (void)ino;
@@ -190,7 +190,7 @@ int nilfs2_read(uint64_t ino, uint64_t offset, uint8_t *buf, size_t len)
     return (int)len;
 }
 
-int nilfs2_readdir(uint64_t ino, uint64_t *offset_out,
+static int nilfs2_readdir(uint64_t ino, uint64_t *offset_out,
                     char *name_buf, int *name_len)
 {
     if (!nilfs2_mounted) return -ENODEV;
@@ -201,7 +201,7 @@ int nilfs2_readdir(uint64_t ino, uint64_t *offset_out,
     return 0;
 }
 
-void nilfs2_init(void)
+static void nilfs2_init(void)
 {
     nilfs2_mounted = 0;
     memset(&nilfs2_sb, 0, sizeof(nilfs2_sb));
@@ -233,7 +233,7 @@ MODULE_VERSION("1.0");
 #endif
 
 /* ── nilfs2_lookup ────────────────────────────────────── */
-int nilfs2_lookup(const char *name, void *parent)
+static int nilfs2_lookup(const char *name, void *parent)
 {
     (void)parent;
     kprintf("[nilfs2] lookup: %s\n", name);

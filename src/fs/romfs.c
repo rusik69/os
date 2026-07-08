@@ -243,14 +243,14 @@ MODULE_DESCRIPTION("ROMFS simple read-only filesystem — loadable module");
 #endif
 
 /* ── romfs_umount ──────────────────────────────────────── */
-int romfs_umount(const char *target)
+static int romfs_umount(const char *target)
 {
     (void)target;
     kprintf("[romfs] ROMFS unmounted\n");
     return 0;
 }
 /* ── romfs_readdir ─────────────────────────────────────── */
-int romfs_readdir(void *dir, void *filldir)
+static int romfs_readdir(void *dir, void *filldir)
 {
     (void)dir;
     (void)filldir;
@@ -258,7 +258,7 @@ int romfs_readdir(void *dir, void *filldir)
     return 0;
 }
 /* ── romfs_lookup ──────────────────────────────────────── */
-int romfs_lookup(const char *name, void *parent)
+static int romfs_lookup(const char *name, void *parent)
 {
     (void)parent;
     kprintf("[romfs] lookup: %s\n", name);

@@ -68,7 +68,7 @@ void tun_destroy(void) {
 }
 
 /* ── Implement: tun_stop ────────────────── */
-int tun_stop(void *dev)
+static int tun_stop(void *dev)
 {
     if (!dev) {
         kprintf("[tun] tun_stop: NULL dev\n");
@@ -78,7 +78,7 @@ int tun_stop(void *dev)
     return -EOPNOTSUPP;
 }
 /* ── Implement: tun_xmit ────────────────── */
-int tun_xmit(void *skb, void *dev)
+static int tun_xmit(void *skb, void *dev)
 {
     if (!skb || !dev) {
         kprintf("[tun] tun_xmit: NULL parameter\n");

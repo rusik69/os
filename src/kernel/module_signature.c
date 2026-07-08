@@ -536,7 +536,7 @@ int module_verify_sig(const uint8_t *module_data, size_t module_size,
 }
 
 /* ── Stub: module_sig_verify ─────────────────────────────── */
-int module_sig_verify(const void *data, size_t size)
+static int module_sig_verify(const void *data, size_t size)
 {
     (void)data;
     (void)size;
@@ -544,7 +544,7 @@ int module_sig_verify(const void *data, size_t size)
     return 0;
 }
 /* ── Stub: module_sig_sign ─────────────────────────────── */
-int module_sig_sign(const void *data, size_t size, void *sig, size_t *slen)
+static int module_sig_sign(const void *data, size_t size, void *sig, size_t *slen)
 {
     (void)data;
     (void)size;

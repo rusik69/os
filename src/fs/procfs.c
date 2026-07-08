@@ -1625,7 +1625,7 @@ MODULE_DESCRIPTION("procfs — /proc virtual filesystem (loadable module)");
 #endif /* MODULE */
 
 /* ── procfs_create_entry ───────────────────────────────── */
-int procfs_create_entry(const char *name, void *parent, void *fops)
+static int procfs_create_entry(const char *name, void *parent, void *fops)
 {
     (void)parent;
     (void)fops;
@@ -1633,7 +1633,7 @@ int procfs_create_entry(const char *name, void *parent, void *fops)
     return 0;
 }
 /* ── procfs_remove_entry ───────────────────────────────── */
-int procfs_remove_entry(const char *name)
+static int procfs_remove_entry(const char *name)
 {
     kprintf("[procfs] Removed entry: %s\n", name);
     return 0;

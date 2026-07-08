@@ -1477,7 +1477,7 @@ void ipv6_get_linklocal(struct in6_addr *addr)
 }
 
 /* ── Implement: ipv6_send ────────────────── */
-int ipv6_send(void *skb)
+static int ipv6_send(void *skb)
 {
     if (!skb) {
         kprintf("[ipv6] ipv6_send: NULL skb\n");
@@ -1487,7 +1487,7 @@ int ipv6_send(void *skb)
     return -EOPNOTSUPP;
 }
 /* ── Implement: ipv6_route_add ────────────────── */
-int ipv6_route_add(const void *dst, const void *gw, int ifindex)
+static int ipv6_route_add(const void *dst, const void *gw, int ifindex)
 {
     if (!dst || !gw) {
         kprintf("[ipv6] ipv6_route_add: NULL parameter\n");
@@ -1501,7 +1501,7 @@ int ipv6_route_add(const void *dst, const void *gw, int ifindex)
     return -EOPNOTSUPP;
 }
 /* ── Implement: ipv6_route_del ────────────────── */
-int ipv6_route_del(const void *dst)
+static int ipv6_route_del(const void *dst)
 {
     if (!dst) {
         kprintf("[ipv6] ipv6_route_del: NULL dst\n");

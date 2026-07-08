@@ -362,7 +362,7 @@ struct lldp_neighbor *lldp_get_neighbor_table(int *count)
 }
 
 /* Age out expired neighbors — call periodically */
-void lldp_age_neighbors(void)
+static void lldp_age_neighbors(void)
 {
     if (!lldp_initialised) return;
 
@@ -379,7 +379,7 @@ void lldp_age_neighbors(void)
 #include "module.h"
 module_init(lldp_init);
 /* ── Implement: lldp_recv ────────────────── */
-int lldp_recv(void *dev, const void *tlv, size_t len)
+static int lldp_recv(void *dev, const void *tlv, size_t len)
 {
     (void)dev;
     if (!lldp_initialised || !tlv || len == 0) return -EINVAL;

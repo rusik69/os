@@ -237,7 +237,7 @@ void prio_tree_init_global(void)
 }
 
 /* ── Stub: prio_tree_iter_init ─────────────────────────────── */
-int prio_tree_iter_init(void *iter, void *root, uint64_t begin, uint64_t end)
+static int prio_tree_iter_init(void *iter, void *root, uint64_t begin, uint64_t end)
 {
     (void)iter;
     (void)root;
@@ -247,7 +247,7 @@ int prio_tree_iter_init(void *iter, void *root, uint64_t begin, uint64_t end)
     return 0;
 }
 /* ── Stub: prio_tree_next ─────────────────────────────── */
-void* prio_tree_next(void *iter)
+static void* prio_tree_next(void *iter)
 {
     (void)iter;
     kprintf("[prio_tree] prio_tree_next: not yet implemented\n");

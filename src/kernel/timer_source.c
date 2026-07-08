@@ -111,7 +111,7 @@ void timer_source_init(void)
 }
 
 /* ── timer_source_read: Read current clocksource counter ──────────────── */
-uint64_t timer_source_read(void)
+static uint64_t timer_source_read(void)
 {
     if (!current_clocksource || !current_clocksource->read) {
         kprintf("[timer] timer_source_read: no clocksource available\n");
@@ -120,7 +120,7 @@ uint64_t timer_source_read(void)
     return current_clocksource->read();
 }
 /* ── timer_source_get_freq: Get current clocksource frequency in Hz ──── */
-uint64_t timer_source_get_freq(void)
+static uint64_t timer_source_get_freq(void)
 {
     if (!current_clocksource) {
         kprintf("[timer] timer_source_get_freq: no clocksource available\n");

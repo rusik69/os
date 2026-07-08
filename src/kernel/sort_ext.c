@@ -128,7 +128,7 @@ void sort_ext_init(void)
 }
 
 /* ── Stub: sort_ext_sort ─────────────────────────────── */
-int sort_ext_sort(void *base, size_t nmemb, size_t size, void *cmp, void *swap)
+static int sort_ext_sort(void *base, size_t nmemb, size_t size, void *cmp, void *swap)
 {
     (void)base;
     (void)nmemb;
@@ -139,7 +139,7 @@ int sort_ext_sort(void *base, size_t nmemb, size_t size, void *cmp, void *swap)
     return 0;
 }
 /* ── Stub: sort_ext_r_sort ─────────────────────────────── */
-int sort_ext_r_sort(void *base, size_t nmemb, size_t size, void *cmp, void *swap, void *priv)
+static int sort_ext_r_sort(void *base, size_t nmemb, size_t size, void *cmp, void *swap, void *priv)
 {
     (void)base;
     (void)nmemb;

@@ -80,7 +80,7 @@ int bn_is_zero(const bignum *a) {
 }
 
 /* Test if one */
-int bn_is_one(const bignum *a) {
+static int bn_is_one(const bignum *a) {
     if (a->l[0] != 1) return 0;
     for (int i = 1; i < a->used; i++)
         if (a->l[i] != 0) return 0;
@@ -306,7 +306,7 @@ void dh_compute_shared(bignum *shared, const bignum *their_pub, const bignum *my
 
 static int rsa_key_loaded = 0;
 
-void rsa_load_key(void) {
+static void rsa_load_key(void) {
     rsa_key_loaded = 1;
 }
 
@@ -438,27 +438,27 @@ struct ssh_cipher {
 
 
 /* ── Stub: ssh_crypto_init ─────────────────────────────── */
-int __init ssh_crypto_init(void)
+static int __init ssh_crypto_init(void)
 {
     kprintf("[ssh] ssh_crypto_init: not yet implemented\n");
     return 0;
 }
 /* ── Stub: ssh_crypto_keygen ─────────────────────────────── */
-int ssh_crypto_keygen(void *key)
+static int ssh_crypto_keygen(void *key)
 {
     (void)key;
     kprintf("[ssh] ssh_crypto_keygen: not yet implemented\n");
     return 0;
 }
 /* ── Stub: ssh_crypto_exchange ─────────────────────────────── */
-int ssh_crypto_exchange(void *session)
+static int ssh_crypto_exchange(void *session)
 {
     (void)session;
     kprintf("[ssh] ssh_crypto_exchange: not yet implemented\n");
     return 0;
 }
 /* ── Stub: ssh_crypto_encrypt ─────────────────────────────── */
-int ssh_crypto_encrypt(const void *plain, size_t plen, void *cipher, size_t *clen)
+static int ssh_crypto_encrypt(const void *plain, size_t plen, void *cipher, size_t *clen)
 {
     (void)plain;
     (void)plen;

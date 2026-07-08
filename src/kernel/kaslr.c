@@ -120,13 +120,13 @@ void __init kaslr_init(void) {
 }
 
 /* ── Stub: kaslr_randomize ─────────────────────────────── */
-uint64_t kaslr_randomize(void)
+static uint64_t kaslr_randomize(void)
 {
     kprintf("[kaslr] kaslr_randomize: not yet implemented\n");
     return 0;
 }
 /* ── Stub: kaslr_get_random_addr ─────────────────────────────── */
-uint64_t kaslr_get_random_addr(uint64_t base, uint64_t size)
+static uint64_t kaslr_get_random_addr(uint64_t base, uint64_t size)
 {
     (void)base;
     (void)size;

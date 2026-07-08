@@ -29,7 +29,7 @@ struct perf_branch_state {
 static struct perf_branch_state perf_branch;
 
 /* Enable LBR sampling */
-int perf_branch_enable(void)
+static int perf_branch_enable(void)
 {
     perf_branch.enabled = 1;
     perf_branch.count = 0;
@@ -50,7 +50,7 @@ int perf_branch_enable(void)
 }
 
 /* Disable LBR sampling */
-int perf_branch_disable(void)
+static int perf_branch_disable(void)
 {
     perf_branch.enabled = 0;
 
@@ -68,7 +68,7 @@ int perf_branch_disable(void)
 }
 
 /* Read LBR entries from MSRs */
-int perf_branch_read_lbr(void)
+static int perf_branch_read_lbr(void)
 {
     if (!perf_branch.enabled)
         return -EINVAL;
@@ -103,7 +103,7 @@ int perf_branch_read_lbr(void)
 }
 
 /* Get the last N LBR entries */
-int perf_branch_get_entries(struct perf_lbr_entry *entries, int max)
+static int perf_branch_get_entries(struct perf_lbr_entry *entries, int max)
 {
     int n = (perf_branch.count < max) ? perf_branch.count : max;
     memcpy(entries, perf_branch.entries,
@@ -111,14 +111,14 @@ int perf_branch_get_entries(struct perf_lbr_entry *entries, int max)
     return n;
 }
 
-void perf_branch_init(void)
+static void perf_branch_init(void)
 {
     memset(&perf_branch, 0, sizeof(perf_branch));
     kprintf("[OK] perf branch stack (LBR) sampling\n");
 }
 
 /* ── perf_branch_read: Read LBR data into user buffer ───────────────── */
-int perf_branch_read(void *data, size_t *len)
+static int perf_branch_read(void *data, size_t *len)
 {
     if (!data || !len) return -EINVAL;
 

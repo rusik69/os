@@ -202,7 +202,7 @@ int ima_policy_add_rule(const char *rule_str)
  *
  * Returns action bitmask (IMA_POLICY_MEASURE, etc.).
  */
-uint32_t ima_policy_evaluate(const char *path, uint32_t uid, uint32_t gid,
+static uint32_t ima_policy_evaluate(const char *path, uint32_t uid, uint32_t gid,
                               uint32_t func, uint32_t fs_magic)
 {
     if (!g_ima_policy_initialized || !path)
@@ -254,7 +254,7 @@ uint32_t ima_policy_evaluate(const char *path, uint32_t uid, uint32_t gid,
  * ima_policy_should_measure — Convenience wrapper.
  * Returns 1 if the file should be measured, 0 otherwise.
  */
-int ima_policy_should_measure(const char *path, uint32_t uid, uint32_t gid,
+static int ima_policy_should_measure(const char *path, uint32_t uid, uint32_t gid,
                                uint32_t func, uint32_t fs_magic)
 {
     uint32_t action = ima_policy_evaluate(path, uid, gid, func, fs_magic);
@@ -267,7 +267,7 @@ int ima_policy_should_measure(const char *path, uint32_t uid, uint32_t gid,
  * ima_policy_should_appraise — Convenience wrapper.
  * Returns 1 if the file should be appraised, 0 otherwise.
  */
-int ima_policy_should_appraise(const char *path, uint32_t uid, uint32_t gid,
+static int ima_policy_should_appraise(const char *path, uint32_t uid, uint32_t gid,
                                 uint32_t func, uint32_t fs_magic)
 {
     uint32_t action = ima_policy_evaluate(path, uid, gid, func, fs_magic);
@@ -280,7 +280,7 @@ int ima_policy_should_appraise(const char *path, uint32_t uid, uint32_t gid,
  * ima_policy_init — Initialize the IMA policy engine.
  * Loads the default built-in policy rules.
  */
-void ima_policy_init(void)
+static void ima_policy_init(void)
 {
     if (g_ima_policy_initialized) return;
 
@@ -297,7 +297,7 @@ void ima_policy_init(void)
 /*
  * ima_policy_get_rule_count — Return the number of active policy rules.
  */
-int ima_policy_get_rule_count(void)
+static int ima_policy_get_rule_count(void)
 {
     return g_ima_rule_count;
 }
@@ -305,7 +305,7 @@ int ima_policy_get_rule_count(void)
 /*
  * ima_policy_clear — Clear all policy rules.
  */
-void ima_policy_clear(void)
+static void ima_policy_clear(void)
 {
     memset(g_ima_rules, 0, sizeof(g_ima_rules));
     g_ima_rule_count = 0;
@@ -314,21 +314,21 @@ void ima_policy_clear(void)
 module_init(ima_policy_init);
 
 /* ── Stub: ima_policy_register ─────────────────────────────── */
-int ima_policy_register(void *rule)
+static int ima_policy_register(void *rule)
 {
     (void)rule;
     kprintf("[ima] ima_policy_register: not yet implemented\n");
     return 0;
 }
 /* ── Stub: ima_policy_unregister ─────────────────────────────── */
-int ima_policy_unregister(void *rule)
+static int ima_policy_unregister(void *rule)
 {
     (void)rule;
     kprintf("[ima] ima_policy_unregister: not yet implemented\n");
     return 0;
 }
 /* ── Stub: ima_policy_match ─────────────────────────────── */
-int ima_policy_match(void *inode, int mask, int func)
+static int ima_policy_match(void *inode, int mask, int func)
 {
     (void)inode;
     (void)mask;

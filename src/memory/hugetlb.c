@@ -176,7 +176,7 @@ uint32_t hugetlb_pool_size(void)
 }
 
 /* ── hugetlb_alloc ────────────────────────────────────── */
-uint64_t hugetlb_alloc(uint32_t nr_pages)
+static uint64_t hugetlb_alloc(uint32_t nr_pages)
 {
     if (!g_pool.initialized) {
         kprintf("[hugetlb] hugetlb_alloc: pool not initialised\n");
@@ -227,7 +227,7 @@ uint64_t hugetlb_alloc(uint32_t nr_pages)
 }
 
 /* ── hugetlb_free ─────────────────────────────────────── */
-int hugetlb_free(uint64_t phys, uint32_t nr_pages)
+static int hugetlb_free(uint64_t phys, uint32_t nr_pages)
 {
     if (!g_pool.initialized) return -EINVAL;
     if (phys == 0 || nr_pages == 0) return -EINVAL;
@@ -258,7 +258,7 @@ int hugetlb_free(uint64_t phys, uint32_t nr_pages)
 }
 
 /* ── hugetlb_fault ────────────────────────────────────── */
-int hugetlb_fault(uint64_t addr, int write)
+static int hugetlb_fault(uint64_t addr, int write)
 {
     if (!g_pool.initialized) return -EINVAL;
     (void)write;
@@ -280,7 +280,7 @@ int hugetlb_fault(uint64_t addr, int write)
 }
 
 /* ── hugetlb_map ─────────────────────────────────────── */
-int hugetlb_map(uint64_t vaddr, uint64_t phys, uint64_t flags)
+static int hugetlb_map(uint64_t vaddr, uint64_t phys, uint64_t flags)
 {
     if (!g_pool.initialized) return -EINVAL;
     if (vaddr & (HUGETLB_PAGE_SIZE - 1)) return -EINVAL;
@@ -293,7 +293,7 @@ int hugetlb_map(uint64_t vaddr, uint64_t phys, uint64_t flags)
 }
 
 /* ── hugetlb_unmap ───────────────────────────────────── */
-int hugetlb_unmap(uint64_t vaddr)
+static int hugetlb_unmap(uint64_t vaddr)
 {
     if (!g_pool.initialized) return -EINVAL;
     if (vaddr & (HUGETLB_PAGE_SIZE - 1)) return -EINVAL;

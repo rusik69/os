@@ -107,7 +107,7 @@ int pidfd_send_signal(int pidfd, int sig, struct siginfo *info, uint32_t flags)
 }
 
 /* Release a reference to a pidfd */
-void pidfd_put(int pidfd)
+static void pidfd_put(int pidfd)
 {
     if (pidfd < 0 || pidfd >= PIDFD_MAX)
         return;
@@ -188,7 +188,7 @@ int pidfd_getfd(int pidfd, int target_fd, uint32_t flags)
 }
 
 /* ── Stub: pidfd_poll ─────────────────────────────── */
-int pidfd_poll(void *file, void *pt)
+static int pidfd_poll(void *file, void *pt)
 {
     (void)file;
     (void)pt;
@@ -196,7 +196,7 @@ int pidfd_poll(void *file, void *pt)
     return 0;
 }
 /* ── Stub: pidfd_show_fdinfo ─────────────────────────────── */
-int pidfd_show_fdinfo(void *file, void *m)
+static int pidfd_show_fdinfo(void *file, void *m)
 {
     (void)file;
     (void)m;

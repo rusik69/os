@@ -1297,14 +1297,14 @@ MODULE_DESCRIPTION("ISO9660 CDROM filesystem with Rock Ridge (RRIP) and Joliet (
 #endif
 
 /* ── iso9660_umount ────────────────────────────────────── */
-int iso9660_umount(const char *target)
+static int iso9660_umount(const char *target)
 {
     (void)target;
     kprintf("[iso9660] ISO 9660 unmounted\n");
     return 0;
 }
 /* ── iso9660_readdir ───────────────────────────────────── */
-int iso9660_readdir(void *dir, void *filldir)
+static int iso9660_readdir(void *dir, void *filldir)
 {
     (void)dir;
     (void)filldir;
@@ -1312,7 +1312,7 @@ int iso9660_readdir(void *dir, void *filldir)
     return 0;
 }
 /* ── iso9660_lookup ────────────────────────────────────── */
-int iso9660_lookup(const char *name, void *parent)
+static int iso9660_lookup(const char *name, void *parent)
 {
     (void)parent;
     kprintf("[iso9660] lookup: %s\n", name);

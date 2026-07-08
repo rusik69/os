@@ -568,7 +568,7 @@ MODULE_DESCRIPTION("HFS+ (Apple) — read-only");
 #endif
 
 /* ── hfsplus_mount ────────────────────────────────────── */
-int hfsplus_mount(const char *source, const char *target, unsigned long flags)
+static int hfsplus_mount(const char *source, const char *target, unsigned long flags)
 {
     (void)source;
     (void)target;
@@ -577,14 +577,14 @@ int hfsplus_mount(const char *source, const char *target, unsigned long flags)
     return 0;
 }
 /* ── hfsplus_umount ───────────────────────────────────── */
-int hfsplus_umount(const char *target)
+static int hfsplus_umount(const char *target)
 {
     (void)target;
     kprintf("[hfsplus] HFS+ unmounted\n");
     return 0;
 }
 /* ── hfsplus_lookup ───────────────────────────────────── */
-int hfsplus_lookup(const char *name, void *parent)
+static int hfsplus_lookup(const char *name, void *parent)
 {
     (void)parent;
     kprintf("[hfsplus] lookup: %s\n", name);

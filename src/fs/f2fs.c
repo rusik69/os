@@ -181,7 +181,7 @@ static int f2fs_recover_checkpoint(void)
     return 0;
 }
 
-int f2fs_mount(const uint8_t *data, uint64_t size)
+static int f2fs_mount(const uint8_t *data, uint64_t size)
 {
     if (size < sizeof(struct f2fs_superblock))
         return -EINVAL;
@@ -224,7 +224,7 @@ int f2fs_mount(const uint8_t *data, uint64_t size)
     return 0;
 }
 
-int f2fs_umount(void)
+static int f2fs_umount(void)
 {
     f2fs_mounted = 0;
     f2fs_data_base = NULL;
@@ -242,7 +242,7 @@ static uint32_t f2fs_inode_to_block(uint32_t ino)
 }
 
 /* Read from an inode at a given offset */
-int f2fs_read(uint64_t ino, uint64_t offset, uint8_t *buf, size_t len)
+static int f2fs_read(uint64_t ino, uint64_t offset, uint8_t *buf, size_t len)
 {
     if (!f2fs_mounted) return -ENODEV;
 
@@ -276,7 +276,7 @@ int f2fs_read(uint64_t ino, uint64_t offset, uint8_t *buf, size_t len)
     return (int)len;
 }
 
-int f2fs_write(uint64_t ino, uint64_t offset, const uint8_t *buf, size_t len)
+static int f2fs_write(uint64_t ino, uint64_t offset, const uint8_t *buf, size_t len)
 {
     if (!f2fs_mounted) return -ENODEV;
     (void)ino;
@@ -286,7 +286,7 @@ int f2fs_write(uint64_t ino, uint64_t offset, const uint8_t *buf, size_t len)
     return (int)len;
 }
 
-int f2fs_readdir(uint64_t ino, uint64_t *offset_out,
+static int f2fs_readdir(uint64_t ino, uint64_t *offset_out,
                   char *name_buf, int *name_len)
 {
     if (!f2fs_mounted) return -ENODEV;
@@ -297,7 +297,7 @@ int f2fs_readdir(uint64_t ino, uint64_t *offset_out,
     return 0;
 }
 
-void f2fs_init(void)
+static void f2fs_init(void)
 {
     f2fs_mounted = 0;
     memset(&f2fs_sb, 0, sizeof(f2fs_sb));
@@ -330,7 +330,7 @@ MODULE_VERSION("1.0");
 #endif
 
 /* ── f2fs_lookup ─────────────────────────────────────── */
-int f2fs_lookup(const char *name, void *parent)
+static int f2fs_lookup(const char *name, void *parent)
 {
     (void)parent;
     kprintf("[f2fs] lookup: %s\n", name);

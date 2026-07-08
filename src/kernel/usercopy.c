@@ -22,7 +22,7 @@ static size_t usercopy_whitelist[USERCOPY_WHITELIST_MAX];
 static int usercopy_whitelist_count = 0;
 
 /* Register a struct size as whitelisted for user copies */
-int usercopy_whitelist_add(size_t struct_size)
+static int usercopy_whitelist_add(size_t struct_size)
 {
     if (usercopy_whitelist_count >= USERCOPY_WHITELIST_MAX)
         return -ENOMEM;
@@ -64,7 +64,7 @@ static int usercopy_validate_range(uintptr_t addr, size_t size, int is_user)
 }
 
 /* Hardened copy_from_user with bounds checking */
-int hardened_copy_from_user(void *dst, uintptr_t src, size_t size)
+static int hardened_copy_from_user(void *dst, uintptr_t src, size_t size)
 {
     /* Size limit enforcement */
     if (size > USERCOPY_MAX_SIZE) {
@@ -97,7 +97,7 @@ int hardened_copy_from_user(void *dst, uintptr_t src, size_t size)
 }
 
 /* Hardened copy_to_user with bounds checking */
-int hardened_copy_to_user(uintptr_t dst, const void *src, size_t size)
+static int hardened_copy_to_user(uintptr_t dst, const void *src, size_t size)
 {
     /* Size limit enforcement */
     if (size > USERCOPY_MAX_SIZE) {
@@ -120,7 +120,7 @@ int hardened_copy_to_user(uintptr_t dst, const void *src, size_t size)
 }
 
 /* Init */
-void usercopy_init(void)
+static void usercopy_init(void)
 {
     /* Pre-register common struct sizes */
     usercopy_whitelist_add(sizeof(uint64_t));
@@ -137,7 +137,7 @@ void usercopy_init(void)
 }
 
 /* ── Stub: usercopy_check ─────────────────────────────── */
-int usercopy_check(const void *addr, size_t len, int write)
+static int usercopy_check(const void *addr, size_t len, int write)
 {
     (void)addr;
     (void)len;
@@ -146,13 +146,13 @@ int usercopy_check(const void *addr, size_t len, int write)
     return 0;
 }
 /* ── Stub: usercopy_allow ─────────────────────────────── */
-int usercopy_allow(void)
+static int usercopy_allow(void)
 {
     kprintf("[usercopy] usercopy_allow: not yet implemented\n");
     return 0;
 }
 /* ── Stub: usercopy_forbid ─────────────────────────────── */
-int usercopy_forbid(void)
+static int usercopy_forbid(void)
 {
     kprintf("[usercopy] usercopy_forbid: not yet implemented\n");
     return 0;

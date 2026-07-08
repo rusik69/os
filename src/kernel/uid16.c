@@ -42,35 +42,35 @@ static inline uint32_t uid_from_16(uint16_t uid16)
 
 /* ── Syscall implementations ───────────────────────────────────────── */
 
-int sys_getuid16(void)
+static int sys_getuid16(void)
 {
     struct process *p = process_get_current();
     if (!p) return 0;
     return uid_to_16(p->uid);
 }
 
-int sys_getgid16(void)
+static int sys_getgid16(void)
 {
     struct process *p = process_get_current();
     if (!p) return 0;
     return uid_to_16(p->gid);
 }
 
-int sys_geteuid16(void)
+static int sys_geteuid16(void)
 {
     struct process *p = process_get_current();
     if (!p) return 0;
     return uid_to_16(p->euid);
 }
 
-int sys_getegid16(void)
+static int sys_getegid16(void)
 {
     struct process *p = process_get_current();
     if (!p) return 0;
     return uid_to_16(p->egid);
 }
 
-int sys_setuid16(uint16_t uid16)
+static int sys_setuid16(uint16_t uid16)
 {
     struct process *p = process_get_current();
     if (!p) return -EINVAL;
@@ -86,7 +86,7 @@ int sys_setuid16(uint16_t uid16)
     return 0;
 }
 
-int sys_setgid16(uint16_t gid16)
+static int sys_setgid16(uint16_t gid16)
 {
     struct process *p = process_get_current();
     if (!p) return -EINVAL;
@@ -101,7 +101,7 @@ int sys_setgid16(uint16_t gid16)
     return 0;
 }
 
-int sys_setreuid16(uint16_t ruid16, uint16_t euid16)
+static int sys_setreuid16(uint16_t ruid16, uint16_t euid16)
 {
     struct process *p = process_get_current();
     if (!p) return -EINVAL;
@@ -127,7 +127,7 @@ int sys_setreuid16(uint16_t ruid16, uint16_t euid16)
     return 0;
 }
 
-int sys_setregid16(uint16_t rgid16, uint16_t egid16)
+static int sys_setregid16(uint16_t rgid16, uint16_t egid16)
 {
     struct process *p = process_get_current();
     if (!p) return -EINVAL;
@@ -153,7 +153,7 @@ int sys_setregid16(uint16_t rgid16, uint16_t egid16)
     return 0;
 }
 
-int __no_sanitize_address sys_getresuid16(uint16_t *ruid, uint16_t *euid, uint16_t *suid)
+static int __no_sanitize_address sys_getresuid16(uint16_t *ruid, uint16_t *euid, uint16_t *suid)
 {
     struct process *p = process_get_current();
     if (!p) return -EINVAL;
@@ -169,7 +169,7 @@ int __no_sanitize_address sys_getresuid16(uint16_t *ruid, uint16_t *euid, uint16
     return 0;
 }
 
-int __no_sanitize_address sys_getresgid16(uint16_t *rgid, uint16_t *egid, uint16_t *sgid)
+static int __no_sanitize_address sys_getresgid16(uint16_t *rgid, uint16_t *egid, uint16_t *sgid)
 {
     struct process *p = process_get_current();
     if (!p) return -EINVAL;
@@ -185,7 +185,7 @@ int __no_sanitize_address sys_getresgid16(uint16_t *rgid, uint16_t *egid, uint16
     return 0;
 }
 
-int sys_setresuid16(uint16_t ruid16, uint16_t euid16, uint16_t suid16)
+static int sys_setresuid16(uint16_t ruid16, uint16_t euid16, uint16_t suid16)
 {
     struct process *p = process_get_current();
     if (!p) return -EINVAL;
@@ -211,7 +211,7 @@ int sys_setresuid16(uint16_t ruid16, uint16_t euid16, uint16_t suid16)
     return 0;
 }
 
-int sys_setresgid16(uint16_t rgid16, uint16_t egid16, uint16_t sgid16)
+static int sys_setresgid16(uint16_t rgid16, uint16_t egid16, uint16_t sgid16)
 {
     struct process *p = process_get_current();
     if (!p) return -EINVAL;
@@ -237,7 +237,7 @@ int sys_setresgid16(uint16_t rgid16, uint16_t egid16, uint16_t sgid16)
     return 0;
 }
 
-int sys_setfsuid16(uint16_t uid16)
+static int sys_setfsuid16(uint16_t uid16)
 {
     struct process *p = process_get_current();
     if (!p) return -EINVAL;
@@ -254,7 +254,7 @@ int sys_setfsuid16(uint16_t uid16)
     return old_fsuid;
 }
 
-int sys_setfsgid16(uint16_t gid16)
+static int sys_setfsgid16(uint16_t gid16)
 {
     struct process *p = process_get_current();
     if (!p) return -EINVAL;
@@ -273,27 +273,27 @@ int sys_setfsgid16(uint16_t gid16)
 
 /* ── Initialization ────────────────────────────────────────────────── */
 
-void __init uid16_init(void)
+static void __init uid16_init(void)
 {
     kprintf("[OK] UID16: 16-bit UID syscall compatibility layer\n");
 }
 
 /* ── Stub: uid16_to_uid ─────────────────────────────── */
-int uid16_to_uid(uint16_t uid16)
+static int uid16_to_uid(uint16_t uid16)
 {
     (void)uid16;
     kprintf("[uid] uid16_to_uid: not yet implemented\n");
     return 0;
 }
 /* ── Stub: uid_to_uid16 ─────────────────────────────── */
-uint16_t uid_to_uid16(int uid)
+static uint16_t uid_to_uid16(int uid)
 {
     (void)uid;
     kprintf("[uid] uid_to_uid16: not yet implemented\n");
     return 0;
 }
 /* ── Stub: uid16_validate ─────────────────────────────── */
-int uid16_validate(uint16_t uid16)
+static int uid16_validate(uint16_t uid16)
 {
     (void)uid16;
     kprintf("[uid] uid16_validate: not yet implemented\n");

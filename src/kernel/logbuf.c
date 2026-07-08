@@ -32,7 +32,7 @@ uint32_t logbuf_available(void) {
 }
 
 /* ── Stub: logbuf_clear ─────────────────────────────── */
-int logbuf_clear(void)
+static int logbuf_clear(void)
 {
     kprintf("[logbuf] logbuf_clear: not yet implemented\n");
     return 0;

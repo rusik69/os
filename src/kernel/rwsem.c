@@ -277,28 +277,28 @@ EXPORT_SYMBOL(rwsem_is_write_locked);
 EXPORT_SYMBOL(rwsem_is_read_locked);
 
 /* ── Stub: rwsem_down_read ─────────────────────────────── */
-int rwsem_down_read(void *sem)
+static int rwsem_down_read(void *sem)
 {
     (void)sem;
     kprintf("[rwsem] rwsem_down_read: not yet implemented\n");
     return 0;
 }
 /* ── Stub: rwsem_down_write ─────────────────────────────── */
-int rwsem_down_write(void *sem)
+static int rwsem_down_write(void *sem)
 {
     (void)sem;
     kprintf("[rwsem] rwsem_down_write: not yet implemented\n");
     return 0;
 }
 /* ── Stub: rwsem_up_read ─────────────────────────────── */
-int rwsem_up_read(void *sem)
+static int rwsem_up_read(void *sem)
 {
     (void)sem;
     kprintf("[rwsem] rwsem_up_read: not yet implemented\n");
     return 0;
 }
 /* ── Stub: rwsem_up_write ─────────────────────────────── */
-int rwsem_up_write(void *sem)
+static int rwsem_up_write(void *sem)
 {
     (void)sem;
     kprintf("[rwsem] rwsem_up_write: not yet implemented\n");

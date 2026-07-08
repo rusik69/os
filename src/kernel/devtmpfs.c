@@ -101,7 +101,7 @@ int devtmpfs_create_device(const char *name, uint8_t type, uint32_t major, uint3
 /* Remove a device node by name from the devtmpfs table.
  * Finds the node with matching name, marks it unused, and removes
  * the VFS entry.  Returns 0 on success, -ENOENT if not found. */
-int devtmpfs_delete_node(const char *name)
+static int devtmpfs_delete_node(const char *name)
 {
     if (!devtmpfs_initialised || !name)
         return 0;
@@ -181,14 +181,14 @@ struct devtmpfs_node *devtmpfs_get_table(int *count)
 }
 
 /* ── Stub: devtmpfs_mount ─────────────────────────────── */
-int devtmpfs_mount(const char *target)
+static int devtmpfs_mount(const char *target)
 {
     (void)target;
     kprintf("[devtmpfs] devtmpfs_mount: not yet implemented\n");
     return 0;
 }
 /* ── Stub: devtmpfs_create_node ─────────────────────────────── */
-int devtmpfs_create_node(void *dev)
+static int devtmpfs_create_node(void *dev)
 {
     (void)dev;
     kprintf("[devtmpfs] devtmpfs_create_node: not yet implemented\n");

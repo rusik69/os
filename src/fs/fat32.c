@@ -2612,14 +2612,14 @@ MODULE_VERSION("1.0");
 #endif /* MODULE */
 
 /* ── fat32_umount ─────────────────────────────────────── */
-int fat32_umount(const char *target)
+static int fat32_umount(const char *target)
 {
     (void)target;
     kprintf("[fat32] FAT32 unmounted\n");
     return 0;
 }
 /* ── fat32_readdir ────────────────────────────────────── */
-int fat32_readdir(void *dir, void *filldir)
+static int fat32_readdir(void *dir, void *filldir)
 {
     (void)dir;
     (void)filldir;
@@ -2627,14 +2627,14 @@ int fat32_readdir(void *dir, void *filldir)
     return 0;
 }
 /* ── fat32_lookup ─────────────────────────────────────── */
-int fat32_lookup(const char *name, void *parent)
+static int fat32_lookup(const char *name, void *parent)
 {
     (void)parent;
     kprintf("[fat32] lookup: %s\n", name);
     return -ENOENT;
 }
 /* ── fat32_read ──────────────────────────────────────── */
-int fat32_read(void *file, void *buf, size_t count, uint64_t offset)
+static int fat32_read(void *file, void *buf, size_t count, uint64_t offset)
 {
     (void)file;
     (void)buf;
@@ -2644,7 +2644,7 @@ int fat32_read(void *file, void *buf, size_t count, uint64_t offset)
     return 0;
 }
 /* ── fat32_write ─────────────────────────────────────── */
-int fat32_write(void *file, const void *buf, size_t count, uint64_t offset)
+static int fat32_write(void *file, const void *buf, size_t count, uint64_t offset)
 {
     (void)file;
     (void)buf;
@@ -2654,7 +2654,7 @@ int fat32_write(void *file, const void *buf, size_t count, uint64_t offset)
     return (int)count;
 }
 /* ── fat32_truncate ────────────────────────────────────── */
-int fat32_truncate(void *inode, uint64_t size)
+static int fat32_truncate(void *inode, uint64_t size)
 {
     (void)inode;
     kprintf("[fat32] truncate to %llu\n", (unsigned long long)size);

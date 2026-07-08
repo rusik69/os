@@ -378,7 +378,7 @@ void mce_dump_banks(void)
 }
 
 /* ── Stub: mce_register ────────────────────────────────────────────── */
-int mce_register(void *handler)
+static int mce_register(void *handler)
 {
     (void)handler;
     kprintf("[MCE] mce_register: not yet implemented\n");
@@ -386,7 +386,7 @@ int mce_register(void *handler)
 }
 
 /* ── Stub: mce_unregister ──────────────────────────────────────────── */
-int mce_unregister(void *handler)
+static int mce_unregister(void *handler)
 {
     (void)handler;
     kprintf("[MCE] mce_unregister: not yet implemented\n");
@@ -394,7 +394,7 @@ int mce_unregister(void *handler)
 }
 
 /* ── Stub: mce_log ─────────────────────────────────────────────────── */
-int mce_log(void *mce)
+static int mce_log(void *mce)
 {
     (void)mce;
     kprintf("[MCE] mce_log: not yet implemented\n");

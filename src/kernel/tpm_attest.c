@@ -687,13 +687,13 @@ int __init tpm_attest_init(void)
 }
 
 /* ── Stub: tpm_attest_cleanup ─────────────────────────────── */
-int tpm_attest_cleanup(void)
+static int tpm_attest_cleanup(void)
 {
     kprintf("[tpm] tpm_attest_cleanup: not yet implemented\n");
     return 0;
 }
 /* ── Stub: tpm_attest_get_platform_pcr ─────────────────────────────── */
-int tpm_attest_get_platform_pcr(int pcr, void *val, size_t *len)
+static int tpm_attest_get_platform_pcr(int pcr, void *val, size_t *len)
 {
     (void)pcr;
     (void)val;

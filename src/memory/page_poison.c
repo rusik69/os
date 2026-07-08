@@ -165,7 +165,7 @@ int poison_check_region(const void *addr, size_t size, uint8_t poison_val)
 }
 
 /* ── poison_page ───────────────────────────────────────── */
-void poison_page(uint64_t phys_addr)
+static void poison_page(uint64_t phys_addr)
 {
     if (!g_poison_active || phys_addr == 0)
         return;
@@ -174,7 +174,7 @@ void poison_page(uint64_t phys_addr)
 }
 
 /* ── unpoison_page ─────────────────────────────────────── */
-void unpoison_page(uint64_t phys_addr)
+static void unpoison_page(uint64_t phys_addr)
 {
     if (!g_poison_active || phys_addr == 0)
         return;
@@ -183,7 +183,7 @@ void unpoison_page(uint64_t phys_addr)
 }
 
 /* ── page_poison_check ─────────────────────────────────── */
-int page_poison_check(uint64_t phys_addr)
+static int page_poison_check(uint64_t phys_addr)
 {
     if (!g_poison_active || phys_addr == 0)
         return 0;
@@ -192,7 +192,7 @@ int page_poison_check(uint64_t phys_addr)
 }
 
 /* ── page_poison_debug ─────────────────────────────────── */
-void page_poison_debug(void)
+static void page_poison_debug(void)
 {
     kprintf("[page_poison] active=%d stage=%d freed_val=0x%02x\n",
             g_poison_active, (int)g_init_stage,

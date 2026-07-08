@@ -329,7 +329,7 @@ static int nfs_rpc_call(uint32_t server_ip, uint32_t prog,
 /* ── Mount protocol ──────────────────────────────────────────────── */
 
 /* Mount an NFS export via the mount protocol (RFC 1813, Appendix 1) */
-int nfs_mount(const char *server, const char *export_path)
+static int nfs_mount(const char *server, const char *export_path)
 {
     if (nfs_mount_count >= NFS_MAX_MOUNTS)
         return -ENOMEM;
@@ -475,7 +475,7 @@ static int nfs_lookup_component(struct nfs_mount_info *mnt,
 /* Resolve a multi-component path relative to a mount point by
  * iteratively looking up each path component (separated by '/').
  * Returns 0 on success with the final entry's file handle in fh. */
-int nfs_path_resolve(int mount_id, const char *path,
+static int nfs_path_resolve(int mount_id, const char *path,
                       struct nfs_fhandle *fh)
 {
 	if (mount_id < 0 || mount_id >= nfs_mount_count)
@@ -538,14 +538,14 @@ int nfs_path_resolve(int mount_id, const char *path,
 
 /* Look up a path relative to a mount, filling the file handle.
  * Supports multi-component paths by delegating to nfs_path_resolve. */
-int nfs_lookup(int mount_id, const char *path, struct nfs_fhandle *fh)
+static int nfs_lookup(int mount_id, const char *path, struct nfs_fhandle *fh)
 {
 	return nfs_path_resolve(mount_id, path, fh);
 }
 
 /* ── NFS GETATTR ─────────────────────────────────────────────────── */
 
-int nfs_getattr(int mount_id, const struct nfs_fhandle *fh,
+static int nfs_getattr(int mount_id, const struct nfs_fhandle *fh,
                  uint64_t *size, uint32_t *mode)
 {
     if (mount_id < 0 || mount_id >= nfs_mount_count)
@@ -612,7 +612,7 @@ struct nfs_sattr {
     uint32_t mtime_nsec;
 };
 
-int nfs_setattr(int mount_id, const struct nfs_fhandle *fh,
+static int nfs_setattr(int mount_id, const struct nfs_fhandle *fh,
                  const struct nfs_sattr *sattr)
 {
     if (mount_id < 0 || mount_id >= nfs_mount_count)
@@ -687,7 +687,7 @@ int nfs_setattr(int mount_id, const struct nfs_fhandle *fh,
 
 /* ── NFS READ ────────────────────────────────────────────────────── */
 
-int nfs_read(int mount_id, const struct nfs_fhandle *fh,
+static int nfs_read(int mount_id, const struct nfs_fhandle *fh,
               uint64_t offset, uint32_t count, uint8_t *buf)
 {
     if (mount_id < 0 || mount_id >= nfs_mount_count)
@@ -747,7 +747,7 @@ int nfs_read(int mount_id, const struct nfs_fhandle *fh,
 
 /* ── NFS WRITE ───────────────────────────────────────────────────── */
 
-int nfs_write(int mount_id, const struct nfs_fhandle *fh,
+static int nfs_write(int mount_id, const struct nfs_fhandle *fh,
                uint64_t offset, uint32_t count, const uint8_t *buf)
 {
     if (mount_id < 0 || mount_id >= nfs_mount_count)
@@ -803,7 +803,7 @@ int nfs_write(int mount_id, const struct nfs_fhandle *fh,
 
 /* ── NFS CREATE (simple file) ────────────────────────────────────── */
 
-int nfs_create(int mount_id, const struct nfs_fhandle *dir_fh,
+static int nfs_create(int mount_id, const struct nfs_fhandle *dir_fh,
                 const char *name, struct nfs_fhandle *new_fh)
 {
     if (mount_id < 0 || mount_id >= nfs_mount_count)
@@ -865,7 +865,7 @@ int nfs_create(int mount_id, const struct nfs_fhandle *dir_fh,
 
 /* ── Unmount ─────────────────────────────────────────────────────── */
 
-int nfs_umount(int mount_id)
+static int nfs_umount(int mount_id)
 {
     if (mount_id < 0 || mount_id >= nfs_mount_count)
         return -EINVAL;
@@ -891,7 +891,7 @@ int nfs_umount(int mount_id)
     return 0;
 }
 
-void nfs_init(void)
+static void nfs_init(void)
 {
     memset(nfs_mounts, 0, sizeof(nfs_mounts));
     nfs_mount_count = 0;
@@ -938,7 +938,7 @@ MODULE_VERSION("1.0");
  *       }
  *   } while (ret == 0 && cookie != 0);
  */
-int nfs_readdir(int mount_id, const struct nfs_fhandle *fh,
+static int nfs_readdir(int mount_id, const struct nfs_fhandle *fh,
                 uint64_t *cookie, uint64_t *cookieverf,
                 int (*callback)(uint64_t fileid, const char *name,
                                 uint64_t entry_cookie, void *priv),
@@ -1074,7 +1074,7 @@ int nfs_readdir(int mount_id, const struct nfs_fhandle *fh,
  * filesystem-wide usage statistics: total/used/available space and
  * total/used/available inode slots.
  */
-int nfs_fsstat(int mount_id, const struct nfs_fhandle *fh,
+static int nfs_fsstat(int mount_id, const struct nfs_fhandle *fh,
                struct vfs_statfs *st)
 {
     if (mount_id < 0 || mount_id >= nfs_mount_count)
@@ -1148,7 +1148,7 @@ int nfs_fsstat(int mount_id, const struct nfs_fhandle *fh,
 }
 
 /* ── nfs_statfs (VFS-compatible wrapper) ───────────────── */
-int nfs_statfs(void *sb, void *stat)
+static int nfs_statfs(void *sb, void *stat)
 {
     (void)sb;
     struct vfs_statfs *st = (struct vfs_statfs *)stat;
@@ -1180,7 +1180,7 @@ int nfs_statfs(void *sb, void *stat)
 
 /* ── NFS REMOVE (unlink) ──────────────────────────────────────── */
 
-int nfs_remove(int mount_id, const struct nfs_fhandle *dir_fh,
+static int nfs_remove(int mount_id, const struct nfs_fhandle *dir_fh,
                const char *name)
 {
     if (mount_id < 0 || mount_id >= nfs_mount_count)
@@ -1223,7 +1223,7 @@ int nfs_remove(int mount_id, const struct nfs_fhandle *dir_fh,
 
 /* ── NFS MKDIR ─────────────────────────────────────────────────── */
 
-int nfs_mkdir(int mount_id, const struct nfs_fhandle *dir_fh,
+static int nfs_mkdir(int mount_id, const struct nfs_fhandle *dir_fh,
               const char *name, struct nfs_fhandle *new_fh)
 {
     if (mount_id < 0 || mount_id >= nfs_mount_count)
@@ -1304,7 +1304,7 @@ int nfs_mkdir(int mount_id, const struct nfs_fhandle *dir_fh,
 
 /* ── NFS RMDIR ─────────────────────────────────────────────────── */
 
-int nfs_rmdir(int mount_id, const struct nfs_fhandle *dir_fh,
+static int nfs_rmdir(int mount_id, const struct nfs_fhandle *dir_fh,
               const char *name)
 {
     if (mount_id < 0 || mount_id >= nfs_mount_count)
@@ -1349,7 +1349,7 @@ int nfs_rmdir(int mount_id, const struct nfs_fhandle *dir_fh,
 
 /* ── NFS RENAME ───────────────────────────────────────────────── */
 
-int nfs_rename(int mount_id, const struct nfs_fhandle *from_dir_fh,
+static int nfs_rename(int mount_id, const struct nfs_fhandle *from_dir_fh,
                const char *from_name,
                const struct nfs_fhandle *to_dir_fh,
                const char *to_name)

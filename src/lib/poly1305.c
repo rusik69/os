@@ -168,7 +168,7 @@ void poly1305_update(struct poly1305_ctx *ctx, const uint8_t *data, size_t len)
     }
 }
 
-void poly1305_final(struct poly1305_ctx *ctx, uint8_t mac[16])
+static void poly1305_final(struct poly1305_ctx *ctx, uint8_t mac[16])
 {
     uint64_t f0, f1, f2, f3;
     uint32_t g0, g1, g2, g3, g4;
@@ -235,7 +235,7 @@ void poly1305_mac(uint8_t mac[16], const uint8_t *data, size_t len,
 }
 
 /* ── poly1305_auth ─────────────────────────────── */
-int poly1305_auth(void *mac, const void *msg, size_t mlen, const void *key)
+static int poly1305_auth(void *mac, const void *msg, size_t mlen, const void *key)
 {
     if (!mac || !key)
         return -1;

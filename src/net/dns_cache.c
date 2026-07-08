@@ -479,7 +479,7 @@ void net_dns_cache_init(void) {
     dns_cache_init();
 }
 /* ── Implement: dns_cache_insert ────────────────── */
-int dns_cache_insert(const char *name, uint32_t ip, uint32_t ttl)
+static int dns_cache_insert(const char *name, uint32_t ip, uint32_t ttl)
 {
     if (!name || !*name) {
         kprintf("[dns_cache] dns_cache_insert: invalid name\n");
@@ -500,7 +500,7 @@ int dns_cache_insert(const char *name, uint32_t ip, uint32_t ttl)
 }
 
 /* ── Implement: dns_cache_remove ────────────────── */
-int dns_cache_remove(const char *name)
+static int dns_cache_remove(const char *name)
 {
     if (!name || !*name) {
         kprintf("[dns_cache] dns_cache_remove: invalid name\n");
@@ -519,14 +519,14 @@ int dns_cache_remove(const char *name)
 }
 
 /* ── Stub: dns_cache_flush ──────────────────────────────────────── */
-void dns_cache_flush(void)
+static void dns_cache_flush(void)
 {
     kprintf("[dns_cache] dns_cache_flush: clearing all entries\n");
     dns_cache_clear();
 }
 
 /* ── Stub: dns_cache_expire ─────────────────────────────────────── */
-void dns_cache_expire(void)
+static void dns_cache_expire(void)
 {
     kprintf("[dns_cache] dns_cache_expire: evicting expired entries\n");
     dns_cache_evict_expired();
@@ -540,7 +540,7 @@ struct dns_cache_stats dns_cache_stats(void)
 }
 
 /* ── Implement: dns_cache_set_size ────────────────── */
-int dns_cache_set_size(int new_size)
+static int dns_cache_set_size(int new_size)
 {
     if (new_size <= 0 || new_size > 1024) {
         kprintf("[dns_cache] dns_cache_set_size: invalid size %d\n", new_size);

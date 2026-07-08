@@ -287,7 +287,7 @@ static int kvm_dev_write(void *priv, const void *data, uint32_t size)
 
 /* ── KVM API ioctl handling ────────────────────────────────────────── */
 
-int kvm_ioctl(int cmd, uint64_t arg)
+static int kvm_ioctl(int cmd, uint64_t arg)
 {
     if (!kvm_initialized) return -1;
 
@@ -483,7 +483,7 @@ int kvm_init(void)
 }
 
 /* ── Stub: kvm_hypercall ─────────────────────────────── */
-int kvm_hypercall(uint64_t nr, uint64_t a0, uint64_t a1)
+static int kvm_hypercall(uint64_t nr, uint64_t a0, uint64_t a1)
 {
     (void)nr;
     (void)a0;
@@ -492,13 +492,13 @@ int kvm_hypercall(uint64_t nr, uint64_t a0, uint64_t a1)
     return 0;
 }
 /* ── Stub: kvm_para_available ─────────────────────────────── */
-int kvm_para_available(void)
+static int kvm_para_available(void)
 {
     kprintf("[KVM] kvm_para_available: not yet implemented\n");
     return 0;
 }
 /* ── Stub: kvm_register_steal_time ─────────────────────────────── */
-int kvm_register_steal_time(void)
+static int kvm_register_steal_time(void)
 {
     kprintf("[KVM] kvm_register_steal_time: not yet implemented\n");
     return 0;

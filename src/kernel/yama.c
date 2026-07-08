@@ -110,7 +110,7 @@ void yama_sysctl_register(void) {
 struct task_struct;
 
 /* ── Stub: yama_ptrace_access_check ─────────────────────────────── */
-int yama_ptrace_access_check(struct task_struct *child, unsigned int mode)
+static int yama_ptrace_access_check(struct task_struct *child, unsigned int mode)
 {
     (void)child;
     (void)mode;
@@ -119,7 +119,7 @@ int yama_ptrace_access_check(struct task_struct *child, unsigned int mode)
 }
 
 /* ── Stub: yama_ptrace_traceme_allowed ─────────────────────────────── */
-int yama_ptrace_traceme_allowed(struct task_struct *parent)
+static int yama_ptrace_traceme_allowed(struct task_struct *parent)
 {
     (void)parent;
     kprintf("[yama] yama_ptrace_traceme_allowed: not yet implemented\n");
@@ -127,7 +127,7 @@ int yama_ptrace_traceme_allowed(struct task_struct *parent)
 }
 
 /* ── Stub: yama_task_prctl ─────────────────────────────── */
-int yama_task_prctl(int option, unsigned long arg2, unsigned long arg3)
+static int yama_task_prctl(int option, unsigned long arg2, unsigned long arg3)
 {
     (void)option;
     (void)arg2;
@@ -137,7 +137,7 @@ int yama_task_prctl(int option, unsigned long arg2, unsigned long arg3)
 }
 
 /* ── Stub: yama_task_free ─────────────────────────────── */
-void yama_task_free(struct task_struct *task)
+static void yama_task_free(struct task_struct *task)
 {
     (void)task;
     kprintf("[yama] yama_task_free: not yet implemented\n");

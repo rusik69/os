@@ -20,7 +20,7 @@
 static char process_chroot[PROCESS_MAX][CHROOT_PATH_MAX];
 static int chroot_initialized = 0;
 
-void __init chroot_init(void) {
+static void __init chroot_init(void) {
     if (chroot_initialized) return;
     memset(process_chroot, 0, sizeof(process_chroot));
     chroot_initialized = 1;
@@ -45,7 +45,7 @@ int chroot_set(const char *path) {
 }
 
 /* Get chroot for a PID (returns NULL if none) */
-const char *chroot_get(uint32_t pid) {
+static const char *chroot_get(uint32_t pid) {
     if (pid >= PROCESS_MAX) return NULL;
     if (process_chroot[pid][0] == '\0') return NULL;
     return process_chroot[pid];
@@ -56,7 +56,7 @@ const char *chroot_get(uint32_t pid) {
  * Returns 0 if allowed, -EPERM if denied.
  * For absolute paths, this prepends the chroot.
  */
-int chroot_check_path(const char *path, char *resolved, int resolved_max) {
+static int chroot_check_path(const char *path, char *resolved, int resolved_max) {
     if (!path || !resolved) return -EINVAL;
 
     struct process *cur = process_get_current();
@@ -96,12 +96,12 @@ int chroot_check_path(const char *path, char *resolved, int resolved_max) {
 }
 
 /* VFS wrapper for chroot-aware path resolution */
-int vfs_chroot_resolve(const char *path, char *out, int out_max) {
+static int vfs_chroot_resolve(const char *path, char *out, int out_max) {
     return chroot_check_path(path, out, out_max);
 }
 
 /* ── Stub: chroot_escape ─────────────────────────────── */
-int chroot_escape(void *task)
+static int chroot_escape(void *task)
 {
     (void)task;
     kprintf("[chroot] chroot_escape: not yet implemented\n");

@@ -689,7 +689,7 @@ void service_watchdog_check(void) {
 }
 
 /* ── Stub: service_unregister ─────────────────────────────── */
-int service_unregister(const char *name)
+static int service_unregister(const char *name)
 {
     (void)name;
     kprintf("[service] service_unregister: not yet implemented\n");

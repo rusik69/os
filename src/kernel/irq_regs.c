@@ -321,13 +321,13 @@ void __init irq_regs_init(void)
 }
 
 /* ── Stub: irq_regs_get ─────────────────────────────── */
-void* irq_regs_get(void)
+static void* irq_regs_get(void)
 {
     kprintf("[irq] irq_regs_get: not yet implemented\n");
     return 0;
 }
 /* ── Stub: irq_regs_set ─────────────────────────────── */
-int irq_regs_set(void *regs)
+static int irq_regs_set(void *regs)
 {
     (void)regs;
     kprintf("[irq] irq_regs_set: not yet implemented\n");

@@ -307,14 +307,14 @@ MODULE_VERSION("1.0");
 #endif /* MODULE */
 
 /* ── tarfs_umount ──────────────────────────────────────── */
-int tarfs_umount(const char *target)
+static int tarfs_umount(const char *target)
 {
     (void)target;
     kprintf("[tarfs] TarFS unmounted\n");
     return 0;
 }
 /* ── tarfs_lookup ──────────────────────────────────────── */
-int tarfs_lookup(const char *name, void *parent)
+static int tarfs_lookup(const char *name, void *parent)
 {
     (void)parent;
     kprintf("[tarfs] lookup: %s\n", name);

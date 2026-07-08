@@ -208,7 +208,7 @@ static int erofs_read_compressed_extent(uint64_t ino, uint64_t offset,
 }
 
 /* EROFS filesystem operations */
-int erofs_mount(const uint8_t *data, uint64_t size)
+static int erofs_mount(const uint8_t *data, uint64_t size)
 {
     if (size < sizeof(struct erofs_superblock))
         return -EINVAL;
@@ -231,7 +231,7 @@ int erofs_mount(const uint8_t *data, uint64_t size)
     return 0;
 }
 
-int erofs_umount(void)
+static int erofs_umount(void)
 {
     erofs_mounted = 0;
     erofs_data_base = NULL;
@@ -240,7 +240,7 @@ int erofs_umount(void)
 }
 
 /* Lookup inode by number */
-int erofs_read_inode(uint64_t ino, struct erofs_inode_compact *inode)
+static int erofs_read_inode(uint64_t ino, struct erofs_inode_compact *inode)
 {
     if (!erofs_mounted) return -ENODEV;
     struct erofs_inode_extended ext;
@@ -251,7 +251,7 @@ int erofs_read_inode(uint64_t ino, struct erofs_inode_compact *inode)
 }
 
 /* Read data from an inode — handles all extent types */
-int erofs_read_data(uint64_t ino, uint64_t offset,
+static int erofs_read_data(uint64_t ino, uint64_t offset,
                      uint8_t *buf, size_t len)
 {
     if (!erofs_mounted) return -ENODEV;
@@ -259,7 +259,7 @@ int erofs_read_data(uint64_t ino, uint64_t offset,
 }
 
 /* List directory entries */
-int erofs_readdir(uint64_t ino, uint64_t *offset_out,
+static int erofs_readdir(uint64_t ino, uint64_t *offset_out,
                    char *name_buf, int *name_len)
 {
     if (!erofs_mounted) return -ENODEV;
@@ -270,7 +270,7 @@ int erofs_readdir(uint64_t ino, uint64_t *offset_out,
     return 0;
 }
 
-void erofs_init(void)
+static void erofs_init(void)
 {
     erofs_mounted = 0;
     memset(&erofs_sb, 0, sizeof(erofs_sb));
@@ -289,7 +289,7 @@ MODULE_VERSION("1.0");
 #endif
 
 /* ── erofs_lookup ─────────────────────────────────────── */
-int erofs_lookup(const char *name, void *parent)
+static int erofs_lookup(const char *name, void *parent)
 {
     (void)parent;
     kprintf("[erofs] lookup: %s\n", name);

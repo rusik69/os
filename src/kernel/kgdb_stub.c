@@ -237,7 +237,7 @@ static int kgdb_receive_packet(void)
 }
 
 /* Enter KGDB and wait for GDB connection */
-void kgdb_breakpoint(void)
+static void kgdb_breakpoint(void)
 {
     if (!kgdb.active) {
         kgdb.active = 1;
@@ -252,7 +252,7 @@ void kgdb_breakpoint(void)
 }
 
 /* Initialize KGDB stub */
-void kgdb_stub_init(void)
+static void kgdb_stub_init(void)
 {
     memset(&kgdb, 0, sizeof(kgdb));
     kgdb.active = 0;
@@ -260,14 +260,14 @@ void kgdb_stub_init(void)
 }
 
 /* ── kgdb_init: Initialize KGDB stub ───────────────────────────────── */
-int kgdb_init(void)
+static int kgdb_init(void)
 {
     kgdb_stub_init();
     kprintf("[kgdb] kgdb_init: KGDB stub initialized\n");
     return 0;
 }
 /* ── kgdb_handle_exception: Handle an exception in KGDB ──────────────── */
-int kgdb_handle_exception(int vector, void *regs)
+static int kgdb_handle_exception(int vector, void *regs)
 {
     (void)vector;
     (void)regs;
@@ -277,7 +277,7 @@ int kgdb_handle_exception(int vector, void *regs)
     return 0;
 }
 /* ── kgdb_register_io_module: Register KGDB I/O operations ────────────── */
-int kgdb_register_io_module(void *io_ops)
+static int kgdb_register_io_module(void *io_ops)
 {
     if (!io_ops) return -EINVAL;
     /* In a minimal implementation we just acknowledge the registration.

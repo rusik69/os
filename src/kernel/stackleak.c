@@ -28,7 +28,7 @@ static uint64_t stackleak_poison_count = 0;
 
 /* ── Core poison routine ───────────────────────────────────────────── */
 
-void stackleak_poison_stack(void)
+static void stackleak_poison_stack(void)
 {
     if (!stackleak_enabled) return;
 
@@ -52,7 +52,7 @@ void stackleak_poison_stack(void)
 
 /* ── Called from syscall entry ────────────────────────────────────── */
 
-void stackleak_syscall_entry(void)
+static void stackleak_syscall_entry(void)
 {
     /* Record current stack pointer for later poisoning bounds.
      * Called at the very start of syscall entry (before any kernel stack use). */
@@ -66,47 +66,47 @@ void stackleak_syscall_entry(void)
 
 /* ── Called from syscall exit ─────────────────────────────────────── */
 
-void stackleak_syscall_exit(void)
+static void stackleak_syscall_exit(void)
 {
     stackleak_poison_stack();
 }
 
 /* ── Sysctl handler ────────────────────────────────────────────────── */
 
-int stackleak_set_enabled(int val)
+static int stackleak_set_enabled(int val)
 {
     int old = stackleak_enabled;
     stackleak_enabled = val ? 1 : 0;
     return old;
 }
 
-int stackleak_get_enabled(void)
+static int stackleak_get_enabled(void)
 {
     return stackleak_enabled;
 }
 
-uint64_t stackleak_get_poison_count(void)
+static uint64_t stackleak_get_poison_count(void)
 {
     return stackleak_poison_count;
 }
 
 /* ── Initialization ────────────────────────────────────────────────── */
 
-void __init stackleak_init(void)
+static void __init stackleak_init(void)
 {
     kprintf("[OK] STACKLEAK: kernel stack eraser initialized (poison=0x%016llx)\n",
             (unsigned long long)STACKLEAK_POISON_VALUE);
 }
 
 /* ── Stub: stackleak_check ─────────────────────────────── */
-int stackleak_check(void *task)
+static int stackleak_check(void *task)
 {
     (void)task;
     kprintf("[stackleak] stackleak_check: not yet implemented\n");
     return 0;
 }
 /* ── Stub: stackleak_erase ─────────────────────────────── */
-int stackleak_erase(void *task)
+static int stackleak_erase(void *task)
 {
     (void)task;
     kprintf("[stackleak] stackleak_erase: not yet implemented\n");

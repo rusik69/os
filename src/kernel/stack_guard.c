@@ -115,7 +115,7 @@ int stack_guard_remove(uint64_t stack_virt, int stack_pages)
 }
 
 /* ── Stub: stack_guard_handle_violation ─────────────────────────────── */
-int stack_guard_handle_violation(void *task)
+static int stack_guard_handle_violation(void *task)
 {
     (void)task;
     kprintf("[stack] stack_guard_handle_violation: not yet implemented\n");

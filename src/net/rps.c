@@ -238,7 +238,7 @@ void rfs_update_flow_cpu(const struct rps_flow_key *key)
 
 /* ── Debug / stats ────────────────────────────────────────────────── */
 
-int rps_backlog_count(int cpu)
+static int rps_backlog_count(int cpu)
 {
     if (cpu < 0 || cpu >= SMP_MAX_CPUS) return -1;
     struct rps_backlog *bl = cpu_info_array[cpu].rps_backlog;
@@ -246,13 +246,13 @@ int rps_backlog_count(int cpu)
     return bl->count;
 }
 
-int rfs_flow_count(void)
+static int rfs_flow_count(void)
 {
     return g_rfs_table.count;
 }
 
 /* ── Implement: rps_process ────────────────── */
-int rps_process(void *softirq)
+static int rps_process(void *softirq)
 {
     if (!softirq) {
         kprintf("[rps] rps_process: NULL softirq\n");
@@ -262,7 +262,7 @@ int rps_process(void *softirq)
     return -EOPNOTSUPP;
 }
 /* ── Implement: rps_map_flow ────────────────── */
-int rps_map_flow(void *skb, void *flow_table)
+static int rps_map_flow(void *skb, void *flow_table)
 {
     if (!skb || !flow_table) {
         kprintf("[rps] rps_map_flow: NULL parameter\n");

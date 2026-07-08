@@ -782,7 +782,7 @@ uint64_t vdso_get_khz(void)
 }
 
 /* ── Stub: vsyscall_emulate ───────────────────────────────────────────── */
-int vsyscall_emulate(uint64_t ip, uint64_t *regs)
+static int vsyscall_emulate(uint64_t ip, uint64_t *regs)
 {
     (void)ip;
     (void)regs;
@@ -791,7 +791,7 @@ int vsyscall_emulate(uint64_t ip, uint64_t *regs)
 }
 
 /* ── Stub: vsyscall_handle_fault ──────────────────────────────────────── */
-int vsyscall_handle_fault(uint64_t fault_addr, uint64_t fault_ip)
+static int vsyscall_handle_fault(uint64_t fault_addr, uint64_t fault_ip)
 {
     (void)fault_addr;
     (void)fault_ip;
@@ -800,7 +800,7 @@ int vsyscall_handle_fault(uint64_t fault_addr, uint64_t fault_ip)
 }
 
 /* ── Stub: vsyscall_set_emu_mode ──────────────────────────────────────── */
-int vsyscall_set_emu_mode(int mode)
+static int vsyscall_set_emu_mode(int mode)
 {
     (void)mode;
     kprintf("[vsyscall] vsyscall_set_emu_mode not yet implemented\n");

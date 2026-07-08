@@ -164,7 +164,7 @@ void perf_disable(void)
 }
 
 /* Configure a generic performance counter to count a specific event */
-void perf_configure_event(int counter, uint64_t event_sel)
+static void perf_configure_event(int counter, uint64_t event_sel)
 {
     if (!perf_available || counter < 0 || counter > 3)
         return;
@@ -914,12 +914,12 @@ void perf_mux_init(void)
             MUX_MAX_EVENTS, g_mux_interval);
 }
 
-int perf_mux_enabled(void)
+static int perf_mux_enabled(void)
 {
     return g_mux_enabled_flag;
 }
 
-void perf_mux_enable(void)
+static void perf_mux_enable(void)
 {
     g_mux_enabled_flag = 1;
     g_mux_tick = 0;
@@ -927,14 +927,14 @@ void perf_mux_enable(void)
     kprintf("[perf] MUX enabled\n");
 }
 
-void perf_mux_disable(void)
+static void perf_mux_disable(void)
 {
     g_mux_enabled_flag = 0;
     kprintf("[perf] MUX disabled\n");
 }
 
 /* Set the rotation interval (in timer ticks). */
-void perf_mux_set_interval(int ticks)
+static void perf_mux_set_interval(int ticks)
 {
     if (ticks < 1) ticks = 1;
     if (ticks > 1000) ticks = 1000;
@@ -943,7 +943,7 @@ void perf_mux_set_interval(int ticks)
 
 /* Register an event for multiplexing.
  * Returns the event index on success, -1 on error. */
-int perf_mux_register_event(uint64_t event_config)
+static int perf_mux_register_event(uint64_t event_config)
 {
     if (!g_mux_initialized) perf_mux_init();
 
@@ -967,7 +967,7 @@ int perf_mux_register_event(uint64_t event_config)
 }
 
 /* Unregister an event (by index returned from perf_mux_register_event). */
-void perf_mux_unregister_event(int idx)
+static void perf_mux_unregister_event(int idx)
 {
     if (idx < 0 || idx >= MUX_MAX_EVENTS) return;
 
@@ -979,7 +979,7 @@ void perf_mux_unregister_event(int idx)
 }
 
 /* Read the scaled count of an event. */
-uint64_t perf_mux_read_event(int idx)
+static uint64_t perf_mux_read_event(int idx)
 {
     if (idx < 0 || idx >= MUX_MAX_EVENTS || !g_mux_events[idx].active)
         return 0;
@@ -990,7 +990,7 @@ uint64_t perf_mux_read_event(int idx)
  * Called on each timer tick.  If multiplexing is enabled and the interval
  * has elapsed, rotate which events are assigned to the physical PMCs.
  */
-void perf_mux_tick(void)
+static void perf_mux_tick(void)
 {
     if (!g_mux_enabled_flag || g_mux_num_events == 0)
         return;
@@ -1091,7 +1091,7 @@ static struct {
     int initialized;
 } perf_cswitch_state;
 
-void perf_cswitch_init(void)
+static void perf_cswitch_init(void)
 {
     if (perf_cswitch_state.initialized) return;
     memset(&perf_cswitch_state, 0, sizeof(perf_cswitch_state));
@@ -1099,17 +1099,17 @@ void perf_cswitch_init(void)
     perf_cswitch_state.initialized = 1;
 }
 
-void perf_cswitch_enable(void)
+static void perf_cswitch_enable(void)
 {
     perf_cswitch_state.enabled = 1;
 }
 
-void perf_cswitch_disable(void)
+static void perf_cswitch_disable(void)
 {
     perf_cswitch_state.enabled = 0;
 }
 
-void perf_cswitch_trace(uint32_t prev_pid, uint32_t next_pid,
+static void perf_cswitch_trace(uint32_t prev_pid, uint32_t next_pid,
                         const char *prev_comm, const char *next_comm,
                         uint8_t prev_state)
 {
@@ -1139,7 +1139,7 @@ void perf_cswitch_trace(uint32_t prev_pid, uint32_t next_pid,
     }
 }
 
-ssize_t perf_cswitch_read(struct perf_cswitch_event *buf, int max_count)
+static ssize_t perf_cswitch_read(struct perf_cswitch_event *buf, int max_count)
 {
     if (!buf || max_count <= 0)
         return 0;
@@ -1186,7 +1186,7 @@ static struct {
     int sample_rate;          /* 1/N sampling rate (1 = every fault) */
 } perf_pf_state;
 
-void perf_pf_init(void)
+static void perf_pf_init(void)
 {
     if (perf_pf_state.initialized) return;
     memset(&perf_pf_state, 0, sizeof(perf_pf_state));
@@ -1195,10 +1195,10 @@ void perf_pf_init(void)
     perf_pf_state.initialized = 1;
 }
 
-void perf_pf_enable(void)  { perf_pf_state.enabled = 1; }
-void perf_pf_disable(void) { perf_pf_state.enabled = 0; }
+static void perf_pf_enable(void)  { perf_pf_state.enabled = 1; }
+static void perf_pf_disable(void) { perf_pf_state.enabled = 0; }
 
-void perf_pf_set_sample_rate(int rate)
+static void perf_pf_set_sample_rate(int rate)
 {
     if (rate < 1) rate = 1;
     if (rate > 1000) rate = 1000;
@@ -1235,7 +1235,7 @@ static int perf_capture_stack(uint64_t *frames, int max_frames)
     return count;
 }
 
-void perf_pf_sample(uint64_t fault_addr, uint64_t ip, uint32_t error_code,
+static void perf_pf_sample(uint64_t fault_addr, uint64_t ip, uint32_t error_code,
                     uint32_t pid)
 {
     if (!perf_pf_state.initialized || !perf_pf_state.enabled)
@@ -1261,7 +1261,7 @@ void perf_pf_sample(uint64_t fault_addr, uint64_t ip, uint32_t error_code,
     s->stack_depth = perf_capture_stack(s->stack, PERF_PF_STACK_DEPTH);
 }
 
-ssize_t perf_pf_read_samples(struct perf_pf_sample *buf, int max_count)
+static ssize_t perf_pf_read_samples(struct perf_pf_sample *buf, int max_count)
 {
     if (!buf || max_count <= 0)
         return 0;
@@ -1312,7 +1312,7 @@ static struct {
     int initialized;
 } flame_state;
 
-void perf_flame_init(void)
+static void perf_flame_init(void)
 {
     if (flame_state.initialized) return;
     memset(&flame_state, 0, sizeof(flame_state));
@@ -1320,8 +1320,8 @@ void perf_flame_init(void)
     flame_state.initialized = 1;
 }
 
-void perf_flame_enable(void)  { flame_state.enabled = 1; }
-void perf_flame_disable(void) { flame_state.enabled = 0; }
+static void perf_flame_enable(void)  { flame_state.enabled = 1; }
+static void perf_flame_disable(void) { flame_state.enabled = 0; }
 
 /* Compare two stack frames for equality */
 static int flame_stack_equal(const uint64_t *a, int depth_a,
@@ -1335,7 +1335,7 @@ static int flame_stack_equal(const uint64_t *a, int depth_a,
 }
 
 /* Add a sample (stack trace) to the flame graph aggregator. */
-void perf_flame_add_sample(const uint64_t *frames, int depth)
+static void perf_flame_add_sample(const uint64_t *frames, int depth)
 {
     if (!flame_state.initialized || !flame_state.enabled || !frames)
         return;
@@ -1382,7 +1382,7 @@ static const char *flame_resolve_symbol(uint64_t addr)
 /* Write the folded stack output into a caller-provided buffer.
  * Uses the format: func_a;func_b;func_c <count>\n
  * Returns the number of bytes written. */
-int perf_flame_generate(char *buf, int buf_size)
+static int perf_flame_generate(char *buf, int buf_size)
 {
     if (!buf || buf_size <= 0)
         return 0;
@@ -1429,14 +1429,14 @@ int perf_flame_generate(char *buf, int buf_size)
 }
 
 /* Clear the flame graph aggregator. */
-void perf_flame_clear(void)
+static void perf_flame_clear(void)
 {
     memset(flame_state.stacks, 0, sizeof(flame_state.stacks));
     flame_state.num_stacks = 0;
 }
 
 /* Return the number of unique stacks tracked. */
-int perf_flame_num_stacks(void)
+static int perf_flame_num_stacks(void)
 {
     return flame_state.num_stacks;
 }

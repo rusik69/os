@@ -538,7 +538,7 @@ void smack_sysfs_init(void)
     kprintf("[SMACK] /sys/fs/smackfs/load created\n");
 }
 /* ── Stub: smack_task_ptrace ─────────────────────────────── */
-int smack_task_ptrace(struct process *tracer, struct process *tracee)
+static int smack_task_ptrace(struct process *tracer, struct process *tracee)
 {
     (void)tracer;
     (void)tracee;
@@ -547,7 +547,7 @@ int smack_task_ptrace(struct process *tracer, struct process *tracee)
 }
 
 /* ── Stub: smack_setprocattr ─────────────────────────────── */
-int smack_setprocattr(const char *attr, const char *value, size_t size)
+static int smack_setprocattr(const char *attr, const char *value, size_t size)
 {
     (void)attr;
     (void)value;
@@ -557,7 +557,7 @@ int smack_setprocattr(const char *attr, const char *value, size_t size)
 }
 
 /* ── Stub: smack_getprocattr ─────────────────────────────── */
-int smack_getprocattr(const char *attr, char *buf, size_t size)
+static int smack_getprocattr(const char *attr, char *buf, size_t size)
 {
     (void)attr;
     (void)buf;
@@ -567,7 +567,7 @@ int smack_getprocattr(const char *attr, char *buf, size_t size)
 }
 
 /* ── Stub: smack_netlabel ─────────────────────────────── */
-int smack_netlabel(const char *label, const char *addr, int family)
+static int smack_netlabel(const char *label, const char *addr, int family)
 {
     (void)label;
     (void)addr;
@@ -577,7 +577,7 @@ int smack_netlabel(const char *label, const char *addr, int family)
 }
 
 /* ── Stub: smack_cipso ─────────────────────────────── */
-int smack_cipso(const char *label, const void *doi, const void *cipso)
+static int smack_cipso(const char *label, const void *doi, const void *cipso)
 {
     (void)label;
     (void)doi;
@@ -587,7 +587,7 @@ int smack_cipso(const char *label, const void *doi, const void *cipso)
 }
 
 /* ── Stub: smack_from_secattr ─────────────────────────────── */
-int smack_from_secattr(const void *secattr, char *label, size_t label_len)
+static int smack_from_secattr(const void *secattr, char *label, size_t label_len)
 {
     (void)secattr;
     (void)label;

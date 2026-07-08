@@ -27,7 +27,7 @@ static spinlock_t cfi_lock;
 static int cfi_enabled = 0;
 
 /* Register a valid indirect call target */
-int cfi_register_target(uintptr_t addr, const char *name)
+static int cfi_register_target(uintptr_t addr, const char *name)
 {
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&cfi_lock, &irq_flags);
@@ -47,7 +47,7 @@ int cfi_register_target(uintptr_t addr, const char *name)
 }
 
 /* Check if an address is a valid indirect call target */
-int cfi_check_target(uintptr_t addr)
+static int cfi_check_target(uintptr_t addr)
 {
     if (!cfi_enabled)
         return 0; /* CFI disabled, allow all */
@@ -61,7 +61,7 @@ int cfi_check_target(uintptr_t addr)
 }
 
 /* Indirect call check — called from instrumented code via asm stub */
-int __attribute__((used)) __cfi_check(uintptr_t target)
+static int __attribute__((used)) __cfi_check(uintptr_t target)
 {
     if (!cfi_check_target(target)) {
         struct process *cur = process_get_current();
@@ -75,13 +75,13 @@ int __attribute__((used)) __cfi_check(uintptr_t target)
 }
 
 /* Enable/disable CFI checking */
-void cfi_set_enabled(int enabled)
+static void cfi_set_enabled(int enabled)
 {
     cfi_enabled = enabled;
     kprintf("[CFI] %s\n", enabled ? "enabled" : "disabled");
 }
 
-void cfi_init(void)
+static void cfi_init(void)
 {
     cfi_enabled = 1;
     spinlock_init(&cfi_lock);
@@ -90,7 +90,7 @@ void cfi_init(void)
 }
 
 /* ── Stub: cfi_check ──────────────────────────────────────────────────── */
-int cfi_check(uintptr_t target, const char *func)
+static int cfi_check(uintptr_t target, const char *func)
 {
     (void)target;
     (void)func;
@@ -99,7 +99,7 @@ int cfi_check(uintptr_t target, const char *func)
 }
 
 /* ── Stub: cfi_set_shadow ─────────────────────────────────────────────── */
-int cfi_set_shadow(uintptr_t addr, uintptr_t shadow)
+static int cfi_set_shadow(uintptr_t addr, uintptr_t shadow)
 {
     (void)addr;
     (void)shadow;
@@ -108,7 +108,7 @@ int cfi_set_shadow(uintptr_t addr, uintptr_t shadow)
 }
 
 /* ── Stub: cfi_verify ─────────────────────────────────────────────────── */
-int cfi_verify(uintptr_t target, uintptr_t expected)
+static int cfi_verify(uintptr_t target, uintptr_t expected)
 {
     (void)target;
     (void)expected;

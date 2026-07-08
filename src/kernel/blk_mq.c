@@ -305,7 +305,7 @@ static void blk_mq_free_request(struct blk_mq_request *req)
  * polling loop).  It does NOT free the tag — use blk_mq_free_request()
  * if the request should be returned to the pool.
  */
-void blk_mq_complete_request(struct blk_mq_request *req)
+static void blk_mq_complete_request(struct blk_mq_request *req)
 {
     int hw_idx;
     struct blk_mq_hw_queue *hwq;
@@ -343,7 +343,7 @@ void blk_mq_complete_request(struct blk_mq_request *req)
  * Sets the error code on the request and calls
  * blk_mq_complete_request().  Does NOT free the tag.
  */
-void blk_mq_complete(struct blk_mq_request *req, int error)
+static void blk_mq_complete(struct blk_mq_request *req, int error)
 {
     if (req) {
         req->error = error;
@@ -364,7 +364,7 @@ void blk_mq_complete(struct blk_mq_request *req, int error)
  *
  * Returns 0 on success, -EAGAIN if the poll completion ring is full.
  */
-int blk_mq_poll_complete(struct blk_mq_request *req)
+static int blk_mq_poll_complete(struct blk_mq_request *req)
 {
     int hw_idx;
     struct blk_mq_hw_queue *hwq;
@@ -418,7 +418,7 @@ int blk_mq_poll_complete(struct blk_mq_request *req)
  * @hw_idx:  Hardware queue index to harvest
  * Returns the number of completions processed.
  */
-int blk_mq_harvest_poll_completions(int hw_idx)
+static int blk_mq_harvest_poll_completions(int hw_idx)
 {
     struct blk_mq_hw_queue *hwq;
     uint64_t irq_flags;
@@ -490,7 +490,7 @@ static int blk_mq_get_hw_queue(uint64_t sector)
  * Returns the preferred HW queue for requests originating from this CPU.
  * Used for direct submission when the caller doesn't specify a queue.
  */
-int blk_mq_map_cpu_to_hw_queue(int cpu)
+static int blk_mq_map_cpu_to_hw_queue(int cpu)
 {
     if (cpu < 0 || cpu >= BLK_MQ_MAX_SW_QUEUES)
         cpu = 0;
@@ -515,7 +515,7 @@ int blk_mq_map_cpu_to_hw_queue(int cpu)
  * @cpu_bitmap: Bitmask of CPUs that should submit to this queue
  * Returns 0 on success, -EINVAL if the queue index is out of range.
  */
-int blk_mq_set_hw_queue_affinity(int hw_idx, unsigned long cpu_bitmap)
+static int blk_mq_set_hw_queue_affinity(int hw_idx, unsigned long cpu_bitmap)
 {
     if (hw_idx < 0 || hw_idx >= BLK_MQ_MAX_HW_QUEUES)
         return -EINVAL;
@@ -534,7 +534,7 @@ int blk_mq_set_hw_queue_affinity(int hw_idx, unsigned long cpu_bitmap)
  *           BLK_MQ_DISPATCH_BATCH
  * Returns 0 on success, -EINVAL on invalid arguments.
  */
-int blk_mq_set_hw_queue_dispatch_mode(int hw_idx,
+static int blk_mq_set_hw_queue_dispatch_mode(int hw_idx,
                                       enum blk_mq_dispatch_mode mode)
 {
     if (hw_idx < 0 || hw_idx >= blk_mq_num_hw_queues)
@@ -583,7 +583,7 @@ static void blk_mq_hw_queue_init(int hw_idx)
  * Returns 0 on success, -EINVAL if @submit_fn is NULL or @hw_idx is
  * out of range, -EALREADY if the queue already has a submit callback.
  */
-int blk_mq_init_hw_queue(int hw_idx, blk_mq_hw_submit_fn submit_fn,
+static int blk_mq_init_hw_queue(int hw_idx, blk_mq_hw_submit_fn submit_fn,
                           void *priv, int use_polling)
 {
     if (hw_idx < 0 || hw_idx >= BLK_MQ_MAX_HW_QUEUES)
@@ -622,7 +622,7 @@ int blk_mq_init_hw_queue(int hw_idx, blk_mq_hw_submit_fn submit_fn,
  * Returns 0 on success, -EINVAL if out of range, -EBUSY if the queue
  * still has pending requests (caller must drain first).
  */
-int blk_mq_exit_hw_queue(int hw_idx)
+static int blk_mq_exit_hw_queue(int hw_idx)
 {
     if (hw_idx < 0 || hw_idx >= BLK_MQ_MAX_HW_QUEUES)
         return -EINVAL;
@@ -656,7 +656,7 @@ int blk_mq_exit_hw_queue(int hw_idx)
  * Start a hardware queue, allowing it to accept and dispatch requests.
  * Queues are started by default after initialisation.
  */
-int blk_mq_start_hw_queue(int hw_idx)
+static int blk_mq_start_hw_queue(int hw_idx)
 {
     if (hw_idx < 0 || hw_idx >= blk_mq_num_hw_queues)
         return -EINVAL;
@@ -679,7 +679,7 @@ int blk_mq_start_hw_queue(int hw_idx)
  * Stop a hardware queue.  Requests may still be enqueued but will
  * not be dispatched until start is called again.
  */
-int blk_mq_stop_hw_queue(int hw_idx)
+static int blk_mq_stop_hw_queue(int hw_idx)
 {
     if (hw_idx < 0 || hw_idx >= blk_mq_num_hw_queues)
         return -EINVAL;
@@ -702,7 +702,7 @@ int blk_mq_stop_hw_queue(int hw_idx)
  * All requests still in the ring buffer are completed with -EIO and
  * freed back to the tag pool.  Returns the number of requests drained.
  */
-int blk_mq_drain_hw_queue(int hw_idx)
+static int blk_mq_drain_hw_queue(int hw_idx)
 {
     if (hw_idx < 0 || hw_idx >= blk_mq_num_hw_queues)
         return -EINVAL;
@@ -742,7 +742,7 @@ int blk_mq_drain_hw_queue(int hw_idx)
  * waiting for an IRQ to complete requests.  This is used by devices
  * that support NVMe-style completion polling.
  */
-int blk_mq_set_hw_queue_poll(int hw_idx, blk_mq_hw_poll_fn poll_fn,
+static int blk_mq_set_hw_queue_poll(int hw_idx, blk_mq_hw_poll_fn poll_fn,
                               void *priv)
 {
     if (hw_idx < 0 || hw_idx >= blk_mq_num_hw_queues)
@@ -1067,7 +1067,7 @@ static int blk_mq_sw_queue_insert(struct blk_mq_sw_queue *swq,
  *
  * @cpu: CPU index identifying the SW queue
  */
-void blk_mq_plug_sw_queue(int cpu)
+static void blk_mq_plug_sw_queue(int cpu)
 {
     if (cpu < 0 || cpu >= BLK_MQ_MAX_SW_QUEUES)
         return;
@@ -1089,7 +1089,7 @@ void blk_mq_plug_sw_queue(int cpu)
  *
  * @cpu: CPU index identifying the SW queue
  */
-void blk_mq_unplug_sw_queue(int cpu)
+static void blk_mq_unplug_sw_queue(int cpu)
 {
     if (cpu < 0 || cpu >= BLK_MQ_MAX_SW_QUEUES)
         return;
@@ -1108,7 +1108,7 @@ void blk_mq_unplug_sw_queue(int cpu)
  *
  * Returns 1 if plugged, 0 if not.
  */
-int blk_mq_sw_queue_is_plugged(int cpu)
+static int blk_mq_sw_queue_is_plugged(int cpu)
 {
     if (cpu < 0 || cpu >= BLK_MQ_MAX_SW_QUEUES)
         return 0;
@@ -1122,7 +1122,7 @@ int blk_mq_sw_queue_is_plugged(int cpu)
  * Useful for batch I/O submission where the caller wants to defer
  * flushing until all requests are queued.
  */
-void blk_mq_plug_all_sw_queues(void)
+static void blk_mq_plug_all_sw_queues(void)
 {
     for (int i = 0; i < BLK_MQ_MAX_SW_QUEUES; i++) {
         uint64_t irq_flags;
@@ -1137,7 +1137,7 @@ void blk_mq_plug_all_sw_queues(void)
  *
  * After unplugging, call blk_mq_flush() to drain the queues.
  */
-void blk_mq_unplug_all_sw_queues(void)
+static void blk_mq_unplug_all_sw_queues(void)
 {
     for (int i = 0; i < BLK_MQ_MAX_SW_QUEUES; i++) {
         uint64_t irq_flags;
@@ -1165,7 +1165,7 @@ void blk_mq_unplug_all_sw_queues(void)
  *
  * Returns 0 on success, -EINVAL if @cpu is out of range.
  */
-int blk_mq_get_sw_queue_stats(int cpu, int *occupancy, int *peak,
+static int blk_mq_get_sw_queue_stats(int cpu, int *occupancy, int *peak,
                                 uint64_t *enqueued, uint64_t *dequeued,
                                 uint64_t *merged, uint64_t *flushed)
 {
@@ -1244,7 +1244,7 @@ static int blk_mq_drain_sw_queue_locked(struct blk_mq_sw_queue *swq,
  * Return: 0 on success, -ENOMEM if the tag pool is empty, -EAGAIN if
  *         the software queue is full
  */
-int blk_mq_submit_request(uint64_t sector, uint8_t *buffer,
+static int blk_mq_submit_request(uint64_t sector, uint8_t *buffer,
                            size_t count, int write,
                            void (*complete)(struct blk_mq_request *, int))
 {
@@ -1309,7 +1309,7 @@ int blk_mq_submit_request(uint64_t sector, uint8_t *buffer,
  * unplugged.  If a hardware queue is stopped or full, the request
  * is freed back to the tag pool.
  */
-void blk_mq_flush(void)
+static void blk_mq_flush(void)
 {
     struct blk_mq_request *batch[BLK_MQ_DEPTH];
 
@@ -1379,7 +1379,7 @@ void blk_mq_flush(void)
  * After the driver submits the request, it is responsible for calling
  * blk_mq_complete_request() when the I/O finishes.
  */
-void blk_mq_dispatch(void)
+static void blk_mq_dispatch(void)
 {
     for (int hw = 0; hw < blk_mq_num_hw_queues; hw++) {
         struct blk_mq_hw_queue *hwq = &blk_mq_hw_queues[hw];
@@ -1431,7 +1431,7 @@ void blk_mq_dispatch(void)
  * Returns the number of requests completed during this poll, or
  * -EINVAL if the queue is out of range.
  */
-int blk_mq_hw_queue_poll(int hw_idx)
+static int blk_mq_hw_queue_poll(int hw_idx)
 {
     if (hw_idx < 0 || hw_idx >= blk_mq_num_hw_queues)
         return -EINVAL;
@@ -1465,7 +1465,7 @@ int blk_mq_hw_queue_poll(int hw_idx)
  *
  * Return: 0 on success, negative errno on failure.
  */
-int blk_mq_poll_request(uint64_t sector, uint8_t *buffer, size_t count,
+static int blk_mq_poll_request(uint64_t sector, uint8_t *buffer, size_t count,
                          int write, uint64_t cookie, int timeout_ms)
 {
     struct blk_mq_request *req;
@@ -1587,7 +1587,7 @@ int blk_mq_poll_request(uint64_t sector, uint8_t *buffer, size_t count,
  * explicit I/O completion check).  Returns the total number of completions
  * processed across all poll-mode queues.
  */
-int blk_mq_run_poll(void)
+static int blk_mq_run_poll(void)
 {
     int total = 0;
 
@@ -1626,7 +1626,7 @@ int blk_mq_run_poll(void)
  *
  * Returns 0 on success, -EINVAL if out of range.
  */
-int blk_mq_get_hw_queue_stats(int hw_idx, uint64_t *submitted,
+static int blk_mq_get_hw_queue_stats(int hw_idx, uint64_t *submitted,
                                uint64_t *completed, uint64_t *errors,
                                uint64_t *pending, uint64_t *poll_completed)
 {
@@ -1652,7 +1652,7 @@ int blk_mq_get_hw_queue_stats(int hw_idx, uint64_t *submitted,
  * is assigned its own spinlock for concurrent access.  This function
  * may safely be called multiple times — subsequent calls are no-ops.
  */
-void __init blk_mq_init(void)
+static void __init blk_mq_init(void)
 {
     if (blk_mq_initialized)
         return;
@@ -1689,7 +1689,7 @@ void __init blk_mq_init(void)
 }
 
 /* ── Stub: blk_mq_init_queue ─────────────────────────────────────── */
-int blk_mq_init_queue(void *dev, void *tag_set)
+static int blk_mq_init_queue(void *dev, void *tag_set)
 {
     (void)dev;
     (void)tag_set;
@@ -1697,14 +1697,14 @@ int blk_mq_init_queue(void *dev, void *tag_set)
 }
 
 /* ── Stub: blk_mq_exit_queue ─────────────────────────────────────── */
-int blk_mq_exit_queue(void *q)
+static int blk_mq_exit_queue(void *q)
 {
     (void)q;
     return 0;
 }
 
 /* ── Stub: blk_mq_submit_bio ─────────────────────────────────────── */
-int blk_mq_submit_bio(void *bio)
+static int blk_mq_submit_bio(void *bio)
 {
     (void)bio;
     return 0;

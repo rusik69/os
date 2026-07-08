@@ -292,7 +292,7 @@ static void cl_dispatch(struct ssh_client *c, uint8_t type, uint8_t *pl, int ple
 }
 
 /* Process raw data from network */
-void cl_feed(struct ssh_client *c, const uint8_t *data, int len) {
+static void cl_feed(struct ssh_client *c, const uint8_t *data, int len) {
     if(c->rlen+len>CLI_BUF)len=CLI_BUF-c->rlen;
     memcpy(c->rbuf+c->rlen,data,len);
     c->rlen+=len;
@@ -420,14 +420,14 @@ int ssh_client_ready(struct ssh_client *cl) {
 }
 
 /* ── Stub: ssh_client_disconnect ─────────────────────────────── */
-int ssh_client_disconnect(void *session)
+static int ssh_client_disconnect(void *session)
 {
     (void)session;
     kprintf("[ssh] ssh_client_disconnect: not yet implemented\n");
     return 0;
 }
 /* ── Stub: ssh_client_exec ─────────────────────────────── */
-int ssh_client_exec(void *session, const char *cmd, void *output)
+static int ssh_client_exec(void *session, const char *cmd, void *output)
 {
     (void)session;
     (void)cmd;

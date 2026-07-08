@@ -49,7 +49,7 @@ int dmesg_check_access(void) {
 }
 
 /* ── Stub: dmesg_read ─────────────────────────────── */
-int dmesg_read(void *buf, size_t count, uint64_t *pos)
+static int dmesg_read(void *buf, size_t count, uint64_t *pos)
 {
     (void)buf;
     (void)count;
@@ -58,7 +58,7 @@ int dmesg_read(void *buf, size_t count, uint64_t *pos)
     return 0;
 }
 /* ── Stub: dmesg_write ─────────────────────────────── */
-int dmesg_write(const void *buf, size_t count)
+static int dmesg_write(const void *buf, size_t count)
 {
     (void)buf;
     (void)count;

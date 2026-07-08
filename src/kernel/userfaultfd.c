@@ -508,7 +508,7 @@ int userfaultfd_api(int fd, struct uffdio_api *api_arg)
  * UFFDIO_REGISTER — Register a virtual memory range with the uffd context.
  * Arg comes from userspace; we trust the caller already validated it.
  */
-int userfaultfd_register_ioctl(int fd, struct uffdio_register *reg_arg)
+static int userfaultfd_register_ioctl(int fd, struct uffdio_register *reg_arg)
 {
     if (!reg_arg)
         return -EFAULT;
@@ -528,7 +528,7 @@ int userfaultfd_register_ioctl(int fd, struct uffdio_register *reg_arg)
 /*
  * UFFDIO_UNREGISTER — Unregister a virtual memory range.
  */
-int userfaultfd_unregister_ioctl(int fd, struct uffdio_register *unreg_arg)
+static int userfaultfd_unregister_ioctl(int fd, struct uffdio_register *unreg_arg)
 {
     if (!unreg_arg)
         return -EFAULT;
@@ -1042,7 +1042,7 @@ int64_t __no_sanitize_address sys_userfaultfd2(uint64_t fd, uint64_t cmd, uint64
  * ═══════════════════════════════════════════════════════════════════════ */
 
 /* ── Stub: userfaultfd_poison ──────────────────────────────────────────── */
-int userfaultfd_poison(int fd, uint64_t addr, uint64_t len, uint64_t mode)
+static int userfaultfd_poison(int fd, uint64_t addr, uint64_t len, uint64_t mode)
 {
     (void)fd;
     (void)addr;
@@ -1053,7 +1053,7 @@ int userfaultfd_poison(int fd, uint64_t addr, uint64_t len, uint64_t mode)
 }
 
 /* ── Stub: userfaultfd_remap ───────────────────────────────────────────── */
-int userfaultfd_remap(int fd, uint64_t addr, uint64_t len, uint64_t new_addr)
+static int userfaultfd_remap(int fd, uint64_t addr, uint64_t len, uint64_t new_addr)
 {
     (void)fd;
     (void)addr;
@@ -1064,7 +1064,7 @@ int userfaultfd_remap(int fd, uint64_t addr, uint64_t len, uint64_t new_addr)
 }
 
 /* ── Stub: userfaultfd_unmap ───────────────────────────────────────────── */
-int userfaultfd_unmap(int fd, uint64_t addr, uint64_t len)
+static int userfaultfd_unmap(int fd, uint64_t addr, uint64_t len)
 {
     (void)fd;
     (void)addr;

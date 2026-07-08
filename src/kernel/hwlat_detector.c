@@ -59,7 +59,7 @@ static uint64_t hwlat_measure(void)
 }
 
 /* Start sampling */
-int hwlat_start(void)
+static int hwlat_start(void)
 {
     if (hwlat_enabled)
         return -EBUSY;
@@ -76,7 +76,7 @@ int hwlat_start(void)
 }
 
 /* Stop sampling */
-void hwlat_stop(void)
+static void hwlat_stop(void)
 {
     hwlat_enabled = 0;
     kprintf("[HWLAT] Detector stopped. Max latency: %llu us\n",
@@ -84,7 +84,7 @@ void hwlat_stop(void)
 }
 
 /* Perform a single latency sample (call this periodically) */
-void hwlat_sample(void)
+static void hwlat_sample(void)
 {
     if (!hwlat_enabled)
         return;
@@ -112,7 +112,7 @@ void hwlat_sample(void)
 }
 
 /* Get statistics */
-void hwlat_get_stats(uint64_t *max, uint64_t *avg, uint64_t *count)
+static void hwlat_get_stats(uint64_t *max, uint64_t *avg, uint64_t *count)
 {
     if (max) *max = hwlat_max_latency;
     if (avg) *avg = hwlat_sample_count_total > 0 ?
@@ -120,7 +120,7 @@ void hwlat_get_stats(uint64_t *max, uint64_t *avg, uint64_t *count)
     if (count) *count = hwlat_sample_count_total;
 }
 
-void hwlat_init(void)
+static void hwlat_init(void)
 {
     memset(hwlat_samples, 0, sizeof(hwlat_samples));
     hwlat_enabled = 0;
@@ -128,13 +128,13 @@ void hwlat_init(void)
 }
 
 /* ── Stub: hwlat_detect ─────────────────────────────── */
-int hwlat_detect(void)
+static int hwlat_detect(void)
 {
     kprintf("[hwlat] hwlat_detect: not yet implemented\n");
     return 0;
 }
 /* ── Stub: hwlat_report ─────────────────────────────── */
-int hwlat_report(void *report)
+static int hwlat_report(void *report)
 {
     (void)report;
     kprintf("[hwlat] hwlat_report: not yet implemented\n");

@@ -29,7 +29,7 @@ int ipip_init(void) {
     return 0;
 }
 
-void ipip_exit(void) {
+static void ipip_exit(void) {
     if (!ipip_initialized)
         return;
     /* Tear down any active tunnel */
@@ -116,7 +116,7 @@ EXPORT_SYMBOL(ipip_decapsulate);
  * ═══════════════════════════════════════════════════════════════ */
 
 /* ── Implement: ipip_xmit ────────────────── */
-int ipip_xmit(void *skb, void *dev)
+static int ipip_xmit(void *skb, void *dev)
 {
     if (!skb || !dev) {
         kprintf("[ipip] ipip_xmit: NULL parameter\n");
@@ -126,7 +126,7 @@ int ipip_xmit(void *skb, void *dev)
     return -EOPNOTSUPP;
 }
 /* ── Implement: ipip_rcv ────────────────── */
-int ipip_rcv(void *skb)
+static int ipip_rcv(void *skb)
 {
     if (!skb) {
         kprintf("[ipip] ipip_rcv: NULL skb\n");
@@ -136,7 +136,7 @@ int ipip_rcv(void *skb)
     return -EOPNOTSUPP;
 }
 /* ── Stub: ipip_err ────────────────────────────────── */
-void ipip_err(void *skb, uint32_t info)
+static void ipip_err(void *skb, uint32_t info)
 {
     (void)skb;
     (void)info;

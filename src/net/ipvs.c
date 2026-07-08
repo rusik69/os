@@ -279,7 +279,7 @@ int ipvs_get_dest(uint32_t vip, uint16_t port, uint32_t *rip_out, uint16_t *rpor
 }
 
 /* ── Implement: ipvs_add_service ────────────────── */
-int ipvs_add_service(const void *svc)
+static int ipvs_add_service(const void *svc)
 {
     if (!svc) {
         kprintf("[ipvs] ipvs_add_service: NULL svc\n");
@@ -293,7 +293,7 @@ int ipvs_add_service(const void *svc)
     return -EOPNOTSUPP;
 }
 /* ── Implement: ipvs_del_service ────────────────── */
-int ipvs_del_service(const void *svc)
+static int ipvs_del_service(const void *svc)
 {
     if (!svc) {
         kprintf("[ipvs] ipvs_del_service: NULL svc\n");
@@ -307,7 +307,7 @@ int ipvs_del_service(const void *svc)
     return -EOPNOTSUPP;
 }
 /* ── Implement: ipvs_add_dest ────────────────── */
-int ipvs_add_dest(void *svc, const void *dest)
+static int ipvs_add_dest(void *svc, const void *dest)
 {
     if (!svc || !dest) {
         kprintf("[ipvs] ipvs_add_dest: NULL parameter\n");
@@ -321,7 +321,7 @@ int ipvs_add_dest(void *svc, const void *dest)
     return -EOPNOTSUPP;
 }
 /* ── Implement: ipvs_del_dest ────────────────── */
-int ipvs_del_dest(void *svc, const void *dest)
+static int ipvs_del_dest(void *svc, const void *dest)
 {
     if (!svc || !dest) {
         kprintf("[ipvs] ipvs_del_dest: NULL parameter\n");

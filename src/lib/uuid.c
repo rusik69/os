@@ -2,7 +2,7 @@
 #include "string.h"
 #include "timer.h"
 /* Generate a random UUID v4 using timer-based entropy */
-void uuid_gen(uint8_t uuid[16]) {
+static void uuid_gen(uint8_t uuid[16]) {
     for (int i = 0; i < 16; i++) {
         uint64_t t = timer_get_ticks();
         uint64_t a = (uint64_t)(uintptr_t)&t;
@@ -11,7 +11,7 @@ void uuid_gen(uint8_t uuid[16]) {
     uuid[6] = (uuid[6] & 0x0F) | 0x40; /* Version 4 */
     uuid[8] = (uuid[8] & 0x3F) | 0x80; /* Variant 1 */
 }
-void uuid_to_str(const uint8_t uuid[16], char out[37]) {
+static void uuid_to_str(const uint8_t uuid[16], char out[37]) {
     const char *hex = "0123456789abcdef";
     int pos = 0;
     for (int i = 0; i < 16; i++) {
@@ -23,7 +23,7 @@ void uuid_to_str(const uint8_t uuid[16], char out[37]) {
 }
 
 /* ── uuid_generate ─────────────────────────────── */
-int uuid_generate(void *uuid)
+static int uuid_generate(void *uuid)
 {
     if (!uuid)
         return -1;
@@ -31,7 +31,7 @@ int uuid_generate(void *uuid)
     return 0;
 }
 /* ── uuid_parse ─────────────────────────────── */
-int uuid_parse(const char *str, void *uuid)
+static int uuid_parse(const char *str, void *uuid)
 {
     if (!str || !uuid)
         return -1;
@@ -59,7 +59,7 @@ int uuid_parse(const char *str, void *uuid)
     return (idx == 32) ? 0 : -1;
 }
 /* ── uuid_unparse ─────────────────────────────── */
-int uuid_unparse(const void *uuid, char *str)
+static int uuid_unparse(const void *uuid, char *str)
 {
     if (!uuid || !str)
         return -1;

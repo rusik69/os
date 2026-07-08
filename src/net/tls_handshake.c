@@ -2360,7 +2360,7 @@ static int tls_send_new_session_ticket(struct tls_conn *conn,
  * Called from tls_init() after the record layer is set up.
  * Returns 0 on success, negative errno on failure.
  */
-int __init tls_handshake_init(void)
+static int __init tls_handshake_init(void)
 {
 	kprintf("[ok] tls: handshake protocol initialised (TLS 1.2/1.3)\n");
 	return 0;

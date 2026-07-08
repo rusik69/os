@@ -483,13 +483,13 @@ MODULE_VERSION("1.0");
  * ═══════════════════════════════════════════════════════════════════════ */
 
 /* ── Stub: overlay_cleanup ─────────────────────────────────────────────── */
-void overlay_cleanup(void)
+static void overlay_cleanup(void)
 {
     kprintf("[overlay] overlay_cleanup not yet implemented\n");
 }
 
 /* ── Stub: overlay_add_lower_layer ─────────────────────────────────────── */
-int overlay_add_lower_layer(int mount_idx, const char *lower_dir)
+static int overlay_add_lower_layer(int mount_idx, const char *lower_dir)
 {
     (void)mount_idx;
     (void)lower_dir;
@@ -498,7 +498,7 @@ int overlay_add_lower_layer(int mount_idx, const char *lower_dir)
 }
 
 /* ── Stub: overlay_remove_lower_layer ──────────────────────────────────── */
-int overlay_remove_lower_layer(int mount_idx, const char *lower_dir)
+static int overlay_remove_lower_layer(int mount_idx, const char *lower_dir)
 {
     (void)mount_idx;
     (void)lower_dir;

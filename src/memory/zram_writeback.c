@@ -175,7 +175,7 @@ static int throttle_check(uint32_t byte_count)
 }
 
 /* Called each timer tick to reset throttle */
-void zram_writeback_tick(void)
+static void zram_writeback_tick(void)
 {
     wb_throttle_bytes_this_tick = 0;
 }
@@ -333,7 +333,7 @@ void __init zram_writeback_init(void)
 module_init(zram_writeback_init);
 
 /* ── zram_writeback_check ──────────────────────────────────── */
-int zram_writeback_check(void)
+static int zram_writeback_check(void)
 {
     if (!backing_store_initialised) {
         kprintf("[zram-wb] writeback_check: backing store not initialised\n");
@@ -369,7 +369,7 @@ int zram_writeback_check(void)
     return errors;
 }
 /* ── zram_writeback_load — Load a page from writeback ──────── */
-int zram_writeback_load(void *zram, uint32_t index)
+static int zram_writeback_load(void *zram, uint32_t index)
 {
     (void)zram;
     if (index >= ZRAM_WRITEBACK_MAX_SLOTS)
@@ -405,7 +405,7 @@ int zram_writeback_load(void *zram, uint32_t index)
 }
 
 /* ── zram_writeback_flush — Flush all writeback entries ────── */
-int zram_writeback_flush(void *zram)
+static int zram_writeback_flush(void *zram)
 {
     (void)zram;
 

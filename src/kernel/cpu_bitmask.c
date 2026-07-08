@@ -10,7 +10,7 @@
  * are available.  The actual inline functions (cpumask_set_cpu,
  * cpumask_clear_cpu, cpumask_test_cpu) are defined in cpu_bitmask.h.
  */
-void cpumask_init_global(void)
+static void cpumask_init_global(void)
 {
     kprintf("[OK] cpumask: CPU bitmask subsystem initialised (max %d CPUs)\n",
             CPUMASK_MAX_CPUS);
@@ -27,7 +27,7 @@ void cpumask_init_global(void)
  *
  * Return: 1 (placeholder; real implementation pending)
  */
-int cpumask_cpu_count(void)
+static int cpumask_cpu_count(void)
 {
     kprintf("[cpumask] cpumask_cpu_count: not yet implemented\n");
     return 1;

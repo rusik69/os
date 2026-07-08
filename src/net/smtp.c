@@ -186,7 +186,7 @@ int smtp_send_auth(uint32_t server_ip, uint16_t port,
 }
 
 /* ── Implement: smtp_connect ────────────────── */
-int smtp_connect(const char *host, int port)
+static int smtp_connect(const char *host, int port)
 {
     if (!host || !*host) {
         kprintf("[smtp] smtp_connect: invalid hostname\n");
@@ -201,7 +201,7 @@ int smtp_connect(const char *host, int port)
 }
 
 /* Module init */
-void smtp_init(void)
+static void smtp_init(void)
 {
     kprintf("[OK] SMTP client initialized\n");
 }

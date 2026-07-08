@@ -73,7 +73,7 @@ static int ipe_is_path_trusted(const char *path)
  *   0  — File fails IPE checks (if strict mode, execution denied).
  *  -1  — Error.
  */
-int ipe_verify_file(const char *path)
+static int ipe_verify_file(const char *path)
 {
     if (!path)
         return -EINVAL;
@@ -144,7 +144,7 @@ int ipe_check_exec(const char *path)
  *
  * Returns 0 on success, -1 on failure.
  */
-int ipe_add_trusted_path(const char *prefix)
+static int ipe_add_trusted_path(const char *prefix)
 {
     if (!prefix || g_ipe_trusted_count >= IPE_MAX_TRUSTED_PATHS)
         return -EINVAL;
@@ -165,7 +165,7 @@ int ipe_add_trusted_path(const char *prefix)
  *
  * @mode:  IPE_MODE_OFF, IPE_MODE_PERMISSIVE, or IPE_MODE_STRICT.
  */
-void ipe_set_mode(int mode)
+static void ipe_set_mode(int mode)
 {
     if (mode >= IPE_MODE_OFF && mode <= IPE_MODE_STRICT)
         g_ipe_mode = mode;
@@ -174,7 +174,7 @@ void ipe_set_mode(int mode)
 /*
  * ipe_get_mode — Get the current IPE enforcement mode.
  */
-int ipe_get_mode(void)
+static int ipe_get_mode(void)
 {
     return g_ipe_mode;
 }
@@ -184,7 +184,7 @@ int ipe_get_mode(void)
  *
  * Registers default trusted paths and sets the default policy.
  */
-void __init ipe_init(void)
+static void __init ipe_init(void)
 {
     if (g_ipe_initialized) return;
 
@@ -218,7 +218,7 @@ struct file_lock;
  * In strict mode, the module must have a valid signature or be on a
  * trusted path.
  */
-int ipe_kernel_module_load(const char *path)
+static int ipe_kernel_module_load(const char *path)
 {
     if (!path)
         return -EINVAL;
@@ -245,7 +245,7 @@ int ipe_kernel_module_load(const char *path)
 /*
  * Verify integrity of the kernel image and initrd for kexec.
  */
-int ipe_kexec_load(const char *kernel, const char *initrd, const char *cmdline)
+static int ipe_kexec_load(const char *kernel, const char *initrd, const char *cmdline)
 {
     if (!kernel)
         return -EINVAL;
@@ -295,7 +295,7 @@ int ipe_bprm_check_security(struct linux_binprm *bprm)
  * Check file open against IPE policy.
  * Files that are opened for execution are verified.
  */
-int ipe_file_open(struct file *file)
+static int ipe_file_open(struct file *file)
 {
     if (!file)
         return -EINVAL;
@@ -312,7 +312,7 @@ int ipe_file_open(struct file *file)
 /*
  * Verify a file being memory-mapped for execution.
  */
-int ipe_mmap_file(struct file *file, unsigned long prot)
+static int ipe_mmap_file(struct file *file, unsigned long prot)
 {
     if (!file)
         return -EINVAL;
@@ -335,7 +335,7 @@ int ipe_mmap_file(struct file *file, unsigned long prot)
  * Check ioctl operation against IPE policy.
  * In strict mode, restrict certain ioctl operations.
  */
-int ipe_file_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+static int ipe_file_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
     if (!file)
         return -EINVAL;
@@ -355,7 +355,7 @@ int ipe_file_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 /*
  * Check file locking operation against IPE policy.
  */
-int ipe_file_lock(struct file *file, int cmd, struct file_lock *fl)
+static int ipe_file_lock(struct file *file, int cmd, struct file_lock *fl)
 {
     if (!file)
         return -EINVAL;
@@ -374,7 +374,7 @@ int ipe_file_lock(struct file *file, int cmd, struct file_lock *fl)
 /*
  * Check fcntl operation against IPE policy.
  */
-int ipe_file_fcntl(struct file *file, unsigned int cmd, unsigned long arg)
+static int ipe_file_fcntl(struct file *file, unsigned int cmd, unsigned long arg)
 {
     if (!file)
         return -EINVAL;

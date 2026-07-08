@@ -340,7 +340,7 @@ static struct vfs_ops ufs_ops = {
 
 /* ── Probe ──────────────────────────────────────────────────────── */
 
-int ufs_probe(uint8_t dev_id)
+static int ufs_probe(uint8_t dev_id)
 {
     uint8_t buf[512];
     /* UFS superblock at sector 2 (byte offset 1024) */
@@ -357,7 +357,7 @@ int ufs_probe(uint8_t dev_id)
 
 /* ── Init ──────────────────────────────────────────────────────── */
 
-int __init ufs_init(void)
+static int __init ufs_init(void)
 {
     kprintf("[ufs] UFS/FFS filesystem (with cylinder groups, fragments, soft updates stub) initialized\n");
     vfs_register_filesystem("ufs", &ufs_ops);
@@ -374,7 +374,7 @@ MODULE_VERSION("1.0");
 #endif
 
 /* ── ufs_mount ──────────────────────────────────────── */
-int ufs_mount(const char *source, const char *target, unsigned long flags)
+static int ufs_mount(const char *source, const char *target, unsigned long flags)
 {
     (void)source;
     (void)target;
@@ -383,14 +383,14 @@ int ufs_mount(const char *source, const char *target, unsigned long flags)
     return 0;
 }
 /* ── ufs_umount ──────────────────────────────────────── */
-int ufs_umount(const char *target)
+static int ufs_umount(const char *target)
 {
     (void)target;
     kprintf("[ufs] UFS unmounted\n");
     return 0;
 }
 /* ── ufs_lookup ──────────────────────────────────────── */
-int ufs_lookup(const char *name, void *parent)
+static int ufs_lookup(const char *name, void *parent)
 {
     (void)parent;
     kprintf("[ufs] lookup: %s\n", name);

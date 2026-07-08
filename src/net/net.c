@@ -163,7 +163,7 @@ int rt_lookup(uint32_t ip, uint32_t *gw_out, int *iface_out) {
     return 0;
 }
 
-void rt_clear(void) {
+static void rt_clear(void) {
     spinlock_acquire(&net_lock);
     rt_num_entries = 0;
     spinlock_release(&net_lock);
@@ -1445,7 +1445,7 @@ EXPORT_SYMBOL(net_udp_recv);
 EXPORT_SYMBOL(net_udp_unlisten);
 
 /* ── Implement: net_exit ──────────────────────────────── */
-int net_exit(void)
+static int net_exit(void)
 {
     kprintf("[net] net_exit: shutting down network stack\n");
     for (int i = 0; i < MAX_TCP_CONNS; i++) {
@@ -1456,14 +1456,14 @@ int net_exit(void)
     return 0;
 }
 /* ── Implement: net_register_protocol ─────────────────── */
-int net_register_protocol(int family, void *proto)
+static int net_register_protocol(int family, void *proto)
 {
     (void)proto;
     kprintf("[net] net_register_protocol: registered family %d\n", family);
     return 0;
 }
 /* ── Implement: net_unregister_protocol ───────────────── */
-int net_unregister_protocol(int family)
+static int net_unregister_protocol(int family)
 {
     kprintf("[net] net_unregister_protocol: unregistered family %d\n", family);
     return 0;

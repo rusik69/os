@@ -398,7 +398,7 @@ static int efi_var_store_set_variable(const char *name, uint8_t *guid,
  * -ENOENT if no more variables exist.
  * On first call, set *name_size to 0 to start from the beginning.
  */
-int efi_var_store_get_next_variable(uint64_t *name_size, char *name,
+static int efi_var_store_get_next_variable(uint64_t *name_size, char *name,
                                      uint8_t *guid)
 {
     if (!name_size || !name) return -EINVAL;
@@ -435,7 +435,7 @@ int efi_var_store_get_next_variable(uint64_t *name_size, char *name,
 /* QueryVariableInfo — return storage space info for the variable store.
  * Returns total, available, and maximum variable storage space.
  */
-int efi_var_store_query_variable_info(uint32_t attributes,
+static int efi_var_store_query_variable_info(uint32_t attributes,
                                        uint64_t *max_storage,
                                        uint64_t *remaining,
                                        uint64_t *max_var_size)
@@ -460,7 +460,7 @@ int efi_var_store_query_variable_info(uint32_t attributes,
  * On success, fills in @enabled (1 if alarm is set), @pending (1 if
  * alarm has triggered), and the alarm time components.
  */
-int efi_get_wakeup_time(uint8_t *enabled, uint8_t *pending,
+static int efi_get_wakeup_time(uint8_t *enabled, uint8_t *pending,
                         uint16_t *year, uint8_t *month, uint8_t *day,
                         uint8_t *hour, uint8_t *minute, uint8_t *second)
 {
@@ -502,7 +502,7 @@ int efi_get_wakeup_time(uint8_t *enabled, uint8_t *pending,
  * If @enable is non-zero, sets an alarm for the specified time.
  * The alarm time components are stored in an in-memory EFI variable.
  */
-int efi_set_wakeup_time(uint8_t enable, uint16_t year, uint8_t month, uint8_t day,
+static int efi_set_wakeup_time(uint8_t enable, uint16_t year, uint8_t month, uint8_t day,
                         uint8_t hour, uint8_t minute, uint8_t second)
 {
     static const uint8_t wakeup_guid[16] = {
@@ -553,7 +553,7 @@ int efi_set_wakeup_time(uint8_t enable, uint16_t year, uint8_t month, uint8_t da
  * Returns a bitmask of EFI_RT_SUPPORTED_* flags.
  * If no UEFI runtime is present, returns the software fallback set.
  */
-uint64_t efi_query_rts_properties(void)
+static uint64_t efi_query_rts_properties(void)
 {
     uint64_t props = 0;
 

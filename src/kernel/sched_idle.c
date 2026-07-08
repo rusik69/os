@@ -197,21 +197,21 @@ int sched_idle_count(void)
 }
 
 /* ── Stub: sched_idle_balance ─────────────────────────────── */
-int sched_idle_balance(int cpu)
+static int sched_idle_balance(int cpu)
 {
     (void)cpu;
     kprintf("[sched] sched_idle_balance: not yet implemented\n");
     return 0;
 }
 /* ── Stub: sched_idle_pick ─────────────────────────────── */
-int sched_idle_pick(int cpu)
+static int sched_idle_pick(int cpu)
 {
     (void)cpu;
     kprintf("[sched] sched_idle_pick: not yet implemented\n");
     return 0;
 }
 /* ── Stub: sched_idle_set ─────────────────────────────── */
-int sched_idle_set(int cpu, int idle)
+static int sched_idle_set(int cpu, int idle)
 {
     (void)cpu;
     (void)idle;

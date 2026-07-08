@@ -207,7 +207,7 @@ const char *module_alias_find(const char *modalias)
 
 /* Print all registered aliases to kprintf.  Used by the lsmod command
  * (via sys_query_module) and for debugging. */
-void module_alias_dump(void)
+static void module_alias_dump(void)
 {
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&g_alias_lock, &irq_flags);
@@ -230,7 +230,7 @@ void module_alias_dump(void)
 }
 
 /* ── Stub: module_alias_lookup ─────────────────────────────── */
-const char* module_alias_lookup(const char *alias)
+static const char* module_alias_lookup(const char *alias)
 {
     (void)alias;
     kprintf("[modalias] module_alias_lookup: not yet implemented\n");

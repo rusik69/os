@@ -115,7 +115,7 @@ static uint32_t ovs_flow_hash(const struct ovs_flow_key *key)
 }
 
 /* Add a flow entry */
-int ovs_flow_add(const struct ovs_flow_key *key,
+static int ovs_flow_add(const struct ovs_flow_key *key,
                   const struct ovs_action *actions, int n_actions,
                   uint64_t cookie, int idle_timeout)
 {
@@ -177,7 +177,7 @@ int ovs_flow_add(const struct ovs_flow_key *key,
 }
 
 /* Delete a flow */
-int ovs_flow_del(uint64_t cookie)
+static int ovs_flow_del(uint64_t cookie)
 {
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&ovs_lock, &irq_flags);
@@ -196,7 +196,7 @@ int ovs_flow_del(uint64_t cookie)
 }
 
 /* Lookup a flow by key and execute actions */
-int ovs_flow_execute(const struct ovs_flow_key *key,
+static int ovs_flow_execute(const struct ovs_flow_key *key,
                       uint8_t *packet, size_t *pkt_len)
 {
     uint64_t irq_flags;
@@ -323,7 +323,7 @@ int ovs_flow_execute(const struct ovs_flow_key *key,
 }
 
 /* Age out idle flows */
-void ovs_flow_age(void)
+static void ovs_flow_age(void)
 {
     uint64_t irq_flags;
     uint64_t now = timer_get_ticks();
@@ -341,7 +341,7 @@ void ovs_flow_age(void)
     spinlock_irqsave_release(&ovs_lock, irq_flags);
 }
 
-void ovs_init(void)
+static void ovs_init(void)
 {
     spinlock_init(&ovs_lock);
     memset(ovs_flow_table, 0, sizeof(ovs_flow_table));
@@ -352,7 +352,7 @@ void ovs_init(void)
 module_init(ovs_init);
 
 /* ── Implement: ovs_add_flow ────────────────── */
-int ovs_add_flow(const void *flow)
+static int ovs_add_flow(const void *flow)
 {
     if (!flow) {
         kprintf("[openvswitch] ovs_add_flow: NULL flow\n");
@@ -362,7 +362,7 @@ int ovs_add_flow(const void *flow)
     return -EOPNOTSUPP;
 }
 /* ── Implement: ovs_del_flow ────────────────── */
-int ovs_del_flow(const void *flow)
+static int ovs_del_flow(const void *flow)
 {
     if (!flow) {
         kprintf("[openvswitch] ovs_del_flow: NULL flow\n");
@@ -372,7 +372,7 @@ int ovs_del_flow(const void *flow)
     return -EOPNOTSUPP;
 }
 /* ── Implement: ovs_add_port ────────────────── */
-int ovs_add_port(const char *name, void *dev)
+static int ovs_add_port(const char *name, void *dev)
 {
     if (!name || !dev) {
         kprintf("[openvswitch] ovs_add_port: NULL parameter\n");

@@ -336,7 +336,7 @@ static int fq_drop(struct qdisc *q)
 /* ── Query ──────────────────────────────────────────────────────── */
 
 /* Return total queued packets across all flows. */
-int fq_qlen(struct qdisc *q)
+static int fq_qlen(struct qdisc *q)
 {
     struct fq_priv *priv = (struct fq_priv *)q->priv;
     if (!priv)
@@ -349,7 +349,7 @@ int fq_qlen(struct qdisc *q)
 }
 
 /* Return number of flows that have at least one packet. */
-int fq_flow_count(struct qdisc *q)
+static int fq_flow_count(struct qdisc *q)
 {
     struct fq_priv *priv = (struct fq_priv *)q->priv;
     if (!priv)
@@ -364,7 +364,7 @@ int fq_flow_count(struct qdisc *q)
 }
 
 /* Collect statistics. */
-void fq_get_stats(struct qdisc *q, uint64_t *drops, uint64_t *dequeues)
+static void fq_get_stats(struct qdisc *q, uint64_t *drops, uint64_t *dequeues)
 {
     struct fq_priv *priv = (struct fq_priv *)q->priv;
     if (!priv)

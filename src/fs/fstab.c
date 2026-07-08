@@ -290,13 +290,13 @@ int fstab_mount_all(void) {
 }
 
 /* ── fstab_read ──────────────────────────────────────── */
-int fstab_read(const char *path)
+static int fstab_read(const char *path)
 {
     kprintf("[fstab] Reading fstab: %s\n", path);
     return 0;
 }
 /* ── fstab_write ─────────────────────────────────────── */
-int fstab_write(const char *path)
+static int fstab_write(const char *path)
 {
     kprintf("[fstab] Writing fstab: %s\n", path);
     return 0;

@@ -659,7 +659,7 @@ int kmemleak_unreferenced_count(void)
 }
 
 /* ── Stub: kmemleak_report ─────────────────────────────── */
-int kmemleak_report(void)
+static int kmemleak_report(void)
 {
     kprintf("[kmemleak] kmemleak_report: not yet implemented\n");
     return 0;

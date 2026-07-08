@@ -351,14 +351,14 @@ void mce_inject_init(void)
 }
 
 /* ── Stub: mce_inject ─────────────────────────────── */
-int mce_inject(void *mce)
+static int mce_inject(void *mce)
 {
     (void)mce;
     kprintf("[mce] mce_inject: not yet implemented\n");
     return 0;
 }
 /* ── Stub: mce_inject_bank ─────────────────────────────── */
-int mce_inject_bank(int bank, uint64_t status, uint64_t addr)
+static int mce_inject_bank(int bank, uint64_t status, uint64_t addr)
 {
     (void)bank;
     (void)status;

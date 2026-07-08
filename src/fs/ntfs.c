@@ -581,7 +581,7 @@ MODULE_DESCRIPTION("NTFS — read-only");
 #endif
 
 /* ── ntfs_mount ──────────────────────────────────────── */
-int ntfs_mount(const char *source, const char *target, unsigned long flags)
+static int ntfs_mount(const char *source, const char *target, unsigned long flags)
 {
     (void)source;
     (void)target;
@@ -590,14 +590,14 @@ int ntfs_mount(const char *source, const char *target, unsigned long flags)
     return 0;
 }
 /* ── ntfs_umount ──────────────────────────────────────── */
-int ntfs_umount(const char *target)
+static int ntfs_umount(const char *target)
 {
     (void)target;
     kprintf("[ntfs] NTFS unmounted\n");
     return 0;
 }
 /* ── ntfs_lookup ──────────────────────────────────────── */
-int ntfs_lookup(const char *name, void *parent)
+static int ntfs_lookup(const char *name, void *parent)
 {
     (void)parent;
     kprintf("[ntfs] lookup: %s\n", name);

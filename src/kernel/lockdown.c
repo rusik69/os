@@ -57,14 +57,14 @@ int lockdown_get_level(void)
 }
 
 /* ── lockdown_set ────────────────────────────────────────────── */
-int lockdown_set(int level)
+static int lockdown_set(int level)
 {
     lock_down(level);
     return 0;
 }
 
 /* ── lockdown_release ────────────────────────────────────────── */
-int lockdown_release(void)
+static int lockdown_release(void)
 {
     /* Lockdown is irreversible; this is a no-op */
     kprintf("[LOCKDOWN] lockdown_release: lockdown is irreversible, ignored\n");
@@ -72,7 +72,7 @@ int lockdown_release(void)
 }
 
 /* ── lockdown_restrict ───────────────────────────────────────── */
-int lockdown_restrict(const char *reason)
+static int lockdown_restrict(const char *reason)
 {
     kprintf("[LOCKDOWN] lockdown_restrict: %s\n", reason ? reason : "unspecified reason");
     lock_down(LOCKDOWN_INTEGRITY);
@@ -80,13 +80,13 @@ int lockdown_restrict(const char *reason)
 }
 
 /* ── lockdown_get ─────────────────────────────── */
-int lockdown_get(void)
+static int lockdown_get(void)
 {
     return g_lockdown_level;
 }
 
 /* ── lockdown_is_locked ─────────────────────────────── */
-int lockdown_is_locked(int what)
+static int lockdown_is_locked(int what)
 {
     return lockdown_is_locked_down(what);
 }

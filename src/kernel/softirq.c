@@ -268,7 +268,7 @@ void do_softirq(void)
 }
 
 /* ── softirq_handle: Handle pending softirqs in process context ────── */
-int softirq_handle(void)
+static int softirq_handle(void)
 {
     /* Forward to the existing do_softirq implementation */
     do_softirq();

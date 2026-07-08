@@ -634,7 +634,7 @@ int stp_port_state(int port_num) {
  * ═══════════════════════════════════════════════════════════════ */
 
 /* ── Implement: stp_xmit ────────────────── */
-int stp_xmit(void *skb, int port_num)
+static int stp_xmit(void *skb, int port_num)
 {
     if (!skb || port_num < 0) {
         kprintf("[stp] stp_xmit: invalid parameter (skb=%p port=%d)\n", skb, port_num);
@@ -644,7 +644,7 @@ int stp_xmit(void *skb, int port_num)
     return -EOPNOTSUPP;
 }
 /* ── Implement: stp_rcv ────────────────── */
-int stp_rcv(void *skb, int port_num)
+static int stp_rcv(void *skb, int port_num)
 {
     if (!skb || port_num < 0) {
         kprintf("[stp] stp_rcv: invalid parameter (skb=%p port=%d)\n", skb, port_num);
@@ -654,19 +654,19 @@ int stp_rcv(void *skb, int port_num)
     return -EOPNOTSUPP;
 }
 /* ── Stub: stp_become_root ─────────────────────────── */
-void stp_become_root(void)
+static void stp_become_root(void)
 {
     kprintf("[STP] stp_become_root: not yet implemented\n");
 }
 /* ── Stub: stp_become_designated ───────────────────── */
-void stp_become_designated(int port_num)
+static void stp_become_designated(int port_num)
 {
     (void)port_num;
     kprintf("[STP] stp_become_designated: not yet implemented\n");
 }
 
 /* Module init — zero-arg wrapper for module loader */
-void stp_mod_init(void)
+static void stp_mod_init(void)
 {
     if (g_initialized) return;
     g_initialized = 1;

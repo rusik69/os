@@ -1446,7 +1446,7 @@ MODULE_VERSION("1.0");
 #endif
 
 /* ── cifs_write ────────────────────────────────────── */
-int cifs_write(void *file, const void *buf, size_t count, uint64_t offset)
+static int cifs_write(void *file, const void *buf, size_t count, uint64_t offset)
 {
     (void)file;
     (void)buf;

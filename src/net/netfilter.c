@@ -164,7 +164,7 @@ int nf_check_rules(void *skb, uint32_t src_ip, uint32_t dst_ip,
 
 /* ── NAT ────────────────────────────────────────────────────────── */
 
-int nf_nat_register_rule(uint32_t orig_ip, uint16_t orig_port,
+static int nf_nat_register_rule(uint32_t orig_ip, uint16_t orig_port,
                           uint32_t new_ip, uint16_t new_port) {
     if (nf_nat_num_rules >= NF_NAT_RULES_MAX) return -1;
     nf_nat_rules[nf_nat_num_rules].orig_ip   = orig_ip;
@@ -176,7 +176,7 @@ int nf_nat_register_rule(uint32_t orig_ip, uint16_t orig_port,
     return 0;
 }
 
-int nf_nat_apply_pre_routing(uint32_t *ip, uint16_t *port) {
+static int nf_nat_apply_pre_routing(uint32_t *ip, uint16_t *port) {
     if (!ip || !port) return 0;
     for (int i = 0; i < NF_NAT_RULES_MAX; i++) {
         if (!nf_nat_rules[i].used) continue;
@@ -191,7 +191,7 @@ int nf_nat_apply_pre_routing(uint32_t *ip, uint16_t *port) {
     return 0;
 }
 
-int nf_nat_apply_post_routing(uint32_t *ip, uint16_t *port) {
+static int nf_nat_apply_post_routing(uint32_t *ip, uint16_t *port) {
     if (!ip || !port) return 0;
     for (int i = 0; i < NF_NAT_RULES_MAX; i++) {
         if (!nf_nat_rules[i].used) continue;
@@ -267,20 +267,20 @@ void nf_init(void) {
 module_init(nf_init);
 
 /* ── Implement: netfilter_register ────────────────────── */
-int netfilter_register(void *hook)
+static int netfilter_register(void *hook)
 {
     if (!hook) return -EINVAL;
     /* Registration uses simple (hooknum, fn, priority) API */
     return 0;
 }
 /* ── Implement: netfilter_unregister ──────────────────── */
-int netfilter_unregister(void *hook)
+static int netfilter_unregister(void *hook)
 {
     if (!hook) return -EINVAL;
     return 0;
 }
 /* ── Implement: netfilter_hook ────────────────────────── */
-int netfilter_hook(void *skb, void *dev, int dir)
+static int netfilter_hook(void *skb, void *dev, int dir)
 {
     if (!skb) return -EINVAL;
     (void)dev; (void)dir;

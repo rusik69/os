@@ -260,7 +260,7 @@ static struct vfs_ops adfs_ops = {
 
 /* ── Probe ──────────────────────────────────────────────────────── */
 
-int adfs_probe(uint8_t dev_id)
+static int adfs_probe(uint8_t dev_id)
 {
     uint8_t buf[512];
     if (blockdev_read_sectors(dev_id, 0, 1, buf) != 0)
@@ -277,7 +277,7 @@ int adfs_probe(uint8_t dev_id)
 
 /* ── Init ──────────────────────────────────────────────────────── */
 
-int __init adfs_init(void)
+static int __init adfs_init(void)
 {
     kprintf("[adfs] Acorn Disc Filing System initialized\n");
     vfs_register_filesystem("adfs", &adfs_ops);
@@ -294,7 +294,7 @@ MODULE_VERSION("1.0");
 #endif
 
 /* ── adfs_mount ──────────────────────────────────────── */
-int adfs_mount(const char *source, const char *target, unsigned long flags)
+static int adfs_mount(const char *source, const char *target, unsigned long flags)
 {
     (void)source;
     (void)target;
@@ -303,14 +303,14 @@ int adfs_mount(const char *source, const char *target, unsigned long flags)
     return 0;
 }
 /* ── adfs_umount ─────────────────────────────────────── */
-int adfs_umount(const char *target)
+static int adfs_umount(const char *target)
 {
     (void)target;
     kprintf("[adfs] ADFS unmounted\n");
     return 0;
 }
 /* ── adfs_lookup ────────────────────────────────────── */
-int adfs_lookup(const char *name, void *parent)
+static int adfs_lookup(const char *name, void *parent)
 {
     (void)parent;
     kprintf("[adfs] lookup: %s\n", name);

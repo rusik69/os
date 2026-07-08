@@ -338,7 +338,7 @@ static int __request_module_internal(const char *name, const char *params, int f
  *
  * See __request_module_internal() for parameter/return documentation.
  */
-int __request_module(const char *name, const char *params, int flags)
+static int __request_module(const char *name, const char *params, int flags)
 {
     if (!name || !name[0])
         return -EINVAL;
@@ -440,7 +440,7 @@ int module_autoload(const char *name)
     return 0;
 }
 /* ── Stub: module_autoload_alias ─────────────────────────────── */
-int module_autoload_alias(const char *alias)
+static int module_autoload_alias(const char *alias)
 {
     (void)alias;
     kprintf("[modload] module_autoload_alias: not yet implemented\n");

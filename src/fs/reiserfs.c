@@ -564,7 +564,7 @@ MODULE_VERSION("1.0");
 #endif
 
 /* ── reiserfs_mount ────────────────────────────────────── */
-int reiserfs_mount(const char *source, const char *target, unsigned long flags)
+static int reiserfs_mount(const char *source, const char *target, unsigned long flags)
 {
     (void)source;
     (void)target;
@@ -573,14 +573,14 @@ int reiserfs_mount(const char *source, const char *target, unsigned long flags)
     return 0;
 }
 /* ── reiserfs_umount ───────────────────────────────────── */
-int reiserfs_umount(const char *target)
+static int reiserfs_umount(const char *target)
 {
     (void)target;
     kprintf("[reiserfs] ReiserFS unmounted\n");
     return 0;
 }
 /* ── reiserfs_lookup ───────────────────────────────────── */
-int reiserfs_lookup(const char *name, void *parent)
+static int reiserfs_lookup(const char *name, void *parent)
 {
     (void)parent;
     kprintf("[reiserfs] lookup: %s\n", name);

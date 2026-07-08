@@ -297,7 +297,7 @@ EXPORT_SYMBOL(gre_decapsulate);
  * ═══════════════════════════════════════════════════════════════ */
 
 /* ── Implement: gre_xmit ────────────────── */
-int gre_xmit(void *skb, void *dev)
+static int gre_xmit(void *skb, void *dev)
 {
     if (!skb || !dev) {
         kprintf("[gre] gre_xmit: NULL parameter\n");
@@ -307,7 +307,7 @@ int gre_xmit(void *skb, void *dev)
     return -EOPNOTSUPP;
 }
 /* ── Implement: gre_rcv ────────────────── */
-int gre_rcv(void *skb)
+static int gre_rcv(void *skb)
 {
     if (!skb) {
         kprintf("[gre] gre_rcv: NULL skb\n");
@@ -317,7 +317,7 @@ int gre_rcv(void *skb)
     return -EOPNOTSUPP;
 }
 /* ── Stub: gre_err ─────────────────────────────────── */
-void gre_err(void *skb, uint32_t info)
+static void gre_err(void *skb, uint32_t info)
 {
     (void)skb;
     (void)info;

@@ -60,7 +60,7 @@ int vlan_tag_frame(uint8_t *frame, int len, uint16_t vid) {
 }
 
 /* ── Implement: vlan_xmit ────────────────── */
-int vlan_xmit(void *skb, void *dev)
+static int vlan_xmit(void *skb, void *dev)
 {
     if (!skb || !dev) {
         kprintf("[vlan] vlan_xmit: NULL parameter\n");
@@ -70,7 +70,7 @@ int vlan_xmit(void *skb, void *dev)
     return -EOPNOTSUPP;
 }
 /* ── Implement: vlan_kill_vid ────────────────── */
-int vlan_kill_vid(void *dev, uint16_t vid)
+static int vlan_kill_vid(void *dev, uint16_t vid)
 {
     if (!dev) {
         kprintf("[vlan] vlan_kill_vid: NULL dev\n");

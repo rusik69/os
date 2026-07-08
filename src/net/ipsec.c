@@ -69,7 +69,7 @@ struct security_assoc {
 static struct security_assoc sadb[SADB_MAX_SAS];
 static int ipsec_initialised = 0;
 
-void ipsec_init(void)
+static void ipsec_init(void)
 {
     if (ipsec_initialised) return;
     memset(sadb, 0, sizeof(sadb));
@@ -98,7 +98,7 @@ static int sadb_find_by_spi(uint32_t spi, uint32_t dst_ip)
 }
 
 /* Add a Security Association */
-int ipsec_sa_add(uint32_t spi, uint32_t src_ip, uint32_t dst_ip,
+static int ipsec_sa_add(uint32_t spi, uint32_t src_ip, uint32_t dst_ip,
                  uint8_t proto, uint8_t mode,
                  const uint8_t *auth_key, int auth_key_len,
                  const uint8_t *enc_key, int enc_key_len)
@@ -142,7 +142,7 @@ int ipsec_sa_add(uint32_t spi, uint32_t src_ip, uint32_t dst_ip,
 }
 
 /* Delete a Security Association */
-int ipsec_sa_del(uint32_t spi, uint32_t dst_ip)
+static int ipsec_sa_del(uint32_t spi, uint32_t dst_ip)
 {
     int idx = sadb_find_by_spi(spi, dst_ip);
     if (idx < 0) return -ENOENT;
@@ -151,7 +151,7 @@ int ipsec_sa_del(uint32_t spi, uint32_t dst_ip)
 }
 
 /* Flush all SAs */
-void ipsec_sa_flush(void)
+static void ipsec_sa_flush(void)
 {
     memset(sadb, 0, sizeof(sadb));
     kprintf("ipsec: all SAs flushed\n");
@@ -169,7 +169,7 @@ static int ipsec_compute_icv(struct security_assoc *sa, const uint8_t *data,
 }
 
 /* ESP/AH output path: encapsulate a payload with ESP or AH header */
-int ipsec_output_ah(struct ip_header *outer_ip, uint8_t *buf, int *len, int max_len)
+static int ipsec_output_ah(struct ip_header *outer_ip, uint8_t *buf, int *len, int max_len)
 {
     if (!ipsec_initialised || !buf || !len || !outer_ip) return -EINVAL;
     uint32_t dst_ip = ntohl(outer_ip->dst_ip);
@@ -211,7 +211,7 @@ int ipsec_output_ah(struct ip_header *outer_ip, uint8_t *buf, int *len, int max_
     return 0;
 }
 
-int ipsec_output_esp(struct ip_header *outer_ip, uint8_t *buf, int *len, int max_len)
+static int ipsec_output_esp(struct ip_header *outer_ip, uint8_t *buf, int *len, int max_len)
 {
     if (!ipsec_initialised || !buf || !len || !outer_ip) return -EINVAL;
     uint32_t dst_ip = ntohl(outer_ip->dst_ip);
@@ -332,20 +332,20 @@ static int ipsec_input_esp(struct ip_header *ip_hdr, const uint8_t *payload, int
 }
 
 /* Process inbound IPsec packet (called from IP layer) */
-void handle_ipsec_ah(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len)
+static void handle_ipsec_ah(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len)
 {
     if (!ipsec_initialised) return;
     ipsec_input_ah(ip_hdr, payload, len);
 }
 
-void handle_ipsec_esp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len)
+static void handle_ipsec_esp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len)
 {
     if (!ipsec_initialised) return;
     ipsec_input_esp(ip_hdr, payload, len);
 }
 /* List all Security Associations — fills @buf with up to @max entries.
  * Returns the number of active SAs. */
-int ipsec_sa_list(struct security_assoc *buf, int max)
+static int ipsec_sa_list(struct security_assoc *buf, int max)
 {
     int count = 0;
     for (int i = 0; i < SADB_MAX_SAS && count < max; i++) {
@@ -362,7 +362,7 @@ module_init(ipsec_init);
  * ═══════════════════════════════════════════════════════════════ */
 
 /* ── ipsec_encrypt: encrypt data using SA key material ── */
-int ipsec_encrypt(void *skb, void *sa)
+static int ipsec_encrypt(void *skb, void *sa)
 {
     (void)skb;
     if (!ipsec_initialised) return -ENOSYS;
@@ -379,7 +379,7 @@ int ipsec_encrypt(void *skb, void *sa)
     return 0;
 }
 /* ── ipsec_decrypt: decrypt data using SA key material ── */
-int ipsec_decrypt(void *skb, void *sa)
+static int ipsec_decrypt(void *skb, void *sa)
 {
     (void)skb;
     if (!ipsec_initialised) return -ENOSYS;
@@ -396,7 +396,7 @@ int ipsec_decrypt(void *skb, void *sa)
     return 0;
 }
 /* ── ipsec_key_add: add key material to an existing SA ── */
-int ipsec_key_add(void *sa, const uint8_t *key, int key_len, int is_encrypt)
+static int ipsec_key_add(void *sa, const uint8_t *key, int key_len, int is_encrypt)
 {
     if (!ipsec_initialised) return -ENOSYS;
     if (!sa || !key || key_len <= 0) return -EINVAL;
@@ -415,7 +415,7 @@ int ipsec_key_add(void *sa, const uint8_t *key, int key_len, int is_encrypt)
     return 0;
 }
 /* ── Stub: ipsec_sa_alloc ──────────────────────────── */
-struct ipsec_sa *ipsec_sa_alloc(void)
+static struct ipsec_sa *ipsec_sa_alloc(void)
 {
     if (!ipsec_initialised) return NULL;
 
@@ -432,7 +432,7 @@ struct ipsec_sa *ipsec_sa_alloc(void)
     return NULL;
 }
 /* ── Stub: ipsec_sa_free ───────────────────────────── */
-void ipsec_sa_free(struct ipsec_sa *sa)
+static void ipsec_sa_free(struct ipsec_sa *sa)
 {
     if (!sa || !ipsec_initialised) return;
     struct security_assoc *s = (struct security_assoc *)sa;
@@ -440,7 +440,7 @@ void ipsec_sa_free(struct ipsec_sa *sa)
     kprintf("[IPSEC] ipsec_sa_free: freed SA\n");
 }
 /* ── Stub: ipsec_sa_lookup ─────────────────────────── */
-struct ipsec_sa *ipsec_sa_lookup(uint32_t spi, uint32_t daddr)
+static struct ipsec_sa *ipsec_sa_lookup(uint32_t spi, uint32_t daddr)
 {
     if (!ipsec_initialised) return NULL;
 

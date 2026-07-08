@@ -45,7 +45,7 @@ void __init cpuset_init(void)
 }
 
 /* Return a reference to the "all CPUs" cpuset */
-const cpuset_t *cpuset_get_all(void)
+static const cpuset_t *cpuset_get_all(void)
 {
     return &cpuset_all;
 }
@@ -110,7 +110,7 @@ int sched_getaffinity(uint32_t pid, cpuset_t *cpuset)
  * cpuset_mems_allowed — return the memory nodes allowed for the current process.
  * If the current process has no mems_allowed set, returns default (all nodes).
  */
-cpuset_t cpuset_mems_allowed(void)
+static cpuset_t cpuset_mems_allowed(void)
 {
     struct process *current = process_get_current();
     cpuset_t all_nodes;
@@ -131,7 +131,7 @@ cpuset_t cpuset_mems_allowed(void)
  * cpuset_cpus_allowed — return the CPU affinity mask for the current process.
  * If the current process has no cpus_allowed set, returns default (all CPUs).
  */
-cpuset_t cpuset_cpus_allowed(void)
+static cpuset_t cpuset_cpus_allowed(void)
 {
     struct process *current = process_get_current();
     cpuset_t mask;
@@ -245,7 +245,7 @@ void cpu_cgroup_reset_window(void)
 }
 
 /* ── Stub: cpuset_create ─────────────────────────────── */
-int cpuset_create(const char *name, void *parent)
+static int cpuset_create(const char *name, void *parent)
 {
     (void)name;
     (void)parent;
@@ -253,14 +253,14 @@ int cpuset_create(const char *name, void *parent)
     return 0;
 }
 /* ── Stub: cpuset_delete ─────────────────────────────── */
-int cpuset_delete(const char *name)
+static int cpuset_delete(const char *name)
 {
     (void)name;
     kprintf("[cpuset] cpuset_delete: not yet implemented\n");
     return 0;
 }
 /* ── Stub: cpuset_attach ─────────────────────────────── */
-int cpuset_attach(const char *name, void *task)
+static int cpuset_attach(const char *name, void *task)
 {
     (void)name;
     (void)task;
@@ -268,7 +268,7 @@ int cpuset_attach(const char *name, void *task)
     return 0;
 }
 /* ── Stub: cpuset_migrate ─────────────────────────────── */
-int cpuset_migrate(const char *name, const void *cpus)
+static int cpuset_migrate(const char *name, const void *cpus)
 {
     (void)name;
     (void)cpus;

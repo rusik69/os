@@ -608,7 +608,7 @@ static uint64_t __read_mostly rcu_nocb_cpumask;
  * offloaded to a dedicated kthread rather than being handled by the
  * main RCU grace-period machinery.
  * @mask: bitmask of CPU IDs to offload (bit N set = CPU N is nocb). */
-void rcu_nocbs_set_cpumask(uint64_t mask)
+static void rcu_nocbs_set_cpumask(uint64_t mask)
 {
     rcu_nocb_cpumask = mask;
     kprintf("[RCU] nocbs: CPUs 0x%llX set for callback offloading\n",
@@ -616,7 +616,7 @@ void rcu_nocbs_set_cpumask(uint64_t mask)
 }
 
 /* Check if a given CPU has nocb offloading. */
-int rcu_nocbs_is_enabled(int cpu_id)
+static int rcu_nocbs_is_enabled(int cpu_id)
 {
     if (cpu_id < 0 || cpu_id >= 64) return 0;
     return (rcu_nocb_cpumask >> cpu_id) & 1;
@@ -651,7 +651,7 @@ static struct {
  * @priority: RT priority (1..99) to boost blocking tasks to.
  *            0 disables boosting.
  * @duration_ticks: how many timer ticks to hold the boosted priority. */
-void rcu_boost_set_params(int priority, uint64_t duration_ticks)
+static void rcu_boost_set_params(int priority, uint64_t duration_ticks)
 {
     rcu_boost_priority = priority;
     rcu_boost_duration = duration_ticks;
@@ -662,7 +662,7 @@ void rcu_boost_set_params(int priority, uint64_t duration_ticks)
 /* Initiate boosting for a specific grace period.
  * Called when a stall is detected — we boost any blocked CPU's
  * current process to help it complete its RCU read-side critical section. */
-void rcu_boost_gp(uint64_t gp_seq)
+static void rcu_boost_gp(uint64_t gp_seq)
 {
     if (rcu_boost_priority <= 0) return; /* boosting disabled */
 
@@ -681,7 +681,7 @@ void rcu_boost_gp(uint64_t gp_seq)
 /* Check if a specific grace period is currently being boosted.
  * Used by the scheduler to determine if a process should get
  * a priority boost. */
-int rcu_boost_is_active(uint64_t gp_seq)
+static int rcu_boost_is_active(uint64_t gp_seq)
 {
     uint64_t now = timer_get_ticks();
     for (int i = 0; i < RCU_BOOST_MAX_GPS; i++) {
@@ -699,7 +699,7 @@ int rcu_boost_is_active(uint64_t gp_seq)
 
 /* Boost the priority of a task that's blocking a grace period.
  * Returns the boosted priority, or 0 if no boost needed. */
-int rcu_boost_get_priority(uint64_t gp_seq)
+static int rcu_boost_get_priority(uint64_t gp_seq)
 {
     if (rcu_boost_is_active(gp_seq))
         return rcu_boost_priority;
@@ -732,7 +732,7 @@ void __init rcu_init(void) {
 }
 
 /* ── rcu_synchronize: Wait for all RCU readers to complete ──────────── */
-int rcu_synchronize(void)
+static int rcu_synchronize(void)
 {
     /* Call the existing synchronize_rcu() implementation */
     synchronize_rcu();

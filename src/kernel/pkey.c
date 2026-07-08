@@ -259,13 +259,13 @@ int pkey_get_rights(int pkey)
 }
 
 /* ── sys_pkey_alloc ─────────────────────────────────────────────────── */
-int sys_pkey_alloc(unsigned int flags, unsigned int rights)
+static int sys_pkey_alloc(unsigned int flags, unsigned int rights)
 {
     return pkey_alloc(flags, rights);
 }
 
 /* ── sys_pkey_free ──────────────────────────────────────────────────── */
-int sys_pkey_free(int pkey)
+static int sys_pkey_free(int pkey)
 {
     return pkey_free(pkey);
 }
