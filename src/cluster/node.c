@@ -141,7 +141,9 @@ int node_register(const char *node_id, const char *hostname,
     for (int i = 0; i < NODE_MAX; i++) {
         if (!nodes[i].in_use) {
             strncpy(nodes[i].id, node_id, NODE_ID_MAX - 1);
+            nodes[i].id[NODE_ID_MAX - 1] = '\0';
             strncpy(nodes[i].hostname, hostname, NODE_HOSTNAME_MAX - 1);
+            nodes[i].hostname[NODE_HOSTNAME_MAX - 1] = '\0';
             nodes[i].ip = ip;
             nodes[i].port = port;
             nodes[i].cpu_cores_total = cpu_cores;
@@ -273,6 +275,7 @@ int node_announce_candidacy(const char *node_id, uint64_t term)
 
     leader_term = term;
     strncpy(leader_id, node_id, NODE_ID_MAX - 1);
+    leader_id[NODE_ID_MAX - 1] = '\0';
     leader_last_seen = timer_get_ms();
     is_leader = (strcmp(node_id, nodes[local_node_idx].id) == 0) ? 1 : 0;
 
@@ -295,6 +298,7 @@ int node_get_leader(char *leader_out, size_t maxlen)
 
     spinlock_acquire(&node_lock);
     strncpy(leader_out, leader_id, maxlen - 1);
+    leader_out[maxlen - 1] = '\0';
     spinlock_release(&node_lock);
     return 0;
 }
@@ -328,8 +332,10 @@ int endpoint_add(const char *service_name, const char *pod_id,
         if (!endpoints[i].in_use) {
             strncpy(endpoints[i].service_name, service_name,
                     sizeof(endpoints[i].service_name) - 1);
+            endpoints[i].service_name[sizeof(endpoints[i].service_name) - 1] = '\0';
             strncpy(endpoints[i].pod_id, pod_id,
                     sizeof(endpoints[i].pod_id) - 1);
+            endpoints[i].pod_id[sizeof(endpoints[i].pod_id) - 1] = '\0';
             endpoints[i].pod_ip = pod_ip;
             endpoints[i].pod_port = pod_port;
             endpoints[i].target_port = target_port;

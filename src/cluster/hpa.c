@@ -122,7 +122,9 @@ int hpa_create(const char *name, const char *target_rs,
     spinlock_acquire(&as_lock);
     struct hpa *h = &hpas[hpa_count++];
     strncpy(h->name, name, sizeof(h->name) - 1);
+    h->name[sizeof(h->name) - 1] = '\0';
     strncpy(h->target_rs, target_rs, sizeof(h->target_rs) - 1);
+    h->target_rs[sizeof(h->target_rs) - 1] = '\0';
     h->metric_type = metric_type;
     h->target_value = target_value;
     h->current_value = 0;
@@ -197,7 +199,9 @@ int vpa_create(const char *name, const char *target_rs, int mode)
     spinlock_acquire(&as_lock);
     struct vpa *v = &vpas[vpa_count++];
     strncpy(v->name, name, sizeof(v->name) - 1);
+    v->name[sizeof(v->name) - 1] = '\0';
     strncpy(v->target_rs, target_rs, sizeof(v->target_rs) - 1);
+    v->target_rs[sizeof(v->target_rs) - 1] = '\0';
     v->mode = mode;
     v->rec.cpu_target = 100;    /* 100 millicores */
     v->rec.mem_target = 256 * 1024 * 1024; /* 256 MB */

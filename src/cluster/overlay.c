@@ -107,6 +107,7 @@ int overlay_add_peer(const char *node_id, uint32_t node_ip,
         if (!overlay_nodes[i].in_use) {
             strncpy(overlay_nodes[i].node_id, node_id,
                     sizeof(overlay_nodes[i].node_id) - 1);
+            overlay_nodes[i].node_id[sizeof(overlay_nodes[i].node_id) - 1] = '\0';
             overlay_nodes[i].node_ip = node_ip;
             overlay_nodes[i].pod_cidr = pod_cidr;
             overlay_nodes[i].pod_prefix_len = pod_prefix_len;

@@ -139,6 +139,7 @@ int dlm_acquire(const char *lock_name, const char *holder_id, uint64_t ttl_ms)
             /* Lock expired — take it */
             strncpy(dist_locks[i].holder_id, holder_id,
                     sizeof(dist_locks[i].holder_id) - 1);
+            dist_locks[i].holder_id[sizeof(dist_locks[i].holder_id) - 1] = '\0';
             dist_locks[i].acquire_time = now;
             dist_locks[i].ttl_ms = ttl_ms;
             spinlock_release(&lock_mgr_lock);
@@ -150,8 +151,10 @@ int dlm_acquire(const char *lock_name, const char *holder_id, uint64_t ttl_ms)
     for (int i = 0; i < LOCK_MAX; i++) {
         if (!dist_locks[i].in_use) {
             strncpy(dist_locks[i].name, lock_name, LOCK_NAME_MAX - 1);
+            dist_locks[i].name[LOCK_NAME_MAX - 1] = '\0';
             strncpy(dist_locks[i].holder_id, holder_id,
                     sizeof(dist_locks[i].holder_id) - 1);
+            dist_locks[i].holder_id[sizeof(dist_locks[i].holder_id) - 1] = '\0';
             dist_locks[i].acquire_time = now;
             dist_locks[i].ttl_ms = ttl_ms;
             dist_locks[i].in_use = 1;
@@ -208,6 +211,7 @@ int dlm_is_locked(const char *lock_name, char *holder_out, size_t maxlen)
             }
             if (holder_out) {
                 strncpy(holder_out, dist_locks[i].holder_id, maxlen - 1);
+                holder_out[maxlen - 1] = '\0';
             }
             spinlock_release(&lock_mgr_lock);
             return 1; /* Locked */
@@ -230,6 +234,7 @@ int barrier_create(const char *name, int total_nodes, uint64_t timeout_ms)
     for (int i = 0; i < BARRIER_MAX; i++) {
         if (!barriers[i].in_use) {
             strncpy(barriers[i].name, name, BARRIER_NAME_MAX - 1);
+            barriers[i].name[BARRIER_NAME_MAX - 1] = '\0';
             barriers[i].total_nodes = total_nodes;
             barriers[i].arrived_count = 0;
             barriers[i].timeout_ms = timeout_ms;
@@ -303,6 +308,7 @@ int cluster_config_set(const char *key, const char *value)
             /* Update existing */
             strncpy(config_entries[i].value, value,
                     CLUSTER_CONFIG_VAL_MAX - 1);
+            config_entries[i].value[CLUSTER_CONFIG_VAL_MAX - 1] = '\0';
             config_entries[i].version = ++config_version_counter;
             spinlock_release(&config_lock);
             return 0;
@@ -314,8 +320,10 @@ int cluster_config_set(const char *key, const char *value)
         if (!config_entries[i].in_use) {
             strncpy(config_entries[i].key, key,
                     CLUSTER_CONFIG_KEY_MAX - 1);
+            config_entries[i].key[CLUSTER_CONFIG_KEY_MAX - 1] = '\0';
             strncpy(config_entries[i].value, value,
                     CLUSTER_CONFIG_VAL_MAX - 1);
+            config_entries[i].value[CLUSTER_CONFIG_VAL_MAX - 1] = '\0';
             config_entries[i].version = ++config_version_counter;
             config_entries[i].in_use = 1;
             config_count++;
@@ -337,6 +345,7 @@ int cluster_config_get(const char *key, char *value_out, size_t maxlen)
         if (config_entries[i].in_use &&
             strcmp(config_entries[i].key, key) == 0) {
             strncpy(value_out, config_entries[i].value, maxlen - 1);
+            value_out[maxlen - 1] = '\0';
             spinlock_release(&config_lock);
             return 0;
         }

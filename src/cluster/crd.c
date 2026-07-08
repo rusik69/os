@@ -170,6 +170,7 @@ int rv_check_and_swap(const char *resource_id, uint64_t expected_version)
         if (!resource_versions[i].in_use) {
             strncpy(resource_versions[i].resource_id, resource_id,
                     sizeof(resource_versions[i].resource_id) - 1);
+            resource_versions[i].resource_id[sizeof(resource_versions[i].resource_id) - 1] = '\0';
             resource_versions[i].version = rv_global_counter++;
             resource_versions[i].in_use = 1;
             rv_count++;
@@ -197,9 +198,12 @@ int webhook_register(const char *name, int type,
     spinlock_acquire(&crd_lock);
     struct admission_webhook *w = &webhooks[webhook_count++];
     strncpy(w->name, name, sizeof(w->name) - 1);
+    w->name[sizeof(w->name) - 1] = '\0';
     w->type = type;
     strncpy(w->url, url, sizeof(w->url) - 1);
+    w->url[sizeof(w->url) - 1] = '\0';
     strncpy(w->resource_type, resource_type, sizeof(w->resource_type) - 1);
+    w->resource_type[sizeof(w->resource_type) - 1] = '\0';
     w->timeout_ms = timeout_ms;
     w->in_use = 1;
     spinlock_release(&crd_lock);
@@ -249,10 +253,15 @@ int crd_create(const char *name, const char *kind,
     spinlock_acquire(&crd_lock);
     struct crd *c = &crds[crd_count++];
     strncpy(c->name, name, sizeof(c->name) - 1);
+    c->name[sizeof(c->name) - 1] = '\0';
     strncpy(c->kind, kind, sizeof(c->kind) - 1);
+    c->kind[sizeof(c->kind) - 1] = '\0';
     strncpy(c->plural, plural, sizeof(c->plural) - 1);
+    c->plural[sizeof(c->plural) - 1] = '\0';
     strncpy(c->singular, singular, sizeof(c->singular) - 1);
+    c->singular[sizeof(c->singular) - 1] = '\0';
     strncpy(c->version, version, sizeof(c->version) - 1);
+    c->version[sizeof(c->version) - 1] = '\0';
     c->scope = scope;
     c->field_count = 0;
     c->in_use = 1;
@@ -282,7 +291,9 @@ int crd_add_field(const char *crd_name,
         }
         struct crd_field_schema *f = &crds[i].fields[crds[i].field_count++];
         strncpy(f->name, field_name, sizeof(f->name) - 1);
+        f->name[sizeof(f->name) - 1] = '\0';
         strncpy(f->type, field_type, sizeof(f->type) - 1);
+        f->type[sizeof(f->type) - 1] = '\0';
         f->required = required;
         spinlock_release(&crd_lock);
         return 0;
@@ -327,7 +338,9 @@ int operator_register(const char *name, const char *crd_kind,
     spinlock_acquire(&crd_lock);
     struct operator *op = &operators[operator_count++];
     strncpy(op->name, name, sizeof(op->name) - 1);
+    op->name[sizeof(op->name) - 1] = '\0';
     strncpy(op->crd_kind, crd_kind, sizeof(op->crd_kind) - 1);
+    op->crd_kind[sizeof(op->crd_kind) - 1] = '\0';
     op->running = 1;
     op->last_reconcile = 0;
     op->reconcile_interval_ms = reconcile_interval_ms;

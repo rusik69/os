@@ -79,6 +79,7 @@ static struct node_condition *cond_find_or_create(const char *type)
     for (int i = 0; i < MAX_CONDITIONS; i++) {
         if (!conditions[i].in_use) {
             strncpy(conditions[i].type, type, CONDITION_TYPE_MAX - 1);
+            conditions[i].type[CONDITION_TYPE_MAX - 1] = '\0';
             conditions[i].status = CONDITION_UNKNOWN;
             conditions[i].last_heartbeat = timer_get_ms();
             conditions[i].last_transition = timer_get_ms();
@@ -133,8 +134,14 @@ int node_condition_set(const char *type, int status,
     }
 
     c->status = status;
-    if (reason) strncpy(c->reason, reason, CONDITION_REASON_MAX - 1);
-    if (message) strncpy(c->message, message, CONDITION_MESSAGE_MAX - 1);
+    if (reason) {
+        strncpy(c->reason, reason, CONDITION_REASON_MAX - 1);
+        c->reason[CONDITION_REASON_MAX - 1] = '\0';
+    }
+    if (message) {
+        strncpy(c->message, message, CONDITION_MESSAGE_MAX - 1);
+        c->message[CONDITION_MESSAGE_MAX - 1] = '\0';
+    }
     c->last_heartbeat = now;
 
     spinlock_release(&cond_lock);

@@ -397,6 +397,7 @@ int raft_add_server(const char *id, uint32_t address, uint16_t port, int voting)
 
     struct raft_server *s = &raft.servers[raft.num_servers];
     strncpy(s->id, id, RAFT_SERVER_ID_MAX - 1);
+    s->id[RAFT_SERVER_ID_MAX - 1] = '\0';
     s->address = address;
     s->port = port;
     s->voting = voting;

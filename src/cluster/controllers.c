@@ -158,6 +158,7 @@ int rs_create(const char *name, int desired_replicas,
     spinlock_acquire(&ctrl_lock);
     struct replicaset *rs = &replicasets[rs_count++];
     strncpy(rs->name, name, sizeof(rs->name) - 1);
+    rs->name[sizeof(rs->name) - 1] = '\0';
     rs->desired_replicas = desired_replicas;
     rs->current_replicas = 0;
     rs->ready_replicas = 0;
@@ -165,7 +166,9 @@ int rs_create(const char *name, int desired_replicas,
                          ? selector_count : CONTROLLER_SELECTOR_MAX;
     for (int i = 0; i < rs->selector_count; i++) {
         strncpy(rs->selector_keys[i], selector_keys[i], 63);
+        rs->selector_keys[i][63] = '\0';
         strncpy(rs->selector_vals[i], selector_vals[i], 63);
+        rs->selector_vals[i][63] = '\0';
     }
     rs->created_at = timer_get_ms();
     rs->in_use = 1;
@@ -238,6 +241,7 @@ int deploy_create(const char *name, int desired_replicas, int strategy,
     spinlock_acquire(&ctrl_lock);
     struct deployment *d = &deployments[deploy_count++];
     strncpy(d->name, name, sizeof(d->name) - 1);
+    d->name[sizeof(d->name) - 1] = '\0';
     d->desired_replicas = desired_replicas;
     d->current_replicas = 0;
     d->ready_replicas = 0;
@@ -267,8 +271,10 @@ int deploy_rolling_update(const char *name, const char *new_rs_name)
         /* Save previous ReplicaSet for rollback */
         strncpy(deployments[i].previous_rs, deployments[i].current_rs,
                 sizeof(deployments[i].previous_rs) - 1);
+        deployments[i].previous_rs[sizeof(deployments[i].previous_rs) - 1] = '\0';
         strncpy(deployments[i].current_rs, new_rs_name,
                 sizeof(deployments[i].current_rs) - 1);
+        deployments[i].current_rs[sizeof(deployments[i].current_rs) - 1] = '\0';
         deployments[i].revision++;
 
         /* Rolling update logic:
@@ -302,10 +308,13 @@ int deploy_rollback(const char *name)
 
         char temp[CONTROLLER_NAME_MAX];
         strncpy(temp, deployments[i].current_rs, sizeof(temp) - 1);
+        temp[sizeof(temp) - 1] = '\0';
         strncpy(deployments[i].current_rs, deployments[i].previous_rs,
                 sizeof(deployments[i].current_rs) - 1);
+        deployments[i].current_rs[sizeof(deployments[i].current_rs) - 1] = '\0';
         strncpy(deployments[i].previous_rs, temp,
                 sizeof(deployments[i].previous_rs) - 1);
+        deployments[i].previous_rs[sizeof(deployments[i].previous_rs) - 1] = '\0';
         deployments[i].revision--;
         spinlock_release(&ctrl_lock);
 
@@ -329,6 +338,7 @@ int ds_create(const char *name)
     spinlock_acquire(&ctrl_lock);
     struct daemonset *d = &daemonsets[ds_count++];
     strncpy(d->name, name, sizeof(d->name) - 1);
+    d->name[sizeof(d->name) - 1] = '\0';
     d->current_replicas = 0;
     d->ready_replicas = 0;
     d->in_use = 1;
@@ -351,10 +361,14 @@ int ss_create(const char *name, int desired_replicas,
     spinlock_acquire(&ctrl_lock);
     struct statefulset *s = &statefulsets[ss_count++];
     strncpy(s->name, name, sizeof(s->name) - 1);
+    s->name[sizeof(s->name) - 1] = '\0';
     s->desired_replicas = desired_replicas;
     s->current_replicas = 0;
     s->ready_replicas = 0;
-    if (service_name) strncpy(s->service_name, service_name, sizeof(s->service_name) - 1);
+    if (service_name) {
+        strncpy(s->service_name, service_name, sizeof(s->service_name) - 1);
+        s->service_name[sizeof(s->service_name) - 1] = '\0';
+    }
     s->has_pvc = has_pvc;
     s->in_use = 1;
     spinlock_release(&ctrl_lock);
@@ -376,6 +390,7 @@ int job_create(const char *name, int completions, int backoff_limit)
     spinlock_acquire(&ctrl_lock);
     struct job *j = &jobs[job_count++];
     strncpy(j->name, name, sizeof(j->name) - 1);
+    j->name[sizeof(j->name) - 1] = '\0';
     j->completions = completions;
     j->succeeded = 0;
     j->failed = 0;
@@ -465,8 +480,11 @@ int cronjob_create(const char *name, const char *schedule,
     spinlock_acquire(&ctrl_lock);
     struct cronjob *c = &cronjobs[cronjob_count++];
     strncpy(c->name, name, sizeof(c->name) - 1);
+    c->name[sizeof(c->name) - 1] = '\0';
     strncpy(c->schedule, schedule, sizeof(c->schedule) - 1);
+    c->schedule[sizeof(c->schedule) - 1] = '\0';
     strncpy(c->job_template, job_template, sizeof(c->job_template) - 1);
+    c->job_template[sizeof(c->job_template) - 1] = '\0';
     c->suspend = suspend;
     c->last_run = 0;
     c->history_limit_success = 3;

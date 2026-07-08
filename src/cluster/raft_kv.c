@@ -103,6 +103,7 @@ int kv_put(const char *key, const uint8_t *value, uint32_t value_len)
 
     entry->in_use = 1;
     strncpy(entry->key, key, KV_KEY_MAX - 1);
+    entry->key[KV_KEY_MAX - 1] = '\0';
     memcpy(entry->value, value, value_len);
     entry->value_len = value_len;
     entry->version = ++kv_version_counter;
@@ -118,6 +119,7 @@ int kv_put(const char *key, const uint8_t *value, uint32_t value_len)
                 struct kv_watch_event *ev = &kv_watches[w].events[kv_watches[w].num_events++];
                 ev->type = KV_EVENT_PUT;
                 strncpy(ev->key, key, KV_KEY_MAX - 1);
+                ev->key[KV_KEY_MAX - 1] = '\0';
                 memcpy(ev->value, value, value_len);
                 ev->value_len = value_len;
                 ev->version = entry->version;
@@ -175,6 +177,7 @@ int kv_delete(const char *key)
                         struct kv_watch_event *ev = &kv_watches[w].events[kv_watches[w].num_events++];
                         ev->type = KV_EVENT_DELETE;
                         strncpy(ev->key, key, KV_KEY_MAX - 1);
+                        ev->key[KV_KEY_MAX - 1] = '\0';
                         ev->version = ++kv_version_counter;
                         kv_watches[w].has_events = 1;
                     }
@@ -220,6 +223,7 @@ int kv_watch_register(const char *prefix)
 
     struct kv_watch *w = &kv_watches[kv_watch_count++];
     strncpy(w->prefix, prefix, KV_KEY_MAX - 1);
+    w->prefix[KV_KEY_MAX - 1] = '\0';
     w->num_events = 0;
     w->has_events = 0;
     w->in_use = 1;

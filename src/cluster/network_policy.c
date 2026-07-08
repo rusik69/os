@@ -132,7 +132,9 @@ int netpol_add_rule(int type, int action,
 
     for (int i = 0; i < r->selector_count; i++) {
         strncpy(r->selector_keys[i], selector_keys[i], 63);
+        r->selector_keys[i][63] = '\0';
         strncpy(r->selector_vals[i], selector_vals[i], 63);
+        r->selector_vals[i][63] = '\0';
     }
     for (int i = 0; i < r->port_count; i++) {
         r->ports[i] = ports[i];
@@ -247,8 +249,10 @@ int ingress_add_nodeport(const char *name, const char *service_name,
     spinlock_acquire(&ingress_lock);
     struct ingress_rule *r = &ingress_rules[ingress_count++];
     strncpy(r->name, name, sizeof(r->name) - 1);
+    r->name[sizeof(r->name) - 1] = '\0';
     r->type = INGRESS_TYPE_NODEPORT;
     strncpy(r->service_name, service_name, sizeof(r->service_name) - 1);
+    r->service_name[sizeof(r->service_name) - 1] = '\0';
     r->service_port = service_port;
     r->node_port = node_port;
     r->target_port = service_port;
@@ -273,10 +277,18 @@ int ingress_add_http(const char *name, const char *hostname,
     spinlock_acquire(&ingress_lock);
     struct ingress_rule *r = &ingress_rules[ingress_count++];
     strncpy(r->name, name, sizeof(r->name) - 1);
+    r->name[sizeof(r->name) - 1] = '\0';
     r->type = INGRESS_TYPE_HTTP;
-    if (hostname) strncpy(r->hostname, hostname, sizeof(r->hostname) - 1);
-    if (path) strncpy(r->path, path, sizeof(r->path) - 1);
+    if (hostname) {
+        strncpy(r->hostname, hostname, sizeof(r->hostname) - 1);
+        r->hostname[sizeof(r->hostname) - 1] = '\0';
+    }
+    if (path) {
+        strncpy(r->path, path, sizeof(r->path) - 1);
+        r->path[sizeof(r->path) - 1] = '\0';
+    }
     strncpy(r->target_service, target_service, sizeof(r->target_service) - 1);
+    r->target_service[sizeof(r->target_service) - 1] = '\0';
     r->target_port = target_port;
     r->in_use = 1;
     spinlock_release(&ingress_lock);
@@ -373,6 +385,7 @@ int netpol_assign_namespace_vni(const char *ns_name, uint32_t *out_vni)
 
     uint32_t vni = 256 + (uint32_t)namespace_vni_count; /* VNI range 256+ */
     strncpy(namespace_names[namespace_vni_count], ns_name, 63);
+    namespace_names[namespace_vni_count][63] = '\0';
     namespace_vni_map[namespace_vni_count] = vni;
     *out_vni = vni;
     namespace_vni_count++;

@@ -1203,7 +1203,7 @@ static void parse_expr_prec(CompilerState *cc, int prec) {
             return;
         }
         if (t->type == TK_IDENT) {
-            char name[64]; strncpy(name, t->sval, 63);
+            char name[64]; strncpy(name, t->sval, 63); name[63] = '\0';
             Token *nx = peek1(cc);
             /* name[i] op= rhs */
             if (nx->type == TK_LBRACKET) {
@@ -1217,7 +1217,7 @@ static void parse_expr_prec(CompilerState *cc, int prec) {
                     int sp = cc->tok_pos;
                     advance(cc); advance(cc); advance(cc); /* skip name, ->|., field */
                     if (is_assign_op(cur(cc)->type)) {
-                        char fname2[64]; strncpy(fname2, nx2->sval, 63);
+                        char fname2[64]; strncpy(fname2, nx2->sval, 63); fname2[63] = '\0';
                         TokenType op = cur(cc)->type; advance(cc);
                         parse_expr_prec(cc, 0); /* rhs in rax */
                         Symbol *s = find_sym(cc, name);
@@ -1537,7 +1537,7 @@ static void parse_var_decl(CompilerState *cc, TypeDesc *base_td) {
         TypeDesc td = *base_td;
         while (cur(cc)->type == TK_STAR) { td.ptr_depth++; advance(cc); }
         if (cur(cc)->type != TK_IDENT) { cc_error(cc, "expected variable name"); return; }
-        char vname[64]; strncpy(vname, cur(cc)->sval, 63); advance(cc);
+        char vname[64]; strncpy(vname, cur(cc)->sval, 63); vname[63] = '\0'; advance(cc);
 
         int arr_n = 0;
         if (cur(cc)->type == TK_LBRACKET) {
@@ -2067,7 +2067,7 @@ static void parse_function(CompilerState *cc, const char *fname, TypeDesc *ret_t
         if (cur(cc)->type == TK_ELLIPSIS) { advance(cc); break; } /* varargs — ignore */
         TypeDesc ptd; parse_type(cc, &ptd);
         if (cur(cc)->type != TK_IDENT) { cc_error(cc, "expected param name"); return; }
-        char pname[64]; strncpy(pname, cur(cc)->sval, 63); advance(cc);
+        char pname[64]; strncpy(pname, cur(cc)->sval, 63); pname[63] = '\0'; advance(cc);
         if (cur(cc)->type == TK_LBRACKET) {
             advance(cc);
             if (cur(cc)->type == TK_INTLIT) advance(cc);
@@ -2341,7 +2341,7 @@ void cc_parse(CompilerState *cc) {
                 /* extra pointer */
                 while (cur(cc)->type == TK_STAR) { td.ptr_depth++; advance(cc); }
                 if (cur(cc)->type != TK_IDENT) { advance(cc); break; }
-                char name[64]; strncpy(name, cur(cc)->sval, 63); advance(cc);
+                char name[64]; strncpy(name, cur(cc)->sval, 63); name[63] = '\0'; advance(cc);
                 if (cur(cc)->type == TK_LPAREN) {
                     parse_function(cc, name, &td);
                     break;
@@ -2364,7 +2364,7 @@ void cc_parse(CompilerState *cc) {
                 while (cur(cc)->type != TK_RBRACE && cur(cc)->type != TK_EOF) {
                     if (cur(cc)->type == TK_IDENT) {
                         /* Declare enum constant as global int with value */
-                        char ename[64]; strncpy(ename, cur(cc)->sval, 63); advance(cc);
+                        char ename[64]; strncpy(ename, cur(cc)->sval, 63); ename[63] = '\0'; advance(cc);
                         if (cur(cc)->type == TK_ASSIGN) {
                             advance(cc);
                             if (cur(cc)->type == TK_INTLIT) { val = cur(cc)->ival; advance(cc); }

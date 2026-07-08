@@ -85,6 +85,7 @@ int gossip_init(const char *local_id, uint32_t local_ip, uint16_t local_port)
     /* Add self to membership list */
     struct member *self = &members[member_count++];
     strncpy(self->id, local_id, sizeof(self->id) - 1);
+    self->id[sizeof(self->id) - 1] = '\0';
     self->ip = local_ip;
     self->port = local_port;
     self->state = MEMBER_STATE_ALIVE;
@@ -134,6 +135,7 @@ int gossip_piggyback(const char *member_id, int state, int incarnation)
     spinlock_acquire(&gossip_lock);
     struct gossip_update *gu = &piggyback_updates[piggyback_count++];
     strncpy(gu->member_id, member_id, sizeof(gu->member_id) - 1);
+    gu->member_id[sizeof(gu->member_id) - 1] = '\0';
     gu->state = state;
     gu->incarnation = incarnation;
     spinlock_release(&gossip_lock);
@@ -295,6 +297,7 @@ int gossip_join(const char *seed_id, uint32_t seed_ip, uint16_t seed_port)
 
     struct member *m = &members[member_count++];
     strncpy(m->id, seed_id, sizeof(m->id) - 1);
+    m->id[sizeof(m->id) - 1] = '\0';
     m->ip = seed_ip;
     m->port = seed_port;
     m->state = MEMBER_STATE_ALIVE;
