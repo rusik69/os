@@ -172,16 +172,25 @@ void igmp_handle_report(struct ip_header *ip_hdr, uint16_t len)
 {
     if (!ip_hdr || !igmp_initialised) return;
 
-    /* IGMP payload follows the IP header (assume 20-byte IHL) */
-    struct igmp_header *igmp = (struct igmp_header *)((uint8_t *)ip_hdr + 20);
+    /* Compute actual IP header length from IHL field (no hardcoded 20) */
+    int ihl = (ip_hdr->version_ihl & 0xF) * 4;
+    if (ihl < 20) return; /* bogus IHL */
+
+    /* IGMP payload follows the IP header */
+    if (len < (uint16_t)(ihl + (int)sizeof(struct igmp_header)))
+        return; /* packet too short for any IGMP message */
+    struct igmp_header *igmp = (struct igmp_header *)((uint8_t *)ip_hdr + ihl);
     uint32_t src_ip = ip_hdr->src_ip;
     uint32_t group_ip = igmp->group_addr;
 
     switch (igmp->type) {
     case IGMP_TYPE_MEMBERSHIP_QUERY: {
-        /* Determine if this is IGMPv3 query */
+        /* Determine if this is IGMPv3 query by checking payload length.
+         * IGMPv2 query = 8 bytes, IGMPv3 query = 12+ bytes (fixed). */
+        uint16_t ip_total = ntohs(ip_hdr->total_len);
+        uint16_t igmp_len = (ip_total > (uint16_t)ihl) ? ip_total - (uint16_t)ihl : 0;
         struct igmpv3_query *q = (struct igmpv3_query *)igmp;
-        int is_v3 = (ip_hdr->total_len > 24); /* IGMPv3 query has more fields */
+        int is_v3 = (igmp_len >= sizeof(struct igmpv3_query));
 
         kprintf("igmp: membership query from %d.%d.%d.%d group=%d.%d.%d.%d%s\n",
                 (src_ip >> 24) & 0xFF, (src_ip >> 16) & 0xFF,
@@ -193,12 +202,14 @@ void igmp_handle_report(struct ip_header *ip_hdr, uint16_t len)
         /* Parse IGMPv3 source list from query */
         uint16_t n_srcs = 0;
         uint32_t *src_list = NULL;
-        if (is_v3 && len >= (int)sizeof(struct igmpv3_query)) {
+        if (is_v3 && igmp_len >= sizeof(struct igmpv3_query)) {
             n_srcs = ntohs(q->n_srcs);
             if (n_srcs > 0) {
-                /* Source addresses follow the fixed query header */
-                int src_offset = sizeof(struct igmp_header);
-                if (ip_hdr->total_len >= src_offset + n_srcs * 4) {
+                /* Source addresses follow the full IGMPv3 query header (12 bytes) */
+                int src_offset = sizeof(struct igmpv3_query);
+                uint32_t src_bytes = (uint32_t)n_srcs * 4;
+                if (src_bytes / 4 == (uint32_t)n_srcs && /* no overflow */
+                    igmp_len >= (uint16_t)(src_offset + (int)src_bytes)) {
                     src_list = (uint32_t *)((uint8_t *)igmp + src_offset);
                 }
             }
@@ -213,25 +224,29 @@ void igmp_handle_report(struct ip_header *ip_hdr, uint16_t len)
             if (is_v3) {
                 /* For IGMPv3 queries, send IGMPv3 report if sources are specified */
                 if (n_srcs > 0 && src_list) {
-                    /* Build IGMPv3 membership report */
+                    /* Cap source count to prevent uint16_t overflow in length */
+                    uint16_t max_srcs = ((uint16_t)-1 - sizeof(struct igmp_header) -
+                                         sizeof(struct igmpv3_grec)) / 4;
+                    uint16_t actual_srcs = (n_srcs < max_srcs) ? n_srcs : max_srcs;
                     uint16_t v3_report_len = (uint16_t)(sizeof(struct igmp_header) +
                                              sizeof(struct igmpv3_grec) +
-                                             n_srcs * 4);
+                                             actual_srcs * 4);
                     uint8_t *v3_report = kmalloc(v3_report_len);
                     if (!v3_report) break;
                     struct igmp_header *v3_hdr = (struct igmp_header *)v3_report;
                     v3_hdr->type = IGMP_TYPE_V3_MEMBERSHIP_REPORT;
                     v3_hdr->max_resp_time = q->max_resp_code;
-                    v3_hdr->group_addr = igmp_groups[i].multiaddr;
+                    /* Bytes 4-7 of v3 report = Reserved(16) + Number of Group Records(16) */
+                    v3_hdr->group_addr = htons(1); /* exactly 1 group record */
                     v3_hdr->checksum = 0;
 
                     struct igmpv3_grec *grec =
                         (struct igmpv3_grec *)(v3_report + sizeof(struct igmp_header));
                     grec->record_type = IGMPV3_MODE_IS_INCLUDE;
                     grec->aux_data_len = 0;
-                    grec->n_srcs = htons(n_srcs);
+                    grec->n_srcs = htons(actual_srcs);
                     grec->group_addr = igmp_groups[i].multiaddr;
-                    memcpy(grec + 1, src_list, n_srcs * 4);
+                    memcpy(grec + 1, src_list, actual_srcs * 4);
 
                     v3_hdr->checksum = net_checksum(v3_report, v3_report_len);
                     send_ip(igmp_groups[i].multiaddr, 2, v3_report, v3_report_len);
@@ -243,7 +258,8 @@ void igmp_handle_report(struct ip_header *ip_hdr, uint16_t len)
                     struct igmp_header *v3_hdr = (struct igmp_header *)v3_report;
                     v3_hdr->type = IGMP_TYPE_V3_MEMBERSHIP_REPORT;
                     v3_hdr->max_resp_time = q->max_resp_code;
-                    v3_hdr->group_addr = igmp_groups[i].multiaddr;
+                    /* Bytes 4-7 of v3 report = Reserved(16) + Number of Group Records(16) */
+                    v3_hdr->group_addr = htons(1); /* exactly 1 group record */
                     v3_hdr->checksum = 0;
 
                     struct igmpv3_grec *grec =
