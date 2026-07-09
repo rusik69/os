@@ -426,6 +426,12 @@ int ktls_sw_encrypt(struct ktls_ctx *ctx,
 	if (plain_len < 0 || plain_len > TLS_MAX_PLAINTEXT_LEN)
 		return -EINVAL;
 
+	/* CCS records MUST always be sent in cleartext
+	 * (RFC 8446 TLS 1.3 middlebox compat mode).
+	 * The kTLS encrypt path must not encrypt them. */
+	if (content_type == TLS_CT_CHANGE_CIPHER_SPEC)
+		return -EINVAL;
+
 	/* Initialise AEAD from the kTLS crypto info */
 	ret = tls_aead_init(&aead, ctx->crypto.enc_key,
 	                     ctx->crypto.enc_key_len,
@@ -527,6 +533,11 @@ int ktls_sw_decrypt(struct ktls_ctx *ctx,
 
 	payload_len = ntohs(hdr->length);
 	if (payload_len < 0 || payload_len > TLS_MAX_CIPHERTEXT_LEN)
+		return -EINVAL;
+
+	/* CCS records are NEVER encrypted (RFC 8446 §5.1).
+	 * Reject them here before attempting AEAD decryption. */
+	if (hdr->content_type == TLS_CT_CHANGE_CIPHER_SPEC)
 		return -EINVAL;
 
 	/* Initialise AEAD from the kTLS crypto info */
