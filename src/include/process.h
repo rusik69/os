@@ -373,8 +373,8 @@ void process_caps_allow(struct process *proc, uint32_t num);
 void process_caps_allow_all(struct process *proc);
 int process_caps_has(const struct process *proc, uint32_t num);
 int process_set_cap_profile(struct process *proc, enum process_cap_profile profile);
-int process_fork(void); /* fork current process, returns child PID, child starts in fork_child_entry */
-int process_clone(struct process *parent, uint64_t flags, void *child_stack,
+int __must_check process_fork(void); /* fork current process, returns child PID, child starts in fork_child_entry */
+int __must_check process_clone(struct process *parent, uint64_t flags, void *child_stack,
                   uint64_t user_rip, uint64_t user_rflags);
 void process_set_current(struct process *proc);
 uint32_t process_get_count(void);
@@ -423,8 +423,8 @@ struct process *kthread_create_on_cpu(void (*entry)(void *arg), void *arg,
                                        const char *name, int cpu_id);
 
 /* ── Thread management (pthread support) ───────────────────── */
-int  process_thread_create(void *(*start_routine)(void *), void *arg);
-int  process_thread_join(int thread_pid, void **retval);
+int __must_check process_thread_create(void *(*start_routine)(void *), void *arg);
+int __must_check process_thread_join(int thread_pid, void **retval);
 void process_thread_exit(void *retval) __attribute__((noreturn));
 void thread_info_init(void);
 
@@ -439,6 +439,6 @@ int process_set_user_process(uint64_t entry, uint64_t stack, uint64_t *pml4);
 /* Before executing a binary, verify that the inode has the necessary
  * execute permission bits (S_IXUSR, S_IXGRP, or S_IXOTH).
  * Returns 0 if execute is allowed, -EACCES if denied. */
-int process_check_exec_perms(const char *binary_path, uint32_t uid, uint32_t gid);
+int __must_check process_check_exec_perms(const char *binary_path, uint32_t uid, uint32_t gid);
 
 #endif

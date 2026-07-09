@@ -260,7 +260,7 @@ extern uint64_t vmm_zero_page_frame;
 extern uint64_t vmm_committed_bytes;
 #define VMM_OVERCOMMIT_LIMIT (256ULL * 1024 * 1024) /* 256 MB overcommit limit */
 int vmm_get_committed(void);
-int vmm_commit(uint64_t bytes);
+int __must_check vmm_commit(uint64_t bytes);
 void vmm_uncommit(uint64_t bytes);
 
 #endif
