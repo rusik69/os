@@ -211,7 +211,7 @@ static void parse_dsdt_for_sleep(struct fadt *fadt) {
 
     /* Validate header length to prevent underflow */
     if (dsdt_len < sizeof(struct acpi_header)) {
-        kprintf("  ACPI: DSDT too short (%u bytes, need %zu)\\n",
+        kprintf("  ACPI: DSDT too short (%u bytes, need %zu)\n",
                 (unsigned int)dsdt_len, sizeof(struct acpi_header));
         return;
     }
@@ -221,7 +221,7 @@ static void parse_dsdt_for_sleep(struct fadt *fadt) {
 
     /* Need at least 8 bytes of AML to search for sleep state markers */
     if (aml_len < 8) {
-        kprintf("  ACPI: DSDT AML too short (%u bytes, need 8)\\n",
+        kprintf("  ACPI: DSDT AML too short (%u bytes, need 8)\n",
                 (unsigned int)aml_len);
         return;
     }

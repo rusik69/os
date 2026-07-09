@@ -574,7 +574,7 @@ static uint32_t aml_process_object(struct aml_parse_state *state,
 		name_bytes = aml_skip_name_string(aml, max_len, o);
 		if (name_bytes == 0)
 			return 0;
-		total_size = (o + name_bytes) - (o - 1 - name_bytes);
+		total_size = (o + name_bytes) - state->offset;
 		return total_size;
 
 	case AML_EXT_OP_PREFIX:
