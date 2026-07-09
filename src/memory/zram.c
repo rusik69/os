@@ -326,9 +326,9 @@ static int zram_read(uint64_t offset, void *buf, size_t count)
     if (offset + count > zram_dev.disk_size)
         return -ENXIO;
 
-    /* Convert byte offset to sector number (512-byte sectors) and count */
-    uint64_t sector = offset / 512;
-    uint32_t sector_count = (uint32_t)((count + 511) / 512);
+    /* Convert byte offset to slot index (PAGE_SIZE slots) and count */
+    uint64_t sector = offset / PAGE_SIZE;
+    uint32_t sector_count = (uint32_t)((count + PAGE_SIZE - 1) / PAGE_SIZE);
     if (sector_count == 0) return 0;
 
     return zram_read_sectors(sector, buf, sector_count);
@@ -344,8 +344,8 @@ static int zram_write(uint64_t offset, const void *buf, size_t count)
     if (offset + count > zram_dev.disk_size)
         return -ENXIO;
 
-    uint64_t sector = offset / 512;
-    uint32_t sector_count = (uint32_t)((count + 511) / 512);
+    uint64_t sector = offset / PAGE_SIZE;
+    uint32_t sector_count = (uint32_t)((count + PAGE_SIZE - 1) / PAGE_SIZE);
     if (sector_count == 0) return 0;
 
     return zram_write_sectors(sector, buf, sector_count);
