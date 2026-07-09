@@ -224,8 +224,9 @@ static int ksm_scan_batch(int max_batch)
             ksm_pages[best_j].merged = 1;
             ksm_pages[best_j].phys_addr = pi->phys_addr;
             ksm_pages[best_j].numa_node = pi->numa_node;
-            pi->refcount = (pi->refcount + 1) & 0xFFFF;
-            if (pi->refcount == 0) pi->refcount = 1;  /* Saturate at 65535 */
+            if (pi->refcount < 0xFFFF)
+                pi->refcount++;
+            /* else: already at max (65535), saturate */
             ksm_merged_pages++;
         }
     }
