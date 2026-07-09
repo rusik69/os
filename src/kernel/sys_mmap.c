@@ -262,6 +262,10 @@ uint64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot,
     if (length == 0)
         return (uint64_t)(int64_t)-EINVAL;
 
+    /* Guard against overflow in the page-alignment addition */
+    if (length > UINT64_MAX - (PAGE_SIZE - 1))
+        return (uint64_t)-EINVAL;
+
     /* Round up to page size */
     length = (length + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
 
