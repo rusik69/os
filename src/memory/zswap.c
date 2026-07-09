@@ -139,11 +139,11 @@ void __init zswap_init(void)
         return;
     }
 
-    /* Calculate pool size limit: % of total RAM */
+    /* Calculate pool size limit: % of total RAM, with a minimum floor */
     uint64_t total_pages = pmm_get_total_frames();
     uint64_t pool_pages  = total_pages * ZSWAP_DEFAULT_POOL_PCT / 100;
-    if (pool_pages < 1)
-        pool_pages = 1;
+    if (pool_pages < ZSWAP_MIN_POOL_KB / 4)
+        pool_pages = ZSWAP_MIN_POOL_KB / 4;
 
     zswap_pool_max = pool_pages * 4096;   /* in bytes */
     zswap_pool_used = 0;
@@ -415,7 +415,8 @@ static int zswap_invalidate(uint64_t offset)
                     (uint64_t)e->dev_idx == (uint64_t)(int)(offset >> 32)) {
                     if (e->comp_data) {
                         kfree(e->comp_data);
-                        zswap_pool_used -= (uint64_t)e->comp_len;
+                        zswap_pool_used -= (uint64_t)e->comp_len +
+                                           (uint64_t)sizeof(struct zswap_entry);
                     }
                     zswap_entry_count--;
                     e->in_use = 0;
@@ -428,6 +429,7 @@ static int zswap_invalidate(uint64_t offset)
                     else
                         zswap_table[i] = e->next;
 
+                    kfree(e);
                     spinlock_release(&zswap_lock);
                     return 0;
                 }
@@ -460,7 +462,8 @@ static int zswap_shrink(int nr_to_reclaim)
             if (e->in_use) {
                 if (e->comp_data) {
                     kfree(e->comp_data);
-                    zswap_pool_used -= (uint64_t)e->comp_len;
+                    zswap_pool_used -= (uint64_t)e->comp_len +
+                                       (uint64_t)sizeof(struct zswap_entry);
                 }
                 zswap_entry_count--;
                 e->in_use = 0;
@@ -519,7 +522,8 @@ found:
     victim->in_use = 0;
     victim->comp_data = NULL;
     zswap_entry_count--;
-    zswap_pool_used -= (uint64_t)len;
+    zswap_pool_used -= (uint64_t)len +
+                       (uint64_t)sizeof(struct zswap_entry);
 
     spinlock_release(&zswap_lock);
 
@@ -528,6 +532,7 @@ found:
      * device before freeing. */
     if (data)
         kfree(data);
+    kfree(victim);
 
     kprintf("[zswap] zswap_writeback_entry: wrote back entry (offset=%llu)\n",
             (unsigned long long)offset);
