@@ -901,14 +901,18 @@ static void tc_send_done(int protocol, uint32_t src_pid, uint32_t seq)
 }
 
 /* Helper: append a TCA_STATS attribute (raw struct tc_stats) to a
- * response buffer.  Returns the new nlmsg_len (unchanged on failure). */
-static uint32_t tc_nla_put_stats(uint8_t *buf, uint32_t nlmsg_len,
+ * response buffer.  Returns the new nlmsg_len (unchanged on failure).
+ * buf_size is the total capacity of buf (used for bounds checking). */
+static uint32_t tc_nla_put_stats(uint8_t *buf, uint32_t buf_size,
+                                  uint32_t nlmsg_len,
                                   const struct tc_stats *st)
 {
     if (!buf || !st) return nlmsg_len;
     uint32_t offset = nlmsg_len;
-    struct nlattr *nla = (struct nlattr *)(buf + offset);
     uint16_t payload_len = (uint16_t)sizeof(*st);
+    uint32_t total_len = (uint32_t)NLA_HDRLEN + (uint32_t)payload_len;
+    if (offset + total_len > buf_size) return nlmsg_len;
+    struct nlattr *nla = (struct nlattr *)(buf + offset);
     nla->nla_len = (uint16_t)(NLA_HDRLEN + payload_len);
     nla->nla_type = TCA_STATS;
     memcpy((uint8_t *)(nla + 1), st, payload_len);
@@ -916,13 +920,22 @@ static uint32_t tc_nla_put_stats(uint8_t *buf, uint32_t nlmsg_len,
 }
 
 /* Helper: append a TCA_STATS2 nested attribute with basic and queue
- * sub-attributes.  Returns the new nlmsg_len. */
-static uint32_t tc_nla_put_stats2(uint8_t *buf, uint32_t nlmsg_len,
+ * sub-attributes.  Returns the new nlmsg_len.
+ * buf_size is the total capacity of buf (used for bounds checking). */
+static uint32_t tc_nla_put_stats2(uint8_t *buf, uint32_t buf_size,
+                                   uint32_t nlmsg_len,
                                    const struct gnet_stats_basic *basic,
                                    const struct gnet_stats_queue *queue)
 {
     if (!buf || !basic || !queue) return nlmsg_len;
     uint32_t offset = nlmsg_len;
+
+    /* Estimate maximum needed space including alignment */
+    uint32_t needed = NLA_HDRLEN +
+                      NLA_ALIGN(NLA_HDRLEN + (uint32_t)sizeof(*basic)) +
+                      NLA_ALIGN(NLA_HDRLEN + (uint32_t)sizeof(*queue)) +
+                      NLA_HDRLEN;
+    if (offset + needed > buf_size) return nlmsg_len;
 
     /* Nested TCA_STATS2 header */
     struct nlattr *nla_stats2 = (struct nlattr *)(buf + offset);
@@ -1003,7 +1016,7 @@ static int nl_tc_getqdisc(int protocol, const struct nlmsghdr *nlh,
         /* TCA_STATS + TCA_STATS2 */
         struct tc_stats st;
         tc_get_qdisc_stats(q, &st);
-        resp->nlmsg_len = tc_nla_put_stats(buf, resp->nlmsg_len, &st);
+        resp->nlmsg_len = tc_nla_put_stats(buf, sizeof(buf), resp->nlmsg_len, &st);
 
         struct gnet_stats_basic gb;
         struct gnet_stats_queue gq;
@@ -1015,7 +1028,7 @@ static int nl_tc_getqdisc(int protocol, const struct nlmsghdr *nlh,
         gq.backlog = st.backlog;
         gq.drops   = st.drops;
         gq.overlimits = st.overlimits;
-        resp->nlmsg_len = tc_nla_put_stats2(buf, resp->nlmsg_len, &gb, &gq);
+        resp->nlmsg_len = tc_nla_put_stats2(buf, sizeof(buf), resp->nlmsg_len, &gb, &gq);
 
         netlink_unicast(protocol, src_pid, buf, resp->nlmsg_len, 0);
         return 0;
@@ -1057,7 +1070,7 @@ static int nl_tc_getqdisc(int protocol, const struct nlmsghdr *nlh,
         /* TCA_STATS + TCA_STATS2 */
         struct tc_stats st;
         tc_get_qdisc_stats(q, &st);
-        resp->nlmsg_len = tc_nla_put_stats(buf, resp->nlmsg_len, &st);
+        resp->nlmsg_len = tc_nla_put_stats(buf, sizeof(buf), resp->nlmsg_len, &st);
 
         struct gnet_stats_basic gb;
         struct gnet_stats_queue gq;
@@ -1069,7 +1082,7 @@ static int nl_tc_getqdisc(int protocol, const struct nlmsghdr *nlh,
         gq.backlog = st.backlog;
         gq.drops   = st.drops;
         gq.overlimits = st.overlimits;
-        resp->nlmsg_len = tc_nla_put_stats2(buf, resp->nlmsg_len, &gb, &gq);
+        resp->nlmsg_len = tc_nla_put_stats2(buf, sizeof(buf), resp->nlmsg_len, &gb, &gq);
 
         netlink_unicast(protocol, src_pid, buf, resp->nlmsg_len, 0);
     }
@@ -1167,14 +1180,18 @@ static int nl_tc_delqdisc(int protocol, const struct nlmsghdr *nlh,
 }
 
 /* Helper: append class stats as TCA_STATS attribute to a response buffer.
- * Returns the new nlmsg_len. */
-static uint32_t tc_nla_put_class_stats(uint8_t *buf, uint32_t nlmsg_len,
+ * Returns the new nlmsg_len.
+ * buf_size is the total capacity of buf (used for bounds checking). */
+static uint32_t tc_nla_put_class_stats(uint8_t *buf, uint32_t buf_size,
+                                        uint32_t nlmsg_len,
                                         const struct tc_class_stats *st)
 {
     if (!buf || !st) return nlmsg_len;
     uint32_t offset = nlmsg_len;
-    struct nlattr *nla = (struct nlattr *)(buf + offset);
     uint16_t payload_len = (uint16_t)sizeof(*st);
+    uint32_t total_len = (uint32_t)NLA_HDRLEN + (uint32_t)payload_len;
+    if (offset + total_len > buf_size) return nlmsg_len;
+    struct nlattr *nla = (struct nlattr *)(buf + offset);
     nla->nla_len = (uint16_t)(NLA_HDRLEN + payload_len);
     nla->nla_type = TCA_STATS;
     memcpy((uint8_t *)(nla + 1), st, payload_len);
@@ -1261,7 +1278,7 @@ static int nl_tc_gettclass(int protocol, const struct nlmsghdr *nlh,
         }
 
         /* TCA_STATS with per-class stats */
-        resp->nlmsg_len = tc_nla_put_class_stats(buf, resp->nlmsg_len, &cs);
+        resp->nlmsg_len = tc_nla_put_class_stats(buf, sizeof(buf), resp->nlmsg_len, &cs);
 
         netlink_unicast(protocol, src_pid, buf, resp->nlmsg_len, 0);
 
