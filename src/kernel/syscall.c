@@ -6868,6 +6868,17 @@ static uint64_t sys_recvmsg(uint64_t sockfd, uint64_t msg_addr, uint64_t flags) 
         return (uint64_t)(int64_t)-EFAULT;
     if (syscall_is_user_process() && !syscall_user_write_ok(msg_addr, sizeof(struct msghdr)))
         return (uint64_t)(int64_t)-EFAULT;
+    /* Validate msg_control ancillary data buffer is user-writable.
+     * unix_recvmsg() writes SCM_CREDENTIALS / SCM_RIGHTS through this
+     * pointer; failing to validate here lets a user pass a kernel address
+     * as msg_control and corrupt kernel memory. */
+    if (syscall_is_user_process()) {
+        struct msghdr *msg = (struct msghdr *)msg_addr;
+        if (msg->msg_controllen > 0 && msg->msg_control) {
+            if (!syscall_user_write_ok((uint64_t)msg->msg_control, msg->msg_controllen))
+                return (uint64_t)(int64_t)-EFAULT;
+        }
+    }
     return (uint64_t)(int64_t)sys_recvmsg_impl((int)sockfd, (struct msghdr *)msg_addr, (int)flags);
 }
 
