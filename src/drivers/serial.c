@@ -116,21 +116,24 @@ int serial_readable(void) {
     return inb(SERIAL_COM1 + UART_LSR) & UART_LSR_DR;
 }
 
-char serial_getchar(void) {
+int serial_getchar(void) {
     int timeout = 10000000;
     while (!serial_readable() && --timeout > 0)
         __asm__ volatile("pause");
-    return timeout > 0 ? (char)inb(SERIAL_COM1) : 0;
+    if (timeout == 0)
+        return -1;
+    return (uint8_t)inb(SERIAL_COM1);
 }
 
 void serial_read_line(char *buf, int max) {
     int i = 0;
     while (i < max - 1) {
-        char c = serial_getchar();
+        int c = serial_getchar();
+        if (c < 0) break;  /* timeout */
         if (c == '\r' || c == '\n') break;
-        buf[i++] = c;
+        buf[i++] = (char)c;
     }
-    buf[i] = 0;
+    buf[i] = '\0';
 }
 
 /* ── IRQ mode ─────────────────────────────────────────────────────── */
@@ -173,13 +176,13 @@ int serial_set_irq_mode(int port_idx, int enable) {
     return 0;
 }
 
-char serial_read_irq(int port_idx) {
-    if (port_idx < 0 || port_idx >= SERIAL_PORTS_MAX) return 0;
+int serial_read_irq(int port_idx) {
+    if (port_idx < 0 || port_idx >= SERIAL_PORTS_MAX) return -1;
     struct serial_port_state *port = &g_ports[port_idx];
 
-    if (port->rx_head == port->rx_tail) return 0;
+    if (port->rx_head == port->rx_tail) return -1;
 
-    char c = port->rx_buffer[port->rx_tail];
+    uint8_t c = (uint8_t)port->rx_buffer[port->rx_tail];
     port->rx_tail = (port->rx_tail + 1) % (int)sizeof(port->rx_buffer);
     return c;
 }

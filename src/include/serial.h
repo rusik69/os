@@ -64,7 +64,7 @@ void serial_write(const char *str);
 int  serial_readable(void);
 
 /* Read one char from COM1 (polling). */
-char serial_getchar(void);
+int  serial_getchar(void);
 
 /* Read a line from COM1. */
 void serial_read_line(char *buf, int max);
@@ -96,8 +96,8 @@ void early_printdec(uint64_t val);
 int  serial_set_irq_mode(int port_idx, int enable);
 
 /* Read a character from the IRQ-driven receive buffer for a port.
-   Returns 0 if no data available. */
-char serial_read_irq(int port_idx);
+   Returns the byte (0-255) on success, or -1 if no data available. */
+int  serial_read_irq(int port_idx);
 
 /* Check if IRQ data is available on a port (returns non-zero if yes). */
 int  serial_has_irq(int port_idx);
