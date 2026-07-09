@@ -1701,20 +1701,22 @@ int fat32_set_volume_label(const char *label)
         return -EIO;
 
     /* ── Update backup boot sector (FAT32 only) ── */
-    /* The backup_boot_sector field is at offset 0x32 in FAT32 BPB.
-     * Typical value is 6 (sector 6). */
+    /* The backup_boot_sector field is at offset 0x32 in FAT32 BPB
+     * and is partition-relative (typically 6).  Add part_start to
+     * get the absolute LBA for the block-device layer. */
     if (fat_type == FAT32) {
         uint16_t backup_sec;
         __builtin_memcpy(&backup_sec, boot + 0x32, 2);
-        if (backup_sec > 0 && backup_sec != part_start) {
+        if (backup_sec > 0) {
+            uint32_t backup_lba = part_start + backup_sec;
             uint8_t backup[SECT_SIZE];
-            if (read_sector(backup_sec, backup) == 0) {
+            if (read_sector(backup_lba, backup) == 0) {
                 if (fat_type == FAT32) {
                     __builtin_memcpy(backup + 0x47, new_label, 11);
                 } else {
                     __builtin_memcpy(backup + 0x2B, new_label, 11);
                 }
-                write_sector(backup_sec, backup);
+                write_sector(backup_lba, backup);
             }
         }
     }
@@ -2363,8 +2365,8 @@ int fat32_repair_boot(void)
 	uint16_t backup_sec_num = bpb->backup_boot_sector;
 	int backup_valid = 0;
 
-	if (backup_sec_num > 0 && backup_sec_num != (uint16_t)part_start) {
-		uint32_t backup_lba = (uint32_t)backup_sec_num;
+	if (backup_sec_num > 0) {
+		uint32_t backup_lba = part_start + backup_sec_num;
 		if (read_sector(backup_lba, backup) == 0) {
 			int bz = 1;
 			for (int i = 0; i < 512; i++) {
@@ -2386,7 +2388,7 @@ int fat32_repair_boot(void)
 		primary_valid = 1;
 	} else if (primary_valid && !backup_valid && backup_sec_num > 0) {
 		/* Restore backup from primary */
-		uint32_t backup_lba = (uint32_t)backup_sec_num;
+		uint32_t backup_lba = part_start + backup_sec_num;
 		if (write_sector(backup_lba, primary) != 0)
 			return -EIO;
 		repairs++;
