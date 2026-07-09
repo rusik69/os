@@ -62,6 +62,13 @@ int64_t sys_mprotect(uint64_t addr, uint64_t length, uint64_t prot) {
     if (addr & (PAGE_SIZE - 1))
         return (int64_t)-EINVAL;
 
+    /* ── Pre-rounding overflow guard ─────────────────────────────────
+     * Reject lengths so large that rounding up to PAGE_SIZE would
+     * overflow in unsigned arithmetic (silently wrapping to a small
+     * value and bypassing the addr+length overflow check below). */
+    if (length > UINT64_MAX - (PAGE_SIZE - 1))
+        return (int64_t)-EINVAL;
+
     /* ── Round length to page boundary ─────────────────────────────── */
     length = (length + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
 
