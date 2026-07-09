@@ -65,8 +65,4 @@ static int dmesg_write(const void *buf, size_t count)
     kprintf("[dmesg] dmesg_write: not yet implemented\n");
     return 0;
 }
-/* ── Stub: dmesg_clear ─────────────────────────────── */
-void dmesg_clear(void)
-{
-    kprintf("[dmesg] dmesg_clear: not yet implemented\n");
-}
+/* dmesg_clear: implemented in lib/printf.c */
