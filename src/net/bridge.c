@@ -77,9 +77,17 @@ void bridge_exit(void) {
 
 int bridge_add_port(int port_iface) {
     if (!g_bridge.initialized) return -1;
+    if (port_iface < 0 || !netif_valid(port_iface)) return -1;
     if (g_bridge.num_ports >= BRIDGE_MAX_PORTS) return -1;
+    /* Prevent duplicate port */
+    for (int i = 0; i < g_bridge.num_ports; i++) {
+        if (g_bridge.ports[i] == port_iface) return -1;
+    }
     g_bridge.ports[g_bridge.num_ports++] = port_iface;
-    /* Register with STP */
+    /* Register with STP using interface index as STP port number.
+     * This works because STP port_num == ifindex throughout, but is fragile:
+     * ideally the bridge would maintain its own port numbering separate
+     * from the netdevice ifindex namespace. */
     stp_add_port(port_iface, 128, 0);
     return 0;
 }
@@ -91,6 +99,8 @@ int bridge_remove_port(int port_iface) {
             for (int j = i; j < g_bridge.num_ports - 1; j++)
                 g_bridge.ports[j] = g_bridge.ports[j + 1];
             g_bridge.num_ports--;
+            /* Clean up STP state for this port */
+            stp_remove_port(port_iface);
             return 0;
         }
     }
