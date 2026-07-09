@@ -146,10 +146,10 @@ static int iscsi_login(struct iscsi_session *sess)
     /* ── Stage 2: LoginOperationalNegotiation ── */
     memset(&bhs, 0, sizeof(bhs));
     bhs.opcode = ISCSI_OP_LOGIN | ISCSI_OP_FINAL;
-    /* Transition to FullFeaturePhase: TSG=Full, CSG=OperationalNegotiation, T=1 */
+    /* Transition to FullFeaturePhase: CSG=OperationalNegotiation, NSG=FullFeaturePhase, T=1 */
     bhs.flags = (1U << 6) |                             /* T bit (transit) */
-                (ISCSI_LOGIN_STAGE_OP_NEGOTIATION << 2) | /* CSG */
-                ISCSI_LOGIN_STAGE_FULL_FEATURE_PHASE;     /* NSG (lower 2 bits) */
+                (ISCSI_LOGIN_STAGE_OP_NEGOTIATION) |      /* CSG in bits 1:0 */
+                (ISCSI_LOGIN_STAGE_FULL_FEATURE_PHASE << 2); /* NSG in bits 3:2 */
 
     plen = snprintf(param_buf, sizeof(param_buf),
                     "InitiatorName=iqn.2026-06.kernel.iscsi:initiator\r\n"
@@ -173,7 +173,7 @@ static int iscsi_login(struct iscsi_session *sess)
     }
 
     /* Extract TSIH from the login response BHS */
-    sess->tsih = iscsi_htons((uint16_t)(resp_bhs.lun >> 48));  /* TSIH is in bytes 6-7 of LUN field */
+    sess->tsih = iscsi_htons((uint16_t)(resp_bhs.lun & 0xFFFF));  /* TSIH is in bytes 8-9 (low 16 bits of LUN field on LE host) */
 
     kprintf("[ISCSI] Login complete, TSIH=0x%04x\n", sess->tsih);
     sess->login_done = 1;
@@ -385,8 +385,10 @@ int iscsi_connect(uint32_t target_ip, const char *target_name)
     sess->conn_id = conn_id;
     sess->target_ip = target_ip;
     sess->target_port = ISCSI_PORT;
-    if (target_name)
+    if (target_name) {
         strncpy(sess->target_name, target_name, sizeof(sess->target_name) - 1);
+        sess->target_name[sizeof(sess->target_name) - 1] = '\0';
+    }
     sess->isid = 0x400001370000ULL;  /* Generated ISID */
 
     /* Login */
