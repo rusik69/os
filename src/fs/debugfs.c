@@ -268,8 +268,15 @@ int debugfs_create_rw_file(const char *name,
 		name = slash + 1;
 	}
 
-	if (find_entry(name) >= 0)
-		return -1; /* already exists at this level */
+	/* Check uniqueness — scan entries under the computed parent */
+	for (int i = 0; i < DEBUGFS_MAX_ENTRIES; i++) {
+		if (!debugfs_entries[i].in_use)
+			continue;
+		if (debugfs_entries[i].parent != parent)
+			continue;
+		if (strcmp(debugfs_entries[i].name, name) == 0)
+			return -1; /* already exists at this level */
+	}
 
 	int ret = create_entry(name, DEBUGFS_TYPE_FILE, parent,
 			       read_fn, write_fn, NULL, NULL);
@@ -299,8 +306,15 @@ int debugfs_create_u32(const char *name, uint32_t *val)
 		name = slash + 1;
 	}
 
-	if (find_entry(name) >= 0)
-		return -1;
+	/* Check uniqueness — scan entries under the computed parent */
+	for (int i = 0; i < DEBUGFS_MAX_ENTRIES; i++) {
+		if (!debugfs_entries[i].in_use)
+			continue;
+		if (debugfs_entries[i].parent != parent)
+			continue;
+		if (strcmp(debugfs_entries[i].name, name) == 0)
+			return -1;
+	}
 
 	int ret = create_entry(name, DEBUGFS_TYPE_FILE, parent,
 			       NULL, NULL, val, NULL);
