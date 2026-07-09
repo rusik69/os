@@ -66,8 +66,11 @@ static int nbd_tcp_recv(int conn_id, void *buf, uint32_t len, int timeout_ticks)
 /*
  * Old-style negotiation:
  *   1. Server sends 128 bytes: magic (8) + export size (8) + flags (4) + reserved (108)
- *   2. Client replies with 32-bit flags (0 = simple, no fixed-newstyle)
- *   3. Now ready for read/write commands
+ *   2. Client sends the export name: uint32_t namelen in network byte order,
+ *      followed by char name[namelen].  A zero-length name selects the
+ *      server's default export.
+ *   3. Server responds with 128 bytes of zeroes (acknowledgment).
+ *   4. Now ready for read/write commands.
  */
 static int nbd_negotiate(int conn_id, struct nbd_device *dev)
 {
@@ -97,11 +100,34 @@ static int nbd_negotiate(int conn_id, struct nbd_device *dev)
     kprintf("[NBD] Export: %llu bytes, flags=0x%x\n",
             (unsigned long long)dev->export_size, dev->flags);
 
-    /* Send client flags (0 = simple) */
-    uint32_t client_flags = 0;
-    if (nbd_tcp_send(conn_id, &client_flags, 4) < 0) {
-        kprintf("[NBD] Failed to send client flags\n");
+    /* Send export name: length 0 (empty name = default export).
+     * NBD old-style protocol requires the client to send the export name
+     * after receiving the server's initial data.  A zero-length name
+     * selects the server's default export. */
+    uint32_t namelen = 0;
+    if (nbd_tcp_send(conn_id, &namelen, 4) < 0) {
+        kprintf("[NBD] Failed to send export name\n");
         return -1;
+    }
+
+    /* Receive server acknowledgment: 128 bytes of zeroes.
+     * The server sends this after accepting the export name.
+     * Not consuming it would desynchronise the protocol — the
+     * acknowledgment would be read as the start of the first
+     * command's reply. */
+    uint8_t ack[128];
+    if (nbd_tcp_recv(conn_id, ack, 128, 100) < 0) {
+        kprintf("[NBD] Failed to receive export acknowledgment\n");
+        return -1;
+    }
+
+    /* Verify acknowledgment is all zeros */
+    for (int i = 0; i < 128; i++) {
+        if (ack[i] != 0) {
+            kprintf("[NBD] Export acknowledgment has non-zero byte at "
+                    "offset %d — server rejected the export name\n", i);
+            return -1;
+        }
     }
 
     kprintf("[NBD] Negotiation complete\n");

@@ -46,11 +46,14 @@ struct nbd_reply {
 
 #define NBD_REPLY_MAGIC 0x67446698
 
-/* NBD export info (returned from old-style negotiation) */
+/* NBD export info (returned from old-style negotiation).
+ * Layout at buf[8..127] in the 128-byte server handshake:
+ *   export_size (8) + flags (4) + reserved (108) = 120 bytes,
+ * prefixed by buf[0..7] = "NBDMAGIC". */
 struct nbd_export_info {
     uint64_t export_size;
     uint32_t flags;
-    uint8_t  reserved[124];
+    uint8_t  reserved[108];
 } __attribute__((packed));
 
 /* Block device operations for the NBD device */
