@@ -377,14 +377,25 @@ static int wg_nl_set_peer(const struct nlmsghdr *nlh,
 
     /* Endpoint IP */
     if (tb[WG_PEER_A_ENDPOINT_IP]) {
-        /* For now, peer endpoint is set via wg_create_peer() but that
-         * generates a random key.  We use our custom create function
-         * and need to set these fields separately.  Let's just log this
-         * for now — the netlink dispatch mechanism is the deliverable. */
         uint32_t ip;
         if (nla_get_u32(tb[WG_PEER_A_ENDPOINT_IP], &ip) == 0) {
-            kprintf("[WG] netlink: peer %d endpoint IP set (accessor TBD)\n", peer_idx);
-            (void)ip;
+            wg_set_peer_endpoint(peer_idx, ip, 0);
+        }
+    }
+
+    /* Endpoint port */
+    if (tb[WG_PEER_A_ENDPOINT_PORT]) {
+        uint16_t port;
+        if (nla_get_u16(tb[WG_PEER_A_ENDPOINT_PORT], &port) == 0) {
+            wg_set_peer_endpoint(peer_idx, 0, port);
+        }
+    }
+
+    /* Persistent keepalive interval */
+    if (tb[WG_PEER_A_PERSISTENT_KEEPALIVE_INTERVAL]) {
+        uint32_t interval;
+        if (nla_get_u32(tb[WG_PEER_A_PERSISTENT_KEEPALIVE_INTERVAL], &interval) == 0) {
+            wg_set_persistent_keepalive(peer_idx, interval);
         }
     }
 

@@ -127,6 +127,7 @@ int  wg_remove_peer(int index);
 int  wg_send(const uint8_t *data, int len);
 int  wg_receive(const uint8_t *data, int len, uint32_t src_ip, uint16_t src_port);
 int  wg_set_persistent_keepalive(int index, uint32_t interval);
+int  wg_set_peer_endpoint(int index, uint32_t ip, uint16_t port);
 void wg_poll(void);
 
 /* ── Handshake API ──────────────────────────────────────────── */

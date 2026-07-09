@@ -1231,6 +1231,37 @@ int wg_set_persistent_keepalive(int index, uint32_t interval) {
     return 0;
 }
 
+/* ── Endpoint setter ───────────────────────────────────────────────── */
+
+int wg_set_peer_endpoint(int index, uint32_t ip, uint16_t port)
+{
+    if (!wg_initialized)
+        return -EINVAL;
+    if (index < 0 || index >= g_wg.num_peers)
+        return -EINVAL;
+    if (!g_wg.peers[index].active)
+        return -EINVAL;
+
+    if (ip != 0)
+        g_wg.peers[index].endpoint_ip = ip;
+    if (port != 0)
+        g_wg.peers[index].endpoint_port = port;
+
+    /* Also update the last observed RX endpoint so roaming starts
+     * from the configured address rather than all-zeros. */
+    g_wg.peers[index].rx_ip   = g_wg.peers[index].endpoint_ip;
+    g_wg.peers[index].rx_port = g_wg.peers[index].endpoint_port;
+
+    kprintf("[WG] Peer %d endpoint set to %d.%d.%d.%d:%u\n",
+            index,
+            (uint8_t)(g_wg.peers[index].endpoint_ip >> 24),
+            (uint8_t)(g_wg.peers[index].endpoint_ip >> 16),
+            (uint8_t)(g_wg.peers[index].endpoint_ip >> 8),
+            (uint8_t)g_wg.peers[index].endpoint_ip,
+            g_wg.peers[index].endpoint_port);
+    return 0;
+}
+
 /* Send a keepalive (empty payload) packet to the given peer
  * Allocates and enqueues the encrypted keepalive message. */
 static void wg_send_keepalive(struct wg_peer *peer)
