@@ -271,22 +271,22 @@ int oci_config_read_file(struct oci_config *config, const char *path);
 
 /**
  * struct oci_state — Container state information for external query.
-  *
-  * Returned by container_state_query() to provide a structured view of
-  * the current container state and resource parameters.
-  *
-  * Fields mirror the OCI runtime-spec state.json schema.
-  */
- struct oci_state {
-     char      container_id[64];        /* Container ID string                */
-     char      state_name[16];          /* Human-readable state name          */
-     int       state;                   /* Numeric state (CONTAINER_STATE_*)  */
-     uint32_t  init_pid;                /* PID of container init process      */
-     uint64_t  memory_limit;            /* Memory limit in bytes              */
-     uint64_t  cpu_shares;              /* CPU shares (relative weight)       */
-     uint64_t  cpu_quota_us;            /* CPU quota in µs per period         */
-     uint64_t  cpu_period_us;           /* CPU period in µs                   */
-     uint32_t  pids_limit;              /* Max PIDs (0 = unlimited)           */
- };
+ *
+ * Returned by container_state_query() to provide a structured view of
+ * the current container state and resource parameters.
+ *
+ * Fields mirror the OCI runtime-spec state.json schema.
+ */
+struct oci_state {
+    char      container_id[64];        /* Container ID string                */
+    char      state_name[16];          /* Human-readable state name          */
+    int       state;                   /* Numeric state (CONTAINER_STATE_*)  */
+    uint32_t  init_pid;                /* PID of container init process      */
+    uint64_t  memory_limit;            /* Memory limit in bytes              */
+    uint64_t  cpu_shares;              /* CPU shares (relative weight)       */
+    uint64_t  cpu_quota_us;            /* CPU quota in µs per period         */
+    uint64_t  cpu_period_us;           /* CPU period in µs                   */
+    uint32_t  pids_limit;              /* Max PIDs (0 = unlimited)           */
+};
 
- #endif /* OCI_SPEC_H */
+#endif /* OCI_SPEC_H */
