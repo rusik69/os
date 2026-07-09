@@ -6906,6 +6906,9 @@ int sys_getpeername_impl(int sockfd, struct sockaddr_in *addr, uint32_t *addrlen
 int sys_socketpair_impl(int domain, int type, int protocol, int sv[2]);
 
 static uint64_t sys_socket(uint64_t domain, uint64_t type, uint64_t protocol) {
+    /* Validate that domain/type/protocol fit in int without truncation */
+    if ((uint64_t)(int)domain != domain || (uint64_t)(int)type != type || (uint64_t)(int)protocol != protocol)
+        return (uint64_t)(int64_t)-EINVAL;
     int ret = sys_socket_impl((int)domain, (int)type, (int)protocol);
     return (uint64_t)(int64_t)ret;
 }
@@ -7007,6 +7010,9 @@ static uint64_t sys_getpeername(uint64_t sockfd, uint64_t addr_addr, uint64_t ad
 }
 
 static uint64_t sys_socketpair(uint64_t domain, uint64_t type, uint64_t protocol, uint64_t sv_addr) {
+    /* Validate that domain/type/protocol fit in int without truncation */
+    if ((uint64_t)(int)domain != domain || (uint64_t)(int)type != type || (uint64_t)(int)protocol != protocol)
+        return (uint64_t)(int64_t)-EINVAL;
     if (syscall_is_user_process() && !syscall_user_write_ok(sv_addr, 8))
         return (uint64_t)(int64_t)-EFAULT;
     int sv[2];
