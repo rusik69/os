@@ -39,17 +39,40 @@ static int fuse_path_walk(struct fuse_mount_info *mnt, const char *path,
 
 /*
  * Find which FUSE mount a path belongs to.
+ *
+ * Returns the mount with the longest matching mountpoint prefix.
+ * The path must either match the mountpoint exactly or have a '/' or
+ * '\0' immediately after the mountpoint length, to prevent false
+ * matches (e.g. "/mnt/foobar" matching mountpoint "/mnt/foo").
  */
 static struct fuse_mount_info *fuse_find_mount(const char *path)
 {
+    struct fuse_mount_info *best = NULL;
+    size_t best_len = 0;
+
     for (int i = 0; i < FUSE_MAX_MOUNTS; i++) {
-        if (g_fuse_mounts[i].active) {
-            size_t mplen = strlen(g_fuse_mounts[i].mountpoint);
-            if (strncmp(path, g_fuse_mounts[i].mountpoint, mplen) == 0)
-                return &g_fuse_mounts[i];
+        if (!g_fuse_mounts[i].active)
+            continue;
+
+        size_t mplen = strlen(g_fuse_mounts[i].mountpoint);
+        if (mplen == 0)
+            continue;
+
+        if (strncmp(path, g_fuse_mounts[i].mountpoint, mplen) != 0)
+            continue;
+
+        /* Path must end at mountpoint or continue with a separator */
+        if (path[mplen] != '/' && path[mplen] != '\0')
+            continue;
+
+        /* Prefer the mount with the longest matching prefix */
+        if (mplen > best_len) {
+            best = &g_fuse_mounts[i];
+            best_len = mplen;
         }
     }
-    return NULL;
+
+    return best;
 }
 
 /* Get node ID for a path within a FUSE mount */
@@ -1344,6 +1367,7 @@ int fuse_mount(const char *mountpoint)
     mnt = &g_fuse_mounts[slot];
     memset(mnt, 0, sizeof(*mnt));
     strncpy(mnt->mountpoint, mountpoint, sizeof(mnt->mountpoint) - 1);
+    mnt->mountpoint[sizeof(mnt->mountpoint) - 1] = '\0';
     fuse_entry_cache_init(mnt);
     fuse_open_fh_cache_init(mnt);
     fuse_dir_cache_init(mnt);
