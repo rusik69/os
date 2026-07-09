@@ -116,12 +116,16 @@ static void v9pnet_virtio_init(void)
              VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER |
              VIRTIO_STATUS_DRIVER_OK);
 
-    /* Read mount tag from config space (after PCI config, at offset 20) */
+    /* Read mount tag from config space (after PCI config, at offset 20)
+     * Virtio-9p config layout: [le16 tag_len][u8 tag[tag_len]]
+     * The tag is NOT null-terminated in config space — tag_len
+     * determines the number of tag bytes. */
     memset(v9p_mount_tag, 0, sizeof(v9p_mount_tag));
-    for (int i = 0; i < 63; i++) {
-        v9p_mount_tag[i] = (char)v9p_inb((uint8_t)(0x14 + i));
-        if (v9p_mount_tag[i] == '\0') break;
-    }
+    uint16_t tag_len = v9p_inw(0x14);               /* 16-bit length field */
+    if (tag_len >= sizeof(v9p_mount_tag))
+        tag_len = sizeof(v9p_mount_tag) - 1;        /* clamp to fit buffer */
+    for (uint16_t i = 0; i < tag_len; i++)
+        v9p_mount_tag[i] = (char)v9p_inb((uint8_t)(0x16 + i));
 
     v9p_present = 1;
 
