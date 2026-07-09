@@ -4204,14 +4204,20 @@ static uint64_t sys_writev(uint64_t fd, uint64_t iov_addr, uint64_t iovcnt) {
     for (uint64_t i = 0; i < iovcnt; i++) {
         if (!iov[i].iov_base || iov[i].iov_len == 0)
             continue;
-        int64_t n = (int64_t)sys_write(fd, (uint64_t)iov[i].iov_base,
-                                       iov[i].iov_len);
-        if (n < 0) {
+        uint64_t n = sys_write(fd, (uint64_t)iov[i].iov_base,
+                               iov[i].iov_len);
+        /* sys_write returns (uint64_t)-1 on error; treat any other value as success */
+        if (n == (uint64_t)-1) {
             if (allocd) kfree(iov);
-            /* Partial write: return bytes so far; full failure: propagate errno */
-            return total ? total : (uint64_t)(int64_t)n;
+            /* Partial write: return bytes so far; full failure: return -1 */
+            return total ? total : (uint64_t)-1;
         }
-        total += (uint64_t)n;
+        /* Guard against wrap-around in the total byte counter */
+        if (n > UINT64_MAX - total) {
+            total = UINT64_MAX;
+            break;
+        }
+        total += n;
     }
 
     if (allocd) kfree(iov);
