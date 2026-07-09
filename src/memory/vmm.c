@@ -8,6 +8,7 @@
 #include "export.h"
 #include "bug.h"
 #include "err.h"
+#include "heap.h"
 
 /* Verify our fundamental page size assumption at compile time */
 _Static_assert(PAGE_SIZE == 4096, "PAGE_SIZE must be 4096");
@@ -769,7 +770,8 @@ static int vmm_user_virt_to_phys(uint64_t *pml4, uint64_t virt, uint64_t *phys)
 int vmm_map_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages,
                        uint64_t flags) {
     if (!pml4 || virt >= USER_VADDR_MAX) return -EINVAL;
-    if (virt + num_pages * PAGE_SIZE < virt) return -EOVERFLOW; /* overflow */
+    if (num_pages > SIZE_MAX / PAGE_SIZE) return -EOVERFLOW; /* mul overflow */
+    if (virt + num_pages * PAGE_SIZE < virt) return -EOVERFLOW; /* add overflow */
     if (virt + num_pages * PAGE_SIZE > USER_VADDR_MAX) return -EINVAL;
 
     size_t i = 0;
@@ -832,7 +834,8 @@ unwind:
 
 int vmm_unmap_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages) {
     if (!pml4 || virt >= USER_VADDR_MAX) return -EINVAL;
-    if (virt + num_pages * PAGE_SIZE < virt) return -EOVERFLOW;
+    if (num_pages > SIZE_MAX / PAGE_SIZE) return -EOVERFLOW; /* mul overflow */
+    if (virt + num_pages * PAGE_SIZE < virt) return -EOVERFLOW; /* add overflow */
     if (virt + num_pages * PAGE_SIZE > USER_VADDR_MAX) return -EINVAL;
 
     for (size_t i = 0; i < num_pages; i++) {
@@ -946,6 +949,7 @@ int vmm_map_user_huge_pages(uint64_t *pml4, uint64_t virt,
                              size_t num_4k_pages, uint64_t flags) {
     if (!pml4 || virt >= USER_VADDR_MAX) return -EINVAL;
     if (num_4k_pages == 0) return 0;
+    if (num_4k_pages > SIZE_MAX / PAGE_SIZE) return -EOVERFLOW; /* mul overflow */
 
     uint64_t end = virt + (uint64_t)num_4k_pages * PAGE_SIZE;
     if (end < virt || end > USER_VADDR_MAX) return -EINVAL;
@@ -1003,7 +1007,8 @@ int vmm_map_user_huge_pages(uint64_t *pml4, uint64_t virt,
 int vmm_set_user_pages_flags(uint64_t *pml4, uint64_t virt, size_t num_pages,
                              uint64_t new_flags) {
     if (!pml4 || virt >= USER_VADDR_MAX) return -EINVAL;
-    if (virt + num_pages * PAGE_SIZE < virt) return -EOVERFLOW;
+    if (num_pages > SIZE_MAX / PAGE_SIZE) return -EOVERFLOW; /* mul overflow */
+    if (virt + num_pages * PAGE_SIZE < virt) return -EOVERFLOW; /* add overflow */
     if (virt + num_pages * PAGE_SIZE > USER_VADDR_MAX) return -EINVAL;
 
     for (size_t i = 0; i < num_pages; i++) {
@@ -1109,7 +1114,8 @@ int vmm_set_user_pages_flags(uint64_t *pml4, uint64_t virt, size_t num_pages,
  */
 int vmm_lock_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages) {
     if (!pml4 || virt >= USER_VADDR_MAX) return -EINVAL;
-    if (virt + num_pages * PAGE_SIZE < virt) return -EOVERFLOW;
+    if (num_pages > SIZE_MAX / PAGE_SIZE) return -EOVERFLOW; /* mul overflow */
+    if (virt + num_pages * PAGE_SIZE < virt) return -EOVERFLOW; /* add overflow */
     if (virt + num_pages * PAGE_SIZE > USER_VADDR_MAX) return -EINVAL;
 
     for (size_t i = 0; i < num_pages; i++) {
@@ -1196,7 +1202,8 @@ int vmm_lock_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages) {
  */
 int vmm_unlock_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages) {
     if (!pml4 || virt >= USER_VADDR_MAX) return -EINVAL;
-    if (virt + num_pages * PAGE_SIZE < virt) return -EOVERFLOW;
+    if (num_pages > SIZE_MAX / PAGE_SIZE) return -EOVERFLOW; /* mul overflow */
+    if (virt + num_pages * PAGE_SIZE < virt) return -EOVERFLOW; /* add overflow */
     if (virt + num_pages * PAGE_SIZE > USER_VADDR_MAX) return -EINVAL;
 
     for (size_t i = 0; i < num_pages; i++) {
