@@ -243,6 +243,7 @@ int vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
 
 void vmm_set_range_uncacheable(uint64_t virt, uint64_t size) {
     if (!size) return;
+    if (virt + size < virt) return; /* overflow check */
     uint64_t end = virt + size;
 
     while (virt < end) {
@@ -351,6 +352,8 @@ uint64_t *vmm_get_pml4(void) {
  * the identity map is removed.
  */
 void *vmm_map_phys(uint64_t phys, uint64_t size, uint64_t flags) {
+    if (size == 0) return NULL;
+    if (phys + size < phys) return ERR_PTR(-EOVERFLOW); /* overflow check */
     uint64_t start = phys & ~(PAGE_SIZE - 1ULL);
     uint64_t end   = (phys + size + PAGE_SIZE - 1ULL) & ~(PAGE_SIZE - 1ULL);
     for (uint64_t off = 0; off < end - start; off += PAGE_SIZE) {
@@ -363,8 +366,11 @@ void *vmm_map_phys(uint64_t phys, uint64_t size, uint64_t flags) {
 
 /* Unmap a region previously mapped with vmm_map_phys. */
 void vmm_unmap_phys(void *vaddr, uint64_t size) {
-    uint64_t start = (uint64_t)(uintptr_t)vaddr & ~(PAGE_SIZE - 1ULL);
-    uint64_t end   = ((uint64_t)(uintptr_t)vaddr + size + PAGE_SIZE - 1ULL) & ~(PAGE_SIZE - 1ULL);
+    if (size == 0) return;
+    uint64_t va = (uint64_t)(uintptr_t)vaddr;
+    if (va + size < va) return; /* overflow check */
+    uint64_t start = va & ~(PAGE_SIZE - 1ULL);
+    uint64_t end   = (va + size + PAGE_SIZE - 1ULL) & ~(PAGE_SIZE - 1ULL);
     for (uint64_t addr = start; addr < end; addr += PAGE_SIZE)
         vmm_unmap_page(addr);
 }
@@ -1467,6 +1473,8 @@ static int vmm_free(uint64_t addr, size_t size)
 {
     if (addr == 0 || size == 0)
         return -EINVAL;
+    if (addr + size < addr)
+        return -EOVERFLOW;
 
     uint64_t start = addr & ~(PAGE_SIZE - 1ULL);
     uint64_t end = ((addr + size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL));
@@ -1485,6 +1493,8 @@ static int vmm_protect(uint64_t addr, size_t size, int new_flags)
 {
     if (addr == 0 || size == 0)
         return -EINVAL;
+    if (addr + size < addr)
+        return -EOVERFLOW;
 
     uint64_t start = addr & ~(PAGE_SIZE - 1ULL);
     uint64_t end = ((addr + size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL));
@@ -1526,6 +1536,7 @@ static void vmm_flush_tlb(uint64_t addr, size_t size)
         __asm__ volatile("mov %0, %%cr3" : : "r"(cr3) : "memory");
         return;
     }
+    if (addr + size < addr) return; /* overflow check */
 
     uint64_t start = addr & ~(PAGE_SIZE - 1ULL);
     uint64_t end = ((addr + size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL));
