@@ -1470,8 +1470,8 @@ static int pci_match_modalias(const char *modalias, const struct pci_device_id *
     uint16_t subsys_v = 0, subsys_d = 0;
     unsigned int base_cl_val = 0, sub_cl_val = 0;
 
-    /* Parse: pci:vXXXXdXXXXsvXXXXsdXXXXbcXXccXX */
-    if (sscanf(modalias, "pci:v%04hxd%04hxsv%04hxsd%04hxbc%02xcc%02x",
+    /* Parse: pci:vXXXXXXXXdXXXXXXXXsvXXXXXXXXsdXXXXXXXXbcXXccXX */
+    if (sscanf(modalias, "pci:v%08hxd%08hxsv%08hxsd%08hxbc%02xcc%02x",
                &vendor, &device, &subsys_v, &subsys_d,
                &base_cl_val, &sub_cl_val) < 4)
         return 0;
