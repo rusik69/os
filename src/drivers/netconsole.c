@@ -301,8 +301,9 @@ static void nc_output_hook(char c, void *ctx)
                 if (!nc_work_pending) {
                     nc_work_pending = 1;
                     if (workqueue_schedule(nc_send_line, copy) < 0) {
-                        /* Queue full — drop the line */
+                        /* Queue full — drop the line, reset flag */
                         kfree(copy);
+                        nc_work_pending = 0;
                     }
                 } else {
                     /* A work item is already pending; we can either queue
@@ -362,8 +363,8 @@ static void nc_send_line(void *arg)
     len = snprintf(buf, sizeof(buf), "<%d>kernel: %s\n",
                    NC_FACILITY * 8 + NC_DEFAULT_SEVERITY,
                    line);
-    if ((size_t)len > sizeof(buf))
-        len = (int)sizeof(buf);
+    if ((size_t)len >= sizeof(buf))
+        len = (int)sizeof(buf) - 1;
 
     /* Send via UDP */
     if (nc_target_ip != 0) {
