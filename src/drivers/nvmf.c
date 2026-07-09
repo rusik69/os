@@ -76,9 +76,14 @@ static int nvmf_handle_connect(struct nvmf_target *tgt,
         return -EIO;
 
     /* Read optional data segment containing host/target NQN */
-    dlen = (uint32_t)(req_hdr->len - sizeof(*req_hdr) - sizeof(conn_req));
-    dlen = nvmf_htons((uint16_t)dlen);  /* len is big-endian */
-    if (dlen > 0 && dlen <= sizeof(data_seg)) {
+    dlen = nvmf_htons(req_hdr->len);          /* convert to host byte order */
+    if (dlen < sizeof(*req_hdr) + sizeof(conn_req))
+        dlen = 0;                             /* malformed: no data segment */
+    else
+        dlen -= sizeof(*req_hdr) + sizeof(conn_req);
+    if (dlen > sizeof(data_seg))
+        dlen = sizeof(data_seg);              /* clamp to buffer size */
+    if (dlen > 0) {
         if (nvmf_recv_exact(tgt, data_seg, dlen, 100) < 0)
             return -EIO;
     }

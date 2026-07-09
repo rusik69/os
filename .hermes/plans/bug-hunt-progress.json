@@ -1,7 +1,7 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
   "current_batch": "B003",
-  "current_item": 174,
+  "current_item": 176,
   "completed_items": [
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
     11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
@@ -26,13 +26,15 @@
     171,
     172,
     173,
-    174
+    174,
+    175,
+    176
   ],
-  "found_bugs": 669,
-  "fixed_bugs": 669,
+  "found_bugs": 673,
+  "fixed_bugs": 673,
   "completed_batches": [
     "B002"
   ],
-  "last_item_timestamp": "2026-07-09T10:53:35",
+  "last_item_timestamp": "2026-07-09T11:22:58",
   "skip_on_no_bug": true
 }
