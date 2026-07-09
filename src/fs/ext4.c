@@ -306,13 +306,13 @@ static int ext4_load_bgd_cache(struct ext4_priv *ep)
     if (ep->incompat & EXT4_FEATURE_INCOMPAT_64BIT)
         bgd_entry_size = 64;
 
-    uint32_t bgd_bytes = ep->num_block_groups * bgd_entry_size;
-    uint32_t bgd_blocks = (bgd_bytes + ep->block_size - 1) / ep->block_size;
+    uint64_t bgd_bytes = (uint64_t)ep->num_block_groups * bgd_entry_size;
+    uint32_t bgd_blocks = (uint32_t)((bgd_bytes + ep->block_size - 1) / ep->block_size);
 
-    ep->bgd_cache = (struct ext4_bg_desc *)kmalloc(bgd_bytes);
+    ep->bgd_cache = (struct ext4_bg_desc *)kmalloc((size_t)bgd_bytes);
     if (!ep->bgd_cache)
         return -ENOMEM;
-    ep->bgd_cache_size = bgd_bytes;
+    ep->bgd_cache_size = (uint32_t)bgd_bytes;
 
     /* The block group descriptor table starts at byte offset 2048 on disk:
      *   byte 0–1023: x86 boot sector / partition table
@@ -1344,8 +1344,22 @@ int ext4_mount(const char *mountpoint, uint8_t dev_id)
         if (ep->incompat & EXT4_FEATURE_INCOMPAT_64BIT)
             total_blocks |= (uint64_t)ep->sb.s_blocks_count_hi << 32;
 
-        uint32_t total_groups = (uint32_t)((total_blocks + ep->blocks_per_group - 1) /
-                                            ep->blocks_per_group);
+        /* Saturating cast: for very large filesystems (64-bit feature,
+         * sparse per-group counts) the group count can exceed UINT32_MAX.
+         * Clamp to the maximum representable value so that all subsequent
+         * block-group-number computations remain consistent (wrapping to
+         * 0 would silently break every inode lookup and BGD access). */
+        uint64_t total_groups_64 = (total_blocks + ep->blocks_per_group - 1) /
+                                    ep->blocks_per_group;
+        uint32_t total_groups;
+        if (total_groups_64 > 0xFFFFFFFFULL) {
+            kprintf("[ext4] WARNING: total block groups (%llu) exceeds "
+                    "32-bit limit, clamping to 0xFFFFFFFF\n",
+                    total_groups_64);
+            total_groups = 0xFFFFFFFFUL;
+        } else {
+            total_groups = (uint32_t)total_groups_64;
+        }
         ep->num_block_groups = total_groups;
     }
 
