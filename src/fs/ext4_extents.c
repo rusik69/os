@@ -549,6 +549,9 @@ static int ext4_ext_split(struct ext4_priv *ep,
     /* ── Allocate a new block ── */
     /* Simply use old_block + 1 as a naive allocator.
      * A real implementation should call ext4 block allocation. */
+    /* Guard against overflow when old_block == UINT32_MAX */
+    if (old_block == 0xFFFFFFFFU)
+        return -ENOSPC;
     uint32_t alloc_block = old_block + 1;
 
     /* ── Allocate a buffer for the new node ── */
@@ -993,8 +996,15 @@ int ext4_ext_insert_extent(struct ext4_priv *ep,
             }
         }
 
-        /* Does the new extent prepend before ext[i]? */
-        if (newext->ee_block + new_len == exts[i].ee_block) {
+        /* Does the new extent prepend before ext[i]?
+         * Use safe addition to avoid overflow when newext->ee_block
+         * is near UINT32_MAX and adding new_len wraps past 0. */
+        uint32_t new_start_plus_len;
+        if (new_len > 0xFFFFFFFFU - newext->ee_block)
+            new_start_plus_len = 0xFFFFFFFFU;
+        else
+            new_start_plus_len = newext->ee_block + new_len;
+        if (new_start_plus_len == exts[i].ee_block) {
             uint64_t new_phys =
                 ((uint64_t)newext->ee_start_hi << 32) |
                 newext->ee_start_lo;
