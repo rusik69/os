@@ -390,9 +390,21 @@ static int syscall_validate_user_args(uint64_t num, uint64_t a1, uint64_t a2,
             if (a4 && !syscall_user_write_ok(a4, 16)) return -EFAULT;
             return 0;
         }
-        case SYS_FUTEX:
-            if (a2 == FUTEX_WAIT && !syscall_user_read_ok(a1, 4)) return -EFAULT;
+        case SYS_FUTEX: {
+            uint64_t op_clean = a2 & ~(uint64_t)(FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME);
+            /* Validate uaddr (a1) — needed for all operations */
+            if (!syscall_user_read_ok(a1, 4))
+                return -EFAULT;
+            /* Validate timeout pointer (a4) for wait operations */
+            if ((op_clean == FUTEX_WAIT || op_clean == FUTEX_WAIT_BITSET) &&
+                a4 && !syscall_user_read_ok(a4, sizeof(struct timespec)))
+                return -EFAULT;
+            /* Validate uaddr2 (a5) for requeue operations */
+            if ((op_clean == FUTEX_REQUEUE || op_clean == FUTEX_CMP_REQUEUE) &&
+                !syscall_user_read_ok(a5, 4))
+                return -EFAULT;
             return 0;
+        }
         case SYS_ARCH_PRCTL:
             if ((a1 == ARCH_GET_FS || a1 == ARCH_GET_GS) &&
                 !syscall_user_write_ok(a2, 8)) return -EFAULT;
@@ -5022,12 +5034,14 @@ void futex_robust_list_cleanup(struct process *proc)
 
 static uint64_t sys_futex(uint64_t uaddr, uint64_t op, uint64_t val,
                            uint64_t timeout, uint64_t uaddr2, uint64_t val3) {
-    (void)timeout;
     uint32_t *addr = (uint32_t *)uaddr;
     uint32_t *addr2 = (uint32_t *)uaddr2;
 
     switch (op & ~(uint64_t)(FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME)) {
         case FUTEX_WAIT: {
+            struct process *cur_proc = process_get_current();
+            if (!cur_proc) return (uint64_t)-1;
+
             /* Check user address */
             if (syscall_is_user_process() && !syscall_user_read_ok(uaddr, 4))
                 return (uint64_t)-1;
@@ -5037,13 +5051,34 @@ static uint64_t sys_futex(uint64_t uaddr, uint64_t op, uint64_t val,
             if (copy_from_user(&cur, uaddr, 4) < 0)
                 return (uint64_t)-1;
             if (cur != (uint32_t)val)
-                return (uint64_t)-1; /* EWOULDBLOCK — caller should retry */
+                return (uint64_t)-1; /* EWOULDBLOCK */
+
+            /* Handle timeout — validate the timespec and set deadline */
+            uint64_t deadline = 0;
+            int has_timeout = 0;
+            if (timeout) {
+                struct timespec ts;
+                if (copy_from_user(&ts, timeout, sizeof(struct timespec)) < 0)
+                    return (uint64_t)-1; /* EFAULT */
+                /* Validate tv_nsec is in [0, 999999999] per POSIX */
+                if ((int64_t)ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000ULL)
+                    return (uint64_t)-1; /* EINVAL */
+                if ((int64_t)ts.tv_sec < 0)
+                    return (uint64_t)-1; /* EINVAL */
+                uint64_t total_ns = ts.tv_sec * 1000000000ULL + ts.tv_nsec;
+                uint64_t timeout_ticks = total_ns / NS_PER_TICK;
+                if (total_ns > 0 && timeout_ticks == 0)
+                    timeout_ticks = 1; /* round up non-zero tiny timeout */
+                if (timeout_ticks > 0) {
+                    deadline = timer_get_ticks() + timeout_ticks;
+                    has_timeout = 1;
+                } else {
+                    /* Zero-length timeout — don't block */
+                    return (uint64_t)-1; /* ETIMEDOUT */
+                }
+            }
 
             /* Register as waiter */
-            struct process *cur_proc = process_get_current();
-            if (!cur_proc) return (uint64_t)-1;
-
-            /* Bounds check: ensure we don't exceed the waiter array capacity */
             if (futex_num_waiters >= FUTEX_MAX_WAITERS)
                 return (uint64_t)-1;
 
@@ -5065,9 +5100,29 @@ static uint64_t sys_futex(uint64_t uaddr, uint64_t op, uint64_t val,
 
             /* Block the current process */
             cur_proc->state = PROCESS_BLOCKED;
+            if (has_timeout)
+                cur_proc->sleep_until = deadline;
             scheduler_remove(cur_proc);
             __asm__ volatile("sti");
             scheduler_yield();
+
+            /* After wakeup: check if we timed out */
+            if (has_timeout && cur_proc->sleep_until > 0) {
+                /* Timed out — remove from waiter array */
+                cur_proc->sleep_until = 0;
+                __asm__ volatile("cli");
+                for (int i = 0; i < FUTEX_MAX_WAITERS; i++) {
+                    if (futex_waiters[i].proc == cur_proc) {
+                        futex_waiters[i].proc = NULL;
+                        futex_waiters[i].uaddr = NULL;
+                        futex_num_waiters--;
+                        break;
+                    }
+                }
+                __asm__ volatile("sti");
+                return (uint64_t)-1; /* ETIMEDOUT */
+            }
+            cur_proc->sleep_until = 0;
             return 0;
         }
 
@@ -5081,6 +5136,9 @@ static uint64_t sys_futex(uint64_t uaddr, uint64_t op, uint64_t val,
             if (val3 == 0)
                 return (uint64_t)-1; /* EINVAL */
 
+            struct process *cur_proc = process_get_current();
+            if (!cur_proc) return (uint64_t)-1;
+
             /* Check user address */
             if (syscall_is_user_process() && !syscall_user_read_ok(uaddr, 4))
                 return (uint64_t)-1;
@@ -5092,11 +5150,31 @@ static uint64_t sys_futex(uint64_t uaddr, uint64_t op, uint64_t val,
             if (cur != (uint32_t)val)
                 return (uint64_t)-1; /* EWOULDBLOCK */
 
-            /* Register as waiter */
-            struct process *cur_proc = process_get_current();
-            if (!cur_proc) return (uint64_t)-1;
+            /* Handle timeout — validate the timespec and set deadline */
+            uint64_t deadline = 0;
+            int has_timeout = 0;
+            if (timeout) {
+                struct timespec ts;
+                if (copy_from_user(&ts, timeout, sizeof(struct timespec)) < 0)
+                    return (uint64_t)-1; /* EFAULT */
+                /* Validate tv_nsec is in [0, 999999999] per POSIX */
+                if ((int64_t)ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000ULL)
+                    return (uint64_t)-1; /* EINVAL */
+                if ((int64_t)ts.tv_sec < 0)
+                    return (uint64_t)-1; /* EINVAL */
+                uint64_t total_ns = ts.tv_sec * 1000000000ULL + ts.tv_nsec;
+                uint64_t timeout_ticks = total_ns / NS_PER_TICK;
+                if (total_ns > 0 && timeout_ticks == 0)
+                    timeout_ticks = 1; /* round up non-zero tiny timeout */
+                if (timeout_ticks > 0) {
+                    deadline = timer_get_ticks() + timeout_ticks;
+                    has_timeout = 1;
+                } else {
+                    return (uint64_t)-1; /* ETIMEDOUT */
+                }
+            }
 
-            /* Bounds check: ensure we don't exceed the waiter array capacity */
+            /* Register as waiter */
             if (futex_num_waiters >= FUTEX_MAX_WAITERS)
                 return (uint64_t)-1;
 
@@ -5118,9 +5196,29 @@ static uint64_t sys_futex(uint64_t uaddr, uint64_t op, uint64_t val,
 
             /* Block the current process */
             cur_proc->state = PROCESS_BLOCKED;
+            if (has_timeout)
+                cur_proc->sleep_until = deadline;
             scheduler_remove(cur_proc);
             __asm__ volatile("sti");
             scheduler_yield();
+
+            /* After wakeup: check if we timed out */
+            if (has_timeout && cur_proc->sleep_until > 0) {
+                cur_proc->sleep_until = 0;
+                __asm__ volatile("cli");
+                for (int i = 0; i < FUTEX_MAX_WAITERS; i++) {
+                    if (futex_waiters[i].proc == cur_proc) {
+                        futex_waiters[i].proc = NULL;
+                        futex_waiters[i].uaddr = NULL;
+                        futex_waiters[i].bitset = 0;
+                        futex_num_waiters--;
+                        break;
+                    }
+                }
+                __asm__ volatile("sti");
+                return (uint64_t)-1; /* ETIMEDOUT */
+            }
+            cur_proc->sleep_until = 0;
             return 0;
         }
 
