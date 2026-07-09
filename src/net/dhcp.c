@@ -1086,12 +1086,13 @@ static int dhcp_relay_insert_option82(uint8_t *buf, int len, int max_len)
     if (dhcp_relay_remote_id_len > 0)
         opt82_len += 2 + dhcp_relay_remote_id_len; /* sub2 code + len + data */
 
-    /* Check if we have room */
-    if (end_pos + opt82_len + 1 > max_len)
+    int tail_len = len - end_pos; /* includes the 255 byte */
+
+    /* Check if we have room: the entire packet expands by opt82_len bytes */
+    if (len + opt82_len > max_len)
         return len;
 
     /* Shift everything after end_pos to make room */
-    int tail_len = len - end_pos; /* includes the 255 byte */
     if (tail_len > 0 && opt82_len > 0) {
         for (int j = tail_len - 1; j >= 0; j--)
             buf[end_pos + opt82_len + j] = buf[end_pos + j];
