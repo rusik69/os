@@ -716,19 +716,25 @@ int sys_sendmsg_impl(int sockfd, const struct msghdr *msg, int flags) {
                  * the next send may target a different peer. */
                 s->cache_valid = 0;
             }
+            uint64_t udp_len = len > 1500 ? 1500 : len;
             /* Connected UDP fast path: use pre-resolved MAC to skip
              * ARP cache lookup inside send_ip(). */
             if (s->cache_valid && s->state == SOCK_STATE_CONNECTED && dst_ip == s->remote_ip) {
                 net_udp_send_cached(s->cached_dst_mac, dst_ip,
                                     s->local_port, dst_port, data,
-                                    (uint16_t)(len > 1500 ? 1500 : len));
+                                    (uint16_t)udp_len);
             } else {
                 net_udp_send(dst_ip, s->local_port, dst_port, data,
-                             (uint16_t)(len > 1500 ? 1500 : len));
+                             (uint16_t)udp_len);
             }
-            total += len;
+            total += udp_len;
         }
     }
+    /* Clamp total to INT32_MAX to avoid signed overflow on return.
+     * sendmsg(2) returns ssize_t; this implementation returns int, so
+     * values above INT32_MAX cannot be represented correctly. */
+    if (total > 0x7FFFFFFFULL)
+        total = 0x7FFFFFFFULL;
     return (int)total;
 }
 
