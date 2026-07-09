@@ -203,9 +203,17 @@ void dns_cache_store(const char *name, uint32_t ip, uint32_t ttl) {
     int slot = dns_cache_find_slot(name);
     int was_valid = dns_cache[slot].valid;
 
-    /* Fill the slot */
+    /* Reject hostnames that exceed the cache entry buffer.
+     * DNS hostnames are limited to 253 chars per RFC 1035, so
+     * this only catches invalid input.  Silently truncating would
+     * cause subsequent lookups to never match (stored truncated
+     * name != original name), wasting the slot. */
     size_t len = strlen(name);
-    if (len >= DNS_NAME_MAX) len = DNS_NAME_MAX - 1;
+    if (len >= DNS_NAME_MAX) {
+        kprintf("[dns_cache] store: name too long (%zu >= %d), rejecting\n",
+                len, DNS_NAME_MAX);
+        return;
+    }
     memcpy(dns_cache[slot].name, name, len);
     dns_cache[slot].name[len] = '\0';
     dns_cache[slot].ip        = ip;
