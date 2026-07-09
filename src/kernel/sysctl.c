@@ -47,6 +47,7 @@ static int g_num_entries = 0;
 static char g_hostname[65] = "os";
 
 static int sysctl_read_hostname(char *buf, int max) {
+    if (max <= 0) return -EINVAL;
     int l = (int)strlen(g_hostname);
     if (l >= max) l = max - 1;
     memcpy(buf, g_hostname, (size_t)l);
@@ -55,6 +56,7 @@ static int sysctl_read_hostname(char *buf, int max) {
 }
 
 static int sysctl_write_hostname(const char *buf, int len) {
+    if (len <= 0) return -EINVAL;
     int clen = len < 64 ? len : 64;
     memcpy(g_hostname, buf, (size_t)clen);
     g_hostname[clen] = '\0';
@@ -85,6 +87,7 @@ void sysctl_set_hostname(const char *name) {
 static const char *g_osrelease = "6.1.0-os";
 
 static int sysctl_read_osrelease(char *buf, int max) {
+    if (max <= 0) return -EINVAL;
     int l = (int)strlen(g_osrelease);
     if (l >= max) l = max - 1;
     memcpy(buf, g_osrelease, (size_t)l);
@@ -96,6 +99,7 @@ static int sysctl_read_osrelease(char *buf, int max) {
 static const char *g_ostype = "Linux";
 
 static int sysctl_read_ostype(char *buf, int max) {
+    if (max <= 0) return -EINVAL;
     int l = (int)strlen(g_ostype);
     if (l >= max) l = max - 1;
     memcpy(buf, g_ostype, (size_t)l);
@@ -114,7 +118,7 @@ static int sysctl_read_panic(char *buf, int max) {
     else { while (v) { tmp[ti++] = (char)('0' + (int)(v % 10)); v /= 10; } }
     for (int i = ti - 1; i >= 0 && p < max - 1; i--) buf[p++] = tmp[i];
     if (p < max - 1) buf[p++] = '\n';
-    buf[p] = '\0';
+    if (p < max) buf[p] = '\0';
     return p;
 }
 
@@ -221,7 +225,7 @@ static int sysctl_read_sysrq(char *buf, int max)
     else { while (v) { tmp[ti++] = (char)('0' + (int)(v % 10)); v /= 10; } }
     for (int i = ti - 1; i >= 0 && p < max - 1; i--) buf[p++] = tmp[i];
     if (p < max - 1) buf[p++] = '\n';
-    buf[p] = '\0';
+    if (p < max) buf[p] = '\0';
     return p;
 }
 
