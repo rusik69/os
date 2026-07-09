@@ -19,6 +19,11 @@
 #include "net.h"
 #include "errno.h"
 
+/* 64-bit byte-order helpers (NBD protocol is big-endian / network byte order,
+ * x86-64 is little-endian — all multi-byte fields must be swapped) */
+#define ntohll(v)  ((uint64_t)__builtin_bswap64((uint64_t)(v)))
+#define htonll(v)  ((uint64_t)__builtin_bswap64((uint64_t)(v)))
+
 /* Maximum number of NBD devices */
 #define NBD_MAX_DEVICES 4
 
@@ -74,16 +79,20 @@ static int nbd_negotiate(int conn_id, struct nbd_device *dev)
         return -1;
     }
 
-    uint64_t magic;
-    memcpy(&magic, buf, sizeof(magic));
-    if (magic != NBD_MAGIC) {
-        kprintf("[NBD] Bad magic: 0x%llx (expected 0x%llx)\n",
-                (unsigned long long)magic, (unsigned long long)NBD_MAGIC);
+    /* Compare magic as bytes (endian-safe — NBD_MAGIC on wire is "NBDMAGIC"
+     * in network byte order; memcmp works on any host byte order) */
+    if (memcmp(buf, "NBDMAGIC", 8) != 0) {
+        kprintf("[NBD] Bad magic: expected \"NBDMAGIC\"\n");
         return -1;
     }
 
+    /* All multi-byte NBD protocol fields are big-endian (network byte order);
+     * x86-64 is little-endian, so swap to host byte order. */
     memcpy(&dev->export_size, buf + 8, sizeof(dev->export_size));
+    dev->export_size = ntohll(dev->export_size);
+
     memcpy(&dev->flags, buf + 16, sizeof(dev->flags));
+    dev->flags = ntohl(dev->flags);
 
     kprintf("[NBD] Export: %llu bytes, flags=0x%x\n",
             (unsigned long long)dev->export_size, dev->flags);
@@ -108,12 +117,12 @@ static int nbd_issue_command(int conn_id, uint32_t type, uint64_t offset,
     struct nbd_request req;
     struct nbd_reply   rep;
 
-    /* Build request */
-    req.magic  = NBD_REQUEST_MAGIC;
-    req.type   = type;
-    req.handle = handle;
-    req.offset = offset;
-    req.len    = len;
+    /* Build request — all multi-byte fields in network byte order (big-endian) */
+    req.magic  = htonl(NBD_REQUEST_MAGIC);
+    req.type   = htonl(type);
+    req.handle = htonll(handle);
+    req.offset = htonll(offset);
+    req.len    = htonl(len);
 
     /* Send request */
     if (nbd_tcp_send(conn_id, &req, sizeof(req)) < 0)
@@ -128,6 +137,11 @@ static int nbd_issue_command(int conn_id, uint32_t type, uint64_t offset,
     /* Receive reply */
     if (nbd_tcp_recv(conn_id, &rep, sizeof(rep), 100) < 0)
         return -EIO;
+
+    /* Convert reply fields from network byte order to host byte order */
+    rep.magic = ntohl(rep.magic);
+    rep.error = ntohl(rep.error);
+    rep.handle = ntohll(rep.handle);
 
     if (rep.magic != NBD_REPLY_MAGIC) {
         kprintf("[NBD] Bad reply magic: 0x%x\n", rep.magic);
