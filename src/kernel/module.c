@@ -1549,7 +1549,8 @@ int module_sysfs_add_params(struct kernel_module *mod)
                  "/sys/module/%s/holders", mod->name);
         char holders_buf[256];
         int pos = 0;
-        for (int i = 0; i < MODULE_MAX; i++) {
+        int buf_full = 0;
+        for (int i = 0; i < MODULE_MAX && !buf_full; i++) {
             struct kernel_module *other = module_get_by_id(i);
             if (!other || other == mod || other->state != MODULE_LIVE)
                 continue;
@@ -1558,7 +1559,11 @@ int module_sysfs_add_params(struct kernel_module *mod)
                     int n = snprintf(holders_buf + pos,
                                      sizeof(holders_buf) - (size_t)pos,
                                      "%s\n", other->name);
-                    if (n > 0) pos += n;
+                    if (n > 0) {
+                        pos += n;
+                        if ((size_t)pos >= sizeof(holders_buf))
+                            buf_full = 1;
+                    }
                     break;
                 }
             }
