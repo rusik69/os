@@ -224,7 +224,7 @@ static const uint8_t *ssh_read_string(const uint8_t *data, int data_len, int *of
     if (*off + 4 > data_len) { *len = 0; return NULL; }
     *len = g32(data + *off);
     *off += 4;
-    if (*off + *len > data_len) { *len = data_len - *off + 4; if (*len < 0) *len = 0; }
+    if (*off + *len > data_len) { *len = data_len - *off; if (*len < 0) *len = 0; }
     const uint8_t *result = data + *off;
     *off += *len;
     return result;
@@ -539,15 +539,14 @@ static void handle_channel_data(struct ssh_session *s, const uint8_t *data, int 
 /* ── Handle received SSH packets ────────────────────────────── */
 
 static void handle_version(struct ssh_session *s) {
-    /* Version exchange - respond with our version */
-    const char *ver = "SSH-2.0-OSSSH\r\n";
-    ses_send_raw(s, (const uint8_t *)ver, (int)strlen(ver));
+    /* Version exchange — server already sent its banner in on_connect;
+     * now the client's version line has arrived. Transition to KEX_INIT. */
     s->phase = SSH_PHASE_KEX_INIT;
 }
 
 static void handle_kexinit(struct ssh_session *s, const uint8_t *data, int len) {
     /* Store client KEXINIT payload (skip the 4-byte packet length) */
-    if (len > SSH_SESS_BUF) len = SSH_SESS_BUF;
+    if (len > (int)sizeof(s->client_kex) + 4) len = (int)sizeof(s->client_kex) + 4;
     s->client_kex_len = (len > 4) ? len - 4 : 0;
     if (s->client_kex_len > 0)
         memcpy(s->client_kex, data + 4, s->client_kex_len);
@@ -748,9 +747,14 @@ static void handle_userauth_request(struct ssh_session *s, const uint8_t *data, 
 /* ── Protocol dispatch ──────────────────────────────────────── */
 
 static void process_ssh_data(struct ssh_session *s, const uint8_t *data, int len) {
+    /* Append data to recv_buf (data may arrive in multiple TCP segments) */
+    int old_len = s->recv_len;
     s->recv_len += len;
-    if (s->recv_len > SSH_SESS_BUF) s->recv_len = SSH_SESS_BUF;
-    memcpy(s->recv_buf, data, len < SSH_SESS_BUF ? len : SSH_SESS_BUF);
+    if (s->recv_len > SSH_SESS_BUF)
+        s->recv_len = SSH_SESS_BUF;
+    int copy_len = s->recv_len - old_len;
+    if (copy_len > 0)
+        memcpy(s->recv_buf + old_len, data, copy_len);
 
     if (s->phase == SSH_PHASE_VERSION) {
         /* Check for newline */
