@@ -374,7 +374,7 @@ int vfat_compare_83_name(const void *entry,
         char a = de->ext[i];
         char b = name83_3[i];
         if (a >= 'a' && a <= 'z') a = (char)(a - 32);
-        if (b >= 'b' && b <= 'z') b = (char)(b - 32);
+        if (b >= 'a' && b <= 'z') b = (char)(b - 32);
         if (a != b) return 0;
     }
     return 1;
