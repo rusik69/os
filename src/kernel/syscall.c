@@ -4166,6 +4166,11 @@ static uint64_t sys_readv(uint64_t fd, uint64_t iov_addr, uint64_t iovcnt) {
             /* Partial read: return bytes so far; full failure: propagate errno */
             return total ? total : (uint64_t)(int64_t)n;
         }
+        /* Guard against wrap-around in the total byte counter */
+        if ((uint64_t)n > UINT64_MAX - total) {
+            total = UINT64_MAX;
+            break;
+        }
         total += (uint64_t)n;
         /* Short read from this iov means no more data (e.g. EOF) */
         if ((uint64_t)n < iov[i].iov_len) break;
