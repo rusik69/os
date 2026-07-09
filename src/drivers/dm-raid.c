@@ -104,8 +104,15 @@ static int raid_ctr(struct dm_target *ti, int argc, const char **argv)
 
         /* Parse numeric */
         uint64_t val = 0;
-        for (const char *p = s; *p; p++)
+        for (const char *p = s; *p; p++) {
+            /* Prevent overflow on very large numeric input */
+            if (val > (UINT64_MAX / 10)) {
+                kprintf("[DM-RAID] ctr: numeric overflow in '%s'\n", dev_argv[i]);
+                kfree(priv);
+                return -EINVAL;
+            }
             val = val * 10 + (uint64_t)(*p - '0');
+        }
 
         if (priv->level == DM_RAID_LEVEL_1) {
             /* RAID1: first arg is starting dev_id, second is num_mirrors */
@@ -125,6 +132,11 @@ static int raid_ctr(struct dm_target *ti, int argc, const char **argv)
                             DM_RAID_MAX_DEVS, priv->num_devs);
                     kfree(priv);
                     return -EINVAL;
+                }
+                /* Fill in remaining mirror device IDs sequentially */
+                int base_dev = priv->dev_ids[0];
+                for (int j = 1; j < priv->num_devs; j++) {
+                    priv->dev_ids[j] = base_dev + j;
                 }
             }
         } else {
@@ -240,13 +252,20 @@ static int raid1_map(struct raid_private *priv, struct blk_request *req,
     if (req->flags & BLK_REQ_WRITE) {
         /* Write to all mirrors */
         if (num_mirrors > DM_RAID_MAX_DEVS) num_mirrors = DM_RAID_MAX_DEVS;
+        int alloc_count = 0;
         for (int i = 0; i < num_mirrors; i++) {
             struct blk_request *clone = blk_request_alloc();
-            if (!clone) return -ENOMEM;
+            if (!clone) {
+                /* Free previously allocated clones on error */
+                for (int j = 0; j < alloc_count; j++)
+                    blk_request_free(mapped[j]);
+                return -ENOMEM;
+            }
             memcpy(clone, req, sizeof(struct blk_request));
             clone->dev_id = (uint8_t)priv->dev_ids[i];
             clone->lba = offset;
             mapped[i] = clone;
+            alloc_count++;
         }
         *mapped_count = num_mirrors;
     } else {
@@ -395,21 +414,3 @@ void dm_raid_init(void)
 }
 #include "module.h"
 module_init(dm_raid_init);
-
-/* ── Stub: dm_raid_ctr ─────────────────────────────── */
-static int dm_raid_ctr(void *ti, unsigned int argc, char **argv)
-{
-    (void)ti;
-    (void)argc;
-    (void)argv;
-    kprintf("[DM_RAID] dm_raid_ctr: not yet implemented\n");
-    return 0;
-}
-/* ── Stub: dm_raid_map ─────────────────────────────── */
-static int dm_raid_map(void *ti, void *bio)
-{
-    (void)ti;
-    (void)bio;
-    kprintf("[DM_RAID] dm_raid_map: not yet implemented\n");
-    return 0;
-}
