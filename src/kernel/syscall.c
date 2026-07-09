@@ -6950,7 +6950,11 @@ static uint64_t sys_connect(uint64_t sockfd, uint64_t addr_addr, uint64_t addrle
 
 static uint64_t sys_setsockopt(uint64_t sockfd, uint64_t level, uint64_t optname,
                                 uint64_t optval_addr, uint64_t optlen) {
-    if (syscall_is_user_process() && !syscall_user_read_ok(optval_addr, (uint32_t)optlen))
+    /* optlen is truncated from uint64_t to uint32_t in the impl;
+     * reject values that would overflow to prevent bypassing bounds checks. */
+    if (optlen > 0xFFFFFFFFULL)
+        return (uint64_t)(int64_t)-EINVAL;
+    if (syscall_is_user_process() && !syscall_user_read_ok(optval_addr, optlen))
         return (uint64_t)(int64_t)-EFAULT;
     return (uint64_t)(int64_t)sys_setsockopt_impl((int)sockfd, (int)level, (int)optname,
                                                   (const void *)optval_addr, (uint32_t)optlen);
