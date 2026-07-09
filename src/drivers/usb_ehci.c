@@ -600,7 +600,7 @@ static int ehci_pool_init(void)
     }
 
     /* Allocate qTD pool pages */
-    int last_qtd = 0;
+    int last_qtd = -1;
     for (int i = 0; i < EHCI_QTD_POOL_SIZE; i++) {
         uint64_t phys = pmm_alloc_frame();
         if (!phys)

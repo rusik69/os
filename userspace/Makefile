@@ -13,7 +13,7 @@ LIBC_DIR = libc
 LIBC_A = $(LIBC_DIR)/libc.a
 
 CFLAGS = -ffreestanding -nostdlib -nostdinc -fno-builtin -mno-red-zone \
-         -I$(LIBC_DIR)/include -Wall -Wextra -Werror -Wundef -Wmisleading-indentation -Wlogical-op -O2 -g -MMD -MP
+         -I$(LIBC_DIR)/include -Wall -Wextra -Werror -Wundef -Wmisleading-indentation -Wlogical-op -Wmaybe-uninitialized -O2 -g -MMD -MP
 LDFLAGS = -T $(LIBC_DIR)/user.ld -nostdlib -z max-page-size=0x1000 -z noexecstack
 
 LIBC_OBJS = \

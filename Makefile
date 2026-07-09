@@ -69,7 +69,7 @@ VERMAGIC_FLAGS += -DCONFIG_SMP
 # target (-Wformat=2) catches any future format-security regressions.
 CFLAGS = -std=c17 -ffreestanding -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
          -fstack-protector-strong -fstack-clash-protection -mstack-protector-guard=global -fno-omit-frame-pointer -nostdlib -nostdinc -fno-builtin \
-         -Wall -Wextra -Werror -Wstrict-prototypes -Wmisleading-indentation -Wshadow -Wcast-qual -Wundef -Wimplicit-fallthrough=5 -Wtautological-compare -Wduplicated-branches -Wduplicated-cond -Wlogical-op -Wrestrict -Wstringop-truncation -Warray-bounds=2 -Wno-format -Wno-sign-conversion -Wno-unused-function -Wno-unused-parameter -Wno-unused-variable -Wno-unused-but-set-variable -Isrc/include -Iuserspace/kmods/gui -Iuserspace/kmods/doom -mcmodel=large -g \
+         -Wall -Wextra -Werror -Wstrict-prototypes -Wmisleading-indentation -Wshadow -Wcast-qual -Wundef -Wimplicit-fallthrough=5 -Wtautological-compare -Wduplicated-branches -Wduplicated-cond -Wlogical-op -Wmaybe-uninitialized -Wrestrict -Wstringop-truncation -Warray-bounds=2 -Wno-format -Wno-sign-conversion -Wno-unused-function -Wno-unused-parameter -Wno-unused-variable -Wno-unused-but-set-variable -Isrc/include -Iuserspace/kmods/gui -Iuserspace/kmods/doom -mcmodel=large -g \
          -Wa,--noexecstack -O2 -MMD -MP \
          -include kernel_pch.h \
          -DKVERSION=\"$(KVERSION)\" \
