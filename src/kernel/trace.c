@@ -12,10 +12,10 @@
  */
 
 #define KERNEL_INTERNAL
-#include "types.h"
+#include "trace.h"
 #include "process.h"
 #include "printf.h"
-#include "trace.h"
+#include "types.h"
 #include "string.h"
 #include "process.h"
 #include "smp.h"

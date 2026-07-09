@@ -2,6 +2,7 @@
 #define DM_ERA_H
 
 #include "types.h"
+#include "dm.h"
 
 /* ── dm-era constants ──────────────────────────────────────────────── */
 

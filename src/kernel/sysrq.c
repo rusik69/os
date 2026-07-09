@@ -24,8 +24,8 @@
  */
 
 #define KERNEL_INTERNAL
-#include "types.h"
 #include "sysrq.h"
+#include "types.h"
 #include "printf.h"
 #include "process.h"
 #include "scheduler.h"

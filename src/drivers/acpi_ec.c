@@ -19,9 +19,9 @@
  */
 
 #define KERNEL_INTERNAL
-#include "types.h"
-#include "acpi.h"
 #include "acpi_ec.h"
+#include "acpi.h"
+#include "types.h"
 #include "io.h"
 #include "string.h"
 #include "printf.h"

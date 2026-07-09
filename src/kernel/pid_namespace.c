@@ -15,8 +15,8 @@
  */
 
 #define KERNEL_INTERNAL
-#include "types.h"
 #include "pid_namespace.h"
+#include "types.h"
 #include "process.h"
 #include "printf.h"
 #include "string.h"

@@ -1,6 +1,6 @@
 #define KERNEL_INTERNAL
-#include "types.h"
 #include "crypto.h"
+#include "types.h"
 #include "string.h"
 #include "printf.h"
 

@@ -11,9 +11,9 @@
  */
 
 #define KERNEL_INTERNAL
-#include "types.h"
-#include "printf.h"
 #include "crypto.h"
+#include "printf.h"
+#include "types.h"
 #include "fscrypt.h"
 #include "string.h"
 #include "vfs.h"

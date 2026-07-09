@@ -1,7 +1,7 @@
 #define KERNEL_INTERNAL
-#include "types.h"
-#include "printf.h"
 #include "irq_affinity.h"
+#include "printf.h"
+#include "types.h"
 #include "string.h"
 #include "smp.h"
 #define MAX_IRQ 256

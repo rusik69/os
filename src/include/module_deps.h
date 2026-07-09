@@ -1,6 +1,8 @@
 #ifndef MODULE_DEPS_H
 #define MODULE_DEPS_H
 
+#include "module.h"
+
 /* module_deps.h — Module dependency resolution API (M25)
  *
  * Provides functions to resolve and auto-load module dependencies

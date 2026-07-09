@@ -1,7 +1,7 @@
 #define KERNEL_INTERNAL
-#include "types.h"
-#include "printf.h"
 #include "perf_events.h"
+#include "printf.h"
+#include "types.h"
 #include "cpu.h"
 #include "heap.h"
 #include "string.h"

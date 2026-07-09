@@ -1,7 +1,7 @@
 #define KERNEL_INTERNAL
-#include "types.h"
-#include "printf.h"
 #include "signalfd.h"
+#include "printf.h"
+#include "types.h"
 #include "string.h"
 #include "signal.h"
 

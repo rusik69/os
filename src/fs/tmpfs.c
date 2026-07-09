@@ -1,6 +1,6 @@
 #define KERNEL_INTERNAL
-#include "types.h"
 #include "tmpfs.h"
+#include "types.h"
 #include "vfs.h"
 #include "printf.h"
 #include "string.h"

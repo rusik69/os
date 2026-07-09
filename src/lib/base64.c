@@ -1,7 +1,7 @@
-#include "types.h"
+#include "base64.h"
 #include "string.h"
 #include "printf.h"
-#include "base64.h"
+#include "types.h"
 #include "stdlib.h"
 
 static const char base64_table[64] = {

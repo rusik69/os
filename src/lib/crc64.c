@@ -1,7 +1,7 @@
-#include "types.h"
+#include "crc64.h"
 #include "string.h"
 #include "printf.h"
-#include "crc64.h"
+#include "types.h"
 
 /* CRC64-ECMA-182 lookup table */
 static uint64_t crc64_table[256];

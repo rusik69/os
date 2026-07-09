@@ -11,8 +11,8 @@
  */
 
 #define KERNEL_INTERNAL
-#include "types.h"
 #include "squashfs.h"
+#include "types.h"
 #include "printf.h"
 #include "string.h"
 #include "heap.h"

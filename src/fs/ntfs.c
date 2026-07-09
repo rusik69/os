@@ -9,14 +9,14 @@
  */
 
 #define KERNEL_INTERNAL
-#include "types.h"
+#include "ntfs.h"
 #include "string.h"
 #include "printf.h"
 #include "heap.h"
 #include "vfs.h"
 #include "errno.h"
 #include "blockdev.h"
-#include "ntfs.h"
+#include "types.h"
 
 #ifdef MODULE
 #include "module.h"

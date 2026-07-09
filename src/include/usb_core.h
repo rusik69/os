@@ -2,6 +2,7 @@
 #define USB_CORE_H
 
 #include "types.h"
+#include "usb.h"
 
 /* ── USB device ID match flags ─────────────────────────────────── */
 

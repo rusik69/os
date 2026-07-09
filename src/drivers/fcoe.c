@@ -9,8 +9,8 @@
  */
 
 #define KERNEL_INTERNAL
-#include "types.h"
 #include "fcoe.h"
+#include "types.h"
 #include "printf.h"
 #include "string.h"
 #include "heap.h"

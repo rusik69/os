@@ -1,11 +1,11 @@
 #define KERNEL_INTERNAL
-#include "types.h"
+#include "dyndbg.h"
 #include "printf.h"
 #include "string.h"
 #include "debugfs.h"
 #include "dynamic_debug.h"
 #include "errno.h"
-#include "dyndbg.h"
+#include "types.h"
 
 /*
  * dyndbg.c — Dynamic debug control file interface

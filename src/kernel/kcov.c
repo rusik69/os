@@ -16,8 +16,8 @@
  *   [1] .. [N] = PC values of executed basic blocks
  */
 #define KERNEL_INTERNAL
-#include "types.h"
 #include "kcov.h"
+#include "types.h"
 #include "process.h"
 #include "heap.h"
 #include "string.h"

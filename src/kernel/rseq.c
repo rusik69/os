@@ -1,11 +1,11 @@
 #define KERNEL_INTERNAL
-#include "types.h"
+#include "rseq.h"
 #include "printf.h"
 #include "string.h"
 #include "process.h"
 #include "vmm.h"
 #include "errno.h"
-#include "rseq.h"
+#include "types.h"
 #include "smp.h"
 
 /*

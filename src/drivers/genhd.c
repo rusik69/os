@@ -14,13 +14,13 @@
  * automatic device node creation and uniform naming.
  */
 
-#include "types.h"
+#include "genhd.h"
 #include "string.h"
 #include "printf.h"
 #include "heap.h"
 #include "errno.h"
 #include "spinlock.h"
-#include "genhd.h"
+#include "types.h"
 #include "blockdev.h"
 #include "devtmpfs.h"
 #include "export.h"

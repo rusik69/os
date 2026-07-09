@@ -1,7 +1,7 @@
 #define KERNEL_INTERNAL
-#include "types.h"
-#include "printf.h"
 #include "dmi.h"
+#include "printf.h"
+#include "types.h"
 #include "string.h"
 #include "io.h"
 static __attribute__((unused)) char dmi_bios_vendor[64] = "QEMU";

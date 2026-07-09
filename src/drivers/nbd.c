@@ -10,8 +10,8 @@
  */
 
 #define KERNEL_INTERNAL
-#include "types.h"
 #include "nbd.h"
+#include "types.h"
 #include "printf.h"
 #include "string.h"
 #include "heap.h"

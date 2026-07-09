@@ -1,6 +1,6 @@
-#include "types.h"
-#include "printf.h"
 #include "adler32.h"
+#include "printf.h"
+#include "types.h"
 
 #define ADLER_MOD ADLER32_MOD
 

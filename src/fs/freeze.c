@@ -1,7 +1,7 @@
 #define KERNEL_INTERNAL
-#include "types.h"
-#include "printf.h"
 #include "freeze.h"
+#include "printf.h"
+#include "types.h"
 #include "bufcache.h"
 #include "page_cache.h"
 #include "blockdev.h"

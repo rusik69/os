@@ -1,7 +1,7 @@
 #define KERNEL_INTERNAL
-#include "types.h"
-#include "errno.h"
 #include "cmdline.h"
+#include "errno.h"
+#include "types.h"
 #include "string.h"
 #include "printf.h"
 #include "cmos.h"

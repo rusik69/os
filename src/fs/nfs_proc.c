@@ -6,11 +6,11 @@
  * both the NFS client (nfs.c) and NFS server (nfsd.c).
  * Includes MOUNTv3 protocol helpers.
  */
-#include "types.h"
+#include "nfs_proc.h"
 #include "string.h"
 #include "printf.h"
 #include "errno.h"
-#include "nfs_proc.h"
+#include "types.h"
 
 /* ── XDR primitives (big-endian wire format) ──────────────────── */
 

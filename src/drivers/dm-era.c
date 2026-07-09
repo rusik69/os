@@ -9,8 +9,8 @@
  */
 
 #define KERNEL_INTERNAL
-#include "dm.h"
 #include "dm-era.h"
+#include "dm.h"
 #include "pmm.h"
 #include "string.h"
 #include "printf.h"

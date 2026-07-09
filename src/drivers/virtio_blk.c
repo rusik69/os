@@ -10,8 +10,8 @@
  * Item 195: Virtio-blk multi-queue
  */
 
-#include "blockdev.h"
 #include "virtio_blk.h"
+#include "blockdev.h"
 #include "virtio.h"
 #include "pci.h"
 #include "printf.h"

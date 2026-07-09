@@ -1,5 +1,5 @@
 #define KERNEL_INTERNAL
-#include "types.h"
+#include "ssh_client.h"
 #include "sha256.h"
 #include "aes.h"
 #include "hmac.h"
@@ -9,7 +9,7 @@
 #include "string.h"
 #include "printf.h"
 #include "ssh.h"
-#include "ssh_client.h"
+#include "types.h"
 
 /* ── Crypto forward declarations ────────────────────────────── */
 extern void bn_from_bytes(bignum *r, const uint8_t *bytes, int len);

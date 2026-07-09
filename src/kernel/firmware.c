@@ -1,8 +1,8 @@
 #define KERNEL_INTERNAL
-#include "types.h"
+#include "firmware.h"
 #include "printf.h"
 #include "string.h"
-#include "firmware.h"
+#include "types.h"
 #include "vfs.h"
 #include "heap.h"
 #include "spinlock.h"

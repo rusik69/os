@@ -15,8 +15,8 @@
  */
 
 #define KERNEL_INTERNAL
-#include "types.h"
 #include "cgroup_namespace.h"
+#include "types.h"
 #include "string.h"
 #include "printf.h"
 #include "spinlock.h"

@@ -1,11 +1,11 @@
 #define KERNEL_INTERNAL
-#include "types.h"
+#include "chroot.h"
 #include "process.h"
 #include "printf.h"
 #include "string.h"
 #include "vfs.h"
 #include "timer.h"
-#include "chroot.h"
+#include "types.h"
 
 /* ── Chroot jail restrictions ────────────────────────────────────────── */
 

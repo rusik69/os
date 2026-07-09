@@ -1,6 +1,6 @@
 #define KERNEL_INTERNAL
-#include "types.h"
 #include "aslr.h"
+#include "types.h"
 #include "string.h"
 #include "printf.h"
 #include "syscall.h"   /* for prng_rand64 */

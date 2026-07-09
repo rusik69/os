@@ -1,6 +1,6 @@
 #define KERNEL_INTERNAL
-#include "types.h"
 #include "rcu.h"
+#include "types.h"
 #include "smp.h"
 #include "printf.h"
 #include "timer.h"

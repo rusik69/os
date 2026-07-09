@@ -1,8 +1,8 @@
-#include "types.h"
+#include "aes.h"
 #include "string.h"
 #include "printf.h"
 #include "errno.h"
-#include "aes.h"
+#include "types.h"
 
 /* AES S-box */
 static const uint8_t sbox[256] = {

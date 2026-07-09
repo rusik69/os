@@ -13,8 +13,8 @@
  */
 
 #define KERNEL_INTERNAL
-#include "types.h"
 #include "module_compress.h"
+#include "types.h"
 #include "string.h"
 #include "printf.h"
 #include "heap.h"

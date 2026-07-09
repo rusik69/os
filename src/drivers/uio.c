@@ -1,7 +1,7 @@
 #define KERNEL_INTERNAL
-#include "types.h"
-#include "printf.h"
 #include "uio.h"
+#include "printf.h"
+#include "types.h"
 #include "string.h"
 #define MAX_UIO 8
 static int uio_count = 0;

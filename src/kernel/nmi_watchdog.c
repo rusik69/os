@@ -1,6 +1,6 @@
 #define KERNEL_INTERNAL
-#include "types.h"
 #include "nmi_watchdog.h"
+#include "types.h"
 #include "printf.h"
 #include "timer.h"
 #include "process.h"

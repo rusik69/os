@@ -1,8 +1,8 @@
 #define KERNEL_INTERNAL
-#include "types.h"
+#include "kasan_light.h"
 #include "printf.h"
 #include "string.h"
-#include "kasan_light.h"
+#include "types.h"
 #include "vmm.h"
 #include "pmm.h"
 #include "errno.h"

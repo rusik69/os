@@ -1,8 +1,8 @@
 #define KERNEL_INTERNAL
-#include "types.h"
+#include "jump_label.h"
 #include "printf.h"
 #include "string.h"
-#include "jump_label.h"
+#include "types.h"
 
 /* 5-byte NOP instruction encoding for x86-64 */
 static const uint8_t nop5[5] = { 0x0F, 0x1F, 0x44, 0x00, 0x00 }; /* nop dword ptr [rax+rax+0] */

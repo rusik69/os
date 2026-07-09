@@ -17,8 +17,8 @@
  */
 
 #define KERNEL_INTERNAL
-#include "types.h"
 #include "user_namespace.h"
+#include "types.h"
 #include "process.h"
 #include "caps.h"
 #include "printf.h"

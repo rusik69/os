@@ -1,9 +1,9 @@
 #define KERNEL_INTERNAL
-#include "types.h"
+#include "pstore.h"
 #include "printf.h"
 #include "string.h"
 #include "spinlock.h"
-#include "pstore.h"
+#include "types.h"
 #include "pmm.h"
 #include "vmm.h"
 #include "timer.h"

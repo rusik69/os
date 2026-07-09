@@ -6,8 +6,8 @@
  */
 
 #define KERNEL_INTERNAL
-#include "types.h"
 #include "hrtimer.h"
+#include "types.h"
 #include "timers.h"
 
 void hrtimer_init(struct hrtimer *timer, void (*function)(void *), void *data)

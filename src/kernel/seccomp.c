@@ -1,6 +1,6 @@
 #define KERNEL_INTERNAL
-#include "types.h"
 #include "seccomp.h"
+#include "types.h"
 #include "process.h"
 #include "syscall.h"
 #include "printf.h"

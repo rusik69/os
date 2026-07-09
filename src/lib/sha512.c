@@ -1,7 +1,7 @@
-#include "types.h"
+#include "sha512.h"
 #include "string.h"
 #include "printf.h"
-#include "sha512.h"
+#include "types.h"
 
 /* SHA-512 initial hash values */
 static const uint64_t H0[8] = {

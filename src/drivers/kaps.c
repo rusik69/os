@@ -1,7 +1,7 @@
 #define KERNEL_INTERNAL
-#include "types.h"
-#include "printf.h"
 #include "kaps.h"
+#include "printf.h"
+#include "types.h"
 static uint64_t caps_effective = 0xFFFFFFFFFFFFFFFFULL;
 static __attribute__((unused)) uint64_t caps_permitted = 0xFFFFFFFFFFFFFFFFULL;
 static __attribute__((unused)) uint64_t caps_inheritable = 0;

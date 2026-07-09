@@ -5,8 +5,8 @@
  * the cipher suite identifier.
  */
 
-#include "tls.h"
 #include "tls_aead.h"
+#include "tls.h"
 #include "aes_gcm.h"
 #include "string.h"
 #include "errno.h"

@@ -1,9 +1,9 @@
-#include "types.h"
+#include "hmac.h"
 #include "string.h"
 #include "printf.h"
 #include "md5.h"
 #include "sha256.h"
-#include "hmac.h"
+#include "types.h"
 
 #define HMAC_IPAD 0x36
 #define HMAC_OPAD 0x5C

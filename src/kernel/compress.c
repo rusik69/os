@@ -1,6 +1,6 @@
 #define KERNEL_INTERNAL
-#include "types.h"
 #include "compress.h"
+#include "types.h"
 #include "string.h"
 #include "errno.h"
 

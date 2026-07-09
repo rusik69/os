@@ -1,7 +1,7 @@
-#include "types.h"
+#include "md5.h"
 #include "string.h"
 #include "printf.h"
-#include "md5.h"
+#include "types.h"
 
 /* MD5 initial state */
 static const uint32_t H0[4] = {

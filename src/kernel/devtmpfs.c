@@ -1,9 +1,9 @@
 #define KERNEL_INTERNAL
-#include "types.h"
+#include "devtmpfs.h"
 #include "printf.h"
 #include "string.h"
 #include "kernel.h"
-#include "devtmpfs.h"
+#include "types.h"
 #include "vfs.h"
 #include "errno.h"
 

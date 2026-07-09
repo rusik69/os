@@ -26,8 +26,8 @@
  * Task #8 — D142 OSS /dev/dsp implementation (open, read, write, ioctl)
  */
 
-#include "sound_pcm.h"
 #include "sound_oss.h"
+#include "sound_pcm.h"
 
 /* ── Forward declarations ─────────────────────────────────────────── */
 void __init sound_oss_init(void);

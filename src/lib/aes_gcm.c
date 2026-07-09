@@ -10,11 +10,11 @@
  *                     Galois/Counter Mode (GCM) and GMAC
  */
 
-#include "types.h"
+#include "aes_gcm.h"
 #include "string.h"
 #include "errno.h"
 #include "aes.h"
-#include "aes_gcm.h"
+#include "types.h"
 
 /* ── GHASH: Universal Hash over GF(2^128) ──────────────────────────── */
 

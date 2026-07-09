@@ -6,14 +6,14 @@
  */
 
 #define KERNEL_INTERNAL
-#include "types.h"
+#include "btrfs.h"
 #include "string.h"
 #include "printf.h"
 #include "heap.h"
 #include "vfs.h"
 #include "errno.h"
 #include "blockdev.h"
-#include "btrfs.h"
+#include "types.h"
 #include "crc.h"
 
 #ifdef MODULE

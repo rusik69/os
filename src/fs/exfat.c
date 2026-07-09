@@ -11,14 +11,14 @@
  */
 
 #define KERNEL_INTERNAL
-#include "types.h"
+#include "exfat.h"
 #include "string.h"
 #include "printf.h"
 #include "heap.h"
 #include "vfs.h"
 #include "errno.h"
 #include "blockdev.h"
-#include "exfat.h"
+#include "types.h"
 #include "crc.h"
 
 #ifdef MODULE

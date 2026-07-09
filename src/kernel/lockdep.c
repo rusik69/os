@@ -1,6 +1,6 @@
 #define KERNEL_INTERNAL
-#include "types.h"
 #include "lockdep.h"
+#include "types.h"
 #include "printf.h"
 #include "process.h"
 #include "panic.h"

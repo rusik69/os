@@ -20,8 +20,8 @@
  */
 
 #define KERNEL_INTERNAL
-#include "types.h"
 #include "dns_cache.h"
+#include "types.h"
 #include "string.h"
 #include "printf.h"
 #include "timer.h"

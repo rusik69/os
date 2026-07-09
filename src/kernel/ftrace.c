@@ -24,8 +24,8 @@
  */
 
 #define KERNEL_INTERNAL
-#include "types.h"
 #include "ftrace.h"
+#include "types.h"
 #include "printf.h"
 #include "string.h"
 #include "kprobes.h"

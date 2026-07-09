@@ -1,7 +1,7 @@
 #define KERNEL_INTERNAL
-#include "types.h"
-#include "printf.h"
 #include "hpet.h"
+#include "printf.h"
+#include "types.h"
 #include "io.h"
 #include "pci.h"
 #define HPET_BASE 0xFED00000

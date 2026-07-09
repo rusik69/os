@@ -1,9 +1,9 @@
 #define KERNEL_INTERNAL
-#include "types.h"
+#include "overlay.h"
 #include "printf.h"
 #include "string.h"
 #include "kernel.h"
-#include "overlay.h"
+#include "types.h"
 #include "vfs.h"
 #include "errno.h"
 #include "heap.h"

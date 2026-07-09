@@ -1,7 +1,7 @@
 #define KERNEL_INTERNAL
-#include "types.h"
-#include "printf.h"
 #include "bochs.h"
+#include "printf.h"
+#include "types.h"
 #include "pci.h"
 #include "io.h"
 #define VBE_DISPI_INDEX_ID 0

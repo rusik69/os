@@ -1,6 +1,6 @@
 #define KERNEL_INTERNAL
-#include "types.h"
 #include "oom.h"
+#include "types.h"
 #include "process.h"
 #include "scheduler.h"
 #include "printf.h"

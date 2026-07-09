@@ -1,7 +1,7 @@
-#include "types.h"
+#include "sha256.h"
 #include "string.h"
 #include "printf.h"
-#include "sha256.h"
+#include "types.h"
 
 /* SHA-256 initial hash values */
 static const uint32_t H0[8] = {

@@ -11,12 +11,12 @@
  *   - Sound core mixer (sound_core.c) — mixer state
  */
 
-#include "ac97.h"
+#include "sndstat.h"
 #include "sound_core.h"
 #include "string.h"
 #include "printf.h"
 #include "types.h"
-#include "sndstat.h"
+#include "ac97.h"
 
 /* ── Forward declarations ──────────────────────────────────────────── */
 

@@ -1,7 +1,7 @@
 #define KERNEL_INTERNAL
-#include "types.h"
-#include "printf.h"
 #include "pagecache.h"
+#include "printf.h"
+#include "types.h"
 #include "string.h"
 #include "spinlock.h"
 #define CACHE_PAGES 256

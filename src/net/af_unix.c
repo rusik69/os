@@ -21,9 +21,9 @@
  * Reference: Linux AF_UNIX implementation, POSIX.1-2001.
  */
 #define KERNEL_INTERNAL
-#include "types.h"
-#include "socket.h"
 #include "af_unix.h"
+#include "socket.h"
+#include "types.h"
 #include "process.h"
 #include "vfs.h"
 #include "string.h"

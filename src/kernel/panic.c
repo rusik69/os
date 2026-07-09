@@ -1,6 +1,6 @@
 #define KERNEL_INTERNAL
-#include "types.h"
 #include "panic.h"
+#include "types.h"
 #include "printf.h"
 #include "vga.h"
 #include "io.h"

@@ -14,8 +14,8 @@
  *            Linux include/net/genetlink.h
  */
 #define KERNEL_INTERNAL
-#include "types.h"
 #include "netlink.h"
+#include "types.h"
 #include "socket.h"
 #include "process.h"
 #include "string.h"

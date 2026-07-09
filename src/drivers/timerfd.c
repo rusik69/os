@@ -7,8 +7,8 @@
  * Timer fds range: 800..815 (max 16 timerfds)
  */
 #define KERNEL_INTERNAL
-#include "types.h"
 #include "timerfd.h"
+#include "types.h"
 #include "timer.h"
 #include "printf.h"
 #include "string.h"

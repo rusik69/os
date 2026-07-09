@@ -19,10 +19,10 @@
  * handler (pipe mode).  Otherwise, it is written to the expanded path.
  */
 #define KERNEL_INTERNAL
-#include "types.h"
+#include "coredump.h"
 #include "printf.h"
 #include "process.h"
-#include "coredump.h"
+#include "types.h"
 #include "string.h"
 #include "fs.h"
 #include "vfs.h"

@@ -19,8 +19,8 @@
  */
 
 #define KERNEL_INTERNAL
-#include "types.h"
 #include "dns_resolver.h"
+#include "types.h"
 #include "dns_cache.h"
 #include "net.h"
 #include "net_internal.h"

@@ -13,8 +13,8 @@
  * Item S36 — USB core device model
  */
 
-#include "usb.h"
 #include "usb_core.h"
+#include "usb.h"
 #include "string.h"
 #include "printf.h"
 #include "spinlock.h"

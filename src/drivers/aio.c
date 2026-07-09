@@ -1,7 +1,7 @@
 #define KERNEL_INTERNAL
-#include "types.h"
-#include "printf.h"
 #include "aio.h"
+#include "printf.h"
+#include "types.h"
 #include "spinlock.h"
 #include "string.h"
 #define MAX_AIO 64

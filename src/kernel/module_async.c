@@ -12,8 +12,8 @@
  */
 
 #define KERNEL_INTERNAL
-#include "module.h"
 #include "module_async.h"
+#include "module.h"
 #include "printf.h"
 #include "string.h"
 #include "scheduler.h"

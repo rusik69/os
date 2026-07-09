@@ -10,8 +10,8 @@
  */
 
 #define KERNEL_INTERNAL
-#include "types.h"
 #include "coredump_core.h"
+#include "types.h"
 #include "printf.h"
 #include "export.h"
 

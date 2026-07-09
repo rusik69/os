@@ -1,7 +1,7 @@
 #define KERNEL_INTERNAL
-#include "types.h"
-#include "printf.h"
 #include "pgrp.h"
+#include "printf.h"
+#include "types.h"
 #include "process.h"
 void pgrp_init(void) {
     kprintf("[OK] Process group management initialized\n");

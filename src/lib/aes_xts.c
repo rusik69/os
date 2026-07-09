@@ -12,8 +12,8 @@
  */
 
 #define KERNEL_INTERNAL
-#include "types.h"
 #include "aes_xts.h"
+#include "types.h"
 #include "aes.h"
 #include "string.h"
 #include "printf.h"
