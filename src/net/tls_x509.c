@@ -333,7 +333,7 @@ int x509_parse_cert(const uint8_t *der, int der_len,
 	if (ret < 0)
 		return ret;
 	cert->tbs_len = ret;  /* length of the TBSCertificate SEQUENCE */
-	offset = ret;
+	offset = 0;          /* offset within tbs_content (the value) */
 
 	/* ── Version [0] EXPLICIT INTEGER (v3 only) ──────────────── */
 	if ((int)inner_len > 0 && tbs_content[0] == DER_TAG_CTX_0) {
@@ -372,8 +372,8 @@ int x509_parse_cert(const uint8_t *der, int der_len,
 			offset = vret;
 		}
 	} else {
-		/* No version tag → v1 default; offset stays at entry seq size */
-		offset = ret;
+		/* No version tag → v1 default; offset starts at 0 */
+		offset = 0;
 	}
 
 	/* ── Serial Number ────────────────────────────────────────── */
@@ -401,19 +401,23 @@ int x509_parse_cert(const uint8_t *der, int der_len,
 	if (offset >= (int)inner_len)
 		return -EINVAL;
 	inner = tbs_content + offset;
-	ret = x509_read_der_tlv(inner, (int)(inner_len - (uint32_t)offset),
-	                         &tag, &tbs_content, &inner_len);
-	if (ret < 0)
-		return ret;
-	/* Store the raw DN bytes */
 	{
-		int to_copy = (int)(inner_len);
-		if (to_copy > X509_DN_MAX_LEN)
-			to_copy = X509_DN_MAX_LEN;
-		memcpy(cert->issuer.raw, tbs_content, (size_t)to_copy);
-		cert->issuer.raw_len = to_copy;
+		const uint8_t *issuer_val;
+		uint32_t issuer_vlen;
+		ret = x509_read_der_tlv(inner, (int)(inner_len - (uint32_t)offset),
+		                         &tag, &issuer_val, &issuer_vlen);
+		if (ret < 0)
+			return ret;
+		/* Store the raw DN bytes */
+		{
+			int to_copy = (int)(issuer_vlen);
+			if (to_copy > X509_DN_MAX_LEN)
+				to_copy = X509_DN_MAX_LEN;
+			memcpy(cert->issuer.raw, issuer_val, (size_t)to_copy);
+			cert->issuer.raw_len = to_copy;
+		}
+		offset += ret;
 	}
-	offset += ret;
 
 	/* ── Validity (SEQUENCE of notBefore, notAfter) ───────────── */
 	if (offset >= (int)inner_len)
@@ -492,18 +496,22 @@ int x509_parse_cert(const uint8_t *der, int der_len,
 	if (offset >= (int)inner_len)
 		return -EINVAL;
 	inner = tbs_content + offset;
-	ret = x509_read_der_tlv(inner, (int)(inner_len - (uint32_t)offset),
-	                         &tag, &tbs_content, &inner_len);
-	if (ret < 0)
-		return ret;
 	{
-		int to_copy = (int)(inner_len);
-		if (to_copy > X509_DN_MAX_LEN)
-			to_copy = X509_DN_MAX_LEN;
-		memcpy(cert->subject.raw, tbs_content, (size_t)to_copy);
-		cert->subject.raw_len = to_copy;
+		const uint8_t *subject_val;
+		uint32_t subject_vlen;
+		ret = x509_read_der_tlv(inner, (int)(inner_len - (uint32_t)offset),
+		                         &tag, &subject_val, &subject_vlen);
+		if (ret < 0)
+			return ret;
+		{
+			int to_copy = (int)(subject_vlen);
+			if (to_copy > X509_DN_MAX_LEN)
+				to_copy = X509_DN_MAX_LEN;
+			memcpy(cert->subject.raw, subject_val, (size_t)to_copy);
+			cert->subject.raw_len = to_copy;
+		}
+		offset += ret;
 	}
-	offset += ret;
 
 	/* ── SubjectPublicKeyInfo ─────────────────────────────────── */
 	if (offset >= (int)inner_len)
