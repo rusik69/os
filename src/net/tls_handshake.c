@@ -1155,10 +1155,20 @@ void tls_hkdf_expand(const uint8_t *prk, int prk_len,
 
 	for (i = 1; generated < out_len; i++) {
 		int copy_len;
+		int max_info;
 
 		/* Build: T(i-1) || info || counter_byte */
 		if (t_len > 0)
 			memcpy(buf, t, (size_t)t_len);
+
+		/* Per-iteration clamp: ensure T(i-1) + info + counter
+		 * fits within buf[].  On iteration 2+, t_len = 32
+		 * so info_copy_len must be reduced to stay within
+		 * the 257-byte buffer (RFC 5869 allows this — the
+		 * implementation can truncate info that doesn't fit). */
+		max_info = (int)sizeof(buf) - 1 - t_len;
+		if (info_copy_len > max_info)
+			info_copy_len = max_info;
 
 		if (info_copy_len > 0)
 			memcpy(buf + t_len, info, (size_t)info_copy_len);
@@ -1216,9 +1226,13 @@ void tls_hkdf_expand_label(const uint8_t *secret, int secret_len,
 		secret_len = 32;
 
 	label_str_len  = (int)strlen(label);
+
+	/* Clamp label to fit in the 1-byte length field.
+	 * total_label_len = "tls13 " prefix (6) + label_str.
+	 * We must also clamp what we memcpy below. */
+	if (label_str_len > 255 - label_prefix_len)
+		label_str_len = 255 - label_prefix_len;
 	total_label_len = label_prefix_len + label_str_len;
-	if (total_label_len > 255)
-		total_label_len = 255;
 
 	if (context_len < 0)
 		context_len = 0;
