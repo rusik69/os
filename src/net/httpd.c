@@ -138,7 +138,12 @@ static int build_response(char *resp, int status, const char *status_text,
     /* Date */
     p = http_date(p);
 
-    if (ctype) { p = str_nl(ctype, p); }
+    if (ctype) {
+        static const char ct_hdr[] = "Content-Type: ";
+        const char *ctp = ct_hdr;
+        while (*ctp) *p++ = *ctp++;
+        p = str_nl(ctype, p);
+    }
     if (clen != (uint64_t)-1) {
         char hdr[64]; char *hp = hdr;
         const char *clp = "Content-Length: ";
