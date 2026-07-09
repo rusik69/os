@@ -131,6 +131,7 @@ static char         g_volume_label[12];
 #define FAT_EOC()        (fat_type == FAT12 ? 0x0FF8u : (fat_type == FAT16 ? 0xFFF8u : 0x0FFFFFF8u))
 #define FAT_FREE()       0u
 #define FAT_MAX_CLUSTER() (fat_type == FAT12 ? 0x0FF0u : (fat_type == FAT16 ? 0xFFF0u : 0x0FFFFFF0u))
+#define FAT_IS_EOC(val)   ((val) >= FAT_MAX_CLUSTER())
 
 /* Sector-sized scratch buffer (on stack in helpers) */
 #define SECT_SIZE 512
@@ -254,11 +255,10 @@ static uint32_t fat_alloc_cluster(void) {
 
 static void fat_free_chain(uint32_t cluster) {
     uint32_t max_clusters = 0;
-    uint32_t eoc = FAT_EOC();
     if (fat_sectors) max_clusters = (fat_sectors * SECT_SIZE * 2) / 3;
     if (!max_clusters) max_clusters = 65536;
     uint32_t visited = 0;
-    while (cluster >= 2 && cluster < eoc) {
+    while (cluster >= 2 && !FAT_IS_EOC(cluster)) {
         if (++visited > max_clusters) break;
         uint32_t next = fat_next_cluster(cluster);
         fat_write_entry(cluster, FAT_FREE());
@@ -490,7 +490,6 @@ static int dir_add_lfn_entries(uint32_t lba_base, uint32_t sector_idx, int entry
 static uint32_t dir_find(uint32_t dir_cluster, const char *name,
                           int *is_dir, uint32_t *file_size) {
     uint8_t buf[SECT_SIZE];
-    uint32_t eoc = FAT_EOC();
     uint32_t sec_count;
     uint32_t first_lba;
 
@@ -552,7 +551,7 @@ static uint32_t dir_find(uint32_t dir_cluster, const char *name,
     /* Normal cluster-chain directory (FAT32 or FAT12/16 subdirectory) */
     uint32_t cluster = dir_cluster;
     uint64_t _chain_cnt = 0;
-    while (cluster >= 2 && cluster < eoc) {
+    while (cluster >= 2 && !FAT_IS_EOC(cluster)) {
         if (++_chain_cnt > FAT_MAX_CLUSTER()) break;
         uint32_t lba = cluster_to_lba(cluster);
         for (uint32_t s = 0; s < spc; s++) {
@@ -792,7 +791,7 @@ int fat32_read_file(const char *path, void *buf, uint32_t max_size) {
     uint32_t clus = cluster;
     uint64_t _chain_cnt = 0;
 
-    while (clus < FAT_EOC() && done < to_read) {
+    while (!FAT_IS_EOC(clus) && done < to_read) {
         if (++_chain_cnt > FAT_MAX_CLUSTER()) return -EIO;
         uint32_t lba = cluster_to_lba(clus);
         for (uint32_t s = 0; s < spc && done < to_read; s++) {
@@ -874,10 +873,9 @@ int fat32_list_dir(const char *path, char names[][FAT32_MAX_NAME], int max) {
     }
 
     /* Normal cluster-chain directory */
-    uint32_t eoc = FAT_EOC();
     uint32_t clus = cluster;
     uint64_t _chain_cnt = 0;
-    while (clus >= 2 && clus < eoc && count < max) {
+    while (clus >= 2 && !FAT_IS_EOC(clus) && count < max) {
         if (++_chain_cnt > FAT_MAX_CLUSTER()) break;
         uint32_t lba = cluster_to_lba(clus);
         for (uint32_t s = 0; s < spc && count < max; s++) {
@@ -995,7 +993,7 @@ static int fat32_83_name_exists(uint32_t dir_cluster,
     /* FAT32 / non-root: follow cluster chain */
     uint32_t cluster = dir_cluster;
     uint64_t _chain_cnt = 0;
-    while (cluster >= 2 && cluster < FAT_EOC()) {
+    while (cluster >= 2 && !FAT_IS_EOC(cluster)) {
         if (++_chain_cnt > FAT_MAX_CLUSTER()) break;
         uint32_t lba = cluster_to_lba(cluster);
         for (uint32_t s = 0; s < spc; s++) {
@@ -1200,7 +1198,6 @@ static int dir_add_entry(uint32_t dir_cluster, const char *name83_8, const char 
                          uint32_t first_cluster, uint32_t file_size, int is_dir,
                          const char *orig_name) {
     uint8_t buf[SECT_SIZE];
-    uint32_t eoc = FAT_EOC();
 
     /* Determine if we need LFN entries */
     int use_lfn = (orig_name != NULL) && needs_lfn(orig_name, name83_8, name83_3);
@@ -1254,8 +1251,8 @@ static int dir_add_entry(uint32_t dir_cluster, const char *name83_8, const char 
     /* Normal cluster-chain directory */
     uint32_t cluster = dir_cluster;
     uint64_t _chain_cnt = 0;
-    while (cluster >= 2 && cluster < eoc) {
-        if (++_chain_cnt > FAT_MAX_CLUSTER()) { cluster = eoc; break; }
+    while (cluster >= 2 && !FAT_IS_EOC(cluster)) {
+        if (++_chain_cnt > FAT_MAX_CLUSTER()) { break; }
         uint32_t lba = cluster_to_lba(cluster);
         for (uint32_t s = 0; s < spc; s++) {
             if (read_sector(lba + s, buf) != 0) return -EIO;
@@ -1297,7 +1294,7 @@ static int dir_add_entry(uint32_t dir_cluster, const char *name83_8, const char 
             }
         }
         uint32_t next = fat_next_cluster(cluster);
-        if (next >= eoc) {
+        if (FAT_IS_EOC(next)) {
             if (dir_grow_cluster(&cluster) != 0) return -2;
             continue;
         }
@@ -1309,7 +1306,6 @@ static int dir_add_entry(uint32_t dir_cluster, const char *name83_8, const char 
 static int dir_update_size(uint32_t dir_cluster, const char *cmp_name,
                            uint32_t first_cluster, uint32_t file_size) {
     uint8_t buf[SECT_SIZE];
-    uint32_t eoc = FAT_EOC();
 
     /* Inline search function used for both fixed-root and cluster-chain dirs.
      * We search two possible ranges: the fixed root dir (FAT12/16) first,
@@ -1335,7 +1331,7 @@ static int dir_update_size(uint32_t dir_cluster, const char *cmp_name,
 
     uint32_t cluster = dir_cluster;
     uint64_t _chain_cnt = 0;
-    while (cluster >= 2 && cluster < eoc) {
+    while (cluster >= 2 && !FAT_IS_EOC(cluster)) {
         if (++_chain_cnt > FAT_MAX_CLUSTER()) break;
         uint32_t lba = cluster_to_lba(cluster);
         for (uint32_t s = 0; s < spc; s++) {
@@ -1419,7 +1415,7 @@ int fat32_write_file(const char *path, const void *data, uint32_t size) {
     uint32_t clus = first;
     uint8_t sect_buf[SECT_SIZE];
     uint64_t _chain_cnt = 0;
-    while (clus < FAT_EOC() && done < size) {
+    while (!FAT_IS_EOC(clus) && done < size) {
         if (++_chain_cnt > FAT_MAX_CLUSTER()) return -EIO;
         uint32_t lba = cluster_to_lba(clus);
         for (uint32_t s = 0; s < spc && done < size; s++) {
@@ -1448,7 +1444,7 @@ static int dir_remove_entry(uint32_t dir_cluster, const char *name) {
     uint8_t buf[SECT_SIZE];
     uint32_t cluster = dir_cluster;
     uint64_t _chain_cnt = 0;
-    while (cluster >= 2 && cluster < FAT_EOC()) {
+    while (cluster >= 2 && !FAT_IS_EOC(cluster)) {
         if (++_chain_cnt > FAT_MAX_CLUSTER()) break;
         uint32_t lba = cluster_to_lba(cluster);
         for (uint32_t s = 0; s < spc; s++) {
@@ -1548,7 +1544,6 @@ int fat32_unlink(const char *path) {
 static int fat32_dir_is_empty(uint32_t dir_cluster)
 {
 	uint8_t buf[SECT_SIZE];
-	uint32_t eoc = FAT_EOC();
 
 	if (dir_cluster == 0 && fat_type != FAT32) {
 		/* FAT12/16 fixed root directory — not a subdirectory */
@@ -1557,7 +1552,7 @@ static int fat32_dir_is_empty(uint32_t dir_cluster)
 
 	uint32_t cluster = dir_cluster;
 	uint64_t _chain_cnt = 0;
-	while (cluster >= 2 && cluster < eoc) {
+	while (cluster >= 2 && !FAT_IS_EOC(cluster)) {
 		if (++_chain_cnt > FAT_MAX_CLUSTER())
 			break;
 		uint32_t lba = cluster_to_lba(cluster);
@@ -1730,7 +1725,6 @@ int fat32_set_volume_label(const char *label)
      * The volume label entry has cluster=0, file_size=0, ATTR_VOLUME_ID set. */
     {
         uint8_t dir_buf[SECT_SIZE];
-        uint32_t eoc = FAT_EOC();
         uint32_t root_clus = root_cluster; /* for FAT32; 0 means fixed root for FAT12/16 */
         uint32_t sec_count = root_dir_sectors;
 
@@ -1740,7 +1734,7 @@ int fat32_set_volume_label(const char *label)
             int entry_found = 0;
             uint64_t _chain_cnt = 0;
 
-            while (clus < eoc && clus >= 2) {
+            while (!FAT_IS_EOC(clus) && clus >= 2) {
                 if (++_chain_cnt > FAT_MAX_CLUSTER()) break;
                 uint32_t lba = cluster_to_lba(clus);
                 for (uint32_t s = 0; s < spc; s++) {
@@ -1841,13 +1835,12 @@ vol_label_done:
 uint32_t fat32_chain_walk(uint32_t start, uint32_t steps)
 {
     uint32_t cluster = start;
-    uint32_t eoc = FAT_EOC();
     uint64_t _cnt = 0;
 
     for (uint32_t i = 0; i < steps; i++) {
         if (++_cnt > FAT_MAX_CLUSTER())
             return 0;
-        if (cluster < 2 || cluster >= eoc)
+        if (cluster < 2 || FAT_IS_EOC(cluster))
             return 0;
         cluster = fat_next_cluster(cluster);
     }
@@ -1859,10 +1852,9 @@ uint32_t fat32_chain_length(uint32_t start)
 {
     uint32_t count = 0;
     uint32_t cluster = start;
-    uint32_t eoc = FAT_EOC();
     uint64_t _cnt = 0;
 
-    while (cluster >= 2 && cluster < eoc) {
+    while (cluster >= 2 && !FAT_IS_EOC(cluster)) {
         if (++_cnt > FAT_MAX_CLUSTER())
             break;
         count++;
@@ -1879,12 +1871,12 @@ int fat32_chain_extend(uint32_t cluster, uint32_t num)
     uint64_t _cnt = 0;
 
     /* Walk to the end of the existing chain */
-    if (cluster >= 2 && cluster < eoc) {
+    if (cluster >= 2 && !FAT_IS_EOC(cluster)) {
         while (1) {
             if (++_cnt > FAT_MAX_CLUSTER())
                 return -EIO;
             uint32_t next = fat_next_cluster(cluster);
-            if (next >= eoc || next < 2)
+            if (FAT_IS_EOC(next) || next < 2)
                 break;
             cluster = next;
         }
@@ -1915,7 +1907,6 @@ static int dir_update_by_leaf(uint32_t dir_cluster, const char *leaf,
                                uint32_t first_cluster, uint32_t file_size)
 {
     uint8_t buf[SECT_SIZE];
-    uint32_t eoc = FAT_EOC();
 
     /* FAT12/16 fixed root directory */
     if (dir_cluster == 0 && fat_type != FAT32) {
@@ -1963,7 +1954,7 @@ static int dir_update_by_leaf(uint32_t dir_cluster, const char *leaf,
     /* Cluster-chain directory */
     uint32_t cluster = dir_cluster;
     uint64_t _chain_cnt = 0;
-    while (cluster >= 2 && cluster < eoc) {
+    while (cluster >= 2 && !FAT_IS_EOC(cluster)) {
         if (++_chain_cnt > FAT_MAX_CLUSTER()) break;
         uint32_t lba = cluster_to_lba(cluster);
         for (uint32_t s = 0; s < spc; s++) {
@@ -2032,18 +2023,17 @@ int fat32_pread(const char *path, void *buf, uint32_t size, uint32_t offset)
     uint32_t bpc = spc * bps;
     uint32_t start_idx = offset / bpc;
     uint32_t start_off = offset % bpc;
-    uint32_t eoc = FAT_EOC();
 
     /* Walk the fragmented chain to the starting cluster */
     uint32_t clus = fat32_chain_walk(cluster, start_idx);
-    if (clus < 2 || clus >= eoc)
+    if (clus < 2 || FAT_IS_EOC(clus))
         return -EIO;
 
     uint32_t done = 0;
     uint8_t sect_buf[SECT_SIZE];
     uint64_t _chain_cnt = 0;
 
-    while (clus >= 2 && clus < eoc && done < size) {
+    while (clus >= 2 && !FAT_IS_EOC(clus) && done < size) {
         if (++_chain_cnt > FAT_MAX_CLUSTER())
             return done > 0 ? (int)done : -EIO;
         uint32_t lba = cluster_to_lba(clus);
@@ -2113,7 +2103,7 @@ int fat32_pwrite(const char *path, const void *data, uint32_t size, uint32_t off
         uint8_t sect_buf[SECT_SIZE];
         uint64_t _chain_cnt = 0;
 
-        while (clus >= 2 && clus < FAT_EOC() && done < size) {
+        while (clus >= 2 && !FAT_IS_EOC(clus) && done < size) {
             if (++_chain_cnt > FAT_MAX_CLUSTER()) {
                 fat_free_chain(first); return -EIO;
             }
@@ -2168,7 +2158,7 @@ int fat32_pwrite(const char *path, const void *data, uint32_t size, uint32_t off
         uint8_t sect_buf[SECT_SIZE];
         uint64_t _chain_cnt = 0;
 
-        while (clus >= 2 && clus < FAT_EOC() && done < size) {
+        while (clus >= 2 && !FAT_IS_EOC(clus) && done < size) {
             if (++_chain_cnt > FAT_MAX_CLUSTER())
                 return done > 0 ? (int)done : -EIO;
             uint32_t lba = cluster_to_lba(clus);
