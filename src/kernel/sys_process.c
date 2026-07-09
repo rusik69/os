@@ -17,6 +17,7 @@
 #include "uaccess.h"
 #include "spinlock.h"
 #include "printf.h"
+#include "string.h"
 #include "signal_libc.h"    /* for struct sigaction (userspace ABI) */
 #include "signal_frame.h"   /* for ucontext_t, sigcontext */
 #include "vmm.h"            /* for USER_VADDR_MAX */

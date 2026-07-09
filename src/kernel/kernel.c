@@ -16,6 +16,7 @@
 
 #include "serial.h"
 #include "printf.h"
+#include "string.h"
 #include "io.h"
 #include "ata.h"
 #include "fs.h"

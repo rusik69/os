@@ -22,6 +22,7 @@
 #include "heap.h"
 #include "vmm.h"
 #include "string.h"
+#include "spinlock.h"
 #include "err.h"
 #include "printf.h"
 #include "io.h"

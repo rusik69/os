@@ -24,6 +24,7 @@
 #include "errno.h"
 #include "bug.h"
 #include "uaccess.h"
+#include "export.h"
 
 /* ── Compile-time struct size assertions ────────────────────────────── */
 _Static_assert(sizeof(struct process) >= 2048, "struct process must be at least 2048 bytes for fixed-size table");

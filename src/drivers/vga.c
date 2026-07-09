@@ -6,6 +6,7 @@
 #include "heap.h"
 #include "pci.h"
 #include "err.h"
+#include "export.h"
 
 #define FB_CELL_W 8
 #define FB_CELL_H 16

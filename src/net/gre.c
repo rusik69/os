@@ -15,6 +15,7 @@
 #include "printf.h"
 #include "string.h"
 #include "errno.h"
+#include "export.h"
 
 /* ── Tunnel hash table ─────────────────────────────────────────────── */
 

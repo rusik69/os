@@ -28,6 +28,7 @@
 #include "speaker.h"
 #include "mouse.h"
 #include "acpi.h"
+#include "err.h"
 #include "ata.h"
 #include "ramdisk.h"
 #include "fs.h"

@@ -15,6 +15,7 @@
 
 #include "module.h"
 #include "printf.h"
+#include "export.h"
 
 /* ── Symbols imported from test_module ────────────────────────────
  *

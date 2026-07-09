@@ -28,6 +28,7 @@
 #include "psi.h"
 #include "cpuset.h"
 #include "cpu_topology.h"
+#include "export.h"
 #include "fault.h"
 #include "kpti.h"
 #include "page_cache.h"

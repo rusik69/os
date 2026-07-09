@@ -4,6 +4,7 @@
 #include "timer.h"
 #include "string.h"
 #include "printf.h"
+#include "export.h"
 #ifdef MODULE
 #include "module.h"
 #endif

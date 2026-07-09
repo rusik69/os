@@ -19,6 +19,7 @@
 #include "pmm.h"
 #include "string.h"
 #include "printf.h"
+#include "spinlock.h"
 #include "io.h"
 #include "cpu.h"           /* read_msr, write_msr */
 #include "smp.h"

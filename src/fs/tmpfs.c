@@ -16,6 +16,7 @@
 #include "ioctl.h"
 #include "syscall.h"
 #include "uaccess.h"
+#include "export.h"
 #include "nfsd.h"
 
 static struct tmpfs_inode inodes[TMPFS_MAX_INODES];

@@ -4,6 +4,7 @@
 #include "net.h"
 #include "net_internal.h"
 #include "string.h"
+#include "heap.h"
 #include "printf.h"
 #include "spinlock.h"
 #include "errno.h"

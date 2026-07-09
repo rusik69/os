@@ -6,6 +6,7 @@
 #include "scheduler.h"
 #include "printf.h"
 #include "ps2.h"
+#include "export.h"
 
 #define KB_DATA_PORT 0x60
 #define KB_CMD_PORT  0x64

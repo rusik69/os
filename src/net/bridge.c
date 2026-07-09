@@ -22,6 +22,7 @@
 #include "string.h"
 #include "timer.h"
 #include "timers.h"
+#include "export.h"
 #include "net_igmp.h"    /* IGMP type constants */
 
 static struct bridge g_bridge;

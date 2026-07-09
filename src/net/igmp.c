@@ -4,6 +4,7 @@
 #include "types.h"
 #include "printf.h"
 #include "string.h"
+#include "heap.h"
 #include "net.h"
 #include "net_internal.h"
 #include "net_igmp.h"

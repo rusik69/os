@@ -21,6 +21,7 @@
 #include "errno.h"
 #include "printf.h"
 #include "string.h"
+#include "export.h"
 
 /* ── Hook registration tracking ──────────────────────────────────── */
 
