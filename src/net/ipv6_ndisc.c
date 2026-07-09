@@ -368,12 +368,26 @@ void ipv6_nd_handle_ns(struct ipv6_header *ip6,
 	opt_offset = sizeof(struct nd_neighbor);
 
 	while (opt_offset + 2 <= (int)len) {
-		if (opt->type == ND_OPT_SRC_LLADDR && opt->len == 1) {
+		uint8_t opt_len_val = opt->len;
+		int opt_total;
+
+		/* Reject zero-length options (RFC 4861 $4.1) */
+		if (opt_len_val < 1)
+			break;
+
+		opt_total = (int)opt_len_val * 8;
+
+		/* Verify full option fits within the packet */
+		if (opt_offset + opt_total > (int)len)
+			break;
+
+		if (opt->type == ND_OPT_SRC_LLADDR && opt_len_val == 1) {
 			ipv6_nd_cache_add(&ip6->src_ip,
 			                  payload + opt_offset + 2);
 			break;
 		}
-		opt_offset += (int)opt->len * 8;
+		/* Advance past this option (already verified to fit) */
+		opt_offset += opt_total;
 		if (opt_offset + 2 > (int)len)
 			break;
 		opt = (const struct nd_option *)(payload + opt_offset);
@@ -425,7 +439,20 @@ void ipv6_nd_handle_na(struct ipv6_header *ip6,
 	opt_offset = sizeof(struct nd_neighbor);
 
 	while (opt_offset + 2 <= (int)len) {
-		if (opt->type == ND_OPT_TGT_LLADDR && opt->len == 1) {
+		uint8_t opt_len_val = opt->len;
+		int opt_total;
+
+		/* Reject zero-length options (RFC 4861 $4.1) */
+		if (opt_len_val < 1)
+			break;
+
+		opt_total = (int)opt_len_val * 8;
+
+		/* Verify full option fits within the packet */
+		if (opt_offset + opt_total > (int)len)
+			break;
+
+		if (opt->type == ND_OPT_TGT_LLADDR && opt_len_val == 1) {
 			ipv6_nd_cache_add(&na->target,
 			                  payload + opt_offset + 2);
 
@@ -448,7 +475,8 @@ void ipv6_nd_handle_na(struct ipv6_header *ip6,
 			}
 			break;
 		}
-		opt_offset += (int)opt->len * 8;
+		/* Advance past this option (already verified to fit) */
+		opt_offset += opt_total;
 		if (opt_offset + 2 > (int)len)
 			break;
 		opt = (const struct nd_option *)(payload + opt_offset);
