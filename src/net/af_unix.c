@@ -432,6 +432,7 @@ int unix_connect(int idx, const struct sockaddr_un *addr, uint32_t addrlen)
     if (plen <= 0) return -EINVAL;
     if (plen >= UNIX_PATH_MAX) plen = UNIX_PATH_MAX - 1;
     memcpy(path, addr->sun_path, (size_t)plen);
+    path[plen] = '\0'; /* ensure string safety for strlen/path_lookup */
 
     spinlock_acquire(&unix_lock);
     struct unix_ep *ep = ep_get(idx);
@@ -574,6 +575,7 @@ static int unix_dgram_sendto(int idx, const void *data, uint32_t len,
     if (dst_plen <= 0) return -EINVAL;
     if (dst_plen >= UNIX_PATH_MAX) dst_plen = UNIX_PATH_MAX - 1;
     memcpy(dst_path, dst_addr->sun_path, (size_t)dst_plen);
+    dst_path[dst_plen] = '\0'; /* ensure string safety for strlen */
     int dst_len = (dst_path[0] != '\0') ? (int)strlen(dst_path) : dst_plen;
     if (dst_len <= 0) return -EDESTADDRREQ;
 
