@@ -276,8 +276,12 @@ static int ext4_ext_binsearch(struct ext4_extent_header *eh,
         } else {
             uint16_t len = ext[mid].ee_len & ~0x8000;
             if (len == 0)
-                len = 32768; /* treat 0 len as full range (convention) */
-            if (iblock < ext[mid].ee_block + len) {
+                len = 32768;
+            /* Use subtraction to avoid overflow: ee_block + len can wrap
+             * when ee_block is near UINT32_MAX, causing incorrect extent
+             * lookup.  Since iblock >= ee_block at this point, the
+             * subtraction (iblock - ee_block) is well-defined. */
+            if ((iblock - ext[mid].ee_block) < len) {
                 if (ret_ext)
                     *ret_ext = &ext[mid];
                 return 0;
@@ -342,15 +346,23 @@ static int ext4_ext_find_insert_position(struct ext4_extent_header *eh,
     *pos = 0;
 
     for (i = 0; i < (int)num_entries; i++) {
-        uint32_t ext_end = exts[i].ee_block;
+        uint32_t ext_start = exts[i].ee_block;
         uint16_t ext_len = exts[i].ee_len & ~0x8000;
         if (ext_len == 0)
             ext_len = 32768;
-        ext_end += ext_len;
+        /* Avoid overflow: use safe comparison instead of ext_start + ext_len */
+        uint32_t ext_end = (ext_len > 0xFFFFFFFFU - ext_start)
+                           ? 0xFFFFFFFFU
+                           : ext_start + ext_len;
 
         /* Check for overlap: new extent starts before existing ends,
          * and existing starts before new ends */
-        uint32_t new_end = newext->ee_block + (newext->ee_len & ~0x8000);
+        uint32_t new_len_val = newext->ee_len & ~0x8000;
+        if (new_len_val == 0)
+            new_len_val = 32768;
+        uint32_t new_end = (new_len_val > 0xFFFFFFFFU - newext->ee_block)
+                           ? 0xFFFFFFFFU
+                           : newext->ee_block + new_len_val;
 
         if (newext->ee_block < ext_end &&
             exts[i].ee_block < new_end) {
@@ -411,8 +423,15 @@ static int ext4_ext_merge(struct ext4_extent_header *eh)
             continue;
         }
 
-        /* Check logical contiguity: a ends exactly where b starts */
-        if (a->ee_block + a_len != b->ee_block) {
+        /* Check logical contiguity: a ends exactly where b starts.
+         * Use safe arithmetic to avoid overflow when a->ee_block + a_len
+         * wraps past 0xFFFFFFFF. */
+        uint32_t a_end;
+        if (a_len > 0xFFFFFFFFU - a->ee_block)
+            a_end = 0xFFFFFFFFU;
+        else
+            a_end = a->ee_block + a_len;
+        if (a_end != b->ee_block) {
             i++;
             continue;
         }
@@ -790,8 +809,12 @@ int ext4_ext_get_blocks(struct ext4_priv *ep,
             if (len == 0)
                 len = 32768;
 
-            uint32_t extent_end = ext_entry->ee_block + len;
-            uint32_t avail_blocks = extent_end - iblock;
+            /* Compute contiguous remaining blocks without overflow.
+             * binsearch guarantees iblock - ee_block < len, so the
+             * subtraction is well-defined even when ee_block + len
+             * would wrap past UINT32_MAX. */
+            uint32_t offset = iblock - ext_entry->ee_block;
+            uint32_t avail_blocks = len - offset;
 
             if (*max_blocks > avail_blocks)
                 *max_blocks = avail_blocks;
@@ -939,7 +962,10 @@ int ext4_ext_insert_extent(struct ext4_priv *ep,
         if (ext_len == 0)
             ext_len = 32768;
 
-        uint32_t ext_end = exts[i].ee_block + ext_len;
+        /* Avoid overflow when ee_block + ext_len wraps past 0xFFFFFFFF */
+        uint32_t ext_end = (ext_len > 0xFFFFFFFFU - exts[i].ee_block)
+                           ? 0xFFFFFFFFU
+                           : exts[i].ee_block + ext_len;
 
         /* Does the new extent append directly after ext[i]? */
         if (ext_end == newext->ee_block) {
@@ -1303,7 +1329,10 @@ int ext4_ext_remove_space(struct ext4_priv *ep,
             ext_len = 32768;
 
         uint32_t ext_start = exts[i].ee_block;
-        uint32_t ext_end = ext_start + ext_len;
+        /* Avoid overflow when ext_start + ext_len wraps past 0xFFFFFFFF */
+        uint32_t ext_end = (ext_len > 0xFFFFFFFFU - ext_start)
+                           ? 0xFFFFFFFFU
+                           : ext_start + ext_len;
         int uninit = !!(exts[i].ee_len & 0x8000);
 
         /* Case 1: Entirely before the range — keep */
