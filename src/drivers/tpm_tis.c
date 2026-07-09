@@ -154,6 +154,26 @@ static uint32_t tis_get_burst_count(struct tpm_device *dev) {
     return count;
 }
 
+/* ── Command header byteswap (host → big-endian for TPM wire format) ──
+ *
+ * TPM 2.0 uses big-endian byte ordering for all multi-byte fields in
+ * command/response buffers.  On little-endian hosts (x86) we must swap
+ * bytes in the 10-byte header after writing struct fields in host order.
+ */
+static void tpm_hdr_to_be(struct tpm_cmd_hdr *hdr)
+{
+    uint8_t *b = (uint8_t *)hdr;
+    uint8_t tmp;
+    /* tag (bytes 0-1): swap pair */
+    tmp = b[0]; b[0] = b[1]; b[1] = tmp;
+    /* total_size (bytes 2-5): full reverse */
+    tmp = b[2]; b[2] = b[5]; b[5] = tmp;
+    tmp = b[3]; b[3] = b[4]; b[4] = tmp;
+    /* command_code (bytes 6-9): full reverse */
+    tmp = b[6]; b[6] = b[9]; b[9] = tmp;
+    tmp = b[7]; b[7] = b[8]; b[8] = tmp;
+}
+
 /* ── Command transmission (write command, execute, read response) ── */
 
 int tpm_transmit(const uint8_t *cmd, uint32_t cmd_len,
@@ -249,8 +269,11 @@ int tpm_transmit(const uint8_t *cmd, uint32_t cmd_len,
         rsp_bytes++;
     }
 
-    struct tpm_rsp_hdr *hdr = (struct tpm_rsp_hdr *)rsp_hdr_buf;
-    uint32_t expected = hdr->total_size;
+    /* TPM response is big-endian; convert total_size */
+    uint32_t expected = ((uint32_t)rsp_hdr_buf[2] << 24) |
+                        ((uint32_t)rsp_hdr_buf[3] << 16) |
+                        ((uint32_t)rsp_hdr_buf[4] << 8)  |
+                         (uint32_t)rsp_hdr_buf[5];
 
     if (expected < sizeof(struct tpm_rsp_hdr) || expected > *rsp_len) {
         kprintf("[TPM] invalid response size %u (buf=%u)\n",
@@ -275,10 +298,20 @@ int tpm_transmit(const uint8_t *cmd, uint32_t cmd_len,
     }
 
     *rsp_len = rsp_pos;
-    ret = (hdr->return_code == TPM2_RC_SUCCESS) ? 0 : -1;
-
+    /* Read return_code in big-endian (TPM wire format) */
+    {
+        uint32_t rc = ((uint32_t)rsp_hdr_buf[6] << 24) |
+                      ((uint32_t)rsp_hdr_buf[7] << 16) |
+                      ((uint32_t)rsp_hdr_buf[8] << 8)  |
+                       (uint32_t)rsp_hdr_buf[9];
+        ret = (rc == TPM2_RC_SUCCESS) ? 0 : -1;
+    }
     if (ret != 0) {
-        kprintf("[TPM] command failed: return_code=0x%08x\n", hdr->return_code);
+        kprintf("[TPM] command failed: return_code=0x%08x\n",
+                ((uint32_t)rsp_hdr_buf[6] << 24) |
+                ((uint32_t)rsp_hdr_buf[7] << 16) |
+                ((uint32_t)rsp_hdr_buf[8] << 8)  |
+                 (uint32_t)rsp_hdr_buf[9]);
     }
 
 cancel:
@@ -307,6 +340,7 @@ static int tpm2_startup(uint16_t startup_type) {
     hdr->tag = TPM2_ST_NO_SESSIONS;
     hdr->total_size = sizeof(cmd);
     hdr->command_code = TPM2_CC_STARTUP;
+    tpm_hdr_to_be(hdr);
 
     cmd[10] = (uint8_t)(startup_type >> 8);
     cmd[11] = (uint8_t)(startup_type & 0xFF);
@@ -329,6 +363,7 @@ static int tpm2_selftest(int full_test) {
     hdr->tag = TPM2_ST_NO_SESSIONS;
     hdr->total_size = sizeof(cmd);
     hdr->command_code = TPM2_CC_SELF_TEST;
+    tpm_hdr_to_be(hdr);
 
     cmd[10] = (full_test ? 1 : 0);
 
@@ -360,6 +395,7 @@ int tpm2_get_random(uint8_t *buf, uint32_t count) {
         hdr->tag = TPM2_ST_NO_SESSIONS;
         hdr->total_size = sizeof(cmd);
         hdr->command_code = TPM2_CC_GET_RANDOM;
+        tpm_hdr_to_be(hdr);
 
         cmd[10] = (uint8_t)(chunk >> 8);
         cmd[11] = (uint8_t)(chunk & 0xFF);
@@ -550,6 +586,7 @@ int tpm2_context_save(void *object_handle, uint8_t *out_buf, uint32_t *out_len)
     hdr->tag = TPM2_ST_NO_SESSIONS;
     hdr->total_size = sizeof(cmd);
     hdr->command_code = TPM2_CC_CONTEXT_SAVE;
+    tpm_hdr_to_be(hdr);
 
     cmd[10] = (uint8_t)(handle >> 24);
     cmd[11] = (uint8_t)(handle >> 16);
@@ -587,6 +624,7 @@ int tpm2_context_load(const uint8_t *ctx_buf, uint32_t ctx_len,
     hdr->tag = TPM2_ST_NO_SESSIONS;
     hdr->total_size = ctx_len + 10;
     hdr->command_code = TPM2_CC_CONTEXT_LOAD;
+    tpm_hdr_to_be(hdr);
 
     memcpy(cmd + 10, ctx_buf, (size_t)ctx_len);
 
@@ -626,6 +664,7 @@ int tpm2_flush_context(uint32_t handle)
     hdr->tag = TPM2_ST_NO_SESSIONS;
     hdr->total_size = sizeof(cmd);
     hdr->command_code = TPM2_CC_FLUSH_CONTEXT;
+    tpm_hdr_to_be(hdr);
 
     cmd[10] = (uint8_t)(handle >> 24);
     cmd[11] = (uint8_t)(handle >> 16);
@@ -670,6 +709,7 @@ int tpm2_nv_define_space(uint32_t nv_index, uint32_t data_size,
     hdr->tag = TPM2_ST_SESSIONS;
     hdr->total_size = sizeof(cmd);
     hdr->command_code = TPM2_CC_NV_DEFINE_SPACE;
+    tpm_hdr_to_be(hdr);
 
     /* authHandle = TPM2_RH_OWNER */
     cmd[10] = 0x40;
@@ -741,6 +781,7 @@ int tpm2_nv_write(uint32_t nv_index, const uint8_t *data, uint32_t len)
     hdr->tag = TPM2_ST_SESSIONS;
     hdr->total_size = cmd_size;
     hdr->command_code = TPM2_CC_NV_WRITE;
+    tpm_hdr_to_be(hdr);
 
     /* authHandle = TPM2_RH_OWNER */
     cmd[10] = 0x40;
@@ -801,6 +842,7 @@ int tpm2_nv_read(uint32_t nv_index, uint8_t *buf, uint32_t *len)
     hdr->tag = TPM2_ST_SESSIONS;
     hdr->total_size = sizeof(cmd);
     hdr->command_code = TPM2_CC_NV_READ;
+    tpm_hdr_to_be(hdr);
 
     cmd[10] = 0x40; cmd[11] = 0x00; cmd[12] = 0x00; cmd[13] = 0x01; /* owner */
     cmd[14] = (uint8_t)(nv_index >> 24);
@@ -866,6 +908,8 @@ int tpm2_quote(uint32_t pcr_index, const uint8_t *nonce, uint32_t nonce_len,
     hdr2->tag = TPM2_ST_SESSIONS;
     hdr2->total_size = 0;  /* will set at end */
     hdr2->command_code = TPM2_CC_QUOTE;
+    tpm_hdr_to_be(hdr2);
+    /* total_size will be re-swapped by the end */
 
     int pos = 10;
 
@@ -901,6 +945,7 @@ int tpm2_quote(uint32_t pcr_index, const uint8_t *nonce, uint32_t nonce_len,
 
     /* Set total size */
     hdr2->total_size = (uint32_t)pos;
+    tpm_hdr_to_be(hdr2);
 
     uint32_t rsp_len = *attest_len;
     int ret = tpm_transmit(cmd2, (uint32_t)pos, attest_buf, &rsp_len);
@@ -944,6 +989,7 @@ int tpm2_create(uint32_t parent_handle, const uint8_t *sealed_data,
     hdr->tag = TPM2_ST_SESSIONS;
     hdr->command_code = TPM2_CC_CREATE;
     hdr->total_size = 0;
+    tpm_hdr_to_be(hdr);
 
     int pos = 10;
 
@@ -991,6 +1037,7 @@ int tpm2_create(uint32_t parent_handle, const uint8_t *sealed_data,
     cmd[pos++] = 0; cmd[pos++] = 0;
 
     hdr->total_size = (uint32_t)pos;
+    tpm_hdr_to_be(hdr);
 
     uint32_t rsp_len = 1024;
     uint8_t *rsp = (uint8_t *)kmalloc(rsp_len);
@@ -1049,6 +1096,7 @@ int tpm2_load(uint32_t parent_handle,
     hdr->tag = TPM2_ST_SESSIONS;
     hdr->command_code = TPM2_CC_LOAD;
     hdr->total_size = cmd_size;
+    tpm_hdr_to_be(hdr);
 
     int pos = 10;
 
@@ -1108,6 +1156,7 @@ int tpm2_unseal(uint32_t item_handle,
     hdr->tag = TPM2_ST_SESSIONS;
     hdr->total_size = sizeof(cmd);
     hdr->command_code = TPM2_CC_UNSEAL;
+    tpm_hdr_to_be(hdr);
 
     /* itemHandle */
     cmd[10] = (uint8_t)(item_handle >> 24);
@@ -1205,6 +1254,7 @@ int tpm2_sign(uint32_t key_handle, const uint8_t *digest, uint32_t digest_len,
     hdr->tag = TPM2_ST_SESSIONS;
     hdr->command_code = TPM2_CC_SIGN;  /* = 0x0000015D — may need define */
     hdr->total_size = 0;
+    tpm_hdr_to_be(hdr);
 
     int pos = 10;
 
@@ -1238,6 +1288,7 @@ int tpm2_sign(uint32_t key_handle, const uint8_t *digest, uint32_t digest_len,
     cmd[pos++] = 0; cmd[pos++] = 0;
 
     hdr->total_size = (uint32_t)pos;
+    tpm_hdr_to_be(hdr);
 
     uint32_t rsp_len = *sig_len;
     int ret = tpm_transmit(cmd, (uint32_t)pos, sig_buf, &rsp_len);
@@ -1509,12 +1560,7 @@ static int build_pcr_read_cmd(uint8_t *buf, uint32_t *buf_len,
 
     total = (uint32_t)(p - buf);
     hdr->total_size = total;
-
-    /* Update total size in header */
-    {
-        uint32_t total_be = total;
-        memcpy(buf + 2, &total_be, sizeof(total_be));
-    }
+    tpm_hdr_to_be(hdr);
 
     *buf_len = total;
     return 0;
@@ -1539,29 +1585,24 @@ static int build_pcr_extend_cmd(uint8_t *buf, uint32_t *buf_len,
 
     uint8_t *p = buf + sizeof(struct tpm_cmd_hdr);
 
-    /* PCR handle */
-    memcpy(p, &pcr_index, sizeof(pcr_index));
+    /* PCR handle (big-endian) */
+    p[0] = (uint8_t)(pcr_index >> 24);
+    p[1] = (uint8_t)(pcr_index >> 16);
+    p[2] = (uint8_t)(pcr_index >> 8);
+    p[3] = (uint8_t)(pcr_index & 0xFF);
     p += 4;
 
     /* No authorization session (simplified — not using TPM2_RS_PW) */
-    {
-        uint32_t zero = 0;
-        memcpy(p, &zero, sizeof(zero));
-    }
+    p[0] = 0; p[1] = 0; p[2] = 0; p[3] = 0;
     p += 4;
 
-    /* Digests count */
-    {
-        uint32_t one = 1;
-        memcpy(p, &one, sizeof(one));
-    }
+    /* Digests count (big-endian) */
+    p[0] = 0; p[1] = 0; p[2] = 0; p[3] = 1;
     p += 4;
 
-    /* Hash algorithm (SHA-256) */
-    {
-        uint16_t alg = TPM2_ALG_SHA256;
-        memcpy(p, &alg, sizeof(alg));
-    }
+    /* Hash algorithm (big-endian) */
+    p[0] = (uint8_t)(TPM2_ALG_SHA256 >> 8);
+    p[1] = (uint8_t)(TPM2_ALG_SHA256 & 0xFF);
     p += 2;
 
     /* Digest value */
@@ -1570,6 +1611,7 @@ static int build_pcr_extend_cmd(uint8_t *buf, uint32_t *buf_len,
 
     uint32_t total = (uint32_t)(p - buf);
     hdr->total_size = total;
+    tpm_hdr_to_be(hdr);
 
     *buf_len = total;
     return 0;
@@ -1583,8 +1625,10 @@ static int parse_pcr_read_rsp(const uint8_t *rsp, uint32_t rsp_len,
     if (rsp_len < sizeof(struct tpm_rsp_hdr) + 8)
         return -EIO;
 
-    const struct tpm_rsp_hdr *hdr = (const struct tpm_rsp_hdr *)rsp;
-    if (hdr->return_code != TPM2_RC_SUCCESS)
+    /* Read return_code in big-endian (TPM wire format) */
+    uint32_t rc = ((uint32_t)rsp[6] << 24) | ((uint32_t)rsp[7] << 16) |
+                  ((uint32_t)rsp[8] << 8)  |  (uint32_t)rsp[9];
+    if (rc != TPM2_RC_SUCCESS)
         return -EIO;
 
     /* Response structure:
@@ -1598,22 +1642,24 @@ static int parse_pcr_read_rsp(const uint8_t *rsp, uint32_t rsp_len,
     uint8_t size_of_select = *p++;
     p += size_of_select;  /* skip the PCR select bitmap */
 
-    /* Read digests count */
-    uint32_t digests_count = *(const uint32_t *)p;
+    /* Read digests count (big-endian) */
+    uint32_t digests_count = ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
+                             ((uint32_t)p[2] << 8)  |  (uint32_t)p[3];
     p += 4;
 
     if (digests_count == 0)
         return -EINVAL;
 
-    /* Read the first digest */
-    uint16_t algo = *(const uint16_t *)p;
+    /* Read the hash algorithm (big-endian) */
+    uint16_t algo = ((uint16_t)p[0] << 8) | (uint16_t)p[1];
     p += 2;
 
     (void)algo; /* we expect SHA-256 */
 
-    uint32_t digest_size = (rsp_len - (uint32_t)(p - rsp));
-    if (digest_size < TPM2_PCR_DIGEST_LEN)
-        digest_size = TPM2_PCR_DIGEST_LEN;
+    /* Verify enough bytes remain for the full digest */
+    uint32_t remaining = rsp_len - (uint32_t)(p - rsp);
+    if (remaining < TPM2_PCR_DIGEST_LEN)
+        return -EIO;
 
     memcpy(digest, p, TPM2_PCR_DIGEST_LEN);
     return 0;
@@ -1690,11 +1736,15 @@ int tpm2_pcr_extend(uint32_t pcr_index,
     ret = tpm_transmit(cmd, cmd_len, rsp, &rsp_len);
     if (ret != 0) return ret;
 
-    const struct tpm_rsp_hdr *hdr = (const struct tpm_rsp_hdr *)rsp;
-    if (ret != 0 || hdr->return_code != TPM2_RC_SUCCESS) {
-        kprintf("[TPM] PCR_Extend failed for index %u: rc=0x%08x\n",
-                pcr_index, hdr->return_code);
-        return -EIO;
+    /* Read return_code in big-endian (TPM wire format) */
+    {
+        uint32_t rc = ((uint32_t)rsp[6] << 24) | ((uint32_t)rsp[7] << 16) |
+                      ((uint32_t)rsp[8] << 8)  |  (uint32_t)rsp[9];
+        if (rc != TPM2_RC_SUCCESS) {
+            kprintf("[TPM] PCR_Extend failed for index %u: rc=0x%08x\n",
+                    pcr_index, rc);
+            return -EIO;
+        }
     }
 
     kprintf("[TPM] PCR_Extend index %u succeeded\n", pcr_index);
