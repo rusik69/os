@@ -20,6 +20,18 @@
 #define OPT_SUPPRESS_GA 3
 #define OPT_LINEMODE   34
 
+/* Telnet command bytes (RFC 854) */
+#define SE   240
+#define NOP  241
+#define BRK  243
+#define IP   244
+#define AO   245
+#define AYT  246
+#define EC   247
+#define EL   248
+#define GA   249
+#define SB   250
+
 /* Per-connection state */
 #define TELNET_BUF_SIZE 256
 #define TELNET_OUT_SIZE 32768
@@ -183,10 +195,36 @@ static void on_data(int conn_id, const void *data, uint16_t len) {
     for (uint16_t i = 0; i < len; i++) {
         uint8_t c = p[i];
 
-        /* Skip telnet IAC sequences */
-        if (c == IAC && i + 2 < len) {
-            i += 2; /* skip command + option */
-            continue;
+        /* ── Telnet IAC negotiation parsing (RFC 854) ────────────── */
+        if (c == IAC) {
+            if (i + 1 >= len) continue;        /* truncated — skip lone IAC */
+            uint8_t cmd = p[i + 1];
+
+            if (cmd == IAC) {
+                /* IAC IAC = escaped literal 0xFF (data byte 255) */
+                i++;                            /* skip second IAC byte */
+                continue;                       /* 0xFF won't pass the printable check below */
+            } else if (cmd == WILL || cmd == WONT || cmd == DO || cmd == DONT) {
+                /* 3-byte: IAC WILL/WONT/DO/DONT <option> */
+                if (i + 2 >= len) continue;     /* truncated — need option byte */
+                i += 2;                         /* skip command + option */
+                continue;
+            } else if (cmd == SB) {
+                /* Variable-length subnegotiation: IAC SB ... IAC SE */
+                uint16_t j;
+                for (j = i + 2; j + 1 < len; j++)
+                    if (p[j] == IAC && p[j + 1] == SE) {
+                        i = j + 1;              /* skip to end of SE */
+                        break;
+                    }
+                if (j + 1 >= len)
+                    i = len - 1;                /* truncated — advance to end */
+                continue;
+            } else {
+                /* 2-byte commands: NOP, DM, BRK, IP, AO, AYT, EC, EL, GA, etc. */
+                i++;                            /* skip command byte */
+                continue;
+            }
         }
 
         /* ANSI escape sequence state machine for arrow keys */
