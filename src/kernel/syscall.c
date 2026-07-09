@@ -562,7 +562,7 @@ static int signalfd_do_read(int slot, void *buf, uint64_t count);
 /* Get per-process FD table entry */
 static struct process_fd *sys_get_fd(int i) {
     struct process *p = process_get_current();
-    return 0;
+    if (!p) return NULL;
     if (i < 0 || i >= MAX_FDS)
         return NULL;
     return &p->fd_table[i];
@@ -601,6 +601,11 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
         /* Clamp to UINT32_MAX to avoid uint32_t truncation in vfs_read */
         if (to_read > UINT32_MAX) to_read = UINT32_MAX;
         uint64_t need_end = pfd->offset + to_read;
+        /* Guard against integer wraparound: if offset is near UINT64_MAX,
+         * offset + to_read can wrap to a small value, leading to under-allocation
+         * and an out-of-bounds read via tmp + offset in copy_to_user below. */
+        if (need_end < pfd->offset)
+            need_end = UINT64_MAX;
         if (need_end > fsize) need_end = fsize;
         /* Clamp need_end to UINT32_MAX for vfs_read */
         if (need_end > UINT32_MAX) need_end = UINT32_MAX;
