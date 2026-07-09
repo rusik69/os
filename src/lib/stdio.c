@@ -708,6 +708,7 @@ static unsigned long long read_int(FILE *stream, int base, int *chars_read,
     return sign > 0 ? val : (unsigned long long)(-(long long)val);
 }
 
+__scanf(2, 0)
 int vfscanf(FILE *stream, const char *fmt, __builtin_va_list ap)
 {
     if (!stream || !fmt)
@@ -1041,6 +1042,7 @@ done:
     return assignments;
 }
 
+__scanf(2, 3)
 int fscanf(FILE *stream, const char *fmt, ...)
 {
     __builtin_va_list ap;
@@ -1063,6 +1065,7 @@ void stdio_init(void)
 /* Supports: %s (whitespace-delimited), %d (int), %u (unsigned),
  * %x (hex), %255s (width-limited), %255[^\n] (character class).
  * Returns number of items matched, or -ENOSYS on unsupported format. */
+__scanf(2, 3)
 int sscanf(const char *str, const char *fmt, ...)
 {
     va_list ap;
