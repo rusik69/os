@@ -18,6 +18,7 @@
 #include "printf.h"
 #include "errno.h"
 #include "net.h"
+#include "dns_resolver.h"
 
 /* SOCKS5 protocol constants */
 #define SOCKS5_VER        0x05
@@ -35,6 +36,45 @@
 #define SOCKS5_REP_SUCCESS   0x00
 #define SOCKS5_REP_FAILURE   0x01
 
+/* ── Proxy server address resolution ─────────────────────────────────── */
+
+static int socks5_resolve_proxy(const struct socks5_server *srv,
+                                uint32_t *proxy_ip)
+{
+    uint8_t octets[4] = {0,0,0,0};
+    int parsed = 0;
+    const char *p = srv->host;
+
+    /* Try parsing as dotted-decimal IPv4 address first.
+     * Reject non-digit characters immediately to avoid infinite
+     * loop on hostname input (the old code had this bug). */
+    while (*p && parsed < 4) {
+        if (*p < '0' || *p > '9')
+            break;  /* not a digit — not a valid dotted-decimal */
+        unsigned long val = 0;
+        while (*p >= '0' && *p <= '9') {
+            val = val * 10 + (unsigned long)(*p - '0');
+            p++;
+        }
+        if (val > 255)
+            break;  /* invalid octet value */
+        octets[parsed++] = (uint8_t)(val & 0xFF);
+        if (*p == '.')
+            p++;
+    }
+
+    if (parsed == 4 && *p == '\0') {
+        *proxy_ip = ((uint32_t)octets[0] << 24) |
+                    ((uint32_t)octets[1] << 16) |
+                    ((uint32_t)octets[2] << 8) |
+                    (uint32_t)octets[3];
+        return 0;
+    }
+
+    /* Not a valid dotted-decimal — try DNS resolution */
+    return dns_resolver_query_a_follow_cname(srv->host, proxy_ip, NULL);
+}
+
 /* ── Server connection ─────────────────────────────────────────────── */
 
 int socks5_connect(const struct socks5_server *srv,
@@ -42,28 +82,14 @@ int socks5_connect(const struct socks5_server *srv,
 {
     if (!srv || !dest_host) return -EINVAL;
 
-    /* Create TCP connection to proxy server */
-    /* srv->host is a string; parse it as dotted-decimal IP */
+    /* Validate domain name length (RFC 1928: 1-octet length field, max 255) */
+    size_t hostlen = strlen(dest_host);
+    if (hostlen == 0 || hostlen > 255) return -EINVAL;
+
+    /* Resolve proxy server address (dotted-decimal or DNS) */
     uint32_t proxy_ip = 0;
-    {
-        uint8_t octets[4] = {0,0,0,0};
-        int parsed = 0;
-        const char *p = srv->host;
-        while (*p && parsed < 4) {
-            unsigned long val = 0;
-            while (*p >= '0' && *p <= '9') {
-                val = val * 10 + (unsigned long)(*p - '0');
-                p++;
-            }
-            octets[parsed++] = (uint8_t)(val & 0xFF);
-            if (*p == '.') p++;
-        }
-        if (parsed == 4)
-            proxy_ip = ((uint32_t)octets[0] << 24) |
-                       ((uint32_t)octets[1] << 16) |
-                       ((uint32_t)octets[2] << 8) |
-                       ((uint32_t)octets[3]);
-    }
+    int err = socks5_resolve_proxy(srv, &proxy_ip);
+    if (err < 0) return err;
 
     int conn_id = net_tcp_connect(proxy_ip, srv->port);
     if (conn_id < 0) return conn_id;
@@ -130,9 +156,9 @@ int socks5_connect(const struct socks5_server *srv,
     conn_req[pos++] = SOCKS5_CMD_CONNECT;
     conn_req[pos++] = 0x00;  /* reserved */
     conn_req[pos++] = SOCKS5_ATYP_DOMAIN;
-    conn_req[pos++] = (uint8_t)strlen(dest_host);
-    memcpy(&conn_req[pos], dest_host, strlen(dest_host));
-    pos += (int)strlen(dest_host);
+    conn_req[pos++] = (uint8_t)hostlen;
+    memcpy(&conn_req[pos], dest_host, hostlen);
+    pos += (int)hostlen;
     conn_req[pos++] = (uint8_t)(dest_port >> 8);
     conn_req[pos++] = (uint8_t)(dest_port & 0xFF);
 
@@ -196,21 +222,14 @@ int socks5_bind(const struct socks5_server *srv,
 {
     if (!srv || !dest_host || !bind_port) return -EINVAL;
 
+    /* Validate domain name length */
+    size_t hostlen = strlen(dest_host);
+    if (hostlen == 0 || hostlen > 255) return -EINVAL;
+
+    /* Resolve proxy server address (dotted-decimal or DNS) */
     uint32_t proxy_ip = 0;
-    {
-        uint8_t octets[4] = {0,0,0,0};
-        int parsed = 0;
-        const char *p = srv->host;
-        while (*p && parsed < 4) {
-            unsigned long val = 0;
-            while (*p >= '0' && *p <= '9') { val = val * 10 + (unsigned long)(*p - '0'); p++; }
-            octets[parsed++] = (uint8_t)(val & 0xFF);
-            if (*p == '.') p++;
-        }
-        if (parsed == 4)
-            proxy_ip = ((uint32_t)octets[0] << 24) | ((uint32_t)octets[1] << 16) |
-                       ((uint32_t)octets[2] << 8) | (uint32_t)octets[3];
-    }
+    int err = socks5_resolve_proxy(srv, &proxy_ip);
+    if (err < 0) return err;
 
     int conn_id = net_tcp_connect(proxy_ip, srv->port);
     if (conn_id < 0) return conn_id;
@@ -247,9 +266,9 @@ int socks5_bind(const struct socks5_server *srv,
     bind_req[pos++] = SOCKS5_CMD_BIND;
     bind_req[pos++] = 0x00;
     bind_req[pos++] = SOCKS5_ATYP_DOMAIN;
-    bind_req[pos++] = (uint8_t)strlen(dest_host);
-    memcpy(&bind_req[pos], dest_host, strlen(dest_host));
-    pos += (int)strlen(dest_host);
+    bind_req[pos++] = (uint8_t)hostlen;
+    memcpy(&bind_req[pos], dest_host, hostlen);
+    pos += (int)hostlen;
     bind_req[pos++] = (uint8_t)(dest_port >> 8);
     bind_req[pos++] = (uint8_t)(dest_port & 0xFF);
 
@@ -283,14 +302,27 @@ int socks5_bind(const struct socks5_server *srv,
         resp_len += n;
     }
 
-    /* Extract bound port from the response */
-    if (bind_resp[3] == SOCKS5_ATYP_IPV4) {
+    /* Extract bound port from the response (handle all ATYP types) */
+    switch (bind_resp[3]) {
+    case SOCKS5_ATYP_IPV4:
         *bind_port = (uint16_t)(bind_resp[8] << 8) | bind_resp[9];
+        break;
+    case SOCKS5_ATYP_IPV6:
+        *bind_port = (uint16_t)(bind_resp[20] << 8) | bind_resp[21];
+        break;
+    case SOCKS5_ATYP_DOMAIN: {
+        int port_off = 5 + bind_resp[4];
+        *bind_port = (uint16_t)(bind_resp[port_off] << 8) | bind_resp[port_off + 1];
+        break;
+    }
     }
 
     /* Read second BIND response (incoming connection notification) */
     resp_len = net_tcp_recv(conn_id, bind_resp, 4, 100);
     if (resp_len < 4) { net_tcp_close(conn_id); return -EIO; }
+    if (bind_resp[0] != SOCKS5_VER || bind_resp[1] != SOCKS5_REP_SUCCESS) {
+        net_tcp_close(conn_id); return -ECONNREFUSED;
+    }
 
     kprintf("[SOCKS5] BIND via %s:%u for %s:%u, bound port=%u\n",
             srv->host, srv->port, dest_host, dest_port, *bind_port);
@@ -304,21 +336,10 @@ int socks5_udp_associate(const struct socks5_server *srv,
 {
     if (!srv || !assoc_port) return -EINVAL;
 
+    /* Resolve proxy server address (dotted-decimal or DNS) */
     uint32_t proxy_ip = 0;
-    {
-        uint8_t octets[4] = {0,0,0,0};
-        int parsed = 0;
-        const char *p = srv->host;
-        while (*p && parsed < 4) {
-            unsigned long val = 0;
-            while (*p >= '0' && *p <= '9') { val = val * 10 + (unsigned long)(*p - '0'); p++; }
-            octets[parsed++] = (uint8_t)(val & 0xFF);
-            if (*p == '.') p++;
-        }
-        if (parsed == 4)
-            proxy_ip = ((uint32_t)octets[0] << 24) | ((uint32_t)octets[1] << 16) |
-                       ((uint32_t)octets[2] << 8) | (uint32_t)octets[3];
-    }
+    int err = socks5_resolve_proxy(srv, &proxy_ip);
+    if (err < 0) return err;
 
     int conn_id = net_tcp_connect(proxy_ip, srv->port);
     if (conn_id < 0) return conn_id;
@@ -398,6 +419,11 @@ int socks5_udp_associate(const struct socks5_server *srv,
 
     if (udp_resp[3] == SOCKS5_ATYP_IPV4) {
         *assoc_port = (uint16_t)(udp_resp[8] << 8) | udp_resp[9];
+    } else if (udp_resp[3] == SOCKS5_ATYP_IPV6) {
+        *assoc_port = (uint16_t)(udp_resp[20] << 8) | udp_resp[21];
+    } else if (udp_resp[3] == SOCKS5_ATYP_DOMAIN) {
+        int port_off = 5 + udp_resp[4];
+        *assoc_port = (uint16_t)(udp_resp[port_off] << 8) | udp_resp[port_off + 1];
     }
 
     kprintf("[SOCKS5] UDP ASSOCIATE via %s:%u, assoc_port=%u\n",
