@@ -53,10 +53,10 @@ int hugetlb_init(uint32_t count)
 
     /* Allocate the frame-pointer array.  Use heap (kmalloc) since the
      * number of entries is modest — at max 1024 entries × 8 bytes = 8 KB. */
-    size_t _alloc_size;
-    if (__builtin_mul_overflow((size_t)count, sizeof(uint64_t), &_alloc_size))
+    size_t alloc_size;
+    if (__builtin_mul_overflow((size_t)count, sizeof(uint64_t), &alloc_size))
         return -EOVERFLOW;
-    uint64_t *frames = (uint64_t *)kmalloc(count * sizeof(uint64_t));
+    uint64_t *frames = (uint64_t *)kmalloc(alloc_size);
     if (!frames)
         return -ENOMEM; /* ENOMEM */
 
@@ -184,42 +184,56 @@ static uint64_t hugetlb_alloc(uint32_t nr_pages)
     }
     if (nr_pages == 0) return 0;
 
-    /* Allocate nr_pages huge pages from the pool */
-    uint64_t first_phys = 0;
-    uint64_t prev_phys = 0;
+    /* Allocate nr_pages huge pages from the pool.
+     *
+     * The pool is a LIFO stack, so pages are popped in descending
+     * physical-address order (high-to-low).  We verify contiguity
+     * in that descending order and return the lowest (base) address
+     * of the contiguous block so the caller can range over it as
+     * phys, phys+2M, phys+4M, … */
+
+    uint64_t first_phys = 0;  /* highest address popped (first iter) */
+    uint64_t prev_phys  = 0;
 
     spinlock_acquire(&g_pool.lock);
 
+    if (g_pool.count < nr_pages) {
+        spinlock_release(&g_pool.lock);
+        kprintf("[hugetlb] hugetlb_alloc: pool exhausted (%u < %u)\n",
+                g_pool.count, nr_pages);
+        return 0;
+    }
+
     for (uint32_t i = 0; i < nr_pages; i++) {
-        if (g_pool.count == 0) {
-            spinlock_release(&g_pool.lock);
-            if (first_phys) {
-                /* Free what we allocated so far */
-                for (uint32_t j = 0; j < i; j++) {
-                    uint64_t phys = first_phys + (uint64_t)j * HUGETLB_PAGE_SIZE;
-                    pmm_free_frames_contiguous(phys, HUGETLB_PAGE_NFRAMES);
-                }
-            }
-            kprintf("[hugetlb] hugetlb_alloc: pool exhausted after %u pages\n", i);
-            return 0;
-        }
         g_pool.count--;
         uint64_t phys = g_pool.frames[g_pool.count];
         g_pool.frames[g_pool.count] = 0;
 
         if (i == 0) {
             first_phys = phys;
-        } else if (phys != prev_phys + HUGETLB_PAGE_SIZE) {
-            /* Pages not contiguous — this shouldn't happen for our pool,
-             * but handle gracefully */
+        } else if (prev_phys - phys != HUGETLB_PAGE_SIZE) {
+            /* Not contiguous — push the non-conforming page back, then
+             * restore the previously-allocated pages to the pool. */
+            g_pool.frames[g_pool.count] = phys;
+            g_pool.count++;
+            for (uint32_t j = i; j > 0; j--) {
+                uint64_t saved = first_phys -
+                    (uint64_t)(j - 1) * HUGETLB_PAGE_SIZE;
+                g_pool.frames[g_pool.count] = saved;
+                g_pool.count++;
+            }
             spinlock_release(&g_pool.lock);
-            pmm_free_frames_contiguous(phys, HUGETLB_PAGE_NFRAMES);
-            continue;
+            kprintf("[hugetlb] hugetlb_alloc: non-contiguous at page %u\n", i);
+            return 0;
         }
         prev_phys = phys;
     }
 
     spinlock_release(&g_pool.lock);
+
+    /* Convert the highest address we saved into the base (lowest) of the
+     * contiguous range so callers can use phys, phys+2M, phys+4M, … */
+    first_phys = first_phys - (uint64_t)(nr_pages - 1) * HUGETLB_PAGE_SIZE;
 
     kprintf("[hugetlb] hugetlb_alloc: %u huge pages at 0x%llx\n",
             nr_pages, (unsigned long long)first_phys);
