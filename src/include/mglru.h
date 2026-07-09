@@ -43,6 +43,7 @@ struct mglru_page_entry {
     uint64_t         phys_addr;    /* physical address of the page */
     int              gen;          /* current generation index */
     int              accessed;     /* young flag — promotes on next scan */
+    int              active;       /* 1 = promoted/active, 0 = inactive */
     int              in_use;       /* slot occupied */
 };
 

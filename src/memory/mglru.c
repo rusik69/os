@@ -122,6 +122,7 @@ static int mglru_alloc_entry(void)
             mglru_page_pool[idx].phys_addr = 0;
             mglru_page_pool[idx].gen = 0;
             mglru_page_pool[idx].accessed = 0;
+            mglru_page_pool[idx].active = 0;
             INIT_LIST_HEAD(&mglru_page_pool[idx].list);
             mglru_pool_next = (idx + 1) % MGLRU_MAX_PAGES;
             return idx;
@@ -211,6 +212,7 @@ void mglru_add_page(uint64_t phys_addr)
     entry->phys_addr = phys_addr;
     entry->gen       = target_gen;
     entry->accessed  = 0;
+    entry->active    = 0;
     entry->in_use    = 1;
 
     /* Add to the youngest generation's LRU list (tail = most recent). */
@@ -252,7 +254,7 @@ void mglru_remove_page(uint64_t phys_addr)
         /* Decrement the generation's counters */
         struct mglru_gen *g = &st->gens[gen];
         if (g->nr_pages > 0) g->nr_pages--;
-        if (entry->accessed) {
+        if (entry->active) {
             if (g->nr_active > 0) g->nr_active--;
         } else {
             if (g->nr_inactive > 0) g->nr_inactive--;
@@ -335,7 +337,7 @@ void mglru_rotate(uint64_t phys_addr)
     if (old_gen >= 0 && old_gen < MGLRU_NR_GENS) {
         struct mglru_gen *og = &st->gens[old_gen];
         if (og->nr_pages > 0) og->nr_pages--;
-        if (entry->accessed) {
+        if (entry->active) {
             if (og->nr_active > 0) og->nr_active--;
         } else {
             if (og->nr_inactive > 0) og->nr_inactive--;
@@ -345,6 +347,7 @@ void mglru_rotate(uint64_t phys_addr)
     /* Move to new generation */
     entry->gen = new_gen;
     entry->accessed = 0;
+    entry->active = 1;
     list_add_tail(&entry->list, &st->gens[new_gen].list);
 
     /* Update new gen counters */
@@ -384,6 +387,12 @@ void mglru_age(void)
     struct mglru_gen *pg = &st->gens[prev_gen];
     pg->nr_inactive += pg->nr_active;
     pg->nr_active = 0;
+
+    /* Keep per-page active flags in sync with the gen-level demotion */
+    struct mglru_page_entry *m_pos;
+    list_for_each_entry(m_pos, &pg->list, list) {
+        m_pos->active = 0;
+    }
 
     spinlock_irqsave_release(&st->lock, irq_flags);
 }
@@ -443,13 +452,18 @@ int mglru_isolate(int nr_to_isolate, struct list_head *list)
                 if (old_gen >= 0 && old_gen < MGLRU_NR_GENS) {
                     if (st->gens[old_gen].nr_pages > 0)
                         st->gens[old_gen].nr_pages--;
-                    if (st->gens[old_gen].nr_active > 0)
-                        st->gens[old_gen].nr_active--;
-                    else if (st->gens[old_gen].nr_inactive > 0)
-                        st->gens[old_gen].nr_inactive--;
+                    if (entry->active) {
+                        if (st->gens[old_gen].nr_active > 0)
+                            st->gens[old_gen].nr_active--;
+                    } else {
+                        if (st->gens[old_gen].nr_inactive > 0)
+                            st->gens[old_gen].nr_inactive--;
+                    }
                 }
                 st->gens[new_gen].nr_pages++;
                 st->gens[new_gen].nr_active++;
+
+                entry->active = 1;
 
                 continue;  /* skip this entry — it's now young */
             }
@@ -459,7 +473,7 @@ int mglru_isolate(int nr_to_isolate, struct list_head *list)
 
             /* Update counters */
             if (g->nr_pages > 0) g->nr_pages--;
-            if (entry->accessed) {
+            if (entry->active) {
                 /* Shouldn't happen since we checked above, but be safe */
                 if (g->nr_active > 0) g->nr_active--;
             } else {
