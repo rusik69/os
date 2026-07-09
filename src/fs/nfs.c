@@ -1031,14 +1031,15 @@ static int nfs_readdir(int mount_id, const struct nfs_fhandle *fh,
 
         /* name (filename3 = string) */
         uint32_t name_len = xdr_get_u32(&rp);
+        uint32_t wire_name_len = name_len; /* save original for wire pointer advancement */
         char name[256];
         if (name_len > 255)
             name_len = 255;
         memcpy(name, rp, name_len);
-        rp += name_len;
+        rp += wire_name_len; /* advance past actual wire data, not capped */
         name[name_len] = '\0';
-        /* Pad to 4 bytes */
-        while (name_len & 3) { rp++; name_len++; }
+        /* Pad to 4 bytes based on original wire length */
+        while (wire_name_len & 3) { rp++; wire_name_len++; }
 
         /* cookie (uint64) — pass back for next page */
         uint64_t entry_cookie = ((uint64_t)xdr_get_u32(&rp) << 32)
