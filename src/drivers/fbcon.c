@@ -158,6 +158,17 @@ static int g_scrollback_head = 0;   /* next write position */
 static int g_scrollback_count = 0;  /* total stored lines */
 static int g_scrollback_view = 0;   /* >0 = viewing scrollback, 0 = live */
 
+/* ── Escape sequence parser state ────────────────────────────────── */
+#define ESC_NORMAL  0
+#define ESC_SEEN    1
+#define ESC_CSI     2
+
+static int g_esc_state = ESC_NORMAL;
+static int g_esc_pvals[8];
+static int g_esc_pnum;
+static int g_esc_saved_x;
+static int g_esc_saved_y;
+
 /* ── Internal helpers ─────────────────────────────────────────────── */
 
 /* Pack an RGB colour into 32-bit BGRX framebuffer format */
@@ -289,6 +300,157 @@ void fbcon_putchar(char c) {
     /* Reset scrollback view on new output */
     g_scrollback_view = 0;
 
+    /* ── Escape sequence state machine ───────────────────────────── */
+    if (g_esc_state == ESC_SEEN) {
+        if (c == '[') {
+            g_esc_state = ESC_CSI;
+            g_esc_pnum = 0;
+            g_esc_pvals[0] = 0;
+            return;
+        }
+        /* Non-CSI escape: consume and return to normal */
+        g_esc_state = ESC_NORMAL;
+        return;
+    }
+
+    if (g_esc_state == ESC_CSI) {
+        /* Parameter bytes: digits and separators */
+        if (c >= '0' && c <= '9') {
+            g_esc_pvals[g_esc_pnum] =
+                g_esc_pvals[g_esc_pnum] * 10 + (c - '0');
+            return;
+        }
+        if (c == ';') {
+            g_esc_pnum++;
+            if (g_esc_pnum >= 8) g_esc_pnum = 7;
+            g_esc_pvals[g_esc_pnum] = 0;
+            return;
+        }
+        /* Private marker or intermediate bytes — just consume */
+        if (c == '?' || (c >= 0x20 && c <= 0x2F)) {
+            return;
+        }
+
+        /* Final byte (0x40-0x7E) — execute command */
+        g_esc_state = ESC_NORMAL;
+
+        switch (c) {
+        case 'A': /* CUU — cursor up */
+        {
+            int n = g_esc_pvals[0] ? g_esc_pvals[0] : 1;
+            g_cursor_y -= n;
+            if (g_cursor_y < 0) g_cursor_y = 0;
+            break;
+        }
+        case 'B': /* CUD — cursor down */
+        {
+            int n = g_esc_pvals[0] ? g_esc_pvals[0] : 1;
+            g_cursor_y += n;
+            if (g_cursor_y >= FBCON_ROWS) g_cursor_y = FBCON_ROWS - 1;
+            break;
+        }
+        case 'C': /* CUF — cursor forward */
+        {
+            int n = g_esc_pvals[0] ? g_esc_pvals[0] : 1;
+            g_cursor_x += n;
+            if (g_cursor_x >= FBCON_COLS) g_cursor_x = FBCON_COLS - 1;
+            break;
+        }
+        case 'D': /* CUB — cursor back */
+        {
+            int n = g_esc_pvals[0] ? g_esc_pvals[0] : 1;
+            g_cursor_x -= n;
+            if (g_cursor_x < 0) g_cursor_x = 0;
+            break;
+        }
+        case 'H': /* CUP — cursor position */
+        case 'f': /* HVP — cursor position */
+        {
+            int row = g_esc_pvals[0] ? g_esc_pvals[0] - 1 : 0;
+            int col = (g_esc_pnum >= 1 && g_esc_pvals[1])
+                      ? g_esc_pvals[1] - 1 : 0;
+            if (row < 0) row = 0;
+            if (row >= FBCON_ROWS) row = FBCON_ROWS - 1;
+            if (col < 0) col = 0;
+            if (col >= FBCON_COLS) col = FBCON_COLS - 1;
+            g_cursor_x = col;
+            g_cursor_y = row;
+            break;
+        }
+        case 'J': /* ED — erase display */
+        {
+            int param = g_esc_pvals[0]; /* 0=from, 1=to, 2=all */
+            if (param == 2) {
+                for (int r = 0; r < FBCON_ROWS; r++)
+                    for (int k = 0; k < FBCON_COLS; k++) {
+                        g_buffer[r][k].ch = 0x20;
+                        g_buffer[r][k].fg = g_fg;
+                        g_buffer[r][k].bg = g_bg;
+                    }
+            }
+            break;
+        }
+        case 'K': /* EL — erase line */
+        {
+            int param = g_esc_pvals[0]; /* 0=from, 1=to, 2=all */
+            if (param == 0 || param == 2) {
+                for (int k = g_cursor_x; k < FBCON_COLS; k++) {
+                    g_buffer[g_cursor_y][k].ch = 0x20;
+                    g_buffer[g_cursor_y][k].fg = g_fg;
+                    g_buffer[g_cursor_y][k].bg = g_bg;
+                }
+            }
+            if (param == 1 || param == 2) {
+                for (int k = 0; k <= g_cursor_x; k++) {
+                    g_buffer[g_cursor_y][k].ch = 0x20;
+                    g_buffer[g_cursor_y][k].fg = g_fg;
+                    g_buffer[g_cursor_y][k].bg = g_bg;
+                }
+            }
+            break;
+        }
+        case 'm': /* SGR — select graphics rendition */
+        {
+            for (int i = 0; i <= g_esc_pnum; i++) {
+                int p = g_esc_pvals[i];
+                if (p == 0) {
+                    g_fg = FBCON_LIGHT_GREY;
+                    g_bg = FBCON_BLACK;
+                } else if (p >= 30 && p <= 37) {
+                    g_fg = (uint8_t)(p - 30);
+                } else if (p >= 40 && p <= 47) {
+                    g_bg = (uint8_t)(p - 40);
+                } else if (p == 39) {
+                    g_fg = FBCON_LIGHT_GREY;
+                } else if (p == 49) {
+                    g_bg = FBCON_BLACK;
+                } else if (p >= 90 && p <= 97) {
+                    g_fg = (uint8_t)(p - 90 + 8);
+                } else if (p >= 100 && p <= 107) {
+                    g_bg = (uint8_t)(p - 100 + 8);
+                }
+                /* p==1 (bold): skip — we approximate with extant palette */
+            }
+            break;
+        }
+        case 's': /* SCP — save cursor position */
+            g_esc_saved_x = g_cursor_x;
+            g_esc_saved_y = g_cursor_y;
+            break;
+        case 'u': /* RCP — restore cursor position */
+            g_cursor_x = g_esc_saved_x;
+            g_cursor_y = g_esc_saved_y;
+            break;
+        default:
+            /* Unknown/unsupported CSI command — ignore */
+            break;
+        }
+
+        fbcon_redraw();
+        return;
+    }
+
+    /* ── Normal (non-escape) character handling ──────────────────── */
     switch (c) {
     case '\n':
         g_cursor_x = 0;
@@ -312,8 +474,11 @@ void fbcon_putchar(char c) {
     case '\a': /* BEL — console bell */
         speaker_bell();
         break;
+    case 0x1b: /* ESC — start escape sequence */
+        g_esc_state = ESC_SEEN;
+        return;  /* don't redraw yet — sequence not complete */
     default:
-        if (c < 0x20) break; /* non-printable */
+        if (c < 0x20) break; /* other non-printable */
         g_buffer[g_cursor_y][g_cursor_x].ch = (uint8_t)c;
         g_buffer[g_cursor_y][g_cursor_x].fg = g_fg;
         g_buffer[g_cursor_y][g_cursor_x].bg = g_bg;
