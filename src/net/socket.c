@@ -670,6 +670,17 @@ int sys_sendmsg_impl(int sockfd, const struct msghdr *msg, int flags) {
     /* For now, just write the first iovec entry */
     if (msg->msg_iovlen < 1 || !msg->msg_iov) return -EINVAL;
 
+    /* Validate msg_controllen to prevent pointer arithmetic overflow in
+     * CMSG_FIRSTHDR / CMSG_NXTHDR.  If msg_controllen is large enough that
+     * (unsigned char *)msg->msg_control + msg->msg_controllen wraps around,
+     * the CMSG_NXTHDR end-of-buffer check is defeated and the ancillary-data
+     * walker will read past the supplied buffer. */
+    if (msg->msg_control && msg->msg_controllen > 0) {
+        uintptr_t ctrl_end = (uintptr_t)msg->msg_control + msg->msg_controllen;
+        if (ctrl_end <= (uintptr_t)msg->msg_control)
+            return -EINVAL;
+    }
+
     /* AF_NETLINK: use msghdr-aware sendmsg that flattens all iovecs
      * into one contiguous netlink message. */
     if (s->domain == AF_NETLINK) {
