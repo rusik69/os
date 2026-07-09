@@ -127,8 +127,9 @@ int vfat_mark_entry_deleted(void *entry);
 void vfat_build_83_name(const char *long_name, char out_name[8], char out_ext[3]);
 
 /* Reconstruct a long filename from VFAT LFN directory entries.
- * Entries are in on-disk physical order (highest ordinal first).
- * Returns the name length on success, negative errno on error. */
+ * Entries are in ordinal order (entries[0] = ordinal 1,
+ * entries[count-1] = ordinal N).  Returns the name length on success,
+ * negative errno on error. */
 int vfat_reconstruct_name(const void *entries, int count,
                            char *out, int out_max);
 

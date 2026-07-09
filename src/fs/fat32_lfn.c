@@ -557,8 +557,10 @@ void vfat_build_83_name(const char *long_name, char out_name[8], char out_ext[3]
  * Reconstruct a long filename from VFAT LFN directory entries.
  * Validates entry ordering and builds the null-terminated name string.
  *
- * The entries array follows the on-disk physical order: highest ordinal
- * first, lowest ordinal last (entries[0] = ordinal N, entries[N-1] = 1).
+ * The entries array follows ordinal order: lowest ordinal first,
+ * highest ordinal last (entries[0] = ordinal 1, entries[count-1] =
+ * ordinal N).  This is the order produced by dir_find and other
+ * callers which store LFN entries via ord-1 indexing.
  *
  * @entries:    array of 'count' LFN directory entries (32 bytes each)
  * @count:      number of LFN entries (1-20)
@@ -581,19 +583,19 @@ int vfat_reconstruct_name(const void *entries, int count,
         return -EINVAL;
     }
 
-    /* Validate: the last entry (highest ordinal in physical order =
-     * entries[count-1]) must have the LAST_LFN bit (0x40) set */
+    /* Validate: the last entry (entries[count-1], the highest ordinal)
+     * must have the LAST_LFN bit (0x40) set */
     if (!(lfn[count - 1].order & LFN_LAST_FLAG)) {
         if (out_max > 0) out[0] = '\0';
         return -EINVAL;
     }
 
-    /* Verify contiguity: ordinal values should be count..1 without gaps.
-     * Entries are stored in reverse physical order (highest ordinal first).
-     * For 3 entries: lfn[0].order==3, lfn[1].order==2, lfn[2].order==1. */
+    /* Verify contiguity: ordinal values should be 1..count without gaps.
+     * Entries are in forward ordinal order (lowest first, highest last).
+     * For 3 entries: lfn[0].order==1, lfn[1].order==2, lfn[2].order==3. */
     for (int i = 0; i < count; i++) {
         int actual_ord  = (int)(lfn[i].order & LFN_ORD_MASK);
-        int expected_ord = count - i; /* highest ord first */
+        int expected_ord = i + 1; /* forward order: ordinal = index + 1 */
         if (actual_ord != expected_ord) {
             if (out_max > 0) out[0] = '\0';
             return -EINVAL;
@@ -606,11 +608,11 @@ int vfat_reconstruct_name(const void *entries, int count,
         }
     }
 
-    /* Reconstruct: iterate from highest ordinal (count) down to 1.
-     * Characters are stored as UTF-16LE; we handle the ASCII subset
-     * and convert uppercase to lowercase for readability. */
-    for (int seq = count; seq >= 1; seq--) {
-        const struct vfat_lfn *e = &lfn[seq - 1];
+    /* Reconstruct: iterate from ordinal 1 (entries[0]) up to ordinal N
+     * (entries[count-1]).  Characters are stored as UTF-16LE; we handle
+     * the ASCII subset and convert uppercase to lowercase for readability. */
+    for (int seq = 0; seq < count; seq++) {
+        const struct vfat_lfn *e = &lfn[seq];
         for (int i = 0; i < 5 && pos < out_max - 1; i++) {
             uint16_t c = e->name1[i];
             if (!c || c == 0xFFFF) continue;
