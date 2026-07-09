@@ -270,6 +270,7 @@ static int syscall_validate_user_args(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_ELF_EXEC:
         case SYS_SCRIPT_EXEC:
         case SYS_FAT_FILE_SIZE:
+            return syscall_user_cstr_ok(a1) ? 0 : -EFAULT;
 
         case SYS_STAT:
             return (syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, sizeof(uint32_t) * 2)) ? 0 : -EFAULT;
