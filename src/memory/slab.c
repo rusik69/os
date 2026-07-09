@@ -436,11 +436,23 @@ struct kmem_cache *kmem_cache_create(const char *name, size_t obj_size,
     memset(cache, 0, sizeof(*cache));
     cache->name      = name;
     cache->align     = (align == 0) ? 16 : align;
-    cache->ctor      = ctor;
+    /* Ensure alignment is a power of two (requirement of the documented API) */
+    if (cache->align & (cache->align - 1))
+        cache->align = 16;
+    /* Round up user size to the requested alignment so that each object's
+     * user-data region starts at a correctly-aligned offset within the slab.
+     * This is what callers expect when they pass a non-zero align value. */
+    obj_size = (obj_size + cache->align - 1) & ~(size_t)(cache->align - 1);
     cache->user_size = obj_size;
+    cache->ctor      = ctor;
 
-    /* Expand the internal object size to include the redzone canary */
+    /* Expand the internal object size to include the redzone canary.
+     * Check for wrap-around since obj_size is caller-controlled. */
     obj_size += SLAB_REDZONE_SIZE;
+    if (obj_size < cache->user_size) {
+        kfree(cache);
+        return NULL;
+    }
 
     slab_sizing(obj_size, &cache->gfporder, &cache->num);
     cache->obj_size = (obj_size + 15) & ~15ULL;
