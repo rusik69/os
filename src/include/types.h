@@ -37,7 +37,31 @@ typedef uint64_t            uintptr_t;
 #define __cacheline_aligned __attribute__((__aligned__(64)))
 #endif
 #ifndef __user
+#ifdef __CHECKER__
+/*
+ * Sparse semantic parser annotations — enable address-space /
+ * endianness / force-cast checking when running `make sparse`.
+ *
+ *   __user    — userspace address (address-space 1)
+ *   __kernel  — kernel-space address (address-space 0, the default)
+ *   __iomem   — MMIO / device memory address (address-space 2)
+ *   __force   — suppress address-space warning on intentional casts
+ *   __bitwise — endianness-checked integer type
+ */
+#define __user            __attribute__((noderef, address_space(1)))
+#define __kernel          __attribute__((address_space(0)))
+#define __iomem           __attribute__((noderef, address_space(2)))
+#define __force           __attribute__((force))
+#define __bitwise         __attribute__((bitwise))
+#define __bitwise__       __attribute__((bitwise))
+#else
 #define __user            /* nothing — documentation only for userspace pointer annotations */
+#define __kernel          /* nothing — kernel address space (default) */
+#define __iomem           /* nothing — MMIO address space annotation */
+#define __force           /* nothing — intentional address-space cast */
+#define __bitwise         /* nothing — endianness annotation */
+#define __bitwise__       /* nothing — endianness annotation */
+#endif
 #endif
 
 #ifndef __no_sanitize_address
