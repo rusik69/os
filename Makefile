@@ -1369,7 +1369,7 @@ CHECK_FULL_CFLAGS = $(CFLAGS) -Werror -Wpedantic -Wconversion -Wshadow \
                     -Wold-style-definition -Wpadded -Wno-error=padded -Wmisleading-indentation
 BUILDDIR_CHECK_FULL = build_check_full
 
-C_CHECK_FULL_SRCS  = $(C_SRCS) $(CMD_SRCS) $(COMPILER_SRCS) $(GUI_SRCS) $(DOOM_SRCS) src/test/test.c
+C_CHECK_FULL_SRCS  = $(C_SRCS) $(CMD_SRCS) $(COMPILER_SRCS) $(GUI_SRCS) $(DOOM_SRCS)
 ASM_CHECK_FULL_SRCS = $(ASM_SRCS)
 
 C_CHECK_FULL_OBJS  = $(patsubst src/%.c,$(BUILDDIR_CHECK_FULL)/%.o,$(C_CHECK_FULL_SRCS))

@@ -212,7 +212,7 @@ static int tar_extract(const char *archive) {
         unsigned long long file_size = octal_parse(hdr->size, 12);
         unsigned int mode = (unsigned int)octal_parse(hdr->mode, 8);
 
-        if (hdr->typeflag == DIRTYPE || hdr->typeflag == '5') {
+        if (hdr->typeflag == DIRTYPE) {
             mkdir(name, mode);
             continue;
         }

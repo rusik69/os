@@ -225,7 +225,7 @@ static int pax_read(void) {
         unsigned int mode = (unsigned int)octal_parse(hdr->mode, 8);
 
         /* Handle type */
-        if (hdr->typeflag == DIRTYPE || hdr->typeflag == '5') {
+        if (hdr->typeflag == DIRTYPE) {
             mkdir(name, mode);
             continue;
         }
