@@ -465,7 +465,8 @@ static void hub_enum_device(struct hub_state *hub, uint8_t port) {
     }
 
     kprintf("[USB HUB] Device on addr=%d port %d speed=%s\n",
-            hub->dev_addr, port, speed == 2 ? "high" : "full");
+            hub->dev_addr, port,
+            speed == 2 ? "high" : (speed == 1 ? "low" : "full"));
 }
 
 /* ── Hotplug connect/disconnect handlers ────────────────────────── */
