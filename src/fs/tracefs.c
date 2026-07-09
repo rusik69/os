@@ -338,9 +338,9 @@ static int tracefs_write_buffer_size(const char *buf, int len, void *priv)
 	}
 
 	if (val < (TRACEFS_BUF_MIN / 1024))
-		val = TRACEFS_BUF_MIN;
+		val = TRACEFS_BUF_MIN / 1024;
 	if (val > (TRACEFS_BUF_MAX / 1024))
-		val = TRACEFS_BUF_MAX;
+		val = TRACEFS_BUF_MAX / 1024;
 
 	uint32_t new_size = val * 1024;
 
