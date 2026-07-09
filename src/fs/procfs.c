@@ -592,6 +592,7 @@ static int procfs_gen_pid_status(uint32_t pid, char *buf, int max) {
     proc_str("CapInh:\t0000000000000000\n", buf, &pos, max);
     proc_str("CapPrm:\t", buf, &pos, max);
     for (int w = PROCESS_SYSCALL_CAP_WORDS - 1; w >= 0; w--) {
+        if (pos >= max - 1) break;
         for (int nib = 15; nib >= 0; nib--) {
             uint8_t nibble = (p->syscall_caps[w] >> (nib * 4)) & 0xF;
             buf[pos++] = (char)(nibble < 10 ? '0' + nibble : 'a' + nibble - 10);
@@ -603,6 +604,7 @@ static int procfs_gen_pid_status(uint32_t pid, char *buf, int max) {
 
     proc_str("CapEff:\t", buf, &pos, max);
     for (int w = PROCESS_SYSCALL_CAP_WORDS - 1; w >= 0; w--) {
+        if (pos >= max - 1) break;
         for (int nib = 15; nib >= 0; nib--) {
             uint8_t nibble = (p->syscall_caps[w] >> (nib * 4)) & 0xF;
             buf[pos++] = (char)(nibble < 10 ? '0' + nibble : 'a' + nibble - 10);
