@@ -112,6 +112,9 @@ void * __malloc kmalloc(size_t size) {
     }
 
     /* No free block found, expand heap */
+    /* Check for overflow: size + block_header must not wrap */
+    if (size > SIZE_MAX - BLOCK_HDR_SIZE)
+        return NULL;
     size_t total = size + BLOCK_HDR_SIZE;
     if (heap_expand(total) < 0)
         return NULL;
