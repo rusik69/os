@@ -292,7 +292,7 @@ static int btrfs_read_item_data(struct btrfs_priv *bp, uint64_t bytenr,
 
     uint32_t offset = items[item_idx].offset;
     uint32_t size = items[item_idx].size;
-    if (offset + size > bp->nodesize)
+    if (offset > bp->nodesize || size > bp->nodesize - offset)
         return -1;
 
     memcpy(out, node_buf + offset, size);
@@ -358,7 +358,7 @@ static int btrfs_build_chunk_tree(struct btrfs_priv *bp)
             uint32_t chk_off = items[item_idx].offset;
             uint32_t chk_sz  = items[item_idx].size;
 
-            if (chk_off + chk_sz <= bp->nodesize) {
+            if (chk_off <= bp->nodesize && chk_sz <= bp->nodesize - chk_off) {
                 struct btrfs_chunk *chunk =
                     (struct btrfs_chunk *)(buf + chk_off);
                 uint16_t num_stripes = chunk->num_stripes;
@@ -680,7 +680,7 @@ static int btrfs_parse_extent_tree(struct btrfs_priv *bp)
             if (cur_typ == BTRFS_EXTENT_ITEM_KEY) {
                 uint32_t off = items[item_idx].offset;
                 uint32_t sz  = items[item_idx].size;
-                if (off + sz <= bp->nodesize &&
+                if (off <= bp->nodesize && sz <= bp->nodesize - off &&
                     sz >= sizeof(struct btrfs_extent_item)) {
                     struct btrfs_extent_item *ei =
                         (struct btrfs_extent_item *)(buf + off);
@@ -696,7 +696,7 @@ static int btrfs_parse_extent_tree(struct btrfs_priv *bp)
             } else if (cur_typ == BTRFS_METADATA_ITEM_KEY) {
                 uint32_t off = items[item_idx].offset;
                 uint32_t sz  = items[item_idx].size;
-                if (off + sz <= bp->nodesize &&
+                if (off <= bp->nodesize && sz <= bp->nodesize - off &&
                     sz >= sizeof(struct btrfs_extent_item)) {
                     struct btrfs_extent_item *ei =
                         (struct btrfs_extent_item *)(buf + off);
@@ -808,7 +808,7 @@ static int btrfs_parse_csum_tree(struct btrfs_priv *bp)
 
                 /* Verify the first checksum in this item if possible */
                 if (num_csums > 0 && sz >= 4 &&
-                    off + 4 <= bp->nodesize &&
+                    off <= bp->nodesize && 4 <= bp->nodesize - off &&
                     block_start + block_size <= (uint64_t)bp->nodesize * 1024) {
                     /* Read the stored checksum from the item data */
                     uint32_t stored_csum = le32(buf + off);
@@ -953,6 +953,8 @@ static uint64_t btrfs_lookup(struct btrfs_priv *bp, uint64_t dir_id,
 
         uint32_t off = items[i].offset;
         uint32_t sz = items[i].size;
+        if (off > bp->nodesize || sz > bp->nodesize - off)
+            continue;
 
         /* Parse dir_item entries (may be multiple in one item) */
         uint32_t consumed = 0;
@@ -1064,7 +1066,7 @@ static int btrfs_get_subvolume_name(struct btrfs_priv *bp,
     uint32_t off = items[item_idx].offset;
     uint32_t sz  = items[item_idx].size;
 
-    if (off + sz > bp->nodesize ||
+    if (off > bp->nodesize || sz > bp->nodesize - off ||
         sz < sizeof(struct btrfs_root_ref))
         return 0;
 
@@ -1147,7 +1149,7 @@ static int btrfs_list_subvolumes(struct btrfs_priv *bp)
         uint32_t off = items[item_idx].offset;
         uint32_t sz  = items[item_idx].size;
 
-        if (off + sz <= bp->nodesize &&
+        if (off <= bp->nodesize && sz <= bp->nodesize - off &&
             sz >= sizeof(struct btrfs_root_item)) {
             struct btrfs_root_item *ri =
                 (struct btrfs_root_item *)(buf + off);
@@ -1277,7 +1279,7 @@ static int btrfs_detect_snapshots(struct btrfs_priv *bp)
         uint32_t off = items[item_idx].offset;
         uint32_t sz  = items[item_idx].size;
 
-        if (off + sz <= bp->nodesize &&
+        if (off <= bp->nodesize && sz <= bp->nodesize - off &&
             sz >= sizeof(struct btrfs_root_item)) {
             struct btrfs_root_item *ri =
                 (struct btrfs_root_item *)(buf + off);
@@ -1342,7 +1344,7 @@ static int btrfs_detect_snapshots(struct btrfs_priv *bp)
         uint32_t off = items[item_idx].offset;
         uint32_t sz  = items[item_idx].size;
 
-        if (off + sz <= bp->nodesize &&
+        if (off <= bp->nodesize && sz <= bp->nodesize - off &&
             sz >= sizeof(struct btrfs_root_item)) {
             struct btrfs_root_item *ri =
                 (struct btrfs_root_item *)(buf + off);
@@ -1526,7 +1528,7 @@ static int btrfs_read(void *priv, const char *path,
             uint32_t item_off = items[item_idx].offset;
             uint32_t item_sz  = items[item_idx].size;
 
-            if (item_off + item_sz > bp->nodesize) {
+            if (item_off > bp->nodesize || item_sz > bp->nodesize - item_off) {
                 /* Corrupt item — skip */
                 search_off = extent_off + 1;
                 goto wrap_search;
@@ -1805,6 +1807,15 @@ static int btrfs_readdir_names(void *priv, const char *path,
 			/* Parse each btrfs_dir_item inside this item */
 			uint32_t off = items[item_idx].offset;
 			uint32_t sz  = items[item_idx].size;
+			if (off > bp->nodesize || sz > bp->nodesize - off) {
+				search_off = cur_off + 1;
+				if (search_off == 0) {
+					search_type = cur_typ + 1;
+					if (search_type == 0)
+						search_obj = cur_obj + 1;
+				}
+				continue;
+			}
 			uint32_t consumed = 0;
 
 			while (consumed + sizeof(struct btrfs_dir_item) <= sz &&
