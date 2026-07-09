@@ -49,8 +49,11 @@ int vlan_tag_frame(uint8_t *frame, int len, uint16_t vid) {
     if (!frame || len < 14) return -1;
     if (len + 4 > 1518) return -1;  /* MTU check */
 
-    /* Shift payload by 4 bytes to make room for VLAN header */
-    memmove(frame + 18, frame + 14, len - 14);
+    /* Shift EtherType + payload by 4 bytes to make room for VLAN header.
+     * Original frame: [DMAC(6)][SMAC(6)][EtherType(2)][Payload(N)]
+     * Tagged frame:   [DMAC(6)][SMAC(6)][TPID(2)][TCI(2)][EtherType(2)][Payload(N)]
+     * The original EtherType at offset 12 becomes the inner EtherType at offset 16. */
+    memmove(frame + 16, frame + 12, len - 12);
 
     struct vlan_header *vh = (struct vlan_header *)(frame + 12);
     vh->tpid = htons(VLAN_TPID);
