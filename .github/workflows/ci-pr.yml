@@ -96,6 +96,39 @@ jobs:
           echo "## PR Build (strict -Werror)" >> $GITHUB_STEP_SUMMARY
           echo "- Clean build with -Wall -Wextra -Werror" >> $GITHUB_STEP_SUMMARY
 
+  # ── check-full: build with ALL strict warning flags ───────────────────
+  check-full:
+    runs-on: [self-hosted, linux, x64]
+    container: ghcr.io/rusik69/os-ci:latest
+    timeout-minutes: 15
+    needs: [security-check]
+    environment: ci-approval
+    steps:
+      - uses: actions/checkout@v4
+      - name: ccache cache
+        continue-on-error: true
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-pr-check-full-${{ github.event.pull_request.head.sha }}
+          restore-keys: |
+            ccache-pr-check-full-
+            ccache-pr-
+            ccache-
+      - name: Run make check-full
+        run: |
+          make check-full \
+            CC="ccache x86_64-linux-gnu-gcc" \
+            LD=x86_64-linux-gnu-ld \
+            OBJCOPY=x86_64-linux-gnu-objcopy \
+            -j$(nproc)
+      - name: Summary
+        run: |
+          echo "## check-full (Strict Warnings Build)" >> $GITHUB_STEP_SUMMARY
+          echo "- Build with -Werror -Wpedantic -Wconversion -Wshadow -Wformat=2" >> $GITHUB_STEP_SUMMARY
+          echo "- Includes -Wpadded (struct alignment, non-fatal via -Wno-error=padded)" >> $GITHUB_STEP_SUMMARY
+          echo "- All strict warning flags pass on every PR" >> $GITHUB_STEP_SUMMARY
+
   # ── Static analysis (requires approval) ─────────────────────────────
   static-analysis:
     runs-on: [self-hosted, linux, x64]
