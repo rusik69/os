@@ -371,8 +371,9 @@ void __init devfs_init(void) {
 
     devfs_mounted = 1;
 }
-#include "initcall.h"
-fs_initcall(devfs_init);
+/* devfs_init is called explicitly from kernel_main after vfs_init(),
+ * not via the initcall system — fs_initcall would be silently lost
+ * because do_initcalls() runs before vfs_init(). */
 
 #ifdef MODULE
 #include "module.h"

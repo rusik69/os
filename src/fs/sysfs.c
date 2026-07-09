@@ -703,10 +703,9 @@ void __init sysfs_init(void) {
 
     sysfs_mounted = 1;
 }
-#ifndef MODULE
-#include "initcall.h"
-fs_initcall(sysfs_init);
-#endif /* !MODULE */
+/* sysfs_init is called explicitly from kernel_main after vfs_init(),
+ * not via the initcall system — fs_initcall would be silently lost
+ * because do_initcalls() runs before vfs_init(). */
 
 /* ── sysfs_remove_dir ──────────────────────────────────── */
 int sysfs_remove_dir(const char *name)

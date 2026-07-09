@@ -1599,8 +1599,9 @@ void __init procfs_init(void)
         kprintf("[!!] procfs mount failed\n");
     }
 }
-#include "initcall.h"
-fs_initcall(procfs_init);
+/* procfs_init is called explicitly from kernel_main after vfs_init()
+ * to ensure the VFS mount table is ready.  An fs_initcall registration
+ * would be silently lost because do_initcalls() runs before vfs_init(). */
 
 #ifdef MODULE
 #include "module.h"
