@@ -501,9 +501,9 @@ int dm_table_load(int dm_id, const char *table)
 
         /* Parse remaining args (space-separated until end of line) */
         while (*p == ' ' || *p == '\t') p++;
+        char argbufs[8][64];
         while (*p && *p != '\n' && argc < 8) {
             /* Collect one arg */
-            char argbufs[8][64];
             size_t ai = 0;
             while (*p && *p != ' ' && *p != '\t' && *p != '\n' &&
                    ai < sizeof(argbufs[0]) - 1) {
