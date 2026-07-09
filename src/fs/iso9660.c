@@ -338,6 +338,10 @@ walk_susp:
             }
             /* NM (Alternative Name) entry */
             else if (susp_sig_match(hdr, 'N', 'M')) {
+                if (hdr->len < 5) {
+                    walk_off += hdr->len;
+                    continue;       /* malformed: no flags byte */
+                }
                 const struct rrip_nm_entry *nm =
                     (const struct rrip_nm_entry *)hdr;
                 uint8_t nm_flags = nm->flags;
@@ -370,6 +374,10 @@ walk_susp:
             }
             /* SL (Symbolic Link) entry */
             else if (susp_sig_match(hdr, 'S', 'L')) {
+                if (hdr->len < 5) {
+                    walk_off += hdr->len;
+                    continue;       /* malformed: no flags byte */
+                }
                 const struct rrip_sl_entry *sl =
                     (const struct rrip_sl_entry *)hdr;
                 uint32_t sl_data_len = hdr->len - 5; /* header + flags */
@@ -835,7 +843,7 @@ static int check_rrip_in_dir(struct iso9660_priv *ip,
         if (iso_read_block(ip, lba, buf) < 0) return 0;
 
         uint32_t pos = offset % ip->block_size;
-        while (pos < ip->block_size && offset < ip->root_size) {
+        while (pos < ip->block_size && offset < size) {
             const struct iso_dir_record *rec =
                 (const struct iso_dir_record *)(buf + pos);
             if (rec->length == 0) { pos++; offset++; continue; }
