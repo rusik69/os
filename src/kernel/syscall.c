@@ -6746,25 +6746,33 @@ static uint64_t sys_sched_getscheduler(uint64_t pid) {
 static uint64_t sys_sched_setattr(uint64_t pid, uint64_t attr_addr, uint64_t flags)
 {
     struct sched_attr attr;
+    size_t user_size;
     int ret;
 
     if (!attr_addr)
         return (uint64_t)(int64_t)-EINVAL;
 
-    /* Copy struct sched_attr from userspace */
-    if (syscall_is_user_process() && !syscall_user_read_ok((uint64_t)attr_addr, sizeof(struct sched_attr)))
+    /* Step 1: Read just the size field to learn the caller's struct extent.
+     * We use copy_from_user() which safely handles SMAP (STAC/CLAC) and
+     * validates the user range via vmm_user_range_ok(). */
+    if (copy_from_user(&user_size, attr_addr, sizeof(user_size)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
-    memcpy(&attr, (const void *)attr_addr, sizeof(struct sched_attr));
 
-    /* Validate the size field before using it */
-    if (attr.size == 0 || attr.size > sizeof(struct sched_attr))
+    /* Step 2: Validate the size field.
+     * - Zero means uninitialised / invalid
+     * - Larger than our struct means caller is from a newer kernel ABI */
+    if (user_size == 0 || user_size > sizeof(struct sched_attr))
         return (uint64_t)(int64_t)-EINVAL;
 
-    /* If caller provided a smaller struct, zero the tail */
-    size_t copy_size = attr.size < sizeof(struct sched_attr) ? attr.size : sizeof(struct sched_attr);
-    if (copy_size < sizeof(struct sched_attr))
-        memset((uint8_t *)&attr + copy_size, 0, sizeof(struct sched_attr) - copy_size);
-    attr.size = sizeof(struct sched_attr);  /* normalize */
+    /* Step 3: Zero the kernel struct, then copy only the caller's bytes.
+     * Any fields beyond the caller's struct are implicitly zeroed.
+     * Using copy_from_user() for proper SMAP handling. */
+    memset(&attr, 0, sizeof(struct sched_attr));
+    if (copy_from_user(&attr, attr_addr, user_size) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
+
+    /* Normalise so the rest of the kernel always sees the full size */
+    attr.size = sizeof(struct sched_attr);
 
     /* Resolve PID */
     if (pid == 0)
