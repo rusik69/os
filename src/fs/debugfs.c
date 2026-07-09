@@ -62,17 +62,23 @@ static int find_entry(const char *path)
 	/* Strip "/sys/kernel/debug" prefix if present */
 	const char *rel = path;
 	if (strncmp(path, "/sys/kernel/debug", 17) == 0) {
-		rel = path + 17;
-		if (*rel == '\0')
-			rel = "/";
+		/* Require boundary: next char must be '/' or '\0' */
+		if (path[17] == '/' || path[17] == '\0') {
+			rel = path + 17;
+			if (*rel == '\0')
+				rel = "/";
+		}
 	}
 	/* Also strip just "/sys/kernel" for backward compat in find */
 	if (rel == path && strncmp(path, "/sys/kernel", 11) == 0) {
 		/* Only strip if path continues with /debug */
 		if (path[11] == '/' && strncmp(path + 12, "debug", 5) == 0) {
-			rel = path + 17;
-			if (*rel == '\0')
-				rel = "/";
+			/* Require boundary: next char must be '/' or '\0' */
+			if (path[17] == '/' || path[17] == '\0') {
+				rel = path + 17;
+				if (*rel == '\0')
+					rel = "/";
+			}
 		}
 	}
 
