@@ -62,12 +62,36 @@ static int smtp_cmd(int conn_id, const char *cmd, char *resp, int resp_size) {
     return smtp_status_ok(resp) ? 0 : -1;
 }
 
+/* Validate email header fields — reject CR/LF to prevent header injection */
+static int smtp_validate_field(const char *field, const char *label) {
+    if (!field) return -1;
+    if (strchr(field, '\r') || strchr(field, '\n')) {
+        kprintf("[SMTP] %s contains illegal CR/LF\n", label);
+        return -1;
+    }
+    return 0;
+}
+
+/* Append string to buffer safely, returns new position */
+static int buf_cat(char *buf, int pos, int bufsize, const char *s) {
+    while (*s && pos < bufsize - 1)
+        buf[pos++] = *s++;
+    return pos;
+}
+
 static int smtp_connect_and_send(uint32_t server_ip, uint16_t port,
                                   const char *from, const char *to,
                                   const char *subject, const char *body,
                                   const char *username, const char *password) {
     char buf[SMTP_BUF_SIZE];
     int ret = -1;
+
+    /* Validate email fields to prevent header/SMTP injection */
+    if (smtp_validate_field(from, "from") < 0 ||
+        smtp_validate_field(to, "to") < 0 ||
+        smtp_validate_field(subject, "subject") < 0) {
+        return -1;
+    }
 
     /* Connect to SMTP server */
     int conn_id = net_tcp_connect(server_ip, port);
@@ -141,18 +165,37 @@ static int smtp_connect_and_send(uint32_t server_ip, uint16_t port,
 
     /* Send email headers and body */
     char data_buf[2048];
-    int n = snprintf(data_buf, sizeof(data_buf),
-                     "From: <%s>\r\n"
-                     "To: <%s>\r\n"
-                     "Subject: %s\r\n"
-                     "MIME-Version: 1.0\r\n"
-                     "Content-Type: text/plain; charset=UTF-8\r\n"
-                     "\r\n"
-                     "%s\r\n"
-                     ".\r\n",
-                     from, to, subject, body);
+    int pos = 0;
 
-    if (net_tcp_send(conn_id, data_buf, (uint16_t)n) < 0) goto out;
+    /* Build headers */
+    pos = buf_cat(data_buf, pos, sizeof(data_buf), "From: <");
+    pos = buf_cat(data_buf, pos, sizeof(data_buf), from);
+    pos = buf_cat(data_buf, pos, sizeof(data_buf), ">\r\nTo: <");
+    pos = buf_cat(data_buf, pos, sizeof(data_buf), to);
+    pos = buf_cat(data_buf, pos, sizeof(data_buf), ">\r\nSubject: ");
+    pos = buf_cat(data_buf, pos, sizeof(data_buf), subject);
+    pos = buf_cat(data_buf, pos, sizeof(data_buf), "\r\nMIME-Version: 1.0\r\n");
+    pos = buf_cat(data_buf, pos, sizeof(data_buf), "Content-Type: text/plain; charset=UTF-8\r\n\r\n");
+
+    /* Dot-stuff body per RFC 5321 §4.5.2: prepend '.' to any line starting with '.' */
+    {
+        int at_line_start = 1;
+        const char *b = body;
+        while (*b && pos < (int)sizeof(data_buf) - 5) {
+            if (at_line_start && *b == '.') {
+                data_buf[pos++] = '.';
+                if (pos >= (int)sizeof(data_buf) - 5) break;
+            }
+            data_buf[pos++] = *b;
+            at_line_start = (*b == '\n');
+            b++;
+        }
+    }
+
+    pos = buf_cat(data_buf, pos, sizeof(data_buf), "\r\n.\r\n");
+    data_buf[pos] = '\0';
+
+    if (net_tcp_send(conn_id, data_buf, (uint16_t)pos) < 0) goto out;
 
     /* Read response */
     smtp_read_response(conn_id, buf, sizeof(buf));
