@@ -147,9 +147,13 @@ static uint64_t *get_or_create_table(uint64_t *table, int index, uint64_t flags)
         if (unlikely(!pt_phys)) return ERR_PTR(-ENOMEM);
         uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pt_phys);
         uint64_t base  = huge & 0x000FFFFFFFE00000ULL;
-        uint64_t pflags = (huge & 0x1FF) & ~(uint64_t)PTE_HUGE;
+        /* Propagate full flag bits 0-11 (hw + software) and NX (bit 63)
+         * from the original huge-page PDE to each 4KB PTE.
+         * The PS/HUGE bit is cleared — this is now a 4KB leaf PTE. */
+        uint64_t pflags = (huge & 0xFFF) & ~(uint64_t)PTE_HUGE;
+        uint64_t pnx    = huge & PTE_NX;
         for (int i = 0; i < 512; i++)
-            pt[i] = (base + (uint64_t)i * PAGE_SIZE) | pflags | PTE_PRESENT;
+            pt[i] = (base + (uint64_t)i * PAGE_SIZE) | pflags | pnx | PTE_PRESENT;
         table[index] = pt_phys | (flags & 0xFFF) | PTE_PRESENT | PTE_WRITE;
         return pt;
     }
@@ -917,11 +921,13 @@ int vmm_map_user_hugepage_internal(uint64_t *pml4, uint64_t virt,
     /* Place the huge-page PDE: physical base + flags + HUGE + PRESENT.
      * The physical address mask for a PDE with the HUGE bit is
      * 0x000FFFFFFFE00000 (bits 39:21), which covers 2MB alignment.
-     * We strip low 12 bits of flags and use the caller-supplied flags. */
+     * We take low 12 flag bits from the caller (hw bits 0-8 + software
+     * bits 9-11) and explicitly set NX (bit 63) when requested. */
     uint64_t pde = (huge_phys & 0x000FFFFFFFE00000ULL)
-                   | (flags & 0x1FF)  /* low 9 flag bits fit below HUGE bit */
+                   | (flags & 0xFFF)  /* low 12 flag bits (hw + software) */
                    | PTE_HUGE
-                   | PTE_PRESENT;
+                   | PTE_PRESENT
+                   | ((flags & VMM_FLAG_NOEXEC) ? PTE_NX : 0);
     pd[idx2] = pde;
 
     /* Track in THP subsystem */
@@ -1042,10 +1048,13 @@ int vmm_set_user_pages_flags(uint64_t *pml4, uint64_t virt, size_t num_pages,
             uint64_t had_big = pde & PTE_HUGE;
             /* Preserve software bits (9-11) from new_flags */
             uint64_t sw_bits = new_flags & (PTE_COW | PTE_LAZY | PTE_EXECONLY);
-            /* Write new flags and re-apply PRESENT + HUGE + software bits */
+            /* Write new flags and re-apply PRESENT + HUGE + software bits.
+             * NX (bit 63) is explicitly set/cleared from new_flags. */
             uint64_t hw_flags = (new_flags & 0x1FF) | sw_bits;
+            uint64_t nx = (new_flags & VMM_FLAG_NOEXEC) ? PTE_NX : 0;
             pd[pd_idx] = base | hw_flags
                          | had_big
+                         | nx
                          | ((new_flags & VMM_FLAG_PRESENT) ? PTE_PRESENT : 0);
             tlb_flush(addr & ~(HUGE_PAGE_SIZE - 1ULL));
             /* Skip the rest of this 2MB region */
