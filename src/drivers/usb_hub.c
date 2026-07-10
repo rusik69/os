@@ -1020,8 +1020,14 @@ static int usb_hub_detect(void)
             /* Handle connection changes with debounce */
             if (change & PORT_CHANGE_C_CONNECTION) {
                 hub_clear_feature(hub->dev_addr, HUB_FEATURE_C_PORT_CONNECTION, (uint16_t)p);
-                kprintf("[USB HUB] Port %d: connection change%s\n", p,
-                        (status & PORT_STATUS_CONNECTION) ? " (connected)" : " (disconnected)");
+                if (status & PORT_STATUS_CONNECTION) {
+                    kprintf("[USB HUB] Port %d: connection change (connected)\n", p);
+                    /* Start debounce */
+                    (void)hub_port_debounce(hub, p, status);
+                } else {
+                    kprintf("[USB HUB] Port %d: device disconnected\n", p);
+                    hotplug_handle_disconnect(h, p, 0);
+                }
             }
 
             /* Handle over-current */
