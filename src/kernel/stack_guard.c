@@ -6,6 +6,7 @@
 #include "vmm.h"
 #include "pmm.h"
 #include "errno.h"
+#include "mglru.h"
 
 /* Size of guard region tracking table */
 #define STACK_GUARD_MAX_REGIONS 64
@@ -67,7 +68,14 @@ int stack_guard_setup(uint64_t stack_virt, int stack_pages)
     if (guard_phys == 0) {
         return -ENOMEM;
     }
-    /* Do NOT map it — that's the whole point of a guard page. */
+    /* Do NOT map it — that's the whole point of a guard page.
+     *
+     * Remove from MGLRU reclaim tracking: pmm_alloc_frame() automatically
+     * adds every allocated frame to MGLRU via mglru_add_page().  Since the
+     * guard page is a reserved, non-reclaimable page with no virtual mapping,
+     * it must be removed from MGLRU so the page reclaim subsystem never
+     * accidentally frees it. */
+    mglru_remove_page(guard_phys);
 
     guard_regions[slot].stack_base  = stack_base;
     guard_regions[slot].guard_addr  = guard_addr;
