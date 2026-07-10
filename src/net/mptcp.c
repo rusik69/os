@@ -362,7 +362,21 @@ void mptcp_close(uint32_t token)
     spinlock_acquire(&mptcp_lock);
     for (int i = 0; i < MPTCP_MAX_CONNS; i++) {
         if (mptcp_conns[i].used && mptcp_conns[i].token == token) {
-            memset(&mptcp_conns[i], 0, sizeof(struct mptcp_conn));
+            struct mptcp_conn *mc = &mptcp_conns[i];
+            /* Clear MPTCP association from each subflow's TCP connection
+             * before destroying the MPTCP state, so the subflow TCP connections
+             * do not retain stale mptcp_token references (use-after-close). */
+            for (uint8_t j = 0; j < mc->num_subflows; j++) {
+                struct mptcp_subflow *sf = &mc->subflows[j];
+                if (sf->used && sf->conn_id >= 0 && sf->conn_id < MAX_TCP_CONNS) {
+                    struct tcp_conn *c = &tcp_conns[sf->conn_id];
+                    c->mptcp_token = 0;
+                    c->mptcp_rcv_key_valid = 0;
+                    memset(c->mptcp_snd_key, 0, 8);
+                    memset(c->mptcp_rcv_key, 0, 8);
+                }
+            }
+            memset(mc, 0, sizeof(struct mptcp_conn));
             break;
         }
     }
