@@ -65,9 +65,13 @@ int hugetlb_init(uint32_t count)
      * fast if the pool is exhausted, rather than trying to compact. */
     uint32_t allocated = 0;
     for (uint32_t i = 0; i < count; i++) {
+        uint64_t phys;
+        int retries = 0;
+
+retry:
         /* pmm_alloc_frames returns a pointer to the physical address
          * (frame number * PAGE_SIZE).  We store it as a uint64_t. */
-        uint64_t phys = (uint64_t)(uintptr_t)pmm_alloc_frames(HUGETLB_PAGE_NFRAMES);
+        phys = (uint64_t)(uintptr_t)pmm_alloc_frames(HUGETLB_PAGE_NFRAMES);
         if (phys == 0) {
             /* Ran out of physical memory — free what we already got. */
             kprintf("[hugetlb] Only %u/%u huge pages allocated (OOM)\n",
@@ -80,12 +84,25 @@ int hugetlb_init(uint32_t count)
         }
 
         /* Verify 2MB alignment — pmm_alloc_frames should guarantee
-         * this for large allocations, but we double-check. */
+         * this for large allocations, but we double-check.  Non-aligned
+         * pages cannot be used as 2MB PDE entries, so discard and
+         * retry rather than storing a useless entry in the pool. */
         if (phys & (HUGETLB_PAGE_SIZE - 1)) {
-            kprintf("[hugetlb] WARNING: frame 0x%llx not 2MB-aligned, "
-                    "splitting\n", (unsigned long long)phys);
-            /* Fall back: map as 4KB pages at mmap time.
-             * Still store the frame so we can free it later. */
+            if (retries < 3) {
+                kprintf("[hugetlb] WARNING: frame 0x%llx not 2MB-aligned, "
+                        "retrying\n", (unsigned long long)phys);
+                pmm_free_frames_contiguous(phys, HUGETLB_PAGE_NFRAMES);
+                retries++;
+                goto retry;
+            }
+            kprintf("[hugetlb] ERROR: frame 0x%llx not 2MB-aligned after "
+                    "retries, aborting init\n", (unsigned long long)phys);
+            pmm_free_frames_contiguous(phys, HUGETLB_PAGE_NFRAMES);
+            for (uint32_t j = 0; j < allocated; j++) {
+                pmm_free_frames_contiguous(frames[j], HUGETLB_PAGE_NFRAMES);
+            }
+            kfree(frames);
+            return -ENOMEM;
         }
 
         frames[allocated++] = phys;
