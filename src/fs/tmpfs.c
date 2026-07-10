@@ -93,8 +93,10 @@ static void free_inode(int idx) {
     if (inodes[idx].ksm_registered)
         tmpfs_unregister_ksm(idx);
 
-    /* Subtract freed data from the used-bytes counter */
-    if (inodes[idx].data && inodes[idx].size > 0) {
+    /* Subtract freed data from the used-bytes counter.
+     * For swapped-out inodes, data==NULL but the logical size still
+     * counts toward the quota — the counter must be adjusted here. */
+    if (inodes[idx].size > 0) {
         if (tmpfs_used_bytes >= inodes[idx].size)
             tmpfs_used_bytes -= inodes[idx].size;
         else
@@ -924,6 +926,39 @@ static int tmpfs_create(void *priv, const char *path, uint8_t type) {
     return 0;
 }
 
+/*
+ * tmpfs_free_recursive() - Recursively free an inode and all its children.
+ *
+ * @idx:  Index of the inode to free.
+ *
+ * For regular files and symlinks, calls free_inode(idx) directly.
+ * For directories, recursively frees all child inodes first (depth-first),
+ * then frees the directory itself.  This prevents orphaned children when
+ * a directory is unlinked.
+ *
+ * Called from tmpfs_unlink() and tmpfs_unmount() to guarantee that every
+ * inode whose last directory reference is removed is actually freed.
+ */
+static void tmpfs_free_recursive(int idx)
+{
+    if (idx < 0 || idx >= TMPFS_MAX_INODES)
+        return;
+    if (!inodes[idx].in_use)
+        return;
+
+    /* If this is a directory, free all children first */
+    if (inodes[idx].type == TMPFS_TYPE_DIR) {
+        for (int i = 1; i < TMPFS_MAX_INODES; i++) {
+            if (i != idx && inodes[i].in_use &&
+                (int)inodes[i].parent == idx) {
+                tmpfs_free_recursive(i);
+            }
+        }
+    }
+
+    free_inode(idx);
+}
+
 static int tmpfs_unlink(void *priv, const char *path) {
     (void)priv;
     int idx = find_inode(path);
@@ -936,7 +971,8 @@ static int tmpfs_unlink(void *priv, const char *path) {
         tmpfs_dir_remove(parent, idx);
     }
 
-    free_inode(idx);
+    /* Free the inode and all its descendants (handles directory children) */
+    tmpfs_free_recursive(idx);
     return 0;
 }
 
