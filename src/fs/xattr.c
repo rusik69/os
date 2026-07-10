@@ -133,6 +133,11 @@ static struct xattr_file *xattr_get_or_create(const char *path) {
 int xattr_set(const char *path, const char *name, const void *value, size_t size) {
     if (!path || !name || !value) return -EINVAL;
 
+    /* Reject values that exceed the internal storage limit (prevents
+     * silent truncation and data corruption) */
+    if (size > VFS_XATTR_VALUE_MAX)
+        return -E2BIG;
+
     int ns_ret = xattr_validate_namespace(name);
     if (ns_ret < 0)
         return -EINVAL;
@@ -147,9 +152,8 @@ int xattr_set(const char *path, const char *name, const void *value, size_t size
     /* Check if already exists — update */
     for (int i = 0; i < XATTR_MAX_ENTRIES_PER_FILE; i++) {
         if (xf->entries[i].in_use && strcmp(xf->entries[i].name, name) == 0) {
-            size_t copy_sz = size < VFS_XATTR_VALUE_MAX ? size : VFS_XATTR_VALUE_MAX;
-            memcpy(xf->entries[i].value, value, copy_sz);
-            xf->entries[i].size = (int)copy_sz;
+            memcpy(xf->entries[i].value, value, size);
+            xf->entries[i].size = (int)size;
             return 0;
         }
     }
@@ -159,9 +163,8 @@ int xattr_set(const char *path, const char *name, const void *value, size_t size
         if (!xf->entries[i].in_use) {
             strncpy(xf->entries[i].name, name, VFS_XATTR_NAME_MAX - 1);
             xf->entries[i].name[VFS_XATTR_NAME_MAX - 1] = '\0';
-            size_t copy_sz = size < VFS_XATTR_VALUE_MAX ? size : VFS_XATTR_VALUE_MAX;
-            memcpy(xf->entries[i].value, value, copy_sz);
-            xf->entries[i].size = (int)copy_sz;
+            memcpy(xf->entries[i].value, value, size);
+            xf->entries[i].size = (int)size;
             xf->entries[i].in_use = 1;
             xf->count++;
             return 0;
@@ -279,7 +282,7 @@ int vfs_setxattr(const char *path, const char *name, const void *value, int size
             }
         }
     }
-    return xattr_set(path, name, value, (size_t)size);
+    return xattr_set(ap, name, value, (size_t)size);
 }
 
 /*
@@ -307,7 +310,7 @@ int vfs_getxattr(const char *path, const char *name, void *value, int size)
             }
         }
     }
-    return xattr_get(path, name, value, (size_t)size);
+    return xattr_get(ap, name, value, (size_t)size);
 }
 
 /*
@@ -336,7 +339,7 @@ int vfs_listxattr(const char *path, char *buf, int size)
             }
         }
     }
-    return xattr_list(path, buf, (size_t)size);
+    return xattr_list(ap, buf, (size_t)size);
 }
 
 /*
@@ -364,7 +367,7 @@ int vfs_removexattr(const char *path, const char *name)
             }
         }
     }
-    return xattr_remove(path, name);
+    return xattr_remove(ap, name);
 }
 #include "module.h"
 #ifndef MODULE
