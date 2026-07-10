@@ -2,6 +2,7 @@
 #define DCACHE_H
 
 #include "types.h"
+#include "vfs.h"
 
 /*
  * dcache.h — VFS dentry (path resolution) cache
@@ -52,8 +53,11 @@ void dcache_init(void);
 
 /* ── Lookup / insert / remove ───────────────────────────────────── */
 
-/* Look up a path in the cache.  Returns pointer to entry or NULL. */
-struct dcache_entry *dcache_lookup(const char *path);
+/* Look up a path in the cache, copying result into @st under lock.
+ * Returns 0 on hit, -1 on miss.  The copy is done while the dcache
+ * spinlock is held so the entry cannot be invalidated between lookup
+ * and use (SMP safety). */
+int dcache_lookup(const char *path, struct vfs_stat *st);
 
 /* Insert (or update) a cache entry for the given path + metadata.
  * If the cache is full, the LRU entry is evicted first. */

@@ -96,24 +96,37 @@ int vfs_open(const char *path, int flags, int mode)
     return 0;
 }
 
-struct dcache_entry *dcache_lookup(const char *path)
+int dcache_lookup(const char *path, struct vfs_stat *st)
 {
-    if (!path || !path[0])
-        return NULL;
+    if (!path || !path[0] || !st)
+        return -1;
 
-    struct dcache_entry *best = NULL;
     spinlock_acquire(&dcache_lock);
 
     for (int i = 0; i < DCACHE_SIZE; i++) {
         if (dcache_match(&dcache[i], path)) {
             dcache[i].last_tick = dcache_global_tick++;
-            best = &dcache[i];
-            break;
+            /* Copy all fields while still holding the lock so another
+             * thread cannot invalidate (memset) the entry between
+             * lookup and use. */
+            st->size      = dcache[i].size;
+            st->type      = dcache[i].type;
+            st->uid       = dcache[i].uid;
+            st->gid       = dcache[i].gid;
+            st->mode      = dcache[i].mode;
+            st->mtime     = dcache[i].mtime;
+            st->atime     = dcache[i].atime;
+            st->nlink     = dcache[i].nlink;
+            st->ino       = dcache[i].ino;
+            st->dev_major = dcache[i].dev_major;
+            st->dev_minor = dcache[i].dev_minor;
+            spinlock_release(&dcache_lock);
+            return 0;
         }
     }
 
     spinlock_release(&dcache_lock);
-    return best;
+    return -1;
 }
 
 void dcache_add(const char *path, void *mount,
@@ -932,19 +945,9 @@ int vfs_stat(const char *path, struct vfs_stat *st) {
     }
 
     /* Try the dentry cache first */
-    struct dcache_entry *de = dcache_lookup(ap);
-    if (de) {
-        st->size  = de->size;
-        st->type  = de->type;
-        st->uid   = de->uid;
-        st->gid   = de->gid;
-        st->mode  = de->mode;
-        st->mtime = de->mtime;
-        st->atime = de->atime;
-        st->nlink = de->nlink;
-        st->ino   = de->ino;
-        st->dev_major = de->dev_major;
-        st->dev_minor = de->dev_minor;
+    struct vfs_stat cached_st;
+    if (dcache_lookup(ap, &cached_st) == 0) {
+        memcpy(st, &cached_st, sizeof(*st));
         return 0;
     }
 
