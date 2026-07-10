@@ -430,6 +430,12 @@ static void cpu_slab_drain(struct kmem_cache *cache) {
 
 struct kmem_cache *kmem_cache_create(const char *name, size_t obj_size,
                                      size_t align, kmem_cache_ctor_t ctor) {
+    if (obj_size == 0) {
+        kprintf("[SLAB] ERROR: kmem_cache_create('%s') with size=0 is invalid\n",
+                name ? name : "(null)");
+        return NULL;
+    }
+
     struct kmem_cache *cache = (struct kmem_cache *)kmalloc(sizeof(struct kmem_cache));
     if (!cache) return NULL;
 

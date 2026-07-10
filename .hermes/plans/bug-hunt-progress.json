@@ -1,7 +1,7 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
   "current_batch": "B006",
-  "current_item": 344,
+  "current_item": 346,
   "completed_items": [
     1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,
     21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,
@@ -26,13 +26,15 @@
     331, 332, 333, 334, 335, 336, 337, 338, 339, 340,
     341,
     342,
-    343
+    343,
+    344,
+    345
   ],
   "found_bugs": 808,
   "fixed_bugs": 808,
   "completed_batches": [
     "B002"
   ],
-  "last_item_timestamp": "2026-07-10T18:42:00",
-  "last_item_result": "item 343: FOUND+Fixed - vmm_alloc (plan refers as vmm_alloc_page, actual function is vmm_alloc in vmm.c) had physical frame leak in both failure unwind paths. On OOM or vmm_map_page failure, previously-allocated pages were unmapped via vmm_unmap_page (which only clears PTEs) but their physical frames were never freed back via pmm_free_frame. Both failure paths fixed by calling pmm_free_frame on each frame before unmapping, matching the vmm_free pattern. Also removed unused variable pml4 (assigned kernel_pml4 but never referenced). Build verified clean."
+  "last_item_timestamp": "2026-07-10T18:55:00",
+  "last_item_result": "item 345: AUDITED CLEAN - verified kmem_cache_alloc fails gracefully in src/memory/slab.c. All OOM paths: (1) per-CPU cache empty → falls through to slow path, returns NULL; (2) cpu_slab_refill: no partial/free slabs + slab_grow fails → returns NULL; (3) slab_grow PMM allocation failure → frees partial pages, returns -ENOMEM; (4) slab_grow kmalloc temp-array failure → falls back to sequential order (no allocation). kmalloc backend is first-fit heap allocator (not slab-based), so no recursion risk. No NULL-pointer dereference, double-free, or memory-leak paths in the allocation failure chain."
 }
