@@ -20,6 +20,7 @@
 #include "string.h"
 #include "timer.h"
 #include "heap.h"
+#include "spinlock.h"
 
 /* ══════════════════════════════════════════════════════════════════
  *                    Per-Protocol Timeout Tables
@@ -57,6 +58,12 @@ static struct nf_conn nf_conns[NF_CONNTRACK_MAX];
 static int            nf_conn_count = 0;
 
 static struct nf_conntrack_stats nf_stats;
+
+/* Spinlock protecting the conntrack table (nf_conns[], nf_conn_count, nf_stats).
+ * Must be held for any access to or iteration over the table to prevent races
+ * between packet processing (nf_conntrack_in/out on one CPU) and expiry
+ * (nf_conntrack_purge on another CPU) when RPS/SMP is active. */
+static spinlock_t nf_conn_lock;
 
 /* ══════════════════════════════════════════════════════════════════
  *                   TCP State Machine Transitions
@@ -334,6 +341,8 @@ int nf_conntrack_in(uint32_t src_ip, uint32_t dst_ip,
                     uint8_t protocol, uint8_t tcp_flags,
                     uint16_t payload_len)
 {
+    spinlock_acquire(&nf_conn_lock);
+
     nf_stats.total_lookups++;
 
     /* Lookup existing connection — match in both directions */
@@ -342,8 +351,10 @@ int nf_conntrack_in(uint32_t src_ip, uint32_t dst_ip,
     if (!conn) {
         /* Create new entry with normalized tuple (originator = src) */
         conn = conntrack_new(src_ip, dst_ip, src_port, dst_port, protocol);
-        if (!conn)
+        if (!conn) {
+            spinlock_release(&nf_conn_lock);
             return NF_ACCEPT; /* table full — silently pass */
+        }
 
         /* Check if this new connection matches an expected entry
          * from a protocol helper (e.g., FTP data channel).
@@ -405,6 +416,7 @@ int nf_conntrack_in(uint32_t src_ip, uint32_t dst_ip,
         break;
     }
 
+    spinlock_release(&nf_conn_lock);
     return NF_ACCEPT;
 }
 
@@ -413,6 +425,8 @@ int nf_conntrack_out(uint32_t src_ip, uint32_t dst_ip,
                      uint8_t protocol, uint8_t tcp_flags,
                      uint16_t payload_len)
 {
+    spinlock_acquire(&nf_conn_lock);
+
     /* Outgoing path: same logic as incoming but for LOCAL_OUT hook */
     nf_stats.total_lookups++;
 
@@ -420,8 +434,10 @@ int nf_conntrack_out(uint32_t src_ip, uint32_t dst_ip,
                                           src_port, dst_port, protocol);
     if (!conn) {
         conn = conntrack_new(src_ip, dst_ip, src_port, dst_port, protocol);
-        if (!conn)
+        if (!conn) {
+            spinlock_release(&nf_conn_lock);
             return NF_ACCEPT;
+        }
 
         /* Check for expected connection (e.g., FTP data channel) */
         if (nf_ct_check_expected(src_ip, dst_ip, src_port, dst_port, protocol)) {
@@ -474,6 +490,7 @@ int nf_conntrack_out(uint32_t src_ip, uint32_t dst_ip,
         break;
     }
 
+    spinlock_release(&nf_conn_lock);
     return NF_ACCEPT;
 }
 
@@ -482,8 +499,12 @@ struct nf_conn *nf_conntrack_lookup(uint32_t src_ip, uint32_t dst_ip,
                                     uint16_t src_port, uint16_t dst_port,
                                     uint8_t protocol)
 {
+    spinlock_acquire(&nf_conn_lock);
     nf_stats.total_lookups++;
-    return conntrack_find(src_ip, dst_ip, src_port, dst_port, protocol);
+    struct nf_conn *conn = conntrack_find(src_ip, dst_ip,
+                                          src_port, dst_port, protocol);
+    spinlock_release(&nf_conn_lock);
+    return conn;
 }
 
 /* Legacy API wrappers */
@@ -491,6 +512,7 @@ struct nf_conn *nf_conntrack_get(uint32_t src_ip, uint32_t dst_ip,
                                  uint16_t src_port, uint16_t dst_port,
                                  uint8_t protocol)
 {
+    spinlock_acquire(&nf_conn_lock);
     struct nf_conn *conn = conntrack_find(src_ip, dst_ip,
                                           src_port, dst_port, protocol);
     if (!conn)
@@ -499,18 +521,24 @@ struct nf_conn *nf_conntrack_get(uint32_t src_ip, uint32_t dst_ip,
         conn->last_seen = timer_get_ticks();
         conn->timeout_ticks = 300; /* reset timeout */
     }
+    spinlock_release(&nf_conn_lock);
     return conn;
 }
 
 void nf_conntrack_put(struct nf_conn *conn)
 {
     if (!conn) return;
+    spinlock_acquire(&nf_conn_lock);
     conn->last_seen = timer_get_ticks();
+    spinlock_release(&nf_conn_lock);
 }
 
 void nf_conntrack_timeout(struct nf_conn *conn, uint32_t timeout_ticks)
 {
-    if (conn) conn->timeout_ticks = timeout_ticks;
+    if (!conn) return;
+    spinlock_acquire(&nf_conn_lock);
+    conn->timeout_ticks = timeout_ticks;
+    spinlock_release(&nf_conn_lock);
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -519,6 +547,8 @@ void nf_conntrack_timeout(struct nf_conn *conn, uint32_t timeout_ticks)
 
 void nf_conntrack_purge(void)
 {
+    spinlock_acquire(&nf_conn_lock);
+
     uint64_t now = timer_get_ticks();
     int expired = 0;
 
@@ -550,6 +580,8 @@ void nf_conntrack_purge(void)
     if (expired > 0) {
         nf_stats.current_active = (uint64_t)nf_conn_count;
     }
+
+    spinlock_release(&nf_conn_lock);
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -558,16 +590,22 @@ void nf_conntrack_purge(void)
 
 void nf_conntrack_stats_get(struct nf_conntrack_stats *stats)
 {
-    if (stats) *stats = nf_stats;
+    if (!stats) return;
+    spinlock_acquire(&nf_conn_lock);
+    *stats = nf_stats;
+    spinlock_release(&nf_conn_lock);
 }
 
 int nf_conntrack_dump(struct nf_conn *buf, int max)
 {
+    if (!buf || max <= 0) return 0;
     int count = 0;
+    spinlock_acquire(&nf_conn_lock);
     for (int i = 0; i < NF_CONNTRACK_MAX && count < max; i++) {
         if (nf_conns[i].used)
             buf[count++] = nf_conns[i];
     }
+    spinlock_release(&nf_conn_lock);
     return count;
 }
 
@@ -580,6 +618,7 @@ void nf_conntrack_init(void)
     memset(nf_conns, 0, sizeof(nf_conns));
     nf_conn_count = 0;
     memset(&nf_stats, 0, sizeof(nf_stats));
+    spinlock_init(&nf_conn_lock);
     kprintf("[OK] Conntrack initialized (%d slots)\n", NF_CONNTRACK_MAX);
 }
 #include "module.h"
@@ -593,8 +632,11 @@ static int conntrack_destroy(void *ct)
         return -EINVAL;
     }
 
+    spinlock_acquire(&nf_conn_lock);
+
     struct nf_conn *conn = (struct nf_conn *)ct;
     if (!conn->used) {
+        spinlock_release(&nf_conn_lock);
         kprintf("[conntrack] conntrack_destroy: entry already free\n");
         return -EALREADY;
     }
@@ -604,6 +646,8 @@ static int conntrack_destroy(void *ct)
     nf_conn_count--;
     nf_stats.total_destroys++;
     nf_stats.current_active = (uint64_t)nf_conn_count;
+
+    spinlock_release(&nf_conn_lock);
 
     kprintf("[conntrack] conntrack_destroy: freed ct=%p (src=%d.%d.%d.%d:%u)\n",
             ct,
@@ -620,27 +664,35 @@ static void* conntrack_lookup(void *skb)
         return NULL;
     }
 
+    spinlock_acquire(&nf_conn_lock);
+
     /* In a real implementation, we'd extract the 5-tuple from skb
      * and call conntrack_find().  Since skb layout is opaque here,
      * we attempt a linear scan for any active connection.  For a
      * production system, the caller should extract skb metadata
      * and call nf_conntrack_lookup directly. */
 
+    void *result = NULL;
     /* Return the first active connection as a best-effort match */
     for (int i = 0; i < NF_CONNTRACK_MAX; i++) {
         if (nf_conns[i].used) {
             kprintf("[conntrack] conntrack_lookup: matched ct[%d]\n", i);
-            return (void *)&nf_conns[i];
+            result = (void *)&nf_conns[i];
+            break;
         }
     }
 
-    kprintf("[conntrack] conntrack_lookup: no matching entry for skb=%p\n", skb);
-    return NULL;
+    spinlock_release(&nf_conn_lock);
+
+    if (!result)
+        kprintf("[conntrack] conntrack_lookup: no matching entry for skb=%p\n", skb);
+    return result;
 }
 /* ── conntrack_flush: remove all conntrack entries ── */
 static int conntrack_flush(void)
 {
     int flushed = 0;
+    spinlock_acquire(&nf_conn_lock);
     for (int i = 0; i < NF_CONNTRACK_MAX; i++) {
         if (nf_conns[i].used) {
             nf_conns[i].used = 0;
@@ -650,6 +702,7 @@ static int conntrack_flush(void)
     nf_conn_count = 0;
     nf_stats.total_destroys += (uint64_t)flushed;
     nf_stats.current_active = 0;
+    spinlock_release(&nf_conn_lock);
 
     kprintf("[conntrack] conntrack_flush: flushed %d entries\n", flushed);
     return flushed;
