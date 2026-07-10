@@ -24,6 +24,7 @@
 #include "timer.h"
 #include "net.h"
 #include "netdevice.h"
+#include "preempt.h"
 
 static struct wg_device g_wg;
 static int wg_initialized = 0;
@@ -993,10 +994,14 @@ void wg_tx_flush(void)
     if (!wg_initialized)
         return;
 
+    preempt_disable();
+
     for (int i = 0; i < g_wg.num_peers; i++) {
         if (g_wg.peers[i].active)
             wg_tx_flush_peer(&g_wg.peers[i]);
     }
+
+    preempt_enable();
 }
 
 /* ── Core send-to-peer helper ──────────────────────────────────────── */
@@ -1010,8 +1015,16 @@ static int wg_send_to_peer(struct wg_peer *peer, const uint8_t *data, int len)
 {
     uint8_t session_key[32];
 
-    if (!peer || !peer->active)
+    /* Disable preemption so the peer pointer stays valid across key
+     * derivation, counter increment, encryption, and enqueue.  This
+     * prevents another task from calling wg_remove_peer() and shifting
+     * the peer array while we are mid-operation. */
+    preempt_disable();
+
+    if (!peer || !peer->active) {
+        preempt_enable();
         return -EINVAL;
+    }
 
     /* ── MTU enforcement ─────────────────────────────────────────────
      * The WireGuard tunnel MTU (default 1420) is the maximum size of an
@@ -1020,6 +1033,7 @@ static int wg_send_to_peer(struct wg_peer *peer, const uint8_t *data, int len)
     if (len > g_wg.mtu) {
         kprintf("[WG] Send_to_peer: inner packet %d bytes exceeds MTU %d, dropping\n",
                 len, g_wg.mtu);
+        preempt_enable();
         return -EMSGSIZE;
     }
 
@@ -1036,7 +1050,10 @@ static int wg_send_to_peer(struct wg_peer *peer, const uint8_t *data, int len)
     /* Allocate buffer: header(16) + ciphertext(max) + tag(16) */
     int buf_len = len + 16 + 64;
     uint8_t *buf = (uint8_t *)kmalloc(buf_len);
-    if (!buf) return -ENOMEM;
+    if (!buf) {
+        preempt_enable();
+        return -ENOMEM;
+    }
 
     /* Build WireGuard transport message:
      * [type=4 (1 byte) | reserved(3) | receiver(4) | counter(8) | encrypted(stream) | authtag(16)] */
@@ -1075,23 +1092,41 @@ static int wg_send_to_peer(struct wg_peer *peer, const uint8_t *data, int len)
 
     /* Enqueue the encrypted packet for actual UDP transmission.
      * wg_tx_enqueue() takes ownership of buf and frees it on failure. */
-    return wg_tx_enqueue(peer, buf, total_len);
+    {
+        int __ret = wg_tx_enqueue(peer, buf, total_len);
+        preempt_enable();
+        return __ret;
+    }
 }
 
 int wg_send(const uint8_t *data, int len) {
+    int ret;
+    struct wg_peer *peer;
+
     if (!wg_initialized || !data) return -EINVAL;
     if (g_wg.num_peers == 0) return -EHOSTUNREACH;
 
-    struct wg_peer *peer = NULL;
+    /* Disable preemption while holding a peer pointer so that another
+     * task cannot call wg_remove_peer() and shift the peer array out
+     * from under us while we are in the middle of encryption. */
+    preempt_disable();
+
+    peer = NULL;
     for (int i = 0; i < g_wg.num_peers; i++) {
         if (g_wg.peers[i].active) {
             peer = &g_wg.peers[i];
             break;
         }
     }
-    if (!peer) return -EHOSTUNREACH;
+    if (!peer) {
+        preempt_enable();
+        return -EHOSTUNREACH;
+    }
 
-    return wg_send_to_peer(peer, data, len);
+    ret = wg_send_to_peer(peer, data, len);
+
+    preempt_enable();
+    return ret;
 }
 
 int wg_receive(const uint8_t *data, int len, uint32_t src_ip, uint16_t src_port) {
@@ -1105,6 +1140,10 @@ int wg_receive(const uint8_t *data, int len, uint32_t src_ip, uint16_t src_port)
         kprintf("[WG] Receive: wire packet %d bytes exceeds max wire size %d (MTU %d)\n",
                 len, WG_MAX_WIRE_SIZE, g_wg.mtu);
     }
+
+    /* Disable preemption so the peer pointer stays valid: another task
+     * could call wg_remove_peer() and shift the array under us. */
+    preempt_disable();
 
     struct wg_peer *peer = NULL;
     /* Find peer by source IP matching its allowed-IP routing table.
@@ -1124,7 +1163,10 @@ int wg_receive(const uint8_t *data, int len, uint32_t src_ip, uint16_t src_port)
             }
         }
     }
-    if (!peer) return -EHOSTUNREACH;
+    if (!peer) {
+        preempt_enable();
+        return -EHOSTUNREACH;
+    }
 
     /* ── Roaming detection ───────────────────────────────────────────
      * If the packet arrived from a different source address than what
@@ -1175,6 +1217,7 @@ int wg_receive(const uint8_t *data, int len, uint32_t src_ip, uint16_t src_port)
         kprintf("[WG] Receive: replay detected (counter %llu <= %llu), dropping\n",
                 (unsigned long long)pkt_counter,
                 (unsigned long long)peer->rx_counter);
+        preempt_enable();
         return -EBADMSG;
     }
     if (peer->session_established)
@@ -1188,12 +1231,16 @@ int wg_receive(const uint8_t *data, int len, uint32_t src_ip, uint16_t src_port)
 
     /* Allocate output buffer */
     uint8_t *plaintext = (uint8_t *)kmalloc(ct_len);
-    if (!plaintext) return -1;
+    if (!plaintext) {
+        preempt_enable();
+        return -1;
+    }
 
     int ret = chacha20poly1305_decrypt(plaintext, ct, ct_len, ad, 16, session_key, nonce);
     if (ret < 0) {
         kprintf("[WG] Receive: decryption/MAC verification FAILED\n");
         kfree(plaintext);
+        preempt_enable();
         return -EBADMSG;
     }
 
@@ -1211,6 +1258,7 @@ int wg_receive(const uint8_t *data, int len, uint32_t src_ip, uint16_t src_port)
     peer->last_rx_time = timer_get_ticks();
 
     kfree(plaintext);
+    preempt_enable();
     return payload_len;
 }
 
@@ -1269,6 +1317,10 @@ static void wg_send_keepalive(struct wg_peer *peer)
     uint8_t session_key[32];
     uint8_t shared_secret[32];
 
+    /* Disable preemption so the peer pointer stays valid across
+     * key derivation, encryption, and enqueue. */
+    preempt_disable();
+
     curve25519(shared_secret, g_wg.private_key, peer->public_key);
     wg_kdf(session_key, shared_secret, g_wg.private_key, peer->public_key);
 
@@ -1311,6 +1363,8 @@ static void wg_send_keepalive(struct wg_peer *peer)
         /* wg_tx_enqueue already freed buf on failure */
         kprintf("[WG] keepalive: enqueue failed (%d)\n", ret);
     }
+
+    preempt_enable();
 }
 
 /* Periodic poll: check if any peer needs a keepalive sent.
@@ -1326,6 +1380,8 @@ void wg_poll(void) {
     /* Convert ticks to seconds (assumes ~100 Hz timer tick rate).
      * timer_get_ticks() returns jiffies, typically 100 per second. */
     const uint64_t ticks_per_sec = 100;  /* HZ */
+
+    preempt_disable();
 
     for (int i = 0; i < g_wg.num_peers; i++) {
         struct wg_peer *peer = &g_wg.peers[i];
@@ -1354,6 +1410,7 @@ void wg_poll(void) {
 
     /* Flush any queued encrypted packets */
     wg_tx_flush();
+    preempt_enable();
 }
 /* ── Handshake state tracking ─────────────────────────────────────── */
 
@@ -2762,11 +2819,14 @@ int wg_peer_lookup_by_dest(uint32_t dest_ip)
 int wg_send_to(uint32_t dest_ip, const uint8_t *data, int len)
 {
     int peer_idx;
+    int __ret;
 
     if (!wg_initialized || !data)
         return -EINVAL;
     if (g_wg.num_peers == 0)
         return -EHOSTUNREACH;
+
+    preempt_disable();
 
     if (dest_ip == 0) {
         /* No specific destination — use first active peer (legacy fallback) */
@@ -2777,19 +2837,24 @@ int wg_send_to(uint32_t dest_ip, const uint8_t *data, int len)
                 break;
             }
         }
-        if (peer_idx < 0)
+        if (peer_idx < 0) {
+            preempt_enable();
             return -EHOSTUNREACH;
+        }
     } else {
         peer_idx = wg_peer_lookup_by_dest(dest_ip);
         if (peer_idx < 0) {
             kprintf("[WG] Send_to: no route to %u.%u.%u.%u\n",
                     (uint8_t)(dest_ip >> 24), (uint8_t)(dest_ip >> 16),
                     (uint8_t)(dest_ip >> 8), (uint8_t)dest_ip);
+            preempt_enable();
             return peer_idx;  /* Negative errno */
         }
     }
 
-    return wg_send_to_peer(&g_wg.peers[peer_idx], data, len);
+    __ret = wg_send_to_peer(&g_wg.peers[peer_idx], data, len);
+    preempt_enable();
+    return __ret;
 }
 
 /* ── Accessor functions for wg_netlink.c ────────────────────────────── */
