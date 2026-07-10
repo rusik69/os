@@ -1,7 +1,7 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
   "current_batch": "B006",
-  "current_item": 350,
+  "current_item": 351,
   "completed_items": [
     1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,
     21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,
@@ -32,13 +32,14 @@
     346,
     347,
     348,
-    349
+    349,
+    350
   ],
-  "found_bugs": 809,
-  "fixed_bugs": 809,
+  "found_bugs": 812,
+  "fixed_bugs": 812,
   "completed_batches": [
     "B002"
   ],
-  "last_item_timestamp": "2026-07-10T19:17:00",
-  "last_item_result": "item 349: audited clean - kernel kfree(NULL) has explicit guard at line 156 (`if (!ptr) return;`). Userspace heap_free wrappers in dos.h and gui.h delegate to libc `free()`, which is specified as a no-op for NULL by the C standard."
+  "last_item_timestamp": "2026-07-10T19:43:00",
+  "last_item_result": "bug-hunt #350: zsmalloc - found and fixed 3 bugs in zs_malloc failure path: (1) frame<<12 shift in PHYS_TO_VIRT when pmm_alloc_frame already returns physical address, (2) pool capacity overflow causing untracked page leak, (3) VIRT_TO_PHYS missing in zs_destroy_pool pmm_free_frame call"
 }

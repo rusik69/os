@@ -210,13 +210,6 @@ int zram_write_sectors(uint64_t sector, const void *buf, uint32_t count)
     for (uint32_t i = 0; i < count; i++) {
         struct zram_slot *slot = &zram_dev.slots[sector + i];
 
-        /* Free existing compressed page if any */
-        if (slot->comp_addr) {
-            pmm_free_frame(slot->comp_addr);
-            slot->comp_addr = 0;
-            slot->comp_len = 0;
-        }
-
         /* Try to compress the page */
         int comp_len = zcomp_stream_compress(zs,
                           buf_bytes + i * PAGE_SIZE, PAGE_SIZE,
@@ -232,6 +225,10 @@ int zram_write_sectors(uint64_t sector, const void *buf, uint32_t count)
 
             void *comp_virt = PHYS_TO_VIRT(comp_page);
             memcpy(comp_virt, comp_buf, (size_t)comp_len);
+
+            /* Free existing slot frame — after new alloc succeeds */
+            if (slot->comp_addr)
+                pmm_free_frame(slot->comp_addr);
 
             slot->comp_addr = comp_page;
             slot->comp_len = (uint32_t)comp_len;
@@ -253,6 +250,10 @@ int zram_write_sectors(uint64_t sector, const void *buf, uint32_t count)
 
             void *raw_virt = PHYS_TO_VIRT(raw_page);
             memcpy(raw_virt, buf_bytes + i * PAGE_SIZE, PAGE_SIZE);
+
+            /* Free existing slot frame — after new alloc succeeds */
+            if (slot->comp_addr)
+                pmm_free_frame(slot->comp_addr);
 
             slot->comp_addr = raw_page;
             slot->comp_len = PAGE_SIZE;
@@ -482,13 +483,6 @@ static int zram_comp_write(uint64_t offset, const void *buf, size_t count)
 
     struct zram_slot *slot = &zram_dev.slots[slot_idx];
 
-    /* Free existing compressed page if any */
-    if (slot->comp_addr) {
-        pmm_free_frame(slot->comp_addr);
-        slot->comp_addr = 0;
-        slot->comp_len = 0;
-    }
-
     /* Allocate a temporary buffer for compressed data */
     uint8_t *comp_buf = (uint8_t *)kmalloc(PAGE_SIZE * 2);
     if (!comp_buf)
@@ -517,6 +511,10 @@ static int zram_comp_write(uint64_t offset, const void *buf, size_t count)
         void *comp_virt = PHYS_TO_VIRT(comp_page);
         memcpy(comp_virt, comp_buf, (size_t)comp_len);
 
+        /* Free existing slot frame — after new alloc succeeds */
+        if (slot->comp_addr)
+            pmm_free_frame(slot->comp_addr);
+
         slot->comp_addr = comp_page;
         slot->comp_len = (uint32_t)comp_len;
         slot->orig_len = (uint32_t)write_len;
@@ -534,6 +532,10 @@ static int zram_comp_write(uint64_t offset, const void *buf, size_t count)
         }
         void *raw_virt = PHYS_TO_VIRT(raw_page);
         memcpy(raw_virt, buf, write_len);
+
+        /* Free existing slot frame — after new alloc succeeds */
+        if (slot->comp_addr)
+            pmm_free_frame(slot->comp_addr);
 
         slot->comp_addr = raw_page;
         slot->comp_len = (uint32_t)write_len;
