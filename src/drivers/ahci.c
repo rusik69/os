@@ -2202,7 +2202,30 @@ static int ahci_init_phys_port(int p, int irq, int *is_pm) {
         slot->data_buf_virt = PHYS_TO_VIRT((void*)(uintptr_t)slot->data_buf_phys);
         memset(slot->data_buf_virt, 0, 4096);
     }
-    if (!alloc_ok) return -1;
+    if (!alloc_ok) {
+        /* Clean up partially-allocated resources on failure */
+        for (int s = 0; s < AHCI_SLOT_COUNT; s++) {
+            struct ahci_slot *slot = &port->slots[s];
+            if (slot->data_buf_phys) {
+                pmm_free_frame(slot->data_buf_phys / 4096);
+                slot->data_buf_phys = 0;
+                slot->data_buf_virt = NULL;
+            }
+            if (slot->cmd_tbl_virt) {
+                kfree(slot->cmd_tbl_virt);
+                slot->cmd_tbl_virt = NULL;
+            }
+        }
+        if (port->recv_fis_phys) {
+            pmm_free_frame(port->recv_fis_phys / 4096);
+            port->recv_fis_phys = 0;
+        }
+        if (port->cmd_list_phys) {
+            pmm_free_frame(port->cmd_list_phys / 4096);
+            port->cmd_list_phys = 0;
+        }
+        return -1;
+    }
 
     port_stop(p);
     port_write(p, PORT_CLB,  (uint32_t)(port->cmd_list_phys & 0xFFFFFFFF));
@@ -2295,7 +2318,6 @@ static int ahci_probe_device(struct ahci_port *port, int pm_port __attribute__((
                                     BLK_DRIVER_ASYNC);
         if (ret == 0) {
             port->blockdev_id = bd_id;
-            ahci_port_count++;
             ahci_present = 1;
             return 0;
         }
@@ -2466,6 +2488,7 @@ int __init ahci_init(void) {
                     sub_port->sector_count = sector_count;
                     sub_port->ncq_capable = (id[76] & (1u << 8)) ? 1 : 0;
                     sub_port->inflight_mask = 0;
+                    sub_port->tag_bitmap = 0;
                     /* Clear req ptrs (borrowing phys_port's slot buffers) */
                     for (int s = 0; s < AHCI_SLOT_COUNT; s++) {
                         sub_port->slots[s].req = NULL;
