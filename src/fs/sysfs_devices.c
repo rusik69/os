@@ -132,6 +132,14 @@ static const char *pci_driver_for_device(uint8_t bus, uint8_t slot,
 	return NULL;
 }
 
+/* ── Forward declarations ───────────────────────────────────────────── */
+
+/*
+ * Release callback for power state private data.
+ * Called when the power/control sysfs entry is removed.
+ */
+static void sysfs_release_power_state(void *priv);
+
 /* ── Power management attributes ──────────────────────────────────── */
 
 /*
@@ -285,6 +293,9 @@ static void sysfs_create_power_attrs(const char *devpath,
 					       sysfs_read_power_control,
 					       sysfs_write_power_control) < 0) {
 			kprintf("[sysfs] Failed to create %s\n", ctrl_path);
+		} else {
+			sysfs_set_release_cb(ctrl_path,
+					     sysfs_release_power_state);
 		}
 	}
 
@@ -300,6 +311,21 @@ static void sysfs_create_power_attrs(const char *devpath,
 			kprintf("[sysfs] Failed to create %s\n", wakeup_path);
 		}
 	}
+}
+
+/* ── Power state release callback ───────────────────────────────────── */
+
+/*
+ * Release callback for the per-device power state.
+ * Frees the sysfs_power_state struct when the sysfs entries are removed
+ * (e.g. on driver unbind or hot-unplug).  Registered only on the
+ * power/control file since both power/control and power/wakeup share
+ * the same priv pointer.
+ */
+static void sysfs_release_power_state(void *priv)
+{
+	if (priv)
+		kfree(priv);
 }
 
 /* ── PCI config space access (config file) ──────────────────────────── */
