@@ -101,6 +101,31 @@ int bridge_remove_port(int port_iface) {
             g_bridge.num_ports--;
             /* Clean up STP state for this port */
             stp_remove_port(port_iface);
+
+            /* Flush FDB entries that reference the removed port (stale
+             * entries could cause bridge_handle to forward frames to a
+             * port that is no longer part of the bridge, or worse, to a
+             * different device that has since been assigned the same
+             * ifindex). */
+            for (int k = 0; k < BRIDGE_FDB_SIZE; k++) {
+                if (g_bridge.fdb[k].valid &&
+                    g_bridge.fdb[k].port == port_iface) {
+                    g_bridge.fdb[k].valid = 0;
+                }
+            }
+
+            /* Also remove the port from any IGMP snooping entry's
+             * port_mask so stale bits don't accumulate. */
+            for (int k = 0; k < BRIDGE_IGMP_MAX_GROUPS; k++) {
+                if (g_bridge.mcast[k].valid &&
+                    (g_bridge.mcast[k].port_mask & (1U << port_iface))) {
+                    g_bridge.mcast[k].port_mask &= ~(1U << port_iface);
+                    if (g_bridge.mcast[k].port_mask == 0) {
+                        g_bridge.mcast[k].valid = 0;
+                    }
+                }
+            }
+
             return 0;
         }
     }
