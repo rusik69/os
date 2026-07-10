@@ -18,6 +18,7 @@
 #include "net.h"        /* struct ip_header, struct udp_header, htons etc. */
 #include "printf.h"
 #include "string.h"
+#include "spinlock.h"   /* SMP-preemption-safe tunnel table access */
 #include "types.h"
 
 /* ── Static state ──────────────────────────────────────────────────── */
@@ -25,6 +26,12 @@
 /* Table of active VXLAN tunnels, indexed by VNI hash */
 static struct vxlan_tunnel g_vxlan_tunnels[VXLAN_MAX_TUNNELS];
 static int vxlan_initialized = 0;
+
+/* Spinlock protecting concurrent access to the tunnel table.
+ * All operations that read or write g_vxlan_tunnels[] must hold
+ * this lock to prevent SMP races — especially the window between
+ * looking up a tunnel and using its endpoint addresses. */
+static spinlock_t g_vxlan_lock = SPINLOCK_INIT;
 
 /* ── Helpers ───────────────────────────────────────────────────────── */
 
@@ -103,20 +110,28 @@ int vxlan_create_tunnel(uint32_t remote, uint32_t local, uint32_t vni)
     if (vni > 0x00FFFFFF)
         return -1;
 
+    spinlock_acquire(&g_vxlan_lock);
+
     /* Check for duplicate VNI */
-    if (find_tunnel_by_vni(vni))
+    if (find_tunnel_by_vni(vni)) {
+        spinlock_release(&g_vxlan_lock);
         return -1;  /* tunnel with this VNI already exists */
+    }
 
     /* Find a free slot */
     struct vxlan_tunnel *t = find_free_slot();
-    if (!t)
+    if (!t) {
+        spinlock_release(&g_vxlan_lock);
         return -1;  /* no free tunnel slots */
+    }
 
     t->remote_ip = remote;
     t->local_ip  = local;
     t->vni       = vni;
     t->src_port  = vxlan_src_port(vni);
     t->active    = 1;
+
+    spinlock_release(&g_vxlan_lock);
 
     kprintf("[VXLAN] Tunnel created: VNI=%u local %d.%d.%d.%d -> remote "
             "%d.%d.%d.%d (src_port=%u)\n",
@@ -134,18 +149,28 @@ int vxlan_destroy_tunnel(uint32_t vni)
     if (!vxlan_initialized)
         return -1;
 
+    spinlock_acquire(&g_vxlan_lock);
+
     struct vxlan_tunnel *t = find_tunnel_by_vni(vni);
-    if (!t)
+    if (!t) {
+        spinlock_release(&g_vxlan_lock);
         return -1;
+    }
 
     kprintf("[VXLAN] Tunnel destroyed: VNI=%u\n", (unsigned int)vni);
     memset(t, 0, sizeof(*t));
+
+    spinlock_release(&g_vxlan_lock);
     return 0;
 }
 
 struct vxlan_tunnel *vxlan_tunnel_lookup(uint32_t vni)
 {
-    return find_tunnel_by_vni(vni);
+    struct vxlan_tunnel *t;
+    spinlock_acquire(&g_vxlan_lock);
+    t = find_tunnel_by_vni(vni);
+    spinlock_release(&g_vxlan_lock);
+    return t;
 }
 
 /* ── Encapsulation ───────────────────────────────────────────────────
@@ -173,10 +198,26 @@ int vxlan_encapsulate(const uint8_t *inner_eth, int inner_len,
     if (vni > 0x00FFFFFF)
         return -1;
 
-    /* Find the tunnel for this VNI to get endpoint addresses */
-    struct vxlan_tunnel *t = find_tunnel_by_vni(vni);
-    if (!t)
-        return -1;
+    /* Find the tunnel for this VNI to get endpoint addresses.
+     * Copy the needed fields to local variables under the lock so
+     * that another CPU cannot zero the tunnel (via vxlan_destroy_tunnel)
+     * while we are building the outer IP/UDP headers. */
+    uint32_t encap_local_ip;
+    uint32_t encap_remote_ip;
+    uint16_t encap_src_port;
+
+    spinlock_acquire(&g_vxlan_lock);
+    {
+        struct vxlan_tunnel *t = find_tunnel_by_vni(vni);
+        if (!t) {
+            spinlock_release(&g_vxlan_lock);
+            return -1;
+        }
+        encap_local_ip  = t->local_ip;
+        encap_remote_ip = t->remote_ip;
+        encap_src_port  = t->src_port;
+    }
+    spinlock_release(&g_vxlan_lock);
 
     /* Calculate total outer packet size:
      *   IPv4 header (20) + UDP header (8) + VXLAN header (8) + inner */
@@ -213,8 +254,8 @@ int vxlan_encapsulate(const uint8_t *inner_eth, int inner_len,
     ip->ttl          = 64;
     ip->protocol     = IP_PROTO_UDP;
     ip->checksum     = 0;
-    ip->src_ip       = t->local_ip;
-    ip->dst_ip       = t->remote_ip;
+    ip->src_ip       = encap_local_ip;
+    ip->dst_ip       = encap_remote_ip;
 
     /* Compute IP header checksum (ones-complement sum).
      * Use memcpy to access packed fields and avoid
@@ -235,7 +276,7 @@ int vxlan_encapsulate(const uint8_t *inner_eth, int inner_len,
     /* ── Build outer UDP header ───────────────────────────────────── */
     const int udp_payload_len = vxlan_hdr_len + effective_inner_len;
     struct udp_header *udp = (struct udp_header *)(outer_buf + outer_ip_hdr_len);
-    udp->src_port = htons(t->src_port);
+    udp->src_port = htons(encap_src_port);
     udp->dst_port = htons(VXLAN_UDP_PORT);
     udp->length   = htons((uint16_t)(udp_hdr_len + udp_payload_len));
     udp->checksum = 0;  /* UDP checksum is optional for IPv4; set to 0 */
