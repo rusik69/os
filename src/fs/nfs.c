@@ -18,6 +18,11 @@
 #define MOUNT_PORT    635
 #define NFS_MAX_PATH  1024
 #define NFS_MAX_DATA  8192
+/* Safe payload limit for READ/WRITE data. NFS_MAX_DATA must also
+ * accommodate RPC headers (~40 bytes), file handle, offset, wcc_data
+ * (~176 bytes), count, eof, and padding. This margin prevents buffer
+ * overflows in the args and reply buffers. */
+#define NFS_MAX_RW_DATA (NFS_MAX_DATA - 256)
 #define NFS_MAX_MOUNTS 8
 
 /* RPC message types */
@@ -122,10 +127,14 @@ static void xdr_get_bytes(const uint8_t **p, uint8_t *dst, uint32_t len)
 
 static uint32_t xdr_get_string(const uint8_t **p, char *buf, uint32_t maxlen)
 {
-    uint32_t len = xdr_get_u32(p);
+    uint32_t wire_len = xdr_get_u32(p);
+    uint32_t len = wire_len;
     if (len >= maxlen) len = maxlen - 1;
     xdr_get_bytes(p, (uint8_t *)buf, len);
     buf[len] = '\0';
+    /* Advance past the full wire length and padding */
+    uint32_t skip = wire_len + ((-wire_len) & 3);
+    *p += skip - (len + ((-len) & 3));
     return len;
 }
 
@@ -406,12 +415,17 @@ static int nfs_mount(const char *server, const char *export_path)
         mnt->mounted = 0;
         return -EIO;
     }
-
     /* Read file handle */
     mnt->root_fh.len = xdr_get_u32(&rp);
+    uint32_t fh_wire_len = mnt->root_fh.len;
     if (mnt->root_fh.len > sizeof(mnt->root_fh.data))
         mnt->root_fh.len = sizeof(mnt->root_fh.data);
     memcpy(mnt->root_fh.data, rp, mnt->root_fh.len);
+    /* Advance rp past whole FH data + XDR padding */
+    {
+        uint32_t fh_aligned = (fh_wire_len + 3) & ~3U;
+        rp += fh_aligned;
+    }
 
     mnt->mounted = 1;
     nfs_mount_count++;
@@ -460,9 +474,11 @@ static int nfs_lookup_component(struct nfs_mount_info *mnt,
 	/* Read object handle */
 	if (out_fh) {
 		out_fh->len = xdr_get_u32(&rp);
+		uint32_t fh_wire_len = out_fh->len;
 		if (out_fh->len > sizeof(out_fh->data))
 			out_fh->len = sizeof(out_fh->data);
 		memcpy(out_fh->data, rp, out_fh->len);
+		rp += (fh_wire_len + 3) & ~3U;
 	}
 
 	kprintf("[NFS] LOOKUP: %s -> handle len=%u\n", component,
@@ -706,6 +722,9 @@ static int nfs_read(int mount_id, const struct nfs_fhandle *fh,
     /* Offset (uint64) */
     xdr_put_u32(&ap, (uint32_t)(offset >> 32));
     xdr_put_u32(&ap, (uint32_t)(offset & 0xFFFFFFFF));
+    /* Clamp requested read count to safe buffer size */
+    if (count > NFS_MAX_RW_DATA)
+        count = NFS_MAX_RW_DATA;
     /* Count */
     xdr_put_u32(&ap, count);
 
@@ -737,8 +756,8 @@ static int nfs_read(int mount_id, const struct nfs_fhandle *fh,
 
     /* Read the data */
     uint32_t aligned = (read_count + 3) & ~3U;
-    uint32_t data_len = aligned; /* padded to 4 bytes */
     memcpy(buf, rp, read_count);
+    rp += aligned;  /* Advance past data + XDR padding */
 
     kprintf("[NFS] READ: offset=%llu count=%u actual=%u\n",
             (unsigned long long)offset, count, read_count);
@@ -766,6 +785,9 @@ static int nfs_write(int mount_id, const struct nfs_fhandle *fh,
     /* Offset (uint64) */
     xdr_put_u32(&ap, (uint32_t)(offset >> 32));
     xdr_put_u32(&ap, (uint32_t)(offset & 0xFFFFFFFF));
+    /* Clamp write payload to safe buffer size */
+    if (count > NFS_MAX_RW_DATA)
+        count = NFS_MAX_RW_DATA;
     /* Count */
     xdr_put_u32(&ap, count);
     /* Stable (0=UNSTABLE, 1=DATA_SYNC, 2=FILE_SYNC) */
@@ -793,8 +815,8 @@ static int nfs_write(int mount_id, const struct nfs_fhandle *fh,
         for (int i = 0; i < 21; i++) xdr_get_u32(&rp);
     }
     uint32_t written_count = xdr_get_u32(&rp);
-    /* Skip writeverf (8 bytes) */
-    /* xdr_get_bytes(&rp, ...) */
+    /* Skip committed (4 bytes) and writeverf (8 bytes) */
+    rp += 12;
 
     kprintf("[NFS] WRITE: offset=%llu count=%u written=%u\n",
             (unsigned long long)offset, count, written_count);
