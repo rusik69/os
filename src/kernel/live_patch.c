@@ -243,12 +243,33 @@ static int live_patch_apply(struct live_patch *lp)
     uint8_t jmp_insn[JMP_REL32_SIZE];
     patch_build_jmp_rel32(lp->target_func, lp->replacement_func, jmp_insn);
 
+    /*
+     * Disable interrupts while writing the prologue.  The write is
+     * non-atomic (5 bytes written one at a time), so an interrupt
+     * handler preempting between byte writes would see a partially
+     * corrupted prologue and crash if it tried to execute the target
+     * function.  On SMP we would also need stop_machine(), but this
+     * kernel runs uniprocessor so interrupt masking suffices.
+     */
+    uint64_t irq_flags;
+    __asm__ volatile(
+        "pushfq\n\t"
+        "pop %0\n\t"
+        "cli\n\t"
+        : "=r"(irq_flags) :: "memory");
+
     /* Write the JMP over the prologue */
     if (patch_write_prologue(lp->target_func, jmp_insn, JMP_REL32_SIZE) < 0) {
+        if (irq_flags & 0x200)
+            __asm__ volatile("sti");
         kprintf("[livepatch] '%s': failed to write JMP\n",
                 lp->name ? lp->name : "?");
         return -1;
     }
+
+    /* Restore interrupts */
+    if (irq_flags & 0x200)
+        __asm__ volatile("sti");
 
     lp->applied = 1;
     lp->num_cpus = 1; /* simplified: assume UP if smp not available */
@@ -276,13 +297,32 @@ static int live_patch_unapply(struct live_patch *lp)
     if (!lp || !lp->applied)
         return -1;
 
+    /*
+     * Disable interrupts while restoring the original prologue.
+     * The restore is non-atomic, so an interrupt handler preempting
+     * between byte writes would see a corrupt prologue.  Same
+     * rationale as live_patch_apply().
+     */
+    uint64_t irq_flags;
+    __asm__ volatile(
+        "pushfq\n\t"
+        "pop %0\n\t"
+        "cli\n\t"
+        : "=r"(irq_flags) :: "memory");
+
     /* Restore the original prologue */
     if (patch_write_prologue(lp->target_func, lp->saved.bytes,
                              lp->saved.length) < 0) {
+        if (irq_flags & 0x200)
+            __asm__ volatile("sti");
         kprintf("[livepatch] '%s': failed to restore prologue\n",
                 lp->name ? lp->name : "?");
         return -1;
     }
+
+    /* Restore interrupts */
+    if (irq_flags & 0x200)
+        __asm__ volatile("sti");
 
     lp->applied = 0;
 
