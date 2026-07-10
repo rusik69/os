@@ -133,6 +133,13 @@ static __attribute__((unused)) struct cramfs_inode *cramfs_get_inode(struct cram
                                                uint32_t offset)
 {
     if (!cp->inode_table) return NULL;
+    /* Bounds check: offset must not exceed total image size and
+     * must leave room for the full inode structure.
+     * Uses total_size - offset (safe because offset < total_size
+     * is already checked above) to avoid unsigned wrap. */
+    if (offset >= cp->total_size ||
+        sizeof(struct cramfs_inode) > cp->total_size - offset)
+        return NULL;
     return (struct cramfs_inode *)(cp->inode_table + offset);
 }
 
