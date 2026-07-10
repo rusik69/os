@@ -254,7 +254,7 @@ void vfs_update_quota_blocks(uint16_t uid, int32_t delta_blocks)
     if (!eq)
         return;
 
-    int32_t new_val = (int32_t)eq->cur_blocks + delta_blocks;
+    int64_t new_val = (int64_t)eq->cur_blocks + delta_blocks;
     if (new_val < 0)
         new_val = 0;
 
@@ -275,7 +275,7 @@ void vfs_update_quota_inodes(uint16_t uid, int32_t delta)
     if (!eq)
         return;
 
-    int32_t new_val = (int32_t)eq->cur_inodes + delta;
+    int64_t new_val = (int64_t)eq->cur_inodes + delta;
     if (new_val < 0)
         new_val = 0;
 
