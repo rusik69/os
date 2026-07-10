@@ -225,6 +225,14 @@ int uprobe_unregister(const char *path, uint64_t offset)
         }
     }
 
+    /* Clear stepping reference if this probe is currently being
+     * single-stepped, preventing use-after-unregister through
+     * the g_stepping_uprobe pointer. */
+    if (g_stepping_uprobe == up) {
+        g_stepping_uprobe = NULL;
+        g_stepping_vaddr = 0;
+    }
+
     memset(up, 0, sizeof(*up));
 
     spinlock_irqsave_release(&g_uprobe_lock, flags);
@@ -315,18 +323,26 @@ int uprobe_handle_breakpoint(struct interrupt_frame *frame)
  * This should be called from the #DB handler.
  */
 
-static void uprobe_debug_handler(struct interrupt_frame *frame)
+int uprobe_debug_handler(struct interrupt_frame *frame)
 {
-    (void)frame;
-
     if (!g_stepping_uprobe)
-        return;
+        return 0;
 
     uint64_t flags;
     spinlock_irqsave_acquire(&g_uprobe_lock, &flags);
 
     struct uprobe *up = g_stepping_uprobe;
     g_stepping_uprobe = NULL;
+
+    /* Guard against use-after-unregister: the handler for this probe may
+     * have called uprobe_unregister() (e.g. a one-shot probe), or the
+     * probe may have been unregistered externally while we were stepping.
+     * In either case the probe slot has been memset'd and we must NOT
+     * re-insert the INT3 — that would create an orphan breakpoint. */
+    if (!up->in_use) {
+        spinlock_irqsave_release(&g_uprobe_lock, flags);
+        return 1;
+    }
 
     /* Clear TF (should already be cleared by CPU after single-step) */
     frame->rflags &= ~(1ULL << 8);
@@ -341,6 +357,8 @@ static void uprobe_debug_handler(struct interrupt_frame *frame)
     }
 
     spinlock_irqsave_release(&g_uprobe_lock, flags);
+
+    return 1;
 }
 
 /* ── Default handler (simple logger) ──────────────────────────────────

@@ -70,6 +70,12 @@ int uprobe_unregister(const char *path, uint64_t offset);
  */
 int uprobe_handle_breakpoint(struct interrupt_frame *frame);
 
+/* Called from the debug handler (#DB, vector 1) after single-stepping
+ * a uprobe breakpoint.  Re-inserts the INT3 breakpoint.
+ * Returns 1 if the event was handled (was a uprobe single-step), 0 if not.
+ */
+int uprobe_debug_handler(struct interrupt_frame *frame);
+
 /* Debugfs read callback for /sys/kernel/debug/uprobes/list */
 void uprobe_list_read(char *buf, int *len);
 

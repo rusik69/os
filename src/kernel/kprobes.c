@@ -484,6 +484,11 @@ void kprobe_int3_handler(struct interrupt_frame *frame) {
 }
 
 void kprobe_debug_handler(struct interrupt_frame *frame) {
+    /* Check uprobe single-stepping first — user-space probes take priority */
+    if (uprobe_debug_handler(frame)) {
+        return; /* handled by uprobe */
+    }
+
     /* Check if we're single-stepping for a kprobe */
     if (!g_current_stepping) {
         /* Non-kprobe debug exception — ignore (debugger not supported) */
