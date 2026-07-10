@@ -258,7 +258,7 @@ static int jbd2_write_journal_block(const struct jbd2_journal *journal,
 
     for (uint32_t i = 0; i < sectors_per_block; i++) {
         if (blockdev_write_sectors((int)journal->dev_id,
-                                    (uint32_t)(lba + i), 1,
+                                    lba + i, 1,
                                     buf + i * 512) != 0)
             return JBD2_ERR_IO;
     }
@@ -684,6 +684,10 @@ int jbd2_commit_transaction(struct jbd2_handle *handle)
         if (tags_this_desc > tags_per_block)
             tags_this_desc = tags_per_block;
 
+        /* Handle circular wrap-around for descriptor position */
+        if (journal_pos >= total_blocks)
+            journal_pos = first_data;
+
         desc_block = journal_pos;
         data_pos = journal_pos + 1;
 
@@ -701,12 +705,14 @@ int jbd2_commit_transaction(struct jbd2_handle *handle)
 
         /* Write data blocks for this descriptor */
         for (j = 0; j < tags_this_desc; j++) {
-            uint32_t data_block = journal_pos;
+            uint32_t data_block;
             uint32_t idx = start_tag + j;
 
             /* Handle circular wrap-around within journal area */
-            if (data_block >= total_blocks)
-                data_block = first_data;
+            if (journal_pos >= total_blocks)
+                journal_pos = first_data;
+
+            data_block = journal_pos;
 
             if (data_block >= total_blocks) {
                 kprintf("[jbd2]  data block %u exceeds journal "
@@ -893,7 +899,7 @@ static int jbd2_read_block(const struct jbd2_journal *journal,
 
     for (uint32_t i = 0; i < sectors_per_block; i++) {
         if (blockdev_read_sectors((int)journal->dev_id,
-                                   (uint32_t)(lba + i), 1,
+                                   lba + i, 1,
                                    buf + i * 512) != 0)
             return JBD2_ERR_IO;
     }
@@ -912,7 +918,7 @@ static int jbd2_write_fs_block(const struct jbd2_journal *journal,
 
     for (uint32_t i = 0; i < sectors_per_block; i++) {
         if (blockdev_write_sectors((int)journal->dev_id,
-                                    (uint32_t)(lba + i), 1,
+                                    lba + i, 1,
                                     buf + i * 512) != 0)
             return JBD2_ERR_IO;
     }
@@ -1002,11 +1008,11 @@ static int jbd2_replay_descriptor(const struct jbd2_journal *journal,
 
         tag = (const struct jbd2_block_tag *)(buf + tag_offset);
         target_block = tag->t_blocknr;
-        data_block_num = data_current;
+        /* Handle journal wrap-around before computing position */
+        if (data_current >= journal->total_blocks)
+            data_current = journal->first_data_block;
 
-        /* Handle journal wrap-around */
-        if (data_block_num >= journal->total_blocks)
-            data_block_num = journal->first_data_block;
+        data_block_num = data_current;
 
         if (!(tag->t_flags & JBD2_FLAG_DELETED)) {
             /* Check if this block has been revoked */
