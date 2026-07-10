@@ -359,8 +359,15 @@ void *ksym_lookup(const char *name)
 
 /* ksym_resolve — Reverse lookup: address → symbol name.
  * Scans static export, kallsyms, and dynamic tables linearly.
- * Returns a pointer to the static name string, or NULL if not found.
- * The returned pointer is valid until next ksym_register/unregister. */
+ * Returns a pointer to the name string, or NULL if not found.
+ *
+ * For static (export/kallsyms) tables, the returned pointer is valid
+ * indefinitely (names reside in .rodata).
+ *
+ * For dynamic module symbols, the returned pointer points into the
+ * dynamic symbol table's inline buffer.  It is valid ONLY while no
+ * concurrent ksym_register() or ksym_unregister() modifies the table.
+ * Callers should copy the name if they need it across such operations. */
 const char *ksym_resolve(void *addr)
 {
     if (!addr)
@@ -368,27 +375,36 @@ const char *ksym_resolve(void *addr)
 
     uint64_t target = (uint64_t)(uintptr_t)addr;
 
-    /* Search static export table */
+    /* Search static export table (read-only, no lock needed) */
     for (int i = 0; i < g_ksym_count; i++) {
         const struct ksym_entry *e = &__ksymtab_start[i];
         if (e->addr == target)
             return e->sym_name;
     }
 
-    /* Search comprehensive kallsyms table */
+    /* Search comprehensive kallsyms table (read-only, no lock needed) */
     for (int i = 0; i < g_kallsyms_count; i++) {
         const struct ksym_entry *e = &__kallsyms_start[i];
         if (e->addr == target)
             return e->sym_name;
     }
 
-    /* Search dynamic module symbol table */
+    /* Search dynamic module symbol table — must hold the lock to
+     * safely read g_dynamic_count and entry fields that may be
+     * modified concurrently by ksym_register()/ksym_unregister(). */
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_ksym_lock, &irq_flags);
+
     for (int i = 0; i < g_dynamic_count; i++) {
         if (g_dynamic_syms[i].in_use &&
-            g_dynamic_syms[i].addr == target)
-            return g_dynamic_syms[i].name;
+            g_dynamic_syms[i].addr == target) {
+            const char *ret = g_dynamic_syms[i].name;
+            spinlock_irqsave_release(&g_ksym_lock, irq_flags);
+            return ret;
+        }
     }
 
+    spinlock_irqsave_release(&g_ksym_lock, irq_flags);
     return NULL;
 }
 
