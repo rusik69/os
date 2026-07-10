@@ -1,7 +1,7 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
   "current_batch": "B006",
-  "current_item": 346,
+  "current_item": 347,
   "completed_items": [
     1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,
     21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,
@@ -28,13 +28,14 @@
     342,
     343,
     344,
-    345
+    345,
+    346
   ],
-  "found_bugs": 808,
-  "fixed_bugs": 808,
+  "found_bugs": 809,
+  "fixed_bugs": 809,
   "completed_batches": [
     "B002"
   ],
-  "last_item_timestamp": "2026-07-10T18:55:00",
-  "last_item_result": "item 345: AUDITED CLEAN - verified kmem_cache_alloc fails gracefully in src/memory/slab.c. All OOM paths: (1) per-CPU cache empty → falls through to slow path, returns NULL; (2) cpu_slab_refill: no partial/free slabs + slab_grow fails → returns NULL; (3) slab_grow PMM allocation failure → frees partial pages, returns -ENOMEM; (4) slab_grow kmalloc temp-array failure → falls back to sequential order (no allocation). kmalloc backend is first-fit heap allocator (not slab-based), so no recursion risk. No NULL-pointer dereference, double-free, or memory-leak paths in the allocation failure chain."
+  "last_item_timestamp": "2026-07-10T19:15:00",
+  "last_item_result": "item 346: FOUND+FIXED - kmem_cache_create with size=0 creates a broken cache. user_size=0 causes redzone to be written at obj+0, and kasan_poison_redzone marks all 16 bytes (obj_size) as redzone at obj+0. When kmem_cache_free calls slab_check_redzone, it reads from obj+0, which is KASAN-poisoned memory, triggering a KASAN fault. Fix: reject obj_size==0 at entry with a clear error and return NULL."
 }
