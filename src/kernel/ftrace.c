@@ -64,18 +64,34 @@ static int ftrace_kprobe_pre_handler(struct kprobe *kp, struct interrupt_frame *
     if (!g_ftrace_enabled)
         return 0; /* continue */
 
-    /* Find the tracepoint for this kprobe */
+    /*
+     * Copy the callback pointer under the spinlock to prevent a race with
+     * ftrace_unregister().  Otherwise, on SMP, one CPU could read a stale
+     * callback pointer while another CPU is clearing it inside
+     * ftrace_unregister(), leading to a callback being invoked after the
+     * unregister caller expects it to have stopped — a use-after-free
+     * hazard for any data the callback touches.
+     */
+    void (*cb)(uint64_t ip, uint64_t parent_ip) = NULL;
+    uint64_t ip = 0;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_ftrace_lock, &irq_flags);
+
     for (int i = 0; i < g_num_tracepoints; i++) {
         if (g_trace_kprobes[i].addr == kp->addr &&
             g_tracepoints[i].active) {
-            if (g_tracepoints[i].callback) {
-                uint64_t ip = kp->addr;
-                uint64_t parent_ip = 0; /* caller's IP not easily retrievable in this context */
-                g_tracepoints[i].callback(ip, parent_ip);
-            }
+            cb = g_tracepoints[i].callback;
+            ip = kp->addr;
             break;
         }
     }
+
+    spinlock_irqsave_release(&g_ftrace_lock, irq_flags);
+
+    /* Call the callback outside the lock so it cannot self-deadlock. */
+    if (cb)
+        cb(ip, 0);
 
     return 0; /* KPROBE_CONTINUE */
 }
@@ -215,15 +231,30 @@ void ftrace_dispatch(uint64_t ip, uint64_t parent_ip)
 {
     if (!g_ftrace_enabled) return;
 
+    /*
+     * Copy the callback under the lock — same SMP race protection as
+     * ftrace_kprobe_pre_handler.
+     */
+    void (*cb)(uint64_t ip, uint64_t parent_ip) = NULL;
+    uint64_t callback_ip = 0;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_ftrace_lock, &irq_flags);
+
     for (int i = 0; i < g_num_tracepoints; i++) {
         if (g_tracepoints[i].active && g_tracepoints[i].callback) {
-            /* Check if this kprobe's address matches */
             if (g_trace_kprobes[i].addr == ip) {
-                g_tracepoints[i].callback(ip, parent_ip);
-                return;
+                cb = g_tracepoints[i].callback;
+                callback_ip = ip;
+                break;
             }
         }
     }
+
+    spinlock_irqsave_release(&g_ftrace_lock, irq_flags);
+
+    if (cb)
+        cb(callback_ip, parent_ip);
 }
 
 void ftrace_dump(void)
