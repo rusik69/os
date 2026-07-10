@@ -12,6 +12,9 @@
  *   - A fixed pool of memory is reserved at boot.
  *   - Every N-th kmalloc() is redirected to a KFENCE object.
  *   - Each KFENCE object is surrounded by guard pages (PAGE_SIZE).
+ *   - Freed objects are quarantined (KFENCE_QUARANTINE_DEPTH allocations
+ *     must pass) before they can be reused, giving use-after-free
+ *     detection a meaningful window to trigger.
  *   - Memory accesses beyond the object or after free trigger a
  *     fault that is caught and reported.
  *
@@ -40,6 +43,12 @@
 /* Sampling interval: every N-th kmalloc is checked (default 1/100) */
 #define KFENCE_SAMPLE_INTERVAL 100
 
+/* Quarantine depth: freed objects are not reusable until this many
+ * subsequent KFENCE allocations have passed. This provides a window
+ * for use-after-free detection — a dangling pointer is far more
+ * likely to hit a still-quarantined object than one reused instantly. */
+#define KFENCE_QUARANTINE_DEPTH 64
+
 /* Total pool size = objects * (object_size + 2 * page_size for guards) */
 #define KFENCE_POOL_SIZE  (KFENCE_NUM_OBJECTS * (KFENCE_OBJECT_SIZE + 2 * PAGE_SIZE))
 
@@ -59,6 +68,7 @@ struct kfence_object {
     uint32_t size;             /* Allocated size (may be < KFENCE_OBJECT_SIZE) */
     uint32_t in_use;           /* 1 = currently allocated */
     uint32_t free_count;       /* Number of times freed (0 = allocated, 1+ = freed) */
+    uint32_t quarantine_remaining; /* Quarantine countdown; 0 = ready for reuse */
     uint32_t alloc_tick;       /* Timer tick at allocation */
     uint32_t free_tick;        /* Timer tick at free */
     uint8_t  canary[8];        /* Canary bytes at start/end of object */
@@ -173,6 +183,7 @@ static void kfence_init(void)
         obj->size = 0;
         obj->in_use = 0;
         obj->free_count = 0;
+        obj->quarantine_remaining = 0;
 
         /* Mark guard pages as non-present in page tables */
         /* (In a real implementation, we'd unmap these pages) */
@@ -198,12 +209,18 @@ static void *kfence_alloc(uint64_t size)
 
     spinlock_acquire(&kfence_lock);
 
-    /* Find a free object */
+    /* Decrement quarantine counters for all freed objects, and find
+     * the first object that is free (not in use, not quarantined). */
     int idx = -1;
     for (int i = 0; i < KFENCE_NUM_OBJECTS; i++) {
-        if (!kfence_objects[i].in_use) {
-            idx = i;
-            break;
+        struct kfence_object *obj = &kfence_objects[i];
+        if (!obj->in_use) {
+            if (obj->quarantine_remaining > 0) {
+                obj->quarantine_remaining--;
+            }
+            if (obj->quarantine_remaining == 0 && idx < 0) {
+                idx = i;
+            }
         }
     }
 
@@ -287,6 +304,7 @@ static int kfence_free(void *ptr)
     obj->in_use = 0;
     obj->free_count++;
     obj->free_tick = (uint32_t)timer_get_ticks();
+    obj->quarantine_remaining = KFENCE_QUARANTINE_DEPTH;
 
     /* Poison the object to detect use-after-free */
     memset((void *)PHYS_TO_VIRT(obj->addr), 0xFB, KFENCE_OBJECT_SIZE);
