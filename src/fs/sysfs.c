@@ -269,6 +269,17 @@ int sysfs_remove(const char *path)
     if (idx < 0)
         return -EINVAL;
 
+    /* Prevent removal of directories that still have children.
+     * This maintains proper kobject lifetime semantics: a parent must
+     * outlive its children.  Callers should use sysfs_remove_recursive
+     * to remove a directory and all its descendants. */
+    if (sysfs_entries[idx].type == 2) {
+        for (int i = 1; i < SYSFS_MAX_ENTRIES; i++) {
+            if (sysfs_entries[i].in_use && sysfs_entries[i].parent == idx)
+                return -ENOTEMPTY;
+        }
+    }
+
     /* Invoke the release callback before tearing down the entry.
      * The callback can still access all entry fields, including priv,
      * so it can properly release any dynamically allocated resources. */
@@ -301,10 +312,37 @@ static void sysfs_clear_entry(int idx)
 }
 
 /*
+ * sysfs_clear_children — Recursively clear all children of @idx.
+ *
+ * Walks the entry table and removes every entry whose parent chain
+ * leads to @idx.  The @depth parameter acts as a safety counter for
+ * kref-cycle detection: if it exceeds the total number of possible
+ * entries, we bail out to prevent infinite recursion in case of a
+ * parent-pointer cycle.
+ */
+static void sysfs_clear_children(int idx, int depth)
+{
+    /* Kref cycle detection: prevent infinite recursion */
+    if (depth > SYSFS_MAX_ENTRIES)
+        return;
+
+    for (int i = 1; i < SYSFS_MAX_ENTRIES; i++) {
+        if (!sysfs_entries[i].in_use)
+            continue;
+        if (sysfs_entries[i].parent == idx) {
+            if (sysfs_entries[i].type == 2)
+                sysfs_clear_children(i, depth + 1);
+            sysfs_clear_entry(i);
+        }
+    }
+}
+
+/*
  * sysfs_remove_recursive — Remove a directory and all its children.
  *
  * Iterates all entries; removes any whose parent chain leads to @path.
  * The directory itself is removed last.
+ * Uses a depth-limited recursive walk with kref cycle detection.
  */
 int sysfs_remove_recursive(const char *path)
 {
@@ -317,31 +355,8 @@ int sysfs_remove_recursive(const char *path)
     if (sysfs_entries[idx].type != 2)
         return -EINVAL; /* Not a directory */
 
-    /* Remove all children recursively (multi-pass because children may have children) */
-    int changed;
-    do {
-        changed = 0;
-        for (int i = 1; i < SYSFS_MAX_ENTRIES; i++) {
-            if (!sysfs_entries[i].in_use)
-                continue;
-
-            /* Check if this entry's parent is the target dir */
-            if (sysfs_entries[i].parent == idx) {
-                if (sysfs_entries[i].type == 2) {
-                    /* Directory child — remove children of this child too */
-                    int sub_idx = i;
-                    for (int j = 1; j < SYSFS_MAX_ENTRIES; j++) {
-                        if (sysfs_entries[j].in_use && sysfs_entries[j].parent == sub_idx) {
-                            sysfs_clear_entry(j);
-                        }
-                    }
-                }
-                /* Remove the child entry itself */
-                sysfs_clear_entry(i);
-                changed = 1;
-            }
-        }
-    } while (changed);
+    /* Recursively remove all children with depth-limited cycle detection */
+    sysfs_clear_children(idx, 0);
 
     /* Finally remove the directory itself */
     sysfs_clear_entry(idx);
