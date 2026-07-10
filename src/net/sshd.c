@@ -515,6 +515,7 @@ static void handle_channel_data(struct ssh_session *s, const uint8_t *data, int 
             ses_flush(s);
             process_command(s);
             s->cmd_len = 0;
+            if (!s->active) break;
             continue;
         }
 
@@ -862,8 +863,19 @@ static void process_ssh_data(struct ssh_session *s, const uint8_t *data, int len
                 break;
         }
 
+        /* Session may have been deactivated by the handler above
+         * (e.g. SSH_MSG_CHANNEL_CLOSE or "exit" command).  If so,
+         * stop processing immediately to avoid accessing a session
+         * slot that could be reused by a new connection's SYN
+         * arriving in the same net_poll batch. */
+        if (!s->active) break;
+
         consumed += total_pkt;
     }
+
+    /* If the session was deactivated mid-dispatch, skip buffer
+     * management — the slot may have been reused. */
+    if (!s->active) return;
 
     /* Remove consumed data */
     if (consumed > 0 && consumed < s->recv_len) {
