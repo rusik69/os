@@ -9,6 +9,7 @@ struct hrtimer {
     void (*function)(void *);
     void *data;
     int state;
+    int timer_id;   /* underlying dynamic timer slot, -1 if not scheduled */
 };
 enum hrtimer_restart { HRTIMER_NORESTART, HRTIMER_RESTART };
 void hrtimer_init(struct hrtimer *timer, void (*function)(void *), void *data);

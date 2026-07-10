@@ -17,12 +17,19 @@ void hrtimer_init(struct hrtimer *timer, void (*function)(void *), void *data)
     timer->function = function;
     timer->data = data;
     timer->state = 0;
+    timer->timer_id = -1;
 }
 
 int hrtimer_start(struct hrtimer *timer, uint64_t ns)
 {
     if (!timer || !timer->function) return -1;
     if (!timer_available()) return -1;
+
+    /* Cancel any previously-scheduled underlying timer first */
+    if (timer->timer_id >= 0) {
+        timer_cancel(timer->timer_id);
+        timer->timer_id = -1;
+    }
 
     /* Convert nanoseconds to ticks (assuming ~1 GHz TSC, 1 tick ≈ 1 ns) */
     uint64_t delay_ticks = ns;
@@ -31,6 +38,7 @@ int hrtimer_start(struct hrtimer *timer, uint64_t ns)
     int tid = timer_schedule(timer->function, timer->data, delay_ticks);
     if (tid < 0) return -1;
 
+    timer->timer_id = tid;
     timer->expires = ns;
     timer->state = 1;
     return 0;
@@ -39,6 +47,10 @@ int hrtimer_start(struct hrtimer *timer, uint64_t ns)
 int hrtimer_cancel(struct hrtimer *timer)
 {
     if (!timer) return -1;
+    if (timer->timer_id >= 0) {
+        timer_cancel(timer->timer_id);
+        timer->timer_id = -1;
+    }
     timer->state = 0;
     return 0;
 }
