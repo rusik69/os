@@ -848,7 +848,9 @@ static int virtio_gpu_ctx_create(const char *name, uint32_t name_len)
     cmd.padding  = 0;
     memcpy(cmd.name, name, name_len);
 
-    ret = gpu_send_cmd(&cmd.hdr, 68, &cmd.nlen, &resp, 0);
+    ret = gpu_send_cmd(&cmd.hdr,
+                        sizeof(cmd) - sizeof(cmd.hdr),
+                        &cmd.nlen, &resp, 0);
     if (ret < 0) {
         kprintf("[VIRTIO-GPU] ctx_create(0x%04X) failed: %d\n",
                 (unsigned int)ctx->id, ret);
@@ -1028,7 +1030,9 @@ static int virtio_gpu_resource_create_3d(uint32_t resource_id,
             (unsigned int)format, (unsigned int)width, (unsigned int)height,
             (unsigned int)depth, (unsigned int)level);
 
-    ret = gpu_send_cmd(&cmd.hdr, 0, NULL, &resp, 0);
+    ret = gpu_send_cmd(&cmd.hdr,
+                        sizeof(cmd) - sizeof(cmd.hdr),
+                        &cmd.resource_id, &resp, 0);
     if (ret < 0) {
         kprintf("[VIRTIO-GPU] resource_create_3d(0x%04X) failed: %d\n",
                 (unsigned int)res->id, ret);
@@ -1064,6 +1068,11 @@ static int virtio_gpu_resource_create_blob(uint32_t resource_id,
     if (!gpu_present)
         return -ENODEV;
 
+    /* Check if this resource_id is already in use or allocate new */
+    res = gpu_find_resource(resource_id);
+    if (res)
+        return -EEXIST;
+
     res = gpu_alloc_resource();
     if (!res)
         return -ENOMEM;
@@ -1086,7 +1095,9 @@ static int virtio_gpu_resource_create_blob(uint32_t resource_id,
             (unsigned int)res->id, (unsigned int)blob_mem,
             (unsigned int)blob_flags, blob_id, size);
 
-    ret = gpu_send_cmd(&cmd.hdr, 0, NULL, &resp, 0);
+    ret = gpu_send_cmd(&cmd.hdr,
+                        sizeof(cmd) - sizeof(cmd.hdr),
+                        &cmd.resource_id, &resp, 0);
     if (ret < 0) {
         kprintf("[VIRTIO-GPU] resource_create_blob(0x%04X) failed: %d\n",
                 (unsigned int)res->id, ret);
