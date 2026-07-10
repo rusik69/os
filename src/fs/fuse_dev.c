@@ -200,20 +200,17 @@ int fuse_dev_wait_for_response(uint64_t unique,
             }
         }
 
-        spinlock_irqsave_release(&g_fuse_dev.lock, irq_flags);
+        if (!found) {
+            spinlock_irqsave_release(&g_fuse_dev.lock, irq_flags);
+            return -ENOENT;
+        }
 
-        if (!found)
-            return -ENOENT; /* request was already dequeued and lost? */
-
-        /* Save the response pointers from the item */
-        spinlock_irqsave_acquire(&g_fuse_dev.lock, &irq_flags);
+        /* Response already arrived — extract it while holding the lock */
         if (item->resp_hdr) {
-            /* Response has arrived */
             *out_resp = item->resp_hdr;
             *out_resp_arg = item->resp_arg;
             *out_resp_arg_size = item->resp_arg_size;
 
-            /* Remove item from queue and free */
             list_del(&item->list);
             g_fuse_dev.queue_count--;
             if (item->hdr) kfree(item->hdr);
@@ -221,9 +218,10 @@ int fuse_dev_wait_for_response(uint64_t unique,
             kfree(item);
             return 0;
         }
+
         spinlock_irqsave_release(&g_fuse_dev.lock, irq_flags);
 
-        /* Block until the completion fires */
+        /* Block until the daemon writes a response */
         completion_wait(&item->complete);
     }
 }
