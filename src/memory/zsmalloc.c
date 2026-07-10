@@ -127,6 +127,11 @@ static void *zsmalloc_alloc(int pool_id, size_t size)
     }
 
     /* Allocate a new page */
+    if (pool->nr_pages >= 256) {
+        spinlock_irqsave_release(&pool->lock, irq_flags);
+        return NULL;
+    }
+
     uint64_t frame = pmm_alloc_frame();
     if (!frame) {
         spinlock_irqsave_release(&pool->lock, irq_flags);
@@ -140,7 +145,7 @@ static void *zsmalloc_alloc(int pool_id, size_t size)
         return NULL;
     }
 
-    zp->page = (uint8_t *)PHYS_TO_VIRT(frame << 12);
+    zp->page = (uint8_t *)PHYS_TO_VIRT(frame);
     memset(zp->page, 0, 4096);
 
     zp->nr_objs = pool->classes[class_idx].objs_per_page;
@@ -159,8 +164,7 @@ static void *zsmalloc_alloc(int pool_id, size_t size)
     zp->nr_free = zp->nr_objs - 1;
     zp->in_use = 1;
 
-    if (pool->nr_pages < 256)
-        pool->pages[pool->nr_pages++] = zp;
+    pool->pages[pool->nr_pages++] = zp;
 
     void *obj = zp->page;
     spinlock_irqsave_release(&pool->lock, irq_flags);
@@ -258,7 +262,7 @@ static int zs_destroy_pool(void *pool)
         if (p->pages[i]) {
             struct zsmalloc_page *zp = p->pages[i];
             if (zp->page) {
-                pmm_free_frame((uint64_t)(uintptr_t)zp->page);
+                pmm_free_frame(VIRT_TO_PHYS((uint64_t)(uintptr_t)zp->page));
                 zp->page = NULL;
             }
             if (zp->obj_table) {
