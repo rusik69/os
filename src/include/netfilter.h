@@ -104,6 +104,13 @@ struct nf_conn {
     uint8_t  timeout_idx;    /* index into per-protocol timeout table */
     uint8_t  used;
 
+    /* Reference count for external callers (get/put API).
+     * Starts at 1 for the table's implicit reference.
+     * nf_conntrack_get increments; nf_conntrack_put decrements.
+     * Entry is freed when refcount reaches 0.
+     * nf_conntrack_purge only expires entries with refcount == 1. */
+    int      refcount;
+
     /* Counters */
     uint64_t packets;
     uint64_t bytes;

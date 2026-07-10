@@ -316,6 +316,7 @@ static struct nf_conn *conntrack_new(uint32_t src_ip, uint32_t dst_ip,
         c->dst_port = dst_port;
         c->protocol = protocol;
         c->used     = 1;
+        c->refcount = 1; /* table holds one implicit reference */
         c->last_seen = timer_get_ticks();
         c->timeout_ticks = 300; /* default 30 sec until state machine sets proper */
 
@@ -516,12 +517,13 @@ struct nf_conn *nf_conntrack_get(uint32_t src_ip, uint32_t dst_ip,
     struct nf_conn *conn = conntrack_find(src_ip, dst_ip,
                                           src_port, dst_port, protocol);
     if (!conn) {
-        /* New entry: conntrack_new sets last_seen and timeout_ticks (300) */
+        /* New entry: conntrack_new sets last_seen, timeout_ticks (300), and refcount (1) */
         conn = conntrack_new(src_ip, dst_ip, src_port, dst_port, protocol);
     } else {
         /* Existing entry: extend lifetime without clobbering the
          * protocol-appropriate timeout (e.g., TCP ESTABLISHED = 5 days). */
         conn->last_seen = timer_get_ticks();
+        conn->refcount++; /* take an additional reference for the caller */
     }
     spinlock_release(&nf_conn_lock);
     return conn;
@@ -531,7 +533,16 @@ void nf_conntrack_put(struct nf_conn *conn)
 {
     if (!conn) return;
     spinlock_acquire(&nf_conn_lock);
-    conn->last_seen = timer_get_ticks();
+    if (conn->refcount > 0) {
+        conn->refcount--;
+        if (conn->refcount == 0) {
+            /* Last reference released — free the entry */
+            conn->used = 0;
+            nf_conn_count--;
+            nf_stats.total_destroys++;
+            nf_stats.current_active = (uint64_t)nf_conn_count;
+        }
+    }
     spinlock_release(&nf_conn_lock);
 }
 
@@ -558,8 +569,11 @@ void nf_conntrack_purge(void)
         struct nf_conn *c = &nf_conns[i];
         if (!c->used) continue;
 
-        /* Check if the connection has been idle longer than its timeout */
-        if ((uint64_t)(now - c->last_seen) > c->timeout_ticks) {
+        /* Check if the connection has been idle longer than its timeout.
+         * Only expire entries with no external references (refcount == 1). */
+        if (c->refcount == 1 &&
+            (uint64_t)(now - c->last_seen) > c->timeout_ticks) {
+            c->refcount = 0;
             c->used = 0;
             nf_conn_count--;
             nf_stats.total_expired++;
@@ -568,10 +582,12 @@ void nf_conntrack_purge(void)
 
         /* TCP state machine quiescence: if connection appears closed
          * (proto_state == NONE), but hasn't been freed yet, expire it
-         * after a short grace period. */
+         * after a short grace period.  Only if no external references. */
         if (c->used && c->protocol == IPPROTO_TCP &&
             c->proto_state == TCP_CONN_NONE &&
+            c->refcount == 1 &&
             (uint64_t)(now - c->last_seen) > 120) {
+            c->refcount = 0;
             c->used = 0;
             nf_conn_count--;
             nf_stats.total_destroys++;
@@ -643,7 +659,16 @@ static int conntrack_destroy(void *ct)
         return -EALREADY;
     }
 
+    /* Don't destroy if external callers still hold references */
+    if (conn->refcount > 1) {
+        spinlock_release(&nf_conn_lock);
+        kprintf("[conntrack] conntrack_destroy: still referenced (%d)\n",
+                conn->refcount);
+        return -EBUSY;
+    }
+
     /* Mark the connection as unused and update counters */
+    conn->refcount = 0;
     conn->used = 0;
     nf_conn_count--;
     nf_stats.total_destroys++;
@@ -698,6 +723,7 @@ static int conntrack_flush(void)
     for (int i = 0; i < NF_CONNTRACK_MAX; i++) {
         if (nf_conns[i].used) {
             nf_conns[i].used = 0;
+            nf_conns[i].refcount = 0;
             flushed++;
         }
     }
