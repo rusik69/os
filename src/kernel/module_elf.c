@@ -1520,8 +1520,6 @@ int module_elf_finalize(struct module_elf_context *ctx, const char *name)
         kprintf("[MOD] ERROR: '%s' init returned %d — unloading\n",
                 mod_name, init_ret);
         module_unload(mod_id);
-        if (base != 0 && total_size > 0)
-            module_free_region(base, total_size);
         snprintf(ctx->error_msg, sizeof(ctx->error_msg),
                  "module_elf: init function for '%s' returned %d",
                  mod_name, init_ret);

@@ -644,6 +644,13 @@ int module_unload(int module_id) {
             module_put(dep_mod);
     }
 
+    /* Remove sysfs parameter entries BEFORE freeing module memory,
+     * so no reader/writer can access module data after it's freed.
+     * Call outside the lock since sysfs may have its own locking. */
+    spinlock_irqsave_release(&g_mod_lock, irq_flags);
+    module_sysfs_remove_params(mod);
+    spinlock_irqsave_acquire(&g_mod_lock, &irq_flags);
+
     /* Free module memory region */
     if (mod->base_addr != 0 && mod->size > 0) {
         module_free_region(mod->base_addr, mod->size);
