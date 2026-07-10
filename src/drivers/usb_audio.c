@@ -300,6 +300,10 @@ static int g_initialized = 0;
 /*
  * Send an audio class-specific control request to a feature unit.
  *
+ * UAC1 encoding (USB Audio 1.0 §5.2.1):
+ *   wValue  = (ControlSelector << 8) | ChannelNumber
+ *   wIndex  = (EntityID << 8) | InterfaceNumber
+ *
  * @dev_addr:    USB device address
  * @iface:       AudioControl interface number
  * @entity_id:   Feature Unit entity ID (bUnitID)
@@ -324,11 +328,11 @@ static int audio_feature_unit_request(uint8_t dev_addr, uint8_t iface,
 	else
 		bmReqType = AUDIO_REQTYPE_SET_CUR;
 
-	/* CS = channel << 8, entity ID = low byte */
-	wValue = ((uint16_t)selector << 8) | (uint16_t)entity_id;
+	/* UAC1: wValue = (selector << 8) | channel */
+	wValue = ((uint16_t)selector << 8) | (uint16_t)channel;
 
-	/* For per-channel controls, channel number is in wIndex high byte */
-	uint16_t wIndex = (uint16_t)iface | ((uint16_t)channel << 8);
+	/* UAC1: wIndex = (entity_id << 8) | iface */
+	uint16_t wIndex = ((uint16_t)entity_id << 8) | (uint16_t)iface;
 
 	return usb_control_msg(dev_addr, bmReqType, request,
 			       wValue, wIndex, len, data);
