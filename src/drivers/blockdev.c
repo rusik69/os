@@ -15,6 +15,49 @@ static struct blk_request_queue g_queues[BLOCKDEV_MAX_DEVICES];
 static spinlock_t g_dev_lock;
 static int g_initialized = 0;
 
+/* ── Device reference counting ────────────────────────────────────── */
+
+/**
+ * blockdev_get — Acquire a reference on a block device.
+ * Returns 0 on success, -EINVAL if the device is not active.
+ * Must be called with g_dev_lock NOT held (it acquires it internally).
+ * The caller must hold q->lock or otherwise ensure no concurrent
+ * unregistration can happen between the active check and get. */
+static int blockdev_get(int dev_id)
+{
+    if (dev_id < 0 || dev_id >= BLOCKDEV_MAX_DEVICES)
+        return -EINVAL;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_dev_lock, &irq_flags);
+
+    if (!g_blockdevs[dev_id].active) {
+        spinlock_irqsave_release(&g_dev_lock, irq_flags);
+        return -EINVAL;
+    }
+
+    g_blockdevs[dev_id].refcount++;
+    spinlock_irqsave_release(&g_dev_lock, irq_flags);
+    return 0;
+}
+
+/**
+ * blockdev_put — Release a reference on a block device.
+ * Safe to call with an inactive device (e.g. after unregister). */
+static void blockdev_put(int dev_id)
+{
+    if (dev_id < 0 || dev_id >= BLOCKDEV_MAX_DEVICES)
+        return;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_dev_lock, &irq_flags);
+
+    if (g_blockdevs[dev_id].refcount > 0)
+        g_blockdevs[dev_id].refcount--;
+
+    spinlock_irqsave_release(&g_dev_lock, irq_flags);
+}
+
 /* ── Request slab cache ───────────────────────────────────────────── */
 
 struct blk_request *blk_request_alloc(void) {
@@ -269,13 +312,20 @@ int blockdev_stats_format(char *buf, int size, int dev)
 int blk_submit_async(struct blk_request *req) {
     if (!req || !g_initialized) return -EINVAL;
     int dev_id = req->dev_id;
-    if (dev_id < 0 || dev_id >= BLOCKDEV_MAX_DEVICES || !g_blockdevs[dev_id].active)
+    if (dev_id < 0 || dev_id >= BLOCKDEV_MAX_DEVICES)
         return -EINVAL;
 
     struct blk_request_queue *q = &g_queues[dev_id];
 
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&q->lock, &irq_flags);
+
+    /* Re-check device active state under the queue lock to prevent
+     * TOCTOU races with blockdev_unregister(). */
+    if (!g_blockdevs[dev_id].active) {
+        spinlock_irqsave_release(&q->lock, irq_flags);
+        return -EINVAL;
+    }
 
     req->result = 0;
     req->inflight = 0;
@@ -284,6 +334,17 @@ int blk_submit_async(struct blk_request *req) {
     uint64_t start_ticks = timer_get_ticks();
 
     if (q->inflight_count == 0 && q->queued_count == 0) {
+        /* Take a device reference before dispatching to the driver.
+         * Released in blk_request_done() (async) or below (sync).
+         * We check the return value: if the device was deactivated
+         * between our active check and acquiring g_dev_lock via
+         * blockdev_get, the reference acquisition fails and we
+         * return -EINVAL without mutating any state. */
+        if (blockdev_get(dev_id) < 0) {
+            spinlock_irqsave_release(&q->lock, irq_flags);
+            return -EINVAL;
+        }
+
         req->inflight = 1;
         q->inflight_count++;
         blockdev_track_inflight(dev_id, 1);  /* Track I/O dispatch */
@@ -293,6 +354,7 @@ int blk_submit_async(struct blk_request *req) {
             req->inflight = 0;
             q->inflight_count--;
             blockdev_track_inflight(dev_id, -1);  /* Undo the dispatch tracking */
+            blockdev_put(dev_id);
             req->result = -1;
             req->done = 1;
             if (req->done_wq) {
@@ -307,12 +369,14 @@ int blk_submit_async(struct blk_request *req) {
         uint64_t elapsed_ms = elapsed_ticks * 1000 / TIMER_FREQ;
 
         if (g_blockdevs[dev_id].flags & BLK_DRIVER_ASYNC) {
-            /* Driver will call blk_request_done() asynchronously */
+            /* Driver will call blk_request_done() asynchronously —
+             * the device reference is released there. */
             return ret < 0 ? ret : 0;
         }
 
         q->inflight_count--;
         blockdev_track_inflight(dev_id, -1);
+        blockdev_put(dev_id);
         req->done = 1;
 
         /* Update stats for synchronous completion */
@@ -328,6 +392,12 @@ int blk_submit_async(struct blk_request *req) {
         return ret < 0 ? ret : 0;
     }
 
+    /* Queue path: acquire device ref BEFORE inserting into the queue
+     * so we don't have to undo the insertion on failure. */
+    if (blockdev_get(dev_id) < 0) {
+        spinlock_irqsave_release(&q->lock, irq_flags);
+        return -EINVAL;
+    }
     queue_insert(q, req);
     spinlock_irqsave_release(&q->lock, irq_flags);
     return 0;
@@ -551,6 +621,10 @@ void blk_request_done(struct blk_request *req) {
     /* Track I/O completion for statistics */
     blockdev_track_inflight(req->dev_id, -1);
 
+    /* Release the device reference taken by blk_submit_async()
+     * when this request was dispatched. */
+    blockdev_put(req->dev_id);
+
     if (req->done_wq) {
         wait_queue_wake(req->done_wq);
     }
@@ -583,15 +657,23 @@ struct blk_request *blk_request_deadline_peek(struct blk_request_queue *q) {
 }
 
 static void drain_queue(struct blk_request_queue *q) {
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&q->lock, &irq_flags);
+
     struct blk_request *req = q->head;
     while (req) {
         struct blk_request *next = req->next;
+        /* Release the device reference that was taken when this
+         * request was submitted via blk_submit_async(). */
+        blockdev_put(q->dev_id);
         kfree(req);
         req = next;
     }
     q->head = NULL;
     q->tail = NULL;
     q->queued_count = 0;
+
+    spinlock_irqsave_release(&q->lock, irq_flags);
 }
 
 /* ── Public API ───────────────────────────────────────────────────── */
@@ -614,8 +696,30 @@ int blockdev_register(int id, const char *name,
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&g_dev_lock, &irq_flags);
 
+    /* If the device has active references (in-flight I/O from a prior
+     * lifecycle), we cannot safely reuse the slot.  References are held
+     * for every queued or dispatched request and released only when
+     * blk_request_done() or drain_queue() runs. */
+    if (g_blockdevs[id].refcount > 0) {
+        spinlock_irqsave_release(&g_dev_lock, irq_flags);
+        return -EBUSY;
+    }
+
     if (g_blockdevs[id].active) {
+        /* Drop g_dev_lock before drain_queue to keep the lock ordering
+         * consistent: q->lock → g_dev_lock.  drain_queue holds q->lock
+         * internally, so calling it under g_dev_lock would invert the
+         * ordering used by blk_submit_async. */
+        spinlock_irqsave_release(&g_dev_lock, irq_flags);
         drain_queue(&g_queues[id]);
+        spinlock_irqsave_acquire(&g_dev_lock, &irq_flags);
+
+        /* Re-check: a concurrent blk_submit_async might have submitted
+         * a request during our drain window. */
+        if (g_blockdevs[id].refcount > 0) {
+            spinlock_irqsave_release(&g_dev_lock, irq_flags);
+            return -EBUSY;
+        }
     }
 
     g_blockdevs[id].active = 1;
@@ -624,6 +728,7 @@ int blockdev_register(int id, const char *name,
     g_blockdevs[id].idle_fn = idle_fn;
     g_blockdevs[id].sector_count = sector_count;
     g_blockdevs[id].sector_size = 512;
+    g_blockdevs[id].refcount = 0;
 
     /* Zero out stats */
     memset(&g_blockdevs[id].stats, 0, sizeof(struct blockdev_stats));
@@ -643,6 +748,7 @@ int blockdev_register(int id, const char *name,
     q->dev_id = (uint8_t)id;
     q->queued_count = 0;
     q->inflight_count = 0;
+    q->batch_done = 0;
 
     spinlock_irqsave_release(&g_dev_lock, irq_flags);
     return 0;
@@ -719,8 +825,14 @@ int blockdev_unregister(int id) {
     g_blockdevs[id].active = 0;
     g_blockdevs[id].submit_fn = NULL;
     g_blockdevs[id].idle_fn = NULL;
-    drain_queue(&g_queues[id]);
     spinlock_irqsave_release(&g_dev_lock, irq_flags);
+
+    /* Drain queue outside g_dev_lock to avoid lock ordering inversion:
+     * drain_queue acquires q->lock, while blk_submit_async holds q->lock
+     * when it calls blockdev_get (which acquires g_dev_lock).
+     * Dropping g_dev_lock before drain_queue ensures the locking order
+     * is consistently q->lock → g_dev_lock everywhere. */
+    drain_queue(&g_queues[id]);
     return 0;
 }
 

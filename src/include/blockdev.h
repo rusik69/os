@@ -139,6 +139,11 @@ struct blockdev_entry {
     /* Transfer limits (Item 328: bio splitting for large requests) */
     uint32_t max_transfer;   /* maximum sectors per I/O (0 = unlimited) */
 
+    /* Reference count — prevents slot reuse while in-flight I/O exists.
+     * Incremented for every queued or in-flight request. Protected by
+     * g_dev_lock in blockdev.c. */
+    int            refcount;
+
     /* SCSI pass-through command callback (NULL if not SCSI-capable) */
     scsi_submit_cmd_fn scsi_cmd_fn;
 };
