@@ -167,9 +167,15 @@ static int erofs_read_compressed_extent(uint64_t ino, uint64_t offset,
         }
 
         if (extent_type == EROFS_EXTENT_INLINE) {
-            /* Inline data: data is stored within the inode itself */
-            uint32_t inline_off = sizeof(struct erofs_inode_extended);
-            if (inline_off + block_off + copy > erofs_data_size) {
+            /* Inline data: stored immediately after this inode in the inode
+             * table. Compute the offset using the inode's NID (compact index).
+             */
+            uint32_t nid = (uint32_t)ino;
+            size_t inode_offset = sizeof(struct erofs_superblock)
+                + (size_t)nid * sizeof(struct erofs_inode_extended);
+            size_t inline_off = inode_offset + sizeof(struct erofs_inode_extended);
+            if (block_off + copy > erofs_data_size ||
+                inline_off + block_off + copy > erofs_data_size) {
                 memset(buf + read_off, 0, copy);
             } else {
                 memcpy(buf + read_off,
