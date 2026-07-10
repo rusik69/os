@@ -515,11 +515,13 @@ struct nf_conn *nf_conntrack_get(uint32_t src_ip, uint32_t dst_ip,
     spinlock_acquire(&nf_conn_lock);
     struct nf_conn *conn = conntrack_find(src_ip, dst_ip,
                                           src_port, dst_port, protocol);
-    if (!conn)
+    if (!conn) {
+        /* New entry: conntrack_new sets last_seen and timeout_ticks (300) */
         conn = conntrack_new(src_ip, dst_ip, src_port, dst_port, protocol);
-    if (conn) {
+    } else {
+        /* Existing entry: extend lifetime without clobbering the
+         * protocol-appropriate timeout (e.g., TCP ESTABLISHED = 5 days). */
         conn->last_seen = timer_get_ticks();
-        conn->timeout_ticks = 300; /* reset timeout */
     }
     spinlock_release(&nf_conn_lock);
     return conn;
