@@ -35,15 +35,34 @@ static void stackleak_poison_stack(void)
     struct process *p = process_get_current();
     if (!p) return;
 
-    /* Determine stack boundaries from the process descriptor.
-     * Kernel stack grows downward from stack_top. */
     uint64_t *stack_base = (uint64_t *)p->kernel_stack;
     if (!stack_base) return;
 
-    /* Poison the entire kernel stack region. In a more refined
-     * implementation we would track the exact high-water mark. */
-    int stack_words = STACKLEAK_STACK_SIZE / sizeof(uint64_t);
-    for (int i = 0; i < stack_words; i++) {
+    /*
+     * Read the current stack pointer.  The kernel stack grows downward
+     * from stack_top toward kernel_stack (base).  Everything at addresses
+     * below current RSP is stale data from earlier call frames; everything
+     * at or above RSP is actively live and MUST NOT be poisoned.
+     *
+     * We poison only the stale region: [kernel_stack, rsp - margin).
+     * The margin protects this function's own stack frame and any
+     * registers the compiler saved on entry.
+     */
+    uint64_t current_rsp;
+    __asm__ volatile("mov %%rsp, %0" : "=r"(current_rsp));
+
+    const uint64_t margin = 256;  /* safety headroom */
+
+    /* Bail if the stack pointer is too close to the base to poison
+     * safely — there must be at least margin bytes between them. */
+    if (current_rsp <= p->kernel_stack + margin)
+        return;
+
+    uint64_t poison_end = current_rsp - margin;
+    size_t poison_bytes = poison_end - p->kernel_stack;
+    size_t poison_words = poison_bytes / sizeof(uint64_t);
+
+    for (size_t i = 0; i < poison_words; i++) {
         stack_base[i] = STACKLEAK_POISON_VALUE;
     }
 
