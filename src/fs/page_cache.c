@@ -10,6 +10,10 @@
 #include "timer.h"
 #include "spinlock.h"
 
+#ifndef UINT32_MAX
+#define UINT32_MAX 4294967295U
+#endif
+
 /* ── Page cache: generic file data caching in memory ─────────────────── */
 
 /* Hash table for fast cache entry lookup */
@@ -715,7 +719,9 @@ int page_cache_readahead(uint64_t ino, uint64_t start_block, int count,
         uint8_t tmp[PAGE_SIZE];
 
         /* Read from backing store */
-        if (backing_store((uint32_t)blk, 1, tmp) < 0)
+        uint64_t lba = blk * (PAGE_SIZE / 512);
+        if (lba > UINT32_MAX) break;
+        if (backing_store((uint32_t)lba, (uint8_t)(PAGE_SIZE / 512), tmp) < 0)
             break;  /* probably end of file — stop */
 
         /* Add to cache */
@@ -764,8 +770,9 @@ int page_cache_read(uint64_t ino, uint64_t block, void *buf,
         return -ENOENT;
 
     uint8_t tmp[PAGE_SIZE];
-    if (block > 0xFFFFFFFFULL) return -EOVERFLOW;
-    if (backing_store((uint32_t)block, 1, tmp) < 0)
+    uint64_t lba = block * (PAGE_SIZE / 512);
+    if (lba > UINT32_MAX) return -EOVERFLOW;
+    if (backing_store((uint32_t)lba, (uint8_t)(PAGE_SIZE / 512), tmp) < 0)
         return -EIO;
 
     /* Store in page cache (best-effort — may fail on full cache) */
