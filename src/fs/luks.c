@@ -25,6 +25,25 @@
 
 /* ── Big-endian helpers ──────────────────────────────────────────── */
 
+static uint16_t be16_to_cpu(const uint8_t *b)
+{
+    return ((uint16_t)b[0] << 8) | (uint16_t)b[1];
+}
+
+static uint32_t be32_to_cpu(const uint8_t *b)
+{
+    return ((uint32_t)b[0] << 24) | ((uint32_t)b[1] << 16) |
+           ((uint32_t)b[2] << 8)  | (uint32_t)b[3];
+}
+
+static uint64_t be64_to_cpu(const uint8_t *b)
+{
+    return ((uint64_t)b[0] << 56) | ((uint64_t)b[1] << 48) |
+           ((uint64_t)b[2] << 40) | ((uint64_t)b[3] << 32) |
+           ((uint64_t)b[4] << 24) | ((uint64_t)b[5] << 16) |
+           ((uint64_t)b[6] << 8)  | (uint64_t)b[7];
+}
+
 /* LUKS2 constants */
 #define LUKS2_MAGIC       "LUKS\xBA\xBE"
 #define LUKS2_MAGIC_LEN   6
@@ -44,7 +63,7 @@ struct luks2_header {
     uint8_t  uuid[40];
     uint8_t  subsystem[48];
     uint32_t hdr_offset;    /* offset of this header (0 or 4096) */
-    uint8_t  _pad[184];     /* padding to 512 bytes */
+    uint8_t  _pad[256];     /* padding to 512 bytes (should be 512 − 256 = 256) */
     /* After this, JSON area starts at offset 512 */
 } __attribute__((packed));
 
@@ -72,14 +91,18 @@ static int luks2_parse_header(int dev_id, struct luks_header *hdr)
         return -EINVAL;
     }
 
+    /* Byte-swap multi-byte fields (LUKS2 uses big-endian on-disk) */
+    uint64_t seqid = be64_to_cpu((const uint8_t *)&h2->seqid);
+    uint32_t hdr_size = be32_to_cpu((const uint8_t *)&h2->hdr_size);
+
     kprintf("[luks2] LUKS v2 header detected: seqid=%llu, hdr_size=%u\n",
-            (unsigned long long)h2->seqid, h2->hdr_size);
+            (unsigned long long)seqid, hdr_size);
 
     /* Parse JSON area (text after binary header, at offset 512) */
     /* The LUKS2 JSON area contains keyslot descriptions, cipher info, etc.
      * We do a simplified parse to find active keyslots. */
     char *json = (char *)(raw + 512);
-    uint32_t json_max = h2->hdr_size - 512;
+    uint32_t json_max = hdr_size - 512;
     if (json_max > LUKS2_MAX_JSON) json_max = LUKS2_MAX_JSON;
     json[json_max - 1] = '\0';
 
@@ -164,22 +187,11 @@ static int luks2_parse_header(int dev_id, struct luks_header *hdr)
 
     /* Set version and payload offset */
     hdr->version = 2;
-    hdr->payload_offset = (h2->hdr_size * 2) / 512; /* primary + secondary header */
+    hdr->payload_offset = (hdr_size * 2) / LUKS2_SECTOR_SIZE; /* primary + secondary header */
 
     kprintf("[luks2] Parsed: %d active keyslots, payload_offset=%u\n",
             keyslots_found, hdr->payload_offset);
     return 0;
-}
-
-static uint16_t be16_to_cpu(const uint8_t *b)
-{
-    return ((uint16_t)b[0] << 8) | (uint16_t)b[1];
-}
-
-static uint32_t be32_to_cpu(const uint8_t *b)
-{
-    return ((uint32_t)b[0] << 24) | ((uint32_t)b[1] << 16) |
-           ((uint32_t)b[2] << 8)  | (uint32_t)b[3];
 }
 
 /* ── PBKDF2-HMAC-SHA256 ─────────────────────────────────────────── */
