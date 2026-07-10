@@ -214,6 +214,7 @@ int fuse_dev_wait_for_response(uint64_t unique,
             list_del(&item->list);
             g_fuse_dev.queue_count--;
             if (item->hdr) kfree(item->hdr);
+            if (item->arg) kfree(item->arg);
             spinlock_irqsave_release(&g_fuse_dev.lock, irq_flags);
             kfree(item);
             return 0;
