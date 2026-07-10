@@ -326,6 +326,8 @@ void *bufcache_read(uint64_t lba, uint8_t dev_id) {
         return NULL;
     }
 
+    /* Pin the buffer for caller — refcount was 0 from cache_fill */
+    g_entries[victim].refcount++;
     spinlock_irqsave_release(&g_bc_lock, irq_flags);
     return g_entries[victim].data;
 }
@@ -526,24 +528,33 @@ void bufcache_invalidate(uint64_t lba, uint8_t dev_id) {
     spinlock_irqsave_acquire(&g_bc_lock, &irq_flags);
 
     int16_t idx = hash_lookup(lba, dev_id);
-    if (idx >= 0) {
-        struct bc_entry *e = &g_entries[idx];
-        if (e->dirty) {
-            blk_submit_sync(dev_id, lba, 1, e->data, BLK_REQ_WRITE);
-            g_writes++;
-            e->dirty = 0;
-        }
-        hash_remove(idx);
-        e->valid = 0;
-        lru_remove(idx);
-        /* Return to free pool at tail */
-        g_lru[idx].prev = g_lru_tail;
-        g_lru[idx].next = -1;
-        if (g_lru_tail >= 0) g_lru[g_lru_tail].next = (int16_t)idx;
-        g_lru_tail = (int16_t)idx;
-        if (g_lru_head < 0) g_lru_head = (int16_t)idx;
-        g_count--;
+    if (idx < 0) {
+        spinlock_irqsave_release(&g_bc_lock, irq_flags);
+        return;
     }
+
+    struct bc_entry *e = &g_entries[idx];
+    /* Cannot invalidate a pinned buffer */
+    if (e->refcount > 0) {
+        spinlock_irqsave_release(&g_bc_lock, irq_flags);
+        return;
+    }
+
+    if (e->dirty) {
+        blk_submit_sync(dev_id, lba, 1, e->data, BLK_REQ_WRITE);
+        g_writes++;
+        e->dirty = 0;
+    }
+    hash_remove(idx);
+    e->valid = 0;
+    lru_remove(idx);
+    /* Return to free pool at tail */
+    g_lru[idx].prev = g_lru_tail;
+    g_lru[idx].next = -1;
+    if (g_lru_tail >= 0) g_lru[g_lru_tail].next = (int16_t)idx;
+    g_lru_tail = (int16_t)idx;
+    if (g_lru_head < 0) g_lru_head = (int16_t)idx;
+    g_count--;
 
     spinlock_irqsave_release(&g_bc_lock, irq_flags);
 }
