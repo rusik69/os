@@ -1686,12 +1686,26 @@ static int acpi_load_ssdts(void)
             kprintf("[ACPI] SSDT: expected XSDT signature\n");
             return 0;
         }
+        /* Validate length before entry_count to prevent underflow
+         * from a corrupted header length field */
+        if (sdt_header->length < sizeof(struct acpi_header)) {
+            kprintf("[ACPI] SSDT: XSDT too short (%u bytes, need %zu)\n",
+                    (unsigned int)sdt_header->length, sizeof(struct acpi_header));
+            return 0;
+        }
         entry_count = (uint32_t)((sdt_header->length - sizeof(struct acpi_header)) / 8);
         entry_size  = 8;
     } else if (g_rsdp_cache.rsdt_addr != 0) {
         sdt_header = (struct acpi_header *)PHYS_TO_VIRT((uint64_t)g_rsdp_cache.rsdt_addr);
         if (!sdt_header) return 0;
         if (memcmp(sdt_header->signature, "RSDT", 4) != 0) return 0;
+        /* Validate length before entry_count to prevent underflow
+         * from a corrupted header length field */
+        if (sdt_header->length < sizeof(struct acpi_header)) {
+            kprintf("[ACPI] SSDT: RSDT too short (%u bytes, need %zu)\n",
+                    (unsigned int)sdt_header->length, sizeof(struct acpi_header));
+            return 0;
+        }
         entry_count = (uint32_t)((sdt_header->length - sizeof(struct acpi_header)) / 4);
         entry_size  = 4;
     }
@@ -1836,6 +1850,13 @@ static void *acpi_find_table(const char signature[4])
                     (unsigned long long)g_rsdp_cache.xsdt_addr);
             return NULL;
         }
+        /* Validate length before checksum and entry_count to prevent
+         * underflow/OOB from corrupted header fields */
+        if (sdt_header->length < sizeof(struct acpi_header)) {
+            kprintf("[ACPI] find_table: XSDT too short (%u bytes, need %zu)\n",
+                    (unsigned int)sdt_header->length, sizeof(struct acpi_header));
+            return NULL;
+        }
         /* Validate XSDT checksum */
         if (acpi_verify_checksum(sdt_header, sdt_header->length) < 0) {
             kprintf("[ACPI] find_table: XSDT checksum failed\n");
@@ -1854,6 +1875,13 @@ static void *acpi_find_table(const char signature[4])
         if (memcmp(sdt_header->signature, "RSDT", 4) != 0) {
             kprintf("[ACPI] find_table: expected RSDT signature at 0x%x\n",
                     (unsigned int)g_rsdp_cache.rsdt_addr);
+            return NULL;
+        }
+        /* Validate length before checksum and entry_count to prevent
+         * underflow/OOB from corrupted header fields */
+        if (sdt_header->length < sizeof(struct acpi_header)) {
+            kprintf("[ACPI] find_table: RSDT too short (%u bytes, need %zu)\n",
+                    (unsigned int)sdt_header->length, sizeof(struct acpi_header));
             return NULL;
         }
         /* Validate RSDT checksum */
@@ -1894,6 +1922,15 @@ static void *acpi_find_table(const char signature[4])
 
         /* Check signature match */
         if (memcmp(hdr->signature, signature, 4) == 0) {
+            /* Validate length before checksum to prevent OOB read
+             * from a corrupted length field */
+            if (hdr->length < sizeof(struct acpi_header)) {
+                kprintf("[ACPI] find_table('%.4s'): table at 0x%llx too short "
+                        "(%u bytes, need %zu)\n",
+                        signature, (unsigned long long)table_phys,
+                        (unsigned int)hdr->length, sizeof(struct acpi_header));
+                continue;
+            }
             /* Validate table checksum */
             if (acpi_verify_checksum(hdr, hdr->length) < 0) {
                 kprintf("[ACPI] find_table('%.4s'): table at 0x%llx "
