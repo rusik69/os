@@ -232,6 +232,14 @@ int zswap_store(uint64_t phys_addr, int dev_idx, uint32_t slot)
     /* Insert into hash table */
     spinlock_acquire(&zswap_lock);
 
+    /* Re-check pool capacity under lock (TOCTOU race guard) */
+    if (zswap_pool_used >= zswap_pool_max) {
+        spinlock_release(&zswap_lock);
+        kfree(entry);
+        kfree(shrunk);
+        return -ENOSPC;
+    }
+
     uint32_t idx = zswap_hash(dev_idx, slot);
     entry->next = zswap_table[idx];
     zswap_table[idx] = entry;
@@ -514,6 +522,20 @@ found:
     if (!victim) {
         spinlock_release(&zswap_lock);
         return -ENOENT;
+    }
+
+    /* Remove victim from hash chain before freeing (prevents
+     * use-after-free on subsequent hash chain traversals) */
+    {
+        uint32_t idx = zswap_hash(victim->dev_idx, victim->slot);
+        struct zswap_entry **pp = &zswap_table[idx];
+        while (*pp) {
+            if (*pp == victim) {
+                *pp = victim->next;
+                break;
+            }
+            pp = &(*pp)->next;
+        }
     }
 
     /* Extract data before releasing lock */

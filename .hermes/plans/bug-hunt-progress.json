@@ -1,7 +1,7 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
   "current_batch": "B006",
-  "current_item": 351,
+  "current_item": 352,
   "completed_items": [
     1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,
     21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,
@@ -24,22 +24,14 @@
     317, 318, 319, 320,
     321, 322, 323, 324, 325, 326, 327, 328, 329, 330,
     331, 332, 333, 334, 335, 336, 337, 338, 339, 340,
-    341,
-    342,
-    343,
-    344,
-    345,
-    346,
-    347,
-    348,
-    349,
-    350
+    341, 342, 343, 344, 345, 346, 347, 348, 349, 350,
+    351
   ],
-  "found_bugs": 812,
-  "fixed_bugs": 812,
+  "found_bugs": 814,
+  "fixed_bugs": 814,
   "completed_batches": [
     "B002"
   ],
-  "last_item_timestamp": "2026-07-10T19:43:00",
-  "last_item_result": "bug-hunt #350: zsmalloc - found and fixed 3 bugs in zs_malloc failure path: (1) frame<<12 shift in PHYS_TO_VIRT when pmm_alloc_frame already returns physical address, (2) pool capacity overflow causing untracked page leak, (3) VIRT_TO_PHYS missing in zs_destroy_pool pmm_free_frame call"
+  "last_item_timestamp": "2026-07-10T19:51:55",
+  "last_item_result": "bug-hunt #351: zram - fix pre-mature free-before-alloc in write paths. 2 bugs: (1) zram_write_sectors freed old slot frame before pmm_alloc_frame for new page, (2) zram_comp_write freed old slot before kmalloc and pmm_alloc_frame. Fixed by deferring free-old until after new alloc succeeds."
 }
