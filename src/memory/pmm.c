@@ -166,9 +166,16 @@ static void poison_fill(uint64_t phys_addr, uint32_t pattern) {
     if (phys_addr == 0) return;
     uint64_t *virt = (uint64_t *)PHYS_TO_VIRT(phys_addr);
     /* Fill 4KB page with 64-bit pattern */
-    uint64_t pat64 = ((uint64_t)pattern << 32) | pattern;
+    uint64_t pat64;
     if (pattern == 0xDEADBEEF) {
         pat64 = 0xDEADBEEFDEADBEEFULL;
+    } else {
+        /* Expand byte-pattern to fill all 64 bits (e.g. 0xDC -> 0xDCDCDCDCDCDCDCDC) */
+        uint8_t byte = (uint8_t)(pattern & 0xFF);
+        pat64 = ((uint64_t)byte << 56) | ((uint64_t)byte << 48) |
+                ((uint64_t)byte << 40) | ((uint64_t)byte << 32) |
+                ((uint64_t)byte << 24) | ((uint64_t)byte << 16) |
+                ((uint64_t)byte << 8)  | (uint64_t)byte;
     }
     for (int i = 0; i < (int)(PAGE_SIZE / 8); i++)
         virt[i] = pat64;
@@ -213,7 +220,7 @@ static uint64_t bitmap_alloc_one_locked(void) {
             if (pmm_poison_enabled) {
                 uint64_t *virt = (uint64_t *)PHYS_TO_VIRT(i * PAGE_SIZE);
                 int found_non_poison = 0;
-                uint64_t poison64 = 0xDCDCDCDCDCDCDCULL;
+                uint64_t poison64 = 0xDCDCDCDCDCDCDCDCULL;
                 for (int w = 0; w < (int)(PAGE_SIZE / 8); w++) {
                     if (virt[w] != poison64) {
                         /* Skip first few bytes — they may have been
