@@ -227,6 +227,13 @@ int macsec_encrypt(uint64_t sci, const uint8_t *plain, uint16_t plain_len,
             struct macsec_sc *sc = &macsec_scs[i];
             struct macsec_sa *sa = &sc->sa[sc->active_sa_an];
 
+            /* SA lifetime check: PN must not wrap around UINT32_MAX.
+             * Per 802.1AE the SA MUST NOT be used past the PN limit. */
+            if (sa->next_pn >= 0xFFFFFFFFU) {
+                spinlock_release(&macsec_lock);
+                return -EOVERFLOW;
+            }
+
             struct macsec_header *mh = (struct macsec_header *)out;
             memset(mh, 0, sizeof(*mh));
             mh->tci_an = (sc->sci ? MACSEC_TCI_SC : 0)
@@ -271,6 +278,23 @@ int macsec_decrypt(uint64_t sci, const uint8_t *cipher, uint16_t cipher_len,
             const struct macsec_header *mh = (const struct macsec_header *)cipher;
             uint8_t an = mh->tci_an & MACSEC_AN_MASK;
             struct macsec_sa *sa = &sc->sa[an];
+
+            /* Reject frames referencing an unconfigured SA */
+            if (!sa->used) {
+                sc->rx_dropped++;
+                spinlock_release(&macsec_lock);
+                return -EBADMSG;
+            }
+
+            /* Anti-replay check: reject stale or replayed packets.
+             * Per 802.1AE the receiver must verify PN >= lowest acceptable PN. */
+            uint32_t pn = ntohl(mh->packet_number);
+            if (pn < sa->lowest_pn) {
+                sc->rx_dropped++;
+                spinlock_release(&macsec_lock);
+                return -EBADMSG;
+            }
+            sa->lowest_pn = pn + 1;
 
             uint16_t data_len = (uint16_t)(cipher_len - sizeof(struct macsec_header) - MACSEC_ICV_LEN);
             const uint8_t *secdata = cipher + sizeof(struct macsec_header);
