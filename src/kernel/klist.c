@@ -21,7 +21,12 @@ void klist_node_init(struct klist *list, struct klist_node *n)
 
 void klist_add_head(struct klist_node *n)
 {
-    struct klist *list = n->list;
+    struct klist *list;
+
+    if (!n)
+        return;
+
+    list = n->list;
 
     if (!list)
         return;
@@ -33,7 +38,12 @@ void klist_add_head(struct klist_node *n)
 
 void klist_add_tail(struct klist_node *n)
 {
-    struct klist *list = n->list;
+    struct klist *list;
+
+    if (!n)
+        return;
+
+    list = n->list;
 
     if (!list)
         return;
@@ -45,7 +55,12 @@ void klist_add_tail(struct klist_node *n)
 
 void klist_remove(struct klist_node *n)
 {
-    struct klist *list = n->list;
+    struct klist *list;
+
+    if (!n)
+        return;
+
+    list = n->list;
 
     if (!list)
         return;
@@ -71,6 +86,10 @@ int klist_empty(struct klist *list)
 int klist_put(struct klist_node *n)
 {
     int old;
+
+    if (!n)
+        return -1;
+
     spinlock_acquire(&n->lock);
     old = n->refcount--;
     spinlock_release(&n->lock);
