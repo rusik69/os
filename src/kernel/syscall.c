@@ -7137,18 +7137,18 @@ static uint64_t sys_epoll_pwait(uint64_t epfd, uint64_t events_addr,
 static uint64_t sys_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags) {
     /* Validate flags — only O_CLOEXEC is valid for dup3 */
     if (flags & ~(uint64_t)O_CLOEXEC)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EINVAL;
 
     /* Bounds check both fds against MAX_FDS */
     if (oldfd >= MAX_FDS || newfd >= MAX_FDS)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EBADF;
 
     struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)-1;
+    if (!proc) return (uint64_t)(int64_t)-EPERM;
     if (oldfd >= PROCESS_FD_MAX || !proc->fd_table[oldfd].used)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EBADF;
     if (newfd >= PROCESS_FD_MAX)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EBADF;
 
     /* If oldfd == newfd and flags has O_CLOEXEC, just update the flag */
     if (oldfd == newfd) {
@@ -7179,17 +7179,17 @@ static uint64_t sys_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags) {
 static uint64_t sys_pipe2(uint64_t fds_addr, uint64_t flags) {
     /* Validate flags — only O_CLOEXEC and O_NONBLOCK are valid for pipe2 */
     if (flags & ~(uint64_t)(O_CLOEXEC | O_NONBLOCK))
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EINVAL;
     if (!fds_addr)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EFAULT;
     if (syscall_is_user_process() && !syscall_user_write_ok(fds_addr, 8))
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EFAULT;
 
     struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)-1;
+    if (!proc) return (uint64_t)(int64_t)-EPERM;
 
     int id = pipe_create();
-    if (id < 0) return (uint64_t)-1;
+    if (id < 0) return (uint64_t)(int64_t)-EMFILE;
 
     /* Set non-blocking mode if requested */
     if (flags & O_NONBLOCK)
@@ -7203,7 +7203,7 @@ static uint64_t sys_pipe2(uint64_t fds_addr, uint64_t flags) {
             else if (write_fd < 0) { write_fd = i; break; }
         }
     }
-    if (read_fd < 0 || write_fd < 0) return (uint64_t)-1;
+    if (read_fd < 0 || write_fd < 0) return (uint64_t)(int64_t)-EMFILE;
 
     /* Store pipe index as fd entries */
     proc->fd_table[read_fd].used = true;
@@ -7219,7 +7219,7 @@ static uint64_t sys_pipe2(uint64_t fds_addr, uint64_t flags) {
     /* Write fds back to userspace */
     uint32_t fds[2] = { (uint32_t)read_fd, (uint32_t)write_fd };
     if (copy_to_user(fds_addr, fds, sizeof(fds)) < 0)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EFAULT;
     return 0;
 }
 
