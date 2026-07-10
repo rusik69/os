@@ -5,13 +5,16 @@
 #include "printf.h"
 #include "string.h"
 #include "heap.h"
+#include "spinlock.h"
 
 static struct tun_device g_tun_dev;
 static int tun_initialized = 0;
+static spinlock_t g_tun_lock = SPINLOCK_INIT;
 
 int tun_init(void) {
     if (tun_initialized) return -1;
     memset(&g_tun_dev, 0, sizeof(g_tun_dev));
+    spinlock_init(&g_tun_lock);
     tun_initialized = 1;
     kprintf("[OK] TUN/TAP driver initialized\\n");
     return 0;
@@ -19,7 +22,12 @@ int tun_init(void) {
 
 int tun_open(int flags) {
     if (!tun_initialized) return -1;
-    if (g_tun_dev.opened) return -1;
+
+    spinlock_acquire(&g_tun_lock);
+    if (g_tun_dev.opened) {
+        spinlock_release(&g_tun_lock);
+        return -1;
+    }
 
     g_tun_dev.flags = flags;
     g_tun_dev.opened = 1;
@@ -27,29 +35,47 @@ int tun_open(int flags) {
     g_tun_dev.ring_tail = 0;
     g_tun_dev.ring_count = 0;
     memset(g_tun_dev.ring_len, 0, sizeof(g_tun_dev.ring_len));
+    spinlock_release(&g_tun_lock);
     /* Return a fake fd */
     return 1000;
 }
 
 int tun_write(int fd, const void *data, uint16_t len) {
     (void)fd;
-    if (!tun_initialized || !g_tun_dev.opened) return -1;
     if (!data || len == 0 || len > TUN_PKT_MAX) return -1;
-    if (g_tun_dev.ring_count >= TUN_RING_SIZE) return -1;
+
+    spinlock_acquire(&g_tun_lock);
+    if (!tun_initialized || !g_tun_dev.opened) {
+        spinlock_release(&g_tun_lock);
+        return -1;
+    }
+    if (g_tun_dev.ring_count >= TUN_RING_SIZE) {
+        spinlock_release(&g_tun_lock);
+        return -1;
+    }
 
     int tail = g_tun_dev.ring_tail;
     memcpy(g_tun_dev.ring_buf[tail], data, len);
     g_tun_dev.ring_len[tail] = len;
     g_tun_dev.ring_tail = (tail + 1) % TUN_RING_SIZE;
     g_tun_dev.ring_count++;
+    spinlock_release(&g_tun_lock);
     return len;
 }
 
 int tun_read(int fd, void *buf, uint16_t max_len) {
     (void)fd;
-    if (!tun_initialized || !g_tun_dev.opened) return -1;
     if (!buf || max_len == 0) return -1;
-    if (g_tun_dev.ring_count == 0) return 0;
+
+    spinlock_acquire(&g_tun_lock);
+    if (!tun_initialized || !g_tun_dev.opened) {
+        spinlock_release(&g_tun_lock);
+        return -1;
+    }
+    if (g_tun_dev.ring_count == 0) {
+        spinlock_release(&g_tun_lock);
+        return 0;
+    }
 
     int head = g_tun_dev.ring_head;
     uint16_t len = g_tun_dev.ring_len[head];
@@ -58,13 +84,22 @@ int tun_read(int fd, void *buf, uint16_t max_len) {
     memcpy(buf, g_tun_dev.ring_buf[head], len);
     g_tun_dev.ring_head = (head + 1) % TUN_RING_SIZE;
     g_tun_dev.ring_count--;
+    spinlock_release(&g_tun_lock);
     return len;
 }
 
 void tun_destroy(void) {
-    if (!tun_initialized) return;
-    memset(&g_tun_dev, 0, sizeof(g_tun_dev));
+    spinlock_acquire(&g_tun_lock);
+    if (!tun_initialized) {
+        spinlock_release(&g_tun_lock);
+        return;
+    }
+    /* Set initialized = 0 first so any concurrent reader/writer
+     * that entered before the lock sees a consistent "shut down"
+     * state and bails out. Then clear the device safely. */
     tun_initialized = 0;
+    memset(&g_tun_dev, 0, sizeof(g_tun_dev));
+    spinlock_release(&g_tun_lock);
 }
 
 /* ── Implement: tun_stop ────────────────── */
