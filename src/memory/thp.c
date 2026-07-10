@@ -309,12 +309,25 @@ static int khugepaged_promote_range(uint64_t *pml4, uint64_t virt,
     if (flags & KHUGE_PTE_NX)
         pde |= KHUGE_PTE_NX;
 
-    /* ── Locate the PD entry for this range ── */
+    /* ── Locate the PD entry for this range ──
+     * Re-walk the page tables and verify PRESENT at each level.  Even though
+     * check_range() already verified them, a concurrent page-table operation
+     * (SMP or khugepaged yield) could have unmapped entries since then.
+     * Without these checks a non-present PML4 / PDPT / PD entry would yield
+     * a garbage physical address that gets passed to pmm_free_frame(). */
     int pml4_idx = (int)((virt >> 39) & 0x1FF);
     int pdpt_idx = (int)((virt >> 30) & 0x1FF);
 
+    if (!(pml4[pml4_idx] & KHUGE_PTE_PRESENT))
+        goto fail_free_huge;
+
     uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(pml4[pml4_idx] & KHUGE_PTE_ADDR_MASK);
+    if (!(pdpt[pdpt_idx] & KHUGE_PTE_PRESENT))
+        goto fail_free_huge;
+
     uint64_t *pd   = (uint64_t *)PHYS_TO_VIRT(pdpt[pdpt_idx] & KHUGE_PTE_ADDR_MASK);
+    if (!(pd[pd_idx] & KHUGE_PTE_PRESENT) || (pd[pd_idx] & KHUGE_PTE_HUGE))
+        goto fail_free_huge;
 
     /* ── Free the old page-table and its 4K pages ──
      * We must free the page-table page itself AND unref the data pages.
@@ -347,6 +360,12 @@ static int khugepaged_promote_range(uint64_t *pml4, uint64_t virt,
     khugepaged_pages_promoted++;
 
     return 0;
+
+    /* Page-table entries changed under us — free the huge page we
+     * already allocated and report failure so the scan can retry. */
+fail_free_huge:
+    pmm_free_frames_contiguous(huge_phys, 512);
+    return -1;
 }
 
 /*
