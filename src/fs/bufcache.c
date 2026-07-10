@@ -75,7 +75,7 @@ static void bufcache_throttle_writes(uint8_t dev_id) {
         for (int i = 0; i < BC_CAPACITY; i++) {
             if (g_entries[i].valid && g_entries[i].dirty &&
                 g_entries[i].dev_id == dev_id && g_entries[i].refcount == 0) {
-                if (blockdev_write_sectors(dev_id, (uint32_t)g_entries[i].lba,
+                if (blockdev_write_sectors(dev_id, g_entries[i].lba,
                                             1, g_entries[i].data) == 0) {
                     g_entries[i].dirty = 0;
                     g_writes++;
@@ -231,7 +231,7 @@ static int16_t evict_one(void) {
 
             /* Write dirty data back */
             if (e->dirty) {
-                blockdev_write_sectors(e->dev_id, (uint32_t)e->lba, 1, e->data);
+                blockdev_write_sectors(e->dev_id, e->lba, 1, e->data);
                 g_writes++;
                 g_dirty_forced_writes++;
             }
@@ -434,7 +434,7 @@ void bufcache_flush(void) {
     for (int i = 0; i < BC_CAPACITY; i++) {
         if (g_entries[i].valid && g_entries[i].dirty) {
             blockdev_write_sectors(g_entries[i].dev_id,
-                                    (uint32_t)g_entries[i].lba, 1,
+                                    g_entries[i].lba, 1,
                                     g_entries[i].data);
             g_writes++;
             g_entries[i].dirty = 0;
@@ -459,7 +459,7 @@ void bufcache_flush_dev(uint8_t dev_id) {
     for (int i = 0; i < BC_CAPACITY; i++) {
         if (g_entries[i].valid && g_entries[i].dirty && g_entries[i].dev_id == dev_id) {
             blockdev_write_sectors(g_entries[i].dev_id,
-                                    (uint32_t)g_entries[i].lba, 1,
+                                    g_entries[i].lba, 1,
                                     g_entries[i].data);
             g_writes++;
             g_entries[i].dirty = 0;
@@ -483,7 +483,7 @@ int bufcache_writeback(void) {
     while (idx >= 0) {
         if (g_entries[idx].valid && g_entries[idx].dirty) {
             blockdev_write_sectors(g_entries[idx].dev_id,
-                                    (uint32_t)g_entries[idx].lba, 1,
+                                    g_entries[idx].lba, 1,
                                     g_entries[idx].data);
             g_entries[idx].dirty = 0;
             g_writes++;
