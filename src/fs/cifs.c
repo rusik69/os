@@ -555,6 +555,9 @@ static int cifs_smb2_create(struct cifs_mount_info *mnt, const char *path,
     /* Structure size (2 bytes) */
     smb2_put16(&p, 57);
 
+    /* Security flags (1 byte) */
+    *p++ = 0x00;
+
     /* Op lock (1 byte) */
     *p++ = 0; /* SMB2_OPLOCK_LEVEL_NONE */
 
@@ -583,15 +586,23 @@ static int cifs_smb2_create(struct cifs_mount_info *mnt, const char *path,
     smb2_put32(&p, is_dir ? SMB2_FILE_DIRECTORY_FILE : SMB2_FILE_NON_DIRECTORY_FILE);
 
     /* Name offset and length */
-    uint32_t name_offset = SMB2_HEADER_SIZE + 120; /* after fixed fields */
     uint16_t name_len = (uint16_t)strlen(path);
 
     /* We use ASCII name; SMB2 expects UTF-16 but we send ASCII with len*2 */
-    smb2_put16(&p, (uint16_t)name_offset);
+    /* Reserve NameOffset field — back-patch after computing actual position */
+    uint8_t *name_offset_field = p;
+    smb2_put16(&p, 0); /* placeholder NameOffset */
     smb2_put16(&p, name_len);
 
     /* Create context offset (8 bytes) */
     smb2_put64(&p, 0);
+
+    /* Compute actual name offset from SMB2 header start and back-patch */
+    {
+        uint32_t name_offset = (uint32_t)(uintptr_t)(p - buf);
+        name_offset_field[0] = (uint8_t)(name_offset & 0xFF);
+        name_offset_field[1] = (uint8_t)((name_offset >> 8) & 0xFF);
+    }
 
     /* Name buffer (ASCII, NOT null-terminated) */
     memcpy(p, path, name_len);
@@ -844,13 +855,13 @@ static int cifs_smb2_read(struct cifs_mount_info *mnt, struct cifs_fh *fh,
     (void)data_offset_from_hdr;
     smb2_get32(&rp); /* remaining */
 
-    /* Data is at resp + (data_offset_from_hdr - SMB2_HEADER_SIZE?) */
-    /* Actually data_offset is from start of SMB2 header */
-    uint32_t data_start_pos = data_offset_from_hdr; /* should be >= 64 */
-    if (data_start_pos >= 4 && data_start_pos + data_length <= sizeof(resp)) {
+    /* Data is at offset data_offset_from_hdr from start of SMB2 header */
+    /* resp directly points to SMB2 header (NetBIOS was read separately) */
+    uint32_t data_start_pos = data_offset_from_hdr;
+    if (data_start_pos >= SMB2_HEADER_SIZE && data_start_pos + data_length <= sizeof(resp)) {
         uint32_t copy_len = data_length;
         if (copy_len > count) copy_len = count;
-        memcpy(buf, resp + data_start_pos - 4, copy_len); /* -4 for NetBIOS */
+        memcpy(buf, resp + data_start_pos, copy_len);
         return (int)copy_len;
     }
 
