@@ -273,6 +273,12 @@ struct icmp_rate_entry {
 static struct icmp_rate_entry icmp_rate_table[ICMP_RATELIMIT_DEST_MAX];
 static spinlock_t icmp_rate_lock = SPINLOCK_INIT;
 
+/* Protects net_udp_bindings[] against concurrent modification from
+ * handle_udp (reader) and net_udp_bind/net_udp_unlisten (writers).
+ * The socket layer also calls net_udp_unlisten under socket_lock, so
+ * lock ordering is: socket_lock → udp_bind_lock. */
+static spinlock_t udp_bind_lock = SPINLOCK_INIT;
+
 /* Sysctl tunables */
 static int icmp_ratelimit_ms = 1000;   /* default: 1000ms between ICMP errors */
 static uint32_t icmp_ratemask = 0;     /* bitmask, default = ratelimit all ICMP errors */
@@ -509,12 +515,15 @@ void handle_udp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
         return;
     }
 
+    spinlock_acquire(&udp_bind_lock);
     for (int i = 0; i < net_num_udp_bindings; i++) {
         if (net_udp_bindings[i].port == dst_port && net_udp_bindings[i].handler) {
             net_udp_bindings[i].handler(src_ip, src_port, data, data_len);
+            spinlock_release(&udp_bind_lock);
             return;
         }
     }
+    spinlock_release(&udp_bind_lock);
 
     /* No handler found — send ICMP Destination Unreachable (Port Unreachable) */
     if (net_our_ip && dst_port != DHCP_CLIENT_PORT && dst_port != DNS_PORT) {
@@ -524,10 +533,15 @@ void handle_udp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
 }
 
 void net_udp_bind(uint16_t port, udp_recv_handler handler) {
-    if (net_num_udp_bindings >= MAX_UDP_BINDINGS) return;
+    spinlock_acquire(&udp_bind_lock);
+    if (net_num_udp_bindings >= MAX_UDP_BINDINGS) {
+        spinlock_release(&udp_bind_lock);
+        return;
+    }
     net_udp_bindings[net_num_udp_bindings].port = port;
     net_udp_bindings[net_num_udp_bindings].handler = handler;
     net_num_udp_bindings++;
+    spinlock_release(&udp_bind_lock);
 }
 
 /* ── UDP server: userspace listen/recv ─────────────────────────────────────────────── */
@@ -633,6 +647,7 @@ int net_udp_recv(uint16_t port, void *buf, uint16_t bufsize,
 }
 
 void net_udp_unlisten(uint16_t port) {
+    spinlock_acquire(&udp_bind_lock);
     for (int i = 0; i < UDP_LISTEN_MAX; i++) {
         if (udp_slots[i].port == port) {
             /* Remove from bindings table */
@@ -647,9 +662,11 @@ void net_udp_unlisten(uint16_t port) {
             }
             udp_slots[i].port  = 0;
             udp_slots[i].count = 0;
+            spinlock_release(&udp_bind_lock);
             return;
         }
     }
+    spinlock_release(&udp_bind_lock);
 }
 
 void net_udp_send(uint32_t dst_ip, uint16_t src_port, uint16_t dst_port,

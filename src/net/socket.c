@@ -123,6 +123,8 @@ void sock_free(int fd) {
     int type        = s->type;
     int conn_id     = s->conn_id;
     int unix_ep     = s->unix_ep;
+    int udp_listener = s->udp_listener;
+    uint16_t local_port = s->local_port;
 
     /* Clear pointers so a racing sock_get sees safe default values */
     s->conn_id = -1;
@@ -148,6 +150,9 @@ void sock_free(int fd) {
     /* Close TCP connection if present */
     if (conn_id >= 0)
         net_tcp_close(conn_id);
+    /* Close UDP listener if present */
+    if (type == SOCK_DGRAM && udp_listener >= 0)
+        net_udp_unlisten(local_port);
 
     spinlock_release(&socket_lock);
 }
