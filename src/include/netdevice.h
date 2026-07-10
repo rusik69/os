@@ -71,6 +71,7 @@ struct net_device {
     int           mtu;                     /* maximum transmission unit */
     int           flags;                   /* IFF_UP, etc. */
     void         *priv;                    /* driver-private data */
+    int           refcount;                /* reference count (protected by netdev_lock) */
 
     /* ── Optional callbacks ────────────────────────────────────────── */
 

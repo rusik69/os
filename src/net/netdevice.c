@@ -18,6 +18,7 @@
 #include "printf.h"
 #include "string.h"
 #include "heap.h"
+#include "spinlock.h"
 #include "initcall.h"
 
 /* ── Global registration table ──────────────────────────────────── */
@@ -25,16 +26,22 @@
 static struct net_device *g_devices[NETDEV_MAX];
 static int g_device_count = 0;
 static int g_initialized = 0;
+static spinlock_t netdev_lock = SPINLOCK_INIT;
 
 /* ── Initialisation ─────────────────────────────────────────────── */
 
 void netdevice_init(void)
 {
-    if (g_initialized)
+    uint64_t flags;
+    spinlock_irqsave_acquire(&netdev_lock, &flags);
+    if (g_initialized) {
+        spinlock_irqsave_release(&netdev_lock, flags);
         return;
+    }
     memset(g_devices, 0, sizeof(g_devices));
     g_device_count = 0;
     g_initialized = 1;
+    spinlock_irqsave_release(&netdev_lock, flags);
     kprintf("[OK] netdevice: initialised (%d slots)\n", NETDEV_MAX);
 }
 
@@ -42,21 +49,28 @@ void netdevice_init(void)
 
 int netif_register(struct net_device *dev)
 {
+    uint64_t flags;
+    spinlock_irqsave_acquire(&netdev_lock, &flags);
+
     if (!g_initialized) {
         kprintf("[NETDEV] ERROR: netdevice not initialized\n");
+        spinlock_irqsave_release(&netdev_lock, flags);
         return -1;
     }
     if (!dev) {
         kprintf("[NETDEV] ERROR: NULL device\n");
+        spinlock_irqsave_release(&netdev_lock, flags);
         return -1;
     }
     if (!dev->transmit) {
         kprintf("[NETDEV] ERROR: device '%s' has no transmit callback\n",
                 dev->name[0] ? dev->name : "?");
+        spinlock_irqsave_release(&netdev_lock, flags);
         return -1;
     }
     if (g_device_count >= NETDEV_MAX) {
         kprintf("[NETDEV] ERROR: device table full (%d max)\n", NETDEV_MAX);
+        spinlock_irqsave_release(&netdev_lock, flags);
         return -1;
     }
 
@@ -70,6 +84,7 @@ int netif_register(struct net_device *dev)
     }
     if (ifindex < 0) {
         kprintf("[NETDEV] ERROR: no free slot\n");
+        spinlock_irqsave_release(&netdev_lock, flags);
         return -1;
     }
 
@@ -78,13 +93,17 @@ int netif_register(struct net_device *dev)
     if (!copy) {
         kprintf("[NETDEV] ERROR: out of memory for '%s'\n",
                 dev->name[0] ? dev->name : "?");
+        spinlock_irqsave_release(&netdev_lock, flags);
         return -1;
     }
     memcpy(copy, dev, sizeof(struct net_device));
     copy->ifindex = ifindex;
+    copy->refcount = 1;  /* Table holds the initial reference */
 
     g_devices[ifindex] = copy;
     g_device_count++;
+
+    spinlock_irqsave_release(&netdev_lock, flags);
 
     kprintf("[NETDEV] registered '%s' (ifindex=%d, mac=%02x:%02x:%02x:%02x:%02x:%02x, mtu=%d)\n",
             copy->name, ifindex,
@@ -97,19 +116,37 @@ int netif_register(struct net_device *dev)
 
 int netif_unregister(int ifindex)
 {
-    if (!g_initialized)
+    uint64_t flags;
+    spinlock_irqsave_acquire(&netdev_lock, &flags);
+
+    if (!g_initialized) {
+        spinlock_irqsave_release(&netdev_lock, flags);
         return -1;
-    if (ifindex < 0 || ifindex >= NETDEV_MAX)
+    }
+    if (ifindex < 0 || ifindex >= NETDEV_MAX) {
+        spinlock_irqsave_release(&netdev_lock, flags);
         return -1;
-    if (!g_devices[ifindex])
+    }
+    struct net_device *dev = g_devices[ifindex];
+    if (!dev) {
+        spinlock_irqsave_release(&netdev_lock, flags);
         return -1;
+    }
 
     kprintf("[NETDEV] unregistered '%s' (ifindex=%d)\n",
-            g_devices[ifindex]->name, ifindex);
+            dev->name, ifindex);
 
-    kfree(g_devices[ifindex]);
     g_devices[ifindex] = NULL;
     g_device_count--;
+
+    /* Release the table's reference.  If refcount drops to 0,
+     * nobody is using the device — free it now.  Otherwise the
+     * last user (e.g. netif_send) will free it. */
+    int do_free = (--dev->refcount == 0);
+    spinlock_irqsave_release(&netdev_lock, flags);
+
+    if (do_free)
+        kfree(dev);
     return 0;
 }
 
@@ -117,55 +154,119 @@ int netif_unregister(int ifindex)
 
 int netif_send(int ifindex, const uint8_t *data, uint16_t len)
 {
-    if (!g_initialized)
-        return -1;
-    if (ifindex < 0 || ifindex >= NETDEV_MAX)
-        return -1;
-    struct net_device *dev = g_devices[ifindex];
-    if (!dev || !dev->transmit)
-        return -1;
+    int ret;
+    uint64_t flags;
+    spinlock_irqsave_acquire(&netdev_lock, &flags);
 
-    return dev->transmit(dev, data, len);
+    if (!g_initialized) {
+        spinlock_irqsave_release(&netdev_lock, flags);
+        return -1;
+    }
+    if (ifindex < 0 || ifindex >= NETDEV_MAX) {
+        spinlock_irqsave_release(&netdev_lock, flags);
+        return -1;
+    }
+    struct net_device *dev = g_devices[ifindex];
+    if (!dev || !dev->transmit) {
+        spinlock_irqsave_release(&netdev_lock, flags);
+        return -1;
+    }
+
+    /* Take a reference so the device isn't freed during transmit */
+    dev->refcount++;
+    spinlock_irqsave_release(&netdev_lock, flags);
+
+    ret = dev->transmit(dev, data, len);
+
+    /* Release our reference — if this was the last one (unregister
+     * already removed it from the table), free the device now. */
+    spinlock_irqsave_acquire(&netdev_lock, &flags);
+    int do_free = (--dev->refcount == 0);
+    spinlock_irqsave_release(&netdev_lock, flags);
+
+    if (do_free)
+        kfree(dev);
+    return ret;
 }
 
 int netif_recv(int ifindex, uint8_t *buf, uint16_t max_len)
 {
-    if (!g_initialized)
-        return -1;
-    if (ifindex < 0 || ifindex >= NETDEV_MAX)
-        return -1;
-    struct net_device *dev = g_devices[ifindex];
-    if (!dev || !dev->receive)
-        return -1;
+    int ret;
+    uint64_t flags;
+    spinlock_irqsave_acquire(&netdev_lock, &flags);
 
-    return dev->receive(dev, buf, max_len);
+    if (!g_initialized) {
+        spinlock_irqsave_release(&netdev_lock, flags);
+        return -1;
+    }
+    if (ifindex < 0 || ifindex >= NETDEV_MAX) {
+        spinlock_irqsave_release(&netdev_lock, flags);
+        return -1;
+    }
+    struct net_device *dev = g_devices[ifindex];
+    if (!dev || !dev->receive) {
+        spinlock_irqsave_release(&netdev_lock, flags);
+        return -1;
+    }
+
+    /* Take a reference so the device isn't freed during receive */
+    dev->refcount++;
+    spinlock_irqsave_release(&netdev_lock, flags);
+
+    ret = dev->receive(dev, buf, max_len);
+
+    /* Release our reference */
+    spinlock_irqsave_acquire(&netdev_lock, &flags);
+    int do_free = (--dev->refcount == 0);
+    spinlock_irqsave_release(&netdev_lock, flags);
+
+    if (do_free)
+        kfree(dev);
+    return ret;
 }
 
 /* ── Lookup ─────────────────────────────────────────────────────── */
 
 struct net_device *netif_get(int ifindex)
 {
-    if (ifindex < 0 || ifindex >= NETDEV_MAX)
+    uint64_t flags;
+    spinlock_irqsave_acquire(&netdev_lock, &flags);
+    if (ifindex < 0 || ifindex >= NETDEV_MAX) {
+        spinlock_irqsave_release(&netdev_lock, flags);
         return NULL;
-    return g_devices[ifindex];
+    }
+    struct net_device *dev = g_devices[ifindex];
+    spinlock_irqsave_release(&netdev_lock, flags);
+    return dev;
 }
 
 int netif_name_to_index(const char *name)
 {
-    if (!name)
+    uint64_t flags;
+    spinlock_irqsave_acquire(&netdev_lock, &flags);
+    if (!name) {
+        spinlock_irqsave_release(&netdev_lock, flags);
         return -1;
+    }
     for (int i = 0; i < NETDEV_MAX; i++) {
         if (g_devices[i] &&
             strcmp(g_devices[i]->name, name) == 0) {
+            spinlock_irqsave_release(&netdev_lock, flags);
             return i;
         }
     }
+    spinlock_irqsave_release(&netdev_lock, flags);
     return -1;
 }
 
 int netif_count(void)
 {
-    return g_device_count;
+    uint64_t flags;
+    int count;
+    spinlock_irqsave_acquire(&netdev_lock, &flags);
+    count = g_device_count;
+    spinlock_irqsave_release(&netdev_lock, flags);
+    return count;
 }
 
 /* ── Implement: netdevice_register ────────────────────── */
