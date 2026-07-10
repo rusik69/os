@@ -621,7 +621,10 @@ static int ext4_ext_split(struct ext4_priv *ep,
     *new_eh = new_header;
     *new_block = alloc_block;
 
-    kfree(new_buf);
+    /* NOTE: new_buf is intentionally NOT freed here — the caller
+     * (ext4_ext_insert_extent) receives new_eh pointing into this
+     * buffer and needs it live for subsequent operations on the
+     * newly-created right node.  It will kfree new_eh itself. */
     return 0;
 }
 
@@ -861,6 +864,7 @@ int ext4_ext_insert_extent(struct ext4_priv *ep,
                            struct ext4_extent *newext)
 {
     int ret;
+    struct ext4_extent_header *new_eh = NULL;
 
     if (!ep || !inode || !newext)
         return -EINVAL;
@@ -1073,7 +1077,7 @@ int ext4_ext_insert_extent(struct ext4_priv *ep,
         }
     } else {
         /* ── Leaf is full: need to split ── */
-        struct ext4_extent_header *new_eh = NULL;
+        /* new_eh is declared at function scope */
         uint32_t new_block = 0;
 
         if (path_block[path_depth] == 0) {
@@ -1109,14 +1113,15 @@ int ext4_ext_insert_extent(struct ext4_priv *ep,
             if (leaf_eh->eh_entries < leaf_eh->eh_max) {
                 ret = ext4_ext_insert_in_a_block(target_eh, newext, pos);
                 if (ret < 0)
-                    return ret;
+                    goto out_free_new;
 
                 ret = ext4_ext_write_block(ep, target_block,
                                            (const uint8_t *)target_eh);
                 if (ret < 0)
-                    return ret;
+                    goto out_free_new;
             } else {
-                return -ENOSPC;
+                ret = -ENOSPC;
+                goto out_free_new;
             }
         } else {
             /* Goes in the right (new) node */
@@ -1131,14 +1136,15 @@ int ext4_ext_insert_extent(struct ext4_priv *ep,
                 ret = ext4_ext_insert_in_a_block(target_eh, newext,
                                                  target_pos);
                 if (ret < 0)
-                    return ret;
+                    goto out_free_new;
 
                 ret = ext4_ext_write_block(ep, target_block,
                                            (const uint8_t *)target_eh);
                 if (ret < 0)
-                    return ret;
+                    goto out_free_new;
             } else {
-                return -ENOSPC;
+                ret = -ENOSPC;
+                goto out_free_new;
             }
         }
 
@@ -1159,11 +1165,11 @@ int ext4_ext_insert_extent(struct ext4_priv *ep,
                 uint8_t parent_buf[EXT4_MAX_BLOCK_SIZE];
                 ret = ext4_read_block(ep, parent_block, parent_buf);
                 if (ret < 0)
-                    return ret;
+                    goto out_free_new;
                 ret = ext4_ext_journal_get_write_access(ep, parent_block,
                                                          parent_buf);
                 if (ret < 0)
-                    return ret;
+                    goto out_free_new;
             }
 
             /* Build an index entry for the new node */
@@ -1197,7 +1203,8 @@ int ext4_ext_insert_extent(struct ext4_priv *ep,
             if (parent_eh->eh_entries >= parent_eh->eh_max) {
                 /* Parent is also full — need recursive split.
                  * Deferred to a more advanced task. */
-                return -ENOSPC;
+                ret = -ENOSPC;
+                goto out_free_new;
             }
 
             if (parent_pos < (int)parent_entries) {
@@ -1213,15 +1220,19 @@ int ext4_ext_insert_extent(struct ext4_priv *ep,
             ret = ext4_ext_write_block(ep, parent_block,
                                        (const uint8_t *)parent_eh);
             if (ret < 0)
-                return ret;
+                goto out_free_new;
         }
     }
+
+out_free_new:
+    kfree(new_eh);
+    new_eh = NULL;
 
     /* ── Copy root back to inode if depth == 0 ── */
     if (depth == 0)
         memcpy(inode->i_block, root_buf, 60);
 
-    return 0;
+    return ret;
 }
 
 /* ── Remove extent space (punch hole) ──────────────────────────────── */
