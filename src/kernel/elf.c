@@ -70,8 +70,22 @@ static uint64_t elf_validate(const uint8_t *data, uint64_t size, int *out_is_use
     int userland = (hdr->e_entry < 0x800000000000ULL);
     if (out_is_userland) *out_is_userland = userland;
 
-    /* Validate program header table lies within file */
-    if (hdr->e_phoff + (uint64_t)hdr->e_phnum * (uint64_t)hdr->e_phentsize > size) {
+    /* Validate program header entry size matches expected structure size.
+     * If e_phentsize < sizeof(elf64_phdr), individual header reads
+     * (p_type, p_offset, p_vaddr, etc.) extend beyond the entry boundary
+     * into adjacent data, potentially reading out-of-bounds for the last entry. */
+    if (hdr->e_phentsize < sizeof(struct elf64_phdr)) {
+        kprintf("elf: program header entry size too small (%u < %zu)\n",
+                hdr->e_phentsize, sizeof(struct elf64_phdr));
+        return 0;
+    }
+
+    /* Validate program header table lies within file, checking for integer
+     * overflow.  A crafted e_phoff can wrap the sum so it appears to fit
+     * inside 'size', while the actual program header pointer (data + e_phoff)
+     * points to arbitrary out-of-bounds memory, yielding a NULL/invalid phdr. */
+    uint64_t phdr_end = hdr->e_phoff + (uint64_t)hdr->e_phnum * (uint64_t)hdr->e_phentsize;
+    if (phdr_end > size || phdr_end < hdr->e_phoff) {
         kprintf("elf: program header table out of bounds\n");
         return 0;
     }
