@@ -212,8 +212,11 @@ struct tcp_info {
     uint32_t tcpi_total_retrans;
 };
 
+#include "spinlock.h"
+
 /* Per-socket structure */
 struct socket {
+    spinlock_t    lock;        /* protects this socket entry (concurrent send/recv/close) */
     int           in_use;
     int           domain;      /* AF_INET, AF_UNIX */
     int           type;        /* SOCK_STREAM, SOCK_DGRAM */
@@ -265,6 +268,7 @@ struct socket {
 
 /* Socket table operations */
 struct socket *sock_get(int fd);
+void sock_put(struct socket *s);
 int sock_alloc(void);
 void sock_free(int fd);
 int sock_fd_from_slot(int slot);

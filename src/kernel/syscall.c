@@ -3393,8 +3393,10 @@ static uint64_t sys_select(uint64_t nfds, uint64_t readfds_addr,
                 if (i >= 100 && i < 100 + SOCK_MAX) {
                     struct socket *s = sock_get(i);
                     if (!s || s->state == SOCK_STATE_CLOSED) {
+                        if (s) sock_put(s);
                         continue; /* closed socket is exceptional */
                     }
+                    sock_put(s);
                     FD_CLR(i, &exceptfds);
                 } else {
                     FD_CLR(i, &exceptfds);

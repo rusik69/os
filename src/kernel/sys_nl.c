@@ -29,7 +29,8 @@ MODULE_AUTHOR("OS Kernel Team");
 
 /*
  * Validate that a socket fd is an AF_NETLINK socket.
- * Returns the socket pointer on success, NULL on error (sets errno).
+ * Returns the socket pointer on success (with s->lock held — caller
+ * must call sock_put(s)), NULL on failure.
  */
 static struct socket *sys_nl_get_sock(int sockfd)
 {
@@ -38,9 +39,10 @@ static struct socket *sys_nl_get_sock(int sockfd)
 		return NULL; /* errno already -EBADF from sock_get */
 	}
 	if (s->domain != AF_NETLINK) {
+		sock_put(s);
 		return NULL; /* -EINVAL: not a netlink socket */
 	}
-	return s;
+	return s;  /* lock held — caller must sock_put */
 }
 
 /*
@@ -52,7 +54,9 @@ static int sys_nl_get_protocol(int sockfd)
 	struct socket *s = sys_nl_get_sock(sockfd);
 	if (!s)
 		return -EINVAL;
-	return netlink_get_protocol(sockfd);
+	int ret = netlink_get_protocol(sockfd);
+	sock_put(s);
+	return ret;
 }
 
 /* ── Initialization / registration ─────────────────────────────────── */

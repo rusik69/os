@@ -24,8 +24,23 @@ _Static_assert(sizeof(struct tcp_info) == 104, "tcp_info must be 104 bytes (ABI)
 /* ── Socket table ────────────────────────────────────────────── */
 static struct socket socket_table[SOCK_MAX];
 
+/* ── Global socket table lock ───────────────────────────────────
+ * Protects sock_alloc (find-and-claim) and sock_free (cleanup-and-release)
+ * so that no slot is reused while cleanup is still in progress.
+ *
+ * Per-socket s->lock (acquired by sock_get / released by sock_put)
+ * protects the in_use / state / conn_id fields so that operations
+ * (send, recv, bind, …) see a consistent view and sock_free cannot
+ * destroy resources while a concurrent operation is in flight.
+ *
+ * Lock ordering:  socket_lock → s->lock
+ * No code path ever acquires s->lock → socket_lock in reverse.
+ */
+static spinlock_t socket_lock;
+
 void socket_init(void) {
     memset(socket_table, 0, sizeof(socket_table));
+    spinlock_init(&socket_lock);
     af_unix_init();
     af_packet_init();
     af_netlink_init();
@@ -37,54 +52,104 @@ int sock_fd_from_slot(int slot) {
     return slot + 100;
 }
 
-/* Get socket struct from fd */
+/* Get socket struct from fd.
+ *
+ * Returns with s->lock held.  Caller MUST call sock_put(s) when done
+ * to release the lock.  This prevents the socket from being freed
+ * while in use (see sock_free which checks in_use under the same lock).
+ */
 struct socket *sock_get(int fd) {
     int slot = fd - 100;
     if (slot < 0 || slot >= SOCK_MAX) return NULL;
-    if (!socket_table[slot].in_use) return NULL;
-    return &socket_table[slot];
+    struct socket *s = &socket_table[slot];
+    spinlock_acquire(&s->lock);
+    if (!s->in_use) {
+        spinlock_release(&s->lock);
+        return NULL;
+    }
+    return s;  /* lock held — caller must sock_put */
+}
+
+/* Release a socket obtained from sock_get. */
+void sock_put(struct socket *s) {
+    spinlock_release(&s->lock);
 }
 
 /* Allocate a socket slot */
 int sock_alloc(void) {
+    spinlock_acquire(&socket_lock);
     for (int i = 0; i < SOCK_MAX; i++) {
         if (!socket_table[i].in_use) {
             memset(&socket_table[i], 0, sizeof(struct socket));
+            spinlock_init(&socket_table[i].lock);
             socket_table[i].in_use = 1;
             socket_table[i].state = SOCK_STATE_CREATED;
             socket_table[i].conn_id = -1;
             socket_table[i].udp_listener = -1;
             wait_queue_init(&socket_table[i].wq);
+            spinlock_release(&socket_lock);
             return i;
         }
     }
+    spinlock_release(&socket_lock);
     return -ENOMEM;
 }
 
-/* Free a socket */
+/* Free a socket.
+ *
+ * Under socket_lock (serialises with sock_alloc) and the per-socket
+ * lock (serialises with sock_get / sock_put), marks the slot as free
+ * and tears down all protocol resources.
+ */
 void sock_free(int fd) {
-    struct socket *s = sock_get(fd);
-    if (!s) return;
-    /* Destroy AF_UNIX endpoint if present */
-    if (s->domain == AF_UNIX && s->unix_ep >= 0) {
-        unix_destroy(s->unix_ep);
-        s->unix_ep = -1;
+    int slot = fd - 100;
+    if (slot < 0 || slot >= SOCK_MAX) return;
+    struct socket *s = &socket_table[slot];
+
+    spinlock_acquire(&socket_lock);
+
+    /* Under per-socket lock, mark destroyed so sock_get returns NULL */
+    spinlock_acquire(&s->lock);
+    if (!s->in_use) {
+        spinlock_release(&s->lock);
+        spinlock_release(&socket_lock);
+        return;
     }
-    /* Destroy AF_PACKET socket if present */
-    if (s->domain == AF_PACKET || (s->domain == 0 && s->type == SOCK_RAW)) {
-        packet_close(fd);
-    }
-    /* Destroy AF_NETLINK socket if present */
-    if (s->domain == AF_NETLINK) {
-        netlink_close(fd);
-    }
-    /* Destroy AF_CAN socket if present */
-    if (s->domain == AF_CAN) {
-        can_close(fd);
-    }
-    if (s->conn_id >= 0) net_tcp_close(s->conn_id);
     s->in_use = 0;
     s->state = SOCK_STATE_FREE;
+
+    /* Snapshot fields needed for teardown while locks are held */
+    int domain      = s->domain;
+    int type        = s->type;
+    int conn_id     = s->conn_id;
+    int unix_ep     = s->unix_ep;
+
+    /* Clear pointers so a racing sock_get sees safe default values */
+    s->conn_id = -1;
+    s->unix_ep = -1;
+    s->udp_listener = -1;
+
+    spinlock_release(&s->lock);
+    /* socket_lock still held — prevents sock_alloc from recycling
+     * this slot before protocol-level teardown completes */
+
+    /* Destroy AF_UNIX endpoint if present */
+    if (domain == AF_UNIX && unix_ep >= 0)
+        unix_destroy(unix_ep);
+    /* Destroy AF_PACKET socket if present */
+    if (domain == AF_PACKET || (domain == 0 && type == SOCK_RAW))
+        packet_close(fd);
+    /* Destroy AF_NETLINK socket if present */
+    if (domain == AF_NETLINK)
+        netlink_close(fd);
+    /* Destroy AF_CAN socket if present */
+    if (domain == AF_CAN)
+        can_close(fd);
+    /* Close TCP connection if present */
+    if (conn_id >= 0)
+        net_tcp_close(conn_id);
+
+    spinlock_release(&socket_lock);
 }
 
 /* ── Socket syscall implementations ──────────────────────────── */
@@ -177,56 +242,58 @@ int sys_bind_impl(int sockfd, const struct sockaddr_in *addr, int addrlen)
     struct socket *s = sock_get(sockfd);
     if (!s) return -EBADF;
 
+    int ret = 0;
+
     /* Validate minimum address length (at least the family field) */
     if (addrlen < (int)sizeof(uint16_t))
-        return -EINVAL;
+        { ret = -EINVAL; goto out; }
 
     /* AF_UNIX: dispatch to local socket handler */
     if (s->domain == AF_UNIX) {
         if (addrlen < (int)sizeof(struct sockaddr_un))
-            return -EINVAL;
-        if (s->unix_ep < 0) return -EINVAL;
+            { ret = -EINVAL; goto out; }
+        if (s->unix_ep < 0) { ret = -EINVAL; goto out; }
         const struct sockaddr_un *un = (const struct sockaddr_un *)addr;
-        int ret = unix_bind(s->unix_ep, un, (uint32_t)addrlen);
+        ret = unix_bind(s->unix_ep, un, (uint32_t)addrlen);
         if (ret == 0) s->state = SOCK_STATE_BOUND;
-        return ret;
+        goto out;
     }
 
     /* AF_PACKET: dispatch to raw packet handler */
     if (s->domain == AF_PACKET || (s->domain == 0 && s->type == SOCK_RAW)) {
         if (addrlen < (int)sizeof(struct sockaddr_ll))
-            return -EINVAL;
+            { ret = -EINVAL; goto out; }
         /* sockaddr_ll structure cast from addr */
         const struct sockaddr_ll *sll = (const struct sockaddr_ll *)addr;
         /* Bind to interface index (0 = any interface) */
-        int ret = packet_bind(sockfd, (int)sll->sll_ifindex);
+        ret = packet_bind(sockfd, (int)sll->sll_ifindex);
         if (ret == 0) s->state = SOCK_STATE_BOUND;
-        return ret;
+        goto out;
     }
 
     /* AF_NETLINK: dispatch to netlink handler */
     if (s->domain == AF_NETLINK) {
         if (addrlen < (int)sizeof(struct sockaddr_nl))
-            return -EINVAL;
+            { ret = -EINVAL; goto out; }
         const struct sockaddr_nl *nl_addr = (const struct sockaddr_nl *)addr;
-        int ret = netlink_bind(sockfd, nl_addr);
+        ret = netlink_bind(sockfd, nl_addr);
         if (ret == 0) s->state = SOCK_STATE_BOUND;
-        return ret;
+        goto out;
     }
 
     /* AF_CAN: dispatch to CAN bus handler */
     if (s->domain == AF_CAN) {
         if (addrlen < (int)sizeof(struct sockaddr_can))
-            return -EINVAL;
+            { ret = -EINVAL; goto out; }
         const struct sockaddr_can *can_addr = (const struct sockaddr_can *)addr;
-        int ret = can_bind(sockfd, can_addr);
+        ret = can_bind(sockfd, can_addr);
         if (ret == 0) s->state = SOCK_STATE_BOUND;
-        return ret;
+        goto out;
     }
 
     /* AF_INET (or default) — sockaddr_in */
     if (addrlen < (int)sizeof(struct sockaddr_in))
-        return -EINVAL;
+        { ret = -EINVAL; goto out; }
     s->local_ip = addr->sin_addr.s_addr;
     s->local_port = ntohs(addr->sin_port);
     s->state = SOCK_STATE_BOUND;
@@ -234,23 +301,29 @@ int sys_bind_impl(int sockfd, const struct sockaddr_in *addr, int addrlen)
     /* For UDP, bind the port */
     if (s->type == SOCK_DGRAM) {
         s->udp_listener = net_udp_listen(s->local_port);
-        if (s->udp_listener < 0) return -EADDRINUSE;
+        if (s->udp_listener < 0) { ret = -EADDRINUSE; goto out; }
     }
 
-    return 0;
+out:
+    sock_put(s);
+    return ret;
 }
 
 int sys_listen_impl(int sockfd, int backlog) {
     struct socket *s = sock_get(sockfd);
     if (!s) return -EBADF;
-    if (s->state != SOCK_STATE_BOUND) return -EINVAL;
-    if (s->type != SOCK_STREAM) return -EOPNOTSUPP;
+
+    if (s->state != SOCK_STATE_BOUND) { sock_put(s); return -EINVAL; }
+    if (s->type != SOCK_STREAM) { sock_put(s); return -EOPNOTSUPP; }
+
+    int ret = 0;
 
     /* AF_UNIX: dispatch to local socket handler */
     if (s->domain == AF_UNIX) {
-        if (s->unix_ep < 0) return -EINVAL;
-        int ret = unix_listen(s->unix_ep, backlog);
+        if (s->unix_ep < 0) { sock_put(s); return -EINVAL; }
+        ret = unix_listen(s->unix_ep, backlog);
         if (ret == 0) s->state = SOCK_STATE_LISTENING;
+        sock_put(s);
         return ret;
     }
 
@@ -259,18 +332,28 @@ int sys_listen_impl(int sockfd, int backlog) {
 
     /* Register TCP listener */
     net_tcp_listen(s->local_port, NULL, NULL, NULL);
+
+    sock_put(s);
     return 0;
 }
 
 int sys_accept_impl(int sockfd, struct sockaddr_in *addr, uint32_t *addrlen) {
     struct socket *s = sock_get(sockfd);
     if (!s) return -EBADF;
-    if (s->state != SOCK_STATE_LISTENING) return -EINVAL;
+
+    if (s->state != SOCK_STATE_LISTENING) { sock_put(s); return -EINVAL; }
+
+    int domain = s->domain;
+    int type = s->type;
+    int local_port = s->local_port;
+    int unix_ep = s->unix_ep;
+    sock_put(s);
+    s = NULL;
 
     /* AF_UNIX: dispatch to local socket handler */
-    if (s->domain == AF_UNIX) {
-        if (s->unix_ep < 0) return -EINVAL;
-        int client_ep = unix_accept(s->unix_ep, 0);
+    if (domain == AF_UNIX) {
+        if (unix_ep < 0) return -EINVAL;
+        int client_ep = unix_accept(unix_ep, 0);
         if (client_ep < 0) return -EINVAL;
 
         /* Allocate a new socket for the accepted connection */
@@ -279,7 +362,7 @@ int sys_accept_impl(int sockfd, struct sockaddr_in *addr, uint32_t *addrlen) {
 
         struct socket *ns = &socket_table[new_slot];
         ns->domain = AF_UNIX;
-        ns->type = s->type;
+        ns->type = type;
         ns->protocol = 0;
         ns->state = SOCK_STATE_CONNECTED;
         ns->unix_ep = client_ep;
@@ -295,7 +378,7 @@ int sys_accept_impl(int sockfd, struct sockaddr_in *addr, uint32_t *addrlen) {
     }
 
     /* Block until a connection arrives */
-    int conn_id = net_tcp_accept(s->local_port, 10000); /* 100 second timeout */
+    int conn_id = net_tcp_accept(local_port, 10000); /* 100 second timeout */
     if (conn_id < 0) return -ETIMEDOUT;
 
     /* Allocate a new socket for the accepted connection */
@@ -303,13 +386,12 @@ int sys_accept_impl(int sockfd, struct sockaddr_in *addr, uint32_t *addrlen) {
     if (new_slot < 0) { net_tcp_close(conn_id); return -ENOMEM; }
 
     struct socket *ns = &socket_table[new_slot];
-    ns->domain = s->domain;
-    ns->type = s->type;
-    ns->protocol = s->protocol;
+    ns->domain = domain;
+    ns->type = type;
+    ns->protocol = 0;
     ns->state = SOCK_STATE_CONNECTED;
     ns->conn_id = conn_id;
-    ns->local_port = s->local_port;
-    ns->local_ip = s->local_ip;
+    ns->local_port = (uint16_t)local_port;
 
     /* Fill in peer address if requested */
     if (addr && addrlen) {
@@ -326,13 +408,15 @@ int sys_connect_impl(int sockfd, const struct sockaddr_in *addr) {
     struct socket *s = sock_get(sockfd);
     if (!s) return -EBADF;
 
+    int ret = 0;
+
     /* AF_UNIX: dispatch to local socket handler */
     if (s->domain == AF_UNIX) {
-        if (s->unix_ep < 0) return -EINVAL;
+        if (s->unix_ep < 0) { ret = -EINVAL; goto out; }
         const struct sockaddr_un *un = (const struct sockaddr_un *)addr;
-        int ret = unix_connect(s->unix_ep, un, sizeof(struct sockaddr_un));
+        ret = unix_connect(s->unix_ep, un, sizeof(struct sockaddr_un));
         if (ret == 0) s->state = SOCK_STATE_CONNECTED;
-        return ret;
+        goto out;
     }
 
     s->remote_ip = addr->sin_addr.s_addr;
@@ -340,7 +424,7 @@ int sys_connect_impl(int sockfd, const struct sockaddr_in *addr) {
 
     if (s->type == SOCK_STREAM) {
         s->conn_id = net_tcp_connect(s->remote_ip, s->remote_port);
-        if (s->conn_id < 0) return -ECONNREFUSED;
+        if (s->conn_id < 0) { ret = -ECONNREFUSED; goto out; }
         s->state = SOCK_STATE_CONNECTED;
     } else if (s->type == SOCK_DGRAM) {
         /* UDP is connectionless, but we cache the default destination */
@@ -359,7 +443,9 @@ int sys_connect_impl(int sockfd, const struct sockaddr_in *addr) {
         }
     }
 
-    return 0;
+out:
+    sock_put(s);
+    return ret;
 }
 
 int sys_setsockopt_impl(int sockfd, int level, int optname,
@@ -369,53 +455,65 @@ int sys_setsockopt_impl(int sockfd, int level, int optname,
 
     /* Validate optlen — must be at least sizeof(int) for integer options */
     if (!optval || optlen < sizeof(int))
-        return -EINVAL;
+        { sock_put(s); return -EINVAL; }
 
     if (level == SOL_SOCKET) {
         switch (optname) {
             case SO_REUSEADDR:
                 s->reuseaddr = *(const int*)optval;
+                sock_put(s);
                 return 0;
             case SO_KEEPALIVE: {
                 s->keepalive = *(const int*)optval;
                 if (s->conn_id >= 0)
                     net_tcp_set_keepalive(s->conn_id, s->keepalive);
+                sock_put(s);
                 return 0;
             }
             case SO_RCVBUF:
                 s->rcvbuf = *(const int*)optval;
                 if (s->rcvbuf < 256) s->rcvbuf = 256;
+                sock_put(s);
                 return 0;
             case SO_SNDBUF:
                 s->sndbuf = *(const int*)optval;
                 if (s->sndbuf < 256) s->sndbuf = 256;
+                sock_put(s);
                 return 0;
             case SO_BROADCAST:
                 s->broadcast = *(const int*)optval;
+                sock_put(s);
                 return 0;
             case SO_PRIORITY:
                 s->priority = *(const int*)optval;
+                sock_put(s);
                 return 0;
             case SO_MARK:
                 s->sk_mark = *(const uint32_t*)optval;
+                sock_put(s);
                 return 0;
             case SO_BUSY_POLL:
                 s->busy_poll_usecs = *(const int*)optval;
+                sock_put(s);
                 return 0;
             case SO_MAX_PACING_RATE:
                 s->max_pacing_rate = *(const uint32_t*)optval;
+                sock_put(s);
                 return 0;
             case SO_NO_CHECK:
                 s->no_check = *(const int*)optval;
+                sock_put(s);
                 return 0;
             case SO_RCVTIMEO: {
                 const struct timeval *tv = (const struct timeval *)optval;
                 s->busy_poll_usecs = (int)(tv->tv_sec * 1000000 + tv->tv_usec);
+                sock_put(s);
                 return 0;
             }
             case SO_SNDTIMEO: {
                 const struct timeval *tv = (const struct timeval *)optval;
                 s->max_pacing_rate = (uint32_t)(tv->tv_sec * 1000000 + tv->tv_usec);
+                sock_put(s);
                 return 0;
             }
             default:
@@ -428,6 +526,7 @@ int sys_setsockopt_impl(int sockfd, int level, int optname,
                 s->tcp_nodelay = val;
                 if (s->conn_id >= 0)
                     tcp_conns[s->conn_id].tcp_nodelay = val;
+                sock_put(s);
                 return 0;
             }
             case TCP_CORK: {
@@ -450,12 +549,14 @@ int sys_setsockopt_impl(int sockfd, int level, int optname,
                         }
                     }
                 }
+                sock_put(s);
                 return 0;
             }
             case TCP_KEEPIDLE:
             case TCP_KEEPINTVL:
             case TCP_KEEPCNT:
                 /* Keepalive tuning — store for later use if needed */
+                sock_put(s);
                 return 0;
             default:
                 break;
@@ -465,18 +566,22 @@ int sys_setsockopt_impl(int sockfd, int level, int optname,
             case IP_TTL: {
                 int val = *(const int*)optval;
                 s->ip_ttl = val;
+                sock_put(s);
                 return 0;
             }
             case IP_RECVTTL: {
                 s->ip_recvttl = *(const int*)optval;
+                sock_put(s);
                 return 0;
             }
             case IP_RECVDSTADDR: {
                 s->ip_recvdstaddr = *(const int*)optval;
+                sock_put(s);
                 return 0;
             }
             case IP_FREEBIND: {
                 s->broadcast = *(const int*)optval;
+                sock_put(s);
                 return 0;
             }
             default:
@@ -485,9 +590,12 @@ int sys_setsockopt_impl(int sockfd, int level, int optname,
     } else if (level == SOL_CAN_RAW || level == SOL_CAN_BASE) {
         /* AF_CAN: socket options */
         if (s->domain == AF_CAN) {
-            return can_setsockopt(sockfd, level, optname, optval, optlen);
+            int ret = can_setsockopt(sockfd, level, optname, optval, optlen);
+            sock_put(s);
+            return ret;
         }
     }
+    sock_put(s);
     return 0;
 }
 
@@ -502,66 +610,77 @@ int sys_getsockopt_impl(int sockfd, int level, int optname,
                 int val = s->type;
                 if (*optlen > sizeof(int)) *optlen = sizeof(int);
                 memcpy(optval, &val, *optlen);
+                sock_put(s);
                 return 0;
             }
             case SO_ERROR: {
                 int val = 0;
                 if (*optlen > sizeof(int)) *optlen = sizeof(int);
                 memcpy(optval, &val, *optlen);
+                sock_put(s);
                 return 0;
             }
             case SO_RCVBUF: {
                 int val = s->rcvbuf ? s->rcvbuf : 65536;
                 if (*optlen > sizeof(int)) *optlen = sizeof(int);
                 memcpy(optval, &val, *optlen);
+                sock_put(s);
                 return 0;
             }
             case SO_SNDBUF: {
                 int val = s->sndbuf ? s->sndbuf : 65536;
                 if (*optlen > sizeof(int)) *optlen = sizeof(int);
                 memcpy(optval, &val, *optlen);
+                sock_put(s);
                 return 0;
             }
             case SO_KEEPALIVE: {
                 int val = s->keepalive;
                 if (*optlen > sizeof(int)) *optlen = sizeof(int);
                 memcpy(optval, &val, *optlen);
+                sock_put(s);
                 return 0;
             }
             case SO_REUSEADDR: {
                 int val = s->reuseaddr;
                 if (*optlen > sizeof(int)) *optlen = sizeof(int);
                 memcpy(optval, &val, *optlen);
+                sock_put(s);
                 return 0;
             }
             case SO_PRIORITY: {
                 int val = s->priority;
                 if (*optlen > sizeof(int)) *optlen = sizeof(int);
                 memcpy(optval, &val, *optlen);
+                sock_put(s);
                 return 0;
             }
             case SO_MARK: {
                 uint32_t val = s->sk_mark;
                 if (*optlen > sizeof(uint32_t)) *optlen = sizeof(uint32_t);
                 memcpy(optval, &val, *optlen);
+                sock_put(s);
                 return 0;
             }
             case SO_BUSY_POLL: {
                 int val = s->busy_poll_usecs;
                 if (*optlen > sizeof(int)) *optlen = sizeof(int);
                 memcpy(optval, &val, *optlen);
+                sock_put(s);
                 return 0;
             }
             case SO_MAX_PACING_RATE: {
                 uint32_t val = s->max_pacing_rate;
                 if (*optlen > sizeof(uint32_t)) *optlen = sizeof(uint32_t);
                 memcpy(optval, &val, *optlen);
+                sock_put(s);
                 return 0;
             }
             case SO_NO_CHECK: {
                 int val = s->no_check;
                 if (*optlen > sizeof(int)) *optlen = sizeof(int);
                 memcpy(optval, &val, *optlen);
+                sock_put(s);
                 return 0;
             }
             default:
@@ -573,12 +692,14 @@ int sys_getsockopt_impl(int sockfd, int level, int optname,
                 int val = (s->conn_id >= 0) ? tcp_conns[s->conn_id].tcp_nodelay : s->tcp_nodelay;
                 if (*optlen > sizeof(int)) *optlen = sizeof(int);
                 memcpy(optval, &val, *optlen);
+                sock_put(s);
                 return 0;
             }
             case TCP_CORK: {
                 int val = (s->conn_id >= 0) ? tcp_conns[s->conn_id].tcp_cork : s->tcp_cork;
                 if (*optlen > sizeof(int)) *optlen = sizeof(int);
                 memcpy(optval, &val, *optlen);
+                sock_put(s);
                 return 0;
             }
             case TCP_INFO: {
@@ -617,6 +738,7 @@ int sys_getsockopt_impl(int sockfd, int level, int optname,
                 if (*optlen < copylen) copylen = *optlen;
                 memcpy(optval, &info, copylen);
                 *optlen = copylen;
+                sock_put(s);
                 return 0;
             }
             default:
@@ -628,12 +750,14 @@ int sys_getsockopt_impl(int sockfd, int level, int optname,
                 int val = s->ip_ttl ? s->ip_ttl : 64;
                 if (*optlen > sizeof(int)) *optlen = sizeof(int);
                 memcpy(optval, &val, *optlen);
+                sock_put(s);
                 return 0;
             }
             case IP_MTU: {
                 int val = 1500;
                 if (*optlen > sizeof(int)) *optlen = sizeof(int);
                 memcpy(optval, &val, *optlen);
+                sock_put(s);
                 return 0;
             }
             case IP_OPTIONS: {
@@ -641,24 +765,28 @@ int sys_getsockopt_impl(int sockfd, int level, int optname,
                 uint8_t empty = 0;
                 if (*optlen > sizeof(uint8_t)) *optlen = sizeof(uint8_t);
                 memcpy(optval, &empty, *optlen);
+                sock_put(s);
                 return 0;
             }
             case IP_RECVTTL: {
                 int val = s->ip_recvttl;
                 if (*optlen > sizeof(int)) *optlen = sizeof(int);
                 memcpy(optval, &val, *optlen);
+                sock_put(s);
                 return 0;
             }
             case IP_RECVDSTADDR: {
                 int val = s->ip_recvdstaddr;
                 if (*optlen > sizeof(int)) *optlen = sizeof(int);
                 memcpy(optval, &val, *optlen);
+                sock_put(s);
                 return 0;
             }
             default:
                 break;
         }
     }
+    sock_put(s);
     return -EINVAL;
 }
 
@@ -668,7 +796,7 @@ int sys_sendmsg_impl(int sockfd, const struct msghdr *msg, int flags) {
     if (!s) return -EBADF;
 
     /* For now, just write the first iovec entry */
-    if (msg->msg_iovlen < 1 || !msg->msg_iov) return -EINVAL;
+    if (msg->msg_iovlen < 1 || !msg->msg_iov) { sock_put(s); return -EINVAL; }
 
     /* Validate msg_controllen to prevent pointer arithmetic overflow in
      * CMSG_FIRSTHDR / CMSG_NXTHDR.  If msg_controllen is large enough that
@@ -678,18 +806,23 @@ int sys_sendmsg_impl(int sockfd, const struct msghdr *msg, int flags) {
     if (msg->msg_control && msg->msg_controllen > 0) {
         uintptr_t ctrl_end = (uintptr_t)msg->msg_control + msg->msg_controllen;
         if (ctrl_end <= (uintptr_t)msg->msg_control)
-            return -EINVAL;
+            { sock_put(s); return -EINVAL; }
     }
 
     /* AF_NETLINK: use msghdr-aware sendmsg that flattens all iovecs
      * into one contiguous netlink message. */
     if (s->domain == AF_NETLINK) {
+        int ret;
         if (!netlink_is_valid_fd(sockfd))
-            return -EINVAL;
-        return netlink_sendmsg(sockfd, msg, flags);
+            ret = -EINVAL;
+        else
+            ret = netlink_sendmsg(sockfd, msg, flags);
+        sock_put(s);
+        return ret;
     }
 
     uint64_t total = 0;
+    int error = 0;
     for (uint32_t i = 0; i < msg->msg_iovlen; i++) {
         const void *data = msg->msg_iov[i].iov_base;
         uint64_t len = msg->msg_iov[i].iov_len;
@@ -698,23 +831,24 @@ int sys_sendmsg_impl(int sockfd, const struct msghdr *msg, int flags) {
         /* AF_UNIX: dispatch to local socket handler using sendmsg */
         if (s->domain == AF_UNIX && s->unix_ep >= 0) {
             int sent = unix_sendmsg(s->unix_ep, msg, flags);
+            sock_put(s);
             if (sent < 0) return sent;
             return sent;
         } else if ((s->domain == AF_PACKET || (s->domain == 0 && s->type == SOCK_RAW)) &&
                    packet_is_valid_fd(sockfd)) {
             /* AF_PACKET raw packet send */
             int sent = packet_send(sockfd, data, (int)(len > 2048 ? 2048 : len));
-            if (sent < 0) return total > 0 ? (int)total : -EIO;
+            if (sent < 0) { error = total > 0 ? (int)total : -EIO; goto out; }
             total += (uint64_t)sent;
         } else if (s->domain == AF_CAN) {
             /* AF_CAN: send CAN frame */
-            if (len < sizeof(struct can_frame)) return -EINVAL;
+            if (len < sizeof(struct can_frame)) { error = -EINVAL; goto out; }
             int sent = can_send(sockfd, (const struct can_frame *)data);
-            if (sent < 0) return total > 0 ? (int)total : -EIO;
+            if (sent < 0) { error = total > 0 ? (int)total : -EIO; goto out; }
             total += (uint64_t)sent;
         } else if (s->type == SOCK_STREAM && s->conn_id >= 0) {
             int sent = net_tcp_send(s->conn_id, data, (uint16_t)(len > 65535 ? 65535 : len));
-            if (sent < 0) return total > 0 ? (int)total : -EIO;
+            if (sent < 0) { error = total > 0 ? (int)total : -EIO; goto out; }
             total += (uint64_t)sent;
         } else if (s->type == SOCK_DGRAM) {
             uint32_t dst_ip = s->remote_ip;
@@ -746,7 +880,11 @@ int sys_sendmsg_impl(int sockfd, const struct msghdr *msg, int flags) {
      * values above INT32_MAX cannot be represented correctly. */
     if (total > 0x7FFFFFFFULL)
         total = 0x7FFFFFFFULL;
-    return (int)total;
+    error = (int)total;
+
+out:
+    sock_put(s);
+    return error;
 }
 
 int sys_recvmsg_impl(int sockfd, struct msghdr *msg, int flags) {
@@ -754,7 +892,7 @@ int sys_recvmsg_impl(int sockfd, struct msghdr *msg, int flags) {
     struct socket *s = sock_get(sockfd);
     if (!s) return -EBADF;
 
-    if (msg->msg_iovlen < 1 || !msg->msg_iov) return -EINVAL;
+    if (msg->msg_iovlen < 1 || !msg->msg_iov) { sock_put(s); return -EINVAL; }
 
     /* Receive into the first iovec buffer */
     void *buf = msg->msg_iov[0].iov_base;
@@ -763,6 +901,7 @@ int sys_recvmsg_impl(int sockfd, struct msghdr *msg, int flags) {
     /* AF_UNIX: dispatch to local socket handler using recvmsg */
     if (s->domain == AF_UNIX && s->unix_ep >= 0) {
         int n = unix_recvmsg(s->unix_ep, msg, flags);
+        sock_put(s);
         if (n <= 0) return -EINVAL;
         return n;
     }
@@ -772,6 +911,7 @@ int sys_recvmsg_impl(int sockfd, struct msghdr *msg, int flags) {
         packet_is_valid_fd(sockfd)) {
         uint64_t ifindex = 0;
         int n = packet_recv(sockfd, buf, (int)(bufsize > 2048 ? 2048 : bufsize), &ifindex);
+        sock_put(s);
         if (n < 0) return n; /* propagate -EAGAIN, -EIO, etc. */
         if (msg->msg_name && n >= 0) {
             struct sockaddr_ll *sll = (struct sockaddr_ll *)msg->msg_name;
@@ -786,15 +926,20 @@ int sys_recvmsg_impl(int sockfd, struct msghdr *msg, int flags) {
 
     /* AF_NETLINK: use msghdr-aware recvmsg */
     if (s->domain == AF_NETLINK) {
+        int ret;
         if (!netlink_is_valid_fd(sockfd))
-            return -EINVAL;
-        return netlink_recvmsg(sockfd, msg, flags);
+            ret = -EINVAL;
+        else
+            ret = netlink_recvmsg(sockfd, msg, flags);
+        sock_put(s);
+        return ret;
     }
 
     /* AF_CAN: CAN frame receive */
     if (s->domain == AF_CAN) {
-        if (bufsize < sizeof(struct can_frame)) return -EINVAL;
+        if (bufsize < sizeof(struct can_frame)) { sock_put(s); return -EINVAL; }
         int n = can_recv(sockfd, (struct can_frame *)buf);
+        sock_put(s);
         if (n < 0) return -EINVAL;
         if (msg->msg_name && n >= 0) {
             struct sockaddr_can *scan = (struct sockaddr_can *)msg->msg_name;
@@ -805,15 +950,18 @@ int sys_recvmsg_impl(int sockfd, struct msghdr *msg, int flags) {
         return n;
     }
 
+    int n = -EINVAL;
     if (s->type == SOCK_STREAM && s->conn_id >= 0) {
-        int n = net_tcp_recv(s->conn_id, buf, (uint16_t)(bufsize > 65535 ? 65535 : bufsize), 10);
+        n = net_tcp_recv(s->conn_id, buf, (uint16_t)(bufsize > 65535 ? 65535 : bufsize), 10);
+        sock_put(s);
         if (n < 0) return -EINVAL;
         return n;
     } else if (s->type == SOCK_DGRAM && s->udp_listener >= 0) {
         uint32_t src_ip;
         uint16_t src_port;
-        int n = net_udp_recv((uint16_t)s->local_port, buf, (uint16_t)(bufsize > 1500 ? 1500 : bufsize),
-                             &src_ip, &src_port, 10);
+        n = net_udp_recv((uint16_t)s->local_port, buf, (uint16_t)(bufsize > 1500 ? 1500 : bufsize),
+                         &src_ip, &src_port, 10);
+        sock_put(s);
         if (n < 0) return -EINVAL;
         if (msg->msg_name) {
             struct sockaddr_in *src = (struct sockaddr_in *)msg->msg_name;
@@ -825,62 +973,77 @@ int sys_recvmsg_impl(int sockfd, struct msghdr *msg, int flags) {
         msg->msg_flags = 0;
         return n;
     }
-    return -EINVAL;
+    sock_put(s);
+    return n;
 }
 
 int sys_getsockname_impl(int sockfd, struct sockaddr_in *addr, uint32_t *addrlen) {
     struct socket *s = sock_get(sockfd);
     if (!s) return -EBADF;
 
+    int ret = 0;
+
     /* AF_UNIX: dispatch to local socket handler */
     if (s->domain == AF_UNIX && s->unix_ep >= 0) {
-        int ret = unix_getsockname(s->unix_ep, (struct sockaddr_un *)addr, addrlen);
-        return (ret == 0) ? 0 : -EINVAL;
+        ret = unix_getsockname(s->unix_ep, (struct sockaddr_un *)addr, addrlen);
+        ret = (ret == 0) ? 0 : -EINVAL;
+        goto out;
     }
 
     /* AF_CAN: dispatch to CAN getsockname */
     if (s->domain == AF_CAN) {
-        if (*addrlen < sizeof(struct sockaddr_can)) return -EINVAL;
+        if (*addrlen < sizeof(struct sockaddr_can)) { ret = -EINVAL; goto out; }
         struct sockaddr_can *can_addr = (struct sockaddr_can *)addr;
-        int ret = can_getsockname(sockfd, can_addr);
+        ret = can_getsockname(sockfd, can_addr);
         if (ret == 0) *addrlen = sizeof(struct sockaddr_can);
-        return (ret == 0) ? 0 : -EOPNOTSUPP;
+        ret = (ret == 0) ? 0 : -EOPNOTSUPP;
+        goto out;
     }
 
     /* AF_PACKET: dispatch to raw packet getsockname */
     if (s->domain == AF_PACKET || (s->domain == 0 && s->type == SOCK_RAW)) {
-        if (*addrlen < sizeof(struct sockaddr_ll)) return -EINVAL;
+        if (*addrlen < sizeof(struct sockaddr_ll)) { ret = -EINVAL; goto out; }
         struct sockaddr_ll *sll = (struct sockaddr_ll *)addr;
-        int ret = packet_getsockname(sockfd, sll);
+        ret = packet_getsockname(sockfd, sll);
         if (ret == 0) *addrlen = sizeof(struct sockaddr_ll);
-        return (ret == 0) ? 0 : -EOPNOTSUPP;
+        ret = (ret == 0) ? 0 : -EOPNOTSUPP;
+        goto out;
     }
 
-    if (*addrlen < sizeof(struct sockaddr_in)) return -EINVAL;
+    if (*addrlen < sizeof(struct sockaddr_in)) { ret = -EINVAL; goto out; }
     addr->sin_family = AF_INET;
     addr->sin_port = htons(s->local_port);
     addr->sin_addr.s_addr = s->local_ip;
     *addrlen = sizeof(struct sockaddr_in);
-    return 0;
+
+out:
+    sock_put(s);
+    return ret;
 }
 
 int sys_getpeername_impl(int sockfd, struct sockaddr_in *addr, uint32_t *addrlen) {
     struct socket *s = sock_get(sockfd);
     if (!s) return -EBADF;
-    if (s->state != SOCK_STATE_CONNECTED) return -ENOTCONN;
+    if (s->state != SOCK_STATE_CONNECTED) { sock_put(s); return -ENOTCONN; }
+
+    int ret = 0;
 
     /* AF_UNIX: dispatch to local socket handler */
     if (s->domain == AF_UNIX && s->unix_ep >= 0) {
-        int ret = unix_getpeername(s->unix_ep, (struct sockaddr_un *)addr, addrlen);
-        return (ret == 0) ? 0 : -EINVAL;
+        ret = unix_getpeername(s->unix_ep, (struct sockaddr_un *)addr, addrlen);
+        ret = (ret == 0) ? 0 : -EINVAL;
+        goto out;
     }
 
-    if (*addrlen < sizeof(struct sockaddr_in)) return -EINVAL;
+    if (*addrlen < sizeof(struct sockaddr_in)) { ret = -EINVAL; goto out; }
     addr->sin_family = AF_INET;
     addr->sin_port = htons(s->remote_port);
     addr->sin_addr.s_addr = s->remote_ip;
     *addrlen = sizeof(struct sockaddr_in);
-    return 0;
+
+out:
+    sock_put(s);
+    return ret;
 }
 
 int sys_socketpair_impl(int domain, int type, int protocol, int sv[2]) {
@@ -1005,12 +1168,15 @@ int sock_poll(int sockfd, int events, struct poll_table *pt)
 
     /* AF_UNIX: dispatch to local socket handler */
     if (s->domain == AF_UNIX && s->unix_ep >= 0) {
-        return unix_poll(s->unix_ep, events);
+        int ret = unix_poll(s->unix_ep, events);
+        sock_put(s);
+        return ret;
     }
 
     /* AF_CAN: dispatch to CAN poll handler */
     if (s->domain == AF_CAN) {
         revents = can_poll(sockfd);
+        sock_put(s);
         return revents & events;
     }
 
@@ -1093,12 +1259,14 @@ int sock_poll(int sockfd, int events, struct poll_table *pt)
     if (result == 0 && pt)
         poll_wait(pt, &s->wq);
 
+    sock_put(s);
     return result;
 }
 
 /* ── Exported symbols for network protocol/driver modules ─────────── */
 EXPORT_SYMBOL(socket_init);
 EXPORT_SYMBOL(sock_get);
+EXPORT_SYMBOL(sock_put);
 EXPORT_SYMBOL(sock_alloc);
 EXPORT_SYMBOL(sock_free);
 EXPORT_SYMBOL(sys_socket_impl);
@@ -1108,12 +1276,17 @@ EXPORT_SYMBOL(sys_listen_impl);
 EXPORT_SYMBOL(sys_accept_impl);
 EXPORT_SYMBOL(sys_sendmsg_impl);
 EXPORT_SYMBOL(sys_recvmsg_impl);
+
 /* ── Wake socket by connection ID ────────────────────────────── */
 
 /*
  * sock_wake_by_conn_id — wake the waitqueue of all sockets that
  * have the given conn_id.  Called from the TCP stack when data
  * arrives so poll/select/epoll waiters wake up and re-check.
+ *
+ * Safe to call from softirq context.  Does not acquire socket locks
+ * because it only reads in_use/conn_id (aligned ints — atomic on x86)
+ * and calls wait_queue_wake_all which has its own spinlock.
  */
 void sock_wake_by_conn_id(int conn_id)
 {
@@ -1124,6 +1297,7 @@ void sock_wake_by_conn_id(int conn_id)
         }
     }
 }
+
 EXPORT_SYMBOL(sys_setsockopt_impl);
 EXPORT_SYMBOL(sys_getsockopt_impl);
 

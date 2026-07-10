@@ -36,6 +36,7 @@ static void net_socket_create_test(struct kunit *test)
         KUNIT_EXPECT_NOT_NULL(test, s);
         KUNIT_EXPECT_EQ(test, (int64_t)s->in_use, (int64_t)1);
         KUNIT_EXPECT_EQ(test, (int64_t)s->state, (int64_t)SOCK_STATE_CREATED);
+        sock_put(s);
         sock_free(fd);
     }
 }
@@ -66,6 +67,7 @@ static void net_socket_bind_listen_accept_test(struct kunit *test)
     /* Accept requires a pending connection — we test the state machine */
     KUNIT_EXPECT_EQ(test, (int64_t)s->state, (int64_t)SOCK_STATE_LISTENING);
 
+    sock_put(s);
     sock_free(fd);
 }
 
@@ -265,6 +267,7 @@ static void net_udp_socket_create_test(struct kunit *test)
     KUNIT_EXPECT_EQ(test, (int64_t)s->type, (int64_t)SOCK_DGRAM);
     KUNIT_EXPECT_EQ(test, (int64_t)s->protocol, (int64_t)IPPROTO_UDP);
 
+    sock_put(s);
     sock_free(fd);
 }
 
@@ -293,6 +296,7 @@ static void net_udp_socket_bind_send_test(struct kunit *test)
     KUNIT_EXPECT_EQ(test, (int64_t)s->state, (int64_t)SOCK_STATE_CONNECTED);
     KUNIT_EXPECT_EQ(test, (int64_t)s->remote_port, (int64_t)9002);
 
+    sock_put(s);
     sock_free(fd);
 }
 
@@ -318,6 +322,7 @@ static void net_udp_socket_options_test(struct kunit *test)
     s->rcvbuf = 65536;
     KUNIT_EXPECT_EQ(test, (int64_t)s->rcvbuf, (int64_t)65536);
 
+    sock_put(s);
     sock_free(fd);
 }
 
@@ -451,6 +456,7 @@ static void net_socket_reuse_test(struct kunit *test)
     struct socket *s = sock_get(fd2);
     KUNIT_EXPECT_NOT_NULL(test, s);
     KUNIT_EXPECT_EQ(test, (int64_t)s->in_use, (int64_t)1);
+    sock_put(s);
 
     sock_free(fd2);
 }
