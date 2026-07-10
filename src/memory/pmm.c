@@ -685,14 +685,14 @@ static int pmm_proactive_reclaim(uint64_t needed_pages) {
  * a request.  Runs progressively stronger recovery steps, retrying the
  * per-CPU cache after each step.
  *
- * Returns 1 if a page was successfully allocated (via the cache after
- * recovery), or 0 if all recovery levels failed.
+ * Returns the physical address of a successfully allocated page on success,
+ * or 0 if all recovery levels failed.
  *
  * 'needed_pages' is passed to oom_kill() so the OOM killer knows how
  * much memory needs to be freed.
  *
  * The caller_ip is recorded in the allocation failure history on panic. */
-static int pmm_oom_recover(uint64_t needed_pages, uint64_t caller_ip) {
+static uint64_t pmm_oom_recover(uint64_t needed_pages, uint64_t caller_ip) {
     /*
      * Recovery levels:
      *   Level 1: Dentry cache shrink + slab reaping + OOM kill + yield
@@ -738,7 +738,7 @@ static int pmm_oom_recover(uint64_t needed_pages, uint64_t caller_ip) {
             pmm_irq_restore(irq_save);
             poison_fill(addr, 0xDEADBEEF);
             vm_pgalloc++;
-            return 1;
+            return addr;  /* return the physical address directly */
         }
         pmm_irq_restore(irq_save);
     }
@@ -821,13 +821,12 @@ uint64_t pmm_alloc_frame(void) {
     pmm_record_fail(caller_ip, 1);
 
     psi_memstall_enter();
-    int recovered = pmm_oom_recover(1, caller_ip);
+    uint64_t recovered = pmm_oom_recover(1, caller_ip);
     psi_memstall_leave();
 
     if (recovered)
-        return pmm_alloc_frame();  /* recursive retry after recovery freed pages */
+        return recovered;
 
-    /* unreachable */
     return 0;
 }
 

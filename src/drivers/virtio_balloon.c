@@ -370,7 +370,7 @@ static uint32_t vbl_inflate(struct vbq *q, uint32_t count)
 
 	for (i = 0; i < count; i++) {
 		uint64_t frame = pmm_alloc_frame();
-		if (frame == ~0ULL)
+		if (!frame)
 			break;
 
 		uint64_t phys = frame << 12;
