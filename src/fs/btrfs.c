@@ -358,7 +358,8 @@ static int btrfs_build_chunk_tree(struct btrfs_priv *bp)
             uint32_t chk_off = items[item_idx].offset;
             uint32_t chk_sz  = items[item_idx].size;
 
-            if (chk_off <= bp->nodesize && chk_sz <= bp->nodesize - chk_off) {
+            if (chk_off <= bp->nodesize && chk_sz <= bp->nodesize - chk_off &&
+                chk_sz >= sizeof(struct btrfs_chunk)) {
                 struct btrfs_chunk *chunk =
                     (struct btrfs_chunk *)(buf + chk_off);
                 uint16_t num_stripes = chunk->num_stripes;
@@ -366,6 +367,16 @@ static int btrfs_build_chunk_tree(struct btrfs_priv *bp)
                 /* Only single-device, non-RAID chunks */
                 if (num_stripes == 1 &&
                     !(chunk->type & BTRFS_BLOCK_GROUP_RAID_MASK)) {
+                    /* Verify the item is large enough for the stripe array.
+                     * sizeof(struct btrfs_chunk) + 1 * sizeof(struct btrfs_stripe)
+                     * is the minimum for a single-stripe chunk.  Without this
+                     * check, a crafted chunk item with num_stripes==1 but
+                     * undersized chk_sz would cause stripe->offset to read
+                     * out-of-bounds item data within the node buffer. */
+                    if (chk_sz < sizeof(struct btrfs_chunk) +
+                                 sizeof(struct btrfs_stripe))
+                        continue;
+
                     struct btrfs_stripe *stripe =
                         (struct btrfs_stripe *)
                             ((uint8_t *)chunk +
