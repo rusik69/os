@@ -384,6 +384,7 @@ static int squashfs_walk_dir(struct squashfs_priv *rp, uint64_t inode_ref,
             /* Compute the actual inode offset from the inode table */
             uint64_t inode_offset = (uint64_t)(header_inode_num + ino_off) * 32;
             uint64_t inode_addr_val = rp->sb.inode_table_start + inode_offset;
+            e->inode_offset = (uint32_t)inode_offset;
 
             if (inode_addr_val < rp->total_size) {
                 uint8_t *inode_base = squashfs_addr(rp, inode_addr_val);
@@ -480,41 +481,53 @@ static int squashfs_read(void *priv, const char *path, void *buf,
     struct squashfs_entry *e = squashfs_find(rp, path);
     if (!e || e->is_dir) return -1;
 
-    uint32_t to_read = e->file_size;
-    if (to_read > max_size) to_read = max_size;
-
-    /* Read the data blocks from the image */
-    uint64_t data_start = rp->sb.inode_table_start + rp->sb.bytes_used; /* approximate */
-    /* Actually data is stored in data blocks referenced by start_block */
+    uint32_t remaining = e->file_size;
+    if (remaining > max_size) remaining = max_size;
 
     if (e->start_block == 0) {
         /* Small file: data may be stored inline in the inode */
-        memset(buf, 0, to_read);
+        memset(buf, 0, remaining);
         *out_size = 0;
         return 0;
     }
 
-    /* Locate the compressed data block */
-    uint8_t *comp_base = squashfs_addr(rp, e->start_block);
-    uint32_t comp_size = squashfs_read32(comp_base);
-    int uncompressed = (comp_size & SQUASHFS_UNCOMPRESSED_FLAG);
-    if (uncompressed) {
-        comp_size &= ~SQUASHFS_UNCOMPRESSED_FLAG;
+    /* Compute number of compressed data blocks covering the file */
+    uint32_t num_blocks = (e->file_size + SQUASHFS_BLOCK_SIZE - 1) / SQUASHFS_BLOCK_SIZE;
+    uint32_t data_offset = e->start_block;
+    uint32_t out_pos = 0;
+
+    /* Locate the inode to read block_sizes[] (after the 32-byte reg inode header) */
+    uint8_t *inode_base = squashfs_addr(rp, rp->sb.inode_table_start + e->inode_offset);
+
+    for (uint32_t b = 0; b < num_blocks && out_pos < remaining; b++) {
+        /* Read block size from the inode's block_sizes[] array */
+        uint32_t blk_entry = squashfs_read32(inode_base + 32 + b * 4);
+        int blk_uncompressed = !!(blk_entry & SQUASHFS_UNCOMPRESSED_FLAG);
+        uint32_t blk_size = blk_entry & ~SQUASHFS_UNCOMPRESSED_FLAG;
+
+        if (blk_size == 0)
+            break;
+
+        uint8_t *blk_data = squashfs_addr(rp, data_offset);
+
+        uint8_t decomp_buf[SQUASHFS_BLOCK_SIZE];
+        uint32_t decomp_size = 0;
+
+        if (squashfs_decompress_block(blk_data, blk_size, decomp_buf, &decomp_size,
+                                      !blk_uncompressed) == 0) {
+            uint32_t copy = decomp_size;
+            if (copy > remaining - out_pos) copy = remaining - out_pos;
+            memcpy((uint8_t *)buf + out_pos, decomp_buf, copy);
+            out_pos += copy;
+        } else {
+            *out_size = out_pos;
+            return -1;
+        }
+
+        data_offset += blk_size;
     }
 
-    uint8_t decomp_buf[SQUASHFS_BLOCK_SIZE];
-    uint32_t decomp_size = 0;
-
-    if (squashfs_decompress_block(comp_base, comp_size, decomp_buf, &decomp_size,
-                                  !uncompressed) == 0) {
-        uint32_t copy = decomp_size;
-        if (copy > to_read) copy = to_read;
-        memcpy(buf, decomp_buf, copy);
-        *out_size = copy;
-    } else {
-        *out_size = 0;
-        return -1;
-    }
+    *out_size = out_pos;
 
     return 0;
 }
