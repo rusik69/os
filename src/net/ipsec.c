@@ -8,6 +8,7 @@
 #include "net_internal.h"
 #include "errno.h"
 #include "heap.h"
+#include "spinlock.h"
 
 /* IP protocol numbers for AH and ESP */
 #define IP_PROTO_AH   51
@@ -68,6 +69,7 @@ struct security_assoc {
 
 static struct security_assoc sadb[SADB_MAX_SAS];
 static int ipsec_initialised = 0;
+static spinlock_t sadb_lock = SPINLOCK_INIT;
 
 static void ipsec_init(void)
 {
@@ -107,8 +109,12 @@ static int ipsec_sa_add(uint32_t spi, uint32_t src_ip, uint32_t dst_ip,
     if (proto != SADB_PROTO_AH && proto != SADB_PROTO_ESP) return -EINVAL;
     if (mode != SADB_MODE_TRANSPORT && mode != SADB_MODE_TUNNEL) return -EINVAL;
 
+    spinlock_acquire(&sadb_lock);
     int idx = sadb_find_free();
-    if (idx < 0) return -ENOSPC;
+    if (idx < 0) {
+        spinlock_release(&sadb_lock);
+        return -ENOSPC;
+    }
 
     struct security_assoc *sa = &sadb[idx];
     memset(sa, 0, sizeof(*sa));
@@ -129,6 +135,7 @@ static int ipsec_sa_add(uint32_t spi, uint32_t src_ip, uint32_t dst_ip,
         memcpy(sa->enc_key, enc_key, len);
         sa->enc_key_len = len;
     }
+    spinlock_release(&sadb_lock);
 
     kprintf("ipsec: added SA spi=0x%x %d.%d.%d.%d -> %d.%d.%d.%d proto=%s mode=%s\n",
             spi,
@@ -144,16 +151,23 @@ static int ipsec_sa_add(uint32_t spi, uint32_t src_ip, uint32_t dst_ip,
 /* Delete a Security Association */
 static int ipsec_sa_del(uint32_t spi, uint32_t dst_ip)
 {
+    spinlock_acquire(&sadb_lock);
     int idx = sadb_find_by_spi(spi, dst_ip);
-    if (idx < 0) return -ENOENT;
+    if (idx < 0) {
+        spinlock_release(&sadb_lock);
+        return -ENOENT;
+    }
     memset(&sadb[idx], 0, sizeof(sadb[idx]));
+    spinlock_release(&sadb_lock);
     return 0;
 }
 
 /* Flush all SAs */
 static void ipsec_sa_flush(void)
 {
+    spinlock_acquire(&sadb_lock);
     memset(sadb, 0, sizeof(sadb));
+    spinlock_release(&sadb_lock);
     kprintf("ipsec: all SAs flushed\n");
 }
 
@@ -174,7 +188,7 @@ static int ipsec_output_ah(struct ip_header *outer_ip, uint8_t *buf, int *len, i
     if (!ipsec_initialised || !buf || !len || !outer_ip) return -EINVAL;
     uint32_t dst_ip = ntohl(outer_ip->dst_ip);
 
-    /* Find matching SA */
+    spinlock_acquire(&sadb_lock);
     int idx = -1;
     for (int i = 0; i < SADB_MAX_SAS; i++) {
         if (sadb[i].in_use && sadb[i].proto == SADB_PROTO_AH &&
@@ -183,14 +197,20 @@ static int ipsec_output_ah(struct ip_header *outer_ip, uint8_t *buf, int *len, i
             break;
         }
     }
-    if (idx < 0) return -ENOENT;
+    if (idx < 0) {
+        spinlock_release(&sadb_lock);
+        return -ENOENT;
+    }
     struct security_assoc *sa = &sadb[idx];
 
     int payload_len = *len;
     int ah_hdr_size = sizeof(struct ah_header) + 12; /* header + ICV */
     int total_len = payload_len + ah_hdr_size;
 
-    if (total_len > max_len) return -ENOSPC;
+    if (total_len > max_len) {
+        spinlock_release(&sadb_lock);
+        return -ENOSPC;
+    }
 
     /* Shift payload to make room for AH header */
     memmove(buf + ah_hdr_size, buf, payload_len);
@@ -206,6 +226,8 @@ static int ipsec_output_ah(struct ip_header *outer_ip, uint8_t *buf, int *len, i
     ipsec_compute_icv(sa, buf, ah_hdr_size + payload_len - 12,
                       buf + ah_hdr_size + payload_len - 12);
 
+    spinlock_release(&sadb_lock);
+
     *len = total_len;
     kprintf("ipsec: AH output spi=0x%x seq=%u len=%d\n", sa->spi, sa->last_seq, total_len);
     return 0;
@@ -216,6 +238,7 @@ static int ipsec_output_esp(struct ip_header *outer_ip, uint8_t *buf, int *len, 
     if (!ipsec_initialised || !buf || !len || !outer_ip) return -EINVAL;
     uint32_t dst_ip = ntohl(outer_ip->dst_ip);
 
+    spinlock_acquire(&sadb_lock);
     int idx = -1;
     for (int i = 0; i < SADB_MAX_SAS; i++) {
         if (sadb[i].in_use && sadb[i].proto == SADB_PROTO_ESP &&
@@ -224,7 +247,10 @@ static int ipsec_output_esp(struct ip_header *outer_ip, uint8_t *buf, int *len, 
             break;
         }
     }
-    if (idx < 0) return -ENOENT;
+    if (idx < 0) {
+        spinlock_release(&sadb_lock);
+        return -ENOENT;
+    }
     struct security_assoc *sa = &sadb[idx];
 
     int payload_len = *len;
@@ -234,7 +260,10 @@ static int ipsec_output_esp(struct ip_header *outer_ip, uint8_t *buf, int *len, 
     int esp_trail_size = pad_len + 2 + 12; /* padding + trailer(2) + ICV(12) */
     int total_len = esp_hdr_size + payload_len + esp_trail_size;
 
-    if (total_len > max_len) return -ENOSPC;
+    if (total_len > max_len) {
+        spinlock_release(&sadb_lock);
+        return -ENOSPC;
+    }
 
     /* Shift payload right */
     memmove(buf + esp_hdr_size, buf, payload_len);
@@ -257,6 +286,8 @@ static int ipsec_output_esp(struct ip_header *outer_ip, uint8_t *buf, int *len, 
     for (int i = 0; i < payload_len + pad_len + 2; i++)
         buf[esp_hdr_size + i] ^= sa->enc_key[i % sa->enc_key_len];
 
+    spinlock_release(&sadb_lock);
+
     *len = total_len;
     kprintf("ipsec: ESP output spi=0x%x seq=%u len=%d\n", sa->spi, sa->last_seq, total_len);
     return 0;
@@ -265,14 +296,17 @@ static int ipsec_output_esp(struct ip_header *outer_ip, uint8_t *buf, int *len, 
 static int ipsec_input_ah(struct ip_header *ip_hdr, const uint8_t *payload, int len)
 {
     const struct ah_header *ah = (const struct ah_header *)payload;
+    spinlock_acquire(&sadb_lock);
     int idx = sadb_find_by_spi(ah->spi, ip_hdr->src_ip);
     if (idx < 0) {
+        spinlock_release(&sadb_lock);
         kprintf("ipsec: no SA for inbound AH spi=0x%x\n", ah->spi);
         return -ENOENT;
     }
     struct security_assoc *sa = &sadb[idx];
 
     if (ah->seq_no <= sa->last_seq) {
+        spinlock_release(&sadb_lock);
         kprintf("ipsec: replay attempt dropped (seq=%u last=%u)\n",
                 ah->seq_no, sa->last_seq);
         return -EINVAL;
@@ -281,16 +315,21 @@ static int ipsec_input_ah(struct ip_header *ip_hdr, const uint8_t *payload, int 
     uint8_t expected_icv[12];
     int icv_offset = len - 12;
     if (icv_offset < (int)sizeof(struct ah_header))
+    {
+        spinlock_release(&sadb_lock);
         return -EINVAL;
+    }
 
     ipsec_compute_icv(sa, payload, icv_offset, expected_icv);
     const uint8_t *rcvd_icv = payload + icv_offset;
     if (memcmp(expected_icv, rcvd_icv, 12) != 0) {
+        spinlock_release(&sadb_lock);
         kprintf("ipsec: AH ICV mismatch for spi=0x%x\n", ah->spi);
         return -EINVAL;
     }
 
     sa->last_seq = ah->seq_no;
+    spinlock_release(&sadb_lock);
     kprintf("ipsec: inbound AH packet spi=0x%x seq=%u (ICV verified)\n",
             ah->spi, ah->seq_no);
     return 0;
@@ -299,16 +338,43 @@ static int ipsec_input_ah(struct ip_header *ip_hdr, const uint8_t *payload, int 
 static int ipsec_input_esp(struct ip_header *ip_hdr, const uint8_t *payload, int len)
 {
     const struct esp_header *esp = (const struct esp_header *)payload;
-    int idx = sadb_find_by_spi(esp->spi, ip_hdr->src_ip);
+
+    uint8_t enc_key[32];
+    int enc_key_len;
+    uint32_t esp_spi = esp->spi;
+    uint32_t esp_seq_no = esp->seq_no;
+    int found = 0;
+
+    spinlock_acquire(&sadb_lock);
+    int idx = sadb_find_by_spi(esp_spi, ip_hdr->src_ip);
     if (idx < 0) {
-        kprintf("ipsec: no SA for inbound ESP spi=0x%x\n", esp->spi);
+        spinlock_release(&sadb_lock);
+        kprintf("ipsec: no SA for inbound ESP spi=0x%x\n", esp_spi);
         return -ENOENT;
     }
     struct security_assoc *sa = &sadb[idx];
 
-    if (esp->seq_no <= sa->last_seq) {
+    if (esp_seq_no <= sa->last_seq) {
+        spinlock_release(&sadb_lock);
         kprintf("ipsec: replay attempt dropped (seq=%u last=%u)\n",
-                esp->seq_no, sa->last_seq);
+                esp_seq_no, sa->last_seq);
+        return -EINVAL;
+    }
+
+    /* Copy key material before releasing lock (kmalloc may sleep) */
+    enc_key_len = sa->enc_key_len;
+    if (enc_key_len > 32) enc_key_len = 32;
+    if (enc_key_len > 0)
+        memcpy(enc_key, sa->enc_key, enc_key_len);
+
+    sa->last_seq = esp_seq_no;
+    found = 1;
+    spinlock_release(&sadb_lock);
+
+    if (!found)
+        return -ENOENT;
+    if (enc_key_len == 0) {
+        kprintf("ipsec: no encryption key for inbound ESP spi=0x%x\n", esp_spi);
         return -EINVAL;
     }
 
@@ -319,15 +385,14 @@ static int ipsec_input_esp(struct ip_header *ip_hdr, const uint8_t *payload, int
     if (!decrypted) return -ENOMEM;
 
     for (int i = 0; i < payload_len; i++)
-        decrypted[i] = payload[sizeof(struct esp_header) + i] ^ sa->enc_key[i % sa->enc_key_len];
+        decrypted[i] = payload[sizeof(struct esp_header) + i] ^ enc_key[i % enc_key_len];
 
     struct esp_trailer *trailer = (struct esp_trailer *)(decrypted + payload_len - 2);
     (void)trailer;
 
     kfree(decrypted);
-    sa->last_seq = esp->seq_no;
     kprintf("ipsec: inbound ESP packet spi=0x%x seq=%u (decrypted)\n",
-            esp->spi, esp->seq_no);
+            esp_spi, esp_seq_no);
     return 0;
 }
 
@@ -348,10 +413,12 @@ static void handle_ipsec_esp(struct ip_header *ip_hdr, const uint8_t *payload, u
 static int ipsec_sa_list(struct security_assoc *buf, int max)
 {
     int count = 0;
+    spinlock_acquire(&sadb_lock);
     for (int i = 0; i < SADB_MAX_SAS && count < max; i++) {
         if (sadb[i].in_use)
             buf[count++] = sadb[i];
     }
+    spinlock_release(&sadb_lock);
     return count;
 }
 #include "module.h"
@@ -369,13 +436,18 @@ static int ipsec_encrypt(void *skb, void *sa)
     if (!sa) return -EINVAL;
 
     struct security_assoc *s = (struct security_assoc *)sa;
-    if (s->enc_key_len == 0) {
-        kprintf("[ipsec] ipsec_encrypt: no encryption key for spi=0x%x\n", s->spi);
+    spinlock_acquire(&sadb_lock);
+    int has_key = (s->enc_key_len > 0);
+    uint32_t spi = s->spi;
+    spinlock_release(&sadb_lock);
+
+    if (!has_key) {
+        kprintf("[ipsec] ipsec_encrypt: no encryption key for spi=0x%x\n", spi);
         return -EINVAL;
     }
 
     /* XOR encryption using SA key (simplified — real impl would use AES-CBC) */
-    kprintf("[ipsec] ipsec_encrypt: spi=0x%x enc_key_len=%d\n", s->spi, s->enc_key_len);
+    kprintf("[ipsec] ipsec_encrypt: spi=0x%x enc_key_len=%d\n", spi, s->enc_key_len);
     return 0;
 }
 /* ── ipsec_decrypt: decrypt data using SA key material ── */
@@ -386,13 +458,18 @@ static int ipsec_decrypt(void *skb, void *sa)
     if (!sa) return -EINVAL;
 
     struct security_assoc *s = (struct security_assoc *)sa;
-    if (s->enc_key_len == 0) {
-        kprintf("[ipsec] ipsec_decrypt: no encryption key for spi=0x%x\n", s->spi);
+    spinlock_acquire(&sadb_lock);
+    int has_key = (s->enc_key_len > 0);
+    uint32_t spi = s->spi;
+    spinlock_release(&sadb_lock);
+
+    if (!has_key) {
+        kprintf("[ipsec] ipsec_decrypt: no encryption key for spi=0x%x\n", spi);
         return -EINVAL;
     }
 
     /* XOR decryption using SA key (simplified) */
-    kprintf("[ipsec] ipsec_decrypt: spi=0x%x enc_key_len=%d\n", s->spi, s->enc_key_len);
+    kprintf("[ipsec] ipsec_decrypt: spi=0x%x enc_key_len=%d\n", spi, s->enc_key_len);
     return 0;
 }
 /* ── ipsec_key_add: add key material to an existing SA ── */
@@ -403,6 +480,7 @@ static int ipsec_key_add(void *sa, const uint8_t *key, int key_len, int is_encry
     if (key_len > 32) key_len = 32;
 
     struct security_assoc *s = (struct security_assoc *)sa;
+    spinlock_acquire(&sadb_lock);
     if (is_encrypt) {
         memcpy(s->enc_key, key, (size_t)key_len);
         s->enc_key_len = key_len;
@@ -410,8 +488,10 @@ static int ipsec_key_add(void *sa, const uint8_t *key, int key_len, int is_encry
         memcpy(s->auth_key, key, (size_t)key_len);
         s->auth_key_len = key_len;
     }
+    uint32_t spi = s->spi;
+    spinlock_release(&sadb_lock);
     kprintf("[ipsec] ipsec_key_add: spi=0x%x %s key len=%d\n",
-            s->spi, is_encrypt ? "encrypt" : "auth", key_len);
+            spi, is_encrypt ? "encrypt" : "auth", key_len);
     return 0;
 }
 /* ── Stub: ipsec_sa_alloc ──────────────────────────── */
@@ -419,15 +499,18 @@ static struct ipsec_sa *ipsec_sa_alloc(void)
 {
     if (!ipsec_initialised) return NULL;
 
+    spinlock_acquire(&sadb_lock);
     /* Find a free SA slot and return it as ipsec_sa */
     for (int i = 0; i < SADB_MAX_SAS; i++) {
         if (!sadb[i].in_use) {
             memset(&sadb[i], 0, sizeof(sadb[i]));
             sadb[i].in_use = 1;
             kprintf("[IPSEC] ipsec_sa_alloc: allocated SA %d\n", i);
+            spinlock_release(&sadb_lock);
             return (struct ipsec_sa *)&sadb[i];
         }
     }
+    spinlock_release(&sadb_lock);
     kprintf("[IPSEC] ipsec_sa_alloc: no free SA slots\n");
     return NULL;
 }
@@ -436,7 +519,9 @@ static void ipsec_sa_free(struct ipsec_sa *sa)
 {
     if (!sa || !ipsec_initialised) return;
     struct security_assoc *s = (struct security_assoc *)sa;
+    spinlock_acquire(&sadb_lock);
     memset(s, 0, sizeof(*s));
+    spinlock_release(&sadb_lock);
     kprintf("[IPSEC] ipsec_sa_free: freed SA\n");
 }
 /* ── Stub: ipsec_sa_lookup ─────────────────────────── */
@@ -444,13 +529,17 @@ static struct ipsec_sa *ipsec_sa_lookup(uint32_t spi, uint32_t daddr)
 {
     if (!ipsec_initialised) return NULL;
 
+    spinlock_acquire(&sadb_lock);
     int idx = sadb_find_by_spi(spi, daddr);
     if (idx < 0) {
+        spinlock_release(&sadb_lock);
         kprintf("[IPSEC] ipsec_sa_lookup: SA not found spi=0x%x daddr=%d.%d.%d.%d\n",
                 spi,
                 (daddr >> 24) & 0xFF, (daddr >> 16) & 0xFF,
                 (daddr >> 8) & 0xFF, daddr & 0xFF);
         return NULL;
     }
-    return (struct ipsec_sa *)&sadb[idx];
+    struct ipsec_sa *result = (struct ipsec_sa *)&sadb[idx];
+    spinlock_release(&sadb_lock);
+    return result;
 }
