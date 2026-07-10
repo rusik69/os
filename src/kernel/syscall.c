@@ -1024,7 +1024,7 @@ static uint64_t sys_close(uint64_t fd) {
     }
     int i = (int)fd - 3;
     struct process_fd *pfd = sys_get_fd(i);
-    if (!pfd) return (uint64_t)(int64_t)-EBADF;
+    if (!pfd || !pfd->used) return (uint64_t)(int64_t)-EBADF;
 
     /* If this is an O_TMPFILE fd, unlink the hidden file */
     if (pfd->flags & FD_TMPFILE && pfd->path[0]) {
