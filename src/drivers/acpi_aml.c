@@ -112,6 +112,11 @@ static int g_opregion_handler_count;
 
 /* ── Namespace Storage ──────────────────────────────────────────── */
 
+/* Maximum recursion depth for AML namespace construction to prevent
+ * kernel stack overflow from deeply nested containers (Scope, Device,
+ * etc.). Real-world ACPI tables rarely exceed ~10 levels. */
+#define AML_PARSE_MAX_DEPTH     128
+
 /* The flat namespace array. We use a static pool sized generously. */
 static struct {
 	int              count;
@@ -125,6 +130,7 @@ struct aml_parse_state {
 	uint32_t       offset;      /* Current offset into AML */
 	uint16_t       parent;      /* Current parent node index (0xFFFF = root) */
 	uint8_t        ssdt_index;  /* Which SSDT we are parsing (0 = DSDT) */
+	uint8_t        depth;       /* Recursion depth guard */
 };
 
 /* ── PkgLength Decoder ──────────────────────────────────────────── */
@@ -773,6 +779,14 @@ static uint32_t aml_process_object(struct aml_parse_state *state,
 
 		if (body_end > max_len)
 			body_end = max_len;
+
+		/* Guard against excessive recursion depth (stack overflow) */
+		if (state->depth >= AML_PARSE_MAX_DEPTH) {
+			kprintf("[AML] Error: namespace nesting depth exceeds %u at offset %u\n",
+				(unsigned int)AML_PARSE_MAX_DEPTH, (unsigned int)state->offset);
+			return 0;
+		}
+		state->depth++;
 
 		/* Save and restore parse state for recursion */
 		struct aml_parse_state saved = *state;
