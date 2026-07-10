@@ -1,7 +1,7 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
   "current_batch": "B006",
-  "current_item": 371,
+  "current_item": 373,
   "completed_items": [
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
     11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
@@ -39,13 +39,14 @@
     331, 332, 333, 334, 335, 336, 337, 338, 339, 340,
     341, 342, 343, 344, 345, 346, 347, 348, 349, 350,
     351, 352, 353, 354, 355, 356, 357, 358, 359, 360,
-    361, 362, 363, 364, 365, 366, 367, 368, 369, 370
+    361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371,
+    372
   ],
-  "found_bugs": 830,
-  "fixed_bugs": 830,
+  "found_bugs": 832,
+  "fixed_bugs": 832,
   "completed_batches": [
     "B002"
   ],
-  "last_item_timestamp": "2026-07-10T22:48:31",
-  "last_item_result": "bug-hunt #370: usb_hub - fix missing disconnect handling in usb_hub_detect; added hotplug_handle_disconnect() call for downstream hub disconnects"
+  "last_item_timestamp": "2026-07-10T23:11:00",
+  "last_item_result": "bug-hunt #372: usb_audio - fix UAC1 control request wValue/wIndex encoding: audio_feature_unit_request() swapped device ID and channel number fields — used UAC2 encoding instead of UAC1 per USB Audio 1.0 §5.2.1"
 }

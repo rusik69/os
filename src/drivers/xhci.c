@@ -488,11 +488,13 @@ int xhci_dcbaa_init(struct xhci_controller *xhci)
     xhci->dcbaa = (uint32_t *)PHYS_TO_VIRT((void *)(uintptr_t)xhci->dcbaa_paddr);
     memset(xhci->dcbaa, 0, PAGE_SIZE);
 
-    /* Program DCBAAP register (two 32-bit writes for 64-bit addr) */
-    xhci_write32(xhci, xhci->op_regs, XHCI_OP_DCBAAP,
-                 (uint32_t)(xhci->dcbaa_paddr & 0xFFFFFFFF));
+    /* Program DCBAAP register (two 32-bit writes for 64-bit addr).
+     * Per xHCI 1.2 §5.4.6: write upper dword BEFORE lower dword, because
+     * the xHC latches the full pointer on the lower dword write. */
     xhci_write32(xhci, xhci->op_regs, XHCI_OP_DCBAAP + 4,
                  (uint32_t)((xhci->dcbaa_paddr >> 32) & 0xFFFFFFFF));
+    xhci_write32(xhci, xhci->op_regs, XHCI_OP_DCBAAP,
+                 (uint32_t)(xhci->dcbaa_paddr & 0xFFFFFFFF));
     __asm__ volatile("mfence" ::: "memory");
 
     kprintf("[xHCI] DCBAA programmed @ 0x%lx\n",
@@ -873,14 +875,18 @@ static int xhci_rings_init(struct xhci_controller *xhci)
         return ret;
     }
 
-    /* Program the Command Ring Control Register (CRCR) */
+    /* Program the Command Ring Control Register (CRCR).
+     * Per xHCI 1.2 §5.4.5 + §4.9.3: write upper dword BEFORE lower dword.
+     * RCS = initial consumer cycle state = 1 - initial producer cycle = 0
+     * (producer cycle starts at 1, consumer stays at opposite). */
     {
         uint64_t crcr = (uint64_t)xhci->cmd_ring.paddr & ~0x3FULL;
-        crcr |= 0;  /* CRR=0 (not running), RCS matches first producer cycle = 1 */
-        /* Write CRCR low 32 bits */
-        xhci_write32(xhci, xhci->op_regs, XHCI_OP_CRCR, (uint32_t)(crcr & 0xFFFFFFFF));
-        /* Write CRCR high 32 bits (must be 0 below 4GB, which we assume) */
-        xhci_write32(xhci, xhci->op_regs, XHCI_OP_CRCR + 4, (uint32_t)((crcr >> 32) & 0xFFFFFFFF));
+        /* crcr bits: [63:4]=addr, [3]=CRR(ro), [2]=CA, [1]=CS, [0]=RCS=0 */
+        /* Write CRCR high 32 bits first, then low 32 bits */
+        xhci_write32(xhci, xhci->op_regs, XHCI_OP_CRCR + 4,
+                     (uint32_t)((crcr >> 32) & 0xFFFFFFFF));
+        xhci_write32(xhci, xhci->op_regs, XHCI_OP_CRCR,
+                     (uint32_t)(crcr & 0xFFFFFFFF));
     }
 
     /* Program the Event Ring registers in the Runtime Register Space */
@@ -890,15 +896,20 @@ static int xhci_rings_init(struct xhci_controller *xhci)
         /* ERSTSZ — number of segments (1) */
         xhci_write32(xhci, rt_base, XHCI_ERSTSZ(0, 0), 1);
 
-        /* ERSTBA — physical address of ERST array */
+        /* ERSTBA — physical address of ERST array (write high dword first) */
         uint64_t erst_ba = xhci->ev_ring.erst_paddr;
-        xhci_write32(xhci, rt_base, XHCI_ERSTBA(0, 0), (uint32_t)(erst_ba & 0xFFFFFFFF));
-        xhci_write32(xhci, rt_base, XHCI_ERSTBA(0, 0) + 4, (uint32_t)((erst_ba >> 32) & 0xFFFFFFFF));
+        xhci_write32(xhci, rt_base, XHCI_ERSTBA(0, 0) + 4,
+                     (uint32_t)((erst_ba >> 32) & 0xFFFFFFFF));
+        xhci_write32(xhci, rt_base, XHCI_ERSTBA(0, 0),
+                     (uint32_t)(erst_ba & 0xFFFFFFFF));
 
-        /* ERDP — Event Ring Dequeue Pointer (point to start, DCS=1) */
+        /* ERDP — Event Ring Dequeue Pointer (point to start, DCS=1).
+         * Write high dword first, then low dword (which carries DCS). */
         uint64_t erdp = ((uint64_t)xhci->ev_ring.paddr & ~0x0FULL) | 1ULL;  /* DCS=1 */
-        xhci_write32(xhci, rt_base, XHCI_ERDP(0, 0), (uint32_t)(erdp & 0xFFFFFFFF));
-        xhci_write32(xhci, rt_base, XHCI_ERDP(0, 0) + 4, (uint32_t)((erdp >> 32) & 0xFFFFFFFF));
+        xhci_write32(xhci, rt_base, XHCI_ERDP(0, 0) + 4,
+                     (uint32_t)((erdp >> 32) & 0xFFFFFFFF));
+        xhci_write32(xhci, rt_base, XHCI_ERDP(0, 0),
+                     (uint32_t)(erdp & 0xFFFFFFFF));
     }
 
     /* Allocate and program the Device Context Base Address Array */
