@@ -1229,13 +1229,37 @@ static void e1000_read_mac(void) {
 
 /* ── Per-queue RX/TX initialization ────────────────────────────────── */
 
-static void e1000_init_rx_queue(int q) {
-    struct e1000_queue *qp = &queues[q];
-
+/* e1000_alloc_rx_buffers - Allocate/fill RX buffers for a queue.
+ * @qp: pointer to the queue state.
+ *
+ * Sets up the physical address in each RX descriptor and clears the
+ * descriptor status so the hardware owns the buffers.  With static
+ * pre-allocated buffers this always succeeds, but the function
+ * returns int so callers can check for failure when dynamic buffer
+ * allocation is added in the future.
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+static int e1000_alloc_rx_buffers(struct e1000_queue *qp)
+{
     for (int i = 0; i < NUM_RX_DESC; i++) {
-        qp->rx_descs[i].addr = VIRT_TO_PHYS(qp->rx_buffers[i]);
+        uint64_t phys = VIRT_TO_PHYS(qp->rx_buffers[i]);
+        if (phys == 0)
+            return -ENOMEM;
+        qp->rx_descs[i].addr = phys;
         qp->rx_descs[i].status = 0;
     }
+    return 0;
+}
+
+static int e1000_init_rx_queue(int q) {
+    struct e1000_queue *qp = &queues[q];
+    int ret;
+
+    ret = e1000_alloc_rx_buffers(qp);
+    if (ret < 0)
+        return ret;
+
     uint64_t rdesc_phys = VIRT_TO_PHYS(qp->rx_descs);
     e1000_q_write_rx(q, 0, (uint32_t)(rdesc_phys & 0xFFFFFFFF));       /* RDBAL */
     e1000_q_write_rx(q, 1, (uint32_t)(rdesc_phys >> 32));              /* RDBAH */
@@ -1243,6 +1267,7 @@ static void e1000_init_rx_queue(int q) {
     e1000_q_write_rx(q, 3, 0);                                          /* RDH */
     e1000_q_write_rx(q, 4, NUM_RX_DESC - 1);                           /* RDT */
     qp->rx_cur = 0;
+    return 0;
 }
 
 static void e1000_init_tx_queue(int q) {
@@ -1401,8 +1426,12 @@ int e1000_init(void) {
     e1000_read_mac();
 
     /* Initialize RX queues */
-    for (int q = 0; q < num_queues; q++)
-        e1000_init_rx_queue(q);
+    for (int q = 0; q < num_queues; q++) {
+        if (e1000_init_rx_queue(q) < 0) {
+            kprintf("  e1000: failed to init RX queue %d\\n", q);
+            return -1;
+        }
+    }
 
     /* Initialize TX queues */
     for (int q = 0; q < num_queues; q++)
