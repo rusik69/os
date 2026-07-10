@@ -678,6 +678,7 @@ void pci_write(int bus, int slot, int func, int offset, uint32_t val) {
 }
 
 int pci_find_device(uint16_t vendor, uint16_t device, struct pci_device *out) {
+    if (!out) return -EINVAL;
     for (int bus = 0; bus < 256; bus++) {
         for (int slot = 0; slot < 32; slot++) {
             uint32_t reg0 = pci_read((uint8_t)bus, (uint8_t)slot, 0, 0);
@@ -715,6 +716,7 @@ int pci_find_device(uint16_t vendor, uint16_t device, struct pci_device *out) {
 }
 
 int pci_find_class(uint8_t cls, uint8_t sub, struct pci_device *out) {
+    if (!out) return -EINVAL;
     for (int bus = 0; bus < 256; bus++) {
         for (int slot = 0; slot < 32; slot++) {
             uint32_t reg0 = pci_read((uint8_t)bus, (uint8_t)slot, 0, 0);
