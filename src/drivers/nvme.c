@@ -589,6 +589,12 @@ static int nvme_set_num_queues(uint32_t nr_queues) {
 
 /* ── I/O queue helpers ─────────────────────────────────────────────── */
 
+/* Forward declarations for queue create/delete admin commands */
+static int nvme_create_cq(uint16_t cqid, uint64_t addr, uint16_t size, uint16_t iv);
+static int nvme_create_sq(uint16_t sqid, uint64_t addr, uint16_t size, uint16_t cqid);
+int nvme_delete_cq(uint16_t cqid);
+int nvme_delete_sq(uint16_t sqid);
+
 /** Get the I/O queue for the current CPU (falls back to queue 0 if out of range) */
 static inline struct nvme_io_queue *nvme_get_io_queue(void) {
     int cpu = smp_get_cpu_id();
@@ -710,7 +716,8 @@ static int nvme_setup_io_queues(void) {
         /* Then create submission queue associated with this CQ */
         if (nvme_create_io_sq(q) < 0) {
             kprintf("[NVME] Failed to create I/O SQ %d\n", q->qid);
-            /* Try to clean up CQ (best-effort) */
+            /* Rollback: delete CQ on the controller, then free host memory */
+            nvme_delete_cq(q->qid);
             pmm_free_frame((uint64_t)q->cq_phys / 4096);
             q->cq_virt = NULL;
             q->cq_phys = 0;
