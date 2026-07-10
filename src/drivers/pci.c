@@ -117,13 +117,14 @@ void pcie_write(int bus, int slot, int func, int offset, uint32_t val) {
 
 int pci_find_pcie_cap(int bus, int slot, int func, uint8_t *cap_offset) {
     /* PCI Express capability ID = 0x10 */
-    /* Read status register at offset 0x06 to check Capabilities List bit */
-    uint16_t status;
+    /* Read status register via dword at offset 0x04, upper 16 bits */
+    uint32_t status_dword;
     if (ecam_base) {
-        status = (uint16_t)pcie_read(bus, slot, func, 0x06);
+        status_dword = pcie_read(bus, slot, func, 0x04);
     } else {
-        status = (uint16_t)pci_read(bus, slot, func, 0x06);
+        status_dword = pci_read(bus, slot, func, 0x04);
     }
+    uint16_t status = (uint16_t)(status_dword >> 16);
 
     if (!(status & (1U << 4))) {
         /* Capabilities list not present */
@@ -208,21 +209,33 @@ int pcie_device_type(int bus, int slot, int func) {
 
 /* ── Helper: read 16-bit config register via ECAM-aware path ──────── */
 static uint16_t pci_read16(uint8_t bus, uint8_t slot, uint8_t func, uint16_t offset) {
+    uint32_t val;
+    uint32_t aligned = (uint32_t)(offset & (uint16_t)~3);
     if (ecam_base) {
-        return (uint16_t)(pcie_read(bus, slot, func, offset) & 0xFFFF);
+        val = pcie_read(bus, slot, func, (int)aligned);
+    } else {
+        val = pci_read(bus, slot, func, (int)(aligned & 0xFF));
     }
-    return (uint16_t)(pci_read(bus, slot, func, (uint8_t)(offset & 0xFF)) & 0xFFFF);
+    if (offset & 2)
+        return (uint16_t)(val >> 16);
+    return (uint16_t)(val & 0xFFFF);
 }
 
 static void pci_write16(uint8_t bus, uint8_t slot, uint8_t func, uint16_t offset, uint16_t val) {
     uint32_t base;
-    uint32_t mask = 0xFFFF0000u;
+    uint32_t aligned = (uint32_t)(offset & (uint16_t)~3);
     if (ecam_base) {
-        base = pcie_read(bus, slot, func, offset);
-        pcie_write(bus, slot, func, offset, (base & mask) | val);
+        base = pcie_read(bus, slot, func, (int)aligned);
+        if (offset & 2)
+            pcie_write(bus, slot, func, (int)aligned, (base & 0x0000FFFFu) | ((uint32_t)val << 16));
+        else
+            pcie_write(bus, slot, func, (int)aligned, (base & 0xFFFF0000u) | val);
     } else {
-        base = pci_read(bus, slot, func, (uint8_t)(offset & 0xFF));
-        pci_write(bus, slot, func, (uint8_t)(offset & 0xFF), (base & mask) | val);
+        base = pci_read(bus, slot, func, (int)(aligned & 0xFF));
+        if (offset & 2)
+            pci_write(bus, slot, func, (int)(aligned & 0xFF), (base & 0x0000FFFFu) | ((uint32_t)val << 16));
+        else
+            pci_write(bus, slot, func, (int)(aligned & 0xFF), (base & 0xFFFF0000u) | val);
     }
 }
 
