@@ -237,11 +237,20 @@ int request_firmware(const struct firmware **fw_ptr, const char *name)
         spinlock_release(&fw_lock);
 
         if (ce) {
-            /* Allocate a lightweight firmware descriptor */
+            /* Allocate a lightweight firmware descriptor with a
+             * dedicated copy of the data.  The caller owns the copy,
+             * so the cache can evict/swap independently without
+             * causing use-after-free in any outstanding references. */
             struct firmware *fw = (struct firmware *)kmalloc(sizeof(struct firmware));
             if (!fw)
                 return -ENOMEM;
-            fw->data = ce->data;
+            uint8_t *copy = (uint8_t *)kmalloc(ce->size);
+            if (!copy) {
+                kfree(fw);
+                return -ENOMEM;
+            }
+            memcpy(copy, ce->data, ce->size);
+            fw->data = copy;
             fw->size = ce->size;
             *fw_ptr = fw;
             return 0;
@@ -285,22 +294,20 @@ int request_firmware(const struct firmware **fw_ptr, const char *name)
             return ret;
         }
 
-        /* Allocate firmware descriptor pointing into cache */
-        struct fw_cache_entry *ce;
-        spinlock_acquire(&fw_lock);
-        ce = fw_cache_lookup(name);
-        spinlock_release(&fw_lock);
-
-        if (!ce) {
-            /* Extremely unlikely after insert, but handle it */
+        /* Give the caller a dedicated copy of the data so cache
+         * eviction does not invalidate their pointer. */
+        uint8_t *caller_copy = (uint8_t *)kmalloc(disk_size);
+        if (!caller_copy)
             return -ENOMEM;
-        }
+        memcpy(caller_copy, disk_data, disk_size);
 
         struct firmware *fw = (struct firmware *)kmalloc(sizeof(struct firmware));
-        if (!fw)
+        if (!fw) {
+            kfree(caller_copy);
             return -ENOMEM;
-        fw->data = ce->data;
-        fw->size = ce->size;
+        }
+        fw->data = caller_copy;
+        fw->size = disk_size;
         *fw_ptr = fw;
 
         kprintf("[FW] loaded '%s' (%llu bytes, cached)\n", name, (unsigned long long)disk_size);
@@ -314,10 +321,11 @@ void release_firmware(const struct firmware *fw)
         return;
 
     /*
-     * The firmware data itself is owned by the cache or built-in table.
-     * We only free the lightweight descriptor allocated in request_firmware.
-     * The cache entry persists for future requests.
+     * The firmware data is a dedicated copy allocated in
+     * request_firmware() — free both the data and the descriptor.
      */
+    if (fw->data)
+        kfree((void *)(uintptr_t)fw->data);
     kfree((void *)(uintptr_t)fw);
 }
 
