@@ -586,8 +586,13 @@ int usb_hid_init(void) {
         return rc;
     }
 
-    /* Parse configuration descriptor for HID interfaces */
-    int cfg_len = cfg[0];
+    /* Parse configuration descriptor for HID interfaces.
+     * Use wTotalLength at offset 2-3, not bLength at offset 0 (which is always
+     * 9 — just the config descriptor header — and misses all sub-descriptors
+     * such as HID interfaces and endpoints). */
+    uint16_t cfg_total_len = (uint16_t)cfg[2] | ((uint16_t)cfg[3] << 8);
+    if (cfg_total_len > 256) cfg_total_len = 256;
+    int cfg_len = (int)cfg_total_len;
     int pos = 0;
     while (pos + 1 < cfg_len) {
         uint8_t dlen = cfg[pos];
