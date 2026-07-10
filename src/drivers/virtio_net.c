@@ -2191,6 +2191,10 @@ int virtio_net_receive(void *buf, uint16_t max_len) {
     uint32_t total = used->ring[uidx].len;
     rx_last_used++;
 
+    /* Validate descriptor id from device — must be within our RX buffer array */
+    if (id >= VRING_SIZE)
+        return 0;
+
     uint32_t skip = sizeof(struct virtio_net_hdr);
     if (total <= skip) return 0;
     uint32_t plen = total - skip;
