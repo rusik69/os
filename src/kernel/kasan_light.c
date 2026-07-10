@@ -48,7 +48,6 @@
  *   - ~10-25% performance overhead when enabled
  */
 
-static uint8_t *kasan_shadow = NULL;
 static int kasan_enabled = 0;
 
 /* ── Address → Shadow Translation ────────────────────────────────────── */
@@ -290,7 +289,8 @@ int kasan_extend_coverage(uint64_t start, uint64_t end)
         shadow_off_end = KASAN_SHADOW_SIZE;
 
     /* Poison the newly-covered shadow region (will be unpoisoned on alloc) */
-    memset(kasan_shadow + shadow_off_start, KASAN_SHADOW_FREE,
+    memset((uint8_t *)KASAN_SHADOW_BASE + shadow_off_start,
+           KASAN_SHADOW_FREE,
            shadow_off_end - shadow_off_start);
     mb();
 
