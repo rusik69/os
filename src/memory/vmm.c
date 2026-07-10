@@ -1451,7 +1451,6 @@ uint64_t vmm_alloc(uint64_t addr, size_t size, int flags)
     size_t num_pages = size / PAGE_SIZE;
     if (num_pages == 0) num_pages = 1;
 
-    uint64_t *pml4 = kernel_pml4;
     uint64_t vmm_flags = VMM_FLAG_PRESENT | VMM_FLAG_WRITE;
     if (flags & 2) vmm_flags |= VMM_FLAG_WRITE;   /* PROT_WRITE */
     if (flags & 1) vmm_flags |= VMM_FLAG_PRESENT;  /* PROT_READ */
@@ -1461,16 +1460,24 @@ uint64_t vmm_alloc(uint64_t addr, size_t size, int flags)
     for (size_t i = 0; i < num_pages; i++) {
         uint64_t phys = pmm_alloc_frame();
         if (unlikely(!phys)) {
-            /* Unwind on failure */
-            for (size_t j = 0; j < i; j++)
+            /* Unwind on failure: free each frame before unmapping */
+            for (size_t j = 0; j < i; j++) {
+                uint64_t p = 0;
+                if (vmm_virt_to_phys(start + j * PAGE_SIZE, &p) == 0 && p)
+                    pmm_free_frame(p);
                 vmm_unmap_page(start + j * PAGE_SIZE);
+            }
             return 0;
         }
         memset((void *)PHYS_TO_VIRT(phys), 0, PAGE_SIZE);
         if (vmm_map_page(start + i * PAGE_SIZE, phys, vmm_flags) < 0) {
             pmm_free_frame(phys);
-            for (size_t j = 0; j < i; j++)
+            for (size_t j = 0; j < i; j++) {
+                uint64_t p = 0;
+                if (vmm_virt_to_phys(start + j * PAGE_SIZE, &p) == 0 && p)
+                    pmm_free_frame(p);
                 vmm_unmap_page(start + j * PAGE_SIZE);
+            }
             return 0;
         }
     }

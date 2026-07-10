@@ -1,7 +1,7 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
   "current_batch": "B006",
-  "current_item": 341,
+  "current_item": 343,
   "completed_items": [
     1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,
     21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,
@@ -22,33 +22,16 @@
     311, 312, 313,
     314, 315, 316,
     317, 318, 319, 320,
-    321,
-    322,
-    323,
-    324,
-    325,
-    326,
-    327,
-    328,
-    329,
-    330,
-    331,
-    332,
-    333,
-    334,
-    335,
-    336,
-    337,
-    338,
-    339,
-    340,
-    341
+    321, 322, 323, 324, 325, 326, 327, 328, 329, 330,
+    331, 332, 333, 334, 335, 336, 337, 338, 339, 340,
+    341,
+    342
   ],
   "found_bugs": 807,
   "fixed_bugs": 807,
   "completed_batches": [
     "B002"
   ],
-  "last_item_timestamp": "2026-07-10T17:52:00",
-  "last_item_result": "item 340: audited clean — verified tree root handling on empty tree in interval_tree. All functions properly handle root=NULL: interval_tree_init sets root=NULL; interval_tree_insert on empty tree correctly inserts first node (root=node, count=1); interval_tree_remove on last node correctly sets root=NULL, count=0; interval_tree_search returns NULL; search_all returns immediately on NULL root. Build clean with -Wall -Wextra -Werror."
+  "last_item_timestamp": "2026-07-10T17:53:00",
+  "last_item_result": "item 342: audited clean — verified pmm_alloc_frames (contiguous allocation) failure path. pmm_alloc_frames() correctly returns NULL on all failure paths: count==0 early-returns NULL, count==1 delegates to pmm_alloc_frame() which returns 0→NULL on OOM, count>1 scans bitmap then runs 2-level OOM recovery (slab reaping+OOM, compaction+OOM) before returning NULL. Locking is correct throughout: released before OOM recovery, re-acquired for each retry scan. PSI memstall enter/leave properly paired. All ~28 callers checked properly validate return (NULL/0 check). No functional bugs found."
 }
