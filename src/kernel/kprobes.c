@@ -507,8 +507,14 @@ void kprobe_debug_handler(struct interrupt_frame *frame) {
 
     /* Re-patch INT3 — the probe stays active.  The original opcode was
      * restored before single-stepping and the instruction executed.
-     * Re-insert INT3 for future hits. */
-    text_poke_write(kp->addr, 0xCC);
+     * Re-insert INT3 for future hits.
+     *
+     * Guard against use-after-unregister: the post_handler may have
+     * called unregister_kprobe() on itself (e.g. a one-shot probe).
+     * In that case the kprobe is already gone and we must NOT re-patch
+     * the INT3, otherwise an orphan breakpoint would fire and panic. */
+    if (kp->flags & KPROBE_FLAG_ACTIVE)
+        text_poke_write(kp->addr, 0xCC);
 }
 
 /* ══════════════════════════════════════════════════════════════════════
