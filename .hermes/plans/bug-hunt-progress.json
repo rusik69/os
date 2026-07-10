@@ -1,7 +1,7 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
   "current_batch": "B006",
-  "current_item": 364,
+  "current_item": 365,
   "completed_items": [
     1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,
     21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,
@@ -34,13 +34,14 @@
     360,
     361,
     362,
-    363
+    363,
+    364
   ],
-  "found_bugs": 822,
-  "fixed_bugs": 822,
+  "found_bugs": 825,
+  "fixed_bugs": 825,
   "completed_batches": [
     "B002"
   ],
-  "last_item_timestamp": "2026-07-10T21:40:00",
-  "last_item_result": "bug-hunt #363: nvme - fix queue allocation failure rollback, delete orphaned CQ on controller when SQ creation fails"
+  "last_item_timestamp": "2026-07-10T21:51:00",
+  "last_item_result": "bug-hunt #364: ahci - fix port structure sanity (3 bugs): ahci_port_count off-by-one, missing tag_bitmap=0 for PM sub-ports, resource leak on alloc failure"
 }

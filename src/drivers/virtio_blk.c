@@ -245,6 +245,14 @@ static int vblk_init_queue(int qid) {
     uint64_t phys = (uint64_t)(uintptr_t)q->mem;
     vb_outl(VIRTIO_PCI_QUEUE_PFN, (uint32_t)(phys >> 12));
 
+    /* Verify the device accepted the queue allocation (legacy virtio spec):
+     * after writing QUEUE_PFN, the device writes 0 if it cannot accept it. */
+    if (vb_inl(VIRTIO_PCI_QUEUE_PFN) == 0) {
+        kprintf("virtio-blk: device rejected queue %d PFN 0x%x\n",
+                qid, (unsigned int)(phys >> 12));
+        return -1;
+    }
+
     /* Set up ring pointers into the queue memory */
     q->descs = (struct vring_desc *)q->mem;
     q->avail = (struct vring_avail *)(q->mem +
@@ -326,8 +334,13 @@ int __init virtio_blk_init(void) {
     for (int i = 0; i < want_queues; i++) {
         if (vblk_init_queue(i) < 0) {
             kprintf("virtio-blk: failed to init queue %d\n", i);
-            /* Continue with fewer queues — at least queue 0 should work */
-            want_queues = i > 0 ? i : 1;
+            if (i == 0) {
+                /* Queue 0 is essential — cannot operate without it */
+                kprintf("virtio-blk: queue 0 init failed, giving up\n");
+                return -1;
+            }
+            /* Continue with fewer queues */
+            want_queues = i;
             break;
         }
     }
