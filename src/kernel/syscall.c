@@ -113,6 +113,11 @@ MODULE_AUTHOR("Ruslan Gustomiasov");
  * from syscalls (ps, kill, etc.) and timer interrupts (process_timer_tick). */
 static spinlock_t proc_table_lock = SPINLOCK_INIT;
 
+/* Custom syscall table — shared across register/unregister/lookup */
+#define CUSTOM_SYSCALL_TABLE_SIZE 256
+static void *custom_syscall_table[CUSTOM_SYSCALL_TABLE_SIZE];
+static int custom_syscall_table_initialized = 0;
+
 /* 6th syscall argument — saved by the asm entry before the dispatch call.
  * pselect6 packs {sigmask_ptr, sigset_size} in arg6 per the Linux x86_64 ABI.
  * Interrupts are masked during the syscall handler so a single global is safe. */
@@ -11369,15 +11374,12 @@ static int syscall_register(int nr, void *handler)
 
     /* Store in a small dynamic table for custom syscalls.
      * Currently we use a fixed-size table. */
-    static void *custom_syscall_table[256];
-    static int custom_syscall_initialized = 0;
-
-    if (!custom_syscall_initialized) {
+    if (!custom_syscall_table_initialized) {
         memset(custom_syscall_table, 0, sizeof(custom_syscall_table));
-        custom_syscall_initialized = 1;
+        custom_syscall_table_initialized = 1;
     }
 
-    if (nr >= 256) return -ENOSPC;
+    if (nr >= CUSTOM_SYSCALL_TABLE_SIZE) return -ENOSPC;
 
     if (custom_syscall_table[nr] != NULL) {
         kprintf("[syscall] syscall_register: nr=%d already registered\n", nr);
@@ -11395,11 +11397,8 @@ static int syscall_unregister(int nr)
     if (nr < 0 || nr > 1024) return -EINVAL;
 
     /* Access the static table */
-    static void *custom_syscall_table[256];
-    static int custom_syscall_initialized = 0;
-
-    if (!custom_syscall_initialized) return -EINVAL;
-    if (nr >= 256) return -ENOSPC;
+    if (!custom_syscall_table_initialized) return -EINVAL;
+    if (nr >= CUSTOM_SYSCALL_TABLE_SIZE) return -ENOSPC;
     if (!custom_syscall_table[nr]) return -ENOENT;
 
     custom_syscall_table[nr] = NULL;
@@ -11412,10 +11411,7 @@ static void* syscall_table_lookup(int nr)
     if (nr < 0 || nr > 1024) return NULL;
 
     /* Check the custom table first */
-    static void *custom_syscall_table[256];
-    static int custom_syscall_initialized = 0;
-
-    if (custom_syscall_initialized && nr < 256 && custom_syscall_table[nr]) {
+    if (custom_syscall_table_initialized && nr < CUSTOM_SYSCALL_TABLE_SIZE && custom_syscall_table[nr]) {
         return custom_syscall_table[nr];
     }
 
