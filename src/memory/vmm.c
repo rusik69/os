@@ -1071,21 +1071,60 @@ int vmm_unmap_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages) {
             if ((pdpt[pdpt_idx] & PTE_PRESENT)) {
             uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[pdpt_idx] & PTE_ADDR_MASK);
             if ((pd[pd_idx] & PTE_PRESENT) && (pd[pd_idx] & PTE_HUGE)) {
-                /* Huge page: unref all sub-frames in the unmap range */
-                uint64_t hp_base = pd[pd_idx] & 0x000FFFFFFFE00000ULL;
+                uint64_t huge_pde = pd[pd_idx];
+                uint64_t hp_base = huge_pde & 0x000FFFFFFFE00000ULL;
                 size_t start_sub = (addr & (HUGE_PAGE_SIZE - 1)) / PAGE_SIZE;
                 size_t remain    = num_pages - i;
                 size_t count     = HUGE_PAGE_NFRAMES - start_sub;
                 if (count > remain) count = remain;
 
-                for (size_t j = 0; j < count; j++) {
-                    uint64_t frame = hp_base + (start_sub + j) * PAGE_SIZE;
-                    if (frame != vmm_zero_page_frame)
-                        pmm_unref_frame(frame);
+                /* ── Full huge-page unmap ──────────────────────────
+                 * The unmap range covers the entire remainder of the
+                 * huge page from start_sub to the end.  Unref all
+                 * overlapping sub-frames, then clear the PDE entirely
+                 * (vmm_unmap_user_page clears the full 2MB entry). */
+                if (start_sub == 0 && count == HUGE_PAGE_NFRAMES) {
+                    for (size_t j = 0; j < count; j++) {
+                        uint64_t frame = hp_base + (start_sub + j) * PAGE_SIZE;
+                        if (frame != vmm_zero_page_frame)
+                            pmm_unref_frame(frame);
+                    }
+                    vmm_unmap_user_page(pml4, addr);
+                    i += count;
+                    continue;
                 }
-                vmm_unmap_user_page(pml4, addr);
-                i += count;
-                continue;
+
+                /* ── Partial huge-page unmap ──────────────────────
+                 * The unmap range covers only part of this 2MB huge
+                 * page.  We cannot clear the entire PDE (that would
+                 * lose mappings for sub-frames outside the unmap range,
+                 * causing physical frame leaks).  Instead, replace the
+                 * huge PDE with a 4KB page table page that preserves
+                 * all 512 sub-frame mappings, then fall through to the
+                 * normal 4KB path to unmap only the requested pages. */
+                uint64_t pt_phys = pmm_alloc_frame();
+                if (unlikely(!pt_phys))
+                    return -ENOMEM;
+                uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pt_phys);
+                memset(pt, 0, PAGE_SIZE);
+
+                /* Derive per-4KB-PTE flags from the huge PDE.
+                 * Preserve hardware bits (0-8), software bits (9-11),
+                 * and NX (bit 63).  Strip the HUGE/PS bit. */
+                uint64_t pflags = (huge_pde & 0xFFF) & ~(uint64_t)PTE_HUGE;
+                uint64_t pnx    = huge_pde & PTE_NX;
+                for (int sub = 0; sub < 512; sub++) {
+                    uint64_t frame = hp_base + (uint64_t)sub * PAGE_SIZE;
+                    pt[sub] = (frame & PTE_ADDR_MASK) | pflags | pnx | PTE_PRESENT;
+                }
+
+                /* Point the PDE at the new 4KB page table.
+                 * The sub-frames' refcounts are unchanged — they were
+                 * ref'd once at allocation time and the 4KB entries
+                 * now point to the same frames.  Pages in the unmap
+                 * range will be unreffed by the normal 4KB path below. */
+                pd[pd_idx] = pt_phys | PTE_PRESENT | PTE_WRITE | PTE_USER;
+                /* Fall through to normal 4KB page path */
             }
         }
         }
