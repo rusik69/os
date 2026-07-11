@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 481,
+  "current_item": 484,
   "current_batch": "B008",
   "completed_items": [
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
@@ -52,10 +52,13 @@
     461, 462, 463, 464, 465, 466, 467, 468,
     469, 470, 471, 472, 473, 474, 475, 476,
     477, 478, 479,
-    480
+    480,
+    481,
+    482,
+    483
   ],
-  "found_bugs": 937,
-  "fixed_bugs": 937,
+  "found_bugs": 940,
+  "fixed_bugs": 940,
   "completed_batches": [
     "B001",
     "B002",
@@ -64,6 +67,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-11T19:09:10",
-  "last_item_result": "item 480: src/memory/pmm.c — verify CONFIG_DEBUG_PAGEALLOC poison/unpoison correct — BUG FOUND AND FIXED. Root cause: pmm_free_frame() pushed freed pages to the per-CPU hot cache without calling poison_fill(addr, 0xDC). This meant pages recycled through the cache fast path were never poisoned with the 0xDC free pattern, violating the CONFIG_DEBUG_PAGEALLOC contract: (1) stale data remained in cached pages (potential info disclosure), (2) UAF detection in bitmap_alloc_one_locked() could not detect corruption on pages that moved cache→cache without hitting the bitmap, (3) the re-poison fallback in the UAF check would fire false positives for pages that were freed via cache but later allocated through the bitmap. Fix: Added poison_fill(addr, 0xDC) before caching in both the fast path and the slow-path retry after drain."
+  "last_item_timestamp": "2026-07-11T19:44:00",
+  "last_item_result": "item 483: src/memory/pmm.c — verify pmm_alloc_contiguous (pmm_alloc_frames) for order > 0 — BUG FIXED. Found: pmm_alloc_frames() bypasses CONFIG_DEBUG_PAGEALLOC use-after-free detection present in bitmap_alloc_one_locked(). Multi-page contiguous allocations directly call bitmap_set() without checking if freed pages still contain the 0xDC poison pattern. Fixed by adding #ifdef CONFIG_DEBUG_PAGEALLOC UAF check in both the primary allocation loop and the OOM retry allocation loop, matching the logic in bitmap_alloc_one_locked(). Build verified."
 }

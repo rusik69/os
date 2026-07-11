@@ -1075,6 +1075,27 @@ uint64_t *pmm_alloc_frames(size_t count) {
                     bitmap_set(j);
                     used_frames++;
                     frame_refcount[j] = 1;
+#ifdef CONFIG_DEBUG_PAGEALLOC
+                    /* Use-after-free detection: verify freed poison pattern */
+                    if (pmm_poison_enabled) {
+                        uint64_t *virt = (uint64_t *)PHYS_TO_VIRT(j * PAGE_SIZE);
+                        int found_non_poison = 0;
+                        uint64_t poison64 = 0xDCDCDCDCDCDCDCDCULL;
+                        for (int w = 0; w < (int)(PAGE_SIZE / 8); w++) {
+                            if (virt[w] != poison64) {
+                                if (w > 4) { found_non_poison = 1; break; }
+                            }
+                        }
+                        if (found_non_poison) {
+                            kprintf("[PMM] WARNING: page 0x%llx (frame %llu) "
+                                    "does NOT contain poison pattern — "
+                                    "possible use-after-free!\n",
+                                    (unsigned long long)(j * PAGE_SIZE),
+                                    (unsigned long long)j);
+                            poison_fill(j * PAGE_SIZE, 0xDC);
+                        }
+                    }
+#endif
                     poison_fill(j * PAGE_SIZE, 0xDEADBEEF);
                 }
                 pmm_hint = start + count;
@@ -1131,6 +1152,27 @@ uint64_t *pmm_alloc_frames(size_t count) {
                         bitmap_set(j);
                         used_frames++;
                         frame_refcount[j] = 1;
+#ifdef CONFIG_DEBUG_PAGEALLOC
+                        /* Use-after-free detection: verify freed poison pattern */
+                        if (pmm_poison_enabled) {
+                            uint64_t *virt = (uint64_t *)PHYS_TO_VIRT(j * PAGE_SIZE);
+                            int found_non_poison = 0;
+                            uint64_t poison64 = 0xDCDCDCDCDCDCDCDCULL;
+                            for (int w = 0; w < (int)(PAGE_SIZE / 8); w++) {
+                                if (virt[w] != poison64) {
+                                    if (w > 4) { found_non_poison = 1; break; }
+                                }
+                            }
+                            if (found_non_poison) {
+                                kprintf("[PMM] WARNING: page 0x%llx (frame %llu) "
+                                        "does NOT contain poison pattern — "
+                                        "possible use-after-free!\n",
+                                        (unsigned long long)(j * PAGE_SIZE),
+                                        (unsigned long long)j);
+                                poison_fill(j * PAGE_SIZE, 0xDC);
+                            }
+                        }
+#endif
                         poison_fill(j * PAGE_SIZE, 0xDEADBEEF);
                     }
                     pmm_hint = start + count;
