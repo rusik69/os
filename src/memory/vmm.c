@@ -1396,6 +1396,9 @@ int vmm_set_user_pages_flags(uint64_t *pml4, uint64_t virt, size_t num_pages,
             /* If new_flags says executable (no NOEXEC), don't inherit NX */
             if (!(new_flags & VMM_FLAG_NOEXEC))
                 preserved &= ~(uint64_t)PTE_NX;
+            /* If new_flags says non-executable, force NX on */
+            if (new_flags & VMM_FLAG_NOEXEC)
+                preserved |= PTE_NX;
             uint64_t new_pte = (pte & (PTE_ADDR_MASK | 0xFFF))
                                & ~(uint64_t)VMM_FLAG_COW;
             new_pte = (new_pte & ~PTE_ADDR_MASK) | new_phys;
@@ -1414,6 +1417,9 @@ int vmm_set_user_pages_flags(uint64_t *pml4, uint64_t virt, size_t num_pages,
         /* If new_flags says executable (no NOEXEC), don't inherit NX */
         if (!(new_flags & VMM_FLAG_NOEXEC))
             preserved &= ~(uint64_t)PTE_NX;
+        /* If new_flags says non-executable, force NX on */
+        if (new_flags & VMM_FLAG_NOEXEC)
+            preserved |= PTE_NX;
         pt[pt_idx] = (pte & PTE_ADDR_MASK) | (new_flags & 0xFFF) | preserved
                      | ((new_flags & VMM_FLAG_PRESENT) ? PTE_PRESENT : 0);
         tlb_flush(addr);
