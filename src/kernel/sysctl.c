@@ -10,6 +10,7 @@
 #include "types.h"
 #include "process.h"
 #include "sysrq.h"
+#include "spinlock.h"
 
 /* ─── Default watermark values ───────────────────────────────────── */
 /* Memory reclaim watermark — minimum free pages before reclaim triggers.
@@ -40,6 +41,9 @@ static void ul_to_str(uint64_t v, char *buf, int *pos, int max)
 
 static struct sysctl_entry g_entries[SYSCTL_MAX_ENTRIES];
 static int g_num_entries = 0;
+
+/* Lock protecting concurrent access to g_entries[] and g_num_entries */
+static spinlock_t g_sysctl_lock = SPINLOCK_INIT;
 
 /* ─── Default sysctl handlers ────────────────────────────────────── */
 
@@ -244,7 +248,11 @@ static int sysctl_write_sysrq(const char *buf, int len)
 int sysctl_register(const char *name,
                     int (*read_handler)(char *buf, int max),
                     int (*write_handler)(const char *buf, int len)) {
-    if (g_num_entries >= SYSCTL_MAX_ENTRIES) return -1;
+    spinlock_acquire(&g_sysctl_lock);
+    if (g_num_entries >= SYSCTL_MAX_ENTRIES) {
+        spinlock_release(&g_sysctl_lock);
+        return -1;
+    }
     g_entries[g_num_entries].name = name;
     g_entries[g_num_entries].read_handler = read_handler;
     g_entries[g_num_entries].write_handler = write_handler;
@@ -252,18 +260,27 @@ int sysctl_register(const char *name,
     g_entries[g_num_entries].maxlen = 0;
     g_entries[g_num_entries].mode = 0644;
     g_num_entries++;
+    spinlock_release(&g_sysctl_lock);
     return 0;
 }
 
 int sysctl_read(const char *name, char *buf, int max) {
     if (!name || !buf) return -1;
+
+    /* Search the registered table under lock */
+    int (*handler)(char *, int) = NULL;
+    spinlock_acquire(&g_sysctl_lock);
     for (int i = 0; i < g_num_entries; i++) {
         if (strcmp(g_entries[i].name, name) == 0) {
-            if (g_entries[i].read_handler)
-                return g_entries[i].read_handler(buf, max);
-            return 0;
+            handler = g_entries[i].read_handler;
+            break;
         }
     }
+    spinlock_release(&g_sysctl_lock);
+
+    if (handler)
+        return handler(buf, max);
+
     /* Default: try to read kernel tunables by name */
     if (strcmp(name, "hostname") == 0)
         return sysctl_read_hostname(buf, max);
@@ -282,13 +299,21 @@ int sysctl_read(const char *name, char *buf, int max) {
 
 int sysctl_write(const char *name, const char *buf, int len) {
     if (!name || !buf) return -1;
+
+    /* Search the registered table under lock */
+    int (*handler)(const char *, int) = NULL;
+    spinlock_acquire(&g_sysctl_lock);
     for (int i = 0; i < g_num_entries; i++) {
         if (strcmp(g_entries[i].name, name) == 0) {
-            if (g_entries[i].write_handler)
-                return g_entries[i].write_handler(buf, len);
-            return 0;
+            handler = g_entries[i].write_handler;
+            break;
         }
     }
+    spinlock_release(&g_sysctl_lock);
+
+    if (handler)
+        return handler(buf, len);
+
     /* Default handlers */
     if (strcmp(name, "hostname") == 0)
         return sysctl_write_hostname(buf, len);
@@ -314,6 +339,7 @@ int sysctl_list_names(char names[][48], int max_names)
     int count = 0;
 
     /* First, collect dynamically registered entries */
+    spinlock_acquire(&g_sysctl_lock);
     for (int i = 0; i < g_num_entries && count < max_names; i++) {
         int nlen = (int)strlen(g_entries[i].name);
         int copylen = nlen < 47 ? nlen : 47;
@@ -348,6 +374,7 @@ int sysctl_list_names(char names[][48], int max_names)
             count++;
         }
     }
+    spinlock_release(&g_sysctl_lock);
 
     return count;
 }
