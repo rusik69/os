@@ -512,11 +512,17 @@ void swap_stats(int *out_devices, uint32_t *out_total, uint32_t *out_used)
 
 const char *swap_device_path(int dev_idx)
 {
+    const char *path = NULL;
+
     if (dev_idx < 0 || dev_idx >= SWAP_MAX_DEVICES)
         return NULL;
-    if (!swap_devices[dev_idx].active)
-        return NULL;
-    return swap_devices[dev_idx].path;
+
+    spinlock_acquire(&swap_global_lock);
+    if (swap_devices[dev_idx].active)
+        path = swap_devices[dev_idx].path;
+    spinlock_release(&swap_global_lock);
+
+    return path;
 }
 
 /* ── EXPORT_SYMBOL ─────────────────────────────────────────────────── */
