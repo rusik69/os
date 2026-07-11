@@ -34,12 +34,7 @@ static uint64_t heap_current = 0;
 static uint64_t heap_limit   = 0;
 static uint64_t heap_base_phys = 0; /* physical address of heap base */
 static uint64_t heap_used_bytes = 0; /* running total of bytes in use */
-
-/* Heap lock — protects all shared heap state (linked list, boundaries, counters).
- * Must be held (irqsave variant) before any operation that reads or writes
- * heap_start_block, heap_current, heap_limit, heap_base_phys, or heap_used_bytes.
- * Lock order: heap_lock before pmm_global_lock (never reverse). */
-static spinlock_t heap_lock;
+static spinlock_t heap_lock;          /* protects all shared state above */
 
 static int heap_expand(size_t needed) {
     uint64_t new_limit = heap_current + needed;
@@ -56,19 +51,38 @@ static int heap_expand(size_t needed) {
     return 0;
 }
 
-/* Internal locked versions — assume heap_lock is already held */
-static void *kmalloc_locked(size_t size)
+void __init heap_init(void) {
+    /* Align heap base to PAGE_SIZE above the kernel binary */
+    heap_base    = ((uint64_t)_kernel_end + PAGE_SIZE - 1) & ~(uint64_t)(PAGE_SIZE - 1);
+    heap_current = heap_base + HEAP_INITIAL;
+    heap_limit   = heap_current;
+    heap_base_phys = VIRT_TO_PHYS(heap_base);
+
+    /* Reserve the initial heap pages in PMM so they are not stolen.
+     * heap_base_phys is the physical address of the heap region. */
+    pmm_reserve_frames(heap_base_phys, HEAP_INITIAL);
+
+    /* Advance PMM alloc hint past the initial heap region */
+    pmm_advance_hint(heap_base_phys + HEAP_INITIAL);
+
+    /* Set up initial free block (high-half VMA — mapped via PML4[256] huge pages) */
+    heap_start_block        = (struct heap_block *)heap_base;
+    heap_start_block->size  = HEAP_INITIAL - BLOCK_HDR_SIZE;
+    heap_start_block->free  = 1;
+    heap_start_block->next  = NULL;
+    heap_start_block->prev  = NULL;
+
+    spinlock_init(&heap_lock);
+}
+
+/*
+ * Internal locked helpers for kmalloc/kfree — caller must hold heap_lock.
+ * These are used by krealloc to avoid recursive spinlock deadlock.
+ */
+
+static void *_kmalloc_locked(size_t size)
 {
-    if (size == 0) return NULL;
-    if (heap_base == 0) return NULL;
-
-    /* Fault injection: if enabled, fail this allocation to test error paths */
-    if (fault_inject_should_fail_kmalloc()) {
-        return NULL;
-    }
-
-    /* Align to 16 bytes */
-    size = (size + 15) & ~15ULL;
+    /* size must already be aligned and > 0 */
 
     /* First fit */
     struct heap_block *block = heap_start_block;
@@ -125,9 +139,52 @@ static void *kmalloc_locked(size_t size)
     return ptr;
 }
 
-static void kfree_locked(void *ptr)
+void * __malloc kmalloc(size_t size) {
+    if (size == 0) return NULL;
+    if (heap_base == 0) return NULL;
+
+    /* Fault injection: if enabled, fail this allocation to test error paths */
+    if (fault_inject_should_fail_kmalloc()) {
+        return NULL;
+    }
+
+    /* Align to 16 bytes */
+    size = (size + 15) & ~15ULL;
+
+    uint64_t flags;
+    spinlock_irqsave_acquire(&heap_lock, &flags);
+    void *ret = _kmalloc_locked(size);
+    spinlock_irqsave_release(&heap_lock, flags);
+    return ret;
+}
+
+uint64_t heap_get_total(void) {
+    return HEAP_MAX_SIZE;
+}
+
+uint64_t heap_get_used(void) {
+    uint64_t flags;
+    spinlock_irqsave_acquire(&heap_lock, &flags);
+    uint64_t used = heap_used_bytes;
+    spinlock_irqsave_release(&heap_lock, flags);
+    return used;
+}
+
+uint64_t heap_get_free(void) {
+    uint64_t flags;
+    spinlock_irqsave_acquire(&heap_lock, &flags);
+    uint64_t used = heap_used_bytes;
+    spinlock_irqsave_release(&heap_lock, flags);
+    if (used >= HEAP_MAX_SIZE) return 0;
+    return HEAP_MAX_SIZE - used;
+}
+
+/*
+ * Internal locked helper — caller must hold heap_lock.
+ * Called by kfree and krealloc.
+ */
+static void _kfree_locked(void *ptr)
 {
-    if (!ptr) return;
     struct heap_block *block = (struct heap_block *)((uint8_t *)ptr - BLOCK_HDR_SIZE);
 
     /* KASAN: mark the freed region as poisoned to catch use-after-free */
@@ -156,65 +213,11 @@ static void kfree_locked(void *ptr)
     }
 }
 
-void __init heap_init(void) {
-    spinlock_init(&heap_lock);
-
-    /* Align heap base to PAGE_SIZE above the kernel binary */
-    heap_base    = ((uint64_t)_kernel_end + PAGE_SIZE - 1) & ~(uint64_t)(PAGE_SIZE - 1);
-    heap_current = heap_base + HEAP_INITIAL;
-    heap_limit   = heap_current;
-    heap_base_phys = VIRT_TO_PHYS(heap_base);
-
-    /* Reserve the initial heap pages in PMM so they are not stolen.
-     * heap_base_phys is the physical address of the heap region. */
-    pmm_reserve_frames(heap_base_phys, HEAP_INITIAL);
-
-    /* Advance PMM alloc hint past the initial heap region */
-    pmm_advance_hint(heap_base_phys + HEAP_INITIAL);
-
-    /* Set up initial free block (high-half VMA — mapped via PML4[256] huge pages) */
-    heap_start_block        = (struct heap_block *)heap_base;
-    heap_start_block->size  = HEAP_INITIAL - BLOCK_HDR_SIZE;
-    heap_start_block->free  = 1;
-    heap_start_block->next  = NULL;
-    heap_start_block->prev  = NULL;
-}
-
-void * __malloc kmalloc(size_t size) {
-    uint64_t flags;
-    spinlock_irqsave_acquire(&heap_lock, &flags);
-    void *ptr = kmalloc_locked(size);
-    spinlock_irqsave_release(&heap_lock, flags);
-    return ptr;
-}
-
-uint64_t heap_get_total(void) {
-    return HEAP_MAX_SIZE;
-}
-
-uint64_t heap_get_used(void) {
-    uint64_t used;
-    uint64_t flags;
-    spinlock_irqsave_acquire(&heap_lock, &flags);
-    used = heap_used_bytes;
-    spinlock_irqsave_release(&heap_lock, flags);
-    return used;
-}
-
-uint64_t heap_get_free(void) {
-    uint64_t flags;
-    spinlock_irqsave_acquire(&heap_lock, &flags);
-    uint64_t used = heap_used_bytes;
-    spinlock_irqsave_release(&heap_lock, flags);
-    if (used >= HEAP_MAX_SIZE) return 0;
-    return HEAP_MAX_SIZE - used;
-}
-
 void kfree(void *ptr) {
     if (!ptr) return;
     uint64_t flags;
     spinlock_irqsave_acquire(&heap_lock, &flags);
-    kfree_locked(ptr);
+    _kfree_locked(ptr);
     spinlock_irqsave_release(&heap_lock, flags);
 }
 
@@ -232,10 +235,11 @@ void *krealloc(void *ptr, size_t new_size) {
         return NULL;
     }
 
+    /* Acquire the heap lock and check whether the existing block is large enough */
     uint64_t flags;
     spinlock_irqsave_acquire(&heap_lock, &flags);
 
-    /* Get the original block header — lock held */
+    /* Get the original block header (lock held protects header from modification) */
     struct heap_block *block = (struct heap_block *)((uint8_t *)ptr - BLOCK_HDR_SIZE);
     size_t old_size = block->size;
 
@@ -245,18 +249,21 @@ void *krealloc(void *ptr, size_t new_size) {
         return ptr;
     }
 
-    /* Otherwise allocate a new block using the locked internal path */
-    void *new_ptr = kmalloc_locked(new_size);
+    /* Align size for the new allocation */
+    size_t aligned_size = (new_size + 15) & ~15ULL;
+
+    /* Allocate a new block using the internal locked helper (lock already held) */
+    void *new_ptr = _kmalloc_locked(aligned_size);
     if (!new_ptr) {
         spinlock_irqsave_release(&heap_lock, flags);
         return NULL;
     }
 
-    /* Copy old data — block metadata is stable under the lock */
-    memcpy(new_ptr, ptr, old_size < new_size ? old_size : new_size);
+    /* Copy old data (aligned_size > old_size in this branch, so min is old_size) */
+    memcpy(new_ptr, ptr, old_size);
 
-    /* Free the old block — locked internal path */
-    kfree_locked(ptr);
+    /* Free old block using internal locked helper (lock still held) */
+    _kfree_locked(ptr);
 
     spinlock_irqsave_release(&heap_lock, flags);
     return new_ptr;
@@ -347,13 +354,12 @@ static int heap_check(void)
         b = b->next;
     }
 
-    spinlock_irqsave_release(&heap_lock, flags);
-
     if (errors == 0)
         kprintf("[heap] heap_check: OK (%d blocks, %llu bytes used)\n",
                 errors, (unsigned long long)heap_used_bytes);
     else
         kprintf("[heap] heap_check: %d ERRORS found\n", errors);
 
+    spinlock_irqsave_release(&heap_lock, flags);
     return errors;
 }
