@@ -426,21 +426,31 @@ static struct tcp_listener *find_listener(uint16_t port) {
 }
 
 static int find_conn(uint32_t remote_ip, uint16_t remote_port, uint16_t local_port) {
+    uint64_t __flags;
+    spinlock_irqsave_acquire(&tcp_lock, &__flags);
+    int ret = -1;
     for (int i = 0; i < MAX_TCP_CONNS; i++) {
         if (tcp_conns[i].state != TCP_CLOSED &&
             tcp_conns[i].state != TCP_TIME_WAIT && /* skip TIME_WAIT for reuse */
             tcp_conns[i].remote_ip == remote_ip &&
             tcp_conns[i].remote_port == remote_port &&
-            tcp_conns[i].local_port == local_port)
-            return i;
+            tcp_conns[i].local_port == local_port) {
+            ret = i;
+            break;
+        }
     }
-    return -1;
+    spinlock_irqsave_release(&tcp_lock, __flags);
+    return ret;
 }
 
 static int alloc_conn(void) {
+    uint64_t __flags;
+    spinlock_irqsave_acquire(&tcp_lock, &__flags);
+    int ret = -1;
     for (int i = 0; i < MAX_TCP_CONNS; i++)
-        if (tcp_conns[i].state == TCP_CLOSED) return i;
-    return -1;
+        if (tcp_conns[i].state == TCP_CLOSED) { ret = i; break; }
+    spinlock_irqsave_release(&tcp_lock, __flags);
+    return ret;
 }
 
 void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
@@ -466,6 +476,9 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
     if (hdr_len < sizeof(struct tcp_header) || hdr_len > len) return;
     uint16_t data_len = len - hdr_len;
     const uint8_t *data = payload + hdr_len;
+
+    uint64_t __tcp_flags;
+    spinlock_irqsave_acquire(&tcp_lock, &__tcp_flags);
 
     int conn_id = find_conn(remote_ip, src_port, dst_port);
 
@@ -624,6 +637,7 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
             tmp.our_seq = cookie;
             tmp.their_seq = seq + 1;
             send_tcp(&tmp, TCP_SYN | TCP_ACK, NULL, 0);
+            spinlock_irqsave_release(&tcp_lock, __tcp_flags);
             return;
         }
 
@@ -716,6 +730,7 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
                         data_len, their_win);
                 send_tcp(c, TCP_SYN | TCP_ACK, NULL, 0);
                 c->our_seq++;
+                spinlock_irqsave_release(&tcp_lock, __tcp_flags);
                 return;
             }
             uint16_t copy_len = data_len;
@@ -737,18 +752,27 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
             send_tcp(c, TCP_SYN | TCP_ACK, NULL, 0);
             c->our_seq++;
 
-            if (l && l->on_connect) {
-                l->on_connect(conn_id);
-            } else if (l && l->accept_count < ACCEPT_QUEUE_SIZE) {
-                l->accept_queue[l->accept_tail] = conn_id;
+            /* Save callback/accept state before releasing lock */
+            tcp_connect_handler _on_connect = l ? l->on_connect : NULL;
+            int _accept_ok = (l && l->accept_count < ACCEPT_QUEUE_SIZE) ? 1 : 0;
+            int _accept_tail = l ? l->accept_tail : 0;
+            if (_on_connect) {
+                spinlock_irqsave_release(&tcp_lock, __tcp_flags);
+                _on_connect(conn_id);
+            } else if (_accept_ok) {
+                l->accept_queue[_accept_tail] = conn_id;
                 l->accept_tail = (l->accept_tail + 1) % ACCEPT_QUEUE_SIZE;
                 l->accept_count++;
+                spinlock_irqsave_release(&tcp_lock, __tcp_flags);
+            } else {
+                spinlock_irqsave_release(&tcp_lock, __tcp_flags);
             }
             return;
         }
 
         send_tcp(c, TCP_SYN | TCP_ACK, NULL, 0);
         c->our_seq++;
+        spinlock_irqsave_release(&tcp_lock, __tcp_flags);
         return;
     }
 
@@ -788,7 +812,10 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
                     struct tcp_listener *l = find_listener(dst_port);
                     if (l) {
                         if (l->on_connect) {
-                            l->on_connect(conn_id);
+                            tcp_connect_handler _cb = l->on_connect;
+                            spinlock_irqsave_release(&tcp_lock, __tcp_flags);
+                            _cb(conn_id);
+                            return;
                         } else if (l->accept_count < ACCEPT_QUEUE_SIZE) {
                             l->accept_queue[l->accept_tail] = conn_id;
                             l->accept_tail = (l->accept_tail + 1) % ACCEPT_QUEUE_SIZE;
@@ -799,10 +826,12 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
                             c->state = TCP_CLOSED;
                         }
                     }
-                    return;
                 }
+                spinlock_irqsave_release(&tcp_lock, __tcp_flags);
+                return;
             }
         }
+        spinlock_irqsave_release(&tcp_lock, __tcp_flags);
         return;
     }
 
@@ -822,6 +851,7 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
         } else if (flags & TCP_RST) {
             c->state = TCP_CLOSED;
         }
+        spinlock_irqsave_release(&tcp_lock, __tcp_flags);
         return;
     }
 
@@ -829,7 +859,10 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
         if (flags & TCP_ACK) {
             c->state = TCP_ESTABLISHED;
             if (l && l->on_connect) {
-                l->on_connect(conn_id);
+                tcp_connect_handler _cb = l->on_connect;
+                spinlock_irqsave_release(&tcp_lock, __tcp_flags);
+                _cb(conn_id);
+                return;
             } else if (l && l->accept_count < ACCEPT_QUEUE_SIZE) {
                 /* Accept-queue mode: enqueue the conn_id for net_tcp_accept() */
                 l->accept_queue[l->accept_tail] = conn_id;
@@ -841,6 +874,7 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
                 c->state = TCP_CLOSED;
             }
         }
+        spinlock_irqsave_release(&tcp_lock, __tcp_flags);
         return;
     }
 
@@ -848,7 +882,9 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
         if (flags & TCP_RST) {
             c->state = TCP_CLOSED;
             c->rx_fin = 1;
-            if (l && l->on_close) l->on_close(conn_id);
+            tcp_close_handler _cb = l ? l->on_close : NULL;
+            spinlock_irqsave_release(&tcp_lock, __tcp_flags);
+            if (_cb) _cb(conn_id);
             return;
         }
 
@@ -1150,7 +1186,9 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
             send_tcp(c, TCP_ACK, NULL, 0);
             c->state = TCP_CLOSE_WAIT;
             c->rx_fin = 1;
-            if (l && l->on_close) l->on_close(conn_id);
+            tcp_close_handler _cb = l ? l->on_close : NULL;
+            spinlock_irqsave_release(&tcp_lock, __tcp_flags);
+            if (_cb) _cb(conn_id);
             return;
         }
 
@@ -1161,12 +1199,14 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
                 /* Duplicate data — send immediate ACK (RFC 5681 §4.2) */
                 tcp_flush_delayed_ack(c);
                 send_tcp(c, TCP_ACK, NULL, 0);
+                spinlock_irqsave_release(&tcp_lock, __tcp_flags);
                 return;
             }
             if ((int32_t)(seq - expected) > 0) {
                 /* Out-of-order data — send immediate ACK, do not delay */
                 tcp_flush_delayed_ack(c);
                 send_tcp(c, TCP_ACK, NULL, 0);
+                spinlock_irqsave_release(&tcp_lock, __tcp_flags);
                 return;
             }
             /* Validate that received data is within our advertised window.
@@ -1176,6 +1216,7 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
             if (seq + data_len > c->their_seq + their_win) {
                 kprintf("[TCP] window violation: seq=%u, len=%u, their_seq=%u, window=%u\n",
                         seq, data_len, c->their_seq, their_win);
+                spinlock_irqsave_release(&tcp_lock, __tcp_flags);
                 return;
             }
             /* Handle TCP urgent pointer (URG flag) — RFC 961 §3.3
@@ -1192,6 +1233,7 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
                     /* Fully retransmitted — send immediate ACK */
                     tcp_flush_delayed_ack(c);
                     send_tcp(c, TCP_ACK, NULL, 0);
+                    spinlock_irqsave_release(&tcp_lock, __tcp_flags);
                     return;
                 }
                 data = (const uint8_t *)data + skip;
@@ -1218,7 +1260,11 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
             /* Update activity for keepalive */
             c->last_activity_tick = timer_get_ticks();
             if (l && l->on_data) {
-                l->on_data(conn_id, data, data_len);
+                tcp_data_handler _cb = l->on_data;
+                const uint8_t *_cb_data = data;
+                uint16_t _cb_len = data_len;
+                spinlock_irqsave_release(&tcp_lock, __tcp_flags);
+                _cb(conn_id, _cb_data, _cb_len);
             } else {
                 int space = (int)sizeof(c->rxbuf) - c->rxlen;
                 int copy = (int)data_len < space ? (int)data_len : space;
@@ -1228,6 +1274,7 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
                     /* Wake any poll/select/epoll waiters on this socket */
                     sock_wake_by_conn_id(conn_id);
                 }
+                spinlock_irqsave_release(&tcp_lock, __tcp_flags);
             }
         }
         return;
@@ -1243,6 +1290,7 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
             c->state = TCP_TIME_WAIT;
             c->time_wait_deadline = timer_get_ticks() + TCP_TIME_WAIT_MSL_TICKS;
         }
+        spinlock_irqsave_release(&tcp_lock, __tcp_flags);
         return;
     }
 
@@ -1253,14 +1301,14 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
             c->state = TCP_TIME_WAIT;
             c->time_wait_deadline = timer_get_ticks() + TCP_TIME_WAIT_MSL_TICKS;
         }
+        spinlock_irqsave_release(&tcp_lock, __tcp_flags);
         return;
     }
 
     if (c->state == TCP_TIME_WAIT) {
-        /* RFC 1337: send challenge ACK for any segment received in TIME_WAIT.
-         * This prevents stale segments from confusing a new connection that
-         * reuses the same (src_ip, src_port, dst_ip, dst_port) tuple. */
+        /* RFC 1337: send challenge ACK for any segment received in TIME_WAIT. */
         send_tcp(c, TCP_ACK, NULL, 0);
+        spinlock_irqsave_release(&tcp_lock, __tcp_flags);
         return;
     }
 
@@ -1269,6 +1317,7 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
         if (flags & TCP_RST) {
             c->state = TCP_CLOSED;
         }
+        spinlock_irqsave_release(&tcp_lock, __tcp_flags);
         return;
     }
 
@@ -1276,8 +1325,10 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
         if (flags & TCP_ACK) {
             c->state = TCP_CLOSED;
         }
+        spinlock_irqsave_release(&tcp_lock, __tcp_flags);
         return;
     }
+    spinlock_irqsave_release(&tcp_lock, __tcp_flags);
 }
 
 /* --- Outgoing TCP connect --- */
@@ -1286,6 +1337,9 @@ static uint16_t next_ephemeral_port = 49152;
 int net_tcp_connect(uint32_t ip, uint16_t port) {
     int conn_id = alloc_conn();
     if (conn_id < 0) return -1;
+
+    uint64_t __tcp_flags;
+    spinlock_irqsave_acquire(&tcp_lock, &__tcp_flags);
 
     struct tcp_conn *c = &tcp_conns[conn_id];
     c->state = TCP_SYN_SENT;
@@ -1370,6 +1424,9 @@ int net_tcp_connect(uint32_t ip, uint16_t port) {
     send_tcp(c, TCP_SYN, NULL, 0);
     c->our_seq++;
 
+    /* Release lock before entering poll loop — handle_tcp() acquires its own lock */
+    spinlock_irqsave_release(&tcp_lock, __tcp_flags);
+
     uint64_t start = timer_get_ticks();
     volatile uint32_t tries = 0;
     while (c->state == TCP_SYN_SENT) {
@@ -1409,6 +1466,8 @@ int net_tcp_recv(int conn_id, void *buf, uint16_t bufsize, int timeout_ticks) {
                 break;
         }
     }
+    uint64_t __tcp_flags;
+    spinlock_irqsave_acquire(&tcp_lock, &__tcp_flags);
     int got = c->rxlen < bufsize ? c->rxlen : bufsize;
     if (got > 0) {
         memcpy(buf, c->rxbuf, got);
@@ -1417,6 +1476,7 @@ int net_tcp_recv(int conn_id, void *buf, uint16_t bufsize, int timeout_ticks) {
             memmove(c->rxbuf, c->rxbuf + got, remain);
         c->rxlen = remain;
     }
+    spinlock_irqsave_release(&tcp_lock, __tcp_flags);
     return got;
 }
 
@@ -1449,7 +1509,11 @@ void net_tcp_unlisten(uint16_t port) {
 int net_tcp_send(int conn_id, const void *data, uint16_t len) {
     if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return -1;
     struct tcp_conn *c = &tcp_conns[conn_id];
-    if (c->state != TCP_ESTABLISHED) return -1;
+
+    uint64_t __tcp_flags;
+    spinlock_irqsave_acquire(&tcp_lock, &__tcp_flags);
+
+    if (c->state != TCP_ESTABLISHED) { spinlock_irqsave_release(&tcp_lock, __tcp_flags); return -1; }
 
     /* Clamp to fit in the retransmit buffer */
     uint16_t send_len = len;
@@ -1465,6 +1529,7 @@ int net_tcp_send(int conn_id, const void *data, uint16_t len) {
             c->nagle_buf_len += copy;
         }
         c->last_activity_tick = timer_get_ticks();
+        spinlock_irqsave_release(&tcp_lock, __tcp_flags);
         return 0;
     }
 
@@ -1503,6 +1568,7 @@ int net_tcp_send(int conn_id, const void *data, uint16_t len) {
         c->dupack_count = 0;
         c->last_activity_tick = c->last_send_tick;
         if (c->rto == 0) c->rto = 30;
+        spinlock_irqsave_release(&tcp_lock, __tcp_flags);
         return 0;
     }
 
@@ -1524,6 +1590,7 @@ int net_tcp_send(int conn_id, const void *data, uint16_t len) {
             c->nagle_buf_len += copy;
         }
         c->last_activity_tick = timer_get_ticks();
+        spinlock_irqsave_release(&tcp_lock, __tcp_flags);
         return 0;
     }
 
@@ -1547,6 +1614,7 @@ int net_tcp_send(int conn_id, const void *data, uint16_t len) {
     c->dupack_count = 0;
     c->last_activity_tick = c->last_send_tick;
     if (c->rto == 0) c->rto = 30;
+    spinlock_irqsave_release(&tcp_lock, __tcp_flags);
     return 0;
 }
 
@@ -1598,6 +1666,9 @@ void net_tcp_close(int conn_id) {
     if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return;
     struct tcp_conn *c = &tcp_conns[conn_id];
 
+    uint64_t __tcp_flags;
+    spinlock_irqsave_acquire(&tcp_lock, &__tcp_flags);
+
     /* Flush any pending delayed ACK and Nagle data before closing */
     tcp_flush_delayed_ack(c);
     if (c->nagle_buf_len > 0)
@@ -1632,6 +1703,7 @@ void net_tcp_close(int conn_id) {
         default:
             break;
     }
+    spinlock_irqsave_release(&tcp_lock, __tcp_flags);
 }
 
 /* --- Blocking server accept --- */
@@ -1650,29 +1722,41 @@ int net_tcp_accept(uint16_t port, int timeout_ticks) {
                 return -1;
         }
     }
+    uint64_t __tcp_flags;
+    spinlock_irqsave_acquire(&tcp_lock, &__tcp_flags);
     /* Guard against accept_count being out of sync (should never happen) */
-    if (l->accept_count <= 0)
+    if (l->accept_count <= 0) {
+        spinlock_irqsave_release(&tcp_lock, __tcp_flags);
         return -1;
+    }
     int conn_id = l->accept_queue[l->accept_head];
     /* Validate conn_id — must be a valid established connection */
     if (conn_id < 0 || conn_id >= MAX_TCP_CONNS ||
-        tcp_conns[conn_id].state == TCP_CLOSED)
+        tcp_conns[conn_id].state == TCP_CLOSED) {
+        spinlock_irqsave_release(&tcp_lock, __tcp_flags);
         return -1;
+    }
     l->accept_head = (l->accept_head + 1) % ACCEPT_QUEUE_SIZE;
     l->accept_count--;
+    spinlock_irqsave_release(&tcp_lock, __tcp_flags);
     return conn_id;
 }
 
 void net_conn_list(void (*cb)(uint16_t lport, uint32_t rip, uint16_t rport, int state)) {
+    uint64_t __tcp_flags;
+    spinlock_irqsave_acquire(&tcp_lock, &__tcp_flags);
     for (int i = 0; i < MAX_TCP_CONNS; i++) {
         if (tcp_conns[i].state != TCP_CLOSED)
             cb(tcp_conns[i].local_port, tcp_conns[i].remote_ip,
                tcp_conns[i].remote_port, (int)tcp_conns[i].state);
     }
+    spinlock_irqsave_release(&tcp_lock, __tcp_flags);
 }
 
 /* Periodic retransmission check — called from timer every N ticks */
 void net_tcp_check_retransmit(void) {
+    uint64_t __tcp_flags;
+    spinlock_irqsave_acquire(&tcp_lock, &__tcp_flags);
     uint64_t now = timer_get_ticks();
     for (int i = 0; i < MAX_TCP_CONNS; i++) {
         struct tcp_conn *c = &tcp_conns[i];
@@ -1970,6 +2054,8 @@ static void net_tcp_auto_tune_all(void)
 
 void net_tcp_set_keepalive(int conn_id, int keepalive) {
     if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return;
+    uint64_t __tcp_flags;
+    spinlock_irqsave_acquire(&tcp_lock, &__tcp_flags);
     struct tcp_conn *c = &tcp_conns[conn_id];
     c->keepalive = keepalive;
     if (keepalive) {
@@ -1978,14 +2064,21 @@ void net_tcp_set_keepalive(int conn_id, int keepalive) {
         c->keepalive_probes_max = KEEPALIVE_PROBES_MAX_DEFAULT;
         c->last_activity_tick = timer_get_ticks();
     }
+    spinlock_irqsave_release(&tcp_lock, __tcp_flags);
 }
 
 int net_tcp_get_keepalive(int conn_id) {
     if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return 0;
-    return tcp_conns[conn_id].keepalive;
+    uint64_t __tcp_flags;
+    spinlock_irqsave_acquire(&tcp_lock, &__tcp_flags);
+    int ret = tcp_conns[conn_id].keepalive;
+    spinlock_irqsave_release(&tcp_lock, __tcp_flags);
+    return ret;
 }
 
 void net_tcp_check_keepalive(void) {
+    uint64_t __tcp_flags;
+    spinlock_irqsave_acquire(&tcp_lock, &__tcp_flags);
     uint64_t now = timer_get_ticks();
     for (int i = 0; i < MAX_TCP_CONNS; i++) {
         struct tcp_conn *c = &tcp_conns[i];
@@ -2005,12 +2098,15 @@ void net_tcp_check_keepalive(void) {
             c->last_activity_tick = now;
         }
     }
+    spinlock_irqsave_release(&tcp_lock, __tcp_flags);
 }
 
 int net_tcp_get_info(int conn_id, struct tcp_conn_info *info) {
     if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return -1;
+    uint64_t __tcp_flags;
+    spinlock_irqsave_acquire(&tcp_lock, &__tcp_flags);
     struct tcp_conn *c = &tcp_conns[conn_id];
-    if (c->state == TCP_CLOSED) return -1;
+    if (c->state == TCP_CLOSED) { spinlock_irqsave_release(&tcp_lock, __tcp_flags); return -1; }
     info->local_port = c->local_port;
     info->remote_ip = c->remote_ip;
     info->remote_port = c->remote_port;
@@ -2019,6 +2115,7 @@ int net_tcp_get_info(int conn_id, struct tcp_conn_info *info) {
     info->ssthresh = c->ssthresh;
     info->last_send_tick = c->last_send_tick;
     info->retrans_count = c->retrans_count;
+    spinlock_irqsave_release(&tcp_lock, __tcp_flags);
     return 0;
 }
 
@@ -2026,24 +2123,36 @@ int net_tcp_get_info(int conn_id, struct tcp_conn_info *info) {
 int net_tcp_available(int conn_id)
 {
     if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return 0;
+    uint64_t __tcp_flags;
+    spinlock_irqsave_acquire(&tcp_lock, &__tcp_flags);
     struct tcp_conn *c = &tcp_conns[conn_id];
-    if (c->state == TCP_CLOSED) return 0;
-    return c->rxlen;
+    int ret = 0;
+    if (c->state != TCP_CLOSED) ret = c->rxlen;
+    spinlock_irqsave_release(&tcp_lock, __tcp_flags);
+    return ret;
 }
 
 /* Return 1 if the TCP connection is in ESTABLISHED state (writable) */
 int net_tcp_is_connected(int conn_id)
 {
     if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return 0;
-    return (tcp_conns[conn_id].state == TCP_ESTABLISHED) ? 1 : 0;
+    uint64_t __tcp_flags;
+    spinlock_irqsave_acquire(&tcp_lock, &__tcp_flags);
+    int ret = (tcp_conns[conn_id].state == TCP_ESTABLISHED) ? 1 : 0;
+    spinlock_irqsave_release(&tcp_lock, __tcp_flags);
+    return ret;
 }
 
 /* Return 1 if the TCP connection has received FIN or is closed */
 int net_tcp_has_closed(int conn_id)
 {
     if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return 1; /* invalid = closed */
+    uint64_t __tcp_flags;
+    spinlock_irqsave_acquire(&tcp_lock, &__tcp_flags);
     struct tcp_conn *c = &tcp_conns[conn_id];
-    return (c->state == TCP_CLOSED || c->rx_fin) ? 1 : 0;
+    int ret = (c->state == TCP_CLOSED || c->rx_fin) ? 1 : 0;
+    spinlock_irqsave_release(&tcp_lock, __tcp_flags);
+    return ret;
 }
 
 /* ── Implement: tcp_open ──────────────────────────────── */
@@ -2051,6 +2160,9 @@ static int tcp_open(void *sk)
 {
     if (!sk) return -EINVAL;
     kprintf("[tcp] tcp_open: allocating TCP connection\n");
+    uint64_t __tcp_flags;
+    spinlock_irqsave_acquire(&tcp_lock, &__tcp_flags);
+    int ret = -ENOMEM;
     for (int i = 0; i < MAX_TCP_CONNS; i++) {
         if (tcp_conns[i].state == TCP_CLOSED) {
             memset(&tcp_conns[i], 0, sizeof(struct tcp_conn));
@@ -2060,10 +2172,12 @@ static int tcp_open(void *sk)
             tcp_conns[i].rto = 30;
             tcp_conns[i].keepalive_interval = 500;
             tcp_conns[i].keepalive_probes_max = 3;
-            return i;
+            ret = i;
+            break;
         }
     }
-    return -ENOMEM;
+    spinlock_irqsave_release(&tcp_lock, __tcp_flags);
+    return ret;
 }
 /* ── Implement: tcp_close ─────────────────────────────── */
 static int tcp_close(void *sk)
@@ -2095,7 +2209,10 @@ static int tcp_disconnect(void *sk)
         if (tcp_conns[conn_id].state != TCP_CLOSED) {
             net_tcp_close(conn_id);
         }
+        uint64_t __tcp_flags;
+        spinlock_irqsave_acquire(&tcp_lock, &__tcp_flags);
         tcp_conns[conn_id].state = TCP_CLOSED;
+        spinlock_irqsave_release(&tcp_lock, __tcp_flags);
     }
     return 0;
 }
