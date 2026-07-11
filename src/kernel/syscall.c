@@ -3716,6 +3716,10 @@ static uint64_t sys_alarm(uint64_t seconds) {
     uint64_t ticks = seconds * 100;
     uint64_t old_value = 0;
 
+    /* Lock: process_timer_tick modifies itimers[] under proc_table_lock */
+    uint64_t __al_flags;
+    spinlock_irqsave_acquire(&proc_table_lock, &__al_flags);
+
     /* Get old value */
     if (proc->itimers[ITIMER_REAL].it_value > 0)
         old_value = proc->itimers[ITIMER_REAL].it_value / 100;
@@ -3723,6 +3727,8 @@ static uint64_t sys_alarm(uint64_t seconds) {
     /* Set new alarm */
     proc->itimers[ITIMER_REAL].it_value = ticks;
     proc->itimers[ITIMER_REAL].it_interval = 0; /* one-shot */
+
+    spinlock_irqsave_release(&proc_table_lock, __al_flags);
 
     return old_value;
 }
