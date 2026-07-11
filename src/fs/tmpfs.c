@@ -845,7 +845,7 @@ static int tmpfs_mkdir(const char *path) {
     if (find_inode_in_dir(parent, name) >= 0) return -EINVAL;
 
     int idx = alloc_inode();
-    if (idx < 0) return -EINVAL;
+    if (idx < 0) return idx;
     inodes[idx].type = TMPFS_TYPE_DIR;
     inodes[idx].parent = (uint32_t)parent;
     memcpy(inodes[idx].name, name, (size_t)len + 1);
@@ -901,7 +901,7 @@ static int tmpfs_create(void *priv, const char *path, uint8_t type) {
     memcpy(name, slash + 1, (size_t)len + 1);
 
     int idx = alloc_inode();
-    if (idx < 0) return -EINVAL;
+    if (idx < 0) return idx;
     inodes[idx].type = (type == FS_TYPE_LINK) ? TMPFS_TYPE_LINK : TMPFS_TYPE_FILE;
     inodes[idx].parent = (uint32_t)parent;
     memcpy(inodes[idx].name, name, (size_t)len + 1);
@@ -1169,7 +1169,7 @@ static int tmpfs_mknod(void *priv, const char *path, uint16_t mode, uint16_t dev
     if (find_inode_in_dir(parent, name) >= 0) return -EINVAL;
 
     int idx = alloc_inode();
-    if (idx < 0) return -EINVAL;
+    if (idx < 0) return idx;
     /* Determine device node type from mode bits */
     if (mode & S_IFCHR)
         inodes[idx].type = TMPFS_TYPE_CHR;
