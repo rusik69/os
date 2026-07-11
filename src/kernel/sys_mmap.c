@@ -149,10 +149,10 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size,
             return (uint64_t)(int64_t)-ENOMEM;
     }
 
-    /* Copy pages one by one */
+    /* Copy pages one by one using the process's page table */
     for (uint64_t off = 0; off < old_size; off += PAGE_SIZE) {
-        uint64_t old_phys = vmm_get_physaddr(old_addr + off);
-        if (old_phys) {
+        uint64_t old_phys = 0;
+        if (vmm_user_virt_to_phys(proc->pml4, old_addr + off, &old_phys) == 0 && old_phys) {
             uint64_t new_phys = pmm_alloc_frame();
             if (!new_phys)
                 return (uint64_t)(int64_t)-ENOMEM;

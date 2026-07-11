@@ -968,7 +968,7 @@ int vmm_page_is_mapped_user(uint64_t *pml4, uint64_t virt) {
 
 /* Walk user page tables to resolve a virtual address to a physical address.
  * Returns 0 on success with phys set, -1 if not mapped. */
-static int vmm_user_virt_to_phys(uint64_t *pml4, uint64_t virt, uint64_t *phys)
+int vmm_user_virt_to_phys(uint64_t *pml4, uint64_t virt, uint64_t *phys)
 {
     if (!pml4 || virt >= USER_VADDR_MAX) return -EINVAL;
     uint64_t pde = 0, pte = 0;
@@ -1735,6 +1735,7 @@ int vmm_page_is_execonly(uint64_t *pml4, uint64_t virt) {
 EXPORT_SYMBOL(vmm_map_page);
 EXPORT_SYMBOL(vmm_unmap_page);
 EXPORT_SYMBOL(vmm_get_physaddr);
+EXPORT_SYMBOL(vmm_user_virt_to_phys);
 EXPORT_SYMBOL(vmm_page_is_execonly);
 
 /* ── vmm_alloc — Allocate virtual memory pages ────────────────── */
