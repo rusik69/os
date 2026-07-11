@@ -569,7 +569,7 @@ test_notifier: $(NOTIFIER_OBJS) stubs.o
 	$(CC) -o $@ $^
 
 notifier.o: $(KSRCDIR)/notifier.c
-	$(CC) $(KERNEL_CFLAGS) -DEINVAL=22 -c -o $@ $<
+	$(CC) -I. $(subst -isystem,-I,$(KERNEL_CFLAGS)) -include spinlock.h -DEINVAL=22 -c -o $@ $<
 
 test_notifier.o: test_notifier.c
 	$(CC) $(TEST_CFLAGS) -c -o $@ $<

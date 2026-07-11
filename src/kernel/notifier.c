@@ -1,10 +1,12 @@
 #include "notifier.h"
 #include "printf.h"
 #include "string.h"
+#include "spinlock.h"
 /* Local max notifiers may differ from the public NOTIFIER_MAX constant */
 #define NOTIFIER_LIST_SIZE 32
-static struct notifier_block *notifier_list[NOTIFIER_LIST_SIZE];
+static struct notifier_block *notifier_list[NOTIFIER_MAX];
 static int notifier_init_done = 0;
+static spinlock_t notifier_lock = SPINLOCK_INIT;
 void notifier_init(void) {
     memset(notifier_list, 0, sizeof(notifier_list));
     notifier_init_done = 1;
@@ -12,27 +14,44 @@ void notifier_init(void) {
 }
 int notifier_chain_register(int type, struct notifier_block *nb) {
     if (!notifier_init_done || type < 0 || type >= NOTIFIER_MAX || !nb) return -1;
+    uint64_t flags;
+    spinlock_irqsave_acquire(&notifier_lock, &flags);
     nb->next = notifier_list[type];
     notifier_list[type] = nb;
+    spinlock_irqsave_release(&notifier_lock, flags);
     return 0;
 }
 int notifier_chain_unregister(int type, struct notifier_block *nb) {
     if (!notifier_init_done || type < 0 || type >= NOTIFIER_MAX || !nb) return -1;
+    uint64_t flags;
+    spinlock_irqsave_acquire(&notifier_lock, &flags);
     struct notifier_block **pp = &notifier_list[type];
     while (*pp) {
-        if (*pp == nb) { *pp = nb->next; return 0; }
+        if (*pp == nb) { *pp = nb->next; spinlock_irqsave_release(&notifier_lock, flags); return 0; }
         pp = &(*pp)->next;
     }
+    spinlock_irqsave_release(&notifier_lock, flags);
     return -1;
 }
 int notifier_call_chain(int type, unsigned long v, void *data) {
     if (!notifier_init_done || type < 0 || type >= NOTIFIER_MAX) return 0;
     int ret = 0;
+    /* Snapshot the chain under lock to prevent concurrent modification
+     * during traversal. Callbacks are invoked outside the lock so they
+     * may safely register/unregister on the same chain type. */
+    struct notifier_block *chain[NOTIFIER_LIST_SIZE];
+    int count = 0;
+    uint64_t flags;
+    spinlock_irqsave_acquire(&notifier_lock, &flags);
     struct notifier_block *nb = notifier_list[type];
-    while (nb) {
-        if (nb->notifier_call)
-            ret = nb->notifier_call(nb, v, data);
+    while (nb && count < NOTIFIER_LIST_SIZE) {
+        chain[count++] = nb;
         nb = nb->next;
+    }
+    spinlock_irqsave_release(&notifier_lock, flags);
+    for (int i = 0; i < count; i++) {
+        if (chain[i]->notifier_call)
+            ret = chain[i]->notifier_call(chain[i], v, data);
     }
     return ret;
 }
