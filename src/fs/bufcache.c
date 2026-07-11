@@ -217,6 +217,7 @@ static int16_t evict_one(void) {
             /* Evict this clean entry */
             hash_remove(idx);
             g_entries[idx].valid = 0;
+            g_count--;
             return idx;
         }
         idx = g_lru[idx].prev;
@@ -240,6 +241,7 @@ static int16_t evict_one(void) {
             e->dirty = 0;
             e->access_count = 0;  /* reset on eviction */
             g_evictions++;
+            g_count--;
             return idx;
         }
         idx = g_lru[idx].prev;
@@ -319,8 +321,12 @@ void *bufcache_read(uint64_t lba, uint8_t dev_id) {
     }
 
     if (cache_fill(victim, lba, dev_id) < 0) {
-        /* Fill failed — put entry back in free pool */
-        lru_push_head(victim);
+        /* Fill failed — return entry to free pool at LRU tail */
+        g_lru[victim].prev = g_lru_tail;
+        g_lru[victim].next = -1;
+        if (g_lru_tail >= 0) g_lru[g_lru_tail].next = (int16_t)victim;
+        g_lru_tail = (int16_t)victim;
+        if (g_lru_head < 0) g_lru_head = (int16_t)victim;
         g_entries[victim].valid = 0;
         spinlock_irqsave_release(&g_bc_lock, irq_flags);
         return NULL;

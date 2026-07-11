@@ -1,7 +1,7 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
   "current_batch": "B006",
-  "current_item": 379,
+  "current_item": 388,
   "completed_items": [
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
     11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
@@ -41,13 +41,18 @@
     351, 352, 353, 354, 355, 356, 357, 358, 359, 360,
     361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371,
     372, 373, 374, 375, 376, 377,
-    378
+    378, 379, 380,
+    381, 382, 383,
+    384,
+    385,
+    386,
+    387
   ],
-  "found_bugs": 842,
-  "fixed_bugs": 842,
+  "found_bugs": 849,
+  "fixed_bugs": 849,
   "completed_batches": [
     "B002"
   ],
-  "last_item_timestamp": "2026-07-11T00:20:01",
-  "last_item_result": "bug-hunt #378: simplefb - verify simple-framebuffer presence (3 bugs: multiboot2 tag header using uint16_t instead of uint32_t, wrong tag_size bounds check, multiboot1 wrong offsets/flag bit)"
+  "last_item_timestamp": "2026-07-11T01:58:30",
+  "last_item_result": "item 387: bug found and fixed - propagate alloc_inode failure errno in tmpfs_mkdir, tmpfs_create, tmpfs_mknod instead of masking with -EINVAL"
 }
