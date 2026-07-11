@@ -355,6 +355,7 @@ int smp_boot_aps(void) {
 
         if (info->ready_flag) {
             ap_count++;
+            cpuhp_cpu_state[i] = CPUHP_STATE_ONLINE;
             kprintf("[OK] SMP: AP #%lu (APIC ID %lu) booted successfully\n",
                     (unsigned long)i, (unsigned long)ap_apic_id);
         } else {

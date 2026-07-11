@@ -158,13 +158,17 @@ int cpuhp_is_online(int cpu_id)
 {
     if (cpu_id < 0 || cpu_id >= CPUHP_MAX_CPUS)
         return 0;
-    return cpuhp_cpu_state[cpu_id] == CPUHP_STATE_ONLINE;
+    __asm__ volatile("" ::: "memory");
+    int state = (int)cpuhp_cpu_state[cpu_id];
+    __asm__ volatile("" ::: "memory");
+    return state == CPUHP_STATE_ONLINE;
 }
 
 int cpuhp_online_count(void)
 {
     int count = 0;
     for (int i = 0; i < smp_cpu_count; i++) {
+        __asm__ volatile("" ::: "memory");
         if (cpuhp_cpu_state[i] == CPUHP_STATE_ONLINE)
             count++;
     }
