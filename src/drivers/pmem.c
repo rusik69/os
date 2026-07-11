@@ -159,6 +159,13 @@ void __init pmem_init(void) {
             continue;
         }
 
+        /* Reserve the NVDIMM physical address range in the PMM bitmap so
+         * the general page allocator never hands out persistent memory
+         * frames to regular kernel/userspace allocations.
+         * This is a no-op if the frames were already marked used (e.g. from
+         * the multiboot memory map or the initial memset in pmm_init). */
+        pmm_reserve_frames(spa.spa_base, spa.spa_length);
+
         /* Calculate sector count from SPA length */
         uint64_t sector_count = spa.spa_length / 512ULL;
         g_pmem_sectors[i] = sector_count;
