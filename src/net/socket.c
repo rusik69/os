@@ -534,30 +534,15 @@ int sys_setsockopt_impl(int sockfd, int level, int optname,
                 int val = *(const int*)optval;
                 s->tcp_nodelay = val;
                 if (s->conn_id >= 0)
-                    tcp_conns[s->conn_id].tcp_nodelay = val;
+                    net_tcp_set_nodelay(s->conn_id, val);
                 sock_put(s);
                 return 0;
             }
             case TCP_CORK: {
                 int val = *(const int*)optval;
                 s->tcp_cork = val;
-                if (s->conn_id >= 0) {
-                    struct tcp_conn *c = &tcp_conns[s->conn_id];
-                    int old = c->tcp_cork;
-                    c->tcp_cork = val;
-                    /* Uncorking: flush buffered data */
-                    if (old && !val && c->tx_unacked_len > 0) {
-                        const uint8_t *p = c->tx_unacked_buf;
-                        uint16_t remain = c->tx_unacked_len;
-                        while (remain > 0) {
-                            uint16_t chunk = remain > 1400 ? 1400 : remain;
-                            send_tcp(c, TCP_PSH | TCP_ACK, p, chunk);
-                            c->our_seq += chunk;
-                            p += chunk;
-                            remain -= chunk;
-                        }
-                    }
-                }
+                if (s->conn_id >= 0)
+                    net_tcp_set_cork(s->conn_id, val);
                 sock_put(s);
                 return 0;
             }
@@ -698,14 +683,14 @@ int sys_getsockopt_impl(int sockfd, int level, int optname,
     } else if (level == SOL_TCP) {
         switch (optname) {
             case TCP_NODELAY: {
-                int val = (s->conn_id >= 0) ? tcp_conns[s->conn_id].tcp_nodelay : s->tcp_nodelay;
+                int val = (s->conn_id >= 0) ? net_tcp_get_nodelay(s->conn_id) : s->tcp_nodelay;
                 if (*optlen > sizeof(int)) *optlen = sizeof(int);
                 memcpy(optval, &val, *optlen);
                 sock_put(s);
                 return 0;
             }
             case TCP_CORK: {
-                int val = (s->conn_id >= 0) ? tcp_conns[s->conn_id].tcp_cork : s->tcp_cork;
+                int val = (s->conn_id >= 0) ? net_tcp_get_cork(s->conn_id) : s->tcp_cork;
                 if (*optlen > sizeof(int)) *optlen = sizeof(int);
                 memcpy(optval, &val, *optlen);
                 sock_put(s);
@@ -715,30 +700,18 @@ int sys_getsockopt_impl(int sockfd, int level, int optname,
                 struct tcp_info info;
                 memset(&info, 0, sizeof(info));
                 if (s->conn_id >= 0) {
-                    struct tcp_conn *c = &tcp_conns[s->conn_id];
-                    info.tcpi_state = (uint8_t)c->state;
+                    net_tcp_get_tcpinfo(s->conn_id, &info);
                     info.tcpi_ca_state = 0;
-                    info.tcpi_retransmits = c->retrans_count;
                     info.tcpi_probes = 0;
                     info.tcpi_backoff = 0;
                     info.tcpi_options = 0;
                     info.tcpi_snd_wscale = 0;
                     info.tcpi_rcv_wscale = 0;
-                    info.tcpi_rto = c->rto * 10; /* convert ticks to ms */
                     info.tcpi_snd_mss = 1460;
                     info.tcpi_rcv_mss = 1460;
-                    info.tcpi_unacked = c->tx_unacked_len;
                     info.tcpi_lost = 0;
-                    info.tcpi_retrans = c->retrans_count;
                     info.tcpi_pmtu = 1500;
-                    info.tcpi_rcv_ssthresh = c->ssthresh;
-                    info.tcpi_rtt = (c->srtt > 0) ? (uint32_t)(c->srtt / 8) : 0;
-                    info.tcpi_rttvar = (uint32_t)(c->rttvar / 4);
-                    info.tcpi_snd_ssthresh = c->ssthresh;
-                    info.tcpi_snd_cwnd = c->cwnd;
                     info.tcpi_reordering = 3;
-                    info.tcpi_rcv_space = sizeof(c->rxbuf);
-                    info.tcpi_total_retrans = c->retrans_count;
                 } else {
                     info.tcpi_snd_cwnd = 1;
                     info.tcpi_rtt = 0;

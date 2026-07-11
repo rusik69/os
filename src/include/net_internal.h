@@ -11,6 +11,7 @@
 #include "tcp_westwood.h" /* struct westwood_data for inline embedding in tcp_conn */
 #include "tcp_vegas.h"   /* struct vegas_data for inline embedding in tcp_conn */
 #include "tcp_hybla.h"   /* struct hybla_data for inline embedding in tcp_conn */
+#include "socket.h"      /* struct tcp_info for net_tcp_get_tcpinfo */
 
 /* Shared network state — defined in net.c */
 extern uint8_t  net_our_mac[6];
@@ -466,6 +467,13 @@ void net_tcp_check_retransmit(void);
 void net_tcp_check_keepalive(void);
 uint16_t net_transport_checksum(uint32_t src_ip, uint32_t dst_ip, uint8_t protocol,
                                  const void *data, uint16_t data_len);
+
+/* TCP socket option helpers (synchronized with tcp_lock) */
+void net_tcp_set_nodelay(int conn_id, int val);
+int  net_tcp_get_nodelay(int conn_id);
+void net_tcp_set_cork(int conn_id, int val);
+int  net_tcp_get_cork(int conn_id);
+void net_tcp_get_tcpinfo(int conn_id, struct tcp_info *info);
 
 /* UDP over IPv6 (udp_ipv6.c) */
 void udp_ipv6_init(void);

@@ -2047,6 +2047,81 @@ static void net_tcp_auto_tune_all(void)
     }
 }
 
+/* ── TCP socket option helpers (called from socket.c, acquire tcp_lock) ── */
+
+void net_tcp_set_nodelay(int conn_id, int val)
+{
+    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return;
+    uint64_t __tcp_flags;
+    spinlock_irqsave_acquire(&tcp_lock, &__tcp_flags);
+    tcp_conns[conn_id].tcp_nodelay = val;
+    spinlock_irqsave_release(&tcp_lock, __tcp_flags);
+}
+
+int net_tcp_get_nodelay(int conn_id)
+{
+    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return 0;
+    uint64_t __tcp_flags;
+    spinlock_irqsave_acquire(&tcp_lock, &__tcp_flags);
+    int ret = tcp_conns[conn_id].tcp_nodelay;
+    spinlock_irqsave_release(&tcp_lock, __tcp_flags);
+    return ret;
+}
+
+void net_tcp_set_cork(int conn_id, int val)
+{
+    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return;
+    uint64_t __tcp_flags;
+    spinlock_irqsave_acquire(&tcp_lock, &__tcp_flags);
+    struct tcp_conn *c = &tcp_conns[conn_id];
+    int old = c->tcp_cork;
+    c->tcp_cork = val;
+    /* Uncorking: flush buffered data */
+    if (old && !val && c->tx_unacked_len > 0) {
+        const uint8_t *p = c->tx_unacked_buf;
+        uint16_t remain = c->tx_unacked_len;
+        while (remain > 0) {
+            uint16_t chunk = remain > 1400 ? 1400 : remain;
+            send_tcp(c, TCP_PSH | TCP_ACK, p, chunk);
+            c->our_seq += chunk;
+            p += chunk;
+            remain -= chunk;
+        }
+    }
+    spinlock_irqsave_release(&tcp_lock, __tcp_flags);
+}
+
+int net_tcp_get_cork(int conn_id)
+{
+    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return 0;
+    uint64_t __tcp_flags;
+    spinlock_irqsave_acquire(&tcp_lock, &__tcp_flags);
+    int ret = tcp_conns[conn_id].tcp_cork;
+    spinlock_irqsave_release(&tcp_lock, __tcp_flags);
+    return ret;
+}
+
+void net_tcp_get_tcpinfo(int conn_id, struct tcp_info *info)
+{
+    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return;
+    uint64_t __tcp_flags;
+    spinlock_irqsave_acquire(&tcp_lock, &__tcp_flags);
+    struct tcp_conn *c = &tcp_conns[conn_id];
+    info->tcpi_state = (uint8_t)c->state;
+    info->tcpi_retransmits = c->retrans_count;
+    info->tcpi_rto = c->rto * 10; /* convert ticks to ms */
+    info->tcpi_unacked = c->tx_unacked_len;
+    info->tcpi_retrans = c->retrans_count;
+    info->tcpi_rcv_ssthresh = c->ssthresh;
+    info->tcpi_rtt = (c->srtt > 0) ? (uint32_t)(c->srtt / 8) : 0;
+    info->tcpi_rttvar = (uint32_t)(c->rttvar / 4);
+    info->tcpi_snd_ssthresh = c->ssthresh;
+    info->tcpi_snd_cwnd = c->cwnd;
+    info->tcpi_rcv_space = sizeof(c->rxbuf);
+    info->tcpi_total_retrans = c->retrans_count;
+    spinlock_irqsave_release(&tcp_lock, __tcp_flags);
+}
+
 /* Keepalive check ──────────────────────────────────────────── */
 
 #define KEEPALIVE_INTERVAL_DEFAULT 500
