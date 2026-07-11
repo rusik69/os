@@ -10,6 +10,7 @@
 #include "string.h"
 #include "printf.h"
 #include "spinlock.h"
+#include "softirq.h"
 
 static struct {
     timer_callback_t fn;
@@ -25,6 +26,11 @@ void __init timers_init(void) {
     memset(g_timers, 0, sizeof(g_timers));
     spinlock_init(&g_timers_lock);
     g_timers_initialized = 1;
+
+    /* Register the timer softirq handler so timer_handler_soft() is
+     * called from do_softirq() after the timer IRQ fires. */
+    softirq_register(SOFTIRQ_TIMER, timer_handler_soft);
+
     kprintf("[OK] Dynamic timers initialized (%d slots)\n", TIMER_MAX);
 }
 

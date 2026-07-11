@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 444,
+  "current_item": 446,
   "current_batch": "B007",
   "completed_items": [
     1,
@@ -445,7 +445,9 @@
     440,
     441,
     442,
-    443
+    443,
+    444,
+    445
   ],
   "found_bugs": 899,
   "fixed_bugs": 899,
@@ -457,6 +459,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-11T20:34:00",
-  "last_item_result": "item 443: analyzed inode mutex ordering across all filesystems. Lock hierarchy is acyclic: VFS holds no locks during FS dispatch, removing risk of inversion. However found 3 mount-table SMP races: (1) vfs_mount_ex() modified mounts[] without mount_lock, (2) vfs_force_readonly() modified mount flags without mount_lock, (3) vfs_pivot_root() accessed/ swapped mount entries without mount_lock. Fixed all three. Also documented: tmpfs, SMFS, ext2, and page_cache[] have no SMP locks at all — separate concern."
+  "last_item_timestamp": "2026-07-11T20:55:00",
+  "last_item_result": "item 445: analyzed rcu_read_lock sleeping inside spinlock sections. rcu_read_lock() in this OS is a compiler barrier only (__asm__ volatile(\"\": : :\"memory\")) — it does NOT disable preemption and cannot sleep. synchronize_rcu() calls scheduler_yield() which checks preemptible() first and only calls schedule() when safe. RCU callbacks in this kernel are defined but unused (no external callers of call_rcu, rcu_dereference, or rcu_read_lock outside test.c). The one design concern: rcu_read_lock lacks preempt_disable(), so an RCU reader can be preempted — but this doesn't create a sleeping-while-atomic scenario. All call paths are safe: spinlock sections hold preempt_disable() via spinlock_acquire, and scheduler_yield() defers to need_resched when preemption is off. Audited clean."
 }

@@ -21,6 +21,7 @@
 #include "vsyscall.h"
 #include "nohz.h"
 #include "export.h"
+#include "softirq.h"
 
 #define PIT_CMD  0x43
 #define PIT_CH0  0x40
@@ -36,6 +37,14 @@ static void timer_handler(struct interrupt_frame *frame) {
     nohz_tick_account(0);  /* CPU 0 handles the timer; tick state tracked globally */
 
     scheduler_tick(was_user);
+
+    /* Raise the TIMER softirq so registered dynamic timers are dispatched,
+     * then process all pending softirqs with interrupts enabled.
+     * iretq in the assembly stub will restore the original RFLAGS (IF).
+     * This also enables tasklets, network RX/TX, and other softirq types. */
+    softirq_raise(SOFTIRQ_TIMER);
+    sti();
+    do_softirq();
 }
 
 void __init timer_init(void) {
