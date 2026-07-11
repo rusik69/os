@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 440,
+  "current_item": 441,
   "current_batch": "B007",
   "completed_items": [
     1,2,3,4,5,6,7,8,9,10,
@@ -47,10 +47,10 @@
     411,412,413,414,415,416,417,418,419,420,
     421,422,423,424,425,426,427,428,429,430,
     431,432,433,434,435,436,
-    437,438,439
+    437,438,439,440
   ],
-  "found_bugs": 894,
-  "fixed_bugs": 894,
+  "found_bugs": 895,
+  "fixed_bugs": 895,
   "completed_batches": [
     "B001",
     "B002",
@@ -59,6 +59,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-11T19:55:00",
-  "last_item_result": "item 439: src/fs/fuse.c - unlocked g_fuse_mounts[] mount table (g_fuse_mount_lock declared but never acquired). FIXED: added spinlock_irqsave_acquire/release to fuse_find_mount, fuse_mount (two-phase reserve/init/finalize), fuse_unmount, and fuse_process_notify."
+  "last_item_timestamp": "2026-07-11T19:57:00",
+  "last_item_result": "item 440: src/fs/fuse_dev.c - unlocked device buffer: lost-wakeup race in daemon read path (g_fuse_dev.lock released before registering on daemon_wq, allowing wake_all to arrive before reader is on the wait queue). FIXED: added wait_queue_sleep_spinunlock() to waitqueue API that atomically registers on wq while condition spinlock is held, then releases it before sleeping. Updated fuse_dev_read() to use it. Also added graceful WAITQUEUE_MAX_WAITERS exhaustion handling."
 }

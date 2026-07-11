@@ -705,23 +705,33 @@ void kmem_cache_reap(void) {
     spinlock_irqsave_acquire(&cache_list_lock, &list_irq_flags);
     struct kmem_cache *cache = cache_list;
     while (cache) {
-        uint64_t irq_flags;
-        spinlock_irqsave_acquire(&cache->lock, &irq_flags);
-
-        int pages = 1U << cache->gfporder;
-        struct slab *slab = cache->slabs_free;
-        while (slab) {
-            struct slab *nxt = slab->next;
-            /* slab_relink would also work, but we skip the relink since we're freeing */
-            if (slab->prev) slab->prev->next = slab->next;
-            else cache->slabs_free = slab->next;
-            if (slab->next) slab->next->prev = slab->prev;
-            for (int p = 0; p < pages; p++)
-                slab_page_free((uint8_t *)slab + p * PAGE_SIZE);
-            slab = nxt;
+        /*
+         * Use trylock to avoid deadlock: this function may be called from
+         * the slab allocation slow path (via pmm_alloc_frame → reclaim)
+         * which already holds the current cache's lock (cache->lock).
+         * A blocking spinlock_irqsave_acquire would self-deadlock since
+         * the spinlock is non-recursive.  Skipping is safe — the missed
+         * empty slabs will be freed on a subsequent reap call from a
+         * non-recursive context.
+         *
+         * IRQs are already disabled by the cache_list_lock irqsave
+         * acquisition above, so plain spinlock_try_acquire is sufficient.
+         */
+        if (spinlock_try_acquire(&cache->lock)) {
+            int pages = 1U << cache->gfporder;
+            struct slab *slab = cache->slabs_free;
+            while (slab) {
+                struct slab *nxt = slab->next;
+                /* slab_relink would also work, but we skip the relink since we're freeing */
+                if (slab->prev) slab->prev->next = slab->next;
+                else cache->slabs_free = slab->next;
+                if (slab->next) slab->next->prev = slab->prev;
+                for (int p = 0; p < pages; p++)
+                    slab_page_free((uint8_t *)slab + p * PAGE_SIZE);
+                slab = nxt;
+            }
+            spinlock_release(&cache->lock);
         }
-
-        spinlock_irqsave_release(&cache->lock, irq_flags);
         cache = cache->next;
     }
     spinlock_irqsave_release(&cache_list_lock, list_irq_flags);
