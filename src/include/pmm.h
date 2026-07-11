@@ -68,4 +68,10 @@ int page_reclaim(int nr_pages, unsigned int gfp_mask);
 int pmm_mark_broken(uint64_t phys_addr);
 int pmm_is_broken(uint64_t phys_addr);
 
+/* pfn_valid - Check if a page frame number corresponds to present RAM.
+ * Returns 1 if the PFN is within the range of physical memory managed
+ * by the PMM (total_frames), 0 otherwise.  Used frame (reserved, ACPI,
+ * allocated) are still considered present — this only checks bounds. */
+int pfn_valid(uint64_t pfn);
+
 #endif

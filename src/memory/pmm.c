@@ -1360,6 +1360,26 @@ int pmm_refcount(uint64_t phys) {
 uint64_t pmm_get_total_frames(void) { return total_frames; }
 uint64_t pmm_get_used_frames(void)  { return used_frames; }
 
+/**
+ * pfn_valid - Check if a page frame number corresponds to present RAM
+ * @pfn: Page frame number to check
+ *
+ * Returns 1 if the PFN is within the range of physical memory detected
+ * by the PMM (i.e., the frame is managed by the allocator), 0 otherwise.
+ *
+ * Frames that are "used" (reserved, ACPI, kernel, or allocated) are still
+ * considered valid — this function only checks whether the frame falls
+ * within the bounds of known physical memory, not whether it is free.
+ *
+ * Context: Any context (SMP-safe; reads total_frames without locking
+ *          since writes to total_frames happen only during init/hotplug).
+ * Return: 1 if valid, 0 if out of range.
+ */
+int pfn_valid(uint64_t pfn)
+{
+    return (pfn < total_frames && pfn < MAX_FRAMES);
+}
+
 void pmm_set_poison(int enable) {
     pmm_poison_enabled = enable;
 }
@@ -1663,6 +1683,7 @@ uint64_t pmm_alloc_frame_migrate(enum migratetype mt)
 EXPORT_SYMBOL(pmm_alloc_frame);
 EXPORT_SYMBOL(pmm_free_frame);
 EXPORT_SYMBOL(pmm_ref_frame);
+EXPORT_SYMBOL(pfn_valid);
 
 /* ── pmm_defrag ───────────────────────────────────────── */
 static int pmm_defrag(void)
