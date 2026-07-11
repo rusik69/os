@@ -13,6 +13,7 @@
 #include "vmm.h"
 #include "string.h"
 #include "printf.h"
+#include "spinlock.h"
 
 /* ── Constants ───────────────────────────────────────────────────────── */
 
@@ -48,6 +49,21 @@ struct ksm_page {
 };
 
 /* ── Static state ───────────────────────────────────────────────────── */
+
+/* Lock ordering:
+ *   ksm_lock is INNER (leaf) — always acquired after any higher-level
+ *   process or page-table lock.
+ *
+ *   Path 1 (madvise → ksm_register_phys):
+ *     [potential future mmap_lock] → ksm_lock
+ *
+ *   Path 2 (ksm_scan_cycle):
+ *     ksm_lock → internal data access (no page-table walk)
+ *
+ *   This ensures deadlock-free ordering: no path acquires ksm_lock
+ *   and then tries to acquire a process-level lock.
+ */
+static spinlock_t ksm_lock = SPINLOCK_INIT;
 
 static struct ksm_page ksm_pages[KSM_MAX_PAGES];
 static int ksm_page_count = 0;     /* Number of pages currently tracked */
@@ -262,18 +278,26 @@ void __init ksm_init(void)
 
 void ksm_set_enabled(int enabled)
 {
+    uint64_t flags;
+    spinlock_irqsave_acquire(&ksm_lock, &flags);
     ksm_enabled = enabled;
     if (enabled) {
         ksm_scan_pos = 0;  /* Reset scan cursor */
+        spinlock_irqsave_release(&ksm_lock, flags);
         kprintf("[MEM] KSM enabled (pacing active)\n");
     } else {
+        spinlock_irqsave_release(&ksm_lock, flags);
         kprintf("[MEM] KSM disabled\n");
     }
 }
 
 int ksm_is_enabled(void)
 {
-    return ksm_enabled;
+    uint64_t flags;
+    spinlock_irqsave_acquire(&ksm_lock, &flags);
+    int ret = ksm_enabled;
+    spinlock_irqsave_release(&ksm_lock, flags);
+    return ret;
 }
 
 int ksm_register_region(uint64_t addr, size_t size, int numa_node)
@@ -281,11 +305,16 @@ int ksm_register_region(uint64_t addr, size_t size, int numa_node)
     if (size == 0 || (size & 0xFFF) != 0)
         return -EINVAL;  /* Must be page-aligned */
 
+    uint64_t flags;
+    spinlock_irqsave_acquire(&ksm_lock, &flags);
+
     uint64_t phys = VIRT_TO_PHYS(addr);
     int pages_needed = (int)(size / PAGE_SIZE);
 
-    if (ksm_page_count + pages_needed > KSM_MAX_PAGES)
+    if (ksm_page_count + pages_needed > KSM_MAX_PAGES) {
+        spinlock_irqsave_release(&ksm_lock, flags);
         return -ENOSPC;  /* Full */
+    }
 
     for (int i = 0; i < pages_needed; i++) {
         struct ksm_page *kp = &ksm_pages[ksm_page_count++];
@@ -300,6 +329,8 @@ int ksm_register_region(uint64_t addr, size_t size, int numa_node)
         kp->age       = 0;
         kp->refcount  = 1;
     }
+
+    spinlock_irqsave_release(&ksm_lock, flags);
     return 0;
 }
 
@@ -316,13 +347,20 @@ int ksm_register_phys(uint64_t phys, int numa_node)
     if (phys == 0 || (phys & 0xFFF) != 0)
         return -EINVAL;
 
-    if (ksm_page_count >= KSM_MAX_PAGES)
+    uint64_t flags;
+    spinlock_irqsave_acquire(&ksm_lock, &flags);
+
+    if (ksm_page_count >= KSM_MAX_PAGES) {
+        spinlock_irqsave_release(&ksm_lock, flags);
         return -ENOSPC;
+    }
 
     /* Check for duplicates — the same physical page already tracked */
     for (int i = 0; i < ksm_page_count; i++) {
-        if (ksm_pages[i].phys_addr == phys && !ksm_pages[i].merged)
+        if (ksm_pages[i].phys_addr == phys && !ksm_pages[i].merged) {
+            spinlock_irqsave_release(&ksm_lock, flags);
             return 0;  /* Already registered, no-op */
+        }
     }
 
     struct ksm_page *kp = &ksm_pages[ksm_page_count++];
@@ -336,6 +374,8 @@ int ksm_register_phys(uint64_t phys, int numa_node)
 #pragma GCC diagnostic pop
     kp->age       = 0;
     kp->refcount  = 1;
+
+    spinlock_irqsave_release(&ksm_lock, flags);
     return 0;
 }
 
@@ -344,6 +384,9 @@ int ksm_unregister_phys(uint64_t phys)
     if (phys == 0 || (phys & 0xFFF) != 0)
         return -EINVAL;
 
+    uint64_t flags;
+    spinlock_irqsave_acquire(&ksm_lock, &flags);
+
     for (int i = 0; i < ksm_page_count; i++) {
         if (ksm_pages[i].phys_addr == phys && !ksm_pages[i].merged) {
             /* Remove by swapping with last element */
@@ -355,9 +398,12 @@ int ksm_unregister_phys(uint64_t phys)
                 ksm_scan_pos--;
             if (ksm_scan_pos >= ksm_page_count)
                 ksm_scan_pos = 0;
+            spinlock_irqsave_release(&ksm_lock, flags);
             return 0;
         }
     }
+
+    spinlock_irqsave_release(&ksm_lock, flags);
     return -ENOENT;
 }
 
@@ -365,6 +411,9 @@ int ksm_unregister_region(uint64_t addr)
 {
     uint64_t phys = VIRT_TO_PHYS(addr);
 
+    uint64_t flags;
+    spinlock_irqsave_acquire(&ksm_lock, &flags);
+
     for (int i = 0; i < ksm_page_count; i++) {
         if (ksm_pages[i].phys_addr == phys && !ksm_pages[i].merged) {
             /* Remove by swapping with last element */
@@ -376,9 +425,12 @@ int ksm_unregister_region(uint64_t addr)
                 ksm_scan_pos--;
             if (ksm_scan_pos >= ksm_page_count)
                 ksm_scan_pos = 0;
+            spinlock_irqsave_release(&ksm_lock, flags);
             return 0;
         }
     }
+
+    spinlock_irqsave_release(&ksm_lock, flags);
     return -ENOENT;
 }
 
@@ -387,46 +439,75 @@ int ksm_unregister_region(uint64_t addr)
 
 void ksm_scan_cycle(void)
 {
-    if (!ksm_enabled || ksm_page_count < 2)
+    uint64_t flags;
+    spinlock_irqsave_acquire(&ksm_lock, &flags);
+
+    if (!ksm_enabled || ksm_page_count < 2) {
+        spinlock_irqsave_release(&ksm_lock, flags);
         return;
+    }
 
     ksm_scan_count++;
 
     /* Compute batch size based on current memory pressure */
     int batch = ksm_compute_batch();
-    if (batch <= 0)
+    if (batch <= 0) {
+        spinlock_irqsave_release(&ksm_lock, flags);
         return;  /* Under severe pressure — skip this cycle */
+    }
 
     /* Scan at most `batch` pages */
     int scanned = ksm_scan_batch(batch);
     ksm_total_scanned += (uint64_t)scanned;
+
+    spinlock_irqsave_release(&ksm_lock, flags);
 }
 
 /* ── Statistics ─────────────────────────────────────────────────────── */
 
 uint64_t ksm_get_merged_pages(void)
 {
-    return ksm_merged_pages;
+    uint64_t flags;
+    spinlock_irqsave_acquire(&ksm_lock, &flags);
+    uint64_t ret = ksm_merged_pages;
+    spinlock_irqsave_release(&ksm_lock, flags);
+    return ret;
 }
 
 uint64_t ksm_get_unmergeable_pages(void)
 {
-    return ksm_unmergeable_pages;
+    uint64_t flags;
+    spinlock_irqsave_acquire(&ksm_lock, &flags);
+    uint64_t ret = ksm_unmergeable_pages;
+    spinlock_irqsave_release(&ksm_lock, flags);
+    return ret;
 }
 
 uint64_t ksm_get_scan_count(void)
 {
-    return ksm_scan_count;
+    uint64_t flags;
+    spinlock_irqsave_acquire(&ksm_lock, &flags);
+    uint64_t ret = ksm_scan_count;
+    spinlock_irqsave_release(&ksm_lock, flags);
+    return ret;
 }
 
 uint64_t ksm_get_total_scanned(void)
 {
-    return ksm_total_scanned;
+    uint64_t flags;
+    spinlock_irqsave_acquire(&ksm_lock, &flags);
+    uint64_t ret = ksm_total_scanned;
+    spinlock_irqsave_release(&ksm_lock, flags);
+    return ret;
 }
 
 int ksm_get_page_count(void)
 {
-    return ksm_page_count;
+    uint64_t flags;
+    spinlock_irqsave_acquire(&ksm_lock, &flags);
+    int ret = ksm_page_count;
+    spinlock_irqsave_release(&ksm_lock, flags);
+    return ret;
 }
 
 int ksm_get_scan_batch(void)
