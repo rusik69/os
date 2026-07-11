@@ -482,24 +482,45 @@ static spinlock_t g_graph_lock;
 /* ── Internal helpers ──────────────────────────────────────────────── */
 
 /* Pre-handler: called on function ENTRY (via kprobe in kretprobe).
- * Records the entry timestamp in the tracking stack. */
+ * Records the entry timestamp in the tracking stack.
+ *
+ * Can fire in ANY context (kprobe handlers run with IRQs enabled, see
+ * kprobes.c:kprobe_int3_handler).  We use spinlock_irqsave on g_graph_lock
+ * to serialize with the return handler and prevent re-entrancy corruption.
+ */
 static int ftrace_graph_pre_handler(struct kprobe *kp, struct interrupt_frame *frame)
 {
     (void)frame;
     if (!g_graph_enabled)
         return 0;
 
-    int cpu = smp_get_cpu_id();
-    if (cpu < 0 || cpu >= SMP_MAX_CPUS)
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_graph_lock, &irq_flags);
+
+    /* Re-check under lock — g_graph_enabled may have changed between
+     * the fast-path check and acquiring the lock (SMP race). */
+    if (!g_graph_enabled) {
+        spinlock_irqsave_release(&g_graph_lock, irq_flags);
         return 0;
+    }
+
+    int cpu = smp_get_cpu_id();
+    if (cpu < 0 || cpu >= SMP_MAX_CPUS) {
+        spinlock_irqsave_release(&g_graph_lock, irq_flags);
+        return 0;
+    }
 
     /* Check max depth */
-    if (g_graph_max_depth > 0 && g_graph_depth[cpu] >= g_graph_max_depth)
+    if (g_graph_max_depth > 0 && g_graph_depth[cpu] >= g_graph_max_depth) {
+        spinlock_irqsave_release(&g_graph_lock, irq_flags);
         return 0;
+    }
 
     /* Check stack overflow */
-    if (g_graph_depth[cpu] >= FTRACE_GRAPH_STACK_SIZE)
+    if (g_graph_depth[cpu] >= FTRACE_GRAPH_STACK_SIZE) {
+        spinlock_irqsave_release(&g_graph_lock, irq_flags);
         return 0;
+    }
 
     /* Find the function address from the kprobe */
     uint64_t func_addr = kp->addr;
@@ -513,25 +534,47 @@ static int ftrace_graph_pre_handler(struct kprobe *kp, struct interrupt_frame *f
     g_graph_tracking[cpu][depth].pid = pid;
     g_graph_depth[cpu] = depth + 1;
 
+    spinlock_irqsave_release(&g_graph_lock, irq_flags);
+
     return 0;
 }
 
 /* Handler: called on function RETURN (via kretprobe trampoline).
  * Pops the matching entry from the tracking stack and writes to the
- * ring buffer. */
+ * ring buffer.
+ *
+ * Runs with IRQs enabled (kretprobe_trampoline_handler releases its
+ * spinlock before calling rp->handler).  We protect both the tracking
+ * stack and ring buffer with spinlock_irqsave(&g_graph_lock) to prevent
+ * data races with ftrace_graph_pre_handler (same-CPU re-entrancy via
+ * IRQs) and with ftrace_graph_read_trace/ftrace_graph_clear
+ * (cross-CPU reader/writer races). */
 static void ftrace_graph_handler(struct kretprobe *rp, uint64_t return_value)
 {
     (void)return_value;
     if (!g_graph_enabled)
         return;
 
-    int cpu = smp_get_cpu_id();
-    if (cpu < 0 || cpu >= SMP_MAX_CPUS)
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_graph_lock, &irq_flags);
+
+    /* Re-check under lock */
+    if (!g_graph_enabled) {
+        spinlock_irqsave_release(&g_graph_lock, irq_flags);
         return;
+    }
+
+    int cpu = smp_get_cpu_id();
+    if (cpu < 0 || cpu >= SMP_MAX_CPUS) {
+        spinlock_irqsave_release(&g_graph_lock, irq_flags);
+        return;
+    }
 
     uint64_t func_addr = rp ? rp->addr : 0;
-    if (func_addr == 0)
+    if (func_addr == 0) {
+        spinlock_irqsave_release(&g_graph_lock, irq_flags);
         return;
+    }
 
     uint64_t now_ns = timer_get_ns();
 
@@ -545,8 +588,10 @@ static void ftrace_graph_handler(struct kretprobe *rp, uint64_t return_value)
         }
     }
 
-    if (found < 0)
+    if (found < 0) {
+        spinlock_irqsave_release(&g_graph_lock, irq_flags);
         return;  /* No matching entry found */
+    }
 
     uint64_t entry_ns = g_graph_tracking[cpu][found].entry_ns;
     uint32_t pid = g_graph_tracking[cpu][found].pid;
@@ -558,17 +603,23 @@ static void ftrace_graph_handler(struct kretprobe *rp, uint64_t return_value)
     }
     g_graph_depth[cpu] = depth - 1;
 
-    /* Write to the output ring buffer */
-    if (!g_graph_buf.initialized)
-        return;
+    /* Write to the output ring buffer.
+     * Write the entry data FIRST, then increment write_idx, so that
+     * readers always see consistent entries (spinlock_release includes
+     * a full memory barrier, making all prior writes globally visible
+     * before the next reader can acquire the lock). */
+    if (g_graph_buf.initialized) {
+        uint32_t idx = g_graph_buf.write_idx % FTRACE_GRAPH_BUF_SIZE;
+        struct ftrace_graph_entry *entry = &g_graph_buf.entries[idx];
+        entry->func_addr = func_addr;
+        entry->entry_ns = entry_ns;
+        entry->duration_ns = duration_ns;
+        entry->pid = pid;
+        entry->depth = (uint32_t)(depth - 1);
+        g_graph_buf.write_idx++;
+    }
 
-    uint32_t idx = __sync_fetch_and_add(&g_graph_buf.write_idx, 1) % FTRACE_GRAPH_BUF_SIZE;
-    struct ftrace_graph_entry *entry = &g_graph_buf.entries[idx];
-    entry->func_addr = func_addr;
-    entry->entry_ns = entry_ns;
-    entry->duration_ns = duration_ns;
-    entry->pid = pid;
-    entry->depth = (uint32_t)(depth - 1);
+    spinlock_irqsave_release(&g_graph_lock, irq_flags);
 }
 
 /* ── Lookup helper: find kretprobe index by function name ──────────── */
@@ -771,11 +822,17 @@ int ftrace_graph_read_trace(char *buf, int buf_size)
         return 0;
     }
 
+    /* Take the lock so we see a consistent snapshot of the ring buffer
+     * while writers (ftrace_graph_handler) are blocked. */
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_graph_lock, &irq_flags);
+
     int total = 0;
     uint32_t count = g_graph_buf.write_idx;
     uint32_t n = (count < FTRACE_GRAPH_BUF_SIZE) ? count : FTRACE_GRAPH_BUF_SIZE;
 
     if (n == 0) {
+        spinlock_irqsave_release(&g_graph_lock, irq_flags);
         if (buf_size > 0)
             buf[0] = '\0';
         return 0;
@@ -805,6 +862,8 @@ int ftrace_graph_read_trace(char *buf, int buf_size)
             break;
     }
 
+    spinlock_irqsave_release(&g_graph_lock, irq_flags);
+
     if (total < buf_size)
         buf[total] = '\0';
     else
@@ -818,8 +877,15 @@ void ftrace_graph_clear(void)
     if (!g_graph_buf.initialized)
         return;
 
+    /* Block any concurrent writers (ftrace_graph_handler) before
+     * zeroing the buffer and resetting the write index. */
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_graph_lock, &irq_flags);
+
     memset(g_graph_buf.entries, 0, sizeof(g_graph_buf.entries));
     g_graph_buf.write_idx = 0;
+
+    spinlock_irqsave_release(&g_graph_lock, irq_flags);
 }
 
 /* ── Sysfs helper: write function addresses to set_graph_function ──── */

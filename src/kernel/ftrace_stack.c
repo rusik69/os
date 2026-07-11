@@ -27,6 +27,7 @@ struct stack_trace_state {
 
 static struct stack_trace_state stack_state;
 static int stack_tracer_enabled = 0;
+static spinlock_t g_stack_lock;
 
 /* Enable the stack tracer */
 static void ftrace_stack_enable(void)
@@ -47,8 +48,13 @@ static void ftrace_stack_disable(void)
 static void __attribute__((used)) ftrace_stack_func_entry(uintptr_t return_addr,
                                                      const char *func_name)
 {
-    if (!stack_tracer_enabled)
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_stack_lock, &irq_flags);
+
+    if (!stack_tracer_enabled) {
+        spinlock_irqsave_release(&g_stack_lock, irq_flags);
         return;
+    }
 
     if (stack_state.current_depth < STACK_TRACER_MAX_DEPTH) {
         stack_state.trace[stack_state.current_depth].return_addr = return_addr;
@@ -59,16 +65,25 @@ static void __attribute__((used)) ftrace_stack_func_entry(uintptr_t return_addr,
     if (stack_state.current_depth > stack_state.max_depth) {
         stack_state.max_depth = stack_state.current_depth;
     }
+
+    spinlock_irqsave_release(&g_stack_lock, irq_flags);
 }
 
 /* Called at function exit (via instrumentation) */
 static void __attribute__((used)) ftrace_stack_func_exit(void)
 {
-    if (!stack_tracer_enabled)
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_stack_lock, &irq_flags);
+
+    if (!stack_tracer_enabled) {
+        spinlock_irqsave_release(&g_stack_lock, irq_flags);
         return;
+    }
 
     if (stack_state.current_depth > 0)
         stack_state.current_depth--;
+
+    spinlock_irqsave_release(&g_stack_lock, irq_flags);
 }
 
 /* Record stack usage measurement */
@@ -108,6 +123,7 @@ static void ftrace_stack_print_stats(void)
 static void ftrace_stack_init(void)
 {
     memset(&stack_state, 0, sizeof(stack_state));
+    spinlock_init(&g_stack_lock);
     kprintf("[OK] Ftrace stack tracer — max stack usage tracker\n");
 }
 
