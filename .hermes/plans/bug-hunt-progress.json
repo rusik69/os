@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 472,
+  "current_item": 475,
   "current_batch": "B008",
   "completed_items": [
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
@@ -50,10 +50,10 @@
     441, 442, 443, 444, 445, 446, 447, 448, 449, 450,
     451, 452, 453, 454, 455, 456, 457, 458, 459, 460,
     461, 462, 463, 464, 465, 466, 467, 468,
-    469, 470, 471
+    469, 470, 471, 472, 473, 474
   ],
-  "found_bugs": 934,
-  "fixed_bugs": 934,
+  "found_bugs": 935,
+  "fixed_bugs": 935,
   "completed_batches": [
     "B001",
     "B002",
@@ -62,6 +62,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-11T17:36:00",
-  "last_item_result": "item 471: src/memory/pmm.c — verify pmm_init detects all usable memory (verify e820 parsing) — FIXED: The e820 parsing only processed type-1 (available) entries; non-type-1 (type 2=reserved, type 3=ACPI reclaimable, type 4=ACPI NVS) were silently ignored. If firmware supplies overlapping entries where a non-type-1 region falls within a type-1 range, those reserved frames would have been incorrectly marked as free and allocatable. Added a second pass through the e820 map that calls bitmap_set() for every non-type-1 range above 1MB, punching holes in the type-1 free regions so the allocator never hands out reserved/ACPI memory. The existing recount loop after both passes ensures used_frames is correct regardless of entry ordering. Build-verified: make -j$(nproc) OK."
+  "last_item_timestamp": "2026-07-11T19:00:00",
+  "last_item_result": "item 474: src/memory/pmm.c — verify pmm_free_frame ignores double-free (or panics) — AUDITED CLEAN. Traced all pmm_free_frame code paths: (1) Fast path (per-CPU cache): double-free pushes same addr to cache twice; cache drain calls bitmap_free_one_locked twice — first clears bitmap, second finds bitmap clear and returns silently. (2) Slow path (cache drain + retry): after drain, first free's page is already in bitmap; second free reaches bitmap_free_one_locked which has guard `if (!bitmap_test(frame)) return;`. (3) Fallback (direct bitmap): bitmap_free_one_locked guard catches double-free. Mglru_remove_page is idempotent (find_entry returns -1 on second remove). pmm_free_frames_contiguous and pmm_unref_frame also have double-free guards. No corruption of bitmap, refcounts, used_frames, or MGLRU state. Behavior: silently ignores double-free (no panic, no assert). Correct as-is."
 }
