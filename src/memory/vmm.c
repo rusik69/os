@@ -1192,11 +1192,34 @@ int vmm_map_user_hugepage_internal(uint64_t *pml4, uint64_t virt,
     }
     uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[idx3] & PTE_ADDR_MASK);
 
-    /* If there's already a 4K page-table here, we must free it and its
-     * page-table page before placing the huge-page PDE. */
-    if ((pd[idx2] & PTE_PRESENT) && !(pd[idx2] & PTE_HUGE)) {
-        uint64_t pt_phys = pd[idx2] & PTE_ADDR_MASK;
-        pmm_free_frame(pt_phys);
+    /* If there's already a page-table entry at this PDE, we must fully
+     * tear it down before placing the huge-page PDE.  Both regular 4KB
+     * page tables and existing huge pages are handled to prevent leaking
+     * physical frames when MAP_FIXED replaces an existing mapping. */
+    if (pd[idx2] & PTE_PRESENT) {
+        if (pd[idx2] & PTE_HUGE) {
+            /* Existing huge page: unref all 512 sub-frames, then clear the
+             * PDE so we can replace it with the new huge page below. */
+            uint64_t hp_base = pd[idx2] & 0x000FFFFFFFE00000ULL;
+            for (int sub = 0; sub < 512; sub++) {
+                uint64_t frame = hp_base + (uint64_t)sub * PAGE_SIZE;
+                if (frame != vmm_zero_page_frame)
+                    pmm_unref_frame(frame);
+            }
+        } else {
+            /* Existing 4KB page table: walk all 512 PTEs, unref any
+             * present frames, then free the page-table page itself. */
+            uint64_t pt_phys = pd[idx2] & PTE_ADDR_MASK;
+            uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pt_phys);
+            for (int sub = 0; sub < 512; sub++) {
+                if (pt[sub] & PTE_PRESENT) {
+                    uint64_t frame = pt[sub] & PTE_ADDR_MASK;
+                    if (frame != vmm_zero_page_frame)
+                        pmm_unref_frame(frame);
+                }
+            }
+            pmm_free_frame(pt_phys);
+        }
     }
 
     /* Place the huge-page PDE: physical base + flags + HUGE + PRESENT.
