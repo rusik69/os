@@ -1229,6 +1229,7 @@ int cifs_mount(const char *server, const char *share,
         return -ENFILE;
     struct cifs_mount_info *mnt = &cifs_mounts[idx];
     memset(mnt, 0, sizeof(*mnt));
+    mnt->mount_id = idx;
 
     strncpy(mnt->server, server, sizeof(mnt->server) - 1);
     mnt->server_ip = server_ip;
