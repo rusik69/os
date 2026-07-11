@@ -114,6 +114,12 @@ static int btrfs_parse_superblock(struct btrfs_priv *bp)
     if ((sb->nodesize & (sb->nodesize - 1U)) != 0U)
         return -EINVAL;
 
+    /* Verify tree root node addresses are non-zero */
+    if (sb->root == 0)
+        return -EINVAL;
+    if (sb->chunk_root == 0)
+        return -EINVAL;
+
     /* Check incompatible features — we only support MIXED_BACKREF (bit 0) */
     if (sb->incompat_flags & ~(1ULL << 0))
         return -EINVAL;
@@ -176,6 +182,11 @@ static int btrfs_search_tree(struct btrfs_priv *bp, uint64_t root_bytenr,
                               uint32_t *item_idx, int *exact)
 {
     uint64_t bytenr;
+
+    /* Reject zero root bytenr — would read from physical LBA 0 */
+    if (root_bytenr == 0)
+        return -1;
+
     /* Translate logical -> physical for the root node */
     if (btrfs_chunk_map(bp, root_bytenr, &bytenr) < 0)
         bytenr = root_bytenr;
@@ -495,6 +506,10 @@ static int btrfs_parse_root_tree(struct btrfs_priv *bp)
 
     /* Translate FS tree root logical address to physical via chunk map */
     uint64_t fs_root_logical = rb.fs_root_bytenr;
+    if (fs_root_logical == 0) {
+        kprintf("[btrfs] FS root bytenr is zero in root backup\n");
+        return -EINVAL;
+    }
     if (btrfs_chunk_map(bp, fs_root_logical, &bp->fs_root_bytenr) < 0) {
         kprintf("[btrfs] cannot map FS root logical 0x%llx\n",
                 (unsigned long long)fs_root_logical);
@@ -621,6 +636,10 @@ static int btrfs_parse_extent_tree(struct btrfs_priv *bp)
     }
 
     extent_tree_logical = rb.extent_root_bytenr;
+    if (extent_tree_logical == 0) {
+        kprintf("[btrfs] extent root bytenr is zero in root backup\n");
+        return -EINVAL;
+    }
     if (btrfs_chunk_map(bp, extent_tree_logical,
                          &bp->extent_root_bytenr) < 0) {
         kprintf("[btrfs] cannot map extent root logical 0x%llx\n",
