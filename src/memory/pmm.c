@@ -942,6 +942,7 @@ static uint64_t pmm_oom_recover(uint64_t needed_pages, uint64_t caller_ip) {
             pmm_irq_restore(irq_save);
             poison_fill(addr, 0xDEADBEEF);
             vm_pgalloc++;
+            mglru_add_page(addr);
             return addr;  /* return the physical address directly */
         }
         pmm_irq_restore(irq_save);
