@@ -4,6 +4,7 @@
 #include "types.h"
 #include "printf.h"
 #include "smp.h"
+#include "spinlock.h"
 #include "thp.h"
 #include "export.h"
 #include "bug.h"
@@ -85,6 +86,12 @@ int vmm_check_nx(uint64_t *pml4, uint64_t virt, int write, int exec) {
 }
 
 uint64_t *kernel_pml4;
+
+/* Spinlock protecting the kernel page table (kernel_pml4) against
+ * concurrent walks and modifications on SMP systems.
+ * Acquire with irqsave/disables because page-table walks can occur
+ * in interrupt context (e.g., page-fault handler resolving COW). */
+static spinlock_t vmm_page_table_lock = SPINLOCK_INIT;
 
 /* Shared zero page for demand/lazy allocation */
 uint64_t vmm_zero_page_frame = 0;
@@ -204,12 +211,18 @@ int vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
     int pd_idx   = (virt >> 21) & 0x1FF;
     int pt_idx   = (virt >> 12) & 0x1FF;
 
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&vmm_page_table_lock, &irq_flags);
+
     /* Track whether each intermediate table was newly allocated so we can
      * unwind on failure (preventing page-table-page leaks). */
     int pml4_was_empty = !(kernel_pml4[pml4_idx] & PTE_PRESENT);
 
     uint64_t *pdpt = get_or_create_table(kernel_pml4, pml4_idx, flags);
-    if (IS_ERR(pdpt)) return -ENOMEM;
+    if (IS_ERR(pdpt)) {
+        spinlock_irqsave_release(&vmm_page_table_lock, irq_flags);
+        return -ENOMEM;
+    }
 
     int pdpt_was_empty = !(pdpt[pdpt_idx] & PTE_PRESENT);
 
@@ -220,6 +233,7 @@ int vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
             kernel_pml4[pml4_idx] = 0;
             pmm_free_frame(pdpt_phys);
         }
+        spinlock_irqsave_release(&vmm_page_table_lock, irq_flags);
         return -ENOMEM;
     }
 
@@ -237,11 +251,13 @@ int vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
             kernel_pml4[pml4_idx] = 0;
             pmm_free_frame(pdpt_phys);
         }
+        spinlock_irqsave_release(&vmm_page_table_lock, irq_flags);
         return -ENOMEM;
     }
 
     pt[pt_idx] = (phys & PTE_ADDR_MASK) | (flags & 0xFFF) | PTE_PRESENT;
     tlb_flush(virt);
+    spinlock_irqsave_release(&vmm_page_table_lock, irq_flags);
     return 0;
 }
 
@@ -250,16 +266,19 @@ void vmm_set_range_uncacheable(uint64_t virt, uint64_t size) {
     if (virt + size < virt) return; /* overflow check */
     uint64_t end = virt + size;
 
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&vmm_page_table_lock, &irq_flags);
+
     while (virt < end) {
         int pml4_idx = (virt >> 39) & 0x1FF;
         int pdpt_idx = (virt >> 30) & 0x1FF;
         int pd_idx   = (virt >> 21) & 0x1FF;
 
         if (!(kernel_pml4[pml4_idx] & PTE_PRESENT))
-            return;
+            goto done;
         uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(kernel_pml4[pml4_idx] & PTE_ADDR_MASK);
         if (!(pdpt[pdpt_idx] & PTE_PRESENT))
-            return;
+            goto done;
         uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[pdpt_idx] & PTE_ADDR_MASK);
 
         if (pd[pd_idx] & PTE_HUGE) {
@@ -270,7 +289,7 @@ void vmm_set_range_uncacheable(uint64_t virt, uint64_t size) {
         }
 
         if (!(pd[pd_idx] & PTE_PRESENT))
-            return;
+            goto done;
         uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[pd_idx] & PTE_ADDR_MASK);
         int pt_idx = (virt >> 12) & 0x1FF;
         if (pt[pt_idx] & PTE_PRESENT) {
@@ -279,6 +298,9 @@ void vmm_set_range_uncacheable(uint64_t virt, uint64_t size) {
         }
         virt += PAGE_SIZE;
     }
+
+done:
+    spinlock_irqsave_release(&vmm_page_table_lock, irq_flags);
 }
 
 /**
@@ -300,17 +322,23 @@ void vmm_unmap_page(uint64_t virt) {
     int pd_idx   = (virt >> 21) & 0x1FF;
     int pt_idx   = (virt >> 12) & 0x1FF;
 
-    if (!(kernel_pml4[pml4_idx] & PTE_PRESENT)) return;
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&vmm_page_table_lock, &irq_flags);
+
+    if (!(kernel_pml4[pml4_idx] & PTE_PRESENT)) goto done;
     uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(kernel_pml4[pml4_idx] & PTE_ADDR_MASK);
 
-    if (!(pdpt[pdpt_idx] & PTE_PRESENT)) return;
+    if (!(pdpt[pdpt_idx] & PTE_PRESENT)) goto done;
     uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[pdpt_idx] & PTE_ADDR_MASK);
 
-    if (!(pd[pd_idx] & PTE_PRESENT)) return;
+    if (!(pd[pd_idx] & PTE_PRESENT)) goto done;
     uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[pd_idx] & PTE_ADDR_MASK);
 
     pt[pt_idx] = 0;
     tlb_flush(virt);
+
+done:
+    spinlock_irqsave_release(&vmm_page_table_lock, irq_flags);
 }
 
 int vmm_virt_to_phys(uint64_t virt, uint64_t *phys) {
@@ -319,23 +347,40 @@ int vmm_virt_to_phys(uint64_t virt, uint64_t *phys) {
     int pd_idx   = (virt >> 21) & 0x1FF;
     int pt_idx   = (virt >> 12) & 0x1FF;
 
-    if (!(kernel_pml4[pml4_idx] & PTE_PRESENT)) return -EFAULT;
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&vmm_page_table_lock, &irq_flags);
+
+    if (!(kernel_pml4[pml4_idx] & PTE_PRESENT)) {
+        spinlock_irqsave_release(&vmm_page_table_lock, irq_flags);
+        return -EFAULT;
+    }
     uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(kernel_pml4[pml4_idx] & PTE_ADDR_MASK);
 
-    if (!(pdpt[pdpt_idx] & PTE_PRESENT)) return -EFAULT;
+    if (!(pdpt[pdpt_idx] & PTE_PRESENT)) {
+        spinlock_irqsave_release(&vmm_page_table_lock, irq_flags);
+        return -EFAULT;
+    }
     uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[pdpt_idx] & PTE_ADDR_MASK);
 
     /* Check for 2MB huge page */
     if (pd[pd_idx] & (1ULL << 7)) {
         if (phys) *phys = (pd[pd_idx] & 0x000FFFFFFFE00000ULL) + (virt & 0x1FFFFF);
+        spinlock_irqsave_release(&vmm_page_table_lock, irq_flags);
         return 0;
     }
 
-    if (!(pd[pd_idx] & PTE_PRESENT)) return -EFAULT;
+    if (!(pd[pd_idx] & PTE_PRESENT)) {
+        spinlock_irqsave_release(&vmm_page_table_lock, irq_flags);
+        return -EFAULT;
+    }
     uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[pd_idx] & PTE_ADDR_MASK);
 
-    if (!(pt[pt_idx] & PTE_PRESENT)) return -EFAULT;
+    if (!(pt[pt_idx] & PTE_PRESENT)) {
+        spinlock_irqsave_release(&vmm_page_table_lock, irq_flags);
+        return -EFAULT;
+    }
     if (phys) *phys = (pt[pt_idx] & PTE_ADDR_MASK) + (virt & 0xFFF);
+    spinlock_irqsave_release(&vmm_page_table_lock, irq_flags);
     return 0;
 }
 
@@ -403,9 +448,14 @@ uint64_t *vmm_create_user_pml4(void) {
     uint64_t *pml4 = (uint64_t *)PHYS_TO_VIRT(frame);
     memset(pml4, 0, PAGE_SIZE);
 
-    /* Copy kernel half (entries 256-511 map kernel space) */
+    /* Copy kernel half (entries 256-511 map kernel space) —
+     * hold the page table lock so that kernel_pml4 isn't concurrently
+     * modified while we read it. */
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&vmm_page_table_lock, &irq_flags);
     for (int i = 256; i < 512; i++)
         pml4[i] = kernel_pml4[i] & ~PTE_USER;
+    spinlock_irqsave_release(&vmm_page_table_lock, irq_flags);
 
     return pml4;
 }
