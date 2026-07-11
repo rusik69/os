@@ -557,7 +557,12 @@ int vfs_mount(const char *mountpoint, const struct vfs_ops *ops, void *priv) {
 static struct vfs_mount *resolve(const char *path);
 
 int vfs_mount_ex(const char *mountpoint, const struct vfs_ops *ops, void *priv, int flags) {
-    if (num_mounts >= VFS_MAX_MOUNTS) return -1;
+    spinlock_acquire(&mount_lock);
+
+    if (num_mounts >= VFS_MAX_MOUNTS) {
+        spinlock_release(&mount_lock);
+        return -1;
+    }
     size_t mlen = strlen(mountpoint);
     if (mlen >= 64) mlen = 63;
     memcpy(mounts[num_mounts].mountpoint, mountpoint, mlen);
@@ -582,6 +587,7 @@ int vfs_mount_ex(const char *mountpoint, const struct vfs_ops *ops, void *priv, 
     }
 
     num_mounts++;
+    spinlock_release(&mount_lock);
     return 0;
 }
 
@@ -600,14 +606,20 @@ int vfs_mount_ex(const char *mountpoint, const struct vfs_ops *ops, void *priv, 
  */
 int vfs_force_readonly(const char *path, const char *reason)
 {
+    spinlock_acquire(&mount_lock);
     struct vfs_mount *m = resolve(path);
-    if (!m)
+    if (!m) {
+        spinlock_release(&mount_lock);
         return -1;
+    }
 
-    if (m->flags & MS_RDONLY)
+    if (m->flags & MS_RDONLY) {
+        spinlock_release(&mount_lock);
         return 0;  /* already read-only — no-op */
+    }
 
     m->flags |= MS_RDONLY;
+    spinlock_release(&mount_lock);
     kprintf("[!!] VFS: FORCED READ-ONLY on '%s': %s\n",
             m->mountpoint, reason ? reason : "unknown error");
     return 0;
@@ -1767,8 +1779,13 @@ static int root_mount_index(void) {
 int vfs_pivot_root(const char *new_root, const char *put_old) {
     if (!new_root || !put_old || !new_root[0] || !put_old[0]) return -EINVAL;
 
+    spinlock_acquire(&mount_lock);
+
     int root_idx = root_mount_index();
-    if (root_idx < 0) return -ENOENT;
+    if (root_idx < 0) {
+        spinlock_release(&mount_lock);
+        return -ENOENT;
+    }
 
     /* Find the mount entry for new_root */
     int new_idx = -1;
@@ -1778,16 +1795,30 @@ int vfs_pivot_root(const char *new_root, const char *put_old) {
             break;
         }
     }
-    if (new_idx < 0)
+    if (new_idx < 0) {
+        spinlock_release(&mount_lock);
         return -EINVAL;
+    }
 
     /* new_root must not be the root itself */
-    if (new_idx == root_idx) return -EINVAL;
+    if (new_idx == root_idx) {
+        spinlock_release(&mount_lock);
+        return -EINVAL;
+    }
 
     /* Verify put_old is under new_root */
     size_t nr_len = strlen(new_root);
-    if (strncmp(put_old, new_root, nr_len) != 0) return -EINVAL;
-    if (put_old[nr_len] != '/') return -EINVAL;
+    if (strncmp(put_old, new_root, nr_len) != 0) {
+        spinlock_release(&mount_lock);
+        return -EINVAL;
+    }
+    if (put_old[nr_len] != '/') {
+        spinlock_release(&mount_lock);
+        return -EINVAL;
+    }
+
+    /* Release the lock before VFS operations (create/stat may resolve mounts) */
+    spinlock_release(&mount_lock);
 
     /* Ensure put_old exists as a directory */
     struct vfs_stat st;
@@ -1798,6 +1829,27 @@ int vfs_pivot_root(const char *new_root, const char *put_old) {
         if (ret < 0) return -ENOTDIR;
     } else if (st.type != 2) {
         return -ENOTDIR;
+    }
+
+    /* Re-acquire to swap mount entries */
+    spinlock_acquire(&mount_lock);
+
+    /* Re-validate indices (mount table may have changed while lock was dropped) */
+    root_idx = root_mount_index();
+    if (root_idx < 0) {
+        spinlock_release(&mount_lock);
+        return -ENOENT;
+    }
+    new_idx = -1;
+    for (int i = 0; i < num_mounts; i++) {
+        if (mounts[i].mountpoint[0] && strcmp(mounts[i].mountpoint, new_root) == 0) {
+            new_idx = i;
+            break;
+        }
+    }
+    if (new_idx < 0 || new_idx == root_idx) {
+        spinlock_release(&mount_lock);
+        return -EINVAL;
     }
 
     /* Swap ops/priv between root and new_root entries.
@@ -1824,7 +1876,9 @@ int vfs_pivot_root(const char *new_root, const char *put_old) {
     strncpy(mounts[new_idx].mountpoint, put_old, 63);
     mounts[new_idx].mountpoint[63] = '\0';
 
-    kprintf("[VFS] pivot_root: new_root='%s' -> '/', put_old='%s'\\n", new_root, put_old);
+    spinlock_release(&mount_lock);
+
+    kprintf("[VFS] pivot_root: new_root='%s' -> '/', put_old='%s'\n", new_root, put_old);
     return 0;
 }
 
