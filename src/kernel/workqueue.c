@@ -141,6 +141,7 @@ static void wq_worker_thread(void *arg)
         uint64_t irq_flags;
         spinlock_irqsave_acquire(&wq->lock, &irq_flags);
         wq->workers_running--;
+        wq->pub.workers_running = wq->workers_running;
         spinlock_irqsave_release(&wq->lock, irq_flags);
     }
 
@@ -272,8 +273,12 @@ struct workqueue_struct *workqueue_create(const char *name, uint32_t flags)
                 p->sched_policy = 1; /* SCHED_FIFO */
             }
 
+            /* Protect workers_running with wq->lock; workers decrement
+             * it under the same lock on exit. */
+            spinlock_irqsave_acquire(&wq->lock, &irq_flags);
             wq->workers_running++;
             wq->pub.workers_running = wq->workers_running;
+            spinlock_irqsave_release(&wq->lock, irq_flags);
         } else {
             kprintf("[workqueue] failed to create worker %s\n", tname);
         }
@@ -362,15 +367,20 @@ void workqueue_destroy(struct workqueue_struct *pub_wq)
     wq->draining = 1;
 
     /* Wait for all workers to terminate */
+    int running;
     for (int attempts = 0; attempts < 1000; attempts++) {
-        if (wq->workers_running <= 0)
+        uint64_t irq_flags;
+        spinlock_irqsave_acquire(&wq->lock, &irq_flags);
+        running = wq->workers_running;
+        spinlock_irqsave_release(&wq->lock, irq_flags);
+        if (running <= 0)
             break;
         scheduler_yield();
     }
 
-    if (wq->workers_running > 0) {
+    if (running > 0) {
         kprintf("[workqueue] WARNING: %d workers still running on \"%s\"\n",
-                wq->workers_running, wq->name);
+                running, wq->name);
     }
 
     /* Release the pool slot */
