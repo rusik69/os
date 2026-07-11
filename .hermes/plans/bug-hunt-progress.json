@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 475,
+  "current_item": 479,
   "current_batch": "B008",
   "completed_items": [
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
@@ -50,7 +50,8 @@
     441, 442, 443, 444, 445, 446, 447, 448, 449, 450,
     451, 452, 453, 454, 455, 456, 457, 458, 459, 460,
     461, 462, 463, 464, 465, 466, 467, 468,
-    469, 470, 471, 472, 473, 474
+    469, 470, 471, 472, 473, 474, 475, 476,
+    477, 478
   ],
   "found_bugs": 935,
   "fixed_bugs": 935,
@@ -62,6 +63,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-11T19:00:00",
-  "last_item_result": "item 474: src/memory/pmm.c — verify pmm_free_frame ignores double-free (or panics) — AUDITED CLEAN. Traced all pmm_free_frame code paths: (1) Fast path (per-CPU cache): double-free pushes same addr to cache twice; cache drain calls bitmap_free_one_locked twice — first clears bitmap, second finds bitmap clear and returns silently. (2) Slow path (cache drain + retry): after drain, first free's page is already in bitmap; second free reaches bitmap_free_one_locked which has guard `if (!bitmap_test(frame)) return;`. (3) Fallback (direct bitmap): bitmap_free_one_locked guard catches double-free. Mglru_remove_page is idempotent (find_entry returns -1 on second remove). pmm_free_frames_contiguous and pmm_unref_frame also have double-free guards. No corruption of bitmap, refcounts, used_frames, or MGLRU state. Behavior: silently ignores double-free (no panic, no assert). Correct as-is."
+  "last_item_timestamp": "2026-07-11T21:35:00",
+  "last_item_result": "item 478: src/memory/pmm.c — verify non-contiguous alloc doesn't return overlapping pages — AUDITED CLEAN. Performed full static analysis of all three allocation paths: (1) per-CPU hot cache fast path (pmm_cache_pop_irqsafe): each pop decrements cache->count and returns frames[count], entries are distinct because they come from distinct bitmap_alloc_one_locked() calls; interrupts disabled during pop prevents same-CPU reentrancy; (2) global bitmap slow path (bitmap_alloc_one_locked via pmm_cache_refill): bitmap_test/set under pmm_global_lock guarantees no two allocations return the same frame; (3) pageblock migration-type path (pageblock_scan_block / pageblock_alloc_from_type): same bitmap test/set under pmm_global_lock. Cross-CPU safety: each CPU has its own cache array indexed by smp_get_cpu_id(); bitmap bits remain set for all cached pages, so no other CPU's bitmap scan can allocate them. The existing KUnit test pmm_alloc_free_multi (kunit_pmm.c:40-65) explicitly validates that N consecutive pmm_alloc_frame() calls return N unique addresses. No overlap bug found. Note: pmm_free_frame's fast path has no double-free guard (unlike bitmap_free_one_locked which checks bitmap_test/frame_refcount), but this is a caller-side invariant and doesn't affect the allocator's own correctness."
 }
