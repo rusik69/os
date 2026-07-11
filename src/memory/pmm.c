@@ -15,6 +15,7 @@
 #include "timer.h"    /* timer_get_ticks() for failure timestamps */
 #include "psi.h"      /* psi_memstall_enter/leave for memory stall tracking */
 #include "mglru.h"    /* Multi-Generational LRU page reclaim */
+#include "errno.h"    /* -EINVAL etc. for pmm_mark_broken */
 
 /* Multiboot1 info structure (relevant fields) */
 struct multiboot_info {
@@ -54,6 +55,12 @@ int __read_mostly pmm_poison_enabled = 1;
  * interrupt handlers on the same CPU).
  */
 #define PMM_CPU_CACHE_SIZE 8
+
+/* Broken-page tracking sentinel: frame_refcount[frame] is set to this
+ * value to permanently mark a page as unusable after a hardware memory
+ * error.  0xFFFF is beyond the valid max refcount (65534) so it is
+ * safe from accidental collisions. */
+#define PMM_BROKEN_REFCNT 0xFFFF
 
 /* Memory zone count — guards zone-like migration type array accesses */
 #define ZONE_MAX   MIGRATE_TYPES
@@ -1220,6 +1227,14 @@ uint64_t *pmm_alloc_frames(size_t count) {
 void pmm_free_frame(uint64_t addr) {
     if (addr & (PAGE_SIZE - 1)) return;
 
+    /* Reject freeing a page known to have hardware memory errors —
+     * attempting to recycle it would risk re-allocating faulty memory. */
+    if (pmm_is_broken(addr)) {
+        kprintf("[PMM] WARNING: ignoring free of broken page 0x%llx\n",
+                (unsigned long long)addr);
+        return;
+    }
+
     /* Remove from MGLRU tracking before recycling */
     mglru_remove_page(addr);
 
@@ -1314,6 +1329,12 @@ int pmm_unref_frame(uint64_t phys) {
         spinlock_irqsave_release(&pmm_global_lock, irq_flags);
         return 0;
     }
+    /* Never decrement past the broken sentinel — a page with a hardware
+     * memory error must remain permanently in-use. */
+    if (frame_refcount[frame] == PMM_BROKEN_REFCNT) {
+        spinlock_irqsave_release(&pmm_global_lock, irq_flags);
+        return (int)PMM_BROKEN_REFCNT;
+    }
     frame_refcount[frame]--;
     if (frame_refcount[frame] == 0) {
         poison_fill(phys, 0xDC);
@@ -1341,6 +1362,117 @@ uint64_t pmm_get_used_frames(void)  { return used_frames; }
 
 void pmm_set_poison(int enable) {
     pmm_poison_enabled = enable;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ *  Broken-Page Tracking — Permanently disable faulty physical pages
+ *
+ *  When a hardware memory error is detected (uncorrectable ECC error from
+ *  EDAC, machine-check exception, etc.), the affected physical page must
+ *  be permanently removed from the free pool to prevent the allocator from
+ *  handing it out again.  Reusing a faulty page leads to silent data
+ *  corruption or repeated machine checks.
+ *
+ *  We use a sentinel refcount value of PMM_BROKEN_REFCNT (0xFFFF) to mark
+ *  a page as broken:
+ *    - The bitmap bit is always set (page appears allocated/used)
+ *    - bitmap_free_one_locked() returns early because refcount > 1
+ *    - pmm_free_frame() fast path explicitly checks and rejects them
+ *    - pmm_unref_frame() refuses to decrement below BROKEN_REFCNT
+ *    - pmm_free_frames_contiguous() skips them (refcount > 1 check)
+ *
+ *  This approach adds zero per-page memory overhead (reuses the existing
+ *  refcount array) and provides O(1) lookup via pmm_is_broken().
+ * ══════════════════════════════════════════════════════════════════════════ */
+ 
+ /**
+  * pmm_mark_broken - Permanently disable a physical page after a hardware
+  *                   memory error
+  * @phys_addr: Physical address of the faulty page
+  *
+  * Removes the page from all per-CPU hot caches, marks it used in the bitmap
+  * (if it was free), and sets the refcount to the broken sentinel so that
+  * every path in the allocator/free code treats it as permanently in-use and
+  * never hands it out again.
+  *
+  * Idempotent: calling multiple times on the same page is safe.
+  *
+  * Context: Any context (SMP-safe via pmm_global_lock with IRQ save/restore).
+ *          Must not be called from NMI context.
+ * Return: 0 on success, -EINVAL on unaligned or out-of-range address.
+ */
+int pmm_mark_broken(uint64_t phys_addr)
+{
+    if (phys_addr & (PAGE_SIZE - 1))
+        return -EINVAL;
+
+    uint64_t frame = phys_addr / PAGE_SIZE;
+    if (frame >= MAX_FRAMES)
+        return -EINVAL;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&pmm_global_lock, &irq_flags);
+
+    /* Already broken — idempotent */
+    if (frame_refcount[frame] == PMM_BROKEN_REFCNT) {
+        spinlock_irqsave_release(&pmm_global_lock, irq_flags);
+        return 0;
+    }
+
+    /* Evict from all per-CPU hot caches so no CPU can allocate it
+     * before we mark the bitmap.  Holding pmm_global_lock serialises
+     * against concurrent cache refill/drain slow paths. */
+    for (int cpu = 0; cpu < SMP_MAX_CPUS; cpu++) {
+        struct pmm_cpu_cache *cache = &pmm_cpu_cache[cpu];
+        if (cache->count == 0)
+            continue;
+        for (int j = 0; j < (int)cache->count; j++) {
+            if (cache->frames[j] == phys_addr) {
+                cache->frames[j] = cache->frames[cache->count - 1];
+                cache->count--;
+                j--;
+            }
+        }
+    }
+
+    /* If the page was free, mark it used in the bitmap so the allocator
+     * will never hand it out.  If it was already in use (allocated when
+     * the UE hit), the bitmap bit is already set. */
+    if (!bitmap_test(frame)) {
+        bitmap_set(frame);
+        used_frames++;
+    }
+
+    /* Set broken sentinel refcount — the definitive "never use" marker.
+     * bitmap_free_one_locked returns early when refcount > 1.
+     * pmm_unref_frame refuses to decrement below BROKEN_REFCNT. */
+    frame_refcount[frame] = PMM_BROKEN_REFCNT;
+
+    spinlock_irqsave_release(&pmm_global_lock, irq_flags);
+
+    kprintf("[PMM] MARK BROKEN: frame %llu (phys 0x%llx) — permanently removed from free pool\n",
+            (unsigned long long)frame, (unsigned long long)phys_addr);
+    return 0;
+}
+
+/**
+ * pmm_is_broken - Check if a physical page has been marked as broken
+ * @phys_addr: Physical address of the page to check
+ *
+ * Returns 1 if the page was previously marked via pmm_mark_broken(),
+ * 0 otherwise.  O(1) lookup using the refcount sentinel.
+ *
+ * No locking needed: broken status only transitions 0→1, never back.
+ * A concurrent pmm_mark_broken on the same frame may produce a stale 0
+ * (benign — the caller may briefly operate on a page being concurrently
+ * marked broken, which is a racy scenario anyway).
+ */
+int pmm_is_broken(uint64_t phys_addr)
+{
+    uint64_t frame = phys_addr / PAGE_SIZE;
+    if (frame >= MAX_FRAMES)
+        return 0;
+    return (frame_refcount[frame] == PMM_BROKEN_REFCNT);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════

@@ -20,6 +20,7 @@
 #include "spinlock.h"
 #include "errno.h"
 #include "export.h"
+#include "pmm.h"
 
 /* ── Constants ─────────────────────────────────────────────────────── */
 
@@ -104,6 +105,12 @@ static void default_ue_handler(int ctl, int csrow, int channel, uint64_t addr)
 {
     kprintf("[EDAC] UE (FATAL): controller=%d csrow=%d channel=%d addr=0x%llx\n",
             ctl, csrow, channel, (unsigned long long)addr);
+
+    /* Automatically mark the faulting page as broken so it is permanently
+     * removed from the free pool and never re-allocated.  This prevents
+     * repeat machine checks / silent corruption from the same faulty page. */
+    if (addr != 0)
+        pmm_mark_broken(addr);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════

@@ -60,4 +60,12 @@ int pmm_below_watermark(void);
  * Returns the number of pages actually freed. */
 int page_reclaim(int nr_pages, unsigned int gfp_mask);
 
+/* Broken-page tracking: permanently disable a physical page after a
+ * hardware memory error (uncorrectable ECC, machine check, etc.).
+ * pmm_mark_broken() removes it from the free pool; pmm_is_broken()
+ * checks whether a page has been marked.  Both return 0 on success /
+ * not-broken, non-zero on error / broken. */
+int pmm_mark_broken(uint64_t phys_addr);
+int pmm_is_broken(uint64_t phys_addr);
+
 #endif
