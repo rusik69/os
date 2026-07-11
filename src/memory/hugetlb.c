@@ -183,13 +183,19 @@ void hugetlb_free_frame(uint64_t phys)
 uint32_t hugetlb_available(void)
 {
     if (!g_pool.initialized) return 0;
-    return g_pool.count;
+    spinlock_acquire(&g_pool.lock);
+    uint32_t avail = g_pool.count;
+    spinlock_release(&g_pool.lock);
+    return avail;
 }
 
 uint32_t hugetlb_pool_size(void)
 {
     if (!g_pool.initialized) return 0;
-    return g_pool.capacity;
+    spinlock_acquire(&g_pool.lock);
+    uint32_t cap = g_pool.capacity;
+    spinlock_release(&g_pool.lock);
+    return cap;
 }
 
 /* ── hugetlb_alloc ────────────────────────────────────── */
