@@ -2,14 +2,16 @@
 #define HRTIMER_H
 #include "types.h"
 #include "timer.h"
+#include "spinlock.h"
 typedef uint64_t ktime_t;
 #define KTIME_MAX ((uint64_t)-1)
 struct hrtimer {
+    spinlock_t lock;    /* protects all fields below */
     uint64_t expires;
     void (*function)(void *);
     void *data;
     int state;
-    int timer_id;   /* underlying dynamic timer slot, -1 if not scheduled */
+    int timer_id;       /* underlying dynamic timer slot, -1 if not scheduled */
 };
 enum hrtimer_restart { HRTIMER_NORESTART, HRTIMER_RESTART };
 void hrtimer_init(struct hrtimer *timer, void (*function)(void *), void *data);
