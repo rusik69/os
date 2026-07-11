@@ -189,6 +189,25 @@ int module_put(struct kernel_module *mod);
  * from being unloaded while its resources are in use. */
 int try_module_get(struct kernel_module *mod);
 
+/* ── Text mutex — serializes module loading/unloading and kernel
+ *     text/code-page modifications.
+ *
+ * All module loading (module_elf_finalize) and unloading (module_unload)
+ * operations that allocate, relocate, or change permissions on kernel
+ * code pages acquire this mutex.  This prevents concurrent page table
+ * modifications (vmm_map_page calls in module_elf_set_perms) and
+ * ensures the module region's code pages are not in an inconsistent
+ * RWX → RX transition window while another loader operates.
+ *
+ * Must be acquired AFTER dependency resolution (which can recurse
+ * into module_elf_finalize for dependency chains) and BEFORE any
+ * page table or section-data modifications.
+ *
+ * kprobes text_poke operations should also acquire this mutex to
+ * prevent races with concurrent module loading. */
+void text_mutex_lock(void);
+void text_mutex_unlock(void);
+
 /* ── Module parameter support ────────────────────────────────────── */
 
 /* Register a named parameter for a module. */

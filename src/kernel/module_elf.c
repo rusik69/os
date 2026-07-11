@@ -1402,11 +1402,19 @@ int module_elf_finalize(struct module_elf_context *ctx, const char *name)
         }
     }
 
+    /* ── Acquire text mutex ──────────────────────────────────────
+     * Serialise section loading, permission changes, and init/exit
+     * with other module load/unload operations and text-patching
+     * (kprobes, ftrace).  Dependency resolution is already done,
+     * so recursive calls via request_module() will not deadlock. */
+    text_mutex_lock();
+
     /* Step 1: Resolve symbols */
     kprintf("[MOD_ELF] Resolving symbols for '%s'...\n",
             name ? name : ctx->name);
     if (module_elf_resolve(ctx, 1) < 0) {
         /* error_msg already set */
+        text_mutex_unlock();
         return -1;
     }
 
@@ -1415,6 +1423,7 @@ int module_elf_finalize(struct module_elf_context *ctx, const char *name)
     uint64_t base = module_elf_load_sections(ctx, &total_size);
     if (base == 0) {
         /* error_msg already set */
+        text_mutex_unlock();
         return -1;
     }
 
@@ -1425,6 +1434,7 @@ int module_elf_finalize(struct module_elf_context *ctx, const char *name)
         /* Free the allocated region on failure */
         if (base != 0 && total_size > 0)
             module_free_region(base, total_size);
+        text_mutex_unlock();
         return -1;
     }
 
@@ -1434,6 +1444,7 @@ int module_elf_finalize(struct module_elf_context *ctx, const char *name)
     if (module_elf_set_perms(ctx) < 0) {
         if (base != 0 && total_size > 0)
             module_free_region(base, total_size);
+        text_mutex_unlock();
         return -1;
     }
 
@@ -1445,6 +1456,7 @@ int module_elf_finalize(struct module_elf_context *ctx, const char *name)
                  name ? name : ctx->name);
         if (base != 0 && total_size > 0)
             module_free_region(base, total_size);
+        text_mutex_unlock();
         return -1;
     }
 
@@ -1459,6 +1471,7 @@ int module_elf_finalize(struct module_elf_context *ctx, const char *name)
                  "(duplicate or full table)", mod_name);
         if (base != 0 && total_size > 0)
             module_free_region(base, total_size);
+        text_mutex_unlock();
         return -1;
     }
 
@@ -1519,6 +1532,11 @@ int module_elf_finalize(struct module_elf_context *ctx, const char *name)
     if (init_ret != 0) {
         kprintf("[MOD] ERROR: '%s' init returned %d — unloading\n",
                 mod_name, init_ret);
+        /* Release text mutex before calling module_unload (which may
+         * need the lock if called from another context; more importantly,
+         * the mutex is not recursive so holding it across module_unload
+         * would deadlock). */
+        text_mutex_unlock();
         module_unload(mod_id);
         snprintf(ctx->error_msg, sizeof(ctx->error_msg),
                  "module_elf: init function for '%s' returned %d",
@@ -1563,6 +1581,10 @@ int module_elf_finalize(struct module_elf_context *ctx, const char *name)
     kprintf("[MOD] Loaded: %s (id=%d, base=0x%llx, size=%llu)\n",
             mod_name, mod_id,
             (unsigned long long)base, (unsigned long long)total_size);
+
+    /* Release text mutex — module is now fully live with correct
+     * page permissions; subsequent operations are safe. */
+    text_mutex_unlock();
     return mod_id;
 }
 

@@ -1,7 +1,7 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
   "current_batch": "B007",
-  "current_item": 402,
+  "current_item": 403,
   "completed_items": [
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
     11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
@@ -51,10 +51,11 @@
     398,
     399,
     400,
-    401
+    401,
+    402
   ],
-  "found_bugs": 861,
-  "fixed_bugs": 861,
+  "found_bugs": 862,
+  "fixed_bugs": 862,
   "completed_batches": [
     "B001",
     "B002",
@@ -63,6 +64,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-11T04:20:00",
-  "last_item_result": "item 401: src/kernel/syscall.c - verified all shared state for lock coverage. Found and fixed 5 lock/shared-state bugs: (1) prng_lock added to xorshift64/prng_add_entropy for SMP-safe PRNG, (2) proc_table_lock added to sys_getitimer, (3) proc_table_lock added to sys_alarm, (4) consolidated duplicate custom_syscall_table statics to file scope (registration was disconnected from lookup), (5) fh_lock added to fh_table for handle operations. Audit notes: system_hostname race is low-severity (proc->ns_hostname used in normal paths, sethostname is privileged). ac97_beep pcm[512] local static has trivial race but benign for sound data. Build-verified 5 times with make -j$(nproc)."
+  "last_item_timestamp": "2026-07-11T04:30:00",
+  "last_item_result": "item 402: src/process/process.c - fixed current pointer stability across blocking ops on SMP. process_waitpid() and process_sleep_ticks() used the global 'current_process' (racy on SMP because all CPUs write to it via process_set_current() in schedule()) instead of process_get_current() (reads per-CPU copy via GS segment). Fix: use process_get_current() to obtain the correct 'struct process *' before modifying state fields (wait_for_pid, sleep_until, state) and calling scheduler_remove(). Build-verified with make -j$(nproc)."
 }

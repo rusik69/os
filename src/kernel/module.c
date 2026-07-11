@@ -23,6 +23,7 @@
 #include "sha256.h"
 #include "rsa_key.h"
 #include "export.h"
+#include "mutex.h"
 
 /* ── Compile-time struct size assertions ────────────────────────────── */
 _Static_assert(sizeof(struct kernel_module) >= 256, "kernel_module must be at least 256 bytes for fixed-size table");
@@ -122,6 +123,7 @@ const char *module_get_vermagic(void) {
 
 static struct kernel_module g_modules[MODULE_MAX];
 static spinlock_t g_mod_lock;
+static int g_text_mutex_id = -1;  /* text_mutex — serializes module load/unload */
 static int g_mod_initialized = 0;
 
 /* ── Kernel taint state (D232 task 12) ──────────────────────────── */
@@ -232,6 +234,10 @@ void __init modules_init(void) {
     spinlock_init(&g_mod_lock);
     spinlock_init(&g_deferred_lock);
     spinlock_init(&g_taint_lock);
+    /* Initialize the text mutex for module load/unload serialization */
+    g_text_mutex_id = mutex_init();
+    if (g_text_mutex_id < 0)
+        kprintf("[MOD] WARNING: text mutex init failed — module loading not serialized\n");
     module_region_allocated = 0;
 
     /* Compute a random base offset for KASLR of module addresses.
@@ -372,6 +378,20 @@ void module_free_region(uint64_t vaddr, uint64_t size) {
 
 uint64_t module_allocated_bytes(void) {
     return module_region_allocated;
+}
+
+/* ── Text mutex — serializes module load/unload & code-page modifications ── */
+
+void text_mutex_lock(void)
+{
+    if (g_text_mutex_id >= 0)
+        mutex_lock(g_text_mutex_id);
+}
+
+void text_mutex_unlock(void)
+{
+    if (g_text_mutex_id >= 0)
+        mutex_unlock(g_text_mutex_id);
 }
 
 /* ── Boot-time cmdline parameter helpers (M33) ──────────────────── */
