@@ -49,6 +49,9 @@ static struct fuse_mount_info *fuse_find_mount(const char *path)
 {
     struct fuse_mount_info *best = NULL;
     size_t best_len = 0;
+    uint64_t irq_flags;
+
+    spinlock_irqsave_acquire(&g_fuse_mount_lock, &irq_flags);
 
     for (int i = 0; i < FUSE_MAX_MOUNTS; i++) {
         if (!g_fuse_mounts[i].active)
@@ -72,6 +75,7 @@ static struct fuse_mount_info *fuse_find_mount(const char *path)
         }
     }
 
+    spinlock_irqsave_release(&g_fuse_mount_lock, irq_flags);
     return best;
 }
 
@@ -1328,21 +1332,31 @@ int fuse_mount(const char *mountpoint)
     int resp_arg_size = 0;
     int slot;
     int ret;
+    uint64_t irq_flags;
 
     if (!g_fuse_initialized) fuse_init();
     if (!mountpoint) return -EINVAL;
 
-    /* Find a free mount slot */
+    /* Phase 1: Find and reserve a free mount slot under lock */
     slot = -1;
+    spinlock_irqsave_acquire(&g_fuse_mount_lock, &irq_flags);
     for (int i = 0; i < FUSE_MAX_MOUNTS; i++) {
         if (!g_fuse_mounts[i].active) {
             slot = i;
             break;
         }
     }
-    if (slot < 0) return -ENOMEM;
+    if (slot < 0) {
+        spinlock_irqsave_release(&g_fuse_mount_lock, irq_flags);
+        return -ENOMEM;
+    }
+    /* Reserve slot — set active with empty mountpoint so fuse_find_mount
+     * skips it (strlen == 0 -> continue). */
+    memset(&g_fuse_mounts[slot], 0, sizeof(g_fuse_mounts[slot]));
+    g_fuse_mounts[slot].active = 1;
+    spinlock_irqsave_release(&g_fuse_mount_lock, irq_flags);
 
-    /* Prepare FUSE_INIT request with our protocol version and capabilities */
+    /* Phase 2: Send FUSE_INIT (may block — must not hold spinlock) */
     memset(&init_in, 0, sizeof(init_in));
     init_in.major = FUSE_KERNEL_VERSION;
     init_in.minor = FUSE_KERNEL_MINOR_VERSION;
@@ -1360,10 +1374,14 @@ int fuse_mount(const char *mountpoint)
                                  &resp_arg, &resp_arg_size);
     if (ret < 0) {
         kprintf("[fuse] FUSE_INIT failed: ret=%d\n", ret);
+        spinlock_irqsave_acquire(&g_fuse_mount_lock, &irq_flags);
+        g_fuse_mounts[slot].active = 0;
+        spinlock_irqsave_release(&g_fuse_mount_lock, irq_flags);
         return ret;
     }
 
-    /* Register the mount before parsing response (so we can store results) */
+    /* Phase 3: Fill in mount info under lock */
+    spinlock_irqsave_acquire(&g_fuse_mount_lock, &irq_flags);
     mnt = &g_fuse_mounts[slot];
     memset(mnt, 0, sizeof(*mnt));
     strncpy(mnt->mountpoint, mountpoint, sizeof(mnt->mountpoint) - 1);
@@ -1391,6 +1409,8 @@ int fuse_mount(const char *mountpoint)
                     (unsigned int)init_out->major,
                     (unsigned int)FUSE_KERNEL_VERSION);
             kfree(resp_arg);
+            mnt->active = 0;
+            spinlock_irqsave_release(&g_fuse_mount_lock, irq_flags);
             return -EPROTONOSUPPORT;
         }
 
@@ -1444,14 +1464,18 @@ int fuse_mount(const char *mountpoint)
     kfree(resp_arg);
 
     /* Set root node and file handle defaults */
-    mnt->active = 1;
     mnt->root_nodeid = 1; /* root nodeid per FUSE protocol convention */
     mnt->fh = 0;
+    mnt->active = 1;
+
+    spinlock_irqsave_release(&g_fuse_mount_lock, irq_flags);
 
     /* Mount via VFS */
     ret = vfs_mount(mountpoint, &fuse_vfs_ops, mnt);
     if (ret != 0) {
+        spinlock_irqsave_acquire(&g_fuse_mount_lock, &irq_flags);
         mnt->active = 0;
+        spinlock_irqsave_release(&g_fuse_mount_lock, irq_flags);
         return ret;
     }
 
@@ -1464,16 +1488,21 @@ int fuse_mount(const char *mountpoint)
 
 int fuse_unmount(const char *mountpoint)
 {
+    uint64_t irq_flags;
+
     if (!mountpoint) return -EINVAL;
 
+    spinlock_irqsave_acquire(&g_fuse_mount_lock, &irq_flags);
     for (int i = 0; i < FUSE_MAX_MOUNTS; i++) {
         if (g_fuse_mounts[i].active &&
             strcmp(g_fuse_mounts[i].mountpoint, mountpoint) == 0) {
             g_fuse_mounts[i].active = 0;
             kprintf("[fuse] Unmounted FUSE from %s\n", mountpoint);
+            spinlock_irqsave_release(&g_fuse_mount_lock, irq_flags);
             return 0;
         }
     }
+    spinlock_irqsave_release(&g_fuse_mount_lock, irq_flags);
 
     return -ENOENT;
 }
@@ -1512,7 +1541,9 @@ int fuse_process_notify(uint32_t notify_op,
                          const void *data, int len)
 {
     int handled = 0;
+    uint64_t irq_flags;
 
+    spinlock_irqsave_acquire(&g_fuse_mount_lock, &irq_flags);
     for (int i = 0; i < FUSE_MAX_MOUNTS; i++) {
         if (g_fuse_mounts[i].active) {
             int ret = fuse_notify_mount(&g_fuse_mounts[i],
@@ -1524,6 +1555,7 @@ int fuse_process_notify(uint32_t notify_op,
                         i, ret);
         }
     }
+    spinlock_irqsave_release(&g_fuse_mount_lock, irq_flags);
 
     return handled ? 0 : -ENOENT;
 }

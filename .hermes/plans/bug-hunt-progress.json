@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 438,
+  "current_item": 439,
   "current_batch": "B007",
   "completed_items": [
     1,2,3,4,5,6,7,8,9,10,
@@ -47,10 +47,10 @@
     411,412,413,414,415,416,417,418,419,420,
     421,422,423,424,425,426,427,428,429,430,
     431,432,433,434,435,436,
-    437
+    437,438
   ],
-  "found_bugs": 892,
-  "fixed_bugs": 892,
+  "found_bugs": 893,
+  "fixed_bugs": 893,
   "completed_batches": [
     "B001",
     "B002",
@@ -59,6 +59,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-11T19:19:00",
-  "last_item_result": "item 437: src/fs/procfs.c - unsynchronized proc_dir_entry access via global callback-context vars. FIXED: added procfs_lock spinlock to protect proc_arp_buf/pos/max (used in /proc/net/arp) and proc_tcp_buf/pos/max (used in /proc/net/tcp) from SMP races."
+  "last_item_timestamp": "2026-07-11T19:45:00",
+  "last_item_result": "item 438: src/fs/sysfs.c - unsynchronized kobject attribute show/store on sysfs_entries[] table. FIXED: added sysfs_lock spinlock protecting all entry table operations (alloc_entry, find_entry, VFS read/write/stat/readdir, create/remove, cleanup_module) to prevent SMP races on kobject attribute show/store."
 }
