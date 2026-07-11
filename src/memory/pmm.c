@@ -513,6 +513,73 @@ void pmm_advance_hint(uint64_t phys_addr) {
         pmm_hint = frame + 1;
 }
 
+/**
+ * pmm_add_free_frames - Add physical memory frames to the free pool
+ * @phys_start: Physical start address of the new memory region
+ * @byte_size: Size of the region in bytes
+ *
+ * Called from the memory hotplug subsystem when new physical memory is
+ * brought online.  Marks the frames as free in the bitmap, extends
+ * total_frames if the region is beyond the existing range, and sets
+ * the pageblock migration type to MIGRATE_MOVABLE (the correct default
+ * zone for hotplugged general-purpose memory).
+ *
+ * Previously this path called pmm_reserve_frames(), which marks frames
+ * as USED (the opposite of what hotplug needs).  The semantics here
+ * match the comment in memhp_online_section: "Add pages to PMM by
+ * freeing each page in the region."
+ *
+ * Context: May sleep.  Holds pmm_global_lock internally.
+ */
+void pmm_add_free_frames(uint64_t phys_start, uint64_t byte_size)
+{
+    uint64_t start_frame = phys_start / PAGE_SIZE;
+    uint64_t end_frame   = (phys_start + byte_size + PAGE_SIZE - 1) / PAGE_SIZE;
+    if (start_frame >= MAX_FRAMES) return;
+    if (end_frame > MAX_FRAMES) end_frame = MAX_FRAMES;
+    if (start_frame >= end_frame) return;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&pmm_global_lock, &irq_flags);
+
+    /* Extend total_frames if this region is beyond the current max */
+    if (end_frame > total_frames)
+        total_frames = end_frame;
+
+    /* Clear bitmap for all frames in the region (mark as free) so the
+     * allocator can hand them out.  Only decrement used_frames for
+     * frames that were actually set (handles both re-hotplug of previously
+     * reserved memory and entirely new frames beyond boot-time total). */
+    for (uint64_t f = start_frame; f < end_frame; f++) {
+        if (bitmap_test(f)) {
+            bitmap_clear(f);
+            frame_refcount[f] = 0;
+            used_frames--;
+        }
+    }
+
+    /* Set pageblock migration type to MOVABLE for the new frames,
+     * which is the correct default zone for hotplugged general-purpose
+     * memory.  Only touch pageblocks that intersect the new region.
+     * pageblock_set_migratetype handles the bounds check and accesses
+     * the internal pageblock_types[] array. */
+    {
+        uint64_t start_block = pageblock_of_frame(start_frame);
+        uint64_t end_block   = pageblock_of_frame(end_frame - 1) + 1;
+        if (end_block > PAGEBLOCK_MAX)
+            end_block = PAGEBLOCK_MAX;
+        for (uint64_t b = start_block; b < end_block; b++)
+            pageblock_set_migratetype(b << PAGEBLOCK_ORDER, MIGRATE_MOVABLE);
+    }
+
+    spinlock_irqsave_release(&pmm_global_lock, irq_flags);
+
+    kprintf("[PMM] hotplug: added %llu free frames (%llu KB) at 0x%llx\n",
+            (unsigned long long)(end_frame - start_frame),
+            (unsigned long long)((end_frame - start_frame) * 4ULL),
+            (unsigned long long)phys_start);
+}
+
 /* ── Memory reclaim watermark ───────────────────────────────────────────
  * When free pages fall below watermark, kswapd-like reclaim is triggered.
  * Configurable via sysctl (see pmm_extras.c) or pmm_set_reclaim_watermark().

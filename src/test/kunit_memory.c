@@ -866,9 +866,13 @@ static void pmm_hotplug_basic_lifecycle(struct kunit *test)
 }
 
 /*
- * Verify that onlining a memory section increments pmm_get_used_frames()
- * by the expected number of frames (because memhp_online_section calls
- * pmm_reserve_frames, which marks each page in the range as used).
+ * Verify that onlining a memory section does NOT increment pmm_get_used_frames().
+ * Previously memhp_online_section called pmm_reserve_frames (which marks pages
+ * as used), but the correct behavior is to ADD pages to the FREE pool.  After
+ * the fix, pmm_add_free_frames clears the bitmap, so used_frames should either
+ * decrease (if the frames were previously reserved) or stay the same (if they
+ * were already free — pmm_add_free_frames only decrements for frames that were
+ * actually set in the bitmap).
  */
 static void pmm_hotplug_used_frames_increment(struct kunit *test)
 {
@@ -878,7 +882,6 @@ static void pmm_hotplug_used_frames_increment(struct kunit *test)
 
 	uint64_t test_base = 0x20010000ULL; /* slightly above base test address */
 	uint64_t test_size = 8 * PAGE_SIZE;
-	uint64_t expected_frames = test_size / PAGE_SIZE;
 
 	/* Add and online */
 	ret = memhp_add_region(test_base, test_size);
@@ -888,10 +891,16 @@ static void pmm_hotplug_used_frames_increment(struct kunit *test)
 	ret = memhp_online_section(initial_count);
 	KUNIT_EXPECT_EQ(test, ret, 0);
 
-	/* used_frames should have increased by expected_frames */
+	/* used_frames should NOT have increased — hotplug adds frames to the
+	 * free pool, so used_frames must stay the same or decrease */
 	uint64_t frames_after = pmm_get_used_frames();
-	KUNIT_EXPECT_EQ(test, (int64_t)(frames_after - frames_before),
-			    (int64_t)expected_frames);
+	KUNIT_EXPECT_TRUE(test, frames_after <= frames_before);
+
+	/* Verify section is online */
+	struct memhp_section *sec = memhp_get_section(initial_count);
+	KUNIT_EXPECT_NOT_NULL(test, sec);
+	if (sec)
+		KUNIT_EXPECT_EQ(test, (int)sec->state, (int)MEMHP_ONLINE);
 
 	/* Offline and remove */
 	ret = memhp_offline_section(initial_count);

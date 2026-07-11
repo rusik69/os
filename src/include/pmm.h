@@ -5,6 +5,7 @@
 
 void pmm_init(uint64_t multiboot_info_phys);
 void pmm_reserve_frames(uint64_t phys_start, uint64_t byte_size); /* mark a range used */
+void pmm_add_free_frames(uint64_t phys_start, uint64_t byte_size); /* mark a range free (hotplug) */
 void pmm_advance_hint(uint64_t phys_addr); /* advance alloc hint past given phys addr */
 uint64_t pmm_alloc_frame(void);
 uint64_t *pmm_alloc_frames(size_t count);

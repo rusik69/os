@@ -57,7 +57,7 @@ int memhp_online_section(int section_id) {
 
     sec->state = MEMHP_GOING_ONLINE;
     /* Add pages to PMM by freeing each page in the region */
-    pmm_reserve_frames(sec->base_addr, sec->size);
+    pmm_add_free_frames(sec->base_addr, sec->size);
     sec->state = MEMHP_ONLINE;
     kprintf("[MEM] memhp: section %d online (0x%lx, %lu MB)\n",
             section_id, (unsigned long)sec->base_addr,
@@ -117,7 +117,7 @@ static int memhotplug_add(uint64_t phys_addr, size_t size)
 
     /* Bring memory online: add pages to PMM */
     sec->state = MEMHP_GOING_ONLINE;
-    pmm_reserve_frames(phys_addr, size);
+    pmm_add_free_frames(phys_addr, size);
     sec->state = MEMHP_ONLINE;
 
     kprintf("[memhotplug] memhotplug_add: region 0x%llx (+%llu MB) online\n",

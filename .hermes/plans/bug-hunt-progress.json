@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 479,
+  "current_item": 480,
   "current_batch": "B008",
   "completed_items": [
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
@@ -51,10 +51,10 @@
     451, 452, 453, 454, 455, 456, 457, 458, 459, 460,
     461, 462, 463, 464, 465, 466, 467, 468,
     469, 470, 471, 472, 473, 474, 475, 476,
-    477, 478
+    477, 478, 479
   ],
-  "found_bugs": 935,
-  "fixed_bugs": 935,
+  "found_bugs": 936,
+  "fixed_bugs": 936,
   "completed_batches": [
     "B001",
     "B002",
@@ -63,6 +63,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-11T21:35:00",
-  "last_item_result": "item 478: src/memory/pmm.c — verify non-contiguous alloc doesn't return overlapping pages — AUDITED CLEAN. Performed full static analysis of all three allocation paths: (1) per-CPU hot cache fast path (pmm_cache_pop_irqsafe): each pop decrements cache->count and returns frames[count], entries are distinct because they come from distinct bitmap_alloc_one_locked() calls; interrupts disabled during pop prevents same-CPU reentrancy; (2) global bitmap slow path (bitmap_alloc_one_locked via pmm_cache_refill): bitmap_test/set under pmm_global_lock guarantees no two allocations return the same frame; (3) pageblock migration-type path (pageblock_scan_block / pageblock_alloc_from_type): same bitmap test/set under pmm_global_lock. Cross-CPU safety: each CPU has its own cache array indexed by smp_get_cpu_id(); bitmap bits remain set for all cached pages, so no other CPU's bitmap scan can allocate them. The existing KUnit test pmm_alloc_free_multi (kunit_pmm.c:40-65) explicitly validates that N consecutive pmm_alloc_frame() calls return N unique addresses. No overlap bug found. Note: pmm_free_frame's fast path has no double-free guard (unlike bitmap_free_one_locked which checks bitmap_test/frame_refcount), but this is a caller-side invariant and doesn't affect the allocator's own correctness."
+  "last_item_timestamp": "2026-07-11T21:52:00",
+  "last_item_result": "item 479: src/memory/pmm.c — verify memory hotplug adds new pages to correct zone — BUG FOUND AND FIXED. Root cause: Both memhp_online_section() and memhotplug_add() called pmm_reserve_frames() to 'add pages to PMM', but pmm_reserve_frames() marks frames as USED (bitmap set, used_frames++), which is the opposite of what hotplug needs. For frames beyond boot-time total_frames, the function was a complete no-op (bitmap already 1 from initial memset, bitmap_test() returned true). For frames within range, they were incorrectly marked as used when they should be free. Additionally, total_frames was never extended for new regions, and pageblock migration types were never set — newly hotplugged memory defaulted to MIGRATE_UNMOVABLE (BSS-zero) instead of MIGRATE_MOVABLE. Fix: Created pmm_add_free_frames() that clears bitmap bits, extends total_frames, sets frame_refcount to 0, and initializes pageblock migration types to MIGRATE_MOVABLE for the correct zone. Updated memhotplug.c call sites and KUnit test."
 }
