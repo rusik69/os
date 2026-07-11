@@ -177,6 +177,10 @@ static int procfs_gen_version(char *buf, int max) {
     return p;
 }
 
+/* Lock protecting callback-context globals (proc_arp_buf/pos/max,
+ * proc_tcp_buf/pos/max) from concurrent SMP readers. */
+static spinlock_t procfs_lock;
+
 static char *proc_arp_buf;
 static int   proc_arp_pos;
 static int   proc_arp_max;
@@ -198,12 +202,15 @@ static void proc_arp_cb(uint32_t ip, const uint8_t *mac) {
 }
 
 static int procfs_gen_arp(char *buf, int max) {
+    spinlock_acquire(&procfs_lock);
     proc_arp_buf = buf;
     proc_arp_pos = 0;
     proc_arp_max = max;
     net_arp_list(proc_arp_cb);
     buf[proc_arp_pos] = '\0';
-    return proc_arp_pos;
+    int result = proc_arp_pos;
+    spinlock_release(&procfs_lock);
+    return result;
 }
 
 static int procfs_gen_route(char *buf, int max) {
@@ -331,6 +338,7 @@ static void proc_tcp_entry_cb(uint16_t lport, uint32_t rip, uint16_t rport, int 
 }
 
 static int procfs_gen_net_tcp(char *buf, int max) {
+    spinlock_acquire(&procfs_lock);
     int p = 0;
     proc_str("  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n", buf, &p, max);
     buf[p] = '\0';
@@ -339,7 +347,9 @@ static int procfs_gen_net_tcp(char *buf, int max) {
     proc_tcp_max = max;
     net_conn_list(proc_tcp_entry_cb);
     if (proc_tcp_pos < max) buf[proc_tcp_pos] = '\0';
-    return proc_tcp_pos < max ? proc_tcp_pos : max - 1;
+    int result = proc_tcp_pos < max ? proc_tcp_pos : max - 1;
+    spinlock_release(&procfs_lock);
+    return result;
 }
 
 static int procfs_gen_mounts(char *buf, int max) {
