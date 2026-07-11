@@ -15,7 +15,7 @@
 #define ERR_PTR_MASK ~(uintptr_t)(MAX_ERRNO)
 
 static inline void *ERR_PTR(int error) {
-    return (void *)(uintptr_t)(-error);
+    return (void *)(uintptr_t)(error);
 }
 
 static inline int PTR_ERR(const void *ptr) {
