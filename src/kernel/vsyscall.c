@@ -614,12 +614,16 @@ void vsyscall_update_clock(void)
     if (!vsyscall_initialized || !vdso_data)
         return;
 
-    /* Start seqlock write: seq becomes odd */
-    uint64_t seq = vdso_data->seq + 1;
-    vdso_data->seq = seq;  /* odd now */
+    /* ── Seqlock write: begin ────────────────────────────────────────── */
+    /* Increment seq to odd — signals "writer active" to readers */
+    vdso_data->seq++;
 
-    /* Memory barrier: ensure seq is written before data */
-    __asm__ volatile("mfence" ::: "memory");
+    /* Compiler barrier: seq store must complete before data stores.
+     * On x86-64 TSO, stores are never reordered with other stores for
+     * write-back memory, so a compiler barrier suffices — no SFENCE/MFENCE
+     * is needed.  The compiler barrier prevents the compiler from moving
+     * the non-volatile data stores ahead of the volatile seq store. */
+    __asm__ volatile("" ::: "memory");
 
     /* Read current TSC (serialized; safe on CPUs without rdtscp) */
     uint32_t tsc_lo, tsc_hi;
@@ -638,11 +642,11 @@ void vsyscall_update_clock(void)
     vdso_data->mono_nsec = now_ns % 1000000000ULL;
     vdso_data->wall_clock_offset = epoch - (now_ns / 1000000000ULL);
 
-    /* Memory barrier: ensure data is written before seq update */
-    __asm__ volatile("mfence" ::: "memory");
+    /* Compiler barrier: data stores must complete before seq update */
+    __asm__ volatile("" ::: "memory");
 
     /* End seqlock write: seq becomes even again */
-    vdso_data->seq = seq + 1;
+    vdso_data->seq++;
 }
 
 /* ── Public API ───────────────────────────────────────────────────────── */

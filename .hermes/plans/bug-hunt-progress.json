@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 454,
+  "current_item": 457,
   "current_batch": "B007",
   "completed_items": [
     1,
@@ -455,10 +455,13 @@
     450,
     451,
     452,
-    453
+    453,
+    454,
+    455,
+    456
   ],
-  "found_bugs": 916,
-  "fixed_bugs": 916,
+  "found_bugs": 917,
+  "fixed_bugs": 917,
   "completed_batches": [
     "B001",
     "B002",
@@ -467,6 +470,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-11T22:15:00",
-  "last_item_result": "item 453: verified copy_from_user not inside spinlock — found 4 violations in syscall.c (sys_sigprocmask, sys_ppoll had copy_from_user inside sig_lock; sys_setitimer, sys_getitimer had copy_to_user inside proc_table_lock). All fixed: moved user-space copies outside spinlocks. Build verified."
+  "last_item_timestamp": "2026-07-11T22:30:00",
+  "last_item_result": "item 456: atomic_read/set verified ACCESS_ONCE equivalent — volatile int32_t member ensures single-copy non-optimized-away accesses without memory ordering, matching Linux semantics. Fixed const-correctness in atomic_read (added const qualifier), cleaned up forced cast in refcount_ext.h refcount_read(). Build verified with -Wcast-qual -Werror."
 }
