@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 489,
+  "current_item": 490,
   "current_batch": "B008",
   "completed_items": [
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
@@ -52,13 +52,13 @@
     461, 462, 463, 464, 465, 466, 467, 468, 469, 470,
     471, 472, 473, 474, 475, 476, 477, 478, 479, 480,
     481, 482, 483, 484, 485, 486,
-    487, 488
+    487, 488, 489
   ],
-  "found_bugs": 944,
-  "fixed_bugs": 944,
+  "found_bugs": 945,
+  "fixed_bugs": 945,
   "completed_batches": [
     "B001", "B002", "B003", "B004", "B005", "B006"
   ],
   "last_item_timestamp": "2026-07-11T20:31:00",
-  "last_item_result": "item 488: src/memory/pmm.c — verify pfn_valid() correctly identifies all present ranges — BUG FOUND + FIXED. pfn_valid() did not exist anywhere in the codebase, despite multiple subsystems (compaction.c, hugepage_migration.c, mglru.c) performing ad-hoc frame bounds checks with inconsistent criteria. Added pfn_valid(pfn) to pmm.c, declaration to pmm.h, and EXPORT_SYMBOL. Implementation checks both total_frames (detected physical memory limit) and MAX_FRAMES (bitmap/refcount array bound) so that any PFN within known present RAM returns 1, while out-of-range PFNs return 0."
+  "last_item_result": "item 489: src/memory/pmm.c — verify memory section/pageblock boundaries in hotplug — BUG FOUND + FIXED. pmm_add_free_frames() unconditionally decremented used_frames for every frame whose bitmap bit was cleared in the hotplug range. When total_frames is extended beyond the boot-time value, frames beyond the old total_frames have their bitmap bits set (from the initial 0xFF memset in pmm_init) but are NOT counted in used_frames (the recount loop only scans up to boot-time total_frames). This caused used_frames to drift downward each time hotplug extended into new territory. Fix: capture old_total before extending total_frames, only decrement used_frames for frames where f < old_total."
 }

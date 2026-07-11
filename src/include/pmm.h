@@ -8,6 +8,7 @@ void pmm_reserve_frames(uint64_t phys_start, uint64_t byte_size); /* mark a rang
 void pmm_add_free_frames(uint64_t phys_start, uint64_t byte_size); /* mark a range free (hotplug) */
 void pmm_advance_hint(uint64_t phys_addr); /* advance alloc hint past given phys addr */
 uint64_t pmm_alloc_frame(void);
+uint64_t pmm_alloc_frame_at(uint64_t frame);  /* allocate a specific frame by frame number (NUMA/interleave support) */
 uint64_t *pmm_alloc_frames(size_t count);
 void pmm_free_frame(uint64_t frame);
 void pmm_free_frames_contiguous(uint64_t phys, size_t count); /* free contiguous frames */

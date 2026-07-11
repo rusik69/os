@@ -88,9 +88,15 @@ void __init numa_mem_init(void)
  * pmm_alloc_frame_on_node() — Allocate a physical frame from a specific
  * NUMA node's memory region.
  *
- * Strategy: scan the bitmap starting from the node's memory range to
- * find a free frame within the node's boundaries.  If none is found,
- * fall back to the global pmm_alloc_frame().
+ * Strategy: scan the node's memory range for a free frame and allocate
+ * it directly via pmm_alloc_frame_at().  This guarantees the returned
+ * frame is within the requested node's physical boundaries — unlike the
+ * previous implementation which used a broken verify-and-free pattern
+ * (find a free region via pmm_find_free_region, call the global
+ * pmm_alloc_frame which may return from any node, check and free if
+ * wrong, then fall through to the global allocator).  That pattern
+ * could thrash the per-CPU cache and fail to respect NUMA boundaries,
+ * breaking MPOL_INTERLEAVE correctness.
  *
  * Returns physical address of the frame, or 0 on failure.
  */
@@ -110,29 +116,32 @@ uint64_t pmm_alloc_frame_on_node(int node)
 	uint64_t start_frame = start / PAGE_SIZE;
 	uint64_t end_frame   = end   / PAGE_SIZE;
 
-	/* Scan within the node's range for a free frame */
-	uint64_t count = 0;
-	uint64_t free_frame = pmm_find_free_region(start_frame, &count);
+	/* Scan within the node's range for a free frame and allocate
+	 * it directly.  We loop because pmm_alloc_frame_at may fail due
+	 * to a TOCTOU race (another CPU took the frame between the find
+	 * and the allocate), in which case we re-scan. */
+	for (int retries = 0; retries < 16; retries++) {
+		uint64_t count = 0;
+		uint64_t free_frame = pmm_find_free_region(start_frame, &count);
 
-	if (free_frame != ~0ULL && free_frame < end_frame) {
-		/*
-		 * Allocate this specific frame via pmm_alloc_frame
-		 * (which does the actual bitmap management).  Since
-		 * pmm_alloc_frame() doesn't do node-specific allocation,
-		 * we just call it and trust it finds a free page.
-		 * In a full implementation, the PMM bitmap would be
-		 * split per-node; for now we rely on the hint-based
-		 * allocation being within the right range.
-		 */
-		uint64_t frame = pmm_alloc_frame();
-		if (frame != 0) {
-			/* Verify it's within the requested node's range */
-			uint64_t f = frame / PAGE_SIZE;
-			if (f >= start_frame && f < end_frame)
-				return frame;
-			/* Wrong node — free and try again */
-			pmm_free_frame(frame);
+		if (free_frame == ~0ULL || free_frame >= end_frame)
+			break;  /* no free frames in this node */
+
+		/* Try to allocate each frame in the found free run */
+		uint64_t run_end = free_frame + count;
+		if (run_end > end_frame)
+			run_end = end_frame;
+
+		for (uint64_t f = free_frame; f < run_end; f++) {
+			uint64_t phys = pmm_alloc_frame_at(f);
+			if (phys != 0)
+				return phys;  /* success — frame is on the right node */
+			/* Frame was taken by another CPU between find and allocate;
+			 * continue scanning the rest of the run. */
 		}
+
+		/* The entire found run was consumed by other CPUs before we could
+		 * allocate.  Re-scan to find the next free region. */
 	}
 
 	/* Global fallback */

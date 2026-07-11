@@ -1053,6 +1053,86 @@ uint64_t pmm_alloc_frame(void) {
     return 0;
 }
 
+/**
+ * pmm_alloc_frame_at - Allocate a specific physical frame by frame number
+ * @frame: The frame number to allocate (must be free and within range)
+ *
+ * Marks the given frame as used in the bitmap.  The frame must be within
+ * the managed range (total_frames) and currently free.  This is the
+ * primitive needed by NUMA-aware allocators (numa_mem.c) that must
+ * allocate from a specific node's physical memory range rather than
+ * accepting any frame from the global pool — essential for correct
+ * MPOL_INTERLEAVE page placement across multiple NUMA nodes.
+ *
+ * SRAT/SLIT distance-aware interleave correctness: with only the global
+ * pmm_alloc_frame(), the NUMA allocator in numa_mem.c was forced to use
+ * a broken verify-and-free pattern (find a free region, call the global
+ * allocator, check if the returned frame is in the right node, free if
+ * not).  This could thrash the cache and fail to respect node boundaries.
+ * pmm_alloc_frame_at() provides the direct per-frame allocation that
+ * interleave requires so pages land on the correct NUMA node.
+ *
+ * Context: Any context (SMP-safe via pmm_global_lock with IRQ save/restore).
+ *
+ * Returns physical address of the frame, or 0 if the frame is out of
+ * range, already in use, or beyond total_frames.
+ */
+uint64_t pmm_alloc_frame_at(uint64_t frame)
+{
+    if (frame >= total_frames || frame >= MAX_FRAMES)
+        return 0;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&pmm_global_lock, &irq_flags);
+
+    /* Re-check with lock held (TOCTOU race: pmm_find_free_region may have
+     * been called without the lock, and another CPU could have taken this
+     * frame in the meantime). */
+    if (bitmap_test(frame)) {
+        spinlock_irqsave_release(&pmm_global_lock, irq_flags);
+        return 0;
+    }
+
+    bitmap_set(frame);
+    used_frames++;
+    frame_refcount[frame] = 1;
+
+    /* Advance the allocation hint if this frame is at or past it,
+     * so subsequent non-NUMA allocations don't re-scan old territory. */
+    if (frame >= pmm_hint)
+        pmm_hint = frame + 1;
+    if (pmm_hint >= total_frames)
+        pmm_hint = 0;
+
+#ifdef CONFIG_DEBUG_PAGEALLOC
+    /* Use-after-free detection: verify freed poison pattern */
+    if (pmm_poison_enabled) {
+        uint64_t *virt = (uint64_t *)PHYS_TO_VIRT(frame * PAGE_SIZE);
+        int found_non_poison = 0;
+        uint64_t poison64 = 0xDCDCDCDCDCDCDCDCULL;
+        for (int w = 0; w < (int)(PAGE_SIZE / 8); w++) {
+            if (virt[w] != poison64) {
+                if (w > 4) { found_non_poison = 1; break; }
+            }
+        }
+        if (found_non_poison) {
+            kprintf("[PMM] WARNING: page 0x%llx (frame %llu) "
+                    "does NOT contain poison pattern — "
+                    "possible use-after-free!\n",
+                    (unsigned long long)(frame * PAGE_SIZE),
+                    (unsigned long long)frame);
+            poison_fill(frame * PAGE_SIZE, 0xDC);
+        }
+    }
+#endif /* CONFIG_DEBUG_PAGEALLOC */
+
+    poison_fill(frame * PAGE_SIZE, 0xDEADBEEF);
+    spinlock_irqsave_release(&pmm_global_lock, irq_flags);
+    vm_pgalloc++;
+    mglru_add_page(frame * PAGE_SIZE);
+    return frame * PAGE_SIZE;
+}
+
 /* Allocate count contiguous frames. Returns first frame physical addr, or 0 on failure. */
 uint64_t *pmm_alloc_frames(size_t count) {
     if (count == 0) return NULL;
@@ -1692,6 +1772,7 @@ uint64_t pmm_alloc_frame_migrate(enum migratetype mt)
 
 /* ── Exported symbols for module loading ──────────────────────────── */
 EXPORT_SYMBOL(pmm_alloc_frame);
+EXPORT_SYMBOL(pmm_alloc_frame_at);
 EXPORT_SYMBOL(pmm_free_frame);
 EXPORT_SYMBOL(pmm_ref_frame);
 EXPORT_SYMBOL(pfn_valid);
