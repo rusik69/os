@@ -11078,24 +11078,38 @@ struct fh_entry {
 
 static struct fh_entry fh_table[FH_MAX_HANDLES];
 static int fh_initialized = 0;
+static spinlock_t fh_lock = SPINLOCK_INIT;
 
 static void fh_init(void)
 {
-    if (fh_initialized) return;
+    uint64_t __fh_flags;
+    spinlock_irqsave_acquire(&fh_lock, &__fh_flags);
+    if (fh_initialized) {
+        spinlock_irqsave_release(&fh_lock, __fh_flags);
+        return;
+    }
     memset(fh_table, 0, sizeof(fh_table));
     fh_initialized = 1;
+    spinlock_irqsave_release(&fh_lock, __fh_flags);
 }
 
 /* Allocate a free handle entry, returns index or -1 */
 static int fh_alloc(void)
 {
-    if (!fh_initialized) fh_init();
+    uint64_t __fh_flags;
+    spinlock_irqsave_acquire(&fh_lock, &__fh_flags);
+    if (!fh_initialized) {
+        memset(fh_table, 0, sizeof(fh_table));
+        fh_initialized = 1;
+    }
     for (int i = 0; i < FH_MAX_HANDLES; i++) {
         if (!fh_table[i].in_use) {
             fh_table[i].in_use = 1;
+            spinlock_irqsave_release(&fh_lock, __fh_flags);
             return i;
         }
     }
+    spinlock_irqsave_release(&fh_lock, __fh_flags);
     return -1;
 }
 
@@ -11103,7 +11117,10 @@ static int fh_alloc(void)
 static void fh_free(int idx)
 {
     if (idx < 0 || idx >= FH_MAX_HANDLES) return;
+    uint64_t __fh_flags;
+    spinlock_irqsave_acquire(&fh_lock, &__fh_flags);
     memset(&fh_table[idx], 0, sizeof(struct fh_entry));
+    spinlock_irqsave_release(&fh_lock, __fh_flags);
 }
 
 /* Encode (ino, mount_id) into a handle data buffer */
@@ -11277,8 +11294,14 @@ static uint64_t sys_open_by_handle_at(uint64_t mount_fd, uint64_t handle_addr,
     if (fh_decode(data, hb, &ino, &mount_id) < 0)
         return (uint64_t)(int64_t)-EINVAL;
 
-    /* Search the handle table for a matching entry */
-    if (!fh_initialized) fh_init();
+    /* Search the handle table for a matching entry — lock protects
+     * against concurrent fh_alloc/fh_free from sys_name_to_handle_at. */
+    uint64_t __obh_flags;
+    spinlock_irqsave_acquire(&fh_lock, &__obh_flags);
+    if (!fh_initialized) {
+        memset(fh_table, 0, sizeof(fh_table));
+        fh_initialized = 1;
+    }
 
     const char *open_path = NULL;
     for (int i = 0; i < FH_MAX_HANDLES; i++) {
@@ -11288,6 +11311,7 @@ static uint64_t sys_open_by_handle_at(uint64_t mount_fd, uint64_t handle_addr,
             break;
         }
     }
+    spinlock_irqsave_release(&fh_lock, __obh_flags);
 
     if (!open_path)
         return (uint64_t)(int64_t)-ESTALE;  /* handle is stale */
