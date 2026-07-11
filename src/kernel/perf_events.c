@@ -1477,6 +1477,9 @@ void perf_context_switch_event(uint32_t prev_pid, uint32_t next_pid,
     if (!g_perf_cswitch.initialized || !g_perf_cswitch.enabled)
         return;
 
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_perf_cswitch_lock, &irq_flags);
+
     uint32_t idx = __sync_fetch_and_add(&g_perf_cswitch.write_idx, 1)
                    % PERF_SAMPLE_BUF_SIZE;
 
@@ -1485,12 +1488,17 @@ void perf_context_switch_event(uint32_t prev_pid, uint32_t next_pid,
     s->prev_pid = prev_pid;
     s->next_pid = next_pid;
     s->reason = reason;
+
+    spinlock_irqsave_release(&g_perf_cswitch_lock, irq_flags);
 }
 
 ssize_t perf_read_cswitch_samples(struct perf_cswitch_sample *buf, int max_count)
 {
     if (!buf || max_count <= 0 || !g_perf_cswitch.initialized)
         return 0;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_perf_cswitch_lock, &irq_flags);
 
     uint32_t count = g_perf_cswitch.write_idx;
     uint32_t n = (count < PERF_SAMPLE_BUF_SIZE) ? count : PERF_SAMPLE_BUF_SIZE;
@@ -1500,6 +1508,8 @@ ssize_t perf_read_cswitch_samples(struct perf_cswitch_sample *buf, int max_count
     for (uint32_t i = 0; i < n; i++)
         buf[i] = g_perf_cswitch.events[i];
 
+    spinlock_irqsave_release(&g_perf_cswitch_lock, irq_flags);
+
     return (ssize_t)n;
 }
 
@@ -1507,8 +1517,14 @@ void perf_clear_cswitch(void)
 {
     if (!g_perf_cswitch.initialized)
         return;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_perf_cswitch_lock, &irq_flags);
+
     memset(g_perf_cswitch.events, 0, sizeof(g_perf_cswitch.events));
     g_perf_cswitch.write_idx = 0;
+
+    spinlock_irqsave_release(&g_perf_cswitch_lock, irq_flags);
 }
 
 /* ── Page Fault Sampling ───────────────────────────────────────────── */
@@ -1537,6 +1553,9 @@ void perf_page_fault_event(uint64_t addr, uint32_t flags, uint32_t pid)
     if (!g_perf_pf_v2.initialized || !g_perf_pf_v2.enabled)
         return;
 
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_perf_pf_v2_lock, &irq_flags);
+
     uint32_t idx = __sync_fetch_and_add(&g_perf_pf_v2.write_idx, 1)
                    % PERF_SAMPLE_BUF_SIZE;
 
@@ -1545,12 +1564,17 @@ void perf_page_fault_event(uint64_t addr, uint32_t flags, uint32_t pid)
     s->addr = addr;
     s->flags = flags;
     s->pid = pid;
+
+    spinlock_irqsave_release(&g_perf_pf_v2_lock, irq_flags);
 }
 
 ssize_t perf_read_pf_samples(struct perf_pf_sample_v2 *buf, int max_count)
 {
     if (!buf || max_count <= 0 || !g_perf_pf_v2.initialized)
         return 0;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_perf_pf_v2_lock, &irq_flags);
 
     uint32_t count = g_perf_pf_v2.write_idx;
     uint32_t n = (count < PERF_SAMPLE_BUF_SIZE) ? count : PERF_SAMPLE_BUF_SIZE;
@@ -1560,6 +1584,8 @@ ssize_t perf_read_pf_samples(struct perf_pf_sample_v2 *buf, int max_count)
     for (uint32_t i = 0; i < n; i++)
         buf[i] = g_perf_pf_v2.events[i];
 
+    spinlock_irqsave_release(&g_perf_pf_v2_lock, irq_flags);
+
     return (ssize_t)n;
 }
 
@@ -1567,8 +1593,14 @@ void perf_clear_pf(void)
 {
     if (!g_perf_pf_v2.initialized)
         return;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_perf_pf_v2_lock, &irq_flags);
+
     memset(g_perf_pf_v2.events, 0, sizeof(g_perf_pf_v2.events));
     g_perf_pf_v2.write_idx = 0;
+
+    spinlock_irqsave_release(&g_perf_pf_v2_lock, irq_flags);
 }
 
 /* ── MMAP/Munmap Tracking ──────────────────────────────────────────── */
@@ -1598,6 +1630,9 @@ void perf_mmap_event(uint32_t pid, uint64_t addr, uint64_t len,
     if (!g_perf_mmap.initialized || !g_perf_mmap.enabled)
         return;
 
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_perf_mmap_lock, &irq_flags);
+
     uint32_t idx = __sync_fetch_and_add(&g_perf_mmap.write_idx, 1)
                    % PERF_SAMPLE_BUF_SIZE;
 
@@ -1607,12 +1642,17 @@ void perf_mmap_event(uint32_t pid, uint64_t addr, uint64_t len,
     s->len = len;
     s->pid = pid;
     s->flags = flags;
+
+    spinlock_irqsave_release(&g_perf_mmap_lock, irq_flags);
 }
 
 ssize_t perf_read_mmap_samples(struct perf_mmap_sample *buf, int max_count)
 {
     if (!buf || max_count <= 0 || !g_perf_mmap.initialized)
         return 0;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_perf_mmap_lock, &irq_flags);
 
     uint32_t count = g_perf_mmap.write_idx;
     uint32_t n = (count < PERF_SAMPLE_BUF_SIZE) ? count : PERF_SAMPLE_BUF_SIZE;
@@ -1622,6 +1662,8 @@ ssize_t perf_read_mmap_samples(struct perf_mmap_sample *buf, int max_count)
     for (uint32_t i = 0; i < n; i++)
         buf[i] = g_perf_mmap.events[i];
 
+    spinlock_irqsave_release(&g_perf_mmap_lock, irq_flags);
+
     return (ssize_t)n;
 }
 
@@ -1629,8 +1671,14 @@ void perf_clear_mmap(void)
 {
     if (!g_perf_mmap.initialized)
         return;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_perf_mmap_lock, &irq_flags);
+
     memset(g_perf_mmap.events, 0, sizeof(g_perf_mmap.events));
     g_perf_mmap.write_idx = 0;
+
+    spinlock_irqsave_release(&g_perf_mmap_lock, irq_flags);
 }
 
 /* ── Initialization ─────────────────────────────────────────────────── */
