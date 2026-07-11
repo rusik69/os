@@ -3558,7 +3558,13 @@ static uint64_t sys_getitimer(uint64_t which, uint64_t cur_val_addr) {
     if (which >= ITIMER_MAX) return (uint64_t)-1;
     if (!cur_val_addr) return (uint64_t)-1;
 
-    if (copy_to_user(cur_val_addr, &proc->itimers[which], sizeof(struct itimerval)) < 0)
+    /* Lock: process_timer_tick modifies itimers[] under proc_table_lock */
+    uint64_t __gi_flags;
+    spinlock_irqsave_acquire(&proc_table_lock, &__gi_flags);
+    int ret = copy_to_user(cur_val_addr, &proc->itimers[which],
+                           sizeof(struct itimerval));
+    spinlock_irqsave_release(&proc_table_lock, __gi_flags);
+    if (ret < 0)
         return (uint64_t)-1;
     return 0;
 }
