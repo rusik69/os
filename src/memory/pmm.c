@@ -340,31 +340,69 @@ void __init pmm_init(uint64_t multiboot_info_phys) {
 
     /* Check if memory map is available (bit 6 of flags) */
     if (mbi->flags & (1U << 6)) {
-        uint64_t mmap_addr = (uint64_t)PHYS_TO_VIRT(mbi->mmap_addr);
-        uint64_t mmap_end = mmap_addr + mbi->mmap_length;
+        uint64_t mmap_start = (uint64_t)PHYS_TO_VIRT(mbi->mmap_addr);
+        uint64_t mmap_end = mmap_start + mbi->mmap_length;
 
-        while (mmap_addr < mmap_end) {
-            struct multiboot_mmap_entry *entry = (struct multiboot_mmap_entry *)mmap_addr;
+        /* First pass: mark type-1 (available) regions as free in the bitmap */
+        {
+            uint64_t mmap_addr = mmap_start;
+            while (mmap_addr < mmap_end) {
+                struct multiboot_mmap_entry *entry = (struct multiboot_mmap_entry *)mmap_addr;
 
-            if (entry->type == 1 && entry->addr + entry->len > 0x100000) {
-                uint64_t start = entry->addr;
-                uint64_t end = entry->addr + entry->len;
+                if (entry->type == 1 && entry->addr + entry->len > 0x100000) {
+                    uint64_t start = entry->addr;
+                    uint64_t end = entry->addr + entry->len;
 
-                if (start < 0x100000) start = 0x100000;
+                    if (start < 0x100000) start = 0x100000;
 
-                uint64_t start_frame = (start + PAGE_SIZE - 1) / PAGE_SIZE;
-                uint64_t end_frame = end / PAGE_SIZE;
+                    uint64_t start_frame = (start + PAGE_SIZE - 1) / PAGE_SIZE;
+                    uint64_t end_frame = end / PAGE_SIZE;
 
-                if (end_frame > MAX_FRAMES) end_frame = MAX_FRAMES;
-                if (end_frame > total_frames) total_frames = end_frame;
+                    if (end_frame > MAX_FRAMES) end_frame = MAX_FRAMES;
+                    if (end_frame > total_frames) total_frames = end_frame;
 
-                for (uint64_t f = start_frame; f < end_frame; f++) {
-                    bitmap_clear(f);
-                    used_frames--;
+                    for (uint64_t f = start_frame; f < end_frame; f++) {
+                        bitmap_clear(f);
+                        used_frames--;
+                    }
                 }
+                mmap_addr += entry->size + 4; /* size field doesn't include itself */
             }
-            mmap_addr += entry->size + 4; /* size field doesn't include itself */
-        }
+        } /* end first pass */
+
+        /* Second pass: punch holes for non-available regions (type 2, 3, 4, ...).
+         * The initial memset + first pass above only mark type-1 regions as free;
+         * reserved, ACPI NVS, ACPI reclaimable, and other non-1 types are simply
+         * skipped.  If the firmware supplies overlapping or sequential entries
+         * where a non-type-1 region falls within a type-1 range, the frames
+         * would remain incorrectly marked as free.  This pass re-sets them so
+         * the allocator never hands out reserved/ACPI memory. */
+        {
+            uint64_t mmap_addr = mmap_start;
+            while (mmap_addr < mmap_end) {
+                struct multiboot_mmap_entry *entry = (struct multiboot_mmap_entry *)mmap_addr;
+
+                if (entry->type != 1 && entry->addr + entry->len > 0x100000) {
+                    uint64_t start = entry->addr;
+                    uint64_t end = entry->addr + entry->len;
+
+                    if (start < 0x100000) start = 0x100000;
+
+                    uint64_t start_frame = (start + PAGE_SIZE - 1) / PAGE_SIZE;
+                    uint64_t end_frame = end / PAGE_SIZE;
+
+                    if (start_frame >= MAX_FRAMES) {
+                        mmap_addr += entry->size + 4;
+                        continue;
+                    }
+                    if (end_frame > MAX_FRAMES) end_frame = MAX_FRAMES;
+
+                    for (uint64_t f = start_frame; f < end_frame; f++)
+                        bitmap_set(f);
+                }
+                mmap_addr += entry->size + 4;
+            }
+        } /* end second pass */
     } else {
         /* Fallback: use mem_upper (KB above 1MB) */
         uint64_t mem_bytes = (uint64_t)(mbi->mem_upper) * 1024 + 0x100000;

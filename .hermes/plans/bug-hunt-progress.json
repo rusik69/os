@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 469,
+  "current_item": 471,
   "current_batch": "B007",
   "completed_items": [
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
@@ -49,10 +49,11 @@
     431, 432, 433, 434, 435, 436, 437, 438, 439, 440,
     441, 442, 443, 444, 445, 446, 447, 448, 449, 450,
     451, 452, 453, 454, 455, 456, 457, 458, 459, 460,
-    461, 462, 463, 464, 465, 466, 467, 468
+    461, 462, 463, 464, 465, 466, 467, 468,
+    469, 470
   ],
-  "found_bugs": 927,
-  "fixed_bugs": 927,
+  "found_bugs": 933,
+  "fixed_bugs": 933,
   "completed_batches": [
     "B001",
     "B002",
@@ -61,6 +62,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-11T23:45:00",
-  "last_item_result": "item 467: src/kernel/stop_machine.c \u2014 verify stop-machine threads all reach target state \u2014 IMPLEMENTED: stop_machine was entirely absent (no file existed, smp_stop_cpus() was a stub). Created full stop_machine subsystem: (1) src/kernel/stop_machine.c + src/include/stop_machine.h implementing stop_machine_call(fn, data) for synchronous cross-CPU function execution via IPI vector 0xF5; (2) Real smp_stop_cpus() implementation sends PANIC_HALT IPI to halt all other CPUs; (3) kexec now calls smp_stop_cpus() instead of just printing a warning; (4) Removed obsolete kexec_check_smp_stop() warning. Build-verified: make -j2 OK."
+  "last_item_timestamp": "2026-07-11T17:28:00",
+  "last_item_result": "item 470: src/kernel/jump_label.c — verify jump label patching vs. concurrent execution — FIXED 3 bugs: (1) DATA RACE: text_patch_jmp()/text_patch_nop() had no cross-CPU serialization — added static text_patch_lock spinlock acquired via spinlock_irqsave_acquire() to serialize all text patching; (2) MISSING I-CACHE SYNC: mfence is not a serializing instruction per Intel SDM — added text_patch_serialize() using CPUID as the portable serializing instruction; (3) NON-ATOMIC WRITES: text_patch_nop() wrote NOP as 4+1 separate stores and text_patch_jmp() wrote opcode and offset separately — both now write all 5 bytes as a single __builtin_memcpy. Also cleaned up redundant IF save/restore in jump_label_init() and added 8-byte alignment for test buffer. Build-verified: make -j$(nproc) OK."
 }
