@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 421,
+  "current_item": 422,
   "current_batch": "B007",
   "completed_items": [
     1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,
@@ -24,13 +24,13 @@
     361,362,363,364,365,366,367,368,369,370,371,372,373,374,375,376,377,378,379,380,
     381,382,383,384,385,386,387,388,389,390,391,392,393,394,395,396,397,398,399,400,
     401,402,403,404,405,406,407,408,409,410,411,412,413,414,415,416,
-    417,418,419,420
+    417,418,419,420,421
   ],
-  "found_bugs": 873,
-  "fixed_bugs": 873,
+  "found_bugs": 877,
+  "fixed_bugs": 877,
   "completed_batches": [
     "B001","B002","B003","B004","B005","B006"
   ],
-  "last_item_timestamp": "2026-07-11T07:50:00",
-  "last_item_result": "item 420: src/kernel/swap.c — verify swap lock ordering (swap_lock → page_lock?). ANALYSIS: Lock ordering swap_global_lock → zswap_lock is consistently followed throughout swap.c and zswap.c — no violations found. No code acquires zswap_lock before swap_global_lock, and no page-level lock interacts with swap locks. FOUND AND FIXED: swap_device_path() read swap_devices[dev_idx].active and .path without holding swap_global_lock, creating a data race on SMP. These fields are modified under the lock by swap_swapon()/swap_swapoff(). Added spinlock_acquire/release around the reads. Build verified clean."
+  "last_item_timestamp": "2026-07-11T07:55:00",
+  "last_item_result": "item 421: src/memory/pmm.c — search for unsynchronized bitmap access. FOUND AND FIXED 4 SMP data races: (1) pmm_find_free_region() scanned frame_bitmap via bitmap_test() without pmm_global_lock while used by compaction, virtio-balloon, and NUMA allocator; (2) pmm_largest_free_block() scanned bitmap without lock; (3) pmm_free_block_count() scanned bitmap without lock; (4) pmm_refcount() read frame_refcount[] without lock while all writers (pmm_ref_frame, pmm_unref_frame, bitmap_alloc_one_locked, bitmap_free_one_locked) hold the lock. Added spinlock_irqsave_acquire/release(&pmm_global_lock) around all bitmap scans and refcount reads. Build verified clean."
 }
