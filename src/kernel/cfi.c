@@ -46,18 +46,67 @@ static int cfi_register_target(uintptr_t addr, const char *name)
     return 0;
 }
 
+/* Unregister a previously registered CFI target by address.
+ * Returns 0 on success, -ENOENT if the address was not found. */
+static int cfi_unregister_target(uintptr_t addr)
+{
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&cfi_lock, &irq_flags);
+
+    for (int i = 0; i < cfi_target_count; i++) {
+        if (cfi_targets[i].registered && cfi_targets[i].addr == addr) {
+            cfi_targets[i].registered = 0;
+            spinlock_irqsave_release(&cfi_lock, irq_flags);
+            return 0;
+        }
+    }
+
+    spinlock_irqsave_release(&cfi_lock, irq_flags);
+    return -ENOENT;
+}
+
+/* Unregister all CFI targets whose addresses fall within [base, base+size).
+ * Used during module unload to ensure no dangling function pointers remain
+ * in the CFI target table after module code pages are freed. */
+static void cfi_unregister_range(uintptr_t base, uintptr_t size)
+{
+    if (size == 0)
+        return;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&cfi_lock, &irq_flags);
+
+    uintptr_t end = base + size;
+    for (int i = 0; i < cfi_target_count; i++) {
+        if (cfi_targets[i].registered &&
+            cfi_targets[i].addr >= base &&
+            cfi_targets[i].addr < end) {
+            cfi_targets[i].registered = 0;
+        }
+    }
+
+    spinlock_irqsave_release(&cfi_lock, irq_flags);
+}
+
 /* Check if an address is a valid indirect call target */
 static int cfi_check_target(uintptr_t addr)
 {
     if (!cfi_enabled)
         return 0; /* CFI disabled, allow all */
 
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&cfi_lock, &irq_flags);
+
+    int found = 0;
     for (int i = 0; i < cfi_target_count; i++) {
-        if (cfi_targets[i].registered && cfi_targets[i].addr == addr)
-            return 1; /* valid target */
+        if (cfi_targets[i].registered && cfi_targets[i].addr == addr) {
+            found = 1;
+            break;
+        }
     }
 
-    return 0; /* not found */
+    spinlock_irqsave_release(&cfi_lock, irq_flags);
+    return found;
 }
 
 /* Indirect call check — called from instrumented code via asm stub */
