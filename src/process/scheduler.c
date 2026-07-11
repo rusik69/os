@@ -38,6 +38,7 @@
 #include "nohz.h"
 #include "mglru.h"
 #include "rcu.h"        /* rcu_quiescent_state() */
+#include "perf_branch.h" /* LBR MSR save/restore on context switch */
 
 /* EEVDF scheduling constants */
 #define CFS_NICE_0_WEIGHT 1024
@@ -980,7 +981,17 @@ void schedule(void) {
          * while we still own this CPU's per-CPU state. */
         rcu_quiescent_state();
 
+        /* Save LBR MSR state before switching tasks, so the departing
+         * task's branch history is preserved.  IRQs are already disabled
+         * by the caller (schedule()). */
+        perf_branch_save_state();
+
         context_switch(current ? &current->context : NULL, next->context);
+
+        /* Restore LBR MSR state for the incoming task.  IRQs are still
+         * disabled at this point (sti follows immediately after). */
+        perf_branch_restore_state();
+
         __asm__ volatile("sti");
 
         __stack_chk_guard = saved_canary;

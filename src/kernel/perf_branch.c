@@ -4,136 +4,238 @@
  *
  * Supports Last Branch Record (LBR) sampling for performance
  * monitoring. Captures branch history for profiling.
+ *
+ * LBR MSRs are per-CPU hardware resources.  On context switch the
+ * MSR state must be saved and restored so that a task's branch
+ * history is not corrupted by other tasks running on the same CPU.
+ *
+ * Context-switch protocol (scheduler.c calls these with IRQs disabled):
+ *   1. perf_branch_save_state()   — saves DEBUGCTL + LBR entries
+ *   2. context_switch(old, new)   — switches tasks
+ *   3. perf_branch_restore_state()— restores DEBUGCTL + LBR entries
+ *
+ * The multipart MSR read in perf_branch_read_lbr_atomic() disables
+ * interrupts locally to guarantee a consistent snapshot.
  */
-#include "types.h"
+
+#include "perf_branch.h"
 #include "string.h"
 #include "printf.h"
 #include "errno.h"
 #include "smp.h"
+#include "initcall.h"
 
-#define PERF_LBR_MAX_ENTRIES 32
+/* ── Per-CPU LBR save areas ─────────────────────────────────────── */
+/* Indexed by cpu_id; protects LBR state across context switches.
+ * Initialised to zero (LBR disabled, empty save area). */
+static struct perf_lbr_save_area lbr_save_areas[SMP_MAX_CPUS];
 
-struct perf_lbr_entry {
-    uint64_t from;
-    uint64_t to;
-    uint64_t flags; /* branch type, prediction, etc. */
-};
+/* ── LBR MSR addresses ──────────────────────────────────────────── */
+#define MSR_IA32_DEBUGCTLMSR  0x1D9
+#define MSR_LBR_FROM_BASE     0x40   /* first LBR FROM MSR (legacy format) */
+#define PERF_LBR_LEGACY_ENTRIES 16   /* 16 pairs in legacy MSR range [0x40-0x5F] */
 
-struct perf_branch_state {
-    struct perf_lbr_entry entries[PERF_LBR_MAX_ENTRIES];
-    int count;
-    int enabled;
-    uint64_t total_branches_sampled;
-};
+/* ── Internal helpers ───────────────────────────────────────────── */
 
-static struct perf_branch_state perf_branch;
-
-/* Enable LBR sampling */
-static int perf_branch_enable(void)
+/* Read a 64-bit MSR */
+static inline uint64_t read_msr(uint32_t msr)
 {
-    perf_branch.enabled = 1;
-    perf_branch.count = 0;
-    perf_branch.total_branches_sampled = 0;
-
-/* Enable LBR in MSR_IA32_DEBUGCTLMSR */
     uint32_t lo, hi;
-    uint64_t debugctl;
-    __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(0x1D9));
-    debugctl = ((uint64_t)hi << 32) | lo;
-    debugctl |= 1; /* LBR = bit 0 */
-    lo = (uint32_t)(debugctl & 0xFFFFFFFFULL);
-    hi = (uint32_t)(debugctl >> 32);
-    __asm__ volatile("wrmsr" : : "a"(lo), "d"(hi), "c"(0x1D9));
-
-    kprintf("[PERF_BRANCH] LBR sampling enabled\n");
-    return 0;
+    __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(msr));
+    return ((uint64_t)hi << 32) | lo;
 }
 
-/* Disable LBR sampling */
-static int perf_branch_disable(void)
+/* Write a 64-bit MSR */
+static inline void write_msr(uint32_t msr, uint64_t val)
 {
-    perf_branch.enabled = 0;
-
-    /* Disable LBR */
-    uint32_t lo, hi;
-    uint64_t debugctl;
-    __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(0x1D9));
-    debugctl = ((uint64_t)hi << 32) | lo;
-    debugctl &= ~1ULL;
-    lo = (uint32_t)(debugctl & 0xFFFFFFFFULL);
-    hi = (uint32_t)(debugctl >> 32);
-    __asm__ volatile("wrmsr" : : "a"(lo), "d"(hi), "c"(0x1D9));
-
-    return 0;
+    uint32_t lo = (uint32_t)(val & 0xFFFFFFFFULL);
+    uint32_t hi = (uint32_t)(val >> 32);
+    __asm__ volatile("wrmsr" : : "a"(lo), "d"(hi), "c"(msr));
 }
 
-/* Read LBR entries from MSRs */
-static int perf_branch_read_lbr(void)
+/* Return the per-CPU save area for the calling CPU */
+static inline struct perf_lbr_save_area *this_save_area(void)
 {
-    if (!perf_branch.enabled)
+    int cpu = smp_get_cpu_id();
+    if (cpu < 0 || cpu >= SMP_MAX_CPUS)
+        return NULL;
+    return &lbr_save_areas[cpu];
+}
+
+/* ── Public API ─────────────────────────────────────────────────── */
+
+int perf_branch_enable(void)
+{
+    struct perf_lbr_save_area *area = this_save_area();
+    if (!area)
         return -EINVAL;
 
-    /* Read LBR stack on current CPU */
-    /* LBR entries are in MSR 0x40 - 0x5F (32 entries on modern CPUs) */
-    perf_branch.count = 0;
+    area->enabled = 1;
+    area->count = 0;
 
-    /* Check LBR format in MSR 0x1C8 (IA32_PERF_CAPABILITIES) */
-    /* For simplicity, read first 16 entries */
-    for (int i = 0; i < 16; i++) {
-        uint32_t from_lo, from_hi, to_lo, to_hi;
-        uint32_t msr_from = 0x40 + i * 2;
-        uint32_t msr_to = 0x41 + i * 2;
+    /* Enable LBR in MSR_IA32_DEBUGCTLMSR (bit 0 = LBR) */
+    uint64_t debugctl = read_msr(MSR_IA32_DEBUGCTLMSR);
+    debugctl |= 1;
+    write_msr(MSR_IA32_DEBUGCTLMSR, debugctl);
+    area->debugctl = debugctl;
 
-        __asm__ volatile("rdmsr" : "=a"(from_lo), "=d"(from_hi) : "c"(msr_from));
-        __asm__ volatile("rdmsr" : "=a"(to_lo), "=d"(to_hi) : "c"(msr_to));
+    kprintf("[PERF_BRANCH] LBR sampling enabled on CPU %d\n",
+            smp_get_cpu_id());
+    return 0;
+}
 
-        if (perf_branch.count < PERF_LBR_MAX_ENTRIES) {
-            perf_branch.entries[perf_branch.count].from =
-                ((uint64_t)from_hi << 32) | from_lo;
-            perf_branch.entries[perf_branch.count].to =
-                ((uint64_t)to_hi << 32) | to_lo;
-            perf_branch.entries[perf_branch.count].flags = 0;
-            perf_branch.count++;
+int perf_branch_disable(void)
+{
+    struct perf_lbr_save_area *area = this_save_area();
+    if (!area)
+        return -EINVAL;
+
+    area->enabled = 0;
+
+    /* Disable LBR (clear bit 0) */
+    uint64_t debugctl = read_msr(MSR_IA32_DEBUGCTLMSR);
+    debugctl &= ~1ULL;
+    write_msr(MSR_IA32_DEBUGCTLMSR, debugctl);
+    area->debugctl = debugctl;
+
+    return 0;
+}
+
+/*
+ * perf_branch_read_lbr_atomic — atomically read LBR entries from MSRs
+ *
+ * Disables IRQs to guarantee a consistent snapshot of the LBR MSR ring.
+ * Without this, a timer interrupt mid-read could cause a context switch,
+ * mixing entries from two different tasks.
+ *
+ * Returns the number of entries read, or -EINVAL if LBR is not enabled.
+ */
+int perf_branch_read_lbr_atomic(struct perf_lbr_entry *entries, int max)
+{
+    struct perf_lbr_save_area *area = this_save_area();
+    if (!area || !area->enabled)
+        return -EINVAL;
+
+    /* Save interrupt state and disable IRQs to prevent context switch
+     * during the multi-MSR read sequence.  The scheduler calls
+     * context_switch with IRQs off, so if we are being called from a
+     * syscall or read path we must protect ourselves. */
+    uint64_t flags;
+    __asm__ volatile(
+        "pushfq\n\t"
+        "pop %0\n\t"
+        "cli\n\t"
+        : "=r"(flags)
+        :
+        : "memory"
+    );
+
+    int count = 0;
+
+    /* Read legacy LBR entries from MSR 0x40 - 0x5F (16 FROM/TO pairs) */
+    for (int i = 0; i < PERF_LBR_LEGACY_ENTRIES; i++) {
+        uint32_t msr_from = MSR_LBR_FROM_BASE + (uint32_t)(i * 2);
+        uint32_t msr_to   = MSR_LBR_FROM_BASE + (uint32_t)(i * 2 + 1);
+
+        uint64_t from = read_msr(msr_from);
+        uint64_t to   = read_msr(msr_to);
+
+        if (count < max && count < PERF_LBR_MAX_ENTRIES) {
+            entries[count].from  = from;
+            entries[count].to    = to;
+            entries[count].flags = 0;
+            count++;
         }
-
-        perf_branch.total_branches_sampled++;
     }
 
-    return perf_branch.count;
+    /* Restore interrupt state */
+    if (flags & 0x200) {
+        __asm__ volatile("sti");
+    }
+
+    return count;
 }
 
-/* Get the last N LBR entries */
-static int perf_branch_get_entries(struct perf_lbr_entry *entries, int max)
+/*
+ * perf_branch_save_state — Save LBR MSRs before context switch
+ *
+ * Called from schedule() with IRQs DISABLED (the scheduler disables
+ * interrupts before calling context_switch).  Saves the current LBR
+ * state (DEBUGCTLMSR + entries) into the per-CPU save area so that
+ * the next invocation of perf_branch_restore_state() can reload it
+ * when the task resumes.
+ */
+void perf_branch_save_state(void)
 {
-    int n = (perf_branch.count < max) ? perf_branch.count : max;
-    memcpy(entries, perf_branch.entries,
-           (size_t)n * sizeof(struct perf_lbr_entry));
-    return n;
+    struct perf_lbr_save_area *area = this_save_area();
+    if (!area)
+        return;
+
+    /* Save DEBUGCTL MSR (tells us whether LBR is enabled) */
+    area->debugctl = read_msr(MSR_IA32_DEBUGCTLMSR);
+    area->enabled  = (area->debugctl & 1) ? 1 : 0;
+
+    /* If LBR is disabled there is nothing else to save */
+    if (!area->enabled) {
+        area->count = 0;
+        return;
+    }
+
+    /* Save LBR entries */
+    area->count = 0;
+    for (int i = 0; i < PERF_LBR_LEGACY_ENTRIES && area->count < PERF_LBR_MAX_ENTRIES; i++) {
+        uint32_t msr_from = MSR_LBR_FROM_BASE + (uint32_t)(i * 2);
+        uint32_t msr_to   = MSR_LBR_FROM_BASE + (uint32_t)(i * 2 + 1);
+
+        area->entries[area->count].from  = read_msr(msr_from);
+        area->entries[area->count].to    = read_msr(msr_to);
+        area->entries[area->count].flags = 0;
+        area->count++;
+    }
 }
 
-static void perf_branch_init(void)
+/*
+ * perf_branch_restore_state — Restore LBR MSRs after context switch
+ *
+ * Called from schedule() with IRQs DISABLED after context_switch()
+ * returns.  Reloads the saved LBR state for the task that is now
+ * running on this CPU.
+ */
+void perf_branch_restore_state(void)
 {
-    memset(&perf_branch, 0, sizeof(perf_branch));
-    kprintf("[OK] perf branch stack (LBR) sampling\n");
+    struct perf_lbr_save_area *area = this_save_area();
+    if (!area)
+        return;
+
+    /* Restore DEBUGCTL MSR (enables or disables LBR) */
+    write_msr(MSR_IA32_DEBUGCTLMSR, area->debugctl);
+
+    /* If LBR was disabled when we saved, nothing else to restore */
+    if (!area->enabled)
+        return;
+
+    /* Restore LBR entries — write them back to the MSR ring so the
+     * resuming task sees its own branch history. */
+    for (int i = 0; i < area->count && i < PERF_LBR_MAX_ENTRIES; i++) {
+        uint32_t msr_from = MSR_LBR_FROM_BASE + (uint32_t)(i * 2);
+        uint32_t msr_to   = MSR_LBR_FROM_BASE + (uint32_t)(i * 2 + 1);
+
+        write_msr(msr_from, area->entries[i].from);
+        write_msr(msr_to,   area->entries[i].to);
+    }
 }
 
-/* ── perf_branch_read: Read LBR data into user buffer ───────────────── */
-static int perf_branch_read(void *data, size_t *len)
+/*
+ * perf_branch_init — Initialise LBR subsystem
+ *
+ * Called once during kernel boot.  Zeroes all per-CPU save areas.
+ * LBR sampling is not enabled until a profiler explicitly calls
+ * perf_branch_enable().
+ */
+void perf_branch_init(void)
 {
-    if (!data || !len) return -EINVAL;
-
-    /* Use the already-implemented LBR reading functions */
-    int count = perf_branch_read_lbr();
-    if (count < 0) return count;
-
-    size_t entry_size = sizeof(struct perf_lbr_entry);
-    size_t total = (size_t)count * entry_size;
-    if (total > *len) total = *len;
-
-    int entries_to_copy = (int)(total / entry_size);
-    int n = perf_branch_get_entries((struct perf_lbr_entry *)data, entries_to_copy);
-    *len = (size_t)n * entry_size;
-
-    kprintf("[perf] perf_branch_read: read %d LBR entries\n", n);
-    return n;
+    memset(&lbr_save_areas, 0, sizeof(lbr_save_areas));
+    kprintf("[OK] perf branch stack (LBR) sampling — context-switch safe\n");
 }
+
+postcore_initcall(perf_branch_init);
