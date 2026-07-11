@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 451,
+  "current_item": 454,
   "current_batch": "B007",
   "completed_items": [
     1,
@@ -452,10 +452,13 @@
     447,
     448,
     449,
-    450
+    450,
+    451,
+    452,
+    453
   ],
-  "found_bugs": 912,
-  "fixed_bugs": 912,
+  "found_bugs": 916,
+  "fixed_bugs": 916,
   "completed_batches": [
     "B001",
     "B002",
@@ -464,6 +467,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-11T21:35:00",
-  "last_item_result": "item 450: ftrace - fixed 5 callback locking bugs in ftrace_stack.c (stack_state with no lock) and ftrace.c graph tracer (pre_handler, handler, read_trace, clear all lacked spinlock_irqsave; ring buffer had write-after-publish ordering bug). Build verified clean."
+  "last_item_timestamp": "2026-07-11T22:15:00",
+  "last_item_result": "item 453: verified copy_from_user not inside spinlock — found 4 violations in syscall.c (sys_sigprocmask, sys_ppoll had copy_from_user inside sig_lock; sys_setitimer, sys_getitimer had copy_to_user inside proc_table_lock). All fixed: moved user-space copies outside spinlocks. Build verified."
 }

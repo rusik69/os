@@ -9,7 +9,7 @@ typedef struct {
 
 #define ATOMIC_INIT(i) { (i) }
 
-static inline int atomic_read(atomic_t *v) {
+static inline int atomic_read(const atomic_t *v) {
     return v->counter;
 }
 
