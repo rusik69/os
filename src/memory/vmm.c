@@ -339,6 +339,17 @@ void vmm_unmap_page(uint64_t virt) {
     uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[pdpt_idx] & PTE_ADDR_MASK);
 
     if (!(pd[pd_idx] & PTE_PRESENT)) goto done;
+
+    /* If this is a 2MB kernel huge page, clear the PDE directly.
+     * Kernel huge pages are set up at boot time (e.g. for the heap);
+     * they are not created through vmm_map_page, but must be handled
+     * correctly here if they happen to be unmapped. */
+    if (pd[pd_idx] & PTE_HUGE) {
+        pd[pd_idx] = 0;
+        tlb_flush(virt);
+        goto done;
+    }
+
     uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[pd_idx] & PTE_ADDR_MASK);
 
     pt[pt_idx] = 0;
@@ -909,13 +920,50 @@ int vmm_unmap_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages) {
     if (virt + num_pages * PAGE_SIZE < virt) return -EOVERFLOW; /* add overflow */
     if (virt + num_pages * PAGE_SIZE > USER_VADDR_MAX) return -EINVAL;
 
-    for (size_t i = 0; i < num_pages; i++) {
+    for (size_t i = 0; i < num_pages; ) {
         uint64_t addr = virt + i * PAGE_SIZE;
+
+        /* ── Detect and handle 2MB huge pages ──────────────────────
+         * When the PDE covering this address has the PTE_HUGE bit set,
+         * vmm_unmap_user_page will clear the entire PDE. We must unref
+         * ALL sub-frames that fall within the requested unmap range
+         * before issuing the PDE clear — otherwise the frames outside
+         * the first 4KB sub-page leak their refcounts. */
+        int pml4_idx = (addr >> 39) & 0x1FF;
+        int pdpt_idx = (addr >> 30) & 0x1FF;
+        int pd_idx   = (addr >> 21) & 0x1FF;
+
+        if ((pml4[pml4_idx] & PTE_PRESENT)) {
+            uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(pml4[pml4_idx] & PTE_ADDR_MASK);
+            if ((pdpt[pdpt_idx] & PTE_PRESENT)) {
+            uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[pdpt_idx] & PTE_ADDR_MASK);
+            if ((pd[pd_idx] & PTE_PRESENT) && (pd[pd_idx] & PTE_HUGE)) {
+                /* Huge page: unref all sub-frames in the unmap range */
+                uint64_t hp_base = pd[pd_idx] & 0x000FFFFFFFE00000ULL;
+                size_t start_sub = (addr & (HUGE_PAGE_SIZE - 1)) / PAGE_SIZE;
+                size_t remain    = num_pages - i;
+                size_t count     = HUGE_PAGE_NFRAMES - start_sub;
+                if (count > remain) count = remain;
+
+                for (size_t j = 0; j < count; j++) {
+                    uint64_t frame = hp_base + (start_sub + j) * PAGE_SIZE;
+                    if (frame != vmm_zero_page_frame)
+                        pmm_unref_frame(frame);
+                }
+                vmm_unmap_user_page(pml4, addr);
+                i += count;
+                continue;
+            }
+        }
+        }
+
+        /* ── Normal 4KB page path ───────────────────────────────── */
         uint64_t phys = 0;
         if (vmm_user_virt_to_phys(pml4, addr, &phys) == 0 && phys && phys != vmm_zero_page_frame) {
             pmm_unref_frame(phys);
         }
         vmm_unmap_user_page(pml4, addr);
+        i++;
     }
     return 0;
 }

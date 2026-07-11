@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 491,
+  "current_item": 494,
   "current_batch": "B008",
   "completed_items": [
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
@@ -52,13 +52,14 @@
     461, 462, 463, 464, 465, 466, 467, 468, 469, 470,
     471, 472, 473, 474, 475, 476, 477, 478, 479, 480,
     481, 482, 483, 484, 485, 486,
-    487, 488, 489, 490
+    487, 488, 489, 490, 491,
+    492, 493
   ],
-  "found_bugs": 946,
-  "fixed_bugs": 946,
+  "found_bugs": 948,
+  "fixed_bugs": 948,
   "completed_batches": [
     "B001", "B002", "B003", "B004", "B005", "B006"
   ],
-  "last_item_timestamp": "2026-07-11T20:55:00",
-  "last_item_result": "item 490: src/memory/pmm.c - SRAT/SLIT NUMA distance parsing for interleave correctness - BUG FOUND + FIXED. PMM lacked pmm_alloc_frame_at() needed by NUMA-aware allocator for correct per-node frame allocation. The NUMA allocator in numa_mem.c used a broken verify-and-free pattern (find free region via pmm_find_free_region, call global pmm_alloc_frame which may return any frame, check node, free if wrong, fall through to global). This could thrash the per-CPU cache and fail to respect NUMA boundaries, breaking MPOL_INTERLEAVE correctness. Fix: added pmm_alloc_frame_at() for direct per-frame allocation, rewrote pmm_alloc_frame_on_node() to use it."
+  "last_item_timestamp": "2026-07-11T21:05:00",
+  "last_item_result": "item 492: src/memory/vmm.c - verify page table page allocation in vmm_map succeeds - AUDITED CLEAN. Traced all three get_or_create_table calls in vmm_map_page (lines 221, 229, 242). Every pmm_alloc_frame() call site in get_or_create_table (new allocation + huge page split paths) and get_or_create_table_in checks the return value (line 144: `if (unlikely(!frame))`). Callers all use IS_ERR() to detect failure. Error unwind properly frees newly-created intermediate tables on failure."
 }
