@@ -289,7 +289,8 @@ uint64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot,
     if (wx_enforce_check_prot(prot) < 0)
         return (uint64_t)(int64_t)-EACCES;
 
-    /* (fd, offset) validation — must be zero for anonymous mappings */
+    /* For MAP_ANONYMOUS, fd and offset are intentionally ignored (Linux semantics).
+     * Cast to void to suppress unused-parameter warnings. */
     if (flags & MAP_ANONYMOUS) {
         (void)fd;
         (void)offset;
