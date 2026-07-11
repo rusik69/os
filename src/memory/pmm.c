@@ -499,6 +499,9 @@ int pmm_below_watermark(void) {
 
 /* Scan the bitmap to find the largest contiguous free block (in frames) */
 uint64_t pmm_largest_free_block(void) {
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&pmm_global_lock, &irq_flags);
+
     uint64_t max_run = 0, cur_run = 0;
     for (uint64_t f = 0; f < total_frames; f++) {
         if (!bitmap_test(f)) {
@@ -509,11 +512,16 @@ uint64_t pmm_largest_free_block(void) {
         }
     }
     if (cur_run > max_run) max_run = cur_run;
+
+    spinlock_irqsave_release(&pmm_global_lock, irq_flags);
     return max_run;
 }
 
 /* Count distinct free page runs (higher = more fragmented) */
 uint64_t pmm_free_block_count(void) {
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&pmm_global_lock, &irq_flags);
+
     uint64_t runs = 0;
     int in_run = 0;
     for (uint64_t f = 0; f < total_frames; f++) {
@@ -523,6 +531,8 @@ uint64_t pmm_free_block_count(void) {
             in_run = 0;
         }
     }
+
+    spinlock_irqsave_release(&pmm_global_lock, irq_flags);
     return runs;
 }
 
@@ -530,13 +540,19 @@ uint64_t pmm_free_block_count(void) {
 
 /* Scan the bitmap for the first free region starting at or after start_frame.
  * Returns the starting frame number, or ~0ULL if no free region remains.
- * On success, *out_count is set to the number of contiguous free frames. */
+ * On success, *out_count is set to the number of contiguous free frames.
+ *
+ * Safe for SMP: acquires pmm_global_lock to synchronise bitmap access with
+ * concurrent pmm_alloc_frame / pmm_free_frame callers. */
 uint64_t pmm_find_free_region(uint64_t start_frame, uint64_t *out_count)
 {
     if (out_count)
         *out_count = 0;
     if (start_frame >= total_frames)
         return ~0ULL;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&pmm_global_lock, &irq_flags);
 
     uint64_t f;
     uint64_t run_start = 0;
@@ -552,6 +568,7 @@ uint64_t pmm_find_free_region(uint64_t start_frame, uint64_t *out_count)
             if (in_run) {
                 if (out_count)
                     *out_count = f - run_start;
+                spinlock_irqsave_release(&pmm_global_lock, irq_flags);
                 return run_start;
             }
         }
@@ -561,9 +578,11 @@ uint64_t pmm_find_free_region(uint64_t start_frame, uint64_t *out_count)
     if (in_run) {
         if (out_count)
             *out_count = f - run_start;
+        spinlock_irqsave_release(&pmm_global_lock, irq_flags);
         return run_start;
     }
 
+    spinlock_irqsave_release(&pmm_global_lock, irq_flags);
     return ~0ULL;
 }
 
@@ -1088,7 +1107,11 @@ int pmm_unref_frame(uint64_t phys) {
 int pmm_refcount(uint64_t phys) {
     uint64_t frame = phys / PAGE_SIZE;
     if (frame >= MAX_FRAMES) return 0;
-    return (int)frame_refcount[frame];
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&pmm_global_lock, &irq_flags);
+    int ret = (int)frame_refcount[frame];
+    spinlock_irqsave_release(&pmm_global_lock, irq_flags);
+    return ret;
 }
 
 uint64_t pmm_get_total_frames(void) { return total_frames; }

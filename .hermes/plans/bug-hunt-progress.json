@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 420,
+  "current_item": 421,
   "current_batch": "B007",
   "completed_items": [
     1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,
@@ -24,13 +24,13 @@
     361,362,363,364,365,366,367,368,369,370,371,372,373,374,375,376,377,378,379,380,
     381,382,383,384,385,386,387,388,389,390,391,392,393,394,395,396,397,398,399,400,
     401,402,403,404,405,406,407,408,409,410,411,412,413,414,415,416,
-    417,418,419
+    417,418,419,420
   ],
-  "found_bugs": 872,
-  "fixed_bugs": 872,
+  "found_bugs": 873,
+  "fixed_bugs": 873,
   "completed_batches": [
     "B001","B002","B003","B004","B005","B006"
   ],
-  "last_item_timestamp": "2026-07-11T07:45:00",
-  "last_item_result": "item 419: src/memory/hugetlb.c — verify huge page lock coverage. FOUND AND FIXED: hugetlb_available() and hugetlb_pool_size() both accessed shared mutable state (g_pool.count, g_pool.initialized/capacity) without holding g_pool.lock, creating data races on SMP. hugetlb_available() returned g_pool.count unprotected — another thread concurrently modifying count in hugetlb_alloc_frame() or hugetlb_free_frame() would race. hugetlb_pool_size() similarly read g_pool.capacity (immutable post-init) and g_pool.initialized (shared flag) without lock. Added spinlock_acquire/release around reads in both query helpers. Build verified clean. git commit 8765570d."
+  "last_item_timestamp": "2026-07-11T07:50:00",
+  "last_item_result": "item 420: src/kernel/swap.c — verify swap lock ordering (swap_lock → page_lock?). ANALYSIS: Lock ordering swap_global_lock → zswap_lock is consistently followed throughout swap.c and zswap.c — no violations found. No code acquires zswap_lock before swap_global_lock, and no page-level lock interacts with swap locks. FOUND AND FIXED: swap_device_path() read swap_devices[dev_idx].active and .path without holding swap_global_lock, creating a data race on SMP. These fields are modified under the lock by swap_swapon()/swap_swapoff(). Added spinlock_acquire/release around the reads. Build verified clean."
 }
