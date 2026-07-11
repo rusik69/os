@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 488,
+  "current_item": 489,
   "current_batch": "B008",
   "completed_items": [
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
@@ -52,13 +52,13 @@
     461, 462, 463, 464, 465, 466, 467, 468, 469, 470,
     471, 472, 473, 474, 475, 476, 477, 478, 479, 480,
     481, 482, 483, 484, 485, 486,
-    487
+    487, 488
   ],
-  "found_bugs": 943,
-  "fixed_bugs": 943,
+  "found_bugs": 944,
+  "fixed_bugs": 944,
   "completed_batches": [
     "B001", "B002", "B003", "B004", "B005", "B006"
   ],
-  "last_item_timestamp": "2026-07-11T20:20:00",
-  "last_item_result": "item 487: src/memory/pmm.c — verify NVDIMM / persistent memory region handling — BUG FOUND + FIXED. The ACPI NFIT discovers PMEM SPA physical ranges during acpi_init(), but these ranges were never reserved in the PMM bitmap. If a bootloader reports the NVDIMM region as type 1 (available RAM) — or if the range coincides with a type-1 multiboot entry — the general PMM allocator could hand out NVDIMM-backed frames, corrupting persistent data. Fix: added pmm_reserve_frames() call in pmem_init() for each PMEM SPA range, ensuring the frames stay off-limits to the general allocator."
+  "last_item_timestamp": "2026-07-11T20:31:00",
+  "last_item_result": "item 488: src/memory/pmm.c — verify pfn_valid() correctly identifies all present ranges — BUG FOUND + FIXED. pfn_valid() did not exist anywhere in the codebase, despite multiple subsystems (compaction.c, hugepage_migration.c, mglru.c) performing ad-hoc frame bounds checks with inconsistent criteria. Added pfn_valid(pfn) to pmm.c, declaration to pmm.h, and EXPORT_SYMBOL. Implementation checks both total_frames (detected physical memory limit) and MAX_FRAMES (bitmap/refcount array bound) so that any PFN within known present RAM returns 1, while out-of-range PFNs return 0."
 }
