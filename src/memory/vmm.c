@@ -262,7 +262,8 @@ int vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
         return -EEXIST;
     }
 
-    pt[pt_idx] = (phys & PTE_ADDR_MASK) | (flags & 0xFFF) | PTE_PRESENT;
+    pt[pt_idx] = (phys & PTE_ADDR_MASK) | (flags & 0xFFF) | PTE_PRESENT
+                 | ((flags & VMM_FLAG_NOEXEC) ? PTE_NX : 0);
     tlb_flush(virt);
     spinlock_irqsave_release(&vmm_page_table_lock, irq_flags);
     return 0;
@@ -536,7 +537,8 @@ int vmm_map_user_page(uint64_t *pml4, uint64_t virt, uint64_t phys, uint64_t fla
     if (pt[pt_idx] & PTE_PRESENT)
         return -EEXIST;
 
-    pt[pt_idx] = (phys & PTE_ADDR_MASK) | (flags & 0xFFF) | PTE_PRESENT;
+    pt[pt_idx] = (phys & PTE_ADDR_MASK) | (flags & 0xFFF) | PTE_PRESENT
+                 | ((flags & VMM_FLAG_NOEXEC) ? PTE_NX : 0);
     return 0;
 }
 
@@ -692,12 +694,53 @@ uint64_t *vmm_clone_user_pml4(uint64_t *src) {
 
             for (int k = 0; k < 512; k++) {
                 if (!(src_pd[k] & PTE_PRESENT)) continue;
-                /* Pass 2MB huge pages through with proper refcounting */
+                /* ── 2MB huge pages: split into 4KB COW entries ──────────────
+                 * We cannot leave the PDE pointing at a shared 2MB page with
+                 * WRITE access — fork would break COW semantics, allowing
+                 * parent and child to see each other's writes.
+                 *
+                 * Instead we split the huge page into 512 × 4KB PTEs for both
+                 * sides, each PTE pointing to the same physical sub-frame but
+                 * with WRITE stripped and PTE_COW set.  This matches the 4KB
+                 * path below and ensures the existing COW fault handler
+                 * (vmm_handle_cow_fault) works correctly. */
                 if (src_pd[k] & (1ULL << 7)) {
-                    dst_pd[k] = src_pd[k];
-                    uint64_t huge_phys = src_pd[k] & 0x000FFFFFFFE00000ULL;
-                    for (int l = 0; l < 512; l++)
-                        pmm_ref_frame(huge_phys + (uint64_t)l * PAGE_SIZE);
+                    uint64_t huge_pde = src_pd[k];
+                    uint64_t huge_phys = huge_pde & 0x000FFFFFFFE00000ULL;
+
+                    /* Allocate a page table page for the parent (src) */
+                    uint64_t src_pt_phys = pmm_alloc_frame();
+                    if (unlikely(!src_pt_phys)) { vmm_destroy_user_pml4(dst); return NULL; }
+                    uint64_t *src_pt = (uint64_t *)PHYS_TO_VIRT(src_pt_phys);
+                    memset(src_pt, 0, PAGE_SIZE);
+
+                    /* Allocate a page table page for the child (dst) */
+                    uint64_t dst_pt_phys = pmm_alloc_frame();
+                    if (unlikely(!dst_pt_phys)) { pmm_free_frame(src_pt_phys); vmm_destroy_user_pml4(dst); return NULL; }
+                    uint64_t *dst_pt = (uint64_t *)PHYS_TO_VIRT(dst_pt_phys);
+                    memset(dst_pt, 0, PAGE_SIZE);
+
+                    /* Derive per-4KB-PTE flags from the huge PDE:
+                     *   - Keep hardware flags (bits 0-8) plus software bits (9-11)
+                     *   - Strip PTE_WRITE — will be granted on COW resolution
+                     *   - Preserve PTE_NX (bit 63) */
+                    uint64_t pflags = (huge_pde & 0xFFF) & ~(uint64_t)PTE_WRITE;
+                    uint64_t pnx    = huge_pde & PTE_NX;
+
+                    for (int l = 0; l < 512; l++) {
+                        uint64_t frame = huge_phys + (uint64_t)l * PAGE_SIZE;
+                        uint64_t entry = (frame & PTE_ADDR_MASK)
+                                        | pflags | pnx
+                                        | PTE_COW | PTE_PRESENT;
+                        src_pt[l] = entry;
+                        dst_pt[l] = entry;
+                        pmm_ref_frame(frame);
+                    }
+
+                    /* Point parent's PDE to the new 4KB page table */
+                    src_pd[k] = src_pt_phys | PTE_PRESENT | PTE_WRITE | PTE_USER;
+                    /* Point child's PDE to its own page table */
+                    dst_pd[k] = dst_pt_phys | PTE_PRESENT | PTE_WRITE | PTE_USER;
                     continue;
                 }
 
@@ -714,11 +757,12 @@ uint64_t *vmm_clone_user_pml4(uint64_t *src) {
 
                     uint64_t frame = src_pt[l] & PTE_ADDR_MASK;
                     uint64_t flags = src_pt[l] & 0xFFF;
+                    uint64_t nx    = src_pt[l] & PTE_NX;
 
                     /* Mark both parent and child as read-only COW */
                     flags = (flags & ~(uint64_t)PTE_WRITE) | PTE_COW;
-                    src_pt[l] = frame | flags;
-                    dst_pt[l] = frame | flags;
+                    src_pt[l] = frame | flags | nx;
+                    dst_pt[l] = frame | flags | nx;
                     pmm_ref_frame(frame); /* shared: increment refcount */
                 }
             }
@@ -808,7 +852,7 @@ int vmm_handle_cow_fault(uint64_t *pml4, uint64_t virt) {
         memcpy((void *)PHYS_TO_VIRT(new_phys),
                (void *)PHYS_TO_VIRT(old_phys), PAGE_SIZE);
         pmm_unref_frame(old_phys);
-        pt[pt_idx] = new_phys | (pte & 0xFFF & ~(uint64_t)PTE_COW) | PTE_WRITE | PTE_PRESENT;
+        pt[pt_idx] = new_phys | (pte & (0xFFF | PTE_NX) & ~(uint64_t)PTE_COW) | PTE_WRITE | PTE_PRESENT;
     }
     tlb_flush(virt);
     return 1;

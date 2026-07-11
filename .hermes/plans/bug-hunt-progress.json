@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 494,
+  "current_item": 497,
   "current_batch": "B008",
   "completed_items": [
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
@@ -53,13 +53,13 @@
     471, 472, 473, 474, 475, 476, 477, 478, 479, 480,
     481, 482, 483, 484, 485, 486,
     487, 488, 489, 490, 491,
-    492, 493
+    492, 493, 494, 495, 496
   ],
-  "found_bugs": 948,
-  "fixed_bugs": 948,
+  "found_bugs": 949,
+  "fixed_bugs": 949,
   "completed_batches": [
     "B001", "B002", "B003", "B004", "B005", "B006"
   ],
-  "last_item_timestamp": "2026-07-11T21:05:00",
-  "last_item_result": "item 492: src/memory/vmm.c - verify page table page allocation in vmm_map succeeds - AUDITED CLEAN. Traced all three get_or_create_table calls in vmm_map_page (lines 221, 229, 242). Every pmm_alloc_frame() call site in get_or_create_table (new allocation + huge page split paths) and get_or_create_table_in checks the return value (line 144: `if (unlikely(!frame))`). Callers all use IS_ERR() to detect failure. Error unwind properly frees newly-created intermediate tables on failure."
+  "last_item_timestamp": "2026-07-11T21:50:00",
+  "last_item_result": "item 496: src/memory/vmm.c - verify recursive page table entry traversal correctness - AUDITED CLEAN. All 27 page table walk functions in vmm.c were traced for x86-64 4-level paging correctness: index calculations ((virt>>39)&0x1FF for PML4, (virt>>30)&0x1FF for PDPT, (virt>>21)&0x1FF for PD, (virt>>12)&0x1FF for PT) are correct; PTE_ADDR_MASK (0x000FFFFFFFFFF000) and huge-page PDE mask (0x000FFFFFFFE00000) are correct; all walks properly check PTE_PRESENT at each level before dereferencing; huge-page (2MB) detection via PTE_HUGE (bit 7) is consistent across all functions (vmm_check_nx, vmm_map_page, vmm_unmap_page, vmm_virt_to_phys, vmm_walk_to_pt, vmm_unmap_user_page, vmm_user_range_ok, vmm_user_virt_to_phys, vmm_handle_cow_fault, vmm_page_is_mapped_user, vmm_page_is_execonly, vmm_unmap_user_pages, vmm_set_user_pages_flags, vmm_lock_user_pages, vmm_unlock_user_pages, vmm_count_user_pages_range, vmm_count_user_pages); boundary logic in range-based traversals correctly handles alignment and PML4/PDPT/PD/PT boundary indices; get_or_create_table correctly splits 2MB huge pages into 512x4KB entries with proper flag propagation; vmm_walk_to_pt correctly checks PTE_USER at every intermediate level; vmm_user_range_ok correctly treats COW pages as logically writable. No traversal correctness bug found."
 }
