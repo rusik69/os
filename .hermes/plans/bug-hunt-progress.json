@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 504,
+  "current_item": 505,
   "current_batch": "B008",
   "completed_items": [
     1,
@@ -505,10 +505,11 @@
     500,
     501,
     502,
-    503
+    503,
+    504
   ],
-  "found_bugs": 958,
-  "fixed_bugs": 958,
+  "found_bugs": 959,
+  "fixed_bugs": 959,
   "completed_batches": [
     "B001",
     "B002",
@@ -517,6 +518,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-11T23:00:00",
-  "last_item_result": "item 503: src/memory/vmm.c - verify mremap preserves page content - BUG FOUND & FIXED. sys_mremap copy loop used vmm_get_physaddr() which walks kernel_pml4, not the process PML4. For user VAs this returned 0, causing all page content to be silently lost on move. Fixed by using vmm_user_virt_to_phys(proc->pml4, ...). Exported the helper function, added declaration to vmm.h. Build verified."
+  "last_item_timestamp": "2026-07-11T23:15:00",
+  "last_item_result": "item 504: src/memory/vmm.c - verify mprotect permission changes take effect (TLB shootdown) - BUG FOUND & FIXED. vmm_set_user_pages_flags() 4KB page path (both COW and non-COW) did not propagate PTE_NX when transitioning from executable to non-executable via mprotect. The 'preserved' variable only inherited NX from the old PTE but never explicitly set it from new_flags. A page going from PROT_EXEC to PROT_READ remained executable. Fixed by adding 'if (new_flags & VMM_FLAG_NOEXEC) preserved |= PTE_NX' in both 4KB PTE code paths. TLB shootdown via smp_tlb_shootdown() confirmed correct: IPIs to all other CPUs + local invlpg per modified page. No additional TLB bugs found."
 }
