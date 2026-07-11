@@ -10,11 +10,18 @@
 #include "heap.h"
 #include "net_internal.h"   /* icmp_send_unreachable */
 #include "net.h"            /* ip_header, eth_header */
+#include "spinlock.h"
 
 /* ── Static state ────────────────────────────────────────────────── */
 
 /* Hook chains — one linked list per hook point */
 static struct nf_hook_entry *nf_hooks[NF_MAX_HOOKS];
+
+/* Protects nf_hooks[] — all hook list reads/writes must hold this lock.
+ * IRQ-safe because nf_iterate_hooks() is called from packet receive IRQ
+ * context (net.c) while nf_register_hook() / nf_unregister_hook() may
+ * be called from process context. */
+static spinlock_t nf_hook_lock;
 
 /* Packet filter rules */
 #define NF_RULES_MAX 64
@@ -40,6 +47,9 @@ int nf_register_hook(int hook, nf_hookfn fn, int priority) {
     entry->priority = priority;
     entry->next = NULL;
 
+    uint64_t flags;
+    spinlock_irqsave_acquire(&nf_hook_lock, &flags);
+
     /* Insert in priority order (higher priority first) */
     if (!nf_hooks[hook] || nf_hooks[hook]->priority > priority) {
         entry->next = nf_hooks[hook];
@@ -51,34 +61,49 @@ int nf_register_hook(int hook, nf_hookfn fn, int priority) {
         entry->next = cur->next;
         cur->next = entry;
     }
+
+    spinlock_irqsave_release(&nf_hook_lock, flags);
     return 0;
 }
 
 void nf_unregister_hook(int hook, nf_hookfn fn) {
     if (hook < 0 || hook >= NF_MAX_HOOKS || !fn) return;
 
+    uint64_t flags;
+    spinlock_irqsave_acquire(&nf_hook_lock, &flags);
+
     struct nf_hook_entry **pp = &nf_hooks[hook];
     while (*pp) {
         if ((*pp)->fn == fn) {
             struct nf_hook_entry *tmp = *pp;
             *pp = (*pp)->next;
+            spinlock_irqsave_release(&nf_hook_lock, flags);
             kfree(tmp);
             return;
         }
         pp = &(*pp)->next;
     }
+
+    spinlock_irqsave_release(&nf_hook_lock, flags);
 }
 
 int nf_iterate_hooks(int hook, void *skb) {
     if (hook < 0 || hook >= NF_MAX_HOOKS) return NF_ACCEPT;
 
+    uint64_t flags;
+    spinlock_irqsave_acquire(&nf_hook_lock, &flags);
+
     struct nf_hook_entry *entry = nf_hooks[hook];
     while (entry) {
         int verdict = entry->fn(skb, hook);
-        if (verdict != NF_ACCEPT)
+        if (verdict != NF_ACCEPT) {
+            spinlock_irqsave_release(&nf_hook_lock, flags);
             return verdict;
+        }
         entry = entry->next;
     }
+
+    spinlock_irqsave_release(&nf_hook_lock, flags);
     return NF_ACCEPT;
 }
 
@@ -255,6 +280,7 @@ int nf_hook_traverse(int hook, void *skb, void *iph, uint16_t iph_len)
 /* ── Init ────────────────────────────────────────────────────────── */
 
 void nf_init(void) {
+    spinlock_init(&nf_hook_lock);
     memset(nf_hooks, 0, sizeof(nf_hooks));
     memset(nf_rules, 0, sizeof(nf_rules));
     memset(nf_nat_rules, 0, sizeof(nf_nat_rules));
