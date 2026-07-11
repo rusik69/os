@@ -617,19 +617,30 @@ void pmm_add_free_frames(uint64_t phys_start, uint64_t byte_size)
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&pmm_global_lock, &irq_flags);
 
+    /* Snapshot the old total before potentially extending it.
+     * Frames beyond old_total have their bitmap bits set from the
+     * initial 0xFF memset in pmm_init(), but are NOT counted in
+     * used_frames (the recount loop in pmm_init only runs up to
+     * the boot-time total_frames).  We must avoid decrementing
+     * used_frames for those extended frames below. */
+    uint64_t old_total = total_frames;
+
     /* Extend total_frames if this region is beyond the current max */
     if (end_frame > total_frames)
         total_frames = end_frame;
 
     /* Clear bitmap for all frames in the region (mark as free) so the
      * allocator can hand them out.  Only decrement used_frames for
-     * frames that were actually set (handles both re-hotplug of previously
-     * reserved memory and entirely new frames beyond boot-time total). */
+     * frames that were actually set AND within the old total_frames
+     * range (frames beyond old_total were never counted in used_frames
+     * by pmm_init's recount loop, so decrementing them would corrupt
+     * the counter). */
     for (uint64_t f = start_frame; f < end_frame; f++) {
         if (bitmap_test(f)) {
             bitmap_clear(f);
             frame_refcount[f] = 0;
-            used_frames--;
+            if (f < old_total)
+                used_frames--;
         }
     }
 
