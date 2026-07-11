@@ -4245,16 +4245,27 @@ static uint64_t sys_writev(uint64_t fd, uint64_t iov_addr, uint64_t iovcnt) {
 
 /* ── getrandom / PRNG ────────────────────────────────────────── */
 
-/* xorshift64 PRNG state */
+/* xorshift64 PRNG state protected by prng_lock for SMP safety */
+static spinlock_t prng_lock = SPINLOCK_INIT;
 static uint64_t prng_state = 0xDEADBEEFCAFEBABEULL;
 
-static uint64_t xorshift64(void) {
+/* Internal xorshift — caller must hold prng_lock */
+static uint64_t xorshift64_locked(void) {
     uint64_t x = prng_state;
     x ^= x << 13;
     x ^= x >> 7;
     x ^= x << 17;
     prng_state = x;
     return x;
+}
+
+/* Public xorshift with lock — safe for SMP concurrency */
+static uint64_t xorshift64(void) {
+    uint64_t __p_flags;
+    spinlock_irqsave_acquire(&prng_lock, &__p_flags);
+    uint64_t ret = xorshift64_locked();
+    spinlock_irqsave_release(&prng_lock, __p_flags);
+    return ret;
 }
 
 /* Non-static PRNG accessor for use by other kernel subsystems (e.g. ASLR) */
@@ -4265,9 +4276,12 @@ uint64_t prng_rand64(void) {
 /* Allow kernel subsystems to add external entropy to the PRNG.
  * XORs the given entropy into the state to avoid reducing existing entropy. */
 void prng_add_entropy(uint64_t entropy) {
+    uint64_t __p_flags;
+    spinlock_irqsave_acquire(&prng_lock, &__p_flags);
     prng_state ^= entropy;
     /* Mix one round to spread the bits */
-    xorshift64();
+    xorshift64_locked();
+    spinlock_irqsave_release(&prng_lock, __p_flags);
 }
 
 /*
