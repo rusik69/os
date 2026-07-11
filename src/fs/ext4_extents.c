@@ -672,6 +672,13 @@ int64_t ext4_ext_find_extent(struct ext4_priv *ep,
     for (;;) {
         eh = (struct ext4_extent_header *)node_data;
 
+        /* Validate every extent header encountered during the walk.
+         * The root was already checked above; this catches blocks
+         * read from disk (lines below) on subsequent iterations. */
+        ret = ext4_ext_check_header(eh, EXT4_EXTENT_MAX_DEPTH);
+        if (ret < 0)
+            return ext4_corrupt(ep, "corrupt extent block in tree walk");
+
         if (depth > 0) {
             /* ── Internal (index) node ── */
             struct ext4_extent_idx *idx_entry = NULL;
@@ -776,6 +783,15 @@ int ext4_ext_get_blocks(struct ext4_priv *ep,
     /* Walk the tree */
     for (;;) {
         eh = (struct ext4_extent_header *)node_data;
+
+        /* Validate every extent header encountered during the walk.
+         * The root was already checked above; this catches blocks
+         * read from disk (lines below) on subsequent iterations. */
+        ret = ext4_ext_check_header(eh, EXT4_EXTENT_MAX_DEPTH);
+        if (ret < 0) {
+            ext4_corrupt(ep, "get_blocks: corrupt extent block in tree walk");
+            return -EFSCORRUPTED;
+        }
 
         if (depth > 0) {
             struct ext4_extent_idx *idx_entry = NULL;
@@ -909,6 +925,13 @@ int ext4_ext_insert_extent(struct ext4_priv *ep,
         struct ext4_extent_header *eh =
             (struct ext4_extent_header *)node_data;
 
+        /* Validate every extent header encountered during the walk.
+         * The root was already checked above; this catches blocks
+         * read from disk (lines below) on subsequent iterations. */
+        ret = ext4_ext_check_header(eh, EXT4_EXTENT_MAX_DEPTH);
+        if (ret < 0)
+            return -EFSCORRUPTED;
+
         if (eh->eh_depth > 0) {
             /* ── Internal node ── */
             struct ext4_extent_idx *idx_entry = NULL;
@@ -936,9 +959,11 @@ int ext4_ext_insert_extent(struct ext4_priv *ep,
                 return -EFSCORRUPTED;
 
             path_depth++;
+            /* Store pointer AFTER reading so path_eh[path_depth] refers
+             * to the newly-read child block, not the parent. */
+            node_data = node_buf;
             path_eh[path_depth] = (struct ext4_extent_header *)node_data;
             path_block[path_depth] = child_blk;
-            node_data = node_buf;
         } else {
             /* ── Leaf node — we're here ── */
             break;
