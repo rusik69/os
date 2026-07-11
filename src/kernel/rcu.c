@@ -64,10 +64,18 @@ static spinlock_t rcu_gp_lock;
 /* ── call_rcu() callback lists ───────────────────────────────────── */
 
 /*
- * We maintain two global callback lists protected by a simple flag:
+
+
+
+ * We maintain two global callback lists protected by rcu_cb_lock:
  *
  *   rcu_pending_list  — callbacks awaiting a grace period.
  *   rcu_done_list     — callbacks whose GP has completed, ready to invoke.
+ *
+ * rcu_cb_lock also serialises transitions of rcu_gp_in_progress so that
+ * rcu_start_gp() and rcu_try_complete_gp() see a consistent view of the
+ * "GP in progress" flag together with the pending-list state, preventing
+ * callbacks from being moved to the done list after a new GP has started.
  *
  * A new GP is started whenever rcu_pending_list becomes non-empty and
  * no GP is currently in progress.  When rcu_check_stall() detects that
@@ -290,11 +298,13 @@ static int rcu_try_complete_gp(void) {
             return 0;  /* at least one CPU still pending */
     }
 
-    /* All CPUs have passed through a QS — GP complete */
-    rcu_gp_in_progress = 0;
-
-    /* Move pending callbacks to the done list */
+    /* All CPUs have passed through a QS — GP complete.
+     * Set gp_in_progress = 0 under rcu_cb_lock so that rcu_start_gp()
+     * sees a consistent view of the flag together with the pending list,
+     * preventing premature callback invocation.
+     */
     rcu_cb_lock_acquire();
+    rcu_gp_in_progress = 0;
     if (rcu_pending_list) {
         /* Append the entire pending list to the done list */
         if (rcu_done_list) {
@@ -319,22 +329,32 @@ static int rcu_try_complete_gp(void) {
  * callbacks and no GP is currently in progress.
  */
 static void rcu_start_gp(void) {
-    if (rcu_gp_in_progress)
-        return;
-
+    /*
+     * Check rcu_gp_in_progress under rcu_cb_lock so we see a consistent
+     * view together with the pending list — prevents starting a GP while
+     * rcu_try_complete_gp() is about to move pending callbacks to done.
+     */
     rcu_cb_lock_acquire();
-    int has_pending = (rcu_pending_list != NULL);
-    rcu_cb_lock_release();
-
-    if (!has_pending)
+    if (rcu_gp_in_progress) {
+        rcu_cb_lock_release();
         return;
+    }
 
-    /* Start a new grace period */
+    int has_pending = (rcu_pending_list != NULL);
+
+    if (!has_pending) {
+        rcu_cb_lock_release();
+        return;
+    }
+
+    /* Start a new grace period — hold the lock so rcu_gp_in_progress
+     * and the pending list stay consistent for rcu_try_complete_gp(). */
     rcu_gp_seq++;
     rcu_gp_start_tick = timer_get_ticks();
     rcu_gp_start_seq = rcu_gp_seq;
     rcu_gp_in_progress = 1;
     rcu_stall_warning_printed = 0;
+    rcu_cb_lock_release();
 
     /* Full memory barrier so all CPUs see updated GP sequence */
     __asm__ volatile("mfence" : : : "memory");
@@ -566,13 +586,13 @@ void synchronize_rcu(void) {
         scheduler_yield();
     }
 
-    /* GP complete — advance callback machinery */
-    spinlock_acquire(&rcu_gp_lock);
-    rcu_gp_in_progress = 0;
-    spinlock_release(&rcu_gp_lock);
-
-    /* Move pending callbacks to done list and invoke them */
+    /* GP complete — advance callback machinery.
+     * Set rcu_gp_in_progress = 0 under rcu_cb_lock so that rcu_start_gp()
+     * sees consistent flag + pending-list state, preventing premature
+     * callback invocation.
+     */
     rcu_cb_lock_acquire();
+    rcu_gp_in_progress = 0;
     if (rcu_pending_list) {
         if (rcu_done_list) {
             struct rcu_head *tail = rcu_done_list;
