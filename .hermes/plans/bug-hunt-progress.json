@@ -1,7 +1,7 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
   "current_batch": "B006",
-  "current_item": 389,
+  "current_item": 394,
   "completed_items": [
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
     11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
@@ -43,17 +43,14 @@
     372, 373, 374, 375, 376, 377,
     378, 379, 380,
     381, 382, 383,
-    384,
-    385,
-    386,
-    387,
-    388
+    384, 385, 386, 387, 388, 389, 390, 391,
+    392, 393
   ],
-  "found_bugs": 851,
-  "fixed_bugs": 851,
+  "found_bugs": 852,
+  "fixed_bugs": 852,
   "completed_batches": [
     "B002"
   ],
-  "last_item_timestamp": "2026-07-11T02:15:00",
-  "last_item_result": "item 388: 2 bugs found and fixed in bufcache.c - g_count not decremented in evict_one (leaks upward), and cache_fill failure path uses lru_push_head instead of returning entry to free pool at tail (causes invalid entry at LRU head → next free-pool alloc could overwrite valid cached sector)"
+  "last_item_timestamp": "2026-07-11T03:10:00",
+  "last_item_result": "item 393: src/fs/cifs.c - SMB session NULL analysis: session_id is uint64_t, not a pointer, so NULL concerns are not applicable. Session is initialized to 0 via memset before mount completes and properly set during session_setup(). Found + fixed real bug: cifs_allocate_mount_id() sets mount_id=idx, then memset clears it to 0 and is never restored, causing VFS dispatch (cifs_vfs_readdir) to always reference slot 0. Added mnt->mount_id = idx after memset. Build verified, committed."
 }

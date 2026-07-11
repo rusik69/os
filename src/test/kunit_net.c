@@ -27,27 +27,28 @@
 
 static void net_socket_create_test(struct kunit *test)
 {
-    int fd = sock_alloc();
-    KUNIT_EXPECT_NE(test, fd, -1);
-    KUNIT_EXPECT_TRUE(test, fd >= 0);
+    int slot = sock_alloc();
+    KUNIT_EXPECT_TRUE(test, slot >= 0);
+    if (slot < 0) return;
 
-    if (fd >= 0) {
-        struct socket *s = sock_get(fd);
-        KUNIT_EXPECT_NOT_NULL(test, s);
-        KUNIT_EXPECT_EQ(test, (int64_t)s->in_use, (int64_t)1);
-        KUNIT_EXPECT_EQ(test, (int64_t)s->state, (int64_t)SOCK_STATE_CREATED);
-        sock_put(s);
-        sock_free(fd);
-    }
+    int fd = sock_fd_from_slot(slot);
+    struct socket *s = sock_get(fd);
+    KUNIT_EXPECT_NOT_NULL(test, s);
+    KUNIT_EXPECT_EQ(test, (int64_t)s->in_use, (int64_t)1);
+    KUNIT_EXPECT_EQ(test, (int64_t)s->state, (int64_t)SOCK_STATE_CREATED);
+    sock_put(s);
+    sock_free(fd);
 }
 
 static void net_socket_bind_listen_accept_test(struct kunit *test)
 {
-    int fd = sock_alloc();
-    KUNIT_EXPECT_TRUE(test, fd >= 0);
-    if (fd < 0) return;
+    int slot = sock_alloc();
+    KUNIT_EXPECT_TRUE(test, slot >= 0);
+    if (slot < 0) return;
 
+    int fd = sock_fd_from_slot(slot);
     struct socket *s = sock_get(fd);
+    KUNIT_EXPECT_NOT_NULL(test, s);
     s->domain = AF_INET;
     s->type = SOCK_STREAM;
     s->protocol = IPPROTO_TCP;
@@ -254,11 +255,13 @@ static void ktest_tcp_invalid_transition_test(struct kunit *test)
 
 static void net_udp_socket_create_test(struct kunit *test)
 {
-    int fd = sock_alloc();
-    KUNIT_EXPECT_TRUE(test, fd >= 0);
-    if (fd < 0) return;
+    int slot = sock_alloc();
+    KUNIT_EXPECT_TRUE(test, slot >= 0);
+    if (slot < 0) return;
 
+    int fd = sock_fd_from_slot(slot);
     struct socket *s = sock_get(fd);
+    KUNIT_EXPECT_NOT_NULL(test, s);
     s->domain = AF_INET;
     s->type = SOCK_DGRAM;
     s->protocol = IPPROTO_UDP;
@@ -273,11 +276,13 @@ static void net_udp_socket_create_test(struct kunit *test)
 
 static void net_udp_socket_bind_send_test(struct kunit *test)
 {
-    int fd = sock_alloc();
-    KUNIT_EXPECT_TRUE(test, fd >= 0);
-    if (fd < 0) return;
+    int slot = sock_alloc();
+    KUNIT_EXPECT_TRUE(test, slot >= 0);
+    if (slot < 0) return;
 
+    int fd = sock_fd_from_slot(slot);
     struct socket *s = sock_get(fd);
+    KUNIT_EXPECT_NOT_NULL(test, s);
     s->domain = AF_INET;
     s->type = SOCK_DGRAM;
     s->protocol = IPPROTO_UDP;
@@ -302,11 +307,13 @@ static void net_udp_socket_bind_send_test(struct kunit *test)
 
 static void net_udp_socket_options_test(struct kunit *test)
 {
-    int fd = sock_alloc();
-    KUNIT_EXPECT_TRUE(test, fd >= 0);
-    if (fd < 0) return;
+    int slot = sock_alloc();
+    KUNIT_EXPECT_TRUE(test, slot >= 0);
+    if (slot < 0) return;
 
+    int fd = sock_fd_from_slot(slot);
     struct socket *s = sock_get(fd);
+    KUNIT_EXPECT_NOT_NULL(test, s);
     s->domain = AF_INET;
     s->type = SOCK_DGRAM;
     s->protocol = IPPROTO_UDP;
@@ -444,15 +451,18 @@ static void net_init_api_test(struct kunit *test)
 
 static void net_socket_reuse_test(struct kunit *test)
 {
-    int fd1 = sock_alloc();
-    KUNIT_EXPECT_TRUE(test, fd1 >= 0);
+    int slot1 = sock_alloc();
+    KUNIT_EXPECT_TRUE(test, slot1 >= 0);
+    if (slot1 < 0) return;
 
-    sock_free(fd1);
+    sock_free(sock_fd_from_slot(slot1));
 
     /* Allocate again — should get same or different slot */
-    int fd2 = sock_alloc();
-    KUNIT_EXPECT_TRUE(test, fd2 >= 0);
+    int slot2 = sock_alloc();
+    KUNIT_EXPECT_TRUE(test, slot2 >= 0);
+    if (slot2 < 0) return;
 
+    int fd2 = sock_fd_from_slot(slot2);
     struct socket *s = sock_get(fd2);
     KUNIT_EXPECT_NOT_NULL(test, s);
     KUNIT_EXPECT_EQ(test, (int64_t)s->in_use, (int64_t)1);
@@ -463,30 +473,31 @@ static void net_socket_reuse_test(struct kunit *test)
 
 static void net_socket_max_allocation_test(struct kunit *test)
 {
-    int fds[SOCK_MAX];
+    int slots[SOCK_MAX];
     int count = 0;
 
     /* Allocate all sockets */
     for (int i = 0; i < SOCK_MAX; i++) {
-        fds[i] = sock_alloc();
-        if (fds[i] >= 0) count++;
+        slots[i] = sock_alloc();
+        if (slots[i] >= 0) count++;
     }
 
     KUNIT_EXPECT_EQ(test, (int64_t)count, (int64_t)SOCK_MAX);
 
     /* Next allocation should fail */
     int extra = sock_alloc();
-    KUNIT_EXPECT_EQ(test, (int64_t)extra, (int64_t)-1);
+    KUNIT_EXPECT_TRUE(test, extra < 0);
 
     /* Free all */
     for (int i = 0; i < count; i++) {
-        sock_free(fds[i]);
+        sock_free(sock_fd_from_slot(slots[i]));
     }
 
     /* Should be able to allocate again */
-    int fd = sock_alloc();
-    KUNIT_EXPECT_TRUE(test, fd >= 0);
-    sock_free(fd);
+    int slot = sock_alloc();
+    KUNIT_EXPECT_TRUE(test, slot >= 0);
+    if (slot >= 0)
+        sock_free(sock_fd_from_slot(slot));
 }
 
 static void net_arp_list_dump_test(struct kunit *test)
