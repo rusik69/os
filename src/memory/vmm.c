@@ -255,6 +255,13 @@ int vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
         return -ENOMEM;
     }
 
+    /* Refuse to silently overwrite an existing mapping.
+     * Caller must unmap first if they want to remap. */
+    if (pt[pt_idx] & PTE_PRESENT) {
+        spinlock_irqsave_release(&vmm_page_table_lock, irq_flags);
+        return -EEXIST;
+    }
+
     pt[pt_idx] = (phys & PTE_ADDR_MASK) | (flags & 0xFFF) | PTE_PRESENT;
     tlb_flush(virt);
     spinlock_irqsave_release(&vmm_page_table_lock, irq_flags);
@@ -513,6 +520,10 @@ int vmm_map_user_page(uint64_t *pml4, uint64_t virt, uint64_t phys, uint64_t fla
         }
         return -ENOMEM;
     }
+
+    /* Refuse to overwrite an existing user mapping. */
+    if (pt[pt_idx] & PTE_PRESENT)
+        return -EEXIST;
 
     pt[pt_idx] = (phys & PTE_ADDR_MASK) | (flags & 0xFFF) | PTE_PRESENT;
     return 0;
