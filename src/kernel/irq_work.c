@@ -119,6 +119,67 @@ void irq_work_init(void)
     kprintf("[OK] irq_work: IRQ work queues initialised\n");
 }
 
+/* ── CPU hotplug integration ────────────────────────────────────── */
+
+/*
+ * irq_work_cpu_offline - Drain pending IRQ work from a CPU going offline.
+ *
+ * Called when @cpu is about to transition from ONLINE to OFFLINE.
+ * Moves any pending work items to the current CPU's work queue so they
+ * aren't orphaned. Uses only the lock-free llist_del_all() so it is
+ * safe to call from the hotplug path (which holds cpuhp_lock with IRQs
+ * disabled).
+ */
+void irq_work_cpu_offline(int cpu)
+{
+    struct llist_head *list = irq_work_list(cpu);
+    struct llist_node *node, *next;
+
+    /* Atomically steal all pending work from the leaving CPU */
+    node = llist_del_all(list);
+    if (!node)
+        return;
+
+    /*
+     * llist_del_all returns nodes in LIFO order (reverse of insert).
+     * Reverse the chain so individual items are added in FIFO order
+     * to the current CPU's list.
+     */
+    struct llist_node *rev = NULL;
+    while (node) {
+        next = node->next;
+        node->next = rev;
+        rev = node;
+        node = next;
+    }
+
+    /* Append each item to the current (calling) CPU's work queue */
+    int cur_cpu = smp_get_cpu_id();
+    struct llist_head *cur_list = irq_work_list(cur_cpu);
+
+    node = rev;
+    while (node) {
+        next = node->next;
+        node->next = NULL;
+        llist_add(node, cur_list);
+        node = next;
+    }
+}
+
+/*
+ * irq_work_cpu_online - Re-initialise IRQ work state for a CPU coming
+ *                       online.
+ *
+ * Called when @cpu transitions from OFFLINE to ONLINE.
+ * Ensures the per-CPU list and lock are in a clean state, discarding
+ * any stale nodes that may remain from a previous offline cycle.
+ */
+void irq_work_cpu_online(int cpu)
+{
+    init_llist_head(irq_work_list(cpu));
+    spinlock_init(irq_work_lock(cpu));
+}
+
 /* ── Stub: irq_work_is_pending ─────────────────────────────── */
 static int irq_work_is_pending(void *work)
 {

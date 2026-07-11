@@ -23,6 +23,7 @@
 #include "scheduler.h"
 #include "apic.h"
 #include "timer.h"
+#include "irq_work.h"
 
 /* ═══════════════════════════════════════════════════════════════════════
  * Section 1 — CPU Security Features
@@ -278,6 +279,9 @@ int cpuhp_bring_cpu(int cpu_id)
         goto out;
     }
 
+    /* ── Re-initialise IRQ work state for this CPU ──────────────────── */
+    irq_work_cpu_online(cpu_id);
+
     /* Transition OFFLINE → ONLINE */
     cpuhp_cpu_state[cpu_id] = CPUHP_STATE_ONLINE;
     kprintf("[CPU] CPU %d brought online (now %d online)\n",
@@ -341,7 +345,10 @@ int cpuhp_take_cpu_offline(int cpu_id)
         goto out;
     }
 
-    /* ── Step 4: transition state ──────────────────────────────────── */
+    /* ── Step 4: drain pending IRQ work queued to this CPU ──────────── */
+    irq_work_cpu_offline(cpu_id);
+
+    /* ── Step 5: transition state ──────────────────────────────────── */
     cpuhp_cpu_state[cpu_id] = CPUHP_STATE_OFFLINE;
     kprintf("[CPU] CPU %d taken offline (now %d online)\n",
             cpu_id, cpuhp_online_count());

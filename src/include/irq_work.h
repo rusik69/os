@@ -68,4 +68,19 @@ void irq_work_sync(struct irq_work *work);
 
 void irq_work_init(void);
 
+/* ── CPU hotplug integration ───────────────────────────────────── */
+
+/*
+ * irq_work_cpu_offline - Drain pending IRQ work from a CPU going offline.
+ * Must be called from the hotplug path before the CPU state transitions
+ * to OFFLINE. Moves orphaned work items to the calling CPU's queue.
+ */
+void irq_work_cpu_offline(int cpu);
+
+/*
+ * irq_work_cpu_online - Re-initialise IRQ work state for a CPU coming
+ * online. Must be called before the CPU state transitions to ONLINE.
+ */
+void irq_work_cpu_online(int cpu);
+
 #endif /* IRQ_WORK_H */
