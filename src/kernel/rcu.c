@@ -291,19 +291,33 @@ static int rcu_try_complete_gp(void) {
         return 0;
 
     int ncpus = smp_get_cpu_count();
+    uint64_t current_gp = rcu_gp_seq;   /* snapshot before scanning */
 
     /* Check whether every online CPU has acknowledged this GP */
     for (int c = 0; c < ncpus; c++) {
-        if (rcu_state_percpu[c].gp_seq < rcu_gp_seq)
+        if (rcu_state_percpu[c].gp_seq < current_gp)
             return 0;  /* at least one CPU still pending */
     }
 
     /* All CPUs have passed through a QS — GP complete.
+     *
+     * Re-check under rcu_cb_lock: between the scan above and acquiring
+     * the lock, a concurrent synchronize_rcu() or another
+     * rcu_try_complete_gp() may have already completed this GP AND
+     * rcu_start_gp() may have started a new one.  If rcu_gp_seq
+     * advanced, the pending list contains callbacks for the new GP and
+     * we must NOT touch it or clear rcu_gp_in_progress.
+     *
      * Set gp_in_progress = 0 under rcu_cb_lock so that rcu_start_gp()
      * sees a consistent view of the flag together with the pending list,
      * preventing premature callback invocation.
      */
     rcu_cb_lock_acquire();
+    if (rcu_gp_seq != current_gp) {
+        /* A new GP was started while we scanned — leave it alone */
+        rcu_cb_lock_release();
+        return 0;
+    }
     rcu_gp_in_progress = 0;
     if (rcu_pending_list) {
         /* Append the entire pending list to the done list */
@@ -519,6 +533,7 @@ void synchronize_rcu(void) {
     uint64_t deadline = start + RCU_GP_WAIT_MAX_TICKS;
 
     rcu_gp_seq++;
+    uint64_t my_gp_seq = rcu_gp_seq;     /* save locally for cleanup-lock recheck */
     rcu_gp_start_tick = start;
     rcu_gp_start_seq = rcu_gp_seq;
     rcu_gp_in_progress = 1;
@@ -586,24 +601,36 @@ void synchronize_rcu(void) {
         scheduler_yield();
     }
 
-    /* GP complete — advance callback machinery.
-     * Set rcu_gp_in_progress = 0 under rcu_cb_lock so that rcu_start_gp()
-     * sees consistent flag + pending-list state, preventing premature
-     * callback invocation.
+    /*
+     * GP complete — advance callback machinery.
+     *
+     * Guard the cleanup so we only act on the GP we started.  Between
+     * the wait-loop exit and acquiring rcu_cb_lock, a concurrent
+     * rcu_check_stall() / rcu_start_gp() may have already completed
+     * this GP AND/OR started a new one via call_rcu -> rcu_start_gp().
+     * If rcu_gp_seq was advanced past my_gp_seq, someone else started
+     * a new GP and we MUST NOT clear rcu_gp_in_progress or touch the
+     * pending list (those callbacks belong to the new GP).
+     *
+     * Set rcu_gp_in_progress = 0 under rcu_cb_lock so that
+     * rcu_start_gp() sees consistent flag + pending-list state,
+     * preventing premature callback invocation.
      */
     rcu_cb_lock_acquire();
-    rcu_gp_in_progress = 0;
-    if (rcu_pending_list) {
-        if (rcu_done_list) {
-            struct rcu_head *tail = rcu_done_list;
-            while (tail->next)
-                tail = tail->next;
-            tail->next = rcu_pending_list;
-        } else {
-            rcu_done_list = rcu_pending_list;
+    if (rcu_gp_seq == my_gp_seq) {
+        rcu_gp_in_progress = 0;
+        if (rcu_pending_list) {
+            if (rcu_done_list) {
+                struct rcu_head *tail = rcu_done_list;
+                while (tail->next)
+                    tail = tail->next;
+                tail->next = rcu_pending_list;
+            } else {
+                rcu_done_list = rcu_pending_list;
+            }
+            rcu_pending_list = NULL;
+            rcu_pending_tail = NULL;
         }
-        rcu_pending_list = NULL;
-        rcu_pending_tail = NULL;
     }
     rcu_cb_lock_release();
 
