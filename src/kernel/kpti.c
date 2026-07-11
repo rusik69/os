@@ -264,10 +264,22 @@ void kpti_teardown_process(struct process *proc) {
 void kpti_trampoline_patch_cr3(int cpu, uint64_t kernel_cr3, uint64_t user_cr3) {
     (void)cpu;
     if (!kpti_active) return;
-    tramp_write(KPTI_TRAMP_OFF_CR3_KERN, kernel_cr3);
 
-    uint64_t old_user_cr3 = tramp_read(KPTI_TRAMP_OFF_CR3_USER);
-    tramp_write(KPTI_TRAMP_OFF_CR3_USER, user_cr3);
+    /* Access the trampoline page via PHYS_TO_VIRT (kernel high-half), NOT
+     * through KPTI_TRAMPOLINE_VADDR.  The trampoline is mapped at a user-
+     * half virtual address (PML4 entry 255) which is NOT present in user-
+     * process PML4s created by vmm_create_user_pml4() — those only copy
+     * kernel entries 256-511.  During a scheduler context switch the
+     * active PML4 is next->pml4, which lacks the trampoline mapping, so
+     * accessing it through KPTI_TRAMPOLINE_VADDR would page-fault.
+     * PHYS_TO_VIRT works regardless of the active PML4 because all user
+     * PML4s copy the kernel half entries 256-511 from kernel_pml4. */
+    volatile uint64_t *tramp = (volatile uint64_t *)PHYS_TO_VIRT(trampoline_phys);
+
+    tramp[KPTI_TRAMP_OFF_CR3_KERN / sizeof(uint64_t)] = kernel_cr3;
+
+    uint64_t old_user_cr3 = tramp[KPTI_TRAMP_OFF_CR3_USER / sizeof(uint64_t)];
+    tramp[KPTI_TRAMP_OFF_CR3_USER / sizeof(uint64_t)] = user_cr3;
 
     /* Flush stale PCID 1 TLB entries when switching to a different user PML4 */
     if (old_user_cr3 != user_cr3) {
