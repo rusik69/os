@@ -3543,17 +3543,22 @@ static uint64_t sys_setitimer(uint64_t which, uint64_t new_val_addr,
     uint64_t __sit_flags;
     spinlock_irqsave_acquire(&proc_table_lock, &__sit_flags);
 
-    /* Return old value if requested */
+    /* Return old value if requested — snapshot under lock, copy to user after */
+    struct itimerval old_val;
+    memset(&old_val, 0, sizeof(old_val));
     if (old_val_addr) {
-        if (copy_to_user(old_val_addr, &proc->itimers[which], sizeof(struct itimerval)) < 0) {
-            spinlock_irqsave_release(&proc_table_lock, __sit_flags);
-            return (uint64_t)-1;
-        }
+        old_val = proc->itimers[which];
     }
 
     /* Set new value */
     proc->itimers[which] = new_val;
     spinlock_irqsave_release(&proc_table_lock, __sit_flags);
+
+    /* Copy old value to user AFTER releasing lock — copy_to_user may page fault */
+    if (old_val_addr) {
+        if (copy_to_user(old_val_addr, &old_val, sizeof(struct itimerval)) < 0)
+            return (uint64_t)-1;
+    }
     return 0;
 }
 
@@ -3566,10 +3571,11 @@ static uint64_t sys_getitimer(uint64_t which, uint64_t cur_val_addr) {
     /* Lock: process_timer_tick modifies itimers[] under proc_table_lock */
     uint64_t __gi_flags;
     spinlock_irqsave_acquire(&proc_table_lock, &__gi_flags);
-    int ret = copy_to_user(cur_val_addr, &proc->itimers[which],
-                           sizeof(struct itimerval));
+    struct itimerval cur_val = proc->itimers[which];
     spinlock_irqsave_release(&proc_table_lock, __gi_flags);
-    if (ret < 0)
+
+    /* Copy to user AFTER releasing lock — copy_to_user may page fault */
+    if (copy_to_user(cur_val_addr, &cur_val, sizeof(struct itimerval)) < 0)
         return (uint64_t)-1;
     return 0;
 }
@@ -3934,26 +3940,22 @@ static uint64_t sys_sigprocmask(uint64_t how, uint64_t set_addr, uint64_t oldset
     struct process *proc = process_get_current();
     if (!proc) return (uint64_t)-1;
 
+    /* Read new mask from userspace BEFORE acquiring spinlock — copy_from_user may page fault */
+    uint64_t new_mask = 0;
+    int have_new = 0;
+    if (set_addr) {
+        if (copy_from_user(&new_mask, set_addr, sizeof(new_mask)) < 0)
+            return (uint64_t)-1;
+        have_new = 1;
+    }
+
     uint64_t __sig_flags;
     spinlock_irqsave_acquire(&proc->sig_lock, &__sig_flags);
 
-    /* Return old mask */
-    if (oldset_addr) {
-        uint64_t old = proc->sig_mask;
-        if (copy_to_user(oldset_addr, &old, sizeof(old)) < 0) {
-            spinlock_irqsave_release(&proc->sig_lock, __sig_flags);
-            return (uint64_t)-1;
-        }
-    }
+    uint64_t old_mask = proc->sig_mask;
 
     /* Apply new mask */
-    if (set_addr) {
-        uint64_t new_mask = 0;
-        if (copy_from_user(&new_mask, set_addr, sizeof(new_mask)) < 0) {
-            spinlock_irqsave_release(&proc->sig_lock, __sig_flags);
-            return (uint64_t)-1;
-        }
-
+    if (have_new) {
         switch (how) {
             case SIG_BLOCK:
                 proc->sig_mask |= new_mask;
@@ -3971,6 +3973,13 @@ static uint64_t sys_sigprocmask(uint64_t how, uint64_t set_addr, uint64_t oldset
     }
 
     spinlock_irqsave_release(&proc->sig_lock, __sig_flags);
+
+    /* Return old mask AFTER releasing lock — copy_to_user may page fault */
+    if (oldset_addr) {
+        if (copy_to_user(oldset_addr, &old_mask, sizeof(old_mask)) < 0)
+            return (uint64_t)-1;
+    }
+
     return 0;
 }
 
@@ -5935,18 +5944,22 @@ static uint64_t sys_ppoll(uint64_t fds_addr, uint64_t nfds,
     struct process *proc = process_get_current();
     if (!proc) return (uint64_t)-1;
 
+    /* Read new sigmask from userspace BEFORE acquiring spinlock — copy_from_user may page fault */
+    uint64_t pp_new_mask = 0;
+    int have_pp_sigmask = 0;
+    if (sigmask_addr) {
+        if (copy_from_user(&pp_new_mask, sigmask_addr, sizeof(pp_new_mask)) < 0)
+            return (uint64_t)-1;
+        have_pp_sigmask = 1;
+    }
+
     /* Apply the temporary signal mask if provided */
     uint64_t old_mask;
     uint64_t __pp_flags;
     spinlock_irqsave_acquire(&proc->sig_lock, &__pp_flags);
     old_mask = proc->sig_mask;
-    if (sigmask_addr) {
-        uint64_t new_mask;
-        if (copy_from_user(&new_mask, sigmask_addr, sizeof(new_mask)) < 0) {
-            spinlock_irqsave_release(&proc->sig_lock, __pp_flags);
-            return (uint64_t)-1;
-        }
-        proc->sig_mask = new_mask;
+    if (have_pp_sigmask) {
+        proc->sig_mask = pp_new_mask;
     }
     spinlock_irqsave_release(&proc->sig_lock, __pp_flags);
 
