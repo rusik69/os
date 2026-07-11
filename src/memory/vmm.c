@@ -881,6 +881,19 @@ void vmm_destroy_user_pml4(uint64_t *pml4) {
                         if (sub != vmm_zero_page_frame)
                             pmm_unref_frame(sub);
                     }
+                    /* Notify the THP tracking subsystem that this huge page
+                     * is gone — prevents stale tracking entries from
+                     * accumulating when a process with huge-page mappings
+                     * exits.  Reconstruct the 2MB-aligned virtual address from
+                     * the page-table indices so we can untrack it. */
+                    {
+                        uint64_t huge_virt = ((uint64_t)i << 39)
+                                           | ((uint64_t)j << 30)
+                                           | ((uint64_t)k << 21);
+                        thp_untrack_hugepage(huge_virt);
+                    }
+                    if (vm_hugepages > 0)
+                        vm_hugepages--;
                     continue;
                 }
                 uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[k] & PTE_ADDR_MASK);
