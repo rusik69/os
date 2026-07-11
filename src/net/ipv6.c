@@ -49,6 +49,12 @@ static uint64_t rs_last_tick = 0;   /* tick of last RS transmission */
  * (invert the Universal/Local bit, insert FF:FE in the middle) */
 void ipv6_eui64_from_mac(const uint8_t *mac, struct in6_addr *out)
 {
+    if (!mac || !out) {
+        kprintf("[ipv6] ipv6_eui64_from_mac: NULL parameter"
+                " (mac=%p, out=%p)\n", (const void *)mac, (void *)out);
+        return;
+    }
+
     out->s6_addr[0] = mac[0] ^ 0x02;  /* invert U/L bit */
     out->s6_addr[1] = mac[1];
     out->s6_addr[2] = mac[2];
