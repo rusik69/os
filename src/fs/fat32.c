@@ -735,6 +735,9 @@ int fat32_mount(fat32_disk_t disk, uint32_t part_lba) {
 
     if (fat_type == FAT32) {
         root_cluster = bpb->root_cluster;
+        /* FAT32 root cluster must be a valid cluster number (>= 2) */
+        if (root_cluster < 2 || FAT_IS_EOC(root_cluster))
+            return -EINVAL;
         data_start = fat_start + num_fats * fat_sz;
         root_dir_sectors = 0;
         fs_info_lba = bpb->fs_info ? part_lba + bpb->fs_info : 0;
