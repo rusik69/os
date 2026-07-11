@@ -43,7 +43,7 @@ static int                     mglru_pool_next;   /* hint for allocation */
 
 /* Per-frame lookup: frame number → pool index (or -1 if not tracked).
  * This avoids scanning the LRU lists for remove/find operations. */
-static int mglru_frame_map[262144];  /* MAX_FRAMES */
+static int mglru_frame_map[2097152]; /* MAX_FRAMES = 2M frames = 8 GB */
 
 /* Periodic aging timer */
 static struct hrtimer mglru_timer;
@@ -150,7 +150,7 @@ static void mglru_free_entry(int idx)
 static int mglru_find_entry(uint64_t phys_addr)
 {
     uint64_t frame = phys_addr / PAGE_SIZE;
-    if (frame >= 262144)  /* MAX_FRAMES */
+    if (frame >= 2097152)  /* MAX_FRAMES = 2M */
         return -EINVAL;
     int idx = mglru_frame_map[frame];
     if (idx < 0 || idx >= MGLRU_MAX_PAGES)
@@ -166,7 +166,7 @@ static int mglru_find_entry(uint64_t phys_addr)
 static void mglru_frame_map_set(uint64_t phys_addr, int idx)
 {
     uint64_t frame = phys_addr / PAGE_SIZE;
-    if (frame < 262144)  /* MAX_FRAMES */
+    if (frame < 2097152)  /* MAX_FRAMES = 2M */
         mglru_frame_map[frame] = idx;
 }
 

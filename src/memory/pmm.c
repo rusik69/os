@@ -37,7 +37,7 @@ struct multiboot_mmap_entry {
     uint32_t type; /* 1 = available */
 } __attribute__((packed));
 
-#define MAX_FRAMES (256 * 1024) /* up to 1GB with 4KB pages */
+#define MAX_FRAMES (2 * 1024 * 1024) /* up to 8 GB with 4 KB pages (matches PAGEBLOCK_MAX = 4096 × 2 MB) */
 static uint8_t  frame_bitmap[MAX_FRAMES / 8];
 static uint16_t frame_refcount[MAX_FRAMES]; /* COW reference counts */
 static uint64_t total_frames = 0;

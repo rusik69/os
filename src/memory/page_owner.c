@@ -5,7 +5,7 @@
 #include "printf.h"
 
 /* Page owner tracking table: one entry per frame */
-#define PAGE_OWNER_MAX_FRAMES (256 * 1024)
+#define PAGE_OWNER_MAX_FRAMES (2 * 1024 * 1024) /* matches PMM MAX_FRAMES = 8 GB / 4 KB */
 static uint32_t page_owner_table[PAGE_OWNER_MAX_FRAMES];
 static int page_owner_initialized = 0;
 
