@@ -137,10 +137,18 @@ int cpuhp_register_notify(cpuhp_notify_fn fn)
 {
     if (!fn)
         return -EINVAL;
-    if (cpuhp_notifier_count >= CPUHP_NOTIFIER_MAX)
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&cpuhp_lock, &irq_flags);
+
+    if (cpuhp_notifier_count >= CPUHP_NOTIFIER_MAX) {
+        spinlock_irqsave_release(&cpuhp_lock, irq_flags);
         return -EINVAL;
+    }
 
     cpuhp_notifiers[cpuhp_notifier_count++] = fn;
+
+    spinlock_irqsave_release(&cpuhp_lock, irq_flags);
     return 0;
 }
 
