@@ -88,10 +88,14 @@ void timer_handler_soft(void) {
         if (!g_timers[i].active) continue;
         if (now < g_timers[i].expire_tick) continue;
 
-        /* Atomically deactivate so we don't double-fire */
+        /* Atomically deactivate so we don't double-fire.
+         * Re-check both active AND expire_tick under the lock:
+         * the unlocked read of expire_tick on line ~89 could have seen
+         * a stale value if timer_schedule() on another CPU just
+         * rescheduled this timer with a new expiration. */
         uint64_t irq_flags;
         spinlock_irqsave_acquire(&g_timers_lock, &irq_flags);
-        if (!g_timers[i].active) {
+        if (!g_timers[i].active || now < g_timers[i].expire_tick) {
             spinlock_irqsave_release(&g_timers_lock, irq_flags);
             continue;
         }
