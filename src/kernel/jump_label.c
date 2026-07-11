@@ -3,64 +3,80 @@
 #include "printf.h"
 #include "string.h"
 #include "types.h"
+#include "spinlock.h"
 
 /* 5-byte NOP instruction encoding for x86-64 */
 static const uint8_t nop5[5] = { 0x0F, 0x1F, 0x44, 0x00, 0x00 }; /* nop dword ptr [rax+rax+0] */
 
-/* Patch a 5-byte relative jump (opcode: E9 + 32-bit rel32 offset) */
-void text_patch_jmp(void *addr, void *target)
-{
-    uint8_t *patch = (uint8_t *)addr;
-    int32_t offset = (int32_t)((uintptr_t)target - (uintptr_t)addr - 5);
+/* Serialize all text patching operations across CPUs.
+ * Two CPUs must never patch code concurrently at overlapping addresses,
+ * because they'd race on the stores and could produce torn instructions. */
+static spinlock_t text_patch_lock = SPINLOCK_INIT;
 
-    /* Disable interrupts for atomic patching */
-    uint64_t flags;
+/* ── Instruction-serialization barrier ─────────────────────────────
+ *
+ * After self-modifying code we must execute a *serializing instruction*
+ * to ensure the instruction cache sees the modified bytes.
+ *
+ *   mfence — orders memory accesses but is NOT a serializing instruction.
+ *   CPUID  — the portable serializing instruction on x86-64 (Intel SDM
+ *            Vol. 3A, §8.1.3 "Serializing Instructions").
+ *
+ * Without a serializing instruction the processor may continue to fetch
+ * stale cached instructions from the patched location.
+ */
+static inline void text_patch_serialize(void)
+{
+    uint32_t eax, ebx, ecx, edx;
     __asm__ volatile(
-        "pushfq\n\t"
-        "pop %0\n\t"
-        "cli\n\t"
-        : "=r"(flags)
+        "xorl %%eax, %%eax\n\t"
+        "cpuid\n\t"
+        : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
         :
         : "memory"
     );
+}
 
-    /* Write the jump instruction atomically (the 5-byte jmp rel32) */
-    patch[0] = 0xE9;
-    __builtin_memcpy(&patch[1], &offset, sizeof(offset));
+/* Patch a 5-byte relative jump (opcode: E9 + 32-bit rel32 offset) */
+void text_patch_jmp(void *addr, void *target)
+{
+    uint64_t flags;
 
-    /* Synchronize instruction cache */
-    __asm__ volatile("mfence" : : : "memory");
+    spinlock_irqsave_acquire(&text_patch_lock, &flags);
 
-    /* Restore interrupts */
-    if (!(flags & 0x200))
-        __asm__ volatile("sti");
+    int32_t offset = (int32_t)((uintptr_t)target - (uintptr_t)addr - 5);
+
+    /* Build and write the 5-byte jmp rel32 as a single copy so that a
+     * concurrent reader on another CPU never sees torn bytes. */
+    uint8_t jmp5[5] = {
+        0xE9,
+        (uint8_t)(offset >>  0),
+        (uint8_t)(offset >>  8),
+        (uint8_t)(offset >> 16),
+        (uint8_t)(offset >> 24),
+    };
+    __builtin_memcpy(addr, jmp5, 5);
+
+    /* Serialising instruction — see comment above. */
+    text_patch_serialize();
+
+    spinlock_irqsave_release(&text_patch_lock, flags);
 }
 
 /* Patch a 5-byte NOP (to disable/remove a jump) */
 void text_patch_nop(void *addr)
 {
-    uint8_t *patch = (uint8_t *)addr;
-
     uint64_t flags;
-    __asm__ volatile(
-        "pushfq\n\t"
-        "pop %0\n\t"
-        "cli\n\t"
-        : "=r"(flags)
-        :
-        : "memory"
-    );
 
-    /* Write the 5-byte NOP */
-    uint32_t nop32;
-    __builtin_memcpy(&nop32, &nop5[0], 4);
-    __builtin_memcpy(&patch[0], &nop32, 4);
-    patch[4] = nop5[4];
+    spinlock_irqsave_acquire(&text_patch_lock, &flags);
 
-    __asm__ volatile("mfence" : : : "memory");
+    /* Write the 5-byte NOP as a single copy — no torn stores. */
+    __builtin_memcpy(addr, nop5, 5);
 
-    if (!(flags & 0x200))
-        __asm__ volatile("sti");
+    /* Serialising instruction — see comment above. */
+    text_patch_serialize();
+
+    spinlock_irqsave_release(&text_patch_lock, flags);
 }
 
 /* Enable a static key: increment refcount and patch all jump sites */
@@ -71,8 +87,8 @@ void static_key_enable(struct static_key *key)
      * to race between the increment and the read. */
     if (atomic_add_return(&key->enabled, 1) == 1) {
         /* First enable: all associated branches should be patched to jmp.
-         * In a full implementation, we'd walk the __jump_table section.
-         * For now, the key is just tracked. */
+         * In a full implementation, we'd walk the __jump_table section
+         * under text_patch_lock.  For now, the key is just tracked. */
         __asm__ volatile("mfence" : : : "memory");
     }
 }
@@ -91,30 +107,18 @@ void static_key_disable(struct static_key *key)
 /* Initialize jump label subsystem */
 void __init jump_label_init(void)
 {
-    /* Test that we can patch a jmp and back */
-    uint64_t flags;
-
-    __asm__ volatile(
-        "pushfq\n\t"
-        "pop %0\n\t"
-        "cli\n\t"
-        : "=r"(flags)
-        :
-        : "memory"
-    );
-    volatile uint8_t patch_test[5] __attribute__((aligned(1)));
-    __builtin_memset((void *)(uintptr_t)patch_test, 0x90, 5);
+    /* Test that we can patch a jmp and back.
+     *
+     * 8-byte alignment ensures the 5-byte writes land in a single cache
+     * line so no reader sees a torn instruction-spanning-line. */
+    uint8_t patch_test[5] __attribute__((aligned(8)));
+    __builtin_memset(patch_test, 0x90, 5);
 
     /* Patch a jmp to a known target (skip +2 bytes forward) */
-    text_patch_jmp((void *)(uintptr_t)patch_test, (void *)(uintptr_t)(patch_test + 2));
-    __asm__ volatile("mfence" : : : "memory");
+    text_patch_jmp(patch_test, patch_test + 2);
 
     /* Patch back to NOP */
-    text_patch_nop((void *)(uintptr_t)patch_test);
-    __asm__ volatile("mfence" : : : "memory");
-
-    if (!(flags & 0x200))
-        __asm__ volatile("sti");
+    text_patch_nop(patch_test);
 
     kprintf("[OK] jump_label: NOP patching verified\n");
 }
