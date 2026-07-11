@@ -43,6 +43,8 @@
 #include "string.h"
 #include "panic.h"
 #include "uprobes.h"
+#include "spinlock.h"
+#include "smp.h"
 
 /* ── Scratch area for text_poke ──────────────────────────────────────
  *
@@ -72,14 +74,23 @@ static struct kprobe *g_kprobes[KPROBES_MAX];
 static int g_kprobe_count = 0;
 static int g_kprobes_initialized = 0;
 
-/* Profiling counters */
-static uint64_t g_kprobe_hits = 0;
-static uint64_t g_kprobe_ss_hits = 0;
+/* Profiling counters (atomic for SMP safety) */
+static volatile uint64_t g_kprobe_hits = 0;
+static volatile uint64_t g_kprobe_ss_hits = 0;
 
-/* Temporary storage during single-step — the kprobe we're currently
- * stepping over.  Only one CPU can be single-stepping at a time via
- * this mechanism (global). */
-static struct kprobe *g_current_stepping = NULL;
+/* Per-CPU single-step tracking — each CPU manages its own slot.
+ * This prevents two CPUs from overwriting each other's state. */
+static struct kprobe *g_percpu_stepping[SMP_MAX_CPUS];
+
+/* Spinlocks protecting shared state:
+ *   g_kprobes_lock — protects g_kprobes[], g_kprobe_count, g_kprobes_initialized
+ *   g_kretprobe_lock — protects g_kretprobe_instances[] and rp->active_count
+ */
+static spinlock_t g_kprobes_lock;
+static spinlock_t g_kretprobe_lock;
+
+/* Convenience: get current CPU's stepping slot */
+#define kprobe_this_cpu_stepping()  g_percpu_stepping[smp_get_cpu_id()]
 
 /* ── Text patching helpers ──────────────────────────────────────────── */
 
@@ -314,9 +325,11 @@ static int kprobe_estimate_insn_len(uint64_t addr) {
 void __init kprobes_init(void) {
     memset(g_kprobes, 0, sizeof(g_kprobes));
     g_kprobe_count = 0;
-    g_current_stepping = NULL;
+    memset(g_percpu_stepping, 0, sizeof(g_percpu_stepping));
     g_kprobe_hits = 0;
     g_kprobe_ss_hits = 0;
+    spinlock_init(&g_kprobes_lock);
+    spinlock_init(&g_kretprobe_lock);
 
     /* Verify the scratch page is unmapped */
     uint64_t p = vmm_get_physaddr(TEXT_POKE_BASE);
@@ -351,10 +364,13 @@ int register_kprobe(struct kprobe *kp) {
         return -ENOSYS;
     }
 
+    spinlock_acquire(&g_kprobes_lock);
+
     /* Check if already registered */
     if (kprobe_find(kp->addr)) {
         kprintf("[KPROBES] register_kprobe: already probed at 0x%llX\n",
                 (unsigned long long)kp->addr);
+        spinlock_release(&g_kprobes_lock);
         return -EBUSY;
     }
 
@@ -362,6 +378,7 @@ int register_kprobe(struct kprobe *kp) {
     int slot = kprobe_find_free_slot();
     if (slot < 0) {
         kprintf("[KPROBES] register_kprobe: table full (%d max)\n", KPROBES_MAX);
+        spinlock_release(&g_kprobes_lock);
         return -ENOSPC;
     }
 
@@ -377,11 +394,14 @@ int register_kprobe(struct kprobe *kp) {
         kp->flags = 0;
         kprintf("[KPROBES] register_kprobe: text_poke_write failed at 0x%llX\n",
                 (unsigned long long)kp->addr);
+        spinlock_release(&g_kprobes_lock);
         return -EIO;
     }
 
     g_kprobes[slot] = kp;
     g_kprobe_count++;
+
+    spinlock_release(&g_kprobes_lock);
 
     kprintf("[KPROBES] Registered probe at 0x%llX (opcode 0x%02X, insn_len %d, slot %d)\n",
             (unsigned long long)kp->addr, kp->orig_opcode, kp->insn_len, slot);
@@ -393,10 +413,13 @@ int unregister_kprobe(struct kprobe *kp) {
     if (!kp || !(kp->flags & KPROBE_FLAG_ACTIVE))
         return -EINVAL;
 
+    spinlock_acquire(&g_kprobes_lock);
+
     /* Restore the original opcode */
     if (text_poke_write(kp->addr, kp->orig_opcode) < 0) {
         kprintf("[KPROBES] unregister_kprobe: text_poke_write failed at 0x%llX\n",
                 (unsigned long long)kp->addr);
+        spinlock_release(&g_kprobes_lock);
         return -EIO;
     }
 
@@ -410,6 +433,8 @@ int unregister_kprobe(struct kprobe *kp) {
             break;
         }
     }
+
+    spinlock_release(&g_kprobes_lock);
 
     kprintf("[KPROBES] Unregistered probe at 0x%llX\n",
             (unsigned long long)kp->addr);
@@ -431,13 +456,22 @@ void kprobe_int3_handler(struct interrupt_frame *frame) {
         return; /* handled by uprobe */
     }
 
-    g_kprobe_hits++;
+    __sync_fetch_and_add(&g_kprobe_hits, 1);
 
     /* The CPU pushes RIP pointing to the NEXT instruction after INT3.
      * Since INT3 is 1 byte, rip points to addr+1.  Find the probe by
      * checking rip - 1 (the address containing INT3). */
     uint64_t probe_addr = rip - 1;
+
+    /* Lock the table for the kprobe lookup.  An interrupt-safe spinlock
+     * is required because kprobes can fire in ANY context (process, IRQ,
+     * softirq, NMI-safe).  We release the lock before calling the
+     * pre_handler to avoid deadlock if the handler itself tries to
+     * register/unregister probes. */
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_kprobes_lock, &irq_flags);
     struct kprobe *kp = kprobe_find(probe_addr);
+    spinlock_irqsave_release(&g_kprobes_lock, irq_flags);
 
     if (!kp) {
         /* Unhandled INT3 — could be a debugger.  We treat it as a
@@ -465,7 +499,16 @@ void kprobe_int3_handler(struct interrupt_frame *frame) {
      * 1. Remove INT3 (restore original opcode)
      * 2. Set RIP back to the original instruction address
      * 3. Set the Trap Flag (TF) in RFLAGS
-     * 4. Record that we're single-stepping */
+     * 4. Record that we're single-stepping on this CPU */
+
+    /* Re-check that probe is still active (could have been unregistered
+     * during the pre_handler call) */
+    if (!(kp->flags & KPROBE_FLAG_ACTIVE)) {
+        /* Probe was unregistered between the lookup and here.
+         * The INT3 was already patched out by unregister_kprobe,
+         * so just return and continue execution. */
+        return;
+    }
 
     /* Restore original opcode */
     text_poke_write(kp->addr, kp->orig_opcode);
@@ -476,8 +519,8 @@ void kprobe_int3_handler(struct interrupt_frame *frame) {
     /* Set Trap Flag (bit 8 in RFLAGS) */
     frame->rflags |= (1ULL << 8);
 
-    /* Record which kprobe we're stepping */
-    g_current_stepping = kp;
+    /* Record which kprobe we're stepping — per-CPU slot avoids races */
+    kprobe_this_cpu_stepping() = kp;
 
     /* Return from interrupt — the CPU will execute the original
      * instruction and then fire #DB due to TF. */
@@ -489,18 +532,18 @@ void kprobe_debug_handler(struct interrupt_frame *frame) {
         return; /* handled by uprobe */
     }
 
-    /* Check if we're single-stepping for a kprobe */
-    if (!g_current_stepping) {
+    /* Check if we're single-stepping for a kprobe on this CPU */
+    if (!kprobe_this_cpu_stepping()) {
         /* Non-kprobe debug exception — ignore (debugger not supported) */
         return;
     }
 
-    g_kprobe_ss_hits++;
+    __sync_fetch_and_add(&g_kprobe_ss_hits, 1);
 
     /* The single-step completed.  The probed instruction at
-     * g_current_stepping->addr was executed.  Call post_handler. */
-    struct kprobe *kp = g_current_stepping;
-    g_current_stepping = NULL;
+     * kprobe_this_cpu_stepping()->addr was executed.  Call post_handler. */
+    struct kprobe *kp = kprobe_this_cpu_stepping();
+    kprobe_this_cpu_stepping() = NULL;
 
     /* Clear the Trap Flag so we don't keep single-stepping */
     frame->rflags &= ~(1ULL << 8);
@@ -555,7 +598,9 @@ static struct kretprobe_instance g_kretprobe_instances[KRETPROBE_MAX_INSTANCES];
 
 /* ── Kretprobe internals ────────────────────────────────────────── */
 
-/* Find a free instance slot.  Returns -1 if all are in use. */
+/* Find a free instance slot.  Returns -1 if all are in use.
+ * Must be called with g_kretprobe_lock held (or from a context
+ * where no concurrent allocation is possible). */
 static int kretprobe_alloc_instance(struct kretprobe *rp) {
     /* First, check if this rp has any slots allocated to it */
     for (int i = 0; i < KRETPROBE_MAX_INSTANCES; i++) {
@@ -569,7 +614,8 @@ static int kretprobe_alloc_instance(struct kretprobe *rp) {
     return -ENOSPC;
 }
 
-/* Free an instance slot by index. */
+/* Free an instance slot by index.
+ * Must be called with g_kretprobe_lock held. */
 static void kretprobe_free_instance(int idx) {
     if (idx >= 0 && idx < KRETPROBE_MAX_INSTANCES) {
         g_kretprobe_instances[idx].in_use = 0;
@@ -606,10 +652,14 @@ static int kretprobe_entry_handler(struct kprobe *kp, struct interrupt_frame *fr
     struct kretprobe *rp = (struct kretprobe *)kp->private_data;
     if (!rp) return KPROBE_ACTION_CONTINUE;
 
-    /* Check maxactive limit */
+    /* Check maxactive limit — lock protects rp->active_count */
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_kretprobe_lock, &irq_flags);
+
     if (rp->active_count >= rp->maxactive) {
         /* Too many outstanding calls — let this one proceed without
          * interception (the function will return normally). */
+        spinlock_irqsave_release(&g_kretprobe_lock, irq_flags);
         return KPROBE_ACTION_CONTINUE;
     }
 
@@ -625,16 +675,18 @@ static int kretprobe_entry_handler(struct kprobe *kp, struct interrupt_frame *fr
     uint64_t orig_ret_addr = *ret_addr_ptr;
     if (!orig_ret_addr || orig_ret_addr == 0xFFFFFFFFFFFFFFFFULL) {
         /* Sanity check failed — don't modify */
+        spinlock_irqsave_release(&g_kretprobe_lock, irq_flags);
         return KPROBE_ACTION_CONTINUE;
     }
 
-    /* Allocate an instance slot */
+    /* Allocate an instance slot (protected by g_kretprobe_lock) */
     int slot = kretprobe_alloc_instance(rp);
     if (slot < 0) {
         /* No free trampoline slots — let this call proceed normally */
         kprintf("[KPROBES] kretprobe: no free instance slot for %s (addr 0x%llX)\n",
                 "function", (unsigned long long)rp->addr);
         rp->active_count++;
+        spinlock_irqsave_release(&g_kretprobe_lock, irq_flags);
         return KPROBE_ACTION_CONTINUE;
     }
 
@@ -644,12 +696,13 @@ static int kretprobe_entry_handler(struct kprobe *kp, struct interrupt_frame *fr
     /* Store instance data */
     g_kretprobe_instances[slot].ret_addr = orig_ret_addr;
     g_kretprobe_instances[slot].rp = rp;
-    g_kretprobe_instances[slot].in_use = 1;
 
     /* Replace the return address on the stack with the trampoline */
     *ret_addr_ptr = tramp_addr;
 
     rp->active_count++;
+
+    spinlock_irqsave_release(&g_kretprobe_lock, irq_flags);
 
     /* Return CONTINUE so the kprobe core single-steps the original
      * instruction (the function entry) and execution proceeds normally. */
@@ -717,15 +770,16 @@ int unregister_kretprobe(struct kretprobe *rp) {
     int ret = unregister_kprobe(&rp->kp);
     if (ret < 0) return ret;
 
-    /* Free any still-active instances */
+    /* Free any still-active instances (protected by g_kretprobe_lock) */
+    spinlock_acquire(&g_kretprobe_lock);
     for (int i = 0; i < KRETPROBE_MAX_INSTANCES; i++) {
         if (g_kretprobe_instances[i].in_use &&
             g_kretprobe_instances[i].rp == rp) {
             kretprobe_free_instance(i);
         }
     }
-
     rp->active_count = 0;
+    spinlock_release(&g_kretprobe_lock);
 
     kprintf("[KPROBES] Unregistered kretprobe at 0x%llX\n",
             (unsigned long long)rp->addr);
@@ -746,33 +800,51 @@ uint64_t kretprobe_trampoline_handler(int instance_id, uint64_t *saved_rax) {
         return 0; /* returning 0 will likely crash, but safer than nothing */
     }
 
+    /* Lock the instance table — trampoline can fire in any context */
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_kretprobe_lock, &irq_flags);
+
     struct kretprobe_instance *inst = &g_kretprobe_instances[instance_id];
     if (!inst->in_use || !inst->rp) {
         /* Instance was already freed or invalid */
         kprintf("[KPROBES] kretprobe: stale instance %d (in_use=%d)\n",
                 instance_id, inst->in_use);
-        return inst->ret_addr ? inst->ret_addr : 0;
+        uint64_t addr = inst->ret_addr ? inst->ret_addr : 0;
+        spinlock_irqsave_release(&g_kretprobe_lock, irq_flags);
+        return addr;
     }
 
     struct kretprobe *rp = inst->rp;
     uint64_t orig_ret_addr = inst->ret_addr;
     uint64_t return_value = saved_rax ? *saved_rax : 0;
 
-    /* Call the user's return handler */
-    if (rp->handler) {
-        rp->handler(rp, return_value);
-    }
-
-    /* Clean up the instance */
+    /* Clean up the instance BEFORE calling the handler — prevents
+     * reentrancy issues if the handler itself calls the probed function */
     rp->active_count--;
     inst->in_use = 0;
     inst->rp = NULL;
     inst->ret_addr = 0;
 
+    spinlock_irqsave_release(&g_kretprobe_lock, irq_flags);
+
+    /* Call the user's return handler (outside the lock) */
+    if (rp->handler) {
+        rp->handler(rp, return_value);
+    }
+
     return orig_ret_addr;
 }
 
 /* ── BPF program attachment (Item 4) ──────────────────────────────── */
+
+/*
+ * Static pool of kprobe structs for BPF kprobe attachments.
+ * BPF program fds (1-based) map directly: g_bpf_probes[fd - 1].
+ * This avoids the use-after-return bug that would occur with
+ * stack-allocation (the kprobe must outlive the register call).
+ */
+#define KPROBE_BPF_MAX 64
+static struct kprobe g_bpf_probes[KPROBE_BPF_MAX];
 
 /*
  * kprobe_register_bpf — Attach a BPF program to a kprobe.
@@ -796,14 +868,21 @@ int kprobe_register_bpf(const char *symbol, int bpf_prog_fd)
         return -ENOENT;
     }
 
-    /* Register a kprobe at the symbol.
-     * The pre_handler will be a trampoline that executes the BPF program. */
-    struct kprobe kp;
-    memset(&kp, 0, sizeof(kp));
-    kp.addr = (uint64_t)(uintptr_t)addr;
-    kp.pre_handler = NULL;  /* BPF programs are invoked from the handler directly */
+    /* Validate prog_fd range */
+    if (bpf_prog_fd < 1 || bpf_prog_fd > KPROBE_BPF_MAX) {
+        kprintf("[KPROBES] BPF: invalid prog fd %d\n", bpf_prog_fd);
+        return -EINVAL;
+    }
 
-    int ret = register_kprobe(&kp);
+    /* Register a kprobe at the symbol.
+     * Use the persistent pool slot for this BPF program to avoid
+     * the use-after-return that stack allocation would cause. */
+    struct kprobe *kp = &g_bpf_probes[bpf_prog_fd - 1];
+    memset(kp, 0, sizeof(*kp));
+    kp->addr = (uint64_t)(uintptr_t)addr;
+    kp->pre_handler = NULL;  /* BPF programs are invoked from the handler directly */
+
+    int ret = register_kprobe(kp);
     if (ret < 0) {
         kprintf("[KPROBES] BPF: failed to register kprobe at '%s' (ret=%d)\n",
                 symbol, ret);
@@ -816,13 +895,15 @@ int kprobe_register_bpf(const char *symbol, int bpf_prog_fd)
 }
 
 /* kprobe_unregister_bpf — Detach a BPF program from its kprobe. */
-static int kprobe_unregister_bpf(const char *symbol)
+static int kprobe_unregister_bpf(int prog_fd)
 {
-    if (!symbol) return -EINVAL;
-    /* In a full implementation, we'd track the kprobe by prog_fd
-     * and unregister it. For now, just acknowledge. */
-    kprintf("[KPROBES] BPF: detached from kprobe '%s'\n", symbol);
-    return 0;
+    if (prog_fd < 1 || prog_fd > KPROBE_BPF_MAX) return -EINVAL;
+    struct kprobe *kp = &g_bpf_probes[prog_fd - 1];
+    int ret = unregister_kprobe(kp);
+    memset(kp, 0, sizeof(*kp));
+    if (ret == 0)
+        kprintf("[KPROBES] BPF: detached from kprobe fd=%d\n", prog_fd);
+    return ret;
 }
 
 /* ── kprobe_register: Wrapper for register_kprobe ──────────────────── */
