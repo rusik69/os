@@ -26,9 +26,23 @@ static uint64_t thp_total = 0;
 static uint64_t thp_merged = 0;
 static uint64_t thp_split = 0;
 
+/* Lock protecting all THP state (thp_entries[], entry_count, thp_enabled,
+ * statistics, and deferred split queue).
+ *
+ * Lock ordering: thp_lock is INNER (leaf).  If a page-table lock is later
+ * introduced for process address spaces, it MUST be acquired BEFORE thp_lock
+ * to prevent ABBA deadlock between the khugepaged promotion path and the
+ * THP split path.
+ *
+ *   Correct order:  page-table-lock -> thp_lock
+ *   WRONG order:    thp_lock -> page-table-lock   (potential deadlock)
+ */
+static spinlock_t thp_lock;
+
 void __init thp_init(void) {
     memset(thp_entries, 0, sizeof(thp_entries));
     thp_entry_count = 0;
+    spinlock_init(&thp_lock);
     thp_enabled = 1;
     thp_total = 0;
     thp_merged = 0;
@@ -37,16 +51,24 @@ void __init thp_init(void) {
 }
 
 void thp_set_enabled(int enabled) {
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&thp_lock, &irq_flags);
     thp_enabled = enabled;
+    spinlock_irqsave_release(&thp_lock, irq_flags);
     kprintf("[MEM] THP %s\n", enabled ? "enabled" : "disabled");
 }
 
 int thp_is_enabled(void) {
-    return thp_enabled;
+    int enabled;
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&thp_lock, &irq_flags);
+    enabled = thp_enabled;
+    spinlock_irqsave_release(&thp_lock, irq_flags);
+    return enabled;
 }
 
-int thp_track_hugepage(uint64_t virt_addr, uint64_t phys_addr) {
-    if (!thp_enabled) return -ENODEV;
+/* Internal: caller must hold thp_lock */
+static int __thp_track_hugepage_locked(uint64_t virt_addr, uint64_t phys_addr) {
     if (thp_entry_count >= THP_MAX_PAGES) return -ENOSPC;
 
     /* Check for duplicate */
@@ -64,17 +86,33 @@ int thp_track_hugepage(uint64_t virt_addr, uint64_t phys_addr) {
     return 0;
 }
 
+int thp_track_hugepage(uint64_t virt_addr, uint64_t phys_addr) {
+    uint64_t irq_flags;
+    int ret;
+    spinlock_irqsave_acquire(&thp_lock, &irq_flags);
+    if (!thp_enabled) { ret = -ENODEV; goto out; }
+    ret = __thp_track_hugepage_locked(virt_addr, phys_addr);
+out:
+    spinlock_irqsave_release(&thp_lock, irq_flags);
+    return ret;
+}
+
 void thp_untrack_hugepage(uint64_t virt_addr) {
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&thp_lock, &irq_flags);
     for (int i = 0; i < thp_entry_count; i++) {
         if (thp_entries[i].virt_addr == virt_addr && thp_entries[i].present) {
             thp_entries[i].present = 0;
             thp_total--;
+            spinlock_irqsave_release(&thp_lock, irq_flags);
             return;
         }
     }
+    spinlock_irqsave_release(&thp_lock, irq_flags);
 }
 
-int thp_split_hugepage(uint64_t virt_addr) {
+/* Internal: caller must hold thp_lock */
+static int __thp_split_hugepage_locked(uint64_t virt_addr) {
     for (int i = 0; i < thp_entry_count; i++) {
         if (thp_entries[i].virt_addr == virt_addr && thp_entries[i].present) {
             if (thp_entries[i].state == THP_RAW) {
@@ -88,9 +126,41 @@ int thp_split_hugepage(uint64_t virt_addr) {
     return -ENOENT;
 }
 
-uint64_t thp_get_total_pages(void)  { return thp_total; }
-uint64_t thp_get_merged_pages(void) { return thp_merged; }
-uint64_t thp_get_split_pages(void)  { return thp_split; }
+int thp_split_hugepage(uint64_t virt_addr) {
+    uint64_t irq_flags;
+    int ret;
+    spinlock_irqsave_acquire(&thp_lock, &irq_flags);
+    ret = __thp_split_hugepage_locked(virt_addr);
+    spinlock_irqsave_release(&thp_lock, irq_flags);
+    return ret;
+}
+
+uint64_t thp_get_total_pages(void) {
+    uint64_t val;
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&thp_lock, &irq_flags);
+    val = thp_total;
+    spinlock_irqsave_release(&thp_lock, irq_flags);
+    return val;
+}
+
+uint64_t thp_get_merged_pages(void) {
+    uint64_t val;
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&thp_lock, &irq_flags);
+    val = thp_merged;
+    spinlock_irqsave_release(&thp_lock, irq_flags);
+    return val;
+}
+
+uint64_t thp_get_split_pages(void) {
+    uint64_t val;
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&thp_lock, &irq_flags);
+    val = thp_split;
+    spinlock_irqsave_release(&thp_lock, irq_flags);
+    return val;
+}
 
 /* ═══════════════════════════════════════════════════════════════════════
  *  khugepaged — background 4K → 2MB huge page promotion daemon
@@ -162,9 +232,32 @@ int khugepaged_get_sleep_ms(void) {
     return khugepaged_sleep_ms;
 }
 
-uint64_t khugepaged_get_scanned(void)   { return khugepaged_pages_scanned; }
-uint64_t khugepaged_get_promoted(void)  { return khugepaged_pages_promoted; }
-uint64_t khugepaged_get_failed(void)    { return khugepaged_pages_failed; }
+uint64_t khugepaged_get_scanned(void) {
+    uint64_t val;
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&khugepaged_lock, &irq_flags);
+    val = khugepaged_pages_scanned;
+    spinlock_irqsave_release(&khugepaged_lock, irq_flags);
+    return val;
+}
+
+uint64_t khugepaged_get_promoted(void) {
+    uint64_t val;
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&khugepaged_lock, &irq_flags);
+    val = khugepaged_pages_promoted;
+    spinlock_irqsave_release(&khugepaged_lock, irq_flags);
+    return val;
+}
+
+uint64_t khugepaged_get_failed(void) {
+    uint64_t val;
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&khugepaged_lock, &irq_flags);
+    val = khugepaged_pages_failed;
+    spinlock_irqsave_release(&khugepaged_lock, irq_flags);
+    return val;
+}
 
 /* ── Page-table walk helpers ─────────────────────────────────────── */
 
@@ -356,8 +449,14 @@ static int khugepaged_promote_range(uint64_t *pml4, uint64_t virt,
     if (thp_enabled) {
         thp_track_hugepage(virt, huge_phys);
     }
+    uint64_t __vh_irq;
+    spinlock_irqsave_acquire(&thp_lock, &__vh_irq);
     vm_hugepages++;
+    spinlock_irqsave_release(&thp_lock, __vh_irq);
+    uint64_t __irq_flags_promo;
+    spinlock_irqsave_acquire(&khugepaged_lock, &__irq_flags_promo);
     khugepaged_pages_promoted++;
+    spinlock_irqsave_release(&khugepaged_lock, __irq_flags_promo);
 
     return 0;
 
@@ -421,11 +520,17 @@ static void khugepaged_scan_process(struct process *proc)
         if (!khugepaged_check_range(pml4, virt, &range_phys, &range_flags))
             continue;
 
+        uint64_t __irq_flags_scanned;
+        spinlock_irqsave_acquire(&khugepaged_lock, &__irq_flags_scanned);
         khugepaged_pages_scanned++;
+        spinlock_irqsave_release(&khugepaged_lock, __irq_flags_scanned);
 
         /* ── Attempt promotion ── */
         if (khugepaged_promote_range(pml4, virt, range_phys, range_flags) < 0) {
+            uint64_t __irq_flags_fail;
+            spinlock_irqsave_acquire(&khugepaged_lock, &__irq_flags_fail);
             khugepaged_pages_failed++;
+            spinlock_irqsave_release(&khugepaged_lock, __irq_flags_fail);
         }
     }
 }
@@ -439,7 +544,7 @@ static void khugepaged_daemon(void *arg)
     kprintf("[khugepaged] daemon started (scan interval=%d ms)\n",
             khugepaged_sleep_ms);
 
-    while (khugepaged_enabled) {
+    while (khugepaged_is_enabled()) {
         uint64_t scan_start = timer_get_ticks();
         uint64_t pages_before = khugepaged_pages_scanned;
 
@@ -521,10 +626,16 @@ module_init(thp_init);
 /* ── split_huge_page ─────────────────────────────────────────── */
 static int split_huge_page(uint64_t addr)
 {
-    if (!thp_enabled) return -ENODEV;
+    uint64_t irq_flags;
+    int ret;
+
+    spinlock_irqsave_acquire(&thp_lock, &irq_flags);
+
+    if (!thp_enabled) { ret = -ENODEV; goto out; }
     if (addr & (THP_HPAGE_SIZE - 1)) {
         kprintf("[thp] split_huge_page: addr 0x%llx not 2MB-aligned\n", (unsigned long long)addr);
-        return -EINVAL;
+        ret = -EINVAL;
+        goto out;
     }
     /* Check if this huge page is tracked */
     for (int i = 0; i < thp_entry_count; i++) {
@@ -534,42 +645,64 @@ static int split_huge_page(uint64_t addr)
                 thp_split++;
                 kprintf("[thp] split_huge_page: 0x%llx split into 512 4K pages\n",
                         (unsigned long long)addr);
-                return 512;
+                ret = 512;
+            } else {
+                ret = 0;
             }
-            return 0;
+            goto out;
         }
     }
     kprintf("[thp] split_huge_page: 0x%llx not found in tracking\n", (unsigned long long)addr);
-    return -ENOENT;
+    ret = -ENOENT;
+
+out:
+    spinlock_irqsave_release(&thp_lock, irq_flags);
+    return ret;
 }
 
 /* ── collapse_huge_page ──────────────────────────────────────── */
 static int collapse_huge_page(uint64_t addr)
 {
-    if (!thp_enabled) return -ENODEV;
+    uint64_t irq_flags;
+    int ret;
+
+    spinlock_irqsave_acquire(&thp_lock, &irq_flags);
+
+    if (!thp_enabled) { ret = -ENODEV; goto out_unlock; }
     if (addr & (THP_HPAGE_SIZE - 1)) {
         kprintf("[thp] collapse_huge_page: addr 0x%llx not 2MB-aligned\n", (unsigned long long)addr);
-        return -EINVAL;
+        ret = -EINVAL;
+        goto out_unlock;
     }
     /* Check if already a huge page */
     for (int i = 0; i < thp_entry_count; i++) {
         if (thp_entries[i].virt_addr == addr && thp_entries[i].present) {
-            if (thp_entries[i].state == THP_RAW)
-                return 0; /* Already a huge page */
+            if (thp_entries[i].state == THP_RAW) {
+                ret = 0; /* Already a huge page */
+                goto out_unlock;
+            }
             thp_entries[i].state = THP_RAW;
             thp_merged++;
             kprintf("[thp] collapse_huge_page: 0x%llx promoted\n", (unsigned long long)addr);
-            return 0;
+            ret = 0;
+            goto out_unlock;
         }
     }
-    /* Not tracked — try to allocate a new huge page */
+    /* Not tracked -- release lock, allocate, re-acquire to track */
+    spinlock_irqsave_release(&thp_lock, irq_flags);
+
     uint64_t phys = (uint64_t)pmm_alloc_frames(512);
     if (!phys) return -ENOMEM;
-    int ret = thp_track_hugepage(addr, phys);
+
+    spinlock_irqsave_acquire(&thp_lock, &irq_flags);
+    ret = __thp_track_hugepage_locked(addr, phys);
     if (ret == 0) {
         thp_merged++;
         kprintf("[thp] collapse_huge_page: 0x%llx new 2MB huge page\n", (unsigned long long)addr);
     }
+
+out_unlock:
+    spinlock_irqsave_release(&thp_lock, irq_flags);
     return ret;
 }
 
@@ -614,13 +747,15 @@ static uint64_t thp_get_unmapped_area(uint64_t addr, size_t len, unsigned long f
 /* ── deferred_split_huge_page — Queue a THP for deferred split ── */
 static void deferred_split_huge_page(uint64_t addr)
 {
-    if (!thp_enabled)
-        return;
+    uint64_t irq_flags;
 
+    spinlock_irqsave_acquire(&thp_lock, &irq_flags);
+
+    if (!thp_enabled) { goto out; }
     if (addr & (THP_HPAGE_SIZE - 1)) {
         kprintf("[thp] deferred_split_huge_page: addr 0x%llx not 2MB-aligned\n",
                 (unsigned long long)addr);
-        return;
+        goto out;
     }
 
     /* Add to deferred split queue (simple array-based tracking).
@@ -630,17 +765,20 @@ static void deferred_split_huge_page(uint64_t addr)
 
     if (deferred_count >= 64) {
         kprintf("[thp] deferred_split_huge_page: queue full, splitting now\n");
-        thp_split_hugepage(addr);
-        return;
+        __thp_split_hugepage_locked(addr);
+        goto out;
     }
 
     /* Check for duplicates */
     for (int i = 0; i < deferred_count; i++) {
         if (deferred_queue[i] == addr)
-            return;
+            goto out;
     }
 
     deferred_queue[deferred_count++] = addr;
     kprintf("[thp] deferred_split_huge_page: queued 0x%llx for deferred split (%d queued)\n",
             (unsigned long long)addr, deferred_count);
+
+out:
+    spinlock_irqsave_release(&thp_lock, irq_flags);
 }
