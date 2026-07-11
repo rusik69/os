@@ -1,7 +1,7 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_batch": "B006",
-  "current_item": 395,
+  "current_batch": "B007",
+  "current_item": 402,
   "completed_items": [
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
     11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
@@ -44,13 +44,25 @@
     378, 379, 380,
     381, 382, 383,
     384, 385, 386, 387, 388, 389, 390, 391,
-    392, 393, 394
+    392, 393, 394,
+    395,
+    396,
+    397,
+    398,
+    399,
+    400,
+    401
   ],
-  "found_bugs": 853,
-  "fixed_bugs": 853,
+  "found_bugs": 861,
+  "fixed_bugs": 861,
   "completed_batches": [
-    "B002"
+    "B001",
+    "B002",
+    "B003",
+    "B004",
+    "B005",
+    "B006"
   ],
-  "last_item_timestamp": "2026-07-11T03:32:00",
-  "last_item_result": "item 394: src/test/kunit_net.c - sock_alloc returns slot (0..SOCK_MAX-1) not fd (+100). 7 test functions passed raw slot to sock_get()/sock_free() causing NULL returns (sock_get: slot-100<0 → NULL) and silent leaks (sock_free: early return). Fixed all call sites with sock_fd_from_slot() conversion. Also fixed max-allocation test comparing failure against -1 instead of < 0 (ENOMEM is 12). Build verified, committed."
+  "last_item_timestamp": "2026-07-11T04:20:00",
+  "last_item_result": "item 401: src/kernel/syscall.c - verified all shared state for lock coverage. Found and fixed 5 lock/shared-state bugs: (1) prng_lock added to xorshift64/prng_add_entropy for SMP-safe PRNG, (2) proc_table_lock added to sys_getitimer, (3) proc_table_lock added to sys_alarm, (4) consolidated duplicate custom_syscall_table statics to file scope (registration was disconnected from lookup), (5) fh_lock added to fh_table for handle operations. Audit notes: system_hostname race is low-severity (proc->ns_hostname used in normal paths, sethostname is privileged). ac97_beep pcm[512] local static has trivial race but benign for sound data. Build-verified 5 times with make -j$(nproc)."
 }

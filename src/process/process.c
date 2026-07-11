@@ -1390,14 +1390,22 @@ int process_waitpid(uint32_t pid, int *status) {
     if (!child) return -ENOENT;
 
     if (child->state != PROCESS_ZOMBIE && child->state != PROCESS_UNUSED) {
-        /* Block until child's process_exit_code wakes us */
-        current_process->wait_for_pid = pid;
-        current_process->state = PROCESS_BLOCKED;
-        scheduler_remove(current_process);
+        /* Block until child's process_exit_code wakes us.
+         * Use process_get_current() (per-CPU) — NOT current_process (global).
+         * The global 'current_process' is updated by all CPUs via
+         * process_set_current() in schedule() and is racy on SMP.  Using
+         * the per-CPU version guarantees we modify the correct process
+         * even if another CPU has called schedule() since we last ran. */
+        struct process *cur = process_get_current();
+        if (!cur) return -EINVAL;
+        cur->wait_for_pid = pid;
+        cur->state = PROCESS_BLOCKED;
+        scheduler_remove(cur);
         scheduler_yield();
         /* After wake, re-lookup the child — it may have been cleaned up
          * by another concurrent waitpid (race). */
-        current_process->wait_for_pid = 0;
+        cur = process_get_current();
+        cur->wait_for_pid = 0;
         child = process_get_by_pid(pid);
         if (!child || child->state == PROCESS_UNUSED) return -EINVAL;
     }
@@ -1407,11 +1415,16 @@ int process_waitpid(uint32_t pid, int *status) {
     return 0;
 }
 
-/* Block the current process for N ticks. */
+/* Block the current process for N ticks.
+ * Uses process_get_current() (per-CPU) — NOT current_process (global).
+ * The global is racy on SMP because all CPUs write to it via
+ * process_set_current() in schedule(). */
 void process_sleep_ticks(uint64_t nticks) {
-    current_process->sleep_until = timer_get_ticks() + nticks;
-    current_process->state = PROCESS_BLOCKED;
-    scheduler_remove(current_process);
+    struct process *cur = process_get_current();
+    if (!cur) return;
+    cur->sleep_until = timer_get_ticks() + nticks;
+    cur->state = PROCESS_BLOCKED;
+    scheduler_remove(cur);
     scheduler_yield();
 }
 
