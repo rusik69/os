@@ -334,23 +334,39 @@ static int fuse_dev_read(void *priv, void *buf,
 
     spinlock_irqsave_acquire(&g_fuse_dev.lock, &irq_flags);
 
-    /* Wait until a request is available or timeout */
     while (list_empty(&g_fuse_dev.request_queue)) {
-        spinlock_irqsave_release(&g_fuse_dev.lock, irq_flags);
-
-        /* Block on the daemon wait queue */
-        wait_queue_sleep(&g_fuse_dev.daemon_wq);
+        /*
+         * Use wait_queue_sleep_spinunlock which registers this process on
+         * daemon_wq while g_fuse_dev.lock is still held, then releases
+         * g_fuse_dev.lock before sleeping.  This closes the lost-wakeup
+         * window:
+         *
+         *   Reader: [lock released] → [...gap...] → [register on wq] → sleep
+         *   Queuer: [lock acquired] → [add item] → [wake_all] → [lock released]
+         *
+         * If the gap exists, a wake can arrive before the reader registers.
+         * With the new function, the reader registers BEFORE the lock is
+         * released, so any producer holding the lock will find the reader
+         * already on the wait queue.
+         */
+        ret = wait_queue_sleep_spinunlock(&g_fuse_dev.daemon_wq,
+                                               &g_fuse_dev.lock,
+                                               &irq_flags);
 
         spinlock_irqsave_acquire(&g_fuse_dev.lock, &irq_flags);
+
+        if (ret < 0) {
+            /* Wait queue full — return 0 (daemon should retry) */
+            spinlock_irqsave_release(&g_fuse_dev.lock, irq_flags);
+            *out_size = 0;
+            return 0;
+        }
 
         /* Re-check: if queue has items, break and serve them */
         if (!list_empty(&g_fuse_dev.request_queue))
             break;
 
-        /* No items and no waiters — return 0 bytes */
-        spinlock_irqsave_release(&g_fuse_dev.lock, irq_flags);
-        *out_size = 0;
-        return 0;
+        /* Spurious wake — loop back and sleep again */
     }
 
     /* Dequeue the first request */

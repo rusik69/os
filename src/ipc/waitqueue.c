@@ -313,6 +313,86 @@ EXPORT_SYMBOL(wait_queue_sleep);
 EXPORT_SYMBOL(wait_queue_wake);
 EXPORT_SYMBOL(wait_queue_wake_all);
 
+/*
+ * wait_queue_sleep_spinunlock — Sleep on wq, releasing a condition spinlock
+ *                               atomically after registering on the wait queue.
+ *
+ * Registers the current process on @wq while @cond_lock is still held, then
+ * releases @cond_lock before sleeping.  This closes the lost-wakeup window
+ * that exists in the plain wait_queue_sleep() pattern:
+ *
+ *   lock(cond_lock);
+ *   while (!condition) {
+ *       unlock(cond_lock);       ← wake can be LOST here
+ *       wait_queue_sleep(wq);
+ *       lock(cond_lock);
+ *   }
+ *   unlock(cond_lock);
+ *
+ * With this function the pattern becomes:
+ *
+ *   lock(cond_lock);
+ *   while (!condition) {
+ *       wait_queue_sleep_spinunlock(wq, cond_lock, &flags);
+ *       lock(cond_lock);
+ *   }
+ *   unlock(cond_lock);
+ */
+int wait_queue_sleep_spinunlock(struct wait_queue *wq,
+                                 spinlock_t *cond_lock,
+                                 const uint64_t *cond_flags)
+{
+    uint64_t flags;
+    struct process *cur = process_get_current();
+    if (!cur) return -1;
+
+    spinlock_irqsave_acquire(&wq->lock, &flags);
+
+    if (wq->count >= WAITQUEUE_MAX_WAITERS) {
+        spinlock_irqsave_release(&wq->lock, flags);
+        return -1;
+    }
+
+    /* Insert at the tail (FIFO) */
+    int tail = (wq->head + wq->count) % WAITQUEUE_MAX_WAITERS;
+    wq->pids[tail] = cur->pid;
+    wq->count++;
+
+    /* Mark process BLOCKED */
+    cur->state = PROCESS_BLOCKED;
+
+    /* Release wq lock */
+    spinlock_irqsave_release(&wq->lock, flags);
+
+    /* NOW release the condition lock — we are registered on the wait queue
+     * so any concurrent wake_all from the condition lock holder will find us. */
+    if (cond_lock && cond_flags)
+        spinlock_irqsave_release(cond_lock, *cond_flags);
+
+    /* Remove from scheduler and yield */
+    scheduler_remove(cur);
+    scheduler_yield();
+
+    /* Woken up: re-acquire wq lock to clean up */
+    spinlock_irqsave_acquire(&wq->lock, &flags);
+
+    /* Find and remove our PID from the queue (in case of wake_all) */
+    for (int i = 0; i < wq->count; i++) {
+        int idx = (wq->head + i) % WAITQUEUE_MAX_WAITERS;
+        if (wq->pids[idx] == cur->pid) {
+            int last = (wq->head + wq->count - 1) % WAITQUEUE_MAX_WAITERS;
+            if (idx != last)
+                wq->pids[idx] = wq->pids[last];
+            wq->pids[last] = 0;
+            wq->count--;
+            break;
+        }
+    }
+
+    spinlock_irqsave_release(&wq->lock, flags);
+    return 0;
+}
+
 /* ── waitqueue_wake_all ─────────────────────────────── */
 static int waitqueue_wake_all(void *wq)
 {

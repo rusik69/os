@@ -70,6 +70,30 @@ static inline void wait_queue_init(struct wait_queue *wq) {
 int wait_queue_sleep(struct wait_queue *wq);
 
 /*
+ * wait_queue_sleep_spinunlock — Sleep on wq, releasing a condition spinlock
+ *                               atomically after registering on the wait queue.
+ *
+ * @wq:          Wait queue to sleep on
+ * @cond_lock:   Condition spinlock to release AFTER registering on wq
+ *               (pass NULL if no extra lock)
+ * @cond_flags:  Saved IRQ flags for cond_lock release (may be NULL if no lock)
+ *
+ * Unlike wait_queue_sleep(), this function ensures the calling process is
+ * registered on the wait queue BEFORE the condition spinlock is released.
+ * This closes the classic lost-wakeup window: another thread holding the
+ * condition lock can add an item and call wait_queue_wake_all(), guaranteed
+ * to find this process already registered.
+ *
+ * Caller must hold @cond_lock before calling.  After return the caller
+ * should re-acquire @cond_lock and re-check the condition.
+ *
+ * Returns 0 normally, -1 if the wait queue is full.
+ */
+int wait_queue_sleep_spinunlock(struct wait_queue *wq,
+                                 spinlock_t *cond_lock,
+                                 const uint64_t *cond_flags);
+
+/*
  * Interruptible sleep on the wait queue.
  * Like wait_queue_sleep, but returns -EINTR (-4) if a signal is
  * pending before sleeping or when woken.  Use this for syscalls
