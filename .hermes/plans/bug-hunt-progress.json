@@ -1,7 +1,7 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
   "current_batch": "B006",
-  "current_item": 388,
+  "current_item": 389,
   "completed_items": [
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
     11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
@@ -46,13 +46,14 @@
     384,
     385,
     386,
-    387
+    387,
+    388
   ],
-  "found_bugs": 849,
-  "fixed_bugs": 849,
+  "found_bugs": 851,
+  "fixed_bugs": 851,
   "completed_batches": [
     "B002"
   ],
-  "last_item_timestamp": "2026-07-11T01:58:30",
-  "last_item_result": "item 387: bug found and fixed - propagate alloc_inode failure errno in tmpfs_mkdir, tmpfs_create, tmpfs_mknod instead of masking with -EINVAL"
+  "last_item_timestamp": "2026-07-11T02:15:00",
+  "last_item_result": "item 388: 2 bugs found and fixed in bufcache.c - g_count not decremented in evict_one (leaks upward), and cache_fill failure path uses lru_push_head instead of returning entry to free pool at tail (causes invalid entry at LRU head → next free-pool alloc could overwrite valid cached sector)"
 }
