@@ -151,34 +151,9 @@ static inline void slab_poison_alloc(struct kmem_cache *cache, void *obj) {
 
 static struct kmem_cache *cache_list = NULL;
 static int slab_initialized = 0;
+static spinlock_t cache_list_lock = SPINLOCK_INIT;
 
 /* ── Slab statistics ────────────────────────────────────────────────── */
-
-void slab_get_stats(struct slab_stats *s) {
-    if (!s) return;
-    memset(s, 0, sizeof(*s));
-    struct kmem_cache *cache = cache_list;
-    while (cache) {
-        uint64_t irq_flags;
-        spinlock_irqsave_acquire(&cache->lock, &irq_flags);
-        s->cache_count++;
-        size_t slab_size = PAGE_SIZE * (1ULL << cache->gfporder);
-        /* Count objects across all slabs */
-        int total_in_cache = 0;
-        int free_in_cache = 0;
-        struct slab *slab;
-        slab = cache->slabs_full;
-        while (slab) { total_in_cache += slab->total; free_in_cache += slab->free_count; s->memory_used += slab_size; slab = slab->next; }
-        slab = cache->slabs_partial;
-        while (slab) { total_in_cache += slab->total; free_in_cache += slab->free_count; s->memory_used += slab_size; slab = slab->next; }
-        slab = cache->slabs_free;
-        while (slab) { total_in_cache += slab->total; free_in_cache += slab->free_count; s->memory_used += slab_size; slab = slab->next; }
-        s->total_objects += (uint64_t)total_in_cache;
-        s->used_objects += (uint64_t)(total_in_cache - free_in_cache);
-        spinlock_irqsave_release(&cache->lock, irq_flags);
-        cache = cache->next;
-    }
-}
 
 /* ── Helper: free a physical page (given kernel virtual address) ──────── */
 static void slab_page_free(void *virt) {
@@ -472,9 +447,12 @@ struct kmem_cache *kmem_cache_create(const char *name, size_t obj_size,
     slab_grow(cache);
     spinlock_irqsave_release(&cache->lock, irq_flags);
 
-    /* Register in global cache list */
+    /* Register in global cache list (list lock protects against
+     * concurrent iteration by slab_get_stats / kmem_cache_reap). */
+    uint64_t list_irq_flags;
+    spinlock_irqsave_acquire(&cache_list_lock, &list_irq_flags);
     cache->next = cache_list;
-    cache_list = cache;
+    spinlock_irqsave_release(&cache_list_lock, list_irq_flags);
 
     return cache;
 }
@@ -595,8 +573,21 @@ void kmem_cache_destroy(struct kmem_cache *cache) {
 
     int pages = 1U << cache->gfporder;
 
-    uint64_t irq_flags;
-    spinlock_irqsave_acquire(&cache->lock, &irq_flags);
+    /* Remove from global cache list first, so no other thread can
+     * find this cache while we tear it down. */
+    uint64_t list_irq_flags;
+    spinlock_irqsave_acquire(&cache_list_lock, &list_irq_flags);
+    struct kmem_cache **pp = &cache_list;
+    while (*pp) {
+        if (*pp == cache) {
+            *pp = cache->next;
+            break;
+        }
+        pp = &(*pp)->next;
+    }
+    spinlock_irqsave_release(&cache_list_lock, list_irq_flags);
+
+    /* Now free all slabs (no other thread can find this cache anymore) */
 
     /* Free all slabs across all three lists */
     struct slab *slab = cache->slabs_full;
@@ -621,46 +612,9 @@ void kmem_cache_destroy(struct kmem_cache *cache) {
         slab = nxt;
     }
 
-    spinlock_irqsave_release(&cache->lock, irq_flags);
-
-    /* Remove from global cache list */
-    struct kmem_cache **pp = &cache_list;
-    struct kmem_cache *cur = cache_list;
-    while (cur) {
-        if (cur == cache) {
-            *pp = cur->next;
-            break;
-        }
-        pp = &cur->next;
-        cur = cur->next;
-    }
-
     kfree(cache);
 }
 
-void kmem_cache_reap(void) {
-    struct kmem_cache *cache = cache_list;
-    while (cache) {
-        uint64_t irq_flags;
-        spinlock_irqsave_acquire(&cache->lock, &irq_flags);
-
-        int pages = 1U << cache->gfporder;
-        struct slab *slab = cache->slabs_free;
-        while (slab) {
-            struct slab *nxt = slab->next;
-            /* slab_relink would also work, but we skip the relink since we're freeing */
-            if (slab->prev) slab->prev->next = slab->next;
-            else cache->slabs_free = slab->next;
-            if (slab->next) slab->next->prev = slab->prev;
-            for (int p = 0; p < pages; p++)
-                slab_page_free((uint8_t *)slab + p * PAGE_SIZE);
-            slab = nxt;
-        }
-
-        spinlock_irqsave_release(&cache->lock, irq_flags);
-        cache = cache->next;
-    }
-}
 
 /* ── Built-in caches ─────────────────────────────────────────────────── */
 
@@ -717,4 +671,58 @@ static int slab_free(void *cache, void *obj)
     (void)obj;
     kprintf("[slab] slab_free: not yet implemented\n");
     return 0;
+}
+void slab_get_stats(struct slab_stats *s) {
+    if (!s) return;
+    memset(s, 0, sizeof(*s));
+    uint64_t list_irq_flags;
+    spinlock_irqsave_acquire(&cache_list_lock, &list_irq_flags);
+    struct kmem_cache *cache = cache_list;
+    while (cache) {
+        uint64_t irq_flags;
+        spinlock_irqsave_acquire(&cache->lock, &irq_flags);
+        s->cache_count++;
+        size_t slab_size = PAGE_SIZE * (1ULL << cache->gfporder);
+        /* Count objects across all slabs */
+        int total_in_cache = 0;
+        int free_in_cache = 0;
+        struct slab *slab;
+        slab = cache->slabs_full;
+        while (slab) { total_in_cache += slab->total; free_in_cache += slab->free_count; s->memory_used += slab_size; slab = slab->next; }
+        slab = cache->slabs_partial;
+        while (slab) { total_in_cache += slab->total; free_in_cache += slab->free_count; s->memory_used += slab_size; slab = slab->next; }
+        slab = cache->slabs_free;
+        while (slab) { total_in_cache += slab->total; free_in_cache += slab->free_count; s->memory_used += slab_size; slab = slab->next; }
+        s->total_objects += (uint64_t)total_in_cache;
+        s->used_objects += (uint64_t)(total_in_cache - free_in_cache);
+        spinlock_irqsave_release(&cache->lock, irq_flags);
+        cache = cache->next;
+    }
+    spinlock_irqsave_release(&cache_list_lock, list_irq_flags);
+}
+void kmem_cache_reap(void) {
+    uint64_t list_irq_flags;
+    spinlock_irqsave_acquire(&cache_list_lock, &list_irq_flags);
+    struct kmem_cache *cache = cache_list;
+    while (cache) {
+        uint64_t irq_flags;
+        spinlock_irqsave_acquire(&cache->lock, &irq_flags);
+
+        int pages = 1U << cache->gfporder;
+        struct slab *slab = cache->slabs_free;
+        while (slab) {
+            struct slab *nxt = slab->next;
+            /* slab_relink would also work, but we skip the relink since we're freeing */
+            if (slab->prev) slab->prev->next = slab->next;
+            else cache->slabs_free = slab->next;
+            if (slab->next) slab->next->prev = slab->prev;
+            for (int p = 0; p < pages; p++)
+                slab_page_free((uint8_t *)slab + p * PAGE_SIZE);
+            slab = nxt;
+        }
+
+        spinlock_irqsave_release(&cache->lock, irq_flags);
+        cache = cache->next;
+    }
+    spinlock_irqsave_release(&cache_list_lock, list_irq_flags);
 }

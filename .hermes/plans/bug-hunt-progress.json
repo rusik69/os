@@ -1,7 +1,7 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_batch": "B007",
-  "current_item": 413,
+  "current_item": 415,
+  "current_item": 414,
   "completed_items": [
     1,
     2,
@@ -414,10 +414,12 @@
     409,
     410,
     411,
-    412
+    412,
+    413,
+    414
   ],
-  "found_bugs": 865,
-  "fixed_bugs": 865,
+  "found_bugs": 867,
+  "fixed_bugs": 867,
   "completed_batches": [
     "B001",
     "B002",
@@ -426,6 +428,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-11T07:20:00",
-  "last_item_result": "item 412: src/memory/pmm.c — verify bitmap lock covers all alloc/free paths. FOUND AND FIXED 4 paths where the bitmap was modified without pmm_global_lock: (1) pmm_ref_frame() — frame_refcount increment not atomic; (2) pmm_unref_frame() — refcount decrement + bitmap_clear + used_frames without lock, also missing poison_fill and vm_pgfree count; (3) pmm_reserve_frames() — bitmap_set + used_frames without lock, called at runtime from heap/memhotplug; (4) pageblock_scan_block() — bitmap allocation ops without lock in the pageblock allocation path. All fixed with spinlock_irqsave_acquire/release. Build verified clean."
+  "last_item_timestamp": "2026-07-11T06:45:00",
+  "last_item_result": "item 414: src/memory/slab.c — verify slab lock/cache lock order consistent. FOUND AND FIXED: the global cache_list linked list was unsynchronized — slab_get_stats, kmem_cache_reap, kmem_cache_create, and kmem_cache_destroy all accessed it without any lock, creating data races and a use-after-free window in kmem_cache_destroy (released cache->lock before unlinking from cache_list, allowing concurrent iteration to find the cache and then access freed memory after kfree). Added static spinlock_t cache_list_lock protecting all list operations. Lock order is always cache_list_lock before cache->lock (never reverse), preventing deadlock. Build verified clean."
 }
