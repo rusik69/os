@@ -89,13 +89,13 @@ struct bochs_drm_priv {
 
 static inline void vbe_write(uint16_t index, uint16_t value)
 {
-    outw(index, VBE_DISPI_IOPORT_INDEX);
-    outw(value, VBE_DISPI_IOPORT_DATA);
+    outw(VBE_DISPI_IOPORT_INDEX, index);
+    outw(VBE_DISPI_IOPORT_DATA, value);
 }
 
 static inline uint16_t vbe_read(uint16_t index)
 {
-    outw(index, VBE_DISPI_IOPORT_INDEX);
+    outw(VBE_DISPI_IOPORT_INDEX, index);
     return inw(VBE_DISPI_IOPORT_DATA);
 }
 

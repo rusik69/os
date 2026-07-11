@@ -67,7 +67,7 @@ static uint64_t bochs_get_lfb_phys(void)
 void bochs_init(void)
 {
     /* Probe Bochs VBE */
-    outw(VBE_DISPI_INDEX_ID, VBE_DISPI_IOPORT_INDEX);
+    outw(VBE_DISPI_IOPORT_INDEX, VBE_DISPI_INDEX_ID);
     uint16_t id = inw(VBE_DISPI_IOPORT_DATA);
     if (id == 0xB0C0 || id >= 0xB0C4) {
         bochs_present = 1;
@@ -103,24 +103,24 @@ int bochs_set_mode(int w, int h, int bpp)
         return -1;
 
     /* Disable display while changing mode */
-    outw(VBE_DISPI_INDEX_ENABLE, VBE_DISPI_IOPORT_INDEX);
-    outw(0, VBE_DISPI_IOPORT_DATA);
+    outw(VBE_DISPI_IOPORT_INDEX, VBE_DISPI_INDEX_ENABLE);
+    outw(VBE_DISPI_IOPORT_DATA, 0);
 
-    outw(VBE_DISPI_INDEX_XRES, VBE_DISPI_IOPORT_INDEX);
-    outw((uint16_t)w, VBE_DISPI_IOPORT_DATA);
+    outw(VBE_DISPI_IOPORT_INDEX, VBE_DISPI_INDEX_XRES);
+    outw(VBE_DISPI_IOPORT_DATA, (uint16_t)w);
 
-    outw(VBE_DISPI_INDEX_YRES, VBE_DISPI_IOPORT_INDEX);
-    outw((uint16_t)h, VBE_DISPI_IOPORT_DATA);
+    outw(VBE_DISPI_IOPORT_INDEX, VBE_DISPI_INDEX_YRES);
+    outw(VBE_DISPI_IOPORT_DATA, (uint16_t)h);
 
-    outw(VBE_DISPI_INDEX_BPP, VBE_DISPI_IOPORT_INDEX);
-    outw((uint16_t)bpp, VBE_DISPI_IOPORT_DATA);
+    outw(VBE_DISPI_IOPORT_INDEX, VBE_DISPI_INDEX_BPP);
+    outw(VBE_DISPI_IOPORT_DATA, (uint16_t)bpp);
 
     /* Enable display + LFB */
-    outw(VBE_DISPI_INDEX_ENABLE, VBE_DISPI_IOPORT_INDEX);
-    outw((uint16_t)(VBE_DISPI_LFB_ENABLED | 1), VBE_DISPI_IOPORT_DATA);
+    outw(VBE_DISPI_IOPORT_INDEX, VBE_DISPI_INDEX_ENABLE);
+    outw(VBE_DISPI_IOPORT_DATA, (uint16_t)(VBE_DISPI_LFB_ENABLED | 1));
 
     /* Read back enable register to verify mode was accepted */
-    outw(VBE_DISPI_INDEX_ENABLE, VBE_DISPI_IOPORT_INDEX);
+    outw(VBE_DISPI_IOPORT_INDEX, VBE_DISPI_INDEX_ENABLE);
     uint16_t enable = inw(VBE_DISPI_IOPORT_DATA);
     if (!(enable & VBE_DISPI_LFB_ENABLED)) {
         kprintf("[BOCHS] set_mode(%dx%d@%d): LFB not enabled (enable=0x%x)\n",
