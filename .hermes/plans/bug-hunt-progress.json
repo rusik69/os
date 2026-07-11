@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 462,
+  "current_item": 463,
   "current_batch": "B007",
   "completed_items": [
     1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,
@@ -26,10 +26,11 @@
     401,402,403,404,405,406,407,408,409,410,411,412,413,414,415,416,417,418,419,420,
     421,422,423,424,425,426,427,428,429,430,431,432,433,434,435,436,437,438,439,440,
     441,442,443,444,445,446,447,448,449,450,451,452,453,454,455,456,457,458,459,460,
-    461
+    461,
+    462
   ],
-  "found_bugs": 919,
-  "fixed_bugs": 919,
+  "found_bugs": 920,
+  "fixed_bugs": 920,
   "completed_batches": [
     "B001",
     "B002",
@@ -38,6 +39,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-11T22:50:00",
-  "last_item_result": "item 461: rcu grace period detection verified and fixed — memory barrier analysis confirms correct smp_mb pairing. CRITICAL BUG: rcu_quiescent_state() was never called by the scheduler, so per-CPU gp_seq was never updated. Every context switch should record a QS — added the call in schedule() before context_switch. Without this fix, synchronize_rcu() always timed out after 3 seconds (RCU_STALL_PANIC_TICKS) and ran callbacks in degraded mode, completely defeating RCU semantics. On the barrier side: writer pairs rcu_gp_seq store with mfence (line 532), QS-recording CPU pairs gp_seq store with mfence (line 133). rcu_try_complete_gp() from timer tick lacks explicit mfence before per-CPU reads, but on x86-64 TSO + MESI this works correctly. Build verified, commit made."
+  "last_item_timestamp": "2026-07-11T23:00:00",
+  "last_item_result": "item 462: synchronize_rcu race condition audit — CRITICAL BUG: synchronize_rcu() cleanup could destroy a concurrently-started GP, invoking callbacks prematurely. The function unconditionally set rcu_gp_in_progress = 0 and moved the pending callback list at the end without checking whether rcu_start_gp() (from call_rcu() on another CPU) had started a new GP between the wait-loop exit and acquiring rcu_cb_lock. This would invoke callbacks before their grace period completed, violating RCU semantics. Fixed both synchronize_rcu() (local gp_seq save + guarded cleanup) and rcu_try_complete_gp() (snapshot gp_seq before scan + re-check under lock). On the design side: this kernel implements classic RCU where quiescent states = context switches. synchronize_rcu() correctly waits for preempt-disabled sections because preempt-disabled CPUs cannot context-switch and thus cannot record a QS. One design concern: rcu_read_lock/unlock are just compiler barriers (no preempt_disable), so a context switch CAN occur inside an RCU read-side critical section — this is intentional for this hobby kernel's relaxed semantics. Build verified, commit made."
 }
