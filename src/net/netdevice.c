@@ -269,33 +269,6 @@ int netif_count(void)
     return count;
 }
 
-/* ── Implement: netdevice_register ────────────────────── */
-static int netdevice_register(void *dev)
-{
-    if (!dev) return -EINVAL;
-    return 0;
-}
-/* ── Implement: netdevice_unregister ──────────────────── */
-static int netdevice_unregister(void *dev)
-{
-    if (!dev) return -EINVAL;
-    return 0;
-}
-/* ── Implement: netdevice_open ────────────────────────── */
-static int netdevice_open(void *dev)
-{
-    if (!dev) return -EINVAL;
-    (void)dev;
-    return 0;
-}
-/* ── Implement: netdevice_stop ────────────────────────── */
-static int netdevice_stop(void *dev)
-{
-    if (!dev) return -EINVAL;
-    (void)dev;
-    return 0;
-}
-
 /* Register netdevice_init early (subsys = level 4) so that NIC drivers
  * which initialise via device_initcall (level 5) can call netif_register. */
 subsys_initcall(netdevice_init);
