@@ -397,6 +397,10 @@ int sys_accept_impl(int sockfd, struct sockaddr_in *addr, uint32_t *addrlen) {
     ns->state = SOCK_STATE_CONNECTED;
     ns->conn_id = conn_id;
     ns->local_port = (uint16_t)local_port;
+    /* Copy remote address from TCP connection — sock_alloc zeroes the
+     * socket, so ns->remote_ip/remote_port are still 0.0.0.0:0. */
+    ns->remote_ip   = tcp_conns[conn_id].remote_ip;
+    ns->remote_port = tcp_conns[conn_id].remote_port;
 
     /* Fill in peer address if requested */
     if (addr && addrlen) {
