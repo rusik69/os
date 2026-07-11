@@ -8,8 +8,10 @@
 #include "kptr_restrict.h" /* for kptr_restrict */
 #include "smp.h"           /* smp_get_cpu_count() */
 #include "cpuhp.h"         /* cpuhp_is_online(), cpuhp_online_count() */
+#include "spinlock.h"      /* SMP spinlock for entry table */
 
 static struct sysfs_entry sysfs_entries[SYSFS_MAX_ENTRIES];
+static spinlock_t sysfs_lock;
 static int sysfs_mounted = 0;
 
 /* ── Forward declarations ──────────────────────────────────────────── */
@@ -28,6 +30,7 @@ static int alloc_entry(void) {
 }
 
 static int find_entry(const char *path) {
+    /* Caller must hold sysfs_lock */
     if (!path || path[0] != '/') return -EINVAL;
     /* Skip leading "/sys" if present */
     const char *rel = path;
@@ -83,10 +86,14 @@ static int create_entry(const char *name, uint8_t type, const char *content,
 
 int sysfs_set_release_cb(const char *path, sysfs_release_cb_t release_cb)
 {
+    spinlock_acquire(&sysfs_lock);
     int idx = find_entry(path);
-    if (idx < 0)
+    if (idx < 0) {
+        spinlock_release(&sysfs_lock);
         return -EINVAL;
+    }
     sysfs_entries[idx].release_cb = release_cb;
+    spinlock_release(&sysfs_lock);
     return 0;
 }
 
@@ -98,13 +105,16 @@ int sysfs_create_file(const char *path, const char *content) {
     int dirlen = (int)(slash - path);
     if (dirlen > 126) return -EINVAL;
     memcpy(dirpath, path, (size_t)dirlen); dirpath[dirlen] = '\0';
+
+    spinlock_acquire(&sysfs_lock);
     int parent = find_entry(dirpath);
-    if (parent < 0) return -EINVAL;
-    if (sysfs_entries[parent].type != 2) return -EINVAL;
+    if (parent < 0) { spinlock_release(&sysfs_lock); return -EINVAL; }
+    if (sysfs_entries[parent].type != 2) { spinlock_release(&sysfs_lock); return -EINVAL; }
 
     const char *name = slash + 1;
-    if (create_entry(name, 1, content, parent, NULL, NULL, NULL) < 0) return -EINVAL;
-    return 0;
+    int ret = create_entry(name, 1, content, parent, NULL, NULL, NULL);
+    spinlock_release(&sysfs_lock);
+    return ret < 0 ? -EINVAL : 0;
 }
 
 int sysfs_create_writable_file(const char *path, const char *initial_content,
@@ -117,13 +127,16 @@ int sysfs_create_writable_file(const char *path, const char *initial_content,
     int dirlen = (int)(slash - path);
     if (dirlen > 126) return -EINVAL;
     memcpy(dirpath, path, (size_t)dirlen); dirpath[dirlen] = '\0';
+
+    spinlock_acquire(&sysfs_lock);
     int parent = find_entry(dirpath);
-    if (parent < 0) return -EINVAL;
-    if (sysfs_entries[parent].type != 2) return -EINVAL;
+    if (parent < 0) { spinlock_release(&sysfs_lock); return -EINVAL; }
+    if (sysfs_entries[parent].type != 2) { spinlock_release(&sysfs_lock); return -EINVAL; }
 
     const char *name = slash + 1;
-    if (create_entry(name, 1, initial_content, parent, priv, read_cb, write_cb) < 0) return -EINVAL;
-    return 0;
+    int ret = create_entry(name, 1, initial_content, parent, priv, read_cb, write_cb);
+    spinlock_release(&sysfs_lock);
+    return ret < 0 ? -EINVAL : 0;
 }
 
 int sysfs_create_dir(const char *path) {
@@ -134,18 +147,21 @@ int sysfs_create_dir(const char *path) {
     int dirlen = (int)(slash - path);
     if (dirlen > 126) return -EINVAL;
     memcpy(dirpath, path, (size_t)dirlen); dirpath[dirlen] = '\0';
+
+    spinlock_acquire(&sysfs_lock);
     int parent;
     if (dirlen == 0 || (dirlen == 1 && dirpath[0] == '/')) {
         parent = 0; /* root */
     } else {
         parent = find_entry(dirpath);
-        if (parent < 0) return -EINVAL;
+        if (parent < 0) { spinlock_release(&sysfs_lock); return -EINVAL; }
     }
-    if (sysfs_entries[parent].type != 2) return -EINVAL;
+    if (sysfs_entries[parent].type != 2) { spinlock_release(&sysfs_lock); return -EINVAL; }
 
     const char *name = slash + 1;
-    if (create_entry(name, 2, NULL, parent, NULL, NULL, NULL) < 0) return -EINVAL;
-    return 0;
+    int ret = create_entry(name, 2, NULL, parent, NULL, NULL, NULL);
+    spinlock_release(&sysfs_lock);
+    return ret < 0 ? -EINVAL : 0;
 }
 
 /* ── VFS operations ────────────────────────────────────────────── */
@@ -153,15 +169,20 @@ int sysfs_create_dir(const char *path) {
 static int sysfs_vfs_read(void *priv, const char *path, void *buf,
                           uint32_t max_size, uint32_t *out_size) {
     (void)priv;
+
+    spinlock_acquire(&sysfs_lock);
     int idx = find_entry(path);
-    if (idx < 0 || sysfs_entries[idx].type != 1)
+    if (idx < 0 || sysfs_entries[idx].type != 1) {
+        spinlock_release(&sysfs_lock);
         return -EINVAL;
+    }
 
     /* Use dynamic read callback if available */
     if (sysfs_entries[idx].read_cb) {
         int ret = sysfs_entries[idx].read_cb((char *)buf, max_size, sysfs_entries[idx].priv);
-        if (ret < 0) return -EINVAL;
+        if (ret < 0) { spinlock_release(&sysfs_lock); return -EINVAL; }
         *out_size = (uint32_t)ret;
+        spinlock_release(&sysfs_lock);
         return 0;
     }
 
@@ -170,31 +191,42 @@ static int sysfs_vfs_read(void *priv, const char *path, void *buf,
     if (copy > 0)
         memcpy(buf, sysfs_entries[idx].content, copy);
     *out_size = copy;
+    spinlock_release(&sysfs_lock);
     return 0;
 }
 
 static int sysfs_vfs_write(void *priv, const char *path, const void *data, uint32_t size) {
     (void)priv;
+
+    spinlock_acquire(&sysfs_lock);
     int idx = find_entry(path);
-    if (idx < 0 || sysfs_entries[idx].type != 1)
+    if (idx < 0 || sysfs_entries[idx].type != 1) {
+        spinlock_release(&sysfs_lock);
         return -EINVAL;
+    }
 
     /* Use write callback if available */
     if (sysfs_entries[idx].write_cb) {
-        return sysfs_entries[idx].write_cb((const char *)data, size, sysfs_entries[idx].priv);
+        int ret = sysfs_entries[idx].write_cb((const char *)data, size, sysfs_entries[idx].priv);
+        spinlock_release(&sysfs_lock);
+        return ret;
     }
 
+    spinlock_release(&sysfs_lock);
     return -EROFS; /* read-only if no write callback */
 }
 
 static int sysfs_vfs_stat(void *priv, const char *path, struct vfs_stat *st) {
     (void)priv;
+
+    spinlock_acquire(&sysfs_lock);
     int idx = find_entry(path);
-    if (idx < 0) return -EINVAL;
+    if (idx < 0) { spinlock_release(&sysfs_lock); return -EINVAL; }
     st->size = sysfs_entries[idx].size;
     st->type = sysfs_entries[idx].type; /* 1=file, 2=dir */
     st->uid = 0; st->gid = 0;
     st->mode = 0444;
+    spinlock_release(&sysfs_lock);
     return 0;
 }
 
@@ -210,8 +242,10 @@ static int sysfs_vfs_unlink(void *priv, const char *path) {
 
 static int sysfs_vfs_readdir(void *priv, const char *path) {
     (void)priv;
+
+    spinlock_acquire(&sysfs_lock);
     int idx = find_entry(path);
-    if (idx < 0 || sysfs_entries[idx].type != 2) return -EINVAL;
+    if (idx < 0 || sysfs_entries[idx].type != 2) { spinlock_release(&sysfs_lock); return -EINVAL; }
     for (int i = 0; i < SYSFS_MAX_ENTRIES; i++) {
         if (!sysfs_entries[i].in_use) continue;
         if (sysfs_entries[i].parent != idx && !(idx == 0 && i == 0)) continue;
@@ -219,13 +253,16 @@ static int sysfs_vfs_readdir(void *priv, const char *path) {
         const char *t = (sysfs_entries[i].type == 2) ? "D" : "F";
         kprintf("  [%s] %s (%u bytes)\n", t, sysfs_entries[i].name, sysfs_entries[i].size);
     }
+    spinlock_release(&sysfs_lock);
     return 0;
 }
 
 static int sysfs_vfs_readdir_names(void *priv, const char *path, char names[][64], int max) {
     (void)priv;
+
+    spinlock_acquire(&sysfs_lock);
     int idx = find_entry(path);
-    if (idx < 0 || sysfs_entries[idx].type != 2) return 0;
+    if (idx < 0 || sysfs_entries[idx].type != 2) { spinlock_release(&sysfs_lock); return 0; }
     int count = 0;
     for (int i = 0; i < SYSFS_MAX_ENTRIES && count < max; i++) {
         if (!sysfs_entries[i].in_use) continue;
@@ -237,6 +274,7 @@ static int sysfs_vfs_readdir_names(void *priv, const char *path, char names[][64
         names[count][copylen] = '\0';
         count++;
     }
+    spinlock_release(&sysfs_lock);
     return count;
 }
 
@@ -265,25 +303,25 @@ int sysfs_remove(const char *path)
     if (!path || path[0] != '/')
         return -ENOENT;
 
+    spinlock_acquire(&sysfs_lock);
     int idx = find_entry(path);
-    if (idx < 0)
+    if (idx < 0) {
+        spinlock_release(&sysfs_lock);
         return -EINVAL;
+    }
 
-    /* Prevent removal of directories that still have children.
-     * This maintains proper kobject lifetime semantics: a parent must
-     * outlive its children.  Callers should use sysfs_remove_recursive
-     * to remove a directory and all its descendants. */
+    /* Prevent removal of directories that still have children. */
     if (sysfs_entries[idx].type == 2) {
         for (int i = 1; i < SYSFS_MAX_ENTRIES; i++) {
-            if (sysfs_entries[i].in_use && sysfs_entries[i].parent == idx)
+            if (sysfs_entries[i].in_use && sysfs_entries[i].parent == idx) {
+                spinlock_release(&sysfs_lock);
                 return -ENOTEMPTY;
+            }
         }
     }
 
-    /* Invoke the release callback before tearing down the entry.
-     * The callback can still access all entry fields, including priv,
-     * so it can properly release any dynamically allocated resources. */
     sysfs_clear_entry(idx);
+    spinlock_release(&sysfs_lock);
     return 0;
 }
 
@@ -349,17 +387,23 @@ int sysfs_remove_recursive(const char *path)
     if (!path || path[0] != '/')
         return -EINVAL;
 
+    spinlock_acquire(&sysfs_lock);
     int idx = find_entry(path);
-    if (idx < 0)
+    if (idx < 0) {
+        spinlock_release(&sysfs_lock);
         return -EINVAL;
-    if (sysfs_entries[idx].type != 2)
+    }
+    if (sysfs_entries[idx].type != 2) {
+        spinlock_release(&sysfs_lock);
         return -EINVAL; /* Not a directory */
+    }
 
     /* Recursively remove all children with depth-limited cycle detection */
     sysfs_clear_children(idx, 0);
 
     /* Finally remove the directory itself */
     sysfs_clear_entry(idx);
+    spinlock_release(&sysfs_lock);
     return 0;
 }
 
@@ -378,11 +422,13 @@ int init_module(void) {
 void __exit cleanup_module(void) {
     if (sysfs_mounted) {
         sysfs_mounted = 0;
+        spinlock_acquire(&sysfs_lock);
         for (int i = 0; i < SYSFS_MAX_ENTRIES; i++) {
             if (sysfs_entries[i].in_use)
                 sysfs_clear_entry(i);
         }
-        kprintf("[sysfs] Module unloaded\\n");
+        spinlock_release(&sysfs_lock);
+        kprintf("[sysfs] Module unloaded\n");
     }
 }
 
@@ -646,6 +692,8 @@ static void sysfs_create_cpu_hotplug_files(void)
 
 void __init sysfs_init(void) {
     if (sysfs_mounted) return;
+
+    spinlock_init(&sysfs_lock);
 
     /* Clear all entries */
     for (int i = 0; i < SYSFS_MAX_ENTRIES; i++) {
