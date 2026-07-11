@@ -806,15 +806,26 @@ int unix_sendmsg(int idx, const struct msghdr *msg, int flags)
     if (!msg || msg->msg_iovlen < 1 || !msg->msg_iov)
         return -EINVAL;
 
+    /* Cache type for fast path — we validate endpoint again under lock */
+    int ep_type;
+
+    spinlock_acquire(&unix_lock);
     struct unix_ep *ep = ep_get(idx);
-    if (!ep) return -EBADF;
+    if (!ep) { spinlock_release(&unix_lock); return -EBADF; }
+    ep_type = ep->type;
+    spinlock_release(&unix_lock);
 
     /* Handle SOCK_DGRAM: dispatch to datagram sender */
-    if (ep->type == SOCK_DGRAM) {
-        /* Determine destination address */
+    if (ep_type == SOCK_DGRAM) {
+        /* Determine destination address — need the lock to safely read
+         * endpoint fields that may change (default_dst). */
         const struct sockaddr_un *dst = NULL;
         uint32_t dst_len = 0;
         struct sockaddr_un tmp_dst;
+
+        spinlock_acquire(&unix_lock);
+        ep = ep_get(idx);
+        if (!ep || ep->type != SOCK_DGRAM) { spinlock_release(&unix_lock); return -EBADF; }
         if (msg->msg_name && msg->msg_namelen >= sizeof(uint16_t)) {
             dst = (const struct sockaddr_un *)msg->msg_name;
             dst_len = msg->msg_namelen;
@@ -826,7 +837,8 @@ int unix_sendmsg(int idx, const struct msghdr *msg, int flags)
             dst = &tmp_dst;
             dst_len = sizeof(uint16_t) + (uint32_t)ep->default_dst_len;
         }
-        /* If no explicit destination, use connected address (future) */
+        spinlock_release(&unix_lock);
+
         if (!dst) return -EDESTADDRREQ;
 
         /* Gather data from iovec */
@@ -863,9 +875,16 @@ int unix_sendmsg(int idx, const struct msghdr *msg, int flags)
         total += (uint64_t)sent;
     }
 
-    /* Process ancillary data for stream sockets */
-    unix_process_cmsg_ancillary(ep, msg);
-    unix_fill_default_creds(ep);
+    /* Process ancillary data for stream sockets — re-acquire lock
+     * so we have a fresh, safe ep pointer and serialized access to
+     * the ancillary-data fields on the endpoint. */
+    spinlock_acquire(&unix_lock);
+    ep = ep_get(idx);
+    if (ep) {
+        unix_process_cmsg_ancillary(ep, msg);
+        unix_fill_default_creds(ep);
+    }
+    spinlock_release(&unix_lock);
 
     return (int)total;
 }
@@ -877,11 +896,16 @@ int unix_recvmsg(int idx, struct msghdr *msg, int flags)
     if (!msg || msg->msg_iovlen < 1 || !msg->msg_iov)
         return -EINVAL;
 
+    /* Cache type under lock for dispatch */
+    int ep_type;
+    spinlock_acquire(&unix_lock);
     struct unix_ep *ep = ep_get(idx);
-    if (!ep) return -EBADF;
+    if (!ep) { spinlock_release(&unix_lock); return -EBADF; }
+    ep_type = ep->type;
+    spinlock_release(&unix_lock);
 
     /* Handle SOCK_DGRAM: dispatch to datagram receiver */
-    if (ep->type == SOCK_DGRAM) {
+    if (ep_type == SOCK_DGRAM) {
         void *buf = msg->msg_iov[0].iov_base;
         uint64_t bufsize = msg->msg_iov[0].iov_len;
         struct sockaddr_un *src = (struct sockaddr_un *)msg->msg_name;
@@ -896,7 +920,13 @@ int unix_recvmsg(int idx, struct msghdr *msg, int flags)
     int n = unix_recv(idx, buf, (uint32_t)(bufsize > 65535 ? 65535 : bufsize), 0);
     if (n <= 0) return -1;
 
-    /* Provide ancillary data (credentials) if available */
+    /* Provide ancillary data (credentials) if available.
+     * Re-acquire the lock so we have a fresh, safe ep pointer and
+     * serialized access to the ancillary-data fields. */
+    spinlock_acquire(&unix_lock);
+    ep = ep_get(idx);
+    if (!ep) { spinlock_release(&unix_lock); return n; }
+
     if (msg->msg_control && msg->msg_controllen > 0 && ep->has_pending_creds) {
         unsigned char *ctrl = (unsigned char *)msg->msg_control;
         uint64_t ctrl_len = msg->msg_controllen;
@@ -936,6 +966,8 @@ int unix_recvmsg(int idx, struct msghdr *msg, int flags)
         un->sun_path[0] = '\0';
         msg->msg_namelen = sizeof(uint16_t);
     }
+
+    spinlock_release(&unix_lock);
 
     return n;
 }
