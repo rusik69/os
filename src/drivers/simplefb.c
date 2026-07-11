@@ -77,7 +77,7 @@ static const char *simplefb_format_name(enum simplefb_format fmt)
  *
  * Returns 0 on success, -1 on invalid parameters.
  */
-static int simplefb_init(uint64_t fb_addr, uint32_t width, uint32_t height,
+int simplefb_init(uint64_t fb_addr, uint32_t width, uint32_t height,
                   uint32_t stride, int format_enum)
 {
     /* Validate parameters */
@@ -148,14 +148,14 @@ int simplefb_init_from_multiboot2(uint64_t mboot_info_phys)
     uint32_t offset = 8; /* skip total_size + reserved */
 
     while (offset + 8 < total_size) {
-        uint16_t tag_type = *(uint16_t*)(uintptr_t)(mboot_info_phys + offset);
-        uint16_t tag_size = *(uint16_t*)(uintptr_t)(mboot_info_phys + offset + 2);
+        uint32_t tag_type = *(uint32_t*)(uintptr_t)(mboot_info_phys + offset);
+        uint32_t tag_size = *(uint32_t*)(uintptr_t)(mboot_info_phys + offset + 4);
 
         if (tag_type == 0)
             break;
 
         if (tag_type == 8) { /* framebuffer info tag */
-            if (tag_size < 25)
+            if (tag_size < 34)
                 goto skip;
 
             uint8_t *data = (uint8_t*)(uintptr_t)(mboot_info_phys + offset + 8);
@@ -195,21 +195,19 @@ int simplefb_init_from_multiboot1(uint64_t mboot_info_phys)
     if (!mboot_info_phys)
         return -1;
 
-    /* Multiboot v1: framebuffer fields at offset 60-88 if flags[2] is set */
+    /* Multiboot v1: framebuffer fields at offset 88-116 if flags[11] is set */
     uint32_t flags = *(uint32_t*)(uintptr_t)mboot_info_phys;
-    if (!(flags & (1U << 2))) {
+    if (!(flags & (1U << 11))) {
         kprintf("[SIMPLEFB] No framebuffer in multiboot v1 info\n");
         return -1;
     }
 
-    uint32_t fb_addr_low = *(uint32_t*)(uintptr_t)(mboot_info_phys + 60);
-    uint32_t fb_addr_high = *(uint32_t*)(uintptr_t)(mboot_info_phys + 64);
-    uint64_t fb_addr = ((uint64_t)fb_addr_high << 32) | fb_addr_low;
-    uint32_t pitch = *(uint32_t*)(uintptr_t)(mboot_info_phys + 68);
-    uint32_t width = *(uint32_t*)(uintptr_t)(mboot_info_phys + 72);
-    uint32_t height = *(uint32_t*)(uintptr_t)(mboot_info_phys + 76);
-    uint8_t  bpp = *(uint8_t*)(uintptr_t)(mboot_info_phys + 80);
-    /* fb_type at offset 81 */
+    uint64_t fb_addr = *(uint64_t*)(uintptr_t)(mboot_info_phys + 88);
+    uint32_t pitch = *(uint32_t*)(uintptr_t)(mboot_info_phys + 96);
+    uint32_t width = *(uint32_t*)(uintptr_t)(mboot_info_phys + 100);
+    uint32_t height = *(uint32_t*)(uintptr_t)(mboot_info_phys + 104);
+    uint8_t  bpp = *(uint8_t*)(uintptr_t)(mboot_info_phys + 108);
+    /* fb_type at offset 109 */
 
     if (width == 0 || height == 0 || fb_addr == 0) {
         kprintf("[SIMPLEFB] Multiboot v1 framebuffer info incomplete\n");
