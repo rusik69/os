@@ -456,12 +456,17 @@ void pmm_reserve_frames(uint64_t phys_start, uint64_t byte_size) {
         }
     }
 
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&pmm_global_lock, &irq_flags);
+
     for (uint64_t f = start_frame; f < end_frame; f++) {
         if (!bitmap_test(f)) {
             bitmap_set(f);
             used_frames++;
         }
     }
+
+    spinlock_irqsave_release(&pmm_global_lock, irq_flags);
 }
 
 void pmm_advance_hint(uint64_t phys_addr) {
@@ -1049,20 +1054,35 @@ void pmm_free_frames_contiguous(uint64_t phys, size_t count) {
 
 void pmm_ref_frame(uint64_t phys) {
     uint64_t frame = phys / PAGE_SIZE;
-    if (frame < MAX_FRAMES && frame_refcount[frame] < 65535)
+    if (frame >= MAX_FRAMES) return;
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&pmm_global_lock, &irq_flags);
+    if (frame_refcount[frame] < 65535)
         frame_refcount[frame]++;
+    spinlock_irqsave_release(&pmm_global_lock, irq_flags);
 }
 
 int pmm_unref_frame(uint64_t phys) {
     uint64_t frame = phys / PAGE_SIZE;
     if (frame >= MAX_FRAMES) return 0;
-    if (frame_refcount[frame] == 0) return 0;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&pmm_global_lock, &irq_flags);
+
+    if (frame_refcount[frame] == 0) {
+        spinlock_irqsave_release(&pmm_global_lock, irq_flags);
+        return 0;
+    }
     frame_refcount[frame]--;
     if (frame_refcount[frame] == 0) {
+        poison_fill(phys, 0xDC);
+        vm_pgfree++;
         bitmap_clear(frame);
         used_frames--;
     }
-    return (int)frame_refcount[frame];
+    int ret = (int)frame_refcount[frame];
+    spinlock_irqsave_release(&pmm_global_lock, irq_flags);
+    return ret;
 }
 
 int pmm_refcount(uint64_t phys) {
@@ -1149,6 +1169,9 @@ static uint64_t pageblock_scan_block(uint64_t block_idx)
     if (end_frame > total_frames)
         end_frame = total_frames;
 
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&pmm_global_lock, &irq_flags);
+
     for (uint64_t f = base_frame; f < end_frame; f++) {
         if (!bitmap_test(f)) {
             bitmap_set(f);
@@ -1157,9 +1180,11 @@ static uint64_t pageblock_scan_block(uint64_t block_idx)
             pmm_hint = f + 1;
             if (pmm_hint >= total_frames)
                 pmm_hint = 0;
+            spinlock_irqsave_release(&pmm_global_lock, irq_flags);
             return f * PAGE_SIZE;
         }
     }
+    spinlock_irqsave_release(&pmm_global_lock, irq_flags);
     return 0;
 }
 
