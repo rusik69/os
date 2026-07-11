@@ -68,23 +68,34 @@ static void bufcache_throttle_writes(uint8_t dev_id) {
                 "(limit=%u)\n",
                 dev_id, g_dirty_count_per_dev[dev_id], BC_MAX_DIRTY_PER_DEV);
 
-        /* Flush all dirty buffers for this device */
+        struct {
+            uint64_t lba;
+            uint8_t  data[SECT_SIZE];
+        } flush_bufs[BC_CAPACITY];
+        int n_flush = 0;
+
         uint64_t irq_flags;
         spinlock_irqsave_acquire(&g_bc_lock, &irq_flags);
-        int flushed = 0;
         for (int i = 0; i < BC_CAPACITY; i++) {
             if (g_entries[i].valid && g_entries[i].dirty &&
                 g_entries[i].dev_id == dev_id && g_entries[i].refcount == 0) {
-                if (blockdev_write_sectors(dev_id, g_entries[i].lba,
-                                            1, g_entries[i].data) == 0) {
-                    g_entries[i].dirty = 0;
-                    g_writes++;
-                    flushed++;
-                }
+                flush_bufs[n_flush].lba = g_entries[i].lba;
+                memcpy(flush_bufs[n_flush].data, g_entries[i].data, SECT_SIZE);
+                g_entries[i].dirty = 0;
+                n_flush++;
             }
         }
         g_dirty_count_per_dev[dev_id] = 0;
         spinlock_irqsave_release(&g_bc_lock, irq_flags);
+
+        int flushed = 0;
+        for (int i = 0; i < n_flush; i++) {
+            if (blockdev_write_sectors(dev_id, flush_bufs[i].lba,
+                                        1, flush_bufs[i].data) == 0) {
+                g_writes++;
+                flushed++;
+            }
+        }
 
         if (flushed > 0) {
             kprintf("[bufcache] throttled writeback: flushed %d buffers for dev=%u\n",
@@ -98,13 +109,20 @@ static void bufcache_throttle_writes(uint8_t dev_id) {
 static uint32_t g_ws_est = 0;  /* working set estimate (active entries count) */
 
 /* ── Forward declarations ───────────────────────────────────────────── */
+struct evict_wb {
+    int      needs_write;
+    uint8_t  dev_id;
+    uint64_t lba;
+    uint8_t  data[SECT_SIZE];
+};
+
 static void lru_touch(int16_t idx);
 static void lru_remove(int16_t idx);
 static void lru_push_head(int16_t idx);
 static int16_t hash_lookup(uint64_t lba, uint8_t dev_id);
 static void hash_remove(int16_t idx);
 static void hash_insert(int16_t idx);
-static int16_t evict_one(void);
+static int16_t evict_one(struct evict_wb *wb);
 
 /* ── Initialization ─────────────────────────────────────────────────── */
 void bufcache_init(void) {
@@ -209,7 +227,9 @@ static void hash_insert(int16_t idx) {
 }
 
 /* ── Eviction ───────────────────────────────────────────────────────── */
-static int16_t evict_one(void) {
+static int16_t evict_one(struct evict_wb *wb) {
+    if (wb) memset(wb, 0, sizeof(*wb));
+
     /* Start from tail (LRU) and work backwards until we find a clean, unreferenced entry */
     int16_t idx = g_lru_tail;
     while (idx >= 0) {
@@ -223,17 +243,19 @@ static int16_t evict_one(void) {
         idx = g_lru[idx].prev;
     }
 
-    /* All entries are dirty or referenced — force-write the LRU unreferenced entry */
+    /* All entries are dirty or referenced — force-evict the LRU unreferenced entry */
     idx = g_lru_tail;
     while (idx >= 0) {
         if (g_entries[idx].refcount == 0) {
             struct bc_entry *e = &g_entries[idx];
             hash_remove(idx);
 
-            /* Write dirty data back */
-            if (e->dirty) {
-                blockdev_write_sectors(e->dev_id, e->lba, 1, e->data);
-                g_writes++;
+            /* Copy dirty data for caller to write back outside the lock */
+            if (e->dirty && wb) {
+                wb->needs_write = 1;
+                wb->dev_id = e->dev_id;
+                wb->lba = e->lba;
+                memcpy(wb->data, e->data, SECT_SIZE);
                 g_dirty_forced_writes++;
             }
 
@@ -251,28 +273,6 @@ static int16_t evict_one(void) {
 }
 
 /* ── Core cache operations ──────────────────────────────────────────── */
-
-/* Fill a cache entry with fresh data from disk */
-static int cache_fill(int16_t idx, uint64_t lba, uint8_t dev_id) {
-    struct bc_entry *e = &g_entries[idx];
-    e->lba = lba;
-    e->dev_id = dev_id;
-    e->valid = 1;
-    e->dirty = 0;
-    e->access_count = 1;  /* first access */
-    e->refcount = 0;      /* no outstanding references yet */
-
-    /* Read from disk */
-    if (blk_submit_sync(dev_id, lba, 1, e->data, BLK_REQ_READ) != 0) {
-        e->valid = 0;
-        return -1;
-    }
-
-    hash_insert(idx);
-    lru_push_head(idx);
-    g_count++;
-    return 0;
-}
 
 /* ── Public API ─────────────────────────────────────────────────────── */
 
@@ -305,37 +305,84 @@ void *bufcache_read(uint64_t lba, uint8_t dev_id) {
     g_total_accesses++;
 
     /* Cache miss — need to fill */
+    struct evict_wb wb;
     int16_t victim;
+    int was_evicted = 0;
+
     if (g_count < BC_CAPACITY) {
         /* Use the LRU tail (free pool entry) */
         victim = g_lru_tail;
         lru_remove(victim);
     } else {
         /* Evict an existing entry */
-        victim = evict_one();
+        victim = evict_one(&wb);
         if (victim < 0) {
             spinlock_irqsave_release(&g_bc_lock, irq_flags);
             return NULL;
         }
+        was_evicted = 1;
         lru_remove(victim);
     }
 
-    if (cache_fill(victim, lba, dev_id) < 0) {
-        /* Fill failed — return entry to free pool at LRU tail */
+    struct bc_entry *e = &g_entries[victim];
+    e->lba = lba;
+    e->dev_id = dev_id;
+    e->valid = 0;       /* not valid until read completes */
+    e->dirty = 0;
+    e->access_count = 1;
+    e->refcount = 0;    /* no outstanding references yet */
+
+    spinlock_irqsave_release(&g_bc_lock, irq_flags);
+
+    /* Write back evicted dirty data (outside the lock) */
+    if (wb.needs_write) {
+        blockdev_write_sectors(wb.dev_id, wb.lba, 1, wb.data);
+        g_writes++;
+    }
+
+    /* Read from disk (outside the lock — avoids deadlock on async devices) */
+    if (blk_submit_sync(dev_id, lba, 1, e->data, BLK_REQ_READ) != 0) {
+        /* Read failed — return victim slot to free pool */
+        spinlock_irqsave_acquire(&g_bc_lock, &irq_flags);
+        e->valid = 0;
         g_lru[victim].prev = g_lru_tail;
         g_lru[victim].next = -1;
         if (g_lru_tail >= 0) g_lru[g_lru_tail].next = (int16_t)victim;
         g_lru_tail = (int16_t)victim;
         if (g_lru_head < 0) g_lru_head = (int16_t)victim;
-        g_entries[victim].valid = 0;
+        if (was_evicted) g_count++;  /* undo evict_one's decrement */
         spinlock_irqsave_release(&g_bc_lock, irq_flags);
         return NULL;
     }
 
-    /* Pin the buffer for caller — refcount was 0 from cache_fill */
-    g_entries[victim].refcount++;
+    /* Re-acquire lock to finalize */
+    spinlock_irqsave_acquire(&g_bc_lock, &irq_flags);
+
+    /* Check if another thread cached this sector while we were doing I/O */
+    int16_t existing = hash_lookup(lba, dev_id);
+    if (existing >= 0) {
+        /* Another thread beat us — free our victim slot and return their entry */
+        e->valid = 0;
+        g_lru[victim].prev = g_lru_tail;
+        g_lru[victim].next = -1;
+        if (g_lru_tail >= 0) g_lru[g_lru_tail].next = (int16_t)victim;
+        g_lru_tail = (int16_t)victim;
+        if (g_lru_head < 0) g_lru_head = (int16_t)victim;
+        if (was_evicted) g_count++;  /* undo evict_one's decrement */
+
+        g_entries[existing].refcount++;
+        spinlock_irqsave_release(&g_bc_lock, irq_flags);
+        return g_entries[existing].data;
+    }
+
+    /* We own this slot — finalize insertion */
+    e->valid = 1;
+    hash_insert(victim);
+    lru_push_head(victim);
+    if (!was_evicted) g_count++;  /* free pool entry — not yet counted */
+    e->refcount++;
     spinlock_irqsave_release(&g_bc_lock, irq_flags);
-    return g_entries[victim].data;
+    return e->data;
 }
 
 /* Release a previously acquired buffer cache entry.
@@ -400,18 +447,22 @@ int bufcache_write(uint64_t lba, uint8_t dev_id, const void *data) {
         return 0;
     }
 
-    /* Cache miss — fill then update */
+    /* Cache miss — need to insert new entry */
+    struct evict_wb wb;
     int16_t victim;
+    int was_evicted = 0;
+
     if (g_count < BC_CAPACITY) {
         victim = g_lru_tail;
         lru_remove(victim);
     } else {
-        victim = evict_one();
+        victim = evict_one(&wb);
         if (victim < 0) {
             /* Cache full with dirty entries — write directly */
             spinlock_irqsave_release(&g_bc_lock, irq_flags);
             return blk_submit_sync(dev_id, lba, 1, (void *)(uintptr_t)data, BLK_REQ_WRITE);
         }
+        was_evicted = 1;
         lru_remove(victim);
     }
 
@@ -424,9 +475,15 @@ int bufcache_write(uint64_t lba, uint8_t dev_id, const void *data) {
     memcpy(e->data, data, SECT_SIZE);
     hash_insert(victim);
     lru_push_head(victim);
-    g_count++;
+    if (!was_evicted) g_count++;
 
     spinlock_irqsave_release(&g_bc_lock, irq_flags);
+
+    /* Write back evicted dirty data (outside the lock) */
+    if (wb.needs_write) {
+        blockdev_write_sectors(wb.dev_id, wb.lba, 1, wb.data);
+        g_writes++;
+    }
 
     /* Throttle: flush if too many dirty buffers on this device */
     bufcache_throttle_writes(dev_id);
@@ -436,20 +493,34 @@ int bufcache_write(uint64_t lba, uint8_t dev_id, const void *data) {
 void bufcache_flush(void) {
     if (!g_initialized) return;
 
+    struct {
+        uint8_t  dev_id;
+        uint64_t lba;
+        uint8_t  data[SECT_SIZE];
+    } flush_bufs[BC_CAPACITY];
+    int n_flush = 0;
+
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&g_bc_lock, &irq_flags);
 
     for (int i = 0; i < BC_CAPACITY; i++) {
         if (g_entries[i].valid && g_entries[i].dirty) {
-            blockdev_write_sectors(g_entries[i].dev_id,
-                                    g_entries[i].lba, 1,
-                                    g_entries[i].data);
-            g_writes++;
+            flush_bufs[n_flush].dev_id = g_entries[i].dev_id;
+            flush_bufs[n_flush].lba    = g_entries[i].lba;
+            memcpy(flush_bufs[n_flush].data, g_entries[i].data, SECT_SIZE);
             g_entries[i].dirty = 0;
+            n_flush++;
         }
     }
 
     spinlock_irqsave_release(&g_bc_lock, irq_flags);
+
+    for (int i = 0; i < n_flush; i++) {
+        blockdev_write_sectors(flush_bufs[i].dev_id,
+                                flush_bufs[i].lba, 1,
+                                flush_bufs[i].data);
+        g_writes++;
+    }
 }
 
 void bufcache_flush_all(void) {
@@ -461,20 +532,30 @@ void bufcache_flush_all(void) {
 void bufcache_flush_dev(uint8_t dev_id) {
     if (!g_initialized) return;
 
+    struct {
+        uint64_t lba;
+        uint8_t  data[SECT_SIZE];
+    } flush_bufs[BC_CAPACITY];
+    int n_flush = 0;
+
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&g_bc_lock, &irq_flags);
 
     for (int i = 0; i < BC_CAPACITY; i++) {
         if (g_entries[i].valid && g_entries[i].dirty && g_entries[i].dev_id == dev_id) {
-            blockdev_write_sectors(g_entries[i].dev_id,
-                                    g_entries[i].lba, 1,
-                                    g_entries[i].data);
-            g_writes++;
+            flush_bufs[n_flush].lba = g_entries[i].lba;
+            memcpy(flush_bufs[n_flush].data, g_entries[i].data, SECT_SIZE);
             g_entries[i].dirty = 0;
+            n_flush++;
         }
     }
 
     spinlock_irqsave_release(&g_bc_lock, irq_flags);
+
+    for (int i = 0; i < n_flush; i++) {
+        blockdev_write_sectors(dev_id, flush_bufs[i].lba, 1, flush_bufs[i].data);
+        g_writes++;
+    }
 }
 
 /* ── Writeback: flush dirty pages without invalidating ──────────────── */
@@ -482,26 +563,39 @@ void bufcache_flush_dev(uint8_t dev_id) {
 int bufcache_writeback(void) {
     if (!g_initialized) return -1;
 
+    struct {
+        uint8_t  dev_id;
+        uint64_t lba;
+        uint8_t  data[SECT_SIZE];
+    } flush_bufs[BC_CAPACITY];
+    int n_flush = 0;
+
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&g_bc_lock, &irq_flags);
 
-    int written = 0;
     /* Walk the LRU list from tail (coldest) to head (hottest) */
     int16_t idx = g_lru_tail;
     while (idx >= 0) {
         if (g_entries[idx].valid && g_entries[idx].dirty) {
-            blockdev_write_sectors(g_entries[idx].dev_id,
-                                    g_entries[idx].lba, 1,
-                                    g_entries[idx].data);
+            flush_bufs[n_flush].dev_id = g_entries[idx].dev_id;
+            flush_bufs[n_flush].lba    = g_entries[idx].lba;
+            memcpy(flush_bufs[n_flush].data, g_entries[idx].data, SECT_SIZE);
             g_entries[idx].dirty = 0;
-            g_writes++;
-            written++;
+            n_flush++;
         }
         idx = g_lru[idx].prev;
     }
 
     spinlock_irqsave_release(&g_bc_lock, irq_flags);
-    return written;
+
+    for (int i = 0; i < n_flush; i++) {
+        blockdev_write_sectors(flush_bufs[i].dev_id,
+                                flush_bufs[i].lba, 1,
+                                flush_bufs[i].data);
+        g_writes++;
+    }
+
+    return n_flush;
 }
 
 void bufcache_set_dirty(uint64_t lba, uint8_t dev_id) {
@@ -531,6 +625,9 @@ void bufcache_invalidate(uint64_t lba, uint8_t dev_id) {
     if (!g_active || !g_initialized) return;
 
     uint64_t irq_flags;
+    uint8_t needs_write = 0;
+    uint8_t data_copy[SECT_SIZE];
+
     spinlock_irqsave_acquire(&g_bc_lock, &irq_flags);
 
     int16_t idx = hash_lookup(lba, dev_id);
@@ -547,9 +644,9 @@ void bufcache_invalidate(uint64_t lba, uint8_t dev_id) {
     }
 
     if (e->dirty) {
-        blk_submit_sync(dev_id, lba, 1, e->data, BLK_REQ_WRITE);
-        g_writes++;
+        memcpy(data_copy, e->data, SECT_SIZE);
         e->dirty = 0;
+        needs_write = 1;
     }
     hash_remove(idx);
     e->valid = 0;
@@ -563,6 +660,11 @@ void bufcache_invalidate(uint64_t lba, uint8_t dev_id) {
     g_count--;
 
     spinlock_irqsave_release(&g_bc_lock, irq_flags);
+
+    if (needs_write) {
+        blk_submit_sync(dev_id, lba, 1, data_copy, BLK_REQ_WRITE);
+        g_writes++;
+    }
 }
 
 /* Enhanced stats */
