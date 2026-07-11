@@ -257,6 +257,13 @@ static int zs_destroy_pool(void *pool)
 
     struct zsmalloc_pool *p = (struct zsmalloc_pool *)pool;
 
+    uint64_t irq_flags;
+
+    /* Acquire pool lock to synchronize with zsmalloc_alloc/zsmalloc_free.
+     * Lock order: pool->lock → [pmm_global_lock, heap_lock] — consistent
+     * with the ordering in zsmalloc_alloc(). */
+    spinlock_irqsave_acquire(&p->lock, &irq_flags);
+
     /* Free all pages allocated by this pool */
     for (int i = 0; i < p->nr_pages; i++) {
         if (p->pages[i]) {
@@ -274,6 +281,8 @@ static int zs_destroy_pool(void *pool)
         }
     }
     p->nr_pages = 0;
+
+    spinlock_irqsave_release(&p->lock, irq_flags);
 
     kprintf("[zsmalloc] zs_destroy_pool: pool destroyed\n");
     return 0;
