@@ -55,6 +55,7 @@
 #define IPI_VECTOR_BACKTRACE    0xF2
 #define IPI_VECTOR_MEMBARRIER   0xF3
 #define IPI_VECTOR_PANIC_HALT   0xF4
+#define IPI_VECTOR_STOP_MACHINE 0xF5
 
 /* I/O APIC registers */
 #define IOAPIC_INDEX   0x00

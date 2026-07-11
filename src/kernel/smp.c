@@ -467,9 +467,33 @@ static int smp_call_function(void *func, void *info, int wait)
     kprintf("[smp] smp_call_function: not yet implemented\n");
     return 0;
 }
-/* ── Stub: smp_stop_cpus ─────────────────────────────── */
-static int smp_stop_cpus(void)
+/* ── smp_stop_cpus ─────────────────────────────── */
+void smp_stop_cpus(void)
 {
-    kprintf("[smp] smp_stop_cpus: not yet implemented\n");
-    return 0;
+    int cpu_count = smp_get_cpu_count();
+
+    if (cpu_count <= 1) {
+        kprintf("[smp] smp_stop_cpus: only 1 CPU online, nothing to stop\n");
+        return;
+    }
+
+    kprintf("[smp] Stopping %d other CPUs via PANIC_HALT IPI...\n",
+            cpu_count - 1);
+
+    /*
+     * Send the panic-halt IPI to all other CPUs.  The handler
+     * (ipi_panic_halt_handler) disables local interrupts on each
+     * receiving CPU and enters an infinite HLT loop without
+     * acknowledging the APIC (no EOI).  This is safe for kexec
+     * because the APIC is masked and re-initialised by the new
+     * kernel after the transition.
+     */
+    apic_send_ipi_all_except(IPI_VECTOR_PANIC_HALT);
+
+    /* Small delay to let IPIs fire before the caller disables its APIC */
+    for (volatile int d = 0; d < 10000; d++)
+        __asm__ volatile("pause");
+
+    kprintf("[smp] Stop IPIs sent\n");
+    return;
 }

@@ -105,6 +105,7 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/apic.c \
          src/kernel/cmdline.c \
          src/kernel/smp.c \
+         src/kernel/stop_machine.c \
          src/kernel/cpu.c \
          src/kernel/cet.c \
          src/kernel/cpuidle.c \

@@ -364,31 +364,6 @@ int kexec_crash_load(uint64_t phys_addr, uint64_t entry, uint32_t flags)
     return 0;
 }
 
-/* ── SMP safety check ──────────────────────────────────────────────── */
-/*
- * kexec_check_smp_stop — Warn if other CPUs are still online.
- *
- * kexec_do_reboot only masks the current CPU's APIC and disables local
- * interrupts.  Other CPUs continue running with full kernel privileges
- * and can access old kernel memory (code, data, page tables, the kexec
- * region) after the transition.  This is a known limitation while
- * smp_stop_cpus() remains a stub.
- *
- * The proper fix is to implement smp_stop_cpus() (send INIT IPI or a
- * stop-vector IPI to each AP) and call it from kexec_do_reboot before
- * masking APIC LVT entries on the BSP.
- */
-static void kexec_check_smp_stop(void)
-{
-    int ncpus = smp_get_cpu_count();
-    if (ncpus > 1) {
-        kprintf("[!!] kexec: %d CPUs online — other CPUs will still "
-                "access old kernel memory after transition!\n"
-                "[!!] kexec: smp_stop_cpus() is not yet implemented.\n",
-                ncpus);
-    }
-}
-
 /* ── APIC LVT masking ─────────────────────────────────────────────── */
 static void kexec_mask_apic_lvts(void)
 {
@@ -414,6 +389,12 @@ static void kexec_mask_apic_lvts(void)
     apic_write(LAPIC_SVR, svr);
 }
 
+/* ── SMP safety ──────────────────────────────────────────────────────── */
+static void kexec_stop_other_cpus(void)
+{
+    smp_stop_cpus();
+}
+
 /*
  * kexec_do_reboot — Common kexec reboot transition.
  *
@@ -425,8 +406,8 @@ static void kexec_mask_apic_lvts(void)
  */
 static void __attribute__((noreturn)) kexec_do_reboot(uint64_t entry, uint64_t phys_base)
 {
-    /* ── Step 0: Warn if other CPUs are still online ────────────────── */
-    kexec_check_smp_stop();
+    /* ── Step 0: Stop all other CPUs and mask local APIC ──────────── */
+    kexec_stop_other_cpus();
 
     /* ── Step 1: Disable interrupts ─────────────────────────────────── */
     cli();

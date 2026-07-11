@@ -8,6 +8,7 @@
 #include "vmm.h"
 #include "pmm.h"
 #include "string.h"
+#include "stop_machine.h"
 #include "export.h"
 #include "idt.h"
 #include "smp.h"
@@ -334,6 +335,9 @@ void ipi_init(void) {
     idt_register_handler(IPI_VECTOR_MEMBARRIER,  ipi_membarrier_handler);
     idt_register_handler(IPI_VECTOR_PANIC_HALT,  ipi_panic_halt_handler);
     memset(tlb_info, 0, sizeof(tlb_info));
+
+    /* Initialize stop_machine subsystem (registers its own IPI handler) */
+    stop_machine_init();
 }
 
 /* Reschedule IPI: triggers the receiving CPU to re-evaluate the scheduler.

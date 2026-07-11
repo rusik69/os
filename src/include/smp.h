@@ -126,6 +126,9 @@ static inline int smp_get_cpu_id(void) {
 /* SMP TLB shootdown: invalidate addresses on all CPUs */
 void smp_tlb_shootdown(const uint64_t *addrs, int nr);
 
+/* Stop all other CPUs (for kexec / shutdown). */
+void smp_stop_cpus(void);
+
 /* AP trampoline entry point (defined in ap_trampoline.asm) */
 extern void ap_trampoline(void);
 extern void ap_entry_64(void);
