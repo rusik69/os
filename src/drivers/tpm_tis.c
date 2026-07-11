@@ -116,7 +116,8 @@ static int tis_request_locality(struct tpm_device *dev) {
 }
 
 static int tis_relinquish_locality(struct tpm_device *dev) {
-    tis_write8(dev, TIS_ACCESS, TIS_ACC_SEIZE);
+    /* Write requestUse to signal end of locality use (per TCG TIS spec) */
+    tis_write8(dev, TIS_ACCESS, TIS_ACC_REQ_USE);
     return 0;
 }
 
