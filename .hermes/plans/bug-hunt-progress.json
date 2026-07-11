@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 463,
+  "current_item": 465,
   "current_batch": "B007",
   "completed_items": [
     1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,
@@ -27,10 +27,12 @@
     421,422,423,424,425,426,427,428,429,430,431,432,433,434,435,436,437,438,439,440,
     441,442,443,444,445,446,447,448,449,450,451,452,453,454,455,456,457,458,459,460,
     461,
-    462
+    462,
+    463,
+    464
   ],
-  "found_bugs": 920,
-  "fixed_bugs": 920,
+  "found_bugs": 921,
+  "fixed_bugs": 921,
   "completed_batches": [
     "B001",
     "B002",
@@ -39,6 +41,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-11T23:00:00",
-  "last_item_result": "item 462: synchronize_rcu race condition audit — CRITICAL BUG: synchronize_rcu() cleanup could destroy a concurrently-started GP, invoking callbacks prematurely. The function unconditionally set rcu_gp_in_progress = 0 and moved the pending callback list at the end without checking whether rcu_start_gp() (from call_rcu() on another CPU) had started a new GP between the wait-loop exit and acquiring rcu_cb_lock. This would invoke callbacks before their grace period completed, violating RCU semantics. Fixed both synchronize_rcu() (local gp_seq save + guarded cleanup) and rcu_try_complete_gp() (snapshot gp_seq before scan + re-check under lock). On the design side: this kernel implements classic RCU where quiescent states = context switches. synchronize_rcu() correctly waits for preempt-disabled sections because preempt-disabled CPUs cannot context-switch and thus cannot record a QS. One design concern: rcu_read_lock/unlock are just compiler barriers (no preempt_disable), so a context switch CAN occur inside an RCU read-side critical section — this is intentional for this hobby kernel's relaxed semantics. Build verified, commit made."
+  "last_item_timestamp": "2026-07-11T23:27:00",
+  "last_item_result": "item 464: src/kernel/softirq.c — raised vs pending bit atomicity audit — AUDITED CLEAN. Traced the full lifecycle: softirq_raise() uses __atomic_fetch_or(SEQ_CST) to set pending bits; do_softirq() and ksoftirqd_task() use __atomic_exchange_n(SEQ_CST) to atomically read-and-clear. Both are atomic RMW operations with SEQ_CST ordering, participating in a single total modification order. The classic 'lost softirq' race (read between set-and-clear) is impossible because exchange is indivisible. The deferred path (budget exceeded) uses fetch_or to restore bits, which preserves any bits set concurrently. All runtime accesses to softirq_pending use __atomic_* built-ins. The sole plain store in softirq_init() occurs during boot before any interrupts are enabled. No bug found."
 }
