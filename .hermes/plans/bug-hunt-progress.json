@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 457,
+  "current_item": 461,
   "current_batch": "B007",
   "completed_items": [
     1,
@@ -458,10 +458,14 @@
     453,
     454,
     455,
-    456
+    456,
+    457,
+    458,
+    459,
+    460
   ],
-  "found_bugs": 917,
-  "fixed_bugs": 917,
+  "found_bugs": 918,
+  "fixed_bugs": 918,
   "completed_batches": [
     "B001",
     "B002",
@@ -470,6 +474,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-11T22:30:00",
-  "last_item_result": "item 456: atomic_read/set verified ACCESS_ONCE equivalent — volatile int32_t member ensures single-copy non-optimized-away accesses without memory ordering, matching Linux semantics. Fixed const-correctness in atomic_read (added const qualifier), cleaned up forced cast in refcount_ext.h refcount_read(). Build verified with -Wcast-qual -Werror."
+  "last_item_timestamp": "2026-07-11T22:50:00",
+  "last_item_result": "item 460: seqlock reader retry loop audited clean — read_seqbegin()/read_seqretry() are correct: volatile seq ensures the spin-load is re-read each iteration, the MESI protocol on x86-64 guarantees writer stores are eventually visible, compiler barriers provide ordering, and the retry abstraction follows the standard Linux seqlock semantics. No bug found."
 }

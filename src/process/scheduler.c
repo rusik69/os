@@ -37,6 +37,7 @@
 #include "core_sched.h"
 #include "nohz.h"
 #include "mglru.h"
+#include "rcu.h"        /* rcu_quiescent_state() */
 
 /* EEVDF scheduling constants */
 #define CFS_NICE_0_WEIGHT 1024
@@ -973,6 +974,11 @@ void schedule(void) {
                 psi_cpu_enter();
             psi_cpu_leave();
         }
+
+        /* Record quiescent state for RCU grace-period tracking.
+         * This must happen on the outgoing CPU BEFORE the context switch,
+         * while we still own this CPU's per-CPU state. */
+        rcu_quiescent_state();
 
         context_switch(current ? &current->context : NULL, next->context);
         __asm__ volatile("sti");
