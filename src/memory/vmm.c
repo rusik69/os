@@ -389,9 +389,62 @@ void vmm_unmap_page(uint64_t virt) {
     pt[pt_idx] = 0;
     did_unmap = 1;
 
+    /* ── Page-table-page reclamation ────────────────────────────────
+     * After clearing the leaf PTE, check whether the entire page-table
+     * page is now empty.  If so, free it and propagate upward through
+     * the page table hierarchy (PD → PDPT).  This prevents page-table-
+     * page leaks when vmm_alloc/vmm_free or other map/unmap pairs
+     * allocate and release a range of pages — the intermediate tables
+     * that were created by get_or_create_table are reclaimed once no
+     * valid mapping remains in the subtree.
+     *
+     * We hold vmm_page_table_lock here, so no concurrent modification
+     * from another CPU can race with the emptiness check.  The TLB
+     * flush for (virt) issued after the lock release suffices for
+     * coherency of all freed levels — INVLPEG operates by linear
+     * address regardless of the original page size. */
+    {
+        int pt_empty = 1;
+        for (int i = 0; i < 512; i++) {
+            if (pt[i] != 0) { pt_empty = 0; break; }
+        }
+        if (pt_empty) {
+            /* Free the page-table (PT) page and clear the PDE. */
+            uint64_t pt_phys = pd[pd_idx] & PTE_ADDR_MASK;
+            pd[pd_idx] = 0;
+            pmm_free_frame(pt_phys);
+
+            /* Propagate: check if the page-directory (PD) page is empty. */
+            int pd_empty = 1;
+            for (int i = 0; i < 512; i++) {
+                if (pd[i] != 0) { pd_empty = 0; break; }
+            }
+            if (pd_empty) {
+                uint64_t pd_phys = pdpt[pdpt_idx] & PTE_ADDR_MASK;
+                pdpt[pdpt_idx] = 0;
+                pmm_free_frame(pd_phys);
+
+                /* Propagate: check if the PDPT page is empty. */
+                int pdpt_empty = 1;
+                for (int i = 0; i < 512; i++) {
+                    if (pdpt[i] != 0) { pdpt_empty = 0; break; }
+                }
+                if (pdpt_empty) {
+                    uint64_t pdpt_phys = kernel_pml4[pml4_idx] & PTE_ADDR_MASK;
+                    kernel_pml4[pml4_idx] = 0;
+                    pmm_free_frame(pdpt_phys);
+                }
+            }
+        }
+    }
+
 done:
     spinlock_irqsave_release(&vmm_page_table_lock, irq_flags);
-    /* TLB flush after releasing the lock to avoid deadlock (see vmm_map_page). */
+    /* TLB flush after releasing the lock to avoid deadlock (see vmm_map_page).
+     * This single INVLPEG for (virt) flushes any cached translation for this
+     * address at any page size (4KB, 2MB, 1GB) — section 4.10.4 of the Intel
+     * SDM specifies that INVLPEG invalidates TLB entries for the page
+     * containing the linear address, regardless of the original page size. */
     if (did_unmap)
         tlb_flush(virt);
 }
