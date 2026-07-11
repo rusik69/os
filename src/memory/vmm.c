@@ -210,6 +210,7 @@ int vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
     int pdpt_idx = (virt >> 30) & 0x1FF;
     int pd_idx   = (virt >> 21) & 0x1FF;
     int pt_idx   = (virt >> 12) & 0x1FF;
+    int ret = 0;
 
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&vmm_page_table_lock, &irq_flags);
@@ -258,21 +259,39 @@ int vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
     /* Refuse to silently overwrite an existing mapping.
      * Caller must unmap first if they want to remap. */
     if (pt[pt_idx] & PTE_PRESENT) {
-        spinlock_irqsave_release(&vmm_page_table_lock, irq_flags);
-        return -EEXIST;
+        ret = -EEXIST;
+        goto out;
     }
 
     pt[pt_idx] = (phys & PTE_ADDR_MASK) | (flags & 0xFFF) | PTE_PRESENT
                  | ((flags & VMM_FLAG_NOEXEC) ? PTE_NX : 0);
-    tlb_flush(virt);
+
+out:
     spinlock_irqsave_release(&vmm_page_table_lock, irq_flags);
-    return 0;
+    /* TLB flush must happen AFTER releasing the lock (IRQs re-enabled)
+     * to avoid SMP deadlock: smp_tlb_shootdown sends IPIs to all other
+     * CPUs and waits for ACKs. If another CPU is spinning on
+     * vmm_page_table_lock with IRQs disabled, it cannot process the IPI,
+     * causing a deadlock.  Deferring the flush is safe because the PTE
+     * store is globally visible (via __sync_synchronize in
+     * spinlock_release), and any concurrent remap will correctly handle
+     * a stale TLB via page-fault re-walk. */
+    if (ret == 0)
+        tlb_flush(virt);
+    return ret;
 }
 
 void vmm_set_range_uncacheable(uint64_t virt, uint64_t size) {
     if (!size) return;
     if (virt + size < virt) return; /* overflow check */
     uint64_t end = virt + size;
+
+    /* Collect addresses for deferred TLB flush (avoids deadlock — see
+     * vmm_map_page for details).  Use a fixed-size stack buffer; if the
+     * range exceeds it, flush in batches. */
+#define VMM_FLUSH_BATCH 256
+    uint64_t flush_addrs[VMM_FLUSH_BATCH];
+    int nr_flush = 0;
 
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&vmm_page_table_lock, &irq_flags);
@@ -291,9 +310,9 @@ void vmm_set_range_uncacheable(uint64_t virt, uint64_t size) {
 
         if (pd[pd_idx] & PTE_HUGE) {
             pd[pd_idx] |= PTE_PCD;
-            tlb_flush(virt & ~0x1FFFFFULL);
+            flush_addrs[nr_flush++] = virt & ~0x1FFFFFULL;
             virt = (virt & ~0x1FFFFFULL) + (2ULL * 1024 * 1024);
-            continue;
+            goto check_batch;
         }
 
         if (!(pd[pd_idx] & PTE_PRESENT))
@@ -302,13 +321,26 @@ void vmm_set_range_uncacheable(uint64_t virt, uint64_t size) {
         int pt_idx = (virt >> 12) & 0x1FF;
         if (pt[pt_idx] & PTE_PRESENT) {
             pt[pt_idx] |= PTE_PCD;
-            tlb_flush(virt & ~(PAGE_SIZE - 1ULL));
+            flush_addrs[nr_flush++] = virt & ~(PAGE_SIZE - 1ULL);
         }
         virt += PAGE_SIZE;
+
+check_batch:
+        if (nr_flush >= VMM_FLUSH_BATCH) {
+            /* Batch-flush to keep buffer small — IRQs still disabled here
+             * (inside the lock), so this is safe: no other CPU can be
+             * spinning on this same lock because we hold it. */
+            for (int i = 0; i < nr_flush; i++)
+                __asm__ volatile("invlpg (%0)" : : "r"(flush_addrs[i]) : "memory");
+            nr_flush = 0;
+        }
     }
 
 done:
     spinlock_irqsave_release(&vmm_page_table_lock, irq_flags);
+    /* Flush any remaining addresses after releasing the lock. */
+    for (int i = 0; i < nr_flush; i++)
+        tlb_flush(flush_addrs[i]);
 }
 
 /**
@@ -329,6 +361,7 @@ void vmm_unmap_page(uint64_t virt) {
     int pdpt_idx = (virt >> 30) & 0x1FF;
     int pd_idx   = (virt >> 21) & 0x1FF;
     int pt_idx   = (virt >> 12) & 0x1FF;
+    int did_unmap = 0;
 
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&vmm_page_table_lock, &irq_flags);
@@ -347,17 +380,20 @@ void vmm_unmap_page(uint64_t virt) {
      * correctly here if they happen to be unmapped. */
     if (pd[pd_idx] & PTE_HUGE) {
         pd[pd_idx] = 0;
-        tlb_flush(virt);
+        did_unmap = 1;
         goto done;
     }
 
     uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[pd_idx] & PTE_ADDR_MASK);
 
     pt[pt_idx] = 0;
-    tlb_flush(virt);
+    did_unmap = 1;
 
 done:
     spinlock_irqsave_release(&vmm_page_table_lock, irq_flags);
+    /* TLB flush after releasing the lock to avoid deadlock (see vmm_map_page). */
+    if (did_unmap)
+        tlb_flush(virt);
 }
 
 int vmm_virt_to_phys(uint64_t virt, uint64_t *phys) {
