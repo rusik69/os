@@ -1120,6 +1120,11 @@ void pmm_free_frame(uint64_t addr) {
     __asm__ volatile("pushfq; pop %0; cli" : "=r"(irq_save) : : "memory");
 
     if (cache->count < PMM_CPU_CACHE_SIZE) {
+        /* Poison with 0xDC before caching so that CONFIG_DEBUG_PAGEALLOC
+         * UAF detection works correctly, and stale data is scrubbed even
+         * for pages that move only through the hot cache (never hitting
+         * the global bitmap). */
+        poison_fill(addr, 0xDC);
         cache->frames[cache->count++] = addr;
         if (irq_save & 0x200) __asm__ volatile("sti" : : : "memory");
         return;
@@ -1133,6 +1138,7 @@ void pmm_free_frame(uint64_t addr) {
     /* Now add the new page (should succeed since we just drained) */
     __asm__ volatile("pushfq; pop %0; cli" : "=r"(irq_save) : : "memory");
     if (cache->count < PMM_CPU_CACHE_SIZE) {
+        poison_fill(addr, 0xDC);
         cache->frames[cache->count++] = addr;
         if (irq_save & 0x200) __asm__ volatile("sti" : : : "memory");
         return;
