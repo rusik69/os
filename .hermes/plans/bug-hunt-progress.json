@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 480,
+  "current_item": 481,
   "current_batch": "B008",
   "completed_items": [
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
@@ -51,10 +51,11 @@
     451, 452, 453, 454, 455, 456, 457, 458, 459, 460,
     461, 462, 463, 464, 465, 466, 467, 468,
     469, 470, 471, 472, 473, 474, 475, 476,
-    477, 478, 479
+    477, 478, 479,
+    480
   ],
-  "found_bugs": 936,
-  "fixed_bugs": 936,
+  "found_bugs": 937,
+  "fixed_bugs": 937,
   "completed_batches": [
     "B001",
     "B002",
@@ -63,6 +64,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-11T21:52:00",
-  "last_item_result": "item 479: src/memory/pmm.c — verify memory hotplug adds new pages to correct zone — BUG FOUND AND FIXED. Root cause: Both memhp_online_section() and memhotplug_add() called pmm_reserve_frames() to 'add pages to PMM', but pmm_reserve_frames() marks frames as USED (bitmap set, used_frames++), which is the opposite of what hotplug needs. For frames beyond boot-time total_frames, the function was a complete no-op (bitmap already 1 from initial memset, bitmap_test() returned true). For frames within range, they were incorrectly marked as used when they should be free. Additionally, total_frames was never extended for new regions, and pageblock migration types were never set — newly hotplugged memory defaulted to MIGRATE_UNMOVABLE (BSS-zero) instead of MIGRATE_MOVABLE. Fix: Created pmm_add_free_frames() that clears bitmap bits, extends total_frames, sets frame_refcount to 0, and initializes pageblock migration types to MIGRATE_MOVABLE for the correct zone. Updated memhotplug.c call sites and KUnit test."
+  "last_item_timestamp": "2026-07-11T19:09:10",
+  "last_item_result": "item 480: src/memory/pmm.c — verify CONFIG_DEBUG_PAGEALLOC poison/unpoison correct — BUG FOUND AND FIXED. Root cause: pmm_free_frame() pushed freed pages to the per-CPU hot cache without calling poison_fill(addr, 0xDC). This meant pages recycled through the cache fast path were never poisoned with the 0xDC free pattern, violating the CONFIG_DEBUG_PAGEALLOC contract: (1) stale data remained in cached pages (potential info disclosure), (2) UAF detection in bitmap_alloc_one_locked() could not detect corruption on pages that moved cache→cache without hitting the bitmap, (3) the re-poison fallback in the UAF check would fire false positives for pages that were freed via cache but later allocated through the bitmap. Fix: Added poison_fill(addr, 0xDC) before caching in both the fast path and the slow-path retry after drain."
 }

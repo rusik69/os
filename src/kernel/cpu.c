@@ -24,6 +24,7 @@
 #include "apic.h"
 #include "timer.h"
 #include "irq_work.h"
+#include "pmm.h"
 
 /* ═══════════════════════════════════════════════════════════════════════
  * Section 1 — CPU Security Features
@@ -288,6 +289,12 @@ int cpuhp_bring_cpu(int cpu_id)
             cpu_id, cpuhp_online_count());
     cpuhp_notify();
 
+    /* Clear the per-CPU PMM hot cache so stale entries from before
+     * the offline period do not get handed out on the new online
+     * incarnation.  Frames still cached were already leaked; this
+     * just prevents them from being used. */
+    pmm_cpu_online(cpu_id);
+
 out:
     spinlock_irqsave_release(&cpuhp_lock, irq_flags);
     return ret;
@@ -348,7 +355,12 @@ int cpuhp_take_cpu_offline(int cpu_id)
     /* ── Step 4: drain pending IRQ work queued to this CPU ──────────── */
     irq_work_cpu_offline(cpu_id);
 
-    /* ── Step 5: transition state ──────────────────────────────────── */
+    /* ── Step 5: drain the per-CPU PMM hot cache ─────────────────────
+     * Pages cached on the going-offline CPU would otherwise be stranded
+     * (marked used in the bitmap but inaccessible to other CPUs). */
+    pmm_cpu_offline(cpu_id);
+
+    /* ── Step 6: transition state ──────────────────────────────────── */
     cpuhp_cpu_state[cpu_id] = CPUHP_STATE_OFFLINE;
     kprintf("[CPU] CPU %d taken offline (now %d online)\n",
             cpu_id, cpuhp_online_count());

@@ -48,6 +48,10 @@ void pmm_set_poison(int enable);
 uint64_t pmm_get_reclaim_watermark(void);
 void pmm_set_reclaim_watermark(uint64_t pages);
 
+/* CPU hotplug: drain or clear the per-CPU hot cache */
+void pmm_cpu_offline(int cpu_id);
+void pmm_cpu_online(int cpu_id);
+
 /* Check if memory is below reclaim watermark */
 int pmm_below_watermark(void);
 

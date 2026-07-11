@@ -313,6 +313,51 @@ static void pmm_cache_drain(void) {
     spinlock_irqsave_release(&pmm_global_lock, irq_flags);
 }
 
+/* ── CPU hotplug helpers ─────────────────────────────────────────────
+ * Drain or clear the per-CPU hot cache when a CPU goes offline/online.
+ * Prevents pages from being stranded in an offline CPU's cache.
+ */
+
+/* Drain a specific (possibly non-current) CPU's hot cache.
+ * Called from cpuhp_take_cpu_offline() during CPU hotplug takedown.
+ * Holding pmm_global_lock serialises against concurrent refill/drain
+ * operations on the target CPU's cache.  Note: lock-free fast-path
+ * operations (pmm_free_frame / pmm_alloc_frame fast paths) on the
+ * target CPU may still run during this drain; a tiny window exists
+ * between the drain and the state transition.  A subsequent
+ * pmm_cpu_online() on bring-up clears any stray entries. */
+void pmm_cpu_offline(int cpu_id) {
+    if (cpu_id < 0 || cpu_id >= SMP_MAX_CPUS)
+        return;
+
+    struct pmm_cpu_cache *cache = &pmm_cpu_cache[cpu_id];
+    if (cache->count == 0)
+        return;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&pmm_global_lock, &irq_flags);
+
+    while (cache->count > 0) {
+        cache->count--;
+        bitmap_free_one_locked(cache->frames[cache->count]);
+    }
+
+    spinlock_irqsave_release(&pmm_global_lock, irq_flags);
+}
+
+/* Clear a specific CPU's hot cache (without freeing the frames).
+ * Called from cpuhp_bring_cpu() when a CPU comes back online.
+ * Any frames still in the cache are stale (marked used in the bitmap
+ * but unreachable); clearing count to 0 discards them safely.
+ * No lock needed: the target CPU is not yet online, and the only
+ * code that will access this cache slot is the CPU being brought up. */
+void pmm_cpu_online(int cpu_id) {
+    if (cpu_id < 0 || cpu_id >= SMP_MAX_CPUS)
+        return;
+
+    pmm_cpu_cache[cpu_id].count = 0;
+}
+
 extern char _kernel_end[];
 
 /**
@@ -476,8 +521,13 @@ void pmm_reserve_frames(uint64_t phys_start, uint64_t byte_size) {
     uint64_t end_frame   = (phys_start + byte_size + PAGE_SIZE - 1) / PAGE_SIZE;
     if (end_frame > MAX_FRAMES) end_frame = MAX_FRAMES;
 
-    /* Drain per-CPU caches so no cached frame overlaps with this range.
-     * We iterate all possible CPUs (at boot, only BSP cache is populated). */
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&pmm_global_lock, &irq_flags);
+
+    /* Pass 1 — Remove overlapping entries from all per-CPU hot caches.
+     * Holding pmm_global_lock serialises against concurrent cache
+     * refill/drain slow paths, so no cached entry can be allocated
+     * or freed to the bitmap behind our back during this scan. */
     for (int cpu = 0; cpu < SMP_MAX_CPUS; cpu++) {
         struct pmm_cpu_cache *cache = &pmm_cpu_cache[cpu];
         if (cache->count == 0) continue;
@@ -494,13 +544,31 @@ void pmm_reserve_frames(uint64_t phys_start, uint64_t byte_size) {
         }
     }
 
-    uint64_t irq_flags;
-    spinlock_irqsave_acquire(&pmm_global_lock, &irq_flags);
-
+    /* Pass 2 — Mark all frames in the range as used in the bitmap. */
     for (uint64_t f = start_frame; f < end_frame; f++) {
         if (!bitmap_test(f)) {
             bitmap_set(f);
             used_frames++;
+        }
+    }
+
+    /* Pass 3 — Re-scan all caches.  The lock-free fast paths of
+     * pmm_free_frame / pmm_alloc_frame (which only disable local IRQs,
+     * not take pmm_global_lock) may have added or removed entries in
+     * a remote cache while passes 1-2 ran.  If a page in the reserved
+     * range was cached after pass 1, we must evict it from the cache
+     * now; it is already marked used in the bitmap so the slow path
+     * will not hand it out. */
+    for (int cpu = 0; cpu < SMP_MAX_CPUS; cpu++) {
+        struct pmm_cpu_cache *cache = &pmm_cpu_cache[cpu];
+        if (cache->count == 0) continue;
+        for (int j = 0; j < (int)cache->count; j++) {
+            uint64_t f = cache->frames[j] / PAGE_SIZE;
+            if (f >= start_frame && f < end_frame) {
+                cache->frames[j] = cache->frames[cache->count - 1];
+                cache->count--;
+                j--;
+            }
         }
     }
 
