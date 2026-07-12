@@ -393,8 +393,10 @@ int process_set_cred(uint32_t pid, uint32_t uid, uint32_t gid,
 int process_get_dumpable(struct process *proc);
 int process_set_dumpable(struct process *proc, int val);
 
-/* Exec credential security — call during execve */
-void process_exec_cred_security(void);
+/* Exec credential security — call during execve.
+ * Pass the original euid/egid (before setuid/setgid) for proper
+ * credential change detection and privilege dropping. */
+void process_exec_cred_security(uint32_t orig_euid, uint32_t orig_egid);
 
 /* Close all file descriptors with FD_CLOEXEC set */
 void process_exec_close_cloexec(void);

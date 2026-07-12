@@ -909,7 +909,7 @@ int process_set_dumpable(struct process *proc, int val) {
 
 /* ── Exec credential security ──────────────────────────────────── */
 
-void process_exec_cred_security(void) {
+void process_exec_cred_security(uint32_t orig_euid, uint32_t orig_egid) {
     struct process *p = process_get_current();
     if (!p) return;
 
@@ -923,8 +923,8 @@ void process_exec_cred_security(void) {
         /* If the new binary has setuid/setgid bits, keep the
          * existing euid/egid unchanged. NO_NEW_PRIVS means the
          * process never gains new privileges, ever. */
-        /* (setuid/setgid exec hook would go here; currently the
-         *  ELF loader does not yet check file mode bits) */
+        /* (Setuid/setgid may have been applied by the caller; the
+         *  caller is responsible for restoring euid after this.) */
 
         /* ── Block file capability elevation ───────────────────── */
         /* Clear ALL capability sets — the new binary starts with
@@ -943,13 +943,6 @@ void process_exec_cred_security(void) {
 
         return;
     }
-
-    /* ── SECBIT_NO_SETUID_FIXUP enforcement ───────────────────── */
-    /* When SECBIT_NO_SETUID_FIXUP is set, setuid/setgid bits on
-     * the executed binary must NOT change the effective UID/GID.
-     * Save the current credentials so setuid exec won't elevate. */
-    uint32_t old_euid = p->euid;
-    uint32_t old_egid = p->egid;
 
     /* ── SECBIT_NOROOT enforcement ────────────────────────────── */
     /* When SECBIT_NOROOT is set, the process must not gain root
@@ -971,9 +964,11 @@ void process_exec_cred_security(void) {
     process_exec_caps();
 
     /* ── Detect credential change ─────────────────────────────── */
-    /* If euid or egid changed during exec (e.g., setuid binary),
-     * or if NO_NEW_PRIVS is set, we reduce privileges. */
-    int creds_changed = (p->euid != old_euid || p->egid != old_egid);
+    /* Compare current credentials against the originals saved by the
+     * caller (before setuid/setgid was applied) to detect changes.
+     * If euid or egid changed during exec (e.g., setuid binary),
+     * we reduce privileges. */
+    int creds_changed = (p->euid != orig_euid || p->egid != orig_egid);
 
     if (creds_changed) {
         /*

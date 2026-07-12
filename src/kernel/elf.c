@@ -530,6 +530,12 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
     /* ── Check for setuid/setgid on the binary file ──────────────── */
     struct vfs_stat bin_stat;
     int has_setuid = 0;
+
+    /* Save original credentials BEFORE setuid/setgid so
+     * process_exec_cred_security can properly detect changes. */
+    uint32_t orig_euid = cur->euid;
+    uint32_t orig_egid = cur->egid;
+
     if (vfs_stat(path, &bin_stat) == 0) {
         if (bin_stat.mode & S_ISUID) {
             kprintf("execve: setuid (euid %u -> %u)\n", cur->euid, bin_stat.uid);
@@ -547,7 +553,7 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
      *  - Dumpable flag based on credential changes
      *  - NO_NEW_PRIVS enforcement
      *  - AT_SECURE calculation */
-    process_exec_cred_security();
+    process_exec_cred_security(orig_euid, orig_egid);
 
     /* Cancel setuid if no_new_privs was set (NO_NEW_PRIVS blocks elevation) */
     if (cur->no_new_privs && has_setuid) {
