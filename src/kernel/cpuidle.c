@@ -454,9 +454,14 @@ static int menu_governor_select(struct cpuidle_cpu *cpu_data)
         }
     }
 
-    /* Scan from deepest to shallowest (skip POLL at index 0 for
-     * deeper state selection since we already handled it above) */
-    for (int idx = idle_state_count - 1; idx >= 1; idx--) {
+    /* Scan from deepest allowed to shallowest (skip POLL at index 0 for
+     * deeper state selection since we already handled it above).
+     * Respect the per-CPU deepest_state limit — different CPUs may
+     * have different hardware/platform capabilities. */
+    int max_idx = (int)cpu_data->deepest_state;
+    if (max_idx >= idle_state_count)
+        max_idx = idle_state_count - 1;
+    for (int idx = max_idx; idx >= 1; idx--) {
         struct cpuidle_state *s = &idle_states[idx];
 
         /* Check PM QoS latency constraint */
@@ -482,8 +487,11 @@ static int menu_governor_select(struct cpuidle_cpu *cpu_data)
             return idx;
     }
 
-    /* Fall back to C1 (HLT) at index 1, or POLL if only POLL exists */
-    return idle_state_count > 1;
+    /* Fall back to C1 (HLT) at index 1, or POLL if only POLL exists or
+     * deepest_state doesn't permit C1. */
+    if (idle_state_count > 1 && cpu_data->deepest_state >= 1)
+        return 1;
+    return 0;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
