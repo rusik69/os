@@ -29,8 +29,10 @@ typedef void (*kmem_cache_ctor_t)(void *obj);
  * Returns NULL on failure (out of memory). */
 struct kmem_cache *kmem_cache_create(const char *name, size_t obj_size, size_t align, kmem_cache_ctor_t ctor);
 
-/* Allocate an object from the cache. Returns NULL on OOM. */
-void *kmem_cache_alloc(struct kmem_cache *cache);
+/* Allocate an object from the cache. Returns NULL on OOM.
+ * @gfp_flags: GFP flags (GFP_KERNEL, GFP_ATOMIC, etc.) propagated to the
+ *             page allocator when the slab needs to grow. */
+void *kmem_cache_alloc(struct kmem_cache *cache, int gfp_flags);
 
 /* Return an object to its cache. The object must have been allocated from this cache. */
 void kmem_cache_free(struct kmem_cache *cache, void *obj);

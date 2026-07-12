@@ -22,6 +22,7 @@
 #include "string.h"
 #include "printf.h"
 #include "export.h"
+#include "page_allocator_ext.h"
 
 /* ── Convenience helpers (mirrored from kunit.h for readability) ──── */
 #ifndef KUNIT_EXPECT_GT
@@ -162,7 +163,7 @@ static void slab_cache_basic_test(struct kunit *test)
     if (!cache) return;
 
     /* Allocate an object */
-    struct slab_test_obj *obj = (struct slab_test_obj *)kmem_cache_alloc(cache);
+    struct slab_test_obj *obj = (struct slab_test_obj *)kmem_cache_alloc(cache, GFP_KERNEL);
     KUNIT_EXPECT_NOT_NULL(test, obj);
     if (!obj) {
         kmem_cache_destroy(cache);
@@ -196,7 +197,7 @@ static void slab_cache_multi_alloc_test(struct kunit *test)
     int success = 1;
 
     for (int i = 0; i < SLAB_MULTI_N; i++) {
-        objs[i] = (struct slab_test_obj *)kmem_cache_alloc(cache);
+        objs[i] = (struct slab_test_obj *)kmem_cache_alloc(cache, GFP_KERNEL);
         if (!objs[i]) {
             success = 0;
             break;
@@ -409,7 +410,7 @@ static void slab_cache_ctor_test(struct kunit *test)
     if (!cache) return;
 
     /* Allocate an object — constructor should have been called */
-    struct slab_test_obj *obj = (struct slab_test_obj *)kmem_cache_alloc(cache);
+    struct slab_test_obj *obj = (struct slab_test_obj *)kmem_cache_alloc(cache, GFP_KERNEL);
     KUNIT_EXPECT_NOT_NULL(test, obj);
     if (obj) {
         KUNIT_EXPECT_EQ(test, (int64_t)obj->magic, (int64_t)0xCAFEBABE);
@@ -432,7 +433,7 @@ static void slab_aligned_cache_test(struct kunit *test)
     KUNIT_EXPECT_NOT_NULL(test, cache);
     if (!cache) return;
 
-    struct slab_test_obj *obj = (struct slab_test_obj *)kmem_cache_alloc(cache);
+    struct slab_test_obj *obj = (struct slab_test_obj *)kmem_cache_alloc(cache, GFP_KERNEL);
     KUNIT_EXPECT_NOT_NULL(test, obj);
     if (obj) {
         /* With 64-byte alignment, pointer must be 64-byte aligned */

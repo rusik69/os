@@ -9,6 +9,7 @@
 #include "rng.h"
 #include "kasan_light.h"
 #include "kmemleak.h"
+#include "page_allocator_ext.h"
 
 /*
  * Slab allocator — O(1) allocate/free for fixed-size kernel objects.
@@ -262,15 +263,21 @@ static int slab_sizing(size_t obj_size, int *out_order, int *out_num) {
 
 /* ── Create a new slab and add it to the cache's free list ───────────── */
 
-static int slab_grow(struct kmem_cache *cache) {
+static int slab_grow(struct kmem_cache *cache, int gfp_flags) {
     size_t slab_size = PAGE_SIZE * (1ULL << cache->gfporder);
     size_t aligned   = (cache->obj_size + 15) & ~15ULL;
     if (aligned < 16) aligned = 16;
     size_t header    = sizeof(struct slab);
 
-    /* Allocate physically-contiguous pages via PMM */
+    /* Allocate physically-contiguous pages via the GFP-aware page allocator.
+     * Use alloc_pages() so caller-provided flags (GFP_KERNEL, GFP_ATOMIC,
+     * GFP_ZERO, etc.) propagate to the physical page allocator.
+     * Fall back to raw pmm_alloc_frames() if alloc_pages() returns 0
+     * (which can happen before page_allocator_ext_init() in early boot). */
     int pages = 1U << cache->gfporder;
-    uint64_t phys_base = (uint64_t)pmm_alloc_frames(pages);
+    uint64_t phys_base = alloc_pages(gfp_flags, cache->gfporder);
+    if (!phys_base)
+        phys_base = (uint64_t)pmm_alloc_frames(pages);
     if (!phys_base)
         return -ENOMEM;
     void *virt = PHYS_TO_VIRT(phys_base);
@@ -360,7 +367,7 @@ static int slab_grow(struct kmem_cache *cache) {
  * the fast-path check in kmem_cache_alloc() and acquiring the cache lock
  * (see kmem_cache_alloc for the window).  Resetting count unconditionally
  * would leak that object. */
-static void *cpu_slab_refill(struct kmem_cache *cache) {
+static void *cpu_slab_refill(struct kmem_cache *cache, int gfp_flags) {
     int cpu = smp_get_cpu_id();
     struct cpu_slab *cpu_s = &cache->cpu_slab[cpu];
     void *ret = NULL;
@@ -410,7 +417,7 @@ static void *cpu_slab_refill(struct kmem_cache *cache) {
         }
 
         /* If still nothing, grow a new slab */
-        if (!obj && slab_grow(cache) == 0) {
+        if (!obj && slab_grow(cache, gfp_flags) == 0) {
             slab = cache->slabs_partial;
             if (slab) {
                 obj = slab->free_list;
@@ -542,7 +549,7 @@ struct kmem_cache *kmem_cache_create(const char *name, size_t obj_size,
     /* Pre-allocate one slab so the cache is immediately usable */
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&cache->lock, &irq_flags);
-    slab_grow(cache);
+    slab_grow(cache, GFP_KERNEL);
     spinlock_irqsave_release(&cache->lock, irq_flags);
 
     /* Register in global cache list (list lock protects against
@@ -556,7 +563,7 @@ struct kmem_cache *kmem_cache_create(const char *name, size_t obj_size,
     return cache;
 }
 
-void *kmem_cache_alloc(struct kmem_cache *cache) {
+void *kmem_cache_alloc(struct kmem_cache *cache, int gfp_flags) {
     int cpu = smp_get_cpu_id();
     struct cpu_slab *cpu_s = &cache->cpu_slab[cpu];
 
@@ -593,7 +600,7 @@ void *kmem_cache_alloc(struct kmem_cache *cache) {
     uint64_t lock_flags;
     spinlock_irqsave_acquire(&cache->lock, &lock_flags);
 
-    void *obj = cpu_slab_refill(cache);
+    void *obj = cpu_slab_refill(cache, gfp_flags);
 
     spinlock_irqsave_release(&cache->lock, lock_flags);
 
