@@ -35,11 +35,20 @@ void numa_balancing_init(void);
 void numa_hint_fault(uint64_t addr, int node);
 
 /* Migrate a page to the target NUMA node using the PMM migration path.
- * @page:   Physical address of the page (frame number << 12)
+ * Allocates a new frame on the target node via pmm_alloc_frame_on_node(),
+ * copies the page contents, and records the migration in the cool-down
+ * tracker to prevent bouncing.
+ *
+ * @page:        Physical address of the source page
  * @target_node: Destination NUMA node ID
- * Returns 0 on success, negative errno on failure.
+ *
+ * Returns the physical address of the new frame on success,
+ * 0 on failure (allocation failure, invalid params, or !initialised).
+ *
+ * NOTE: The caller is responsible for updating the page table entry
+ * to point to the returned frame and for freeing the old frame.
  */
-int numa_migrate_page(uint64_t page, int target_node);
+uint64_t numa_migrate_page(uint64_t page, int target_node);
 
 /* Get per-node statistics.
  * @node:  NUMA node ID

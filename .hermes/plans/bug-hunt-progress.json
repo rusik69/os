@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 553,
+  "current_item": 554,
   "current_batch": "B009",
   "completed_items": [
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
@@ -67,10 +67,11 @@
     549,
     550,
     551,
-    552
+    552,
+    553
   ],
-  "found_bugs": 1001,
-  "fixed_bugs": 1001,
+  "found_bugs": 1002,
+  "fixed_bugs": 1002,
   "completed_batches": [
     "B001",
     "B002",
@@ -79,6 +80,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-12T08:09:00",
-  "last_item_result": "item 552: src/kernel/core_sched.c — verify core scheduling cookie matching. Audited clean — no bug found. The sched_core_allow() function correctly implements cookie matching: tasks with cookie 0 have no restriction; tasks with non-zero cookie are denied if any sibling CPU runs a task with a different non-zero cookie; tasks with matching non-zero cookies are allowed. Build verified."
+  "last_item_timestamp": "2026-07-12T08:29:00",
+  "last_item_result": "item 553: src/kernel/sys_caps.c — verify SCHED_RESET_ON_FORK with cap_effective. **BUG FOUND**: The kernel defined SCHED_FLAG_RESET_ON_FORK but never checked it during process_fork() or process_clone(). When a parent with RESET_ON_FORK set forked a child, the child inherited the full cap_effective without clearing. Fix: (1) added sched_flags field to struct process, (2) persist sched_flags in sched_setattr/sched_getattr, (3) clear child's cap_effective in process_fork() and process_clone() if parent has SCHED_FLAG_RESET_ON_FORK. Build verified."
 }
