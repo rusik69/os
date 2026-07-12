@@ -6,6 +6,7 @@
 #include "apic.h"
 
 static int tsc_deadline_available = 0;
+static uint64_t tsc_deadline_cached = 0;
 
 int tsc_deadline_init(void) {
     int rax, rbx, rcx, rdx;
@@ -40,23 +41,30 @@ int tsc_deadline_init(void) {
 
 void tsc_deadline_set(uint64_t deadline) {
     if (!tsc_deadline_available) return;
+    /* Cache the deadline — IA32_TSC_DEADLINE MSR is write-only */
+    tsc_deadline_cached = deadline;
     /* Write deadline to MSR — fires interrupt when TSC >= deadline */
     write_msr(IA32_TSC_DEADLINE, deadline);
 }
 
 uint64_t tsc_deadline_get(void) {
-    return read_msr(IA32_TSC_DEADLINE);
+    /* IA32_TSC_DEADLINE MSR (0x6E0) is write-only per Intel SDM
+     * Vol 3 §10.5.4.1. Reading it always returns 0. Return the
+     * cached value set by tsc_deadline_set() instead. */
+    return tsc_deadline_cached;
 }
 
-/* ── Stub: tsc_deadline_cancel ─────────────────────────────── */
+/* ── tsc_deadline_cancel ─────────────────────────────── */
 static int tsc_deadline_cancel(void)
 {
-    kprintf("[TSC] tsc_deadline_cancel: not yet implemented\n");
+    if (!tsc_deadline_available) return -1;
+    /* Writing 0 to IA32_TSC_DEADLINE disarms the timer (Intel SDM) */
+    write_msr(IA32_TSC_DEADLINE, 0);
+    tsc_deadline_cached = 0;
     return 0;
 }
-/* ── Stub: tsc_deadline_read ─────────────────────────────── */
+/* ── tsc_deadline_read ─────────────────────────────── */
 static uint64_t tsc_deadline_read(void)
 {
-    kprintf("[TSC] tsc_deadline_read: not yet implemented\n");
-    return 0;
+    return tsc_deadline_cached;
 }
