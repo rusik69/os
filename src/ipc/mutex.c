@@ -206,7 +206,7 @@ void mutex_lock(int id) {
             /* Reflect the waiter into the owner's priority immediately */
             uint8_t effective = held_mutex_effective_prio(m->owner_pid);
             if (effective < owner->priority) {
-                owner->priority = effective;
+                scheduler_set_priority(owner, effective);
             }
         }
 
@@ -391,7 +391,7 @@ static void boost_owner(struct mutex_entry *m, uint8_t waiter_prio) {
         if (owner->priority == owner->base_priority) {
             m->owner_orig_prio = owner->priority;
         }
-        owner->priority = waiter_prio;
+        scheduler_set_priority(owner, waiter_prio);
 
         /* Track the boost */
         if (m->owner_pid < MUTEX_MAX_PI_BOOST)
@@ -417,7 +417,7 @@ static void restore_owner_priority(struct mutex_entry *m) {
      * current mutex is no longer in the owner's held list. */
     uint8_t new_prio = held_mutex_effective_prio(m->owner_pid);
 
-    owner->priority = new_prio;
+    scheduler_set_priority(owner, new_prio);
     m->owner_orig_prio = owner->base_priority;
 
     /* Clear boost tracking */

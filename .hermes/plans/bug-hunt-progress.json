@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 543,
+  "current_item": 544,
   "current_batch": "B009",
   "completed_items": [
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
@@ -58,11 +58,10 @@
     521, 522, 523, 524, 525, 526, 527, 528, 529, 530,
     531, 532, 533, 534, 535, 536, 537,
     538, 539, 540,
-    541,
-    542
+    541, 542, 543
   ],
-  "found_bugs": 994,
-  "fixed_bugs": 994,
+  "found_bugs": 995,
+  "fixed_bugs": 995,
   "completed_batches": [
     "B001",
     "B002",
@@ -71,6 +70,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-12T06:40:00",
-  "last_item_result": "item 542: src/process/scheduler.c + src/process/switch.asm — verify idle thread never scheduled onto non-idle CPU: Found 3 bugs. (1) Idle process (PID 0) could be added to BSP runqueue and then stolen by AP via load_balance() — added PID 0 skip in load_balance(). (2) Idle process could be migrated during CPU hot-unplug in scheduler_migrate_tasks_from() — added PID 0 skip. (3) AP has current_process=NULL; if load_balance ever found a task, context_switch(NULL, next->context) would crash in asm at 'mov [rdi], rsp' — fixed context_switch to handle NULL old_ctx. Also added missing EEVDF and NOHZ hooks in load_balance. Build verified. Commit: b700d15e."
+  "last_item_timestamp": "2026-07-12T06:50:00",
+  "last_item_result": "item 543: src/kernel/cpuidle.c — verify idle state deepest allowed, not deeper: Found bug. The menu governor's menu_governor_select() scanned C-states from idle_state_count - 1 (global deepest) without respecting cpu_data->deepest_state (per-CPU limit). If deepest_state was less than idle_state_count - 1 (e.g., after cpuidle_register_custom_state() added states without updating per-CPU deepest_state, or on CPUs with different capabilities), the governor could select a state deeper than allowed. The caller cpuidle_idle() had a clamping safety net, but the governor itself should respect the limit. Fixed: start scan from cpu_data->deepest_state instead, and updated fallback to check deepest_state >= 1 before returning C1. Build verified. Commit: 9ad57616."
 }
