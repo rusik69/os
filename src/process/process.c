@@ -730,6 +730,7 @@ void process_exit(void) {
     struct process *parent = process_get_by_pid(current_process->parent_pid);
     if (parent) {
         struct siginfo info;
+        memset(&info, 0, sizeof(info));
         info.si_signo = SIGCHLD;
         info.si_errno = 0;
         info.si_code  = CLD_EXITED;
@@ -775,6 +776,7 @@ void process_exit_code(int code) {
     struct process *parent = process_get_by_pid(current_process->parent_pid);
     if (parent) {
         struct siginfo info;
+        memset(&info, 0, sizeof(info));
         info.si_signo = SIGCHLD;
         info.si_errno = 0;
         info.si_code  = CLD_EXITED;

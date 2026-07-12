@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 598,
+  "current_item": 599,
   "current_batch": "B009",
   "completed_items": [
     1,2,3,4,5,6,7,8,9,10,
@@ -63,10 +63,11 @@
     571,572,573,574,575,576,577,578,579,580,
     581,582,583,584,585,586,587,588,589,590,
     591,592,593,594,595,596,
-    597
+    597,
+    598
   ],
-  "found_bugs": 1055,
-  "fixed_bugs": 1055,
+  "found_bugs": 1062,
+  "fixed_bugs": 1062,
   "completed_batches": [
     "B001",
     "B002",
@@ -75,6 +76,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-12T17:33:00",
-  "last_item_result": "item 597: src/kernel/syscall.c - verified syscall args validation. Found 14 handlers passing user-space string pointers directly to VFS/kernel functions without strncpy_from_user() uaccess protection: sys_access, sys_rmdir, sys_rename, sys_chmod, sys_mknod, sys_chdir, sys_elf_exec, sys_script_exec, sys_init_module, sys_finit_module, sys_query_module (name input), sys_umount, sys_pivot_root, sys_chroot. All fixed to copy user strings to kernel buffers before use. All also added to or already covered by pre-validation in syscall_validate_user_args. Build-verified clean."
+  "last_item_timestamp": "2026-07-12T17:46:00",
+  "last_item_result": "item 598: src/kernel/syscall.c - verified syscall_validate_user_args covers all pointer params. Found 7 syscalls with uncovered user-space pointer params whose handlers dereferenced user addresses directly without uaccess: SYS_FS_GET_USAGE, SYS_FS_SYMLINK, SYS_FS_READLINK, SYS_FS_LSTAT, SYS_NET_UDP_RECV, SYS_UNAME, SYS_VGA_GET_FB_INFO. All 7 added to validation switch; all 7 handlers fixed to use strncpy_from_user()/copy_to_user() instead of direct dereference. Build-verified clean."
 }

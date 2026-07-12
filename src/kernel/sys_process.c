@@ -1044,6 +1044,7 @@ uint64_t sys_exit_group(uint64_t code)
 			continue;
 
 		struct siginfo info;
+		memset(&info, 0, sizeof(info));
 		info.si_signo = SIGKILL;
 		info.si_errno = 0;
 		info.si_code  = SI_KERNEL;
