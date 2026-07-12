@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 615,
+  "current_item": 616,
   "current_batch": "B010",
   "completed_items": [
     1,
@@ -616,10 +616,11 @@
     611,
     612,
     613,
-    614
+    614,
+    615
   ],
-  "found_bugs": 1078,
-  "fixed_bugs": 1078,
+  "found_bugs": 1081,
+  "fixed_bugs": 1081,
   "completed_batches": [
     "B001",
     "B002",
@@ -631,6 +632,6 @@
     "B008",
     "B009"
   ],
-  "last_item_timestamp": "2026-07-12T22:45:00",
-  "last_item_result": "item 614: verify namespace ID range check. Bug found: g_nvme_ctrl.nn (controller-reported namespace count) was not capped to NVME_MAX_NS (8), while per-namespace arrays are sized NVME_MAX_NS. A controller claiming >8 namespaces would allow OOB array access in nvme_blk_submit() and nvme_deallocate(). Fix: clamp nn to NVME_MAX_NS after reading from Identify Controller data."
+  "last_item_timestamp": "2026-07-12T23:20:00",
+  "last_item_result": "item 615: verify PMR discovery in nvme_pmr.c. Found 3 bugs: (1) RDS field in PMRCAP treated as single-bit flag but is 3-bit field (bits 3:1) \u2014 stride always 0 or 1 instead of proper 2^RDS; (2) elasticity buffer size read from PMRMCAPL bits 63:32 (reserved) instead of PMREBS register; (3) unused pmrcap_high variable. All fixed, build verifies clean."
 }
