@@ -281,6 +281,37 @@ void ioapic_unmask_irq(uint8_t irq) {
     ioapic_write_reg(IOAPIC_REDTBL + irq * 2, low & ~IOAPIC_MASKED);
 }
 
+/* ── IRQ affinity ────────────────────────────────────────────────── */
+
+/* Update the destination APIC ID in an I/O APIC redirection entry.
+ * Reads the current entry, preserves the vector / delivery-mode low
+ * DWORD, and writes back with a new APIC ID in the high DWORD.
+ * This is the hardware side of irq_set_affinity() — without it the
+ * stored cpu_mask never takes effect. */
+void ioapic_set_irq_destination(uint8_t irq, uint32_t apic_id)
+{
+    if (irq > ioapic_nr_entries)
+        return;
+
+    /* Read current redirection entry */
+    uint32_t low  = ioapic_read_reg(IOAPIC_REDTBL + irq * 2);
+    uint32_t high = ioapic_read_reg(IOAPIC_REDTBL + irq * 2 + 1);
+
+    /* If this pin is in ExtINT delivery mode (bits 10:8 = 111), the
+     * destination field is irrelevant — ExtINT forwards whatever the
+     * legacy PIC outputs.  Leave it alone. */
+    if ((low & (7u << 8)) == (7u << 8))
+        return;
+
+    /* Clear destination field (bits 27:24 in high DWORD) and set new id */
+    high &= ~(0xFFu << 24);
+    high |= (apic_id & 0xFFu) << 24;
+
+    /* Write back — low DWORD must be written after high to latch */
+    ioapic_write_reg(IOAPIC_REDTBL + irq * 2 + 1, high);
+    ioapic_write_reg(IOAPIC_REDTBL + irq * 2, low);
+}
+
 /* ── IPI (Inter-Processor Interrupts) handlers ────────────────────── */
 
 #define TLB_SHOOTDOWN_MAX 64

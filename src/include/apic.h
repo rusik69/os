@@ -89,6 +89,7 @@ void ioapic_redirect_extint(uint8_t irq);
 void ioapic_redirect_irq(uint8_t irq, uint8_t vector, uint32_t apic_id);
 void ioapic_mask_irq(uint8_t irq);
 void ioapic_unmask_irq(uint8_t irq);
+void ioapic_set_irq_destination(uint8_t irq, uint32_t apic_id);
 void irq_ack(uint8_t irq);
 
 /* IPI handlers */

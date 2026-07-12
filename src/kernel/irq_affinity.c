@@ -4,6 +4,9 @@
 #include "types.h"
 #include "string.h"
 #include "smp.h"
+#include "apic.h"
+#include "cpu_bitmask.h"
+
 #define MAX_IRQ 256
 
 /* irq_affinity[] is accessed from multiple CPUs (or potentially from IRQ
@@ -20,7 +23,21 @@ void irq_affinity_init(void) {
 
 int irq_set_affinity(int irq, uint64_t cpu_mask) {
     if (irq < 0 || irq >= MAX_IRQ) return -1;
+    if (cpu_mask == 0) return -1;          /* at least one CPU required */
+
     __atomic_store_n(&irq_affinity[irq], cpu_mask, __ATOMIC_SEQ_CST);
+
+    /* ── Make the affinity take effect at the hardware level ──────────
+     * Pick the first (lowest-numbered) CPU in the mask and program the
+     * I/O APIC destination to that CPU's APIC ID.  Without this step the
+     * stored mask is purely cosmetic — interrupts would keep arriving on
+     * whatever CPU the IOAPIC was originally programmed for. */
+    int target_cpu = __builtin_ctzll(cpu_mask);
+    if (target_cpu < SMP_MAX_CPUS) {
+        uint32_t apic_id = cpu_info_array[target_cpu].apic_id;
+        ioapic_set_irq_destination((uint8_t)irq, apic_id);
+    }
+
     return 0;
 }
 
@@ -29,19 +46,15 @@ uint64_t irq_get_affinity(int irq) {
     return __atomic_load_n(&irq_affinity[irq], __ATOMIC_SEQ_CST);
 }
 
-/* ── Stub: irq_affinity_set ─────────────────────────────── */
-int irq_affinity_set(int irq, const void *cpus)
+int irq_affinity_set(int irq, const struct cpumask *cpus)
 {
-    (void)irq;
-    (void)cpus;
-    kprintf("[irq] irq_affinity_set: not yet implemented\n");
-    return 0;
+    if (!cpus) return -1;
+    return irq_set_affinity(irq, cpus->bits);
 }
-/* ── Stub: irq_affinity_get ─────────────────────────────── */
-int irq_affinity_get(int irq, void *cpus)
+
+int irq_affinity_get(int irq, struct cpumask *cpus)
 {
-    (void)irq;
-    (void)cpus;
-    kprintf("[irq] irq_affinity_get: not yet implemented\n");
+    if (!cpus) return -1;
+    cpus->bits = irq_get_affinity(irq);
     return 0;
 }
