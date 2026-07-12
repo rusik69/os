@@ -772,34 +772,65 @@ static int load_balance(void) {
     for (int lvl = SCHED_LEVELS - 1; lvl >= 0; lvl--) {
         if (!busy->queue_head[lvl]) continue;
 
-        /* Find the last (tail) process in this priority level */
+        /* Find the last (tail) process in this priority level that is
+         * NOT the idle process (PID 0).  The idle process belongs only
+         * on the BSP and must never be stolen by another CPU. */
         struct process *prev = NULL;
         struct process *cur = busy->queue_head[lvl];
-        while (cur->next) {
+        struct process *target_prev = NULL;
+        struct process *target = NULL;
+
+        while (cur) {
+            if (cur->pid != 0) {
+                /* Found a candidate — it becomes the new target */
+                target_prev = prev;
+                target = cur;
+            }
             prev = cur;
             cur = cur->next;
         }
 
-        /* Unlink from busy CPU */
-        if (prev) prev->next = NULL;
-        else busy->queue_head[lvl] = NULL;
-        busy->queue_tail[lvl] = prev;
+        /* If every task in this level is the idle process, move on */
+        if (!target)
+            continue;
 
-        cur->next = NULL;
-        cur->on_queue = 0;
+        /* Unlink target from busy CPU */
+        if (target_prev)
+            target_prev->next = target->next;
+        else
+            busy->queue_head[lvl] = target->next;
+
+        /* Update tail if we unlinked the last element */
+        if (busy->queue_tail[lvl] == target)
+            busy->queue_tail[lvl] = target_prev;
+
+        target->next = NULL;
+        target->on_queue = 0;
 
         /* Add to our queue */
         {
-            int our_lvl = (int)cur->priority;
+            int our_lvl = (int)target->priority;
+            /* SCHED_IDLE tasks always go to the lowest queue level */
+            if (target->sched_policy == SCHED_IDLE)
+                our_lvl = SCHED_LEVELS - 1;
+            if (our_lvl < 0 || our_lvl >= SCHED_LEVELS)
+                our_lvl = 1;
             if (!ci->queue_tail[our_lvl]) {
-                ci->queue_head[our_lvl] = cur;
-                ci->queue_tail[our_lvl] = cur;
+                ci->queue_head[our_lvl] = target;
+                ci->queue_tail[our_lvl] = target;
             } else {
-                ci->queue_tail[our_lvl]->next = cur;
-                ci->queue_tail[our_lvl] = cur;
+                ci->queue_tail[our_lvl]->next = target;
+                ci->queue_tail[our_lvl] = target;
             }
-            cur->on_queue = 1;
+            target->on_queue = 1;
         }
+
+        /* ── EEVDF hook: recalculate deadline on destination CPU ── */
+        eevdf_enqueue(target);
+
+        /* ── NO_HZ: restart the tick on this CPU if it was stopped ── */
+        if (nohz_tick_is_stopped(this_cpu_id))
+            nohz_tick_restart(this_cpu_id);
 
         return 1; /* stole one task */
     }
@@ -1638,6 +1669,17 @@ int scheduler_migrate_tasks_from(int from_cpu)
 
         while (p) {
             struct process *next = p->next;
+
+            /* Never migrate the idle process (PID 0) — it belongs only on
+             * the BSP and must never be scheduled on another CPU.  Skip it
+             * so it remains in the source queue; when the CPU comes back
+             * online, the idle thread is still available.  If the source
+             * CPU is going offline permanently, the callers ensure the
+             * idle process stays with the BSP via other mechanisms. */
+            if (p->pid == 0) {
+                p = next;
+                continue;
+            }
 
             /* ── Pick a destination CPU respecting CPU affinity ─────
              *

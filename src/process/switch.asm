@@ -2,7 +2,7 @@ bits 64
 section .text
 
 ; void context_switch(struct cpu_context **old, struct cpu_context *new_ctx)
-; rdi = &old->context (pointer to pointer)
+; rdi = &old->context (pointer to pointer), may be NULL (e.g. AP first switch)
 ; rsi = new->context
 ;
 ; IMPORTANT: caller must disable interrupts (cli) before calling this
@@ -11,6 +11,10 @@ section .text
 ; the partially-restored context frame.
 global context_switch
 context_switch:
+    ; Check if old context pointer is NULL (e.g. AP with no current process)
+    test rdi, rdi
+    jz .skip_save
+
     ; Save callee-saved registers
     push rbp
     push rbx
@@ -21,7 +25,15 @@ context_switch:
 
     ; Save current stack pointer to old context
     mov [rdi], rsp
+    jmp .restore
 
+.skip_save:
+    ; No old context to save — just advance past the 6 saved-reg slots
+    ; on the NEW stack so we can restore from the same layout
+    ; (the new context was pushed as: rbp, rbx, r12, r13, r14, r15, ret_addr)
+    ; so there is nothing to discard — we go straight to restore.
+
+.restore:
     ; Load new stack pointer
     mov rsp, rsi
 

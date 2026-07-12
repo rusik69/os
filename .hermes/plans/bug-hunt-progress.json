@@ -1,7 +1,7 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
   "current_item": 542,
-  "current_batch": "B008",
+  "current_batch": "B009",
   "completed_items": [
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
     11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
@@ -60,8 +60,8 @@
     538, 539, 540,
     541
   ],
-  "found_bugs": 987,
-  "fixed_bugs": 987,
+  "found_bugs": 991,
+  "fixed_bugs": 991,
   "completed_batches": [
     "B001",
     "B002",
@@ -70,6 +70,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-12T06:16:00",
-  "last_item_result": "item 541: src/process/scheduler.c + src/kernel/cpu.c — scheduler runqueue after migration: found 3 bugs. (1) scheduler_migrate_tasks_from() wrote to destination CPU runqueues without sched_lock, racing with concurrent schedule/scheduler_add/scheduler_tick. (2) scheduler_migrate_tasks_from() didn't force SCHED_IDLE tasks to lowest queue level (SCHED_LEVELS-1), diverging from scheduler_add_locked(). (3) cpuhp_migrate_tasks_away() set current process state to READY but never enqueued it, stranding it forever. Fixed all three. Build verified. Commit: 623fb99f."
+  "last_item_timestamp": "2026-07-12T06:27:00",
+  "last_item_result": "item 541 (supplemental): src/process/scheduler.c + src/include/sched_deadline.h — scheduler runqueue after migration: found 4 additional bugs in scheduler_migrate_tasks_from(). (1) Missing CPU affinity check: migrated tasks could land on CPUs not in their sched_setaffinity mask. (2) Missing SCHED_DEADLINE migration: deadline tasks in per-CPU cpu_dl_rq[] were never migrated, stranding them permanently when a CPU goes offline. (3) Missing EEVDF hooks: eevdf_enqueue() was not called after migration, leaving stale deadline/lag values from the source CPU's runqueue. (4) Missing NOHZ tick restart: adding a task to a destination CPU with stopped tick left the task without accounting. Fixed all four. Build verified. Commit: 217db94f."
 }
