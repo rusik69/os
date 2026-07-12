@@ -1801,8 +1801,10 @@ static uint64_t sys_fs_lstat(uint64_t path_addr, uint64_t size_addr, uint64_t ty
 }
 
 static uint64_t sys_chdir(uint64_t path_addr) {
-    const char *path = (const char *)path_addr;
-    if (!path) return (uint64_t)(int64_t)-EFAULT;
+    char kpath[256];
+    if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
+    const char *path = kpath;
     /* Prefer per-session CWD so that cd/pwd work correctly even when
      * net_poll() is called from a different process (e.g. httpd). */
     char *ses_cwd = telnet_get_cwd_ctx();
@@ -3789,12 +3791,13 @@ static uint64_t sys_pause(void) {
 /* ── access() ────────────────────────────────────────────────── */
 
 static uint64_t sys_access(uint64_t path_addr, uint64_t mode) {
-    const char *path = (const char *)path_addr;
-    if (!path) return (uint64_t)(int64_t)-EFAULT;
+    char kpath[256];
+    if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
 
     /* Check if file exists */
     struct vfs_stat st;
-    if (vfs_stat(path, &st) < 0) return (uint64_t)(int64_t)-ENOENT;
+    if (vfs_stat(kpath, &st) < 0) return (uint64_t)(int64_t)-ENOENT;
 
     /* For now, we don't check permissions (always OK if file exists) */
     (void)mode;
@@ -3830,11 +3833,12 @@ static uint64_t sys_getegid(void) {
 /* ── rmdir() ─────────────────────────────────────────────────── */
 
 static uint64_t sys_rmdir(uint64_t path_addr) {
-    const char *path = (const char *)path_addr;
-    if (!path) return (uint64_t)(int64_t)-EFAULT;
+    char kpath[256];
+    if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
 
     /* Use VFS unlink (same as delete for directories) */
-    int ret = vfs_unlink(path);
+    int ret = vfs_unlink(kpath);
     if (ret < 0) return (uint64_t)(int64_t)ret;
     return 0;
 }
@@ -3842,14 +3846,16 @@ static uint64_t sys_rmdir(uint64_t path_addr) {
 /* ── rename() ────────────────────────────────────────────────── */
 
 static uint64_t sys_rename(uint64_t old_addr, uint64_t new_addr) {
-    const char *old_path = (const char *)old_addr;
-    const char *new_path = (const char *)new_addr;
-    if (!old_path || !new_path) return (uint64_t)(int64_t)-EINVAL;
+    char old_kpath[256], new_kpath[256];
+    if (strncpy_from_user(old_kpath, old_addr, sizeof(old_kpath)) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
+    if (strncpy_from_user(new_kpath, new_addr, sizeof(new_kpath)) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
 
     /* Use the VFS rename operation — supports both files and directories,
      * handles cross-filesystem moves (returns -EXDEV), enforces Landlock
      * permissions and read-only mounts. */
-    int ret = vfs_rename(old_path, new_path);
+    int ret = vfs_rename(old_kpath, new_kpath);
     if (ret < 0) return (uint64_t)(int64_t)ret;
     return 0;
 }
@@ -3857,9 +3863,10 @@ static uint64_t sys_rename(uint64_t old_addr, uint64_t new_addr) {
 /* ── chmod() ─────────────────────────────────────────────────── */
 
 static uint64_t sys_chmod(uint64_t path_addr, uint64_t mode) {
-    const char *path = (const char *)path_addr;
-    if (!path) return (uint64_t)(int64_t)-EFAULT;
-    int ret = fs_chmod(path, (uint16_t)mode);
+    char kpath[256];
+    if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
+    int ret = fs_chmod(kpath, (uint16_t)mode);
     return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
 }
 
@@ -4494,8 +4501,9 @@ static uint64_t sys_umask(uint64_t mask) {
 /* ── mknod() ─────────────────────────────────────────────────── */
 
 static uint64_t sys_mknod(uint64_t path_addr, uint64_t mode, uint64_t dev) {
-    const char *path = (const char *)path_addr;
-    if (!path) return (uint64_t)-ENOENT;
+    char kpath[256];
+    if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
+        return (uint64_t)-EFAULT;
 
     /* Extract the file type from the POSIX mode bits */
     uint32_t file_type = (mode & S_IFMT);
@@ -4505,7 +4513,7 @@ static uint64_t sys_mknod(uint64_t path_addr, uint64_t mode, uint64_t dev) {
             /* Character device node */
             uint16_t major = (uint16_t)((dev >> 8) & 0xFF);
             uint16_t minor = (uint16_t)(dev & 0xFF);
-            if (vfs_mknod(path, (uint16_t)(mode & 0x0FFF), major, minor) < 0)
+            if (vfs_mknod(kpath, (uint16_t)(mode & 0x0FFF), major, minor) < 0)
                 return (uint64_t)-1;
             return 0;
         }
@@ -4513,25 +4521,25 @@ static uint64_t sys_mknod(uint64_t path_addr, uint64_t mode, uint64_t dev) {
             /* Block device node */
             uint16_t major = (uint16_t)((dev >> 8) & 0xFF);
             uint16_t minor = (uint16_t)(dev & 0xFF);
-            if (vfs_mknod(path, (uint16_t)(mode & 0x0FFF), major, minor) < 0)
+            if (vfs_mknod(kpath, (uint16_t)(mode & 0x0FFF), major, minor) < 0)
                 return (uint64_t)-1;
             return 0;
         }
         case S_IFREG:
         case 0: {
             /* Regular file (default when no type bits set) */
-            if (vfs_create(path, FS_TYPE_FILE) < 0)
+            if (vfs_create(kpath, FS_TYPE_FILE) < 0)
                 return (uint64_t)-1;
             return 0;
         }
         case S_IFDIR:
             /* Directory — use vfs_create with FS_TYPE_DIR */
-            if (vfs_create(path, FS_TYPE_DIR) < 0)
+            if (vfs_create(kpath, FS_TYPE_DIR) < 0)
                 return (uint64_t)-1;
             return 0;
         case S_IFIFO:
             /* Named FIFO (pipe) — create as FIFO-type file */
-            if (vfs_create(path, VFS_TYPE_FIFO) < 0)
+            if (vfs_create(kpath, VFS_TYPE_FIFO) < 0)
                 return (uint64_t)-1;
             return 0;
         case S_IFSOCK:
@@ -4822,16 +4830,18 @@ static uint64_t sys_pmm_get_stats(uint64_t out_addr) {
 /* Specialized syscall handlers (Phase 3 Group 3b) */
 
 static uint64_t sys_elf_exec(uint64_t path_addr) {
-    const char *path = (const char *)path_addr;
-    if (!path) return (uint64_t)-1;
-    return (uint64_t)elf_exec(path);
+    char kpath[256];
+    if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
+        return (uint64_t)-EFAULT;
+    return (uint64_t)elf_exec(kpath);
 }
 
 static uint64_t sys_script_exec(uint64_t path_addr) {
-    const char *path = (const char *)path_addr;
-    if (!path) return (uint64_t)(int64_t)-EFAULT;
+    char kpath[256];
+    if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
     if (!script_exec_ptr) return (uint64_t)(int64_t)-ENOSYS;
-    return (uint64_t)script_exec_ptr(path);
+    return (uint64_t)script_exec_ptr(kpath);
 }
 
 static uint64_t sys_fat_mount(uint64_t disk, uint64_t part_lba) {
@@ -6647,7 +6657,8 @@ static uint64_t sys_umount(uint64_t target_addr) {
     char target[64];
     if (syscall_is_user_process() && !syscall_user_cstr_ok(target_addr))
         return (uint64_t)(int64_t)-EFAULT;
-    memcpy(target, (void*)target_addr, 63); target[63] = '\0';
+    if (strncpy_from_user(target, target_addr, sizeof(target)) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
 
     kprintf("[umount] %s\n", target);
     /* In a full implementation this would call vfs_umount */
@@ -6665,8 +6676,10 @@ static uint64_t sys_pivot_root(uint64_t new_root_addr, uint64_t put_old_addr) {
             return (uint64_t)(int64_t)-EFAULT;
     }
 
-    memcpy(new_root, (void*)new_root_addr, 63); new_root[63] = '\0';
-    memcpy(put_old, (void*)put_old_addr, 63);   put_old[63] = '\0';
+    if (strncpy_from_user(new_root, new_root_addr, sizeof(new_root)) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
+    if (strncpy_from_user(put_old, put_old_addr, sizeof(put_old)) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
 
     int ret = vfs_pivot_root(new_root, put_old);
     if (ret < 0)
@@ -6684,8 +6697,8 @@ static uint64_t sys_chroot(uint64_t path_addr) {
             return (uint64_t)(int64_t)-EFAULT;
     }
 
-    memcpy(path, (void*)path_addr, 255);
-    path[255] = '\0';
+    if (strncpy_from_user(path, path_addr, sizeof(path)) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
 
     int ret = chroot_set(path);
     if (ret < 0)
@@ -9974,8 +9987,22 @@ static uint64_t sys_personality(uint64_t persona) {
  */
 static uint64_t sys_init_module(uint64_t path_addr, uint64_t params_addr)
 {
-    const char *path = (const char *)path_addr;
-    const char *params = (params_addr) ? (const char *)params_addr : NULL;
+    char kpath[256];
+    char kparams[512];
+
+    /* Copy path from user-space (safe uaccess) */
+    if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
+        return (uint64_t)-EFAULT;
+
+    /* Copy params from user-space (optional) */
+    const char *params = NULL;
+    if (params_addr) {
+        if (strncpy_from_user(kparams, params_addr, sizeof(kparams)) < 0)
+            return (uint64_t)-EFAULT;
+        params = kparams;
+    }
+
+    const char *path = kpath;
 
     /* Lockdown: reject module loading at INTEGRITY level or above */
     if (lockdown_is_locked_down(LOCKDOWN_INTEGRITY))
@@ -9993,11 +10020,6 @@ static uint64_t sys_init_module(uint64_t path_addr, uint64_t params_addr)
         struct process *p = process_get_current();
         if (!p || p->euid != 0)
             return (uint64_t)-EPERM;
-        /* Validate user-space pointers */
-        if (path && !syscall_user_cstr_ok(path_addr))
-            return (uint64_t)-EFAULT;
-        if (params && !syscall_user_cstr_ok(params_addr))
-            return (uint64_t)-EFAULT;
     }
 
     /* Validate the path string */
@@ -10108,7 +10130,13 @@ static uint64_t sys_init_module(uint64_t path_addr, uint64_t params_addr)
  */
 static uint64_t sys_finit_module(uint64_t fd, uint64_t params_addr, uint64_t flags)
 {
-    const char *params = (params_addr) ? (const char *)params_addr : NULL;
+    char kparams[512];
+    const char *params = NULL;
+    if (params_addr) {
+        if (strncpy_from_user(kparams, params_addr, sizeof(kparams)) < 0)
+            return (uint64_t)-EFAULT;
+        params = kparams;
+    }
     (void)flags;
 
     /* Lockdown: reject module loading at INTEGRITY level or above */
@@ -10127,9 +10155,6 @@ static uint64_t sys_finit_module(uint64_t fd, uint64_t params_addr, uint64_t fla
         struct process *p = process_get_current();
         if (!p || p->euid != 0)
             return (uint64_t)-EPERM;
-        /* Validate user-space pointer for params */
-        if (params && !syscall_user_cstr_ok(params_addr))
-            return (uint64_t)-EFAULT;
     }
 
     /* Validate the fd */
@@ -10352,11 +10377,19 @@ static uint64_t sys_delete_module(uint64_t name_addr, uint64_t flags)
 static uint64_t sys_query_module(uint64_t name_addr, uint64_t info_buf_addr,
                                   uint64_t buf_size)
 {
-    const char *name = (const char *)name_addr;
     char *info_buf = (char *)info_buf_addr;
 
     if (!info_buf || buf_size == 0)
         return (uint64_t)-EINVAL;
+
+    /* Copy name from user-space if provided */
+    char kname_buf[256];
+    const char *name = NULL;
+    if (name_addr) {
+        if (strncpy_from_user(kname_buf, name_addr, sizeof(kname_buf)) < 0)
+            return (uint64_t)-EFAULT;
+        name = kname_buf;
+    }
 
     /* If name is NULL or empty, enumerate all loaded modules */
     if (!name || !name[0]) {
