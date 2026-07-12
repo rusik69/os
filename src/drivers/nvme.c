@@ -933,8 +933,17 @@ static int nvme_blk_submit(struct blk_request *req) {
     void *data_virt = PHYS_TO_VIRT((void*)(uintptr_t)data_phys);
 
     if (req->flags & BLK_REQ_WRITE) {
-        /* For writes: copy data from request buffer to DMA buffer */
-        memcpy(data_virt, req->buf, (size_t)nr_sectors * 512);
+        /* For writes: copy data from request buffer to DMA buffer.
+         * Data may span multiple pages, copy page by page. */
+        uint64_t remaining = (uint64_t)nr_sectors * 512;
+        uint64_t offset = 0;
+        for (uint32_t i = 0; i < nr_pages && remaining > 0; i++) {
+            void *page_virt = PHYS_TO_VIRT(frames[i] * 4096);
+            uint64_t copy = remaining < 4096 ? remaining : 4096;
+            memcpy(page_virt, (uint8_t *)req->buf + offset, (size_t)copy);
+            offset += copy;
+            remaining -= copy;
+        }
     }
 
     /* Build PRP list if multi-page (NVMe PRP entries cannot cross page boundaries) */
