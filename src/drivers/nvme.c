@@ -507,6 +507,12 @@ int nvme_identify_ctrl(struct nvme_identify_ctrl *id) {
     if (ret == 0) {
         memcpy(id, data_virt, sizeof(struct nvme_identify_ctrl));
         g_nvme_ctrl.nn = id->nn;
+        /* Clamp to our array size — all per-namespace arrays (ns_sector_count,
+         * ns_sector_size, ns_blkdev_id) are sized NVME_MAX_NS. Without this
+         * cap, a controller claiming >NVME_MAX_NS namespaces causes OOB
+         * array access in nvme_blk_submit() and nvme_deallocate(). */
+        if (g_nvme_ctrl.nn > NVME_MAX_NS)
+            g_nvme_ctrl.nn = NVME_MAX_NS;
         g_nvme_ctrl.sq_entry_size = 1U << (id->sqes & 0x0F);
         g_nvme_ctrl.cq_entry_size = 1U << ((id->cqes >> 4) & 0x0F);
 
