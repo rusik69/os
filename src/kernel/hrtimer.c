@@ -40,8 +40,10 @@ int hrtimer_start(struct hrtimer *timer, uint64_t ns)
         timer->timer_id = -1;
     }
 
-    /* Convert nanoseconds to ticks (assuming ~1 GHz TSC, 1 tick ≈ 1 ns) */
-    uint64_t delay_ticks = ns;
+    /* Convert nanoseconds to ticks.
+     * PIT runs at 100 Hz → NS_PER_TICK = 10,000,000.
+     * Divide and round up so even tiny ns values yield at least 1 tick. */
+    uint64_t delay_ticks = (ns + NS_PER_TICK - 1) / NS_PER_TICK;
     if (delay_ticks < 1) delay_ticks = 1;
 
     int tid = timer_schedule(timer->function, timer->data, delay_ticks);
