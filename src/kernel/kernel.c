@@ -1330,8 +1330,11 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     get_cpu_info()->scheduler_enabled = 1;
     schedule();
 
-    /* Idle loop - the boot thread becomes the idle process */
+    /* Idle loop — the boot thread becomes the idle process.
+     * Reap zombie processes while idle so orphaned children
+     * (especially those reparented to init) don't accumulate. */
     for (;;) {
+        process_reap_zombies();
         if (need_resched())
             schedule();
         cpuidle_idle();

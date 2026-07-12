@@ -1514,7 +1514,10 @@ void process_cleanup(struct process *proc) {
 }
 
 /* Reap zombie processes: background jobs are reaped immediately,
- * other zombies are reaped only if their parent is gone. */
+ * other zombies are reaped only if their parent is gone.
+ * Orphaned zombies reparented to init (PID 1) are always reaped —
+ * init is trusted to collect all children and must not accumulate
+ * zombies even if it is busy processing other events. */
 void process_reap_zombies(void) {
     for (int i = 0; i < PROCESS_MAX; i++) {
         if (process_table[i].state == PROCESS_ZOMBIE) {
@@ -1527,6 +1530,15 @@ void process_reap_zombies(void) {
             struct process *parent = process_get_by_pid(process_table[i].parent_pid);
             if (!parent || parent->state == PROCESS_ZOMBIE ||
                 parent->state == PROCESS_UNUSED) {
+                process_cleanup(&process_table[i]);
+                continue;
+            }
+            /* Init (PID 1) auto-reaps orphaned zombies.
+             * When a child has been reparented to init, it must be
+             * cleaned up automatically without requiring init to call
+             * waitpid().  In Linux this is handled via the child_reaper
+             * check in release_task(). */
+            if (process_table[i].parent_pid == 1) {
                 process_cleanup(&process_table[i]);
             }
         }
