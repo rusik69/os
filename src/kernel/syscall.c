@@ -3956,6 +3956,9 @@ static uint64_t sys_sigprocmask(uint64_t how, uint64_t set_addr, uint64_t oldset
 
     /* Apply new mask */
     if (have_new) {
+        /* SIGKILL and SIGSTOP are unblockable — never allow them in the mask */
+        new_mask &= ~((1ULL << SIGKILL) | (1ULL << SIGSTOP));
+
         switch (how) {
             case SIG_BLOCK:
                 proc->sig_mask |= new_mask;

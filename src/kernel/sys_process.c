@@ -161,6 +161,9 @@ uint64_t sys_rt_sigprocmask(uint64_t how, uint64_t set_addr,
         if (copy_from_user(&new_mask, set_addr, sizeof(new_mask)) < 0)
             return (uint64_t)(int64_t)-EFAULT;
 
+        /* SIGKILL and SIGSTOP are unblockable — never allow them in the mask */
+        new_mask &= ~((1ULL << SIGKILL) | (1ULL << SIGSTOP));
+
         spinlock_irqsave_acquire(&p->sig_lock, &__sig_flags);
         switch (how) {
         case SIG_BLOCK:
@@ -234,7 +237,8 @@ uint64_t sys_rt_sigreturn(void)
     {
         uint64_t __sig_flags;
         spinlock_irqsave_acquire(&p->sig_lock, &__sig_flags);
-        p->sig_mask = uc.uc_sigmask;
+        /* SIGKILL and SIGSTOP are unblockable — never allow them in the mask */
+        p->sig_mask = uc.uc_sigmask & ~((1ULL << SIGKILL) | (1ULL << SIGSTOP));
         spinlock_irqsave_release(&p->sig_lock, __sig_flags);
     }
 
