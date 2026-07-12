@@ -325,6 +325,7 @@ void __init process_init(void) {
     process_caps_allow_all(&process_table[0]);
     memset(process_table[0].sig_handlers, 0, sizeof(process_table[0].sig_handlers));
     memset(process_table[0].sig_flags, 0, sizeof(process_table[0].sig_flags));
+    memset(process_table[0].sig_sa_mask, 0, sizeof(process_table[0].sig_sa_mask));
     process_table[0].sched_policy = SCHED_OTHER;
     process_table[0].alt_stack_sp = NULL;
     process_table[0].alt_stack_size = 0;
@@ -416,6 +417,7 @@ struct process *process_create(void (*entry)(void), const char *name) {
     proc->sig_mask = 0;
     memset(proc->sig_handlers, 0, sizeof(proc->sig_handlers));
     memset(proc->sig_flags, 0, sizeof(proc->sig_flags));
+    memset(proc->sig_sa_mask, 0, sizeof(proc->sig_sa_mask));
     memset(proc->fd_table, 0, sizeof(proc->fd_table));
     proc->is_user = 0;
     proc->user_entry = 0;
@@ -609,6 +611,7 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
     proc->pending_signals = 0;
     proc->sig_mask = 0;
     memset(proc->sig_handlers, 0, sizeof(proc->sig_handlers));
+    memset(proc->sig_sa_mask, 0, sizeof(proc->sig_sa_mask));
     memset(proc->fd_table, 0, sizeof(proc->fd_table));
     proc->is_user = 1;
     proc->user_entry = entry;

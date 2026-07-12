@@ -148,6 +148,7 @@ struct process {
     signal_handler_t sig_handlers[PROCESS_SIG_MAX]; /* per-signal handler */
     struct siginfo sig_info[PROCESS_SIG_MAX]; /* most recent siginfo per signal */
     uint32_t sig_flags[PROCESS_SIG_MAX];    /* per-signal SA_* flags (SA_RESTART, etc.) */
+    uint64_t sig_sa_mask[PROCESS_SIG_MAX];  /* per-signal sa_mask (signals to block during handler) */
     /* Ring 3 support */
     int      is_user;         /* 1 = runs in ring 3, 0 = kernel thread */
     uint64_t user_entry;      /* ring 3 entry point (ELF e_entry) */

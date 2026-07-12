@@ -70,7 +70,7 @@ uint64_t sys_rt_sigaction(uint64_t signum, uint64_t act_addr,
         old.sa_sigaction = NULL;  /* sa_handler and sa_sigaction share the same slot in Linux */
         old.sa_flags   = (int)p->sig_flags[signum];
         old.sa_restorer = NULL;  /* not tracked per-signal */
-        old.sa_mask.__bits[0] = p->sig_mask;
+        old.sa_mask.__bits[0] = p->sig_sa_mask[signum];
 
         spinlock_irqsave_release(&p->sig_lock, __sig_flags);
         if (copy_to_user(oldact_addr, &old, sizeof(old)) < 0)
@@ -99,13 +99,7 @@ uint64_t sys_rt_sigaction(uint64_t signum, uint64_t act_addr,
 
         p->sig_handlers[signum] = handler;
         p->sig_flags[signum]    = (uint32_t)(new_act.sa_flags & 0xFFFFFFFFU);
-
-        /* sa_mask: set of signals to block during handler execution.
-         * Stored in sig_info for signal_check() to apply at delivery time.
-         * Currently the kernel uses p->sig_mask (global mask); per-signal
-         * sa_mask application during delivery is a future enhancement.
-         * TODO: apply sa_mask during signal_check() delivery. */
-        (void)new_act.sa_mask;
+        p->sig_sa_mask[signum]  = new_act.sa_mask.__bits[0];
 
         /* SA_NODEFER: normally the signal is masked while its handler runs.
          * If set, don't mask it. This is handled at signal delivery time.
