@@ -85,18 +85,25 @@ void timer_cancel(int timer_id) {
 void timer_handler_soft(void) {
     if (!g_timers_initialized) return;
 
-    uint64_t now = timer_get_ticks();
-
     /* Walk through all timers and fire any that have expired.
      * We do NOT hold the lock while firing the callback to avoid
-     * deadlocks if the callback schedules another timer. */
+     * deadlocks if the callback schedules another timer.
+     *
+     * Refresh now on each iteration so a long-running callback in a
+     * lower-index slot does not starve timers in higher-index slots:
+     * the stale-now condition (now < expire_tick) would otherwise
+     * skip timers whose expire_tick falls between the original
+     * snapshot and the actual current tick.  In a timer-wheel design
+     * this is prevented by bucket-level isolation; here we mitigate
+     * it by re-reading the monotonic tick counter in the loop. */
     for (int i = 0; i < TIMER_MAX; i++) {
+        uint64_t now = timer_get_ticks();
         if (!g_timers[i].active) continue;
         if (now < g_timers[i].expire_tick) continue;
 
         /* Atomically deactivate so we don't double-fire.
          * Re-check both active AND expire_tick under the lock:
-         * the unlocked read of expire_tick on line ~89 could have seen
+         * the unlocked read of expire_tick above could have seen
          * a stale value if timer_schedule() on another CPU just
          * rescheduled this timer with a new expiration. */
         uint64_t irq_flags;
