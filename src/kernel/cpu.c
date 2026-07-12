@@ -225,11 +225,21 @@ int cpuhp_migrate_tasks_away(int cpu_id)
         return CPUHP_ERR_BUSY;
     }
 
-    /* Handle the currently running process on that CPU */
+    /* Handle the currently running process on that CPU.
+     * This process was executing (not on the runqueue) and must
+     * be re-enqueued on a destination CPU — otherwise it becomes
+     * permanently stranded (PROCESS_READY state, but no runqueue).
+     *
+     * We use the public scheduler_add() API which acquires sched_lock
+     * internally and performs NUMA-aware placement on the current
+     * (running) CPU's queue. */
     struct cpu_info *ci = &cpu_info_array[cpu_id];
     if (ci->current_process &&
         ci->current_process->state == PROCESS_RUNNING) {
-        ci->current_process->state = PROCESS_READY;
+        struct process *cur = ci->current_process;
+        cur->state = PROCESS_READY;
+        cur->on_cpu = 0;
+        scheduler_add(cur);
         migrated++;
     }
 

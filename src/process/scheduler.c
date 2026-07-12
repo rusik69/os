@@ -1567,6 +1567,18 @@ int scheduler_migrate_tasks_from(int from_cpu)
     if (num_dst == 0)
         return 0; /* no targets — nothing to do */
 
+    /* ── Acquire sched_lock to safely modify destination runqueues ──
+     *
+     * The caller holds cpuhp_lock (which serialises the offline
+     * transition), but normal scheduler operations (schedule(),
+     * scheduler_add(), scheduler_tick()) use sched_lock, not
+     * cpuhp_lock.  Without sched_lock here, writes to destination
+     * CPUs' runqueues race with those CPUs' own scheduler operations,
+     * which can corrupt the linked lists (lost updates, dangling
+     * pointers). */
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&sched_lock, &irq_flags);
+
     /* ── Migrate tasks from each priority level ──────────────────── */
     int spread = (int)timer_get_ticks(); /* pseudo-random spread seed */
 
@@ -1584,11 +1596,18 @@ int scheduler_migrate_tasks_from(int from_cpu)
             p->next = NULL;
             p->on_queue = 0;
 
-            /* Link into destination queue */
-            struct cpu_info *dci = &cpu_info_array[dst];
+            /* Determine destination priority level.
+             * SCHED_IDLE tasks must always go to the lowest queue
+             * level (SCHED_LEVELS - 1) regardless of their priority
+             * field, matching the convention in scheduler_add_locked(). */
             int dlvl = (int)p->priority;
             if (dlvl < 0 || dlvl >= SCHED_LEVELS)
                 dlvl = 1;
+            if (p->sched_policy == SCHED_IDLE)
+                dlvl = SCHED_LEVELS - 1;
+
+            /* Link into destination queue */
+            struct cpu_info *dci = &cpu_info_array[dst];
 
             if (!dci->queue_tail[dlvl]) {
                 dci->queue_head[dlvl] = p;
@@ -1607,6 +1626,8 @@ int scheduler_migrate_tasks_from(int from_cpu)
         ci->queue_head[lvl] = NULL;
         ci->queue_tail[lvl] = NULL;
     }
+
+    spinlock_irqsave_release(&sched_lock, irq_flags);
 
     return migrated;
 }

@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 537,
+  "current_item": 541,
   "current_batch": "B008",
   "completed_items": [
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
@@ -55,24 +55,12 @@
     491, 492, 493, 494, 495, 496, 497, 498, 499, 500,
     501, 502, 503, 504, 505, 506, 507, 508, 509, 510,
     511, 512, 513, 514, 515, 516, 517, 518, 519, 520,
-    521, 522,
-    523,
-    524,
-    525,
-    526,
-    527,
-    528,
-    529,
-    530,
-    531,
-    532,
-    533,
-    534,
-    535,
-    536
+    521, 522, 523, 524, 525, 526, 527, 528, 529, 530,
+    531, 532, 533, 534, 535, 536, 537,
+    538, 539, 540
   ],
-  "found_bugs": 981,
-  "fixed_bugs": 981,
+  "found_bugs": 984,
+  "fixed_bugs": 984,
   "completed_batches": [
     "B001",
     "B002",
@@ -81,6 +69,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-12T06:25:00",
-  "last_item_result": "item 536: src/memory/ksm.c — fixed stale/different-owner mapping in KSM merge unregister. Added orig_phys field to struct ksm_page to preserve original physical frame before merge. ksm_unregister_phys/ksm_unregister_region now un-merge child pages (restore orig_phys, reset merged=0, refcount=1) when removing a source page with refcount > 1. Also added orphaned merged entry safety net cleanup. Build verified clean."
+  "last_item_timestamp": "2026-07-12T06:06:00",
+  "last_item_result": "item 540: src/memory/zsmalloc.c — class compaction: found cross-class page-reuse bug in zsmalloc_alloc(). The allocator reused pages across different size classes without tracking which class each page belonged to, causing wrong object stride in offset calculation, corrupted obj_table indexing, and unrecoverable free-path behavior. Fixed by adding class_idx tracking to struct zsmalloc_page. Build verified. Commit: 414d54d4."
 }
