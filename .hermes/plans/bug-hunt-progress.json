@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 550,
+  "current_item": 551,
   "current_batch": "B009",
   "completed_items": [
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
@@ -64,10 +64,11 @@
     546,
     547,
     548,
-    549
+    549,
+    550
   ],
-  "found_bugs": 999,
-  "fixed_bugs": 999,
+  "found_bugs": 1000,
+  "fixed_bugs": 1000,
   "completed_batches": [
     "B001",
     "B002",
@@ -76,6 +77,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-12T07:53:00",
-  "last_item_result": "item 549: src/kernel/psi.c — verify pressure stall counters wrap correctly (not overflow). Found two bugs. (1) Counter overflow: psi_inc() lacked overflow protection on stall_count (signed int), allowing UB on increment past INT32_MAX. The symmetric psi_dec() already clamped to 0, making the asymmetry a clear oversight. Added INT32_MAX saturation check. (2) Lock consistency: psi_gen_proc_file() read full_windows averages after releasing the spinlock, creating an inconsistent snapshot between 'some' and 'full' lines. Moved reads inside the locked section alongside the 'some' averages. Build verified, committed."
+  "last_item_timestamp": "2026-07-12T07:55:00",
+  "last_item_result": "item 550: src/kernel/sched_attr.c — verify sched_setattr permission checks. Found bug: sched_setattr() had zero permission checks — any unprivileged process could set RT/deadline policies, non-zero priorities, or modify any other process's scheduling. Added CAP_SYS_NICE checks via cap_capable_audit() for: cross-process modifications, SCHED_FIFO/RR/DEADLINE policies, and non-zero RT priority. Also added #include \"caps.h\". Build verified, committed."
 }

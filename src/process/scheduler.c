@@ -782,9 +782,16 @@ static int load_balance(void) {
 
         while (cur) {
             if (cur->pid != 0) {
-                /* Found a candidate — it becomes the new target */
-                target_prev = prev;
-                target = cur;
+                /* Check that this task's cpu_affinity allows it to run on
+                 * this CPU before selecting it as a steal candidate.
+                 * Without this check, a cpuset-restricted task could be
+                 * migrated to a disallowed CPU and become stranded. */
+                uint8_t aff = cur->cpu_affinity;
+                if (aff == 0 || (aff & (1U << this_cpu_id))) {
+                    /* Found a candidate — it becomes the new target */
+                    target_prev = prev;
+                    target = cur;
+                }
             }
             prev = cur;
             cur = cur->next;
