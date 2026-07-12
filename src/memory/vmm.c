@@ -988,7 +988,15 @@ int vmm_handle_cow_fault(uint64_t *pml4, uint64_t virt) {
         memcpy((void *)PHYS_TO_VIRT(new_phys),
                (void *)PHYS_TO_VIRT(old_phys), PAGE_SIZE);
         pmm_unref_frame(old_phys);
-        pt[pt_idx] = new_phys | (pte & (0xFFF | PTE_NX) & ~(uint64_t)PTE_COW) | PTE_WRITE | PTE_PRESENT;
+        /* Preserve VMM_FLAG_LOCKED so locked pages don't lose their lock
+         * status when COW is broken after fork.  Without this, an mlock'd
+         * page that was COW-marked on fork silently becomes unlocked on
+         * first write — the locked_pages counter stays wrong and the
+         * new frame lacks the extra lock ref, causing refcount leaks. */
+        uint64_t preserved = pte & (0xFFF | PTE_NX | VMM_FLAG_LOCKED) & ~(uint64_t)PTE_COW;
+        pt[pt_idx] = new_phys | preserved | PTE_WRITE | PTE_PRESENT;
+        if (pte & VMM_FLAG_LOCKED)
+            pmm_ref_frame(new_phys);  /* extra ref for the lock pin */
     }
     tlb_flush(virt);
     return 1;

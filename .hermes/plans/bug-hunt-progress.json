@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 589,
+  "current_item": 591,
   "current_batch": "B009",
   "completed_items": [
     1,
@@ -590,10 +590,12 @@
     585,
     586,
     587,
-    588
+    588,
+    589,
+    590
   ],
-  "found_bugs": 1034,
-  "fixed_bugs": 1034,
+  "found_bugs": 1036,
+  "fixed_bugs": 1036,
   "completed_batches": [
     "B001",
     "B002",
@@ -602,6 +604,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-12T15:45:00",
-  "last_item_result": "item 588: process/process - fix zombie reaping by init process. Two bugs: (1) process_reap_zombies() had no special case for init (PID 1) auto-reaping orphaned zombies reparented to it \u2014 only background and orphaned-parent zombies were reaped. (2) process_reap_zombies() was never called from any code path \u2014 dead code. Fixed by adding init auto-reap check (parent_pid==1) and calling from idle loop."
+  "last_item_timestamp": "2026-07-12T15:56:00",
+  "last_item_result": "item 590: process_create RLIMIT_NPROC enforcement. Found and fixed: process_create() counted ALL processes (every UID) instead of same-UID only, and did not exclude zombies - inconsistent with fork/clone paths. Now matches fork/clone: same-UID count with zombie exclusion."
 }
