@@ -587,7 +587,6 @@ int exec_binprm(const char *filename, void *argv, void *envp)
         return -EIO;
     }
 
-    uint64_t entry_point = 0;
     uint64_t phdr = 0, phent = 0, phnum = 0, base_addr = 0;
 
     /* Validate and load the ELF from the buffer */
@@ -616,11 +615,11 @@ int exec_binprm(const char *filename, void *argv, void *envp)
     uint64_t auxv_base = user_stack - ELF_AUXV_ENTRIES * 2 * 8;
     setup_auxv((uint64_t *)auxv_base, p,
                phdr, phent, phnum,
-               entry_point, base_addr,
+               entry, base_addr,
                filename);
 
     /* Populate process state */
-    p->entry_point = entry_point;
+    p->entry_point = entry;
     p->user_rsp = user_stack;
     p->brk = 0;
     p->name = filename;
@@ -629,7 +628,7 @@ int exec_binprm(const char *filename, void *argv, void *envp)
     vfs_close(binary);
 
     kprintf("[exec] Loaded '%s' entry=0x%lx stack=0x%lx\n",
-            filename, entry_point, user_stack);
+            filename, entry, user_stack);
 
     return 0;
 }
