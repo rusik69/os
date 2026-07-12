@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 562,
+  "current_item": 563,
   "current_batch": "B009",
   "completed_items": [
     1,
@@ -563,10 +563,11 @@
     558,
     559,
     560,
-    561
+    561,
+    562
   ],
-  "found_bugs": 1012,
-  "fixed_bugs": 1012,
+  "found_bugs": 1013,
+  "fixed_bugs": 1013,
   "completed_batches": [
     "B001",
     "B002",
@@ -575,6 +576,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-12T10:07:00",
-  "last_item_result": "item 561: src/kernel/nmi_watchdog.c — verify CPU stuck detection doesn't false-positive on idle. BUG FOUND AND FIXED: The NMI watchdog could false-positive a hard lockup on idle CPUs. Root cause: The PMC (performance counter) counts CPU_CLK_UNHALTED.THREAD_P (event 0x3C), which stops in all non-POLL idle C-states (HLT/MWAIT). If the counter is near its overflow point when the CPU enters a deep C-state with NO_HZ stopping the timer tick, the counter resumes on wake and can overflow during the wake interrupt handler — before the idle loop re-pets the watchdog. The NMI handler then finds hard_pet_tick stale by 10+ seconds and declares a lockup on a legitimately idle CPU. Fix: (1) Added 'idle_in_idle_state' per-CPU flag checked in the NMI handler; when set, the handler re-pets and bails out. (2) cpuidle_idle sets the flag before entering any C-state and clears it after wake. (3) schedule() clears the flag before context-switching to a real process so the guard can't mask lockups in running processes. (4) Also fixed the cpuidle-disabled HLT fallback path which was not petting the watchdog at all (dead code today, but a latent correctness issue). Build-verified clean."
+  "last_item_timestamp": "2026-07-12T10:20:00",
+  "last_item_result": "item 562: src/kernel/nmi_watchdog.c — verify NMI latency threshold sensible. BUG FOUND AND FIXED: Soft lockup detection was broken — nmi_watchdog_check_soft() checked soft_pet_tick which was just updated by nmi_watchdog_soft_pet() in the immediately preceding line of scheduler_tick(), making elapsed time always ~0. Fixed by checking hard_pet_tick instead, which is only updated by the scheduler/idle context (nmi_watchdog_pet()), not by the timer tick handler. This correctly detects when the scheduler has stalled even though timer ticks continue. Build-verified clean."
 }
