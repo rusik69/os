@@ -226,13 +226,20 @@ static void page_fault_handler(struct interrupt_frame *frame) {
      *
      *   - If the faulting address has PTE_EXECONLY set AND
      *   - The access is NOT an instruction fetch (err bit 4 = 0)
+     *   - The access is from user mode (err bit 2 = 1)
      *
      * Then this is a read (or write) to an execute-only page → SIGSEGV.
      *
      * The instruction fetch case (err bit 4 = 1) is allowed — that's
      * the whole point of execute-only pages: code can be fetched but
-     * not read or written. */
-    if ((err & (1ULL << 4)) == 0 && (err & 1ULL)) {
+     * not read or written.
+     *
+     * Kernel-mode access to an EXECONLY page (extremely unlikely since
+     * kernel pages are never tagged EXECONLY) should NOT attempt to
+     * deliver a signal — it must panic with full register dump.  The
+     * guard (err & (1ULL << 2)) ensures kernel protection faults fall
+     * through to the kernel panic path below. */
+    if ((err & (1ULL << 4)) == 0 && (err & 1ULL) && (err & (1ULL << 2))) {
         /* Read/write access to a present page — check EXECONLY flag */
         struct process *proc = process_get_current();
         if (proc && proc->pml4) {
