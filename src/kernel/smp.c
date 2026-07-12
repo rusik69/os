@@ -2,6 +2,7 @@
 
 #include "smp.h"
 #include "apic.h"
+#include "x2apic.h"
 #include "vmm.h"
 #include "pmm.h"
 #include "printf.h"
@@ -90,6 +91,10 @@ static void ap_entry_c(void) {
     /* Initialize local APIC on this CPU */
     apic_init_local();
     info->apic_id = apic_id;
+
+    /* If the BSP switched to x2APIC mode, switch this AP too.
+     * Switch happens after all MMIO-based APIC setup is done. */
+    x2apic_init();
 
     /* Initialize per-CPU TSS */
     memset(&info->tss, 0, sizeof(info->tss));

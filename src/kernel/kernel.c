@@ -420,7 +420,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     fsgsbase_init();
     invpcid_init();
     rdpid_init();
-    x2apic_init();
+    /* x2APIC (if supported) is enabled after full APIC+IOAPIC+timer
+     * setup so we can save existing LAPIC state before the mode switch
+     * and restore it via x2APIC MSRs afterwards — see x2apic_init(). */
     nx_enforce_init();
 
     /* W^X enforcement — reject writable+executable mappings */
@@ -631,6 +633,14 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* Timer (starts scheduling) */
     timer_init();
     kprintf("[OK] Timer initialized at %d Hz\n", TIMER_FREQ);
+
+    /* Switch to x2APIC mode if CPU supports it.
+     * This must happen after apic_init_local(), timer_init(), and
+     * nmi_watchdog_init() have completed MMIO-based LAPIC setup.
+     * x2apic_init() saves current state before the switch and
+     * restores it via x2APIC MSRs to avoid losing LAPIC state
+     * and dropping in-flight IRR interrupts. */
+    x2apic_init();
 
     /* Dynamic kernel timers (driven by timer IRQ) */
     timers_init();
