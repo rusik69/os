@@ -761,6 +761,7 @@ int ahci_ncq_read(int port_num, int pm_port, uint32_t lba, uint8_t count,
     /* For reads, the slot data buf will be written by the device */
 
     ahci_build_ncq_cmd(port, slot, req);
+    port->tag_bitmap |= (1u << slot);
     port->inflight_mask |= (1u << slot);
     port->slots[slot].req = req;
     spinlock_irqsave_release(&ahci_lock, irq_flags);
@@ -836,6 +837,7 @@ int ahci_ncq_write(int port_num, int pm_port, uint32_t lba, uint8_t count,
     req->flags = BLK_REQ_WRITE;
 
     ahci_build_ncq_cmd(port, slot, req);
+    port->tag_bitmap |= (1u << slot);
     port->inflight_mask |= (1u << slot);
     port->slots[slot].req = req;
     spinlock_irqsave_release(&ahci_lock, irq_flags);

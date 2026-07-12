@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 616,
+  "current_item": 617,
   "current_batch": "B010",
   "completed_items": [
     1,
@@ -617,10 +617,11 @@
     612,
     613,
     614,
-    615
+    615,
+    616
   ],
-  "found_bugs": 1081,
-  "fixed_bugs": 1081,
+  "found_bugs": 1082,
+  "fixed_bugs": 1082,
   "completed_batches": [
     "B001",
     "B002",
@@ -632,6 +633,6 @@
     "B008",
     "B009"
   ],
-  "last_item_timestamp": "2026-07-12T23:20:00",
-  "last_item_result": "item 615: verify PMR discovery in nvme_pmr.c. Found 3 bugs: (1) RDS field in PMRCAP treated as single-bit flag but is 3-bit field (bits 3:1) \u2014 stride always 0 or 1 instead of proper 2^RDS; (2) elasticity buffer size read from PMRMCAPL bits 63:32 (reserved) instead of PMREBS register; (3) unused pmrcap_high variable. All fixed, build verifies clean."
+  "last_item_timestamp": "2026-07-12T23:50:00",
+  "last_item_result": "item 616: ahci.c - ahci_ncq_read/write allocate NCQ slots without updating tag_bitmap, allowing ahci_drain_queue to double-allocate the same slot via tag_bitmap_alloc. Fixed by setting tag_bitmap after slot allocation in both functions. Build verifies clean."
 }
