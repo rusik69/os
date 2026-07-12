@@ -1141,6 +1141,13 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
     child->next = NULL;
     child->tgid = (flags & CLONE_THREAD) ? parent->tgid : child->pid;
 
+    /* Per POSIX / Linux semantics: after fork/clone, the child inherits
+     * NO pending signals from the parent.  The pending signal set must
+     * be cleared, along with the per-signal siginfo storage, so the
+     * child does not see signals that were destined for the parent. */
+    child->pending_signals = 0;
+    memset(child->sig_info, 0, sizeof(child->sig_info));
+
     /* ── Handle CLONE_NEWPID: child gets a new PID namespace (Item 111) ── */
     if (flags & CLONE_NEWPID) {
         struct pid_namespace *new_ns = pid_ns_create(parent->pid_ns);

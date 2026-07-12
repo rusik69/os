@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 585,
+  "current_item": 586,
   "current_batch": "B009",
   "completed_items": [
   1,
@@ -586,10 +586,11 @@
   581,
   582,
   583,
-  584
+  584,
+  585
   ],
-  "found_bugs": 1030,
-  "fixed_bugs": 1030,
+  "found_bugs": 1031,
+  "fixed_bugs": 1031,
   "completed_batches": [
     "B001",
     "B002",
@@ -598,6 +599,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-12T14:45:00",
-  "last_item_result": "item 584: signal/signal_register - fixed BSD semantics. signal_register() was setting sig_flags=0 (no SA_RESTART, SysV behavior). Fixed to set SA_RESTART flag for BSD semantics (interrupted syscalls restart). sys_signal() was returning 0 instead of the old handler; blocking all user custom handlers; returning -EINVAL instead of -1ULL (SIG_ERR). Fixed to return old handler, allow user handlers with proper validation, and return -1ULL on error."
+  "last_item_timestamp": "2026-07-12T15:20:00",
+  "last_item_result": "item 585: signal/sigaction - strip SIGKILL/SIGSTOP from sa_mask. sys_rt_sigaction() stored userspace sa_mask without sanitizing out SIGKILL/SIGSTOP (which must never be blockable). signal_check() also applied sa_mask without sanitizing during signal handler frame setup. Fixed both storage and application points."
 }
