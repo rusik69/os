@@ -5729,13 +5729,27 @@ static uint64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr,
     struct process *proc = process_get_current();
     if (!proc) return (uint64_t)-1;
 
-    /* Extract sigmask from the packed 6th argument */
-    const uint64_t *sigmask = NULL;
+    /* Extract sigmask from the packed 6th argument.
+     * Read the packed struct and the actual sigmask value from user-space
+     * BEFORE acquiring any locks — copy_from_user may page fault. */
+    int have_sigmask = 0;
+    uint64_t sigmask_val = 0;  /* pre-read sigmask value from userspace */
     uint64_t packed = syscall_arg6;
     if (packed) {
         if (syscall_is_user_process() && !syscall_user_read_ok(packed, sizeof(uint64_t*) + sizeof(size_t)))
             return (uint64_t)-1;
-        sigmask = *(const uint64_t **)packed;
+        /* Safely read the sigmask pointer from the packed struct via copy_from_user */
+        uint64_t sigmask_addr = 0;
+        if (copy_from_user(&sigmask_addr, packed, sizeof(uint64_t)) < 0)
+            return (uint64_t)-1;
+        /* If a sigmask pointer is provided, pre-read its value */
+        if (sigmask_addr) {
+            if (syscall_is_user_process() && !syscall_user_read_ok(sigmask_addr, sizeof(uint64_t)))
+                return (uint64_t)-1;
+            if (copy_from_user(&sigmask_val, sigmask_addr, sizeof(uint64_t)) < 0)
+                return (uint64_t)-1;
+            have_sigmask = 1;
+        }
     }
 
     /* Apply the temporary signal mask if provided */
@@ -5743,12 +5757,8 @@ static uint64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr,
     uint64_t __ps_flags;
     spinlock_irqsave_acquire(&proc->sig_lock, &__ps_flags);
     old_mask = proc->sig_mask;
-    if (sigmask) {
-        if (syscall_is_user_process() && !syscall_user_read_ok((uint64_t)sigmask, sizeof(uint64_t))) {
-            spinlock_irqsave_release(&proc->sig_lock, __ps_flags);
-            return (uint64_t)-1;
-        }
-        proc->sig_mask = *sigmask;
+    if (have_sigmask) {
+        proc->sig_mask = sigmask_val;
     }
     spinlock_irqsave_release(&proc->sig_lock, __ps_flags);
 
@@ -5899,7 +5909,7 @@ static uint64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr,
             if (exceptfds_addr && copy_to_user(exceptfds_addr, &exceptfds, sizeof(fd_set)) < 0)
                 return (uint64_t)-1;
             /* Restore original signal mask */
-            if (sigmask) {
+            if (have_sigmask) {
                 uint64_t __ps_flags3;
                 spinlock_irqsave_acquire(&proc->sig_lock, &__ps_flags3);
                 proc->sig_mask = old_mask;
@@ -5933,7 +5943,7 @@ static uint64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr,
         return (uint64_t)-1;
 
     /* Restore original signal mask */
-    if (sigmask) {
+    if (have_sigmask) {
         uint64_t __ps_flags4;
         spinlock_irqsave_acquire(&proc->sig_lock, &__ps_flags4);
         proc->sig_mask = old_mask;
