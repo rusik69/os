@@ -41,6 +41,13 @@ extern int aslr_disabled;
  * keeps them within the same 64KB region while adding significant entropy. */
 #define ASLR_KSTACK_RANDOM_PAGES 8
 
+/* Maximum random shift for PIE (ET_DYN) ELF base address (in pages).
+ * PIE binaries get a randomized load base; non-PIE (ET_EXEC) load at
+ * their fixed p_vaddr. Up to 256 pages = 1MB random offset provides
+ * meaningful entropy while keeping the binary within a predictable
+ * region of the user address space. */
+#define ASLR_PIE_RANDOM_PAGES 256
+
 /* Query whether ASLR is globally enabled */
 static inline int aslr_is_enabled(void) {
     extern int aslr_disabled;
@@ -73,5 +80,9 @@ uint64_t aslr_kernel_stack_offset(void);
 
 /* Seed the PRNG with additional entropy from timing */
 void aslr_add_entropy(uint64_t entropy);
+
+/* Return a random number of pages (0..max_pages) as a base offset.
+ * Returns 0 if ASLR is globally disabled. */
+uint64_t aslr_get_random_offset(uint64_t max_pages);
 
 #endif

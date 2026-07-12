@@ -13,6 +13,7 @@
 #include "process.h"
 #include "vmm.h"
 #include "elf.h"
+#include "aslr.h"
 
 /* ELF segment flags (not defined in elf.h) */
 #define PF_X        1
@@ -86,7 +87,6 @@ static int execshield_read_implies_exec(const struct elf64_header *ehdr,
     return 0;
 }
 
-/* Apply READ_IMPLIES_EXEC personality to a process */
 static void execshield_apply_personality(struct process *proc, int read_implies_exec)
 {
     if (!proc)
@@ -99,7 +99,42 @@ static void execshield_apply_personality(struct process *proc, int read_implies_
     }
 }
 
-/* ── mprotect enforcement ─────────────────────────────────────────── */
+/* ── ASLR entropy per ELF type ──────────────────────────────── */
+
+/**
+ * execshield_aslr_base_offset - Get ASLR load-base offset for an ELF binary
+ * @ehdr: ELF header of the binary being loaded
+ *
+ * Differentiates ASLR entropy based on ELF type:
+ *   - PIE (ET_DYN): returns a random page offset for base address
+ *     randomization, providing ASLR for the executable's segments.
+ *   - Non-PIE (ET_EXEC): returns 0 — fixed load address as the
+ *     linker-specified p_vaddr is absolute.
+ *
+ * This is the central policy point that maps ELF type to ASLR
+ * entropy level.  Callers (ELF loader) apply the returned page
+ * offset to both segment p_vaddr and the entry point.
+ *
+ * Context: Any context. Calls aslr_get_random_offset() which may
+ *          acquire the PRNG lock.
+ * Return: Random page offset (0..ASLR_PIE_RANDOM_PAGES) for PIE,
+ *         0 for non-PIE or if ASLR is globally disabled.
+ */
+uint64_t execshield_aslr_base_offset(const struct elf64_header *ehdr)
+{
+    if (!ehdr || aslr_disabled)
+        return 0;
+
+    if (ehdr->e_type == ET_DYN) {
+        /* PIE binary: randomize load base for full ASLR benefit */
+        return aslr_get_random_offset(ASLR_PIE_RANDOM_PAGES);
+    }
+
+    /* Non-PIE (ET_EXEC): load at fixed linker-specified address */
+    return 0;
+}
+
+/* ── mprotect enforcement ─────────────────────────────────── */
 
 /**
  * execshield_mprotect_check - Enforce W^X during an mprotect syscall

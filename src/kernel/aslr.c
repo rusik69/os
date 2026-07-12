@@ -176,6 +176,16 @@ void aslr_add_entropy(uint64_t entropy) {
     prng_add_entropy(entropy);
 }
 
+/*
+ * Return a random number of pages (0..max_pages) as an offset for any
+ * ASLR-randomizable purpose (e.g. PIE base, module base, etc.).
+ * Returns 0 if ASLR is globally disabled.
+ */
+uint64_t aslr_get_random_offset(uint64_t max_pages) {
+    if (aslr_disabled || max_pages == 0) return 0;
+    return prng_rand64() % (max_pages + 1);
+}
+
 /**
  * aslr_randomize_addr - Randomize a base address within a given range
  * @base: Base address to randomize

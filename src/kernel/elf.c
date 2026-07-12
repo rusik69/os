@@ -13,6 +13,9 @@
 #include "err.h"
 #include "signalfd.h"
 
+/* External ASLR policy: determines load-base offset per ELF type (PIE vs non-PIE) */
+extern uint64_t execshield_aslr_base_offset(const struct elf64_header *ehdr);
+
 /* Max ELF binary we'll try to load from disk */
 #define ELF_MAX_SIZE (1024 * 1024)  /* 1MB — increased from 64KB to support real binaries */
 
@@ -367,6 +370,15 @@ int elf_exec(const char *path) {
     }
 
     if (is_userland) {
+        /* ── ASLR: determine PIE base offset ────────────────────────── */
+        uint64_t aslr_base_pages = execshield_aslr_base_offset(hdr);
+        uint64_t aslr_base = aslr_base_pages * PAGE_SIZE;
+        if (aslr_base_pages > 0) {
+            entry += aslr_base;
+            kprintf("elf: '%s' PIE base randomized +%llu pages\n",
+                    path, (unsigned long long)aslr_base_pages);
+        }
+
         /* Create per-process page tables */
         uint64_t *user_pml4 = vmm_create_user_pml4();
         if (IS_ERR(user_pml4)) {
@@ -382,14 +394,14 @@ int elf_exec(const char *path) {
                 (const struct elf64_phdr *)(buf + hdr->e_phoff + i * hdr->e_phentsize);
             if (ph->p_type != PT_LOAD) continue;
 
-            if (ph->p_vaddr >= 0x0000800000000000ULL) {
+            if ((ph->p_vaddr + aslr_base) >= 0x0000800000000000ULL) {
                 kprintf("elf: user segment outside user address space\n");
                 map_ok = 0; break;
             }
 
-            /* Map pages covering [vaddr, vaddr+memsz) */
-            uint64_t seg_start = ph->p_vaddr & ~0xFFFULL;
-            uint64_t seg_end   = (ph->p_vaddr + ph->p_memsz + 0xFFF) & ~0xFFFULL;
+            /* Map pages covering [vaddr+aslr_base, vaddr+aslr_base+memsz) */
+            uint64_t seg_start = (ph->p_vaddr + aslr_base) & ~0xFFFULL;
+            uint64_t seg_end   = (ph->p_vaddr + ph->p_memsz + aslr_base + 0xFFF) & ~0xFFFULL;
             uint64_t flags = VMM_FLAG_PRESENT | VMM_FLAG_USER;
             if (ph->p_flags & 2) flags |= VMM_FLAG_WRITE; /* PF_W */
             if (!(ph->p_flags & 1)) flags |= VMM_FLAG_NOEXEC; /* PF_X not set → NX */
@@ -404,7 +416,7 @@ int elf_exec(const char *path) {
                 /* Copy segment data to the physical frame via the high-half VMA.
                  * buf is safe because it's a kernel heap address already in the
                  * high-half, reachable regardless of which PML4 is active. */
-                uint64_t page_off = va - (ph->p_vaddr & ~0xFFFULL);
+                uint64_t page_off = va - seg_start;
                 if (ph->p_filesz > page_off) {
                     uint64_t copy_sz = ph->p_filesz - page_off;
                     if (copy_sz > PAGE_SIZE) copy_sz = PAGE_SIZE;
@@ -455,8 +467,6 @@ int elf_exec(const char *path) {
         }
 
         uint64_t user_rsp = user_stack_top - 8; /* stack grows down */
-
-        (void)hdr;
 
         kfree(buf);
 
@@ -565,6 +575,15 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
         }
     }
 
+    /* ── ASLR: determine PIE base offset ──────────────────────────── */
+    uint64_t aslr_base_pages = execshield_aslr_base_offset(hdr);
+    uint64_t aslr_base = aslr_base_pages * PAGE_SIZE;
+    if (aslr_base_pages > 0) {
+        entry += aslr_base;
+        kprintf("execve: '%s' PIE base randomized +%llu pages\n",
+                path, (unsigned long long)aslr_base_pages);
+    }
+
     uint64_t *new_pml4 = vmm_create_user_pml4();
     if (IS_ERR(new_pml4)) { kfree(buf); return -ENOMEM; }
 
@@ -573,10 +592,10 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
         const struct elf64_phdr *ph =
             (const struct elf64_phdr *)(buf + hdr->e_phoff + i * hdr->e_phentsize);
         if (ph->p_type != PT_LOAD) continue;
-        if (ph->p_vaddr >= 0x0000800000000000ULL) { map_ok = 0; break; }
+        if ((ph->p_vaddr + aslr_base) >= 0x0000800000000000ULL) { map_ok = 0; break; }
 
-        uint64_t seg_start = ph->p_vaddr & ~0xFFFULL;
-        uint64_t seg_end   = (ph->p_vaddr + ph->p_memsz + 0xFFF) & ~0xFFFULL;
+        uint64_t seg_start = (ph->p_vaddr + aslr_base) & ~0xFFFULL;
+        uint64_t seg_end   = (ph->p_vaddr + ph->p_memsz + aslr_base + 0xFFF) & ~0xFFFULL;
         uint64_t flags = VMM_FLAG_PRESENT | VMM_FLAG_USER;
         if (ph->p_flags & 2) flags |= VMM_FLAG_WRITE;
         if (!(ph->p_flags & 1)) flags |= VMM_FLAG_NOEXEC;
@@ -587,7 +606,7 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
             memset(PHYS_TO_VIRT(frame), 0, PAGE_SIZE);
 
             /* Copy segment data via high-half VMA (buf is kernel addr). */
-            uint64_t page_off = va - (ph->p_vaddr & ~0xFFFULL);
+            uint64_t page_off = va - seg_start;
             if (ph->p_filesz > page_off) {
                 uint64_t copy_sz = ph->p_filesz - page_off;
                 if (copy_sz > PAGE_SIZE) copy_sz = PAGE_SIZE;
@@ -1125,6 +1144,15 @@ int process_spawn(const char *path, char *const argv[], char *const envp[])
         }
     }
 
+    /* ── ASLR: determine PIE base offset ──────────────────────────── */
+    uint64_t aslr_base_pages = execshield_aslr_base_offset(hdr);
+    uint64_t aslr_base = aslr_base_pages * PAGE_SIZE;
+    if (aslr_base_pages > 0) {
+        entry += aslr_base;
+        kprintf("spawn: '%s' PIE base randomized +%llu pages\n",
+                path, (unsigned long long)aslr_base_pages);
+    }
+
     /* ── 3. Create fresh page tables ────────────────────────────── */
     uint64_t *new_pml4 = vmm_create_user_pml4();
     if (IS_ERR(new_pml4)) { kfree(buf); return -ENOMEM; }
@@ -1135,10 +1163,10 @@ int process_spawn(const char *path, char *const argv[], char *const envp[])
         const struct elf64_phdr *ph =
             (const struct elf64_phdr *)(buf + hdr->e_phoff + i * hdr->e_phentsize);
         if (ph->p_type != PT_LOAD) continue;
-        if (ph->p_vaddr >= 0x0000800000000000ULL) { map_ok = 0; break; }
+        if ((ph->p_vaddr + aslr_base) >= 0x0000800000000000ULL) { map_ok = 0; break; }
 
-        uint64_t seg_start = ph->p_vaddr & ~0xFFFULL;
-        uint64_t seg_end   = (ph->p_vaddr + ph->p_memsz + 0xFFF) & ~0xFFFULL;
+        uint64_t seg_start = (ph->p_vaddr + aslr_base) & ~0xFFFULL;
+        uint64_t seg_end   = (ph->p_vaddr + ph->p_memsz + aslr_base + 0xFFF) & ~0xFFFULL;
         uint64_t flags = VMM_FLAG_PRESENT | VMM_FLAG_USER;
         if (ph->p_flags & 2) flags |= VMM_FLAG_WRITE;
         if (!(ph->p_flags & 1)) flags |= VMM_FLAG_NOEXEC;
@@ -1148,7 +1176,7 @@ int process_spawn(const char *path, char *const argv[], char *const envp[])
             if (unlikely(!frame)) { map_ok = 0; break; }
             memset(PHYS_TO_VIRT(frame), 0, PAGE_SIZE);
 
-            uint64_t page_off = va - (ph->p_vaddr & ~0xFFFULL);
+            uint64_t page_off = va - seg_start;
             if (ph->p_filesz > page_off) {
                 uint64_t copy_sz = ph->p_filesz - page_off;
                 if (copy_sz > PAGE_SIZE) copy_sz = PAGE_SIZE;
