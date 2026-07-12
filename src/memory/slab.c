@@ -580,8 +580,14 @@ void *kmem_cache_alloc(struct kmem_cache *cache) {
 void kmem_cache_free(struct kmem_cache *cache, void *obj) {
     if (!obj || !cache) return;
 
-    /* Check redzone before modifying the object */
-    slab_check_redzone(cache, obj);
+    /* Check redzone before modifying the object.
+     * On double-free, the redzone has been poisoned by the first free's
+     * slab_poison_free — detect this and refuse to proceed. */
+    if (!slab_check_redzone(cache, obj)) {
+        kprintf("[SLAB] DOUBLE-FREE DETECTED in '%s': obj=%p — refusing to free\n",
+                cache->name, obj);
+        return;
+    }
 
     /* KASAN: verify user area hasn't been touched and poison entire object */
     kasan_check(obj, cache->user_size, 0);
