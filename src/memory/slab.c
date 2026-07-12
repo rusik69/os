@@ -519,6 +519,7 @@ struct kmem_cache *kmem_cache_create(const char *name, size_t obj_size,
     uint64_t list_irq_flags;
     spinlock_irqsave_acquire(&cache_list_lock, &list_irq_flags);
     cache->next = cache_list;
+    cache_list = cache;
     spinlock_irqsave_release(&cache_list_lock, list_irq_flags);
 
     return cache;
@@ -825,4 +826,75 @@ void kmem_cache_reap(void) {
         cache = cache->next;
     }
     spinlock_irqsave_release(&cache_list_lock, list_irq_flags);
+}
+
+/* ── CPU hotplug: drain per-CPU slab cache ───────────────────────────── */
+
+/* Drain the per-CPU slab cache for @cpu_id across ALL caches.
+ * Called from cpuhp_take_cpu_offline() when a CPU goes offline.
+ * The target CPU must be stopped (scheduler disabled, tasks migrated away),
+ * so no new objects can arrive in its per-CPU cache during this drain.
+ * Returns the number of objects drained, or -EINVAL on bad @cpu_id. */
+int slab_cpu_offline(int cpu_id) {
+    if (cpu_id < 0 || cpu_id >= SMP_MAX_CPUS)
+        return -EINVAL;
+
+    int drained = 0;
+
+    uint64_t list_irq_flags;
+    spinlock_irqsave_acquire(&cache_list_lock, &list_irq_flags);
+
+    struct kmem_cache *cache = cache_list;
+    while (cache) {
+        uint64_t irq_flags;
+        spinlock_irqsave_acquire(&cache->lock, &irq_flags);
+
+        struct cpu_slab *cpu_s = &cache->cpu_slab[cpu_id];
+        size_t slab_size = PAGE_SIZE * (1ULL << (unsigned int)cache->gfporder);
+
+        while (cpu_s->count > 0) {
+            cpu_s->count--;
+            void *obj = cpu_s->objects[cpu_s->count];
+            struct slab *slab = (struct slab *)((uint64_t)(uintptr_t)obj & ~(slab_size - 1));
+
+            /* Return the object to its slab's freelist (scrambled order) */
+            slab_freelist_insert_random(slab, obj);
+            slab->free_count++;
+
+            /* Update slab list position if its free status changed */
+            if (slab->free_count == 1) {
+                slab_relink(cache, slab, SLAB_PARTIAL);
+            } else if (slab->free_count == slab->total) {
+                slab_relink(cache, slab, SLAB_FREE);
+            }
+
+            drained++;
+        }
+
+        spinlock_irqsave_release(&cache->lock, irq_flags);
+        cache = cache->next;
+    }
+
+    spinlock_irqsave_release(&cache_list_lock, list_irq_flags);
+    return drained;
+}
+
+/* Clear the per-CPU slab cache for @cpu_id across ALL caches.
+ * Called from cpuhp_bring_cpu() when a CPU comes back online.
+ * The cache is expected to be already empty (drained by slab_cpu_offline),
+ * but we clear it for safety — analogous to pmm_cpu_online(). */
+void slab_cpu_online(int cpu_id) {
+    if (cpu_id < 0 || cpu_id >= SMP_MAX_CPUS)
+        return;
+
+    /* No lock: the target CPU is not yet online and no other code
+     * accesses this CPU's per-CPU slot during bring-up.  The cache_list
+     * iteration is safe because the caller (cpuhp_bring_cpu) holds
+     * cpuhp_lock which serialises against concurrent hotplug operations
+     * that could modify the list. */
+    struct kmem_cache *cache = cache_list;
+    while (cache) {
+        cache->cpu_slab[cpu_id].count = 0;
+        cache = cache->next;
+    }
 }

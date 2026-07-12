@@ -54,6 +54,10 @@ void slab_get_stats(struct slab_stats *s);
 /* Initialize the slab subsystem and create built-in caches. Must be called after heap_init. */
 void slab_init(void);
 
+/* CPU hotplug hooks: drain/clear per-CPU slab caches when a CPU goes offline/online. */
+int slab_cpu_offline(int cpu_id);
+void slab_cpu_online(int cpu_id);
+
 /* Built-in caches (initialized by slab_init) */
 extern struct kmem_cache *cache_process;
 extern struct kmem_cache *cache_socket;
