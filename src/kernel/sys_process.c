@@ -434,8 +434,8 @@ uint64_t sys_kill(uint64_t pid, uint64_t sig) {
         return (uint64_t)(int64_t)-ESRCH;
 
     /* Basic signal number sanity — sig == 0 is the null-signal probe,
-     * sig > SIG_MAX is invalid, everything 1..SIG_MAX is valid. */
-    if (sig > SIG_MAX)
+     * sig >= SIG_MAX is invalid, everything 1..SIG_MAX-1 is valid. */
+    if (sig >= SIG_MAX)
         return (uint64_t)(int64_t)-EINVAL;
 
     /* ── pid > 0: send to a specific process ──────────────────── */
@@ -551,8 +551,8 @@ uint64_t sys_tkill(uint64_t pid, uint64_t sig)
         return (uint64_t)(int64_t)-ESRCH;
 
     /* Basic signal number sanity — sig == 0 is the null-signal probe,
-     * sig > SIG_MAX is invalid, everything 1..SIG_MAX is valid. */
-    if (sig > SIG_MAX)
+     * sig >= SIG_MAX is invalid, everything 1..SIG_MAX-1 is valid. */
+    if (sig >= SIG_MAX)
         return (uint64_t)(int64_t)-EINVAL;
 
     /* Find the target thread by PID */
@@ -620,8 +620,8 @@ uint64_t sys_tgkill(uint64_t tgid, uint64_t tid, uint64_t sig)
         return (uint64_t)(int64_t)-ESRCH;
 
     /* Basic signal number sanity — sig == 0 is the null-signal probe,
-     * sig > SIG_MAX is invalid, everything 1..SIG_MAX is valid. */
-    if (sig > SIG_MAX)
+     * sig >= SIG_MAX is invalid, everything 1..SIG_MAX-1 is valid. */
+    if (sig >= SIG_MAX)
         return (uint64_t)(int64_t)-EINVAL;
 
     /* Find the target thread by TID */

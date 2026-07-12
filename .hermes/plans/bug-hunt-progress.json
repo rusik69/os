@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 578,
+  "current_item": 581,
   "current_batch": "B009",
   "completed_items": [
   1,
@@ -579,10 +579,13 @@
   574,
   575,
   576,
-  577
+  577,
+  578,
+  579,
+  580
   ],
-  "found_bugs": 1024,
-  "fixed_bugs": 1024,
+  "found_bugs": 1026,
+  "fixed_bugs": 1026,
   "completed_batches": [
     "B001",
     "B002",
@@ -591,6 +594,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-12T13:25:03",
-  "last_item_result": "item 577: signal - pending signals not lost during exec (they are preserved). However, signal handlers were NOT reset to SIG_DFL during exec (process_execve in elf.c), violating POSIX. Fixed: added loop under sig_lock resetting caught handlers to SIG_DFL while preserving SIG_IGN, and cleared stale sig_info. Also noted exec.c (broken draft) has same signal_handlers typo among many other issues."
+  "last_item_timestamp": "2026-07-12T14:30:00",
+  "last_item_result": "item 580: signal - audited clean. ptrace unimplemented (__NR_ptrace=sys_ni_syscall). No signal vs ptrace interaction exists."
 }
