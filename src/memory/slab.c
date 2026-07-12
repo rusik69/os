@@ -639,6 +639,7 @@ void kmem_cache_destroy(struct kmem_cache *cache) {
     if (!cache) return;
 
     int pages = 1U << cache->gfporder;
+    size_t slab_size = PAGE_SIZE * (1ULL << cache->gfporder);
 
     /* Remove from global cache list first, so no other thread can
      * find this cache while we tear it down. */
@@ -653,6 +654,26 @@ void kmem_cache_destroy(struct kmem_cache *cache) {
         pp = &(*pp)->next;
     }
     spinlock_irqsave_release(&cache_list_lock, list_irq_flags);
+
+    /* Drain per-CPU caches before freeing slabs.  Objects in per-CPU
+     * caches have been removed from their slab's free list (their memory
+     * lives inside the slab pages) but have not yet been returned to the
+     * slab freelist.  If we skip this step and free slab pages directly,
+     * the per-CPU cache entries become dangling pointers inside the
+     * about-to-be-freed cache structure.  Return every cached object to
+     * its slab's free list and increment free_count so the per-CPU cache
+     * is empty when we start freeing pages. */
+    for (int cpu = 0; cpu < SMP_MAX_CPUS; cpu++) {
+        struct cpu_slab *cpu_s = &cache->cpu_slab[cpu];
+        while (cpu_s->count > 0) {
+            cpu_s->count--;
+            void *obj = cpu_s->objects[cpu_s->count];
+            struct slab *slab = (struct slab *)((uint64_t)obj & ~(slab_size - 1));
+            *(void **)obj = slab->free_list;
+            slab->free_list = obj;
+            slab->free_count++;
+        }
+    }
 
     /* Now free all slabs (no other thread can find this cache anymore) */
 
