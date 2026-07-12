@@ -308,14 +308,31 @@ static int slab_grow(struct kmem_cache *cache) {
 
 /* Refill the current CPU's object cache from the slab freelist.
  * Must be called with cache->lock held and IRQs disabled.
- * Returns one object for immediate use, and fills cpu_slab with extras. */
+ * Returns one object for immediate use, and fills cpu_slab with extras.
+ *
+ * NOTE: Must check the per-CPU cache *first*, because an interrupt handler
+ * may have fast-path freed an object into it during the IRQ window between
+ * the fast-path check in kmem_cache_alloc() and acquiring the cache lock
+ * (see kmem_cache_alloc for the window).  Resetting count unconditionally
+ * would leak that object. */
 static void *cpu_slab_refill(struct kmem_cache *cache) {
     int cpu = smp_get_cpu_id();
     struct cpu_slab *cpu_s = &cache->cpu_slab[cpu];
     void *ret = NULL;
 
-    /* Reset local cache */
+    /* Preserve any objects that arrived via fast-path free during the IRQ
+     * window.  Take one for immediate use; leave the rest cached so we
+     * don't need to refill from slabs at all. */
+    if (cpu_s->count > 0) {
+        cpu_s->count--;
+        ret = cpu_s->objects[cpu_s->count];
+        if (cpu_s->count > 0)
+            return ret;     /* cpu cache already has extras, skip refill */
+    }
     cpu_s->count = 0;
+
+    if (ret)
+        return ret;
 
     /* Pull objects from partial slabs first, then free slabs, then grow */
     while (cpu_s->count < SLAB_CPU_CACHE_SIZE) {

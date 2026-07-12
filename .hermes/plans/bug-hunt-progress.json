@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 513,
+  "current_item": 519,
   "current_batch": "B008",
   "completed_items": [
     1,
@@ -514,10 +514,16 @@
     509,
     510,
     511,
-    512
+    512,
+    513,
+    514,
+    515,
+    516,
+    517,
+    518
   ],
-  "found_bugs": 965,
-  "fixed_bugs": 965,
+  "found_bugs": 969,
+  "fixed_bugs": 969,
   "completed_batches": [
     "B001",
     "B002",
@@ -526,6 +532,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-12T01:17:00",
-  "last_item_result": "item 512: src/kernel/fault.c - verify page fault handler covers all (present/missing/prot) cases - BUG FIXED. The EXECONLY software-enforcement check at fault.c:235 was not gated on user-mode faults (err bit 2). A kernel-mode protection fault hitting an EXECONLY-tagged page would incorrectly deliver SIGSEGV/process_exit_code(11) instead of panicking with full register dump. Added (err & (1ULL << 2)) guard. Build verified."
+  "last_item_timestamp": "2026-07-12T02:55:00",
+  "last_item_result": "item 518: src/memory/slab.c - slab reclaim returns pages to PMM incorrectly - FIXED. Slab allocator allocated pages individually via pmm_alloc_frame() (no contiguity guarantee) but freed them assuming physical contiguity via VIRT_TO_PHYS linear mapping. For multi-page slabs (gfporder>0) this freed the wrong physical pages, corrupting PMM bitmap. Switched to pmm_alloc_frames() for allocation and pmm_free_frames_contiguous() for deallocation across slab_grow(), kmem_cache_destroy(), and kmem_cache_reap(). Build verified."
 }
