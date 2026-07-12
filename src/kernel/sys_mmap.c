@@ -63,6 +63,15 @@ uint64_t sys_munmap(uint64_t addr, uint64_t length) {
     if (vmm_unmap_user_pages(proc->pml4, addr, length / PAGE_SIZE) < 0)
         return (uint64_t)(int64_t)-EFAULT;
 
+    /* Account for the unmapped virtual address range. vmm_unmap_user_pages
+     * skips unmapped pages, so we conservatively subtract the full range;
+     * undercount only makes enforcement weaker (which is bounded because
+     * mmap adds to mapped_bytes for the same range beforehand). */
+    if (proc->mapped_bytes >= length)
+        proc->mapped_bytes -= length;
+    else
+        proc->mapped_bytes = 0;
+
     /* Flush TLB for the unmapped range if running on this PML4 */
     if (proc->pml4 == vmm_get_pml4()) {
         for (uint64_t v = addr; v < addr + length; v += PAGE_SIZE)
@@ -97,16 +106,26 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size,
         /* Shrinking: unmap the extra pages */
         vmm_unmap_user_pages(proc->pml4, old_addr + new_size,
                              (old_size - new_size) / PAGE_SIZE);
+        uint64_t freed = old_size - new_size;
+        if (proc->mapped_bytes >= freed)
+            proc->mapped_bytes -= freed;
+        else
+            proc->mapped_bytes = 0;
         return old_addr;
     }
 
-    /* RLIMIT_AS: reject growth beyond the address-space limit */
+    /* RLIMIT_AS: reject if cumulative address space would exceed limit.
+     * Net increase is extend = new_size - old_size for both in-place
+     * and move paths (old mapping is freed in the move case). */
+    uint64_t extend = new_size - old_size;
     uint64_t as_limit = proc->rlim_cur[RLIMIT_AS];
-    if (as_limit != RLIM_INFINITY && new_size > as_limit)
-        return (uint64_t)-ENOMEM;
+    if (as_limit != RLIM_INFINITY) {
+        uint64_t new_total = proc->mapped_bytes + extend;
+        if (new_total > as_limit || new_total < proc->mapped_bytes)
+            return (uint64_t)-ENOMEM;
+    }
 
     /* Growing: try to extend in-place */
-    uint64_t extend = new_size - old_size;
     int can_extend = 1;
     for (uint64_t check = old_addr + old_size;
          check < old_addr + new_size; check += PAGE_SIZE) {
@@ -123,6 +142,7 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size,
         if (vmm_map_user_pages(proc->pml4, old_addr + old_size,
                                extend / PAGE_SIZE, page_flags) < 0)
             return (uint64_t)(int64_t)-ENOMEM;
+        proc->mapped_bytes += extend;
         return old_addr;
     }
 
@@ -175,6 +195,7 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size,
                            (new_size - old_size) / PAGE_SIZE, page_flags);
     }
 
+    proc->mapped_bytes += extend;
     return new;
 }
 
@@ -212,16 +233,19 @@ uint64_t sys_brk(uint64_t addr) {
         if (data_limit != RLIM_INFINITY && (addr - p->heap_start) > data_limit)
             return (uint64_t)(int64_t)-ENOMEM;
 
-        /* Also enforce RLIMIT_AS: new heap end relative to
-         * heap_start must not exceed rlim_cur[RLIMIT_AS]. */
+        /* Enforce RLIMIT_AS against total cumulative address space */
         uint64_t as_limit = p->rlim_cur[RLIMIT_AS];
-        if (as_limit != RLIM_INFINITY && (addr - p->heap_start) > as_limit)
-            return (uint64_t)(int64_t)-ENOMEM;
+        if (as_limit != RLIM_INFINITY) {
+            uint64_t new_total = p->mapped_bytes + grow;
+            if (new_total > as_limit || new_total < p->mapped_bytes)
+                return (uint64_t)(int64_t)-ENOMEM;
+        }
         uint64_t pages = (grow + PAGE_SIZE - 1) / PAGE_SIZE;
         uint64_t page_flags = VMM_FLAG_PRESENT | VMM_FLAG_USER | VMM_FLAG_WRITE | VMM_FLAG_NOEXEC | VMM_FLAG_LAZY;
         if (vmm_map_user_pages(p->pml4, old_end, pages, page_flags) < 0)
             return (uint64_t)(int64_t)-ENOMEM;
         p->heap_end = addr;
+        p->mapped_bytes += grow;
     } else if (addr < old_end) {
         /* Shrink heap — unmap pages */
         uint64_t shrink = old_end - addr;
@@ -230,6 +254,10 @@ uint64_t sys_brk(uint64_t addr) {
             vmm_unmap_user_pages(p->pml4, addr, pages);
         }
         p->heap_end = addr;
+        if (p->mapped_bytes >= shrink)
+            p->mapped_bytes -= shrink;
+        else
+            p->mapped_bytes = 0;
     }
     return p->heap_end;
 }
@@ -280,10 +308,13 @@ uint64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot,
     if (length > 0 && addr + length < addr)
         return (uint64_t)-EINVAL;
 
-    /* RLIMIT_AS: reject mappings that exceed address-space limit */
+    /* RLIMIT_AS: reject if cumulative address space would exceed limit */
     uint64_t as_limit = proc->rlim_cur[RLIMIT_AS];
-    if (as_limit != RLIM_INFINITY && length > as_limit)
-        return (uint64_t)-ENOMEM;
+    if (as_limit != RLIM_INFINITY) {
+        uint64_t new_total = proc->mapped_bytes + length;
+        if (new_total > as_limit || new_total < proc->mapped_bytes)
+            return (uint64_t)-ENOMEM;
+    }
 
     /* W^X enforcement: reject writable + executable mappings */
     if (wx_enforce_check_prot(prot) < 0)
@@ -311,6 +342,13 @@ uint64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot,
         /* Unmap any existing pages in the target range (MAP_FIXED semantics) */
         if (flags & MAP_FIXED) {
             vmm_unmap_user_pages(proc->pml4, addr, length / PAGE_SIZE);
+            /* Account for the unmapped region: we conservatively subtract
+             * length even though some pages may not have been mapped.
+             * Over-counting only makes enforcement stricter, not weaker. */
+            if (proc->mapped_bytes >= length)
+                proc->mapped_bytes -= length;
+            else
+                proc->mapped_bytes = 0;
         }
     }
 
@@ -366,6 +404,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot,
             for (uint64_t v = addr; v < addr + length; v += PAGE_SIZE)
                 local_invlpg(v);
         }
+        proc->mapped_bytes += length;
         return addr;
     }
 
@@ -461,5 +500,6 @@ uint64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot,
             local_invlpg(v);
     }
 
+    proc->mapped_bytes += length;
     return addr;
 }

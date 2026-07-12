@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 593,
+  "current_item": 594,
   "current_batch": "B009",
   "completed_items": [
     1,
@@ -594,10 +594,11 @@
     589,
     590,
     591,
-    592
+    592,
+    593
   ],
-  "found_bugs": 1038,
-  "fixed_bugs": 1038,
+  "found_bugs": 1039,
+  "fixed_bugs": 1039,
   "completed_batches": [
     "B001",
     "B002",
@@ -606,6 +607,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-12T16:33:00",
-  "last_item_result": "item 592: sys_mlockall - fix RLIMIT_MEMLOCK enforcement. Three bugs: (1) locked_pages set when Phase 2 skipped (MCL_CURRENT|MCL_ONFAULT) — moved inside Phase 2 block; (2) vmm_lock_user_pages() return values unchecked — added error checks at all 4 call sites; (3) 1GB huge page locking broken in Phase 2 — vmm_lock_user_pages() can't handle PDPT-level huge pages, so skip them. Build verified."
+  "last_item_timestamp": "2026-07-12T16:44:00",
+  "last_item_result": "item 593: process_rlimit - fix RLIMIT_NOFILE enforcement off-by-3. do_sys_open and pidfd_getfd both compare fd-table index i against rlim_cur/max_fds, but table index 0 = user fd 3. The check should be (i+3) >= max_fds, not i >= max_fds. Without this fix, setting RLIMIT_NOFILE to a small value (e.g., 10) would wrongly allow fds up to rlim_cur-1 instead of rlim_cur-4, since the 3 reserved fd numbers (0/1/2) were not accounted for. Build verified."
 }

@@ -230,6 +230,8 @@ struct process {
     /* User stack tracking for RLIMIT_STACK auto-grow */
     uint64_t user_stack_bottom; /* lowest mapped user stack page (grows down on expand) */
     uint64_t user_stack_top;    /* highest user stack address (fixed after exec) */
+    /* RLIMIT_AS tracking: cumulative virtual address space mapped (bytes) */
+    uint64_t mapped_bytes;      /* total user virtual address space in use */
     /* Capability bounding set */
     uint64_t cap_bset[PROCESS_SYSCALL_CAP_WORDS];
     /* no_new_privs flag */
