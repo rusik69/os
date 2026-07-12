@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 606,
+  "current_item": 607,
   "current_batch": "B009",
   "completed_items": [
     1,
@@ -607,7 +607,8 @@
     602,
     603,
     604,
-    605
+    605,
+    606
   ],
   "found_bugs": 1072,
   "fixed_bugs": 1072,
@@ -619,6 +620,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-12T19:20:00",
-  "last_item_result": "item 605: src/kernel/elf.c - audited clean. PT_LOAD segment overlap detection in elf_validate() is correct: collects segments into [p_vaddr, p_vaddr+p_memsz) intervals, uses standard interval overlap check (segs[i].start < segs[j].end \u0026\u0026 segs[j].start < segs[i].end), overflow protection on p_vaddr+p_filesz and p_vaddr+p_memsz via line 109 and 113. vmm_map_user_page() provides safety net with -EEXIST on double-map. process_execve() additionally verifies no segment pages overlap user stack region. No bug found."
+  "last_item_timestamp": "2026-07-12T19:56:00",
+  "last_item_result": "item 606: src/kernel/elf.c, src/include/elf.h, src/kernel/spawn_kernel.c - verified interpreter (ld) loading. Found and fixed 3 issues in elf loading for dynamically linked binaries: (1) Added missing PT_INTERP, PT_NOTE, PT_PHDR, PT_TLS constants to elf.h; (2) Fixed NULL-page check in elf_validate() — ET_DYN (PIE) binaries were incorrectly rejected when p_vaddr<0x1000 (PIE has relative p_vaddr starting at 0); (3) Added elf_find_interp() helper to detect PT_INTERP and extract interpreter path — integrated into all 4 exec paths (elf_exec, process_execve, process_spawn, process_spawn_kernel) with clear error message that interpreter loading is not yet implemented; (4) Completed auxiliary vector (auxv) setup in process_execve() — added AT_PHDR, AT_PHENT, AT_PHNUM, AT_PAGESZ, AT_BASE, AT_FLAGS, AT_ENTRY, AT_UID, AT_EUID, AT_GID, AT_EGID, AT_CLKTCK entries (previously only AT_SECURE and AT_NULL were written). Build-verified clean with -Werror."
 }

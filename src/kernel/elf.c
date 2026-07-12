@@ -800,6 +800,12 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
         return -E2BIG;
     }
 
+    /* Track stack addresses of each string for use when writing argv[]/envp[] pointers */
+    uint64_t arg_str_addrs[256];
+    uint64_t env_str_addrs[256];
+    memset(arg_str_addrs, 0, sizeof(arg_str_addrs));
+    memset(env_str_addrs, 0, sizeof(env_str_addrs));
+
     /* Write string data first (at the top of the stack area) */
     sp -= total_str_size;
     sp &= ~0xFULL;  /* align to 16 bytes */
@@ -807,6 +813,7 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
     uint64_t str_pos = sp;
     for (int i = 0; i < argc; i++) {
         if (!tmp_buf[i]) continue;
+        arg_str_addrs[i] = str_pos;
         char *s = tmp_buf[i];
         int len = (int)strlen(s) + 1;
         /* Copy string to new stack physical page */
@@ -832,6 +839,7 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
     for (int i = 0; i < envc; i++) {
         int idx = argc + i;
         if (!tmp_buf[idx]) continue;
+        env_str_addrs[i] = str_pos;
         char *s = tmp_buf[idx];
         int len = (int)strlen(s) + 1;
         for (int j = 0; j < len; j++) {
@@ -858,25 +866,18 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
         if (tmp_buf[i]) kfree(tmp_buf[i]);
     }
 
-    /* Write envp[] array (envp pointers, then NULL) */
-    sp -= (envc + 1) * sizeof(uint64_t);
-    sp &= ~0xFULL;
-    uint64_t envp_array = sp;
-    uint64_t *envp_virt_ptr = (uint64_t *)PHYS_TO_VIRT(stack_phys_base + (envp_array - user_stack_bottom));
-    for (int i = 0; i < envc; i++) {
-        if (envp_virt_ptr) envp_virt_ptr[i] = envp_array + i * sizeof(uint64_t); /* dummy */
-    }
-    /* For now, set envp[envc] = NULL */
-
     /* ── Write auxiliary vector (auxv) entries ───────────────── */
     /*
-     * Standard Linux x86-64 auxv layout (highest → lowest address):
+     * Standard Linux x86-64 auxv layout (highest → lowest stack address):
      *   AT_PHDR, AT_PHENT, AT_PHNUM, AT_PAGESZ, AT_BASE,
      *   AT_FLAGS, AT_ENTRY, AT_UID, AT_EUID, AT_GID, AT_EGID,
      *   AT_SECURE, AT_CLKTCK, AT_RANDOM, AT_EXECFN, AT_NULL
      *
      * Each entry is a 16-byte pair (a_type, a_value).
-     * After AT_NULL comes argv[], then argc. */
+     *
+     * Stack layout from RSP upward:
+     *   argc, argv[]+NULL, envp[]+NULL, auxv[], strings
+     */
     {
         /* Build the auxv array on the kernel stack */
         Elf64_auxv_t auxv_buf[24];
@@ -927,7 +928,7 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
 
         size_t auxv_bytes = (size_t)a * sizeof(Elf64_auxv_t);
 
-        /* Reserve space on the stack for all auxv entries */
+        /* Reserve space on the stack for auxv entries (below strings, above envp[]) */
         sp -= auxv_bytes;
         sp &= ~0xFULL;
 
@@ -938,9 +939,31 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
             memcpy(aux_virt, auxv_buf, auxv_bytes);
     }
 
-    /* Write argv[] array (argv pointers, then NULL) */
+    /* Write envp[] array (envp pointers pointing to actual string data, then NULL) */
+    sp -= (envc + 1) * sizeof(uint64_t);
+    sp &= ~0xFULL;
+    {
+        uint64_t *envp_virt_ptr = (uint64_t *)PHYS_TO_VIRT(
+            stack_phys_base + (sp - user_stack_bottom));
+        if (envp_virt_ptr) {
+            for (int i = 0; i < envc; i++)
+                envp_virt_ptr[i] = env_str_addrs[i];
+            envp_virt_ptr[envc] = 0;  /* NULL terminator */
+        }
+    }
+
+    /* Write argv[] array (argv pointers pointing to actual string data, then NULL) */
     sp -= (argc + 1) * sizeof(uint64_t);
     sp &= ~0xFULL;
+    {
+        uint64_t *argv_virt_ptr = (uint64_t *)PHYS_TO_VIRT(
+            stack_phys_base + (sp - user_stack_bottom));
+        if (argv_virt_ptr) {
+            for (int i = 0; i < argc; i++)
+                argv_virt_ptr[i] = arg_str_addrs[i];
+            argv_virt_ptr[argc] = 0;  /* NULL terminator */
+        }
+    }
 
     /* Write argc */
     sp -= sizeof(uint64_t);
