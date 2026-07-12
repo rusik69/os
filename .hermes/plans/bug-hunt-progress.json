@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 551,
+  "current_item": 553,
   "current_batch": "B009",
   "completed_items": [
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
@@ -65,10 +65,12 @@
     547,
     548,
     549,
-    550
+    550,
+    551,
+    552
   ],
-  "found_bugs": 1000,
-  "fixed_bugs": 1000,
+  "found_bugs": 1001,
+  "fixed_bugs": 1001,
   "completed_batches": [
     "B001",
     "B002",
@@ -77,6 +79,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-12T07:55:00",
-  "last_item_result": "item 550: src/kernel/sched_attr.c — verify sched_setattr permission checks. Found bug: sched_setattr() had zero permission checks — any unprivileged process could set RT/deadline policies, non-zero priorities, or modify any other process's scheduling. Added CAP_SYS_NICE checks via cap_capable_audit() for: cross-process modifications, SCHED_FIFO/RR/DEADLINE policies, and non-zero RT priority. Also added #include \"caps.h\". Build verified, committed."
+  "last_item_timestamp": "2026-07-12T08:09:00",
+  "last_item_result": "item 552: src/kernel/core_sched.c — verify core scheduling cookie matching. Audited clean — no bug found. The sched_core_allow() function correctly implements cookie matching: tasks with cookie 0 have no restriction; tasks with non-zero cookie are denied if any sibling CPU runs a task with a different non-zero cookie; tasks with matching non-zero cookies are allowed. Build verified."
 }

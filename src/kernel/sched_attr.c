@@ -107,6 +107,9 @@ int sched_setattr(uint32_t pid, const struct sched_attr *attr, uint32_t flags)
     memcpy(&sched_attr_table[idx], attr, sizeof(struct sched_attr));
     sched_attr_used[idx] = 1;
 
+    /* Also persist sched_flags in the process struct for fork/clone checks */
+    proc->sched_flags = attr->sched_flags;
+
     /* Also update the process's in-core scheduling policy/priority */
     if (attr->sched_policy == SCHED_FIFO || attr->sched_policy == SCHED_RR ||
         attr->sched_policy == SCHED_OTHER || attr->sched_policy == SCHED_BATCH) {
@@ -161,7 +164,7 @@ int sched_getattr(uint32_t pid, struct sched_attr *attr, size_t size, uint32_t f
         memset(attr, 0, size);
         attr->size           = sizeof(struct sched_attr);
         attr->sched_policy   = proc->sched_policy;
-        attr->sched_flags    = 0;
+        attr->sched_flags    = proc->sched_flags;
         attr->sched_nice     = 0;
         attr->sched_priority = proc->priority;
         attr->sched_runtime  = 0;

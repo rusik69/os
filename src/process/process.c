@@ -25,6 +25,7 @@
 #include "bug.h"
 #include "uaccess.h"
 #include "export.h"
+#include "sched_attr.h"
 
 /* ── Compile-time struct size assertions ────────────────────────────── */
 _Static_assert(sizeof(struct process) >= 2048, "struct process must be at least 2048 bytes for fixed-size table");
@@ -1052,6 +1053,14 @@ int process_fork(void) {
      * parent's caps but must also respect the global mask. */
     sys_cap_bset_apply(child);
 
+    /* SCHED_FLAG_RESET_ON_FORK: if parent had this scheduling flag
+     * set, the child's effective capability set must be cleared so
+     * that elevated capabilities aren't accidentally inherited by
+     * unprivileged children (Linux-compatible security behavior). */
+    if (parent->sched_flags & SCHED_FLAG_RESET_ON_FORK) {
+        memset(child->cap_effective, 0, sizeof(child->cap_effective));
+    }
+
     /* Clone user address space if process has one */
     if (parent->pml4) {
         child->pml4 = vmm_clone_user_pml4(parent->pml4);
@@ -1286,6 +1295,14 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
     /* Apply system-wide bounding set on clone — caps must respect
      * the global mask even if the parent had different caps. */
     sys_cap_bset_apply(child);
+
+    /* SCHED_FLAG_RESET_ON_FORK: if parent had this scheduling flag
+     * set, the child's effective capability set must be cleared so
+     * that elevated capabilities aren't accidentally inherited by
+     * unprivileged children (Linux-compatible security behavior). */
+    if (parent->sched_flags & SCHED_FLAG_RESET_ON_FORK) {
+        memset(child->cap_effective, 0, sizeof(child->cap_effective));
+    }
 
     /* Set up child's kernel stack with sysret return frame.
      * Layout (from stack_top down):

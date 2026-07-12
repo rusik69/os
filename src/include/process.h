@@ -197,6 +197,8 @@ struct process {
     uint64_t rlim_max[_RLIMIT_NLIMITS];
     /* Scheduling policy: SCHED_OTHER, SCHED_FIFO, SCHED_RR */
     uint8_t  sched_policy;
+    /* Scheduling flags: SCHED_FLAG_RESET_ON_FORK, etc. */
+    uint64_t sched_flags;
     /* Alternate signal stack */
     void    *alt_stack_sp;     /* ss_sp */
     uint64_t alt_stack_size;   /* ss_size */
