@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 592,
+  "current_item": 593,
   "current_batch": "B009",
   "completed_items": [
     1,
@@ -593,10 +593,11 @@
     588,
     589,
     590,
-    591
+    591,
+    592
   ],
-  "found_bugs": 1037,
-  "fixed_bugs": 1037,
+  "found_bugs": 1038,
+  "fixed_bugs": 1038,
   "completed_batches": [
     "B001",
     "B002",
@@ -605,6 +606,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-12T16:27:00",
-  "last_item_result": "item 591: process_fork + vmm - verify mlocks transferred on fork. Traced fork/clone paths: process_fork() copies vm_locked_flags + locked_pages via struct copy, and vmm_clone_user_pml4() correctly preserves VMM_FLAG_LOCKED in PTEs with extra lock refs for the child. However, vmm_handle_cow_fault() drops VMM_FLAG_LOCKED (bit 52) when allocating a private COW copy — mask (0xFFF | PTE_NX) doesn't include bit 52. Fix: preserve VMM_FLAG_LOCKED in the new PTE and take pmm_ref_frame() on the new frame for the lock pin. Build verified."
+  "last_item_timestamp": "2026-07-12T16:33:00",
+  "last_item_result": "item 592: sys_mlockall - fix RLIMIT_MEMLOCK enforcement. Three bugs: (1) locked_pages set when Phase 2 skipped (MCL_CURRENT|MCL_ONFAULT) — moved inside Phase 2 block; (2) vmm_lock_user_pages() return values unchecked — added error checks at all 4 call sites; (3) 1GB huge page locking broken in Phase 2 — vmm_lock_user_pages() can't handle PDPT-level huge pages, so skip them. Build verified."
 }

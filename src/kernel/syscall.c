@@ -933,7 +933,7 @@ static uint64_t do_sys_open(const char *path, uint64_t flags, uint64_t mode) {
                            p->rlim_cur[RLIMIT_NOFILE] : PROCESS_FD_MAX;
         for (int i = 0; i < PROCESS_FD_MAX; i++) {
             if (!p->fd_table[i].used) {
-                if ((uint64_t)i >= max_fds) {
+                if ((uint64_t)(i + 3) >= max_fds) {
                     vfs_unlink(tmp_path);
                     return (uint64_t)(int64_t)-EMFILE;
                 }
@@ -973,7 +973,7 @@ static uint64_t do_sys_open(const char *path, uint64_t flags, uint64_t mode) {
                        p->rlim_cur[RLIMIT_NOFILE] : PROCESS_FD_MAX;
     for (int i = 0; i < PROCESS_FD_MAX; i++) {
         if (!p->fd_table[i].used) {
-            if ((uint64_t)i >= max_fds) return (uint64_t)(int64_t)-EMFILE;
+            if ((uint64_t)(i + 3) >= max_fds) return (uint64_t)(int64_t)-EMFILE;
             strncpy(p->fd_table[i].path, path, 63);
             p->fd_table[i].path[63] = '\0';
             p->fd_table[i].offset = 0;

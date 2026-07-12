@@ -171,7 +171,7 @@ int pidfd_getfd(int pidfd, int target_fd, uint32_t flags)
     int new_fd = -1;
     for (int i = 0; i < PROCESS_FD_MAX; i++) {
         if (!current->fd_table[i].used) {
-            if ((uint64_t)i >= max_fds)
+            if ((uint64_t)(i + 3) >= max_fds)
                 return -EMFILE;
             new_fd = i;
             break;
