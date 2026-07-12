@@ -89,14 +89,15 @@ static int allocate_irq_stack(int cpu_id)
     irq_stacks[cpu_id].magic         = IRQ_STACK_MAGIC;
     irq_stacks[cpu_id].cpu_id        = cpu_id;
 
+    /* Poison the entire stack with a known pattern to detect
+     * uninitialized stack usage or overflow after the fact.
+     * Must be done BEFORE placing the magic value at the bottom. */
+    memset((void *)virt, 0xCC, IRQ_STACK_SIZE);
+
     /* Place a magic value at the bottom (low end) of the stack for
      * overflow detection.  If RSP ever reaches this region, we've
-     * overflowed. */
+     * overflowed.  Written AFTER memset so it survives. */
     *((volatile uint64_t *)virt) = IRQ_STACK_MAGIC;
-
-    /* Poison the entire stack with a known pattern to detect
-     * uninitialized stack usage or overflow after the fact. */
-    memset((void *)virt, 0xCC, IRQ_STACK_SIZE);
 
     kprintf("[OK] irq_regs: CPU %d IRQ stack: virt 0x%llx-0x%llx phys 0x%llx\n",
             cpu_id,
@@ -124,15 +125,30 @@ uint64_t irq_stack_switch(void)
     /* Save the old RSP (the interrupted task's stack pointer) and
      * switch to the top of the per-CPU IRQ stack.
      *
-     * NOTE: This function returns with RSP set to the IRQ stack.
-     * The caller must preserve the old RSP and pass it to
-     * irq_stack_restore() when leaving IRQ context. */
+     * CRITICAL: After switching RSP, the function's return address
+     * still sits on the old stack.  The compiler epilogue will 'ret'
+     * by popping from RSP, which would then be the empty IRQ stack —
+     * a guaranteed crash.  We therefore perform the switch in inline
+     * asm that moves the return address to the new stack and includes
+     * the ret instruction, preventing the compiler from emitting its
+     * own epilogue. */
     uint64_t prev_rsp = current_rsp;
     uint64_t new_rsp  = irq_stacks[cpu].stack_top;
 
-    __asm__ volatile("mov %0, %%rsp" : : "r"(new_rsp) : "memory");
+    __asm__ volatile(
+        "popq %%r11\n"              /* 1: return address → callee-saved reg */
+        "movq %[new], %%rsp\n"      /* 2: switch to IRQ stack */
+        "pushq %%r11\n"             /* 3: return address on new stack */
+        "movq %[prev], %%rax\n"     /* 4: prev_rsp as return value */
+        "ret\n"                     /* 5: return via new stack */
+        :
+        : [prev] "r"(prev_rsp), [new] "r"(new_rsp)
+        : "rax", "r11", "memory"
+    );
 
-    return prev_rsp;
+    /* NOT REACHED — the asm block above does the final ret. */
+    __builtin_unreachable();
+    return 0;
 }
 
 /* ── Stack restore: leave IRQ context, revert to original stack ────── */
