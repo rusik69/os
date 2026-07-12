@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 527,
+  "current_item": 529,
   "current_batch": "B008",
   "completed_items": [
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
@@ -59,10 +59,12 @@
     523,
     524,
     525,
-    526
+    526,
+    527,
+    528
   ],
-  "found_bugs": 976,
-  "fixed_bugs": 976,
+  "found_bugs": 978,
+  "fixed_bugs": 978,
   "completed_batches": [
     "B001",
     "B002",
@@ -71,6 +73,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-12T03:51:00",
-  "last_item_result": "item 526: src/memory/slab.c - verify kobject/inode/dentry slab caches sized correctly - BUGS FOUND AND FIXED. Verified: no struct kobject, struct inode, or struct dentry exist in this kernel, so no slab caches for them exist. cache_process created with 280 bytes but sizeof(struct process)=7024 (~25x undersized) and never used (processes from static table). cache_socket created with 96 bytes but sizeof(struct socket)=256 (~2.7x undersized) and never used (sockets from static table). cache_fd_entry and cache_inode documented in slab.h but never created. Removed all dead code (cache_process, cache_socket declarations/creation) and updated slab.h docs to reflect reality."
+  "last_item_timestamp": "2026-07-12T04:30:00",
+  "last_item_result": "item 528: src/memory/slab.c - fix constructor/freelist ordering bug + add alloc-time UAF poison verification"
 }
