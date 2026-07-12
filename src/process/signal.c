@@ -26,6 +26,9 @@
 /* Maximum signal number (signals 1-64) — bounds all signal arrays */
 #define MAX_SIG  65
 
+/* Forward declarations */
+static void signal_notify_parent(struct process *p, int signum, int si_code);
+
 int signal_send(uint32_t pid, int signum) {
     if (signum == 0) {
         struct process *probe = process_get_by_pid(pid);
@@ -83,6 +86,7 @@ int signal_send(uint32_t pid, int signum) {
         scheduler_remove(p);
         spinlock_irqsave_release(&p->sig_lock, __sig_flags);
         process_wake_waiter(p->pid);
+        signal_notify_parent(p, signum, CLD_KILLED);
         if (p == process_get_current()) scheduler_yield();
         return 0;
     }
@@ -114,6 +118,8 @@ int signal_send(uint32_t pid, int signum) {
         p->sleep_until = 0;
         scheduler_remove(p);
         spinlock_irqsave_release(&p->sig_lock, __sig_flags);
+        process_wake_waiter(p->pid);
+        signal_notify_parent(p, signum, CLD_KILLED);
         if (p == process_get_current()) scheduler_yield();
         return 0;
     }
@@ -187,6 +193,7 @@ int signal_send_info(uint32_t pid, int signum, struct siginfo *info) {
         scheduler_remove(p);
         spinlock_irqsave_release(&p->sig_lock, __sig_flags);
         process_wake_waiter(p->pid);
+        signal_notify_parent(p, signum, CLD_KILLED);
         if (p == process_get_current()) scheduler_yield();
         return 0;
     }
@@ -379,6 +386,30 @@ int signal_setup_frame_userspace(struct interrupt_frame *frame, int signum,
     return 0;
 }
 
+/* ── signal_notify_parent — send SIGCHLD to parent ──────────────
+ * Called when a process is about to become (or has become) ZOMBIE.
+ * Must be called without p->sig_lock held to avoid lock ordering
+ * issues with the parent's sig_lock.
+ * 'signum' is the signal that killed the process (if any).
+ * 'si_code' should be CLD_EXITED, CLD_KILLED, or CLD_DUMPED. */
+static void signal_notify_parent(struct process *p, int signum, int si_code)
+{
+    if (!p) return;
+    struct process *parent = process_get_by_pid(p->parent_pid);
+    if (!parent || parent->state == PROCESS_UNUSED || parent->state == PROCESS_ZOMBIE)
+        return;
+    struct siginfo info;
+    memset(&info, 0, sizeof(info));
+    info.si_signo  = SIGCHLD;
+    info.si_errno  = 0;
+    info.si_code   = si_code;
+    info.si_pid    = p->pid;
+    info.si_uid    = p->uid;
+    info.si_addr   = NULL;
+    info.si_status = 128 + signum;
+    signal_send_info(parent->pid, SIGCHLD, &info);
+}
+
 /* ── signal_check — Check and deliver pending signals ────────────────── */
 void signal_check(void) {
     struct process *p = process_get_current();
@@ -485,7 +516,14 @@ void signal_check(void) {
             case SIGQUIT:
             case SIGABRT:
                 do_coredump(p, sig);
-                __attribute__((fallthrough));
+                p->state = PROCESS_ZOMBIE;
+                p->exit_code = 128 + sig;
+                scheduler_remove(p);
+                process_wake_waiter(p->pid);
+                spinlock_irqsave_release(&p->sig_lock, __sig_flags);
+                signal_notify_parent(p, sig, CLD_DUMPED);
+                scheduler_yield();
+                return; /* zombie — never resumes */
             case SIGKILL:
             case SIGTERM:
             case SIGPIPE:
@@ -494,6 +532,7 @@ void signal_check(void) {
                 scheduler_remove(p);
                 process_wake_waiter(p->pid);
                 spinlock_irqsave_release(&p->sig_lock, __sig_flags);
+                signal_notify_parent(p, sig, CLD_KILLED);
                 scheduler_yield();
                 return; /* zombie — never resumes */
             case SIGCHLD:
@@ -522,6 +561,7 @@ void signal_check(void) {
                 p->exit_code = 128 + sig;
                 scheduler_remove(p);
                 spinlock_irqsave_release(&p->sig_lock, __sig_flags);
+                signal_notify_parent(p, sig, CLD_KILLED);
                 scheduler_yield();
                 return; /* zombie — never resumes */
         }
