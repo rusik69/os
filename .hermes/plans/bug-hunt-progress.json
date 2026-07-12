@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 599,
+  "current_item": 600,
   "current_batch": "B009",
   "completed_items": [
     1,2,3,4,5,6,7,8,9,10,
@@ -64,10 +64,11 @@
     581,582,583,584,585,586,587,588,589,590,
     591,592,593,594,595,596,
     597,
-    598
+    598,
+    599
   ],
-  "found_bugs": 1062,
-  "fixed_bugs": 1062,
+  "found_bugs": 1065,
+  "fixed_bugs": 1065,
   "completed_batches": [
     "B001",
     "B002",
@@ -76,6 +77,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-12T17:46:00",
-  "last_item_result": "item 598: src/kernel/syscall.c - verified syscall_validate_user_args covers all pointer params. Found 7 syscalls with uncovered user-space pointer params whose handlers dereferenced user addresses directly without uaccess: SYS_FS_GET_USAGE, SYS_FS_SYMLINK, SYS_FS_READLINK, SYS_FS_LSTAT, SYS_NET_UDP_RECV, SYS_UNAME, SYS_VGA_GET_FB_INFO. All 7 added to validation switch; all 7 handlers fixed to use strncpy_from_user()/copy_to_user() instead of direct dereference. Build-verified clean."
+  "last_item_timestamp": "2026-07-12T17:55:30",
+  "last_item_result": "item 599: src/kernel/syscall.c - verified syscall_exit (sys_exit + process_exit_code) doesn't leak kernel stack bytes. Found struct siginfo padding leak in 3 exit-path functions (process_exit, process_exit_code, sys_exit_group) that construct siginfo on stack without memset — 8 bytes of padding (4 between si_uid/si_addr, 4 tail) carry stale kernel data through signal_send_info into sig_info[] and eventually to userspace via copy_to_user in signal delivery. All other sites already used memset. Added memset before field assignment in all 3. Build-verified clean."
 }
