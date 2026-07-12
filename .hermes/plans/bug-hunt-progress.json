@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 525,
+  "current_item": 526,
   "current_batch": "B008",
   "completed_items": [
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
@@ -57,10 +57,11 @@
     511, 512, 513, 514, 515, 516, 517, 518, 519, 520,
     521, 522,
     523,
-    524
+    524,
+    525
   ],
-  "found_bugs": 974,
-  "fixed_bugs": 974,
+  "found_bugs": 975,
+  "fixed_bugs": 975,
   "completed_batches": [
     "B001",
     "B002",
@@ -69,6 +70,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-12T10:00:00",
-  "last_item_result": "item 524: src/memory/slab.c - verify per-CPU slab cache balanced on migration - BUGS FOUND AND FIXED. (1) kmem_cache_create() never updated cache_list = cache, so the global cache list was always NULL, breaking slab_get_stats() and kmem_cache_reap(). (2) No slab_cpu_offline()/slab_cpu_online() hooks existed — when a CPU goes offline, its per-CPU slab cache was never drained, stranding cached objects and corrupting free_count accounting. Fix: added cache_list = cache; added slab_cpu_offline() and slab_cpu_online() functions wired into the CPU hotplug path (cpuhp_take_cpu_offline / cpuhp_bring_cpu), mirroring the existing pmm_cpu_offline/pmm_cpu_online pattern."
+  "last_item_timestamp": "2026-07-12T03:40:00",
+  "last_item_result": "item 525: src/memory/slab.c - verify slab merge doesn't cause type confusion - BUG FOUND AND FIXED. slab_sizing() loop allowed multi-page slabs (gfporder>0), but the slab-header address computation (obj & ~(slab_size-1)) used in cpu_slab_drain, kmem_cache_free fallback, kmem_cache_destroy, and slab_cpu_offline assumes slab_size alignment which PMM doesn't guarantee (only 4K). Fixed by forcing all slabs to single-page (gfporder=0) where PAGE_SIZE masking is always correct."
 }

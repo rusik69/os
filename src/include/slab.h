@@ -12,11 +12,10 @@
  *   // ... use obj ...
  *   kmem_cache_free(my_cache, obj);
  *
- * Built-in caches (initialized at boot):
- *   cache_process     — struct process (see process.h)
- *   cache_fd_entry    — struct process_fd (see process.h, but used internally)
- *   cache_socket      — struct socket (see socket.h/socket.c)
- *   cache_inode       — generic inode (for fs layer, reserved)
+ * Built-in caches (reserved for future use — currently none are created
+ * at boot because process and socket structures use static tables rather
+ * than slab-backed allocators, and kobject/inode/dentry types are not
+ * yet defined in this kernel):
  */
 
 struct kmem_cache;
@@ -58,8 +57,6 @@ void slab_init(void);
 int slab_cpu_offline(int cpu_id);
 void slab_cpu_online(int cpu_id);
 
-/* Built-in caches (initialized by slab_init) */
-extern struct kmem_cache *cache_process;
-extern struct kmem_cache *cache_socket;
+/* Built-in caches (currently none are created at boot — see slab_init) */
 
 #endif

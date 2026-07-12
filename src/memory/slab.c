@@ -713,23 +713,23 @@ void kmem_cache_destroy(struct kmem_cache *cache) {
 
 /* ── Built-in caches ─────────────────────────────────────────────────── */
 
-struct kmem_cache *cache_process = NULL;
-struct kmem_cache *cache_socket  = NULL;
-
 void __init slab_init(void) {
     if (slab_initialized) return;
 
     kprintf("[..] Initializing slab allocator...\n");
 
-    cache_process = kmem_cache_create("process", 280, 0, NULL);
-    cache_socket  = kmem_cache_create("socket",   96, 0, NULL);
-
-    if (cache_process)
-        kprintf("[OK] Slab: cache_process (%lld-byte objects, %d per slab)\n",
-                (unsigned long long)cache_process->obj_size, cache_process->num);
-    if (cache_socket)
-        kprintf("[OK] Slab: cache_socket (%lld-byte objects, %d per slab)\n",
-                (unsigned long long)cache_socket->obj_size, cache_socket->num);
+    /* NOTE: slab caches for kobject, inode, dentry, process, socket, and
+     * process_fd are not yet created because:
+     *   - This kernel uses a static process_table[] for struct process
+     *     (7024 bytes) and a static socket_table[] for struct socket
+     *     (256 bytes) rather than slab-backed allocators.
+     *   - There are no struct kobject, struct inode, or struct dentry
+     *     types defined in this kernel — the VFS layer is path-based
+     *     and sysfs uses a simple entry table, not a kobject tree.
+     *   When these types gain their own dynamic allocators, their slab
+     *   caches should be created here with the correct sizes verified
+     *   by BUILD_BUG_ON(sizeof(struct...) != cache->obj_size).
+     */
 
     slab_initialized = 1;
 }
