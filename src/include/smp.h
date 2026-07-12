@@ -56,6 +56,9 @@ struct cpu_info {
     /* ── RPS/RFS: Per-CPU packet backlog ─────────────────────────── */
     struct rps_backlog *rps_backlog;  /* allocated separately */
 
+    /* ── Current interrupt frame (for signal delivery to userspace) ─── */
+    struct interrupt_frame *current_frame;  /* set by isr_common_handler, NULL outside interrupt */
+
     uint8_t _pad[40];            /* cache line padding */
 } __attribute__((aligned(64)));
 

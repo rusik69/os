@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 571,
+  "current_item": 572,
   "current_batch": "B009",
   "completed_items": [
     1,
@@ -572,10 +572,11 @@
     567,
     568,
     569,
-    570
+    570,
+    571
   ],
-  "found_bugs": 1018,
-  "fixed_bugs": 1018,
+  "found_bugs": 1019,
+  "fixed_bugs": 1019,
   "completed_batches": [
     "B001",
     "B002",
@@ -584,6 +585,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-12T12:00:00",
-  "last_item_result": "item 569: src/kernel/tsc_deadline.c - verify TSC deadline timer calibration. BUG FOUND: tsc_deadline_get() read IA32_TSC_DEADLINE MSR (0x6E0) which is write-only per Intel SDM - always returned 0. Fixed: cache deadline value in static var. Also implemented tsc_deadline_cancel() to actually disarm timer (was no-op stub). Build verified clean."
+  "last_item_timestamp": "2026-07-12T11:51:15",
+  "last_item_result": "item 571: src/kernel/sys_process.c - verify sigaction stores correct sa_mask. BUG FOUND (2 bugs): (1) sys_rt_sigaction returned global p->sig_mask as oldact.sa_mask instead of per-signal sa_mask; (2) new_act.sa_mask was completely ignored (cast to void). Fixed: added uint64_t sig_sa_mask[PROCESS_SIG_MAX] field, store on install, return stored value on query. Initialized in all 3 creation paths. Build verified clean."
 }

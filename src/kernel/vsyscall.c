@@ -30,6 +30,7 @@
 #include "panic.h"    /* panic_get_tsc_freq() */
 #include "rtc.h"      /* rtc_get_epoch() */
 #include "timer.h"
+#include "syscall.h"  /* for SYS_RT_SIGRETURN */
 
 /* clockid_t for kernel use */
 typedef uint64_t clockid_t;
@@ -581,7 +582,8 @@ int vsyscall_init(void)
     /* For now, use syscall stub for clock_gettime too */
     write_syscall_stub(vsyscall_code_page, VSYSCALL_CLOCK_GETTIME, 0xE4); /* SYS_clock_gettime */
 
-    /* ── Map both pages in kernel page table ─────────────────────── */
+    /* Entry 4: sigreturn trampoline (__restore_rt) */
+    write_syscall_stub(vsyscall_code_page, VSYSCALL_SIGRETURN, SYS_RT_SIGRETURN);
     uint64_t code_phys = VIRT_TO_PHYS((uint64_t)vsyscall_code_page);
 
     /* Code page: user-accessible, executable, read-only */

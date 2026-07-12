@@ -123,4 +123,14 @@ void signal_unmask(uint64_t sigmask);
 struct process;
 struct siginfo *signal_get_info(struct process *p, int signum);
 
+/* Deliver a signal to the currently running user-space process by building
+ * a signal frame on the user stack and redirecting the saved execution context.
+ * Called from signal_check() in interrupt context when a user handler exists.
+ * Returns 0 on success, -errno on failure. */
+struct interrupt_frame;
+int signal_setup_frame_userspace(struct interrupt_frame *frame, int signum,
+                                 uint64_t handler_addr,
+                                 struct siginfo *info,
+                                 uint64_t saved_sigmask);
+
 #endif

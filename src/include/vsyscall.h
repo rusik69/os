@@ -43,13 +43,14 @@ struct vdso_timezone {
 #define VDSO_DATA_PAGE_VADDR 0xFFFFFFFFFF601000ULL
 
 /* Number of vDSO function entries */
-#define VSYSCALL_NR_ENTRIES 4
+#define VSYSCALL_NR_ENTRIES 5
 
 /* vDSO entry indices */
 #define VSYSCALL_GETTIMEOFDAY 0  /* int gettimeofday(struct timeval *tv, struct timezone *tz) */
 #define VSYSCALL_TIME         1  /* time_t time(time_t *t) */
 #define VSYSCALL_GETCPU       2  /* int getcpu(unsigned *cpu, unsigned *node) */
 #define VSYSCALL_CLOCK_GETTIME 3 /* int clock_gettime(clockid_t clk_id, struct timespec *tp) */
+#define VSYSCALL_SIGRETURN   4  /* __restore_rt — sigreturn trampoline */
 
 /*
  * vDSO clock data — shared read-only page between kernel and userspace.

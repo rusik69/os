@@ -80,6 +80,10 @@ static void idt_set_gate(uint8_t num, uint64_t handler, uint16_t sel, uint8_t ty
 }
 
 void isr_common_handler(struct interrupt_frame *frame) {
+    /* Store the current frame for signal delivery to userspace */
+    struct cpu_info *ci = get_cpu_info();
+    if (ci) ci->current_frame = frame;
+
     /* Count the interrupt — per-CPU, per-vector */
     {
         int cpu = (int)get_cpu_id();
@@ -91,6 +95,7 @@ void isr_common_handler(struct interrupt_frame *frame) {
 
     if (handlers[frame->int_no]) {
         handlers[frame->int_no](frame);
+        if (ci) ci->current_frame = NULL;
         return;
     }
 
@@ -104,6 +109,7 @@ void isr_common_handler(struct interrupt_frame *frame) {
         cli();
         for (;;) hlt();
     }
+    if (ci) ci->current_frame = NULL;
 }
 
 void idt_register_handler(uint8_t vector, isr_handler_t handler) {
