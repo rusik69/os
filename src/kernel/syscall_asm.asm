@@ -38,6 +38,7 @@ extern zero_kernel_stack_uapi
 %define KPTI_OFF_SAVE_RIP  0x118
 %define KPTI_OFF_SAVE_RFL  0x120
 %define KPTI_OFF_EXIT_RIP  0x128
+%define KPTI_OFF_SAVE_RAX  0x130
 %define KPTI_OFF_EXIT      0x080
 
 ; Per-CPU kernel stack pointer offset within cpu_info struct (smp.h)
@@ -69,6 +70,11 @@ execve_user_rsp: dq 0
 ; ── Kernel stack zeroing ────────────────────────────────────────────
 global syscall_entry_rsp_saved
 syscall_entry_rsp_saved: dq 0
+
+; ── User R15 save for KPTI syscall_entry_full ──────────────────────
+; clobbered by mov r15, KPTI_TRAMP_VADDR before push
+global syscall_user_r15
+syscall_user_r15: dq 0
 
 ; ── KPTI mode selector: 0 = disabled, 1 = active ────────────────────
 ; Set by kpti_init().  When active, the original syscall_entry is not used
@@ -254,6 +260,8 @@ syscall_linux_entry:
 ; we jump back to the exit trampoline (which switches CR3 to user PML4).
 
 syscall_entry_full:
+    ; Save user R15 before clobbering with KPTI base pointer
+    mov     [rel syscall_user_r15], r15
     ; Load KPTI base address once
     mov     r15, KPTI_TRAMP_VADDR
     ; Read saved user state from trampoline page
@@ -261,6 +269,8 @@ syscall_entry_full:
     mov     r11, [r15 + KPTI_OFF_SAVE_RFL]    ; user RFLAGS
     mov     rax, [r15 + KPTI_OFF_SAVE_RSP]    ; user RSP
     mov     [rel syscall_user_rsp], rax
+    ; Read saved syscall number (trampoline saved RAX before clobbering it)
+    mov     rax, [r15 + KPTI_OFF_SAVE_RAX]    ; syscall number
 
     ; Switch to per-CPU process kernel stack
     mov     rsp, [gs:CPU_INFO_KERNEL_RSP_OFF]
@@ -274,7 +284,7 @@ syscall_entry_full:
     push    r12
     push    r13
     push    r14
-    push    r15
+    push    qword [rel syscall_user_r15]       ; saved user R15 (not KPTI base!)
 
     mov     [rel syscall_entry_rsp_saved], rsp
 
@@ -287,13 +297,13 @@ syscall_entry_full:
     ; Save arg6
     mov     [rel syscall_arg6], r9
 
-    ; Arg shuffle (same as syscall_entry)
+    ; Arg shuffle (same as syscall_entry) — RAX now holds syscall number
     mov     r9,  r8
     mov     r8,  r10
     mov     rcx, rdx
     mov     rdx, rsi
     mov     rsi, rdi
-    mov     rdi, rax
+    mov     rdi, rax        ; num
 
     call    syscall_dispatch
 
@@ -301,16 +311,16 @@ syscall_entry_full:
     cmp     qword [rel execve_pending], 0
     je      .full_normal_return
 
-    ; Execve path: jump to exit trampoline
+    ; Execve path: jump to exit trampoline (process replacement — no R15 restore needed)
     xor     eax, eax
     mov     rcx, [rel execve_user_rip]
     mov     r11, [rel execve_user_rflags]
     mov     rsp, [rel execve_user_rsp]
     mov     qword [rel execve_pending], 0
 
-    ; Jump to exit trampoline
-    mov     r15, KPTI_TRAMP_VADDR + KPTI_OFF_EXIT
-    jmp     r15
+    ; Jump to exit trampoline via RAX (won't disturb R15 for new process)
+    mov     rax, KPTI_TRAMP_VADDR + KPTI_OFF_EXIT
+    jmp     rax
 
 .full_normal_return:
     ; Zero kernel stack
@@ -319,7 +329,7 @@ syscall_entry_full:
     call    zero_kernel_stack_uapi
     pop     rax                                 ; restore syscall return value
 
-    pop     r15
+    pop     r15                                 ; user R15 (saved via syscall_user_r15 global)
     pop     r14
     pop     r13
     pop     r12
@@ -329,9 +339,9 @@ syscall_entry_full:
     pop     rcx             ; user RIP
     pop     rsp             ; user RSP
 
-    ; Instead of sysret, jump to exit trampoline which switches CR3 and sysrets
-    mov     r15, KPTI_TRAMP_VADDR + KPTI_OFF_EXIT
-    jmp     r15
+    ; Jump to exit trampoline via RAX (exit tramp saves/restores RAX itself)
+    mov     rax, KPTI_TRAMP_VADDR + KPTI_OFF_EXIT
+    jmp     rax
 
 ; ============================================================================
 ; libc_syscall — C library syscall gateway

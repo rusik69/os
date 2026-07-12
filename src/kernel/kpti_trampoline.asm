@@ -25,6 +25,7 @@
 %define KPTI_OFF_SAVE_RIP  0x118
 %define KPTI_OFF_SAVE_RFL  0x120
 %define KPTI_OFF_EXIT_RIP  0x128
+%define KPTI_OFF_SAVE_RAX  0x130
 
 org KPTI_TRAMP_VADDR
 bits 64
@@ -33,10 +34,22 @@ bits 64
 ; syscall_entry_trampoline — at KPTI_OFF_ENTRY (0x000)
 ; ============================================================================
 ; Saves user state, switches to kernel page table, jumps to real handler.
+;
+; On entry (CPU has done):
+;   RCX = saved user RIP  (instruction after `syscall`)
+;   R11 = saved user RFLAGS
+;   RSP = user stack
+;   RAX = syscall number
+;   RDI = a1, RSI = a2, RDX = a3, R10 = a4, R8 = a5, R9 = a6
+;
+; Saves RAX (syscall number) and RSP, RCX, R11 to the trampoline data area,
+; switches CR3, then jumps to the real handler.
 
 global syscall_entry_trampoline
 syscall_entry_trampoline:
 
+    ; Save user RAX (syscall number) before clobbering it
+    mov     [KPTI_TRAMP_VADDR + KPTI_OFF_SAVE_RAX], rax
     ; Save user RSP, RIP (RCX), RFLAGS (R11)
     mov     [KPTI_TRAMP_VADDR + KPTI_OFF_SAVE_RSP], rsp
     mov     [KPTI_TRAMP_VADDR + KPTI_OFF_SAVE_RIP], rcx
@@ -62,12 +75,17 @@ syscall_entry_trampoline:
 ;   R11 = user RFLAGS
 ;   RSP = user stack (already set up by kernel return path)
 ;
-; We save the return state, switch to user CR3, then SYSRET.
+; Saves the return state including RAX, switches to user CR3,
+; restores RAX, then SYSRET.
+;   - We must save/restore RAX because the exit trampoline clobbers
+;     it with the CR3 load. Without this, the user would see CR3 as
+;     the syscall return value instead of the actual return value.
 
 global syscall_exit_trampoline
 syscall_exit_trampoline:
 
-    ; Save the return values
+    ; Save the return values including RAX (syscall result)
+    mov     [KPTI_TRAMP_VADDR + KPTI_OFF_SAVE_RAX], rax
     mov     [KPTI_TRAMP_VADDR + KPTI_OFF_SAVE_RIP], rcx
     mov     [KPTI_TRAMP_VADDR + KPTI_OFF_SAVE_RFL], r11
     mov     [KPTI_TRAMP_VADDR + KPTI_OFF_SAVE_RSP], rsp
@@ -76,7 +94,8 @@ syscall_exit_trampoline:
     mov     rax, [KPTI_TRAMP_VADDR + KPTI_OFF_CR3_USER]
     mov     cr3, rax
 
-    ; Restore user state
+    ; Restore user state — read RAX back so user gets the real return value
+    mov     rax, [KPTI_TRAMP_VADDR + KPTI_OFF_SAVE_RAX]
     mov     rcx, [KPTI_TRAMP_VADDR + KPTI_OFF_SAVE_RIP]
     mov     r11, [KPTI_TRAMP_VADDR + KPTI_OFF_SAVE_RFL]
     mov     rsp, [KPTI_TRAMP_VADDR + KPTI_OFF_SAVE_RSP]
@@ -103,3 +122,5 @@ kpti_saved_rfl:
     dq 0  ; KPTI_OFF_SAVE_RFL
 kpti_real_handler_addr:
     dq 0  ; KPTI_OFF_EXIT_RIP: patched to kernel's syscall_entry_full address
+kpti_saved_rax:
+    dq 0  ; KPTI_OFF_SAVE_RAX: saved RAX (syscall number / return value)

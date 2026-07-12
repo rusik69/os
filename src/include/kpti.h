@@ -34,6 +34,7 @@ struct process;  /* forward declaration */
 #define KPTI_TRAMP_OFF_SAVE_RIP   0x118
 #define KPTI_TRAMP_OFF_SAVE_RFL   0x120
 #define KPTI_TRAMP_OFF_EXIT_RIP   0x128
+#define KPTI_TRAMP_OFF_SAVE_RAX   0x130
 
 /* ── PCID assignment for TLB tagging ──────────────────────────────── */
 #define KPTI_PCID_KERNEL  0ULL   /* Kernel page tables — PCID 0, never flushed on syscall */
