@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 563,
+  "current_item": 570,
   "current_batch": "B009",
   "completed_items": [
     1,
@@ -564,10 +564,17 @@
     559,
     560,
     561,
-    562
+    562,
+    563,
+    564,
+    565,
+    566,
+    567,
+    568,
+    569
   ],
-  "found_bugs": 1013,
-  "fixed_bugs": 1013,
+  "found_bugs": 1017,
+  "fixed_bugs": 1017,
   "completed_batches": [
     "B001",
     "B002",
@@ -576,6 +583,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-12T10:20:00",
-  "last_item_result": "item 562: src/kernel/nmi_watchdog.c — verify NMI latency threshold sensible. BUG FOUND AND FIXED: Soft lockup detection was broken — nmi_watchdog_check_soft() checked soft_pet_tick which was just updated by nmi_watchdog_soft_pet() in the immediately preceding line of scheduler_tick(), making elapsed time always ~0. Fixed by checking hard_pet_tick instead, which is only updated by the scheduler/idle context (nmi_watchdog_pet()), not by the timer tick handler. This correctly detects when the scheduler has stalled even though timer ticks continue. Build-verified clean."
+  "last_item_timestamp": "2026-07-12T12:00:00",
+  "last_item_result": "item 569: src/kernel/tsc_deadline.c - verify TSC deadline timer calibration. BUG FOUND: tsc_deadline_get() read IA32_TSC_DEADLINE MSR (0x6E0) which is write-only per Intel SDM - always returned 0. Fixed: cache deadline value in static var. Also implemented tsc_deadline_cancel() to actually disarm timer (was no-op stub). Build verified clean."
 }

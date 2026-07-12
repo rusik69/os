@@ -55,12 +55,16 @@ static inline uint64_t timeconst_ns_per_tick(uint32_t hz)
 /*
  * timeconst_ticks_to_nsecs  - Convert @ticks to nanoseconds using
  *                             pre-computed @mult and @shift.
+ *
+ * Uses __uint128_t to avoid overflow in the intermediate product
+ * (ticks * mult), which can exceed 64 bits for moderate tick counts.
+ * At 1000 Hz: mult = 4.3e15, overflow at ~4295 ticks (~4.3 s).
  */
 static inline uint64_t timeconst_ticks_to_nsecs(uint64_t ticks,
                                                 uint64_t mult,
                                                 unsigned int shift)
 {
-    return (ticks * mult) >> shift;
+    return ((__uint128_t)ticks * mult) >> shift;
 }
 
 /*
