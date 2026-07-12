@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 574,
+  "current_item": 575,
   "current_batch": "B009",
   "completed_items": [
     1,
@@ -575,10 +575,11 @@
     570,
     571,
     572,
-    573
+    573,
+    574
   ],
-  "found_bugs": 1020,
-  "fixed_bugs": 1020,
+  "found_bugs": 1021,
+  "fixed_bugs": 1021,
   "completed_batches": [
     "B001",
     "B002",

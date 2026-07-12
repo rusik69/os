@@ -310,9 +310,22 @@ int signal_setup_frame_userspace(struct interrupt_frame *frame, int signum,
     /* ── Fill ucontext (read by sys_rt_sigreturn to restore state) ── */
     sigframe.uc.uc_flags  = 0;
     sigframe.uc.uc_link   = NULL;
-    sigframe.uc.ss_sp     = NULL;
-    sigframe.uc.ss_flags  = SS_DISABLE;
-    sigframe.uc.ss_size   = 0;
+    /* Record the actual alternate signal stack state from the current
+     * process, not a hardcoded SS_DISABLE.  Userspace (libunwind, GDB,
+     * sanitizers, SA_SIGINFO handlers) reads these fields from the
+     * ucontext to determine the stack layout at signal time. */
+    {
+        struct process *cur = process_get_current();
+        if (cur) {
+            sigframe.uc.ss_sp     = cur->alt_stack_sp;
+            sigframe.uc.ss_flags  = cur->alt_stack_flags;
+            sigframe.uc.ss_size   = cur->alt_stack_size;
+        } else {
+            sigframe.uc.ss_sp     = NULL;
+            sigframe.uc.ss_flags  = SS_DISABLE;
+            sigframe.uc.ss_size   = 0;
+        }
+    }
     sigframe.uc.__pad     = 0;
 
     /* Save the OLD signal mask — sigreturn will restore it */
