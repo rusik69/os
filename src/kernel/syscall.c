@@ -1109,11 +1109,38 @@ static uint64_t sys_getpid(void) {
 
 /* ── Signal registration (SYS_SIGNAL=213) ──────────────────────── */
 static uint64_t sys_signal(uint64_t signum, uint64_t handler_addr) {
-    if (syscall_is_user_process() &&
-        handler_addr != (uint64_t)SIG_DFL && handler_addr != (uint64_t)SIG_IGN)
-        return (uint64_t)(int64_t)-EINVAL;
-    signal_register((int)signum, (signal_handler_t)(uintptr_t)handler_addr);
-    return 0;
+    if (signum <= 0 || signum >= SIG_MAX)
+        return (uint64_t)-1ULL;  /* SIG_ERR */
+
+    struct process *p = process_get_current();
+    if (!p)
+        return (uint64_t)-1ULL;  /* SIG_ERR */
+
+    /* SIGKILL and SIGSTOP cannot have their dispositions changed */
+    if (signum == SIGKILL || signum == SIGSTOP)
+        return (uint64_t)-1ULL;  /* SIG_ERR */
+
+    /* Validate that the handler address is sane for user processes */
+    signal_handler_t handler = (signal_handler_t)(uintptr_t)handler_addr;
+    if (p->is_user &&
+        handler != SIG_DFL && handler != SIG_IGN &&
+        (uint64_t)(uintptr_t)handler >= USER_VADDR_MAX)
+        return (uint64_t)-1ULL;  /* SIG_ERR */
+
+    uint64_t __sig_flags;
+    spinlock_irqsave_acquire(&p->sig_lock, &__sig_flags);
+
+    /* Save the old handler to return to userspace */
+    uint64_t old_handler = (uint64_t)(uintptr_t)p->sig_handlers[signum];
+
+    /* Install the new handler with BSD semantics (SA_RESTART) */
+    p->sig_handlers[signum] = handler;
+    p->sig_flags[signum] = (handler != SIG_DFL && handler != SIG_IGN)
+                           ? SA_RESTART : 0;
+
+    spinlock_irqsave_release(&p->sig_lock, __sig_flags);
+
+    return old_handler;
 }
 
 /* ── File seek / truncate (SYS_LSEEK=214, SYS_TRUNCATE=215) ───── */

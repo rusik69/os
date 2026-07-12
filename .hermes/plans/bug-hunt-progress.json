@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 583,
+  "current_item": 584,
   "current_batch": "B009",
   "completed_items": [
   1,
@@ -584,10 +584,11 @@
   579,
   580,
   581,
-  582
+  582,
+  583
   ],
-  "found_bugs": 1028,
-  "fixed_bugs": 1028,
+  "found_bugs": 1029,
+  "fixed_bugs": 1029,
   "completed_batches": [
     "B001",
     "B002",
@@ -596,6 +597,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-12T14:40:00",
-  "last_item_result": "item 582: signal - fix pselect6 user-space pointer dereference without SMAP handling (syscall.c). Both sigmask ptr extraction and sigmask value read were direct derefs of user ptrs; value read happened while holding sig_lock spinlock with IRQs disabled. Fixed with copy_from_user + pre-read before lock."
+  "last_item_timestamp": "2026-07-12T15:00:00",
+  "last_item_result": "item 583: signal - sys_sigprocmask/sys_rt_sigprocmask/sigreturn must not allow SIGKILL/SIGSTOP in mask. Three code paths fixed: sys_rt_sigprocmask (sys_process.c), sys_sigprocmask (syscall.c), sys_rt_sigreturn (sys_process.c). All now mask out (1ULL<<SIGKILL|1ULL<<SIGSTOP) before applying mask changes."
 }

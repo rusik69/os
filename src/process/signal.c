@@ -577,7 +577,7 @@ void signal_register(int signum, signal_handler_t handler) {
     uint64_t __sig_flags;
     spinlock_irqsave_acquire(&p->sig_lock, &__sig_flags);
     p->sig_handlers[signum] = handler;
-    p->sig_flags[signum] = 0;  /* No SA flags when using signal() */
+    p->sig_flags[signum] = SA_RESTART;  /* BSD semantics: restart interrupted syscalls */
     spinlock_irqsave_release(&p->sig_lock, __sig_flags);
 }
 
