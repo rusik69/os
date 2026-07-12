@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 591,
+  "current_item": 592,
   "current_batch": "B009",
   "completed_items": [
     1,
@@ -592,10 +592,11 @@
     587,
     588,
     589,
-    590
+    590,
+    591
   ],
-  "found_bugs": 1036,
-  "fixed_bugs": 1036,
+  "found_bugs": 1037,
+  "fixed_bugs": 1037,
   "completed_batches": [
     "B001",
     "B002",
@@ -604,6 +605,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-12T15:56:00",
-  "last_item_result": "item 590: process_create RLIMIT_NPROC enforcement. Found and fixed: process_create() counted ALL processes (every UID) instead of same-UID only, and did not exclude zombies - inconsistent with fork/clone paths. Now matches fork/clone: same-UID count with zombie exclusion."
+  "last_item_timestamp": "2026-07-12T16:27:00",
+  "last_item_result": "item 591: process_fork + vmm - verify mlocks transferred on fork. Traced fork/clone paths: process_fork() copies vm_locked_flags + locked_pages via struct copy, and vmm_clone_user_pml4() correctly preserves VMM_FLAG_LOCKED in PTEs with extra lock refs for the child. However, vmm_handle_cow_fault() drops VMM_FLAG_LOCKED (bit 52) when allocating a private COW copy — mask (0xFFF | PTE_NX) doesn't include bit 52. Fix: preserve VMM_FLAG_LOCKED in the new PTE and take pmm_ref_frame() on the new frame for the lock pin. Build verified."
 }

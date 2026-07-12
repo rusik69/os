@@ -8123,11 +8123,8 @@ static uint64_t sys_mlockall(uint64_t flags) {
                         uint64_t base_virt_1g = ((uint64_t)i4 << 39) | ((uint64_t)i3 << 30);
 
                         if (pdpt[i3] & PTE_HUGE) {
-                            /* 1GB huge page: lock each 2MB sub-range separately */
-                            for (int i2 = 0; i2 < 512; i2++) {
-                                uint64_t va = base_virt_1g | ((uint64_t)i2 << 21);
-                                vmm_lock_user_pages(p->pml4, va, 512);
-                            }
+                            /* 1GB huge page: vmm_lock_user_pages does not handle
+                             * PDPT-level huge pages, so skip them. */
                             continue;
                         }
 
@@ -8138,7 +8135,8 @@ static uint64_t sys_mlockall(uint64_t flags) {
 
                             if (pd[i2] & PTE_HUGE) {
                                 /* 2MB huge page: lock all 512 frames */
-                                vmm_lock_user_pages(p->pml4, base_virt_2m, 512);
+                                if (vmm_lock_user_pages(p->pml4, base_virt_2m, 512) < 0)
+                                    return (uint64_t)-ENOMEM;
                                 continue;
                             }
 
@@ -8156,7 +8154,8 @@ static uint64_t sys_mlockall(uint64_t flags) {
                                     if (in_range) {
                                         uint64_t range_end = base_virt_2m | ((uint64_t)i1 << 12);
                                         uint64_t npages = (range_end - range_start) / PAGE_SIZE;
-                                        vmm_lock_user_pages(p->pml4, range_start, npages);
+                                        if (vmm_lock_user_pages(p->pml4, range_start, npages) < 0)
+                                            return (uint64_t)-ENOMEM;
                                         in_range = 0;
                                     }
                                 }
@@ -8165,15 +8164,15 @@ static uint64_t sys_mlockall(uint64_t flags) {
                             if (in_range) {
                                 uint64_t range_end = base_virt_2m | (512ULL << 12);
                                 uint64_t npages = (range_end - range_start) / PAGE_SIZE;
-                                vmm_lock_user_pages(p->pml4, range_start, npages);
+                                if (vmm_lock_user_pages(p->pml4, range_start, npages) < 0)
+                                    return (uint64_t)-ENOMEM;
                             }
                         }
                     }
                 }
+                p->locked_pages = total;
             }
         }
-
-        p->locked_pages = total;
     }
     return 0;
 }
