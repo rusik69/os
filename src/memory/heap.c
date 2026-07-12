@@ -17,7 +17,10 @@
 #define HEAP_MAX_SIZE (64ULL * 1024 * 1024)   /* 64 MB — cc needs ~7 MB per compile */
 #define HEAP_INITIAL  (4ULL * 4096)            /* 4 pages */
 
+#define HEAP_BLOCK_MAGIC 0xE1E0E3E2E5E4E7E6ULL /* canary — detects heap metadata corruption */
+
 struct heap_block {
+    uint64_t magic;          /* must be HEAP_BLOCK_MAGIC — corruption canary */
     size_t size;
     int    free;
     struct heap_block *next;
@@ -67,6 +70,7 @@ void __init heap_init(void) {
 
     /* Set up initial free block (high-half VMA — mapped via PML4[256] huge pages) */
     heap_start_block        = (struct heap_block *)heap_base;
+    heap_start_block->magic = HEAP_BLOCK_MAGIC;
     heap_start_block->size  = HEAP_INITIAL - BLOCK_HDR_SIZE;
     heap_start_block->free  = 1;
     heap_start_block->next  = NULL;
@@ -91,6 +95,7 @@ static void *_kmalloc_locked(size_t size)
             /* Split if possible */
             if (block->size > size + BLOCK_HDR_SIZE + 16) {
                 struct heap_block *new_block = (struct heap_block *)((uint8_t *)block + BLOCK_HDR_SIZE + size);
+                new_block->magic = HEAP_BLOCK_MAGIC;
                 new_block->size = block->size - size - BLOCK_HDR_SIZE;
                 new_block->free = 1;
                 new_block->next = block->next;
@@ -122,6 +127,7 @@ static void *_kmalloc_locked(size_t size)
 
     struct heap_block *new_block = (struct heap_block *)heap_current;
     heap_current += total;
+    new_block->magic = HEAP_BLOCK_MAGIC;
     new_block->size = size;
     new_block->free = 0;
     new_block->next = NULL;
@@ -187,6 +193,18 @@ static void _kfree_locked(void *ptr)
 {
     struct heap_block *block = (struct heap_block *)((uint8_t *)ptr - BLOCK_HDR_SIZE);
 
+    /* Verify heap block canary — detects buffer overflows and corruption */
+    if (block->magic != HEAP_BLOCK_MAGIC) {
+        kprintf("[heap] CRITICAL: heap corruption detected in kfree(%p) — "
+                "block %p magic mismatch (expected 0x%016llx, actual 0x%016llx)\n",
+                ptr, (void *)block,
+                (unsigned long long)HEAP_BLOCK_MAGIC,
+                (unsigned long long)block->magic);
+        /* Continue with the free to avoid leaking memory — the corruption
+         * may have already damaged the allocator state, but freeing the
+         * block is the least-worst option. */
+    }
+
     /* KASAN: mark the freed region as poisoned to catch use-after-free */
     kasan_free(ptr, block->size);
 
@@ -241,6 +259,18 @@ void *krealloc(void *ptr, size_t new_size) {
 
     /* Get the original block header (lock held protects header from modification) */
     struct heap_block *block = (struct heap_block *)((uint8_t *)ptr - BLOCK_HDR_SIZE);
+
+    /* Verify heap block canary before operating on the block */
+    if (block->magic != HEAP_BLOCK_MAGIC) {
+        kprintf("[heap] CRITICAL: heap corruption detected in krealloc(%p) — "
+                "block %p magic mismatch (expected 0x%016llx, actual 0x%016llx)\n",
+                ptr, (void *)block,
+                (unsigned long long)HEAP_BLOCK_MAGIC,
+                (unsigned long long)block->magic);
+        spinlock_irqsave_release(&heap_lock, flags);
+        return NULL;
+    }
+
     size_t old_size = block->size;
 
     /* If new size fits in the existing block, return ptr as-is */
@@ -332,6 +362,15 @@ static int heap_check(void)
         if (b->size == 0 || b->size > HEAP_MAX_SIZE) {
             kprintf("[heap] heap_check: ERROR block %p has invalid size %llu\n",
                     (void *)b, (unsigned long long)b->size);
+            errors++;
+        }
+        /* Validate block magic (canary) — detects heap metadata corruption */
+        if (b->magic != HEAP_BLOCK_MAGIC) {
+            kprintf("[heap] heap_check: ERROR block %p has corrupted magic "
+                    "(expected 0x%016llx, actual 0x%016llx)\n",
+                    (void *)b,
+                    (unsigned long long)HEAP_BLOCK_MAGIC,
+                    (unsigned long long)b->magic);
             errors++;
         }
         /* Validate prev/next consistency */
