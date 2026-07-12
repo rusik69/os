@@ -813,18 +813,25 @@ uint64_t *vmm_clone_user_pml4(uint64_t *src) {
                     /* Derive per-4KB-PTE flags from the huge PDE:
                      *   - Keep hardware flags (bits 0-8) plus software bits (9-11)
                      *   - Strip PTE_WRITE — will be granted on COW resolution
-                     *   - Preserve PTE_NX (bit 63) */
+                     *   - Preserve PTE_NX (bit 63)
+                     *   - Preserve VMM_FLAG_LOCKED (bit 52) so each new PTE
+                     *     retains the lock-pin flag; the child gets its own
+                     *     lock-pin ref via an extra pmm_ref_frame below. */
                     uint64_t pflags = (huge_pde & 0xFFF) & ~(uint64_t)PTE_WRITE;
                     uint64_t pnx    = huge_pde & PTE_NX;
+                    uint64_t plocked = huge_pde & VMM_FLAG_LOCKED;
 
                     for (int l = 0; l < 512; l++) {
                         uint64_t frame = huge_phys + (uint64_t)l * PAGE_SIZE;
                         uint64_t entry = (frame & PTE_ADDR_MASK)
                                         | pflags | pnx
-                                        | PTE_COW | PTE_PRESENT;
+                                        | PTE_COW | PTE_PRESENT
+                                        | plocked;
                         src_pt[l] = entry;
                         dst_pt[l] = entry;
-                        pmm_ref_frame(frame);
+                        pmm_ref_frame(frame);  /* child mapping ref */
+                        if (plocked)
+                            pmm_ref_frame(frame);  /* child lock ref */
                     }
 
                     /* Point parent's PDE to the new 4KB page table */
@@ -848,12 +855,18 @@ uint64_t *vmm_clone_user_pml4(uint64_t *src) {
                     uint64_t frame = src_pt[l] & PTE_ADDR_MASK;
                     uint64_t flags = src_pt[l] & 0xFFF;
                     uint64_t nx    = src_pt[l] & PTE_NX;
+                    uint64_t lck   = src_pt[l] & VMM_FLAG_LOCKED;
 
-                    /* Mark both parent and child as read-only COW */
+                    /* Mark both parent and child as read-only COW,
+                     * preserving the lock-pin flag.  Add an extra
+                     * child lock-pin ref so each process can unlock
+                     * independently. */
                     flags = (flags & ~(uint64_t)PTE_WRITE) | PTE_COW;
-                    src_pt[l] = frame | flags | nx;
-                    dst_pt[l] = frame | flags | nx;
-                    pmm_ref_frame(frame); /* shared: increment refcount */
+                    src_pt[l] = frame | flags | nx | lck;
+                    dst_pt[l] = frame | flags | nx | lck;
+                    pmm_ref_frame(frame); /* shared: child mapping ref */
+                    if (lck)
+                        pmm_ref_frame(frame); /* child lock ref */
                 }
             }
         }
@@ -1096,12 +1109,18 @@ int vmm_unmap_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages) {
                  * The unmap range covers the entire remainder of the
                  * huge page from start_sub to the end.  Unref all
                  * overlapping sub-frames, then clear the PDE entirely
-                 * (vmm_unmap_user_page clears the full 2MB entry). */
+                 * (vmm_unmap_user_page clears the full 2MB entry).
+                 * If the huge page was locked (VMM_FLAG_LOCKED), also
+                 * release the extra lock-pin ref on each sub-frame. */
                 if (start_sub == 0 && count == HUGE_PAGE_NFRAMES) {
+                    int was_locked = !!(huge_pde & VMM_FLAG_LOCKED);
                     for (size_t j = 0; j < count; j++) {
                         uint64_t frame = hp_base + (start_sub + j) * PAGE_SIZE;
-                        if (frame != vmm_zero_page_frame)
-                            pmm_unref_frame(frame);
+                        if (frame != vmm_zero_page_frame) {
+                            pmm_unref_frame(frame);  /* drop mapping ref */
+                            if (was_locked)
+                                pmm_unref_frame(frame);  /* drop lock ref */
+                        }
                     }
                     vmm_unmap_user_page(pml4, addr);
                     i += count;
@@ -1124,12 +1143,15 @@ int vmm_unmap_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages) {
 
                 /* Derive per-4KB-PTE flags from the huge PDE.
                  * Preserve hardware bits (0-8), software bits (9-11),
-                 * and NX (bit 63).  Strip the HUGE/PS bit. */
+                 * NX (bit 63), and the LOCKED pin flag (bit 52).
+                 * Strip the HUGE/PS bit. */
                 uint64_t pflags = (huge_pde & 0xFFF) & ~(uint64_t)PTE_HUGE;
                 uint64_t pnx    = huge_pde & PTE_NX;
+                uint64_t plocked = huge_pde & VMM_FLAG_LOCKED;
                 for (int sub = 0; sub < 512; sub++) {
                     uint64_t frame = hp_base + (uint64_t)sub * PAGE_SIZE;
-                    pt[sub] = (frame & PTE_ADDR_MASK) | pflags | pnx | PTE_PRESENT;
+                    pt[sub] = (frame & PTE_ADDR_MASK) | pflags | pnx
+                            | PTE_PRESENT | plocked;
                 }
 
                 /* Point the PDE at the new 4KB page table.
@@ -1143,10 +1165,28 @@ int vmm_unmap_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages) {
         }
         }
 
-        /* ── Normal 4KB page path ───────────────────────────────── */
-        uint64_t phys = 0;
-        if (vmm_user_virt_to_phys(pml4, addr, &phys) == 0 && phys && phys != vmm_zero_page_frame) {
-            pmm_unref_frame(phys);
+        /* ── Normal 4KB page path ─────────────────────────────────
+         * Walk the page table directly (not via vmm_user_virt_to_phys)
+         * so we can check VMM_FLAG_LOCKED in the PTE and release the
+         * extra lock-pin ref when unmapping a locked page. */
+        if ((pml4[pml4_idx] & PTE_PRESENT)) {
+            uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(pml4[pml4_idx] & PTE_ADDR_MASK);
+            if ((pdpt[pdpt_idx] & PTE_PRESENT)) {
+                uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[pdpt_idx] & PTE_ADDR_MASK);
+                if ((pd[pd_idx] & PTE_PRESENT)) {
+                    uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[pd_idx] & PTE_ADDR_MASK);
+                    int pt_idx4 = (addr >> 12) & 0x1FF;
+                    uint64_t pte = pt[pt_idx4];
+                    if (pte & PTE_PRESENT) {
+                        uint64_t paddr = pte & PTE_ADDR_MASK;
+                        if (paddr != vmm_zero_page_frame) {
+                            pmm_unref_frame(paddr);  /* drop mapping ref */
+                            if (pte & VMM_FLAG_LOCKED)
+                                pmm_unref_frame(paddr);  /* drop lock ref */
+                        }
+                    }
+                }
+            }
         }
         vmm_unmap_user_page(pml4, addr);
         i++;
