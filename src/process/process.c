@@ -395,16 +395,22 @@ struct process *process_create(void (*entry)(void), const char *name) {
     }
     if (!proc) return NULL;
 
-    /* Enforce RLIMIT_NPROC: check total process count */
+    /* Enforce RLIMIT_NPROC: check processes owned by the same UID */
     struct process *cur = process_get_current();
     if (cur) {
-        int total_count = 0;
-        for (int i = 0; i < PROCESS_MAX; i++) {
-            if (process_table[i].state != PROCESS_UNUSED)
-                total_count++;
+        uint64_t nproc_limit = cur->rlim_cur[RLIMIT_NPROC];
+        if (nproc_limit != ~0ULL && nproc_limit > 0) {
+            uint64_t same_user_count = 0;
+            for (int i = 0; i < PROCESS_MAX; i++) {
+                if (process_table[i].state != PROCESS_UNUSED &&
+                    process_table[i].state != PROCESS_ZOMBIE &&
+                    process_table[i].uid == cur->uid) {
+                    same_user_count++;
+                }
+            }
+            if (same_user_count >= nproc_limit)
+                return NULL;
         }
-        if ((uint64_t)total_count >= cur->rlim_cur[RLIMIT_NPROC])
-            return NULL;
     }
 
     /* Allocate kernel stack with guard page */
