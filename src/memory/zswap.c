@@ -240,6 +240,16 @@ int zswap_store(uint64_t phys_addr, int dev_idx, uint32_t slot)
         return -ENOSPC;
     }
 
+    /* Re-check for duplicate under lock (SMP race guard).
+     * Prevents a concurrent zswap_store for the same (dev_idx, slot)
+     * from creating duplicate entries after our initial lock-free check. */
+    if (zswap_find(dev_idx, slot)) {
+        spinlock_release(&zswap_lock);
+        kfree(entry);
+        kfree(shrunk);
+        return -EEXIST;
+    }
+
     uint32_t idx = zswap_hash(dev_idx, slot);
     entry->next = zswap_table[idx];
     zswap_table[idx] = entry;
