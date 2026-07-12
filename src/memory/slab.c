@@ -74,6 +74,8 @@ struct kmem_cache {
     size_t            align;      /* requested alignment */
     int               gfporder;   /* 2^gfporder pages per slab */
     int               num;        /* objects per slab */
+    int               colour_off; /* max colour offset (leftover bytes) for cache-line coloring */
+    int               colour_next;/* next colour to use (cycling per slab) */
     kmem_cache_ctor_t ctor;       /* constructor for fresh objects (may be NULL) */
 
     struct slab      *slabs_full;
@@ -261,7 +263,19 @@ static int slab_grow(struct kmem_cache *cache) {
     slab->state    = SLAB_PARTIAL;
 
     /* Build an array of object pointers for shuffling */
-    void *obj_base = (uint8_t *)virt + header;
+    /* ── Object coloring: shift first object by a cycling offset to avoid
+     *     cache-line ping-pong (false sharing) between different slabs. ── */
+    int colour_bytes = 0;
+    if (cache->colour_off > 0) {
+        int colour_step  = 16;  /* minimum alignment step */
+        int colour_count = cache->colour_off / colour_step + 1;
+        int colour = cache->colour_next;
+        cache->colour_next = (colour + 1) % colour_count;
+        colour_bytes = colour * colour_step;
+        if (colour_bytes > cache->colour_off)
+            colour_bytes = cache->colour_off;
+    }
+    void *obj_base = (uint8_t *)virt + header + colour_bytes;
     void **obj_ptrs = (void **)kmalloc(sizeof(void *) * (size_t)cache->num);
     if (!obj_ptrs) {
         /* Fall back to sequential order if we can't allocate the temp array */
@@ -473,6 +487,24 @@ struct kmem_cache *kmem_cache_create(const char *name, size_t obj_size,
     }
     cache->obj_size = (obj_size + 15) & ~15ULL;
     if (cache->obj_size < 16) cache->obj_size = 16;
+
+    /* Calculate colour offset for object coloring (cache-line ping-pong avoidance).
+     * colour_off = leftover bytes in the slab after fitting all objects.
+     * Each new slab gets a different colour offset, spreading objects across
+     * distinct cache-line alignments across slabs. */
+    {
+        size_t slab_sz = PAGE_SIZE * (1ULL << cache->gfporder);
+        size_t hdr_sz  = sizeof(struct slab);
+        size_t al_sz   = (cache->obj_size + 15) & ~15ULL;
+        if (al_sz < 16) al_sz = 16;
+        size_t used    = (size_t)cache->num * al_sz;
+        size_t avail   = slab_sz - hdr_sz;
+        if (avail > used)
+            cache->colour_off = (int)(avail - used);
+        else
+            cache->colour_off = 0;
+        cache->colour_next = 0;
+    }
 
     spinlock_init(&cache->lock);
 
