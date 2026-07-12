@@ -250,6 +250,9 @@ int psi_gen_proc_file(int resource, char *buf, int max)
     int avg10_fp = pr->windows[0].avg_fp;
     int avg60_fp = pr->windows[1].avg_fp;
     int avg300_fp = pr->windows[2].avg_fp;
+    int full_avg10_fp = pr->full_windows[0].avg_fp;
+    int full_avg60_fp = pr->full_windows[1].avg_fp;
+    int full_avg300_fp = pr->full_windows[2].avg_fp;
 
     /* Total stall time (in timer ticks) → convert to microseconds */
     uint64_t some_total_us = pr->some_total * (1000000ULL / TIMER_FREQ);
@@ -268,11 +271,6 @@ int psi_gen_proc_file(int resource, char *buf, int max)
     psi_format_pct(some_10, avg10_fp);
     psi_format_pct(some_60, avg60_fp);
     psi_format_pct(some_300, avg300_fp);
-
-    /* Use separate full_windows tracking */
-    int full_avg10_fp = pr->full_windows[0].avg_fp;
-    int full_avg60_fp = pr->full_windows[1].avg_fp;
-    int full_avg300_fp = pr->full_windows[2].avg_fp;
 
     psi_format_pct(full_10, full_avg10_fp);
     psi_format_pct(full_60, full_avg60_fp);
@@ -321,7 +319,9 @@ static inline int psi_inc(int res)
 {
     uint64_t flags;
     spinlock_irqsave_acquire(&psi_resources[res].lock, &flags);
-    int new = ++psi_resources[res].stall_count;
+    if (psi_resources[res].stall_count < INT32_MAX)
+        psi_resources[res].stall_count++;
+    int new = psi_resources[res].stall_count;
     spinlock_irqsave_release(&psi_resources[res].lock, flags);
     return new;
 }
