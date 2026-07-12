@@ -332,17 +332,17 @@ static void recompute_time_slices(void) {
 
 /* Accessor used throughout the scheduler; replaces direct use of the
  * old static time_slices[] array.  Falls back to a reasonable default
- * if the computed table hasn't been initialised yet. */
+ * if the computed table hasn't been initialised yet.
+ *
+ * NOTE: does NOT acquire sched_lock because all callers in
+ * scheduler_tick() (lines 1177, 1180, 1188, 1206, 1212) already hold
+ * it — acquiring the lock inside would cause a recursive spinlock
+ * deadlock.  computed_slices[] is uint16_t (atomically readable on
+ * x86) and only written under sched_lock by recompute_time_slices(),
+ * so lock-free reads are safe. */
 static inline uint16_t slice_for_prio(int lvl) {
-    uint64_t flags;
-    uint16_t val;
-
-    spinlock_irqsave_acquire(&sched_lock, &flags);
     if (lvl < 0 || lvl >= SCHED_LEVELS) lvl = 1;
-    val = computed_slices[lvl];
-    spinlock_irqsave_release(&sched_lock, flags);
-
-    return val;
+    return computed_slices[lvl];
 }
 
 /* ── Sysctl handlers for scheduler latency/granularity ──────────── */
