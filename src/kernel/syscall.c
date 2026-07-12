@@ -4026,6 +4026,9 @@ static int do_sigwait(uint64_t set_mask, int timeout_ticks,
                 /* Dequeue the signal */
                 proc->pending_signals &= ~(1ULL << sig);
 
+                /* Clear sigwait_mask — we're no longer waiting */
+                proc->sigwait_mask = 0;
+
                 /* Copy out siginfo if requested */
                 if (out_info) {
                     struct siginfo *info = signal_get_info(proc, sig);
@@ -4048,20 +4051,29 @@ static int do_sigwait(uint64_t set_mask, int timeout_ticks,
         if (timeout_ticks > 0) {
             uint64_t elapsed = timer_get_ticks() - start;
             if (elapsed >= (uint64_t)timeout_ticks) {
+                /* Clear sigwait_mask on timeout */
+                spinlock_irqsave_acquire(&proc->sig_lock, &__sig_flags);
+                proc->sigwait_mask = 0;
+                spinlock_irqsave_release(&proc->sig_lock, __sig_flags);
                 *out_errno = 11; /* EAGAIN */
                 return -1;
             }
         }
 
-        /* Block until woken (we'll be woken when a signal arrives) */
-        process_get_current()->wait_for_pid = 0; /* not waiting for child */
-        process_get_current()->sleep_until = timeout_ticks > 0
+        /* Set sigwait_mask so signal_send() can wake us */
+        spinlock_irqsave_acquire(&proc->sig_lock, &__sig_flags);
+        proc->sigwait_mask = set_mask;
+        proc->wait_for_pid = 0; /* not waiting for child */
+        proc->sleep_until = timeout_ticks > 0
             ? start + (uint64_t)timeout_ticks : 0;
-        process_get_current()->state = PROCESS_BLOCKED;
-        scheduler_remove(process_get_current());
+        proc->state = PROCESS_BLOCKED;
+        scheduler_remove(proc);
+        spinlock_irqsave_release(&proc->sig_lock, __sig_flags);
         scheduler_yield();
 
-        /* Woken — loop back and check signals */
+        /* Woken — loop back and check signals.
+         * signal_send() (via sigwait_mask match) or a timeout expiration
+         * woke us.  sigwait_mask is cleared by the waker. */
     }
 }
 
