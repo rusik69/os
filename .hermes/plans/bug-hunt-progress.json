@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 544,
+  "current_item": 550,
   "current_batch": "B009",
   "completed_items": [
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
@@ -58,10 +58,16 @@
     521, 522, 523, 524, 525, 526, 527, 528, 529, 530,
     531, 532, 533, 534, 535, 536, 537,
     538, 539, 540,
-    541, 542, 543
+    541, 542, 543,
+    544,
+    545,
+    546,
+    547,
+    548,
+    549
   ],
-  "found_bugs": 995,
-  "fixed_bugs": 995,
+  "found_bugs": 999,
+  "fixed_bugs": 999,
   "completed_batches": [
     "B001",
     "B002",
@@ -70,6 +76,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-12T06:50:00",
-  "last_item_result": "item 543: src/kernel/cpuidle.c — verify idle state deepest allowed, not deeper: Found bug. The menu governor's menu_governor_select() scanned C-states from idle_state_count - 1 (global deepest) without respecting cpu_data->deepest_state (per-CPU limit). If deepest_state was less than idle_state_count - 1 (e.g., after cpuidle_register_custom_state() added states without updating per-CPU deepest_state, or on CPUs with different capabilities), the governor could select a state deeper than allowed. The caller cpuidle_idle() had a clamping safety net, but the governor itself should respect the limit. Fixed: start scan from cpu_data->deepest_state instead, and updated fallback to check deepest_state >= 1 before returning C1. Build verified. Commit: 9ad57616."
+  "last_item_timestamp": "2026-07-12T07:53:00",
+  "last_item_result": "item 549: src/kernel/psi.c — verify pressure stall counters wrap correctly (not overflow). Found two bugs. (1) Counter overflow: psi_inc() lacked overflow protection on stall_count (signed int), allowing UB on increment past INT32_MAX. The symmetric psi_dec() already clamped to 0, making the asymmetry a clear oversight. Added INT32_MAX saturation check. (2) Lock consistency: psi_gen_proc_file() read full_windows averages after releasing the spinlock, creating an inconsistent snapshot between 'some' and 'full' lines. Moved reads inside the locked section alongside the 'some' averages. Build verified, committed."
 }

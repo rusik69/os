@@ -6,6 +6,7 @@
 #include "errno.h"
 #include "kernel.h"
 #include "sched_deadline.h"
+#include "caps.h"
 
 /*
  * Per-pid scheduling attributes table.
@@ -72,6 +73,33 @@ int sched_setattr(uint32_t pid, const struct sched_attr *attr, uint32_t flags)
     struct process *proc = process_get_by_pid(pid);
     if (!proc)
         return -ESRCH;
+
+    /* ── Permission checks ────────────────────────────────── */
+    int perm_ret;
+
+    /* Modifying scheduling of another process requires CAP_SYS_NICE */
+    struct process *caller = process_get_current();
+    if (caller && caller != proc) {
+        perm_ret = cap_capable_audit(CAP_SYS_NICE, "sched_setattr");
+        if (perm_ret < 0)
+            return perm_ret;
+    }
+
+    /* Real-time and deadline scheduling policies require CAP_SYS_NICE */
+    if (attr->sched_policy == SCHED_FIFO ||
+        attr->sched_policy == SCHED_RR ||
+        attr->sched_policy == SCHED_DEADLINE) {
+        perm_ret = cap_capable_audit(CAP_SYS_NICE, "sched_setattr");
+        if (perm_ret < 0)
+            return perm_ret;
+    }
+
+    /* Setting a non-zero RT priority requires CAP_SYS_NICE */
+    if (attr->sched_priority > 0) {
+        perm_ret = cap_capable_audit(CAP_SYS_NICE, "sched_setattr");
+        if (perm_ret < 0)
+            return perm_ret;
+    }
 
     int idx = sched_attr_index(pid);
 
