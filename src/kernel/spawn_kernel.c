@@ -65,6 +65,19 @@ int process_spawn_kernel(const char *path) {
         return -ENOEXEC;
     }
 
+    /* ── Check for dynamically linked binary (PT_INTERP) ──────────── */
+    {
+        char interp_path[256];
+        int interp_ret = elf_find_interp(buf, (uint64_t)size, interp_path);
+        if (interp_ret == 0) {
+            kprintf("[spawn_kernel] '%s' is dynamically linked (interpreter: %s) — "
+                    "interpreter loading not yet supported\n",
+                    path, interp_path);
+            kfree(buf);
+            return -ENOEXEC;
+        }
+    }
+
     /* Create per-process page tables */
     uint64_t *new_pml4 = vmm_create_user_pml4();
     if (IS_ERR(new_pml4)) {

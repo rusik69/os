@@ -11,6 +11,11 @@
 #define EM_X86_64   62
 #define PT_LOAD     1           /* Loadable segment */
 #define PT_DYNAMIC  2           /* Dynamic linking info */
+#define PT_INTERP   3           /* Interpreter path (ld.so) */
+#define PT_NOTE     4           /* Auxiliary information */
+#define PT_SHLIB    5           /* Reserved */
+#define PT_PHDR     6           /* Program header table itself */
+#define PT_TLS      7           /* Thread-local storage */
 #define ELF_CLASS64 2
 #define ELF_DATA2LSB 1
 
@@ -223,5 +228,16 @@ int process_spawn(const char *path, char *const argv[], char *const envp[]);
  * Bypasses the is_user check in process_spawn.  Returns PID on success,
  * negative errno on failure. */
 int process_spawn_kernel(const char *path);
+
+/*
+ * elf_find_interp - Find PT_INTERP program header and extract interpreter path
+ * @data: Pointer to the ELF file data
+ * @size: Size of the data buffer
+ * @out_path: Output buffer for the interpreter path (at least 256 bytes)
+ *
+ * Return: 0 if PT_INTERP found and path extracted, 1 if statically linked
+ *         (no PT_INTERP), -errno on error.
+ */
+int elf_find_interp(const uint8_t *data, uint64_t size, char *out_path);
 
 #endif

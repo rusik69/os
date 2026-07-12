@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 602,
+  "current_item": 606,
   "current_batch": "B009",
   "completed_items": [
     1,
@@ -603,10 +603,14 @@
     598,
     599,
     600,
-    601
+    601,
+    602,
+    603,
+    604,
+    605
   ],
-  "found_bugs": 1070,
-  "fixed_bugs": 1070,
+  "found_bugs": 1072,
+  "fixed_bugs": 1072,
   "completed_batches": [
     "B001",
     "B002",
@@ -615,6 +619,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-12T18:30:00",
-  "last_item_result": "item 601: src/kernel/syscall_asm.asm - fixed 3 bugs in KPTI syscall_entry_full: (1) R15 was clobbered by mov r15, KPTI_TRAMP_VADDR before push - added syscall_user_r15 global to save/restore user R15; (2) RAX (syscall number) was lost in trampoline (clobbered by CR3/handler loads) and replaced with user RSP as the dispatch num - added KPTI_OFF_SAVE_RAX trampoline slot; entry trampoline now saves RAX before clobbering; syscall_entry_full reads it back for the arg shuffle; (3) syscall return value was clobbered by exit trampoline's CR3 load - exit trampoline now saves/restores RAX. All three non-KPTI paths (syscall_entry, syscall_linux_entry, libc_syscall) were already correct. Build-verified clean."
+  "last_item_timestamp": "2026-07-12T19:20:00",
+  "last_item_result": "item 605: src/kernel/elf.c - audited clean. PT_LOAD segment overlap detection in elf_validate() is correct: collects segments into [p_vaddr, p_vaddr+p_memsz) intervals, uses standard interval overlap check (segs[i].start < segs[j].end \u0026\u0026 segs[j].start < segs[i].end), overflow protection on p_vaddr+p_filesz and p_vaddr+p_memsz via line 109 and 113. vmm_map_user_page() provides safety net with -EEXIST on double-map. process_execve() additionally verifies no segment pages overlap user stack region. No bug found."
 }

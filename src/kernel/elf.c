@@ -115,7 +115,10 @@ static uint64_t elf_validate(const uint8_t *data, uint64_t size, int *out_is_use
             kprintf("elf: segment memsz overflow\n");
             return 0;
         }
-        if (ph->p_vaddr < 0x1000) {
+        /* For ET_EXEC (non-PIE), reject segments targeting the NULL page.
+         * For ET_DYN (PIE), p_vaddr is relative to the load base so the
+         * check is skipped — the loader will add a randomized base. */
+        if (hdr->e_type == ET_EXEC && ph->p_vaddr < 0x1000) {
             kprintf("elf: segment targets NULL page\n");
             return 0;
         }
@@ -207,7 +210,60 @@ uint64_t elf_load(const uint8_t *data, uint64_t size) {
     return entry;
 }
 
-/* Trampoline: each exec'd process gets its own entry-point stub */
+/**
+ * elf_find_interp - Find PT_INTERP program header and extract interpreter path
+ * @data: Pointer to the ELF file data
+ * @size: Size of the data buffer
+ * @out_path: Output buffer for the interpreter path (at least 256 bytes)
+ *
+ * Scans program headers for PT_INTERP. If found, copies the interpreter
+ * path string (which resides in the file data at phdr->p_offset) into
+ * out_path (null-terminated, max 255 chars).
+ *
+ * Context: Any context.
+ * Return: 0 if PT_INTERP found and path extracted, 1 if no PT_INTERP
+ *         (statically linked binary), -errno on error.
+ */
+int elf_find_interp(const uint8_t *data, uint64_t size, char *out_path)
+{
+    if (!data || !out_path || size < sizeof(struct elf64_header))
+        return -EINVAL;
+
+    const struct elf64_header *hdr = (const struct elf64_header *)data;
+
+    if (hdr->e_phoff == 0 || hdr->e_phnum == 0)
+        return 1; /* no program headers — not dynamically linked */
+
+    if (hdr->e_phnum > ELF_MAX_PHNUM)
+        return 1;
+
+    for (uint16_t i = 0; i < hdr->e_phnum; i++) {
+        const struct elf64_phdr *ph =
+            (const struct elf64_phdr *)(data + hdr->e_phoff +
+                                        (uint64_t)i * (uint64_t)hdr->e_phentsize);
+
+        if (ph->p_type != PT_INTERP)
+            continue;
+
+        /* PT_INTERP: p_offset points to interpreter path string in file,
+         * p_filesz is the length including NUL terminator. */
+        if (ph->p_offset >= size || ph->p_filesz >= 256 ||
+            ph->p_offset + ph->p_filesz > size || ph->p_filesz < 1) {
+            kprintf("elf: bad PT_INTERP segment (off=%llu sz=%llu)\n",
+                    (unsigned long long)ph->p_offset,
+                    (unsigned long long)ph->p_filesz);
+            return -ENOEXEC;
+        }
+
+        memcpy(out_path, data + ph->p_offset, (size_t)ph->p_filesz);
+        out_path[255] = '\0'; /* Ensure null-terminated */
+        return 0; /* Found interpreter */
+    }
+
+    return 1; /* No PT_INTERP — statically linked */
+}
+
+
 
 /**
  * elf_exec - Execute an ELF binary from a file path
@@ -295,6 +351,20 @@ int elf_exec(const char *path) {
 
     /* Check if this ELF is targeted at user-space addresses (< 0x800000000000) */
     int is_userland = (entry < 0x800000000000ULL);
+
+    /* ── Check for dynamically linked binary (PT_INTERP) ──────────── */
+    if (is_userland) {
+        char interp_path[256];
+        int interp_ret = elf_find_interp(buf, (unsigned long)size, interp_path);
+        if (interp_ret == 0) {
+            kprintf("elf: '%s' is dynamically linked (interpreter: %s) — "
+                    "interpreter loading not yet supported, try a static binary\n",
+                    path, interp_path);
+            kfree(buf);
+            kfree(name);
+            return -ENOEXEC;
+        }
+    }
 
     if (is_userland) {
         /* Create per-process page tables */
@@ -480,6 +550,19 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
     if (entry >= 0x800000000000ULL) {
         kfree(buf);
         return -ENOEXEC;
+    }
+
+    /* ── Check for dynamically linked binary (PT_INTERP) ──────────── */
+    {
+        char interp_path[256];
+        int interp_ret = elf_find_interp(buf, (uint64_t)size, interp_path);
+        if (interp_ret == 0) {
+            kprintf("elf: execve '%s' is dynamically linked (interpreter: %s) — "
+                    "interpreter loading not yet supported\n",
+                    path, interp_path);
+            kfree(buf);
+            return -ENOEXEC;
+        }
     }
 
     uint64_t *new_pml4 = vmm_create_user_pml4();
@@ -786,28 +869,73 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
     /* For now, set envp[envc] = NULL */
 
     /* ── Write auxiliary vector (auxv) entries ───────────────── */
-    /* auxv comes after envp[]: envp[] NULL auxv[] AT_NULL argv[] argc */
-    sp -= 2 * sizeof(uint64_t);  /* AT_SECURE + value */
-    sp &= ~0xFULL;
+    /*
+     * Standard Linux x86-64 auxv layout (highest → lowest address):
+     *   AT_PHDR, AT_PHENT, AT_PHNUM, AT_PAGESZ, AT_BASE,
+     *   AT_FLAGS, AT_ENTRY, AT_UID, AT_EUID, AT_GID, AT_EGID,
+     *   AT_SECURE, AT_CLKTCK, AT_RANDOM, AT_EXECFN, AT_NULL
+     *
+     * Each entry is a 16-byte pair (a_type, a_value).
+     * After AT_NULL comes argv[], then argc. */
     {
-        uint64_t *aux_secure = (uint64_t *)PHYS_TO_VIRT(
-            stack_phys_base + (sp - user_stack_bottom));
-        if (aux_secure) {
-            aux_secure[0] = AT_SECURE;
-            aux_secure[1] = (uint64_t)(uintptr_t)(at_secure ? 1UL : 0UL);
-        }
-    }
+        /* Build the auxv array on the kernel stack */
+        Elf64_auxv_t auxv_buf[24];
+        int a = 0;
 
-    /* AT_NULL terminator */
-    sp -= 2 * sizeof(uint64_t);
-    sp &= ~0xFULL;
-    {
-        uint64_t *aux_null = (uint64_t *)PHYS_TO_VIRT(
+        auxv_buf[a].a_type = AT_PHDR;
+        auxv_buf[a].a_val  = 0;                    /* Not mapped separately yet */
+        a++;
+        auxv_buf[a].a_type = AT_PHENT;
+        auxv_buf[a].a_val  = sizeof(struct elf64_phdr);
+        a++;
+        auxv_buf[a].a_type = AT_PHNUM;
+        auxv_buf[a].a_val  = (uint64_t)hdr->e_phnum;
+        a++;
+        auxv_buf[a].a_type = AT_PAGESZ;
+        auxv_buf[a].a_val  = 4096;
+        a++;
+        auxv_buf[a].a_type = AT_BASE;
+        auxv_buf[a].a_val  = 0;                    /* No interpreter for static binaries */
+        a++;
+        auxv_buf[a].a_type = AT_FLAGS;
+        auxv_buf[a].a_val  = 0;
+        a++;
+        auxv_buf[a].a_type = AT_ENTRY;
+        auxv_buf[a].a_val  = entry;
+        a++;
+        auxv_buf[a].a_type = AT_UID;
+        auxv_buf[a].a_val  = (uint64_t)cur->uid;
+        a++;
+        auxv_buf[a].a_type = AT_EUID;
+        auxv_buf[a].a_val  = (uint64_t)cur->euid;
+        a++;
+        auxv_buf[a].a_type = AT_GID;
+        auxv_buf[a].a_val  = (uint64_t)cur->gid;
+        a++;
+        auxv_buf[a].a_type = AT_EGID;
+        auxv_buf[a].a_val  = (uint64_t)cur->egid;
+        a++;
+        auxv_buf[a].a_type = AT_SECURE;
+        auxv_buf[a].a_val  = (uint64_t)(at_secure ? 1UL : 0UL);
+        a++;
+        auxv_buf[a].a_type = AT_CLKTCK;
+        auxv_buf[a].a_val  = 100;
+        a++;
+        auxv_buf[a].a_type = AT_NULL;
+        auxv_buf[a].a_val  = 0;
+        a++;
+
+        size_t auxv_bytes = (size_t)a * sizeof(Elf64_auxv_t);
+
+        /* Reserve space on the stack for all auxv entries */
+        sp -= auxv_bytes;
+        sp &= ~0xFULL;
+
+        /* Copy the auxv array to the new user stack (via PHYS_TO_VIRT) */
+        uint64_t *aux_virt = (uint64_t *)PHYS_TO_VIRT(
             stack_phys_base + (sp - user_stack_bottom));
-        if (aux_null) {
-            aux_null[0] = AT_NULL;
-            aux_null[1] = 0;
-        }
+        if (aux_virt)
+            memcpy(aux_virt, auxv_buf, auxv_bytes);
     }
 
     /* Write argv[] array (argv pointers, then NULL) */
@@ -959,6 +1087,19 @@ int process_spawn(const char *path, char *const argv[], char *const envp[])
     if (entry >= 0x800000000000ULL) {
         kfree(buf);
         return -ENOEXEC;
+    }
+
+    /* ── Check for dynamically linked binary (PT_INTERP) ──────────── */
+    {
+        char interp_path[256];
+        int interp_ret = elf_find_interp(buf, (uint64_t)size, interp_path);
+        if (interp_ret == 0) {
+            kprintf("elf: spawn '%s' is dynamically linked (interpreter: %s) — "
+                    "interpreter loading not yet supported\n",
+                    path, interp_path);
+            kfree(buf);
+            return -ENOEXEC;
+        }
     }
 
     /* ── 3. Create fresh page tables ────────────────────────────── */
