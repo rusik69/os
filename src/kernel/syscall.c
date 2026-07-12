@@ -562,6 +562,27 @@ static int syscall_validate_user_args(uint64_t num, uint64_t a1, uint64_t a2,
             if (a1 > 0 && a2 && !syscall_user_read_ok(a2, a1 * sizeof(uint32_t)))
                 return -EFAULT;
             return 0;
+        /* D150: Extended FS syscalls — validate user pointers */
+        case SYS_FS_GET_USAGE:
+            if (a1 && !syscall_user_write_ok(a1, sizeof(uint32_t) * 4))
+                return -EFAULT;
+            return 0;
+        case SYS_FS_SYMLINK:
+            return (syscall_user_cstr_ok(a1) && syscall_user_cstr_ok(a2)) ? 0 : -EFAULT;
+        case SYS_FS_READLINK:
+            return (syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, a3)) ? 0 : -EFAULT;
+        case SYS_FS_LSTAT:
+            return (syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, sizeof(uint32_t)) &&
+                    syscall_user_write_ok(a3, 1)) ? 0 : -EFAULT;
+        case SYS_NET_UDP_RECV:
+            if (!syscall_user_write_ok(a2, a3)) return -EFAULT;
+            if (a4 && !syscall_user_write_ok(a4, 4)) return -EFAULT;
+            if (a5 && !syscall_user_write_ok(a5, 2)) return -EFAULT;
+            return 0;
+        case SYS_UNAME:
+            return syscall_user_write_ok(a1, sizeof(struct utsname)) ? 0 : -EFAULT;
+        case SYS_VGA_GET_FB_INFO:
+            return syscall_user_write_ok(a1, sizeof(struct syscall_fb_info)) ? 0 : -EFAULT;
         default:
             return 0;
     }
@@ -1574,11 +1595,9 @@ static uint64_t sys_fs_get_usage(uint64_t out_addr) {
     uint32_t used_inodes = 0, total_inodes = 0, used_blocks = 0, data_start = 0;
     fs_get_usage(&used_inodes, &total_inodes, &used_blocks, &data_start);
     if (out_addr) {
-        uint32_t *out = (uint32_t *)out_addr;
-        out[0] = used_inodes;
-        out[1] = total_inodes;
-        out[2] = used_blocks;
-        out[3] = data_start;
+        uint32_t usage[4] = { used_inodes, total_inodes, used_blocks, data_start };
+        if (copy_to_user(out_addr, usage, sizeof(usage)) < 0)
+            return (uint64_t)(int64_t)-EFAULT;
     }
     return 0;
 }
@@ -1771,9 +1790,30 @@ static uint64_t sys_net_udp_listen(uint64_t port) {
 }
 static uint64_t sys_net_udp_recv(uint64_t port, uint64_t buf, uint64_t bufsz,
                                  uint64_t src_ip_ptr, uint64_t src_port_ptr) {
-    return (uint64_t)(int64_t)net_udp_recv((uint16_t)port,
-        (void *)buf, (uint16_t)bufsz,
-        (uint32_t *)src_ip_ptr, (uint16_t *)src_port_ptr, 200);
+    /* Allocate kernel buffer — net_udp_recv writes directly to buf */
+    uint16_t kbufsz = (uint16_t)(bufsz > 1500 ? 1500 : bufsz);
+    uint8_t *kbuf = kmalloc(kbufsz);
+    if (!kbuf) return (uint64_t)(int64_t)-ENOMEM;
+    uint32_t ksrc_ip = 0;
+    uint16_t ksrc_port = 0;
+    int ret = net_udp_recv((uint16_t)port, kbuf, kbufsz,
+                           &ksrc_ip, &ksrc_port, 200);
+    if (ret < 0) {
+        kfree(kbuf);
+        return (uint64_t)(int64_t)ret;
+    }
+    /* Copy received data to user-space */
+    if (copy_to_user(buf, kbuf, (size_t)ret) < 0) {
+        kfree(kbuf);
+        return (uint64_t)(int64_t)-EFAULT;
+    }
+    kfree(kbuf);
+    /* Copy source IP/port to user-space if requested */
+    if (src_ip_ptr && copy_to_user(src_ip_ptr, &ksrc_ip, sizeof(ksrc_ip)) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
+    if (src_port_ptr && copy_to_user(src_port_ptr, &ksrc_port, sizeof(ksrc_port)) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
+    return (uint64_t)(int64_t)ret;
 }
 static uint64_t sys_net_udp_unlisten(uint64_t port) {
     net_udp_unlisten((uint16_t)port);
@@ -1782,22 +1822,40 @@ static uint64_t sys_net_udp_unlisten(uint64_t port) {
 
 /* ── FS extended syscalls ────────────────────────────────────────────────── */
 static uint64_t sys_fs_symlink(uint64_t path_addr, uint64_t target_addr) {
-    char ap[128];
-    const char *rp = vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0
-                     ? (const char *)path_addr : ap;
-    return (uint64_t)(int64_t)fs_symlink(rp, (const char *)target_addr);
+    char kpath[256], ktarget[256];
+    if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
+    if (strncpy_from_user(ktarget, target_addr, sizeof(ktarget)) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
+    return (uint64_t)(int64_t)fs_symlink(kpath, ktarget);
 }
 static uint64_t sys_fs_readlink(uint64_t path_addr, uint64_t buf_addr, uint64_t bufsz) {
-    char ap[128];
-    const char *rp = vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0
-                     ? (const char *)path_addr : ap;
-    return (uint64_t)(int64_t)fs_readlink(rp, (char *)buf_addr, (int)bufsz);
+    char kpath[256];
+    if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
+    /* Validate bufsz to prevent unbounded kernel buffer allocation */
+    if (bufsz == 0) return (uint64_t)(int64_t)-EINVAL;
+    size_t kbufsz = (size_t)bufsz > 256 ? 256 : (size_t)bufsz;
+    char kbuf[256];
+    int ret = fs_readlink(kpath, kbuf, (int)kbufsz);
+    if (ret < 0) return (uint64_t)(int64_t)ret;
+    if (copy_to_user(buf_addr, kbuf, (size_t)ret) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
+    return 0;
 }
 static uint64_t sys_fs_lstat(uint64_t path_addr, uint64_t size_addr, uint64_t type_addr) {
-    char ap[128];
-    const char *rp = vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0
-                     ? (const char *)path_addr : ap;
-    return (uint64_t)(int64_t)fs_lstat(rp, (uint32_t *)size_addr, (uint8_t *)type_addr);
+    char kpath[256];
+    if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
+    uint32_t size;
+    uint8_t type;
+    int ret = fs_lstat(kpath, &size, &type);
+    if (ret < 0) return (uint64_t)(int64_t)ret;
+    if (copy_to_user(size_addr, &size, sizeof(size)) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
+    if (copy_to_user(type_addr, &type, sizeof(type)) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
+    return 0;
 }
 
 static uint64_t sys_chdir(uint64_t path_addr) {
@@ -3675,21 +3733,23 @@ static char system_hostname[HOSTNAME_MAX] = "os";
 
 static uint64_t sys_uname(uint64_t buf_addr) {
     if (!buf_addr) return (uint64_t)(int64_t)-EFAULT;
-    struct utsname *buf = (struct utsname *)buf_addr;
-    memset(buf, 0, sizeof(struct utsname));
-    memcpy(buf->sysname, "Linux", 6);
+    struct utsname buf;
+    memset(&buf, 0, sizeof(buf));
+    memcpy(buf.sysname, "Linux", 6);
     {
         struct process *proc = process_get_current();
         const char *node = proc ? proc->ns_hostname : system_hostname;
         if (!node || !*node) node = "localhost";
         size_t nlen = strlen(node);
-        if (nlen > sizeof(buf->nodename) - 1)
-            nlen = sizeof(buf->nodename) - 1;
-        memcpy(buf->nodename, node, nlen);
+        if (nlen > sizeof(buf.nodename) - 1)
+            nlen = sizeof(buf.nodename) - 1;
+        memcpy(buf.nodename, node, nlen);
     }
-    memcpy(buf->release, "6.1.0-osdev", 12);
-    snprintf(buf->version, sizeof(buf->version), "%s %s", __DATE__, __TIME__);
-    memcpy(buf->machine, "x86_64", 7);
+    memcpy(buf.release, "6.1.0-osdev", 12);
+    snprintf(buf.version, sizeof(buf.version), "%s %s", __DATE__, __TIME__);
+    memcpy(buf.machine, "x86_64", 7);
+    if (copy_to_user(buf_addr, &buf, sizeof(buf)) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
     return 0;
 }
 
@@ -4881,17 +4941,14 @@ static uint64_t sys_vga_set_color(uint64_t fg, uint64_t bg) {
 }
 
 static uint64_t sys_vga_get_fb_info(uint64_t out_addr) {
-    struct syscall_fb_info *out = (struct syscall_fb_info *)out_addr;
-    if (!out) return (uint64_t)-1;
-    out->is_framebuffer = (uint8_t)(vga_is_framebuffer() ? 1 : 0);
-    if (out->is_framebuffer) {
-        vga_get_framebuffer_info(&out->width, &out->height, &out->pitch, &out->bpp);
-    } else {
-        out->width = 0;
-        out->height = 0;
-        out->pitch = 0;
-        out->bpp = 0;
+    struct syscall_fb_info info;
+    memset(&info, 0, sizeof(info));
+    info.is_framebuffer = (uint8_t)(vga_is_framebuffer() ? 1 : 0);
+    if (info.is_framebuffer) {
+        vga_get_framebuffer_info(&info.width, &info.height, &info.pitch, &info.bpp);
     }
+    if (copy_to_user(out_addr, &info, sizeof(info)) < 0)
+        return (uint64_t)-1;
     return 0;
 }
 
