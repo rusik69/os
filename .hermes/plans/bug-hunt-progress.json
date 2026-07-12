@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 526,
+  "current_item": 527,
   "current_batch": "B008",
   "completed_items": [
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
@@ -58,10 +58,11 @@
     521, 522,
     523,
     524,
-    525
+    525,
+    526
   ],
-  "found_bugs": 975,
-  "fixed_bugs": 975,
+  "found_bugs": 976,
+  "fixed_bugs": 976,
   "completed_batches": [
     "B001",
     "B002",
@@ -70,6 +71,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-12T03:40:00",
-  "last_item_result": "item 525: src/memory/slab.c - verify slab merge doesn't cause type confusion - BUG FOUND AND FIXED. slab_sizing() loop allowed multi-page slabs (gfporder>0), but the slab-header address computation (obj & ~(slab_size-1)) used in cpu_slab_drain, kmem_cache_free fallback, kmem_cache_destroy, and slab_cpu_offline assumes slab_size alignment which PMM doesn't guarantee (only 4K). Fixed by forcing all slabs to single-page (gfporder=0) where PAGE_SIZE masking is always correct."
+  "last_item_timestamp": "2026-07-12T03:51:00",
+  "last_item_result": "item 526: src/memory/slab.c - verify kobject/inode/dentry slab caches sized correctly - BUGS FOUND AND FIXED. Verified: no struct kobject, struct inode, or struct dentry exist in this kernel, so no slab caches for them exist. cache_process created with 280 bytes but sizeof(struct process)=7024 (~25x undersized) and never used (processes from static table). cache_socket created with 96 bytes but sizeof(struct socket)=256 (~2.7x undersized) and never used (sockets from static table). cache_fd_entry and cache_inode documented in slab.h but never created. Removed all dead code (cache_process, cache_socket declarations/creation) and updated slab.h docs to reflect reality."
 }

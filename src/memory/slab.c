@@ -92,6 +92,26 @@ struct kmem_cache {
 
 /* ── Poisoning and redzone helpers ────────────────────────────────────── */
 
+/* Verify free poison is intact (UAF detection on alloc).
+ * Prints a warning if the object was written to while on the free list.
+ * Called right before slab_poison_alloc in kmem_cache_alloc. */
+static inline void slab_check_poison_free(struct kmem_cache *cache, void *obj) {
+    /* Check bytes 8-15 (the first 8 bytes after the free-list pointer).
+     * If disturbed (no longer SLAB_POISON_FREE), a UAF write likely
+     * occurred while the object was on the free list. */
+    uint64_t check = *(const uint64_t *)((const uint8_t *)obj + 8);
+    uint64_t expected = 0;
+    for (int i = 0; i < 8; i++)
+        expected = (expected << 8) | SLAB_POISON_FREE;
+    if (check != expected) {
+        kprintf("[SLAB] UAF DETECTED in '%s': obj=%p, bytes 8-15 corrupted "
+                "(expected 0x%016llx, actual 0x%016llx) — possible use-after-free write\n",
+                cache->name, obj,
+                (unsigned long long)expected,
+                (unsigned long long)check);
+    }
+}
+
 /* Write the redzone canary at the end of a freshly allocated object */
 static inline void slab_set_redzone(struct kmem_cache *cache, void *obj) {
     uint64_t *rz = (uint64_t *)((uint8_t *)obj + cache->user_size);
@@ -281,13 +301,19 @@ static int slab_grow(struct kmem_cache *cache) {
     void *obj_base = (uint8_t *)virt + header + colour_bytes;
     void **obj_ptrs = (void **)kmalloc(sizeof(void *) * (size_t)cache->num);
     if (!obj_ptrs) {
-        /* Fall back to sequential order if we can't allocate the temp array */
+        /* Fall back to sequential order if we can't allocate the temp array.
+         * NOTE: constructor is called BEFORE setting free-list pointer so the
+         * constructor cannot corrupt the free list (bytes 0-7).  After the
+         * free-list pointer is set, poison bytes 8+ so that alloc-time UAF
+         * verification works on freshly-grown slabs. */
         for (int i = 0; i < cache->num; i++) {
             void *obj = (uint8_t *)obj_base + (size_t)i * aligned;
-            *(void **)obj = slab->free_list;
-            slab->free_list = obj;
             if (cache->ctor)
                 cache->ctor(obj);
+            *(void **)obj = slab->free_list;
+            slab->free_list = obj;
+            /* Poison bytes 8+ for alloc-time UAF poison verification */
+            slab_poison_free(cache, obj);
         }
         slab_relink(cache, slab, SLAB_PARTIAL);
         return 0;
@@ -308,10 +334,12 @@ static int slab_grow(struct kmem_cache *cache) {
         obj_ptrs[j] = tmp;
     }
 
-    /* Build free list from shuffled array */
+    /* Build free list from shuffled array and poison for UAF detection */
     for (int i = 0; i < cache->num; i++) {
         *(void **)obj_ptrs[i] = slab->free_list;
         slab->free_list = obj_ptrs[i];
+        /* Poison bytes 8+ so alloc-time UAF check can verify poison is intact */
+        slab_poison_free(cache, obj_ptrs[i]);
     }
 
     kfree(obj_ptrs);
@@ -541,6 +569,9 @@ void *kmem_cache_alloc(struct kmem_cache *cache) {
         void *obj = cpu_s->objects[cpu_s->count];
         if (irq_save & 0x200) __asm__ volatile("sti" : : : "memory");
 
+        /* Verify free poison is intact for UAF detection */
+        slab_check_poison_free(cache, obj);
+
         /* Poison with allocation pattern and set redzone */
         slab_poison_alloc(cache, obj);
         slab_set_redzone(cache, obj);
@@ -567,6 +598,9 @@ void *kmem_cache_alloc(struct kmem_cache *cache) {
     spinlock_irqsave_release(&cache->lock, lock_flags);
 
     if (obj) {
+        /* Verify free poison is intact for UAF detection */
+        slab_check_poison_free(cache, obj);
+
         slab_poison_alloc(cache, obj);
         slab_set_redzone(cache, obj);
 
