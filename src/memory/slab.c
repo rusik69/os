@@ -420,10 +420,23 @@ struct kmem_cache *kmem_cache_create(const char *name, size_t obj_size,
     /* Ensure alignment is a power of two (requirement of the documented API) */
     if (cache->align & (cache->align - 1))
         cache->align = 16;
+    /* Minimum alignment of 8 for redzone canary (uint64_t) alignment.
+     * Smaller alignments would allow the redzone to be placed at a
+     * sub-8-byte-aligned offset, causing a misaligned uint64_t access. */
+    if (cache->align < 8)
+        cache->align = 8;
     /* Round up user size to the requested alignment so that each object's
      * user-data region starts at a correctly-aligned offset within the slab.
-     * This is what callers expect when they pass a non-zero align value. */
-    obj_size = (obj_size + cache->align - 1) & ~(size_t)(cache->align - 1);
+     * This is what callers expect when they pass a non-zero align value.
+     * Check for wrap-around since obj_size is caller-controlled. */
+    size_t cache_obj_size_rounded = (obj_size + cache->align - 1) & ~(size_t)(cache->align - 1);
+    if (cache_obj_size_rounded < obj_size) {
+        kprintf("[SLAB] ERROR: kmem_cache_create('%s') alignment rounding overflow (size=%zu, align=%zu)\n",
+                name ? name : "(null)", obj_size, cache->align);
+        kfree(cache);
+        return NULL;
+    }
+    obj_size = cache_obj_size_rounded;
     cache->user_size = obj_size;
     cache->ctor      = ctor;
 
