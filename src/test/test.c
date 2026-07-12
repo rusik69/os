@@ -4087,7 +4087,7 @@ static void test_thp(void) {
 
     /* Track a huge page (2MB aligned) */
     static uint8_t huge_page[THP_HPAGE_SIZE] __attribute__((aligned(THP_HPAGE_SIZE)));
-    int ret = thp_track_hugepage((uint64_t)huge_page, 0);
+    int ret = thp_track_hugepage((uint64_t)huge_page, 0, NULL);
     ASSERT("thp track hugepage", ret == 0);
     ASSERT("thp total pages", thp_get_total_pages() == 1);
 

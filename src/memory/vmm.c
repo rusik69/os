@@ -1309,7 +1309,7 @@ int vmm_map_user_hugepage_internal(uint64_t *pml4, uint64_t virt,
     pd[idx2] = pde;
 
     /* Track in THP subsystem */
-    thp_track_hugepage(virt, huge_phys);
+    thp_track_hugepage(virt, huge_phys, pml4);
     vm_hugepages++;
 
     return 0;

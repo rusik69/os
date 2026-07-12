@@ -15,6 +15,7 @@
 struct thp_entry {
     uint64_t virt_addr;    /* Virtual address of the huge page */
     uint64_t phys_addr;    /* Physical address of the huge page */
+    uint64_t *pml4;        /* Page-table root of the owning process (NULL if unknown) */
     int state;             /* THP_RAW, THP_SPLIT, or THP_PARTIAL */
     int present;
 };
@@ -68,7 +69,7 @@ int thp_is_enabled(void) {
 }
 
 /* Internal: caller must hold thp_lock */
-static int __thp_track_hugepage_locked(uint64_t virt_addr, uint64_t phys_addr) {
+static int __thp_track_hugepage_locked(uint64_t virt_addr, uint64_t phys_addr, uint64_t *pml4) {
     if (thp_entry_count >= THP_MAX_PAGES) return -ENOSPC;
 
     /* Check for duplicate */
@@ -80,18 +81,19 @@ static int __thp_track_hugepage_locked(uint64_t virt_addr, uint64_t phys_addr) {
     struct thp_entry *entry = &thp_entries[thp_entry_count++];
     entry->virt_addr = virt_addr;
     entry->phys_addr = phys_addr;
+    entry->pml4      = pml4;
     entry->state = THP_RAW;
     entry->present = 1;
     thp_total++;
     return 0;
 }
 
-int thp_track_hugepage(uint64_t virt_addr, uint64_t phys_addr) {
+int thp_track_hugepage(uint64_t virt_addr, uint64_t phys_addr, uint64_t *pml4) {
     uint64_t irq_flags;
     int ret;
     spinlock_irqsave_acquire(&thp_lock, &irq_flags);
     if (!thp_enabled) { ret = -ENODEV; goto out; }
-    ret = __thp_track_hugepage_locked(virt_addr, phys_addr);
+    ret = __thp_track_hugepage_locked(virt_addr, phys_addr, pml4);
 out:
     spinlock_irqsave_release(&thp_lock, irq_flags);
     return ret;
@@ -111,11 +113,77 @@ void thp_untrack_hugepage(uint64_t virt_addr) {
     spinlock_irqsave_release(&thp_lock, irq_flags);
 }
 
-/* Internal: caller must hold thp_lock */
+/* 2MB PDE physical address mask (bits 39:21) */
+#define THP_PDE_ADDR_MASK 0x000FFFFFFFE00000ULL
+
+/* Internal: caller must hold thp_lock.
+ * Splits the huge-page tracking entry AND the corresponding page-table
+ * PDE so individual 4K pages can be swapped, migrated, or unmapped.
+ * Returns 512 (number of 4K pages) on success, 0 if already split,
+ * -ENOENT if not found, -ENOMEM if page-table page allocation fails. */
 static int __thp_split_hugepage_locked(uint64_t virt_addr) {
     for (int i = 0; i < thp_entry_count; i++) {
         if (thp_entries[i].virt_addr == virt_addr && thp_entries[i].present) {
             if (thp_entries[i].state == THP_RAW) {
+                /* ── Actually split the 2MB PDE into 512 × 4KB PTEs ── */
+                uint64_t *pml4 = thp_entries[i].pml4;
+                uint64_t phys = thp_entries[i].phys_addr;
+                (void)phys; /* used implicitly below via page-table walk */
+
+                if (pml4) {
+                    int pml4_idx = (int)((virt_addr >> 39) & 0x1FF);
+                    int pdpt_idx = (int)((virt_addr >> 30) & 0x1FF);
+                    int pd_idx   = (int)((virt_addr >> 21) & 0x1FF);
+
+                    /* Walk to the PDE and verify it is still a huge page.
+                     * We tolerate non-present / non-huge entries because
+                     * someone may have freed or already split concurrently. */
+                    if ((pml4[pml4_idx] & PTE_PRESENT)) {
+                        uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(pml4[pml4_idx] & PTE_ADDR_MASK);
+                        if ((pdpt[pdpt_idx] & PTE_PRESENT)) {
+                            uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[pdpt_idx] & PTE_ADDR_MASK);
+                            if ((pd[pd_idx] & PTE_PRESENT) && (pd[pd_idx] & PTE_HUGE)) {
+                                uint64_t huge_pde = pd[pd_idx];
+                                uint64_t base = huge_pde & THP_PDE_ADDR_MASK;
+
+                                /* Allocate a page-table page for the 4KB entries */
+                                uint64_t pt_phys = pmm_alloc_frame();
+                                if (!pt_phys)
+                                    return -ENOMEM;
+
+                                uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pt_phys);
+                                memset(pt, 0, PAGE_SIZE);
+
+                                /* Derive per-4KB-PTE flags from the huge PDE.
+                                 * Strip the HUGE/PS bit (bit 7) — these are
+                                 * now 4KB leaf PTEs, not a 2MB leaf PDE. */
+                                uint64_t pflags = (huge_pde & 0xFFF) & ~(uint64_t)PTE_HUGE;
+                                uint64_t pnx    = huge_pde & PTE_NX;
+
+                                for (int j = 0; j < 512; j++) {
+                                    pt[j] = (base + (uint64_t)j * PAGE_SIZE)
+                                          | pflags | pnx | PTE_PRESENT;
+                                }
+
+                                /* Replace the PDE — now points to a 4K page
+                                 * table instead of a 2MB huge page.  Keep
+                                 * the same user/kernel/write flags on the
+                                 * PD entry itself. */
+                                pd[pd_idx] = pt_phys
+                                           | PTE_PRESENT
+                                           | PTE_WRITE
+                                           | PTE_USER;
+
+                                /* Flush TLB for this virtual address range.
+                                 * invlpg at the start suffices — x86 hardware
+                                 * invalidates the entire 2MB region when the
+                                 * PDE changes from 2MB to 4K. */
+                                __asm__ volatile("invlpg (%0)" : : "r"(virt_addr) : "memory");
+                            }
+                        }
+                    }
+                }
+
                 thp_entries[i].state = THP_SPLIT;
                 thp_split++;
                 return 512; /* 2 MB / 4 KB = 512 pages */
@@ -447,7 +515,7 @@ static int khugepaged_promote_range(uint64_t *pml4, uint64_t virt,
 
     /* ── Track in THP subsystem ── */
     if (thp_enabled) {
-        thp_track_hugepage(virt, huge_phys);
+        thp_track_hugepage(virt, huge_phys, pml4);
     }
     uint64_t __vh_irq;
     spinlock_irqsave_acquire(&thp_lock, &__vh_irq);
@@ -695,7 +763,7 @@ static int collapse_huge_page(uint64_t addr)
     if (!phys) return -ENOMEM;
 
     spinlock_irqsave_acquire(&thp_lock, &irq_flags);
-    ret = __thp_track_hugepage_locked(addr, phys);
+    ret = __thp_track_hugepage_locked(addr, phys, NULL);
     if (ret == 0) {
         thp_merged++;
         kprintf("[thp] collapse_huge_page: 0x%llx new 2MB huge page\n", (unsigned long long)addr);

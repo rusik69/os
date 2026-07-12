@@ -21,8 +21,9 @@ void thp_init(void);
 void thp_set_enabled(int enabled);
 int thp_is_enabled(void);
 
-/* Track a huge page mapping */
-int thp_track_hugepage(uint64_t virt_addr, uint64_t phys_addr);
+/* Track a huge page mapping.
+ * @pml4: page-table root of the owning process (NULL if unknown/non-user) */
+int thp_track_hugepage(uint64_t virt_addr, uint64_t phys_addr, uint64_t *pml4);
 
 /* Untrack a huge page */
 void thp_untrack_hugepage(uint64_t virt_addr);

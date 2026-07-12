@@ -260,7 +260,7 @@ int migrate_huge_page(uint64_t phys_addr, int target_node)
     thp_untrack_hugepage(old_virt);
 
     uint64_t new_virt = (uint64_t)PHYS_TO_VIRT(new_phys);
-    thp_track_hugepage(new_virt, new_phys);
+    thp_track_hugepage(new_virt, new_phys, NULL);
 
     kprintf("[hugepage-mig] Migrated huge page 0x%llx → 0x%llx (node %d)\n",
             (unsigned long long)phys_addr,
