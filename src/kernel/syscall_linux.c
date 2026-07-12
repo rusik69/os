@@ -166,14 +166,14 @@ static uint64_t lin_pread64(uint64_t a1, uint64_t a2, uint64_t a3,
                              uint64_t a4, uint64_t a5, uint64_t a6)
 {
     lin_discard2(a5, a6);
-    return syscall_dispatch_internal(SYS_FD_READ, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_PREAD64, a1, a2, a3, a4, 0);
 }
 
 static uint64_t lin_pwrite64(uint64_t a1, uint64_t a2, uint64_t a3,
                               uint64_t a4, uint64_t a5, uint64_t a6)
 {
     lin_discard2(a5, a6);
-    return syscall_dispatch_internal(SYS_FD_WRITE, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_PWRITE64, a1, a2, a3, a4, 0);
 }
 
 static uint64_t lin_readv(uint64_t a1, uint64_t a2, uint64_t a3,
