@@ -562,7 +562,7 @@ uint64_t *vmm_create_user_pml4(void) {
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&vmm_page_table_lock, &irq_flags);
     for (int i = 256; i < 512; i++)
-        pml4[i] = kernel_pml4[i] & ~PTE_USER;
+        pml4[i] = kernel_pml4[i];
     spinlock_irqsave_release(&vmm_page_table_lock, irq_flags);
 
     return pml4;
