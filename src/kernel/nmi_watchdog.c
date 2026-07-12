@@ -191,6 +191,24 @@ void nmi_watchdog_request_backtrace(void) {
         __asm__ volatile("pause");
 }
 
+/* ── Idle-state tracking ────────────────────────────────────────────
+ * These are called by cpuidle to signal that the CPU is legitimately
+ * idle.  The NMI handler uses the flag to avoid false-positive hard
+ * lockup declarations when the PMC counter overflow fires during wake
+ * processing from a deep C-state. */
+
+void nmi_watchdog_idle_enter(void) {
+    struct nmi_watchdog_cpu *wd = this_watchdog();
+    wd->idle_in_idle_state = 1;
+    __asm__ volatile("" ::: "memory");
+}
+
+void nmi_watchdog_idle_exit(void) {
+    struct nmi_watchdog_cpu *wd = this_watchdog();
+    wd->idle_in_idle_state = 0;
+    __asm__ volatile("" ::: "memory");
+}
+
 /* ── Soft lockup check ───────────────────────────────────────────── */
 
 void nmi_watchdog_check_soft(void) {
@@ -288,6 +306,29 @@ void nmi_watchdog_handler(struct interrupt_frame *frame) {
 
     struct nmi_watchdog_cpu *wd = this_watchdog();
     wd->nmi_count++;
+
+    /* ── Idle-CPU guard ────────────────────────────────────────────
+     * If this CPU is currently in an idle C-state (HLT/MWAIT), the PMC
+     * performance counter may have been close to its overflow point
+     * when the CPU entered the idle state.  Since the PMC counts
+     * *unhalted* core cycles, it does not advance during HLT/MWAIT.
+     * On wake (from an external interrupt such as an IPI or I/O IRQ),
+     * the counter resumes and may overflow during the wake-processing
+     * interrupt handler — before the idle loop has re-petted the
+     * watchdog.  The hard_pet_tick is therefore stale from the long
+     * idle period, yet the CPU is not stuck: it is legitimately idle.
+     *
+     * We re-pet the watchdog and bail out to avoid the false-positive
+     * hard lockup report.  Soft-lockup detection (via the timer tick)
+     * still catches the case where a POLL-idle CPU is genuinely stuck;
+     * this guard only prevents false positives on C-states where the
+     * core clock (and thus the PMC counter) is gated. */
+    if (wd->idle_in_idle_state) {
+        uint64_t now = timer_get_ticks();
+        wd->hard_pet_tick = now;
+        wd->soft_pet_tick = now;
+        return;
+    }
 
     /* If we're already handling a lockup on this CPU, bail out to
      * prevent recursive NMI storms. */

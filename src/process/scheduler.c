@@ -1019,6 +1019,15 @@ void schedule(void) {
          * while we still own this CPU's per-CPU state. */
         rcu_quiescent_state();
 
+        /* ── Idle flag hand-off ──────────────────────────────────────
+         * Clear the watchdog's idle flag (if set) before switching to
+         * a real process.  This handles the case where schedule() is
+         * reached from an interrupt handler that woke the CPU from
+         * deep idle — the flag was set before HLT/MWAIT and would
+         * otherwise remain set for the duration of the new process's
+         * execution, suppressing genuine hard lockup detection. */
+        nmi_watchdog_idle_exit();
+
         /* Save LBR MSR state before switching tasks, so the departing
          * task's branch history is preserved.  IRQs are already disabled
          * by the caller (schedule()). */

@@ -785,8 +785,17 @@ void cpuidle_idle(void)
     struct cpuidle_cpu *c = &ci->idle_data;
 
     if (!c->enabled) {
-        /* cpuidle disabled — use plain HLT as fallback */
+        /* cpuidle disabled — use plain HLT as fallback.
+         * Pet the watchdog and set the idle flag before halting, to
+         * prevent false-positive hard lockup detection if the PMC
+         * counter happens to be near overflow and fires during wake. */
+        extern void nmi_watchdog_pet(void);
+        extern void nmi_watchdog_idle_enter(void);
+        extern void nmi_watchdog_idle_exit(void);
+        nmi_watchdog_pet();
+        nmi_watchdog_idle_enter();
         __asm__ volatile("sti; hlt; cli" : : : "memory");
+        nmi_watchdog_idle_exit();
         return;
     }
 
@@ -824,8 +833,25 @@ void cpuidle_idle(void)
     c->state_entries[state_idx]++;
     c->last_state_idx = (uint8_t)state_idx;
 
+    /* ── Enter idle ──────────────────────────────────────────────
+     * Signal the NMI watchdog that we're entering a C-state.
+     * The idle flag prevents false-positive hard lockup reports
+     * when the PMC counter overflows during wake processing. */
+    extern void nmi_watchdog_idle_enter(void);
+    extern void nmi_watchdog_idle_exit(void);
+    nmi_watchdog_idle_enter();
+
     /* Enter the idle state (interrupts enabled inside, disabled on return) */
     state->enter(state);
+
+    /* ── Exit idle ───────────────────────────────────────────────
+     * Clear the idle flag and re-pet the watchdog so the NMI handler
+     * has a fresh timestamp, covering the case where the PMC counter
+     * was near overflow when we entered idle (the NMI would fire
+     * during wake processing with the old stale timestamp). */
+    nmi_watchdog_idle_exit();
+    extern void nmi_watchdog_pet(void);
+    nmi_watchdog_pet();
 
     /* Compute time spent in ticks */
     uint64_t elapsed = timer_get_ticks() - start;

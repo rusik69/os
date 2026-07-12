@@ -49,6 +49,13 @@ struct nmi_watchdog_cpu {
      * prevent recursive floods. */
     volatile int      lockup_active;
 
+    /* Set before entering an idle C-state (HLT/MWAIT), cleared after
+     * wake.  The NMI handler checks this flag to avoid false-positive
+     * hard lockup reports when a PMC counter overflow fires during
+     * wake processing while the hard_pet_tick is still stale from the
+     * long idle period. */
+    volatile int      idle_in_idle_state;
+
     /* Lockup event counters (read-only from outside) */
     volatile uint64_t hard_lockup_count;
     volatile uint64_t soft_lockup_count;
@@ -100,5 +107,15 @@ struct nmi_watchdog_stats {
 };
 
 void nmi_watchdog_get_stats(struct nmi_watchdog_stats *stats);
+
+/* Called by cpuidle before entering an idle C-state (HLT/MWAIT/POLL).
+ * Sets a per-CPU flag so the NMI handler knows the CPU is legitimately
+ * idle — a stale pet timestamp is not a hard lockup. */
+void nmi_watchdog_idle_enter(void);
+
+/* Called by cpuidle after waking from an idle C-state.
+ * Clears the per-CPU idle flag so the NMI handler resumes normal
+ * hard lockup detection. */
+void nmi_watchdog_idle_exit(void);
 
 #endif /* NMI_WATCHDOG_H */
