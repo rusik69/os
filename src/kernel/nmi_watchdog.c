@@ -218,7 +218,12 @@ void nmi_watchdog_check_soft(void) {
     if (wd->lockup_active) return;  /* already reporting on this CPU */
 
     uint64_t now = timer_get_ticks();
-    uint64_t elapsed = (now - wd->soft_pet_tick) * 1000ULL / TIMER_FREQ;
+    /* Check hard_pet_tick — this is only updated by nmi_watchdog_pet()
+     * from the scheduler/idle context, NOT by the timer tick handler.
+     * This correctly detects when the scheduler has stalled even though
+     * timer ticks continue (soft lockup), distinguishing it from a hard
+     * lockup where timer IRQs are also stopped. */
+    uint64_t elapsed = (now - wd->hard_pet_tick) * 1000ULL / TIMER_FREQ;
 
     if (elapsed < SOFT_LOCKUP_THRESHOLD_MS)
         return;
