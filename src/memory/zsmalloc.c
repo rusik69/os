@@ -40,6 +40,7 @@ struct zsmalloc_page {
     int nr_free;
     int nr_objs;
     int in_use;
+    int class_idx;  /* size class index this page was created for */
 };
 
 struct zsmalloc_pool {
@@ -109,10 +110,13 @@ static void *zsmalloc_alloc(int pool_id, size_t size)
         return NULL;
     }
 
-    /* Find a page with free objects in this size class */
+    /* Find a page with free objects in this size class.
+     * Only reuse pages created for the same size class to ensure
+     * correct object stride and obj_table indexing. */
     for (int p = 0; p < pool->nr_pages; p++) {
         struct zsmalloc_page *zp = pool->pages[p];
-        if (zp && zp->nr_free > 0 && zp->nr_objs >= 1) {
+        if (zp && zp->nr_free > 0 && zp->nr_objs >= 1 &&
+            zp->class_idx == class_idx) {
             /* Find a free object in this page */
             for (int o = 0; o < zp->nr_objs; o++) {
                 if (zp->obj_table && (zp->obj_table[o] == 0)) {
@@ -149,6 +153,7 @@ static void *zsmalloc_alloc(int pool_id, size_t size)
     memset(zp->page, 0, 4096);
 
     zp->nr_objs = pool->classes[class_idx].objs_per_page;
+    zp->class_idx = class_idx;
     zp->obj_table = (uint16_t *)kmalloc(
         (size_t)zp->nr_objs * sizeof(uint16_t));
     if (!zp->obj_table) {
