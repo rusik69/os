@@ -196,25 +196,31 @@ int sched_idle_count(void)
     return this_idle_rq()->nr_tasks;
 }
 
-/* ── Stub: sched_idle_balance ─────────────────────────────── */
+/* ── Idle load balancing is intentionally disabled ────────────
+ *
+ * SCHED_IDLE is the lowest-priority scheduling class.  Idle tasks
+ * run only when no RT, CFS, or deadline task is available.  Load
+ * balancing of idle-class tasks is deliberately skipped — they
+ * stay on their assigned CPU and are never pulled by the global
+ * load balancer (load_balance() in scheduler.c selects only from
+ * the multilevel priority queue, which does not contain idle-runqueue
+ * tasks).  These stubs exist for a future callback interface and
+ * are silent no-ops.                                          */
 static int sched_idle_balance(int cpu)
 {
     (void)cpu;
-    kprintf("[sched] sched_idle_balance: not yet implemented\n");
-    return 0;
+    return 0;   /* disabled — no balancing for idle tasks */
 }
 /* ── Stub: sched_idle_pick ─────────────────────────────── */
 static int sched_idle_pick(int cpu)
 {
     (void)cpu;
-    kprintf("[sched] sched_idle_pick: not yet implemented\n");
-    return 0;
+    return -1;  /* disabled — nothing to pull */
 }
 /* ── Stub: sched_idle_set ─────────────────────────────── */
 static int sched_idle_set(int cpu, int idle)
 {
     (void)cpu;
     (void)idle;
-    kprintf("[sched] sched_idle_set: not yet implemented\n");
-    return 0;
+    return 0;   /* disabled — no-op */
 }
