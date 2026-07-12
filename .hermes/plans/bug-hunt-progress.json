@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 554,
+  "current_item": 556,
   "current_batch": "B009",
   "completed_items": [
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
@@ -68,10 +68,12 @@
     550,
     551,
     552,
-    553
+    553,
+    554,
+    555
   ],
-  "found_bugs": 1002,
-  "fixed_bugs": 1002,
+  "found_bugs": 1004,
+  "fixed_bugs": 1004,
   "completed_batches": [
     "B001",
     "B002",
@@ -80,6 +82,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-12T08:29:00",
-  "last_item_result": "item 553: src/kernel/sys_caps.c — verify SCHED_RESET_ON_FORK with cap_effective. **BUG FOUND**: The kernel defined SCHED_FLAG_RESET_ON_FORK but never checked it during process_fork() or process_clone(). When a parent with RESET_ON_FORK set forked a child, the child inherited the full cap_effective without clearing. Fix: (1) added sched_flags field to struct process, (2) persist sched_flags in sched_setattr/sched_getattr, (3) clear child's cap_effective in process_fork() and process_clone() if parent has SCHED_FLAG_RESET_ON_FORK. Build verified."
+  "last_item_timestamp": "2026-07-12T08:50:00",
+  "last_item_result": "item 555: src/kernel/idle_inject.c — verify idle injection throttle correctness. **BUG FOUND AND FIXED**: idle_inject_tick() used a 'static uint64_t global_tick' shared across ALL CPUs and incremented on every call. On an N-CPU system this advanced N× per real timer tick, causing phase transitions at N× the intended rate (throttle runs too fast on SMP). ++global_tick was also a non-atomic RMW on 64-bit. Fixed by using timer_get_ticks() (system jiffies) instead, which gives every CPU the same wall-clock time regardless of CPU count."
 }

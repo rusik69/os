@@ -256,8 +256,11 @@ void ioapic_redirect_irq(uint8_t irq, uint8_t vector, uint32_t apic_id) {
     /* Bounds check: ensure irq does not exceed I/O APIC redirection entries */
     if (irq > ioapic_nr_entries)
         return;
-    uint32_t low = vector | (apic_id << 24);  /* physical destination mode */
-    uint32_t high = 0;
+    /* Redirection entry format (64-bit split into two 32-bit registers):
+     *   Low  (IOAPIC_REDTBL + irq*2)     : vector (7:0), delivery mode (10:8), ... mask (16)
+     *   High (IOAPIC_REDTBL + irq*2 + 1) : destination APIC ID (27:24) for physical mode */
+    uint32_t low = vector;
+    uint32_t high = (apic_id << 24);  /* destination field in bits 27:24 of high DWORD */
     ioapic_write_reg(IOAPIC_REDTBL + irq * 2, low);
     ioapic_write_reg(IOAPIC_REDTBL + irq * 2 + 1, high);
 }
