@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 529,
+  "current_item": 537,
   "current_batch": "B008",
   "completed_items": [
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
@@ -61,10 +61,18 @@
     525,
     526,
     527,
-    528
+    528,
+    529,
+    530,
+    531,
+    532,
+    533,
+    534,
+    535,
+    536
   ],
-  "found_bugs": 978,
-  "fixed_bugs": 978,
+  "found_bugs": 981,
+  "fixed_bugs": 981,
   "completed_batches": [
     "B001",
     "B002",
@@ -73,6 +81,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-12T04:30:00",
-  "last_item_result": "item 528: src/memory/slab.c - fix constructor/freelist ordering bug + add alloc-time UAF poison verification"
+  "last_item_timestamp": "2026-07-12T06:25:00",
+  "last_item_result": "item 536: src/memory/ksm.c — fixed stale/different-owner mapping in KSM merge unregister. Added orig_phys field to struct ksm_page to preserve original physical frame before merge. ksm_unregister_phys/ksm_unregister_region now un-merge child pages (restore orig_phys, reset merged=0, refcount=1) when removing a source page with refcount > 1. Also added orphaned merged entry safety net cleanup. Build verified clean."
 }

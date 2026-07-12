@@ -41,6 +41,7 @@
 
 struct ksm_page {
     uint64_t phys_addr;    /* Physical address of the page */
+    uint64_t orig_phys;    /* Original physical address (preserved before merge) */
     uint64_t hash;         /* Content hash (XOR of all 64-bit words) */
     unsigned int merged:1; /* Whether this page is a merged alias */
     unsigned int numa_node:7; /* NUMA node ID (0 for single-node systems) */
@@ -238,6 +239,8 @@ static int ksm_scan_batch(int max_batch)
         if (best_j >= 0) {
             /* Merge: keep page i, alias page j to i's physical frame */
             ksm_pages[best_j].merged = 1;
+            /* Preserve original frame so we can cleanly un-merge later */
+            ksm_pages[best_j].orig_phys = ksm_pages[best_j].phys_addr;
             ksm_pages[best_j].phys_addr = pi->phys_addr;
             ksm_pages[best_j].numa_node = pi->numa_node;
             if (pi->refcount < 0xFFFF)
@@ -389,11 +392,42 @@ int ksm_unregister_phys(uint64_t phys)
 
     for (int i = 0; i < ksm_page_count; i++) {
         if (ksm_pages[i].phys_addr == phys && !ksm_pages[i].merged) {
+            /* If this page has merged aliases, un-merge them first to
+             * prevent stale / different-owner mappings. */
+            if (ksm_pages[i].refcount > 1) {
+                for (int j = 0; j < ksm_page_count; j++) {
+                    if (j != i && ksm_pages[j].merged &&
+                        ksm_pages[j].phys_addr == phys) {
+                        /* Restore original physical frame and mark
+                         * independent; the page tables still map the
+                         * original frame, so KSM metadata must agree. */
+                        ksm_pages[j].phys_addr = ksm_pages[j].orig_phys;
+                        ksm_pages[j].orig_phys = 0;
+                        ksm_pages[j].merged = 0;
+                        ksm_pages[j].refcount = 1;
+                    }
+                }
+            }
             /* Remove by swapping with last element */
             ksm_pages[i] = ksm_pages[--ksm_page_count];
             /* Clear vacated slot */
             memset(&ksm_pages[ksm_page_count], 0, sizeof(struct ksm_page));
             /* Adjust scan position if needed */
+            if (ksm_scan_pos > i)
+                ksm_scan_pos--;
+            if (ksm_scan_pos >= ksm_page_count)
+                ksm_scan_pos = 0;
+            spinlock_irqsave_release(&ksm_lock, flags);
+            return 0;
+        }
+    }
+
+    /* Also check for orphaned merged entry (merged=1 but its source was
+     * removed without going through this path — safety net). */
+    for (int i = 0; i < ksm_page_count; i++) {
+        if (ksm_pages[i].merged && ksm_pages[i].phys_addr == phys) {
+            ksm_pages[i] = ksm_pages[--ksm_page_count];
+            memset(&ksm_pages[ksm_page_count], 0, sizeof(struct ksm_page));
             if (ksm_scan_pos > i)
                 ksm_scan_pos--;
             if (ksm_scan_pos >= ksm_page_count)
@@ -416,11 +450,37 @@ int ksm_unregister_region(uint64_t addr)
 
     for (int i = 0; i < ksm_page_count; i++) {
         if (ksm_pages[i].phys_addr == phys && !ksm_pages[i].merged) {
+            /* If this page has merged aliases, un-merge them first */
+            if (ksm_pages[i].refcount > 1) {
+                for (int j = 0; j < ksm_page_count; j++) {
+                    if (j != i && ksm_pages[j].merged &&
+                        ksm_pages[j].phys_addr == phys) {
+                        ksm_pages[j].phys_addr = ksm_pages[j].orig_phys;
+                        ksm_pages[j].orig_phys = 0;
+                        ksm_pages[j].merged = 0;
+                        ksm_pages[j].refcount = 1;
+                    }
+                }
+            }
             /* Remove by swapping with last element */
             ksm_pages[i] = ksm_pages[--ksm_page_count];
             /* Clear vacated slot */
             memset(&ksm_pages[ksm_page_count], 0, sizeof(struct ksm_page));
             /* Adjust scan position if needed */
+            if (ksm_scan_pos > i)
+                ksm_scan_pos--;
+            if (ksm_scan_pos >= ksm_page_count)
+                ksm_scan_pos = 0;
+            spinlock_irqsave_release(&ksm_lock, flags);
+            return 0;
+        }
+    }
+
+    /* Also check for orphaned merged entry (safety net) */
+    for (int i = 0; i < ksm_page_count; i++) {
+        if (ksm_pages[i].merged && ksm_pages[i].phys_addr == phys) {
+            ksm_pages[i] = ksm_pages[--ksm_page_count];
+            memset(&ksm_pages[ksm_page_count], 0, sizeof(struct ksm_page));
             if (ksm_scan_pos > i)
                 ksm_scan_pos--;
             if (ksm_scan_pos >= ksm_page_count)
