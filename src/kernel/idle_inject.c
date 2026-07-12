@@ -208,13 +208,8 @@ void idle_inject_tick(int cpu)
     }
 
     /* Check if current phase has expired.
-     * We use timer ticks directly; assume 100 Hz timer = 10 ms per tick. */
-    uint64_t now = 0;
-    {
-        /* Simple tick counter — use the system jiffies or a local counter */
-        static uint64_t global_tick;
-        now = ++global_tick;
-    }
+     * System timer ticks at TIMER_FREQ (100 Hz → 10 ms per tick). */
+    uint64_t now = timer_get_ticks();
 
     if (state->phase_start_tick == 0)
         state->phase_start_tick = now;
