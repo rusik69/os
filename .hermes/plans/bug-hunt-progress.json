@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 524,
+  "current_item": 525,
   "current_batch": "B008",
   "completed_items": [
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
@@ -56,10 +56,11 @@
     501, 502, 503, 504, 505, 506, 507, 508, 509, 510,
     511, 512, 513, 514, 515, 516, 517, 518, 519, 520,
     521, 522,
-    523
+    523,
+    524
   ],
-  "found_bugs": 973,
-  "fixed_bugs": 973,
+  "found_bugs": 974,
+  "fixed_bugs": 974,
   "completed_batches": [
     "B001",
     "B002",
@@ -68,6 +69,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-12T08:00:00",
-  "last_item_result": "item 523: src/memory/slab.c - verify kmem_cache_free detects double-free - BUG FOUND AND FIXED. slab_check_redzone() return value was ignored in kmem_cache_free(). On double-free, the first free's slab_poison_free overwrites the redzone with SLAB_POISON_FREE (0x6b), so the second free would detect corrupted redzone via slab_check_redzone() but then proceed anyway (return value ignored), corrupting the free list. Fix: check slab_check_redzone() return; if 0 (corrupted), print DOUBLE-FREE DETECTED message and return early."
+  "last_item_timestamp": "2026-07-12T10:00:00",
+  "last_item_result": "item 524: src/memory/slab.c - verify per-CPU slab cache balanced on migration - BUGS FOUND AND FIXED. (1) kmem_cache_create() never updated cache_list = cache, so the global cache list was always NULL, breaking slab_get_stats() and kmem_cache_reap(). (2) No slab_cpu_offline()/slab_cpu_online() hooks existed — when a CPU goes offline, its per-CPU slab cache was never drained, stranding cached objects and corrupting free_count accounting. Fix: added cache_list = cache; added slab_cpu_offline() and slab_cpu_online() functions wired into the CPU hotplug path (cpuhp_take_cpu_offline / cpuhp_bring_cpu), mirroring the existing pmm_cpu_offline/pmm_cpu_online pattern."
 }

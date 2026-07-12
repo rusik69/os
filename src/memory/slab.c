@@ -213,26 +213,29 @@ static int slab_sizing(size_t obj_size, int *out_order, int *out_num) {
     size_t aligned = (obj_size + 15) & ~15ULL;
     if (aligned < 16) aligned = 16;
 
-    int order = 0;
-    size_t slab_size = PAGE_SIZE;          /* 2^0 = 1 page */
     size_t header = sizeof(struct slab);
-    int num;
-
-    for (;;) {
-        size_t usable = slab_size - header;
-        num = (int)(usable / aligned);
-        if (num >= 8 || order >= 4) break;
-        order++;
-        slab_size = PAGE_SIZE * (1ULL << order);
-    }
+    size_t usable = PAGE_SIZE - header;
+    int num = (int)(usable / aligned);
 
     if (num < 1) {
-        /* Object too large for any slab size — the aligned object does not
-         * fit within the slab's pages.  The caller should reject this
-         * cache creation and fall back to the page allocator. */
+        /* Object too large for a single-page slab.  Multi-page slabs are
+         * forbidden because the slab-header address computation
+         *
+         *   (struct slab *)((uint64_t)obj & ~(slab_size - 1))
+         *
+         * used in cpu_slab_drain, kmem_cache_free (fallback),
+         * kmem_cache_destroy, and slab_cpu_offline relies on the slab
+         * base being slab_size-aligned.  PMM (pmm_alloc_frames) only
+         * guarantees PAGE_SIZE (4K) alignment, not multi-page alignment;
+         * with a multi-page slab at an unaligned base, objects in pages
+         * 2+ map to the wrong address, treat object data as a slab header,
+         * and corrupt the freelist / free_count / slab lists (type confusion).
+         *
+         * The caller should reject this cache creation and fall back to
+         * the page allocator or heap allocator for oversized objects. */
         return -EINVAL;
     }
-    *out_order = order;
+    *out_order = 0;
     *out_num   = num;
     return 0;
 }
