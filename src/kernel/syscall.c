@@ -11509,11 +11509,11 @@ void __init syscall_init(void) {
     /* Enable SCE bit in EFER */
     wrmsr(MSR_EFER, rdmsr(MSR_EFER) | EFER_SCE);
 
-    /* STAR: bits 47:32 = kernel CS (0x08), bits 63:48 = user CS-8 (0x18-8=0x10
+    /* STAR: bits 47:32 = kernel CS, bits 63:48 = user code base
      * The CPU loads CS=STAR[47:32] and SS=STAR[47:32]+8 on syscall
-     * On sysret:   CS=STAR[63:48]+16, SS=STAR[63:48]+8
-     * We want kernel CS=0x08, user CS=0x18 (ring-3 code at GDT index 3)
-     * So STAR[63:48] = 0x10 → sysret CS = 0x10+16 = 0x1B (with RPL3 added by CPU)
+     * On sysret:   CS=STAR[63:48]+16, SS=(STAR[63:48]+8)|3
+     * SYSCALL: CS=0x08 (kernel code GDT idx 1), SS=0x10 (kernel data GDT idx 2)
+     * SYSRETQ: CS=0x10+16=0x20 (user code GDT idx 4), SS=(0x10+8)|3=0x1B (user data GDT idx 3, RPL=3)
      */
     uint64_t star = ((uint64_t)0x0008 << 32) | ((uint64_t)0x0010 << 48);
     wrmsr(MSR_STAR, star);

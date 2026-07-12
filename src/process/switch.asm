@@ -67,7 +67,7 @@ process_entry_trampoline:
 ;   r14 = user RSP (user stack top)
 ;
 ; We perform an iretq to transition to ring 3:
-;   Push: SS(0x23), RSP(user), RFLAGS(IF=1), CS(0x1B), RIP(user)
+;   Push: SS(0x1B), RSP(user), RFLAGS(IF=1), CS(0x23), RIP(user)
 ; ──────────────────────────────────────────────────────────────────
 global user_entry_trampoline
 user_entry_trampoline:
@@ -87,10 +87,10 @@ user_entry_trampoline:
     mov rbp, r14          ; set rbp = user stack for reference
 
     ; Build iretq frame on kernel stack
-    push 0x23             ; SS = user data selector (0x20 | RPL 3)
+    push 0x1B             ; SS = user data selector (0x18 | RPL 3)
     push r14              ; RSP = user stack pointer
     push 0x202            ; RFLAGS = IF=1 (interrupts enabled)
-    push 0x1B             ; CS = user code selector (0x18 | RPL 3)
+    push 0x23             ; CS = user code selector (0x20 | RPL 3)
     push r15              ; RIP = user entry point
 
     ; Clear remaining registers

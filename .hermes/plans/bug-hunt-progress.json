@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 601,
+  "current_item": 602,
   "current_batch": "B009",
   "completed_items": [
     1,
@@ -602,10 +602,11 @@
     597,
     598,
     599,
-    600
+    600,
+    601
   ],
-  "found_bugs": 1067,
-  "fixed_bugs": 1067,
+  "found_bugs": 1070,
+  "fixed_bugs": 1070,
   "completed_batches": [
     "B001",
     "B002",
@@ -614,6 +615,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-12T18:10:00",
-  "last_item_result": "item 600: src/kernel/syscall_new.c - fixed 2 bugs: (1) three independent static tables (function-scoped) prevented register/unregister/invoke from sharing state \u2014 moved to file scope; (2) no built-in shadowing protection allowed new entries to silently override built-in syscall dispatch \u2014 added syscall_new_is_builtin() helper that rejects registration at any SYS_* number handled by the main switch. Build-verified clean."
+  "last_item_timestamp": "2026-07-12T18:30:00",
+  "last_item_result": "item 601: src/kernel/syscall_asm.asm - fixed 3 bugs in KPTI syscall_entry_full: (1) R15 was clobbered by mov r15, KPTI_TRAMP_VADDR before push - added syscall_user_r15 global to save/restore user R15; (2) RAX (syscall number) was lost in trampoline (clobbered by CR3/handler loads) and replaced with user RSP as the dispatch num - added KPTI_OFF_SAVE_RAX trampoline slot; entry trampoline now saves RAX before clobbering; syscall_entry_full reads it back for the arg shuffle; (3) syscall return value was clobbered by exit trampoline's CR3 load - exit trampoline now saves/restores RAX. All three non-KPTI paths (syscall_entry, syscall_linux_entry, libc_syscall) were already correct. Build-verified clean."
 }

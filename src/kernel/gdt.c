@@ -45,11 +45,15 @@ void __init gdt_init(void) {
     /* Kernel data: index 2, selector 0x10 */
     gdt_set_entry(2, 0, 0xFFFFF, 0x92, 0xC0); /* present, data, write, 4K granularity */
 
-    /* User code: index 3, selector 0x18 */
-    gdt_set_entry(3, 0, 0xFFFFF, 0xFA, 0xA0); /* present, DPL=3, exec, read, 64-bit */
+    /* User data: index 3, selector 0x18
+     * SYSRETQ: SS.SEL = (STAR[63:48]+8) | 3 = (0x10+8) | 3 = 0x1B = index 3 | RPL3
+     * Must be a data segment (writeable, DPL=3) */
+    gdt_set_entry(3, 0, 0xFFFFF, 0xF2, 0xC0); /* present, DPL=3, data, write */
 
-    /* User data: index 4, selector 0x20 */
-    gdt_set_entry(4, 0, 0xFFFFF, 0xF2, 0xC0); /* present, DPL=3, data, write */
+    /* User code: index 4, selector 0x20
+     * SYSRETQ: CS.SEL = STAR[63:48] + 16 = 0x10 + 16 = 0x20 = index 4
+     * Must be a code segment (exec/read, DPL=3) */
+    gdt_set_entry(4, 0, 0xFFFFF, 0xFA, 0xA0); /* present, DPL=3, exec, read, 64-bit */
 
     /* TSS: index 5 (and 6 for upper base), selector 0x28 */
     memset(&kernel_tss, 0, sizeof(kernel_tss));
