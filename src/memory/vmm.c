@@ -812,20 +812,25 @@ uint64_t *vmm_clone_user_pml4(uint64_t *src) {
 
                     /* Derive per-4KB-PTE flags from the huge PDE:
                      *   - Keep hardware flags (bits 0-8) plus software bits (9-11)
-                     *   - Strip PTE_WRITE — will be granted on COW resolution
+                     *   - Strip PTE_WRITE and add PTE_COW only if the PDE was
+                     *     writable — genuinely read-only huge pages stay read-only
                      *   - Preserve PTE_NX (bit 63)
                      *   - Preserve VMM_FLAG_LOCKED (bit 52) so each new PTE
                      *     retains the lock-pin flag; the child gets its own
                      *     lock-pin ref via an extra pmm_ref_frame below. */
-                    uint64_t pflags = (huge_pde & 0xFFF) & ~(uint64_t)PTE_WRITE;
+                    uint64_t pflags = huge_pde & 0xFFF;
                     uint64_t pnx    = huge_pde & PTE_NX;
                     uint64_t plocked = huge_pde & VMM_FLAG_LOCKED;
+
+                    if (pflags & PTE_WRITE) {
+                        pflags = (pflags & ~(uint64_t)PTE_WRITE) | PTE_COW;
+                    }
 
                     for (int l = 0; l < 512; l++) {
                         uint64_t frame = huge_phys + (uint64_t)l * PAGE_SIZE;
                         uint64_t entry = (frame & PTE_ADDR_MASK)
                                         | pflags | pnx
-                                        | PTE_COW | PTE_PRESENT
+                                        | PTE_PRESENT
                                         | plocked;
                         src_pt[l] = entry;
                         dst_pt[l] = entry;
@@ -857,13 +862,28 @@ uint64_t *vmm_clone_user_pml4(uint64_t *src) {
                     uint64_t nx    = src_pt[l] & PTE_NX;
                     uint64_t lck   = src_pt[l] & VMM_FLAG_LOCKED;
 
-                    /* Mark both parent and child as read-only COW,
-                     * preserving the lock-pin flag.  Add an extra
-                     * child lock-pin ref so each process can unlock
-                     * independently. */
-                    flags = (flags & ~(uint64_t)PTE_WRITE) | PTE_COW;
-                    src_pt[l] = frame | flags | nx | lck;
-                    dst_pt[l] = frame | flags | nx | lck;
+                    /* Copy the page table entry into the child's page table.
+                     *
+                     * For writable pages: share as read-only + PTE_COW.
+                     * The first write by either process triggers a private
+                     * copy via vmm_handle_cow_fault.
+                     *
+                     * For genuinely read-only pages (e.g. .rodata, EXECONLY
+                     * code pages): share the frame as-is.  No COW marking
+                     * because writes must still fail with SIGSEGV even after
+                     * fork — adding PTE_COW would allow the COW handler to
+                     * silently create a writable private copy, violating
+                     * the original read-only protection.
+                     *
+                     * Preserve the lock-pin flag.  Add an extra child lock-pin
+                     * ref so each process can unlock independently. */
+                    if (flags & PTE_WRITE) {
+                        flags = (flags & ~(uint64_t)PTE_WRITE) | PTE_COW;
+                        src_pt[l] = frame | flags | nx | lck;
+                        dst_pt[l] = frame | flags | nx | lck;
+                    } else {
+                        dst_pt[l] = src_pt[l];
+                    }
                     pmm_ref_frame(frame); /* shared: child mapping ref */
                     if (lck)
                         pmm_ref_frame(frame); /* child lock ref */

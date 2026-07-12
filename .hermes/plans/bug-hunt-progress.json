@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 510,
+  "current_item": 513,
   "current_batch": "B008",
   "completed_items": [
     1,
@@ -511,10 +511,13 @@
     506,
     507,
     508,
-    509
+    509,
+    510,
+    511,
+    512
   ],
-  "found_bugs": 962,
-  "fixed_bugs": 962,
+  "found_bugs": 965,
+  "fixed_bugs": 965,
   "completed_batches": [
     "B001",
     "B002",
@@ -523,6 +526,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-11T23:57:00",
-  "last_item_result": "item 508: src/memory/vmm.c - verify vsyscall/vDSO page mapped in every process - BUG FIXED. vDSO pages (code at 0xFFFFFFFFFF600000, data at 0xFFFFFFFFFF601000) are mapped into kernel_pml4 by vsyscall_init() with VMM_FLAG_USER (PTE_USER). However, vmm_create_user_pml4() copied all kernel PML4 entries (256-511) with '& ~PTE_USER', clearing the user-accessible bit. Since vDSO addresses fall in PML4[511] (kernel half), user-mode processes could not access them — the PTE_USER clearing at the PML4 level blocked the page walk regardless of leaf PTE permissions. Fix: removed '& ~PTE_USER' from the kernel-half copy in vmm_create_user_pml4(), preserving PTE_USER from kernel_pml4 entries so intentionally user-accessible kernel mappings (vDSO) remain accessible. Only the vDSO pages use VMM_FLAG_USER in kernel_pml4, so no security concern. Build verified."
+  "last_item_timestamp": "2026-07-12T01:17:00",
+  "last_item_result": "item 512: src/kernel/fault.c - verify page fault handler covers all (present/missing/prot) cases - BUG FIXED. The EXECONLY software-enforcement check at fault.c:235 was not gated on user-mode faults (err bit 2). A kernel-mode protection fault hitting an EXECONLY-tagged page would incorrectly deliver SIGSEGV/process_exit_code(11) instead of panicking with full register dump. Added (err & (1ULL << 2)) guard. Build verified."
 }
