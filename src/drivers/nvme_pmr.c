@@ -11,7 +11,7 @@
  *   PMREBS  0xE0C  — PMR Elasticity Buffer Size [32-bit]
  *   PMRSWTP 0xE10  — PMR Sustained Write Throughput [32-bit]
  *   PMRMSCL 0xE18  — PMR Misc Capabilities Low [32-bit]
- *   PMRMSCU 0E1C   — PMR Misc Capabilities High [32-bit]
+ *   PMRMSCU 0xE1C  — PMR Misc Capabilities High [32-bit]
  *   PMRMCAPL 0xE20 — PMR Memory Capability Low  [64-bit]
  *   PMRMCAPU 0xE28 — PMR Memory Capability High  [64-bit]
  *
@@ -44,8 +44,8 @@ static int nvme_pmr_register_bdev(void);
 
 /* PMRCAP bit definitions */
 #define PMRCAP_PMR_SU      (1u << 0)   /* PMR Supported */
-#define PMRCAP_PMR_RDS     (1u << 1)   /* PMR Region Data Stride */
-#define PMRCAP_PMR_WDS     (1u << 2)   /* PMR Write Data Stride */
+#define PMRCAP_PMR_RDS     (0x7 << 1)  /* PMR Region Data Stride (bits 3:1, 2^RDS bytes) */
+#define PMRCAP_PMR_WDS     (0x7 << 4)  /* PMR Write Data Stride (bits 6:4, 2^WDS bytes) */
 #define PMRCAP_PMR_BMASK   0x000000F8  /* Reserved */
 
 /* PMRCTL bit definitions */
@@ -115,19 +115,25 @@ static int nvme_pmr_detect(uint64_t ctrl_regs, uint64_t ctrl_phys_regs) {
      * is set, the controller should have the PMR memory mapped through a
      * separate PCI BAR (typically BAR4).  We probe for it. */
     g_pmr.present = 1;
-    g_pmr.stride = (pmrcap & PMRCAP_PMR_RDS) ? 1 : 0;
+    g_pmr.stride = (uint8_t)((pmrcap >> 1) & 0x7);  /* Extract RDS bits 3:1 */
 
     /* Read PMR Memory Capability (size) */
     uint64_t pmrcap_low  = pmr_read64(NVME_REG_PMRMCAPL);
     uint64_t pmrcap_high = pmr_read64(NVME_REG_PMRMCAPU);
     g_pmr.total_size = pmrcap_low;  /* lower 64 bits = size in bytes */
 
+    if (pmrcap_high != 0) {
+        kprintf("[NVMe PMR] WARNING: PMR size exceeds 64-bit range, truncating "
+                "(pmrcap_high=0x%016llX)\n",
+                (unsigned long long)pmrcap_high);
+    }
+
     kprintf("[NVMe PMR] Memory capability: total_size=%llu bytes (0x%llX)\n",
             (unsigned long long)g_pmr.total_size,
             (unsigned long long)g_pmr.total_size);
 
-    /* Read elasticity buffer size (in 4KB units) */
-    g_pmr.elasticity_buf_size = (uint32_t)((pmrcap_low >> 32) & 0xFFFFFFFF);
+    /* Read elasticity buffer size from PMREBS (in 4KB units) */
+    g_pmr.elasticity_buf_size = pmr_read32(NVME_REG_PMREBS);
 
     /* Read PMR Sustained Write Throughput */
     g_pmr.write_throughput = pmr_read32(NVME_REG_PMRSWTP);
