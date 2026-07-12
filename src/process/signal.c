@@ -165,7 +165,8 @@ int signal_send(uint32_t pid, int signum) {
  * to avoid a TOCTOU race between setting the pending bit and
  * storing the siginfo.
  */
-int signal_send_info(uint32_t pid, int signum, struct siginfo *info) {
+int signal_send_info(uint32_t pid, int signum, struct siginfo *info,
+                     int from_userspace) {
     if (signum <= 0 || signum >= SIG_MAX) return -1;
 
     struct process *p = process_get_by_pid(pid);
@@ -209,8 +210,7 @@ int signal_send_info(uint32_t pid, int signum, struct siginfo *info) {
             return -1;
         }
         struct siginfo validated = *info;
-        int is_from_userspace = (caller && caller->is_user) ? 1 : 0;
-        signal_validate_siginfo(&validated, is_from_userspace);
+        signal_validate_siginfo(&validated, from_userspace);
         p->sig_info[signum] = validated;
     }
 
@@ -407,7 +407,7 @@ static void signal_notify_parent(struct process *p, int signum, int si_code)
     info.si_uid    = p->uid;
     info.si_addr   = NULL;
     info.si_status = 128 + signum;
-    signal_send_info(parent->pid, SIGCHLD, &info);
+    signal_send_info(parent->pid, SIGCHLD, &info, 0);
 }
 
 /* ── signal_check — Check and deliver pending signals ────────────────── */

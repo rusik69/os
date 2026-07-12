@@ -330,7 +330,7 @@ int userfaultfd_handle_fault(int fd, uint64_t fault_addr, int write,
             info.si_errno = 0;
             info.si_code  = SI_KERNEL;
             info.si_addr  = (void *)fault_addr;
-            signal_send_info(p->pid, SIGBUS, &info);
+            signal_send_info(p->pid, SIGBUS, &info, 0);
         }
         return 0; /* handled */
     }

@@ -613,7 +613,7 @@ int nx_enforce_check_fault(uint64_t cr2, uint64_t err,
             sinfo.si_addr  = (void *)(uintptr_t)cr2;
             sinfo.si_pid   = proc->pid;
             sinfo.si_uid   = proc->uid;
-            signal_send_info(proc->pid, SIGSEGV, &sinfo);
+            signal_send_info(proc->pid, SIGSEGV, &sinfo, 0);
         }
 
         /* process_exit_code(11) kills the process with SIGSEGV */

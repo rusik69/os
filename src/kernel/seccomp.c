@@ -113,7 +113,7 @@ void seccomp_send_sigsys(uint64_t num, uint64_t rip)
     /* Send the signal — the signal handler (if any) will be invoked
      * before the process resumes.  If SIG_DFL, the default action
      * for SIGSYS is to terminate the process with core dump. */
-    signal_send_info(p->pid, SIGSYS, &info);
+    signal_send_info(p->pid, SIGSYS, &info, 0);
 }
 
 /*

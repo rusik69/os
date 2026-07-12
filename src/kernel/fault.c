@@ -271,7 +271,7 @@ static void page_fault_handler(struct interrupt_frame *frame) {
                                 sinfo.si_addr = (void *)(uintptr_t)cr2;
                                 sinfo.si_pid = proc->pid;
                                 sinfo.si_uid = proc->uid;
-                                signal_send_info(proc->pid, SIGSEGV, &sinfo);
+                                signal_send_info(proc->pid, SIGSEGV, &sinfo, 0);
                                 process_exit_code(11);
                                 /* Not reached */
                             }
@@ -292,7 +292,7 @@ static void page_fault_handler(struct interrupt_frame *frame) {
                                     sinfo.si_addr = (void *)(uintptr_t)cr2;
                                     sinfo.si_pid = proc->pid;
                                     sinfo.si_uid = proc->uid;
-                                    signal_send_info(proc->pid, SIGSEGV, &sinfo);
+                                    signal_send_info(proc->pid, SIGSEGV, &sinfo, 0);
                                 }
                                 process_exit_code(11);
                                 /* Not reached */
@@ -428,7 +428,7 @@ static void page_fault_handler(struct interrupt_frame *frame) {
         sinfo.si_addr  = (void *)(uintptr_t)cr2;
         sinfo.si_pid   = proc->pid;
         sinfo.si_uid   = proc->uid;
-        signal_send_info(proc->pid, SIGSEGV, &sinfo);
+        signal_send_info(proc->pid, SIGSEGV, &sinfo, 0);
     }
 
     process_exit_code(11); /* SIGSEGV = 11 — does not return */

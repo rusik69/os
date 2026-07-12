@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 577,
+  "current_item": 578,
   "current_batch": "B009",
   "completed_items": [
   1,
@@ -578,10 +578,11 @@
   573,
   574,
   575,
-  576
+  576,
+  577
   ],
-  "found_bugs": 1023,
-  "fixed_bugs": 1023,
+  "found_bugs": 1024,
+  "fixed_bugs": 1024,
   "completed_batches": [
     "B001",
     "B002",
@@ -590,6 +591,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-12T13:30:00",
-  "last_item_result": "item 576: signal - SIGCHLD not delivered when child killed by signal. Fixed: added signal_notify_parent() helper and injected SIGCHLD delivery (with CLD_KILLED/CLD_DUMPED) into all signal-induced death paths: signal_send() SIGKILL/SIGTERM (also added missing process_wake_waiter for SIGTERM), signal_send_info() SIGKILL, signal_check() default actions for SIGSEGV/SIGQUIT/SIGABRT (CLD_DUMPED), SIGKILL/SIGTERM/SIGPIPE (CLD_KILLED), and unknown terminating signals."
+  "last_item_timestamp": "2026-07-12T13:25:03",
+  "last_item_result": "item 577: signal - pending signals not lost during exec (they are preserved). However, signal handlers were NOT reset to SIG_DFL during exec (process_execve in elf.c), violating POSIX. Fixed: added loop under sig_lock resetting caught handlers to SIG_DFL while preserving SIG_IGN, and cleared stale sig_info. Also noted exec.c (broken draft) has same signal_handlers typo among many other issues."
 }

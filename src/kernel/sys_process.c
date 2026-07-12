@@ -584,7 +584,7 @@ uint64_t sys_tkill(uint64_t pid, uint64_t sig)
     /* Deliver the signal via signal_send_info which handles
      * the si_code, pending bit setting, and process wakeup.
      * Returns 0 on success, -1 on failure. */
-    if (signal_send_info((uint32_t)pid, (int)sig, &info) < 0)
+    if (signal_send_info((uint32_t)pid, (int)sig, &info, 1) < 0)
         return (uint64_t)(int64_t)-EAGAIN;
 
     return 0;
@@ -658,7 +658,7 @@ uint64_t sys_tgkill(uint64_t tgid, uint64_t tid, uint64_t sig)
     /* Deliver the signal via signal_send_info which handles
      * the si_code, pending bit setting, and process wakeup.
      * Returns 0 on success, -1 on failure. */
-    if (signal_send_info((uint32_t)tid, (int)sig, &info) < 0)
+    if (signal_send_info((uint32_t)tid, (int)sig, &info, 1) < 0)
         return (uint64_t)(int64_t)-EAGAIN;
 
     return 0;
@@ -1046,7 +1046,7 @@ uint64_t sys_exit_group(uint64_t code)
 		info.si_addr  = NULL;
 		info.si_status = 0;
 
-		signal_send_info(p->pid, SIGKILL, &info);
+		signal_send_info(p->pid, SIGKILL, &info, 0);
 	}
 
 	/* Terminate the caller — this doesn't return. */

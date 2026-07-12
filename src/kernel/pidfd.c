@@ -100,7 +100,7 @@ int pidfd_send_signal(int pidfd, int sig, struct siginfo *info, uint32_t flags)
 
     /* Send the signal using the kernel's signal infrastructure */
     if (info) {
-        return signal_send_info(entry->pid, sig, info);
+        return signal_send_info(entry->pid, sig, info, 1);
     } else {
         return signal_send(entry->pid, sig);
     }

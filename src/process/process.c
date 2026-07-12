@@ -723,7 +723,7 @@ void process_exit(void) {
         info.si_uid   = current_process->uid;
         info.si_addr  = NULL;
         info.si_status = 0;
-        signal_send_info(parent->pid, SIGCHLD, &info);
+        signal_send_info(parent->pid, SIGCHLD, &info, 0);
     }
     current_process->state = PROCESS_ZOMBIE;
     current_process->exit_code = 0;
@@ -768,7 +768,7 @@ void process_exit_code(int code) {
         info.si_uid   = current_process->uid;
         info.si_addr  = NULL;
         info.si_status = code;
-        signal_send_info(parent->pid, SIGCHLD, &info);
+        signal_send_info(parent->pid, SIGCHLD, &info, 0);
     }
     scheduler_yield();
     for (;;) __asm__ volatile("hlt");
