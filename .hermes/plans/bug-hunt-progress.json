@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 541,
+  "current_item": 542,
   "current_batch": "B008",
   "completed_items": [
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
@@ -57,10 +57,11 @@
     511, 512, 513, 514, 515, 516, 517, 518, 519, 520,
     521, 522, 523, 524, 525, 526, 527, 528, 529, 530,
     531, 532, 533, 534, 535, 536, 537,
-    538, 539, 540
+    538, 539, 540,
+    541
   ],
-  "found_bugs": 984,
-  "fixed_bugs": 984,
+  "found_bugs": 987,
+  "fixed_bugs": 987,
   "completed_batches": [
     "B001",
     "B002",
@@ -69,6 +70,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-12T06:06:00",
-  "last_item_result": "item 540: src/memory/zsmalloc.c — class compaction: found cross-class page-reuse bug in zsmalloc_alloc(). The allocator reused pages across different size classes without tracking which class each page belonged to, causing wrong object stride in offset calculation, corrupted obj_table indexing, and unrecoverable free-path behavior. Fixed by adding class_idx tracking to struct zsmalloc_page. Build verified. Commit: 414d54d4."
+  "last_item_timestamp": "2026-07-12T06:16:00",
+  "last_item_result": "item 541: src/process/scheduler.c + src/kernel/cpu.c — scheduler runqueue after migration: found 3 bugs. (1) scheduler_migrate_tasks_from() wrote to destination CPU runqueues without sched_lock, racing with concurrent schedule/scheduler_add/scheduler_tick. (2) scheduler_migrate_tasks_from() didn't force SCHED_IDLE tasks to lowest queue level (SCHED_LEVELS-1), diverging from scheduler_add_locked(). (3) cpuhp_migrate_tasks_away() set current process state to READY but never enqueued it, stranding it forever. Fixed all three. Build verified. Commit: 623fb99f."
 }

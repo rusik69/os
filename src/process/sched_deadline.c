@@ -26,7 +26,7 @@
 
 /* ── Per-CPU deadline runqueues ──────────────────────────────────────── */
 
-static struct cpu_dl_rq cpu_dl_rq[SMP_MAX_CPUS];
+struct cpu_dl_rq cpu_dl_rq[SMP_MAX_CPUS];
 
 /* ── Initialisation ──────────────────────────────────────────────────── */
 
@@ -45,7 +45,7 @@ void sched_deadline_init_cpu(int cpu)
  * Compute (runtime << BW_SHIFT) / period as a fixed-point value.
  * Clamps to DL_BW_UNIT (i.e., 1.0 in fixed point) to prevent overflow.
  */
-static uint64_t dl_bw(uint64_t runtime, uint64_t period)
+uint64_t dl_bw(uint64_t runtime, uint64_t period)
 {
     if (period == 0 || runtime == 0)
         return 0;

@@ -46,6 +46,13 @@ struct cpu_dl_rq {
 
 /* ── API ─────────────────────────────────────────────────────────────── */
 
+/* Per-CPU deadline runqueue array (exposed for CPU hotplug migration) */
+extern struct cpu_dl_rq cpu_dl_rq[SMP_MAX_CPUS];
+
+/* Compute (runtime << BW_SHIFT) / period as fixed-point bandwidth.
+ * Returns 0 on invalid input; clamps to 1.0 (DL_BW_UNIT). */
+uint64_t dl_bw(uint64_t runtime, uint64_t period);
+
 /* Initialise the per-CPU deadline runqueue for a CPU */
 void sched_deadline_init_cpu(int cpu);
 

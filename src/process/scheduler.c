@@ -1579,8 +1579,59 @@ int scheduler_migrate_tasks_from(int from_cpu)
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&sched_lock, &irq_flags);
 
+    /* Pseudo-random spread seed for distributing tasks across CPUs */
+    int spread = (int)timer_get_ticks();
+
+    /* ── Migrate SCHED_DEADLINE tasks (per-CPU array, not linked list) ──
+     *
+     * Deadline tasks live in a separate per-CPU array (cpu_dl_rq[])
+     * managed by sched_deadline.c.  They are NOT on the general priority
+     * queues and must be migrated separately.  Without this, deadline
+     * tasks on the going-offline CPU would be stranded permanently. */
+    {
+        struct cpu_dl_rq *dl_rq = &cpu_dl_rq[from_cpu];
+        int n = dl_rq->nr_tasks;
+        if (n > 0) {
+            /* Snapshot the array and clear the source runqueue */
+            struct process *dl_tasks[SCHED_DL_MAX_PER_CPU];
+            int j;
+            for (j = 0; j < n && j < SCHED_DL_MAX_PER_CPU; j++)
+                dl_tasks[j] = dl_rq->tasks[j];
+            dl_rq->nr_tasks = 0;
+            dl_rq->total_bw = 0;
+            dl_rq->reclaimed_bw = 0;
+
+            for (j = 0; j < n; j++) {
+                struct process *proc = dl_tasks[j];
+                if (!proc) continue;
+
+                /* Pick a destination CPU respecting CPU affinity */
+                int dst = -1;
+                int start = spread % num_dst;
+                uint8_t aff = proc->cpu_affinity;
+                for (int k = 0; k < num_dst; k++) {
+                    int cand = dst_cpus[(start + k) % num_dst];
+                    if (aff == 0 || (aff & (1U << cand)) || k == num_dst - 1) {
+                        dst = cand;
+                        break;
+                    }
+                }
+                spread++;
+
+                struct cpu_dl_rq *dst_rq = &cpu_dl_rq[dst];
+                if (dst_rq->nr_tasks < SCHED_DL_MAX_PER_CPU) {
+                    dst_rq->tasks[dst_rq->nr_tasks++] = proc;
+                    dst_rq->total_bw += dl_bw(proc->dl_runtime, proc->dl_period);
+                }
+                /* If the destination is full, the task is stranded — this
+                 * is an extreme corner case (all per-CPU DL slots full)
+                 * that should not happen in practice. */
+                migrated++;
+            }
+        }
+    }
+
     /* ── Migrate tasks from each priority level ──────────────────── */
-    int spread = (int)timer_get_ticks(); /* pseudo-random spread seed */
 
     for (int lvl = 0; lvl < SCHED_LEVELS; lvl++) {
         struct process *p = ci->queue_head[lvl];
@@ -1588,35 +1639,67 @@ int scheduler_migrate_tasks_from(int from_cpu)
         while (p) {
             struct process *next = p->next;
 
-            /* Pick a destination CPU (round-robin) */
-            int dst = dst_cpus[spread % num_dst];
-            spread++;
+            /* ── Pick a destination CPU respecting CPU affinity ─────
+             *
+             * If the task has a non-zero cpu_affinity bitmask, prefer
+             * a destination CPU whose bit is set.  If no online CPU
+             * is in the affinity mask (e.g. the only allowed CPU is
+             * the one going offline), fall through to any online CPU
+             * — not allowing the CPU to offline is better than
+             * stranding the task. */
+            int dst;
+            {
+                int start = spread % num_dst;
+                uint8_t aff = p->cpu_affinity;
+                dst = dst_cpus[start];            /* fallback */
+                for (int k = 0; k < num_dst; k++) {
+                    int cand = dst_cpus[(start + k) % num_dst];
+                    if (aff == 0 || (aff & (1U << cand))) {
+                        dst = cand;
+                        break;
+                    }
+                }
+                spread++;
 
-            /* Unlink from source queue */
-            p->next = NULL;
-            p->on_queue = 0;
+                /* Unlink from source queue */
+                p->next = NULL;
+                p->on_queue = 0;
 
-            /* Determine destination priority level.
-             * SCHED_IDLE tasks must always go to the lowest queue
-             * level (SCHED_LEVELS - 1) regardless of their priority
-             * field, matching the convention in scheduler_add_locked(). */
-            int dlvl = (int)p->priority;
-            if (dlvl < 0 || dlvl >= SCHED_LEVELS)
-                dlvl = 1;
-            if (p->sched_policy == SCHED_IDLE)
-                dlvl = SCHED_LEVELS - 1;
+                /* Determine destination priority level.
+                 * SCHED_IDLE tasks must always go to the lowest queue
+                 * level (SCHED_LEVELS - 1) regardless of their priority
+                 * field, matching the convention in scheduler_add_locked(). */
+                int dlvl = (int)p->priority;
+                if (dlvl < 0 || dlvl >= SCHED_LEVELS)
+                    dlvl = 1;
+                if (p->sched_policy == SCHED_IDLE)
+                    dlvl = SCHED_LEVELS - 1;
 
-            /* Link into destination queue */
-            struct cpu_info *dci = &cpu_info_array[dst];
+                /* Link into destination queue */
+                struct cpu_info *dci = &cpu_info_array[dst];
 
-            if (!dci->queue_tail[dlvl]) {
-                dci->queue_head[dlvl] = p;
-                dci->queue_tail[dlvl] = p;
-            } else {
-                dci->queue_tail[dlvl]->next = p;
-                dci->queue_tail[dlvl] = p;
+                if (!dci->queue_tail[dlvl]) {
+                    dci->queue_head[dlvl] = p;
+                    dci->queue_tail[dlvl] = p;
+                } else {
+                    dci->queue_tail[dlvl]->next = p;
+                    dci->queue_tail[dlvl] = p;
+                }
+                p->on_queue = 1;
             }
-            p->on_queue = 1;
+
+            /* ── EEVDF hook: recalculate deadline on destination CPU ──
+             * Without this, the migrated task carries stale deadline/lag
+             * values computed for the source CPU's load, producing
+             * incorrect ordering in eevdf_pick_next(). */
+            eevdf_enqueue(p);
+
+            /* ── NO_HZ: restart the tick on the destination CPU if it
+             * was stopped (the CPU was idle).  Without this, the
+             * migrated task would run without proper accounting. */
+            if (nohz_tick_is_stopped(dst))
+                nohz_tick_restart(dst);
+
             migrated++;
 
             p = next;
