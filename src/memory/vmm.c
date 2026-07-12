@@ -1523,8 +1523,13 @@ int vmm_lock_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages) {
             /* Set the LOCKED bit in the PDE */
             pd[pd_idx] = pde | VMM_FLAG_LOCKED;
             tlb_flush(addr & ~(HUGE_PAGE_SIZE - 1ULL));
-            /* Skip remaining pages in this 2MB region */
-            uint64_t remaining = HUGE_PAGE_SIZE / PAGE_SIZE - (i % (HUGE_PAGE_SIZE / PAGE_SIZE));
+            /* Skip remaining pages in this 2MB region.
+             * Compute the 4KB-page offset within the 2MB huge page from the
+             * virtual address itself, NOT from the loop index i — when virt
+             * is not 2MB-aligned, i % 512 would give the wrong offset, causing
+             * the loop to skip past the current PDE boundary and miss pages
+             * in the next PDE range (leaking lock refs). */
+            uint64_t remaining = HUGE_PAGE_NFRAMES - ((addr >> 12) & (HUGE_PAGE_NFRAMES - 1));
             if (remaining > 1) {
                 i += remaining - 1;
                 if (i >= num_pages) break;
@@ -1610,8 +1615,11 @@ int vmm_unlock_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages) {
             /* Clear the LOCKED bit */
             pd[pd_idx] = pde & ~VMM_FLAG_LOCKED;
             tlb_flush(addr & ~(HUGE_PAGE_SIZE - 1ULL));
-            /* Skip remaining pages in this 2MB region */
-            uint64_t remaining = HUGE_PAGE_SIZE / PAGE_SIZE - (i % (HUGE_PAGE_SIZE / PAGE_SIZE));
+            /* Skip remaining pages in this 2MB region.
+             * Compute the 4KB-page offset within the 2MB huge page from the
+             * virtual address, not from the loop index i — same rationale
+             * as vmm_lock_user_pages. */
+            uint64_t remaining = HUGE_PAGE_NFRAMES - ((addr >> 12) & (HUGE_PAGE_NFRAMES - 1));
             if (remaining > 1) {
                 i += remaining - 1;
                 if (i >= num_pages) break;
