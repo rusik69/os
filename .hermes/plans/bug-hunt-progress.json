@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 584,
+  "current_item": 585,
   "current_batch": "B009",
   "completed_items": [
   1,
@@ -585,10 +585,11 @@
   580,
   581,
   582,
-  583
+  583,
+  584
   ],
-  "found_bugs": 1029,
-  "fixed_bugs": 1029,
+  "found_bugs": 1030,
+  "fixed_bugs": 1030,
   "completed_batches": [
     "B001",
     "B002",
@@ -597,6 +598,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-12T15:00:00",
-  "last_item_result": "item 583: signal - sys_sigprocmask/sys_rt_sigprocmask/sigreturn must not allow SIGKILL/SIGSTOP in mask. Three code paths fixed: sys_rt_sigprocmask (sys_process.c), sys_sigprocmask (syscall.c), sys_rt_sigreturn (sys_process.c). All now mask out (1ULL<<SIGKILL|1ULL<<SIGSTOP) before applying mask changes."
+  "last_item_timestamp": "2026-07-12T14:45:00",
+  "last_item_result": "item 584: signal/signal_register - fixed BSD semantics. signal_register() was setting sig_flags=0 (no SA_RESTART, SysV behavior). Fixed to set SA_RESTART flag for BSD semantics (interrupted syscalls restart). sys_signal() was returning 0 instead of the old handler; blocking all user custom handlers; returning -EINVAL instead of -1ULL (SIG_ERR). Fixed to return old handler, allow user handlers with proper validation, and return -1ULL on error."
 }

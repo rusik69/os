@@ -464,8 +464,9 @@ void signal_check(void) {
 
                     /* Update signal mask: block this signal during handler
                      * (unless SA_NODEFER), plus any additional sa_mask
-                     * signals specified by sigaction. */
-                    p->sig_mask |= sa_mask;
+                     * signals specified by sigaction.
+                     * SIGKILL and SIGSTOP are never blockable — strip them. */
+                    p->sig_mask |= (sa_mask & ~((1ULL << SIGKILL) | (1ULL << SIGSTOP)));
                     if (!(flags & SA_NODEFER))
                         p->sig_mask |= (1ULL << sig);
 

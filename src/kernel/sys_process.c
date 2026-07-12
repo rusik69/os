@@ -99,7 +99,9 @@ uint64_t sys_rt_sigaction(uint64_t signum, uint64_t act_addr,
 
         p->sig_handlers[signum] = handler;
         p->sig_flags[signum]    = (uint32_t)(new_act.sa_flags & 0xFFFFFFFFU);
-        p->sig_sa_mask[signum]  = new_act.sa_mask.__bits[0];
+        /* SIGKILL and SIGSTOP are unblockable — silently strip them from sa_mask */
+        p->sig_sa_mask[signum]  = new_act.sa_mask.__bits[0]
+                                  & ~((1ULL << SIGKILL) | (1ULL << SIGSTOP));
 
         /* SA_NODEFER: normally the signal is masked while its handler runs.
          * If set, don't mask it. This is handled at signal delivery time.
