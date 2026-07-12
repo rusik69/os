@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 581,
+  "current_item": 582,
   "current_batch": "B009",
   "completed_items": [
   1,
@@ -582,10 +582,11 @@
   577,
   578,
   579,
-  580
+  580,
+  581
   ],
-  "found_bugs": 1026,
-  "fixed_bugs": 1026,
+  "found_bugs": 1027,
+  "fixed_bugs": 1027,
   "completed_batches": [
     "B001",
     "B002",
@@ -594,6 +595,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-12T14:30:00",
-  "last_item_result": "item 580: signal - audited clean. ptrace unimplemented (__NR_ptrace=sys_ni_syscall). No signal vs ptrace interaction exists."
+  "last_item_timestamp": "2026-07-12T14:35:00",
+  "last_item_result": "item 581: signal number range validation - signal_validate.c correct (signo<=0||signo>=SIG_MAX=65); fixed sys_process.c (3 sites) using sig>SIG_MAX->sig>=SIG_MAX (off-by-one allowing sig=65)"
 }
