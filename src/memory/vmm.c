@@ -540,9 +540,10 @@ void vmm_unmap_phys(void *vaddr, uint64_t size) {
  * vmm_create_user_pml4 - Create a new user-space PML4 page table
  *
  * Allocates a new PML4 page for a user process and copies the kernel
- * half of the page table (entries 256-511) from the kernel PML4, with
- * the PTE_USER bit cleared for kernel entries. The user half (entries
- * 0-255) is zeroed, ready for user-space mappings.
+ * half of the page table (entries 256-511) from the kernel PML4,
+ * preserving the PTE_USER bit so intentionally user-accessible kernel
+ * mappings (vDSO/vsyscall) remain accessible in per-process PML4s.
+ * The user half (entries 0-255) is zeroed, ready for user-space mappings.
  *
  * Context: Any context. Allocates one physical frame for the PML4.
  *          Must not be called from interrupt context.
