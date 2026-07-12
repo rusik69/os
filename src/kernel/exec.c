@@ -150,14 +150,18 @@ static int bprm_check_security(const struct process *p,
 
     /* ── Set-user-ID / set-group-ID elevation ───────────────────────── */
     if (*has_setuid && p->uid != 0) {
-        /* Only allow SUID if the owner matches or we're privileged */
-        if (p->euid != binary->uid && p->uid != 0)
-            *has_setuid = 0;
+        /* SUID is honored for any user who passes the execute permission
+         * check above.  The whole point of SUID is to let non-owners run
+         * with the file owner's EUID, so we do NOT check that the caller's
+         * EUID matches binary->uid — that would defeat SUID entirely.
+         * A future check could verify the filesystem is not mounted nosuid
+         * or that the process is not being ptrace'd by an unprivileged
+         * tracer (Yama already checks ptrace attacher scope above). */
     }
 
     if (*has_setgid && p->gid != 0) {
-        if (p->egid != binary->gid && p->uid != 0)
-            *has_setgid = 0;
+        /* Same logic as SUID: SGID is honored for any user with execute
+         * permission, not just the file's owning group. */
     }
 
     /* ── LSM hooks (Yama ptrace scope, SELinux, etc.) ────────────────── */
