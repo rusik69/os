@@ -411,6 +411,10 @@ struct process *process_create(void (*entry)(void), const char *name) {
     if (alloc_guarded_kernel_stack(proc) < 0) return NULL;
 
     proc->pid = alloc_pid();
+    if (proc->pid == (uint32_t)-1) {
+        free_guarded_kernel_stack(proc);
+        return NULL;
+    }
     proc->state = PROCESS_READY;
     proc->next = NULL;
     proc->pending_signals = 0;
@@ -606,6 +610,10 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
     if (alloc_guarded_kernel_stack(proc) < 0) return NULL;
 
     proc->pid = alloc_pid();
+    if (proc->pid == (uint32_t)-1) {
+        free_guarded_kernel_stack(proc);
+        return NULL;
+    }
     proc->state = PROCESS_READY;
     proc->next = NULL;
     proc->pending_signals = 0;
@@ -1033,6 +1041,11 @@ int process_fork(void) {
     child->state = PROCESS_UNUSED;
     *child = *parent;
     child->pid = alloc_pid();
+    if (child->pid == (uint32_t)-1) {
+        child->state = PROCESS_UNUSED;
+        __asm__ volatile("sti");
+        return -EAGAIN;
+    }
     child->parent_pid = parent->pid;
     child->is_suspended = 0;
     /* Give the child its own unique stack canary — distinct from parent */
@@ -1128,6 +1141,11 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
     child->state = PROCESS_UNUSED;
     *child = *parent;
     child->pid = alloc_pid();
+    if (child->pid == (uint32_t)-1) {
+        child->state = PROCESS_UNUSED;
+        __asm__ volatile("sti");
+        return -EINVAL;
+    }
     child->parent_pid = parent->pid;
     child->is_suspended = 0;
     child->wait_for_pid = 0;
