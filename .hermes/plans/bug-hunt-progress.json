@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 594,
+  "current_item": 596,
   "current_batch": "B009",
   "completed_items": [
     1,
@@ -595,10 +595,12 @@
     590,
     591,
     592,
-    593
+    593,
+    594,
+    595
   ],
-  "found_bugs": 1039,
-  "fixed_bugs": 1039,
+  "found_bugs": 1041,
+  "fixed_bugs": 1041,
   "completed_batches": [
     "B001",
     "B002",
@@ -607,6 +609,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-12T16:44:00",
-  "last_item_result": "item 593: process_rlimit - fix RLIMIT_NOFILE enforcement off-by-3. do_sys_open and pidfd_getfd both compare fd-table index i against rlim_cur/max_fds, but table index 0 = user fd 3. The check should be (i+3) >= max_fds, not i >= max_fds. Without this fix, setting RLIMIT_NOFILE to a small value (e.g., 10) would wrongly allow fds up to rlim_cur-1 instead of rlim_cur-4, since the 3 reserved fd numbers (0/1/2) were not accounted for. Build verified."
+  "last_item_timestamp": "2026-07-12T17:11:00",
+  "last_item_result": "item 595: rseq - fix rseq abort handler to redirect userspace IP to abort_ip per the rseq ABI. When a task is preempted inside an rseq critical section and migrated, the kernel must redirect execution to abort_ip instead of resuming inside the critical section body, which would otherwise modify per-CPU data for the wrong CPU before detecting migration via cpu_id/cpu_id_start comparison. Also reordered rseq_migrate() call in schedule() to execute BEFORE switching to the next task's page tables, so the outgoing task's userspace memory is accessible for reading the rseq_cs descriptor. Build verified."
 }

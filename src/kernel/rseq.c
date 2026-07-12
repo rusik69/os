@@ -7,6 +7,7 @@
 #include "errno.h"
 #include "types.h"
 #include "smp.h"
+#include "idt.h"
 
 /*
  * rseq.c — Restartable Sequences (Item 348)
@@ -205,6 +206,36 @@ void rseq_migrate(struct process *proc, int old_cpu, int new_cpu)
         /* Process is in an rseq critical section — abort it.
          * Clear rseq_cs so the userspace retry loop restarts. */
         *(volatile uint64_t *)rseq_cs_addr = 0;
+
+        /* ── Redirect instruction pointer to abort handler ──────────
+         *
+         * Per the rseq ABI, when a critical section is aborted the
+         * kernel must redirect userspace execution to the abort
+         * handler (abort_ip).  Without this, the task resumes at the
+         * interrupted instruction inside the critical section and
+         * executes the body using per-CPU data computed for the old
+         * CPU, corrupting the old CPU's per-CPU data.
+         *
+         * We read the rseq_cs descriptor from userspace and compare
+         * the saved RIP (from the interrupt frame saved when the
+         * timer fired) against [start_ip, start_ip + post_commit_offset).
+         * If RIP falls within that range, we set it to abort_ip so
+         * userspace retries from the abort handler on the correct CPU. */
+        struct interrupt_frame *frame = get_cpu_info()->current_frame;
+        if (frame && (frame->cs & 3) && rseq_cs_val < USER_VADDR_MAX) {
+            /* Read the rseq_cs descriptor from userspace.
+             * The current task's page tables are still active because
+             * schedule() calls us before switching to next's CR3. */
+            volatile struct rseq_cs *cs =
+                (volatile struct rseq_cs *)(uintptr_t)rseq_cs_val;
+            uint64_t start_ip = cs->start_ip;
+            uint64_t end_ip   = cs->start_ip + cs->post_commit_offset;
+            uint64_t abort_ip = cs->abort_ip;
+
+            if (frame->rip >= start_ip && frame->rip < end_ip) {
+                frame->rip = abort_ip;
+            }
+        }
 
         kprintf("[rseq] aborted critical section for pid=%d on migration "
                 "cpu %d -> %d\n",

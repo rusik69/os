@@ -963,6 +963,14 @@ void schedule(void) {
     struct cpu_info *info = get_cpu_info();
     if (info) info->current_kernel_rsp = next->stack_top;
 
+    /* ── rseq: abort outgoing task's critical section BEFORE switching
+     *     page tables so we can access the outgoing task's userspace
+     *     memory to read the rseq_cs descriptor and redirect IP. ──── */
+    if (current && current->is_user && current != next) {
+        int current_cpu = smp_get_cpu_id();
+        rseq_migrate(current, current_cpu, current_cpu);
+    }
+
     /* Switch page tables if user process */
     if (next->is_user && next->pml4) {
         vmm_switch_pml4(next->pml4);
@@ -979,15 +987,10 @@ void schedule(void) {
      * is making forward progress on this CPU. */
     nmi_watchdog_pet();
 
-    /* ── rseq: update cpu_id for the incoming task ────────────────── */
+    /* ── rseq: update cpu_id for the incoming task (after page table
+     *     switch — next's userspace is now accessible) ────────────── */
     if (next->is_user) {
         rseq_update_cpu_id(next);
-    }
-
-    /* ── rseq: detect migration and abort critical sections ────────── */
-    if (current && current->is_user && current != next) {
-        int current_cpu = smp_get_cpu_id();
-        rseq_migrate(current, current_cpu, current_cpu);
     }
 
     /* Per-task stack canary: save the current guard, load the incoming
