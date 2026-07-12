@@ -155,9 +155,10 @@ static spinlock_t cache_list_lock = SPINLOCK_INIT;
 
 /* ── Slab statistics ────────────────────────────────────────────────── */
 
-/* ── Helper: free a physical page (given kernel virtual address) ──────── */
-static void slab_page_free(void *virt) {
-    pmm_free_frame(VIRT_TO_PHYS((uint64_t)virt));
+/* ── Helper: free a slab's physically-contiguous pages to PMM ────────── */
+static void slab_free_pages(struct slab *slab, int pages) {
+    uint64_t phys = VIRT_TO_PHYS((uint64_t)(uintptr_t)slab);
+    pmm_free_frames_contiguous(phys, (size_t)pages);
 }
 
 /* ── Unlink slab from whatever cache list it's in, then link to new list ── */
@@ -242,18 +243,11 @@ static int slab_grow(struct kmem_cache *cache) {
     if (aligned < 16) aligned = 16;
     size_t header    = sizeof(struct slab);
 
-    /* Allocate contiguous pages via PMM */
-    uint64_t phys_base = 0;
+    /* Allocate physically-contiguous pages via PMM */
     int pages = 1U << cache->gfporder;
-    for (int i = 0; i < pages; i++) {
-        uint64_t p = pmm_alloc_frame();
-        if (!p) {
-            for (int j = 0; j < i; j++)
-                pmm_free_frame(phys_base + (uint64_t)j * PAGE_SIZE);
-            return -ENOMEM;
-        }
-        if (i == 0) phys_base = p;
-    }
+    uint64_t phys_base = (uint64_t)pmm_alloc_frames(pages);
+    if (!phys_base)
+        return -ENOMEM;
     void *virt = PHYS_TO_VIRT(phys_base);
     memset(virt, 0, slab_size);
 
@@ -617,22 +611,19 @@ void kmem_cache_destroy(struct kmem_cache *cache) {
     struct slab *slab = cache->slabs_full;
     while (slab) {
         struct slab *nxt = slab->next;
-        for (int p = 0; p < pages; p++)
-            slab_page_free((uint8_t *)slab + p * PAGE_SIZE);
+        slab_free_pages(slab, pages);
         slab = nxt;
     }
     slab = cache->slabs_partial;
     while (slab) {
         struct slab *nxt = slab->next;
-        for (int p = 0; p < pages; p++)
-            slab_page_free((uint8_t *)slab + p * PAGE_SIZE);
+        slab_free_pages(slab, pages);
         slab = nxt;
     }
     slab = cache->slabs_free;
     while (slab) {
         struct slab *nxt = slab->next;
-        for (int p = 0; p < pages; p++)
-            slab_page_free((uint8_t *)slab + p * PAGE_SIZE);
+        slab_free_pages(slab, pages);
         slab = nxt;
     }
 
@@ -750,8 +741,7 @@ void kmem_cache_reap(void) {
                 if (slab->prev) slab->prev->next = slab->next;
                 else cache->slabs_free = slab->next;
                 if (slab->next) slab->next->prev = slab->prev;
-                for (int p = 0; p < pages; p++)
-                    slab_page_free((uint8_t *)slab + p * PAGE_SIZE);
+                slab_free_pages(slab, pages);
                 slab = nxt;
             }
             spinlock_release(&cache->lock);
