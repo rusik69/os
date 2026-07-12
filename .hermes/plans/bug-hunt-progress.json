@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 572,
+  "current_item": 574,
   "current_batch": "B009",
   "completed_items": [
     1,
@@ -573,10 +573,12 @@
     568,
     569,
     570,
-    571
+    571,
+    572,
+    573
   ],
-  "found_bugs": 1019,
-  "fixed_bugs": 1019,
+  "found_bugs": 1020,
+  "fixed_bugs": 1020,
   "completed_batches": [
     "B001",
     "B002",
@@ -585,6 +587,6 @@
     "B005",
     "B006"
   ],
-  "last_item_timestamp": "2026-07-12T11:51:15",
-  "last_item_result": "item 571: src/kernel/sys_process.c - verify sigaction stores correct sa_mask. BUG FOUND (2 bugs): (1) sys_rt_sigaction returned global p->sig_mask as oldact.sa_mask instead of per-signal sa_mask; (2) new_act.sa_mask was completely ignored (cast to void). Fixed: added uint64_t sig_sa_mask[PROCESS_SIG_MAX] field, store on install, return stored value on query. Initialized in all 3 creation paths. Build verified clean."
+  "last_item_timestamp": "2026-07-12T14:05:00",
+  "last_item_result": "item 573: src/kernel/signal* - verify SA_RESTART retries interrupted syscall. AUDITED CLEAN (gap documented): SA_RESTART flag is stored in sig_flags via sigaction() but never checked or acted upon. No code reads sig_flags[sig] & SA_RESTART. Blocking syscalls return -EINTR directly instead of -ERESTARTSYS. Syscall return path has no signal check (asm just sysrets). ERESTART (85) defined but never returned. restart_syscall(__NR=219) maps to sys_ni_syscall. Signals only delivered via timer interrupts in userspace, never on syscall exit. Result: programs using SA_RESTART do NOT get automatic syscall restart - they see -EINTR instead. This is a structural feature gap requiring: (1) save syscall args for restart, (2) return ERESTARTSYS from blocking paths, (3) post-syscall SA_RESTART check, (4) restart_syscall implementation. Not a localized bug; large feature."
 }

@@ -82,6 +82,7 @@ int signal_send(uint32_t pid, int signum) {
         p->sleep_until = 0;
         scheduler_remove(p);
         spinlock_irqsave_release(&p->sig_lock, __sig_flags);
+        process_wake_waiter(p->pid);
         if (p == process_get_current()) scheduler_yield();
         return 0;
     }
@@ -185,6 +186,7 @@ int signal_send_info(uint32_t pid, int signum, struct siginfo *info) {
         p->sleep_until = 0;
         scheduler_remove(p);
         spinlock_irqsave_release(&p->sig_lock, __sig_flags);
+        process_wake_waiter(p->pid);
         if (p == process_get_current()) scheduler_yield();
         return 0;
     }
@@ -477,6 +479,7 @@ void signal_check(void) {
                 p->state = PROCESS_ZOMBIE;
                 p->exit_code = 128 + sig;
                 scheduler_remove(p);
+                process_wake_waiter(p->pid);
                 spinlock_irqsave_release(&p->sig_lock, __sig_flags);
                 scheduler_yield();
                 return; /* zombie — never resumes */

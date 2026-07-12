@@ -699,7 +699,7 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
 }
 
 /* Wake any process blocked in waitpid waiting for 'pid'. */
-static void process_wake_waiter(uint32_t pid) {
+void process_wake_waiter(uint32_t pid) {
     for (int i = 0; i < PROCESS_MAX; i++) {
         struct process *p = &process_table[i];
         if (p->state == PROCESS_BLOCKED && p->wait_for_pid == pid) {
