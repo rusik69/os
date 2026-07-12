@@ -205,7 +205,7 @@ static void slab_relink(struct kmem_cache *cache, struct slab *slab,
 
 /* ── Helper: compute slab size and order for a given object size ─────── */
 
-static void slab_sizing(size_t obj_size, int *out_order, int *out_num) {
+static int slab_sizing(size_t obj_size, int *out_order, int *out_num) {
     /* Align object size to the minimum alignment (16 bytes for cacheline safety) */
     size_t aligned = (obj_size + 15) & ~15ULL;
     if (aligned < 16) aligned = 16;
@@ -218,14 +218,20 @@ static void slab_sizing(size_t obj_size, int *out_order, int *out_num) {
     for (;;) {
         size_t usable = slab_size - header;
         num = (int)(usable / aligned);
-        if (num >= 8 || order >= 4) break; /* at least 8 objects, max 16 pages */
+        if (num >= 8 || order >= 4) break;
         order++;
         slab_size = PAGE_SIZE * (1ULL << order);
     }
 
-    if (num < 1) num = 1;
+    if (num < 1) {
+        /* Object too large for any slab size — the aligned object does not
+         * fit within the slab's pages.  The caller should reject this
+         * cache creation and fall back to the page allocator. */
+        return -EINVAL;
+    }
     *out_order = order;
     *out_num   = num;
+    return 0;
 }
 
 /* ── Create a new slab and add it to the cache's free list ───────────── */
@@ -448,7 +454,12 @@ struct kmem_cache *kmem_cache_create(const char *name, size_t obj_size,
         return NULL;
     }
 
-    slab_sizing(obj_size, &cache->gfporder, &cache->num);
+    if (slab_sizing(obj_size, &cache->gfporder, &cache->num) != 0) {
+        kprintf("[SLAB] ERROR: kmem_cache_create('%s') object size %zu too large for slab\n",
+                name ? name : "(null)", obj_size);
+        kfree(cache);
+        return NULL;
+    }
     cache->obj_size = (obj_size + 15) & ~15ULL;
     if (cache->obj_size < 16) cache->obj_size = 16;
 
