@@ -2195,12 +2195,26 @@ int virtio_net_receive(void *buf, uint16_t max_len) {
     if (id >= VRING_SIZE)
         return 0;
 
+    struct vring_desc *descs = (struct vring_desc *)rx_queue_mem;
+
     uint32_t skip = sizeof(struct virtio_net_hdr);
     if (total <= skip) return 0;
     uint32_t plen = total - skip;
 
     /* Check for LRO/GSO packet */
     struct virtio_net_hdr *vhdr = (struct virtio_net_hdr *)rx_pkt_bufs[id];
+
+    /* Determine number of buffers in this mergeable RX buffer chain.
+     * When VIRTIO_NET_F_MRG_RXBUF is negotiated, the device may chain
+     * multiple descriptors for a single packet.  num_buffers tells us
+     * how many descriptors were consumed, and we must walk the chain
+     * via next pointers to read data from all buffers and recycle each. */
+    uint16_t num_bufs = 1;
+    if (vnet_negotiated_features & VIRTIO_NET_F_MRG_RXBUF) {
+        num_bufs = vhdr->num_buffers;
+        if (num_bufs == 0 || num_bufs > VRING_SIZE)
+            num_bufs = 1;
+    }
 
     if (lro_enabled && vhdr->gso_type != VIRTIO_NET_HDR_GSO_NONE &&
         vhdr->hdr_len > 0 && vhdr->gso_size > 0) {
@@ -2220,19 +2234,39 @@ int virtio_net_receive(void *buf, uint16_t max_len) {
          */
         static uint8_t lro_staging[RX_BUF_SIZE];
         uint32_t data_offset = sizeof(struct virtio_net_hdr);
-        memcpy(lro_staging, rx_pkt_bufs[id] + data_offset, plen);
-
-        /* Recycle the RX descriptor immediately */
+        /* Accumulate data from all buffers in the mergeable chain */
         {
-            struct vring_desc *descs = (struct vring_desc *)rx_queue_mem;
-            descs[id].addr  = VIRT_TO_PHYS(rx_pkt_bufs[id]);
-            descs[id].len   = sizeof(rx_pkt_bufs[0]);
-            descs[id].flags = VRING_DESC_F_WRITE;
-            uint16_t slot = avail->idx & (VRING_SIZE - 1);
-            avail->ring[slot] = (uint16_t)id;
-            __asm__ volatile("" ::: "memory");
-            avail->idx++;
-            __asm__ volatile("" ::: "memory");
+            uint32_t remaining = plen;
+            uint16_t cur_id = id;
+            uint8_t *dst = lro_staging;
+            for (uint16_t i = 0; i < num_bufs && remaining > 0; i++) {
+                uint32_t chunk = RX_BUF_SIZE;
+                if (i == 0) chunk = RX_BUF_SIZE - data_offset;
+                if (chunk > remaining) chunk = remaining;
+                memcpy(dst, rx_pkt_bufs[cur_id] + (i == 0 ? data_offset : 0), chunk);
+                dst += chunk;
+                remaining -= chunk;
+                if (i + 1 < num_bufs)
+                    cur_id = descs[cur_id].next;
+            }
+        }
+
+        /* Recycle all RX descriptors used by this packet */
+        {
+            uint16_t cur_id = id;
+            for (uint16_t i = 0; i < num_bufs; i++) {
+                descs[cur_id].addr  = VIRT_TO_PHYS(rx_pkt_bufs[cur_id]);
+                descs[cur_id].len   = sizeof(rx_pkt_bufs[0]);
+                descs[cur_id].flags = VRING_DESC_F_WRITE;
+                descs[cur_id].next  = 0;
+                uint16_t slot = avail->idx & (VRING_SIZE - 1);
+                avail->ring[slot] = cur_id;
+                __asm__ volatile("" ::: "memory");
+                avail->idx++;
+                __asm__ volatile("" ::: "memory");
+                if (i + 1 < num_bufs)
+                    cur_id = descs[cur_id].next;
+            }
             vio_outw(VIRTIO_PCI_QUEUE_NOTIFY, RX_QUEUE_IDX);
         }
 
@@ -2253,21 +2287,40 @@ deliver_raw:
     {
         if (plen > max_len) plen = max_len;
         uint32_t data_offset = sizeof(struct virtio_net_hdr);
-        memcpy(buf, rx_pkt_bufs[id] + data_offset, plen);
+        {
+            uint32_t remaining = plen;
+            uint16_t cur_id = id;
+            uint8_t *dst = (uint8_t *)buf;
+            for (uint16_t i = 0; i < num_bufs && remaining > 0; i++) {
+                uint32_t chunk = RX_BUF_SIZE;
+                if (i == 0) chunk = RX_BUF_SIZE - data_offset;
+                if (chunk > remaining) chunk = remaining;
+                memcpy(dst, rx_pkt_bufs[cur_id] + (i == 0 ? data_offset : 0), chunk);
+                dst += chunk;
+                remaining -= chunk;
+                if (i + 1 < num_bufs)
+                    cur_id = descs[cur_id].next;
+            }
+        }
     }
 
 deliver_raw_fallback:
     /* Recycle the RX descriptor */
     {
-        struct vring_desc *descs = (struct vring_desc *)rx_queue_mem;
-        descs[id].addr  = VIRT_TO_PHYS(rx_pkt_bufs[id]);
-        descs[id].len   = sizeof(rx_pkt_bufs[0]);
-        descs[id].flags = VRING_DESC_F_WRITE;
-        uint16_t slot = avail->idx & (VRING_SIZE - 1);
-        avail->ring[slot] = (uint16_t)id;
-        __asm__ volatile("" ::: "memory");
-        avail->idx++;
-        __asm__ volatile("" ::: "memory");
+        uint16_t cur_id = id;
+        for (uint16_t i = 0; i < num_bufs; i++) {
+            descs[cur_id].addr  = VIRT_TO_PHYS(rx_pkt_bufs[cur_id]);
+            descs[cur_id].len   = sizeof(rx_pkt_bufs[0]);
+            descs[cur_id].flags = VRING_DESC_F_WRITE;
+            descs[cur_id].next  = 0;
+            uint16_t slot = avail->idx & (VRING_SIZE - 1);
+            avail->ring[slot] = cur_id;
+            __asm__ volatile("" ::: "memory");
+            avail->idx++;
+            __asm__ volatile("" ::: "memory");
+            if (i + 1 < num_bufs)
+                cur_id = descs[cur_id].next;
+        }
         vio_outw(VIRTIO_PCI_QUEUE_NOTIFY, RX_QUEUE_IDX);
     }
 
