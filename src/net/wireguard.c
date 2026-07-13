@@ -2040,14 +2040,35 @@ int wireguard_recv_handshake_init(const uint8_t *pkt, uint16_t len,
     {
         uint8_t enc_key[32], enc_extra[32], nonce[12];
         uint8_t timestamp[12];
+        int64_t delta;
         memset(nonce, 0, 12);
         wg_kdf2(enc_key, enc_extra, chaining_key, zeros);
 
         if (chacha20poly1305_decrypt(timestamp, enc_ts, 28,
                                      hash, 32, enc_key, nonce) < 0)
             return -EKEYREJECTED;
-        /* In production, verify timestamp freshness */
-        (void)timestamp;
+
+        /* Verify timestamp freshness to prevent handshake replay attacks.
+         * The initiator encodes timer_get_ticks()/100 as 8 big-endian bytes.
+         * Allow ±120 seconds of clock skew — generous enough for a hobby OS
+         * but prevents replay of captured handshake init messages. */
+        uint64_t ts_sec = ((uint64_t)timestamp[0] << 56) |
+                          ((uint64_t)timestamp[1] << 48) |
+                          ((uint64_t)timestamp[2] << 40) |
+                          ((uint64_t)timestamp[3] << 32) |
+                          ((uint64_t)timestamp[4] << 24) |
+                          ((uint64_t)timestamp[5] << 16) |
+                          ((uint64_t)timestamp[6] << 8)  |
+                          (uint64_t)timestamp[7];
+        uint64_t now_sec = timer_get_ticks() / 100;
+        delta = (int64_t)(now_sec - ts_sec);
+        if (delta < -120 || delta > 120) {
+            kprintf("[WG] Init: timestamp out of window (ts=%llu, now=%llu), "
+                    "rejecting replay\n",
+                    (unsigned long long)ts_sec,
+                    (unsigned long long)now_sec);
+            return -EKEYREJECTED;
+        }
     }
 
     /* Step 7: mix_hash(H, encrypted_timestamp) */
