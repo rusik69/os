@@ -2548,7 +2548,10 @@ int wireguard_recv_cookie(const uint8_t *pkt, uint16_t len,
 
     /* Decrypt cookie: nonce is first 12 bytes of the 24-byte field */
     memcpy(nonce, pkt + 8, 12);
-    ret = chacha20poly1305_decrypt(raw_cookie, pkt + 32, WG_COOKIE_REPLY_LEN - 64,
+    /* The encrypted payload starts at byte 32 and consists of
+     * 16 bytes ciphertext (cookie) + 16 bytes Poly1305 tag = 32 bytes.
+     * mac1 follows at byte 64. */
+    ret = chacha20poly1305_decrypt(raw_cookie, pkt + 32, WG_COOKIE_REPLY_LEN - 48,
                                     pkt, 32, enc_key, nonce);
     if (ret < 0) {
         kprintf("[wireguard] wireguard_recv_cookie: decryption FAILED\n");
