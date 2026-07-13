@@ -375,79 +375,86 @@ int vmxnet3_receive(struct vmxnet3_priv *priv,
     struct vmxnet3_rxq *rxq;
     struct vmxnet3_rx_comp *comp;
     int received;
+    int start_comp;
+    int count;
 
     if (!priv->present)
         return -EIO;
 
     rxq = &priv->rxq[0];
     received = 0;
+    start_comp = rxq->comp_next;
+    count = 0;
 
-    /* Check the RX completion ring for new packets */
+    /* ── Phase 1: Process all available completion entries ──────────
+     *
+     * Walk the completion ring, copying received data out of each
+     * buffer.  We defer descriptor refill to Phase 2 so that the
+     * gen toggle on ring wrap takes effect before any refill. */
+
     comp = &rxq->comp[rxq->comp_next];
-
-    /* The device writes completion entries with gen toggled.
-     * Our comp_gen tracks the last gen we consumed. */
-    while (comp->gen == rxq->comp_gen) {
-        int comp_slot;
-        int buf_idx;
+    while (comp->gen == rxq->comp_gen && count < rxq->size) {
+        int comp_slot = rxq->comp_next;
         uint16_t pkt_len;
-
-        comp_slot = rxq->comp_next;
-        buf_idx   = comp_slot;  /* one-to-one mapping in single-buf mode */
+        uint16_t copy_len;
 
         pkt_len = (uint16_t)(comp->len & 0xFFFF);
         if (pkt_len > VMXNET3_RX_BUF_SIZE)
             pkt_len = VMXNET3_RX_BUF_SIZE;
 
-        if (pkt_len > 0 && comp->eop) {
-            /* Valid packet — copy the data from the buffer */
-            uint16_t copy_len = pkt_len;
+        if (pkt_len > 0) {
+            copy_len = pkt_len;
             if (copy_len > max_len - (uint16_t)received)
                 copy_len = max_len - (uint16_t)received;
 
-            memcpy(buf + received, rxq->buffers[buf_idx], copy_len);
+            memcpy(buf + received, rxq->buffers[comp_slot], copy_len);
             received += copy_len;
 
-            priv->rx_packets++;
-            priv->rx_bytes += pkt_len;
-        } else if (pkt_len > 0 && !comp->eop) {
-            /* Multi-fragment packet (we only handle single-buf mode) —
-             * still accept the data. */
-            uint16_t copy_len = pkt_len;
-            if (copy_len > max_len - (uint16_t)received)
-                copy_len = max_len - (uint16_t)received;
-
-            memcpy(buf + received, rxq->buffers[buf_idx], copy_len);
-            received += copy_len;
+            if (comp->eop)
+                priv->rx_packets++;
             priv->rx_bytes += pkt_len;
         }
 
-        /* Refill the RX descriptor that was just consumed */
-        {
-            struct vmxnet3_rx_desc *rdesc = &rxq->descs[buf_idx];
+        /* Advance the completion index, toggling generations on wrap.
+         * The descriptor ring gen (rxq->gen) must toggle here too,
+         * matching the TX side's behaviour (txq->gen toggles on
+         * producer-index wrap at line 348). */
+        rxq->comp_next = (comp_slot + 1) % rxq->size;
+        if (rxq->comp_next == 0) {
+            rxq->comp_gen ^= 1;  /* toggle completion gen */
+            rxq->gen ^= 1;       /* toggle RX descriptor gen */
+        }
+
+        comp = &rxq->comp[rxq->comp_next];
+        count++;
+    }
+
+    /* ── Phase 2: Refill consumed RX descriptors with the correct gen
+     *
+     * All gen toggles from Phase 1 are final.  We now walk the same
+     * range of descriptors and set each gen to rxq->gen (which may
+     * have been toggled on ring wrap), ensuring the device sees the
+     * correct gen on its next pass. */
+    if (count > 0) {
+        int refill = start_comp;
+        int i;
+
+        for (i = 0; i < count; i++) {
+            struct vmxnet3_rx_desc *rdesc = &rxq->descs[refill];
+
             memset(rdesc, 0, sizeof(*rdesc));
-            rdesc->addr  = rxq->buf_phys[buf_idx];
+            rdesc->addr  = rxq->buf_phys[refill];
             rdesc->len   = VMXNET3_RX_BUF_SIZE;
             rdesc->btype = 0;
             rdesc->gen   = (unsigned int)(rxq->gen ? 1 : 0);
+
+            refill = (refill + 1) % rxq->size;
+            if (refill == 0)
+                rxq->gen ^= 1;   /* toggle on refill wrap too */
         }
-
-        /* Advance in the completion ring */
-        rxq->comp_next = (comp_slot + 1) % rxq->size;
-        if (rxq->comp_next == 0)
-            rxq->comp_gen ^= 1;   /* toggle expected generation */
-
-        /* Re-read the next completion entry */
-        comp = &rxq->comp[rxq->comp_next];
-
-        /* Limit processing to one full ring worth of entries */
-        if (rxq->comp_next == rxq->next)
-            break;
     }
 
-    /* Keep the RX descriptor ring's fill index in sync.
-     * Since we refilled the consumed descriptor above, advance
-     * the fill index to match the new producer position. */
+    /* Update the fill index to match where we've refilled up to */
     rxq->next = rxq->comp_next;
 
     if (received > 0)
