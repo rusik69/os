@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 617,
+  "current_item": 624,
   "current_batch": "B010",
   "completed_items": [
     1,
@@ -618,10 +618,17 @@
     613,
     614,
     615,
-    616
+    616,
+    617,
+    618,
+    619,
+    620,
+    621,
+    622,
+    623
   ],
-  "found_bugs": 1082,
-  "fixed_bugs": 1082,
+  "found_bugs": 1087,
+  "fixed_bugs": 1087,
   "completed_batches": [
     "B001",
     "B002",
@@ -633,6 +640,6 @@
     "B008",
     "B009"
   ],
-  "last_item_timestamp": "2026-07-12T23:50:00",
-  "last_item_result": "item 616: ahci.c - ahci_ncq_read/write allocate NCQ slots without updating tag_bitmap, allowing ahci_drain_queue to double-allocate the same slot via tag_bitmap_alloc. Fixed by setting tag_bitmap after slot allocation in both functions. Build verifies clean."
+  "last_item_timestamp": "2026-07-13T03:48:00",
+  "last_item_result": "item 623: src/drivers/virtio_blk.c — audited clean. Verified virtio-blk request descriptor chain in vblk_queue_request() and vblk_queue_special(): 3-descriptor chain (header→data→status) with correct NEXT/WRITE flags, all device-readable before device-writable (virtio spec §5.2.6), correct avail ring interaction with memory barriers, proper used ring polling. No bugs found in descriptor chain construction."
 }

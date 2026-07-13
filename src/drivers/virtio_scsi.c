@@ -34,18 +34,44 @@
 
 #define VIRTIO_SCSI_CDB_SIZE        32
 #define VIRTIO_SCSI_SENSE_SIZE      96
-#define VIRTIO_SCSI_MAX_TARGET      256
-#define VIRTIO_SCSI_MAX_LUN         16384
+#define VIRTIO_SCSI_MAX_TARGET      255   /* max target value (0-255 = 256 targets) */
+#define VIRTIO_SCSI_MAX_LUN         16383 /* max LUN value (0-16383 = 16384 LUNs) */
+
+/* VirtIO SCSI LUN address method (per SAM-4 T10 LUN format) */
+#define VIRTIO_SCSI_LUN_ADDR_METHOD    0  /* byte 0 of lun[]: address method */
+#define VIRTIO_SCSI_LUN_BUS            1  /* byte 1: bus/channel */
+#define VIRTIO_SCSI_LUN_TARGET_OFF     2  /* bytes 2-3: target (big-endian 16-bit) */
+#define VIRTIO_SCSI_LUN_LUN_OFF        4  /* bytes 4-7: LUN ID (big-endian 32-bit) */
+
+/* Address method values */
+#define VIRTIO_SCSI_LUN_METHOD_REPORT_LUNS  0  /* REPORT LUNS addressing */
+#define VIRTIO_SCSI_LUN_METHOD_LOGICAL      1  /* Logical unit addressing (SAM-4) */
+#define VIRTIO_SCSI_LUN_METHOD_PERIPHERAL   2  /* Peripheral device addressing */
 
 /* Request types */
 #define VIRTIO_SCSI_T_CMD           0
 #define VIRTIO_SCSI_T_TMF           1
 
-/* Response codes */
+/* TMF subtypes */
+#define VIRTIO_SCSI_TMF_ABORT_TASK         0
+#define VIRTIO_SCSI_TMF_ABORT_TASK_SET     1
+#define VIRTIO_SCSI_TMF_CLEAR_ACA          2
+#define VIRTIO_SCSI_TMF_CLEAR_TASK_SET     3
+#define VIRTIO_SCSI_TMF_I_T_NEXUS_RESET    4
+#define VIRTIO_SCSI_TMF_LOGICAL_UNIT_RESET 5
+#define VIRTIO_SCSI_TMF_QUERY_TASK          6
+#define VIRTIO_SCSI_TMF_QUERY_TASK_SET      7
+
+/* TMF response codes */
 #define VIRTIO_SCSI_S_OK            0
+#define VIRTIO_SCSI_S_FUNCTION_COMPLETE     0
+#define VIRTIO_SCSI_S_TASK_NONEXISTENT      1
+#define VIRTIO_SCSI_S_FAILED                2
+#define VIRTIO_SCSI_S_INCORRECT_LUN         3
+#define VIRTIO_SCSI_S_BUSY                  4
 
 #pragma pack(push, 1)
-/* SCSI command request header */
+/* SCSI command request header (per VirtIO spec §5.6) */
 struct virtio_scsi_cmd_req {
     uint8_t  lun[8];
     uint64_t tag;
@@ -53,6 +79,7 @@ struct virtio_scsi_cmd_req {
     uint8_t  prio;
     uint8_t  crn;
     uint8_t  cdb[VIRTIO_SCSI_CDB_SIZE];
+    /* uint8_t dataout[]; — data to write (separate descriptor in chain) */
 };
 
 /* SCSI command response header */
@@ -64,7 +91,75 @@ struct virtio_scsi_cmd_resp {
     uint8_t  response;
     uint8_t  sense[VIRTIO_SCSI_SENSE_SIZE];
 };
+
+/* Task Management Function request (per VirtIO spec §5.6.8) */
+struct virtio_scsi_ctrl_tmf_req {
+    uint8_t  lun[8];
+    uint64_t tag;
+    uint8_t  subtype;
+    uint8_t  timeout;
+    uint8_t  reserved[3];
+    uint64_t tmf_related_tag;
+};
+
+/* Task Management Function response */
+struct virtio_scsi_ctrl_tmf_resp {
+    uint8_t  response;
+};
 #pragma pack(pop)
+
+/* ── LUN encoding helper ────────────────────────────────────────────
+ * Encodes a (bus, target, lun_id) triplet into the 8-byte VirtIO SCSI
+ * LUN field per SAM-4 T10 Logical Unit Addressing (method=1):
+ *   lun[0] = VIRTIO_SCSI_LUN_METHOD_LOGICAL (1)
+ *   lun[1] = bus (channel)
+ *   lun[2..3] = target (big-endian 16-bit)
+ *   lun[4..7] = lun_id (big-endian 32-bit)
+ *
+ * Returns lun[0] on success, -1 if any argument exceeds spec limits.
+ */
+static inline int virtio_scsi_encode_lun(uint8_t lun[8],
+                                          uint16_t bus,
+                                          uint16_t target,
+                                          uint32_t lun_id)
+{
+    if (!lun) return -1;
+    if (bus > 255) return -1;            /* max 1 byte */
+    if (target > VIRTIO_SCSI_MAX_TARGET) return -1;
+    if (lun_id > VIRTIO_SCSI_MAX_LUN)    return -1;
+
+    memset(lun, 0, 8);
+    lun[VIRTIO_SCSI_LUN_ADDR_METHOD] = VIRTIO_SCSI_LUN_METHOD_LOGICAL;
+    lun[VIRTIO_SCSI_LUN_BUS]         = (uint8_t)bus;
+    lun[VIRTIO_SCSI_LUN_TARGET_OFF]     = (uint8_t)(target >> 8);   /* big-endian high byte */
+    lun[VIRTIO_SCSI_LUN_TARGET_OFF + 1] = (uint8_t)(target);        /* big-endian low byte */
+    lun[VIRTIO_SCSI_LUN_LUN_OFF]        = (uint8_t)(lun_id >> 24);  /* big-endian */
+    lun[VIRTIO_SCSI_LUN_LUN_OFF + 1]    = (uint8_t)(lun_id >> 16);
+    lun[VIRTIO_SCSI_LUN_LUN_OFF + 2]    = (uint8_t)(lun_id >> 8);
+    lun[VIRTIO_SCSI_LUN_LUN_OFF + 3]    = (uint8_t)(lun_id);
+    return (int)lun[0];
+}
+
+/* Decode virtio SCSI LUN back into bus/target/lun_id components.
+ * Returns 0 on success, -1 if method is not logical unit addressing. */
+static inline int virtio_scsi_decode_lun(const uint8_t lun[8],
+                                          uint16_t *bus,
+                                          uint16_t *target,
+                                          uint32_t *lun_id)
+{
+    if (!lun) return -1;
+    if (lun[VIRTIO_SCSI_LUN_ADDR_METHOD] != VIRTIO_SCSI_LUN_METHOD_LOGICAL)
+        return -1;
+
+    if (bus)    *bus    = lun[VIRTIO_SCSI_LUN_BUS];
+    if (target) *target = ((uint16_t)lun[VIRTIO_SCSI_LUN_TARGET_OFF] << 8) |
+                           (uint16_t)lun[VIRTIO_SCSI_LUN_TARGET_OFF + 1];
+    if (lun_id) *lun_id = ((uint32_t)lun[VIRTIO_SCSI_LUN_LUN_OFF] << 24) |
+                           ((uint32_t)lun[VIRTIO_SCSI_LUN_LUN_OFF + 1] << 16) |
+                           ((uint32_t)lun[VIRTIO_SCSI_LUN_LUN_OFF + 2] << 8) |
+                           (uint32_t)lun[VIRTIO_SCSI_LUN_LUN_OFF + 3];
+    return 0;
+}
 
 /* ── Driver state ──────────────────────────────────────────────── */
 
