@@ -24,7 +24,7 @@ void ata_id_string(const uint16_t *ident, unsigned int offset,
     unsigned int i;
     unsigned int idx;
 
-    if (!ident || !buf || offset + len > 256) {
+    if (!ident || !buf || offset >= 256 || len > 256 - offset) {
         if (buf)
             buf[0] = '\0';
         return;
