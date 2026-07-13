@@ -7,6 +7,7 @@
 #include "net.h"
 #include "net_internal.h"
 #include "errno.h"
+#include "timers.h"
 
 /* 802.3ad LACP constants */
 #define LACP_VERSION        1
@@ -91,15 +92,22 @@ struct lacp_port {
 #define LACP_MAX_PORTS 8
 static struct lacp_port lacp_ports[LACP_MAX_PORTS];
 static int lacp_enabled = 0;
+static int lacp_timer_id = -1;
 
 /* LACP multicast MAC (01:80:C2:00:00:02) */
 static const uint8_t lacp_dmac[6] = { 0x01, 0x80, 0xC2, 0x00, 0x00, 0x02 };
+
+/* Forward declarations */
+static void lacp_tick(void *arg);
+static int lacp_send_pdu(uint16_t port_number);
 
 static void lacp_init(void)
 {
     if (lacp_enabled) return;
     memset(lacp_ports, 0, sizeof(lacp_ports));
     lacp_enabled = 1;
+    /* Register periodic tick timer (1-tick interval, self-rearming) */
+    lacp_timer_id = timer_schedule(lacp_tick, NULL, 1);
     kprintf("[OK] lacp: Link Aggregation Control Protocol initialised (%d ports max)\n",
             LACP_MAX_PORTS);
 }
@@ -174,10 +182,11 @@ static int lacp_send_pdu(uint16_t port_number)
     pdu.subtype = LACP_SUBTYPE;
     pdu.version = LACP_VERSION;
 
-    /* Actor information */
+    /* Actor information — sync from working state flags */
     pdu.tlv_actor_type = LACP_TLV_ACTOR_INFO;
     pdu.tlv_actor_len  = 20;
     pdu.actor = p->actor;
+    pdu.actor.state_flags = p->state_flags;
 
     /* Partner information (use our defaults if not learned) */
     pdu.tlv_partner_type = LACP_TLV_PARTNER_INFO;
@@ -245,6 +254,9 @@ static int lacp_receive_pdu(uint16_t port_number, const struct lacp_pdu *pdu, ui
         p->actor.state_flags &= ~LACP_STATE_DISTRIBUTING;
         p->aggregated = 0;
     }
+    /* Sync working state flags */
+    p->state_flags = (p->state_flags & (LACP_STATE_DEFAULTED | LACP_STATE_EXPIRED)) |
+                     (p->actor.state_flags & ~(LACP_STATE_DEFAULTED | LACP_STATE_EXPIRED));
 
     /* Track timeout mode */
     if (rx_state & LACP_STATE_SHORT_TIMER) {
@@ -260,6 +272,7 @@ static int lacp_receive_pdu(uint16_t port_number, const struct lacp_pdu *pdu, ui
     /* Clear defaulted/expired flags since we received a valid PDU */
     p->actor.state_flags &= ~LACP_STATE_DEFAULTED;
     p->actor.state_flags &= ~LACP_STATE_EXPIRED;
+    p->state_flags &= ~(LACP_STATE_DEFAULTED | LACP_STATE_EXPIRED);
 
     kprintf("lacp: received PDU on port %u, partner system=%02x:%02x:%02x:%02x:%02x:%02x "
             "state=0x%02x aggregated=%d\n",
@@ -273,8 +286,9 @@ static int lacp_receive_pdu(uint16_t port_number, const struct lacp_pdu *pdu, ui
 }
 
 /* Periodic LACP tick — call from timer */
-static void lacp_tick(void)
+static void lacp_tick(void *arg)
 {
+    (void)arg;
     if (!lacp_enabled) return;
 
     for (int i = 0; i < LACP_MAX_PORTS; i++) {
@@ -282,16 +296,48 @@ static void lacp_tick(void)
 
         struct lacp_port *p = &lacp_ports[i];
 
-        /* Decrement periodic timer */
+        /* Decrement periodic timer — send PDU on expiry */
         if (p->periodic_timer > 0) {
             p->periodic_timer--;
             if (p->periodic_timer == 0) {
-                /* Send LACP PDU periodically */
                 lacp_send_pdu(p->port_number);
                 p->periodic_timer = (p->periodic_state == LACP_PERIODIC_FAST) ? 1 : 30;
             }
         }
+
+        /* Decrement current_while_timer — CURRENT → EXPIRED on expiry */
+        if (p->current_while_timer > 0) {
+            p->current_while_timer--;
+            if (p->current_while_timer == 0) {
+                p->state_flags |= LACP_STATE_EXPIRED;
+                p->state_flags &= ~LACP_STATE_DEFAULTED;
+                p->actor.state_flags |= LACP_STATE_EXPIRED;
+                p->actor.state_flags &= ~LACP_STATE_DEFAULTED;
+                p->aggregated = 0;
+                /* Start wait timer before transitioning to DEFAULTED */
+                p->wait_while_timer = (p->periodic_state == LACP_PERIODIC_FAST) ? 3 : 90;
+                kprintf("lacp: port %u -> EXPIRED (current_while_timer=0)\n",
+                        p->port_number);
+            }
+        }
+
+        /* Decrement wait_while_timer — EXPIRED → DEFAULTED on expiry */
+        if (p->wait_while_timer > 0 &&
+            (p->state_flags & LACP_STATE_EXPIRED)) {
+            p->wait_while_timer--;
+            if (p->wait_while_timer == 0) {
+                p->state_flags |= LACP_STATE_DEFAULTED;
+                p->state_flags &= ~LACP_STATE_EXPIRED;
+                p->actor.state_flags |= LACP_STATE_DEFAULTED;
+                p->actor.state_flags &= ~LACP_STATE_EXPIRED;
+                kprintf("lacp: port %u -> DEFAULTED (wait_while_timer=0)\n",
+                        p->port_number);
+            }
+        }
     }
+
+    /* Re-arm the timer for next tick */
+    lacp_timer_id = timer_schedule(lacp_tick, NULL, 1);
 }
 #include "module.h"
 module_init(lacp_init);
@@ -371,6 +417,9 @@ static int lacp_mux_machine(void *port, int event)
         p->actor.state_flags &= ~(LACP_STATE_SYNC | LACP_STATE_COLLECTING |
                                   LACP_STATE_DISTRIBUTING);
     }
+    /* Sync working state flags — keep timer-based flags intact */
+    p->state_flags = (p->state_flags & (LACP_STATE_DEFAULTED | LACP_STATE_EXPIRED)) |
+                     (p->actor.state_flags & ~(LACP_STATE_DEFAULTED | LACP_STATE_EXPIRED));
 
     kprintf("[lacp] lacp_mux_machine: port=%u event=%d -> state=%d aggregated=%d\n",
             p->port_number, event, new_state, p->aggregated);
@@ -390,23 +439,27 @@ static int lacp_rx_machine(void *port, int event)
         p->state_flags |= LACP_STATE_DEFAULTED;
         p->state_flags &= ~LACP_STATE_EXPIRED;
         p->current_while_timer = 0;
+        p->actor.state_flags = p->state_flags;
         kprintf("[lacp] lacp_rx_machine: port=%u -> PORT_DISABLED\n", p->port_number);
         return 1;
     }
     if (event == 2) { /* EXPIRE */
         p->state_flags |= LACP_STATE_EXPIRED;
         p->state_flags &= ~LACP_STATE_DEFAULTED;
+        p->actor.state_flags = p->state_flags;
         kprintf("[lacp] lacp_rx_machine: port=%u -> EXPIRED\n", p->port_number);
         return 2;
     }
     if (event == 3) { /* DEFAULT */
         p->state_flags |= LACP_STATE_DEFAULTED;
         p->state_flags &= ~LACP_STATE_EXPIRED;
+        p->actor.state_flags = p->state_flags;
         kprintf("[lacp] lacp_rx_machine: port=%u -> DEFAULTED\n", p->port_number);
         return 3;
     }
     /* event == 0 or anything else: CURRENT (received valid LACP PDU) */
     p->state_flags &= ~(LACP_STATE_DEFAULTED | LACP_STATE_EXPIRED);
+    p->actor.state_flags = p->state_flags;
     kprintf("[lacp] lacp_rx_machine: port=%u -> CURRENT\n", p->port_number);
     return 4;
 }
