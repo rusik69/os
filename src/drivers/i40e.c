@@ -269,7 +269,7 @@ int i40e_setup_rx_ring(struct i40e_priv *priv, int q_idx)
         rxq->buffers[i] = (uint8_t *)pool_virt + i * I40E_RX_BUF_SIZE;
         rxq->buf_phys[i] = pool_phys + (uint64_t)(i * I40E_RX_BUF_SIZE);
         rxq->descs[i].addr = rxq->buf_phys[i];
-        rxq->descs[i].status_error = 0;
+        rxq->descs[i].status_error_len = 0;
     }
 
     /* Program RX queue registers */
@@ -459,6 +459,7 @@ int i40e_receive_ring(struct i40e_priv *priv, int q_idx,
     struct i40e_rxq *rxq;
     struct i40e_rx_desc *desc;
     int idx, len = 0;
+    uint64_t sel;
 
     if (q_idx < 0 || q_idx >= priv->num_rx_queues)
         return -EINVAL;
@@ -467,23 +468,25 @@ int i40e_receive_ring(struct i40e_priv *priv, int q_idx,
     idx = rxq->next;
 
     desc = &rxq->descs[idx];
-    if (!(desc->status_error & I40E_RXD_ST_DD))
+    sel = desc->status_error_len;
+    if (!(sel & I40E_RXD_ST_DD))
         return 0;  /* no packet ready */
 
     /* Check if this is a complete packet (EOP) */
-    if (!(desc->status_error & I40E_RXD_ST_EOP)) {
+    if (!(sel & I40E_RXD_ST_EOP)) {
         /* For now, skip partial packets (would need reassembly) */
-        desc->status_error = 0;
+        desc->status_error_len = 0;
         goto skip;
     }
 
-    /* Get the received length */
-    len = (int)(desc->length & 0x3FFF);
+    /* Get the received length from status_error_len bits [51:38] */
+    len = (int)((sel >> I40E_RXD_LEN_SHIFT) & 0x3FFF);
     if (len > (int)max_len)
         len = (int)max_len;
 
-    if (desc->status_error & (I40E_RXD_ERR_CE | I40E_RXD_ERR_SE |
-                               I40E_RXD_ERR_RXE)) {
+    /* Check error bits in status_error_len bits [26:19] */
+    if ((sel >> I40E_RXD_ERR_SHIFT) & (I40E_RXD_ERR_CE | I40E_RXD_ERR_SE |
+                                         I40E_RXD_ERR_RXE)) {
         priv->rx_errors++;
         goto skip;
     }
@@ -497,7 +500,7 @@ int i40e_receive_ring(struct i40e_priv *priv, int q_idx,
 
 skip:
     /* Recycle the descriptor — clear status, re-arm with buffer addr */
-    desc->status_error = 0;
+    desc->status_error_len = 0;
     desc->addr = rxq->buf_phys[idx];
 
     /* Advance consumer index */
@@ -1236,7 +1239,7 @@ static int i40e_vf_setup_rx_ring(struct i40e_vf_priv *priv, int vf_q_idx)
         rxq->buffers[i] = (uint8_t *)pool_virt + i * I40E_RX_BUF_SIZE;
         rxq->buf_phys[i] = pool_phys + (uint64_t)(i * I40E_RX_BUF_SIZE);
         rxq->descs[i].addr = rxq->buf_phys[i];
-        rxq->descs[i].status_error = 0;
+        rxq->descs[i].status_error_len = 0;
     }
 
     if (i40e_vf_shared_pf != NULL) {
@@ -1392,6 +1395,7 @@ static int i40e_vf_receive_ring(struct i40e_vf_priv *priv, int vf_q_idx,
     struct i40e_rx_desc *desc;
     int idx, len = 0;
     int hw_q_idx;
+    uint64_t sel;
 
     if (vf_q_idx < 0 || vf_q_idx >= priv->num_rx_queues)
         return -EINVAL;
@@ -1401,20 +1405,21 @@ static int i40e_vf_receive_ring(struct i40e_vf_priv *priv, int vf_q_idx,
     idx = rxq->next;
 
     desc = &rxq->descs[idx];
-    if (!(desc->status_error & I40E_RXD_ST_DD))
+    sel = desc->status_error_len;
+    if (!(sel & I40E_RXD_ST_DD))
         return 0;
 
-    if (!(desc->status_error & I40E_RXD_ST_EOP)) {
-        desc->status_error = 0;
+    if (!(sel & I40E_RXD_ST_EOP)) {
+        desc->status_error_len = 0;
         goto skip;
     }
 
-    len = (int)(desc->length & 0x3FFF);
+    len = (int)((sel >> I40E_RXD_LEN_SHIFT) & 0x3FFF);
     if (len > (int)max_len)
         len = (int)max_len;
 
-    if (desc->status_error & (I40E_RXD_ERR_CE | I40E_RXD_ERR_SE |
-                               I40E_RXD_ERR_RXE)) {
+    if ((sel >> I40E_RXD_ERR_SHIFT) & (I40E_RXD_ERR_CE | I40E_RXD_ERR_SE |
+                                         I40E_RXD_ERR_RXE)) {
         priv->rx_errors++;
         goto skip;
     }
@@ -1426,7 +1431,7 @@ static int i40e_vf_receive_ring(struct i40e_vf_priv *priv, int vf_q_idx,
     priv->rx_bytes += (uint64_t)len;
 
 skip:
-    desc->status_error = 0;
+    desc->status_error_len = 0;
     desc->addr = rxq->buf_phys[idx];
     rxq->next = (idx + 1) & (I40E_RX_RING_SIZE - 1);
 

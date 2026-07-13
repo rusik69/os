@@ -166,13 +166,15 @@
 /* ── Transmit Descriptor (32 bytes, advanced) ─────────────────────────
  * The i40e uses a 32-byte descriptor format (both legacy and advanced).
  * We use the advanced format for full offload support.
+ * Each descriptor is exactly 32 bytes (4 quadwords) in the ring.
  */
 struct i40e_tx_desc {
-    uint64_t addr;          /* physical address of packet data */
-    uint32_t cmd_type_len;  /* command / type / length */
-    uint32_t olinfo_status; /* offload info / completion status */
-    uint32_t rsvd;          /* reserved (must be 0) */
-    uint32_t bti;           /* buffer type info / FD filter */
+    uint64_t addr;          /* bytes 0-7: physical address of packet data */
+    uint32_t cmd_type_len;  /* bytes 8-11: command / type / length */
+    uint32_t olinfo_status; /* bytes 12-15: offload info / completion status */
+    uint32_t rsvd;          /* bytes 16-19: reserved (must be 0) */
+    uint32_t bti;           /* bytes 20-23: buffer type info / FD filter */
+    uint64_t reserved;      /* bytes 24-31: reserved (must be 0) */
 } __attribute__((packed));
 
 /* TX descriptor command bits */
@@ -201,20 +203,29 @@ struct i40e_tx_desc {
 /* TX descriptor status bits (from olinfo_status) */
 #define I40E_TXD_ST_DD             (1U << 0)   /* Descriptor Done */
 
-/* ── Receive Descriptor (32 bytes, advanced) ───────────────────────── */
+/* ── Receive Descriptor (32 bytes, advanced, write-back) ─────────────
+ *
+ * The 32-byte RX descriptor write-back format:
+ *   bytes  0-7:  pkt_addr - buffer address (written by driver, preserved)
+ *   bytes  8-15: status_error_len - Status/Error/PTYPE/Length (HW write-back)
+ *     bits [18:0]   = Status (DD at bit 0, EOP at bit 1)
+ *     bits [26:19]  = Error (CE=bit0, SE=bit1, RXE=bit6)
+ *     bits [29:27]  = Extended Status
+ *     bits [36:30]  = Packet Type (PTYPE)
+ *     bits [51:38]  = Length (14 bits, max 16383)
+ *     bits [62:52]  = Reserved
+ *     bit  63       = SPH (Split Header)
+ *   bytes 16-31: reserved
+ */
 struct i40e_rx_desc {
-    uint64_t addr;          /* physical address of receive buffer */
-    uint64_t rsvd;          /* reserved */
-    uint32_t hdr_addr;      /* header address / status field */
-    uint32_t hdr_len;       /* header length / RSS hash */
-    uint32_t rss_hash;      /* RSS hash value */
-    uint32_t status_error;  /* status and error */
-    uint32_t length;        /* received data length */
-    uint32_t vlan_tag;      /* VLAN tag (if stripped) */
-    uint64_t rsvd2;         /* reserved */
+    uint64_t addr;              /* bytes 0-7: Buffer address (set by driver) */
+    uint64_t status_error_len;  /* bytes 8-15: Status/Error/PTYPE/Length (HW fills) */
+    uint64_t reserved[2];       /* bytes 16-31: Reserved */
 } __attribute__((packed));
+#define I40E_RXD_ERR_SHIFT    19  /* shift to reach Error field in status_error_len */
+#define I40E_RXD_LEN_SHIFT    38  /* shift to reach Length field in status_error_len */
 
-/* RX descriptor status bits (from status_error) */
+/* RX descriptor status bits */
 #define I40E_RXD_ST_DD            (1U << 0)   /* Descriptor Done */
 #define I40E_RXD_ST_EOP           (1U << 1)   /* End of Packet */
 #define I40E_RXD_ST_RSVD         (1U << 2)   /* reserved */
@@ -224,7 +235,7 @@ struct i40e_rx_desc {
 #define I40E_RXD_ST_UDPCS        (1U << 6)   /* UDP Checksum */
 #define I40E_RXD_ST_PIF          (1U << 7)   /* Passed Internal Filter */
 
-/* RX descriptor error bits */
+/* RX descriptor error bits (within status_error_len bits [26:19]) */
 #define I40E_RXD_ERR_CE           (1U << 0)   /* CRC Error */
 #define I40E_RXD_ERR_SE           (1U << 1)   /* Symbol Error */
 #define I40E_RXD_ERR_RXE          (1U << 6)   /* RX Data Error */
