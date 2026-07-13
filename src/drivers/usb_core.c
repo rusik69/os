@@ -382,6 +382,8 @@ int usb_parse_device_descriptor(const uint8_t *raw, uint16_t len,
 int usb_parse_config_descriptor(const uint8_t *raw, uint16_t len,
                                 struct usb_config_descriptor *config)
 {
+    uint16_t wTotalLength;
+
     if (!raw || !config)
         return -EINVAL;
     if (len < 9)
@@ -393,7 +395,14 @@ int usb_parse_config_descriptor(const uint8_t *raw, uint16_t len,
 
     config->bLength         = raw[0];
     config->bDescriptorType = raw[1];
-    config->wTotalLength    = (uint16_t)raw[2] | ((uint16_t)raw[3] << 8);
+    wTotalLength            = (uint16_t)raw[2] | ((uint16_t)raw[3] << 8);
+
+    /* wTotalLength must not exceed the available buffer and must be at
+     * least large enough to hold the config descriptor header itself. */
+    if (wTotalLength > len || wTotalLength < raw[0])
+        return -EINVAL;
+
+    config->wTotalLength    = wTotalLength;
     config->bNumInterfaces  = raw[4];
     config->bConfigurationValue = raw[5];
     config->iConfiguration  = raw[6];
