@@ -86,6 +86,31 @@ int rtl8139_set_mac(struct rtl8139_priv *priv, const uint8_t *mac)
     return 0;
 }
 
+/* ── Multicast filter configuration ────────────────────────────── */
+
+void rtl8139_set_multicast_filter(struct rtl8139_priv *priv)
+{
+    /* The RTL8139 uses a 64-bit hash-based multicast address filter
+     * (MAR0-MAR7).  When RCR_AM is set, the NIC computes a 6-bit hash
+     * index (CRC bits 30:26 of the destination address) and tests the
+     * corresponding bit in the 64-bit MAR.
+     *
+     * After power-on or system-wide reset, the MAR is undefined or all
+     * zeros, which would cause the NIC to reject ALL multicast packets
+     * even though the driver advertises multicast support.  Writing all
+     * ones (accept-all-multicast) ensures full multicast reception — the
+     * simplest safe default for a driver that does not yet implement
+     * fine-grained multicast address registration. */
+    rtl8139_writeb(priv, RTL_REG_MAR0, 0xFF);
+    rtl8139_writeb(priv, RTL_REG_MAR1, 0xFF);
+    rtl8139_writeb(priv, RTL_REG_MAR2, 0xFF);
+    rtl8139_writeb(priv, RTL_REG_MAR3, 0xFF);
+    rtl8139_writeb(priv, RTL_REG_MAR4, 0xFF);
+    rtl8139_writeb(priv, RTL_REG_MAR5, 0xFF);
+    rtl8139_writeb(priv, RTL_REG_MAR6, 0xFF);
+    rtl8139_writeb(priv, RTL_REG_MAR7, 0xFF);
+}
+
 /* ── Hardware reset ──────────────────────────────────────────────── */
 
 int rtl8139_reset(struct rtl8139_priv *priv)
@@ -172,6 +197,10 @@ int rtl8139_init_hw(struct rtl8139_priv *priv)
 
     /* Step 9: Clear missed packet counter */
     rtl8139_readl(priv, RTL_REG_MPC);
+
+    /* Step 9b: Initialize multicast address filter to accept-all.
+     * Must be done while config registers are unlocked (step 3). */
+    rtl8139_set_multicast_filter(priv);
 
     /* Step 10: Lock configuration registers */
     rtl8139_writeb(priv, RTL_REG_9346CR, RTL_9346CR_EECLK);

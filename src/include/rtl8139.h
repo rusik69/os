@@ -23,10 +23,14 @@
 #define RTL_REG_IDR3       0x03
 #define RTL_REG_IDR4       0x04
 #define RTL_REG_IDR5       0x05
-#define RTL_REG_MAR0       0x08  /* Multicast Address Filter (8 bytes) */
-#define RTL_REG_MAR3       0x0B
-#define RTL_REG_MAR4       0x0C
-#define RTL_REG_MAR7       0x0F
+#define RTL_REG_MAR0       0x08  /* Multicast Address Filter — byte 0 (bits 7:0) */
+#define RTL_REG_MAR1       0x09  /* Multicast Address Filter — byte 1 (bits 15:8) */
+#define RTL_REG_MAR2       0x0A  /* Multicast Address Filter — byte 2 (bits 23:16) */
+#define RTL_REG_MAR3       0x0B  /* Multicast Address Filter — byte 3 (bits 31:24) */
+#define RTL_REG_MAR4       0x0C  /* Multicast Address Filter — byte 4 (bits 39:32) */
+#define RTL_REG_MAR5       0x0D  /* Multicast Address Filter — byte 5 (bits 47:40) */
+#define RTL_REG_MAR6       0x0E  /* Multicast Address Filter — byte 6 (bits 55:48) */
+#define RTL_REG_MAR7       0x0F  /* Multicast Address Filter — byte 7 (bits 63:56) */
 #define RTL_REG_TDSTAT0    0x10  /* Transmit Status Descriptor 0 (4 bytes) */
 #define RTL_REG_TDSTAT1    0x14  /* Transmit Status Descriptor 1 (4 bytes) */
 #define RTL_REG_TDSTAT2    0x18  /* Transmit Status Descriptor 2 (4 bytes) */
@@ -228,6 +232,9 @@ void rtl8139_writel(struct rtl8139_priv *priv, uint16_t reg, uint32_t val);
 /* MAC address access */
 void rtl8139_get_mac(struct rtl8139_priv *priv, uint8_t *mac);
 int  rtl8139_set_mac(struct rtl8139_priv *priv, const uint8_t *mac);
+
+/* Multicast filter */
+void rtl8139_set_multicast_filter(struct rtl8139_priv *priv);
 
 /* Hardware control */
 int  rtl8139_reset(struct rtl8139_priv *priv);
