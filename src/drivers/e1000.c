@@ -1594,6 +1594,9 @@ static int e1000_netdev_transmit(struct net_device *dev,
     uint16_t tx_len = len;
     uint8_t vlan_buf[RX_BUF_SIZE];  /* for VLAN-offloaded frame rebuild */
 
+    /* Safety clamp -- prevents TX buffer overrun for oversized frames */
+    if (tx_len > RX_BUF_SIZE) tx_len = RX_BUF_SIZE;
+
     /* VLAN offload: detect 802.1Q tagged frames and offload tag
      * insertion to hardware via the VLE (VLAN Insertion Enable) bit.
      *
@@ -1682,6 +1685,11 @@ static int e1000_netdev_receive(struct net_device *dev,
         }
 
         uint16_t len = qp->rx_descs[idx].length;
+        /* Clamp to source buffer size -- prevents OOB read when hardware
+         * reports length > RX_BUF_SIZE without setting the error flag
+         * (hardware errata, QEMU simplifications, LPE inadvertently
+         * enabled). */
+        if (len > RX_BUF_SIZE) len = RX_BUF_SIZE;
         if (len > max_len) len = max_len;
         memcpy(buf, qp->rx_buffers[idx], len);
 
@@ -1790,6 +1798,7 @@ int e1000_receive(void *buf, uint16_t max_len) {
         }
 
         uint16_t len = qp->rx_descs[idx].length;
+        if (len > RX_BUF_SIZE) len = RX_BUF_SIZE;
         if (len > max_len) len = max_len;
         memcpy(buf, qp->rx_buffers[idx], len);
 
