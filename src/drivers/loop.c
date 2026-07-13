@@ -63,21 +63,40 @@ static int loop_submit(struct blk_request *req) {
     if (!req) return -EINVAL;
 
     int idx = loop_id_to_idx(req->dev_id);
-    if (idx < 0 || !g_loops[idx].in_use)
+    if (idx < 0)
         return -ENODEV;
 
-    struct loop_dev *loop = &g_loops[idx];
-    int backing_dev = loop->backing_dev_id;
+    /*
+     * Snapshot loop device state under the lock to prevent races
+     * with loop_destroy() / loop_create() which modify g_loops[]
+     * under g_loop_lock.  Without this, another CPU could zero
+     * g_loops[idx] between reads, giving us a corrupted backing
+     * offset or backing device ID (item 628: concurrent access,
+     * writer vs reader).
+     */
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_loop_lock, &irq_flags);
+
+    if (!g_loops[idx].in_use) {
+        spinlock_irqsave_release(&g_loop_lock, irq_flags);
+        return -ENODEV;
+    }
+
+    int backing_dev = g_loops[idx].backing_dev_id;
+    uint64_t backing_offset = g_loops[idx].backing_offset;
+    uint64_t sectors = g_loops[idx].sectors;
+
+    spinlock_irqsave_release(&g_loop_lock, irq_flags);
 
     /* Validate the backing device is still active */
     if (!blockdev_is_registered(backing_dev))
         return -ENODEV;
 
     /* Translate LBA: add the backing offset */
-    uint64_t backing_lba = req->lba + loop->backing_offset;
+    uint64_t backing_lba = req->lba + backing_offset;
 
     /* Validate the request fits within our sector range */
-    if (req->lba + req->count > loop->sectors)
+    if (req->lba + req->count > sectors)
         return -EIO;
 
     /*

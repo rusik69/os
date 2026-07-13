@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 627,
+  "current_item": 628,
   "current_batch": "B010",
   "completed_items": [
     1,
@@ -628,10 +628,11 @@
     623,
     624,
     625,
-    626
+    626,
+    627
   ],
-  "found_bugs": 1092,
-  "fixed_bugs": 1092,
+  "found_bugs": 1093,
+  "fixed_bugs": 1093,
   "completed_batches": [
     "B001",
     "B002",
@@ -643,6 +644,6 @@
     "B008",
     "B009"
   ],
-  "last_item_timestamp": "2026-07-13T05:45:00",
-  "last_item_result": "item 626: src/drivers/vhost_scsi.c — fixed 3 iov bounds bugs: integer overflow in READ10/WRITE10 bounds check (removed vulnerable offset+length wraparound), missing data_len clamp on INQUIRY and REPORT_LUNS copies. All three paths could overrun the iov data buffer. Build-verified."
+  "last_item_timestamp": "2026-07-13T06:15:00",
+  "last_item_result": "item 627: src/drivers/vmw_pvscsi.c — fixed 2 ring handling bugs: (1) MMIO BAR0 physical address used directly as virtual address without PHYS_TO_VIRT translation — would fault on high-half kernel when accessing registers; (2) ring base page PFNs never written to PVSCSI registers REQ_RING_PAGE (0x010), CMP_RING_PAGE (0x018), MSG_RING_PAGE (0x020) — pvscsi_setup_rings() only programmed sizes and issued SETUP_RINGS command, leaving the device with no way to locate the ring buffers. Fixed by allocating DMA pages, writing PFNs to registers, and using PHYS_TO_VIRT for MMIO mapping. Build-verified."
 }
