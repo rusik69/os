@@ -97,6 +97,10 @@ int vhost_scsi_handle_cmd(struct virtio_scsi_cmd_req *req,
         uint32_t inq_len = sizeof(struct scsi_inquiry_data);
         uint32_t copy_len = (alloc_len < inq_len) ? alloc_len : inq_len;
 
+        /* Clamp to actual data buffer to avoid iov overrun */
+        if (copy_len > data_len)
+            copy_len = data_len;
+
         struct scsi_inquiry_data inq;
         scsi_build_inquiry(&inq, lun);
         if (data_buf && copy_len > 0)
@@ -133,8 +137,10 @@ int vhost_scsi_handle_cmd(struct virtio_scsi_cmd_req *req,
 
         uint64_t offset = (uint64_t)lba * VHOST_SCSI_SECTOR_SIZE;
         uint64_t length = (uint64_t)num_blocks * VHOST_SCSI_SECTOR_SIZE;
+        uint64_t backing_size = lun->num_blocks * VHOST_SCSI_SECTOR_SIZE;
 
-        if (offset + length > lun->num_blocks * VHOST_SCSI_SECTOR_SIZE) {
+        /* Guard against integer overflow in offset+length */
+        if (offset > backing_size || length > backing_size - offset) {
             resp->status = VHOST_SCSI_CHECK_COND;
             return -1;
         }
@@ -158,8 +164,10 @@ int vhost_scsi_handle_cmd(struct virtio_scsi_cmd_req *req,
 
         uint64_t offset = (uint64_t)lba * VHOST_SCSI_SECTOR_SIZE;
         uint64_t length = (uint64_t)num_blocks * VHOST_SCSI_SECTOR_SIZE;
+        uint64_t backing_size = lun->num_blocks * VHOST_SCSI_SECTOR_SIZE;
 
-        if (offset + length > lun->num_blocks * VHOST_SCSI_SECTOR_SIZE) {
+        /* Guard against integer overflow in offset+length */
+        if (offset > backing_size || length > backing_size - offset) {
             resp->status = VHOST_SCSI_CHECK_COND;
             return -1;
         }
@@ -182,6 +190,11 @@ int vhost_scsi_handle_cmd(struct virtio_scsi_cmd_req *req,
                              (cdb[8] << 8)  | cdb[9];
         uint32_t rld_len = sizeof(rld);
         uint32_t copy_len = (alloc_len < rld_len) ? alloc_len : rld_len;
+
+        /* Clamp to actual data buffer to avoid iov overrun */
+        if (copy_len > data_len)
+            copy_len = data_len;
+
         if (data_buf && copy_len > 0)
             memcpy(data_buf, &rld, copy_len);
         resp->status = VHOST_SCSI_GOOD;
