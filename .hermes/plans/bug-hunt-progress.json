@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 624,
+  "current_item": 627,
   "current_batch": "B010",
   "completed_items": [
     1,
@@ -625,10 +625,13 @@
     620,
     621,
     622,
-    623
+    623,
+    624,
+    625,
+    626
   ],
-  "found_bugs": 1087,
-  "fixed_bugs": 1087,
+  "found_bugs": 1092,
+  "fixed_bugs": 1092,
   "completed_batches": [
     "B001",
     "B002",
@@ -640,6 +643,6 @@
     "B008",
     "B009"
   ],
-  "last_item_timestamp": "2026-07-13T03:48:00",
-  "last_item_result": "item 623: src/drivers/virtio_blk.c — audited clean. Verified virtio-blk request descriptor chain in vblk_queue_request() and vblk_queue_special(): 3-descriptor chain (header→data→status) with correct NEXT/WRITE flags, all device-readable before device-writable (virtio spec §5.2.6), correct avail ring interaction with memory barriers, proper used ring polling. No bugs found in descriptor chain construction."
+  "last_item_timestamp": "2026-07-13T05:45:00",
+  "last_item_result": "item 626: src/drivers/vhost_scsi.c — fixed 3 iov bounds bugs: integer overflow in READ10/WRITE10 bounds check (removed vulnerable offset+length wraparound), missing data_len clamp on INQUIRY and REPORT_LUNS copies. All three paths could overrun the iov data buffer. Build-verified."
 }

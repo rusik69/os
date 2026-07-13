@@ -92,6 +92,13 @@ static uint64_t       pvscsi_mmio_phys = 0;
 static uint32_t       pvscsi_version = 0;
 static int            pvscsi_irq     = 0;
 
+/* ── Ring buffers (DMA-able) ──────────────────────────────────── */
+#define PVSCSI_PAGE_SHIFT   12      /* PAGE_SIZE = 4096 = 2^12 */
+
+static uint64_t       pvscsi_req_ring_phys = 0;
+static uint64_t       pvscsi_cmp_ring_phys = 0;
+static uint64_t       pvscsi_msg_ring_phys = 0;
+
 /* ── MMIO accessors ────────────────────────────────────────────── */
 
 static inline uint32_t pvscsi_readl(uint32_t offset)
@@ -108,10 +115,32 @@ static inline void pvscsi_writel(uint32_t offset, uint32_t val)
 
 static int pvscsi_setup_rings(void)
 {
+    if (!pvscsi_mmio)
+        return -1;
+
+    /* Write ring page PFNs (physical page numbers) */
+    pvscsi_writel(PVSCSI_REG_OFFSET_REQ_RING,
+                  (uint32_t)(pvscsi_req_ring_phys >> PVSCSI_PAGE_SHIFT));
+    pvscsi_writel(PVSCSI_REG_OFFSET_CMP_RING,
+                  (uint32_t)(pvscsi_cmp_ring_phys >> PVSCSI_PAGE_SHIFT));
+    pvscsi_writel(PVSCSI_REG_OFFSET_MSG_RING,
+                  (uint32_t)(pvscsi_msg_ring_phys >> PVSCSI_PAGE_SHIFT));
+
+    /* Write ring sizes (number of entries) */
     pvscsi_writel(PVSCSI_REG_OFFSET_REQ_RING_SIZE, PVSCSI_REQ_RING_SIZE);
     pvscsi_writel(PVSCSI_REG_OFFSET_CMP_RING_SIZE, PVSCSI_CMP_RING_SIZE);
     pvscsi_writel(PVSCSI_REG_OFFSET_MSG_RING_SIZE, PVSCSI_MSG_RING_SIZE);
+
+    /* Issue the SETUP_RINGS command */
     pvscsi_writel(PVSCSI_REG_OFFSET_COMMAND, PVSCSI_CMD_SETUP_RINGS);
+
+    kprintf("[vmw-pvscsi] rings: req PFN=%u/%u cmp PFN=%u/%u msg PFN=%u/%u\n",
+            (uint32_t)(pvscsi_req_ring_phys >> PVSCSI_PAGE_SHIFT),
+            PVSCSI_REQ_RING_SIZE,
+            (uint32_t)(pvscsi_cmp_ring_phys >> PVSCSI_PAGE_SHIFT),
+            PVSCSI_CMP_RING_SIZE,
+            (uint32_t)(pvscsi_msg_ring_phys >> PVSCSI_PAGE_SHIFT),
+            PVSCSI_MSG_RING_SIZE);
     return 0;
 }
 
@@ -127,9 +156,24 @@ static void vmw_pvscsi_init(void)
         return;
 
     pvscsi_mmio_phys = dev.bar[0] & ~0xF;
-    pvscsi_mmio = (void *)(uint64_t)pvscsi_mmio_phys;
+    pvscsi_mmio = PHYS_TO_VIRT(pvscsi_mmio_phys);
 
     pci_enable_bus_master(&dev);
+
+    /* Allocate DMA-able pages for request, completion, and message rings */
+    pvscsi_req_ring_phys = pmm_alloc_frame();
+    pvscsi_cmp_ring_phys = pmm_alloc_frame();
+    pvscsi_msg_ring_phys = pmm_alloc_frame();
+
+    if (!pvscsi_req_ring_phys || !pvscsi_cmp_ring_phys || !pvscsi_msg_ring_phys) {
+        kprintf("[vmw-pvscsi] FAILED to allocate ring buffer pages\n");
+        return;
+    }
+
+    /* Zero the ring buffers */
+    memset(PHYS_TO_VIRT(pvscsi_req_ring_phys), 0, PAGE_SIZE);
+    memset(PHYS_TO_VIRT(pvscsi_cmp_ring_phys), 0, PAGE_SIZE);
+    memset(PHYS_TO_VIRT(pvscsi_msg_ring_phys), 0, PAGE_SIZE);
 
     pvscsi_version = pvscsi_readl(PVSCSI_REG_OFFSET_VERSION);
     pvscsi_irq = dev.irq;
