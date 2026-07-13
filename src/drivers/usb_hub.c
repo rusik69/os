@@ -766,8 +766,8 @@ static void usb_hub_poll(void) {
                 }
             }
 
-            /* If we had a pending debounce, check it */
-            if (hub->debounce_pending[p - 1]) {
+            /* If we had a pending debounce (not already processed this iteration) */
+            if (hub->debounce_pending[p - 1] && !(change & PORT_CHANGE_C_CONNECTION)) {
                 int db = hub_port_debounce(hub, p, status);
                 if (db > 0) {
                     /* Debounce passed — connection is stable */
@@ -982,6 +982,18 @@ static int hub_port_debounce(struct hub_state *hub, int port, uint16_t status)
     uint16_t final_change = 0;
     if (hub_get_port_status(hub->dev_addr, (uint8_t)port, &final_status, &final_change) < 0)
         return -1;
+
+    /*
+     * If a new connect/disconnect change flag appeared in the bitmap during
+     * software debounce, a transient disconnection/reconnection occurred.
+     * Leave C_PORT_CONNECTION set so the next poll cycle re-processes it
+     * and starts a fresh debounce (USB 2.0 spec §7.1.7.3).
+     */
+    if (final_change & PORT_CHANGE_C_CONNECTION) {
+        kprintf("[USB HUB] Port %d: connection change during debounce, "
+                "restarting\n", port);
+        return 0;
+    }
 
     if (!!(final_status & PORT_STATUS_CONNECTION) != !!(status & PORT_STATUS_CONNECTION)) {
         /* State changed during debounce — restart */
