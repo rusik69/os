@@ -102,9 +102,12 @@ static int nbd_negotiate(int conn_id, struct nbd_device *dev)
 
     /* Send export name: length 0 (empty name = default export).
      * NBD old-style protocol requires the client to send the export name
-     * after receiving the server's initial data.  A zero-length name
-     * selects the server's default export. */
-    uint32_t namelen = 0;
+     * length in network byte order (big-endian) followed by the name.
+     * A zero-length name selects the server's default export.
+     * Note: htonl ensures the byte order is correct on little-endian
+     * x86-64; for namelen=0 the result is identical regardless, but
+     * using htonl prevents a latent bug if a non-zero name is used. */
+    uint32_t namelen = htonl(0);
     if (nbd_tcp_send(conn_id, &namelen, 4) < 0) {
         kprintf("[NBD] Failed to send export name\n");
         return -1;
@@ -211,13 +214,24 @@ static int nbd_submit_fn(struct blk_request *req)
     if (!dev || !dev->connected)
         return -ENODEV;
 
+    /* Snapshot conn_id immediately after the connected check to prevent
+     * a TOCTOU race with nbd_disconnect().  On SMP, another thread may
+     * call nbd_disconnect() and memset the struct to zero between our
+     * connected check and the conn_id read below.  By snapshoting the
+     * value right here we guarantee we always use the conn_id that was
+     * valid when the device was found connected, even if the struct is
+     * zeroed concurrently.  Without this we could read conn_id = 0
+     * (the post-memset value) and inadvertently send NBD commands to
+     * TCP connection slot 0, which may belong to a different device. */
+    int conn_id = dev->conn_id;
+
     uint64_t offset = req->lba * 512ULL;
     uint32_t len    = req->count * 512;
     int is_write    = (req->flags & BLK_REQ_WRITE);
     uint32_t type   = is_write ? NBD_CMD_WRITE : NBD_CMD_READ;
     uint64_t handle = (uint64_t)((uintptr_t)req);
 
-    int ret = nbd_issue_command(dev->conn_id, type, offset, len, handle,
+    int ret = nbd_issue_command(conn_id, type, offset, len, handle,
                                 req->buf, is_write);
 
     req->result = ret;
@@ -305,6 +319,13 @@ void nbd_disconnect(int dev_id)
         kprintf("[NBD] Device %d not found\n", dev_id);
         return;
     }
+
+    /* Mark disconnected immediately so nbd_find_by_dev_id() and
+     * nbd_submit_fn() see the device as inactive during teardown.
+     * The memset at the end zeros everything (including conn_id),
+     * so we set connected = 0 up front to prevent any concurrent
+     * lookup from treating the device as live while we clean up. */
+    dev->connected = 0;
 
     blockdev_unregister(dev_id);
     net_tcp_close(dev->conn_id);
