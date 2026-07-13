@@ -18,6 +18,7 @@
 #include "net.h"
 #include "errno.h"
 #include "socket.h"
+#include "crc.h"
 
 /* ── Global state ──────────────────────────────────────────────────── */
 
@@ -59,7 +60,7 @@ static int fcoe_xmit_frame(const uint8_t *dst_mac, const uint8_t *src_mac,
     if (!buf) return -ENOMEM;
     struct fcoe_frame *fcoe = (struct fcoe_frame *)buf;
 
-    if (fc_frame_len + sizeof(struct fcoe_frame) + 4 /* CRC */ > 2048) {
+    if (fc_frame_len + sizeof(struct fcoe_frame) + 4 /* CRC */ + 1 /* EOF */ > 2048) {
         kfree(buf);
         return -EINVAL;
     }
@@ -76,9 +77,10 @@ static int fcoe_xmit_frame(const uint8_t *dst_mac, const uint8_t *src_mac,
     memcpy(buf + offset, fc_frame, fc_frame_len);
     offset += fc_frame_len;
 
-    /* Append CRC (simplified: 0x00000000) */
+    /* Append CRC-32C (FC CRC uses Castagnoli polynomial) */
     {
-        uint32_t crc = 0;
+        uint32_t crc = crc32c(0, buf + sizeof(struct fcoe_frame), fc_frame_len);
+        crc = fcoe_htonl(crc);  /* FC CRC transmitted MSB-first */
         memcpy(buf + offset, &crc, sizeof(crc));
     }
     offset += 4;
