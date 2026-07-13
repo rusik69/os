@@ -553,6 +553,81 @@ int mlx4_probe(struct mlx4_priv *priv)
 }
 
 /* ══════════════════════════════════════════════════════════════════════
+ *  Completion queue helpers
+ * ══════════════════════════════════════════════════════════════════════ */
+
+/* mlx4_cq_arm - Arm a completion queue by writing the CQ doorbell.
+ *
+ * This notifies the hardware that the driver has consumed CQEs up to
+ * the consumer_index, allowing the hardware to write new CQEs.
+ * For ConnectX-3, the doorbell is a 32-bit write containing the CQ
+ * number (low 24 bits) with a notification type bit. */
+void mlx4_cq_arm(struct mlx4_cq *cq)
+{
+    if (!cq)
+        return;
+    /* 32-bit doorbell: CQN in low 24 bits + arm bit in bit 30 */
+    uint32_t db_val = (uint32_t)(cq->cqn & 0xFFFFFFU) | (1U << 30);
+    /* (Actual write is device-specific; this is the abstracted form) */
+    (void)db_val;
+}
+
+/* mlx4_cq_init - Initialise a completion queue.
+ *
+ * @cqn:   CQ number (0-based).
+ * @size:  number of CQE entries (must be power of 2 and <= MLX4_CQ_RING_SIZE).
+ * @ring:  virtual address of the CQE ring buffer (must be aligned to 64 bytes).
+ * @ring_phys: physical address of the CQE ring buffer.
+ *
+ * Returns 0 on success, negative errno on failure. */
+int mlx4_cq_init(struct mlx4_priv *priv, int cqn, int size,
+                 struct mlx4_cqe *ring, uint64_t ring_phys)
+{
+    struct mlx4_cq *cq;
+
+    if (!priv || cqn < 0 || cqn >= MLX4_NUM_CQS)
+        return -EINVAL;
+    if (!ring || !ring_phys)
+        return -EINVAL;
+    if (size < 2 || size > MLX4_CQ_RING_SIZE ||
+        (size & (size - 1)) != 0)    /* must be power of 2 */
+        return -EINVAL;
+
+    cq = &priv->cq[cqn];
+    cq->cqn             = cqn;
+    cq->cqe_ring        = ring;
+    cq->cqe_ring_phys   = ring_phys;
+    cq->size            = size;
+    cq->consumer_index  = 0;
+    cq->doorbell_offset = MLX4_CQ_DOORBELL(cqn);
+
+    /* Clear the CQE ring (set owner bit to hardware) */
+    {
+        int i;
+        for (i = 0; i < size; i++)
+            ring[i].flags_syndrome = 0;  /* hardware owner = bit 7 clear */
+    }
+
+    /* Arm the CQ for the first time */
+    mlx4_cq_arm(cq);
+
+    kprintf("  mlx4: CQ%d initialised (%d entries, doorbell at 0x%x)\n",
+            cqn, size, cq->doorbell_offset);
+    return 0;
+}
+
+/* mlx4_cq_cleanup - Tear down a completion queue. */
+void mlx4_cq_cleanup(struct mlx4_cq *cq)
+{
+    if (!cq)
+        return;
+    cq->cqe_ring        = NULL;
+    cq->cqe_ring_phys   = 0;
+    cq->size            = 0;
+    cq->consumer_index  = 0;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
  *  Netdevice glue layer
  *
  *  Connects the mlx4 driver to the kernel's netdevice registration
@@ -727,7 +802,7 @@ MODULE_LICENSE("GPL");
 MODULE_VERSION("1.0");
 MODULE_DESCRIPTION("Mellanox ConnectX-3 (mlx4) Ethernet driver (firmware command interface)");
 MODULE_AUTHOR("1000 Changes Project");
-MODULE_ALIAS("pci:v000014E4d00001007*");
+MODULE_ALIAS("pci:v000015B3d00001007*");
 MODULE_ALIAS("pci:v000015B3d00001004*");
 MODULE_ALIAS("pci:v000015B3d00001013*");
 #endif

@@ -54,6 +54,15 @@
 #define MLX4_HCR_DB        0x20
 #define MLX4_HCR_STAT      0x24
 
+/* ── Completion queue (CQ) register offsets (BAR0 extended) ──────────── *
+ * The CQ doorbell is accessed through a UAR page.  For the simplified
+ * driver model we place the CQ doorbell region at BAR0+0x22000 (above the
+ * mailbox area at 0x20000–0x21FFF).  Each CQ owner updates the hardware
+ * with a single 32-bit write: the CQ number in the low 24 bits.          */
+#define MLX4_CQ_DB_BASE       0x22000U    /* Base offset for CQ doorbells */
+#define MLX4_CQ_DB_STRIDE     0x10        /* Stride per CQ doorbell slot  */
+#define MLX4_CQ_DOORBELL(n)   (MLX4_CQ_DB_BASE + ((uint32_t)(n) * MLX4_CQ_DB_STRIDE))
+
 /* CMD_CTL register bits */
 #define MLX4_HCR_GO_BIT          (1U << 31)   /* Go bit — initiate command */
 #define MLX4_HCR_OPCODE_SHIFT    16            /* Opcode shift in CMD_CTL */
@@ -112,6 +121,8 @@
 #define MLX4_TX_RING_SIZE       256
 #define MLX4_RX_RING_SIZE       256
 #define MLX4_RX_BUF_SIZE        2048
+#define MLX4_CQ_RING_SIZE       256     /* Must be >= max(TX_RING_SIZE,RX_RING_SIZE) */
+#define MLX4_NUM_CQS            2       /* One for TX completions, one for RX */
 
 /* ── Command mailbox structure ─────────────────────────────────────────── *
  * The command descriptor is placed at the mailbox BAR address.
@@ -221,6 +232,46 @@ struct mlx4_rxq {
     uint64_t             buf_phys[MLX4_RX_RING_SIZE]; /* Phys addr of RX buffers */
 };
 
+/* ── Completion Queue Entry (CQE, 32 bytes) ──────────────────────────── *
+ * Written by the hardware to signal that a WQE has completed.
+ * Fields are laid out for 32-byte CQE format (64B_CQE flag selects a
+ * 64-byte variant with identical first-half layout + extended info).      */
+struct mlx4_cqe {
+    uint32_t flags_syndrome;   /* [0:6] syndrome, [7] owner, [8:15] sig_err,
+                                *  [16:22] vendor_err, [23] ml_path,
+                                *  [24:31] sl */
+    uint32_t my_qp;            /* QP number that generated this CQE */
+    uint32_t byte_cnt;         /* Byte count (RX: received bytes) */
+    uint32_t src_qp;           /* Source QP (RX: remote QP number) */
+    uint32_t wqe_cnt;          /* WQE consumer counter */
+    uint32_t g_ml_path;        /* G_mylink / path bits */
+    uint32_t rsvd0;
+    uint32_t rsvd1;
+} __attribute__((packed));
+
+/* CQE flag/syndrome field masks */
+#define MLX4_CQE_OWNER_MASK     (1U << 7)    /* 0 = hardware owns, 1 = software owns */
+#define MLX4_CQE_OWNER_SHIFT    7
+#define MLX4_CQE_IS_OWNED(hw_owned, cqe, idx, size) \
+    ((cqe)->flags_syndrome & (1U << 7)) == ((hw_owned) ? 0 : (1U << 7))
+#define MLX4_CQE_SYNDROME_MASK  0x7F
+#define MLX4_CQE_STATUS_OK      0x00
+#define MLX4_CQE_STATUS_LOC_LEN 0x01     /* Local length error */
+#define MLX4_CQE_STATUS_LOC_QP  0x02     /* Local QP operation error */
+#define MLX4_CQE_STATUS_LOC_PROT 0x04    /* Local protection error */
+#define MLX4_CQE_STATUS_WR_FLUSHED_ERR 0x05
+#define MLX4_CQE_STATUS_REM_ACCESS_ERR 0x06
+
+/* ── Completion queue state ───────────────────────────────────────────── */
+struct mlx4_cq {
+    int                   cqn;             /* CQ number (0-based) */
+    struct mlx4_cqe      *cqe_ring;        /* Virtual addr of CQE ring buffer */
+    uint64_t              cqe_ring_phys;   /* Physical addr of CQE ring buffer */
+    int                   size;            /* Number of CQE entries (power of 2) */
+    int                   consumer_index;  /* Consumer index (mod size) */
+    uint32_t              doorbell_offset; /* BAR0 offset for this CQ's doorbell */
+};
+
 /* ── Driver private data ──────────────────────────────────────────────── */
 struct mlx4_priv {
     int             present;           /* Device found and initialised */
@@ -252,6 +303,9 @@ struct mlx4_priv {
     int             num_rx_queues;
     struct mlx4_txq txq[MLX4_MAX_TX_QUEUES];
     struct mlx4_rxq rxq[MLX4_MAX_RX_QUEUES];
+
+    /* Completion queues (one per direction) */
+    struct mlx4_cq   cq[MLX4_NUM_CQS];
 
     /* Statistics */
     uint64_t        tx_packets;
@@ -314,6 +368,14 @@ int mlx4_query_hca(struct mlx4_priv *priv);
 int mlx4_init_hca(struct mlx4_priv *priv);
 int mlx4_close_hca(struct mlx4_priv *priv);
 int mlx4_query_port(struct mlx4_priv *priv, int port);
+
+/* mlx4_cq_arm - Arm a completion queue, notifying the hardware that
+ * the driver has consumed CQEs up to consumer_index.
+ * This is a stub for the firmware-based CQ model. */
+int mlx4_cq_init(struct mlx4_priv *priv, int cqn, int size,
+                 struct mlx4_cqe *ring, uint64_t ring_phys);
+void mlx4_cq_cleanup(struct mlx4_cq *cq);
+void mlx4_cq_arm(struct mlx4_cq *cq);
 
 /* ── Hardware initialisation ────────────────────────────────────────── */
 int mlx4_init_hw(struct mlx4_priv *priv);
