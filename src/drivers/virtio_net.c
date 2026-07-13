@@ -29,6 +29,7 @@
 #include "pic.h"
 #include "apic.h"
 #include "net.h"
+#include "spinlock.h"
 #ifdef MODULE
 #include "module.h"
 #endif
@@ -267,6 +268,7 @@ static uint32_t vnet_negotiated_features = 0;
 static int     ctrl_vq_available = 0;   /* 1 if control VQ was negotiated and set up */
 static uint8_t ctrl_ack_buf[16];        /* ACK status from device (first byte used) */
 static uint8_t ctrl_data_buf[1024];     /* Scatter buffer for control command data */
+static spinlock_t ctrl_vq_lock = SPINLOCK_INIT;  /* Serializes control VQ access */
 
 /* ── GRO flow table ──────────────────────────────────────────────── */
 static struct gro_flow gro_flows[GRO_MAX_FLOWS];
@@ -1720,9 +1722,13 @@ static int virtio_net_ctrl_send(uint8_t class, uint8_t command,
     struct vring_used  *used  = vring_used_ptr(ctrl_queue_mem);
     struct virtio_net_ctrl_hdr *hdr;
     int desc_count = 0;
+    uint64_t irq_flags;
+    int ret = -EIO;
 
     if (!ctrl_vq_available)
         return -ENOSYS;
+
+    spinlock_irqsave_acquire(&ctrl_vq_lock, &irq_flags);
 
     /* Build descriptor chain:
      *   desc 0: ctrl_hdr (OUT) — always present
@@ -1779,29 +1785,37 @@ static int virtio_net_ctrl_send(uint8_t class, uint8_t command,
     }
 
     /* Place the chain head into the avail ring */
-    uint16_t slot = avail->idx & (VRING_SIZE - 1);
-    avail->ring[slot] = 0;  /* descriptor 0 is always the chain head */
-    __asm__ volatile("" ::: "memory");
-    avail->idx++;
-    __asm__ volatile("" ::: "memory");
+    {
+        uint16_t slot = avail->idx & (VRING_SIZE - 1);
+        avail->ring[slot] = 0;  /* descriptor 0 is always the chain head */
+        __asm__ volatile("" ::: "memory");
+        avail->idx++;
+        __asm__ volatile("" ::: "memory");
+    }
 
     /* Notify the device */
     vio_outw(VIRTIO_PCI_QUEUE_NOTIFY, CTRL_QUEUE_IDX);
 
     /* Wait for device to process the control command */
-    uint64_t spin = 0;
-    uint16_t last_used = used->idx;
-    while (used->idx == last_used && spin++ < 1000000)
-        __asm__ volatile("" ::: "memory");
+    {
+        uint64_t spin = 0;
+        uint16_t last_used = used->idx;
+        while (used->idx == last_used && spin++ < 1000000)
+            __asm__ volatile("" ::: "memory");
 
-    if (used->idx == last_used)
-        return -EIO;  /* Device did not process command in time */
+        if (used->idx == last_used)
+            goto out;
+    }
 
     /* Check ACK status */
-    if (ctrl_ack_buf[0] == VIRTIO_NET_OK)
-        return 0;
+    if (ctrl_ack_buf[0] == VIRTIO_NET_OK) {
+        ret = 0;
+        goto out;
+    }
 
-    return -EIO;  /* Device rejected the command */
+out:
+    spinlock_irqsave_release(&ctrl_vq_lock, irq_flags);
+    return ret;
 }
 
 /* ── Set promiscuous mode ──────────────────────────────────────────
