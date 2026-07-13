@@ -188,7 +188,6 @@ static int iscsi_submit_scsi_cmd(struct iscsi_session *sess,
                                   int data_dir)
 {
     struct iscsi_bhs bhs;
-    uint8_t pdu_buf[64];  /* BHS + small CDB */
 
     memset(&bhs, 0, sizeof(bhs));
     bhs.opcode = ISCSI_OP_SCSI_CMD | ISCSI_OP_FINAL;
@@ -198,40 +197,42 @@ static int iscsi_submit_scsi_cmd(struct iscsi_session *sess,
     else if (data_dir == ISCSI_DATA_OUT)
         bhs.flags |= ISCSI_FLAG_WRITE;
 
-    /* Fill in expected data length (big-endian) in the LUN/len field */
-    /* For simplicity we use ITT as a tag */
+    /* Fill in initiator task tag and sequence numbers */
     bhs.itt = iscsi_htonl(sess->cmd_sn++);
     bhs.exp_cmd_sn = iscsi_htonl(sess->cmd_sn);
     bhs.max_cmd_sn = iscsi_htonl(sess->cmd_sn + 1);
 
-    /* Set data segment length to the CDB length (unsolicited data for writes) */
-    if (data_dir == ISCSI_DATA_OUT) {
-        bhs.data_seg_len = iscsi_htonl((uint32_t)data_len);
-    }
-
-    /* Send BHS */
-    if (iscsi_transmit_pdu(sess, &bhs, NULL, 0) < 0)
-        return -EIO;
-
-    /* Send CDB as AHS (or inline if small) */
+    /* Embed CDB in BHS bytes 32-47 (per RFC 3720 §10.3).
+     * For SCSI Command PDUs, the CDB resides in the last 16 bytes
+     * of the 48-byte BHS, not as a separate TCP segment. */
     if (cdb_len > 0) {
-        if (iscsi_tcp_send(sess->conn_id, cdb, (uint32_t)cdb_len) < 0)
-            return -EIO;
+        int copy_len = (cdb_len > 16) ? 16 : cdb_len;
+        uint8_t *bhs_cdb = ((uint8_t *)&bhs) + 32;
+        memcpy(bhs_cdb, cdb, (size_t)copy_len);
+        /* Remaining CDB bytes (if cdb_len < 16) are already zero from memset */
     }
 
-    /* For writes: send data after the command */
+    /* Send BHS with optional unsolicited data segment (for writes) */
     if (data_dir == ISCSI_DATA_OUT && data && data_len > 0) {
-        if (iscsi_tcp_send(sess->conn_id, data, (uint32_t)data_len) < 0)
+        if (iscsi_transmit_pdu(sess, &bhs, data, (uint32_t)data_len) < 0)
+            return -EIO;
+    } else {
+        if (iscsi_transmit_pdu(sess, &bhs, NULL, 0) < 0)
             return -EIO;
     }
 
-    /* Receive response */
+    /* Receive SCSI Response PDU */
     struct iscsi_bhs rsp_bhs;
     uint32_t rsp_dlen = 0;
     if (iscsi_receive_pdu(sess, &rsp_bhs, NULL, &rsp_dlen) < 0)
         return -EIO;
 
-    /* For reads: receive data */
+    /* Simplified read data handling: after the response PDU, try to read
+     * remaining data.  NOTE: Per RFC 3720, read data arrives in separate
+     * Data-In PDUs (opcode 0x25), not in the Response PDU data segment.
+     * A full implementation would loop on Data-In PDUs until the S-bit is
+     * set, then read the SCSI Response.  This simplified version works
+     * only with non-standard targets that inline read data. */
     if (data_dir == ISCSI_DATA_IN && data && rsp_dlen > 0) {
         if (rsp_dlen > (uint32_t)data_len)
             rsp_dlen = (uint32_t)data_len;

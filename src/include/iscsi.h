@@ -62,6 +62,7 @@ struct iscsi_bhs {
     uint32_t max_cmd_sn;       /* Maximum Command SN */
     uint8_t  _rsv[3];
     uint8_t  hslen;            /* Header digest length (0 if no digest) */
+    uint8_t  _bhs_pad[8];      /* BHS is 48 bytes per RFC 3720 */
 } __attribute__((packed));
 
 /* SCSI command descriptor block (CDB) — 16 bytes */
