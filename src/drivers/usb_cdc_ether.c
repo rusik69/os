@@ -620,11 +620,14 @@ static int cdc_ether_frame_tx(struct cdc_ether_device *dev,
  * Extract an Ethernet frame from a received buffer.
  * For ECM: the buffer is the raw Ethernet frame.
  * For EEM: strip the 2-byte EEM header (handle command packets too).
- * Returns the Ethernet frame length (negative on error).
+ * @out_frame_len: receives the Ethernet frame length extracted
+ * Returns the number of bytes consumed from the input buffer on success,
+ *         negative errno on failure.
  */
 static int cdc_ether_frame_rx(struct cdc_ether_device *dev,
                               const uint8_t *in_buf, uint16_t in_len,
-                              uint8_t *out_frame, uint16_t max_out)
+                              uint8_t *out_frame, uint16_t max_out,
+                              uint16_t *out_frame_len)
 {
     if (!dev || !in_buf || !out_frame)
         return -EINVAL;
@@ -637,9 +640,11 @@ static int cdc_ether_frame_rx(struct cdc_ether_device *dev,
         int type = eem_parse_header(header, &payload_len, &crc_flag);
 
         if (type == EEM_HEADER_TYPE_CMD) {
-            /* Command packet — process and return 0 (no data) */
+            /* Command packet — process and return 0 consumed (no data) */
             eem_process_command(dev, header & 0x0FFF);
-            return 0;
+            if (out_frame_len)
+                *out_frame_len = 0;
+            return (int)payload_len;  /* total EEM packet consumed */
         }
 
         /* Data packet: payload follows the 2-byte header */
@@ -659,12 +664,17 @@ static int cdc_ether_frame_rx(struct cdc_ether_device *dev,
 
         uint16_t copy_len = (in_len - 2 < eth_len) ? (in_len - 2) : eth_len;
         memcpy(out_frame, in_buf + 2, copy_len);
-        return (int)copy_len;
+        if (out_frame_len)
+            *out_frame_len = copy_len;
+        /* Return total bytes consumed from input (the full EEM packet) */
+        return (int)payload_len;
     }
 
     /* ECM: raw frame */
     uint16_t copy_len = (in_len < max_out) ? in_len : max_out;
     memcpy(out_frame, in_buf, copy_len);
+    if (out_frame_len)
+        *out_frame_len = copy_len;
     return (int)copy_len;
 }
 
@@ -771,12 +781,14 @@ static int cdc_ether_recv(int dev_id, uint8_t *frame, int max_len)
         return 0;
 
     uint16_t in_len = (uint16_t)dev->rx_len;
-    int rc = cdc_ether_frame_rx(dev, dev->rx_buf, in_len,
-                                 frame, (uint16_t)max_len);
-    if (rc <= 0)
-        return rc;
-
-    int frame_len = rc;
+    uint16_t frame_len = 0;
+    int consumed = cdc_ether_frame_rx(dev, dev->rx_buf, in_len,
+                                 frame, (uint16_t)max_len,
+                                 &frame_len);
+    if (consumed < 0)
+        return consumed;
+    if (frame_len == 0)
+        return 0;
 
     spinlock_acquire(&dev->lock);
 
@@ -798,10 +810,10 @@ static int cdc_ether_recv(int dev_id, uint8_t *frame, int max_len)
         }
     }
 
-    dev->rx_len -= frame_len;
+    dev->rx_len -= consumed;
     /* Shift remaining data */
     if (dev->rx_len > 0)
-        memmove(dev->rx_buf, dev->rx_buf + frame_len, (size_t)dev->rx_len);
+        memmove(dev->rx_buf, dev->rx_buf + consumed, (size_t)dev->rx_len);
 
     spinlock_release(&dev->lock);
 

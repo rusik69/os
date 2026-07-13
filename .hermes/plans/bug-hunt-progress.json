@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 651,
+  "current_item": 652,
   "current_batch": "B010",
   "completed_items": [
     1,
@@ -652,10 +652,11 @@
     647,
     648,
     649,
-    650
+    650,
+    651
   ],
-  "found_bugs": 1122,
-  "fixed_bugs": 1122,
+  "found_bugs": 1123,
+  "fixed_bugs": 1123,
   "completed_batches": [
     "B001",
     "B002",
@@ -667,6 +668,6 @@
     "B008",
     "B009"
   ],
-  "last_item_timestamp": "2026-07-13T17:58:37",
-  "last_item_result": "item 650: src/drivers/bonding.c - verify bond hash policy for balance-xor. FOUND 1 BUG: tx_xor() selects slave by hash without checking BOND_SLAVE_UP flag; if slave link is down, packets are silently dropped. Fixed with UP-state fallback scan (wraparound probe from hash start). Build-verified and committed."
+  "last_item_timestamp": "2026-07-13T18:28:25",
+  "last_item_result": "item 651: src/drivers/usb_eth.c - verify USB ethernet rx_urb submission on disconnect. FOUND 3 BUGS: (1) usb_eth_disconnect() modified shared state and freed rx_buf/tx_buf without holding the priv spinlock, racing with eth_receive/eth_transmit; (2) both callbacks checked priv->connected outside the spinlock (TOCTOU race); (3) pending RX URB would write to freed rx_buf after disconnect. Fixed with spinlock acquire in disconnect, moving connected check inside the lock in both callbacks, and proper ordering (mark disconnected -> netif_unregister -> free). Build-verified and committed."
 }
