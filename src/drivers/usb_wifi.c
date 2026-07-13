@@ -54,6 +54,7 @@ struct usb_wifi_device {
     int connected;
     uint8_t *rx_buf;
     int rx_len;
+    int rx_offset;
     uint8_t *tx_buf;
     int tx_len;
 
@@ -241,11 +242,18 @@ static int usb_wifi_recv(int dev_id, uint8_t *buf, int max)
         return -ENODEV;
 
     struct usb_wifi_device *dev = &usb_wifi_devs[dev_id];
-    if (dev->rx_len <= 0) return 0;
+    if (dev->rx_len <= 0) {
+        dev->rx_offset = 0;
+        return 0;
+    }
 
     int copy_len = (max > dev->rx_len) ? dev->rx_len : max;
-    memcpy(buf, dev->rx_buf, (size_t)copy_len);
+    memcpy(buf, dev->rx_buf + dev->rx_offset, (size_t)copy_len);
+    dev->rx_offset += copy_len;
     dev->rx_len -= copy_len;
+
+    if (dev->rx_len == 0)
+        dev->rx_offset = 0;
 
     return copy_len;
 }
