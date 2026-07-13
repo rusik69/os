@@ -95,10 +95,29 @@ static int tx_active_backup(struct bonding *bond,
     if (bond->slave_count == 0) return -1;
 
     int idx = bond->active_slave;
-    if (idx < 0 || idx >= bond->slave_count) {
-        /* Fall back to first available slave */
-        idx = 0;
-        bond->active_slave = 0;
+
+    /* If the active slave index is out of bounds, or the active slave's
+     * link is down, scan for an alternative UP slave to prevent packet
+     * loss during the failover detection window (~1 sec for timer). */
+    if (idx < 0 || idx >= bond->slave_count ||
+        !(bond->slaves[idx].state & BOND_SLAVE_UP)) {
+
+        int found = -1;
+        for (int i = 0; i < bond->slave_count; i++) {
+            if (bond->slaves[i].state & BOND_SLAVE_UP) {
+                found = i;
+                break;
+            }
+        }
+
+        if (found >= 0) {
+            idx = found;
+            bond->active_slave = found;
+        } else {
+            /* No slaves are UP; fall back to first slave anyway */
+            idx = 0;
+            bond->active_slave = 0;
+        }
     }
 
     return netif_send(bond->slaves[idx].ifindex, data, len);
@@ -205,6 +224,10 @@ void bonding_link_monitor(void)
 
         /* Failover: if active slave is down, switch to first up slave */
         if (!active_up && bond->slave_count > 0) {
+            /* Clear ACTIVE flag from the current active slave */
+            if (bond->active_slave >= 0 && bond->active_slave < bond->slave_count)
+                bond->slaves[bond->active_slave].state &= ~BOND_SLAVE_ACTIVE;
+
             for (int i = 0; i < bond->slave_count; i++) {
                 if (bond->slaves[i].state & BOND_SLAVE_UP) {
                     bond->active_slave = i;
@@ -256,7 +279,9 @@ int bonding_add_slave(const char *bond_name, const char *slave_name)
     /* Add slave */
     int idx = bond->slave_count;
     bond->slaves[idx].ifindex = ifindex;
-    bond->slaves[idx].state = BOND_SLAVE_UP | BOND_SLAVE_ACTIVE;
+    bond->slaves[idx].state = BOND_SLAVE_UP;
+    if (bond->slave_count == 0)
+        bond->slaves[idx].state |= BOND_SLAVE_ACTIVE;
     struct net_device *nd = netif_get(ifindex);
     if (nd) {
         memcpy(bond->slaves[idx].mac, nd->mac, 6);
@@ -310,7 +335,17 @@ int bonding_remove_slave(const char *bond_name, const char *slave_name)
         bond->slaves[i] = bond->slaves[i + 1];
     bond->slave_count--;
 
-    /* Adjust active_slave if needed */
+    /* Adjust active_slave when removing a slave */
+    if (found < bond->active_slave) {
+        /* A slave before the active one was removed; shift index down */
+        bond->active_slave--;
+    } else if (found == bond->active_slave) {
+        /* The active slave itself was removed; reset to first available */
+        bond->active_slave = 0;
+    }
+    /* If found > active_slave, no adjustment needed (position unchanged) */
+
+    /* Safety: ensure active_slave stays in bounds */
     if (bond->active_slave >= bond->slave_count && bond->slave_count > 0)
         bond->active_slave = 0;
 
