@@ -32,6 +32,17 @@
 #define REG_RAH        0x5404  /* Receive Address High */
 #define REG_MTA        0x5200  /* Multicast Table Array */
 
+/* ── ICR / IMS / IMC interrupt cause bits ──────────────────────────── */
+/* These match both Intel 82540EM/82574L hardware and QEMU's e1000 model.
+ * TXQE (bit 1) fires when the TX ring empties (TDH == TDT).
+ * TXDW (bit 0) fires when a descriptor with RS bit is written back.
+ * LSC  (bit 2) fires on link status changes.
+ * RXT0 (bit 7) fires on the receive timer interrupt. */
+#define ICR_TXDW    (1U << 0)   /* TX Descriptor Writeback */
+#define ICR_TXQE    (1U << 1)   /* TX Queue Empty */
+#define ICR_LSC     (1U << 2)   /* Link Status Change */
+#define ICR_RXT0    (1U << 7)   /* Receiver Timer Interrupt */
+
 /* ── Interrupt moderation registers ───────────────────────────────── */
 /* RDTR  — Receive Delay Timer (per-queue): delays RX interrupt generation
  *         after receiving a packet, allowing more packets to arrive and
@@ -921,7 +932,7 @@ static void e1000_irq_handler(struct interrupt_frame *frame) {
     spinlock_irqsave_acquire(&e1000_lock, &__e1k_flags);
 
     /* Mask RX interrupt — NAPI-style: re-enable after draining in net_poll */
-    e1000_write(REG_IMC, 0x80); /* mask RXT0 */
+    e1000_write(REG_IMC, ICR_RXT0);
 
     /* Count received packets for adaptive ITR */
     if (itr_enabled) {
@@ -1353,7 +1364,7 @@ int e1000_init(void) {
     /* Enable RX interrupt on queue 0; clear pending */
     e1000_write(REG_IMC, 0xFFFFFFFF);
     e1000_read(REG_ICR);
-    e1000_write(REG_IMS, 0x80); /* RXT0 */
+    e1000_write(REG_IMS, ICR_RXT0);
     e1000_irq_line = dev.irq;
     idt_register_handler(32 + dev.irq, e1000_irq_handler);
     if (apic_is_init_complete())
@@ -1533,7 +1544,7 @@ void e1000_irq_rearm(void) {
         spinlock_irqsave_acquire(&e1000_lock, &__e1k_flags);
         e1000_itr_adaptive();
         spinlock_irqsave_release(&e1000_lock, __e1k_flags);
-        e1000_write(REG_IMS, 0x80); /* unmask RXT0 */
+        e1000_write(REG_IMS, ICR_RXT0);
     }
 }
 
@@ -1903,8 +1914,8 @@ static int e1000_open(void *dev)
     tctl |= TCTL_EN | TCTL_PSP;
     e1000_write(REG_TCTL, tctl);
 
-    /* Enable interrupts: TXQE, RXQ0, LINK */
-    e1000_write(REG_IMS, (1u << 6) | (1u << 7) | (1u << 2));
+    /* Enable interrupts: TXQE, RXT0, LSC */
+    e1000_write(REG_IMS, ICR_TXQE | ICR_RXT0 | ICR_LSC);
     e1000_read(REG_ICR); /* clear pending */
 
     kprintf("[E1000] NIC opened\n");
