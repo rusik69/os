@@ -528,8 +528,8 @@ int raid0_create(const int *member_dev_ids, int num_disks,
 
     g_raid0_arrays[slot].disk_sectors = min_sectors;
     g_raid0_arrays[slot].stripe_size  = (uint64_t)chunk_size * num_disks;
-    /* Total array capacity: each disk contributes min_sectors, striped */
-    g_raid0_arrays[slot].array_sectors = min_sectors * num_disks;
+    /* Total array capacity: aligned to full chunks across all disks */
+    g_raid0_arrays[slot].array_sectors = (min_sectors / chunk_size) * chunk_size * num_disks;
 
     if (uuid) {
         memcpy(g_raid0_arrays[slot].uuid, uuid, 16);
@@ -853,7 +853,7 @@ int raid10_create(const int *member_dev_ids, int num_disks,
 
     g_raid10_arrays[slot].pair_sectors  = min_pair_sectors;
     g_raid10_arrays[slot].stripe_size   = (uint64_t)chunk_size * num_pairs;
-    g_raid10_arrays[slot].array_sectors = min_pair_sectors * num_pairs;
+    g_raid10_arrays[slot].array_sectors = (min_pair_sectors / chunk_size) * chunk_size * num_pairs;
 
     if (uuid) {
         memcpy(g_raid10_arrays[slot].uuid, uuid, 16);
@@ -1204,7 +1204,7 @@ int raid5_create(const int *member_dev_ids, int num_disks,
 
     g_raid5_arrays[slot].disk_sectors  = min_sectors;
     g_raid5_arrays[slot].stripe_size   = (uint64_t)chunk_size * (num_disks - 1);
-    g_raid5_arrays[slot].array_sectors = min_sectors * (num_disks - 1);
+    g_raid5_arrays[slot].array_sectors = (min_sectors / chunk_size) * chunk_size * (num_disks - 1);
 
     if (uuid) {
         memcpy(g_raid5_arrays[slot].uuid, uuid, 16);
@@ -1500,7 +1500,7 @@ int raid6_create(const int *member_dev_ids, int num_disks,
 
     g_raid6_arrays[slot].disk_sectors  = min_sectors;
     g_raid6_arrays[slot].stripe_size   = (uint64_t)chunk_size * (num_disks - 2);
-    g_raid6_arrays[slot].array_sectors = min_sectors * (num_disks - 2);
+    g_raid6_arrays[slot].array_sectors = (min_sectors / chunk_size) * chunk_size * (num_disks - 2);
 
     if (uuid) {
         memcpy(g_raid6_arrays[slot].uuid, uuid, 16);
