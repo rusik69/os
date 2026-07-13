@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 643,
+  "current_item": 651,
   "current_batch": "B010",
   "completed_items": [
     1,
@@ -644,10 +644,18 @@
     639,
     640,
     641,
-    642
+    642,
+    643,
+    644,
+    645,
+    646,
+    647,
+    648,
+    649,
+    650
   ],
-  "found_bugs": 1112,
-  "fixed_bugs": 1112,
+  "found_bugs": 1122,
+  "fixed_bugs": 1122,
   "completed_batches": [
     "B001",
     "B002",
@@ -659,6 +667,6 @@
     "B008",
     "B009"
   ],
-  "last_item_timestamp": "2026-07-13T17:00:00",
-  "last_item_result": "item 642: src/drivers/i40e.c - verify XL710 descriptor ring alignment. FOUND 2 BUGS. Fix: struct i40e_tx_desc was 24 bytes instead of hardware 32 bytes (missing padded uint64_t). struct i40e_rx_desc was 48 bytes with wrong field offsets instead of correct 32-byte write-back format (field accesses pointed to wrong memory). Fixed both struct sizes and corrected all RX descriptor field accesses in PF and VF paths to use 64-bit status_error_len with proper shift constants."
+  "last_item_timestamp": "2026-07-13T17:58:37",
+  "last_item_result": "item 650: src/drivers/bonding.c - verify bond hash policy for balance-xor. FOUND 1 BUG: tx_xor() selects slave by hash without checking BOND_SLAVE_UP flag; if slave link is down, packets are silently dropped. Fixed with UP-state fallback scan (wraparound probe from hash start). Build-verified and committed."
 }

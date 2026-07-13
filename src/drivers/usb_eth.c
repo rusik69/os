@@ -85,10 +85,15 @@ static int eth_transmit(struct net_device *dev,
                         const uint8_t *data, uint16_t len)
 {
     struct usb_eth_priv *priv = (struct usb_eth_priv *)dev->priv;
-    if (!priv || !priv->connected || len > ECM_MAX_PACKET)
+    if (!priv)
         return -1;
 
     spinlock_acquire(&priv->lock);
+
+    if (!priv->connected || len > ECM_MAX_PACKET) {
+        spinlock_release(&priv->lock);
+        return -1;
+    }
 
     /* Copy frame to TX buffer */
     memcpy(priv->tx_buf, data, len);
@@ -131,10 +136,14 @@ static int eth_receive(struct net_device *dev,
                        uint8_t *buf, uint16_t max_len)
 {
     struct usb_eth_priv *priv = (struct usb_eth_priv *)dev->priv;
-    if (!priv || !priv->connected)
+    if (!priv)
         return -1;
 
     spinlock_acquire(&priv->lock);
+    if (!priv->connected) {
+        spinlock_release(&priv->lock);
+        return -1;
+    }
 
     /* Poll for received frame via bulk IN.
      * Simulate a USB bulk IN transfer: submit a read URB to the bulk IN
@@ -303,7 +312,16 @@ static void usb_eth_disconnect(const struct usb_device *dev_desc)
     (void)dev_desc;
     if (!g_eth_dev) return;
 
+    /* Acquire lock to synchronize with eth_receive/eth_transmit.
+     * Setting connected=0 under lock ensures in-flight callbacks
+     * see the disconnect signal before we unregister and free. */
+    spinlock_acquire(&g_eth_dev->lock);
     g_eth_dev->connected = 0;
+    spinlock_release(&g_eth_dev->lock);
+
+    /* Unregister from netdevice layer — prevents new callbacks.
+     * In-flight callbacks that already hold a ref on the net_device
+     * copy will see connected=0 and bail without touching rx/tx. */
     netif_unregister(g_eth_dev->nd.ifindex);
 
     kfree(g_eth_dev->tx_buf);
