@@ -134,8 +134,20 @@ static int tx_xor(struct bonding *bond,
         for (int i = 0; i < 12; i++)
             hash ^= data[i];
     }
-    int idx = hash % bond->slave_count;
-    return netif_send(bond->slaves[idx].ifindex, data, len);
+    int start = (int)(hash % (uint8_t)bond->slave_count);
+
+    /* If the hashed slave is not UP, scan for an alternative UP slave
+     * to prevent packet loss during link failure (same failover safety
+     * as active-backup mode). */
+    int idx = start;
+    for (int i = 0; i < bond->slave_count; i++) {
+        if (bond->slaves[idx].state & BOND_SLAVE_UP)
+            return netif_send(bond->slaves[idx].ifindex, data, len);
+        idx = (idx + 1) % bond->slave_count;
+    }
+
+    /* No slaves are UP — fall back to the hashed slave anyway */
+    return netif_send(bond->slaves[start].ifindex, data, len);
 }
 
 static int tx_broadcast(struct bonding *bond,
