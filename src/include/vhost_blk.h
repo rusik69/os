@@ -59,4 +59,8 @@ int  vhost_blk_set_backing(struct vhost_blk_backing *bak);
 int  vhost_blk_handle_kick(int vq_idx);
 void vhost_blk_cleanup(void);
 
+/* Memory region translation API — register guest→host address mappings */
+int  vhost_blk_add_mem_region(uint64_t gpa, uint64_t size, uint64_t hva);
+void vhost_blk_clear_mem_regions(void);
+
 #endif /* VHOST_BLK_H */

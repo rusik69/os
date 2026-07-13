@@ -11,6 +11,58 @@
 #include "string.h"
 #include "pmm.h"
 
+/* ── Memory region translation ─────────────────────────────────────── */
+
+#define VHOST_BLK_MAX_MEM_REGS 64
+
+struct vhost_memory_region {
+    uint64_t guest_phys_addr;   /* GPA base */
+    uint64_t size;              /* region size */
+    uint64_t userspace_addr;    /* HVA base (via PHYS_TO_VIRT or mmap) */
+};
+
+static struct vhost_memory_region vhost_mem_regs[VHOST_BLK_MAX_MEM_REGS];
+static int vhost_mem_reg_count = 0;
+
+/* Translate a guest-physical address to a host virtual address
+ * using the registered memory region table.
+ * Returns NULL on failure (no region covers the address).
+ */
+static void *vhost_blk_translate(uint64_t gpa)
+{
+    for (int i = 0; i < vhost_mem_reg_count; i++) {
+        struct vhost_memory_region *reg = &vhost_mem_regs[i];
+        if (gpa >= reg->guest_phys_addr &&
+            gpa < reg->guest_phys_addr + reg->size) {
+            uint64_t offset = gpa - reg->guest_phys_addr;
+            return (void *)(reg->userspace_addr + offset);
+        }
+    }
+    return NULL;
+}
+
+/* Register a memory region for guest→host address translation.
+ * Returns 0 on success, -1 if the table is full or region is invalid.
+ */
+int vhost_blk_add_mem_region(uint64_t gpa, uint64_t size, uint64_t hva)
+{
+    if (vhost_mem_reg_count >= VHOST_BLK_MAX_MEM_REGS)
+        return -1;
+    if (size == 0)
+        return -1;
+    struct vhost_memory_region *reg = &vhost_mem_regs[vhost_mem_reg_count++];
+    reg->guest_phys_addr = gpa;
+    reg->size            = size;
+    reg->userspace_addr  = hva;
+    return 0;
+}
+
+/* Clear all registered memory regions (e.g. on device reset) */
+void vhost_blk_clear_mem_regions(void)
+{
+    vhost_mem_reg_count = 0;
+}
+
 /* ── Internal state ────────────────────────────────────────────────── */
 
 static int vhost_blk_initialized = 0;
@@ -81,48 +133,71 @@ static int vhost_blk_process_request(struct vhost_blk_req_hdr *hdr,
 
     case VHOST_BLK_T_DISCARD: {
         /* Discard: zero out the specified range */
+        if (!data_buf) {
+            *status = VHOST_BLK_S_IOERR;
+            return -1;
+        }
         struct vhost_blk_discard_desc *desc =
             (struct vhost_blk_discard_desc *)data_buf;
-        if (data_buf && hdr->sector == 0) {
-            /* hdr->sector is typically unused for discard; desc has the data */
-            uint64_t byte_off = desc->sector * VHOST_BLK_SECTOR_SIZE;
-            uint64_t byte_len = desc->num_sectors * VHOST_BLK_SECTOR_SIZE;
 
-            if (bak->readonly) {
-                *status = VHOST_BLK_S_IOERR;
-                return -1;
-            }
-            if (byte_off + byte_len > bak->num_sectors * VHOST_BLK_SECTOR_SIZE) {
-                *status = VHOST_BLK_S_IOERR;
-                return -1;
-            }
-            memset(bak->data + byte_off, 0, (size_t)byte_len);
-            kprintf("[vhost-blk] DISCARD sector=%llu count=%u\n",
-                    desc->sector, desc->num_sectors);
+        if (bak->readonly) {
+            *status = VHOST_BLK_S_IOERR;
+            return -1;
         }
+
+        /* Check for integer overflow before computing ranges */
+        if (desc->num_sectors == 0 ||
+            desc->sector > UINT64_MAX / VHOST_BLK_SECTOR_SIZE ||
+            desc->num_sectors > (UINT64_MAX / VHOST_BLK_SECTOR_SIZE - desc->sector)) {
+            *status = VHOST_BLK_S_IOERR;
+            return -1;
+        }
+        uint64_t byte_off = desc->sector * VHOST_BLK_SECTOR_SIZE;
+        uint64_t byte_len = desc->num_sectors * VHOST_BLK_SECTOR_SIZE;
+        uint64_t backing_size = bak->num_sectors * VHOST_BLK_SECTOR_SIZE;
+
+        if (byte_off > backing_size || byte_len > backing_size - byte_off) {
+            *status = VHOST_BLK_S_IOERR;
+            return -1;
+        }
+        memset(bak->data + byte_off, 0, (size_t)byte_len);
+        kprintf("[vhost-blk] DISCARD sector=%llu count=%u\n",
+                desc->sector, desc->num_sectors);
         *status = VHOST_BLK_S_OK;
         return 0;
     }
 
     case VHOST_BLK_T_WRITE_ZEROES: {
+        if (!data_buf) {
+            *status = VHOST_BLK_S_IOERR;
+            return -1;
+        }
         struct vhost_blk_discard_desc *desc =
             (struct vhost_blk_discard_desc *)data_buf;
-        if (data_buf && hdr->sector == 0) {
-            uint64_t byte_off = desc->sector * VHOST_BLK_SECTOR_SIZE;
-            uint64_t byte_len = desc->num_sectors * VHOST_BLK_SECTOR_SIZE;
 
-            if (bak->readonly) {
-                *status = VHOST_BLK_S_IOERR;
-                return -1;
-            }
-            if (byte_off + byte_len > bak->num_sectors * VHOST_BLK_SECTOR_SIZE) {
-                *status = VHOST_BLK_S_IOERR;
-                return -1;
-            }
-            memset(bak->data + byte_off, 0, (size_t)byte_len);
-            kprintf("[vhost-blk] WRITE_ZEROES sector=%llu count=%u\n",
-                    desc->sector, desc->num_sectors);
+        if (bak->readonly) {
+            *status = VHOST_BLK_S_IOERR;
+            return -1;
         }
+
+        /* Check for integer overflow before computing ranges */
+        if (desc->num_sectors == 0 ||
+            desc->sector > UINT64_MAX / VHOST_BLK_SECTOR_SIZE ||
+            desc->num_sectors > (UINT64_MAX / VHOST_BLK_SECTOR_SIZE - desc->sector)) {
+            *status = VHOST_BLK_S_IOERR;
+            return -1;
+        }
+        uint64_t byte_off = desc->sector * VHOST_BLK_SECTOR_SIZE;
+        uint64_t byte_len = desc->num_sectors * VHOST_BLK_SECTOR_SIZE;
+        uint64_t backing_size = bak->num_sectors * VHOST_BLK_SECTOR_SIZE;
+
+        if (byte_off > backing_size || byte_len > backing_size - byte_off) {
+            *status = VHOST_BLK_S_IOERR;
+            return -1;
+        }
+        memset(bak->data + byte_off, 0, (size_t)byte_len);
+        kprintf("[vhost-blk] WRITE_ZEROES sector=%llu count=%u\n",
+                desc->sector, desc->num_sectors);
         *status = VHOST_BLK_S_OK;
         return 0;
     }
