@@ -296,7 +296,7 @@ int ata_opal_discovery0(int bus, int master,
 
     /* Walk feature descriptors starting at byte 16 */
     offset = 16;
-    while (offset + 6 < 16 + data_len) {
+    while (offset + 6 <= 16 + data_len) {
         struct tcg_feature_desc fd;
         const uint8_t *fp = buf + offset;
 
@@ -617,8 +617,8 @@ static int build_start_session_pkt(uint8_t *buf, size_t buf_size,
     /* start_list */
     method_payload[mp_off++] = OPAL_TOKEN_START_LIST;
 
-    /* SP UID: short atom with 8 bytes */
-    method_payload[mp_off++] = OPAL_SHORT_ATOM_HDR(8);
+    /* SP UID: short atom with 16 bytes (4 × uint32_t big-endian) */
+    method_payload[mp_off++] = OPAL_SHORT_ATOM_HDR(16);
     for (i = 0; i < 4; i++) {
         cpu_to_be32(method_payload + mp_off, sp_uid[i]);
         mp_off += 4;
@@ -783,7 +783,7 @@ int ata_opal_set_lock_state(struct opal_session *session, int range,
      *   { "lockUnlock" : [ range, read_lock, write_lock, 0 ] }
      */
     uint8_t  tx_buf[OPAL_DISCOVERY_MAX_BYTES];
-    uint8_t  rx_buf[256];
+    uint8_t  rx_buf[ATA_SECTOR_SIZE];
     int      pkt_size;
     int      ret;
 
