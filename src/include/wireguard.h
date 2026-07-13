@@ -191,7 +191,7 @@ int  wg_peer_lookup_by_dest(uint32_t dest_ip);
 int  wg_send_to(uint32_t dest_ip, const uint8_t *data, int len);
 
 /* Check whether a source IP is allowed for a peer (matches allowed-IPs).
- * Returns 1 if allowed, 0 if denied (or peer has no allowed-IPs). */
+ * Returns 1 if allowed, 0 if denied (or no allowed-IPs configured). */
 int  wg_peer_check_source(int peer_idx, uint32_t src_ip);
 
 /* WireGuard encrypt/decrypt utility functions */

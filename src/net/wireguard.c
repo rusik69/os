@@ -2661,13 +2661,13 @@ static int wg_allowed_ip_match(uint32_t addr, uint8_t cidr, uint32_t dest_ip)
 }
 
 /* Check whether a source IP is allowed for a peer (matches any allowed-IP).
- * Returns 1 if allowed (or no allowed-IPs configured), 0 if denied. */
+ * Returns 1 if allowed, 0 if denied (or no allowed-IPs configured). */
 static int wg_peer_source_allowed(struct wg_peer *peer, uint32_t src_ip)
 {
     if (!peer || !peer->active)
         return 0;
     if (peer->num_allowed_ips == 0)
-        return 1;  /* No restrictions — allow all */
+        return 0;  /* No allowed-IPs — deny all */
 
     for (int i = 0; i < peer->num_allowed_ips; i++) {
         if (peer->allowed_ips[i].active &&
@@ -2764,6 +2764,7 @@ int wg_peer_remove_allowed_ip(int peer_idx, uint32_t addr, uint8_t cidr)
 }
 
 /* Find the peer whose allowed-IPs include src_ip, with best-prefix tiebreak.
+ * Skips peers with no allowed-IPs configured (they have no routes).
  * Returns peer index on success, or -EHOSTUNREACH if no match. */
 static int wg_peer_find_by_source(uint32_t src_ip)
 {
@@ -2774,14 +2775,8 @@ static int wg_peer_find_by_source(uint32_t src_ip)
         if (!g_wg.peers[i].active)
             continue;
 
-        if (g_wg.peers[i].num_allowed_ips == 0) {
-            /* No allowed-IPs — match all but with lowest priority */
-            if (best_peer < 0 || best_prefix < 0) {
-                best_peer = i;
-                best_prefix = -1;
-            }
-            continue;
-        }
+        if (g_wg.peers[i].num_allowed_ips == 0)
+            continue;  /* No allowed-IPs — no match */
 
         for (int j = 0; j < g_wg.peers[i].num_allowed_ips; j++) {
             struct wg_allowed_ip *aip = &g_wg.peers[i].allowed_ips[j];
