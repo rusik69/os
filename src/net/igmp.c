@@ -237,7 +237,7 @@ void igmp_handle_report(struct ip_header *ip_hdr, uint16_t len)
                     v3_hdr->type = IGMP_TYPE_V3_MEMBERSHIP_REPORT;
                     v3_hdr->max_resp_time = q->max_resp_code;
                     /* Bytes 4-7 of v3 report = Reserved(16) + Number of Group Records(16) */
-                    v3_hdr->group_addr = htons(1); /* exactly 1 group record */
+                    v3_hdr->group_addr = htonl(1); /* exactly 1 group record */
                     v3_hdr->checksum = 0;
 
                     struct igmpv3_grec *grec =
@@ -259,7 +259,7 @@ void igmp_handle_report(struct ip_header *ip_hdr, uint16_t len)
                     v3_hdr->type = IGMP_TYPE_V3_MEMBERSHIP_REPORT;
                     v3_hdr->max_resp_time = q->max_resp_code;
                     /* Bytes 4-7 of v3 report = Reserved(16) + Number of Group Records(16) */
-                    v3_hdr->group_addr = htons(1); /* exactly 1 group record */
+                    v3_hdr->group_addr = htonl(1); /* exactly 1 group record */
                     v3_hdr->checksum = 0;
 
                     struct igmpv3_grec *grec =
