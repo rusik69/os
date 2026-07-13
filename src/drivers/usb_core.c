@@ -347,12 +347,16 @@ void usb_exit(void)
 
 /* ── USB descriptor parsing ────────────────────────────────────────────── */
 
-int usb_parse_device_descriptor(const uint8_t *raw,
+int usb_parse_device_descriptor(const uint8_t *raw, uint16_t len,
                                 struct usb_device_descriptor *desc)
 {
     if (!raw || !desc)
         return -EINVAL;
+    if (len < 18)
+        return -EINVAL;
     if (raw[0] < 18)
+        return -EINVAL;
+    if (len < raw[0])
         return -EINVAL;
     if (raw[1] != USB_DT_DEVICE)
         return -EINVAL;

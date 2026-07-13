@@ -199,7 +199,7 @@ int  usb_get_device_count(void);
 struct usb_device *usb_get_device(int idx);
 
 /* ── Descriptor parsing API ──────────────────────────────────────────── */
-int usb_parse_device_descriptor(const uint8_t *raw,
+int usb_parse_device_descriptor(const uint8_t *raw, uint16_t len,
                                 struct usb_device_descriptor *desc);
 int usb_parse_config_descriptor(const uint8_t *raw, uint16_t len,
                                 struct usb_config_descriptor *config);

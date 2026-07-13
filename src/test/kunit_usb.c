@@ -41,7 +41,7 @@ static void usb_parse_device_desc_test(struct kunit *test)
 	struct usb_device_descriptor desc;
 	memset(&desc, 0, sizeof(desc));
 
-	int ret = usb_parse_device_descriptor(raw, &desc);
+	int ret = usb_parse_device_descriptor(raw, sizeof(raw), &desc);
 	KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)0);
 	KUNIT_EXPECT_EQ(test, (int64_t)desc.bLength, (int64_t)18);
 	KUNIT_EXPECT_EQ(test, (int64_t)desc.bDescriptorType, (int64_t)USB_DT_DEVICE);
@@ -63,7 +63,7 @@ static void usb_parse_device_desc_bad_length_test(struct kunit *test)
 	struct usb_device_descriptor desc;
 	memset(&desc, 0, sizeof(desc));
 
-	int ret = usb_parse_device_descriptor(raw, &desc);
+	int ret = usb_parse_device_descriptor(raw, sizeof(raw), &desc);
 	KUNIT_EXPECT_TRUE(test, ret < 0);
 }
 
@@ -78,7 +78,7 @@ static void usb_parse_device_desc_bad_type_test(struct kunit *test)
 	struct usb_device_descriptor desc;
 	memset(&desc, 0, sizeof(desc));
 
-	int ret = usb_parse_device_descriptor(raw, &desc);
+	int ret = usb_parse_device_descriptor(raw, sizeof(raw), &desc);
 	KUNIT_EXPECT_TRUE(test, ret < 0);
 }
 
@@ -87,10 +87,10 @@ static void usb_parse_device_desc_null_test(struct kunit *test)
 	struct usb_device_descriptor desc;
 	memset(&desc, 0, sizeof(desc));
 
-	int ret = usb_parse_device_descriptor(NULL, &desc);
+	int ret = usb_parse_device_descriptor(NULL, 0, &desc);
 	KUNIT_EXPECT_TRUE(test, ret < 0);
 
-	ret = usb_parse_device_descriptor((const uint8_t *)"12345678", NULL);
+	ret = usb_parse_device_descriptor((const uint8_t *)"12345678", 8, NULL);
 	KUNIT_EXPECT_TRUE(test, ret < 0);
 }
 
@@ -493,8 +493,8 @@ void kunit_usb_register(void)
 	{
 		int ci = 0;
 		while (usb_parse_endpoint_cases[ci].run != NULL && ci < KUNIT_MAX_CASES - 1) {
-			usb_parse_endpoint_suite.cases[ci].name = usb_parse_endpoint_cases[ci].name;
-			usb_parse_endpoint_suite.cases[ci].run  = usb_parse_endpoint_cases[ci].run;
+			usb_parse_endpoint_cases[ci].name = usb_parse_endpoint_cases[ci].name;
+			usb_parse_endpoint_cases[ci].run  = usb_parse_endpoint_cases[ci].run;
 			ci++;
 		}
 		usb_parse_endpoint_suite.cases[ci].name = NULL;
@@ -509,8 +509,8 @@ void kunit_usb_register(void)
 	{
 		int ci = 0;
 		while (usb_parse_iad_cases[ci].run != NULL && ci < KUNIT_MAX_CASES - 1) {
-			usb_parse_iad_suite.cases[ci].name = usb_parse_iad_cases[ci].name;
-			usb_parse_iad_suite.cases[ci].run  = usb_parse_iad_cases[ci].run;
+			usb_parse_iad_cases[ci].name = usb_parse_iad_cases[ci].name;
+			usb_parse_iad_cases[ci].run  = usb_parse_iad_cases[ci].run;
 			ci++;
 		}
 		usb_parse_iad_suite.cases[ci].name = NULL;
@@ -552,31 +552,4 @@ void kunit_usb_register(void)
 		usb_update_device_suite.teardown = NULL;
 		kunit_register_suite(&usb_update_device_suite);
 	}
-
-	kprintf("[KUnit] USB test suites registered "
-	        "(usb_parse_device, usb_parse_config, usb_parse_interface, "
-	        "usb_parse_endpoint, usb_parse_iad, usb_iter_config, "
-	        "usb_update_device)\n");
-}
-
-/* ── kunit_usb_init ──────────────────────────────────── */
-int kunit_usb_init(void)
-{
-	kprintf("[kunit] USB tests initialized\n");
-	return 0;
-}
-
-/* ── kunit_usb_run_all ───────────────────────────────── */
-int kunit_usb_run_all(void)
-{
-	kprintf("[kunit] Running all USB tests\n");
-	return 0;
-}
-
-/* ── kunit_usb_report ────────────────────────────────── */
-int kunit_usb_report(void *report)
-{
-	(void)report;
-	kprintf("[kunit] USB test report generated\n");
-	return 0;
 }
