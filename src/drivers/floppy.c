@@ -433,16 +433,26 @@ int floppy_read_sectors(int drive, uint32_t lba, uint8_t count, void *buf)
 
     uintptr_t dma_phys = (uintptr_t)VIRT_TO_PHYS(dma_buf);
     if (dma_phys >= 0x1000000ULL) {
-        /* Buffer too high for ISA DMA — this won't work on real hardware
-         * but on QEMU/firmware it might be OK. Try anyway. */
-        kprintf("[FLOPPY] WARNING: DMA buffer at 0x%lx may be too high for ISA DMA\n",
-                (unsigned long)dma_phys);
+        /* ISA DMA (8237A) can only address the first 16 MB of physical
+         * memory.  Using a buffer above 16 MB will wrap modulo 16 MB and
+         * corrupt memory on real hardware. */
+        kprintf("[FLOPPY] ERROR: DMA buffer at 0x%lx is above 16 MB, "
+                "ISA DMA cannot address it\n", (unsigned long)dma_phys);
+        kfree(dma_buf);
+        return -EIO;
     }
 
     floppy_select_drive(drive);
 
     /* Seek to the right cylinder */
-    floppy_seek(drive, cylinder);
+    int seek_ret = floppy_seek(drive, cylinder);
+    if (seek_ret < 0) {
+        kprintf("[FLOPPY] Seek to cylinder %d failed (err %d)\n",
+                cylinder, seek_ret);
+        floppy_deselect_drive(drive);
+        kfree(dma_buf);
+        return -EIO;
+    }
 
     /* Set up DMA */
     floppy_setup_dma_read((uint32_t)dma_phys, (uint32_t)total_bytes);
@@ -629,14 +639,26 @@ static int floppy_write_sectors(int drive, uint32_t lba, void *buf, int count)
 
     uintptr_t dma_phys = (uintptr_t)VIRT_TO_PHYS(dma_buf);
     if (dma_phys >= 0x1000000ULL) {
-        kprintf("[FLOPPY] WARNING: DMA buffer at 0x%lx may be too high for ISA DMA\n",
-                (unsigned long)dma_phys);
+        /* ISA DMA (8237A) can only address the first 16 MB of physical
+         * memory.  Using a buffer above 16 MB will wrap modulo 16 MB and
+         * corrupt memory on real hardware. */
+        kprintf("[FLOPPY] ERROR: DMA buffer at 0x%lx is above 16 MB, "
+                "ISA DMA cannot address it\n", (unsigned long)dma_phys);
+        kfree(dma_buf);
+        return -EIO;
     }
 
     floppy_select_drive(drive);
 
     /* Seek to the right cylinder */
-    floppy_seek(drive, cylinder);
+    int seek_ret = floppy_seek(drive, cylinder);
+    if (seek_ret < 0) {
+        kprintf("[FLOPPY] Seek to cylinder %d failed (err %d)\n",
+                cylinder, seek_ret);
+        floppy_deselect_drive(drive);
+        kfree(dma_buf);
+        return -EIO;
+    }
 
     /* Set up DMA for WRITE (memory → I/O, mode 0x4A) */
     /* Mask DMA channel 2 */
