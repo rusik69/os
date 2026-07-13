@@ -2191,11 +2191,16 @@ static int ahci_init_phys_port(int p, int irq, int *is_pm) {
     for (int s = 0; s < AHCI_SLOT_COUNT; s++) {
         struct ahci_slot *slot = &port->slots[s];
 
-        /* Command table: kmalloc (small, ~144 bytes each) */
-        slot->cmd_tbl_virt = kmalloc(sizeof(struct ahci_cmd_table));
-        if (!slot->cmd_tbl_virt) { alloc_ok = 0; break; }
+        /* Command table: allocate from PMM for 128-byte aligned physical address.
+         * The AHCI spec requires CTBA (command table base address) to be
+         * 128-byte aligned — bits 7:0 are ignored by the HBA, so a non-aligned
+         * address would cause the HBA to read from the wrong location.
+         * pmm_alloc_frame gives page-aligned (4KB = 128-byte aligned) memory. */
+        uint64_t tbl_frame = pmm_alloc_frame();
+        if (!tbl_frame) { alloc_ok = 0; break; }
+        slot->cmd_tbl_phys = tbl_frame * 4096;
+        slot->cmd_tbl_virt = PHYS_TO_VIRT((void*)(uintptr_t)slot->cmd_tbl_phys);
         memset(slot->cmd_tbl_virt, 0, sizeof(struct ahci_cmd_table));
-        slot->cmd_tbl_phys = VIRT_TO_PHYS(slot->cmd_tbl_virt);
 
         /* Data buffer: one 4KB frame per slot */
         uint64_t data_frame = pmm_alloc_frame();
@@ -2213,8 +2218,9 @@ static int ahci_init_phys_port(int p, int irq, int *is_pm) {
                 slot->data_buf_phys = 0;
                 slot->data_buf_virt = NULL;
             }
-            if (slot->cmd_tbl_virt) {
-                kfree(slot->cmd_tbl_virt);
+            if (slot->cmd_tbl_phys) {
+                pmm_free_frame(slot->cmd_tbl_phys / 4096);
+                slot->cmd_tbl_phys = 0;
                 slot->cmd_tbl_virt = NULL;
             }
         }
@@ -2600,8 +2606,9 @@ void ahci_exit(void) {
         /* Free per-slot resources */
         for (int s = 0; s < AHCI_SLOT_COUNT; s++) {
             struct ahci_slot *slot = &port->slots[s];
-            if (slot->cmd_tbl_virt) {
-                kfree(slot->cmd_tbl_virt);
+            if (slot->cmd_tbl_phys) {
+                pmm_free_frame(slot->cmd_tbl_phys / 4096);
+                slot->cmd_tbl_phys = 0;
                 slot->cmd_tbl_virt = NULL;
             }
             if (slot->data_buf_phys) {
