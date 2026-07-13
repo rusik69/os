@@ -101,10 +101,18 @@ static int pmem_submit(struct blk_request *req) {
 
     /* Compute the virtual address of the target memory */
     uint64_t phys_addr = spa.spa_base + offset;
-    void *virt_addr = (void *)(uintptr_t)(phys_addr + 0xFFFF800000000000ULL);
+    void *virt_addr = PHYS_TO_VIRT(phys_addr);
     void *buf = req->buf;
 
     if (!buf) {
+        req->result = -1;
+        return -1;
+    }
+
+    /* Enforce read-only policy: reject writes to a read-only PMEM region */
+    if ((req->flags & BLK_REQ_WRITE) && (spa.flags & NFIT_SPA_READ_ONLY)) {
+        kprintf("[PMEM] ERROR: write to read-only PMEM region (dev_id=%d)\n",
+                dev_id);
         req->result = -1;
         return -1;
     }
