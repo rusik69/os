@@ -56,6 +56,72 @@ struct p9_header {
 };
 #pragma pack(pop)
 
+/* ── Tag management ────────────────────────────────────────────────
+ * In the 9P2000.L protocol, each request carries a 16-bit tag used to
+ * match responses to requests.  Tag 0xFFFF is reserved (P9_NOTAG) for
+ * messages that do not expect a response (e.g. TCLUNK).  Must be at
+ * most 65535 unique tags in flight simultaneously; in practice the
+ * virtqueue depth bounds concurrency.
+ *
+ * We maintain a simple wrap-around counter allocator backed by a
+ * bitmap to detect and prevent collisions.  The bitmap covers all
+ * 65536 possible tag values (8 KB) — acceptable for a transport that
+ * may drive an entire filesystem.
+ * ──────────────────────────────────────────────────────────────── */
+
+#define P9_NOTAG               0xFFFFu       /* reserved "no tag" value */
+#define P9_TAG_BMAP_ENTRIES    (65536 / 64)  /* 1024 uint64_t entries */
+
+static uint16_t      v9p_next_tag = 0;
+static uint64_t      v9p_tag_bmap[P9_TAG_BMAP_ENTRIES]; /* zero-initialised */
+
+/* v9p_tag_alloc: allocate a unique tag for an outgoing request.
+ * Returns P9_NOTAG if all tags are exhausted.
+ * The returned tag is marked in-flight in the bitmap. */
+static uint16_t v9p_tag_alloc(void)
+{
+    uint16_t tag;
+    int attempts = 0;
+
+    /* Linear scan — at most one full wrap */
+    while (attempts < 65535) {
+        tag = v9p_next_tag;
+        v9p_next_tag++;
+
+        /* Skip the reserved NOTAG value */
+        if (tag == P9_NOTAG)
+            continue;
+
+        /* Wrap at 0xFFFF (P9_NOTAG is the only reserved value) */
+        if (v9p_next_tag >= P9_NOTAG)
+            v9p_next_tag = 0;
+
+        uint16_t idx  = tag / 64;
+        uint64_t bit  = (uint64_t)1u << (tag % 64);
+        if (!(v9p_tag_bmap[idx] & bit)) {
+            v9p_tag_bmap[idx] |= bit;
+            return tag;
+        }
+        attempts++;
+    }
+
+    /* All tags in-flight — exhausted */
+    kprintf("[9pnet-virtio] WARNING: tag exhaustion, all 65535 tags in use\n");
+    return P9_NOTAG;
+}
+
+/* v9p_tag_free: release a tag that is no longer in flight.
+ * Safe to call with P9_NOTAG (no-op). */
+static void v9p_tag_free(uint16_t tag)
+{
+    if (tag == P9_NOTAG)
+        return;
+
+    uint16_t idx  = tag / 64;
+    uint64_t bit  = (uint64_t)1u << (tag % 64);
+    v9p_tag_bmap[idx] &= ~bit;
+}
+
 /* ── Driver state ──────────────────────────────────────────────── */
 
 static int            v9p_present = 0;
@@ -193,6 +259,20 @@ static int p9_virtio_request(void *dev, void *req)
     /* The req is a struct p9_req_t containing a buffer */
     struct p9_header *hdr = (struct p9_header *)req;
     uint32_t size = hdr->size;
+
+    /* Validate tag — P9_NOTAG cannot be used for messages that expect
+     * a response through the request/response interface. */
+    if (hdr->tag == P9_NOTAG) {
+        kprintf("[9p] ERROR: request with reserved NOTAG tag rejected\n");
+        return -EINVAL;
+    }
+
+    /* Validate size — must be at least header size */
+    if (size < sizeof(struct p9_header)) {
+        kprintf("[9p] ERROR: request size %u < header %zu\n",
+                (unsigned int)size, sizeof(struct p9_header));
+        return -EINVAL;
+    }
 
     kprintf("[9p] 9P request: type=%d tag=%d size=%u\n",
             hdr->type, hdr->tag, (unsigned int)size);
