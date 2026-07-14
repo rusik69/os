@@ -394,10 +394,15 @@ static int uas_send_command_iu(uint16_t tag, uint8_t lun,
  * Read the STATUS/SENSE IU from the Bulk IN endpoint after a command.
  * On success, @iu_id and @status are filled from the response.
  *
+ * @toggle:  Data toggle for the status phase:
+ *           1 (DATA1 PID) for writes and no-data commands,
+ *           0 (DATA0 PID) after a data-in (read) phase.
+ *
  * Returns 0 on success (with status indicating SCSI result),
  * negative errno on transport failure.
  */
-static int uas_read_status_iu(uint8_t *out_iu_id, uint8_t *out_status)
+static int uas_read_status_iu(uint8_t *out_iu_id, uint8_t *out_status,
+			      int toggle)
 {
 	struct uas_sense_iu *sense_iu;
 
@@ -405,14 +410,14 @@ static int uas_read_status_iu(uint8_t *out_iu_id, uint8_t *out_status)
 	if (!sense_iu)
 		return -ENOMEM;
 
-	/* Read 32 bytes to capture header + possible sense data */
 	int rc = ehci_do_transfer(QTD_PID_IN, g_bulk_in_ep,
-				  sense_iu, sizeof(*sense_iu), 1);
+				  sense_iu, sizeof(*sense_iu), toggle);
 
 	if (rc == 0) {
 		/*
 		 * Check that the response is a SENSE IU or RESPONSE IU.
-		 * The data toggle for status is 1 (DATA1 PID).
+		 * Per UAS spec §5.2, the status IU uses either DATA1 PID
+		 * (no data-in or write) or DATA0 PID (after data-in).
 		 */
 		if (sense_iu->iu_id == UAS_IU_SENSE ||
 		    sense_iu->iu_id == UAS_IU_RESPONSE) {
@@ -481,10 +486,14 @@ static int uas_scsi_exec(const uint8_t *cdb, int cdb_len,
 						      g_bulk_in_ep,
 						      data, data_len, 1);
 			} else {
-				/* Write data to Bulk OUT */
+				/*
+				 * Write data to Bulk OUT.
+				 * Per UAS §5.2.3: after COMMAND IU
+				 * (DATA0), data-out uses DATA1.
+				 */
 				rc = ehci_do_transfer(QTD_PID_OUT,
 						      g_bulk_out_ep & 0x0F,
-						      data, data_len, 0);
+						      data, data_len, 1);
 			}
 			if (rc < 0) {
 				/* Data phase failed — clear halt on endpoint */
@@ -498,33 +507,41 @@ static int uas_scsi_exec(const uint8_t *cdb, int cdb_len,
 		}
 
 		/* Step 3: Read STATUS IU from Bulk IN */
-		{
-			uint8_t iu_id = 0;
-			uint8_t status = 0;
-			rc = uas_read_status_iu(&iu_id, &status);
-			if (rc < 0) {
-				/* Status read failed — IN endpoint stall */
-				rc = usb_clear_halt(g_dev_addr, g_bulk_in_ep);
-				if (rc == 0)
-					stalled = 1;
-				continue;
-			}
+		/*
+		 * Status toggle depends on whether data-in occurred.
+		 * Per UAS §5.2.2/5.2.3:
+		 *   - Write or no-data: STATUS uses DATA1 (toggle=1)
+		 *   - Read with data:    STATUS uses DATA0 (toggle=0)
+		 *     because data-in already consumed DATA1.
+		 */
+		int status_toggle = (dir && data_len > 0 && data)
+				   ? 0 : 1;
+		uint8_t iu_id = 0;
+		uint8_t status = 0;
+		rc = uas_read_status_iu(&iu_id, &status,
+					status_toggle);
+		if (rc < 0) {
+			/* Status read failed — IN endpoint stall */
+			rc = usb_clear_halt(g_dev_addr, g_bulk_in_ep);
+			if (rc == 0)
+				stalled = 1;
+			continue;
+		}
 
-			/* Check SCSI status */
-			if (status != 0x00) {
-				/*
-				 * SCSI status non-zero:
-				 * 0x02 = CHECK CONDITION
-				 * 0x08 = BUSY
-				 * 0x18 = RESERVATION CONFLICT
-				 */
-				kprintf("[UAS] SCSI status 0x%02x (tag %u)\n",
-					status, (unsigned)tag);
+		/* Check SCSI status */
+		if (status != 0x00) {
+			/*
+			 * SCSI status non-zero:
+			 * 0x02 = CHECK CONDITION
+			 * 0x08 = BUSY
+			 * 0x18 = RESERVATION CONFLICT
+			 */
+			kprintf("[UAS] SCSI status 0x%02x (tag %u)\n",
+				status, (unsigned)tag);
+			rc = -EIO;
+			/* CHECK CONDITION — sense data available */
+			if (status == 0x02)
 				rc = -EIO;
-				/* CHECK CONDITION — sense data available */
-				if (status == 0x02)
-					rc = -EIO;
-			}
 		}
 
 		if (rc == 0)
