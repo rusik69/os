@@ -801,11 +801,33 @@ static void usb_hub_poll(void) {
                         (status & PORT_STATUS_ENABLE) ? "enabled" : "disabled");
             }
 
-            /* Suspend change */
+            /* Suspend change — handle wake from suspend with reset-resume */
             if (change & PORT_CHANGE_C_SUSPEND) {
                 hub_clear_feature(hub->dev_addr, HUB_FEATURE_C_PORT_SUSPEND, (uint16_t)p);
-                kprintf("[USB HUB] Port %d: %s\n", p,
-                        (status & PORT_STATUS_SUSPEND) ? "suspended" : "resumed");
+
+                if (!(status & PORT_STATUS_SUSPEND)) {
+                    /* Port resumed from suspend — perform reset-resume
+                     * (USB 2.0 §11.5.1, §11.9.1).  A reset-resume ensures the
+                     * device is fully recovered to a known operational state
+                     * after waking from suspend. */
+                    kprintf("[USB HUB] Port %d: wake from suspend, "
+                            "reset-resume\n", p);
+                    hub_set_port_feature(hub->dev_addr,
+                                         HUB_FEATURE_PORT_RESET, (uint16_t)p);
+                    mdelay(50);
+                    hub_clear_feature(hub->dev_addr,
+                                      HUB_FEATURE_C_PORT_RESET, (uint16_t)p);
+
+                    /* Re-read port status after reset */
+                    uint16_t rstatus = 0, rchange = 0;
+                    hub_get_port_status(hub->dev_addr, (uint8_t)p,
+                                        &rstatus, &rchange);
+                    if (rstatus & PORT_STATUS_ENABLE)
+                        kprintf("[USB HUB] Port %d: reset-resume complete, "
+                                "device active\n", p);
+                } else {
+                    kprintf("[USB HUB] Port %d: suspended\n", p);
+                }
             }
 
             /* Reset complete */
@@ -1098,11 +1120,29 @@ static int usb_hub_detect(void)
                         (status & PORT_STATUS_ENABLE) ? "enabled" : "disabled");
             }
 
-            /* Handle suspend changes */
+            /* Handle suspend changes — perform reset-resume on wake */
             if (change & PORT_CHANGE_C_SUSPEND) {
                 hub_clear_feature(hub->dev_addr, HUB_FEATURE_C_PORT_SUSPEND, (uint16_t)p);
-                kprintf("[USB HUB] Port %d: suspend change -> %s\n", p,
-                        (status & PORT_STATUS_SUSPEND) ? "suspended" : "resumed");
+
+                if (!(status & PORT_STATUS_SUSPEND)) {
+                    kprintf("[USB HUB] Port %d: wake from suspend, "
+                            "reset-resume\n", p);
+                    hub_set_port_feature(hub->dev_addr,
+                                         HUB_FEATURE_PORT_RESET, (uint16_t)p);
+                    mdelay(50);
+                    hub_clear_feature(hub->dev_addr,
+                                      HUB_FEATURE_C_PORT_RESET, (uint16_t)p);
+
+                    /* Re-read port status after reset */
+                    uint16_t rstatus = 0, rchange = 0;
+                    hub_get_port_status(hub->dev_addr, (uint8_t)p,
+                                        &rstatus, &rchange);
+                    if (rstatus & PORT_STATUS_ENABLE)
+                        kprintf("[USB HUB] Port %d: reset-resume complete, "
+                                "device active\n", p);
+                } else {
+                    kprintf("[USB HUB] Port %d: suspended\n", p);
+                }
             }
 
             /* Handle reset completion */
