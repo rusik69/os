@@ -275,5 +275,6 @@ int usb_isochronous_msg(uint8_t dev_addr, uint8_t ep,
         return ret;
     }
 
-    return 0;
+    /* Return the number of bytes in the isochronous packet */
+    return (int)len;
 }
