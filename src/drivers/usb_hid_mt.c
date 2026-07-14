@@ -90,8 +90,10 @@ static void mt_record_field(struct mt_device *mt,
             }
             break;
         case HID_USAGE_CONTACT_COUNT:
-            if (mt->off_contact_count < 0)
+            if (mt->off_contact_count < 0) {
                 mt->off_contact_count = byte_offset;
+                mt->size_contact_count = bit_size;
+            }
             break;
         case HID_USAGE_TIP_SWITCH:
             if (mt->off_tip_switch < 0 && bit_size <= 8) {
@@ -175,6 +177,7 @@ static void mt_compute_offsets(struct mt_device *mt,
     mt->size_x            = 0;
     mt->size_y            = 0;
     mt->size_contact_id   = 0;
+    mt->size_contact_count = 0;
     mt->per_contact_bits  = 0;
 
     /* Track collection nesting to find per-contact field boundaries */
@@ -315,8 +318,16 @@ void usb_hid_mt_process_report(struct mt_device *mt,
 
     /* Extract Contact Count (if available) */
     if (mt->off_contact_count >= 0 &&
-        mt->off_contact_count < len) {
-        mt->contact_count = (int)report[mt->off_contact_count];
+        mt->off_contact_count < len &&
+        mt->size_contact_count > 0 &&
+        mt->size_contact_count <= 8) {
+        int cc = (int)mt_extract_bits(report,
+            mt->off_contact_count * 8, mt->size_contact_count);
+        if (cc > MT_MAX_CONTACTS)
+            cc = MT_MAX_CONTACTS;
+        if (cc < 0)
+            cc = 0;
+        mt->contact_count = cc;
     }
 
     /* Extract Contact ID */

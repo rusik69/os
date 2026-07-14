@@ -226,6 +226,7 @@ struct mt_device {
     int      size_x;              /* bit size of X field */
     int      size_y;              /* bit size of Y field */
     int      size_contact_id;     /* bit size of Contact ID */
+    int      size_contact_count;  /* bit size of Contact Count */
 
     /* Tip Switch and Confidence are often 1-bit fields inside a byte.
      * Store both byte offset and bit mask. */

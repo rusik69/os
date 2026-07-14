@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 672,
+  "current_item": 674,
   "current_batch": "B010",
   "completed_items": [
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
@@ -70,14 +70,16 @@
     641, 642, 643, 644, 645, 646, 647, 648, 649, 650,
     651, 652, 653, 654, 655, 656, 657, 658, 659, 660,
     661, 662, 663, 664, 665, 666, 667, 668, 669, 670,
-    671
+    671,
+    672,
+    673
   ],
-  "found_bugs": 1140,
-  "fixed_bugs": 1140,
+  "found_bugs": 1142,
+  "fixed_bugs": 1142,
   "completed_batches": [
     "B001", "B002", "B003", "B004", "B005",
     "B006", "B007", "B008", "B009"
   ],
-  "last_item_timestamp": "2026-07-14T03:39:00",
-  "last_item_result": "item 671: src/drivers/usb_hid.c - verify HID item tag/value parsing (short items). BUG FOUND. End Collection (bTag=12) handler in usb_hid_parse_report() did not call hid_reset_local(&ls) after capturing local state, violating USB HID Spec §6.2.2.4 which requires local items to reset after every Main item. All other Main items (Input, Output, Collection, Feature) correctly reset local state, but End Collection was missing this call, allowing stale local items to carry over to subsequent Main items. Added hid_reset_local(&ls) to End Collection handler. Build verified, committed."
+  "last_item_timestamp": "2026-07-14T04:20:00",
+  "last_item_result": "item 673: src/drivers/usb_hid_joy.c - verify joystick axis calibration overflow. BUG FOUND. Three locations compute (max + min) / 2 using int32_t; when both min and max are large with same sign, the addition overflows. Fixed by promoting to int64_t before addition. Build verified, committed."
 }
