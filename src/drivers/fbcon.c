@@ -321,9 +321,10 @@ void fbcon_putchar(char c) {
             return;
         }
         if (c == ';') {
-            g_esc_pnum++;
-            if (g_esc_pnum >= 8) g_esc_pnum = 7;
-            g_esc_pvals[g_esc_pnum] = 0;
+            if (g_esc_pnum < 7) {
+                g_esc_pnum++;
+                g_esc_pvals[g_esc_pnum] = 0;
+            }
             return;
         }
         /* Private marker or intermediate bytes — just consume */
