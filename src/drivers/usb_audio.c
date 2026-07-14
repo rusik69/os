@@ -1504,12 +1504,24 @@ static int audio_desc_callback(uint8_t bDescriptorType,
 				dev->uac_version = UAC_VERSION_1_0;
 		}
 
-		/* Track audio streaming interface */
+		/* Track audio streaming interface.
+		 * USB Audio streaming interfaces have multiple alternate settings:
+		 *   alt=0: zero-bandwidth setting (no endpoints — used to stop streaming)
+		 *   alt>=1: actual streaming configuration with isochronous endpoints
+		 * We skip alt=0 and record the first non-zero alternate setting.
+		 */
 		if (iface->bInterfaceClass == USB_CLASS_AUDIO &&
 		    iface->bInterfaceSubClass == AUDIO_SUBCLASS_STREAMING) {
 			if (!ctx->as_iface_found) {
 				ctx->as_iface_found = 1;
 				dev->as_iface = iface->bInterfaceNumber;
+			}
+			/* Record the first non-zero alternate setting as the
+			 * streaming default.  Alt setting 0 is the zero-bandwidth
+			 * placeholder with no endpoints — skip it.
+			 */
+			if (iface->bAlternateSetting > 0 &&
+			    dev->alt_setting == 0) {
 				dev->alt_setting = iface->bAlternateSetting;
 			}
 		}
