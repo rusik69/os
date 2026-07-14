@@ -53,8 +53,8 @@ int sound_mixer_sw_init(struct sound_mixer_sw *mixer,
 	/* Allocate the mix accumulator buffer */
 	uint32_t mix_buf_bytes = SOUND_MIXER_SW_BUFFER_FRAMES *
 				 SOUND_MIXER_SW_MAX_PCM_CHANNELS *
-				 sizeof(int16_t);
-	mixer->mix_buffer = (int16_t *)kmalloc(mix_buf_bytes);
+				 sizeof(int32_t);
+	mixer->mix_buffer = (int32_t *)kmalloc(mix_buf_bytes);
 	if (!mixer->mix_buffer)
 		return -ENOMEM;
 
@@ -335,7 +335,7 @@ uint32_t sound_mixer_sw_mix(struct sound_mixer_sw *mixer,
 		min_avail = mix_limit;
 
 	/* Clear the accumulator buffer */
-	memset(mixer->mix_buffer, 0, min_avail * pcm_ch * sizeof(int16_t));
+	memset(mixer->mix_buffer, 0, min_avail * pcm_ch * sizeof(int32_t));
 
 	/*
 	 * Accumulate: for each active, unmuted channel, read up to
@@ -372,7 +372,7 @@ uint32_t sound_mixer_sw_mix(struct sound_mixer_sw *mixer,
 				for (uint32_t c = 0; c < (uint32_t)pcm_ch; c++) {
 					int16_t sample = ch->buffer[(offset + f) * pcm_ch + c];
 					int32_t scaled = ((int32_t)sample * vol) / 255;
-					mixer->mix_buffer[(consumed + f) * pcm_ch + c] += (int16_t)scaled;
+					mixer->mix_buffer[(consumed + f) * pcm_ch + c] += scaled;
 				}
 			}
 

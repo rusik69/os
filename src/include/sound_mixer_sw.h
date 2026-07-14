@@ -64,7 +64,7 @@ struct sound_mixer_sw {
 	struct sound_mixer_sw_channel channels[SOUND_MIXER_SW_MAX_CHANNELS];
 
 	/* Mix accumulator buffer (temporary workspace for mixing) */
-	int16_t    *mix_buffer;      /**< Accumulator for summing samples */
+	int32_t    *mix_buffer;      /**< Accumulator for summing samples (int32_t to avoid overflow) */
 	uint32_t    mix_frames;      /**< Mix buffer capacity in frames */
 
 	/* Global output format */
