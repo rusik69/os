@@ -81,6 +81,8 @@ static int usb_serial_write(int dev_id, const uint8_t *data, int len)
 {
     if (dev_id < 0 || dev_id >= usb_ser_count || !usb_ser_devs[dev_id].active)
         return -ENODEV;
+    if (len <= 0)
+        return 0;
 
     struct usb_serial_device *dev = &usb_ser_devs[dev_id];
     int copy_len = (len > USB_SERIAL_BUF_SIZE) ? USB_SERIAL_BUF_SIZE : len;
@@ -97,9 +99,15 @@ static int usb_serial_read(int dev_id, uint8_t *buf, int max)
         return -ENODEV;
 
     struct usb_serial_device *dev = &usb_ser_devs[dev_id];
+    if (max <= 0 || dev->rx_len <= 0)
+        return 0;
+
     int copy_len = (max > dev->rx_len) ? dev->rx_len : max;
     memcpy(buf, dev->rx_buf, (size_t)copy_len);
     dev->rx_len -= copy_len;
+    /* Shift remaining data to front of buffer so next read starts fresh */
+    if (dev->rx_len > 0)
+        memmove(dev->rx_buf, dev->rx_buf + copy_len, (size_t)dev->rx_len);
     return copy_len;
 }
 
