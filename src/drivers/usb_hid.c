@@ -1025,6 +1025,9 @@ int usb_hid_parse_report(void *dev, const void *report, size_t len,
                     ri->local  = ls;
                     ri->collection_depth = out->collection_stack_depth;
                 }
+                /* Local items do not carry over past any Main item
+                 * (§6.2.2.4 USB HID Spec).  Reset local state here too. */
+                hid_reset_local(&ls);
                 break;
             }
             default:

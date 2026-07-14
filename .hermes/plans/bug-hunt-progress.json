@@ -1,6 +1,6 @@
 {
   "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 666,
+  "current_item": 671,
   "current_batch": "B010",
   "completed_items": [
     1,
@@ -667,10 +667,15 @@
     662,
     663,
     664,
-    665
+    665,
+    666,
+    667,
+    668,
+    669,
+    670
   ],
-  "found_bugs": 1136,
-  "fixed_bugs": 1136,
+  "found_bugs": 1139,
+  "fixed_bugs": 1139,
   "completed_batches": [
     "B001",
     "B002",
@@ -682,6 +687,6 @@
     "B008",
     "B009"
   ],
-  "last_item_timestamp": "2026-07-14T00:41:00",
-  "last_item_result": "item 665: src/drivers/usb_hub.c - verify hub descriptor bNbrPorts validation. BUG FOUND. enumerate_hub() assigned hub->n_ports = desc->bNbrPorts with zero validation against USB_MAX_PORTS_PER_HUB (8). Three port iteration loops lacked the && p <= USB_MAX_PORTS_PER_HUB cap present on the first loop, allowing potential buffer overflows on debounce_pending[], port_status[], and debounce_until[] if a malicious/faulty hub reports bNbrPorts > 8. Added validation in enumerate_hub() + added bounds guard to three unbounded loops. Build verified, committed."
+  "last_item_timestamp": "2026-07-14T02:59:00",
+  "last_item_result": "item 670: src/drivers/usb_hid.c - verify HID report descriptor size validation. AUDITED CLEAN: The size validation in usb_hid_get_and_parse_report_descriptor() checks wDescriptorLength0 from the HID descriptor, rejects 0 and >512. The buffer allocated by hid_alloc_dma() is always a full 4KB page (sufficient for max 512 bytes). The USB control transfer uses report_len as wLength, matching the validated size. The parser in usb_hid_parse_report() has proper bounds checks (pos + data_bytes > len). No overflow, underflow, or missing validation found.\n}"
 }
