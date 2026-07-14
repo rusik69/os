@@ -738,69 +738,33 @@ static int atomic_commit_obj(struct drm_device *dev,
 			if (prop) {
 				/* FB_ID -> update CRTC fb_id with refcount */
 				if (!strcmp(prop->name, "FB_ID")) {
-					for (int c = 0;
-					     c < DRM_MAX_CRTC; c++) {
-						if (dev->crtcs[c].in_use &&
-						    dev->crtcs[c].crtc_id ==
-						    obj_req->obj_id) {
-							uint32_t old_fb_id =
-							    dev->crtcs[c]
-							        .fb_id;
-							uint32_t new_fb_id =
-							    (uint32_t)
-							    obj_req->props[i]
-							        .value;
-
-							/* Take a reference on
-							 * the new FB before
-							 * releasing the old one,
-							 * to avoid a window
-							 * where refcount = 0 */
-							if (new_fb_id != 0) {
-								struct drm_framebuffer
-								    *new_fb =
-								    drm_fb_lookup(
-								    dev,
-								    new_fb_id);
-								if (new_fb)
-									drm_fb_ref(
-									    new_fb);
-							}
-
-							dev->crtcs[c].fb_id =
-							    new_fb_id;
-
-							/* Release the old FB
-							 * reference */
-							if (old_fb_id != 0 &&
-							    old_fb_id !=
-							    new_fb_id) {
-								struct drm_framebuffer
-								    *old_fb =
-								    drm_fb_lookup(
-								    dev,
-								    old_fb_id);
-								if (old_fb)
-									drm_fb_unref(
-									    dev,
-									    old_fb);
-							}
-							break;
-						}
+					uint32_t new_fb_id = (uint32_t)
+					    obj_req->props[i].value;
+					ret = drm_crtc_set_fb(dev,
+					    obj_req->obj_id,
+					    new_fb_id);
+					if (ret < 0) {
+						kprintf("[DRM atomic] "
+						    "drm_crtc_set_fb "
+						    "failed (crtc=%u "
+						    "fb=%u ret=%d)\n",
+						    obj_req->obj_id,
+						    new_fb_id, ret);
+						return ret;
 					}
 				}
 				/* ACTIVE -> toggle CRTC enable */
 				if (!strcmp(prop->name, "ACTIVE")) {
-					for (int c = 0;
-					     c < DRM_MAX_CRTC; c++) {
-						if (dev->crtcs[c].in_use &&
-						    dev->crtcs[c].crtc_id ==
-						    obj_req->obj_id) {
-							dev->crtcs[c].enabled =
-							    obj_req->props[i]
-							        .value ? 1 : 0;
-							break;
-						}
+					ret = drm_crtc_set_active(dev,
+					    obj_req->obj_id,
+					    (int)obj_req->props[i].value);
+					if (ret < 0) {
+						kprintf("[DRM atomic] "
+						    "drm_crtc_set_active "
+						    "failed (crtc=%u "
+						    "ret=%d)\n",
+						    obj_req->obj_id, ret);
+						return ret;
 					}
 				}
 			}

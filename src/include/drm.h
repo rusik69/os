@@ -695,6 +695,17 @@ int  drm_ioctl_mode_getcrtc(struct drm_device *dev,
 int  drm_ioctl_mode_page_flip(struct drm_device *dev,
                                struct drm_file *fp, void *arg);
 
+/* Atomic-safe CRTC framebuffer assignment — holds g_drm_lock internally
+ * to prevent races with concurrent page flips and FB add/remove.
+ * Handles refcounting on old and new framebuffers atomically.
+ * Returns 0 on success, negative errno on failure (e.g. invalid fb_id). */
+int  drm_crtc_set_fb(struct drm_device *dev, uint32_t crtc_id,
+                      uint32_t new_fb_id);
+
+/* Atomic-safe CRTC enable/disable — holds g_drm_lock internally. */
+int  drm_crtc_set_active(struct drm_device *dev, uint32_t crtc_id,
+                          int active);
+
 /* ═══════════════════════════════════════════════════════════════════
  *  Multi-display layout ioctl (clone / extend)
  * ═══════════════════════════════════════════════════════════════════ */

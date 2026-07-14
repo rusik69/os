@@ -938,6 +938,80 @@ int drm_ioctl_mode_page_flip(struct drm_device *dev,
     return -ENOENT;
 }
 
+/* ── Atomic-safe CRTC state helpers (called from drm_atomic.c) ──── */
+
+int drm_crtc_set_fb(struct drm_device *dev, uint32_t crtc_id,
+                     uint32_t new_fb_id)
+{
+    if (!dev)
+        return -EINVAL;
+
+    spinlock_acquire(&g_drm_lock);
+
+    /* Find the CRTC */
+    for (int i = 0; i < DRM_MAX_CRTC; i++) {
+        if (dev->crtcs[i].in_use &&
+            dev->crtcs[i].crtc_id == crtc_id) {
+            struct drm_crtc *crtc = &dev->crtcs[i];
+            uint32_t old_fb_id = crtc->fb_id;
+
+            /* Take a reference on the new framebuffer first */
+            if (new_fb_id != 0) {
+                struct drm_framebuffer *new_fb =
+                    drm_fb_lookup(dev, new_fb_id);
+                if (!new_fb) {
+                    spinlock_release(&g_drm_lock);
+                    return -ENOENT;
+                }
+                drm_fb_ref(new_fb);
+            }
+
+            /* Atomically swap the CRTC's fb_id under lock */
+            crtc->fb_id = new_fb_id;
+
+            /* Release the old framebuffer reference */
+            if (old_fb_id != 0 && old_fb_id != new_fb_id) {
+                struct drm_framebuffer *old_fb =
+                    drm_fb_lookup(dev, old_fb_id);
+                if (old_fb)
+                    drm_fb_unref(dev, old_fb);
+            }
+
+            spinlock_release(&g_drm_lock);
+
+            kprintf("[DRM] crtc_set_fb: CRTC %u fb %u -> %u\n",
+                    crtc_id, old_fb_id, new_fb_id);
+            return 0;
+        }
+    }
+
+    spinlock_release(&g_drm_lock);
+    return -ENOENT;
+}
+
+int drm_crtc_set_active(struct drm_device *dev, uint32_t crtc_id,
+                         int active)
+{
+    if (!dev)
+        return -EINVAL;
+
+    spinlock_acquire(&g_drm_lock);
+
+    for (int i = 0; i < DRM_MAX_CRTC; i++) {
+        if (dev->crtcs[i].in_use &&
+            dev->crtcs[i].crtc_id == crtc_id) {
+            dev->crtcs[i].enabled = active ? 1 : 0;
+            spinlock_release(&g_drm_lock);
+            kprintf("[DRM] crtc_set_active: CRTC %u -> %s\n",
+                    crtc_id, active ? "enabled" : "disabled");
+            return 0;
+        }
+    }
+
+    spinlock_release(&g_drm_lock);
+    return -ENOENT;
+}
+
 /* ── Implement: drm_open ─────────────────────────────── */
 static int drm_open(void *dev, void *file)
 {
