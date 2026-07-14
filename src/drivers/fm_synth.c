@@ -525,7 +525,16 @@ static void fm_setup_voice(struct fm_voice *v, uint8_t channel,
     memset(&v->carrier, 0, sizeof(v->carrier));
 
     v->carrier.phase     = 0;
-    v->carrier.phase_inc = (note_inc * (uint32_t)inst->car_ratio + 1U) / 2U;
+    {
+        /* Use 64-bit arithmetic to avoid overflow: note_inc * ratio can
+         * exceed uint32_t for high notes (e.g. MIDI note 127 ~ 12.5 kHz)
+         * combined with ratios >= 4.  The result is also clamped to
+         * uint32_t max since phase_inc is a 32-bit register. */
+        uint64_t pi = (uint64_t)note_inc * (uint64_t)inst->car_ratio;
+        pi = (pi + 1U) / 2U;
+        if (pi > 0xFFFFFFFFULL) pi = 0xFFFFFFFFULL;
+        v->carrier.phase_inc = (uint32_t)pi;
+    }
     v->carrier.waveform    = inst->car_wave;
     v->carrier.output_level = inst->car_level;
 
@@ -550,7 +559,13 @@ static void fm_setup_voice(struct fm_voice *v, uint8_t channel,
     memset(&v->modulator, 0, sizeof(v->modulator));
 
     v->modulator.phase     = 0;
-    v->modulator.phase_inc = (note_inc * (uint32_t)inst->mod_ratio + 1U) / 2U;
+    {
+        /* Use 64-bit arithmetic to avoid overflow (same as carrier) */
+        uint64_t pi = (uint64_t)note_inc * (uint64_t)inst->mod_ratio;
+        pi = (pi + 1U) / 2U;
+        if (pi > 0xFFFFFFFFULL) pi = 0xFFFFFFFFULL;
+        v->modulator.phase_inc = (uint32_t)pi;
+    }
     v->modulator.waveform    = inst->mod_wave;
     v->modulator.output_level = inst->mod_level;
 
