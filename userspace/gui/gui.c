@@ -92,16 +92,26 @@ static int font_char_index(char c) {
     return 36;
 }
 
-static void render_glyph(int32_t x, int32_t y, char c, gui_color_t fg, gui_color_t bg) {
+static void render_glyph(int32_t x, int32_t y, char c, gui_color_t fg, gui_color_t bg,
+                          const gui_window_t *clip) {
     int idx = font_char_index(c);
     const uint8_t *glyph = font5x7[idx];
+    /* Precompute clip boundaries */
+    int32_t cl = clip ? clip->rect.x : INT32_MIN;
+    int32_t ct = clip ? clip->rect.y : INT32_MIN;
+    int32_t cr = clip ? (int32_t)(clip->rect.x + clip->rect.w) : INT32_MAX;
+    int32_t cb = clip ? (int32_t)(clip->rect.y + clip->rect.h) : INT32_MAX;
     for (int row = 0; row < 7; row++) {
         uint8_t bits = glyph[row];
         for (int col = 0; col < 5; col++) {
             gui_color_t color = (bits & (0x80 >> col)) ? fg : bg;
             for (int dy = 0; dy < 2; dy++) {
+                int py = y + row * 2 + dy;
+                if (py < ct || py >= cb) continue;
                 for (int dx = 0; dx < 2; dx++) {
-                    vga_put_pixel(x + col * 2 + dx, y + row * 2 + dy, color);
+                    int px = x + col * 2 + dx;
+                    if (px < cl || px >= cr) continue;
+                    vga_put_pixel(px, py, color);
                 }
             }
         }
@@ -278,17 +288,15 @@ void gui_window_draw_rect_outline(gui_window_t *win, gui_rect_t rect,
 
 void gui_window_draw_text(gui_window_t *win, int32_t x, int32_t y,
                           const char *text, gui_color_t fg, gui_color_t bg) {
-    (void)win;
     if (!text) return;
     for (int i = 0; text[i]; i++) {
-        render_glyph(x + i * 12, y, text[i], fg, bg);
+        render_glyph(x + i * 12, y, text[i], fg, bg, win);
     }
 }
 
 void gui_window_draw_text_align(gui_window_t *win, gui_rect_t rect,
                                 const char *text, gui_align_t align,
                                 gui_color_t fg, gui_color_t bg) {
-    (void)win;
     if (!text) return;
     int tw = gui_text_width(text);
     int32_t x = rect.x;
@@ -297,7 +305,7 @@ void gui_window_draw_text_align(gui_window_t *win, gui_rect_t rect,
     else if (align == GUI_ALIGN_RIGHT)
         x = rect.x + (int32_t)rect.w - tw;
     int32_t y = rect.y + ((int32_t)rect.h - 14) / 2;
-    gui_window_draw_text(NULL, x, y, text, fg, bg);
+    gui_window_draw_text(win, x, y, text, fg, bg);
 }
 
 /* Simplified string drawing without varargs */
@@ -855,7 +863,7 @@ void gui_render_frame(void) {
             /* Maximize button [ ] */
             gui_rect_t max_r = {(int32_t)(win->rect.x + win->rect.w - 24), win->rect.y + 2, 20, 20};
             gui_window_draw_rect(win, max_r, GUI_COLOR(60, 100, 60));
-            gui_window_draw_rect_outline(NULL, (gui_rect_t){max_r.x + 4, max_r.y + 4, 12, 12}, GUI_WHITE, 1);
+            gui_window_draw_rect_outline(win, (gui_rect_t){max_r.x + 4, max_r.y + 4, 12, 12}, GUI_WHITE, 1);
             /* Close button [X] */
             gui_rect_t close_r = {(int32_t)(win->rect.x + win->rect.w - 68), win->rect.y + 2, 20, 20};
             gui_window_draw_rect(win, close_r, GUI_COLOR(180, 40, 40));
