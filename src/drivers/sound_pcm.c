@@ -144,10 +144,19 @@ void sound_pcm_destroy_stream(struct sound_pcm_stream *stream)
 static uint32_t avail_write_locked(struct sound_pcm_stream *s)
 {
     /* How much space is between hw_ptr and app_ptr?
-     * hw_ptr is consumed by DMA (playback) or filled by DMA (capture).
-     * For playback: app_ptr - hw_ptr = data in buffer.
-     * Free space = buf_size - (app_ptr - hw_ptr) */
-    uint32_t filled = s->app_ptr - s->hw_ptr;
+     * For playback: app produces (app_ptr), DMA consumes (hw_ptr).
+     *   filled = app_ptr - hw_ptr = data in buffer,
+     *   free   = buf_size - filled.
+     * For capture: DMA produces (hw_ptr), app consumes (app_ptr).
+     *   filled = hw_ptr - app_ptr = data in buffer,
+     *   free   = buf_size - filled.
+     */
+    uint32_t filled;
+    if (s->dir == SOUND_PCM_PLAYBACK) {
+        filled = s->app_ptr - s->hw_ptr;
+    } else {
+        filled = s->hw_ptr - s->app_ptr;
+    }
     if (filled > s->buf_size) {
         /* Should not happen, but clamp */
         return 0;
@@ -163,7 +172,18 @@ static uint32_t avail_write_locked(struct sound_pcm_stream *s)
  */
 static uint32_t avail_read_locked(struct sound_pcm_stream *s)
 {
-    uint32_t filled = s->app_ptr - s->hw_ptr;
+    /* How much data is available for the consumer to read.
+     * For playback: DMA is the consumer of data produced by the app.
+     *   filled = app_ptr - hw_ptr (data not yet consumed by DMA).
+     * For capture: app is the consumer of data produced by DMA.
+     *   filled = hw_ptr - app_ptr (data not yet read by the app).
+     */
+    uint32_t filled;
+    if (s->dir == SOUND_PCM_PLAYBACK) {
+        filled = s->app_ptr - s->hw_ptr;
+    } else {
+        filled = s->hw_ptr - s->app_ptr;
+    }
     if (filled > s->buf_size)
         return 0;
     return filled;
@@ -270,15 +290,21 @@ int sound_pcm_read(struct sound_pcm_stream *stream,
     uint8_t *dst    = (uint8_t *)buf;
 
     while (readb < to_read) {
-        uint32_t offset = stream->hw_ptr & stream->buf_mask;
+        uint32_t offset = stream->app_ptr & stream->buf_mask;
         uint32_t chunk  = to_read - readb;
         uint32_t space  = stream->buf_size - offset;
         if (chunk > space)
             chunk = space;
 
         memcpy(dst + readb, stream->buffer + offset, chunk);
-        stream->hw_ptr += chunk;
+        stream->app_ptr += chunk;
         readb += chunk;
+    }
+
+    /* Update fragment tracking for capture */
+    uint32_t new_frag_app = stream->app_ptr / stream->frag_size;
+    if (new_frag_app > stream->frag_app) {
+        stream->frag_app = new_frag_app;
     }
 
     spinlock_irqsave_release(&stream->lock, irq_flags);
