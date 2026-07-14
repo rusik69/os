@@ -209,6 +209,24 @@ struct virtio_gpu_resource_flush {
 
 #pragma pack(pop)
 
+/* ── Cursor protocol structures (virtio-gpu spec §5.7.6.7) ────── */
+
+struct virtio_gpu_cursor_pos {
+    uint32_t scanout_id;
+    uint32_t x;
+    uint32_t y;
+    uint32_t padding;
+};
+
+struct virtio_gpu_update_cursor {
+    struct virtio_gpu_ctrl_hdr hdr;
+    struct virtio_gpu_cursor_pos pos;   /* scanout_id, x, y */
+    uint32_t resource_id;               /* 0 to hide cursor   */
+    uint32_t hot_x;
+    uint32_t hot_y;
+    uint32_t padding;
+};
+
 /* ── Internal resource tracking ───────────────────────────────── */
 
 #define MAX_GPU_CONTEXTS    16
@@ -1318,6 +1336,78 @@ static int virtio_gpu_resource_flush(uint32_t resource_id,
         gpu_check_response_fence(&resp);
 
     return 0;
+}
+
+/* ── Cursor API ────────────────────────────────────────────────── */
+
+static int virtio_gpu_cursor_set(uint32_t scanout_id,
+                                  int x, int y,
+                                  uint32_t resource_id,
+                                  uint32_t hot_x, uint32_t hot_y)
+{
+    struct virtio_gpu_update_cursor cmd;
+    struct virtio_gpu_ctrl_hdr resp;
+    int ret;
+
+    if (!gpu_present)
+        return -ENODEV;
+
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.hdr.type  = VIRTIO_GPU_CMD_UPDATE_CURSOR;
+    cmd.hdr.flags = 0;
+    cmd.pos.scanout_id = scanout_id;
+    cmd.pos.x          = (uint32_t)x;
+    cmd.pos.y          = (uint32_t)y;
+    cmd.resource_id    = resource_id;
+    cmd.hot_x          = hot_x;
+    cmd.hot_y          = hot_y;
+
+    ret = gpu_send_cmd(&cmd.hdr,
+                        sizeof(cmd) - sizeof(cmd.hdr),
+                        &cmd.pos, &resp, 0);
+    if (ret < 0) {
+        kprintf("[VIRTIO-GPU] cursor_set(scanout=%u, res=%u, %d,%d) failed: %d\n",
+                (unsigned int)scanout_id, (unsigned int)resource_id,
+                x, y, ret);
+        return ret;
+    }
+
+    return 0;
+}
+
+static int virtio_gpu_cursor_move(uint32_t scanout_id, int x, int y)
+{
+    struct virtio_gpu_update_cursor cmd;
+    struct virtio_gpu_ctrl_hdr resp;
+    int ret;
+
+    if (!gpu_present)
+        return -ENODEV;
+
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.hdr.type  = VIRTIO_GPU_CMD_MOVE_CURSOR;
+    cmd.hdr.flags = 0;
+    cmd.pos.scanout_id = scanout_id;
+    cmd.pos.x          = (uint32_t)x;
+    cmd.pos.y          = (uint32_t)y;
+    /* resource_id = 0 means "keep current cursor image" for MOVE_CURSOR */
+
+    ret = gpu_send_cmd(&cmd.hdr,
+                        sizeof(cmd) - sizeof(cmd.hdr),
+                        &cmd.pos, &resp, 0);
+    if (ret < 0) {
+        kprintf("[VIRTIO-GPU] cursor_move(scanout=%u, %d,%d) failed: %d\n",
+                (unsigned int)scanout_id, x, y, ret);
+        return ret;
+    }
+
+    return 0;
+}
+
+static int virtio_gpu_cursor_hide(uint32_t scanout_id)
+{
+    /* Per spec, setting resource_id = 0 hides the cursor */
+    return virtio_gpu_cursor_set(scanout_id, 0, 0, 0, 0, 0);
 }
 
 /* ── 2D-mode API (unchanged from original) ────────────────────── */
