@@ -1389,10 +1389,29 @@ static int parse_audio_streaming_ep(struct audio_device *dev,
 	uint16_t max_pkt = ep->wMaxPacketSize;
 	uint8_t interval = ep->bInterval;
 
+	/*
+	 * UAC2 implicit feedback detection: if this is an isochronous IN
+	 * endpoint on a streaming interface that already has an OUT data
+	 * endpoint, the IN endpoint is the implicit feedback companion
+	 * (carrying device clock timing info), NOT an audio data endpoint.
+	 *
+	 * UAC2 §4.9.2: When an AudioStreaming interface uses asynchronous
+	 * or adaptive playback, the isochronous OUT endpoint has a companion
+	 * isochronous IN endpoint for feedback.
+	 *
+	 * UAC1 and capture-only interfaces (no OUT endpoint): the IN
+	 * endpoint carries audio data as expected.
+	 */
 	if (ep_addr & USB_ENDPOINT_DIR_IN) {
-		dev->iso_in_ep = ep_addr;
-		kprintf("[usb_audio]   ISO IN ep 0x%02X max=%u interval=%u\n",
-			ep_addr, max_pkt, interval);
+		if (dev->uac_version == UAC_VERSION_2_0 && dev->iso_out_ep != 0) {
+			dev->feedback_ep = ep_addr;
+			kprintf("[usb_audio]   UAC2 feedback EP 0x%02X max=%u interval=%u\n",
+				ep_addr, max_pkt, interval);
+		} else {
+			dev->iso_in_ep = ep_addr;
+			kprintf("[usb_audio]   ISO IN ep 0x%02X max=%u interval=%u\n",
+				ep_addr, max_pkt, interval);
+		}
 	} else {
 		dev->iso_out_ep = ep_addr;
 		kprintf("[usb_audio]   ISO OUT ep 0x%02X max=%u interval=%u\n",
@@ -1401,6 +1420,51 @@ static int parse_audio_streaming_ep(struct audio_device *dev,
 
 	if (max_pkt > dev->max_packet_size)
 		dev->max_packet_size = max_pkt;
+
+	return 0;
+}
+
+/* ── UAC2 class-specific endpoint descriptor parser ──────────────────── */
+
+/*
+ * Parse a UAC2 class-specific isochronous audio data endpoint descriptor
+ * (CS_ENDPOINT, subtype EP_GENERAL).  This follows the standard endpoint
+ * descriptor and provides per-endpoint capabilities.
+ *
+ * UAC2 §4.10.2.1:
+ *   bLength(1) bDescriptorType(1) bDescriptorSubtype(1) bmAttributes(1)
+ *   bmLockDelayUnits(1) wLockDelay(2)
+ *
+ * bmAttributes:
+ *   D0: Sampling Frequency Control (SET/GET CUR for sampling frequency)
+ *   D1: Pitch Control (can adjust pitch)
+ *
+ * Returns 0 on success, negative errno on parse error.
+ */
+static int parse_uac2_ep_general(struct audio_device *dev,
+				 const uint8_t *data, uint8_t length)
+{
+	if (!data || length < 7) {
+		kprintf("[usb_audio] UAC2: short EP_GENERAL desc (%u)\n",
+			length);
+		return -EINVAL;
+	}
+
+	uint8_t bm_attr = data[3];
+	uint8_t ld_units = data[4];
+	uint16_t ld_delay = 0;
+	memcpy(&ld_delay, data + 5, sizeof(ld_delay));
+
+	kprintf("[usb_audio] UAC2 EP_GENERAL: attr=0x%02X "
+		"(sf_ctrl=%s pitch_ctrl=%s) lock_delay=%u units=%u\n",
+		bm_attr,
+		(bm_attr & 0x01) ? "yes" : "no",
+		(bm_attr & 0x02) ? "yes" : "no",
+		ld_delay, ld_units);
+
+	(void)bm_attr;
+	(void)ld_units;
+	(void)ld_delay;
 
 	return 0;
 }
@@ -1554,6 +1618,24 @@ static int audio_desc_callback(uint8_t bDescriptorType,
 	    ctx->current_iface_class == USB_CLASS_AUDIO &&
 	    ctx->current_iface_subclass == AUDIO_SUBCLASS_STREAMING) {
 		ret = parse_audio_streaming_ep(dev, data, bLength);
+		return ret;
+	}
+
+	/*
+	 * Class-specific endpoint descriptors (CS_ENDPOINT) for UAC2
+	 * streaming endpoints. These follow each standard endpoint
+	 * descriptor and provide per-endpoint capabilities:
+	 *   EP_GENERAL (subtype 0x01) — bmAttributes with sampling
+	 *   frequency control and pitch control flags, plus lock delay.
+	 */
+	if (bDescriptorType == CS_ENDPOINT &&
+	    ctx->current_iface_class == USB_CLASS_AUDIO &&
+	    ctx->current_iface_subclass == AUDIO_SUBCLASS_STREAMING) {
+		if (dev->uac_version == UAC_VERSION_2_0 && bLength >= 4) {
+			uint8_t ep_subtype = data[2];
+			if (ep_subtype == EP_GENERAL)
+				ret = parse_uac2_ep_general(dev, data, bLength);
+		}
 		return ret;
 	}
 
