@@ -66,7 +66,8 @@ struct sound_pcm_stream {
     uint32_t    buf_mask;        /**< Buffer size - 1 (for modulo arithmetic) */
 
     /* Ring buffer */
-    uint8_t    *buffer;          /**< Allocated ring buffer storage */
+    uint8_t    *buffer;          /**< Allocated ring buffer storage (DMA-aligned) */
+    void       *buffer_alloc_base;/**< Original kmalloc pointer for kfree */
     int         buffer_owned;    /**< 1 if we allocated buffer ourselves */
 
     /* Cursor tracking */
@@ -205,6 +206,9 @@ static inline int sound_pcm_is_power_of_2(uint32_t v)
 {
     return v && (v & (v - 1)) == 0;
 }
+
+/** DMA-safe alignment for PCM buffer allocations (cache line size) */
+#define SOUND_PCM_DMA_ALIGN  64U
 
 /**
  * sound_pcm_roundup_pow2 — Round up to the next power of two.

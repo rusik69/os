@@ -80,12 +80,18 @@ int sound_pcm_init_stream(struct sound_pcm_stream *stream,
 
     /* Allocate or adopt buffer */
     if (buf) {
-        stream->buffer       = (uint8_t *)buf;
-        stream->buffer_owned = 0;
+        stream->buffer           = (uint8_t *)buf;
+        stream->buffer_alloc_base = NULL;  /* not owned, no free needed */
+        stream->buffer_owned     = 0;
     } else {
-        stream->buffer = (uint8_t *)kmalloc(buf_size);
-        if (!stream->buffer)
+        /* Overallocate by DMA_ALIGN-1 to guarantee cache-line alignment */
+        void *alloc = kmalloc(buf_size + SOUND_PCM_DMA_ALIGN - 1);
+        if (!alloc)
             return -ENOMEM;
+        stream->buffer_alloc_base = alloc;
+        stream->buffer = (uint8_t *)(((uintptr_t)alloc
+                                      + SOUND_PCM_DMA_ALIGN - 1)
+                                     & ~(uintptr_t)(SOUND_PCM_DMA_ALIGN - 1));
         stream->buffer_owned = 1;
     }
 
@@ -119,10 +125,11 @@ void sound_pcm_destroy_stream(struct sound_pcm_stream *stream)
     if (!stream)
         return;
 
-    if (stream->buffer_owned && stream->buffer) {
-        kfree(stream->buffer);
+    if (stream->buffer_owned && stream->buffer_alloc_base) {
+        kfree(stream->buffer_alloc_base);
     }
-    stream->buffer       = NULL;
+    stream->buffer           = NULL;
+    stream->buffer_alloc_base = NULL;
     stream->buffer_owned = 0;
     stream->active       = 0;
 }
