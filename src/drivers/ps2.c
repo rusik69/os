@@ -59,7 +59,7 @@ int ps2_controller_init(void) {
     kprintf("[OK] PS/2 controller self-test passed\n");
 
     /* Step 5: Write config back (keep current settings but ensure ports enabled) */
-    config |= PS2_CFG_P1_IRQ;
+    config |= PS2_CFG_P1_IRQ | PS2_CFG_P1_TRANS;   /* enable IRQ + scancode set 1 translation */
     config = (uint8_t)(config & ~PS2_CFG_P1_CLOCK);  /* enable clock for port 1 */
 
     /* Check if dual-channel: read port 2 status */

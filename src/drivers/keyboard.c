@@ -173,10 +173,24 @@ static void keyboard_handler(struct interrupt_frame *frame) {
 
     if (kb_extend) {
         kb_extend = 0;
-        if (scancode & 0x80)
+        if (scancode & 0x80) {
             key_set_down(scancode & 0x7F, 0);
-        else
+        } else {
             key_set_down(scancode, 1);
+            /* Extended (0xE0-prefixed) navigation keys — push special
+             * keycodes so arrow/page keys work.  These are always
+             * prefixed with 0xE0 in scancode set 1 and would never
+             * reach the arrow-key checks below. */
+            switch (scancode) {
+            case 0x48: kb_push(KEY_UP);    break;
+            case 0x50: kb_push(KEY_DOWN);  break;
+            case 0x4B: kb_push(KEY_LEFT);  break;
+            case 0x4D: kb_push(KEY_RIGHT); break;
+            case 0x49: kb_push(KEY_PAGEUP);   break;
+            case 0x51: kb_push(KEY_PAGEDOWN); break;
+            default:    break;
+            }
+        }
         return;
     }
 
