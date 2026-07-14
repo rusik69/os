@@ -93,6 +93,9 @@ static int parse_detailed_timing(const uint8_t *desc, struct edid_timing *t) {
     if (pixel_clock > 0) {
         uint64_t vfreq = (uint64_t)pixel_clock * 10000ULL / (uint64_t)h_total / (uint64_t)v_total;
         t->v_freq = (uint8_t)vfreq;
+
+        uint64_t hfreq = (uint64_t)pixel_clock * 10000ULL / (uint64_t)h_total;
+        t->h_freq = (uint8_t)(hfreq / 1000);
     }
 
     return 0;
@@ -173,13 +176,17 @@ int edid_parse(const uint8_t *raw, struct edid_data *edid) {
             /* Monitor descriptor */
             edid->descriptors[i].tag = desc[3];
             if (desc[3] == 0xFC) {
-                /* Monitor name */
-                int len = desc[0x0A] > 13 ? 13 : desc[0x0A];
+                /* Monitor name — scan for newline terminator */
+                int len = 0;
+                while (len < 13 && desc[5 + len] != '\n')
+                    len++;
                 memcpy(edid->descriptors[i].text, &desc[5], len);
                 edid->descriptors[i].text[len] = '\0';
             } else if (desc[3] == 0xFF) {
-                /* Serial number string */
-                int len = desc[0x0A] > 13 ? 13 : desc[0x0A];
+                /* Serial number string — scan for newline terminator */
+                int len = 0;
+                while (len < 13 && desc[5 + len] != '\n')
+                    len++;
                 memcpy(edid->descriptors[i].text, &desc[5], len);
                 edid->descriptors[i].text[len] = '\0';
             }
