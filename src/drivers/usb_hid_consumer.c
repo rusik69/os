@@ -383,9 +383,17 @@ static void consumer_process_report(const uint8_t *report, int len)
                 }
 
                 if (is_variable && bit_size == 1 && cur_usage_max >= cur_usage_min) {
-                    /* Pattern A: 1-bit toggle array (bitmap) */
+                    /* Pattern A: 1-bit toggle array (bitmap)
+                     * Each bit position maps to usage = base_usage + bit_index
+                     * bounded by cur_usage_max per USB HID spec §6.2.2.7.
+                     */
                     uint32_t base_usage = cur_usage_min;
-                    for (int b = 0; b < count && b < 64; b++) {
+                    uint32_t range_size = cur_usage_max - cur_usage_min + 1;
+                    int num_bits = count;
+                    if ((uint32_t)num_bits > range_size)
+                        num_bits = (int)range_size;
+                    if (num_bits > 64) num_bits = 64;
+                    for (int b = 0; b < num_bits; b++) {
                         int byte_off = report_bit_offset / 8;
                         int bit_off  = report_bit_offset % 8;
                         uint16_t usage_code = (uint16_t)(base_usage + b);
