@@ -169,7 +169,21 @@ void speaker_tone(uint32_t frequency) {
         return;
     }
 
+    /* Clamp to valid PIT divisor range [1, 65535].
+     * PIT_BASE_FREQ / 65535 ≈ 18.2 Hz is the minimum,
+     * PIT_BASE_FREQ / 1     ≈ 1.19 MHz is the maximum.
+     * Without clamping, frequencies below ~18 Hz produce a divisor
+     * exceeding 16 bits (silent truncation to wrong value) and
+     * frequencies above PIT_BASE_FREQ produce divisor = 0, which the
+     * PIT interprets as 65536 (~18.2 Hz output). */
+    if (frequency > PIT_BASE_FREQ)
+        frequency = PIT_BASE_FREQ;
+
     uint32_t divisor = PIT_BASE_FREQ / frequency;
+    if (divisor < 1)
+        divisor = 1;
+    if (divisor > 65535)
+        divisor = 65535;
 
     /* Configure PIT channel 2: mode 3 (square wave), binary */
     outb(PIT_CMD, 0xB6);
@@ -480,7 +494,15 @@ static int speaker_set_freq(int freq)
         return 0;
     }
 
+    /* Clamp to valid PIT divisor range (see speaker_tone for details) */
+    if ((uint32_t)freq > PIT_BASE_FREQ)
+        freq = (int)PIT_BASE_FREQ;
+
     uint32_t divisor = PIT_BASE_FREQ / (uint32_t)freq;
+    if (divisor < 1)
+        divisor = 1;
+    if (divisor > 65535)
+        divisor = 65535;
 
     /* Configure PIT channel 2: mode 3 (square wave), binary */
     outb(PIT_CMD, 0xB6);
