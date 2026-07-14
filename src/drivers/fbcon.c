@@ -656,6 +656,27 @@ void fbcon_dim_fb(int frac)
 static int fbcon_exit(void)
 {
     kprintf("[FBCON] fbcon_exit called\n");
+
+    /* Clear the framebuffer pointer so that all "if (!g_fb) return;" guards
+       in putchar, redraw, fill_rect, and any future cursor-blink timer
+       callback will bail out safely instead of writing through a stale or
+       freed framebuffer. */
+    g_fb = NULL;
+    g_width = 0;
+    g_height = 0;
+    g_pitch = 0;
+
+    /* Reset console state */
+    g_cursor_x = 0;
+    g_cursor_y = 0;
+    g_fg = FBCON_LIGHT_GREY;
+    g_bg = FBCON_BLACK;
+    g_scrollback_head = 0;
+    g_scrollback_count = 0;
+    g_scrollback_view = 0;
+    g_esc_state = ESC_NORMAL;
+    g_esc_pnum = 0;
+
     return 0;
 }
 
