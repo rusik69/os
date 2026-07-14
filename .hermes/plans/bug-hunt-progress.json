@@ -1,5 +1,5 @@
 {
-  "current_item": 699,
+  "current_item": 700,
   "total_items": 1000,
   "completed_items": [
     1,
@@ -699,9 +699,10 @@
     695,
     696,
     697,
-    698
+    698,
+    699
   ],
-  "found_bugs": 1162,
-  "fixed_bugs": 1162,
+  "found_bugs": 1163,
+  "fixed_bugs": 1163,
   "current_batch": "B011"
 }

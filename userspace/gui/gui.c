@@ -754,7 +754,15 @@ void gui_set_focused_window(gui_window_t *win) { if (win) g_gui_ctx.focused_wind
 void gui_handle_event(gui_event_t *evt) {
     if (!g_gui_ctx.focused_window) return;
     gui_widget_t *w = g_gui_ctx.focused_window->focused_widget;
-    if (w) gui_widget_on_event(w, evt);
+    if (!w) return;
+    /* Validate mouse event coordinates: only dispatch if within widget bounds.
+       This prevents negative/off-screen coordinates from triggering widgets. */
+    if (evt->type == GUI_EVENT_MOUSE_DOWN || evt->type == GUI_EVENT_MOUSE_UP ||
+        evt->type == GUI_EVENT_MOUSE_MOVE || evt->type == GUI_EVENT_MOUSE_DRAG) {
+        if (!gui_widget_contains_point(w, evt->x, evt->y))
+            return;
+    }
+    gui_widget_on_event(w, evt);
 }
 
 void gui_update_mouse(int32_t x, int32_t y, int buttons) {
@@ -909,7 +917,7 @@ void gui_run_loop(void) {
         mouse_get_pixel_pos(&mx, &my); mbuttons = mouse_get_buttons();
         gui_update_mouse(mx, my, mbuttons);
         gui_window_t *focused = gui_get_focused_window();
-        if (focused && mbuttons) {
+        if (focused && mbuttons && mx >= 0 && my >= 0) {
             gui_event_t evt; memset(&evt, 0, sizeof(evt));
             if (mbuttons & 1) { evt.type = GUI_EVENT_MOUSE_DOWN; evt.x = mx; evt.y = my; evt.button = 1; gui_handle_event(&evt); redraw = 1; }
         }
