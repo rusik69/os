@@ -135,14 +135,12 @@ static inline uint16_t nam_in16(uint16_t reg) { return inw((uint16_t)(ac97_nam_b
 static inline void nabm_out8 (uint16_t reg, uint8_t  v) { outb((uint16_t)(ac97_nabm_base + reg), v);  }
 static inline void nabm_out16(uint16_t reg, uint16_t v) { outw((uint16_t)(ac97_nabm_base + reg), v);  }
 static inline void nabm_out32(uint16_t reg, uint32_t v) {
-    outw((uint16_t)(ac97_nabm_base + reg),     (uint16_t)v);
-    outw((uint16_t)(ac97_nabm_base + reg + 2), (uint16_t)(v >> 16));
+    outl((uint16_t)(ac97_nabm_base + reg), v);
 }
 static inline uint8_t  nabm_in8 (uint16_t reg) { return inb((uint16_t)(ac97_nabm_base + reg));  }
 static inline uint16_t nabm_in16(uint16_t reg) { return inw((uint16_t)(ac97_nabm_base + reg));  }
 static inline uint32_t nabm_in32(uint16_t reg) {
-    return (uint32_t)inw((uint16_t)(ac97_nabm_base + reg)) |
-           ((uint32_t)inw((uint16_t)(ac97_nabm_base + reg + 2)) << 16);
+    return inl((uint16_t)(ac97_nabm_base + reg));
 }
 
 /* ── Init ────────────────────────────────────────────────────────── */
@@ -174,10 +172,17 @@ int ac97_init(void) {
     /* Set default sample rate to 44100 Hz */
     nam_out16(NAM_SAMPLE_RATE, 44100);
 
-    /* Enable Variable Rate Audio (VRA) for independent capture rate control */
-    uint16_t ext_audio = nam_in16(NAM_EXTENDED_AUDIO);
-    if (!(ext_audio & EA_VRA)) {
-        nam_out16(NAM_EXTENDED_AUDIO, ext_audio | EA_VRA);
+    /* Enable Variable Rate Audio (VRA) for independent capture rate control
+     * Note: 0x28 is Extended Audio ID (read-only).  To enable VRA we must
+     * read the capability from 0x28, then set the enable bit in the
+     * Extended Audio Control register at 0x2A.  Writing 0x28 directly
+     * has no effect. */
+    uint16_t ext_id = inw(ac97_nam_base + AC97_REG_EXT_AUDIO_ID);
+    if (ext_id & EA_VRA) {
+        uint16_t ext_ctrl = inw(ac97_nam_base + AC97_REG_EXT_AUDIO_CTRL);
+        if (!(ext_ctrl & EA_VRA)) {
+            outw(ac97_nam_base + AC97_REG_EXT_AUDIO_CTRL, ext_ctrl | EA_VRA);
+        }
     }
     /* Set capture sample rate default */
     nam_out16(NAM_PCM_IN_RATE, 44100);
@@ -329,11 +334,12 @@ int ac97_capture_read(int16_t *buf, uint32_t bytes, uint32_t rate)
     if (bytes & 1) bytes = (bytes + 1) & ~1u;
     if (bytes > sizeof(cap_audio_buf)) bytes = sizeof(cap_audio_buf);
 
-    /* Set capture sample rate if different from current */
+    /* Set capture sample rate if different from current
+     * Only valid when VRA is actually enabled in the control register. */
     if (rate != 44100) {
-        uint16_t ext_audio = nam_in16(NAM_EXTENDED_AUDIO);
-        if (ext_audio & EA_VRA) {
-            nam_out16(NAM_PCM_IN_RATE, (uint16_t)rate);
+        uint16_t ext_ctrl = inw(ac97_nam_base + AC97_REG_EXT_AUDIO_CTRL);
+        if (ext_ctrl & EA_VRA) {
+            outw(ac97_nam_base + NAM_PCM_IN_RATE, (uint16_t)rate);
         }
     }
 
