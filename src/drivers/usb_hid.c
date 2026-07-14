@@ -428,6 +428,11 @@ static const char hid_keycode_shifted[128] = {
 static int hid_key_to_ascii(uint8_t keycode, uint8_t modifiers) {
     if (keycode == HID_KEYCODE_NONE) return 0;
 
+    /* Guard against out-of-bounds access on the 128-entry tables.
+     * HID keyboard usage IDs range 0x00-0xDD (and beyond), but the
+     * boot-protocol subset and our ASCII mapping tables only cover 0-127. */
+    if (keycode >= 128) return 0;
+
     int shifted = (modifiers & (MOD_LSHIFT | MOD_RSHIFT)) != 0;
     int ctrl = (modifiers & (MOD_LCTRL | MOD_RCTRL)) != 0;
 
