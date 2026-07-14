@@ -191,6 +191,22 @@ struct virtio_gpu_ctx_resource {
     uint32_t padding;
 };
 
+/* Rectangle for resource flush */
+struct virtio_gpu_rect {
+    uint32_t x;
+    uint32_t y;
+    uint32_t width;
+    uint32_t height;
+};
+
+/* Resource flush command */
+struct virtio_gpu_resource_flush {
+    struct virtio_gpu_ctrl_hdr hdr;
+    uint32_t resource_id;
+    uint32_t padding;
+    struct virtio_gpu_rect rect;
+};
+
 #pragma pack(pop)
 
 /* ── Internal resource tracking ───────────────────────────────── */
@@ -789,6 +805,8 @@ static int virtio_gpu_submit_3d(uint32_t ctx_id,
             /* Reuse: reset signaled state for re-submission */
             f->signaled = 0;
         }
+        /* Store the fence tracking ID for response matching */
+        f->fence_id = (uint64_t)fence_id;
     } else {
         f = NULL;
     }
@@ -1231,6 +1249,73 @@ static int virtio_gpu_resource_unref(uint32_t resource_id)
     }
 
     gpu_free_resource(res);
+
+    return 0;
+}
+
+/* ── Resource flush ────────────────────────────────────────────── */
+
+static int virtio_gpu_resource_flush(uint32_t resource_id,
+                                      uint32_t x, uint32_t y,
+                                      uint32_t width, uint32_t height,
+                                      uint32_t fence_id)
+{
+    struct virtio_gpu_resource_flush cmd;
+    struct virtio_gpu_ctrl_hdr resp;
+    struct gpu_resource *res;
+    struct gpu_fence *f;
+    int ret;
+
+    if (!gpu_present)
+        return -ENODEV;
+
+    res = gpu_find_resource(resource_id);
+    if (!res)
+        return -ENOENT;
+
+    /* Look up fence if provided */
+    if (fence_id != 0) {
+        f = gpu_find_fence(fence_id);
+        if (!f)
+            return -ENOENT;
+        if (f->signaled)
+            f->signaled = 0;
+        /* Store the fence tracking ID for response matching */
+        f->fence_id = (uint64_t)fence_id;
+    } else {
+        f = NULL;
+    }
+
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.hdr.type  = VIRTIO_GPU_CMD_RESOURCE_FLUSH;
+    cmd.hdr.flags = (fence_id != 0) ? VIRTIO_GPU_FLAG_FENCE : 0;
+    cmd.hdr.fence_id = (uint64_t)fence_id;
+    cmd.resource_id   = resource_id;
+    cmd.padding       = 0;
+    cmd.rect.x        = x;
+    cmd.rect.y        = y;
+    cmd.rect.width    = width;
+    cmd.rect.height   = height;
+
+    kprintf("[VIRTIO-GPU] flush resource 0x%04X rect=%ux%u+%u+%u",
+            (unsigned int)resource_id, (unsigned int)width, (unsigned int)height,
+            (unsigned int)x, (unsigned int)y);
+    if (fence_id != 0)
+        kprintf(" fence=%u", (unsigned int)fence_id);
+    kprintf("\n");
+
+    ret = gpu_send_cmd(&cmd.hdr,
+                        sizeof(cmd) - sizeof(cmd.hdr),
+                        &cmd.resource_id, &resp, 0);
+    if (ret < 0) {
+        kprintf("[VIRTIO-GPU] resource_flush(0x%04X) failed: %d\n",
+                (unsigned int)resource_id, ret);
+        return ret;
+    }
+
+    /* Check if the response completes a pending fence */
+    if (fence_id != 0 && resp.fence_id != 0)
+        gpu_check_response_fence(&resp);
 
     return 0;
 }

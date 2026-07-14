@@ -1,7 +1,7 @@
 {
-  "plan_file": ".hermes/plans/bug-hunt-1k.md",
-  "current_item": 678,
-  "current_batch": "B010",
+  "current_batch": "B011",
+  "current_item": 685,
+  "total_items": 1000,
   "completed_items": [
     1,
     2,
@@ -679,21 +679,15 @@
     674,
     675,
     676,
-    677
+    677,
+    678,
+    679,
+    680,
+    681,
+    682,
+    683,
+    684
   ],
-  "found_bugs": 1146,
-  "fixed_bugs": 1146,
-  "completed_batches": [
-    "B001",
-    "B002",
-    "B003",
-    "B004",
-    "B005",
-    "B006",
-    "B007",
-    "B008",
-    "B009"
-  ],
-  "last_item_timestamp": "2026-07-14T06:41:00",
-  "last_item_result": "item 677: src/drivers/usb_audio.c - verify audio streaming interface alternate setting. BUG FOUND: the descriptor walk captured bAlternateSetting from the first AudioStreaming interface descriptor encountered, which is always alternate setting 0 (zero-bandwidth placeholder with no endpoints). Fixed by skipping alt=0 and recording the first non-zero alternate setting. Build verified, committed."
+  "found_bugs": 1151,
+  "fixed_bugs": 1151
 }
