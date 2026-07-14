@@ -310,8 +310,8 @@ static int gamepad_parse_report_desc(const uint8_t *desc, int len,
 	for (int a = 0; a < dev->n_axes; a++) {
 		dev->axes[a].min = (int32_t)logical_min;
 		dev->axes[a].max = (int32_t)logical_max;
-		dev->axes[a].value = (int32_t)(((int32_t)logical_min +
-		                                 (int32_t)logical_max) / 2);
+		dev->axes[a].value = (int32_t)(((int64_t)(int32_t)logical_min +
+		                                 (int64_t)(int32_t)logical_max) / 2);
 		dev->axes[a].deadzone = 0;
 		dev->axes[a].fuzz = 0;
 		dev->axes[a].flat = 0;
@@ -448,9 +448,9 @@ static void gamepad_process_report(struct hid_gamepad_dev *dev,
 							if (axis_idx >= 0 &&
 							    axis_idx < GAMEPAD_MAX_AXES &&
 							    axis_idx < dev->n_axes) {
-								int32_t centre =
-								    (dev->axes[axis_idx].max +
-								     dev->axes[axis_idx].min) / 2;
+								int32_t centre = (int32_t)(
+								    ((int64_t)dev->axes[axis_idx].max +
+								     (int64_t)dev->axes[axis_idx].min) / 2);
 								int32_t dz =
 								    dev->axes[axis_idx].deadzone;
 								/* Apply deadzone */
@@ -1041,8 +1041,9 @@ int usb_hid_joy_ioctl(int joy_idx, int cmd, void *arg)
 		/* Re-centre all axes */
 		for (int a = 0; a < dev->n_axes; a++) {
 			dev->axes[a].deadzone = 0;
-			dev->axes[a].value =
-			    (dev->axes[a].max + dev->axes[a].min) / 2;
+			dev->axes[a].value = (int32_t)(
+			    ((int64_t)dev->axes[a].max +
+			     (int64_t)dev->axes[a].min) / 2);
 		}
 		kprintf("[JOY] Calibration reset for device %d\n", joy_idx);
 		return 0;
