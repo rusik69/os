@@ -42,7 +42,7 @@ struct simplefb_drm_priv {
 	uint32_t            width;     /* visible width in pixels */
 	uint32_t            height;    /* visible height in pixels */
 	uint32_t            stride;    /* bytes per scanline */
-	uint32_t            fb_size;   /* total framebuffer size in bytes */
+	uint64_t            fb_size;   /* total framebuffer size in bytes */
 	uint8_t             bpp;       /* bits per pixel */
 };
 
@@ -79,9 +79,9 @@ static int simplefb_drm_load(struct drm_device *dev, unsigned long flags)
 	dev->min_height = priv->height;
 	dev->max_height = priv->height;
 
-	kprintf("[simplefb-drm] loaded: %dx%d @ %dbpp stride=%d fb=0x%llx size=%u\n",
+	kprintf("[simplefb-drm] loaded: %dx%d @ %dbpp stride=%d fb=0x%llx size=%llu\n",
 		priv->width, priv->height, priv->bpp, priv->stride,
-		(unsigned long long)priv->fb_phys, priv->fb_size);
+		(unsigned long long)priv->fb_phys, (unsigned long long)priv->fb_size);
 
 	return 0;
 }
@@ -153,7 +153,7 @@ static int simplefb_drm_init(void)
 	}
 
 	/* Compute framebuffer size from stride and height */
-	uint32_t fb_size = stride * height;
+	uint64_t fb_size = (uint64_t)stride * height;
 
 	/* Allocate private state */
 	struct simplefb_drm_priv *priv =
