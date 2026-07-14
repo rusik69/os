@@ -71,8 +71,47 @@ static int scan_intel_display(struct intel_gpu_info *out) {
                 if (cls != PCI_CLASS_DISPLAY) continue;
 
                 uint32_t irqr = pci_read((uint8_t)bus, (uint8_t)slot, (uint8_t)func, 0x3C);
+
+                /* ── MMIO BAR (BAR0): probe size, handle 64-bit BAR ── */
+                uint32_t saved_bar0 = pci_read((uint8_t)bus, (uint8_t)slot,
+                                                (uint8_t)func, 0x10);
+                pci_write((uint8_t)bus, (uint8_t)slot, (uint8_t)func, 0x10, 0xFFFFFFFF);
+                uint32_t bar0_sz = pci_read((uint8_t)bus, (uint8_t)slot,
+                                              (uint8_t)func, 0x10);
+                /* Restore and re-read */
+                pci_write((uint8_t)bus, (uint8_t)slot, (uint8_t)func, 0x10, saved_bar0);
                 uint32_t bar0 = pci_read((uint8_t)bus, (uint8_t)slot, (uint8_t)func, 0x10);
+
+                uint64_t mmio_base;
+                uint32_t mmio_size;
+
+                if ((bar0 & 0x6) == 0x4) {
+                    /* 64-bit MMIO BAR: upper 32 bits in BAR1 (offset 0x14) */
+                    uint32_t bar1 = pci_read((uint8_t)bus, (uint8_t)slot,
+                                              (uint8_t)func, 0x14);
+                    mmio_base = ((uint64_t)bar1 << 32) | (bar0 & ~0xFULL);
+                } else {
+                    /* 32-bit MMIO BAR */
+                    mmio_base = (uint64_t)(bar0 & ~0xFULL);
+                }
+                /* Decode BAR size from probe: writable bits indicate capacity */
+                mmio_size = ~(bar0_sz & 0xFFFFFFF0) + 1;
+                if (mmio_size < 0x1000 || mmio_size > 0x10000000) {
+                    /* Unreasonable value; fall back to default 2 MB */
+                    mmio_size = (uint32_t)INTEL_GPU_MMIO_SIZE;
+                }
+
+                /* ── APERTURE BAR (BAR2): handle 64-bit BAR ── */
                 uint32_t bar2 = pci_read((uint8_t)bus, (uint8_t)slot, (uint8_t)func, 0x18);
+                uint64_t aperture_base;
+
+                if ((bar2 & 0x6) == 0x4) {
+                    uint32_t bar3 = pci_read((uint8_t)bus, (uint8_t)slot,
+                                              (uint8_t)func, 0x1C);
+                    aperture_base = ((uint64_t)bar3 << 32) | (bar2 & ~0xFULL);
+                } else {
+                    aperture_base = (uint64_t)(bar2 & ~0xFULL);
+                }
 
                 out->present = 1;
                 out->bus = (uint8_t)bus;
@@ -80,11 +119,11 @@ static int scan_intel_display(struct intel_gpu_info *out) {
                 out->func = (uint8_t)func;
                 out->device_id = did;
                 out->irq = (uint8_t)(irqr & 0xFF);
-                out->mmio_base = (uint64_t)(bar0 & ~0xFULL);
-                out->aperture_base = (uint64_t)(bar2 & ~0xFULL);
+                out->mmio_base = mmio_base;
+                out->aperture_base = aperture_base;
                 out->stolen_mem_base = (uint64_t)(pci_read((uint8_t)bus, (uint8_t)slot,
                                                             (uint8_t)func, 0x5C) & ~0xFFFFFULL);
-                out->mmio_size = (uint32_t)INTEL_GPU_MMIO_SIZE;
+                out->mmio_size = mmio_size;
                 return 0;
             }
         }
