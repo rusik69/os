@@ -60,6 +60,9 @@
 #define VIRTIO_GPU_CMD_SUBMIT_3D           0x0204
 #define VIRTIO_GPU_CMD_FENCE_RETIRE        0x0206
 
+/* EDID command (virtio-gpu spec §5.7.6.8) */
+#define VIRTIO_GPU_CMD_GET_EDID           0x010B
+
 /* ── Fence flags ──────────────────────────────────────────────── */
 #define VIRTIO_GPU_FLAG_FENCE              (1u << 0)
 
@@ -205,6 +208,22 @@ struct virtio_gpu_resource_flush {
     uint32_t resource_id;
     uint32_t padding;
     struct virtio_gpu_rect rect;
+};
+
+/* EDID request/response (virtio-gpu spec §5.7.6.8) */
+struct virtio_gpu_get_edid {
+    struct virtio_gpu_ctrl_hdr hdr;
+    uint32_t scanout;
+    uint32_t padding;
+};
+
+#define VIRTIO_GPU_EDID_MAX_SIZE  1024
+
+struct virtio_gpu_resp_edid {
+    struct virtio_gpu_ctrl_hdr hdr;
+    uint32_t size;
+    uint32_t padding;
+    uint8_t  edid[VIRTIO_GPU_EDID_MAX_SIZE];
 };
 
 #pragma pack(pop)
@@ -1431,6 +1450,51 @@ static int virtio_gpu_transfer(void *dev, void *buf, size_t count)
     (void)buf;
     (void)count;
     kprintf("[VIRTIO] virtio_gpu_transfer: use virtio_gpu_2d API instead\n");
+    return 0;
+}
+
+/* ── EDID block transfer (virtio-gpu spec §5.7.6.8) ───────────── */
+
+static int virtio_gpu_get_edid(uint32_t scanout, uint8_t *edid_buf,
+                                uint32_t *edid_size_out)
+{
+    struct virtio_gpu_get_edid cmd;
+    struct virtio_gpu_resp_edid resp;
+    int ret;
+
+    if (!gpu_present)
+        return -ENODEV;
+    if (!edid_buf || !edid_size_out)
+        return -EINVAL;
+
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.hdr.type  = VIRTIO_GPU_CMD_GET_EDID;
+    cmd.hdr.flags = 0;
+    cmd.scanout   = scanout;
+    cmd.padding   = 0;
+
+    ret = gpu_send_cmd(&cmd.hdr,
+                        sizeof(cmd) - sizeof(cmd.hdr),
+                        &cmd.scanout, &resp.hdr,
+                        sizeof(resp) - sizeof(struct virtio_gpu_ctrl_hdr));
+    if (ret < 0) {
+        kprintf("[VIRTIO-GPU] get_edid(scanout=%u) failed: %d\n",
+                (unsigned int)scanout, ret);
+        return ret;
+    }
+
+    /* Extract the EDID data size reported by the device */
+    uint32_t edid_size = resp.size;
+    if (edid_size > VIRTIO_GPU_EDID_MAX_SIZE)
+        edid_size = VIRTIO_GPU_EDID_MAX_SIZE;
+
+    /* Copy the EDID block to the caller's buffer */
+    memcpy(edid_buf, resp.edid, edid_size);
+    *edid_size_out = edid_size;
+
+    kprintf("[VIRTIO-GPU] EDID block for scanout %u: %u bytes\n",
+            (unsigned int)scanout, (unsigned int)edid_size);
+
     return 0;
 }
 
