@@ -933,7 +933,16 @@ static int usb_hub_port_power(void *hub_ptr, int port, int on)
     }
 }
 
-/* ── Hub port over-current recovery ─────────────────────────── */
+/* ── Hub port over-current recovery (with debounce) ──────────── */
+/*
+ * Per USB 2.0 spec §11.8.3, software must debounce the over-current
+ * indication before re-enabling the port:
+ *   1) Clear C_PORT_OVER_CURRENT
+ *   2) Poll wPortStatus — verify PORT_STATUS_OVER_CURRENT is clear
+ *   3) If the condition persists, wait and retry (debounce)
+ *   4) Only re-enable the port after the condition clears
+ *   5) If a reasonable timeout expires, leave the port disabled.
+ */
 static int hub_port_over_current_recover(struct hub_state *hub, int port)
 {
     kprintf("[USB HUB] Port %d: over-current condition, disabling port\n", port);
@@ -948,16 +957,43 @@ static int hub_port_over_current_recover(struct hub_state *hub, int port)
     if (rc < 0)
         return rc;
 
-    /* Wait 100 ms for over-current to clear */
-    mdelay(100);
+    /* Debounce: poll port status until over-current clears or timeout.
+     * Use a 1-second total timeout with 100ms polling intervals. */
+    uint64_t deadline = timer_get_ticks() + (1000 * 100 / 1000);  /* 1 sec */
 
-    /* Re-enable the port */
-    rc = hub_set_port_feature(hub->dev_addr, HUB_FEATURE_PORT_ENABLE, (uint16_t)port);
-    if (rc < 0)
-        return rc;
+    do {
+        /* Wait 100 ms between checks */
+        mdelay(100);
 
-    kprintf("[USB HUB] Port %d: over-current cleared, port re-enabled\n", port);
-    return 0;
+        uint16_t status = 0, change = 0;
+        rc = hub_get_port_status(hub->dev_addr, (uint8_t)port, &status, &change);
+        if (rc < 0)
+            return rc;
+
+        /* Over-current condition cleared — re-enable the port */
+        if (!(status & PORT_STATUS_OVER_CURRENT)) {
+            rc = hub_set_port_feature(hub->dev_addr, HUB_FEATURE_PORT_ENABLE,
+                                      (uint16_t)port);
+            if (rc == 0) {
+                kprintf("[USB HUB] Port %d: over-current cleared, "
+                        "port re-enabled\n", port);
+            }
+            return rc;
+        }
+
+        /* Clear any new over-current change flags that appeared during the wait */
+        if (change & PORT_CHANGE_C_OVER_CURRENT) {
+            hub_clear_feature(hub->dev_addr, HUB_FEATURE_C_PORT_OVER_CURRENT,
+                              (uint16_t)port);
+        }
+
+        /* Check for timeout */
+        if (timer_get_ticks() >= deadline) {
+            kprintf("[USB HUB] Port %d: over-current condition persists, "
+                    "leaving port disabled\n", port);
+            return -1;
+        }
+    } while (1);
 }
 
 /* ── Hub port debounce ──────────────────────────────────────── */
