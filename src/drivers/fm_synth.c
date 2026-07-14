@@ -761,15 +761,30 @@ static int32_t fm_render_voice(struct fm_voice *v, uint16_t *lfsr)
     /* Render modulator sample (it modulates the carrier's phase) */
     int16_t mod_sample = fm_operator_render(&v->modulator, lfsr);
 
-    /* Modulate carrier phase: add modulator output * modulation index */
+    /* Modulate carrier phase: add modulator output * modulation index
+     * to the carrier's phase *before* the waveform lookup, then
+     * advance the carrier phase linearly as usual. */
     int32_t mod_phase_offset = (int32_t)mod_sample
                                * (int32_t)v->mod_index / 128;
 
-    /* Render carrier with modulated phase */
-    int16_t car_sample = fm_operator_render(&v->carrier, lfsr);
+    /* Sample carrier at the modulated phase */
+    uint32_t car_lookup = v->carrier.phase
+                        + (uint32_t)(int32_t)mod_phase_offset;
+    int16_t car_raw = fm_waveform_lookup(car_lookup,
+                                         v->carrier.waveform, lfsr);
+
+    /* Scale by envelope and output level */
+    int32_t scaled = (int32_t)car_raw
+                    * (int32_t)v->carrier.env_level / 255;
+    scaled = scaled * (int32_t)v->carrier.output_level / 255;
+    if (scaled > 32767) scaled = 32767;
+    if (scaled < -32767) scaled = -32767;
+
+    /* Advance carrier phase linearly (unmodulated) */
+    v->carrier.phase += v->carrier.phase_inc;
 
     /* Apply velocity scaling (0-127) */
-    int32_t out = (int32_t)car_sample * (int32_t)v->velocity / 127;
+    int32_t out = scaled * (int32_t)v->velocity / 127;
 
     return out;
 }
@@ -860,20 +875,29 @@ uint32_t fm_note_to_phase_inc(uint8_t note, uint32_t sample_rate)
     if (note > 127)
         return 0;
 
-    if (sample_rate != FM_SYNTH_DEFAULT_RATE) {
-        /* Recalculate for non-default sample rate */
-        double freq = 440.0 * 1.059463094359;
-        /* Actually just recompute — but for default rate use table */
-    }
+    if (sample_rate == FM_SYNTH_DEFAULT_RATE)
+        return g_fm_phase_incs[note];
 
-    return g_fm_phase_incs[note];
+    /* Recalculate for non-default sample rate using equal temperament:
+     * phase_inc = 440 * 2^((note-69)/12) / sample_rate * 2^32 */
+    if (sample_rate < 8000 || sample_rate > 192000)
+        return 0;
+
+    /* Compute using 64-bit fixed-point arithmetic */
+    uint32_t base = g_fm_phase_incs[note];
+    /* base is for 44100 Hz, scale to new rate */
+    uint64_t inc = (uint64_t)base * FM_SYNTH_DEFAULT_RATE / sample_rate;
+    if (inc > 0xFFFFFFFFULL) inc = 0xFFFFFFFFULL;
+    return (uint32_t)inc;
 }
 
 uint32_t fm_freq_to_phase_inc(uint32_t freq_fp, uint32_t sample_rate)
 {
     /* freq_fp is in 24.8 fixed-point format */
-    uint64_t freq_hz = (uint64_t)freq_fp;
-    uint64_t inc = (freq_hz << 24U) / (uint64_t)sample_rate;
+    /* Cast to uint64_t before shifting to avoid 32-bit overflow */
+    uint64_t inc = ((uint64_t)freq_fp << 24U) / (uint64_t)sample_rate;
+    if (inc > 0xFFFFFFFFULL)
+        inc = 0xFFFFFFFFULL;
     return (uint32_t)inc;
 }
 
