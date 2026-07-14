@@ -26,6 +26,7 @@
 #include "printf.h"
 #include "spinlock.h"
 #include "stdlib.h"
+#include "errno.h"
 
 /* ── Global mixer state ───────────────────────────────────────────── */
 
@@ -375,7 +376,7 @@ void sound_core_init(void)
 int sound_mixer_set_volume(enum sound_mixer_channel ch, uint8_t left, uint8_t right)
 {
     if (ch < 0 || ch >= SOUND_MIXER_COUNT)
-        return -1;
+        return -EINVAL;
 
     if (left  > SOUND_VOLUME_MAX) left  = SOUND_VOLUME_MAX;
     if (right > SOUND_VOLUME_MAX) right = SOUND_VOLUME_MAX;
@@ -393,7 +394,7 @@ int sound_mixer_set_volume(enum sound_mixer_channel ch, uint8_t left, uint8_t ri
 int sound_mixer_set_mute(enum sound_mixer_channel ch, int mute)
 {
     if (ch < 0 || ch >= SOUND_MIXER_COUNT)
-        return -1;
+        return -EINVAL;
 
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&g_mixer_lock, &irq_flags);
@@ -407,7 +408,7 @@ int sound_mixer_set_mute(enum sound_mixer_channel ch, int mute)
 int sound_mixer_set_recsel(enum sound_mixer_channel ch, int select)
 {
     if (ch < 0 || ch >= SOUND_MIXER_COUNT)
-        return -1;
+        return -EINVAL;
 
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&g_mixer_lock, &irq_flags);
@@ -436,7 +437,7 @@ uint16_t sound_mixer_read(enum sound_mixer_channel ch)
 int sound_mixer_write(enum sound_mixer_channel ch, uint16_t val)
 {
     if (ch < 0 || ch >= SOUND_MIXER_COUNT)
-        return -1;
+        return -EINVAL;
 
     uint8_t left  = (uint8_t)(val & 0x00FF);
     uint8_t right = (uint8_t)((val >> 8) & 0x00FF);

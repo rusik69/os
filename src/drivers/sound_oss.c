@@ -881,8 +881,14 @@ int sound_oss_ioctl(int cmd, uint64_t arg)
 		ret = oss_read_arg32(arg, &val);
 		if (ret < 0)
 			return ret;
-		return sound_mixer_write(SOUND_MIXER_MASTER,
-					 (uint16_t)val);
+		ret = sound_mixer_write(SOUND_MIXER_MASTER,
+					(uint16_t)val);
+		if (ret < 0)
+			return ret;
+		/* Write back the actual value after clamping
+		 * (OSS mixer ioctls are read-write — dir=3). */
+		uint16_t actual = sound_mixer_read(SOUND_MIXER_MASTER);
+		return oss_write_arg32(arg, (uint32_t)actual);
 	}
 
 	case SOUND_MIXER_READ_MUTE: {
@@ -895,8 +901,15 @@ int sound_oss_ioctl(int cmd, uint64_t arg)
 		ret = oss_read_arg32(arg, &val);
 		if (ret < 0)
 			return ret;
-		return sound_mixer_set_mute(SOUND_MIXER_MASTER,
-					    (int)val ? 1 : 0);
+		ret = sound_mixer_set_mute(SOUND_MIXER_MASTER,
+					(int)val ? 1 : 0);
+		if (ret < 0)
+			return ret;
+		/* Write back the actual mute state
+		 * (OSS mixer ioctls are read-write — dir=3). */
+		uint16_t mv = sound_mixer_read(SOUND_MIXER_MASTER);
+		return oss_write_arg32(arg,
+				(mv & 0x8000) ? 1U : 0U);
 	}
 
 	case SOUND_MIXER_READ_DEVMASK:
@@ -928,7 +941,14 @@ int sound_oss_ioctl(int cmd, uint64_t arg)
 			if (ret < 0)
 				return ret;
 		}
-		return 0;
+		/* Write back the actual rec source mask
+		 * (OSS mixer ioctls are read-write — dir=3). */
+		uint32_t actual_mask = 0;
+		for (int i = 0; i < SOUND_MIXER_COUNT; i++) {
+			if (g_sound_mixer[i].recsel)
+				actual_mask |= (1u << i);
+		}
+		return oss_write_arg32(arg, actual_mask);
 	}
 
 	case SOUND_MIXER_READ_STEREO:
