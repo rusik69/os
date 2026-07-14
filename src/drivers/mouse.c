@@ -64,12 +64,15 @@ static void mouse_irq_handler(struct interrupt_frame *frame) {
             /* Decode 4-byte IntelliMouse packet */
             mouse_buttons = (uint8_t)(mouse_bytes[0] & 0x07);
 
-            int dx = mouse_bytes[1];
-            int dy = mouse_bytes[2];
-
-            /* Sign extension from packet flags */
-            if (mouse_bytes[0] & 0x10) dx |= ~0xFF;
-            if (mouse_bytes[0] & 0x20) dy |= ~0xFF;
+            /* Decode 9-bit signed X/Y deltas.
+             * Byte 0 bit 4 = X sign (9th bit), byte 0 bit 5 = Y sign.
+             * Bytes 1/2 are the lower 8 bits (unsigned) of the 9-bit
+             * two's complement value.  The old code used int8_t and
+             * then ORed ~0xFF, which broke positive values > 127. */
+            int dx = (uint8_t)mouse_bytes[1];
+            int dy = (uint8_t)mouse_bytes[2];
+            if (mouse_bytes[0] & 0x10) dx -= 256;
+            if (mouse_bytes[0] & 0x20) dy -= 256;
 
             /* Overflow: ignore */
             if (mouse_bytes[0] & 0x40) dx = 0;
