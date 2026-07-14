@@ -46,7 +46,7 @@ struct simplefb_device {
     uint32_t  width;            /* Visible width in pixels */
     uint32_t  height;           /* Visible height in pixels */
     uint32_t  stride;           /* Bytes per scanline */
-    uint32_t  fb_size;          /* Total framebuffer size in bytes */
+    uint64_t  fb_size;          /* Total framebuffer size in bytes */
     enum simplefb_format format;
     int       registered;       /* Whether fbcon is using this */
 };
@@ -106,8 +106,39 @@ int simplefb_init(uint64_t fb_addr, uint32_t width, uint32_t height,
             break;
     }
 
-    /* Compute total framebuffer size */
-    uint32_t fb_size = stride * height;
+    /* Compute total framebuffer size with overflow-safe arithmetic */
+    uint64_t fb_size = (uint64_t)stride * height;
+
+    /* ── Verify framebuffer physical address range ──────────────────
+     *
+     * Bootloader-provided framebuffers typically reside in MMIO space
+     * above 1MB (high memory or PCI BAR aperture).  Validate the full
+     * range [fb_addr, fb_addr + fb_size) before using it:
+     *
+     * 1. The stride*height product must not overflow uint64_t (belt-
+     *    and-suspenders — already safe with the cast above).
+     * 2. fb_addr + fb_size must not wrap around the address space.
+     * 3. The starting address should not be in the first 1MB (low BIOS
+     *    / VGA legacy area) — a framebuffer there is almost certainly
+     *    a configuration error.  We warn but accept it.
+     */
+    if (fb_size == 0) {
+        kprintf("[SIMPLEFB] Integer overflow in framebuffer size "
+                "computation (stride=%u * height=%u)\n", stride, height);
+        return -1;
+    }
+
+    if (fb_addr + fb_size < fb_addr) {
+        kprintf("[SIMPLEFB] Framebuffer address range wraps around: "
+                "addr=%p size=%llu\n", (void*)(uintptr_t)fb_addr, fb_size);
+        return -1;
+    }
+
+    if (fb_addr < 0x100000ULL) {
+        kprintf("[SIMPLEFB] Warning: framebuffer phys addr %p is in "
+                "low memory region (< 1MB)\n",
+                (void*)(uintptr_t)fb_addr);
+    }
 
     /* Map the framebuffer as uncacheable (ioremap equivalent) */
     /* For now, assume the framebuffer is already identity-mapped or
@@ -120,7 +151,7 @@ int simplefb_init(uint64_t fb_addr, uint32_t width, uint32_t height,
     g_simplefb.format     = (enum simplefb_format)format_enum;
     g_simplefb.registered = 0;
 
-    kprintf("[SIMPLEFB] %s framebuffer: %dx%d, %dbpp, stride=%d, addr=%p, size=%u\n",
+    kprintf("[SIMPLEFB] %s framebuffer: %dx%d, %dbpp, stride=%d, addr=%p, size=%llu\n",
             simplefb_format_name(g_simplefb.format),
             width, height, bpp, stride, (void *)g_simplefb.fb_addr, fb_size);
 
