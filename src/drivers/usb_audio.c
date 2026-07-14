@@ -958,14 +958,15 @@ static int parse_uac2_control_desc(struct audio_device *dev,
 		struct audio_clock_selector *cs =
 			&dev->clock_selectors[dev->num_clock_selectors];
 		cs->id = data[3];
-		cs->num_inputs = data[4];
+
+		/* bNrInPins — cap at source_ids[] array size to prevent
+		 * out-of-bounds access by any code iterating via num_inputs.
+		 * The raw value is kept locally for wire-format offset math. */
+		uint8_t raw_num_inputs = data[4];
+		cs->num_inputs = (raw_num_inputs <= 4) ? raw_num_inputs : 4;
 
 		/* Read source IDs (one byte each) */
-		uint8_t num_pins = cs->num_inputs;
-		if (num_pins > 4)
-			num_pins = 4;
-
-		for (uint8_t i = 0; i < num_pins; i++) {
+		for (uint8_t i = 0; i < cs->num_inputs; i++) {
 			uint8_t src_offset = 5 + i;
 			if (src_offset >= length)
 				break;
@@ -973,7 +974,7 @@ static int parse_uac2_control_desc(struct audio_device *dev,
 		}
 
 		/* bmControls is after the source ID list */
-		uint8_t controls_offset = 5 + cs->num_inputs;
+		uint8_t controls_offset = 5 + raw_num_inputs;
 		if (controls_offset < length)
 			cs->controls = data[controls_offset];
 		else
