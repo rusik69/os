@@ -691,6 +691,14 @@ static int enumerate_hub(uint8_t dev_addr) {
         return -2;
     }
 
+    /* Validate bNbrPorts: must be between 1 and USB_MAX_PORTS_PER_HUB */
+    if (desc->bNbrPorts == 0 || desc->bNbrPorts > USB_MAX_PORTS_PER_HUB) {
+        kprintf("[USB HUB] Hub addr=%d: invalid bNbrPorts=%d (max %d)\n",
+                dev_addr, desc->bNbrPorts, USB_MAX_PORTS_PER_HUB);
+        pmm_free_frame(VIRT_TO_PHYS((uint64_t)buf));
+        return -3;
+    }
+
     struct hub_state *hub = &g_hubs[g_hub_count];
     hub->dev_addr = dev_addr;
     hub->n_ports = desc->bNbrPorts;
@@ -717,7 +725,7 @@ static int enumerate_hub(uint8_t dev_addr) {
     busy_wait((uint32_t)hub->power_good_delay * 2000);
 
     /* Enumerate already-connected devices */
-    for (int p = 1; p <= hub->n_ports; p++) {
+    for (int p = 1; p <= hub->n_ports && p <= USB_MAX_PORTS_PER_HUB; p++) {
         uint16_t status = 0, change = 0;
         hub_get_port_status(dev_addr, (uint8_t)p, &status, &change);
 
@@ -742,7 +750,7 @@ static void usb_hub_poll(void) {
     for (int h = 0; h < g_hub_count; h++) {
         struct hub_state *hub = &g_hubs[h];
 
-        for (int p = 1; p <= hub->n_ports; p++) {
+        for (int p = 1; p <= hub->n_ports && p <= USB_MAX_PORTS_PER_HUB; p++) {
             uint16_t status = 0, change = 0;
             if (hub_get_port_status(hub->dev_addr, (uint8_t)p, &status, &change) < 0)
                 continue;
@@ -1018,7 +1026,7 @@ static int usb_hub_detect(void)
     for (int h = 0; h < g_hub_count; h++) {
         struct hub_state *hub = &g_hubs[h];
 
-        for (int p = 1; p <= hub->n_ports; p++) {
+        for (int p = 1; p <= hub->n_ports && p <= USB_MAX_PORTS_PER_HUB; p++) {
             uint16_t status = 0, change = 0;
             if (hub_get_port_status(hub->dev_addr, (uint8_t)p, &status, &change) < 0)
                 continue;
