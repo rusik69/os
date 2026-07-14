@@ -852,9 +852,9 @@ static int parse_uac2_control_desc(struct audio_device *dev,
 		 *
 		 * Each bmaControls entry is 4 bytes.
 		 * Number of channels = (bLength - 7 - 1) / 4
-		 *   (bLength - header(6) - iFeature(1)) / 4
+		 *   (bLength - header(5) - iFeature(1)) / 4
 		 */
-		if (length < 11) { /* 6 header + 4 master control + 1 ifeature */
+		if (length < 10) { /* 5 header + 4 master control + 1 ifeature */
 			kprintf("[usb_audio] UAC2: short feature unit desc (%u)\n",
 				length);
 			return -EINVAL;
