@@ -472,9 +472,13 @@ int edid_parse_extensions(const uint8_t *raw, int count,
         const uint8_t *blk = &raw[(ext + 1) * EDID_SIZE];
         uint8_t tag = blk[0];
 
+        /* Validate extension block checksum (last byte of 128-byte block) */
+        if (edid_validate_checksum(blk) < 0)
+            continue;   /* Skip corrupted extension block */
+
         if (tag == EDID_EXT_TAG_CEA) {
             uint8_t rev = blk[1];
-            uint8_t dtd_offset = blk[2] & 0x3F; /* bits 4:0 = DTD offset */
+            uint8_t dtd_offset = blk[2] & 0x7F; /* bits 6:0 = DTD offset per CEA-861 */
             uint8_t features = blk[3];
 
             edid->has_cea_block = 1;
