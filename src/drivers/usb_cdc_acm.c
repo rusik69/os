@@ -412,15 +412,21 @@ int __init usb_cdc_acm_init(void) {
         return rc;
     }
 
-    int cfg_len = cfg[0];
+    /* Use wTotalLength at offset 2-3, not bLength at offset 0 (which is always
+     * 9 — just the config descriptor header — and misses all sub-descriptors
+     * such as CDC ACM interfaces and endpoints). */
+    uint16_t cfg_total_len = (uint16_t)cfg[2] | ((uint16_t)cfg[3] << 8);
+    if (cfg_total_len > 256) cfg_total_len = 256;
+    int cfg_len = (int)cfg_total_len;
     int pos = 0;
     int cdc_found = 0;
     int data_iface_num = -1;
 
-    while (pos < cfg_len) {
+    while (pos + 1 < cfg_len) {
         uint8_t dlen = cfg[pos];
         uint8_t dtype = cfg[pos + 1];
-        if (dlen == 0) break;
+        if (dlen < 2) break;
+        if (pos + dlen > cfg_len) break;
 
         if (dtype == 4) {  /* Interface */
             uint8_t if_class  = cfg[pos + 5];
