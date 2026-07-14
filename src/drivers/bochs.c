@@ -97,6 +97,13 @@ uint64_t bochs_get_fb_phys(void) { return bochs_fb_phys; }
 
 uint32_t bochs_get_fb_size(void) { return bochs_fb_size; }
 
+/*
+ * Compute bytes-per-pixel rounding up (integer ceiling division).
+ * For 15-bit colour (5:5:5), for example, bpp=15 → bpp/8=1 in
+ * integer math but the actual pixel consumes 2 bytes.
+ */
+#define BPP_TO_BYTES(bpp)  (((bpp) + 7) / 8)
+
 int bochs_set_mode(int w, int h, int bpp)
 {
     if (!bochs_present)
@@ -115,6 +122,17 @@ int bochs_set_mode(int w, int h, int bpp)
     outw(VBE_DISPI_IOPORT_INDEX, VBE_DISPI_INDEX_BPP);
     outw(VBE_DISPI_IOPORT_DATA, (uint16_t)bpp);
 
+    /* Set virtual dimensions and panning offsets — these can otherwise
+     * retain stale values left by boot firmware or a previous mode. */
+    outw(VBE_DISPI_IOPORT_INDEX, 6);  /* VIRT_WIDTH */
+    outw(VBE_DISPI_IOPORT_DATA,  (uint16_t)w);
+    outw(VBE_DISPI_IOPORT_INDEX, 7);  /* VIRT_HEIGHT */
+    outw(VBE_DISPI_IOPORT_DATA,  (uint16_t)h);
+    outw(VBE_DISPI_IOPORT_INDEX, 8);  /* X_OFFSET */
+    outw(VBE_DISPI_IOPORT_DATA,  0);
+    outw(VBE_DISPI_IOPORT_INDEX, 9);  /* Y_OFFSET */
+    outw(VBE_DISPI_IOPORT_DATA,  0);
+
     /* Enable display + LFB */
     outw(VBE_DISPI_IOPORT_INDEX, VBE_DISPI_INDEX_ENABLE);
     outw(VBE_DISPI_IOPORT_DATA, (uint16_t)(VBE_DISPI_LFB_ENABLED | 1));
@@ -128,17 +146,44 @@ int bochs_set_mode(int w, int h, int bpp)
         return -1;
     }
 
+    /*
+     * Read back the actual dimensions the hardware programmed.
+     * The Bochs VBE spec says unsupported modes are silently clamped
+     * to the nearest supported resolution; we must use the real
+     * values for the mapping size and cached dimensions.
+     */
+    outw(VBE_DISPI_IOPORT_INDEX, VBE_DISPI_INDEX_XRES);
+    int actual_w = (int)inw(VBE_DISPI_IOPORT_DATA);
+    outw(VBE_DISPI_IOPORT_INDEX, VBE_DISPI_INDEX_YRES);
+    int actual_h = (int)inw(VBE_DISPI_IOPORT_DATA);
+    outw(VBE_DISPI_IOPORT_INDEX, VBE_DISPI_INDEX_BPP);
+    int actual_bpp = (int)inw(VBE_DISPI_IOPORT_DATA);
+
     /* Update cached dimensions */
-    bochs_width  = w;
-    bochs_height = h;
+    bochs_width  = actual_w;
+    bochs_height = actual_h;
+
+    /* Warn if the hardware chose different parameters */
+    if (actual_w != w || actual_h != h || actual_bpp != bpp) {
+        kprintf("[BOCHS] set_mode: requested %dx%d@%d, hardware "
+                "clamped to %dx%d@%d\n",
+                w, h, bpp, actual_w, actual_h, actual_bpp);
+    }
 
     /* Re-discover the LFB physical address (BAR may be invalid before enable) */
     if (!bochs_fb_phys)
         bochs_fb_phys = bochs_get_lfb_phys();
     bochs_fb_size = BOCHS_LFB_SIZE_DEFAULT;
 
+    /* Unmap any previous framebuffer mapping before re-mapping */
+    if (bochs_fb_base) {
+        vmm_unmap_phys((void *)(uintptr_t)bochs_fb_base, bochs_fb_size);
+        bochs_fb_base = NULL;
+    }
+
     /* Map framebuffer into kernel virtual address space */
-    uint64_t fb_sz = (uint64_t)w * (uint64_t)h * (uint64_t)(bpp / 8);
+    uint32_t bpp_bytes = BPP_TO_BYTES(actual_bpp);
+    uint64_t fb_sz = (uint64_t)actual_w * (uint64_t)actual_h * (uint64_t)bpp_bytes;
     if (fb_sz > bochs_fb_size)
         fb_sz = bochs_fb_size;
 
@@ -157,13 +202,15 @@ int bochs_set_mode(int w, int h, int bpp)
 
     kprintf("[BOCHS] set_mode: %dx%d@%dbpp — framebuffer mapped "
             "(phys=0x%llx virt=%p size=%llu)\n",
-            w, h, bpp,
+            actual_w, actual_h, actual_bpp,
             (unsigned long long)bochs_fb_phys,
             (const void *)(uintptr_t)bochs_fb_base,
             (unsigned long long)fb_sz);
 
     return 0;
 }
+
+#undef BPP_TO_BYTES
 
 #include "module.h"
 module_init(bochs_init);
