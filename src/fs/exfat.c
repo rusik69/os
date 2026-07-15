@@ -687,6 +687,149 @@ static int exfat_bitmap_sync(struct exfat_priv *ep)
 	return 0;
 }
 
+/* ── Up-case table validation ───────────────────────────────────── */
+/* Scans the root directory for the up-case table entry (type 0x82),
+ * reads the table data, and verifies its CRC32 checksum.
+ * The up-case table is required for correct case-insensitive filename
+ * comparison in exFAT.  Returns 0 on success (table loaded and verified),
+ * negative on error.  A missing or invalid table is non-fatal — the
+ * volume is still mountable but case-insensitive comparison is limited
+ * to ASCII. */
+
+static int exfat_validate_upcase(struct exfat_priv *ep)
+{
+    uint32_t cluster_size = (1U << ep->sectors_per_cluster_shift) *
+                            ep->sector_size;
+    uint8_t stack_buf[4096];
+    uint8_t *cluster_buf = stack_buf;
+    int need_free = 0;
+    int ret = -ENOENT;
+
+    if (!ep->bitmap_initialized)
+        return -EINVAL;
+
+    if (cluster_size > sizeof(stack_buf)) {
+        cluster_buf = (uint8_t *)kmalloc(cluster_size);
+        if (!cluster_buf) return -ENOMEM;
+        need_free = 1;
+    }
+
+    /* Root directory: cluster 0 = cluster_heap_offset */
+    uint32_t cluster = ep->root_dir_cluster;
+
+    while (cluster >= 2 && cluster < EXFAT_CLUSTER_END) {
+        if (exfat_read_cluster(ep, cluster, cluster_buf) < 0) {
+            ret = -EIO;
+            goto out;
+        }
+
+        for (uint32_t off = 0; off + 32 <= cluster_size; off += 32) {
+            uint8_t *entry = cluster_buf + off;
+            uint8_t type = entry[0];
+
+            if (type == EXFAT_ENTRY_EOD)
+                goto not_found;
+
+            if (type == EXFAT_ENTRY_UNUSED)
+                continue;
+
+            /* Check for up-case table entry */
+            if (type == EXFAT_ENTRY_UPCASE) {
+                struct exfat_upcase_entry *ue =
+                    (struct exfat_upcase_entry *)entry;
+                uint32_t uc_cluster  = ue->first_cluster;
+                uint64_t uc_data_len = ue->data_length;
+                uint32_t uc_checksum = ue->checksum;
+
+                /* Validate basic parameters */
+                if (uc_data_len == 0 || uc_data_len > 256 * 1024) {
+                    kprintf("[exfat] up-case table: invalid size %llu\n",
+                            (unsigned long long)uc_data_len);
+                    ret = -EINVAL;
+                    goto out;
+                }
+
+                if (uc_cluster < 2 || uc_cluster >= EXFAT_CLUSTER_END) {
+                    kprintf("[exfat] up-case table: invalid cluster %u\n",
+                            uc_cluster);
+                    ret = -EINVAL;
+                    goto out;
+                }
+
+                /* Allocate buffer for the table data */
+                uint32_t data_bytes = (uint32_t)uc_data_len;
+                uint8_t *table_data = (uint8_t *)kmalloc(data_bytes);
+                if (!table_data) {
+                    ret = -ENOMEM;
+                    goto out;
+                }
+
+                /* Read the table data cluster by cluster */
+                uint32_t bytes_per_cluster = cluster_size;
+                uint32_t offset = 0;
+                uint32_t cur_cluster = uc_cluster;
+
+                while (offset < data_bytes && cur_cluster >= 2 &&
+                       cur_cluster < EXFAT_CLUSTER_END) {
+                    uint32_t chunk = data_bytes - offset;
+                    if (chunk > bytes_per_cluster)
+                        chunk = bytes_per_cluster;
+
+                    if (exfat_read_cluster(ep, cur_cluster,
+                                           table_data + offset) < 0) {
+                        kprintf("[exfat] up-case table: read error "
+                                "at cluster %u\n", cur_cluster);
+                        kfree(table_data);
+                        ret = -EIO;
+                        goto out;
+                    }
+
+                    offset += chunk;
+                    cur_cluster = exfat_next_cluster(ep, cur_cluster);
+                }
+
+                /* Verify CRC32 of the table data */
+                uint32_t computed_crc = crc32(0, table_data, data_bytes);
+
+                if (computed_crc != uc_checksum) {
+                    kprintf("[exfat] up-case table: CRC32 mismatch "
+                            "(computed 0x%08X, stored 0x%08X)\n",
+                            computed_crc, uc_checksum);
+                    kfree(table_data);
+                    ret = -EILSEQ;
+                    goto out;
+                }
+
+                /* Table validated — store it */
+                if (ep->upcase_table)
+                    kfree(ep->upcase_table);
+
+                ep->upcase_table       = table_data;
+                ep->upcase_table_size  = data_bytes;
+                ep->upcase_table_valid = 1;
+
+                kprintf("[exfat] up-case table: loaded %u bytes, "
+                        "CRC32 0x%08X OK\n",
+                        data_bytes, computed_crc);
+                ret = 0;
+                goto out;
+            }
+        }
+
+        /* Move to next cluster */
+        cluster = exfat_next_cluster(ep, cluster);
+    }
+
+not_found:
+    kprintf("[exfat] up-case table: not found in root directory\n");
+    ret = -ENOENT;
+
+out:
+    if (need_free) kfree(cluster_buf);
+    return ret;
+}
+
+
 /* ── Name hash (exFAT spec: 16-bit hash from UTF-16 name) ────────── */
 
 static uint16_t exfat_name_hash(const uint16_t *name, uint32_t len)
@@ -2401,6 +2544,9 @@ static int exfat_mount(const char *source, const char *target, unsigned long fla
 		return ret;
 	}
 
+	/* Validate and load the up-case table (non-fatal if missing) */
+	exfat_validate_upcase(ep);
+
 	kprintf("[exfat] mounted %s on %s\n", source, target);
 
 	/* Register with VFS */
@@ -2428,6 +2574,13 @@ static int exfat_umount(const char *target)
 	ret = exfat_bitmap_sync(ep);  /* NULL-safe: bitmap_initialized is 0 */
 	if (ret < 0)
 		kprintf("[exfat] bitmap sync warning on unmount: %d\n", ret);
+
+	/* Free the up-case table if loaded */
+	if (ep && ep->upcase_table) {
+		kfree(ep->upcase_table);
+		ep->upcase_table = NULL;
+		ep->upcase_table_valid = 0;
+	}
 
 	kprintf("[exfat] exFAT unmounted\n");
 	return 0;

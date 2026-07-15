@@ -168,6 +168,11 @@ struct exfat_priv {
     uint32_t cached_fat_sector;     /* FAT sector in cache (~0 = invalid) */
     uint8_t  cached_fat_data[512];  /* cached FAT sector data */
     int      cached_fat_dirty;      /* 1 = cache needs write-back */
+
+    /* ── Up-case table ─────────────────────────────────────────── */
+    uint8_t  *upcase_table;         /* loaded up-case table data (NULL if none) */
+    uint32_t  upcase_table_size;    /* size in bytes */
+    int       upcase_table_valid;   /* 1 = CRC32 verified, usable for lookups */
 };
 
 int exfat_probe(uint8_t dev_id);
