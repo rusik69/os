@@ -54,7 +54,10 @@ static int cmos_get_time(void *time)
     uint16_t yr    = cmos_read(0x09);
     uint16_t cent  = cmos_read(0x32);
 
-    /* Convert BCD to binary if needed */
+    /* Convert BCD to binary if needed — only time registers (0x00-0x09)
+     * follow the DM bit of Status Register B.  The century byte at CMOS
+     * register 0x32 is in the NVRAM space and is always BCD on PC hardware,
+     * regardless of the data mode. */
     uint8_t status_b = cmos_read(0x0B);
     if (!(status_b & 0x04)) {
         t->second = (uint8_t)((t->second & 0x0F) + ((t->second / 16) * 10));
@@ -63,8 +66,13 @@ static int cmos_get_time(void *time)
         t->day    = (uint8_t)((t->day & 0x0F) + ((t->day / 16) * 10));
         t->month  = (uint8_t)((t->month & 0x0F) + ((t->month / 16) * 10));
         yr        = (uint16_t)((yr & 0x0F) + ((yr / 16) * 10));
-        cent      = (uint16_t)((cent & 0x0F) + ((cent / 16) * 10));
     }
+
+    /* Century byte at CMOS 0x32 is always BCD on PC hardware — convert
+     * unconditionally.  A missing century register (reading 0x00) yields
+     * cent = 0, which produces year = yr (the 2-digit year, wrong but
+     * safe).  We accept this because the item spec says 0x32 is present. */
+    cent = (uint16_t)((cent & 0x0F) + ((cent / 16) * 10));
 
     t->year = yr + cent * 100;
 
