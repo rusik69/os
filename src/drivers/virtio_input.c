@@ -64,6 +64,9 @@
 #define INPUT_EVENT_BUF_SIZE   256
 
 /* ── Split virtqueue ring structures (legacy layout) ───────────── */
+/* Legacy VirtIO requires the used ring to be page-aligned (4K).    */
+
+#define VIRTIO_PCI_VRING_ALIGN  4096
 
 #pragma pack(push, 1)
 struct vring_desc {
@@ -192,10 +195,7 @@ static inline void vi_outw(uint8_t off, uint16_t v)
 
 static inline void vi_outl(uint8_t off, uint32_t v)
 {
-	outb((uint16_t)(input_iobase + off),     (uint8_t)(v));
-	outb((uint16_t)(input_iobase + off + 1), (uint8_t)(v >> 8));
-	outb((uint16_t)(input_iobase + off + 2), (uint8_t)(v >> 16));
-	outb((uint16_t)(input_iobase + off + 3), (uint8_t)(v >> 24));
+	outl((uint16_t)(input_iobase + off), v);
 }
 
 static inline uint8_t vi_inb(uint8_t off)
@@ -210,10 +210,7 @@ static inline uint16_t vi_inw(uint8_t off)
 
 static inline uint32_t vi_inl(uint8_t off)
 {
-	return (uint32_t)inb((uint16_t)(input_iobase + off)) |
-	       ((uint32_t)inb((uint16_t)(input_iobase + off + 1)) << 8)  |
-	       ((uint32_t)inb((uint16_t)(input_iobase + off + 2)) << 16) |
-	       ((uint32_t)inb((uint16_t)(input_iobase + off + 3)) << 24);
+	return inl((uint16_t)(input_iobase + off));
 }
 
 /* ── Device config access (legacy PCI I/O port) ──────────────────── */
@@ -335,7 +332,15 @@ static int vi_init_vq(struct vi_vq *q, uint16_t queue_idx)
 	q->descs = (struct vring_desc *)q->mem;
 	q->avail = (struct vring_avail *)(q->mem +
 		   sizeof(struct vring_desc) * VRING_SIZE);
-	q->used  = (struct vring_used *)(q->mem + 2048);
+
+	/* The used ring must be page-aligned per the VirtIO legacy spec.
+	 * Device computes: offset = ALIGN(desc_table_end + avail_size, 4096) */
+	size_t avail_end = sizeof(struct vring_desc) * VRING_SIZE +
+			   sizeof(struct vring_avail) +
+			   VRING_SIZE * sizeof(uint16_t);
+	size_t used_off = (avail_end + VIRTIO_PCI_VRING_ALIGN - 1) &
+			  ~(VIRTIO_PCI_VRING_ALIGN - 1);
+	q->used  = (struct vring_used *)(q->mem + used_off);
 	q->last_used_idx = 0;
 	q->initialized   = 1;
 
