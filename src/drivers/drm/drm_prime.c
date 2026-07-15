@@ -249,9 +249,9 @@ int drm_gem_prime_handle_to_fd(struct drm_device *dev,
         spinlock_acquire(&g_prime_lock);
         struct prime_fd_entry *ent = prime_fd_lookup(obj->prime_fd);
         if (ent && ent->in_use) {
-            /* Bump the dma-buf refcount for the new reference */
-            if (ent->dmabuf)
-                ent->dmabuf->refcount++;
+            /* Reuse the existing FD — the prime_fd_alloc call already took
+             * one dma-buf reference for this entry.  No additional ref is
+             * needed: every caller sharing this FD shares the same entry. */
             int fd = ent->fd;
             spinlock_release(&g_prime_lock);
             args->prime_fd = fd;
