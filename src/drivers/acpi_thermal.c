@@ -83,7 +83,7 @@ struct trip_point {
 
 struct thermal_zone_ext {
     struct acpi_thermal_zone base;
-    struct trip_point trip_points[12]; /* _CRT, _HOT, _PSV, _AC0-_AC9 */
+    struct trip_point trip_points[13]; /* _CRT, _HOT, _PSV, _AC0-_AC9 (13 total) */
     int num_trip_points;
     int active_cooling_level;  /* Current active cooling level (0-9, -1=off) */
     int passive_cooling_active; /* 1 if passive cooling (throttling) is engaged */
