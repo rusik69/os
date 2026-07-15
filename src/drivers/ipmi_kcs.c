@@ -74,8 +74,8 @@ static int kcs_wait_obf(uint16_t base, int timeout_us)
         uint8_t sts = kcs_read_status(base);
         if (sts & IPMI_KCS_STS_OBF)
             return 0;
-        /* Check for error state: both SMS bits set */
-        if ((sts & IPMI_KCS_STS_SMS) == IPMI_KCS_STS_SMS)
+        /* Check for error state (KCS ERROR = both state bits [3:2] set) */
+        if ((sts & (IPMI_KCS_STS_SMS | IPMI_KCS_STS_CD)) == (IPMI_KCS_STS_SMS | IPMI_KCS_STS_CD))
             return -1;
         for (volatile int j = 0; j < 10; j++)
             __asm__ volatile("pause");
@@ -163,7 +163,8 @@ int ipmi_send_cmd(struct ipmi_msg *msg)
 
     /* ── Step 6: Write 1's complement checksum ──────────────────── */
     {
-        uint8_t cksum = (uint8_t)(~(req_hdr + msg->cmd));
+        /* checksum = ~(NetFn/LUN + cmd + data[0] + ... + data[N-1]) */
+        uint8_t cksum = (uint8_t)(req_hdr + msg->cmd);
         for (int i = 0; i < msg->data_len; i++)
             cksum = (uint8_t)(cksum + msg->data[i]);
         cksum = (uint8_t)(~cksum);
