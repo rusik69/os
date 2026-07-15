@@ -189,8 +189,25 @@ static struct rsdp *find_rsdp(uint64_t start, uint64_t end) {
         if (memcmp(PHYS_TO_VIRT(addr), RSDP_SIG, 8) == 0) {
             uint8_t *p = (uint8_t *)PHYS_TO_VIRT(addr);
             uint8_t sum = 0;
+            /* Validate first checksum covering bytes 0-19 (ACPI v1 and v2+) */
             for (int i = 0; i < 20; i++) sum += p[i];
-            if (sum == 0) return (struct rsdp *)PHYS_TO_VIRT(addr);
+            if (sum == 0) {
+                struct rsdp *rsdp = (struct rsdp *)p;
+                /* For ACPI v2+ (revision >= 2), also validate the extended
+                 * checksum covering the entire RSDP (including the XSDT
+                 * address and extended fields). */
+                if (rsdp->revision >= 2) {
+                    /* Sanity-check the RSDP length field (byte 20-23) before
+                     * using it for the extended checksum calculation. */
+                    uint32_t rsdp_len = rsdp->length;
+                    if (rsdp_len < sizeof(struct rsdp))
+                        continue;  /* invalid length, skip this candidate */
+                    sum = 0;
+                    for (uint32_t i = 0; i < rsdp_len; i++) sum += p[i];
+                    if (sum != 0) continue;  /* extended checksum failed */
+                }
+                return rsdp;
+            }
         }
     }
     return NULL;
