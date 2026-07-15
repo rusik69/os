@@ -266,9 +266,16 @@ static void fat_free_chain(uint32_t cluster) {
     }
 }
 
-/* Cluster number → LBA of first sector */
+/* Cluster number → LBA of first sector.
+ * Uses 64-bit intermediate arithmetic to prevent overflow for large
+ * cluster numbers (near 0x0FFFFFF0) combined with sectors-per-cluster
+ * values above 16, which would overflow 32-bit multiplication.
+ * Returns 0 on invalid cluster (< 2 or > FAT_MAX_CLUSTER()). */
 static uint32_t cluster_to_lba(uint32_t cluster) {
-    return data_start + (cluster - 2) * spc;
+    if (cluster < 2 || cluster > FAT_MAX_CLUSTER())
+        return 0;
+    uint64_t offset = (uint64_t)(cluster - 2) * (uint64_t)spc;
+    return (uint32_t)((uint64_t)data_start + offset);
 }
 
 /* ── 8.3 name comparison (case-insensitive) ─────────────────────────────────── */
@@ -537,6 +544,13 @@ static uint32_t dir_find(uint32_t dir_cluster, const char *name,
                 if (matched) {
                     uint32_t clus = ((uint32_t)entries[i].cluster_hi << 16)
                                   | entries[i].cluster_lo;
+                    /* Mask FAT32 cluster numbers to 28 bits (upper 4 bits
+                     * are reserved and should not be interpreted as part
+                     * of the cluster number), matching the masking done
+                     * in fat_read_entry(). Prevents arithmetic overflow
+                     * from corrupted upper bits. */
+                    if (fat_type == FAT32)
+                        clus &= 0x0FFFFFFF;
                     if (is_dir)    *is_dir    = !!(entries[i].attr & FAT32_ATTR_DIRECTORY);
                     if (file_size) *file_size = entries[i].file_size;
                     /* For FAT12/16, cluster 0 means empty; return it anyway as the caller
@@ -593,6 +607,9 @@ static uint32_t dir_find(uint32_t dir_cluster, const char *name,
                 if (matched) {
                     uint32_t clus = ((uint32_t)entries[i].cluster_hi << 16)
                                   | entries[i].cluster_lo;
+                    /* Mask FAT32 cluster numbers to 28 bits */
+                    if (fat_type == FAT32)
+                        clus &= 0x0FFFFFFF;
                     if (is_dir)    *is_dir    = !!(entries[i].attr & FAT32_ATTR_DIRECTORY);
                     if (file_size) *file_size = entries[i].file_size;
                     return clus ? clus : root_cluster;
