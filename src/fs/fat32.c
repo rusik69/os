@@ -2227,10 +2227,10 @@ int fat32_truncate_file(const char *path, uint32_t new_size)
 
     if (new_clusters < old_clusters) {
         uint32_t last_keep = fat32_chain_walk(clus, new_clusters - 1);
-        if (last_keep >= 2 && last_keep < FAT_EOC()) {
+        if (last_keep >= 2 && !FAT_IS_EOC(last_keep)) {
             uint32_t free_start = fat_next_cluster(last_keep);
             fat_write_entry(last_keep, FAT_EOC());
-            if (free_start >= 2 && free_start < FAT_EOC())
+            if (free_start >= 2 && !FAT_IS_EOC(free_start))
                 fat_free_chain(free_start);
         }
     }
