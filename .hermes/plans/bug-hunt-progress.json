@@ -780,8 +780,9 @@
     776,
     777,
     778,
-    779
+    779,
+    780
   ],
-  "found_bugs": 1200,
-  "fixed_bugs": 1200
+  "found_bugs": 1203,
+  "fixed_bugs": 1203
 }
