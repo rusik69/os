@@ -229,7 +229,7 @@ int ec_read_burst(uint8_t start_addr, uint8_t *buf, int count)
     if (!ec_present || !buf || count <= 0) return -1;
 
     /* Must have burst mode for multi-byte transactions */
-    if (ec_ensure_burst() < 0) {
+    if (!ec_burst_supported || ec_ensure_burst() < 0) {
         /* Burst not available — read one byte at a time */
         for (int i = 0; i < count; i++) {
             if (ec_read((uint8_t)(start_addr + i), &buf[i]) < 0)
