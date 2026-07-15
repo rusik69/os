@@ -1199,11 +1199,19 @@ int ext4_ext_insert_extent(struct ext4_priv *ep,
          * is only one level deep (depth=1).  Recursive splits on
          * internal nodes are deferred to a future task. */
         if (path_depth > 0) {
-            struct ext4_extent_header *parent_eh = path_eh[path_depth - 1];
             uint32_t parent_block = path_block[path_depth - 1];
+            struct ext4_extent_header *parent_eh;
 
-            /* If journaling, register the parent block before modifying it */
-            {
+            /* Re-read the parent block into a local buffer.
+             *
+             * path_eh[path_depth-1] may be STALE because node_buf was
+             * reused during tree walk — reading a child block overwrites
+             * the buffer that the parent's path_eh entry pointed to.
+             *
+             * For parent_block == 0 (the embedded root in i_block[]),
+             * there is no disk block to read — root_buf already holds
+             * the authoritative copy and we skip disk I/O/journaling. */
+            if (parent_block != 0) {
                 uint8_t parent_buf[EXT4_MAX_BLOCK_SIZE];
                 ret = ext4_read_block(ep, parent_block, parent_buf);
                 if (ret < 0)
@@ -1212,6 +1220,9 @@ int ext4_ext_insert_extent(struct ext4_priv *ep,
                                                          parent_buf);
                 if (ret < 0)
                     goto out_free_new;
+                parent_eh = (struct ext4_extent_header *)parent_buf;
+            } else {
+                parent_eh = path_eh[path_depth - 1];
             }
 
             /* Build an index entry for the new node */
@@ -1259,10 +1270,15 @@ int ext4_ext_insert_extent(struct ext4_priv *ep,
                    sizeof(struct ext4_extent_idx));
             parent_eh->eh_entries++;
 
-            ret = ext4_ext_write_block(ep, parent_block,
-                                       (const uint8_t *)parent_eh);
-            if (ret < 0)
-                goto out_free_new;
+            if (parent_block != 0) {
+                ret = ext4_ext_write_block(ep, parent_block,
+                                           (const uint8_t *)parent_eh);
+                if (ret < 0)
+                    goto out_free_new;
+            }
+            /* For the embedded root (parent_block == 0), the
+             * modifications to root_buf are persisted via the
+             * i_block copy-back below. */
         }
     }
 
@@ -1270,8 +1286,11 @@ out_free_new:
     kfree(new_eh);
     new_eh = NULL;
 
-    /* ── Copy root back to inode if depth == 0 ── */
-    if (depth == 0)
+    /* ── Copy root back to inode if the embedded root was modified.
+     * This covers both depth==0 (root IS the leaf node, simple insert)
+     * and depth>0 where the root was modified as a parent index node
+     * (path_depth == 1, parent_block == 0). */
+    if (depth == 0 || (path_depth == 1 && path_block[0] == 0))
         memcpy(inode->i_block, root_buf, 60);
 
     return ret;
