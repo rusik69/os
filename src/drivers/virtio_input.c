@@ -169,17 +169,14 @@ static spinlock_t   event_lock;
 static struct virtio_input_event event_pool[NUM_EVENT_BUFS]
 	__attribute__((aligned(16)));
 
-/* Index tracking for event pool: which buffer is submitted at which
- * descriptor index. */
-static int event_pool_idx;    /* next pool slot to submit */
-
 /* ── Forward declarations ────────────────────────────────────────── */
 
-static void vi_process_mt_event(const struct virtio_input_event *ev);
-static void vi_push_event(const struct virtio_input_event *ev);
-static void vi_process_events(struct vi_vq *q);
-static int  vi_submit_event_buf(struct vi_vq *q,
-				struct virtio_input_event *ev);
+ static void vi_process_mt_event(const struct virtio_input_event *ev);
+ static void vi_push_event(const struct virtio_input_event *ev);
+ static void vi_process_events(struct vi_vq *q);
+ static int  vi_submit_event_buf(struct vi_vq *q,
+ 				struct virtio_input_event *ev,
+ 				uint16_t desc_idx);
 
 /* ── I/O helpers (legacy PCI transport) ──────────────────────────── */
 
@@ -350,7 +347,8 @@ static int vi_init_vq(struct vi_vq *q, uint16_t queue_idx)
  * fill it with the next input event.
  */
 static int vi_submit_event_buf(struct vi_vq *q,
-			       struct virtio_input_event *ev)
+			       struct virtio_input_event *ev,
+			       uint16_t desc_idx)
 {
 	struct vring_desc  *descs;
 	struct vring_avail *avail;
@@ -364,16 +362,20 @@ static int vi_submit_event_buf(struct vi_vq *q,
 	avail = q->avail;
 	used  = q->used;
 
-	/* Build a single descriptor: device writes event data */
-	descs[0].addr  = (uint64_t)(uintptr_t)ev;
-	descs[0].len   = (uint32_t)sizeof(*ev);
-	descs[0].flags = VRING_DESC_F_WRITE;
-	descs[0].next  = 0;
+	/* Build a single descriptor: device writes event data.
+	 * Each pool buffer gets its own descriptor index so the device
+	 * can process them concurrently. */
+	if (desc_idx >= VRING_SIZE)
+		return -1;
+	descs[desc_idx].addr  = (uint64_t)(uintptr_t)ev;
+	descs[desc_idx].len   = (uint32_t)sizeof(*ev);
+	descs[desc_idx].flags = VRING_DESC_F_WRITE;
+	descs[desc_idx].next  = 0;
 
 	/* Submit to the avail ring */
 	prev_used = used->idx;
 	avail_idx = avail->idx & (VRING_SIZE - 1);
-	avail->ring[avail_idx] = 0;  /* descriptor index 0 (head of chain) */
+	avail->ring[avail_idx] = desc_idx;
 	__asm__ volatile("" ::: "memory");
 	avail->idx++;
 	__asm__ volatile("" ::: "memory");
@@ -388,16 +390,17 @@ static int vi_submit_event_buf(struct vi_vq *q,
 
 /*
  * Submit all event pool buffers as receive buffers on the event vq.
+ * Each pool buffer uses its array index as the descriptor index so
+ * the device can process them concurrently.
  */
 static int vi_submit_all_event_bufs(struct vi_vq *q)
 {
 	int i;
 
 	for (i = 0; i < NUM_EVENT_BUFS; i++) {
-		if (vi_submit_event_buf(q, &event_pool[i]) < 0)
+		if (vi_submit_event_buf(q, &event_pool[i], (uint16_t)i) < 0)
 			return -1;
 	}
-	event_pool_idx = 0;
 	return 0;
 }
 
@@ -424,31 +427,24 @@ static void vi_process_events(struct vi_vq *q)
 		uint16_t used_idx = q->last_used_idx & (VRING_SIZE - 1);
 		uint32_t desc_id = used->ring[used_idx].id;
 		uint32_t len     = used->ring[used_idx].len;
-		uint32_t i;
 
 		q->last_used_idx++;
 
-		/* Find which event pool buffer this descriptor maps to */
-		/* (We always submit descriptor index 0 for each buffer) */
-		/* The device wrote an event — check which pool slot */
-		for (i = 0; i < NUM_EVENT_BUFS; i++) {
-			if ((uint64_t)(uintptr_t)&event_pool[i] ==
-			    descs[desc_id].addr)
-				break;
-		}
-
-		if (i < NUM_EVENT_BUFS && len >= sizeof(struct virtio_input_event)) {
+		/* The descriptor index directly identifies the pool buffer.
+		 * (We submit each pool buffer at its own descriptor index.) */
+		if (desc_id < NUM_EVENT_BUFS && len >= sizeof(struct virtio_input_event)) {
 			/* Process the event the device wrote */
-			struct virtio_input_event ev = event_pool[i];
+			struct virtio_input_event ev = event_pool[desc_id];
 
-			/* Re-submit this buffer for the next event */
-			descs[0].addr  = (uint64_t)(uintptr_t)&event_pool[i];
-			descs[0].len   = (uint32_t)sizeof(event_pool[i]);
-			descs[0].flags = VRING_DESC_F_WRITE;
-			descs[0].next  = 0;
+			/* Re-submit this buffer for the next event,
+			 * using its dedicated descriptor index. */
+			descs[desc_id].addr  = (uint64_t)(uintptr_t)&event_pool[desc_id];
+			descs[desc_id].len   = (uint32_t)sizeof(event_pool[desc_id]);
+			descs[desc_id].flags = VRING_DESC_F_WRITE;
+			descs[desc_id].next  = 0;
 
 			uint16_t avail_idx = avail->idx & (VRING_SIZE - 1);
-			avail->ring[avail_idx] = 0;
+			avail->ring[avail_idx] = (uint16_t)desc_id;
 			__asm__ volatile("" ::: "memory");
 			avail->idx++;
 			__asm__ volatile("" ::: "memory");
