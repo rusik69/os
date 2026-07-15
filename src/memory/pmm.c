@@ -1452,6 +1452,33 @@ uint64_t pmm_get_total_frames(void) { return total_frames; }
 uint64_t pmm_get_used_frames(void)  { return used_frames; }
 
 /**
+ * pmm_is_phys_ram - Check if a physical address is in available RAM.
+ * @phys: Physical address to check
+ *
+ * Returns 1 if the page at 'phys' is marked as available (free) in the
+ * PMM bitmap — meaning the allocator could hand it out.  Returns 0 if
+ * the address is reserved, used by kernel/ACPI, in PCI MMIO space, or
+ * outside the managed range.
+ *
+ * This is useful for validating that PCI MMIO BAR addresses don't
+ * overlap with system RAM, which would cause memory corruption.
+ *
+ * Context: Any context (SMP-safe; reads bitmap without locking since
+ *          PMM bitmap is write-guarded by pmm_global_lock but reads
+ *          are advisory and racy by nature).
+ * Return: 1 if the address is in available RAM, 0 otherwise.
+ */
+int pmm_is_phys_ram(uint64_t phys)
+{
+    uint64_t frame = phys / PAGE_SIZE;
+    if (frame >= MAX_FRAMES)
+        return 0; /* out of managed range — not RAM */
+    /* bitmap_test returns 1 for used/reserved, 0 for free/available */
+    return !bitmap_test(frame);
+}
+EXPORT_SYMBOL(pmm_is_phys_ram);
+
+/**
  * pfn_valid - Check if a page frame number corresponds to present RAM
  * @pfn: Page frame number to check
  *

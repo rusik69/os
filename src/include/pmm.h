@@ -75,4 +75,17 @@ int pmm_is_broken(uint64_t phys_addr);
  * allocated) are still considered present — this only checks bounds. */
 int pfn_valid(uint64_t pfn);
 
+/* pmm_is_phys_ram - Check if a physical address is in available RAM.
+ * @phys: Physical address to check
+ *
+ * Returns 1 if the page at 'phys' is marked as available (free) in the
+ * PMM bitmap — meaning the allocator could hand it out.  Returns 0 if
+ * the address is reserved, used by kernel/ACPI, in PCI MMIO space, or
+ * outside the managed range.
+ *
+ * This is useful for validating that PCI MMIO BAR addresses don't
+ * overlap with system RAM, which would cause memory corruption.
+ */
+int pmm_is_phys_ram(uint64_t phys);
+
 #endif

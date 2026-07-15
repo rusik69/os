@@ -720,6 +720,34 @@ int pci_find_device(uint16_t vendor, uint16_t device, struct pci_device *out) {
                     out->irq = (uint8_t)(reg3c & 0xFF);
                     for (int i = 0; i < 6; i++)
                         out->bar[i] = pci_read((uint8_t)bus, (uint8_t)slot, (uint8_t)func, (uint8_t)(0x10 + i * 4));
+
+                    /* Validate MMIO BAR addresses don't overlap with RAM */
+                    for (int i = 0; i < 6; i++) {
+                        uint32_t bar_val = out->bar[i];
+                        if (bar_val == 0 || (bar_val & 1))
+                            continue; /* unassigned or I/O BAR */
+                        uint8_t bar_type = (bar_val >> 1) & 0x3;
+                        if (bar_type == 0x2 && i + 1 < 6) { /* 64-bit MMIO */
+                            uint64_t phys = (uint64_t)(bar_val & ~0xFu)
+                                          | ((uint64_t)out->bar[i+1] << 32);
+                            if (pmm_is_phys_ram(phys))
+                                kprintf("[PCI] WARNING: %02x:%02x.%x BAR%d "
+                                        "(64-bit MMIO at 0x%llx) overlaps with RAM!\n",
+                                        (unsigned int)bus, (unsigned int)slot,
+                                        (unsigned int)func, i,
+                                        (unsigned long long)phys);
+                            i++; /* skip the upper-32 BAR */
+                        } else if (bar_type != 0x2) { /* 32-bit MMIO */
+                            uint64_t phys = (uint64_t)(bar_val & ~0xFu);
+                            if (pmm_is_phys_ram(phys))
+                                kprintf("[PCI] WARNING: %02x:%02x.%x BAR%d "
+                                        "(MMIO at 0x%llx) overlaps with RAM!\n",
+                                        (unsigned int)bus, (unsigned int)slot,
+                                        (unsigned int)func, i,
+                                        (unsigned long long)phys);
+                        }
+                    }
+
                     return 0;
                 }
             }
@@ -754,6 +782,34 @@ int pci_find_class(uint8_t cls, uint8_t sub, struct pci_device *out) {
                     out->irq = (uint8_t)(r3c & 0xFF);
                     for (int i = 0; i < 6; i++)
                         out->bar[i] = pci_read((uint8_t)bus, (uint8_t)slot, (uint8_t)func, (uint8_t)(0x10 + i * 4));
+
+                    /* Validate MMIO BAR addresses don't overlap with RAM */
+                    for (int i = 0; i < 6; i++) {
+                        uint32_t bar_val = out->bar[i];
+                        if (bar_val == 0 || (bar_val & 1))
+                            continue;
+                        uint8_t bar_type = (bar_val >> 1) & 0x3;
+                        if (bar_type == 0x2 && i + 1 < 6) {
+                            uint64_t phys = (uint64_t)(bar_val & ~0xFu)
+                                          | ((uint64_t)out->bar[i+1] << 32);
+                            if (pmm_is_phys_ram(phys))
+                                kprintf("[PCI] WARNING: %02x:%02x.%x BAR%d "
+                                        "(64-bit MMIO at 0x%llx) overlaps with RAM!\n",
+                                        (unsigned int)bus, (unsigned int)slot,
+                                        (unsigned int)func, i,
+                                        (unsigned long long)phys);
+                            i++;
+                        } else if (bar_type != 0x2) {
+                            uint64_t phys = (uint64_t)(bar_val & ~0xFu);
+                            if (pmm_is_phys_ram(phys))
+                                kprintf("[PCI] WARNING: %02x:%02x.%x BAR%d "
+                                        "(MMIO at 0x%llx) overlaps with RAM!\n",
+                                        (unsigned int)bus, (unsigned int)slot,
+                                        (unsigned int)func, i,
+                                        (unsigned long long)phys);
+                        }
+                    }
+
                     return 0;
                 }
             }
