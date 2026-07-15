@@ -12,6 +12,7 @@
 #include "errno.h"
 #include "timer.h"
 #include "pci.h"
+#include "io.h"
 
 /* Intel 6300ESB watchdog registers */
 #define ESB_WDT_ENABLE  0xF0
@@ -20,9 +21,12 @@
 #define ESB_WDT_STATUS  0xF6
 
 /* Control register bits */
-#define ESB_WDT_ENABLE_BIT (1U << 0)
-#define ESB_WDT_LOCK_BIT   (1U << 1)
-#define ESB_WDT_PULSE_BIT  (1U << 2)
+#define ESB_WDT_ENABLE_BIT     (1U << 0)
+#define ESB_WDT_LOCK_BIT       (1U << 1)
+#define ESB_WDT_PULSE_BIT      (1U << 2)
+
+/* Status register bits */
+#define ESB_WDT_TOV_BIT        (1U << 0)  /* Watchdog timeout occurred */
 
 #define ESB_BAR0 0x10
 
@@ -41,6 +45,12 @@ static int i6300esb_init_wdt(uint16_t io_base)
     i6300esb.io_base = io_base;
     i6300esb.timeout_sec = 30; /* default 30s */
     i6300esb.running = 0;
+
+    /* Check if the watchdog caused the last system reset */
+    uint16_t status = inw(io_base + ESB_WDT_STATUS);
+    if (status & ESB_WDT_TOV_BIT) {
+        kprintf("[I6300ESB] Previous reset was caused by watchdog timeout!\n");
+    }
 
     kprintf("[I6300ESB] Watchdog at IO 0x%04x\n", io_base);
     return 0;
