@@ -721,6 +721,10 @@ int fat32_mount(fat32_disk_t disk, uint32_t part_lba) {
     /* Validate geometry before any division operations */
     if (bps == 0) return -5;
     if (spc == 0) return -6;
+    /* BPB_RsvdSecCnt must be >= 1 (boot sector is always reserved) */
+    if (bpb->reserved_sectors == 0) return -7;
+    /* Reserved sectors must not exceed total sectors (prevents unsigned underflow) */
+    if (total_sectors > 0 && bpb->reserved_sectors >= total_sectors) return -7;
     /* Determine FAT type from cluster count */
     uint32_t root_dir_sz = root_entries * 32; /* bytes */
     uint32_t root_dir_sec = (root_dir_sz + bps - 1) / bps;
