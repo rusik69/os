@@ -499,6 +499,14 @@ static int bb_transfer_one(void *priv, const uint8_t *tx_buf, uint8_t *rx_buf,
             rx_buf[i] = rx_byte;
     }
 
+    /* ── CS hold time after last SCLK edge ──────────────────────────
+     * Ensure the slave has time to capture the last bit before CS is
+     * de-asserted.  Without this delay the CS hold time (t_csh) is
+     * effectively zero, which can cause some SPI slaves to glitch or
+     * lose the final bit.  The half-period delay scales with the
+     * configured bus speed. */
+    bb_half_period(bp);
+
     /* De-assert CS (back to inactive high) */
     bb_pin_high(&bp->cs);
     bb_delay();
