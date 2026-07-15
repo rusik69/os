@@ -64,10 +64,10 @@ static int aer_handle_correctable(int bus, int dev, int func, uint32_t status)
     kprintf("[AER] Correctable: %02x:%02x.%x status=0x%08x\n",
             bus, dev, func, status);
 
-    /* Clear status (in real hw, write 1 to clear) */
+    /* Clear status (write 1 to clear) */
     uint16_t aer_cap = (uint16_t)pci_find_ext_cap(bus, dev, func, 0x0001);
     if (aer_cap) {
-        /* pci_write32(bus, dev, func, aer_cap + PCI_ERR_COR_STATUS, status); */
+        pcie_write(bus, dev, func, aer_cap + PCI_ERR_COR_STATUS, status);
     }
 
     aer_log_error(bus, dev, func, 0, status);
@@ -82,10 +82,23 @@ static int aer_handle_uncorrectable(int bus, int dev, int func, uint32_t status)
 
     aer_log_error(bus, dev, func, status, 0);
 
-    /* Check severity */
-    /* Non-fatal may be recoverable, fatal requires reset */
+    /* Read severity register to distinguish fatal vs non-fatal */
+    uint16_t aer_cap = (uint16_t)pci_find_ext_cap(bus, dev, func, 0x0001);
+    uint32_t severity = 0;
+    if (aer_cap) {
+        severity = pcie_read(bus, dev, func, aer_cap + PCI_ERR_UNCOR_SEVER);
+    }
 
-    return -EIO;
+    /* Non-fatal errors may be recoverable; fatal requires reset */
+    if (status & severity) {
+        kprintf("[AER] Fatal error(s) on %02x:%02x.%x — device reset required\n",
+                bus, dev, func);
+        return -EIO;
+    }
+
+    kprintf("[AER] Non-fatal error(s) on %02x:%02x.%x — may be recoverable\n",
+            bus, dev, func);
+    return 0;
 }
 
 /* Scan for AER capability on a device */
