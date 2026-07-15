@@ -2,7 +2,7 @@
  * gpio.c — GPIO driver using port-mapped I/O
  *
  * Provides a simple GPIO API for manipulating pins via I/O ports.
- * Supports up to GPIO_MAX_PINS (64) pins, with direction control
+ * Supports up to GPIO_MAX_PINS (8) pins, with direction control
  * and value get/set operations.  Uses a fixed port-mapped register
  * layout where each pin's data/control is accessed through a
  * GPIO base port.

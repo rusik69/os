@@ -11,8 +11,8 @@
 #define GPIO_LOW  0
 #define GPIO_HIGH 1
 
-/* Maximum number of GPIO pins */
-#define GPIO_MAX_PINS 64
+/* Maximum number of GPIO pins (port 0xE/0xF are 8-bit ports) */
+#define GPIO_MAX_PINS 8
 
 /* GPIO pin descriptor */
 struct gpio_pin {
