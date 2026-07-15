@@ -241,7 +241,8 @@ int ext4_verify_bg_checksum(struct ext4_priv *ep,
 /* ── Inode checksum ──────────────────────────────────────────────── */
 
 int ext4_verify_inode_checksum(struct ext4_priv *ep,
-                                const struct ext4_inode *inode)
+                                const struct ext4_inode *inode,
+                                uint32_t ino)
 {
 	uint16_t lo, hi;
 	uint32_t stored_csum, computed_csum;
@@ -252,7 +253,7 @@ int ext4_verify_inode_checksum(struct ext4_priv *ep,
 	if (ep->inode_size <= 128)
 		return 0;
 	if (inode->i_extra_isize <
-	    offsetof(struct ext4_inode, i_checksum_hi) -
+	    offsetof(struct ext4_inode, i_checksum_hi) + sizeof(uint16_t) -
 	    offsetof(struct ext4_inode, i_extra_isize))
 		return 0; /* Extended area too small for checksum */
 
@@ -280,11 +281,14 @@ int ext4_verify_inode_checksum(struct ext4_priv *ep,
 	}
 
 	/* Fold i_projid into the checksum for inodes large enough */
-	if (ep->inode_size > offsetof(struct ext4_inode, i_projid) +
+	if (ep->inode_size >= offsetof(struct ext4_inode, i_projid) +
 	                     sizeof(inode->i_projid)) {
 		uint32_t projid = inode->i_projid;
 		computed_csum = crc32c(computed_csum, &projid, sizeof(projid));
 	}
+
+	/* Fold inode number into the checksum (Linux ext4 compatibility) */
+	computed_csum = crc32c(computed_csum, &ino, sizeof(ino));
 
 	if (computed_csum != stored_csum) {
 		kprintf("[ext4] WARNING: inode checksum mismatch: "
@@ -430,7 +434,7 @@ static int ext4_read_inode(struct ext4_priv *ep, uint32_t ino, struct ext4_inode
     memcpy(inode, block_buf + tbl_off, sizeof(struct ext4_inode));
 
     /* ── Verify inode metadata checksum (CRC32C) ── */
-    if (ext4_verify_inode_checksum(ep, inode) < 0) {
+    if (ext4_verify_inode_checksum(ep, inode, ino) < 0) {
         kprintf("[ext4] NOTE: inode %u checksum mismatch — continuing "
                 "read-only\n", ino);
     }

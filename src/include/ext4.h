@@ -441,7 +441,8 @@ int ext4_verify_bg_checksum(struct ext4_priv *ep,
                              const struct ext4_bg_desc *bg,
                              uint32_t bg_index);
 int ext4_verify_inode_checksum(struct ext4_priv *ep,
-                                const struct ext4_inode *inode);
+                                const struct ext4_inode *inode,
+                                uint32_t ino);
 
 /* Project quota support */
 int  ext4_read_quota_block(struct ext4_priv *ep, uint32_t projid,
