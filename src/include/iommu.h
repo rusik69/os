@@ -150,8 +150,7 @@ static inline int iommu_map(struct iommu_domain *domain,
     if (!domain || !domain->initialized || !domain->pgd) return -1;
     if (size == 0) return -1;
 
-    uint64_t prot = 0;
-    if (flags & IOMMU_READ)  prot |= IOMMU_PTE_PRESENT;
+    uint64_t prot = IOMMU_PTE_PRESENT;  /* Always present for valid mappings */
     if (flags & IOMMU_WRITE) prot |= IOMMU_PTE_RW;
     /* No-execute by default unless IOMMU_EXEC is set */
     if (!(flags & IOMMU_EXEC)) prot |= IOMMU_PTE_NX;
@@ -166,7 +165,7 @@ static inline int iommu_map(struct iommu_domain *domain,
         if (!pte) return -1;
 
         /* Set the page table entry to point to the physical page */
-        *pte = (phys_addr_page & ~0xFFFULL) | prot | IOMMU_PTE_PRESENT | IOMMU_PTE_RW;
+        *pte = (phys_addr_page & ~0xFFFULL) | prot;
 
         offset += IOMMU_PAGE_SIZE;
     }
