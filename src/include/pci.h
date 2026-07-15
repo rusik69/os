@@ -29,6 +29,10 @@ uint32_t pcie_read(int bus, int slot, int func, int offset);
 void pcie_write(int bus, int slot, int func, int offset, uint32_t val);
 int pcie_is_available(void);
 
+/* 16-bit config space helpers (ECAM-aware, handle alignment internally) */
+uint16_t pci_read16(uint8_t bus, uint8_t slot, uint8_t func, uint16_t offset);
+void pci_write16(uint8_t bus, uint8_t slot, uint8_t func, uint16_t offset, uint16_t val);
+
 /* PCI Express capability detection */
 int pci_find_pcie_cap(int bus, int slot, int func, uint8_t *cap_offset);
 int pcie_is_present(void);

@@ -14,9 +14,9 @@
 
 /* DPC capability registers */
 #define PCI_DPC_CAP          0x00
-#define PCI_DPC_CTL          0x04
-#define PCI_DPC_STATUS       0x06
-#define PCI_DPC_ERR_SRC_ID   0x08
+#define PCI_DPC_CTL          0x06
+#define PCI_DPC_STATUS       0x08
+#define PCI_DPC_ERR_SRC_ID   0x0A
 #define PCI_DPC_RP_LOG       0x0C
 #define PCI_DPC_RP_LOG_SIZE  16
 
@@ -45,7 +45,7 @@ static int dpc_enable(int bus, int dev, int func)
         return -ENODEV;
 
     /* Read current control */
-    /* pci_write16(bus, dev, func, dpc_cap + PCI_DPC_CTL, DPC_CTL_ENABLE | DPC_CTL_INT_ENABLE); */
+    pci_write16(bus, dev, func, dpc_cap + PCI_DPC_CTL, DPC_CTL_ENABLE | DPC_CTL_INT_ENABLE);
 
     kprintf("[DPC] Enabled on %02x:%02x.%x\n", bus, dev, func);
     return 0;
@@ -58,21 +58,21 @@ static int dpc_handle_trigger(int bus, int dev, int func)
     if (!dpc_cap)
         return -ENODEV;
 
-    uint16_t status = 0; /* pci_read16(bus, dev, func, dpc_cap + PCI_DPC_STATUS); */
+    uint16_t status = pci_read16(bus, dev, func, dpc_cap + PCI_DPC_STATUS);
 
     if (status & DPC_STATUS_TRIGGER) {
         kprintf("[DPC] Triggered on %02x:%02x.%x status=0x%04x\n",
                 bus, dev, func, status);
 
         /* Read error source ID */
-        uint16_t source_id = 0; /* pci_read16(bus, dev, func, dpc_cap + PCI_DPC_ERR_SRC_ID); */
+        uint16_t source_id = pci_read16(bus, dev, func, dpc_cap + PCI_DPC_ERR_SRC_ID);
         kprintf("[DPC] Error source: bus=%02x dev=%02x func=%x\n",
                 source_id >> 8, (source_id >> 3) & 0x1F, source_id & 0x7);
 
         dpc_triggered_count++;
 
         /* Clear DPC trigger status and restore */
-        /* pci_write16(bus, dev, func, dpc_cap + PCI_DPC_STATUS, DPC_STATUS_TRIGGER); */
+        pci_write16(bus, dev, func, dpc_cap + PCI_DPC_STATUS, DPC_STATUS_TRIGGER);
 
         return 0;
     }

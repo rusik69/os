@@ -218,7 +218,7 @@ int pcie_device_type(int bus, int slot, int func) {
 }
 
 /* ── Helper: read 16-bit config register via ECAM-aware path ──────── */
-static uint16_t pci_read16(uint8_t bus, uint8_t slot, uint8_t func, uint16_t offset) {
+uint16_t pci_read16(uint8_t bus, uint8_t slot, uint8_t func, uint16_t offset) {
     uint32_t val;
     uint32_t aligned = (uint32_t)(offset & (uint16_t)~3);
     if (ecam_base) {
@@ -231,7 +231,7 @@ static uint16_t pci_read16(uint8_t bus, uint8_t slot, uint8_t func, uint16_t off
     return (uint16_t)(val & 0xFFFF);
 }
 
-static void pci_write16(uint8_t bus, uint8_t slot, uint8_t func, uint16_t offset, uint16_t val) {
+void pci_write16(uint8_t bus, uint8_t slot, uint8_t func, uint16_t offset, uint16_t val) {
     uint32_t base;
     uint32_t aligned = (uint32_t)(offset & (uint16_t)~3);
     if (ecam_base) {
