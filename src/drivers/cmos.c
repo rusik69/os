@@ -46,12 +46,13 @@ static int cmos_get_time(void *time)
     while ((cmos_read(0x0A) & 0x80) && --timeout > 0)
         io_wait();
 
-    t->second = cmos_read(0x00);
-    t->minute = cmos_read(0x02);
-    t->hour   = cmos_read(0x04);
-    t->day    = cmos_read(0x07);
-    t->month  = cmos_read(0x08);
-    t->year   = (uint16_t)cmos_read(0x09) + 2000;
+    t->second      = cmos_read(0x00);
+    t->minute      = cmos_read(0x02);
+    t->hour        = cmos_read(0x04);
+    t->day         = cmos_read(0x07);
+    t->month       = cmos_read(0x08);
+    uint16_t yr    = cmos_read(0x09);
+    uint16_t cent  = cmos_read(0x32);
 
     /* Convert BCD to binary if needed */
     uint8_t status_b = cmos_read(0x0B);
@@ -61,8 +62,11 @@ static int cmos_get_time(void *time)
         t->hour   = (uint8_t)((t->hour & 0x0F) + ((t->hour / 16) * 10));
         t->day    = (uint8_t)((t->day & 0x0F) + ((t->day / 16) * 10));
         t->month  = (uint8_t)((t->month & 0x0F) + ((t->month / 16) * 10));
-        t->year   = (uint16_t)((t->year & 0x0F) + ((t->year / 16) * 10) + 2000);
+        yr        = (uint16_t)((yr & 0x0F) + ((yr / 16) * 10));
+        cent      = (uint16_t)((cent & 0x0F) + ((cent / 16) * 10));
     }
+
+    t->year = yr + cent * 100;
 
     return 0;
 }
@@ -93,7 +97,9 @@ static int cmos_set_time(const void *time)
     cmos_write(0x07, bcd_day);
     cmos_write(0x08, bcd_mon);
     cmos_write(0x09, bcd_yr);
-    cmos_write(0x32, (uint8_t)((t->year / 100) % 100));
+    uint16_t century = t->year / 100;
+    uint8_t bcd_century = (uint8_t)(((century / 10) << 4) | (century % 10));
+    cmos_write(0x32, bcd_century);
 
     /* Clear SET bit */
     cmos_write(0x0B, prev & ~0x80);
