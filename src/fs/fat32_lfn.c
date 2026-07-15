@@ -659,7 +659,6 @@ int vfat_reconstruct_name_checked(const void *entries, int count,
                                    char *out, int out_max)
 {
     const struct vfat_lfn *lfn = (const struct vfat_lfn *)entries;
-    uint8_t stored_cksum;
 
     if (count <= 0) {
         /* No LFN entries — nothing to verify */
@@ -667,9 +666,14 @@ int vfat_reconstruct_name_checked(const void *entries, int count,
         return 0;
     }
 
-    stored_cksum = lfn[0].checksum;
-    if (stored_cksum != vfat_checksum(name83_8, name83_3))
-        return -EILSEQ;
+    uint8_t computed = vfat_checksum(name83_8, name83_3);
+    /* Verify ALL LFN entries in the set have the same checksum
+     * matching the 8.3 short name.  Per VFAT spec, every LFN entry
+     * for a given file must carry the same checksum value. */
+    for (int i = 0; i < count; i++) {
+        if (lfn[i].checksum != computed)
+            return -EILSEQ;
+    }
 
     return vfat_reconstruct_name(entries, count, out, out_max);
 }
