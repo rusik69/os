@@ -1509,6 +1509,7 @@ static int dir_remove_entry(uint32_t dir_cluster, const char *name) {
         memset(lfn_parts, 0, sizeof(lfn_parts));
         int lfn_n = 0;
         int lfn_start = -1;
+        uint32_t lfn_start_sector = 0;
         for (uint32_t s = 0; s < spc; s++) {
             if (read_sector(lba + s, buf) != 0) return -EIO;
             struct fat32_dirent *entries = (struct fat32_dirent *)buf;
@@ -1522,7 +1523,10 @@ static int dir_remove_entry(uint32_t dir_cluster, const char *name) {
                     if (ord > 0 && ord <= 20)
                         __builtin_memcpy(&lfn_parts[ord - 1], &entries[i],
                                          sizeof(struct fat32_dirent));
-                    if (lfn_start < 0) lfn_start = i;
+                    if (lfn_start < 0) {
+                        lfn_start = i;
+                        lfn_start_sector = s;
+                    }
                     if (entries[i].name[0] & 0x40)
                         lfn_n = ord;
                     continue;
@@ -1543,8 +1547,31 @@ static int dir_remove_entry(uint32_t dir_cluster, const char *name) {
                 }
                 if (matched) {
                     if (lfn_start >= 0) {
-                        for (int j = lfn_start; j < i; j++)
-                            entries[j].name[0] = (char)0xE5;
+                        /* Mark all LFN entries across sector boundaries */
+                        for (uint32_t ms = lfn_start_sector; ms <= s; ms++) {
+                            struct fat32_dirent *dp;
+                            uint8_t tmp_buf[SECT_SIZE];
+                            int is_current = (ms == s);
+
+                            if (is_current) {
+                                dp = entries;
+                            } else {
+                                if (read_sector(lba + ms, tmp_buf) != 0) return -EIO;
+                                dp = (struct fat32_dirent *)tmp_buf;
+                            }
+
+                            int start_j = (ms == lfn_start_sector) ? lfn_start : 0;
+                            int end_j   = (ms == s) ? i : (int)(SECT_SIZE / sizeof(struct fat32_dirent));
+
+                            for (int j = start_j; j < end_j; j++) {
+                                if (dp[j].attr == FAT32_ATTR_LFN)
+                                    dp[j].name[0] = (char)0xE5;
+                            }
+
+                            if (!is_current) {
+                                if (write_sector(lba + ms, tmp_buf) != 0) return -EIO;
+                            }
+                        }
                     }
                     entries[i].name[0] = (char)0xE5;
                     return write_sector(lba + s, buf);
