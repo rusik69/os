@@ -130,12 +130,25 @@ static uint32_t ext4_crc32c(struct ext4_priv *ep, const void *data,
 {
 	uint32_t crc;
 
+	/*
+	 * Compute the seed as the Linux kernel does:
+	 *
+	 *   seed = checksum_seed                        (if CSUM_SEED)
+	 *   seed = ~crc32c(~0, s_uuid, 16)              (otherwise)
+	 *
+	 * The kernel stores this seed and uses it as the initial CRC
+	 * state for crypto_shash_update (raw CRC continuation — no
+	 * entry/exit XOR).  Because our library crc32c() applies
+	 * entry/exit NOTs, we use the identity:
+	 *
+	 *   raw_continue(seed, data) = ~crc32c(~seed, data)
+	 */
 	if (ep->incompat & EXT4_FEATURE_INCOMPAT_CSUM_SEED)
 		crc = ep->sb.s_checksum_seed;
 	else
-		crc = crc32c(~0, ep->sb.s_uuid, sizeof(ep->sb.s_uuid));
+		crc = ~crc32c(~0, ep->sb.s_uuid, sizeof(ep->sb.s_uuid));
 
-	crc = crc32c(crc, data, len);
+	crc = ~crc32c(~crc, data, len);
 	return crc;
 }
 
@@ -398,7 +411,12 @@ static int ext4_read_inode(struct ext4_priv *ep, uint32_t ino, struct ext4_inode
     if (!ep->bgd_cache || group >= ep->num_block_groups)
         return ext4_corrupt(ep, "block group out of range");
 
-    struct ext4_bg_desc *bgd = &ep->bgd_cache[group];
+    /* BGD entries may be 64 bytes with 64BIT feature; use byte offset */
+    uint32_t bgd_esize = sizeof(struct ext4_bg_desc);
+    if (ep->incompat & EXT4_FEATURE_INCOMPAT_64BIT)
+        bgd_esize = 64;
+    struct ext4_bg_desc *bgd = (struct ext4_bg_desc *)
+        ((uint8_t *)ep->bgd_cache + group * bgd_esize);
     uint32_t inode_table_block = bgd->bg_inode_table;
     uint32_t byte_offset = index * ep->inode_size;
 
