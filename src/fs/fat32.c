@@ -1038,7 +1038,8 @@ static int fat32_83_name_exists(uint32_t dir_cluster,
             for (int i = 0; i < n_entries; i++) {
                 uint8_t first = (uint8_t)entries[i].name[0];
                 if (first == 0x00) return 0; /* end of directory */
-                if (first == 0xE5 || entries[i].attr == FAT32_ATTR_LFN) continue;
+                if (first == 0xE5 || entries[i].attr == FAT32_ATTR_LFN ||
+                    (entries[i].attr & FAT32_ATTR_VOLUME_ID)) continue;
                 /* Compare 8-byte name and 3-byte extension */
                 if (__builtin_memcmp(entries[i].name, name83_8, 8) == 0 &&
                     __builtin_memcmp(entries[i].ext, name83_3, 3) == 0)
@@ -1061,7 +1062,8 @@ static int fat32_83_name_exists(uint32_t dir_cluster,
             for (int i = 0; i < n_entries; i++) {
                 uint8_t first = (uint8_t)entries[i].name[0];
                 if (first == 0x00) return 0;
-                if (first == 0xE5 || entries[i].attr == FAT32_ATTR_LFN) continue;
+                if (first == 0xE5 || entries[i].attr == FAT32_ATTR_LFN ||
+                    (entries[i].attr & FAT32_ATTR_VOLUME_ID)) continue;
                 if (__builtin_memcmp(entries[i].name, name83_8, 8) == 0 &&
                     __builtin_memcmp(entries[i].ext, name83_3, 3) == 0)
                     return 1;
@@ -1377,6 +1379,7 @@ static int dir_update_size(uint32_t dir_cluster, const char *cmp_name,
             int n_entries = (int)(SECT_SIZE / sizeof(struct fat32_dirent));
             for (int i = 0; i < n_entries; i++) {
                 if (entries[i].attr == FAT32_ATTR_LFN) continue;
+                if (entries[i].attr & FAT32_ATTR_VOLUME_ID) continue;
                 if (!name83_match(entries[i].name, entries[i].ext, cmp_name)) continue;
                 entries[i].cluster_lo = (uint16_t)(first_cluster & 0xFFFF);
                 entries[i].cluster_hi = (uint16_t)((first_cluster >> 16) & 0xFFFF);
@@ -1398,6 +1401,7 @@ static int dir_update_size(uint32_t dir_cluster, const char *cmp_name,
             int n_entries = (int)(SECT_SIZE / sizeof(struct fat32_dirent));
             for (int i = 0; i < n_entries; i++) {
                 if (entries[i].attr == FAT32_ATTR_LFN) continue;
+                if (entries[i].attr & FAT32_ATTR_VOLUME_ID) continue;
                 if (!name83_match(entries[i].name, entries[i].ext, cmp_name)) continue;
                 entries[i].cluster_lo = (uint16_t)(first_cluster & 0xFFFF);
                 entries[i].cluster_hi = (uint16_t)((first_cluster >> 16) & 0xFFFF);
