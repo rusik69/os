@@ -70,6 +70,11 @@ struct acpi_table_header {
 /* EBDA segment pointer at 0x40E */
 #define EBDA_PTR_ADDR       0x0000040EULL
 
+/* Maximum RSDP length for extended checksum validation.
+ * ACPI v2 RSDP is exactly 36 bytes; this generous bound prevents
+ * stack-buffer overreads from a corrupted length field. */
+#define RSDP_MAX_LENGTH     4096
+
 /* ── Checksum validation ───────────────────────────────────────────────── */
 
 /* Standard ACPI checksum: sum of all bytes must be 0 (mod 256) */
@@ -119,6 +124,12 @@ static int find_rsdp(struct acpi_rsdp *out)
             if (acpi_checksum(out, 20) == 0) {
                 /* For v2+, also validate extended checksum */
                 if (out->revision >= 2) {
+                    /* Sanity-check length before using it for checksum to
+                     * prevent stack-buffer overread from a corrupted or
+                     * malicious RSDP length field. */
+                    if (out->length < sizeof(struct acpi_rsdp) ||
+                        out->length > RSDP_MAX_LENGTH)
+                        continue;
                     if (acpi_checksum(out, out->length) == 0)
                         return 0;
                 } else {

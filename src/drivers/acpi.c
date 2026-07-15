@@ -180,6 +180,12 @@ static uint8_t reset_value = 0;
 /* ACPI SCI (System Control Interrupt) IRQ from FADT */
 static uint16_t g_sci_irq = 0;
 
+/* Maximum RSDP length for extended checksum validation.
+ * ACPI v2 RSDP is exactly 36 bytes; this generous bound prevents
+ * unbounded loops from a corrupted length field while allowing
+ * any reasonable future spec expansion. */
+#define RSDP_MAX_LENGTH  4096
+
 static struct rsdp *find_rsdp(uint64_t start, uint64_t end) {
     /* Constrain scan to known-good physical memory ranges to avoid
      * dereferencing non-existent or MMIO regions.  The standard ACPI
@@ -202,9 +208,12 @@ static struct rsdp *find_rsdp(uint64_t start, uint64_t end) {
                  * address and extended fields). */
                 if (rsdp->revision >= 2) {
                     /* Sanity-check the RSDP length field (byte 20-23) before
-                     * using it for the extended checksum calculation. */
+                     * using it for the extended checksum calculation.
+                     * Reject both undersized and absurdly large lengths to
+                     * prevent unbounded loops or out-of-bounds reads. */
                     uint32_t rsdp_len = rsdp->length;
-                    if (rsdp_len < sizeof(struct rsdp))
+                    if (rsdp_len < sizeof(struct rsdp) ||
+                        rsdp_len > RSDP_MAX_LENGTH)
                         continue;  /* invalid length, skip this candidate */
                     sum = 0;
                     for (uint32_t i = 0; i < rsdp_len; i++) sum += p[i];
