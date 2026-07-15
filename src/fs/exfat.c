@@ -1540,7 +1540,7 @@ static int exfat_parse_entries(struct exfat_priv *ep, uint32_t cluster,
                     uint32_t fn_pos = 0;
 
                     for (uint8_t k = 2; k < secondary_count; k++) {
-                        if (off + k * 32 > cluster_size) break;
+                        if (off + (k + 1) * 32 > cluster_size) break;
                         uint8_t *nentry = entry + k * 32;
                         if (nentry[0] != EXFAT_ENTRY_FILE_NAME) break;
 
@@ -1828,6 +1828,8 @@ static int exfat_read(void *priv, const char *path,
 			uint16_t ename[128];
 			int en_pos = 0;
 			for (uint8_t k = 2; k < sec; k++) {
+				if (off + (uint32_t)(k + 1) * 32 > cluster_size)
+					break;
 				uint8_t *nentry = cluster_buf + off + (uint32_t)k * 32;
 				if (nentry[0] != EXFAT_ENTRY_FILE_NAME)
 					break;
@@ -2306,6 +2308,8 @@ static int exfat_stat(void *priv, const char *path, struct vfs_stat *st)
 			uint16_t ename[128];
 			int en_pos = 0;
 			for (uint8_t k = 2; k < sec; k++) {
+				if (off + (uint32_t)(k + 1) * 32 > cluster_size)
+					break;
 				uint8_t *nentry = cluster_buf + off + (uint32_t)k * 32;
 				if (nentry[0] != EXFAT_ENTRY_FILE_NAME)
 					break;
