@@ -30,6 +30,12 @@ static void pci_queue_autoprobe(const char *modalias, uint16_t vendor,
                                  uint16_t subdevice, uint8_t class_code,
                                  uint8_t subclass);
 
+/* Maximum iterations for capabilities list traversal (safety bound to
+ * prevent infinite loops on buggy or malicious devices that form a
+ * circular pointer chain).  PCI config space is 256 bytes and each
+ * capability header is at least 2 bytes, so 64 is a generous limit. */
+#define PCI_CAP_MAX_ITERATIONS   64
+
 /* PCIe ECAM (Memory-Mapped Configuration Space) */
 static uint64_t ecam_base = 0;
 
@@ -139,7 +145,11 @@ int pci_find_pcie_cap(int bus, int slot, int func, uint8_t *cap_offset) {
         cap_ptr = (uint8_t)(pci_read(bus, slot, func, 0x34) & 0xFF);
     }
 
+    int iter = 0;
     while (cap_ptr != 0) {
+        if (++iter > PCI_CAP_MAX_ITERATIONS)
+            break;
+
         uint32_t cap_reg;
         if (ecam_base) {
             cap_reg = pcie_read(bus, slot, func, cap_ptr);
@@ -267,7 +277,11 @@ int pci_find_msi_cap(uint8_t bus, uint8_t slot, uint8_t func,
 
     uint8_t cap_ptr = (uint8_t)(pci_read16(bus, slot, func, 0x34) & 0xFF);
 
+    int iter = 0;
     while (cap_ptr != 0) {
+        if (++iter > PCI_CAP_MAX_ITERATIONS)
+            break;
+
         uint16_t cap_id_next = pci_read16(bus, slot, func, cap_ptr);
         uint8_t cap_id = (uint8_t)(cap_id_next & 0xFF);
 
@@ -301,7 +315,11 @@ int pci_find_msix_cap(uint8_t bus, uint8_t slot, uint8_t func,
 
     uint8_t cap_ptr = (uint8_t)(pci_read16(bus, slot, func, 0x34) & 0xFF);
 
+    int iter = 0;
     while (cap_ptr != 0) {
+        if (++iter > PCI_CAP_MAX_ITERATIONS)
+            break;
+
         uint16_t cap_id_next = pci_read16(bus, slot, func, cap_ptr);
         uint8_t cap_id = (uint8_t)(cap_id_next & 0xFF);
 
@@ -899,7 +917,11 @@ int pci_vpd_find_cap(struct pci_device *dev)
 
     uint8_t cap_ptr = (uint8_t)(pci_read16(dev->bus, dev->slot, dev->func, 0x34) & 0xFF);
 
+    int iter = 0;
     while (cap_ptr != 0) {
+        if (++iter > PCI_CAP_MAX_ITERATIONS)
+            break;
+
         uint16_t cap_id_next = pci_read16(dev->bus, dev->slot, dev->func, cap_ptr);
         uint8_t cap_id = (uint8_t)(cap_id_next & 0xFF);
 
