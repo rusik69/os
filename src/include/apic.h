@@ -87,6 +87,7 @@ int apic_is_init_complete(void);
 void ioapic_init(void);
 void ioapic_redirect_extint(uint8_t irq);
 void ioapic_redirect_irq(uint8_t irq, uint8_t vector, uint32_t apic_id);
+void ioapic_redirect_irq_level(uint8_t irq, uint8_t vector, uint32_t apic_id, int active_low);
 void ioapic_mask_irq(uint8_t irq);
 void ioapic_unmask_irq(uint8_t irq);
 void ioapic_set_irq_destination(uint8_t irq, uint32_t apic_id);

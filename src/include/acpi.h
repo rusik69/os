@@ -19,6 +19,10 @@ int  acpi_find_reset_register(void);
 /* Power button */
 int  acpi_power_button_read(void);  /* returns 1 if pressed, clears flag */
 
+/* ACPI SCI (System Control Interrupt) IRQ number, read from FADT.
+   Returns 0 if ACPI is not yet initialized or FADT not found. */
+uint16_t acpi_get_sci_irq(void);
+
 /* ACPI table lookup — returns PHYS_TO_VIRT-mapped pointer or NULL */
 void *acpi_get_table(const char *sig);
 

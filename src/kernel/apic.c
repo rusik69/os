@@ -281,6 +281,38 @@ void ioapic_unmask_irq(uint8_t irq) {
     ioapic_write_reg(IOAPIC_REDTBL + irq * 2, low & ~IOAPIC_MASKED);
 }
 
+/*
+ * Redirect an I/O APIC pin for level-triggered interrupt delivery.
+ *
+ * Used for the ACPI SCI (System Control Interrupt) and other chipset-level
+ * interrupts that use level-triggered, active-low signalling.
+ *
+ * The I/O APIC redirection entry format (Intel I/O APIC spec):
+ *   Low DWORD  [7:0]  = vector
+ *               [10:8] = delivery mode (0 = Fixed, 1 = LowestPri, ...)
+ *               [13]   = interrupt polarity (0 = active-high, 1 = active-low)
+ *               [15]   = trigger mode (0 = edge, 1 = level)
+ *               [16]   = interrupt mask (1 = masked)
+ *   High DWORD [27:24] = destination APIC ID (physical mode)
+ */
+void ioapic_redirect_irq_level(uint8_t irq, uint8_t vector, uint32_t apic_id, int active_low)
+{
+    /* Bounds check: ensure irq does not exceed I/O APIC redirection entries */
+    if (irq > ioapic_nr_entries)
+        return;
+
+    uint32_t low = (uint32_t)vector;
+    if (active_low)
+        low |= (1U << 13);             /* Active-low polarity */
+    low |= (1U << 15);                 /* Level-triggered */
+    low |= IOAPIC_MASKED;              /* Start masked — handler must unmask */
+
+    uint32_t high = (apic_id << 24);  /* Physical destination APIC ID */
+
+    ioapic_write_reg(IOAPIC_REDTBL + irq * 2, low);
+    ioapic_write_reg(IOAPIC_REDTBL + irq * 2 + 1, high);
+}
+
 /* ── IRQ affinity ────────────────────────────────────────────────── */
 
 /* Update the destination APIC ID in an I/O APIC redirection entry.

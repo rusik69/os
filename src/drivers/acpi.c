@@ -5,6 +5,7 @@
 #include "printf.h"
 #include "cpuidle.h"
 #include "cpupstate.h"
+#include "apic.h"
 
 /* Forward declarations for DSDT/SSDT parsing defined below */
 struct fadt;
@@ -175,6 +176,9 @@ static uint8_t reset_reg_addr_space = 0;
 static uint8_t reset_reg_access_size = 0;
 static uint64_t reset_reg_address = 0;
 static uint8_t reset_value = 0;
+
+/* ACPI SCI (System Control Interrupt) IRQ from FADT */
+static uint16_t g_sci_irq = 0;
 
 static struct rsdp *find_rsdp(uint64_t start, uint64_t end) {
     /* Constrain scan to known-good physical memory ranges to avoid
@@ -1030,6 +1034,26 @@ void __init acpi_init(void) {
     pm1a_evt = (uint16_t)fadt->pm1a_evt_blk;
     acpi_ready = 1;
 
+    /* ── SCI interrupt routing ──────────────────────────────────────
+     * Read the System Control Interrupt from the FADT and configure
+     * it in the I/O APIC.  The SCI is a level-triggered, active-low
+     * interrupt used by ACPI for power management events (PM1), GPEs,
+     * and Embedded Controller events.
+     *
+     * We set up the I/O APIC redirection entry but leave it masked
+     * until a handler is registered.  The vector uses the same
+     * scheme as legacy ISA IRQs (IRQ_OFFSET + IRQ number). */
+    g_sci_irq = fadt->sci_int;
+    if (g_sci_irq != 0) {
+        uint32_t bsp_apic_id = apic_get_id();
+        uint8_t  vector = (uint8_t)(32 + g_sci_irq);  /* IRQ_OFFSET + IRQ */
+        ioapic_redirect_irq_level((uint8_t)g_sci_irq, vector, bsp_apic_id, 1);
+        kprintf("[OK] ACPI: SCI routed on IRQ %u (vector %u, level/active-low, masked)\n",
+                (unsigned int)g_sci_irq, (unsigned int)vector);
+    } else {
+        kprintf("[OK] ACPI: SCI interrupt not configured (FADT sci_int=0)\n");
+    }
+
     /* Parse reset register from FADT */
     if (fadt->reset_reg_address != 0) {
         reset_reg_available = 1;
@@ -1086,6 +1110,10 @@ void acpi_shutdown(void) {
 
 int acpi_find_reset_register(void) {
     return reset_reg_available;
+}
+
+uint16_t acpi_get_sci_irq(void) {
+    return g_sci_irq;
 }
 
 void acpi_reboot(void) {
