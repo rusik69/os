@@ -43,20 +43,19 @@ static volatile int g_pretimeout_fired = 0;
 /* Pretimeout governor (default: NONE — just warn, no hard action) */
 static int g_pretimeout_governor = WDT_GOVERNOR_NONE;
 
-/* Internal callback: if this fires, the watchdog was not petted in time */
+/* Internal callback: if this fires, the watchdog was not petted in time.
+ *
+ * Uses the full multi-method reset chain from watchdog_system_reset():
+ * ACPI reset register, keyboard controller, legacy chipset ports, and
+ * triple-fault via zero-length IDT — each method is tried in sequence.
+ * This is significantly more reliable than a bare "div 0" trick which
+ * is caught by the kernel's #DE handler and does not cause a reset on
+ * a properly-configured IDT.
+ */
 static void watchdog_reboot(void *arg) {
     (void)arg;
     kprintf("\n*** WATCHDOG TIMEOUT — System reset ***\n");
-
-    for (int i = 0; i < 3; i++) {
-        outb(0x64, 0xFE);
-        io_wait();
-    }
-
-    __asm__ volatile("div %0" : : "r"(0) : "eax", "edx");
-
-    cli();
-    for (;;) hlt();
+    watchdog_system_reset();
 }
 
 /* Internal callback to re-arm the watchdog periodically */
