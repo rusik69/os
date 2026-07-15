@@ -156,7 +156,7 @@ static int exfat_bitmap_load_sector(struct exfat_priv *ep,
 	/* Flush any dirty cached sector before replacing it */
 	if (ep->cached_bitmap_dirty) {
 		if (blockdev_write_sectors(ep->dev_id,
-		         ep->cached_bitmap_sector, 1,
+		         ep->bitmap_start_sector + ep->cached_bitmap_sector, 1,
 		         ep->cached_bitmap_data) != 0)
 			return -EIO;
 		ep->cached_bitmap_dirty = 0;
@@ -170,7 +170,7 @@ static int exfat_bitmap_load_sector(struct exfat_priv *ep,
 		return -EIO;
 	}
 
-	ep->cached_bitmap_sector = ep->bitmap_start_sector + sector_index;
+	ep->cached_bitmap_sector = sector_index;
 	ep->cached_bitmap_dirty = 0;
 	return 0;
 }
@@ -228,7 +228,7 @@ static int exfat_bitmap_flush(struct exfat_priv *ep)
 		return 0;
 
 	if (blockdev_write_sectors(ep->dev_id,
-	         ep->cached_bitmap_sector, 1,
+	         ep->bitmap_start_sector + ep->cached_bitmap_sector, 1,
 	         ep->cached_bitmap_data) != 0)
 		return -EIO;
 
