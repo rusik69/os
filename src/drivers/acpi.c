@@ -411,6 +411,13 @@ static void parse_dsdt_for_dock(struct fadt *fadt) {
     uint8_t *aml = dsdt + sizeof(struct acpi_header);
     uint32_t aml_len = (uint32_t)(dsdt_len - sizeof(struct acpi_header));
 
+    /* Need at least 8 bytes of AML to search for _DCK method signatures */
+    if (aml_len < 8) {
+        kprintf("  ACPI: DSDT AML too short for dock detection (%u bytes, need 8)\n",
+                (unsigned int)aml_len);
+        return;
+    }
+
     acpi_find_dock_device(aml, aml_len);
 }
 
@@ -1645,6 +1652,13 @@ static int acpi_parse_dsdt(struct fadt *fadt)
         return -1;
     }
 
+    /* Reject suspiciously large tables to avoid OOB in checksum loop */
+    if (hdr->length > 0x100000) {
+        kprintf("[ACPI] DSDT: suspiciously large length %u (>1MB), ignoring\n",
+                (unsigned int)hdr->length);
+        return -1;
+    }
+
     /* Validate checksum */
     if (acpi_verify_checksum(hdr, hdr->length) < 0) {
         kprintf("[ACPI] DSDT: checksum failed\n");
@@ -1765,6 +1779,17 @@ static int acpi_load_ssdts(void)
         if (hdr->length < sizeof(struct acpi_header)) {
             kprintf("[ACPI] SSDT[%d] at 0x%llx: too short (%u bytes), "
                     "skipping\n",
+                    g_acpi_ssdt_count,
+                    (unsigned long long)table_phys,
+                    (unsigned int)hdr->length);
+            continue;
+        }
+
+        /* Reject suspiciously large SSDT tables to avoid OOB in
+         * checksum loop or AML parser */
+        if (hdr->length > 0x100000) {
+            kprintf("[ACPI] SSDT[%d] at 0x%llx: suspiciously large length "
+                    "%u (>1MB), skipping\n",
                     g_acpi_ssdt_count,
                     (unsigned long long)table_phys,
                     (unsigned int)hdr->length);
