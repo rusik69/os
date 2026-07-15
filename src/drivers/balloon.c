@@ -19,6 +19,7 @@
 #include "virtio.h"
 #include "io.h"
 #include "heap.h"
+#include "spinlock.h"
 
 /* ── Balloon constants ─────────────────────────────────────────────── */
 
@@ -66,6 +67,9 @@ static struct {
     uint16_t iobase;
     int      present;
 
+    /* Synchronisation — protects pages[], inflate_count, target_pages */
+    spinlock_t lock;
+
     /* Balloon state */
     struct balloon_page pages[BALLOON_MAX_PAGES];
     int      num_pages;          /* total pages tracked */
@@ -104,7 +108,8 @@ static inline uint32_t bal_inl(uint8_t off) {
 /* ── Core balloon operations ───────────────────────────────────────── */
 
 /* Inflate: "take" a page from the guest (mark as balloon-owned).
- * The host holds onto this page for potential re-use. */
+ * The host holds onto this page for potential re-use.
+ * Caller must hold balloon.lock. */
 static int balloon_inflate_one(void)
 {
     if (balloon.inflate_count >= balloon.num_pages)
@@ -126,16 +131,21 @@ static int balloon_inflate_one(void)
     return 0;
 }
 
-/* Deflate: "release" a page back to the guest. */
+/* Deflate: "release" a page back to the guest.
+ * Validates page state BEFORE popping the stack, so a failed
+ * validation never leaves inflate_count permanently decremented.
+ * Caller must hold balloon.lock. */
 static int balloon_deflate_one(void)
 {
     if (balloon.inflate_count <= 0)
         return -1;
 
-    balloon.inflate_count--;
-    struct balloon_page *bp = &balloon.pages[balloon.inflate_count];
+    /* Peek at the top of the stack first — validate before pop */
+    struct balloon_page *bp = &balloon.pages[balloon.inflate_count - 1];
     if (!bp->inflated)
         return -1;
+
+    balloon.inflate_count--;
 
     /* Free the page back to the system */
     pmm_free_frame(bp->phys_addr);
@@ -175,28 +185,41 @@ static void balloon_adjust(void)
  * that can be moved. */
 static int balloon_page_isolate(uint64_t phys_addr)
 {
+    uint64_t irq_flags;
+    int found = 0;
+
     if (!balloon.compaction_enabled)
         return 0;
+
+    spinlock_irqsave_acquire(&balloon.lock, &irq_flags);
 
     /* Check if this phys_addr belongs to the balloon */
     for (int i = 0; i < balloon.inflate_count; i++) {
         struct balloon_page *bp = &balloon.pages[i];
         if (bp->inflated && bp->phys_addr == phys_addr) {
             /* Mark as isolate (MIGRATE_ISOLATE) — pageblock will do this */
-            return 1; /* yes, this is a balloon page */
+            found = 1;
+            break;
         }
     }
-    return 0;
+
+    spinlock_irqsave_release(&balloon.lock, irq_flags);
+    return found;
 }
 
 /* Migrate a balloon page: copy contents from old_phys to new_phys,
  * then update balloon tracking and re-inflate. */
 static int balloon_page_migrate(uint64_t old_phys, uint64_t new_phys)
 {
+    uint64_t irq_flags;
+    int ret = -1;
+
     if (!balloon.compaction_enabled)
         return -1;
     if (old_phys == 0 || new_phys == 0)
         return -1;
+
+    spinlock_irqsave_acquire(&balloon.lock, &irq_flags);
 
     /* Find the balloon page entry */
     for (int i = 0; i < balloon.inflate_count; i++) {
@@ -216,10 +239,13 @@ static int balloon_page_migrate(uint64_t old_phys, uint64_t new_phys)
 
             /* Re-inflate: the new page is now balloon-owned */
             balloon.stat_migrate++;
-            return 0;
+            ret = 0;
+            break;
         }
     }
-    return -1; /* not found */
+
+    spinlock_irqsave_release(&balloon.lock, irq_flags);
+    return ret;
 }
 
 /* Dequeue a balloon page for migration (called during compaction scan).
@@ -237,7 +263,11 @@ static int balloon_page_dequeue(uint64_t phys_addr)
 static int balloon_sysfs_read(void *priv, void *buf,
                                uint32_t max_size, uint32_t *out_size)
 {
+    uint64_t irq_flags;
     char tmp[256];
+
+    spinlock_irqsave_acquire(&balloon.lock, &irq_flags);
+
     int n = snprintf(tmp, sizeof(tmp),
                      "balloon_compaction:\n"
                      "  inflate_count:  %d\n"
@@ -259,6 +289,8 @@ static int balloon_sysfs_read(void *priv, void *buf,
                      balloon.stat_fail,
                      (unsigned long long)compaction_fragmentation_pct());
 
+    spinlock_irqsave_release(&balloon.lock, irq_flags);
+
     uint32_t len = (max_size < (uint32_t)n) ? max_size : (uint32_t)n;
     memcpy(buf, tmp, len);
     *out_size = len;
@@ -271,7 +303,11 @@ static int balloon_sysfs_read(void *priv, void *buf,
  * Inflates the balloon to reclaim pages and trigger compaction. */
 static void balloon_memory_pressure(void)
 {
+    uint64_t irq_flags;
+
     if (!balloon.present) return;
+
+    spinlock_irqsave_acquire(&balloon.lock, &irq_flags);
 
     /* Increase target on pressure */
     balloon.target_pages += BALLOON_BATCH_SIZE;
@@ -280,7 +316,9 @@ static void balloon_memory_pressure(void)
 
     balloon_adjust();
 
-    /* Run compaction to defragment */
+    spinlock_irqsave_release(&balloon.lock, irq_flags);
+
+    /* Run compaction to defragment (lock not needed — compaction is independent) */
     compaction_run();
 
     kprintf("[BALLOON] memory pressure: target=%d inflated=%d "
