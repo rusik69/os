@@ -117,6 +117,13 @@ static int g_opregion_handler_count;
  * etc.). Real-world ACPI tables rarely exceed ~10 levels. */
 #define AML_PARSE_MAX_DEPTH     128
 
+/* Maximum recursion depth for AML interpreter execution to prevent
+ * kernel stack overflow from deeply nested control flow (If/While)
+ * in AML method bodies.  The interpreter uses mutual recursion between
+ * aml_exec_one_term() and aml_exec_if()/aml_exec_while(), so deeply
+ * nested control flow would otherwise overflow the kernel C stack. */
+#define AML_EXEC_MAX_DEPTH      64
+
 /* The flat namespace array. We use a static pool sized generously. */
 static struct {
 	int              count;
@@ -1333,6 +1340,12 @@ struct aml_exec_context {
 	/* Method-local named objects (created by NameOp inside method body) */
 	struct aml_local_name_entry local_names[AML_MAX_LOCAL_NAMES];
 	int  local_name_count;
+
+	/* Recursion depth guard for control flow nesting (If/While).
+	 * Checked/incremented in aml_exec_one_term() before calling
+	 * aml_exec_if() / aml_exec_while().  Prevents kernel stack
+	 * overflow from deeply nested AML control flow. */
+	uint8_t  depth;
 };
 
 /* ── Method Header Parser ───────────────────────────────────────── */
@@ -3534,11 +3547,20 @@ static uint32_t aml_exec_one_term(struct aml_exec_context *ctx)
 	/* IfOp (0xA0) */
 	case AML_IF_OP:
 		ctx->offset++;
+		/* Guard against excessive execution recursion (stack overflow) */
+		if (ctx->depth >= AML_EXEC_MAX_DEPTH) {
+			kprintf("[AML] Error: execution nesting exceeds %u at offset %u\n",
+				(unsigned int)AML_EXEC_MAX_DEPTH, (unsigned int)o);
+			ctx->error = 1;
+			return ctx->offset - o;
+		}
+		ctx->depth++;
 		if (aml_exec_if(ctx) < 0) {
 			kprintf("[AML] IfOp failed at offset %u\n",
 				(unsigned int)(o));
 			ctx->error = 1;
 		}
+		ctx->depth--;
 		return ctx->offset - o;
 
 	/* ElseOp (0xA1) — should only appear inside an IfOp handler;
@@ -3562,11 +3584,20 @@ static uint32_t aml_exec_one_term(struct aml_exec_context *ctx)
 	/* WhileOp (0xA2) */
 	case AML_WHILE_OP:
 		ctx->offset++;
+		/* Guard against excessive execution recursion (stack overflow) */
+		if (ctx->depth >= AML_EXEC_MAX_DEPTH) {
+			kprintf("[AML] Error: execution nesting exceeds %u at offset %u\n",
+				(unsigned int)AML_EXEC_MAX_DEPTH, (unsigned int)o);
+			ctx->error = 1;
+			return ctx->offset - o;
+		}
+		ctx->depth++;
 		if (aml_exec_while(ctx) < 0) {
 			kprintf("[AML] WhileOp failed at offset %u\n",
 				(unsigned int)(o));
 			ctx->error = 1;
 		}
+		ctx->depth--;
 		return ctx->offset - o;
 
 	/* BreakOp (0xA3) */
