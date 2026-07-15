@@ -2252,6 +2252,38 @@ int fat32_truncate_file(const char *path, uint32_t new_size)
             if (free_start >= 2 && free_start < FAT_EOC())
                 fat_free_chain(free_start);
         }
+    } else if (new_clusters > old_clusters) {
+        /* Extend the cluster chain — walk to the actual end, then allocate
+         * and zero-fill the additional clusters so that file_size is
+         * consistent with the chain length. */
+        uint32_t extend_by = new_clusters - old_clusters;
+        uint32_t last = fat32_chain_walk(clus, old_clusters - 1);
+        if (last < 2) return -EIO;
+        /* Walk to the real end of the chain (may extend beyond old_clusters
+         * if the chain was externally modified or previously inconsistent). */
+        {
+            uint64_t _walk = 0;
+            while (!FAT_IS_EOC(last)) {
+                if (++_walk > FAT_MAX_CLUSTER()) return -EIO;
+                uint32_t nxt = fat_next_cluster(last);
+                if (FAT_IS_EOC(nxt) || nxt < 2) break;
+                last = nxt;
+            }
+        }
+        for (uint32_t i = 0; i < extend_by; i++) {
+            uint32_t newc = fat_alloc_cluster();
+            if (!newc) return -ENOSPC;
+            /* Zero-fill the new cluster */
+            uint32_t lba = cluster_to_lba(newc);
+            uint8_t zbuf[SECT_SIZE];
+            memset(zbuf, 0, SECT_SIZE);
+            for (uint32_t s = 0; s < spc; s++) {
+                if (write_sector(lba + s, zbuf) != 0) return -EIO;
+            }
+            fat_write_entry(last, newc);
+            last = newc;
+        }
+        fat_write_entry(last, FAT_EOC());
     }
 
     dir_update_by_leaf(parent, leaf, clus, new_size);
