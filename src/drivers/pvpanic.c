@@ -11,6 +11,7 @@
 #include "printf.h"
 #include "string.h"
 #include "io.h"
+#include "notifier.h"
 
 #ifdef MODULE
 #include "module.h"
@@ -65,11 +66,37 @@ static void pvpanic_detect_mmio(void)
     }
 }
 
+/* ── Panic notifier ─────────────────────────────────────────────── */
+
+/* Forward declaration */
+int pvpanic_send(uint8_t event);
+
+static struct notifier_block pvpanic_nb = {
+    .notifier_call = NULL,
+    .next          = NULL,
+};
+
+/* Called on kernel panic (via NOTIFIER_PANIC chain). Sends a panic
+ * event to the QEMU hypervisor so it can record or react. */
+static int pvpanic_panic_notifier(struct notifier_block *nb,
+                                  unsigned long action, void *data)
+{
+    (void)nb;
+    (void)data;
+
+    if (action == 0) {
+        pvpanic_send(PVPANIC_EVENT_PANIC);
+    }
+
+    return 0;
+}
+
 /* ── Public API: signal a panic event to the hypervisor ────────── */
 
-static void pvpanic_send_event(uint8_t event)
+int pvpanic_send(uint8_t event)
 {
-    if (!pvpanic_detected) return;
+    if (!pvpanic_detected)
+        return -1;
 
     switch (pvpanic_mode) {
     case PVPANIC_MODE_ISA:
@@ -82,8 +109,9 @@ static void pvpanic_send_event(uint8_t event)
         break;
     }
     default:
-        break;
+        return -1;
     }
+    return 0;
 }
 
 /* ── Init ──────────────────────────────────────────────────────── */
@@ -94,10 +122,20 @@ static void pvpanic_init(void)
     if (!pvpanic_detected)
         pvpanic_detect_mmio();
 
-    if (pvpanic_detected)
-        kprintf("[PVPANIC] QEMU pvpanic device ready, mode=%d\n", pvpanic_mode);
-    else
+    if (pvpanic_detected) {
+        /* Register panic notifier so we signal QEMU on kernel panic */
+        pvpanic_nb.notifier_call = pvpanic_panic_notifier;
+        int ret = notifier_chain_register(NOTIFIER_PANIC, &pvpanic_nb);
+        if (ret == 0) {
+            kprintf("[PVPANIC] QEMU pvpanic device ready, mode=%d, notifier registered\n",
+                    pvpanic_mode);
+        } else {
+            kprintf("[PVPANIC] QEMU pvpanic device ready, mode=%d, notifier FAILED (%d)\n",
+                    pvpanic_mode, ret);
+        }
+    } else {
         kprintf("[PVPANIC] not detected\n");
+    }
 }
 
 #ifdef MODULE
@@ -105,14 +143,6 @@ int __init init_module(void) { pvpanic_init(); return 0; }
 void cleanup_module(void) {}
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Hermes OS Kernel Team");
-MODULE_DESCRIPTION("QEMU pvpanic — MMIO detection, panic event");
+MODULE_DESCRIPTION("QEMU pvpanic — MMIO detection, panic event, hypervisor notification");
 MODULE_VERSION("1.0");
 #endif
-
-/* ── Stub: pvpanic_send ─────────────────────────────── */
-static int pvpanic_send(uint8_t event)
-{
-    (void)event;
-    kprintf("[PVPANIC] pvpanic_send: not yet implemented\n");
-    return 0;
-}
