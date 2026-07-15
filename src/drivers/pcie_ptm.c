@@ -9,6 +9,7 @@
 #include "string.h"
 #include "printf.h"
 #include "errno.h"
+#include "kernel.h"
 #include "pci.h"
 
 /* PTM capability registers */
@@ -76,14 +77,14 @@ static int ptm_dialog(void)
     /* Send PTM Request and get response */
     /* In real hardware, this involves a PTM dialog transaction */
 
-    ptm.local_time = 0; /* timer_get_ticks() */
-    ptm.master_time = 0;
-    ptm.dialog_count++;
+    WRITE_ONCE(ptm.local_time, 0);    /* timer_get_ticks() */
+    WRITE_ONCE(ptm.master_time, 0);
+    WRITE_ONCE(ptm.dialog_count, READ_ONCE(ptm.dialog_count) + 1);
 
     /* Compute correction based on dialog exchange */
     /* tm = (t1 + (t4 - (t3 - t2)) / 2) - t2 */
     /* Simplified: */
-    ptm.correction = ptm.master_time - ptm.local_time;
+    WRITE_ONCE(ptm.correction, READ_ONCE(ptm.master_time) - READ_ONCE(ptm.local_time));
 
     return 0;
 }
@@ -91,10 +92,10 @@ static int ptm_dialog(void)
 /* Get corrected time */
 static uint64_t ptm_get_corrected_time(uint64_t raw_time)
 {
-    if (ptm.dialog_count == 0)
+    if (READ_ONCE(ptm.dialog_count) == 0)
         return raw_time;
 
-    return raw_time + ptm.correction;
+    return raw_time + READ_ONCE(ptm.correction);
 }
 
 static void ptm_init(void)
