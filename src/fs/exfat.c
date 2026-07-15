@@ -112,6 +112,12 @@ static uint32_t exfat_next_cluster(struct exfat_priv *ep, uint32_t cluster)
 
     /* If no FAT table, assume contiguous allocation */
     if (ep->fat_length == 0) {
+        /* Return next contiguous cluster, but don't go beyond the
+         * valid cluster range (2 .. cluster_count+1).  Returning a
+         * cluster past the heap would cause callers to attempt I/O
+         * on sectors that do not belong to the filesystem data area. */
+        if (cluster >= ep->cluster_count + 1)
+            return EXFAT_CLUSTER_END;
         return cluster + 1;
     }
 
@@ -1725,6 +1731,8 @@ static void exfat_free_chain(struct exfat_priv *ep, uint32_t first_cluster,
                 break;
 
             if (next >= 0xFFFFFFF8) /* End of chain */
+                break;
+            if (next == 0xFFFFFFF7) /* Bad cluster — stop traversal */
                 break;
             if (next == 0)          /* Shouldn't happen, but safe */
                 break;
