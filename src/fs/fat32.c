@@ -122,6 +122,7 @@ static uint32_t     num_fats      = 2;
 static uint32_t     fat_sectors   = 0;
 static uint32_t     fs_info_lba   = 0;
 static uint32_t     fsinfo_next_free = 2;
+static uint32_t     fsinfo_free_count = 0;
 
 /* Cached volume label (11-char padded, null-terminated) */
 static char         g_volume_label[12];
@@ -131,7 +132,7 @@ static char         g_volume_label[12];
 #define FAT_EOC()        (fat_type == FAT12 ? 0x0FF8u : (fat_type == FAT16 ? 0xFFF8u : 0x0FFFFFF8u))
 #define FAT_FREE()       0u
 #define FAT_MAX_CLUSTER() (fat_type == FAT12 ? 0x0FF0u : (fat_type == FAT16 ? 0xFFF0u : 0x0FFFFFF0u))
-#define FAT_IS_EOC(val)   ((val) >= FAT_EOC())
+#define FAT_IS_EOC(val)   ((val) >= FAT_MAX_CLUSTER())
 
 /* Sector-sized scratch buffer (on stack in helpers) */
 #define SECT_SIZE 512
@@ -154,10 +155,16 @@ static void fsinfo_write_hint(uint32_t next) {
     if (!fs_info_lba) return;
     uint8_t buf[SECT_SIZE];
     if (read_sector(fs_info_lba, buf) != 0) return;
-    buf[488] = (uint8_t)(next & 0xFF);
-    buf[489] = (uint8_t)((next >> 8) & 0xFF);
-    buf[490] = (uint8_t)((next >> 16) & 0xFF);
-    buf[491] = (uint8_t)((next >> 24) & 0xFF);
+    /* FSI_Free_Count at offset 488-491 (per Microsoft FAT32 spec) */
+    buf[488] = (uint8_t)(fsinfo_free_count & 0xFF);
+    buf[489] = (uint8_t)((fsinfo_free_count >> 8) & 0xFF);
+    buf[490] = (uint8_t)((fsinfo_free_count >> 16) & 0xFF);
+    buf[491] = (uint8_t)((fsinfo_free_count >> 24) & 0xFF);
+    /* FSI_Nxt_Free at offset 492-495 (per Microsoft FAT32 spec) */
+    buf[492] = (uint8_t)(next & 0xFF);
+    buf[493] = (uint8_t)((next >> 8) & 0xFF);
+    buf[494] = (uint8_t)((next >> 16) & 0xFF);
+    buf[495] = (uint8_t)((next >> 24) & 0xFF);
     write_sector(fs_info_lba, buf);
 }
 
@@ -246,6 +253,7 @@ static uint32_t fat_alloc_cluster(void) {
         if (val == FAT_FREE()) {
             if (fat_write_entry(c, eoc) != 0) return 0;
             fsinfo_next_free = c + 1;
+            if (fsinfo_free_count > 0) fsinfo_free_count--;
             fsinfo_write_hint(fsinfo_next_free);
             return c;
         }
@@ -258,24 +266,24 @@ static void fat_free_chain(uint32_t cluster) {
     if (fat_sectors) max_clusters = (fat_sectors * SECT_SIZE * 2) / 3;
     if (!max_clusters) max_clusters = 65536;
     uint32_t visited = 0;
+    uint32_t first_freed = cluster;
     while (cluster >= 2 && !FAT_IS_EOC(cluster)) {
         if (++visited > max_clusters) break;
         uint32_t next = fat_next_cluster(cluster);
         fat_write_entry(cluster, FAT_FREE());
+        fsinfo_free_count++;
         cluster = next;
     }
+    /* Update next-free hint if we freed clusters before the current hint */
+    if (first_freed >= 2 && first_freed < fsinfo_next_free) {
+        fsinfo_next_free = first_freed;
+    }
+    fsinfo_write_hint(fsinfo_next_free);
 }
 
-/* Cluster number → LBA of first sector.
- * Uses 64-bit intermediate arithmetic to prevent overflow for large
- * cluster numbers (near 0x0FFFFFF0) combined with sectors-per-cluster
- * values above 16, which would overflow 32-bit multiplication.
- * Returns 0 on invalid cluster (< 2 or > FAT_MAX_CLUSTER()). */
+/* Cluster number → LBA of first sector */
 static uint32_t cluster_to_lba(uint32_t cluster) {
-    if (cluster < 2 || cluster > FAT_MAX_CLUSTER())
-        return 0;
-    uint64_t offset = (uint64_t)(cluster - 2) * (uint64_t)spc;
-    return (uint32_t)((uint64_t)data_start + offset);
+    return data_start + (cluster - 2) * spc;
 }
 
 /* ── 8.3 name comparison (case-insensitive) ─────────────────────────────────── */
@@ -322,18 +330,15 @@ static int name_match_ci(const char *a, const char *b) {
 /* Compute the 13-char checksum over an 8.3 name (11 bytes: 8 name + 3 ext) */
 static uint8_t lfn_checksum(const char *name83_8, const char *name83_3);
 
-/* Validate that ALL LFN entries' checksum matches the 8.3 entry.
- * Returns 1 if all checksums match (or if no LFN entries), 0 on mismatch. */
+/* Validate that the LFN entries' checksum matches the 8.3 entry.
+ * Returns 1 if checksums match (or if no LFN entries), 0 on mismatch. */
 static int lfn_validate_checksum(const struct fat32_lfn *entries, int count,
                                   const char *name83_8, const char *name83_3) {
     if (count <= 0) return 1;
+    /* All LFN entries for the same file have the same checksum; use the first */
+    uint8_t stored_cksum = entries[0].checksum;
     uint8_t computed_cksum = lfn_checksum(name83_8, name83_3);
-    /* Verify every LFN entry in the set has the same checksum */
-    for (int i = 0; i < count; i++) {
-        if (entries[i].checksum != computed_cksum)
-            return 0;
-    }
-    return 1;
+    return (stored_cksum == computed_cksum);
 }
 
 static int dir_grow_cluster(uint32_t *cluster) {
@@ -508,13 +513,13 @@ static uint32_t dir_find(uint32_t dir_cluster, const char *name,
         first_lba = fat_start + num_fats * fat_sectors;
         sec_count = root_dir_sectors;
         /* No cluster chain to follow — single layer of sectors */
-        struct fat32_lfn lfn_parts[20];
-        memset(lfn_parts, 0, sizeof(lfn_parts));
-        int lfn_n = 0;
         for (uint32_t s = 0; s < sec_count; s++) {
             if (read_sector(first_lba + s, buf) != 0) return 0;
             struct fat32_dirent *entries = (struct fat32_dirent *)buf;
             int n_entries = (int)(SECT_SIZE / sizeof(struct fat32_dirent));
+            struct fat32_lfn lfn_parts[20];
+            memset(lfn_parts, 0, sizeof(lfn_parts));
+            int lfn_n = 0;
             for (int i = 0; i < n_entries; i++) {
                 uint8_t first = (uint8_t)entries[i].name[0];
                 if (first == 0x00) return 0;
@@ -547,13 +552,6 @@ static uint32_t dir_find(uint32_t dir_cluster, const char *name,
                 if (matched) {
                     uint32_t clus = ((uint32_t)entries[i].cluster_hi << 16)
                                   | entries[i].cluster_lo;
-                    /* Mask FAT32 cluster numbers to 28 bits (upper 4 bits
-                     * are reserved and should not be interpreted as part
-                     * of the cluster number), matching the masking done
-                     * in fat_read_entry(). Prevents arithmetic overflow
-                     * from corrupted upper bits. */
-                    if (fat_type == FAT32)
-                        clus &= 0x0FFFFFFF;
                     if (is_dir)    *is_dir    = !!(entries[i].attr & FAT32_ATTR_DIRECTORY);
                     if (file_size) *file_size = entries[i].file_size;
                     /* For FAT12/16, cluster 0 means empty; return it anyway as the caller
@@ -571,13 +569,13 @@ static uint32_t dir_find(uint32_t dir_cluster, const char *name,
     while (cluster >= 2 && !FAT_IS_EOC(cluster)) {
         if (++_chain_cnt > FAT_MAX_CLUSTER()) break;
         uint32_t lba = cluster_to_lba(cluster);
-        struct fat32_lfn lfn_parts[20];
-        memset(lfn_parts, 0, sizeof(lfn_parts));
-        int lfn_n = 0;
         for (uint32_t s = 0; s < spc; s++) {
             if (read_sector(lba + s, buf) != 0) return 0;
             struct fat32_dirent *entries = (struct fat32_dirent *)buf;
             int n_entries = (int)(SECT_SIZE / sizeof(struct fat32_dirent));
+            struct fat32_lfn lfn_parts[20];
+            memset(lfn_parts, 0, sizeof(lfn_parts));
+            int lfn_n = 0;
             for (int i = 0; i < n_entries; i++) {
                 uint8_t first = (uint8_t)entries[i].name[0];
                 if (first == 0x00) return 0;
@@ -610,9 +608,6 @@ static uint32_t dir_find(uint32_t dir_cluster, const char *name,
                 if (matched) {
                     uint32_t clus = ((uint32_t)entries[i].cluster_hi << 16)
                                   | entries[i].cluster_lo;
-                    /* Mask FAT32 cluster numbers to 28 bits */
-                    if (fat_type == FAT32)
-                        clus &= 0x0FFFFFFF;
                     if (is_dir)    *is_dir    = !!(entries[i].attr & FAT32_ATTR_DIRECTORY);
                     if (file_size) *file_size = entries[i].file_size;
                     return clus ? clus : root_cluster;
@@ -724,10 +719,6 @@ int fat32_mount(fat32_disk_t disk, uint32_t part_lba) {
     /* Validate geometry before any division operations */
     if (bps == 0) return -5;
     if (spc == 0) return -6;
-    /* BPB_RsvdSecCnt must be >= 1 (boot sector is always reserved) */
-    if (bpb->reserved_sectors == 0) return -7;
-    /* Reserved sectors must not exceed total sectors (prevents unsigned underflow) */
-    if (total_sectors > 0 && bpb->reserved_sectors >= total_sectors) return -7;
     /* Determine FAT type from cluster count */
     uint32_t root_dir_sz = root_entries * 32; /* bytes */
     uint32_t root_dir_sec = (root_dir_sz + bps - 1) / bps;
@@ -764,32 +755,24 @@ int fat32_mount(fat32_disk_t disk, uint32_t part_lba) {
             return -EINVAL;
         data_start = fat_start + num_fats * fat_sz;
         root_dir_sectors = 0;
-        /* BPB_FSInfo: 0 or 0xFFFF means no FSInfo sector.
-         * Must also be within the reserved area, otherwise writes
-         * to the FSInfo sector could corrupt FAT or data. */
-        uint16_t fs_info_val = bpb->fs_info;
-        if (fs_info_val == 0 || fs_info_val == 0xFFFF ||
-            fs_info_val >= bpb->reserved_sectors) {
-            fs_info_lba = 0;
-        } else {
-            fs_info_lba = part_lba + fs_info_val;
-        }
+        fs_info_lba = bpb->fs_info ? part_lba + bpb->fs_info : 0;
         if (fs_info_lba) {
             uint8_t fbuf[SECT_SIZE];
             if (read_sector(fs_info_lba, fbuf) == 0) {
-                /* Validate FSInfo signatures before trusting the hint:
-                 * Offset 0: lead signature 0x41615252 ("RRaA")
-                 * Offset 484: struct signature 0x61417272 ("rrAa") */
-                if (fbuf[0] == 0x52 && fbuf[1] == 0x52 &&
-                    fbuf[2] == 0x61 && fbuf[3] == 0x41 &&
-                    fbuf[484] == 0x72 && fbuf[485] == 0x72 &&
-                    fbuf[486] == 0x41 && fbuf[487] == 0x61) {
-                    fsinfo_next_free = (uint32_t)fbuf[488]
-                                     | ((uint32_t)fbuf[489] << 8)
-                                     | ((uint32_t)fbuf[490] << 16)
-                                     | ((uint32_t)fbuf[491] << 24);
-                    if (fsinfo_next_free < 2) fsinfo_next_free = 2;
-                }
+                /* FSI_Nxt_Free at offset 492-495 (hint for next free cluster) */
+                fsinfo_next_free = (uint32_t)fbuf[492]
+                                 | ((uint32_t)fbuf[493] << 8)
+                                 | ((uint32_t)fbuf[494] << 16)
+                                 | ((uint32_t)fbuf[495] << 24);
+                if (fsinfo_next_free < 2 || fsinfo_next_free == 0xFFFFFFFF)
+                    fsinfo_next_free = 2;
+                /* FSI_Free_Count at offset 488-491 (last known free count) */
+                fsinfo_free_count = (uint32_t)fbuf[488]
+                                  | ((uint32_t)fbuf[489] << 8)
+                                  | ((uint32_t)fbuf[490] << 16)
+                                  | ((uint32_t)fbuf[491] << 24);
+                if (fsinfo_free_count == 0xFFFFFFFF)
+                    fsinfo_free_count = 0;
             }
         }
     } else {
@@ -862,13 +845,13 @@ int fat32_list_dir(const char *path, char names[][FAT32_MAX_NAME], int max) {
     if (cluster == 0 && fat_type != FAT32) {
         /* FAT12/16 fixed root directory */
         uint32_t first_lba = fat_start + num_fats * fat_sectors;
-        struct fat32_lfn lfn_parts[20];
-        memset(lfn_parts, 0, sizeof(lfn_parts));
-        int lfn_n = 0;
         for (uint32_t s = 0; s < root_dir_sectors && count < max; s++) {
             if (read_sector(first_lba + s, buf) != 0) return count;
             struct fat32_dirent *entries = (struct fat32_dirent *)buf;
             int n_entries = (int)(SECT_SIZE / sizeof(struct fat32_dirent));
+            struct fat32_lfn lfn_parts[20];
+            memset(lfn_parts, 0, sizeof(lfn_parts));
+            int lfn_n = 0;
             for (int i = 0; i < n_entries && count < max; i++) {
                 uint8_t first = (uint8_t)entries[i].name[0];
                 if (first == 0x00) return count;
@@ -883,17 +866,10 @@ int fat32_list_dir(const char *path, char names[][FAT32_MAX_NAME], int max) {
                 }
                 if (entries[i].attr & FAT32_ATTR_VOLUME_ID) { lfn_n = 0; continue; }
                 char *out = names[count];
-                int use_lfn = 0;
                 if (lfn_n > 0) {
-                    /* Validate LFN checksum against the 8.3 entry before using long name */
-                    if (lfn_validate_checksum(lfn_parts, lfn_n,
-                                               entries[i].name, entries[i].ext)) {
-                        vfat_reconstruct_name(lfn_parts, lfn_n, out, FAT32_MAX_NAME);
-                        use_lfn = 1;
-                    }
+                    vfat_reconstruct_name(lfn_parts, lfn_n, out, FAT32_MAX_NAME);
                     lfn_n = 0;
-                }
-                if (!use_lfn) {
+                } else {
                     int ni = 0;
                     for (int j = 0; j < 8 && entries[i].name[j] != ' '; j++) {
                         char c = entries[i].name[j];
@@ -929,13 +905,13 @@ int fat32_list_dir(const char *path, char names[][FAT32_MAX_NAME], int max) {
     while (clus >= 2 && !FAT_IS_EOC(clus) && count < max) {
         if (++_chain_cnt > FAT_MAX_CLUSTER()) break;
         uint32_t lba = cluster_to_lba(clus);
-        struct fat32_lfn lfn_parts[20];
-        memset(lfn_parts, 0, sizeof(lfn_parts));
-        int lfn_n = 0;
         for (uint32_t s = 0; s < spc && count < max; s++) {
             if (read_sector(lba + s, buf) != 0) return count;
             struct fat32_dirent *entries = (struct fat32_dirent *)buf;
             int n_entries = (int)(SECT_SIZE / sizeof(struct fat32_dirent));
+            struct fat32_lfn lfn_parts[20];
+            memset(lfn_parts, 0, sizeof(lfn_parts));
+            int lfn_n = 0;
             for (int i = 0; i < n_entries && count < max; i++) {
                 uint8_t first = (uint8_t)entries[i].name[0];
                 if (first == 0x00) goto done;
@@ -952,17 +928,10 @@ int fat32_list_dir(const char *path, char names[][FAT32_MAX_NAME], int max) {
                 if (entries[i].attr & FAT32_ATTR_VOLUME_ID) { lfn_n = 0; continue; }
 
                 char *out = names[count];
-                int use_lfn = 0;
                 if (lfn_n > 0) {
-                    /* Validate LFN checksum against the 8.3 entry before using long name */
-                    if (lfn_validate_checksum(lfn_parts, lfn_n,
-                                               entries[i].name, entries[i].ext)) {
-                        vfat_reconstruct_name(lfn_parts, lfn_n, out, FAT32_MAX_NAME);
-                        use_lfn = 1;
-                    }
+                    vfat_reconstruct_name(lfn_parts, lfn_n, out, FAT32_MAX_NAME);
                     lfn_n = 0;
-                }
-                if (!use_lfn) {
+                } else {
                     int ni = 0;
                     for (int j = 0; j < 8 && entries[i].name[j] != ' '; j++) {
                         char c = entries[i].name[j];
@@ -1038,8 +1007,7 @@ static int fat32_83_name_exists(uint32_t dir_cluster,
             for (int i = 0; i < n_entries; i++) {
                 uint8_t first = (uint8_t)entries[i].name[0];
                 if (first == 0x00) return 0; /* end of directory */
-                if (first == 0xE5 || entries[i].attr == FAT32_ATTR_LFN ||
-                    (entries[i].attr & FAT32_ATTR_VOLUME_ID)) continue;
+                if (first == 0xE5 || entries[i].attr == FAT32_ATTR_LFN) continue;
                 /* Compare 8-byte name and 3-byte extension */
                 if (__builtin_memcmp(entries[i].name, name83_8, 8) == 0 &&
                     __builtin_memcmp(entries[i].ext, name83_3, 3) == 0)
@@ -1062,8 +1030,7 @@ static int fat32_83_name_exists(uint32_t dir_cluster,
             for (int i = 0; i < n_entries; i++) {
                 uint8_t first = (uint8_t)entries[i].name[0];
                 if (first == 0x00) return 0;
-                if (first == 0xE5 || entries[i].attr == FAT32_ATTR_LFN ||
-                    (entries[i].attr & FAT32_ATTR_VOLUME_ID)) continue;
+                if (first == 0xE5 || entries[i].attr == FAT32_ATTR_LFN) continue;
                 if (__builtin_memcmp(entries[i].name, name83_8, 8) == 0 &&
                     __builtin_memcmp(entries[i].ext, name83_3, 3) == 0)
                     return 1;
@@ -1379,7 +1346,6 @@ static int dir_update_size(uint32_t dir_cluster, const char *cmp_name,
             int n_entries = (int)(SECT_SIZE / sizeof(struct fat32_dirent));
             for (int i = 0; i < n_entries; i++) {
                 if (entries[i].attr == FAT32_ATTR_LFN) continue;
-                if (entries[i].attr & FAT32_ATTR_VOLUME_ID) continue;
                 if (!name83_match(entries[i].name, entries[i].ext, cmp_name)) continue;
                 entries[i].cluster_lo = (uint16_t)(first_cluster & 0xFFFF);
                 entries[i].cluster_hi = (uint16_t)((first_cluster >> 16) & 0xFFFF);
@@ -1401,7 +1367,6 @@ static int dir_update_size(uint32_t dir_cluster, const char *cmp_name,
             int n_entries = (int)(SECT_SIZE / sizeof(struct fat32_dirent));
             for (int i = 0; i < n_entries; i++) {
                 if (entries[i].attr == FAT32_ATTR_LFN) continue;
-                if (entries[i].attr & FAT32_ATTR_VOLUME_ID) continue;
                 if (!name83_match(entries[i].name, entries[i].ext, cmp_name)) continue;
                 entries[i].cluster_lo = (uint16_t)(first_cluster & 0xFFFF);
                 entries[i].cluster_hi = (uint16_t)((first_cluster >> 16) & 0xFFFF);
@@ -1418,11 +1383,6 @@ int fat32_sync(void) {
     if (!mounted) return -EINVAL;
     bufcache_flush();
     fsinfo_write_hint(fsinfo_next_free);
-    if (fs_info_lba) {
-        uint8_t buf[SECT_SIZE];
-        if (read_sector(fs_info_lba, buf) != 0) return -EIO;
-        if (write_sector(fs_info_lba, buf) != 0) return -EIO;
-    }
     return 0;
 }
 
@@ -1509,15 +1469,14 @@ static int dir_remove_entry(uint32_t dir_cluster, const char *name) {
     while (cluster >= 2 && !FAT_IS_EOC(cluster)) {
         if (++_chain_cnt > FAT_MAX_CLUSTER()) break;
         uint32_t lba = cluster_to_lba(cluster);
-        struct fat32_lfn lfn_parts[20];
-        memset(lfn_parts, 0, sizeof(lfn_parts));
-        int lfn_n = 0;
-        int lfn_start = -1;
-        uint32_t lfn_start_sector = 0;
         for (uint32_t s = 0; s < spc; s++) {
             if (read_sector(lba + s, buf) != 0) return -EIO;
             struct fat32_dirent *entries = (struct fat32_dirent *)buf;
             int n_entries = (int)(SECT_SIZE / sizeof(struct fat32_dirent));
+            struct fat32_lfn lfn_parts[20];
+            memset(lfn_parts, 0, sizeof(lfn_parts));
+            int lfn_n = 0;
+            int lfn_start = -1;
             for (int i = 0; i < n_entries; i++) {
                 uint8_t first = (uint8_t)entries[i].name[0];
                 if (first == 0x00) return -EINVAL;
@@ -1527,10 +1486,7 @@ static int dir_remove_entry(uint32_t dir_cluster, const char *name) {
                     if (ord > 0 && ord <= 20)
                         __builtin_memcpy(&lfn_parts[ord - 1], &entries[i],
                                          sizeof(struct fat32_dirent));
-                    if (lfn_start < 0) {
-                        lfn_start = i;
-                        lfn_start_sector = s;
-                    }
+                    if (lfn_start < 0) lfn_start = i;
                     if (entries[i].name[0] & 0x40)
                         lfn_n = ord;
                     continue;
@@ -1539,43 +1495,15 @@ static int dir_remove_entry(uint32_t dir_cluster, const char *name) {
                 int matched = 0;
                 if (lfn_n > 0) {
                     char lname[FAT32_MAX_NAME];
-                    if (lfn_validate_checksum(lfn_parts, lfn_n,
-                                               entries[i].name, entries[i].ext)) {
-                        vfat_reconstruct_name(lfn_parts, lfn_n, lname, FAT32_MAX_NAME);
-                        matched = name_match_ci(lname, name);
-                    } else {
-                        matched = 0; /* checksum mismatch — don't match */
-                    }
+                    vfat_reconstruct_name(lfn_parts, lfn_n, lname, FAT32_MAX_NAME);
+                    matched = name_match_ci(lname, name);
                 } else {
                     matched = name83_match(entries[i].name, entries[i].ext, name);
                 }
                 if (matched) {
                     if (lfn_start >= 0) {
-                        /* Mark all LFN entries across sector boundaries */
-                        for (uint32_t ms = lfn_start_sector; ms <= s; ms++) {
-                            struct fat32_dirent *dp;
-                            uint8_t tmp_buf[SECT_SIZE];
-                            int is_current = (ms == s);
-
-                            if (is_current) {
-                                dp = entries;
-                            } else {
-                                if (read_sector(lba + ms, tmp_buf) != 0) return -EIO;
-                                dp = (struct fat32_dirent *)tmp_buf;
-                            }
-
-                            int start_j = (ms == lfn_start_sector) ? lfn_start : 0;
-                            int end_j   = (ms == s) ? i : (int)(SECT_SIZE / sizeof(struct fat32_dirent));
-
-                            for (int j = start_j; j < end_j; j++) {
-                                if (dp[j].attr == FAT32_ATTR_LFN)
-                                    dp[j].name[0] = (char)0xE5;
-                            }
-
-                            if (!is_current) {
-                                if (write_sector(lba + ms, tmp_buf) != 0) return -EIO;
-                            }
-                        }
+                        for (int j = lfn_start; j < i; j++)
+                            entries[j].name[0] = (char)0xE5;
                     }
                     entries[i].name[0] = (char)0xE5;
                     return write_sector(lba + s, buf);
@@ -2007,13 +1935,13 @@ static int dir_update_by_leaf(uint32_t dir_cluster, const char *leaf,
     /* FAT12/16 fixed root directory */
     if (dir_cluster == 0 && fat_type != FAT32) {
         uint32_t first_lba = fat_start + num_fats * fat_sectors;
-        struct fat32_lfn lfn_parts[20];
-        memset(lfn_parts, 0, sizeof(lfn_parts));
-        int lfn_n = 0;
         for (uint32_t s = 0; s < root_dir_sectors; s++) {
             if (read_sector(first_lba + s, buf) != 0) return -EIO;
             struct fat32_dirent *entries = (struct fat32_dirent *)buf;
             int n_entries = (int)(SECT_SIZE / sizeof(struct fat32_dirent));
+            struct fat32_lfn lfn_parts[20];
+            memset(lfn_parts, 0, sizeof(lfn_parts));
+            int lfn_n = 0;
             for (int i = 0; i < n_entries; i++) {
                 uint8_t firstb = (uint8_t)entries[i].name[0];
                 if (firstb == 0x00) return -EIO;
@@ -2030,13 +1958,8 @@ static int dir_update_by_leaf(uint32_t dir_cluster, const char *leaf,
                 int matched = 0;
                 if (lfn_n > 0) {
                     char lname[FAT32_MAX_NAME];
-                    if (lfn_validate_checksum(lfn_parts, lfn_n,
-                                               entries[i].name, entries[i].ext)) {
-                        vfat_reconstruct_name(lfn_parts, lfn_n, lname, FAT32_MAX_NAME);
-                        matched = name_match_ci(lname, leaf);
-                    } else {
-                        matched = 0;
-                    }
+                    vfat_reconstruct_name(lfn_parts, lfn_n, lname, FAT32_MAX_NAME);
+                    matched = name_match_ci(lname, leaf);
                 } else {
                     matched = name83_match(entries[i].name, entries[i].ext, leaf);
                 }
@@ -2058,13 +1981,13 @@ static int dir_update_by_leaf(uint32_t dir_cluster, const char *leaf,
     while (cluster >= 2 && !FAT_IS_EOC(cluster)) {
         if (++_chain_cnt > FAT_MAX_CLUSTER()) break;
         uint32_t lba = cluster_to_lba(cluster);
-        struct fat32_lfn lfn_parts[20];
-        memset(lfn_parts, 0, sizeof(lfn_parts));
-        int lfn_n = 0;
         for (uint32_t s = 0; s < spc; s++) {
             if (read_sector(lba + s, buf) != 0) return -EIO;
             struct fat32_dirent *entries = (struct fat32_dirent *)buf;
             int n_entries = (int)(SECT_SIZE / sizeof(struct fat32_dirent));
+            struct fat32_lfn lfn_parts[20];
+            memset(lfn_parts, 0, sizeof(lfn_parts));
+            int lfn_n = 0;
             for (int i = 0; i < n_entries; i++) {
                 uint8_t firstb = (uint8_t)entries[i].name[0];
                 if (firstb == 0x00) return -EIO;
@@ -2081,13 +2004,8 @@ static int dir_update_by_leaf(uint32_t dir_cluster, const char *leaf,
                 int matched = 0;
                 if (lfn_n > 0) {
                     char lname[FAT32_MAX_NAME];
-                    if (lfn_validate_checksum(lfn_parts, lfn_n,
-                                               entries[i].name, entries[i].ext)) {
-                        vfat_reconstruct_name(lfn_parts, lfn_n, lname, FAT32_MAX_NAME);
-                        matched = name_match_ci(lname, leaf);
-                    } else {
-                        matched = 0;
-                    }
+                    vfat_reconstruct_name(lfn_parts, lfn_n, lname, FAT32_MAX_NAME);
+                    matched = name_match_ci(lname, leaf);
                 } else {
                     matched = name83_match(entries[i].name, entries[i].ext, leaf);
                 }
@@ -2328,10 +2246,10 @@ int fat32_truncate_file(const char *path, uint32_t new_size)
 
     if (new_clusters < old_clusters) {
         uint32_t last_keep = fat32_chain_walk(clus, new_clusters - 1);
-        if (last_keep >= 2 && !FAT_IS_EOC(last_keep)) {
+        if (last_keep >= 2 && last_keep < FAT_EOC()) {
             uint32_t free_start = fat_next_cluster(last_keep);
             fat_write_entry(last_keep, FAT_EOC());
-            if (free_start >= 2 && !FAT_IS_EOC(free_start))
+            if (free_start >= 2 && free_start < FAT_EOC())
                 fat_free_chain(free_start);
         }
     }
@@ -2417,13 +2335,13 @@ static void fat32_repair_fsinfo(uint8_t *buf, uint32_t total_clusters)
 	/* Signature at offset 484: "rrAa" */
 	buf[484] = 0x72; buf[485] = 0x72;
 	buf[486] = 0x41; buf[487] = 0x61;
-	/* Last known free cluster count hint (offset 488–491) — set to cluster 2 */
-	buf[488] = 2; buf[489] = 0; buf[490] = 0; buf[491] = 0;
-	/* Free cluster count (offset 492–495) — set to total_clusters */
-	buf[492] = (uint8_t)(total_clusters & 0xFF);
-	buf[493] = (uint8_t)((total_clusters >> 8) & 0xFF);
-	buf[494] = (uint8_t)((total_clusters >> 16) & 0xFF);
-	buf[495] = (uint8_t)((total_clusters >> 24) & 0xFF);
+	/* FSI_Free_Count at offset 488–491 (per Microsoft FAT32 spec) — set to total_clusters */
+	buf[488] = (uint8_t)(total_clusters & 0xFF);
+	buf[489] = (uint8_t)((total_clusters >> 8) & 0xFF);
+	buf[490] = (uint8_t)((total_clusters >> 16) & 0xFF);
+	buf[491] = (uint8_t)((total_clusters >> 24) & 0xFF);
+	/* FSI_Nxt_Free at offset 492–495 (per Microsoft FAT32 spec) — initial hint = cluster 2 */
+	buf[492] = 2; buf[493] = 0; buf[494] = 0; buf[495] = 0;
 	/* Signature at offset 508–509: 0xAA55 */
 	buf[508] = 0x55; buf[509] = 0xAA;
 	/* Signature at offset 510–511: 0x0000 (already zeroed) */
