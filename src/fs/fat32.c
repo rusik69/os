@@ -761,15 +761,32 @@ int fat32_mount(fat32_disk_t disk, uint32_t part_lba) {
             return -EINVAL;
         data_start = fat_start + num_fats * fat_sz;
         root_dir_sectors = 0;
-        fs_info_lba = bpb->fs_info ? part_lba + bpb->fs_info : 0;
+        /* BPB_FSInfo: 0 or 0xFFFF means no FSInfo sector.
+         * Must also be within the reserved area, otherwise writes
+         * to the FSInfo sector could corrupt FAT or data. */
+        uint16_t fs_info_val = bpb->fs_info;
+        if (fs_info_val == 0 || fs_info_val == 0xFFFF ||
+            fs_info_val >= bpb->reserved_sectors) {
+            fs_info_lba = 0;
+        } else {
+            fs_info_lba = part_lba + fs_info_val;
+        }
         if (fs_info_lba) {
             uint8_t fbuf[SECT_SIZE];
             if (read_sector(fs_info_lba, fbuf) == 0) {
-                fsinfo_next_free = (uint32_t)fbuf[488]
-                                 | ((uint32_t)fbuf[489] << 8)
-                                 | ((uint32_t)fbuf[490] << 16)
-                                 | ((uint32_t)fbuf[491] << 24);
-                if (fsinfo_next_free < 2) fsinfo_next_free = 2;
+                /* Validate FSInfo signatures before trusting the hint:
+                 * Offset 0: lead signature 0x41615252 ("RRaA")
+                 * Offset 484: struct signature 0x61417272 ("rrAa") */
+                if (fbuf[0] == 0x52 && fbuf[1] == 0x52 &&
+                    fbuf[2] == 0x61 && fbuf[3] == 0x41 &&
+                    fbuf[484] == 0x72 && fbuf[485] == 0x72 &&
+                    fbuf[486] == 0x41 && fbuf[487] == 0x61) {
+                    fsinfo_next_free = (uint32_t)fbuf[488]
+                                     | ((uint32_t)fbuf[489] << 8)
+                                     | ((uint32_t)fbuf[490] << 16)
+                                     | ((uint32_t)fbuf[491] << 24);
+                    if (fsinfo_next_free < 2) fsinfo_next_free = 2;
+                }
             }
         }
     } else {
