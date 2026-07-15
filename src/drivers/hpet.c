@@ -155,9 +155,11 @@ void __init hpet_init(void)
      *   4. Reset the main counter to 0.
      *   5. Enable the HPET globally (GEN_CONF.ENABLE = 1).
      *
-     * We set the timer to tick at 10 MHz (100 ns period).  This is
-     * a reasonable default suitable for both the scheduler tick and
-     * high-resolution timekeeping.
+     * We set the timer period to 1 second (freq_hz counter ticks).  This
+     * is intentionally conservative: the PIT drives the main 100 Hz system
+     * tick; the HPET is set up here so the high-resolution timer subsystem
+     * (clockevent) can reprogram it to finer granularity later by writing
+     * a new comparator value.
      */
     hpet_write32(HPET_GEN_CONF, 0);
 
