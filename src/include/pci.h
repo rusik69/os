@@ -13,6 +13,8 @@ struct pci_device {
     uint8_t  class_code, subclass;
     uint8_t  irq;
     uint32_t bar[6];
+    uint64_t dma_mask;             /* DMA addressing mask (set via dma_set_mask) */
+    uint64_t coherent_dma_mask;    /* Coherent DMA addressing mask */
 };
 
 uint32_t pci_read(int bus, int slot, int func, int offset);

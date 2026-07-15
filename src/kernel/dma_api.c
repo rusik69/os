@@ -26,6 +26,33 @@
 #include "errno.h"
 #include "err.h"
 
+/* ── DMA mask validation ─────────────────────────────────────────── */
+
+/*
+ * dma_addr_fits_mask — Check if a DMA address range fits the device's mask.
+ * Returns 0 if OK, -EIO if the range exceeds the mask.
+ */
+static int dma_addr_fits_mask(struct pci_device *dev, uint64_t dma_addr,
+                               size_t num_pages, uint64_t mask)
+{
+    /* No mask constraint — allow everything (64-bit) */
+    if (mask == 0)
+        return 0;
+
+    uint64_t end = dma_addr + num_pages * PAGE_SIZE - 1;
+
+    /* Check every bit set in the address range is within the mask */
+    if ((dma_addr & ~mask) != 0 || (end & ~mask) != 0) {
+        kprintf("[DMA] ERROR: dma_addr 0x%llx-0x%llx exceeds mask 0x%016llx "
+                "for dev %02x:%02x.%x\n",
+                (unsigned long long)dma_addr, (unsigned long long)end,
+                (unsigned long long)mask,
+                dev->bus, dev->slot, dev->func);
+        return -EIO;
+    }
+    return 0;
+}
+
 /* ── Internal helpers ───────────────────────────────────────────── */
 
 /* Convert a kernel virtual address to physical (via the fixed VMA offset) */
@@ -183,6 +210,19 @@ void *dma_alloc_coherent(struct pci_device *dev, size_t size,
         return NULL;
     }
 
+    /* Validate against device DMA mask */
+    uint64_t cmask = dev ? dev->coherent_dma_mask : 0;
+    if (cmask == 0)
+        cmask = dev ? dev->dma_mask : 0;
+    if (dma_addr_fits_mask(dev, iova, num_pages, cmask) < 0) {
+        dma_unmap_pages_iommu(dev, iova, num_pages);
+        vmm_unmap_phys(virt, alloc_size);
+        for (size_t i = 0; i < num_pages; i++)
+            pmm_free_frame(first_phys + i * PAGE_SIZE);
+        if (dma_handle) *dma_handle = 0;
+        return NULL;
+    }
+
     if (dma_handle)
         *dma_handle = iova;
 
@@ -271,7 +311,14 @@ uint64_t dma_map_single(struct pci_device *dev, void *cpu_addr,
      */
     __asm__ volatile("mfence" ::: "memory");
 
-    return dma_map_pages_iommu(dev, phys_addr, num_pages, iommu_flags);
+    uint64_t iova = dma_map_pages_iommu(dev, phys_addr, num_pages, iommu_flags);
+    if (iova != ~0ULL && dev && dev->dma_mask != 0) {
+        if (dma_addr_fits_mask(dev, iova, num_pages, dev->dma_mask) < 0) {
+            dma_unmap_pages_iommu(dev, iova, num_pages);
+            return ~0ULL;
+        }
+    }
+    return iova;
 }
 
 /**

@@ -24,6 +24,9 @@
  *   dma_unmap_single() — tear down an IOMMU mapping.
  */
 
+/* DMA_BIT_MASK(n) — create a DMA address mask for n address bits */
+#define DMA_BIT_MASK(n)  (((n) == 64) ? ~0ULL : ((1ULL << (n)) - 1))
+
 /* Forward declaration for PCI device (included from pci.h) */
 struct pci_device;
 
@@ -95,5 +98,32 @@ uint64_t dma_map_single(struct pci_device *dev, void *cpu_addr,
  */
 void dma_unmap_single(struct pci_device *dev, uint64_t dma_handle,
                       size_t size, enum dma_data_direction dir);
+
+/*
+ * dma_set_mask — Set the DMA addressing mask for a device.
+ *
+ * Sets the DMA addressing capability for streaming mappings.
+ * The mask should be derived from DMA_BIT_MASK(n) where n is
+ * the number of bits the device can address (e.g., 32 for 4GB).
+ *
+ * @dev:   PCI device
+ * @mask:  DMA address mask (e.g., DMA_BIT_MASK(32))
+ *
+ * Returns 0 on success or -EIO if the mask is too restrictive
+ * for the platform's DMA addressing capabilities.
+ */
+int dma_set_mask(struct pci_device *dev, uint64_t mask);
+
+/*
+ * dma_set_coherent_mask — Set the coherent DMA addressing mask.
+ *
+ * Same as dma_set_mask but for coherent allocations.
+ *
+ * @dev:   PCI device
+ * @mask:  DMA address mask (e.g., DMA_BIT_MASK(32))
+ *
+ * Returns 0 on success or -EIO if the mask is too restrictive.
+ */
+int dma_set_coherent_mask(struct pci_device *dev, uint64_t mask);
 
 #endif /* DMA_H */

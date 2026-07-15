@@ -101,6 +101,39 @@ void *dma_alloc_coherent_aligned(struct pci_device *dev, size_t size,
     return (void *)aligned;
 }
 
+/* ── DMA mask management ───────────────────────────────────────── */
+
+int dma_set_mask(struct pci_device *dev, uint64_t mask)
+{
+    if (!dev)
+        return -EINVAL;
+
+    /* Ensure the mask doesn't exclude addresses the platform needs */
+    if (mask == 0)
+        return -EIO;
+
+    dev->dma_mask = mask;
+    kprintf("[DMA] dma_set_mask: dev=%02x:%02x.%x mask=0x%016llx\n",
+            dev->bus, dev->slot, dev->func,
+            (unsigned long long)mask);
+    return 0;
+}
+
+int dma_set_coherent_mask(struct pci_device *dev, uint64_t mask)
+{
+    if (!dev)
+        return -EINVAL;
+
+    if (mask == 0)
+        return -EIO;
+
+    dev->coherent_dma_mask = mask;
+    kprintf("[DMA] dma_set_coherent_mask: dev=%02x:%02x.%x mask=0x%016llx\n",
+            dev->bus, dev->slot, dev->func,
+            (unsigned long long)mask);
+    return 0;
+}
+
 /* ── Stub: dma_api_init ─────────────────────────────── */
 static int dma_api_init(void)
 {
