@@ -320,6 +320,7 @@ struct aml_ns_node {
 	uint8_t  *aml_start;          /* Pointer to start of AML for this node */
 	uint32_t aml_length;          /* Length of AML bytecode for this node */
 	uint8_t  from_ssdt;           /* Source SSDT index (0 = DSDT) */
+	uint8_t  arg_count;           /* Method argument count (0-7), from MethodFlags bits[2:0] */
 	struct aml_object *value;     /* Evaluated value (set during method exec) */
 };
 

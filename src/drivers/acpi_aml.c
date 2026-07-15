@@ -380,6 +380,7 @@ static int aml_add_node(const char name[4], uint8_t type, uint16_t parent,
 	node->aml_start = (uint8_t *)(uintptr_t)aml_start;
 	node->aml_length = aml_length;
 	node->from_ssdt = ssdt_index;
+	node->arg_count = 0;
 	node->value = NULL;
 
 	g_ns.count++;
@@ -824,6 +825,11 @@ static uint32_t aml_process_object(struct aml_parse_state *state,
 				aml_free_object(g_ns.nodes[node_idx].value);
 			g_ns.nodes[node_idx].value = oreg;
 		}
+	}
+
+	/* For method nodes, extract argument count from MethodFlags (byte after NameString) */
+	if (node_type == AML_NS_METHOD && node_idx >= 0 && body_offset < max_len) {
+		g_ns.nodes[node_idx].arg_count = aml[body_offset] & 0x07;
 	}
 
 	return total_size;
@@ -3777,9 +3783,11 @@ struct aml_object *aml_evaluate_method(const char *path,
 		}
 	}
 
+	/* Use the argument count stored during namespace construction */
+	method_arg_count = node->arg_count;
+
 	/* Skip past the method header to the TermList */
-	termlist_offset = aml_skip_method_header(ctx.aml, ctx.aml_len,
-						 &method_arg_count);
+	termlist_offset = aml_skip_method_header(ctx.aml, ctx.aml_len, NULL);
 	if (termlist_offset == 0) {
 		kprintf("[AML] Failed to parse method header for '%s'\n",
 			path ? path : "(null)");
@@ -3788,8 +3796,14 @@ struct aml_object *aml_evaluate_method(const char *path,
 
 	/* Validate argument count */
 	if (num_args > (int)method_arg_count) {
-		kprintf("[AML] Method '%s' takes %u args, got %d "
+		kprintf("[AML] Method '%s' declares %u args, got %d "
 			"(continuing anyway)\n",
+			path ? path : "(null)",
+			(unsigned int)method_arg_count, num_args);
+	}
+	if (num_args < (int)method_arg_count) {
+		kprintf("[AML] Method '%s' expects %u args, got %d "
+			"(continuing anyway; unprovided args will be zero)\n",
 			path ? path : "(null)",
 			(unsigned int)method_arg_count, num_args);
 	}
