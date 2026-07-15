@@ -1196,10 +1196,24 @@ int ext4_mount(const char *mountpoint, uint8_t dev_id)
         goto fail;
     }
 
-    /* ── Cache feature flags ── */
-    ep->incompat  = ep->sb.s_feature_incompat;
-    ep->ro_compat = ep->sb.s_feature_ro_compat;
-    ep->compat    = ep->sb.s_feature_compat;
+    /* ── Validate superblock revision level ── */
+    if (ep->sb.s_rev_level != EXT4_GOOD_OLD_REV &&
+        ep->sb.s_rev_level != EXT4_DYNAMIC_REV) {
+        kprintf("[ext4] ERROR: unsupported superblock revision level: %u\n",
+                ep->sb.s_rev_level);
+        goto fail;
+    }
+
+    /* ── Cache feature flags (only valid for DYNAMIC_REV) ── */
+    if (ep->sb.s_rev_level == EXT4_DYNAMIC_REV) {
+        ep->incompat  = ep->sb.s_feature_incompat;
+        ep->ro_compat = ep->sb.s_feature_ro_compat;
+        ep->compat    = ep->sb.s_feature_compat;
+    } else {
+        ep->incompat  = 0;
+        ep->ro_compat = 0;
+        ep->compat    = 0;
+    }
 
     /* ── Initialize quota tracking from superblock ── */
     ext4_init_quota(ep);
@@ -1326,9 +1340,21 @@ int ext4_mount(const char *mountpoint, uint8_t dev_id)
 
     ep->blocks_per_group = ep->sb.s_blocks_per_group;
     ep->inodes_per_group = ep->sb.s_inodes_per_group;
-    ep->inode_size = ep->sb.s_inode_size;
-    if (ep->inode_size < 128)
+    if (ep->sb.s_rev_level == EXT4_GOOD_OLD_REV) {
         ep->inode_size = 128;
+    } else {
+        ep->inode_size = ep->sb.s_inode_size;
+        if (ep->inode_size < 128) {
+            kprintf("[ext4] ERROR: invalid inode size: %u (must be >= 128)\n",
+                    ep->inode_size);
+            goto fail;
+        }
+    }
+    if (ep->inode_size > EXT4_MAX_BLOCK_SIZE) {
+        kprintf("[ext4] ERROR: inode size %u exceeds max block size %u\n",
+                ep->inode_size, EXT4_MAX_BLOCK_SIZE);
+        goto fail;
+    }
 
     /* If RO_COMPAT_EXTRA_ISIZE is set, inodes may have extended fields */
     if (ep->ro_compat & EXT4_FEATURE_RO_COMPAT_EXTRA_ISIZE) {
