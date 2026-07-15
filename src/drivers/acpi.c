@@ -246,6 +246,13 @@ static void parse_dsdt_for_sleep(struct fadt *fadt) {
         return;
     }
 
+    /* Reject suspiciously large tables to avoid OOB in AML walk loop */
+    if (dsdt_len > 0x100000) {
+        kprintf("  ACPI: DSDT too large (%u bytes, max 1MB), skipping sleep parsing\n",
+                (unsigned int)dsdt_len);
+        return;
+    }
+
     uint8_t *aml = dsdt + sizeof(struct acpi_header);
     uint32_t aml_len = (uint32_t)(dsdt_len - sizeof(struct acpi_header));
 
@@ -418,6 +425,13 @@ static void parse_dsdt_for_dock(struct fadt *fadt) {
     if (dsdt_len < sizeof(struct acpi_header)) {
         kprintf("  ACPI: DSDT too short (%u bytes, need %zu)\n",
                 (unsigned int)dsdt_len, sizeof(struct acpi_header));
+        return;
+    }
+
+    /* Reject suspiciously large tables to avoid OOB in AML walk loop */
+    if (dsdt_len > 0x100000) {
+        kprintf("  ACPI: DSDT too large (%u bytes, max 1MB), skipping dock parsing\n",
+                (unsigned int)dsdt_len);
         return;
     }
 
