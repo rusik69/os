@@ -134,15 +134,36 @@ int smbus_block_read(uint8_t addr, uint8_t cmd, uint8_t *buf, int len) {
     if (smbus_wait_idle() < 0)
         return SMBUS_ERR_TIMEOUT;
 
+    /* Check for transaction error (NACK, CRC, host-device error) */
+    if (inb(SMBUS_HCTL) & SMBUS_HCTL_ERROR)
+        return SMBUS_ERR_NODEV;
+
     /* Read block length from DATA0 */
     int count = inb(SMBUS_DATA0);
-    if (count > len) count = len;
 
-    /* Read block data from BLOCK port */
-    for (int i = 0; i < count; i++)
+    /*
+     * Validate count: SMBus block read must return 1-32 bytes per
+     * the SMBus specification.  A count of 0 or >32 indicates a
+     * protocol violation or corrupted device response.
+     */
+    if (count <= 0 || count > 32)
+        return SMBUS_ERR_NODEV;
+
+    /* Read up to len bytes into caller's buffer */
+    int to_read = (count < len) ? count : len;
+    for (int i = 0; i < to_read; i++)
         buf[i] = inb(SMBUS_BLOCK);
 
-    return count;
+    /*
+     * Drain remaining FIFO bytes if caller's buffer was smaller than
+     * the device's count.  The BLOCK port (0xEF4) is shared with
+     * SMBUS_DATA1; leaving unconsumed bytes would corrupt subsequent
+     * word reads or block reads.
+     */
+    for (int i = to_read; i < count; i++)
+        (void)inb(SMBUS_BLOCK);
+
+    return to_read;
 }
 #include "module.h"
 module_init(smbus_init);
