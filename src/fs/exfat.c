@@ -42,7 +42,7 @@ static int exfat_write_cluster(struct exfat_priv *ep, uint32_t cluster,
 	uint32_t sectors = 1U << ep->sectors_per_cluster_shift;
 	for (uint32_t i = 0; i < sectors; i++) {
 		if (blockdev_write_sectors(ep->dev_id,
-		                           (uint32_t)(start_sector + i), 1,
+		                           start_sector + i, 1,
 		                           buf + i * ep->sector_size) != 0)
 			return -1;
 	}
@@ -85,7 +85,7 @@ static int exfat_read_cluster(struct exfat_priv *ep, uint32_t cluster,
     uint64_t start_sector = exfat_cluster_to_sector(ep, cluster);
     uint32_t sectors = 1U << ep->sectors_per_cluster_shift;
     for (uint32_t i = 0; i < sectors; i++) {
-        if (blockdev_read_sectors(ep->dev_id, (uint32_t)(start_sector + i), 1,
+        if (blockdev_read_sectors(ep->dev_id, start_sector + i, 1,
                                    buf + i * ep->sector_size) != 0)
             return -1;
     }
@@ -568,6 +568,26 @@ static int exfat_bitmap_init(struct exfat_priv *ep)
 	ep->volume_flags         = bpb->volume_flags;
 	ep->num_clusters         = bpb->cluster_count;
 	ep->data_start_sector    = bpb->cluster_heap_offset;
+
+	/* Read and validate volume_length (64-bit) */
+	ep->volume_length        = bpb->volume_length;
+
+	/* Validate that cluster heap fits within the volume.
+	 * The last sector of the cluster heap is at:
+	 *   cluster_heap_offset + cluster_count * sectors_per_cluster - 1
+	 * This must not exceed volume_length. */
+	{
+		uint64_t sectors_per_cluster = 1U << ep->sectors_per_cluster_shift;
+		uint64_t heap_end = (uint64_t)ep->cluster_heap_offset +
+		                    (uint64_t)ep->cluster_count * sectors_per_cluster;
+		if (heap_end > ep->volume_length) {
+			kprintf("[exfat] ERROR: cluster heap extends past volume end "
+			        "(%llu > %llu sectors)\n",
+			        (unsigned long long)heap_end,
+			        (unsigned long long)ep->volume_length);
+			return -EINVAL;
+		}
+	}
 
 	/* In exFAT, the allocation bitmap resides at the FAT offset
 	 * when no FAT is present, or after the FAT when FAT is active.
@@ -1924,7 +1944,7 @@ read_done:
 					if (sec_size > to_read - done)
 						sec_size = (uint32_t)(to_read - done);
 					if (blockdev_read_sectors(ep->dev_id,
-					    (uint32_t)(start_sector + si / ep->sector_size),
+					    start_sector + si / ep->sector_size,
 					    1, (uint8_t *)buf + done) != 0) {
 						if (out_size) *out_size = (uint32_t)done;
 						return -EIO;
@@ -1941,8 +1961,9 @@ read_done:
 				uint32_t num_sectors = this_batch / ep->sector_size;
 				if (num_sectors == 0) break;
 
+				uint64_t lba = start_sector;
 				if (blockdev_read_sectors(ep->dev_id,
-				    (uint32_t)start_sector,
+				    lba,
 				    (uint8_t)num_sectors,
 				    (uint8_t *)buf + done) != 0) {
 					if (out_size) *out_size = (uint32_t)done;
@@ -1969,8 +1990,9 @@ read_done:
 			uint32_t sec_size = ep->sector_size;
 			if (sec_size > to_read - done)
 				sec_size = (uint32_t)(to_read - done);
+			uint64_t lba = start_sector + i / ep->sector_size;
 			if (blockdev_read_sectors(ep->dev_id,
-			                          (uint32_t)(start_sector + i / ep->sector_size),
+			                          lba,
 			                          1, (uint8_t *)buf + done) != 0) {
 				if (out_size) *out_size = (uint32_t)done;
 				return -EIO;

@@ -144,6 +144,7 @@ struct exfat_priv {
     uint8_t  sectors_per_cluster_shift;
     uint32_t sector_size;
     uint32_t cluster_size;
+    uint64_t volume_length;           /* total sectors on the volume (from BPB) */
     uint32_t fat_offset;
     uint32_t fat_length;
     uint32_t cluster_heap_offset;
