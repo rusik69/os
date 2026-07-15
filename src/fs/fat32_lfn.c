@@ -610,25 +610,30 @@ int vfat_reconstruct_name(const void *entries, int count,
 
     /* Reconstruct: iterate from ordinal 1 (entries[0]) up to ordinal N
      * (entries[count-1]).  Characters are stored as UTF-16LE; we handle
-     * the ASCII subset and convert uppercase to lowercase for readability. */
+     * the ASCII subset and convert uppercase to lowercase for readability.
+     *
+     * Per the VFAT spec, the name is terminated by 0x0000 in the entry
+     * character array; all subsequent slots are filled with 0xFFFF padding.
+     * Stop immediately on either sentinel — the name is done. */
     for (int seq = 0; seq < count; seq++) {
         const struct vfat_lfn *e = &lfn[seq];
         for (int i = 0; i < 5 && pos < out_max - 1; i++) {
             uint16_t c = e->name1[i];
-            if (!c || c == 0xFFFF) continue;
+            if (!c || c == 0xFFFF) goto done;
             out[pos++] = (char)((c >= 'A' && c <= 'Z') ? c + 32 : c);
         }
         for (int i = 0; i < 6 && pos < out_max - 1; i++) {
             uint16_t c = e->name2[i];
-            if (!c || c == 0xFFFF) continue;
+            if (!c || c == 0xFFFF) goto done;
             out[pos++] = (char)((c >= 'A' && c <= 'Z') ? c + 32 : c);
         }
         for (int i = 0; i < 2 && pos < out_max - 1; i++) {
             uint16_t c = e->name3[i];
-            if (!c || c == 0xFFFF) continue;
+            if (!c || c == 0xFFFF) goto done;
             out[pos++] = (char)((c >= 'A' && c <= 'Z') ? c + 32 : c);
         }
     }
+done:
     out[pos] = '\0';
     return pos;
 }
