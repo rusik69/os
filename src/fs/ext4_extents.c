@@ -161,7 +161,8 @@ int ext4_ext_journal_dirty_block(struct ext4_priv *ep,
 
 /* ── Validation ────────────────────────────────────────────────────── */
 
-int ext4_ext_check_header(struct ext4_extent_header *eh, uint16_t max_depth)
+int ext4_ext_check_header(struct ext4_extent_header *eh, uint16_t max_depth,
+                          uint32_t container_size)
 {
     if (!eh)
         return -EFSCORRUPTED;
@@ -175,6 +176,19 @@ int ext4_ext_check_header(struct ext4_extent_header *eh, uint16_t max_depth)
     if (eh->eh_depth > max_depth) {
         kprintf("[ext4_ext] extent tree depth %u exceeds max %u\n",
                 eh->eh_depth, max_depth);
+        return -EFSCORRUPTED;
+    }
+
+    /* Validate that eh_max is consistent with the actual container
+     * capacity (e.g., block size for disk blocks, 60 for embedded root).
+     * A corrupt header with eh_max exceeding the physical container can
+     * cause out-of-bounds reads during extent/idx binary search.
+     * eh_max == 0 is treated as "unknown" for backward compatibility. */
+    uint16_t max_expected = ext4_ext_max_entries(eh->eh_depth, container_size);
+    if (eh->eh_max != 0 && eh->eh_max > max_expected) {
+        kprintf("[ext4_ext] eh_max %u exceeds capacity %u "
+                "(depth=%u, container=%u)\n",
+                eh->eh_max, max_expected, eh->eh_depth, container_size);
         return -EFSCORRUPTED;
     }
 
@@ -659,8 +673,8 @@ int64_t ext4_ext_find_extent(struct ext4_priv *ep,
     struct ext4_extent_header *eh = (struct ext4_extent_header *)root_buf;
     uint8_t *node_data = root_buf;
 
-    /* Validate root header */
-    int ret = ext4_ext_check_header(eh, EXT4_EXTENT_MAX_DEPTH);
+    /* Validate root header — root lives in i_block which is 60 bytes */
+    int ret = ext4_ext_check_header(eh, EXT4_EXTENT_MAX_DEPTH, 60);
     if (ret < 0) {
         kprintf("[ext4_ext] root extent header corrupt for inode\n");
         return ext4_corrupt(ep, "bad extent header in inode");
@@ -675,7 +689,8 @@ int64_t ext4_ext_find_extent(struct ext4_priv *ep,
         /* Validate every extent header encountered during the walk.
          * The root was already checked above; this catches blocks
          * read from disk (lines below) on subsequent iterations. */
-        ret = ext4_ext_check_header(eh, EXT4_EXTENT_MAX_DEPTH);
+        ret = ext4_ext_check_header(eh, EXT4_EXTENT_MAX_DEPTH,
+                                    ep->block_size);
         if (ret < 0)
             return ext4_corrupt(ep, "corrupt extent block in tree walk");
 
@@ -771,7 +786,7 @@ int ext4_ext_get_blocks(struct ext4_priv *ep,
     struct ext4_extent_header *eh = (struct ext4_extent_header *)root_buf;
     uint8_t *node_data = root_buf;
 
-    int ret = ext4_ext_check_header(eh, EXT4_EXTENT_MAX_DEPTH);
+    int ret = ext4_ext_check_header(eh, EXT4_EXTENT_MAX_DEPTH, 60);
     if (ret < 0) {
         kprintf("[ext4_ext] get_blocks: corrupt extent header\n");
         ext4_corrupt(ep, "bad extent header in get_blocks");
@@ -787,7 +802,8 @@ int ext4_ext_get_blocks(struct ext4_priv *ep,
         /* Validate every extent header encountered during the walk.
          * The root was already checked above; this catches blocks
          * read from disk (lines below) on subsequent iterations. */
-        ret = ext4_ext_check_header(eh, EXT4_EXTENT_MAX_DEPTH);
+        ret = ext4_ext_check_header(eh, EXT4_EXTENT_MAX_DEPTH,
+                                    ep->block_size);
         if (ret < 0) {
             ext4_corrupt(ep, "get_blocks: corrupt extent block in tree walk");
             return -EFSCORRUPTED;
@@ -907,7 +923,7 @@ int ext4_ext_insert_extent(struct ext4_priv *ep,
         (struct ext4_extent_header *)root_buf;
     uint8_t *node_data = root_buf;
 
-    ret = ext4_ext_check_header(root_eh, EXT4_EXTENT_MAX_DEPTH);
+    ret = ext4_ext_check_header(root_eh, EXT4_EXTENT_MAX_DEPTH, 60);
     if (ret < 0)
         return -EFSCORRUPTED;
 
@@ -928,7 +944,8 @@ int ext4_ext_insert_extent(struct ext4_priv *ep,
         /* Validate every extent header encountered during the walk.
          * The root was already checked above; this catches blocks
          * read from disk (lines below) on subsequent iterations. */
-        ret = ext4_ext_check_header(eh, EXT4_EXTENT_MAX_DEPTH);
+        ret = ext4_ext_check_header(eh, EXT4_EXTENT_MAX_DEPTH,
+                                    ep->block_size);
         if (ret < 0)
             return -EFSCORRUPTED;
 
@@ -1307,6 +1324,11 @@ int ext4_ext_remove_space(struct ext4_priv *ep,
     struct ext4_extent_header *leaf_eh = root_eh;
     uint32_t leaf_block = 0;
 
+    /* Validate the root header — root lives in i_block (60 bytes) */
+    ret = ext4_ext_check_header(root_eh, EXT4_EXTENT_MAX_DEPTH, 60);
+    if (ret < 0)
+        return -EFSCORRUPTED;
+
     /* Walk tree to find the leaf containing the range */
     uint8_t *node_data = root_buf;
 
@@ -1314,7 +1336,8 @@ int ext4_ext_remove_space(struct ext4_priv *ep,
         struct ext4_extent_header *eh =
             (struct ext4_extent_header *)node_data;
 
-        ret = ext4_ext_check_header(eh, EXT4_EXTENT_MAX_DEPTH);
+        ret = ext4_ext_check_header(eh, EXT4_EXTENT_MAX_DEPTH,
+                                    ep->block_size);
         if (ret < 0)
             return -EFSCORRUPTED;
 

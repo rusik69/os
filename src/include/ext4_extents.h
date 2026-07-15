@@ -63,10 +63,16 @@ int ext4_ext_get_blocks(struct ext4_priv *ep,
 /*
  * ext4_ext_check_header — validate an extent tree header.
  *
- * Validates magic number, depth bounds, and entry counts.
+ * Validates magic number, depth bounds, and entry counts, including
+ * that eh_max is consistent with the actual container (block / i_block)
+ * capacity.  @container_size is the byte size of the buffer housing
+ * the header (e.g., ep->block_size for disk blocks, 60 for the inode's
+ * embedded i_block root).
+ *
  * Returns 0 if valid, -EFSCORRUPTED if invalid.
  */
-int ext4_ext_check_header(struct ext4_extent_header *eh, uint16_t max_depth);
+int ext4_ext_check_header(struct ext4_extent_header *eh, uint16_t max_depth,
+                          uint32_t container_size);
 
 /* ── Extent tree manipulation ──────────────────────────────────────── */
 
