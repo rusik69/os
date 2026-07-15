@@ -486,32 +486,35 @@ static int fsck_ext2(struct vfs_mount *mnt, int flags, int *errors_out)
             if (ii >= 32 && (ii % 16) != 0)
                 continue;
 
-            /* Read inode from inode table */
+            /* Read inode from inode table.
+             * Read only from the sector within the block that contains
+             * this inode, avoiding stack overflow on large blocks. */
             uint32_t table_block = bgd->bg_inode_table;
             uint32_t byte_off = ii * inode_size;
             uint32_t blk = table_block + byte_off / block_size;
             uint32_t blk_off = byte_off % block_size;
 
-            uint8_t inode_buf[512];
-            uint64_t lba = (uint64_t)blk * (block_size / 512);
-            uint32_t buf_off = 0;
-            uint32_t sectors_needed = (blk_off + inode_size + 511) / 512;
+            uint32_t ino_sector = blk_off / 512;
+            uint32_t ino_off    = blk_off % 512;
+            uint32_t sectors_needed = (ino_off + inode_size + 511) / 512;
             if (sectors_needed == 0) sectors_needed = 1;
+
+            uint8_t inode_buf[1024];  /* 2 sectors max for inode straddle */
+            uint64_t lba = (uint64_t)blk * (block_size / 512) + ino_sector;
 
             int io_ok = 1;
             for (uint32_t s = 0; s < sectors_needed; s++) {
                 if (blockdev_read_sectors(dev_id, (uint32_t)(lba + s), 1,
-                                          inode_buf + buf_off) != 0) {
+                                          inode_buf + s * 512) != 0) {
                     io_ok = 0;
                     break;
                 }
-                buf_off += 512;
             }
             if (!io_ok)
                 continue;
 
             struct ext2_inode *inode =
-                (struct ext2_inode *)(inode_buf + blk_off);
+                (struct ext2_inode *)(inode_buf + ino_off);
 
             /* Validate i_mode */
             if (inode->i_mode == 0) {
@@ -537,15 +540,21 @@ static int fsck_ext2(struct vfs_mount *mnt, int flags, int *errors_out)
                     /* Link count would be set to 1 and directory entry
                      * created in lost+found — simplified here */
                     inode->i_links_count = 1;
-                    /* Write back inode */
+                    /* Write back inode — read/write only the
+                     * sector(s) containing this inode. */
                     uint32_t wblk = blk;
                     uint32_t woff = blk_off;
-                    uint8_t wbuf[512];
-                    if (blockdev_read_sectors(dev_id,
-                            wblk * (block_size / 512), 1, wbuf) == 0) {
-                        memcpy(wbuf + woff, inode, sizeof(struct ext2_inode));
-                        blockdev_write_sectors(dev_id,
-                            wblk * (block_size / 512), 1, wbuf);
+                    uint32_t wo_sector = woff / 512;
+                    uint32_t wo_off    = woff % 512;
+                    uint32_t wsectors  = (wo_off + sizeof(struct ext2_inode) + 511) / 512;
+                    if (wsectors == 0) wsectors = 1;
+                    uint8_t wbuf[1024];  /* 2 sectors max for straddle */
+                    uint64_t wlba2 = (uint64_t)wblk * (block_size / 512) + wo_sector;
+                    if (blockdev_read_sectors(dev_id, (uint32_t)wlba2,
+                                              (uint8_t)wsectors, wbuf) == 0) {
+                        memcpy(wbuf + wo_off, inode, sizeof(struct ext2_inode));
+                        blockdev_write_sectors(dev_id, (uint32_t)wlba2,
+                                               (uint8_t)wsectors, wbuf);
                     }
                 }
             }
@@ -673,32 +682,34 @@ static int fsck_ext2(struct vfs_mount *mnt, int flags, int *errors_out)
                 if (ino > sb.s_inodes_count)
                     break;
 
-                /* Read inode */
+                /* Read inode (start from the sector containing it
+                 * to avoid stack overflow on large blocks) */
                 uint32_t table_block = bgd->bg_inode_table;
                 uint32_t byte_off = ii * inode_size;
                 uint32_t blk = table_block + byte_off / block_size;
                 uint32_t blk_off = byte_off % block_size;
 
-                uint8_t inode_buf[512] = {0};
-                uint64_t lba = (uint64_t)blk * (block_size / 512);
-                uint32_t buf_off = 0;
-                uint32_t sectors_needed = (blk_off + inode_size + 511) / 512;
+                uint32_t ino_sector = blk_off / 512;
+                uint32_t ino_off    = blk_off % 512;
+                uint32_t sectors_needed = (ino_off + inode_size + 511) / 512;
                 if (sectors_needed == 0) sectors_needed = 1;
+
+                uint8_t inode_buf[1024] = {0};  /* 2 sectors max for straddle */
+                uint64_t lba = (uint64_t)blk * (block_size / 512) + ino_sector;
 
                 int io_ok = 1;
                 for (uint32_t s = 0; s < sectors_needed; s++) {
                     if (blockdev_read_sectors(dev_id, (uint32_t)(lba + s), 1,
-                                              inode_buf + buf_off) != 0) {
+                                              inode_buf + s * 512) != 0) {
                         io_ok = 0;
                         break;
                     }
-                    buf_off += 512;
                 }
                 if (!io_ok)
                     continue;
 
                 struct ext2_inode *inode =
-                    (struct ext2_inode *)(inode_buf + blk_off);
+                    (struct ext2_inode *)(inode_buf + ino_off);
 
                 if (inode->i_mode == 0 || inode->i_links_count == 0)
                     continue;
@@ -757,14 +768,20 @@ static int fsck_ext2(struct vfs_mount *mnt, int flags, int *errors_out)
                 uint32_t blk = table_block + byte_off / block_size;
                 uint32_t blk_off = byte_off % block_size;
 
-                /* Read, modify, write back */
-                uint8_t wbuf[512];
-                uint64_t wlba = (uint64_t)blk * (block_size / 512);
-                if (blockdev_read_sectors(dev_id, (uint32_t)wlba, 1, wbuf) != 0)
+                /* Read, modify, write back — operate on the sector
+                 * containing this inode, not the entire block. */
+                uint32_t lk_sector = blk_off / 512;
+                uint32_t lk_off    = blk_off % 512;
+                uint32_t lk_sectors = (lk_off + sizeof(struct ext2_inode) + 511) / 512;
+                if (lk_sectors == 0) lk_sectors = 1;
+                uint8_t wbuf[1024];  /* 2 sectors max for straddle */
+                uint64_t wlba = (uint64_t)blk * (block_size / 512) + lk_sector;
+                if (blockdev_read_sectors(dev_id, (uint32_t)wlba,
+                                          (uint8_t)lk_sectors, wbuf) != 0)
                     continue;
 
                 struct ext2_inode *w_inode =
-                    (struct ext2_inode *)(wbuf + blk_off);
+                    (struct ext2_inode *)(wbuf + lk_off);
                 if (w_inode->i_links_count != actual_links &&
                     actual_links > 0) {
                     kprintf("[FSCK] Fixing inode %u link count: %u -> %u\n",
@@ -772,7 +789,8 @@ static int fsck_ext2(struct vfs_mount *mnt, int flags, int *errors_out)
                             (unsigned int)w_inode->i_links_count,
                             (unsigned int)actual_links);
                     w_inode->i_links_count = actual_links;
-                    blockdev_write_sectors(dev_id, (uint32_t)wlba, 1, wbuf);
+                    blockdev_write_sectors(dev_id, (uint32_t)wlba,
+                                           (uint8_t)lk_sectors, wbuf);
                 }
             }
         }
