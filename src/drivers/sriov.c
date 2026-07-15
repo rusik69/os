@@ -4,6 +4,10 @@
  *
  * Implements SR-IOV for PCIe devices, enabling virtual functions
  * to be assigned directly to virtual machines or containers.
+ *
+ * SR-IOV is a PCIe Extended Capability (cap_id = 0x0010) found
+ * in the extended config space (offset >= 0x100), NOT in the
+ * standard PCI capability list where cap_id 0x10 is PCI Express.
  */
 #include "types.h"
 #include "string.h"
@@ -16,25 +20,48 @@ int sriov_probe_pf(int bus, int dev, int func);
 int sriov_enable_vfs(int bus, int dev, int func, int num_vfs);
 int sriov_disable_vfs(int bus, int dev, int func);
 
-/* SR-IOV capability registers */
-#define PCI_SRIOV_CAP          0x00
-#define PCI_SRIOV_CTL          0x08
-#define PCI_SRIOV_STATUS       0x0A
-#define PCI_SRIOV_INITIAL_VF   0x0C
-#define PCI_SRIOV_TOTAL_VF     0x0E
-#define PCI_SRIOV_NUM_VF       0x10
-#define PCI_SRIOV_FUNC_LINK    0x12
-#define PCI_SRIOV_VF_OFFSET    0x14
-#define PCI_SRIOV_VF_STRIDE    0x16
-#define PCI_SRIOV_VF_DID       0x1A
-#define PCI_SRIOV_SUP_PGSIZE   0x1C
-#define PCI_SRIOV_SYS_PGSIZE   0x20
-#define PCI_SRIOV_BAR          0x24
+/* SR-IOV extended capability ID */
+#define PCI_EXT_CAP_ID_SRIOV    0x0010
+
+/* SR-IOV capability register offsets
+ * (relative to the SR-IOV extended capability base) */
+#define PCI_SRIOV_CAP          0x00    /* Extended Capability Header */
+#define PCI_SRIOV_CTL          0x08    /* SR-IOV Control (16-bit) */
+#define PCI_SRIOV_STATUS       0x0A    /* SR-IOV Status (16-bit) */
+#define PCI_SRIOV_INITIAL_VF   0x0C    /* Initial VFs (16-bit) */
+#define PCI_SRIOV_TOTAL_VF     0x0E    /* Total VFs (16-bit) */
+#define PCI_SRIOV_NUM_VF       0x10    /* Num VFs (16-bit) */
+#define PCI_SRIOV_FUNC_LINK    0x12    /* Function Dependency Link (8-bit) */
+#define PCI_SRIOV_VF_OFFSET    0x14    /* VF Offset (16-bit) */
+#define PCI_SRIOV_VF_STRIDE    0x16    /* VF Stride (16-bit) */
+#define PCI_SRIOV_VF_DID       0x1A    /* VF Device ID (16-bit) */
+#define PCI_SRIOV_SUP_PGSIZE   0x1C    /* Supported Page Size (32-bit) */
+#define PCI_SRIOV_SYS_PGSIZE   0x20    /* System Page Size (32-bit) */
+#define PCI_SRIOV_BAR          0x24    /* VF BAR0 (32-bit, up to BAR5 at +0x38) */
+#define PCI_SRIOV_VF_BAR_SIZE  4       /* Each VF BAR is 4 bytes */
+#define PCI_SRIOV_MAX_VF_BARS  6       /* VF BAR0 through BAR5 */
 
 /* SR-IOV control bits */
 #define SRIOV_CTL_ENABLE       (1U << 0)
 #define SRIOV_CTL_VF_MIGRATION (1U << 1)
 #define SRIOV_CTL_VF_ARB_EN    (1U << 2)
+
+/* VF BAR type bits */
+#define PCI_BAR_MEM_SPACE      (0U << 0)
+#define PCI_BAR_IO_SPACE       (1U << 0)
+#define PCI_BAR_MEM_TYPE_MASK  (6U << 1)
+#define PCI_BAR_MEM_TYPE_32    (0U << 1)
+#define PCI_BAR_MEM_TYPE_64    (4U << 1)
+#define PCI_BAR_PREFETCH       (1U << 3)
+#define PCI_BAR_MEM_ATTR_MASK  0x0F
+#define PCI_BAR_SIZE_MASK      0xFFFFFFF0  /* 32-bit BAR */
+
+struct sriov_vf_bar {
+    uint64_t base;
+    uint64_t size;
+    int      is_64bit;
+    int      is_io;
+};
 
 struct sriov_vf {
     int pf_bus;
@@ -42,8 +69,7 @@ struct sriov_vf {
     int pf_func;
     int vf_number;
     uint16_t vf_did;
-    uint64_t bar0_base;
-    uint32_t bar0_size;
+    struct sriov_vf_bar bars[PCI_SRIOV_MAX_VF_BARS];
 };
 
 struct sriov_pf_state {
@@ -51,72 +77,174 @@ struct sriov_pf_state {
     int enabled_vfs;
     int vf_offset;
     int vf_stride;
+    int pf_bus;
+    int pf_dev;
+    int pf_func;
+    int sriov_cap_offset;   /* Extended capability base offset */
     int in_use;
 };
 
 static struct sriov_pf_state sriov_pf_states[16];
 static int sriov_pf_count = 0;
 
-/* Probe a PF for SR-IOV capability */
+/*
+ * Helper: find the SR-IOV extended capability on a device.
+ * Returns the capability offset (>= 0x100) or < 0 if not found.
+ */
+static int sriov_find_cap(int bus, int dev, int func)
+{
+    return pci_find_ext_cap(bus, dev, func, PCI_EXT_CAP_ID_SRIOV);
+}
+
+/*
+ * Size a single VF BAR register.
+ * Writes 0xFFFFFFFF to determine size, then restores the original value.
+ * Handles 64-bit BARs by sizing two adjacent slots.
+ *
+ * Returns the BAR size in bytes (power-of-2) or 0 if the BAR is unimplemented.
+ */
+static uint64_t sriov_size_vf_bar(int bus, int dev, int func,
+                                   int cap_off, int bar_idx,
+                                   int *is_64bit, int *is_io)
+{
+    int off = cap_off + PCI_SRIOV_BAR + bar_idx * PCI_SRIOV_VF_BAR_SIZE;
+
+    /* Read original value */
+    uint32_t orig_lo = pcie_read(bus, dev, func, off);
+
+    if (orig_lo == 0) {
+        *is_64bit = 0;
+        *is_io = 0;
+        return 0;  /* BAR not implemented */
+    }
+
+    *is_io = (orig_lo & PCI_BAR_IO_SPACE) ? 1 : 0;
+    *is_64bit = 0;
+
+    if (!*is_io) {
+        uint8_t mem_type = (uint8_t)((orig_lo & PCI_BAR_MEM_TYPE_MASK) >> 1);
+        if (mem_type == 2)  /* 0b10 = 64-bit */
+            *is_64bit = 1;
+    }
+
+    /* Size the lower 32-bit part */
+    pcie_write(bus, dev, func, off, 0xFFFFFFFF);
+    uint32_t sz_lo = pcie_read(bus, dev, func, off);
+    pcie_write(bus, dev, func, off, orig_lo);
+
+    uint64_t size;
+    if (*is_io) {
+        /* I/O BAR: bits 31:2 encode size */
+        size = (uint64_t)(~(sz_lo & 0xFFFFFFFC)) + 1;
+    } else {
+        /* Memory BAR: bits 31:4 encode size */
+        size = (uint64_t)(~(sz_lo & PCI_BAR_SIZE_MASK)) + 1;
+    }
+
+    if (*is_64bit && size != 0) {
+        /* Size the upper 32-bit part (bits 63:32) */
+        int off_hi = off + PCI_SRIOV_VF_BAR_SIZE;
+        uint32_t orig_hi = pcie_read(bus, dev, func, off_hi);
+        pcie_write(bus, dev, func, off_hi, 0xFFFFFFFF);
+        uint32_t sz_hi = pcie_read(bus, dev, func, off_hi);
+        pcie_write(bus, dev, func, off_hi, orig_hi);
+
+        size |= ((uint64_t)~(uint64_t)sz_hi) << 32;
+        /* Compute final size as power-of-2 aligned */
+        /* size is now the mask; add 1 for the real size */
+        if (size != 0)
+            size = size + 1;
+    }
+
+    return size;
+}
+
+/*
+ * Probe a PF for SR-IOV capability and read all capability registers,
+ * including VF BAR sizing.
+ *
+ * Returns 1 on success, 0 if SR-IOV not supported, < 0 on error.
+ */
 int sriov_probe_pf(int bus, int dev, int func)
 {
-    /* Walk standard PCI capability list to find SR-IOV (cap_id=0x10) */
-    uint16_t status = (uint16_t)(pci_read(bus, dev, func, 0x06) & 0xFFFF);
-    if (!(status & (1U << 4)))
-        return 0;
-    uint8_t cap_ptr = (uint8_t)(pci_read(bus, dev, func, 0x34) & 0xFF);
-    uint16_t sriov_cap = 0;
-    while (cap_ptr != 0) {
-        uint16_t cap_id_next = (uint16_t)(pci_read(bus, dev, func, cap_ptr) & 0xFFFF);
-        if ((uint8_t)(cap_id_next & 0xFF) == 0x10) {
-            sriov_cap = cap_ptr;
-            break;
-        }
-        cap_ptr = (uint8_t)((cap_id_next >> 8) & 0xFF);
-    }
-    if (!sriov_cap)
-        return 0;
+    /* Find SR-IOV extended capability (ID 0x0010) */
+    int sriov_cap = sriov_find_cap(bus, dev, func);
+    if (sriov_cap < 0)
+        return 0;   /* No SR-IOV capability */
 
     if (sriov_pf_count >= 16)
         return -ENOMEM;
 
+    /* Check capabilities list bit is set */
+    uint16_t status = pci_read16((uint8_t)bus, (uint8_t)dev, (uint8_t)func, 0x06);
+    if (!(status & (1U << 4)))
+        return 0;
+
     struct sriov_pf_state *pf = &sriov_pf_states[sriov_pf_count];
-    pf->total_vfs = 0; /* pci_read16(bus, dev, func, sriov_cap + PCI_SRIOV_TOTAL_VF); */
-    pf->vf_offset = 0; /* pci_read16(bus, dev, func, sriov_cap + PCI_SRIOV_VF_OFFSET); */
-    pf->vf_stride = 0; /* pci_read16(bus, dev, func, sriov_cap + PCI_SRIOV_VF_STRIDE); */
-    pf->enabled_vfs = 0;
-    pf->in_use = 1;
+    pf->total_vfs    = pci_read16((uint8_t)bus, (uint8_t)dev, (uint8_t)func,
+                                  (uint16_t)(sriov_cap + PCI_SRIOV_TOTAL_VF));
+    pf->vf_offset    = pci_read16((uint8_t)bus, (uint8_t)dev, (uint8_t)func,
+                                  (uint16_t)(sriov_cap + PCI_SRIOV_VF_OFFSET));
+    pf->vf_stride    = pci_read16((uint8_t)bus, (uint8_t)dev, (uint8_t)func,
+                                  (uint16_t)(sriov_cap + PCI_SRIOV_VF_STRIDE));
+    pf->pf_bus       = bus;
+    pf->pf_dev       = dev;
+    pf->pf_func      = func;
+    pf->sriov_cap_offset = sriov_cap;
+    pf->enabled_vfs  = 0;
+    pf->in_use       = 1;
     sriov_pf_count++;
 
+    /* Read supported page size and VF device ID */
+    uint32_t sup_pgsize = pcie_read(bus, dev, func, sriov_cap + PCI_SRIOV_SUP_PGSIZE);
+    uint16_t vf_did = pci_read16((uint8_t)bus, (uint8_t)dev, (uint8_t)func,
+                                 (uint16_t)(sriov_cap + PCI_SRIOV_VF_DID));
+
+    /* Size all VF BARs */
     kprintf("[SR-IOV] PF at %02x:%02x.%x: total VFs=%d, offset=%d, stride=%d\n",
             bus, dev, func, pf->total_vfs, pf->vf_offset, pf->vf_stride);
+
+    uint64_t total_vf_mem = 0;
+    for (int i = 0; i < PCI_SRIOV_MAX_VF_BARS; i++) {
+        int is_64bit = 0, is_io = 0;
+        uint64_t bar_sz = sriov_size_vf_bar(bus, dev, func,
+                                            sriov_cap, i, &is_64bit, &is_io);
+        if (bar_sz > 0) {
+            kprintf("[SR-IOV]   VF BAR%d: %lld bytes %s%s\n",
+                    i, (unsigned long long)bar_sz,
+                    is_64bit ? "64-bit " : "32-bit ",
+                    is_io ? "I/O" : "mem");
+            total_vf_mem += bar_sz;
+        }
+        if (is_64bit) {
+            /* 64-bit BAR consumes two slots; skip the next index */
+            i++;
+        }
+    }
+
+    kprintf("[SR-IOV]   Total memory required per VF: %lld bytes\n",
+            (unsigned long long)total_vf_mem);
+    kprintf("[SR-IOV]   VF Device ID: 0x%04x, Supported Page Size: 0x%08x\n",
+            vf_did, sup_pgsize);
+
     return 1;
 }
 
 /* Enable virtual functions on a PF */
 int sriov_enable_vfs(int bus, int dev, int func, int num_vfs)
 {
-    /* Walk standard PCI capability list to find SR-IOV (cap_id=0x10) */
-    uint16_t status = (uint16_t)(pci_read(bus, dev, func, 0x06) & 0xFFFF);
-    if (!(status & (1U << 4)))
-        return -ENODEV;
-    uint8_t cap_ptr = (uint8_t)(pci_read(bus, dev, func, 0x34) & 0xFF);
-    uint16_t sriov_cap = 0;
-    while (cap_ptr != 0) {
-        uint16_t cap_id_next = (uint16_t)(pci_read(bus, dev, func, cap_ptr) & 0xFFFF);
-        if ((uint8_t)(cap_id_next & 0xFF) == 0x10) {
-            sriov_cap = cap_ptr;
-            break;
-        }
-        cap_ptr = (uint8_t)((cap_id_next >> 8) & 0xFF);
-    }
-    if (!sriov_cap)
+    /* Find SR-IOV extended capability */
+    int sriov_cap = sriov_find_cap(bus, dev, func);
+    if (sriov_cap < 0)
         return -ENODEV;
 
-    /* Find PF state */
+    /* Find matching PF state by bus/dev/func */
     struct sriov_pf_state *pf = NULL;
     for (int i = 0; i < sriov_pf_count; i++) {
-        if (sriov_pf_states[i].in_use) {
+        if (sriov_pf_states[i].in_use &&
+            sriov_pf_states[i].pf_bus  == bus &&
+            sriov_pf_states[i].pf_dev  == dev &&
+            sriov_pf_states[i].pf_func == func) {
             pf = &sriov_pf_states[i];
             break;
         }
@@ -127,11 +255,15 @@ int sriov_enable_vfs(int bus, int dev, int func, int num_vfs)
         num_vfs = pf->total_vfs;
 
     /* Set number of VFs */
-    /* pci_write16(bus, dev, func, sriov_cap + PCI_SRIOV_NUM_VF, (uint16_t)num_vfs); */
+    pci_write16((uint8_t)bus, (uint8_t)dev, (uint8_t)func,
+                (uint16_t)(sriov_cap + PCI_SRIOV_NUM_VF), (uint16_t)num_vfs);
 
-    /* Enable SR-IOV */
-    uint16_t ctl = SRIOV_CTL_ENABLE; /* | pci_read16(bus, dev, func, sriov_cap + PCI_SRIOV_CTL); */
-    /* pci_write16(bus, dev, func, sriov_cap + PCI_SRIOV_CTL, ctl); */
+    /* Enable SR-IOV: read-modify-write the control register */
+    uint16_t ctl = pci_read16((uint8_t)bus, (uint8_t)dev, (uint8_t)func,
+                              (uint16_t)(sriov_cap + PCI_SRIOV_CTL));
+    ctl |= SRIOV_CTL_ENABLE;
+    pci_write16((uint8_t)bus, (uint8_t)dev, (uint8_t)func,
+                (uint16_t)(sriov_cap + PCI_SRIOV_CTL), ctl);
 
     pf->enabled_vfs = num_vfs;
     kprintf("[SR-IOV] Enabled %d VFs on %02x:%02x.%x\n",
@@ -142,24 +274,25 @@ int sriov_enable_vfs(int bus, int dev, int func, int num_vfs)
 /* Disable virtual functions */
 int sriov_disable_vfs(int bus, int dev, int func)
 {
-    /* Walk standard PCI capability list to find SR-IOV (cap_id=0x10) */
-    uint16_t status = (uint16_t)(pci_read(bus, dev, func, 0x06) & 0xFFFF);
-    if (!(status & (1U << 4)))
-        return -ENODEV;
-    uint8_t cap_ptr = (uint8_t)(pci_read(bus, dev, func, 0x34) & 0xFF);
-    uint16_t sriov_cap = 0;
-    while (cap_ptr != 0) {
-        uint16_t cap_id_next = (uint16_t)(pci_read(bus, dev, func, cap_ptr) & 0xFFFF);
-        if ((uint8_t)(cap_id_next & 0xFF) == 0x10) {
-            sriov_cap = cap_ptr;
-            break;
-        }
-        cap_ptr = (uint8_t)((cap_id_next >> 8) & 0xFF);
-    }
-    if (!sriov_cap)
+    /* Find SR-IOV extended capability */
+    int sriov_cap = sriov_find_cap(bus, dev, func);
+    if (sriov_cap < 0)
         return -ENODEV;
 
-    /* pci_write16(bus, dev, func, sriov_cap + PCI_SRIOV_CTL, 0); */
+    /* Disable SR-IOV by clearing control register */
+    pci_write16((uint8_t)bus, (uint8_t)dev, (uint8_t)func,
+                (uint16_t)(sriov_cap + PCI_SRIOV_CTL), 0);
+
+    /* Clear the matching PF state */
+    for (int i = 0; i < sriov_pf_count; i++) {
+        if (sriov_pf_states[i].in_use &&
+            sriov_pf_states[i].pf_bus  == bus &&
+            sriov_pf_states[i].pf_dev  == dev &&
+            sriov_pf_states[i].pf_func == func) {
+            sriov_pf_states[i].enabled_vfs = 0;
+            break;
+        }
+    }
 
     kprintf("[SR-IOV] Disabled VFs on %02x:%02x.%x\n", bus, dev, func);
     return 0;
