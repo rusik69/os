@@ -31,6 +31,7 @@
 #define LFN_ORD_MASK          0x1F   /* bits 0-4 = ordinal number */
 #define LFN_MAX_ENTRIES       20     /* max 20 LFN entries per file (255 chars) */
 #define LFN_CHARS_PER_ENTRY   13     /* 13 UTF-16LE chars per LFN entry */
+#define LFN_MAX_CHARS         255    /* max filename length per VFAT spec */
 #define SECT_SIZE             512
 
 /* ── VFAT LFN directory entry (raw 32-byte layout) ─────────────────── */
@@ -170,7 +171,7 @@ int vfat_needs_lfn(const char *name)
  * given filename. Each entry holds up to 13 characters.
  *
  * Returns the entry count (0-20), or 20 if the name is longer than
- * 20*13 = 260 characters (truncated to 20 entries per spec).
+ * LFN_MAX_CHARS = 255 characters (truncated to the VFAT spec limit).
  */
 int vfat_count_lfn_entries(const char *name)
 {
@@ -179,8 +180,8 @@ int vfat_count_lfn_entries(const char *name)
     if (!name) return 0;
     len = (int)strlen(name);
     if (len <= 0) return 0;
-    if (len > LFN_MAX_ENTRIES * LFN_CHARS_PER_ENTRY)
-        len = LFN_MAX_ENTRIES * LFN_CHARS_PER_ENTRY;
+    if (len > LFN_MAX_CHARS)
+        len = LFN_MAX_CHARS;
 
     return (len + LFN_CHARS_PER_ENTRY - 1) / LFN_CHARS_PER_ENTRY;
 }
@@ -221,6 +222,8 @@ void vfat_build_entry(void *entry_out, int ordinal, int is_last,
 
     /* Encode up to 13 characters into UTF-16LE buffers */
     name_len = (int)strlen(name);
+    if (name_len > LFN_MAX_CHARS)
+        name_len = LFN_MAX_CHARS;
     for (int i = 0; i < LFN_CHARS_PER_ENTRY; i++) {
         int idx = name_offset + i;
         if (idx < name_len) {
