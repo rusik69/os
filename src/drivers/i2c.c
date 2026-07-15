@@ -282,6 +282,16 @@ int i2c_write_byte(uint8_t data) {
             gpio_sda_release();
             return -1;  /* clock stretch timeout */
         }
+
+        /* Multi-master arbitration check: if we released SDA (wanted HIGH)
+         * but the line is LOW, another master is pulling it — we lost. */
+        if (!want_low && gpio_sda_read() == 0) {
+            g_arbitration_lost = 1;
+            gpio_sda_release();
+            gpio_scl_low();
+            return -2;
+        }
+
         gpio_scl_low();
         i2c_delay();
     }
@@ -343,10 +353,17 @@ uint8_t i2c_read_byte(int ack) {
     i2c_delay();
     gpio_scl_low();
 
-    /* Verify arbitration on ACK bit for multi-master */
-    if (ack && gpio_sda_read() != 0) {
-        /* We tried to send ACK but line is high — arbitration lost */
-        g_arbitration_lost = 1;
+    /* Verify arbitration on ACK/NAK bit for multi-master */
+    if (ack) {
+        if (gpio_sda_read() != 0) {
+            /* We tried to send ACK but line is high — arbitration lost */
+            g_arbitration_lost = 1;
+        }
+    } else {
+        if (gpio_sda_read() == 0) {
+            /* We tried to send NAK but line is low — arbitration lost */
+            g_arbitration_lost = 1;
+        }
     }
 
     /* Release SDA */
