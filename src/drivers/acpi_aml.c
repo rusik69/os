@@ -124,6 +124,12 @@ static int g_opregion_handler_count;
  * nested control flow would otherwise overflow the kernel C stack. */
 #define AML_EXEC_MAX_DEPTH      64
 
+/* Maximum recursion depth for AML package object nesting.
+ * Packages can contain sub-packages as elements, and aml_parse_package_from_aml()
+ * recurses to parse them.  Without a limit, a malicious AML table with deeply
+ * nested Package objects could overflow the kernel stack. */
+#define AML_PACKAGE_MAX_DEPTH   64
+
 /* The flat namespace array. We use a static pool sized generously. */
 static struct {
 	int              count;
@@ -1352,6 +1358,12 @@ struct aml_exec_context {
 	 * aml_exec_if() / aml_exec_while().  Prevents kernel stack
 	 * overflow from deeply nested AML control flow. */
 	uint8_t  depth;
+
+	/* Recursion depth guard for package object nesting.
+	 * Checked/incremented in aml_parse_package_from_aml() before
+	 * recursing into sub-packages.  Prevents kernel stack overflow
+	 * from deeply nested AML Package objects. */
+	uint8_t  pkg_depth;
 };
 
 /* ── Method Header Parser ───────────────────────────────────────── */
@@ -1573,18 +1585,29 @@ static struct aml_object *aml_parse_package_from_aml(
 	if (element_end > ctx->aml_len)
 		element_end = ctx->aml_len;
 
+	/* Guard against excessive package nesting depth (stack overflow) */
+	if (ctx->pkg_depth >= AML_PACKAGE_MAX_DEPTH) {
+		kprintf("[AML] Error: package nesting depth exceeds %u at offset %u\n",
+			(unsigned int)AML_PACKAGE_MAX_DEPTH, (unsigned int)o);
+		return NULL;
+	}
+	ctx->pkg_depth++;
+
 	if (num_elements == 0) {
 		obj = aml_create_package(NULL, 0);
 		if (obj)
 			ctx->offset = element_end;
+		ctx->pkg_depth--;
 		return obj;
 	}
 
 	/* Allocate temporary array for element parsing */
 	elements = (struct aml_object *)
 		kmalloc(num_elements * sizeof(struct aml_object));
-	if (!elements)
+	if (!elements) {
+		ctx->pkg_depth--;
 		return NULL;
+	}
 	memset(elements, 0, num_elements * sizeof(struct aml_object));
 
 	/* Save and reset the execution context so our element parsing
@@ -1712,6 +1735,7 @@ static struct aml_object *aml_parse_package_from_aml(
 		aml_free_object(&elements[i]);
 	kfree(elements);
 
+	ctx->pkg_depth--;
 	return obj;
 }
 
