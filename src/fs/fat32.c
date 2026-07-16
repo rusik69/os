@@ -123,6 +123,7 @@ static uint32_t     fat_sectors   = 0;
 static uint32_t     fs_info_lba   = 0;
 static uint32_t     fsinfo_next_free = 2;
 static uint32_t     fsinfo_free_count = 0;
+static uint16_t     g_ext_flags   = 0;
 
 /* Cached volume label (11-char padded, null-terminated) */
 static char         g_volume_label[12];
@@ -227,10 +228,12 @@ static int fat_write_entry(uint32_t cluster, uint32_t value) {
         __builtin_memcpy(buf + offset, &old, 4);
     }
     if (write_sector(fat_sec, buf) != 0) return -EIO;
-    /* Mirror to additional FATs — entry size is same for all mirrors */
-    for (uint32_t f = 1; f < num_fats; f++) {
-        uint32_t mir_sec = fat_start + f * fat_sectors + byte_off / SECT_SIZE;
-        if (write_sector(mir_sec, buf) != 0) return -EIO;
+    /* Mirror to additional FATs unless ext_flags bit 7 disables mirroring */
+    if (!(g_ext_flags & 0x80)) {
+        for (uint32_t f = 1; f < num_fats; f++) {
+            uint32_t mir_sec = fat_start + f * fat_sectors + byte_off / SECT_SIZE;
+            if (write_sector(mir_sec, buf) != 0) return -EIO;
+        }
     }
     return 0;
 }
@@ -657,6 +660,9 @@ static uint32_t path_resolve(const char *path, int *is_dir, uint32_t *file_size)
     return cluster;
 }
 
+/* Forward declarations for FSInfo validation (defined later in repair section) */
+static int fat32_validate_fsinfo(const uint8_t *buf);
+
 /* ── Public API ─────────────────────────────────────────────────────────────── */
 int fat32_is_mounted(void) { return mounted; }
 
@@ -762,28 +768,36 @@ int fat32_mount(fat32_disk_t disk, uint32_t part_lba) {
             return -EINVAL;
         data_start = fat_start + num_fats * fat_sz;
         root_dir_sectors = 0;
-        fs_info_lba = bpb->fs_info ? part_lba + bpb->fs_info : 0;
+        g_ext_flags = bpb->ext_flags;
+        /* BPB_FSInfo (fs_info): 0xFFFF means \"no FSInfo sector\" per spec */
+        fs_info_lba = (bpb->fs_info && bpb->fs_info != 0xFFFF)
+                      ? part_lba + bpb->fs_info : 0;
         if (fs_info_lba) {
             uint8_t fbuf[SECT_SIZE];
             if (read_sector(fs_info_lba, fbuf) == 0) {
-                /* FSI_Nxt_Free at offset 492-495 (hint for next free cluster) */
-                fsinfo_next_free = (uint32_t)fbuf[492]
-                                 | ((uint32_t)fbuf[493] << 8)
-                                 | ((uint32_t)fbuf[494] << 16)
-                                 | ((uint32_t)fbuf[495] << 24);
-                if (fsinfo_next_free < 2 || fsinfo_next_free == 0xFFFFFFFF)
-                    fsinfo_next_free = 2;
-                /* FSI_Free_Count at offset 488-491 (last known free count) */
-                fsinfo_free_count = (uint32_t)fbuf[488]
-                                  | ((uint32_t)fbuf[489] << 8)
-                                  | ((uint32_t)fbuf[490] << 16)
-                                  | ((uint32_t)fbuf[491] << 24);
-                if (fsinfo_free_count == 0xFFFFFFFF)
-                    fsinfo_free_count = 0;
+                /* Only trust cached values if FSInfo signatures are valid */
+                if (fat32_validate_fsinfo(fbuf) == 0) {
+                    /* FSI_Nxt_Free at offset 492-495 */
+                    fsinfo_next_free = (uint32_t)fbuf[492]
+                                     | ((uint32_t)fbuf[493] << 8)
+                                     | ((uint32_t)fbuf[494] << 16)
+                                     | ((uint32_t)fbuf[495] << 24);
+                    if (fsinfo_next_free < 2 || fsinfo_next_free == 0xFFFFFFFF)
+                        fsinfo_next_free = 2;
+                    /* FSI_Free_Count at offset 488-491 */
+                    fsinfo_free_count = (uint32_t)fbuf[488]
+                                      | ((uint32_t)fbuf[489] << 8)
+                                      | ((uint32_t)fbuf[490] << 16)
+                                      | ((uint32_t)fbuf[491] << 24);
+                    if (fsinfo_free_count == 0xFFFFFFFF)
+                        fsinfo_free_count = 0;
+                }
+                /* If signatures are invalid, keep defaults (next_free=2, free_count=0) */
             }
         }
     } else {
         /* FAT12 / FAT16: fixed root directory */
+        g_ext_flags = 0;  /* no extended flags for FAT12/16 */
         uint32_t total_root_bytes = root_entries * 32;
         root_dir_sectors = (total_root_bytes + bps - 1) / bps;
         data_start = fat_start + num_fats * fat_sz + root_dir_sectors;
