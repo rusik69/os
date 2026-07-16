@@ -360,8 +360,8 @@ void rtc_get_time(struct rtc_time *t) {
         yr  = bcd_to_bin(yr);
     }
 
-    if (!(regb & 0x02) && (hr & 0x80)) {
-        hr = (uint8_t)(((hr & 0x7F) + 12) % 24);
+    if (!(regb & 0x02)) {
+        hr = (uint8_t)(((hr & 0x7F) % 12) + ((hr & 0x80) ? 12 : 0));
     }
 
     t->second = sec;
