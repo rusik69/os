@@ -274,6 +274,7 @@ struct btrfs_priv {
     uint32_t sectorsize;
     uint32_t nodesize;
     uint16_t csum_type;
+    uint64_t sb_generation;   /* current generation from superblock */
     uint64_t chunk_root_bytenr;
     uint8_t  chunk_root_level;
     uint64_t root_bytenr;

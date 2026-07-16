@@ -139,6 +139,7 @@ static int btrfs_parse_superblock(struct btrfs_priv *bp)
     bp->sectorsize         = sb->sectorsize;
     bp->nodesize           = sb->nodesize;
     bp->csum_type          = sb->csum_type;
+    bp->sb_generation      = sb->generation;
     bp->chunk_root_bytenr  = sb->chunk_root;
     bp->chunk_root_level   = sb->chunk_root_level;
     bp->root_bytenr        = sb->root;
@@ -1082,6 +1083,26 @@ static int btrfs_read_inode_data(struct btrfs_priv *bp, uint64_t ino,
 
     memcpy(inode_out, item_data, sizeof(struct btrfs_inode_item));
     *size_out = (uint32_t)inode_out->size;
+
+    /* Validate inode generation against superblock generation.
+     *
+     * Btrfs inodes carry a 'generation' field that records the
+     * transaction ID in which the inode was last modified.  The
+     * superblock's 'generation' field is the current transaction ID
+     * of the filesystem.  In a consistent filesystem, every inode's
+     * generation must be <= the superblock generation.  If an inode
+     * has a higher generation, it was written in a transaction that
+     * does not exist (corruption or a newer kernel writing with a
+     * higher generation than what the superblock reflects). */
+    if (inode_out->generation > bp->sb_generation) {
+        kprintf("[btrfs] WARNING: inode %llu has generation %llu > "
+                "superblock generation %llu (corrupt inode)\n",
+                (unsigned long long)ino,
+                (unsigned long long)inode_out->generation,
+                (unsigned long long)bp->sb_generation);
+        return -1;
+    }
+
     return 0;
 }
 
