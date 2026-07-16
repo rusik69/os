@@ -937,6 +937,7 @@ static int ext2_add_dirent_to_block(struct ext2_priv *ep,
         } *de = (void *)(block_buf + pos);
 
         if (de->rec_len == 0) break;
+        if (de->rec_len % 4 != 0) break;
 
         /* Unused entry with enough space */
         if (de->inode == 0 && de->rec_len >= reclen) {
@@ -1025,13 +1026,13 @@ static int ext2_add_dirent_htree(struct ext2_priv *ep,
     {
         uint32_t *de_inode = (uint32_t *)(root_buf + pos);
         uint16_t *de_rec   = (uint16_t *)(root_buf + pos + 4);
-        if (*de_inode == 0 || *de_rec == 0) return -EINVAL;
+        if (*de_inode == 0 || *de_rec == 0 || *de_rec % 4 != 0) return -EINVAL;
         pos += *de_rec;
     }
     {
         uint32_t *de_inode = (uint32_t *)(root_buf + pos);
         uint16_t *de_rec   = (uint16_t *)(root_buf + pos + 4);
-        if (*de_inode == 0 || *de_rec == 0) return -EINVAL;
+        if (*de_inode == 0 || *de_rec == 0 || *de_rec % 4 != 0) return -EINVAL;
         pos += *de_rec;
     }
 
@@ -1148,6 +1149,8 @@ static int ext2_add_dirent(struct ext2_priv *ep,
 
 			if (de->rec_len == 0)
 				break;
+			if (de->rec_len % 4 != 0)
+				break;
 
 			if (de->inode == 0 && de->rec_len >= reclen) {
 				/* Free/unused entry large enough */
@@ -1222,6 +1225,7 @@ static int ext2_add_dirent(struct ext2_priv *ep,
 				char     name[255];
 			} *lde = (void *)(last_buf + lp);
 			if (lde->rec_len == 0) break;
+			if (lde->rec_len % 4 != 0) break;
 			last_entry_pos = lp;
 			last_entry_rec = lde->rec_len;
 			lp += lde->rec_len;
@@ -1548,7 +1552,7 @@ static int ext2_htree_lookup_leaf(struct ext2_priv *ep,
     {
         uint32_t *de_inode  = (uint32_t *)(block_buf + pos);
         uint16_t *de_rec    = (uint16_t *)(block_buf + pos + 4);
-        if (*de_inode == 0 || *de_rec == 0)
+        if (*de_inode == 0 || *de_rec == 0 || *de_rec % 4 != 0)
             return -EINVAL;
         pos += *de_rec;
     }
@@ -1557,7 +1561,7 @@ static int ext2_htree_lookup_leaf(struct ext2_priv *ep,
     {
         uint32_t *de_inode  = (uint32_t *)(block_buf + pos);
         uint16_t *de_rec    = (uint16_t *)(block_buf + pos + 4);
-        if (*de_inode == 0 || *de_rec == 0)
+        if (*de_inode == 0 || *de_rec == 0 || *de_rec % 4 != 0)
             return -EINVAL;
         pos += *de_rec;
     }
@@ -1724,12 +1728,12 @@ static int ext2_find_in_dir(struct ext2_priv *ep, struct ext2_inode *dir_inode,
                 /* Skip '.' */
                 uint32_t *de_inode  = (uint32_t *)(root_buf + pos);
                 uint16_t *de_rec    = (uint16_t *)(root_buf + pos + 4);
-                if (*de_inode != 0 && *de_rec != 0 && pos + *de_rec <= ep->block_size) {
+                if (*de_inode != 0 && *de_rec != 0 && *de_rec % 4 == 0 && pos + *de_rec <= ep->block_size) {
                     pos += *de_rec;
                     /* Skip '..' */
                     de_inode = (uint32_t *)(root_buf + pos);
                     de_rec   = (uint16_t *)(root_buf + pos + 4);
-                    if (*de_inode != 0 && *de_rec != 0 && pos + *de_rec <= ep->block_size) {
+                    if (*de_inode != 0 && *de_rec != 0 && *de_rec % 4 == 0 && pos + *de_rec <= ep->block_size) {
                         pos += *de_rec;
                         /* The 8-byte info block starts here; hash_version is at offset 4 */
                         if (pos + 8 <= ep->block_size) {
@@ -1799,6 +1803,7 @@ static int ext2_find_in_dir(struct ext2_priv *ep, struct ext2_inode *dir_inode,
             } *dirent = (void *)(block_buf + pos);
 
             if (dirent->rec_len == 0) break;
+            if (dirent->rec_len % 4 != 0) break;
             if (dirent->inode == 0) { pos += dirent->rec_len; continue; }
 
             if ((size_t)dirent->name_len == nlen &&
@@ -1840,6 +1845,7 @@ static int ext2_read_dir(struct ext2_priv *ep, struct ext2_inode *inode,
             } *dirent = (void *)(block_buf + pos);
 
             if (dirent->rec_len == 0) break;
+            if (dirent->rec_len % 4 != 0) break;
             if (dirent->inode == 0) { pos += dirent->rec_len; continue; }
 
             uint8_t nlen = dirent->name_len;
@@ -2748,6 +2754,7 @@ static int ext2_unlink(void *priv, const char *path)
 				} *de = (void *)(block_buf + pos);
 
 				if (de->rec_len == 0) break;
+				if (de->rec_len % 4 != 0) break;
 
 				if (de->inode == target_ino) {
 					de->inode = 0;
