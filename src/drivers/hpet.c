@@ -108,7 +108,6 @@ void __init hpet_init(void)
         return;
     }
 
-    hpet_present    = 1;
     revision_id     = (uint8_t)((gcap_id >> 16) & 0xFF);
     vendor_id       = (uint16_t)(gcap_id & 0xFFFF);
     counter_size    = (uint8_t)((gcap_id >> 13) & 1);   /* 0 = 32, 1 = 64 */
@@ -129,6 +128,8 @@ void __init hpet_init(void)
         kprintf("[WARN] HPET period is 0 — cannot configure timer\n");
         return;
     }
+
+    hpet_present    = 1;
 
     /*
      * Compute the HPET counter frequency.
