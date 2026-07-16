@@ -12,11 +12,21 @@
 #include "io.h"
 #include "printf.h"
 #include "string.h"
+#include "timer.h"
 
 static int g_pbtn_ext_init_done = 0;
 static int g_pbtn_ext_present = 0;
 static int g_pbtn_ext_state = 0;
 static acpi_pbtn_callback_t g_pbtn_ext_callback = NULL;
+
+/* Debounce: minimum interval (ms) between accepted power button events.
+ * Mechanical button bounce can cause multiple ACPI fixed-event SCIs for a
+ * single physical press; this window suppresses duplicates. 100 ms is the
+ * standard debounce period per ACPI OS guidance (similar to USB HID). */
+#define ACPI_PBTN_DEBOUNCE_MS   100
+
+/* Timestamp (timer_get_ms) of the last processed power button event. */
+static uint64_t g_pbtn_ext_last_event_ms = 0;
 
 /* ACPI PM1a_EVT_BLK ports for power button status */
 #define PM1a_EVT_BLK  0x1000  /* Will be set from FADT in real system */
@@ -104,8 +114,26 @@ int acpi_power_button_fixed_event_handler(void *context)
     if (!(pm1_sts & ACPI_PWRBTN_STS))
         return 0;  /* No power button event pending */
 
-    /* Clear the status bit by writing 1 to it (ACPI spec: write-1-clear) */
+    /* Clear the status bit by writing 1 to it (ACPI spec: write-1-clear).
+     * This MUST be done even when debounce suppresses the event, otherwise
+     * the status bit stays asserted and prevents future SCIs. */
     outw((uint16_t)g_ext_pm1a_evt_blk + ACPI_PM1_STS, ACPI_PWRBTN_STS);
+
+    /*
+     * Debounce: suppress events that arrive within the debounce window
+     * of the last processed press.  Physical power buttons exhibit
+     * mechanical bounce that can re-assert PWRBTN_STS within a few ms
+     * of being cleared; without debounce a single press would be
+     * reported multiple times.
+     */
+    uint64_t now_ms = timer_get_ms();
+    if (now_ms - g_pbtn_ext_last_event_ms < ACPI_PBTN_DEBOUNCE_MS) {
+        kprintf("[ACPI_PBTN] Fixed event: power button bounce suppressed "
+                "(debounce %llu ms)\n",
+                (unsigned long long)(now_ms - g_pbtn_ext_last_event_ms));
+        return 1;  /* Status cleared, event consumed — no duplicate delivery */
+    }
+    g_pbtn_ext_last_event_ms = now_ms;
 
     /* Update internal state */
     g_pbtn_ext_state = ACPI_PBTN_PRESSED;
