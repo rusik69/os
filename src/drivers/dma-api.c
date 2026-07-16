@@ -112,6 +112,16 @@ int dma_set_mask(struct pci_device *dev, uint64_t mask)
     if (mask == 0)
         return -EIO;
 
+    /* Validate the mask doesn't exceed the device's hardware DMA capability */
+    if (dev->dma_limit != 0 && (mask & ~dev->dma_limit) != 0) {
+        kprintf("[DMA] ERROR: dma_set_mask: dev=%02x:%02x.%x mask=0x%016llx "
+                "exceeds device limit 0x%016llx\n",
+                dev->bus, dev->slot, dev->func,
+                (unsigned long long)mask,
+                (unsigned long long)dev->dma_limit);
+        return -EIO;
+    }
+
     dev->dma_mask = mask;
     kprintf("[DMA] dma_set_mask: dev=%02x:%02x.%x mask=0x%016llx\n",
             dev->bus, dev->slot, dev->func,
@@ -126,6 +136,16 @@ int dma_set_coherent_mask(struct pci_device *dev, uint64_t mask)
 
     if (mask == 0)
         return -EIO;
+
+    /* Validate the mask doesn't exceed the device's hardware DMA capability */
+    if (dev->dma_limit != 0 && (mask & ~dev->dma_limit) != 0) {
+        kprintf("[DMA] ERROR: dma_set_coherent_mask: dev=%02x:%02x.%x mask=0x%016llx "
+                "exceeds device limit 0x%016llx\n",
+                dev->bus, dev->slot, dev->func,
+                (unsigned long long)mask,
+                (unsigned long long)dev->dma_limit);
+        return -EIO;
+    }
 
     dev->coherent_dma_mask = mask;
     kprintf("[DMA] dma_set_coherent_mask: dev=%02x:%02x.%x mask=0x%016llx\n",

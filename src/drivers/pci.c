@@ -1,4 +1,5 @@
 #include "pci.h"
+#include "dma.h"
 #include "io.h"
 #include "printf.h"
 #include "string.h"
@@ -808,6 +809,29 @@ int pci_find_device(uint16_t vendor, uint16_t device, struct pci_device *out) {
                     for (int i = 0; i < 6; i++)
                         out->bar[i] = pci_read((uint8_t)bus, (uint8_t)slot, (uint8_t)func, (uint8_t)(0x10 + i * 4));
 
+                    /* Initialize DMA addressing capabilities */
+                    out->dma_mask = 0;
+                    out->coherent_dma_mask = 0;
+                    out->dma_limit = DMA_BIT_MASK(32);
+
+                    /* Detect 64-bit DMA capability from 64-bit MMIO BARs */
+                    for (int i = 0; i < 6; i++) {
+                        uint32_t bar_val = out->bar[i];
+                        if (bar_val == 0 || (bar_val & 1))
+                            continue;
+                        if (((bar_val >> 1) & 0x3) == 0x2) {
+                            out->dma_limit = DMA_BIT_MASK(64);
+                            break;
+                        }
+                    }
+
+                    /* PCIe capability also indicates 64-bit DMA support */
+                    if (out->dma_limit == DMA_BIT_MASK(32)) {
+                        uint8_t cap_off;
+                        if (pci_find_pcie_cap((uint8_t)bus, (uint8_t)slot, (uint8_t)func, &cap_off) == 0)
+                            out->dma_limit = DMA_BIT_MASK(64);
+                    }
+
                     /* Validate MMIO BAR address ranges don't overlap with RAM.
                      * Both the base address and the end of each BAR's range
                      * are verified to catch overlaps that span into adjacent
@@ -934,6 +958,29 @@ int pci_find_class(uint8_t cls, uint8_t sub, struct pci_device *out) {
                     out->irq = (uint8_t)(r3c & 0xFF);
                     for (int i = 0; i < 6; i++)
                         out->bar[i] = pci_read((uint8_t)bus, (uint8_t)slot, (uint8_t)func, (uint8_t)(0x10 + i * 4));
+
+                    /* Initialize DMA addressing capabilities */
+                    out->dma_mask = 0;
+                    out->coherent_dma_mask = 0;
+                    out->dma_limit = DMA_BIT_MASK(32);
+
+                    /* Detect 64-bit DMA capability from 64-bit MMIO BARs */
+                    for (int i = 0; i < 6; i++) {
+                        uint32_t bar_val = out->bar[i];
+                        if (bar_val == 0 || (bar_val & 1))
+                            continue;
+                        if (((bar_val >> 1) & 0x3) == 0x2) {
+                            out->dma_limit = DMA_BIT_MASK(64);
+                            break;
+                        }
+                    }
+
+                    /* PCIe capability also indicates 64-bit DMA support */
+                    if (out->dma_limit == DMA_BIT_MASK(32)) {
+                        uint8_t cap_off;
+                        if (pci_find_pcie_cap((uint8_t)bus, (uint8_t)slot, (uint8_t)func, &cap_off) == 0)
+                            out->dma_limit = DMA_BIT_MASK(64);
+                    }
 
                     /* Validate MMIO BAR address ranges don't overlap with RAM.
                      * Both the base address and the end of each BAR's range

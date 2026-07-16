@@ -15,6 +15,7 @@ struct pci_device {
     uint32_t bar[6];
     uint64_t dma_mask;             /* DMA addressing mask (set via dma_set_mask) */
     uint64_t coherent_dma_mask;    /* Coherent DMA addressing mask */
+    uint64_t dma_limit;            /* Max DMA mask the device can support (set during enumeration) */
 };
 
 uint32_t pci_read(int bus, int slot, int func, int offset);
