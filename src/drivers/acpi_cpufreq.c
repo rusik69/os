@@ -221,12 +221,12 @@ static int scan_dsdt_for_pss(void)
 
                 status = read_aml_dword(&saved_pos, remaining);
 
-                if (core_freq_mhz > 0 && control <= 0xFF) {
+                if (core_freq_mhz > 0 && (control & 0xFF) <= 0xFF) {
                     states_buf[state_count].core_freq = core_freq_mhz;
                     states_buf[state_count].power     = power_mw;
                     states_buf[state_count].transition_latency = trans_lat;
-                    states_buf[state_count].control   = (uint8_t)(control & 0xFF);
-                    states_buf[state_count].status    = (uint8_t)(status & 0xFF);
+                    states_buf[state_count].control   = control;       /* Full 32-bit _PSS control */
+                    states_buf[state_count].status    = status;        /* Full 32-bit _PSS status */
                     state_count++;
                 }
 
@@ -280,5 +280,5 @@ static int acpi_cpufreq_target(void *policy, unsigned int target_freq)
     (void)policy;
     (void)target_freq;
     kprintf("[acpi] acpi_cpufreq_target: not yet implemented\n");
-    return 0;
+    return -1;  /* Not implemented — callers must use cpupstate_set_state directly */
 }

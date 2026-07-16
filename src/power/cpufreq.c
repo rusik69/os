@@ -276,16 +276,22 @@ int cpupstate_set_state(int state)
     if (!g_cpufreq.present) return -1;
     if (state < 0 || state >= g_cpufreq.num_states) return -1;
 
-    uint8_t pstate_num = g_cpufreq.states[state].control;
-
-    /* Write the P-state number to IA32_PERF_CTL.
-     * Bits 7:0 = P-state number.
-     * Bit 32 = IDA (Intel Dynamic Acceleration) enable (set if available).
-     * Bit 33 = IDA disable. */
-    uint64_t ctl_val = (uint64_t)pstate_num & 0xFFULL;
-
-    /* Optionally set IDA enable (bit 32) for turbo. We leave it
-     * as 0 to stay at the requested P-state. */
+    /*
+     * P-state MSR write — read-modify-write to preserve bits:
+     *   Bits 7:0   = P-state number / FID
+     *   Bits 15:8  = VID (on older Intel CPUs with Enhanced SpeedStep)
+     *   Bit  32    = IDA enable (turbo engage)
+     *   Bit  33    = IDA disable (turbo inhibit)
+     * All other bits must remain unchanged to avoid clobbering
+     * platform-specific MSR configuration or previously-set
+     * IDA/turbo settings.
+     *
+     * Read current value, clear the P-state number field (bits 7:0),
+     * then set the new number from the state table's control field.
+     */
+    uint64_t ctl_val = read_msr(MSR_IA32_PERF_CTL_ACTUAL);
+    ctl_val &= ~0xFFULL;                     /* Clear bits 7:0 */
+    ctl_val |= (uint64_t)(g_cpufreq.states[state].control & 0xFF);  /* Set new P-state */
     write_msr(MSR_IA32_PERF_CTL_ACTUAL, ctl_val);
 
     g_cpufreq.current_state = state;
@@ -766,16 +772,15 @@ static int cpufreq_fast_switch(uint32_t target_freq_khz)
         }
     }
 
-    /* Write directly to MSR_PERF_CTL */
-    uint8_t pstate_num = g_cpufreq.states[target_state].control;
-    uint64_t ctl_val = (uint64_t)pstate_num & 0xFFULL;
-
-    /* Preserve IDA/turbo setting */
-    if (g_boost_enabled)
-        ctl_val |= PERF_CTL_TURBO;
-
-    __asm__ volatile("wrmsr" :: "a"((uint32_t)ctl_val), "d"((uint32_t)(ctl_val >> 32)),
-                     "c"(MSR_IA32_PERF_CTL_ACTUAL) : "memory");
+    /*
+     * Read-modify-write PERF_CTL to preserve all bits except the
+     * P-state number (bits 7:0), including IDA/turbo (bits 32-33)
+     * and VID (bits 15:8 on older Intel Enhanced SpeedStep).
+     */
+    uint64_t ctl_val = read_msr(MSR_IA32_PERF_CTL_ACTUAL);
+    ctl_val &= ~0xFFULL;                     /* Clear bits 7:0 */
+    ctl_val |= (uint64_t)(g_cpufreq.states[target_state].control & 0xFF);  /* Set new P-state */
+    write_msr(MSR_IA32_PERF_CTL_ACTUAL, ctl_val);
 
     g_cpufreq.current_state = target_state;
     return 0;
