@@ -96,6 +96,11 @@ static int aer_handle_uncorrectable(int bus, int dev, int func, uint32_t status)
         return -EIO;
     }
 
+    /* Clear status (write 1 to clear) — non-fatal errors are recoverable */
+    if (aer_cap) {
+        pcie_write(bus, dev, func, aer_cap + PCI_ERR_UNCOR_STATUS, status);
+    }
+
     kprintf("[AER] Non-fatal error(s) on %02x:%02x.%x — may be recoverable\n",
             bus, dev, func);
     return 0;
