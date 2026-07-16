@@ -242,6 +242,10 @@ int spi_transfer(struct spi_device *dev,
             return ret;
     }
 
+    /* ── Assert chip select ───────────────────────────────────────────── */
+    if (master->ops->cs_control)
+        master->ops->cs_control(master->priv, 1);
+
     for (int i = 0; i < num; i++) {
         struct spi_transfer *t = &transfers[i];
 
@@ -256,26 +260,33 @@ int spi_transfer(struct spi_device *dev,
                 return ret;
         }
 
-        /* Execute the transfer */
+        /* Execute the transfer (CS is managed by the framework) */
         int ret = master->ops->transfer_one(master->priv,
                                             t->tx_buf,
                                             t->rx_buf,
                                             t->len,
                                             dev->cs_pin,
                                             master->cs_active_low);
-        if (ret < 0)
+        if (ret < 0) {
+            /* De-assert CS on error */
+            if (master->ops->cs_control)
+                master->ops->cs_control(master->priv, 0);
             return ret;
+        }
 
-        /* If cs_change is set, de-assert CS — the next transfer will
-         * pick it up again if it re-asserts.  For the bitbang path,
-         * each transfer_one already handles CS, so this is advisory. */
+        /* Handle cs_change: de-assert CS between transfers if requested */
         if (t->cs_change) {
-            /* De-assert CS: done implicitly by transfer_one if it drops CS.
-             * Some controllers keep CS asserted between transfers;
-             * the bitbang implementation always de-asserts after each
-             * transfer_one, so this is a no-op for now. */
+            if (master->ops->cs_control)
+                master->ops->cs_control(master->priv, 0);
+            /* Re-assert CS if more transfers follow */
+            if (i < num - 1 && master->ops->cs_control)
+                master->ops->cs_control(master->priv, 1);
         }
     }
+
+    /* ── De-assert chip select ─────────────────────────────────────────── */
+    if (master->ops->cs_control)
+        master->ops->cs_control(master->priv, 0);
 
     return 0;
 }
@@ -481,37 +492,37 @@ static int bb_transfer_one(void *priv, const uint8_t *tx_buf, uint8_t *rx_buf,
     if (!bp || len == 0)
         return -1;  /* EINVAL */
 
-    /* Assert CS (active low by default) — pull low */
-    bb_pin_low(&bp->cs);
-    bb_delay();
-
-    /* Transfer bytes */
+    /* Transfer bytes — CS is managed by the framework */
     for (uint32_t i = 0; i < len; i++) {
         uint8_t tx_byte = tx_buf ? tx_buf[i] : 0xFF;
         uint8_t rx_byte = 0;
 
-        if (bb_transfer_byte(bp, tx_byte, &rx_byte) < 0) {
-            bb_pin_high(&bp->cs);  /* de-assert on error */
+        if (bb_transfer_byte(bp, tx_byte, &rx_byte) < 0)
             return -1;  /* EIO */
-        }
 
         if (rx_buf)
             rx_buf[i] = rx_byte;
     }
 
-    /* ── CS hold time after last SCLK edge ──────────────────────────
-     * Ensure the slave has time to capture the last bit before CS is
-     * de-asserted.  Without this delay the CS hold time (t_csh) is
-     * effectively zero, which can cause some SPI slaves to glitch or
-     * lose the final bit.  The half-period delay scales with the
-     * configured bus speed. */
-    bb_half_period(bp);
-
-    /* De-assert CS (back to inactive high) */
-    bb_pin_high(&bp->cs);
-    bb_delay();
-
     return 0;
+}
+
+/* ── Chip-select control for bitbang backend ────────────────────────── */
+
+static void bb_cs_control(void *priv, int assert)
+{
+    struct bitbang_priv *bp = (struct bitbang_priv *)priv;
+
+    if (assert) {
+        /* Assert CS (active low) — pull low, then setup delay */
+        bb_pin_low(&bp->cs);
+        bb_delay();
+    } else {
+        /* CS hold time after last SCLK edge before de-assert */
+        bb_half_period(bp);
+        bb_pin_high(&bp->cs);
+        bb_delay();
+    }
 }
 
 static int bb_set_mode(void *priv, int mode)
@@ -558,6 +569,7 @@ static const struct spi_master_ops g_bitbang_ops = {
     .set_speed     = bb_set_speed,
     .set_bit_order = bb_set_bit_order,
     .set_word_size = bb_set_word_size,
+    .cs_control    = bb_cs_control,
 };
 
 /**

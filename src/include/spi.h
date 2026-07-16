@@ -101,6 +101,18 @@ struct spi_master_ops {
      * Returns 0 on success, negative errno on failure.
      */
     int (*set_word_size)(void *priv, int bits);
+
+    /**
+     * cs_control — Assert or de-assert chip select (optional).
+     * @priv:    Controller private data
+     * @assert:  1 = assert CS, 0 = de-assert CS
+     *
+     * When set, the SPI framework manages CS assertion and
+     * de-assertion around transfers according to the cs_change
+     * transfer flag.  When NULL (the default), the controller
+     * handles CS inside its own transfer_one() callback.
+     */
+    void (*cs_control)(void *priv, int assert);
 };
 
 /**
