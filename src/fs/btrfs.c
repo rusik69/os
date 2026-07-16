@@ -233,6 +233,14 @@ static int btrfs_search_tree(struct btrfs_priv *bp, uint64_t root_bytenr,
         if (hdr->level != level)
             return -1;
 
+        /* Verify tree block CRC32C checksum stored in the node header.
+         * Every Btrfs node/leaf carries a 32-byte csum field at offset 0;
+         * for csum_type 0 (CRC32C) the first 4 bytes hold the CRC32C of
+         * the entire node after zeroing that field.  Corrupted or
+         * tampered blocks are rejected here. */
+        if (btrfs_csum_verify_node(buf, bp->nodesize, bp->csum_type) != 0)
+            return -1;
+
         uint32_t nritems = hdr->nritems;
         uint32_t hi = nritems;
         uint32_t lo = 0;
