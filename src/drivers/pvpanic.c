@@ -13,9 +13,7 @@
 #include "io.h"
 #include "notifier.h"
 
-#ifdef MODULE
 #include "module.h"
-#endif
 
 /* ── pvpanic constants ─────────────────────────────────────────── */
 
@@ -138,11 +136,14 @@ static void pvpanic_init(void)
     }
 }
 
-#ifdef MODULE
-int __init init_module(void) { pvpanic_init(); return 0; }
-void cleanup_module(void) {}
+/* ── Built-in / modular init and exit ───────────────────────── */
+
+static void pvpanic_exit(void) {}
+
+module_init(pvpanic_init);
+module_exit(pvpanic_exit);
+
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("QEMU pvpanic — MMIO detection, panic event, hypervisor notification");
 MODULE_VERSION("1.0");
-#endif
