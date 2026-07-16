@@ -577,17 +577,28 @@ int pci_setup_interrupts(struct pci_device *dev,
             uint64_t phys_base = (uint64_t)(bar_val & ~0xFu);
             uint64_t table_phys = phys_base + msix_info.table_offset;
 
-            /* Map a page for the MSI-X table */
-            uint64_t table_page = table_phys & ~(uint64_t)0xFFF;
-            uint64_t table_virt = (uint64_t)PHYS_TO_VIRT(table_page);
-            vmm_map_page(table_virt, table_page,
-                         VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_NOCACHE);
-
-            volatile uint32_t *table = (volatile uint32_t *)(table_virt + (table_phys - table_page));
-
             /* Allocate vectors */
             int nvecs = (int)msix_info.table_size;
             if (nvecs > 8) nvecs = 8;  /* limit to reasonable number */
+
+            /* Map the MSI-X table region.
+             * The table may straddle a page boundary if the BAR offset is
+             * near the end of a 4KB page, so we map ALL pages that the
+             * nvecs entries (each MSIX_ENTRY_SIZE bytes) touch. */
+            uint64_t table_start_page = table_phys & ~(uint64_t)(PAGE_SIZE - 1);
+            uint64_t table_end = table_phys + (uint64_t)nvecs * MSIX_ENTRY_SIZE - 1;
+            uint64_t table_end_page = table_end & ~(uint64_t)(PAGE_SIZE - 1);
+
+            for (uint64_t page = table_start_page; page <= table_end_page;
+                 page += PAGE_SIZE) {
+                uint64_t virt = (uint64_t)PHYS_TO_VIRT(page);
+                vmm_map_page(virt, page,
+                             VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_NOCACHE);
+            }
+
+            volatile uint32_t *table = (volatile uint32_t *)(
+                (uint64_t)PHYS_TO_VIRT(table_start_page)
+                + (table_phys - table_start_page));
 
             uint8_t vectors[8];
             uint32_t apic_ids[8];
