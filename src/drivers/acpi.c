@@ -12,6 +12,9 @@ struct fadt;
 static int acpi_parse_dsdt(struct fadt *fadt);
 static int acpi_load_ssdts(void);
 
+/* Forward declaration for ACPI table checksum validation */
+static int acpi_verify_checksum(const void *table, uint32_t length);
+
 /* AML method signatures for dock detection */
 /* "_DCK" as little-endian uint32_t: 'D' 'C' 'K' '_' */
 #define AML_DCK_SIG  0x5f4b4344
@@ -864,10 +867,22 @@ void __init acpi_init(void) {
         xsdt_hdr = (struct acpi_header *)PHYS_TO_VIRT((unsigned long)rsdp->xsdt_addr);
         if (xsdt_hdr && memcmp(xsdt_hdr->signature, "XSDT", 4) == 0) {
             if (xsdt_hdr->length >= sizeof(struct acpi_header)) {
-                num_entries = (uint32_t)((xsdt_hdr->length - sizeof(struct acpi_header)) / 8);
-                use_xsdt = 1;
-                kprintf("[OK] ACPI: XSDT found at 0x%llx with %u entries\n",
-                        (unsigned long long)rsdp->xsdt_addr, num_entries);
+                /* Validate length upper bound and checksum before trusting
+                 * the length field for entry_count computation.  Prevent OOB
+                 * reads from corrupted headers. */
+                if (xsdt_hdr->length > 0x100000) {
+                    kprintf("[ACPI] XSDT too large (%u bytes > 1MB), "
+                            "falling back to RSDT\n",
+                            (unsigned int)xsdt_hdr->length);
+                } else if (acpi_verify_checksum(xsdt_hdr, xsdt_hdr->length) < 0) {
+                    kprintf("[ACPI] XSDT checksum failed, "
+                            "falling back to RSDT\n");
+                } else {
+                    num_entries = (uint32_t)((xsdt_hdr->length - sizeof(struct acpi_header)) / 8);
+                    use_xsdt = 1;
+                    kprintf("[OK] ACPI: XSDT found at 0x%llx with %u entries\n",
+                            (unsigned long long)rsdp->xsdt_addr, num_entries);
+                }
             }
         }
     }
@@ -882,6 +897,18 @@ void __init acpi_init(void) {
         if (rsdt->header.length < sizeof(struct acpi_header)) {
             kprintf("[--] ACPI: RSDT too short (%u bytes, need %zu)\n",
                     (unsigned int)rsdt->header.length, sizeof(struct acpi_header));
+            return;
+        }
+        /* Reject suspiciously large RSDT to prevent OOB reads in
+         * checksum validation and entry enumeration. */
+        if (rsdt->header.length > 0x100000) {
+            kprintf("[--] ACPI: RSDT too large (%u bytes > 1MB)\n",
+                    (unsigned int)rsdt->header.length);
+            return;
+        }
+        /* Validate RSDT checksum before trusting length for entry count */
+        if (acpi_verify_checksum(&rsdt->header, rsdt->header.length) < 0) {
+            kprintf("[--] ACPI: RSDT checksum failed\n");
             return;
         }
         num_entries = (uint32_t)((rsdt->header.length - sizeof(struct acpi_header)) / 4);
@@ -1666,9 +1693,6 @@ static uint32_t acpi_read_gpe_status(void)
 
 /* ── DSDT & SSDT Parsing ───────────────────────────────────────── */
 
-/* Forward declaration for checksum validation used below */
-static int acpi_verify_checksum(const void *table, uint32_t length);
-
 /*
  * Validate the DSDT table header and extract the AML bytecode region.
  * Returns 0 on success, -1 on failure.
@@ -1775,6 +1799,18 @@ static int acpi_load_ssdts(void)
                     (unsigned int)sdt_header->length, sizeof(struct acpi_header));
             return 0;
         }
+        /* Reject suspiciously large XSDT to prevent OOB reads in
+         * checksum validation and entry enumeration. */
+        if (sdt_header->length > 0x100000) {
+            kprintf("[ACPI] SSDT: XSDT too large (%u bytes > 1MB)\n",
+                    (unsigned int)sdt_header->length);
+            return 0;
+        }
+        /* Validate XSDT checksum before trusting length for entry count */
+        if (acpi_verify_checksum(sdt_header, sdt_header->length) < 0) {
+            kprintf("[ACPI] SSDT: XSDT checksum failed\n");
+            return 0;
+        }
         entry_count = (uint32_t)((sdt_header->length - sizeof(struct acpi_header)) / 8);
         entry_size  = 8;
     } else if (g_rsdp_cache.rsdt_addr != 0) {
@@ -1786,6 +1822,18 @@ static int acpi_load_ssdts(void)
         if (sdt_header->length < sizeof(struct acpi_header)) {
             kprintf("[ACPI] SSDT: RSDT too short (%u bytes, need %zu)\n",
                     (unsigned int)sdt_header->length, sizeof(struct acpi_header));
+            return 0;
+        }
+        /* Reject suspiciously large RSDT to prevent OOB reads in
+         * checksum validation and entry enumeration. */
+        if (sdt_header->length > 0x100000) {
+            kprintf("[ACPI] SSDT: RSDT too large (%u bytes > 1MB)\n",
+                    (unsigned int)sdt_header->length);
+            return 0;
+        }
+        /* Validate RSDT checksum before trusting length for entry count */
+        if (acpi_verify_checksum(sdt_header, sdt_header->length) < 0) {
+            kprintf("[ACPI] SSDT: RSDT checksum failed\n");
             return 0;
         }
         entry_count = (uint32_t)((sdt_header->length - sizeof(struct acpi_header)) / 4);
