@@ -339,9 +339,9 @@ void ioapic_set_irq_destination(uint8_t irq, uint32_t apic_id)
     high &= ~(0xFFu << 24);
     high |= (apic_id & 0xFFu) << 24;
 
-    /* Write back — low DWORD must be written after high to latch */
-    ioapic_write_reg(IOAPIC_REDTBL + irq * 2 + 1, high);
+    /* Write back — low DWORD must be written before high to latch */
     ioapic_write_reg(IOAPIC_REDTBL + irq * 2, low);
+    ioapic_write_reg(IOAPIC_REDTBL + irq * 2 + 1, high);
 }
 
 /* ── IPI (Inter-Processor Interrupts) handlers ────────────────────── */

@@ -43,8 +43,8 @@ struct fadt {
     uint32_t pm1b_evt_blk;
     uint32_t pm1a_cnt_blk;   /* PM1a control block port */
     uint32_t pm1b_cnt_blk;
-    uint32_t pm1a_evt_blk_len;
-    uint32_t pm1b_evt_blk_len;
+    uint16_t pm1a_evt_blk_len;
+    uint16_t pm1b_evt_blk_len;
     uint32_t pm2_cnt_blk;
     uint32_t pm_tmr_blk;
     uint32_t gpe0_blk;
@@ -67,8 +67,7 @@ struct fadt {
     uint8_t  mon_alrm;
     uint8_t  century;
     uint16_t iapc_boot_arch;
-    uint8_t  _flags2;
-    uint8_t  _res3[3];
+    uint32_t flags;
     /* Reset register (Generic Address Structure) — 12 bytes */
     uint8_t  reset_reg_addr_space;
     uint8_t  reset_reg_bit_width;
