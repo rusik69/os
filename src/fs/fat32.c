@@ -132,7 +132,7 @@ static char         g_volume_label[12];
 #define FAT_EOC()        (fat_type == FAT12 ? 0x0FF8u : (fat_type == FAT16 ? 0xFFF8u : 0x0FFFFFF8u))
 #define FAT_FREE()       0u
 #define FAT_MAX_CLUSTER() (fat_type == FAT12 ? 0x0FF0u : (fat_type == FAT16 ? 0xFFF0u : 0x0FFFFFF0u))
-#define FAT_IS_EOC(val)   ((val) >= FAT_MAX_CLUSTER())
+#define FAT_IS_EOC(val)   ((val) >= FAT_EOC())
 
 /* Sector-sized scratch buffer (on stack in helpers) */
 #define SECT_SIZE 512
