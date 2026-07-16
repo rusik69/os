@@ -79,12 +79,25 @@ static int ptm_dialog(void)
 
     WRITE_ONCE(ptm.local_time, 0);    /* timer_get_ticks() */
     WRITE_ONCE(ptm.master_time, 0);
-    WRITE_ONCE(ptm.dialog_count, READ_ONCE(ptm.dialog_count) + 1);
 
     /* Compute correction based on dialog exchange */
     /* tm = (t1 + (t4 - (t3 - t2)) / 2) - t2 */
     /* Simplified: */
     WRITE_ONCE(ptm.correction, READ_ONCE(ptm.master_time) - READ_ONCE(ptm.local_time));
+
+    /*
+     * Clock domain crossing barrier pair (wmb/rmb):
+     *
+     * The correction computed above must be globally visible before
+     * we advertise it by incrementing dialog_count.  Without the
+     * wmb(), a reader on a different clock domain (e.g. a timer
+     * callback consuming corrected time) could see the new
+     * dialog_count but the old correction value.
+     *
+     * This pairs with the rmb() in ptm_get_corrected_time().
+     */
+    wmb();
+    WRITE_ONCE(ptm.dialog_count, READ_ONCE(ptm.dialog_count) + 1);
 
     return 0;
 }
@@ -95,6 +108,12 @@ static uint64_t ptm_get_corrected_time(uint64_t raw_time)
     if (READ_ONCE(ptm.dialog_count) == 0)
         return raw_time;
 
+    /*
+     * Read barrier pairs with the wmb() in ptm_dialog().
+     * Having observed dialog_count > 0 we must ensure the
+     * correction value is also visible before using it.
+     */
+    rmb();
     return raw_time + READ_ONCE(ptm.correction);
 }
 
