@@ -774,7 +774,7 @@ static uint32_t aml_process_object(struct aml_parse_state *state,
 
 	/* Add the namespace node */
 	int node_idx = aml_add_node(name, node_type, parent,
-				    &aml[o - 1], total_size, state->ssdt_index);
+				    &aml[state->offset], total_size, state->ssdt_index);
 
 	if (node_idx < 0)
 		return total_size;
