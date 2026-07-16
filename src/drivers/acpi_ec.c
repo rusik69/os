@@ -196,6 +196,9 @@ int ec_write(uint8_t addr, uint8_t val)
     if (ec_wait_ibf() < 0) return -1;
     outb(val, EC_DATA);
 
+    /* Wait for EC to consume the data byte (IBF=0) before returning */
+    if (ec_wait_ibf() < 0) return -1;
+
     return 0;
 }
 
