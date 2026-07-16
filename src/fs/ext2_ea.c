@@ -324,7 +324,9 @@ int ext2_ea_set(struct ext2_priv *ep, uint32_t ino,
 
     /* Collect all entries from the old block */
     struct {
-        struct ext2_ext_attr_entry *entry;
+        uint8_t  name_len;      /* saved entry name length */
+        uint8_t  name_index;    /* saved entry name index */
+        uint32_t name_offs;     /* offset of name data in old block */
         uint32_t entry_len;     /* total bytes for entry + name (aligned) */
         uint32_t value_offs;    /* offset of value in old block */
         uint32_t value_size;    /* size of value */
@@ -358,7 +360,10 @@ int ext2_ea_set(struct ext2_priv *ep, uint32_t ino,
                 found_old = 1;
                 /* Skip — we'll add the new value instead */
             } else if (num_entries < 32) {
-                entries[num_entries].entry = entry;
+                entries[num_entries].name_len = entry->e_name_len;
+                entries[num_entries].name_index = entry->e_name_index;
+                entries[num_entries].name_offs =
+                    (uint32_t)((const uint8_t *)(entry + 1) - ea_block);
                 entries[num_entries].entry_len = elen;
                 entries[num_entries].value_offs = entry->e_value_offs;
                 entries[num_entries].value_size = entry->e_value_size;
@@ -399,6 +404,11 @@ int ext2_ea_set(struct ext2_priv *ep, uint32_t ino,
     }
 
     /* ── Rebuild the block ───────────────────────────────────────── */
+    /* Save old block content before zeroing — entry names and values
+     * were read from ea_block in the collection loop above and will
+     * be needed for the rebuild below. */
+    uint8_t old_ea_block[4096];
+    memcpy(old_ea_block, ea_block, block_size);
     memset(ea_block, 0, block_size);
 
     struct ext2_ext_attr_header *new_hdr =
@@ -419,20 +429,20 @@ int ext2_ea_set(struct ext2_priv *ep, uint32_t ino,
 
         struct ext2_ext_attr_entry *new_entry =
             (struct ext2_ext_attr_entry *)(ea_block + entry_pos);
-        new_entry->e_name_len = entries[i].entry->e_name_len;
-        new_entry->e_name_index = entries[i].entry->e_name_index;
+        new_entry->e_name_len = entries[i].name_len;
+        new_entry->e_name_index = entries[i].name_index;
         new_entry->e_value_block = 0;
         new_entry->e_value_size = entries[i].value_size;
 
-        /* Copy the name */
-        const uint8_t *old_name = (const uint8_t *)(entries[i].entry + 1);
+        /* Copy the name from the saved old block */
+        const uint8_t *old_name = old_ea_block + entries[i].name_offs;
         memcpy(new_entry + 1, old_name, new_entry->e_name_len);
 
         /* Copy the value to the end of the block */
         value_pos -= entries[i].value_alen;
         new_entry->e_value_offs = (uint16_t)value_pos;
         memcpy(ea_block + value_pos,
-               ea_block + entries[i].value_offs,
+               old_ea_block + entries[i].value_offs,
                entries[i].value_size);
 
         /* Compute hash */
