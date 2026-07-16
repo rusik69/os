@@ -1404,66 +1404,128 @@ int jbd2_replay(struct jbd2_journal *journal)
             break;
         }
 
-        /* Replay this descriptor's data blocks */
-        ret = jbd2_replay_descriptor(journal, buf,
-                                      &current, block_size);
-        if (ret < 0)
-            goto out_err;
+        {
+            /* ── Phase 1: Pre-verify commit block before replaying data ── */
+            uint32_t desc_block = current;
+            uint32_t desc_sequence = hdr->h_sequence;
+            int tags_per_block;
+            int num_tags;
+            uint32_t tag_offset;
+            int i;
+            uint32_t commit_pos;
 
-        /* Skip any revocation blocks between data and commit block */
-        for (;;) {
-            if (current >= journal->total_blocks)
-                current = journal->first_data_block;
+            /* Count tags from descriptor (same logic as
+             * jbd2_replay_descriptor) */
+            tags_per_block = ((int)block_size -
+                              (int)sizeof(struct jbd2_header))
+                             / (int)sizeof(struct jbd2_block_tag);
+            if (tags_per_block <= 0) {
+                kprintf("[jbd2] invalid block size for tags\n");
+                ret = JBD2_ERR_BAD_MAGIC;
+                goto out_err;
+            }
 
-            ret = jbd2_read_block(journal, current, buf);
+            num_tags = 0;
+            tag_offset = sizeof(struct jbd2_header);
+            for (i = 0; i < tags_per_block; i++) {
+                const struct jbd2_block_tag *tag;
+
+                if (tag_offset + sizeof(struct jbd2_block_tag) >
+                    block_size)
+                    break;
+
+                tag = (const struct jbd2_block_tag *)(buf +
+                                                       tag_offset);
+                num_tags++;
+                tag_offset += sizeof(struct jbd2_block_tag);
+
+                if (tag->t_flags & JBD2_FLAG_LAST_TAG)
+                    break;
+            }
+
+            /* Calculate where the commit block should be:
+             * descriptor block + 1 + num_tags data blocks */
+            commit_pos = desc_block + 1 + num_tags;
+            if (commit_pos >= journal->total_blocks)
+                commit_pos = journal->first_data_block;
+
+            /* Process any revocation blocks between data blocks
+             * and the commit block */
+            for (;;) {
+                if (commit_pos >= journal->total_blocks)
+                    commit_pos = journal->first_data_block;
+
+                ret = jbd2_read_block(journal, commit_pos, buf);
+                if (ret != JBD2_OK) {
+                    kprintf("[jbd2] I/O error reading block %u "
+                            "during commit pre-check\n",
+                            commit_pos);
+                    goto out_err;
+                }
+
+                hdr = (const struct jbd2_header *)buf;
+                if (hdr->h_magic != JBD2_MAGIC_NUMBER ||
+                    hdr->h_blocktype != JBD2_REVOKE_BLOCK)
+                    break;
+
+                ret = jbd2_process_revoke_block(journal, buf);
+                if (ret != JBD2_OK) {
+                    kprintf("[jbd2]  failed to process revoke "
+                            "block at %u\n", commit_pos);
+                    goto out_err;
+                }
+                commit_pos++;
+            }
+
+            /* Handle wrap-around for final commit position */
+            if (commit_pos >= journal->total_blocks)
+                commit_pos = journal->first_data_block;
+
+            /* Read and verify the commit block */
+            ret = jbd2_read_block(journal, commit_pos, buf);
             if (ret != JBD2_OK) {
-                kprintf("[jbd2] I/O error reading block %u "
-                        "after descriptor replay\n", current);
+                kprintf("[jbd2] I/O error reading commit block "
+                        "at %u\n", commit_pos);
                 goto out_err;
             }
 
             hdr = (const struct jbd2_header *)buf;
             if (hdr->h_magic != JBD2_MAGIC_NUMBER ||
-                hdr->h_blocktype != JBD2_REVOKE_BLOCK)
-                break;
-
-            /* Process the revocation block */
-            ret = jbd2_process_revoke_block(journal, buf);
-            if (ret != JBD2_OK) {
-                kprintf("[jbd2]  failed to process revoke block "
-                        "at %u\n", current);
+                hdr->h_blocktype != JBD2_COMMIT_BLOCK ||
+                hdr->h_sequence != desc_sequence) {
+                kprintf("[jbd2] missing/invalid commit block for "
+                        "seq %u at block %u\n",
+                        desc_sequence, commit_pos);
+                ret = JBD2_ERR_BAD_MAGIC;
                 goto out_err;
             }
-            current++;
+
+            /* ── Phase 2: Commit block verified — now safely replay ── */
+
+            /* Re-read descriptor block (buf was overwritten by
+             * commit/revoke reads above) */
+            ret = jbd2_read_block(journal, desc_block, buf);
+            if (ret != JBD2_OK) {
+                kprintf("[jbd2] I/O error re-reading descriptor "
+                        "at %u\n", desc_block);
+                goto out_err;
+            }
+
+            /* Replay the descriptor's data blocks */
+            current = desc_block;
+            ret = jbd2_replay_descriptor(
+                journal, buf, &current, block_size);
+            if (ret < 0)
+                goto out_err;
+
+            /* Advance past the commit block */
+            current = commit_pos + 1;
+            transactions++;
+
+            kprintf("[jbd2]  transaction seq=%u committed, "
+                    "%d block(s) replayed\n",
+                    desc_sequence, (ret > 0) ? ret : 0);
         }
-
-        /* Verify the commit block exists */
-        if (current >= journal->total_blocks)
-            current = journal->first_data_block;
-
-        ret = jbd2_read_block(journal, current, buf);
-        if (ret != JBD2_OK) {
-            kprintf("[jbd2] I/O error reading commit block "
-                    "at %u\n", current);
-            goto out_err;
-        }
-
-        hdr = (const struct jbd2_header *)buf;
-        if (hdr->h_magic != JBD2_MAGIC_NUMBER ||
-            hdr->h_blocktype != JBD2_COMMIT_BLOCK) {
-            kprintf("[jbd2] missing commit block for seq %u "
-                    "at block %u\n", expected_seq, current);
-            ret = JBD2_ERR_BAD_MAGIC;
-            goto out_err;
-        }
-
-        /* Advance past the commit block */
-        current++;
-        transactions++;
-
-        kprintf("[jbd2]  transaction seq=%u committed, "
-                "%d block(s) replayed\n",
-                expected_seq, ret);
     }
 
     if (transactions > 0) {
