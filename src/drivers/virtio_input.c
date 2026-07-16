@@ -266,7 +266,6 @@ static struct virtio_input_absinfo vi_config_read_abs(uint8_t code)
 {
 	struct virtio_input_absinfo info;
 	uint8_t size_val;
-	int i;
 
 	memset(&info, 0, sizeof(info));
 
@@ -357,15 +356,13 @@ static int vi_submit_event_buf(struct vi_vq *q,
 {
 	struct vring_desc  *descs;
 	struct vring_avail *avail;
-	struct vring_used  *used;
-	uint16_t prev_used, avail_idx;
+	uint16_t avail_idx;
 
 	if (!q->initialized)
 		return -1;
 
 	descs = q->descs;
 	avail = q->avail;
-	used  = q->used;
 
 	/* Build a single descriptor: device writes event data.
 	 * Each pool buffer gets its own descriptor index so the device
@@ -378,18 +375,12 @@ static int vi_submit_event_buf(struct vi_vq *q,
 	descs[desc_idx].next  = 0;
 
 	/* Submit to the avail ring */
-	prev_used = used->idx;
 	avail_idx = avail->idx & (VRING_SIZE - 1);
 	avail->ring[avail_idx] = desc_idx;
 	__asm__ volatile("" ::: "memory");
 	avail->idx++;
 	__asm__ volatile("" ::: "memory");
 
-	/* Notify the device */
-	vi_notify_queue(q->queue_idx);
-
-	/* Return without waiting — we poll for used buffers later */
-	(void)prev_used;
 	return 0;
 }
 
@@ -406,6 +397,9 @@ static int vi_submit_all_event_bufs(struct vi_vq *q)
 		if (vi_submit_event_buf(q, &event_pool[i], (uint16_t)i) < 0)
 			return -1;
 	}
+
+	/* Single notification after all buffers are queued */
+	vi_notify_queue(q->queue_idx);
 	return 0;
 }
 
@@ -824,23 +818,31 @@ static void virtio_input_init(void)
 		}
 	}
 
-	/* Submit all event pool buffers as receive descriptors */
-	if (vi_submit_all_event_bufs(&event_vq) < 0) {
-		kprintf("[VIRTIO-INPUT] event buffer submission failed\n");
-		return;
-	}
-
 	/* Set FEATURES_OK */
 	vi_outb(VIRTIO_PCI_STATUS,
 		VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER |
 		VIRTIO_STATUS_FEATURES_OK);
 
-	/* Driver OK */
+	/* Read back to verify feature negotiation was accepted */
+	if (!(vi_inb(VIRTIO_PCI_STATUS) & VIRTIO_STATUS_FEATURES_OK)) {
+		kprintf("[VIRTIO-INPUT] device rejected feature negotiation\n");
+		return;
+	}
+
+	/* Driver OK — device is live */
 	vi_outb(VIRTIO_PCI_STATUS,
 		VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER |
 		VIRTIO_STATUS_FEATURES_OK | VIRTIO_STATUS_DRIVER_OK);
 
 	input_present = 1;
+
+	/* Submit all event pool buffers as receive descriptors.
+	 * Done after DRIVER_OK per VirtIO spec (driver must not notify
+	 * before DRIVER_OK). */
+	if (vi_submit_all_event_bufs(&event_vq) < 0) {
+		kprintf("[VIRTIO-INPUT] event buffer submission failed\n");
+		/* Non-fatal — device is already live */
+	}
 
 	/* Initialize multi-touch state */
 	{
