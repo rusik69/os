@@ -172,8 +172,14 @@ void __init hpet_init(void)
      * (hrtimer / clockevent) has registered for it yet.
      * The HPET periodic mode itself is proved by reading back
      * the configuration register.
+     *
+     * TN_VAL_SET is set so that writing the comparator also
+     * initializes the internal periodic accumulator.  Without it
+     * the accumulator may stay at 0 (undefined), and periodic
+     * mode will not work correctly on subsequent matches.
+     * This bit auto-clears after the comparator write.
      */
-    uint32_t t0_conf = HPET_TN_ENABLE | HPET_TN_PERIODIC;
+    uint32_t t0_conf = HPET_TN_ENABLE | HPET_TN_PERIODIC | HPET_TN_VAL_SET;
 
     /* If the counter only supports 32-bit mode, set the 32-bit flag */
     if (!hpet_64bit)

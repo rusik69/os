@@ -1,5 +1,5 @@
 {
-  "current_item": 797,
+  "current_item": 719,
   "total_items": 1000,
   "completed_items": [
     1,
@@ -717,6 +717,7 @@
     713,
     714,
     715,
+    718,
     784,
     785,
     786,
@@ -729,8 +730,9 @@
     793,
     794,
     795,
-    796
+    796,
+    797
   ],
-  "found_bugs": 1199,
-  "fixed_bugs": 1199
+  "found_bugs": 1201,
+  "fixed_bugs": 1201
 }
