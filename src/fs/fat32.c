@@ -719,11 +719,16 @@ int fat32_mount(fat32_disk_t disk, uint32_t part_lba) {
     /* Validate geometry before any division operations */
     if (bps == 0) return -5;
     if (spc == 0) return -6;
+    if (bpb->reserved_sectors == 0) return -7;
     /* Determine FAT type from cluster count */
     uint32_t root_dir_sz = root_entries * 32; /* bytes */
     uint32_t root_dir_sec = (root_dir_sz + bps - 1) / bps;
     uint32_t fat_sz = bpb->fat_size_16 ? bpb->fat_size_16 : bpb->fat_size_32;
     fat_sectors = fat_sz;
+
+    /* Prevent arithmetic underflow — total geometry must fit within total sectors */
+    if ((uint64_t)bpb->reserved_sectors + (uint64_t)num_fats * fat_sz + root_dir_sec > total_sectors)
+        return -EINVAL;
 
     uint32_t data_sec = total_sectors
                       - bpb->reserved_sectors
@@ -750,6 +755,8 @@ int fat32_mount(fat32_disk_t disk, uint32_t part_lba) {
 
     if (fat_type == FAT32) {
         root_cluster = bpb->root_cluster;
+        /* FAT32 requires at least 2 reserved sectors (boot sector + FSInfo) */
+        if (bpb->reserved_sectors < 2) return -EINVAL;
         /* FAT32 root cluster must be a valid cluster number (>= 2) */
         if (root_cluster < 2 || FAT_IS_EOC(root_cluster))
             return -EINVAL;
@@ -2319,6 +2326,9 @@ static int fat32_validate_bpb(const uint8_t *boot)
 		return -EINVAL;
 
 	if (bpb->fat_size_32 == 0 && bpb->fat_size_16 == 0)
+		return -EINVAL;
+
+	if (bpb->reserved_sectors == 0)
 		return -EINVAL;
 
 	return 0;
