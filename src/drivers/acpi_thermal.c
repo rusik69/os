@@ -37,6 +37,8 @@
 
 #define MAX_THERMAL_ZONES       4
 #define TEMP_TREND_HYSTERESIS   5   /* tenths K (0.5°C) to consider a trend change */
+#define TEMP_DK_MIN_VALID       2231  /* -50°C in deci-Kelvin — lowest plausible temp */
+#define TEMP_DK_MAX_VALID       4731  /* +200°C in deci-Kelvin — above silicon limits */
 #define TREND_RISING            1
 #define TREND_FALLING          (-1)
 #define TREND_STABLE            0
@@ -331,6 +333,7 @@ static void thermal_timer_cb(void *arg);
  */
 static void thermal_init_trip_points(struct thermal_zone_ext *tze)
 {
+    struct acpi_thermal_zone *z = &tze->base;
     int idx = 0;
     struct {
         const char *method;
@@ -357,6 +360,14 @@ static void thermal_init_trip_points(struct thermal_zone_ext *tze)
 
         int temp;
         if (thermal_evaluate_method(0, methods[m].method, &temp) == 0) {
+            /* Validate temperature is in physically plausible range */
+            if (temp < TEMP_DK_MIN_VALID || temp > TEMP_DK_MAX_VALID) {
+                kprintf("[ACPI_TZ] Ignoring %s with out-of-range "
+                        "temperature %d dK (valid %d..%d)\n",
+                        methods[m].method, temp,
+                        TEMP_DK_MIN_VALID, TEMP_DK_MAX_VALID);
+                continue;
+            }
             struct trip_point *tp = &tze->trip_points[idx];
             tp->type = methods[m].type;
             tp->temperature = temp;
@@ -364,6 +375,13 @@ static void thermal_init_trip_points(struct thermal_zone_ext *tze)
             tp->crossed = 0;
             strncpy(tp->method, methods[m].method, sizeof(tp->method) - 1);
             tp->method[sizeof(tp->method) - 1] = '\0';
+
+            /* Sync zone-level cached thresholds from trip point values */
+            if (methods[m].type == TRIP_POINT_CRITICAL)
+                z->crit_temp = temp;
+            else if (methods[m].type == TRIP_POINT_PASSIVE)
+                z->passive_temp = temp;
+
             idx++;
         }
     }
