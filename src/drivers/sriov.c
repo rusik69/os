@@ -127,33 +127,50 @@ static uint64_t sriov_size_vf_bar(int bus, int dev, int func,
             *is_64bit = 1;
     }
 
-    /* Size the lower 32-bit part */
-    pcie_write(bus, dev, func, off, 0xFFFFFFFF);
-    uint32_t sz_lo = pcie_read(bus, dev, func, off);
-    pcie_write(bus, dev, func, off, orig_lo);
-
     uint64_t size;
-    if (*is_io) {
-        /* I/O BAR: bits 31:2 encode size */
-        size = (uint64_t)(~(sz_lo & 0xFFFFFFFC)) + 1;
-    } else {
-        /* Memory BAR: bits 31:4 encode size */
-        size = (uint64_t)(~(sz_lo & PCI_BAR_SIZE_MASK)) + 1;
-    }
 
-    if (*is_64bit && size != 0) {
-        /* Size the upper 32-bit part (bits 63:32) */
+    if (*is_64bit) {
+        /*
+         * 64-bit BAR sizing: write ALL-1s to BOTH halves, read back the
+         * full 64-bit address mask, restore both originals, then compute
+         * size via ~mask + 1 in a single step.
+         *
+         * Doing the low half first and the high half separately (the old
+         * approach) is incorrect because ~sz_lo + 1 already converts the
+         * low mask into a size — OR'ing in ~sz_hi << 32 and adding 1 again
+         * produces a garbage result.  The combined ~full_mask + 1 must be
+         * done exactly once.
+         */
         int off_hi = off + PCI_SRIOV_VF_BAR_SIZE;
         uint32_t orig_hi = pcie_read(bus, dev, func, off_hi);
+
+        pcie_write(bus, dev, func, off,   0xFFFFFFFF);
         pcie_write(bus, dev, func, off_hi, 0xFFFFFFFF);
+        uint32_t sz_lo = pcie_read(bus, dev, func, off);
         uint32_t sz_hi = pcie_read(bus, dev, func, off_hi);
+
+        pcie_write(bus, dev, func, off,   orig_lo);
         pcie_write(bus, dev, func, off_hi, orig_hi);
 
-        size |= ((uint64_t)~(uint64_t)sz_hi) << 32;
-        /* Compute final size as power-of-2 aligned */
-        /* size is now the mask; add 1 for the real size */
-        if (size != 0)
-            size = size + 1;
+        /* Form the full 64-bit address mask then compute size exactly once */
+        uint64_t full_mask = ((uint64_t)sz_hi << 32)
+                           | (uint64_t)(sz_lo & PCI_BAR_SIZE_MASK);
+        if (full_mask == UINT64_MAX)
+            return 0;               /* all bits decoded — BAR not implemented */
+        size = (~full_mask) + 1;
+    } else {
+        /* Standard 32-bit (or I/O) BAR sizing */
+        pcie_write(bus, dev, func, off, 0xFFFFFFFF);
+        uint32_t sz_lo = pcie_read(bus, dev, func, off);
+        pcie_write(bus, dev, func, off, orig_lo);
+
+        if (*is_io) {
+            /* I/O BAR: bits 31:2 encode size */
+            size = (uint64_t)(~(sz_lo & 0xFFFFFFFC)) + 1;
+        } else {
+            /* Memory BAR: bits 31:4 encode size */
+            size = (uint64_t)(~(sz_lo & PCI_BAR_SIZE_MASK)) + 1;
+        }
     }
 
     return size;
