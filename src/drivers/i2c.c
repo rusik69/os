@@ -242,9 +242,21 @@ void i2c_stop(void) {
     gpio_scl_high();
     i2c_delay();
 
+    /* Check for clock stretch: if SCL doesn't go high, a slave is
+     * stretching.  Wait with a timeout, then release the bus.
+     * This is NOT arbitration loss — it's a slave clock stretch. */
     if (gpio_scl_read() == 0) {
-        /* Clock stretched on stop — rare, but handle */
-        g_arbitration_lost = 1;
+        int timeout = 1000;
+        while (gpio_scl_read() == 0 && timeout > 0) {
+            i2c_delay();
+            timeout--;
+        }
+        /* If SCL never goes high, just release and give up */
+        if (timeout == 0) {
+            gpio_sda_release();
+            i2c_delay();
+            return;
+        }
     }
 
     gpio_sda_release();
@@ -349,11 +361,25 @@ uint8_t i2c_read_byte(int ack) {
         gpio_sda_release();  /* NAK */
     i2c_delay();
 
+    /* Clock in the ACK/NAK bit with clock stretch handling */
     gpio_scl_high();
     i2c_delay();
-    gpio_scl_low();
 
-    /* Verify arbitration on ACK/NAK bit for multi-master */
+    if (gpio_scl_read() == 0) {
+        /* Clock stretch during ACK/NAK — wait with timeout */
+        int timeout = 1000;
+        while (gpio_scl_read() == 0 && timeout > 0) {
+            i2c_delay();
+            timeout--;
+        }
+        if (timeout == 0) {
+            /* SCL never went high — bus error */
+            gpio_sda_release();
+            return 0xFF;
+        }
+    }
+
+    /* Verify arbitration on ACK/NAK bit for multi-master (sample while SCL is HIGH) */
     if (ack) {
         if (gpio_sda_read() != 0) {
             /* We tried to send ACK but line is high — arbitration lost */
@@ -365,6 +391,9 @@ uint8_t i2c_read_byte(int ack) {
             g_arbitration_lost = 1;
         }
     }
+
+    gpio_scl_low();
+    i2c_delay();
 
     /* Release SDA */
     gpio_sda_release();
