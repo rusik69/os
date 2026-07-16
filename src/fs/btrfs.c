@@ -672,6 +672,19 @@ static int btrfs_parse_extent_tree(struct btrfs_priv *bp)
     uint32_t extent_count;
     uint32_t metadata_count;
 
+    /* Safety check: nodesize must fit in our stack buffer.
+     * btrfs_search_tree passes buf to btrfs_read_node which writes
+     * bp->nodesize bytes — if nodesize exceeds buf[] we get stack
+     * corruption.  Without this check, a crafted or non-4K-nodesize
+     * Btrfs image would overflow the 4K buffer before any extent
+     * item can be safely read. */
+    if (bp->nodesize > sizeof(buf)) {
+        kprintf("[btrfs] extent tree: nodesize %u exceeds stack "
+                "buffer (%zu), cannot parse extent items\n",
+                bp->nodesize, sizeof(buf));
+        return -EINVAL;
+    }
+
     ret = btrfs_read_root_backup(bp, 0, &rb);
     if (ret < 0) {
         kprintf("[btrfs] failed to read root backup for extent tree: %d\n",
@@ -758,6 +771,18 @@ static int btrfs_parse_extent_tree(struct btrfs_priv *bp)
                     sz >= sizeof(struct btrfs_extent_item)) {
                     struct btrfs_extent_item *ei =
                         (struct btrfs_extent_item *)(buf + off);
+
+                    /* Validate refs count: a live extent must have
+                     * at least one reference.  refs == 0 means the
+                     * extent item is stale (should have been deleted)
+                     * or the filesystem is corrupt. */
+                    if (ei->refs == 0) {
+                        kprintf("[btrfs] WARNING: extent 0x%llx "
+                                "len=%llu has refs==0 (stale extent)\n",
+                                (unsigned long long)cur_obj,
+                                (unsigned long long)cur_off);
+                    }
+
                     kprintf("[btrfs]   extent 0x%llx len=%llu "
                             "refs=%llu gen=%llu flags=0x%llx\n",
                             (unsigned long long)cur_obj,
@@ -774,6 +799,17 @@ static int btrfs_parse_extent_tree(struct btrfs_priv *bp)
                     sz >= sizeof(struct btrfs_extent_item)) {
                     struct btrfs_extent_item *ei =
                         (struct btrfs_extent_item *)(buf + off);
+
+                    /* Validate refs count: a live metadata extent must
+                     * have at least one reference. */
+                    if (ei->refs == 0) {
+                        kprintf("[btrfs] WARNING: metadata extent "
+                                "0x%llx level=%llu has refs==0"
+                                " (stale extent)\n",
+                                (unsigned long long)cur_obj,
+                                (unsigned long long)cur_off);
+                    }
+
                     kprintf("[btrfs]   metadata 0x%llx "
                             "level=%llu refs=%llu gen=%llu flags=0x%llx\n",
                             (unsigned long long)cur_obj,
