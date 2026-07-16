@@ -185,6 +185,14 @@ struct dma_buf_attachment *dma_buf_attach(struct dma_buf *dmabuf,
         return NULL;
     }
 
+    /* Check for refcount overflow — saturate at INT32_MAX so the
+     * buffer cannot be permanently leaked via signed-wrap to INT_MIN. */
+    if (dmabuf->refcount >= INT32_MAX) {
+        spinlock_irqsave_release(&dmabuf->lock, flags);
+        free_attachment(att);
+        return NULL;
+    }
+
     dmabuf->attachments[dmabuf->attach_count++] = att;
     dmabuf->refcount++;
 
