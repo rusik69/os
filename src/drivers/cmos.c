@@ -86,31 +86,44 @@ static int cmos_set_time(const void *time)
     if (!t)
         return -EINVAL;
 
-    uint8_t bcd_sec = (t->second / 10) << 4 | (t->second % 10);
-    uint8_t bcd_min = (t->minute / 10) << 4 | (t->minute % 10);
-    uint8_t bcd_hr  = (t->hour / 10) << 4 | (t->hour % 10);
-    uint8_t bcd_day = (t->day / 10) << 4 | (t->day % 10);
-    uint8_t bcd_mon = (t->month / 10) << 4 | (t->month % 10);
-    uint16_t year_short = t->year % 100;
-    uint8_t bcd_yr  = (uint8_t)((year_short / 10) << 4 | (year_short % 10));
+    /* Check data mode: DM bit (bit 2) of Status Register B.
+     * DM=0 → BCD mode, DM=1 → binary mode.
+     * Only time registers (0x00-0x09) follow the DM bit;
+     * the century byte at 0x32 is always BCD on PC hardware. */
+    uint8_t regb = cmos_read(0x0B);
+    int bcd_mode = !(regb & 0x04);
 
     /* Disable NMI and set SET bit to prevent updates during write */
-    uint8_t prev = cmos_read(0x0B);
-    cmos_write(0x0B, prev | 0x80);
+    cmos_write(0x0B, regb | 0x80);
 
-    cmos_write(0x00, bcd_sec);
-    cmos_write(0x02, bcd_min);
-    cmos_write(0x04, bcd_hr);
-    cmos_write(0x06, 0);  /* day of week — skip */
-    cmos_write(0x07, bcd_day);
-    cmos_write(0x08, bcd_mon);
-    cmos_write(0x09, bcd_yr);
+    if (bcd_mode) {
+        /* BCD mode: encode values as BCD (2-digit decimal per byte) */
+        cmos_write(0x00, (uint8_t)((t->second / 10) << 4 | (t->second % 10)));
+        cmos_write(0x02, (uint8_t)((t->minute / 10) << 4 | (t->minute % 10)));
+        cmos_write(0x04, (uint8_t)((t->hour / 10) << 4 | (t->hour % 10)));
+        cmos_write(0x06, 0);  /* day of week — skip */
+        cmos_write(0x07, (uint8_t)((t->day / 10) << 4 | (t->day % 10)));
+        cmos_write(0x08, (uint8_t)((t->month / 10) << 4 | (t->month % 10)));
+        uint16_t yr_short = t->year % 100;
+        cmos_write(0x09, (uint8_t)((yr_short / 10) << 4 | (yr_short % 10)));
+    } else {
+        /* Binary mode: write raw values directly */
+        cmos_write(0x00, t->second);
+        cmos_write(0x02, t->minute);
+        cmos_write(0x04, t->hour);
+        cmos_write(0x06, 0);  /* day of week — skip */
+        cmos_write(0x07, t->day);
+        cmos_write(0x08, t->month);
+        cmos_write(0x09, (uint8_t)(t->year % 100));
+    }
+
+    /* Century byte at 0x32 is always BCD on PC hardware */
     uint16_t century = t->year / 100;
     uint8_t bcd_century = (uint8_t)(((century / 10) << 4) | (century % 10));
     cmos_write(0x32, bcd_century);
 
-    /* Clear SET bit */
-    cmos_write(0x0B, prev & ~0x80);
+    /* Clear SET bit (restore original NMI state) */
+    cmos_write(0x0B, regb & ~0x80);
 
     return 0;
 }
