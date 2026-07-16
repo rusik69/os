@@ -648,6 +648,58 @@ try_msi:
     }
 }
 
+/*
+ * pci_probe_bar_size - Probe a standard PCI BAR's size (write-all-1s).
+ * @bus:   PCI bus number
+ * @slot:  PCI slot number
+ * @func:  PCI function number
+ * @bar_off: Config-space offset of the BAR (0x10 + i*4)
+ * @orig_lo: The original value of the BAR (already read by caller)
+ * @is_64bit: 1 for a 64-bit MMIO BAR (probes the upper-32 register too)
+ *
+ * Writes 0xFFFFFFFF to the BAR register, reads back the size mask,
+ * then restores the original value.  For 64-bit BARs the adjacent
+ * upper-32 register is also probed.
+ *
+ * Returns the size in bytes, or 0 if the BAR is unimplemented (all
+ * address bits are hardwired 0 → register reads 0 on probe).
+ */
+static uint64_t pci_probe_bar_size(int bus, int slot, int func,
+                                    int bar_off, int is_64bit,
+                                    uint32_t orig_lo)
+{
+    if (orig_lo == 0)
+        return 0;
+    if (orig_lo & 1)
+        return 0;   /* I/O BAR — not handled here */
+
+    /* Probe lower 32-bit part */
+    pci_write(bus, slot, func, bar_off, 0xFFFFFFFF);
+    uint32_t mask_lo = pci_read(bus, slot, func, bar_off);
+    pci_write(bus, slot, func, bar_off, orig_lo);
+
+    /* Bits [31:4] encode address space; ~(mask) + 1 gives size
+     * (PCI spec §6.2.5.1).  Work in uint64_t to avoid overflow. */
+    uint64_t size = (uint64_t)(~(mask_lo & (uint32_t)~0xFu)) + 1ULL;
+
+    if (is_64bit && size != 0) {
+        /* Probe upper 32-bit part (address bits [63:32]) */
+        int off_hi = bar_off + 4;
+        uint32_t orig_hi = pci_read(bus, slot, func, off_hi);
+        pci_write(bus, slot, func, off_hi, 0xFFFFFFFF);
+        uint32_t mask_hi = pci_read(bus, slot, func, off_hi);
+        pci_write(bus, slot, func, off_hi, orig_hi);
+
+        /* Combine lower-32 mask with upper-32 mask then add 1 */
+        uint64_t full_mask = (uint64_t)(mask_lo & (uint32_t)~0xFu)
+                           | ((uint64_t)mask_hi << 32);
+        if (full_mask != 0)
+            size = ~full_mask + 1ULL;
+    }
+
+    return size;
+}
+
 /* ── PCI class name ───────────────────────────────────────────────── */
 
 static const char *pci_class_name(uint8_t cls, uint8_t sub) {
@@ -739,30 +791,95 @@ int pci_find_device(uint16_t vendor, uint16_t device, struct pci_device *out) {
                     for (int i = 0; i < 6; i++)
                         out->bar[i] = pci_read((uint8_t)bus, (uint8_t)slot, (uint8_t)func, (uint8_t)(0x10 + i * 4));
 
-                    /* Validate MMIO BAR addresses don't overlap with RAM */
+                    /* Validate MMIO BAR address ranges don't overlap with RAM.
+                     * Both the base address and the end of each BAR's range
+                     * are verified to catch overlaps that span into adjacent
+                     * memory regions. */
                     for (int i = 0; i < 6; i++) {
                         uint32_t bar_val = out->bar[i];
                         if (bar_val == 0 || (bar_val & 1))
                             continue; /* unassigned or I/O BAR */
                         uint8_t bar_type = (bar_val >> 1) & 0x3;
-                        if (bar_type == 0x2 && i + 1 < 6) { /* 64-bit MMIO */
+                        int is_64bit = (bar_type == 0x2);
+                        int is_last_64bit = (is_64bit && i + 1 >= 6);
+
+                        if (is_64bit && i + 1 < 6) {
+                            /* 64-bit MMIO BAR: combine lower + upper dwords */
                             uint64_t phys = (uint64_t)(bar_val & ~0xFu)
                                           | ((uint64_t)out->bar[i+1] << 32);
+                            uint64_t size = pci_probe_bar_size(
+                                bus, slot, func, 0x10 + i * 4, 1, bar_val);
+
                             if (pmm_is_phys_ram(phys))
                                 kprintf("[PCI] WARNING: %02x:%02x.%x BAR%d "
-                                        "(64-bit MMIO at 0x%llx) overlaps with RAM!\n",
+                                        "(64-bit MMIO at 0x%llx) base overlaps with RAM!\n",
                                         (unsigned int)bus, (unsigned int)slot,
                                         (unsigned int)func, i,
                                         (unsigned long long)phys);
+
+                            if (size > 0) {
+                                uint64_t end = phys + size - 1;
+                                if (end < phys)
+                                    kprintf("[PCI] WARNING: %02x:%02x.%x BAR%d "
+                                            "(64-bit MMIO at 0x%llx) size 0x%llx wraps!\n",
+                                            (unsigned int)bus, (unsigned int)slot,
+                                            (unsigned int)func, i,
+                                            (unsigned long long)phys,
+                                            (unsigned long long)size);
+                                else if (pmm_is_phys_ram(end))
+                                    kprintf("[PCI] WARNING: %02x:%02x.%x BAR%d "
+                                            "(64-bit MMIO at 0x%llx, size 0x%llx) "
+                                            "end at 0x%llx overlaps with RAM!\n",
+                                            (unsigned int)bus, (unsigned int)slot,
+                                            (unsigned int)func, i,
+                                            (unsigned long long)phys,
+                                            (unsigned long long)size,
+                                            (unsigned long long)end);
+                            }
                             i++; /* skip the upper-32 BAR */
-                        } else if (bar_type != 0x2) { /* 32-bit MMIO */
+                        } else if (!is_64bit || is_last_64bit) {
+                            /* 32-bit MMIO (or 64-bit at last slot — unlikely) */
                             uint64_t phys = (uint64_t)(bar_val & ~0xFu);
+                            uint64_t size = pci_probe_bar_size(
+                                bus, slot, func, 0x10 + i * 4, 0, bar_val);
+
+                            /* For a 64-bit BAR that doesn't fit (last slot),
+                             * the size computed from just the lower dword is
+                             * the truncated size — warn so this can't hide. */
+                            if (is_last_64bit) {
+                                kprintf("[PCI] %02x:%02x.%x BAR%d "
+                                        "is a 64-bit MMIO at the last BAR slot — "
+                                        "size probed from lower dword may be incomplete\n",
+                                        (unsigned int)bus, (unsigned int)slot,
+                                        (unsigned int)func, i);
+                            }
+
                             if (pmm_is_phys_ram(phys))
                                 kprintf("[PCI] WARNING: %02x:%02x.%x BAR%d "
-                                        "(MMIO at 0x%llx) overlaps with RAM!\n",
+                                        "(MMIO at 0x%llx) base overlaps with RAM!\n",
                                         (unsigned int)bus, (unsigned int)slot,
                                         (unsigned int)func, i,
                                         (unsigned long long)phys);
+
+                            if (size > 0) {
+                                uint64_t end = phys + size - 1;
+                                if (end < phys)
+                                    kprintf("[PCI] WARNING: %02x:%02x.%x BAR%d "
+                                            "(MMIO at 0x%llx) size 0x%llx wraps!\n",
+                                            (unsigned int)bus, (unsigned int)slot,
+                                            (unsigned int)func, i,
+                                            (unsigned long long)phys,
+                                            (unsigned long long)size);
+                                else if (pmm_is_phys_ram(end))
+                                    kprintf("[PCI] WARNING: %02x:%02x.%x BAR%d "
+                                            "(MMIO at 0x%llx, size 0x%llx) "
+                                            "end at 0x%llx overlaps with RAM!\n",
+                                            (unsigned int)bus, (unsigned int)slot,
+                                            (unsigned int)func, i,
+                                            (unsigned long long)phys,
+                                            (unsigned long long)size,
+                                            (unsigned long long)end);
+                            }
                         }
                     }
 
@@ -801,30 +918,92 @@ int pci_find_class(uint8_t cls, uint8_t sub, struct pci_device *out) {
                     for (int i = 0; i < 6; i++)
                         out->bar[i] = pci_read((uint8_t)bus, (uint8_t)slot, (uint8_t)func, (uint8_t)(0x10 + i * 4));
 
-                    /* Validate MMIO BAR addresses don't overlap with RAM */
+                    /* Validate MMIO BAR address ranges don't overlap with RAM.
+                     * Both the base address and the end of each BAR's range
+                     * are verified to catch overlaps that span into adjacent
+                     * memory regions. */
                     for (int i = 0; i < 6; i++) {
                         uint32_t bar_val = out->bar[i];
                         if (bar_val == 0 || (bar_val & 1))
                             continue;
                         uint8_t bar_type = (bar_val >> 1) & 0x3;
-                        if (bar_type == 0x2 && i + 1 < 6) {
+                        int is_64bit = (bar_type == 0x2);
+                        int is_last_64bit = (is_64bit && i + 1 >= 6);
+
+                        if (is_64bit && i + 1 < 6) {
+                            /* 64-bit MMIO BAR: combine lower + upper dwords */
                             uint64_t phys = (uint64_t)(bar_val & ~0xFu)
                                           | ((uint64_t)out->bar[i+1] << 32);
+                            uint64_t size = pci_probe_bar_size(
+                                bus, slot, func, 0x10 + i * 4, 1, bar_val);
+
                             if (pmm_is_phys_ram(phys))
                                 kprintf("[PCI] WARNING: %02x:%02x.%x BAR%d "
-                                        "(64-bit MMIO at 0x%llx) overlaps with RAM!\n",
+                                        "(64-bit MMIO at 0x%llx) base overlaps with RAM!\n",
                                         (unsigned int)bus, (unsigned int)slot,
                                         (unsigned int)func, i,
                                         (unsigned long long)phys);
+
+                            if (size > 0) {
+                                uint64_t end = phys + size - 1;
+                                if (end < phys)
+                                    kprintf("[PCI] WARNING: %02x:%02x.%x BAR%d "
+                                            "(64-bit MMIO at 0x%llx) size 0x%llx wraps!\n",
+                                            (unsigned int)bus, (unsigned int)slot,
+                                            (unsigned int)func, i,
+                                            (unsigned long long)phys,
+                                            (unsigned long long)size);
+                                else if (pmm_is_phys_ram(end))
+                                    kprintf("[PCI] WARNING: %02x:%02x.%x BAR%d "
+                                            "(64-bit MMIO at 0x%llx, size 0x%llx) "
+                                            "end at 0x%llx overlaps with RAM!\n",
+                                            (unsigned int)bus, (unsigned int)slot,
+                                            (unsigned int)func, i,
+                                            (unsigned long long)phys,
+                                            (unsigned long long)size,
+                                            (unsigned long long)end);
+                            }
                             i++;
-                        } else if (bar_type != 0x2) {
+                        } else if (!is_64bit || is_last_64bit) {
+                            /* 32-bit MMIO (or 64-bit at last slot — unlikely) */
                             uint64_t phys = (uint64_t)(bar_val & ~0xFu);
+                            uint64_t size = pci_probe_bar_size(
+                                bus, slot, func, 0x10 + i * 4, 0, bar_val);
+
+                            if (is_last_64bit) {
+                                kprintf("[PCI] %02x:%02x.%x BAR%d "
+                                        "is a 64-bit MMIO at the last BAR slot — "
+                                        "size probed from lower dword may be incomplete\n",
+                                        (unsigned int)bus, (unsigned int)slot,
+                                        (unsigned int)func, i);
+                            }
+
                             if (pmm_is_phys_ram(phys))
                                 kprintf("[PCI] WARNING: %02x:%02x.%x BAR%d "
-                                        "(MMIO at 0x%llx) overlaps with RAM!\n",
+                                        "(MMIO at 0x%llx) base overlaps with RAM!\n",
                                         (unsigned int)bus, (unsigned int)slot,
                                         (unsigned int)func, i,
                                         (unsigned long long)phys);
+
+                            if (size > 0) {
+                                uint64_t end = phys + size - 1;
+                                if (end < phys)
+                                    kprintf("[PCI] WARNING: %02x:%02x.%x BAR%d "
+                                            "(MMIO at 0x%llx) size 0x%llx wraps!\n",
+                                            (unsigned int)bus, (unsigned int)slot,
+                                            (unsigned int)func, i,
+                                            (unsigned long long)phys,
+                                            (unsigned long long)size);
+                                else if (pmm_is_phys_ram(end))
+                                    kprintf("[PCI] WARNING: %02x:%02x.%x BAR%d "
+                                            "(MMIO at 0x%llx, size 0x%llx) "
+                                            "end at 0x%llx overlaps with RAM!\n",
+                                            (unsigned int)bus, (unsigned int)slot,
+                                            (unsigned int)func, i,
+                                            (unsigned long long)phys,
+                                            (unsigned long long)size,
+                                            (unsigned long long)end);
+                            }
                         }
                     }
 
