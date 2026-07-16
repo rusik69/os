@@ -36,6 +36,12 @@ static void pci_queue_autoprobe(const char *modalias, uint16_t vendor,
  * capability header is at least 2 bytes, so 64 is a generous limit. */
 #define PCI_CAP_MAX_ITERATIONS   64
 
+/* Maximum iterations for PCIe Extended Capabilities list traversal.
+ * Extended config space is 0x100-0xFFF (3840 bytes) and each extended
+ * capability header is at least 4 bytes, so 256 is a generous limit
+ * well above any realistic device. */
+#define PCI_EXT_CAP_MAX_ITERATIONS  256
+
 /* PCIe ECAM (Memory-Mapped Configuration Space) */
 static uint64_t ecam_base = 0;
 
@@ -1279,7 +1285,11 @@ int pci_find_ext_cap(int bus, int slot, int func, uint16_t cap_id) {
     if (!ecam_base) return -EINVAL;  /* Extended caps require ECAM access */
 
     uint16_t offset = 0x100;  /* Start of extended config space */
-    while (offset < 0x1000) {
+    int iter = 0;
+    while (offset >= 0x100 && offset < 0x1000) {
+        if (++iter > PCI_EXT_CAP_MAX_ITERATIONS)
+            break;
+
         uint32_t header = pcie_read(bus, slot, func, offset);
         uint16_t id = header & 0xFFFF;
         if (id == 0xFFFF)
@@ -1288,8 +1298,8 @@ int pci_find_ext_cap(int bus, int slot, int func, uint16_t cap_id) {
             return (int)offset;  /* Found it */
 
         uint16_t next = (uint16_t)((header >> 20) & 0xFFF);
-        if (next == 0)
-            break;  /* Last capability */
+        if (next == 0 || next < 0x100)
+            break;  /* Last capability or invalid pointer */
         offset = next;
     }
     return -EINVAL;
