@@ -88,10 +88,10 @@ static void kcs_abort(uint16_t base)
 {
     /* Write ABORT command */
     kcs_write_cmd(base, 0x60); /* Get Status / abort */
-    /* Read and discard status until idle */
+    /* Read and discard status until idle (state bits == IDLE) */
     for (int i = 0; i < 100; i++) {
         uint8_t sts = kcs_read_status(base);
-        if (!(sts & IPMI_KCS_STS_OBF) && !(sts & IPMI_KCS_STS_IBF))
+        if (!(sts & (IPMI_KCS_STS_SMS | IPMI_KCS_STS_CD)))
             break;
         /* Clear OBF by reading data */
         if (sts & IPMI_KCS_STS_OBF)
@@ -216,10 +216,9 @@ int ipmi_send_cmd(struct ipmi_msg *msg)
             break;
         uint8_t byte = kcs_read_data(base);
 
-        /* The last byte is the checksum; we don't store it */
-        /* OBF cleared — check if we're done by seeing if SMS went IDLE */
+        /* Check KCS state machine state bits for IDLE (both SMS=0, CD=0) */
         uint8_t new_sts = kcs_read_status(base);
-        if (!(new_sts & IPMI_KCS_STS_OBF) && !(new_sts & IPMI_KCS_STS_IBF)) {
+        if (!(new_sts & (IPMI_KCS_STS_SMS | IPMI_KCS_STS_CD))) {
             /* KCS is back to IDLE — this was the last data byte */
             msg->rsp[rsp_idx++] = byte;
             break;
