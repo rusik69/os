@@ -1710,9 +1710,38 @@ static int ext2_find_in_dir(struct ext2_priv *ep, struct ext2_inode *dir_inode,
             hash_seed[2] = 0;
             hash_seed[3] = 0;
         }
+        /* Read the hash version from the dx_root header rather than
+         * hardcoding HALF_MD4.  The dx_root's hash_version determines
+         * which hash function was used when building the HTree index,
+         * and the lookup must use the same function.  A mismatch would
+         * cause incorrect leaf-block selection during binary search,
+         * making directory lookups fail silently. */
+        uint8_t hash_version = EXT2_HTREE_HALF_MD4; /* default fallback */
+        {
+            uint8_t root_buf[4096];
+            if (ext2_read_inode_block(ep, dir_inode, 0, root_buf) == 0) {
+                uint32_t pos = 0;
+                /* Skip '.' */
+                uint32_t *de_inode  = (uint32_t *)(root_buf + pos);
+                uint16_t *de_rec    = (uint16_t *)(root_buf + pos + 4);
+                if (*de_inode != 0 && *de_rec != 0 && pos + *de_rec <= ep->block_size) {
+                    pos += *de_rec;
+                    /* Skip '..' */
+                    de_inode = (uint32_t *)(root_buf + pos);
+                    de_rec   = (uint16_t *)(root_buf + pos + 4);
+                    if (*de_inode != 0 && *de_rec != 0 && pos + *de_rec <= ep->block_size) {
+                        pos += *de_rec;
+                        /* The 8-byte info block starts here; hash_version is at offset 4 */
+                        if (pos + 8 <= ep->block_size) {
+                            hash_version = root_buf[pos + 4];
+                        }
+                    }
+                }
+            }
+        }
         uint32_t hash = ext2_dx_hash((const unsigned char *)name,
                                       (int)nlen,
-                                      EXT2_HTREE_HALF_MD4,
+                                      hash_version,
                                       hash_seed);
 
         uint32_t leaf_block = 0;
