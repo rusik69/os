@@ -22,6 +22,7 @@
 #include "heap.h"
 #include "errno.h"
 #include "initcall.h"
+#include "crc.h"
 
 #ifdef MODULE
 #include "module.h"
@@ -102,6 +103,31 @@ int jbd2_check_superblock(const struct jbd2_superblock *sb,
         kprintf("[jbd2] start block %u exceeds maxlen %u\n",
                 sb->s_start, sb->s_maxlen);
         return JBD2_ERR_BAD_MAGIC;
+    }
+
+    /* Verify superblock checksum if feature is present */
+    if (sb->s_feature_compat & JBD2_FEATURE_COMPAT_CHECKSUM) {
+        uint32_t stored_csum = sb->s_checksum;
+        uint32_t computed_csum;
+        uint8_t tmp[JBD2_SUPERBLOCK_SIZE];
+
+        if (stored_csum != 0) {
+            /* CRC32 covers the full 1024-byte superblock area.
+             * Zero the checksum field for computation, then restore. */
+            memcpy(tmp, (const uint8_t *)sb, JBD2_SUPERBLOCK_SIZE);
+            ((struct jbd2_superblock *)tmp)->s_checksum = 0;
+            computed_csum = crc32(0, tmp, JBD2_SUPERBLOCK_SIZE);
+
+            if (stored_csum != computed_csum) {
+                kprintf("[jbd2] superblock checksum mismatch: "
+                        "stored=0x%08x, computed=0x%08x\n",
+                        stored_csum, computed_csum);
+                return JBD2_ERR_CHECKSUM;
+            }
+
+            kprintf("[jbd2] superblock checksum OK (0x%08x)\n",
+                    stored_csum);
+        }
     }
 
     return JBD2_OK;
@@ -191,10 +217,18 @@ int jbd2_load_superblock(struct jbd2_journal *journal, uint8_t dev_id,
 
     /* Check for incompatible features we don't support */
     if (sb->s_feature_incompat & ~(JBD2_FEATURE_INCOMPAT_REVOKE |
-                                    JBD2_FEATURE_INCOMPAT_64BIT)) {
+                                    JBD2_FEATURE_INCOMPAT_64BIT |
+                                    JBD2_FEATURE_INCOMPAT_CSUM_V2 |
+                                    JBD2_FEATURE_INCOMPAT_CSUM_V3)) {
         kprintf("[jbd2] warning: unsupported incompat features: 0x%08x\n",
                 sb->s_feature_incompat);
     }
+
+    /* Warn about checksum features that are not yet implemented */
+    if (sb->s_feature_incompat & JBD2_FEATURE_INCOMPAT_CSUM_V2)
+        kprintf("[jbd2] warning: V2 CRC32C checksum not yet verified\n");
+    if (sb->s_feature_incompat & JBD2_FEATURE_INCOMPAT_CSUM_V3)
+        kprintf("[jbd2] warning: V3 UUID-based checksum not yet verified\n");
 
     kprintf("[jbd2] journal loaded: dev=%u, inum=%u, "
             "blocks=%u, blk_size=%u, first=%u, seq=%u, start=%u\n",
