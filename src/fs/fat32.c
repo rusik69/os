@@ -283,7 +283,7 @@ static void fat_free_chain(uint32_t cluster) {
 
 /* Cluster number → LBA of first sector */
 static uint32_t cluster_to_lba(uint32_t cluster) {
-    return data_start + (cluster - 2) * spc;
+    return data_start + (uint32_t)((uint64_t)(cluster - 2) * (uint64_t)spc);
 }
 
 /* ── 8.3 name comparison (case-insensitive) ─────────────────────────────────── */
