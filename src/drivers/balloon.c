@@ -119,8 +119,11 @@ static int balloon_inflate_one(void)
     if (bp->inflated)
         return -1; /* already inflated */
 
-    /* Allocate a physical page */
-    uint64_t phys = pmm_alloc_frame();
+    /* Allocate a physical page in an UNMOVABLE pageblock so compaction
+     * never migrates a balloon page out from under us — that would leave
+     * a stale phys_addr in balloon tracking and cause a double-free on
+     * subsequent deflation (the deflate race). */
+    uint64_t phys = pmm_alloc_frame_migrate(MIGRATE_UNMOVABLE);
     if (phys == 0)
         return -1; /* OOM */
 
@@ -300,7 +303,8 @@ static int balloon_sysfs_read(void *priv, void *buf,
 /* ── Memory pressure callback ──────────────────────────────────────── */
 
 /* Called when the system detects memory pressure.
- * Inflates the balloon to reclaim pages and trigger compaction. */
+ * Deflates the balloon to return pages to the system for reuse,
+ * then runs compaction to defragment the freed pages. */
 static void balloon_memory_pressure(void)
 {
     uint64_t irq_flags;
@@ -309,10 +313,11 @@ static void balloon_memory_pressure(void)
 
     spinlock_irqsave_acquire(&balloon.lock, &irq_flags);
 
-    /* Increase target on pressure */
-    balloon.target_pages += BALLOON_BATCH_SIZE;
-    if (balloon.target_pages > balloon.num_pages)
-        balloon.target_pages = balloon.num_pages;
+    /* Decrease target on pressure — return pages to the system */
+    if (balloon.target_pages >= BALLOON_BATCH_SIZE)
+        balloon.target_pages -= BALLOON_BATCH_SIZE;
+    else
+        balloon.target_pages = 0;
 
     balloon_adjust();
 
