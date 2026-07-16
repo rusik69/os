@@ -104,6 +104,17 @@ static int btrfs_parse_superblock(struct btrfs_priv *bp)
     /* Cast to superblock structure */
     struct btrfs_superblock *sb = (struct btrfs_superblock *)buf;
 
+    /* Verify the superblock FSID is non-zero — zero FSID means
+     * the superblock data is uninitialised or corrupt. */
+    {
+        uint8_t zero_uuid[16] = {0};
+        if (memcmp(sb->fsid, zero_uuid, 16) == 0)
+            return -EINVAL;
+    }
+
+    /* Save FSID — every node/leaf header must match this */
+    memcpy(bp->fsid, sb->fsid, 16);
+
     /* Sanity-check critical geometry fields */
     if (sb->sectorsize == 0 || sb->nodesize == 0)
         return -EINVAL;
@@ -198,6 +209,13 @@ static int btrfs_search_tree(struct btrfs_priv *bp, uint64_t root_bytenr,
             return -1;
 
         struct btrfs_header *hdr = (struct btrfs_header *)buf;
+
+        /* Verify node header FSID matches the superblock FSID.
+         * This prevents using tree nodes from a different Btrfs
+         * filesystem instance. */
+        if (memcmp(hdr->fsid, bp->fsid, 16) != 0)
+            return -1;
+
         uint32_t nritems = hdr->nritems;
         uint32_t hi = nritems;
         uint32_t lo = 0;

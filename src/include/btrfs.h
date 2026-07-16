@@ -269,6 +269,7 @@ struct btrfs_chunk_map {
 
 struct btrfs_priv {
     uint8_t  dev_id;
+    uint8_t  fsid[16];        /* filesystem UUID from superblock */
     uint32_t sectorsize;
     uint32_t nodesize;
     uint16_t csum_type;
