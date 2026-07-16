@@ -794,6 +794,9 @@ static uint32_t aml_process_object(struct aml_parse_state *state,
 		if (body_end > max_len)
 			body_end = max_len;
 
+		/* Save and restore parse state for recursion */
+		struct aml_parse_state saved = *state;
+
 		/* Guard against excessive recursion depth (stack overflow) */
 		if (state->depth >= AML_PARSE_MAX_DEPTH) {
 			kprintf("[AML] Error: namespace nesting depth exceeds %u at offset %u\n",
@@ -801,9 +804,6 @@ static uint32_t aml_process_object(struct aml_parse_state *state,
 			return 0;
 		}
 		state->depth++;
-
-		/* Save and restore parse state for recursion */
-		struct aml_parse_state saved = *state;
 
 		state->parent = (uint16_t)node_idx;
 		state->offset = body_start;
