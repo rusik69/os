@@ -50,8 +50,8 @@ struct ext2_acl_xattr_entry {
 	uint32_t id;
 } __attribute__((packed));
 
-/* Maximum ACL entry count (USER_OBJ + USER + GROUP_OBJ + GROUP + MASK + OTHER) */
-#define EXT2_ACL_MAX_ENTRIES 6
+/* Maximum ACL entry count — must match posix_acl.entries[] capacity */
+#define EXT2_ACL_MAX_ENTRIES POSIX_ACL_MAX_ENTRIES
 
 /* ── Serialize an in-memory posix_acl to xattr binary format ───────── */
 
