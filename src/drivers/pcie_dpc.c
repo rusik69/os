@@ -44,7 +44,7 @@ static int dpc_enable(int bus, int dev, int func)
     if (!dpc_cap)
         return -ENODEV;
 
-    /* Read current control */
+    /* Enable DPC and DPC interrupt */
     pci_write16(bus, dev, func, dpc_cap + PCI_DPC_CTL, DPC_CTL_ENABLE | DPC_CTL_INT_ENABLE);
 
     kprintf("[DPC] Enabled on %02x:%02x.%x\n", bus, dev, func);
@@ -71,8 +71,9 @@ static int dpc_handle_trigger(int bus, int dev, int func)
 
         dpc_triggered_count++;
 
-        /* Clear DPC trigger status and restore */
-        pci_write16(bus, dev, func, dpc_cap + PCI_DPC_STATUS, DPC_STATUS_TRIGGER);
+        /* Clear DPC trigger status, interrupt status, and restore */
+        pci_write16(bus, dev, func, dpc_cap + PCI_DPC_STATUS,
+                    DPC_STATUS_TRIGGER | DPC_STATUS_INTERRUPT);
 
         return 0;
     }
