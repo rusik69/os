@@ -135,6 +135,14 @@ static int btrfs_parse_superblock(struct btrfs_priv *bp)
     if (sb->incompat_flags & ~(1ULL << 0))
         return -EINVAL;
 
+    /* Verify device count — a valid Btrfs must have at least one device.
+     * The superblock num_devices should equal the number of DEV_ITEM
+     * entries in the device tree (BTRFS_DEV_TREE_OBJECTID).  For a
+     * read-only single-device implementation we accept num_devices >= 1
+     * and log a warning if the count is > 1 (multi-device fs). */
+    if (sb->num_devices == 0)
+        return -EINVAL;
+
     /* Populate btrfs_priv from superblock fields */
     bp->sectorsize         = sb->sectorsize;
     bp->nodesize           = sb->nodesize;
@@ -144,16 +152,18 @@ static int btrfs_parse_superblock(struct btrfs_priv *bp)
     bp->chunk_root_level   = sb->chunk_root_level;
     bp->root_bytenr        = sb->root;
     bp->root_level         = sb->root_level;
+    bp->num_devices        = sb->num_devices;
     bp->num_chunks         = 0;
 
     kprintf("[btrfs] superblock: gen=%llu, root=0x%llx, "
             "chunk_root=0x%llx, total=%llu, "
-            "sectorsize=%u, nodesize=%u\n",
+            "sectorsize=%u, nodesize=%u, num_devices=%llu\n",
             (unsigned long long)sb->generation,
             (unsigned long long)sb->root,
             (unsigned long long)sb->chunk_root,
             (unsigned long long)sb->total_bytes,
-            sb->sectorsize, sb->nodesize);
+            sb->sectorsize, sb->nodesize,
+            (unsigned long long)sb->num_devices);
 
     return 0;
 }

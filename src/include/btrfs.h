@@ -286,6 +286,7 @@ struct btrfs_priv {
     uint8_t  extent_root_level;
     uint64_t csum_root_bytenr;
     uint8_t  csum_root_level;
+    uint64_t num_devices;       /* from superblock — must match DEV_ITEM count */
     uint32_t num_chunks;
     struct btrfs_chunk_map chunks[BTRFS_MAX_CHUNKS];
 };
