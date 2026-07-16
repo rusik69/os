@@ -51,6 +51,9 @@ struct vtd_root_entry {
 #define VTD_CTX_ENTRY_PRESENT    (1ULL << 0)
 #define VTD_CTX_ENTRY_TT_SHIFT   2    /* Translation Type: 0=host, 1=guest, 2=pass-through */
 #define VTD_CTX_ENTRY_TT_MASK    (3ULL << 2)
+#define VTD_CTX_ENTRY_AW_SHIFT   4    /* Address Width: 0=32b/2L, 1=39b/3L, 2=48b/4L */
+#define VTD_CTX_ENTRY_AW_MASK    (7ULL << 4)
+#define VTD_CTX_ENTRY_AW_4LEVEL  (2ULL << 4)  /* 4-level page tables, 48-bit */
 #define VTD_CTX_ENTRY_ADDR_SHIFT 12
 
 struct vtd_ctx_entry {
@@ -313,7 +316,7 @@ static int iommu_setup_device_context(struct iommu_device *dev)
     uint64_t *domain_pgd = PHYS_TO_VIRT(domain_pgd_phys);
 
     /* Set up context entry: pass-through or translate */
-    ce->low = domain_pgd_phys | VTD_CTX_ENTRY_PRESENT;
+    ce->low = domain_pgd_phys | VTD_CTX_ENTRY_PRESENT | VTD_CTX_ENTRY_AW_4LEVEL;
     /* Translation type = 0 (Host mode with scalable? No, simple host mode):
      * bits [2:3] = 00 for host mode with 4-level page tables */
     ce->low &= ~VTD_CTX_ENTRY_TT_MASK;
