@@ -198,6 +198,12 @@ static int btrfs_search_tree(struct btrfs_priv *bp, uint64_t root_bytenr,
     if (root_bytenr == 0)
         return -1;
 
+    /* Reject root level that exceeds the maximum Btrfs tree depth.
+     * Btrfs tree levels are 0 (leaf) through BTRFS_MAX_LEVEL-1 (deepest
+     * internal node).  A level at or above BTRFS_MAX_LEVEL is corrupt. */
+    if (root_level >= BTRFS_MAX_LEVEL)
+        return -1;
+
     /* Translate logical -> physical for the root node */
     if (btrfs_chunk_map(bp, root_bytenr, &bytenr) < 0)
         bytenr = root_bytenr;
@@ -214,6 +220,17 @@ static int btrfs_search_tree(struct btrfs_priv *bp, uint64_t root_bytenr,
          * This prevents using tree nodes from a different Btrfs
          * filesystem instance. */
         if (memcmp(hdr->fsid, bp->fsid, 16) != 0)
+            return -1;
+
+        /* Validate node level:
+         * - Must be < BTRFS_MAX_LEVEL (8) to prevent integer overflow
+         *   or infinite loop from a corrupt/malicious node header.
+         * - Must match the expected level for this depth in the tree:
+         *   the root node's level must equal root_level, and each
+         *   child's level must be one less than its parent's level. */
+        if (hdr->level >= BTRFS_MAX_LEVEL)
+            return -1;
+        if (hdr->level != level)
             return -1;
 
         uint32_t nritems = hdr->nritems;
