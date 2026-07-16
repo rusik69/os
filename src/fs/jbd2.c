@@ -954,7 +954,6 @@ static int jbd2_replay_descriptor(const struct jbd2_journal *journal,
                                    uint32_t *current,
                                    uint32_t block_size)
 {
-    uint32_t data_current;
     int tags_per_block;
     int num_tags;
     uint32_t tag_offset;
@@ -970,7 +969,6 @@ static int jbd2_replay_descriptor(const struct jbd2_journal *journal,
     /* Count tags and find the data block start position */
     num_tags = 0;
     tag_offset = sizeof(struct jbd2_header);
-    data_current = *current + 1;
 
     for (i = 0; i < tags_per_block; i++) {
         const struct jbd2_block_tag *tag;
@@ -989,7 +987,7 @@ static int jbd2_replay_descriptor(const struct jbd2_journal *journal,
     if (num_tags == 0) {
         /* No tags means no data blocks — just advance past header */
         kprintf("[jbd2]  transaction with zero blocks\n");
-        *current = data_current;
+        *current = *current + 1;
         return 0;
     }
 
@@ -997,29 +995,54 @@ static int jbd2_replay_descriptor(const struct jbd2_journal *journal,
             *current, num_tags);
 
     /* Replay each data block */
-    blocks_replayed = 0;
-    tag_offset = sizeof(struct jbd2_header);
+    /* ── First pass: save all tag metadata before we read data ── */
+    {
+        struct saved_tag {
+            uint32_t blocknr;
+            uint16_t flags;
+            uint32_t data_block_num;
+        } *saved_tags;
+        uint32_t data_pos;
 
-    for (i = 0; i < num_tags; i++) {
-        const struct jbd2_block_tag *tag;
-        uint32_t target_block;
-        uint32_t data_block_num;
-        int ret;
+        saved_tags = (struct saved_tag *)kmalloc(
+            num_tags * sizeof(struct saved_tag));
+        if (!saved_tags)
+            return -ENOMEM;
 
-        tag = (const struct jbd2_block_tag *)(buf + tag_offset);
-        target_block = tag->t_blocknr;
-        /* Handle journal wrap-around before computing position */
-        if (data_current >= journal->total_blocks)
-            data_current = journal->first_data_block;
+        data_pos = *current + 1;
+        tag_offset = sizeof(struct jbd2_header);
 
-        data_block_num = data_current;
+        for (i = 0; i < num_tags; i++) {
+            const struct jbd2_block_tag *tag =
+                (const struct jbd2_block_tag *)(buf + tag_offset);
+            /* Handle wrap-around for each data block position */
+            if (data_pos >= journal->total_blocks)
+                data_pos = journal->first_data_block;
 
-        if (!(tag->t_flags & JBD2_FLAG_DELETED)) {
+            saved_tags[i].blocknr = tag->t_blocknr;
+            saved_tags[i].flags = tag->t_flags;
+            saved_tags[i].data_block_num = data_pos;
+
+            data_pos++;
+            tag_offset += sizeof(struct jbd2_block_tag);
+        }
+
+        /* ── Second pass: replay from saved tags ── */
+        blocks_replayed = 0;
+        for (i = 0; i < num_tags; i++) {
+            uint32_t target_block = saved_tags[i].blocknr;
+            uint32_t data_block_num = saved_tags[i].data_block_num;
+            uint16_t flags = saved_tags[i].flags;
+            int ret;
+
+            if (flags & JBD2_FLAG_DELETED)
+                continue;
+
             /* Check if this block has been revoked */
             if (jbd2_is_block_revoked(journal, target_block)) {
                 kprintf("[jbd2]    skipping revoked block %u\n",
                         target_block);
-                goto skip_block;
+                continue;
             }
 
             /* Read data block from the journal */
@@ -1027,6 +1050,7 @@ static int jbd2_replay_descriptor(const struct jbd2_journal *journal,
             if (ret != JBD2_OK) {
                 kprintf("[jbd2]  I/O error reading journal "
                         "data block %u\n", data_block_num);
+                kfree(saved_tags);
                 return ret;
             }
 
@@ -1034,7 +1058,7 @@ static int jbd2_replay_descriptor(const struct jbd2_journal *journal,
              * If the file system data block happened to contain the
              * JBD2 magic number, it was replaced with the magic + 0
              * block type during commit.  Restore the original magic. */
-            if (tag->t_flags & JBD2_FLAG_ESCAPE) {
+            if (flags & JBD2_FLAG_ESCAPE) {
                 struct jbd2_header *data_hdr =
                     (struct jbd2_header *)buf;
                 if (data_hdr->h_magic != JBD2_MAGIC_NUMBER) {
@@ -1045,25 +1069,23 @@ static int jbd2_replay_descriptor(const struct jbd2_journal *journal,
                 }
             }
 
-            /* Write the data block to its target filesystem location */
+            /* Write the data block to its target fs location */
             ret = jbd2_write_fs_block(journal, target_block, buf);
             if (ret != JBD2_OK) {
                 kprintf("[jbd2]  failed to write block %u "
                         "during recovery\n", target_block);
+                kfree(saved_tags);
                 return ret;
             }
 
             blocks_replayed++;
         }
 
-skip_block:
-        data_current++;
-        tag_offset += sizeof(struct jbd2_block_tag);
+        /* Advance past all data blocks */
+        *current = *current + 1 + num_tags;
+        kfree(saved_tags);
+        return blocks_replayed;
     }
-
-    /* Advance past all data blocks */
-    *current = data_current;
-    return blocks_replayed;
 }
 
 /* ── Helper: check if a block is in the revocation list ───────────── */
@@ -1353,6 +1375,33 @@ int jbd2_replay(struct jbd2_journal *journal)
                                       &current, block_size);
         if (ret < 0)
             goto out_err;
+
+        /* Skip any revocation blocks between data and commit block */
+        for (;;) {
+            if (current >= journal->total_blocks)
+                current = journal->first_data_block;
+
+            ret = jbd2_read_block(journal, current, buf);
+            if (ret != JBD2_OK) {
+                kprintf("[jbd2] I/O error reading block %u "
+                        "after descriptor replay\n", current);
+                goto out_err;
+            }
+
+            hdr = (const struct jbd2_header *)buf;
+            if (hdr->h_magic != JBD2_MAGIC_NUMBER ||
+                hdr->h_blocktype != JBD2_REVOKE_BLOCK)
+                break;
+
+            /* Process the revocation block */
+            ret = jbd2_process_revoke_block(journal, buf);
+            if (ret != JBD2_OK) {
+                kprintf("[jbd2]  failed to process revoke block "
+                        "at %u\n", current);
+                goto out_err;
+            }
+            current++;
+        }
 
         /* Verify the commit block exists */
         if (current >= journal->total_blocks)
