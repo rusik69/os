@@ -258,6 +258,16 @@ static int64_t ext2_extent_get_block(struct ext2_priv *ep,
     for (;;) {
         eh = (struct ext4_extent_header *)node_data;
 
+        /* Validate every extent block header (not just the root).
+         * Each node read from disk must be verified for correct magic,
+         * depth bounds, and entry counts to catch on-disk corruption. */
+        if (eh->eh_magic != EXT4_EXTENT_MAGIC)
+            return ext2_corrupt(ep, "bad extent magic in tree walk");
+        if (eh->eh_depth > EXT4_EXTENT_MAX_DEPTH)
+            return ext2_corrupt(ep, "extent tree depth exceeds max");
+        if (eh->eh_entries > eh->eh_max)
+            return ext2_corrupt(ep, "extent entries exceed max");
+
         if (depth > 0) {
             /* Internal node — binary search for child */
             struct ext4_extent_idx *idx = (struct ext4_extent_idx *)(eh + 1);

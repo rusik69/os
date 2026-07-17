@@ -1216,6 +1216,14 @@ int ext4_ext_insert_extent(struct ext4_priv *ep,
                 ret = ext4_read_block(ep, parent_block, parent_buf);
                 if (ret < 0)
                     goto out_free_new;
+                /* Validate the extent tree block header after reading
+                 * from disk — every block-level header must be checked
+                 * for magic, depth, and capacity before being used. */
+                ret = ext4_ext_check_header(
+                        (struct ext4_extent_header *)parent_buf,
+                        EXT4_EXTENT_MAX_DEPTH, ep->block_size);
+                if (ret < 0)
+                    goto out_free_new;
                 ret = ext4_ext_journal_get_write_access(ep, parent_block,
                                                          parent_buf);
                 if (ret < 0)
