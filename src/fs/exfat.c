@@ -431,7 +431,7 @@ static uint32_t exfat_bitmap_find_contiguous(struct exfat_priv *ep,
     uint32_t max_c = ep->cluster_count + 2;
     uint32_t start = ep->next_free_hint;
 
-    if (count == 0 || count > ep->free_clusters + 2)
+    if (count == 0 || count > ep->free_clusters)
         return EXFAT_CLUSTER_END;
 
     /* Clamp hint to valid range */
@@ -596,7 +596,9 @@ static int exfat_bitmap_init(struct exfat_priv *ep)
 	if (ep->cluster_count == 0)
 		return -EINVAL;
 
-	bitmap_byte_count = (ep->cluster_count + 7) / 8;
+	/* Per exFAT spec: bitmap must cover clusters 0 through cluster_count+1,
+	 * which is (cluster_count + 2) bits total. */
+	bitmap_byte_count = (ep->cluster_count + 9) / 8;
 	bitmap_sect = (bitmap_byte_count + ep->sector_size - 1) / ep->sector_size;
 
 	/* When FAT is present (fat_length > 0), the bitmap is stored
