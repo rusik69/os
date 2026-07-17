@@ -22,7 +22,7 @@ env:
 jobs:
   # ── Build kernel ────────────────────────────────────────────────────
   kernel:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -32,8 +32,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq \
+          apt-get update -qq
+          apt-get install -y -qq \
             build-essential nasm qemu-system-x86 \
             gcc-x86-64-linux-gnu xorriso grub-pc-bin mtools \
             ccache
@@ -73,15 +73,15 @@ jobs:
 
   # ── Build userspace ─────────────────────────────────────────────────
   userspace:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq \
+          apt-get update -qq
+          apt-get install -y -qq \
             build-essential \
             gcc-x86-64-linux-gnu
 
@@ -116,15 +116,15 @@ jobs:
 
   # ── Host-side unit tests ───────────────────────────────────────────
   unit-tests:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq build-essential
+          apt-get update -qq
+          apt-get install -y -qq build-essential
 
       - name: Build unit test binaries
         run: |
@@ -145,7 +145,7 @@ jobs:
 
       - name: Install ccache (for stats only)
         run: |
-          sudo apt-get install -y -qq ccache
+          apt-get install -y -qq ccache
 
       - name: Summary
         run: |
@@ -166,7 +166,7 @@ jobs:
 
   # ── QEMU boot test ─────────────────────────────────────────────────
   boot-test:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 5
     needs: [kernel]
     steps:
@@ -180,8 +180,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq \
+          apt-get update -qq
+          apt-get install -y -qq \
             qemu-system-x86 python3
 
       - name: Run QEMU boot test
@@ -198,7 +198,7 @@ jobs:
 
   # ── Direct QEMU boot test (no Python wrapper) ──────────────────────
   qemu-boot-test:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 5
     needs: [kernel]
     steps:
@@ -212,8 +212,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq qemu-system-x86
+          apt-get update -qq
+          apt-get install -y -qq qemu-system-x86
 
       - name: QEMU boot test (direct, 30s timeout)
         run: |
@@ -235,7 +235,7 @@ jobs:
 
   # ── Full build check (kernel + userspace) ──────────────────────────
   full-build:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -245,8 +245,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq \
+          apt-get update -qq
+          apt-get install -y -qq \
             build-essential nasm qemu-system-x86 \
             gcc-x86-64-linux-gnu xorriso grub-pc-bin mtools \
             ccache
@@ -291,7 +291,7 @@ jobs:
 
   # ── Code formatting check ──────────────────────────────────────────
   format-check:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
@@ -300,8 +300,8 @@ jobs:
 
       - name: Install clang-format
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq clang-format-18
+          apt-get update -qq
+          apt-get install -y -qq clang-format-18
           sudo ln -sf /usr/bin/clang-format-18 /usr/local/bin/clang-format
           sudo ln -sf /usr/bin/clang-format-18 /usr/local/bin/git-clang-format
 
@@ -316,7 +316,7 @@ jobs:
 
   # ── Trailing whitespace check ──────────────────────────────────────
   trailing-whitespace:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
@@ -332,15 +332,15 @@ jobs:
 
   # ── Static analysis (cppcheck) ─────────────────────────────────────
   lint:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
       - name: Install cppcheck
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq cppcheck
+          apt-get update -qq
+          apt-get install -y -qq cppcheck
 
       - name: Run cppcheck
         run: |
@@ -353,15 +353,15 @@ jobs:
 
   # ── Comprehensive static analysis ─────────────────────────────────
   static-analysis:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
       - name: Install static analysis tools
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq \
+          apt-get update -qq
+          apt-get install -y -qq \
             cppcheck sparse clang-tidy-18
           sudo ln -sf /usr/bin/clang-tidy-18 /usr/local/bin/clang-tidy
 
@@ -396,7 +396,7 @@ jobs:
 
   # ── Fast pre-merge verification ────────────────────────────────────
   verify:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
@@ -405,8 +405,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq \
+          apt-get update -qq
+          apt-get install -y -qq \
             build-essential \
             cppcheck \
             clang-tidy-18 \
@@ -432,7 +432,7 @@ jobs:
 
   # ── E2E smoke test ─────────────────────────────────────────────────
   e2e-smoke:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 10
     needs: [kernel]
     steps:
@@ -446,8 +446,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq \
+          apt-get update -qq
+          apt-get install -y -qq \
             build-essential nasm qemu-system-x86 \
             gcc-x86-64-linux-gnu xorriso grub-pc-bin mtools \
             python3 telnet
