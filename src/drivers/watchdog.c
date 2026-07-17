@@ -29,10 +29,11 @@
 #include "sysfs.h"
 #include "panic.h"
 #include "kdump.h"
+#include "module.h"
 
 static int g_watchdog_timer_id = -1;
 static int g_pretimeout_timer_id = -1;
-static int g_watchdog_timeout_ticks = 0;
+static uint64_t g_watchdog_timeout_ticks = 0;
 static int g_watchdog_active = 0;
 
 /* Pretimeout state */
@@ -58,7 +59,8 @@ static void watchdog_reboot(void *arg) {
     watchdog_system_reset();
 }
 
-/* Internal callback to re-arm the watchdog periodically */
+/* Internal callback: watchdog timer expiry — if this fires, the watchdog
+ * was not petted in time. Triggers a full system reset. */
 static void watchdog_tick(void *arg) {
     (void)arg;
     if (!g_watchdog_active) return;
@@ -243,11 +245,11 @@ void watchdog_pet(void) {
     /* Reset pretimeout fired flag */
     g_pretimeout_fired = 0;
 
-    /* Re-schedule pretimeout if configured */
-    if (g_pretimeout_secs > 0 && g_pretimeout_fn) {
+    /* Re-schedule pretimeout if configured (consistent with watchdog_init) */
+    if (g_pretimeout_secs > 0) {
         int timeout_secs = g_watchdog_timeout_ticks / TIMER_FREQ;
         if (g_pretimeout_secs < timeout_secs) {
-            int pretimeout_ticks = (uint64_t)(timeout_secs - g_pretimeout_secs) * TIMER_FREQ;
+            uint64_t pretimeout_ticks = (uint64_t)(timeout_secs - g_pretimeout_secs) * TIMER_FREQ;
             g_pretimeout_timer_id = timer_schedule(watchdog_pretimeout_tick, NULL, pretimeout_ticks);
         }
     }
@@ -444,24 +446,6 @@ void watchdog_system_reset(void)
     /* Last resort */
     for (;;) hlt();
 }
-#include "module.h"
+
 module_init(watchdog_sysfs_init);
-
-/* I6300ESB register base (hardware-specific, may need platform detection) */
-#define I6300ESB_BASE 0x0
-
-static int watchdog_start(void)
-{
-    kprintf("[WATCHDOG] Starting\n");
-    outb(I6300ESB_BASE + 0x05, 0x30);
-    outb(I6300ESB_BASE + 0x05, 0x30);
-    return 0;
-}
-
-static int watchdog_set_timeout(uint32_t seconds)
-{
-    if (seconds == 0 || seconds > 255) return -EINVAL;
-    outb(I6300ESB_BASE + 0x07, (uint8_t)seconds);
-    return 0;
-}
 
