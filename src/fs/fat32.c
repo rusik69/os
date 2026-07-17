@@ -266,7 +266,11 @@ static uint32_t fat_alloc_cluster(void) {
 
 static void fat_free_chain(uint32_t cluster) {
     uint32_t max_clusters = 0;
-    if (fat_sectors) max_clusters = (fat_sectors * SECT_SIZE * 2) / 3;
+    if (fat_sectors) {
+        /* FAT-type-aware entry count: FAT12=1.5, FAT16=2, FAT32=4 bytes/entry */
+        uint32_t bytes_per_entry = (fat_type == FAT12) ? 3u : (fat_type == FAT16 ? 2u : 4u);
+        max_clusters = (fat_sectors * (uint64_t)SECT_SIZE) / bytes_per_entry;
+    }
     if (!max_clusters) max_clusters = 65536;
     uint32_t visited = 0;
     uint32_t first_freed = cluster;
@@ -2572,10 +2576,14 @@ int fat32_repair_boot(void)
 		}
 	}
 
-	/* ── Step 6: Sync cached label from boot sector ── */
+	/* ── Step 6: Sync cached state from boot sector ── */
 	bpb = (const struct fat32_bpb *)primary;
 	__builtin_memcpy(g_volume_label, bpb->volume_label, 11);
 	g_volume_label[11] = '\0';
+	/* Re-sync ext_flags — the boot sector may have been repaired from the
+	 * backup, so the cached value at mount time could be stale.  This
+	 * directly affects FAT mirroring behavior in fat_write_entry. */
+	g_ext_flags = bpb->ext_flags;
 
 	if (repairs > 0)
 		kprintf("[fat32] Boot sector repair complete: %d repair(s) performed\n",
