@@ -50,6 +50,9 @@ static int i6300esb_init_wdt(uint16_t io_base)
     uint16_t status = inw(io_base + ESB_WDT_STATUS);
     if (status & ESB_WDT_TOV_BIT) {
         kprintf("[I6300ESB] Previous reset was caused by watchdog timeout!\n");
+        /* Clear the sticky timeout-occurred status so future boots
+         * report the correct reset cause. The TOV bit is write-1-to-clear. */
+        outw(io_base + ESB_WDT_STATUS, ESB_WDT_TOV_BIT);
     }
 
     kprintf("[I6300ESB] Watchdog at IO 0x%04x\n", io_base);
