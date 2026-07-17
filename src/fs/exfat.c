@@ -1313,14 +1313,25 @@ static int exfat_create_entry_set(struct exfat_priv *ep,
 		found_space = 1;
 		cluster = new_cluster;
 	} else if (reached_eod) {
-		/* Write entry set at EOD position, keep the EOD marker in place
-		 * by writing after it.  The EOD marker is a single 0x00 byte,
-		 * followed by implicitly free entries. */
-		/* Actually for EOD, we write the entry set right there.
-		 * We'll just overwrite the EOD with our entry set and put
-		 * a new EOD after it if space permits. */
+		/* Check if the entry set fits in the remaining cluster space.
+		 * When EOD is near the end of the cluster, writing the entry
+		 * set without a bounds check would overflow write_buf.
+		 * If the set doesn't fit, allocate a fresh cluster. */
+		uint32_t eod_remaining = cluster_size - free_start_byte;
+		if ((uint32_t)num_entries * 32 > eod_remaining) {
+			uint32_t new_cluster = exfat_alloc_cluster(ep);
+			if (new_cluster >= EXFAT_CLUSTER_END) {
+				if (need_free) kfree(cluster_buf);
+				kfree(entries);
+				return -ENOSPC;
+			}
+			free_start_cluster = new_cluster;
+			free_start_byte = 0;
+			cluster = new_cluster;
+		} else {
+			cluster = free_start_cluster;
+		}
 		found_space = 1;
-		cluster = free_start_cluster;
 	} else if (found_space) {
 		cluster = free_start_cluster;
 	}
@@ -1410,6 +1421,17 @@ static int exfat_remove_entry_set(struct exfat_priv *ep,
 
 	uint32_t start_byte = loc.sector_off * ep->sector_size +
 	                      loc.byte_off;
+
+	/* Boundary check: verify the full entry set fits within the cluster.
+	 * Entry sets must not span cluster boundaries per the exFAT spec,
+	 * but a corrupted image or in-memory data might have an inflated
+	 * num_entries.  Without this check the memcpy loop below would
+	 * write past the cluster buffer. */
+	if (start_byte + (uint32_t)loc.num_entries * 32 > cluster_size) {
+		if (need_free) kfree(buf);
+		return -EINVAL;
+	}
+
 	for (int i = 0; i < loc.num_entries; i++)
 		buf[start_byte + (uint32_t)i * 32] = EXFAT_ENTRY_UNUSED;
 
@@ -1453,6 +1475,14 @@ static int exfat_update_entry_set(struct exfat_priv *ep,
 
 	uint32_t start_byte = loc.sector_off * ep->sector_size +
 	                      loc.byte_off;
+
+	/* Boundary check: ensure the full entry set lives within this cluster
+	 * before computing CRC16 over it.  Without this check a corrupted
+	 * secondary_count could cause crc16() to read past the buffer. */
+	if (start_byte + (uint32_t)loc.num_entries * 32 > cluster_size) {
+		if (need_free) kfree(buf);
+		return -EINVAL;
+	}
 
 	/* Update stream extension (second entry in the set) */
 	uint8_t *stream_entry = buf + start_byte + 32;
