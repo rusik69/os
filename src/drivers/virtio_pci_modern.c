@@ -53,8 +53,11 @@ static uint8_t pci_find_virtio_cap(uint8_t bus, uint8_t slot, uint8_t func,
 
 	uint32_t caps_ptr_raw = pci_read(bus, slot, func, 0x34);
 	uint8_t cap_ptr = (uint8_t)(caps_ptr_raw & 0xFF);
+	int iter = 0;
 
 	while (cap_ptr != 0) {
+		if (++iter > 64)
+			break;
 		uint32_t cap_reg = pci_read(bus, slot, func, cap_ptr);
 		uint8_t cap_id = (uint8_t)(cap_reg & 0xFF);
 

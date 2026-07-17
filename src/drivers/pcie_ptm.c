@@ -48,7 +48,10 @@ static int ptm_enable(int bus, int dev, int func)
         return -ENODEV;
     uint8_t cap_ptr = (uint8_t)(pci_read(bus, dev, func, 0x34) & 0xFF);
     uint16_t ptm_cap = 0;
+    int iter = 0;
     while (cap_ptr != 0) {
+        if (++iter > 64)
+            break;
         uint16_t cap_id_next = (uint16_t)(pci_read(bus, dev, func, cap_ptr) & 0xFFFF);
         if ((uint8_t)(cap_id_next & 0xFF) == 0x1F) {
             ptm_cap = cap_ptr;
