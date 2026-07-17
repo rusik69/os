@@ -168,10 +168,13 @@ static int vfat_generate_short_name(const char *long_name, char *short_out,
 
             suffix++;
             if (suffix > 99999) {
-                /* Give up — use a random numeric name */
-                snprintf(test, sizeof(test), "%08X.%03X",
-                         (unsigned int)(unsigned long)long_name,
-                         (unsigned int)(unsigned long)ext_start);
+                /* Give up — use a hash of the actual filename content */
+                uint32_t hash = 0;
+                for (const char *p = long_name; *p; p++)
+                    hash = hash * 31 + (uint8_t)(*p);
+                snprintf(test, sizeof(test), "~%05X.%03X",
+                         (unsigned int)(hash & 0xFFFFF),
+                         (unsigned int)((hash >> 20) & 0xFFF));
                 break;
             }
         }
@@ -203,6 +206,7 @@ static int vfat_shortname_create(const char *long_name, char *short_name)
     short_name[i+2] = '\0';
     return 0;
 }
+
 /* ── vfat_shortname_checksum ────────────────────────────── */
 static int vfat_shortname_checksum(const char *short_name)
 {
@@ -213,10 +217,40 @@ static int vfat_shortname_checksum(const char *short_name)
     }
     return (int)sum;
 }
+
 /* ── vfat_shortname_match ───────────────────────────────── */
 static int vfat_shortname_match(const char *short_name, const char *long_name)
 {
-    (void)long_name;
-    (void)short_name;
-    return 0;
+    if (!short_name || !long_name) return 0;
+    /* Build an 8.3 short name from the long name, then compare
+     * case-insensitively against the given short_name */
+    char n8[8];
+    char n3[3];
+    vfat_build_83_name(long_name, n8, n3);
+
+    /* Compare: skip spaces in name/extension (space = no char) */
+    int si = 0, ni = 0;
+    while (short_name[si] && short_name[si] != '.' && ni < 8) {
+        char a = short_name[si];
+        char b = n8[ni];
+        if (a >= 'a' && a <= 'z') a = (char)(a - 32);
+        if (a != b) return 0;
+        si++;
+        ni++;
+    }
+    /* Skip the dot */
+    if (short_name[si] == '.') si++;
+
+    /* Compare extension */
+    ni = 0;
+    while (short_name[si] && ni < 3) {
+        char a = short_name[si];
+        char b = n3[ni];
+        if (a >= 'a' && a <= 'z') a = (char)(a - 32);
+        if (a != b) return 0;
+        si++;
+        ni++;
+    }
+    /* Both should be exhausted */
+    return (short_name[si] == '\0' || short_name[si] == '.') ? 1 : 0;
 }
