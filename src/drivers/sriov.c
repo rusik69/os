@@ -155,8 +155,9 @@ static uint64_t sriov_size_vf_bar(int bus, int dev, int func,
         /* Form the full 64-bit address mask then compute size exactly once */
         uint64_t full_mask = ((uint64_t)sz_hi << 32)
                            | (uint64_t)(sz_lo & PCI_BAR_SIZE_MASK);
-        if (full_mask == UINT64_MAX)
-            return 0;               /* all bits decoded — BAR not implemented */
+        if (full_mask == 0 || full_mask == UINT64_MAX)
+            return 0;               /* no address bits decoded (unimplemented) */
+                                    /* or all bits decoded (degenerate)       */
         size = (~full_mask) + 1;
     } else {
         /* Standard 32-bit (or I/O) BAR sizing */
@@ -166,10 +167,16 @@ static uint64_t sriov_size_vf_bar(int bus, int dev, int func,
 
         if (*is_io) {
             /* I/O BAR: bits 31:2 encode size */
-            size = (uint64_t)(~(sz_lo & 0xFFFFFFFC)) + 1;
+            uint32_t io_mask = sz_lo & 0xFFFFFFFC;
+            if (io_mask == 0)
+                return 0;           /* I/O BAR not implemented */
+            size = (uint64_t)(~io_mask) + 1;
         } else {
             /* Memory BAR: bits 31:4 encode size */
-            size = (uint64_t)(~(sz_lo & PCI_BAR_SIZE_MASK)) + 1;
+            uint32_t mem_mask = sz_lo & PCI_BAR_SIZE_MASK;
+            if (mem_mask == 0)
+                return 0;           /* memory BAR not implemented */
+            size = (uint64_t)(~mem_mask) + 1;
         }
     }
 
