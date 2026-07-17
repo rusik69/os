@@ -2388,7 +2388,8 @@ static int fat32_validate_bpb(const uint8_t *boot)
 	if (bpb->fat_size_32 == 0 && bpb->fat_size_16 == 0)
 		return -EINVAL;
 
-	if (bpb->reserved_sectors == 0)
+	/* FAT32 requires at least 2 reserved sectors (boot sector + FSInfo) */
+	if (bpb->reserved_sectors < 2)
 		return -EINVAL;
 
 	return 0;
