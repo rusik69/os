@@ -1863,7 +1863,7 @@ format-check:
 		BASE_REF="$${FORMAT_BASE_REF:-HEAD~1}"; \
 		echo "Checking code formatting against $${BASE_REF}..."; \
 		git clang-format --diff "$${BASE_REF}" 2>/dev/null > /tmp/format_diff.$$$$; \
-		if [ -s /tmp/format_diff.$$$$ ]; then \
+		if grep -q "^diff --git" /tmp/format_diff.$$$$ 2>/dev/null; then \
 			echo "❌ Code formatting issues found:"; \
 			cat /tmp/format_diff.$$$$; \
 			rm -f /tmp/format_diff.$$$$; \

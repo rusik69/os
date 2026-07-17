@@ -92,6 +92,21 @@ static int font_char_index(char c) {
     return 36;
 }
 
+/* ===== Window Management ===== */
+
+struct gui_window {
+    gui_rect_t rect;
+    gui_rect_t saved_rect;
+    char title[64];
+    gui_color_t bg;
+    int visible;
+    gui_window_state_t state;
+    uint32_t min_w, min_h;
+    gui_widget_t *widgets;
+    gui_widget_t *focused_widget;
+    gui_window_t *next, *prev;
+};
+
 static void render_glyph(int32_t x, int32_t y, char c, gui_color_t fg, gui_color_t bg,
                           const gui_window_t *clip) {
     int idx = font_char_index(c);
@@ -118,20 +133,6 @@ static void render_glyph(int32_t x, int32_t y, char c, gui_color_t fg, gui_color
     }
 }
 
-/* ===== Window Management ===== */
-
-struct gui_window {
-    gui_rect_t rect;
-    gui_rect_t saved_rect;
-    char title[64];
-    gui_color_t bg;
-    int visible;
-    gui_window_state_t state;
-    uint32_t min_w, min_h;
-    gui_widget_t *widgets;
-    gui_widget_t *focused_widget;
-    gui_window_t *next, *prev;
-};
 
 static const int TITLE_H = 24;
 static const int RESIZE_HANDLE = 6;

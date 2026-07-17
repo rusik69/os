@@ -151,10 +151,10 @@ jobs:
         run: |
           echo "## Unit Tests" >> $GITHUB_STEP_SUMMARY
           for f in ${{ runner.temp }}/test-reports/*-results.xml; do
-            name="$$(basename "$$f" -results.xml)"
-            tests="$$(grep -o 'tests="[0-9]*"' "$$f" | head -1 | grep -o '[0-9]*')"
-            fails="$$(grep -o 'failures="[0-9]*"' "$$f" | head -1 | grep -o '[0-9]*')"
-            echo "- $$name: $$tests tests, $$fails failures" >> $GITHUB_STEP_SUMMARY
+            name="$(basename "$f" -results.xml)"
+            tests="$(grep -o 'tests="[0-9]*"' "$f" | head -1 | grep -o '[0-9]*')"
+            fails="$(grep -o 'failures="[0-9]*"' "$f" | head -1 | grep -o '[0-9]*')"
+            echo "- $name: $tests tests, $fails failures" >> $GITHUB_STEP_SUMMARY
           done
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### ccache Stats" >> $GITHUB_STEP_SUMMARY
