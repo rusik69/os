@@ -761,7 +761,7 @@ static int fat32_lfn_selftest(void)
     /* Test: count entries */
     {
         int cnt = vfat_count_lfn_entries("HelloWorld.txt");
-        if (cnt != 1) return -4; /* "HelloWorld.txt" = 14 chars, needs 1 entry */
+        if (cnt != 2) return -4; /* "HelloWorld.txt" = 14 chars, needs 2 entries */
     }
 
     /* Test: insert entries */
@@ -786,7 +786,7 @@ static int fat32_lfn_selftest(void)
         if (ret != 0) return -6;
 
         /* Verify the entry at entry_idx should be the right position */
-        if (entry_idx != 1) return -7; /* one LFN entry was inserted */
+        if (entry_idx != 2) return -7; /* two LFN entries for "HelloWorld.txt" */
 
         /* Verify it's a valid LFN entry */
         if (!vfat_is_lfn_entry(&sector[0])) return -8;
@@ -816,7 +816,7 @@ static int fat32_lfn_selftest(void)
         /* Delete LFN entries matching the checksum */
         {
             int deleted = vfat_delete_by_checksum(sector, 0, entry_idx, ck);
-            if (deleted != 1) return -10;
+            if (deleted != 2) return -10; /* 2 LFN entries for "HelloWorld.txt" */
         }
     }
 
