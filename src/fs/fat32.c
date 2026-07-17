@@ -1527,6 +1527,7 @@ static int dir_remove_entry(uint32_t dir_cluster, const char *name) {
         memset(lfn_parts, 0, sizeof(lfn_parts));
         int lfn_n = 0;
         int lfn_start = -1;
+        uint32_t lfn_start_sec = (uint32_t)-1;  /* sector index where lfn_start was set */
         for (uint32_t s = 0; s < spc; s++) {
             if (read_sector(lba + s, buf) != 0) return -EIO;
             struct fat32_dirent *entries = (struct fat32_dirent *)buf;
@@ -1534,13 +1535,13 @@ static int dir_remove_entry(uint32_t dir_cluster, const char *name) {
             for (int i = 0; i < n_entries; i++) {
                 uint8_t first = (uint8_t)entries[i].name[0];
                 if (first == 0x00) return -EINVAL;
-                if (first == 0xE5) { lfn_n = 0; lfn_start = -1; continue; }
+                if (first == 0xE5) { lfn_n = 0; lfn_start = -1; lfn_start_sec = (uint32_t)-1; continue; }
                 if (entries[i].attr == FAT32_ATTR_LFN) {
                     int ord = entries[i].name[0] & 0x1F;
                     if (ord > 0 && ord <= 20)
                         __builtin_memcpy(&lfn_parts[ord - 1], &entries[i],
                                          sizeof(struct fat32_dirent));
-                    if (lfn_start < 0) lfn_start = i;
+                    if (lfn_start < 0) { lfn_start = i; lfn_start_sec = s; }
                     if (entries[i].name[0] & 0x40)
                         lfn_n = ord;
                     continue;
@@ -1555,6 +1556,7 @@ static int dir_remove_entry(uint32_t dir_cluster, const char *name) {
                                                entries[i].name, entries[i].ext)) {
                         lfn_n = 0;
                         lfn_start = -1;
+                        lfn_start_sec = (uint32_t)-1;
                         continue; /* checksum mismatch — skip this entry */
                     }
                     matched = name_match_ci(lname, name);
@@ -1563,14 +1565,36 @@ static int dir_remove_entry(uint32_t dir_cluster, const char *name) {
                 }
                 if (matched) {
                     if (lfn_start >= 0) {
-                        for (int j = lfn_start; j < i; j++)
-                            entries[j].name[0] = (char)0xE5;
+                        if (lfn_start_sec == s) {
+                            /* LFN entries are in the same sector — mark in bulk */
+                            for (int j = lfn_start; j < i; j++)
+                                entries[j].name[0] = (char)0xE5;
+                        } else {
+                            /* LFN entries span sectors — flush the previous sector
+                             * with 0xE5 markers first, then mark the current sector.
+                             * This prevents writing 0xE5 to wrong entries in the
+                             * current->buffer using stale lfn_start from an earlier sector. */
+                            uint8_t prev_buf[SECT_SIZE];
+                            if (read_sector(lba + lfn_start_sec, prev_buf) != 0)
+                                return -EIO;
+                            struct fat32_dirent *prev_entries =
+                                (struct fat32_dirent *)prev_buf;
+                            int n_pentries = (int)(SECT_SIZE / sizeof(struct fat32_dirent));
+                            for (int j = lfn_start; j < n_pentries; j++)
+                                prev_entries[j].name[0] = (char)0xE5;
+                            if (write_sector(lba + lfn_start_sec, prev_buf) != 0)
+                                return -EIO;
+                            /* Mark LFN entries in the current sector */
+                            for (int j = 0; j < i; j++)
+                                entries[j].name[0] = (char)0xE5;
+                        }
                     }
                     entries[i].name[0] = (char)0xE5;
                     return write_sector(lba + s, buf);
                 }
                 lfn_n = 0;
                 lfn_start = -1;
+                lfn_start_sec = (uint32_t)-1;
             }
         }
         cluster = fat_next_cluster(cluster);
