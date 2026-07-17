@@ -546,7 +546,7 @@ static int fsck_ext2(struct vfs_mount *mnt, int flags, int *errors_out)
                     uint32_t woff = blk_off;
                     uint32_t wo_sector = woff / 512;
                     uint32_t wo_off    = woff % 512;
-                    uint32_t wsectors  = (wo_off + sizeof(struct ext2_inode) + 511) / 512;
+                    uint32_t wsectors  = (wo_off + inode_size + 511) / 512;
                     if (wsectors == 0) wsectors = 1;
                     uint8_t wbuf[1024];  /* 2 sectors max for straddle */
                     uint64_t wlba2 = (uint64_t)wblk * (block_size / 512) + wo_sector;
@@ -772,7 +772,7 @@ static int fsck_ext2(struct vfs_mount *mnt, int flags, int *errors_out)
                  * containing this inode, not the entire block. */
                 uint32_t lk_sector = blk_off / 512;
                 uint32_t lk_off    = blk_off % 512;
-                uint32_t lk_sectors = (lk_off + sizeof(struct ext2_inode) + 511) / 512;
+                uint32_t lk_sectors = (lk_off + inode_size + 511) / 512;
                 if (lk_sectors == 0) lk_sectors = 1;
                 uint8_t wbuf[1024];  /* 2 sectors max for straddle */
                 uint64_t wlba = (uint64_t)blk * (block_size / 512) + lk_sector;
