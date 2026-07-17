@@ -65,8 +65,8 @@ static int aer_handle_correctable(int bus, int dev, int func, uint32_t status)
             bus, dev, func, status);
 
     /* Clear status (write 1 to clear) */
-    uint16_t aer_cap = (uint16_t)pci_find_ext_cap(bus, dev, func, 0x0001);
-    if (aer_cap) {
+    int aer_cap = pci_find_ext_cap(bus, dev, func, 0x0001);
+    if (aer_cap > 0) {
         pcie_write(bus, dev, func, aer_cap + PCI_ERR_COR_STATUS, status);
     }
 
@@ -83,9 +83,9 @@ static int aer_handle_uncorrectable(int bus, int dev, int func, uint32_t status)
     aer_log_error(bus, dev, func, status, 0);
 
     /* Read severity register to distinguish fatal vs non-fatal */
-    uint16_t aer_cap = (uint16_t)pci_find_ext_cap(bus, dev, func, 0x0001);
+    int aer_cap = pci_find_ext_cap(bus, dev, func, 0x0001);
     uint32_t severity = 0;
-    if (aer_cap) {
+    if (aer_cap > 0) {
         severity = pcie_read(bus, dev, func, aer_cap + PCI_ERR_UNCOR_SEVER);
     }
 
@@ -97,7 +97,7 @@ static int aer_handle_uncorrectable(int bus, int dev, int func, uint32_t status)
     }
 
     /* Clear status (write 1 to clear) — non-fatal errors are recoverable */
-    if (aer_cap) {
+    if (aer_cap > 0) {
         pcie_write(bus, dev, func, aer_cap + PCI_ERR_UNCOR_STATUS, status);
     }
 
@@ -109,8 +109,8 @@ static int aer_handle_uncorrectable(int bus, int dev, int func, uint32_t status)
 /* Scan for AER capability on a device */
 static int aer_probe_device(int bus, int dev, int func)
 {
-    uint16_t aer_cap = (uint16_t)pci_find_ext_cap(bus, dev, func, 0x0001); /* PCI_EXT_CAP_ID_AER */
-    if (aer_cap) {
+    int aer_cap = pci_find_ext_cap(bus, dev, func, 0x0001); /* PCI_EXT_CAP_ID_AER */
+    if (aer_cap > 0) {
         kprintf("[AER] Found AER on %02x:%02x.%x (cap=0x%04x)\n",
                 bus, dev, func, aer_cap);
         return 1;
