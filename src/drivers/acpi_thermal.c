@@ -275,7 +275,7 @@ static int thermal_check_trip_point(struct thermal_zone_ext *tze,
         tp->crossed = 1;
         kprintf("[ACPI_TZ] Trip point %s crossed at %d (%d.%d°C)\n",
                 tp->method, current_temp,
-                current_temp / 10 - 273, current_temp % 10);
+                (current_temp - 2731) / 10, abs(current_temp - 2731) % 10);
 
         if (tp->type == TRIP_POINT_CRITICAL) {
             kprintf("[ACPI_TZ] CRITICAL temperature! Emergency shutdown!\n");
@@ -474,7 +474,7 @@ int __init acpi_thermal_init(void)
             "poll=[%d..%d]ms, %d trip points, "
             "_TC1=%d _TC2=%d _TSP=%d (passive perf=%d%%)\n",
             z->name, z->temp,
-            z->temp / 10 - 273, (z->temp % 10) ? (z->temp % 10) : 0,
+            (z->temp - 2731) / 10, abs(z->temp - 2731) % 10,
             z->polling_ms_min, z->polling_ms_max,
             tze->num_trip_points,
             z->tc1, z->tc2, z->tsp,
@@ -606,7 +606,7 @@ void acpi_thermal_print_info(void)
         kprintf("  Zone %d: %s temp=%d (%d.%d°C) crit=%d pass=%d "
                 "poll=%dms trend=%s samples=%d\n",
                 i, z->name, z->temp,
-                z->temp / 10 - 273, z->temp % 10,
+                (z->temp - 2731) / 10, abs(z->temp - 2731) % 10,
                 z->crit_temp, z->passive_temp,
                 z->polling_ms, trend_str, z->consecutive_samples);
 
