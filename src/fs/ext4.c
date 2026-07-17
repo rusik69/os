@@ -263,6 +263,10 @@ int ext4_verify_inode_checksum(struct ext4_priv *ep,
 	 *   - High 16 bits: stored in i_checksum_hi (bytes 130-131)
 	 *
 	 * CRC32C covers bytes 0 to offsetof(i_checksum_hi) = 130 bytes.
+	 * The low checksum field (i_osd2[0..1]) at bytes 116-117 falls within
+	 * this CRC range, so it must be zeroed before computing the CRC to
+	 * avoid a circular dependency — same pattern as the superblock
+	 * checksum verification (cf. ext4_verify_sb_checksum).
 	 */
 	memcpy(&lo, &inode->i_osd2[0], sizeof(lo));
 	hi = inode->i_checksum_hi;
@@ -271,8 +275,21 @@ int ext4_verify_inode_checksum(struct ext4_priv *ep,
 	if (stored_csum == 0)
 		return 0; /* Zero checksum = not computed */
 
-	computed_csum = ext4_crc32c(ep, inode,
-	                offsetof(struct ext4_inode, i_checksum_hi));
+	/*
+	 * Make a working copy and zero the low checksum field
+	 * (i_osd2[0..1]) which is within the CRC32C range.
+	 */
+	{
+		struct ext4_inode tmp;
+		uint8_t *tmp_bytes = (uint8_t *)&tmp;
+
+		memcpy(&tmp, inode, sizeof(tmp));
+		memset(&tmp_bytes[offsetof(struct ext4_inode, i_osd2[0])],
+		       0, sizeof(lo));
+
+		computed_csum = ext4_crc32c(ep, &tmp,
+		                offsetof(struct ext4_inode, i_checksum_hi));
+	}
 
 	/* Fold i_extra_isize into the checksum (Linux kernel compat) */
 	{
