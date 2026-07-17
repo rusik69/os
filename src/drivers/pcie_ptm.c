@@ -43,16 +43,16 @@ static struct ptm_state ptm;
 static int ptm_enable(int bus, int dev, int func)
 {
     /* Walk standard PCI capability list to find PTM (cap_id=0x1F) */
-    uint16_t status = (uint16_t)(pci_read(bus, dev, func, 0x06) & 0xFFFF);
+    uint16_t status = pci_read16((uint8_t)bus, (uint8_t)dev, (uint8_t)func, 0x06);
     if (!(status & (1U << 4)))
         return -ENODEV;
-    uint8_t cap_ptr = (uint8_t)(pci_read(bus, dev, func, 0x34) & 0xFF);
+    uint8_t cap_ptr = (uint8_t)(pci_read16((uint8_t)bus, (uint8_t)dev, (uint8_t)func, 0x34) & 0xFF);
     uint16_t ptm_cap = 0;
     int iter = 0;
     while (cap_ptr != 0) {
         if (++iter > 64)
             break;
-        uint16_t cap_id_next = (uint16_t)(pci_read(bus, dev, func, cap_ptr) & 0xFFFF);
+        uint16_t cap_id_next = pci_read16((uint8_t)bus, (uint8_t)dev, (uint8_t)func, cap_ptr);
         if ((uint8_t)(cap_id_next & 0xFF) == 0x1F) {
             ptm_cap = cap_ptr;
             break;
