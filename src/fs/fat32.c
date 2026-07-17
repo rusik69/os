@@ -854,6 +854,10 @@ int fat32_read_file(const char *path, void *buf, uint32_t max_size) {
         }
         clus = fat_next_cluster(clus);
     }
+    /* File size vs cluster chain consistency: if the chain ended before we
+     * read the declared file size, the filesystem is corrupted or inconsistent. */
+    if (done < to_read)
+        return -EIO;
     return (int)done;
 }
 
@@ -2132,6 +2136,10 @@ int fat32_pread(const char *path, void *buf, uint32_t size, uint32_t offset)
         start_off = 0;
         clus = fat_next_cluster(clus);
     }
+    /* File size vs cluster chain consistency: if the chain ended before
+     * covering the requested range, the filesystem is inconsistent. */
+    if (done < size)
+        return done > 0 ? (int)done : -EIO;
     return (int)done;
 }
 
