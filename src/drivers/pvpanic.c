@@ -43,8 +43,7 @@ static int  pvpanic_detected = 0;
 static void pvpanic_detect_isa(void)
 {
     uint8_t val = inb(PVPANIC_PORT);
-    /* Port responds if not 0xFF on non-existent hardware */
-    if (val != 0xFF || val == 0x00) {
+    if (val != 0xFF) {
         pvpanic_mode = PVPANIC_MODE_ISA;
         pvpanic_detected = 1;
         kprintf("[PVPANIC] detected at ISA I/O port 0x%04x (val=0x%02x)\n",
@@ -67,7 +66,7 @@ static void pvpanic_detect_mmio(void)
 /* ── Panic notifier ─────────────────────────────────────────────── */
 
 /* Forward declaration */
-int pvpanic_send(uint8_t event);
+static int pvpanic_send(uint8_t event);
 
 static struct notifier_block pvpanic_nb = {
     .notifier_call = NULL,
@@ -89,9 +88,9 @@ static int pvpanic_panic_notifier(struct notifier_block *nb,
     return 0;
 }
 
-/* ── Public API: signal a panic event to the hypervisor ────────── */
+/* ── Send a panic event to the hypervisor ─────────────────────── */
 
-int pvpanic_send(uint8_t event)
+static int pvpanic_send(uint8_t event)
 {
     if (!pvpanic_detected)
         return -1;
