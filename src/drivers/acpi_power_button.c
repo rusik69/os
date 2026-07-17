@@ -28,6 +28,12 @@ static acpi_pbtn_callback_t g_pbtn_ext_callback = NULL;
 /* Timestamp (timer_get_ms) of the last processed power button event. */
 static uint64_t g_pbtn_ext_last_event_ms = 0;
 
+/* Flag to bypass debounce on the very first event after init.
+ * Prevents the initial 0 value of g_pbtn_ext_last_event_ms from
+ * falsely suppressing the first legitimate press within the first
+ * 100 ms of uptime. */
+static int g_pbtn_ext_first_event = 1;
+
 /* ACPI PM1a_EVT_BLK ports for power button status */
 #define PM1a_EVT_BLK  0x1000  /* Will be set from FADT in real system */
 #define ACPI_PWRBTN_STS (1U << 8)   /* Power button status bit in PM1_STS */
@@ -51,6 +57,7 @@ int __init acpi_power_button_ext_init(void) {
 
     g_pbtn_ext_present = 1;
     g_pbtn_ext_init_done = 1;
+    g_pbtn_ext_first_event = 1;
     kprintf("[ACPI_PBTN_EXT] Power button driver initialized\n");
     return 0;
 }
@@ -125,14 +132,20 @@ int acpi_power_button_fixed_event_handler(void *context)
      * mechanical bounce that can re-assert PWRBTN_STS within a few ms
      * of being cleared; without debounce a single press would be
      * reported multiple times.
+     *
+     * The first event after init always passes through because
+     * g_pbtn_ext_last_event_ms starts at 0 and we must not falsely
+     * suppress a legitimate press within the first 100 ms of boot.
      */
     uint64_t now_ms = timer_get_ms();
-    if (now_ms - g_pbtn_ext_last_event_ms < ACPI_PBTN_DEBOUNCE_MS) {
+    if (!g_pbtn_ext_first_event &&
+        now_ms - g_pbtn_ext_last_event_ms < ACPI_PBTN_DEBOUNCE_MS) {
         kprintf("[ACPI_PBTN] Fixed event: power button bounce suppressed "
                 "(debounce %llu ms)\n",
                 (unsigned long long)(now_ms - g_pbtn_ext_last_event_ms));
         return 1;  /* Status cleared, event consumed — no duplicate delivery */
     }
+    g_pbtn_ext_first_event = 0;
     g_pbtn_ext_last_event_ms = now_ms;
 
     /* Update internal state */
@@ -199,6 +212,7 @@ int acpi_power_button_fixed_event_init(void)
 
     g_pbtn_ext_present = 1;
     g_pbtn_ext_init_done = 1;
+    g_pbtn_ext_first_event = 1;
 
     kprintf("[ACPI_PBTN] Fixed event: power button initialized "
             "(PM1a_EVT_BLK=0x%x)\n", g_ext_pm1a_evt_blk);
