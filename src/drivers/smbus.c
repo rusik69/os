@@ -145,9 +145,20 @@ int smbus_block_read(uint8_t addr, uint8_t cmd, uint8_t *buf, int len) {
      * Validate count: SMBus block read must return 1-32 bytes per
      * the SMBus specification.  A count of 0 or >32 indicates a
      * protocol violation or corrupted device response.
+     *
+     * When count > 32, drain the block data FIFO before returning
+     * so stale data does not corrupt subsequent SMBus operations.
+     * SMBUS_BLOCK (0xEF4) is shared with SMBUS_DATA1; leaving
+     * unconsumed bytes would silently corrupt word/block reads.
      */
-    if (count <= 0 || count > 32)
+    if (count <= 0 || count > 32) {
+        /* Drain block data FIFO when count > 32 */
+        if (count > 32) {
+            for (int i = 0; i < 32; i++)
+                (void)inb(SMBUS_BLOCK);
+        }
         return SMBUS_ERR_NODEV;
+    }
 
     /* Read up to len bytes into caller's buffer */
     int to_read = (count < len) ? count : len;
