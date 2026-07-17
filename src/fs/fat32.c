@@ -171,11 +171,30 @@ static void fsinfo_write_hint(uint32_t next) {
 
 /* ── FAT chain traversal (FAT12/16/32 aware) ────────────────────────────────── */
 
+/*
+ * Return the LBA base address of the active FAT, taking BPB_ExtFlags into
+ * account.  Per the FAT32 spec:
+ *   - Bit 7 = 0 : all FATs are mirrored; use FAT 0 as the primary.
+ *   - Bit 7 = 1 : only one FAT is active; bits 0-3 select which.
+ */
+static uint32_t fat_active_base(void)
+{
+    if (g_ext_flags & 0x80) {
+        uint32_t active = g_ext_flags & 0x0F;
+        /* Clamp to a valid FAT index — fall back to 0 if the value is bogus */
+        if (active >= num_fats)
+            active = 0;
+        return fat_start + active * fat_sectors;
+    }
+    return fat_start;
+}
+
 /* Read a FAT entry — automatically handles 12-bit, 16-bit, and 32-bit FATs */
 static int fat_read_entry(uint32_t cluster, uint32_t *out) {
     uint32_t entry_sz = FAT_ENTRY_SIZE();
     uint32_t byte_off = cluster * entry_sz;
-    uint32_t fat_sec  = fat_start + byte_off / SECT_SIZE;
+    uint32_t fat_base = fat_active_base();
+    uint32_t fat_sec  = fat_base + byte_off / SECT_SIZE;
     uint32_t offset   = byte_off % SECT_SIZE;
     uint8_t buf[SECT_SIZE];
     if (read_sector(fat_sec, buf) != 0) return -EIO;
@@ -205,7 +224,8 @@ static int fat_read_entry(uint32_t cluster, uint32_t *out) {
 static int fat_write_entry(uint32_t cluster, uint32_t value) {
     uint32_t entry_sz = FAT_ENTRY_SIZE();
     uint32_t byte_off = cluster * entry_sz;
-    uint32_t fat_sec  = fat_start + byte_off / SECT_SIZE;
+    uint32_t fat_base = fat_active_base();
+    uint32_t fat_sec  = fat_base + byte_off / SECT_SIZE;
     uint32_t offset   = byte_off % SECT_SIZE;
     uint8_t buf[SECT_SIZE];
     if (read_sector(fat_sec, buf) != 0) return -EIO;
@@ -783,9 +803,14 @@ int fat32_mount(fat32_disk_t disk, uint32_t part_lba) {
         data_start = fat_start + num_fats * fat_sz;
         root_dir_sectors = 0;
         g_ext_flags = bpb->ext_flags;
-        /* BPB_FSInfo (fs_info): 0xFFFF means \"no FSInfo sector\" per spec */
-        fs_info_lba = (bpb->fs_info && bpb->fs_info != 0xFFFF)
-                      ? part_lba + bpb->fs_info : 0;
+        /* BPB_FSInfo (fs_info): 0xFFFF means "no FSInfo sector" per spec.
+         * Also reject values outside the reserved area — a corrupted BPB should
+         * not cause us to read an arbitrary sector as FSInfo. */
+        if (bpb->fs_info == 0xFFFF ||
+            (bpb->fs_info != 0 && bpb->fs_info >= bpb->reserved_sectors))
+            fs_info_lba = 0;
+        else
+            fs_info_lba = bpb->fs_info ? part_lba + bpb->fs_info : 0;
         if (fs_info_lba) {
             uint8_t fbuf[SECT_SIZE];
             if (read_sector(fs_info_lba, fbuf) == 0) {
@@ -2429,7 +2454,14 @@ static int fat32_validate_bpb(const uint8_t *boot)
 
 	/* FAT32 requires at least 2 reserved sectors (boot sector + FSInfo) */
 	if (bpb->reserved_sectors < 2)
-		return -EINVAL;
+	    return -EINVAL;
+
+	/* BPB_FSInfo (fs_info) must be 0, 0xFFFF (no FSInfo), or a
+	 * valid sector within the reserved area. */
+	if (bpb->fs_info != 0 && bpb->fs_info != 0xFFFF) {
+	    if (bpb->fs_info >= bpb->reserved_sectors)
+	        return -EINVAL;
+	}
 
 	return 0;
 }
