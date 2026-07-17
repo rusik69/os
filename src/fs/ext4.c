@@ -134,7 +134,7 @@ static uint32_t ext4_crc32c(struct ext4_priv *ep, const void *data,
 	 * Compute the seed as the Linux kernel does:
 	 *
 	 *   seed = checksum_seed                        (if CSUM_SEED)
-	 *   seed = ~crc32c(~0, s_uuid, 16)              (otherwise)
+	 *   seed = ~crc32c(0, s_uuid, 16)               (otherwise)
 	 *
 	 * The kernel stores this seed and uses it as the initial CRC
 	 * state for crypto_shash_update (raw CRC continuation — no
@@ -146,7 +146,7 @@ static uint32_t ext4_crc32c(struct ext4_priv *ep, const void *data,
 	if (ep->incompat & EXT4_FEATURE_INCOMPAT_CSUM_SEED)
 		crc = ep->sb.s_checksum_seed;
 	else
-		crc = ~crc32c(~0, ep->sb.s_uuid, sizeof(ep->sb.s_uuid));
+		crc = ~crc32c(0, ep->sb.s_uuid, sizeof(ep->sb.s_uuid));
 
 	crc = ~crc32c(~crc, data, len);
 	return crc;
@@ -223,8 +223,8 @@ int ext4_verify_bg_checksum(struct ext4_priv *ep,
 	/* With 64-bit feature, fold the block group number in */
 	if (ep->incompat & EXT4_FEATURE_INCOMPAT_64BIT) {
 		uint32_t le_bg = bg_index;
-		computed_csum = crc32c(computed_csum, &le_bg,
-		                       sizeof(le_bg));
+		computed_csum = ~crc32c(~computed_csum, &le_bg,
+		                        sizeof(le_bg));
 	}
 
 	if (computed_csum != stored_csum) {
@@ -277,18 +277,18 @@ int ext4_verify_inode_checksum(struct ext4_priv *ep,
 	/* Fold i_extra_isize into the checksum (Linux kernel compat) */
 	{
 		uint16_t extra = inode->i_extra_isize;
-		computed_csum = crc32c(computed_csum, &extra, sizeof(extra));
+		computed_csum = ~crc32c(~computed_csum, &extra, sizeof(extra));
 	}
 
 	/* Fold i_projid into the checksum for inodes large enough */
 	if (ep->inode_size >= offsetof(struct ext4_inode, i_projid) +
 	                     sizeof(inode->i_projid)) {
 		uint32_t projid = inode->i_projid;
-		computed_csum = crc32c(computed_csum, &projid, sizeof(projid));
+		computed_csum = ~crc32c(~computed_csum, &projid, sizeof(projid));
 	}
 
 	/* Fold inode number into the checksum (Linux ext4 compatibility) */
-	computed_csum = crc32c(computed_csum, &ino, sizeof(ino));
+	computed_csum = ~crc32c(~computed_csum, &ino, sizeof(ino));
 
 	if (computed_csum != stored_csum) {
 		kprintf("[ext4] WARNING: inode checksum mismatch: "
