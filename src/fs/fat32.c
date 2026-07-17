@@ -1060,6 +1060,7 @@ static int fat32_83_name_exists(uint32_t dir_cluster,
                 uint8_t first = (uint8_t)entries[i].name[0];
                 if (first == 0x00) return 0; /* end of directory */
                 if (first == 0xE5 || entries[i].attr == FAT32_ATTR_LFN) continue;
+                if (entries[i].attr & FAT32_ATTR_VOLUME_ID) continue;
                 /* Compare 8-byte name and 3-byte extension */
                 if (__builtin_memcmp(entries[i].name, name83_8, 8) == 0 &&
                     __builtin_memcmp(entries[i].ext, name83_3, 3) == 0)
@@ -1083,6 +1084,7 @@ static int fat32_83_name_exists(uint32_t dir_cluster,
                 uint8_t first = (uint8_t)entries[i].name[0];
                 if (first == 0x00) return 0;
                 if (first == 0xE5 || entries[i].attr == FAT32_ATTR_LFN) continue;
+                if (entries[i].attr & FAT32_ATTR_VOLUME_ID) continue;
                 if (__builtin_memcmp(entries[i].name, name83_8, 8) == 0 &&
                     __builtin_memcmp(entries[i].ext, name83_3, 3) == 0)
                     return 1;
