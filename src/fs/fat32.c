@@ -523,13 +523,13 @@ static uint32_t dir_find(uint32_t dir_cluster, const char *name,
         first_lba = fat_start + num_fats * fat_sectors;
         sec_count = root_dir_sectors;
         /* No cluster chain to follow — single layer of sectors */
+        struct fat32_lfn lfn_parts[20];
+        memset(lfn_parts, 0, sizeof(lfn_parts));
+        int lfn_n = 0;
         for (uint32_t s = 0; s < sec_count; s++) {
             if (read_sector(first_lba + s, buf) != 0) return 0;
             struct fat32_dirent *entries = (struct fat32_dirent *)buf;
             int n_entries = (int)(SECT_SIZE / sizeof(struct fat32_dirent));
-            struct fat32_lfn lfn_parts[20];
-            memset(lfn_parts, 0, sizeof(lfn_parts));
-            int lfn_n = 0;
             for (int i = 0; i < n_entries; i++) {
                 uint8_t first = (uint8_t)entries[i].name[0];
                 if (first == 0x00) return 0;
@@ -581,13 +581,13 @@ static uint32_t dir_find(uint32_t dir_cluster, const char *name,
     while (cluster >= 2 && !FAT_IS_EOC(cluster)) {
         if (++_chain_cnt > FAT_MAX_CLUSTER()) break;
         uint32_t lba = cluster_to_lba(cluster);
+        struct fat32_lfn lfn_parts[20];
+        memset(lfn_parts, 0, sizeof(lfn_parts));
+        int lfn_n = 0;
         for (uint32_t s = 0; s < spc; s++) {
             if (read_sector(lba + s, buf) != 0) return 0;
             struct fat32_dirent *entries = (struct fat32_dirent *)buf;
             int n_entries = (int)(SECT_SIZE / sizeof(struct fat32_dirent));
-            struct fat32_lfn lfn_parts[20];
-            memset(lfn_parts, 0, sizeof(lfn_parts));
-            int lfn_n = 0;
             for (int i = 0; i < n_entries; i++) {
                 uint8_t first = (uint8_t)entries[i].name[0];
                 if (first == 0x00) return 0;
@@ -881,13 +881,13 @@ int fat32_list_dir(const char *path, char names[][FAT32_MAX_NAME], int max) {
     if (cluster == 0 && fat_type != FAT32) {
         /* FAT12/16 fixed root directory */
         uint32_t first_lba = fat_start + num_fats * fat_sectors;
+        struct fat32_lfn lfn_parts[20];
+        memset(lfn_parts, 0, sizeof(lfn_parts));
+        int lfn_n = 0;
         for (uint32_t s = 0; s < root_dir_sectors && count < max; s++) {
             if (read_sector(first_lba + s, buf) != 0) return count;
             struct fat32_dirent *entries = (struct fat32_dirent *)buf;
             int n_entries = (int)(SECT_SIZE / sizeof(struct fat32_dirent));
-            struct fat32_lfn lfn_parts[20];
-            memset(lfn_parts, 0, sizeof(lfn_parts));
-            int lfn_n = 0;
             for (int i = 0; i < n_entries && count < max; i++) {
                 uint8_t first = (uint8_t)entries[i].name[0];
                 if (first == 0x00) return count;
@@ -949,13 +949,13 @@ int fat32_list_dir(const char *path, char names[][FAT32_MAX_NAME], int max) {
     while (clus >= 2 && !FAT_IS_EOC(clus) && count < max) {
         if (++_chain_cnt > FAT_MAX_CLUSTER()) break;
         uint32_t lba = cluster_to_lba(clus);
+        struct fat32_lfn lfn_parts[20];
+        memset(lfn_parts, 0, sizeof(lfn_parts));
+        int lfn_n = 0;
         for (uint32_t s = 0; s < spc && count < max; s++) {
             if (read_sector(lba + s, buf) != 0) return count;
             struct fat32_dirent *entries = (struct fat32_dirent *)buf;
             int n_entries = (int)(SECT_SIZE / sizeof(struct fat32_dirent));
-            struct fat32_lfn lfn_parts[20];
-            memset(lfn_parts, 0, sizeof(lfn_parts));
-            int lfn_n = 0;
             for (int i = 0; i < n_entries && count < max; i++) {
                 uint8_t first = (uint8_t)entries[i].name[0];
                 if (first == 0x00) goto done;
@@ -1523,14 +1523,14 @@ static int dir_remove_entry(uint32_t dir_cluster, const char *name) {
     while (cluster >= 2 && !FAT_IS_EOC(cluster)) {
         if (++_chain_cnt > FAT_MAX_CLUSTER()) break;
         uint32_t lba = cluster_to_lba(cluster);
+        struct fat32_lfn lfn_parts[20];
+        memset(lfn_parts, 0, sizeof(lfn_parts));
+        int lfn_n = 0;
+        int lfn_start = -1;
         for (uint32_t s = 0; s < spc; s++) {
             if (read_sector(lba + s, buf) != 0) return -EIO;
             struct fat32_dirent *entries = (struct fat32_dirent *)buf;
             int n_entries = (int)(SECT_SIZE / sizeof(struct fat32_dirent));
-            struct fat32_lfn lfn_parts[20];
-            memset(lfn_parts, 0, sizeof(lfn_parts));
-            int lfn_n = 0;
-            int lfn_start = -1;
             for (int i = 0; i < n_entries; i++) {
                 uint8_t first = (uint8_t)entries[i].name[0];
                 if (first == 0x00) return -EINVAL;
