@@ -1473,31 +1473,34 @@ int fat32_write_file(const char *path, const void *data, uint32_t size) {
     if (old_clus && !is_dir)
         fat_free_chain(old_clus);
 
-    /* Allocate cluster chain */
+    /* Allocate cluster chain — skip allocation for zero-size files */
     uint32_t bytes_per_cluster = spc * bps;
-    uint32_t needed = size ? size : 1;
-    uint32_t clusters_needed = (needed + bytes_per_cluster - 1) / bytes_per_cluster;
-    if (clusters_needed == 0) clusters_needed = 1;
-
     uint32_t first = 0, prev = 0;
-    for (uint32_t i = 0; i < clusters_needed; i++) {
-        uint32_t c = fat_alloc_cluster();
-        if (!c) {
-            if (first) fat_free_chain(first);
-            return -ENOSPC;
-        }
-        if (!first) first = c;
-        if (prev) fat_write_entry(prev, c);
-        prev = c;
-    }
-    if (prev) fat_write_entry(prev, FAT_EOC());
 
-    /* Write data */
+    if (size > 0) {
+        uint32_t clusters_needed = (size + bytes_per_cluster - 1) / bytes_per_cluster;
+        if (clusters_needed == 0) clusters_needed = 1;
+
+        for (uint32_t i = 0; i < clusters_needed; i++) {
+            uint32_t c = fat_alloc_cluster();
+            if (!c) {
+                if (first) fat_free_chain(first);
+                return -ENOSPC;
+            }
+            if (!first) first = c;
+            if (prev) fat_write_entry(prev, c);
+            prev = c;
+        }
+        if (prev) fat_write_entry(prev, FAT_EOC());
+    }
+
+    /* Write data (skip for empty files) */
     uint32_t done = 0;
     uint32_t clus = first;
     uint8_t sect_buf[SECT_SIZE];
     uint64_t _chain_cnt = 0;
-    while (!FAT_IS_EOC(clus) && done < size) {
+
+    while (clus >= 2 && !FAT_IS_EOC(clus) && done < size) {
         if (++_chain_cnt > FAT_MAX_CLUSTER()) return -EIO;
         uint32_t lba = cluster_to_lba(clus);
         for (uint32_t s = 0; s < spc && done < size; s++) {
@@ -1510,7 +1513,6 @@ int fat32_write_file(const char *path, const void *data, uint32_t size) {
         }
         clus = fat_next_cluster(clus);
     }
-
     if (!old_clus) {
         if (dir_add_entry(parent, n8, n3, first, size, 0, leaf) != 0) {
             if (first) fat_free_chain(first);
@@ -2208,8 +2210,9 @@ int fat32_pwrite(const char *path, const void *data, uint32_t size, uint32_t off
         char n8[8], n3[3];
         fat32_generate_short_name(leaf, parent, n8, n3);
 
-        uint32_t clusters_needed = (needed + bpc - 1) / bpc;
-        if (clusters_needed == 0) clusters_needed = 1;
+        uint32_t clusters_needed = 0;
+        if (needed > 0)
+            clusters_needed = (needed + bpc - 1) / bpc;
 
         uint32_t first = 0, prev = 0;
         for (uint32_t i = 0; i < clusters_needed; i++) {
@@ -2261,14 +2264,14 @@ int fat32_pwrite(const char *path, const void *data, uint32_t size, uint32_t off
     }
 
     /* ── File exists — extend fragmented chain if needed ── */
-    {
-        uint32_t old_clusters = (old_size + bpc - 1) / bpc;
-        if (old_clusters == 0) old_clusters = 1;
+    if (needed > 0) {
+        uint32_t old_clusters = old_size > 0 ? (old_size + bpc - 1) / bpc : 0;
         uint32_t new_clusters = (needed + bpc - 1) / bpc;
-        if (new_clusters == 0) new_clusters = 1;
 
         if (new_clusters > old_clusters) {
-            uint32_t last = fat32_chain_walk(old_clus, old_clusters - 1);
+            uint32_t last = old_clusters > 0
+                ? fat32_chain_walk(old_clus, old_clusters - 1)
+                : old_clus;
             if (last < 2) return -EIO;
             int ext_ret = fat32_chain_extend(last, new_clusters - old_clusters);
             if (ext_ret != 0) return ext_ret;
@@ -2276,7 +2279,7 @@ int fat32_pwrite(const char *path, const void *data, uint32_t size, uint32_t off
     }
 
     /* Walk to the start cluster and write data */
-    {
+    if (size > 0) {
         uint32_t done = 0;
         uint32_t clus = fat32_chain_walk(old_clus, offset / bpc);
         uint32_t off_in_cluster = offset % bpc;
@@ -2308,9 +2311,8 @@ int fat32_pwrite(const char *path, const void *data, uint32_t size, uint32_t off
 
         if (needed > old_size)
             dir_update_by_leaf(parent, leaf, old_clus, needed);
-
-        return (int)size;
     }
+    return (int)size;
 }
 
 /* fat32_truncate_file: truncate a file to a specified size.  Frees excess
