@@ -190,13 +190,14 @@ void __init rtc_init(void) {
    RTC uses divider 32768 >> (rate_select - 1) for rate_select >= 3 */
 static int hz_to_rate_select(int rate_hz) {
     if (rate_hz <= 0) return -1;
-    /* Rate = 32768 >> (rs - 1), so rs = 16 - log2(32768/rate) */
-    int div = 32768 / rate_hz;
-    int rs = 16;
-    while (div > 1 && rs > 2) {
-        div >>= 1;
-        rs--;
+    /* Rate = 32768 >> (rs - 1), so rs = 16 - log2(rate_hz) */
+    int log = 0;
+    int r = rate_hz;
+    while (r > 1) {
+        r >>= 1;
+        log++;
     }
+    int rs = 16 - log;
     if (rs < 3 || rs > 15) return -1;
     return rs;
 }
