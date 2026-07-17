@@ -2405,18 +2405,20 @@ static int fat32_validate_fsinfo(const uint8_t *buf)
 	if (buf[484] != 0x72 || buf[485] != 0x72 ||
 	    buf[486] != 0x41 || buf[487] != 0x61)
 		return -EINVAL;
-	/* Boot signature at offsets 508–509: 0xAA55 */
-	if (buf[508] != 0x55 || buf[509] != 0xAA)
+	/* Trail signature at offsets 508–511: 0xAA550000 in little-endian.
+	 * Per Microsoft FAT32 spec, the last 4 bytes of the FSInfo sector
+	 * are 0x00, 0x00, 0x55, 0xAA (LE representation of 0xAA550000). */
+	if (buf[508] != 0x00 || buf[509] != 0x00)
 		return -EINVAL;
-	/* Signature at offsets 510–511: 0x0000 */
-	if (buf[510] != 0x00 || buf[511] != 0x00)
+	if (buf[510] != 0x55 || buf[511] != 0xAA)
 		return -EINVAL;
 	return 0;
 }
 
 /* Repair the FSInfo sector by writing the standard signature markers and
- * a plausible free-cluster hint. */
-static void fat32_repair_fsinfo(uint8_t *buf, uint32_t total_clusters)
+ * marking both cached values as unknown (0xFFFFFFFF) so the next mount
+ * does not trust stale data. */
+static void fat32_repair_fsinfo(uint8_t *buf)
 {
 	/* Clear everything first */
 	memset(buf, 0, 512);
@@ -2425,16 +2427,15 @@ static void fat32_repair_fsinfo(uint8_t *buf, uint32_t total_clusters)
 	/* Signature at offset 484: "rrAa" */
 	buf[484] = 0x72; buf[485] = 0x72;
 	buf[486] = 0x41; buf[487] = 0x61;
-	/* FSI_Free_Count at offset 488–491 (per Microsoft FAT32 spec) — set to total_clusters */
-	buf[488] = (uint8_t)(total_clusters & 0xFF);
-	buf[489] = (uint8_t)((total_clusters >> 8) & 0xFF);
-	buf[490] = (uint8_t)((total_clusters >> 16) & 0xFF);
-	buf[491] = (uint8_t)((total_clusters >> 24) & 0xFF);
-	/* FSI_Nxt_Free at offset 492–495 (per Microsoft FAT32 spec) — initial hint = cluster 2 */
-	buf[492] = 2; buf[493] = 0; buf[494] = 0; buf[495] = 0;
-	/* Signature at offset 508–509: 0xAA55 */
-	buf[508] = 0x55; buf[509] = 0xAA;
-	/* Signature at offset 510–511: 0x0000 (already zeroed) */
+	/* FSI_Free_Count at offset 488–491: 0xFFFFFFFF = unknown (per spec) */
+	buf[488] = 0xFF; buf[489] = 0xFF;
+	buf[490] = 0xFF; buf[491] = 0xFF;
+	/* FSI_Nxt_Free at offset 492–495: 0xFFFFFFFF = unknown (per spec) */
+	buf[492] = 0xFF; buf[493] = 0xFF;
+	buf[494] = 0xFF; buf[495] = 0xFF;
+	/* Trail signature at offsets 508–511: 0xAA550000 in little-endian */
+	buf[508] = 0x00; buf[509] = 0x00;
+	buf[510] = 0x55; buf[511] = 0xAA;
 }
 
 /* Repair FAT32 boot sector structures.
@@ -2540,23 +2541,7 @@ int fat32_repair_boot(void)
 		if (read_sector(fsinfo_lba, fsinfo) == 0) {
 			if (fat32_validate_fsinfo(fsinfo) != 0) {
 				/* FSInfo is corrupt — reconstruct it */
-				uint32_t total_sectors = bpb->total_sectors_16
-					? bpb->total_sectors_16
-					: bpb->total_sectors_32;
-				uint32_t total_clusters = 0;
-				if (bpb->sectors_per_cluster > 0 && bpb->bytes_per_sector > 0) {
-					uint32_t root_dir_bytes =
-						bpb->root_entry_count * 32;
-					uint32_t root_dir_sec =
-						(root_dir_bytes + bpb->bytes_per_sector - 1)
-							/ bpb->bytes_per_sector;
-					uint32_t data_sec = total_sectors
-						- bpb->reserved_sectors
-						- bpb->num_fats * bpb->fat_size_32
-						- root_dir_sec;
-					total_clusters = data_sec / bpb->sectors_per_cluster;
-				}
-				fat32_repair_fsinfo(fsinfo, total_clusters);
+				fat32_repair_fsinfo(fsinfo);
 				if (write_sector(fsinfo_lba, fsinfo) != 0)
 					return -EIO;
 				repairs++;
@@ -2565,24 +2550,7 @@ int fat32_repair_boot(void)
 			}
 		} else {
 			/* FSInfo sector is unreadable — try to recreate it */
-			uint32_t total_sectors = bpb->total_sectors_16
-				? bpb->total_sectors_16
-				: bpb->total_sectors_32;
-			uint32_t total_clusters = 0;
-			if (bpb->sectors_per_cluster > 0 && bpb->bytes_per_sector > 0) {
-				uint32_t root_dir_bytes =
-					bpb->root_entry_count * 32;
-				uint32_t root_dir_sec =
-					(root_dir_bytes + bpb->bytes_per_sector - 1)
-						/ bpb->bytes_per_sector;
-				uint32_t data_sec = total_sectors
-					- bpb->reserved_sectors
-					- bpb->num_fats * bpb->fat_size_32
-					- root_dir_sec;
-				total_clusters = data_sec / bpb->sectors_per_cluster;
-			}
-			memset(fsinfo, 0, 512);
-			fat32_repair_fsinfo(fsinfo, total_clusters);
+			fat32_repair_fsinfo(fsinfo);
 			if (write_sector(fsinfo_lba, fsinfo) != 0)
 				return -EIO;
 			repairs++;
