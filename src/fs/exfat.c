@@ -594,6 +594,19 @@ static int exfat_bitmap_init(struct exfat_priv *ep)
 	/* Read and validate volume_length (64-bit) */
 	ep->volume_length        = bpb->volume_length;
 
+	/* Volume length must be greater than 0 */
+	if (ep->volume_length == 0) {
+		kprintf("[exfat] ERROR: volume_length is 0\n");
+		return -EINVAL;
+	}
+
+	/* Per exFAT spec: bytes_per_sector_shift must be 9..12 (512..4096) */
+	if (bpb->bytes_per_sector_shift < 9 || bpb->bytes_per_sector_shift > 12) {
+		kprintf("[exfat] ERROR: invalid bytes_per_sector_shift %u "
+		        "(must be 9..12)\n", bpb->bytes_per_sector_shift);
+		return -EINVAL;
+	}
+
 	/* Validate that cluster heap fits within the volume.
 	 * The last sector of the cluster heap is at:
 	 *   cluster_heap_offset + cluster_count * sectors_per_cluster - 1
@@ -627,7 +640,23 @@ static int exfat_bitmap_init(struct exfat_priv *ep)
 	 * after the FAT to avoid overlap.  When no FAT, the bitmap uses
 	 * the offset directly. */
 	if (ep->fat_length > 0) {
+		/* Validate fat_offset + fat_length doesn't overflow uint32_t.
+		 * The BPB stores these as 32-bit, and an overflow here would
+		 * cause bitmap_start_sector to wrap to a wrong location. */
+		if ((uint64_t)ep->fat_offset + ep->fat_length > 0xFFFFFFFFULL) {
+			kprintf("[exfat] ERROR: FAT overflow (offset %u + length %u)\n",
+			        ep->fat_offset, ep->fat_length);
+			return -EINVAL;
+		}
 		ep->bitmap_start_sector = ep->fat_offset + ep->fat_length;
+		/* Validate that FAT region fits within the volume */
+		if ((uint64_t)ep->bitmap_start_sector > ep->volume_length) {
+			kprintf("[exfat] ERROR: FAT extends past volume end "
+			        "(sector %u > %llu)\n",
+			        ep->bitmap_start_sector,
+			        (unsigned long long)ep->volume_length);
+			return -EINVAL;
+		}
 		kprintf("[exfat] FAT enabled (%u sectors), bitmap at sector %u\n",
 		        ep->fat_length, ep->bitmap_start_sector);
 	} else {
@@ -636,6 +665,15 @@ static int exfat_bitmap_init(struct exfat_priv *ep)
 		        ep->bitmap_start_sector);
 	}
 	ep->bitmap_sectors      = bitmap_sect;
+
+	/* Validate that the entire bitmap fits within the volume */
+	if ((uint64_t)ep->bitmap_start_sector + ep->bitmap_sectors > ep->volume_length) {
+		kprintf("[exfat] ERROR: bitmap extends past volume end "
+		        "(end %llu > %llu)\n",
+		        (unsigned long long)ep->bitmap_start_sector + ep->bitmap_sectors,
+		        (unsigned long long)ep->volume_length);
+		return -EINVAL;
+	}
 
 	/* Initialize the sector cache */
 	ep->cached_bitmap_sector = ~0U;
