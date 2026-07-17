@@ -497,10 +497,17 @@ static int lfn_fill_entry(struct fat32_lfn *lfn, const char *name, int *pos) {
 
 /* Write LFN directory entries before a new 8.3 entry.
  * The buffer 'buf' should contain the sector where the 8.3 entry will be written,
- * and 'entry_idx' is the index within that sector. Returns 0 on success, -1 on failure.
- * This function modifies 'buf' in-memory AND writes to disk the previous sector(s)
- * if the LFN entries span across sector boundaries. */
-static int dir_add_lfn_entries(uint64_t lba_base, uint32_t sector_idx, int entry_idx, uint8_t *buf,
+ * and *entry_idx / *sector_idx point to the position within that sector. Returns 0
+ * on success, -1 on failure.
+ *
+ * On success, *sector_idx and *entry_idx are updated to reflect the position where
+ * the 8.3 entry should be written (after all LFN entries have been inserted), and
+ * 'buf' contains the sector data for that position. The caller must still call
+ * write_sector() for the final sector to write the 8.3 entry.
+ *
+ * This function writes intermediate sectors to disk as needed if the LFN entries
+ * span across sector boundaries. */
+static int dir_add_lfn_entries(uint64_t lba_base, uint32_t *sector_idx, int *entry_idx, uint8_t *buf,
                                const char *leaf, const char *name83_8, const char *name83_3) {
     int name_len = (int)strlen(leaf);
     if (name_len <= 0)
@@ -511,16 +518,37 @@ static int dir_add_lfn_entries(uint64_t lba_base, uint32_t sector_idx, int entry
     if (num_entries > 20)
         num_entries = 20; /* max 20 LFN entries per file */
 
+    int cur_sector = (int)*sector_idx;
+    int cur_entry  = *entry_idx;
+
     uint8_t cksum = lfn_checksum(name83_8, name83_3);
+
+    /* Pre-check: if the combined (dir_entry + lfn_entries) spans past the current
+     * sector boundary, verify we have room to flush and continue.  This check
+     * prevents writing past the end of the sector buffer when the caller expects
+     * the 8.3 entry to fit in the same sector. */
+    {
+        int n_entries = (int)(SECT_SIZE / sizeof(struct fat32_dirent));
+        if (cur_entry + num_entries > n_entries) {
+            /* The LFN entries won't all fit in the current sector.
+             * Flush the current sector (which contains the free slot marker
+             * we found) and start fresh at sector_idx + 1, entry 0. */
+            if (write_sector(lba_base + (uint32_t)cur_sector, buf) != 0)
+                return -EIO;
+            cur_sector++;
+            cur_entry = 0;
+            memset(buf, 0, SECT_SIZE);
+        }
+    }
 
     /* Write LFN entries in reverse order: last entry first in the directory.
      * The last entry (highest ordinal) goes closest to the beginning of the dir,
      * and is marked with bit 6 set in the order field. */
     for (int n = num_entries - 1; n >= 0; n--) {
-        /* Write LFN entry starting at (sector_idx, entry_idx).
+        /* Write LFN entry starting at (cur_sector, cur_entry).
          * We need to shift the existing entries (and any future entries) down
          * to make room. We do this by rewriting the sector with the LFN entry
-         * inserted before the current entry_idx. */
+         * inserted before the current cur_entry. */
         struct fat32_lfn lfn_entry;
         memset(&lfn_entry, 0, sizeof(lfn_entry));
 
@@ -538,32 +566,33 @@ static int dir_add_lfn_entries(uint64_t lba_base, uint32_t sector_idx, int entry
         /* We need to insert this LFN entry just before the current dir entry.
          * Since we're writing in reverse order (from last LFN to first),
          * we always insert at the same spot — just before the 8.3 entry.
-         * Strategy: shift all entries from entry_idx onward by one slot,
-         * then write the LFN at entry_idx. */
+         * Strategy: shift all entries from cur_entry onward by one slot,
+         * then write the LFN at cur_entry. */
         int n_entries = (int)(SECT_SIZE / sizeof(struct fat32_dirent));
-        if (entry_idx >= n_entries) {
+        if (cur_entry >= n_entries) {
             /* Need to flush this sector and move to the next */
-            if (write_sector(lba_base + sector_idx, buf) != 0)
+            if (write_sector(lba_base + (uint32_t)cur_sector, buf) != 0)
                 return -EIO;
-            sector_idx++;
-            entry_idx = 0;
+            cur_sector++;
+            cur_entry = 0;
             memset(buf, 0, SECT_SIZE);
         }
 
         /* Shift existing entries down by one */
         struct fat32_dirent *dirents = (struct fat32_dirent *)buf;
-        if (entry_idx < n_entries - 1) {
-            memmove(&dirents[entry_idx + 1], &dirents[entry_idx],
-                    (size_t)(n_entries - entry_idx - 1) * sizeof(struct fat32_dirent));
+        if (cur_entry < n_entries - 1) {
+            memmove(&dirents[cur_entry + 1], &dirents[cur_entry],
+                    (size_t)(n_entries - cur_entry - 1) * sizeof(struct fat32_dirent));
         }
-        /* Write the LFN entry at entry_idx */
-        memcpy(&dirents[entry_idx], &lfn_entry, sizeof(struct fat32_lfn));
-        entry_idx++;
+        /* Write the LFN entry at cur_entry */
+        memcpy(&dirents[cur_entry], &lfn_entry, sizeof(struct fat32_lfn));
+        cur_entry++;
     }
 
-    /* Write back the sector (the caller will write the 8.3 entry) */
-    if (write_sector(lba_base + sector_idx, buf) != 0)
-        return -EIO;
+    /* Return the final position and sector to the caller */
+    *sector_idx = (uint32_t)cur_sector;
+    *entry_idx  = cur_entry;
+
     return 0;
 }
 
@@ -1448,26 +1477,23 @@ static int dir_add_entry(uint32_t dir_cluster, const char *name83_8, const char 
                 if (first == 0x00 || first == 0xE5) {
                     /* First write LFN entries if needed (before the 8.3 entry at position i) */
                     if (use_lfn) {
-                        if (dir_add_lfn_entries(first_lba, s, i, buf, orig_name, name83_8,
+                        uint32_t lfn_sec = s;
+                        int lfn_idx = i;
+                        if (dir_add_lfn_entries(first_lba, &lfn_sec, &lfn_idx, buf, orig_name, name83_8,
                                                 name83_3) != 0)
                             return -EIO;
-                        /* After inserting LFN entries, re-read the sector to get fresh state */
-                        if (read_sector(first_lba + s, buf) != 0)
-                            return -EIO;
-                        /* Find the new free slot (LFN entries were inserted before position i) */
-                        entries = (struct fat32_dirent *)buf;
-                        /* Re-scan to find the next free slot after LFN entries */
-                        int found = 0;
-                        for (int j = 0; j < n_entries; j++) {
-                            uint8_t f = (uint8_t)entries[j].name[0];
-                            if (f == 0x00 || f == 0xE5) {
-                                i = j;
-                                found = 1;
-                                break;
-                            }
+                        /* dir_add_lfn_entries updated buf with the sector data
+                         * at lfn_sec, and lfn_idx points to the slot after the
+                         * inserted LFN entries where the 8.3 entry should go.
+                         * If LFN entries overflowed to a different sector,
+                         * re-read that sector so buf reflects on-disk state. */
+                        if (lfn_sec != s) {
+                            if (read_sector(first_lba + lfn_sec, buf) != 0)
+                                return -EIO;
+                            entries = (struct fat32_dirent *)buf;
+                            s = lfn_sec; /* update sector for final write_sector */
                         }
-                        if (!found)
-                            return -2;
+                        i = lfn_idx;
                     }
                     memset(&entries[i], 0, sizeof(entries[i]));
                     memcpy(entries[i].name, name83_8, 8);
@@ -1503,24 +1529,22 @@ static int dir_add_entry(uint32_t dir_cluster, const char *name83_8, const char 
                 if (first == 0x00 || first == 0xE5) {
                     /* First write LFN entries if needed (before the 8.3 entry at position i) */
                     if (use_lfn) {
-                        if (dir_add_lfn_entries(lba, s, i, buf, orig_name, name83_8, name83_3) != 0)
+                        uint32_t lfn_sec = s;
+                        int lfn_idx = i;
+                        if (dir_add_lfn_entries(lba, &lfn_sec, &lfn_idx, buf, orig_name, name83_8, name83_3) != 0)
                             return -EIO;
-                        /* After inserting LFN entries, re-read the sector to get fresh state */
-                        if (read_sector(lba + s, buf) != 0)
-                            return -EIO;
-                        entries = (struct fat32_dirent *)buf;
-                        /* Re-scan to find the next free slot after LFN entries */
-                        int found = 0;
-                        for (int j = 0; j < n_entries; j++) {
-                            uint8_t f = (uint8_t)entries[j].name[0];
-                            if (f == 0x00 || f == 0xE5) {
-                                i = j;
-                                found = 1;
-                                break;
-                            }
+                        /* dir_add_lfn_entries updated buf with the sector data
+                         * at lfn_sec, and lfn_idx points to the slot after the
+                         * inserted LFN entries where the 8.3 entry should go.
+                         * If LFN entries overflowed to a different sector,
+                         * re-read that sector so buf reflects on-disk state. */
+                        if (lfn_sec != s) {
+                            if (read_sector(lba + lfn_sec, buf) != 0)
+                                return -EIO;
+                            entries = (struct fat32_dirent *)buf;
+                            s = lfn_sec; /* update sector for final write_sector */
                         }
-                        if (!found)
-                            return -2;
+                        i = lfn_idx;
                     }
                     memset(&entries[i], 0, sizeof(entries[i]));
                     memcpy(entries[i].name, name83_8, 8);
