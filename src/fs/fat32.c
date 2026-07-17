@@ -338,10 +338,13 @@ static uint8_t lfn_checksum(const char *name83_8, const char *name83_3);
 static int lfn_validate_checksum(const struct fat32_lfn *entries, int count,
                                   const char *name83_8, const char *name83_3) {
     if (count <= 0) return 1;
-    /* All LFN entries for the same file have the same checksum; use the first */
-    uint8_t stored_cksum = entries[0].checksum;
     uint8_t computed_cksum = lfn_checksum(name83_8, name83_3);
-    return (stored_cksum == computed_cksum);
+    /* Verify all LFN entries have the same checksum matching the short name */
+    for (int i = 0; i < count; i++) {
+        if (entries[i].checksum != computed_cksum)
+            return 0;
+    }
+    return 1;
 }
 
 static int dir_grow_cluster(uint32_t *cluster) {
@@ -887,7 +890,14 @@ int fat32_list_dir(const char *path, char names[][FAT32_MAX_NAME], int max) {
                 }
                 if (entries[i].attr & FAT32_ATTR_VOLUME_ID) { lfn_n = 0; continue; }
                 char *out = names[count];
+                int use_lfn = 0;
                 if (lfn_n > 0) {
+                    if (lfn_validate_checksum(lfn_parts, lfn_n,
+                                              entries[i].name, entries[i].ext)) {
+                        use_lfn = 1;
+                    }
+                }
+                if (use_lfn) {
                     vfat_reconstruct_name(lfn_parts, lfn_n, out, FAT32_MAX_NAME);
                     lfn_n = 0;
                 } else {
@@ -906,6 +916,7 @@ int fat32_list_dir(const char *path, char names[][FAT32_MAX_NAME], int max) {
                         }
                     }
                     out[ni] = '\0';
+                    lfn_n = 0;
                 }
                 if (entries[i].attr & FAT32_ATTR_DIRECTORY) {
                     size_t _slen = strlen(out);
@@ -949,7 +960,14 @@ int fat32_list_dir(const char *path, char names[][FAT32_MAX_NAME], int max) {
                 if (entries[i].attr & FAT32_ATTR_VOLUME_ID) { lfn_n = 0; continue; }
 
                 char *out = names[count];
+                int use_lfn = 0;
                 if (lfn_n > 0) {
+                    if (lfn_validate_checksum(lfn_parts, lfn_n,
+                                              entries[i].name, entries[i].ext)) {
+                        use_lfn = 1;
+                    }
+                }
+                if (use_lfn) {
                     vfat_reconstruct_name(lfn_parts, lfn_n, out, FAT32_MAX_NAME);
                     lfn_n = 0;
                 } else {
@@ -968,6 +986,7 @@ int fat32_list_dir(const char *path, char names[][FAT32_MAX_NAME], int max) {
                         }
                     }
                     out[ni] = '\0';
+                    lfn_n = 0;
                 }
                 if (entries[i].attr & FAT32_ATTR_DIRECTORY) {
                     size_t _slen = strlen(out);
@@ -1517,6 +1536,13 @@ static int dir_remove_entry(uint32_t dir_cluster, const char *name) {
                 if (lfn_n > 0) {
                     char lname[FAT32_MAX_NAME];
                     vfat_reconstruct_name(lfn_parts, lfn_n, lname, FAT32_MAX_NAME);
+                    /* Validate LFN checksum against the 8.3 entry */
+                    if (!lfn_validate_checksum(lfn_parts, lfn_n,
+                                               entries[i].name, entries[i].ext)) {
+                        lfn_n = 0;
+                        lfn_start = -1;
+                        continue; /* checksum mismatch — skip this entry */
+                    }
                     matched = name_match_ci(lname, name);
                 } else {
                     matched = name83_match(entries[i].name, entries[i].ext, name);
@@ -2026,6 +2052,12 @@ static int dir_update_by_leaf(uint32_t dir_cluster, const char *leaf,
                 if (lfn_n > 0) {
                     char lname[FAT32_MAX_NAME];
                     vfat_reconstruct_name(lfn_parts, lfn_n, lname, FAT32_MAX_NAME);
+                    /* Validate LFN checksum against the 8.3 entry */
+                    if (!lfn_validate_checksum(lfn_parts, lfn_n,
+                                               entries[i].name, entries[i].ext)) {
+                        lfn_n = 0;
+                        continue; /* checksum mismatch — skip this entry */
+                    }
                     matched = name_match_ci(lname, leaf);
                 } else {
                     matched = name83_match(entries[i].name, entries[i].ext, leaf);
