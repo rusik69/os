@@ -732,6 +732,9 @@ int fat32_mount(fat32_disk_t disk, uint32_t part_lba) {
     uint32_t root_entries = bpb->root_entry_count;
     uint32_t total_sectors = bpb->total_sectors_16 ? bpb->total_sectors_16 : bpb->total_sectors_32;
     fat_start = part_lba + bpb->reserved_sectors;
+    /* Prevent overflow: if fat_start wrapped around, the BPB or partition
+     * table specifies an impossible geometry. */
+    if (fat_start < part_lba) return -EINVAL;
 
     /* Validate geometry before any division operations */
     if (bps == 0) return -5;
