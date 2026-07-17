@@ -57,3 +57,14 @@ git push origin main
 ```
 
 Always push after committing so CI picks up the latest state. The self-hosted runner listens for new commits and runs automatically.
+
+## Temporary Files
+
+Remove temporary files from the working tree before committing:
+
+- **Build artifacts** — `build/`, `build_test/`, `build_check*`, `build_analyze/` — gitignored, but don't `git add -A` with stray build output outside those dirs
+- **Editor swap files** — `*.swp`, `*.swo`, `*~` — remove with `find . -name '*.swp' -o -name '*~' -delete`
+- **`.o`/`.elf`/`.ko` files** — should all be under build dirs. If any appear in the source tree, delete them
+- **Compiler temp files** — `*.i`, `*.s` preprocessor/assembly output
+- **Progress state files** — `os-improvements-progress.json` and `bug-hunt-progress.json` ARE tracked and should be committed with plan-driven changes
+- Check with `git status --short` before every commit — unexpected untracked files are likely temp artifacts
