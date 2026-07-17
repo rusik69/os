@@ -555,6 +555,42 @@ void vfat_build_83_name(const char *long_name, char out_name[8], char out_ext[3]
     }
 }
 
+/* ── lfn_utf16_to_utf8 ──────────────────────────────────────────────────
+ * Encode a single UTF-16 code point (BMP: U+0000–U+FFFF) to UTF-8
+ * into the output buffer.  Uppercase ASCII (A–Z) is downcased for
+ * readability (matching VFAT convention).  Surrogate code points
+ * (U+D800–U+DFFF) are replaced with '_' since VFAT LFN does not use
+ * surrogate pairs.
+ *
+ * Returns 1 on success, 0 if the result would exceed out_max bounds
+ * (caller treats this as "done — buffer full").
+ */
+static int lfn_utf16_to_utf8(uint16_t c, char *out, int *pos, int out_max)
+{
+    if (c >= 0xD800 && c <= 0xDFFF)
+        c = '_';   /* invalid surrogate → replacement */
+
+    if (c < 0x80) {
+        /* 1-byte UTF-8: 0xxxxxxx – ASCII subset */
+        if (*pos + 1 >= out_max) return 0;
+        out[(*pos)++] = (char)((c >= 'A' && c <= 'Z') ? c + 32 : c);
+        return 1;
+    } else if (c < 0x800) {
+        /* 2-byte UTF-8: 110xxxxx 10xxxxxx */
+        if (*pos + 2 >= out_max) return 0;
+        out[(*pos)++] = (char)(0xC0 | (c >> 6));
+        out[(*pos)++] = (char)(0x80 | (c & 0x3F));
+        return 1;
+    } else {
+        /* 3-byte UTF-8: 1110xxxx 10xxxxxx 10xxxxxx */
+        if (*pos + 3 >= out_max) return 0;
+        out[(*pos)++] = (char)(0xE0 | (c >> 12));
+        out[(*pos)++] = (char)(0x80 | ((c >> 6) & 0x3F));
+        out[(*pos)++] = (char)(0x80 | (c & 0x3F));
+        return 1;
+    }
+}
+
 /* ── vfat_reconstruct_name ─────────────────────────────────────────────
  *
  * Reconstruct a long filename from VFAT LFN directory entries.
@@ -564,6 +600,9 @@ void vfat_build_83_name(const char *long_name, char out_name[8], char out_ext[3]
  * highest ordinal last (entries[0] = ordinal 1, entries[count-1] =
  * ordinal N).  This is the order produced by dir_find and other
  * callers which store LFN entries via ord-1 indexing.
+ *
+ * Characters are stored as UTF-16LE and converted to UTF-8 on output.
+ * Only the BMP (U+0000–U+FFFF) is handled; surrogate pairs are replaced.
  *
  * @entries:    array of 'count' LFN directory entries (32 bytes each)
  * @count:      number of LFN entries (1-20)
@@ -612,28 +651,28 @@ int vfat_reconstruct_name(const void *entries, int count,
     }
 
     /* Reconstruct: iterate from ordinal 1 (entries[0]) up to ordinal N
-     * (entries[count-1]).  Characters are stored as UTF-16LE; we handle
-     * the ASCII subset and convert uppercase to lowercase for readability.
+     * (entries[count-1]).  Characters are stored as UTF-16LE; convert
+     * to UTF-8 on output with uppercase-to-lowercase for readability.
      *
      * Per the VFAT spec, the name is terminated by 0x0000 in the entry
      * character array; all subsequent slots are filled with 0xFFFF padding.
      * Stop immediately on either sentinel — the name is done. */
     for (int seq = 0; seq < count; seq++) {
         const struct vfat_lfn *e = &lfn[seq];
-        for (int i = 0; i < 5 && pos < out_max - 1; i++) {
+        for (int i = 0; i < 5; i++) {
             uint16_t c = e->name1[i];
             if (!c || c == 0xFFFF) goto done;
-            out[pos++] = (char)((c >= 'A' && c <= 'Z') ? c + 32 : c);
+            if (!lfn_utf16_to_utf8(c, out, &pos, out_max)) goto done;
         }
-        for (int i = 0; i < 6 && pos < out_max - 1; i++) {
+        for (int i = 0; i < 6; i++) {
             uint16_t c = e->name2[i];
             if (!c || c == 0xFFFF) goto done;
-            out[pos++] = (char)((c >= 'A' && c <= 'Z') ? c + 32 : c);
+            if (!lfn_utf16_to_utf8(c, out, &pos, out_max)) goto done;
         }
-        for (int i = 0; i < 2 && pos < out_max - 1; i++) {
+        for (int i = 0; i < 2; i++) {
             uint16_t c = e->name3[i];
             if (!c || c == 0xFFFF) goto done;
-            out[pos++] = (char)((c >= 'A' && c <= 'Z') ? c + 32 : c);
+            if (!lfn_utf16_to_utf8(c, out, &pos, out_max)) goto done;
         }
     }
 done:
