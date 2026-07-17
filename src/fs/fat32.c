@@ -1386,6 +1386,7 @@ static int dir_update_size(uint32_t dir_cluster, const char *cmp_name,
             int n_entries = (int)(SECT_SIZE / sizeof(struct fat32_dirent));
             for (int i = 0; i < n_entries; i++) {
                 if (entries[i].attr == FAT32_ATTR_LFN) continue;
+                if (entries[i].attr & FAT32_ATTR_VOLUME_ID) continue;
                 if (!name83_match(entries[i].name, entries[i].ext, cmp_name)) continue;
                 entries[i].cluster_lo = (uint16_t)(first_cluster & 0xFFFF);
                 entries[i].cluster_hi = (uint16_t)((first_cluster >> 16) & 0xFFFF);
@@ -1407,6 +1408,7 @@ static int dir_update_size(uint32_t dir_cluster, const char *cmp_name,
             int n_entries = (int)(SECT_SIZE / sizeof(struct fat32_dirent));
             for (int i = 0; i < n_entries; i++) {
                 if (entries[i].attr == FAT32_ATTR_LFN) continue;
+                if (entries[i].attr & FAT32_ATTR_VOLUME_ID) continue;
                 if (!name83_match(entries[i].name, entries[i].ext, cmp_name)) continue;
                 entries[i].cluster_lo = (uint16_t)(first_cluster & 0xFFFF);
                 entries[i].cluster_hi = (uint16_t)((first_cluster >> 16) & 0xFFFF);
