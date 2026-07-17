@@ -192,7 +192,7 @@ int ext4_ext_check_header(struct ext4_extent_header *eh, uint16_t max_depth,
         return -EFSCORRUPTED;
     }
 
-    if (eh->eh_entries > eh->eh_max) {
+    if (eh->eh_max != 0 && eh->eh_entries > eh->eh_max) {
         kprintf("[ext4_ext] entries %u exceeds capacity %u\n",
                 eh->eh_entries, eh->eh_max);
         return -EFSCORRUPTED;
