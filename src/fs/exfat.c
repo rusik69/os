@@ -110,6 +110,12 @@ static uint32_t exfat_next_cluster(struct exfat_priv *ep, uint32_t cluster)
     if (cluster >= EXFAT_CLUSTER_END)
         return EXFAT_CLUSTER_END;
 
+    /* Clusters 0 and 1 are reserved in exFAT and are never valid data
+     * clusters in chain traversal.  Returning them would cause callers
+     * to attempt I/O on invalid sector ranges. */
+    if (cluster < 2)
+        return EXFAT_CLUSTER_END;
+
     /* If no FAT table, assume contiguous allocation */
     if (ep->fat_length == 0) {
         /* Return next contiguous cluster, but don't go beyond the
@@ -134,8 +140,24 @@ static uint32_t exfat_next_cluster(struct exfat_priv *ep, uint32_t cluster)
     if (next == 0xFFFFFFF7)
         return EXFAT_CLUSTER_END;
 
+    /* Check for reserved markers (0xFFFFFFF0 through 0xFFFFFFF6) */
+    if (next >= 0xFFFFFFF0)
+        return EXFAT_CLUSTER_END;
+
     /* Check for free marker (0x00000000) — should not happen for in-use cluster */
     if (next == 0)
+        return EXFAT_CLUSTER_END;
+
+    /* Cluster 1 is reserved in exFAT — should never appear in a chain */
+    if (next == 1)
+        return EXFAT_CLUSTER_END;
+
+    /* Ensure the returned cluster is within the valid range.
+     * The maximum valid data cluster is cluster_count+1.  Values
+     * above this (but below 0xFFFFFFF0) are not valid data clusters
+     * and would cause callers to compute sector addresses outside
+     * the cluster heap. */
+    if (next > ep->cluster_count + 1)
         return EXFAT_CLUSTER_END;
 
     return next;
@@ -306,12 +328,12 @@ static int exfat_fat_flush(struct exfat_priv *ep)
 static int exfat_read_fat_entry(struct exfat_priv *ep,
                                 uint32_t cluster, uint32_t *entry)
 {
+    if (cluster < 2 || cluster > ep->cluster_count + 1)
+        return -EINVAL;
+
     uint32_t byte_offset = cluster * 4;
     uint32_t sector_idx = byte_offset / ep->sector_size;
     uint32_t byte_in_sec = byte_offset % ep->sector_size;
-
-    if (cluster < 2 || cluster > ep->cluster_count + 1)
-        return -EINVAL;
 
     if (exfat_fat_load_sector(ep, sector_idx) != 0)
         return -EIO;
@@ -325,12 +347,12 @@ static int exfat_read_fat_entry(struct exfat_priv *ep,
 static int exfat_write_fat_entry(struct exfat_priv *ep,
                                  uint32_t cluster, uint32_t value)
 {
+    if (cluster < 2 || cluster > ep->cluster_count + 1)
+        return -EINVAL;
+
     uint32_t byte_offset = cluster * 4;
     uint32_t sector_idx = byte_offset / ep->sector_size;
     uint32_t byte_in_sec = byte_offset % ep->sector_size;
-
-    if (cluster < 2 || cluster > ep->cluster_count + 1)
-        return -EINVAL;
 
     if (exfat_fat_load_sector(ep, sector_idx) != 0)
         return -EIO;
