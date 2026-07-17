@@ -89,7 +89,7 @@ static int font_char_index(char c) {
 static void render_glyph(int32_t x, int32_t y, char c, gui_color_t fg, gui_color_t bg) {
     int idx = font_char_index(c);
     const uint8_t *glyph = font5x7[idx];
-    
+
     for (int row = 0; row < 7; row++) {
         uint8_t bits = glyph[row];
         for (int col = 0; col < 5; col++) {
@@ -120,7 +120,7 @@ gui_window_t* gui_window_create(const char *title, int32_t x, int32_t y,
                                  uint32_t w, uint32_t h, gui_color_t bg) {
     gui_window_t *win = kmalloc(sizeof(gui_window_t));
     if (!win) return NULL;
-    
+
     memset(win, 0, sizeof(gui_window_t));
     win->rect.x = x;
     win->rect.y = y;
@@ -128,12 +128,12 @@ gui_window_t* gui_window_create(const char *title, int32_t x, int32_t y,
     win->rect.h = h;
     win->bg = bg;
     win->visible = 1;
-    
+
     if (title) {
         strncpy(win->title, title, sizeof(win->title) - 1);
         win->title[sizeof(win->title) - 1] = '\0';
     }
-    
+
     return win;
 }
 
@@ -181,8 +181,7 @@ void gui_window_draw_rect(gui_window_t *win, gui_rect_t rect, gui_color_t color)
 void gui_window_draw_rect_outline(gui_window_t *win, gui_rect_t rect,
                                    gui_color_t color, int thickness) {
     for (int t = 0; t < thickness; t++) {
-        gui_rect_t r = {rect.x + t, rect.y + t, 
-                        rect.w - 2*t, rect.h - 2*t};
+        gui_rect_t r = {rect.x + t, rect.y + t, rect.w - 2 * t, rect.h - 2 * t};
         /* top */
         for (int32_t x = r.x; x < (int32_t)(r.x + r.w); x++)
             gui_window_draw_pixel(win, x, r.y, color);
@@ -303,8 +302,8 @@ static void button_draw(gui_widget_t *w) {
     gui_button_data_t *data = (gui_button_data_t *)w->data;
     gui_window_draw_rect(NULL, w->rect, GUI_BUTTON_BG);
     gui_window_draw_rect_outline(NULL, w->rect, GUI_DARK_GRAY, 2);
-    gui_window_draw_text(NULL, w->rect.x + 8, w->rect.y + 4, 
-                        data->label, GUI_BUTTON_FG, GUI_BUTTON_BG);
+    gui_window_draw_text(NULL, w->rect.x + 8, w->rect.y + 4, data->label, GUI_BUTTON_FG,
+                         GUI_BUTTON_BG);
 }
 
 static void button_event(gui_widget_t *w, gui_event_t *evt) {
@@ -364,8 +363,7 @@ gui_widget_t* gui_textbox_create(gui_rect_t rect, int max_len) {
     gui_textbox_data_t *data = kmalloc(sizeof(gui_textbox_data_t));
     if (!data) { kfree(w); return NULL; }
     memset(data, 0, sizeof(gui_textbox_data_t));
-    data->max_len = max_len > (int)sizeof(data->text) - 1 ? 
-                    (int)sizeof(data->text) - 1 : max_len;
+    data->max_len = max_len > (int)sizeof(data->text) - 1 ? (int)sizeof(data->text) - 1 : max_len;
     w->data = data;
     w->draw = textbox_draw;
     w->on_event = textbox_event;
@@ -479,17 +477,17 @@ void gui_update_mouse(int32_t x, int32_t y, int buttons) {
 void gui_render_frame(void) {
     /* Clear framebuffer */
     vga_clear_framebuffer(GUI_BLACK);
-    
+
     /* Draw windows back-to-front */
     gui_window_t *win = g_gui_ctx.windows;
     while (win && win->next) win = win->next; /* find last */
-    
+
     while (win) {
         if (!win->visible) { win = win->prev; continue; }
-        
+
         /* Draw window background */
         gui_window_draw_rect(win, win->rect, win->bg);
-        
+
         /* Draw title bar — focused window gets brighter colour */
         int is_focused = (win == g_gui_ctx.focused_window);
         gui_color_t tbar_col = is_focused ? GUI_TITLE_BG : GUI_COLOR(60, 60, 90);
@@ -507,21 +505,21 @@ void gui_render_frame(void) {
             gui_window_draw_text(win, close_r.x + 4, close_r.y + 3,
                                 "X", GUI_WHITE, GUI_COLOR(180, 40, 40));
         }
-        
+
         /* Draw window border */
         gui_color_t border_col = is_focused ? GUI_WHITE : GUI_DARK_GRAY;
         gui_window_draw_rect_outline(win, win->rect, border_col, 2);
-        
+
         /* Draw widgets */
         gui_widget_t *w = win->widgets;
         while (w) {
             gui_widget_draw(w);
             w = w->next;
         }
-        
+
         win = win->prev;
     }
-    
+
     /* Draw mouse cursor */
     int size = 12;
     for (int y = g_gui_ctx.mouse_y; y < g_gui_ctx.mouse_y + size; y++) {

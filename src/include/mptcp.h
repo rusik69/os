@@ -37,7 +37,7 @@
 #define MPTCP_CAPABLE_SYN_LEN     12  /* kind(1) + len(1) + sub/flags(1) + resv(1) + key(8) */
 #define MPTCP_CAPABLE_ACK_LEN    24  /* kind(1) + len(1) + sub/flags(1) + resv(1) + snd_key(8) + rcv_key(8) + hmac(8) */
 
-/* MP_JOIN option lengths (RFC 8684 §3.2) — per RFC errata, ACK length is 12 */ 
+/* MP_JOIN option lengths (RFC 8684 §3.2) — per RFC errata, ACK length is 12 */
 #define MPTCP_JOIN_SYN_LEN      12  /* kind(1)+len(1)+sub/flags(1)+addr_id(1)+token(4)+nonce(4) */
 #define MPTCP_JOIN_SYNACK_LEN   16  /* kind(1)+len(1)+sub/flags(1)+addr_id(1)+nonce(4)+hmac(8) */
 #define MPTCP_JOIN_ACK_LEN      12  /* kind(1)+len(1)+sub/flags(1)+resv(1)+hmac(8) */

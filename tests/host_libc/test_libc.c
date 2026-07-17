@@ -745,7 +745,7 @@ static void test_strcat(void)
     TEST("strcat to full buffer (no space)");
     {
         char full[4] = "abc";
-        /* Appending to an already-full buffer (no null terminator at position 3) 
+        /* Appending to an already-full buffer (no null terminator at position 3)
          * strcat should write at position 3, but buffer is only 4 bytes including null */
         strcat(full, "");
         ASSERT_STR_EQ(full, "abc", "appending empty to full buffer unchanged");

@@ -18,13 +18,13 @@ int main(int argc, char *argv[]) {
         case '+': result = a + b; break;
         case '-': result = a - b; break;
         case '*': result = a * b; break;
-        case '/': 
+        case '/':
             if (b == 0) { printf("division by zero\n"); return 1; }
-            result = a / b; 
+            result = a / b;
             break;
-        case '%': 
+        case '%':
             if (b == 0) { printf("division by zero\n"); return 1; }
-            result = a % b; 
+            result = a % b;
             break;
         default:
             printf("unknown operator: %c\n", op);

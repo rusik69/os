@@ -1522,7 +1522,7 @@ void pmm_set_poison(int enable) {
  *  This approach adds zero per-page memory overhead (reuses the existing
  *  refcount array) and provides O(1) lookup via pmm_is_broken().
  * ══════════════════════════════════════════════════════════════════════════ */
- 
+
  /**
   * pmm_mark_broken - Permanently disable a physical page after a hardware
   *                   memory error

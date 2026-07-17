@@ -24,7 +24,6 @@ gui_taskbar_t* gui_taskbar_create(gui_rect_t rect);
 void gui_taskbar_destroy(gui_taskbar_t *tb);
 gui_widget_t* gui_taskbar_get_widget(gui_taskbar_t *tb);
 
-void gui_taskbar_add_button(gui_taskbar_t *tb, const char *label, 
-                            void (*on_click)(gui_widget_t *));
+void gui_taskbar_add_button(gui_taskbar_t *tb, const char *label, void (*on_click)(gui_widget_t *));
 
 #endif /* GUI_FILEBROWSER_H */

@@ -317,7 +317,7 @@ static const uint32_t IGB_RSS_KEY_DEFAULT[4] = {
 int  igb_init(void);
 void igb_exit(void);
 
-/* PCI probe */ 
+/* PCI probe */
 int  igb_find_device(struct pci_device *pci_dev);
 int  igb_probe(struct igb_priv *priv);
 

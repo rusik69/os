@@ -80,7 +80,7 @@ void cmd_ssh(const char *args) {
             ssh_client_poll(cl);
         }
         if (!ssh_client_connected(cl)) break;
-        
+
         /* No interactive input from shell command context,
            just send a command and wait */
         break;

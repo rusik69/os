@@ -65,19 +65,18 @@ typedef struct {
 
 /* ===== Window API ===== */
 
-gui_window_t* gui_window_create(const char *title, int32_t x, int32_t y, 
-                                 uint32_t w, uint32_t h, gui_color_t bg);
+gui_window_t *gui_window_create(const char *title, int32_t x, int32_t y, uint32_t w, uint32_t h,
+                                gui_color_t bg);
 void gui_window_destroy(gui_window_t *win);
 void gui_window_set_title(gui_window_t *win, const char *title);
 void gui_window_clear(gui_window_t *win, gui_color_t color);
 void gui_window_draw_pixel(gui_window_t *win, int32_t x, int32_t y, gui_color_t color);
 void gui_window_draw_rect(gui_window_t *win, gui_rect_t rect, gui_color_t color);
-void gui_window_draw_rect_outline(gui_window_t *win, gui_rect_t rect, 
-                                   gui_color_t color, int thickness);
-void gui_window_draw_text(gui_window_t *win, int32_t x, int32_t y, 
-                          const char *text, gui_color_t fg, gui_color_t bg);
-void gui_window_draw_string(gui_window_t *win, int32_t x, int32_t y, 
-                            const char *text);
+void gui_window_draw_rect_outline(gui_window_t *win, gui_rect_t rect, gui_color_t color,
+                                  int thickness);
+void gui_window_draw_text(gui_window_t *win, int32_t x, int32_t y, const char *text, gui_color_t fg,
+                          gui_color_t bg);
+void gui_window_draw_string(gui_window_t *win, int32_t x, int32_t y, const char *text);
 gui_rect_t gui_window_get_rect(gui_window_t *win);
 void gui_window_set_rect(gui_window_t *win, gui_rect_t rect);
 void gui_window_set_visible(gui_window_t *win, int visible);

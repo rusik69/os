@@ -49,7 +49,7 @@ fi
 {
     for ko in "${KO_FILES[@]}"; do
         modname=$(basename "$ko")
-        
+
         if [ "$USE_MODINFO" -eq 1 ]; then
             # Extract dependencies using modinfo
             deps=$(modinfo -F depends "$ko" 2>/dev/null || echo "")

@@ -180,7 +180,7 @@ kpti_interrupt_entry:
     mov     rax, cr3
     mov     [KPTI_OFF_SAVED_CR3], rax
 
-    ; Switch to kernel page table  
+    ; Switch to kernel page table
     mov     rax, [KPTI_OFF_KERNEL_CR3]
     mov     cr3, rax
 
@@ -255,7 +255,7 @@ kpti_interrupt_entry:
     ; Let's re-arrange: we want the frame to look like a normal
     ; interrupt entry, which expects:
     ;   [rsp+0] = vector number
-    ;   [rsp+8] = error code  
+    ;   [rsp+8] = error code
     ;   [rsp+16] = RIP
     ;   [rsp+24] = CS
     ;   [rsp+32] = RFLAGS
@@ -360,7 +360,7 @@ kpti_interrupt_entry:
     ;   [rsp]   = SS
     ;   [rsp+8] = user RSP
     ;   [rsp+16] = RFLAGS
-    ;   [rsp+24] = CS  
+    ;   [rsp+24] = CS
     ;   [rsp+32] = RIP
     ;   [rsp+40] = error code
     ;   [rsp+48] = vector number
@@ -440,7 +440,7 @@ kpti_interrupt_entry:
     ; So we need to intercept the return path.  We can do this by
     ; NOT jumping to isr_common_stub directly, but instead jumping
     ; to a modified version that switches CR3 before iretq.
-    
+
     ; For now, jump to the existing isr_common_stub.
     ; We'll add the CR3 switch before iretq in the stub.
     jmp     isr_common_stub
