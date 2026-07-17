@@ -66,5 +66,6 @@ Remove temporary files from the working tree before committing:
 - **Editor swap files** — `*.swp`, `*.swo`, `*~` — remove with `find . -name '*.swp' -o -name '*~' -delete`
 - **`.o`/`.elf`/`.ko` files** — should all be under build dirs. If any appear in the source tree, delete them
 - **Compiler temp files** — `*.i`, `*.s` preprocessor/assembly output
-- **Progress state files** — `os-improvements-progress.json` and `bug-hunt-progress.json` ARE tracked and should be committed with plan-driven changes
+- **Plan files** — `OS-IMPROVEMENT-PLAN.md`, `os-improvements-progress.json`, `bug-hunt-progress.json`, and anything under `.hermes/plans/` — `.hermes/` is gitignored, so these files stay local and are never committed. Do not `git add -f` them.
+- **Progress state files** — tracked plan progress lives under `.hermes/plans/` and must NOT be added to git
 - Check with `git status --short` before every commit — unexpected untracked files are likely temp artifacts

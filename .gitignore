@@ -50,6 +50,10 @@ tests/unit/test_memory
 tests/unit/test_fs
 tests/unit/test_socket
 build_config.txt
+# Plan files
+/OS-IMPROVEMENT-PLAN.md
+/os-improvements-progress.json
+/bug-hunt-progress.json
 *.o
 *.d
 *.cpio
