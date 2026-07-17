@@ -122,10 +122,25 @@ static int balloon_inflate_one(void)
     /* Allocate a physical page in an UNMOVABLE pageblock so compaction
      * never migrates a balloon page out from under us — that would leave
      * a stale phys_addr in balloon tracking and cause a double-free on
-     * subsequent deflation (the deflate race). */
+     * subsequent deflation (the deflate race).
+     *
+     * pmm_alloc_frame_migrate() prefers UNMOVABLE but falls back through
+     * RECLAIMABLE -> MOVABLE -> CMA when UNMOVABLE is exhausted.  Accepting
+     * a page from a MOVABLE (or fallback) pageblock would defeat the
+     * purpose: compaction_run() scans MOVABLE pageblocks and migrates pages
+     * via migrate_one_page() which does NOT consult the balloon driver
+     * (balloon_page_migrate is dead code), so the phys_addr in balloon
+     * tracking would become stale, causing a double-free on deflation.
+     * Verify the page really landed in an UNMOVABLE block. */
     uint64_t phys = pmm_alloc_frame_migrate(MIGRATE_UNMOVABLE);
     if (phys == 0)
         return -1; /* OOM */
+
+    /* Reject fallback allocations from non-UNMOVABLE pageblocks */
+    if (pageblock_get_migratetype(phys / PAGE_SIZE) != MIGRATE_UNMOVABLE) {
+        pmm_free_frame(phys);
+        return -1;
+    }
 
     bp->phys_addr = phys;
     bp->inflated = 1;
