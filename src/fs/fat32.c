@@ -795,6 +795,8 @@ int fat32_mount(fat32_disk_t disk, uint32_t part_lba) {
                                      | ((uint32_t)fbuf[495] << 24);
                     if (fsinfo_next_free < 2 || fsinfo_next_free == 0xFFFFFFFF)
                         fsinfo_next_free = 2;
+                    else if ((uint64_t)fsinfo_next_free >= (uint64_t)total_clusters + 2)
+                        fsinfo_next_free = 2;
                     /* FSI_Free_Count at offset 488-491 */
                     fsinfo_free_count = (uint32_t)fbuf[488]
                                       | ((uint32_t)fbuf[489] << 8)
@@ -802,6 +804,8 @@ int fat32_mount(fat32_disk_t disk, uint32_t part_lba) {
                                       | ((uint32_t)fbuf[491] << 24);
                     if (fsinfo_free_count == 0xFFFFFFFF)
                         fsinfo_free_count = 0;
+                    else if (fsinfo_free_count > total_clusters)
+                        fsinfo_free_count = total_clusters;
                 }
                 /* If signatures are invalid, keep defaults (next_free=2, free_count=0) */
             }
