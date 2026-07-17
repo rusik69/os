@@ -42,3 +42,18 @@ make check-whitespace
 - Use conventional commits: `feat:`, `fix:`, `ci:`, `docs:`, `refactor:`, `test:`, `perf:`, `sec:`
 - Reference item numbers for plan-driven work: `P01 item 5: FAT32 buffer overflow check`
 - Never commit broken code. Revert with `git checkout -- .` if a fix can't be completed.
+
+## Commit & Push
+
+```bash
+# Stage all changes
+git add -A
+
+# Commit with a descriptive message
+git commit -m "type: description of what changed"
+
+# Push to origin main
+git push origin main
+```
+
+Always push after committing so CI picks up the latest state. The self-hosted runner listens for new commits and runs automatically.
