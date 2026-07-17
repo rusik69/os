@@ -956,8 +956,12 @@ int ext4_ext_insert_extent(struct ext4_priv *ep,
 
             ret = ext4_ext_binsearch_idx(eh, newext->ee_block, &idx_entry);
             if (ret < 0 || !idx_entry) {
-                /* No appropriate index — should not happen with a valid
-                 * tree but handle gracefully.  Insert at first child. */
+                /* No appropriate index — fall through to the first child.
+                 * This happens when newext->ee_block lies before every
+                 * existing index entry in a non-empty node.  An empty
+                 * index node at depth > 0 is a corrupted tree. */
+                if (eh->eh_entries == 0)
+                    return -EFSCORRUPTED;
                 struct ext4_extent_idx *idx_arr =
                     (struct ext4_extent_idx *)(eh + 1);
                 idx_entry = &idx_arr[0];
