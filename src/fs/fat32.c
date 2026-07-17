@@ -556,8 +556,10 @@ static uint32_t dir_find(uint32_t dir_cluster, const char *name,
                 }
                 lfn_n = 0;
                 if (matched) {
-                    uint32_t clus = ((uint32_t)entries[i].cluster_hi << 16)
-                                  | entries[i].cluster_lo;
+                    /* Mask to 28-bit FAT32 cluster range; harmless for FAT12/16
+                     * where cluster_hi is always 0 on valid volumes. */
+                    uint32_t clus = (((uint32_t)entries[i].cluster_hi << 16)
+                                   | entries[i].cluster_lo) & 0x0FFFFFFF;
                     if (is_dir)    *is_dir    = !!(entries[i].attr & FAT32_ATTR_DIRECTORY);
                     if (file_size) *file_size = entries[i].file_size;
                     /* For FAT12/16, cluster 0 means empty; return it anyway as the caller
@@ -612,8 +614,10 @@ static uint32_t dir_find(uint32_t dir_cluster, const char *name,
                 }
                 lfn_n = 0;
                 if (matched) {
-                    uint32_t clus = ((uint32_t)entries[i].cluster_hi << 16)
-                                  | entries[i].cluster_lo;
+                    /* Mask to 28-bit FAT32 cluster range; harmless for FAT12/16
+                     * where cluster_hi is always 0 on valid volumes. */
+                    uint32_t clus = (((uint32_t)entries[i].cluster_hi << 16)
+                                   | entries[i].cluster_lo) & 0x0FFFFFFF;
                     if (is_dir)    *is_dir    = !!(entries[i].attr & FAT32_ATTR_DIRECTORY);
                     if (file_size) *file_size = entries[i].file_size;
                     return clus ? clus : root_cluster;
