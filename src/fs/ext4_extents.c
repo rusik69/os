@@ -928,6 +928,7 @@ int ext4_ext_insert_extent(struct ext4_priv *ep,
         return -EFSCORRUPTED;
 
     uint16_t depth = root_eh->eh_depth;
+    uint16_t cur_depth = depth;  /* local counter for tree descent */
 
     /* ── Walk to the leaf node ── */
     uint32_t path_block[EXT4_EXTENT_MAX_DEPTH + 1];
@@ -949,7 +950,7 @@ int ext4_ext_insert_extent(struct ext4_priv *ep,
         if (ret < 0)
             return -EFSCORRUPTED;
 
-        if (eh->eh_depth > 0) {
+        if (cur_depth > 0) {
             /* ── Internal node ── */
             struct ext4_extent_idx *idx_entry = NULL;
 
@@ -975,6 +976,7 @@ int ext4_ext_insert_extent(struct ext4_priv *ep,
             if (ret < 0)
                 return -EFSCORRUPTED;
 
+            cur_depth--;
             path_depth++;
             /* Store pointer AFTER reading so path_eh[path_depth] refers
              * to the newly-read child block, not the parent. */
