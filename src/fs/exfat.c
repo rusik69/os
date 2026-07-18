@@ -839,6 +839,16 @@ static int exfat_validate_upcase(struct exfat_priv *ep) {
                     cur_cluster = exfat_next_cluster(ep, cur_cluster);
                 }
 
+                /* Check that all data was read (cluster chain didn't end early) */
+                if (offset < data_bytes) {
+                    kprintf("[exfat] up-case table: incomplete read "
+                            "(%u of %u bytes at cluster %u)\n",
+                            offset, data_bytes, cur_cluster);
+                    kfree(table_data);
+                    ret = -EIO;
+                    goto out;
+                }
+
                 /* Verify CRC32 of the table data */
                 uint32_t computed_crc = crc32(0, table_data, data_bytes);
 

@@ -110,7 +110,7 @@ struct exfat_file_name {
 struct exfat_upcase_entry {
     uint8_t  type;
     uint8_t  general_secondary_flags;
-    uint8_t  reserved1[3];
+    uint8_t  reserved1[2];        /* spec: offsets 2-3 */
     uint32_t checksum;
     uint32_t first_cluster;
     uint64_t data_length;
@@ -121,7 +121,7 @@ struct exfat_upcase_entry {
 struct exfat_bitmap_entry {
     uint8_t  type;
     uint8_t  general_secondary_flags;
-    uint8_t  reserved1[3];
+    uint8_t  reserved1[2];        /* spec: offsets 2-3 */
     uint32_t first_cluster;
     uint64_t data_length;
     uint8_t  reserved2[12];
