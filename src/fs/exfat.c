@@ -771,7 +771,7 @@ static int exfat_validate_upcase(struct exfat_priv *ep) {
     /* Root directory: cluster 0 = cluster_heap_offset */
     uint32_t cluster = ep->root_dir_cluster;
 
-    while (cluster >= 2 && cluster < EXFAT_CLUSTER_END) {
+    while (cluster < EXFAT_CLUSTER_END && (cluster >= 2 || cluster == 0)) {
         if (exfat_read_cluster(ep, cluster, cluster_buf) < 0) {
             ret = -EIO;
             goto out;
@@ -1576,7 +1576,7 @@ static int exfat_parse_entries(struct exfat_priv *ep, uint32_t cluster, uint32_t
     uint32_t cluster_count = 0;
     uint32_t entry_count = 0;
 
-    while (cluster < EXFAT_CLUSTER_END && cluster >= 2) {
+    while (cluster < EXFAT_CLUSTER_END && (cluster >= 2 || cluster == 0)) {
         if (exfat_read_cluster(ep, cluster, cluster_buf) < 0) {
             if (cluster_buf != buf)
                 kfree(cluster_buf);
