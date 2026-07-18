@@ -2643,7 +2643,8 @@ int fat32_pwrite(const char *path, const void *data, uint32_t size, uint32_t off
          * what the chain can deliver. */
         if (done < size) {
             if (needed > old_size)
-                dir_update_by_leaf(parent, leaf, old_clus, (offset + done) > old_size ? (offset + done) : old_size);
+                dir_update_by_leaf(parent, leaf, old_clus,
+                                   (offset + done) > old_size ? (offset + done) : old_size);
             return done > 0 ? (int)done : -EIO;
         }
 
