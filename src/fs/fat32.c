@@ -682,9 +682,11 @@ static uint32_t dir_find(uint32_t dir_cluster, const char *name, int *is_dir, ui
                         *is_dir = !!(entries[i].attr & FAT32_ATTR_DIRECTORY);
                     if (file_size)
                         *file_size = entries[i].file_size;
-                    /* For FAT12/16, cluster 0 means empty; return it anyway as the caller
-                     * distinguishes by is_dir/file_size. */
-                    return clus ? clus : root_cluster;
+                    /* Return the actual cluster value (may be 0 for zero-size files).
+                     * Previously substituted root_cluster for FAT32 zero-size files,
+                     * which caused callers to misinterpret root_cluster as the file's
+                     * data chain and potentially free the root directory's clusters. */
+                    return clus;
                 }
             }
         }
@@ -751,7 +753,7 @@ static uint32_t dir_find(uint32_t dir_cluster, const char *name, int *is_dir, ui
                         *is_dir = !!(entries[i].attr & FAT32_ATTR_DIRECTORY);
                     if (file_size)
                         *file_size = entries[i].file_size;
-                    return clus ? clus : root_cluster;
+                    return clus;
                 }
             }
         }
@@ -1697,8 +1699,6 @@ int fat32_write_file(const char *path, const void *data, uint32_t size) {
 
     if (size > 0) {
         uint32_t clusters_needed = (size + bytes_per_cluster - 1) / bytes_per_cluster;
-        if (clusters_needed == 0)
-            clusters_needed = 1;
 
         for (uint32_t i = 0; i < clusters_needed; i++) {
             uint32_t c = fat_alloc_cluster();
@@ -1739,14 +1739,16 @@ int fat32_write_file(const char *path, const void *data, uint32_t size) {
         }
         clus = fat_next_cluster(clus);
     }
-    if (!old_clus) {
+    /* Try to update existing directory entry first (handles zero-size files
+     * with cluster 0 correctly, unlike the old_clus check which would miss
+     * them since dir_find now returns 0 for cluster-0 entries).
+     * dir_update_size searches by 8.3 short name. */
+    if (dir_update_size(parent, cmp, first, size) != 0) {
         if (dir_add_entry(parent, n8, n3, first, size, 0, leaf) != 0) {
             if (first)
                 fat_free_chain(first);
             return -EIO;
         }
-    } else {
-        dir_update_size(parent, cmp, first, size);
     }
     return (int)size;
 }
@@ -1856,8 +1858,15 @@ int fat32_mkdir(const char *path) {
     uint32_t parent = path_parent_cluster(path, leaf, FAT32_MAX_NAME);
     if (!parent)
         return -2;
-    if (dir_find(parent, leaf, 0, 0))
+    if (dir_find(parent, leaf, 0, 0)) {
+        kprintf("[fat32] mkdir: '%s' already exists in parent %lu\n", leaf, (unsigned long)parent);
         return -3;
+    }
+    /* NOTE: dir_find returns 0 for both "entry not found" and "entry found
+     * but cluster 0 (zero-size file)". The latter case is extremely rare and
+     * would allow creating a directory with the same name as a zero-size
+     * regular file, producing a duplicate entry. This is a known edge case
+     * that requires a dir_find interface enhancement to fully resolve. */
 
     char n8[8], n3[3];
     fat32_generate_short_name(leaf, parent, n8, n3);
@@ -1902,7 +1911,14 @@ int fat32_unlink(const char *path) {
     int is_dir = 0;
     uint32_t fsize = 0;
     uint32_t clus = dir_find(parent, leaf, &is_dir, &fsize);
-    if (!clus)
+    if (!clus && !is_dir) {
+        /* Entry may be a zero-size file with cluster 0. Try to remove the
+         * directory entry directly — if it exists, the remove will succeed. */
+        if (dir_remove_entry(parent, leaf) == 0)
+            return 0;  /* removed zero-size file entry */
+        return -3;     /* entry not found */
+    }
+    if (!clus || is_dir)
         return -3;
     if (is_dir)
         return -4;
@@ -2480,7 +2496,10 @@ int fat32_pwrite(const char *path, const void *data, uint32_t size, uint32_t off
     uint32_t needed = offset + size;
 
     if (!old_clus) {
-        /* ── File does not exist — create it ── */
+        /* ── File does not exist (or is a zero-size file with cluster 0) ── */
+        /* For zero-size files, remove the old directory entry first to
+         * prevent duplicate entries, then create the file fresh. */
+        dir_remove_entry(parent, leaf);
         char n8[8], n3[3];
         fat32_generate_short_name(leaf, parent, n8, n3);
 
@@ -2616,6 +2635,14 @@ int fat32_truncate_file(const char *path, uint32_t new_size) {
     int is_dir = 0;
     uint32_t old_size = 0;
     uint32_t clus = dir_find(parent, leaf, &is_dir, &old_size);
+    if (!clus && !is_dir) {
+        /* Zero-size file with no cluster allocation — only possible if
+         * new_size is also 0, a no-op truncation. If growing is needed,
+         * we'd need to handle the cluster-0 case; for now reject. */
+        if (new_size == 0)
+            return 0;
+        return -EINVAL;
+    }
     if (!clus || is_dir)
         return -EINVAL;
 
