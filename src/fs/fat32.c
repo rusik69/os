@@ -124,6 +124,7 @@ static uint32_t fat_sectors = 0;
 static uint32_t fs_info_lba = 0;
 static uint32_t fsinfo_next_free = 2;
 static uint32_t fsinfo_free_count = 0;
+static uint32_t g_total_clusters = 0;
 static uint16_t g_ext_flags = 0;
 
 /* Cached volume label (11-char padded, null-terminated) */
@@ -312,6 +313,8 @@ static void fat_free_chain(uint32_t cluster) {
         uint32_t next = fat_next_cluster(cluster);
         fat_write_entry(cluster, FAT_FREE());
         fsinfo_free_count++;
+        if (g_total_clusters > 0 && fsinfo_free_count > g_total_clusters)
+            fsinfo_free_count = g_total_clusters;
         cluster = next;
     }
     /* Update next-free hint if we freed clusters before the current hint */
@@ -883,6 +886,7 @@ int fat32_mount(fat32_disk_t disk, uint32_t part_lba) {
 
     uint32_t data_sec = total_sectors - bpb->reserved_sectors - num_fats * fat_sz - root_dir_sec;
     uint32_t total_clusters = data_sec / spc;
+    g_total_clusters = total_clusters;
 
     if (total_clusters < 4085) {
         fat_type = FAT12;
@@ -2872,6 +2876,7 @@ int fat32_repair_boot(void) {
 
     /* ── Step 5: Validate and repair FSInfo sector ── */
     uint32_t fsinfo_lba = fs_info_lba;
+    int fsinfo_repaired = 0;
     if (fsinfo_lba > 0) {
         if (read_sector(fsinfo_lba, fsinfo) == 0) {
             if (fat32_validate_fsinfo(fsinfo) != 0) {
@@ -2880,6 +2885,7 @@ int fat32_repair_boot(void) {
                 if (write_sector(fsinfo_lba, fsinfo) != 0)
                     return -EIO;
                 repairs++;
+                fsinfo_repaired = 1;
                 kprintf("[fat32] Repaired FSInfo sector at LBA %lu\n", (unsigned long)fsinfo_lba);
             }
         } else {
@@ -2888,8 +2894,18 @@ int fat32_repair_boot(void) {
             if (write_sector(fsinfo_lba, fsinfo) != 0)
                 return -EIO;
             repairs++;
+            fsinfo_repaired = 1;
             kprintf("[fat32] Recreated FSInfo sector at LBA %lu\n", (unsigned long)fsinfo_lba);
         }
+    }
+
+    /* If the FSInfo sector was actually repaired on disk, reset the in-memory
+     * cached values so subsequent hint writes don't overwrite the fresh repair
+     * with stale data.  The repair wrote 0xFFFFFFFF (unknown) for both fields;
+     * we set conservative defaults in memory. */
+    if (fsinfo_repaired) {
+        fsinfo_free_count = 0;
+        fsinfo_next_free = 2;
     }
 
     /* ── Step 6: Sync cached state from boot sector ── */
