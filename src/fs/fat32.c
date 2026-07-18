@@ -173,12 +173,24 @@ static int write_sector(uint64_t lba, const void *buf) {
     return bufcache_write(lba, (uint8_t)disk_id, buf);
 }
 
+/* Forward declarations for FSInfo functions defined later in the file */
+static int  fat32_validate_fsinfo(const uint8_t *buf);
+static void fat32_repair_fsinfo(uint8_t *buf);
+
 static void fsinfo_write_hint(uint32_t next) {
     if (!fs_info_lba)
         return;
     uint8_t buf[SECT_SIZE];
     if (read_sector(fs_info_lba, buf) != 0)
         return;
+    /* Validate FSInfo signature bytes before reading/modifying the free
+     * cluster count fields.  If the signatures are corrupt, repair the
+     * entire FSInfo sector to a known-good state before writing back. */
+    if (fat32_validate_fsinfo(buf) != 0) {
+        fat32_repair_fsinfo(buf);
+        write_sector(fs_info_lba, buf);
+        return;
+    }
     if (fsinfo_count_valid) {
         /* FSI_Free_Count at offset 488-491 (per Microsoft FAT32 spec) */
         buf[488] = (uint8_t)(fsinfo_free_count & 0xFF);
