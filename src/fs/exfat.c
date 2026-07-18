@@ -1198,6 +1198,15 @@ static int exfat_create_entry_set(struct exfat_priv *ep, uint32_t dir_cluster, c
         return -EINVAL;
 
     int num_entries = exfat_num_entries_for_name(name_units);
+
+    /* Entry set must fit within a single cluster per exFAT spec.
+     * Without this check a long filename that requires more entry
+     * space than cluster_size can provide would cause a buffer
+     * overflow in the memcpy at line 1393 when writing to a newly
+     * allocated cluster buffer of only cluster_size bytes. */
+    if ((uint32_t)num_entries * 32 > cluster_size)
+        return -ENAMETOOLONG;
+
     uint16_t name_hash = exfat_name_hash(utf16_name, (uint32_t)name_units);
 
     /* Allocate a contiguous buffer for the entry set */
