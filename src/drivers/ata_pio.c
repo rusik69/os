@@ -205,58 +205,98 @@ int ata_pio_identify(int bus, int master, uint16_t *ident)
 
 /* ── Sector Read / Write ─────────────────────────────────────────── */
 
+/*
+ * Retry a timing-sensitive ATA PIO operation on timeout.
+ * The loop resets the bus and retries up to ATA_PIO_READ_RETRIES times
+ * when the device does not respond in time (ETIMEDOUT).  Hard errors
+ * (EIO, EINVAL) are returned immediately.
+ */
+#define ATA_PIO_READ_RETRIES  3
+
 int ata_pio_read_sector(int bus, int master, uint32_t lba, uint16_t *buf)
 {
-	uint16_t dh_port = ATA_PIO_DRIVE_HEAD(bus);
 	int ret;
+	int attempt;
 
 	if (!buf)
 		return -EINVAL;
 	if (lba > 0x0FFFFFFF)
 		return -EINVAL;
 
-	/* Select drive with LBA bits */
-	outb(dh_port, 0xE0 | (master ? 0x10 : 0x00) | ((lba >> 24) & 0x0F));
-	ata_pio_400ns_delay(bus);
+	for (attempt = 0; attempt < ATA_PIO_READ_RETRIES; attempt++) {
+		uint16_t dh_port = ATA_PIO_DRIVE_HEAD(bus);
 
-	ret = ata_pio_wait_bsy(bus);
-	if (ret < 0)
-		return ret;
+		/* Select drive with LBA bits */
+		outb(dh_port, 0xE0 | (master ? 0x10 : 0x00) |
+		     ((lba >> 24) & 0x0F));
+		ata_pio_400ns_delay(bus);
 
-	/* Program sector count and LBA registers */
-	outb(ATA_PIO_SECT_CNT(bus), 1);
-	outb(ATA_PIO_LBA_LO(bus), lba & 0xFF);
-	outb(ATA_PIO_LBA_MID(bus), (lba >> 8) & 0xFF);
-	outb(ATA_PIO_LBA_HI(bus), (lba >> 16) & 0xFF);
-
-	/* Issue READ SECTOR(S) command */
-	outb(ATA_PIO_COMMAND(bus), ATA_CMD_READ_PIO);
-	ata_pio_400ns_delay(bus);
-
-	/* Wait for BSY=0 */
-	ret = ata_pio_wait_bsy(bus);
-	if (ret < 0)
-		return ret;
-
-	/* Check error */
-	{
-		uint8_t sts = inb(ATA_PIO_STATUS(bus));
-
-		if (sts & ATA_SR_ERR) {
-			uint8_t err = ata_pio_read_error(bus);
-
-			kprintf("[ATA PIO] READ error: status=0x%02x error=0x%02x "
-				"LBA=%u\n", sts, err, (unsigned)lba);
-			return -EIO;
+		ret = ata_pio_wait_bsy(bus);
+		if (ret < 0) {
+			if (ret == -ETIMEDOUT && attempt < ATA_PIO_READ_RETRIES - 1) {
+				kprintf("[ATA PIO] READ LBA=%u: timeout on "
+					"BSY wait, retrying (%d)\n",
+					(unsigned)lba, attempt + 1);
+				ata_pio_soft_reset(bus);
+				continue;
+			}
+			return ret;
 		}
+
+		/* Program sector count and LBA registers */
+		outb(ATA_PIO_SECT_CNT(bus), 1);
+		outb(ATA_PIO_LBA_LO(bus), lba & 0xFF);
+		outb(ATA_PIO_LBA_MID(bus), (lba >> 8) & 0xFF);
+		outb(ATA_PIO_LBA_HI(bus), (lba >> 16) & 0xFF);
+
+		/* Issue READ SECTOR(S) command */
+		outb(ATA_PIO_COMMAND(bus), ATA_CMD_READ_PIO);
+		ata_pio_400ns_delay(bus);
+
+		/* Wait for BSY=0 */
+		ret = ata_pio_wait_bsy(bus);
+		if (ret < 0) {
+			if (ret == -ETIMEDOUT && attempt < ATA_PIO_READ_RETRIES - 1) {
+				kprintf("[ATA PIO] READ LBA=%u: timeout after "
+					"command, retrying (%d)\n",
+					(unsigned)lba, attempt + 1);
+				ata_pio_soft_reset(bus);
+				continue;
+			}
+			return ret;
+		}
+
+		/* Check error */
+		{
+			uint8_t sts = inb(ATA_PIO_STATUS(bus));
+
+			if (sts & ATA_SR_ERR) {
+				uint8_t err = ata_pio_read_error(bus);
+
+				kprintf("[ATA PIO] READ error: status=0x%02x "
+					"error=0x%02x LBA=%u\n",
+					sts, err, (unsigned)lba);
+				return -EIO;
+			}
+		}
+
+		/* Wait for DRQ and read data */
+		ret = ata_pio_wait_drq(bus);
+		if (ret < 0) {
+			if (ret == -ETIMEDOUT && attempt < ATA_PIO_READ_RETRIES - 1) {
+				kprintf("[ATA PIO] READ LBA=%u: timeout on "
+					"DRQ wait, retrying (%d)\n",
+					(unsigned)lba, attempt + 1);
+				ata_pio_soft_reset(bus);
+				continue;
+			}
+			return ret;
+		}
+
+		return ata_pio_read_data(bus, buf, ATA_SECTOR_WORDS);
 	}
 
-	/* Wait for DRQ and read data */
-	ret = ata_pio_wait_drq(bus);
-	if (ret < 0)
-		return ret;
-
-	return ata_pio_read_data(bus, buf, ATA_SECTOR_WORDS);
+	return -ETIMEDOUT;
 }
 
 int ata_pio_read_sectors(int bus, int master, uint32_t lba,
