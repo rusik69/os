@@ -124,7 +124,7 @@ static uint32_t fat_sectors = 0;
 static uint32_t fs_info_lba = 0;
 static uint32_t fsinfo_next_free = 2;
 static uint32_t fsinfo_free_count = 0;
-static int fsinfo_count_valid = 0;  /* 1 = free/next fields carry actual data */
+static int fsinfo_count_valid = 0; /* 1 = free/next fields carry actual data */
 static uint32_t g_total_clusters = 0;
 static uint16_t g_ext_flags = 0;
 
@@ -175,10 +175,14 @@ static void fsinfo_write_hint(uint32_t next) {
         buf[495] = (uint8_t)((next >> 24) & 0xFF);
     } else {
         /* Free count unknown — write sentinel (0xFFFFFFFF) per spec */
-        buf[488] = 0xFF; buf[489] = 0xFF;
-        buf[490] = 0xFF; buf[491] = 0xFF;
-        buf[492] = 0xFF; buf[493] = 0xFF;
-        buf[494] = 0xFF; buf[495] = 0xFF;
+        buf[488] = 0xFF;
+        buf[489] = 0xFF;
+        buf[490] = 0xFF;
+        buf[491] = 0xFF;
+        buf[492] = 0xFF;
+        buf[493] = 0xFF;
+        buf[494] = 0xFF;
+        buf[495] = 0xFF;
     }
     write_sector(fs_info_lba, buf);
 }
@@ -519,8 +523,9 @@ static int lfn_fill_entry(struct fat32_lfn *lfn, const char *name, int *pos) {
  *
  * This function writes intermediate sectors to disk as needed if the LFN entries
  * span across sector boundaries. */
-static int dir_add_lfn_entries(uint64_t lba_base, uint32_t *sector_idx, int *entry_idx, uint8_t *buf,
-                               const char *leaf, const char *name83_8, const char *name83_3) {
+static int dir_add_lfn_entries(uint64_t lba_base, uint32_t *sector_idx, int *entry_idx,
+                               uint8_t *buf, const char *leaf, const char *name83_8,
+                               const char *name83_3) {
     int name_len = (int)strlen(leaf);
     if (name_len <= 0)
         return -EINVAL;
@@ -531,7 +536,7 @@ static int dir_add_lfn_entries(uint64_t lba_base, uint32_t *sector_idx, int *ent
         num_entries = 20; /* max 20 LFN entries per file */
 
     int cur_sector = (int)*sector_idx;
-    int cur_entry  = *entry_idx;
+    int cur_entry = *entry_idx;
 
     uint8_t cksum = lfn_checksum(name83_8, name83_3);
 
@@ -603,7 +608,7 @@ static int dir_add_lfn_entries(uint64_t lba_base, uint32_t *sector_idx, int *ent
 
     /* Return the final position and sector to the caller */
     *sector_idx = (uint32_t)cur_sector;
-    *entry_idx  = cur_entry;
+    *entry_idx = cur_entry;
 
     return 0;
 }
@@ -1496,8 +1501,8 @@ static int dir_add_entry(uint32_t dir_cluster, const char *name83_8, const char 
                     if (use_lfn) {
                         uint32_t lfn_sec = s;
                         int lfn_idx = i;
-                        if (dir_add_lfn_entries(first_lba, &lfn_sec, &lfn_idx, buf, orig_name, name83_8,
-                                                name83_3) != 0)
+                        if (dir_add_lfn_entries(first_lba, &lfn_sec, &lfn_idx, buf, orig_name,
+                                                name83_8, name83_3) != 0)
                             return -EIO;
                         /* dir_add_lfn_entries updated buf with the sector data
                          * at lfn_sec, and lfn_idx points to the slot after the
@@ -1548,7 +1553,8 @@ static int dir_add_entry(uint32_t dir_cluster, const char *name83_8, const char 
                     if (use_lfn) {
                         uint32_t lfn_sec = s;
                         int lfn_idx = i;
-                        if (dir_add_lfn_entries(lba, &lfn_sec, &lfn_idx, buf, orig_name, name83_8, name83_3) != 0)
+                        if (dir_add_lfn_entries(lba, &lfn_sec, &lfn_idx, buf, orig_name, name83_8,
+                                                name83_3) != 0)
                             return -EIO;
                         /* dir_add_lfn_entries updated buf with the sector data
                          * at lfn_sec, and lfn_idx points to the slot after the
