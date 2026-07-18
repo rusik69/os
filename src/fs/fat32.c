@@ -2712,8 +2712,7 @@ int fat32_truncate_file(const char *path, uint32_t new_size) {
                 actual_clusters++;
             }
             /* Adjust extension: the chain may already have enough clusters */
-            extend_by = (actual_clusters >= new_clusters) ? 0
-                                                         : new_clusters - actual_clusters;
+            extend_by = (actual_clusters >= new_clusters) ? 0 : new_clusters - actual_clusters;
         }
         for (uint32_t i = 0; i < extend_by; i++) {
             uint32_t newc = fat_alloc_cluster();
