@@ -816,7 +816,12 @@ static int exfat_validate_upcase(struct exfat_priv *ep) {
                     goto out;
                 }
 
-                /* Read the table data cluster by cluster */
+                /* Read the table data cluster by cluster.
+                 * We must read full clusters into cluster_buf (which is
+                 * guaranteed to be at least as large as one cluster) and
+                 * then copy only the needed portion, because
+                 * exfat_read_cluster() always reads a full cluster and
+                 * table_data is allocated for exactly data_bytes. */
                 uint32_t bytes_per_cluster = cluster_size;
                 uint32_t offset = 0;
                 uint32_t cur_cluster = uc_cluster;
@@ -826,7 +831,7 @@ static int exfat_validate_upcase(struct exfat_priv *ep) {
                     if (chunk > bytes_per_cluster)
                         chunk = bytes_per_cluster;
 
-                    if (exfat_read_cluster(ep, cur_cluster, table_data + offset) < 0) {
+                    if (exfat_read_cluster(ep, cur_cluster, cluster_buf) < 0) {
                         kprintf("[exfat] up-case table: read error "
                                 "at cluster %u\n",
                                 cur_cluster);
@@ -834,6 +839,8 @@ static int exfat_validate_upcase(struct exfat_priv *ep) {
                         ret = -EIO;
                         goto out;
                     }
+
+                    memcpy(table_data + offset, cluster_buf, chunk);
 
                     offset += chunk;
                     cur_cluster = exfat_next_cluster(ep, cur_cluster);
