@@ -1096,7 +1096,11 @@ int fat32_list_dir(const char *path, char names[][FAT32_MAX_NAME], int max) {
         return -EINVAL;
     int is_dir = 0;
     uint32_t cluster = path_resolve(path, &is_dir, (void *)0);
-    if (!cluster || !is_dir)
+    if (!is_dir)
+        return -EINVAL;
+    /* FAT12/16 uses cluster 0 as the sentinel for the fixed root directory;
+     * reject cluster 0 only for FAT32 where root must be >= 2. */
+    if (!cluster && fat_type == FAT32)
         return -EINVAL;
 
     int count = 0;
