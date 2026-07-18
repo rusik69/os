@@ -2492,6 +2492,13 @@ int fat32_pwrite(const char *path, const void *data, uint32_t size, uint32_t off
     if (is_dir)
         return -EISDIR;
 
+    /* pwrite with zero bytes is a no-op regardless of offset — POSIX
+     * specifies that pwrite() with nbyte == 0 returns 0 and performs
+     * no operation.  Extending the cluster chain without writing data
+     * would leave file_size inconsistent with the actual chain length. */
+    if (size == 0)
+        return 0;
+
     uint32_t bpc = spc * bps;
     uint32_t needed = offset + size;
 
