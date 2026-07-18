@@ -29,7 +29,8 @@
 
 #define LFN_LAST_FLAG         0x40   /* bit 6 set = last LFN entry in chain */
 #define LFN_ORD_MASK          0x1F   /* bits 0-4 = ordinal number */
-#define LFN_MAX_ENTRIES       20     /* max 20 LFN entries per file (255 chars) */
+/* LFN_MAX_ENTRIES is now defined in fat32.h (shared with fat32.c) */
+
 #define LFN_CHARS_PER_ENTRY   13     /* 13 UTF-16LE chars per LFN entry */
 #define LFN_MAX_CHARS         255    /* max filename length per VFAT spec */
 #define SECT_SIZE             512

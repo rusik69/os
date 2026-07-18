@@ -5,6 +5,9 @@
 
 struct vfs_ops;
 
+/* Max 20 VFAT LFN entries per directory entry (255 chars / 13 per entry). */
+#define LFN_MAX_ENTRIES 20
+
 #define FAT32_MAX_NAME 256
 
 /* Mount point: which disk to use for FAT32 */

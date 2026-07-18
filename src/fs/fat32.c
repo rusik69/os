@@ -400,6 +400,11 @@ static int lfn_validate_checksum(const struct fat32_lfn *entries, int count, con
                                  const char *name83_3) {
     if (count <= 0)
         return 1;
+    /* Reject out-of-range count (max 20 entries = 255 chars per VFAT spec).
+     * A corrupted or malicious LFN chain with ordinal > 20 would set a
+     * count beyond the lfn_parts[20] array, causing a buffer over-read. */
+    if (count > 20)
+        return 0;
     uint8_t computed_cksum = lfn_checksum(name83_8, name83_3);
     /* Verify all LFN entries have the same checksum matching the short name */
     for (int i = 0; i < count; i++) {
@@ -650,7 +655,7 @@ static uint32_t dir_find(uint32_t dir_cluster, const char *name, int *is_dir, ui
                     if (ord > 0 && ord <= 20)
                         __builtin_memcpy(&lfn_parts[ord - 1], &entries[i],
                                          sizeof(struct fat32_dirent));
-                    if (entries[i].name[0] & 0x40)
+                    if ((entries[i].name[0] & 0x40) && ord <= LFN_MAX_ENTRIES)
                         lfn_n = ord;
                     continue;
                 }
@@ -721,7 +726,7 @@ static uint32_t dir_find(uint32_t dir_cluster, const char *name, int *is_dir, ui
                     if (ord > 0 && ord <= 20)
                         __builtin_memcpy(&lfn_parts[ord - 1], &entries[i],
                                          sizeof(struct fat32_dirent));
-                    if (entries[i].name[0] & 0x40)
+                    if ((entries[i].name[0] & 0x40) && ord <= LFN_MAX_ENTRIES)
                         lfn_n = ord;
                     continue;
                 }
@@ -1070,7 +1075,7 @@ int fat32_list_dir(const char *path, char names[][FAT32_MAX_NAME], int max) {
                     if (ord > 0 && ord <= 20)
                         __builtin_memcpy(&lfn_parts[ord - 1], &entries[i],
                                          sizeof(struct fat32_dirent));
-                    if (entries[i].name[0] & 0x40)
+                    if ((entries[i].name[0] & 0x40) && ord <= LFN_MAX_ENTRIES)
                         lfn_n = ord;
                     continue;
                 }
@@ -1149,7 +1154,7 @@ int fat32_list_dir(const char *path, char names[][FAT32_MAX_NAME], int max) {
                     if (ord > 0 && ord <= 20)
                         __builtin_memcpy(&lfn_parts[ord - 1], &entries[i],
                                          sizeof(struct fat32_dirent));
-                    if (entries[i].name[0] & 0x40)
+                    if ((entries[i].name[0] & 0x40) && ord <= LFN_MAX_ENTRIES)
                         lfn_n = ord;
                     continue;
                 }
@@ -1799,7 +1804,7 @@ static int dir_remove_entry(uint32_t dir_cluster, const char *name) {
                         lfn_start = i;
                         lfn_start_sec = s;
                     }
-                    if (entries[i].name[0] & 0x40)
+                    if ((entries[i].name[0] & 0x40) && ord <= LFN_MAX_ENTRIES)
                         lfn_n = ord;
                     continue;
                 }
@@ -2327,7 +2332,7 @@ static int dir_update_by_leaf(uint32_t dir_cluster, const char *leaf, uint32_t f
                     if (ord > 0 && ord <= 20)
                         __builtin_memcpy(&lfn_parts[ord - 1], &entries[i],
                                          sizeof(struct fat32_dirent));
-                    if (entries[i].name[0] & 0x40)
+                    if ((entries[i].name[0] & 0x40) && ord <= LFN_MAX_ENTRIES)
                         lfn_n = ord;
                     continue;
                 }
@@ -2388,7 +2393,7 @@ static int dir_update_by_leaf(uint32_t dir_cluster, const char *leaf, uint32_t f
                     if (ord > 0 && ord <= 20)
                         __builtin_memcpy(&lfn_parts[ord - 1], &entries[i],
                                          sizeof(struct fat32_dirent));
-                    if (entries[i].name[0] & 0x40)
+                    if ((entries[i].name[0] & 0x40) && ord <= LFN_MAX_ENTRIES)
                         lfn_n = ord;
                     continue;
                 }
