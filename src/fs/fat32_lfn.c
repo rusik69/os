@@ -703,6 +703,52 @@ done:
     return pos;
 }
 
+/* ── vfat_validate_lfn_ordinals ────────────────────────────────────────
+ *
+ * Validate that VFAT LFN directory entries form a correct ordinal
+ * sequence (1, 2, 3, ..., N) with the LAST flag (0x40) set only on
+ * the final entry (entries[count-1]).
+ *
+ * The entries array must be in forward ordinal order:
+ *   entries[0] = ordinal 1, entries[count-1] = ordinal N.
+ *
+ * @entries:  array of 'count' LFN directory entries (32 bytes each)
+ * @count:    number of LFN entries (1-20)
+ *
+ * Returns 1 if the ordinal sequence is valid, 0 otherwise.
+ */
+int vfat_validate_lfn_ordinals(const void *entries, int count)
+{
+    const struct vfat_lfn *lfn = (const struct vfat_lfn *)entries;
+
+    if (!entries || count < 1 || count > LFN_MAX_ENTRIES)
+        return 0;
+
+    for (int i = 0; i < count; i++) {
+        int ord       = (int)(lfn[i].order & LFN_ORD_MASK);
+        int expected  = i + 1;               /* ordinal 1 -> index 0 */
+        int has_last  = !!(lfn[i].order & LFN_LAST_FLAG);
+
+        /* Each entry's ordinal must match its position in the array */
+        if (ord != expected)
+            return 0;
+
+        /* Only the final entry (highest ordinal) may have the LAST flag */
+        if (has_last && i != count - 1)
+            return 0;
+
+        /* Every LFN entry must carry the correct attribute byte */
+        if (lfn[i].attr != FAT32_ATTR_LFN)
+            return 0;
+    }
+
+    /* The final entry MUST have the LAST flag set */
+    if (!(lfn[count - 1].order & LFN_LAST_FLAG))
+        return 0;
+
+    return 1;
+}
+
 /* ── vfat_reconstruct_name_checked ────────────────────────────────────
  *
  * Reconstruct a long filename from VFAT LFN entries, with checksum

@@ -129,6 +129,12 @@ int vfat_mark_entry_deleted(void *entry);
 /* Build an 8.3 short name from a long filename (space-padded output) */
 void vfat_build_83_name(const char *long_name, char out_name[8], char out_ext[3]);
 
+/* Validate VFAT LFN ordinal sequence correctness.
+ * Checks that the entries form a contiguous ordinal sequence 1..count
+ * with the LAST flag (0x40) set only on the final entry.
+ * Returns 1 if valid, 0 if malformed. */
+int vfat_validate_lfn_ordinals(const void *entries, int count);
+
 /* Reconstruct a long filename from VFAT LFN directory entries.
  * Entries are in ordinal order (entries[0] = ordinal 1,
  * entries[count-1] = ordinal N).  Returns the name length on success,

@@ -712,6 +712,11 @@ static uint32_t dir_find(uint32_t dir_cluster, const char *name, int *is_dir, ui
                 int matched = 0;
                 if (lfn_n > 0) {
                     char lname[FAT32_MAX_NAME];
+                    /* Validate LFN ordinal sequence before reconstruction */
+                    if (!vfat_validate_lfn_ordinals(lfn_parts, lfn_n)) {
+                        lfn_n = 0;
+                        continue;
+                    }
                     vfat_reconstruct_name(lfn_parts, lfn_n, lname, FAT32_MAX_NAME);
                     /* Validate LFN checksum against the 8.3 entry */
                     if (!lfn_validate_checksum(lfn_parts, lfn_n, entries[i].name, entries[i].ext)) {
@@ -788,6 +793,11 @@ static uint32_t dir_find(uint32_t dir_cluster, const char *name, int *is_dir, ui
                 int matched = 0;
                 if (lfn_n > 0) {
                     char lname[FAT32_MAX_NAME];
+                    /* Validate LFN ordinal sequence before reconstruction */
+                    if (!vfat_validate_lfn_ordinals(lfn_parts, lfn_n)) {
+                        lfn_n = 0;
+                        continue;
+                    }
                     vfat_reconstruct_name(lfn_parts, lfn_n, lname, FAT32_MAX_NAME);
                     /* Validate LFN checksum against the 8.3 entry */
                     if (!lfn_validate_checksum(lfn_parts, lfn_n, entries[i].name, entries[i].ext)) {
@@ -1149,6 +1159,10 @@ int fat32_list_dir(const char *path, char names[][FAT32_MAX_NAME], int max) {
                     if (lfn_validate_checksum(lfn_parts, lfn_n, entries[i].name, entries[i].ext)) {
                         use_lfn = 1;
                     }
+                    /* Validate LFN ordinal sequence — fall back to 8.3 if malformed */
+                    if (use_lfn && !vfat_validate_lfn_ordinals(lfn_parts, lfn_n)) {
+                        use_lfn = 0;
+                    }
                 }
                 if (use_lfn) {
                     vfat_reconstruct_name(lfn_parts, lfn_n, out, FAT32_MAX_NAME);
@@ -1233,6 +1247,10 @@ int fat32_list_dir(const char *path, char names[][FAT32_MAX_NAME], int max) {
                 if (lfn_n > 0) {
                     if (lfn_validate_checksum(lfn_parts, lfn_n, entries[i].name, entries[i].ext)) {
                         use_lfn = 1;
+                    }
+                    /* Validate LFN ordinal sequence — fall back to 8.3 if malformed */
+                    if (use_lfn && !vfat_validate_lfn_ordinals(lfn_parts, lfn_n)) {
+                        use_lfn = 0;
                     }
                 }
                 if (use_lfn) {
@@ -1892,6 +1910,13 @@ static int dir_remove_entry(uint32_t dir_cluster, const char *name) {
                 int matched = 0;
                 if (lfn_n > 0) {
                     char lname[FAT32_MAX_NAME];
+                    /* Validate LFN ordinal sequence before reconstruction */
+                    if (!vfat_validate_lfn_ordinals(lfn_parts, lfn_n)) {
+                        lfn_n = 0;
+                        lfn_start = -1;
+                        lfn_start_sec = (uint32_t)-1;
+                        continue;
+                    }
                     vfat_reconstruct_name(lfn_parts, lfn_n, lname, FAT32_MAX_NAME);
                     /* Validate LFN checksum against the 8.3 entry */
                     if (!lfn_validate_checksum(lfn_parts, lfn_n, entries[i].name, entries[i].ext)) {
@@ -2425,6 +2450,11 @@ static int dir_update_by_leaf(uint32_t dir_cluster, const char *leaf, uint32_t f
                 int matched = 0;
                 if (lfn_n > 0) {
                     char lname[FAT32_MAX_NAME];
+                    /* Validate LFN ordinal sequence before reconstruction */
+                    if (!vfat_validate_lfn_ordinals(lfn_parts, lfn_n)) {
+                        lfn_n = 0;
+                        continue;
+                    }
                     vfat_reconstruct_name(lfn_parts, lfn_n, lname, FAT32_MAX_NAME);
                     /* Validate LFN checksum against the 8.3 entry */
                     if (!lfn_validate_checksum(lfn_parts, lfn_n, entries[i].name, entries[i].ext)) {
@@ -2491,6 +2521,11 @@ static int dir_update_by_leaf(uint32_t dir_cluster, const char *leaf, uint32_t f
                 int matched = 0;
                 if (lfn_n > 0) {
                     char lname[FAT32_MAX_NAME];
+                    /* Validate LFN ordinal sequence before reconstruction */
+                    if (!vfat_validate_lfn_ordinals(lfn_parts, lfn_n)) {
+                        lfn_n = 0;
+                        continue;
+                    }
                     vfat_reconstruct_name(lfn_parts, lfn_n, lname, FAT32_MAX_NAME);
                     /* Validate LFN checksum against the 8.3 entry */
                     if (!lfn_validate_checksum(lfn_parts, lfn_n, entries[i].name, entries[i].ext)) {
