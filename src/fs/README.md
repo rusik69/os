@@ -48,7 +48,7 @@ System Calls → VFS Layer (src/fs/fs.c, vfs_enhance.c)
 | `ext2.c` | Second Extended Filesystem — read/write, sparse files, large files, symlinks, fast symlinks, HTree directory indexing |
 | `ext4.c` | Fourth Extended Filesystem — read/write, extents, flex_bg, HTree dirs, large inodes, nanosecond timestamps, journal replay |
 | `fat32.c` | FAT filesystem — read/write for FAT12/16/32, VFAT long filename support, volume labels |
-| `vfat_shortname.c` | VFAT short name generation — creates 8.3 DOS-compatible names from long filenames |
+| `fat32_lfn.c` | VFAT LFN + 8.3 short name generation — create/delete long file name entries, build short 8.3 names |
 | `ntfs.c` | NTFS — read-only, MFT-based directory traversal, attribute resolution, basic file read |
 | `exfat.c` | exFAT — read-only, large file support, exFAT allocation table |
 | `btrfs.c` | Btrfs — read-only, copy-on-write, extents, checksum verification, subvolumes |
