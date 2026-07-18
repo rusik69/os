@@ -688,6 +688,18 @@ int vfat_reconstruct_name(const void *entries, int count,
     }
 done:
     out[pos] = '\0';
+
+    /* Reject reconstructed names that match the special directory entries
+     * "." (current directory) or ".." (parent directory).  These reserved
+     * names are always stored as bare 8.3 entries without LFN chains in
+     * a valid FAT filesystem.  A crafted LFN chain that spells out "." or
+     * ".." is invalid and could confuse path resolution — reject it. */
+    if (out[0] == '.' && (out[1] == '\0' ||
+        (out[1] == '.' && out[2] == '\0'))) {
+        out[0] = '\0';
+        return -EINVAL;
+    }
+
     return pos;
 }
 
