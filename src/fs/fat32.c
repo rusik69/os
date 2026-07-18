@@ -1067,6 +1067,8 @@ int fat32_file_size(const char *path) {
 int fat32_read_file(const char *path, void *buf, uint32_t max_size) {
     if (!mounted)
         return -EINVAL;
+    if (!buf)
+        return -EINVAL;
     int is_dir = 0;
     uint32_t fsize = 0;
     uint32_t cluster = path_resolve(path, &is_dir, &fsize);
