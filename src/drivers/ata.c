@@ -127,7 +127,12 @@ int ata_read_sectors(uint32_t lba, uint8_t count, void *buf) {
     /* If a redirect is active (ramdisk mode), use it instead of real ATA */
     if (redirect_read) return redirect_read(lba, count, buf);
     if (!ata_present) return -1;
-    if (lba + count > ata_total_sectors) return -1;
+
+    /* Validate LBA range before issuing ATA command */
+    if (count == 0) return -1;                     /* must read at least 1 sector */
+    if (lba >= ata_total_sectors) return -1;       /* start LBA out of range */
+    if (lba + count < lba) return -1;              /* uint32_t overflow check */
+    if (lba + count > ata_total_sectors) return -1; /* end exceeds disk size */
 
     if (ata_wait_bsy() < 0) return -1;
     outb(ATA_DRIVE_HEAD, 0xE0 | ((lba >> 24) & 0x0F));
@@ -157,7 +162,12 @@ int ata_write_sectors(uint32_t lba, uint8_t count, const void *buf) {
     /* If a redirect is active (ramdisk mode), use it instead of real ATA */
     if (redirect_write) return redirect_write(lba, count, buf);
     if (!ata_present) return -1;
-    if (lba + count > ata_total_sectors) return -1;
+
+    /* Validate LBA range before issuing ATA command */
+    if (count == 0) return -1;                     /* must write at least 1 sector */
+    if (lba >= ata_total_sectors) return -1;       /* start LBA out of range */
+    if (lba + count < lba) return -1;              /* uint32_t overflow check */
+    if (lba + count > ata_total_sectors) return -1; /* end exceeds disk size */
 
     if (ata_wait_bsy() < 0) return -1;
     outb(ATA_DRIVE_HEAD, 0xE0 | ((lba >> 24) & 0x0F));
