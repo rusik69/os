@@ -356,6 +356,18 @@ static void fat_free_chain(uint32_t cluster) {
 
 /* Cluster number → LBA of first sector */
 static uint64_t cluster_to_lba(uint32_t cluster) {
+    /* Sanity check: cluster must be at least 2 (clusters 0-1 are reserved)
+     * and must not exceed the maximum valid cluster number.  Without this
+     * check, a corrupted or malicious filesystem could cause the subtraction
+     * (cluster - 2) to wrap around (for cluster < 2) or map to sectors
+     * beyond the end of the data region (for cluster >= FAT_MAX_CLUSTER()). */
+    if (cluster < 2 || cluster >= FAT_MAX_CLUSTER()) {
+        kprintf("[fat32] WARNING: invalid cluster %lu (valid: 2-%lu), "
+                "returning data_start to prevent wild access\n",
+                (unsigned long)cluster,
+                (unsigned long)(FAT_MAX_CLUSTER() - 1));
+        return (uint64_t)data_start;
+    }
     return (uint64_t)data_start + (uint64_t)(cluster - 2) * (uint64_t)spc;
 }
 
