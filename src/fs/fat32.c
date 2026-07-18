@@ -2675,18 +2675,32 @@ int fat32_truncate_file(const char *path, uint32_t new_size) {
             fat_write_entry(last_keep, FAT_EOC());
             if (free_start >= 2 && free_start < FAT_EOC())
                 fat_free_chain(free_start);
+        } else {
+            /* Chain is shorter than old_clusters would suggest (pre-existing
+             * inconsistency).  Clamp new_size to the actual capacity of the
+             * chain to avoid writing a file_size that exceeds what the
+             * clusters can deliver — which would make the file unreadable
+             * (read returns -EIO when the chain ends before file_size). */
+            uint32_t actual = fat32_chain_length(clus);
+            uint32_t max_size = actual * bpc;
+            if (new_size > max_size)
+                new_size = max_size;
+            if (new_size == old_size)
+                return 0; /* No change possible — leave the chain alone */
         }
     } else if (new_clusters > old_clusters) {
         /* Extend the cluster chain — walk to the actual end, then allocate
          * and zero-fill the additional clusters so that file_size is
          * consistent with the chain length. */
-        uint32_t extend_by = new_clusters - old_clusters;
         uint32_t last = fat32_chain_walk(clus, old_clusters - 1);
         if (last < 2)
             return -EIO;
         /* Walk to the real end of the chain (may extend beyond old_clusters
-         * if the chain was externally modified or previously inconsistent). */
+         * if the chain was externally modified or previously inconsistent).
+         * Track the actual cluster count to avoid over-allocation. */
+        uint32_t extend_by;
         {
+            uint32_t actual_clusters = old_clusters;
             uint64_t _walk = 0;
             while (!FAT_IS_EOC(last)) {
                 if (++_walk > FAT_MAX_CLUSTER())
@@ -2695,7 +2709,11 @@ int fat32_truncate_file(const char *path, uint32_t new_size) {
                 if (FAT_IS_EOC(nxt) || nxt < 2)
                     break;
                 last = nxt;
+                actual_clusters++;
             }
+            /* Adjust extension: the chain may already have enough clusters */
+            extend_by = (actual_clusters >= new_clusters) ? 0
+                                                         : new_clusters - actual_clusters;
         }
         for (uint32_t i = 0; i < extend_by; i++) {
             uint32_t newc = fat_alloc_cluster();
@@ -2712,7 +2730,8 @@ int fat32_truncate_file(const char *path, uint32_t new_size) {
             fat_write_entry(last, newc);
             last = newc;
         }
-        fat_write_entry(last, FAT_EOC());
+        if (extend_by > 0)
+            fat_write_entry(last, FAT_EOC());
     }
 
     dir_update_by_leaf(parent, leaf, clus, new_size);
