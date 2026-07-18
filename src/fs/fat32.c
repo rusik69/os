@@ -1873,7 +1873,8 @@ static int dir_remove_entry(uint32_t dir_cluster, const char *name) {
                         continue;
                     }
                     int ord = entries[i].name[0] & 0x1F;
-                    if (ord > 0 && ord <= 20)
+                    /* Upper bound check: LFN ordinal must not exceed max entries */
+                    if (ord > 0 && ord <= LFN_MAX_ENTRIES)
                         __builtin_memcpy(&lfn_parts[ord - 1], &entries[i],
                                          sizeof(struct fat32_dirent));
                     if (lfn_start < 0) {
