@@ -663,7 +663,7 @@ static uint32_t dir_find(uint32_t dir_cluster, const char *name, int *is_dir, ui
                 uint8_t first = (uint8_t)entries[i].name[0];
                 if (first == 0x00)
                     return 0;
-                if (first == 0xE5) {
+                if (first == 0xE5 || first >= 0x80) {
                     lfn_n = 0;
                     continue;
                 }
@@ -739,7 +739,7 @@ static uint32_t dir_find(uint32_t dir_cluster, const char *name, int *is_dir, ui
                 uint8_t first = (uint8_t)entries[i].name[0];
                 if (first == 0x00)
                     return 0;
-                if (first == 0xE5) {
+                if (first == 0xE5 || first >= 0x80) {
                     lfn_n = 0;
                     continue;
                 }
@@ -1093,7 +1093,7 @@ int fat32_list_dir(const char *path, char names[][FAT32_MAX_NAME], int max) {
                 uint8_t first = (uint8_t)entries[i].name[0];
                 if (first == 0x00)
                     return count;
-                if (first == 0xE5) {
+                if (first == 0xE5 || first >= 0x80) {
                     lfn_n = 0;
                     continue;
                 }
@@ -1177,7 +1177,7 @@ int fat32_list_dir(const char *path, char names[][FAT32_MAX_NAME], int max) {
                 uint8_t first = (uint8_t)entries[i].name[0];
                 if (first == 0x00)
                     goto done;
-                if (first == 0xE5) {
+                if (first == 0xE5 || first >= 0x80) {
                     lfn_n = 0;
                     continue;
                 }
@@ -1291,7 +1291,7 @@ static int fat32_83_name_exists(uint32_t dir_cluster, const char name83_8[8],
                 uint8_t first = (uint8_t)entries[i].name[0];
                 if (first == 0x00)
                     return 0; /* end of directory */
-                if (first == 0xE5 || entries[i].attr == FAT32_ATTR_LFN)
+                if (first == 0xE5 || first >= 0x80 || entries[i].attr == FAT32_ATTR_LFN)
                     continue;
                 if (entries[i].attr & FAT32_ATTR_VOLUME_ID)
                     continue;
@@ -1320,7 +1320,7 @@ static int fat32_83_name_exists(uint32_t dir_cluster, const char name83_8[8],
                 uint8_t first = (uint8_t)entries[i].name[0];
                 if (first == 0x00)
                     return 0;
-                if (first == 0xE5 || entries[i].attr == FAT32_ATTR_LFN)
+                if (first == 0xE5 || first >= 0x80 || entries[i].attr == FAT32_ATTR_LFN)
                     continue;
                 if (entries[i].attr & FAT32_ATTR_VOLUME_ID)
                     continue;
@@ -1544,7 +1544,7 @@ static int dir_add_entry(uint32_t dir_cluster, const char *name83_8, const char 
             int n_entries = (int)(SECT_SIZE / sizeof(struct fat32_dirent));
             for (int i = 0; i < n_entries; i++) {
                 uint8_t first = (uint8_t)entries[i].name[0];
-                if (first == 0x00 || first == 0xE5) {
+                if (first == 0x00 || first == 0xE5 || first >= 0x80) {
                     /* First write LFN entries if needed (before the 8.3 entry at position i) */
                     if (use_lfn) {
                         uint32_t lfn_sec = s;
@@ -1596,7 +1596,7 @@ static int dir_add_entry(uint32_t dir_cluster, const char *name83_8, const char 
             int n_entries = (int)(SECT_SIZE / sizeof(struct fat32_dirent));
             for (int i = 0; i < n_entries; i++) {
                 uint8_t first = (uint8_t)entries[i].name[0];
-                if (first == 0x00 || first == 0xE5) {
+                if (first == 0x00 || first == 0xE5 || first >= 0x80) {
                     /* First write LFN entries if needed (before the 8.3 entry at position i) */
                     if (use_lfn) {
                         uint32_t lfn_sec = s;
@@ -1830,7 +1830,7 @@ static int dir_remove_entry(uint32_t dir_cluster, const char *name) {
                 uint8_t first = (uint8_t)entries[i].name[0];
                 if (first == 0x00)
                     return -EINVAL;
-                if (first == 0xE5) {
+                if (first == 0xE5 || first >= 0x80) {
                     lfn_n = 0;
                     lfn_start = -1;
                     lfn_start_sec = (uint32_t)-1;
@@ -2017,7 +2017,7 @@ static int fat32_dir_is_empty(uint32_t dir_cluster) {
                 uint8_t first = (uint8_t)entries[i].name[0];
                 if (first == 0x00)
                     goto done; /* end of directory */
-                if (first == 0xE5)
+                if (first == 0xE5 || first >= 0x80)
                     continue;
                 if (entries[i].attr == FAT32_ATTR_LFN)
                     continue;
@@ -2196,7 +2196,7 @@ int fat32_set_volume_label(const char *label) {
                     int n_ents = SECT_SIZE / (int)sizeof(struct fat32_dirent);
                     for (int i = 0; i < n_ents; i++) {
                         uint8_t first = (uint8_t)ents[i].name[0];
-                        if (first == 0x00 || first == 0xE5)
+                        if (first == 0x00 || first == 0xE5 || first >= 0x80)
                             continue;
                         if (ents[i].attr == FAT32_ATTR_VOLUME_ID) {
                             /* Update existing volume label entry */
@@ -2220,7 +2220,7 @@ int fat32_set_volume_label(const char *label) {
                     int n_ents = SECT_SIZE / (int)sizeof(struct fat32_dirent);
                     for (int i = 0; i < n_ents; i++) {
                         uint8_t first = (uint8_t)ents[i].name[0];
-                        if (first == 0x00 || first == 0xE5) {
+                        if (first == 0x00 || first == 0xE5 || first >= 0x80) {
                             /* Free/deleted entry — use it */
                             __builtin_memset(&ents[i], 0, sizeof(struct fat32_dirent));
                             __builtin_memcpy(ents[i].name, new_label, 11);
@@ -2242,7 +2242,7 @@ int fat32_set_volume_label(const char *label) {
                 int n_ents = SECT_SIZE / (int)sizeof(struct fat32_dirent);
                 for (int i = 0; i < n_ents; i++) {
                     uint8_t first = (uint8_t)ents[i].name[0];
-                    if (first == 0x00 || first == 0xE5)
+                    if (first == 0x00 || first == 0xE5 || first >= 0x80)
                         continue;
                     if (ents[i].attr == FAT32_ATTR_VOLUME_ID) {
                         __builtin_memcpy(ents[i].name, new_label, 11);
@@ -2259,7 +2259,7 @@ int fat32_set_volume_label(const char *label) {
                     int n_ents = SECT_SIZE / (int)sizeof(struct fat32_dirent);
                     for (int i = 0; i < n_ents; i++) {
                         uint8_t first = (uint8_t)ents[i].name[0];
-                        if (first == 0x00 || first == 0xE5) {
+                        if (first == 0x00 || first == 0xE5 || first >= 0x80) {
                             __builtin_memset(&ents[i], 0, sizeof(struct fat32_dirent));
                             __builtin_memcpy(ents[i].name, new_label, 11);
                             ents[i].attr = FAT32_ATTR_VOLUME_ID;
@@ -2371,7 +2371,7 @@ static int dir_update_by_leaf(uint32_t dir_cluster, const char *leaf, uint32_t f
                 uint8_t firstb = (uint8_t)entries[i].name[0];
                 if (firstb == 0x00)
                     return -EIO;
-                if (firstb == 0xE5) {
+                if (firstb == 0xE5 || firstb >= 0x80) {
                     lfn_n = 0;
                     continue;
                 }
@@ -2437,7 +2437,7 @@ static int dir_update_by_leaf(uint32_t dir_cluster, const char *leaf, uint32_t f
                 uint8_t firstb = (uint8_t)entries[i].name[0];
                 if (firstb == 0x00)
                     return -EIO;
-                if (firstb == 0xE5) {
+                if (firstb == 0xE5 || firstb >= 0x80) {
                     lfn_n = 0;
                     continue;
                 }
