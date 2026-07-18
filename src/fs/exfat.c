@@ -1605,8 +1605,13 @@ static int exfat_parse_entries(struct exfat_priv *ep, uint32_t cluster, uint32_t
                 if (secondary_count == 0)
                     continue;
 
-                /* Check if next entry in cluster is stream extension */
-                if (off + 32 > cluster_size)
+                /* Check if next entry in cluster is stream extension.
+                 * Both the file entry (32 bytes at 'off') and the stream
+                 * extension (32 bytes at 'off + 32') must fit within the
+                 * cluster.  Without the off+64 check an entry at the last
+                 * slot (off == cluster_size - 32) would read past the
+                 * cluster buffer. */
+                if (off + 64 > cluster_size)
                     continue;
                 uint8_t *next = entry + 32;
                 if (next[0] == EXFAT_ENTRY_STREAM_EXT) {
@@ -1898,6 +1903,13 @@ static int exfat_read(void *priv, const char *path, void *buf, uint32_t max_size
             struct exfat_file_entry *fe = (struct exfat_file_entry *)(cluster_buf + off);
             uint8_t sec = fe->secondary_count_continuations & 0x1F;
             if (sec < 1)
+                continue;
+
+            /* Ensure the stream extension entry (at off + 32) fits within
+             * the cluster buffer before dereferencing it.  An entry at the
+             * last slot (off == cluster_size - 32) would otherwise read
+             * past the buffer end. */
+            if (off + 64 > cluster_size)
                 continue;
 
             uint8_t *stream_entry = cluster_buf + off + 32;
@@ -2383,6 +2395,11 @@ static int exfat_stat(void *priv, const char *path, struct vfs_stat *st) {
             struct exfat_file_entry *fe = (struct exfat_file_entry *)(cluster_buf + off);
             uint8_t sec = fe->secondary_count_continuations & 0x1F;
             if (sec < 1)
+                continue;
+
+            /* Ensure the stream extension entry (at off + 32) fits within
+             * the cluster buffer before dereferencing it. */
+            if (off + 64 > cluster_size)
                 continue;
 
             uint8_t *se_bytes = cluster_buf + off + 32;
