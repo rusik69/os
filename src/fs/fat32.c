@@ -1739,6 +1739,15 @@ int fat32_write_file(const char *path, const void *data, uint32_t size) {
         }
         clus = fat_next_cluster(clus);
     }
+    /* File size vs cluster chain consistency: if the chain ended before we
+     * wrote all data, the filesystem is corrupted or the disk is full.  Free
+     * the partial chain and bail out rather than creating an entry whose
+     * declared file_size exceeds what the chain can deliver. */
+    if (done < size) {
+        if (first)
+            fat_free_chain(first);
+        return -EIO;
+    }
     /* Try to update existing directory entry first (handles zero-size files
      * with cluster 0 correctly, unlike the old_clus check which would miss
      * them since dir_find now returns 0 for cluster-0 entries).
@@ -2567,6 +2576,13 @@ int fat32_pwrite(const char *path, const void *data, uint32_t size, uint32_t off
             clus = fat_next_cluster(clus);
         }
 
+        /* File size vs cluster chain consistency: if the chain ended before
+         * writing all data, free the partial chain and bail out. */
+        if (done < size) {
+            fat_free_chain(first);
+            return -EIO;
+        }
+
         if (dir_add_entry(parent, n8, n3, first, needed, 0, leaf) != 0) {
             fat_free_chain(first);
             return -EIO;
@@ -2619,6 +2635,16 @@ int fat32_pwrite(const char *path, const void *data, uint32_t size, uint32_t off
             }
             off_in_cluster = 0;
             clus = fat_next_cluster(clus);
+        }
+
+        /* File size vs cluster chain consistency: if the chain ended before
+         * writing all data, don't update file_size — leave the old size
+         * (or partial write bytes) to avoid declaring a size that exceeds
+         * what the chain can deliver. */
+        if (done < size) {
+            if (needed > old_size)
+                dir_update_by_leaf(parent, leaf, old_clus, (offset + done) > old_size ? (offset + done) : old_size);
+            return done > 0 ? (int)done : -EIO;
         }
 
         if (needed > old_size)
