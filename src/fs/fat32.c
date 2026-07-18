@@ -1915,8 +1915,8 @@ int fat32_unlink(const char *path) {
         /* Entry may be a zero-size file with cluster 0. Try to remove the
          * directory entry directly — if it exists, the remove will succeed. */
         if (dir_remove_entry(parent, leaf) == 0)
-            return 0;  /* removed zero-size file entry */
-        return -3;     /* entry not found */
+            return 0; /* removed zero-size file entry */
+        return -3;    /* entry not found */
     }
     if (!clus || is_dir)
         return -3;
