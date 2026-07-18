@@ -124,6 +124,7 @@ static uint32_t fat_sectors = 0;
 static uint32_t fs_info_lba = 0;
 static uint32_t fsinfo_next_free = 2;
 static uint32_t fsinfo_free_count = 0;
+static int fsinfo_count_valid = 0;  /* 1 = free/next fields carry actual data */
 static uint32_t g_total_clusters = 0;
 static uint16_t g_ext_flags = 0;
 
@@ -161,16 +162,24 @@ static void fsinfo_write_hint(uint32_t next) {
     uint8_t buf[SECT_SIZE];
     if (read_sector(fs_info_lba, buf) != 0)
         return;
-    /* FSI_Free_Count at offset 488-491 (per Microsoft FAT32 spec) */
-    buf[488] = (uint8_t)(fsinfo_free_count & 0xFF);
-    buf[489] = (uint8_t)((fsinfo_free_count >> 8) & 0xFF);
-    buf[490] = (uint8_t)((fsinfo_free_count >> 16) & 0xFF);
-    buf[491] = (uint8_t)((fsinfo_free_count >> 24) & 0xFF);
-    /* FSI_Nxt_Free at offset 492-495 (per Microsoft FAT32 spec) */
-    buf[492] = (uint8_t)(next & 0xFF);
-    buf[493] = (uint8_t)((next >> 8) & 0xFF);
-    buf[494] = (uint8_t)((next >> 16) & 0xFF);
-    buf[495] = (uint8_t)((next >> 24) & 0xFF);
+    if (fsinfo_count_valid) {
+        /* FSI_Free_Count at offset 488-491 (per Microsoft FAT32 spec) */
+        buf[488] = (uint8_t)(fsinfo_free_count & 0xFF);
+        buf[489] = (uint8_t)((fsinfo_free_count >> 8) & 0xFF);
+        buf[490] = (uint8_t)((fsinfo_free_count >> 16) & 0xFF);
+        buf[491] = (uint8_t)((fsinfo_free_count >> 24) & 0xFF);
+        /* FSI_Nxt_Free at offset 492-495 (per Microsoft FAT32 spec) */
+        buf[492] = (uint8_t)(next & 0xFF);
+        buf[493] = (uint8_t)((next >> 8) & 0xFF);
+        buf[494] = (uint8_t)((next >> 16) & 0xFF);
+        buf[495] = (uint8_t)((next >> 24) & 0xFF);
+    } else {
+        /* Free count unknown — write sentinel (0xFFFFFFFF) per spec */
+        buf[488] = 0xFF; buf[489] = 0xFF;
+        buf[490] = 0xFF; buf[491] = 0xFF;
+        buf[492] = 0xFF; buf[493] = 0xFF;
+        buf[494] = 0xFF; buf[495] = 0xFF;
+    }
     write_sector(fs_info_lba, buf);
 }
 
@@ -929,15 +938,19 @@ int fat32_mount(fat32_disk_t disk, uint32_t part_lba) {
                 /* Only trust cached values if FSInfo signatures are valid */
                 if (fat32_validate_fsinfo(fbuf) == 0) {
                     /* FSI_Nxt_Free at offset 492-495 */
-                    fsinfo_next_free = (uint32_t)fbuf[492] | ((uint32_t)fbuf[493] << 8) |
-                                       ((uint32_t)fbuf[494] << 16) | ((uint32_t)fbuf[495] << 24);
+                    uint32_t raw_next = (uint32_t)fbuf[492] | ((uint32_t)fbuf[493] << 8) |
+                                        ((uint32_t)fbuf[494] << 16) | ((uint32_t)fbuf[495] << 24);
+                    /* FSI_Free_Count at offset 488-491 */
+                    uint32_t raw_free = (uint32_t)fbuf[488] | ((uint32_t)fbuf[489] << 8) |
+                                        ((uint32_t)fbuf[490] << 16) | ((uint32_t)fbuf[491] << 24);
+                    /* Only trust cached values if neither is 0xFFFFFFFF (unknown) */
+                    fsinfo_count_valid = (raw_free != 0xFFFFFFFF && raw_next != 0xFFFFFFFF);
+                    fsinfo_next_free = raw_next;
                     if (fsinfo_next_free < 2 || fsinfo_next_free == 0xFFFFFFFF)
                         fsinfo_next_free = 2;
                     else if ((uint64_t)fsinfo_next_free >= (uint64_t)total_clusters + 2)
                         fsinfo_next_free = 2;
-                    /* FSI_Free_Count at offset 488-491 */
-                    fsinfo_free_count = (uint32_t)fbuf[488] | ((uint32_t)fbuf[489] << 8) |
-                                        ((uint32_t)fbuf[490] << 16) | ((uint32_t)fbuf[491] << 24);
+                    fsinfo_free_count = raw_free;
                     if (fsinfo_free_count == 0xFFFFFFFF)
                         fsinfo_free_count = 0;
                     else if (fsinfo_free_count > total_clusters)
@@ -2906,6 +2919,7 @@ int fat32_repair_boot(void) {
     if (fsinfo_repaired) {
         fsinfo_free_count = 0;
         fsinfo_next_free = 2;
+        fsinfo_count_valid = 0;
     }
 
     /* ── Step 6: Sync cached state from boot sector ── */
