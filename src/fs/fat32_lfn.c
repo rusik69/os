@@ -626,6 +626,16 @@ int vfat_reconstruct_name(const void *entries, int count,
         return -EINVAL;
     }
 
+    /* Buffer overflow fence: the caller's lfn_parts[] array has exactly
+     * LFN_MAX_ENTRIES (20) elements but may have fewer valid entries.
+     * Validate that accessing lfn[count-1] stays within the caller's
+     * buffer.  This is a defence-in-depth measure; callers should
+     * already ensure well-formed input via lfn_entry_in_bounds(). */
+    if (count > LFN_MAX_ENTRIES) {
+        if (out_max > 0) out[0] = '\0';
+        return -EINVAL;
+    }
+
     /* Validate: the last entry (entries[count-1], the highest ordinal)
      * must have the LAST_LFN bit (0x40) set */
     if (!(lfn[count - 1].order & LFN_LAST_FLAG)) {

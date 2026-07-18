@@ -142,6 +142,23 @@ static char g_volume_label[12];
 /* Sector-sized scratch buffer (on stack in helpers) */
 #define SECT_SIZE 512
 
+/*
+ * Validate that a directory entry at index @i within a sector buffer @buf
+ * is fully contained in the buffer (does not extend past the end).
+ * This is a safety fence against buffer over-reads when copying LFN
+ * entries that might (theoretically) span sector boundaries or when
+ * processing corrupted directory data.
+ *
+ * Returns 1 if the entry is fully within bounds, 0 if it would overflow.
+ */
+static inline int lfn_entry_in_bounds(const uint8_t *buf, int buf_size,
+                                       const void *entries, int idx)
+{
+    const uint8_t *start = (const uint8_t *)entries + (size_t)idx * sizeof(struct fat32_dirent);
+    const uint8_t *end   = start + sizeof(struct fat32_dirent);
+    return (start >= buf && end <= buf + buf_size);
+}
+
 /* Low-level sector I/O (with buffer cache) */
 static int read_sector(uint64_t lba, void *buf) {
     void *cached = bufcache_read(lba, (uint8_t)disk_id);
@@ -651,6 +668,11 @@ static uint32_t dir_find(uint32_t dir_cluster, const char *name, int *is_dir, ui
                     continue;
                 }
                 if (entries[i].attr == FAT32_ATTR_LFN) {
+                    /* Safety: ensure the full entry is within the sector buffer */
+                    if (!lfn_entry_in_bounds(buf, SECT_SIZE, entries, i)) {
+                        lfn_n = 0;
+                        continue;
+                    }
                     int ord = entries[i].name[0] & 0x1F;
                     if (ord > 0 && ord <= 20)
                         __builtin_memcpy(&lfn_parts[ord - 1], &entries[i],
@@ -722,6 +744,11 @@ static uint32_t dir_find(uint32_t dir_cluster, const char *name, int *is_dir, ui
                     continue;
                 }
                 if (entries[i].attr == FAT32_ATTR_LFN) {
+                    /* Safety: ensure the full entry is within the sector buffer */
+                    if (!lfn_entry_in_bounds(buf, SECT_SIZE, entries, i)) {
+                        lfn_n = 0;
+                        continue;
+                    }
                     int ord = entries[i].name[0] & 0x1F;
                     if (ord > 0 && ord <= 20)
                         __builtin_memcpy(&lfn_parts[ord - 1], &entries[i],
@@ -1071,6 +1098,11 @@ int fat32_list_dir(const char *path, char names[][FAT32_MAX_NAME], int max) {
                     continue;
                 }
                 if (entries[i].attr == FAT32_ATTR_LFN) {
+                    /* Safety: ensure the full entry is within the sector buffer */
+                    if (!lfn_entry_in_bounds(buf, SECT_SIZE, entries, i)) {
+                        lfn_n = 0;
+                        continue;
+                    }
                     int ord = entries[i].name[0] & 0x1F;
                     if (ord > 0 && ord <= 20)
                         __builtin_memcpy(&lfn_parts[ord - 1], &entries[i],
@@ -1150,6 +1182,11 @@ int fat32_list_dir(const char *path, char names[][FAT32_MAX_NAME], int max) {
                     continue;
                 }
                 if (entries[i].attr == FAT32_ATTR_LFN) {
+                    /* Safety: ensure the full entry is within the sector buffer */
+                    if (!lfn_entry_in_bounds(buf, SECT_SIZE, entries, i)) {
+                        lfn_n = 0;
+                        continue;
+                    }
                     int ord = entries[i].name[0] & 0x1F;
                     if (ord > 0 && ord <= 20)
                         __builtin_memcpy(&lfn_parts[ord - 1], &entries[i],
@@ -1800,6 +1837,13 @@ static int dir_remove_entry(uint32_t dir_cluster, const char *name) {
                     continue;
                 }
                 if (entries[i].attr == FAT32_ATTR_LFN) {
+                    /* Safety: ensure the full entry is within the sector buffer */
+                    if (!lfn_entry_in_bounds(buf, SECT_SIZE, entries, i)) {
+                        lfn_n = 0;
+                        lfn_start = -1;
+                        lfn_start_sec = (uint32_t)-1;
+                        continue;
+                    }
                     int ord = entries[i].name[0] & 0x1F;
                     if (ord > 0 && ord <= 20)
                         __builtin_memcpy(&lfn_parts[ord - 1], &entries[i],
@@ -2332,6 +2376,11 @@ static int dir_update_by_leaf(uint32_t dir_cluster, const char *leaf, uint32_t f
                     continue;
                 }
                 if (entries[i].attr == FAT32_ATTR_LFN) {
+                    /* Safety: ensure the full entry is within the sector buffer */
+                    if (!lfn_entry_in_bounds(buf, SECT_SIZE, entries, i)) {
+                        lfn_n = 0;
+                        continue;
+                    }
                     int ord = entries[i].name[0] & 0x1F;
                     if (ord > 0 && ord <= 20)
                         __builtin_memcpy(&lfn_parts[ord - 1], &entries[i],
@@ -2393,6 +2442,11 @@ static int dir_update_by_leaf(uint32_t dir_cluster, const char *leaf, uint32_t f
                     continue;
                 }
                 if (entries[i].attr == FAT32_ATTR_LFN) {
+                    /* Safety: ensure the full entry is within the sector buffer */
+                    if (!lfn_entry_in_bounds(buf, SECT_SIZE, entries, i)) {
+                        lfn_n = 0;
+                        continue;
+                    }
                     int ord = entries[i].name[0] & 0x1F;
                     if (ord > 0 && ord <= 20)
                         __builtin_memcpy(&lfn_parts[ord - 1], &entries[i],
