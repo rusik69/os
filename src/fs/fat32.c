@@ -1361,7 +1361,11 @@ static int fat32_generate_short_name(const char *long_name, uint32_t dir_cluster
     /* ---- Step 3: Uppercase and validate extension characters ---- */
     {
         int oi = 0;
-        const char *e = (dot && dot[1]) ? dot + 1 : "";
+        /* Only derive extension if dot is NOT at position 0 (leading-dot
+         * names like ".bashrc" have no extension — the entire name is the
+         * base name per VFAT convention).  Mirrors the dot > long_name
+         * check from Step 1. */
+        const char *e = (dot && dot > long_name && dot[1]) ? dot + 1 : "";
         for (int i = 0; e[i] && oi < 3; i++) {
             char c = e[i];
             if (c >= 'a' && c <= 'z')
