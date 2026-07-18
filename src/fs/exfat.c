@@ -667,18 +667,28 @@ static int exfat_bitmap_init(struct exfat_priv *ep) {
         }
 
         for (j = 0; j < bits_in_this_sector; j++) {
+            /* Compute the global cluster number this bit represents */
+            uint32_t cluster_num = i * ep->sector_size * 8 + j;
+
+            /* Skip reserved clusters 0 and 1 — they are never free
+             * regardless of their bitmap state.  On a properly formatted
+             * exFAT volume the allocator marks these as allocated (bit=1),
+             * but some formatters may leave them clear.  Either way,
+             * they must never be counted as available. */
+            if (cluster_num < 2)
+                continue;
+
+            /* Ensure we don't count beyond valid cluster range.
+             * The bitmap may have padding bits in the last sector. */
+            if (cluster_num >= ep->cluster_count + 2)
+                continue;
+
             uint32_t byte_idx = j / 8;
             uint32_t bit_idx = j % 8;
             if (!(sect_buf[byte_idx] & (1U << bit_idx)))
                 ep->free_clusters++;
         }
     }
-
-    /* Clusters 0 and 1 are reserved — they are not really free */
-    if (ep->free_clusters >= 2)
-        ep->free_clusters -= 2;
-    else
-        ep->free_clusters = 0;
 
     /* Set allocation hint start */
     ep->next_free_hint = 2;
