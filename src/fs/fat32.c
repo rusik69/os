@@ -1061,9 +1061,9 @@ int fat32_read_file(const char *path, void *buf, uint32_t max_size) {
         clus = fat_next_cluster(clus);
     }
     /* File size vs cluster chain consistency: if the chain ended before we
-     * read the declared file size, the filesystem is corrupted or inconsistent. */
-    if (done < to_read)
-        return -EIO;
+     * read the declared file size, the file is truncated or the filesystem is
+     * corrupted. Return partial data that was successfully read instead of
+     * failing entirely. */
     return (int)done;
 }
 
