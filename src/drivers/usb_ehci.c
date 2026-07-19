@@ -22,9 +22,11 @@
 #include "string.h"
 #include "printf.h"
 #include "io.h"
+#include "bug.h"    /* WARN_ON, BUG_ON */
 
 /* ── Forward declarations ─────────────────────────────────────────── */
 int __init ehci_usb_init(void);
+static inline int ehci_validate_qtd_phys(uint64_t phys);
 
 /* ── EHCI Capability Register offsets ──────────────────────────────────────── */
 #define EHCI_CAPLENGTH   0x00   /* Capability registers length (1 byte) */
@@ -864,6 +866,11 @@ static int ehci_periodic_add_int_qh(uint8_t dev_addr, uint8_t ep,
     if (!g_periodic_on)
         return -ENOSYS;
 
+    /* Validate qTD pointer alignment (must be 32-byte aligned) */
+    ret = ehci_validate_qtd_phys(qtd_phys);
+    if (ret < 0)
+        return ret;
+
     /* Find a free slot */
     int slot = -1;
     for (int i = 0; i < EHCI_MAX_PERIODIC_INTR; i++) {
@@ -980,6 +987,10 @@ static void ehci_periodic_update_int_qh(int slot, uint64_t qtd_phys)
     if (slot < 0 || slot >= EHCI_MAX_PERIODIC_INTR)
         return;
     if (!g_periodic_intr[slot].in_use)
+        return;
+
+    /* Validate qTD pointer alignment (must be 32-byte aligned) */
+    if (WARN_ON(ehci_validate_qtd_phys(qtd_phys) < 0))
         return;
 
     volatile uint32_t *qh = g_periodic_intr[slot].qh_virt;
@@ -1232,6 +1243,21 @@ int ehci_submit_isochronous(uint8_t dev_addr, uint8_t ep,
 /* Maximum number of qTDs per QH */
 #define QTD_MAX_PER_QH         8
 
+/* qTD must be 32-byte aligned per EHCI spec §3.5 */
+#define EHCI_QTD_ALIGNMENT  32
+#define EHCI_QTD_ALIGN_MASK (EHCI_QTD_ALIGNMENT - 1)
+
+/* Validate qTD physical address alignment. Returns 0 if aligned, -EINVAL if not. */
+static inline int ehci_validate_qtd_phys(uint64_t phys)
+{
+    if (phys & EHCI_QTD_ALIGN_MASK) {
+        kprintf("[EHCI] ERROR: qTD phys 0x%lx not %d-byte aligned!\n",
+                (unsigned long)phys, EHCI_QTD_ALIGNMENT);
+        return -EINVAL;
+    }
+    return 0;
+}
+
 /* Maximum async schedule processing depth per call */
 #define ASYNC_MAX_QDS          32
 
@@ -1245,6 +1271,10 @@ int ehci_submit_isochronous(uint8_t dev_addr, uint8_t ep,
  */
 static int ehci_process_async_qtd(uint64_t qtd_phys)
 {
+    int ret = ehci_validate_qtd_phys(qtd_phys);
+    if (ret < 0)
+        return ret;
+
     volatile uint32_t *qtd_virt = (volatile uint32_t *)PHYS_TO_VIRT(qtd_phys);
     uint32_t token = qtd_virt[2];  /* Token dword at offset 8 */
 
@@ -1306,6 +1336,13 @@ static int ehci_process_async_schedule(void)
         uint32_t qtd_ptr = overlay_qtd & 0xFFFFFFE0u;
 
         if (qtd_ptr && !(qtd_ptr & QH_NEXT_TERMINATE)) {
+            /* Validate qTD pointer alignment before processing */
+            if (WARN_ON(ehci_validate_qtd_phys(qtd_ptr & ~0x1Fu) < 0)) {
+                /* Skip this malformed qTD */
+                current_qh_phys = horiz_link;
+                safety--;
+                continue;
+            }
             int ret = ehci_process_async_qtd((uint64_t)(qtd_ptr & ~0x1Fu));
             if (ret > 0) {
                 /* qTD completed successfully */
@@ -1393,6 +1430,12 @@ static int ehci_submit_async_qtd(uint8_t dev_addr, uint8_t ep,
 
     volatile uint32_t *qtd = (volatile uint32_t *)PHYS_TO_VIRT(qtd_phys);
     memset((void *)(uintptr_t)qtd, 0, 4096);
+
+    /* Defensive: verify qTD alignment (should always pass via pmm_alloc_frame) */
+    if (WARN_ON(ehci_validate_qtd_phys(qtd_phys) < 0)) {
+        pmm_free_frame(qtd_phys);
+        return -2;
+    }
 
     /* Fill qTD */
     uint32_t buf_phys = (uint32_t)(uintptr_t)VIRT_TO_PHYS(buf);
@@ -1500,6 +1543,12 @@ static int ehci_sync_submit(uint8_t dev_addr, uint8_t ep,
 
     volatile uint32_t *qtd = (volatile uint32_t *)PHYS_TO_VIRT(qtd_phys);
     memset((void *)(uintptr_t)qtd, 0, 4096);
+
+    /* Defensive: verify qTD alignment (should always pass via pmm_alloc_frame) */
+    if (WARN_ON(ehci_validate_qtd_phys(qtd_phys) < 0)) {
+        pmm_free_frame(qtd_phys);
+        return -ENOMEM;
+    }
 
     /* Fill qTD */
     uint32_t buf_phys = (uint32_t)(uintptr_t)VIRT_TO_PHYS(buf);
@@ -1764,6 +1813,12 @@ static int ehci_interrupt_transfer(uint8_t dev_addr, uint8_t ep,
 
     volatile uint32_t *qtd = (volatile uint32_t *)PHYS_TO_VIRT(qtd_phys);
     memset((void *)(uintptr_t)qtd, 0, 4096);
+
+    /* Defensive: verify qTD alignment (should always pass via pmm_alloc_frame) */
+    if (WARN_ON(ehci_validate_qtd_phys(qtd_phys) < 0)) {
+        pmm_free_frame(qtd_phys);
+        return -ENOMEM;
+    }
 
     /* Fill qTD */
     uint32_t buf_phys = (uint32_t)(uintptr_t)VIRT_TO_PHYS(data);
