@@ -220,6 +220,11 @@ struct nvme_io_queue {
     uint16_t  cq_head;
     uint16_t  cq_size;
 
+    /* Expected phase tag (P bit in status field, bit 0) for CQ completions.
+     * Initialised to 1 after controller enable.  Toggled when the CQ head
+     * wraps, matching the controller's phase tag toggle. */
+    uint8_t   cq_phase;
+
     /* Doorbell stride (cached from CAP) */
     uint32_t  stride;
 
@@ -246,6 +251,10 @@ struct nvme_ctrl {
     void    *admin_cq;
     uint64_t admin_sq_phys;
     uint64_t admin_cq_phys;
+
+    /* Expected phase tag (P bit) for the admin completion queue.
+     * Initialised to 1, toggled on CQ wrap. */
+    uint8_t  admin_cq_phase;
 
     /* I/O queues */
     uint32_t  nr_io_queues;       /* Number of I/O queue pairs created */

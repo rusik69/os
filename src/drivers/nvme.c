@@ -264,6 +264,7 @@ static int nvme_setup_admin_queues(void) {
 
     g_nvme_ctrl.admin_sq_tail = 0;
     g_nvme_ctrl.admin_cq_head = 0;
+    g_nvme_ctrl.admin_cq_phase = 1;  /* Controller starts with P=1 after enable */
 
     /* Set admin queue attributes (AQA) */
     /* AQA: bits 0-11: admin SQ size, bits 16-27: admin CQ size */
@@ -468,11 +469,27 @@ int nvme_submit_admin_cmd(struct nvme_sq_entry *cmd, struct nvme_cq_entry *cqe)
     uint32_t timeout = 1000000;
     while (timeout--) {
         if (cq[head].status != 0xFFFF) {
+            /* Validate the phase tag (bit 0 of status) matches our expected
+             * phase.  A mismatch indicates a stale entry or controller error. */
+            if ((cq[head].status & 1) != g_nvme_ctrl.admin_cq_phase) {
+                /* Phase tag mismatch — skip this stale entry */
+                cq[head].status = 0xFFFF;
+                head = (uint16_t)((head + 1) % 64);
+                if (head == 0)
+                    g_nvme_ctrl.admin_cq_phase ^= 1;
+                g_nvme_ctrl.admin_cq_head = head;
+                nvme_write32(&g_nvme_ctrl,
+                             nvme_cq_doorbell(&g_nvme_ctrl, 0), head);
+                continue;
+            }
+
             /* Drain any AER completions that arrived before our command */
             if (cq[head].cid != cid) {
                 /* Consume and re-arm for the unexpected completion */
                 cq[head].status = 0xFFFF;
                 head = (uint16_t)((head + 1) % 64);
+                if (head == 0)
+                    g_nvme_ctrl.admin_cq_phase ^= 1;
                 g_nvme_ctrl.admin_cq_head = head;
                 nvme_write32(&g_nvme_ctrl,
                              nvme_cq_doorbell(&g_nvme_ctrl, 0), head);
@@ -485,6 +502,8 @@ int nvme_submit_admin_cmd(struct nvme_sq_entry *cmd, struct nvme_cq_entry *cqe)
             /* Mark as consumed */
             cq[head].status = 0xFFFF;
             head = (uint16_t)((head + 1) % 64);
+            if (head == 0)
+                g_nvme_ctrl.admin_cq_phase ^= 1;
             g_nvme_ctrl.admin_cq_head = head;
 
             /* Ring the admin CQ doorbell to re-arm */
@@ -668,6 +687,7 @@ static int nvme_create_io_cq(struct nvme_io_queue *q) {
     q->cq_phys = cq_frame * 4096;
     memset(q->cq_virt, 0, 4096);
     q->cq_head = 0;
+    q->cq_phase = 1;  /* Controller starts with P=1 after enable */
 
     cmd.cdw0 = NVME_ADMIN_CREATE_CQ;
     cmd.prp1 = q->cq_phys;
@@ -836,6 +856,20 @@ static int nvme_poll_io_cq(struct nvme_io_queue *q, uint32_t timeout_loops) {
 
     while (timeout_loops--) {
         if (cq[head].status != 0xFFFF) {
+            /* Validate the phase tag (bit 0 of status) matches our expected
+             * phase.  A mismatch indicates a stale entry or controller error. */
+            if ((cq[head].status & 1) != q->cq_phase) {
+                /* Phase tag mismatch — skip this stale entry */
+                cq[head].status = 0xFFFF;
+                head = (uint16_t)((head + 1) % q->cq_size);
+                if (head == 0)
+                    q->cq_phase ^= 1;
+                q->cq_head = head;
+                nvme_write32(&g_nvme_ctrl,
+                             nvme_cq_doorbell(&g_nvme_ctrl, q->qid), head);
+                continue;
+            }
+
             /* Check for errors */
             uint16_t status = cq[head].status;
             uint16_t sc = (status >> 1) & 0xFF;  /* Status Code */
@@ -844,6 +878,8 @@ static int nvme_poll_io_cq(struct nvme_io_queue *q, uint32_t timeout_loops) {
             /* Mark as consumed */
             cq[head].status = 0xFFFF;
             head = (uint16_t)((head + 1) % q->cq_size);
+            if (head == 0)
+                q->cq_phase ^= 1;
             q->cq_head = head;
 
             /* Re-arm CQ doorbell */
@@ -2026,6 +2062,19 @@ void nvme_aer_poll(void)
     uint16_t cid = cq[head].cid;
     uint16_t status = cq[head].status;
 
+    /* Validate the phase tag (bit 0 of status) matches our expected
+     * phase.  A mismatch indicates a stale entry or controller error. */
+    if ((status & 1) != g_nvme_ctrl.admin_cq_phase) {
+        /* Phase tag mismatch — discard this stale entry */
+        cq[head].status = 0xFFFF;
+        head = (uint16_t)((head + 1) % 64);
+        if (head == 0)
+            g_nvme_ctrl.admin_cq_phase ^= 1;
+        g_nvme_ctrl.admin_cq_head = head;
+        nvme_write32(&g_nvme_ctrl, nvme_cq_doorbell(&g_nvme_ctrl, 0), head);
+        return;
+    }
+
     /* Only consume if this is our AER completion */
     if (cid != NVME_AER_CID)
         return;
@@ -2033,6 +2082,8 @@ void nvme_aer_poll(void)
     /* Mark completion as consumed */
     cq[head].status = 0xFFFF;
     head = (uint16_t)((head + 1) % 64);
+    if (head == 0)
+        g_nvme_ctrl.admin_cq_phase ^= 1;
     g_nvme_ctrl.admin_cq_head = head;
 
     /* Re-arm admin CQ doorbell */
@@ -2106,13 +2157,13 @@ static int nvme_complete_cmd(void *q, struct nvme_cq_entry *cqe)
 
     /* Poll for phase tag change */
     struct nvme_cq_entry *slot = (struct nvme_cq_entry *)queue->cq_virt + queue->cq_head;
-    uint16_t expected_phase = 1;  /* initial phase tag */
+    uint16_t expected = queue->cq_phase;
     uint32_t timeout = 10000000;
 
     while (timeout--) {
         uint16_t status = slot->status;
-        uint16_t phase = (status >> 14) & 1;
-        if (phase == expected_phase)
+        uint16_t phase = status & 1;   /* Phase Tag is bit 0 of status */
+        if (phase == expected)
             break;
         __asm__ volatile("pause");
     }
@@ -2125,6 +2176,8 @@ static int nvme_complete_cmd(void *q, struct nvme_cq_entry *cqe)
 
     /* Advance completion queue head */
     queue->cq_head = (uint16_t)((queue->cq_head + 1) % queue->cq_size);
+    if (queue->cq_head == 0)
+        queue->cq_phase ^= 1;
 
     /* Ring the completion queue doorbell */
     uint32_t doorbell_offset = 0x1000 + (2 * queue->qid + 1) * queue->stride;
