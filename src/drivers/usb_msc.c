@@ -334,11 +334,17 @@ static int bot_recv_csw(struct bot_csw *csw, struct bot_cbw *cbw)
     if (cbw && csw->tag != cbw->tag)
         return -EPROTO;
 
-    /* status: 0=good, 1=failed, 2=phase error */
-    if (csw->status == 1)
-        return -EIO;
-    if (csw->status == 2)
+    /* Validate residue: leftover bytes should not exceed requested data length */
+    if (cbw && csw->residue > cbw->data_len)
         return -EPROTO;
+
+    /* status: 0=good, 1=failed, 2=phase error; anything else is reserved */
+    switch (csw->status) {
+    case 0:  break;              /* success */
+    case 1:  return -EIO;        /* command failed */
+    case 2:  return -EPROTO;     /* phase error */
+    default: return -EPROTO;     /* reserved / invalid status */
+    }
 
     return 0;
 }
