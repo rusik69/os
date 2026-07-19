@@ -21,9 +21,11 @@ static volatile int mouse_py = 384;
 #define FB_HEIGHT 768
 #define MOUSE_SENSITIVITY 4
 
-/* 4-byte packet accumulator (IntelliMouse: 4 bytes) */
+/* Packet accumulator (3-byte standard or 4-byte IntelliMouse) */
 static uint8_t mouse_cycle = 0;
 static int8_t  mouse_bytes[4];
+static uint8_t mouse_packet_size = 4; /* bytes per packet (3 or 4) */
+static uint8_t mouse_id = 0;          /* 0 = standard, 3 = IntelliMouse, 4 = 5-button */
 
 /* Scroll wheel */
 static volatile int mouse_wheel_delta = 0;
@@ -42,62 +44,71 @@ static void mouse_irq_handler(struct interrupt_frame *frame) {
     uint8_t byte = inb(PS2_DATA);
     irq_ack(12);
 
-    switch (mouse_cycle) {
-        case 0:
-            /* First byte: buttons + overflow bits */
-            if (!(byte & 0x08)) { mouse_cycle = 0; return; }
-            mouse_bytes[0] = (int8_t)byte;
-            mouse_cycle = 1;
-            break;
-        case 1:
-            mouse_bytes[1] = (int8_t)byte;
-            mouse_cycle = 2;
-            break;
-        case 2:
-            mouse_bytes[2] = (int8_t)byte;
-            mouse_cycle = 3;
-            break;
-        case 3:
-            mouse_bytes[3] = (int8_t)byte;
+    /* Validate first byte: bit 3 must be set in a valid mouse packet */
+    if (mouse_cycle == 0) {
+        if (!(byte & 0x08)) {
+            /* Not a valid packet start byte — reset and discard */
             mouse_cycle = 0;
+            return;
+        }
+        mouse_bytes[0] = (int8_t)byte;
+        mouse_cycle = 1;
+        return;
+    }
 
-            /* Decode 4-byte IntelliMouse packet */
-            mouse_buttons = (uint8_t)(mouse_bytes[0] & 0x07);
+    /* Validate mid-packet bytes: 0xFA (ACK) or 0xAA (self-test passed)
+     * arriving mid-sequence indicates the mouse state machine is out of sync. */
+    if (byte == 0xFA || byte == 0xAA || byte == 0xFE) {
+        /* Unexpected command response — reset packet accumulation */
+        mouse_cycle = 0;
+        return;
+    }
 
-            /* Decode 9-bit signed X/Y deltas.
-             * Byte 0 bit 4 = X sign (9th bit), byte 0 bit 5 = Y sign.
-             * Bytes 1/2 are the lower 8 bits (unsigned) of the 9-bit
-             * two's complement value.  The old code used int8_t and
-             * then ORed ~0xFF, which broke positive values > 127. */
-            int dx = (uint8_t)mouse_bytes[1];
-            int dy = (uint8_t)mouse_bytes[2];
-            if (mouse_bytes[0] & 0x10) dx -= 256;
-            if (mouse_bytes[0] & 0x20) dy -= 256;
+    /* Accumulate packet bytes */
+    if (mouse_cycle <= mouse_packet_size) {
+        mouse_bytes[mouse_cycle] = (int8_t)byte;
+        mouse_cycle++;
+    }
 
-            /* Overflow: ignore */
-            if (mouse_bytes[0] & 0x40) dx = 0;
-            if (mouse_bytes[0] & 0x80) dy = 0;
+    /* Process when we have a complete packet */
+    if (mouse_cycle == mouse_packet_size) {
+        mouse_cycle = 0;
 
-            /* Scroll wheel is in byte 3 (signed) */
+        /* Decode packet (common layout: byte0=buttons, byte1=X, byte2=Y) */
+        mouse_buttons = (uint8_t)(mouse_bytes[0] & 0x07);
+
+        /* Decode 9-bit signed X/Y deltas.
+         * Byte 0 bit 4 = X sign (9th bit), byte 0 bit 5 = Y sign.
+         * Bytes 1/2 are the lower 8 bits (unsigned) of the 9-bit
+         * two's complement value. */
+        int dx = (uint8_t)mouse_bytes[1];
+        int dy = (uint8_t)mouse_bytes[2];
+        if (mouse_bytes[0] & 0x10) dx -= 256;
+        if (mouse_bytes[0] & 0x20) dy -= 256;
+
+        /* Overflow: ignore */
+        if (mouse_bytes[0] & 0x40) dx = 0;
+        if (mouse_bytes[0] & 0x80) dy = 0;
+
+        /* Scroll wheel (4-byte IntelliMouse packets only) */
+        if (mouse_packet_size == 4) {
             mouse_wheel_delta += (int8_t)mouse_bytes[3];
+        }
 
-            mouse_x += dx;
-            mouse_y -= dy;
+        mouse_x += dx;
+        mouse_y -= dy;
 
-            if (mouse_x < 0) mouse_x = 0;
-            if (mouse_x >= VGA_COLS) mouse_x = VGA_COLS - 1;
-            if (mouse_y < 0) mouse_y = 0;
-            if (mouse_y >= VGA_ROWS) mouse_y = VGA_ROWS - 1;
+        if (mouse_x < 0) mouse_x = 0;
+        if (mouse_x >= VGA_COLS) mouse_x = VGA_COLS - 1;
+        if (mouse_y < 0) mouse_y = 0;
+        if (mouse_y >= VGA_ROWS) mouse_y = VGA_ROWS - 1;
 
-            mouse_px += dx * MOUSE_SENSITIVITY;
-            mouse_py -= dy * MOUSE_SENSITIVITY;
-            if (mouse_px < 0) mouse_px = 0;
-            if (mouse_px >= FB_WIDTH)  mouse_px = FB_WIDTH  - 1;
-            if (mouse_py < 0) mouse_py = 0;
-            if (mouse_py >= FB_HEIGHT) mouse_py = FB_HEIGHT - 1;
-            break;
-        default:
-            break;
+        mouse_px += dx * MOUSE_SENSITIVITY;
+        mouse_py -= dy * MOUSE_SENSITIVITY;
+        if (mouse_px < 0) mouse_px = 0;
+        if (mouse_px >= FB_WIDTH)  mouse_px = FB_WIDTH  - 1;
+        if (mouse_py < 0) mouse_py = 0;
+        if (mouse_py >= FB_HEIGHT) mouse_py = FB_HEIGHT - 1;
     }
 }
 
@@ -117,7 +128,10 @@ void __init mouse_init(void) {
     mouse_write(0xFF);
     mouse_read(); /* ACK */
     mouse_read(); /* 0xAA self-test passed */
-    mouse_read(); /* 0x00 mouse ID */
+    mouse_id = mouse_read(); /* mouse ID: 0=standard, 3=IntelliMouse, 4=5-button */
+
+    /* Set packet size based on detected mouse type */
+    mouse_packet_size = (mouse_id == 0) ? 3 : 4;
 
     /* Set defaults */
     mouse_write(0xF6);
@@ -134,6 +148,14 @@ void __init mouse_init(void) {
     mouse_write(100);  mouse_read(); /* ACK */
     mouse_write(0xF3); mouse_read(); /* ACK */
     mouse_write(80);   mouse_read(); /* ACK */
+
+    /* Re-read mouse ID after IntelliMouse activation sequence */
+    mouse_write(0xF2); /* get mouse ID */
+    mouse_read();      /* ACK */
+    mouse_id = mouse_read(); /* 0x03 = IntelliMouse, 0x04 = 5-button */
+    if (mouse_id >= 3) {
+        mouse_packet_size = 4;
+    }
 
     /* Enable data reporting */
     mouse_write(0xF4);
