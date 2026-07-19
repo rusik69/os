@@ -429,6 +429,16 @@ int rtl8139_receive(struct net_device *dev,
          * Compute as uint32_t to avoid uint16_t overflow. */
         {
             uint32_t pkt_size_32 = ((uint32_t)pkt_len + 3) & ~3U;
+            /* Validate: dword-aligned size must not exceed the ring buffer.
+             * If pkt_size >= RTL8139_RX_BUF_SIZE, advancing rx_cur by
+             * pkt_size wraps back to the original position, creating an
+             * infinite loop.  This catches corrupt descriptors where
+             * pkt_len >= 65533 (the dword-aligned size wraps to 65536). */
+            if (pkt_size_32 >= RTL8139_RX_BUF_SIZE) {
+                priv->rx_cur = (int)cbr;
+                priv->stats.rx_errors++;
+                break;
+            }
             pkt_size = (int)pkt_size_32;
         }
 
