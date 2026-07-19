@@ -899,6 +899,14 @@ static int ehci_periodic_add_int_qh(uint8_t dev_addr, uint8_t ep,
         frame_idx %= EHCI_FRAME_LIST_ENTRIES;
     }
 
+    /* Bounds check: frame list index must be within [0, EHCI_FRAME_LIST_ENTRIES) */
+    if (frame_idx >= EHCI_FRAME_LIST_ENTRIES) {
+        kprintf("[EHCI] BUG: periodic_add_int_qh frame_idx=%u out of bounds\n",
+                (unsigned)frame_idx);
+        ehci_pool_free_qh(qh_phys);
+        return -EINVAL;
+    }
+
     /* Horizontal link pointer: terminate (single QH in this slot) */
     qh[0] = EHCI_PTR_TERMINATE;
 
@@ -957,11 +965,20 @@ static void ehci_periodic_remove_int_qh(int slot)
     if (!g_periodic_intr[slot].in_use)
         return;
 
+    /* Bounds check: stored frame index must be valid */
+    uint32_t fi = g_periodic_intr[slot].frame_idx;
+    if (fi >= EHCI_FRAME_LIST_ENTRIES) {
+        kprintf("[EHCI] WARN: periodic_remove_int_qh slot=%d has "
+                "invalid frame_idx=%u, skipping restore\n",
+                slot, (unsigned)fi);
+        goto skip_restore;
+    }
+
     /* Restore the frame list entry */
-    g_flist[g_periodic_intr[slot].frame_idx] =
-        g_periodic_intr[slot].old_fl_entry;
+    g_flist[fi] = g_periodic_intr[slot].old_fl_entry;
     __asm__ volatile("mfence" ::: "memory");
 
+skip_restore:
     kprintf("[EHCI] periodic_intr: removed slot=%d "
             "(addr=%d ep=0x%02x)\n",
             slot, g_periodic_intr[slot].dev_addr,
@@ -1053,8 +1070,15 @@ void ehci_teardown_periodic(void) {
     for (int i = 0; i < EHCI_MAX_PERIODIC_INTR; i++) {
         if (g_periodic_intr[i].in_use) {
             uint32_t fi = g_periodic_intr[i].frame_idx;
-            /* Restore the frame list entry we replaced */
-            g_flist[fi] = g_periodic_intr[i].old_fl_entry;
+            /* Bounds check: stored frame index must be valid */
+            if (fi >= EHCI_FRAME_LIST_ENTRIES) {
+                kprintf("[EHCI] WARN: teardown slot %d has "
+                        "invalid frame_idx=%u, skipping\n",
+                        i, (unsigned)fi);
+            } else {
+                /* Restore the frame list entry we replaced */
+                g_flist[fi] = g_periodic_intr[i].old_fl_entry;
+            }
             /* Return the QH to the pool */
             ehci_pool_free_qh(g_periodic_intr[i].qh_phys);
             memset(&g_periodic_intr[i], 0,
