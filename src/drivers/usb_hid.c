@@ -888,6 +888,11 @@ int usb_hid_parse_report(void *dev, const void *report, size_t len,
 {
     (void)dev;
     if (!report || len == 0 || !out) return -EINVAL;
+    if (len > HID_REPORT_DESC_MAX_SIZE) {
+        kprintf("[usb_hid] Report descriptor too large: %llu bytes (max %u)\n",
+                (unsigned long long)len, HID_REPORT_DESC_MAX_SIZE);
+        return -EINVAL;
+    }
 
     const uint8_t *data = (const uint8_t *)report;
     size_t pos = 0;

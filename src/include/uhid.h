@@ -419,6 +419,12 @@ struct hid_mouse_report {
 #define HID_KEYCODE_LEFT      0x50
 #define HID_KEYCODE_RIGHT     0x4F
 
+/* ── HID report descriptor limits ─────────────────────────────────── */
+/* Maximum size of a HID report descriptor (65535 possible per USB HID spec,
+ * but we impose a practical upper bound to prevent memory exhaustion and
+ * parsing of malformed descriptors). */
+#define HID_REPORT_DESC_MAX_SIZE     8192
+
 /* ── HID report descriptor parser structures ──────────────────────── */
 
 #define HID_REPORT_MAX_ITEMS         64
