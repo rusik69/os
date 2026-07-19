@@ -135,9 +135,17 @@ int ata_id_parse(const uint16_t *ident, struct ata_device_info *info)
     uint64_t lba48;
     uint16_t cmd_supp;
     uint16_t feature_en;
+    int ret;
 
     if (!ident || !info)
         return -EINVAL;
+
+    /* Validate the identify data has a plausible signature before parsing.
+     * This guards against parsing garbage from a missing, failed, or
+     * in-progress IDENTIFY command. */
+    ret = ata_id_check_signature(ident);
+    if (ret < 0)
+        return ret;
 
     memset(info, 0, sizeof(*info));
 

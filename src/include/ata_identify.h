@@ -607,4 +607,45 @@ static inline uint64_t ata_id_wwn(const uint16_t *ident)
             ((uint64_t)ident[ATA_ID_WWN + 3] << 48));
 }
 
+/* ====================================================================
+ *  IDENTIFY data signature validation
+ * ==================================================================== */
+
+/**
+ * ata_id_check_signature — Validate IDENTIFY data has a plausible signature.
+ * @ident: Raw 256-word IDENTIFY DEVICE data buffer
+ *
+ * Returns 0 if the identify data appears valid, or -EINVAL if the buffer
+ * is NULL, contains an all-zeros or all-ones word 0 (uninitialized/bus
+ * floating), or the ATAPI signature check fails.
+ *
+ * Call this before parsing or consuming raw IDENTIFY data to guard against
+ * parsing garbage from a missing, failed, or in-progress IDENTIFY command.
+ */
+static inline int ata_id_check_signature(const uint16_t *ident)
+{
+    if (!ident)
+        return -EINVAL;
+
+    /* Word 0 (General configuration) must not be all-zeros or all-ones.
+     * 0x0000 = uninitialized / data not ready
+     * 0xFFFF = bus floating / device absent */
+    if (ident[ATA_ID_GENERAL] == 0x0000 ||
+        ident[ATA_ID_GENERAL] == 0xFFFF)
+        return -EINVAL;
+
+    /* For ATAPI devices (word 0 bit 15 set), the identify signature in
+     * words 2-4 must be valid per the ATA/ATAPI spec:
+     *   word 2 = 0xEB14, word 3 = 0x0000, word 4 = 0x0000
+     * (Per the ATA-8 ACS specification section 7.18.7.6) */
+    if (ident[ATA_ID_GENERAL] & ATA_GEN_ATAPI) {
+        if (ident[2] != 0xEB14 && ident[2] != 0x0000)
+            return -EINVAL;
+        if (ident[3] != 0x0000 || ident[4] != 0x0000)
+            return -EINVAL;
+    }
+
+    return 0;
+}
+
 #endif /* ATA_IDENTIFY_H */
