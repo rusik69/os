@@ -102,6 +102,20 @@ static void key_set_down(uint8_t sc, int down) {
         key_down[sc] = down ? 1 : 0;
 }
 
+/* Validate a raw scancode byte from the PS/2 controller.
+ * Scancode set 1: 0x00 and 0xFF are never valid (controller error /
+ * buffer overrun / no device).  Extended (0xE0-prefixed) scancodes
+ * share the same invalid values.  Returns 1 if valid, 0 to reject. */
+static inline int is_valid_scancode(uint8_t sc, int is_extended)
+{
+    (void)is_extended;
+    /* 0x00 — spurious read / controller reset
+     * 0xFF — keyboard buffer overrun / no device */
+    if (sc == 0x00 || sc == 0xFF)
+        return 0;
+    return 1;
+}
+
 /* Send data to the keyboard */
 static void kb_write_data(uint8_t data) {
     uint32_t timeout = 100000;
@@ -166,6 +180,10 @@ static void keyboard_handler(struct interrupt_frame *frame) {
 
     irq_ack(1);
 
+    /* Validate the raw scancode — reject controller errors */
+    if (!is_valid_scancode(scancode, 0))
+        return;
+
     if (scancode == 0xE0) {
         kb_extend = 1;
         return;
@@ -173,6 +191,11 @@ static void keyboard_handler(struct interrupt_frame *frame) {
 
     if (kb_extend) {
         kb_extend = 0;
+
+        /* Validate extended (0xE0-prefixed) scancode */
+        if (!is_valid_scancode(scancode, 1))
+            return;
+
         if (scancode & 0x80) {
             key_set_down(scancode & 0x7F, 0);
         } else {
