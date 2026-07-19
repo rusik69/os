@@ -808,8 +808,18 @@ void pci_write(int bus, int slot, int func, int offset, uint32_t val) {
 
 int pci_find_device(uint16_t vendor, uint16_t device, struct pci_device *out) {
     if (!out) return -EINVAL;
+
+    /* PCI bus number range: 0-255 per PCI Local Bus Specification r3.0.
+     * Issuing config cycles with an out-of-range bus number can cause
+     * master-abort errors or hang the PCI bus on some hardware. */
     for (int bus = 0; bus < 256; bus++) {
+        /* Slot (device) number range: 0-31 per PCI spec (5-bit field) */
         for (int slot = 0; slot < 32; slot++) {
+            /* Defensive range check: ensure bus/slot stay within valid
+             * bounds even if loop bounds are changed in the future. */
+            if ((unsigned int)bus > 255U || (unsigned int)slot > 31U)
+                continue;
+
             uint32_t reg0 = pci_read((uint8_t)bus, (uint8_t)slot, 0, 0);
             uint16_t vid = (uint16_t)(reg0 & 0xFFFF);
             uint16_t did = (uint16_t)((reg0 >> 16) & 0xFFFF);
@@ -819,6 +829,10 @@ int pci_find_device(uint16_t vendor, uint16_t device, struct pci_device *out) {
             int is_multi = (reg_hdr & (1U << 23)) ? 1 : 0;
             int max_func = is_multi ? 8 : 1;
             for (int func = 0; func < max_func; func++) {
+                /* Function number range: 0-7 per PCI spec (3-bit field) */
+                if ((unsigned int)func > 7U)
+                    continue;
+
                 reg0 = pci_read((uint8_t)bus, (uint8_t)slot, (uint8_t)func, 0);
                 vid = (uint16_t)(reg0 & 0xFFFF);
                 did = (uint16_t)((reg0 >> 16) & 0xFFFF);
