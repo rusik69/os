@@ -118,6 +118,52 @@ static inline uint64_t nvme_cq_doorbell(struct nvme_ctrl *ctrl, uint16_t qid) {
     return 0x1000 + (uint64_t)(2 * qid + 1) * ctrl->doorbell_stride;
 }
 
+/**
+ * nvme_ring_sq_doorbell — Validate and ring a submission queue doorbell.
+ *
+ * Checks that @qid is within the range of valid queues and that @tail
+ * does not exceed the queue depth before writing the doorbell register.
+ * This prevents invalid doorbell writes that could cause undefined
+ * controller behaviour (NVMe spec: Invalid Doorbell Write error).
+ *
+ * @ctrl   NVMe controller state
+ * @qid    Queue ID (0 = admin queue, 1..nr_io_queues = I/O queues)
+ * @tail   New tail pointer value to write to the doorbell
+ *
+ * Returns 0 on success, -EINVAL if validation fails.
+ */
+static int nvme_ring_sq_doorbell(struct nvme_ctrl *ctrl, uint16_t qid, uint16_t tail)
+{
+    /* Validate queue ID */
+    if (qid == 0) {
+        /* Admin queue is always valid if controller is present */
+        if (!ctrl->admin_sq)
+            return -EINVAL;
+    } else {
+        /* I/O queue IDs range from 1 to nr_io_queues */
+        if (qid > ctrl->nr_io_queues)
+            return -EINVAL;
+        /* Also verify the queue entry is valid */
+        if (qid - 1 >= NVME_IO_QUEUE_MAX)
+            return -EINVAL;
+        if (!ctrl->io_queues[qid - 1].valid)
+            return -EINVAL;
+    }
+
+    /* Validate tail does not exceed queue depth */
+    uint16_t qdepth;
+    if (qid == 0) {
+        qdepth = 64;  /* Admin queue depth is fixed at 64 */
+    } else {
+        qdepth = ctrl->io_queues[qid - 1].sq_size;
+    }
+    if (tail >= qdepth)
+        return -EINVAL;
+
+    nvme_write32(ctrl, nvme_sq_doorbell(ctrl, qid), tail);
+    return 0;
+}
+
 /* ── Wait for controller ready state ───────────────────────────────── */
 
 static int nvme_wait_ready(struct nvme_ctrl *ctrl, int ready, int timeout_ms) {
@@ -413,8 +459,8 @@ int nvme_submit_admin_cmd(struct nvme_sq_entry *cmd, struct nvme_cq_entry *cqe)
     __sync_synchronize();
 
     /* Ring the admin SQ doorbell (qid=0) */
-    uint32_t sq_doorbell = (uint32_t)nvme_sq_doorbell(&g_nvme_ctrl, 0);
-    nvme_write32(&g_nvme_ctrl, sq_doorbell, tail);
+    if (nvme_ring_sq_doorbell(&g_nvme_ctrl, 0, tail) != 0)
+        return -EINVAL;
 
     /* Spin-wait for completion */
     struct nvme_cq_entry *cq = (struct nvme_cq_entry *)g_nvme_ctrl.admin_cq;
@@ -778,7 +824,7 @@ static int nvme_io_submit_on_queue(struct nvme_io_queue *q, uint32_t nsid,
     __sync_synchronize();
 
     q->sq_tail = tail;
-    nvme_write32(&g_nvme_ctrl, nvme_sq_doorbell(&g_nvme_ctrl, q->qid), tail);
+    nvme_ring_sq_doorbell(&g_nvme_ctrl, q->qid, tail);
 
     return 0;
 }
@@ -878,7 +924,7 @@ int nvme_deallocate(int ns_id, uint64_t lba, uint32_t count) {
     tail = (uint16_t)((tail + 1) % q->sq_size);
     __sync_synchronize();
     q->sq_tail = tail;
-    nvme_write32(&g_nvme_ctrl, nvme_sq_doorbell(&g_nvme_ctrl, q->qid), tail);
+    nvme_ring_sq_doorbell(&g_nvme_ctrl, q->qid, tail);
 
     /* Poll for completion */
     int ret = nvme_poll_io_cq(q, 10000000);
@@ -1887,7 +1933,7 @@ static int nvme_aer_submit(void)
     g_nvme_ctrl.admin_sq_tail = tail;
 
     __sync_synchronize();
-    nvme_write32(&g_nvme_ctrl, nvme_sq_doorbell(&g_nvme_ctrl, 0), tail);
+    nvme_ring_sq_doorbell(&g_nvme_ctrl, 0, tail);
 
     g_aer_pending = 1;
     kprintf("[NVME] AER submitted (SQ tail=%u)\n", tail);
@@ -2042,8 +2088,8 @@ static int nvme_submit_cmd(void *q, struct nvme_sq_entry *cmd)
     queue->sq_tail = (uint16_t)((queue->sq_tail + 1) % queue->sq_size);
 
     /* Ring the submission queue doorbell */
-    uint32_t doorbell_offset = 0x1000 + (2 * queue->qid) * queue->stride;
-    nvme_write32(&g_nvme_ctrl, doorbell_offset, queue->sq_tail);
+    if (nvme_ring_sq_doorbell(&g_nvme_ctrl, queue->qid, queue->sq_tail) != 0)
+        return -EINVAL;
 
     return 0;
 }
