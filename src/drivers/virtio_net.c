@@ -114,6 +114,26 @@ struct vring_used {
 };
 #pragma pack(pop)
 
+/* ── Available ring overflow check ───────────────────────────────────
+ * Returns 1 if the avail ring has room for 'needed' additional entries,
+ * 0 if adding them would overflow the ring (overwriting entries the
+ * device hasn't consumed yet).
+ *
+ * The virtio spec requires that the driver MUST NOT add more entries
+ * than the ring can hold.  The number of in-flight descriptors is
+ * (avail->idx - used->idx), both uint16_t counters that wrap naturally.
+ * Because uint16_t subtraction is well-defined mod 2^16, this remains
+ * correct across wraps as long as the ring is never more than VRING_SIZE
+ * entries deep (which it can't be by design).
+ */
+static inline int vring_avail_has_room(struct vring_avail *avail,
+                                       struct vring_used *used,
+                                       uint16_t needed)
+{
+    uint16_t in_flight = (uint16_t)(avail->idx - used->idx);
+    return (uint16_t)(in_flight + needed) <= VRING_SIZE;
+}
+
 /* virtio-net header prepended to every packet (12 bytes, 14 with num_buffers) */
 #pragma pack(push, 1)
 struct virtio_net_hdr {
@@ -1786,6 +1806,10 @@ static int virtio_net_ctrl_send(uint8_t class, uint8_t command,
 
     /* Place the chain head into the avail ring */
     {
+        if (!vring_avail_has_room(avail, used, 1)) {
+            ret = -EAGAIN;
+            goto out;
+        }
         uint16_t slot = avail->idx & (VRING_SIZE - 1);
         avail->ring[slot] = 0;  /* descriptor 0 is always the chain head */
         __asm__ volatile("" ::: "memory");
@@ -2153,11 +2177,18 @@ int virtio_net_send(const uint8_t *data, uint32_t len) {
         tx_offload_stats.raw_packets++;
     }
 
-    uint16_t idx = avail->idx & (VRING_SIZE - 1);
-    avail->ring[idx] = 0;
-    __asm__ volatile("" ::: "memory");
-    avail->idx++;
-    __asm__ volatile("" ::: "memory");
+    /* Place descriptor 0 into the avail ring */
+    {
+        if (!vring_avail_has_room(avail, used, 1)) {
+            tx_offload_stats.tx_offload_drops++;
+            return -1;
+        }
+        uint16_t idx = avail->idx & (VRING_SIZE - 1);
+        avail->ring[idx] = 0;
+        __asm__ volatile("" ::: "memory");
+        avail->idx++;
+        __asm__ volatile("" ::: "memory");
+    }
 
     vio_outw(VIRTIO_PCI_QUEUE_NOTIFY, TX_QUEUE_IDX);
 
@@ -2267,6 +2298,11 @@ int virtio_net_receive(void *buf, uint16_t max_len) {
 
         /* Recycle all RX descriptors used by this packet */
         {
+            /* Device just consumed num_bufs entries, so we must have room */
+            if (!vring_avail_has_room(avail, used, num_bufs)) {
+                lro_stats.dropped_oversize++;
+                goto deliver_raw_fallback;
+            }
             uint16_t cur_id = id;
             for (uint16_t i = 0; i < num_bufs; i++) {
                 descs[cur_id].addr  = VIRT_TO_PHYS(rx_pkt_bufs[cur_id]);
@@ -2321,6 +2357,10 @@ deliver_raw:
 deliver_raw_fallback:
     /* Recycle the RX descriptor */
     {
+        /* Device just consumed num_bufs entries, so we must have room */
+        if (!vring_avail_has_room(avail, used, num_bufs)) {
+            return 0;
+        }
         uint16_t cur_id = id;
         for (uint16_t i = 0; i < num_bufs; i++) {
             descs[cur_id].addr  = VIRT_TO_PHYS(rx_pkt_bufs[cur_id]);
