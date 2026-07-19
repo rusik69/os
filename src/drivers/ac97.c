@@ -124,6 +124,20 @@ static struct ac97_capture_state ac97_cap;
 /* Forward declaration for interrupt handler (used by ac97_init) */
 static void ac97_irq_handler(struct interrupt_frame *frame);
 
+/* ── Codec register cache (saved mixer state for suspend/resume) ─── */
+struct ac97_saved_mixer_state {
+    uint16_t master;
+    uint16_t pcm;
+    uint16_t mic;
+    uint16_t line_in;
+    uint16_t cd;
+    uint16_t rec_gain;
+    uint16_t rec_source;
+    uint16_t ext_audio;
+};
+
+static struct ac97_saved_mixer_state ac97_saved_regs;
+
 /* ── Helpers ─────────────────────────────────────────────────────── */
 static inline void nam_out16(uint16_t reg, uint16_t v) { outw((uint16_t)(ac97_nam_base  + reg), v); }
 static inline void nam_out32(uint16_t reg, uint32_t v) {
@@ -147,6 +161,11 @@ static inline uint32_t nabm_in32(uint16_t reg) {
 int ac97_init(void) {
     if (pci_find_class(AC97_CLASS, AC97_SUBCLASS, &ac97_pci_dev) < 0)
         return -1;
+
+    /* Reset the codec register cache so saved mixer state starts clean.
+     * This prevents stale data from a previous init or module reload
+     * from being used during suspend/resume later. */
+    memset(&ac97_saved_regs, 0, sizeof(ac97_saved_regs));
 
     ac97_nam_base  = (uint16_t)(ac97_pci_dev.bar[0] & ~0x3u);
     ac97_nabm_base = (uint16_t)(ac97_pci_dev.bar[1] & ~0x3u);
@@ -1151,25 +1170,6 @@ void ac97_mixer_init_defaults(void)
  * Starts at D0 (fully on) after ac97_init completes.
  */
 static enum ac97_power_state ac97_pwr_state = AC97_POWER_D0;
-
-/**
- * Saved mixer state for restore on resume.
- * The AC97 spec guarantees that mixer registers survive a warm reset,
- * but not a cold reset.  We save the primary channel volumes before
- * D3_COLD suspend so they can be restored after cold reset.
- */
-struct ac97_saved_mixer_state {
-    uint16_t master;
-    uint16_t pcm;
-    uint16_t mic;
-    uint16_t line_in;
-    uint16_t cd;
-    uint16_t rec_gain;
-    uint16_t rec_source;
-    uint16_t ext_audio;
-};
-
-static struct ac97_saved_mixer_state ac97_saved_regs;
 
 /**
  * ac97_cold_reset — Full AC-link cold reset.
