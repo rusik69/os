@@ -53,11 +53,27 @@ static uint8_t pci_find_virtio_cap(uint8_t bus, uint8_t slot, uint8_t func,
 
 	uint32_t caps_ptr_raw = pci_read(bus, slot, func, 0x34);
 	uint8_t cap_ptr = (uint8_t)(caps_ptr_raw & 0xFF);
+
+	/* Validate initial capability pointer: must be in valid config space
+	 * (standard PCI capabilities live at offsets 0x40..0xFF).
+	 * A pointer below 0x40 is either a bogus value or aliased hardware;
+	 * treat it as absent. */
+	if (cap_ptr < 0x40)
+		return 0;
+
 	int iter = 0;
 
 	while (cap_ptr != 0) {
 		if (++iter > 64)
 			break;
+
+		/* Sanity check: cap_ptr must stay within standard config space
+		 * and leave room for at least the two-byte cap header. */
+		if (cap_ptr > 0xFD) {
+			cap_ptr = 0;
+			break;
+		}
+
 		uint32_t cap_reg = pci_read(bus, slot, func, cap_ptr);
 		uint8_t cap_id = (uint8_t)(cap_reg & 0xFF);
 
@@ -68,6 +84,10 @@ static uint8_t pci_find_virtio_cap(uint8_t bus, uint8_t slot, uint8_t func,
 		}
 
 		cap_ptr = (uint8_t)((cap_reg >> 8) & 0xFF);
+
+		/* Validate the next pointer before continuing the loop */
+		if (cap_ptr != 0 && cap_ptr < 0x40)
+			break;
 	}
 
 	return 0;
@@ -84,12 +104,29 @@ static void pci_read_virtio_cap(uint8_t bus, uint8_t slot, uint8_t func,
 	if (!out)
 		return;
 
+	/* Validate capability offset: must be in standard config space
+	 * and at a sane location.  Capabilities start at 0x40 or higher,
+	 * and the structure (16 bytes) must not wrap past 0xFF. */
+	if (cap_offset < 0x40 || cap_offset > 0xF0) {
+		memset(out, 0, sizeof(*out));
+		return;
+	}
+
 	/* First dword: vndr, next, len, cfg_type */
 	uint32_t dw = pci_read(bus, slot, func, cap_offset);
 	out->cap_vndr = (uint8_t)(dw & 0xFF);
 	out->cap_next = (uint8_t)((dw >> 8) & 0xFF);
 	out->cap_len  = (uint8_t)((dw >> 16) & 0xFF);
 	out->cfg_type = (uint8_t)((dw >> 24) & 0xFF);
+
+	/* Validate capability length: the virtio_pci_cap structure
+	 * is at least 16 bytes (four dwords).  If the device reports
+	 * a shorter capability, zero out and abort to prevent reading
+	 * past the end of the capability in config space. */
+	if (out->cap_len < 16) {
+		memset(out, 0, sizeof(*out));
+		return;
+	}
 
 	/* Second dword: bar, padding[3] */
 	dw = pci_read(bus, slot, func, cap_offset + 4);
@@ -106,6 +143,25 @@ static void pci_read_virtio_cap(uint8_t bus, uint8_t slot, uint8_t func,
 }
 
 /* ── API implementation ──────────────────────────────────────────── */
+
+/*
+ * Validate a virtio_pci_cap's BAR index and return the base address
+ * (with the bottom 4 flag bits masked off).  Returns 0 if the BAR
+ * index is out of range or the BAR is unmapped.
+ */
+static uint64_t vpci_valid_bar_base(const struct pci_device *dev,
+                                    const struct virtio_pci_cap *cap)
+{
+	if (!dev || !cap)
+		return 0;
+
+	/* BAR indices 0-5 are valid for standard PCI devices */
+	if (cap->bar > 5)
+		return 0;
+
+	uint64_t base = (uint64_t)(dev->bar[cap->bar] & ~0xFu);
+	return base;
+}
 
 int virtio_pci_modern_probe(struct pci_device *dev,
                             struct vpci_modern_device *vdev)
@@ -147,7 +203,7 @@ int virtio_pci_modern_probe(struct pci_device *dev,
 		 * BAR stores the physical base address; we add the
 		 * capability offset within the BAR.
 		 */
-		uint64_t bar_base = (uint64_t)(dev->bar[vcap.bar] & ~0xFu);
+		uint64_t bar_base = vpci_valid_bar_base(dev, &vcap);
 		if (bar_base) {
 			vdev->caps.common = (volatile struct virtio_pci_common_cfg *)
 				((uintptr_t)PHYS_TO_VIRT(bar_base + vcap.offset));
@@ -173,13 +229,16 @@ int virtio_pci_modern_probe(struct pci_device *dev,
 		uint32_t notify_len = notify_dw[3];
 		uint32_t multiplier = notify_dw[4];
 
-		uint64_t bar_base = (uint64_t)(dev->bar[notify_bar] & ~0xFu);
-		if (bar_base && notify_len > 0) {
-			vdev->caps.notify_base = (volatile void *)
-				((uintptr_t)PHYS_TO_VIRT(bar_base + notify_bar_off));
-			vdev->caps.notify_off_multiplier = multiplier;
-			vdev->caps.notify_base_off = notify_bar_off;
-			found_any = 1;
+		/* Validate notify BAR index */
+		if (notify_bar <= 5) {
+			uint64_t bar_base = (uint64_t)(dev->bar[notify_bar] & ~0xFu);
+			if (bar_base && notify_len > 0) {
+				vdev->caps.notify_base = (volatile void *)
+					((uintptr_t)PHYS_TO_VIRT(bar_base + notify_bar_off));
+				vdev->caps.notify_off_multiplier = multiplier;
+				vdev->caps.notify_base_off = notify_bar_off;
+				found_any = 1;
+			}
 		}
 	}
 
@@ -188,7 +247,7 @@ int virtio_pci_modern_probe(struct pci_device *dev,
 	                              VIRTIO_PCI_CAP_ISR_CFG);
 	if (cap_off) {
 		pci_read_virtio_cap(bus, slot, func, cap_off, &vcap);
-		uint64_t bar_base = (uint64_t)(dev->bar[vcap.bar] & ~0xFu);
+		uint64_t bar_base = vpci_valid_bar_base(dev, &vcap);
 		if (bar_base) {
 			vdev->caps.isr = (volatile uint8_t *)
 				((uintptr_t)PHYS_TO_VIRT(bar_base + vcap.offset));
@@ -201,7 +260,7 @@ int virtio_pci_modern_probe(struct pci_device *dev,
 	                              VIRTIO_PCI_CAP_DEVICE_CFG);
 	if (cap_off) {
 		pci_read_virtio_cap(bus, slot, func, cap_off, &vcap);
-		uint64_t bar_base = (uint64_t)(dev->bar[vcap.bar] & ~0xFu);
+		uint64_t bar_base = vpci_valid_bar_base(dev, &vcap);
 		if (bar_base) {
 			vdev->caps.device_cfg = (volatile void *)
 				((uintptr_t)PHYS_TO_VIRT(bar_base + vcap.offset));
