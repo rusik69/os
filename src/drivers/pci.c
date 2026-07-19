@@ -224,8 +224,28 @@ int pcie_device_type(int bus, int slot, int func) {
     }
 }
 
+/* ── Helper: vendor/device ID validation before config space access ─ */
+/* Read vendor ID register (offset 0) and verify it is not 0xFFFF,
+ * which indicates no device exists at this bus/slot/func.  This check
+ * prevents issuing config cycles to non-existent devices, which on some
+ * hardware can cause master-abort errors or hang the PCI bus. */
+static bool pci_device_exists(uint8_t bus, uint8_t slot, uint8_t func) {
+    uint32_t reg0;
+    if (ecam_base) {
+        reg0 = pcie_read(bus, slot, func, 0);
+    } else {
+        reg0 = pci_read(bus, slot, func, 0);
+    }
+    return (reg0 & 0xFFFF) != 0xFFFF;
+}
+
 /* ── Helper: read 16-bit config register via ECAM-aware path ──────── */
+/* Vendor/device ID validation: skip hardware access if device does not
+ * exist (vendor ID == 0xFFFF).  On buggy hardware or virtual platforms
+ * this prevents master-abort errors. */
 uint16_t pci_read16(uint8_t bus, uint8_t slot, uint8_t func, uint16_t offset) {
+    if (!pci_device_exists(bus, slot, func))
+        return 0xFFFF;
     uint32_t val;
     uint32_t aligned = (uint32_t)(offset & (uint16_t)~3);
     if (ecam_base) {
@@ -239,6 +259,9 @@ uint16_t pci_read16(uint8_t bus, uint8_t slot, uint8_t func, uint16_t offset) {
 }
 
 void pci_write16(uint8_t bus, uint8_t slot, uint8_t func, uint16_t offset, uint16_t val) {
+    /* Skip write if no device at this address */
+    if (!pci_device_exists(bus, slot, func))
+        return;
     uint32_t base;
     uint32_t aligned = (uint32_t)(offset & (uint16_t)~3);
     if (ecam_base) {
@@ -257,6 +280,9 @@ void pci_write16(uint8_t bus, uint8_t slot, uint8_t func, uint16_t offset, uint1
 }
 
 static void pci_write32(uint8_t bus, uint8_t slot, uint8_t func, uint16_t offset, uint32_t val) {
+    /* Skip write if no device at this address */
+    if (!pci_device_exists(bus, slot, func))
+        return;
     if (ecam_base) {
         pcie_write(bus, slot, func, offset, val);
     } else {
@@ -265,6 +291,8 @@ static void pci_write32(uint8_t bus, uint8_t slot, uint8_t func, uint16_t offset
 }
 
 static uint32_t pci_read32(uint8_t bus, uint8_t slot, uint8_t func, uint16_t offset) {
+    if (!pci_device_exists(bus, slot, func))
+        return 0xFFFFFFFF;
     if (ecam_base) {
         return pcie_read(bus, slot, func, offset);
     }
