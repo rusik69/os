@@ -375,6 +375,53 @@ int __init virtio_blk_init(void) {
 #include "initcall.h"
 device_initcall(virtio_blk_init);
 
+/* ── Validate descriptor chain length ──────────────────────────────
+ * Ensures the chain starting at head descriptor 'start' with 'count'
+ * descriptors fits within VRING_SIZE and does not exceed the available
+ * ring slots.  Returns 0 on success, -1 if validation fails.
+ */
+static int vblk_validate_chain(const struct vblk_queue *q,
+                                uint16_t start, unsigned int count)
+{
+    if (start >= VRING_SIZE) {
+        kprintf("virtio-blk: descriptor start %u out of bounds (VRING_SIZE=%u)\n",
+                (unsigned int)start, (unsigned int)VRING_SIZE);
+        return -1;
+    }
+    if (count == 0 || count > VRING_SIZE) {
+        kprintf("virtio-blk: invalid descriptor chain length %u (max %u)\n",
+                (unsigned int)count, (unsigned int)VRING_SIZE);
+        return -1;
+    }
+    /* Check every descriptor index in the chain is within bounds */
+    uint16_t idx = start;
+    unsigned int traversed = 0;
+    do {
+        if (idx >= VRING_SIZE) {
+            kprintf("virtio-blk: descriptor index %u out of bounds\n",
+                    (unsigned int)idx);
+            return -1;
+        }
+        if (traversed >= count) {
+            kprintf("virtio-blk: descriptor chain longer than expected (%u)\n",
+                    (unsigned int)count);
+            return -1;
+        }
+        traversed++;
+        if (q->descs[idx].flags & VRING_DESC_F_NEXT)
+            idx = q->descs[idx].next;
+        else
+            break;
+    } while (1);
+
+    if (traversed != count) {
+        kprintf("virtio-blk: descriptor chain length %u != expected %u\n",
+                (unsigned int)traversed, (unsigned int)count);
+        return -1;
+    }
+    return 0;
+}
+
 /* ── I/O request on a specific queue ──────────────────────────────
  * Submits a read or write request on the given queue index.
  * Busy-waits for completion (this driver has no IRQ handler yet).
@@ -387,6 +434,10 @@ static int vblk_queue_request(int qid, uint32_t type,
 
     struct vblk_queue *q = &vblk_queues[qid];
     if (!q->initialized)
+        return -1;
+
+    /* Validate descriptor chain (3 descriptors: header, data, status) */
+    if (vblk_validate_chain(q, 0, 3) < 0)
         return -1;
 
     struct vring_desc  *descs = q->descs;
@@ -461,6 +512,10 @@ static int vblk_queue_special(int qid, uint32_t type,
 
     struct vblk_queue *q = &vblk_queues[qid];
     if (!q->initialized)
+        return -1;
+
+    /* Validate descriptor chain (3 descriptors: header, discard_desc, status) */
+    if (vblk_validate_chain(q, 0, 3) < 0)
         return -1;
 
     struct vring_desc  *descs = q->descs;
