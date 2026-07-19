@@ -164,6 +164,8 @@ static const char *skip_spaces(const char *p)
 static int volume_read_cb(char *buf, uint32_t max_size, void *priv)
 {
     enum sound_mixer_channel ch = (enum sound_mixer_channel)(uintptr_t)priv;
+    if ((int)ch < 0 || ch >= SOUND_MIXER_COUNT)
+        return 0;
 
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&g_mixer_lock, &irq_flags);
@@ -185,6 +187,8 @@ static int volume_read_cb(char *buf, uint32_t max_size, void *priv)
 static int volume_write_cb(const char *buf, uint32_t size, void *priv)
 {
     enum sound_mixer_channel ch = (enum sound_mixer_channel)(uintptr_t)priv;
+    if ((int)ch < 0 || ch >= SOUND_MIXER_COUNT)
+        return (int)size;
 
     /* Copy to a temporary NUL-terminated buffer */
     char tmp[32];
@@ -251,6 +255,8 @@ static int volume_write_cb(const char *buf, uint32_t size, void *priv)
 static int mute_read_cb(char *buf, uint32_t max_size, void *priv)
 {
     enum sound_mixer_channel ch = (enum sound_mixer_channel)(uintptr_t)priv;
+    if ((int)ch < 0 || ch >= SOUND_MIXER_COUNT)
+        return 0;
 
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&g_mixer_lock, &irq_flags);
@@ -268,6 +274,8 @@ static int mute_read_cb(char *buf, uint32_t max_size, void *priv)
 static int mute_write_cb(const char *buf, uint32_t size, void *priv)
 {
     enum sound_mixer_channel ch = (enum sound_mixer_channel)(uintptr_t)priv;
+    if ((int)ch < 0 || ch >= SOUND_MIXER_COUNT)
+        return (int)size;
 
     int muted = 0;
     if (size > 0 && (buf[0] == '1'))
