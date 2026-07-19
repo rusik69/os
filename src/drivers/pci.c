@@ -746,6 +746,78 @@ static uint64_t pci_probe_bar_size(int bus, int slot, int func,
     return size;
 }
 
+/*
+ * pci_read_bar - Read a PCI BAR register with alignment validation.
+ * @bus, @slot, @func: PCI device address
+ * @bar_index: BAR index (0-5)
+ * @out_val: On success, receives the raw BAR value read from config space
+ *           at offset 0x10 + bar_index*4.
+ *
+ * Reads the BAR and validates its base address alignment per PCI
+ * Local Bus Specification rev 3.0, Section 6.2.5.1:
+ *   - I/O BAR (bit 0 = 1): address is in bits [31:2], 4-byte aligned.
+ *     Bit 1 is reserved (must be 0), so (bar_val & 3) must be 0x01.
+ *   - 32-bit memory BAR (bits [2:1] = 00, bit 0 = 0): address in
+ *     bits [31:4], 16-byte aligned.
+ *   - 64-bit memory BAR (bits [2:1] = 10, bit 0 = 0): same alignment
+ *     as 32-bit; upper dword holds bits [63:32].
+ *   - Reserved encoding (bits [2:1] = 01 or 11 with bit 0 = 0) is
+ *     reported as invalid.
+ *
+ * Returns 0 on success, -EINVAL on invalid alignment or reserved type.
+ * A diagnostic warning is logged via kprintf on mismatch. */
+int pci_read_bar(uint8_t bus, uint8_t slot, uint8_t func,
+                 int bar_index, uint32_t *out_val)
+{
+    if (!out_val)
+        return -EINVAL;
+    if (bar_index < 0 || bar_index > 5)
+        return -EINVAL;
+
+    uint32_t bar_val = pci_read(bus, slot, func, (uint8_t)(0x10 + bar_index * 4));
+    *out_val = bar_val;
+
+    if (bar_val == 0 || bar_val == 0xFFFFFFFF)
+        return 0; /* unassigned; nothing to validate */
+
+    if (bar_val & 1) {
+        /* I/O BAR */
+        if ((bar_val & 0x3) != 0x1) {
+            kprintf("[PCI] WARNING: %02x:%02x.%x BAR%d I/O BAR has "
+                    "invalid encoding 0x%x (bit 1 must be 0)\n",
+                    (unsigned int)bus, (unsigned int)slot,
+                    (unsigned int)func, bar_index,
+                    (unsigned int)(bar_val & 3));
+            return -EINVAL;
+        }
+        /* Base address in bits [31:2] is inherently 4-byte aligned
+         * when bit 0=1 and bit 1=0.  No further check needed. */
+    } else {
+        /* Memory BAR */
+        uint8_t mem_type = (bar_val >> 1) & 0x3;
+        if (mem_type == 0x1 || mem_type == 0x3) {
+            kprintf("[PCI] WARNING: %02x:%02x.%x BAR%d memory BAR has "
+                    "reserved type encoding %u\n",
+                    (unsigned int)bus, (unsigned int)slot,
+                    (unsigned int)func, bar_index,
+                    (unsigned int)mem_type);
+            return -EINVAL;
+        }
+        /* 32-bit and 64-bit memory BARs: address is in bits [31:4],
+         * so bits [3:0] must be zero for proper 16-byte alignment. */
+        if (bar_val & 0xF) {
+            kprintf("[PCI] WARNING: %02x:%02x.%x BAR%d memory BAR "
+                    "address is not 16-byte aligned (raw=0x%x)\n",
+                    (unsigned int)bus, (unsigned int)slot,
+                    (unsigned int)func, bar_index,
+                    (unsigned int)bar_val);
+            return -EINVAL;
+        }
+    }
+
+    return 0;
+}
+
 /* ── PCI class name ───────────────────────────────────────────────── */
 
 static const char *pci_class_name(uint8_t cls, uint8_t sub) {
@@ -849,7 +921,7 @@ int pci_find_device(uint16_t vendor, uint16_t device, struct pci_device *out) {
                     uint32_t reg3c = pci_read((uint8_t)bus, (uint8_t)slot, (uint8_t)func, 0x3C);
                     out->irq = (uint8_t)(reg3c & 0xFF);
                     for (int i = 0; i < 6; i++)
-                        out->bar[i] = pci_read((uint8_t)bus, (uint8_t)slot, (uint8_t)func, (uint8_t)(0x10 + i * 4));
+                        pci_read_bar((uint8_t)bus, (uint8_t)slot, (uint8_t)func, i, &out->bar[i]);
 
                     /* Initialize DMA addressing capabilities */
                     out->dma_mask = 0;
@@ -999,7 +1071,7 @@ int pci_find_class(uint8_t cls, uint8_t sub, struct pci_device *out) {
                     uint32_t r3c = pci_read((uint8_t)bus, (uint8_t)slot, (uint8_t)func, 0x3C);
                     out->irq = (uint8_t)(r3c & 0xFF);
                     for (int i = 0; i < 6; i++)
-                        out->bar[i] = pci_read((uint8_t)bus, (uint8_t)slot, (uint8_t)func, (uint8_t)(0x10 + i * 4));
+                        pci_read_bar((uint8_t)bus, (uint8_t)slot, (uint8_t)func, i, &out->bar[i]);
 
                     /* Initialize DMA addressing capabilities */
                     out->dma_mask = 0;

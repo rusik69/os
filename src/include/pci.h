@@ -22,6 +22,8 @@ uint32_t pci_read(int bus, int slot, int func, int offset);
 void pci_write(int bus, int slot, int func, int offset, uint32_t val);
 int pci_find_device(uint16_t vendor, uint16_t device, struct pci_device *out);
 int pci_find_class(uint8_t cls, uint8_t sub, struct pci_device *out);
+int pci_read_bar(uint8_t bus, uint8_t slot, uint8_t func,
+                 int bar_index, uint32_t *out_val);
 void pci_enable_bus_master(struct pci_device *dev);
 void pci_list(void);
 void pci_init(void);
