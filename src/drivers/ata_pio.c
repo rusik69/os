@@ -310,6 +310,10 @@ int ata_pio_read_sectors(int bus, int master, uint32_t lba,
 		return -EINVAL;
 	if (lba > 0x0FFFFFFF)
 		return -EINVAL;
+	/* Validate the full multi-sector transfer stays within the 28-bit
+	 * addressable range (268,435,456 sectors, numbered 0..0x0FFFFFFF). */
+	if ((uint32_t)(lba + count) > 0x10000000UL)
+		return -EINVAL;
 
 	/* Select drive with LBA bits */
 	outb(dh_port, 0xE0 | (master ? 0x10 : 0x00) | ((lba >> 24) & 0x0F));
@@ -437,6 +441,10 @@ int ata_pio_write_sectors(int bus, int master, uint32_t lba,
 	if (!buf || count == 0)
 		return -EINVAL;
 	if (lba > 0x0FFFFFFF)
+		return -EINVAL;
+	/* Validate the full multi-sector transfer stays within the 28-bit
+	 * addressable range (268,435,456 sectors, numbered 0..0x0FFFFFFF). */
+	if ((uint32_t)(lba + count) > 0x10000000UL)
 		return -EINVAL;
 
 	/* Select drive with LBA bits */

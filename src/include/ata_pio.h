@@ -81,6 +81,14 @@
 #define ATA_SECTOR_SIZE      512
 #define ATA_SECTOR_WORDS     256
 
+/* ── Multi-Sector Transfer Limits ─────────────────────────────────── */
+
+/* Maximum number of sectors per PIO multi-sector command per ATA spec.
+ * The 8-bit sector count register can hold 1-255 explicitly, and 0x00
+ * means 256 sectors.  We expose the count as uint8_t so callers pass
+ * 1-255; the hardware value 0x00 (== 256) is handled internally. */
+#define ATA_PIO_MAX_SECTORS  256
+
 /* ── Public API ──────────────────────────────────────────────────── */
 
 /* Wait for BSY bit to clear (device ready).  Returns 0 on success,
