@@ -182,6 +182,7 @@ static struct hotplug_entry g_hotplug[HOTPLUG_MAX_DEVICES];
 /* ── Forward declarations for static functions ───────────────────── */
 static int hub_port_debounce(struct hub_state *hub, int port, uint16_t status);
 static int hub_port_over_current_recover(struct hub_state *hub, int port);
+static int hub_port_is_valid(struct hub_state *hub, int port);
 
 /* ── Hotplug helpers ────────────────────────────────────────────── */
 
@@ -221,6 +222,21 @@ static void hotplug_remove(int hub_id, int port)
             return;
         }
     }
+}
+
+/* ── Port validation helper ────────────────────────────────────────── */
+
+/*
+ * hub_port_is_valid - Check that a port number is within the hub's port count.
+ * @hub:  hub state
+ * @port: 1-based port number
+ * Returns 1 if valid, 0 if out of range.
+ */
+static int hub_port_is_valid(struct hub_state *hub, int port)
+{
+    if (!hub)
+        return 0;
+    return (port >= 1 && port <= hub->n_ports);
 }
 
 /* ── DMA / MMIO helpers ────────────────────────────────────────────── */
@@ -967,6 +983,13 @@ static int usb_hub_port_power(void *hub_ptr, int port, int on)
  */
 static int hub_port_over_current_recover(struct hub_state *hub, int port)
 {
+    /* Validate port range against hub port count */
+    if (!hub_port_is_valid(hub, port)) {
+        kprintf("[USB HUB] over-current: invalid port %d (n_ports %d)\n",
+                port, hub ? hub->n_ports : 0);
+        return -1;
+    }
+
     kprintf("[USB HUB] Port %d: over-current condition, disabling port\n", port);
 
     /* Disable the port */
@@ -1026,6 +1049,13 @@ static int hub_port_over_current_recover(struct hub_state *hub, int port)
 static int hub_port_debounce(struct hub_state *hub, int port, uint16_t status)
 {
     uint64_t now = timer_get_ticks();
+
+    /* Validate port range against hub port count */
+    if (!hub_port_is_valid(hub, port)) {
+        kprintf("[USB HUB] debounce: invalid port %d (n_ports %d)\n",
+                port, hub ? hub->n_ports : 0);
+        return -1;
+    }
 
     /* Debounce time: 100 ms (USB 2.0 spec §7.1.7.3: 100 ms debounce) */
     const uint64_t debounce_ms = 100;
