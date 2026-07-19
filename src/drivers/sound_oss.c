@@ -479,11 +479,8 @@ int sound_oss_ioctl(int cmd, uint64_t arg)
 		if (ret < 0)
 			return ret;
 
-		g_sample_rate = (int)rate;
-		if (g_sample_rate < 8000)
-			g_sample_rate = 8000;
-		if (g_sample_rate > 48000)
-			g_sample_rate = 48000;
+		/* Validate/clamp sample rate against codec capabilities */
+		g_sample_rate = (int)ac97_sanitise_sample_rate(rate);
 
 		/* Reconfigure streams if active */
 		if (g_playback) {

@@ -242,6 +242,9 @@ int ac97_init(void) {
 void ac97_play_pcm(const int16_t *samples, uint32_t len, uint32_t rate) {
     if (!ac97_dev_present || !samples || len == 0) return;
 
+    /* Sanitise sample rate against codec capabilities */
+    rate = ac97_sanitise_sample_rate(rate);
+
     /* Set sample rate */
     if (rate != 44100) nam_out16(NAM_SAMPLE_RATE, (uint16_t)rate);
 
@@ -352,6 +355,9 @@ int ac97_capture_read(int16_t *buf, uint32_t bytes, uint32_t rate)
     /* Round to even number of bytes (16-bit samples) */
     if (bytes & 1) bytes = (bytes + 1) & ~1u;
     if (bytes > sizeof(cap_audio_buf)) bytes = sizeof(cap_audio_buf);
+
+    /* Sanitise sample rate against codec capabilities */
+    rate = ac97_sanitise_sample_rate(rate);
 
     /* Set capture sample rate if different from current
      * Only valid when VRA is actually enabled in the control register. */
@@ -1480,6 +1486,41 @@ int ac97_set_amplifier_power(int on)
 
     kprintf("[AC97] External amplifier %s\n", on ? "ON" : "OFF");
     return 0;
+}
+
+/* ── Sample rate validation against codec capabilities ──────────── */
+
+/**
+ * ac97_sanitise_sample_rate — Clamp/sanitise a sample rate to what
+ * the codec can actually support.
+ *
+ * @rate: Requested sample rate in Hz.
+ *
+ * AC97 codecs with Variable Rate Audio (VRA) support any rate from
+ * 8000 to 48000 Hz.  Without VRA the DAC is fixed at 48000 Hz.
+ * If no AC97 hardware is present the full range 8000–48000 is accepted
+ * (software/simulated fallback).
+ *
+ * Returns the nearest supported rate.
+ */
+uint32_t ac97_sanitise_sample_rate(uint32_t rate)
+{
+    /* Hard AC97 spec limits */
+    if (rate < 8000)
+        return 8000;
+    if (rate > 48000)
+        return 48000;
+
+    /* If the hardware codec is present, check VRA capability */
+    if (ac97_dev_present) {
+        uint16_t ext_id = inw(ac97_nam_base + AC97_REG_EXT_AUDIO_ID);
+        if (!(ext_id & EA_VRA)) {
+            /* Without VRA the DAC is fixed at 48 kHz */
+            return 48000;
+        }
+    }
+
+    return rate;
 }
 
 MODULE_LICENSE("GPL");

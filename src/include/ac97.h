@@ -466,6 +466,20 @@ static inline int ac97_mixer_count(void) { return AC97_MIXER_CHANNEL_COUNT; }
 #define AC97_MIXER_CD_REG      AC97_REG_CD
 
 /**
+ * ac97_sanitise_sample_rate — Clamp a sample rate to what the codec
+ * (or software fallback) can support.
+ *
+ * @rate: Requested rate in Hz.
+ *
+ * AC97 codecs with VRA support 8000–48000 Hz.  Without VRA the codec
+ * is fixed at 48000 Hz.  If no hardware is present the full range
+ * 8000–48000 is accepted (software fallback).
+ *
+ * Returns the nearest supported rate.
+ */
+uint32_t ac97_sanitise_sample_rate(uint32_t rate);
+
+/**
  * Legacy: ac97_set_volume — Set raw volume for a NAM register.
  * @channel:  NAM register offset.
  * @left:     Left channel volume (0 = max, 31 = min).
