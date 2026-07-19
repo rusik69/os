@@ -1812,6 +1812,15 @@ int e1000_send(const void *data, uint16_t len) {
     struct e1000_queue *qp = &queues[0];
     int idx = qp->tx_cur;
 
+    /* Check if TX ring is full: if the next descriptor is still in-flight,
+     * the ring has no room. Return -EAGAIN so the caller can retry later
+     * instead of busy-waiting or overwriting an in-flight descriptor. */
+    int next_idx = (idx + 1) % NUM_TX_DESC;
+    if (!(qp->tx_descs[next_idx].status & TDESC_STA_DD)) {
+        qp->stats.tx_busy++;
+        return -EAGAIN;
+    }
+
     int tx_timeout = 10000000;
     while (!(qp->tx_descs[idx].status & TDESC_STA_DD) && --tx_timeout > 0)
         __asm__ volatile("pause");
