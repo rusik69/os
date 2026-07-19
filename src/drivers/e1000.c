@@ -1238,6 +1238,16 @@ static void e1000_read_mac(void) {
     mac_addr[5] = (uint8_t)((rah >> 8) & 0xFF);
 }
 
+/* ── Descriptor validation helpers ───────────────────────────────────── */
+
+/* e1000_desc_addr_valid - Check a ring descriptor's buffer address is
+ * safe for DMA.  A zero address means VIRT_TO_PHYS failed during init.
+ * Returns non-zero if valid, 0 if the address should not be used for DMA. */
+static inline int e1000_desc_addr_valid(uint64_t addr)
+{
+    return addr != 0;
+}
+
 /* ── Per-queue RX/TX initialization ────────────────────────────────── */
 
 /* e1000_alloc_rx_buffers - Allocate/fill RX buffers for a queue.
@@ -1272,6 +1282,14 @@ static int e1000_init_rx_queue(int q) {
         return ret;
 
     uint64_t rdesc_phys = VIRT_TO_PHYS(qp->rx_descs);
+
+    /* Validate the descriptor ring base address before programming HW.
+     * A zero physical address means the ring is mapped to the NULL page
+     * and would cause a DMA to/from physical address 0, which is either
+     * the real-mode IVT or unmapped — both unsafe. */
+    if (rdesc_phys == 0)
+        return -EFAULT;
+
     e1000_q_write_rx(q, 0, (uint32_t)(rdesc_phys & 0xFFFFFFFF));       /* RDBAL */
     e1000_q_write_rx(q, 1, (uint32_t)(rdesc_phys >> 32));              /* RDBAH */
     e1000_q_write_rx(q, 2, NUM_RX_DESC * sizeof(struct e1000_rx_desc));/* RDLEN */
@@ -1281,21 +1299,31 @@ static int e1000_init_rx_queue(int q) {
     return 0;
 }
 
-static void e1000_init_tx_queue(int q) {
+static int e1000_init_tx_queue(int q) {
     struct e1000_queue *qp = &queues[q];
 
     for (int i = 0; i < NUM_TX_DESC; i++) {
-        qp->tx_descs[i].addr = VIRT_TO_PHYS(qp->tx_buffers[i]);
+        uint64_t phys = VIRT_TO_PHYS(qp->tx_buffers[i]);
+        if (phys == 0)
+            return -ENOMEM;
+        qp->tx_descs[i].addr = phys;
         qp->tx_descs[i].status = TDESC_STA_DD;
         qp->tx_descs[i].cmd = 0;
     }
+
     uint64_t tdesc_phys = VIRT_TO_PHYS(qp->tx_descs);
+
+    /* Validate the TX descriptor ring base address before programming HW */
+    if (tdesc_phys == 0)
+        return -EFAULT;
+
     e1000_q_write_tx(q, 0, (uint32_t)(tdesc_phys & 0xFFFFFFFF));       /* TDBAL */
     e1000_q_write_tx(q, 1, (uint32_t)(tdesc_phys >> 32));              /* TDBAH */
     e1000_q_write_tx(q, 2, NUM_TX_DESC * sizeof(struct e1000_tx_desc));/* TDLEN */
     e1000_q_write_tx(q, 3, 0);                                          /* TDH */
     e1000_q_write_tx(q, 4, 0);                                          /* TDT */
     qp->tx_cur = 0;
+    return 0;
 }
 
 /* ── Netdevice callbacks (forward declarations) ─────────────────── */
@@ -1445,8 +1473,12 @@ int e1000_init(void) {
     }
 
     /* Initialize TX queues */
-    for (int q = 0; q < num_queues; q++)
-        e1000_init_tx_queue(q);
+    for (int q = 0; q < num_queues; q++) {
+        if (e1000_init_tx_queue(q) < 0) {
+            kprintf("  e1000: failed to init TX queue %d\\n", q);
+            return -1;
+        }
+    }
 
     /* Enable RX and TX with RCTL */
     uint32_t rctl = RCTL_EN | RCTL_BAM | RCTL_BSIZE_2048 | RCTL_SECRC;
@@ -1608,6 +1640,17 @@ static int e1000_netdev_transmit(struct net_device *dev,
     /* Safety clamp -- prevents TX buffer overrun for oversized frames */
     if (tx_len > RX_BUF_SIZE) tx_len = RX_BUF_SIZE;
 
+    /* Validate descriptor buffer address before DMA.
+     * A zero address means VIRT_TO_PHYS failed during queue init — if
+     * the hardware reads from physical address 0 the result will either
+     * be garbage data (QEMU) or a DMA read from the real-mode IVT (real
+     * hardware).  Refuse to transmit rather than silently corrupt. */
+    if (!e1000_desc_addr_valid(qp->tx_descs[idx].addr)) {
+        spinlock_irqsave_release(&e1000_lock, __e1k_flags);
+        qp->stats.tx_errors++;
+        return -EFAULT;
+    }
+
     /* VLAN offload: detect 802.1Q tagged frames and offload tag
      * insertion to hardware via the VLE (VLAN Insertion Enable) bit.
      *
@@ -1695,6 +1738,18 @@ static int e1000_netdev_receive(struct net_device *dev,
             continue;
         }
 
+        /* Validate descriptor buffer address before copying from RX buffer.
+         * A zero address means VIRT_TO_PHYS failed during init — reading
+         * from physical address 0 would return garbage or fault. */
+        if (!e1000_desc_addr_valid(qp->rx_descs[idx].addr)) {
+            qp->rx_descs[idx].status = 0;
+            int old_cur = qp->rx_cur;
+            qp->rx_cur = (qp->rx_cur + 1) % NUM_RX_DESC;
+            e1000_q_write_rx(q, 4, old_cur);
+            qp->stats.rx_errors++;
+            continue;
+        }
+
         uint16_t len = qp->rx_descs[idx].length;
         /* Clamp to source buffer size -- prevents OOB read when hardware
          * reports length > RX_BUF_SIZE without setting the error flag
@@ -1765,6 +1820,12 @@ int e1000_send(const void *data, uint16_t len) {
     uint64_t __e1k_flags;
     spinlock_irqsave_acquire(&e1000_lock, &__e1k_flags);
 
+    /* Validate descriptor buffer address before DMA */
+    if (!e1000_desc_addr_valid(qp->tx_descs[idx].addr)) {
+        spinlock_irqsave_release(&e1000_lock, __e1k_flags);
+        return -EFAULT;
+    }
+
     memcpy(qp->tx_buffers[idx], data, len);
     qp->tx_descs[idx].length = len;
     qp->tx_descs[idx].cmd = TDESC_CMD_EOP | TDESC_CMD_IFCS | TDESC_CMD_RS;
@@ -1806,6 +1867,16 @@ int e1000_receive(void *buf, uint16_t max_len) {
             e1000_q_write_rx(q, 4, old_cur);
             spinlock_irqsave_release(&e1000_lock, __e1k_flags);
             return -3;
+        }
+
+        /* Validate descriptor buffer address before copying from RX */
+        if (!e1000_desc_addr_valid(qp->rx_descs[idx].addr)) {
+            qp->rx_descs[idx].status = 0;
+            int old_cur = qp->rx_cur;
+            qp->rx_cur = (qp->rx_cur + 1) % NUM_RX_DESC;
+            e1000_q_write_rx(q, 4, old_cur);
+            spinlock_irqsave_release(&e1000_lock, __e1k_flags);
+            return -EFAULT;
         }
 
         uint16_t len = qp->rx_descs[idx].length;
