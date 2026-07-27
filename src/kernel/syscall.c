@@ -984,7 +984,7 @@ static uint64_t do_sys_open(const char *path, uint64_t flags, uint64_t mode) {
                 p->fd_table[i].path[63] = '\0';
                 p->fd_table[i].offset = 0;
                 p->fd_table[i].used = true;
-                p->fd_table[i].flags = FD_TMPFILE;
+                p->fd_table[i].flags = (uint8_t)(FD_TMPFILE | ((flags & O_CLOEXEC) ? FD_CLOEXEC : 0));
                 p->fd_table[i].open_flags = (uint32_t)(flags & 0x3FFF); /* save relevant flags */
                 spinlock_irqsave_release(&p->fd_table_lock, __tmp_irq);
                 return (uint64_t)(i + 3);
@@ -1028,6 +1028,7 @@ static uint64_t do_sys_open(const char *path, uint64_t flags, uint64_t mode) {
             p->fd_table[i].path[63] = '\0';
             p->fd_table[i].offset = 0;
             p->fd_table[i].used = true;
+            p->fd_table[i].flags = (flags & O_CLOEXEC) ? FD_CLOEXEC : 0;
             p->fd_table[i].open_flags = (uint32_t)(flags & 0x3FFF); /* save relevant flags */
             spinlock_irqsave_release(&p->fd_table_lock, __open_irq);
             return (uint64_t)(i + 3);
