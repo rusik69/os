@@ -4,7 +4,7 @@
 CC = gcc
 
 # Flags for kernel source files (need kernel include paths)
-KERNEL_CFLAGS = -DTEST_MODE_HOST \
+KERNEL_CFLAGS = -DTEST_MODE_HOST -std=gnu17 \
                 -isystem ../../src/include \
                 -isystem ../../src \
                 -Wall -Werror -Wundef -Wmisleading-indentation -Wduplicated-branches -Wlogical-op -Wmaybe-uninitialized \

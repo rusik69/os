@@ -44,6 +44,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     clang-format-18 \
     python3 \
     xxd \
+    cpio \
+    telnet \
     && rm -rf /var/lib/apt/lists/*
 
 # Create symlinks for unversioned tool names (git-clang-format, clang-tidy, etc.)

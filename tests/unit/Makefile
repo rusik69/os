@@ -6,7 +6,7 @@
 #         make clean    → remove binaries
 
 CC      = gcc
-CFLAGS  = -Wall -Werror -Wundef -Wmisleading-indentation -Wduplicated-branches -Wlogical-op -Wmaybe-uninitialized -g -O0
+CFLAGS  = -std=gnu17 -Wall -Werror -Wundef -Wmisleading-indentation -Wduplicated-branches -Wlogical-op -Wmaybe-uninitialized -g -O0
 
 .PHONY: all clean test
 
