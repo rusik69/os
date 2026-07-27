@@ -3477,19 +3477,31 @@ static uint64_t sys_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg) {
             return (uint64_t)proc->fd_table[fd].sigio_pid;
         }
         case F_SETPIPE_SZ: {
-            /* Set pipe buffer capacity (must be a pipe FD) */
+            /* Set pipe buffer capacity (must be a pipe FD).
+             * Linux rounds the requested size up to PAGE_SIZE. */
             if (strncmp(proc->fd_table[fd].path, "pipe_", 5) != 0)
-                return (uint64_t)-EINVAL;
+                return (uint64_t)(int64_t)-EINVAL;
             int pipe_id = (int)proc->fd_table[fd].offset;
-            int ret = pipe_set_capacity(pipe_id, (int)arg);
-            return ret < 0 ? (uint64_t)-EINVAL : (uint64_t)ret;
+            int new_sz = (int)arg;
+            /* Round up to PAGE_SIZE (limit overflows to PIPE_MAX_SIZE) */
+            if (new_sz > PIPE_MAX_SIZE - PAGE_SIZE)
+                new_sz = PIPE_MAX_SIZE;
+            else
+                new_sz = ((new_sz + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1));
+            int ret = pipe_set_capacity(pipe_id, new_sz);
+            if (ret < 0)
+                return (uint64_t)(int64_t)ret;
+            return (uint64_t)ret;
         }
         case F_GETPIPE_SZ: {
             /* Get pipe buffer capacity */
             if (strncmp(proc->fd_table[fd].path, "pipe_", 5) != 0)
-                return (uint64_t)-EINVAL;
+                return (uint64_t)(int64_t)-EINVAL;
             int pipe_id = (int)proc->fd_table[fd].offset;
-            return (uint64_t)pipe_get_capacity(pipe_id);
+            int ret = pipe_get_capacity(pipe_id);
+            if (ret < 0)
+                return (uint64_t)(int64_t)ret;
+            return (uint64_t)ret;
         }
         case F_SETLK:
         case F_SETLKW: {
