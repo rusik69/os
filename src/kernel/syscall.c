@@ -3572,11 +3572,17 @@ static uint64_t sys_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg) {
             int new_fd = (int)arg;
             if (new_fd < 0) new_fd = 0;
             if (new_fd >= PROCESS_FD_MAX) return (uint64_t)(int64_t)-EINVAL;
+            uint64_t __fdc_irq;
+            spinlock_irqsave_acquire(&proc->fd_table_lock, &__fdc_irq);
             while (new_fd < PROCESS_FD_MAX && proc->fd_table[new_fd].used)
                 new_fd++;
-            if (new_fd >= PROCESS_FD_MAX) return (uint64_t)(int64_t)-EMFILE;
+            if (new_fd >= PROCESS_FD_MAX) {
+                spinlock_irqsave_release(&proc->fd_table_lock, __fdc_irq);
+                return (uint64_t)(int64_t)-EMFILE;
+            }
             proc->fd_table[new_fd] = proc->fd_table[fd];
             proc->fd_table[new_fd].flags |= FD_CLOEXEC;
+            spinlock_irqsave_release(&proc->fd_table_lock, __fdc_irq);
             return (uint64_t)new_fd;
         }
         case F_ADD_SEALS: {
