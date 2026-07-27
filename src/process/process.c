@@ -56,34 +56,52 @@ static int pid_is_free_in_table(uint32_t pid) {
     return 1;
 }
 
+/* Monotonic PID counter for wraparound-based allocation.
+ * Incremented on each allocation; when it reaches PROCESS_MAX it wraps
+ * to 1, spreading PID reuse across the full range and avoiding immediate
+ * reuse of recently-freed PIDs, which could confuse userspace. */
+static uint32_t last_pid = 0;
+
 static uint32_t alloc_pid(void) {
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&pid_lock, &irq_flags);
     uint32_t pid = (uint32_t)-1;
-    for (int w = 0; w < PID_BITMAP_WORDS; w++) {
-        if (w < 0 || w >= PID_BITMAP_WORDS) break;  /* bounds safety */
-        if (pid_bitmap[w] == ~0ULL) continue;
-        int bit = __builtin_ctzll(~pid_bitmap[w]);
-        pid = (uint32_t)(w * 64 + bit);
-        if (pid >= PROCESS_MAX) {
-            pid = (uint32_t)-1;
-            break;
-        }
-        /* Validate PID reuse: ensure PID is not already assigned to an
-         * existing process in the table (zombie or alive).  The bitmap
-         * normally guarantees this, but the explicit check provides
-         * defense-in-depth against bugs that could lead to mysterious
-         * failures when /proc/<pid> entries reference recycled PIDs. */
-        if (!pid_is_free_in_table(pid)) {
-            /* PID still in use by a non-UNUSED slot — skip and continue
-             * searching.  Mark the bit used so we don't spin on it. */
-            pid_bitmap[w] |= (1ULL << bit);
-            pid = (uint32_t)-1;
+
+    /* Search for a free PID starting from (last_pid + 1), wrapping
+     * around when we exceed PROCESS_MAX.  PID 0 is reserved for the
+     * idle process and is never handed out.  Linear scan — at most
+     * PROCESS_MAX iterations (256) — negligible cost for fork. */
+    for (uint32_t i = 1; i < PROCESS_MAX; i++) {
+        uint32_t candidate = (last_pid + i) % PROCESS_MAX;
+        if (candidate == 0) continue;          /* skip PID 0 */
+
+        int w = (int)(candidate / 64);
+        int bit = (int)(candidate % 64);
+
+        if (pid_bitmap[w] & (1ULL << bit)) continue;
+
+        /* Defense-in-depth: verify the PID is truly free in the
+         * process table (the bitmap can drift in edge cases). */
+        if (!pid_is_free_in_table(candidate)) {
+            pid_bitmap[w] |= (1ULL << bit);   /* sync bitmap with reality */
             continue;
         }
+
         pid_bitmap[w] |= (1ULL << bit);
+        pid = candidate;
         break;
     }
+
+    if (pid != (uint32_t)-1) {
+        /* Log wraparound event when the counter wraps around */
+        if (pid < last_pid && last_pid > 0) {
+            kprintf("[pid] Wraparound: PID counter wrapped at %d, "
+                    "new PID %u (last was %u)\n",
+                    PROCESS_MAX, pid, last_pid);
+        }
+        last_pid = pid;
+    }
+
     spinlock_irqsave_release(&pid_lock, irq_flags);
     return pid;
 }
