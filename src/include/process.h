@@ -66,7 +66,20 @@ struct process_fd {
     uint32_t open_flags;  /* O_APPEND, O_NONBLOCK, etc. from open(2) */
     uint32_t sigio_pid;   /* PID to receive SIGIO (0 = none) */
     int      advice;      /* POSIX_FADV_* hint (-1 = unset) */
+    /* After fork(), parent and child share this offset pointer.
+     * When non-NULL, *shared_offset is the authoritative offset
+     * and the local 'offset' field must be kept in sync. */
+    uint64_t *shared_offset;
 };
+
+/* ── File offset sync helpers ──────────────────────────────────────── */
+/* When shared_offset is non-NULL (after fork), the primary offset
+ * lives in *shared_offset.  The local 'offset' field is a cached copy
+ * that must be synchronised before use and after modification. */
+#define fd_sync_from_shared(pfd) \
+    do { if (unlikely((pfd)->shared_offset)) (pfd)->offset = *(pfd)->shared_offset; } while(0)
+#define fd_sync_to_shared(pfd) \
+    do { if (unlikely((pfd)->shared_offset)) *(pfd)->shared_offset = (pfd)->offset; } while(0)
 
 /* Per-process interval timer (setitimer) */
 #define ITIMER_REAL    0

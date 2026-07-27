@@ -647,6 +647,7 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
         int i = (int)fd - 3;
         struct process_fd *pfd = sys_get_fd(i);
         if (!pfd || !pfd->used) return (uint64_t)(int64_t)-EBADF;
+        fd_sync_from_shared(pfd);
         struct vfs_stat st;
         if (vfs_stat(pfd->path, &st) < 0) return (uint64_t)(int64_t)-EIO;
         uint64_t fsize = st.size;
@@ -674,6 +675,7 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
         }
         kfree(tmp);
         pfd->offset += to_read;
+        fd_sync_to_shared(pfd);
         /* I/O accounting */
         {
             struct process *cur = process_get_current();
@@ -1242,6 +1244,7 @@ static uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence) {
     int i = (int)fd - 3;
     struct process_fd *pfd = sys_get_fd(i);
     if (!pfd || !pfd->used) return (uint64_t)(int64_t)-EBADF;
+    fd_sync_from_shared(pfd);
     struct vfs_stat st;
     uint64_t fsz = 0;
     if (vfs_stat(pfd->path, &st) == 0) fsz = st.size;
@@ -1264,6 +1267,7 @@ static uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence) {
     }
     if (new_off < 0) return (uint64_t)(int64_t)-EINVAL;
     pfd->offset = (uint64_t)new_off;
+    fd_sync_to_shared(pfd);
     return (uint64_t)new_off;
 }
 

@@ -1192,6 +1192,21 @@ int process_fork(void) {
     child->state = PROCESS_UNUSED;
     *child = *parent;
     spinlock_init(&child->fd_table_lock);
+    /* After fork, parent and child share file offsets.
+     * For each in-use fd, allocate a shared uint64_t with the
+     * current offset so both parent and child see the same
+     * file position. */
+    for (int i = 0; i < PROCESS_FD_MAX; i++) {
+        if (parent->fd_table[i].used) {
+            uint64_t *shared = kmalloc(sizeof(uint64_t));
+            if (shared) {
+                *shared = parent->fd_table[i].offset;
+                parent->fd_table[i].shared_offset = shared;
+                child->fd_table[i].shared_offset = shared;
+                child->fd_table[i].offset = *shared;  /* keep local copy in sync */
+            }
+        }
+    }
     child->pid = alloc_pid();
     if (child->pid == (uint32_t)-1) {
         child->state = PROCESS_UNUSED;
@@ -1319,6 +1334,18 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
     child->state = PROCESS_UNUSED;
     *child = *parent;
     child->pid = alloc_pid();
+    /* After fork/clone, parent and child share file offsets */
+    for (int i = 0; i < PROCESS_FD_MAX; i++) {
+        if (parent->fd_table[i].used) {
+            uint64_t *shared = kmalloc(sizeof(uint64_t));
+            if (shared) {
+                *shared = parent->fd_table[i].offset;
+                parent->fd_table[i].shared_offset = shared;
+                child->fd_table[i].shared_offset = shared;
+                child->fd_table[i].offset = *shared;
+            }
+        }
+    }
     if (child->pid == (uint32_t)-1) {
         child->state = PROCESS_UNUSED;
         __asm__ volatile("sti");
