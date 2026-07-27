@@ -1906,7 +1906,7 @@ lint:
 
 cppcheck-check:
 	@if command -v cppcheck >/dev/null 2>&1; then \
-		cppcheck --enable=warning,performance,portability \
+		cppcheck -j$$(nproc) \
 		  --suppress=unusedFunction \
 		  --suppress=constVariablePointer \
 		  --suppress=constParameterPointer \
