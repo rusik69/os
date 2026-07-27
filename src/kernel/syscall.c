@@ -3416,6 +3416,13 @@ static uint64_t sys_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg) {
             int new_fd = (int)arg;
             if (new_fd < 0) new_fd = 0;
             if (new_fd >= PROCESS_FD_MAX) return (uint64_t)(int64_t)-EINVAL;
+            /* Enforce RLIMIT_NOFILE */
+            int open_count = 0;
+            for (int i = 0; i < PROCESS_FD_MAX; i++) {
+                if (proc->fd_table[i].used) open_count++;
+            }
+            if ((uint64_t)open_count >= proc->rlim_cur[RLIMIT_NOFILE])
+                return (uint64_t)(int64_t)-EMFILE;
             uint64_t __fc_irq;
             spinlock_irqsave_acquire(&proc->fd_table_lock, &__fc_irq);
             while (new_fd < PROCESS_FD_MAX && proc->fd_table[new_fd].used)
@@ -3572,6 +3579,13 @@ static uint64_t sys_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg) {
             int new_fd = (int)arg;
             if (new_fd < 0) new_fd = 0;
             if (new_fd >= PROCESS_FD_MAX) return (uint64_t)(int64_t)-EINVAL;
+            /* Enforce RLIMIT_NOFILE */
+            int __cloexec_open_count = 0;
+            for (int i = 0; i < PROCESS_FD_MAX; i++) {
+                if (proc->fd_table[i].used) __cloexec_open_count++;
+            }
+            if ((uint64_t)__cloexec_open_count >= proc->rlim_cur[RLIMIT_NOFILE])
+                return (uint64_t)(int64_t)-EMFILE;
             uint64_t __fdc_irq;
             spinlock_irqsave_acquire(&proc->fd_table_lock, &__fdc_irq);
             while (new_fd < PROCESS_FD_MAX && proc->fd_table[new_fd].used)
@@ -7618,6 +7632,14 @@ static uint64_t sys_pipe2(uint64_t fds_addr, uint64_t flags) {
 
     struct process *proc = process_get_current();
     if (!proc) return (uint64_t)(int64_t)-EPERM;
+
+    /* Enforce RLIMIT_NOFILE (need 2 fds for pipe read/write ends) */
+    int open_count = 0;
+    for (int i = 0; i < PROCESS_FD_MAX; i++) {
+        if (proc->fd_table[i].used) open_count++;
+    }
+    if ((uint64_t)open_count + 1 >= proc->rlim_cur[RLIMIT_NOFILE])
+        return (uint64_t)(int64_t)-EMFILE;
 
     int id = pipe_create();
     if (id < 0) return (uint64_t)(int64_t)-EMFILE;
