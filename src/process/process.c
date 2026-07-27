@@ -1203,6 +1203,16 @@ int process_fork(void) {
         kpti_setup_process(child);
     }
 
+    /* ── Validate user stack pointer ───────────── */
+    if (!syscall_user_rsp || syscall_user_rsp >= USER_VADDR_MAX ||
+        (syscall_user_rsp & 0xF) != 0) {
+        free_pid(child->pid);
+        free_guarded_kernel_stack(child);
+        child->state = PROCESS_UNUSED;
+        __asm__ volatile("sti");
+        return -EFAULT;
+    }
+
     uint64_t *sp = (uint64_t *)child->stack_top;
     sp -= 9;
     sp[0] = 0;
@@ -1233,6 +1243,26 @@ extern void clone_child_trampoline(void);
 int process_clone(struct process *parent, uint64_t flags, void *child_stack,
                   uint64_t user_rip, uint64_t user_rflags) {
     struct process *child = NULL;
+
+    /* ── Validate user-space stack pointer ───────────────────── */
+    /* For user-mode callers, ensure child_stack is a valid user address.
+     * If child_stack is NULL, inherit the parent's stack pointer (fork semantics).
+     * For kernel-mode callers, child_stack may be a function pointer — skip
+     * validation. */
+    if (parent->is_user) {
+        uint64_t stack_addr = (uint64_t)(uintptr_t)child_stack;
+        if (stack_addr == 0) {
+            /* NULL child_stack: inherit parent's stack pointer */
+            if (!syscall_user_rsp || syscall_user_rsp >= USER_VADDR_MAX ||
+                (syscall_user_rsp & 0xF) != 0)
+                return -EFAULT;
+            child_stack = (void *)syscall_user_rsp;
+        } else {
+            /* Explicit stack pointer: validate it */
+            if (stack_addr >= USER_VADDR_MAX || (stack_addr & 0xF) != 0)
+                return -EINVAL;
+        }
+    }
 
     /* RLIMIT_NPROC: count processes owned by the same UID */
     uint64_t nproc_limit = parent->rlim_cur[RLIMIT_NPROC];
