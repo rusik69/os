@@ -841,6 +841,20 @@ static uint64_t lin_tkill(uint64_t a1, uint64_t a2, uint64_t a3,
     return syscall_dispatch_internal(SYS_TKILL, a1, a2, 0, 0, 0);
 }
 
+static uint64_t lin_rt_sigqueueinfo(uint64_t a1, uint64_t a2, uint64_t a3,
+                                     uint64_t a4, uint64_t a5, uint64_t a6)
+{
+    lin_discard3(a4, a5, a6);
+    return syscall_dispatch_internal(SYS_RT_SIGQUEUEINFO, a1, a2, a3, 0, 0);
+}
+
+static uint64_t lin_rt_tgsigqueueinfo(uint64_t a1, uint64_t a2, uint64_t a3,
+                                       uint64_t a4, uint64_t a5, uint64_t a6)
+{
+    lin_discard2(a5, a6);
+    return syscall_dispatch_internal(SYS_RT_TGSIGQUEUEINFO, a1, a2, a3, a4, 0);
+}
+
 static uint64_t lin_futex(uint64_t a1, uint64_t a2, uint64_t a3,
                            uint64_t a4, uint64_t a5, uint64_t a6)
 {
@@ -1540,7 +1554,7 @@ linux_syscall_t sys_call_table[__NR_syscalls] = {
     [126] = lin_capset,          /* __NR_capset */
     [127] = sys_ni_syscall,     /* __NR_rt_sigpending */
     [128] = sys_ni_syscall,     /* __NR_rt_sigtimedwait */
-    [129] = sys_ni_syscall,     /* __NR_rt_sigqueueinfo */
+    [129] = lin_rt_sigqueueinfo, /* __NR_rt_sigqueueinfo */
     [130] = sys_ni_syscall,     /* __NR_rt_sigsuspend */
     [131] = lin_sigaltstack,     /* __NR_sigaltstack */
     [132] = sys_ni_syscall,     /* __NR_utime */
@@ -1708,7 +1722,7 @@ linux_syscall_t sys_call_table[__NR_syscalls] = {
     [294] = lin_inotify_init1,   /* __NR_inotify_init1 */
     [295] = sys_ni_syscall,     /* __NR_preadv */
     [296] = sys_ni_syscall,     /* __NR_pwritev */
-    [297] = sys_ni_syscall,     /* __NR_rt_tgsigqueueinfo */
+    [297] = lin_rt_tgsigqueueinfo, /* __NR_rt_tgsigqueueinfo */
     [298] = sys_ni_syscall,     /* __NR_perf_event_open */
     [299] = lin_recvmmsg,        /* __NR_recvmmsg */
     [300] = sys_ni_syscall,     /* __NR_fanotify_init */

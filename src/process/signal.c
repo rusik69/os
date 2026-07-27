@@ -186,6 +186,21 @@ int signal_send_info(uint32_t pid, int signum, struct siginfo *info,
         }
     }
 
+    /* RLIMIT_SIGPENDING: enforce pending signal queue limit.
+     * SIGKILL is always deliverable; SIGSTOP cannot be blocked. */
+    if (signum != SIGKILL && signum != SIGSTOP) {
+        uint64_t sig_limit = p->rlim_cur[RLIMIT_SIGPENDING];
+        if (sig_limit != ~0ULL) {
+            uint64_t pending = p->pending_signals;
+            int count = 0;
+            while (pending) { pending &= pending - 1; count++; }
+            if ((uint64_t)count >= sig_limit) {
+                spinlock_irqsave_release(&p->sig_lock, __sig_flags);
+                return -EAGAIN;
+            }
+        }
+    }
+
     if (signum == SIGKILL) {
         p->state = PROCESS_ZOMBIE;
         p->exit_code = -(int)signum;

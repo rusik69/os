@@ -679,6 +679,139 @@ uint64_t sys_tgkill(uint64_t tgid, uint64_t tid, uint64_t sig)
     return 0;
 }
 
+/* ── sys_rt_sigqueueinfo — queue signal with siginfo to a process ──
+ *
+ *   int rt_sigqueueinfo(pid_t pid, int sig, siginfo_t *uinfo);
+ *
+ * Linux-compatible rt_sigqueueinfo syscall.  Sends signal `sig` with
+ * a user-provided siginfo_t to the process identified by `pid`.
+ *
+ * This is the kernel-side entry point for sigqueue(3):
+ *   - Validates that the siginfo comes from userspace (from_userspace=1)
+ *   - The signal is queued with full siginfo_t via signal_send_info()
+ *   - Returns -EAGAIN if RLIMIT_SIGPENDING would be exceeded
+ *   - Returns -EINVAL if sig is out of range or uinfo is invalid
+ *   - Returns -ESRCH if target process doesn't exist
+ *
+ * If sig == 0, perform error checking only (null-signal probe).
+ */
+uint64_t sys_rt_sigqueueinfo(uint64_t pid, uint64_t sig, uint64_t uinfo)
+{
+    struct process *cur = process_get_current();
+    if (!cur)
+        return (uint64_t)(int64_t)-ESRCH;
+
+    /* Signal number sanity */
+    if (sig >= SIG_MAX)
+        return (uint64_t)(int64_t)-EINVAL;
+
+    /* Find the target process */
+    struct process *target = process_get_by_pid((uint32_t)pid);
+    if (!target || target->state == PROCESS_UNUSED)
+        return (uint64_t)(int64_t)-ESRCH;
+
+    /* Permission check — must be same UID/EUID or root */
+    if (cur->euid != 0 &&
+        cur->euid != target->euid &&
+        cur->uid  != target->uid)
+        return (uint64_t)(int64_t)-EPERM;
+
+    /* Null-signal probe */
+    if (sig == 0)
+        return 0;
+
+    /* Copy siginfo from userspace */
+    struct siginfo info;
+    memset(&info, 0, sizeof(info));
+    if (uinfo) {
+        if (copy_from_user(&info, uinfo, sizeof(info)) < 0)
+            return (uint64_t)(int64_t)-EFAULT;
+    } else {
+        info.si_signo = (int)sig;
+        info.si_code  = SI_USER;
+        info.si_pid   = cur->pid;
+        info.si_uid   = cur->uid;
+    }
+
+    /* Override si_code to distinguish sigqueue from kill */
+    info.si_signo = (int)sig;
+    info.si_code  = SI_QUEUE;
+    info.si_pid   = cur->pid;
+    info.si_uid   = cur->uid;
+
+    /* Deliver the signal via signal_send_info which checks RLIMIT_SIGPENDING.
+     * Returns 0 on success, -EAGAIN on queue overflow, -1 on other errors. */
+    if (signal_send_info((uint32_t)pid, (int)sig, &info, 1) < 0)
+        return (uint64_t)(int64_t)-EAGAIN;
+
+    return 0;
+}
+
+/* ── sys_rt_tgsigqueueinfo — queue signal to a thread in a thread group ─
+ *
+ *   int rt_tgsigqueueinfo(pid_t tgid, pid_t tid, int sig, siginfo_t *uinfo);
+ *
+ * Linux-compatible rt_tgsigqueueinfo syscall.  Like rt_sigqueueinfo but
+ * targets a specific thread (tid) within a thread group (tgid).  This
+ * is used by pthread_sigqueue(3) and related APIs.
+ *
+ * Validates that tid belongs to tgid before delivering.
+ */
+uint64_t sys_rt_tgsigqueueinfo(uint64_t tgid, uint64_t tid,
+                                uint64_t sig, uint64_t uinfo)
+{
+    (void)tgid;  /* Thread group validation — in this kernel tgid == pid
+                  * for non-threaded processes; for threads we check below. */
+
+    struct process *cur = process_get_current();
+    if (!cur)
+        return (uint64_t)(int64_t)-ESRCH;
+
+    if (sig >= SIG_MAX)
+        return (uint64_t)(int64_t)-EINVAL;
+
+    /* Find target thread */
+    struct process *target = process_get_by_pid((uint32_t)tid);
+    if (!target || target->state == PROCESS_UNUSED)
+        return (uint64_t)(int64_t)-ESRCH;
+
+    /* Verify thread belongs to the specified thread group */
+    if (target->tgid != (uint32_t)tgid)
+        return (uint64_t)(int64_t)-EINVAL;
+
+    /* Permission check */
+    if (cur->euid != 0 &&
+        cur->euid != target->euid &&
+        cur->uid  != target->uid)
+        return (uint64_t)(int64_t)-EPERM;
+
+    if (sig == 0)
+        return 0;
+
+    /* Copy siginfo from userspace */
+    struct siginfo info;
+    memset(&info, 0, sizeof(info));
+    if (uinfo) {
+        if (copy_from_user(&info, uinfo, sizeof(info)) < 0)
+            return (uint64_t)(int64_t)-EFAULT;
+    } else {
+        info.si_signo = (int)sig;
+        info.si_code  = SI_USER;
+        info.si_pid   = cur->pid;
+        info.si_uid   = cur->uid;
+    }
+
+    info.si_signo = (int)sig;
+    info.si_code  = SI_QUEUE;
+    info.si_pid   = cur->pid;
+    info.si_uid   = cur->uid;
+
+    if (signal_send_info((uint32_t)tid, (int)sig, &info, 1) < 0)
+        return (uint64_t)(int64_t)-EAGAIN;
+
+    return 0;
+}
+
 /* ── Helper: check if a process is a child matching the given
  * wait4 pid criteria.
  *

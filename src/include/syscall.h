@@ -950,6 +950,8 @@ struct linux_dirent64 {
 #define SYS_TGKILL                456  /* tgkill(tgid, tid, sig) → 0 or -errno */
 #define SYS_WAIT4                 457  /* wait4(pid, wstatus, opts, rusage) */
 #define SYS_WAITID                458  /* waitid(which, pid, info, options, rusage) */
+#define SYS_RT_SIGQUEUEINFO       459  /* rt_sigqueueinfo(pid, sig, uinfo) → 0 or -errno */
+#define SYS_RT_TGSIGQUEUEINFO     460  /* rt_tgsigqueueinfo(tgid, tid, sig, uinfo) → 0 or -errno */
 
 /* ── kexec (Item 362) ─────────────────────────────────────────── */
 #define SYS_KEXEC_LOAD       778  /* kexec_load(phys_addr, entry, flags) → 0 or -1 */

@@ -149,6 +149,8 @@ uint64_t sys_rt_sigtimedwait(uint64_t set_addr, uint64_t info_addr,
 uint64_t sys_kill(uint64_t pid, uint64_t sig);
 uint64_t sys_tkill(uint64_t pid, uint64_t sig);
 uint64_t sys_tgkill(uint64_t tgid, uint64_t tid, uint64_t sig);
+uint64_t sys_rt_sigqueueinfo(uint64_t pid, uint64_t sig, uint64_t uinfo);
+uint64_t sys_rt_tgsigqueueinfo(uint64_t tgid, uint64_t tid, uint64_t sig, uint64_t uinfo);
 uint64_t sys_wait4(uint64_t pid, uint64_t wstatus_addr,
                    uint64_t options, uint64_t rusage_addr);
 uint64_t sys_waitid(uint64_t which, uint64_t id, uint64_t info_addr,
@@ -315,6 +317,12 @@ static int syscall_validate_user_args(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_WAITID:
             if (a3 && !syscall_user_write_ok(a3, sizeof(struct siginfo))) return -EFAULT;
             if (a5 && !syscall_user_write_ok(a5, sizeof(struct rusage))) return -EFAULT;
+            return 0;
+        case SYS_RT_SIGQUEUEINFO:
+            if (a3 && !syscall_user_read_ok(a3, sizeof(struct siginfo))) return -EFAULT;
+            return 0;
+        case SYS_RT_TGSIGQUEUEINFO:
+            if (a4 && !syscall_user_read_ok(a4, sizeof(struct siginfo))) return -EFAULT;
             return 0;
         case SYS_NET_GET_MAC:
             return syscall_user_write_ok(a1, 6) ? 0 : -EFAULT;
@@ -11026,6 +11034,8 @@ uint64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_GETTID:              return sys_gettid();
         case SYS_TKILL:               return sys_tkill(a1, a2);
         case SYS_TGKILL:              return sys_tgkill(a1, a2, a3);
+        case SYS_RT_SIGQUEUEINFO:     return sys_rt_sigqueueinfo(a1, a2, a3);
+        case SYS_RT_TGSIGQUEUEINFO:   return sys_rt_tgsigqueueinfo(a1, a2, a3, a4);
         case SYS_EXECVE:              return sys_execve(a1, a2, a3);
         case SYS_POSIX_SPAWN:         return sys_posix_spawn(a1, a2, a3);
         case SYS_KEXEC_LOAD:          return sys_kexec_load(a1, a2, a3);
