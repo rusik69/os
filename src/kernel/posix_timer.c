@@ -439,16 +439,23 @@ uint64_t sys_clock_nanosleep(uint64_t clockid, uint64_t flags,
         deadline = now + ticks;
     }
 
-    /* Block the process until deadline */
-    proc->sleep_until = deadline;
-    proc->state = PROCESS_BLOCKED;
-    scheduler_remove(proc);
-    scheduler_yield();
+    /* Block the process until deadline, restarting if SA_RESTART is set */
+    for (;;) {
+        proc->sleep_until = deadline;
+        proc->state = PROCESS_BLOCKED;
+        scheduler_remove(proc);
+        scheduler_yield();
 
-    /* Process woke up — check if timer expired or signal */
-    now = timer_get_ticks();
-    if (now < deadline) {
-        /* Woken early by signal — compute remaining time */
+        /* Process woke up — check if timer expired or signal */
+        now = timer_get_ticks();
+        if (now >= deadline)
+            return 0;
+
+        /* Woken early by signal — check SA_RESTART */
+        if (proc->pending_signals && signal_has_sa_restart())
+            continue;  /* restart the sleep (SA_RESTART) */
+
+        /* Compute remaining time and return -EINTR */
         uint64_t remaining = deadline - now;
         if (rem_addr) {
             struct timespec rem;

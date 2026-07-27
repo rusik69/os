@@ -111,6 +111,11 @@ int signal_send_pgid(uint32_t pgid, int signum);
 int signal_send_info(uint32_t pid, int signum, struct siginfo *info,
                      int from_userspace);
 
+/* Check if any pending (non-masked) signal has SA_RESTART flag set.
+ * Used by blocking syscalls to decide whether to restart the syscall
+ * instead of returning -EINTR when interrupted by a signal. */
+int signal_has_sa_restart(void);
+
 /* Check and deliver any pending signals for the current process.
  * Called by scheduler before returning to a READY process. */
 void signal_check(void);

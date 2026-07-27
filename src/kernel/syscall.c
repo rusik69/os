@@ -3990,22 +3990,35 @@ static uint64_t sys_nanosleep(uint64_t req_addr, uint64_t rem_addr) {
     uint64_t ticks = req.tv_sec * 100 + req.tv_nsec / 10000000;
     if (ticks == 0 && req.tv_nsec > 0) ticks = 1; /* minimum 1 tick */
 
-    /* Block by setting sleep_until */
-    uint64_t now = timer_get_ticks();
-    proc->sleep_until = now + ticks;
-    proc->state = PROCESS_BLOCKED;
-    scheduler_remove(proc);
-    scheduler_yield();
+    /* Block until timeout, restarting if SA_RESTART is set */
+    uint64_t deadline = timer_get_ticks() + ticks;
 
-    /* Process woke up — check if it was from timer or signal */
-    if (rem_addr && timer_get_ticks() < proc->sleep_until) {
-        /* Woke early (signal) — compute remaining */
-        struct timespec rem;
-        uint64_t remaining = proc->sleep_until - timer_get_ticks();
-        rem.tv_sec = remaining / 100;
-        rem.tv_nsec = (remaining % 100) * 10000000;
-        if (copy_to_user(rem_addr, &rem, sizeof(rem)) < 0)
-            return (uint64_t)-1;
+    for (;;) {
+        proc->sleep_until = deadline;
+        proc->state = PROCESS_BLOCKED;
+        scheduler_remove(proc);
+        scheduler_yield();
+
+        /* Process woke up — check if from timer or signal */
+        uint64_t now = timer_get_ticks();
+        if (now >= deadline)
+            return 0;
+
+        /* Woken early by signal — check SA_RESTART */
+        if (proc->pending_signals && signal_has_sa_restart())
+            continue;  /* restart the sleep (SA_RESTART) */
+
+        /* Compute remaining and return -EINTR */
+        if (rem_addr) {
+            struct timespec rem;
+            uint64_t remaining = deadline - now;
+            rem.tv_sec = remaining / 100;
+            rem.tv_nsec = (remaining % 100) * 10000000;
+            if (copy_to_user(rem_addr, &rem, sizeof(rem)) < 0)
+                return (uint64_t)-1;
+        }
+
+        return (uint64_t)(int64_t)-EINTR;
     }
 
     return 0;
@@ -4148,12 +4161,20 @@ static uint64_t sys_pause(void) {
     struct process *proc = process_get_current();
     if (!proc) return (uint64_t)(int64_t)-ESRCH;
 
-    proc->state = PROCESS_BLOCKED;
-    scheduler_remove(proc);
-    scheduler_yield();
+    for (;;) {
+        proc->state = PROCESS_BLOCKED;
+        scheduler_remove(proc);
+        scheduler_yield();
 
-    /* Woken by signal — return -EINTR (always interrupted) */
-    return (uint64_t)(int64_t)-EINTR;
+        /* Woken by signal — check SA_RESTART */
+        if (proc->pending_signals) {
+            if (signal_has_sa_restart())
+                continue;  /* restart the wait (SA_RESTART) */
+        }
+
+        /* Woken by signal — return -EINTR (always interrupted) */
+        return (uint64_t)(int64_t)-EINTR;
+    }
 }
 
 /* ── access() ────────────────────────────────────────────────── */

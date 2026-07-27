@@ -410,6 +410,32 @@ static void signal_notify_parent(struct process *p, int signum, int si_code)
     signal_send_info(parent->pid, SIGCHLD, &info, 0);
 }
 
+/* ── signal_has_sa_restart — check if SA_RESTART applies ───────
+ * Returns 1 if any pending non-masked signal has SA_RESTART flag set,
+ * meaning the interrupted blocking syscall should be restarted instead
+ * of returning -EINTR to userspace.
+ *
+ * Must be called with the current process's sig_lock held (or from a
+ * context where the process cannot be interrupted, like after yielding).
+ * Safe to call without locks when the caller is the current process and
+ * no other CPU can concurrently modify our signal state. */
+int signal_has_sa_restart(void) {
+    struct process *p = process_get_current();
+    if (!p) return 0;
+    if (!p->pending_signals) return 0;
+
+    uint64_t pending = p->pending_signals & ~p->sig_mask;
+    while (pending) {
+        int sig = __builtin_ctzll(pending);
+        if (sig > 0 && sig < SIG_MAX) {
+            if (p->sig_flags[sig] & SA_RESTART)
+                return 1;
+        }
+        pending &= pending - 1;  /* clear lowest set bit */
+    }
+    return 0;
+}
+
 /* ── signal_check — Check and deliver pending signals ────────────────── */
 void signal_check(void) {
     struct process *p = process_get_current();
