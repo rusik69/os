@@ -3534,7 +3534,7 @@ static uint64_t sys_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg) {
             return 0;
         }
         case F_GETLK: {
-            /* Get any conflicting lock via file_lock.c */
+            /* Test for conflicting lock (fcntl F_GETLK semantics) */
             struct flock {
                 int16_t l_type;
                 int16_t l_whence;
@@ -3555,23 +3555,32 @@ static uint64_t sys_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg) {
             const char *fpath = proc->fd_table[fd].path;
             if (!fpath || !fpath[0]) return (uint64_t)(int64_t)-EBADF;
 
-            struct file_lock kflk;
-            memset(&kflk, 0, sizeof(kflk));
-            int rc = file_lock_get(fpath, &kflk);
+            /* Convert user's proposed lock to kernel struct */
+            struct file_lock proposed;
+            memset(&proposed, 0, sizeof(proposed));
+            proposed.l_type   = (int)user_flk.l_type;
+            proposed.l_whence = (int)user_flk.l_whence;
+            proposed.l_start  = user_flk.l_start;
+            proposed.l_len    = user_flk.l_len;
+
+            /* Look for a conflicting lock */
+            struct file_lock conflicting;
+            memset(&conflicting, 0, sizeof(conflicting));
+            int rc = file_lock_test(fpath, &proposed, &conflicting);
             if (rc == -ENOENT) {
-                /* No lock — return F_UNLCK */
+                /* No conflict — return F_UNLCK */
                 user_flk.l_type   = F_UNLCK;
                 user_flk.l_whence = 0;
                 user_flk.l_start  = 0;
                 user_flk.l_len    = 0;
                 user_flk.l_pid    = 0;
             } else if (rc == 0) {
-                /* Convert kernel file_lock back to userspace flock */
-                user_flk.l_type   = (int16_t)kflk.l_type;
-                user_flk.l_whence = (int16_t)kflk.l_whence;
-                user_flk.l_start  = kflk.l_start;
-                user_flk.l_len    = kflk.l_len;
-                user_flk.l_pid    = kflk.l_pid;
+                /* Conflict found — return the conflicting lock's info */
+                user_flk.l_type   = (int16_t)conflicting.l_type;
+                user_flk.l_whence = (int16_t)conflicting.l_whence;
+                user_flk.l_start  = conflicting.l_start;
+                user_flk.l_len    = conflicting.l_len;
+                user_flk.l_pid    = conflicting.l_pid;
             } else {
                 return (uint64_t)(int64_t)rc;
             }

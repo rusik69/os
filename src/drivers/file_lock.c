@@ -255,6 +255,43 @@ int file_lock_get(const char *path, struct file_lock *flk)
     return 0;
 }
 
+/*
+ * Test whether a proposed lock would conflict with any existing lock
+ * on the given path (fcntl F_GETLK semantics).
+ *
+ * Checks if any existing lock on 'path' conflicts with the proposed lock.
+ * If a conflicting lock is found, copies its description into 'conflicting'
+ * and returns 0.  If no conflict exists (including when no lock exists at
+ * all), returns -ENOENT.
+ */
+int file_lock_test(const char *path, const struct file_lock *proposed, struct file_lock *conflicting)
+{
+    if (!path || !proposed || !conflicting || !lock_initialized)
+        return -EINVAL;
+
+    char ap[128];
+    strncpy(ap, path, sizeof(ap) - 1);
+    ap[sizeof(ap) - 1] = '\0';
+
+    spinlock_acquire(&lock_spinlock);
+
+    struct lock_entry *entry = find_entry(ap);
+    if (!entry) {
+        spinlock_release(&lock_spinlock);
+        return -ENOENT;
+    }
+
+    /* Check if the existing lock conflicts with the proposed lock */
+    if (lock_conflicts(&entry->flk, proposed)) {
+        memcpy(conflicting, &entry->flk, sizeof(struct file_lock));
+        spinlock_release(&lock_spinlock);
+        return 0; /* conflict found */
+    }
+
+    spinlock_release(&lock_spinlock);
+    return -ENOENT; /* existing lock does not conflict */
+}
+
 /* ── Mandatory lock check (called by VFS before read/write) ────── */
 
 int file_lock_check_mandatory(const char *path, int for_write)

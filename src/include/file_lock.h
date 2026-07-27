@@ -44,6 +44,17 @@ int file_lock_unlock(const char *path, struct file_lock *flk);
 int file_lock_get(const char *path, struct file_lock *flk);
 
 /*
+ * Check whether a proposed lock would conflict with any existing lock
+ * on the given path (fcntl F_GETLK semantics).
+ *
+ * Tests if any existing lock on 'path' conflicts with 'proposed'.
+ * If a conflicting lock is found, copies its description into 'conflicting'
+ * and returns 0.  If no conflict exists, returns -ENOENT.
+ * Returns -EINVAL on bad arguments, or negative errno on other errors.
+ */
+int file_lock_test(const char *path, const struct file_lock *proposed, struct file_lock *conflicting);
+
+/*
  * Check whether a mandatory lock prevents the requested access.
  *
  * Called by the VFS layer before every read/write:
