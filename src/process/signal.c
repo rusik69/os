@@ -91,9 +91,15 @@ int signal_send(uint32_t pid, int signum) {
         return 0;
     }
 
-    /* SIGCONT — always resumes, regardless of mask */
+    /* SIGCONT — always resumes, regardless of mask.
+     * Per POSIX: SIGCONT discards pending stop signals (SIGSTOP, SIGTSTP,
+     * SIGTTIN, SIGTTOU).  The pending stop bits are cleared so they won't
+     * be delivered after the process resumes. */
     if (signum == SIGCONT) {
         p->pending_signals |= (1ULL << signum);
+        p->pending_signals &=
+            ~((1ULL << SIGSTOP) | (1ULL << SIGTSTP) |
+              (1ULL << SIGTTIN) | (1ULL << SIGTTOU));
         if (p->is_suspended) {
             p->is_suspended = 0;
             p->sleep_until = 0;
@@ -125,6 +131,8 @@ int signal_send(uint32_t pid, int signum) {
     }
 
     if (signum == SIGSTOP || signum == SIGTSTP || signum == SIGTTIN || signum == SIGTTOU) {
+        /* Per POSIX: if SIGCONT is pending, clear it when delivering a stop signal */
+        p->pending_signals &= ~(1ULL << SIGCONT);
         p->is_suspended = 1;
         p->sleep_until = 0;
         p->state = PROCESS_BLOCKED;
@@ -586,6 +594,8 @@ void signal_check(void) {
             case SIGTSTP:
             case SIGTTIN:
             case SIGTTOU:
+                /* Per POSIX: clear pending SIGCONT on stop signal delivery */
+                p->pending_signals &= ~(1ULL << SIGCONT);
                 p->is_suspended = 1;
                 p->state = PROCESS_BLOCKED;
                 scheduler_remove(p);
@@ -595,6 +605,11 @@ void signal_check(void) {
                 spinlock_irqsave_acquire(&p->sig_lock, &__sig_flags);
                 continue;
             case SIGCONT:
+                /* Per POSIX: delivery of SIGCONT discards any pending
+                 * stop signals (SIGSTOP, SIGTSTP, SIGTTIN, SIGTTOU). */
+                p->pending_signals &=
+                    ~((1ULL << SIGSTOP) | (1ULL << SIGTSTP) |
+                      (1ULL << SIGTTIN) | (1ULL << SIGTTOU));
                 break;
             default:
                 /* For real-time signals (SIGRTMIN+) with no handler: ignore */
