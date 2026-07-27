@@ -1749,6 +1749,16 @@ static uint64_t sys_vfs_readdir(uint64_t path_addr) {
 }
 
 static uint64_t sys_waitpid(uint64_t pid, uint64_t status_addr) {
+    struct process *cur = process_get_current();
+    if (!cur)
+        return (uint64_t)(int64_t)-ESRCH;
+
+    /* waitpid(pid, ...) requires pid to be a direct child.
+     * Return ECHILD if no such child exists. */
+    struct process *child = process_get_by_pid((uint32_t)pid);
+    if (!child || child->parent_pid != cur->pid)
+        return (uint64_t)(int64_t)-ECHILD;
+
     return (uint64_t)process_waitpid((uint32_t)pid, (int *)status_addr, 0);
 }
 
