@@ -91,12 +91,19 @@ typedef struct {
 /* Default/suggested alternate signal stack size */
 #define SIGSTKSZ     8192
 
-/* sigaltstack flags for syscall */
-#define SA_ONSTACK     0x08000000
-#define SA_SIGINFO     0x00000004
-#define SA_RESTART     0x10000000
-#define SA_NODEFER     0x40000000
-#define SA_RESETHAND   0x80000000
+/* sigaction flags — POSIX SA_* flags */
+#define SA_NOCLDSTOP  0x00000001
+#define SA_NOCLDWAIT  0x00000002
+#define SA_SIGINFO    0x00000004
+#define SA_ONSTACK    0x08000000
+#define SA_RESTART    0x10000000
+#define SA_NODEFER    0x40000000
+#define SA_RESETHAND  0x80000000
+
+/* Mask of all currently recognised SA_* flags.
+ * Any bit set outside this mask in sa_flags shall be rejected with EINVAL. */
+#define SA_VALID_FLAGS  (SA_NOCLDSTOP | SA_NOCLDWAIT | SA_SIGINFO \
+                         | SA_ONSTACK | SA_RESTART | SA_NODEFER | SA_RESETHAND)
 
 /* Send signal to process by pid; 0 = success, -1 = not found */
 int signal_send(uint32_t pid, int signum);

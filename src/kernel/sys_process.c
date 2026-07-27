@@ -97,6 +97,15 @@ uint64_t sys_rt_sigaction(uint64_t signum, uint64_t act_addr,
 
         spinlock_irqsave_acquire(&p->sig_lock, &__sig_flags);
 
+        /* Validate sa_flags — reject any bit that is not a recognised SA_* flag.
+         * This catches typos, future-incompatible bits, and malicious input.
+         * SA_NOCLDSTOP, SA_NOCLDWAIT, SA_SIGINFO, SA_ONSTACK, SA_RESTART,
+         * SA_NODEFER, and SA_RESETHAND are currently accepted. */
+        if ((unsigned int)new_act.sa_flags & ~SA_VALID_FLAGS) {
+            spinlock_irqsave_release(&p->sig_lock, __sig_flags);
+            return (uint64_t)(int64_t)-EINVAL;
+        }
+
         p->sig_handlers[signum] = handler;
         p->sig_flags[signum]    = (uint32_t)(new_act.sa_flags & 0xFFFFFFFFU);
         /* SIGKILL and SIGSTOP are unblockable — silently strip them from sa_mask */
