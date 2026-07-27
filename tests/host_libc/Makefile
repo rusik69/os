@@ -360,7 +360,7 @@ test_libc.o: test_libc.c
 
 # ── Host-side bitmap/crypto/SHA test ─────────────────────────────
 
-test_bitops_crc_sha: $(CRYPTO_OBJS) printf.o stubs.o
+test_bitops_crc_sha: $(CRYPTO_OBJS) printf.o stubs.o find_bit.o
 	$(CC) -o $@ $^
 
 bitmap.o: $(CRYPTODIR)/bitmap.c
