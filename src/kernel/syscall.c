@@ -2336,12 +2336,57 @@ static uint64_t sys_ioprio_set(uint64_t which, uint64_t who, uint64_t ioprio)
 }
 
 static uint64_t sys_setpgid(uint64_t pid, uint64_t pgid) {
+    struct process *cur = process_get_current();
     struct process *p;
-    if (pid == 0) p = process_get_current();
-    else p = process_get_by_pid((uint32_t)pid);
-    if (!p || p->state == PROCESS_UNUSED) return (uint64_t)(int64_t)-ESRCH;
-    p->pgid = pgid ? (uint32_t)pgid : p->pid;
-    if (p->sid == 0) p->sid = p->pgid;
+
+    /* If pid is 0, use current process */
+    if (pid == 0)
+        p = cur;
+    else
+        p = process_get_by_pid((uint32_t)pid);
+
+    /* Validate target process exists and is alive */
+    if (!p || p->state == PROCESS_UNUSED)
+        return (uint64_t)(int64_t)-ESRCH;
+
+    /* Session leader cannot change its own process group */
+    if (p->sid == p->pid)
+        return (uint64_t)(int64_t)-EPERM;
+
+    /* Permission check: only self or parent process can setpgid */
+    if (cur != p && p->parent_pid != cur->pid)
+        return (uint64_t)(int64_t)-EPERM;
+
+    /* Same-UID check: caller must have permission to affect target */
+    if (cur != p && cur->euid != 0 && cur->euid != p->euid)
+        return (uint64_t)(int64_t)-EPERM;
+
+    uint32_t new_pgid;
+
+    if (pgid == 0) {
+        /* Create a new process group with the target's PID as group ID */
+        new_pgid = (uint32_t)(pid ? (uint32_t)pid : p->pid);
+    } else {
+        new_pgid = (uint32_t)pgid;
+
+        /* Validate pgid: must correspond to a valid PID of an existing
+         * process in the same session as the target process. */
+        struct process *pgid_proc = process_get_by_pid(new_pgid);
+        if (!pgid_proc || pgid_proc->state == PROCESS_UNUSED)
+            return (uint64_t)(int64_t)-ESRCH;
+
+        /* The pgid process must be in the same session as the target */
+        if (pgid_proc->sid != p->sid)
+            return (uint64_t)(int64_t)-EPERM;
+    }
+
+    /* Leave old process group and join the new one */
+    p->pgid = new_pgid;
+
+    /* If the process has no session yet, set it to the new pgid */
+    if (p->sid == 0)
+        p->sid = new_pgid;
+
     return 0;
 }
 
