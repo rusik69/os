@@ -3440,8 +3440,12 @@ static uint64_t sys_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg) {
             return (uint64_t)new_fd;
         }
         case F_GETFD:
-            return (uint64_t)proc->fd_table[fd].flags;
+            /* Only return userspace-visible flags (FD_CLOEXEC) */
+            return (uint64_t)(proc->fd_table[fd].flags & FD_CLOEXEC);
         case F_SETFD:
+            /* Only FD_CLOEXEC (bit 0) is a valid flag; reject everything else */
+            if (arg & ~(uint64_t)FD_CLOEXEC)
+                return (uint64_t)(int64_t)-EINVAL;
             proc->fd_table[fd].flags = (uint8_t)arg;
             return 0;
         case F_GETFL:
