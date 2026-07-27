@@ -783,9 +783,71 @@ void process_exit(void) {
     for (;;) __asm__ volatile("hlt");
 }
 
+/* ── Orphaned process group detection ────────────────────────────────── */
+/* Check if a process group in a given session is orphaned.
+ * A process group is orphaned if for every member, the parent is either
+ * in a different session or in a different process group (same session).
+ * Returns 1 if orphaned, 0 if not. */
+static int is_pgid_orphaned(uint32_t pgid, uint32_t sid) {
+    struct process *table = process_get_table();
+    for (int i = 0; i < PROCESS_MAX; i++) {
+        if (table[i].state == PROCESS_UNUSED || table[i].state == PROCESS_ZOMBIE)
+            continue;
+        if (table[i].pgid != pgid || table[i].sid != sid)
+            continue;
+        /* Found a living member — check its parent */
+        struct process *parent = process_get_by_pid(table[i].parent_pid);
+        if (!parent || parent->state == PROCESS_UNUSED || parent->state == PROCESS_ZOMBIE)
+            continue;  /* parent gone → orphaned condition met for this member */
+        /* If parent is in same session AND same process group, NOT orphaned */
+        if (parent->sid == sid && parent->pgid == pgid)
+            return 0;
+    }
+    return 1;  /* orphaned */
+}
+
+/* Check for orphaned process groups in the given session.
+ * For each orphaned process group, deliver SIGHUP followed by SIGCONT
+ * to all members (POSIX job-control requirement). */
+static void check_orphaned_process_groups(uint32_t sid) {
+    struct process *table = process_get_table();
+    uint32_t seen_pgids[PROCESS_MAX];
+    int n_seen = 0;
+
+    for (int i = 0; i < PROCESS_MAX; i++) {
+        if (table[i].state == PROCESS_UNUSED || table[i].state == PROCESS_ZOMBIE)
+            continue;
+        if (table[i].sid != sid)
+            continue;
+
+        uint32_t pgid = table[i].pgid;
+        if (pgid == 0)
+            continue;
+
+        /* Skip duplicate pgids */
+        int already_seen = 0;
+        for (int j = 0; j < n_seen; j++) {
+            if (seen_pgids[j] == pgid) {
+                already_seen = 1;
+                break;
+            }
+        }
+        if (already_seen) continue;
+        if (n_seen < PROCESS_MAX)
+            seen_pgids[n_seen++] = pgid;
+
+        if (is_pgid_orphaned(pgid, sid)) {
+            /* POSIX: deliver SIGHUP then SIGCONT to orphaned process group */
+            signal_send_group(pgid, SIGHUP);
+            signal_send_group(pgid, SIGCONT);
+        }
+    }
+}
+
 void process_exit_code(int code) {
     /* Reparent orphans to init (PID 1) */
     uint32_t my_pid = current_process->pid;
+    uint32_t my_sid = current_process->sid;
     for (int i = 0; i < PROCESS_MAX; i++) {
         if (process_table[i].state != PROCESS_UNUSED &&
             process_table[i].parent_pid == my_pid &&
@@ -793,6 +855,10 @@ void process_exit_code(int code) {
             process_table[i].parent_pid = 1;
         }
     }
+    /* Check for orphaned process groups in our session now that some
+     * processes' parents have been reparented to init (PID 1), which
+     * is typically in a different session. */
+    check_orphaned_process_groups(my_sid);
     current_process->state = PROCESS_ZOMBIE;
     current_process->exit_code = code;
     scheduler_remove(current_process);
