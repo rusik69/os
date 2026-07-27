@@ -429,7 +429,7 @@ struct process *process_create(void (*entry)(void), const char *name) {
     struct process *cur = process_get_current();
     if (cur) {
         uint64_t nproc_limit = cur->rlim_cur[RLIMIT_NPROC];
-        if (nproc_limit != ~0ULL && nproc_limit > 0) {
+        if (nproc_limit != ~0ULL) {
             uint64_t same_user_count = 0;
             for (int i = 0; i < PROCESS_MAX; i++) {
                 if (process_table[i].state != PROCESS_UNUSED &&
@@ -1140,7 +1140,7 @@ int process_fork(void) {
 
     /* RLIMIT_NPROC: count processes owned by the same UID */
     uint64_t nproc_limit = parent->rlim_cur[RLIMIT_NPROC];
-    if (nproc_limit != ~0ULL && nproc_limit > 0) {
+    if (nproc_limit != ~0ULL) {
         uint64_t same_user_count = 0;
         for (int i = 0; i < PROCESS_MAX; i++) {
             if (process_table[i].state != PROCESS_UNUSED &&
@@ -1266,7 +1266,7 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
 
     /* RLIMIT_NPROC: count processes owned by the same UID */
     uint64_t nproc_limit = parent->rlim_cur[RLIMIT_NPROC];
-    if (nproc_limit != ~0ULL && nproc_limit > 0) {
+    if (nproc_limit != ~0ULL) {
         uint64_t same_user_count = 0;
         for (int i = 0; i < PROCESS_MAX; i++) {
             if (process_table[i].state != PROCESS_UNUSED &&
