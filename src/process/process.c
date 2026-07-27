@@ -45,6 +45,17 @@ static uint64_t pid_bitmap[4];
 static spinlock_t pid_lock;
 #define PID_BITMAP_WORDS 4
 
+static int pid_is_free_in_table(uint32_t pid) {
+    if (pid == 0) return 0;  /* PID 0 is reserved for idle */
+    for (int i = 0; i < PROCESS_MAX; i++) {
+        if (process_table[i].state != PROCESS_UNUSED &&
+            process_table[i].pid == pid) {
+            return 0;  /* still in use by another slot */
+        }
+    }
+    return 1;
+}
+
 static uint32_t alloc_pid(void) {
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&pid_lock, &irq_flags);
@@ -57,6 +68,18 @@ static uint32_t alloc_pid(void) {
         if (pid >= PROCESS_MAX) {
             pid = (uint32_t)-1;
             break;
+        }
+        /* Validate PID reuse: ensure PID is not already assigned to an
+         * existing process in the table (zombie or alive).  The bitmap
+         * normally guarantees this, but the explicit check provides
+         * defense-in-depth against bugs that could lead to mysterious
+         * failures when /proc/<pid> entries reference recycled PIDs. */
+        if (!pid_is_free_in_table(pid)) {
+            /* PID still in use by a non-UNUSED slot — skip and continue
+             * searching.  Mark the bit used so we don't spin on it. */
+            pid_bitmap[w] |= (1ULL << bit);
+            pid = (uint32_t)-1;
+            continue;
         }
         pid_bitmap[w] |= (1ULL << bit);
         break;

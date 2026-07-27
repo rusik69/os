@@ -916,7 +916,7 @@ $(KPTI_TRAMP_H): $(KPTI_TRAMP_BIN)
 	    echo '/* Auto-generated — do not edit. */'; \
 	    echo '#ifndef KPTI_TRAMPOLINE_BIN_H'; \
 	    echo '#define KPTI_TRAMPOLINE_BIN_H'; \
-	    xxd -i -n kpti_trampoline_bin < $<; \
+	    xxd -i -n build_kpti_trampoline_bin < $<; \
 	    echo '#endif /* KPTI_TRAMPOLINE_BIN_H */'; \
 	} > $@.tmp && mv $@.tmp $@
 
