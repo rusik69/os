@@ -871,6 +871,25 @@ void process_exit_code(int code) {
             kprintf("[process] warning: failed to clear CTID at 0x%lx\n",
                     (unsigned long)current_process->ctid_ptr);
         }
+
+        /* Wake up to 1 futex waiter on the CTID address (thread join) */
+        uint32_t *ctid_uaddr = (uint32_t *)current_process->ctid_ptr;
+        __asm__ volatile("cli");
+        for (int i = 0; i < FUTEX_MAX_WAITERS; i++) {
+            if (futex_waiters[i].proc &&
+                futex_waiters[i].uaddr == ctid_uaddr) {
+                struct process *wake_p = futex_waiters[i].proc;
+                futex_waiters[i].proc = NULL;
+                futex_waiters[i].uaddr = NULL;
+                futex_num_waiters--;
+                if (wake_p->state == PROCESS_BLOCKED) {
+                    wake_p->state = PROCESS_READY;
+                    scheduler_add(wake_p);
+                }
+                break;  /* wake only 1 waiter */
+            }
+        }
+        __asm__ volatile("sti");
     }
     /* Send SIGCHLD to parent with siginfo */
     struct process *parent = process_get_by_pid(current_process->parent_pid);
