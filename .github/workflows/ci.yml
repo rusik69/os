@@ -2,6 +2,8 @@
 #
 # Builds the kernel, userspace, runs unit tests, boot test, and quality checks.
 # Uses ccache for 10-20x faster rebuilds on repeated commits.
+# All build tools are pre-installed in the self-hosted runner Docker image
+# (ghcr.io/rusik69/os-runner:latest). No apt-get install steps needed.
 
 name: CI
 
@@ -26,17 +28,6 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-
-      - name: Make version
-        run: make --version
-
-      - name: Install dependencies
-        run: |
-          apt-get update -qq
-          apt-get install -y -qq \
-            build-essential nasm qemu-system-x86 \
-            gcc-x86-64-linux-gnu xorriso grub-pc-bin mtools \
-            ccache
 
       - name: ccache cache
         uses: actions/cache@v4
@@ -78,13 +69,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: |
-          apt-get update -qq
-          apt-get install -y -qq \
-            build-essential \
-            gcc-x86-64-linux-gnu
-
       - name: Build userspace
         run: |
           cd userspace && make -j$(nproc) \
@@ -121,11 +105,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: |
-          apt-get update -qq
-          apt-get install -y -qq build-essential
-
       - name: Build unit test binaries
         run: |
           make -C tests/host_libc all -j$(nproc)
@@ -142,10 +121,6 @@ jobs:
           name: junit-results
           path: ${{ runner.temp }}/test-reports/
           retention-days: 7
-
-      - name: Install ccache (for stats only)
-        run: |
-          apt-get install -y -qq ccache
 
       - name: Summary
         run: |
@@ -178,12 +153,6 @@ jobs:
           name: kernel
           path: build/
 
-      - name: Install dependencies
-        run: |
-          apt-get update -qq
-          apt-get install -y -qq \
-            qemu-system-x86 python3
-
       - name: Run QEMU boot test
         run: |
           python3 src/test/boot_test.py \
@@ -210,11 +179,6 @@ jobs:
           name: kernel
           path: build/
 
-      - name: Install dependencies
-        run: |
-          apt-get update -qq
-          apt-get install -y -qq qemu-system-x86
-
       - name: QEMU boot test (direct, 30s timeout)
         run: |
           timeout 30 qemu-system-x86_64 \
@@ -231,7 +195,7 @@ jobs:
       - name: Summary
         run: |
           echo "## QEMU Boot Test (Direct)" >> $GITHUB_STEP_SUMMARY
-          echo "- Kernel boots via `qemu-system-x86_64 -nographic` with 30s timeout" >> $GITHUB_STEP_SUMMARY
+          echo "- Kernel boots via \`qemu-system-x86_64 -nographic\` with 30s timeout" >> $GITHUB_STEP_SUMMARY
 
   # ── Full build check (kernel + userspace) ──────────────────────────
   full-build:
@@ -239,17 +203,6 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-
-      - name: Make version
-        run: make --version
-
-      - name: Install dependencies
-        run: |
-          apt-get update -qq
-          apt-get install -y -qq \
-            build-essential nasm qemu-system-x86 \
-            gcc-x86-64-linux-gnu xorriso grub-pc-bin mtools \
-            ccache
 
       - name: ccache cache
         uses: actions/cache@v4
@@ -298,13 +251,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install clang-format
-        run: |
-          apt-get update -qq
-          apt-get install -y -qq clang-format-18
-          sudo ln -sf /usr/bin/clang-format-18 /usr/local/bin/clang-format
-          sudo ln -sf /usr/bin/clang-format-18 /usr/local/bin/git-clang-format
-
       - name: Check formatting
         run: |
           BASE_REF="origin/${{ github.base_ref || 'main' }}"
@@ -337,11 +283,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install cppcheck
-        run: |
-          apt-get update -qq
-          apt-get install -y -qq cppcheck
-
       - name: Run cppcheck
         run: |
           make cppcheck-check
@@ -357,13 +298,6 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install static analysis tools
-        run: |
-          apt-get update -qq
-          apt-get install -y -qq \
-            cppcheck sparse clang-tidy-18
-          sudo ln -sf /usr/bin/clang-tidy-18 /usr/local/bin/clang-tidy
 
       - name: cppcheck (static analysis with suppressions)
         continue-on-error: true
@@ -403,20 +337,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install dependencies
-        run: |
-          apt-get update -qq
-          apt-get install -y -qq \
-            build-essential \
-            cppcheck \
-            clang-tidy-18 \
-            clang-format-18
-          sudo ln -sf /usr/bin/clang-format-18 /usr/local/bin/clang-format
-          sudo ln -sf /usr/bin/clang-format-18 /usr/local/bin/git-clang-format
-
-      - name: Make version
-        run: make --version
-
       - name: Run verify (format-check + lint + app boundary check)
         run: |
           BASE_REF="origin/${{ github.base_ref || 'main' }}"
@@ -443,14 +363,6 @@ jobs:
         with:
           name: kernel
           path: build/
-
-      - name: Install dependencies
-        run: |
-          apt-get update -qq
-          apt-get install -y -qq \
-            build-essential nasm qemu-system-x86 \
-            gcc-x86-64-linux-gnu xorriso grub-pc-bin mtools \
-            python3 telnet
 
       - name: Build/repair disk image
         run: |
