@@ -46,6 +46,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xxd \
     && rm -rf /var/lib/apt/lists/*
 
+# Create symlinks for unversioned tool names (git-clang-format, clang-tidy, etc.)
+RUN ln -sf /usr/bin/clang-format-18 /usr/local/bin/clang-format && \
+    ln -sf /usr/bin/clang-format-18 /usr/local/bin/git-clang-format && \
+    ln -sf /usr/bin/clang-tidy-18 /usr/local/bin/clang-tidy
+
 # Create runner user (uid 1001; 1000 is taken by ubuntu user in base image)
 RUN adduser --disabled-password --gecos "" --uid 1001 runner && \
     usermod -aG docker runner
