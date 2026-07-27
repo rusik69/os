@@ -625,6 +625,9 @@ static struct process_fd *sys_get_fd(int i) {
  */
 static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
     if (!buf_addr && len > 0) return (uint64_t)(int64_t)-EFAULT;
+    /* Negative fd — reject with EBADF */
+    if ((int64_t)fd < 0)
+        return (uint64_t)(int64_t)-EBADF;
 
     if (fd == 0) {
         if (!syscall_is_user_process()) return 0;
@@ -785,7 +788,7 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
         kfree(kbuf);
         return ret >= 0 ? (uint64_t)ret : (uint64_t)-1;
     }
-    return (uint64_t)-1;
+    return (uint64_t)(int64_t)-EBADF;
 }
 
 /**
@@ -805,6 +808,9 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
  */
 static uint64_t sys_write(uint64_t fd, uint64_t buf_addr, uint64_t len) {
     if (!buf_addr && len > 0) return (uint64_t)(int64_t)-EFAULT;
+    /* Negative fd — reject with EBADF */
+    if ((int64_t)fd < 0)
+        return (uint64_t)(int64_t)-EBADF;
 
     if (fd == 1 || fd == 2) {
         {
@@ -882,7 +888,7 @@ static uint64_t sys_write(uint64_t fd, uint64_t buf_addr, uint64_t len) {
         }
         return (uint64_t)(ret >= 0 ? (uint64_t)ret : (uint64_t)-1);
     }
-    return (uint64_t)-1;
+    return (uint64_t)(int64_t)-EBADF;
 }
 
 /*
@@ -1077,6 +1083,9 @@ static uint64_t sys_open(uint64_t path_addr, uint64_t flags, uint64_t mode) {
 static uint64_t sys_close(uint64_t fd) {
     /* stdin/stdout/stderr — cannot be closed */
     if (fd < 3) return 0;
+    /* Negative fd — reject with EBADF */
+    if ((int64_t)fd < 0)
+        return (uint64_t)(int64_t)-EBADF;
     /* inotify close (fd range 720-727) */
     if (fd >= INOTIFY_FD_BASE && fd < INOTIFY_FD_BASE + INOTIFY_INSTANCES) {
         int ret = inotify_close((int)fd);
@@ -1281,6 +1290,9 @@ static uint64_t sys_raw_send(uint64_t buf_addr, uint64_t len) {
 
 /* ── FD-based read/write (SYS_FD_READ=217, SYS_FD_WRITE=218) ──── */
 static uint64_t sys_fd_read(uint64_t fd, uint64_t buf_addr, uint64_t count) {
+    /* Negative fd — reject with EBADF */
+    if ((int64_t)fd < 0)
+        return (uint64_t)(int64_t)-EBADF;
     /* Handle stdin (fd 0) — read from console input */
     if (fd == 0) {
         struct process_fd *pfd = sys_get_fd(0);
@@ -1351,6 +1363,9 @@ static uint64_t sys_fd_read(uint64_t fd, uint64_t buf_addr, uint64_t count) {
 }
 
 static uint64_t sys_fd_write(uint64_t fd, uint64_t buf_addr, uint64_t count) {
+    /* Negative fd — reject with EBADF */
+    if ((int64_t)fd < 0)
+        return (uint64_t)(int64_t)-EBADF;
     /* Handle stdout/stderr (fd 1/2) */
     if (fd == 1 || fd == 2) {
         struct process_fd *pfd = sys_get_fd((int)fd);
