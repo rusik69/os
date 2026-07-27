@@ -9,6 +9,22 @@
 #include "stdlib.h"
 #include "string.h"
 
+/* Reap any zombie children (including orphaned grandchildren that
+ * have been reparented to init).  This prevents accumulation of
+ * zombies that no other process is waiting for.
+ * Returns the number of children reaped, or 0 if none. */
+static int reap_children(void) {
+    int reaped = 0;
+    int status;
+    while (1) {
+        int pid = waitpid(-1, &status, WNOHANG);
+        if (pid <= 0) break;
+        printf("[init] Reaped child %d (status %d)\n", pid, status);
+        reaped++;
+    }
+    return reaped;
+}
+
 int main(int argc, char *argv[]) {
     (void)argc;
     (void)argv;
@@ -52,9 +68,16 @@ int main(int argc, char *argv[]) {
             exit(1);
         }
 
-        /* Parent — wait for children */
+        /* Parent — reap any zombie children before blocking on the shell */
+        reap_children();
+
+        /* Wait for the shell to exit */
         int status = 0;
         waitpid(pid, &status, 0);
+
+        /* Reap again after shell exits (collect any remaining orphans) */
+        reap_children();
+
         printf("[init] Shell exited (status %d), respawning...\n", status);
     }
 
