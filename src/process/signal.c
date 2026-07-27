@@ -203,7 +203,23 @@ int signal_send(uint32_t pid, int signum) {
 
     p->pending_signals |= (1ULL << signum);
 
-    /* Wake process if it's blocked in sigtimedwait for this signal */
+    /* Wake from interruptible sleep (PROCESS_BLOCKED, not suspended).
+     * A signal arriving while a process is sleeping (process_sleep_ticks,
+     * waitpid, etc.) should make it runnable again so it can either handle
+     * the signal or return -EINTR from the interrupted syscall. */
+    if (p->state == PROCESS_BLOCKED && !p->is_suspended) {
+        p->sleep_until = 0;
+        p->state = PROCESS_READY;
+        p->last_run_tick = timer_get_ticks();
+        spinlock_irqsave_release(&p->sig_lock, __sig_flags);
+        scheduler_add(p);
+        signalfd_notify(signum);
+        return 0;
+    }
+
+    /* Wake process if it's blocked in sigtimedwait for this signal.
+     * This is a sub-case of the general wakeup above — the general check
+     * already handles it — but kept for clarity and early-return order. */
     if (p->state == PROCESS_BLOCKED && (p->sigwait_mask & (1ULL << signum))) {
         p->sigwait_mask = 0;
         p->sleep_until = 0;
@@ -294,6 +310,24 @@ int signal_send_info(uint32_t pid, int signum, struct siginfo *info,
         struct siginfo validated = *info;
         signal_validate_siginfo(&validated, from_userspace);
         p->sig_info[signum] = validated;
+    }
+
+    /* Wake from interruptible sleep (PROCESS_BLOCKED, not suspended).
+     * A signal arriving while a process is sleeping should make it
+     * runnable again so it can handle the signal or return -EINTR. */
+    if (p->state == PROCESS_BLOCKED && !p->is_suspended) {
+        p->sleep_until = 0;
+        p->state = PROCESS_READY;
+        p->last_run_tick = timer_get_ticks();
+        spinlock_irqsave_release(&p->sig_lock, __sig_flags);
+        scheduler_add(p);
+        /* Notify signalfd listeners */
+        signalfd_notify(signum);
+        if (info) {
+            signalfd_notify_ext(signum, info->si_code, info->si_pid, info->si_uid,
+                               (uint64_t)(uintptr_t)info->si_addr, info->si_status);
+        }
+        return 0;
     }
 
     /* Wake process if it's blocked in sigtimedwait for this signal */
