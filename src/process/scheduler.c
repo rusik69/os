@@ -952,6 +952,35 @@ void schedule(void) {
         }
     }
 
+    /* ── Skip context switch if current == next ──────────────────────
+     * When the only runnable task is the one already executing, there is
+     * nothing to switch to.  Attempting context_switch with current==next
+     * corrupts the kernel stack: the timer ISR frame overwrites the
+     * initial context frame at stack_top-56, and context_switch would
+     * restore from that corrupted data, jumping to an invalid address. */
+    if (current == next) {
+        next->state = PROCESS_RUNNING;
+        next->on_cpu = 1;
+        next->ticks_remaining = slice_for_prio((int)next->priority);
+        next->last_run_tick = timer_get_ticks();
+        tss_set_rsp0(next->stack_top);
+        struct cpu_info *info_guard = get_cpu_info();
+        if (info_guard) info_guard->current_kernel_rsp = next->stack_top;
+        if (next->is_user && next->pml4) {
+            vmm_switch_pml4(next->pml4);
+        }
+        if (kpti_is_active() && next->is_user && next->kpti_state.user_cr3) {
+            kpti_trampoline_patch_cr3(0, next->kpti_state.kernel_cr3,
+                                      next->kpti_state.user_cr3);
+        }
+        nmi_watchdog_pet();
+        if (next->is_user) {
+            rseq_update_cpu_id(next);
+        }
+        __asm__ volatile("sti");
+        return;
+    }
+
     next->state = PROCESS_RUNNING;
     next->on_cpu = 1;        /* about to execute on this CPU */
     next->ticks_remaining = slice_for_prio((int)next->priority);
@@ -1036,7 +1065,31 @@ void schedule(void) {
          * by the caller (schedule()). */
         perf_branch_save_state();
 
+        /* Save FPU/SSE state of the outgoing process */
+        if (current && current->is_user) {
+            __asm__ volatile("fxsave (%0)" : : "r"(current->fpu_state) : "memory");
+            current->fpu_used = 1;
+        }
+
+        if (next->is_user && next->context_switches == 0)
+            kprintf("[SCHED] FIRST switch to user PID %d (entry=0x%lx rsp=0x%lx pml4 phys=0x%lx)\n",
+                    next->pid, next->user_entry, next->user_rsp,
+                    next->pml4 ? (uint64_t)VIRT_TO_PHYS((uint64_t)next->pml4) : 0);
         context_switch(current ? &current->context : NULL, next->context);
+
+        /* After context_switch returns we are running as 'next'.
+         * Increment its context-switch counter so the "FIRST switch"
+         * message only prints on the genuine first entry to ring 3. */
+        next->context_switches++;
+
+        /* Restore FPU/SSE state of the incoming process.
+         * After context_switch returns, we are running as the new process. */
+        {
+            struct process *now = process_get_current();
+            if (now && now->is_user && now->fpu_used) {
+                __asm__ volatile("fxrstor (%0)" : : "r"(now->fpu_state) : "memory");
+            }
+        }
 
         /* Restore LBR MSR state for the incoming task.  IRQs are still
          * disabled at this point (sti follows immediately after). */

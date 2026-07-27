@@ -626,7 +626,20 @@ static struct process_fd *sys_get_fd(int i) {
 static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
     if (!buf_addr && len > 0) return (uint64_t)(int64_t)-EFAULT;
 
-    if (fd == 0 && !syscall_is_user_process()) return 0;
+    if (fd == 0) {
+        if (!syscall_is_user_process()) return 0;
+        /* User process reading stdin — read from keyboard/serial console */
+        uint64_t total = 0;
+        while (total < len) {
+            char c = keyboard_getchar();
+            if (copy_to_user(buf_addr + total, &c, 1) < 0)
+                return total > 0 ? total : (uint64_t)(int64_t)-EFAULT;
+            total++;
+            if (c == '\n' || c == '\r')
+                break;
+        }
+        return total;
+    }
     if (fd >= 3 && fd < 700) {
         int i = (int)fd - 3;
         struct process_fd *pfd = sys_get_fd(i);
@@ -794,6 +807,12 @@ static uint64_t sys_write(uint64_t fd, uint64_t buf_addr, uint64_t len) {
     if (!buf_addr && len > 0) return (uint64_t)(int64_t)-EFAULT;
 
     if (fd == 1 || fd == 2) {
+        {
+            struct process *dbg = process_get_current();
+            if (dbg && len > 0 && len < 256)
+                kprintf("[SYS_WRITE] PID %d fd=%d len=%d buf=0x%lx\n",
+                        dbg->pid, (int)fd, (int)len, buf_addr);
+        }
         /* Copy from user-space to avoid SMAP fault */
         uint8_t *kbuf = kmalloc(len > 4096 ? 4096 : (len > 0 ? len : 1));
         if (!kbuf) return (uint64_t)(int64_t)-ENOMEM;
@@ -1043,6 +1062,8 @@ static uint64_t sys_open(uint64_t path_addr, uint64_t flags, uint64_t mode) {
  * Return: 0 on success, or (uint64_t)-1 on error.
  */
 static uint64_t sys_close(uint64_t fd) {
+    /* stdin/stdout/stderr — cannot be closed */
+    if (fd < 3) return 0;
     /* inotify close (fd range 720-727) */
     if (fd >= INOTIFY_FD_BASE && fd < INOTIFY_FD_BASE + INOTIFY_INSTANCES) {
         int ret = inotify_close((int)fd);
@@ -1217,7 +1238,47 @@ static uint64_t sys_raw_send(uint64_t buf_addr, uint64_t len) {
 
 /* ── FD-based read/write (SYS_FD_READ=217, SYS_FD_WRITE=218) ──── */
 static uint64_t sys_fd_read(uint64_t fd, uint64_t buf_addr, uint64_t count) {
-    int i = (int)fd - 3;
+    /* Handle stdin (fd 0) — read from console input */
+    if (fd == 0) {
+        struct process_fd *pfd = sys_get_fd(0);
+        if (pfd && pfd->used) {
+            /* dup2'd — read from the file */
+            uint64_t fsize = 0;
+            struct vfs_stat st;
+            if (vfs_stat(pfd->path, &st) < 0) return (uint64_t)(int64_t)-EIO;
+            fsize = st.size;
+            if (pfd->offset >= fsize) return 0;
+            uint64_t avail = fsize - pfd->offset;
+            uint64_t to_read = count < avail ? count : avail;
+            if (to_read > UINT32_MAX) to_read = UINT32_MAX;
+            uint64_t need_end = pfd->offset + to_read;
+            if (need_end > fsize) need_end = fsize;
+            if (need_end > UINT32_MAX) need_end = UINT32_MAX;
+            uint8_t *tmp = kmalloc(need_end);
+            if (!tmp) return (uint64_t)(int64_t)-ENOMEM;
+            uint32_t nread = 0;
+            vfs_read(pfd->path, tmp, (uint32_t)need_end, &nread);
+            if (copy_to_user(buf_addr, tmp + pfd->offset, to_read) < 0) {
+                kfree(tmp);
+                return (uint64_t)(int64_t)-EFAULT;
+            }
+            kfree(tmp);
+            pfd->offset += to_read;
+            return (uint64_t)to_read;
+        }
+        /* No dup2 — read from keyboard/serial console */
+        uint64_t total = 0;
+        while (total < count) {
+            char c = keyboard_getchar();
+            if (copy_to_user(buf_addr + total, &c, 1) < 0)
+                return total > 0 ? total : (uint64_t)(int64_t)-EFAULT;
+            total++;
+            if (c == '\n' || c == '\r')
+                break;
+        }
+        return total;
+    }
+    int i = (int)fd < 3 ? (int)fd : (int)fd - 3;
     struct process_fd *pfd = sys_get_fd(i);
     if (!pfd || !pfd->used) return (uint64_t)(int64_t)-EBADF;
     uint64_t fsize = 0;
@@ -1247,7 +1308,45 @@ static uint64_t sys_fd_read(uint64_t fd, uint64_t buf_addr, uint64_t count) {
 }
 
 static uint64_t sys_fd_write(uint64_t fd, uint64_t buf_addr, uint64_t count) {
-    int i = (int)fd - 3;
+    /* Handle stdout/stderr (fd 1/2) */
+    if (fd == 1 || fd == 2) {
+        struct process_fd *pfd = sys_get_fd((int)fd);
+        if (pfd && pfd->used) {
+            /* dup2'd — write to the file */
+            if (count > UINT32_MAX) count = UINT32_MAX;
+            int r;
+            if (pfd->open_flags & O_APPEND) {
+                r = vfs_append(pfd->path, (const void *)(uintptr_t)buf_addr, (uint32_t)count);
+                if (r == 0) {
+                    struct vfs_stat st;
+                    if (vfs_stat(pfd->path, &st) == 0)
+                        pfd->offset = st.size;
+                }
+            } else {
+                r = vfs_write(pfd->path, (const void *)(uintptr_t)buf_addr, (uint32_t)count);
+                if (r == 0) pfd->offset += count;
+            }
+            return (r == 0) ? count : (uint64_t)(int64_t)r;
+        }
+        /* Default stdout/stderr — write to console */
+        if (!buf_addr && count > 0) return (uint64_t)(int64_t)-EFAULT;
+        uint8_t *kbuf = kmalloc(count > 4096 ? 4096 : (count > 0 ? count : 1));
+        if (!kbuf) return (uint64_t)(int64_t)-ENOMEM;
+        size_t to_copy = count > 4096 ? 4096 : count;
+        if (to_copy > 0) {
+            if (copy_from_user(kbuf, buf_addr, to_copy) < 0) {
+                kfree(kbuf);
+                return (uint64_t)(int64_t)-EFAULT;
+            }
+            for (uint64_t i = 0; i < to_copy; i++) {
+                vga_putchar((char)kbuf[i]);
+                serial_putchar((char)kbuf[i]);
+            }
+        }
+        kfree(kbuf);
+        return count;
+    }
+    int i = (int)fd < 3 ? (int)fd : (int)fd - 3;
     struct process_fd *pfd = sys_get_fd(i);
     if (!pfd || !pfd->used) return (uint64_t)(int64_t)-EBADF;
     /* Clamp count to UINT32_MAX to avoid uint32_t truncation in vfs_write/vfs_append */
@@ -3113,20 +3212,27 @@ static uint64_t sys_dup(uint64_t old_fd) {
 static uint64_t sys_dup2(uint64_t old_fd, uint64_t new_fd) {
     struct process *proc = process_get_current();
     if (!proc) return (uint64_t)(int64_t)-EPERM;
-    if (old_fd >= PROCESS_FD_MAX || !proc->fd_table[old_fd].used)
-        return (uint64_t)(int64_t)-EBADF;
-    if (new_fd >= PROCESS_FD_MAX) return (uint64_t)(int64_t)-EBADF;
 
-    /* If new_fd is the same as old_fd, just return it */
-    if (old_fd == new_fd) return new_fd;
+    /* Convert fd numbers to table indices.
+     * fd 0/1/2 are stored at fd_table[0/1/2], fd >= 3 at fd_table[fd-3]. */
+    int old_idx = (int)old_fd - 3;
+    int new_idx = (int)new_fd < 3 ? (int)new_fd : (int)new_fd - 3;
+
+    if (old_idx < 0 || old_idx >= PROCESS_FD_MAX || !proc->fd_table[old_idx].used)
+        return (uint64_t)(int64_t)-EBADF;
+    if (new_idx < 0 || new_idx >= PROCESS_FD_MAX)
+        return (uint64_t)(int64_t)-EBADF;
+
+    /* If both map to the same table slot, nothing to do */
+    if (old_idx == new_idx) return new_fd;
 
     /* Close new_fd if open */
-    if (proc->fd_table[new_fd].used) {
-        memset(&proc->fd_table[new_fd], 0, sizeof(struct process_fd));
+    if (proc->fd_table[new_idx].used) {
+        memset(&proc->fd_table[new_idx], 0, sizeof(struct process_fd));
     }
 
-    proc->fd_table[new_fd] = proc->fd_table[old_fd];
-    proc->fd_table[new_fd].offset = proc->fd_table[old_fd].offset;
+    proc->fd_table[new_idx] = proc->fd_table[old_idx];
+    proc->fd_table[new_idx].offset = proc->fd_table[old_idx].offset;
     return new_fd;
 }
 
@@ -10505,6 +10611,14 @@ static uint64_t sys_open_by_handle_at(uint64_t mount_fd, uint64_t handle,
 uint64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2,
                                     uint64_t a3, uint64_t a4, uint64_t a5);
 
+/* Debug: called from syscall_entry_full assembly to trace syscall entry */
+void kprintf_syscall_trace(uint64_t num, uint64_t unused) {
+    (void)unused;
+    struct process *p = process_get_current();
+    if (p)
+        kprintf("[SYSCALL] PID %d nr=%lu\n", p->pid, (unsigned long)num);
+}
+
 uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
                           uint64_t a3, uint64_t a4, uint64_t a5) {
     /* Seccomp check — must happen before any capability or argument validation */
@@ -11518,11 +11632,16 @@ void __init syscall_init(void) {
     uint64_t star = ((uint64_t)0x0008 << 32) | ((uint64_t)0x0010 << 48);
     wrmsr(MSR_STAR, star);
 
-    /* LSTAR: syscall entry point */
-    wrmsr(MSR_LSTAR, (uint64_t)syscall_entry);
-
-    /* SFMASK: mask IF (bit 9) during syscall execution */
-    wrmsr(MSR_SFMASK, (1U << 9));
+    /* LSTAR and SFMASK: only set if KPTI hasn't already configured them.
+     * kpti_init() runs earlier and sets LSTAR to the trampoline entry;
+     * overwriting it here would break KPTI for syscalls. */
+    extern int kpti_is_active(void);
+    if (!kpti_is_active()) {
+        /* LSTAR: syscall entry point */
+        wrmsr(MSR_LSTAR, (uint64_t)syscall_entry);
+        /* SFMASK: mask IF (bit 9) during syscall execution */
+        wrmsr(MSR_SFMASK, (1U << 9));
+    }
 }
 
 /* ── syscall_handle: Handle a syscall by number ─────────────────────── */

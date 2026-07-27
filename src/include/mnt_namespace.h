@@ -42,6 +42,9 @@ struct mnt_namespace *mnt_ns_get(struct mnt_namespace *ns);
 /* Return the current process's mount namespace, or the initial one. */
 struct mnt_namespace *mnt_ns_current(void);
 
+/* Return the root (initial) mount namespace singleton. */
+struct mnt_namespace *mnt_ns_root(void);
+
 /* Mount a filesystem in the given namespace.  Returns 0 on success. */
 int mnt_ns_mount(struct mnt_namespace *ns, const char *mountpoint,
                  struct vfs_ops *ops, void *priv, int flags);

@@ -14,9 +14,9 @@ _start:
     movq    (%rsp), %rdi        # arg1 = argc
     leaq    8(%rsp), %rsi       # arg2 = argv
 
-    # Align stack to 16 bytes (rsp+8 is 16-byte aligned after push of argc)
+    # Align stack to 16 bytes before call.  The call instruction pushes
+    # the 8-byte return address, so RSP % 16 == 8 at main entry (ABI).
     andq    $-16, %rsp
-    pushq   %rax                # push to misalign for call (ret will pop)
 
     call    main
 

@@ -34,8 +34,9 @@ int process_spawn_kernel(const char *path) {
     if (!buf) return -ENOMEM;
 
     uint32_t size = 0;
-    if (vfs_read(path, buf, ELF_MAX_SIZE, &size) < 0) {
-        kprintf("[spawn_kernel] Cannot read: %s\n", path);
+    int rc = vfs_read(path, buf, ELF_MAX_SIZE, &size);
+    if (rc < 0) {
+        kprintf("[spawn_kernel] Cannot read: %s (vfs_read returned %d)\n", path, rc);
         kfree(buf);
         return -ENOENT;
     }
@@ -129,8 +130,15 @@ int process_spawn_kernel(const char *path) {
                        buf + ph->p_offset + page_off, copy_sz);
             }
 
-            if (vmm_map_user_page(new_pml4, va, frame, flags) < 0) {
-                kprintf("[spawn_kernel] vmm_map_user_page failed\n");
+            int map_rc = vmm_map_user_page(new_pml4, va, frame, flags);
+            if (map_rc == -EEXIST) {
+                /* Page already mapped by a prior overlapping segment — normal for ELF */
+                pmm_free_frame(frame);
+                continue;
+            }
+            if (map_rc < 0) {
+                kprintf("[spawn_kernel] vmm_map_user_page failed: va=0x%lx frame=0x%lx flags=0x%lx rc=%d\n",
+                        va, frame, flags, map_rc);
                 pmm_free_frame(frame);
                 map_ok = 0; break;
             }
@@ -194,14 +202,11 @@ int process_spawn_kernel(const char *path) {
     strncpy(proc->exe_path, path, 255);
     proc->exe_path[255] = '\0';
 
-    /* Copy name if we allocated it separately */
+    /* Copy name if we allocated it separately.
+     * Don't kfree(proc->name) — it points to proc->proc_comm (not heap). */
     if (pname && pname != path) {
-        kfree((void *)(uintptr_t)proc->name);
         proc->name = pname;
     }
-
-    kprintf("[spawn_kernel] Created PID %d: %s (entry=0x%lx)\n",
-            proc->pid, path, (unsigned long)entry);
 
     return (int)proc->pid;
 }

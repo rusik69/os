@@ -95,7 +95,7 @@ void tss_set_rsp0(uint64_t rsp0) {
 
 /* ── IST stack management ────────────────────────────────────────── */
 
-static uint64_t ist_stack_phys[4]; /* physical base of IST stacks (index 0 unused) */
+static uint64_t ist_stack_phys[5]; /* physical base of IST stacks (index 0 unused) */
 
 void tss_set_ist(int index, uint64_t stack_top) {
     if (index < 1 || index > 7) return;
@@ -148,12 +148,33 @@ void __init ist_init(void) {
             (unsigned long long)kernel_tss.ist3,
             (unsigned long long)mce_phys);
 
+    /* ── Page Fault IST stack (2 pages = 8 KB) ──
+     *
+     * After SYSCALL, RSP points to the user stack (SYSCALL does not
+     * change RSP).  If a page fault fires, the CPU pushes the
+     * exception frame onto the current RSP.  With SMAP enabled the
+     * ring-0 push to a user page faults → double fault.  Giving the
+     * page fault handler its own IST stack ensures a safe kernel RSP
+     * regardless of what RSP was at the time of the fault.
+     */
+    uint64_t pf_phys = (uint64_t)(uintptr_t)pmm_alloc_frames(2);
+    if (!pf_phys) {
+        kprintf("[!!] IST: failed to allocate page-fault stack\n");
+        return;
+    }
+    kernel_tss.ist4 = (uint64_t)PHYS_TO_VIRT(pf_phys) + 2 * PAGE_SIZE;
+    ist_stack_phys[4] = pf_phys;
+    kprintf("[OK] IST4 (PF)  virt=0x%llx phys=0x%llx\n",
+            (unsigned long long)kernel_tss.ist4,
+            (unsigned long long)pf_phys);
+
     /* Patch IDT entries to use IST entries */
     idt_set_gate_ist(8, IST_INDEX_DF);   /* Double fault  → IST1 */
     idt_set_gate_ist(2, IST_INDEX_NMI);  /* NMI           → IST2 */
     idt_set_gate_ist(18, IST_INDEX_MCE); /* Machine Check → IST3 */
+    idt_set_gate_ist(14, IST_INDEX_PF);  /* Page fault    → IST4 */
 
-    kprintf("[OK] IST stacks configured for DF/NMI/MCE protection\n");
+    kprintf("[OK] IST stacks configured for DF/NMI/MCE/PF protection\n");
 }
 
 /* ── Stub: gdt_get_entry ─────────────────────────────── */

@@ -87,7 +87,10 @@ static void free_pid(uint32_t pid) {
  * Returns 0 on success, -1 on failure (all frames freed on error). */
 static int alloc_guarded_kernel_stack(struct process *proc) {
     uint64_t *phys = pmm_alloc_frames(KERNEL_STACK_TOTAL_PAGES);
-    if (unlikely(!phys)) return -ENOMEM;
+    if (unlikely(!phys)) {
+        kprintf("[alloc_kernel_stack] pmm_alloc_frames(%d) failed\n", KERNEL_STACK_TOTAL_PAGES);
+        return -ENOMEM;
+    }
 
     uint64_t guard_phys  = (uint64_t)phys;
     uint64_t stack_phys  = guard_phys + PAGE_SIZE;
@@ -95,8 +98,12 @@ static int alloc_guarded_kernel_stack(struct process *proc) {
     uint64_t stack_vma   = (uint64_t)PHYS_TO_VIRT(stack_phys);
 
     /* Call vmm_map_page for the guard VMA — this splits the 2MB huge page
-     * into 4KB PTEs for the region if needed.  Then unmap just the guard. */
-    if (vmm_map_page(guard_vma, guard_phys, VMM_FLAG_WRITE) < 0) {
+     * into 4KB PTEs for the region if needed.  Then unmap just the guard.
+     * -EEXIST is fine: the page was already present (identity-mapped),
+     * which means the huge page has been split successfully. */
+    int map_rc = vmm_map_page(guard_vma, guard_phys, VMM_FLAG_WRITE);
+    if (map_rc < 0 && map_rc != -EEXIST) {
+        kprintf("[alloc_kernel_stack] vmm_map_page(0x%lx, 0x%lx) failed rc=%d\n", guard_vma, guard_phys, map_rc);
         for (size_t i = 0; i < KERNEL_STACK_TOTAL_PAGES; i++)
             pmm_free_frame(guard_phys + i * PAGE_SIZE);
         return -EINVAL;
@@ -613,10 +620,14 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
     if (!proc) return NULL;
 
     /* Allocate kernel stack for syscall handling */
-    if (alloc_guarded_kernel_stack(proc) < 0) return NULL;
+    if (alloc_guarded_kernel_stack(proc) < 0) {
+        kprintf("[process_create_user] alloc_guarded_kernel_stack failed\n");
+        return NULL;
+    }
 
     proc->pid = alloc_pid();
     if (proc->pid == (uint32_t)-1) {
+        kprintf("[process_create_user] alloc_pid failed\n");
         free_guarded_kernel_stack(proc);
         return NULL;
     }
@@ -1010,11 +1021,10 @@ void process_exec_cred_security(uint32_t orig_euid, uint32_t orig_egid) {
  * Instead, the child begins execution in fork_child_entry().
  */
 int process_fork(void);
-extern void fork_child_trampoline(void); /* defined in switch.asm */
-
-static void fork_child_entry(void) {
-    process_exit_code(0);
-}
+extern void fork_child_trampoline(void);
+extern uint64_t syscall_user_rsp;
+extern uint64_t syscall_user_rip;
+extern uint64_t syscall_user_rflags;
 
 int process_fork(void) {
     struct process *parent = current_process;
@@ -1056,10 +1066,8 @@ int process_fork(void) {
     }
     child->parent_pid = parent->pid;
     child->is_suspended = 0;
-    /* Give the child its own unique stack canary — distinct from parent */
     child->stack_canary = prng_rand64();
 
-    /* Allocate fresh kernel stack BEFORE setting state to READY */
     if (alloc_guarded_kernel_stack(child) < 0) {
         free_pid(child->pid);
         child->state = PROCESS_UNUSED;
@@ -1068,19 +1076,12 @@ int process_fork(void) {
     }
     child->state = PROCESS_READY;
 
-    /* Apply system-wide bounding set on fork — child inherits
-     * parent's caps but must also respect the global mask. */
     sys_cap_bset_apply(child);
 
-    /* SCHED_FLAG_RESET_ON_FORK: if parent had this scheduling flag
-     * set, the child's effective capability set must be cleared so
-     * that elevated capabilities aren't accidentally inherited by
-     * unprivileged children (Linux-compatible security behavior). */
     if (parent->sched_flags & SCHED_FLAG_RESET_ON_FORK) {
         memset(child->cap_effective, 0, sizeof(child->cap_effective));
     }
 
-    /* Clone user address space if process has one */
     if (parent->pml4) {
         child->pml4 = vmm_clone_user_pml4(parent->pml4);
         if (!child->pml4) {
@@ -1090,16 +1091,21 @@ int process_fork(void) {
             __asm__ volatile("sti");
             return -EROFS;
         }
-        /* Flush parent TLB: COW marking made parent pages read-only in the page tables */
         vmm_switch_pml4(parent->pml4);
+        kpti_setup_process(child);
     }
 
-    /* Set up child kernel stack */
     uint64_t *sp = (uint64_t *)child->stack_top;
-    sp -= 7;
-    sp[0] = (uint64_t)fork_child_entry;  /* r15 = child entry point */
-    sp[1] = 0;  sp[2] = 0; sp[3] = 0; sp[4] = 0; sp[5] = 0;
-    sp[6] = (uint64_t)fork_child_trampoline;
+    sp -= 9;
+    sp[0] = 0;
+    sp[1] = 0;
+    sp[2] = 0;
+    sp[3] = 0;
+    sp[4] = 0;
+    sp[5] = 0;
+    sp[6] = syscall_user_rflags;
+    sp[7] = syscall_user_rip;
+    sp[8] = syscall_user_rsp;
     child->context = (struct cpu_context *)sp;
 
     if (scheduler_add(child) < 0) {

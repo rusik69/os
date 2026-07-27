@@ -28,6 +28,7 @@ global syscall_linux_entry
 global libc_syscall
 extern syscall_dispatch
 extern syscall_linux_dispatch
+extern kprintf_syscall_trace
 extern zero_kernel_stack_uapi
 
 ; KPTI trampoline constants (must match kpti.h)
@@ -275,6 +276,17 @@ syscall_entry_full:
     ; Switch to per-CPU process kernel stack
     mov     rsp, [gs:CPU_INFO_KERNEL_RSP_OFF]
 
+    ; Debug: trace syscall entry (rax = syscall number)
+    push    rax
+    push    rcx
+    push    r11
+    mov     rdi, rax
+    xor     esi, esi
+    call    kprintf_syscall_trace
+    pop     r11
+    pop     rcx
+    pop     rax
+
     ; Push saved state (same frame as syscall_entry)
     push    qword [rel syscall_user_rsp]       ; saved user RSP
     push    rcx                                ; saved user RIP
@@ -339,9 +351,9 @@ syscall_entry_full:
     pop     rcx             ; user RIP
     pop     rsp             ; user RSP
 
-    ; Jump to exit trampoline via RAX (exit tramp saves/restores RAX itself)
-    mov     rax, KPTI_TRAMP_VADDR + KPTI_OFF_EXIT
-    jmp     rax
+    ; Jump to exit trampoline via R10 (preserves RAX = syscall return value)
+    mov     r10, KPTI_TRAMP_VADDR + KPTI_OFF_EXIT
+    jmp     r10
 
 ; ============================================================================
 ; libc_syscall — C library syscall gateway
@@ -377,6 +389,7 @@ libc_syscall:
     jmp     syscall_dispatch
 
 section .bss
+global syscall_user_rsp
 syscall_user_rsp: resq 1
 
 section .note.GNU-stack noalloc noexec nowrite progbits

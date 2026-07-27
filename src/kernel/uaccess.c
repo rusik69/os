@@ -28,17 +28,40 @@ static inline int current_is_user(void) {
     return p && p->is_user;
 }
 
+/*
+ * Switch to user CR3 and back.  User PML4s contain kernel upper-half
+ * entries (copied from kernel_pml4), so kernel code keeps running.
+ * The caller must have interrupts disabled around the switch.
+ */
+static inline uint64_t switch_to_user_cr3(struct process *p) {
+    uint64_t old_cr3 = read_cr3();
+    uint64_t user_cr3 = VIRT_TO_PHYS((uint64_t)p->pml4);
+    if ((old_cr3 & PTE_ADDR_MASK) != user_cr3)
+        write_cr3(user_cr3);
+    return old_cr3;
+}
+
+static inline void restore_cr3(uint64_t old_cr3) {
+    uint64_t cur = read_cr3();
+    if ((cur & PTE_ADDR_MASK) != (old_cr3 & PTE_ADDR_MASK))
+        write_cr3(old_cr3);
+}
+
 int copy_from_user(void *dst, uint64_t __user src_user, size_t n) {
     if (n == 0) return 0;
     if (current_is_user()) {
         struct process *p = process_get_current();
         if (!p || !p->pml4 || !vmm_user_range_ok(p->pml4, src_user, n, 0))
             return -EFAULT;
+        uint64_t old_cr3;
+        __asm__ volatile("cli");
+        old_cr3 = switch_to_user_cr3(p);
         stac();
         memcpy(dst, (const void *)(uintptr_t)src_user, n);
         clac();
+        restore_cr3(old_cr3);
+        __asm__ volatile("sti");
     } else {
-        /* Kernel-mode caller (e.g. shell) — pointer is already kernel-mapped */
         memcpy(dst, (const void *)(uintptr_t)src_user, n);
     }
     return 0;
@@ -50,11 +73,15 @@ int copy_to_user(uint64_t __user dst_user, const void *src, size_t n) {
         struct process *p = process_get_current();
         if (!p || !p->pml4 || !vmm_user_range_ok(p->pml4, dst_user, n, 1))
             return -EFAULT;
+        uint64_t old_cr3;
+        __asm__ volatile("cli");
+        old_cr3 = switch_to_user_cr3(p);
         stac();
         memcpy((void *)(uintptr_t)dst_user, src, n);
         clac();
+        restore_cr3(old_cr3);
+        __asm__ volatile("sti");
     } else {
-        /* Kernel-mode caller — pointer is already kernel-mapped */
         memcpy((void *)(uintptr_t)dst_user, src, n);
     }
     return 0;
@@ -68,6 +95,9 @@ long strncpy_from_user(char *dst, uint64_t __user src_user, size_t max_len) {
         struct process *p = process_get_current();
         if (!p || !p->pml4 || !vmm_user_string_ok(p->pml4, src_user, max_len))
             return -EFAULT;
+        uint64_t old_cr3;
+        __asm__ volatile("cli");
+        old_cr3 = switch_to_user_cr3(p);
         stac();
         for (i = 0; i < max_len - 1; i++) {
             char c = ((volatile const char *)(uintptr_t)src_user)[i];
@@ -76,8 +106,9 @@ long strncpy_from_user(char *dst, uint64_t __user src_user, size_t max_len) {
         }
         dst[i] = '\0';
         clac();
+        restore_cr3(old_cr3);
+        __asm__ volatile("sti");
     } else {
-        /* Kernel-mode caller */
         for (i = 0; i < max_len - 1; i++) {
             char c = ((const char *)(uintptr_t)src_user)[i];
             dst[i] = c;
@@ -96,14 +127,21 @@ long strlen_user(uint64_t __user src_user, size_t max_len) {
         struct process *p = process_get_current();
         if (!p || !p->pml4 || !vmm_user_string_ok(p->pml4, src_user, max_len))
             return -EFAULT;
+        uint64_t old_cr3;
+        __asm__ volatile("cli");
+        old_cr3 = switch_to_user_cr3(p);
         stac();
         for (i = 0; i < max_len; i++) {
             if (((volatile const char *)(uintptr_t)src_user)[i] == '\0') {
                 clac();
+                restore_cr3(old_cr3);
+                __asm__ volatile("sti");
                 return (long)(i + 1);
             }
         }
         clac();
+        restore_cr3(old_cr3);
+        __asm__ volatile("sti");
     } else {
         for (i = 0; i < max_len; i++) {
             if (((const char *)(uintptr_t)src_user)[i] == '\0')
@@ -118,9 +156,14 @@ int get_user_byte(uint64_t __user addr, uint8_t *out) {
         struct process *p = process_get_current();
         if (!p || !p->pml4 || !vmm_user_range_ok(p->pml4, addr, 1, 0))
             return -EFAULT;
+        uint64_t old_cr3;
+        __asm__ volatile("cli");
+        old_cr3 = switch_to_user_cr3(p);
         stac();
         *out = *(volatile uint8_t *)(uintptr_t)addr;
         clac();
+        restore_cr3(old_cr3);
+        __asm__ volatile("sti");
     } else {
         *out = *(const uint8_t *)(uintptr_t)addr;
     }
@@ -132,9 +175,14 @@ int put_user_byte(uint64_t __user addr, uint8_t val) {
         struct process *p = process_get_current();
         if (!p || !p->pml4 || !vmm_user_range_ok(p->pml4, addr, 1, 1))
             return -EFAULT;
+        uint64_t old_cr3;
+        __asm__ volatile("cli");
+        old_cr3 = switch_to_user_cr3(p);
         stac();
         *(volatile uint8_t *)(uintptr_t)addr = val;
         clac();
+        restore_cr3(old_cr3);
+        __asm__ volatile("sti");
     } else {
         *(uint8_t *)(uintptr_t)addr = val;
     }
@@ -147,9 +195,14 @@ int memset_user(uint64_t __user dst_user, uint8_t val, size_t n) {
         struct process *p = process_get_current();
         if (!p || !p->pml4 || !vmm_user_range_ok(p->pml4, dst_user, n, 1))
             return -EFAULT;
+        uint64_t old_cr3;
+        __asm__ volatile("cli");
+        old_cr3 = switch_to_user_cr3(p);
         stac();
         memset((void *)(uintptr_t)dst_user, val, n);
         clac();
+        restore_cr3(old_cr3);
+        __asm__ volatile("sti");
     } else {
         memset((void *)(uintptr_t)dst_user, val, n);
     }

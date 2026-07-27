@@ -4,6 +4,8 @@
 #include "string.h"
 #include "export.h"
 #include "smp.h"
+#include "signal.h"
+#include "process.h"
 
 static struct idt_entry idt[256];
 static struct idt_pointer idt_ptr;
@@ -100,12 +102,66 @@ void isr_common_handler(struct interrupt_frame *frame) {
     }
 
     if (frame->int_no < 32) {
-        kprintf("\n*** EXCEPTION: %s (#%lu) ***\n", exception_names[frame->int_no], (unsigned long)frame->int_no);
+        int user_mode = (frame->cs & 3) == 3;
+
+        kprintf("\n*** EXCEPTION: %s (#%lu) %s ***\n",
+                exception_names[frame->int_no], (unsigned long)frame->int_no,
+                user_mode ? "[user]" : "[kernel]");
         kprintf("Error code: 0x%lx\n", (unsigned long)frame->error_code);
-        kprintf("RIP: 0x%lx  RSP: 0x%lx\n", (unsigned long)frame->rip, (unsigned long)frame->rsp);
+        kprintf("RIP: 0x%lx  RSP: 0x%lx  CS: 0x%lx\n",
+                (unsigned long)frame->rip, (unsigned long)frame->rsp,
+                (unsigned long)frame->cs);
         kprintf("RAX: 0x%lx  RBX: 0x%lx  RCX: 0x%lx  RDX: 0x%lx\n",
                 (unsigned long)frame->rax, (unsigned long)frame->rbx,
                 (unsigned long)frame->rcx, (unsigned long)frame->rdx);
+
+        if (user_mode) {
+            /* User-mode exception: deliver appropriate signal and kill the process */
+            struct process *proc = process_get_current();
+            int sig = SIGILL;
+            int sig_code = 1; /* ILL_ILLOPC */
+
+            switch (frame->int_no) {
+            case 6:  sig = SIGILL;  sig_code = 1; break; /* #UD  ILL_ILLOPC */
+            case 0:  sig = SIGFPE;  sig_code = 1; break; /* #DE  FPE_INTDIV */
+            case 5:  sig = SIGSEGV; sig_code = 1; break; /* #BR  SEGV_MAPERR */
+            case 13: sig = SIGSEGV; sig_code = 2; break; /* #GP  SEGV_ACCERR */
+            case 16: sig = SIGFPE;  sig_code = 2; break; /* #MF  FPE_FLTINV */
+            case 19: sig = SIGFPE;  sig_code = 4; break; /* #XM  FPE_FLTUNK */
+            case 17: sig = SIGBUS;  sig_code = 1; break; /* #AC  BUS_ADRALN */
+            default: sig = SIGSEGV; sig_code = 1; break;
+            }
+
+            if (proc) {
+                kprintf("Killing %s (pid=%u) with %s at RIP=0x%lx\n",
+                        proc->name ? proc->name : "?",
+                        (unsigned int)proc->pid,
+                        sig == SIGILL ? "SIGILL" :
+                        sig == SIGSEGV ? "SIGSEGV" :
+                        sig == SIGFPE ? "SIGFPE" :
+                        sig == SIGBUS ? "SIGBUS" : "SIG?",
+                        (unsigned long)frame->rip);
+
+                struct siginfo sinfo;
+                memset(&sinfo, 0, sizeof(sinfo));
+                sinfo.si_signo = sig;
+                sinfo.si_code  = sig_code;
+                sinfo.si_addr  = (void *)(uintptr_t)frame->rip;
+                sinfo.si_pid   = proc->pid;
+                sinfo.si_uid   = proc->uid;
+                signal_send_info(proc->pid, sig, &sinfo, 0);
+            } else {
+                kprintf("No current process — halting CPU\n");
+                cli();
+                for (;;) hlt();
+            }
+
+            /* Kill the process: exit code = 128 + signal number */
+            process_exit_code(128 + sig);
+            return;
+        }
+
+        /* Kernel-mode exception: nothing we can do — halt */
         cli();
         for (;;) hlt();
     }

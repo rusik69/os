@@ -144,7 +144,9 @@ static uint64_t *get_or_create_table(uint64_t *table, int index, uint64_t flags)
         if (unlikely(!frame)) return ERR_PTR(-ENOMEM);
         uint64_t *virt = (uint64_t *)PHYS_TO_VIRT(frame);
         memset(virt, 0, PAGE_SIZE);
-        table[index] = frame | flags | PTE_PRESENT | PTE_WRITE;
+        /* Strip NX from intermediate entries — it must only appear on leaf PTEs */
+        table[index] = (frame | (flags & ~(uint64_t)PTE_NX)
+                        | PTE_PRESENT | PTE_WRITE);
         return virt;
     }
     /* If the entry is a 2MB huge page, split it into 512 × 4KB entries. */
@@ -575,7 +577,13 @@ static uint64_t *get_or_create_table_in(uint64_t *table, int index, uint64_t fla
         if (unlikely(!frame)) return ERR_PTR(-ENOMEM);
         uint64_t *virt = (uint64_t *)PHYS_TO_VIRT(frame);
         memset(virt, 0, PAGE_SIZE);
-        table[index] = frame | flags | PTE_PRESENT | PTE_WRITE | PTE_USER;
+        /* Intermediate page directory entries must NOT carry the NX bit.
+         * On x86-64, NX at any level in the page table hierarchy cascades
+         * to all entries below it.  The NX permission should only appear
+         * on leaf PTEs; intermediate entries are just pointers to the next
+         * level and should not impose additional access restrictions. */
+        table[index] = (frame | (flags & ~(uint64_t)PTE_NX)
+                        | PTE_PRESENT | PTE_WRITE | PTE_USER);
     }
     return (uint64_t *)PHYS_TO_VIRT(table[index] & PTE_ADDR_MASK);
 }
@@ -729,14 +737,19 @@ int vmm_user_string_ok(uint64_t *pml4, uint64_t addr, uint64_t max_len) {
     for (i = 0; i < max_len; i++) {
         uint64_t cur = addr + i;
         if (cur < addr || cur >= USER_VADDR_MAX) return 0;
-        /* Check + access atomically: disable interrupts to prevent the page
-         * from being unmapped by another process between validation and read. */
+        /* Walk user page tables to get physical address, then access
+         * via the kernel's direct mapping (PHYS_TO_VIRT) so we don't
+         * fault on user addresses that aren't mapped in kernel CR3. */
         __asm__ volatile("cli");
-        if (!vmm_user_range_ok(pml4, cur, 1, 0)) {
+        uint64_t pde = 0, pte = 0;
+        uint64_t *pt = vmm_walk_to_pt(pml4, cur, &pde, &pte);
+        if (IS_ERR(pt) || !(pte & PTE_PRESENT)) {
             __asm__ volatile("sti");
             return 0;
         }
-        if (*(const volatile char *)cur == '\0') {
+        uint64_t phys = pte & PTE_ADDR_MASK;
+        uint64_t kern = (uint64_t)PHYS_TO_VIRT(phys) | (cur & 0xFFF);
+        if (*(const volatile char *)kern == '\0') {
             __asm__ volatile("sti");
             return 1;
         }

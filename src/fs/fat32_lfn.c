@@ -815,8 +815,8 @@ static int fat32_lfn_selftest(void)
 
     /* Test: checksum */
     {
-        char test_name[8] = "HELLO   ";
-        char test_ext[3] = "TXT";
+        char test_name[9] = "HELLO   ";
+        char test_ext[4] = "TXT";
         uint8_t ck = vfat_checksum(test_name, test_ext);
         if (ck == 0) return -1; /* checksum must be non-zero for non-empty */
     }
@@ -863,8 +863,8 @@ static int fat32_lfn_selftest(void)
 
     /* Test: delete by checksum */
     {
-        char test_n8[8] = "HELLOWOR";
-        char test_n3[3] = "TXT";
+        char test_n8[9] = "HELLOWOR";
+        char test_n3[4] = "TXT";
         uint8_t ck = vfat_checksum(test_n8, test_n3);
 
         /* Build a sector with an LFN entry followed by an 8.3 entry */

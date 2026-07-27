@@ -675,7 +675,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* Kernel symbol export table — for module symbol resolution */
     ksym_init();
 
-    /* Initcall system — run all registered initcalls in order */
+    /* Initcall system — run all registered initcalls in order.
+     * Enable interrupts first so udelay/timer_get_ticks() work. */
+    sti();
     do_initcalls();
 
     /* TPM RNG seeding — feed TPM hardware entropy into kernel RNG */
@@ -890,14 +892,20 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* FAT32 — try to mount before fs_init so we don't format over it */
 #ifndef TEST_MODE
     if (ahci_is_present()) {
-        if (fat32_mount(FAT32_DISK_AHCI, 0) == 0) {
+        int fat_rc = fat32_mount(FAT32_DISK_AHCI, 0);
+        if (fat_rc == 0) {
             vfs_mount("/mnt", &fat32_vfs_ops, NULL);
             kprintf("[OK] FAT32 mounted on /mnt\n");
+        } else {
+            kprintf("[!!] FAT32 mount (AHCI) failed: %d\n", fat_rc);
         }
     } else if (ata_is_present()) {
-        if (fat32_mount(FAT32_DISK_ATA, 0) == 0) {
+        int fat_rc = fat32_mount(FAT32_DISK_ATA, 0);
+        if (fat_rc == 0) {
             vfs_mount("/mnt", &fat32_vfs_ops, NULL);
             kprintf("[OK] FAT32 mounted on /mnt\n");
+        } else {
+            kprintf("[!!] FAT32 mount failed: %d\n", fat_rc);
         }
     }
 #else
@@ -1194,7 +1202,7 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* Check for init= cmdline parameter first */
     const char *cmdline_init_path = cmdline_get("init");
-    const char *init_path = "/init";
+    const char *init_path = "/mnt/sbin/init";
 
     if (cmdline_init_path && *cmdline_init_path) {
         init_path = cmdline_init_path;

@@ -173,7 +173,8 @@ static int cmd_which(char **argv) {
     /* Check built-ins */
     static const char *builtins[] = {
         "cd", "pwd", "exit", "help", "echo", "clear",
-        "exec", "export", "which", "ps", 0
+        "exec", "export", "which", "ps", "free", "uptime",
+        "uname", 0
     };
     for (int i = 0; builtins[i]; i++) {
         if (strcmp(name, builtins[i]) == 0) {
@@ -227,16 +228,14 @@ static int cmd_ps(void) {
         printf("ps: no entries\n");
         return 1;
     }
-    printf("PID   NAME\n");
+    printf("  PID NAME\n");
     int pos = 0;
     while (pos < n) {
         struct dirent *d = (struct dirent *)(buf + pos);
-        /* Only show numeric entries (processes) */
         int is_num = 1;
         char *p = d->d_name;
         while (*p) { if (*p < '0' || *p > '9') { is_num = 0; break; } p++; }
         if (is_num) {
-            /* Try to read the process name from /proc/<pid>/cmdline or /proc/<pid>/stat */
             char procpath[64];
             snprintf(procpath, 64, "/proc/%s/cmdline", d->d_name);
             int pfd = open(procpath, O_RDONLY, 0);
@@ -244,12 +243,15 @@ static int cmd_ps(void) {
                 char cmdline[256];
                 int r = read(pfd, cmdline, 255);
                 close(pfd);
-                cmdline[r] = '\0';
-                /* Replace null bytes with spaces */
-                for (int i = 0; i < r; i++) if (cmdline[i] == '\0') cmdline[i] = ' ';
-                printf("%-5s %s\n", d->d_name, cmdline);
+                if (r > 0) {
+                    cmdline[r] = '\0';
+                    for (int i = 0; i < r; i++) if (cmdline[i] == '\0') cmdline[i] = ' ';
+                    printf("%5s %s\n", d->d_name, cmdline);
+                } else {
+                    printf("%5s\n", d->d_name);
+                }
             } else {
-                printf("%-5s\n", d->d_name);
+                printf("%5s\n", d->d_name);
             }
         }
         pos += d->d_reclen;
@@ -257,9 +259,76 @@ static int cmd_ps(void) {
     return 0;
 }
 
+/* ── Built-in: free (read /proc/meminfo) ──────────────────────── */
+static int cmd_free(void) {
+    int fd = open("/proc/meminfo", O_RDONLY, 0);
+    if (fd < 0) {
+        printf("free: cannot open /proc/meminfo\n");
+        return 1;
+    }
+    char buf[1024];
+    int r = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (r > 0) {
+        buf[r] = '\0';
+        printf("%s", buf);
+    }
+    return 0;
+}
+
+/* ── Built-in: uptime ─────────────────────────────────────────── */
+static int cmd_uptime(void) {
+    int fd = open("/proc/uptime", O_RDONLY, 0);
+    if (fd < 0) {
+        printf("uptime: cannot open /proc/uptime\n");
+        return 1;
+    }
+    char buf[128];
+    int r = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (r > 0) {
+        buf[r] = '\0';
+        printf("%s", buf);
+    }
+    return 0;
+}
+
+/* ── Built-in: uname ──────────────────────────────────────────── */
+static int cmd_uname(int argc, char **argv) {
+    struct utsname u;
+    if (uname(&u) < 0) {
+        printf("uname: failed\n");
+        return 1;
+    }
+    if (argc < 2 || argv[1][0] != '-') {
+        printf("%s\n", u.sysname);
+        return 0;
+    }
+    int show_all = 0;
+    const char *a = argv[1];
+    for (int i = 1; a[i]; i++) {
+        if (a[i] == 'a') show_all = 1;
+    }
+    if (show_all) {
+        printf("%s %s %s %s %s\n", u.sysname, u.nodename, u.release, u.version, u.machine);
+    } else {
+        for (int i = 1; a[i]; i++) {
+            switch (a[i]) {
+            case 's': printf("%s ", u.sysname); break;
+            case 'n': printf("%s ", u.nodename); break;
+            case 'r': printf("%s ", u.release); break;
+            case 'v': printf("%s ", u.version); break;
+            case 'm': printf("%s ", u.machine); break;
+            }
+        }
+        printf("\n");
+    }
+    return 0;
+}
+
 /* ── Built-in: help ───────────────────────────────────────────── */
 static int cmd_help(void) {
-    printf("BusyBox-style shell built-in commands:\n");
+    printf("Shell built-in commands:\n");
     printf("  cd <path>        — Change directory\n");
     printf("  pwd              — Print working directory\n");
     printf("  exit [code]      — Exit shell\n");
@@ -270,7 +339,10 @@ static int cmd_help(void) {
     printf("  export VAR=VALUE — Set environment variable\n");
     printf("  which <cmd>      — Show path to command\n");
     printf("  ps               — List processes\n");
-    printf("  For unknown commands, fork+execve in PATH (/bin:/usr/bin)\n");
+    printf("  free             — Show memory usage\n");
+    printf("  uptime           — Show system uptime\n");
+    printf("  uname [-snrvma]  — Show system information\n");
+    printf("  For unknown commands, fork+execve in PATH (/bin)\n");
     return 0;
 }
 
@@ -356,6 +428,18 @@ static int run_builtin(int argc, char **argv) {
         return cmd_ps();
     }
 
+    if (strcmp(cmd, "free") == 0) {
+        return cmd_free();
+    }
+
+    if (strcmp(cmd, "uptime") == 0) {
+        return cmd_uptime();
+    }
+
+    if (strcmp(cmd, "uname") == 0) {
+        return cmd_uname(argc, argv);
+    }
+
     /* Not a built-in */
     return -1;
 }
@@ -393,7 +477,7 @@ int main(int argc, char *argv[]) {
     char line[MAX_LINE];
 
     while (1) {
-        write(1, "sh$ ", 4);
+        write(1, "\nsh$ ", 5);
         int n = sh_getline(line, MAX_LINE);
         if (n <= 0) {
             write(1, "\n", 1);

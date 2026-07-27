@@ -47,6 +47,11 @@ void tss_set_rsp0(uint64_t rsp0);
 #define IST_INDEX_DF  1  /* Double fault  (vector 8)  */
 #define IST_INDEX_NMI 2  /* NMI           (vector 2)  */
 #define IST_INDEX_MCE 3  /* Machine Check (vector 18) */
+#define IST_INDEX_PF  4  /* Page fault    (vector 14) — needed for SMAP:
+                          * after SYSCALL RSP points to user stack; if a
+                          * page fault fires the CPU pushes the exception
+                          * frame onto that user page, SMAP blocks the
+                          * ring-0 write and we get a double fault. */
 
 /* Set an IST stack pointer in the TSS */
 void tss_set_ist(int index, uint64_t stack_top);

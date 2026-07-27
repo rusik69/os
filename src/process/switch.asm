@@ -1,6 +1,8 @@
 bits 64
 section .text
 
+extern kpti_user_entry_trace
+
 ; void context_switch(struct cpu_context **old, struct cpu_context *new_ctx)
 ; rdi = &old->context (pointer to pointer), may be NULL (e.g. AP first switch)
 ; rsi = new->context
@@ -71,6 +73,15 @@ process_entry_trampoline:
 ; ──────────────────────────────────────────────────────────────────
 global user_entry_trampoline
 user_entry_trampoline:
+    ; Debug: trace entry into ring 3 (r15=entry, r14=user_rsp)
+    push r15
+    push r14
+    mov rdi, r15          ; arg1 = entry point
+    mov rsi, r14          ; arg2 = user RSP
+    call kpti_user_entry_trace
+    pop r14
+    pop r15
+
     ; Zero general-purpose registers to avoid leaking kernel data
     xor rax, rax
     xor rbx, rbx
@@ -101,17 +112,32 @@ user_entry_trampoline:
 
 ; ──────────────────────────────────────────────────────────────────
 ; Fork child trampoline.
-; context_switch returns here with:
-;   r15 = fork child entry function
-; The child starts executing the entry function.
+; Called after context_switch to start a forked process.
+; context_switch already popped the 6 callee-saved registers
+; (r15, r14, r13, r12, rbx, rbp), so RSP now points at user RFLAGS.
+; Stack layout:
+;   [user RFLAGS]   → pop into r11  (for sysret)
+;   [user RIP]       → pop into rcx  (for sysret)
+;   [user RSP]       → pop into rsp  (for sysret)
+;
+; If KPTI is active, we must switch to the user page table before
+; returning to userspace, just like the KPTI syscall exit trampoline.
 ; ──────────────────────────────────────────────────────────────────
+extern kpti_active_flag
 global fork_child_trampoline
 fork_child_trampoline:
-    xor rax, rax           ; fork return value = 0
-    sti
-    call r15
-    cli
-    hlt
+    xor rax, rax           ; fork return value = 0 (child)
+    pop r11                ; user RFLAGS
+    pop rcx                ; user RIP
+    pop rsp                ; user RSP
+    cmp qword [rel kpti_active_flag], 0
+    je .sysret
+    ; Load user CR3 from per-CPU KPTI trampoline page
+    mov r15, 0x00007FFFFFFE0108  ; CPU 0: KPTI_TRAMP_VADDR + KPTI_OFF_CR3_USER
+    mov r15, [r15]
+    mov cr3, r15
+.sysret:
+    o64 sysret
 
 ; ──────────────────────────────────────────────────────────────────
 ; Clone child trampoline.

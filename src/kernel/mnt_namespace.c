@@ -264,6 +264,8 @@ EXPORT_SYMBOL(mnt_ns_mount);
 EXPORT_SYMBOL(mnt_ns_resolve);
 EXPORT_SYMBOL(mnt_ns_list_mounts);
 
+struct mnt_namespace *mnt_ns_root(void) { return root_ns; }
+
 /* ── Stub: mnt_ns_create ─────────────────────────────── */
 static int mnt_ns_create(void *parent)
 {

@@ -1146,8 +1146,9 @@ run: $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
 	qemu-system-x86_64 -cpu max,-x2apic -smp 2 -kernel $(BUILDDIR)/kernel.bin -m 256M -serial stdio -vga std \
 		-display cocoa -k en-us \
 		-drive file=$(BUILDDIR)/disk.img,format=raw,if=ide \
-		-netdev user,id=net0 -device e1000,netdev=net0 ; \
-	stty sane
+		-netdev user,id=net0 -device e1000,netdev=net0 \
+		-no-reboot ; \
+	if [ -t 0 ]; then stty sane; fi
 
 run-virtio: $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
 	qemu-system-x86_64 -cpu max,-x2apic -smp 2 -kernel $(BUILDDIR)/kernel.bin -m 256M -serial stdio -vga std \

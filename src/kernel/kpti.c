@@ -15,9 +15,11 @@
  */
 #include "kpti_trampoline_bin.h"
 /* Provides:
- *   unsigned char kpti_trampoline_bin[];
- *   unsigned int kpti_trampoline_bin_len;
+ *   unsigned char build_kpti_trampoline_bin[];
+ *   unsigned int build_kpti_trampoline_bin_len;
  */
+#define kpti_trampoline_bin      build_kpti_trampoline_bin
+#define kpti_trampoline_bin_len  build_kpti_trampoline_bin_len
 
 /* ── Trampoline page per-CPU data accessors ───────────────────────
  * The trampoline page is at KPTI_TRAMPOLINE_VADDR, mapped in both
@@ -144,8 +146,12 @@ int kpti_setup_process(struct process *proc) {
     uint64_t *user_pml4 = (uint64_t *)PHYS_TO_VIRT(user_frame);
     memset(user_pml4, 0, KPTI_PAGE_SIZE);
 
-    /* Copy user-space PML4 entries (0..255) — the user half */
-    memcpy(user_pml4, kernel_pml4, 256 * sizeof(uint64_t));
+    /* Copy user-space PML4 entries (0..255) — the user half.
+     * Use proc->pml4 (not kernel_pml4) because the process's PML4
+     * contains the user mappings (ELF segments, stack, etc.) that were
+     * added by process_spawn_kernel after vmm_create_user_pml4().
+     * kernel_pml4 entries 0..255 lack those mappings. */
+    memcpy(user_pml4, proc->pml4, 256 * sizeof(uint64_t));
 
     /* 2. Build trampoline page table chain in user PML4.
      *    Need: PML4[511] → PDPT[511] → PD[511] → PT[0] → trampoline phys
@@ -204,6 +210,52 @@ int kpti_setup_process(struct process *proc) {
     /* Map the trampoline page: supervisor-only, global, executable */
     pt[pt_idx] = trampoline_phys | KPTI_PTE_PRESENT | KPTI_PTE_GLOBAL;
     pt[pt_idx] &= ~KPTI_PTE_USER;  /* clear user bit — supervisor-only */
+
+    /* Also map the trampoline in proc->pml4.
+     * The scheduler sets CR3 = proc->pml4 before iretq to userspace.
+     * When the user process executes SYSCALL, the CPU jumps to LSTAR
+     * (the trampoline) using the current CR3 = proc->pml4.  If the
+     * trampoline page is not present there, the instruction fetch
+     * page-faults and the process never enters the kernel. */
+    {
+        uint64_t *kpml4 = proc->pml4;
+
+        if (!(kpml4[pml4_idx] & KPTI_PTE_PRESENT)) {
+            uint64_t kpdpt_phys = pmm_alloc_frame();
+            if (kpdpt_phys) {
+                memset((void *)PHYS_TO_VIRT(kpdpt_phys), 0, KPTI_PAGE_SIZE);
+                kpml4[pml4_idx] = kpdpt_phys | KPTI_PTE_PRESENT | KPTI_PTE_WRITE;
+            }
+        }
+        if (kpml4[pml4_idx] & KPTI_PTE_PRESENT) {
+            uint64_t *kpdpt = (uint64_t *)PHYS_TO_VIRT(kpml4[pml4_idx] & KPTI_PTE_ADDR_MASK);
+            if (!(kpdpt[pdpt_idx] & KPTI_PTE_PRESENT)) {
+                uint64_t kpd_phys = pmm_alloc_frame();
+                if (kpd_phys) {
+                    memset((void *)PHYS_TO_VIRT(kpd_phys), 0, KPTI_PAGE_SIZE);
+                    kpdpt[pdpt_idx] = kpd_phys | KPTI_PTE_PRESENT | KPTI_PTE_WRITE;
+                }
+            }
+            if (kpdpt[pdpt_idx] & KPTI_PTE_PRESENT) {
+                uint64_t *kpd = (uint64_t *)PHYS_TO_VIRT(kpdpt[pdpt_idx] & KPTI_PTE_ADDR_MASK);
+                if (!(kpd[pd_idx] & KPTI_PTE_PRESENT)) {
+                    uint64_t kpt_phys = pmm_alloc_frame();
+                    if (kpt_phys) {
+                        memset((void *)PHYS_TO_VIRT(kpt_phys), 0, KPTI_PAGE_SIZE);
+                        kpd[pd_idx] = kpt_phys | KPTI_PTE_PRESENT | KPTI_PTE_WRITE;
+                    }
+                }
+                if (kpd[pd_idx] & KPTI_PTE_PRESENT) {
+                    uint64_t *kpt = (uint64_t *)PHYS_TO_VIRT(kpd[pd_idx] & KPTI_PTE_ADDR_MASK);
+                    if (!(kpt[pt_idx] & KPTI_PTE_PRESENT)) {
+                        kpt[pt_idx] = trampoline_phys | KPTI_PTE_PRESENT |
+                                      KPTI_PTE_WRITE | KPTI_PTE_GLOBAL;
+                        /* Supervisor-only: no USER bit */
+                    }
+                }
+            }
+        }
+    }
 
     /* 3. Fill KPTI state */
     proc->kpti_state.kernel_pml4 = kernel_pml4;
@@ -285,6 +337,11 @@ void kpti_trampoline_patch_cr3(int cpu, uint64_t kernel_cr3, uint64_t user_cr3) 
     if (old_user_cr3 != user_cr3) {
         invpcid_flush_pcid(KPTI_PCID_USER);
     }
+}
+
+/* ── Debug: trace user entry ──────────────────────────────────────── */
+void kpti_user_entry_trace(uint64_t entry, uint64_t rsp) {
+    kprintf("[TRAMP] iretq entry=0x%lx rsp=0x%lx\n", entry, rsp);
 }
 
 /* ── Query ─────────────────────────────────────────────────────────── */

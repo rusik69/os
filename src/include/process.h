@@ -356,6 +356,9 @@ struct process {
     /* ── Signal lock for SMP safety (T3) ──────────────────────── */
     spinlock_t sig_lock;     /* guards pending_signals/state/exit_code */
     uint64_t sigwait_mask;   /* signals blocked on in sigtimedwait (0 = none) */
+    /* ── FPU/SSE state (512 bytes, 16-byte aligned for FXSAVE) ── */
+    uint8_t  fpu_state[512] __attribute__((aligned(16)));
+    int      fpu_used;       /* 1 = fpu_state contains valid saved data */
 };
 
 void process_init(void);

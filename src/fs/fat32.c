@@ -315,20 +315,29 @@ static uint32_t fat_next_cluster(uint32_t cluster) {
 }
 
 static uint32_t fat_alloc_cluster(void) {
-    uint32_t max = FAT_MAX_CLUSTER();
+    uint32_t max_cluster = FAT_MAX_CLUSTER();
+    /* Clamp scan range to actual disk geometry to avoid I/O errors
+     * reading FAT sectors beyond the partition. */
+    if (g_total_clusters > 0 && g_total_clusters + 1 < max_cluster)
+        max_cluster = g_total_clusters + 1;
     uint32_t eoc = FAT_EOC();
     uint32_t start = fsinfo_next_free >= 2 ? fsinfo_next_free : 2;
-    for (uint32_t pass = 0; pass < max; pass++) {
-        uint32_t c = (start + pass) % max;
-        if (c < 2)
-            c = 2;
+    if (start > max_cluster)
+        start = 2;
+    uint32_t total = max_cluster - 2 + 1; /* allocatable clusters: 2..max_cluster */
+    for (uint32_t pass = 0; pass < total; pass++) {
+        uint32_t c = start + pass;
+        if (c > max_cluster)
+            c = 2 + (c - max_cluster - 1); /* wrap: 2, 3, ... */
         uint32_t val;
         if (fat_read_entry(c, &val) != 0)
-            return 0;
+            continue; /* I/O error on this cluster — skip, don't give up */
         if (val == FAT_FREE()) {
             if (fat_write_entry(c, eoc) != 0)
                 return 0;
             fsinfo_next_free = c + 1;
+            if (fsinfo_next_free > max_cluster)
+                fsinfo_next_free = 2;
             if (fsinfo_free_count > 0)
                 fsinfo_free_count--;
             fsinfo_write_hint(fsinfo_next_free);
@@ -1072,8 +1081,11 @@ int fat32_read_file(const char *path, void *buf, uint32_t max_size) {
     int is_dir = 0;
     uint32_t fsize = 0;
     uint32_t cluster = path_resolve(path, &is_dir, &fsize);
-    if (!cluster || is_dir)
+    if (!cluster || is_dir) {
+        kprintf("[fat32_read_file] path_resolve('%s') failed: cluster=%lu is_dir=%d\n",
+                path, (unsigned long)cluster, is_dir);
         return -EINVAL;
+    }
 
     uint32_t to_read = fsize < max_size ? fsize : max_size;
     uint32_t done = 0;

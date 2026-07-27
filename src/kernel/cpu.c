@@ -83,8 +83,48 @@ int cpu_security_init(void)
         kprintf("[CPU] UMIP not supported\n");
     }
 
+    /* Enable OSFXSR (CR4 bit 9) — required for SSE/FXSAVE/FXRSTOR in user mode.
+     * Without this bit, SSE instructions cause #UD in ring 3. */
+    cr4 |= (1ULL << 9);
+    kprintf("[CPU] OSFXSR enabled (SSE support for userspace)\n");
+
+    /* Enable OSXSAVE (CR4 bit 18) — required for XGETBV/XSETBV/XSAVE/XRSTOR.
+     * CPUID.1:ECX bit 27 (OSXSAVE) is DYNAMIC — it only reads 1 AFTER
+     * CR4.OSXSAVE is set.  Instead, check bit 26 (XSAVE hardware support)
+     * to know if the CPU can do XSAVE at all. */
+    if (rcx & (1U << 26)) { /* CPUID.1:ECX bit 26 = XSAVE hardware support */
+        cr4 |= (1ULL << 18);
+        kprintf("[CPU] OSXSAVE enabled (XSAVE/XRSTOR + XCR0 support)\n");
+    }
+
     /* Write updated CR4 */
     write_cr4(cr4);
+
+    /* Configure XCR0 if OSXSAVE is now enabled — controls which FPU/SSE/AVX
+     * state components are saved on context switch. */
+    if (cr4 & (1ULL << 18)) {
+        /* Build XCR0 from CPUID feature bits we already know.
+         * Always enable x87 (bit 0) and SSE (bit 1).
+         * Enable AVX (bit 2) if CPUID.1:ECX bit 28 says it's supported.
+         * We re-read CPUID.1 here since we need EDX for SSE2 bit 26. */
+        int c1_eax, c1_ebx, c1_ecx, c1_edx;
+        __asm__ volatile("cpuid" : "=a"(c1_eax), "=b"(c1_ebx), "=c"(c1_ecx), "=d"(c1_edx) : "a"(1));
+
+        uint64_t desired = 0x3; /* x87 (bit 0) + SSE (bit 1) — always available on x86-64 */
+        if (c1_ecx & (1U << 28)) /* CPUID.1:ECX.AVX (bit 28) */
+            desired |= (1ULL << 2); /* AVX (bit 2) */
+
+        __asm__ volatile("xsetbv" : : "c"(0), "a"((uint32_t)desired), "d"((uint32_t)(desired >> 32)));
+
+        /* Read back to verify */
+        uint32_t xcr0_lo, xcr0_hi;
+        __asm__ volatile("xgetbv" : "=a"(xcr0_lo), "=d"(xcr0_hi) : "c"(0));
+        uint64_t xcr0_now = ((uint64_t)xcr0_hi << 32) | xcr0_lo;
+        kprintf("[CPU] XCR0 = 0x%llx (x87=%d SSE=%d AVX=%d)\n",
+                (unsigned long long)xcr0_now,
+                (int)(xcr0_now & 1), (int)((xcr0_now >> 1) & 1),
+                (int)((xcr0_now >> 2) & 1));
+    }
 
     /* Enable NXE in EFER if supported */
     __asm__ volatile("cpuid" : "=a"(rax), "=b"(rbx), "=c"(rcx), "=d"(rdx) : "a"(0x80000001));

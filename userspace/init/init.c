@@ -22,8 +22,12 @@ int main(int argc, char *argv[]) {
         printf("[init] Warning: no /dev/console, using raw I/O\n");
     } else {
         /* Map the console fd to stdin/stdout/stderr */
-        if (console != 0) { dup2(console, 0); close(console); }
-        /* Note: stdout and stderr are fds 1 and 2 */
+        if (console != 0) {
+            dup2(console, 0);
+            dup2(console, 1);
+            dup2(console, 2);
+            close(console);
+        }
     }
 
     printf("[init] Starting shell /bin/sh...\n");

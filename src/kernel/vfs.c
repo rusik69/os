@@ -588,6 +588,24 @@ int vfs_mount_ex(const char *mountpoint, const struct vfs_ops *ops, void *priv, 
 
     num_mounts++;
     spinlock_release(&mount_lock);
+
+    /* Sync to root mount namespace so resolve() finds the new mount */
+    {
+        struct mnt_namespace *root = mnt_ns_root();
+        if (root && root->num_mounts < VFS_MAX_MOUNTS) {
+            size_t cplen = strlen(mountpoint);
+            if (cplen >= 64) cplen = 63;
+            memcpy(root->mounts[root->num_mounts].mountpoint, mountpoint, cplen);
+            root->mounts[root->num_mounts].mountpoint[cplen] = '\0';
+            root->mounts[root->num_mounts].ops  = ops;
+            root->mounts[root->num_mounts].priv = priv;
+            root->mounts[root->num_mounts].flags = flags;
+            root->mounts[root->num_mounts].is_bind = 0;
+            root->mounts[root->num_mounts].bind_source[0] = '\0';
+            root->num_mounts++;
+        }
+    }
+
     return 0;
 }
 
@@ -716,7 +734,10 @@ int vfs_read(const char *path, void *buf, uint32_t max, uint32_t *out_size) {
     }
 
     struct vfs_mount *m = resolve(ap);
-    if (!m || !m->ops->read) return -EIO;
+    if (!m || !m->ops->read) {
+        kprintf("[vfs_read] resolve('%s') failed: mount=%p\n", ap, (void*)m);
+        return -EIO;
+    }
     int r = m->ops->read(m->priv, ap, buf, max, out_size);
     /* If the read fails with an I/O or corruption error, auto-remount
      * read-only to prevent further damage.  Reads into corrupted areas

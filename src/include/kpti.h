@@ -72,4 +72,7 @@ void kpti_trampoline_patch_cr3(int cpu, uint64_t kernel_cr3, uint64_t user_cr3);
 /* Check if KPTI is active. */
 int kpti_is_active(void);
 
+/* Debug: trace user-mode entry. */
+void kpti_user_entry_trace(uint64_t entry, uint64_t rsp);
+
 #endif /* KPTI_H */
