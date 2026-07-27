@@ -80,7 +80,7 @@ int signal_send(uint32_t pid, int signum) {
     /* SIGKILL — immediate terminate */
     if (signum == SIGKILL) {
         p->state = PROCESS_ZOMBIE;
-        p->exit_code = 128 + signum;
+        p->exit_code = -(int)signum;
         p->is_suspended = 0;
         p->sleep_until = 0;
         scheduler_remove(p);
@@ -113,7 +113,7 @@ int signal_send(uint32_t pid, int signum) {
 
     if (signum == SIGTERM) {
         p->state = PROCESS_ZOMBIE;
-        p->exit_code = 128 + signum;
+        p->exit_code = -(int)signum;
         p->is_suspended = 0;
         p->sleep_until = 0;
         scheduler_remove(p);
@@ -188,7 +188,7 @@ int signal_send_info(uint32_t pid, int signum, struct siginfo *info,
 
     if (signum == SIGKILL) {
         p->state = PROCESS_ZOMBIE;
-        p->exit_code = 128 + signum;
+        p->exit_code = -(int)signum;
         p->is_suspended = 0;
         p->sleep_until = 0;
         scheduler_remove(p);
@@ -406,7 +406,7 @@ static void signal_notify_parent(struct process *p, int signum, int si_code)
     info.si_pid    = p->pid;
     info.si_uid    = p->uid;
     info.si_addr   = NULL;
-    info.si_status = 128 + signum;
+    info.si_status = signum;
     signal_send_info(parent->pid, SIGCHLD, &info, 0);
 }
 
@@ -518,7 +518,7 @@ void signal_check(void) {
             case SIGABRT:
                 do_coredump(p, sig);
                 p->state = PROCESS_ZOMBIE;
-                p->exit_code = 128 + sig;
+                p->exit_code = -(int)sig;
                 scheduler_remove(p);
                 process_wake_waiter(p->pid);
                 spinlock_irqsave_release(&p->sig_lock, __sig_flags);
@@ -529,7 +529,7 @@ void signal_check(void) {
             case SIGTERM:
             case SIGPIPE:
                 p->state = PROCESS_ZOMBIE;
-                p->exit_code = 128 + sig;
+                p->exit_code = -(int)sig;
                 scheduler_remove(p);
                 process_wake_waiter(p->pid);
                 spinlock_irqsave_release(&p->sig_lock, __sig_flags);
@@ -559,7 +559,7 @@ void signal_check(void) {
                     break;
                 /* Unknown signal with default: terminate */
                 p->state = PROCESS_ZOMBIE;
-                p->exit_code = 128 + sig;
+                p->exit_code = -(int)sig;
                 scheduler_remove(p);
                 spinlock_irqsave_release(&p->sig_lock, __sig_flags);
                 signal_notify_parent(p, sig, CLD_KILLED);

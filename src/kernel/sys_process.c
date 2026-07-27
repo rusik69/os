@@ -754,10 +754,20 @@ uint64_t sys_wait4(uint64_t pid, uint64_t wstatus_addr,
                 int wstatus;
 
                 /* Encode exit status in Linux-compatible format.
-                 * The kernel stores the raw exit code in exit_code.
-                 * For now, all exits are treated as WIFEXITED with
-                 * WEXITSTATUS = exit_code. */
-                wstatus = __W_EXITCODE(child->exit_code & 0xff, 0);
+                 * The kernel stores negative exit_code for signal-killed
+                 * processes and non-negative for normal exit.
+                 *   exit_code >= 0 → WIFEXITED, WEXITSTATUS = exit_code & 0xff
+                 *   exit_code < 0  → WIFSIGNALED, WTERMSIG = -exit_code */
+                int ec = child->exit_code;
+                if (ec < 0) {
+                    int sig = -ec;
+                    if (sig > 0 && sig < SIG_MAX)
+                        wstatus = __W_EXITCODE(0, sig);
+                    else
+                        wstatus = __W_EXITCODE(0, 0); /* fallback */
+                } else {
+                    wstatus = __W_EXITCODE(ec & 0xff, 0);
+                }
 
                 /* Copy wait status to userspace */
                 if (wstatus_addr) {
@@ -929,10 +939,12 @@ uint64_t sys_waitid(uint64_t which, uint64_t id, uint64_t info_addr,
                 memset(&info, 0, sizeof(info));
                 info.si_signo = SIGCHLD;
                 info.si_errno = 0;
-                info.si_code  = CLD_EXITED;
+                info.si_code  = (child->exit_code < 0) ? CLD_KILLED : CLD_EXITED;
                 info.si_pid   = child->pid;
                 info.si_uid   = child->uid;
-                info.si_status = child->exit_code & 0xff;
+                info.si_status = (child->exit_code < 0)
+                                     ? (-child->exit_code)
+                                     : (child->exit_code & 0xff);
                 info.si_addr  = NULL;
 
                 /* Copy siginfo to userspace */
