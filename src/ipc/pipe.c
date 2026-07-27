@@ -63,6 +63,10 @@ int pipe_write(int pipe_id, const void *buf, int len) {
 
     while (written < len) {
         while (p->count == p->capacity) {
+            /* Non-blocking mode: return EAGAIN immediately */
+            if (p->flags & PIPE_FLAG_NONBLOCK) {
+                return written > 0 ? written : -EAGAIN;
+            }
             wait_queue_ensure(&p->write_wq);
             scheduler_yield();
             if (p->readers == 0) {
@@ -193,6 +197,10 @@ int pipe_read(int pipe_id, void *buf, int len) {
         while (p->count == 0) {
             if (p->writers == 0) {
                 return total;  /* EOF */
+            }
+            /* Non-blocking mode: return EAGAIN immediately */
+            if (p->flags & PIPE_FLAG_NONBLOCK) {
+                return total > 0 ? total : -EAGAIN;
             }
             wait_queue_ensure(&p->read_wq);
             scheduler_yield();
