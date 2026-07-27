@@ -18,7 +18,7 @@ int bitmap_find_next_zero_area(unsigned long *map, int size, int start, int nr) 
 }
 
 /* ── bitmap_alloc ─────────────────────────────── */
-static void* bitmap_alloc(int nbits)
+void* bitmap_alloc(int nbits)
 {
     size_t bytes = (nbits + 7) / 8;
     void *p = kmalloc(bytes);
@@ -26,13 +26,13 @@ static void* bitmap_alloc(int nbits)
     return p;
 }
 /* ── bitmap_free ─────────────────────────────── */
-static int bitmap_free(void *bitmap)
+int bitmap_free(void *bitmap)
 {
     if (bitmap) kfree(bitmap);
     return 0;
 }
 /* ── bitmap_parselist ─────────────────────────────── */
-static int bitmap_parselist(const char *buf, void *bitmap, int nbits)
+int bitmap_parselist(const char *buf, void *bitmap, int nbits)
 {
     unsigned long *map = (unsigned long *)bitmap;
     bitmap_zero(map, nbits);
