@@ -1013,13 +1013,20 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
     /* Reset signal handlers per POSIX execve(2) semantics:
      * All caught signals are reset to SIG_DFL. Signals already set to
      * SIG_IGN remain SIG_IGN (preserving the ignore disposition).
-     * The signal mask and pending-signal set are preserved. */
+     * The signal mask and pending-signal set are preserved.
+     * SA_FLAGS and sa_mask are cleared for all signals (Linux behaviour),
+     * since stale per-signal metadata from the old image has no meaning
+     * in the new execution context. */
     {
         uint64_t __exec_sig_flags;
         spinlock_irqsave_acquire(&cur->sig_lock, &__exec_sig_flags);
         for (int i = 1; i < SIG_MAX; i++) {
             if (cur->sig_handlers[i] != SIG_IGN)
                 cur->sig_handlers[i] = SIG_DFL;
+            /* Clear per-signal flags and mask — even for SIG_IGN signals,
+             * stale SA_RESTART/SA_NODEFER etc. must not carry across exec. */
+            cur->sig_flags[i] = 0;
+            cur->sig_sa_mask[i] = 0;
         }
         /* Clear per-signal siginfo — stale data from the old process
          * image is meaningless in the new context. Pending signals
