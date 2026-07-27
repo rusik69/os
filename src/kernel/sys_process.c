@@ -23,6 +23,7 @@
 #include "vmm.h"            /* for USER_VADDR_MAX */
 #include "timer.h"          /* for TIMER_FREQ, NS_PER_TICK, timer_get_ticks */
 #include "scheduler.h"      /* for scheduler_remove, scheduler_yield */
+#include "caps.h"           /* for CAP_KILL, cap_bset_has */
 
 /* Module metadata */
 MODULE_LICENSE("GPL v2");
@@ -459,8 +460,17 @@ uint64_t sys_kill(uint64_t pid, uint64_t sig) {
         if (!target || target->state == PROCESS_UNUSED)
             return (uint64_t)(int64_t)-ESRCH;
 
-        /* Permission check — root (euid 0) or matching UID can signal */
-        if (cur->euid != 0 &&
+        /* Permission check — root (euid 0), CAP_KILL, or matching UID */
+        int has_cap_kill = 0;
+        {
+            int w = CAP_KILL / 64;
+            int b = CAP_KILL % 64;
+            if (w < PROCESS_SYSCALL_CAP_WORDS &&
+                (cur->syscall_caps[w] & (1ULL << b)) &&
+                (cur->cap_bset[w] & (1ULL << b)))
+                has_cap_kill = 1;
+        }
+        if (cur->euid != 0 && !has_cap_kill &&
             cur->euid != target->euid &&
             cur->uid  != target->uid)
             return (uint64_t)(int64_t)-EPERM;
@@ -497,6 +507,17 @@ uint64_t sys_kill(uint64_t pid, uint64_t sig) {
     if ((int64_t)pid == -1) {
         struct process *table = process_get_table();
 
+        /* Compute CAP_KILL once for the broadcast loop */
+        int has_cap_kill = 0;
+        {
+            int w = CAP_KILL / 64;
+            int b = CAP_KILL % 64;
+            if (w < PROCESS_SYSCALL_CAP_WORDS &&
+                (cur->syscall_caps[w] & (1ULL << b)) &&
+                (cur->cap_bset[w] & (1ULL << b)))
+                has_cap_kill = 1;
+        }
+
         for (int i = 0; i < PROCESS_MAX; i++) {
             if (table[i].state == PROCESS_UNUSED)
                 continue;
@@ -505,7 +526,7 @@ uint64_t sys_kill(uint64_t pid, uint64_t sig) {
                 continue;
             if (sig != 0) {
                 /* Permission check per target */
-                if (cur->euid == 0 ||
+                if (cur->euid == 0 || has_cap_kill ||
                     cur->euid == table[i].euid ||
                     cur->uid  == table[i].uid)
                     signal_send(table[i].pid, (int)sig);

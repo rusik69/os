@@ -15,6 +15,8 @@
 #include "timer.h"
 #include "coredump_core.h"
 #include "signalfd.h"
+#include "caps.h"           /* for CAP_KILL */
+#include "pid_namespace.h"  /* for pid_ns_visible */
 
 #include "idt.h"            /* for struct interrupt_frame */
 #include "smp.h"            /* for get_cpu_info() */
@@ -28,6 +30,56 @@
 
 /* Forward declarations */
 void signal_notify_parent(struct process *p, int si_code, int si_status);
+
+/* ── signal_kill_permitted — check if caller can send signal to target ──
+ *
+ * Returns 1 if the caller process has permission to send a signal to
+ * the target process, 0 if denied.
+ *
+ * Permission model (POSIX + Linux semantics):
+ *  1. Caller == target (self) — always allowed
+ *  2. PID namespace visibility — must be able to see the target
+ *  3. Root (euid 0) — allowed
+ *  4. CAP_KILL capability (in caller's effective set + bounding set) — allowed
+ *  5. Same effective UID — allowed
+ *  6. SIGCONT special case — allowed for any process in the same session
+ */
+static int signal_kill_permitted(const struct process *caller,
+                                 const struct process *target, int signum)
+{
+    if (!caller || !target)
+        return 0;
+    if (caller == target)
+        return 1;
+
+    /* PID namespace visibility */
+    if (!pid_ns_visible(caller, target))
+        return 0;
+
+    /* Root (euid 0) can always send signals */
+    if (caller->euid == 0)
+        return 1;
+
+    /* CAP_KILL: check effective capability set and bounding set */
+    {
+        int word = CAP_KILL / 64;
+        int bit  = CAP_KILL % 64;
+        if (word < PROCESS_SYSCALL_CAP_WORDS &&
+            (caller->syscall_caps[word] & (1ULL << bit)) &&
+            (caller->cap_bset[word] & (1ULL << bit)))
+            return 1;
+    }
+
+    /* Same effective UID */
+    if (caller->euid == target->euid)
+        return 1;
+
+    /* SIGCONT: any process in the same session can be continued */
+    if (signum == SIGCONT && caller->sid == target->sid)
+        return 1;
+
+    return 0;
+}
 
 int signal_send(uint32_t pid, int signum) {
     if (signum == 0) {
@@ -63,12 +115,12 @@ int signal_send(uint32_t pid, int signum) {
     /* Track resource usage */
     p->signals_received++;
 
-    /* Permission check */
+    /* Permission check — POSIX kill permission */
     struct process *caller = process_get_current();
     if (caller && caller->pid != p->pid) {
-        if (!process_can_see(caller, p)) {
+        if (!signal_kill_permitted(caller, p, signum)) {
             spinlock_irqsave_release(&p->sig_lock, __sig_flags);
-            return -1;
+            return -EPERM;
         }
     }
 
@@ -192,12 +244,12 @@ int signal_send_info(uint32_t pid, int signum, struct siginfo *info,
     uint64_t __sig_flags;
     spinlock_irqsave_acquire(&p->sig_lock, &__sig_flags);
 
-    /* Permission check */
+    /* Permission check — POSIX kill permission */
     struct process *caller = process_get_current();
     if (caller && caller->pid != p->pid) {
-        if (!process_can_see(caller, p)) {
+        if (!signal_kill_permitted(caller, p, signum)) {
             spinlock_irqsave_release(&p->sig_lock, __sig_flags);
-            return -1;
+            return -EPERM;
         }
     }
 
