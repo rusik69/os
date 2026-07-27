@@ -17,9 +17,11 @@ typedef int64_t ssize_t;
 #define STDERR_FILENO 2
 
 /* ── lseek whence values ────────────────────────────────────────── */
-#define SEEK_SET 0
-#define SEEK_CUR 1
-#define SEEK_END 2
+#define SEEK_SET  0
+#define SEEK_CUR  1
+#define SEEK_END  2
+#define SEEK_DATA 3
+#define SEEK_HOLE 4
 
 /* ── access() mode flags ────────────────────────────────────────── */
 #define F_OK 0  /* test for existence */
