@@ -22,13 +22,28 @@ RUN curl -sL "https://github.com/actions/runner/releases/download/v${RUNNER_VERS
 # ── Stage 2: Runtime image ───────────────────────────────────────────
 FROM ubuntu:26.04
 
-# Runtime dependencies only (no curl/tar/build tools)
+# Runtime dependencies — includes all CI build tools pre-installed
+# so the non-root runner can execute workflow steps without sudo/apt.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     docker.io \
     git \
     jq \
     libicu-dev \
+    build-essential \
+    nasm \
+    qemu-system-x86 \
+    gcc-x86-64-linux-gnu \
+    xorriso \
+    grub-pc-bin \
+    mtools \
+    ccache \
+    cppcheck \
+    sparse \
+    clang-tidy-18 \
+    clang-format-18 \
+    python3 \
+    xxd \
     && rm -rf /var/lib/apt/lists/*
 
 # Create runner user (uid 1001; 1000 is taken by ubuntu user in base image)
