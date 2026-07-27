@@ -4165,7 +4165,12 @@ static uint64_t sys_alarm(uint64_t seconds) {
 /* ── pause() ─────────────────────────────────────────────────── */
 
 static uint64_t sys_pause(void) {
-    /* Block the current process until a signal arrives */
+    /* Block the current process until a signal arrives.
+     *
+     * Per POSIX: pause() suspends the calling thread until delivery of a
+     * signal whose action is either to execute a signal handler or to
+     * terminate the process.  It ALWAYS returns -EINTR — SA_RESTART does
+     * NOT apply to pause(). */
     struct process *proc = process_get_current();
     if (!proc) return (uint64_t)(int64_t)-ESRCH;
 
@@ -4174,13 +4179,11 @@ static uint64_t sys_pause(void) {
         scheduler_remove(proc);
         scheduler_yield();
 
-        /* Woken by signal — check SA_RESTART */
-        if (proc->pending_signals) {
-            if (signal_has_sa_restart())
-                continue;  /* restart the wait (SA_RESTART) */
-        }
+        /* Woken — if no pending signals, go back to sleep (spurious wake) */
+        if (!proc->pending_signals)
+            continue;
 
-        /* Woken by signal — return -EINTR (always interrupted) */
+        /* Always return -EINTR, regardless of SA_RESTART */
         return (uint64_t)(int64_t)-EINTR;
     }
 }
