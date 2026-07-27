@@ -3317,14 +3317,17 @@ static uint64_t sys_dup2(uint64_t old_fd, uint64_t new_fd) {
     struct process *proc = process_get_current();
     if (!proc) return (uint64_t)(int64_t)-EPERM;
 
-    /* Convert fd numbers to table indices.
-     * fd 0/1/2 are stored at fd_table[0/1/2], fd >= 3 at fd_table[fd-3]. */
-    int old_idx = (int)old_fd - 3;
-    int new_idx = (int)new_fd < 3 ? (int)new_fd : (int)new_fd - 3;
-
-    if (old_idx < 0 || old_idx >= PROCESS_FD_MAX || !proc->fd_table[old_idx].used)
+    /* Only fd >= 3 are stored in fd_table (fd 0/1/2 are stdin/stdout/stderr
+     * handled specially in read/write paths).  Reject fds < 3 with EBADF. */
+    if (old_fd < 3 || new_fd < 3)
         return (uint64_t)(int64_t)-EBADF;
-    if (new_idx < 0 || new_idx >= PROCESS_FD_MAX)
+
+    int old_idx = (int)old_fd - 3;
+    int new_idx = (int)new_fd - 3;
+
+    if (old_idx >= PROCESS_FD_MAX || !proc->fd_table[old_idx].used)
+        return (uint64_t)(int64_t)-EBADF;
+    if (new_idx >= PROCESS_FD_MAX)
         return (uint64_t)(int64_t)-EBADF;
 
     /* If both map to the same table slot, nothing to do */
@@ -3333,9 +3336,30 @@ static uint64_t sys_dup2(uint64_t old_fd, uint64_t new_fd) {
     uint64_t __dup2_irq;
     spinlock_irqsave_acquire(&proc->fd_table_lock, &__dup2_irq);
 
-    /* Close new_fd if open */
+    /* Close new_fd atomically if already open (proper close, not just memset) */
     if (proc->fd_table[new_idx].used) {
-        memset(&proc->fd_table[new_idx], 0, sizeof(struct process_fd));
+        /* Handle O_TMPFILE: save path for unlinking after lock is released */
+        char tmp_path[64];
+        int has_tmpfile = 0;
+        if ((proc->fd_table[new_idx].flags & FD_TMPFILE) && proc->fd_table[new_idx].path[0]) {
+            strncpy(tmp_path, proc->fd_table[new_idx].path, 63);
+            tmp_path[63] = '\0';
+            has_tmpfile = 1;
+        }
+        proc->fd_table[new_idx].used = 0;
+        proc->fd_table[new_idx].flags = 0;
+        proc->fd_table[new_idx].path[0] = '\0';
+
+        /* Copy old fd to the now-empty new slot */
+        proc->fd_table[new_idx] = proc->fd_table[old_idx];
+        proc->fd_table[new_idx].offset = proc->fd_table[old_idx].offset;
+        spinlock_irqsave_release(&proc->fd_table_lock, __dup2_irq);
+
+        /* Unlink tmpfile after releasing lock (vfs_unlink may sleep) */
+        if (has_tmpfile)
+            vfs_unlink(tmp_path);
+
+        return new_fd;
     }
 
     proc->fd_table[new_idx] = proc->fd_table[old_idx];
