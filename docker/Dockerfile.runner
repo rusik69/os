@@ -80,8 +80,24 @@ if [ -f "$CONFIG_DIR/.runner" ] && [ -f "$CONFIG_DIR/.credentials" ]; then
     ln -sf "$CONFIG_DIR/.credentials_rsaparams" .credentials_rsaparams 2>/dev/null || true
 fi
 
-# Start the runner
-exec ./run.sh "$@"
+# Start the runner in the background so we can handle signals
+./run.sh "$@" &
+RUNNER_PID=$!
+
+# Forward signals to the runner process group
+shutdown() {
+    echo "[entrypoint] Shutting down runner (PID $RUNNER_PID)..."
+    # Send SIGTERM to the runner process
+    kill -TERM "$RUNNER_PID" 2>/dev/null || true
+    # Wait for clean exit (Docker gives us 10s via --stop-timeout)
+    wait "$RUNNER_PID" 2>/dev/null || true
+    echo "[entrypoint] Runner exited cleanly"
+    exit 0
+}
+trap shutdown SIGTERM SIGINT SIGQUIT
+
+# Wait for the runner process
+wait "$RUNNER_PID"
 ENTRYPOINT
 
 ENTRYPOINT ["/home/runner/entrypoint.sh"]
