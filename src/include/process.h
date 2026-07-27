@@ -185,6 +185,7 @@ struct process {
     uint8_t  base_priority;    /* original priority before PI boost (restored on unlock) */
     /* Per-process file descriptor table */
     struct process_fd fd_table[PROCESS_FD_MAX];
+    spinlock_t fd_table_lock;    /* guards fd_table[] against concurrent access */
     /* Thread group ID (same as pid for leader, same as leader for threads) */
     uint32_t tgid;
     /* SetChildTID / ClearChildTID userspace pointers for thread teardown */

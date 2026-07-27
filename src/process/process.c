@@ -335,6 +335,10 @@ void __init process_init(void) {
     spinlock_init(&pid_lock);
     pid_bitmap[0] = 1; /* PID 0 (idle) is always allocated */
 
+    /* Initialize per-process fd_table locks */
+    for (int i = 0; i < PROCESS_MAX; i++)
+        spinlock_init(&process_table[i].fd_table_lock);
+
     /* Initialize PID namespace subsystem (root namespace) */
     pid_ns_init();
 
@@ -933,6 +937,8 @@ void process_exit_code(int code) {
 void process_exec_close_cloexec(void) {
     struct process *cur = process_get_current();
     if (!cur) return;
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&cur->fd_table_lock, &irq_flags);
     for (int i = 0; i < PROCESS_FD_MAX; i++) {
         if (cur->fd_table[i].used && (cur->fd_table[i].flags & FD_CLOEXEC)) {
             cur->fd_table[i].used = 0;
@@ -941,6 +947,7 @@ void process_exec_close_cloexec(void) {
             cur->fd_table[i].flags = 0;
         }
     }
+    spinlock_irqsave_release(&cur->fd_table_lock, irq_flags);
 }
 
 struct process *process_get_current(void) {
@@ -1184,6 +1191,7 @@ int process_fork(void) {
 
     child->state = PROCESS_UNUSED;
     *child = *parent;
+    spinlock_init(&child->fd_table_lock);
     child->pid = alloc_pid();
     if (child->pid == (uint32_t)-1) {
         child->state = PROCESS_UNUSED;

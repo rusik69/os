@@ -971,9 +971,12 @@ static uint64_t do_sys_open(const char *path, uint64_t flags, uint64_t mode) {
         if (!p) { vfs_unlink(tmp_path); return (uint64_t)(int64_t)-EPERM; }
         uint64_t max_fds = p->rlim_cur[RLIMIT_NOFILE] > 0 ?
                            p->rlim_cur[RLIMIT_NOFILE] : PROCESS_FD_MAX;
+        uint64_t __tmp_irq;
+        spinlock_irqsave_acquire(&p->fd_table_lock, &__tmp_irq);
         for (int i = 0; i < PROCESS_FD_MAX; i++) {
             if (!p->fd_table[i].used) {
                 if ((uint64_t)(i + 3) >= max_fds) {
+                    spinlock_irqsave_release(&p->fd_table_lock, __tmp_irq);
                     vfs_unlink(tmp_path);
                     return (uint64_t)(int64_t)-EMFILE;
                 }
@@ -983,9 +986,11 @@ static uint64_t do_sys_open(const char *path, uint64_t flags, uint64_t mode) {
                 p->fd_table[i].used = true;
                 p->fd_table[i].flags = FD_TMPFILE;
                 p->fd_table[i].open_flags = (uint32_t)(flags & 0x3FFF); /* save relevant flags */
+                spinlock_irqsave_release(&p->fd_table_lock, __tmp_irq);
                 return (uint64_t)(i + 3);
             }
         }
+        spinlock_irqsave_release(&p->fd_table_lock, __tmp_irq);
         vfs_unlink(tmp_path);
         return (uint64_t)(int64_t)-EMFILE;
     }
@@ -1011,17 +1016,24 @@ static uint64_t do_sys_open(const char *path, uint64_t flags, uint64_t mode) {
     /* Enforce RLIMIT_NOFILE */
     uint64_t max_fds = p->rlim_cur[RLIMIT_NOFILE] > 0 ?
                        p->rlim_cur[RLIMIT_NOFILE] : PROCESS_FD_MAX;
+    uint64_t __open_irq;
+    spinlock_irqsave_acquire(&p->fd_table_lock, &__open_irq);
     for (int i = 0; i < PROCESS_FD_MAX; i++) {
         if (!p->fd_table[i].used) {
-            if ((uint64_t)(i + 3) >= max_fds) return (uint64_t)(int64_t)-EMFILE;
+            if ((uint64_t)(i + 3) >= max_fds) {
+                spinlock_irqsave_release(&p->fd_table_lock, __open_irq);
+                return (uint64_t)(int64_t)-EMFILE;
+            }
             strncpy(p->fd_table[i].path, path, 63);
             p->fd_table[i].path[63] = '\0';
             p->fd_table[i].offset = 0;
             p->fd_table[i].used = true;
             p->fd_table[i].open_flags = (uint32_t)(flags & 0x3FFF); /* save relevant flags */
+            spinlock_irqsave_release(&p->fd_table_lock, __open_irq);
             return (uint64_t)(i + 3);
         }
     }
+    spinlock_irqsave_release(&p->fd_table_lock, __open_irq);
     return (uint64_t)(int64_t)-EMFILE;
 }
 
@@ -1070,17 +1082,32 @@ static uint64_t sys_close(uint64_t fd) {
         return ret < 0 ? (uint64_t)(int64_t)ret : 0;
     }
     int i = (int)fd - 3;
-    struct process_fd *pfd = sys_get_fd(i);
-    if (!pfd || !pfd->used) return (uint64_t)(int64_t)-EBADF;
+    struct process *proc = process_get_current();
+    if (!proc) return (uint64_t)(int64_t)-EPERM;
+    uint64_t __cl_irq;
+    spinlock_irqsave_acquire(&proc->fd_table_lock, &__cl_irq);
+    struct process_fd *pfd = (i >= 0 && i < PROCESS_FD_MAX) ? &proc->fd_table[i] : NULL;
+    if (!pfd || !pfd->used) {
+        spinlock_irqsave_release(&proc->fd_table_lock, __cl_irq);
+        return (uint64_t)(int64_t)-EBADF;
+    }
 
     /* If this is an O_TMPFILE fd, unlink the hidden file */
-    if (pfd->flags & FD_TMPFILE && pfd->path[0]) {
-        vfs_unlink(pfd->path);
+    uint8_t is_tmpfile = (pfd->flags & FD_TMPFILE) && pfd->path[0];
+    char tmp_path[64];
+    if (is_tmpfile) {
+        strncpy(tmp_path, pfd->path, 63);
+        tmp_path[63] = '\0';
     }
 
     pfd->used = false;
     pfd->flags = 0;
     pfd->path[0] = '\0';
+    spinlock_irqsave_release(&proc->fd_table_lock, __cl_irq);
+
+    /* Unlink after releasing the lock (vfs_unlink may sleep) */
+    if (is_tmpfile && tmp_path[0])
+        vfs_unlink(tmp_path);
     return 0;
 }
 
@@ -1106,6 +1133,11 @@ static uint64_t sys_close_range(uint64_t first, uint64_t last, uint64_t flags)
         last = PROCESS_FD_MAX - 1;
 
     uint64_t closed = 0;
+    /* Collect TMPFILE paths to unlink after releasing the lock */
+    char tmp_unlinks[PROCESS_FD_MAX][64];
+    int tmp_count = 0;
+    uint64_t __cr_irq;
+    spinlock_irqsave_acquire(&p->fd_table_lock, &__cr_irq);
     for (uint64_t fd = first; fd <= last; fd++) {
         int i = (int)fd - 3;
         if (i < 0) continue;
@@ -1119,13 +1151,23 @@ static uint64_t sys_close_range(uint64_t first, uint64_t last, uint64_t flags)
             pfd->flags |= FD_CLOEXEC;
         } else {
             /* Close the fd */
-            if (pfd->flags & FD_TMPFILE && pfd->path[0])
-                vfs_unlink(pfd->path);
+            if (pfd->flags & FD_TMPFILE && pfd->path[0]) {
+                strncpy(tmp_unlinks[tmp_count], pfd->path, 63);
+                tmp_unlinks[tmp_count][63] = '\0';
+                tmp_count++;
+            }
             pfd->used = false;
             pfd->flags = 0;
             pfd->path[0] = '\0';
             closed++;
         }
+    }
+    spinlock_irqsave_release(&p->fd_table_lock, __cr_irq);
+
+    /* Unlink TMPFILE paths after releasing the lock */
+    for (int t = 0; t < tmp_count; t++) {
+        if (tmp_unlinks[t][0])
+            vfs_unlink(tmp_unlinks[t]);
     }
 
     return 0;
@@ -3256,11 +3298,17 @@ static uint64_t sys_dup(uint64_t old_fd) {
     if (old_fd >= PROCESS_FD_MAX || !proc->fd_table[old_fd].used)
         return (uint64_t)(int64_t)-EBADF;
 
+    uint64_t __dup_irq;
+    spinlock_irqsave_acquire(&proc->fd_table_lock, &__dup_irq);
     int new_fd = fd_find_free(proc);
-    if (new_fd < 0) return (uint64_t)(int64_t)-EMFILE;
+    if (new_fd < 0) {
+        spinlock_irqsave_release(&proc->fd_table_lock, __dup_irq);
+        return (uint64_t)(int64_t)-EMFILE;
+    }
 
     proc->fd_table[new_fd] = proc->fd_table[old_fd];
     proc->fd_table[new_fd].offset = proc->fd_table[old_fd].offset;
+    spinlock_irqsave_release(&proc->fd_table_lock, __dup_irq);
     return (uint64_t)new_fd;
 }
 
@@ -3281,6 +3329,9 @@ static uint64_t sys_dup2(uint64_t old_fd, uint64_t new_fd) {
     /* If both map to the same table slot, nothing to do */
     if (old_idx == new_idx) return new_fd;
 
+    uint64_t __dup2_irq;
+    spinlock_irqsave_acquire(&proc->fd_table_lock, &__dup2_irq);
+
     /* Close new_fd if open */
     if (proc->fd_table[new_idx].used) {
         memset(&proc->fd_table[new_idx], 0, sizeof(struct process_fd));
@@ -3288,6 +3339,7 @@ static uint64_t sys_dup2(uint64_t old_fd, uint64_t new_fd) {
 
     proc->fd_table[new_idx] = proc->fd_table[old_idx];
     proc->fd_table[new_idx].offset = proc->fd_table[old_idx].offset;
+    spinlock_irqsave_release(&proc->fd_table_lock, __dup2_irq);
     return new_fd;
 }
 
@@ -3324,10 +3376,16 @@ static uint64_t sys_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg) {
             int new_fd = (int)arg;
             if (new_fd < 0) new_fd = 0;
             if (new_fd >= PROCESS_FD_MAX) return (uint64_t)(int64_t)-EINVAL;
+            uint64_t __fc_irq;
+            spinlock_irqsave_acquire(&proc->fd_table_lock, &__fc_irq);
             while (new_fd < PROCESS_FD_MAX && proc->fd_table[new_fd].used)
                 new_fd++;
-            if (new_fd >= PROCESS_FD_MAX) return (uint64_t)(int64_t)-EMFILE;
+            if (new_fd >= PROCESS_FD_MAX) {
+                spinlock_irqsave_release(&proc->fd_table_lock, __fc_irq);
+                return (uint64_t)(int64_t)-EMFILE;
+            }
             proc->fd_table[new_fd] = proc->fd_table[fd];
+            spinlock_irqsave_release(&proc->fd_table_lock, __fc_irq);
             return (uint64_t)new_fd;
         }
         case F_GETFD:
