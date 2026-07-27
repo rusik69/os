@@ -27,7 +27,7 @@
 #define MAX_SIG  65
 
 /* Forward declarations */
-static void signal_notify_parent(struct process *p, int signum, int si_code);
+void signal_notify_parent(struct process *p, int si_code, int si_status);
 
 int signal_send(uint32_t pid, int signum) {
     if (signum == 0) {
@@ -86,7 +86,7 @@ int signal_send(uint32_t pid, int signum) {
         scheduler_remove(p);
         spinlock_irqsave_release(&p->sig_lock, __sig_flags);
         process_wake_waiter(p->pid);
-        signal_notify_parent(p, signum, CLD_KILLED);
+        signal_notify_parent(p, CLD_KILLED, signum);
         if (p == process_get_current()) scheduler_yield();
         return 0;
     }
@@ -119,7 +119,7 @@ int signal_send(uint32_t pid, int signum) {
         scheduler_remove(p);
         spinlock_irqsave_release(&p->sig_lock, __sig_flags);
         process_wake_waiter(p->pid);
-        signal_notify_parent(p, signum, CLD_KILLED);
+        signal_notify_parent(p, CLD_KILLED, signum);
         if (p == process_get_current()) scheduler_yield();
         return 0;
     }
@@ -209,7 +209,7 @@ int signal_send_info(uint32_t pid, int signum, struct siginfo *info,
         scheduler_remove(p);
         spinlock_irqsave_release(&p->sig_lock, __sig_flags);
         process_wake_waiter(p->pid);
-        signal_notify_parent(p, signum, CLD_KILLED);
+        signal_notify_parent(p, CLD_KILLED, signum);
         if (p == process_get_current()) scheduler_yield();
         return 0;
     }
@@ -401,13 +401,15 @@ int signal_setup_frame_userspace(struct interrupt_frame *frame, int signum,
     return 0;
 }
 
-/* ── signal_notify_parent — send SIGCHLD to parent ──────────────
- * Called when a process is about to become (or has become) ZOMBIE.
+/* ── signal_notify_parent — send SIGCHLD with full siginfo_t ────
+ * Called when a process transitions to ZOMBIE state to notify its
+ * parent with a complete siginfo_t (pid, uid, exit status).
  * Must be called without p->sig_lock held to avoid lock ordering
  * issues with the parent's sig_lock.
- * 'signum' is the signal that killed the process (if any).
- * 'si_code' should be CLD_EXITED, CLD_KILLED, or CLD_DUMPED. */
-static void signal_notify_parent(struct process *p, int signum, int si_code)
+ * 'si_code' should be CLD_EXITED, CLD_KILLED, or CLD_DUMPED.
+ * 'si_status' is the exit status (exit code for CLD_EXITED,
+ * signal number for CLD_KILLED/CLD_DUMPED). */
+void signal_notify_parent(struct process *p, int si_code, int si_status)
 {
     if (!p) return;
     struct process *parent = process_get_by_pid(p->parent_pid);
@@ -421,7 +423,7 @@ static void signal_notify_parent(struct process *p, int signum, int si_code)
     info.si_pid    = p->pid;
     info.si_uid    = p->uid;
     info.si_addr   = NULL;
-    info.si_status = signum;
+    info.si_status = si_status;
     signal_send_info(parent->pid, SIGCHLD, &info, 0);
 }
 
@@ -563,7 +565,7 @@ void signal_check(void) {
                 scheduler_remove(p);
                 process_wake_waiter(p->pid);
                 spinlock_irqsave_release(&p->sig_lock, __sig_flags);
-                signal_notify_parent(p, sig, CLD_DUMPED);
+                signal_notify_parent(p, CLD_DUMPED, sig);
                 scheduler_yield();
                 return; /* zombie — never resumes */
             case SIGKILL:
@@ -574,7 +576,7 @@ void signal_check(void) {
                 scheduler_remove(p);
                 process_wake_waiter(p->pid);
                 spinlock_irqsave_release(&p->sig_lock, __sig_flags);
-                signal_notify_parent(p, sig, CLD_KILLED);
+                signal_notify_parent(p, CLD_KILLED, sig);
                 scheduler_yield();
                 return; /* zombie — never resumes */
             case SIGCHLD:
@@ -603,7 +605,7 @@ void signal_check(void) {
                 p->exit_code = -(int)sig;
                 scheduler_remove(p);
                 spinlock_irqsave_release(&p->sig_lock, __sig_flags);
-                signal_notify_parent(p, sig, CLD_KILLED);
+                signal_notify_parent(p, CLD_KILLED, sig);
                 scheduler_yield();
                 return; /* zombie — never resumes */
         }

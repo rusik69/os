@@ -140,6 +140,12 @@ void signal_unmask(uint64_t sigmask);
 struct process;
 struct siginfo *signal_get_info(struct process *p, int signum);
 
+/* Deliver SIGCHLD with full siginfo_t to parent.  Called when a process
+ * transitions to ZOMBIE state.  Must NOT hold the child's sig_lock.
+ * @si_code: CLD_EXITED, CLD_KILLED, or CLD_DUMPED
+ * @si_status: exit code (CLD_EXITED) or termination signal (CLD_KILLED/CLD_DUMPED) */
+void signal_notify_parent(struct process *p, int si_code, int si_status);
+
 /* Deliver a signal to the currently running user-space process by building
  * a signal frame on the user stack and redirecting the saved execution context.
  * Called from signal_check() in interrupt context when a user handler exists.

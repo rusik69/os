@@ -782,20 +782,8 @@ void process_wake_waiter(uint32_t pid) {
 }
 
 void process_exit(void) {
-    /* Send SIGCHLD to parent */
-    struct process *parent = process_get_by_pid(current_process->parent_pid);
-    if (parent) {
-        struct siginfo info;
-        memset(&info, 0, sizeof(info));
-        info.si_signo = SIGCHLD;
-        info.si_errno = 0;
-        info.si_code  = CLD_EXITED;
-        info.si_pid   = current_process->pid;
-        info.si_uid   = current_process->uid;
-        info.si_addr  = NULL;
-        info.si_status = 0;
-        signal_send_info(parent->pid, SIGCHLD, &info, 0);
-    }
+    /* Send SIGCHLD to parent with full siginfo_t */
+    signal_notify_parent(current_process, CLD_EXITED, 0);
     current_process->state = PROCESS_ZOMBIE;
     current_process->exit_code = 0;
     scheduler_remove(current_process);
@@ -913,20 +901,8 @@ void process_exit_code(int code) {
         }
         __asm__ volatile("sti");
     }
-    /* Send SIGCHLD to parent with siginfo */
-    struct process *parent = process_get_by_pid(current_process->parent_pid);
-    if (parent) {
-        struct siginfo info;
-        memset(&info, 0, sizeof(info));
-        info.si_signo = SIGCHLD;
-        info.si_errno = 0;
-        info.si_code  = CLD_EXITED;
-        info.si_pid   = current_process->pid;
-        info.si_uid   = current_process->uid;
-        info.si_addr  = NULL;
-        info.si_status = code;
-        signal_send_info(parent->pid, SIGCHLD, &info, 0);
-    }
+    /* Send SIGCHLD to parent with full siginfo_t */
+    signal_notify_parent(current_process, CLD_EXITED, code);
     scheduler_yield();
     for (;;) __asm__ volatile("hlt");
 }
