@@ -1527,12 +1527,18 @@ int process_can_see(const struct process *caller, const struct process *target) 
 
 /* Wait for a specific child process to become ZOMBIE.
  * Returns 0 on success (exit code in *status), -1 if not found.
- * Blocks (does NOT spin) until the child exits. */
-int process_waitpid(uint32_t pid, int *status) {
+ * If options & WNOHANG (1), returns 0 immediately if no child has exited
+ * (does not block).  Otherwise blocks (does NOT spin) until the child
+ * exits. */
+int process_waitpid(uint32_t pid, int *status, int options) {
     struct process *child = process_get_by_pid(pid);
     if (!child) return -ENOENT;
 
     if (child->state != PROCESS_ZOMBIE && child->state != PROCESS_UNUSED) {
+        /* WNOHANG: return 0 immediately instead of blocking */
+        if (options & 1) /* WNOHANG */
+            return 0;
+
         /* Block until child's process_exit_code wakes us.
          * Use process_get_current() (per-CPU) — NOT current_process (global).
          * The global 'current_process' is updated by all CPUs via
@@ -1831,7 +1837,7 @@ int process_thread_join(int thread_pid, void **retval) {
         } else {
             /* Thread still running — block until zombie */
             int status = 0;
-            process_waitpid((uint32_t)thread_pid, &status);
+            process_waitpid((uint32_t)thread_pid, &status, 0);
         }
     }
 

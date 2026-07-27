@@ -1749,7 +1749,7 @@ static uint64_t sys_vfs_readdir(uint64_t path_addr) {
 }
 
 static uint64_t sys_waitpid(uint64_t pid, uint64_t status_addr) {
-    return (uint64_t)process_waitpid((uint32_t)pid, (int *)status_addr);
+    return (uint64_t)process_waitpid((uint32_t)pid, (int *)status_addr, 0);
 }
 
 static uint64_t sys_sleep_ticks(uint64_t ticks) {

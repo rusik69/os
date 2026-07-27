@@ -373,7 +373,7 @@ struct process *process_get_by_pid_visible(uint32_t pid);
 struct process *process_get_table(void);
 int process_can_see(const struct process *caller, const struct process *target);
 void process_wake_waiter(uint32_t pid);
-int  process_waitpid(uint32_t pid, int *status);
+int  process_waitpid(uint32_t pid, int *status, int options);
 void process_sleep_ticks(uint64_t ticks);
 void process_reap_zombies(void);
 void process_cleanup(struct process *proc);

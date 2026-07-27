@@ -614,7 +614,7 @@ static void test_fork(void) {
     }
     /* Child starts at fork_child_entry and exits immediately with code 0 */
     int status;
-    process_waitpid(child, &status);
+    process_waitpid(child, &status, 0);
     ASSERT("fork child exit 0", status == 0);
     t_ok("fork parent");
 }
@@ -2459,7 +2459,7 @@ static void test_sigchld(void) {
 
     /* Wait for child to exit */
     int status;
-    process_waitpid(child, &status);
+    process_waitpid(child, &status, 0);
     ASSERT("sigchld child exit 0", status == 0);
 
     /* Check if SIGCHLD is pending */
