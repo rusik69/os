@@ -46,6 +46,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xxd \
     cpio \
     telnet \
+    file \
     && rm -rf /var/lib/apt/lists/*
 
 # Create symlinks for unversioned tool names (git-clang-format, clang-tidy, etc.)
