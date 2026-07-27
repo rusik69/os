@@ -239,7 +239,8 @@ static int security_scan_init(void)
     vuln_db_count = 0;
 
     /* Load built-in CVE database */
-    for (int i = 0; i < VULN_DB_MAX && builtin_vulns[i].cve_id != NULL; i++) {
+    int num_builtin = sizeof(builtin_vulns) / sizeof(builtin_vulns[0]);
+    for (int i = 0; i < num_builtin && i < VULN_DB_MAX && builtin_vulns[i].cve_id != NULL; i++) {
         struct vuln_entry *e = &vuln_db[i];
         e->in_use = 1;
         strncpy(e->name, builtin_vulns[i].cve_id, VULN_NAME_MAX - 1);
