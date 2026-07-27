@@ -1393,6 +1393,11 @@ int process_spawn(const char *path, char *const argv[], char *const envp[])
     for (int i = 0; i < PROCESS_SYSCALL_CAP_WORDS; i++)
         child->cap_bset[i] = parent->cap_bset[i];
 
+    /* Inherit parent's signal mask — per POSIX, sigprocmask mask
+     * persists across exec, and posix_spawn inherits the mask from
+     * the parent by default (unless POSIX_SPAWN_SETSIGMASK overrides). */
+    child->sig_mask = parent->sig_mask;
+
     /* Inherit parent's file descriptors */
     for (int i = 0; i < PROCESS_FD_MAX; i++) {
         if (parent->fd_table[i].used) {
