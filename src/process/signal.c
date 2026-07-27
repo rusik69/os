@@ -96,17 +96,21 @@ int signal_send(uint32_t pid, int signum) {
      * SIGTTIN, SIGTTOU).  The pending stop bits are cleared so they won't
      * be delivered after the process resumes. */
     if (signum == SIGCONT) {
+        int was_suspended = p->is_suspended;
         p->pending_signals |= (1ULL << signum);
         p->pending_signals &=
             ~((1ULL << SIGSTOP) | (1ULL << SIGTSTP) |
               (1ULL << SIGTTIN) | (1ULL << SIGTTOU));
-        if (p->is_suspended) {
+        if (was_suspended) {
             p->is_suspended = 0;
             p->sleep_until = 0;
             p->state = PROCESS_READY;
             scheduler_add(p);
         }
         spinlock_irqsave_release(&p->sig_lock, __sig_flags);
+        /* Notify parent that the stopped process was continued */
+        if (was_suspended)
+            signal_notify_parent(p, CLD_CONTINUED, SIGCONT);
         return 0;
     }
 
@@ -137,8 +141,11 @@ int signal_send(uint32_t pid, int signum) {
         p->sleep_until = 0;
         p->state = PROCESS_BLOCKED;
         scheduler_remove(p);
+        int is_self = (p == process_get_current());
         spinlock_irqsave_release(&p->sig_lock, __sig_flags);
-        if (p == process_get_current()) scheduler_yield();
+        /* Notify parent that this process was stopped by a job-control signal */
+        signal_notify_parent(p, CLD_STOPPED, signum);
+        if (is_self) scheduler_yield();
         return 0;
     }
 
@@ -412,11 +419,13 @@ int signal_setup_frame_userspace(struct interrupt_frame *frame, int signum,
 /* ── signal_notify_parent — send SIGCHLD with full siginfo_t ────
  * Called when a process transitions to ZOMBIE state to notify its
  * parent with a complete siginfo_t (pid, uid, exit status).
+ * Also called when a process is stopped (CLD_STOPPED) or continued
+ * (CLD_CONTINUED) by a job-control signal.
  * Must be called without p->sig_lock held to avoid lock ordering
  * issues with the parent's sig_lock.
- * 'si_code' should be CLD_EXITED, CLD_KILLED, or CLD_DUMPED.
- * 'si_status' is the exit status (exit code for CLD_EXITED,
- * signal number for CLD_KILLED/CLD_DUMPED). */
+ * @si_code: CLD_EXITED, CLD_KILLED, CLD_DUMPED, CLD_STOPPED, or CLD_CONTINUED
+ * @si_status: exit code (CLD_EXITED), termination signal (CLD_KILLED/CLD_DUMPED),
+ *             or stop/continue signal (CLD_STOPPED/CLD_CONTINUED) */
 void signal_notify_parent(struct process *p, int si_code, int si_status)
 {
     if (!p) return;
@@ -600,6 +609,8 @@ void signal_check(void) {
                 p->state = PROCESS_BLOCKED;
                 scheduler_remove(p);
                 spinlock_irqsave_release(&p->sig_lock, __sig_flags);
+                /* Notify parent that this process was stopped */
+                signal_notify_parent(p, CLD_STOPPED, sig);
                 scheduler_yield();
                 /* Resumed by SIGCONT — re-acquire and check more signals */
                 spinlock_irqsave_acquire(&p->sig_lock, &__sig_flags);
