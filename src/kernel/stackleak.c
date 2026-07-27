@@ -92,26 +92,26 @@ static void stackleak_syscall_exit(void)
 
 /* ── Sysctl handler ────────────────────────────────────────────────── */
 
-static int stackleak_set_enabled(int val)
+int stackleak_set_enabled(int val)
 {
     int old = stackleak_enabled;
     stackleak_enabled = val ? 1 : 0;
     return old;
 }
 
-static int stackleak_get_enabled(void)
+int stackleak_get_enabled(void)
 {
     return stackleak_enabled;
 }
 
-static uint64_t stackleak_get_poison_count(void)
+uint64_t stackleak_get_poison_count(void)
 {
     return stackleak_poison_count;
 }
 
 /* ── Initialization ────────────────────────────────────────────────── */
 
-static void __init stackleak_init(void)
+void __init stackleak_init(void)
 {
     kprintf("[OK] STACKLEAK: kernel stack eraser initialized (poison=0x%016llx)\n",
             (unsigned long long)STACKLEAK_POISON_VALUE);

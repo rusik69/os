@@ -61,14 +61,14 @@ int kptr_restrict_check(void) {
 }
 
 /* ── Stub: kptr_restrict_set ─────────────────────────────── */
-static int kptr_restrict_set(int level)
+int kptr_restrict_set(int level)
 {
     (void)level;
     kprintf("[kptr] kptr_restrict_set: not yet implemented\n");
     return 0;
 }
 /* ── Stub: kptr_restrict_get ─────────────────────────────── */
-static int kptr_restrict_get(void)
+int kptr_restrict_get(void)
 {
     kprintf("[kptr] kptr_restrict_get: not yet implemented\n");
     return 0;

@@ -11,31 +11,31 @@
  */
 
 /* Provide the standard libgcc names for the linker */
-static uint64_t __udivdi3(uint64_t a, uint64_t b)
+uint64_t __udivdi3(uint64_t a, uint64_t b)
 {
     if (b == 0) return 0;
     return a / b;
 }
 
-static uint64_t __umoddi3(uint64_t a, uint64_t b)
+uint64_t __umoddi3(uint64_t a, uint64_t b)
 {
     if (b == 0) return a;
     return a % b;
 }
 
-static int64_t __divdi3(int64_t a, int64_t b)
+int64_t __divdi3(int64_t a, int64_t b)
 {
     if (b == 0) return 0;
     return a / b;
 }
 
-static int64_t __moddi3(int64_t a, int64_t b)
+int64_t __moddi3(int64_t a, int64_t b)
 {
     if (b == 0) return a;
     return a % b;
 }
 
-static uint64_t __udivmoddi4(uint64_t a, uint64_t b, uint64_t *rem)
+uint64_t __udivmoddi4(uint64_t a, uint64_t b, uint64_t *rem)
 {
     if (b == 0) {
         if (rem) *rem = a;

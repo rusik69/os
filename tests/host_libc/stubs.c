@@ -62,3 +62,19 @@ void sysctl_register(const char *name,
 
 /* ── SCHED_DEADLINE stub (used by sched_attr.c) ─────────────── */
 int sched_deadline_add_task(struct process *proc) { (void)proc; return 0; }
+
+/* ── Spinlock stubs (used by compress.c, etc.) ─────────────── */
+struct lockdep { int dummy; };
+void lockdep_spinlock_acquired(void *lock) { (void)lock; }
+void lockdep_spinlock_released(void *lock) { (void)lock; }
+void schedule(void) {}
+void spinlock_detect_lockup(void *lock, int try) { (void)lock; (void)try; }
+void spinlock_register_owner(void *lock) { (void)lock; }
+void spinlock_unregister_owner(void *lock) { (void)lock; }
+
+/* ── Capability stubs (used by compress.c via module_alias.c) ── */
+int cap_capable_audit(int cap, int ns_cap) { (void)cap; (void)ns_cap; return 0; }
+
+/* ── kptr_restrict stubs ── */
+int kptr_restrict_get(void) { return 0; }
+int kptr_restrict_set(int level) { (void)level; return 0; }
