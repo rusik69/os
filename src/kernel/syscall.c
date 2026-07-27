@@ -10070,10 +10070,28 @@ static uint64_t sys_syncfs(uint64_t fd) {
 
 static uint64_t sys_setsid(void) {
     struct process *p = process_get_current();
-    if (!p) return (uint64_t)-1;
-    /* Create a new session: this process becomes session leader */
-    p->sid = p->pid;
+    if (!p)
+        return (uint64_t)(int64_t)-ESRCH;
+
+    /* EPERM if the calling process is already a session leader */
+    if (p->sid == p->pid)
+        return (uint64_t)(int64_t)-EPERM;
+
+    /* EPERM if the calling process is already a process group leader
+     * (i.e., any process in the system has a pgid matching our pid).
+     * This also catches the case where p->pgid == p->pid. */
+    struct process *table = process_get_table();
+    for (int i = 0; i < PROCESS_MAX; i++) {
+        if (table[i].state != PROCESS_UNUSED && table[i].pgid == p->pid)
+            return (uint64_t)(int64_t)-EPERM;
+    }
+
+    /* Create a new session: this process becomes session leader,
+     * starts a new process group, and disconnects from the
+     * controlling terminal (none assigned yet in this OS). */
+    p->sid  = p->pid;
     p->pgid = p->pid;
+
     return (uint64_t)p->sid;
 }
 
