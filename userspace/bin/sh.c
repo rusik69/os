@@ -26,7 +26,7 @@
 #define MAX_ARGS 64
 #define MAX_ENV 64
 #define PATH_MAX 256
-#define MAX_SEGMENTS 16   /* max pipe segments in a pipeline */
+#define MAX_SEGMENTS 16 /* max pipe segments in a pipeline */
 
 /* ── Environment ──────────────────────────────────────────────── */
 static char *sh_env[MAX_ENV];
@@ -98,8 +98,7 @@ struct cmd_segment {
  * Split 'line' by '|', parse each segment into argv arrays.
  * Returns number of segments, or -1 on error.
  */
-static int sh_split_pipes(char *line, struct cmd_segment *segs, int max_segs)
-{
+static int sh_split_pipes(char *line, struct cmd_segment *segs, int max_segs) {
     int nsegs = 0;
     char *p = line;
 
@@ -160,8 +159,7 @@ static int sh_split_pipes(char *line, struct cmd_segment *segs, int max_segs)
  * The shell ignores SIGPIPE so it survives broken pipes;
  * children inherit default SIGPIPE handling and terminate on SIGPIPE.
  */
-static int sh_exec_pipeline(struct cmd_segment *segs, int nsegs)
-{
+static int sh_exec_pipeline(struct cmd_segment *segs, int nsegs) {
     int pipes[MAX_SEGMENTS - 1][2];
     int pids[MAX_SEGMENTS];
     int last_status = 0;
