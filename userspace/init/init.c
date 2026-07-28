@@ -4,10 +4,10 @@
  * This is the first userspace process started by the kernel.
  */
 
-#include "unistd.h"
 #include "stdio.h"
 #include "stdlib.h"
 #include "string.h"
+#include "unistd.h"
 
 /* Reap any zombie children (including orphaned grandchildren that
  * have been reparented to init).  This prevents accumulation of
@@ -18,7 +18,8 @@ static int reap_children(void) {
     int status;
     while (1) {
         int pid = waitpid(-1, &status, WNOHANG);
-        if (pid <= 0) break;
+        if (pid <= 0)
+            break;
         printf("[init] Reaped child %d (status %d)\n", pid, status);
         reaped++;
     }
@@ -58,13 +59,13 @@ int main(int argc, char *argv[]) {
 
         if (pid == 0) {
             /* Child — exec getty on console */
-            char *const argv[] = { "/bin/getty", "/dev/console", NULL };
-            char *const envp[] = { "PATH=/bin", "HOME=/", NULL };
+            char *const argv[] = {"/bin/getty", "/dev/console", NULL};
+            char *const envp[] = {"PATH=/bin", "HOME=/", NULL};
             execve("/bin/getty", argv, envp);
             /* If exec returns, it failed — fallback to direct shell */
             printf("[init] execve /bin/getty failed, trying /bin/sh...\n");
             {
-                char *const sh_argv[] = { "/bin/sh", NULL };
+                char *const sh_argv[] = {"/bin/sh", NULL};
                 execve("/bin/sh", sh_argv, envp);
             }
             printf("[init] execve /bin/sh also failed\n");
@@ -86,6 +87,7 @@ int main(int argc, char *argv[]) {
 
     /* Fallback — just loop */
     printf("[init] All shells failed, halting\n");
-    for (;;) { /* pause */ }
+    for (;;) { /* pause */
+    }
     return 0;
 }
