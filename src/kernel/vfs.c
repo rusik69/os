@@ -1530,12 +1530,11 @@ int vfs_bind_mount(const char *src, const char *target) {
         tlen = sizeof(mounts[num_mounts].mountpoint) - 1;
     memcpy(mounts[num_mounts].mountpoint, ap_tgt, tlen);
     mounts[num_mounts].mountpoint[tlen] = '\0';
-    mounts[num_mounts].ops  = src_mount->ops;
+    mounts[num_mounts].ops = src_mount->ops;
     mounts[num_mounts].priv = src_mount->priv;
     mounts[num_mounts].flags = MS_BIND;
     mounts[num_mounts].is_bind = 1;
-    strncpy(mounts[num_mounts].bind_source, ap_src,
-            sizeof(mounts[num_mounts].bind_source) - 1);
+    strncpy(mounts[num_mounts].bind_source, ap_src, sizeof(mounts[num_mounts].bind_source) - 1);
     mounts[num_mounts].bind_source[sizeof(mounts[num_mounts].bind_source) - 1] = '\0';
 
     num_mounts++;
@@ -1550,14 +1549,14 @@ int vfs_bind_mount(const char *src, const char *target) {
                 cplen = sizeof(root->mounts[root->num_mounts].mountpoint) - 1;
             memcpy(root->mounts[root->num_mounts].mountpoint, ap_tgt, cplen);
             root->mounts[root->num_mounts].mountpoint[cplen] = '\0';
-            root->mounts[root->num_mounts].ops  = src_mount->ops;
+            root->mounts[root->num_mounts].ops = src_mount->ops;
             root->mounts[root->num_mounts].priv = src_mount->priv;
             root->mounts[root->num_mounts].flags = MS_BIND;
             root->mounts[root->num_mounts].is_bind = 1;
             strncpy(root->mounts[root->num_mounts].bind_source, ap_src,
                     sizeof(root->mounts[root->num_mounts].bind_source) - 1);
-            root->mounts[root->num_mounts].bind_source[
-                sizeof(root->mounts[root->num_mounts].bind_source) - 1] = '\0';
+            root->mounts[root->num_mounts]
+                .bind_source[sizeof(root->mounts[root->num_mounts].bind_source) - 1] = '\0';
             root->num_mounts++;
         }
     }
