@@ -107,6 +107,10 @@ struct vfs_stat {
 
 /* Maximum symlink traversal depth (Linux: MAXSYMLINKS = 40) */
 #define SYMLINK_MAX 40
+
+/* Maximum hard link count (ext2 inode i_links_count is uint16_t: 65535 max) */
+#define VFS_LINK_MAX 65535
+
 #define VFS_TYPE_BLK    5  /* block device */
 #define VFS_TYPE_FIFO   6  /* named pipe/FIFO */
 struct file_lock {

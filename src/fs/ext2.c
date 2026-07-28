@@ -2205,6 +2205,10 @@ static int ext2_link(void *priv, const char *oldpath, const char *newpath)
 	if (target_inode.i_mode & S_IFDIR)
 		return -EPERM;
 
+	/* Reject hard link creation when nlink would overflow (uint16_t limit) */
+	if (target_inode.i_links_count >= 65535)
+		return -EMLINK;
+
 	/* ── Extract parent directory path and basename from newpath ── */
 	const char *slash = strrchr(newpath, '/');
 	const char *basename;

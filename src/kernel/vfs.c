@@ -1587,6 +1587,9 @@ int vfs_link(const char *oldpath, const char *newpath) {
     if (vfs_stat(ap_old, &st) < 0) return -ENOENT;
     if (vfs_stat(ap_new, &st) == 0) return -EEXIST;
 
+    /* Reject hard link creation when nlink would overflow (max 65535) */
+    if (st.nlink >= VFS_LINK_MAX) return -EMLINK;
+
     struct vfs_mount *m_old = resolve(ap_old);
     if (!m_old) return -ENOENT;
     struct vfs_mount *m_new = resolve(ap_new);
