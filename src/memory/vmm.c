@@ -768,6 +768,13 @@ void vmm_switch_pml4(uint64_t *pml4) {
  * Both parent and child PTEs are marked !WRITE | PTE_COW.
  * pmm_ref_frame is called for each shared leaf frame.
  * Returns new child PML4, or NULL on allocation failure.
+ *
+ * NOTE: This function modifies the parent's live page table entries (stripping
+ * PTE_WRITE and adding PTE_COW).  The parent's TLB may have stale writable
+ * translations for those entries.  To guarantee correctness we flush the TLB
+ * before returning by reloading CR3 (which invalidates all non-global entries).
+ * Callers do NOT need a separate TLB flush afterwards, though redundant flushes
+ * are harmless.
  */
 uint64_t *vmm_clone_user_pml4(uint64_t *src) {
     uint64_t *dst = vmm_create_user_pml4(); /* copies kernel half */
@@ -904,6 +911,20 @@ uint64_t *vmm_clone_user_pml4(uint64_t *src) {
             }
         }
     }
+
+    /* ── Flush TLB after modifying parent's PTEs ─────────────────────────
+     * We have stripped PTE_WRITE from all writable user pages in the
+     * parent's page table and set PTE_COW instead.  The parent's TLB may
+     * still cache the old (writable) translations, which would allow the
+     * parent to write to shared pages without triggering a COW fault,
+     * breaking the fundamental fork invariant.
+     *
+     * Reloading CR3 (even to the same PML4) invalidates all non-global
+     * TLB entries, ensuring the next access walks the updated page tables.
+     * This is self-contained — callers need NOT flush separately (though
+     * redundant flushes are harmless). */
+    vmm_switch_pml4(src);
+
     return dst;
 }
 
