@@ -1498,12 +1498,12 @@ int vfs_statfs(const char *path, struct vfs_statfs *st) {
 
 int vfs_fstatfs(int fd, struct vfs_statfs *st) {
     if (!st) return -EINVAL;
-    /* Resolve fd to path */
-    struct process *p = process_get_current();
-    if (!p) return -EBADF;
-    int i = fd - 3;
-    if (i < 0 || i >= PROCESS_FD_MAX || !p->fd_table[i].used) return -EBADF;
-    return vfs_statfs(p->fd_table[i].path, st);
+    struct process *proc = process_get_current();
+    if (!proc) return -EBADF;
+    if (fd < 0 || fd >= PROCESS_FD_MAX) return -EBADF;
+    struct process_fd *pfd = &proc->fd_table[fd];
+    if (!pfd->used) return -EBADF;
+    return vfs_statfs(pfd->path, st);
 }
 
 int vfs_truncate(const char *path, uint32_t len) {

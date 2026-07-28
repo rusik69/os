@@ -8355,16 +8355,21 @@ static uint64_t sys_statfs(uint64_t path_addr, uint64_t buf_addr) {
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
 
+    struct vfs_statfs vs;
+    int ret = vfs_statfs(kpath, &vs);
+    if (ret < 0)
+        return (uint64_t)(int64_t)ret;
+
     struct statfs st;
     memset(&st, 0, sizeof(st));
-    st.f_type = 0x4D44; /* FAT */
-    st.f_bsize = 512;
-    st.f_blocks = 0; /* unknown */
-    st.f_bfree = 0;
-    st.f_bavail = 0;
-    st.f_files = 0;
-    st.f_ffree = 0;
-    st.f_namelen = 256;
+    st.f_type    = vs.f_type;
+    st.f_bsize   = vs.f_bsize;
+    st.f_blocks  = vs.f_blocks;
+    st.f_bfree   = vs.f_bfree;
+    st.f_bavail  = vs.f_bavail;
+    st.f_files   = vs.f_files;
+    st.f_ffree   = vs.f_ffree;
+    st.f_namelen = vs.f_namelen;
 
     if (copy_to_user(buf_addr, &st, sizeof(struct statfs)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
@@ -8372,8 +8377,25 @@ static uint64_t sys_statfs(uint64_t path_addr, uint64_t buf_addr) {
 }
 
 static uint64_t sys_fstatfs(uint64_t fd, uint64_t buf_addr) {
-    (void)fd;
-    return sys_statfs(0, buf_addr);
+    struct vfs_statfs vs;
+    int ret = vfs_fstatfs((int)fd, &vs);
+    if (ret < 0)
+        return (uint64_t)(int64_t)ret;
+
+    struct statfs st;
+    memset(&st, 0, sizeof(st));
+    st.f_type    = vs.f_type;
+    st.f_bsize   = vs.f_bsize;
+    st.f_blocks  = vs.f_blocks;
+    st.f_bfree   = vs.f_bfree;
+    st.f_bavail  = vs.f_bavail;
+    st.f_files   = vs.f_files;
+    st.f_ffree   = vs.f_ffree;
+    st.f_namelen = vs.f_namelen;
+
+    if (copy_to_user(buf_addr, &st, sizeof(struct statfs)) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
+    return 0;
 }
 
 static uint64_t sys_getrusage(uint64_t who, uint64_t usage_addr) {
