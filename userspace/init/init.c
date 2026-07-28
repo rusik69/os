@@ -57,28 +57,31 @@ int main(int argc, char *argv[]) {
         }
 
         if (pid == 0) {
-            /* Child — exec shell */
-            char *const argv[] = { "/bin/sh", NULL };
+            /* Child — exec getty on console */
+            char *const argv[] = { "/bin/getty", "/dev/console", NULL };
             char *const envp[] = { "PATH=/bin", "HOME=/", NULL };
-            execve("/bin/sh", argv, envp);
-            /* If exec returns, it failed */
-            printf("[init] execve /bin/sh failed, trying /bin/sh.elf...\n");
-            execve("/bin/sh.elf", argv, envp);
-            printf("[init] execve failed\n");
+            execve("/bin/getty", argv, envp);
+            /* If exec returns, it failed — fallback to direct shell */
+            printf("[init] execve /bin/getty failed, trying /bin/sh...\n");
+            {
+                char *const sh_argv[] = { "/bin/sh", NULL };
+                execve("/bin/sh", sh_argv, envp);
+            }
+            printf("[init] execve /bin/sh also failed\n");
             exit(1);
         }
 
-        /* Parent — reap any zombie children before blocking on the shell */
+        /* Parent — reap any zombie children before blocking on the getty */
         reap_children();
 
-        /* Wait for the shell to exit */
+        /* Wait for the getty (and its shell) to exit */
         int status = 0;
         waitpid(pid, &status, 0);
 
-        /* Reap again after shell exits (collect any remaining orphans) */
+        /* Reap again after getty exits (collect any remaining orphans) */
         reap_children();
 
-        printf("[init] Shell exited (status %d), respawning...\n", status);
+        printf("[init] Getty exited (status %d), respawning...\n", status);
     }
 
     /* Fallback — just loop */
