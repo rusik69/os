@@ -50,6 +50,11 @@
  * mlock/munlock page locking.  Pages with this bit set have an elevated refcount
  * via pmm_ref_frame() and must not be swapped out or freed. */
 #define VMM_FLAG_LOCKED   (1ULL << 52)
+/* Software bit 53 (available to OS) used for MAP_SHARED page tracking.
+ * Pages with this bit are shared between processes (not COW'd on fork).
+ * Both parent and child maintain writable mappings to the same physical frame
+ * after fork, ensuring writes by one process are visible to the other. */
+#define VMM_FLAG_SHARED   (1ULL << 53)
 /* Page-level cache disable (PAT bit) for MMIO */
 #define VMM_FLAG_NOCACHE  (1ULL << 4)  /* PCD = Page Cache Disable */
 #define VMM_FLAG_NOEXEC   (1ULL << 63) /* No-Execute (NX bit) */

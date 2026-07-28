@@ -475,6 +475,8 @@ uint64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot,
     if (flags & MAP_SHARED) {
         /* Shared anonymous: allocate pages immediately (no COW) */
         page_flags &= ~(uint64_t)VMM_FLAG_LAZY;
+        /* Mark as shared so fork preserves writable sharing (no COW) */
+        page_flags |= VMM_FLAG_SHARED;
         /* Writable shared mappings need write permission */
         if (ast & AST_WRITE)
             page_flags |= VMM_FLAG_WRITE;

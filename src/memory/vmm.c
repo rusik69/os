@@ -837,12 +837,16 @@ uint64_t *vmm_clone_user_pml4(uint64_t *src) {
                      *   - Preserve PTE_NX (bit 63)
                      *   - Preserve VMM_FLAG_LOCKED (bit 52) so each new PTE
                      *     retains the lock-pin flag; the child gets its own
-                     *     lock-pin ref via an extra pmm_ref_frame below. */
-                    uint64_t pflags = huge_pde & 0xFFF;
-                    uint64_t pnx    = huge_pde & PTE_NX;
-                    uint64_t plocked = huge_pde & VMM_FLAG_LOCKED;
+                     *     lock-pin ref via an extra pmm_ref_frame below.
+                     *   - Preserve VMM_FLAG_SHARED (bit 53) so MAP_SHARED
+                     *     semantics are maintained across fork. */
+                    uint64_t pflags   = huge_pde & 0xFFF;
+                    uint64_t pnx      = huge_pde & PTE_NX;
+                    uint64_t plocked  = huge_pde & VMM_FLAG_LOCKED;
+                    uint64_t pshared = huge_pde & VMM_FLAG_SHARED;
 
-                    if (pflags & PTE_WRITE) {
+                    /* Skip COW for MAP_SHARED huge pages — keep writable */
+                    if ((pflags & PTE_WRITE) && !pshared) {
                         pflags = (pflags & ~(uint64_t)PTE_WRITE) | PTE_COW;
                     }
 
@@ -851,7 +855,8 @@ uint64_t *vmm_clone_user_pml4(uint64_t *src) {
                         uint64_t entry = (frame & PTE_ADDR_MASK)
                                         | pflags | pnx
                                         | PTE_PRESENT
-                                        | plocked;
+                                        | plocked
+                                        | pshared;
                         src_pt[l] = entry;
                         dst_pt[l] = entry;
                         pmm_ref_frame(frame);  /* child mapping ref */
@@ -884,9 +889,14 @@ uint64_t *vmm_clone_user_pml4(uint64_t *src) {
 
                     /* Copy the page table entry into the child's page table.
                      *
-                     * For writable pages: share as read-only + PTE_COW.
-                     * The first write by either process triggers a private
-                     * copy via vmm_handle_cow_fault.
+                     * For writable pages that are NOT shared (MAP_SHARED):
+                     * share as read-only + PTE_COW.  The first write by either
+                     * process triggers a private copy via vmm_handle_cow_fault.
+                     *
+                     * For MAP_SHARED writable pages (VMM_FLAG_SHARED): keep
+                     * the page writable in both parent and child, pointing to
+                     * the same physical frame.  Writes by either process are
+                     * immediately visible to the other.
                      *
                      * For genuinely read-only pages (e.g. .rodata, EXECONLY
                      * code pages): share the frame as-is.  No COW marking
@@ -897,7 +907,7 @@ uint64_t *vmm_clone_user_pml4(uint64_t *src) {
                      *
                      * Preserve the lock-pin flag.  Add an extra child lock-pin
                      * ref so each process can unlock independently. */
-                    if (flags & PTE_WRITE) {
+                    if ((flags & PTE_WRITE) && !(flags & VMM_FLAG_SHARED)) {
                         flags = (flags & ~(uint64_t)PTE_WRITE) | PTE_COW;
                         src_pt[l] = frame | flags | nx | lck;
                         dst_pt[l] = frame | flags | nx | lck;
@@ -1467,7 +1477,7 @@ int vmm_set_user_pages_flags(uint64_t *pml4, uint64_t virt, size_t num_pages,
             uint64_t base = pde & 0x000FFFFFFFE00000ULL;
             uint64_t had_big = pde & PTE_HUGE;
             /* Preserve software bits (9-11) from new_flags */
-            uint64_t sw_bits = new_flags & (PTE_COW | PTE_LAZY | PTE_EXECONLY);
+            uint64_t sw_bits = new_flags & (PTE_COW | PTE_LAZY | PTE_EXECONLY | VMM_FLAG_SHARED);
             /* Write new flags and re-apply PRESENT + HUGE + software bits.
              * NX (bit 63) is explicitly set/cleared from new_flags. */
             uint64_t hw_flags = (new_flags & 0x1FF) | sw_bits;
@@ -1508,7 +1518,7 @@ int vmm_set_user_pages_flags(uint64_t *pml4, uint64_t virt, size_t num_pages,
             /* Preserve NX and EXECONLY from the old PTE if the new
              * flags don't explicitly override them.  The low 12 bits
              * of new_flags become the new low-12 PTE flags. */
-            uint64_t preserved = pte & (PTE_NX | PTE_EXECONLY);
+            uint64_t preserved = pte & (PTE_NX | PTE_EXECONLY | VMM_FLAG_SHARED);
             /* If new_flags says executable (no NOEXEC), don't inherit NX */
             if (!(new_flags & VMM_FLAG_NOEXEC))
                 preserved &= ~(uint64_t)PTE_NX;
@@ -1527,9 +1537,9 @@ int vmm_set_user_pages_flags(uint64_t *pml4, uint64_t virt, size_t num_pages,
 
         /* Preserve physical address, replace flags.
          * Only set PRESENT if the caller asked for it (PROT_NONE clears it).
-         * Preserve NX and EXECONLY from the old PTE if the new flags don't
+         * Preserve NX, EXECONLY, and SHARED from the old PTE if the new flags don't
          * explicitly override them. */
-        uint64_t preserved = pte & (PTE_NX | PTE_EXECONLY);
+        uint64_t preserved = pte & (PTE_NX | PTE_EXECONLY | VMM_FLAG_SHARED);
         /* If new_flags says executable (no NOEXEC), don't inherit NX */
         if (!(new_flags & VMM_FLAG_NOEXEC))
             preserved &= ~(uint64_t)PTE_NX;
