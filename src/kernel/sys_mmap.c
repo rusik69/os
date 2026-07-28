@@ -320,7 +320,16 @@ uint64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot,
         return (uint64_t)(int64_t)-EACCES;
 
     /* For MAP_ANONYMOUS, fd and offset are intentionally ignored (Linux semantics).
-     * Cast to void to suppress unused-parameter warnings. */
+     * Cast to void to suppress unused-parameter warnings.
+     *
+     * Zero-fill guarantee: MAP_ANONYMOUS pages are guaranteed to be zero-filled.
+     * This is achieved via two mechanisms:
+     *   - Lazy (VMM_FLAG_LAZY) pages: mapped to the shared zero page (vmm_zero_page_frame),
+     *     a permanently-pinned physical frame zeroed at boot.  Reads return zeros directly.
+     *     On first write, the COW handler (vmm_handle_cow_fault) allocates a new physical
+     *     frame and memcpy's the zero-page content, preserving zero-fill semantics.
+     *   - Eager (non-lazy) pages: vmm_map_user_pages / vmm_map_user_huge_pages call
+     *     pmm_alloc_frame() then memset(0) on every allocated frame before mapping. */
     if (flags & MAP_ANONYMOUS) {
         (void)fd;
         (void)offset;
