@@ -92,8 +92,8 @@
 #define O_CREAT     0x40
 #define O_TRUNC     0x200
 #define O_APPEND    0x400
-#define O_DSYNC    010000
-#define O_SYNC     04010000
+#define O_DSYNC 010000
+#define O_SYNC 04010000
 
 /* Seek flags */
 #define SEEK_SET    0

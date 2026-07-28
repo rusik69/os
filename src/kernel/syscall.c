@@ -1878,8 +1878,7 @@ static uint64_t sys_fd_read(uint64_t fd, uint64_t buf_addr, uint64_t count) {
  * Returns 0 on success; errors are logged but not propagated to the caller
  * (the write itself already succeeded).
  */
-static void do_sync_after_write(struct process_fd *pfd)
-{
+static void do_sync_after_write(struct process_fd *pfd) {
     if (!pfd || !(pfd->open_flags & (O_SYNC | O_DSYNC)))
         return;
 
@@ -1918,7 +1917,8 @@ static uint64_t sys_fd_write(uint64_t fd, uint64_t buf_addr, uint64_t count) {
                 r = vfs_write(pfd->path, (const void *)(uintptr_t)buf_addr, (uint32_t)count);
                 if (r == 0) pfd->offset += count;
             }
-            if (r == 0) do_sync_after_write(pfd);
+            if (r == 0)
+                do_sync_after_write(pfd);
             return (r == 0) ? count : (uint64_t)(int64_t)r;
         }
         /* Default stdout/stderr — write to console */
@@ -1956,7 +1956,8 @@ static uint64_t sys_fd_write(uint64_t fd, uint64_t buf_addr, uint64_t count) {
         r = vfs_write(pfd->path, (const void *)(uintptr_t)buf_addr, (uint32_t)count);
         if (r == 0) pfd->offset += count;
     }
-    if (r == 0) do_sync_after_write(pfd);
+    if (r == 0)
+        do_sync_after_write(pfd);
     return (r == 0) ? count : (uint64_t)(int64_t)r;
 }
 
@@ -2103,7 +2104,8 @@ static uint64_t sys_pwrite64(uint64_t fd, uint64_t buf_addr,
         return (uint64_t)(int64_t)r;
 
     /* O_SYNC/O_DSYNC: flush written data to backing store */
-    if (r == 0) do_sync_after_write(pfd);
+    if (r == 0)
+        do_sync_after_write(pfd);
 
     /* I/O accounting */
     {
