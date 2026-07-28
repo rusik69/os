@@ -625,7 +625,7 @@ static struct process_fd *sys_get_fd(int i) {
 static char tty_read_char(void) {
     for (;;) {
         char c = keyboard_getchar();
-        if ((uint8_t)c == 0x03) {  /* Ctrl+C */
+        if ((uint8_t)c == 0x03) {  /* Ctrl+C -> SIGINT */
             uint64_t fg = pgrp_get_foreground();
             if (fg == 0) {
                 /* No foreground group set — send to current process group */
@@ -635,6 +635,18 @@ static char tty_read_char(void) {
             }
             if (fg != 0)
                 signal_send_group((uint32_t)fg, SIGINT);
+            /* Consume the character — don't return it */
+            continue;
+        }
+        if ((uint8_t)c == 0x1C) {  /* Ctrl+\ -> SIGQUIT with core dump */
+            uint64_t fg = pgrp_get_foreground();
+            if (fg == 0) {
+                struct process *cur = process_get_current();
+                if (cur && cur->pgid != 0)
+                    fg = cur->pgid;
+            }
+            if (fg != 0)
+                signal_send_group((uint32_t)fg, SIGQUIT);
             /* Consume the character — don't return it */
             continue;
         }

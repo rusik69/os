@@ -285,6 +285,7 @@ static void keyboard_handler(struct interrupt_frame *frame) {
     char c = use_shift ? shift_table[scancode] : base;
 
     if (kb_ctrl && c >= 'a' && c <= 'z') c = c - 'a' + 1;
+    if (kb_ctrl && (c == '\\' || c == '|')) c = 0x1C;  /* Ctrl+\ -> SIGQUIT */
     if (c) kb_push(c);
 }
 
