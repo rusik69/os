@@ -705,6 +705,11 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     keyboard_init();
     kprintf("[OK] Keyboard initialized\n");
 
+    /* Enable IRQ-driven serial console input for COM1 and COM2 */
+    serial_set_irq_mode(0, 1);
+    serial_set_irq_mode(1, 1);
+    kprintf("[OK] Serial console input enabled (COM1, COM2)\n");
+
     /* RTC */
     rtc_init();
     struct rtc_time rtc;

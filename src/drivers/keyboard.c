@@ -7,6 +7,7 @@
 #include "printf.h"
 #include "ps2.h"
 #include "export.h"
+#include "serial.h"
 
 #define KB_DATA_PORT 0x60
 #define KB_CMD_PORT  0x64
@@ -310,6 +311,26 @@ int keyboard_has_input(void) {
 #define SERIAL_DATA  0x3F8
 #define SERIAL_LSR   (0x3F8 + 5)
 
+#define SERIAL2_DATA 0x2F8
+#define SERIAL2_LSR  (0x2F8 + 5)
+
+/* Read one character from a serial port (IRQ buffer first, fall back to polling).
+ * port_idx: 0 = COM1, 1 = COM2
+ * Returns character (0-255) on success, -1 if no data available. */
+static int serial_read_char(int port_idx)
+{
+    /* Try IRQ buffer first */
+    if (serial_has_irq(port_idx)) {
+        return serial_read_irq(port_idx);
+    }
+    /* Fall back to polling */
+    uint16_t base = (port_idx == 0) ? SERIAL_COM1 : SERIAL_COM2;
+    if (inb(base + UART_LSR) & UART_LSR_DR) {
+        return (uint8_t)inb(base + UART_RBR);
+    }
+    return -1;
+}
+
 static int serial_has_input(void) {
     return inb(SERIAL_LSR) & 1;
 }
@@ -360,8 +381,25 @@ char keyboard_getchar(void) {
             return c;
         }
         __asm__ volatile("sti");
-        if (serial_has_input()) {
-            char c = inb(SERIAL_DATA);
+
+        /* Try serial input from COM1 and COM2 */
+        int serial_c = -1;
+        int src_port = -1; /* 0 = COM1, 1 = COM2 */
+
+        /* Try COM1 first (IRQ then poll) */
+        serial_c = serial_read_char(0);
+        if (serial_c >= 0) {
+            src_port = 0;
+        } else {
+            /* Try COM2 next */
+            serial_c = serial_read_char(1);
+            if (serial_c >= 0) {
+                src_port = 1;
+            }
+        }
+
+        if (serial_c >= 0) {
+            char c = (char)serial_c;
 
             /* Serial SysRq trigger: NUL byte followed by command char */
             if (serial_sysrq_state == 0 && c == 0x00) {

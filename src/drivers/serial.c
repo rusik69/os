@@ -85,6 +85,7 @@ int serial_port_init(int port_idx) {
 
 void __init serial_init(void) {
     serial_port_init(0); /* COM1 */
+    serial_port_init(1); /* COM2 */
 }
 
 /* ── Port I/O ──────────────────────────────────────────────────────── */

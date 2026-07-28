@@ -890,8 +890,16 @@ retry:
         int rc = serial_read_irq(0);
         if (rc < 0) goto no_data;
         c = (char)rc;
+    } else if (serial_has_irq(1)) {
+        int rc = serial_read_irq(1);
+        if (rc < 0) goto no_data;
+        c = (char)rc;
     } else if (inb(SERIAL_COM1 + UART_LSR) & UART_LSR_DR) {
         c = (char)inb(SERIAL_COM1 + UART_RBR);
+        if (c == '\r') c = '\n';
+        if (c == 127)  c = '\b';
+    } else if (inb(SERIAL_COM2 + UART_LSR) & UART_LSR_DR) {
+        c = (char)inb(SERIAL_COM2 + UART_RBR);
         if (c == '\r') c = '\n';
         if (c == 127)  c = '\b';
     } else {
