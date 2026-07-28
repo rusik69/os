@@ -10,6 +10,12 @@
 #include "stdlib.h"
 #include "stdarg.h"
 
+/* Exit status decoding macros (Linux-compatible encoding) */
+#define WIFEXITED(s)   (((s) & 0x7f) == 0)
+#define WEXITSTATUS(s) (((s) >> 8) & 0xff)
+#define WIFSIGNALED(s) ((((s) & 0x7f) != 0) && (((s) & 0x7f) < 0x7f))
+#define WTERMSIG(s)    ((s) & 0x7f)
+
 /* ── Shell config ─────────────────────────────────────────────── */
 #define MAX_LINE   1024
 #define MAX_ARGS   64
@@ -19,6 +25,7 @@
 /* ── Environment ──────────────────────────────────────────────── */
 static char *sh_env[MAX_ENV];
 static int   sh_env_count;
+static int   last_exit_code;  /* $? — exit status of last command */
 
 static void sh_init_env(void) {
     sh_env[0] = "PATH=/bin";
@@ -104,6 +111,42 @@ int sh_parse(char *line, char **argv, int max) {
     }
     argv[argc] = 0;
     return argc;
+}
+
+/* ── Variable expansion (currently just $?) ──────────────────── */
+static void sh_expand_line(char *line, int max) {
+    char tmp[MAX_LINE];
+    int i = 0, j = 0;
+    while (line[i] && j < max - 1) {
+        if (line[i] == '$' && line[i+1] == '?') {
+            /* Convert last_exit_code to string */
+            char buf[16];
+            int k = 0;
+            int code = last_exit_code;
+            if (code == 0) {
+                buf[k++] = '0';
+            } else {
+                char rev[16];
+                int r = 0;
+                while (code > 0) {
+                    rev[r++] = (char)('0' + (code % 10));
+                    code /= 10;
+                }
+                while (r > 0)
+                    buf[k++] = rev[--r];
+            }
+            buf[k] = '\0';
+            int n = 0;
+            while (buf[n] && j < max - 1)
+                tmp[j++] = buf[n++];
+            i += 2;
+        } else {
+            tmp[j++] = line[i++];
+        }
+    }
+    tmp[j] = '\0';
+    strncpy(line, tmp, (unsigned long)max - 1);
+    line[max - 1] = '\0';
 }
 
 /* ── External command execution ───────────────────────────────── */
@@ -465,7 +508,11 @@ int main(int argc, char *argv[]) {
         if (pid > 0) {
             int status = 0;
             waitpid(pid, &status, 0);
-            return status;
+            if (WIFEXITED(status))
+                return WEXITSTATUS(status);
+            else if (WIFSIGNALED(status))
+                return 128 + WTERMSIG(status);
+            return 0;
         }
         printf("sh: %s: not found\n", cmd_argv[0]);
         return 127;
@@ -482,23 +529,36 @@ int main(int argc, char *argv[]) {
             break;
         }
 
+        /* Expand $? before parsing */
+        sh_expand_line(line, MAX_LINE);
+
         char *argv_buf[MAX_ARGS];
         int ac = sh_parse(line, argv_buf, MAX_ARGS);
         if (ac == 0) continue;
 
         /* Check built-ins */
         int r = run_builtin(ac, argv_buf);
-        if (r >= 0) continue;
+        if (r >= 0) {
+            last_exit_code = r;
+            continue;
+        }
 
         /* External command */
         int pid = sh_exec_ext(argv_buf);
         if (pid > 0) {
             int status = 0;
             waitpid(pid, &status, 0);
+            if (WIFEXITED(status))
+                last_exit_code = WEXITSTATUS(status);
+            else if (WIFSIGNALED(status))
+                last_exit_code = 128 + WTERMSIG(status);
+            else
+                last_exit_code = 0;
         } else {
             printf("sh: %s: not found\n", argv_buf[0]);
+            last_exit_code = 127;
         }
     }
 
-    return 0;
+    return last_exit_code;
 }
