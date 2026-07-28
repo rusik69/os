@@ -636,16 +636,11 @@ static int g_tty_line_pos;   /* number of chars accumulated */
 static int g_tty_line_out;   /* index of next char to return to reader */
 
 /* ── TTY input helper ──────────────────────────────────────────────
- * Read one character from the keyboard/serial console.
+ * Read one character from the keyboard/serial console in canonical
+ * mode (ICANON).  Input is line-buffered in g_tty_line_buf.
  *
- * In canonical mode (c_lflag & ICANON), input is line-buffered.
- * Characters are accumulated in g_tty_line_buf until a line delimiter
- * (newline) is received.  Line editing is supported:
- *   Backspace/DEL  — delete previous character
- *   Ctrl+U (0x15)  — kill the entire line
- *   Ctrl+W (0x17)  — delete word backwards
- *
- * In non-canonical mode, characters are returned immediately.
+ * For non-canonical raw reads with VMIN/VTIME semantics, see
+ * tty_read_raw_nonblock() below.
  *
  * Signal characters are intercepted when c_lflag & ISIG:
  *   Ctrl+C (0x03) -> SIGINT   to the foreground process group.
@@ -657,67 +652,13 @@ static int g_tty_line_out;   /* index of next char to return to reader */
  */
 static char tty_read_char(void)
 {
-    /* ── Non-canonical (raw) mode — return characters immediately ── */
+    /* ── Canonical mode only for this function ───────────────── */
     if (!(g_tty_termios.c_lflag & ICANON)) {
-        for (;;) {
-            char c = keyboard_getchar();
-            /* Signal characters (when ISIG) */
-            if (g_tty_termios.c_lflag & ISIG) {
-                if ((uint8_t)c == 0x03) {
-                    uint64_t fg = pgrp_get_foreground();
-                    if (fg == 0) {
-                        struct process *cur = process_get_current();
-                        if (cur && cur->pgid != 0)
-                            fg = cur->pgid;
-                    }
-                    if (fg != 0)
-                        signal_send_group((uint32_t)fg, SIGINT);
-                    continue;
-                }
-                if ((uint8_t)c == 0x1C) {
-                    uint64_t fg = pgrp_get_foreground();
-                    if (fg == 0) {
-                        struct process *cur = process_get_current();
-                        if (cur && cur->pgid != 0)
-                            fg = cur->pgid;
-                    }
-                    if (fg != 0)
-                        signal_send_group((uint32_t)fg, SIGQUIT);
-                    continue;
-                }
-                if ((uint8_t)c == 0x1A) {
-                    uint64_t fg = pgrp_get_foreground();
-                    if (fg == 0) {
-                        struct process *cur = process_get_current();
-                        if (cur && cur->pgid != 0)
-                            fg = cur->pgid;
-                    }
-                    if (fg != 0)
-                        signal_send_group((uint32_t)fg, SIGTSTP);
-                    continue;
-                }
-            }
-            /* Echo */
-            if (g_tty_termios.c_lflag & ECHO) {
-                if (c == '\n' || c == '\r') {
-                    vga_putchar('\r');
-                    serial_putchar('\r');
-                    vga_putchar('\n');
-                    serial_putchar('\n');
-                } else if (c == '\b' || c == 127) {
-                    vga_putchar('\b');
-                    serial_putchar('\b');
-                    vga_putchar(' ');
-                    serial_putchar(' ');
-                    vga_putchar('\b');
-                    serial_putchar('\b');
-                } else {
-                    vga_putchar(c);
-                    serial_putchar(c);
-                }
-            }
-            return c;
-        }
+        /* Should not happen — caller handles non-canonical via
+         * tty_read_raw_nonblock() + VMIN/VTIME logic directly. */
+        /* Fall back to blocking getchar for safety */
+        char c = keyboard_getchar();
+        return c;
     }
 
     /* ── Canonical mode — line-buffered with editing ───────────── */
@@ -901,6 +842,158 @@ static char tty_read_char(void)
     }
 }
 
+/* ── Non-canonical (raw) mode helpers ──────────────────────────── */
+
+/* Try to read one character from keyboard or serial without blocking.
+ * Returns the character (0-255) on success, or -1 if no data available.
+ * Handles ISIG signal processing and ECHO internally. Signal characters
+ * are consumed (not returned to the caller). */
+static int tty_read_raw_nonblock(void)
+{
+    char c;
+
+retry:
+    /* Try keyboard buffer first */
+    if (keyboard_has_input()) {
+        c = keyboard_getchar();
+    } else if (serial_has_irq(0)) {
+        int rc = serial_read_irq(0);
+        if (rc < 0) goto no_data;
+        c = (char)rc;
+    } else if (inb(SERIAL_COM1 + UART_LSR) & UART_LSR_DR) {
+        c = (char)inb(SERIAL_COM1 + UART_RBR);
+        if (c == '\r') c = '\n';
+        if (c == 127)  c = '\b';
+    } else {
+        goto no_data;
+    }
+
+    /* ── Signal characters (when ISIG) ──────────────────────── */
+    if (g_tty_termios.c_lflag & ISIG) {
+        uint64_t fg = pgrp_get_foreground();
+        if (fg == 0) {
+            struct process *cur = process_get_current();
+            if (cur && cur->pgid != 0)
+                fg = cur->pgid;
+        }
+        if ((uint8_t)c == 0x03) {
+            if (fg != 0)
+                signal_send_group((uint32_t)fg, SIGINT);
+            goto retry;
+        }
+        if ((uint8_t)c == 0x1C) {
+            if (fg != 0)
+                signal_send_group((uint32_t)fg, SIGQUIT);
+            goto retry;
+        }
+        if ((uint8_t)c == 0x1A) {
+            if (fg != 0)
+                signal_send_group((uint32_t)fg, SIGTSTP);
+            goto retry;
+        }
+    }
+
+    /* ── Echo ────────────────────────────────────────────────── */
+    if (g_tty_termios.c_lflag & ECHO) {
+        if (c == '\n' || c == '\r') {
+            vga_putchar('\r');
+            serial_putchar('\r');
+            vga_putchar('\n');
+            serial_putchar('\n');
+        } else if (c == '\b' || c == 127) {
+            vga_putchar('\b');
+            serial_putchar('\b');
+            vga_putchar(' ');
+            serial_putchar(' ');
+            vga_putchar('\b');
+            serial_putchar('\b');
+        } else {
+            vga_putchar(c);
+            serial_putchar(c);
+        }
+    }
+
+    return (unsigned char)c;
+
+no_data:
+    return -1;
+}
+
+/* Read from the TTY in non-canonical mode with VMIN/VTIME semantics.
+ * Implements the four POSIX cases:
+ *   VMIN>0, VTIME=0: block until at least VMIN bytes
+ *   VMIN=0, VTIME>0: wait up to VTIME deciseconds for first byte
+ *   VMIN>0, VTIME>0: inter-byte timer, block for VMIN or timeout
+ *   VMIN=0, VTIME=0: non-blocking, return whatever is available
+ * Returns number of bytes read into buf (or 0). */
+static uint64_t tty_read_noncanonical(char *buf, uint64_t len)
+{
+    unsigned char vmin = g_tty_termios.c_cc[VMIN];
+    unsigned char vtime = g_tty_termios.c_cc[VTIME];
+    uint64_t total = 0;
+
+    /* Case D: VMIN=0, VTIME=0 — non-blocking, return immediately */
+    if (vmin == 0 && vtime == 0) {
+        while (total < len) {
+            int c = tty_read_raw_nonblock();
+            if (c < 0) break;
+            buf[total++] = (char)c;
+        }
+        return total;
+    }
+
+    /* Cases A/B/C: need to wait */
+    uint64_t timeout_ticks = vtime > 0
+        ? (uint64_t)vtime * ((uint64_t)TIMER_FREQ / 10)
+        : 0;
+    uint64_t deadline = vtime > 0
+        ? timer_get_ticks() + timeout_ticks
+        : 0;
+    int timer_active = 0;   /* For case C: timer starts after first byte */
+
+    while (total < len) {
+        int c = tty_read_raw_nonblock();
+
+        if (c >= 0) {
+            buf[total++] = (char)c;
+
+            /* Case B: first byte arrived, return immediately */
+            if (vmin == 0)
+                return total;
+
+            /* Case A/C: have enough bytes yet? */
+            if (total >= vmin)
+                return total;
+
+            /* Case C: reset inter-byte timer on each new byte */
+            if (vtime > 0) {
+                deadline = timer_get_ticks() + timeout_ticks;
+                timer_active = 1;
+            }
+        } else {
+            /* No char available — check timeouts */
+            uint64_t now = timer_get_ticks();
+
+            if (vtime > 0) {
+                if (vmin == 0) {
+                    /* Case B: initial timer expired — no data arrived */
+                    if (now >= deadline)
+                        return 0;
+                } else if (timer_active) {
+                    /* Case C: inter-byte timer expired */
+                    if (now >= deadline)
+                        return total;
+                }
+            }
+            /* Case A or C (before first byte): yield and retry */
+            __asm__ volatile("pause");
+            scheduler_yield();
+        }
+    }
+
+    return total;
+}
+
 /* Get pointer to the global TTY termios structure (for ioctl handlers) */
 struct termios *tty_get_termios(void)
 {
@@ -933,14 +1026,32 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
         if (!syscall_is_user_process()) return 0;
         /* User process reading stdin — read from keyboard/serial console */
         uint64_t total = 0;
-        while (total < len) {
-            char c = tty_read_char();
-            if (copy_to_user(buf_addr + total, &c, 1) < 0)
-                return total > 0 ? total : (uint64_t)(int64_t)-EFAULT;
-            total++;
-            if (c == '\n' || c == '\r')
-                break;
+
+        if (g_tty_termios.c_lflag & ICANON) {
+            /* Canonical (cooked) mode — line-buffered via tty_read_char */
+            while (total < len) {
+                char c = tty_read_char();
+                if (copy_to_user(buf_addr + total, &c, 1) < 0)
+                    return total > 0 ? total : (uint64_t)(int64_t)-EFAULT;
+                total++;
+                if (c == '\n' || c == '\r')
+                    break;
+            }
+        } else {
+            /* Non-canonical (raw) mode — VMIN/VTIME semantics */
+            if (len > 0) {
+                /* Allocate temp buffer so we mediate signal/echo processing
+                 * via tty_read_noncanonical before copying to userspace. */
+                uint64_t chunk = len > 256 ? 256 : len;
+                char kbuf[256];
+                total = tty_read_noncanonical(kbuf, chunk);
+                if (total > 0) {
+                    if (copy_to_user(buf_addr, kbuf, total) < 0)
+                        return (uint64_t)(int64_t)-EFAULT;
+                }
+            }
         }
+
         return total;
     }
     if (fd >= 3 && fd < 700) {
@@ -1636,14 +1747,30 @@ static uint64_t sys_fd_read(uint64_t fd, uint64_t buf_addr, uint64_t count) {
         }
         /* No dup2 — read from keyboard/serial console */
         uint64_t total = 0;
-        while (total < count) {
-            char c = tty_read_char();
-            if (copy_to_user(buf_addr + total, &c, 1) < 0)
-                return total > 0 ? total : (uint64_t)(int64_t)-EFAULT;
-            total++;
-            if (c == '\n' || c == '\r')
-                break;
+
+        if (g_tty_termios.c_lflag & ICANON) {
+            /* Canonical (cooked) mode — line-buffered via tty_read_char */
+            while (total < count) {
+                char c = tty_read_char();
+                if (copy_to_user(buf_addr + total, &c, 1) < 0)
+                    return total > 0 ? total : (uint64_t)(int64_t)-EFAULT;
+                total++;
+                if (c == '\n' || c == '\r')
+                    break;
+            }
+        } else {
+            /* Non-canonical (raw) mode — VMIN/VTIME semantics */
+            if (count > 0) {
+                uint64_t chunk = count > 256 ? 256 : count;
+                char kbuf[256];
+                total = tty_read_noncanonical(kbuf, chunk);
+                if (total > 0) {
+                    if (copy_to_user(buf_addr, kbuf, total) < 0)
+                        return (uint64_t)(int64_t)-EFAULT;
+                }
+            }
         }
+
         return total;
     }
     int i = (int)fd < 3 ? (int)fd : (int)fd - 3;

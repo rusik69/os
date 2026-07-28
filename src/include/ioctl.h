@@ -75,6 +75,15 @@
 #define ECHO        0x0008     /* echo input characters */
 #define TOSTOP      0x0100     /* send SIGTTOU to background processes writing to terminal */
 
+/* Termios c_cc array indices — non-canonical mode.
+ * VMIN and VEOF share the same index (4), as do VTIME and VEOL (5).
+ * In canonical mode c_cc[4]=VEOF, c_cc[5]=VEOL.
+ * In non-canonical mode c_cc[4]=VMIN, c_cc[5]=VTIME. */
+#define VMIN  4
+#define VTIME 5
+#define VEOF  4
+#define VEOL  5
+
 /* Minimal termios structure (Linux-compatible layout) */
 struct termios {
     unsigned int c_iflag;
