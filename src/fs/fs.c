@@ -474,7 +474,7 @@ int fs_write_file(const char *path, const void *data, uint32_t size) {
             for (uint32_t j = 0; j < i; j++) {
                 if (new_blocks[j]) bitmap_free_sector(new_blocks[j]);
             }
-            return -EINVAL;
+            return -ENOSPC;
         }
         new_blocks[i] = blk;
 
@@ -1050,6 +1050,12 @@ int fs_symlink(const char *path, const char *target) {
     uint32_t tlen = (uint32_t)strlen(target);
     if (tlen >= FS_BLOCK_SIZE) tlen = FS_BLOCK_SIZE - 1;
     uint32_t blk = alloc_block();
+    if (blk == 0) {
+        /* Free the inode we just allocated */
+        memset(&inodes[idx], 0, sizeof(struct fs_inode));
+        save_inodes();
+        return -ENOSPC;
+    }
     uint8_t blk_buf[FS_BLOCK_SIZE];
     memset(blk_buf, 0, FS_BLOCK_SIZE);
     memcpy(blk_buf, target, tlen);
@@ -1100,7 +1106,7 @@ int fs_truncate(const char *path, uint32_t len) {
             if (unlikely(!blk)) {
                 /* Allocation failed — free any blocks we allocated */
                 if (free_start >= 0) fs_free_inode_blocks_from(idx, free_start);
-                return -EINVAL;
+                return -ENOSPC;
             }
             inodes[idx].blocks[b] = blk;
             if (free_start < 0) free_start = (int)b;
@@ -1209,7 +1215,7 @@ int fs_fallocate(const char *path, int mode, uint32_t offset, uint32_t len)
                         }
                     }
                 }
-                return -EINVAL;
+                return -ENOSPC;
             }
             inodes[idx].blocks[b] = blk;
         }
