@@ -512,11 +512,12 @@ int sys_connect_impl(int sockfd, const struct sockaddr_in *addr) {
     s->remote_port = ntohs(addr->sin_port);
 
     if (s->type == SOCK_STREAM) {
-        s->conn_id = net_tcp_connect(s->remote_ip, s->remote_port);
-        if (s->conn_id < 0) {
-            ret = -ECONNREFUSED;
+        int conn_id = net_tcp_connect(s->remote_ip, s->remote_port);
+        if (conn_id < 0) {
+            ret = conn_id;
             goto out;
         }
+        s->conn_id = conn_id;
         s->state = SOCK_STATE_CONNECTED;
     } else if (s->type == SOCK_DGRAM) {
         /* UDP is connectionless, but we cache the default destination */

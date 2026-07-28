@@ -8,6 +8,7 @@
 #include "scheduler.h"
 #include "sha256.h"
 #include "syscall.h"   /* for prng_rand64 */
+#include "errno.h"
 #include "tcp_bbr.h"   /* BBR congestion control (Item 157) */
 #include "spinlock.h"  /* spinlock_t, SPINLOCK_INIT */
 #include "socket.h"    /* struct sockaddr_in */
@@ -1435,16 +1436,16 @@ int net_tcp_connect(uint32_t ip, uint16_t port) {
         uint64_t now = timer_get_ticks();
         if (now != start && now - start > 500) {
             memset(c, 0, sizeof(*c));
-            return -1;
+            return -ETIMEDOUT;
         }
         if (tries > 5000000) {
             memset(c, 0, sizeof(*c));
-            return -1;
+            return -ETIMEDOUT;
         }
     }
     if (c->state != TCP_ESTABLISHED) {
         memset(c, 0, sizeof(*c));
-        return -1;
+        return -ECONNREFUSED;
     }
     return conn_id;
 }
