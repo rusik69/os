@@ -215,12 +215,11 @@ uint64_t sys_brk(uint64_t addr) {
 
     if (addr == 0) return p->heap_end; /* brk(0) — get current */
 
-    /* Guard against overflow in the page-alignment addition */
-    if (addr > UINT64_MAX - (PAGE_SIZE - 1))
-        return (uint64_t)(int64_t)-ENOMEM;
+    /* Reject unaligned program break (must be page-aligned) */
+    if ((addr & (PAGE_SIZE - 1)) != 0)
+        return (uint64_t)(int64_t)-EINVAL;
 
-    /* Align to page boundary */
-    addr = (addr + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
+    /* Guard against overflow */
     if (addr > USER_VADDR_MAX) return (uint64_t)(int64_t)-ENOMEM;
 
     uint64_t old_end = p->heap_end;
