@@ -1308,6 +1308,8 @@ static int64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
         struct vfs_stat st;
         if (vfs_stat(pfd->path, &st) < 0)
             return (uint64_t)(int64_t)-EIO;
+        if (st.type == VFS_TYPE_DIR)
+            return (uint64_t)(int64_t)-EISDIR;
         uint64_t fsize = st.size;
         if (pfd->offset >= fsize)
             return 0;
@@ -2018,6 +2020,8 @@ static int64_t sys_fd_read(uint64_t fd, uint64_t buf_addr, uint64_t count) {
             struct vfs_stat st;
             if (vfs_stat(pfd->path, &st) < 0)
                 return (uint64_t)(int64_t)-EIO;
+            if (st.type == VFS_TYPE_DIR)
+                return (uint64_t)(int64_t)-EISDIR;
             fsize = st.size;
             if (pfd->offset >= fsize)
                 return 0;
@@ -2084,6 +2088,8 @@ static int64_t sys_fd_read(uint64_t fd, uint64_t buf_addr, uint64_t count) {
     struct vfs_stat st;
     if (vfs_stat(pfd->path, &st) < 0)
         return (uint64_t)(int64_t)-EIO;
+    if (st.type == VFS_TYPE_DIR)
+        return (uint64_t)(int64_t)-EISDIR;
     fsize = st.size;
     if (pfd->offset >= fsize)
         return 0;
@@ -2238,6 +2244,9 @@ static int64_t sys_pread64(uint64_t fd, uint64_t buf_addr, uint64_t count, uint6
     struct vfs_stat st;
     if (vfs_stat(pfd->path, &st) < 0)
         return (uint64_t)(int64_t)-EIO;
+
+    if (st.type == VFS_TYPE_DIR)
+        return (uint64_t)(int64_t)-EISDIR;
 
     uint64_t fsize = st.size;
     if (offset >= fsize)
