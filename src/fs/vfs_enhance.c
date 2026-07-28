@@ -24,6 +24,7 @@
 #include "errno.h"
 #include "quota.h"
 #include "process.h"
+#include "dcache.h"
 
 /* ====================================================================
  * 7. POSIX ACL Enforcement in VFS operations
@@ -202,13 +203,36 @@ int vfs_fallocate(const char *path, int mode, uint32_t offset, uint32_t len) {
     if (m->flags & MS_RDONLY) return -EROFS;
 
     /* If the filesystem has a fallocate op, use it */
-    if (m->ops && m->ops->fallocate)
-        return m->ops->fallocate(m->priv, ap, mode, offset, len);
+    if (m->ops && m->ops->fallocate) {
+        int r = m->ops->fallocate(m->priv, ap, mode, offset, len);
+        if (r == 0) {
+            /* Invalidate dentry cache — file size/metadata changed */
+            dcache_remove(ap);
+            char parent[128];
+            strncpy(parent, ap, sizeof(parent) - 1);
+            parent[sizeof(parent) - 1] = '\0';
+            char *slash = strrchr(parent, '/');
+            if (slash && slash != parent) { *slash = '\0'; dcache_remove(parent); }
+            else if (slash == parent) { dcache_remove("/"); }
+        }
+        return r;
+    }
 
     /* Fallback for simple preallocation (mode 0):
      * Use the native fs_fallocate which allocates and reserves blocks */
-    if (mode == 0)
-        return fs_fallocate(path, mode, offset, len);
+    if (mode == 0) {
+        int r = fs_fallocate(path, mode, offset, len);
+        if (r == 0) {
+            dcache_remove(ap);
+            char parent[128];
+            strncpy(parent, ap, sizeof(parent) - 1);
+            parent[sizeof(parent) - 1] = '\0';
+            char *slash = strrchr(parent, '/');
+            if (slash && slash != parent) { *slash = '\0'; dcache_remove(parent); }
+            else if (slash == parent) { dcache_remove("/"); }
+        }
+        return r;
+    }
 
     /* Other modes are not supported without FS-specific ops */
     return -EOPNOTSUPP;

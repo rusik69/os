@@ -1536,6 +1536,19 @@ int vfs_truncate(const char *path, uint32_t len) {
                 if (delta != 0)
                     vfs_update_quota_blocks((uint16_t)proc->uid, delta);
             }
+            /* Invalidate dentry cache — file size changed */
+            dcache_remove(ap);
+            /* Also invalidate parent directory */
+            char parent[128];
+            strncpy(parent, ap, sizeof(parent) - 1);
+            parent[sizeof(parent) - 1] = '\0';
+            char *slash = strrchr(parent, '/');
+            if (slash && slash != parent) {
+                *slash = '\0';
+                dcache_remove(parent);
+            } else if (slash == parent) {
+                dcache_remove("/");
+            }
         }
         return r;
     }
@@ -1609,6 +1622,21 @@ int vfs_link(const char *oldpath, const char *newpath) {
         int ret = m_old->ops->link(m_old->priv, ap_old, ap_new);
         if (ret == 0) {
             vfs_inc_nlink(ap_old);
+            /* Invalidate dentry cache — nlink changed for old path,
+             * new path now exists */
+            dcache_remove(ap_old);
+            dcache_remove(ap_new);
+            char parent_old[128], parent_new[128];
+            strncpy(parent_old, ap_old, sizeof(parent_old) - 1);
+            parent_old[sizeof(parent_old) - 1] = '\0';
+            char *slash = strrchr(parent_old, '/');
+            if (slash && slash != parent_old) { *slash = '\0'; dcache_remove(parent_old); }
+            else if (slash == parent_old) { dcache_remove("/"); }
+            strncpy(parent_new, ap_new, sizeof(parent_new) - 1);
+            parent_new[sizeof(parent_new) - 1] = '\0';
+            slash = strrchr(parent_new, '/');
+            if (slash && slash != parent_new) { *slash = '\0'; dcache_remove(parent_new); }
+            else if (slash == parent_new) { dcache_remove("/"); }
         }
         return ret;
     }
@@ -1630,6 +1658,20 @@ int vfs_link(const char *oldpath, const char *newpath) {
     if (ret == 0) {
         vfs_inc_nlink(ap_old);
         vfs_inc_nlink(ap_new);
+        /* Invalidate dentry cache */
+        dcache_remove(ap_old);
+        dcache_remove(ap_new);
+        char parent_old[128], parent_new[128];
+        strncpy(parent_old, ap_old, sizeof(parent_old) - 1);
+        parent_old[sizeof(parent_old) - 1] = '\0';
+        char *slash = strrchr(parent_old, '/');
+        if (slash && slash != parent_old) { *slash = '\0'; dcache_remove(parent_old); }
+        else if (slash == parent_old) { dcache_remove("/"); }
+        strncpy(parent_new, ap_new, sizeof(parent_new) - 1);
+        parent_new[sizeof(parent_new) - 1] = '\0';
+        slash = strrchr(parent_new, '/');
+        if (slash && slash != parent_new) { *slash = '\0'; dcache_remove(parent_new); }
+        else if (slash == parent_new) { dcache_remove("/"); }
     }
 
     return ret;
@@ -1651,8 +1693,20 @@ int vfs_symlink(const char *target, const char *linkpath) {
     struct vfs_mount *m = resolve(ap);
     if (!m) return -ENOENT;
     if (m->flags & MS_RDONLY) return -EROFS_KERNEL;
-    if (m->ops->symlink)
-        return m->ops->symlink(m->priv, target, ap);
+    if (m->ops->symlink) {
+        int r = m->ops->symlink(m->priv, target, ap);
+        if (r == 0) {
+            /* Invalidate dentry cache — new symlink created */
+            dcache_remove(ap);
+            char parent[128];
+            strncpy(parent, ap, sizeof(parent) - 1);
+            parent[sizeof(parent) - 1] = '\0';
+            char *slash = strrchr(parent, '/');
+            if (slash && slash != parent) { *slash = '\0'; dcache_remove(parent); }
+            else if (slash == parent) { dcache_remove("/"); }
+        }
+        return r;
+    }
     /* Fallback: create a link inode and write target into it */
     int r = vfs_create(ap, 3); /* FS_TYPE_LINK */
     if (r < 0) return r;
@@ -1699,8 +1753,20 @@ int vfs_mknod(const char *path, uint16_t mode, uint16_t dev_major, uint16_t dev_
     struct vfs_mount *m = resolve(ap);
     if (!m) return -ENOENT;
     if (m->flags & MS_RDONLY) return -EROFS_KERNEL;
-    if (m->ops->mknod)
-        return m->ops->mknod(m->priv, ap, mode, dev_major, dev_minor);
+    if (m->ops->mknod) {
+        int r = m->ops->mknod(m->priv, ap, mode, dev_major, dev_minor);
+        if (r == 0) {
+            /* Invalidate dentry cache — new device node created */
+            dcache_remove(ap);
+            char parent[128];
+            strncpy(parent, ap, sizeof(parent) - 1);
+            parent[sizeof(parent) - 1] = '\0';
+            char *slash = strrchr(parent, '/');
+            if (slash && slash != parent) { *slash = '\0'; dcache_remove(parent); }
+            else if (slash == parent) { dcache_remove("/"); }
+        }
+        return r;
+    }
     return -EOPNOTSUPP;
 }
 
