@@ -833,6 +833,60 @@ int fs_get_ino(const char *path) {
     return idx;
 }
 
+/* ── fs_rename: rename/move a file or directory within the simple FS ── */
+int fs_rename(const char *old_path, const char *new_path) {
+    int old_idx, new_parent;
+    const char *new_name;
+
+    /* Find the source inode */
+    old_idx = find_inode(old_path);
+    if (old_idx < 0) return -ENOENT;
+
+    /* Cannot rename the root directory */
+    if (old_idx == 0) return -EINVAL;
+
+    /* Check write+execute permission on source parent directory */
+    int old_parent = (int)inodes[old_idx].parent;
+    if (check_dir_perm_idx(old_parent, 'w') < 0 ||
+        check_dir_perm_idx(old_parent, 'x') < 0) return -EACCES;
+
+    /* Check destination doesn't already exist */
+    if (find_inode(new_path) >= 0) return -EEXIST;
+
+    /* Find new parent directory */
+    new_parent = find_parent(new_path);
+    if (new_parent < 0) return -ENOENT;
+
+    /* Check write+execute permission on new parent directory */
+    if (check_dir_perm_idx(new_parent, 'w') < 0 ||
+        check_dir_perm_idx(new_parent, 'x') < 0) return -EACCES;
+
+    /* If source is a directory, check target isn't a subdirectory of source */
+    if (inodes[old_idx].type == FS_TYPE_DIR) {
+        int p = new_parent;
+        while (p != 0) {
+            if (p == old_idx) return -EINVAL; /* would create a cycle */
+            p = (int)inodes[p].parent;
+        }
+    }
+
+    /* Extract new name from new_path */
+    new_name = basename(new_path);
+    if (*new_name == '\0') return -EINVAL;
+
+    size_t nlen = strlen(new_name);
+    if (nlen >= FS_MAX_NAME) return -ENAMETOOLONG;
+
+    /* Update the inode: parent, name, mtime */
+    inodes[old_idx].parent = (uint16_t)new_parent;
+    memset(inodes[old_idx].name, 0, FS_MAX_NAME);
+    memcpy(inodes[old_idx].name, new_name, nlen);
+    inodes[old_idx].mtime = (uint32_t)(timer_get_ticks() / TIMER_FREQ);
+
+    if (save_inodes() < 0) return -EIO;
+    return 0;
+}
+
 int fs_chmod(const char *path, uint16_t mode) {
     int idx = find_inode(path);
     if (idx < 0) return -EINVAL;
@@ -1263,56 +1317,6 @@ uint32_t fs_cow_block(uint32_t block) {
         fs_block_refcount[new_bmap_idx] = 1;
 
     return new_block;
-}
-
-/* ── Rename (move) a file ──────────────────────────────────────── */
-static int fs_rename(const char *old_path, const char *new_path)
-{
-    if (!old_path || !new_path) return -EINVAL;
-
-    int old_idx = find_inode(old_path);
-    if (old_idx < 0) return -EEXIST;
-
-    int new_idx = find_inode(new_path);
-    if (new_idx >= 0) return -EEXIST; /* target already exists */
-
-    /* Find a free inode for the new path */
-    new_idx = find_free_inode();
-    if (new_idx < 0) return -EEXIST;
-
-    /* Copy the inode data from old to new */
-    memcpy(&inodes[new_idx], &inodes[old_idx], sizeof(struct fs_inode));
-
-    /* Update the path in the new inode */
-    memset(inodes[new_idx].name, 0, FS_MAX_NAME);
-    size_t nlen = strlen(new_path);
-    const char *nbase = new_path;
-    const char *slash = strrchr(new_path, '/');
-    if (slash) nbase = slash + 1;
-    nlen = strlen(nbase);
-    if (nlen >= FS_MAX_NAME) nlen = FS_MAX_NAME - 1;
-    memcpy(inodes[new_idx].name, nbase, nlen);
-    inodes[new_idx].name[nlen] = '\0';
-
-    /* Free the old inode */
-    memset(&inodes[old_idx], 0, sizeof(struct fs_inode));
-
-    /* Update refcounts — bump refcount for all data blocks (now shared) */
-    for (uint32_t b = 0; b < FS_MAX_BLOCKS; b++) {
-        if (inodes[new_idx].blocks[b] != 0) {
-            int bmap_idx = (int)(inodes[new_idx].blocks[b] - FS_DATA_START);
-            if (bmap_idx >= 0 && bmap_idx < FS_MAX_BLOCKS_TOTAL)
-                fs_block_refcount[bmap_idx]++;
-        }
-    }
-
-    int ret = save_inodes();
-    if (ret < 0) {
-        /* Rollback: restore old inode, free new one */
-        memcpy(&inodes[old_idx], &inodes[new_idx], sizeof(struct fs_inode));
-        memset(&inodes[new_idx], 0, sizeof(struct fs_inode));
-    }
-    return ret;
 }
 
 /* ── fs_register ──────────────────────────────────────── */

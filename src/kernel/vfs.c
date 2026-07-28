@@ -490,7 +490,7 @@ static int smfs_set_time(void *priv, const char *path,
 static int smfs_rename(void *priv, const char *old_path, const char *new_path)
 {
     (void)priv;
-    return vfs_rename(old_path, new_path);
+    return fs_rename(old_path, new_path);
 }
 
 static const struct vfs_ops smfs_ops = {
