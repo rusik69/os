@@ -625,7 +625,7 @@ static struct termios g_tty_termios = {
     .c_oflag = 0,
     .c_cflag = 0,
     .c_lflag = ISIG | ICANON | ECHO,
-    .c_cc    = {1, 0},   /* VMIN=1, VTIME=0 */
+    .c_cc    = {1, 0, 0, 0, 0x04, 0},   /* VMIN=1, VTIME=0, VEOF=Ctrl+D, VEOL=0 */
 };
 
 /* ── Canonical input buffer (for ICANON mode) ──────────────────────── */
@@ -650,7 +650,20 @@ static int g_tty_line_out;   /* index of next char to return to reader */
  * Echoes to console output when c_lflag & ECHO.
  * Returns the next character to return to userspace.
  */
-static char tty_read_char(void)
+/*
+ * tty_read_char - Read one character in canonical mode
+ *
+ * Returns the next character (0-255) for the reader, or -1 to signal EOF
+ * (Ctrl+D on an empty line).  In canonical mode input is line-buffered
+ * with line-editing (backspace, word erase, line kill) and signal
+ * character interception (Ctrl+C, Ctrl+\, Ctrl+Z).
+ *
+ * Ctrl+D (the VEOF character, 0x04 by default):
+ *   - If the line buffer is non-empty, the accumulated characters are
+ *     flushed to the reader immediately (without a terminating newline).
+ *   - If the line buffer is empty, returns -1 to indicate end-of-file.
+ */
+static int tty_read_char(void)
 {
     /* ── Canonical mode only for this function ───────────────── */
     if (!(g_tty_termios.c_lflag & ICANON)) {
@@ -658,14 +671,14 @@ static char tty_read_char(void)
          * tty_read_raw_nonblock() + VMIN/VTIME logic directly. */
         /* Fall back to blocking getchar for safety */
         char c = keyboard_getchar();
-        return c;
+        return (unsigned char)c;
     }
 
     /* ── Canonical mode — line-buffered with editing ───────────── */
 
     /* Return buffered characters first */
     if (g_tty_line_out < g_tty_line_pos)
-        return g_tty_line_buf[g_tty_line_out++];
+        return (unsigned char)g_tty_line_buf[g_tty_line_out++];
 
     /* Buffer exhausted — read a new line */
     g_tty_line_pos = 0;
@@ -673,10 +686,11 @@ static char tty_read_char(void)
 
     for (;;) {
         char c = keyboard_getchar();
+        unsigned char uc = (unsigned char)c;
 
         /* ── Signal characters (when ISIG) ──────────────────────── */
         if (g_tty_termios.c_lflag & ISIG) {
-            if ((uint8_t)c == 0x03) {
+            if (uc == 0x03) {
                 uint64_t fg = pgrp_get_foreground();
                 if (fg == 0) {
                     struct process *cur = process_get_current();
@@ -697,7 +711,7 @@ static char tty_read_char(void)
                 }
                 continue;
             }
-            if ((uint8_t)c == 0x1C) {
+            if (uc == 0x1C) {
                 uint64_t fg = pgrp_get_foreground();
                 if (fg == 0) {
                     struct process *cur = process_get_current();
@@ -718,7 +732,7 @@ static char tty_read_char(void)
                 }
                 continue;
             }
-            if ((uint8_t)c == 0x1A) {
+            if (uc == 0x1A) {
                 uint64_t fg = pgrp_get_foreground();
                 if (fg == 0) {
                     struct process *cur = process_get_current();
@@ -741,6 +755,22 @@ static char tty_read_char(void)
             }
         }
 
+        /* ── Ctrl+D (VEOF) — end-of-file / flush line ──────────── */
+        if (g_tty_termios.c_lflag & ICANON) {
+            unsigned char veof = g_tty_termios.c_cc[VEOF];
+            /* VEOF defaults to 0x04 (Ctrl+D); 0 means not set. */
+            if (veof != 0 && uc == veof) {
+                if (g_tty_line_pos > 0) {
+                    /* Flush buffered characters immediately
+                     * (like a partial line return without newline) */
+                    g_tty_line_out = 0;
+                    return (unsigned char)g_tty_line_buf[g_tty_line_out++];
+                }
+                /* Empty line — signal end-of-file */
+                return -1;
+            }
+        }
+
         /* ── Backspace / DEL — delete previous character ───────── */
         if (c == '\b' || c == 127) {
             if (g_tty_line_pos > 0) {
@@ -758,7 +788,7 @@ static char tty_read_char(void)
         }
 
         /* ── Ctrl+U — kill the entire line ──────────────────────── */
-        if ((uint8_t)c == 0x15) {
+        if (uc == 0x15) {
             if ((g_tty_termios.c_lflag & ECHO) && g_tty_line_pos > 0) {
                 int i;
                 for (i = 0; i < g_tty_line_pos; i++) {
@@ -776,7 +806,7 @@ static char tty_read_char(void)
         }
 
         /* ── Ctrl+W — delete word backwards ────────────────────── */
-        if ((uint8_t)c == 0x17) {
+        if (uc == 0x17) {
             if (g_tty_line_pos > 0) {
                 int count = 0;
                 /* Skip trailing spaces */
@@ -825,11 +855,11 @@ static char tty_read_char(void)
             g_tty_line_buf[g_tty_line_pos] = '\n';
             g_tty_line_pos++;
             g_tty_line_out = 0;
-            return g_tty_line_buf[g_tty_line_out++];
+            return (unsigned char)g_tty_line_buf[g_tty_line_out++];
         }
 
         /* ── Add printable character to buffer ───────────────────── */
-        if ((uint8_t)c >= 0x20 && g_tty_line_pos < TTY_LINE_BUF_SIZE) {
+        if (uc >= 0x20 && g_tty_line_pos < TTY_LINE_BUF_SIZE) {
             g_tty_line_buf[g_tty_line_pos] = c;
             g_tty_line_pos++;
         }
@@ -837,7 +867,7 @@ static char tty_read_char(void)
         /* ── Buffer full — flush to reader ───────────────────────── */
         if (g_tty_line_pos >= TTY_LINE_BUF_SIZE) {
             g_tty_line_out = 0;
-            return g_tty_line_buf[g_tty_line_out++];
+            return (unsigned char)g_tty_line_buf[g_tty_line_out++];
         }
     }
 }
@@ -1030,7 +1060,12 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
         if (g_tty_termios.c_lflag & ICANON) {
             /* Canonical (cooked) mode — line-buffered via tty_read_char */
             while (total < len) {
-                char c = tty_read_char();
+                int ch = tty_read_char();
+                if (ch < 0) {
+                    /* Ctrl+D on empty line — end of file */
+                    return total;
+                }
+                char c = (char)ch;
                 if (copy_to_user(buf_addr + total, &c, 1) < 0)
                     return total > 0 ? total : (uint64_t)(int64_t)-EFAULT;
                 total++;
@@ -1751,7 +1786,12 @@ static uint64_t sys_fd_read(uint64_t fd, uint64_t buf_addr, uint64_t count) {
         if (g_tty_termios.c_lflag & ICANON) {
             /* Canonical (cooked) mode — line-buffered via tty_read_char */
             while (total < count) {
-                char c = tty_read_char();
+                int ch = tty_read_char();
+                if (ch < 0) {
+                    /* Ctrl+D on empty line — end of file */
+                    return total;
+                }
+                char c = (char)ch;
                 if (copy_to_user(buf_addr + total, &c, 1) < 0)
                     return total > 0 ? total : (uint64_t)(int64_t)-EFAULT;
                 total++;
