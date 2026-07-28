@@ -675,6 +675,10 @@ int sys_setsockopt_impl(int sockfd, int level, int optname, const void *optval, 
             sock_put(s);
             return ret;
         }
+    } else {
+        /* Unknown/unrecognized option level — reject */
+        sock_put(s);
+        return -ENOPROTOOPT;
     }
     sock_put(s);
     return 0;
@@ -875,7 +879,7 @@ int sys_getsockopt_impl(int sockfd, int level, int optname, void *optval, uint32
         }
     }
     sock_put(s);
-    return -EINVAL;
+    return -ENOPROTOOPT;
 }
 
 int sys_sendmsg_impl(int sockfd, const struct msghdr *msg, int flags) {
