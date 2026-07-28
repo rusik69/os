@@ -481,6 +481,7 @@ int elf_exec(const char *path) {
 
         p->user_stack_bottom = user_stack_bottom + PAGE_SIZE; /* skip unmapped guard page */
         p->user_stack_top    = user_stack_top;
+        p->user_stack_guard  = user_stack_bottom; /* absolute bottom of stack region (guard) */
         kprintf("elf: launched '%s' (pid %lu, ring 3, entry 0x%lx)\n",
                 name ? name : "(null)", (unsigned long)p->pid, (unsigned long)entry);
         strncpy(p->exe_path, path, 255);
@@ -690,6 +691,7 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
      * (past the bottom) will fault on this page, caught as a SIGSEGV. */
     cur->user_stack_bottom = user_stack_bottom + PAGE_SIZE; /* first mapped stack page */
     cur->user_stack_top    = user_stack_top;
+    cur->user_stack_guard  = user_stack_bottom; /* absolute bottom of stack region (guard) */
 
     /* ── Verify no PT_LOAD segment overlaps with the user stack ────── */
     for (uint64_t va = user_stack_bottom; va < user_stack_top; va += PAGE_SIZE) {
@@ -1201,11 +1203,13 @@ int process_spawn(const char *path, char *const argv[], char *const envp[])
     kfree(buf);
     if (!map_ok) { vmm_destroy_user_pml4(new_pml4); return -ENOMEM; }
 
-    /* ── 5. Allocate user stack (64KB) with ASLR offset ─────────── */
+    /* ── 5. Allocate user stack (64KB) with ASLR offset and guard page ── */
+    /* The bottommost page (user_stack_bottom) is deliberately left unmapped
+     * as a guard page — a stack overflow past it will fault with SIGSEGV. */
     uint64_t aslr_pages = aslr_stack_offset();
     uint64_t user_stack_top = USER_STACK_TOP - (aslr_pages * PAGE_SIZE);
     uint64_t user_stack_bottom = user_stack_top - USER_STACK_SIZE;
-    for (uint64_t va = user_stack_bottom; va < user_stack_top; va += PAGE_SIZE) {
+    for (uint64_t va = user_stack_bottom + PAGE_SIZE; va < user_stack_top; va += PAGE_SIZE) {
         uint64_t frame = pmm_alloc_frame();
         if (unlikely(!frame)) { vmm_destroy_user_pml4(new_pml4); return -ENOMEM; }
         memset(PHYS_TO_VIRT(frame), 0, PAGE_SIZE);
@@ -1388,8 +1392,9 @@ int process_spawn(const char *path, char *const argv[], char *const envp[])
     child->euid = parent->euid;
     child->egid = parent->egid;
     child->umask = parent->umask;
-    child->user_stack_bottom = user_stack_bottom; /* lowest mapped stack page */
+    child->user_stack_bottom = user_stack_bottom + PAGE_SIZE; /* skip unmapped guard page */
     child->user_stack_top    = user_stack_top;
+    child->user_stack_guard  = user_stack_bottom; /* absolute bottom of stack region (guard) */
     for (int i = 0; i < PROCESS_SYSCALL_CAP_WORDS; i++)
         child->cap_bset[i] = parent->cap_bset[i];
 

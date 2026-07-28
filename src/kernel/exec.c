@@ -474,11 +474,12 @@ int exec_setup_stack(void *bprm, uint64_t *sp)
     }
 
     /* Allocate a user stack region at the top of user space.
-     * A real implementation would map pages with proper permissions. */
+     * Leave the bottommost page unmapped as a guard page to detect
+     * stack overflow. */
     uint64_t stack_base = USER_STACK_TOP - USER_STACK_SIZE;
 
-    /* Map the initial stack pages */
-    for (uint64_t vaddr = stack_base; vaddr < USER_STACK_TOP; vaddr += PAGE_SIZE) {
+    /* Map the initial stack pages — skip the guard page at the bottom */
+    for (uint64_t vaddr = stack_base + PAGE_SIZE; vaddr < USER_STACK_TOP; vaddr += PAGE_SIZE) {
         uint64_t phys = pmm_alloc_zero_frame();
         if (unlikely(!phys))
             return -ENOMEM;
@@ -492,7 +493,8 @@ int exec_setup_stack(void *bprm, uint64_t *sp)
     /* Set stack pointers */
     *sp = USER_STACK_TOP;
     p->user_stack_top = USER_STACK_TOP;
-    p->user_stack_bottom = stack_base;
+    p->user_stack_bottom = stack_base + PAGE_SIZE; /* skip unmapped guard page */
+    p->user_stack_guard  = stack_base; /* absolute bottom of stack region (guard) */
 
     /* Store stack area for AT_RANDOM (16 random bytes) */
     uint64_t random_area = USER_STACK_TOP - 32;

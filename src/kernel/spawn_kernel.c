@@ -199,6 +199,7 @@ int process_spawn_kernel(const char *path) {
     /* Set process metadata */
     proc->user_stack_bottom = stack_base - (stack_pages * 0x1000);
     proc->user_stack_top    = stack_base;
+    proc->user_stack_guard  = proc->user_stack_bottom; /* no explicit guard page in this path */
     strncpy(proc->exe_path, path, 255);
     proc->exe_path[255] = '\0';
 

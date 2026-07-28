@@ -353,26 +353,48 @@ static void page_fault_handler(struct interrupt_frame *frame) {
     /* ── User stack auto-grow (RLIMIT_STACK) ────────────────────────── */
     /* A user-mode write to an unmapped page below the current stack bottom
      * may indicate stack expansion.  If the total stack size stays within
-     * rlim_cur[RLIMIT_STACK], map the faulting page and retry. */
+     * rlim_cur[RLIMIT_STACK], map the faulting page and retry.
+     *
+     * The guard page (user_stack_guard) is always kept one page below the
+     * current bottom — accessing it triggers auto-growth which then sets
+     * up a new guard page below.  Accesses below the guard page are treated
+     * as true stack overflows and result in SIGSEGV. */
     if ((err & (1ULL << 2)) && !(err & 1)) {
         /* User-mode, not-present fault */
         struct process *proc = process_get_current();
         if (proc && proc->user_stack_bottom > 0 && proc->user_stack_top > 0) {
             uint64_t fault_page = cr2 & ~(uint64_t)(PAGE_SIZE - 1);
-            /* Fault must be below current bottom (growth downward) */
+
+            /* Check if this is below the guard page — true stack overflow */
+            if (fault_page < proc->user_stack_guard) {
+                kprintf("[stack-guard] OVERFLOW pid=%u addr=0x%llx below guard=0x%llx\n",
+                        (unsigned int)proc->pid,
+                        (unsigned long long)cr2,
+                        (unsigned long long)proc->user_stack_guard);
+                goto user_sigsegv;
+            }
+
+            /* Fault must be below current bottom (growth downward) and at or
+             * above the guard page.  The guard page itself is mapped and a
+             * new guard is created below it. */
             if (fault_page < proc->user_stack_bottom &&
-                fault_page + PAGE_SIZE >= proc->user_stack_bottom) {
+                fault_page >= proc->user_stack_guard) {
                 uint64_t new_sz  = proc->user_stack_top - fault_page;
                 /* Check RLIMIT_STACK (index 6) — RLIM_INFINITY means unlimited */
                 uint64_t stack_limit = proc->rlim_cur[6]; /* RLIMIT_STACK */
                 if (stack_limit == (uint64_t)-1 || new_sz <= stack_limit) {
-                    /* Stack expansion is allowed — map one page */
+                    /* Stack expansion is allowed — map one page and move guard */
                     uint64_t paddr = pmm_alloc_frame();
                     if (paddr) {
                         memset(PHYS_TO_VIRT(paddr), 0, PAGE_SIZE);
                         if (vmm_map_user_page(proc->pml4, fault_page, paddr,
                                               VMM_FLAG_PRESENT | VMM_FLAG_WRITE |
                                               VMM_FLAG_USER | VMM_FLAG_NOEXEC) == 0) {
+                            /* Before updating bottom, if we are AT the guard page,
+                             * create a new guard one page below */
+                            if (fault_page == proc->user_stack_guard) {
+                                proc->user_stack_guard = fault_page - PAGE_SIZE;
+                            }
                             proc->user_stack_bottom = fault_page;
                             proc->minflt++;
                             kprintf("[stack-grow] pid=%u stack 0x%llx -> 0x%llx (used=%llu limit=%llu)\n",
@@ -412,6 +434,7 @@ static void page_fault_handler(struct interrupt_frame *frame) {
         }
     }
 
+user_sigsegv:
     /* Unhandled user fault: kill the process with SIGSEGV (code 11) */
     struct process *proc = process_get_current();
     kprintf("[fault] SIGSEGV pid=%u addr=0x%llx err=0x%llx rip=0x%llx\n",
