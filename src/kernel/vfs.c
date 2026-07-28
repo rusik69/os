@@ -1,25 +1,25 @@
 #include "vfs.h"
-#include "fs.h"
-#include "fat32.h"
-#include "string.h"
-#include "printf.h"
-#include "page_cache.h"
-#include "process.h"
-#include "heap.h"
-#include "signal.h"
-#include "syscall.h"
-#include "fsnotify.h"
-#include "tmpfs.h"
+
 #include "bufcache.h"
-#include "file_lock.h"
 #include "dcache.h"
-#include "spinlock.h"
 #include "export.h"
-#include "quota.h"
+#include "fat32.h"
+#include "file_lock.h"
+#include "fs.h"
+#include "fsnotify.h"
+#include "heap.h"
 #include "landlock.h"
-#include "timer.h"
-#include "process.h"
 #include "mnt_namespace.h"
+#include "page_cache.h"
+#include "printf.h"
+#include "process.h"
+#include "quota.h"
+#include "signal.h"
+#include "spinlock.h"
+#include "string.h"
+#include "syscall.h"
+#include "timer.h"
+#include "tmpfs.h"
 
 #define EROFS_KERNEL 30
 
@@ -34,16 +34,14 @@
 
 static struct dcache_entry dcache[DCACHE_SIZE];
 static spinlock_t dcache_lock = SPINLOCK_INIT;
-static uint32_t dcache_global_tick = 1;  /* monotonic tick for LRU aging */
+static uint32_t dcache_global_tick = 1; /* monotonic tick for LRU aging */
 
-void dcache_init(void)
-{
+void dcache_init(void) {
     memset(dcache, 0, sizeof(dcache));
     dcache_global_tick = 1;
 }
 
-static int dcache_match(const struct dcache_entry *e, const char *path)
-{
+static int dcache_match(const struct dcache_entry *e, const char *path) {
     return e->in_use && (strcmp(e->path, path) == 0);
 }
 
@@ -62,9 +60,9 @@ static int dcache_match(const struct dcache_entry *e, const char *path)
  * Context: May sleep. Performs VFS path resolution and Landlock checks.
  * Return: File descriptor (>=0) on success, or a negative errno on error.
  */
-int vfs_open(const char *path, int flags, int mode)
-{
-    if (!path) return -EINVAL;
+int vfs_open(const char *path, int flags, int mode) {
+    if (!path)
+        return -EINVAL;
 
     (void)mode;
     char ap[128];
@@ -89,15 +87,15 @@ int vfs_open(const char *path, int flags, int mode)
         if (proc && landlock_check_path(proc, ap, LANDLOCK_ACCESS_FS_WRITE_FILE) < 0)
             return -EACCES;
         int ret = vfs_create(path, 0);
-        if (ret < 0) return ret;
+        if (ret < 0)
+            return ret;
     }
 
     /* For now, return a dummy fd. Real fd allocation needs process fd table. */
     return 0;
 }
 
-int dcache_lookup(const char *path, struct vfs_stat *st)
-{
+int dcache_lookup(const char *path, struct vfs_stat *st) {
     if (!path || !path[0] || !st)
         return -1;
 
@@ -109,15 +107,15 @@ int dcache_lookup(const char *path, struct vfs_stat *st)
             /* Copy all fields while still holding the lock so another
              * thread cannot invalidate (memset) the entry between
              * lookup and use. */
-            st->size      = dcache[i].size;
-            st->type      = dcache[i].type;
-            st->uid       = dcache[i].uid;
-            st->gid       = dcache[i].gid;
-            st->mode      = dcache[i].mode;
-            st->mtime     = dcache[i].mtime;
-            st->atime     = dcache[i].atime;
-            st->nlink     = dcache[i].nlink;
-            st->ino       = dcache[i].ino;
+            st->size = dcache[i].size;
+            st->type = dcache[i].type;
+            st->uid = dcache[i].uid;
+            st->gid = dcache[i].gid;
+            st->mode = dcache[i].mode;
+            st->mtime = dcache[i].mtime;
+            st->atime = dcache[i].atime;
+            st->nlink = dcache[i].nlink;
+            st->ino = dcache[i].ino;
             st->dev_major = dcache[i].dev_major;
             st->dev_minor = dcache[i].dev_minor;
             spinlock_release(&dcache_lock);
@@ -129,19 +127,16 @@ int dcache_lookup(const char *path, struct vfs_stat *st)
     return -1;
 }
 
-void dcache_add(const char *path, void *mount,
-                uint8_t type, uint32_t size,
-                uint16_t uid, uint16_t gid, uint16_t mode,
-                uint32_t mtime, uint32_t atime, uint32_t nlink,
-                uint32_t ino, uint16_t dev_major, uint16_t dev_minor)
-{
+void dcache_add(const char *path, void *mount, uint8_t type, uint32_t size, uint16_t uid,
+                uint16_t gid, uint16_t mode, uint32_t mtime, uint32_t atime, uint32_t nlink,
+                uint32_t ino, uint16_t dev_major, uint16_t dev_minor) {
     if (!path || !path[0])
         return;
 
     spinlock_acquire(&dcache_lock);
 
     int target = -1;
-    int empty  = -1;
+    int empty = -1;
     int lru_idx = 0;
     uint32_t lru_tick = dcache[0].last_tick;
 
@@ -155,7 +150,7 @@ void dcache_add(const char *path, void *mount,
         }
         if (dcache[i].in_use && dcache[i].last_tick < lru_tick) {
             lru_tick = dcache[i].last_tick;
-            lru_idx  = i;
+            lru_idx = i;
         }
     }
 
@@ -166,26 +161,25 @@ void dcache_add(const char *path, void *mount,
     struct dcache_entry *e = &dcache[target];
     strncpy(e->path, path, DCACHE_PATH_LEN - 1);
     e->path[DCACHE_PATH_LEN - 1] = '\0';
-    e->mount   = mount;
-    e->type    = type;
-    e->size    = size;
-    e->uid     = uid;
-    e->gid     = gid;
-    e->mode    = mode;
-    e->mtime   = mtime;
-    e->atime   = atime;
-    e->nlink   = nlink;
-    e->ino     = ino;
+    e->mount = mount;
+    e->type = type;
+    e->size = size;
+    e->uid = uid;
+    e->gid = gid;
+    e->mode = mode;
+    e->mtime = mtime;
+    e->atime = atime;
+    e->nlink = nlink;
+    e->ino = ino;
     e->dev_major = dev_major;
     e->dev_minor = dev_minor;
     e->last_tick = dcache_global_tick++;
-    e->in_use  = 1;
+    e->in_use = 1;
 
     spinlock_release(&dcache_lock);
 }
 
-void dcache_remove(const char *path)
-{
+void dcache_remove(const char *path) {
     if (!path || !path[0])
         return;
 
@@ -199,8 +193,7 @@ void dcache_remove(const char *path)
     spinlock_release(&dcache_lock);
 }
 
-void dcache_remove_mount(void *mount)
-{
+void dcache_remove_mount(void *mount) {
     spinlock_acquire(&dcache_lock);
     for (int i = 0; i < DCACHE_SIZE; i++) {
         if (dcache[i].in_use && dcache[i].mount == mount) {
@@ -210,8 +203,7 @@ void dcache_remove_mount(void *mount)
     spinlock_release(&dcache_lock);
 }
 
-int dcache_shrink(int target_count)
-{
+int dcache_shrink(int target_count) {
     if (target_count <= 0)
         return 0;
 
@@ -225,7 +217,7 @@ int dcache_shrink(int target_count)
         for (int i = 0; i < DCACHE_SIZE; i++) {
             if (dcache[i].in_use && dcache[i].last_tick < lru_tick) {
                 lru_tick = dcache[i].last_tick;
-                lru_idx  = i;
+                lru_idx = i;
             }
         }
 
@@ -240,13 +232,11 @@ int dcache_shrink(int target_count)
     return evicted;
 }
 
-int dcache_evict_one(void)
-{
+int dcache_evict_one(void) {
     return dcache_shrink(1);
 }
 
-int dcache_fill_count(void)
-{
+int dcache_fill_count(void) {
     int count = 0;
     spinlock_acquire(&dcache_lock);
     for (int i = 0; i < DCACHE_SIZE; i++) {
@@ -257,8 +247,7 @@ int dcache_fill_count(void)
     return count;
 }
 
-int dcache_capacity(void)
-{
+int dcache_capacity(void) {
     return DCACHE_SIZE;
 }
 
@@ -276,7 +265,11 @@ int vfs_abs_path(const char *path, char *out, int out_max) {
     char tmp[128];
     int wpos = 0;
 
-    if (!path || !path[0]) { out[0] = '/'; out[1] = '\0'; return 0; }
+    if (!path || !path[0]) {
+        out[0] = '/';
+        out[1] = '\0';
+        return 0;
+    }
 
     /* Start with cwd for relative paths, empty for absolute */
     if (path[0] == '/') {
@@ -284,26 +277,32 @@ int vfs_abs_path(const char *path, char *out, int out_max) {
     } else {
         const char *cwd = "/";
         struct process *p = process_get_current();
-        if (p && p->cwd[0]) cwd = p->cwd;
+        if (p && p->cwd[0])
+            cwd = p->cwd;
         int cwdl = (int)strlen(cwd);
-        if ((size_t)cwdl >= sizeof(tmp)) cwdl = (int)sizeof(tmp) - 1;
+        if ((size_t)cwdl >= sizeof(tmp))
+            cwdl = (int)sizeof(tmp) - 1;
         memcpy(tmp, cwd, (size_t)cwdl);
         wpos = cwdl;
     }
 
     /* Normalize the starting path: remove trailing slash unless it's just "/" */
-    while (wpos > 1 && tmp[wpos - 1] == '/') wpos--;
+    while (wpos > 1 && tmp[wpos - 1] == '/')
+        wpos--;
 
     /* Tokenize the input path and process each component */
     int i = 0;
     while (path[i]) {
         /* Skip slashes */
-        while (path[i] == '/') i++;
-        if (!path[i]) break;
+        while (path[i] == '/')
+            i++;
+        if (!path[i])
+            break;
 
         /* Read the next component */
         int comp_start = i;
-        while (path[i] && path[i] != '/') i++;
+        while (path[i] && path[i] != '/')
+            i++;
         int comp_len = i - comp_start;
 
         if (comp_len == 1 && path[comp_start] == '.') {
@@ -314,9 +313,12 @@ int vfs_abs_path(const char *path, char *out, int out_max) {
             /* ".." — go up one level, but stay at root if already there */
             if (wpos == 0)
                 continue;
-            while (wpos > 0 && tmp[wpos - 1] != '/') wpos--;
-            if (wpos > 0) wpos--; /* remove the slash too */
-            if (wpos < 0) wpos = 0;
+            while (wpos > 0 && tmp[wpos - 1] != '/')
+                wpos--;
+            if (wpos > 0)
+                wpos--; /* remove the slash too */
+            if (wpos < 0)
+                wpos = 0;
             continue;
         }
         /* Regular component: append */
@@ -336,7 +338,9 @@ int vfs_abs_path(const char *path, char *out, int out_max) {
     }
 
     /* Ensure result is non-empty */
-    if (wpos == 0) { tmp[wpos++] = '/'; }
+    if (wpos == 0) {
+        tmp[wpos++] = '/';
+    }
     tmp[wpos] = '\0';
 
     /* Copy to output with size limit */
@@ -349,8 +353,8 @@ int vfs_abs_path(const char *path, char *out, int out_max) {
  * SMFS backend — adapts the existing fs.c API to vfs_ops
  * ------------------------------------------------------------------ */
 
-static int smfs_read(void *priv, const char *path, void *buf,
-                     uint32_t max_size, uint32_t *out_size) {
+static int smfs_read(void *priv, const char *path, void *buf, uint32_t max_size,
+                     uint32_t *out_size) {
     (void)priv;
     return fs_read_file(path, buf, max_size, out_size);
 }
@@ -366,14 +370,16 @@ static int smfs_stat(void *priv, const char *path, struct vfs_stat *st) {
     uint8_t type;
     uint16_t uid = 0, gid = 0, mode = 0;
     int r = fs_stat_ex(path, &size, &type, &uid, &gid, &mode);
-    if (r < 0) return r;
-    st->size  = size;
-    st->type  = type;
-    st->uid   = uid;
-    st->gid   = gid;
-    st->mode  = mode;
+    if (r < 0)
+        return r;
+    st->size = size;
+    st->type = type;
+    st->uid = uid;
+    st->gid = gid;
+    st->mode = mode;
     st->mtime = (uint32_t)fs_stat_mtime(path);
-    if ((int32_t)st->mtime < 0) st->mtime = 0;
+    if ((int32_t)st->mtime < 0)
+        st->mtime = 0;
     st->atime = 0;
     st->nlink = 1;
     /* Populate inode number from the underlying filesystem */
@@ -419,13 +425,14 @@ static int smfs_fallocate(void *priv, const char *path, int mode, uint32_t offse
     (void)mode;
     /* For SMTF, fallocate just ensures the file is large enough */
     uint32_t fs_size = 0;
-    uint8_t  fs_type = 0;
+    uint8_t fs_type = 0;
     if (fs_stat(path, &fs_size, &fs_type) == 0) {
         uint32_t needed = offset + len;
         if (needed > fs_size) {
             /* Extend file with zeros */
             uint8_t *zero_buf = (uint8_t *)kmalloc(needed - fs_size);
-            if (unlikely(!zero_buf)) return -1;
+            if (unlikely(!zero_buf))
+                return -1;
             memset(zero_buf, 0, needed - fs_size);
             int ret = fs_append(path, zero_buf, needed - fs_size);
             kfree(zero_buf);
@@ -473,10 +480,8 @@ static int smfs_journal_abort(void *priv) {
 
 /* ── SMFS set_time: set file access and modification times ──────── */
 
-static int smfs_set_time(void *priv, const char *path,
-                          uint64_t atime_sec, uint64_t atime_nsec,
-                          uint64_t mtime_sec, uint64_t mtime_nsec)
-{
+static int smfs_set_time(void *priv, const char *path, uint64_t atime_sec, uint64_t atime_nsec,
+                         uint64_t mtime_sec, uint64_t mtime_nsec) {
     (void)priv;
     /* SMFS stores timestamps as uint32_t seconds (truncating nanoseconds).
      * If either value is UTIME_OMIT (passed through from caller), skip it. */
@@ -492,30 +497,29 @@ static int smfs_set_time(void *priv, const char *path,
 }
 
 /* ── smfs_rename — rename/move a file within the simple FS ──────── */
-static int smfs_rename(void *priv, const char *old_path, const char *new_path)
-{
+static int smfs_rename(void *priv, const char *old_path, const char *new_path) {
     (void)priv;
     return fs_rename(old_path, new_path);
 }
 
 static const struct vfs_ops smfs_ops = {
-    .read    = smfs_read,
-    .write   = smfs_write,
-    .stat    = smfs_stat,
-    .create  = smfs_create,
-    .unlink  = smfs_unlink,
+    .read = smfs_read,
+    .write = smfs_write,
+    .stat = smfs_stat,
+    .create = smfs_create,
+    .unlink = smfs_unlink,
     .readdir = smfs_readdir,
     .truncate = smfs_truncate,
     .fallocate = smfs_fallocate,
-    .dedup     = smfs_dedup,
-    .resize    = smfs_resize,
+    .dedup = smfs_dedup,
+    .resize = smfs_resize,
     .journal_start = smfs_journal_start,
     .journal_commit = smfs_journal_commit,
-    .journal_abort  = smfs_journal_abort,
-    .symlink   = smfs_symlink,
-    .readlink  = smfs_readlink,
-    .set_time  = smfs_set_time,
-    .rename    = smfs_rename,
+    .journal_abort = smfs_journal_abort,
+    .symlink = smfs_symlink,
+    .readlink = smfs_readlink,
+    .set_time = smfs_set_time,
+    .rename = smfs_rename,
 };
 
 /* ------------------------------------------------------------------
@@ -540,7 +544,7 @@ static int num_fs_types = 0;
 static struct {
     char source[64];
     char target[64];
-    int  in_use;
+    int in_use;
 } bind_mounts[VFS_MAX_BIND_MOUNTS];
 
 /**
@@ -570,10 +574,11 @@ int vfs_mount_ex(const char *mountpoint, const struct vfs_ops *ops, void *priv, 
         return -1;
     }
     size_t mlen = strlen(mountpoint);
-    if (mlen >= 64) mlen = 63;
+    if (mlen >= 64)
+        mlen = 63;
     memcpy(mounts[num_mounts].mountpoint, mountpoint, mlen);
     mounts[num_mounts].mountpoint[mlen] = '\0';
-    mounts[num_mounts].ops  = ops;
+    mounts[num_mounts].ops = ops;
     mounts[num_mounts].priv = priv;
     mounts[num_mounts].flags = flags;
     mounts[num_mounts].is_bind = 0;
@@ -600,10 +605,11 @@ int vfs_mount_ex(const char *mountpoint, const struct vfs_ops *ops, void *priv, 
         struct mnt_namespace *root = mnt_ns_root();
         if (root && root->num_mounts < VFS_MAX_MOUNTS) {
             size_t cplen = strlen(mountpoint);
-            if (cplen >= 64) cplen = 63;
+            if (cplen >= 64)
+                cplen = 63;
             memcpy(root->mounts[root->num_mounts].mountpoint, mountpoint, cplen);
             root->mounts[root->num_mounts].mountpoint[cplen] = '\0';
-            root->mounts[root->num_mounts].ops  = ops;
+            root->mounts[root->num_mounts].ops = ops;
             root->mounts[root->num_mounts].priv = priv;
             root->mounts[root->num_mounts].flags = flags;
             root->mounts[root->num_mounts].is_bind = 0;
@@ -628,8 +634,7 @@ int vfs_mount_ex(const char *mountpoint, const struct vfs_ops *ops, void *priv, 
  *
  * Returns 0 on success, -1 if the path has no matching mount.
  */
-int vfs_force_readonly(const char *path, const char *reason)
-{
+int vfs_force_readonly(const char *path, const char *reason) {
     spinlock_acquire(&mount_lock);
     struct vfs_mount *m = resolve(path);
     if (!m) {
@@ -639,13 +644,13 @@ int vfs_force_readonly(const char *path, const char *reason)
 
     if (m->flags & MS_RDONLY) {
         spinlock_release(&mount_lock);
-        return 0;  /* already read-only — no-op */
+        return 0; /* already read-only — no-op */
     }
 
     m->flags |= MS_RDONLY;
     spinlock_release(&mount_lock);
-    kprintf("[!!] VFS: FORCED READ-ONLY on '%s': %s\n",
-            m->mountpoint, reason ? reason : "unknown error");
+    kprintf("[!!] VFS: FORCED READ-ONLY on '%s': %s\n", m->mountpoint,
+            reason ? reason : "unknown error");
     return 0;
 }
 EXPORT_SYMBOL(vfs_force_readonly);
@@ -668,16 +673,23 @@ static struct vfs_mount *resolve(const char *path) {
     /* Fall back to global mount table */
     for (int i = 0; i < num_mounts; i++) {
         size_t mlen = strlen(mounts[i].mountpoint);
-        if (mlen == 0) continue;
+        if (mlen == 0)
+            continue;
         /* Root mount "/" matches everything */
         if (mlen == 1 && mounts[i].mountpoint[0] == '/') {
-            if (1 > best_len) { best = &mounts[i]; best_len = 1; }
+            if (1 > best_len) {
+                best = &mounts[i];
+                best_len = 1;
+            }
             continue;
         }
         if (strncmp(path, mounts[i].mountpoint, mlen) == 0) {
             /* Exact match or path continues after a separator */
             if (path[mlen] == '\0' || path[mlen] == '/') {
-                if (mlen > best_len) { best = &mounts[i]; best_len = mlen; }
+                if (mlen > best_len) {
+                    best = &mounts[i];
+                    best_len = mlen;
+                }
             }
         }
     }
@@ -690,8 +702,7 @@ struct vfs_mount *vfs_resolve_mount(const char *path) {
 }
 
 /* Check if a mountpoint has any open files (used by umount to return EBUSY) */
-int vfs_umount_check_busy(const char *mountpoint)
-{
+int vfs_umount_check_busy(const char *mountpoint) {
     struct vfs_mount *m = resolve(mountpoint);
     if (!m)
         return -EINVAL;
@@ -714,15 +725,13 @@ int vfs_umount_check_busy(const char *mountpoint)
 }
 
 /* Remove a mount entry from the global mount table */
-int vfs_umount(const char *mountpoint)
-{
+int vfs_umount(const char *mountpoint) {
     spinlock_acquire(&mount_lock);
     for (int i = 0; i < num_mounts; i++) {
         if (strcmp(mounts[i].mountpoint, mountpoint) == 0) {
             int remaining = num_mounts - i - 1;
             if (remaining > 0) {
-                memmove(&mounts[i], &mounts[i + 1],
-                        (size_t)remaining * sizeof(struct vfs_mount));
+                memmove(&mounts[i], &mounts[i + 1], (size_t)remaining * sizeof(struct vfs_mount));
             }
             num_mounts--;
             spinlock_release(&mount_lock);
@@ -736,7 +745,8 @@ int vfs_umount(const char *mountpoint)
 }
 
 int vfs_register_filesystem(const char *name, const struct vfs_ops *ops) {
-    if (num_fs_types >= VFS_MAX_FS_TYPES) return -1;
+    if (num_fs_types >= VFS_MAX_FS_TYPES)
+        return -1;
     strncpy(fs_types[num_fs_types].name, name, 31);
     fs_types[num_fs_types].name[31] = '\0';
     fs_types[num_fs_types].ops = ops;
@@ -774,7 +784,8 @@ int vfs_list_filesystems(char names[][32], int max) {
  * Return: 0 on success, negative errno on failure.
  */
 int vfs_read(const char *path, void *buf, uint32_t max, uint32_t *out_size) {
-    char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
+    char ap[128];
+    vfs_abs_path(path, ap, sizeof(ap));
 
     /* Check Landlock read-file permission */
     {
@@ -792,7 +803,7 @@ int vfs_read(const char *path, void *buf, uint32_t max, uint32_t *out_size) {
 
     struct vfs_mount *m = resolve(ap);
     if (!m || !m->ops->read) {
-        kprintf("[vfs_read] resolve('%s') failed: mount=%p\n", ap, (void*)m);
+        kprintf("[vfs_read] resolve('%s') failed: mount=%p\n", ap, (void *)m);
         return -EIO;
     }
     int r = m->ops->read(m->priv, ap, buf, max, out_size);
@@ -803,7 +814,8 @@ int vfs_read(const char *path, void *buf, uint32_t max, uint32_t *out_size) {
         if (!(m->flags & MS_RDONLY)) {
             m->flags |= MS_RDONLY;
             kprintf("[!!] VFS: read on '%s' failed with %d; "
-                    "auto-remounted read-only\n", m->mountpoint, r);
+                    "auto-remounted read-only\n",
+                    m->mountpoint, r);
         }
     }
     if (r == 0) {
@@ -828,7 +840,8 @@ int vfs_read(const char *path, void *buf, uint32_t max, uint32_t *out_size) {
  * Return: 0 on success, negative errno on failure.
  */
 int vfs_write(const char *path, const void *data, uint32_t size) {
-    char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
+    char ap[128];
+    vfs_abs_path(path, ap, sizeof(ap));
 
     /* Check Landlock write-file permission */
     {
@@ -845,10 +858,12 @@ int vfs_write(const char *path, const void *data, uint32_t size) {
     }
 
     struct vfs_mount *m = resolve(ap);
-    if (!m || !m->ops->write) return -EIO;
+    if (!m || !m->ops->write)
+        return -EIO;
 
     /* Check read-only mount */
-    if (m->flags & MS_RDONLY) return -EROFS_KERNEL;
+    if (m->flags & MS_RDONLY)
+        return -EROFS_KERNEL;
 
     /* Enforce RLIMIT_FSIZE: check if write would exceed file size limit */
     struct process *proc = process_get_current();
@@ -876,8 +891,8 @@ int vfs_write(const char *path, const void *data, uint32_t size) {
         uint32_t blocks_needed = bytes_to_blocks(size);
         int qret = vfs_check_quota_blocks(uid, blocks_needed);
         if (qret < 0) {
-            kprintf("QUOTA: write denied for UID %u (needs %u blocks)\n",
-                    (unsigned int)uid, (unsigned int)blocks_needed);
+            kprintf("QUOTA: write denied for UID %u (needs %u blocks)\n", (unsigned int)uid,
+                    (unsigned int)blocks_needed);
             return -EDQUOT;
         }
     }
@@ -892,7 +907,8 @@ int vfs_write(const char *path, const void *data, uint32_t size) {
         if (!(m->flags & MS_RDONLY)) {
             m->flags |= MS_RDONLY;
             kprintf("[!!] VFS: write to '%s' failed with %d; "
-                    "auto-remounted read-only\n", m->mountpoint, r);
+                    "auto-remounted read-only\n",
+                    m->mountpoint, r);
         }
     }
     if (r == 0) {
@@ -931,8 +947,7 @@ int vfs_write(const char *path, const void *data, uint32_t size) {
  *
  * Returns 0 on success, or a negative errno on failure.
  */
-int vfs_append(const char *path, const void *data, uint32_t size)
-{
+int vfs_append(const char *path, const void *data, uint32_t size) {
     if (!path || !data || size == 0)
         return -EINVAL;
 
@@ -990,7 +1005,8 @@ int vfs_append(const char *path, const void *data, uint32_t size)
  * Returns 0 on success, or negative on error.
  */
 int vfs_readahead(const char *path, uint32_t offset, uint32_t count) {
-    char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
+    char ap[128];
+    vfs_abs_path(path, ap, sizeof(ap));
 
     /* Check Landlock read-file permission (same as vfs_read) */
     {
@@ -1007,7 +1023,8 @@ int vfs_readahead(const char *path, uint32_t offset, uint32_t count) {
     }
 
     struct vfs_mount *m = resolve(ap);
-    if (!m) return -1;
+    if (!m)
+        return -1;
 
     /* For block-device-backed filesystems, delegate to the legacy
      * filesystem's readahead which integrates with the page cache.
@@ -1023,9 +1040,11 @@ int vfs_readahead(const char *path, uint32_t offset, uint32_t count) {
 }
 
 int vfs_stat(const char *path, struct vfs_stat *st) {
-    if (!path) return -EINVAL;
+    if (!path)
+        return -EINVAL;
 
-    char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
+    char ap[128];
+    vfs_abs_path(path, ap, sizeof(ap));
 
     /* Check Landlock read-file permission (reading metadata) */
     {
@@ -1043,20 +1062,20 @@ int vfs_stat(const char *path, struct vfs_stat *st) {
 
     /* Cache miss — query the real filesystem */
     struct vfs_mount *m = resolve(ap);
-    if (!m || !m->ops->stat) return -1;
+    if (!m || !m->ops->stat)
+        return -1;
     int r = m->ops->stat(m->priv, ap, st);
     if (r == 0) {
         /* Cache the result for future lookups */
-        dcache_add(ap, (void *)m, st->type, (uint32_t)st->size,
-                   st->uid, st->gid, st->mode,
-                   st->mtime, st->atime, st->nlink,
-                   st->ino, st->dev_major, st->dev_minor);
+        dcache_add(ap, (void *)m, st->type, (uint32_t)st->size, st->uid, st->gid, st->mode,
+                   st->mtime, st->atime, st->nlink, st->ino, st->dev_major, st->dev_minor);
     }
     return r;
 }
 
 int vfs_create(const char *path, uint8_t type) {
-    char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
+    char ap[128];
+    vfs_abs_path(path, ap, sizeof(ap));
 
     /* Check Landlock write-file permission (creating a new file writes to parent dir) */
     {
@@ -1066,9 +1085,11 @@ int vfs_create(const char *path, uint8_t type) {
     }
 
     struct vfs_mount *m = resolve(ap);
-    if (!m || !m->ops->create) return -1;
+    if (!m || !m->ops->create)
+        return -1;
     /* Check read-only mount */
-    if (m->flags & MS_RDONLY) return -EROFS_KERNEL;
+    if (m->flags & MS_RDONLY)
+        return -EROFS_KERNEL;
 
     /* Enforce filesystem quotas: check inode quota before create */
     {
@@ -1076,8 +1097,7 @@ int vfs_create(const char *path, uint8_t type) {
         if (proc) {
             int qret = vfs_check_quota_inodes((uint16_t)proc->uid);
             if (qret < 0) {
-                kprintf("QUOTA: inode creation denied for UID %u\n",
-                        (unsigned int)proc->uid);
+                kprintf("QUOTA: inode creation denied for UID %u\n", (unsigned int)proc->uid);
                 return -EDQUOT;
             }
         }
@@ -1108,7 +1128,8 @@ int vfs_create(const char *path, uint8_t type) {
 }
 
 int vfs_unlink(const char *path) {
-    char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
+    char ap[128];
+    vfs_abs_path(path, ap, sizeof(ap));
 
     /* Check Landlock write-file permission (removing a file writes to parent dir) */
     {
@@ -1118,9 +1139,11 @@ int vfs_unlink(const char *path) {
     }
 
     struct vfs_mount *m = resolve(ap);
-    if (!m || !m->ops->unlink) return -1;
+    if (!m || !m->ops->unlink)
+        return -1;
     /* Check read-only mount */
-    if (m->flags & MS_RDONLY) return -EROFS_KERNEL;
+    if (m->flags & MS_RDONLY)
+        return -EROFS_KERNEL;
 
     /* Save stat before unlink for quota adjustment */
     struct vfs_stat pre_st;
@@ -1148,8 +1171,7 @@ int vfs_unlink(const char *path) {
             if (have_pre_stat) {
                 uint32_t blocks_freed = bytes_to_blocks((uint32_t)pre_st.size);
                 if (blocks_freed > 0)
-                    vfs_update_quota_blocks((uint16_t)proc->uid,
-                                            -(int32_t)blocks_freed);
+                    vfs_update_quota_blocks((uint16_t)proc->uid, -(int32_t)blocks_freed);
             }
         }
     }
@@ -1166,8 +1188,7 @@ int vfs_unlink(const char *path) {
  * Both paths must resolve to the same mounted filesystem.
  * Returns 0 on success or negative errno on error.
  */
-int vfs_rename(const char *old_path, const char *new_path)
-{
+int vfs_rename(const char *old_path, const char *new_path) {
     char old_ap[128], new_ap[128];
     vfs_abs_path(old_path, old_ap, sizeof(old_ap));
     vfs_abs_path(new_path, new_ap, sizeof(new_ap));
@@ -1175,10 +1196,12 @@ int vfs_rename(const char *old_path, const char *new_path)
     /* Resolve mounts for both paths */
     struct vfs_mount *m_old = resolve(old_ap);
     struct vfs_mount *m_new = resolve(new_ap);
-    if (!m_old || !m_new) return -ENOENT;
+    if (!m_old || !m_new)
+        return -ENOENT;
 
     /* Both paths must be on the same filesystem */
-    if (m_old != m_new) return -EXDEV;
+    if (m_old != m_new)
+        return -EXDEV;
 
     /* Check Landlock write permission (renaming modifies parent directories) */
     {
@@ -1192,12 +1215,14 @@ int vfs_rename(const char *old_path, const char *new_path)
     }
 
     /* Check read-only mount */
-    if (m_old->flags & MS_RDONLY) return -EROFS_KERNEL;
+    if (m_old->flags & MS_RDONLY)
+        return -EROFS_KERNEL;
 
     /* Stat the old path first */
     struct vfs_stat st;
     int stat_ret = vfs_stat(old_ap, &st);
-    if (stat_ret < 0) return stat_ret;
+    if (stat_ret < 0)
+        return stat_ret;
 
     /* If the new path already exists, return -EEXIST */
     {
@@ -1219,11 +1244,17 @@ int vfs_rename(const char *old_path, const char *new_path)
             strncpy(parent, old_ap, sizeof(parent) - 1);
             parent[sizeof(parent) - 1] = '\0';
             char *slash = strrchr(parent, '/');
-            if (slash) { *slash = '\0'; dcache_remove(parent); }
+            if (slash) {
+                *slash = '\0';
+                dcache_remove(parent);
+            }
             strncpy(parent, new_ap, sizeof(parent) - 1);
             parent[sizeof(parent) - 1] = '\0';
             slash = strrchr(parent, '/');
-            if (slash) { *slash = '\0'; dcache_remove(parent); }
+            if (slash) {
+                *slash = '\0';
+                dcache_remove(parent);
+            }
         }
         return r;
     }
@@ -1234,23 +1265,23 @@ int vfs_rename(const char *old_path, const char *new_path)
     if (st.type == 2) {
         /* Create the destination directory */
         int cres = m_old->ops->create(m_old->priv, new_ap, 2);
-        if (cres < 0) return cres;
+        if (cres < 0)
+            return cres;
 
         /* Copy all entries recursively */
         char entries[64][64];
         int n = vfs_readdir_names(old_ap, entries, 64);
         for (int i = 0; i < n; i++) {
             char old_child[256], new_child[256];
-            int slen = snprintf(old_child, sizeof(old_child), "%s/%s",
-                                old_ap, entries[i]);
-            if (slen < 0 || (size_t)slen >= sizeof(old_child)) continue;
+            int slen = snprintf(old_child, sizeof(old_child), "%s/%s", old_ap, entries[i]);
+            if (slen < 0 || (size_t)slen >= sizeof(old_child))
+                continue;
             snprintf(new_child, sizeof(new_child), "%s/%s", new_ap, entries[i]);
 
             /* Recurse for each child */
             int ret = vfs_rename(old_child, new_child);
             if (ret < 0 && ret != -ENOENT) {
-                kprintf("vfs_rename: warning: failed to move '%s' (%d)\n",
-                        old_child, -ret);
+                kprintf("vfs_rename: warning: failed to move '%s' (%d)\n", old_child, -ret);
             }
         }
 
@@ -1265,13 +1296,20 @@ int vfs_rename(const char *old_path, const char *new_path)
 
     /* For regular files and symlinks, use create+copy+delete fallback */
     void *buf = kmalloc(st.size + 1);
-    if (unlikely(!buf)) return -ENOMEM;
+    if (unlikely(!buf))
+        return -ENOMEM;
     uint32_t sz = 0;
     int r = m_old->ops->read(m_old->priv, old_ap, buf, (uint32_t)st.size, &sz);
-    if (r < 0) { kfree(buf); return r; }
+    if (r < 0) {
+        kfree(buf);
+        return r;
+    }
 
     int wret = m_old->ops->create(m_old->priv, new_ap, st.type);
-    if (wret < 0) { kfree(buf); return wret; }
+    if (wret < 0) {
+        kfree(buf);
+        return wret;
+    }
 
     if (st.size > 0) {
         wret = m_old->ops->write(m_old->priv, new_ap, buf, (uint32_t)st.size);
@@ -1302,18 +1340,25 @@ int vfs_rename(const char *old_path, const char *new_path)
         strncpy(parent, old_ap, sizeof(parent) - 1);
         parent[sizeof(parent) - 1] = '\0';
         char *slash = strrchr(parent, '/');
-        if (slash) { *slash = '\0'; dcache_remove(parent); }
+        if (slash) {
+            *slash = '\0';
+            dcache_remove(parent);
+        }
         strncpy(parent, new_ap, sizeof(parent) - 1);
         parent[sizeof(parent) - 1] = '\0';
         slash = strrchr(parent, '/');
-        if (slash) { *slash = '\0'; dcache_remove(parent); }
+        if (slash) {
+            *slash = '\0';
+            dcache_remove(parent);
+        }
     }
 
     return 0;
 }
 
 int vfs_readdir(const char *path) {
-    char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
+    char ap[128];
+    vfs_abs_path(path, ap, sizeof(ap));
 
     /* Check Landlock read-dir permission */
     {
@@ -1323,12 +1368,14 @@ int vfs_readdir(const char *path) {
     }
 
     struct vfs_mount *m = resolve(ap);
-    if (!m || !m->ops->readdir) return -1;
+    if (!m || !m->ops->readdir)
+        return -1;
     return m->ops->readdir(m->priv, ap);
 }
 
 int vfs_readdir_names(const char *path, char names[][64], int max) {
-    char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
+    char ap[128];
+    vfs_abs_path(path, ap, sizeof(ap));
 
     /* Check Landlock read-dir permission */
     {
@@ -1338,10 +1385,12 @@ int vfs_readdir_names(const char *path, char names[][64], int max) {
     }
 
     struct vfs_mount *m = resolve(ap);
-    if (!m) return -1;
+    if (!m)
+        return -1;
     if (strcmp(m->mountpoint, "/") == 0) {
-        char (*smfs_names)[FS_MAX_NAME] = kmalloc((size_t)64 * FS_MAX_NAME);
-        if (!smfs_names) return -1;
+        char(*smfs_names)[FS_MAX_NAME] = kmalloc((size_t)64 * FS_MAX_NAME);
+        if (!smfs_names)
+            return -1;
         int n = fs_list_names(ap, "", smfs_names, max < 64 ? max : 64);
         for (int i = 0; i < n; i++) {
             strncpy(names[i], smfs_names[i], 63);
@@ -1353,11 +1402,14 @@ int vfs_readdir_names(const char *path, char names[][64], int max) {
     if (strcmp(m->mountpoint, "/mnt") == 0 && fat32_is_mounted()) {
         const char *rel = ap;
         if (strncmp(ap, "/mnt", 4) == 0) {
-            if (ap[4] == '\0') rel = "/";
-            else if (ap[4] == '/') rel = ap + 4;
+            if (ap[4] == '\0')
+                rel = "/";
+            else if (ap[4] == '/')
+                rel = ap + 4;
         }
-        char (*fat_names)[FAT32_MAX_NAME] = kmalloc((size_t)64 * FAT32_MAX_NAME);
-        if (!fat_names) return -1;
+        char(*fat_names)[FAT32_MAX_NAME] = kmalloc((size_t)64 * FAT32_MAX_NAME);
+        if (!fat_names)
+            return -1;
         int n = fat32_list_dir(rel, fat_names, max < 64 ? max : 64);
         for (int i = 0; i < n; i++) {
             strncpy(names[i], fat_names[i], 63);
@@ -1387,22 +1439,23 @@ int vfs_list_mountpoints(char mounts_out[][64], int max) {
 
 /* ── File locking ──────────────────────────────────────────────── */
 
-int vfs_setlk(const char *path, struct file_lock *flk, int wait)
-{
+int vfs_setlk(const char *path, struct file_lock *flk, int wait) {
     return file_lock_set(path, flk, wait);
 }
 
-int vfs_getlk(const char *path, struct file_lock *flk)
-{
+int vfs_getlk(const char *path, struct file_lock *flk) {
     return file_lock_get(path, flk);
 }
 
 /* ── Extended attributes ───────────────────────────────────────── */
 
 int vfs_bind_mount(const char *src, const char *target) {
-    if (!src || !target) return -1;
-    char ap_src[128]; vfs_abs_path(src, ap_src, sizeof(ap_src));
-    char ap_tgt[128]; vfs_abs_path(target, ap_tgt, sizeof(ap_tgt));
+    if (!src || !target)
+        return -1;
+    char ap_src[128];
+    vfs_abs_path(src, ap_src, sizeof(ap_src));
+    char ap_tgt[128];
+    vfs_abs_path(target, ap_tgt, sizeof(ap_tgt));
 
     /* Find free slot */
     for (int i = 0; i < VFS_MAX_BIND_MOUNTS; i++) {
@@ -1419,7 +1472,8 @@ int vfs_bind_mount(const char *src, const char *target) {
 }
 
 int vfs_is_bind_mount(const char *path) {
-    char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
+    char ap[128];
+    vfs_abs_path(path, ap, sizeof(ap));
     for (int i = 0; i < VFS_MAX_BIND_MOUNTS; i++) {
         if (bind_mounts[i].in_use && strcmp(bind_mounts[i].target, ap) == 0)
             return 1;
@@ -1428,7 +1482,8 @@ int vfs_is_bind_mount(const char *path) {
 }
 
 const char *vfs_bind_source(const char *path) {
-    char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
+    char ap[128];
+    vfs_abs_path(path, ap, sizeof(ap));
     for (int i = 0; i < VFS_MAX_BIND_MOUNTS; i++) {
         if (bind_mounts[i].in_use && strcmp(bind_mounts[i].target, ap) == 0)
             return bind_mounts[i].source;
@@ -1449,50 +1504,56 @@ void vfs_update_atime(const char *path) {
 /* ── Set file times (utimensat / futimens) ────────────────────── */
 
 /* Internal helper: resolve path, call filesystem's set_time, update dcache. */
-static int vfs_do_set_time(const char *abs_path, const struct timespec times[2])
-{
+static int vfs_do_set_time(const char *abs_path, const struct timespec times[2]) {
     struct vfs_mount *m = resolve(abs_path);
-    if (!m) return -ENOENT;
+    if (!m)
+        return -ENOENT;
 
     if (!m->ops->set_time)
-        return -EOPNOTSUPP;  /* filesystem doesn't support timestamp changes */
+        return -EOPNOTSUPP; /* filesystem doesn't support timestamp changes */
 
     /* Resolve times[] to actual values.
      * NULL or UTIME_NOW → current time (boot seconds + nsec).
      * UTIME_OMIT → leave unchanged (pass caller's value and let FS handle it).
      */
     uint64_t atime_sec, atime_nsec, mtime_sec, mtime_nsec;
-    uint64_t now_sec  = timer_get_ticks() / TIMER_FREQ;
+    uint64_t now_sec = timer_get_ticks() / TIMER_FREQ;
     uint64_t now_nsec = (timer_get_ticks() % TIMER_FREQ) * (1000000000ULL / TIMER_FREQ);
 
     if (times == NULL) {
         /* Both to current time */
-        atime_sec = now_sec;  atime_nsec = now_nsec;
-        mtime_sec = now_sec;  mtime_nsec = now_nsec;
+        atime_sec = now_sec;
+        atime_nsec = now_nsec;
+        mtime_sec = now_sec;
+        mtime_nsec = now_nsec;
     } else {
         /* Process times[0] (atime) */
-        if (times[0].tv_nsec == UTIME_NOW || (times[0].tv_sec == 0 && times[0].tv_nsec == UTIME_NOW)) {
-            atime_sec = now_sec;  atime_nsec = now_nsec;
+        if (times[0].tv_nsec == UTIME_NOW ||
+            (times[0].tv_sec == 0 && times[0].tv_nsec == UTIME_NOW)) {
+            atime_sec = now_sec;
+            atime_nsec = now_nsec;
         } else if (times[0].tv_nsec == UTIME_OMIT) {
-            atime_sec = 0;  atime_nsec = UTIME_OMIT;
+            atime_sec = 0;
+            atime_nsec = UTIME_OMIT;
         } else {
             atime_sec = times[0].tv_sec;
             atime_nsec = times[0].tv_nsec;
         }
         /* Process times[1] (mtime) */
-        if (times[1].tv_nsec == UTIME_NOW || (times[1].tv_sec == 0 && times[1].tv_nsec == UTIME_NOW)) {
-            mtime_sec = now_sec;  mtime_nsec = now_nsec;
+        if (times[1].tv_nsec == UTIME_NOW ||
+            (times[1].tv_sec == 0 && times[1].tv_nsec == UTIME_NOW)) {
+            mtime_sec = now_sec;
+            mtime_nsec = now_nsec;
         } else if (times[1].tv_nsec == UTIME_OMIT) {
-            mtime_sec = 0;  mtime_nsec = UTIME_OMIT;
+            mtime_sec = 0;
+            mtime_nsec = UTIME_OMIT;
         } else {
             mtime_sec = times[1].tv_sec;
             mtime_nsec = times[1].tv_nsec;
         }
     }
 
-    int ret = m->ops->set_time(m->priv, abs_path,
-                               atime_sec, atime_nsec,
-                               mtime_sec, mtime_nsec);
+    int ret = m->ops->set_time(m->priv, abs_path, atime_sec, atime_nsec, mtime_sec, mtime_nsec);
     if (ret == 0) {
         /* Invalidate dentry cache for the path so next stat re-reads metadata */
         dcache_remove(abs_path);
@@ -1500,27 +1561,28 @@ static int vfs_do_set_time(const char *abs_path, const struct timespec times[2])
     return ret;
 }
 
-int vfs_set_time(const char *path, const struct timespec times[2])
-{
-    if (!path || !path[0]) return -EINVAL;
+int vfs_set_time(const char *path, const struct timespec times[2]) {
+    if (!path || !path[0])
+        return -EINVAL;
     char ap[128];
     vfs_abs_path(path, ap, sizeof(ap));
     return vfs_do_set_time(ap, times);
 }
 
-int vfs_fset_time(int fd, const struct timespec times[2])
-{
+int vfs_fset_time(int fd, const struct timespec times[2]) {
     struct process *proc = process_get_current();
-    if (!proc) return -EPERM;
-    if (fd < 0 || fd >= PROCESS_FD_MAX) return -EBADF;
+    if (!proc)
+        return -EPERM;
+    if (fd < 0 || fd >= PROCESS_FD_MAX)
+        return -EBADF;
     struct process_fd *pfd = &proc->fd_table[fd];
-    if (!pfd->used) return -EBADF;
+    if (!pfd->used)
+        return -EBADF;
     return vfs_do_set_time(pfd->path, times);
 }
 
 /* ── vfs_utimes — set atime/mtime via set_time callback ────────── */
-static int vfs_utimes(const char *path, const uint64_t atime, const uint64_t mtime)
-{
+static int vfs_utimes(const char *path, const uint64_t atime, const uint64_t mtime) {
     struct timespec ts[2];
     ts[0].tv_sec = atime;
     ts[0].tv_nsec = 0;
@@ -1532,33 +1594,39 @@ static int vfs_utimes(const char *path, const uint64_t atime, const uint64_t mti
 /* ── Filesystem statistics ──────────────────────────────────────── */
 
 int vfs_statfs(const char *path, struct vfs_statfs *st) {
-    if (!path || !st) return -EINVAL;
+    if (!path || !st)
+        return -EINVAL;
     (void)path;
     /* Default: return sensible values */
     memset(st, 0, sizeof(*st));
-    st->f_type    = 0x01021994;  /* EXT2 magic */
-    st->f_bsize   = 4096;
-    st->f_blocks  = 0;
-    st->f_bfree   = 0;
-    st->f_bavail  = 0;
-    st->f_files   = 0;
-    st->f_ffree   = 0;
+    st->f_type = 0x01021994; /* EXT2 magic */
+    st->f_bsize = 4096;
+    st->f_blocks = 0;
+    st->f_bfree = 0;
+    st->f_bavail = 0;
+    st->f_files = 0;
+    st->f_ffree = 0;
     st->f_namelen = 255;
     return 0;
 }
 
 int vfs_fstatfs(int fd, struct vfs_statfs *st) {
-    if (!st) return -EINVAL;
+    if (!st)
+        return -EINVAL;
     struct process *proc = process_get_current();
-    if (!proc) return -EBADF;
-    if (fd < 0 || fd >= PROCESS_FD_MAX) return -EBADF;
+    if (!proc)
+        return -EBADF;
+    if (fd < 0 || fd >= PROCESS_FD_MAX)
+        return -EBADF;
     struct process_fd *pfd = &proc->fd_table[fd];
-    if (!pfd->used) return -EBADF;
+    if (!pfd->used)
+        return -EBADF;
     return vfs_statfs(pfd->path, st);
 }
 
 int vfs_truncate(const char *path, uint32_t len) {
-    char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
+    char ap[128];
+    vfs_abs_path(path, ap, sizeof(ap));
 
     /* Check Landlock write-file permission */
     {
@@ -1568,8 +1636,10 @@ int vfs_truncate(const char *path, uint32_t len) {
     }
 
     struct vfs_mount *m = resolve(ap);
-    if (!m) return -1;
-    if (m->flags & MS_RDONLY) return -EROFS_KERNEL;
+    if (!m)
+        return -1;
+    if (m->flags & MS_RDONLY)
+        return -EROFS_KERNEL;
 
     /* Get the old size before truncate for quota adjustment */
     struct vfs_stat old_st;
@@ -1636,7 +1706,8 @@ static void vfs_inc_nlink(const char *path) {
 
 /* ── vfs_link: create a hard link ────────────────────────────────── */
 int vfs_link(const char *oldpath, const char *newpath) {
-    if (!oldpath || !newpath) return -EINVAL;
+    if (!oldpath || !newpath)
+        return -EINVAL;
     char ap_old[128], ap_new[128];
     vfs_abs_path(oldpath, ap_old, sizeof(ap_old));
     vfs_abs_path(newpath, ap_new, sizeof(ap_new));
@@ -1654,19 +1725,25 @@ int vfs_link(const char *oldpath, const char *newpath) {
 
     /* Check that old path exists and new path does not */
     struct vfs_stat st;
-    if (vfs_stat(ap_old, &st) < 0) return -ENOENT;
-    if (vfs_stat(ap_new, &st) == 0) return -EEXIST;
+    if (vfs_stat(ap_old, &st) < 0)
+        return -ENOENT;
+    if (vfs_stat(ap_new, &st) == 0)
+        return -EEXIST;
 
     /* Reject hard link creation when nlink would overflow (max 65535) */
-    if (st.nlink >= VFS_LINK_MAX) return -EMLINK;
+    if (st.nlink >= VFS_LINK_MAX)
+        return -EMLINK;
 
     struct vfs_mount *m_old = resolve(ap_old);
-    if (!m_old) return -ENOENT;
+    if (!m_old)
+        return -ENOENT;
     struct vfs_mount *m_new = resolve(ap_new);
-    if (!m_new) return -ENOENT;
+    if (!m_new)
+        return -ENOENT;
 
     /* Hard links must be on the same filesystem */
-    if (m_old != m_new) return -EXDEV;
+    if (m_old != m_new)
+        return -EXDEV;
 
     /* If the filesystem supports native link, use it */
     if (m_old->ops && m_old->ops->link) {
@@ -1681,27 +1758,42 @@ int vfs_link(const char *oldpath, const char *newpath) {
             strncpy(parent_old, ap_old, sizeof(parent_old) - 1);
             parent_old[sizeof(parent_old) - 1] = '\0';
             char *slash = strrchr(parent_old, '/');
-            if (slash && slash != parent_old) { *slash = '\0'; dcache_remove(parent_old); }
-            else if (slash == parent_old) { dcache_remove("/"); }
+            if (slash && slash != parent_old) {
+                *slash = '\0';
+                dcache_remove(parent_old);
+            } else if (slash == parent_old) {
+                dcache_remove("/");
+            }
             strncpy(parent_new, ap_new, sizeof(parent_new) - 1);
             parent_new[sizeof(parent_new) - 1] = '\0';
             slash = strrchr(parent_new, '/');
-            if (slash && slash != parent_new) { *slash = '\0'; dcache_remove(parent_new); }
-            else if (slash == parent_new) { dcache_remove("/"); }
+            if (slash && slash != parent_new) {
+                *slash = '\0';
+                dcache_remove(parent_new);
+            } else if (slash == parent_new) {
+                dcache_remove("/");
+            }
         }
         return ret;
     }
 
     /* Fallback: data copy for filesystems that don't support hard links */
     uint8_t *buf = kmalloc(st.size + 1);
-    if (unlikely(!buf)) return -ENOMEM;
+    if (unlikely(!buf))
+        return -ENOMEM;
 
     uint32_t out_size = 0;
     int ret = vfs_read(ap_old, buf, (uint32_t)st.size, &out_size);
-    if (ret < 0) { kfree(buf); return ret; }
+    if (ret < 0) {
+        kfree(buf);
+        return ret;
+    }
 
     ret = vfs_create(ap_new, st.type);
-    if (ret < 0) { kfree(buf); return ret; }
+    if (ret < 0) {
+        kfree(buf);
+        return ret;
+    }
 
     ret = vfs_write(ap_new, buf, out_size);
     kfree(buf);
@@ -1716,13 +1808,21 @@ int vfs_link(const char *oldpath, const char *newpath) {
         strncpy(parent_old, ap_old, sizeof(parent_old) - 1);
         parent_old[sizeof(parent_old) - 1] = '\0';
         char *slash = strrchr(parent_old, '/');
-        if (slash && slash != parent_old) { *slash = '\0'; dcache_remove(parent_old); }
-        else if (slash == parent_old) { dcache_remove("/"); }
+        if (slash && slash != parent_old) {
+            *slash = '\0';
+            dcache_remove(parent_old);
+        } else if (slash == parent_old) {
+            dcache_remove("/");
+        }
         strncpy(parent_new, ap_new, sizeof(parent_new) - 1);
         parent_new[sizeof(parent_new) - 1] = '\0';
         slash = strrchr(parent_new, '/');
-        if (slash && slash != parent_new) { *slash = '\0'; dcache_remove(parent_new); }
-        else if (slash == parent_new) { dcache_remove("/"); }
+        if (slash && slash != parent_new) {
+            *slash = '\0';
+            dcache_remove(parent_new);
+        } else if (slash == parent_new) {
+            dcache_remove("/");
+        }
     }
 
     return ret;
@@ -1730,7 +1830,8 @@ int vfs_link(const char *oldpath, const char *newpath) {
 
 /* ── vfs_symlink / vfs_readlink ──────────────────────────────── */
 int vfs_symlink(const char *target, const char *linkpath) {
-    if (!target || !linkpath) return -EINVAL;
+    if (!target || !linkpath)
+        return -EINVAL;
     char ap[128];
     vfs_abs_path(linkpath, ap, sizeof(ap));
 
@@ -1742,8 +1843,10 @@ int vfs_symlink(const char *target, const char *linkpath) {
     }
 
     struct vfs_mount *m = resolve(ap);
-    if (!m) return -ENOENT;
-    if (m->flags & MS_RDONLY) return -EROFS_KERNEL;
+    if (!m)
+        return -ENOENT;
+    if (m->flags & MS_RDONLY)
+        return -EROFS_KERNEL;
     if (m->ops->symlink) {
         int r = m->ops->symlink(m->priv, target, ap);
         if (r == 0) {
@@ -1753,19 +1856,25 @@ int vfs_symlink(const char *target, const char *linkpath) {
             strncpy(parent, ap, sizeof(parent) - 1);
             parent[sizeof(parent) - 1] = '\0';
             char *slash = strrchr(parent, '/');
-            if (slash && slash != parent) { *slash = '\0'; dcache_remove(parent); }
-            else if (slash == parent) { dcache_remove("/"); }
+            if (slash && slash != parent) {
+                *slash = '\0';
+                dcache_remove(parent);
+            } else if (slash == parent) {
+                dcache_remove("/");
+            }
         }
         return r;
     }
     /* Fallback: create a link inode and write target into it */
     int r = vfs_create(ap, 3); /* FS_TYPE_LINK */
-    if (r < 0) return r;
+    if (r < 0)
+        return r;
     return vfs_write(ap, target, (uint32_t)strlen(target));
 }
 
 int vfs_readlink(const char *path, char *buf, int bufsize) {
-    if (!path || !buf || bufsize <= 0) return -EINVAL;
+    if (!path || !buf || bufsize <= 0)
+        return -EINVAL;
     char ap[128];
     vfs_abs_path(path, ap, sizeof(ap));
 
@@ -1777,20 +1886,23 @@ int vfs_readlink(const char *path, char *buf, int bufsize) {
     }
 
     struct vfs_mount *m = resolve(ap);
-    if (!m) return -ENOENT;
+    if (!m)
+        return -ENOENT;
     if (m->ops->readlink)
         return m->ops->readlink(m->priv, ap, buf, bufsize);
     /* Fallback: read the raw content (the target string) */
     uint32_t out_size = 0;
     int r = vfs_read(ap, buf, (uint32_t)(bufsize - 1), &out_size);
-    if (r < 0) return r;
+    if (r < 0)
+        return r;
     buf[out_size] = '\0';
     return (int)out_size;
 }
 
 /* ── vfs_mknod ────────────────────────────────────────────────── */
 int vfs_mknod(const char *path, uint16_t mode, uint16_t dev_major, uint16_t dev_minor) {
-    if (!path) return -EINVAL;
+    if (!path)
+        return -EINVAL;
     char ap[128];
     vfs_abs_path(path, ap, sizeof(ap));
 
@@ -1802,8 +1914,10 @@ int vfs_mknod(const char *path, uint16_t mode, uint16_t dev_major, uint16_t dev_
     }
 
     struct vfs_mount *m = resolve(ap);
-    if (!m) return -ENOENT;
-    if (m->flags & MS_RDONLY) return -EROFS_KERNEL;
+    if (!m)
+        return -ENOENT;
+    if (m->flags & MS_RDONLY)
+        return -EROFS_KERNEL;
     if (m->ops->mknod) {
         int r = m->ops->mknod(m->priv, ap, mode, dev_major, dev_minor);
         if (r == 0) {
@@ -1813,8 +1927,12 @@ int vfs_mknod(const char *path, uint16_t mode, uint16_t dev_major, uint16_t dev_
             strncpy(parent, ap, sizeof(parent) - 1);
             parent[sizeof(parent) - 1] = '\0';
             char *slash = strrchr(parent, '/');
-            if (slash && slash != parent) { *slash = '\0'; dcache_remove(parent); }
-            else if (slash == parent) { dcache_remove("/"); }
+            if (slash && slash != parent) {
+                *slash = '\0';
+                dcache_remove(parent);
+            } else if (slash == parent) {
+                dcache_remove("/");
+            }
         }
         return r;
     }
@@ -1824,7 +1942,8 @@ int vfs_mknod(const char *path, uint16_t mode, uint16_t dev_major, uint16_t dev_
 /* ── vfs_flush: flush cached writes for a filesystem identified by path ── */
 
 int vfs_flush(const char *path) {
-    if (!path) return -EINVAL;
+    if (!path)
+        return -EINVAL;
     char ap[128];
     vfs_abs_path(path, ap, sizeof(ap));
     struct vfs_mount *m;
@@ -1862,7 +1981,8 @@ int vfs_sync_all(void) {
     for (int i = 0; i < num_mounts; i++) {
         if (mounts[i].ops->flush) {
             int r = mounts[i].ops->flush(mounts[i].priv);
-            if (r < 0) ret = r;
+            if (r < 0)
+                ret = r;
         }
     }
     spinlock_release(&mount_lock);
@@ -1924,7 +2044,8 @@ static int root_mount_index(void) {
  *   - The new_root mount entry serves the old root at "put_old".
  */
 int vfs_pivot_root(const char *new_root, const char *put_old) {
-    if (!new_root || !put_old || !new_root[0] || !put_old[0]) return -EINVAL;
+    if (!new_root || !put_old || !new_root[0] || !put_old[0])
+        return -EINVAL;
 
     spinlock_acquire(&mount_lock);
 
@@ -1973,7 +2094,8 @@ int vfs_pivot_root(const char *new_root, const char *put_old) {
     if (ret < 0) {
         /* Try to create put_old as a directory */
         ret = vfs_create(put_old, 2); /* type 2 = directory */
-        if (ret < 0) return -ENOTDIR;
+        if (ret < 0)
+            return -ENOTDIR;
     } else if (st.type != 2) {
         return -ENOTDIR;
     }
@@ -2007,16 +2129,16 @@ int vfs_pivot_root(const char *new_root, const char *put_old) {
      *   - new_root entry gets old root's filesystem at put_old → old root
      *     is accessible there.
      */
-    const struct vfs_ops *tmp_ops   = mounts[root_idx].ops;
-    void           *tmp_priv  = mounts[root_idx].priv;
-    int             tmp_flags = mounts[root_idx].flags;
+    const struct vfs_ops *tmp_ops = mounts[root_idx].ops;
+    void *tmp_priv = mounts[root_idx].priv;
+    int tmp_flags = mounts[root_idx].flags;
 
-    mounts[root_idx].ops   = mounts[new_idx].ops;
-    mounts[root_idx].priv  = mounts[new_idx].priv;
+    mounts[root_idx].ops = mounts[new_idx].ops;
+    mounts[root_idx].priv = mounts[new_idx].priv;
     mounts[root_idx].flags = mounts[new_idx].flags;
 
-    mounts[new_idx].ops   = tmp_ops;
-    mounts[new_idx].priv  = tmp_priv;
+    mounts[new_idx].ops = tmp_ops;
+    mounts[new_idx].priv = tmp_priv;
     mounts[new_idx].flags = tmp_flags;
 
     /* Update the mountpoint of the old-root-turned-new-root entry to put_old */
@@ -2063,10 +2185,9 @@ EXPORT_SYMBOL(vfs_bind_mount);
  *
  * Returns 0 if permitted, -EACCES if denied, or a negative errno on error.
  */
-int vfs_check_perms(const char *path, uint16_t uid, uint16_t gid,
-                     uint16_t op)
-{
-    if (!path) return -EINVAL;
+int vfs_check_perms(const char *path, uint16_t uid, uint16_t gid, uint16_t op) {
+    if (!path)
+        return -EINVAL;
 
     /* VFS_F_OK: just check existence */
     if (op == VFS_F_OK) {
@@ -2087,21 +2208,30 @@ int vfs_check_perms(const char *path, uint16_t uid, uint16_t gid,
 
     /* Owner */
     if (uid == file_uid) {
-        if (op & VFS_R_OK) perm |= (mode & S_IRUSR) ? VFS_R_OK : 0;
-        if (op & VFS_W_OK) perm |= (mode & S_IWUSR) ? VFS_W_OK : 0;
-        if (op & VFS_X_OK) perm |= (mode & S_IXUSR) ? VFS_X_OK : 0;
+        if (op & VFS_R_OK)
+            perm |= (mode & S_IRUSR) ? VFS_R_OK : 0;
+        if (op & VFS_W_OK)
+            perm |= (mode & S_IWUSR) ? VFS_W_OK : 0;
+        if (op & VFS_X_OK)
+            perm |= (mode & S_IXUSR) ? VFS_X_OK : 0;
     }
     /* Group */
     else if (gid == file_gid) {
-        if (op & VFS_R_OK) perm |= (mode & S_IRGRP) ? VFS_R_OK : 0;
-        if (op & VFS_W_OK) perm |= (mode & S_IWGRP) ? VFS_W_OK : 0;
-        if (op & VFS_X_OK) perm |= (mode & S_IXGRP) ? VFS_X_OK : 0;
+        if (op & VFS_R_OK)
+            perm |= (mode & S_IRGRP) ? VFS_R_OK : 0;
+        if (op & VFS_W_OK)
+            perm |= (mode & S_IWGRP) ? VFS_W_OK : 0;
+        if (op & VFS_X_OK)
+            perm |= (mode & S_IXGRP) ? VFS_X_OK : 0;
     }
     /* Other */
     else {
-        if (op & VFS_R_OK) perm |= (mode & S_IROTH) ? VFS_R_OK : 0;
-        if (op & VFS_W_OK) perm |= (mode & S_IWOTH) ? VFS_W_OK : 0;
-        if (op & VFS_X_OK) perm |= (mode & S_IXOTH) ? VFS_X_OK : 0;
+        if (op & VFS_R_OK)
+            perm |= (mode & S_IROTH) ? VFS_R_OK : 0;
+        if (op & VFS_W_OK)
+            perm |= (mode & S_IWOTH) ? VFS_W_OK : 0;
+        if (op & VFS_X_OK)
+            perm |= (mode & S_IXOTH) ? VFS_X_OK : 0;
     }
 
     return (perm == op) ? 0 : -EACCES;
@@ -2114,8 +2244,7 @@ int vfs_check_perms(const char *path, uint16_t uid, uint16_t gid,
  * (other execute) bits based on the caller's identity.
  * Returns 0 if execute is allowed, -EACCES otherwise.
  * This is the low-level check used by the exec path. */
-static int exec_check_binary_perms(const char *path, uint16_t uid, uint16_t gid)
-{
+static int exec_check_binary_perms(const char *path, uint16_t uid, uint16_t gid) {
     return vfs_check_perms(path, uid, gid, VFS_X_OK);
 }
 
@@ -2130,8 +2259,7 @@ static int exec_check_binary_perms(const char *path, uint16_t uid, uint16_t gid)
  * Context: Any context.
  * Return: 0 on success (stub).
  */
-int vfs_close(void *file)
-{
+int vfs_close(void *file) {
     (void)file;
     kprintf("[vfs] vfs_close: not yet implemented\n");
     return 0;
@@ -2144,8 +2272,7 @@ int vfs_close(void *file)
  * filesystem's ioctl handler if present.  Returns -ENOTTY if the
  * filesystem does not implement ioctl.
  */
-int vfs_ioctl(const char *path, uint64_t cmd, uint64_t arg)
-{
+int vfs_ioctl(const char *path, uint64_t cmd, uint64_t arg) {
     char ap[128];
     vfs_abs_path(path, ap, sizeof(ap));
 
@@ -2168,8 +2295,7 @@ int vfs_ioctl(const char *path, uint64_t cmd, uint64_t arg)
  * If the final component already exists as a directory, succeeds (no error).
  * If any component exists but is not a directory, returns -ENOTDIR.
  */
-int vfs_mkdir_p(const char *path)
-{
+int vfs_mkdir_p(const char *path) {
     char ap[128];
     char cur[128];
     char component[128];
@@ -2189,8 +2315,10 @@ int vfs_mkdir_p(const char *path)
 
     while (*p) {
         /* Skip consecutive slashes */
-        while (*p == '/') p++;
-        if (!*p) break;
+        while (*p == '/')
+            p++;
+        if (!*p)
+            break;
 
         /* Extract next path component */
         int i = 0;
@@ -2198,7 +2326,8 @@ int vfs_mkdir_p(const char *path)
             component[i++] = *p++;
         }
         component[i] = '\0';
-        if (i == 0) continue; /* trailing slash */
+        if (i == 0)
+            continue; /* trailing slash */
 
         /* Build current path */
         size_t cur_len = strlen(cur);
@@ -2208,8 +2337,7 @@ int vfs_mkdir_p(const char *path)
             if (n < 0 || (size_t)n >= sizeof(cur))
                 return -ENAMETOOLONG;
         } else {
-            int n = snprintf(cur + cur_len, sizeof(cur) - cur_len,
-                             "/%s", component);
+            int n = snprintf(cur + cur_len, sizeof(cur) - cur_len, "/%s", component);
             if (n < 0 || cur_len + (size_t)n >= sizeof(cur))
                 return -ENAMETOOLONG;
         }
