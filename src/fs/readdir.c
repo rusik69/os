@@ -150,6 +150,11 @@ int64_t sys_getdents64(const char *dir_path, void *dirp, uint64_t count,
             entry->d_type = DT_UNKNOWN;
         }
 
+        /* Skip entries with unknown type — likely deleted or corrupted */
+        if (entry->d_type == DT_UNKNOWN) {
+            continue;
+        }
+
         memcpy(entry->d_name, name, name_len);
         entry->d_name[name_len] = '\0';
 

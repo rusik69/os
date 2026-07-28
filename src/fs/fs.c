@@ -763,6 +763,9 @@ int fs_delete(const char *path) {
     return 0;
 }
 
+/* Forward declaration for type validation used by fs_list */
+static int fs_type_valid(uint8_t type);
+
 int fs_list(const char *path) {
     int parent = (!path || path[0] == '\0' || (path[0] == '/' && path[1] == '\0'))
                  ? 0 : find_inode(path);
@@ -773,6 +776,7 @@ int fs_list(const char *path) {
     int count = 0;
     for (int i = 0; i < FS_MAX_FILES; i++) {
         if (inodes[i].type != FS_TYPE_FREE &&
+            fs_type_valid(inodes[i].type) &&
             inodes[i].parent == (uint16_t)parent && i != parent) {
             char mstr[10];
             fs_mode_str(inodes[i].mode, mstr);
@@ -972,6 +976,12 @@ void fs_get_usage(uint32_t *used_inodes, uint32_t *total_inodes,
     if (data_start)   *data_start   = FS_DATA_START;
 }
 
+/* Validate that an inode type is a known, valid type (not free, not corrupted). */
+static int fs_type_valid(uint8_t type)
+{
+    return type == FS_TYPE_FILE || type == FS_TYPE_DIR || type == FS_TYPE_LINK;
+}
+
 int fs_list_names(const char *dir, const char *prefix,
                   char names[][FS_MAX_NAME], int max) {
     int parent = (!dir || dir[0] == '\0' || (dir[0] == '/' && dir[1] == '\0'))
@@ -981,9 +991,13 @@ int fs_list_names(const char *dir, const char *prefix,
     int plen = prefix ? (int)strlen(prefix) : 0;
     int n = 0;
     for (int i = 0; i < FS_MAX_FILES && n < max; i++) {
+        /* Skip free, invalid, or partially-written inodes */
         if (inodes[i].type == FS_TYPE_FREE) continue;
+        if (!fs_type_valid(inodes[i].type)) continue;
         if (inodes[i].parent != (uint16_t)parent || i == parent) continue;
         if (plen > 0 && strncmp(inodes[i].name, prefix, plen) != 0) continue;
+        /* Skip entries with empty names (partial write / corruption) */
+        if (inodes[i].name[0] == '\0') continue;
         strncpy(names[n], inodes[i].name, FS_MAX_NAME - 1);
         names[n][FS_MAX_NAME - 1] = '\0';
         n++;
