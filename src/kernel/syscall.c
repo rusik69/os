@@ -663,6 +663,124 @@ static int syscall_validate_user_args(uint64_t num, uint64_t a1, uint64_t a2, ui
         return syscall_user_write_ok(a1, sizeof(struct utsname)) ? 0 : -EFAULT;
     case SYS_VGA_GET_FB_INFO:
         return syscall_user_write_ok(a1, sizeof(struct syscall_fb_info)) ? 0 : -EFAULT;
+
+    /* ── Per-syscall argument validation (Item 89) ─────────────────── */
+
+    /* Signal number validation — sig 0 is valid for permission check */
+    case SYS_KILL:
+    case SYS_TKILL:
+    case SYS_KILLPG:
+        if (a2 >= SIG_MAX)
+            return -EINVAL;
+        return 0;
+    case SYS_TGKILL:
+        if (a3 >= SIG_MAX)
+            return -EINVAL;
+        return 0;
+    case SYS_SIGNAL:
+        if (a1 >= SIG_MAX || a1 == SIGKILL || a1 == SIGSTOP)
+            return -EINVAL;
+        return 0;
+
+    /* FD range validation — reject negative or out-of-range fds early */
+    case SYS_CLOSE:
+    case SYS_FSYNC:
+    case SYS_FDATASYNC:
+        if ((int64_t)a1 < 0 || a1 >= MAX_FDS)
+            return -EBADF;
+        return 0;
+
+    /* Path string validation for string-arg syscalls */
+    case SYS_ACCESS:
+        if (!syscall_user_cstr_ok(a1))
+            return -EFAULT;
+        if (a2 & ~(R_OK | W_OK | X_OK | F_OK))
+            return -EINVAL;
+        return 0;
+    case SYS_RENAME:
+        if (!syscall_user_cstr_ok(a1) || !syscall_user_cstr_ok(a2))
+            return -EFAULT;
+        return 0;
+    case SYS_RMDIR:
+    case SYS_CHMOD:
+    case SYS_MKNOD:
+        if (!syscall_user_cstr_ok(a1))
+            return -EFAULT;
+        return 0;
+
+    /* Pipe fd array pointer validation */
+    case SYS_PIPE:
+    case SYS_PIPE2:
+        if (!syscall_user_write_ok(a1, 2 * sizeof(int)))
+            return -EFAULT;
+        return 0;
+
+    /* Priority which validation */
+    case SYS_SETPRIORITY:
+        if (a1 > PRIO_USER)
+            return -EINVAL;
+        return 0;
+
+    /* Dup fd validation */
+    case SYS_DUP:
+        if ((int64_t)a1 < 0 || a1 >= MAX_FDS)
+            return -EBADF;
+        return 0;
+    case SYS_DUP2:
+        if ((int64_t)a1 < 0 || a1 >= MAX_FDS)
+            return -EBADF;
+        if ((int64_t)a2 < 0 || a2 >= MAX_FDS)
+            return -EBADF;
+        return 0;
+
+    /* Nanosleep timespec pointer validation */
+    case SYS_NANOSLEEP:
+        if (a1 && !syscall_user_read_ok(a1, sizeof(struct timespec)))
+            return -EFAULT;
+        if (a2 && !syscall_user_write_ok(a2, sizeof(struct timespec)))
+            return -EFAULT;
+        return 0;
+
+    /* Signal mask pointer validation */
+    case SYS_SIGPENDING:
+        if (a1 && !syscall_user_write_ok(a1, sizeof(uint64_t)))
+            return -EFAULT;
+        return 0;
+    case SYS_SIGPROCMASK:
+        if (a1 > SIG_SETMASK)
+            return -EINVAL;
+        if (a2 && !syscall_user_read_ok(a2, sizeof(uint64_t)))
+            return -EFAULT;
+        if (a3 && !syscall_user_write_ok(a3, sizeof(uint64_t)))
+            return -EFAULT;
+        return 0;
+
+    /* Readv/writev iovec array validation */
+    case SYS_READV:
+    case SYS_WRITEV:
+        if ((int64_t)a1 < 0)
+            return -EBADF;
+        if (a3 == 0)
+            return -EINVAL;
+        if (!syscall_user_read_ok(a2, a3 * sizeof(struct iovec)))
+            return -EFAULT;
+        return 0;
+
+    /* getrandom buffer validation */
+    case SYS_GETRANDOM:
+        if (a2 > 0 && !syscall_user_write_ok(a1, a2))
+            return -EFAULT;
+        return 0;
+
+    /* sethostname/gethostname name pointer and length validation */
+    case SYS_SETHOSTNAME:
+    case SYS_GETHOSTNAME:
+        if (!syscall_user_cstr_ok(a1))
+            return -EFAULT;
+        if (a2 == 0 || a2 > 64)
+            return -EINVAL;
+        return 0;
+
     default:
         return 0;
     }
