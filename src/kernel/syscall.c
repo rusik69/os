@@ -2822,15 +2822,6 @@ static int priority_to_nice(int prio) {
     }
 }
 
-/* Clamp nice to valid range [-20, 19] */
-static int clamp_nice(int nice) {
-    if (nice < NICE_MIN)
-        return NICE_MIN;
-    if (nice > NICE_MAX)
-        return NICE_MAX;
-    return nice;
-}
-
 /*
  * ── POSIX setpriority(which, who, prio) ──────────────────────────────
  *
@@ -2846,7 +2837,9 @@ static uint64_t sys_setpriority(uint64_t which, uint64_t who, uint64_t prio) {
     if (!cur)
         return (uint64_t)(int64_t)-ESRCH;
 
-    int nice = clamp_nice((int)(int64_t)prio);
+    int nice = (int)(int64_t)prio;
+    if (nice < NICE_MIN || nice > NICE_MAX)
+        return (uint64_t)(int64_t)-EINVAL;
 
     switch (which) {
     case PRIO_PROCESS: {
