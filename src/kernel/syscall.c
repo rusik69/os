@@ -8446,9 +8446,9 @@ static uint64_t sys_mlock(uint64_t addr, uint64_t len) {
 
     uint64_t npages = len / PAGE_SIZE;
 
-    /* RLIMIT_MEMLOCK check (index 8) */
-    uint64_t limit = p->rlim_cur[8];
-    if (limit != (uint64_t)-1) {
+    /* RLIMIT_MEMLOCK check — reject if locked pages would exceed limit */
+    uint64_t limit = p->rlim_cur[RLIMIT_MEMLOCK];
+    if (limit != RLIM_INFINITY) {
         uint64_t limit_pages = limit / PAGE_SIZE;
         if (p->locked_pages + npages > limit_pages)
             return (uint64_t)-ENOMEM;
