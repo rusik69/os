@@ -701,6 +701,50 @@ struct vfs_mount *vfs_resolve_mount(const char *path) {
     return resolve(path);
 }
 
+/*
+ * resolve_bind() — Like resolve(), but translates paths through bind mounts.
+ *
+ * For bind mounts (is_bind=1), replaces the mountpoint prefix with the
+ * bind_source prefix in out_path so the filesystem receives the original
+ * source path instead of the target path.
+ *
+ * Example: mount --bind /a /b, then resolve_bind("/b/file") returns
+ *   m = mount entry for "/b", out_path = "/a/file"
+ *
+ * Returns the mount, and writes the translated (or original) path into
+ * out_path.  If no mount matches, out_path is set to "" and NULL returned.
+ */
+static struct vfs_mount *resolve_bind(const char *path, char *out_path, size_t out_size) {
+    struct vfs_mount *m = resolve(path);
+    if (!m) {
+        if (out_path && out_size > 0)
+            out_path[0] = '\0';
+        return NULL;
+    }
+
+    /* Copy the original path first */
+    if (out_path && out_size > 0) {
+        strncpy(out_path, path, out_size - 1);
+        out_path[out_size - 1] = '\0';
+    }
+
+    /* If this is a bind mount, translate the path */
+    if (m->is_bind && m->bind_source[0]) {
+        size_t mplen = strlen(m->mountpoint);
+        const char *suffix = path + mplen;
+        size_t src_len = strlen(m->bind_source);
+        size_t suffix_len = strlen(suffix);
+
+        if (out_path && out_size > 0 && src_len + suffix_len < out_size) {
+            memcpy(out_path, m->bind_source, src_len);
+            memcpy(out_path + src_len, suffix, suffix_len);
+            out_path[src_len + suffix_len] = '\0';
+        }
+    }
+
+    return m;
+}
+
 /* Check if a mountpoint has any open files (used by umount to return EBUSY) */
 int vfs_umount_check_busy(const char *mountpoint) {
     struct vfs_mount *m = resolve(mountpoint);
@@ -801,12 +845,13 @@ int vfs_read(const char *path, void *buf, uint32_t max, uint32_t *out_size) {
             return lock_ret; /* -EAGAIN if blocked by mandatory write lock */
     }
 
-    struct vfs_mount *m = resolve(ap);
+    char rp[128];
+    struct vfs_mount *m = resolve_bind(ap, rp, sizeof(rp));
     if (!m || !m->ops->read) {
         kprintf("[vfs_read] resolve('%s') failed: mount=%p\n", ap, (void *)m);
         return -EIO;
     }
-    int r = m->ops->read(m->priv, ap, buf, max, out_size);
+    int r = m->ops->read(m->priv, rp, buf, max, out_size);
     /* If the read fails with an I/O or corruption error, auto-remount
      * read-only to prevent further damage.  Reads into corrupted areas
      * can propagate bad data; stopping writes protects data integrity. */
@@ -857,7 +902,8 @@ int vfs_write(const char *path, const void *data, uint32_t size) {
             return lock_ret; /* -EAGAIN if blocked by mandatory read or write lock */
     }
 
-    struct vfs_mount *m = resolve(ap);
+    char rp[128];
+    struct vfs_mount *m = resolve_bind(ap, rp, sizeof(rp));
     if (!m || !m->ops->write)
         return -EIO;
 
@@ -897,7 +943,7 @@ int vfs_write(const char *path, const void *data, uint32_t size) {
         }
     }
 
-    int r = m->ops->write(m->priv, ap, data, size);
+    int r = m->ops->write(m->priv, rp, data, size);
     /* If the filesystem returns an I/O or corruption error, automatically
      * remount read-only to prevent further data loss.  The filesystem
      * driver should also call vfs_force_readonly() directly when it
@@ -1022,7 +1068,8 @@ int vfs_readahead(const char *path, uint32_t offset, uint32_t count) {
             return lock_ret;
     }
 
-    struct vfs_mount *m = resolve(ap);
+    char rp[128];
+    struct vfs_mount *m = resolve_bind(ap, rp, sizeof(rp));
     if (!m)
         return -1;
 
@@ -1031,7 +1078,7 @@ int vfs_readahead(const char *path, uint32_t offset, uint32_t count) {
      * The SMFS (Simple Memory File System) on "/" is backed by
      * the legacy ATA block filesystem (fs.c). */
     if (m->ops == &smfs_ops) {
-        return fs_readahead(ap, offset, count);
+        return fs_readahead(rp, offset, count);
     }
 
     /* For other filesystems (tmpfs, procfs, sysfs, etc.), readahead
@@ -1061,10 +1108,11 @@ int vfs_stat(const char *path, struct vfs_stat *st) {
     }
 
     /* Cache miss — query the real filesystem */
-    struct vfs_mount *m = resolve(ap);
+    char rp[128];
+    struct vfs_mount *m = resolve_bind(ap, rp, sizeof(rp));
     if (!m || !m->ops->stat)
         return -1;
-    int r = m->ops->stat(m->priv, ap, st);
+    int r = m->ops->stat(m->priv, rp, st);
     if (r == 0) {
         /* Cache the result for future lookups */
         dcache_add(ap, (void *)m, st->type, (uint32_t)st->size, st->uid, st->gid, st->mode,
@@ -1084,7 +1132,8 @@ int vfs_create(const char *path, uint8_t type) {
             return -EACCES;
     }
 
-    struct vfs_mount *m = resolve(ap);
+    char rp[128];
+    struct vfs_mount *m = resolve_bind(ap, rp, sizeof(rp));
     if (!m || !m->ops->create)
         return -1;
     /* Check read-only mount */
@@ -1103,7 +1152,7 @@ int vfs_create(const char *path, uint8_t type) {
         }
     }
 
-    int r = m->ops->create(m->priv, ap, type);
+    int r = m->ops->create(m->priv, rp, type);
     if (r == 0) {
         fsnotify_notify(ap, FS_CREATE);
         /* Invalidate the parent directory's cache entry */
@@ -1138,7 +1187,8 @@ int vfs_unlink(const char *path) {
             return -EACCES;
     }
 
-    struct vfs_mount *m = resolve(ap);
+    char rp[128];
+    struct vfs_mount *m = resolve_bind(ap, rp, sizeof(rp));
     if (!m || !m->ops->unlink)
         return -1;
     /* Check read-only mount */
@@ -1149,7 +1199,7 @@ int vfs_unlink(const char *path) {
     struct vfs_stat pre_st;
     int have_pre_stat = (vfs_stat(ap, &pre_st) == 0) ? 1 : 0;
 
-    int r = m->ops->unlink(m->priv, ap);
+    int r = m->ops->unlink(m->priv, rp);
     if (r == 0) {
         fsnotify_notify(ap, FS_DELETE);
         dcache_remove(ap);
@@ -1194,8 +1244,9 @@ int vfs_rename(const char *old_path, const char *new_path) {
     vfs_abs_path(new_path, new_ap, sizeof(new_ap));
 
     /* Resolve mounts for both paths */
-    struct vfs_mount *m_old = resolve(old_ap);
-    struct vfs_mount *m_new = resolve(new_ap);
+    char old_rp[128], new_rp[128];
+    struct vfs_mount *m_old = resolve_bind(old_ap, old_rp, sizeof(old_rp));
+    struct vfs_mount *m_new = resolve_bind(new_ap, new_rp, sizeof(new_rp));
     if (!m_old || !m_new)
         return -ENOENT;
 
@@ -1233,7 +1284,7 @@ int vfs_rename(const char *old_path, const char *new_path) {
 
     /* Use filesystem-native rename if available */
     if (m_old->ops->rename) {
-        int r = m_old->ops->rename(m_old->priv, old_ap, new_ap);
+        int r = m_old->ops->rename(m_old->priv, old_rp, new_rp);
         if (r == 0) {
             fsnotify_notify(old_ap, FS_DELETE);
             fsnotify_notify(new_ap, FS_CREATE);
@@ -1367,10 +1418,11 @@ int vfs_readdir(const char *path) {
             return -EACCES;
     }
 
-    struct vfs_mount *m = resolve(ap);
+    char rp[128];
+    struct vfs_mount *m = resolve_bind(ap, rp, sizeof(rp));
     if (!m || !m->ops->readdir)
         return -1;
-    return m->ops->readdir(m->priv, ap);
+    return m->ops->readdir(m->priv, rp);
 }
 
 int vfs_readdir_names(const char *path, char names[][64], int max) {
@@ -1384,14 +1436,15 @@ int vfs_readdir_names(const char *path, char names[][64], int max) {
             return -EACCES;
     }
 
-    struct vfs_mount *m = resolve(ap);
+    char rp[128];
+    struct vfs_mount *m = resolve_bind(ap, rp, sizeof(rp));
     if (!m)
         return -1;
     if (strcmp(m->mountpoint, "/") == 0) {
         char(*smfs_names)[FS_MAX_NAME] = kmalloc((size_t)64 * FS_MAX_NAME);
         if (!smfs_names)
             return -1;
-        int n = fs_list_names(ap, "", smfs_names, max < 64 ? max : 64);
+        int n = fs_list_names(rp, "", smfs_names, max < 64 ? max : 64);
         for (int i = 0; i < n; i++) {
             strncpy(names[i], smfs_names[i], 63);
             names[i][63] = '\0';
@@ -1400,12 +1453,12 @@ int vfs_readdir_names(const char *path, char names[][64], int max) {
         return n;
     }
     if (strcmp(m->mountpoint, "/mnt") == 0 && fat32_is_mounted()) {
-        const char *rel = ap;
-        if (strncmp(ap, "/mnt", 4) == 0) {
-            if (ap[4] == '\0')
+        const char *rel = rp;
+        if (strncmp(rp, "/mnt", 4) == 0) {
+            if (rp[4] == '\0')
                 rel = "/";
-            else if (ap[4] == '/')
-                rel = ap + 4;
+            else if (rp[4] == '/')
+                rel = rp + 4;
         }
         char(*fat_names)[FAT32_MAX_NAME] = kmalloc((size_t)64 * FAT32_MAX_NAME);
         if (!fat_names)
@@ -1457,7 +1510,59 @@ int vfs_bind_mount(const char *src, const char *target) {
     char ap_tgt[128];
     vfs_abs_path(target, ap_tgt, sizeof(ap_tgt));
 
-    /* Find free slot */
+    /* Find the mount that contains the source path */
+    struct vfs_mount *src_mount = resolve(ap_src);
+    if (!src_mount) {
+        kprintf("[vfs_bind_mount] source '%s' not in any mounted filesystem\n", ap_src);
+        return -1;
+    }
+
+    /* Create a mount entry in the global mount table */
+    spinlock_acquire(&mount_lock);
+
+    if (num_mounts >= VFS_MAX_MOUNTS) {
+        spinlock_release(&mount_lock);
+        return -1;
+    }
+
+    size_t tlen = strlen(ap_tgt);
+    if (tlen >= sizeof(mounts[num_mounts].mountpoint))
+        tlen = sizeof(mounts[num_mounts].mountpoint) - 1;
+    memcpy(mounts[num_mounts].mountpoint, ap_tgt, tlen);
+    mounts[num_mounts].mountpoint[tlen] = '\0';
+    mounts[num_mounts].ops  = src_mount->ops;
+    mounts[num_mounts].priv = src_mount->priv;
+    mounts[num_mounts].flags = MS_BIND;
+    mounts[num_mounts].is_bind = 1;
+    strncpy(mounts[num_mounts].bind_source, ap_src,
+            sizeof(mounts[num_mounts].bind_source) - 1);
+    mounts[num_mounts].bind_source[sizeof(mounts[num_mounts].bind_source) - 1] = '\0';
+
+    num_mounts++;
+    spinlock_release(&mount_lock);
+
+    /* Sync to root mount namespace so resolve() finds the new mount */
+    {
+        struct mnt_namespace *root = mnt_ns_root();
+        if (root && root->num_mounts < VFS_MAX_MOUNTS) {
+            size_t cplen = strlen(ap_tgt);
+            if (cplen >= sizeof(root->mounts[root->num_mounts].mountpoint))
+                cplen = sizeof(root->mounts[root->num_mounts].mountpoint) - 1;
+            memcpy(root->mounts[root->num_mounts].mountpoint, ap_tgt, cplen);
+            root->mounts[root->num_mounts].mountpoint[cplen] = '\0';
+            root->mounts[root->num_mounts].ops  = src_mount->ops;
+            root->mounts[root->num_mounts].priv = src_mount->priv;
+            root->mounts[root->num_mounts].flags = MS_BIND;
+            root->mounts[root->num_mounts].is_bind = 1;
+            strncpy(root->mounts[root->num_mounts].bind_source, ap_src,
+                    sizeof(root->mounts[root->num_mounts].bind_source) - 1);
+            root->mounts[root->num_mounts].bind_source[
+                sizeof(root->mounts[root->num_mounts].bind_source) - 1] = '\0';
+            root->num_mounts++;
+        }
+    }
+
+    /* Also store in traditional bind_mounts[] for backward compat */
     for (int i = 0; i < VFS_MAX_BIND_MOUNTS; i++) {
         if (!bind_mounts[i].in_use) {
             strncpy(bind_mounts[i].source, ap_src, 63);
@@ -1465,10 +1570,12 @@ int vfs_bind_mount(const char *src, const char *target) {
             strncpy(bind_mounts[i].target, ap_tgt, 63);
             bind_mounts[i].target[63] = '\0';
             bind_mounts[i].in_use = 1;
-            return 0;
+            break;
         }
     }
-    return -1;
+
+    kprintf("[vfs_bind_mount] bind: %s at %s\n", ap_src, ap_tgt);
+    return 0;
 }
 
 int vfs_is_bind_mount(const char *path) {
@@ -1505,7 +1612,8 @@ void vfs_update_atime(const char *path) {
 
 /* Internal helper: resolve path, call filesystem's set_time, update dcache. */
 static int vfs_do_set_time(const char *abs_path, const struct timespec times[2]) {
-    struct vfs_mount *m = resolve(abs_path);
+    char rp[128];
+    struct vfs_mount *m = resolve_bind(abs_path, rp, sizeof(rp));
     if (!m)
         return -ENOENT;
 
@@ -1553,7 +1661,7 @@ static int vfs_do_set_time(const char *abs_path, const struct timespec times[2])
         }
     }
 
-    int ret = m->ops->set_time(m->priv, abs_path, atime_sec, atime_nsec, mtime_sec, mtime_nsec);
+    int ret = m->ops->set_time(m->priv, rp, atime_sec, atime_nsec, mtime_sec, mtime_nsec);
     if (ret == 0) {
         /* Invalidate dentry cache for the path so next stat re-reads metadata */
         dcache_remove(abs_path);
@@ -1635,7 +1743,8 @@ int vfs_truncate(const char *path, uint32_t len) {
             return -EACCES;
     }
 
-    struct vfs_mount *m = resolve(ap);
+    char rp[128];
+    struct vfs_mount *m = resolve_bind(ap, rp, sizeof(rp));
     if (!m)
         return -1;
     if (m->flags & MS_RDONLY)
@@ -1646,7 +1755,7 @@ int vfs_truncate(const char *path, uint32_t len) {
     int have_old = (vfs_stat(ap, &old_st) == 0) ? 1 : 0;
 
     if (m->ops->truncate) {
-        int r = m->ops->truncate(m->priv, ap, len);
+        int r = m->ops->truncate(m->priv, rp, len);
         if (r == 0) {
             /* Update block quota after truncate */
             struct process *proc = process_get_current();
@@ -1734,10 +1843,11 @@ int vfs_link(const char *oldpath, const char *newpath) {
     if (st.nlink >= VFS_LINK_MAX)
         return -EMLINK;
 
-    struct vfs_mount *m_old = resolve(ap_old);
+    char old_rp[128], new_rp[128];
+    struct vfs_mount *m_old = resolve_bind(ap_old, old_rp, sizeof(old_rp));
     if (!m_old)
         return -ENOENT;
-    struct vfs_mount *m_new = resolve(ap_new);
+    struct vfs_mount *m_new = resolve_bind(ap_new, new_rp, sizeof(new_rp));
     if (!m_new)
         return -ENOENT;
 
@@ -1747,7 +1857,7 @@ int vfs_link(const char *oldpath, const char *newpath) {
 
     /* If the filesystem supports native link, use it */
     if (m_old->ops && m_old->ops->link) {
-        int ret = m_old->ops->link(m_old->priv, ap_old, ap_new);
+        int ret = m_old->ops->link(m_old->priv, old_rp, new_rp);
         if (ret == 0) {
             vfs_inc_nlink(ap_old);
             /* Invalidate dentry cache — nlink changed for old path,
@@ -1842,13 +1952,14 @@ int vfs_symlink(const char *target, const char *linkpath) {
             return -EACCES;
     }
 
-    struct vfs_mount *m = resolve(ap);
+    char rp[128];
+    struct vfs_mount *m = resolve_bind(ap, rp, sizeof(rp));
     if (!m)
         return -ENOENT;
     if (m->flags & MS_RDONLY)
         return -EROFS_KERNEL;
     if (m->ops->symlink) {
-        int r = m->ops->symlink(m->priv, target, ap);
+        int r = m->ops->symlink(m->priv, target, rp);
         if (r == 0) {
             /* Invalidate dentry cache — new symlink created */
             dcache_remove(ap);
@@ -1885,11 +1996,12 @@ int vfs_readlink(const char *path, char *buf, int bufsize) {
             return -EACCES;
     }
 
-    struct vfs_mount *m = resolve(ap);
+    char rp[128];
+    struct vfs_mount *m = resolve_bind(ap, rp, sizeof(rp));
     if (!m)
         return -ENOENT;
     if (m->ops->readlink)
-        return m->ops->readlink(m->priv, ap, buf, bufsize);
+        return m->ops->readlink(m->priv, rp, buf, bufsize);
     /* Fallback: read the raw content (the target string) */
     uint32_t out_size = 0;
     int r = vfs_read(ap, buf, (uint32_t)(bufsize - 1), &out_size);
@@ -1913,13 +2025,14 @@ int vfs_mknod(const char *path, uint16_t mode, uint16_t dev_major, uint16_t dev_
             return -EACCES;
     }
 
-    struct vfs_mount *m = resolve(ap);
+    char rp[128];
+    struct vfs_mount *m = resolve_bind(ap, rp, sizeof(rp));
     if (!m)
         return -ENOENT;
     if (m->flags & MS_RDONLY)
         return -EROFS_KERNEL;
     if (m->ops->mknod) {
-        int r = m->ops->mknod(m->priv, ap, mode, dev_major, dev_minor);
+        int r = m->ops->mknod(m->priv, rp, mode, dev_major, dev_minor);
         if (r == 0) {
             /* Invalidate dentry cache — new device node created */
             dcache_remove(ap);
@@ -2276,14 +2389,15 @@ int vfs_ioctl(const char *path, uint64_t cmd, uint64_t arg) {
     char ap[128];
     vfs_abs_path(path, ap, sizeof(ap));
 
-    struct vfs_mount *m = resolve(ap);
+    char rp[128];
+    struct vfs_mount *m = resolve_bind(ap, rp, sizeof(rp));
     if (!m)
         return -ENOENT;
 
     if (!m->ops->ioctl)
         return -ENOTTY;
 
-    return m->ops->ioctl(m->priv, ap, cmd, arg);
+    return m->ops->ioctl(m->priv, rp, cmd, arg);
 }
 
 /*
