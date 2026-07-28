@@ -135,16 +135,43 @@ static int ioctl_tcgets(uint64_t arg)
 	return 0;
 }
 
+/* ── Known termios flag masks for validation ──────────────────── */
+
+/* c_lflag known bits: ISIG, ICANON, NOFLSH, ECHO, TOSTOP */
+#define TERMIOS_LFLAG_KNOWN  (ISIG | ICANON | NOFLSH | ECHO | TOSTOP)
+
+/* c_iflag, c_oflag, c_cflag — no flags defined yet, all bits invalid */
+
+/*
+ * tty_termios_valid — Validate a struct termios before applying it.
+ * Returns true if valid, false if bits outside the known masks are set.
+ */
+static bool tty_termios_valid(const struct termios *t)
+{
+	if (t->c_iflag & ~0U)          /* no known flags yet → any non-zero is invalid */
+		return false;
+	if (t->c_oflag & ~0U)          /* no known flags yet → any non-zero is invalid */
+		return false;
+	if (t->c_cflag & ~0U)          /* no known flags yet → any non-zero is invalid */
+		return false;
+	if (t->c_lflag & ~TERMIOS_LFLAG_KNOWN)
+		return false;
+	return true;
+}
+
 /*
  * TCSETS — Set termios attributes.
  * arg is a userspace pointer to struct termios.
- * Copies the termios struct from user and updates the global TTY state.
+ * Copies the termios struct from user, validates it, and updates the
+ * global TTY state.  Returns -EINVAL if unknown or invalid flags are set.
  */
 static int ioctl_tcsets(uint64_t arg)
 {
 	struct termios t;
 	if (copy_from_user(&t, arg, sizeof(t)) < 0)
 		return -EFAULT;
+	if (!tty_termios_valid(&t))
+		return -EINVAL;
 	struct termios *dst = tty_get_termios();
 	if (!dst)
 		return -ENOTTY;
