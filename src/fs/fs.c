@@ -8,6 +8,7 @@
 #include "fat32.h"
 #include "page_cache.h"
 #include "pmm.h"
+#include "vfs.h"
 #include "syscall.h"   /* for FALLOC_FL_* constants */
 
 /* ── Compile-time struct size assertions ────────────────────────────── */
@@ -239,10 +240,8 @@ static int find_inode(const char *path) {
     return find_inode_depth(path, 0);
 }
 
-#define SYMLINK_MAX_DEPTH 8
-
 static int find_inode_depth(const char *path, int depth) {
-    if (depth > SYMLINK_MAX_DEPTH) return -ELOOP;
+    if (depth > SYMLINK_MAX) return -ELOOP;
     if (*path == '/') path++;
     if (*path == '\0') return 0; /* root itself = inode 0 */
 

@@ -104,6 +104,9 @@ struct vfs_stat {
 #define VFS_TYPE_DIR    2
 #define VFS_TYPE_LINK   3
 #define VFS_TYPE_CHR    4  /* character device */
+
+/* Maximum symlink traversal depth (Linux: MAXSYMLINKS = 40) */
+#define SYMLINK_MAX 40
 #define VFS_TYPE_BLK    5  /* block device */
 #define VFS_TYPE_FIFO   6  /* named pipe/FIFO */
 struct file_lock {

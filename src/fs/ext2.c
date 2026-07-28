@@ -1909,7 +1909,7 @@ static int ext2_path_to_ino(struct ext2_priv *ep, const char *path, uint32_t *in
 
         /* ── Follow symlinks with depth limit ──────────────── */
         int sym_depth = 0;
-        while (sym_depth < 8) {
+        while (sym_depth < SYMLINK_MAX) {
             struct ext2_inode link_inode;
             if (ext2_read_inode(ep, *ino, &link_inode) < 0)
                 break;
@@ -1953,7 +1953,7 @@ static int ext2_path_to_ino(struct ext2_priv *ep, const char *path, uint32_t *in
             }
             break;
         }
-        if (sym_depth >= 8)
+        if (sym_depth >= SYMLINK_MAX)
             return -ELOOP;
 
         p = end;
