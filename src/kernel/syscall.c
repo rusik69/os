@@ -7914,8 +7914,22 @@ static uint64_t sys_umount(uint64_t target_addr) {
     if (strncpy_from_user(target, target_addr, sizeof(target)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
 
+    /* Check if mountpoint exists */
+    struct vfs_mount *m = vfs_resolve_mount(target);
+    if (!m)
+        return (uint64_t)(int64_t)-EINVAL;
+
+    /* Check if mount is busy (has open file descriptors) */
+    int busy = vfs_umount_check_busy(target);
+    if (busy < 0)
+        return (uint64_t)(int64_t)busy;
+
+    /* Perform the unmount */
+    int ret = vfs_umount(target);
+    if (ret < 0)
+        return (uint64_t)(int64_t)ret;
+
     kprintf("[umount] %s\n", target);
-    /* In a full implementation this would call vfs_umount */
     return 0;
 }
 

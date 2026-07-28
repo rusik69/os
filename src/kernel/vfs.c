@@ -684,6 +684,57 @@ static struct vfs_mount *resolve(const char *path) {
     return best;
 }
 
+/* Public wrapper around the static resolve() */
+struct vfs_mount *vfs_resolve_mount(const char *path) {
+    return resolve(path);
+}
+
+/* Check if a mountpoint has any open files (used by umount to return EBUSY) */
+int vfs_umount_check_busy(const char *mountpoint)
+{
+    struct vfs_mount *m = resolve(mountpoint);
+    if (!m)
+        return -EINVAL;
+
+    struct process *table = process_get_table();
+    for (int i = 0; i < PROCESS_MAX; i++) {
+        if (table[i].state == PROCESS_UNUSED)
+            continue;
+        for (int j = 0; j < PROCESS_FD_MAX; j++) {
+            if (!table[i].fd_table[j].used)
+                continue;
+            if (table[i].fd_table[j].path[0] == '\0')
+                continue;
+            struct vfs_mount *fd_mnt = resolve(table[i].fd_table[j].path);
+            if (fd_mnt == m)
+                return -EBUSY;
+        }
+    }
+    return 0;
+}
+
+/* Remove a mount entry from the global mount table */
+int vfs_umount(const char *mountpoint)
+{
+    spinlock_acquire(&mount_lock);
+    for (int i = 0; i < num_mounts; i++) {
+        if (strcmp(mounts[i].mountpoint, mountpoint) == 0) {
+            int remaining = num_mounts - i - 1;
+            if (remaining > 0) {
+                memmove(&mounts[i], &mounts[i + 1],
+                        (size_t)remaining * sizeof(struct vfs_mount));
+            }
+            num_mounts--;
+            spinlock_release(&mount_lock);
+            kprintf("[umount] unmounted %s\n", mountpoint);
+            return 0;
+        }
+    }
+    spinlock_release(&mount_lock);
+    kprintf("[umount] %s: mountpoint not found\n", mountpoint);
+    return -EINVAL;
+}
+
 int vfs_register_filesystem(const char *name, const struct vfs_ops *ops) {
     if (num_fs_types >= VFS_MAX_FS_TYPES) return -1;
     strncpy(fs_types[num_fs_types].name, name, 31);

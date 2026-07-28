@@ -455,6 +455,17 @@ void vfs_init(void);
 extern struct vfs_mount mounts[VFS_MAX_MOUNTS];
 extern int num_mounts;
 
+/* Resolve a path to its best-matching mount entry.  Returns NULL if no mount matches. */
+struct vfs_mount *vfs_resolve_mount(const char *path);
+
+/* Check if a mountpoint is busy (has any open file descriptors on it).
+ * Returns 0 if not busy, -EBUSY if busy, -EINVAL if mountpoint not found. */
+int vfs_umount_check_busy(const char *mountpoint);
+
+/* Unmount a filesystem — remove it from the mount table.
+ * Returns 0 on success, -EINVAL if mountpoint not found. */
+int vfs_umount(const char *mountpoint);
+
 /* Check permissions on a path given uid/gid.
  * @op is VFS_R_OK (4), VFS_W_OK (2), VFS_X_OK (1), or VFS_F_OK (0).
  * Returns 0 on success, -EACCES on denial. */
