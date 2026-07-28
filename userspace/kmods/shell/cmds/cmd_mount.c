@@ -7,12 +7,12 @@
  *   mount -t fstype -o options device mountpoint  - mount a specific fs
  */
 
-#include "shell.h"
-#include "shell_cmd_table.h"
-#include "vfs.h"
 #include "fstab.h"
 #include "printf.h"
+#include "shell.h"
+#include "shell_cmd_table.h"
 #include "string.h"
+#include "vfs.h"
 
 /* ── Forward declarations for VFS mount table access ────────────────── */
 extern int num_mounts;
@@ -21,48 +21,55 @@ extern struct vfs_mount mounts[VFS_MAX_MOUNTS];
 /* ── Recursive mount listing helpers ──────────────────── */
 
 /* Return non-zero if mounts[parent] is the direct parent of mounts[child] */
-static int is_direct_child(int parent, int child)
-{
+static int is_direct_child(int parent, int child) {
     const char *pp = mounts[parent].mountpoint;
     const char *cp = mounts[child].mountpoint;
     size_t plen = strlen(pp);
     size_t clen = strlen(cp);
 
-    if (clen <= plen + 1) return 0;  /* child must be longer */
+    if (clen <= plen + 1)
+        return 0; /* child must be longer */
 
     /* Root mount "/" is special */
     if (plen == 1 && pp[0] == '/') {
-        if (cp[0] != '/') return 0;
+        if (cp[0] != '/')
+            return 0;
         /* Exactly one path component — no '/' beyond the first */
         for (size_t i = 1; cp[i]; i++)
-            if (cp[i] == '/') return 0;
+            if (cp[i] == '/')
+                return 0;
         return 1;
     }
 
     /* Non-root: child must start with parent + "/" */
-    if (strncmp(cp, pp, plen) != 0) return 0;
-    if (cp[plen] != '/') return 0;
+    if (strncmp(cp, pp, plen) != 0)
+        return 0;
+    if (cp[plen] != '/')
+        return 0;
 
     /* Ensure no further slashes (direct child, not grandchild) */
     for (size_t i = plen + 1; cp[i]; i++)
-        if (cp[i] == '/') return 0;
+        if (cp[i] == '/')
+            return 0;
 
     return 1;
 }
 
 /* Return a descriptive filesystem-type string for a mount entry */
-static const char *mount_type_str(int i)
-{
-    if (mounts[i].is_bind) return "bind";
-    if (strcmp(mounts[i].mountpoint, "/proc") == 0) return "proc";
-    if (strcmp(mounts[i].mountpoint, "/dev") == 0) return "devfs";
-    if (strcmp(mounts[i].mountpoint, "/dev/shm") == 0) return "tmpfs";
+static const char *mount_type_str(int i) {
+    if (mounts[i].is_bind)
+        return "bind";
+    if (strcmp(mounts[i].mountpoint, "/proc") == 0)
+        return "proc";
+    if (strcmp(mounts[i].mountpoint, "/dev") == 0)
+        return "devfs";
+    if (strcmp(mounts[i].mountpoint, "/dev/shm") == 0)
+        return "tmpfs";
     return "smfs";
 }
 
 /* Recursively print a mount entry and all its children */
-static void print_mount_tree(int idx, const char *prefix, int is_last)
-{
+static void print_mount_tree(int idx, const char *prefix, int is_last) {
     /* Print tree connector */
     kprintf("%s", prefix);
     kprintf(is_last ? "└── " : "├── ");
@@ -87,14 +94,14 @@ static void print_mount_tree(int idx, const char *prefix, int is_last)
 
     /* Build prefix for children */
     char child_prefix[128];
-    snprintf(child_prefix, sizeof(child_prefix), "%s%s",
-             prefix, is_last ? "    " : "│   ");
+    snprintf(child_prefix, sizeof(child_prefix), "%s%s", prefix, is_last ? "    " : "│   ");
 
     /* Collect direct children */
     int children[VFS_MAX_MOUNTS];
     int nchildren = 0;
     for (int i = 0; i < num_mounts; i++) {
-        if (i == idx) continue;
+        if (i == idx)
+            continue;
         if (is_direct_child(idx, i))
             children[nchildren++] = i;
     }
@@ -102,8 +109,7 @@ static void print_mount_tree(int idx, const char *prefix, int is_last)
     /* Sort children by mountpoint for deterministic output */
     for (int i = 0; i < nchildren - 1; i++) {
         for (int j = 0; j < nchildren - i - 1; j++) {
-            if (strcmp(mounts[children[j]].mountpoint,
-                       mounts[children[j + 1]].mountpoint) > 0) {
+            if (strcmp(mounts[children[j]].mountpoint, mounts[children[j + 1]].mountpoint) > 0) {
                 int tmp = children[j];
                 children[j] = children[j + 1];
                 children[j + 1] = tmp;
@@ -135,11 +141,15 @@ void cmd_mount(const char *args) {
 
         char *p = buf;
         while (*p && argc < 16) {
-            while (*p == ' ') p++;
-            if (*p == '\0') break;
+            while (*p == ' ')
+                p++;
+            if (*p == '\0')
+                break;
             argv[argc++] = p;
-            while (*p && *p != ' ') p++;
-            if (*p) *p++ = '\0';
+            while (*p && *p != ' ')
+                p++;
+            if (*p)
+                *p++ = '\0';
         }
     }
 
@@ -182,7 +192,8 @@ void cmd_mount(const char *args) {
         for (int i = 0; i < num_mounts; i++) {
             int has_parent = 0;
             for (int j = 0; j < num_mounts; j++) {
-                if (i == j) continue;
+                if (i == j)
+                    continue;
                 if (is_direct_child(j, i)) {
                     has_parent = 1;
                     break;
@@ -195,8 +206,7 @@ void cmd_mount(const char *args) {
         /* Sort top-level mounts by mountpoint for a stable tree */
         for (int i = 0; i < ntops - 1; i++) {
             for (int j = 0; j < ntops - i - 1; j++) {
-                if (strcmp(mounts[tops[j]].mountpoint,
-                           mounts[tops[j + 1]].mountpoint) > 0) {
+                if (strcmp(mounts[tops[j]].mountpoint, mounts[tops[j + 1]].mountpoint) > 0) {
                     int tmp = tops[j];
                     tops[j] = tops[j + 1];
                     tops[j + 1] = tmp;
@@ -232,8 +242,7 @@ void cmd_mount(const char *args) {
         if (ret == 0) {
             kprintf("mount: %s mounted at %s\n", device, mountpoint);
         } else {
-            kprintf("mount: failed to mount %s at %s (error %d)\n",
-                    device, mountpoint, ret);
+            kprintf("mount: failed to mount %s at %s (error %d)\n", device, mountpoint, ret);
         }
         return;
     }
