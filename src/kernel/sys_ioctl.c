@@ -32,6 +32,9 @@
 #include "sound_oss.h"
 #include "tmpfs.h"
 
+/* Declaration of global TTY termios accessor (defined in syscall.c) */
+extern struct termios *tty_get_termios(void);
+
 MODULE_LICENSE("MIT");
 MODULE_VERSION("1.0");
 MODULE_DESCRIPTION("Unified ioctl dispatch layer");
@@ -114,6 +117,38 @@ static int ioctl_tiocgwinsz(uint64_t arg)
 
 	if (copy_to_user(arg, &ws, sizeof(ws)) < 0)
 		return -EFAULT;
+	return 0;
+}
+
+/*
+ * TCGETS — Get termios attributes.
+ * arg is a userspace pointer to struct termios.
+ * Reads the global TTY termios state and copies it to user.
+ */
+static int ioctl_tcgets(uint64_t arg)
+{
+	struct termios *t = tty_get_termios();
+	if (!t)
+		return -ENOTTY;
+	if (copy_to_user(arg, t, sizeof(*t)) < 0)
+		return -EFAULT;
+	return 0;
+}
+
+/*
+ * TCSETS — Set termios attributes.
+ * arg is a userspace pointer to struct termios.
+ * Copies the termios struct from user and updates the global TTY state.
+ */
+static int ioctl_tcsets(uint64_t arg)
+{
+	struct termios t;
+	if (copy_from_user(&t, arg, sizeof(t)) < 0)
+		return -EFAULT;
+	struct termios *dst = tty_get_termios();
+	if (!dst)
+		return -ENOTTY;
+	*dst = t;
 	return 0;
 }
 
@@ -543,6 +578,10 @@ uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg)
 	/* ── Terminal ioctls ────────────────────────────────────── */
 	case TIOCGWINSZ:
 		return (uint64_t)(int64_t)ioctl_tiocgwinsz(arg);
+	case TCGETS:
+		return (uint64_t)(int64_t)ioctl_tcgets(arg);
+	case TCSETS:
+		return (uint64_t)(int64_t)ioctl_tcsets(arg);
 
 	/* ── Network / Socket ioctls ────────────────────────────── */
 	case SIOCGIFNAME:

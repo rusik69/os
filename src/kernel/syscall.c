@@ -616,10 +616,25 @@ static struct process_fd *sys_get_fd(int i) {
     return &p->fd_table[i];
 }
 
+/* ── TTY state (termios) ──────────────────────────────────────────────── *
+ * Default: ISIG | ICANON | ECHO — cooked mode with signal generation
+ * and local echo enabled.                                          */
+
+static struct termios g_tty_termios = {
+    .c_iflag = 0,
+    .c_oflag = 0,
+    .c_cflag = 0,
+    .c_lflag = ISIG | ICANON | ECHO,
+    .c_cc    = {1, 0},   /* VMIN=1, VTIME=0 */
+};
+
 /* ── TTY input helper ──────────────────────────────────────────────────
  * Read one character from the keyboard/serial console.
  * Intercept special characters:
  *   Ctrl+C (0x03) -> send SIGINT to the foreground process group.
+ *   Ctrl+\ (0x1C) -> send SIGQUIT to the foreground process group.
+ *   Ctrl+Z (0x1A) -> send SIGTSTP to the foreground process group.
+ * Echo the character to console output if ECHO flag is set.
  * Returns the next normal character to return to userspace.
  */
 static char tty_read_char(void) {
@@ -662,8 +677,33 @@ static char tty_read_char(void) {
             /* Consume the character — don't return it */
             continue;
         }
+        /* Echo the character to console output if ECHO flag is set */
+        if (g_tty_termios.c_lflag & ECHO) {
+            if (c == '\n' || c == '\r') {
+                vga_putchar('\r');
+                serial_putchar('\r');
+                vga_putchar('\n');
+                serial_putchar('\n');
+            } else if (c == '\b' || c == 127) {
+                vga_putchar('\b');
+                serial_putchar('\b');
+                vga_putchar(' ');
+                serial_putchar(' ');
+                vga_putchar('\b');
+                serial_putchar('\b');
+            } else {
+                vga_putchar(c);
+                serial_putchar(c);
+            }
+        }
         return c;
     }
+}
+
+/* Get pointer to the global TTY termios structure (for ioctl handlers) */
+struct termios *tty_get_termios(void)
+{
+    return &g_tty_termios;
 }
 
 /**

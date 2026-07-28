@@ -63,6 +63,25 @@
 #define TIOCGWINSZ  0x5413     /* get terminal window size */
 #define TIOCSWINSZ  0x5414     /* set terminal window size */
 
+/* ── Termios ioctls (TCGETS/TCSETS) ──────────────────────────────── */
+
+#define TCGETS      0x5401     /* get termios attributes */
+#define TCSETS      0x5402     /* set termios attributes */
+
+/* Termios c_lflag bits */
+#define ISIG        0x0001     /* enable signals (Ctrl+C, Ctrl+Z, Ctrl+\) */
+#define ICANON      0x0002     /* canonical (line-buffered) mode */
+#define ECHO        0x0008     /* echo input characters */
+
+/* Minimal termios structure (Linux-compatible layout) */
+struct termios {
+    unsigned int c_iflag;
+    unsigned int c_oflag;
+    unsigned int c_cflag;
+    unsigned int c_lflag;
+    unsigned char c_cc[20];
+};
+
 /* ── Network interface ioctls (SIOCGIF*) ──────────────────────────── */
 
 #define SIOCGIFNAME     0x8910  /* get interface name (arg: struct ifreq) */

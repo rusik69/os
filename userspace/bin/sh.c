@@ -77,7 +77,6 @@ int sh_getline(char *buf, int max) {
         if (n <= 0) break;
         if (c == '\n') {
             buf[i] = '\0';
-            write(1, "\n", 1);
             return i;
         }
         if (c == '\b' || c == 127) {
@@ -88,7 +87,6 @@ int sh_getline(char *buf, int max) {
             continue;
         }
         buf[i++] = c;
-        write(1, &c, 1);  /* echo */
     }
     buf[i] = '\0';
     return i;
