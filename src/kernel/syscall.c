@@ -1,101 +1,99 @@
 #define KERNEL_INTERNAL
 #include "syscall.h"
-#include "process.h"
-#include "pid_namespace.h"
-#include "cgroup_namespace.h"
-#include "mnt_namespace.h"
-#include "ipc_namespace.h"
-#include "user_namespace.h"
-#include "ioprio.h"
-#include "scheduler.h"
-#include "signal.h"
-#include "fs.h"
-#include "vfs.h"
-#include "ata.h"
+
+#include "ac97.h"
+#include "acpi.h"
 #include "ahci.h"
-#include "vga.h"
+#include "apic.h"
+#include "aslr.h"
+#include "ata.h"
+#include "audit.h"
+#include "blockdev.h" /* for SG_IO ioctl */
+#include "bufcache.h"
+#include "caps.h"
+#include "cgroup_namespace.h"
+#include "chroot.h" /* for chroot_set */
+#include "coredump.h"
+#include "cpu.h"          /* for stac/clac (SMAP toggling) */
+#include "cpu_features.h" /* for MSR_FS_BASE / MSR_GS_BASE constants */
+#include "dmesg.h"
+#include "e1000.h"
+#include "elf.h"
+#include "epoll.h"
+#include "eventfd.h"
+#include "fat32.h"
+#include "file_lock.h"
+#include "fs.h"
+#include "fs_mount_prop.h"
+#include "futex.h"
+#include "heap.h"
+#include "hugetlb.h"
+#include "inotify.h"
+#include "io.h"
+#include "io_uring.h" /* for io_uring syscalls */
+#include "ioctl.h"    /* for sys_ioctl (extern from sys_ioctl.c) */
+#include "ioprio.h"
+#include "ipc_namespace.h"
+#include "kcov.h"
+#include "kexec.h"
+#include "keyboard.h"
+#include "kptr_restrict.h"
+#include "lockdown.h"
+#include "madvise_ext.h"
+#include "mem_policy.h" /* for NUMA memory policy syscalls */
+#include "memfd.h"
+#include "mnt_namespace.h"
+#include "module.h"
+#include "module_deps.h"
+#include "module_elf.h"
+#include "mouse.h"
+#include "mprotect.h"
+#include "mseal.h"
+#include "net.h"
+#include "netlink.h" /* for netlink_is_valid_fd / netlink_send (sys_sendfile) */
+#include "page_cache.h"
+#include "pci.h"
+#include "pgrp.h"
+#include "pid_namespace.h"
+#include "pidfd.h"
+#include "pipe.h"
+#include "pkey.h" /* for sys_pkey_mprotect */
+#include "pmm.h"
+#include "poll.h"
+#include "printf.h"
+#include "process.h"
+#include "rng.h"
+#include "rseq.h"
+#include "rtc.h"
+#include "sched_attr.h"
+#include "scheduler.h"
+#include "script.h"
+#include "seccomp.h"
+#include "serial.h"
+#include "shm.h"
+#include "signal.h"
+#include "signal_libc.h" /* for struct sigaction (sys_rt_sigaction validation) */
+#include "signalfd.h"
+#include "smp.h"
+#include "socket.h"
+#include "speaker.h"
+#include "string.h"
+#include "swap.h"
+#include "sysctl.h"
+#include "telnetd.h"
 #include "timer.h"
 #include "timers.h"
-#include "sysctl.h"
-#include "caps.h"
-#include "keyboard.h"
-#include "pgrp.h"
-#include "printf.h"
-#include "io.h"
-#include "vmm.h"
-#include "string.h"
-#include "eventfd.h"
-#include "epoll.h"
-#include "signalfd.h"
-#include "inotify.h"
-#include "net.h"
-#include "e1000.h"
-#include "pci.h"
-#include "usb.h"
-#include "users.h"
-#include "rtc.h"
-#include "acpi.h"
-#include "speaker.h"
-#include "mouse.h"
-#include "serial.h"
-#include "pmm.h"
-#include "io.h"
-#include "elf.h"
-#include "script.h"
-#include "telnetd.h"
-#include "fat32.h"
-
-#include "heap.h"
-#include "smp.h"
-#include "apic.h"
-#include "pipe.h"
-#include "rng.h"
-#include "users.h"
-#include "module.h"
-#include "module_elf.h"
-#include "module_deps.h"
-#include "shm.h"
-#include "ac97.h"
-#include "socket.h"
-#include "seccomp.h"
-#include "futex.h"
-#include "audit.h"
-#include "yama.h"
-#include "kptr_restrict.h"
-#include "dmesg.h"
-#include "aslr.h"
-#include "wx_enforce.h"
-#include "mprotect.h"
-#include "memfd.h"
-#include "pidfd.h"
-#include "fs_mount_prop.h"
-#include "page_cache.h"
-#include "bufcache.h"
-#include "coredump.h"
-#include "workqueue.h"
-#include "madvise_ext.h"
-#include "rseq.h"
-#include "kcov.h"
-#include "file_lock.h"
-#include "hugetlb.h"
-#include "sched_attr.h"
-#include "swap.h"
-#include "kexec.h"
 #include "uaccess.h"
-#include "mseal.h"
-#include "lockdown.h"
+#include "usb.h"
+#include "user_namespace.h"
 #include "userfaultfd.h"
-#include "poll.h"
-#include "blockdev.h"   /* for SG_IO ioctl */
-#include "io_uring.h"   /* for io_uring syscalls */
-#include "signal_libc.h" /* for struct sigaction (sys_rt_sigaction validation) */
-#include "netlink.h"     /* for netlink_is_valid_fd / netlink_send (sys_sendfile) */
-#include "pkey.h"        /* for sys_pkey_mprotect */
-#include "mem_policy.h"  /* for NUMA memory policy syscalls */
-#include "cpu_features.h" /* for MSR_FS_BASE / MSR_GS_BASE constants */
-#include "cpu.h"          /* for stac/clac (SMAP toggling) */
-#include "ioctl.h"        /* for sys_ioctl (extern from sys_ioctl.c) */
-#include "chroot.h"       /* for chroot_set */
+#include "users.h"
+#include "vfs.h"
+#include "vga.h"
+#include "vmm.h"
+#include "workqueue.h"
+#include "wx_enforce.h"
+#include "yama.h"
 
 /* Module metadata */
 MODULE_LICENSE("GPL v2");
@@ -140,22 +138,21 @@ uint64_t sys_setsecurebits(uint64_t bits);
 uint64_t sys_getsecurebits(void);
 
 /* D123: Process & Signal syscalls — declared in sys_process.c */
-uint64_t sys_rt_sigaction(uint64_t signum, uint64_t act_addr,
-                          uint64_t oldact_addr, uint64_t sigsetsize);
-uint64_t sys_rt_sigprocmask(uint64_t how, uint64_t set_addr,
-                            uint64_t oldset_addr, uint64_t sigsetsize);
+uint64_t sys_rt_sigaction(uint64_t signum, uint64_t act_addr, uint64_t oldact_addr,
+                          uint64_t sigsetsize);
+uint64_t sys_rt_sigprocmask(uint64_t how, uint64_t set_addr, uint64_t oldset_addr,
+                            uint64_t sigsetsize);
 uint64_t sys_rt_sigreturn(void);
-uint64_t sys_rt_sigtimedwait(uint64_t set_addr, uint64_t info_addr,
-                             uint64_t timeout_addr, uint64_t sigsetsize);
+uint64_t sys_rt_sigtimedwait(uint64_t set_addr, uint64_t info_addr, uint64_t timeout_addr,
+                             uint64_t sigsetsize);
 uint64_t sys_kill(uint64_t pid, uint64_t sig);
 uint64_t sys_tkill(uint64_t pid, uint64_t sig);
 uint64_t sys_tgkill(uint64_t tgid, uint64_t tid, uint64_t sig);
 uint64_t sys_rt_sigqueueinfo(uint64_t pid, uint64_t sig, uint64_t uinfo);
 uint64_t sys_rt_tgsigqueueinfo(uint64_t tgid, uint64_t tid, uint64_t sig, uint64_t uinfo);
-uint64_t sys_wait4(uint64_t pid, uint64_t wstatus_addr,
-                   uint64_t options, uint64_t rusage_addr);
-uint64_t sys_waitid(uint64_t which, uint64_t id, uint64_t info_addr,
-                    uint64_t options, uint64_t rusage_addr);
+uint64_t sys_wait4(uint64_t pid, uint64_t wstatus_addr, uint64_t options, uint64_t rusage_addr);
+uint64_t sys_waitid(uint64_t which, uint64_t id, uint64_t info_addr, uint64_t options,
+                    uint64_t rusage_addr);
 uint64_t sys_exit_group(uint64_t code);
 uint64_t sys_set_tid_address(uint64_t tidptr);
 
@@ -163,7 +160,7 @@ uint64_t sys_set_tid_address(uint64_t tidptr);
 
 struct syscall_fs_stat_ex {
     uint32_t size;
-    uint8_t  type;
+    uint8_t type;
     uint16_t uid;
     uint16_t gid;
     uint16_t mode;
@@ -182,7 +179,7 @@ struct syscall_process_info {
     char name[32];
     uint64_t cpu_user_ticks;   /* utime */
     uint64_t cpu_system_ticks; /* stime */
-    int      nice;             /* nice value (-20..+19) */
+    int nice;                  /* nice value (-20..+19) */
     uint64_t max_rss;          /* max resident set size (pages) */
 };
 
@@ -208,9 +205,9 @@ struct syscall_fb_info {
 };
 
 /* MSR numbers */
-#define MSR_EFER   0xC0000080
-#define MSR_STAR   0xC0000081
-#define MSR_LSTAR  0xC0000082
+#define MSR_EFER 0xC0000080
+#define MSR_STAR 0xC0000081
+#define MSR_LSTAR 0xC0000082
 #define MSR_SFMASK 0xC0000084
 
 /* Local TLB invalidation */
@@ -220,7 +217,7 @@ static inline void local_invlpg(uint64_t addr) {
 
 /* EFER bits */
 #ifndef EFER_SCE
-#define EFER_SCE (1U << 0)  /* Syscall Enable */
+#define EFER_SCE (1U << 0) /* Syscall Enable */
 #endif
 
 extern void syscall_entry(void);
@@ -242,358 +239,432 @@ static int syscall_is_user_process(void) {
 
 static int syscall_user_read_ok(uint64_t addr, uint64_t len) {
     struct process *p = process_get_current();
-    if (!p || !p->pml4) return 0;
+    if (!p || !p->pml4)
+        return 0;
     return vmm_user_range_ok(p->pml4, addr, len, 0);
 }
 
 static int syscall_user_write_ok(uint64_t addr, uint64_t len) {
     struct process *p = process_get_current();
-    if (!p || !p->pml4) return 0;
+    if (!p || !p->pml4)
+        return 0;
     return vmm_user_range_ok(p->pml4, addr, len, 1);
 }
 
 static int syscall_user_cstr_ok(uint64_t addr) {
     struct process *p = process_get_current();
-    if (!p || !p->pml4) return 0;
+    if (!p || !p->pml4)
+        return 0;
     return vmm_user_string_ok(p->pml4, addr, SYSCALL_USER_STR_MAX);
 }
 
-static int syscall_validate_user_args(uint64_t num, uint64_t a1, uint64_t a2,
-                                      uint64_t a3, uint64_t a4, uint64_t a5) {
-    if (!syscall_is_user_process()) return 0;
+static int syscall_validate_user_args(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3,
+                                      uint64_t a4, uint64_t a5) {
+    if (!syscall_is_user_process())
+        return 0;
 
     switch (num) {
-        case SYS_READ:
-            return syscall_user_write_ok(a2, a3) ? 0 : -EFAULT;
-        case SYS_WRITE:
-            return syscall_user_read_ok(a2, a3) ? 0 : -EFAULT;
-        case SYS_OPEN:
-        case SYS_MKDIR:
-        case SYS_UNLINK:
-        case SYS_FS_DELETE:
-        case SYS_FS_LIST:
-        case SYS_VFS_UNLINK:
-        case SYS_VFS_READDIR:
-        case SYS_NET_DNS:
-        case SYS_ELF_EXEC:
-        case SYS_SCRIPT_EXEC:
-        case SYS_FAT_FILE_SIZE:
-            return syscall_user_cstr_ok(a1) ? 0 : -EFAULT;
+    case SYS_READ:
+        return syscall_user_write_ok(a2, a3) ? 0 : -EFAULT;
+    case SYS_WRITE:
+        return syscall_user_read_ok(a2, a3) ? 0 : -EFAULT;
+    case SYS_OPEN:
+    case SYS_MKDIR:
+    case SYS_UNLINK:
+    case SYS_FS_DELETE:
+    case SYS_FS_LIST:
+    case SYS_VFS_UNLINK:
+    case SYS_VFS_READDIR:
+    case SYS_NET_DNS:
+    case SYS_ELF_EXEC:
+    case SYS_SCRIPT_EXEC:
+    case SYS_FAT_FILE_SIZE:
+        return syscall_user_cstr_ok(a1) ? 0 : -EFAULT;
 
-        case SYS_STAT:
-            return (syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, sizeof(uint32_t) * 2)) ? 0 : -EFAULT;
-        case SYS_FS_CREATE:
-        case SYS_FS_CHMOD:
-            return syscall_user_cstr_ok(a1) ? 0 : -EFAULT;
-        case SYS_FS_CHOWN:
-            return syscall_user_cstr_ok(a1) ? 0 : -EFAULT;
-        case SYS_FS_WRITE:
-            return (syscall_user_cstr_ok(a1) && syscall_user_read_ok(a2, a3)) ? 0 : -EFAULT;
-        case SYS_FS_READ:
-            return (syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, a3) &&
-                    syscall_user_write_ok(a4, sizeof(uint32_t))) ? 0 : -EFAULT;
-        case SYS_FS_STAT:
-            return (syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, sizeof(uint32_t) * 2)) ? 0 : -EFAULT;
-        case SYS_FS_STAT_EX:
-            return (syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, sizeof(struct syscall_fs_stat_ex))) ? 0 : -EFAULT;
-        case SYS_FS_LIST_NAMES:
-            if (!syscall_user_cstr_ok(a1)) return -EFAULT;
-            if (a2 && !syscall_user_cstr_ok(a2)) return -EFAULT;
-            if (a4 == 0) return 0;
-            if (a4 > (1ULL << 20)) return -EINVAL;
-            return syscall_user_write_ok(a3, a4 * FS_MAX_NAME) ? 0 : -EFAULT;
-        case SYS_VFS_READ:
-            return (syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, a3) &&
-                    syscall_user_write_ok(a4, sizeof(uint32_t))) ? 0 : -EFAULT;
-        case SYS_VFS_WRITE:
-            return (syscall_user_cstr_ok(a1) && syscall_user_read_ok(a2, a3)) ? 0 : -EFAULT;
-        case SYS_VFS_STAT:
-            return (syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, sizeof(struct vfs_stat))) ? 0 : -EFAULT;
-        case SYS_WAITPID:
-            return (a2 ? syscall_user_write_ok(a2, sizeof(int)) : 1) ? 0 : -EFAULT;
-        case SYS_WAIT4:
-            if (a2 && !syscall_user_write_ok(a2, sizeof(int))) return -EFAULT;
-            if (a4 && !syscall_user_write_ok(a4, sizeof(struct rusage))) return -EFAULT;
+    case SYS_STAT:
+        return (syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, sizeof(uint32_t) * 2))
+                   ? 0
+                   : -EFAULT;
+    case SYS_FS_CREATE:
+    case SYS_FS_CHMOD:
+        return syscall_user_cstr_ok(a1) ? 0 : -EFAULT;
+    case SYS_FS_CHOWN:
+        return syscall_user_cstr_ok(a1) ? 0 : -EFAULT;
+    case SYS_FS_WRITE:
+        return (syscall_user_cstr_ok(a1) && syscall_user_read_ok(a2, a3)) ? 0 : -EFAULT;
+    case SYS_FS_READ:
+        return (syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, a3) &&
+                syscall_user_write_ok(a4, sizeof(uint32_t)))
+                   ? 0
+                   : -EFAULT;
+    case SYS_FS_STAT:
+        return (syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, sizeof(uint32_t) * 2))
+                   ? 0
+                   : -EFAULT;
+    case SYS_FS_STAT_EX:
+        return (syscall_user_cstr_ok(a1) &&
+                syscall_user_write_ok(a2, sizeof(struct syscall_fs_stat_ex)))
+                   ? 0
+                   : -EFAULT;
+    case SYS_FS_LIST_NAMES:
+        if (!syscall_user_cstr_ok(a1))
+            return -EFAULT;
+        if (a2 && !syscall_user_cstr_ok(a2))
+            return -EFAULT;
+        if (a4 == 0)
             return 0;
-        case SYS_WAITID:
-            if (a3 && !syscall_user_write_ok(a3, sizeof(struct siginfo))) return -EFAULT;
-            if (a5 && !syscall_user_write_ok(a5, sizeof(struct rusage))) return -EFAULT;
+        if (a4 > (1ULL << 20))
+            return -EINVAL;
+        return syscall_user_write_ok(a3, a4 * FS_MAX_NAME) ? 0 : -EFAULT;
+    case SYS_VFS_READ:
+        return (syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, a3) &&
+                syscall_user_write_ok(a4, sizeof(uint32_t)))
+                   ? 0
+                   : -EFAULT;
+    case SYS_VFS_WRITE:
+        return (syscall_user_cstr_ok(a1) && syscall_user_read_ok(a2, a3)) ? 0 : -EFAULT;
+    case SYS_VFS_STAT:
+        return (syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, sizeof(struct vfs_stat)))
+                   ? 0
+                   : -EFAULT;
+    case SYS_WAITPID:
+        return (a2 ? syscall_user_write_ok(a2, sizeof(int)) : 1) ? 0 : -EFAULT;
+    case SYS_WAIT4:
+        if (a2 && !syscall_user_write_ok(a2, sizeof(int)))
+            return -EFAULT;
+        if (a4 && !syscall_user_write_ok(a4, sizeof(struct rusage)))
+            return -EFAULT;
+        return 0;
+    case SYS_WAITID:
+        if (a3 && !syscall_user_write_ok(a3, sizeof(struct siginfo)))
+            return -EFAULT;
+        if (a5 && !syscall_user_write_ok(a5, sizeof(struct rusage)))
+            return -EFAULT;
+        return 0;
+    case SYS_RT_SIGQUEUEINFO:
+        if (a3 && !syscall_user_read_ok(a3, sizeof(struct siginfo)))
+            return -EFAULT;
+        return 0;
+    case SYS_RT_TGSIGQUEUEINFO:
+        if (a4 && !syscall_user_read_ok(a4, sizeof(struct siginfo)))
+            return -EFAULT;
+        return 0;
+    case SYS_NET_GET_MAC:
+        return syscall_user_write_ok(a1, 6) ? 0 : -EFAULT;
+    case SYS_NET_GET_IP:
+        return syscall_user_write_ok(a1, 4) ? 0 : -EFAULT;
+    case SYS_NET_UDP_SEND:
+        return syscall_user_read_ok(a4, a5) ? 0 : -EFAULT;
+    case SYS_NET_HTTP_GET: {
+        uint64_t bufsize = (uint32_t)(a5 >> 32);
+        return (syscall_user_cstr_ok(a1) && syscall_user_cstr_ok(a3) &&
+                syscall_user_write_ok(a4, bufsize))
+                   ? 0
+                   : -EFAULT;
+    }
+    case SYS_NET_TCP_SEND_CONN:
+        return syscall_user_read_ok(a2, a3) ? 0 : -EFAULT;
+    case SYS_NET_TCP_RECV_CONN:
+        return syscall_user_write_ok(a2, a3) ? 0 : -EFAULT;
+    case SYS_PROC_LIST:
+        if (a2 == 0)
             return 0;
-        case SYS_RT_SIGQUEUEINFO:
-            if (a3 && !syscall_user_read_ok(a3, sizeof(struct siginfo))) return -EFAULT;
-            return 0;
-        case SYS_RT_TGSIGQUEUEINFO:
-            if (a4 && !syscall_user_read_ok(a4, sizeof(struct siginfo))) return -EFAULT;
-            return 0;
-        case SYS_NET_GET_MAC:
-            return syscall_user_write_ok(a1, 6) ? 0 : -EFAULT;
-        case SYS_NET_GET_IP:
-            return syscall_user_write_ok(a1, 4) ? 0 : -EFAULT;
-        case SYS_NET_UDP_SEND:
-            return syscall_user_read_ok(a4, a5) ? 0 : -EFAULT;
-        case SYS_NET_HTTP_GET: {
-            uint64_t bufsize = (uint32_t)(a5 >> 32);
-            return (syscall_user_cstr_ok(a1) && syscall_user_cstr_ok(a3) &&
-                    syscall_user_write_ok(a4, bufsize)) ? 0 : -EFAULT;
-        }
-        case SYS_NET_TCP_SEND_CONN:
-            return syscall_user_read_ok(a2, a3) ? 0 : -EFAULT;
-        case SYS_NET_TCP_RECV_CONN:
-            return syscall_user_write_ok(a2, a3) ? 0 : -EFAULT;
-        case SYS_PROC_LIST:
-            if (a2 == 0) return 0;
-            if (a2 > PROCESS_MAX) return -EINVAL;
-            return syscall_user_write_ok(a1, a2 * sizeof(struct syscall_process_info)) ? 0 : -EFAULT;
-        case SYS_USER_FIND:
-            return (syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, sizeof(struct user_entry))) ? 0 : -EFAULT;
-        case SYS_USER_ADD:
-            return (syscall_user_cstr_ok(a1) && syscall_user_cstr_ok(a3)) ? 0 : -EFAULT;
-        case SYS_USER_PASSWD:
-        case SYS_SESSION_LOGIN:
-            return (syscall_user_cstr_ok(a1) && syscall_user_cstr_ok(a2)) ? 0 : -EFAULT;
-        case SYS_USER_DELETE:
-            return syscall_user_cstr_ok(a1) ? 0 : -EFAULT;
-        case SYS_USERS_GET_BY_INDEX:
-            return syscall_user_write_ok(a2, sizeof(struct user_entry)) ? 0 : -EFAULT;
-        case SYS_RTC_GET_TIME:
-            return syscall_user_write_ok(a1, sizeof(struct rtc_time)) ? 0 : -EFAULT;
-        case SYS_MOUSE_GET_STATE:
-            return syscall_user_write_ok(a1, sizeof(struct mouse_state)) ? 0 : -EFAULT;
-        case SYS_SERIAL_READ:
-            return syscall_user_write_ok(a1, a2) ? 0 : -EFAULT;
-        case SYS_SERIAL_WRITE:
-            return syscall_user_read_ok(a1, a2) ? 0 : -EFAULT;
-        case SYS_PMM_GET_STATS:
-            return syscall_user_write_ok(a1, sizeof(struct pmm_stats)) ? 0 : -EFAULT;
-        case SYS_FAT_LIST_DIR:
-            return (syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, a3 * FAT32_MAX_NAME)) ? 0 : -EFAULT;
-        case SYS_FAT_READ_FILE:
-            return (syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, a3)) ? 0 : -EFAULT;
-        case SYS_FAT_WRITE_FILE:
-            return (syscall_user_cstr_ok(a1) && syscall_user_read_ok(a2, a3)) ? 0 : -EFAULT;
+        if (a2 > PROCESS_MAX)
+            return -EINVAL;
+        return syscall_user_write_ok(a1, a2 * sizeof(struct syscall_process_info)) ? 0 : -EFAULT;
+    case SYS_USER_FIND:
+        return (syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, sizeof(struct user_entry)))
+                   ? 0
+                   : -EFAULT;
+    case SYS_USER_ADD:
+        return (syscall_user_cstr_ok(a1) && syscall_user_cstr_ok(a3)) ? 0 : -EFAULT;
+    case SYS_USER_PASSWD:
+    case SYS_SESSION_LOGIN:
+        return (syscall_user_cstr_ok(a1) && syscall_user_cstr_ok(a2)) ? 0 : -EFAULT;
+    case SYS_USER_DELETE:
+        return syscall_user_cstr_ok(a1) ? 0 : -EFAULT;
+    case SYS_USERS_GET_BY_INDEX:
+        return syscall_user_write_ok(a2, sizeof(struct user_entry)) ? 0 : -EFAULT;
+    case SYS_RTC_GET_TIME:
+        return syscall_user_write_ok(a1, sizeof(struct rtc_time)) ? 0 : -EFAULT;
+    case SYS_MOUSE_GET_STATE:
+        return syscall_user_write_ok(a1, sizeof(struct mouse_state)) ? 0 : -EFAULT;
+    case SYS_SERIAL_READ:
+        return syscall_user_write_ok(a1, a2) ? 0 : -EFAULT;
+    case SYS_SERIAL_WRITE:
+        return syscall_user_read_ok(a1, a2) ? 0 : -EFAULT;
+    case SYS_PMM_GET_STATS:
+        return syscall_user_write_ok(a1, sizeof(struct pmm_stats)) ? 0 : -EFAULT;
+    case SYS_FAT_LIST_DIR:
+        return (syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, a3 * FAT32_MAX_NAME))
+                   ? 0
+                   : -EFAULT;
+    case SYS_FAT_READ_FILE:
+        return (syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, a3)) ? 0 : -EFAULT;
+    case SYS_FAT_WRITE_FILE:
+        return (syscall_user_cstr_ok(a1) && syscall_user_read_ok(a2, a3)) ? 0 : -EFAULT;
 
-        case SYS_FREE:
-            /* Pointer could be any previously-allocated address; no range check needed */
+    case SYS_FREE:
+        /* Pointer could be any previously-allocated address; no range check needed */
+        return 0;
+    case SYS_REALLOC:
+        /* old ptr is arbitrary; just validate that the new result ptr location is writable */
+        return 0;
+    case SYS_CHDIR:
+    case SYS_TRUNCATE:
+        return syscall_user_cstr_ok(a1) ? 0 : -EFAULT;
+    case SYS_GETCWD:
+        if (a2 == 0)
+            return -EINVAL;
+        return syscall_user_write_ok(a1, a2) ? 0 : -EFAULT;
+    case SYS_FD_READ:
+        return syscall_user_write_ok(a2, a3) ? 0 : -EFAULT;
+    case SYS_FD_WRITE:
+        return syscall_user_read_ok(a2, a3) ? 0 : -EFAULT;
+    case SYS_PREAD64:
+        if (a3 == 0)
             return 0;
-        case SYS_REALLOC:
-            /* old ptr is arbitrary; just validate that the new result ptr location is writable */
+        return syscall_user_write_ok(a2, a3) ? 0 : -EFAULT;
+    case SYS_PWRITE64:
+        if (a3 == 0)
             return 0;
-        case SYS_CHDIR:
-        case SYS_TRUNCATE:
-            return syscall_user_cstr_ok(a1) ? 0 : -EFAULT;
-        case SYS_GETCWD:
-            if (a2 == 0) return -EINVAL;
-            return syscall_user_write_ok(a1, a2) ? 0 : -EFAULT;
-        case SYS_FD_READ:
-            return syscall_user_write_ok(a2, a3) ? 0 : -EFAULT;
-        case SYS_FD_WRITE:
-            return syscall_user_read_ok(a2, a3) ? 0 : -EFAULT;
-        case SYS_PREAD64:
-            if (a3 == 0) return 0;
-            return syscall_user_write_ok(a2, a3) ? 0 : -EFAULT;
-        case SYS_PWRITE64:
-            if (a3 == 0) return 0;
-            return syscall_user_read_ok(a2, a3) ? 0 : -EFAULT;
-        case SYS_RAW_SEND:
-            if (a2 == 0 || a2 > 1514) return -EINVAL;
-            return syscall_user_read_ok(a1, a2) ? 0 : -EFAULT;
-        /* New production syscalls */
-        case SYS_PRLIMIT64: {
-            if (a2 >= _RLIMIT_NLIMITS) return -EINVAL;
-            if (a3 && !syscall_user_read_ok(a3, 16)) return -EFAULT;
-            if (a4 && !syscall_user_write_ok(a4, 16)) return -EFAULT;
+        return syscall_user_read_ok(a2, a3) ? 0 : -EFAULT;
+    case SYS_RAW_SEND:
+        if (a2 == 0 || a2 > 1514)
+            return -EINVAL;
+        return syscall_user_read_ok(a1, a2) ? 0 : -EFAULT;
+    /* New production syscalls */
+    case SYS_PRLIMIT64: {
+        if (a2 >= _RLIMIT_NLIMITS)
+            return -EINVAL;
+        if (a3 && !syscall_user_read_ok(a3, 16))
+            return -EFAULT;
+        if (a4 && !syscall_user_write_ok(a4, 16))
+            return -EFAULT;
+        return 0;
+    }
+    case SYS_FUTEX: {
+        uint64_t op_clean = a2 & ~(uint64_t)(FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME);
+        /* Validate uaddr (a1) — needed for all operations */
+        if (!syscall_user_read_ok(a1, 4))
+            return -EFAULT;
+        /* Validate timeout pointer (a4) for wait operations */
+        if ((op_clean == FUTEX_WAIT || op_clean == FUTEX_WAIT_BITSET) && a4 &&
+            !syscall_user_read_ok(a4, sizeof(struct timespec)))
+            return -EFAULT;
+        /* Validate uaddr2 (a5) for requeue operations */
+        if ((op_clean == FUTEX_REQUEUE || op_clean == FUTEX_CMP_REQUEUE) &&
+            !syscall_user_read_ok(a5, 4))
+            return -EFAULT;
+        return 0;
+    }
+    case SYS_ARCH_PRCTL:
+        if ((a1 == ARCH_GET_FS || a1 == ARCH_GET_GS) && !syscall_user_write_ok(a2, 8))
+            return -EFAULT;
+        return 0;
+    case SYS_POLL:
+        if (a2 == 0)
             return 0;
-        }
-        case SYS_FUTEX: {
-            uint64_t op_clean = a2 & ~(uint64_t)(FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME);
-            /* Validate uaddr (a1) — needed for all operations */
-            if (!syscall_user_read_ok(a1, 4))
-                return -EFAULT;
-            /* Validate timeout pointer (a4) for wait operations */
-            if ((op_clean == FUTEX_WAIT || op_clean == FUTEX_WAIT_BITSET) &&
-                a4 && !syscall_user_read_ok(a4, sizeof(struct timespec)))
-                return -EFAULT;
-            /* Validate uaddr2 (a5) for requeue operations */
-            if ((op_clean == FUTEX_REQUEUE || op_clean == FUTEX_CMP_REQUEUE) &&
-                !syscall_user_read_ok(a5, 4))
-                return -EFAULT;
-            return 0;
-        }
-        case SYS_ARCH_PRCTL:
-            if ((a1 == ARCH_GET_FS || a1 == ARCH_GET_GS) &&
-                !syscall_user_write_ok(a2, 8)) return -EFAULT;
-            return 0;
-        case SYS_POLL:
-            if (a2 == 0) return 0;
-            return (syscall_user_read_ok(a1, a2 * sizeof(struct pollfd)) &&
-                    syscall_user_write_ok(a1, a2 * sizeof(struct pollfd))) ? 0 : -EFAULT;
-        case SYS_EVENTFD:
-            return 0;
-        case SYS_SENDFILE:
-            if (a3 && !syscall_user_read_ok(a3, 8)) return -EFAULT;
-            return 0;
-        case SYS_IOCTL:
-            return 0;
-        case SYS_SYSLOG:
-            if ((a1 == SYSLOG_ACTION_READ_ALL || a1 == SYSLOG_ACTION_READ_CLEAR) &&
-                !syscall_user_write_ok(a2, a3)) return -EFAULT;
-            return 0;
-        case SYS_PRCTL:
-            if (a1 == PR_SET_NAME && !syscall_user_read_ok(a2, 16)) return -EFAULT;
-            if (a1 == PR_GET_NAME && !syscall_user_write_ok(a2, 16)) return -EFAULT;
-            return 0;
-        case SYS_MOUNT:
-            return (syscall_user_cstr_ok(a1) && syscall_user_cstr_ok(a2)) ? 0 : -EFAULT;
-        case SYS_UMOUNT:
-            return syscall_user_cstr_ok(a1) ? 0 : -EFAULT;
-        case SYS_FTRUNCATE:
-            return 0;
-        case SYS_READDIR:
-            return syscall_user_write_ok(a2, a3) ? 0 : -EFAULT;
-        case SYS_EXECVEAT:
-            return syscall_user_cstr_ok(a2) ? 0 : -EFAULT;
-        case SYS_SCHED_SETSCHEDULER:
-            return 0;
-        case SYS_SCHED_GETSCHEDULER:
-            return 0;
-        case SYS_SCHED_SETATTR:
-            if (!a2) return -EINVAL;
-            return syscall_user_read_ok(a2, sizeof(struct sched_attr)) ? 0 : -EFAULT;
-        case SYS_SCHED_GETATTR:
-            if (!a2) return -EINVAL;
-            return syscall_user_write_ok(a2, a3) ? 0 : -EFAULT;
-        /* New production syscalls (batch 2) */
-        case SYS_OPENAT:
-            return syscall_user_cstr_ok(a2) ? 0 : -EFAULT;
-        case SYS_MKDIRAT:
-            return syscall_user_cstr_ok(a2) ? 0 : -EFAULT;
-        case SYS_FSTATAT:
-            return (syscall_user_cstr_ok(a2) && syscall_user_write_ok(a3, sizeof(struct vfs_stat))) ? 0 : -EFAULT;
-        case SYS_UNLINKAT:
-            return syscall_user_cstr_ok(a2) ? 0 : -EFAULT;
-        case SYS_RENAMEAT:
-            return (syscall_user_cstr_ok(a2) && syscall_user_cstr_ok(a4)) ? 0 : -EFAULT;
-        case SYS_SYMLINKAT:
-            return (syscall_user_cstr_ok(a1) && syscall_user_cstr_ok(a3)) ? 0 : -EFAULT;
-        case SYS_READLINKAT:
-            return (syscall_user_cstr_ok(a2) && syscall_user_write_ok(a3, a4)) ? 0 : -EFAULT;
-        case SYS_GETDENTS64:
-            return syscall_user_write_ok(a2, a3) ? 0 : -EFAULT;
-        case SYS_MLOCK:
-        case SYS_MLOCKALL:
-        case SYS_MUNLOCK:
-        case SYS_MUNLOCKALL:
-        case SYS_FALLOCATE:
-            return 0;
-        case SYS_MINCORE:
-            return syscall_user_write_ok(a3, (a2 + PAGE_SIZE - 1) / PAGE_SIZE) ? 0 : -EFAULT;
-        case SYS_MADVISE:
-            return 0;
-        /* NUMA memory policy */
-        case SYS_MBIND:
-            /* addr (a1) checked in handler; nodemask (a4) content checked in handler */
-            return 0;
-        case SYS_SET_MEMPOLICY:
-            return 0;
-        case SYS_GET_MEMPOLICY:
-            /* mode_addr (a1) and nodemask_addr (a2) are write pointers */
-            if (a1 && !syscall_user_write_ok(a1, sizeof(int))) return -EFAULT;
-            if (a2 && !syscall_user_write_ok(a2, sizeof(uint64_t))) return -EFAULT;
-            return 0;
-        case SYS_MIGRATE_PAGES:
-            /* new_nodes_addr (a4) is a read pointer */
-            if (a4 && !syscall_user_read_ok(a4, sizeof(uint64_t))) return -EFAULT;
-            return 0;
-        case SYS_MOVE_PAGES:
-            /* pages_addr (a3), nodes_addr (a4), status_addr (a5) */
-            if (a3 && !syscall_user_read_ok(a3, a2 * sizeof(uint64_t))) return -EFAULT;
-            if (a4 && !syscall_user_read_ok(a4, a2 * sizeof(int))) return -EFAULT;
-            if (a5 && !syscall_user_write_ok(a5, a2 * sizeof(int))) return -EFAULT;
-            return 0;
-        case SYS_REMAP_FILE_PAGES:
-            return 0;
-        case SYS_TIMERFD_CREATE:
-            return 0;
-        case SYS_TIMERFD_SETTIME:
-            if (a3 && !syscall_user_read_ok(a3, sizeof(struct itimerspec))) return -EFAULT;
-            if (a4 && !syscall_user_write_ok(a4, sizeof(struct itimerspec))) return -EFAULT;
-            return 0;
-        case SYS_TIMERFD_GETTIME:
-            return syscall_user_write_ok(a2, sizeof(struct itimerspec)) ? 0 : -EFAULT;
-        case SYS_SIGNALFD:
-            if (a2 && !syscall_user_read_ok(a2, 8)) return -EFAULT;
-            return 0;
-        case SYS_MEMFD_CREATE:
-            if (a1 && !syscall_user_cstr_ok(a1)) return -EFAULT;
-            return 0;
-        case SYS_SPLICE:
-        case SYS_TEE:
-            return 0;
-        case SYS_SENDMMSG:
-        case SYS_RECVMMSG:
-            return 0; /* simplified validation */
-        case SYS_SYNC:
-        case SYS_SYNCFS:
-        case SYS_SETSID:
-        case SYS_GETSID:
-        case SYS_GETUID:
-        case SYS_GETEUID:
-        case SYS_GETGID:
-        case SYS_GETEGID:
-        case SYS_SETUID:
-        case SYS_SETEUID:
-        case SYS_SETGID:
-        case SYS_SETEGID:
-            return 0;
-        case SYS_SIGALTSTACK:
-            if (a1 && !syscall_user_read_ok(a1, sizeof(stack_t))) return -EFAULT;
-            if (a2 && !syscall_user_write_ok(a2, sizeof(stack_t))) return -EFAULT;
-            return 0;
-        case SYS_RT_SIGACTION:
-            if (a2 && !syscall_user_read_ok(a2, sizeof(struct sigaction))) return -EFAULT;
-            if (a3 && !syscall_user_write_ok(a3, sizeof(struct sigaction))) return -EFAULT;
-            return 0;
-        case SYS_RT_SIGPROCMASK:
-            if (a2 && !syscall_user_read_ok(a2, sizeof(uint64_t))) return -EFAULT;
-            if (a3 && !syscall_user_write_ok(a3, sizeof(uint64_t))) return -EFAULT;
-            return 0;
-        case SYS_RT_SIGRETURN:
-            /* No arguments — just validate that user is calling from user mode */
-            return 0;
-        case SYS_PERSONALITY:
-            return 0;
-        /* Supplementary groups — validate user pointers */
-        case SYS_GETGROUPS:
-            if (a1 > 0 && a2 && !syscall_user_write_ok(a2, a1 * sizeof(uint32_t)))
-                return -EFAULT;
-            return 0;
-        case SYS_SETGROUPS:
-            if (a1 > 0 && a2 && !syscall_user_read_ok(a2, a1 * sizeof(uint32_t)))
-                return -EFAULT;
-            return 0;
-        /* D150: Extended FS syscalls — validate user pointers */
-        case SYS_FS_GET_USAGE:
-            if (a1 && !syscall_user_write_ok(a1, sizeof(uint32_t) * 4))
-                return -EFAULT;
-            return 0;
-        case SYS_FS_SYMLINK:
-            return (syscall_user_cstr_ok(a1) && syscall_user_cstr_ok(a2)) ? 0 : -EFAULT;
-        case SYS_FS_READLINK:
-            return (syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, a3)) ? 0 : -EFAULT;
-        case SYS_FS_LSTAT:
-            return (syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, sizeof(uint32_t)) &&
-                    syscall_user_write_ok(a3, 1)) ? 0 : -EFAULT;
-        case SYS_NET_UDP_RECV:
-            if (!syscall_user_write_ok(a2, a3)) return -EFAULT;
-            if (a4 && !syscall_user_write_ok(a4, 4)) return -EFAULT;
-            if (a5 && !syscall_user_write_ok(a5, 2)) return -EFAULT;
-            return 0;
-        case SYS_UNAME:
-            return syscall_user_write_ok(a1, sizeof(struct utsname)) ? 0 : -EFAULT;
-        case SYS_VGA_GET_FB_INFO:
-            return syscall_user_write_ok(a1, sizeof(struct syscall_fb_info)) ? 0 : -EFAULT;
-        default:
-            return 0;
+        return (syscall_user_read_ok(a1, a2 * sizeof(struct pollfd)) &&
+                syscall_user_write_ok(a1, a2 * sizeof(struct pollfd)))
+                   ? 0
+                   : -EFAULT;
+    case SYS_EVENTFD:
+        return 0;
+    case SYS_SENDFILE:
+        if (a3 && !syscall_user_read_ok(a3, 8))
+            return -EFAULT;
+        return 0;
+    case SYS_IOCTL:
+        return 0;
+    case SYS_SYSLOG:
+        if ((a1 == SYSLOG_ACTION_READ_ALL || a1 == SYSLOG_ACTION_READ_CLEAR) &&
+            !syscall_user_write_ok(a2, a3))
+            return -EFAULT;
+        return 0;
+    case SYS_PRCTL:
+        if (a1 == PR_SET_NAME && !syscall_user_read_ok(a2, 16))
+            return -EFAULT;
+        if (a1 == PR_GET_NAME && !syscall_user_write_ok(a2, 16))
+            return -EFAULT;
+        return 0;
+    case SYS_MOUNT:
+        return (syscall_user_cstr_ok(a1) && syscall_user_cstr_ok(a2)) ? 0 : -EFAULT;
+    case SYS_UMOUNT:
+        return syscall_user_cstr_ok(a1) ? 0 : -EFAULT;
+    case SYS_FTRUNCATE:
+        return 0;
+    case SYS_READDIR:
+        return syscall_user_write_ok(a2, a3) ? 0 : -EFAULT;
+    case SYS_EXECVEAT:
+        return syscall_user_cstr_ok(a2) ? 0 : -EFAULT;
+    case SYS_SCHED_SETSCHEDULER:
+        return 0;
+    case SYS_SCHED_GETSCHEDULER:
+        return 0;
+    case SYS_SCHED_SETATTR:
+        if (!a2)
+            return -EINVAL;
+        return syscall_user_read_ok(a2, sizeof(struct sched_attr)) ? 0 : -EFAULT;
+    case SYS_SCHED_GETATTR:
+        if (!a2)
+            return -EINVAL;
+        return syscall_user_write_ok(a2, a3) ? 0 : -EFAULT;
+    /* New production syscalls (batch 2) */
+    case SYS_OPENAT:
+        return syscall_user_cstr_ok(a2) ? 0 : -EFAULT;
+    case SYS_MKDIRAT:
+        return syscall_user_cstr_ok(a2) ? 0 : -EFAULT;
+    case SYS_FSTATAT:
+        return (syscall_user_cstr_ok(a2) && syscall_user_write_ok(a3, sizeof(struct vfs_stat)))
+                   ? 0
+                   : -EFAULT;
+    case SYS_UNLINKAT:
+        return syscall_user_cstr_ok(a2) ? 0 : -EFAULT;
+    case SYS_RENAMEAT:
+        return (syscall_user_cstr_ok(a2) && syscall_user_cstr_ok(a4)) ? 0 : -EFAULT;
+    case SYS_SYMLINKAT:
+        return (syscall_user_cstr_ok(a1) && syscall_user_cstr_ok(a3)) ? 0 : -EFAULT;
+    case SYS_READLINKAT:
+        return (syscall_user_cstr_ok(a2) && syscall_user_write_ok(a3, a4)) ? 0 : -EFAULT;
+    case SYS_GETDENTS64:
+        return syscall_user_write_ok(a2, a3) ? 0 : -EFAULT;
+    case SYS_MLOCK:
+    case SYS_MLOCKALL:
+    case SYS_MUNLOCK:
+    case SYS_MUNLOCKALL:
+    case SYS_FALLOCATE:
+        return 0;
+    case SYS_MINCORE:
+        return syscall_user_write_ok(a3, (a2 + PAGE_SIZE - 1) / PAGE_SIZE) ? 0 : -EFAULT;
+    case SYS_MADVISE:
+        return 0;
+    /* NUMA memory policy */
+    case SYS_MBIND:
+        /* addr (a1) checked in handler; nodemask (a4) content checked in handler */
+        return 0;
+    case SYS_SET_MEMPOLICY:
+        return 0;
+    case SYS_GET_MEMPOLICY:
+        /* mode_addr (a1) and nodemask_addr (a2) are write pointers */
+        if (a1 && !syscall_user_write_ok(a1, sizeof(int)))
+            return -EFAULT;
+        if (a2 && !syscall_user_write_ok(a2, sizeof(uint64_t)))
+            return -EFAULT;
+        return 0;
+    case SYS_MIGRATE_PAGES:
+        /* new_nodes_addr (a4) is a read pointer */
+        if (a4 && !syscall_user_read_ok(a4, sizeof(uint64_t)))
+            return -EFAULT;
+        return 0;
+    case SYS_MOVE_PAGES:
+        /* pages_addr (a3), nodes_addr (a4), status_addr (a5) */
+        if (a3 && !syscall_user_read_ok(a3, a2 * sizeof(uint64_t)))
+            return -EFAULT;
+        if (a4 && !syscall_user_read_ok(a4, a2 * sizeof(int)))
+            return -EFAULT;
+        if (a5 && !syscall_user_write_ok(a5, a2 * sizeof(int)))
+            return -EFAULT;
+        return 0;
+    case SYS_REMAP_FILE_PAGES:
+        return 0;
+    case SYS_TIMERFD_CREATE:
+        return 0;
+    case SYS_TIMERFD_SETTIME:
+        if (a3 && !syscall_user_read_ok(a3, sizeof(struct itimerspec)))
+            return -EFAULT;
+        if (a4 && !syscall_user_write_ok(a4, sizeof(struct itimerspec)))
+            return -EFAULT;
+        return 0;
+    case SYS_TIMERFD_GETTIME:
+        return syscall_user_write_ok(a2, sizeof(struct itimerspec)) ? 0 : -EFAULT;
+    case SYS_SIGNALFD:
+        if (a2 && !syscall_user_read_ok(a2, 8))
+            return -EFAULT;
+        return 0;
+    case SYS_MEMFD_CREATE:
+        if (a1 && !syscall_user_cstr_ok(a1))
+            return -EFAULT;
+        return 0;
+    case SYS_SPLICE:
+    case SYS_TEE:
+        return 0;
+    case SYS_SENDMMSG:
+    case SYS_RECVMMSG:
+        return 0; /* simplified validation */
+    case SYS_SYNC:
+    case SYS_SYNCFS:
+    case SYS_SETSID:
+    case SYS_GETSID:
+    case SYS_GETUID:
+    case SYS_GETEUID:
+    case SYS_GETGID:
+    case SYS_GETEGID:
+    case SYS_SETUID:
+    case SYS_SETEUID:
+    case SYS_SETGID:
+    case SYS_SETEGID:
+        return 0;
+    case SYS_SIGALTSTACK:
+        if (a1 && !syscall_user_read_ok(a1, sizeof(stack_t)))
+            return -EFAULT;
+        if (a2 && !syscall_user_write_ok(a2, sizeof(stack_t)))
+            return -EFAULT;
+        return 0;
+    case SYS_RT_SIGACTION:
+        if (a2 && !syscall_user_read_ok(a2, sizeof(struct sigaction)))
+            return -EFAULT;
+        if (a3 && !syscall_user_write_ok(a3, sizeof(struct sigaction)))
+            return -EFAULT;
+        return 0;
+    case SYS_RT_SIGPROCMASK:
+        if (a2 && !syscall_user_read_ok(a2, sizeof(uint64_t)))
+            return -EFAULT;
+        if (a3 && !syscall_user_write_ok(a3, sizeof(uint64_t)))
+            return -EFAULT;
+        return 0;
+    case SYS_RT_SIGRETURN:
+        /* No arguments — just validate that user is calling from user mode */
+        return 0;
+    case SYS_PERSONALITY:
+        return 0;
+    /* Supplementary groups — validate user pointers */
+    case SYS_GETGROUPS:
+        if (a1 > 0 && a2 && !syscall_user_write_ok(a2, a1 * sizeof(uint32_t)))
+            return -EFAULT;
+        return 0;
+    case SYS_SETGROUPS:
+        if (a1 > 0 && a2 && !syscall_user_read_ok(a2, a1 * sizeof(uint32_t)))
+            return -EFAULT;
+        return 0;
+    /* D150: Extended FS syscalls — validate user pointers */
+    case SYS_FS_GET_USAGE:
+        if (a1 && !syscall_user_write_ok(a1, sizeof(uint32_t) * 4))
+            return -EFAULT;
+        return 0;
+    case SYS_FS_SYMLINK:
+        return (syscall_user_cstr_ok(a1) && syscall_user_cstr_ok(a2)) ? 0 : -EFAULT;
+    case SYS_FS_READLINK:
+        return (syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, a3)) ? 0 : -EFAULT;
+    case SYS_FS_LSTAT:
+        return (syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, sizeof(uint32_t)) &&
+                syscall_user_write_ok(a3, 1))
+                   ? 0
+                   : -EFAULT;
+    case SYS_NET_UDP_RECV:
+        if (!syscall_user_write_ok(a2, a3))
+            return -EFAULT;
+        if (a4 && !syscall_user_write_ok(a4, 4))
+            return -EFAULT;
+        if (a5 && !syscall_user_write_ok(a5, 2))
+            return -EFAULT;
+        return 0;
+    case SYS_UNAME:
+        return syscall_user_write_ok(a1, sizeof(struct utsname)) ? 0 : -EFAULT;
+    case SYS_VGA_GET_FB_INFO:
+        return syscall_user_write_ok(a1, sizeof(struct syscall_fb_info)) ? 0 : -EFAULT;
+    default:
+        return 0;
     }
 }
 
@@ -610,7 +681,8 @@ static int signalfd_do_read(int slot, void *buf, uint64_t count);
 /* Get per-process FD table entry */
 static struct process_fd *sys_get_fd(int i) {
     struct process *p = process_get_current();
-    if (!p) return NULL;
+    if (!p)
+        return NULL;
     if (i < 0 || i >= MAX_FDS)
         return NULL;
     return &p->fd_table[i];
@@ -625,13 +697,13 @@ static struct termios g_tty_termios = {
     .c_oflag = 0,
     .c_cflag = 0,
     .c_lflag = ISIG | ICANON | ECHO,
-    .c_cc    = {1, 0, 0, 0, 0x04, 0},   /* VMIN=1, VTIME=0, VEOF=Ctrl+D, VEOL=0 */
+    .c_cc = {1, 0, 0, 0, 0x04, 0}, /* VMIN=1, VTIME=0, VEOF=Ctrl+D, VEOL=0 */
 };
 
 /* Global TTY window size — default 25 rows x 80 columns */
 static struct winsize g_tty_winsize = {
-    .ws_row    = 25,
-    .ws_col    = 80,
+    .ws_row = 25,
+    .ws_col = 80,
     .ws_xpixel = 0,
     .ws_ypixel = 0,
 };
@@ -640,8 +712,8 @@ static struct winsize g_tty_winsize = {
 #define TTY_LINE_BUF_SIZE 256
 
 static char g_tty_line_buf[TTY_LINE_BUF_SIZE];
-static int g_tty_line_pos;   /* number of chars accumulated */
-static int g_tty_line_out;   /* index of next char to return to reader */
+static int g_tty_line_pos; /* number of chars accumulated */
+static int g_tty_line_out; /* index of next char to return to reader */
 
 /* ── TTY input helper ──────────────────────────────────────────────
  * Read one character from the keyboard/serial console in canonical
@@ -671,8 +743,7 @@ static int g_tty_line_out;   /* index of next char to return to reader */
  *     flushed to the reader immediately (without a terminating newline).
  *   - If the line buffer is empty, returns -1 to indicate end-of-file.
  */
-static int tty_read_char(void)
-{
+static int tty_read_char(void) {
     /* ── Canonical mode only for this function ───────────────── */
     if (!(g_tty_termios.c_lflag & ICANON)) {
         /* Should not happen — caller handles non-canonical via
@@ -818,14 +889,12 @@ static int tty_read_char(void)
             if (g_tty_line_pos > 0) {
                 int count = 0;
                 /* Skip trailing spaces */
-                while (g_tty_line_pos > 0 &&
-                       g_tty_line_buf[g_tty_line_pos - 1] == ' ') {
+                while (g_tty_line_pos > 0 && g_tty_line_buf[g_tty_line_pos - 1] == ' ') {
                     g_tty_line_pos--;
                     count++;
                 }
                 /* Delete word characters (non-space) */
-                while (g_tty_line_pos > 0 &&
-                       g_tty_line_buf[g_tty_line_pos - 1] != ' ') {
+                while (g_tty_line_pos > 0 && g_tty_line_buf[g_tty_line_pos - 1] != ' ') {
                     g_tty_line_pos--;
                     count++;
                 }
@@ -886,8 +955,7 @@ static int tty_read_char(void)
  * Returns the character (0-255) on success, or -1 if no data available.
  * Handles ISIG signal processing and ECHO internally. Signal characters
  * are consumed (not returned to the caller). */
-static int tty_read_raw_nonblock(void)
-{
+static int tty_read_raw_nonblock(void) {
     char c;
 
 retry:
@@ -896,20 +964,26 @@ retry:
         c = keyboard_getchar();
     } else if (serial_has_irq(0)) {
         int rc = serial_read_irq(0);
-        if (rc < 0) goto no_data;
+        if (rc < 0)
+            goto no_data;
         c = (char)rc;
     } else if (serial_has_irq(1)) {
         int rc = serial_read_irq(1);
-        if (rc < 0) goto no_data;
+        if (rc < 0)
+            goto no_data;
         c = (char)rc;
     } else if (inb(SERIAL_COM1 + UART_LSR) & UART_LSR_DR) {
         c = (char)inb(SERIAL_COM1 + UART_RBR);
-        if (c == '\r') c = '\n';
-        if (c == 127)  c = '\b';
+        if (c == '\r')
+            c = '\n';
+        if (c == 127)
+            c = '\b';
     } else if (inb(SERIAL_COM2 + UART_LSR) & UART_LSR_DR) {
         c = (char)inb(SERIAL_COM2 + UART_RBR);
-        if (c == '\r') c = '\n';
-        if (c == 127)  c = '\b';
+        if (c == '\r')
+            c = '\n';
+        if (c == 127)
+            c = '\b';
     } else {
         goto no_data;
     }
@@ -972,8 +1046,7 @@ no_data:
  *   VMIN>0, VTIME>0: inter-byte timer, block for VMIN or timeout
  *   VMIN=0, VTIME=0: non-blocking, return whatever is available
  * Returns number of bytes read into buf (or 0). */
-static uint64_t tty_read_noncanonical(char *buf, uint64_t len)
-{
+static uint64_t tty_read_noncanonical(char *buf, uint64_t len) {
     unsigned char vmin = g_tty_termios.c_cc[VMIN];
     unsigned char vtime = g_tty_termios.c_cc[VTIME];
     uint64_t total = 0;
@@ -982,20 +1055,17 @@ static uint64_t tty_read_noncanonical(char *buf, uint64_t len)
     if (vmin == 0 && vtime == 0) {
         while (total < len) {
             int c = tty_read_raw_nonblock();
-            if (c < 0) break;
+            if (c < 0)
+                break;
             buf[total++] = (char)c;
         }
         return total;
     }
 
     /* Cases A/B/C: need to wait */
-    uint64_t timeout_ticks = vtime > 0
-        ? (uint64_t)vtime * ((uint64_t)TIMER_FREQ / 10)
-        : 0;
-    uint64_t deadline = vtime > 0
-        ? timer_get_ticks() + timeout_ticks
-        : 0;
-    int timer_active = 0;   /* For case C: timer starts after first byte */
+    uint64_t timeout_ticks = vtime > 0 ? (uint64_t)vtime * ((uint64_t)TIMER_FREQ / 10) : 0;
+    uint64_t deadline = vtime > 0 ? timer_get_ticks() + timeout_ticks : 0;
+    int timer_active = 0; /* For case C: timer starts after first byte */
 
     while (total < len) {
         int c = tty_read_raw_nonblock();
@@ -1041,14 +1111,12 @@ static uint64_t tty_read_noncanonical(char *buf, uint64_t len)
 }
 
 /* Get pointer to the global TTY termios structure (for ioctl handlers) */
-struct termios *tty_get_termios(void)
-{
+struct termios *tty_get_termios(void) {
     return &g_tty_termios;
 }
 
 /* Get pointer to the global TTY window size structure (for ioctl handlers) */
-struct winsize *tty_get_winsize(void)
-{
+struct winsize *tty_get_winsize(void) {
     return &g_tty_winsize;
 }
 
@@ -1069,13 +1137,15 @@ struct winsize *tty_get_winsize(void)
  * Return: Number of bytes read on success, or (uint64_t)-1 on error.
  */
 static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
-    if (!buf_addr && len > 0) return (uint64_t)(int64_t)-EFAULT;
+    if (!buf_addr && len > 0)
+        return (uint64_t)(int64_t)-EFAULT;
     /* Negative fd — reject with EBADF */
     if ((int64_t)fd < 0)
         return (uint64_t)(int64_t)-EBADF;
 
     if (fd == 0) {
-        if (!syscall_is_user_process()) return 0;
+        if (!syscall_is_user_process())
+            return 0;
         /* User process reading stdin — read from keyboard/serial console */
         uint64_t total = 0;
 
@@ -1114,27 +1184,34 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
     if (fd >= 3 && fd < 700) {
         int i = (int)fd - 3;
         struct process_fd *pfd = sys_get_fd(i);
-        if (!pfd || !pfd->used) return (uint64_t)(int64_t)-EBADF;
+        if (!pfd || !pfd->used)
+            return (uint64_t)(int64_t)-EBADF;
         fd_sync_from_shared(pfd);
         struct vfs_stat st;
-        if (vfs_stat(pfd->path, &st) < 0) return (uint64_t)(int64_t)-EIO;
+        if (vfs_stat(pfd->path, &st) < 0)
+            return (uint64_t)(int64_t)-EIO;
         uint64_t fsize = st.size;
-        if (pfd->offset >= fsize) return 0;
+        if (pfd->offset >= fsize)
+            return 0;
         uint64_t avail = fsize - pfd->offset;
         uint64_t to_read = len < avail ? len : avail;
         /* Clamp to UINT32_MAX to avoid uint32_t truncation in vfs_read */
-        if (to_read > UINT32_MAX) to_read = UINT32_MAX;
+        if (to_read > UINT32_MAX)
+            to_read = UINT32_MAX;
         uint64_t need_end = pfd->offset + to_read;
         /* Guard against integer wraparound: if offset is near UINT64_MAX,
          * offset + to_read can wrap to a small value, leading to under-allocation
          * and an out-of-bounds read via tmp + offset in copy_to_user below. */
         if (need_end < pfd->offset)
             need_end = UINT64_MAX;
-        if (need_end > fsize) need_end = fsize;
+        if (need_end > fsize)
+            need_end = fsize;
         /* Clamp need_end to UINT32_MAX for vfs_read */
-        if (need_end > UINT32_MAX) need_end = UINT32_MAX;
+        if (need_end > UINT32_MAX)
+            need_end = UINT32_MAX;
         uint8_t *tmp = kmalloc(need_end);
-        if (!tmp) return (uint64_t)(int64_t)-ENOMEM;
+        if (!tmp)
+            return (uint64_t)(int64_t)-ENOMEM;
         uint32_t nread = 0;
         vfs_read(pfd->path, tmp, (uint32_t)need_end, &nread);
         if (copy_to_user(buf_addr, tmp + pfd->offset, to_read) < 0) {
@@ -1159,7 +1236,8 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
     if (fd >= 600 && fd < 616) {
         int slot = (int)fd - 600;
         uint8_t *kbuf = kmalloc(len > 4096 ? 4096 : len);
-        if (!kbuf) return (uint64_t)(int64_t)-ENOMEM;
+        if (!kbuf)
+            return (uint64_t)(int64_t)-ENOMEM;
         int ret = signalfd_do_read(slot, kbuf, len);
         if (ret > 0) {
             if (copy_to_user(buf_addr, kbuf, (size_t)ret) < 0) {
@@ -1182,8 +1260,7 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
     if (fd >= 500 && fd < 516) {
         int slot = (int)fd - 500;
         uint64_t tval = 0;
-        if (timerfd_do_read(slot, &tval) == 0 &&
-            syscall_user_write_ok(buf_addr, 8)) {
+        if (timerfd_do_read(slot, &tval) == 0 && syscall_user_write_ok(buf_addr, 8)) {
             if (copy_to_user(buf_addr, &tval, 8) < 0)
                 return (uint64_t)(int64_t)-EFAULT;
         }
@@ -1199,10 +1276,13 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
     }
     /* eventfd read */
     if (fd >= 700 && fd < 716) {
-        if (len < 8) return (uint64_t)(int64_t)-EINVAL;
+        if (len < 8)
+            return (uint64_t)(int64_t)-EINVAL;
         uint64_t val;
-        if (eventfd_read((int)fd, &val) < 0) return (uint64_t)(int64_t)-EAGAIN;
-        if (copy_to_user(buf_addr, &val, 8) < 0) return (uint64_t)(int64_t)-EFAULT;
+        if (eventfd_read((int)fd, &val) < 0)
+            return (uint64_t)(int64_t)-EAGAIN;
+        if (copy_to_user(buf_addr, &val, 8) < 0)
+            return (uint64_t)(int64_t)-EFAULT;
         /* I/O accounting */
         {
             struct process *cur = process_get_current();
@@ -1216,9 +1296,13 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
     /* memfd read */
     if (memfd_is_fd((int)fd)) {
         struct memfd *mfd = memfd_get_by_fd((int)fd);
-        if (!mfd) return (uint64_t)-1;
+        if (!mfd)
+            return (uint64_t)-1;
         uint8_t *kbuf = kmalloc(len > 65536 ? 65536 : len);
-        if (!kbuf) { memfd_put(mfd); return (uint64_t)(int64_t)-ENOMEM; }
+        if (!kbuf) {
+            memfd_put(mfd);
+            return (uint64_t)(int64_t)-ENOMEM;
+        }
         int64_t ret = memfd_read(mfd, kbuf, len, 0);
         if (ret > 0) {
             if (copy_to_user(buf_addr, kbuf, (size_t)ret) < 0) {
@@ -1242,7 +1326,8 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
     /* inotify read (fd range 720-727) */
     if (fd >= INOTIFY_FD_BASE && fd < INOTIFY_FD_BASE + INOTIFY_INSTANCES) {
         uint8_t *kbuf = kmalloc(len > 4096 ? 4096 : len);
-        if (!kbuf) return (uint64_t)(int64_t)-ENOMEM;
+        if (!kbuf)
+            return (uint64_t)(int64_t)-ENOMEM;
         int ret = inotify_read((int)fd, kbuf, (size_t)(len > 4096 ? 4096 : len));
         if (ret >= 0) {
             if (copy_to_user(buf_addr, kbuf, (size_t)ret) < 0) {
@@ -1277,7 +1362,8 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
  * Return: Number of bytes written on success, or (uint64_t)-1 on error.
  */
 static uint64_t sys_write(uint64_t fd, uint64_t buf_addr, uint64_t len) {
-    if (!buf_addr && len > 0) return (uint64_t)(int64_t)-EFAULT;
+    if (!buf_addr && len > 0)
+        return (uint64_t)(int64_t)-EFAULT;
     /* Negative fd — reject with EBADF */
     if ((int64_t)fd < 0)
         return (uint64_t)(int64_t)-EBADF;
@@ -1295,12 +1381,13 @@ static uint64_t sys_write(uint64_t fd, uint64_t buf_addr, uint64_t len) {
         {
             struct process *dbg = process_get_current();
             if (dbg && len > 0 && len < 256)
-                kprintf("[SYS_WRITE] PID %d fd=%d len=%d buf=0x%lx\n",
-                        dbg->pid, (int)fd, (int)len, buf_addr);
+                kprintf("[SYS_WRITE] PID %d fd=%d len=%d buf=0x%lx\n", dbg->pid, (int)fd, (int)len,
+                        buf_addr);
         }
         /* Copy from user-space to avoid SMAP fault */
         uint8_t *kbuf = kmalloc(len > 4096 ? 4096 : (len > 0 ? len : 1));
-        if (!kbuf) return (uint64_t)(int64_t)-ENOMEM;
+        if (!kbuf)
+            return (uint64_t)(int64_t)-ENOMEM;
         size_t to_copy = len > 4096 ? 4096 : len;
         if (to_copy > 0) {
             if (copy_from_user(kbuf, buf_addr, to_copy) < 0) {
@@ -1326,10 +1413,13 @@ static uint64_t sys_write(uint64_t fd, uint64_t buf_addr, uint64_t len) {
     }
     /* eventfd write */
     if (fd >= 700 && fd < 716) {
-        if (len < 8) return (uint64_t)-1;
+        if (len < 8)
+            return (uint64_t)-1;
         uint64_t val;
-        if (copy_from_user(&val, buf_addr, 8) < 0) return (uint64_t)(int64_t)-EFAULT;
-        if (eventfd_write((int)fd, val) < 0) return (uint64_t)-1;
+        if (copy_from_user(&val, buf_addr, 8) < 0)
+            return (uint64_t)(int64_t)-EFAULT;
+        if (eventfd_write((int)fd, val) < 0)
+            return (uint64_t)-1;
         /* I/O accounting */
         {
             struct process *cur = process_get_current();
@@ -1344,9 +1434,13 @@ static uint64_t sys_write(uint64_t fd, uint64_t buf_addr, uint64_t len) {
     /* memfd write */
     if (memfd_is_fd((int)fd)) {
         struct memfd *mfd = memfd_get_by_fd((int)fd);
-        if (!mfd) return (uint64_t)-1;
+        if (!mfd)
+            return (uint64_t)-1;
         uint8_t *kbuf = kmalloc(len > 65536 ? 65536 : (len > 0 ? len : 1));
-        if (!kbuf) { memfd_put(mfd); return (uint64_t)(int64_t)-ENOMEM; }
+        if (!kbuf) {
+            memfd_put(mfd);
+            return (uint64_t)(int64_t)-ENOMEM;
+        }
         size_t wlen = len > 65536 ? 65536 : len;
         if (copy_from_user(kbuf, buf_addr, wlen) < 0) {
             kfree(kbuf);
@@ -1375,8 +1469,7 @@ static uint64_t sys_write(uint64_t fd, uint64_t buf_addr, uint64_t len) {
  * The path is of the form:  <dir>/.tmp_<pid>_<counter>
  * Returns 0 on success, -1 on failure (path too long).
  */
-static int tmpfile_make_path(const char *dir, char *buf, int bufsize)
-{
+static int tmpfile_make_path(const char *dir, char *buf, int bufsize) {
     static uint64_t tmpfile_counter = 0;
     struct process *p = process_get_current();
     uint32_t pid = p ? p->pid : 0;
@@ -1386,8 +1479,7 @@ static int tmpfile_make_path(const char *dir, char *buf, int bufsize)
     __asm__ volatile("lock; addq $1, %0" : "+m"(tmpfile_counter) : : "memory");
     seq = tmpfile_counter;
 
-    int n = snprintf(buf, (size_t)bufsize, "%s/.tmp_%u_%llu",
-                     dir ? dir : "/tmp", pid,
+    int n = snprintf(buf, (size_t)bufsize, "%s/.tmp_%u_%llu", dir ? dir : "/tmp", pid,
                      (unsigned long long)seq);
     if (n < 0 || n >= bufsize)
         return -1;
@@ -1429,11 +1521,12 @@ static uint64_t do_sys_open(const char *path, uint64_t flags, uint64_t mode) {
     /* Permission check for existing file */
     if (exists && !(flags & O_TMPFILE)) {
         struct process *p = process_get_current();
-        if (!p) return (uint64_t)(int64_t)-EPERM;
+        if (!p)
+            return (uint64_t)(int64_t)-EPERM;
         uint16_t perm_op = 0;
-        if (access_mode == 0 || access_mode == 2)  /* O_RDONLY or O_RDWR */
+        if (access_mode == 0 || access_mode == 2) /* O_RDONLY or O_RDWR */
             perm_op |= VFS_R_OK;
-        if (access_mode == 1 || access_mode == 2)  /* O_WRONLY or O_RDWR */
+        if (access_mode == 1 || access_mode == 2) /* O_WRONLY or O_RDWR */
             perm_op |= VFS_W_OK;
         if ((flags & O_TRUNC))
             perm_op |= VFS_W_OK;
@@ -1453,9 +1546,12 @@ static uint64_t do_sys_open(const char *path, uint64_t flags, uint64_t mode) {
 
         /* Allocate fd slot and mark as FD_TMPFILE */
         struct process *p = process_get_current();
-        if (!p) { vfs_unlink(tmp_path); return (uint64_t)(int64_t)-EPERM; }
-        uint64_t max_fds = p->rlim_cur[RLIMIT_NOFILE] > 0 ?
-                           p->rlim_cur[RLIMIT_NOFILE] : PROCESS_FD_MAX;
+        if (!p) {
+            vfs_unlink(tmp_path);
+            return (uint64_t)(int64_t)-EPERM;
+        }
+        uint64_t max_fds =
+            p->rlim_cur[RLIMIT_NOFILE] > 0 ? p->rlim_cur[RLIMIT_NOFILE] : PROCESS_FD_MAX;
         uint64_t __tmp_irq;
         spinlock_irqsave_acquire(&p->fd_table_lock, &__tmp_irq);
         for (int i = 0; i < PROCESS_FD_MAX; i++) {
@@ -1469,7 +1565,8 @@ static uint64_t do_sys_open(const char *path, uint64_t flags, uint64_t mode) {
                 p->fd_table[i].path[63] = '\0';
                 p->fd_table[i].offset = 0;
                 p->fd_table[i].used = true;
-                p->fd_table[i].flags = (uint8_t)(FD_TMPFILE | ((flags & O_CLOEXEC) ? FD_CLOEXEC : 0));
+                p->fd_table[i].flags =
+                    (uint8_t)(FD_TMPFILE | ((flags & O_CLOEXEC) ? FD_CLOEXEC : 0));
                 p->fd_table[i].open_flags = (uint32_t)(flags & 0x1FFFFF); /* save relevant flags */
                 spinlock_irqsave_release(&p->fd_table_lock, __tmp_irq);
                 return (uint64_t)(i + 3);
@@ -1485,7 +1582,8 @@ static uint64_t do_sys_open(const char *path, uint64_t flags, uint64_t mode) {
         vfs_truncate(path, 0);
     }
 
-    if (!exists) return (uint64_t)(int64_t)-ENOENT;
+    if (!exists)
+        return (uint64_t)(int64_t)-ENOENT;
 
     /* IMA measurement: measure the file before opening for read */
     {
@@ -1505,10 +1603,10 @@ static uint64_t do_sys_open(const char *path, uint64_t flags, uint64_t mode) {
 
     /* Allocate fd slot in current process's table */
     struct process *p = process_get_current();
-    if (!p) return (uint64_t)(int64_t)-EPERM;
+    if (!p)
+        return (uint64_t)(int64_t)-EPERM;
     /* Enforce RLIMIT_NOFILE */
-    uint64_t max_fds = p->rlim_cur[RLIMIT_NOFILE] > 0 ?
-                       p->rlim_cur[RLIMIT_NOFILE] : PROCESS_FD_MAX;
+    uint64_t max_fds = p->rlim_cur[RLIMIT_NOFILE] > 0 ? p->rlim_cur[RLIMIT_NOFILE] : PROCESS_FD_MAX;
     uint64_t __open_irq;
     spinlock_irqsave_acquire(&p->fd_table_lock, &__open_irq);
     for (int i = 0; i < PROCESS_FD_MAX; i++) {
@@ -1569,7 +1667,8 @@ static uint64_t sys_open(uint64_t path_addr, uint64_t flags, uint64_t mode) {
  */
 static uint64_t sys_close(uint64_t fd) {
     /* stdin/stdout/stderr — cannot be closed */
-    if (fd < 3) return 0;
+    if (fd < 3)
+        return 0;
     /* Negative fd — reject with EBADF */
     if ((int64_t)fd < 0)
         return (uint64_t)(int64_t)-EBADF;
@@ -1580,7 +1679,8 @@ static uint64_t sys_close(uint64_t fd) {
     }
     int i = (int)fd - 3;
     struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)(int64_t)-EPERM;
+    if (!proc)
+        return (uint64_t)(int64_t)-EPERM;
     uint64_t __cl_irq;
     spinlock_irqsave_acquire(&proc->fd_table_lock, &__cl_irq);
     struct process_fd *pfd = (i >= 0 && i < PROCESS_FD_MAX) ? &proc->fd_table[i] : NULL;
@@ -1609,8 +1709,7 @@ static uint64_t sys_close(uint64_t fd) {
 }
 
 /* ── close_range — close all file descriptors in [first, last] ────── */
-static uint64_t sys_close_range(uint64_t first, uint64_t last, uint64_t flags)
-{
+static uint64_t sys_close_range(uint64_t first, uint64_t last, uint64_t flags) {
     /* Validate range */
     if (first > last)
         return (uint64_t)(int64_t)-EINVAL;
@@ -1621,11 +1720,12 @@ static uint64_t sys_close_range(uint64_t first, uint64_t last, uint64_t flags)
         return (uint64_t)(int64_t)-EINVAL;
 
     struct process *p = process_get_current();
-    if (!p) return (uint64_t)(int64_t)-EPERM;
+    if (!p)
+        return (uint64_t)(int64_t)-EPERM;
 
     /* Clamp to PROCESS_FD_MAX */
     if (first >= PROCESS_FD_MAX)
-        return 0;  /* nothing to do */
+        return 0; /* nothing to do */
     if (last >= PROCESS_FD_MAX)
         last = PROCESS_FD_MAX - 1;
 
@@ -1637,7 +1737,8 @@ static uint64_t sys_close_range(uint64_t first, uint64_t last, uint64_t flags)
     spinlock_irqsave_acquire(&p->fd_table_lock, &__cr_irq);
     for (uint64_t fd = first; fd <= last; fd++) {
         int i = (int)fd - 3;
-        if (i < 0) continue;
+        if (i < 0)
+            continue;
 
         struct process_fd *pfd = &p->fd_table[i];
         if (!pfd->used)
@@ -1691,22 +1792,21 @@ static uint64_t sys_getpid(void) {
 /* ── Signal registration (SYS_SIGNAL=213) ──────────────────────── */
 static uint64_t sys_signal(uint64_t signum, uint64_t handler_addr) {
     if (signum <= 0 || signum >= SIG_MAX)
-        return (uint64_t)-1ULL;  /* SIG_ERR */
+        return (uint64_t)-1ULL; /* SIG_ERR */
 
     struct process *p = process_get_current();
     if (!p)
-        return (uint64_t)-1ULL;  /* SIG_ERR */
+        return (uint64_t)-1ULL; /* SIG_ERR */
 
     /* SIGKILL and SIGSTOP cannot have their dispositions changed */
     if (signum == SIGKILL || signum == SIGSTOP)
-        return (uint64_t)-1ULL;  /* SIG_ERR */
+        return (uint64_t)-1ULL; /* SIG_ERR */
 
     /* Validate that the handler address is sane for user processes */
     signal_handler_t handler = (signal_handler_t)(uintptr_t)handler_addr;
-    if (p->is_user &&
-        handler != SIG_DFL && handler != SIG_IGN &&
+    if (p->is_user && handler != SIG_DFL && handler != SIG_IGN &&
         (uint64_t)(uintptr_t)handler >= USER_VADDR_MAX)
-        return (uint64_t)-1ULL;  /* SIG_ERR */
+        return (uint64_t)-1ULL; /* SIG_ERR */
 
     uint64_t __sig_flags;
     spinlock_irqsave_acquire(&p->sig_lock, &__sig_flags);
@@ -1716,8 +1816,7 @@ static uint64_t sys_signal(uint64_t signum, uint64_t handler_addr) {
 
     /* Install the new handler with BSD semantics (SA_RESTART) */
     p->sig_handlers[signum] = handler;
-    p->sig_flags[signum] = (handler != SIG_DFL && handler != SIG_IGN)
-                           ? SA_RESTART : 0;
+    p->sig_flags[signum] = (handler != SIG_DFL && handler != SIG_IGN) ? SA_RESTART : 0;
 
     spinlock_irqsave_release(&p->sig_lock, __sig_flags);
 
@@ -1728,29 +1827,38 @@ static uint64_t sys_signal(uint64_t signum, uint64_t handler_addr) {
 static uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence) {
     int i = (int)fd - 3;
     struct process_fd *pfd = sys_get_fd(i);
-    if (!pfd || !pfd->used) return (uint64_t)(int64_t)-EBADF;
+    if (!pfd || !pfd->used)
+        return (uint64_t)(int64_t)-EBADF;
     fd_sync_from_shared(pfd);
     struct vfs_stat st;
     uint64_t fsz = 0;
-    if (vfs_stat(pfd->path, &st) == 0) fsz = st.size;
+    if (vfs_stat(pfd->path, &st) == 0)
+        fsz = st.size;
     int64_t off = (int64_t)offset;
     int64_t new_off;
     switch (whence) {
-        case 0: new_off = off; break;                /* SEEK_SET */
-        case 1: new_off = (int64_t)pfd->offset + off; break; /* SEEK_CUR */
-        case 2: new_off = (int64_t)fsz + off; break; /* SEEK_END */
-        case 3: /* SEEK_DATA */
-        case 4: /* SEEK_HOLE */
-            {
-                int seek_ret = vfs_seek(pfd->path, offset, (int)whence);
-                if (seek_ret < 0)
-                    return (uint64_t)(int64_t)seek_ret;
-                new_off = seek_ret;
-            }
-            break;
-        default: return (uint64_t)(int64_t)-EINVAL;
+    case 0:
+        new_off = off;
+        break; /* SEEK_SET */
+    case 1:
+        new_off = (int64_t)pfd->offset + off;
+        break; /* SEEK_CUR */
+    case 2:
+        new_off = (int64_t)fsz + off;
+        break; /* SEEK_END */
+    case 3:    /* SEEK_DATA */
+    case 4:    /* SEEK_HOLE */
+    {
+        int seek_ret = vfs_seek(pfd->path, offset, (int)whence);
+        if (seek_ret < 0)
+            return (uint64_t)(int64_t)seek_ret;
+        new_off = seek_ret;
+    } break;
+    default:
+        return (uint64_t)(int64_t)-EINVAL;
     }
-    if (new_off < 0) return (uint64_t)(int64_t)-EINVAL;
+    if (new_off < 0)
+        return (uint64_t)(int64_t)-EINVAL;
     pfd->offset = (uint64_t)new_off;
     fd_sync_to_shared(pfd);
     return (uint64_t)new_off;
@@ -1772,7 +1880,8 @@ static uint64_t sys_truncate(uint64_t path_addr, uint64_t len) {
 
 /* ── Raw Ethernet send (SYS_RAW_SEND=216) ──────────────────────── */
 static uint64_t sys_raw_send(uint64_t buf_addr, uint64_t len) {
-    if (len == 0 || len > 1514) return (uint64_t)(int64_t)-EINVAL;
+    if (len == 0 || len > 1514)
+        return (uint64_t)(int64_t)-EINVAL;
     int r = net_link_send((const uint8_t *)(uintptr_t)buf_addr, (uint16_t)len);
     return r < 0 ? (uint64_t)(int64_t)r : len;
 }
@@ -1789,17 +1898,23 @@ static uint64_t sys_fd_read(uint64_t fd, uint64_t buf_addr, uint64_t count) {
             /* dup2'd — read from the file */
             uint64_t fsize = 0;
             struct vfs_stat st;
-            if (vfs_stat(pfd->path, &st) < 0) return (uint64_t)(int64_t)-EIO;
+            if (vfs_stat(pfd->path, &st) < 0)
+                return (uint64_t)(int64_t)-EIO;
             fsize = st.size;
-            if (pfd->offset >= fsize) return 0;
+            if (pfd->offset >= fsize)
+                return 0;
             uint64_t avail = fsize - pfd->offset;
             uint64_t to_read = count < avail ? count : avail;
-            if (to_read > UINT32_MAX) to_read = UINT32_MAX;
+            if (to_read > UINT32_MAX)
+                to_read = UINT32_MAX;
             uint64_t need_end = pfd->offset + to_read;
-            if (need_end > fsize) need_end = fsize;
-            if (need_end > UINT32_MAX) need_end = UINT32_MAX;
+            if (need_end > fsize)
+                need_end = fsize;
+            if (need_end > UINT32_MAX)
+                need_end = UINT32_MAX;
             uint8_t *tmp = kmalloc(need_end);
-            if (!tmp) return (uint64_t)(int64_t)-ENOMEM;
+            if (!tmp)
+                return (uint64_t)(int64_t)-ENOMEM;
             uint32_t nread = 0;
             vfs_read(pfd->path, tmp, (uint32_t)need_end, &nread);
             if (copy_to_user(buf_addr, tmp + pfd->offset, to_read) < 0) {
@@ -1845,22 +1960,29 @@ static uint64_t sys_fd_read(uint64_t fd, uint64_t buf_addr, uint64_t count) {
     }
     int i = (int)fd < 3 ? (int)fd : (int)fd - 3;
     struct process_fd *pfd = sys_get_fd(i);
-    if (!pfd || !pfd->used) return (uint64_t)(int64_t)-EBADF;
+    if (!pfd || !pfd->used)
+        return (uint64_t)(int64_t)-EBADF;
     uint64_t fsize = 0;
     struct vfs_stat st;
-    if (vfs_stat(pfd->path, &st) < 0) return (uint64_t)(int64_t)-EIO;
+    if (vfs_stat(pfd->path, &st) < 0)
+        return (uint64_t)(int64_t)-EIO;
     fsize = st.size;
-    if (pfd->offset >= fsize) return 0;
+    if (pfd->offset >= fsize)
+        return 0;
     uint64_t avail = fsize - pfd->offset;
     uint64_t to_read = count < avail ? count : avail;
     /* Clamp to UINT32_MAX to avoid uint32_t truncation in vfs_read */
-    if (to_read > UINT32_MAX) to_read = UINT32_MAX;
+    if (to_read > UINT32_MAX)
+        to_read = UINT32_MAX;
     uint64_t need_end = pfd->offset + to_read;
-    if (need_end > fsize) need_end = fsize;
+    if (need_end > fsize)
+        need_end = fsize;
     /* Clamp need_end to UINT32_MAX for vfs_read */
-    if (need_end > UINT32_MAX) need_end = UINT32_MAX;
+    if (need_end > UINT32_MAX)
+        need_end = UINT32_MAX;
     uint8_t *tmp = kmalloc(need_end);
-    if (!tmp) return (uint64_t)(int64_t)-ENOMEM;
+    if (!tmp)
+        return (uint64_t)(int64_t)-ENOMEM;
     uint32_t nread = 0;
     vfs_read(pfd->path, tmp, (uint32_t)need_end, &nread);
     if (copy_to_user(buf_addr, tmp + pfd->offset, to_read) < 0) {
@@ -1904,7 +2026,8 @@ static uint64_t sys_fd_write(uint64_t fd, uint64_t buf_addr, uint64_t count) {
         struct process_fd *pfd = sys_get_fd((int)fd);
         if (pfd && pfd->used) {
             /* dup2'd — write to the file */
-            if (count > UINT32_MAX) count = UINT32_MAX;
+            if (count > UINT32_MAX)
+                count = UINT32_MAX;
             int r;
             if (pfd->open_flags & O_APPEND) {
                 r = vfs_append(pfd->path, (const void *)(uintptr_t)buf_addr, (uint32_t)count);
@@ -1915,16 +2038,19 @@ static uint64_t sys_fd_write(uint64_t fd, uint64_t buf_addr, uint64_t count) {
                 }
             } else {
                 r = vfs_write(pfd->path, (const void *)(uintptr_t)buf_addr, (uint32_t)count);
-                if (r == 0) pfd->offset += count;
+                if (r == 0)
+                    pfd->offset += count;
             }
             if (r == 0)
                 do_sync_after_write(pfd);
             return (r == 0) ? count : (uint64_t)(int64_t)r;
         }
         /* Default stdout/stderr — write to console */
-        if (!buf_addr && count > 0) return (uint64_t)(int64_t)-EFAULT;
+        if (!buf_addr && count > 0)
+            return (uint64_t)(int64_t)-EFAULT;
         uint8_t *kbuf = kmalloc(count > 4096 ? 4096 : (count > 0 ? count : 1));
-        if (!kbuf) return (uint64_t)(int64_t)-ENOMEM;
+        if (!kbuf)
+            return (uint64_t)(int64_t)-ENOMEM;
         size_t to_copy = count > 4096 ? 4096 : count;
         if (to_copy > 0) {
             if (copy_from_user(kbuf, buf_addr, to_copy) < 0) {
@@ -1941,9 +2067,11 @@ static uint64_t sys_fd_write(uint64_t fd, uint64_t buf_addr, uint64_t count) {
     }
     int i = (int)fd < 3 ? (int)fd : (int)fd - 3;
     struct process_fd *pfd = sys_get_fd(i);
-    if (!pfd || !pfd->used) return (uint64_t)(int64_t)-EBADF;
+    if (!pfd || !pfd->used)
+        return (uint64_t)(int64_t)-EBADF;
     /* Clamp count to UINT32_MAX to avoid uint32_t truncation in vfs_write/vfs_append */
-    if (count > UINT32_MAX) count = UINT32_MAX;
+    if (count > UINT32_MAX)
+        count = UINT32_MAX;
     int r;
     if (pfd->open_flags & O_APPEND) {
         r = vfs_append(pfd->path, (const void *)(uintptr_t)buf_addr, (uint32_t)count);
@@ -1954,7 +2082,8 @@ static uint64_t sys_fd_write(uint64_t fd, uint64_t buf_addr, uint64_t count) {
         }
     } else {
         r = vfs_write(pfd->path, (const void *)(uintptr_t)buf_addr, (uint32_t)count);
-        if (r == 0) pfd->offset += count;
+        if (r == 0)
+            pfd->offset += count;
     }
     if (r == 0)
         do_sync_after_write(pfd);
@@ -1978,9 +2107,7 @@ static uint64_t sys_fd_write(uint64_t fd, uint64_t buf_addr, uint64_t count) {
  * Context: Called from syscall dispatch. May sleep.
  * Return: Number of bytes read, 0 at EOF, or (uint64_t)-1 on error.
  */
-static uint64_t sys_pread64(uint64_t fd, uint64_t buf_addr,
-                            uint64_t count, uint64_t offset)
-{
+static uint64_t sys_pread64(uint64_t fd, uint64_t buf_addr, uint64_t count, uint64_t offset) {
     if (fd < 3)
         return (uint64_t)(int64_t)-EBADF;
     int i = (int)fd - 3;
@@ -2052,9 +2179,7 @@ static uint64_t sys_pread64(uint64_t fd, uint64_t buf_addr,
  * Context: Called from syscall dispatch. May sleep.
  * Return: Number of bytes written, or (uint64_t)-1 on error.
  */
-static uint64_t sys_pwrite64(uint64_t fd, uint64_t buf_addr,
-                             uint64_t count, uint64_t offset)
-{
+static uint64_t sys_pwrite64(uint64_t fd, uint64_t buf_addr, uint64_t count, uint64_t offset) {
     if (fd < 3)
         return (uint64_t)(int64_t)-EBADF;
     int i = (int)fd - 3;
@@ -2132,12 +2257,18 @@ static uint64_t sys_free(uint64_t ptr) {
 }
 
 static uint64_t sys_realloc(uint64_t ptr, uint64_t new_size) {
-    if (!ptr) return sys_malloc(new_size);
-    if (!new_size) { kfree((void *)(uintptr_t)ptr); return 0; }
+    if (!ptr)
+        return sys_malloc(new_size);
+    if (!new_size) {
+        kfree((void *)(uintptr_t)ptr);
+        return 0;
+    }
     void *newp = kmalloc((size_t)new_size);
-    if (!newp) return 0;
+    if (!newp)
+        return 0;
     size_t copy = (size_t)new_size;
-    for (size_t i = 0; i < copy; i++) ((uint8_t *)newp)[i] = ((uint8_t *)(uintptr_t)ptr)[i];
+    for (size_t i = 0; i < copy; i++)
+        ((uint8_t *)newp)[i] = ((uint8_t *)(uintptr_t)ptr)[i];
     kfree((void *)(uintptr_t)ptr);
     return (uint64_t)(uintptr_t)newp;
 }
@@ -2147,7 +2278,9 @@ static uint64_t sys_calloc(uint64_t nmemb, uint64_t size) {
         return 0;
     size_t total = (size_t)(nmemb * size);
     void *p = kmalloc(total);
-    if (p) for (size_t i = 0; i < total; i++) ((uint8_t *)p)[i] = 0;
+    if (p)
+        for (size_t i = 0; i < total; i++)
+            ((uint8_t *)p)[i] = 0;
     return (uint64_t)(uintptr_t)p;
 }
 
@@ -2160,7 +2293,7 @@ static uint64_t sys_stat(uint64_t path_addr, uint64_t out_addr) {
     if (vfs_stat(kpath, &st) < 0)
         return (uint64_t)(int64_t)-ENOENT;
     if (out) {
-        uint64_t stbuf[2] = { st.size, st.type };
+        uint64_t stbuf[2] = {st.size, st.type};
         if (copy_to_user(out_addr, stbuf, sizeof(stbuf)) < 0)
             return (uint64_t)(int64_t)-EFAULT;
     }
@@ -2180,8 +2313,7 @@ static uint64_t sys_unlink(uint64_t path_addr) {
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
     char ap[128];
-    const char *rp = vfs_abs_path(kpath, ap, sizeof(ap)) < 0
-                     ? kpath : ap;
+    const char *rp = vfs_abs_path(kpath, ap, sizeof(ap)) < 0 ? kpath : ap;
     int ret = fs_delete(rp);
     return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
 }
@@ -2205,48 +2337,49 @@ static uint64_t sys_fs_format(void) {
 
 static uint64_t sys_fs_create(uint64_t path_addr, uint64_t type) {
     char ap[128];
-    const char *rp = vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0
-                     ? (const char *)path_addr : ap;
+    const char *rp =
+        vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0 ? (const char *)path_addr : ap;
     return (uint64_t)fs_create(rp, (uint8_t)type);
 }
 
 static uint64_t sys_fs_write(uint64_t path_addr, uint64_t data_addr, uint64_t size) {
     char ap[128];
-    const char *rp = vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0
-                     ? (const char *)path_addr : ap;
+    const char *rp =
+        vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0 ? (const char *)path_addr : ap;
     return (uint64_t)fs_write_file(rp, (const void *)data_addr, (uint32_t)size);
 }
 
-static uint64_t sys_fs_read(uint64_t path_addr, uint64_t buf_addr, uint64_t max_size, uint64_t out_addr) {
+static uint64_t sys_fs_read(uint64_t path_addr, uint64_t buf_addr, uint64_t max_size,
+                            uint64_t out_addr) {
     char ap[128];
-    const char *rp = vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0
-                     ? (const char *)path_addr : ap;
-    return (uint64_t)fs_read_file(rp, (void *)buf_addr,
-                                  (uint32_t)max_size, (uint32_t *)out_addr);
+    const char *rp =
+        vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0 ? (const char *)path_addr : ap;
+    return (uint64_t)fs_read_file(rp, (void *)buf_addr, (uint32_t)max_size, (uint32_t *)out_addr);
 }
 
 static uint64_t sys_fs_delete(uint64_t path_addr) {
     char ap[128];
-    const char *rp = vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0
-                     ? (const char *)path_addr : ap;
+    const char *rp =
+        vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0 ? (const char *)path_addr : ap;
     return (uint64_t)fs_delete(rp);
 }
 
 static uint64_t sys_fs_list(uint64_t path_addr) {
     char ap[128];
-    const char *rp = vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0
-                     ? (const char *)path_addr : ap;
+    const char *rp =
+        vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0 ? (const char *)path_addr : ap;
     return (uint64_t)fs_list(rp);
 }
 
 static uint64_t sys_fs_stat(uint64_t path_addr, uint64_t out_addr) {
     char ap[128];
-    const char *rp = vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0
-                     ? (const char *)path_addr : ap;
+    const char *rp =
+        vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0 ? (const char *)path_addr : ap;
     uint32_t size = 0;
     uint8_t type = 0;
     int rc = fs_stat(rp, &size, &type);
-    if (rc < 0) return (uint64_t)rc;
+    if (rc < 0)
+        return (uint64_t)rc;
     if (out_addr) {
         uint32_t *out = (uint32_t *)out_addr;
         out[0] = size;
@@ -2257,14 +2390,15 @@ static uint64_t sys_fs_stat(uint64_t path_addr, uint64_t out_addr) {
 
 static uint64_t sys_fs_stat_ex(uint64_t path_addr, uint64_t out_addr) {
     char ap[128];
-    const char *rp = vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0
-                     ? (const char *)path_addr : ap;
+    const char *rp =
+        vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0 ? (const char *)path_addr : ap;
     struct syscall_fs_stat_ex *out = (struct syscall_fs_stat_ex *)out_addr;
     uint32_t size = 0;
     uint8_t type = 0;
     uint16_t uid = 0, gid = 0, mode = 0;
     int rc = fs_stat_ex(rp, &size, &type, &uid, &gid, &mode);
-    if (rc < 0) return (uint64_t)rc;
+    if (rc < 0)
+        return (uint64_t)rc;
     if (out) {
         out->size = size;
         out->type = type;
@@ -2277,15 +2411,15 @@ static uint64_t sys_fs_stat_ex(uint64_t path_addr, uint64_t out_addr) {
 
 static uint64_t sys_fs_chmod(uint64_t path_addr, uint64_t mode) {
     char ap[128];
-    const char *rp = vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0
-                     ? (const char *)path_addr : ap;
+    const char *rp =
+        vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0 ? (const char *)path_addr : ap;
     return (uint64_t)fs_chmod(rp, (uint16_t)mode);
 }
 
 static uint64_t sys_fs_chown(uint64_t path_addr, uint64_t uid, uint64_t gid) {
     char ap[128];
-    const char *rp = vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0
-                     ? (const char *)path_addr : ap;
+    const char *rp =
+        vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0 ? (const char *)path_addr : ap;
     return (uint64_t)fs_chown(rp, (uint16_t)uid, (uint16_t)gid);
 }
 
@@ -2293,17 +2427,17 @@ static uint64_t sys_fs_get_usage(uint64_t out_addr) {
     uint32_t used_inodes = 0, total_inodes = 0, used_blocks = 0, data_start = 0;
     fs_get_usage(&used_inodes, &total_inodes, &used_blocks, &data_start);
     if (out_addr) {
-        uint32_t usage[4] = { used_inodes, total_inodes, used_blocks, data_start };
+        uint32_t usage[4] = {used_inodes, total_inodes, used_blocks, data_start};
         if (copy_to_user(out_addr, usage, sizeof(usage)) < 0)
             return (uint64_t)(int64_t)-EFAULT;
     }
     return 0;
 }
 
-static uint64_t sys_fs_list_names(uint64_t dir_addr, uint64_t prefix_addr,
-                                  uint64_t names_addr, uint64_t max) {
+static uint64_t sys_fs_list_names(uint64_t dir_addr, uint64_t prefix_addr, uint64_t names_addr,
+                                  uint64_t max) {
     return (uint64_t)fs_list_names((const char *)dir_addr, (const char *)prefix_addr,
-                                   (char (*)[FS_MAX_NAME])names_addr, (int)max);
+                                   (char(*)[FS_MAX_NAME])names_addr, (int)max);
 }
 
 static uint64_t sys_ata_present(void) {
@@ -2322,9 +2456,10 @@ static uint64_t sys_ahci_sectors(void) {
     return (uint64_t)ahci_get_sectors();
 }
 
-static uint64_t sys_vfs_read(uint64_t path_addr, uint64_t buf_addr, uint64_t max, uint64_t out_addr) {
-    return (uint64_t)vfs_read((const char *)path_addr, (void *)buf_addr,
-                              (uint32_t)max, (uint32_t *)out_addr);
+static uint64_t sys_vfs_read(uint64_t path_addr, uint64_t buf_addr, uint64_t max,
+                             uint64_t out_addr) {
+    return (uint64_t)vfs_read((const char *)path_addr, (void *)buf_addr, (uint32_t)max,
+                              (uint32_t *)out_addr);
 }
 
 static uint64_t sys_vfs_write(uint64_t path_addr, uint64_t data_addr, uint64_t size) {
@@ -2368,14 +2503,16 @@ static uint64_t sys_net_present(void) {
 
 static uint64_t sys_net_get_mac(uint64_t mac_addr) {
     uint8_t *mac = (uint8_t *)mac_addr;
-    if (!mac) return (uint64_t)-1;
+    if (!mac)
+        return (uint64_t)-1;
     e1000_get_mac(mac);
     return 0;
 }
 
 static uint64_t sys_net_get_ip(uint64_t ip_addr) {
     uint8_t *ip = (uint8_t *)ip_addr;
-    if (!ip) return (uint64_t)-1;
+    if (!ip)
+        return (uint64_t)-1;
     net_get_ip(ip);
     return 0;
 }
@@ -2398,8 +2535,8 @@ static uint64_t sys_net_ping(uint64_t ip) {
 
 static uint64_t sys_net_udp_send(uint64_t dst_ip, uint64_t src_port, uint64_t dst_port,
                                  uint64_t data_addr, uint64_t len) {
-    net_udp_send((uint32_t)dst_ip, (uint16_t)src_port, (uint16_t)dst_port,
-                 (const void *)data_addr, (uint16_t)len);
+    net_udp_send((uint32_t)dst_ip, (uint16_t)src_port, (uint16_t)dst_port, (const void *)data_addr,
+                 (uint16_t)len);
     return 0;
 }
 
@@ -2408,16 +2545,13 @@ static uint64_t sys_net_http_get(uint64_t host_addr, uint64_t port, uint64_t pat
     int bufsize = (int)(uint32_t)(packed >> 32);
     int follow = (int)(uint32_t)packed;
     return (uint64_t)net_http_get_ex((const char *)host_addr, (uint16_t)port,
-                                     (const char *)path_addr, (char *)buf_addr,
-                                     bufsize, follow);
+                                     (const char *)path_addr, (char *)buf_addr, bufsize, follow);
 }
 
 /* ── TCP server syscalls ─────────────────────────────────────── */
 
 static uint64_t sys_net_tcp_listen(uint64_t port) {
-    net_tcp_listen((uint16_t)port,
-                   (tcp_connect_handler)0,
-                   (tcp_data_handler)0,
+    net_tcp_listen((uint16_t)port, (tcp_connect_handler)0, (tcp_data_handler)0,
                    (tcp_close_handler)0);
     return 0;
 }
@@ -2427,14 +2561,13 @@ static uint64_t sys_net_tcp_accept(uint64_t port, uint64_t timeout_ticks) {
 }
 
 static uint64_t sys_net_tcp_send_conn(uint64_t conn_id, uint64_t buf_addr, uint64_t len) {
-    return (uint64_t)(int64_t)net_tcp_send((int)conn_id,
-                                           (const void *)buf_addr, (uint16_t)len);
+    return (uint64_t)(int64_t)net_tcp_send((int)conn_id, (const void *)buf_addr, (uint16_t)len);
 }
 
-static uint64_t sys_net_tcp_recv_conn(uint64_t conn_id, uint64_t buf_addr,
-                                      uint64_t len, uint64_t timeout_ticks) {
-    return (uint64_t)(int64_t)net_tcp_recv((int)conn_id, (void *)buf_addr,
-                                           (uint16_t)len, (int)timeout_ticks);
+static uint64_t sys_net_tcp_recv_conn(uint64_t conn_id, uint64_t buf_addr, uint64_t len,
+                                      uint64_t timeout_ticks) {
+    return (uint64_t)(int64_t)net_tcp_recv((int)conn_id, (void *)buf_addr, (uint16_t)len,
+                                           (int)timeout_ticks);
 }
 
 static uint64_t sys_net_tcp_close_conn(uint64_t conn_id) {
@@ -2492,16 +2625,16 @@ static uint64_t sys_sem_destroy(uint64_t id) {
 static uint64_t sys_net_udp_listen(uint64_t port) {
     return (uint64_t)(int64_t)net_udp_listen((uint16_t)port);
 }
-static uint64_t sys_net_udp_recv(uint64_t port, uint64_t buf, uint64_t bufsz,
-                                 uint64_t src_ip_ptr, uint64_t src_port_ptr) {
+static uint64_t sys_net_udp_recv(uint64_t port, uint64_t buf, uint64_t bufsz, uint64_t src_ip_ptr,
+                                 uint64_t src_port_ptr) {
     /* Allocate kernel buffer — net_udp_recv writes directly to buf */
     uint16_t kbufsz = (uint16_t)(bufsz > 1500 ? 1500 : bufsz);
     uint8_t *kbuf = kmalloc(kbufsz);
-    if (!kbuf) return (uint64_t)(int64_t)-ENOMEM;
+    if (!kbuf)
+        return (uint64_t)(int64_t)-ENOMEM;
     uint32_t ksrc_ip = 0;
     uint16_t ksrc_port = 0;
-    int ret = net_udp_recv((uint16_t)port, kbuf, kbufsz,
-                           &ksrc_ip, &ksrc_port, 200);
+    int ret = net_udp_recv((uint16_t)port, kbuf, kbufsz, &ksrc_ip, &ksrc_port, 200);
     if (ret < 0) {
         kfree(kbuf);
         return (uint64_t)(int64_t)ret;
@@ -2538,11 +2671,13 @@ static uint64_t sys_fs_readlink(uint64_t path_addr, uint64_t buf_addr, uint64_t 
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
     /* Validate bufsz to prevent unbounded kernel buffer allocation */
-    if (bufsz == 0) return (uint64_t)(int64_t)-EINVAL;
+    if (bufsz == 0)
+        return (uint64_t)(int64_t)-EINVAL;
     size_t kbufsz = (size_t)bufsz > 256 ? 256 : (size_t)bufsz;
     char kbuf[256];
     int ret = fs_readlink(kpath, kbuf, (int)kbufsz);
-    if (ret < 0) return (uint64_t)(int64_t)ret;
+    if (ret < 0)
+        return (uint64_t)(int64_t)ret;
     if (copy_to_user(buf_addr, kbuf, (size_t)ret) < 0)
         return (uint64_t)(int64_t)-EFAULT;
     return 0;
@@ -2554,7 +2689,8 @@ static uint64_t sys_fs_lstat(uint64_t path_addr, uint64_t size_addr, uint64_t ty
     uint32_t size;
     uint8_t type;
     int ret = fs_lstat(kpath, &size, &type);
-    if (ret < 0) return (uint64_t)(int64_t)ret;
+    if (ret < 0)
+        return (uint64_t)(int64_t)ret;
     if (copy_to_user(size_addr, &size, sizeof(size)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
     if (copy_to_user(type_addr, &type, sizeof(type)) < 0)
@@ -2582,7 +2718,8 @@ static uint64_t sys_chdir(uint64_t path_addr) {
         size_t pl = (size_t)strlen(path);
         if (cl + 1 + pl < sizeof(tmp)) {
             memcpy(tmp, ses_cwd, cl);
-            if (tmp[cl-1] != '/') tmp[cl++] = '/';
+            if (tmp[cl - 1] != '/')
+                tmp[cl++] = '/';
             memcpy(tmp + cl, path, pl + 1);
             /* Normalize .. and . components */
             vfs_abs_path(tmp, ap, sizeof(ap));
@@ -2590,10 +2727,16 @@ static uint64_t sys_chdir(uint64_t path_addr) {
     }
     /* Special case: root always exists */
     if (ap[0] == '/' && ap[1] == '\0') {
-        if (ses_cwd) { ses_cwd[0] = '/'; ses_cwd[1] = '\0'; return 0; }
+        if (ses_cwd) {
+            ses_cwd[0] = '/';
+            ses_cwd[1] = '\0';
+            return 0;
+        }
         struct process *cur = process_get_current();
-        if (!cur) return (uint64_t)(int64_t)-ESRCH;
-        cur->cwd[0] = '/'; cur->cwd[1] = '\0';
+        if (!cur)
+            return (uint64_t)(int64_t)-ESRCH;
+        cur->cwd[0] = '/';
+        cur->cwd[1] = '\0';
         return 0;
     }
     /* Verify it's a directory */
@@ -2605,11 +2748,19 @@ static uint64_t sys_chdir(uint64_t path_addr) {
         return (uint64_t)(int64_t)-ENOTDIR;
     /* Remove trailing slash (except root) */
     int len = (int)strlen(ap);
-    while (len > 1 && ap[len-1] == '/') { ap[--len] = '\0'; }
-    if (ses_cwd) { strncpy(ses_cwd, ap, 63); ses_cwd[63] = '\0'; return 0; }
+    while (len > 1 && ap[len - 1] == '/') {
+        ap[--len] = '\0';
+    }
+    if (ses_cwd) {
+        strncpy(ses_cwd, ap, 63);
+        ses_cwd[63] = '\0';
+        return 0;
+    }
     struct process *cur = process_get_current();
-    if (!cur) return (uint64_t)(int64_t)-ESRCH;
-    strncpy(cur->cwd, ap, 63); cur->cwd[63] = '\0';
+    if (!cur)
+        return (uint64_t)(int64_t)-ESRCH;
+    strncpy(cur->cwd, ap, 63);
+    cur->cwd[63] = '\0';
     return 0;
 }
 
@@ -2623,10 +2774,13 @@ static uint64_t sys_getcwd(uint64_t buf_addr, uint64_t buf_size) {
         cwd = (cur && cur->cwd[0]) ? cur->cwd : "/";
     }
     char *buf = (char *)buf_addr;
-    if (buf_size == 0) return (uint64_t)(int64_t)-EINVAL;
-    if (!buf) return (uint64_t)(int64_t)-EFAULT;
+    if (buf_size == 0)
+        return (uint64_t)(int64_t)-EINVAL;
+    if (!buf)
+        return (uint64_t)(int64_t)-EFAULT;
     size_t max = buf_size;
-    strncpy(buf, cwd, max - 1); buf[max-1] = '\0';
+    strncpy(buf, cwd, max - 1);
+    buf[max - 1] = '\0';
     return 0;
 }
 
@@ -2642,9 +2796,12 @@ static uint64_t sys_getcwd(uint64_t buf_addr, uint64_t buf_size) {
  *   nice  10 ..  19  →  priority 3
  */
 static int nice_to_priority(int nice) {
-    if (nice <= -11) return 0;
-    if (nice <=  -1) return 1;
-    if (nice <=   9) return 2;
+    if (nice <= -11)
+        return 0;
+    if (nice <= -1)
+        return 1;
+    if (nice <= 9)
+        return 2;
     return 3;
 }
 
@@ -2652,18 +2809,25 @@ static int nice_to_priority(int nice) {
  * Used by getpriority to report a representative nice value. */
 static int priority_to_nice(int prio) {
     switch (prio) {
-        case 0: return -15;
-        case 1: return  -5;
-        case 2: return   5;
-        case 3: return  15;
-        default: return  0;
+    case 0:
+        return -15;
+    case 1:
+        return -5;
+    case 2:
+        return 5;
+    case 3:
+        return 15;
+    default:
+        return 0;
     }
 }
 
 /* Clamp nice to valid range [-20, 19] */
 static int clamp_nice(int nice) {
-    if (nice < NICE_MIN) return NICE_MIN;
-    if (nice > NICE_MAX) return NICE_MAX;
+    if (nice < NICE_MIN)
+        return NICE_MIN;
+    if (nice > NICE_MAX)
+        return NICE_MAX;
     return nice;
 }
 
@@ -2679,7 +2843,8 @@ static int clamp_nice(int nice) {
  */
 static uint64_t sys_setpriority(uint64_t which, uint64_t who, uint64_t prio) {
     struct process *cur = process_get_current();
-    if (!cur) return (uint64_t)(int64_t)-ESRCH;
+    if (!cur)
+        return (uint64_t)(int64_t)-ESRCH;
 
     int nice = clamp_nice((int)(int64_t)prio);
 
@@ -2704,13 +2869,15 @@ static uint64_t sys_setpriority(uint64_t which, uint64_t who, uint64_t prio) {
         uint32_t count = process_get_count();
         int found = 0;
         for (uint32_t i = 0; i < count; i++) {
-            if (table[i].state == PROCESS_UNUSED) continue;
+            if (table[i].state == PROCESS_UNUSED)
+                continue;
             if (table[i].pgid == pgid) {
                 scheduler_set_nice(&table[i], nice);
                 found = 1;
             }
         }
-        if (!found) return (uint64_t)(int64_t)-ESRCH;
+        if (!found)
+            return (uint64_t)(int64_t)-ESRCH;
         return 0;
     }
     case PRIO_USER: {
@@ -2720,13 +2887,15 @@ static uint64_t sys_setpriority(uint64_t which, uint64_t who, uint64_t prio) {
         uint32_t count = process_get_count();
         int found = 0;
         for (uint32_t i = 0; i < count; i++) {
-            if (table[i].state == PROCESS_UNUSED) continue;
+            if (table[i].state == PROCESS_UNUSED)
+                continue;
             if (table[i].uid == uid) {
                 scheduler_set_nice(&table[i], nice);
                 found = 1;
             }
         }
-        if (!found) return (uint64_t)(int64_t)-ESRCH;
+        if (!found)
+            return (uint64_t)(int64_t)-ESRCH;
         return 0;
     }
     default:
@@ -2747,7 +2916,8 @@ static uint64_t sys_setpriority(uint64_t which, uint64_t who, uint64_t prio) {
  */
 static uint64_t sys_getpriority(uint64_t which, uint64_t who) {
     struct process *cur = process_get_current();
-    if (!cur) return (uint64_t)(int64_t)-ESRCH;
+    if (!cur)
+        return (uint64_t)(int64_t)-ESRCH;
 
     int highest_nice = NICE_MIN - 1; /* sentinel: below valid range */
 
@@ -2769,7 +2939,8 @@ static uint64_t sys_getpriority(uint64_t which, uint64_t who) {
         struct process *table = process_get_table();
         uint32_t count = process_get_count();
         for (uint32_t i = 0; i < count; i++) {
-            if (table[i].state == PROCESS_UNUSED) continue;
+            if (table[i].state == PROCESS_UNUSED)
+                continue;
             if (table[i].pgid == pgid && table[i].nice > highest_nice)
                 highest_nice = table[i].nice;
         }
@@ -2782,7 +2953,8 @@ static uint64_t sys_getpriority(uint64_t which, uint64_t who) {
         struct process *table = process_get_table();
         uint32_t count = process_get_count();
         for (uint32_t i = 0; i < count; i++) {
-            if (table[i].state == PROCESS_UNUSED) continue;
+            if (table[i].state == PROCESS_UNUSED)
+                continue;
             if (table[i].uid == uid && table[i].nice > highest_nice)
                 highest_nice = table[i].nice;
         }
@@ -2813,10 +2985,10 @@ static uint64_t sys_getpriority(uint64_t which, uint64_t who) {
  * On success, returns the 16-bit ioprio value.
  * On error, returns -ESRCH (no such process/pgrp/user) or -EINVAL.
  */
-static uint64_t sys_ioprio_get(uint64_t which, uint64_t who)
-{
+static uint64_t sys_ioprio_get(uint64_t which, uint64_t who) {
     struct process *cur = process_get_current();
-    if (!cur) return (uint64_t)(int64_t)-EINVAL;
+    if (!cur)
+        return (uint64_t)(int64_t)-EINVAL;
 
     switch (which) {
     case IOPRIO_WHO_PROCESS: {
@@ -2843,7 +3015,8 @@ static uint64_t sys_ioprio_get(uint64_t which, uint64_t who)
                     best = table[i].ioprio;
             }
         }
-        if (!found) return (uint64_t)(int64_t)-ESRCH;
+        if (!found)
+            return (uint64_t)(int64_t)-ESRCH;
         return (uint64_t)best;
     }
     case IOPRIO_WHO_USER: {
@@ -2852,14 +3025,14 @@ static uint64_t sys_ioprio_get(uint64_t which, uint64_t who)
         uint16_t best = IOPRIO_PRIO_VALUE(IOPRIO_CLASS_IDLE, 0);
         int found = 0;
         for (int i = 0; i < PROCESS_MAX; i++) {
-            if (table[i].state != PROCESS_UNUSED &&
-                (table[i].uid == uid || table[i].euid == uid)) {
+            if (table[i].state != PROCESS_UNUSED && (table[i].uid == uid || table[i].euid == uid)) {
                 found = 1;
                 if (ioprio_class_order(table[i].ioprio) < ioprio_class_order(best))
                     best = table[i].ioprio;
             }
         }
-        if (!found) return (uint64_t)(int64_t)-ESRCH;
+        if (!found)
+            return (uint64_t)(int64_t)-ESRCH;
         return (uint64_t)best;
     }
     default:
@@ -2879,10 +3052,10 @@ static uint64_t sys_ioprio_get(uint64_t which, uint64_t who)
  * ioprio encodes class (bits 15:13) and priority data (bits 12:0):
  *   IOPRIO_CLASS_RT (1), IOPRIO_CLASS_BE (2), IOPRIO_CLASS_IDLE (3)
  */
-static uint64_t sys_ioprio_set(uint64_t which, uint64_t who, uint64_t ioprio)
-{
+static uint64_t sys_ioprio_set(uint64_t which, uint64_t who, uint64_t ioprio) {
     struct process *cur = process_get_current();
-    if (!cur) return (uint64_t)(int64_t)-EINVAL;
+    if (!cur)
+        return (uint64_t)(int64_t)-EINVAL;
 
     /* Validate: class must be NONE, RT, BE, or IDLE */
     unsigned int class = IOPRIO_PRIO_CLASS((uint16_t)(ioprio & 0xFFFF));
@@ -2918,7 +3091,8 @@ static uint64_t sys_ioprio_set(uint64_t which, uint64_t who, uint64_t ioprio)
                 found = 1;
             }
         }
-        if (!found) return (uint64_t)(int64_t)-ESRCH;
+        if (!found)
+            return (uint64_t)(int64_t)-ESRCH;
         return 0;
     }
     case IOPRIO_WHO_USER: {
@@ -2926,13 +3100,13 @@ static uint64_t sys_ioprio_set(uint64_t which, uint64_t who, uint64_t ioprio)
         struct process *table = process_get_table();
         int found = 0;
         for (int i = 0; i < PROCESS_MAX; i++) {
-            if (table[i].state != PROCESS_UNUSED &&
-                (table[i].uid == uid || table[i].euid == uid)) {
+            if (table[i].state != PROCESS_UNUSED && (table[i].uid == uid || table[i].euid == uid)) {
                 table[i].ioprio = ioprio16;
                 found = 1;
             }
         }
-        if (!found) return (uint64_t)(int64_t)-ESRCH;
+        if (!found)
+            return (uint64_t)(int64_t)-ESRCH;
         return 0;
     }
     default:
@@ -2997,9 +3171,12 @@ static uint64_t sys_setpgid(uint64_t pid, uint64_t pgid) {
 
 static uint64_t sys_getpgid(uint64_t pid) {
     struct process *p;
-    if (pid == 0) p = process_get_current();
-    else p = process_get_by_pid((uint32_t)pid);
-    if (!p || p->state == PROCESS_UNUSED) return (uint64_t)(int64_t)-ESRCH;
+    if (pid == 0)
+        p = process_get_current();
+    else
+        p = process_get_by_pid((uint32_t)pid);
+    if (!p || p->state == PROCESS_UNUSED)
+        return (uint64_t)(int64_t)-ESRCH;
     return p->pgid;
 }
 
@@ -3044,7 +3221,8 @@ static uint64_t sys_shmctl(uint64_t id, uint64_t cmd, uint64_t arg) {
     if (ccmd == 1) {
         struct shm_perm sp;
         int ret = shm_perm_get(cid, &sp);
-        if (ret < 0) return (uint64_t)(int64_t)ret;
+        if (ret < 0)
+            return (uint64_t)(int64_t)ret;
         if (copy_to_user((uint64_t)(uintptr_t)arg, &sp, sizeof(sp)) < 0)
             return (uint64_t)-1;
         return 0;
@@ -3055,8 +3233,8 @@ static uint64_t sys_shmctl(uint64_t id, uint64_t cmd, uint64_t arg) {
 
 /* ── semctl() — System V semaphore control (simplified IPC_STAT/IPC_SET) ─── */
 struct sem_perm {
-    int      key;
-    int      semval;
+    int key;
+    int semval;
     uint32_t uid;
     uint32_t gid;
     uint16_t mode;
@@ -3068,7 +3246,8 @@ static uint64_t sys_semctl(uint64_t semid, uint64_t semnum, uint64_t cmd, uint64
 
     /* Get current IPC namespace */
     struct ipc_namespace *ns = ipc_ns_current();
-    if (!ns) return (uint64_t)-1;
+    if (!ns)
+        return (uint64_t)-1;
 
     /* Validate semid */
     int sid = (int)semid;
@@ -3078,11 +3257,11 @@ static uint64_t sys_semctl(uint64_t semid, uint64_t semnum, uint64_t cmd, uint64
     /* SEMCTL_IPC_STAT (1): copy semaphore metadata to user space */
     if (ccmd == 1) {
         struct sem_perm sp;
-        sp.key    = ns->sem_table[sid].key;
+        sp.key = ns->sem_table[sid].key;
         sp.semval = ns->sem_table[sid].semval;
-        sp.uid    = ns->sem_table[sid].uid;
-        sp.gid    = ns->sem_table[sid].gid;
-        sp.mode   = ns->sem_table[sid].mode;
+        sp.uid = ns->sem_table[sid].uid;
+        sp.gid = ns->sem_table[sid].gid;
+        sp.mode = ns->sem_table[sid].mode;
         if (copy_to_user(arg, &sp, sizeof(sp)) < 0)
             return (uint64_t)-1;
         return 0;
@@ -3093,8 +3272,8 @@ static uint64_t sys_semctl(uint64_t semid, uint64_t semnum, uint64_t cmd, uint64
         struct sem_perm sp;
         if (copy_from_user(&sp, arg, sizeof(sp)) < 0)
             return (uint64_t)-1;
-        ns->sem_table[sid].uid  = sp.uid;
-        ns->sem_table[sid].gid  = sp.gid;
+        ns->sem_table[sid].uid = sp.uid;
+        ns->sem_table[sid].gid = sp.gid;
         ns->sem_table[sid].mode = sp.mode;
         return 0;
     }
@@ -3106,10 +3285,11 @@ static uint64_t sys_fork(void) {
     return (uint64_t)(int64_t)process_fork();
 }
 
-static uint64_t sys_clone(uint64_t flags, uint64_t child_stack, uint64_t ptid,
-                           uint64_t tls, uint64_t ctid) {
+static uint64_t sys_clone(uint64_t flags, uint64_t child_stack, uint64_t ptid, uint64_t tls,
+                          uint64_t ctid) {
     struct process *parent = process_get_current();
-    if (!parent) return (uint64_t)(int64_t)-EAGAIN;
+    if (!parent)
+        return (uint64_t)(int64_t)-EAGAIN;
 
     /* ── Validate flag combinations (Linux-compatible) ───────────── */
     /* CLONE_THREAD requires CLONE_VM (cannot share TGID without VM) */
@@ -3130,8 +3310,7 @@ static uint64_t sys_clone(uint64_t flags, uint64_t child_stack, uint64_t ptid,
          * before the child runs.  We do this after clone returns
          * when we know the child PID. */
 
-        int ret = process_clone(parent, flags, (void *)child_stack,
-                                user_rip, user_rflags);
+        int ret = process_clone(parent, flags, (void *)child_stack, user_rip, user_rflags);
         if (ret < 0)
             return (uint64_t)(int64_t)ret;
 
@@ -3170,14 +3349,15 @@ static uint64_t sys_clone(uint64_t flags, uint64_t child_stack, uint64_t ptid,
             uint64_t saved_fs_base = ((uint64_t)hi << 32) | lo;
 
             /* Set child's FS base */
-            __asm__ volatile("wrmsr" : : "c"(0xC0000100ULL),
-                             "a"((uint32_t)tls),
-                             "d"((uint32_t)(tls >> 32)));
+            __asm__ volatile("wrmsr"
+                             :
+                             : "c"(0xC0000100ULL), "a"((uint32_t)tls), "d"((uint32_t)(tls >> 32)));
 
             /* Restore parent's FS base */
-            __asm__ volatile("wrmsr" : : "c"(0xC0000100ULL),
-                             "a"((uint32_t)saved_fs_base),
-                             "d"((uint32_t)(saved_fs_base >> 32)));
+            __asm__ volatile("wrmsr"
+                             :
+                             : "c"(0xC0000100ULL), "a"((uint32_t)saved_fs_base),
+                               "d"((uint32_t)(saved_fs_base >> 32)));
         }
 
         /* ── CLONE_VFORK: block parent until child exec/exit ──── */
@@ -3194,8 +3374,7 @@ static uint64_t sys_clone(uint64_t flags, uint64_t child_stack, uint64_t ptid,
 
     /* Kernel-mode clone: create a thread that calls a function.
      * child_stack is actually a function pointer for kernel threads. */
-    int ret = process_clone(parent, flags, (void *)child_stack,
-                            0, 0);
+    int ret = process_clone(parent, flags, (void *)child_stack, 0, 0);
     return (uint64_t)(int64_t)ret;
 }
 
@@ -3214,7 +3393,8 @@ static uint64_t sys_clone(uint64_t flags, uint64_t child_stack, uint64_t ptid,
  */
 static uint64_t sys_clone3(uint64_t uargs_addr, uint64_t size) {
     struct process *parent = process_get_current();
-    if (!parent) return (uint64_t)(int64_t)-EAGAIN;
+    if (!parent)
+        return (uint64_t)(int64_t)-EAGAIN;
 
     /*
      * The size must be at least CLONE_ARGS_SIZE_VER0.
@@ -3261,8 +3441,7 @@ static uint64_t sys_clone3(uint64_t uargs_addr, uint64_t size) {
     uint64_t user_rflags = syscall_user_rflags;
 
     if (parent->is_user) {
-        int ret = process_clone(parent, flags, child_stack,
-                                user_rip, user_rflags);
+        int ret = process_clone(parent, flags, child_stack, user_rip, user_rflags);
         if (ret < 0)
             return (uint64_t)(int64_t)ret;
 
@@ -3271,8 +3450,7 @@ static uint64_t sys_clone3(uint64_t uargs_addr, uint64_t size) {
         /* ── CLONE_PARENT_SETTID: write child PID to *parent_tid ── */
         if ((flags & CLONE_PARENT_SETTID) && args.parent_tid && child) {
             uint32_t child_pid = (uint32_t)ret;
-            int uerr = copy_to_user(args.parent_tid, &child_pid,
-                                    sizeof(child_pid));
+            int uerr = copy_to_user(args.parent_tid, &child_pid, sizeof(child_pid));
             if (uerr < 0)
                 return (uint64_t)(int64_t)-EFAULT;
         }
@@ -3280,8 +3458,7 @@ static uint64_t sys_clone3(uint64_t uargs_addr, uint64_t size) {
         /* ── CLONE_CHILD_SETTID: write child PID to *child_tid ──── */
         if ((flags & CLONE_CHILD_SETTID) && args.child_tid && child) {
             uint32_t child_pid = (uint32_t)ret;
-            int uerr = copy_to_user(args.child_tid, &child_pid,
-                                    sizeof(child_pid));
+            int uerr = copy_to_user(args.child_tid, &child_pid, sizeof(child_pid));
             if (uerr < 0)
                 return (uint64_t)(int64_t)-EFAULT;
         }
@@ -3294,21 +3471,17 @@ static uint64_t sys_clone3(uint64_t uargs_addr, uint64_t size) {
         /* ── CLONE_SETTLS: set TLS (FS base) for child ──────────── */
         if ((flags & CLONE_SETTLS) && child) {
             uint32_t lo, hi;
-            __asm__ volatile("rdmsr"
-                             : "=a"(lo), "=d"(hi)
-                             : "c"(0xC0000100ULL));
+            __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(0xC0000100ULL));
             uint64_t saved_fs_base = ((uint64_t)hi << 32) | lo;
 
             __asm__ volatile("wrmsr"
                              :
-                             : "c"(0xC0000100ULL),
-                               "a"((uint32_t)args.tls),
+                             : "c"(0xC0000100ULL), "a"((uint32_t)args.tls),
                                "d"((uint32_t)(args.tls >> 32)));
 
             __asm__ volatile("wrmsr"
                              :
-                             : "c"(0xC0000100ULL),
-                               "a"((uint32_t)saved_fs_base),
+                             : "c"(0xC0000100ULL), "a"((uint32_t)saved_fs_base),
                                "d"((uint32_t)(saved_fs_base >> 32)));
         }
 
@@ -3331,8 +3504,7 @@ static uint64_t sys_clone3(uint64_t uargs_addr, uint64_t size) {
             int pidfd = pidfd_open((uint32_t)ret, 0);
             if (pidfd >= 0) {
                 uint32_t pidfd_u32 = (uint32_t)pidfd;
-                int uerr = copy_to_user(args.pidfd, &pidfd_u32,
-                                        sizeof(pidfd_u32));
+                int uerr = copy_to_user(args.pidfd, &pidfd_u32, sizeof(pidfd_u32));
                 if (uerr < 0) {
                     /* pidfd leaked on failure, but that's acceptable */
                 }
@@ -3365,13 +3537,11 @@ static uint64_t sys_clone3(uint64_t uargs_addr, uint64_t size) {
  *
  * Returns 0 on success, -1 with errno on failure.
  */
-static uint64_t sys_unshare(uint64_t flags)
-{
+static uint64_t sys_unshare(uint64_t flags) {
     /* Only the namespace-related bits are accepted — all other flags
      * (CLONE_VM, CLONE_THREAD, etc.) are invalid for unshare. */
-    uint64_t ns_mask = CLONE_NEWNS | CLONE_NEWUTS | CLONE_NEWPID |
-                       CLONE_NEWNET | CLONE_NEWIPC | CLONE_NEWCGROUP |
-                       CLONE_NEWTIME | CLONE_NEWUSER;
+    uint64_t ns_mask = CLONE_NEWNS | CLONE_NEWUTS | CLONE_NEWPID | CLONE_NEWNET | CLONE_NEWIPC |
+                       CLONE_NEWCGROUP | CLONE_NEWTIME | CLONE_NEWUSER;
 
     if (flags & ~ns_mask)
         return (uint64_t)-EINVAL;
@@ -3386,13 +3556,11 @@ static uint64_t sys_unshare(uint64_t flags)
          * Future sethostname() calls on this process will only affect
          * its own copy. */
         const char *host = sysctl_get_hostname();
-        strncpy(cur->ns_hostname, host ? host : "localhost",
-                sizeof(cur->ns_hostname) - 1);
+        strncpy(cur->ns_hostname, host ? host : "localhost", sizeof(cur->ns_hostname) - 1);
         cur->ns_hostname[sizeof(cur->ns_hostname) - 1] = '\0';
 
         /* Also copy the domainname from the system default */
-        strncpy(cur->ns_domainname, "(none)",
-                sizeof(cur->ns_domainname) - 1);
+        strncpy(cur->ns_domainname, "(none)", sizeof(cur->ns_domainname) - 1);
         cur->ns_domainname[sizeof(cur->ns_domainname) - 1] = '\0';
     }
 
@@ -3432,17 +3600,16 @@ static uint64_t sys_unshare(uint64_t flags)
     /* ── CLONE_NEWCGROUP: create a new cgroup namespace (Item 117) ── */
     if (flags & CLONE_NEWCGROUP) {
         /* Snapshot current cgroup path as the namespace root */
-        const char *cur_path = "/sys/fs/cgroup";  /* default cgroup path */
+        const char *cur_path = "/sys/fs/cgroup"; /* default cgroup path */
         struct cgroup_namespace *new_ns = cgroup_ns_create(cur_path);
         if (!new_ns) {
-            return (uint64_t)-1;  /* ENOMEM */
+            return (uint64_t)-1; /* ENOMEM */
         }
         /* Drop the old reference and take the new one */
         if (cur->cgroup_ns)
             cgroup_ns_put(cur->cgroup_ns);
         cur->cgroup_ns = new_ns;
-        kprintf("[CGROUP_NS] unshare(NEWCGROUP): PID %d, root='%s'\n",
-                cur->pid, new_ns->root_path);
+        kprintf("[CGROUP_NS] unshare(NEWCGROUP): PID %d, root='%s'\n", cur->pid, new_ns->root_path);
     }
 
     /* ── CLONE_NEWTIME: create a fresh time namespace ─────────── */
@@ -3459,9 +3626,8 @@ static uint64_t sys_unshare(uint64_t flags)
 
     /* ── CLONE_NEWUSER: create a new user namespace (Item 114) ──── */
     if (flags & CLONE_NEWUSER) {
-        struct user_namespace *new_ns = user_ns_create(
-            cur->user_ns ? cur->user_ns : &init_user_ns,
-            cur->uid, cur->gid);
+        struct user_namespace *new_ns =
+            user_ns_create(cur->user_ns ? cur->user_ns : &init_user_ns, cur->uid, cur->gid);
         if (!new_ns) {
             return (uint64_t)-ENOMEM;
         }
@@ -3470,12 +3636,12 @@ static uint64_t sys_unshare(uint64_t flags)
          * The caller's UID/GID in the parent namespace are mapped to 0
          * inside.  Set the process's euid to reflect root-equivalent
          * privileges inside this namespace. */
-        cur->uid  = 0;
-        cur->gid  = 0;
+        cur->uid = 0;
+        cur->gid = 0;
         cur->euid = 0;
         cur->egid = 0;
-        kprintf("[USERNS] unshare(NEWUSER): PID %d is root in new namespace id=%d\n",
-                cur->pid, new_ns->id);
+        kprintf("[USERNS] unshare(NEWUSER): PID %d is root in new namespace id=%d\n", cur->pid,
+                new_ns->id);
     }
 
     /* Record the set of unshared namespace flags on this process.
@@ -3500,15 +3666,17 @@ static uint64_t sys_unshare(uint64_t flags)
  * Other namespace types are accepted but treated as no-ops (the
  * infrastructure will be extended as namespace isolation is deepened).
  */
-static uint64_t sys_setns(uint64_t fd, uint64_t nstype)
-{
+static uint64_t sys_setns(uint64_t fd, uint64_t nstype) {
     struct process *cur = process_get_current();
-    if (!cur) return (uint64_t)-EINVAL;
+    if (!cur)
+        return (uint64_t)-EINVAL;
 
     /* Validate that fd is in range and in use */
-    if (fd >= PROCESS_FD_MAX) return (uint64_t)-EBADF;
+    if (fd >= PROCESS_FD_MAX)
+        return (uint64_t)-EBADF;
     struct process_fd *pfd = &cur->fd_table[fd];
-    if (!pfd->used) return (uint64_t)-EBADF;
+    if (!pfd->used)
+        return (uint64_t)-EBADF;
 
     /* Parse the fd's path to extract the namespace type and target PID.
      * Expected path format: "/proc/<pid>/ns/<type>" */
@@ -3522,7 +3690,8 @@ static uint64_t sys_setns(uint64_t fd, uint64_t nstype)
     int got_pid = 0;
     while (*p >= '0' && *p <= '9') {
         target_pid = target_pid * 10 + (uint32_t)(*p - '0');
-        p++; got_pid = 1;
+        p++;
+        got_pid = 1;
     }
     if (!got_pid || *p != '/')
         return (uint64_t)-EINVAL;
@@ -3567,12 +3736,10 @@ static uint64_t sys_setns(uint64_t fd, uint64_t nstype)
     switch (discovered_nstype) {
     case CLONE_NEWUTS:
         /* Copy hostname and domainname from target process */
-        strncpy(cur->ns_hostname, target->ns_hostname[0]
-                ? target->ns_hostname : "localhost",
+        strncpy(cur->ns_hostname, target->ns_hostname[0] ? target->ns_hostname : "localhost",
                 sizeof(cur->ns_hostname) - 1);
         cur->ns_hostname[sizeof(cur->ns_hostname) - 1] = '\0';
-        strncpy(cur->ns_domainname,
-                target->ns_domainname[0] ? target->ns_domainname : "(none)",
+        strncpy(cur->ns_domainname, target->ns_domainname[0] ? target->ns_domainname : "(none)",
                 sizeof(cur->ns_domainname) - 1);
         cur->ns_domainname[sizeof(cur->ns_domainname) - 1] = '\0';
         cur->ns_flags |= CLONE_NEWUTS;
@@ -3652,13 +3819,15 @@ static void sys_thread_exit(void *retval) {
 
 static uint64_t sys_gettid(void) {
     struct process *p = process_get_current();
-    if (!p) return 0;
+    if (!p)
+        return 0;
     return (uint64_t)p->tgid ? (uint64_t)p->tgid : (uint64_t)p->pid;
 }
 
 uint64_t sys_set_tid_address(uint64_t tidptr) {
     struct process *p = process_get_current();
-    if (!p) return (uint64_t)-ESRCH;
+    if (!p)
+        return (uint64_t)-ESRCH;
     /* Save the old clear_child_tid pointer and set the new one.
      * On thread exit, the kernel writes 0 to *clear_child_tid and
      * performs a futex wake on that address (see process_exit_code). */
@@ -3673,7 +3842,8 @@ static uint64_t sys_execve(uint64_t path_addr, uint64_t argv_addr, uint64_t envp
         return (uint64_t)(int64_t)-EFAULT;
     const char *path = kpath;
     /* For now, ignore argv/envp */
-    (void)argv_addr; (void)envp_addr;
+    (void)argv_addr;
+    (void)envp_addr;
 
     /* IMA appraisal: measure executable file before execution */
     {
@@ -3701,8 +3871,7 @@ static uint64_t sys_execve(uint64_t path_addr, uint64_t argv_addr, uint64_t envp
  *
  * Returns child PID on success, -errno on failure.
  */
-static uint64_t sys_posix_spawn(uint64_t path_addr, uint64_t argv_addr, uint64_t envp_addr)
-{
+static uint64_t sys_posix_spawn(uint64_t path_addr, uint64_t argv_addr, uint64_t envp_addr) {
     struct process *cur = process_get_current();
     if (!cur || !cur->is_user)
         return (uint64_t)(int64_t)-ECHILD;
@@ -3732,7 +3901,8 @@ static uint64_t sys_posix_spawn(uint64_t path_addr, uint64_t argv_addr, uint64_t
             uint64_t ptr = 0;
             if (copy_from_user(&ptr, argv_addr + (uint64_t)argc * 8, 8) < 0)
                 break;
-            if (ptr == 0) break;
+            if (ptr == 0)
+                break;
             if (!syscall_user_cstr_ok(ptr))
                 return (uint64_t)(int64_t)-EFAULT;
             argv_ptr[argc] = ptr;
@@ -3749,7 +3919,8 @@ static uint64_t sys_posix_spawn(uint64_t path_addr, uint64_t argv_addr, uint64_t
             uint64_t ptr = 0;
             if (copy_from_user(&ptr, envp_addr + (uint64_t)envc * 8, 8) < 0)
                 break;
-            if (ptr == 0) break;
+            if (ptr == 0)
+                break;
             if (!syscall_user_cstr_ok(ptr))
                 return (uint64_t)(int64_t)-EFAULT;
             envp_ptr[envc] = ptr;
@@ -3771,14 +3942,18 @@ static uint64_t sys_posix_spawn(uint64_t path_addr, uint64_t argv_addr, uint64_t
 
 static uint64_t sys_mseal(uint64_t addr, uint64_t length, uint64_t flags) {
     struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)(int64_t)-ENOMEM;
+    if (!proc)
+        return (uint64_t)(int64_t)-ENOMEM;
 
     /* Address must be page-aligned */
-    if (addr & (PAGE_SIZE - 1)) return (uint64_t)(int64_t)-EINVAL;
+    if (addr & (PAGE_SIZE - 1))
+        return (uint64_t)(int64_t)-EINVAL;
 
     length = (length + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
-    if (addr + length < addr) return (uint64_t)(int64_t)-EINVAL;
-    if (addr + length > USER_VADDR_MAX) return (uint64_t)(int64_t)-EFAULT;
+    if (addr + length < addr)
+        return (uint64_t)(int64_t)-EINVAL;
+    if (addr + length > USER_VADDR_MAX)
+        return (uint64_t)(int64_t)-EFAULT;
 
     int ret = mseal(addr, length, (int)flags);
     return ret < 0 ? (uint64_t)(int64_t)ret : 0;
@@ -3810,7 +3985,8 @@ static uint64_t sys_sched_setaffinity(uint64_t pid, uint64_t cpuset) {
     } else {
         proc = process_get_by_pid((uint32_t)pid);
     }
-    if (!proc) return (uint64_t)(int64_t)-ESRCH;
+    if (!proc)
+        return (uint64_t)(int64_t)-ESRCH;
     /* Only the low 8 bits represent CPU affinity; bit 0 = CPU 0, etc. */
     proc->cpu_affinity = (uint8_t)(cpuset & 0xFF);
     return 0;
@@ -3823,7 +3999,8 @@ static uint64_t sys_sched_getaffinity(uint64_t pid) {
     } else {
         proc = process_get_by_pid((uint32_t)pid);
     }
-    if (!proc) return (uint64_t)(int64_t)-ESRCH;
+    if (!proc)
+        return (uint64_t)(int64_t)-ESRCH;
     return (uint64_t)proc->cpu_affinity;
 }
 
@@ -3834,20 +4011,23 @@ static int fd_find_free(struct process *proc) {
     /* Count open FDs and check against RLIMIT_NOFILE */
     int open_count = 0;
     for (int i = 0; i < PROCESS_FD_MAX; i++) {
-        if (proc->fd_table[i].used) open_count++;
+        if (proc->fd_table[i].used)
+            open_count++;
     }
     if ((uint64_t)open_count >= proc->rlim_cur[RLIMIT_NOFILE])
         return -1;
     /* Find first free slot */
     for (int i = 0; i < PROCESS_FD_MAX; i++) {
-        if (!proc->fd_table[i].used) return i;
+        if (!proc->fd_table[i].used)
+            return i;
     }
     return -1;
 }
 
 static uint64_t sys_dup(uint64_t old_fd) {
     struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)(int64_t)-EPERM;
+    if (!proc)
+        return (uint64_t)(int64_t)-EPERM;
     if (old_fd >= PROCESS_FD_MAX || !proc->fd_table[old_fd].used)
         return (uint64_t)(int64_t)-EBADF;
 
@@ -3867,7 +4047,8 @@ static uint64_t sys_dup(uint64_t old_fd) {
 
 static uint64_t sys_dup2(uint64_t old_fd, uint64_t new_fd) {
     struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)(int64_t)-EPERM;
+    if (!proc)
+        return (uint64_t)(int64_t)-EPERM;
 
     /* Only fd >= 3 are stored in fd_table (fd 0/1/2 are stdin/stdout/stderr
      * handled specially in read/write paths).  Reject fds < 3 with EBADF. */
@@ -3883,7 +4064,8 @@ static uint64_t sys_dup2(uint64_t old_fd, uint64_t new_fd) {
         return (uint64_t)(int64_t)-EBADF;
 
     /* If both map to the same table slot, nothing to do */
-    if (old_idx == new_idx) return new_fd;
+    if (old_idx == new_idx)
+        return new_fd;
 
     uint64_t __dup2_irq;
     spinlock_irqsave_acquire(&proc->fd_table_lock, &__dup2_irq);
@@ -3922,257 +4104,272 @@ static uint64_t sys_dup2(uint64_t old_fd, uint64_t new_fd) {
 
 /* ── fcntl ──────────────────────────────────────────────────── */
 
-#define F_DUPFD   0
-#define F_GETFD   1
-#define F_SETFD   2
-#define F_GETFL   3
-#define F_SETFL   4
-#define F_SETOWN  5
-#define F_GETOWN  6
-#define F_SETLK   7
-#define F_SETLKW  8
-#define F_GETLK   9
+#define F_DUPFD 0
+#define F_GETFD 1
+#define F_SETFD 2
+#define F_GETFL 3
+#define F_SETFL 4
+#define F_SETOWN 5
+#define F_GETOWN 6
+#define F_SETLK 7
+#define F_SETLKW 8
+#define F_GETLK 9
 #define F_DUPFD_CLOEXEC 10
-#define F_OFD_SETLK  37
+#define F_OFD_SETLK 37
 #define F_OFD_SETLKW 38
-#define F_OFD_GETLK  39
+#define F_OFD_GETLK 39
 #define F_SETPIPE_SZ 1031
 #define F_GETPIPE_SZ 1032
-#define O_ASYNC   0x2000
+#define O_ASYNC 0x2000
 /* O_NONBLOCK is defined in types.h (04000) */
 
 static uint64_t sys_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg) {
     struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)(int64_t)-ESRCH;
+    if (!proc)
+        return (uint64_t)(int64_t)-ESRCH;
     if (fd >= PROCESS_FD_MAX || !proc->fd_table[fd].used)
         return (uint64_t)(int64_t)-EBADF;
 
     switch (cmd) {
-        case F_DUPFD: {
-            /* Duplicate fd to lowest FD >= arg */
-            int new_fd = (int)arg;
-            if (new_fd < 0) new_fd = 0;
-            if (new_fd >= PROCESS_FD_MAX) return (uint64_t)(int64_t)-EINVAL;
-            /* Enforce RLIMIT_NOFILE */
-            int open_count = 0;
-            for (int i = 0; i < PROCESS_FD_MAX; i++) {
-                if (proc->fd_table[i].used) open_count++;
-            }
-            if ((uint64_t)open_count >= proc->rlim_cur[RLIMIT_NOFILE])
-                return (uint64_t)(int64_t)-EMFILE;
-            uint64_t __fc_irq;
-            spinlock_irqsave_acquire(&proc->fd_table_lock, &__fc_irq);
-            while (new_fd < PROCESS_FD_MAX && proc->fd_table[new_fd].used)
-                new_fd++;
-            if (new_fd >= PROCESS_FD_MAX) {
-                spinlock_irqsave_release(&proc->fd_table_lock, __fc_irq);
-                return (uint64_t)(int64_t)-EMFILE;
-            }
-            proc->fd_table[new_fd] = proc->fd_table[fd];
+    case F_DUPFD: {
+        /* Duplicate fd to lowest FD >= arg */
+        int new_fd = (int)arg;
+        if (new_fd < 0)
+            new_fd = 0;
+        if (new_fd >= PROCESS_FD_MAX)
+            return (uint64_t)(int64_t)-EINVAL;
+        /* Enforce RLIMIT_NOFILE */
+        int open_count = 0;
+        for (int i = 0; i < PROCESS_FD_MAX; i++) {
+            if (proc->fd_table[i].used)
+                open_count++;
+        }
+        if ((uint64_t)open_count >= proc->rlim_cur[RLIMIT_NOFILE])
+            return (uint64_t)(int64_t)-EMFILE;
+        uint64_t __fc_irq;
+        spinlock_irqsave_acquire(&proc->fd_table_lock, &__fc_irq);
+        while (new_fd < PROCESS_FD_MAX && proc->fd_table[new_fd].used)
+            new_fd++;
+        if (new_fd >= PROCESS_FD_MAX) {
             spinlock_irqsave_release(&proc->fd_table_lock, __fc_irq);
-            return (uint64_t)new_fd;
+            return (uint64_t)(int64_t)-EMFILE;
         }
-        case F_GETFD:
-            /* Only return userspace-visible flags (FD_CLOEXEC) */
-            return (uint64_t)(proc->fd_table[fd].flags & FD_CLOEXEC);
-        case F_SETFD:
-            /* Only FD_CLOEXEC (bit 0) is a valid flag; reject everything else */
-            if (arg & ~(uint64_t)FD_CLOEXEC)
-                return (uint64_t)(int64_t)-EINVAL;
-            proc->fd_table[fd].flags = (uint8_t)arg;
-            return 0;
-        case F_GETFL:
-            /* Return simulated flags (always RDWR for now) */
-            return 2; /* O_RDWR */
-        case F_SETFL: {
-            /* Handle O_NONBLOCK for pipe FDs */
-            uint8_t nonblock = (arg & O_NONBLOCK) ? 1 : 0;
-            /* Handle O_ASYNC for pipe FDs */
-            if (arg & O_ASYNC) {
-                proc->fd_table[fd].sigio_pid = process_get_current()->pid;
-            }
-            /* Try to find pipe ID from fd path pattern */
-            if (strncmp(proc->fd_table[fd].path, "pipe_", 5) == 0) {
-                int pid = (int)proc->fd_table[fd].offset;
-                pipe_set_nonblock(pid, nonblock);
-                if (arg & O_ASYNC)
-                    pipe_set_sigio(pid, process_get_current()->pid);
-            }
-            return 0;
+        proc->fd_table[new_fd] = proc->fd_table[fd];
+        spinlock_irqsave_release(&proc->fd_table_lock, __fc_irq);
+        return (uint64_t)new_fd;
+    }
+    case F_GETFD:
+        /* Only return userspace-visible flags (FD_CLOEXEC) */
+        return (uint64_t)(proc->fd_table[fd].flags & FD_CLOEXEC);
+    case F_SETFD:
+        /* Only FD_CLOEXEC (bit 0) is a valid flag; reject everything else */
+        if (arg & ~(uint64_t)FD_CLOEXEC)
+            return (uint64_t)(int64_t)-EINVAL;
+        proc->fd_table[fd].flags = (uint8_t)arg;
+        return 0;
+    case F_GETFL:
+        /* Return simulated flags (always RDWR for now) */
+        return 2; /* O_RDWR */
+    case F_SETFL: {
+        /* Handle O_NONBLOCK for pipe FDs */
+        uint8_t nonblock = (arg & O_NONBLOCK) ? 1 : 0;
+        /* Handle O_ASYNC for pipe FDs */
+        if (arg & O_ASYNC) {
+            proc->fd_table[fd].sigio_pid = process_get_current()->pid;
         }
-        case F_SETOWN: {
-            /* Set the owner PID for SIGIO */
-            proc->fd_table[fd].sigio_pid = (uint32_t)arg;
-            return 0;
+        /* Try to find pipe ID from fd path pattern */
+        if (strncmp(proc->fd_table[fd].path, "pipe_", 5) == 0) {
+            int pid = (int)proc->fd_table[fd].offset;
+            pipe_set_nonblock(pid, nonblock);
+            if (arg & O_ASYNC)
+                pipe_set_sigio(pid, process_get_current()->pid);
         }
-        case F_GETOWN: {
-            /* Get the owner PID for SIGIO */
-            return (uint64_t)proc->fd_table[fd].sigio_pid;
+        return 0;
+    }
+    case F_SETOWN: {
+        /* Set the owner PID for SIGIO */
+        proc->fd_table[fd].sigio_pid = (uint32_t)arg;
+        return 0;
+    }
+    case F_GETOWN: {
+        /* Get the owner PID for SIGIO */
+        return (uint64_t)proc->fd_table[fd].sigio_pid;
+    }
+    case F_SETPIPE_SZ: {
+        /* Set pipe buffer capacity (must be a pipe FD).
+         * Linux rounds the requested size up to PAGE_SIZE. */
+        if (strncmp(proc->fd_table[fd].path, "pipe_", 5) != 0)
+            return (uint64_t)(int64_t)-EINVAL;
+        int pipe_id = (int)proc->fd_table[fd].offset;
+        int new_sz = (int)arg;
+        /* Round up to PAGE_SIZE (limit overflows to PIPE_MAX_SIZE) */
+        if (new_sz > PIPE_MAX_SIZE - PAGE_SIZE)
+            new_sz = PIPE_MAX_SIZE;
+        else
+            new_sz = ((new_sz + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1));
+        int ret = pipe_set_capacity(pipe_id, new_sz);
+        if (ret < 0)
+            return (uint64_t)(int64_t)ret;
+        return (uint64_t)ret;
+    }
+    case F_GETPIPE_SZ: {
+        /* Get pipe buffer capacity */
+        if (strncmp(proc->fd_table[fd].path, "pipe_", 5) != 0)
+            return (uint64_t)(int64_t)-EINVAL;
+        int pipe_id = (int)proc->fd_table[fd].offset;
+        int ret = pipe_get_capacity(pipe_id);
+        if (ret < 0)
+            return (uint64_t)(int64_t)ret;
+        return (uint64_t)ret;
+    }
+    case F_SETLK:
+    case F_SETLKW: {
+        /* Advisory record locking via file_lock.c */
+        struct flock {
+            int16_t l_type;
+            int16_t l_whence;
+            int64_t l_start;
+            int64_t l_len;
+            int32_t l_pid;
+        } __attribute__((packed));
+
+        struct flock user_flk;
+        if (!arg)
+            return (uint64_t)(int64_t)-EFAULT;
+        if (syscall_is_user_process() && !syscall_user_read_ok(arg, sizeof(user_flk)))
+            return (uint64_t)(int64_t)-EFAULT;
+        if (copy_from_user(&user_flk, arg, sizeof(user_flk)) < 0)
+            return (uint64_t)(int64_t)-EFAULT;
+
+        /* Convert to kernel struct file_lock */
+        struct file_lock kflk;
+        memset(&kflk, 0, sizeof(kflk));
+        kflk.l_type = (int)user_flk.l_type;
+        kflk.l_whence = (int)user_flk.l_whence;
+        kflk.l_start = user_flk.l_start;
+        kflk.l_len = user_flk.l_len;
+        kflk.l_pid = user_flk.l_pid;
+        kflk.used = true;
+        kflk.mandatory = 0;
+
+        /* Get file path from fd table */
+        const char *fpath = proc->fd_table[fd].path;
+        if (!fpath || !fpath[0])
+            return (uint64_t)(int64_t)-EBADF;
+
+        int wait_flag = (cmd == F_SETLKW) ? 1 : 0;
+        int rc = file_lock_set(fpath, &kflk, wait_flag);
+        if (rc < 0) {
+            if (rc == -EAGAIN)
+                return (uint64_t)(int64_t)-EAGAIN;
+            if (rc == -ENOLCK)
+                return (uint64_t)(int64_t)-ENOLCK;
+            return (uint64_t)(int64_t)rc;
         }
-        case F_SETPIPE_SZ: {
-            /* Set pipe buffer capacity (must be a pipe FD).
-             * Linux rounds the requested size up to PAGE_SIZE. */
-            if (strncmp(proc->fd_table[fd].path, "pipe_", 5) != 0)
-                return (uint64_t)(int64_t)-EINVAL;
-            int pipe_id = (int)proc->fd_table[fd].offset;
-            int new_sz = (int)arg;
-            /* Round up to PAGE_SIZE (limit overflows to PIPE_MAX_SIZE) */
-            if (new_sz > PIPE_MAX_SIZE - PAGE_SIZE)
-                new_sz = PIPE_MAX_SIZE;
-            else
-                new_sz = ((new_sz + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1));
-            int ret = pipe_set_capacity(pipe_id, new_sz);
-            if (ret < 0)
-                return (uint64_t)(int64_t)ret;
-            return (uint64_t)ret;
+        return 0;
+    }
+    case F_GETLK: {
+        /* Test for conflicting lock (fcntl F_GETLK semantics) */
+        struct flock {
+            int16_t l_type;
+            int16_t l_whence;
+            int64_t l_start;
+            int64_t l_len;
+            int32_t l_pid;
+        } __attribute__((packed));
+
+        if (!arg)
+            return (uint64_t)(int64_t)-EFAULT;
+        if (syscall_is_user_process() && !syscall_user_read_ok(arg, sizeof(struct flock)))
+            return (uint64_t)(int64_t)-EFAULT;
+
+        struct flock user_flk;
+        if (copy_from_user(&user_flk, arg, sizeof(user_flk)) < 0)
+            return (uint64_t)(int64_t)-EFAULT;
+
+        /* Get file path */
+        const char *fpath = proc->fd_table[fd].path;
+        if (!fpath || !fpath[0])
+            return (uint64_t)(int64_t)-EBADF;
+
+        /* Convert user's proposed lock to kernel struct */
+        struct file_lock proposed;
+        memset(&proposed, 0, sizeof(proposed));
+        proposed.l_type = (int)user_flk.l_type;
+        proposed.l_whence = (int)user_flk.l_whence;
+        proposed.l_start = user_flk.l_start;
+        proposed.l_len = user_flk.l_len;
+
+        /* Look for a conflicting lock */
+        struct file_lock conflicting;
+        memset(&conflicting, 0, sizeof(conflicting));
+        int rc = file_lock_test(fpath, &proposed, &conflicting);
+        if (rc == -ENOENT) {
+            /* No conflict — return F_UNLCK */
+            user_flk.l_type = F_UNLCK;
+            user_flk.l_whence = 0;
+            user_flk.l_start = 0;
+            user_flk.l_len = 0;
+            user_flk.l_pid = 0;
+        } else if (rc == 0) {
+            /* Conflict found — return the conflicting lock's info */
+            user_flk.l_type = (int16_t)conflicting.l_type;
+            user_flk.l_whence = (int16_t)conflicting.l_whence;
+            user_flk.l_start = conflicting.l_start;
+            user_flk.l_len = conflicting.l_len;
+            user_flk.l_pid = conflicting.l_pid;
+        } else {
+            return (uint64_t)(int64_t)rc;
         }
-        case F_GETPIPE_SZ: {
-            /* Get pipe buffer capacity */
-            if (strncmp(proc->fd_table[fd].path, "pipe_", 5) != 0)
-                return (uint64_t)(int64_t)-EINVAL;
-            int pipe_id = (int)proc->fd_table[fd].offset;
-            int ret = pipe_get_capacity(pipe_id);
-            if (ret < 0)
-                return (uint64_t)(int64_t)ret;
-            return (uint64_t)ret;
+
+        if (syscall_is_user_process() && !syscall_user_write_ok(arg, sizeof(struct flock)))
+            return (uint64_t)(int64_t)-EFAULT;
+        if (copy_to_user(arg, &user_flk, sizeof(user_flk)) < 0)
+            return (uint64_t)(int64_t)-EFAULT;
+        return 0;
+    }
+    case F_DUPFD_CLOEXEC: {
+        /* Duplicate with close-on-exec */
+        int new_fd = (int)arg;
+        if (new_fd < 0)
+            new_fd = 0;
+        if (new_fd >= PROCESS_FD_MAX)
+            return (uint64_t)(int64_t)-EINVAL;
+        /* Enforce RLIMIT_NOFILE */
+        int __cloexec_open_count = 0;
+        for (int i = 0; i < PROCESS_FD_MAX; i++) {
+            if (proc->fd_table[i].used)
+                __cloexec_open_count++;
         }
-        case F_SETLK:
-        case F_SETLKW: {
-            /* Advisory record locking via file_lock.c */
-            struct flock {
-                int16_t l_type;
-                int16_t l_whence;
-                int64_t l_start;
-                int64_t l_len;
-                int32_t l_pid;
-            } __attribute__((packed));
-
-            struct flock user_flk;
-            if (!arg) return (uint64_t)(int64_t)-EFAULT;
-            if (syscall_is_user_process() && !syscall_user_read_ok(arg, sizeof(user_flk)))
-                return (uint64_t)(int64_t)-EFAULT;
-            if (copy_from_user(&user_flk, arg, sizeof(user_flk)) < 0)
-                return (uint64_t)(int64_t)-EFAULT;
-
-            /* Convert to kernel struct file_lock */
-            struct file_lock kflk;
-            memset(&kflk, 0, sizeof(kflk));
-            kflk.l_type   = (int)user_flk.l_type;
-            kflk.l_whence = (int)user_flk.l_whence;
-            kflk.l_start  = user_flk.l_start;
-            kflk.l_len    = user_flk.l_len;
-            kflk.l_pid    = user_flk.l_pid;
-            kflk.used     = true;
-            kflk.mandatory = 0;
-
-            /* Get file path from fd table */
-            const char *fpath = proc->fd_table[fd].path;
-            if (!fpath || !fpath[0]) return (uint64_t)(int64_t)-EBADF;
-
-            int wait_flag = (cmd == F_SETLKW) ? 1 : 0;
-            int rc = file_lock_set(fpath, &kflk, wait_flag);
-            if (rc < 0) {
-                if (rc == -EAGAIN) return (uint64_t)(int64_t)-EAGAIN;
-                if (rc == -ENOLCK) return (uint64_t)(int64_t)-ENOLCK;
-                return (uint64_t)(int64_t)rc;
-            }
-            return 0;
-        }
-        case F_GETLK: {
-            /* Test for conflicting lock (fcntl F_GETLK semantics) */
-            struct flock {
-                int16_t l_type;
-                int16_t l_whence;
-                int64_t l_start;
-                int64_t l_len;
-                int32_t l_pid;
-            } __attribute__((packed));
-
-            if (!arg) return (uint64_t)(int64_t)-EFAULT;
-            if (syscall_is_user_process() && !syscall_user_read_ok(arg, sizeof(struct flock)))
-                return (uint64_t)(int64_t)-EFAULT;
-
-            struct flock user_flk;
-            if (copy_from_user(&user_flk, arg, sizeof(user_flk)) < 0)
-                return (uint64_t)(int64_t)-EFAULT;
-
-            /* Get file path */
-            const char *fpath = proc->fd_table[fd].path;
-            if (!fpath || !fpath[0]) return (uint64_t)(int64_t)-EBADF;
-
-            /* Convert user's proposed lock to kernel struct */
-            struct file_lock proposed;
-            memset(&proposed, 0, sizeof(proposed));
-            proposed.l_type   = (int)user_flk.l_type;
-            proposed.l_whence = (int)user_flk.l_whence;
-            proposed.l_start  = user_flk.l_start;
-            proposed.l_len    = user_flk.l_len;
-
-            /* Look for a conflicting lock */
-            struct file_lock conflicting;
-            memset(&conflicting, 0, sizeof(conflicting));
-            int rc = file_lock_test(fpath, &proposed, &conflicting);
-            if (rc == -ENOENT) {
-                /* No conflict — return F_UNLCK */
-                user_flk.l_type   = F_UNLCK;
-                user_flk.l_whence = 0;
-                user_flk.l_start  = 0;
-                user_flk.l_len    = 0;
-                user_flk.l_pid    = 0;
-            } else if (rc == 0) {
-                /* Conflict found — return the conflicting lock's info */
-                user_flk.l_type   = (int16_t)conflicting.l_type;
-                user_flk.l_whence = (int16_t)conflicting.l_whence;
-                user_flk.l_start  = conflicting.l_start;
-                user_flk.l_len    = conflicting.l_len;
-                user_flk.l_pid    = conflicting.l_pid;
-            } else {
-                return (uint64_t)(int64_t)rc;
-            }
-
-            if (syscall_is_user_process() && !syscall_user_write_ok(arg, sizeof(struct flock)))
-                return (uint64_t)(int64_t)-EFAULT;
-            if (copy_to_user(arg, &user_flk, sizeof(user_flk)) < 0)
-                return (uint64_t)(int64_t)-EFAULT;
-            return 0;
-        }
-        case F_DUPFD_CLOEXEC: {
-            /* Duplicate with close-on-exec */
-            int new_fd = (int)arg;
-            if (new_fd < 0) new_fd = 0;
-            if (new_fd >= PROCESS_FD_MAX) return (uint64_t)(int64_t)-EINVAL;
-            /* Enforce RLIMIT_NOFILE */
-            int __cloexec_open_count = 0;
-            for (int i = 0; i < PROCESS_FD_MAX; i++) {
-                if (proc->fd_table[i].used) __cloexec_open_count++;
-            }
-            if ((uint64_t)__cloexec_open_count >= proc->rlim_cur[RLIMIT_NOFILE])
-                return (uint64_t)(int64_t)-EMFILE;
-            uint64_t __fdc_irq;
-            spinlock_irqsave_acquire(&proc->fd_table_lock, &__fdc_irq);
-            while (new_fd < PROCESS_FD_MAX && proc->fd_table[new_fd].used)
-                new_fd++;
-            if (new_fd >= PROCESS_FD_MAX) {
-                spinlock_irqsave_release(&proc->fd_table_lock, __fdc_irq);
-                return (uint64_t)(int64_t)-EMFILE;
-            }
-            proc->fd_table[new_fd] = proc->fd_table[fd];
-            proc->fd_table[new_fd].flags |= FD_CLOEXEC;
+        if ((uint64_t)__cloexec_open_count >= proc->rlim_cur[RLIMIT_NOFILE])
+            return (uint64_t)(int64_t)-EMFILE;
+        uint64_t __fdc_irq;
+        spinlock_irqsave_acquire(&proc->fd_table_lock, &__fdc_irq);
+        while (new_fd < PROCESS_FD_MAX && proc->fd_table[new_fd].used)
+            new_fd++;
+        if (new_fd >= PROCESS_FD_MAX) {
             spinlock_irqsave_release(&proc->fd_table_lock, __fdc_irq);
-            return (uint64_t)new_fd;
+            return (uint64_t)(int64_t)-EMFILE;
         }
-        case F_ADD_SEALS: {
-            /* Add seals to a memfd */
-            if (!memfd_is_fd((int)fd)) return (uint64_t)(int64_t)-EINVAL;
-            return (uint64_t)memfd_add_seals_fd((int)fd, (int)arg);
-        }
-        case F_GET_SEALS: {
-            /* Get seals from a memfd */
-            if (!memfd_is_fd((int)fd)) return (uint64_t)(int64_t)-EINVAL;
-            return (uint64_t)memfd_get_seals_fd((int)fd);
-        }
-        default:
-            return (uint64_t)-1;
+        proc->fd_table[new_fd] = proc->fd_table[fd];
+        proc->fd_table[new_fd].flags |= FD_CLOEXEC;
+        spinlock_irqsave_release(&proc->fd_table_lock, __fdc_irq);
+        return (uint64_t)new_fd;
+    }
+    case F_ADD_SEALS: {
+        /* Add seals to a memfd */
+        if (!memfd_is_fd((int)fd))
+            return (uint64_t)(int64_t)-EINVAL;
+        return (uint64_t)memfd_add_seals_fd((int)fd, (int)arg);
+    }
+    case F_GET_SEALS: {
+        /* Get seals from a memfd */
+        if (!memfd_is_fd((int)fd))
+            return (uint64_t)(int64_t)-EINVAL;
+        return (uint64_t)memfd_get_seals_fd((int)fd);
+    }
+    default:
+        return (uint64_t)-1;
     }
 }
 
@@ -4196,10 +4393,8 @@ static uint64_t sys_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg) {
  *          -EINTR  if interrupted by a signal
  *          -EINVAL if bad timeout value
  */
-static uint64_t sys_select(uint64_t nfds, uint64_t readfds_addr,
-                            uint64_t writefds_addr, uint64_t exceptfds_addr,
-                            uint64_t timeout_addr)
-{
+static uint64_t sys_select(uint64_t nfds, uint64_t readfds_addr, uint64_t writefds_addr,
+                           uint64_t exceptfds_addr, uint64_t timeout_addr) {
     struct process *cur = process_get_current();
     if (!cur)
         return (uint64_t)(int64_t)-EINTR;
@@ -4326,7 +4521,8 @@ static uint64_t sys_select(uint64_t nfds, uint64_t readfds_addr,
                 if (i >= 100 && i < 100 + SOCK_MAX) {
                     struct socket *s = sock_get(i);
                     if (!s || s->state == SOCK_STATE_CLOSED) {
-                        if (s) sock_put(s);
+                        if (s)
+                            sock_put(s);
                         continue; /* closed socket is exceptional */
                     }
                     sock_put(s);
@@ -4436,7 +4632,8 @@ void process_timer_tick(int was_user) {
             current->itimers[ITIMER_VIRTUAL].it_value--;
             if (current->itimers[ITIMER_VIRTUAL].it_value == 0) {
                 signal_send(current->pid, SIGVTALRM);
-                current->itimers[ITIMER_VIRTUAL].it_value = current->itimers[ITIMER_VIRTUAL].it_interval;
+                current->itimers[ITIMER_VIRTUAL].it_value =
+                    current->itimers[ITIMER_VIRTUAL].it_interval;
             }
         }
     }
@@ -4455,11 +4652,12 @@ void process_timer_tick(int was_user) {
     spinlock_irqsave_release(&proc_table_lock, __it_flags);
 }
 
-static uint64_t sys_setitimer(uint64_t which, uint64_t new_val_addr,
-                               uint64_t old_val_addr) {
+static uint64_t sys_setitimer(uint64_t which, uint64_t new_val_addr, uint64_t old_val_addr) {
     struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)-1;
-    if (which >= ITIMER_MAX) return (uint64_t)-1;
+    if (!proc)
+        return (uint64_t)-1;
+    if (which >= ITIMER_MAX)
+        return (uint64_t)-1;
 
     struct itimerval new_val;
     memset(&new_val, 0, sizeof(new_val));
@@ -4492,9 +4690,12 @@ static uint64_t sys_setitimer(uint64_t which, uint64_t new_val_addr,
 
 static uint64_t sys_getitimer(uint64_t which, uint64_t cur_val_addr) {
     struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)-1;
-    if (which >= ITIMER_MAX) return (uint64_t)-1;
-    if (!cur_val_addr) return (uint64_t)-1;
+    if (!proc)
+        return (uint64_t)-1;
+    if (which >= ITIMER_MAX)
+        return (uint64_t)-1;
+    if (!cur_val_addr)
+        return (uint64_t)-1;
 
     /* Lock: process_timer_tick modifies itimers[] under proc_table_lock */
     uint64_t __gi_flags;
@@ -4512,8 +4713,10 @@ static uint64_t sys_getitimer(uint64_t which, uint64_t cur_val_addr) {
 
 static uint64_t sys_nanosleep(uint64_t req_addr, uint64_t rem_addr) {
     struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)-1;
-    if (!req_addr) return (uint64_t)-1;
+    if (!proc)
+        return (uint64_t)-1;
+    if (!req_addr)
+        return (uint64_t)-1;
 
     struct timespec req;
     if (copy_from_user(&req, req_addr, sizeof(req)) < 0)
@@ -4521,7 +4724,8 @@ static uint64_t sys_nanosleep(uint64_t req_addr, uint64_t rem_addr) {
 
     /* Convert to ticks */
     uint64_t ticks = req.tv_sec * 100 + req.tv_nsec / 10000000;
-    if (ticks == 0 && req.tv_nsec > 0) ticks = 1; /* minimum 1 tick */
+    if (ticks == 0 && req.tv_nsec > 0)
+        ticks = 1; /* minimum 1 tick */
 
     /* Block until timeout, restarting if SA_RESTART is set */
     uint64_t deadline = timer_get_ticks() + ticks;
@@ -4539,7 +4743,7 @@ static uint64_t sys_nanosleep(uint64_t req_addr, uint64_t rem_addr) {
 
         /* Woken early by signal — check SA_RESTART */
         if (proc->pending_signals && signal_has_sa_restart())
-            continue;  /* restart the sleep (SA_RESTART) */
+            continue; /* restart the sleep (SA_RESTART) */
 
         /* Compute remaining and return -EINTR */
         if (rem_addr) {
@@ -4559,22 +4763,22 @@ static uint64_t sys_nanosleep(uint64_t req_addr, uint64_t rem_addr) {
 
 /* ── sysconf ────────────────────────────────────────────────── */
 
-#define _SC_CLK_TCK       2
-#define _SC_PAGESIZE      30
+#define _SC_CLK_TCK 2
+#define _SC_PAGESIZE 30
 #define _SC_NPROCESSORS_CONF 83
 #define _SC_NPROCESSORS_ONLN 84
 
 static uint64_t sys_sysconf(uint64_t name) {
     switch (name) {
-        case _SC_CLK_TCK:
-            return 100;  /* PIT frequency */
-        case _SC_PAGESIZE:
-            return PAGE_SIZE;
-        case _SC_NPROCESSORS_CONF:
-        case _SC_NPROCESSORS_ONLN:
-            return (uint64_t)smp_get_cpu_count();
-        default:
-            return (uint64_t)-1;
+    case _SC_CLK_TCK:
+        return 100; /* PIT frequency */
+    case _SC_PAGESIZE:
+        return PAGE_SIZE;
+    case _SC_NPROCESSORS_CONF:
+    case _SC_NPROCESSORS_ONLN:
+        return (uint64_t)smp_get_cpu_count();
+    default:
+        return (uint64_t)-1;
     }
 }
 
@@ -4586,14 +4790,16 @@ static char system_hostname[HOSTNAME_MAX] = "os";
 /* ── uname ──────────────────────────────────────────────────── */
 
 static uint64_t sys_uname(uint64_t buf_addr) {
-    if (!buf_addr) return (uint64_t)(int64_t)-EFAULT;
+    if (!buf_addr)
+        return (uint64_t)(int64_t)-EFAULT;
     struct utsname buf;
     memset(&buf, 0, sizeof(buf));
     memcpy(buf.sysname, "Linux", 6);
     {
         struct process *proc = process_get_current();
         const char *node = proc ? proc->ns_hostname : system_hostname;
-        if (!node || !*node) node = "localhost";
+        if (!node || !*node)
+            node = "localhost";
         size_t nlen = strlen(node);
         if (nlen > sizeof(buf.nodename) - 1)
             nlen = sizeof(buf.nodename) - 1;
@@ -4610,30 +4816,39 @@ static uint64_t sys_uname(uint64_t buf_addr) {
 /* ── pipe() ──────────────────────────────────────────────────── */
 
 static uint64_t sys_pipe(uint64_t fds_addr) {
-    if (!fds_addr) return (uint64_t)(int64_t)-EFAULT;
+    if (!fds_addr)
+        return (uint64_t)(int64_t)-EFAULT;
     struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)(int64_t)-EPERM;
+    if (!proc)
+        return (uint64_t)(int64_t)-EPERM;
 
     /* Count open FDs and check against RLIMIT_NOFILE */
     int open_count = 0;
     for (int i = 0; i < PROCESS_FD_MAX; i++) {
-        if (proc->fd_table[i].used) open_count++;
+        if (proc->fd_table[i].used)
+            open_count++;
     }
     if ((uint64_t)open_count + 1 >= proc->rlim_cur[RLIMIT_NOFILE])
         return (uint64_t)-EMFILE;
 
     int id = pipe_create();
-    if (id < 0) return (uint64_t)(int64_t)-EMFILE;
+    if (id < 0)
+        return (uint64_t)(int64_t)-EMFILE;
 
     /* Allocate two FD slots */
     int read_fd = -1, write_fd = -1;
     for (int i = 0; i < PROCESS_FD_MAX; i++) {
         if (!proc->fd_table[i].used) {
-            if (read_fd < 0) read_fd = i;
-            else if (write_fd < 0) { write_fd = i; break; }
+            if (read_fd < 0)
+                read_fd = i;
+            else if (write_fd < 0) {
+                write_fd = i;
+                break;
+            }
         }
     }
-    if (read_fd < 0 || write_fd < 0) return (uint64_t)(int64_t)-EMFILE;
+    if (read_fd < 0 || write_fd < 0)
+        return (uint64_t)(int64_t)-EMFILE;
 
     /* Store pipe index as part of fd path */
     proc->fd_table[read_fd].used = true;
@@ -4647,8 +4862,9 @@ static uint64_t sys_pipe(uint64_t fds_addr) {
     proc->fd_table[write_fd].flags = 0;
 
     /* Write fds back to userspace */
-    uint32_t fds[2] = { (uint32_t)read_fd, (uint32_t)write_fd };
-    if (copy_to_user(fds_addr, fds, sizeof(fds)) < 0) return (uint64_t)-1;
+    uint32_t fds[2] = {(uint32_t)read_fd, (uint32_t)write_fd};
+    if (copy_to_user(fds_addr, fds, sizeof(fds)) < 0)
+        return (uint64_t)-1;
     return 0;
 }
 
@@ -4656,7 +4872,8 @@ static uint64_t sys_pipe(uint64_t fds_addr) {
 
 static uint64_t sys_getppid(void) {
     struct process *proc = process_get_current();
-    if (!proc) return 0;
+    if (!proc)
+        return 0;
     return (uint64_t)proc->parent_pid;
 }
 
@@ -4664,7 +4881,8 @@ static uint64_t sys_getppid(void) {
 
 static uint64_t sys_alarm(uint64_t seconds) {
     struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)(int64_t)-ESRCH;
+    if (!proc)
+        return (uint64_t)(int64_t)-ESRCH;
 
     /* Convert seconds to ticks (100 Hz) */
     uint64_t ticks = seconds * 100;
@@ -4697,7 +4915,8 @@ static uint64_t sys_pause(void) {
      * terminate the process.  It ALWAYS returns -EINTR — SA_RESTART does
      * NOT apply to pause(). */
     struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)(int64_t)-ESRCH;
+    if (!proc)
+        return (uint64_t)(int64_t)-ESRCH;
 
     for (;;) {
         proc->state = PROCESS_BLOCKED;
@@ -4722,7 +4941,8 @@ static uint64_t sys_access(uint64_t path_addr, uint64_t mode) {
 
     /* Check if file exists */
     struct vfs_stat st;
-    if (vfs_stat(kpath, &st) < 0) return (uint64_t)(int64_t)-ENOENT;
+    if (vfs_stat(kpath, &st) < 0)
+        return (uint64_t)(int64_t)-ENOENT;
 
     /* For now, we don't check permissions (always OK if file exists) */
     (void)mode;
@@ -4733,25 +4953,29 @@ static uint64_t sys_access(uint64_t path_addr, uint64_t mode) {
 
 static uint64_t sys_getuid(void) {
     struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)(int64_t)-ESRCH;
+    if (!proc)
+        return (uint64_t)(int64_t)-ESRCH;
     return (uint64_t)proc->uid;
 }
 
 static uint64_t sys_geteuid(void) {
     struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)(int64_t)-ESRCH;
+    if (!proc)
+        return (uint64_t)(int64_t)-ESRCH;
     return (uint64_t)proc->euid;
 }
 
 static uint64_t sys_getgid(void) {
     struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)(int64_t)-ESRCH;
+    if (!proc)
+        return (uint64_t)(int64_t)-ESRCH;
     return (uint64_t)proc->gid;
 }
 
 static uint64_t sys_getegid(void) {
     struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)(int64_t)-ESRCH;
+    if (!proc)
+        return (uint64_t)(int64_t)-ESRCH;
     return (uint64_t)proc->egid;
 }
 
@@ -4764,7 +4988,8 @@ static uint64_t sys_rmdir(uint64_t path_addr) {
 
     /* Use VFS unlink (same as delete for directories) */
     int ret = vfs_unlink(kpath);
-    if (ret < 0) return (uint64_t)(int64_t)ret;
+    if (ret < 0)
+        return (uint64_t)(int64_t)ret;
     return 0;
 }
 
@@ -4781,7 +5006,8 @@ static uint64_t sys_rename(uint64_t old_addr, uint64_t new_addr) {
      * handles cross-filesystem moves (returns -EXDEV), enforces Landlock
      * permissions and read-only mounts. */
     int ret = vfs_rename(old_kpath, new_kpath);
-    if (ret < 0) return (uint64_t)(int64_t)ret;
+    if (ret < 0)
+        return (uint64_t)(int64_t)ret;
     return 0;
 }
 
@@ -4806,7 +5032,8 @@ static uint64_t sys_chmod(uint64_t path_addr, uint64_t mode) {
  */
 static uint64_t sys_fsync(uint64_t fd) {
     struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)-EBADF;
+    if (!proc)
+        return (uint64_t)-EBADF;
 
     /* Regular file fd (3+) */
     if (fd >= 3 && fd < (uint64_t)(3 + PROCESS_FD_MAX)) {
@@ -4858,7 +5085,8 @@ static uint64_t sys_fsync(uint64_t fd) {
  */
 static uint64_t sys_fdatasync(uint64_t fd) {
     struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)-EBADF;
+    if (!proc)
+        return (uint64_t)-EBADF;
 
     /* Regular file fd (3+) */
     if (fd >= 3 && fd < (uint64_t)(3 + PROCESS_FD_MAX)) {
@@ -4897,7 +5125,8 @@ static uint64_t sys_fdatasync(uint64_t fd) {
 
 static uint64_t sys_sigprocmask(uint64_t how, uint64_t set_addr, uint64_t oldset_addr) {
     struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)-1;
+    if (!proc)
+        return (uint64_t)-1;
 
     /* Read new mask from userspace BEFORE acquiring spinlock — copy_from_user may page fault */
     uint64_t new_mask = 0;
@@ -4919,18 +5148,18 @@ static uint64_t sys_sigprocmask(uint64_t how, uint64_t set_addr, uint64_t oldset
         new_mask &= ~((1ULL << SIGKILL) | (1ULL << SIGSTOP));
 
         switch (how) {
-            case SIG_BLOCK:
-                proc->sig_mask |= new_mask;
-                break;
-            case SIG_UNBLOCK:
-                proc->sig_mask &= ~new_mask;
-                break;
-            case SIG_SETMASK:
-                proc->sig_mask = new_mask;
-                break;
-            default:
-                spinlock_irqsave_release(&proc->sig_lock, __sig_flags);
-                return (uint64_t)-1;
+        case SIG_BLOCK:
+            proc->sig_mask |= new_mask;
+            break;
+        case SIG_UNBLOCK:
+            proc->sig_mask &= ~new_mask;
+            break;
+        case SIG_SETMASK:
+            proc->sig_mask = new_mask;
+            break;
+        default:
+            spinlock_irqsave_release(&proc->sig_lock, __sig_flags);
+            return (uint64_t)-1;
         }
     }
 
@@ -4947,8 +5176,10 @@ static uint64_t sys_sigprocmask(uint64_t how, uint64_t set_addr, uint64_t oldset
 
 static uint64_t sys_sigpending(uint64_t set_addr) {
     struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)-1;
-    if (!set_addr) return (uint64_t)-1;
+    if (!proc)
+        return (uint64_t)-1;
+    if (!set_addr)
+        return (uint64_t)-1;
 
     uint64_t __sig_flags;
     spinlock_irqsave_acquire(&proc->sig_lock, &__sig_flags);
@@ -4966,10 +5197,13 @@ static uint64_t sys_sigpending(uint64_t set_addr) {
  * Returns the signal number, or -1 on error (with errno in *out_errno).
  * If info is non-NULL, fills in siginfo for the delivered signal.
  * If timeout_ticks > 0, blocks at most that many timer ticks. */
-static int do_sigwait(uint64_t set_mask, int timeout_ticks,
-                      struct siginfo *out_info, int *out_errno) {
+static int do_sigwait(uint64_t set_mask, int timeout_ticks, struct siginfo *out_info,
+                      int *out_errno) {
     struct process *proc = process_get_current();
-    if (!proc) { *out_errno = 1; return -1; }
+    if (!proc) {
+        *out_errno = 1;
+        return -1;
+    }
 
     uint64_t start = timer_get_ticks();
 
@@ -5026,8 +5260,7 @@ static int do_sigwait(uint64_t set_mask, int timeout_ticks,
         spinlock_irqsave_acquire(&proc->sig_lock, &__sig_flags);
         proc->sigwait_mask = set_mask;
         proc->wait_for_pid = 0; /* not waiting for child */
-        proc->sleep_until = timeout_ticks > 0
-            ? start + (uint64_t)timeout_ticks : 0;
+        proc->sleep_until = timeout_ticks > 0 ? start + (uint64_t)timeout_ticks : 0;
         proc->state = PROCESS_BLOCKED;
         scheduler_remove(proc);
         spinlock_irqsave_release(&proc->sig_lock, __sig_flags);
@@ -5040,7 +5273,8 @@ static int do_sigwait(uint64_t set_mask, int timeout_ticks,
 }
 
 static uint64_t sys_sigwaitinfo(uint64_t set_addr, uint64_t info_addr) {
-    if (!set_addr) return (uint64_t)-1;
+    if (!set_addr)
+        return (uint64_t)-1;
 
     uint64_t sigmask;
     if (copy_from_user(&sigmask, set_addr, sizeof(uint64_t)) < 0)
@@ -5071,7 +5305,8 @@ static uint64_t sys_sigwaitinfo(uint64_t set_addr, uint64_t info_addr) {
         spinlock_irqsave_release(&proc->sig_lock, __sig_flags);
     }
 
-    if (sig < 0) return (uint64_t)-1;
+    if (sig < 0)
+        return (uint64_t)-1;
 
     /* Copy siginfo back to userspace if requested */
     if (info_addr) {
@@ -5082,9 +5317,9 @@ static uint64_t sys_sigwaitinfo(uint64_t set_addr, uint64_t info_addr) {
     return (uint64_t)(unsigned int)sig;
 }
 
-static uint64_t sys_sigtimedwait(uint64_t set_addr, uint64_t info_addr,
-                                  uint64_t timeout_addr) {
-    if (!set_addr || !timeout_addr) return (uint64_t)-1;
+static uint64_t sys_sigtimedwait(uint64_t set_addr, uint64_t info_addr, uint64_t timeout_addr) {
+    if (!set_addr || !timeout_addr)
+        return (uint64_t)-1;
 
     uint64_t sigmask;
     if (copy_from_user(&sigmask, set_addr, sizeof(uint64_t)) < 0)
@@ -5096,7 +5331,8 @@ static uint64_t sys_sigtimedwait(uint64_t set_addr, uint64_t info_addr,
     if (copy_from_user(&ts, timeout_addr, sizeof(struct timespec)) < 0)
         return (uint64_t)-1;
     int timeout_ticks = (int)(ts.tv_sec * TIMER_FREQ + ts.tv_nsec * TIMER_FREQ / 1000000000ULL);
-    if (timeout_ticks < 0) timeout_ticks = 0;
+    if (timeout_ticks < 0)
+        timeout_ticks = 0;
 
     struct process *proc = process_get_current();
     uint64_t saved_mask = proc ? proc->sig_mask : 0;
@@ -5118,7 +5354,8 @@ static uint64_t sys_sigtimedwait(uint64_t set_addr, uint64_t info_addr,
         spinlock_irqsave_release(&proc->sig_lock, __sig_flags);
     }
 
-    if (sig < 0) return (uint64_t)-1;
+    if (sig < 0)
+        return (uint64_t)-1;
 
     if (info_addr) {
         if (copy_to_user(info_addr, &info_buf, sizeof(struct siginfo)) < 0)
@@ -5165,7 +5402,8 @@ static uint64_t sys_readv(uint64_t fd, uint64_t iov_addr, uint64_t iovcnt) {
     }
 
     if (copy_from_user(iov, iov_addr, sizeof(struct iovec) * iovcnt) < 0) {
-        if (allocd) kfree(iov);
+        if (allocd)
+            kfree(iov);
         return (uint64_t)(int64_t)-EFAULT;
     }
 
@@ -5173,10 +5411,10 @@ static uint64_t sys_readv(uint64_t fd, uint64_t iov_addr, uint64_t iovcnt) {
     for (uint64_t i = 0; i < iovcnt; i++) {
         if (!iov[i].iov_base || iov[i].iov_len == 0)
             continue;
-        int64_t n = (int64_t)sys_read(fd, (uint64_t)iov[i].iov_base,
-                                      iov[i].iov_len);
+        int64_t n = (int64_t)sys_read(fd, (uint64_t)iov[i].iov_base, iov[i].iov_len);
         if (n < 0) {
-            if (allocd) kfree(iov);
+            if (allocd)
+                kfree(iov);
             /* Partial read: return bytes so far; full failure: propagate errno */
             return total ? total : (uint64_t)(int64_t)n;
         }
@@ -5187,10 +5425,12 @@ static uint64_t sys_readv(uint64_t fd, uint64_t iov_addr, uint64_t iovcnt) {
         }
         total += (uint64_t)n;
         /* Short read from this iov means no more data (e.g. EOF) */
-        if ((uint64_t)n < iov[i].iov_len) break;
+        if ((uint64_t)n < iov[i].iov_len)
+            break;
     }
 
-    if (allocd) kfree(iov);
+    if (allocd)
+        kfree(iov);
     return total;
 }
 
@@ -5215,7 +5455,8 @@ static uint64_t sys_writev(uint64_t fd, uint64_t iov_addr, uint64_t iovcnt) {
     }
 
     if (copy_from_user(iov, iov_addr, sizeof(struct iovec) * iovcnt) < 0) {
-        if (allocd) kfree(iov);
+        if (allocd)
+            kfree(iov);
         return (uint64_t)(int64_t)-EFAULT;
     }
 
@@ -5223,11 +5464,11 @@ static uint64_t sys_writev(uint64_t fd, uint64_t iov_addr, uint64_t iovcnt) {
     for (uint64_t i = 0; i < iovcnt; i++) {
         if (!iov[i].iov_base || iov[i].iov_len == 0)
             continue;
-        uint64_t n = sys_write(fd, (uint64_t)iov[i].iov_base,
-                               iov[i].iov_len);
+        uint64_t n = sys_write(fd, (uint64_t)iov[i].iov_base, iov[i].iov_len);
         /* sys_write returns (uint64_t)-1 on error; treat any other value as success */
         if (n == (uint64_t)-1) {
-            if (allocd) kfree(iov);
+            if (allocd)
+                kfree(iov);
             /* Partial write: return bytes so far; full failure: return -1 */
             return total ? total : (uint64_t)-1;
         }
@@ -5239,7 +5480,8 @@ static uint64_t sys_writev(uint64_t fd, uint64_t iov_addr, uint64_t iovcnt) {
         total += n;
     }
 
-    if (allocd) kfree(iov);
+    if (allocd)
+        kfree(iov);
     return total;
 }
 
@@ -5303,9 +5545,7 @@ void prng_add_entropy(uint64_t entropy) {
  *
  * Returns the number of bytes written on success, or a negative errno.
  */
-static uint64_t sys_getrandom(uint64_t buf_addr, uint64_t count,
-                               uint64_t flags)
-{
+static uint64_t sys_getrandom(uint64_t buf_addr, uint64_t count, uint64_t flags) {
     /* Validate flags — reject unknown bits */
     if (flags & ~(GRND_NONBLOCK | GRND_RANDOM))
         return (uint64_t)(int64_t)-EINVAL;
@@ -5347,8 +5587,7 @@ static uint64_t sys_getrandom(uint64_t buf_addr, uint64_t count,
 
 /* ── kexec_load — register a kernel image for kexec reboot (Item 362) ── */
 
-static uint64_t sys_kexec_load(uint64_t phys_addr, uint64_t entry, uint64_t flags)
-{
+static uint64_t sys_kexec_load(uint64_t phys_addr, uint64_t entry, uint64_t flags) {
     /* Lockdown: reject kexec_load at INTEGRITY level or above */
     if (lockdown_is_locked_down(LOCKDOWN_INTEGRITY))
         return (uint64_t)-EPERM;
@@ -5374,16 +5613,19 @@ static uint64_t sys_reboot(void) {
     /* Call ACPI shutdown */
     acpi_shutdown();
     /* Should not reach here */
-    for (;;) __asm__ volatile("hlt");
+    for (;;)
+        __asm__ volatile("hlt");
     return (uint64_t)-1;
 }
 
 /* ── sethostname / gethostname ───────────────────────────────── */
 
 static uint64_t sys_sethostname(uint64_t name_addr, uint64_t len) {
-    if (!name_addr) return (uint64_t)-1;
+    if (!name_addr)
+        return (uint64_t)-1;
     struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)-1;
+    if (!proc)
+        return (uint64_t)-1;
     size_t copylen = (size_t)len;
     if (copylen > sizeof(proc->ns_hostname) - 1)
         copylen = sizeof(proc->ns_hostname) - 1;
@@ -5392,20 +5634,24 @@ static uint64_t sys_sethostname(uint64_t name_addr, uint64_t len) {
         return (uint64_t)-1;
     proc->ns_hostname[copylen] = '\0';
     /* Also update the system global so new processes inherit it */
-    if (copylen > HOSTNAME_MAX - 1) copylen = HOSTNAME_MAX - 1;
+    if (copylen > HOSTNAME_MAX - 1)
+        copylen = HOSTNAME_MAX - 1;
     memcpy(system_hostname, proc->ns_hostname, copylen + 1);
     return 0;
 }
 
 static uint64_t sys_gethostname(uint64_t name_addr, uint64_t len) {
-    if (!name_addr || len == 0) return (uint64_t)-1;
+    if (!name_addr || len == 0)
+        return (uint64_t)-1;
     struct process *proc = process_get_current();
     const char *host = proc ? proc->ns_hostname : system_hostname;
     size_t slen = strlen(host);
-    if (slen > (size_t)len - 1) slen = (size_t)len - 1;
+    if (slen > (size_t)len - 1)
+        slen = (size_t)len - 1;
     /* Copy hostname to user via uaccess */
     char kbuf[256];
-    if (slen >= sizeof(kbuf)) slen = sizeof(kbuf) - 1;
+    if (slen >= sizeof(kbuf))
+        slen = sizeof(kbuf) - 1;
     memcpy(kbuf, host, slen);
     kbuf[slen] = '\0';
     if (copy_to_user(name_addr, kbuf, slen + 1) < 0)
@@ -5417,7 +5663,8 @@ static uint64_t sys_gethostname(uint64_t name_addr, uint64_t len) {
 
 static uint64_t sys_umask(uint64_t mask) {
     struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)-1;
+    if (!proc)
+        return (uint64_t)-1;
     uint16_t old = proc->umask;
     proc->umask = (uint16_t)(mask & 0777);
     return (uint64_t)old;
@@ -5434,55 +5681,55 @@ static uint64_t sys_mknod(uint64_t path_addr, uint64_t mode, uint64_t dev) {
     uint32_t file_type = (mode & S_IFMT);
 
     switch (file_type) {
-        case S_IFCHR: {
-            /* Character device node */
-            uint16_t major = (uint16_t)((dev >> 8) & 0xFF);
-            uint16_t minor = (uint16_t)(dev & 0xFF);
-            if (vfs_mknod(kpath, (uint16_t)(mode & 0x0FFF), major, minor) < 0)
-                return (uint64_t)-1;
-            return 0;
-        }
-        case S_IFBLK: {
-            /* Block device node */
-            uint16_t major = (uint16_t)((dev >> 8) & 0xFF);
-            uint16_t minor = (uint16_t)(dev & 0xFF);
-            if (vfs_mknod(kpath, (uint16_t)(mode & 0x0FFF), major, minor) < 0)
-                return (uint64_t)-1;
-            return 0;
-        }
-        case S_IFREG:
-        case 0: {
-            /* Regular file (default when no type bits set) */
-            if (vfs_create(kpath, FS_TYPE_FILE) < 0)
-                return (uint64_t)-1;
-            return 0;
-        }
-        case S_IFDIR:
-            /* Directory — use vfs_create with FS_TYPE_DIR */
-            if (vfs_create(kpath, FS_TYPE_DIR) < 0)
-                return (uint64_t)-1;
-            return 0;
-        case S_IFIFO:
-            /* Named FIFO (pipe) — create as FIFO-type file */
-            if (vfs_create(kpath, VFS_TYPE_FIFO) < 0)
-                return (uint64_t)-1;
-            return 0;
-        case S_IFSOCK:
-            /* Socket — not supported via mknod */
-            return (uint64_t)-EOPNOTSUPP;
-        default:
-            return (uint64_t)-EINVAL;
+    case S_IFCHR: {
+        /* Character device node */
+        uint16_t major = (uint16_t)((dev >> 8) & 0xFF);
+        uint16_t minor = (uint16_t)(dev & 0xFF);
+        if (vfs_mknod(kpath, (uint16_t)(mode & 0x0FFF), major, minor) < 0)
+            return (uint64_t)-1;
+        return 0;
+    }
+    case S_IFBLK: {
+        /* Block device node */
+        uint16_t major = (uint16_t)((dev >> 8) & 0xFF);
+        uint16_t minor = (uint16_t)(dev & 0xFF);
+        if (vfs_mknod(kpath, (uint16_t)(mode & 0x0FFF), major, minor) < 0)
+            return (uint64_t)-1;
+        return 0;
+    }
+    case S_IFREG:
+    case 0: {
+        /* Regular file (default when no type bits set) */
+        if (vfs_create(kpath, FS_TYPE_FILE) < 0)
+            return (uint64_t)-1;
+        return 0;
+    }
+    case S_IFDIR:
+        /* Directory — use vfs_create with FS_TYPE_DIR */
+        if (vfs_create(kpath, FS_TYPE_DIR) < 0)
+            return (uint64_t)-1;
+        return 0;
+    case S_IFIFO:
+        /* Named FIFO (pipe) — create as FIFO-type file */
+        if (vfs_create(kpath, VFS_TYPE_FIFO) < 0)
+            return (uint64_t)-1;
+        return 0;
+    case S_IFSOCK:
+        /* Socket — not supported via mknod */
+        return (uint64_t)-EOPNOTSUPP;
+    default:
+        return (uint64_t)-EINVAL;
     }
 }
 
 static void netstat_tcp_cb(uint16_t lport, uint32_t rip, uint16_t rport, int state) {
-    const char *snames[] = {"CLOSED","LISTEN","SYN_SENT","SYN_RCV","ESTABLISHED","FIN_WAIT","CLOSE_WAIT","TIME_WAIT"};
+    const char *snames[] = {"CLOSED",      "LISTEN",   "SYN_SENT",   "SYN_RCV",
+                            "ESTABLISHED", "FIN_WAIT", "CLOSE_WAIT", "TIME_WAIT"};
     const char *sname = (state >= 0 && state < 8) ? snames[state] : "?";
-    kprintf("  TCP  %5lu  %lu.%lu.%lu.%lu:%lu  %s\n",
-        (unsigned long)lport,
-        (unsigned long)((rip >> 24) & 0xFF), (unsigned long)((rip >> 16) & 0xFF),
-        (unsigned long)((rip >>  8) & 0xFF), (unsigned long)(rip & 0xFF),
-        (unsigned long)rport, sname);
+    kprintf("  TCP  %5lu  %lu.%lu.%lu.%lu:%lu  %s\n", (unsigned long)lport,
+            (unsigned long)((rip >> 24) & 0xFF), (unsigned long)((rip >> 16) & 0xFF),
+            (unsigned long)((rip >> 8) & 0xFF), (unsigned long)(rip & 0xFF), (unsigned long)rport,
+            sname);
 }
 
 static void netstat_udp_cb(uint16_t port) {
@@ -5497,11 +5744,11 @@ static uint64_t sys_net_connlist(void) {
 }
 
 static void arp_print_entry_sys(uint32_t ip, const uint8_t *mac) {
-    kprintf("  %lu.%lu.%lu.%lu  ->  %lx:%lx:%lx:%lx:%lx:%lx\n",
-            (unsigned long)((ip >> 24) & 0xFF), (unsigned long)((ip >> 16) & 0xFF),
-            (unsigned long)((ip >> 8) & 0xFF), (unsigned long)(ip & 0xFF),
-            (unsigned long)mac[0], (unsigned long)mac[1], (unsigned long)mac[2],
-            (unsigned long)mac[3], (unsigned long)mac[4], (unsigned long)mac[5]);
+    kprintf("  %lu.%lu.%lu.%lu  ->  %lx:%lx:%lx:%lx:%lx:%lx\n", (unsigned long)((ip >> 24) & 0xFF),
+            (unsigned long)((ip >> 16) & 0xFF), (unsigned long)((ip >> 8) & 0xFF),
+            (unsigned long)(ip & 0xFF), (unsigned long)mac[0], (unsigned long)mac[1],
+            (unsigned long)mac[2], (unsigned long)mac[3], (unsigned long)mac[4],
+            (unsigned long)mac[5]);
 }
 
 static uint64_t sys_net_arp_list(void) {
@@ -5514,7 +5761,8 @@ static uint64_t sys_proc_list(uint64_t out_addr, uint64_t max) {
     struct process *table = process_get_table();
     int written = 0;
     int lim = (int)max;
-    if (lim < 0) lim = 0;
+    if (lim < 0)
+        lim = 0;
 
     /* Acquire process table lock for consistent snapshot — otherwise
      * a process exiting concurrently can produce corrupted output. */
@@ -5522,7 +5770,8 @@ static uint64_t sys_proc_list(uint64_t out_addr, uint64_t max) {
     spinlock_irqsave_acquire(&proc_table_lock, &__pl_flags);
 
     for (int i = 0; i < PROCESS_MAX && written < lim; i++) {
-        if (table[i].state == PROCESS_UNUSED) continue;
+        if (table[i].state == PROCESS_UNUSED)
+            continue;
         out[written].pid = table[i].pid;
         out[written].ppid = table[i].parent_pid;
         out[written].pgid = table[i].pgid;
@@ -5533,10 +5782,10 @@ static uint64_t sys_proc_list(uint64_t out_addr, uint64_t max) {
         out[written].is_suspended = (uint8_t)(table[i].is_suspended ? 1 : 0);
         out[written].priority = table[i].priority;
         /* CPU time and resource info */
-        out[written].cpu_user_ticks   = table[i].utime_ticks;
+        out[written].cpu_user_ticks = table[i].utime_ticks;
         out[written].cpu_system_ticks = table[i].stime_ticks;
-        out[written].nice             = table[i].nice;
-        out[written].max_rss          = table[i].max_rss;
+        out[written].nice = table[i].nice;
+        out[written].max_rss = table[i].max_rss;
         /* Only dereference kernel-space name pointers (bit 63 set).
          * User processes may have a name pointer from user address space
          * which is not accessible in the kernel page table context. */
@@ -5562,14 +5811,14 @@ static uint64_t sys_usb_list(void) {
     kprintf("USB devices: %lu\n", (unsigned long)n);
     for (int i = 0; i < n; i++) {
         struct usb_device *dev = usb_get_device(i);
-        if (!dev) continue;
-        const char *spd = dev->speed == 2 ? "High" :
-                          dev->speed == 1 ? "Low"  : "Full";
-        kprintf("  Bus %03lu Device %03lu: %s-speed class=%02lx\n",
-                (unsigned long)1, (unsigned long)dev->addr,
-                spd, (unsigned long)dev->class_code);
+        if (!dev)
+            continue;
+        const char *spd = dev->speed == 2 ? "High" : dev->speed == 1 ? "Low" : "Full";
+        kprintf("  Bus %03lu Device %03lu: %s-speed class=%02lx\n", (unsigned long)1,
+                (unsigned long)dev->addr, spd, (unsigned long)dev->class_code);
     }
-    if (n == 0) kprintf("  (no devices connected)\n");
+    if (n == 0)
+        kprintf("  (no devices connected)\n");
     return (uint64_t)n;
 }
 
@@ -5587,8 +5836,8 @@ static uint64_t sys_hwinfo_print(void) {
     kprintf("CPU vendor: %s\n", vendor);
 
     __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(1));
-    kprintf("CPU family/model/stepping: %lu/%lu/%lu\n",
-            (unsigned long)((eax >> 8) & 0xF), (unsigned long)((eax >> 4) & 0xF), (unsigned long)(eax & 0xF));
+    kprintf("CPU family/model/stepping: %lu/%lu/%lu\n", (unsigned long)((eax >> 8) & 0xF),
+            (unsigned long)((eax >> 4) & 0xF), (unsigned long)(eax & 0xF));
 
     kprintf("PCI devices:\n");
     pci_list();
@@ -5600,39 +5849,47 @@ static uint64_t sys_hwinfo_print(void) {
 static uint64_t sys_user_find(uint64_t name_addr, uint64_t out_addr) {
     const char *username = (const char *)name_addr;
     struct user_entry *out = (struct user_entry *)out_addr;
-    if (!username || !out) return (uint64_t)-1;
+    if (!username || !out)
+        return (uint64_t)-1;
     return (uint64_t)user_find(username, out);
 }
 
 static uint64_t sys_user_add(uint64_t name_addr, uint64_t uid, uint64_t pass_addr) {
     struct user_session *sess = session_get();
-    if (!sess || !sess->logged_in || sess->uid != 0) return (uint64_t)-2;
+    if (!sess || !sess->logged_in || sess->uid != 0)
+        return (uint64_t)-2;
 
     const char *username = (const char *)name_addr;
     const char *password = (const char *)pass_addr;
-    if (!username || !password) return (uint64_t)-1;
+    if (!username || !password)
+        return (uint64_t)-1;
     return (uint64_t)user_add(username, (uint32_t)uid, password);
 }
 
 static uint64_t sys_user_delete(uint64_t name_addr) {
     struct user_session *sess = session_get();
-    if (!sess || !sess->logged_in || sess->uid != 0) return (uint64_t)-2;
+    if (!sess || !sess->logged_in || sess->uid != 0)
+        return (uint64_t)-2;
 
     const char *username = (const char *)name_addr;
-    if (!username) return (uint64_t)-1;
+    if (!username)
+        return (uint64_t)-1;
     return (uint64_t)user_delete(username);
 }
 
 static uint64_t sys_user_passwd(uint64_t name_addr, uint64_t pass_addr) {
     struct user_session *sess = session_get();
-    if (!sess || !sess->logged_in) return (uint64_t)-2;
+    if (!sess || !sess->logged_in)
+        return (uint64_t)-2;
 
     const char *username = (const char *)name_addr;
     const char *new_pass = (const char *)pass_addr;
-    if (!username || !new_pass) return (uint64_t)-1;
+    if (!username || !new_pass)
+        return (uint64_t)-1;
 
     /* Linux-like: root can change any password; regular users only their own. */
-    if (sess->uid != 0 && strcmp(username, sess->username) != 0) return (uint64_t)-2;
+    if (sess->uid != 0 && strcmp(username, sess->username) != 0)
+        return (uint64_t)-2;
 
     return (uint64_t)user_passwd(username, new_pass);
 }
@@ -5640,7 +5897,8 @@ static uint64_t sys_user_passwd(uint64_t name_addr, uint64_t pass_addr) {
 static uint64_t sys_session_login(uint64_t name_addr, uint64_t pass_addr) {
     const char *username = (const char *)name_addr;
     const char *password = (const char *)pass_addr;
-    if (!username || !password) return (uint64_t)-1;
+    if (!username || !password)
+        return (uint64_t)-1;
     return (uint64_t)session_login(username, password);
 }
 
@@ -5650,7 +5908,8 @@ static uint64_t sys_session_logout(void) {
 }
 
 static uint64_t sys_session_get(void) {
-    if (syscall_is_user_process()) return (uint64_t)-1;
+    if (syscall_is_user_process())
+        return (uint64_t)-1;
     struct user_session *s = session_get();
     return (uint64_t)(uintptr_t)s;
 }
@@ -5659,7 +5918,8 @@ static uint64_t sys_users_count(uint64_t mode) {
     if (mode == 0) {
         return (uint64_t)users_count();
     } else if (mode == 1) {
-        if (syscall_is_user_process()) return (uint64_t)-1;
+        if (syscall_is_user_process())
+            return (uint64_t)-1;
         /* Return pointer to kernel's user table for direct access */
         return (uint64_t)(uintptr_t)users_get_table();
     }
@@ -5670,18 +5930,22 @@ static uint64_t sys_users_get_by_index(uint64_t idx, uint64_t out_addr) {
     struct user_entry *out = (struct user_entry *)out_addr;
     struct user_entry *tbl = users_get_table();
     int max = users_count();
-    if (!out || (int)idx < 0 || (int)idx >= max) return (uint64_t)-1;
+    if (!out || (int)idx < 0 || (int)idx >= max)
+        return (uint64_t)-1;
     *out = tbl[(int)idx];
     return 0;
 }
 
 static uint64_t sys_proc_set_cap_profile(uint64_t pid, uint64_t profile) {
     struct user_session *sess = session_get();
-    if (!sess || !sess->logged_in || sess->uid != 0) return (uint64_t)-1;
+    if (!sess || !sess->logged_in || sess->uid != 0)
+        return (uint64_t)-1;
 
     struct process *target = process_get_by_pid((uint32_t)pid);
-    if (!target || target->state == PROCESS_UNUSED) return (uint64_t)-2;
-    if (!target->is_user) return (uint64_t)-3;
+    if (!target || target->state == PROCESS_UNUSED)
+        return (uint64_t)-2;
+    if (!target->is_user)
+        return (uint64_t)-3;
 
     if (process_set_cap_profile(target, (enum process_cap_profile)profile) < 0)
         return (uint64_t)-4;
@@ -5698,7 +5962,8 @@ static uint64_t sys_speaker_beep(uint64_t frequency, uint64_t duration_ms) {
 
 static uint64_t sys_rtc_get_time(uint64_t out_addr) {
     struct rtc_time *out = (struct rtc_time *)out_addr;
-    if (!out) return (uint64_t)-1;
+    if (!out)
+        return (uint64_t)-1;
     rtc_get_time(out);
     return 0;
 }
@@ -5712,7 +5977,8 @@ static uint64_t sys_acpi_shutdown(void) {
 
 static uint64_t sys_mouse_get_state(uint64_t out_addr) {
     struct mouse_state *out = (struct mouse_state *)out_addr;
-    if (!out) return (uint64_t)-1;
+    if (!out)
+        return (uint64_t)-1;
     mouse_get_pos((int *)&out->x, (int *)&out->y);
     out->buttons = mouse_get_buttons();
     return 0;
@@ -5720,7 +5986,8 @@ static uint64_t sys_mouse_get_state(uint64_t out_addr) {
 
 static uint64_t sys_serial_read(uint64_t buf_addr, uint64_t max) {
     uint8_t *buf = (uint8_t *)buf_addr;
-    if (!buf || max <= 0) return (uint64_t)-1;
+    if (!buf || max <= 0)
+        return (uint64_t)-1;
     int n_read = 0;
     while (n_read < (int)max && serial_readable()) {
         buf[n_read++] = (uint8_t)serial_getchar();
@@ -5730,20 +5997,22 @@ static uint64_t sys_serial_read(uint64_t buf_addr, uint64_t max) {
 
 static uint64_t sys_serial_write(uint64_t buf_addr, uint64_t len) {
     const char *buf = (const char *)buf_addr;
-    if (!buf || len == 0) return (uint64_t)0;
+    if (!buf || len == 0)
+        return (uint64_t)0;
     serial_write(buf);
     return (uint64_t)len;
 }
 
 static uint64_t sys_cmos_read_byte(uint64_t addr) {
     uint8_t reg = (uint8_t)addr;
-    outb(0x70, reg & 0x7F);  /* mask NMI-disable bit */
+    outb(0x70, reg & 0x7F); /* mask NMI-disable bit */
     return (uint64_t)inb(0x71);
 }
 
 static uint64_t sys_pmm_get_stats(uint64_t out_addr) {
     struct pmm_stats *out = (struct pmm_stats *)out_addr;
-    if (!out) return (uint64_t)-1;
+    if (!out)
+        return (uint64_t)-1;
     uint64_t total = pmm_get_total_frames();
     uint64_t used = pmm_get_used_frames();
     out->total_pages = (uint32_t)total;
@@ -5765,12 +6034,14 @@ static uint64_t sys_script_exec(uint64_t path_addr) {
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
-    if (!script_exec_ptr) return (uint64_t)(int64_t)-ENOSYS;
+    if (!script_exec_ptr)
+        return (uint64_t)(int64_t)-ENOSYS;
     return (uint64_t)script_exec_ptr(kpath);
 }
 
 static uint64_t sys_fat_mount(uint64_t disk, uint64_t part_lba) {
-    if (part_lba > 0xFFFFFFFFULL) return (uint64_t)-EOVERFLOW;
+    if (part_lba > 0xFFFFFFFFULL)
+        return (uint64_t)-EOVERFLOW;
     return (uint64_t)fat32_mount((fat32_disk_t)disk, (uint32_t)part_lba);
 }
 
@@ -5779,8 +6050,7 @@ static uint64_t sys_fat_is_mounted(void) {
 }
 
 static uint64_t sys_fat_list_dir(uint64_t path_addr, uint64_t names_addr, uint64_t max) {
-    return (uint64_t)fat32_list_dir((const char *)path_addr,
-                                    (char (*)[FAT32_MAX_NAME])names_addr,
+    return (uint64_t)fat32_list_dir((const char *)path_addr, (char(*)[FAT32_MAX_NAME])names_addr,
                                     (int)max);
 }
 
@@ -5793,7 +6063,8 @@ static uint64_t sys_fat_file_size(uint64_t path_addr) {
 }
 
 static uint64_t sys_fat_write_file(uint64_t path_addr, uint64_t data_addr, uint64_t size) {
-    return (uint64_t)fat32_write_file((const char *)path_addr, (const void *)data_addr, (uint32_t)size);
+    return (uint64_t)fat32_write_file((const char *)path_addr, (const void *)data_addr,
+                                      (uint32_t)size);
 }
 
 static uint64_t sys_fat_sync(void) {
@@ -5842,9 +6113,10 @@ static uint64_t sys_vga_clear(void) {
 
 /* ── rlimit/prlimit64/getrlimit/setrlimit ──────────────────────────── */
 
-static uint64_t sys_prlimit64(uint64_t pid, uint64_t resource,
-                               uint64_t new_rlim_addr, uint64_t old_rlim_addr) {
-    if (resource >= _RLIMIT_NLIMITS) return (uint64_t)-1;
+static uint64_t sys_prlimit64(uint64_t pid, uint64_t resource, uint64_t new_rlim_addr,
+                              uint64_t old_rlim_addr) {
+    if (resource >= _RLIMIT_NLIMITS)
+        return (uint64_t)-1;
 
     struct process *target;
     if (pid == 0) {
@@ -5852,7 +6124,8 @@ static uint64_t sys_prlimit64(uint64_t pid, uint64_t resource,
     } else {
         target = process_get_by_pid((uint32_t)pid);
     }
-    if (!target || target->state == PROCESS_UNUSED) return (uint64_t)-1;
+    if (!target || target->state == PROCESS_UNUSED)
+        return (uint64_t)-1;
 
     /* Copy old limits to user if requested */
     if (old_rlim_addr) {
@@ -5918,7 +6191,8 @@ static int futex_pi_find(uint32_t *uaddr) {
 
 static int futex_pi_alloc_internal(uint32_t *uaddr, uint32_t owner_pid) {
     int idx = futex_pi_find(uaddr);
-    if (idx >= 0) return idx;
+    if (idx >= 0)
+        return idx;
     for (int i = 0; i < FUTEX_PI_MAX; i++) {
         if (!futex_pi_table[i].in_use) {
             futex_pi_table[i].uaddr = uaddr;
@@ -5933,8 +6207,7 @@ static int futex_pi_alloc_internal(uint32_t *uaddr, uint32_t owner_pid) {
 
 /* ── Robust list support ───────────────────────────────────── */
 
-int sys_set_robust_list(struct robust_list_head *head, size_t len)
-{
+int sys_set_robust_list(struct robust_list_head *head, size_t len) {
     struct process *cur = process_get_current();
 
     if (!cur)
@@ -5958,9 +6231,7 @@ int sys_set_robust_list(struct robust_list_head *head, size_t len)
     return 0;
 }
 
-int sys_get_robust_list(int pid, struct robust_list_head **head_ptr,
-                        size_t *len_ptr)
-{
+int sys_get_robust_list(int pid, struct robust_list_head **head_ptr, size_t *len_ptr) {
     struct process *cur = process_get_current();
     struct process *p;
 
@@ -5997,8 +6268,7 @@ int sys_get_robust_list(int pid, struct robust_list_head **head_ptr,
 }
 
 /* On thread exit, walk robust list and wake waiters */
-void futex_robust_list_cleanup(struct process *proc)
-{
+void futex_robust_list_cleanup(struct process *proc) {
     if (!proc || !proc->ctid_ptr)
         return;
 
@@ -6010,8 +6280,7 @@ void futex_robust_list_cleanup(struct process *proc)
     /* Handle list_op_pending: if non-NULL, there's a pending futex operation
      * that was interrupted.  Wake waiters on that address too. */
     if (head->list_op_pending) {
-        uint32_t *uaddr = (uint32_t *)((uint8_t *)head->list_op_pending +
-                                       head->futex_offset);
+        uint32_t *uaddr = (uint32_t *)((uint8_t *)head->list_op_pending + head->futex_offset);
         for (int i = 0; i < FUTEX_MAX_WAITERS; i++) {
             if (futex_waiters[i].proc && futex_waiters[i].uaddr == uaddr) {
                 struct process *p = futex_waiters[i].proc;
@@ -6048,573 +6317,607 @@ void futex_robust_list_cleanup(struct process *proc)
     clac();
 }
 
-static uint64_t sys_futex(uint64_t uaddr, uint64_t op, uint64_t val,
-                           uint64_t timeout, uint64_t uaddr2, uint64_t val3) {
+static uint64_t sys_futex(uint64_t uaddr, uint64_t op, uint64_t val, uint64_t timeout,
+                          uint64_t uaddr2, uint64_t val3) {
     uint32_t *addr = (uint32_t *)uaddr;
     uint32_t *addr2 = (uint32_t *)uaddr2;
 
     switch (op & ~(uint64_t)(FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME)) {
-        case FUTEX_WAIT: {
-            struct process *cur_proc = process_get_current();
-            if (!cur_proc) return (uint64_t)-1;
+    case FUTEX_WAIT: {
+        struct process *cur_proc = process_get_current();
+        if (!cur_proc)
+            return (uint64_t)-1;
 
-            /* Check user address */
-            if (syscall_is_user_process() && !syscall_user_read_ok(uaddr, 4))
-                return (uint64_t)-1;
+        /* Check user address */
+        if (syscall_is_user_process() && !syscall_user_read_ok(uaddr, 4))
+            return (uint64_t)-1;
 
-            /* Check that *uaddr == val */
-            uint32_t cur;
-            if (copy_from_user(&cur, uaddr, 4) < 0)
-                return (uint64_t)-1;
-            if (cur != (uint32_t)val)
-                return (uint64_t)-1; /* EWOULDBLOCK */
+        /* Check that *uaddr == val */
+        uint32_t cur;
+        if (copy_from_user(&cur, uaddr, 4) < 0)
+            return (uint64_t)-1;
+        if (cur != (uint32_t)val)
+            return (uint64_t)-1; /* EWOULDBLOCK */
 
-            /* Handle timeout — validate the timespec and set deadline */
-            uint64_t deadline = 0;
-            int has_timeout = 0;
-            if (timeout) {
-                struct timespec ts;
-                if (copy_from_user(&ts, timeout, sizeof(struct timespec)) < 0)
-                    return (uint64_t)-1; /* EFAULT */
-                /* Validate tv_nsec is in [0, 999999999] per POSIX */
-                if ((int64_t)ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000ULL)
-                    return (uint64_t)-1; /* EINVAL */
-                if ((int64_t)ts.tv_sec < 0)
-                    return (uint64_t)-1; /* EINVAL */
-                uint64_t total_ns = ts.tv_sec * 1000000000ULL + ts.tv_nsec;
-                uint64_t timeout_ticks = total_ns / NS_PER_TICK;
-                if (total_ns > 0 && timeout_ticks == 0)
-                    timeout_ticks = 1; /* round up non-zero tiny timeout */
-                if (timeout_ticks > 0) {
-                    deadline = timer_get_ticks() + timeout_ticks;
-                    has_timeout = 1;
-                } else {
-                    /* Zero-length timeout — don't block */
-                    return (uint64_t)-1; /* ETIMEDOUT */
-                }
-            }
-
-            /* Register as waiter */
-            if (futex_num_waiters >= FUTEX_MAX_WAITERS)
-                return (uint64_t)-1;
-
-            __asm__ volatile("cli");
-            int found = -1;
-            for (int i = 0; i < FUTEX_MAX_WAITERS; i++) {
-                if (!futex_waiters[i].proc) {
-                    found = i;
-                    break;
-                }
-            }
-            if (found < 0) { __asm__ volatile("sti"); return (uint64_t)-1; }
-
-            futex_waiters[found].uaddr = addr;
-            futex_waiters[found].proc  = cur_proc;
-            futex_waiters[found].bitset = 0xFFFFFFFF; /* match any bitset */
-            if (futex_waiters[found].proc)
-                futex_num_waiters++;
-
-            /* Block the current process */
-            cur_proc->state = PROCESS_BLOCKED;
-            if (has_timeout)
-                cur_proc->sleep_until = deadline;
-            scheduler_remove(cur_proc);
-            __asm__ volatile("sti");
-            scheduler_yield();
-
-            /* After wakeup: check if we timed out */
-            if (has_timeout && cur_proc->sleep_until > 0) {
-                /* Timed out — remove from waiter array */
-                cur_proc->sleep_until = 0;
-                __asm__ volatile("cli");
-                for (int i = 0; i < FUTEX_MAX_WAITERS; i++) {
-                    if (futex_waiters[i].proc == cur_proc) {
-                        futex_waiters[i].proc = NULL;
-                        futex_waiters[i].uaddr = NULL;
-                        futex_num_waiters--;
-                        break;
-                    }
-                }
-                __asm__ volatile("sti");
-                return (uint64_t)-1; /* ETIMEDOUT */
-            }
-            cur_proc->sleep_until = 0;
-            return 0;
-        }
-
-        case FUTEX_WAIT_BITSET: {
-            /* ── FUTEX_WAIT_BITSET: like FUTEX_WAIT but with a bitset mask ──
-             *
-             * val3 holds the bitset. A waiter is only woken by FUTEX_WAKE_BITSET
-             * whose bitset has a non-empty intersection with this bitset.
-             * bitset == 0 is invalid (returns -EINVAL).
-             */
-            if (val3 == 0)
+        /* Handle timeout — validate the timespec and set deadline */
+        uint64_t deadline = 0;
+        int has_timeout = 0;
+        if (timeout) {
+            struct timespec ts;
+            if (copy_from_user(&ts, timeout, sizeof(struct timespec)) < 0)
+                return (uint64_t)-1; /* EFAULT */
+            /* Validate tv_nsec is in [0, 999999999] per POSIX */
+            if ((int64_t)ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000ULL)
                 return (uint64_t)-1; /* EINVAL */
-
-            struct process *cur_proc = process_get_current();
-            if (!cur_proc) return (uint64_t)-1;
-
-            /* Check user address */
-            if (syscall_is_user_process() && !syscall_user_read_ok(uaddr, 4))
-                return (uint64_t)-1;
-
-            /* Check that *uaddr == val */
-            uint32_t cur;
-            if (copy_from_user(&cur, uaddr, 4) < 0)
-                return (uint64_t)-1;
-            if (cur != (uint32_t)val)
-                return (uint64_t)-1; /* EWOULDBLOCK */
-
-            /* Handle timeout — validate the timespec and set deadline */
-            uint64_t deadline = 0;
-            int has_timeout = 0;
-            if (timeout) {
-                struct timespec ts;
-                if (copy_from_user(&ts, timeout, sizeof(struct timespec)) < 0)
-                    return (uint64_t)-1; /* EFAULT */
-                /* Validate tv_nsec is in [0, 999999999] per POSIX */
-                if ((int64_t)ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000ULL)
-                    return (uint64_t)-1; /* EINVAL */
-                if ((int64_t)ts.tv_sec < 0)
-                    return (uint64_t)-1; /* EINVAL */
-                uint64_t total_ns = ts.tv_sec * 1000000000ULL + ts.tv_nsec;
-                uint64_t timeout_ticks = total_ns / NS_PER_TICK;
-                if (total_ns > 0 && timeout_ticks == 0)
-                    timeout_ticks = 1; /* round up non-zero tiny timeout */
-                if (timeout_ticks > 0) {
-                    deadline = timer_get_ticks() + timeout_ticks;
-                    has_timeout = 1;
-                } else {
-                    return (uint64_t)-1; /* ETIMEDOUT */
-                }
-            }
-
-            /* Register as waiter */
-            if (futex_num_waiters >= FUTEX_MAX_WAITERS)
-                return (uint64_t)-1;
-
-            __asm__ volatile("cli");
-            int found = -1;
-            for (int i = 0; i < FUTEX_MAX_WAITERS; i++) {
-                if (!futex_waiters[i].proc) {
-                    found = i;
-                    break;
-                }
-            }
-            if (found < 0) { __asm__ volatile("sti"); return (uint64_t)-1; }
-
-            futex_waiters[found].uaddr  = addr;
-            futex_waiters[found].proc   = cur_proc;
-            futex_waiters[found].bitset = (uint32_t)val3;
-            if (futex_waiters[found].proc)
-                futex_num_waiters++;
-
-            /* Block the current process */
-            cur_proc->state = PROCESS_BLOCKED;
-            if (has_timeout)
-                cur_proc->sleep_until = deadline;
-            scheduler_remove(cur_proc);
-            __asm__ volatile("sti");
-            scheduler_yield();
-
-            /* After wakeup: check if we timed out */
-            if (has_timeout && cur_proc->sleep_until > 0) {
-                cur_proc->sleep_until = 0;
-                __asm__ volatile("cli");
-                for (int i = 0; i < FUTEX_MAX_WAITERS; i++) {
-                    if (futex_waiters[i].proc == cur_proc) {
-                        futex_waiters[i].proc = NULL;
-                        futex_waiters[i].uaddr = NULL;
-                        futex_waiters[i].bitset = 0;
-                        futex_num_waiters--;
-                        break;
-                    }
-                }
-                __asm__ volatile("sti");
+            if ((int64_t)ts.tv_sec < 0)
+                return (uint64_t)-1; /* EINVAL */
+            uint64_t total_ns = ts.tv_sec * 1000000000ULL + ts.tv_nsec;
+            uint64_t timeout_ticks = total_ns / NS_PER_TICK;
+            if (total_ns > 0 && timeout_ticks == 0)
+                timeout_ticks = 1; /* round up non-zero tiny timeout */
+            if (timeout_ticks > 0) {
+                deadline = timer_get_ticks() + timeout_ticks;
+                has_timeout = 1;
+            } else {
+                /* Zero-length timeout — don't block */
                 return (uint64_t)-1; /* ETIMEDOUT */
             }
-            cur_proc->sleep_until = 0;
-            return 0;
         }
 
-        case FUTEX_WAKE: {
-            /* Wake up to 'val' waiters on this uaddr */
-            int woken = 0;
+        /* Register as waiter */
+        if (futex_num_waiters >= FUTEX_MAX_WAITERS)
+            return (uint64_t)-1;
+
+        __asm__ volatile("cli");
+        int found = -1;
+        for (int i = 0; i < FUTEX_MAX_WAITERS; i++) {
+            if (!futex_waiters[i].proc) {
+                found = i;
+                break;
+            }
+        }
+        if (found < 0) {
+            __asm__ volatile("sti");
+            return (uint64_t)-1;
+        }
+
+        futex_waiters[found].uaddr = addr;
+        futex_waiters[found].proc = cur_proc;
+        futex_waiters[found].bitset = 0xFFFFFFFF; /* match any bitset */
+        if (futex_waiters[found].proc)
+            futex_num_waiters++;
+
+        /* Block the current process */
+        cur_proc->state = PROCESS_BLOCKED;
+        if (has_timeout)
+            cur_proc->sleep_until = deadline;
+        scheduler_remove(cur_proc);
+        __asm__ volatile("sti");
+        scheduler_yield();
+
+        /* After wakeup: check if we timed out */
+        if (has_timeout && cur_proc->sleep_until > 0) {
+            /* Timed out — remove from waiter array */
+            cur_proc->sleep_until = 0;
             __asm__ volatile("cli");
-            for (int i = 0; i < FUTEX_MAX_WAITERS && woken < (int)val; i++) {
-                if (futex_waiters[i].proc && futex_waiters[i].uaddr == addr) {
-                    struct process *p = futex_waiters[i].proc;
+            for (int i = 0; i < FUTEX_MAX_WAITERS; i++) {
+                if (futex_waiters[i].proc == cur_proc) {
                     futex_waiters[i].proc = NULL;
                     futex_waiters[i].uaddr = NULL;
                     futex_num_waiters--;
-                    if (p->state == PROCESS_BLOCKED) {
-                        p->state = PROCESS_READY;
-                        scheduler_add(p);
-                    }
-                    woken++;
+                    break;
                 }
             }
             __asm__ volatile("sti");
-            return (uint64_t)woken;
+            return (uint64_t)-1; /* ETIMEDOUT */
+        }
+        cur_proc->sleep_until = 0;
+        return 0;
+    }
+
+    case FUTEX_WAIT_BITSET: {
+        /* ── FUTEX_WAIT_BITSET: like FUTEX_WAIT but with a bitset mask ──
+         *
+         * val3 holds the bitset. A waiter is only woken by FUTEX_WAKE_BITSET
+         * whose bitset has a non-empty intersection with this bitset.
+         * bitset == 0 is invalid (returns -EINVAL).
+         */
+        if (val3 == 0)
+            return (uint64_t)-1; /* EINVAL */
+
+        struct process *cur_proc = process_get_current();
+        if (!cur_proc)
+            return (uint64_t)-1;
+
+        /* Check user address */
+        if (syscall_is_user_process() && !syscall_user_read_ok(uaddr, 4))
+            return (uint64_t)-1;
+
+        /* Check that *uaddr == val */
+        uint32_t cur;
+        if (copy_from_user(&cur, uaddr, 4) < 0)
+            return (uint64_t)-1;
+        if (cur != (uint32_t)val)
+            return (uint64_t)-1; /* EWOULDBLOCK */
+
+        /* Handle timeout — validate the timespec and set deadline */
+        uint64_t deadline = 0;
+        int has_timeout = 0;
+        if (timeout) {
+            struct timespec ts;
+            if (copy_from_user(&ts, timeout, sizeof(struct timespec)) < 0)
+                return (uint64_t)-1; /* EFAULT */
+            /* Validate tv_nsec is in [0, 999999999] per POSIX */
+            if ((int64_t)ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000ULL)
+                return (uint64_t)-1; /* EINVAL */
+            if ((int64_t)ts.tv_sec < 0)
+                return (uint64_t)-1; /* EINVAL */
+            uint64_t total_ns = ts.tv_sec * 1000000000ULL + ts.tv_nsec;
+            uint64_t timeout_ticks = total_ns / NS_PER_TICK;
+            if (total_ns > 0 && timeout_ticks == 0)
+                timeout_ticks = 1; /* round up non-zero tiny timeout */
+            if (timeout_ticks > 0) {
+                deadline = timer_get_ticks() + timeout_ticks;
+                has_timeout = 1;
+            } else {
+                return (uint64_t)-1; /* ETIMEDOUT */
+            }
         }
 
-        case FUTEX_WAKE_BITSET: {
-            /* ── FUTEX_WAKE_BITSET: like FUTEX_WAKE but with bitset matching ──
-             *
-             * val3 holds the wake bitset. Only wake waiters whose stored bitset
-             * has a non-empty intersection with the wake bitset.
-             * bitset == 0 is invalid (returns -EINVAL).
-             */
-            if (val3 == 0)
-                return (uint64_t)-1; /* EINVAL */
+        /* Register as waiter */
+        if (futex_num_waiters >= FUTEX_MAX_WAITERS)
+            return (uint64_t)-1;
 
-            uint32_t wake_bitset = (uint32_t)val3;
-            int woken = 0;
+        __asm__ volatile("cli");
+        int found = -1;
+        for (int i = 0; i < FUTEX_MAX_WAITERS; i++) {
+            if (!futex_waiters[i].proc) {
+                found = i;
+                break;
+            }
+        }
+        if (found < 0) {
+            __asm__ volatile("sti");
+            return (uint64_t)-1;
+        }
+
+        futex_waiters[found].uaddr = addr;
+        futex_waiters[found].proc = cur_proc;
+        futex_waiters[found].bitset = (uint32_t)val3;
+        if (futex_waiters[found].proc)
+            futex_num_waiters++;
+
+        /* Block the current process */
+        cur_proc->state = PROCESS_BLOCKED;
+        if (has_timeout)
+            cur_proc->sleep_until = deadline;
+        scheduler_remove(cur_proc);
+        __asm__ volatile("sti");
+        scheduler_yield();
+
+        /* After wakeup: check if we timed out */
+        if (has_timeout && cur_proc->sleep_until > 0) {
+            cur_proc->sleep_until = 0;
             __asm__ volatile("cli");
-            for (int i = 0; i < FUTEX_MAX_WAITERS && woken < (int)val; i++) {
-                if (futex_waiters[i].proc && futex_waiters[i].uaddr == addr &&
-                    (futex_waiters[i].bitset & wake_bitset) != 0) {
-                    struct process *p = futex_waiters[i].proc;
+            for (int i = 0; i < FUTEX_MAX_WAITERS; i++) {
+                if (futex_waiters[i].proc == cur_proc) {
                     futex_waiters[i].proc = NULL;
                     futex_waiters[i].uaddr = NULL;
                     futex_waiters[i].bitset = 0;
                     futex_num_waiters--;
-                    if (p->state == PROCESS_BLOCKED) {
-                        p->state = PROCESS_READY;
-                        scheduler_add(p);
-                    }
-                    woken++;
+                    break;
                 }
             }
             __asm__ volatile("sti");
-            return (uint64_t)woken;
+            return (uint64_t)-1; /* ETIMEDOUT */
         }
+        cur_proc->sleep_until = 0;
+        return 0;
+    }
 
-        case FUTEX_REQUEUE: {
-            /* Requeue 'val' waiters from addr to addr2 */
-            int requeued = 0;
-            __asm__ volatile("cli");
-            int max_wake = (int)(val & 0x7FFFFFFF);
-            int max_requeue = (int)((val >> 32) & 0x7FFFFFFF);
-            if (max_wake < 1) max_wake = 1;
-            if (max_requeue < 1) max_requeue = 1;
-
-            /* First, wake up to max_wake waiters */
-            int woken = 0;
-            for (int i = 0; i < FUTEX_MAX_WAITERS && woken < max_wake; i++) {
-                if (futex_waiters[i].proc && futex_waiters[i].uaddr == addr) {
-                    struct process *p = futex_waiters[i].proc;
-                    futex_waiters[i].proc = NULL;
-                    futex_waiters[i].uaddr = NULL;
-                    futex_num_waiters--;
-                    if (p->state == PROCESS_BLOCKED) {
-                        p->state = PROCESS_READY;
-                        scheduler_add(p);
-                    }
-                    woken++;
+    case FUTEX_WAKE: {
+        /* Wake up to 'val' waiters on this uaddr */
+        int woken = 0;
+        __asm__ volatile("cli");
+        for (int i = 0; i < FUTEX_MAX_WAITERS && woken < (int)val; i++) {
+            if (futex_waiters[i].proc && futex_waiters[i].uaddr == addr) {
+                struct process *p = futex_waiters[i].proc;
+                futex_waiters[i].proc = NULL;
+                futex_waiters[i].uaddr = NULL;
+                futex_num_waiters--;
+                if (p->state == PROCESS_BLOCKED) {
+                    p->state = PROCESS_READY;
+                    scheduler_add(p);
                 }
+                woken++;
             }
-            /* Then requeue remaining to addr2 */
-            for (int i = 0; i < FUTEX_MAX_WAITERS && requeued < max_requeue; i++) {
-                if (futex_waiters[i].proc && futex_waiters[i].uaddr == addr) {
-                    futex_waiters[i].uaddr = addr2;
-                    requeued++;
-                }
-            }
-            __asm__ volatile("sti");
-            return (uint64_t)woken;
         }
+        __asm__ volatile("sti");
+        return (uint64_t)woken;
+    }
 
-        case FUTEX_CMP_REQUEUE: {
-            if (syscall_is_user_process() && !syscall_user_read_ok(uaddr, 4))
-                return (uint64_t)-1;
-            uint32_t cur;
-            if (copy_from_user(&cur, uaddr, 4) < 0)
-                return (uint64_t)-1;
-            if (cur != (uint32_t)val3)
-                return (uint64_t)-1; /* values don't match */
-            return sys_futex(uaddr, FUTEX_REQUEUE, val, timeout, uaddr2, val3);
-        }
+    case FUTEX_WAKE_BITSET: {
+        /* ── FUTEX_WAKE_BITSET: like FUTEX_WAKE but with bitset matching ──
+         *
+         * val3 holds the wake bitset. Only wake waiters whose stored bitset
+         * has a non-empty intersection with the wake bitset.
+         * bitset == 0 is invalid (returns -EINVAL).
+         */
+        if (val3 == 0)
+            return (uint64_t)-1; /* EINVAL */
 
-        case FUTEX_LOCK_PI: {
-            /* Priority Inheritance futex lock */
-            struct process *cur = process_get_current();
-            if (!cur) return (uint64_t)-1;
-
-            uint32_t cur_val;
-            memcpy(&cur_val, addr, 4);
-
-            if (cur_val == 0) {
-                /* Free — try to acquire directly */
-                uint32_t tid = cur->pid;
-                memcpy(addr, &tid, 4);
-                return 0;
-            }
-
-            /* Contended — register as PI waiter and block */
-            int pi_idx = futex_pi_alloc_internal(addr, cur_val);
-            if (pi_idx < 0) return (uint64_t)-1;
-
-            /* Boost owner priority */
-            struct process *owner = process_get_by_pid(futex_pi_table[pi_idx].owner_pid);
-            if (owner && owner->priority > cur->priority) {
-                owner->base_priority = owner->priority;
-                owner->priority = cur->priority;
-                scheduler_set_priority(owner, cur->priority);
-            }
-
-            /* Register as waiter */
-            {
-                int w = futex_pi_table[pi_idx].waiter_count;
-                if (w < 4) {
-                    futex_pi_table[pi_idx].waiter_pids[w] = cur->pid;
-                    futex_pi_table[pi_idx].waiter_count++;
+        uint32_t wake_bitset = (uint32_t)val3;
+        int woken = 0;
+        __asm__ volatile("cli");
+        for (int i = 0; i < FUTEX_MAX_WAITERS && woken < (int)val; i++) {
+            if (futex_waiters[i].proc && futex_waiters[i].uaddr == addr &&
+                (futex_waiters[i].bitset & wake_bitset) != 0) {
+                struct process *p = futex_waiters[i].proc;
+                futex_waiters[i].proc = NULL;
+                futex_waiters[i].uaddr = NULL;
+                futex_waiters[i].bitset = 0;
+                futex_num_waiters--;
+                if (p->state == PROCESS_BLOCKED) {
+                    p->state = PROCESS_READY;
+                    scheduler_add(p);
                 }
+                woken++;
             }
+        }
+        __asm__ volatile("sti");
+        return (uint64_t)woken;
+    }
 
-            /* Block */
-            uint32_t tid = cur->pid | 0x80000000U; /* set high bit = contended */
+    case FUTEX_REQUEUE: {
+        /* Requeue 'val' waiters from addr to addr2 */
+        int requeued = 0;
+        __asm__ volatile("cli");
+        int max_wake = (int)(val & 0x7FFFFFFF);
+        int max_requeue = (int)((val >> 32) & 0x7FFFFFFF);
+        if (max_wake < 1)
+            max_wake = 1;
+        if (max_requeue < 1)
+            max_requeue = 1;
+
+        /* First, wake up to max_wake waiters */
+        int woken = 0;
+        for (int i = 0; i < FUTEX_MAX_WAITERS && woken < max_wake; i++) {
+            if (futex_waiters[i].proc && futex_waiters[i].uaddr == addr) {
+                struct process *p = futex_waiters[i].proc;
+                futex_waiters[i].proc = NULL;
+                futex_waiters[i].uaddr = NULL;
+                futex_num_waiters--;
+                if (p->state == PROCESS_BLOCKED) {
+                    p->state = PROCESS_READY;
+                    scheduler_add(p);
+                }
+                woken++;
+            }
+        }
+        /* Then requeue remaining to addr2 */
+        for (int i = 0; i < FUTEX_MAX_WAITERS && requeued < max_requeue; i++) {
+            if (futex_waiters[i].proc && futex_waiters[i].uaddr == addr) {
+                futex_waiters[i].uaddr = addr2;
+                requeued++;
+            }
+        }
+        __asm__ volatile("sti");
+        return (uint64_t)woken;
+    }
+
+    case FUTEX_CMP_REQUEUE: {
+        if (syscall_is_user_process() && !syscall_user_read_ok(uaddr, 4))
+            return (uint64_t)-1;
+        uint32_t cur;
+        if (copy_from_user(&cur, uaddr, 4) < 0)
+            return (uint64_t)-1;
+        if (cur != (uint32_t)val3)
+            return (uint64_t)-1; /* values don't match */
+        return sys_futex(uaddr, FUTEX_REQUEUE, val, timeout, uaddr2, val3);
+    }
+
+    case FUTEX_LOCK_PI: {
+        /* Priority Inheritance futex lock */
+        struct process *cur = process_get_current();
+        if (!cur)
+            return (uint64_t)-1;
+
+        uint32_t cur_val;
+        memcpy(&cur_val, addr, 4);
+
+        if (cur_val == 0) {
+            /* Free — try to acquire directly */
+            uint32_t tid = cur->pid;
             memcpy(addr, &tid, 4);
-
-            cur->state = PROCESS_BLOCKED;
-            scheduler_remove(cur);
-            scheduler_yield();
             return 0;
         }
 
-        case FUTEX_UNLOCK_PI: {
-            /* Priority Inheritance futex unlock */
-            struct process *cur = process_get_current();
-            if (!cur) return (uint64_t)-1;
+        /* Contended — register as PI waiter and block */
+        int pi_idx = futex_pi_alloc_internal(addr, cur_val);
+        if (pi_idx < 0)
+            return (uint64_t)-1;
 
-            uint32_t cur_val;
-            memcpy(&cur_val, addr, 4);
+        /* Boost owner priority */
+        struct process *owner = process_get_by_pid(futex_pi_table[pi_idx].owner_pid);
+        if (owner && owner->priority > cur->priority) {
+            owner->base_priority = owner->priority;
+            owner->priority = cur->priority;
+            scheduler_set_priority(owner, cur->priority);
+        }
 
-            if ((cur_val & 0x7FFFFFFF) != cur->pid)
-                return (uint64_t)-1; /* not owner */
+        /* Register as waiter */
+        {
+            int w = futex_pi_table[pi_idx].waiter_count;
+            if (w < 4) {
+                futex_pi_table[pi_idx].waiter_pids[w] = cur->pid;
+                futex_pi_table[pi_idx].waiter_count++;
+            }
+        }
 
-            int pi_idx = futex_pi_find(addr);
-            if (pi_idx >= 0) {
-                struct process *owner = process_get_by_pid(futex_pi_table[pi_idx].owner_pid);
-                if (owner && owner->priority != owner->base_priority) {
-                    /* Restore base priority */
-                    owner->priority = owner->base_priority;
-                    scheduler_set_priority(owner, owner->base_priority);
-                }
+        /* Block */
+        uint32_t tid = cur->pid | 0x80000000U; /* set high bit = contended */
+        memcpy(addr, &tid, 4);
 
-                if (futex_pi_table[pi_idx].waiter_count > 0) {
-                    /* Wake the first waiter */
-                    uint32_t next_pid = futex_pi_table[pi_idx].waiter_pids[0];
-                    /* Shift remaining waiters */
-                    for (int w = 1; w < futex_pi_table[pi_idx].waiter_count; w++)
-                        futex_pi_table[pi_idx].waiter_pids[w-1] = futex_pi_table[pi_idx].waiter_pids[w];
-                    futex_pi_table[pi_idx].waiter_count--;
+        cur->state = PROCESS_BLOCKED;
+        scheduler_remove(cur);
+        scheduler_yield();
+        return 0;
+    }
 
-                    /* Transfer ownership to next waiter */
-                    futex_pi_table[pi_idx].owner_pid = next_pid;
-                    uint32_t new_owner_tid = next_pid;
-                    memcpy(addr, &new_owner_tid, 4);
+    case FUTEX_UNLOCK_PI: {
+        /* Priority Inheritance futex unlock */
+        struct process *cur = process_get_current();
+        if (!cur)
+            return (uint64_t)-1;
 
-                    /* Wake the next owner */
-                    struct process *next = process_get_by_pid(next_pid);
-                    if (next && next->state == PROCESS_BLOCKED) {
-                        next->state = PROCESS_READY;
-                        scheduler_wakeup(next);
-                    }
-                } else {
-                    /* No waiters — mark as free */
-                    uint32_t zero = 0;
-                    memcpy(addr, &zero, 4);
-                    futex_pi_table[pi_idx].in_use = 0;
+        uint32_t cur_val;
+        memcpy(&cur_val, addr, 4);
+
+        if ((cur_val & 0x7FFFFFFF) != cur->pid)
+            return (uint64_t)-1; /* not owner */
+
+        int pi_idx = futex_pi_find(addr);
+        if (pi_idx >= 0) {
+            struct process *owner = process_get_by_pid(futex_pi_table[pi_idx].owner_pid);
+            if (owner && owner->priority != owner->base_priority) {
+                /* Restore base priority */
+                owner->priority = owner->base_priority;
+                scheduler_set_priority(owner, owner->base_priority);
+            }
+
+            if (futex_pi_table[pi_idx].waiter_count > 0) {
+                /* Wake the first waiter */
+                uint32_t next_pid = futex_pi_table[pi_idx].waiter_pids[0];
+                /* Shift remaining waiters */
+                for (int w = 1; w < futex_pi_table[pi_idx].waiter_count; w++)
+                    futex_pi_table[pi_idx].waiter_pids[w - 1] =
+                        futex_pi_table[pi_idx].waiter_pids[w];
+                futex_pi_table[pi_idx].waiter_count--;
+
+                /* Transfer ownership to next waiter */
+                futex_pi_table[pi_idx].owner_pid = next_pid;
+                uint32_t new_owner_tid = next_pid;
+                memcpy(addr, &new_owner_tid, 4);
+
+                /* Wake the next owner */
+                struct process *next = process_get_by_pid(next_pid);
+                if (next && next->state == PROCESS_BLOCKED) {
+                    next->state = PROCESS_READY;
+                    scheduler_wakeup(next);
                 }
             } else {
+                /* No waiters — mark as free */
                 uint32_t zero = 0;
                 memcpy(addr, &zero, 4);
+                futex_pi_table[pi_idx].in_use = 0;
             }
-            return 0;
+        } else {
+            uint32_t zero = 0;
+            memcpy(addr, &zero, 4);
+        }
+        return 0;
+    }
+
+    case FUTEX_WAKE_OP: {
+        /* ── FUTEX_WAKE_OP: atomic modify uaddr2, then conditional wake uaddr ──
+         *
+         * val3 encodes op, cmp, oparg, cmparg (see futex.h):
+         *   bits [31:28] = operation (FUTEX_OP_*)
+         *   bits [27:24] = comparison (FUTEX_OP_CMP_*)
+         *   bits [23:12] = oparg (12-bit signed)
+         *   bits [11: 0] = cmparg (12-bit signed)
+         *
+         * 1. Atomically read oldval from *uaddr2, compute newval = op(oldval, oparg),
+         *    write newval to *uaddr2.
+         * 2. Always wake up to 'val2' waiters on uaddr2.
+         * 3. If comparison (oldval OP cmp cmparg) is true, wake up to 'val' waiters on uaddr.
+         */
+        if (syscall_is_user_process()) {
+            if (!syscall_user_read_ok(uaddr, 4) || !syscall_user_read_ok(uaddr2, 4))
+                return (uint64_t)-1;
+            if (!syscall_user_write_ok(uaddr2, 4))
+                return (uint64_t)-1;
         }
 
-        case FUTEX_WAKE_OP: {
-            /* ── FUTEX_WAKE_OP: atomic modify uaddr2, then conditional wake uaddr ──
-             *
-             * val3 encodes op, cmp, oparg, cmparg (see futex.h):
-             *   bits [31:28] = operation (FUTEX_OP_*)
-             *   bits [27:24] = comparison (FUTEX_OP_CMP_*)
-             *   bits [23:12] = oparg (12-bit signed)
-             *   bits [11: 0] = cmparg (12-bit signed)
-             *
-             * 1. Atomically read oldval from *uaddr2, compute newval = op(oldval, oparg),
-             *    write newval to *uaddr2.
-             * 2. Always wake up to 'val2' waiters on uaddr2.
-             * 3. If comparison (oldval OP cmp cmparg) is true, wake up to 'val' waiters on uaddr.
-             */
-            if (syscall_is_user_process()) {
-                if (!syscall_user_read_ok(uaddr, 4) || !syscall_user_read_ok(uaddr2, 4))
-                    return (uint64_t)-1;
-                if (!syscall_user_write_ok(uaddr2, 4))
-                    return (uint64_t)-1;
-            }
+        /* Decode val3 */
+        unsigned futex_op = (unsigned)((val3 >> 28) & 0xf);
+        unsigned cmp = (unsigned)((val3 >> 24) & 0xf);
+        /* Sign-extend 12-bit oparg */
+        int32_t oparg = (int32_t)((val3 >> 12) & 0xfff);
+        if (oparg & 0x800)
+            oparg = (int32_t)((uint32_t)oparg | 0xfffff000);
+        /* Sign-extend 12-bit cmparg */
+        int32_t cmparg = (int32_t)(val3 & 0xfff);
+        if (cmparg & 0x800)
+            cmparg = (int32_t)((uint32_t)cmparg | 0xfffff000);
 
-            /* Decode val3 */
-            unsigned futex_op = (unsigned)((val3 >> 28) & 0xf);
-            unsigned cmp  = (unsigned)((val3 >> 24) & 0xf);
-            /* Sign-extend 12-bit oparg */
-            int32_t oparg = (int32_t)((val3 >> 12) & 0xfff);
-            if (oparg & 0x800) oparg = (int32_t)((uint32_t)oparg | 0xfffff000);
-            /* Sign-extend 12-bit cmparg */
-            int32_t cmparg = (int32_t)(val3 & 0xfff);
-            if (cmparg & 0x800) cmparg = (int32_t)((uint32_t)cmparg | 0xfffff000);
+        /* If OPARG_SHIFT is set, shift oparg left by 8 */
+        if (futex_op & FUTEX_OP_OPARG_SHIFT)
+            oparg <<= 8;
 
-            /* If OPARG_SHIFT is set, shift oparg left by 8 */
-            if (futex_op & FUTEX_OP_OPARG_SHIFT)
-                oparg <<= 8;
+        futex_op &= 7; /* mask to just the operation bits */
 
-            futex_op &= 7; /* mask to just the operation bits */
+        /* Read old value from uaddr2 */
+        uint32_t oldval;
+        memcpy(&oldval, addr2, 4);
 
-            /* Read old value from uaddr2 */
-            uint32_t oldval;
-            memcpy(&oldval, addr2, 4);
-
-            /* Compute new value */
-            uint32_t newval = oldval;
-            switch (op) {
-                case FUTEX_OP_SET:
-                    newval = (uint32_t)oparg;
-                    break;
-                case FUTEX_OP_ADD:
-                    newval = oldval + (uint32_t)oparg;
-                    break;
-                case FUTEX_OP_OR:
-                    newval = oldval | (uint32_t)oparg;
-                    break;
-                case FUTEX_OP_ANDN:
-                    newval = oldval & ~(uint32_t)oparg;
-                    break;
-                case FUTEX_OP_XOR:
-                    newval = oldval ^ (uint32_t)oparg;
-                    break;
-                default:
-                    return (uint64_t)-1; /* ENOSYS */
-            }
-
-            /* Write new value to uaddr2 */
-            memcpy(addr2, &newval, 4);
-
-            /* ── Always wake up to 'val2' waiters on uaddr2 ────────── */
-            int woken1 = 0;
-            int woken2 = 0;
-            __asm__ volatile("cli");
-            int max_wake2 = (int)(val & 0x7FFFFFFF);
-            if (max_wake2 < 1) max_wake2 = 1;
-            for (int i = 0; i < FUTEX_MAX_WAITERS && woken2 < max_wake2; i++) {
-                if (futex_waiters[i].proc && futex_waiters[i].uaddr == addr2) {
-                    struct process *p = futex_waiters[i].proc;
-                    futex_waiters[i].proc = NULL;
-                    futex_waiters[i].uaddr = NULL;
-                    futex_num_waiters--;
-                    if (p->state == PROCESS_BLOCKED) {
-                        p->state = PROCESS_READY;
-                        scheduler_add(p);
-                    }
-                    woken2++;
-                }
-            }
-            __asm__ volatile("sti");
-
-            /* ── Conditional wake on uaddr based on comparison ─────── */
-            /* Per Linux semantics, we use val2 (upper 32 bits) for unconditional
-             * wake on uaddr2 and val (lower 32 bits) for conditional wake on uaddr.
-             * (val is actually in a1, val2 corresponds to timeout parameter) */
-
-            /* Determine if comparison is true */
-            int cmp_result = 0;
-            switch (cmp) {
-                case FUTEX_OP_CMP_EQ: cmp_result = ((int32_t)oldval == cmparg); break;
-                case FUTEX_OP_CMP_NE: cmp_result = ((int32_t)oldval != cmparg); break;
-                case FUTEX_OP_CMP_LT: cmp_result = ((int32_t)oldval <  cmparg); break;
-                case FUTEX_OP_CMP_LE: cmp_result = ((int32_t)oldval <= cmparg); break;
-                case FUTEX_OP_CMP_GT: cmp_result = ((int32_t)oldval >  cmparg); break;
-                case FUTEX_OP_CMP_GE: cmp_result = ((int32_t)oldval >= cmparg); break;
-                default: cmp_result = 0; break;
-            }
-
-            if (cmp_result) {
-                __asm__ volatile("cli");
-                int max_wake1 = (int)(val & 0x7FFFFFFF);
-                if (max_wake1 < 1) max_wake1 = 1;
-                for (int i = 0; i < FUTEX_MAX_WAITERS && woken1 < max_wake1; i++) {
-                    if (futex_waiters[i].proc && futex_waiters[i].uaddr == addr) {
-                        struct process *p = futex_waiters[i].proc;
-                        futex_waiters[i].proc = NULL;
-                        futex_waiters[i].uaddr = NULL;
-                        futex_num_waiters--;
-                        if (p->state == PROCESS_BLOCKED) {
-                            p->state = PROCESS_READY;
-                            scheduler_add(p);
-                        }
-                        woken1++;
-                    }
-                }
-                __asm__ volatile("sti");
-            }
-
-            /* Return total waiters woken (on uaddr + uaddr2) */
-            return (uint64_t)(woken1 + woken2);
-        }
-
-        case FUTEX_CMP_REQUEUE_PI: {
-            /* Requeue from non-PI futex to PI futex with PI boosting */
-            if (syscall_is_user_process() && !syscall_user_read_ok(uaddr, 4))
-                return (uint64_t)-1;
-            uint32_t cur;
-            if (copy_from_user(&cur, uaddr, 4) < 0)
-                return (uint64_t)-1;
-            if (cur != (uint32_t)val3)
-                return (uint64_t)-1;
-
-            int max_wake = (int)(val & 0x7FFFFFFF);
-            int max_requeue = (int)((val >> 32) & 0x7FFFFFFF);
-            if (max_wake < 1) max_wake = 1;
-            if (max_requeue < 1) max_requeue = 1;
-
-            __asm__ volatile("cli");
-
-            /* Wake up to max_wake waiters on addr */
-            int woken = 0;
-            for (int i = 0; i < FUTEX_MAX_WAITERS && woken < max_wake; i++) {
-                if (futex_waiters[i].proc && futex_waiters[i].uaddr == addr) {
-                    struct process *p = futex_waiters[i].proc;
-                    futex_waiters[i].proc = NULL;
-                    futex_waiters[i].uaddr = NULL;
-                    futex_num_waiters--;
-                    if (p->state == PROCESS_BLOCKED) {
-                        p->state = PROCESS_READY;
-                        scheduler_add(p);
-                    }
-                    woken++;
-                }
-            }
-
-            /* Requeue remaining to addr2 (PI futex) with PI boosting */
-            int requeued = 0;
-            for (int i = 0; i < FUTEX_MAX_WAITERS && requeued < max_requeue; i++) {
-                if (futex_waiters[i].proc && futex_waiters[i].uaddr == addr) {
-                    futex_waiters[i].uaddr = addr2;
-                    requeued++;
-                    /* PI boost the requeued waiter */
-                    struct process *rp = futex_waiters[i].proc;
-                    if (rp && rp->priority > 0)
-                        rp->priority--;
-                }
-            }
-
-            __asm__ volatile("sti");
-            return (uint64_t)woken;
-        }
-
+        /* Compute new value */
+        uint32_t newval = oldval;
+        switch (op) {
+        case FUTEX_OP_SET:
+            newval = (uint32_t)oparg;
+            break;
+        case FUTEX_OP_ADD:
+            newval = oldval + (uint32_t)oparg;
+            break;
+        case FUTEX_OP_OR:
+            newval = oldval | (uint32_t)oparg;
+            break;
+        case FUTEX_OP_ANDN:
+            newval = oldval & ~(uint32_t)oparg;
+            break;
+        case FUTEX_OP_XOR:
+            newval = oldval ^ (uint32_t)oparg;
+            break;
         default:
             return (uint64_t)-1; /* ENOSYS */
+        }
+
+        /* Write new value to uaddr2 */
+        memcpy(addr2, &newval, 4);
+
+        /* ── Always wake up to 'val2' waiters on uaddr2 ────────── */
+        int woken1 = 0;
+        int woken2 = 0;
+        __asm__ volatile("cli");
+        int max_wake2 = (int)(val & 0x7FFFFFFF);
+        if (max_wake2 < 1)
+            max_wake2 = 1;
+        for (int i = 0; i < FUTEX_MAX_WAITERS && woken2 < max_wake2; i++) {
+            if (futex_waiters[i].proc && futex_waiters[i].uaddr == addr2) {
+                struct process *p = futex_waiters[i].proc;
+                futex_waiters[i].proc = NULL;
+                futex_waiters[i].uaddr = NULL;
+                futex_num_waiters--;
+                if (p->state == PROCESS_BLOCKED) {
+                    p->state = PROCESS_READY;
+                    scheduler_add(p);
+                }
+                woken2++;
+            }
+        }
+        __asm__ volatile("sti");
+
+        /* ── Conditional wake on uaddr based on comparison ─────── */
+        /* Per Linux semantics, we use val2 (upper 32 bits) for unconditional
+         * wake on uaddr2 and val (lower 32 bits) for conditional wake on uaddr.
+         * (val is actually in a1, val2 corresponds to timeout parameter) */
+
+        /* Determine if comparison is true */
+        int cmp_result = 0;
+        switch (cmp) {
+        case FUTEX_OP_CMP_EQ:
+            cmp_result = ((int32_t)oldval == cmparg);
+            break;
+        case FUTEX_OP_CMP_NE:
+            cmp_result = ((int32_t)oldval != cmparg);
+            break;
+        case FUTEX_OP_CMP_LT:
+            cmp_result = ((int32_t)oldval < cmparg);
+            break;
+        case FUTEX_OP_CMP_LE:
+            cmp_result = ((int32_t)oldval <= cmparg);
+            break;
+        case FUTEX_OP_CMP_GT:
+            cmp_result = ((int32_t)oldval > cmparg);
+            break;
+        case FUTEX_OP_CMP_GE:
+            cmp_result = ((int32_t)oldval >= cmparg);
+            break;
+        default:
+            cmp_result = 0;
+            break;
+        }
+
+        if (cmp_result) {
+            __asm__ volatile("cli");
+            int max_wake1 = (int)(val & 0x7FFFFFFF);
+            if (max_wake1 < 1)
+                max_wake1 = 1;
+            for (int i = 0; i < FUTEX_MAX_WAITERS && woken1 < max_wake1; i++) {
+                if (futex_waiters[i].proc && futex_waiters[i].uaddr == addr) {
+                    struct process *p = futex_waiters[i].proc;
+                    futex_waiters[i].proc = NULL;
+                    futex_waiters[i].uaddr = NULL;
+                    futex_num_waiters--;
+                    if (p->state == PROCESS_BLOCKED) {
+                        p->state = PROCESS_READY;
+                        scheduler_add(p);
+                    }
+                    woken1++;
+                }
+            }
+            __asm__ volatile("sti");
+        }
+
+        /* Return total waiters woken (on uaddr + uaddr2) */
+        return (uint64_t)(woken1 + woken2);
+    }
+
+    case FUTEX_CMP_REQUEUE_PI: {
+        /* Requeue from non-PI futex to PI futex with PI boosting */
+        if (syscall_is_user_process() && !syscall_user_read_ok(uaddr, 4))
+            return (uint64_t)-1;
+        uint32_t cur;
+        if (copy_from_user(&cur, uaddr, 4) < 0)
+            return (uint64_t)-1;
+        if (cur != (uint32_t)val3)
+            return (uint64_t)-1;
+
+        int max_wake = (int)(val & 0x7FFFFFFF);
+        int max_requeue = (int)((val >> 32) & 0x7FFFFFFF);
+        if (max_wake < 1)
+            max_wake = 1;
+        if (max_requeue < 1)
+            max_requeue = 1;
+
+        __asm__ volatile("cli");
+
+        /* Wake up to max_wake waiters on addr */
+        int woken = 0;
+        for (int i = 0; i < FUTEX_MAX_WAITERS && woken < max_wake; i++) {
+            if (futex_waiters[i].proc && futex_waiters[i].uaddr == addr) {
+                struct process *p = futex_waiters[i].proc;
+                futex_waiters[i].proc = NULL;
+                futex_waiters[i].uaddr = NULL;
+                futex_num_waiters--;
+                if (p->state == PROCESS_BLOCKED) {
+                    p->state = PROCESS_READY;
+                    scheduler_add(p);
+                }
+                woken++;
+            }
+        }
+
+        /* Requeue remaining to addr2 (PI futex) with PI boosting */
+        int requeued = 0;
+        for (int i = 0; i < FUTEX_MAX_WAITERS && requeued < max_requeue; i++) {
+            if (futex_waiters[i].proc && futex_waiters[i].uaddr == addr) {
+                futex_waiters[i].uaddr = addr2;
+                requeued++;
+                /* PI boost the requeued waiter */
+                struct process *rp = futex_waiters[i].proc;
+                if (rp && rp->priority > 0)
+                    rp->priority--;
+            }
+        }
+
+        __asm__ volatile("sti");
+        return (uint64_t)woken;
+    }
+
+    default:
+        return (uint64_t)-1; /* ENOSYS */
     }
 }
 
@@ -6634,36 +6937,34 @@ static uint64_t sys_arch_prctl(uint64_t code, uint64_t addr) {
         return (uint64_t)(int64_t)-ENOSYS;
 
     switch (code) {
-        case ARCH_SET_FS:
-            __asm__ volatile("wrmsr"
-                             : : "c"(MSR_FS_BASE),
-                                 "a"((uint32_t)addr),
-                                 "d"((uint32_t)(addr >> 32)));
-            return 0;
+    case ARCH_SET_FS:
+        __asm__ volatile("wrmsr"
+                         :
+                         : "c"(MSR_FS_BASE), "a"((uint32_t)addr), "d"((uint32_t)(addr >> 32)));
+        return 0;
 
-        case ARCH_GET_FS: {
-            uint64_t fs_base = rdmsr(MSR_FS_BASE);
-            if (copy_to_user(addr, &fs_base, sizeof(fs_base)) < 0)
-                return (uint64_t)(int64_t)-EFAULT;
-            return 0;
-        }
+    case ARCH_GET_FS: {
+        uint64_t fs_base = rdmsr(MSR_FS_BASE);
+        if (copy_to_user(addr, &fs_base, sizeof(fs_base)) < 0)
+            return (uint64_t)(int64_t)-EFAULT;
+        return 0;
+    }
 
-        case ARCH_SET_GS:
-            __asm__ volatile("wrmsr"
-                             : : "c"(MSR_GS_BASE),
-                                 "a"((uint32_t)addr),
-                                 "d"((uint32_t)(addr >> 32)));
-            return 0;
+    case ARCH_SET_GS:
+        __asm__ volatile("wrmsr"
+                         :
+                         : "c"(MSR_GS_BASE), "a"((uint32_t)addr), "d"((uint32_t)(addr >> 32)));
+        return 0;
 
-        case ARCH_GET_GS: {
-            uint64_t gs_base = rdmsr(MSR_GS_BASE);
-            if (copy_to_user(addr, &gs_base, sizeof(gs_base)) < 0)
-                return (uint64_t)(int64_t)-EFAULT;
-            return 0;
-        }
+    case ARCH_GET_GS: {
+        uint64_t gs_base = rdmsr(MSR_GS_BASE);
+        if (copy_to_user(addr, &gs_base, sizeof(gs_base)) < 0)
+            return (uint64_t)(int64_t)-EFAULT;
+        return 0;
+    }
 
-        default:
-            return (uint64_t)(int64_t)-ENOSYS;
+    default:
+        return (uint64_t)(int64_t)-ENOSYS;
     }
 }
 
@@ -6683,22 +6984,23 @@ static uint64_t sys_arch_prctl(uint64_t code, uint64_t addr) {
  * (proc->sig_mask), so we treat sigset_t* as uint64_t* here.
  */
 #define PSELECT6_SIGMASK_OFFSET 0
-#define PSELECT6_SSIZE_OFFSET   8
+#define PSELECT6_SSIZE_OFFSET 8
 
-static uint64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr,
-                              uint64_t writefds_addr, uint64_t exceptfds_addr,
-                              uint64_t timeout_addr) {
+static uint64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr, uint64_t writefds_addr,
+                             uint64_t exceptfds_addr, uint64_t timeout_addr) {
     struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)-1;
+    if (!proc)
+        return (uint64_t)-1;
 
     /* Extract sigmask from the packed 6th argument.
      * Read the packed struct and the actual sigmask value from user-space
      * BEFORE acquiring any locks — copy_from_user may page fault. */
     int have_sigmask = 0;
-    uint64_t sigmask_val = 0;  /* pre-read sigmask value from userspace */
+    uint64_t sigmask_val = 0; /* pre-read sigmask value from userspace */
     uint64_t packed = syscall_arg6;
     if (packed) {
-        if (syscall_is_user_process() && !syscall_user_read_ok(packed, sizeof(uint64_t*) + sizeof(size_t)))
+        if (syscall_is_user_process() &&
+            !syscall_user_read_ok(packed, sizeof(uint64_t *) + sizeof(size_t)))
             return (uint64_t)-1;
         /* Safely read the sigmask pointer from the packed struct via copy_from_user */
         uint64_t sigmask_addr = 0;
@@ -6733,7 +7035,8 @@ static uint64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr,
      * after the timeout.  Instead we inline a simplified select loop
      * that checks for pending signals as well. */
 
-    if (nfds > FD_SETSIZE) nfds = FD_SETSIZE;
+    if (nfds > FD_SETSIZE)
+        nfds = FD_SETSIZE;
 
     fd_set readfds, writefds, exceptfds;
     fd_set orig_readfds, orig_writefds, orig_exceptfds;
@@ -6767,7 +7070,8 @@ static uint64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr,
             return (uint64_t)-1;
         /* Validate: timespec fields must be non-negative */
         if ((int64_t)ts.tv_sec >= 0 && (int64_t)ts.tv_nsec >= 0) {
-            timeout_ticks = (uint64_t)(int64_t)ts.tv_sec * 100 + (uint64_t)(int64_t)ts.tv_nsec / 10000000;
+            timeout_ticks =
+                (uint64_t)(int64_t)ts.tv_sec * 100 + (uint64_t)(int64_t)ts.tv_nsec / 10000000;
             has_timeout = 1;
         }
     }
@@ -6775,7 +7079,8 @@ static uint64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr,
     uint64_t start_tick = timer_get_ticks();
     int loops = 0;
     int max_loops = has_timeout ? (int)(timeout_ticks / 1 + 1) : 1;
-    if (max_loops < 1) max_loops = 1;
+    if (max_loops < 1)
+        max_loops = 1;
 
     while (loops < max_loops) {
         /* Check for pending signals before each iteration */
@@ -6795,10 +7100,12 @@ static uint64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr,
         if (readfds_addr) {
             memcpy(&readfds, &orig_readfds, sizeof(fd_set));
             for (int i = 0; i < (int)nfds; i++) {
-                if (!FD_ISSET(i, &readfds)) continue;
+                if (!FD_ISSET(i, &readfds))
+                    continue;
                 if (i >= 100 && i < 100 + SOCK_MAX) {
                     int revents = sock_poll(i, POLLIN, NULL);
-                    if (!(revents & POLLIN)) FD_CLR(i, &readfds);
+                    if (!(revents & POLLIN))
+                        FD_CLR(i, &readfds);
                     continue;
                 }
                 if (i >= PROCESS_FD_MAX || !proc->fd_table[i].used) {
@@ -6808,7 +7115,8 @@ static uint64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr,
                 if (strncmp(proc->fd_table[i].path, "pipe_read_", 10) == 0) {
                     int pipe_id = (int)proc->fd_table[i].offset;
                     int revents = pipe_poll(pipe_id, 1, NULL);
-                    if (!(revents & POLLIN)) FD_CLR(i, &readfds);
+                    if (!(revents & POLLIN))
+                        FD_CLR(i, &readfds);
                     continue;
                 }
             }
@@ -6816,10 +7124,12 @@ static uint64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr,
         if (writefds_addr) {
             memcpy(&writefds, &orig_writefds, sizeof(fd_set));
             for (int i = 0; i < (int)nfds; i++) {
-                if (!FD_ISSET(i, &writefds)) continue;
+                if (!FD_ISSET(i, &writefds))
+                    continue;
                 if (i >= 100 && i < 100 + SOCK_MAX) {
                     int revents = sock_poll(i, POLLOUT, NULL);
-                    if (!(revents & POLLOUT)) FD_CLR(i, &writefds);
+                    if (!(revents & POLLOUT))
+                        FD_CLR(i, &writefds);
                     continue;
                 }
                 if (i >= PROCESS_FD_MAX || !proc->fd_table[i].used) {
@@ -6829,7 +7139,8 @@ static uint64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr,
                 if (strncmp(proc->fd_table[i].path, "pipe_write_", 11) == 0) {
                     int pipe_id = (int)proc->fd_table[i].offset;
                     int revents = pipe_poll(pipe_id, 0, NULL);
-                    if (!(revents & POLLOUT)) FD_CLR(i, &writefds);
+                    if (!(revents & POLLOUT))
+                        FD_CLR(i, &writefds);
                     continue;
                 }
             }
@@ -6837,11 +7148,13 @@ static uint64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr,
         if (exceptfds_addr) {
             memcpy(&exceptfds, &orig_exceptfds, sizeof(fd_set));
             for (int i = 0; i < (int)nfds; i++) {
-                if (!FD_ISSET(i, &exceptfds)) continue;
+                if (!FD_ISSET(i, &exceptfds))
+                    continue;
                 /* For exceptfds, check for out-of-band data on sockets */
                 if (i >= 100 && i < 100 + SOCK_MAX) {
                     int revents = sock_poll(i, POLLPRI, NULL);
-                    if (!(revents & POLLPRI)) FD_CLR(i, &exceptfds);
+                    if (!(revents & POLLPRI))
+                        FD_CLR(i, &exceptfds);
                     continue;
                 }
             }
@@ -6851,15 +7164,24 @@ static uint64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr,
         int ready = 0;
         if (readfds_addr) {
             for (int i = 0; i < (int)nfds; i++)
-                if (FD_ISSET(i, &readfds)) { ready++; break; }
+                if (FD_ISSET(i, &readfds)) {
+                    ready++;
+                    break;
+                }
         }
         if (!ready && writefds_addr) {
             for (int i = 0; i < (int)nfds; i++)
-                if (FD_ISSET(i, &writefds)) { ready++; break; }
+                if (FD_ISSET(i, &writefds)) {
+                    ready++;
+                    break;
+                }
         }
         if (!ready && exceptfds_addr) {
             for (int i = 0; i < (int)nfds; i++)
-                if (FD_ISSET(i, &exceptfds)) { ready++; break; }
+                if (FD_ISSET(i, &exceptfds)) {
+                    ready++;
+                    break;
+                }
         }
 
         if (ready) {
@@ -6880,10 +7202,12 @@ static uint64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr,
             return (uint64_t)ready;
         }
 
-        if (!has_timeout) break;  /* non-blocking case */
+        if (!has_timeout)
+            break; /* non-blocking case */
 
         uint64_t elapsed = timer_get_ticks() - start_tick;
-        if (elapsed >= timeout_ticks) break;
+        if (elapsed >= timeout_ticks)
+            break;
 
         /* Yield until next tick */
         proc->sleep_until = timer_get_ticks() + 1;
@@ -6894,9 +7218,12 @@ static uint64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr,
     }
 
     /* Timeout or no FDs ready */
-    if (readfds_addr) FD_ZERO(&readfds);
-    if (writefds_addr) FD_ZERO(&writefds);
-    if (exceptfds_addr) FD_ZERO(&exceptfds);
+    if (readfds_addr)
+        FD_ZERO(&readfds);
+    if (writefds_addr)
+        FD_ZERO(&writefds);
+    if (exceptfds_addr)
+        FD_ZERO(&exceptfds);
     if (readfds_addr && copy_to_user(readfds_addr, &readfds, sizeof(fd_set)) < 0)
         return (uint64_t)-1;
     if (writefds_addr && copy_to_user(writefds_addr, &writefds, sizeof(fd_set)) < 0)
@@ -6916,8 +7243,8 @@ static uint64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr,
 
 /* ── ppoll — safer poll with atomic signal mask (Item 251) ─────────── */
 
-static uint64_t sys_ppoll(uint64_t fds_addr, uint64_t nfds,
-                           uint64_t timeout_addr, uint64_t sigmask_addr) {
+static uint64_t sys_ppoll(uint64_t fds_addr, uint64_t nfds, uint64_t timeout_addr,
+                          uint64_t sigmask_addr) {
     if (syscall_is_user_process()) {
         if (!syscall_user_read_ok(fds_addr, nfds * sizeof(struct pollfd)))
             return (uint64_t)-1;
@@ -6926,7 +7253,8 @@ static uint64_t sys_ppoll(uint64_t fds_addr, uint64_t nfds,
     }
 
     struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)-1;
+    if (!proc)
+        return (uint64_t)-1;
 
     /* Read new sigmask from userspace BEFORE acquiring spinlock — copy_from_user may page fault */
     uint64_t pp_new_mask = 0;
@@ -6949,7 +7277,8 @@ static uint64_t sys_ppoll(uint64_t fds_addr, uint64_t nfds,
 
     struct pollfd fds_buf[256];
     int n = (int)nfds;
-    if (n > 256) n = 256;
+    if (n > 256)
+        n = 256;
     if (fds_addr) {
         if (copy_from_user(fds_buf, fds_addr, sizeof(struct pollfd) * (size_t)n) < 0)
             return (uint64_t)-1;
@@ -6962,7 +7291,8 @@ static uint64_t sys_ppoll(uint64_t fds_addr, uint64_t nfds,
         if (copy_from_user(&ts, timeout_addr, sizeof(ts)) < 0)
             return (uint64_t)-1;
         if ((int64_t)ts.tv_sec >= 0 && (int64_t)ts.tv_nsec >= 0) {
-            timeout_ticks = (uint64_t)(int64_t)ts.tv_sec * 100 + (uint64_t)(int64_t)ts.tv_nsec / 10000000;
+            timeout_ticks =
+                (uint64_t)(int64_t)ts.tv_sec * 100 + (uint64_t)(int64_t)ts.tv_nsec / 10000000;
         }
     }
 
@@ -6996,7 +7326,8 @@ static uint64_t sys_ppoll(uint64_t fds_addr, uint64_t nfds,
             if (fd_idx >= 100 && fd_idx < 100 + SOCK_MAX) {
                 revents = sock_poll(fd_idx, fds_buf[i].events, NULL);
                 fds_buf[i].revents = (int16_t)revents;
-                if (revents) ready++;
+                if (revents)
+                    ready++;
                 continue;
             }
 
@@ -7016,12 +7347,15 @@ static uint64_t sys_ppoll(uint64_t fds_addr, uint64_t nfds,
                 int pipe_id = (int)pfd->offset;
                 revents = pipe_poll(pipe_id, 0, NULL);
             } else {
-                if (fds_buf[i].events & POLLIN)  revents |= POLLIN;
-                if (fds_buf[i].events & POLLOUT) revents |= POLLOUT;
+                if (fds_buf[i].events & POLLIN)
+                    revents |= POLLIN;
+                if (fds_buf[i].events & POLLOUT)
+                    revents |= POLLOUT;
             }
 
             fds_buf[i].revents = (int16_t)(revents & fds_buf[i].events);
-            if (fds_buf[i].revents) ready++;
+            if (fds_buf[i].revents)
+                ready++;
         }
 
         /* Write results back to userspace */
@@ -7038,10 +7372,12 @@ static uint64_t sys_ppoll(uint64_t fds_addr, uint64_t nfds,
             return (uint64_t)ready;
         }
 
-        if (timeout_ticks == 0) break; /* non-blocking */
+        if (timeout_ticks == 0)
+            break; /* non-blocking */
 
         uint64_t elapsed = timer_get_ticks() - start_tick;
-        if (elapsed >= timeout_ticks) break;
+        if (elapsed >= timeout_ticks)
+            break;
 
         /* Yield until next tick */
         proc->sleep_until = timer_get_ticks() + 1;
@@ -7070,15 +7406,15 @@ static uint64_t sys_ppoll(uint64_t fds_addr, uint64_t nfds,
 
 static uint64_t sys_eventfd(uint64_t initval, uint64_t flags) {
     int fd = eventfd_syscall((uint32_t)initval, (int)flags);
-    if (fd < 0) return (uint64_t)-1;
+    if (fd < 0)
+        return (uint64_t)-1;
     return (uint64_t)fd;
 }
 
 /* ── sendfile ──────────────────────────────────────────────────────────── */
 
 /* Forward declaration for sock_send_raw helper */
-static int sock_send_raw(struct socket *s, int sockfd,
-                          const void *data, uint32_t len);
+static int sock_send_raw(struct socket *s, int sockfd, const void *data, uint32_t len);
 
 /**
  * sys_sendfile — Copy data between file descriptors (zero-copy file-to-socket)
@@ -7116,9 +7452,8 @@ static int sock_send_raw(struct socket *s, int sockfd,
  *   ENOMEM     cannot allocate bounce buffer
  *   ESPIPE     @in_fd is not a regular file
  */
-static uint64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd,
-                              uint64_t offset_addr, uint64_t count)
-{
+static uint64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd, uint64_t offset_addr,
+                             uint64_t count) {
     struct process *p = process_get_current();
     if (!p)
         return (uint64_t)(int64_t)-EPERM;
@@ -7134,7 +7469,7 @@ static uint64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd,
         return (uint64_t)(int64_t)-EBADF;
 
     /* in_fd must be open for reading (O_RDONLY=0 or O_RDWR=2) */
-    if ((pfd_in->open_flags & 3) == 1)   /* O_WRONLY alone */
+    if ((pfd_in->open_flags & 3) == 1) /* O_WRONLY alone */
         return (uint64_t)(int64_t)-EBADF;
 
     /* in_fd must refer to a regular file, not a directory or other type */
@@ -7167,7 +7502,7 @@ static uint64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd,
             return (uint64_t)(int64_t)-EBADF;
 
         /* out_fd must be open for writing (O_WRONLY=1 or O_RDWR=2) */
-        if ((pfd_out->open_flags & 3) == 0)   /* O_RDONLY alone */
+        if ((pfd_out->open_flags & 3) == 0) /* O_RDONLY alone */
             return (uint64_t)(int64_t)-EBADF;
 
         if (vfs_stat(pfd_out->path, &st_out) < 0)
@@ -7216,13 +7551,12 @@ static uint64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd,
         if (r < 0) {
             /* On first iteration, propagate exact VFS errno.
              * On later iterations, return partial success. */
-            sf_result = (total > 0) ? (uint64_t)total
-                                    : (uint64_t)(int64_t)r;
+            sf_result = (total > 0) ? (uint64_t)total : (uint64_t)(int64_t)r;
             goto sendfile_cleanup;
         }
 
         if (nread == 0)
-            break;  /* EOF */
+            break; /* EOF */
 
         /* Write chunk to out_fd */
         int wret;
@@ -7233,15 +7567,14 @@ static uint64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd,
         }
 
         if (wret < 0) {
-            sf_result = (total > 0) ? (uint64_t)total
-                                    : (uint64_t)(int64_t)wret;
+            sf_result = (total > 0) ? (uint64_t)total : (uint64_t)(int64_t)wret;
             goto sendfile_cleanup;
         }
 
         total += nread;
 
         if (nread < chunk)
-            break;  /* Short read — EOF */
+            break; /* Short read — EOF */
     }
 
     /* ── Update user-space offset pointer if applicable ── */
@@ -7275,9 +7608,7 @@ sendfile_cleanup:
  *
  * Return: Number of bytes sent on success, or negative errno on error.
  */
-static int sock_send_raw(struct socket *s, int sockfd,
-                          const void *data, uint32_t len)
-{
+static int sock_send_raw(struct socket *s, int sockfd, const void *data, uint32_t len) {
     if (s->domain == AF_UNIX && s->unix_ep >= 0) {
         /* UNIX domain socket — unix_send handles kernel data */
         return unix_send(s->unix_ep, data, len, 0);
@@ -7285,8 +7616,7 @@ static int sock_send_raw(struct socket *s, int sockfd,
 
     if (s->domain == AF_NETLINK && netlink_is_valid_fd(sockfd)) {
         /* AF_NETLINK socket */
-        int max_send = (int)(len > NETLINK_MAX_PAYLOAD
-                             ? NETLINK_MAX_PAYLOAD : len);
+        int max_send = (int)(len > NETLINK_MAX_PAYLOAD ? NETLINK_MAX_PAYLOAD : len);
         return netlink_send(sockfd, data, max_send);
     }
 
@@ -7298,14 +7628,12 @@ static int sock_send_raw(struct socket *s, int sockfd,
 
     if (s->type == SOCK_DGRAM) {
         /* UDP datagram — connected or connectionless */
-        if (s->cache_valid && s->state == SOCK_STATE_CONNECTED &&
-            s->remote_ip != 0) {
-            net_udp_send_cached(s->cached_dst_mac, s->remote_ip,
-                                s->local_port, s->remote_port,
+        if (s->cache_valid && s->state == SOCK_STATE_CONNECTED && s->remote_ip != 0) {
+            net_udp_send_cached(s->cached_dst_mac, s->remote_ip, s->local_port, s->remote_port,
                                 data, (uint16_t)(len > 1500 ? 1500 : len));
         } else {
-            net_udp_send(s->remote_ip, s->local_port, s->remote_port,
-                         data, (uint16_t)(len > 1500 ? 1500 : len));
+            net_udp_send(s->remote_ip, s->local_port, s->remote_port, data,
+                         (uint16_t)(len > 1500 ? 1500 : len));
         }
         return (int)len;
     }
@@ -7322,13 +7650,13 @@ static uint64_t sys_syslog(uint64_t type, uint64_t buf_addr, uint64_t len) {
     /* Lockdown CONFIDENTIALITY: block reading dmesg from userspace */
     if (lockdown_is_locked_down(LOCKDOWN_CONFIDENTIALITY)) {
         switch (type) {
-            case SYSLOG_ACTION_READ_ALL:
-            case SYSLOG_ACTION_READ_CLEAR:
-            case SYSLOG_ACTION_SIZE_UNREAD:
-            case SYSLOG_ACTION_SIZE_BUFFER:
-                return (uint64_t)-EPERM;
-            default:
-                break;  /* Allow clear, console ops, etc. */
+        case SYSLOG_ACTION_READ_ALL:
+        case SYSLOG_ACTION_READ_CLEAR:
+        case SYSLOG_ACTION_SIZE_UNREAD:
+        case SYSLOG_ACTION_SIZE_BUFFER:
+            return (uint64_t)-EPERM;
+        default:
+            break; /* Allow clear, console ops, etc. */
         }
     }
 
@@ -7338,173 +7666,179 @@ static uint64_t sys_syslog(uint64_t type, uint64_t buf_addr, uint64_t len) {
         if (p && p->is_user) {
             /* Check for CAP_SYSLOG in effective set */
             int cap_word = CAP_SYSLOG / 64;
-            int cap_bit  = CAP_SYSLOG % 64;
+            int cap_bit = CAP_SYSLOG % 64;
             if (cap_word < PROCESS_SYSCALL_CAP_WORDS) {
                 if (!(p->syscall_caps[cap_word] & (1ULL << cap_bit))) {
-                    return (uint64_t)-1;  /* EPERM */
+                    return (uint64_t)-1; /* EPERM */
                 }
             }
         }
     }
 
     switch (type) {
-        case SYSLOG_ACTION_READ_ALL:
-        case SYSLOG_ACTION_READ_CLEAR: {
-            if (syscall_is_user_process() && !syscall_user_write_ok(buf_addr, len))
-                return (uint64_t)-1;
-            char *dst = (char *)buf_addr;
-            int copied = kprintf_dmesg(dst, (int)len);
-            if (type == SYSLOG_ACTION_READ_CLEAR)
-                kprintf_dmesg_clear();
-            return (uint64_t)copied;
-        }
-        case SYSLOG_ACTION_SIZE_BUFFER:
-            return (uint64_t)(65536); /* DMESG_BUF_SIZE */
-        case SYSLOG_ACTION_SIZE_UNREAD:
-            /* Approximate: return max possible */
-            return (uint64_t)(65536);
-        case SYSLOG_ACTION_CLEAR:
+    case SYSLOG_ACTION_READ_ALL:
+    case SYSLOG_ACTION_READ_CLEAR: {
+        if (syscall_is_user_process() && !syscall_user_write_ok(buf_addr, len))
+            return (uint64_t)-1;
+        char *dst = (char *)buf_addr;
+        int copied = kprintf_dmesg(dst, (int)len);
+        if (type == SYSLOG_ACTION_READ_CLEAR)
             kprintf_dmesg_clear();
-            return 0;
-        default:
-            return (unsigned long)-1;
+        return (uint64_t)copied;
+    }
+    case SYSLOG_ACTION_SIZE_BUFFER:
+        return (uint64_t)(65536); /* DMESG_BUF_SIZE */
+    case SYSLOG_ACTION_SIZE_UNREAD:
+        /* Approximate: return max possible */
+        return (uint64_t)(65536);
+    case SYSLOG_ACTION_CLEAR:
+        kprintf_dmesg_clear();
+        return 0;
+    default:
+        return (unsigned long)-1;
     }
 }
 
 /* ── prctl ─────────────────────────────────────────────────────────────── */
 
-static uint64_t sys_prctl(uint64_t op, uint64_t a2, uint64_t a3,
-                           uint64_t a4, uint64_t a5) {
-    (void)a3; (void)a4; (void)a5;
+static uint64_t sys_prctl(uint64_t op, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a3;
+    (void)a4;
+    (void)a5;
     struct process *p = process_get_current();
-    if (!p) return (uint64_t)(int64_t)-ESRCH;
+    if (!p)
+        return (uint64_t)(int64_t)-ESRCH;
 
     switch (op) {
-        case PR_SET_NAME: {
-            if (syscall_is_user_process() && !syscall_user_read_ok(a2, 16))
-                return (uint64_t)(int64_t)-EFAULT;
-            memset(p->proc_comm, 0, 16);
-            memcpy(p->proc_comm, (const char *)a2, 15);
-            p->proc_comm[15] = '\0';
-            return 0;
-        }
-        case PR_GET_NAME: {
-            char name[16];
-            memcpy(name, p->proc_comm, 16);
-            if (copy_to_user(a2, name, 16) < 0)
-                return (uint64_t)(int64_t)-EFAULT;
-            return 0;
-        }
-        case PR_SET_PDEATHSIG: {
-            /* Store the death signal — if we had a field */
-            return 0;
-        }
-        case PR_GET_PDEATHSIG: {
-            return 0;
-        }
-        case PR_SET_NO_NEW_PRIVS: {
-            /* Once set to 1, no_new_privs is irreversible.
-             * After this, execve() cannot gain privileges via setuid/setgid
-             * or file capabilities. Foundation for modern seccomp usage. */
-            if (a2 != 1 || p->no_new_privs) return (uint64_t)(int64_t)-EINVAL;
-            p->no_new_privs = 1;
-            return 0;
-        }
-        case PR_GET_NO_NEW_PRIVS: {
-            return p->no_new_privs;
-        }
-        case PR_SET_SECCOMP: {
-            /* arg2 = seccomp mode, arg3 = flags (e.g. SECCOMP_FILTER_FLAG_TSYNC) */
-            return (uint64_t)seccomp_set_mode((int)a2, (unsigned int)a3);
-        }
-        case PR_GET_SECCOMP: {
-            return (uint64_t)seccomp_get_mode();
-        }
-        case PR_SET_SECUREBITS: {
-            /* arg2 = securebits bitmask. Only allow setting non-locked bits. */
-            uint8_t new_bits = (uint8_t)(a2 & 0xFF);
-            uint8_t current = (uint8_t)securebits_get(p);
-            /* Locked bits are immutable */
-            if ((current & SECBIT_LOCKED_MASK) & (new_bits & SECBIT_LOCKED_MASK))
-                return (uint64_t)(int64_t)-EPERM;
-            /* Can only set bits in SECBIT_ALLOWED_MASK */
-            if (new_bits & ~SECBIT_ALLOWED_MASK & ~SECBIT_LOCKED_MASK)
-                return (uint64_t)(int64_t)-EINVAL;
-            /* Setting a locked bit requires the corresponding non-locked bit to be set */
-            if ((new_bits & SECBIT_KEEP_CAPS_LOCKED) && !(new_bits & SECBIT_KEEP_CAPS))
-                return (uint64_t)(int64_t)-EINVAL;
-            if ((new_bits & SECBIT_NO_SETUID_FIXUP_LOCKED) && !(new_bits & SECBIT_NO_SETUID_FIXUP))
-                return (uint64_t)(int64_t)-EINVAL;
-            if ((new_bits & SECBIT_NOROOT_LOCKED) && !(new_bits & SECBIT_NOROOT))
-                return (uint64_t)(int64_t)-EINVAL;
-            return (uint64_t)securebits_set(p, new_bits);
-        }
-        case PR_GET_SECUREBITS: {
-            return (uint64_t)securebits_get(p);
-        }
-        case PR_SET_DUMPABLE: {
-            /* arg2: 0 = never dump, 1 = always dump, 2 = dump if root.
-             * Only privileged processes (CAP_SYS_ADMIN or running as root)
-             * can set dumpable to a more restrictive value. */
-            int val = (int)a2;
-            if (val < 0 || val > 2)
-                return (uint64_t)(int64_t)-EINVAL;
-            /* Once set to 0, only privileged code can raise it back */
-            p->dumpable = val;
-            return 0;
-        }
-        case PR_GET_DUMPABLE: {
-            return (uint64_t)p->dumpable;
-        }
-        case PR_SET_PTRACER: {
-            /* arg2 = allowed tracer PID:
-             *   0       = no tracer allowed (default)
-             *  -1       = any tracer allowed
-             *   >0      = specific PID allowed to trace
-             * Only the calling process can set its own ptracer.
-             * CAP_SYS_PTRACE can override but the target must still opt in. */
-            int tracer_pid = (int)a2;
-            yama_set_ptracer(p->pid, tracer_pid);
-            return 0;
-        }
-        case PR_GET_PTRACER: {
-            /* Return the PID this process has allowed to trace it,
-             * or 0 if none, or -1 if any. */
-            return (uint64_t)(int64_t)yama_get_ptracer(p->pid);
-        }
-        case PR_SET_KEEPCAPS: {
-            /* Set/clear the "keep capabilities" flag for exec.
-             * arg2: 0 = clear, non-zero = set.
-             * When set, effective capabilities survive execve.
-             * This directly manipulates the SECBIT_KEEP_CAPS securebit. */
-            p->securebits = (uint8_t)(a2 ? (p->securebits | SECBIT_KEEP_CAPS)
-                                         : (p->securebits & ~SECBIT_KEEP_CAPS));
-            return 0;
-        }
-        case PR_GET_KEEPCAPS: {
-            /* Return 1 if keep capabilities flag is set, 0 otherwise. */
-            return (uint64_t)((p->securebits & SECBIT_KEEP_CAPS) ? 1 : 0);
-        }
-        default:
+    case PR_SET_NAME: {
+        if (syscall_is_user_process() && !syscall_user_read_ok(a2, 16))
+            return (uint64_t)(int64_t)-EFAULT;
+        memset(p->proc_comm, 0, 16);
+        memcpy(p->proc_comm, (const char *)a2, 15);
+        p->proc_comm[15] = '\0';
+        return 0;
+    }
+    case PR_GET_NAME: {
+        char name[16];
+        memcpy(name, p->proc_comm, 16);
+        if (copy_to_user(a2, name, 16) < 0)
+            return (uint64_t)(int64_t)-EFAULT;
+        return 0;
+    }
+    case PR_SET_PDEATHSIG: {
+        /* Store the death signal — if we had a field */
+        return 0;
+    }
+    case PR_GET_PDEATHSIG: {
+        return 0;
+    }
+    case PR_SET_NO_NEW_PRIVS: {
+        /* Once set to 1, no_new_privs is irreversible.
+         * After this, execve() cannot gain privileges via setuid/setgid
+         * or file capabilities. Foundation for modern seccomp usage. */
+        if (a2 != 1 || p->no_new_privs)
             return (uint64_t)(int64_t)-EINVAL;
+        p->no_new_privs = 1;
+        return 0;
+    }
+    case PR_GET_NO_NEW_PRIVS: {
+        return p->no_new_privs;
+    }
+    case PR_SET_SECCOMP: {
+        /* arg2 = seccomp mode, arg3 = flags (e.g. SECCOMP_FILTER_FLAG_TSYNC) */
+        return (uint64_t)seccomp_set_mode((int)a2, (unsigned int)a3);
+    }
+    case PR_GET_SECCOMP: {
+        return (uint64_t)seccomp_get_mode();
+    }
+    case PR_SET_SECUREBITS: {
+        /* arg2 = securebits bitmask. Only allow setting non-locked bits. */
+        uint8_t new_bits = (uint8_t)(a2 & 0xFF);
+        uint8_t current = (uint8_t)securebits_get(p);
+        /* Locked bits are immutable */
+        if ((current & SECBIT_LOCKED_MASK) & (new_bits & SECBIT_LOCKED_MASK))
+            return (uint64_t)(int64_t)-EPERM;
+        /* Can only set bits in SECBIT_ALLOWED_MASK */
+        if (new_bits & ~SECBIT_ALLOWED_MASK & ~SECBIT_LOCKED_MASK)
+            return (uint64_t)(int64_t)-EINVAL;
+        /* Setting a locked bit requires the corresponding non-locked bit to be set */
+        if ((new_bits & SECBIT_KEEP_CAPS_LOCKED) && !(new_bits & SECBIT_KEEP_CAPS))
+            return (uint64_t)(int64_t)-EINVAL;
+        if ((new_bits & SECBIT_NO_SETUID_FIXUP_LOCKED) && !(new_bits & SECBIT_NO_SETUID_FIXUP))
+            return (uint64_t)(int64_t)-EINVAL;
+        if ((new_bits & SECBIT_NOROOT_LOCKED) && !(new_bits & SECBIT_NOROOT))
+            return (uint64_t)(int64_t)-EINVAL;
+        return (uint64_t)securebits_set(p, new_bits);
+    }
+    case PR_GET_SECUREBITS: {
+        return (uint64_t)securebits_get(p);
+    }
+    case PR_SET_DUMPABLE: {
+        /* arg2: 0 = never dump, 1 = always dump, 2 = dump if root.
+         * Only privileged processes (CAP_SYS_ADMIN or running as root)
+         * can set dumpable to a more restrictive value. */
+        int val = (int)a2;
+        if (val < 0 || val > 2)
+            return (uint64_t)(int64_t)-EINVAL;
+        /* Once set to 0, only privileged code can raise it back */
+        p->dumpable = val;
+        return 0;
+    }
+    case PR_GET_DUMPABLE: {
+        return (uint64_t)p->dumpable;
+    }
+    case PR_SET_PTRACER: {
+        /* arg2 = allowed tracer PID:
+         *   0       = no tracer allowed (default)
+         *  -1       = any tracer allowed
+         *   >0      = specific PID allowed to trace
+         * Only the calling process can set its own ptracer.
+         * CAP_SYS_PTRACE can override but the target must still opt in. */
+        int tracer_pid = (int)a2;
+        yama_set_ptracer(p->pid, tracer_pid);
+        return 0;
+    }
+    case PR_GET_PTRACER: {
+        /* Return the PID this process has allowed to trace it,
+         * or 0 if none, or -1 if any. */
+        return (uint64_t)(int64_t)yama_get_ptracer(p->pid);
+    }
+    case PR_SET_KEEPCAPS: {
+        /* Set/clear the "keep capabilities" flag for exec.
+         * arg2: 0 = clear, non-zero = set.
+         * When set, effective capabilities survive execve.
+         * This directly manipulates the SECBIT_KEEP_CAPS securebit. */
+        p->securebits = (uint8_t)(a2 ? (p->securebits | SECBIT_KEEP_CAPS)
+                                     : (p->securebits & ~SECBIT_KEEP_CAPS));
+        return 0;
+    }
+    case PR_GET_KEEPCAPS: {
+        /* Return 1 if keep capabilities flag is set, 0 otherwise. */
+        return (uint64_t)((p->securebits & SECBIT_KEEP_CAPS) ? 1 : 0);
+    }
+    default:
+        return (uint64_t)(int64_t)-EINVAL;
     }
 }
 
 /* ── mount/umount ──────────────────────────────────────────────────────── */
 
-static uint64_t sys_mount(uint64_t src_addr, uint64_t target_addr,
-                           uint64_t fstype_addr, uint64_t flags, uint64_t data_addr) {
+static uint64_t sys_mount(uint64_t src_addr, uint64_t target_addr, uint64_t fstype_addr,
+                          uint64_t flags, uint64_t data_addr) {
     (void)data_addr;
     char src[64], target[64], fstype[16];
 
     if (!syscall_user_cstr_ok(src_addr) || !syscall_user_cstr_ok(target_addr))
         return (uint64_t)(int64_t)-EFAULT;
 
-    memcpy(src, (void*)src_addr, 63); src[63] = '\0';
-    memcpy(target, (void*)target_addr, 63); target[63] = '\0';
+    memcpy(src, (void *)src_addr, 63);
+    src[63] = '\0';
+    memcpy(target, (void *)target_addr, 63);
+    target[63] = '\0';
 
     if (fstype_addr && syscall_user_cstr_ok(fstype_addr)) {
-        memcpy(fstype, (void*)fstype_addr, 15); fstype[15] = '\0';
+        memcpy(fstype, (void *)fstype_addr, 15);
+        fstype[15] = '\0';
     } else {
         fstype[0] = '\0';
     }
@@ -7552,14 +7886,13 @@ static uint64_t sys_mount(uint64_t src_addr, uint64_t target_addr,
         }
 
         if (found) {
-            kprintf("[mount] %s at %s (type=%s) — module loaded, VFS mount pending\n",
-                    src, target, fstype);
+            kprintf("[mount] %s at %s (type=%s) — module loaded, VFS mount pending\n", src, target,
+                    fstype);
             return 0;
         }
 
         /* Filesystem type not found */
-        kprintf("[mount] %s at %s (type=%s): filesystem not supported\n",
-                src, target, fstype);
+        kprintf("[mount] %s at %s (type=%s): filesystem not supported\n", src, target, fstype);
         return (uint64_t)(int64_t)-ENODEV;
     }
 
@@ -7569,8 +7902,7 @@ static uint64_t sys_mount(uint64_t src_addr, uint64_t target_addr,
     struct process *cur = process_get_current();
     struct mnt_namespace *ns = cur ? cur->mnt_ns : NULL;
     if (ns) {
-        kprintf("[mount] (namespace=%p) %s at %s type=%s\n",
-                (void*)ns, src, target, fstype);
+        kprintf("[mount] (namespace=%p) %s at %s type=%s\n", (void *)ns, src, target, fstype);
     }
     return 0;
 }
@@ -7593,8 +7925,7 @@ static uint64_t sys_pivot_root(uint64_t new_root_addr, uint64_t put_old_addr) {
     char new_root[64], put_old[64];
 
     if (syscall_is_user_process()) {
-        if (!syscall_user_cstr_ok(new_root_addr) ||
-            !syscall_user_cstr_ok(put_old_addr))
+        if (!syscall_user_cstr_ok(new_root_addr) || !syscall_user_cstr_ok(put_old_addr))
             return (uint64_t)(int64_t)-EFAULT;
     }
 
@@ -7632,7 +7963,8 @@ static uint64_t sys_chroot(uint64_t path_addr) {
 
 static uint64_t sys_ftruncate(uint64_t fd, uint64_t length) {
     struct process *p = process_get_current();
-    if (!p) return (uint64_t)(int64_t)-ESRCH;
+    if (!p)
+        return (uint64_t)(int64_t)-ESRCH;
     if (fd >= PROCESS_FD_MAX || !p->fd_table[fd].used)
         return (uint64_t)(int64_t)-EBADF;
     /* For now, delegate to the path-based truncate */
@@ -7643,7 +7975,8 @@ static uint64_t sys_ftruncate(uint64_t fd, uint64_t length) {
 
 static uint64_t sys_readdir(uint64_t fd, uint64_t buf_addr, uint64_t count) {
     struct process *p = process_get_current();
-    if (!p) return (uint64_t)(int64_t)-ESRCH;
+    if (!p)
+        return (uint64_t)(int64_t)-ESRCH;
     if (fd >= PROCESS_FD_MAX || !p->fd_table[fd].used)
         return (uint64_t)(int64_t)-EBADF;
 
@@ -7652,12 +7985,15 @@ static uint64_t sys_readdir(uint64_t fd, uint64_t buf_addr, uint64_t count) {
 
     char names[64][64];
     int n = vfs_readdir_names(p->fd_table[fd].path, names, 64);
-    if (n < 0) return (uint64_t)(int64_t)n;
-    if (n == 0) return 0;
+    if (n < 0)
+        return (uint64_t)(int64_t)n;
+    if (n == 0)
+        return 0;
 
     /* Start from the fd's current offset (which tracks which entry we're at) */
     int start = (int)p->fd_table[fd].offset;
-    if (start >= n) return 0; /* end of directory */
+    if (start >= n)
+        return 0; /* end of directory */
 
     uint8_t *buf = (uint8_t *)buf_addr;
     size_t total = 0;
@@ -7668,11 +8004,12 @@ static uint64_t sys_readdir(uint64_t fd, uint64_t buf_addr, uint64_t count) {
         /* Align to 8 bytes */
         reclen = (reclen + 7) & ~(size_t)7;
 
-        if (total + reclen > (size_t)count) break;
+        if (total + reclen > (size_t)count)
+            break;
 
         struct linux_dirent64 *entry = (struct linux_dirent64 *)(buf + total);
         if (!entry)
-            break;  /* defensive: should not happen with validated buffer */
+            break;        /* defensive: should not happen with validated buffer */
         entry->d_ino = 1; /* fake inode */
         entry->d_off = (int64_t)(i + 1 < n ? reclen : 0);
         entry->d_reclen = (unsigned short)reclen;
@@ -7687,30 +8024,38 @@ static uint64_t sys_readdir(uint64_t fd, uint64_t buf_addr, uint64_t count) {
 
 /* ── execveat ──────────────────────────────────────────────────────────── */
 
-static uint64_t sys_execveat(uint64_t dirfd, uint64_t path_addr,
-                              uint64_t argv_addr, uint64_t envp_addr,
-                              uint64_t flags) {
-    (void)dirfd; (void)argv_addr; (void)envp_addr; (void)flags;
+static uint64_t sys_execveat(uint64_t dirfd, uint64_t path_addr, uint64_t argv_addr,
+                             uint64_t envp_addr, uint64_t flags) {
+    (void)dirfd;
+    (void)argv_addr;
+    (void)envp_addr;
+    (void)flags;
     char path[256];
 
     if (!syscall_user_cstr_ok(path_addr))
         return (uint64_t)(int64_t)-EFAULT;
-    memcpy(path, (void*)path_addr, 255); path[255] = '\0';
+    memcpy(path, (void *)path_addr, 255);
+    path[255] = '\0';
 
     /* Resolve relative paths against dirfd if not AT_EMPTY_PATH */
     if (path[0] != '/' && !(flags & AT_EMPTY_PATH)) {
         struct process *p = process_get_current();
         if (p && dirfd < PROCESS_FD_MAX && p->fd_table[dirfd].used) {
             char base[64];
-            memcpy(base, p->fd_table[dirfd].path, 63); base[63] = '\0';
+            memcpy(base, p->fd_table[dirfd].path, 63);
+            base[63] = '\0';
             /* Strip filename from base path, keep directory */
             char *last_slash = NULL;
-            for (char *c = base; *c; c++) if (*c == '/') last_slash = c;
-            if (last_slash) *(last_slash + 1) = '\0';
+            for (char *c = base; *c; c++)
+                if (*c == '/')
+                    last_slash = c;
+            if (last_slash)
+                *(last_slash + 1) = '\0';
             /* Combine */
             char combined[256];
             int n = snprintf(combined, 256, "%s%s", base, path);
-            if (n < 0 || n >= 256) return (uint64_t)(int64_t)-ENAMETOOLONG;
+            if (n < 0 || n >= 256)
+                return (uint64_t)(int64_t)-ENAMETOOLONG;
             /* Use existing sys_execve which takes a path */
             return sys_script_exec((uint64_t)(uintptr_t)combined);
         }
@@ -7721,15 +8066,15 @@ static uint64_t sys_execveat(uint64_t dirfd, uint64_t path_addr,
 
 /* ── sched_setscheduler / sched_getscheduler ──────────────────────────── */
 
-static uint64_t sys_sched_setscheduler(uint64_t pid, uint64_t policy,
-                                        uint64_t param_addr) {
+static uint64_t sys_sched_setscheduler(uint64_t pid, uint64_t policy, uint64_t param_addr) {
     struct process *target;
     if (pid == 0)
         target = process_get_current();
     else
         target = process_get_by_pid((uint32_t)pid);
 
-    if (!target || target->state == PROCESS_UNUSED) return (uint64_t)(int64_t)-ESRCH;
+    if (!target || target->state == PROCESS_UNUSED)
+        return (uint64_t)(int64_t)-ESRCH;
 
     if (policy != SCHED_OTHER && policy != SCHED_FIFO && policy != SCHED_RR &&
         policy != SCHED_BATCH && policy != SCHED_IDLE)
@@ -7761,7 +8106,8 @@ static uint64_t sys_sched_getscheduler(uint64_t pid) {
     else
         target = process_get_by_pid((uint32_t)pid);
 
-    if (!target || target->state == PROCESS_UNUSED) return (uint64_t)(int64_t)-ESRCH;
+    if (!target || target->state == PROCESS_UNUSED)
+        return (uint64_t)(int64_t)-ESRCH;
     return (uint64_t)target->sched_policy;
 }
 
@@ -7776,8 +8122,7 @@ static uint64_t sys_sched_getscheduler(uint64_t pid) {
  *
  * Returns 0 on success, -1 with errno set on error.
  */
-static uint64_t sys_sched_setattr(uint64_t pid, uint64_t attr_addr, uint64_t flags)
-{
+static uint64_t sys_sched_setattr(uint64_t pid, uint64_t attr_addr, uint64_t flags) {
     struct sched_attr attr;
     size_t user_size;
     int ret;
@@ -7829,22 +8174,23 @@ static uint64_t sys_sched_setattr(uint64_t pid, uint64_t attr_addr, uint64_t fla
  *
  * Returns 0 on success, -1 with errno set on error.
  */
-static uint64_t sys_sched_getattr(uint64_t pid, uint64_t attr_addr, uint64_t size, uint64_t flags)
-{
+static uint64_t sys_sched_getattr(uint64_t pid, uint64_t attr_addr, uint64_t size, uint64_t flags) {
     struct sched_attr attr;
     int ret;
 
     if (!attr_addr || size == 0 || size > sizeof(struct sched_attr))
         return (uint64_t)(int64_t)-EINVAL;
 
-    if (syscall_is_user_process() && !syscall_user_write_ok((uint64_t)attr_addr, sizeof(struct sched_attr)))
+    if (syscall_is_user_process() &&
+        !syscall_user_write_ok((uint64_t)attr_addr, sizeof(struct sched_attr)))
         return (uint64_t)(int64_t)-EFAULT;
 
     /* Resolve PID */
     uint32_t target_pid;
     if (pid == 0) {
         struct process *cur = process_get_current();
-        if (!cur) return (uint64_t)(int64_t)-ESRCH;
+        if (!cur)
+            return (uint64_t)(int64_t)-ESRCH;
         target_pid = cur->pid;
     } else {
         target_pid = (uint32_t)pid;
@@ -7866,18 +8212,19 @@ static uint64_t sys_sched_getattr(uint64_t pid, uint64_t attr_addr, uint64_t siz
 #include "coredump_core.h"
 
 void do_coredump(struct process *proc, int signo) {
-    if (!proc || !proc->coredump_enabled) return;
-    if (!proc->is_user || !proc->pml4) return;
+    if (!proc || !proc->coredump_enabled)
+        return;
+    if (!proc->is_user || !proc->pml4)
+        return;
 
     /* Enforce RLIMIT_CORE: if core size limit is 0, skip dump */
-    if (proc->rlim_cur[1] == 0) {  /* RLIMIT_CORE = 1 (syscall.h convention) */
+    if (proc->rlim_cur[1] == 0) { /* RLIMIT_CORE = 1 (syscall.h convention) */
         kprintf("[CORE] pid=%u: core dump suppressed (RLIMIT_CORE=0)\n", proc->pid);
         return;
     }
 
-    kprintf("[CORE] pid=%u name=\"%s\": scheduling core dump (max %llu bytes, signal %d)...\n", proc->pid,
-            proc->name ? proc->name : "?",
-            (unsigned long long)proc->rlim_cur[1], signo);
+    kprintf("[CORE] pid=%u name=\"%s\": scheduling core dump (max %llu bytes, signal %d)...\n",
+            proc->pid, proc->name ? proc->name : "?", (unsigned long long)proc->rlim_cur[1], signo);
 
     /* Dispatch via the registered handler (may be NULL if coredump module
      * is not loaded).  The handler is responsible for deferring to a
@@ -7895,14 +8242,16 @@ void do_coredump(struct process *proc, int signo) {
  * The resolved path is written into @buf (caller-owned, @bufsize bytes)
  * and a pointer to it is returned.  For absolute paths @buf is not
  * touched and @path itself is returned.  Returns NULL on error. */
-static const char *resolve_path_at(int dirfd, const char *path,
-                                   char *buf, size_t bufsize) {
-    if (!path) return NULL;
+static const char *resolve_path_at(int dirfd, const char *path, char *buf, size_t bufsize) {
+    if (!path)
+        return NULL;
 
-    if (path[0] == '/') return path; /* absolute */
+    if (path[0] == '/')
+        return path; /* absolute */
 
     struct process *p = process_get_current();
-    if (!p) return NULL;
+    if (!p)
+        return NULL;
 
     const char *base = NULL;
     if (dirfd == AT_FDCWD) {
@@ -7914,7 +8263,8 @@ static const char *resolve_path_at(int dirfd, const char *path,
     }
 
     int n = snprintf(buf, bufsize, "%s/%s", base, path);
-    if (n < 0 || (size_t)n >= bufsize) return NULL;
+    if (n < 0 || (size_t)n >= bufsize)
+        return NULL;
     return buf;
 }
 
@@ -7940,7 +8290,8 @@ int sys_socketpair_impl(int domain, int type, int protocol, int sv[2]);
 
 static uint64_t sys_socket(uint64_t domain, uint64_t type, uint64_t protocol) {
     /* Validate that domain/type/protocol fit in int without truncation */
-    if ((uint64_t)(int)domain != domain || (uint64_t)(int)type != type || (uint64_t)(int)protocol != protocol)
+    if ((uint64_t)(int)domain != domain || (uint64_t)(int)type != type ||
+        (uint64_t)(int)protocol != protocol)
         return (uint64_t)(int64_t)-EINVAL;
     int ret = sys_socket_impl((int)domain, (int)type, (int)protocol);
     return (uint64_t)(int64_t)ret;
@@ -7953,8 +8304,8 @@ static uint64_t sys_bind(uint64_t sockfd, uint64_t addr_addr, uint64_t addrlen) 
     /* Validate user-space address range before dereferencing */
     if (syscall_is_user_process() && !syscall_user_read_ok(addr_addr, (unsigned long)addrlen))
         return (uint64_t)(int64_t)-EFAULT;
-    return (uint64_t)(int64_t)sys_bind_impl((int)sockfd,
-        (const struct sockaddr_in *)addr_addr, (int)addrlen);
+    return (uint64_t)(int64_t)sys_bind_impl((int)sockfd, (const struct sockaddr_in *)addr_addr,
+                                            (int)addrlen);
 }
 
 static uint64_t sys_listen(uint64_t sockfd, uint64_t backlog) {
@@ -7963,14 +8314,14 @@ static uint64_t sys_listen(uint64_t sockfd, uint64_t backlog) {
 
 static uint64_t sys_accept(uint64_t sockfd, uint64_t addr_addr, uint64_t addrlen_addr) {
     if (addr_addr && addrlen_addr) {
-        if (syscall_is_user_process() && !syscall_user_write_ok(addr_addr, sizeof(struct sockaddr_in)))
+        if (syscall_is_user_process() &&
+            !syscall_user_write_ok(addr_addr, sizeof(struct sockaddr_in)))
             return (uint64_t)(int64_t)-EFAULT;
         if (syscall_is_user_process() && !syscall_user_read_ok(addrlen_addr, 4))
             return (uint64_t)(int64_t)-EFAULT;
     }
-    int fd = sys_accept_impl((int)sockfd,
-                             (struct sockaddr_in *)addr_addr,
-                             (uint32_t *)addrlen_addr);
+    int fd =
+        sys_accept_impl((int)sockfd, (struct sockaddr_in *)addr_addr, (uint32_t *)addrlen_addr);
     return (uint64_t)(int64_t)fd;
 }
 
@@ -7982,7 +8333,7 @@ static uint64_t sys_connect(uint64_t sockfd, uint64_t addr_addr, uint64_t addrle
 }
 
 static uint64_t sys_setsockopt(uint64_t sockfd, uint64_t level, uint64_t optname,
-                                uint64_t optval_addr, uint64_t optlen) {
+                               uint64_t optval_addr, uint64_t optlen) {
     /* optlen is truncated from uint64_t to uint32_t in the impl;
      * reject values that would overflow to prevent bypassing bounds checks. */
     if (optlen > 0xFFFFFFFFULL)
@@ -7994,7 +8345,7 @@ static uint64_t sys_setsockopt(uint64_t sockfd, uint64_t level, uint64_t optname
 }
 
 static uint64_t sys_getsockopt(uint64_t sockfd, uint64_t level, uint64_t optname,
-                                uint64_t optval_addr, uint64_t optlen_addr) {
+                               uint64_t optval_addr, uint64_t optlen_addr) {
     if (syscall_is_user_process() && !syscall_user_write_ok(optval_addr, 4))
         return (uint64_t)(int64_t)-EFAULT;
     if (syscall_is_user_process() && !syscall_user_read_ok(optlen_addr, 4))
@@ -8006,7 +8357,8 @@ static uint64_t sys_getsockopt(uint64_t sockfd, uint64_t level, uint64_t optname
 static uint64_t sys_sendmsg(uint64_t sockfd, uint64_t msg_addr, uint64_t flags) {
     if (syscall_is_user_process() && !syscall_user_read_ok(msg_addr, sizeof(struct msghdr)))
         return (uint64_t)(int64_t)-EFAULT;
-    return (uint64_t)(int64_t)sys_sendmsg_impl((int)sockfd, (const struct msghdr *)msg_addr, (int)flags);
+    return (uint64_t)(int64_t)sys_sendmsg_impl((int)sockfd, (const struct msghdr *)msg_addr,
+                                               (int)flags);
 }
 
 static uint64_t sys_recvmsg(uint64_t sockfd, uint64_t msg_addr, uint64_t flags) {
@@ -8046,15 +8398,18 @@ static uint64_t sys_getpeername(uint64_t sockfd, uint64_t addr_addr, uint64_t ad
                                                    (uint32_t *)addrlen_addr);
 }
 
-static uint64_t sys_socketpair(uint64_t domain, uint64_t type, uint64_t protocol, uint64_t sv_addr) {
+static uint64_t sys_socketpair(uint64_t domain, uint64_t type, uint64_t protocol,
+                               uint64_t sv_addr) {
     /* Validate that domain/type/protocol fit in int without truncation */
-    if ((uint64_t)(int)domain != domain || (uint64_t)(int)type != type || (uint64_t)(int)protocol != protocol)
+    if ((uint64_t)(int)domain != domain || (uint64_t)(int)type != type ||
+        (uint64_t)(int)protocol != protocol)
         return (uint64_t)(int64_t)-EINVAL;
     if (syscall_is_user_process() && !syscall_user_write_ok(sv_addr, 8))
         return (uint64_t)(int64_t)-EFAULT;
     int sv[2];
     int r = sys_socketpair_impl((int)domain, (int)type, (int)protocol, sv);
-    if (r < 0) return (uint64_t)(int64_t)r;
+    if (r < 0)
+        return (uint64_t)(int64_t)r;
     memcpy((void *)sv_addr, sv, 8);
     return 0;
 }
@@ -8070,17 +8425,14 @@ static uint64_t sys_socketpair(uint64_t domain, uint64_t type, uint64_t protocol
  * The actual implementation lives in src/kernel/epoll.c.
  */
 
-static uint64_t sys_epoll_create1(uint64_t flags)
-{
+static uint64_t sys_epoll_create1(uint64_t flags) {
     int ret = epoll_create1_syscall((int)flags);
     if (ret < 0)
         return (uint64_t)(int64_t)ret;
     return (uint64_t)ret;
 }
 
-static uint64_t sys_epoll_ctl(uint64_t epfd, uint64_t op,
-                               uint64_t fd, uint64_t event_addr)
-{
+static uint64_t sys_epoll_ctl(uint64_t epfd, uint64_t op, uint64_t fd, uint64_t event_addr) {
     struct epoll_event ev;
     struct epoll_event *ev_ptr = NULL;
 
@@ -8088,8 +8440,7 @@ static uint64_t sys_epoll_ctl(uint64_t epfd, uint64_t op,
         if (syscall_is_user_process() &&
             !syscall_user_read_ok(event_addr, sizeof(struct epoll_event)))
             return (uint64_t)(int64_t)-EFAULT;
-        if (copy_from_user(&ev, (uint64_t)(void *)event_addr,
-                           sizeof(struct epoll_event)) < 0)
+        if (copy_from_user(&ev, (uint64_t)(void *)event_addr, sizeof(struct epoll_event)) < 0)
             return (uint64_t)(int64_t)-EFAULT;
         ev_ptr = &ev;
     }
@@ -8100,30 +8451,25 @@ static uint64_t sys_epoll_ctl(uint64_t epfd, uint64_t op,
     return 0;
 }
 
-static uint64_t sys_epoll_wait(uint64_t epfd, uint64_t events_addr,
-                                uint64_t maxevents, uint64_t timeout)
-{
+static uint64_t sys_epoll_wait(uint64_t epfd, uint64_t events_addr, uint64_t maxevents,
+                               uint64_t timeout) {
     struct epoll_event *events = (struct epoll_event *)events_addr;
 
     if (maxevents == 0)
         return (uint64_t)(int64_t)-EINVAL;
 
     if (syscall_is_user_process() &&
-        !syscall_user_write_ok(events_addr,
-            (uint64_t)maxevents * sizeof(struct epoll_event)))
+        !syscall_user_write_ok(events_addr, (uint64_t)maxevents * sizeof(struct epoll_event)))
         return (uint64_t)(int64_t)-EFAULT;
 
-    int ret = epoll_wait_syscall((int)epfd, events,
-                                  (int)maxevents, (int)timeout);
+    int ret = epoll_wait_syscall((int)epfd, events, (int)maxevents, (int)timeout);
     if (ret < 0)
         return (uint64_t)(int64_t)ret;
     return (uint64_t)ret;
 }
 
-static uint64_t sys_epoll_pwait(uint64_t epfd, uint64_t events_addr,
-                                 uint64_t maxevents, uint64_t timeout,
-                                 uint64_t sigmask_addr)
-{
+static uint64_t sys_epoll_pwait(uint64_t epfd, uint64_t events_addr, uint64_t maxevents,
+                                uint64_t timeout, uint64_t sigmask_addr) {
     /*
      * The syscall dispatch saves the packed sigmask pointer + size
      * in syscall_arg6.  For epoll_pwait, a5 is the sigmask pointer.
@@ -8140,13 +8486,10 @@ static uint64_t sys_epoll_pwait(uint64_t epfd, uint64_t events_addr,
         sigmask = (const uint64_t *)sigmask_addr;
 
     if (syscall_is_user_process() &&
-        !syscall_user_write_ok(events_addr,
-            (uint64_t)maxevents * sizeof(struct epoll_event)))
+        !syscall_user_write_ok(events_addr, (uint64_t)maxevents * sizeof(struct epoll_event)))
         return (uint64_t)(int64_t)-EFAULT;
 
-    int ret = epoll_pwait_syscall((int)epfd, events,
-                                   (int)maxevents, (int)timeout,
-                                   sigmask);
+    int ret = epoll_pwait_syscall((int)epfd, events, (int)maxevents, (int)timeout, sigmask);
     if (ret < 0)
         return (uint64_t)(int64_t)ret;
     return (uint64_t)ret;
@@ -8175,7 +8518,8 @@ static uint64_t sys_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags) {
         return (uint64_t)(int64_t)-EBADF;
 
     struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)(int64_t)-EPERM;
+    if (!proc)
+        return (uint64_t)(int64_t)-EPERM;
     if (oldfd >= PROCESS_FD_MAX || !proc->fd_table[oldfd].used)
         return (uint64_t)(int64_t)-EBADF;
     if (newfd >= PROCESS_FD_MAX)
@@ -8186,7 +8530,8 @@ static uint64_t sys_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags) {
         if (flags & O_CLOEXEC)
             proc->fd_table[newfd].flags |= FD_CLOEXEC;
         else
-            proc->fd_table[newfd].flags = (uint8_t)(proc->fd_table[newfd].flags & ~(unsigned)FD_CLOEXEC);
+            proc->fd_table[newfd].flags =
+                (uint8_t)(proc->fd_table[newfd].flags & ~(unsigned)FD_CLOEXEC);
         return newfd;
     }
 
@@ -8202,7 +8547,8 @@ static uint64_t sys_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags) {
     if (flags & O_CLOEXEC)
         proc->fd_table[newfd].flags |= FD_CLOEXEC;
     else
-        proc->fd_table[newfd].flags = (uint8_t)(proc->fd_table[newfd].flags & ~(unsigned)FD_CLOEXEC);
+        proc->fd_table[newfd].flags =
+            (uint8_t)(proc->fd_table[newfd].flags & ~(unsigned)FD_CLOEXEC);
 
     return newfd;
 }
@@ -8217,18 +8563,21 @@ static uint64_t sys_pipe2(uint64_t fds_addr, uint64_t flags) {
         return (uint64_t)(int64_t)-EFAULT;
 
     struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)(int64_t)-EPERM;
+    if (!proc)
+        return (uint64_t)(int64_t)-EPERM;
 
     /* Enforce RLIMIT_NOFILE (need 2 fds for pipe read/write ends) */
     int open_count = 0;
     for (int i = 0; i < PROCESS_FD_MAX; i++) {
-        if (proc->fd_table[i].used) open_count++;
+        if (proc->fd_table[i].used)
+            open_count++;
     }
     if ((uint64_t)open_count + 1 >= proc->rlim_cur[RLIMIT_NOFILE])
         return (uint64_t)(int64_t)-EMFILE;
 
     int id = pipe_create();
-    if (id < 0) return (uint64_t)(int64_t)-EMFILE;
+    if (id < 0)
+        return (uint64_t)(int64_t)-EMFILE;
 
     /* Set non-blocking mode if requested */
     if (flags & O_NONBLOCK)
@@ -8238,11 +8587,16 @@ static uint64_t sys_pipe2(uint64_t fds_addr, uint64_t flags) {
     int read_fd = -1, write_fd = -1;
     for (int i = 0; i < PROCESS_FD_MAX; i++) {
         if (!proc->fd_table[i].used) {
-            if (read_fd < 0) read_fd = i;
-            else if (write_fd < 0) { write_fd = i; break; }
+            if (read_fd < 0)
+                read_fd = i;
+            else if (write_fd < 0) {
+                write_fd = i;
+                break;
+            }
         }
     }
-    if (read_fd < 0 || write_fd < 0) return (uint64_t)(int64_t)-EMFILE;
+    if (read_fd < 0 || write_fd < 0)
+        return (uint64_t)(int64_t)-EMFILE;
 
     /* Store pipe index as fd entries */
     proc->fd_table[read_fd].used = true;
@@ -8256,7 +8610,7 @@ static uint64_t sys_pipe2(uint64_t fds_addr, uint64_t flags) {
     proc->fd_table[write_fd].flags = (flags & O_CLOEXEC) ? FD_CLOEXEC : 0;
 
     /* Write fds back to userspace */
-    uint32_t fds[2] = { (uint32_t)read_fd, (uint32_t)write_fd };
+    uint32_t fds[2] = {(uint32_t)read_fd, (uint32_t)write_fd};
     if (copy_to_user(fds_addr, fds, sizeof(fds)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
     return 0;
@@ -8290,14 +8644,15 @@ static uint64_t sys_mkdtemp(uint64_t template_addr) {
 /* UTIME_NOW and UTIME_OMIT — now defined in vfs.h */
 /* (syscall.c includes vfs.h which provides these) */
 
-static uint64_t sys_utimensat(uint64_t dirfd, uint64_t path_addr,
-                               uint64_t times_addr, uint64_t flags) {
+static uint64_t sys_utimensat(uint64_t dirfd, uint64_t path_addr, uint64_t times_addr,
+                              uint64_t flags) {
     (void)flags;
     /* Resolve path */
     char path[256];
     if (!path_addr) {
         /* NULL path means operate on dirfd itself */
-        if ((int)dirfd == -100) return (uint64_t)-1; /* AT_FDCWD not valid with NULL path */
+        if ((int)dirfd == -100)
+            return (uint64_t)-1; /* AT_FDCWD not valid with NULL path */
         struct process *p = process_get_current();
         if (!p || dirfd >= PROCESS_FD_MAX || !p->fd_table[(int)dirfd].used)
             return (uint64_t)-1;
@@ -8308,7 +8663,8 @@ static uint64_t sys_utimensat(uint64_t dirfd, uint64_t path_addr,
         if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
             return (uint64_t)-1;
         const char *resolved = resolve_path_at((int)dirfd, kpath, kpath, sizeof(kpath));
-        if (!resolved) return (uint64_t)-1;
+        if (!resolved)
+            return (uint64_t)-1;
         strncpy(path, resolved, 255);
         path[255] = '\0';
     }
@@ -8354,16 +8710,18 @@ static uint64_t sys_futimens(uint64_t fd, uint64_t times_addr) {
         return (uint64_t)-1;
 
     const char *path = p->fd_table[(int)fd].path;
-    if (!path || !path[0]) return (uint64_t)-1;
+    if (!path || !path[0])
+        return (uint64_t)-1;
 
     uint32_t now_sec = (uint32_t)(timer_get_ticks() / TIMER_FREQ);
     uint32_t new_mtime = now_sec;
 
     if (times_addr) {
-        if (syscall_is_user_process() && !syscall_user_read_ok(times_addr, 2 * sizeof(struct timespec)))
+        if (syscall_is_user_process() &&
+            !syscall_user_read_ok(times_addr, 2 * sizeof(struct timespec)))
             return (uint64_t)-1;
         struct timespec ts[2];
-        memcpy(ts, (void*)times_addr, 2 * sizeof(struct timespec));
+        memcpy(ts, (void *)times_addr, 2 * sizeof(struct timespec));
 
         if (ts[1].tv_nsec == UTIME_OMIT) {
             struct vfs_stat st;
@@ -8397,13 +8755,13 @@ static uint64_t sys_statfs(uint64_t path_addr, uint64_t buf_addr) {
 
     struct statfs st;
     memset(&st, 0, sizeof(st));
-    st.f_type    = vs.f_type;
-    st.f_bsize   = vs.f_bsize;
-    st.f_blocks  = vs.f_blocks;
-    st.f_bfree   = vs.f_bfree;
-    st.f_bavail  = vs.f_bavail;
-    st.f_files   = vs.f_files;
-    st.f_ffree   = vs.f_ffree;
+    st.f_type = vs.f_type;
+    st.f_bsize = vs.f_bsize;
+    st.f_blocks = vs.f_blocks;
+    st.f_bfree = vs.f_bfree;
+    st.f_bavail = vs.f_bavail;
+    st.f_files = vs.f_files;
+    st.f_ffree = vs.f_ffree;
     st.f_namelen = vs.f_namelen;
 
     if (copy_to_user(buf_addr, &st, sizeof(struct statfs)) < 0)
@@ -8419,13 +8777,13 @@ static uint64_t sys_fstatfs(uint64_t fd, uint64_t buf_addr) {
 
     struct statfs st;
     memset(&st, 0, sizeof(st));
-    st.f_type    = vs.f_type;
-    st.f_bsize   = vs.f_bsize;
-    st.f_blocks  = vs.f_blocks;
-    st.f_bfree   = vs.f_bfree;
-    st.f_bavail  = vs.f_bavail;
-    st.f_files   = vs.f_files;
-    st.f_ffree   = vs.f_ffree;
+    st.f_type = vs.f_type;
+    st.f_bsize = vs.f_bsize;
+    st.f_blocks = vs.f_blocks;
+    st.f_bfree = vs.f_bfree;
+    st.f_bavail = vs.f_bavail;
+    st.f_files = vs.f_files;
+    st.f_ffree = vs.f_ffree;
     st.f_namelen = vs.f_namelen;
 
     if (copy_to_user(buf_addr, &st, sizeof(struct statfs)) < 0)
@@ -8438,7 +8796,8 @@ static uint64_t sys_getrusage(uint64_t who, uint64_t usage_addr) {
         return (uint64_t)-1;
 
     struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)-1;
+    if (!proc)
+        return (uint64_t)-1;
 
     struct rusage ru;
     memset(&ru, 0, sizeof(ru));
@@ -8451,35 +8810,37 @@ static uint64_t sys_getrusage(uint64_t who, uint64_t usage_addr) {
         uint64_t stime_s = proc->stime_ticks / hz;
         uint64_t stime_us = (proc->stime_ticks % hz) * (1000000ULL / hz);
 
-        ru.ru_utime.tv_sec  = utime_s;
+        ru.ru_utime.tv_sec = utime_s;
         ru.ru_utime.tv_usec = utime_us;
-        ru.ru_stime.tv_sec  = stime_s;
+        ru.ru_stime.tv_sec = stime_s;
         ru.ru_stime.tv_usec = stime_us;
 
-        ru.ru_minflt  = proc->minflt;
-        ru.ru_majflt  = proc->majflt;
-        ru.ru_nvcsw   = proc->nvcsw;
-        ru.ru_nivcsw  = proc->nivcsw;
+        ru.ru_minflt = proc->minflt;
+        ru.ru_majflt = proc->majflt;
+        ru.ru_nvcsw = proc->nvcsw;
+        ru.ru_nivcsw = proc->nivcsw;
 
         /* Approximations */
-        ru.ru_maxrss  = 0; /* not tracked yet */
+        ru.ru_maxrss = 0; /* not tracked yet */
     } else if ((int)who == RUSAGE_CHILDREN) {
         /* Sum children's resource usage */
         struct process *table = process_get_table();
         for (int i = 0; i < PROCESS_MAX; i++) {
-            if (table[i].state == PROCESS_UNUSED) continue;
-            if (table[i].parent_pid != proc->pid) continue;
+            if (table[i].state == PROCESS_UNUSED)
+                continue;
+            if (table[i].parent_pid != proc->pid)
+                continue;
             if (table[i].state == PROCESS_ZOMBIE) {
                 uint64_t hz = TIMER_FREQ;
-                ru.ru_utime.tv_sec  += table[i].utime_ticks / hz;
+                ru.ru_utime.tv_sec += table[i].utime_ticks / hz;
                 ru.ru_utime.tv_usec += (table[i].utime_ticks % hz) * (1000000ULL / hz);
-                ru.ru_stime.tv_sec  += table[i].stime_ticks / hz;
+                ru.ru_stime.tv_sec += table[i].stime_ticks / hz;
                 ru.ru_stime.tv_usec += (table[i].stime_ticks % hz) * (1000000ULL / hz);
             }
-            ru.ru_minflt  += table[i].minflt;
-            ru.ru_majflt  += table[i].majflt;
-            ru.ru_nvcsw   += table[i].nvcsw;
-            ru.ru_nivcsw  += table[i].nivcsw;
+            ru.ru_minflt += table[i].minflt;
+            ru.ru_majflt += table[i].majflt;
+            ru.ru_nvcsw += table[i].nvcsw;
+            ru.ru_nivcsw += table[i].nivcsw;
         }
     } else {
         return (uint64_t)-EINVAL;
@@ -8504,7 +8865,8 @@ static uint64_t sys_sysinfo(uint64_t info_addr) {
 
     for (int i = 0; i < PROCESS_MAX; i++) {
         struct process *table = process_get_table();
-        if (table[i].state != PROCESS_UNUSED) info.procs++;
+        if (table[i].state != PROCESS_UNUSED)
+            info.procs++;
     }
 
     /* Load averages */
@@ -8529,7 +8891,8 @@ static uint64_t sys_sysinfo(uint64_t info_addr) {
 
 static uint64_t sys_getresuid(uint64_t ruid_addr, uint64_t euid_addr, uint64_t suid_addr) {
     struct process *p = process_get_current();
-    if (!p) return (uint64_t)(int64_t)-ESRCH;
+    if (!p)
+        return (uint64_t)(int64_t)-ESRCH;
 
     if (ruid_addr) {
         uint32_t val = p->uid;
@@ -8551,15 +8914,21 @@ static uint64_t sys_getresuid(uint64_t ruid_addr, uint64_t euid_addr, uint64_t s
 
 static uint64_t sys_setresuid(uint64_t ruid, uint64_t euid, uint64_t suid) {
     struct process *p = process_get_current();
-    if (!p) return (uint64_t)(int64_t)-ESRCH;
+    if (!p)
+        return (uint64_t)(int64_t)-ESRCH;
 
     /* Simple: allow setting if the caller is root (uid 0) */
     if (p->euid != 0 && (ruid != (uint64_t)-1 || euid != (uint64_t)-1 || suid != (uint64_t)-1))
         return (uint64_t)(int64_t)-EPERM;
 
-    if (ruid != (uint64_t)-1) { p->uid = (uint32_t)ruid; p->euid = (uint32_t)ruid; }
-    if (euid != (uint64_t)-1) p->euid = (uint32_t)euid;
-    if (suid != (uint64_t)-1) { /* suid storage not separate */ }
+    if (ruid != (uint64_t)-1) {
+        p->uid = (uint32_t)ruid;
+        p->euid = (uint32_t)ruid;
+    }
+    if (euid != (uint64_t)-1)
+        p->euid = (uint32_t)euid;
+    if (suid != (uint64_t)-1) { /* suid storage not separate */
+    }
     /* Clear dumpable on credential change — caller might have dropped privileges */
     p->dumpable = 0;
     return 0;
@@ -8567,7 +8936,8 @@ static uint64_t sys_setresuid(uint64_t ruid, uint64_t euid, uint64_t suid) {
 
 static uint64_t sys_getresgid(uint64_t rgid_addr, uint64_t egid_addr, uint64_t sgid_addr) {
     struct process *p = process_get_current();
-    if (!p) return (uint64_t)(int64_t)-ESRCH;
+    if (!p)
+        return (uint64_t)(int64_t)-ESRCH;
 
     if (rgid_addr) {
         uint32_t val = p->gid;
@@ -8589,13 +8959,20 @@ static uint64_t sys_getresgid(uint64_t rgid_addr, uint64_t egid_addr, uint64_t s
 
 static uint64_t sys_setresgid(uint64_t rgid, uint64_t egid, uint64_t sgid) {
     struct process *p = process_get_current();
-    if (!p) return (uint64_t)(int64_t)-ESRCH;
+    if (!p)
+        return (uint64_t)(int64_t)-ESRCH;
 
-    if (p->euid != 0) return (uint64_t)(int64_t)-EPERM;
+    if (p->euid != 0)
+        return (uint64_t)(int64_t)-EPERM;
 
-    if (rgid != (uint64_t)-1) { p->gid = (uint32_t)rgid; p->egid = (uint32_t)rgid; }
-    if (egid != (uint64_t)-1) p->egid = (uint32_t)egid;
-    if (sgid != (uint64_t)-1) { /* sgid */ }
+    if (rgid != (uint64_t)-1) {
+        p->gid = (uint32_t)rgid;
+        p->egid = (uint32_t)rgid;
+    }
+    if (egid != (uint64_t)-1)
+        p->egid = (uint32_t)egid;
+    if (sgid != (uint64_t)-1) { /* sgid */
+    }
     /* Clear dumpable on credential change */
     p->dumpable = 0;
     return 0;
@@ -8603,9 +8980,12 @@ static uint64_t sys_setresgid(uint64_t rgid, uint64_t egid, uint64_t sgid) {
 
 static uint64_t sys_sched_getparam(uint64_t pid, uint64_t param_addr) {
     struct process *target;
-    if (pid == 0) target = process_get_current();
-    else target = process_get_by_pid((uint32_t)pid);
-    if (!target || target->state == PROCESS_UNUSED) return (uint64_t)(int64_t)-ESRCH;
+    if (pid == 0)
+        target = process_get_current();
+    else
+        target = process_get_by_pid((uint32_t)pid);
+    if (!target || target->state == PROCESS_UNUSED)
+        return (uint64_t)(int64_t)-ESRCH;
 
     if (syscall_is_user_process() && !syscall_user_write_ok(param_addr, sizeof(struct sched_param)))
         return (uint64_t)(int64_t)-EFAULT;
@@ -8619,9 +8999,12 @@ static uint64_t sys_sched_getparam(uint64_t pid, uint64_t param_addr) {
 
 static uint64_t sys_sched_setparam(uint64_t pid, uint64_t param_addr) {
     struct process *target;
-    if (pid == 0) target = process_get_current();
-    else target = process_get_by_pid((uint32_t)pid);
-    if (!target || target->state == PROCESS_UNUSED) return (uint64_t)(int64_t)-ESRCH;
+    if (pid == 0)
+        target = process_get_current();
+    else
+        target = process_get_by_pid((uint32_t)pid);
+    if (!target || target->state == PROCESS_UNUSED)
+        return (uint64_t)(int64_t)-ESRCH;
 
     if (syscall_is_user_process() && !syscall_user_read_ok(param_addr, sizeof(struct sched_param)))
         return (uint64_t)(int64_t)-EFAULT;
@@ -8641,7 +9024,7 @@ static uint64_t sys_sched_setparam(uint64_t pid, uint64_t param_addr) {
 #define MQ_MSG_SIZE 256
 
 struct mq_msg {
-    char  data[MQ_MSG_SIZE];
+    char data[MQ_MSG_SIZE];
     unsigned int prio;
     int in_use;
 };
@@ -8653,7 +9036,7 @@ struct mq {
     int num_msgs;
     uint64_t mq_maxmsg;
     uint64_t mq_msgsize;
-    int  oflags;         /* open flags (O_NONBLOCK etc.) — Item 254 */
+    int oflags; /* open flags (O_NONBLOCK etc.) — Item 254 */
 };
 
 static struct mq mq_table[MQ_MAX];
@@ -8666,23 +9049,27 @@ static struct mq *mq_find_by_name(const char *name) {
     return NULL;
 }
 
-static uint64_t sys_mq_open(uint64_t name_addr, uint64_t oflag,
-                             uint64_t mode, uint64_t attr_addr) {
+static uint64_t sys_mq_open(uint64_t name_addr, uint64_t oflag, uint64_t mode, uint64_t attr_addr) {
     (void)mode;
     char name[64];
-    if (!syscall_user_cstr_ok(name_addr)) return (uint64_t)-1;
-    memcpy(name, (void*)name_addr, 63); name[63] = '\0';
+    if (!syscall_user_cstr_ok(name_addr))
+        return (uint64_t)-1;
+    memcpy(name, (void *)name_addr, 63);
+    name[63] = '\0';
 
     /* O_CREAT (0100) flag */
     if (oflag & 0100) {
         /* Create new mq */
         struct mq *existing = mq_find_by_name(name);
-        if (existing) return (uint64_t)-1; /* EEXIST if O_EXCL */
+        if (existing)
+            return (uint64_t)-1; /* EEXIST if O_EXCL */
         for (int i = 0; i < MQ_MAX; i++) {
             if (!mq_table[i].in_use) {
                 mq_table[i].in_use = 1;
-                mq_table[i].oflags = (int)(oflag & 0xffff);  /* store relevant flags (O_NONBLOCK, O_CREAT, O_EXCL) */
-                memcpy(mq_table[i].name, name, 63); mq_table[i].name[63] = '\0';
+                mq_table[i].oflags =
+                    (int)(oflag & 0xffff); /* store relevant flags (O_NONBLOCK, O_CREAT, O_EXCL) */
+                memcpy(mq_table[i].name, name, 63);
+                mq_table[i].name[63] = '\0';
                 mq_table[i].num_msgs = 0;
                 mq_table[i].mq_maxmsg = MQ_MAX_MSG;
                 mq_table[i].mq_msgsize = MQ_MSG_SIZE;
@@ -8690,7 +9077,8 @@ static uint64_t sys_mq_open(uint64_t name_addr, uint64_t oflag,
                     struct mq_attr attr;
                     if (copy_from_user(&attr, attr_addr, sizeof(struct mq_attr)) < 0)
                         return (uint64_t)-1;
-                    if (attr.mq_maxmsg > 0) mq_table[i].mq_maxmsg = attr.mq_maxmsg;
+                    if (attr.mq_maxmsg > 0)
+                        mq_table[i].mq_maxmsg = attr.mq_maxmsg;
                     if (attr.mq_msgsize > 0 && attr.mq_msgsize <= MQ_MSG_SIZE)
                         mq_table[i].mq_msgsize = attr.mq_msgsize;
                 }
@@ -8702,24 +9090,25 @@ static uint64_t sys_mq_open(uint64_t name_addr, uint64_t oflag,
 
     /* Open existing */
     struct mq *mq = mq_find_by_name(name);
-    if (!mq) return (uint64_t)-1;
+    if (!mq)
+        return (uint64_t)-1;
     for (int i = 0; i < MQ_MAX; i++) {
         if (&mq_table[i] == mq) {
-            mq_table[i].oflags = (int)(oflag & 0xffff);  /* store/replace flags on open (Item 254) */
+            mq_table[i].oflags = (int)(oflag & 0xffff); /* store/replace flags on open (Item 254) */
             return (uint64_t)(800 + i);
         }
     }
     return (uint64_t)-1;
 }
 
-static uint64_t sys_mq_send(uint64_t mqd, uint64_t msg_addr,
-                             uint64_t msg_len, uint64_t prio) {
+static uint64_t sys_mq_send(uint64_t mqd, uint64_t msg_addr, uint64_t msg_len, uint64_t prio) {
     int slot = (int)mqd - 800;
     if (slot < 0 || slot >= MQ_MAX || !mq_table[slot].in_use)
         return (uint64_t)-1;
 
     struct mq *mq = &mq_table[slot];
-    if (msg_len > mq->mq_msgsize) return (uint64_t)-EMSGSIZE;
+    if (msg_len > mq->mq_msgsize)
+        return (uint64_t)-EMSGSIZE;
     if (mq->num_msgs >= (int)mq->mq_maxmsg) {
         if (mq->oflags & O_NONBLOCK)
             return (uint64_t)-EAGAIN;
@@ -8731,14 +9120,14 @@ static uint64_t sys_mq_send(uint64_t mqd, uint64_t msg_addr,
         return (uint64_t)-1;
 
     struct mq_msg *m = &mq->msgs[mq->num_msgs++];
-    memcpy(m->data, (void*)msg_addr, (unsigned long)msg_len);
+    memcpy(m->data, (void *)msg_addr, (unsigned long)msg_len);
     m->prio = (unsigned int)prio;
     m->in_use = 1;
     return 0;
 }
 
-static uint64_t sys_mq_receive(uint64_t mqd, uint64_t msg_addr,
-                                uint64_t msg_len, uint64_t prio_addr) {
+static uint64_t sys_mq_receive(uint64_t mqd, uint64_t msg_addr, uint64_t msg_len,
+                               uint64_t prio_addr) {
     int slot = (int)mqd - 800;
     if (slot < 0 || slot >= MQ_MAX || !mq_table[slot].in_use)
         return (uint64_t)-1;
@@ -8757,7 +9146,8 @@ static uint64_t sys_mq_receive(uint64_t mqd, uint64_t msg_addr,
     /* Dequeue highest-priority message */
     int best = 0;
     for (int i = 1; i < mq->num_msgs; i++) {
-        if (mq->msgs[i].prio > mq->msgs[best].prio) best = i;
+        if (mq->msgs[i].prio > mq->msgs[best].prio)
+            best = i;
     }
 
     struct mq_msg *m = &mq->msgs[best];
@@ -8778,11 +9168,14 @@ static uint64_t sys_mq_receive(uint64_t mqd, uint64_t msg_addr,
 
 static uint64_t sys_mq_unlink(uint64_t name_addr) {
     char name[64];
-    if (!syscall_user_cstr_ok(name_addr)) return (uint64_t)-1;
-    memcpy(name, (void*)name_addr, 63); name[63] = '\0';
+    if (!syscall_user_cstr_ok(name_addr))
+        return (uint64_t)-1;
+    memcpy(name, (void *)name_addr, 63);
+    name[63] = '\0';
 
     struct mq *mq = mq_find_by_name(name);
-    if (!mq) return (uint64_t)-1;
+    if (!mq)
+        return (uint64_t)-1;
     mq->in_use = 0;
     return 0;
 }
@@ -8799,14 +9192,14 @@ void production_subsystems_init(void) {
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 
-static uint64_t sys_openat(uint64_t dirfd, uint64_t path_addr,
-                            uint64_t flags, uint64_t mode) {
+static uint64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags, uint64_t mode) {
     (void)mode;
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
     const char *path = resolve_path_at((int)dirfd, kpath, kpath, sizeof(kpath));
-    if (!path) return (uint64_t)(int64_t)-ENOENT;
+    if (!path)
+        return (uint64_t)(int64_t)-ENOENT;
     /* Delegate to core open logic with resolved path */
     return do_sys_open(path, flags, 0);
 }
@@ -8817,22 +9210,24 @@ static uint64_t sys_mkdirat(uint64_t dirfd, uint64_t path_addr, uint64_t mode) {
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
     const char *path = resolve_path_at((int)dirfd, kpath, kpath, sizeof(kpath));
-    if (!path) return (uint64_t)(int64_t)-ENOENT;
+    if (!path)
+        return (uint64_t)(int64_t)-ENOENT;
     int ret = vfs_create(path, VFS_TYPE_DIR);
     return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
 }
 
-static uint64_t sys_fstatat(uint64_t dirfd, uint64_t path_addr,
-                             uint64_t buf_addr, uint64_t flags) {
+static uint64_t sys_fstatat(uint64_t dirfd, uint64_t path_addr, uint64_t buf_addr, uint64_t flags) {
     (void)flags;
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
     const char *resolved = resolve_path_at((int)dirfd, kpath, kpath, sizeof(kpath));
-    if (!resolved) return (uint64_t)(int64_t)-ENOENT;
+    if (!resolved)
+        return (uint64_t)(int64_t)-ENOENT;
 
     struct vfs_stat st;
-    if (vfs_stat(resolved, &st) < 0) return (uint64_t)(int64_t)-ENOENT;
+    if (vfs_stat(resolved, &st) < 0)
+        return (uint64_t)(int64_t)-ENOENT;
     if (copy_to_user(buf_addr, &st, sizeof(st)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
     return 0;
@@ -8843,14 +9238,15 @@ static uint64_t sys_unlinkat(uint64_t dirfd, uint64_t path_addr, uint64_t flags)
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
     const char *path = resolve_path_at((int)dirfd, kpath, kpath, sizeof(kpath));
-    if (!path) return (uint64_t)(int64_t)-ENOENT;
+    if (!path)
+        return (uint64_t)(int64_t)-ENOENT;
     /* VFS uses unlink for both files and directory removal */
     int ret = vfs_unlink(path);
     return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
 }
 
-static uint64_t sys_renameat(uint64_t olddirfd, uint64_t oldpath_addr,
-                              uint64_t newdirfd, uint64_t newpath_addr) {
+static uint64_t sys_renameat(uint64_t olddirfd, uint64_t oldpath_addr, uint64_t newdirfd,
+                             uint64_t newpath_addr) {
     char koldpath[256], knewpath[256];
     if (strncpy_from_user(koldpath, oldpath_addr, sizeof(koldpath)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
@@ -8858,10 +9254,12 @@ static uint64_t sys_renameat(uint64_t olddirfd, uint64_t oldpath_addr,
         return (uint64_t)(int64_t)-EFAULT;
     const char *oldpath = resolve_path_at((int)olddirfd, koldpath, koldpath, sizeof(koldpath));
     const char *newpath = resolve_path_at((int)newdirfd, knewpath, knewpath, sizeof(knewpath));
-    if (!oldpath || !newpath) return (uint64_t)(int64_t)-ENOENT;
+    if (!oldpath || !newpath)
+        return (uint64_t)(int64_t)-ENOENT;
     /* For now, fall back to VFS operations: copy + delete */
     uint8_t *buf = kmalloc(4096);
-    if (!buf) return (uint64_t)(int64_t)-ENOMEM;
+    if (!buf)
+        return (uint64_t)(int64_t)-ENOMEM;
     uint32_t sz = 0;
     if (vfs_read(oldpath, buf, 4096, &sz) < 0) {
         kfree(buf);
@@ -8876,10 +9274,10 @@ static uint64_t sys_renameat(uint64_t olddirfd, uint64_t oldpath_addr,
     return 0;
 }
 
-static uint64_t sys_symlinkat(uint64_t target_addr, uint64_t newdirfd,
-                               uint64_t linkpath_addr) {
+static uint64_t sys_symlinkat(uint64_t target_addr, uint64_t newdirfd, uint64_t linkpath_addr) {
     char *ktarget = kmalloc(4096);
-    if (!ktarget) return (uint64_t)(int64_t)-ENOMEM;
+    if (!ktarget)
+        return (uint64_t)(int64_t)-ENOMEM;
     char klinkpath[256];
     if (strncpy_from_user(ktarget, target_addr, 4096) < 0) {
         kfree(ktarget);
@@ -8903,22 +9301,29 @@ static uint64_t sys_symlinkat(uint64_t target_addr, uint64_t newdirfd,
     return 0;
 }
 
-static uint64_t sys_readlinkat(uint64_t dirfd, uint64_t path_addr,
-                                uint64_t buf_addr, uint64_t bufsize) {
+static uint64_t sys_readlinkat(uint64_t dirfd, uint64_t path_addr, uint64_t buf_addr,
+                               uint64_t bufsize) {
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
     const char *path = resolve_path_at((int)dirfd, kpath, kpath, sizeof(kpath));
-    if (!path) return (uint64_t)(int64_t)-ENOENT;
-    if (bufsize == 0) return (uint64_t)(int64_t)-EINVAL;
-    if (bufsize > 4096) bufsize = 4096;
+    if (!path)
+        return (uint64_t)(int64_t)-ENOENT;
+    if (bufsize == 0)
+        return (uint64_t)(int64_t)-EINVAL;
+    if (bufsize > 4096)
+        bufsize = 4096;
     /* Read into kernel buffer, then copy out.
      * Use the (clamped) bufsize so we don't overread the user's buffer.
      * Heap-allocate to avoid a 4 KB stack buffer on the 16 KB kernel stack. */
     char *kbuf = kmalloc(4096);
-    if (!kbuf) return (uint64_t)(int64_t)-ENOMEM;
+    if (!kbuf)
+        return (uint64_t)(int64_t)-ENOMEM;
     int n = vfs_readlink(path, kbuf, (int)bufsize);
-    if (n < 0) { kfree(kbuf); return (uint64_t)(int64_t)n; }
+    if (n < 0) {
+        kfree(kbuf);
+        return (uint64_t)(int64_t)n;
+    }
     if (copy_to_user(buf_addr, kbuf, (size_t)n) < 0) {
         kfree(kbuf);
         return (uint64_t)(int64_t)-EFAULT;
@@ -8931,20 +9336,31 @@ static uint64_t sys_readlinkat(uint64_t dirfd, uint64_t path_addr,
 
 static uint64_t sys_getdents64(uint64_t fd, uint64_t dirp_addr, uint64_t count) {
     struct process *p = process_get_current();
-    if (!p) return (uint64_t)(int64_t)-ESRCH;
+    if (!p)
+        return (uint64_t)(int64_t)-ESRCH;
     if (fd >= PROCESS_FD_MAX || !p->fd_table[fd].used)
         return (uint64_t)(int64_t)-EBADF;
     if (syscall_is_user_process() && !syscall_user_write_ok(dirp_addr, count))
         return (uint64_t)(int64_t)-EFAULT;
 
-    char (*names)[64] = kmalloc(64 * sizeof(*names));
-    if (!names) return (uint64_t)(int64_t)-ENOMEM;
+    char(*names)[64] = kmalloc(64 * sizeof(*names));
+    if (!names)
+        return (uint64_t)(int64_t)-ENOMEM;
     int n = vfs_readdir_names(p->fd_table[fd].path, names, 64);
-    if (n < 0) { kfree(names); return (uint64_t)(int64_t)n; }
-    if (n == 0) { kfree(names); return 0; }
+    if (n < 0) {
+        kfree(names);
+        return (uint64_t)(int64_t)n;
+    }
+    if (n == 0) {
+        kfree(names);
+        return 0;
+    }
 
     int start = (int)p->fd_table[fd].offset;
-    if (start >= n) { kfree(names); return 0; }
+    if (start >= n) {
+        kfree(names);
+        return 0;
+    }
 
     size_t total = 0;
 
@@ -8953,7 +9369,8 @@ static uint64_t sys_getdents64(uint64_t fd, uint64_t dirp_addr, uint64_t count) 
         size_t reclen = sizeof(struct linux_dirent64) + (size_t)namelen + 1;
         reclen = (reclen + 7) & ~(size_t)7; /* align to 8 */
 
-        if (total + reclen > (size_t)count) break;
+        if (total + reclen > (size_t)count)
+            break;
 
         /* Build entry in kernel buffer, then copy out */
         uint8_t kentry[512];
@@ -8964,8 +9381,10 @@ static uint64_t sys_getdents64(uint64_t fd, uint64_t dirp_addr, uint64_t count) 
         k_ent->d_type = DT_UNKNOWN;
         memcpy(k_ent->d_name, names[i], (unsigned long)namelen + 1);
 
-        if (copy_to_user(dirp_addr + total, kentry, (size_t)reclen) < 0)
-            { kfree(names); return (uint64_t)-1; }
+        if (copy_to_user(dirp_addr + total, kentry, (size_t)reclen) < 0) {
+            kfree(names);
+            return (uint64_t)-1;
+        }
         total += reclen;
         p->fd_table[fd].offset = (uint32_t)(i + 1);
     }
@@ -8978,13 +9397,18 @@ static uint64_t sys_getdents64(uint64_t fd, uint64_t dirp_addr, uint64_t count) 
 
 static uint64_t sys_mlock(uint64_t addr, uint64_t len) {
     struct process *p = process_get_current();
-    if (!p || !p->pml4) return (uint64_t)-EINVAL;
-    if (addr & (PAGE_SIZE - 1)) return (uint64_t)-EINVAL;
+    if (!p || !p->pml4)
+        return (uint64_t)-EINVAL;
+    if (addr & (PAGE_SIZE - 1))
+        return (uint64_t)-EINVAL;
 
     len = (len + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
-    if (addr + len < addr) return (uint64_t)-EINVAL;
-    if (addr + len > USER_VADDR_MAX) return (uint64_t)-EINVAL;
-    if (len == 0) return 0;
+    if (addr + len < addr)
+        return (uint64_t)-EINVAL;
+    if (addr + len > USER_VADDR_MAX)
+        return (uint64_t)-EINVAL;
+    if (len == 0)
+        return 0;
 
     /* If MCL_FUTURE is set, pages are globally locked via mlockall;
      * individual mlock is not permitted. */
@@ -9017,10 +9441,14 @@ static uint64_t sys_mlock(uint64_t addr, uint64_t len) {
 
 static uint64_t sys_munlock(uint64_t addr, uint64_t len) {
     struct process *p = process_get_current();
-    if (!p || !p->pml4) return (uint64_t)-EINVAL;
-    if (addr & (PAGE_SIZE - 1)) return (uint64_t)-EINVAL;
-    if (addr + len < addr) return (uint64_t)-EINVAL;
-    if (addr + len > USER_VADDR_MAX) return (uint64_t)-EINVAL;
+    if (!p || !p->pml4)
+        return (uint64_t)-EINVAL;
+    if (addr & (PAGE_SIZE - 1))
+        return (uint64_t)-EINVAL;
+    if (addr + len < addr)
+        return (uint64_t)-EINVAL;
+    if (addr + len > USER_VADDR_MAX)
+        return (uint64_t)-EINVAL;
 
     /* If MCL_CURRENT is set, pages are globally locked and cannot be
      * individually unlocked. */
@@ -9028,7 +9456,8 @@ static uint64_t sys_munlock(uint64_t addr, uint64_t len) {
         return (uint64_t)-EPERM;
 
     uint64_t npages = (len + PAGE_SIZE - 1) / PAGE_SIZE;
-    if (npages == 0) return 0;
+    if (npages == 0)
+        return 0;
 
     /* Unwire the pages: clear LOCKED flag, unref physical frames */
     vmm_unlock_user_pages(p->pml4, addr, npages);
@@ -9042,7 +9471,8 @@ static uint64_t sys_munlock(uint64_t addr, uint64_t len) {
 
 static uint64_t sys_mlockall(uint64_t flags) {
     struct process *p = process_get_current();
-    if (!p) return (uint64_t)-ENOMEM;
+    if (!p)
+        return (uint64_t)-ENOMEM;
     /* MCL_CURRENT=1, MCL_FUTURE=2, MCL_ONFAULT=4 */
     if (flags & ~(uint64_t)(MCL_CURRENT | MCL_FUTURE | MCL_ONFAULT))
         return (uint64_t)-EINVAL;
@@ -9055,18 +9485,28 @@ static uint64_t sys_mlockall(uint64_t flags) {
         if (p->pml4) {
             /* ── Phase 1: Count all mapped pages for RLIMIT_MEMLOCK check ── */
             for (int i4 = 0; i4 < 512; i4++) {
-                if (!(p->pml4[i4] & PTE_PRESENT)) continue;
+                if (!(p->pml4[i4] & PTE_PRESENT))
+                    continue;
                 uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(p->pml4[i4] & PTE_ADDR_MASK);
                 for (int i3 = 0; i3 < 512; i3++) {
-                    if (!(pdpt[i3] & PTE_PRESENT)) continue;
-                    if (pdpt[i3] & PTE_HUGE) { total += 512 * 512; continue; }
+                    if (!(pdpt[i3] & PTE_PRESENT))
+                        continue;
+                    if (pdpt[i3] & PTE_HUGE) {
+                        total += 512 * 512;
+                        continue;
+                    }
                     uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[i3] & PTE_ADDR_MASK);
                     for (int i2 = 0; i2 < 512; i2++) {
-                        if (!(pd[i2] & PTE_PRESENT)) continue;
-                        if (pd[i2] & PTE_HUGE) { total += 512; continue; }
+                        if (!(pd[i2] & PTE_PRESENT))
+                            continue;
+                        if (pd[i2] & PTE_HUGE) {
+                            total += 512;
+                            continue;
+                        }
                         uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[i2] & PTE_ADDR_MASK);
                         for (int i1 = 0; i1 < 512; i1++) {
-                            if (pt[i1] & PTE_PRESENT) total++;
+                            if (pt[i1] & PTE_PRESENT)
+                                total++;
                         }
                     }
                 }
@@ -9081,10 +9521,12 @@ static uint64_t sys_mlockall(uint64_t flags) {
             /* Only prefault+lock if MCL_ONFAULT is NOT set */
             if (!(flags & MCL_ONFAULT)) {
                 for (int i4 = 0; i4 < 512; i4++) {
-                    if (!(p->pml4[i4] & PTE_PRESENT)) continue;
+                    if (!(p->pml4[i4] & PTE_PRESENT))
+                        continue;
                     uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(p->pml4[i4] & PTE_ADDR_MASK);
                     for (int i3 = 0; i3 < 512; i3++) {
-                        if (!(pdpt[i3] & PTE_PRESENT)) continue;
+                        if (!(pdpt[i3] & PTE_PRESENT))
+                            continue;
                         uint64_t base_virt_1g = ((uint64_t)i4 << 39) | ((uint64_t)i3 << 30);
 
                         if (pdpt[i3] & PTE_HUGE) {
@@ -9095,7 +9537,8 @@ static uint64_t sys_mlockall(uint64_t flags) {
 
                         uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[i3] & PTE_ADDR_MASK);
                         for (int i2 = 0; i2 < 512; i2++) {
-                            if (!(pd[i2] & PTE_PRESENT)) continue;
+                            if (!(pd[i2] & PTE_PRESENT))
+                                continue;
                             uint64_t base_virt_2m = base_virt_1g | ((uint64_t)i2 << 21);
 
                             if (pd[i2] & PTE_HUGE) {
@@ -9144,15 +9587,18 @@ static uint64_t sys_mlockall(uint64_t flags) {
 
 static uint64_t sys_munlockall(void) {
     struct process *p = process_get_current();
-    if (!p) return (uint64_t)-ENOMEM;
+    if (!p)
+        return (uint64_t)-ENOMEM;
 
     /* Walk the page table and unwire every locked page */
     if (p->pml4) {
         for (int i4 = 0; i4 < 512; i4++) {
-            if (!(p->pml4[i4] & PTE_PRESENT)) continue;
+            if (!(p->pml4[i4] & PTE_PRESENT))
+                continue;
             uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(p->pml4[i4] & PTE_ADDR_MASK);
             for (int i3 = 0; i3 < 512; i3++) {
-                if (!(pdpt[i3] & PTE_PRESENT)) continue;
+                if (!(pdpt[i3] & PTE_PRESENT))
+                    continue;
                 uint64_t base_virt_1g = ((uint64_t)i4 << 39) | ((uint64_t)i3 << 30);
 
                 if (pdpt[i3] & PTE_HUGE) {
@@ -9164,7 +9610,8 @@ static uint64_t sys_munlockall(void) {
 
                 uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[i3] & PTE_ADDR_MASK);
                 for (int i2 = 0; i2 < 512; i2++) {
-                    if (!(pd[i2] & PTE_PRESENT)) continue;
+                    if (!(pd[i2] & PTE_PRESENT))
+                        continue;
                     uint64_t base_virt_2m = base_virt_1g | ((uint64_t)i2 << 21);
 
                     if (pd[i2] & PTE_HUGE) {
@@ -9212,15 +9659,20 @@ static uint64_t sys_munlockall(void) {
 
 static uint64_t sys_mincore(uint64_t addr, uint64_t len, uint64_t vec_addr) {
     struct process *p = process_get_current();
-    if (!p || !p->pml4) return (uint64_t)(int64_t)-ENOMEM;
-    if (addr & (PAGE_SIZE - 1)) return (uint64_t)(int64_t)-EINVAL;
+    if (!p || !p->pml4)
+        return (uint64_t)(int64_t)-ENOMEM;
+    if (addr & (PAGE_SIZE - 1))
+        return (uint64_t)(int64_t)-EINVAL;
 
     /* Overflow and bounds check */
-    if (addr + len < addr) return (uint64_t)(int64_t)-EINVAL;
-    if (addr + len > USER_VADDR_MAX) return (uint64_t)(int64_t)-EINVAL;
+    if (addr + len < addr)
+        return (uint64_t)(int64_t)-EINVAL;
+    if (addr + len > USER_VADDR_MAX)
+        return (uint64_t)(int64_t)-EINVAL;
 
     uint64_t pages = (len + PAGE_SIZE - 1) / PAGE_SIZE;
-    if (pages == 0) return 0;
+    if (pages == 0)
+        return 0;
 
     /* vec_addr is validated by dispatch (syscall_user_write_ok), but
      * also must be non-null for the operation to make sense. */
@@ -9228,7 +9680,8 @@ static uint64_t sys_mincore(uint64_t addr, uint64_t len, uint64_t vec_addr) {
         return (uint64_t)(int64_t)-EFAULT;
 
     uint8_t *vec = (uint8_t *)kmalloc(pages);
-    if (!vec) return (uint64_t)(int64_t)-ENOMEM;
+    if (!vec)
+        return (uint64_t)(int64_t)-ENOMEM;
 
     for (uint64_t i = 0; i < pages; i++) {
         uint64_t vaddr = addr + i * PAGE_SIZE;
@@ -9245,86 +9698,89 @@ static uint64_t sys_mincore(uint64_t addr, uint64_t len, uint64_t vec_addr) {
 
 static uint64_t sys_madvise(uint64_t addr, uint64_t len, uint64_t advice) {
     struct process *p = process_get_current();
-    if (!p || !p->pml4) return (uint64_t)(int64_t)-EFAULT;
+    if (!p || !p->pml4)
+        return (uint64_t)(int64_t)-EFAULT;
 
     /* Common validation for operations that touch user pages */
     switch (advice) {
-        case MADV_DONTNEED:
-        case MADV_FREE:
-        case MADV_MERGEABLE:
-        case MADV_UNMERGEABLE:
-        case MADV_WILLNEED:
-        case MADV_COLD:
-        case MADV_PAGEOUT: {
-            if (addr & (PAGE_SIZE - 1)) return (uint64_t)-EINVAL;
-            uint64_t length = (len + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
-            if (addr + length < addr) return (uint64_t)-EINVAL;
-            if (addr + length > USER_VADDR_MAX) return (uint64_t)-EINVAL;
-            /* Validate user address range is readable/writable */
-            if (!vmm_user_range_ok(p->pml4, addr, length, 0))
-                return (uint64_t)-EFAULT;
-            break;
-        }
-        default:
-            break;
+    case MADV_DONTNEED:
+    case MADV_FREE:
+    case MADV_MERGEABLE:
+    case MADV_UNMERGEABLE:
+    case MADV_WILLNEED:
+    case MADV_COLD:
+    case MADV_PAGEOUT: {
+        if (addr & (PAGE_SIZE - 1))
+            return (uint64_t)-EINVAL;
+        uint64_t length = (len + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
+        if (addr + length < addr)
+            return (uint64_t)-EINVAL;
+        if (addr + length > USER_VADDR_MAX)
+            return (uint64_t)-EINVAL;
+        /* Validate user address range is readable/writable */
+        if (!vmm_user_range_ok(p->pml4, addr, length, 0))
+            return (uint64_t)-EFAULT;
+        break;
+    }
+    default:
+        break;
     }
 
     switch (advice) {
-        case MADV_DONTNEED: {
-            /* Immediately unmap and free physical pages */
-            int ret = madvise_dontneed(addr, len);
-            return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
-        }
-        case MADV_FREE: {
-            /* Lazy freeing: pages become freeable (immediate in our impl) */
-            int ret = madvise_free(addr, len);
-            return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
-        }
-        case MADV_WILLNEED: {
-            /* Pre-fault: ensure pages are mapped */
-            int ret = madvise_willneed(addr, len);
-            return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
-        }
-        case MADV_COLD: {
-            /* Hint pages are cold — clear accessed/dirty, reclaim immediately */
-            int ret = madvise_cold(addr, len);
-            return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
-        }
-        case MADV_PAGEOUT: {
-            /* Proactively swap out pages (immediate reclaim without swap) */
-            int ret = madvise_pageout(addr, len);
-            return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
-        }
-        case MADV_MERGEABLE: {
-            /* Mark pages as candidates for KSM merging */
-            int ret = madvise_mergeable(addr, len);
-            return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
-        }
-        case MADV_UNMERGEABLE: {
-            /* Unmark as KSM mergeable — unregister from KSM */
-            int ret = madvise_unmergeable(addr, len);
-            return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
-        }
-        case MADV_NORMAL:
-        case MADV_RANDOM:
-        case MADV_SEQUENTIAL:
-            /* No-op: we don't do I/O clustering yet */
-            return 0;
-        default:
-            return (uint64_t)-ENOSYS;
+    case MADV_DONTNEED: {
+        /* Immediately unmap and free physical pages */
+        int ret = madvise_dontneed(addr, len);
+        return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
+    }
+    case MADV_FREE: {
+        /* Lazy freeing: pages become freeable (immediate in our impl) */
+        int ret = madvise_free(addr, len);
+        return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
+    }
+    case MADV_WILLNEED: {
+        /* Pre-fault: ensure pages are mapped */
+        int ret = madvise_willneed(addr, len);
+        return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
+    }
+    case MADV_COLD: {
+        /* Hint pages are cold — clear accessed/dirty, reclaim immediately */
+        int ret = madvise_cold(addr, len);
+        return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
+    }
+    case MADV_PAGEOUT: {
+        /* Proactively swap out pages (immediate reclaim without swap) */
+        int ret = madvise_pageout(addr, len);
+        return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
+    }
+    case MADV_MERGEABLE: {
+        /* Mark pages as candidates for KSM merging */
+        int ret = madvise_mergeable(addr, len);
+        return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
+    }
+    case MADV_UNMERGEABLE: {
+        /* Unmark as KSM mergeable — unregister from KSM */
+        int ret = madvise_unmergeable(addr, len);
+        return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
+    }
+    case MADV_NORMAL:
+    case MADV_RANDOM:
+    case MADV_SEQUENTIAL:
+        /* No-op: we don't do I/O clustering yet */
+        return 0;
+    default:
+        return (uint64_t)-ENOSYS;
     }
 }
 
 /* ── NUMA memory policy syscalls ─────────────────────────────────── */
 
-static uint64_t sys_mbind(uint64_t addr, uint64_t len, uint64_t mode,
-                           uint64_t nodemask, uint64_t maxnode,
-                           uint64_t flags)
-{
+static uint64_t sys_mbind(uint64_t addr, uint64_t len, uint64_t mode, uint64_t nodemask,
+                          uint64_t maxnode, uint64_t flags) {
     (void)maxnode;
     (void)flags;
     struct process *p = process_get_current();
-    if (!p) return (uint64_t)-ENOMEM;
+    if (!p)
+        return (uint64_t)-ENOMEM;
 
     if (addr & (PAGE_SIZE - 1))
         return (uint64_t)-EINVAL;
@@ -9337,18 +9793,14 @@ static uint64_t sys_mbind(uint64_t addr, uint64_t len, uint64_t mode,
     return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
 }
 
-static uint64_t sys_set_mempolicy(uint64_t mode, uint64_t nodemask,
-                                   uint64_t maxnode)
-{
+static uint64_t sys_set_mempolicy(uint64_t mode, uint64_t nodemask, uint64_t maxnode) {
     (void)maxnode;
     int ret = mempolicy_set((int)mode, nodemask, -1);
     return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
 }
 
-static uint64_t sys_get_mempolicy(uint64_t mode_addr, uint64_t nodemask_addr,
-                                   uint64_t maxnode, uint64_t addr,
-                                   uint64_t flags)
-{
+static uint64_t sys_get_mempolicy(uint64_t mode_addr, uint64_t nodemask_addr, uint64_t maxnode,
+                                  uint64_t addr, uint64_t flags) {
     (void)maxnode;
     (void)addr;
     (void)flags;
@@ -9370,10 +9822,8 @@ static uint64_t sys_get_mempolicy(uint64_t mode_addr, uint64_t nodemask_addr,
     return 0;
 }
 
-static uint64_t sys_migrate_pages(uint64_t pid, uint64_t maxnode,
-                                   uint64_t old_nodes_addr,
-                                   uint64_t new_nodes_addr)
-{
+static uint64_t sys_migrate_pages(uint64_t pid, uint64_t maxnode, uint64_t old_nodes_addr,
+                                  uint64_t new_nodes_addr) {
     (void)maxnode;
     (void)old_nodes_addr;
 
@@ -9387,10 +9837,8 @@ static uint64_t sys_migrate_pages(uint64_t pid, uint64_t maxnode,
     return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
 }
 
-static uint64_t sys_move_pages(uint64_t pid, uint64_t nr_pages,
-                                uint64_t pages_addr, uint64_t nodes_addr,
-                                uint64_t status_addr, uint64_t flags)
-{
+static uint64_t sys_move_pages(uint64_t pid, uint64_t nr_pages, uint64_t pages_addr,
+                               uint64_t nodes_addr, uint64_t status_addr, uint64_t flags) {
     struct process *target = NULL;
 
     if (nr_pages == 0)
@@ -9484,10 +9932,8 @@ static uint64_t sys_move_pages(uint64_t pid, uint64_t nr_pages,
     return (ret < 0) ? (uint64_t)(int64_t)ret : nr_pages;
 }
 
-static uint64_t sys_remap_file_pages(uint64_t addr, uint64_t size,
-                                      uint64_t prot, uint64_t pgoff,
-                                      uint64_t flags)
-{
+static uint64_t sys_remap_file_pages(uint64_t addr, uint64_t size, uint64_t prot, uint64_t pgoff,
+                                     uint64_t flags) {
     /* remap_file_pages creates non-linear file mappings within an
      * existing MAP_SHARED file-backed VMA.  This kernel does not
      * currently support file-backed mmap with VMA tracking, so we
@@ -9501,7 +9947,7 @@ static uint64_t sys_remap_file_pages(uint64_t addr, uint64_t size,
         return (uint64_t)-EINVAL;
     if (size == 0)
         return (uint64_t)-EINVAL;
-    if (flags & ~(uint64_t)1)  /* only MAP_NONBLOCK (1) is valid */
+    if (flags & ~(uint64_t)1) /* only MAP_NONBLOCK (1) is valid */
         return (uint64_t)-EINVAL;
     (void)prot;
     (void)pgoff;
@@ -9535,8 +9981,7 @@ static uint64_t sys_msync(uint64_t addr, uint64_t len, uint64_t flags) {
  * Return: 0 on success, or (uint64_t)-1 on error with errno encoded
  *         as a negative value.
  */
-static uint64_t sys_fallocate(uint64_t fd, uint64_t mode, uint64_t offset, uint64_t len)
-{
+static uint64_t sys_fallocate(uint64_t fd, uint64_t mode, uint64_t offset, uint64_t len) {
     if (fd < 3)
         return (uint64_t)(int64_t)-EBADF;
     int i = (int)fd - 3;
@@ -9579,8 +10024,7 @@ static uint64_t sys_fallocate(uint64_t fd, uint64_t mode, uint64_t offset, uint6
  * Return: 0 on success, or (uint64_t)-1 on error with errno encoded
  *         as a negative value.
  */
-static uint64_t sys_readahead(uint64_t fd, uint64_t offset, uint64_t count)
-{
+static uint64_t sys_readahead(uint64_t fd, uint64_t offset, uint64_t count) {
     if (fd < 3)
         return (uint64_t)(int64_t)-EBADF;
     int i = (int)fd - 3;
@@ -9619,8 +10063,7 @@ static uint64_t sys_readahead(uint64_t fd, uint64_t offset, uint64_t count)
  *
  * Returns 0 on success, -1 on error with appropriate errno.
  */
-static uint64_t sys_fadvise64(uint64_t fd, uint64_t offset, uint64_t len, uint64_t advice)
-{
+static uint64_t sys_fadvise64(uint64_t fd, uint64_t offset, uint64_t len, uint64_t advice) {
     /* Validate fd: must be a regular file descriptor */
     if (fd < 3 || fd >= 700)
         return (uint64_t)-EBADF;
@@ -9656,8 +10099,7 @@ static uint64_t sys_fadvise64(uint64_t fd, uint64_t offset, uint64_t len, uint64
     case POSIX_FADV_WILLNEED:
         /* Trigger readahead for the requested byte range */
         if (st.type == 1) {
-            (void)vfs_readahead(pfd->path, (uint32_t)offset,
-                                (uint32_t)(end_offset - offset));
+            (void)vfs_readahead(pfd->path, (uint32_t)offset, (uint32_t)(end_offset - offset));
         }
         break;
 
@@ -9666,7 +10108,7 @@ static uint64_t sys_fadvise64(uint64_t fd, uint64_t offset, uint64_t len, uint64
          * Only operates on regular files that have an inode number. */
         if (st.type == 1 && st.ino != 0) {
             uint32_t start_block = (uint32_t)(offset / PAGE_SIZE);
-            uint32_t end_block   = (uint32_t)((end_offset + PAGE_SIZE - 1) / PAGE_SIZE);
+            uint32_t end_block = (uint32_t)((end_offset + PAGE_SIZE - 1) / PAGE_SIZE);
             for (uint32_t blk = start_block; blk < end_block; blk++) {
                 page_cache_discard(st.ino, blk);
             }
@@ -9695,13 +10137,13 @@ static uint64_t sys_fadvise64(uint64_t fd, uint64_t offset, uint64_t len, uint64
 #define TIMERFD_MAX 16
 
 struct timerfd {
-    int      in_use;
-    int      clockid;
-    int      absolute;        /* 1 = TFD_TIMER_ABSTIME was set on last settime */
-    uint64_t it_value;        /* ticks: relative value OR absolute expiration tick */
-    uint64_t it_interval;     /* ticks between repeated expirations */
-    uint64_t expirations;     /* number of times expired since last read */
-    uint64_t start_tick;      /* for relative timers: tick when timer was set */
+    int in_use;
+    int clockid;
+    int absolute;         /* 1 = TFD_TIMER_ABSTIME was set on last settime */
+    uint64_t it_value;    /* ticks: relative value OR absolute expiration tick */
+    uint64_t it_interval; /* ticks between repeated expirations */
+    uint64_t expirations; /* number of times expired since last read */
+    uint64_t start_tick;  /* for relative timers: tick when timer was set */
 };
 
 static struct timerfd timerfd_table[TIMERFD_MAX];
@@ -9710,7 +10152,8 @@ static struct timerfd timerfd_table[TIMERFD_MAX];
 static int timerfd_do_read(int slot, uint64_t *val) {
     if (slot < 0 || slot >= TIMERFD_MAX || !timerfd_table[slot].in_use)
         return -1;
-    if (timerfd_table[slot].expirations == 0) return 0;
+    if (timerfd_table[slot].expirations == 0)
+        return 0;
     *val = timerfd_table[slot].expirations;
     timerfd_table[slot].expirations = 0;
     return 0;
@@ -9737,8 +10180,8 @@ static uint64_t sys_timerfd_create(uint64_t clockid, uint64_t flags) {
     return (uint64_t)-1;
 }
 
-static uint64_t sys_timerfd_settime(uint64_t fd, uint64_t flags,
-                                     uint64_t new_addr, uint64_t old_addr) {
+static uint64_t sys_timerfd_settime(uint64_t fd, uint64_t flags, uint64_t new_addr,
+                                    uint64_t old_addr) {
     int slot = (int)fd - 500;
     if (slot < 0 || slot >= TIMERFD_MAX || !timerfd_table[slot].in_use)
         return (uint64_t)-1;
@@ -9763,10 +10206,12 @@ static uint64_t sys_timerfd_settime(uint64_t fd, uint64_t flags,
             old_val.it_value.tv_nsec = (remaining % TIMER_FREQ) * (1000000000ULL / TIMER_FREQ);
         } else {
             old_val.it_value.tv_sec = timerfd_table[slot].it_value / TIMER_FREQ;
-            old_val.it_value.tv_nsec = (timerfd_table[slot].it_value % TIMER_FREQ) * (1000000000ULL / TIMER_FREQ);
+            old_val.it_value.tv_nsec =
+                (timerfd_table[slot].it_value % TIMER_FREQ) * (1000000000ULL / TIMER_FREQ);
         }
         old_val.it_interval.tv_sec = timerfd_table[slot].it_interval / TIMER_FREQ;
-        old_val.it_interval.tv_nsec = (timerfd_table[slot].it_interval % TIMER_FREQ) * (1000000000ULL / TIMER_FREQ);
+        old_val.it_interval.tv_nsec =
+            (timerfd_table[slot].it_interval % TIMER_FREQ) * (1000000000ULL / TIMER_FREQ);
         if (copy_to_user(old_addr, &old_val, sizeof(struct itimerspec)) < 0)
             return (uint64_t)-1;
     }
@@ -9776,7 +10221,7 @@ static uint64_t sys_timerfd_settime(uint64_t fd, uint64_t flags,
         uint64_t val_ticks = new_val.it_value.tv_sec * TIMER_FREQ +
                              new_val.it_value.tv_nsec / (1000000000ULL / TIMER_FREQ);
         uint64_t interval_ticks = new_val.it_interval.tv_sec * TIMER_FREQ +
-                                   new_val.it_interval.tv_nsec / (1000000000ULL / TIMER_FREQ);
+                                  new_val.it_interval.tv_nsec / (1000000000ULL / TIMER_FREQ);
 
         if (flags & TFD_TIMER_ABSTIME) {
             /* Absolute time: it_value is interpreted as an absolute time in the
@@ -9808,21 +10253,22 @@ static uint64_t sys_timerfd_gettime(uint64_t fd, uint64_t cur_addr) {
     if (timerfd_table[slot].absolute) {
         /* Absolute timer: remaining = it_value - now (or 0 if expired) */
         uint64_t now = timer_get_ticks();
-        uint64_t remaining = timerfd_table[slot].it_value > now ?
-                             timerfd_table[slot].it_value - now : 0;
+        uint64_t remaining =
+            timerfd_table[slot].it_value > now ? timerfd_table[slot].it_value - now : 0;
         cur.it_value.tv_sec = remaining / TIMER_FREQ;
         cur.it_value.tv_nsec = (remaining % TIMER_FREQ) * (1000000000ULL / TIMER_FREQ);
     } else {
         /* Relative timer: remaining = it_value - (now - start_tick) */
         uint64_t elapsed = timer_get_ticks() - timerfd_table[slot].start_tick;
-        uint64_t remaining = timerfd_table[slot].it_value > elapsed ?
-                             timerfd_table[slot].it_value - elapsed : 0;
+        uint64_t remaining =
+            timerfd_table[slot].it_value > elapsed ? timerfd_table[slot].it_value - elapsed : 0;
         cur.it_value.tv_sec = remaining / TIMER_FREQ;
         cur.it_value.tv_nsec = (remaining % TIMER_FREQ) * (1000000000ULL / TIMER_FREQ);
     }
 
     cur.it_interval.tv_sec = timerfd_table[slot].it_interval / TIMER_FREQ;
-    cur.it_interval.tv_nsec = (timerfd_table[slot].it_interval % TIMER_FREQ) * (1000000000ULL / TIMER_FREQ);
+    cur.it_interval.tv_nsec =
+        (timerfd_table[slot].it_interval % TIMER_FREQ) * (1000000000ULL / TIMER_FREQ);
 
     if (copy_to_user(cur_addr, &cur, sizeof(struct itimerspec)) < 0)
         return (uint64_t)-1;
@@ -9880,22 +10326,22 @@ void timerfd_tick(void) {
 /* ── signalfd ─────────────────────────────────────────────────────────── */
 
 #define SIGNALFD_MAX 16
-#define SIGNALFD_BUF 8  /* ring buffer size per fd */
+#define SIGNALFD_BUF 8 /* ring buffer size per fd */
 
 /* Internal signalfd flags for tracking (not the same as SFD_ syscall values) */
-#define SIGNALFD_FLAG_CLOEXEC  0x0001
+#define SIGNALFD_FLAG_CLOEXEC 0x0001
 #define SIGNALFD_FLAG_NONBLOCK 0x0002
 
 struct signalfd_info {
-    int      in_use;
-    uint32_t sigmask;               /* signals to catch */
-    int      flags;                 /* SIGNALFD_FLAG_CLOEXEC, SIGNALFD_FLAG_NONBLOCK */
-    uint32_t pid;                   /* owning process PID (for CLOEXEC cleanup) */
+    int in_use;
+    uint32_t sigmask; /* signals to catch */
+    int flags;        /* SIGNALFD_FLAG_CLOEXEC, SIGNALFD_FLAG_NONBLOCK */
+    uint32_t pid;     /* owning process PID (for CLOEXEC cleanup) */
     /* Ring buffer of siginfo entries */
     struct siginfo ring[SIGNALFD_BUF];
-    int      head;                  /* next write position */
-    int      tail;                  /* next read position */
-    int      count;                 /* number of pending entries */
+    int head;  /* next write position */
+    int tail;  /* next read position */
+    int count; /* number of pending entries */
 };
 
 struct signalfd_info signalfd_table[SIGNALFD_MAX];
@@ -9921,11 +10367,11 @@ static int signalfd_do_read(int slot, void *buf, uint64_t count) {
     memset(&out, 0, sizeof(out));
     out.ssi_signo = (uint32_t)si->si_signo;
     out.ssi_errno = si->si_errno;
-    out.ssi_code  = si->si_code;
-    out.ssi_pid   = si->si_pid;
-    out.ssi_uid   = si->si_uid;
+    out.ssi_code = si->si_code;
+    out.ssi_pid = si->si_pid;
+    out.ssi_uid = si->si_uid;
     out.ssi_status = si->si_status;
-    out.ssi_addr  = (uint64_t)(uintptr_t)si->si_addr;
+    out.ssi_addr = (uint64_t)(uintptr_t)si->si_addr;
 
     /* Advance ring buffer */
     sf->tail = (sf->tail + 1) % SIGNALFD_BUF;
@@ -9947,8 +10393,10 @@ static uint64_t sys_signalfd(uint64_t fd, uint64_t mask_addr, uint64_t flags) {
     /* Extract SFD flags passed by userspace (Linux SFD_CLOEXEC = 02000000,
      * SFD_NONBLOCK = 04000).  We accept and store these for cleanup on
      * exec (SFD_CLOEXEC) and future non-blocking read semantics. */
-    if (flags & 02000000) sfd_flags |= SIGNALFD_FLAG_CLOEXEC;
-    if (flags & 04000)    sfd_flags |= SIGNALFD_FLAG_NONBLOCK;
+    if (flags & 02000000)
+        sfd_flags |= SIGNALFD_FLAG_CLOEXEC;
+    if (flags & 04000)
+        sfd_flags |= SIGNALFD_FLAG_NONBLOCK;
 
     if (mask_addr) {
         uint32_t val;
@@ -9995,7 +10443,7 @@ void signalfd_notify(int signum) {
                 struct siginfo *si = &sf->ring[sf->head];
                 memset(si, 0, sizeof(*si));
                 si->si_signo = signum;
-                si->si_code  = SI_KERNEL;
+                si->si_code = SI_KERNEL;
                 sf->head = (sf->head + 1) % SIGNALFD_BUF;
                 sf->count++;
             }
@@ -10006,10 +10454,8 @@ void signalfd_notify(int signum) {
 
 /* Extended signalfd_notify — called from signal_send_info() with full siginfo.
  * Enqueues the full siginfo data for each matching signalfd. */
-void signalfd_notify_ext(int signum, int si_code,
-                         uint32_t si_pid, uint32_t si_uid,
-                         uint64_t si_addr, int si_status)
-{
+void signalfd_notify_ext(int signum, int si_code, uint32_t si_pid, uint32_t si_uid,
+                         uint64_t si_addr, int si_status) {
     for (int i = 0; i < SIGNALFD_MAX; i++) {
         if (signalfd_table[i].in_use && (signalfd_table[i].sigmask & (1u << signum))) {
             struct signalfd_info *sf = &signalfd_table[i];
@@ -10017,10 +10463,10 @@ void signalfd_notify_ext(int signum, int si_code,
                 struct siginfo *si = &sf->ring[sf->head];
                 memset(si, 0, sizeof(*si));
                 si->si_signo = signum;
-                si->si_code  = si_code;
-                si->si_pid   = si_pid;
-                si->si_uid   = si_uid;
-                si->si_addr  = (void *)(uintptr_t)si_addr;
+                si->si_code = si_code;
+                si->si_pid = si_pid;
+                si->si_uid = si_uid;
+                si->si_addr = (void *)(uintptr_t)si_addr;
                 si->si_status = si_status;
                 sf->head = (sf->head + 1) % SIGNALFD_BUF;
                 sf->count++;
@@ -10039,11 +10485,11 @@ void signalfd_notify_ext(int signum, int si_code,
  */
 void signalfd_exec_close(void) {
     struct process *cur = process_get_current();
-    if (!cur) return;
+    if (!cur)
+        return;
     uint32_t cur_pid = cur->pid;
     for (int i = 0; i < SIGNALFD_MAX; i++) {
-        if (signalfd_table[i].in_use &&
-            signalfd_table[i].pid == cur_pid &&
+        if (signalfd_table[i].in_use && signalfd_table[i].pid == cur_pid &&
             (signalfd_table[i].flags & SIGNALFD_FLAG_CLOEXEC)) {
             signalfd_table[i].in_use = 0;
             signalfd_table[i].sigmask = 0;
@@ -10087,11 +10533,9 @@ void signalfd_exec_close(void) {
  *   ENOMEM — cannot allocate bounce buffer
  *   EIO    — VFS read/write failure
  */
-static uint64_t sys_splice(uint64_t fd_in, uint64_t off_in_addr,
-                           uint64_t fd_out, uint64_t off_out_addr,
-                           uint64_t len, uint64_t flags)
-{
-    (void)flags;  /* SPLICE_F_* flags are advisory; non-blocking depends on O_NONBLOCK */
+static uint64_t sys_splice(uint64_t fd_in, uint64_t off_in_addr, uint64_t fd_out,
+                           uint64_t off_out_addr, uint64_t len, uint64_t flags) {
+    (void)flags; /* SPLICE_F_* flags are advisory; non-blocking depends on O_NONBLOCK */
 
     struct process *p = process_get_current();
     if (!p)
@@ -10105,14 +10549,14 @@ static uint64_t sys_splice(uint64_t fd_in, uint64_t off_in_addr,
     if (fd_in >= PROCESS_FD_MAX || fd_out >= PROCESS_FD_MAX)
         return (uint64_t)(int64_t)-EBADF;
 
-    struct process_fd *pfd_in  = &p->fd_table[fd_in];
+    struct process_fd *pfd_in = &p->fd_table[fd_in];
     struct process_fd *pfd_out = &p->fd_table[fd_out];
 
     if (!pfd_in->used || !pfd_out->used)
         return (uint64_t)(int64_t)-EBADF;
 
     /* Detect pipe fds by their path prefix */
-    int is_in_pipe  = (strncmp(pfd_in->path, "pipe_", 5) == 0);
+    int is_in_pipe = (strncmp(pfd_in->path, "pipe_", 5) == 0);
     int is_out_pipe = (strncmp(pfd_out->path, "pipe_", 5) == 0);
 
     /* Linux: at least one fd must be a pipe */
@@ -10130,7 +10574,7 @@ static uint64_t sys_splice(uint64_t fd_in, uint64_t off_in_addr,
         return (uint64_t)(int64_t)-EINVAL;
 
     /* Extract pipe IDs */
-    int in_pipe_id  = (int)pfd_in->offset;
+    int in_pipe_id = (int)pfd_in->offset;
     int out_pipe_id = (int)pfd_out->offset;
 
     /* Verify pipe direction: source must be a read end, dest a write end */
@@ -10140,7 +10584,7 @@ static uint64_t sys_splice(uint64_t fd_in, uint64_t off_in_addr,
         return (uint64_t)(int64_t)-EBADF;
 
     /* Check open_flags: source must be readable, dest writable */
-    if (!is_in_pipe && (pfd_in->open_flags & 3) == 1)  /* O_WRONLY alone */
+    if (!is_in_pipe && (pfd_in->open_flags & 3) == 1) /* O_WRONLY alone */
         return (uint64_t)(int64_t)-EBADF;
     if (!is_out_pipe && (pfd_out->open_flags & 3) == 0) /* O_RDONLY alone */
         return (uint64_t)(int64_t)-EBADF;
@@ -10167,8 +10611,7 @@ static uint64_t sys_splice(uint64_t fd_in, uint64_t off_in_addr,
     int use_in_explicit = (!is_in_pipe && off_in_addr != 0);
     if (use_in_explicit) {
         int64_t abs_off;
-        if (copy_from_user(&abs_off, off_in_addr,
-                           sizeof(abs_off)) < 0) {
+        if (copy_from_user(&abs_off, off_in_addr, sizeof(abs_off)) < 0) {
             sp_result = (uint64_t)(int64_t)-EFAULT;
             goto splice_out;
         }
@@ -10195,7 +10638,7 @@ static uint64_t sys_splice(uint64_t fd_in, uint64_t off_in_addr,
                 goto splice_out;
             }
             if (n == 0)
-                break;  /* EOF */
+                break; /* EOF */
             nread_total = n;
         } else {
             /* Non-pipe source: use explicit offset */
@@ -10214,7 +10657,7 @@ static uint64_t sys_splice(uint64_t fd_in, uint64_t off_in_addr,
             if (nread == 0) {
                 if (use_in_explicit)
                     pfd_in->offset = saved_off;
-                break;  /* EOF */
+                break; /* EOF */
             }
             nread_total = (int)nread;
 
@@ -10236,8 +10679,7 @@ static uint64_t sys_splice(uint64_t fd_in, uint64_t off_in_addr,
             uint64_t saved_off = pfd_out->offset;
             if (off_out_addr != 0) {
                 int64_t abs_off;
-                if (copy_from_user(&abs_off, off_out_addr,
-                                   sizeof(abs_off)) < 0) {
+                if (copy_from_user(&abs_off, off_out_addr, sizeof(abs_off)) < 0) {
                     sp_result = (uint64_t)(int64_t)-EFAULT;
                     goto splice_out;
                 }
@@ -10259,8 +10701,7 @@ static uint64_t sys_splice(uint64_t fd_in, uint64_t off_in_addr,
             /* Write back updated dest offset to user-space */
             if (off_out_addr != 0) {
                 int64_t new_off = (int64_t)(pfd_out->offset);
-                if (copy_to_user(off_out_addr,
-                                 &new_off, sizeof(new_off)) < 0) {
+                if (copy_to_user(off_out_addr, &new_off, sizeof(new_off)) < 0) {
                     sp_result = (uint64_t)(int64_t)-EFAULT;
                     goto splice_out;
                 }
@@ -10270,14 +10711,13 @@ static uint64_t sys_splice(uint64_t fd_in, uint64_t off_in_addr,
         total += (uint64_t)nread_total;
 
         if (nread_total < (int)chunk)
-            break;  /* Short read/write — no more data */
+            break; /* Short read/write — no more data */
     }
 
     /* Write back updated source offset to user-space */
     if (use_in_explicit) {
         int64_t new_off = (int64_t)in_off;
-        if (copy_to_user(off_in_addr,
-                         &new_off, sizeof(new_off)) < 0) {
+        if (copy_to_user(off_in_addr, &new_off, sizeof(new_off)) < 0) {
             sp_result = (uint64_t)(int64_t)-EFAULT;
             goto splice_out;
         }
@@ -10312,9 +10752,7 @@ splice_out:
  *   EINVAL — fd is not a pipe
  *   ENOMEM — cannot allocate bounce buffer
  */
-static uint64_t sys_tee(uint64_t fd_in, uint64_t fd_out,
-                         uint64_t len, uint64_t flags)
-{
+static uint64_t sys_tee(uint64_t fd_in, uint64_t fd_out, uint64_t len, uint64_t flags) {
     (void)flags;
 
     struct process *p = process_get_current();
@@ -10329,20 +10767,20 @@ static uint64_t sys_tee(uint64_t fd_in, uint64_t fd_out,
     if (fd_in >= PROCESS_FD_MAX || fd_out >= PROCESS_FD_MAX)
         return (uint64_t)(int64_t)-EBADF;
 
-    struct process_fd *pfd_in  = &p->fd_table[fd_in];
+    struct process_fd *pfd_in = &p->fd_table[fd_in];
     struct process_fd *pfd_out = &p->fd_table[fd_out];
 
     if (!pfd_in->used || !pfd_out->used)
         return (uint64_t)(int64_t)-EBADF;
 
     /* Both fds MUST be pipes for tee */
-    int is_in_pipe  = (strncmp(pfd_in->path, "pipe_", 5) == 0);
+    int is_in_pipe = (strncmp(pfd_in->path, "pipe_", 5) == 0);
     int is_out_pipe = (strncmp(pfd_out->path, "pipe_", 5) == 0);
 
     if (!is_in_pipe || !is_out_pipe)
         return (uint64_t)(int64_t)-EINVAL;
 
-    int in_pipe_id  = (int)pfd_in->offset;
+    int in_pipe_id = (int)pfd_in->offset;
     int out_pipe_id = (int)pfd_out->offset;
 
     /* Verify pipe direction: source must be a read end, dest a write end */
@@ -10352,7 +10790,7 @@ static uint64_t sys_tee(uint64_t fd_in, uint64_t fd_out,
         return (uint64_t)(int64_t)-EBADF;
 
     /* Check open_flags: source must be readable, dest writable */
-    if ((pfd_in->open_flags & 3) == 1)  /* O_WRONLY alone */
+    if ((pfd_in->open_flags & 3) == 1) /* O_WRONLY alone */
         return (uint64_t)(int64_t)-EBADF;
     if ((pfd_out->open_flags & 3) == 0) /* O_RDONLY alone */
         return (uint64_t)(int64_t)-EBADF;
@@ -10438,9 +10876,7 @@ tee_out:
  *   ENOMEM — cannot allocate iovec or bounce buffer
  *   EPIPE  — pipe has no readers
  */
-static uint64_t sys_vmsplice(uint64_t fd, uint64_t iov_addr,
-                             uint64_t nr_segs, uint64_t flags)
-{
+static uint64_t sys_vmsplice(uint64_t fd, uint64_t iov_addr, uint64_t nr_segs, uint64_t flags) {
     (void)flags;
 
     struct process *p = process_get_current();
@@ -10468,7 +10904,7 @@ static uint64_t sys_vmsplice(uint64_t fd, uint64_t iov_addr,
         return (uint64_t)(int64_t)-EINVAL;
 
     /* Check that fd is writable */
-    if ((pfd->open_flags & 3) == 0)  /* O_RDONLY alone */
+    if ((pfd->open_flags & 3) == 0) /* O_RDONLY alone */
         return (uint64_t)(int64_t)-EBADF;
 
     int pipe_id = (int)pfd->offset;
@@ -10485,16 +10921,17 @@ static uint64_t sys_vmsplice(uint64_t fd, uint64_t iov_addr,
         allocd = 1;
     }
 
-    if (copy_from_user(iov, iov_addr,
-                       sizeof(struct iovec) * nr_segs) < 0) {
-        if (allocd) kfree(iov);
+    if (copy_from_user(iov, iov_addr, sizeof(struct iovec) * nr_segs) < 0) {
+        if (allocd)
+            kfree(iov);
         return (uint64_t)(int64_t)-EFAULT;
     }
 
     /* Use a 4 KiB kernel bounce buffer for userspace→pipe transfer */
     uint8_t *bounce = kmalloc(4096);
     if (!bounce) {
-        if (allocd) kfree(iov);
+        if (allocd)
+            kfree(iov);
         return (uint64_t)(int64_t)-ENOMEM;
     }
 
@@ -10512,21 +10949,15 @@ static uint64_t sys_vmsplice(uint64_t fd, uint64_t iov_addr,
             uint64_t chunk = (remaining > 4096) ? 4096 : remaining;
 
             /* Copy user data into bounce buffer */
-            if (copy_from_user(bounce,
-                               (uint64_t)iov[i].iov_base + offset,
-                               chunk) < 0) {
-                vmsplice_result = (total > 0)
-                    ? total
-                    : (uint64_t)(int64_t)-EFAULT;
+            if (copy_from_user(bounce, (uint64_t)iov[i].iov_base + offset, chunk) < 0) {
+                vmsplice_result = (total > 0) ? total : (uint64_t)(int64_t)-EFAULT;
                 goto vmsplice_out;
             }
 
             /* Write bounce buffer to pipe */
             int w = pipe_write(pipe_id, bounce, (int)chunk);
             if (w < 0) {
-                vmsplice_result = (total > 0)
-                    ? total
-                    : (uint64_t)(int64_t)w;
+                vmsplice_result = (total > 0) ? total : (uint64_t)(int64_t)w;
                 goto vmsplice_out;
             }
             total += (uint64_t)w;
@@ -10548,7 +10979,8 @@ static uint64_t sys_vmsplice(uint64_t fd, uint64_t iov_addr,
 
 vmsplice_out:
     kfree(bounce);
-    if (allocd) kfree(iov);
+    if (allocd)
+        kfree(iov);
     return vmsplice_result;
 }
 
@@ -10592,10 +11024,8 @@ vmsplice_out:
  *   EXDEV      — cross-device copy (not an error here; we handle it)
  *   ESPIPE     — fd_in or fd_out refers to a pipe/FIFO (not supported yet)
  */
-static uint64_t sys_copy_file_range(uint64_t fd_in, uint64_t off_in_addr,
-                                     uint64_t fd_out, uint64_t off_out_addr,
-                                     uint64_t len, uint64_t flags)
-{
+static uint64_t sys_copy_file_range(uint64_t fd_in, uint64_t off_in_addr, uint64_t fd_out,
+                                    uint64_t off_out_addr, uint64_t len, uint64_t flags) {
     /* ── Parameter validation ── */
 
     /* Per POSIX.1-2016 / Linux, flags must be 0 */
@@ -10613,18 +11043,18 @@ static uint64_t sys_copy_file_range(uint64_t fd_in, uint64_t off_in_addr,
     /* Validate file descriptors using the fd-3 slot convention */
     if (fd_in < 3 || fd_out < 3)
         return (uint64_t)(int64_t)-EBADF;
-    int i_in  = (int)fd_in - 3;
+    int i_in = (int)fd_in - 3;
     int i_out = (int)fd_out - 3;
     if (i_in >= PROCESS_FD_MAX || i_out >= PROCESS_FD_MAX)
         return (uint64_t)(int64_t)-EBADF;
 
-    struct process_fd *pfd_in  = &p->fd_table[i_in];
+    struct process_fd *pfd_in = &p->fd_table[i_in];
     struct process_fd *pfd_out = &p->fd_table[i_out];
     if (!pfd_in->used || !pfd_out->used)
         return (uint64_t)(int64_t)-EBADF;
 
     /* fd_in must be open for reading (O_RDONLY or O_RDWR) */
-    if ((pfd_in->open_flags & 3) == 1)   /* O_WRONLY alone */
+    if ((pfd_in->open_flags & 3) == 1) /* O_WRONLY alone */
         return (uint64_t)(int64_t)-EBADF;
 
     /* fd_out must be open for writing (O_WRONLY or O_RDWR) */
@@ -10688,8 +11118,7 @@ static uint64_t sys_copy_file_range(uint64_t fd_in, uint64_t off_in_addr,
              * On subsequent iterations, return partial success. */
             if (off_in_addr != 0)
                 pfd_in->offset = saved_in_off;
-            cfr_result = (total > 0) ? (uint64_t)total
-                                     : (uint64_t)(int64_t)r;
+            cfr_result = (total > 0) ? (uint64_t)total : (uint64_t)(int64_t)r;
             goto cfr_cleanup;
         }
 
@@ -10703,7 +11132,7 @@ static uint64_t sys_copy_file_range(uint64_t fd_in, uint64_t off_in_addr,
         }
 
         if (nread == 0)
-            break;  /* EOF */
+            break; /* EOF */
 
         /* ── Destination offset ── */
         uint64_t saved_out_off = pfd_out->offset;
@@ -10727,8 +11156,7 @@ static uint64_t sys_copy_file_range(uint64_t fd_in, uint64_t off_in_addr,
                 pfd_in->offset = saved_in_off;
             if (off_out_addr != 0)
                 pfd_out->offset = saved_out_off;
-            cfr_result = (total > 0) ? (uint64_t)total
-                                     : (uint64_t)(int64_t)-EIO;
+            cfr_result = (total > 0) ? (uint64_t)total : (uint64_t)(int64_t)-EIO;
             goto cfr_cleanup;
         }
 
@@ -10744,7 +11172,7 @@ static uint64_t sys_copy_file_range(uint64_t fd_in, uint64_t off_in_addr,
         total += nread;
 
         if (nread < chunk)
-            break;  /* Short read — EOF or underlying FS limit */
+            break; /* Short read — EOF or underlying FS limit */
     }
 
     cfr_result = (uint64_t)total;
@@ -10758,8 +11186,7 @@ cfr_cleanup:
 
 /* For each iovec entry, send one message via net_tcp_send or similar.
  * Simplified: just send each iovec entry as if it were a regular write. */
-static uint64_t sys_sendmmsg(uint64_t sockfd, uint64_t msgvec_addr,
-                              uint64_t vlen, uint64_t flags) {
+static uint64_t sys_sendmmsg(uint64_t sockfd, uint64_t msgvec_addr, uint64_t vlen, uint64_t flags) {
     (void)flags;
     struct process *p = process_get_current();
     if (!p || sockfd >= PROCESS_FD_MAX || !p->fd_table[sockfd].used)
@@ -10770,7 +11197,8 @@ static uint64_t sys_sendmmsg(uint64_t sockfd, uint64_t msgvec_addr,
     for (int i = 0; i < max; i++) {
         /* Read iovec from struct mmsghdr at msgvec_addr + i * sizeof(struct mmsghdr) */
         uint64_t entry_addr = msgvec_addr + (uint64_t)i * 64;
-        if (!syscall_user_read_ok(entry_addr, 64)) break;
+        if (!syscall_user_read_ok(entry_addr, 64))
+            break;
         (void)entry_addr;
         /* Send each message by iterating iovec entries */
         for (unsigned int j = 0; j < 4; j++) {
@@ -10780,9 +11208,13 @@ static uint64_t sys_sendmmsg(uint64_t sockfd, uint64_t msgvec_addr,
     return (uint64_t)sent;
 }
 
-static uint64_t sys_recvmmsg(uint64_t sockfd, uint64_t msgvec_addr,
-                              uint64_t vlen, uint64_t flags, uint64_t timeout_addr) {
-    (void)sockfd; (void)msgvec_addr; (void)vlen; (void)flags; (void)timeout_addr;
+static uint64_t sys_recvmmsg(uint64_t sockfd, uint64_t msgvec_addr, uint64_t vlen, uint64_t flags,
+                             uint64_t timeout_addr) {
+    (void)sockfd;
+    (void)msgvec_addr;
+    (void)vlen;
+    (void)flags;
+    (void)timeout_addr;
     return (uint64_t)(int64_t)-ENOSYS;
 }
 
@@ -10795,7 +11227,8 @@ static uint64_t sys_sync(void) {
 
 static uint64_t sys_syncfs(uint64_t fd) {
     struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)-EBADF;
+    if (!proc)
+        return (uint64_t)-EBADF;
 
     /* Regular file fd (3+) */
     if (fd >= 3 && fd < (uint64_t)(3 + PROCESS_FD_MAX)) {
@@ -10833,7 +11266,7 @@ static uint64_t sys_setsid(void) {
     /* Create a new session: this process becomes session leader,
      * starts a new process group, and disconnects from the
      * controlling terminal (none assigned yet in this OS). */
-    p->sid  = p->pid;
+    p->sid = p->pid;
     p->pgid = p->pid;
 
     return (uint64_t)p->sid;
@@ -10845,7 +11278,8 @@ static uint64_t sys_getsid(uint64_t pid) {
         target = process_get_current();
     else
         target = process_get_by_pid((uint32_t)pid);
-    if (!target || target->state == PROCESS_UNUSED) return (uint64_t)-1;
+    if (!target || target->state == PROCESS_UNUSED)
+        return (uint64_t)-1;
     return (uint64_t)target->sid;
 }
 
@@ -10866,8 +11300,7 @@ static uint64_t sys_getsid(uint64_t pid) {
  *
  * Returns 0 on success, -errno on failure.
  */
-static uint64_t sys_sigaltstack(uint64_t ss_addr, uint64_t old_ss_addr)
-{
+static uint64_t sys_sigaltstack(uint64_t ss_addr, uint64_t old_ss_addr) {
     struct process *p = process_get_current();
     if (!p)
         return (uint64_t)(int64_t)-ESRCH;
@@ -10879,9 +11312,9 @@ static uint64_t sys_sigaltstack(uint64_t ss_addr, uint64_t old_ss_addr)
      */
     if (old_ss_addr) {
         stack_t old;
-        old.ss_sp    = p->alt_stack_sp;
+        old.ss_sp = p->alt_stack_sp;
         old.ss_flags = p->alt_stack_flags;
-        old.ss_size  = p->alt_stack_size;
+        old.ss_size = p->alt_stack_size;
 
         if (copy_to_user(old_ss_addr, &old, sizeof(old)) < 0)
             return (uint64_t)(int64_t)-EFAULT;
@@ -10910,18 +11343,18 @@ static uint64_t sys_sigaltstack(uint64_t ss_addr, uint64_t old_ss_addr)
 
         if (ss_flags & SS_DISABLE) {
             /* Disable the alternate signal stack */
-            p->alt_stack_sp     = NULL;
-            p->alt_stack_size   = 0;
-            p->alt_stack_flags  = SS_DISABLE;
+            p->alt_stack_sp = NULL;
+            p->alt_stack_size = 0;
+            p->alt_stack_flags = SS_DISABLE;
         } else {
             /* Enable — must supply a large enough stack */
             if (new.ss_size < MINSIGSTKSZ)
                 return (uint64_t)(int64_t)-ENOMEM;
 
-            p->alt_stack_sp     = new.ss_sp;
-            p->alt_stack_size   = (uint64_t)new.ss_size;
-            p->alt_stack_flags  = 0;   /* SS_ONSTACK will be set by the
-                                         * kernel at signal delivery time */
+            p->alt_stack_sp = new.ss_sp;
+            p->alt_stack_size = (uint64_t) new.ss_size;
+            p->alt_stack_flags = 0; /* SS_ONSTACK will be set by the
+                                     * kernel at signal delivery time */
         }
     }
 
@@ -10932,7 +11365,8 @@ static uint64_t sys_sigaltstack(uint64_t ss_addr, uint64_t old_ss_addr)
 
 static uint64_t sys_personality(uint64_t persona) {
     struct process *p = process_get_current();
-    if (!p) return (uint64_t)-1;
+    if (!p)
+        return (uint64_t)-1;
     uint64_t old = p->personality;
     if (persona != 0xFFFFFFFFFFFFFFFFULL)
         p->personality = persona;
@@ -10955,8 +11389,7 @@ static uint64_t sys_personality(uint64_t persona) {
  *
  * Only callable by privileged (kernel-mode) code — user processes get -EPERM.
  */
-static uint64_t sys_init_module(uint64_t path_addr, uint64_t params_addr)
-{
+static uint64_t sys_init_module(uint64_t path_addr, uint64_t params_addr) {
     char kpath[256];
     char kparams[512];
 
@@ -11026,16 +11459,14 @@ static uint64_t sys_init_module(uint64_t path_addr, uint64_t params_addr)
 
     /* Step 1: Validate ELF header */
     if (module_elf_validate(&ctx, (const uint8_t *)buf, file_size) < 0) {
-        kprintf("[MOD] init_module(%s): validation failed: %s\n",
-                path, ctx.error_msg);
+        kprintf("[MOD] init_module(%s): validation failed: %s\n", path, ctx.error_msg);
         kfree(buf);
         return (uint64_t)-EINVAL;
     }
 
     /* Step 2: Parse ELF sections, symbols, relocations */
     if (module_elf_parse(&ctx) < 0) {
-        kprintf("[MOD] init_module(%s): parse failed: %s\n",
-                path, ctx.error_msg);
+        kprintf("[MOD] init_module(%s): parse failed: %s\n", path, ctx.error_msg);
         kfree(buf);
         return (uint64_t)-EINVAL;
     }
@@ -11048,7 +11479,8 @@ static uint64_t sys_init_module(uint64_t path_addr, uint64_t params_addr)
         const char *slash = path;
         const char *last = path;
         while (*slash) {
-            if (*slash == '/') last = slash + 1;
+            if (*slash == '/')
+                last = slash + 1;
             slash++;
         }
         mod_name = last;
@@ -11059,8 +11491,7 @@ static uint64_t sys_init_module(uint64_t path_addr, uint64_t params_addr)
     kfree(buf);
 
     if (result < 0) {
-        kprintf("[MOD] init_module(%s): finalize failed: %s\n",
-                path, ctx.error_msg);
+        kprintf("[MOD] init_module(%s): finalize failed: %s\n", path, ctx.error_msg);
         return (uint64_t)-EINVAL;
     }
 
@@ -11075,12 +11506,12 @@ static uint64_t sys_init_module(uint64_t path_addr, uint64_t params_addr)
         if (mod) {
             int pret = module_parse_params(mod, params);
             if (pret < 0) {
-                kprintf("[MOD] init_module(%s): parameter parsing failed (%d), unloading\n",
-                        path, pret);
+                kprintf("[MOD] init_module(%s): parameter parsing failed (%d), unloading\n", path,
+                        pret);
                 module_unload(result);
-                return (uint64_t)(pret == -ENOENT ? (uint64_t)-ENOENT :
-                                  pret == -ENOMEM ? (uint64_t)-ENOMEM :
-                                  (uint64_t)-EINVAL);
+                return (uint64_t)(pret == -ENOENT   ? (uint64_t)-ENOENT
+                                  : pret == -ENOMEM ? (uint64_t)-ENOMEM
+                                                    : (uint64_t)-EINVAL);
             }
         }
     }
@@ -11098,8 +11529,7 @@ static uint64_t sys_init_module(uint64_t path_addr, uint64_t params_addr)
  * Same loading sequence as sys_init_module, but reads from the caller's
  * fd table instead of opening a path.
  */
-static uint64_t sys_finit_module(uint64_t fd, uint64_t params_addr, uint64_t flags)
-{
+static uint64_t sys_finit_module(uint64_t fd, uint64_t params_addr, uint64_t flags) {
     char kparams[512];
     const char *params = NULL;
     if (params_addr) {
@@ -11130,7 +11560,8 @@ static uint64_t sys_finit_module(uint64_t fd, uint64_t params_addr, uint64_t fla
     /* Validate the fd */
     int i = (int)fd - 3;
     struct process *p = process_get_current();
-    if (!p) return (uint64_t)-ESRCH;
+    if (!p)
+        return (uint64_t)-ESRCH;
     struct process_fd *pfd = sys_get_fd(i);
     if (!pfd || !pfd->used)
         return (uint64_t)-EBADF;
@@ -11172,15 +11603,13 @@ static uint64_t sys_finit_module(uint64_t fd, uint64_t params_addr, uint64_t fla
     int result = -1;
 
     if (module_elf_validate(&ctx, (const uint8_t *)buf, file_size) < 0) {
-        kprintf("[MOD] finit_module(fd=%llu): validation failed: %s\n",
-                fd, ctx.error_msg);
+        kprintf("[MOD] finit_module(fd=%llu): validation failed: %s\n", fd, ctx.error_msg);
         kfree(buf);
         return (uint64_t)-EINVAL;
     }
 
     if (module_elf_parse(&ctx) < 0) {
-        kprintf("[MOD] finit_module(fd=%llu): parse failed: %s\n",
-                fd, ctx.error_msg);
+        kprintf("[MOD] finit_module(fd=%llu): parse failed: %s\n", fd, ctx.error_msg);
         kfree(buf);
         return (uint64_t)-EINVAL;
     }
@@ -11191,7 +11620,8 @@ static uint64_t sys_finit_module(uint64_t fd, uint64_t params_addr, uint64_t fla
         const char *slash = path;
         const char *last = path;
         while (*slash) {
-            if (*slash == '/') last = slash + 1;
+            if (*slash == '/')
+                last = slash + 1;
             slash++;
         }
         mod_name = last;
@@ -11202,8 +11632,7 @@ static uint64_t sys_finit_module(uint64_t fd, uint64_t params_addr, uint64_t fla
     kfree(buf);
 
     if (result < 0) {
-        kprintf("[MOD] finit_module(fd=%llu): finalize failed: %s\n",
-                fd, ctx.error_msg);
+        kprintf("[MOD] finit_module(fd=%llu): finalize failed: %s\n", fd, ctx.error_msg);
         return (uint64_t)-EINVAL;
     }
 
@@ -11218,9 +11647,9 @@ static uint64_t sys_finit_module(uint64_t fd, uint64_t params_addr, uint64_t fla
                 kprintf("[MOD] finit_module(fd=%llu): parameter parsing failed (%d), unloading\n",
                         fd, pret);
                 module_unload(result);
-                return (uint64_t)(pret == -ENOENT ? (uint64_t)-ENOENT :
-                                  pret == -ENOMEM ? (uint64_t)-ENOMEM :
-                                  (uint64_t)-EINVAL);
+                return (uint64_t)(pret == -ENOENT   ? (uint64_t)-ENOENT
+                                  : pret == -ENOMEM ? (uint64_t)-ENOMEM
+                                                    : (uint64_t)-EINVAL);
             }
         }
     }
@@ -11250,8 +11679,7 @@ static uint64_t sys_finit_module(uint64_t fd, uint64_t params_addr, uint64_t fla
  *   - Returns -EINVAL if name is invalid or module cannot be unloaded
  *   - Returns 0 on successful unload
  */
-static uint64_t sys_delete_module(uint64_t name_addr, uint64_t flags)
-{
+static uint64_t sys_delete_module(uint64_t name_addr, uint64_t flags) {
     /* Lockdown: reject module unloading at INTEGRITY level or above */
     if (lockdown_is_locked_down(LOCKDOWN_INTEGRITY))
         return (uint64_t)-EPERM;
@@ -11300,8 +11728,7 @@ static uint64_t sys_delete_module(uint64_t name_addr, uint64_t flags)
     /* Check refcount — wait or fail based on O_NONBLOCK flag */
     if (mod->refcount > 0) {
         if (flags & O_NONBLOCK) {
-            kprintf("[MOD] delete_module(%s): refcount=%d, O_NONBLOCK\n",
-                    name, mod->refcount);
+            kprintf("[MOD] delete_module(%s): refcount=%d, O_NONBLOCK\n", name, mod->refcount);
             return (uint64_t)-EBUSY;
         }
         /*
@@ -11310,8 +11737,7 @@ static uint64_t sys_delete_module(uint64_t name_addr, uint64_t flags)
          * out after a configurable interval.  For now, report the
          * state and return -EBUSY.
          */
-        kprintf("[MOD] delete_module(%s): refcount=%d, cannot unload\n",
-                name, mod->refcount);
+        kprintf("[MOD] delete_module(%s): refcount=%d, cannot unload\n", name, mod->refcount);
         return (uint64_t)-EBUSY;
     }
 
@@ -11344,9 +11770,7 @@ static uint64_t sys_delete_module(uint64_t name_addr, uint64_t flags)
  * On success, returns the number of bytes written (not including trailing \0
  * for enumeration mode). Returns -errno on failure.
  */
-static uint64_t sys_query_module(uint64_t name_addr, uint64_t info_buf_addr,
-                                  uint64_t buf_size)
-{
+static uint64_t sys_query_module(uint64_t name_addr, uint64_t info_buf_addr, uint64_t buf_size) {
     char *info_buf = (char *)info_buf_addr;
 
     if (!info_buf || buf_size == 0)
@@ -11391,10 +11815,9 @@ static uint64_t sys_query_module(uint64_t name_addr, uint64_t info_buf_addr,
 
     /* Format module info into buffer */
     int written = snprintf(info_buf, (size_t)buf_size,
-        "name=%s\nstate=%d\nrefcount=%d\nbase=0x%llx\nsize=%llu\n",
-        mod->name, (int)mod->state, mod->refcount,
-        (unsigned long long)mod->base_addr,
-        (unsigned long long)mod->size);
+                           "name=%s\nstate=%d\nrefcount=%d\nbase=0x%llx\nsize=%llu\n", mod->name,
+                           (int)mod->state, mod->refcount, (unsigned long long)mod->base_addr,
+                           (unsigned long long)mod->size);
 
     if (written < 0)
         return (uint64_t)-EINVAL;
@@ -11406,17 +11829,14 @@ static uint64_t sys_query_module(uint64_t name_addr, uint64_t info_buf_addr,
 
 /* Forward declarations for syscalls defined after the dispatch */
 static uint64_t sys_membarrier(uint64_t cmd, uint64_t flags, uint64_t cpu_id);
-static uint64_t sys_rseq(uint64_t rseq_addr, uint64_t rseq_len,
-                         uint64_t rseq_sig, uint64_t flags);
-static uint64_t sys_name_to_handle_at(uint64_t dirfd, uint64_t pathname,
-                                       uint64_t handle, uint64_t mount_id,
-                                       uint64_t flags);
-static uint64_t sys_open_by_handle_at(uint64_t mount_fd, uint64_t handle,
-                                       uint64_t flags);
+static uint64_t sys_rseq(uint64_t rseq_addr, uint64_t rseq_len, uint64_t rseq_sig, uint64_t flags);
+static uint64_t sys_name_to_handle_at(uint64_t dirfd, uint64_t pathname, uint64_t handle,
+                                      uint64_t mount_id, uint64_t flags);
+static uint64_t sys_open_by_handle_at(uint64_t mount_fd, uint64_t handle, uint64_t flags);
 
 /* Forward declaration for raw dispatch (no seccomp/audit/validation) */
-uint64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2,
-                                    uint64_t a3, uint64_t a4, uint64_t a5);
+uint64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4,
+                                   uint64_t a5);
 
 /* Debug: called from syscall_entry_full assembly to trace syscall entry */
 void kprintf_syscall_trace(uint64_t num, uint64_t unused) {
@@ -11426,8 +11846,8 @@ void kprintf_syscall_trace(uint64_t num, uint64_t unused) {
         kprintf("[SYSCALL] PID %d nr=%lu\n", p->pid, (unsigned long)num);
 }
 
-uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
-                          uint64_t a3, uint64_t a4, uint64_t a5) {
+uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4,
+                          uint64_t a5) {
     /* Seccomp check — must happen before any capability or argument validation */
     if (syscall_is_user_process()) {
         uint32_t seccomp_action = seccomp_evaluate_syscall(num, a1, a2, a3, 0);
@@ -11476,7 +11896,8 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
 
     if (syscall_is_user_process()) {
         struct process *p = process_get_current();
-        if (!p || !process_caps_has(p, (uint32_t)num)) return (uint64_t)-1;
+        if (!p || !process_caps_has(p, (uint32_t)num))
+            return (uint64_t)-1;
     }
 
     {
@@ -11491,495 +11912,842 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
 
 /* ── syscall_dispatch_internal — raw dispatch (no seccomp/audit/validation) ── */
 
-uint64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2,
-                                    uint64_t a3, uint64_t a4, uint64_t a5) {
+uint64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4,
+                                   uint64_t a5) {
     switch (num) {
-        case SYS_READ:   return sys_read(a1, a2, a3);
-        case SYS_WRITE:  return sys_write(a1, a2, a3);
-        case SYS_OPEN:   return sys_open(a1, a2, a3);
-        case SYS_CLOSE:  return sys_close(a1);
-        case SYS_CLOSE_RANGE: return sys_close_range(a1, a2, a3);
-        case SYS_EXIT:   return sys_exit(a1);
-        case SYS_EXIT_GROUP:   return sys_exit_group(a1);
-        case SYS_SET_TID_ADDRESS: return sys_set_tid_address(a1);
-        case SYS_GETPID: return sys_getpid();
-        case SYS_KILL:   return sys_kill(a1, a2);
-        case SYS_BRK:    return sys_brk(a1);
-        case SYS_STAT:   return sys_stat(a1, a2);
-        case SYS_MKDIR:  return sys_mkdir(a1);
-        case SYS_UNLINK: return sys_unlink(a1);
-        case SYS_TIME:   return sys_time();
-        case SYS_YIELD:  return sys_yield();
-        case SYS_UPTIME: return sys_uptime();
-        case SYS_FS_FORMAT:     return sys_fs_format();
-        case SYS_FS_CREATE:     return sys_fs_create(a1, a2);
-        case SYS_FS_WRITE:      return sys_fs_write(a1, a2, a3);
-        case SYS_FS_READ:       return sys_fs_read(a1, a2, a3, a4);
-        case SYS_FS_DELETE:     return sys_fs_delete(a1);
-        case SYS_FS_LIST:       return sys_fs_list(a1);
-        case SYS_FS_STAT:       return sys_fs_stat(a1, a2);
-        case SYS_FS_STAT_EX:    return sys_fs_stat_ex(a1, a2);
-        case SYS_FS_CHMOD:      return sys_fs_chmod(a1, a2);
-        case SYS_FS_CHOWN:      return sys_fs_chown(a1, a2, a3);
-        case SYS_FS_GET_USAGE:  return sys_fs_get_usage(a1);
-        case SYS_FS_LIST_NAMES: return sys_fs_list_names(a1, a2, a3, a4);
-        case SYS_ATA_PRESENT:   return sys_ata_present();
-        case SYS_ATA_SECTORS:   return sys_ata_sectors();
-        case SYS_AHCI_PRESENT:  return sys_ahci_present();
-        case SYS_AHCI_SECTORS:  return sys_ahci_sectors();
-        case SYS_VFS_READ:      return sys_vfs_read(a1, a2, a3, a4);
-        case SYS_VFS_WRITE:     return sys_vfs_write(a1, a2, a3);
-        case SYS_VFS_STAT:      return sys_vfs_stat(a1, a2);
-        case SYS_VFS_CREATE:    return sys_vfs_create(a1, a2);
-        case SYS_VFS_UNLINK:    return sys_vfs_unlink(a1);
-        case SYS_VFS_READDIR:   return sys_vfs_readdir(a1);
-        case SYS_WAITPID:       return sys_waitpid(a1, a2, a3);
-        case SYS_WAIT4:         return sys_wait4(a1, a2, a3, a4);
-        case SYS_WAITID:        return sys_waitid(a1, a2, a3, a4, a5);
-        case SYS_SLEEP_TICKS:   return sys_sleep_ticks(a1);
-        case SYS_NET_PRESENT:   return sys_net_present();
-        case SYS_NET_GET_MAC:   return sys_net_get_mac(a1);
-        case SYS_NET_GET_IP:    return sys_net_get_ip(a1);
-        case SYS_NET_GET_GW:    return sys_net_get_gw();
-        case SYS_NET_GET_MASK:  return sys_net_get_mask();
-        case SYS_NET_DNS:       return sys_net_dns(a1);
-        case SYS_NET_PING:      return sys_net_ping(a1);
-        case SYS_NET_UDP_SEND:  return sys_net_udp_send(a1, a2, a3, a4, a5);
-        case SYS_NET_HTTP_GET:  return sys_net_http_get(a1, a2, a3, a4, a5);
-        case SYS_NET_ARP_LIST:  return sys_net_arp_list();
-        case SYS_NET_TCP_LISTEN:     return sys_net_tcp_listen(a1);
-        case SYS_NET_TCP_ACCEPT:     return sys_net_tcp_accept(a1, a2);
-        case SYS_NET_TCP_SEND_CONN:  return sys_net_tcp_send_conn(a1, a2, a3);
-        case SYS_NET_TCP_RECV_CONN:  return sys_net_tcp_recv_conn(a1, a2, a3, a4);
-        case SYS_NET_TCP_CLOSE_CONN: return sys_net_tcp_close_conn(a1);
-        case SYS_NET_TCP_UNLISTEN:   return sys_net_tcp_unlisten(a1);
-        case SYS_NET_TCP_CONNECT:    return sys_net_tcp_connect(a1, a2);
-        case SYS_MUTEX_INIT:         return sys_mutex_init();
-        case SYS_MUTEX_LOCK:         return sys_mutex_lock(a1);
-        case SYS_MUTEX_UNLOCK:       return sys_mutex_unlock(a1);
-        case SYS_MUTEX_DESTROY:      return sys_mutex_destroy(a1);
-        case SYS_SEM_INIT:           return sys_sem_init(a1);
-        case SYS_SEM_WAIT:           return sys_sem_wait(a1);
-        case SYS_SEM_POST:           return sys_sem_post(a1);
-        case SYS_SEM_DESTROY:        return sys_sem_destroy(a1);
-        case SYS_NET_UDP_LISTEN:      return sys_net_udp_listen(a1);
-        case SYS_NET_UDP_RECV:        return sys_net_udp_recv(a1, a2, a3, a4, a5);
-        case SYS_NET_UDP_UNLISTEN:    return sys_net_udp_unlisten(a1);
-        case SYS_FS_SYMLINK:          return sys_fs_symlink(a1, a2);
-        case SYS_FS_READLINK:         return sys_fs_readlink(a1, a2, a3);
-        case SYS_FS_LSTAT:            return sys_fs_lstat(a1, a2, a3);
-        case SYS_CHDIR:               return sys_chdir(a1);
-        case SYS_GETCWD:              return sys_getcwd(a1, a2);
-        case SYS_SETPRIORITY:         return sys_setpriority(a1, a2, a3);
-        case SYS_SHM_GET:             return sys_shm_get(a1, a2);
-        case SYS_SHM_AT:              return sys_shm_at(a1);
-        case SYS_SHM_DT:              return sys_shm_dt(a1);
-        case SYS_SHM_FREE:            return sys_shm_free(a1);
-        case SYS_SHMCTL:              return sys_shmctl(a1, a2, a3);
-        case SYS_FORK:                return sys_fork();
-        case SYS_CLONE:               return sys_clone(a1, a2, a3, a4, a5);
-        case SYS_CLONE3:              return sys_clone3(a1, a2);
-        case SYS_UNSHARE:             return sys_unshare(a1);
-        case SYS_SETNS:               return sys_setns(a1, a2);
-        case SYS_GETTID:              return sys_gettid();
-        case SYS_TKILL:               return sys_tkill(a1, a2);
-        case SYS_TGKILL:              return sys_tgkill(a1, a2, a3);
-        case SYS_RT_SIGQUEUEINFO:     return sys_rt_sigqueueinfo(a1, a2, a3);
-        case SYS_RT_TGSIGQUEUEINFO:   return sys_rt_tgsigqueueinfo(a1, a2, a3, a4);
-        case SYS_EXECVE:              return sys_execve(a1, a2, a3);
-        case SYS_POSIX_SPAWN:         return sys_posix_spawn(a1, a2, a3);
-        case SYS_KEXEC_LOAD:          return sys_kexec_load(a1, a2, a3);
-        /* ── io_uring ───────────────────────────────────── */
-        case SYS_IO_URING_SETUP: {
-            /* io_uring_setup(entries, params) */
-            struct io_uring_params *params = (struct io_uring_params *)a2;
-            int64_t ret = sys_io_uring_setup((uint32_t)a1, params);
-            return ret < 0 ? (uint64_t)-1 : (uint64_t)ret;
+    case SYS_READ:
+        return sys_read(a1, a2, a3);
+    case SYS_WRITE:
+        return sys_write(a1, a2, a3);
+    case SYS_OPEN:
+        return sys_open(a1, a2, a3);
+    case SYS_CLOSE:
+        return sys_close(a1);
+    case SYS_CLOSE_RANGE:
+        return sys_close_range(a1, a2, a3);
+    case SYS_EXIT:
+        return sys_exit(a1);
+    case SYS_EXIT_GROUP:
+        return sys_exit_group(a1);
+    case SYS_SET_TID_ADDRESS:
+        return sys_set_tid_address(a1);
+    case SYS_GETPID:
+        return sys_getpid();
+    case SYS_KILL:
+        return sys_kill(a1, a2);
+    case SYS_BRK:
+        return sys_brk(a1);
+    case SYS_STAT:
+        return sys_stat(a1, a2);
+    case SYS_MKDIR:
+        return sys_mkdir(a1);
+    case SYS_UNLINK:
+        return sys_unlink(a1);
+    case SYS_TIME:
+        return sys_time();
+    case SYS_YIELD:
+        return sys_yield();
+    case SYS_UPTIME:
+        return sys_uptime();
+    case SYS_FS_FORMAT:
+        return sys_fs_format();
+    case SYS_FS_CREATE:
+        return sys_fs_create(a1, a2);
+    case SYS_FS_WRITE:
+        return sys_fs_write(a1, a2, a3);
+    case SYS_FS_READ:
+        return sys_fs_read(a1, a2, a3, a4);
+    case SYS_FS_DELETE:
+        return sys_fs_delete(a1);
+    case SYS_FS_LIST:
+        return sys_fs_list(a1);
+    case SYS_FS_STAT:
+        return sys_fs_stat(a1, a2);
+    case SYS_FS_STAT_EX:
+        return sys_fs_stat_ex(a1, a2);
+    case SYS_FS_CHMOD:
+        return sys_fs_chmod(a1, a2);
+    case SYS_FS_CHOWN:
+        return sys_fs_chown(a1, a2, a3);
+    case SYS_FS_GET_USAGE:
+        return sys_fs_get_usage(a1);
+    case SYS_FS_LIST_NAMES:
+        return sys_fs_list_names(a1, a2, a3, a4);
+    case SYS_ATA_PRESENT:
+        return sys_ata_present();
+    case SYS_ATA_SECTORS:
+        return sys_ata_sectors();
+    case SYS_AHCI_PRESENT:
+        return sys_ahci_present();
+    case SYS_AHCI_SECTORS:
+        return sys_ahci_sectors();
+    case SYS_VFS_READ:
+        return sys_vfs_read(a1, a2, a3, a4);
+    case SYS_VFS_WRITE:
+        return sys_vfs_write(a1, a2, a3);
+    case SYS_VFS_STAT:
+        return sys_vfs_stat(a1, a2);
+    case SYS_VFS_CREATE:
+        return sys_vfs_create(a1, a2);
+    case SYS_VFS_UNLINK:
+        return sys_vfs_unlink(a1);
+    case SYS_VFS_READDIR:
+        return sys_vfs_readdir(a1);
+    case SYS_WAITPID:
+        return sys_waitpid(a1, a2, a3);
+    case SYS_WAIT4:
+        return sys_wait4(a1, a2, a3, a4);
+    case SYS_WAITID:
+        return sys_waitid(a1, a2, a3, a4, a5);
+    case SYS_SLEEP_TICKS:
+        return sys_sleep_ticks(a1);
+    case SYS_NET_PRESENT:
+        return sys_net_present();
+    case SYS_NET_GET_MAC:
+        return sys_net_get_mac(a1);
+    case SYS_NET_GET_IP:
+        return sys_net_get_ip(a1);
+    case SYS_NET_GET_GW:
+        return sys_net_get_gw();
+    case SYS_NET_GET_MASK:
+        return sys_net_get_mask();
+    case SYS_NET_DNS:
+        return sys_net_dns(a1);
+    case SYS_NET_PING:
+        return sys_net_ping(a1);
+    case SYS_NET_UDP_SEND:
+        return sys_net_udp_send(a1, a2, a3, a4, a5);
+    case SYS_NET_HTTP_GET:
+        return sys_net_http_get(a1, a2, a3, a4, a5);
+    case SYS_NET_ARP_LIST:
+        return sys_net_arp_list();
+    case SYS_NET_TCP_LISTEN:
+        return sys_net_tcp_listen(a1);
+    case SYS_NET_TCP_ACCEPT:
+        return sys_net_tcp_accept(a1, a2);
+    case SYS_NET_TCP_SEND_CONN:
+        return sys_net_tcp_send_conn(a1, a2, a3);
+    case SYS_NET_TCP_RECV_CONN:
+        return sys_net_tcp_recv_conn(a1, a2, a3, a4);
+    case SYS_NET_TCP_CLOSE_CONN:
+        return sys_net_tcp_close_conn(a1);
+    case SYS_NET_TCP_UNLISTEN:
+        return sys_net_tcp_unlisten(a1);
+    case SYS_NET_TCP_CONNECT:
+        return sys_net_tcp_connect(a1, a2);
+    case SYS_MUTEX_INIT:
+        return sys_mutex_init();
+    case SYS_MUTEX_LOCK:
+        return sys_mutex_lock(a1);
+    case SYS_MUTEX_UNLOCK:
+        return sys_mutex_unlock(a1);
+    case SYS_MUTEX_DESTROY:
+        return sys_mutex_destroy(a1);
+    case SYS_SEM_INIT:
+        return sys_sem_init(a1);
+    case SYS_SEM_WAIT:
+        return sys_sem_wait(a1);
+    case SYS_SEM_POST:
+        return sys_sem_post(a1);
+    case SYS_SEM_DESTROY:
+        return sys_sem_destroy(a1);
+    case SYS_NET_UDP_LISTEN:
+        return sys_net_udp_listen(a1);
+    case SYS_NET_UDP_RECV:
+        return sys_net_udp_recv(a1, a2, a3, a4, a5);
+    case SYS_NET_UDP_UNLISTEN:
+        return sys_net_udp_unlisten(a1);
+    case SYS_FS_SYMLINK:
+        return sys_fs_symlink(a1, a2);
+    case SYS_FS_READLINK:
+        return sys_fs_readlink(a1, a2, a3);
+    case SYS_FS_LSTAT:
+        return sys_fs_lstat(a1, a2, a3);
+    case SYS_CHDIR:
+        return sys_chdir(a1);
+    case SYS_GETCWD:
+        return sys_getcwd(a1, a2);
+    case SYS_SETPRIORITY:
+        return sys_setpriority(a1, a2, a3);
+    case SYS_SHM_GET:
+        return sys_shm_get(a1, a2);
+    case SYS_SHM_AT:
+        return sys_shm_at(a1);
+    case SYS_SHM_DT:
+        return sys_shm_dt(a1);
+    case SYS_SHM_FREE:
+        return sys_shm_free(a1);
+    case SYS_SHMCTL:
+        return sys_shmctl(a1, a2, a3);
+    case SYS_FORK:
+        return sys_fork();
+    case SYS_CLONE:
+        return sys_clone(a1, a2, a3, a4, a5);
+    case SYS_CLONE3:
+        return sys_clone3(a1, a2);
+    case SYS_UNSHARE:
+        return sys_unshare(a1);
+    case SYS_SETNS:
+        return sys_setns(a1, a2);
+    case SYS_GETTID:
+        return sys_gettid();
+    case SYS_TKILL:
+        return sys_tkill(a1, a2);
+    case SYS_TGKILL:
+        return sys_tgkill(a1, a2, a3);
+    case SYS_RT_SIGQUEUEINFO:
+        return sys_rt_sigqueueinfo(a1, a2, a3);
+    case SYS_RT_TGSIGQUEUEINFO:
+        return sys_rt_tgsigqueueinfo(a1, a2, a3, a4);
+    case SYS_EXECVE:
+        return sys_execve(a1, a2, a3);
+    case SYS_POSIX_SPAWN:
+        return sys_posix_spawn(a1, a2, a3);
+    case SYS_KEXEC_LOAD:
+        return sys_kexec_load(a1, a2, a3);
+    /* ── io_uring ───────────────────────────────────── */
+    case SYS_IO_URING_SETUP: {
+        /* io_uring_setup(entries, params) */
+        struct io_uring_params *params = (struct io_uring_params *)a2;
+        int64_t ret = sys_io_uring_setup((uint32_t)a1, params);
+        return ret < 0 ? (uint64_t)-1 : (uint64_t)ret;
+    }
+    case SYS_IO_URING_ENTER:
+        return (uint64_t)sys_io_uring_enter((int)a1, (uint32_t)a2, (uint32_t)a3, (uint32_t)a4);
+    case SYS_IO_URING_REGISTER:
+        return (uint64_t)sys_io_uring_register((int)a1, (uint32_t)a2, (void *)a3, (uint32_t)a4);
+    /* ── Inotify (Item 340) ─────────────────────────── */
+    case SYS_INOTIFY_INIT1: {
+        int ret = sys_inotify_init1((int)a1);
+        return ret < 0 ? (uint64_t)-1 : (uint64_t)ret;
+    }
+    case SYS_INOTIFY_ADD_WATCH: {
+        int ret = sys_inotify_add_watch((int)a1, (const char *)a2, (uint32_t)a3);
+        return ret < 0 ? (uint64_t)-1 : (uint64_t)ret;
+    }
+    case SYS_INOTIFY_RM_WATCH: {
+        int ret = sys_inotify_rm_watch((int)a1, (int)a2);
+        return ret < 0 ? (uint64_t)-1 : (uint64_t)ret;
+    }
+    case SYS_THREAD_CREATE:
+        return sys_thread_create(a1, a2);
+    case SYS_THREAD_JOIN:
+        return sys_thread_join(a1, a2);
+    case SYS_THREAD_EXIT:
+        sys_thread_exit((void *)a1);
+        return 0;
+    case SYS_NET_CONNLIST:
+        return sys_net_connlist();
+    case SYS_SIGNAL:
+        return sys_signal(a1, a2);
+    case SYS_LSEEK:
+        return sys_lseek(a1, a2, a3);
+    case SYS_TRUNCATE:
+        return sys_truncate(a1, a2);
+    case SYS_RAW_SEND:
+        return sys_raw_send(a1, a2);
+    case SYS_FD_READ:
+        return sys_fd_read(a1, a2, a3);
+    case SYS_FD_WRITE:
+        return sys_fd_write(a1, a2, a3);
+    case SYS_PREAD64:
+        return sys_pread64(a1, a2, a3, a4);
+    case SYS_PWRITE64:
+        return sys_pwrite64(a1, a2, a3, a4);
+    case SYS_SETPRIORITY_PID:
+        return sys_setpriority(PRIO_PROCESS, a1, a2);
+    case SYS_GETPRIORITY:
+        return sys_getpriority(a1, a2);
+    case SYS_SETPGID:
+        return sys_setpgid(a1, a2);
+    case SYS_GETPGID:
+        return sys_getpgid(a1);
+    case SYS_GETPGRP:
+        return sys_getpgrp();
+    case SYS_KILLPG:
+        return sys_killpg(a1, a2);
+    case SYS_PROC_LIST:
+        return sys_proc_list(a1, a2);
+    case SYS_PCI_LIST:
+        return sys_pci_list();
+    case SYS_USB_LIST:
+        return sys_usb_list();
+    case SYS_HWINFO_PRINT:
+        return sys_hwinfo_print();
+    case SYS_USER_FIND:
+        return sys_user_find(a1, a2);
+    case SYS_USER_ADD:
+        return sys_user_add(a1, a2, a3);
+    case SYS_USER_DELETE:
+        return sys_user_delete(a1);
+    case SYS_USER_PASSWD:
+        return sys_user_passwd(a1, a2);
+    case SYS_SESSION_LOGIN:
+        return sys_session_login(a1, a2);
+    case SYS_SESSION_LOGOUT:
+        return sys_session_logout();
+    case SYS_SESSION_GET:
+        return sys_session_get();
+    case SYS_USERS_COUNT:
+        return sys_users_count(a1);
+    case SYS_USERS_GET_BY_INDEX:
+        return sys_users_get_by_index(a1, a2);
+    case SYS_PROC_SET_CAP_PROFILE:
+        return sys_proc_set_cap_profile(a1, a2);
+    case SYS_SPEAKER_BEEP:
+        return sys_speaker_beep(a1, a2);
+    case SYS_RTC_GET_TIME:
+        return sys_rtc_get_time(a1);
+    case SYS_ACPI_SHUTDOWN:
+        return sys_acpi_shutdown();
+    case SYS_MOUSE_GET_STATE:
+        return sys_mouse_get_state(a1);
+    case SYS_SERIAL_READ:
+        return sys_serial_read(a1, a2);
+    case SYS_SERIAL_WRITE:
+        return sys_serial_write(a1, a2);
+    case SYS_CMOS_READ_BYTE:
+        return sys_cmos_read_byte(a1);
+    case SYS_PMM_GET_STATS:
+        return sys_pmm_get_stats(a1);
+    case SYS_ELF_EXEC:
+        return sys_elf_exec(a1);
+    case SYS_SCRIPT_EXEC:
+        return sys_script_exec(a1);
+    case SYS_FAT_MOUNT:
+        return sys_fat_mount(a1, a2);
+    case SYS_FAT_IS_MOUNTED:
+        return sys_fat_is_mounted();
+    case SYS_FAT_LIST_DIR:
+        return sys_fat_list_dir(a1, a2, a3);
+    case SYS_FAT_READ_FILE:
+        return sys_fat_read_file(a1, a2, a3);
+    case SYS_FAT_FILE_SIZE:
+        return sys_fat_file_size(a1);
+    case SYS_FAT_WRITE_FILE:
+        return sys_fat_write_file(a1, a2, a3);
+    case SYS_FAT_SYNC:
+        return sys_fat_sync();
+    case SYS_VGA_SET_COLOR:
+        return sys_vga_set_color(a1, a2);
+    case SYS_VGA_GET_FB_INFO:
+        return sys_vga_get_fb_info(a1);
+    case SYS_KEYBOARD_GETCHAR:
+        return sys_keyboard_getchar();
+    case SYS_VGA_PUT_ENTRY_AT:
+        return sys_vga_put_entry_at(a1, a2, a3, a4);
+    case SYS_VGA_SET_CURSOR:
+        return sys_vga_set_cursor(a1, a2);
+    case SYS_VGA_CLEAR:
+        return sys_vga_clear();
+    case SYS_AC97_PRESENT:
+        return ac97_present();
+    case SYS_AC97_BEEP: {
+        if (!ac97_present())
+            return (uint64_t)-1;
+        uint32_t freq = (uint32_t)a1;
+        uint32_t ms = (uint32_t)a2;
+        if (freq < 100)
+            freq = 440;
+        if (ms == 0)
+            ms = 100;
+        uint32_t n = (freq * ms) / 1000;
+        if (n > 512)
+            n = 512;
+        static int16_t pcm[512];
+        for (uint32_t i = 0; i < n; i++)
+            pcm[i] = (int16_t)(2000 * ((i & 1) ? 1 : -1));
+        ac97_play_pcm(pcm, n * sizeof(int16_t), freq);
+        return 0;
+    }
+    case SYS_MALLOC:
+        return sys_malloc(a1);
+    case SYS_FREE:
+        return sys_free(a1);
+    case SYS_REALLOC:
+        return sys_realloc(a1, a2);
+    case SYS_CALLOC:
+        return sys_calloc(a1, a2);
+    case SYS_MMAP:
+        return sys_mmap(a1, a2, a3, a4, a5, 0);
+    case SYS_MUNMAP:
+        return sys_munmap(a1, a2);
+    case SYS_MPROTECT:
+        return (uint64_t)sys_mprotect(a1, a2, a3);
+    case SYS_PKEY_MPROTECT:
+        return (uint64_t)(int64_t)sys_pkey_mprotect((void *)a1, (size_t)a2, (int)a3, (int)a4);
+    case SYS_MSEAL:
+        return sys_mseal(a1, a2, a3);
+    case SYS_SECCOMP:
+        return sys_seccomp(a1, a2, a3);
+    case SYS_MREMAP:
+        return sys_mremap(a1, a2, a3, a4, a5);
+    case SYS_SCHED_SETAFFINITY:
+        return sys_sched_setaffinity(a1, a2);
+    case SYS_SCHED_GETAFFINITY:
+        return sys_sched_getaffinity(a1);
+    case SYS_DUP:
+        return sys_dup(a1);
+    case SYS_DUP2:
+        return sys_dup2(a1, a2);
+    case SYS_FCNTL:
+        return sys_fcntl(a1, a2, a3);
+    case SYS_SELECT:
+        return sys_select(a1, a2, a3, a4, a5);
+    case SYS_SETITIMER:
+        return sys_setitimer(a1, a2, a3);
+    case SYS_GETITIMER:
+        return sys_getitimer(a1, a2);
+    case SYS_NANOSLEEP:
+        return sys_nanosleep(a1, a2);
+    case SYS_SYSCONF:
+        return sys_sysconf(a1);
+    case SYS_UNAME:
+        return sys_uname(a1);
+    case SYS_PIPE:
+        return sys_pipe(a1);
+    case SYS_GETPPID:
+        return sys_getppid();
+    case SYS_ALARM:
+        return sys_alarm(a1);
+    case SYS_PAUSE:
+        return sys_pause();
+    case SYS_ACCESS:
+        return sys_access(a1, a2);
+    case SYS_GETUID:
+        return sys_getuid();
+    case SYS_GETEUID:
+        return sys_geteuid();
+    case SYS_GETGID:
+        return sys_getgid();
+    case SYS_GETEGID:
+        return sys_getegid();
+    case SYS_SETUID:
+        return sys_setuid(a1);
+    case SYS_SETEUID:
+        return sys_seteuid(a1);
+    case SYS_SETGID:
+        return sys_setgid(a1);
+    case SYS_SETEGID:
+        return sys_setegid(a1);
+    case SYS_RMDIR:
+        return sys_rmdir(a1);
+    case SYS_RENAME:
+        return sys_rename(a1, a2);
+    case SYS_CHMOD:
+        return sys_chmod(a1, a2);
+    case SYS_FSYNC:
+        return sys_fsync(a1);
+    case SYS_SIGPROCMASK:
+        return sys_sigprocmask(a1, a2, a3);
+    case SYS_SIGPENDING:
+        return sys_sigpending(a1);
+    case SYS_READV:
+        return sys_readv(a1, a2, a3);
+    case SYS_WRITEV:
+        return sys_writev(a1, a2, a3);
+    case SYS_GETRANDOM:
+        return sys_getrandom(a1, a2, a3);
+    case SYS_REBOOT:
+        return sys_reboot();
+    case SYS_SETHOSTNAME:
+        return sys_sethostname(a1, a2);
+    case SYS_GETHOSTNAME:
+        return sys_gethostname(a1, a2);
+    case SYS_UMASK:
+        return sys_umask(a1);
+    case SYS_MKNOD:
+        return sys_mknod(a1, a2, a3);
+    case SYS_PRLIMIT64:
+        return sys_prlimit64(a1, a2, a3, a4);
+    case SYS_FUTEX:
+        return sys_futex(a1, a2, a3, a4, a5, syscall_arg6);
+    case SYS_ARCH_PRCTL:
+        return sys_arch_prctl(a1, a2);
+    case SYS_POLL:
+        return sys_poll(a1, a2, a3);
+    case SYS_PSELECT6:
+        return sys_pselect6(a1, a2, a3, a4, a5);
+    case SYS_PPOLL:
+        return sys_ppoll(a1, a2, a3, a4);
+    case SYS_EVENTFD:
+        return sys_eventfd(a1, a2);
+    case SYS_SENDFILE:
+        return sys_sendfile(a1, a2, a3, a4);
+    case SYS_IOCTL:
+        return sys_ioctl(a1, a2, a3);
+    case SYS_SYSLOG:
+        return sys_syslog(a1, a2, a3);
+    case SYS_PRCTL:
+        return sys_prctl(a1, a2, a3, a4, a5);
+    case SYS_MOUNT:
+        return sys_mount(a1, a2, a3, a4, a5);
+    case SYS_UMOUNT:
+        return sys_umount(a1);
+    case SYS_FTRUNCATE:
+        return sys_ftruncate(a1, a2);
+    case SYS_READDIR:
+        return sys_readdir(a1, a2, a3);
+    case SYS_EXECVEAT:
+        return sys_execveat(a1, a2, a3, a4, a5);
+    case SYS_IOPRIO_SET:
+        return sys_ioprio_set(a1, a2, a3);
+    case SYS_IOPRIO_GET:
+        return sys_ioprio_get(a1, a2);
+    case SYS_SCHED_SETSCHEDULER:
+        return sys_sched_setscheduler(a1, a2, a3);
+    case SYS_SCHED_GETSCHEDULER:
+        return sys_sched_getscheduler(a1);
+    case SYS_SCHED_SETATTR:
+        return sys_sched_setattr(a1, a2, a3);
+    case SYS_SCHED_GETATTR:
+        return sys_sched_getattr(a1, a2, a3, a4);
+    case SYS_OPENAT:
+        return sys_openat(a1, a2, a3, a4);
+    case SYS_MKDIRAT:
+        return sys_mkdirat(a1, a2, a3);
+    case SYS_FSTATAT:
+        return sys_fstatat(a1, a2, a3, a4);
+    case SYS_UNLINKAT:
+        return sys_unlinkat(a1, a2, a3);
+    case SYS_RENAMEAT:
+        return sys_renameat(a1, a2, a3, a4);
+    case SYS_SYMLINKAT:
+        return sys_symlinkat(a1, a2, a3);
+    case SYS_READLINKAT:
+        return sys_readlinkat(a1, a2, a3, a4);
+    case SYS_GETDENTS64:
+        return sys_getdents64(a1, a2, a3);
+    case SYS_MLOCK:
+        return sys_mlock(a1, a2);
+    case SYS_MLOCKALL:
+        return sys_mlockall(a1);
+    case SYS_MUNLOCK:
+        return sys_munlock(a1, a2);
+    case SYS_MUNLOCKALL:
+        return sys_munlockall();
+    case SYS_MINCORE:
+        return sys_mincore(a1, a2, a3);
+    case SYS_MADVISE:
+        return sys_madvise(a1, a2, a3);
+    /* NUMA memory policy */
+    case SYS_MBIND:
+        return sys_mbind(a1, a2, a3, a4, a5, syscall_arg6);
+    case SYS_SET_MEMPOLICY:
+        return sys_set_mempolicy(a1, a2, a3);
+    case SYS_GET_MEMPOLICY:
+        return sys_get_mempolicy(a1, a2, a3, a4, a5);
+    case SYS_MIGRATE_PAGES:
+        return sys_migrate_pages(a1, a2, a3, a4);
+    case SYS_MOVE_PAGES:
+        return sys_move_pages(a1, a2, a3, a4, a5, syscall_arg6);
+    case SYS_REMAP_FILE_PAGES:
+        return sys_remap_file_pages(a1, a2, a3, a4, a5);
+    case SYS_MSYNC:
+        return sys_msync(a1, a2, a3);
+    case SYS_FALLOCATE:
+        return sys_fallocate(a1, a2, a3, a4);
+    case SYS_READAHEAD:
+        return sys_readahead(a1, a2, a3);
+    case SYS_PIVOT_ROOT:
+        return sys_pivot_root(a1, a2);
+    case SYS_CHROOT:
+        return sys_chroot(a1);
+    case SYS_FADVISE64:
+        return sys_fadvise64(a1, a2, a3, a4);
+    case SYS_TIMERFD_CREATE:
+        return sys_timerfd_create(a1, a2);
+    case SYS_TIMERFD_SETTIME:
+        return sys_timerfd_settime(a1, a2, a3, a4);
+    case SYS_TIMERFD_GETTIME:
+        return sys_timerfd_gettime(a1, a2);
+    case SYS_SIGNALFD:
+        return sys_signalfd(a1, a2, a3);
+    case SYS_MEMFD_CREATE:
+        return (uint64_t)memfd_syscall_create((const char *)a1, (unsigned int)a2);
+    case SYS_SPLICE:
+        return sys_splice(a1, a2, a3, a4, a5, syscall_arg6);
+    case SYS_TEE:
+        return sys_tee(a1, a2, a3, a4);
+    case SYS_VMSPLICE:
+        return sys_vmsplice(a1, a2, a3, a4);
+    case SYS_COPY_FILE_RANGE:
+        return sys_copy_file_range(a1, a2, a3, a4, a5, syscall_arg6);
+    case SYS_SENDMMSG:
+        return sys_sendmmsg(a1, a2, a3, a4);
+    case SYS_RECVMMSG:
+        return sys_recvmmsg(a1, a2, a3, a4, a5);
+    case SYS_SYNC:
+        return sys_sync();
+    case SYS_SYNCFS:
+        return sys_syncfs(a1);
+    case SYS_SETSID:
+        return sys_setsid();
+    case SYS_GETSID:
+        return sys_getsid(a1);
+    case SYS_SIGALTSTACK:
+        return sys_sigaltstack(a1, a2);
+    case SYS_PERSONALITY:
+        return sys_personality(a1);
+    /* Batch 3 dispatch */
+    case SYS_SOCKET:
+        return sys_socket(a1, a2, a3);
+    case SYS_BIND:
+        return sys_bind(a1, a2, a3);
+    case SYS_LISTEN:
+        return sys_listen(a1, a2);
+    case SYS_ACCEPT:
+        return sys_accept(a1, a2, a3);
+    case SYS_CONNECT:
+        return sys_connect(a1, a2, a3);
+    case SYS_SETSOCKOPT:
+        return sys_setsockopt(a1, a2, a3, a4, a5);
+    case SYS_GETSOCKOPT:
+        return sys_getsockopt(a1, a2, a3, a4, a5);
+    case SYS_SENDMSG:
+        return sys_sendmsg(a1, a2, a3);
+    case SYS_RECVMSG:
+        return sys_recvmsg(a1, a2, a3);
+    case SYS_GETSOCKNAME:
+        return sys_getsockname(a1, a2, a3);
+    case SYS_GETPEERNAME:
+        return sys_getpeername(a1, a2, a3);
+    case SYS_SOCKETPAIR:
+        return sys_socketpair(a1, a2, a3, a4);
+    case SYS_EPOLL_CREATE1:
+        return sys_epoll_create1(a1);
+    case SYS_EPOLL_CTL:
+        return sys_epoll_ctl(a1, a2, a3, a4);
+    case SYS_EPOLL_WAIT:
+        return sys_epoll_wait(a1, a2, a3, a4);
+    case SYS_EPOLL_PWAIT:
+        return sys_epoll_pwait(a1, a2, a3, a4, a5);
+    case SYS_CLOCK_GETTIME:
+        return sys_clock_gettime(a1, a2);
+    case SYS_CLOCK_SETTIME:
+        return sys_clock_settime(a1, a2);
+    case SYS_CLOCK_GETRES:
+        return sys_clock_getres(a1, a2);
+    case SYS_CLOCK_NANOSLEEP:
+        return sys_clock_nanosleep(a1, a2, a3, a4);
+    case SYS_TIMER_CREATE:
+        return sys_timer_create(a1, a2, a3);
+    case SYS_TIMER_SETTIME:
+        return sys_timer_settime(a1, a2, a3, a4);
+    case SYS_TIMER_GETTIME:
+        return sys_timer_gettime(a1, a2);
+    case SYS_TIMER_GETOVERRUN:
+        return sys_timer_getoverrun(a1);
+    case SYS_TIMER_DELETE:
+        return sys_timer_delete(a1);
+    case SYS_DUP3:
+        return sys_dup3(a1, a2, a3);
+    case SYS_PIPE2:
+        return sys_pipe2(a1, a2);
+    case SYS_MKDTEMP:
+        return sys_mkdtemp(a1);
+    case SYS_UTIMENSAT:
+        return sys_utimensat(a1, a2, a3, a4);
+    case SYS_FUTIMENS:
+        return sys_futimens(a1, a2);
+    case SYS_STATFS:
+        return sys_statfs(a1, a2);
+    case SYS_FSTATFS:
+        return sys_fstatfs(a1, a2);
+    case SYS_GETRUSAGE:
+        return sys_getrusage(a1, a2);
+    case SYS_SYSINFO:
+        return sys_sysinfo(a1);
+    case SYS_CAPGET:
+        return sys_capget(a1, a2);
+    case SYS_CAPSET:
+        return sys_capset(a1, a2);
+    case SYS_SETSECUREBITS:
+        return sys_setsecurebits(a1);
+    case SYS_GETSECUREBITS:
+        return sys_getsecurebits();
+    case SYS_GETRESUID:
+        return sys_getresuid(a1, a2, a3);
+    case SYS_SETRESUID:
+        return sys_setresuid(a1, a2, a3);
+    case SYS_GETRESGID:
+        return sys_getresgid(a1, a2, a3);
+    case SYS_SETRESGID:
+        return sys_setresgid(a1, a2, a3);
+    case SYS_SCHED_GETPARAM:
+        return sys_sched_getparam(a1, a2);
+    case SYS_SCHED_SETPARAM:
+        return sys_sched_setparam(a1, a2);
+    case SYS_MQ_OPEN:
+        return sys_mq_open(a1, a2, a3, a4);
+    case SYS_MQ_SEND:
+        return sys_mq_send(a1, a2, a3, a4);
+    case SYS_MQ_RECEIVE:
+        return sys_mq_receive(a1, a2, a3, a4);
+    case SYS_MQ_UNLINK:
+        return sys_mq_unlink(a1);
+    case SYS_GETCPU: {
+        int cpu = smp_get_cpu_id();
+        if (a1) {
+            if (copy_to_user(a1, &cpu, sizeof(cpu)) < 0)
+                return (uint64_t)-1;
         }
-        case SYS_IO_URING_ENTER:
-            return (uint64_t)sys_io_uring_enter((int)a1, (uint32_t)a2,
-                                                 (uint32_t)a3, (uint32_t)a4);
-        case SYS_IO_URING_REGISTER:
-            return (uint64_t)sys_io_uring_register((int)a1, (uint32_t)a2,
-                                                    (void *)a3, (uint32_t)a4);
-        /* ── Inotify (Item 340) ─────────────────────────── */
-        case SYS_INOTIFY_INIT1: {
-            int ret = sys_inotify_init1((int)a1);
-            return ret < 0 ? (uint64_t)-1 : (uint64_t)ret;
+        int zero = 0;
+        if (a2) {
+            if (copy_to_user(a2, &zero, sizeof(zero)) < 0)
+                return (uint64_t)-1;
         }
-        case SYS_INOTIFY_ADD_WATCH: {
-            int ret = sys_inotify_add_watch((int)a1, (const char *)a2, (uint32_t)a3);
-            return ret < 0 ? (uint64_t)-1 : (uint64_t)ret;
-        }
-        case SYS_INOTIFY_RM_WATCH: {
-            int ret = sys_inotify_rm_watch((int)a1, (int)a2);
-            return ret < 0 ? (uint64_t)-1 : (uint64_t)ret;
-        }
-        case SYS_THREAD_CREATE:       return sys_thread_create(a1, a2);
-        case SYS_THREAD_JOIN:         return sys_thread_join(a1, a2);
-        case SYS_THREAD_EXIT:         sys_thread_exit((void *)a1); return 0;
-        case SYS_NET_CONNLIST:         return sys_net_connlist();
-        case SYS_SIGNAL:              return sys_signal(a1, a2);
-        case SYS_LSEEK:               return sys_lseek(a1, a2, a3);
-        case SYS_TRUNCATE:            return sys_truncate(a1, a2);
-        case SYS_RAW_SEND:            return sys_raw_send(a1, a2);
-        case SYS_FD_READ:             return sys_fd_read(a1, a2, a3);
-        case SYS_FD_WRITE:            return sys_fd_write(a1, a2, a3);
-        case SYS_PREAD64:             return sys_pread64(a1, a2, a3, a4);
-        case SYS_PWRITE64:            return sys_pwrite64(a1, a2, a3, a4);
-        case SYS_SETPRIORITY_PID:     return sys_setpriority(PRIO_PROCESS, a1, a2);
-        case SYS_GETPRIORITY:         return sys_getpriority(a1, a2);
-        case SYS_SETPGID:             return sys_setpgid(a1, a2);
-        case SYS_GETPGID:             return sys_getpgid(a1);
-        case SYS_GETPGRP:             return sys_getpgrp();
-        case SYS_KILLPG:              return sys_killpg(a1, a2);
-        case SYS_PROC_LIST:     return sys_proc_list(a1, a2);
-        case SYS_PCI_LIST:      return sys_pci_list();
-        case SYS_USB_LIST:      return sys_usb_list();
-        case SYS_HWINFO_PRINT:  return sys_hwinfo_print();
-        case SYS_USER_FIND:     return sys_user_find(a1, a2);
-        case SYS_USER_ADD:      return sys_user_add(a1, a2, a3);
-        case SYS_USER_DELETE:   return sys_user_delete(a1);
-        case SYS_USER_PASSWD:   return sys_user_passwd(a1, a2);
-        case SYS_SESSION_LOGIN: return sys_session_login(a1, a2);
-        case SYS_SESSION_LOGOUT: return sys_session_logout();
-        case SYS_SESSION_GET:   return sys_session_get();
-        case SYS_USERS_COUNT:   return sys_users_count(a1);
-        case SYS_USERS_GET_BY_INDEX: return sys_users_get_by_index(a1, a2);
-        case SYS_PROC_SET_CAP_PROFILE: return sys_proc_set_cap_profile(a1, a2);
-        case SYS_SPEAKER_BEEP:  return sys_speaker_beep(a1, a2);
-        case SYS_RTC_GET_TIME:  return sys_rtc_get_time(a1);
-        case SYS_ACPI_SHUTDOWN: return sys_acpi_shutdown();
-        case SYS_MOUSE_GET_STATE: return sys_mouse_get_state(a1);
-        case SYS_SERIAL_READ:   return sys_serial_read(a1, a2);
-        case SYS_SERIAL_WRITE:  return sys_serial_write(a1, a2);
-        case SYS_CMOS_READ_BYTE: return sys_cmos_read_byte(a1);
-        case SYS_PMM_GET_STATS: return sys_pmm_get_stats(a1);
-        case SYS_ELF_EXEC:      return sys_elf_exec(a1);
-        case SYS_SCRIPT_EXEC:   return sys_script_exec(a1);
-        case SYS_FAT_MOUNT:     return sys_fat_mount(a1, a2);
-        case SYS_FAT_IS_MOUNTED: return sys_fat_is_mounted();
-        case SYS_FAT_LIST_DIR:  return sys_fat_list_dir(a1, a2, a3);
-        case SYS_FAT_READ_FILE: return sys_fat_read_file(a1, a2, a3);
-        case SYS_FAT_FILE_SIZE: return sys_fat_file_size(a1);
-        case SYS_FAT_WRITE_FILE: return sys_fat_write_file(a1, a2, a3);
-        case SYS_FAT_SYNC: return sys_fat_sync();
-        case SYS_VGA_SET_COLOR: return sys_vga_set_color(a1, a2);
-        case SYS_VGA_GET_FB_INFO: return sys_vga_get_fb_info(a1);
-        case SYS_KEYBOARD_GETCHAR: return sys_keyboard_getchar();
-        case SYS_VGA_PUT_ENTRY_AT: return sys_vga_put_entry_at(a1, a2, a3, a4);
-        case SYS_VGA_SET_CURSOR: return sys_vga_set_cursor(a1, a2);
-        case SYS_VGA_CLEAR: return sys_vga_clear();
-        case SYS_AC97_PRESENT: return ac97_present();
-        case SYS_AC97_BEEP: {
-            if (!ac97_present()) return (uint64_t)-1;
-            uint32_t freq = (uint32_t)a1;
-            uint32_t ms   = (uint32_t)a2;
-            if (freq < 100) freq = 440;
-            if (ms == 0) ms = 100;
-            uint32_t n = (freq * ms) / 1000;
-            if (n > 512) n = 512;
-            static int16_t pcm[512];
-            for (uint32_t i = 0; i < n; i++)
-                pcm[i] = (int16_t)(2000 * ((i & 1) ? 1 : -1));
-            ac97_play_pcm(pcm, n * sizeof(int16_t), freq);
-            return 0;
-        }
-        case SYS_MALLOC:  return sys_malloc(a1);
-        case SYS_FREE:    return sys_free(a1);
-        case SYS_REALLOC: return sys_realloc(a1, a2);
-        case SYS_CALLOC:  return sys_calloc(a1, a2);
-        case SYS_MMAP:    return sys_mmap(a1, a2, a3, a4, a5, 0);
-        case SYS_MUNMAP:  return sys_munmap(a1, a2);
-        case SYS_MPROTECT: return (uint64_t)sys_mprotect(a1, a2, a3);
-        case SYS_PKEY_MPROTECT: return (uint64_t)(int64_t)sys_pkey_mprotect((void *)a1, (size_t)a2, (int)a3, (int)a4);
-        case SYS_MSEAL:    return sys_mseal(a1, a2, a3);
-        case SYS_SECCOMP:  return sys_seccomp(a1, a2, a3);
-        case SYS_MREMAP:   return sys_mremap(a1, a2, a3, a4, a5);
-        case SYS_SCHED_SETAFFINITY: return sys_sched_setaffinity(a1, a2);
-        case SYS_SCHED_GETAFFINITY: return sys_sched_getaffinity(a1);
-        case SYS_DUP:    return sys_dup(a1);
-        case SYS_DUP2:   return sys_dup2(a1, a2);
-        case SYS_FCNTL:  return sys_fcntl(a1, a2, a3);
-        case SYS_SELECT: return sys_select(a1, a2, a3, a4, a5);
-        case SYS_SETITIMER: return sys_setitimer(a1, a2, a3);
-        case SYS_GETITIMER: return sys_getitimer(a1, a2);
-        case SYS_NANOSLEEP: return sys_nanosleep(a1, a2);
-        case SYS_SYSCONF: return sys_sysconf(a1);
-        case SYS_UNAME:  return sys_uname(a1);
-        case SYS_PIPE:        return sys_pipe(a1);
-        case SYS_GETPPID:     return sys_getppid();
-        case SYS_ALARM:       return sys_alarm(a1);
-        case SYS_PAUSE:       return sys_pause();
-        case SYS_ACCESS:      return sys_access(a1, a2);
-        case SYS_GETUID:      return sys_getuid();
-        case SYS_GETEUID:     return sys_geteuid();
-        case SYS_GETGID:      return sys_getgid();
-        case SYS_GETEGID:     return sys_getegid();
-        case SYS_SETUID:      return sys_setuid(a1);
-        case SYS_SETEUID:     return sys_seteuid(a1);
-        case SYS_SETGID:      return sys_setgid(a1);
-        case SYS_SETEGID:     return sys_setegid(a1);
-        case SYS_RMDIR:       return sys_rmdir(a1);
-        case SYS_RENAME:      return sys_rename(a1, a2);
-        case SYS_CHMOD:       return sys_chmod(a1, a2);
-        case SYS_FSYNC:       return sys_fsync(a1);
-        case SYS_SIGPROCMASK: return sys_sigprocmask(a1, a2, a3);
-        case SYS_SIGPENDING:  return sys_sigpending(a1);
-        case SYS_READV:       return sys_readv(a1, a2, a3);
-        case SYS_WRITEV:      return sys_writev(a1, a2, a3);
-        case SYS_GETRANDOM:   return sys_getrandom(a1, a2, a3);
-        case SYS_REBOOT:      return sys_reboot();
-        case SYS_SETHOSTNAME: return sys_sethostname(a1, a2);
-        case SYS_GETHOSTNAME: return sys_gethostname(a1, a2);
-        case SYS_UMASK:       return sys_umask(a1);
-        case SYS_MKNOD:       return sys_mknod(a1, a2, a3);
-        case SYS_PRLIMIT64:   return sys_prlimit64(a1, a2, a3, a4);
-        case SYS_FUTEX:       return sys_futex(a1, a2, a3, a4, a5, syscall_arg6);
-        case SYS_ARCH_PRCTL:  return sys_arch_prctl(a1, a2);
-        case SYS_POLL:        return sys_poll(a1, a2, a3);
-        case SYS_PSELECT6:    return sys_pselect6(a1, a2, a3, a4, a5);
-        case SYS_PPOLL:       return sys_ppoll(a1, a2, a3, a4);
-        case SYS_EVENTFD:     return sys_eventfd(a1, a2);
-        case SYS_SENDFILE:    return sys_sendfile(a1, a2, a3, a4);
-        case SYS_IOCTL:       return sys_ioctl(a1, a2, a3);
-        case SYS_SYSLOG:      return sys_syslog(a1, a2, a3);
-        case SYS_PRCTL:       return sys_prctl(a1, a2, a3, a4, a5);
-        case SYS_MOUNT:       return sys_mount(a1, a2, a3, a4, a5);
-        case SYS_UMOUNT:      return sys_umount(a1);
-        case SYS_FTRUNCATE:   return sys_ftruncate(a1, a2);
-        case SYS_READDIR:     return sys_readdir(a1, a2, a3);
-        case SYS_EXECVEAT:    return sys_execveat(a1, a2, a3, a4, a5);
-        case SYS_IOPRIO_SET:  return sys_ioprio_set(a1, a2, a3);
-        case SYS_IOPRIO_GET:  return sys_ioprio_get(a1, a2);
-        case SYS_SCHED_SETSCHEDULER: return sys_sched_setscheduler(a1, a2, a3);
-        case SYS_SCHED_GETSCHEDULER: return sys_sched_getscheduler(a1);
-        case SYS_SCHED_SETATTR:      return sys_sched_setattr(a1, a2, a3);
-        case SYS_SCHED_GETATTR:      return sys_sched_getattr(a1, a2, a3, a4);
-        case SYS_OPENAT:       return sys_openat(a1, a2, a3, a4);
-        case SYS_MKDIRAT:      return sys_mkdirat(a1, a2, a3);
-        case SYS_FSTATAT:      return sys_fstatat(a1, a2, a3, a4);
-        case SYS_UNLINKAT:     return sys_unlinkat(a1, a2, a3);
-        case SYS_RENAMEAT:     return sys_renameat(a1, a2, a3, a4);
-        case SYS_SYMLINKAT:    return sys_symlinkat(a1, a2, a3);
-        case SYS_READLINKAT:   return sys_readlinkat(a1, a2, a3, a4);
-        case SYS_GETDENTS64:   return sys_getdents64(a1, a2, a3);
-        case SYS_MLOCK:        return sys_mlock(a1, a2);
-        case SYS_MLOCKALL:     return sys_mlockall(a1);
-        case SYS_MUNLOCK:      return sys_munlock(a1, a2);
-        case SYS_MUNLOCKALL:   return sys_munlockall();
-        case SYS_MINCORE:      return sys_mincore(a1, a2, a3);
-        case SYS_MADVISE:      return sys_madvise(a1, a2, a3);
-        /* NUMA memory policy */
-        case SYS_MBIND:            return sys_mbind(a1, a2, a3, a4, a5, syscall_arg6);
-        case SYS_SET_MEMPOLICY:    return sys_set_mempolicy(a1, a2, a3);
-        case SYS_GET_MEMPOLICY:    return sys_get_mempolicy(a1, a2, a3, a4, a5);
-        case SYS_MIGRATE_PAGES:    return sys_migrate_pages(a1, a2, a3, a4);
-        case SYS_MOVE_PAGES:       return sys_move_pages(a1, a2, a3, a4, a5, syscall_arg6);
-        case SYS_REMAP_FILE_PAGES: return sys_remap_file_pages(a1, a2, a3, a4, a5);
-        case SYS_MSYNC:        return sys_msync(a1, a2, a3);
-        case SYS_FALLOCATE:    return sys_fallocate(a1, a2, a3, a4);
-        case SYS_READAHEAD:    return sys_readahead(a1, a2, a3);
-        case SYS_PIVOT_ROOT:      return sys_pivot_root(a1, a2);
-        case SYS_CHROOT:          return sys_chroot(a1);
-        case SYS_FADVISE64:       return sys_fadvise64(a1, a2, a3, a4);
-        case SYS_TIMERFD_CREATE:  return sys_timerfd_create(a1, a2);
-        case SYS_TIMERFD_SETTIME: return sys_timerfd_settime(a1, a2, a3, a4);
-        case SYS_TIMERFD_GETTIME: return sys_timerfd_gettime(a1, a2);
-        case SYS_SIGNALFD:        return sys_signalfd(a1, a2, a3);
-        case SYS_MEMFD_CREATE:    return (uint64_t)memfd_syscall_create((const char*)a1, (unsigned int)a2);
-        case SYS_SPLICE:          return sys_splice(a1, a2, a3, a4, a5, syscall_arg6);
-        case SYS_TEE:             return sys_tee(a1, a2, a3, a4);
-        case SYS_VMSPLICE:        return sys_vmsplice(a1, a2, a3, a4);
-        case SYS_COPY_FILE_RANGE: return sys_copy_file_range(a1, a2, a3, a4, a5, syscall_arg6);
-        case SYS_SENDMMSG:        return sys_sendmmsg(a1, a2, a3, a4);
-        case SYS_RECVMMSG:        return sys_recvmmsg(a1, a2, a3, a4, a5);
-        case SYS_SYNC:            return sys_sync();
-        case SYS_SYNCFS:          return sys_syncfs(a1);
-        case SYS_SETSID:          return sys_setsid();
-        case SYS_GETSID:          return sys_getsid(a1);
-        case SYS_SIGALTSTACK:     return sys_sigaltstack(a1, a2);
-        case SYS_PERSONALITY:     return sys_personality(a1);
-        /* Batch 3 dispatch */
-        case SYS_SOCKET:          return sys_socket(a1, a2, a3);
-        case SYS_BIND:            return sys_bind(a1, a2, a3);
-        case SYS_LISTEN:          return sys_listen(a1, a2);
-        case SYS_ACCEPT:          return sys_accept(a1, a2, a3);
-        case SYS_CONNECT:         return sys_connect(a1, a2, a3);
-        case SYS_SETSOCKOPT:      return sys_setsockopt(a1, a2, a3, a4, a5);
-        case SYS_GETSOCKOPT:      return sys_getsockopt(a1, a2, a3, a4, a5);
-        case SYS_SENDMSG:         return sys_sendmsg(a1, a2, a3);
-        case SYS_RECVMSG:         return sys_recvmsg(a1, a2, a3);
-        case SYS_GETSOCKNAME:     return sys_getsockname(a1, a2, a3);
-        case SYS_GETPEERNAME:     return sys_getpeername(a1, a2, a3);
-        case SYS_SOCKETPAIR:      return sys_socketpair(a1, a2, a3, a4);
-        case SYS_EPOLL_CREATE1:   return sys_epoll_create1(a1);
-        case SYS_EPOLL_CTL:       return sys_epoll_ctl(a1, a2, a3, a4);
-        case SYS_EPOLL_WAIT:      return sys_epoll_wait(a1, a2, a3, a4);
-        case SYS_EPOLL_PWAIT:     return sys_epoll_pwait(a1, a2, a3, a4, a5);
-        case SYS_CLOCK_GETTIME:   return sys_clock_gettime(a1, a2);
-        case SYS_CLOCK_SETTIME:   return sys_clock_settime(a1, a2);
-        case SYS_CLOCK_GETRES:    return sys_clock_getres(a1, a2);
-        case SYS_CLOCK_NANOSLEEP: return sys_clock_nanosleep(a1, a2, a3, a4);
-        case SYS_TIMER_CREATE:    return sys_timer_create(a1, a2, a3);
-        case SYS_TIMER_SETTIME:   return sys_timer_settime(a1, a2, a3, a4);
-        case SYS_TIMER_GETTIME:   return sys_timer_gettime(a1, a2);
-        case SYS_TIMER_GETOVERRUN: return sys_timer_getoverrun(a1);
-        case SYS_TIMER_DELETE:    return sys_timer_delete(a1);
-        case SYS_DUP3:            return sys_dup3(a1, a2, a3);
-        case SYS_PIPE2:           return sys_pipe2(a1, a2);
-        case SYS_MKDTEMP:         return sys_mkdtemp(a1);
-        case SYS_UTIMENSAT:       return sys_utimensat(a1, a2, a3, a4);
-        case SYS_FUTIMENS:        return sys_futimens(a1, a2);
-        case SYS_STATFS:          return sys_statfs(a1, a2);
-        case SYS_FSTATFS:         return sys_fstatfs(a1, a2);
-        case SYS_GETRUSAGE:       return sys_getrusage(a1, a2);
-        case SYS_SYSINFO:         return sys_sysinfo(a1);
-        case SYS_CAPGET:          return sys_capget(a1, a2);
-        case SYS_CAPSET:          return sys_capset(a1, a2);
-        case SYS_SETSECUREBITS:   return sys_setsecurebits(a1);
-        case SYS_GETSECUREBITS:   return sys_getsecurebits();
-        case SYS_GETRESUID:       return sys_getresuid(a1, a2, a3);
-        case SYS_SETRESUID:       return sys_setresuid(a1, a2, a3);
-        case SYS_GETRESGID:       return sys_getresgid(a1, a2, a3);
-        case SYS_SETRESGID:       return sys_setresgid(a1, a2, a3);
-        case SYS_SCHED_GETPARAM:  return sys_sched_getparam(a1, a2);
-        case SYS_SCHED_SETPARAM:  return sys_sched_setparam(a1, a2);
-        case SYS_MQ_OPEN:         return sys_mq_open(a1, a2, a3, a4);
-        case SYS_MQ_SEND:         return sys_mq_send(a1, a2, a3, a4);
-        case SYS_MQ_RECEIVE:      return sys_mq_receive(a1, a2, a3, a4);
-        case SYS_MQ_UNLINK:       return sys_mq_unlink(a1);
-        case SYS_GETCPU: {
-            int cpu = smp_get_cpu_id();
-            if (a1) { if (copy_to_user(a1, &cpu, sizeof(cpu)) < 0) return (uint64_t)-1; }
-            int zero = 0;
-            if (a2) { if (copy_to_user(a2, &zero, sizeof(zero)) < 0) return (uint64_t)-1; }
-            return 0;
-        }
-        case SYS_PREADV: {
-            /* preadv(fd, iov, iovcnt, offset) — vectored read at position */
-            uint64_t fd = a1, iov_addr = a2, iovcnt = a3, offset = a4;
-            if (fd < 3) return (uint64_t)-1;
-            int i = (int)fd - 3;
-            struct process_fd *pfd = sys_get_fd(i);
-            if (!pfd || !pfd->used) return (uint64_t)-1;
-            uint64_t saved_off = pfd->offset;
-            pfd->offset = offset;
-            uint64_t ret = sys_readv(fd, iov_addr, iovcnt);
-            if ((int64_t)ret < 0) pfd->offset = saved_off;
-            return ret;
-        }
-        case SYS_PWRITEV: {
-            /* pwritev(fd, iov, iovcnt, offset) — vectored write at position */
-            uint64_t fd = a1, iov_addr = a2, iovcnt = a3, offset = a4;
-            if (fd < 3) return (uint64_t)-1;
-            int i = (int)fd - 3;
-            struct process_fd *pfd = sys_get_fd(i);
-            if (!pfd || !pfd->used) return (uint64_t)-1;
-            uint64_t saved_off = pfd->offset;
-            pfd->offset = offset;
-            uint64_t ret = sys_writev(fd, iov_addr, iovcnt);
-            if (ret == (uint64_t)-1) pfd->offset = saved_off;
-            return ret;
-        }
-        case SYS_SIGWAITINFO:     return sys_sigwaitinfo(a1, a2);
-        case SYS_SIGTIMEDWAIT:    return sys_sigtimedwait(a1, a2, a3);
-        case SYS_FDATASYNC:       return sys_fdatasync(a1);
-        case SYS_SET_ROBUST_LIST: return (uint64_t)sys_set_robust_list((struct robust_list_head*)a1, (size_t)a2);
-        case SYS_GET_ROBUST_LIST: return (uint64_t)sys_get_robust_list((int)a1, (struct robust_list_head**)a2, (size_t*)a3);
-        /* ── Module syscalls (M17-M20) ─────────────────────────────── */
-        case SYS_INIT_MODULE:     return sys_init_module(a1, a2);
-        case SYS_FINIT_MODULE:    return sys_finit_module(a1, a2, a3);
-        case SYS_DELETE_MODULE:   return sys_delete_module(a1, a2);
-        case SYS_QUERY_MODULE:    return sys_query_module(a1, a2, a3);
-        /* ── Legacy module syscalls (D130) ──────────────────────────── */
-        case SYS_CREATE_MODULE:   return sys_create_module(a1, a2);
-        case SYS_GET_KERNEL_SYMS: return sys_get_kernel_syms(a1);
-        case SYS_SYSCTL:          return sys_sysctl(a1);
-        /* ── membarrier (Item 252) ────────────────────────────────── */
-        case SYS_MEMBARRIER:      return sys_membarrier(a1, a2, a3);
-        /* ── rseq (Item 348) ──────────────────────────────────────── */
-        case SYS_RSEQ:            return sys_rseq(a1, a2, a3, a4);
-        /* ── File handle operations (Item 250) ────────────────────── */
-        case SYS_NAME_TO_HANDLE_AT: return sys_name_to_handle_at(a1, a2, a3, a4, a5);
-        case SYS_OPEN_BY_HANDLE_AT: return sys_open_by_handle_at(a1, a2, a3);
-        /* ── KCOV code coverage (Item 208) ────────────────────────── */
-        case SYS_KCOV:            return (uint64_t)sys_kcov(a1, a2);
-        /* ── userfaultfd (a1=fd, a2=cmd, a3=arg) ─────────────── */
-        case SYS_USERFAULTFD:     return (uint64_t)sys_userfaultfd2(a1, a2, a3);
-        /* ── Swap — block device swap (Item 223) ──────────────────── */
-        case SYS_SWAPON:          return (uint64_t)swap_swapon((const char *)a1);
-        case SYS_SWAPOFF:         return (uint64_t)swap_swapoff((const char *)a1);
-        /* ── Supplementary groups (D127) ─────────────────────────── */
-        case SYS_GETGROUPS:       return sys_getgroups(a1, a2);
-        case SYS_SETGROUPS:       return sys_setgroups(a1, a2);
-        /* ── pidfd operations ─────────────────────────────────────── */
-        case SYS_PIDFD_OPEN: {
-            int ret = pidfd_open((uint32_t)a1, (uint32_t)a2);
-            return ret < 0 ? (uint64_t)-1 : (uint64_t)ret;
-        }
-        case SYS_PIDFD_SEND_SIGNAL: {
-            int ret = pidfd_send_signal((int)a1, (int)a2,
-                                        (struct siginfo *)a3, (uint32_t)a4);
-            return ret < 0 ? (uint64_t)-1 : 0;
-        }
-        case SYS_PIDFD_GETFD: {
-            int ret = pidfd_getfd((int)a1, (int)a2, (uint32_t)a3);
-            return ret < 0 ? (uint64_t)-1 : (uint64_t)ret;
-        }
-        /* ── mount_setattr ────────────────────────────────────────── */
-        case SYS_MOUNT_SETATTR:
-            return (uint64_t)mount_setattr((int)a1, (const char *)a2,
-                                           (uint32_t)a3,
-                                           (const struct mount_attr *)a4,
-                                           (size_t)a5);
-        /* ── Userspace framebuffer / keyboard syscalls (504-510) ── */
-        case SYS_VGA_PUT_PIXEL:
-            vga_put_pixel((int32_t)a1, (int32_t)a2, (uint32_t)a3);
-            return 0;
-        case SYS_VGA_BLIT: {
-            uint64_t buf = a1;
-            int32_t x = (int32_t)a2, y = (int32_t)a3;
-            uint32_t w = (uint32_t)a4, h = (uint32_t)a5;
-            for (uint32_t row = 0; row < h; row++) {
-                for (uint32_t col = 0; col < w; col++) {
-                    uint32_t color;
-                    if (copy_from_user(&color, buf + (row * w + col) * 4, 4) < 0)
-                        return (uint64_t)-1;
-                    vga_put_pixel(x + (int32_t)col, y + (int32_t)row, color);
-                }
+        return 0;
+    }
+    case SYS_PREADV: {
+        /* preadv(fd, iov, iovcnt, offset) — vectored read at position */
+        uint64_t fd = a1, iov_addr = a2, iovcnt = a3, offset = a4;
+        if (fd < 3)
+            return (uint64_t)-1;
+        int i = (int)fd - 3;
+        struct process_fd *pfd = sys_get_fd(i);
+        if (!pfd || !pfd->used)
+            return (uint64_t)-1;
+        uint64_t saved_off = pfd->offset;
+        pfd->offset = offset;
+        uint64_t ret = sys_readv(fd, iov_addr, iovcnt);
+        if ((int64_t)ret < 0)
+            pfd->offset = saved_off;
+        return ret;
+    }
+    case SYS_PWRITEV: {
+        /* pwritev(fd, iov, iovcnt, offset) — vectored write at position */
+        uint64_t fd = a1, iov_addr = a2, iovcnt = a3, offset = a4;
+        if (fd < 3)
+            return (uint64_t)-1;
+        int i = (int)fd - 3;
+        struct process_fd *pfd = sys_get_fd(i);
+        if (!pfd || !pfd->used)
+            return (uint64_t)-1;
+        uint64_t saved_off = pfd->offset;
+        pfd->offset = offset;
+        uint64_t ret = sys_writev(fd, iov_addr, iovcnt);
+        if (ret == (uint64_t)-1)
+            pfd->offset = saved_off;
+        return ret;
+    }
+    case SYS_SIGWAITINFO:
+        return sys_sigwaitinfo(a1, a2);
+    case SYS_SIGTIMEDWAIT:
+        return sys_sigtimedwait(a1, a2, a3);
+    case SYS_FDATASYNC:
+        return sys_fdatasync(a1);
+    case SYS_SET_ROBUST_LIST:
+        return (uint64_t)sys_set_robust_list((struct robust_list_head *)a1, (size_t)a2);
+    case SYS_GET_ROBUST_LIST:
+        return (uint64_t)sys_get_robust_list((int)a1, (struct robust_list_head **)a2, (size_t *)a3);
+    /* ── Module syscalls (M17-M20) ─────────────────────────────── */
+    case SYS_INIT_MODULE:
+        return sys_init_module(a1, a2);
+    case SYS_FINIT_MODULE:
+        return sys_finit_module(a1, a2, a3);
+    case SYS_DELETE_MODULE:
+        return sys_delete_module(a1, a2);
+    case SYS_QUERY_MODULE:
+        return sys_query_module(a1, a2, a3);
+    /* ── Legacy module syscalls (D130) ──────────────────────────── */
+    case SYS_CREATE_MODULE:
+        return sys_create_module(a1, a2);
+    case SYS_GET_KERNEL_SYMS:
+        return sys_get_kernel_syms(a1);
+    case SYS_SYSCTL:
+        return sys_sysctl(a1);
+    /* ── membarrier (Item 252) ────────────────────────────────── */
+    case SYS_MEMBARRIER:
+        return sys_membarrier(a1, a2, a3);
+    /* ── rseq (Item 348) ──────────────────────────────────────── */
+    case SYS_RSEQ:
+        return sys_rseq(a1, a2, a3, a4);
+    /* ── File handle operations (Item 250) ────────────────────── */
+    case SYS_NAME_TO_HANDLE_AT:
+        return sys_name_to_handle_at(a1, a2, a3, a4, a5);
+    case SYS_OPEN_BY_HANDLE_AT:
+        return sys_open_by_handle_at(a1, a2, a3);
+    /* ── KCOV code coverage (Item 208) ────────────────────────── */
+    case SYS_KCOV:
+        return (uint64_t)sys_kcov(a1, a2);
+    /* ── userfaultfd (a1=fd, a2=cmd, a3=arg) ─────────────── */
+    case SYS_USERFAULTFD:
+        return (uint64_t)sys_userfaultfd2(a1, a2, a3);
+    /* ── Swap — block device swap (Item 223) ──────────────────── */
+    case SYS_SWAPON:
+        return (uint64_t)swap_swapon((const char *)a1);
+    case SYS_SWAPOFF:
+        return (uint64_t)swap_swapoff((const char *)a1);
+    /* ── Supplementary groups (D127) ─────────────────────────── */
+    case SYS_GETGROUPS:
+        return sys_getgroups(a1, a2);
+    case SYS_SETGROUPS:
+        return sys_setgroups(a1, a2);
+    /* ── pidfd operations ─────────────────────────────────────── */
+    case SYS_PIDFD_OPEN: {
+        int ret = pidfd_open((uint32_t)a1, (uint32_t)a2);
+        return ret < 0 ? (uint64_t)-1 : (uint64_t)ret;
+    }
+    case SYS_PIDFD_SEND_SIGNAL: {
+        int ret = pidfd_send_signal((int)a1, (int)a2, (struct siginfo *)a3, (uint32_t)a4);
+        return ret < 0 ? (uint64_t)-1 : 0;
+    }
+    case SYS_PIDFD_GETFD: {
+        int ret = pidfd_getfd((int)a1, (int)a2, (uint32_t)a3);
+        return ret < 0 ? (uint64_t)-1 : (uint64_t)ret;
+    }
+    /* ── mount_setattr ────────────────────────────────────────── */
+    case SYS_MOUNT_SETATTR:
+        return (uint64_t)mount_setattr((int)a1, (const char *)a2, (uint32_t)a3,
+                                       (const struct mount_attr *)a4, (size_t)a5);
+    /* ── Userspace framebuffer / keyboard syscalls (504-510) ── */
+    case SYS_VGA_PUT_PIXEL:
+        vga_put_pixel((int32_t)a1, (int32_t)a2, (uint32_t)a3);
+        return 0;
+    case SYS_VGA_BLIT: {
+        uint64_t buf = a1;
+        int32_t x = (int32_t)a2, y = (int32_t)a3;
+        uint32_t w = (uint32_t)a4, h = (uint32_t)a5;
+        for (uint32_t row = 0; row < h; row++) {
+            for (uint32_t col = 0; col < w; col++) {
+                uint32_t color;
+                if (copy_from_user(&color, buf + (row * w + col) * 4, 4) < 0)
+                    return (uint64_t)-1;
+                vga_put_pixel(x + (int32_t)col, y + (int32_t)row, color);
             }
-            return 0;
         }
-        case SYS_VGA_CLEAR_FRAMEBUFFER:
-            vga_clear_framebuffer((uint32_t)a1);
-            return 0;
-        case SYS_VGA_REFRESH_CONSOLE:
-            vga_refresh_console();
-            return 0;
-        case SYS_KEYBOARD_HAS_INPUT:
-            return (uint64_t)keyboard_has_input();
-        case SYS_KEYBOARD_IS_DOWN:
-            return (uint64_t)keyboard_is_down((char)(uint8_t)a1);
-        case SYS_KEYBOARD_RESET_STATE:
-            keyboard_reset_state();
-            return 0;
-        case SYS_SEMCTL:
-            return sys_semctl(a1, a2, a3, a4);
-        /* ── D123: Process & Signal Syscalls ────────────────────── */
-        case SYS_RT_SIGACTION:
-            return sys_rt_sigaction(a1, a2, a3, a4);
-        case SYS_RT_SIGPROCMASK:
-            return sys_rt_sigprocmask(a1, a2, a3, a4);
-        case SYS_RT_SIGRETURN:
-            return sys_rt_sigreturn();
-        case SYS_RT_SIGTIMEDWAIT:
-            return sys_rt_sigtimedwait(a1, a2, a3, a4);
-        default: {
-            uint64_t ret = (uint64_t)-1;
-            audit_syscall_exit(ret);
-            return ret;
-        }
+        return 0;
+    }
+    case SYS_VGA_CLEAR_FRAMEBUFFER:
+        vga_clear_framebuffer((uint32_t)a1);
+        return 0;
+    case SYS_VGA_REFRESH_CONSOLE:
+        vga_refresh_console();
+        return 0;
+    case SYS_KEYBOARD_HAS_INPUT:
+        return (uint64_t)keyboard_has_input();
+    case SYS_KEYBOARD_IS_DOWN:
+        return (uint64_t)keyboard_is_down((char)(uint8_t)a1);
+    case SYS_KEYBOARD_RESET_STATE:
+        keyboard_reset_state();
+        return 0;
+    case SYS_SEMCTL:
+        return sys_semctl(a1, a2, a3, a4);
+    /* ── D123: Process & Signal Syscalls ────────────────────── */
+    case SYS_RT_SIGACTION:
+        return sys_rt_sigaction(a1, a2, a3, a4);
+    case SYS_RT_SIGPROCMASK:
+        return sys_rt_sigprocmask(a1, a2, a3, a4);
+    case SYS_RT_SIGRETURN:
+        return sys_rt_sigreturn();
+    case SYS_RT_SIGTIMEDWAIT:
+        return sys_rt_sigtimedwait(a1, a2, a3, a4);
+    default: {
+        uint64_t ret = (uint64_t)-1;
+        audit_syscall_exit(ret);
+        return ret;
+    }
     }
     /* NOTREACHED */
     return (uint64_t)-1;
@@ -11997,9 +12765,7 @@ uint64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2,
  * Returns 0 on success, -errno on failure.
  * With RSEQ_FLAG_UNREGISTER in flags, unregisters the current rseq.
  */
-static uint64_t sys_rseq(uint64_t rseq_addr, uint64_t rseq_len,
-                          uint64_t rseq_sig, uint64_t flags)
-{
+static uint64_t sys_rseq(uint64_t rseq_addr, uint64_t rseq_len, uint64_t rseq_sig, uint64_t flags) {
     struct process *cur = process_get_current();
     if (!cur)
         return (uint64_t)(int64_t)-ESRCH;
@@ -12024,8 +12790,7 @@ static uint64_t sys_rseq(uint64_t rseq_addr, uint64_t rseq_len,
     if (rseq_sig != (uint32_t)rseq_sig)
         return (uint64_t)(int64_t)-EINVAL;
 
-    int ret = rseq_register(cur, rseq_addr, (uint32_t)rseq_len,
-                            (uint32_t)rseq_sig);
+    int ret = rseq_register(cur, rseq_addr, (uint32_t)rseq_len, (uint32_t)rseq_sig);
     if (ret < 0)
         return (uint64_t)(int64_t)ret;
 
@@ -12035,7 +12800,7 @@ static uint64_t sys_rseq(uint64_t rseq_addr, uint64_t rseq_len,
 /* ── membarrier — Memory barrier on all threads (Item 252) ─────────── */
 
 /* Per-process flag for membarrier registration */
-#define MEMBARRIER_PRIVATE_EXPEDITED  (1U << 0)
+#define MEMBARRIER_PRIVATE_EXPEDITED (1U << 0)
 
 /*
  * sys_membarrier(cmd, flags, cpu_id)
@@ -12053,7 +12818,7 @@ static uint64_t sys_rseq(uint64_t rseq_addr, uint64_t rseq_len,
  *   MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED— register for expedited private
  */
 static uint64_t sys_membarrier(uint64_t cmd, uint64_t flags, uint64_t cpu_id) {
-    (void)cpu_id;  /* CPU-id-based targeting is optional, ignored in this impl */
+    (void)cpu_id; /* CPU-id-based targeting is optional, ignored in this impl */
 
     /* Validate flags — only MEMBARRIER_CMD_FLAG_CPU is accepted */
     if (flags & ~(uint64_t)MEMBARRIER_CMD_FLAG_CPU)
@@ -12062,12 +12827,10 @@ static uint64_t sys_membarrier(uint64_t cmd, uint64_t flags, uint64_t cpu_id) {
     switch (cmd) {
     case MEMBARRIER_CMD_QUERY: {
         /* Report which commands we support */
-        uint64_t supported = MEMBARRIER_CMD_QUERY |
-                             MEMBARRIER_CMD_GLOBAL |
-                             MEMBARRIER_CMD_GLOBAL_EXPEDITED |
-                             MEMBARRIER_CMD_REGISTER_GLOBAL_EXPEDITED |
-                             MEMBARRIER_CMD_PRIVATE_EXPEDITED |
-                             MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED;
+        uint64_t supported =
+            MEMBARRIER_CMD_QUERY | MEMBARRIER_CMD_GLOBAL | MEMBARRIER_CMD_GLOBAL_EXPEDITED |
+            MEMBARRIER_CMD_REGISTER_GLOBAL_EXPEDITED | MEMBARRIER_CMD_PRIVATE_EXPEDITED |
+            MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED;
         return supported;
     }
 
@@ -12090,7 +12853,8 @@ static uint64_t sys_membarrier(uint64_t cmd, uint64_t flags, uint64_t cpu_id) {
          * On Linux this enables fast IPI delivery; we register it
          * per-process for semantic correctness. */
         struct process *cur = process_get_current();
-        if (!cur) return (uint64_t)-1;
+        if (!cur)
+            return (uint64_t)-1;
         cur->membarrier_flags |= MEMBARRIER_PRIVATE_EXPEDITED;
         return 0;
     }
@@ -12099,11 +12863,12 @@ static uint64_t sys_membarrier(uint64_t cmd, uint64_t flags, uint64_t cpu_id) {
         /* Memory barrier on all threads of the current process.
          * Send IPI to CPUs that are running threads of this process. */
         struct process *cur = process_get_current();
-        if (!cur) return (uint64_t)-1;
+        if (!cur)
+            return (uint64_t)-1;
 
         /* Check if registered */
         if (!(cur->membarrier_flags & MEMBARRIER_PRIVATE_EXPEDITED))
-            return (uint64_t)-1;  /* -EPERM */
+            return (uint64_t)-1; /* -EPERM */
 
         __asm__ volatile("mfence" ::: "memory");
 
@@ -12118,13 +12883,14 @@ static uint64_t sys_membarrier(uint64_t cmd, uint64_t flags, uint64_t cpu_id) {
 
     case MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED: {
         struct process *cur = process_get_current();
-        if (!cur) return (uint64_t)-1;
+        if (!cur)
+            return (uint64_t)-1;
         cur->membarrier_flags |= MEMBARRIER_PRIVATE_EXPEDITED;
         return 0;
     }
 
     default:
-        return (uint64_t)-1;  /* -EINVAL */
+        return (uint64_t)-1; /* -EINVAL */
     }
 }
 
@@ -12144,21 +12910,20 @@ static uint64_t sys_membarrier(uint64_t cmd, uint64_t flags, uint64_t cpu_id) {
 #define FH_MAX_HANDLES 32
 
 struct fh_entry {
-    int      in_use;
-    uint32_t ino;              /* inode number from vfs_stat */
-    uint32_t mount_id;         /* mount identifier (0 = root) */
-    int      handle_type;      /* handle type (1 = regular file) */
-    char     path[128];        /* resolved absolute path */
-    uint32_t handle_bytes;     /* size of handle data stored */
-    uint8_t  handle_data[16];  /* raw handle bytes (inode + mount_id) */
+    int in_use;
+    uint32_t ino;            /* inode number from vfs_stat */
+    uint32_t mount_id;       /* mount identifier (0 = root) */
+    int handle_type;         /* handle type (1 = regular file) */
+    char path[128];          /* resolved absolute path */
+    uint32_t handle_bytes;   /* size of handle data stored */
+    uint8_t handle_data[16]; /* raw handle bytes (inode + mount_id) */
 };
 
 static struct fh_entry fh_table[FH_MAX_HANDLES];
 static int fh_initialized = 0;
 static spinlock_t fh_lock = SPINLOCK_INIT;
 
-static void fh_init(void)
-{
+static void fh_init(void) {
     uint64_t __fh_flags;
     spinlock_irqsave_acquire(&fh_lock, &__fh_flags);
     if (fh_initialized) {
@@ -12171,8 +12936,7 @@ static void fh_init(void)
 }
 
 /* Allocate a free handle entry, returns index or -1 */
-static int fh_alloc(void)
-{
+static int fh_alloc(void) {
     uint64_t __fh_flags;
     spinlock_irqsave_acquire(&fh_lock, &__fh_flags);
     if (!fh_initialized) {
@@ -12191,9 +12955,9 @@ static int fh_alloc(void)
 }
 
 /* Free a handle entry */
-static void fh_free(int idx)
-{
-    if (idx < 0 || idx >= FH_MAX_HANDLES) return;
+static void fh_free(int idx) {
+    if (idx < 0 || idx >= FH_MAX_HANDLES)
+        return;
     uint64_t __fh_flags;
     spinlock_irqsave_acquire(&fh_lock, &__fh_flags);
     memset(&fh_table[idx], 0, sizeof(struct fh_entry));
@@ -12201,9 +12965,7 @@ static void fh_free(int idx)
 }
 
 /* Encode (ino, mount_id) into a handle data buffer */
-static void fh_encode(uint8_t *data, uint32_t *bytes_out,
-                       uint32_t ino, uint32_t mount_id)
-{
+static void fh_encode(uint8_t *data, uint32_t *bytes_out, uint32_t ino, uint32_t mount_id) {
     /* Format: 4 bytes ino (LE) + 4 bytes mount_id (LE) = 8 bytes */
     data[0] = (uint8_t)(ino & 0xFF);
     data[1] = (uint8_t)((ino >> 8) & 0xFF);
@@ -12217,14 +12979,13 @@ static void fh_encode(uint8_t *data, uint32_t *bytes_out,
 }
 
 /* Decode handle data to extract (ino, mount_id), returns 0 on success */
-static int fh_decode(const uint8_t *data, uint32_t data_len,
-                      uint32_t *ino, uint32_t *mount_id)
-{
-    if (data_len < 8) return -1;
-    *ino = (uint32_t)data[0] | ((uint32_t)data[1] << 8) |
-           ((uint32_t)data[2] << 16) | ((uint32_t)data[3] << 24);
-    *mount_id = (uint32_t)data[4] | ((uint32_t)data[5] << 8) |
-                ((uint32_t)data[6] << 16) | ((uint32_t)data[7] << 24);
+static int fh_decode(const uint8_t *data, uint32_t data_len, uint32_t *ino, uint32_t *mount_id) {
+    if (data_len < 8)
+        return -1;
+    *ino = (uint32_t)data[0] | ((uint32_t)data[1] << 8) | ((uint32_t)data[2] << 16) |
+           ((uint32_t)data[3] << 24);
+    *mount_id = (uint32_t)data[4] | ((uint32_t)data[5] << 8) | ((uint32_t)data[6] << 16) |
+                ((uint32_t)data[7] << 24);
     return 0;
 }
 
@@ -12239,11 +13000,9 @@ static int fh_decode(const uint8_t *data, uint32_t data_len,
  * On success, handle->handle_bytes is set to the actual size,
  * and *mount_id receives the mount identifier.
  */
-static uint64_t sys_name_to_handle_at(uint64_t dirfd, uint64_t pathname,
-                                       uint64_t handle_addr, uint64_t mount_id_addr,
-                                       uint64_t flags)
-{
-    (void)dirfd;  /* dirfd not used — we resolve from CWD */
+static uint64_t sys_name_to_handle_at(uint64_t dirfd, uint64_t pathname, uint64_t handle_addr,
+                                      uint64_t mount_id_addr, uint64_t flags) {
+    (void)dirfd; /* dirfd not used — we resolve from CWD */
 
     /* Copy path string from user (up to 255 chars) */
     char path[256];
@@ -12264,8 +13023,10 @@ static uint64_t sys_name_to_handle_at(uint64_t dirfd, uint64_t pathname,
                 if (copy_from_user(&c, pathname + (uint64_t)i, 1UL) < 0)
                     return (uint64_t)(int64_t)-EFAULT;
                 path[i] = c;
-                if (c == '\0') break;
-                if (i == 254) path[255] = '\0';
+                if (c == '\0')
+                    break;
+                if (i == 254)
+                    path[255] = '\0';
             }
         }
     } else {
@@ -12282,9 +13043,8 @@ static uint64_t sys_name_to_handle_at(uint64_t dirfd, uint64_t pathname,
 
     /* Read handle_bytes from user space */
     unsigned int handle_bytes;
-    unsigned int hb_off = 0;  /* handle_bytes is first field in file_handle */
-    if (copy_from_user(&handle_bytes, handle_addr + hb_off,
-                       sizeof(handle_bytes)) < 0)
+    unsigned int hb_off = 0; /* handle_bytes is first field in file_handle */
+    if (copy_from_user(&handle_bytes, handle_addr + hb_off, sizeof(handle_bytes)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
 
     if (handle_bytes < 8) {
@@ -12302,11 +13062,10 @@ static uint64_t sys_name_to_handle_at(uint64_t dirfd, uint64_t pathname,
         return (uint64_t)(int64_t)-ENOMEM;
 
     fh_table[slot].ino = st.ino;
-    fh_table[slot].mount_id = 0;  /* single root mount */
-    fh_table[slot].handle_type = 1;  /* regular file */
+    fh_table[slot].mount_id = 0;    /* single root mount */
+    fh_table[slot].handle_type = 1; /* regular file */
     fh_table[slot].handle_bytes = 8;
-    fh_encode(fh_table[slot].handle_data, &fh_table[slot].handle_bytes,
-              st.ino, 0);
+    fh_encode(fh_table[slot].handle_data, &fh_table[slot].handle_bytes, st.ino, 0);
 
     /* Copy the resolved path */
     size_t plen = strlen(path);
@@ -12322,7 +13081,8 @@ static uint64_t sys_name_to_handle_at(uint64_t dirfd, uint64_t pathname,
     k_handle->handle_bytes = fh_table[slot].handle_bytes;
     memcpy(k_handle->f_handle, fh_table[slot].handle_data, fh_table[slot].handle_bytes);
     if (copy_to_user(handle_addr, handle_buf,
-                     sizeof(struct file_handle) - sizeof(unsigned char) + fh_table[slot].handle_bytes) < 0) {
+                     sizeof(struct file_handle) - sizeof(unsigned char) +
+                         fh_table[slot].handle_bytes) < 0) {
         fh_free(slot);
         return (uint64_t)(int64_t)-EFAULT;
     }
@@ -12344,11 +13104,9 @@ static uint64_t sys_name_to_handle_at(uint64_t dirfd, uint64_t pathname,
  *
  * Returns a file descriptor on success, -errno on error.
  */
-static uint64_t sys_open_by_handle_at(uint64_t mount_fd, uint64_t handle_addr,
-                                       uint64_t flags)
-{
-    (void)mount_fd;  /* single mount — ignored */
-    (void)flags;     /* open flags currently unused */
+static uint64_t sys_open_by_handle_at(uint64_t mount_fd, uint64_t handle_addr, uint64_t flags) {
+    (void)mount_fd; /* single mount — ignored */
+    (void)flags;    /* open flags currently unused */
 
     /* Read handle_bytes from userspace */
     unsigned int hb;
@@ -12382,8 +13140,7 @@ static uint64_t sys_open_by_handle_at(uint64_t mount_fd, uint64_t handle_addr,
 
     const char *open_path = NULL;
     for (int i = 0; i < FH_MAX_HANDLES; i++) {
-        if (fh_table[i].in_use && fh_table[i].ino == ino &&
-            fh_table[i].mount_id == mount_id) {
+        if (fh_table[i].in_use && fh_table[i].ino == ino && fh_table[i].mount_id == mount_id) {
             open_path = fh_table[i].path;
             break;
         }
@@ -12391,16 +13148,17 @@ static uint64_t sys_open_by_handle_at(uint64_t mount_fd, uint64_t handle_addr,
     spinlock_irqsave_release(&fh_lock, __obh_flags);
 
     if (!open_path)
-        return (uint64_t)(int64_t)-ESTALE;  /* handle is stale */
+        return (uint64_t)(int64_t)-ESTALE; /* handle is stale */
 
     /* Verify the file still exists */
     struct vfs_stat st;
     if (vfs_stat(open_path, &st) < 0)
-        return (uint64_t)(int64_t)-ESTALE;  /* file was deleted */
+        return (uint64_t)(int64_t)-ESTALE; /* file was deleted */
 
     /* Allocate an fd entry for the calling process */
     struct process *p = process_get_current();
-    if (!p) return (uint64_t)(int64_t)-EPERM;
+    if (!p)
+        return (uint64_t)(int64_t)-EPERM;
 
     int fd = -1;
     uint64_t max_fds = p->file_max > 0 ? p->file_max : PROCESS_FD_MAX;
@@ -12418,12 +13176,13 @@ static uint64_t sys_open_by_handle_at(uint64_t mount_fd, uint64_t handle_addr,
 
     /* Fill in the fd entry */
     size_t plen = strlen(open_path);
-    if (plen > 63) plen = 63;
+    if (plen > 63)
+        plen = 63;
     memcpy(p->fd_table[fd].path, open_path, plen);
     p->fd_table[fd].path[plen] = '\0';
     p->fd_table[fd].offset = 0;
     p->fd_table[fd].used = true;
-    p->fd_table[fd].flags = 0;  /* regular file */
+    p->fd_table[fd].flags = 0; /* regular file */
 
     return (uint64_t)fd;
 }
@@ -12436,7 +13195,8 @@ void __init syscall_init(void) {
      * The CPU loads CS=STAR[47:32] and SS=STAR[47:32]+8 on syscall
      * On sysret:   CS=STAR[63:48]+16, SS=(STAR[63:48]+8)|3
      * SYSCALL: CS=0x08 (kernel code GDT idx 1), SS=0x10 (kernel data GDT idx 2)
-     * SYSRETQ: CS=0x10+16=0x20 (user code GDT idx 4), SS=(0x10+8)|3=0x1B (user data GDT idx 3, RPL=3)
+     * SYSRETQ: CS=0x10+16=0x20 (user code GDT idx 4), SS=(0x10+8)|3=0x1B (user data GDT idx 3,
+     * RPL=3)
      */
     uint64_t star = ((uint64_t)0x0008 << 32) | ((uint64_t)0x0010 << 48);
     wrmsr(MSR_STAR, star);
@@ -12454,9 +13214,9 @@ void __init syscall_init(void) {
 }
 
 /* ── syscall_handle: Handle a syscall by number ─────────────────────── */
-static int syscall_handle(int nr, void *args)
-{
-    if (nr < 0) return -EINVAL;
+static int syscall_handle(int nr, void *args) {
+    if (nr < 0)
+        return -EINVAL;
 
     /* Pack arguments into the dispatch format */
     uint64_t *a = (uint64_t *)args;
@@ -12474,9 +13234,9 @@ static int syscall_handle(int nr, void *args)
     return (int)ret;
 }
 /* ── syscall_register: Register a custom syscall handler ────────────── */
-static int syscall_register(int nr, void *handler)
-{
-    if (nr < 0 || nr > 1024 || !handler) return -EINVAL;
+static int syscall_register(int nr, void *handler) {
+    if (nr < 0 || nr > 1024 || !handler)
+        return -EINVAL;
 
     /* Store in a small dynamic table for custom syscalls.
      * Currently we use a fixed-size table. */
@@ -12485,7 +13245,8 @@ static int syscall_register(int nr, void *handler)
         custom_syscall_table_initialized = 1;
     }
 
-    if (nr >= CUSTOM_SYSCALL_TABLE_SIZE) return -ENOSPC;
+    if (nr >= CUSTOM_SYSCALL_TABLE_SIZE)
+        return -ENOSPC;
 
     if (custom_syscall_table[nr] != NULL) {
         kprintf("[syscall] syscall_register: nr=%d already registered\n", nr);
@@ -12493,31 +13254,35 @@ static int syscall_register(int nr, void *handler)
     }
 
     custom_syscall_table[nr] = handler;
-    kprintf("[syscall] syscall_register: nr=%d handler=0x%llx\n",
-            nr, (unsigned long long)(uintptr_t)handler);
+    kprintf("[syscall] syscall_register: nr=%d handler=0x%llx\n", nr,
+            (unsigned long long)(uintptr_t)handler);
     return 0;
 }
 /* ── syscall_unregister: Unregister a custom syscall handler ────────── */
-static int syscall_unregister(int nr)
-{
-    if (nr < 0 || nr > 1024) return -EINVAL;
+static int syscall_unregister(int nr) {
+    if (nr < 0 || nr > 1024)
+        return -EINVAL;
 
     /* Access the static table */
-    if (!custom_syscall_table_initialized) return -EINVAL;
-    if (nr >= CUSTOM_SYSCALL_TABLE_SIZE) return -ENOSPC;
-    if (!custom_syscall_table[nr]) return -ENOENT;
+    if (!custom_syscall_table_initialized)
+        return -EINVAL;
+    if (nr >= CUSTOM_SYSCALL_TABLE_SIZE)
+        return -ENOSPC;
+    if (!custom_syscall_table[nr])
+        return -ENOENT;
 
     custom_syscall_table[nr] = NULL;
     kprintf("[syscall] syscall_unregister: nr=%d\n", nr);
     return 0;
 }
 /* ── syscall_table_lookup: Look up a syscall handler by number ──────── */
-static void* syscall_table_lookup(int nr)
-{
-    if (nr < 0 || nr > 1024) return NULL;
+static void *syscall_table_lookup(int nr) {
+    if (nr < 0 || nr > 1024)
+        return NULL;
 
     /* Check the custom table first */
-    if (custom_syscall_table_initialized && nr < CUSTOM_SYSCALL_TABLE_SIZE && custom_syscall_table[nr]) {
+    if (custom_syscall_table_initialized && nr < CUSTOM_SYSCALL_TABLE_SIZE &&
+        custom_syscall_table[nr]) {
         return custom_syscall_table[nr];
     }
 
