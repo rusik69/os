@@ -1470,7 +1470,7 @@ static uint64_t do_sys_open(const char *path, uint64_t flags, uint64_t mode) {
                 p->fd_table[i].offset = 0;
                 p->fd_table[i].used = true;
                 p->fd_table[i].flags = (uint8_t)(FD_TMPFILE | ((flags & O_CLOEXEC) ? FD_CLOEXEC : 0));
-                p->fd_table[i].open_flags = (uint32_t)(flags & 0x3FFF); /* save relevant flags */
+                p->fd_table[i].open_flags = (uint32_t)(flags & 0x1FFFFF); /* save relevant flags */
                 spinlock_irqsave_release(&p->fd_table_lock, __tmp_irq);
                 return (uint64_t)(i + 3);
             }
@@ -1522,7 +1522,7 @@ static uint64_t do_sys_open(const char *path, uint64_t flags, uint64_t mode) {
             p->fd_table[i].offset = (flags & O_APPEND) ? append_initial_offset : 0;
             p->fd_table[i].used = true;
             p->fd_table[i].flags = (flags & O_CLOEXEC) ? FD_CLOEXEC : 0;
-            p->fd_table[i].open_flags = (uint32_t)(flags & 0x3FFF); /* save relevant flags */
+            p->fd_table[i].open_flags = (uint32_t)(flags & 0x1FFFFF); /* save relevant flags */
             spinlock_irqsave_release(&p->fd_table_lock, __open_irq);
             return (uint64_t)(i + 3);
         }
@@ -1872,6 +1872,30 @@ static uint64_t sys_fd_read(uint64_t fd, uint64_t buf_addr, uint64_t count) {
     return (uint64_t)to_read;
 }
 
+/*
+ * do_sync_after_write - If the file was opened with O_SYNC or O_DSYNC,
+ * flush the written data (and metadata for O_SYNC) to backing store.
+ * Returns 0 on success; errors are logged but not propagated to the caller
+ * (the write itself already succeeded).
+ */
+static void do_sync_after_write(struct process_fd *pfd)
+{
+    if (!pfd || !(pfd->open_flags & (O_SYNC | O_DSYNC)))
+        return;
+
+    struct vfs_stat st;
+    if (vfs_stat(pfd->path, &st) == 0 && st.ino != 0)
+        page_cache_flush_inode(st.ino);
+
+    if (pfd->open_flags & O_SYNC) {
+        /* O_SYNC: flush data + metadata + buffer cache */
+        vfs_flush(pfd->path);
+    } else {
+        /* O_DSYNC: flush data + buffer cache only */
+        bufcache_flush();
+    }
+}
+
 static uint64_t sys_fd_write(uint64_t fd, uint64_t buf_addr, uint64_t count) {
     /* Negative fd — reject with EBADF */
     if ((int64_t)fd < 0)
@@ -1894,6 +1918,7 @@ static uint64_t sys_fd_write(uint64_t fd, uint64_t buf_addr, uint64_t count) {
                 r = vfs_write(pfd->path, (const void *)(uintptr_t)buf_addr, (uint32_t)count);
                 if (r == 0) pfd->offset += count;
             }
+            if (r == 0) do_sync_after_write(pfd);
             return (r == 0) ? count : (uint64_t)(int64_t)r;
         }
         /* Default stdout/stderr — write to console */
@@ -1931,6 +1956,7 @@ static uint64_t sys_fd_write(uint64_t fd, uint64_t buf_addr, uint64_t count) {
         r = vfs_write(pfd->path, (const void *)(uintptr_t)buf_addr, (uint32_t)count);
         if (r == 0) pfd->offset += count;
     }
+    if (r == 0) do_sync_after_write(pfd);
     return (r == 0) ? count : (uint64_t)(int64_t)r;
 }
 
@@ -2075,6 +2101,9 @@ static uint64_t sys_pwrite64(uint64_t fd, uint64_t buf_addr,
     kfree(tmp);
     if (r < 0)
         return (uint64_t)(int64_t)r;
+
+    /* O_SYNC/O_DSYNC: flush written data to backing store */
+    if (r == 0) do_sync_after_write(pfd);
 
     /* I/O accounting */
     {
