@@ -174,6 +174,26 @@ int signal_send(uint32_t pid, int signum) {
     }
 
     if (signum == SIGTERM) {
+        /* If the target process has a custom handler installed, enqueue
+         * the signal for delivery via signal_check instead of immediately
+         * terminating.  This allows SIGTERM to be caught (POSIX). */
+        signal_handler_t sigterm_handler = p->sig_handlers[signum];
+        if (sigterm_handler != SIG_DFL && sigterm_handler != SIG_IGN) {
+            p->pending_signals |= (1ULL << signum);
+            /* Wake from interruptible sleep if blocked */
+            if (p->state == PROCESS_BLOCKED && !p->is_suspended) {
+                p->sleep_until = 0;
+                p->state = PROCESS_READY;
+                p->last_run_tick = timer_get_ticks();
+                spinlock_irqsave_release(&p->sig_lock, __sig_flags);
+                scheduler_add(p);
+                signalfd_notify(signum);
+            } else {
+                spinlock_irqsave_release(&p->sig_lock, __sig_flags);
+            }
+            return 0;
+        }
+        /* No custom handler — immediate termination (default action) */
         p->state = PROCESS_ZOMBIE;
         p->exit_code = -(int)signum;
         p->is_suspended = 0;

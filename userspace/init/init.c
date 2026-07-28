@@ -2,12 +2,27 @@
  *
  * Opens /dev/console, spawns /bin/sh, then waits for children.
  * This is the first userspace process started by the kernel.
+ *
+ * Signal handling: SIGTERM and SIGINT are forwarded to the child
+ * process so that shutdown/break signals propagate through the
+ * process tree.  (SIGKILL cannot be caught or ignored.)
  */
 
 #include "stdio.h"
 #include "stdlib.h"
 #include "string.h"
 #include "unistd.h"
+
+/* PID of the current child (getty/shell) — used by signal handlers */
+static volatile int g_child_pid = 0;
+
+/* Forward a signal to the child process (if any). */
+static void forward_shutdown_signal(int signum) {
+    int pid = g_child_pid;
+    if (pid > 0) {
+        kill(pid, signum);
+    }
+}
 
 /* Reap any zombie children (including orphaned grandchildren that
  * have been reparented to init).  This prevents accumulation of
@@ -31,6 +46,11 @@ int main(int argc, char *argv[]) {
     (void)argv;
 
     printf("[init] PID %d: Starting init process...\n", getpid());
+
+    /* Install signal handlers to forward shutdown/break signals to
+     * child processes so they propagate through the process tree. */
+    signal(SIGTERM, forward_shutdown_signal);
+    signal(SIGINT, forward_shutdown_signal);
 
     /* Open /dev/console for stdin/stdout/stderr */
     int console = open("/dev/console", 0);
@@ -72,7 +92,9 @@ int main(int argc, char *argv[]) {
             exit(1);
         }
 
-        /* Parent — reap any zombie children before blocking on the getty */
+        /* Parent — save child PID for signal forwarding, then reap
+         * any zombie children before blocking on the getty */
+        g_child_pid = pid;
         reap_children();
 
         /* Wait for the getty (and its shell) to exit */
