@@ -144,7 +144,8 @@ int main(int argc, char *argv[]) {
 
             /* reboot() should not return */
             printf("[init] reboot() returned unexpectedly, halting\n");
-            for (;;) { /* pause */ }
+            for (;;) { /* pause */
+            }
         }
 
         printf("[init] Getty exited (status %d), respawning...\n", status);
@@ -152,6 +153,7 @@ int main(int argc, char *argv[]) {
 
     /* Fallback — just loop */
     printf("[init] All shells failed, halting\n");
-    for (;;) { /* pause */ }
+    for (;;) { /* pause */
+    }
     return 0;
 }

@@ -5613,9 +5613,12 @@ static uint64_t sys_reboot(void) {
     /* Step 1: Send SIGTERM to all user processes except init (PID 1) and self */
     kprintf("[syscall] reboot: sending SIGTERM to all processes...\n");
     for (int i = 0; i < PROCESS_MAX; i++) {
-        if (table[i].state == PROCESS_UNUSED) continue;
-        if (table[i].pid <= 1) continue;          /* skip idle (0) and init (1) */
-        if (cur && table[i].pid == cur->pid) continue; /* skip calling process */
+        if (table[i].state == PROCESS_UNUSED)
+            continue;
+        if (table[i].pid <= 1)
+            continue; /* skip idle (0) and init (1) */
+        if (cur && table[i].pid == cur->pid)
+            continue; /* skip calling process */
         if (table[i].is_user) {
             signal_send(table[i].pid, SIGTERM);
         }
@@ -5624,14 +5627,17 @@ static uint64_t sys_reboot(void) {
     /* Step 2: Brief wait for processes to exit (up to ~2 seconds) */
     kprintf("[syscall] reboot: waiting for processes to terminate...\n");
     now = timer_get_ticks();
-    uint64_t deadline = now + (TIMER_FREQ * 2);   /* ~2 second timeout */
+    uint64_t deadline = now + (TIMER_FREQ * 2); /* ~2 second timeout */
     int all_dead;
     do {
         all_dead = 1;
         for (int i = 0; i < PROCESS_MAX; i++) {
-            if (table[i].state == PROCESS_UNUSED) continue;
-            if (table[i].pid <= 1) continue;
-            if (cur && table[i].pid == cur->pid) continue;
+            if (table[i].state == PROCESS_UNUSED)
+                continue;
+            if (table[i].pid <= 1)
+                continue;
+            if (cur && table[i].pid == cur->pid)
+                continue;
             if (table[i].state != PROCESS_ZOMBIE) {
                 all_dead = 0;
                 break;
@@ -5639,16 +5645,20 @@ static uint64_t sys_reboot(void) {
         }
         if (!all_dead && timer_get_ticks() < deadline) {
             /* Small delay to let other processes run */
-            for (volatile int d = 0; d < 100000; d++);
+            for (volatile int d = 0; d < 100000; d++)
+                ;
         }
     } while (!all_dead && timer_get_ticks() < deadline);
 
     /* Step 3: SIGKILL any remaining non-zombie user processes */
     kprintf("[syscall] reboot: sending SIGKILL to remaining processes...\n");
     for (int i = 0; i < PROCESS_MAX; i++) {
-        if (table[i].state == PROCESS_UNUSED) continue;
-        if (table[i].pid <= 1) continue;
-        if (cur && table[i].pid == cur->pid) continue;
+        if (table[i].state == PROCESS_UNUSED)
+            continue;
+        if (table[i].pid <= 1)
+            continue;
+        if (cur && table[i].pid == cur->pid)
+            continue;
         if (table[i].state != PROCESS_ZOMBIE && table[i].is_user) {
             signal_send(table[i].pid, SIGKILL);
         }
