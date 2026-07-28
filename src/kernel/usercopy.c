@@ -135,25 +135,3 @@ static void usercopy_init(void)
     kprintf("[OK] Usercopy hardened — max size %d, %d whitelisted sizes\n",
             USERCOPY_MAX_SIZE, usercopy_whitelist_count);
 }
-
-/* ── Stub: usercopy_check ─────────────────────────────── */
-static int usercopy_check(const void *addr, size_t len, int write)
-{
-    (void)addr;
-    (void)len;
-    (void)write;
-    kprintf("[usercopy] usercopy_check: not yet implemented\n");
-    return 0;
-}
-/* ── Stub: usercopy_allow ─────────────────────────────── */
-static int usercopy_allow(void)
-{
-    kprintf("[usercopy] usercopy_allow: not yet implemented\n");
-    return 0;
-}
-/* ── Stub: usercopy_forbid ─────────────────────────────── */
-static int usercopy_forbid(void)
-{
-    kprintf("[usercopy] usercopy_forbid: not yet implemented\n");
-    return 0;
-}

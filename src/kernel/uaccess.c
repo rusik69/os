@@ -47,8 +47,21 @@ static inline void restore_cr3(uint64_t old_cr3) {
         write_cr3(old_cr3);
 }
 
+/*
+ * EFAULT-safe copy from user-space to kernel buffer.
+ *
+ * Validates the source range before copying.
+ * In kernel-mode (current_is_user() == 0), we still validate basic
+ * address sanity (non-NULL, no wrap-around) to catch programming errors.
+ */
 int copy_from_user(void *dst, uint64_t __user src_user, size_t n) {
     if (n == 0) return 0;
+    /* Reject NULL source in any context */
+    if (src_user == 0)
+        return -EFAULT;
+    /* Reject wrap-around in any context */
+    if (src_user + n < src_user)
+        return -EFAULT;
     if (current_is_user()) {
         struct process *p = process_get_current();
         if (!p || !p->pml4 || !vmm_user_range_ok(p->pml4, src_user, n, 0))
@@ -62,13 +75,27 @@ int copy_from_user(void *dst, uint64_t __user src_user, size_t n) {
         restore_cr3(old_cr3);
         __asm__ volatile("sti");
     } else {
+        /* Kernel-mode: trusted kernel pointers, but still validate range */
         memcpy(dst, (const void *)(uintptr_t)src_user, n);
     }
     return 0;
 }
 
+/*
+ * EFAULT-safe copy from kernel buffer to user-space.
+ *
+ * Validates the destination range before copying.
+ * In kernel-mode (current_is_user() == 0), we still validate basic
+ * address sanity (non-NULL, no wrap-around) to catch programming errors.
+ */
 int copy_to_user(uint64_t __user dst_user, const void *src, size_t n) {
     if (n == 0) return 0;
+    /* Reject NULL destination in any context */
+    if (dst_user == 0)
+        return -EFAULT;
+    /* Reject wrap-around in any context */
+    if (dst_user + n < dst_user)
+        return -EFAULT;
     if (current_is_user()) {
         struct process *p = process_get_current();
         if (!p || !p->pml4 || !vmm_user_range_ok(p->pml4, dst_user, n, 1))
@@ -82,6 +109,7 @@ int copy_to_user(uint64_t __user dst_user, const void *src, size_t n) {
         restore_cr3(old_cr3);
         __asm__ volatile("sti");
     } else {
+        /* Kernel-mode: trusted kernel pointers, but still validate range */
         memcpy((void *)(uintptr_t)dst_user, src, n);
     }
     return 0;
@@ -91,6 +119,9 @@ long strncpy_from_user(char *dst, uint64_t __user src_user, size_t max_len) {
     size_t i;
 
     if (max_len == 0) return -EFAULT;
+    /* Reject NULL source */
+    if (src_user == 0)
+        return -EFAULT;
     if (current_is_user()) {
         struct process *p = process_get_current();
         if (!p || !p->pml4 || !vmm_user_string_ok(p->pml4, src_user, max_len))
@@ -123,6 +154,9 @@ long strlen_user(uint64_t __user src_user, size_t max_len) {
     size_t i;
 
     if (max_len == 0) return -EFAULT;
+    /* Reject NULL source */
+    if (src_user == 0)
+        return -EFAULT;
     if (current_is_user()) {
         struct process *p = process_get_current();
         if (!p || !p->pml4 || !vmm_user_string_ok(p->pml4, src_user, max_len))
@@ -152,6 +186,8 @@ long strlen_user(uint64_t __user src_user, size_t max_len) {
 }
 
 int get_user_byte(uint64_t __user addr, uint8_t *out) {
+    if (addr == 0)
+        return -EFAULT;
     if (current_is_user()) {
         struct process *p = process_get_current();
         if (!p || !p->pml4 || !vmm_user_range_ok(p->pml4, addr, 1, 0))
@@ -171,6 +207,8 @@ int get_user_byte(uint64_t __user addr, uint8_t *out) {
 }
 
 int put_user_byte(uint64_t __user addr, uint8_t val) {
+    if (addr == 0)
+        return -EFAULT;
     if (current_is_user()) {
         struct process *p = process_get_current();
         if (!p || !p->pml4 || !vmm_user_range_ok(p->pml4, addr, 1, 1))
@@ -191,6 +229,12 @@ int put_user_byte(uint64_t __user addr, uint8_t val) {
 
 int memset_user(uint64_t __user dst_user, uint8_t val, size_t n) {
     if (n == 0) return 0;
+    /* Reject NULL destination */
+    if (dst_user == 0)
+        return -EFAULT;
+    /* Reject wrap-around */
+    if (dst_user + n < dst_user)
+        return -EFAULT;
     if (current_is_user()) {
         struct process *p = process_get_current();
         if (!p || !p->pml4 || !vmm_user_range_ok(p->pml4, dst_user, n, 1))
@@ -206,33 +250,5 @@ int memset_user(uint64_t __user dst_user, uint8_t val, size_t n) {
     } else {
         memset((void *)(uintptr_t)dst_user, val, n);
     }
-    return 0;
-}
-
-/* ── Stub: uaccess_copy_to_user ─────────────────────────────── */
-static int uaccess_copy_to_user(void *dst, const void *src, size_t len)
-{
-    (void)dst;
-    (void)src;
-    (void)len;
-    kprintf("[uaccess] uaccess_copy_to_user: not yet implemented\n");
-    return 0;
-}
-/* ── Stub: uaccess_copy_from_user ─────────────────────────────── */
-static int uaccess_copy_from_user(void *dst, const void *src, size_t len)
-{
-    (void)dst;
-    (void)src;
-    (void)len;
-    kprintf("[uaccess] uaccess_copy_from_user: not yet implemented\n");
-    return 0;
-}
-/* ── Stub: uaccess_strncpy_from_user ─────────────────────────────── */
-static int uaccess_strncpy_from_user(char *dst, const char *src, size_t n)
-{
-    (void)dst;
-    (void)src;
-    (void)n;
-    kprintf("[uaccess] uaccess_strncpy_from_user: not yet implemented\n");
     return 0;
 }

@@ -6356,6 +6356,16 @@ void futex_robust_list_cleanup(struct process *proc) {
     if (!proc || !proc->ctid_ptr)
         return;
 
+    /* Validate that the robust list head is still a valid user address.
+     * Use vmm_user_range_ok with proc's page tables to check the address
+     * is mapped and readable.  If the address is no longer valid (e.g. the
+     * thread unmapped the robust list before exiting), skip cleanup. */
+    if (proc->is_user && proc->pml4) {
+        if (!vmm_user_range_ok(proc->pml4, (uint64_t)proc->ctid_ptr,
+                               sizeof(struct robust_list_head), 0))
+            return; /* EFAULT — robust list no longer mapped */
+    }
+
     stac();
     struct robust_list_head *head = (struct robust_list_head *)proc->ctid_ptr;
     struct robust_list *list;
