@@ -2,6 +2,7 @@
  *
  * Prints prompt "sh$ " and reads input line by line.
  * Supports built-in commands and external command execution via PATH.
+ * Supports pipe chains (cmd1 | cmd2 | ...) with proper EPIPE/SIGPIPE handling.
  */
 
 #include "stdarg.h"
@@ -16,11 +17,16 @@
 #define WIFSIGNALED(s) ((((s) & 0x7f) != 0) && (((s) & 0x7f) < 0x7f))
 #define WTERMSIG(s) ((s) & 0x7f)
 
+/* SIG_IGN / SIG_DFL: kernel uses 1 / 0 cast to function pointer */
+#define SIG_IGN ((void (*)(int))1)
+#define SIG_DFL ((void (*)(int))0)
+
 /* ── Shell config ─────────────────────────────────────────────── */
 #define MAX_LINE 1024
 #define MAX_ARGS 64
 #define MAX_ENV 64
 #define PATH_MAX 256
+#define MAX_SEGMENTS 16   /* max pipe segments in a pipeline */
 
 /* ── Environment ──────────────────────────────────────────────── */
 static char *sh_env[MAX_ENV];
@@ -80,6 +86,219 @@ static int sh_setenv(const char *var, const char *val) {
     sh_env[sh_env_count++] = new_entry;
     sh_env[sh_env_count] = 0;
     return 0;
+}
+
+/* ── Pipe segment descriptors ─────────────────────────────────── */
+struct cmd_segment {
+    char *argv[MAX_ARGS];
+    int argc;
+};
+
+/* ── Parse line into pipe segments ──────────────────────────────
+ * Split 'line' by '|', parse each segment into argv arrays.
+ * Returns number of segments, or -1 on error.
+ */
+static int sh_split_pipes(char *line, struct cmd_segment *segs, int max_segs)
+{
+    int nsegs = 0;
+    char *p = line;
+
+    while (*p && nsegs < max_segs) {
+        /* Skip leading whitespace in segment */
+        while (*p == ' ' || *p == '\t')
+            p++;
+        if (*p == '\0')
+            break;
+
+        struct cmd_segment *seg = &segs[nsegs];
+        int argc = 0;
+
+        /* Parse arguments in this segment until '|', '\0', or end */
+        while (*p && *p != '|') {
+            while (*p == ' ' || *p == '\t')
+                p++;
+            if (*p == '\0' || *p == '|')
+                break;
+            if (argc >= MAX_ARGS - 1)
+                return -1; /* too many args in segment */
+
+            seg->argv[argc++] = p;
+
+            /* Advance past argument characters */
+            while (*p && *p != ' ' && *p != '\t' && *p != '|')
+                p++;
+            if (*p == '|')
+                break;
+            if (*p)
+                *p++ = '\0';
+        }
+
+        seg->argv[argc] = 0;
+        seg->argc = argc;
+
+        if (argc == 0) {
+            /* Empty segment between pipes (e.g. "cmd || cmd" or leading/trailing pipe) */
+            if (*p == '|') {
+                p++;
+                continue;
+            }
+            break;
+        }
+
+        nsegs++;
+
+        /* Skip past the '|' to the next segment */
+        if (*p == '|')
+            p++;
+    }
+
+    return nsegs;
+}
+
+/* ── Execute a pipeline of external commands ────────────────────
+ * Forks N children connected by pipes. Returns exit status of last command.
+ * The shell ignores SIGPIPE so it survives broken pipes;
+ * children inherit default SIGPIPE handling and terminate on SIGPIPE.
+ */
+static int sh_exec_pipeline(struct cmd_segment *segs, int nsegs)
+{
+    int pipes[MAX_SEGMENTS - 1][2];
+    int pids[MAX_SEGMENTS];
+    int last_status = 0;
+    int i;
+
+    /* Create all pipes */
+    for (i = 0; i < nsegs - 1; i++) {
+        if (pipe(pipes[i]) < 0) {
+            /* Clean up any pipes already created */
+            for (int j = 0; j < i; j++) {
+                close(pipes[j][0]);
+                close(pipes[j][1]);
+            }
+            return 127; /* pipe creation failed */
+        }
+    }
+
+    /* Fork each command segment */
+    for (i = 0; i < nsegs; i++) {
+        pids[i] = fork();
+
+        if (pids[i] < 0) {
+            /* Fork failed — kill already-forked children */
+            for (int j = 0; j < i; j++)
+                kill(pids[j], SIGKILL);
+            /* Close all pipes */
+            for (int j = 0; j < nsegs - 1; j++) {
+                close(pipes[j][0]);
+                close(pipes[j][1]);
+            }
+            /* Wait for any killed children */
+            for (int j = 0; j < i; j++)
+                waitpid(pids[j], 0, 0);
+            return 127;
+        }
+
+        if (pids[i] == 0) {
+            /* ── Child process ── */
+
+            /* Restore default SIGPIPE handling so child dies on broken pipe */
+            signal(SIGPIPE, SIG_DFL);
+
+            /* Wire stdin from previous pipe's read end */
+            if (i > 0)
+                dup2(pipes[i - 1][0], STDIN_FILENO);
+
+            /* Wire stdout to current pipe's write end */
+            if (i < nsegs - 1)
+                dup2(pipes[i][1], STDOUT_FILENO);
+
+            /* Close ALL pipe fds in child */
+            for (int j = 0; j < nsegs - 1; j++) {
+                close(pipes[j][0]);
+                close(pipes[j][1]);
+            }
+
+            /* Try direct path first */
+            if (segs[i].argv[0][0] == '/' || segs[i].argv[0][0] == '.') {
+                execve(segs[i].argv[0], segs[i].argv, sh_env);
+                /* If exec returns, it failed */
+                write(STDERR_FILENO, "sh: ", 4);
+                write(STDERR_FILENO, segs[i].argv[0], strlen(segs[i].argv[0]));
+                write(STDERR_FILENO, ": not found\n", 12);
+                exit(127);
+            }
+
+            /* Search PATH */
+            char *path = sh_getenv("PATH");
+            if (!path)
+                path = "/bin";
+            char path_copy[PATH_MAX];
+            strncpy(path_copy, path, PATH_MAX);
+            path_copy[PATH_MAX - 1] = '\0';
+
+            char *dir = path_copy;
+            while (dir) {
+                char *next = strchr(dir, ':');
+                if (next)
+                    *next++ = '\0';
+
+                /* Build full path */
+                unsigned long dlen = strlen(dir);
+                unsigned long nlen = strlen(segs[i].argv[0]);
+                if (dlen + 1 + nlen >= PATH_MAX) {
+                    dir = next;
+                    continue;
+                }
+                char full[PATH_MAX];
+                unsigned long pos = 0;
+                while (dir[pos]) {
+                    full[pos] = dir[pos];
+                    pos++;
+                }
+                full[pos++] = '/';
+                unsigned long j = 0;
+                while (segs[i].argv[0][j]) {
+                    full[pos++] = segs[i].argv[0][j];
+                    j++;
+                }
+                full[pos] = '\0';
+
+                execve(full, segs[i].argv, sh_env);
+                dir = next;
+            }
+
+            /* Nothing worked */
+            write(STDERR_FILENO, "sh: ", 4);
+            write(STDERR_FILENO, segs[i].argv[0], strlen(segs[i].argv[0]));
+            write(STDERR_FILENO, ": not found\n", 12);
+            exit(127);
+        }
+    }
+
+    /* ── Parent process ── */
+
+    /* Close ALL pipe fds in parent — critical! If parent keeps a write-end
+     * open, the reader won't see EOF and will hang. */
+    for (i = 0; i < nsegs - 1; i++) {
+        close(pipes[i][0]);
+        close(pipes[i][1]);
+    }
+
+    /* Wait for all children, recording exit status of the last command */
+    for (i = 0; i < nsegs; i++) {
+        int status = 0;
+        waitpid(pids[i], &status, 0);
+        if (i == nsegs - 1) {
+            if (WIFEXITED(status))
+                last_status = WEXITSTATUS(status);
+            else if (WIFSIGNALED(status))
+                last_status = 128 + WTERMSIG(status);
+            else
+                last_status = 0;
+        }
+    }
+
+    return last_status;
 }
 
 /* ── Line input ───────────────────────────────────────────────── */
@@ -540,6 +759,10 @@ int main(int argc, char *argv[]) {
 
     sh_init_env();
 
+    /* Ignore SIGPIPE in the shell itself so broken pipes don't kill us.
+     * Children inherit default SIGPIPE handling (process termination). */
+    signal(SIGPIPE, SIG_IGN);
+
     /* If we have a command as argument, run it non-interactively */
     if (argc >= 2) {
         /* Run argv[1] with argv[1..] as arguments */
@@ -582,32 +805,42 @@ int main(int argc, char *argv[]) {
         /* Expand $? before parsing */
         sh_expand_line(line, MAX_LINE);
 
-        char *argv_buf[MAX_ARGS];
-        int ac = sh_parse(line, argv_buf, MAX_ARGS);
-        if (ac == 0)
-            continue;
+        /* Try pipe-segmented parsing first */
+        struct cmd_segment segs[MAX_SEGMENTS];
+        int nsegs = sh_split_pipes(line, segs, MAX_SEGMENTS);
 
-        /* Check built-ins */
-        int r = run_builtin(ac, argv_buf);
-        if (r >= 0) {
-            last_exit_code = r;
-            continue;
-        }
+        if (nsegs <= 0) {
+            /* Single non-pipe command — use existing logic */
+            char *argv_buf[MAX_ARGS];
+            int ac = sh_parse(line, argv_buf, MAX_ARGS);
+            if (ac == 0)
+                continue;
 
-        /* External command */
-        int pid = sh_exec_ext(argv_buf);
-        if (pid > 0) {
-            int status = 0;
-            waitpid(pid, &status, 0);
-            if (WIFEXITED(status))
-                last_exit_code = WEXITSTATUS(status);
-            else if (WIFSIGNALED(status))
-                last_exit_code = 128 + WTERMSIG(status);
-            else
-                last_exit_code = 0;
+            /* Check built-ins */
+            int r = run_builtin(ac, argv_buf);
+            if (r >= 0) {
+                last_exit_code = r;
+                continue;
+            }
+
+            /* External command */
+            int pid = sh_exec_ext(argv_buf);
+            if (pid > 0) {
+                int status = 0;
+                waitpid(pid, &status, 0);
+                if (WIFEXITED(status))
+                    last_exit_code = WEXITSTATUS(status);
+                else if (WIFSIGNALED(status))
+                    last_exit_code = 128 + WTERMSIG(status);
+                else
+                    last_exit_code = 0;
+            } else {
+                printf("sh: %s: not found\n", argv_buf[0]);
+                last_exit_code = 127;
+            }
         } else {
-            printf("sh: %s: not found\n", argv_buf[0]);
-            last_exit_code = 127;
+            /* Pipe chain — use pipeline execution */
+            last_exit_code = sh_exec_pipeline(segs, nsegs);
         }
     }
 
