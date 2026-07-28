@@ -2620,7 +2620,17 @@ static int64_t sys_waitpid(uint64_t pid, uint64_t status_addr, uint64_t options)
 }
 
 static int64_t sys_sleep_ticks(uint64_t ticks) {
-    process_sleep_ticks(ticks);
+    /* process_sleep_ticks blocks the process; when woken by signal
+     * the scheduler makes us READY and we resume here. Check for
+     * pending signals and return -ERESTARTSYS if interrupted. */
+    struct process *cur = process_get_current();
+    if (!cur) return (uint64_t)-1;
+    cur->sleep_until = timer_get_ticks() + ticks;
+    cur->state = PROCESS_BLOCKED;
+    scheduler_remove(cur);
+    scheduler_yield();
+    if (signal_has_pending_unmasked())
+        return (uint64_t)(int64_t)-ERESTARTSYS;
     return 0;
 }
 
@@ -12170,7 +12180,7 @@ int64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3, ui
         }
     }
 
-    return syscall_dispatch_internal(num, a1, a2, a3, a4, a5);
+    return signal_convert_erestartsys(syscall_dispatch_internal(num, a1, a2, a3, a4, a5));
 }
 
 /* ── syscall_dispatch_internal — raw dispatch (no seccomp/audit/validation) ── */
@@ -12187,7 +12197,6 @@ int64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2, uint64
     case SYS_CLOSE:
         return sys_close(a1);
     case SYS_CLOSE_RANGE:
-        return sys_close_range(a1, a2, a3);
     case SYS_EXIT:
         return sys_exit(a1);
     case SYS_EXIT_GROUP:

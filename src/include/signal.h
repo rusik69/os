@@ -123,6 +123,21 @@ int signal_send_info(uint32_t pid, int signum, struct siginfo *info,
  * instead of returning -EINTR when interrupted by a signal. */
 int signal_has_sa_restart(void);
 
+/* Check if any pending (non-masked) signal exists for the current process.
+ * Used by blocking syscall handlers to decide whether to return -ERESTARTSYS. */
+int signal_has_pending_unmasked(void);
+
+/* ── Convert kernel-internal ERESTART* codes to what userspace should see ──
+ *
+ * Called from syscall_dispatch_internal() after a syscall handler returns.
+ * If the return value is one of the ERESTART* codes, this function:
+ *   1. If SA_RESTART applies → returns the same value so the caller
+ *      can re-dispatch the syscall
+ *   2. Otherwise → returns -EINTR
+ * For non-ERESTART* values it returns them unchanged.
+ */
+int64_t signal_convert_erestartsys(int64_t retval);
+
 /* Check and deliver any pending signals for the current process.
  * Called by scheduler before returning to a READY process. */
 void signal_check(void);

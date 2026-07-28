@@ -107,4 +107,18 @@
  * structural damage before forcing a read-only remount. */
 #define EFSCORRUPTED 134
 
+/* ── Kernel-internal restart codes (NEVER returned to userspace) ──
+ *
+ * These are positive internal error codes used by kernel syscall handlers
+ * to indicate that a blocking operation was interrupted by a signal.
+ * They MUST be converted to -EINTR (or cause a transparent restart if
+ * SA_RESTART is set) before the return value reaches userspace.
+ *
+ * Values are deliberately high (> 256) to avoid colliding with errno
+ * values that might be exposed to userspace.
+ */
+#define ERESTARTSYS    512   /* restart if SA_RESTART, else convert to -EINTR */
+#define ERESTARTNOINTR 513   /* restart unconditionally (no -EINTR) */
+#define ERESTARTNOHAND 514   /* restart only if no user handler installed */
+
 #endif /* ERRNIO_H */

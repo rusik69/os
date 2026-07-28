@@ -858,7 +858,7 @@ static int wait4_child_matches(const struct process *child, uint32_t parent_pid,
  *   -errno on error:
  *     -ECHILD — no matching (unwaited) children exist
  *     -EFAULT — wstatus or rusage pointer is invalid
- *     -EINTR  — a signal was caught (not yet implemented)
+ *     -EINTR  — a signal was caught (returned via -ERESTARTSYS conversion)
  */
 int64_t sys_wait4(uint64_t pid, uint64_t wstatus_addr, uint64_t options, uint64_t rusage_addr) {
     struct process *cur = process_get_current();
@@ -951,6 +951,15 @@ int64_t sys_wait4(uint64_t pid, uint64_t wstatus_addr, uint64_t options, uint64_
             if (!wait4_child_matches(child, my_pid, my_pgid, req_pid))
                 continue;
             if (child->state != PROCESS_ZOMBIE) {
+                /* Check for pending signals before blocking.
+                 * If a signal arrived before we start waiting,
+                 * return -ERESTARTSYS immediately so the
+                 * syscall dispatch layer converts it to -EINTR
+                 * (or restarts if SA_RESTART is set). */
+                if (signal_has_pending_unmasked()) {
+                    cur->wait_for_pid = 0;
+                    return (uint64_t)(int64_t)-ERESTARTSYS;
+                }
                 /* Wait for this specific child */
                 cur->wait_for_pid = child->pid;
                 cur->state = PROCESS_BLOCKED;
@@ -965,6 +974,13 @@ int64_t sys_wait4(uint64_t pid, uint64_t wstatus_addr, uint64_t options, uint64_
                 my_pid = cur->pid;
                 my_pgid = cur->pgid;
                 cur->wait_for_pid = 0;
+
+                /* Check if we were woken by a signal rather than
+                 * a child becoming zombie.  If so, return
+                 * -ERESTARTSYS for proper conversion. */
+                if (signal_has_pending_unmasked()) {
+                    return (uint64_t)(int64_t)-ERESTARTSYS;
+                }
 
                 /* Re-scan children from the top — the child we
                  * waited for may now be zombie, or another child

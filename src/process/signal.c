@@ -522,6 +522,71 @@ int signal_setup_frame_userspace(struct interrupt_frame *frame, int signum,
     return 0;
 }
 
+/* ── signal_has_pending_unmasked — check if process has pending unmasked signals ──
+ *
+ * Returns 1 if any pending non-masked signals exist for the current
+ * process, 0 otherwise.  Used by blocking syscall handlers to decide
+ * whether to abort with -ERESTARTSYS when woken by a signal.
+ */
+int signal_has_pending_unmasked(void) {
+    struct process *p = process_get_current();
+    if (!p) return 0;
+    uint64_t pending = p->pending_signals & ~p->sig_mask;
+    /* Exclude SIGKILL/SIGSTOP from the check — they can't be caught
+     * or ignored, but they will still cause process termination. */
+    return (pending != 0);
+}
+
+/* ── signal_convert_erestartsys — convert internal restart codes ──────────
+ *
+ * Converts kernel-internal ERESTART* error codes to what userspace should see:
+ *   - ERESTARTSYS  → -EINTR (unless SA_RESTART is set, then leave for retry)
+ *   - ERESTARTNOINTR → leave for retry (unconditional restart)
+ *   - ERESTARTNOHAND → -EINTR if a user handler is installed (leave for retry if SIG_DFL)
+ *   - any other value → returned unchanged
+ *
+ * Note: actual SA_RESTART-aware restart implementation depends on the
+ * caller re-dispatching the syscall when one of the ERESTART* codes is
+ * returned and restart conditions are met.
+ */
+int64_t signal_convert_erestartsys(int64_t retval) {
+    if (retval != -(int64_t)ERESTARTSYS &&
+        retval != -(int64_t)ERESTARTNOINTR &&
+        retval != -(int64_t)ERESTARTNOHAND)
+        return retval;  /* unchanged */
+
+    /* For ERESTARTNOINTR: always retry (unconditional restart) */
+    if (retval == -(int64_t)ERESTARTNOINTR)
+        return retval;  /* keep for caller to re-dispatch */
+
+    /* For ERESTARTSYS: if SA_RESTART applies, keep for retry; else -EINTR */
+    if (retval == -(int64_t)ERESTARTSYS) {
+        if (signal_has_sa_restart())
+            return retval;  /* caller should re-dispatch */
+        return -(int64_t)EINTR;
+    }
+
+    /* For ERESTARTNOHAND: if no user handler for any pending signal, keep for
+     * retry (default action handles it); else -EINTR */
+    if (retval == -(int64_t)ERESTARTNOHAND) {
+        struct process *p = process_get_current();
+        if (!p) return -(int64_t)EINTR;
+
+        uint64_t pending = p->pending_signals & ~p->sig_mask;
+        while (pending) {
+            int sig = __builtin_ctzll(pending);
+            if (sig > 0 && sig < SIG_MAX &&
+                p->sig_handlers[sig] != SIG_DFL &&
+                p->sig_handlers[sig] != SIG_IGN)
+                return -(int64_t)EINTR;  /* user handler exists — convert */
+            pending &= pending - 1;
+        }
+        return retval;  /* no user handler — caller re-dispatches */
+    }
+
+    return -(int64_t)EINTR;
+}
+
 /* ── signal_notify_parent — send SIGCHLD with full siginfo_t ────
  * Called when a process transitions to ZOMBIE state to notify its
  * parent with a complete siginfo_t (pid, uid, exit status).
