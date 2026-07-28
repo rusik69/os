@@ -1,31 +1,31 @@
 /* net.c — Core networking: state, ethernet/IP, ARP, ICMP, poll, init */
 
-#include "net_internal.h"
-#include "e1000.h"
-#include "virtio_net.h"
-#include "string.h"
-#include "printf.h"
-#include "timer.h"
-#include "waitqueue.h"
-#include "netfilter.h"
 #include "conntrack_helper.h"
+#include "e1000.h"
 #include "export.h"
-#include "netdevice.h"
+#include "net_internal.h"
 #include "net_rps.h"
-#include "xdp.h"           /* XDP hook for early packet processing */
+#include "netdevice.h"
+#include "netfilter.h"
+#include "printf.h"
+#include "string.h"
+#include "timer.h"
+#include "virtio_net.h"
+#include "waitqueue.h"
+#include "xdp.h" /* XDP hook for early packet processing */
 
 /* Network state lock — protects all of the following globals */
 static spinlock_t net_lock = SPINLOCK_INIT;
 
 /* Shared network state */
-uint8_t  net_our_mac[6];
+uint8_t net_our_mac[6];
 uint32_t net_our_ip;
 uint32_t net_gateway_ip;
 uint32_t net_subnet_mask;
-int      net_dhcp_done = 0;
+int net_dhcp_done = 0;
 uint32_t net_dns_server = 0;
-uint8_t  net_gw_mac[6];
-int      net_gw_mac_known = 0;
+uint8_t net_gw_mac[6];
+int net_gw_mac_known = 0;
 uint16_t net_ip_id_counter = 1;
 
 /* IP routing table */
@@ -65,12 +65,15 @@ void net_rx_signal(void) {
     wait_queue_wake(&net_rx_wq);
 }
 
-int  net_rx_pending(void) { return net_rx_flag; }
+int net_rx_pending(void) {
+    return net_rx_flag;
+}
 
 int net_link_recv(void *buf, uint16_t max_len) {
     if (virtio_net_present()) {
         int n = virtio_net_receive(buf, max_len);
-        if (n != 0) return n;
+        if (n != 0)
+            return n;
     }
     if (e1000_is_present())
         return e1000_receive(buf, max_len);
@@ -83,8 +86,7 @@ int net_link_send(const void *data, uint16_t len) {
     if (netif_count() > 0) {
         for (int i = 0; i < NETDEV_MAX; i++) {
             struct net_device *dev = netif_get(i);
-            if (dev && dev->transmit &&
-                memcmp(dev->mac, net_our_mac, 6) == 0) {
+            if (dev && dev->transmit && memcmp(dev->mac, net_our_mac, 6) == 0) {
                 kprintf("[dbg] net_link_send: mac match at %d, calling transmit\n", i);
                 int ret = dev->transmit(dev, (const uint8_t *)data, len);
                 kprintf("[dbg] net_link_send: transmit returned %d\n", ret);
@@ -120,9 +122,9 @@ int rt_add(uint32_t dst, uint32_t mask, uint32_t gw, int iface) {
         if (rt_table[i].dst == dst && rt_table[i].mask == mask)
             return -1;
     }
-    rt_table[rt_num_entries].dst   = dst;
-    rt_table[rt_num_entries].mask  = mask;
-    rt_table[rt_num_entries].gw    = gw;
+    rt_table[rt_num_entries].dst = dst;
+    rt_table[rt_num_entries].mask = mask;
+    rt_table[rt_num_entries].gw = gw;
     rt_table[rt_num_entries].iface = iface;
     rt_num_entries++;
     spinlock_release(&net_lock);
@@ -156,9 +158,14 @@ int rt_lookup(uint32_t ip, uint32_t *gw_out, int *iface_out) {
             }
         }
     }
-    if (best < 0) { spinlock_release(&net_lock); return -1; }
-    if (gw_out)   *gw_out   = rt_table[best].gw;
-    if (iface_out) *iface_out = rt_table[best].iface;
+    if (best < 0) {
+        spinlock_release(&net_lock);
+        return -1;
+    }
+    if (gw_out)
+        *gw_out = rt_table[best].gw;
+    if (iface_out)
+        *iface_out = rt_table[best].iface;
     spinlock_release(&net_lock);
     return 0;
 }
@@ -177,7 +184,8 @@ void rt_flush(void) {
 /* ── Gratuitous ARP ────────────────────────────────────────────── */
 
 void arp_announce(void) {
-    if (!net_our_ip) return;
+    if (!net_our_ip)
+        return;
     struct arp_packet arp;
     arp.hw_type = htons(1);
     arp.proto_type = htons(ETH_TYPE_IP);
@@ -188,7 +196,7 @@ void arp_announce(void) {
     arp.sender_ip = htonl(net_our_ip);
     memcpy(arp.target_mac, net_our_mac, 6);
     arp.target_ip = htonl(net_our_ip);
-    uint8_t bc[6] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
+    uint8_t bc[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
     send_eth(bc, ETH_TYPE_ARP, &arp, sizeof(arp));
 }
 
@@ -275,13 +283,14 @@ void arp_send_request(uint32_t target_ip) {
     arp.sender_ip = htonl(net_our_ip);
     memset(arp.target_mac, 0, 6);
     arp.target_ip = htonl(target_ip);
-    uint8_t bc[6] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
+    uint8_t bc[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
     send_eth(bc, ETH_TYPE_ARP, &arp, sizeof(arp));
 }
 
 /* Resolve gateway MAC via ARP with retries + polling */
 void arp_resolve_gateway(void) {
-    if (net_gw_mac_known || !net_gateway_ip) return;
+    if (net_gw_mac_known || !net_gateway_ip)
+        return;
     for (int a = 0; a < 3 && !net_gw_mac_known; a++) {
         arp_send_request(net_gateway_ip);
         uint64_t start = timer_get_ticks();
@@ -291,15 +300,18 @@ void arp_resolve_gateway(void) {
             w++;
             uint64_t now = timer_get_ticks();
             /* Tick-based timeout (2s) when timer is running, else spin-count */
-            if (now > start && now - start > 200) break;
-            if (now == start && w > 3000000) break;
+            if (now > start && now - start > 200)
+                break;
+            if (now == start && w > 3000000)
+                break;
         }
     }
 }
 
 /* Resolve an arbitrary local IP via ARP with retries + polling */
 static void arp_resolve_ip(uint32_t ip) {
-    if (arp_cache_lookup(ip)) return;
+    if (arp_cache_lookup(ip))
+        return;
     for (int a = 0; a < 3 && !arp_cache_lookup(ip); a++) {
         arp_send_request(ip);
         uint64_t start = timer_get_ticks();
@@ -308,8 +320,10 @@ static void arp_resolve_ip(uint32_t ip) {
             net_poll();
             w++;
             uint64_t now = timer_get_ticks();
-            if (now > start && now - start > 200) break;
-            if (now == start && w > 3000000) break;
+            if (now > start && now - start > 200)
+                break;
+            if (now == start && w > 3000000)
+                break;
         }
     }
 }
@@ -320,8 +334,7 @@ static void arp_resolve_ip(uint32_t ip) {
  * refreshed within ARP_TIMEOUT_TICKS (5 min).  Stale entries are
  * marked invalid so subsequent lookups will trigger fresh resolution.
  */
-void arp_gc(void)
-{
+void arp_gc(void) {
     uint64_t now = timer_get_ticks();
 
     for (int i = 0; i < ARP_CACHE_SIZE; i++) {
@@ -365,8 +378,7 @@ void arp_gc(void)
  * increments the retry count.  Entries exceeding ARP_MAX_RETRIES
  * are marked invalid so callers get a fresh entry on next lookup.
  */
-void arp_retry_pending(void)
-{
+void arp_retry_pending(void) {
     uint64_t now = timer_get_ticks();
 
     for (int i = 0; i < ARP_CACHE_SIZE; i++) {
@@ -398,10 +410,10 @@ void arp_retry_pending(void)
  * When an ARP reply arrives, any packets buffered in the pending
  * queue for that IP are sent out using the now-known MAC address.
  */
-void arp_flush_pending(uint32_t ip)
-{
+void arp_flush_pending(uint32_t ip) {
     uint8_t *mac = arp_cache_lookup(ip);
-    if (!mac) return;  /* Not yet resolved — don't flush */
+    if (!mac)
+        return; /* Not yet resolved — don't flush */
 
     for (int i = 0; i < ARP_PENDING_QUEUE_SIZE; i++) {
         if (!arp_pending_queue[i].in_use)
@@ -420,8 +432,7 @@ void arp_flush_pending(uint32_t ip)
 }
 
 /* ── Count pending ARP resolutions ──────────────────────────────── */
-int arp_pending_count(void)
-{
+int arp_pending_count(void) {
     int count = 0;
     for (int i = 0; i < ARP_PENDING_QUEUE_SIZE; i++) {
         if (arp_pending_queue[i].in_use)
@@ -441,9 +452,7 @@ int arp_pending_count(void)
  * The caller should retry sending after net_poll() has been called
  * enough times for the ARP reply to arrive.
  */
-int arp_resolve_or_queue(uint32_t dst_ip,
-                          const void *frame, uint16_t frame_len)
-{
+int arp_resolve_or_queue(uint32_t dst_ip, const void *frame, uint16_t frame_len) {
     uint8_t *mac = arp_cache_lookup(dst_ip);
     if (mac) {
         /* MAC is known — caller can send */
@@ -456,9 +465,7 @@ int arp_resolve_or_queue(uint32_t dst_ip,
     /* Check if there's already an active resolution for this IP */
     int already_resolving = 0;
     for (int i = 0; i < ARP_CACHE_SIZE; i++) {
-        if (net_arp_cache[i].valid &&
-            net_arp_cache[i].ip == dst_ip &&
-            net_arp_cache[i].resolving) {
+        if (net_arp_cache[i].valid && net_arp_cache[i].ip == dst_ip && net_arp_cache[i].resolving) {
             already_resolving = 1;
             break;
         }
@@ -499,7 +506,7 @@ int arp_resolve_or_queue(uint32_t dst_ip,
 
     /* Queue the frame for later delivery */
     if (frame_len > ARP_PENDING_MAX_PKT)
-        return -1;  /* Frame too large to buffer */
+        return -1; /* Frame too large to buffer */
 
     for (int i = 0; i < ARP_PENDING_QUEUE_SIZE; i++) {
         if (!arp_pending_queue[i].in_use) {
@@ -508,11 +515,11 @@ int arp_resolve_or_queue(uint32_t dst_ip,
             arp_pending_queue[i].len = frame_len;
             arp_pending_queue[i].in_use = 1;
             arp_pending_queue[i].enqueue_tick = now;
-            return 0;  /* Queued */
+            return 0; /* Queued */
         }
     }
 
-    return -1;  /* Queue full */
+    return -1; /* Queue full */
 }
 
 /* --- Checksum --- */
@@ -520,9 +527,14 @@ int arp_resolve_or_queue(uint32_t dst_ip,
 uint16_t net_checksum(const void *data, int len) {
     const uint16_t *ptr = (const uint16_t *)data;
     uint32_t sum = 0;
-    while (len > 1) { sum += *ptr++; len -= 2; }
-    if (len == 1) sum += *(const uint8_t *)ptr;
-    while (sum >> 16) sum = (sum & 0xFFFF) + (sum >> 16);
+    while (len > 1) {
+        sum += *ptr++;
+        len -= 2;
+    }
+    if (len == 1)
+        sum += *(const uint8_t *)ptr;
+    while (sum >> 16)
+        sum = (sum & 0xFFFF) + (sum >> 16);
     return ~(uint16_t)sum;
 }
 
@@ -535,9 +547,15 @@ void net_get_ip(uint8_t *ip) {
     ip[3] = (uint8_t)(net_our_ip & 0xFF);
 }
 
-uint32_t net_get_gateway(void) { return net_gateway_ip; }
-uint32_t net_get_mask(void)    { return net_subnet_mask; }
-uint32_t net_get_dns(void)     { return net_dns_server; }
+uint32_t net_get_gateway(void) {
+    return net_gateway_ip;
+}
+uint32_t net_get_mask(void) {
+    return net_subnet_mask;
+}
+uint32_t net_get_dns(void) {
+    return net_dns_server;
+}
 
 void net_set_ip(uint32_t ip, uint32_t gw, uint32_t mask) {
     net_our_ip = ip;
@@ -548,7 +566,7 @@ void net_set_ip(uint32_t ip, uint32_t gw, uint32_t mask) {
 
 /* --- Ethernet/IP send --- */
 
-static volatile int send_ip_resolving = 0;  /* prevent recursive ARP resolve */
+static volatile int send_ip_resolving = 0; /* prevent recursive ARP resolve */
 
 void send_eth(const uint8_t *dst_mac, uint16_t type, const void *payload, uint16_t len) {
     uint8_t frame[1518];
@@ -569,8 +587,8 @@ void send_eth(const uint8_t *dst_mac, uint16_t type, const void *payload, uint16
     }
 }
 
-static void send_ip_fragmented(uint32_t dst_ip, uint8_t protocol,
-                               const void *payload, uint16_t len) {
+static void send_ip_fragmented(uint32_t dst_ip, uint8_t protocol, const void *payload,
+                               uint16_t len) {
     uint16_t ip_id = __sync_fetch_and_add(&net_ip_id_counter, 1);
     uint16_t max_payload = 1500 - (uint16_t)sizeof(struct ip_header);
     uint16_t off = 0;
@@ -601,7 +619,8 @@ static void send_ip_fragmented(uint32_t dst_ip, uint8_t protocol,
         int on_local = 0;
         if (net_subnet_mask && ((dst_ip & net_subnet_mask) == (net_our_ip & net_subnet_mask)))
             on_local = 1;
-        if (dst_ip == 0xFFFFFFFF) on_local = 0;
+        if (dst_ip == 0xFFFFFFFF)
+            on_local = 0;
         if (on_local) {
             uint8_t *cached = arp_cache_lookup(dst_ip);
             dst_mac = cached ? cached : bcast;
@@ -684,9 +703,7 @@ void send_ip(uint32_t dst_ip, uint8_t protocol, const void *payload, uint16_t le
             src_port = (uint16_t)icmp->type << 8 | icmp->code;
             dst_port = icmp->id;
         }
-        nf_conntrack_out(net_our_ip, dst_ip,
-                         src_port, dst_port,
-                         protocol, tcp_flags, len);
+        nf_conntrack_out(net_our_ip, dst_ip, src_port, dst_port, protocol, tcp_flags, len);
     }
 
     /* Netfilter POST_ROUTING */
@@ -723,7 +740,8 @@ void send_ip(uint32_t dst_ip, uint8_t protocol, const void *payload, uint16_t le
 /* --- ARP handler --- */
 
 static void handle_arp(const uint8_t *data, uint16_t len) {
-    if (len < sizeof(struct arp_packet)) return;
+    if (len < sizeof(struct arp_packet))
+        return;
     const struct arp_packet *arp = (const struct arp_packet *)data;
 
     uint32_t target = ntohl(arp->target_ip);
@@ -735,10 +753,8 @@ static void handle_arp(const uint8_t *data, uint16_t len) {
          * or the gateway IP. This prevents man-in-the-middle via
          * gratuitous ARP for IPs outside the local network. */
         uint32_t masked_sender = sender & net_subnet_mask;
-        uint32_t masked_our    = net_our_ip & net_subnet_mask;
-        if (net_subnet_mask == 0 ||
-            sender == net_gateway_ip ||
-            masked_sender == masked_our) {
+        uint32_t masked_our = net_our_ip & net_subnet_mask;
+        if (net_subnet_mask == 0 || sender == net_gateway_ip || masked_sender == masked_our) {
             arp_cache_add(sender, arp->sender_mac);
         }
     }
@@ -771,7 +787,8 @@ static void handle_arp(const uint8_t *data, uint16_t len) {
 /* --- ICMP handler --- */
 
 static void handle_icmp(struct ip_header *ip, const uint8_t *payload, uint16_t len) {
-    if (len < sizeof(struct icmp_header)) return;
+    if (len < sizeof(struct icmp_header))
+        return;
     const struct icmp_header *icmp = (const struct icmp_header *)payload;
 
     if (icmp->type == 8) {
@@ -806,32 +823,32 @@ static void handle_icmp(struct ip_header *ip, const uint8_t *payload, uint16_t l
  *  - Statistics exposed via net_frag_stats() for monitoring tools
  */
 
-#define IP_FRAG_SLOTS          32    /* max concurrent fragmented datagrams */
-#define IP_FRAG_BUF_SIZE       4096  /* max reassembly buf (covers jumbo frames) */
-#define IP_FRAG_TTL_TICKS      3000  /* ~30 seconds at 100 Hz timer (RFC 791 recommends 30s) */
+#define IP_FRAG_SLOTS 32       /* max concurrent fragmented datagrams */
+#define IP_FRAG_BUF_SIZE 4096  /* max reassembly buf (covers jumbo frames) */
+#define IP_FRAG_TTL_TICKS 3000 /* ~30 seconds at 100 Hz timer (RFC 791 recommends 30s) */
 
 /* Fragment reassembly statistics — instantiated here, declared in net_internal.h */
 static struct frag_stats frag_stats;
 
 struct ip_frag_slot {
-    uint16_t id;                          /* IP identification field */
-    uint32_t src;                         /* source IP (host order) */
-    uint32_t dst;                         /* destination IP (host order) */
-    uint8_t  proto;                       /* upper-layer protocol */
-    uint8_t  buf[IP_FRAG_BUF_SIZE];       /* reassembly data buffer */
-    uint16_t len;                         /* highest byte offset received */
-    uint16_t frag_end;                    /* end offset of the last fragment */
-    uint8_t  frag_map[IP_FRAG_BUF_SIZE / 8]; /* bitmap: 1 = byte received */
-    uint64_t tick;                        /* timestamp of last activity */
-    int      valid;                       /* 1 = slot is in use */
-    uint8_t  ihl;                         /* IP header length from first fragment */
+    uint16_t id;                            /* IP identification field */
+    uint32_t src;                           /* source IP (host order) */
+    uint32_t dst;                           /* destination IP (host order) */
+    uint8_t proto;                          /* upper-layer protocol */
+    uint8_t buf[IP_FRAG_BUF_SIZE];          /* reassembly data buffer */
+    uint16_t len;                           /* highest byte offset received */
+    uint16_t frag_end;                      /* end offset of the last fragment */
+    uint8_t frag_map[IP_FRAG_BUF_SIZE / 8]; /* bitmap: 1 = byte received */
+    uint64_t tick;                          /* timestamp of last activity */
+    int valid;                              /* 1 = slot is in use */
+    uint8_t ihl;                            /* IP header length from first fragment */
 };
 
 static struct ip_frag_slot ip_frags[IP_FRAG_SLOTS];
 
 /* Forward declaration for dispatching reassembled packets */
 static void handle_ip(uint8_t *data, uint16_t len);
-int  net_loopback_register(void);
+int net_loopback_register(void);
 
 /* net_frag_stats: copy current fragment reassembly statistics to caller */
 void net_frag_stats(struct frag_stats *out) {
@@ -846,8 +863,8 @@ static void frag_evict_stale(void) {
         if (ip_frags[i].valid && now - ip_frags[i].tick > IP_FRAG_TTL_TICKS) {
             kprintf("[NET] frag timeout: id=%u src=%08x dst=%08x proto=%u "
                     "rcvd=%u/%u\n",
-                    ip_frags[i].id, ip_frags[i].src, ip_frags[i].dst,
-                    ip_frags[i].proto, ip_frags[i].len, ip_frags[i].frag_end);
+                    ip_frags[i].id, ip_frags[i].src, ip_frags[i].dst, ip_frags[i].proto,
+                    ip_frags[i].len, ip_frags[i].frag_end);
             ip_frags[i].valid = 0;
             frag_stats.active_slots--;
             frag_stats.rx_timed_out++;
@@ -857,17 +874,13 @@ static void frag_evict_stale(void) {
 
 /* Find slot matching (id, src, dst, proto) or allocate a new one.
  * Returns NULL if all slots are occupied and no stale entry could be freed. */
-static struct ip_frag_slot *frag_find(uint16_t id, uint32_t src,
-                                       uint32_t dst, uint8_t proto) {
+static struct ip_frag_slot *frag_find(uint16_t id, uint32_t src, uint32_t dst, uint8_t proto) {
     frag_evict_stale();
 
     /* Return existing matching slot */
     for (int i = 0; i < IP_FRAG_SLOTS; i++) {
-        if (ip_frags[i].valid &&
-            ip_frags[i].id    == id &&
-            ip_frags[i].src   == src &&
-            ip_frags[i].dst   == dst &&
-            ip_frags[i].proto == proto)
+        if (ip_frags[i].valid && ip_frags[i].id == id && ip_frags[i].src == src &&
+            ip_frags[i].dst == dst && ip_frags[i].proto == proto)
             return &ip_frags[i];
     }
 
@@ -875,13 +888,13 @@ static struct ip_frag_slot *frag_find(uint16_t id, uint32_t src,
     for (int i = 0; i < IP_FRAG_SLOTS; i++) {
         if (!ip_frags[i].valid) {
             ip_frags[i].valid = 1;
-            ip_frags[i].id     = id;
-            ip_frags[i].src    = src;
-            ip_frags[i].dst    = dst;
-            ip_frags[i].proto  = proto;
-            ip_frags[i].len    = 0;
+            ip_frags[i].id = id;
+            ip_frags[i].src = src;
+            ip_frags[i].dst = dst;
+            ip_frags[i].proto = proto;
+            ip_frags[i].len = 0;
             ip_frags[i].frag_end = 0;
-            ip_frags[i].ihl    = 0;
+            ip_frags[i].ihl = 0;
             memset(ip_frags[i].frag_map, 0, sizeof(ip_frags[i].frag_map));
             ip_frags[i].tick = timer_get_ticks();
             frag_stats.active_slots++;
@@ -893,8 +906,7 @@ static struct ip_frag_slot *frag_find(uint16_t id, uint32_t src,
 
     /* All slots exhausted */
     frag_stats.rx_oom++;
-    kprintf("[NET] frag: all %d slots exhausted (id=%u src=%08x)\n",
-            IP_FRAG_SLOTS, id, src);
+    kprintf("[NET] frag: all %d slots exhausted (id=%u src=%08x)\n", IP_FRAG_SLOTS, id, src);
     return NULL;
 }
 
@@ -907,11 +919,10 @@ static struct ip_frag_slot *frag_find(uint16_t id, uint32_t src,
  *
  * On success (returns 1 with MF=0 and all data present), reassembles
  * the full datagram and dispatches it via handle_ip(). */
-static int handle_ip_fragment(struct ip_header *ip, const uint8_t *data,
-                               uint16_t len) {
+static int handle_ip_fragment(struct ip_header *ip, const uint8_t *data, uint16_t len) {
     uint16_t flags_frag = ntohs(ip->flags_frag);
     uint32_t frag_off = (uint32_t)(flags_frag & 0x1FFF) * 8;
-    int      more     = (flags_frag & 0x2000) != 0;
+    int more = (flags_frag & 0x2000) != 0;
 
     /* Fast path: single unfragmented packet */
     if (frag_off == 0 && !more)
@@ -923,14 +934,14 @@ static int handle_ip_fragment(struct ip_header *ip, const uint8_t *data,
 
     uint16_t part = len - ihl;
     if (part == 0)
-        return -1;   /* empty fragment */
+        return -1; /* empty fragment */
 
     /* Security: first fragment must contain at least the full IP header
      * so that upper-layer protocol demux can operate. */
     if (frag_off == 0 && part < 8) {
         frag_stats.rx_dropped++;
-        kprintf("[NET] frag: tiny first fragment (part=%u) from src=%08x\n",
-                part, ntohl(ip->src_ip));
+        kprintf("[NET] frag: tiny first fragment (part=%u) from src=%08x\n", part,
+                ntohl(ip->src_ip));
         return -1;
     }
 
@@ -938,8 +949,7 @@ static int handle_ip_fragment(struct ip_header *ip, const uint8_t *data,
 
     uint32_t src = ntohl(ip->src_ip);
     uint32_t dst = ntohl(ip->dst_ip);
-    struct ip_frag_slot *slot = frag_find(ntohs(ip->id), src, dst,
-                                           ip->protocol);
+    struct ip_frag_slot *slot = frag_find(ntohs(ip->id), src, dst, ip->protocol);
     if (!slot) {
         frag_stats.rx_dropped++;
         return -1;
@@ -948,8 +958,8 @@ static int handle_ip_fragment(struct ip_header *ip, const uint8_t *data,
     /* Validate fragment fits within the reassembly buffer */
     if (frag_off + (uint32_t)part > IP_FRAG_BUF_SIZE) {
         frag_stats.rx_dropped++;
-        kprintf("[NET] frag overflow: off=%u part=%u limit=%u (id=%u)\n",
-                frag_off, part, IP_FRAG_BUF_SIZE, ntohs(ip->id));
+        kprintf("[NET] frag overflow: off=%u part=%u limit=%u (id=%u)\n", frag_off, part,
+                IP_FRAG_BUF_SIZE, ntohs(ip->id));
         return -1;
     }
 
@@ -988,7 +998,7 @@ static int handle_ip_fragment(struct ip_header *ip, const uint8_t *data,
     /* Last fragment: verify all bytes from 0..len are received */
     for (uint32_t b = 0; b < slot->len; b++) {
         if (!(slot->frag_map[b / 8] & (uint8_t)(1u << (b % 8))))
-            return 1;   /* gaps remain, keep waiting */
+            return 1; /* gaps remain, keep waiting */
     }
 
     /* ---- Reassembly complete ---- */
@@ -1001,16 +1011,15 @@ static int handle_ip_fragment(struct ip_header *ip, const uint8_t *data,
     uint16_t reasm_ihl = (slot->ihl != 0) ? slot->ihl : ihl;
 
     /* Build a complete IP packet in a local buffer */
-    uint8_t pkt[IP_FRAG_BUF_SIZE + 60];  /* 60 = max IP header */
+    uint8_t pkt[IP_FRAG_BUF_SIZE + 60]; /* 60 = max IP header */
     struct ip_header reasm;
     memcpy(&reasm, ip, sizeof(reasm));
     reasm.flags_frag = 0;
-    reasm.total_len  = htons(reasm_ihl + slot->len);
-    reasm.checksum   = 0;
+    reasm.total_len = htons(reasm_ihl + slot->len);
+    reasm.checksum = 0;
 
     if (reasm_ihl + slot->len > sizeof(pkt)) {
-        kprintf("[NET] frag: reassembled pkt too large (%u bytes)\n",
-                reasm_ihl + slot->len);
+        kprintf("[NET] frag: reassembled pkt too large (%u bytes)\n", reasm_ihl + slot->len);
         return -1;
     }
 
@@ -1021,8 +1030,7 @@ static int handle_ip_fragment(struct ip_header *ip, const uint8_t *data,
 
     kprintf("[NET] frag reassembled: id=%u src=%08x dst=%08x proto=%u "
             "size=%u slots_used=%u\n",
-            ntohs(ip->id), src, dst, ip->protocol,
-            reasm_ihl + slot->len, frag_stats.active_slots);
+            ntohs(ip->id), src, dst, ip->protocol, reasm_ihl + slot->len, frag_stats.active_slots);
 
     handle_ip(pkt, reasm_ihl + slot->len);
     return 1;
@@ -1031,19 +1039,23 @@ static int handle_ip_fragment(struct ip_header *ip, const uint8_t *data,
 /* --- IP dispatcher --- */
 
 static void handle_ip(uint8_t *data, uint16_t len) {
-    if (len < sizeof(struct ip_header)) return;
+    if (len < sizeof(struct ip_header))
+        return;
     struct ip_header *ip = (struct ip_header *)data;
 
     uint16_t total = ntohs(ip->total_len);
-    if (total > len) return;
+    if (total > len)
+        return;
 
     uint16_t ihl = (ip->version_ihl & 0xF) * 4;
-    if (ihl < 20 || ihl > total) return;
+    if (ihl < 20 || ihl > total)
+        return;
 
     /* Verify IP header checksum (checksum field must be zero for computation) */
     uint16_t saved_csum = ip->checksum;
     ip->checksum = 0;
-    if (net_checksum(ip, ihl) != saved_csum) return;
+    if (net_checksum(ip, ihl) != saved_csum)
+        return;
 
     if (handle_ip_fragment(ip, data, len) != 0)
         return;
@@ -1053,15 +1065,13 @@ static void handle_ip(uint8_t *data, uint16_t len) {
     uint32_t dst_ip = ntohl(ip->dst_ip);
 
     /* IP forwarding: if packet is not for us and forwarding is enabled, forward it */
-    if (dst_ip != net_our_ip && dst_ip != 0xFFFFFFFF &&
-        (dst_ip & 0xFF000000) != 0x7F000000) {
+    if (dst_ip != net_our_ip && dst_ip != 0xFFFFFFFF && (dst_ip & 0xFF000000) != 0x7F000000) {
         if (net_ip_forwarding) {
             uint32_t fwd_gw;
             int fwd_iface;
             if (rt_lookup(dst_ip, &fwd_gw, &fwd_iface) == 0) {
                 /* Netfilter FORWARD hook — allows/denies forwarding */
-                if (nf_hook_traverse(NF_INET_FORWARD, (void *)data, (void *)data,
-                                     total) != 0)
+                if (nf_hook_traverse(NF_INET_FORWARD, (void *)data, (void *)data, total) != 0)
                     return;
                 /* Decrement TTL, recompute checksum */
                 ip->ttl--;
@@ -1087,31 +1097,28 @@ static void handle_ip(uint8_t *data, uint16_t len) {
             const struct icmp_header *icmp = (const struct icmp_header *)payload;
             uint16_t pseudo_src = (uint16_t)icmp->type << 8 | icmp->code;
             uint16_t pseudo_dst = icmp->id;
-            nf_conntrack_in(ntohl(ip->src_ip), ntohl(ip->dst_ip),
-                            pseudo_src, pseudo_dst, IPPROTO_ICMP, 0, payload_len);
+            nf_conntrack_in(ntohl(ip->src_ip), ntohl(ip->dst_ip), pseudo_src, pseudo_dst,
+                            IPPROTO_ICMP, 0, payload_len);
         }
         handle_icmp(ip, payload, payload_len);
     } else if (ip->protocol == IP_PROTO_TCP) {
         /* Track TCP in conntrack with full state machine */
         if (payload_len >= sizeof(struct tcp_header)) {
             const struct tcp_header *tcp = (const struct tcp_header *)payload;
-            nf_conntrack_in(ntohl(ip->src_ip), ntohl(ip->dst_ip),
-                            ntohs(tcp->src_port), ntohs(tcp->dst_port),
-                            IPPROTO_TCP, tcp->flags, payload_len);
+            nf_conntrack_in(ntohl(ip->src_ip), ntohl(ip->dst_ip), ntohs(tcp->src_port),
+                            ntohs(tcp->dst_port), IPPROTO_TCP, tcp->flags, payload_len);
         }
         handle_tcp(ip, payload, payload_len);
     } else if (ip->protocol == IP_PROTO_UDP) {
         /* Track UDP in conntrack */
         if (payload_len >= sizeof(struct udp_header)) {
             const struct udp_header *udp = (const struct udp_header *)payload;
-            nf_conntrack_in(ntohl(ip->src_ip), ntohl(ip->dst_ip),
-                            ntohs(udp->src_port), ntohs(udp->dst_port),
-                            IPPROTO_UDP, 0, payload_len);
+            nf_conntrack_in(ntohl(ip->src_ip), ntohl(ip->dst_ip), ntohs(udp->src_port),
+                            ntohs(udp->dst_port), IPPROTO_UDP, 0, payload_len);
         }
         handle_udp(ip, payload, payload_len);
     } else if (ip->protocol == IP_PROTO_SCTP) {
-        handle_sctp(ntohl(ip->src_ip), ntohl(ip->dst_ip),
-                    (const uint8_t *)payload, payload_len);
+        handle_sctp(ntohl(ip->src_ip), ntohl(ip->dst_ip), (const uint8_t *)payload, payload_len);
     }
 }
 
@@ -1138,7 +1145,8 @@ int net_ping(uint32_t target_ip) {
         while (!ping_reply_received) {
             net_poll();
             uint64_t now = timer_get_ticks();
-            if (now - start > 200) break;  /* 2 second per-probe timeout */
+            if (now - start > 200)
+                break; /* 2 second per-probe timeout */
         }
         if (ping_reply_received) {
             uint64_t elapsed = timer_get_ticks() - start;
@@ -1160,8 +1168,7 @@ int net_ping(uint32_t target_ip) {
  * This function handles Ethernet type dispatch: ARP, IPv4, IPv6,
  * and runs netfilter hooks at PRE_ROUTING and LOCAL_IN.
  */
-void net_rx_dispatch(uint8_t *pkt, uint16_t len)
-{
+void net_rx_dispatch(uint8_t *pkt, uint16_t len) {
     if (len < (int)sizeof(struct eth_header))
         return;
 
@@ -1207,11 +1214,12 @@ void net_rx_dispatch(uint8_t *pkt, uint16_t len)
         if (payload_len >= sizeof(struct ip_header)) {
             struct ip_header *ip = (struct ip_header *)payload;
             uint32_t src = ntohl(ip->src_ip);
-            if (src) arp_cache_add(src, eth->src);
+            if (src)
+                arp_cache_add(src, eth->src);
 
             /* Netfilter PRE_ROUTING */
-            if (nf_hook_traverse(NF_INET_PRE_ROUTING, (void *)pkt,
-                                 (void *)payload, payload_len) != 0)
+            if (nf_hook_traverse(NF_INET_PRE_ROUTING, (void *)pkt, (void *)payload, payload_len) !=
+                0)
                 return;
         }
         /* Netfilter LOCAL_IN for packets destined to us */
@@ -1220,8 +1228,8 @@ void net_rx_dispatch(uint8_t *pkt, uint16_t len)
             uint32_t dst_ip = ntohl(ip->dst_ip);
             if (dst_ip == net_our_ip || dst_ip == 0xFFFFFFFF ||
                 (dst_ip & 0xFF000000) == 0x7F000000) {
-                if (nf_hook_traverse(NF_INET_LOCAL_IN, (void *)pkt,
-                                     (void *)payload, payload_len) != 0)
+                if (nf_hook_traverse(NF_INET_LOCAL_IN, (void *)pkt, (void *)payload, payload_len) !=
+                    0)
                     return;
             }
         }
@@ -1251,14 +1259,16 @@ void net_poll(void) {
     }
 
     /* Fast path: if no IRQ signaled data, skip descriptor read (saves MMIO) */
-    if (!net_rx_flag) return;
+    if (!net_rx_flag)
+        return;
     net_rx_flag = 0;
 
     int drained = 0;
     int cpu_count = smp_get_cpu_count();
     for (int drain = 0; drain < 32; drain++) {
         int len = net_link_recv(pkt_buf, sizeof(pkt_buf));
-        if (len <= 0) break;
+        if (len <= 0)
+            break;
         drained++;
 
         /* RPS: Distribute packet processing across CPUs by flow hash.
@@ -1277,7 +1287,8 @@ void net_poll(void) {
                 memset(&key, 0, sizeof(key));
 
                 if (eth_type == ETH_TYPE_IP) {
-                    struct ip_header *ip = (struct ip_header *)(pkt_buf + sizeof(struct eth_header));
+                    struct ip_header *ip =
+                        (struct ip_header *)(pkt_buf + sizeof(struct eth_header));
                     key.src_ip = ip->src_ip;
                     key.dst_ip = ip->dst_ip;
                     key.proto = ip->protocol;
@@ -1290,7 +1301,8 @@ void net_poll(void) {
                         key.dst_port = ntohs(*(const uint16_t *)(l4 + 2));
                     }
                 } else { /* IPv6 */
-                    struct ipv6_header *ip6 = (struct ipv6_header *)(pkt_buf + sizeof(struct eth_header));
+                    struct ipv6_header *ip6 =
+                        (struct ipv6_header *)(pkt_buf + sizeof(struct eth_header));
                     /* Simplified: use IPv6 addresses for flow key */
                     key.proto = ip6->next_header;
                     /* Extract IPv6 addresses (first 4 bytes each for hash) */
@@ -1312,7 +1324,7 @@ void net_poll(void) {
                     if (rps_enqueue(target_cpu, pkt_buf, (uint16_t)len) == 0) {
                         /* Record flow for RFS */
                         rfs_record_flow(&key, target_cpu);
-                        continue;  /* Packet queued for remote CPU */
+                        continue; /* Packet queued for remote CPU */
                     }
                     /* Enqueue failed (backlog full) — fall through to
                      * process locally */
@@ -1334,7 +1346,8 @@ void net_poll(void) {
     while (rps_process_backlog() == 0) {
         drained++;
         /* Limit per-poll processing to prevent starvation */
-        if (drained >= 64) break;
+        if (drained >= 64)
+            break;
     }
 
     /* Re-enable NIC interrupts (NAPI-style: mask in IRQ handler, unmask after drain) */
@@ -1407,7 +1420,8 @@ int net_arp_list(void (*cb)(uint32_t ip, const uint8_t *mac)) {
     int count = 0;
     for (int i = 0; i < ARP_CACHE_SIZE; i++) {
         if (net_arp_cache[i].valid) {
-            if (cb) cb(net_arp_cache[i].ip, net_arp_cache[i].mac);
+            if (cb)
+                cb(net_arp_cache[i].ip, net_arp_cache[i].mac);
             count++;
         }
     }
@@ -1423,8 +1437,7 @@ static int loopback_initialized = 0;
 static int lo_ifindex = -1;
 
 /* Loopback transmit callback — feed the frame back into the receive path */
-static int lo_xmit(struct net_device *dev, const uint8_t *data, uint16_t len)
-{
+static int lo_xmit(struct net_device *dev, const uint8_t *data, uint16_t len) {
     (void)dev;
     if (!data || len < sizeof(struct eth_header) || len > 1518)
         return -1;
@@ -1437,8 +1450,7 @@ static int lo_xmit(struct net_device *dev, const uint8_t *data, uint16_t len)
 
 /* Register the loopback interface as a proper net_device.
  * Called from net_init() to bring up "lo" at boot with 127.0.0.1. */
-int net_loopback_register(void)
-{
+int net_loopback_register(void) {
     if (loopback_initialized)
         return -1;
 
@@ -1466,15 +1478,18 @@ int net_loopback_register(void)
 }
 
 int net_loopback_init(void) {
-    if (loopback_initialized) return -1;
+    if (loopback_initialized)
+        return -1;
     loopback_initialized = 1;
     loopback_len = 0;
     return 0;
 }
 
 int net_loopback_send(const void *data, int len) {
-    if (!loopback_initialized) return -1;
-    if (len > LOOPBACK_BUF_SIZE) len = LOOPBACK_BUF_SIZE;
+    if (!loopback_initialized)
+        return -1;
+    if (len > LOOPBACK_BUF_SIZE)
+        len = LOOPBACK_BUF_SIZE;
     memcpy(loopback_buffer, data, len);
     loopback_len = (uint16_t)len;
     return len;
@@ -1519,8 +1534,7 @@ EXPORT_SYMBOL(net_udp_recv);
 EXPORT_SYMBOL(net_udp_unlisten);
 
 /* ── Implement: net_exit ──────────────────────────────── */
-static int net_exit(void)
-{
+static int net_exit(void) {
     kprintf("[net] net_exit: shutting down network stack\n");
     for (int i = 0; i < MAX_TCP_CONNS; i++) {
         if (tcp_conns[i].state != TCP_CLOSED) {
@@ -1530,15 +1544,13 @@ static int net_exit(void)
     return 0;
 }
 /* ── Implement: net_register_protocol ─────────────────── */
-static int net_register_protocol(int family, void *proto)
-{
+static int net_register_protocol(int family, void *proto) {
     (void)proto;
     kprintf("[net] net_register_protocol: registered family %d\n", family);
     return 0;
 }
 /* ── Implement: net_unregister_protocol ───────────────── */
-static int net_unregister_protocol(int family)
-{
+static int net_unregister_protocol(int family) {
     kprintf("[net] net_unregister_protocol: unregistered family %d\n", family);
     return 0;
 }

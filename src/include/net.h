@@ -4,38 +4,42 @@
 #include "types.h"
 
 /* Byte order helpers */
-static inline uint16_t htons(uint16_t v) { return (v >> 8) | (v << 8); }
-static inline uint16_t ntohs(uint16_t v) { return htons(v); }
-static inline uint32_t htonl(uint32_t v) {
-    return ((v >> 24) & 0xFF) | ((v >> 8) & 0xFF00) |
-           ((v << 8) & 0xFF0000) | ((v << 24) & 0xFF000000U);
+static inline uint16_t htons(uint16_t v) {
+    return (v >> 8) | (v << 8);
 }
-static inline uint32_t ntohl(uint32_t v) { return htonl(v); }
+static inline uint16_t ntohs(uint16_t v) {
+    return htons(v);
+}
+static inline uint32_t htonl(uint32_t v) {
+    return ((v >> 24) & 0xFF) | ((v >> 8) & 0xFF00) | ((v << 8) & 0xFF0000) |
+           ((v << 24) & 0xFF000000U);
+}
+static inline uint32_t ntohl(uint32_t v) {
+    return htonl(v);
+}
 
 /* IP address printing macros (Linux kernel-compatible) */
 #define NIPQUAD_FMT "%d.%d.%d.%d"
 #define NIPQUAD(addr) \
-    (uint8_t)(((uint32_t)(addr)) >> 24),  \
-    (uint8_t)(((uint32_t)(addr)) >> 16),  \
-    (uint8_t)(((uint32_t)(addr)) >> 8),   \
-    (uint8_t)((uint32_t)(addr))
+    (uint8_t)(((uint32_t)(addr)) >> 24), (uint8_t)(((uint32_t)(addr)) >> 16), \
+        (uint8_t)(((uint32_t)(addr)) >> 8), (uint8_t)((uint32_t)(addr))
 
 /* Default network config (QEMU user-mode networking) */
-#define NET_IP       0x0A000F02  /* 10.0.2.15 (big-endian built at runtime) */
-#define NET_GATEWAY  0x0A000202  /* 10.0.2.2 */
-#define NET_MASK     0xFFFFFF00  /* 255.255.255.0 */
+#define NET_IP 0x0A000F02      /* 10.0.2.15 (big-endian built at runtime) */
+#define NET_GATEWAY 0x0A000202 /* 10.0.2.2 */
+#define NET_MASK 0xFFFFFF00    /* 255.255.255.0 */
 
-#define ETH_TYPE_IP   0x0800
-#define ETH_TYPE_ARP  0x0806
+#define ETH_TYPE_IP 0x0800
+#define ETH_TYPE_ARP 0x0806
 #define ETH_TYPE_IPV6 0x86DD
 
-#define IP_PROTO_ICMP   1
-#define IP_PROTO_TCP    6
-#define IP_PROTO_UDP    17
+#define IP_PROTO_ICMP 1
+#define IP_PROTO_TCP 6
+#define IP_PROTO_UDP 17
 #define IP_PROTO_ICMPV6 58
-#define IP_PROTO_IPIP   4
-#define IP_PROTO_SCTP   132
-#define IP_PROTO_DCCP   33
+#define IP_PROTO_IPIP 4
+#define IP_PROTO_SCTP 132
+#define IP_PROTO_DCCP 33
 
 #define DHCP_SERVER_PORT 67
 #define DHCP_CLIENT_PORT 68
@@ -43,8 +47,8 @@ static inline uint32_t ntohl(uint32_t v) { return htonl(v); }
 
 /* Ethernet header */
 struct eth_header {
-    uint8_t  dst[6];
-    uint8_t  src[6];
+    uint8_t dst[6];
+    uint8_t src[6];
     uint16_t type;
 } __attribute__((packed));
 
@@ -52,24 +56,24 @@ struct eth_header {
 struct arp_packet {
     uint16_t hw_type;
     uint16_t proto_type;
-    uint8_t  hw_len;
-    uint8_t  proto_len;
+    uint8_t hw_len;
+    uint8_t proto_len;
     uint16_t opcode;
-    uint8_t  sender_mac[6];
+    uint8_t sender_mac[6];
     uint32_t sender_ip;
-    uint8_t  target_mac[6];
+    uint8_t target_mac[6];
     uint32_t target_ip;
 } __attribute__((packed));
 
 /* IPv4 header */
 struct ip_header {
-    uint8_t  version_ihl;
-    uint8_t  tos;
+    uint8_t version_ihl;
+    uint8_t tos;
     uint16_t total_len;
     uint16_t id;
     uint16_t flags_frag;
-    uint8_t  ttl;
-    uint8_t  protocol;
+    uint8_t ttl;
+    uint8_t protocol;
     uint16_t checksum;
     uint32_t src_ip;
     uint32_t dst_ip;
@@ -82,18 +86,18 @@ struct in6_addr {
 
 /* IPv6 header (40 bytes) */
 struct ipv6_header {
-    uint32_t vcl_flow;          /* version(4), traffic_class(8), flow_label(20) */
-    uint16_t payload_length;    /* length of payload after this header */
-    uint8_t  next_header;       /* next header type (protocol) */
-    uint8_t  hop_limit;         /* hop limit */
-    struct in6_addr src_ip;     /* source address */
-    struct in6_addr dst_ip;     /* destination address */
+    uint32_t vcl_flow;       /* version(4), traffic_class(8), flow_label(20) */
+    uint16_t payload_length; /* length of payload after this header */
+    uint8_t next_header;     /* next header type (protocol) */
+    uint8_t hop_limit;       /* hop limit */
+    struct in6_addr src_ip;  /* source address */
+    struct in6_addr dst_ip;  /* destination address */
 } __attribute__((packed));
 
 /* ICMPv6 header */
 struct icmpv6_header {
-    uint8_t  type;
-    uint8_t  code;
+    uint8_t type;
+    uint8_t code;
     uint16_t checksum;
 } __attribute__((packed));
 
@@ -107,8 +111,8 @@ struct icmpv6_echo {
 /* ICMPv6 Neighbor Solicitation / Advertisement */
 struct nd_neighbor {
     struct icmpv6_header icmp;
-    uint32_t reserved;          /* NS: reserved; NA: R/S/O flags in top 3 bits */
-    struct in6_addr target;     /* target address */
+    uint32_t reserved;      /* NS: reserved; NA: R/S/O flags in top 3 bits */
+    struct in6_addr target; /* target address */
     /* Options follow (type, len, ...) */
 } __attribute__((packed));
 
@@ -122,8 +126,8 @@ struct nd_router_solicit {
 /* ICMPv6 Router Advertisement */
 struct nd_router_advert {
     struct icmpv6_header icmp;
-    uint8_t  cur_hop_limit;
-    uint8_t  flags;
+    uint8_t cur_hop_limit;
+    uint8_t flags;
     uint16_t router_lifetime;
     uint32_t reachable_time;
     uint32_t retrans_timer;
@@ -134,157 +138,168 @@ struct nd_router_advert {
 
 /* MLDv2 Group Record (RFC 3810 §5.2.12) */
 struct mldv2_group_record {
-    uint8_t  record_type;                /* MLD2_MODE_IS_INCLUDE, etc. */
-    uint8_t  aux_data_len;              /* length of aux data in 4-octet units */
+    uint8_t record_type;  /* MLD2_MODE_IS_INCLUDE, etc. */
+    uint8_t aux_data_len; /* length of aux data in 4-octet units */
     uint16_t num_sources;
     struct in6_addr multicast_addr;
-    struct in6_addr sources[];           /* variable-length source list */
+    struct in6_addr sources[]; /* variable-length source list */
 } __attribute__((packed));
 
 /* MLDv2 Multicast Listener Query (ICMPv6 type 130, RFC 3810 §5.1) */
 struct mldv2_query {
-    struct icmpv6_header icmp;           /* type=130, code=0 */
-    uint16_t max_response_delay;         /* code (MLDv2), Max Resp Delay in .1ms units */
+    struct icmpv6_header icmp;   /* type=130, code=0 */
+    uint16_t max_response_delay; /* code (MLDv2), Max Resp Delay in .1ms units */
     uint16_t reserved;
-    struct in6_addr multicast_address;   /* zero for General Query */
-    uint8_t  resv_s_qrv;                /* bits 0-2: QRV, 3: S flag, 4-7: reserved */
-    uint8_t  qqic;                      /* Querier's Query Interval Code */
+    struct in6_addr multicast_address; /* zero for General Query */
+    uint8_t resv_s_qrv;                /* bits 0-2: QRV, 3: S flag, 4-7: reserved */
+    uint8_t qqic;                      /* Querier's Query Interval Code */
     uint16_t num_sources;
-    struct in6_addr sources[];           /* variable-length source addresses */
+    struct in6_addr sources[]; /* variable-length source addresses */
 } __attribute__((packed));
 
 /* MLDv2 Multicast Listener Report (ICMPv6 type 143, RFC 3810 §5.2) */
 __extension__ struct mldv2_report {
-    struct icmpv6_header icmp;           /* type=143, code=0 */
+    struct icmpv6_header icmp; /* type=143, code=0 */
     uint16_t reserved;
     uint16_t num_group_records;
-    struct mldv2_group_record records[];  /* variable-length */
+    struct mldv2_group_record records[]; /* variable-length */
 } __attribute__((packed));
 
 /* NDP Option header */
 struct nd_option {
     uint8_t type;
-    uint8_t len;   /* length in units of 8 octets */
+    uint8_t len; /* length in units of 8 octets */
     /* data follows */
 } __attribute__((packed));
 
-#define ND_OPT_SRC_LLADDR   1   /* source link-layer address */
-#define ND_OPT_TGT_LLADDR   2   /* target link-layer address */
-#define ND_OPT_PREFIX_INFO  3   /* prefix information */
-#define ND_OPT_MTU          5   /* MTU option */
-#define ND_OPT_ROUTE_INFO  24   /* route information (RFC 4191) */
-#define ND_OPT_RDNSS       25   /* recursive DNS server (RFC 8106) */
+#define ND_OPT_SRC_LLADDR 1  /* source link-layer address */
+#define ND_OPT_TGT_LLADDR 2  /* target link-layer address */
+#define ND_OPT_PREFIX_INFO 3 /* prefix information */
+#define ND_OPT_MTU 5         /* MTU option */
+#define ND_OPT_ROUTE_INFO 24 /* route information (RFC 4191) */
+#define ND_OPT_RDNSS 25      /* recursive DNS server (RFC 8106) */
 
-#define ICMPV6_PACKET_TOO_BIG    2   /* Packet Too Big (RFC 4443 §3.2) */
+#define ICMPV6_PACKET_TOO_BIG 2 /* Packet Too Big (RFC 4443 §3.2) */
 
 /* MLDv1/v2 — Multicast Listener Discovery (RFC 3810) */
-#define ICMPV6_MLD_QUERY    130 /* Multicast Listener Query */
-#define ICMPV6_MLD_REPORT   131 /* Multicast Listener Report (v1) */
-#define ICMPV6_MLD_DONE     132 /* Multicast Listener Done (v1) */
+#define ICMPV6_MLD_QUERY 130     /* Multicast Listener Query */
+#define ICMPV6_MLD_REPORT 131    /* Multicast Listener Report (v1) */
+#define ICMPV6_MLD_DONE 132      /* Multicast Listener Done (v1) */
 #define ICMPV6_MLD_REPORT_V2 143 /* Multicast Listener Report v2 */
 
 /* MLDv2 record types for group records (RFC 3810 §5.2.12) */
-#define MLD2_MODE_IS_INCLUDE        1
-#define MLD2_MODE_IS_EXCLUDE        2
-#define MLD2_CHANGE_TO_INCLUDE      3
-#define MLD2_CHANGE_TO_EXCLUDE      4
-#define MLD2_ALLOW_NEW_SOURCES      5
-#define MLD2_BLOCK_OLD_SOURCES      6
+#define MLD2_MODE_IS_INCLUDE 1
+#define MLD2_MODE_IS_EXCLUDE 2
+#define MLD2_CHANGE_TO_INCLUDE 3
+#define MLD2_CHANGE_TO_EXCLUDE 4
+#define MLD2_ALLOW_NEW_SOURCES 5
+#define MLD2_BLOCK_OLD_SOURCES 6
 
 /* MLDv2 group record flags */
-#define MLD2_SUPPRESS_JOIN  0x01  /* suppress join processing (per-interface flag) */
+#define MLD2_SUPPRESS_JOIN 0x01 /* suppress join processing (per-interface flag) */
 
-#define ICMPV6_RS           133 /* Router Solicitation */
-#define ICMPV6_RA           134 /* Router Advertisement */
-#define ICMPV6_NS           135 /* Neighbor Solicitation */
-#define ICMPV6_NA           136 /* Neighbor Advertisement */
+#define ICMPV6_RS 133 /* Router Solicitation */
+#define ICMPV6_RA 134 /* Router Advertisement */
+#define ICMPV6_NS 135 /* Neighbor Solicitation */
+#define ICMPV6_NA 136 /* Neighbor Advertisement */
 
 /* IPv6 multicast addresses (network byte order) */
-#define IPV6_ADDR_ALL_NODES     { { 0xFF,0x02,0,0,0,0,0,0,0,0,0,0,0,0,0,1 } }
-#define IPV6_ADDR_ALL_ROUTERS   { { 0xFF,0x02,0,0,0,0,0,0,0,0,0,0,0,0,0,2 } }
-#define IPV6_ADDR_ALL_DHCP_SERVERS { { 0xFF,0x02,0,0,0,0,0,0,0,0,0,0,0x01,0,0x00,0x02 } }
+#define IPV6_ADDR_ALL_NODES \
+    { \
+        { 0xFF, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 } \
+    }
+#define IPV6_ADDR_ALL_ROUTERS \
+    { \
+        { 0xFF, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2 } \
+    }
+#define IPV6_ADDR_ALL_DHCP_SERVERS \
+    { \
+        { 0xFF, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01, 0, 0x00, 0x02 } \
+    }
 
-#define IPV6_ADDR_LINKLOCAL_PFX { { 0xFE,0x80,0,0,0,0,0,0,0,0,0,0,0,0,0,0 } }
+#define IPV6_ADDR_LINKLOCAL_PFX \
+    { \
+        { 0xFE, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 } \
+    }
 
 /* ── IPv6 Next Header constants ──────────────────────────────────── */
-#define IPV6_NEXTHDR_HOPOPT      0   /* Hop-by-Hop Option */
-#define IPV6_NEXTHDR_ICMP        58  /* ICMPv6 */
-#define IPV6_NEXTHDR_TCP         6   /* TCP */
-#define IPV6_NEXTHDR_UDP         17  /* UDP */
-#define IPV6_NEXTHDR_IPV6        41  /* IPv6 in IPv6 */
-#define IPV6_NEXTHDR_ROUTING     43  /* Routing */
-#define IPV6_NEXTHDR_FRAGMENT    44  /* Fragment */
-#define IPV6_NEXTHDR_ESP         50  /* Encapsulating Security Payload */
-#define IPV6_NEXTHDR_AUTH        51  /* Authentication Header */
-#define IPV6_NEXTHDR_NONE        59  /* No next header */
-#define IPV6_NEXTHDR_DEST        60  /* Destination Options */
+#define IPV6_NEXTHDR_HOPOPT 0    /* Hop-by-Hop Option */
+#define IPV6_NEXTHDR_ICMP 58     /* ICMPv6 */
+#define IPV6_NEXTHDR_TCP 6       /* TCP */
+#define IPV6_NEXTHDR_UDP 17      /* UDP */
+#define IPV6_NEXTHDR_IPV6 41     /* IPv6 in IPv6 */
+#define IPV6_NEXTHDR_ROUTING 43  /* Routing */
+#define IPV6_NEXTHDR_FRAGMENT 44 /* Fragment */
+#define IPV6_NEXTHDR_ESP 50      /* Encapsulating Security Payload */
+#define IPV6_NEXTHDR_AUTH 51     /* Authentication Header */
+#define IPV6_NEXTHDR_NONE 59     /* No next header */
+#define IPV6_NEXTHDR_DEST 60     /* Destination Options */
 
 /* IPv6 Extension Header structures (RFC 8200) */
 
 /* Hop-by-Hop Options Header / Destination Options Header */
 struct ipv6_exthdr_opt {
-    uint8_t  next_header;
-    uint8_t  hdr_ext_len;   /* length in 8-octet units excluding first 8 octets */
-    uint8_t  options[];     /* TLV-encoded options */
+    uint8_t next_header;
+    uint8_t hdr_ext_len; /* length in 8-octet units excluding first 8 octets */
+    uint8_t options[];   /* TLV-encoded options */
 } __attribute__((packed));
 
 /* Routing Header (type 0 deprecated, type 2 for mobility) */
 struct ipv6_routing {
-    uint8_t  next_header;
-    uint8_t  hdr_ext_len;
-    uint8_t  routing_type;
-    uint8_t  segments_left;
-    uint8_t  data[];        /* type-specific data */
+    uint8_t next_header;
+    uint8_t hdr_ext_len;
+    uint8_t routing_type;
+    uint8_t segments_left;
+    uint8_t data[]; /* type-specific data */
 } __attribute__((packed));
 
 /* Fragment Header (RFC 8200 §4.5) */
 struct ipv6_fragment {
-    uint8_t  next_header;
-    uint8_t  reserved;
-    uint16_t frag_off_more; /* bits 0-2: reserved, bit 3: M flag, bits 4-15: fragment offset (high bits) */
+    uint8_t next_header;
+    uint8_t reserved;
+    uint16_t frag_off_more; /* bits 0-2: reserved, bit 3: M flag, bits 4-15: fragment offset (high
+                               bits) */
     uint32_t identification;
 } __attribute__((packed));
 
 /* Fragment Offset and More flag extraction helpers */
-#define IPV6_FRAG_OFFSET(hdr) \
-    ((uint16_t)(ntohs((hdr)->frag_off_more) & 0xFFF8) >> 3)
-#define IPV6_FRAG_MORE(hdr) \
-    (!!(ntohs((hdr)->frag_off_more) & 0x0001))
+#define IPV6_FRAG_OFFSET(hdr) ((uint16_t)(ntohs((hdr)->frag_off_more) & 0xFFF8) >> 3)
+#define IPV6_FRAG_MORE(hdr) (!!(ntohs((hdr)->frag_off_more) & 0x0001))
 
 /* Authentication Header (RFC 4302) */
 struct ipv6_auth {
-    uint8_t  next_header;
-    uint8_t  payload_len;   /* length in 4-octet units minus 2 */
+    uint8_t next_header;
+    uint8_t payload_len; /* length in 4-octet units minus 2 */
     uint16_t reserved;
-    uint32_t spi;           /* Security Parameters Index */
+    uint32_t spi; /* Security Parameters Index */
     uint32_t sequence_number;
-    uint8_t  icv[];         /* Integrity Check Value */
+    uint8_t icv[]; /* Integrity Check Value */
 } __attribute__((packed));
 
 /* TLV Option format (used in Hop-by-Hop and Destination options) */
 struct ipv6_tlv_opt {
-    uint8_t  type;
-    uint8_t  len;           /* length of data (not including type+len) */
-    uint8_t  data[];
+    uint8_t type;
+    uint8_t len; /* length of data (not including type+len) */
+    uint8_t data[];
 } __attribute__((packed));
 
 /* TLV option types */
-#define IPV6_TLV_PAD1        0   /* 1-byte padding (no len+data) */
-#define IPV6_TLV_PADN        1   /* padding */
-#define IPV6_TLV_ROUTER_ALERT 5  /* Router Alert (RFC 2711) */
-#define IPV6_TLV_JUMBO       0xC2 /* Jumbo Payload (RFC 2675) */
-#define IPV6_TLV_NSAP_ADDR   0xC3 /* NSAP Address (RFC 1888, deprecated) */
-#define IPV6_TLV_TUN_LIMIT   4   /* Tunnel Encapsulation Limit (RFC 2473) */
+#define IPV6_TLV_PAD1 0         /* 1-byte padding (no len+data) */
+#define IPV6_TLV_PADN 1         /* padding */
+#define IPV6_TLV_ROUTER_ALERT 5 /* Router Alert (RFC 2711) */
+#define IPV6_TLV_JUMBO 0xC2     /* Jumbo Payload (RFC 2675) */
+#define IPV6_TLV_NSAP_ADDR 0xC3 /* NSAP Address (RFC 1888, deprecated) */
+#define IPV6_TLV_TUN_LIMIT 4    /* Tunnel Encapsulation Limit (RFC 2473) */
 
 /* Router Alert value meanings */
-#define IPV6_ROUTER_ALERT_MLD     0   /* Multicast Listener Discovery */
-#define IPV6_ROUTER_ALERT_RSVP    1   /* RSVP */
-#define IPV6_ROUTER_ALERT_ACTIVE  2   /* Active Networks */
+#define IPV6_ROUTER_ALERT_MLD 0    /* Multicast Listener Discovery */
+#define IPV6_ROUTER_ALERT_RSVP 1   /* RSVP */
+#define IPV6_ROUTER_ALERT_ACTIVE 2 /* Active Networks */
 
 /* ICMP header */
 struct icmp_header {
-    uint8_t  type;
-    uint8_t  code;
+    uint8_t type;
+    uint8_t code;
     uint16_t checksum;
     uint16_t id;
     uint16_t seq;
@@ -304,8 +319,8 @@ struct tcp_header {
     uint16_t dst_port;
     uint32_t seq_num;
     uint32_t ack_num;
-    uint8_t  data_off;   /* upper 4 bits = offset in 32-bit words */
-    uint8_t  flags;
+    uint8_t data_off; /* upper 4 bits = offset in 32-bit words */
+    uint8_t flags;
     uint16_t window;
     uint16_t checksum;
     uint16_t urgent;
@@ -321,18 +336,18 @@ struct tcp_header {
 #define TCP_CWR 0x80
 
 /* ECN field in IP TOS byte (lower 2 bits) */
-#define IP_ECN_MASK     0x03
-#define IP_ECN_NOT_ECT  0x00   /* Not ECN-Capable Transport */
-#define IP_ECN_ECT1     0x01   /* ECN-Capable Transport (1) */
-#define IP_ECN_ECT0     0x02   /* ECN-Capable Transport (0) */
-#define IP_ECN_CE       0x03   /* Congestion Experienced */
+#define IP_ECN_MASK 0x03
+#define IP_ECN_NOT_ECT 0x00 /* Not ECN-Capable Transport */
+#define IP_ECN_ECT1 0x01    /* ECN-Capable Transport (1) */
+#define IP_ECN_ECT0 0x02    /* ECN-Capable Transport (0) */
+#define IP_ECN_CE 0x03      /* Congestion Experienced */
 
 /* TCP pseudo header for checksum */
 struct tcp_pseudo {
     uint32_t src_ip;
     uint32_t dst_ip;
-    uint8_t  zero;
-    uint8_t  protocol;
+    uint8_t zero;
+    uint8_t protocol;
     uint16_t tcp_len;
 } __attribute__((packed));
 
@@ -340,10 +355,10 @@ void net_init(void);
 void net_poll(void);
 void net_rx_signal(void);
 void net_rx_dispatch(uint8_t *data, uint16_t len);
-int  net_rx_pending(void);
+int net_rx_pending(void);
 /* Block until a network packet is available (waitqueue-based) */
 void net_wait_for_packet(void);
-int  net_link_send(const void *data, uint16_t len);
+int net_link_send(const void *data, uint16_t len);
 uint16_t net_checksum(const void *data, int len);
 void net_get_ip(uint8_t *ip);
 uint32_t net_get_gateway(void);
@@ -359,19 +374,19 @@ void net_set_ip(uint32_t ip, uint32_t gw, uint32_t mask);
 /* IPv6 support */
 void ipv6_init(void);
 void ipv6_poll(void);
-int  ipv6_has_linklocal(void);
+int ipv6_has_linklocal(void);
 void ipv6_get_linklocal(struct in6_addr *addr);
-int  ipv6_ping6(const struct in6_addr *target);
+int ipv6_ping6(const struct in6_addr *target);
 void ipv6_send_rs(void);
 
 /* Loopback interface */
-int  net_loopback_register(void);
-int  net_loopback_init(void);
-int  net_loopback_send(const void *data, int len);
+int net_loopback_register(void);
+int net_loopback_init(void);
+int net_loopback_send(const void *data, int len);
 
 /* TCP keepalive support */
 void net_tcp_set_keepalive(int conn_id, int keepalive);
-int  net_tcp_get_keepalive(int conn_id);
+int net_tcp_get_keepalive(int conn_id);
 
 /* Return number of bytes available in TCP receive buffer (0 = no data) */
 int net_tcp_available(int conn_id);
@@ -387,11 +402,11 @@ struct tcp_conn_info {
     uint16_t local_port;
     uint32_t remote_ip;
     uint16_t remote_port;
-    int      state;
+    int state;
     uint32_t cwnd;
     uint32_t ssthresh;
     uint64_t last_send_tick;
-    uint8_t  retrans_count;
+    uint8_t retrans_count;
 };
 int net_tcp_get_info(int conn_id, struct tcp_conn_info *info);
 
@@ -400,8 +415,8 @@ typedef void (*tcp_data_handler)(int conn_id, const void *data, uint16_t len);
 typedef void (*tcp_connect_handler)(int conn_id);
 typedef void (*tcp_close_handler)(int conn_id);
 
-void net_tcp_listen(uint16_t port, tcp_connect_handler on_connect,
-                    tcp_data_handler on_data, tcp_close_handler on_close);
+void net_tcp_listen(uint16_t port, tcp_connect_handler on_connect, tcp_data_handler on_data,
+                    tcp_close_handler on_close);
 void net_tcp_unlisten(uint16_t port);
 int net_tcp_send(int conn_id, const void *data, uint16_t len);
 void net_tcp_close(int conn_id);
@@ -411,7 +426,7 @@ uint32_t net_dns_resolve(const char *hostname);
 
 /* TCP */
 int net_tcp_connect(uint32_t ip, uint16_t port);
-void tcp_tfo_init(void);       /* TCP Fast Open initialization */
+void tcp_tfo_init(void); /* TCP Fast Open initialization */
 int net_tcp_recv(int conn_id, void *buf, uint16_t bufsize, int timeout_ticks);
 
 /* Blocking TCP server accept — waits up to timeout_ticks for a new
@@ -423,33 +438,31 @@ int net_tcp_accept(uint16_t port, int timeout_ticks);
 #include "dns_cache.h"
 
 /* UDP send */
-void net_udp_send(uint32_t dst_ip, uint16_t src_port, uint16_t dst_port,
-                  const void *data, uint16_t len);
+void net_udp_send(uint32_t dst_ip, uint16_t src_port, uint16_t dst_port, const void *data,
+                  uint16_t len);
 
 /* UDP connected-socket fast path — pre-resolved destination MAC.
  * Builds the complete Ethernet/IP/UDP frame and sends directly via
  * send_eth(), bypassing ARP cache lookups inside send_ip(). */
-void net_udp_send_cached(const uint8_t *dst_mac, uint32_t dst_ip,
-                          uint16_t src_port, uint16_t dst_port,
-                          const void *data, uint16_t data_len);
+void net_udp_send_cached(const uint8_t *dst_mac, uint32_t dst_ip, uint16_t src_port,
+                         uint16_t dst_port, const void *data, uint16_t data_len);
 
 /* UDP receive binding - register a callback for packets arriving on port */
-typedef void (*udp_recv_handler)(uint32_t src_ip, uint16_t src_port,
-                                  const uint8_t *data, uint16_t len);
+typedef void (*udp_recv_handler)(uint32_t src_ip, uint16_t src_port, const uint8_t *data,
+                                 uint16_t len);
 void net_udp_bind(uint16_t port, udp_recv_handler handler);
 
 /* UDP server — userspace listen/recv */
-int  net_udp_listen(uint16_t port);
-int  net_udp_recv(uint16_t port, void *buf, uint16_t bufsize,
-                  uint32_t *src_ip_out, uint16_t *src_port_out, int timeout_ticks);
+int net_udp_listen(uint16_t port);
+int net_udp_recv(uint16_t port, void *buf, uint16_t bufsize, uint32_t *src_ip_out,
+                 uint16_t *src_port_out, int timeout_ticks);
 void net_udp_unlisten(uint16_t port);
 
 /* HTTP client - fetches URL, writes body to buf. Returns bytes written or -1 */
-int net_http_get(const char *host, uint16_t port, const char *path,
-                 char *buf, int bufsize);
+int net_http_get(const char *host, uint16_t port, const char *path, char *buf, int bufsize);
 /* HTTP GET with optional redirect following (follow_redirects=1 to enable, max 5) */
-int net_http_get_ex(const char *host, uint16_t port, const char *path,
-                    char *buf, int bufsize, int follow_redirects);
+int net_http_get_ex(const char *host, uint16_t port, const char *path, char *buf, int bufsize,
+                    int follow_redirects);
 
 /* ARP cache dump - calls cb(ip, mac) for each valid entry.  Returns count. */
 int net_arp_list(void (*cb)(uint32_t ip, const uint8_t *mac));
