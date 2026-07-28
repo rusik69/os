@@ -5604,15 +5604,73 @@ static uint64_t sys_kexec_load(uint64_t phys_addr, uint64_t entry, uint64_t flag
 /* ── reboot() ────────────────────────────────────────────────── */
 
 static uint64_t sys_reboot(void) {
-    /* If a kexec image is loaded, kexec-reboot instead of ACPI shutdown */
+    struct process *cur = process_get_current();
+    struct process *table = process_get_table();
+    uint64_t now;
+
+    kprintf("[syscall] reboot: commencing shutdown/reboot sequence...\n");
+
+    /* Step 1: Send SIGTERM to all user processes except init (PID 1) and self */
+    kprintf("[syscall] reboot: sending SIGTERM to all processes...\n");
+    for (int i = 0; i < PROCESS_MAX; i++) {
+        if (table[i].state == PROCESS_UNUSED) continue;
+        if (table[i].pid <= 1) continue;          /* skip idle (0) and init (1) */
+        if (cur && table[i].pid == cur->pid) continue; /* skip calling process */
+        if (table[i].is_user) {
+            signal_send(table[i].pid, SIGTERM);
+        }
+    }
+
+    /* Step 2: Brief wait for processes to exit (up to ~2 seconds) */
+    kprintf("[syscall] reboot: waiting for processes to terminate...\n");
+    now = timer_get_ticks();
+    uint64_t deadline = now + (TIMER_FREQ * 2);   /* ~2 second timeout */
+    int all_dead;
+    do {
+        all_dead = 1;
+        for (int i = 0; i < PROCESS_MAX; i++) {
+            if (table[i].state == PROCESS_UNUSED) continue;
+            if (table[i].pid <= 1) continue;
+            if (cur && table[i].pid == cur->pid) continue;
+            if (table[i].state != PROCESS_ZOMBIE) {
+                all_dead = 0;
+                break;
+            }
+        }
+        if (!all_dead && timer_get_ticks() < deadline) {
+            /* Small delay to let other processes run */
+            for (volatile int d = 0; d < 100000; d++);
+        }
+    } while (!all_dead && timer_get_ticks() < deadline);
+
+    /* Step 3: SIGKILL any remaining non-zombie user processes */
+    kprintf("[syscall] reboot: sending SIGKILL to remaining processes...\n");
+    for (int i = 0; i < PROCESS_MAX; i++) {
+        if (table[i].state == PROCESS_UNUSED) continue;
+        if (table[i].pid <= 1) continue;
+        if (cur && table[i].pid == cur->pid) continue;
+        if (table[i].state != PROCESS_ZOMBIE && table[i].is_user) {
+            signal_send(table[i].pid, SIGKILL);
+        }
+    }
+
+    /* Step 4: Sync all mounted filesystems */
+    kprintf("[syscall] reboot: syncing filesystems...\n");
+    vfs_sync_all();
+
+    /* Step 5: Halt or reboot */
     if (kexec_is_loaded()) {
         kprintf("[syscall] reboot: kexec image loaded — jumping to new kernel\n");
         kexec_reboot();
         /* Never reaches here */
     }
-    /* Call ACPI shutdown */
+
+    /* Default: power off via ACPI */
+    kprintf("[syscall] reboot: powering off...\n");
     acpi_shutdown();
-    /* Should not reach here */
+
+    /* Fallback: halt if ACPI poweroff fails */
+    cli();
     for (;;)
         __asm__ volatile("hlt");
     return (uint64_t)-1;

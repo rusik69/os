@@ -3,9 +3,12 @@
  * Opens /dev/console, spawns /bin/sh, then waits for children.
  * This is the first userspace process started by the kernel.
  *
- * Signal handling: SIGTERM and SIGINT are forwarded to the child
- * process so that shutdown/break signals propagate through the
- * process tree.  (SIGKILL cannot be caught or ignored.)
+ * Signal handling:
+ *   SIGTERM — initiates shutdown sequence: kills all children,
+ *             syncs filesystems, then calls reboot().
+ *   SIGINT  — forwarded to the child process (break/interrupt).
+ *
+ * SIGKILL cannot be caught or ignored.
  */
 
 #include "stdio.h"
@@ -16,11 +19,31 @@
 /* PID of the current child (getty/shell) — used by signal handlers */
 static volatile int g_child_pid = 0;
 
+/* Flag set when a shutdown signal has been received */
+static volatile int g_shutting_down = 0;
+
 /* Forward a signal to the child process (if any). */
-static void forward_shutdown_signal(int signum) {
+static void forward_signal_to_child(int signum) {
     int pid = g_child_pid;
     if (pid > 0) {
         kill(pid, signum);
+    }
+}
+
+/* Shutdown handler — triggered by SIGTERM.
+ * Sets the shutdown flag and forwards the signal to the child process.
+ * The main loop will detect the flag and perform the full shutdown
+ * (sync filesystems, call reboot()) instead of respawning the child. */
+static void shutdown_handler(int signum) {
+    if (g_shutting_down)
+        return; /* Already shutting down — prevent re-entry */
+    g_shutting_down = 1;
+    printf("[init] Shutdown signal (%d) received, terminating children...\n", signum);
+
+    /* Forward SIGTERM to the child process (getty/shell) */
+    int pid = g_child_pid;
+    if (pid > 0) {
+        kill(pid, SIGTERM);
     }
 }
 
@@ -47,10 +70,11 @@ int main(int argc, char *argv[]) {
 
     printf("[init] PID %d: Starting init process...\n", getpid());
 
-    /* Install signal handlers to forward shutdown/break signals to
-     * child processes so they propagate through the process tree. */
-    signal(SIGTERM, forward_shutdown_signal);
-    signal(SIGINT, forward_shutdown_signal);
+    /* Install signal handlers:
+     *   SIGTERM — initiate full shutdown sequence
+     *   SIGINT  — forward to child as break/interrupt */
+    signal(SIGTERM, shutdown_handler);
+    signal(SIGINT, forward_signal_to_child);
 
     /* Open /dev/console for stdin/stdout/stderr */
     int console = open("/dev/console", 0);
@@ -104,12 +128,30 @@ int main(int argc, char *argv[]) {
         /* Reap again after getty exits (collect any remaining orphans) */
         reap_children();
 
+        /* If shutdown was requested, perform the full shutdown sequence
+         * instead of respawning the child */
+        if (g_shutting_down) {
+            printf("[init] Shutdown in progress — finalizing...\n");
+
+            /* Sync filesystems to flush all pending writes */
+            printf("[init] Syncing filesystems...\n");
+            sync();
+            sync();
+
+            /* Halt/reboot via the reboot() syscall */
+            printf("[init] Calling reboot()...\n");
+            reboot();
+
+            /* reboot() should not return */
+            printf("[init] reboot() returned unexpectedly, halting\n");
+            for (;;) { /* pause */ }
+        }
+
         printf("[init] Getty exited (status %d), respawning...\n", status);
     }
 
     /* Fallback — just loop */
     printf("[init] All shells failed, halting\n");
-    for (;;) { /* pause */
-    }
+    for (;;) { /* pause */ }
     return 0;
 }
