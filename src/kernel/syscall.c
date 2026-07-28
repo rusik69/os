@@ -19,6 +19,7 @@
 #include "sysctl.h"
 #include "caps.h"
 #include "keyboard.h"
+#include "pgrp.h"
 #include "printf.h"
 #include "io.h"
 #include "vmm.h"
@@ -615,6 +616,32 @@ static struct process_fd *sys_get_fd(int i) {
     return &p->fd_table[i];
 }
 
+/* ── TTY input helper ──────────────────────────────────────────────────
+ * Read one character from the keyboard/serial console.
+ * Intercept special characters:
+ *   Ctrl+C (0x03) -> send SIGINT to the foreground process group.
+ * Returns the next normal character to return to userspace.
+ */
+static char tty_read_char(void) {
+    for (;;) {
+        char c = keyboard_getchar();
+        if ((uint8_t)c == 0x03) {  /* Ctrl+C */
+            uint64_t fg = pgrp_get_foreground();
+            if (fg == 0) {
+                /* No foreground group set — send to current process group */
+                struct process *cur = process_get_current();
+                if (cur && cur->pgid != 0)
+                    fg = cur->pgid;
+            }
+            if (fg != 0)
+                signal_send_group((uint32_t)fg, SIGINT);
+            /* Consume the character — don't return it */
+            continue;
+        }
+        return c;
+    }
+}
+
 /**
  * sys_read - Read from a file descriptor
  * @fd: File descriptor number
@@ -642,7 +669,7 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
         /* User process reading stdin — read from keyboard/serial console */
         uint64_t total = 0;
         while (total < len) {
-            char c = keyboard_getchar();
+            char c = tty_read_char();
             if (copy_to_user(buf_addr + total, &c, 1) < 0)
                 return total > 0 ? total : (uint64_t)(int64_t)-EFAULT;
             total++;
@@ -1336,7 +1363,7 @@ static uint64_t sys_fd_read(uint64_t fd, uint64_t buf_addr, uint64_t count) {
         /* No dup2 — read from keyboard/serial console */
         uint64_t total = 0;
         while (total < count) {
-            char c = keyboard_getchar();
+            char c = tty_read_char();
             if (copy_to_user(buf_addr + total, &c, 1) < 0)
                 return total > 0 ? total : (uint64_t)(int64_t)-EFAULT;
             total++;
