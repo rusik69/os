@@ -744,8 +744,10 @@ static char tty_read_char(void)
                 }
                 if (fg != 0)
                     signal_send_group((uint32_t)fg, SIGINT);
-                g_tty_line_pos = 0;
-                g_tty_line_out = 0;
+                if (!(g_tty_termios.c_lflag & NOFLSH)) {
+                    g_tty_line_pos = 0;
+                    g_tty_line_out = 0;
+                }
                 if (g_tty_termios.c_lflag & ECHO) {
                     vga_putchar('\r');
                     serial_putchar('\r');
@@ -763,8 +765,10 @@ static char tty_read_char(void)
                 }
                 if (fg != 0)
                     signal_send_group((uint32_t)fg, SIGQUIT);
-                g_tty_line_pos = 0;
-                g_tty_line_out = 0;
+                if (!(g_tty_termios.c_lflag & NOFLSH)) {
+                    g_tty_line_pos = 0;
+                    g_tty_line_out = 0;
+                }
                 if (g_tty_termios.c_lflag & ECHO) {
                     vga_putchar('\r');
                     serial_putchar('\r');
@@ -782,8 +786,10 @@ static char tty_read_char(void)
                 }
                 if (fg != 0)
                     signal_send_group((uint32_t)fg, SIGTSTP);
-                g_tty_line_pos = 0;
-                g_tty_line_out = 0;
+                if (!(g_tty_termios.c_lflag & NOFLSH)) {
+                    g_tty_line_pos = 0;
+                    g_tty_line_out = 0;
+                }
                 if (g_tty_termios.c_lflag & ECHO) {
                     vga_putchar('\r');
                     serial_putchar('\r');
@@ -1109,6 +1115,15 @@ static uint64_t sys_write(uint64_t fd, uint64_t buf_addr, uint64_t len) {
         return (uint64_t)(int64_t)-EBADF;
 
     if (fd == 1 || fd == 2) {
+        /* TOSTOP: if set and process not in foreground pg, send SIGTTOU */
+        if (g_tty_termios.c_lflag & TOSTOP) {
+            struct process *cur = process_get_current();
+            uint64_t fg = pgrp_get_foreground();
+            if (cur && fg != 0 && cur->pgid != (uint32_t)fg) {
+                signal_send_group(cur->pgid, SIGTTOU);
+                return (uint64_t)(int64_t)-EINTR;
+            }
+        }
         {
             struct process *dbg = process_get_current();
             if (dbg && len > 0 && len < 256)

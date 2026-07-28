@@ -71,7 +71,9 @@
 /* Termios c_lflag bits */
 #define ISIG        0x0001     /* enable signals (Ctrl+C, Ctrl+Z, Ctrl+\) */
 #define ICANON      0x0002     /* canonical (line-buffered) mode */
+#define NOFLSH      0x0004     /* disable flush on signal generation */
 #define ECHO        0x0008     /* echo input characters */
+#define TOSTOP      0x0100     /* send SIGTTOU to background processes writing to terminal */
 
 /* Minimal termios structure (Linux-compatible layout) */
 struct termios {
