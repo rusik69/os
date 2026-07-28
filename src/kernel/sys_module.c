@@ -14,19 +14,20 @@
  */
 
 #define KERNEL_INTERNAL
-#include "syscall.h"
-#include "module.h"
-#include "uaccess.h"
-#include "lockdown.h"
 #include "caps.h"
-#include "process.h"
-#include "printf.h"
-#include "string.h"
 #include "errno.h"
+#include "lockdown.h"
+#include "module.h"
+#include "printf.h"
+#include "process.h"
+#include "string.h"
+#include "syscall.h"
+#include "uaccess.h"
 
 MODULE_LICENSE("GPL v2");
 MODULE_VERSION("1.0");
-MODULE_DESCRIPTION("Legacy module syscall implementations (create_module, get_kernel_syms, sysctl)");
+MODULE_DESCRIPTION(
+    "Legacy module syscall implementations (create_module, get_kernel_syms, sysctl)");
 MODULE_AUTHOR("OS Kernel Team");
 
 /*
@@ -47,44 +48,43 @@ MODULE_AUTHOR("OS Kernel Team");
  *   -EFAULT    — invalid user-space pointer for name.
  *   -EINVAL    — empty name string.
  */
-int64_t sys_create_module(uint64_t name_addr, uint64_t size)
-{
-	(void)size;
+int64_t sys_create_module(uint64_t name_addr, uint64_t size) {
+    (void)size;
 
-	/* Lockdown: reject module operations at INTEGRITY level or above */
-	if (lockdown_is_locked_down(LOCKDOWN_INTEGRITY))
-		return (uint64_t)-EPERM;
+    /* Lockdown: reject module operations at INTEGRITY level or above */
+    if (lockdown_is_locked_down(LOCKDOWN_INTEGRITY))
+        return (uint64_t)-EPERM;
 
-	/* CAP_SYS_MODULE check */
-	{
-		int cap_ret = cap_sys_module_check();
-		if (cap_ret < 0)
-			return (uint64_t)(int64_t)cap_ret;
-	}
+    /* CAP_SYS_MODULE check */
+    {
+        int cap_ret = cap_sys_module_check();
+        if (cap_ret < 0)
+            return (uint64_t)(int64_t)cap_ret;
+    }
 
-	/* Only root can load modules */
-	if (process_get_current()) {
-		struct process *p = process_get_current();
-		if (p->is_user && p->euid != 0)
-			return (uint64_t)-EPERM;
-	}
+    /* Only root can load modules */
+    if (process_get_current()) {
+        struct process *p = process_get_current();
+        if (p->is_user && p->euid != 0)
+            return (uint64_t)-EPERM;
+    }
 
-	/* Validate user-space name pointer */
-	if (name_addr != 0) {
-		char buf[64];
-		long ret = strncpy_from_user(buf, name_addr, sizeof(buf));
-		if (ret < 0)
-			return (uint64_t)-EFAULT;
-		if (ret == 0 || buf[0] == '\0')
-			return (uint64_t)-EINVAL;
-		kprintf("[MOD] sys_create_module(\"%s\", %llu): deprecated, use finit_module instead\n",
-			buf, (unsigned long long)size);
-	} else {
-		kprintf("[MOD] sys_create_module(NULL, %llu): deprecated, use finit_module instead\n",
-			(unsigned long long)size);
-	}
+    /* Validate user-space name pointer */
+    if (name_addr != 0) {
+        char buf[64];
+        long ret = strncpy_from_user(buf, name_addr, sizeof(buf));
+        if (ret < 0)
+            return (uint64_t)-EFAULT;
+        if (ret == 0 || buf[0] == '\0')
+            return (uint64_t)-EINVAL;
+        kprintf("[MOD] sys_create_module(\"%s\", %llu): deprecated, use finit_module instead\n",
+                buf, (unsigned long long)size);
+    } else {
+        kprintf("[MOD] sys_create_module(NULL, %llu): deprecated, use finit_module instead\n",
+                (unsigned long long)size);
+    }
 
-	return (uint64_t)(int64_t)-ENOSYS;
+    return (uint64_t)(int64_t)-ENOSYS;
 }
 
 /*
@@ -102,22 +102,21 @@ int64_t sys_create_module(uint64_t name_addr, uint64_t size)
  *   -ENOSYS    — always; this interface is not implemented.
  *   -EPERM     — caller lacks permission (not root, or lockdown active).
  */
-int64_t sys_get_kernel_syms(uint64_t table_addr)
-{
-	(void)table_addr;
+int64_t sys_get_kernel_syms(uint64_t table_addr) {
+    (void)table_addr;
 
-	/* Lockdown CONFIDENTIALITY: block kernel symbol leak */
-	if (lockdown_is_locked_down(LOCKDOWN_CONFIDENTIALITY))
-		return (uint64_t)-EPERM;
+    /* Lockdown CONFIDENTIALITY: block kernel symbol leak */
+    if (lockdown_is_locked_down(LOCKDOWN_CONFIDENTIALITY))
+        return (uint64_t)-EPERM;
 
-	/* Root-only access */
-	struct process *p = process_get_current();
-	if (p && p->is_user && p->euid != 0)
-		return (uint64_t)-EPERM;
+    /* Root-only access */
+    struct process *p = process_get_current();
+    if (p && p->is_user && p->euid != 0)
+        return (uint64_t)-EPERM;
 
-	kprintf("[MOD] sys_get_kernel_syms: deprecated interface, use /proc/kallsyms\n");
+    kprintf("[MOD] sys_get_kernel_syms: deprecated interface, use /proc/kallsyms\n");
 
-	return (uint64_t)(int64_t)-ENOSYS;
+    return (uint64_t)(int64_t)-ENOSYS;
 }
 
 /*
@@ -135,15 +134,14 @@ int64_t sys_get_kernel_syms(uint64_t table_addr)
  *   -EPERM     — caller lacks permission (lockdown active).
  *   -EFAULT    — invalid user-space pointer for args.
  */
-int64_t sys_sysctl(uint64_t args_addr)
-{
-	(void)args_addr;
+int64_t sys_sysctl(uint64_t args_addr) {
+    (void)args_addr;
 
-	/* Lockdown CONFIDENTIALITY: block access to kernel tunables */
-	if (lockdown_is_locked_down(LOCKDOWN_CONFIDENTIALITY))
-		return (uint64_t)-EPERM;
+    /* Lockdown CONFIDENTIALITY: block access to kernel tunables */
+    if (lockdown_is_locked_down(LOCKDOWN_CONFIDENTIALITY))
+        return (uint64_t)-EPERM;
 
-	kprintf("[SYSCTL] sys_sysctl: deprecated interface, use /proc/sys instead\n");
+    kprintf("[SYSCTL] sys_sysctl: deprecated interface, use /proc/sys instead\n");
 
-	return (uint64_t)(int64_t)-ENOSYS;
+    return (uint64_t)(int64_t)-ENOSYS;
 }

@@ -1,21 +1,22 @@
 #define KERNEL_INTERNAL
 #include "poll.h"
-#include "syscall.h"
-#include "timer.h"
+
+#include "epoll.h"
+#include "errno.h"
+#include "eventfd.h"
+#include "heap.h"
+#include "inotify.h"
+#include "memfd.h"
+#include "pipe.h"
+#include "printf.h"
 #include "process.h"
 #include "scheduler.h"
-#include "heap.h"
-#include "string.h"
-#include "errno.h"
-#include "socket.h"
-#include "pipe.h"
-#include "inotify.h"
-#include "printf.h"
-#include "eventfd.h"
 #include "signalfd.h"
+#include "socket.h"
+#include "string.h"
+#include "syscall.h"
+#include "timer.h"
 #include "timerfd.h"
-#include "epoll.h"
-#include "memfd.h"
 
 /*
  * poll.c — Poll infrastructure implementation
@@ -36,36 +37,33 @@
 
 /* ── Poll table lifecycle ───────────────────────────────────── */
 
-int poll_init_table(struct poll_table *pt)
-{
+int poll_init_table(struct poll_table *pt) {
     struct poll_queue_entry *entries;
 
     entries = kmalloc(sizeof(struct poll_queue_entry) * POLL_TABLE_MAX);
     if (!entries)
         return -ENOMEM;
 
-    pt->entries    = entries;
+    pt->entries = entries;
     pt->nr_entries = 0;
     pt->max_entries = POLL_TABLE_MAX;
-    pt->error      = 0;
+    pt->error = 0;
     return 0;
 }
 
-void poll_free_table(struct poll_table *pt)
-{
+void poll_free_table(struct poll_table *pt) {
     if (pt->entries) {
         kfree(pt->entries);
-        pt->entries    = NULL;
+        pt->entries = NULL;
         pt->nr_entries = 0;
         pt->max_entries = 0;
-        pt->error      = 0;
+        pt->error = 0;
     }
 }
 
 /* ── Wait queue registration ────────────────────────────────── */
 
-int poll_wait(struct poll_table *pt, struct wait_queue *wq)
-{
+int poll_wait(struct poll_table *pt, struct wait_queue *wq) {
     struct poll_queue_entry *e;
 
     if (!pt)
@@ -77,15 +75,14 @@ int poll_wait(struct poll_table *pt, struct wait_queue *wq)
     }
 
     e = &pt->entries[pt->nr_entries++];
-    e->wq  = wq;
+    e->wq = wq;
     e->key = NULL;
     return 0;
 }
 
 /* ── Blocking wait ───────────────────────────────────────────── */
 
-int poll_schedule(struct poll_table *pt, uint64_t timeout_ms)
-{
+int poll_schedule(struct poll_table *pt, uint64_t timeout_ms) {
     struct process *cur = process_get_current();
 
     if (!cur)
@@ -115,8 +112,7 @@ int poll_schedule(struct poll_table *pt, uint64_t timeout_ms)
         if (timeout_ticks == 0)
             timeout_ticks = 1;
 
-        ret = wait_queue_sleep_interruptible_timeout(
-            pt->entries[0].wq, timeout_ticks);
+        ret = wait_queue_sleep_interruptible_timeout(pt->entries[0].wq, timeout_ticks);
         if (ret == -EINTR)
             return -EINTR;
         if (ret == -ETIME)
@@ -129,7 +125,7 @@ int poll_schedule(struct poll_table *pt, uint64_t timeout_ms)
      * yet wired).  Yield for 1 tick and re-check.
      */
     cur->sleep_until = timer_get_ticks() + 1;
-    cur->state       = PROCESS_BLOCKED;
+    cur->state = PROCESS_BLOCKED;
     scheduler_remove(cur);
     scheduler_yield();
 
@@ -150,7 +146,7 @@ int poll_schedule(struct poll_table *pt, uint64_t timeout_ms)
 /*
  * POLL_MAX_FDS — bound iteration and prevent integer overflow.
  */
-#define POLL_MAX_FDS  PROCESS_FD_MAX
+#define POLL_MAX_FDS PROCESS_FD_MAX
 
 /*
  * sys_poll — poll(2) entry point.
@@ -164,8 +160,7 @@ int poll_schedule(struct poll_table *pt, uint64_t timeout_ms)
  *          -EINTR if interrupted by a signal
  *          -ENOMEM if kernel memory exhausted
  */
-int64_t sys_poll(uint64_t fds_addr, uint64_t nfds, uint64_t timeout_ms)
-{
+int64_t sys_poll(uint64_t fds_addr, uint64_t nfds, uint64_t timeout_ms) {
     /*
      * ── Arg validation ────────────────────────────────────────
      */
@@ -225,8 +220,7 @@ int64_t sys_poll(uint64_t fds_addr, uint64_t nfds, uint64_t timeout_ms)
             /*
              * ── Inotify FDs (fd 720..727) ─────────────────────
              */
-            if (fd_idx >= INOTIFY_FD_BASE &&
-                fd_idx < INOTIFY_FD_BASE + INOTIFY_INSTANCES) {
+            if (fd_idx >= INOTIFY_FD_BASE && fd_idx < INOTIFY_FD_BASE + INOTIFY_INSTANCES) {
                 revents = inotify_poll(fd_idx);
                 if (revents < 0) {
                     fds[i].revents = POLLNVAL;
@@ -245,8 +239,7 @@ int64_t sys_poll(uint64_t fds_addr, uint64_t nfds, uint64_t timeout_ms)
             /*
              * ── Socket FDs (fd 100..100+SOCK_MAX-1) ──────────
              */
-            if (fd_idx >= 100 &&
-                fd_idx < 100 + SOCK_MAX) {
+            if (fd_idx >= 100 && fd_idx < 100 + SOCK_MAX) {
                 revents = sock_poll(fd_idx, fds[i].events, &pt);
                 fds[i].revents = (int16_t)revents;
                 if (revents)
@@ -376,8 +369,7 @@ int64_t sys_poll(uint64_t fds_addr, uint64_t nfds, uint64_t timeout_ms)
  * Returns a revents bitmask of ready events, or POLLNVAL if fd
  * is not valid.
  */
-int vfs_poll_fd(int fd, int events)
-{
+int vfs_poll_fd(int fd, int events) {
     int revents = 0;
 
     /* ── Socket FDs (100–131) ──────────────────────────────── */
@@ -411,8 +403,7 @@ int vfs_poll_fd(int fd, int events)
     }
 
     /* ── Inotify FDs (720–727) ─────────────────────────────── */
-    if (fd >= INOTIFY_FD_BASE &&
-        fd < INOTIFY_FD_BASE + 8) {
+    if (fd >= INOTIFY_FD_BASE && fd < INOTIFY_FD_BASE + 8) {
         revents = inotify_poll(fd);
         if (revents < 0)
             return POLLNVAL;

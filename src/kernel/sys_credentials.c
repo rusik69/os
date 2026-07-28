@@ -9,12 +9,12 @@
  * non-negative value on success.
  */
 #define KERNEL_INTERNAL
-#include "syscall.h"
+#include "errno.h"
 #include "module.h"
 #include "process.h"
-#include "errno.h"
-#include "uaccess.h"
 #include "scheduler.h"
+#include "syscall.h"
+#include "uaccess.h"
 
 /* Module metadata */
 MODULE_LICENSE("GPL v2");
@@ -32,15 +32,14 @@ MODULE_AUTHOR("Ruslan Gustomiasov");
  *
  * Returns 0 on success, -EPERM if not allowed.
  */
-int64_t sys_setuid(uint64_t uid)
-{
+int64_t sys_setuid(uint64_t uid) {
     struct process *p = process_get_current();
     if (!p)
         return (uint64_t)(int64_t)-ESRCH;
 
     /* Root (euid 0) can set all UID values */
     if (p->euid == 0) {
-        p->uid  = (uint32_t)uid;
+        p->uid = (uint32_t)uid;
         p->euid = (uint32_t)uid;
         /* Clear dumpable on credential change */
         p->dumpable = 0;
@@ -66,8 +65,7 @@ int64_t sys_setuid(uint64_t uid)
  *
  * Returns 0 on success, -EPERM if not allowed.
  */
-int64_t sys_seteuid(uint64_t euid)
-{
+int64_t sys_seteuid(uint64_t euid) {
     struct process *p = process_get_current();
     if (!p)
         return (uint64_t)(int64_t)-ESRCH;
@@ -98,15 +96,14 @@ int64_t sys_seteuid(uint64_t euid)
  *
  * Returns 0 on success, -EPERM if not allowed.
  */
-int64_t sys_setgid(uint64_t gid)
-{
+int64_t sys_setgid(uint64_t gid) {
     struct process *p = process_get_current();
     if (!p)
         return (uint64_t)(int64_t)-ESRCH;
 
     /* Root (euid 0) can set all GID values */
     if (p->euid == 0) {
-        p->gid  = (uint32_t)gid;
+        p->gid = (uint32_t)gid;
         p->egid = (uint32_t)gid;
         /* Clear dumpable on credential change */
         p->dumpable = 0;
@@ -132,8 +129,7 @@ int64_t sys_setgid(uint64_t gid)
  *
  * Returns 0 on success, -EPERM if not allowed.
  */
-int64_t sys_setegid(uint64_t egid)
-{
+int64_t sys_setegid(uint64_t egid) {
     struct process *p = process_get_current();
     if (!p)
         return (uint64_t)(int64_t)-ESRCH;
@@ -161,8 +157,7 @@ int64_t sys_setegid(uint64_t egid)
  * Returns the process group ID of the calling process.
  * Equivalent to getpgid(0).
  */
-int64_t sys_getpgrp(void)
-{
+int64_t sys_getpgrp(void) {
     struct process *p = process_get_current();
     if (!p)
         return (uint64_t)(int64_t)-ESRCH;
@@ -178,8 +173,7 @@ int64_t sys_getpgrp(void)
  * Returns the number of groups copied, or -EINVAL if size is
  * non-zero but smaller than the actual number of groups.
  */
-int64_t sys_getgroups(uint64_t size, uint64_t list_addr)
-{
+int64_t sys_getgroups(uint64_t size, uint64_t list_addr) {
     struct process *p = process_get_current();
     if (!p)
         return (uint64_t)(int64_t)-ESRCH;
@@ -196,8 +190,7 @@ int64_t sys_getgroups(uint64_t size, uint64_t list_addr)
 
     /* Copy groups to user buffer */
     if (ngroups > 0) {
-        if (copy_to_user(list_addr, p->groups,
-                         (size_t)ngroups * sizeof(uint32_t)) < 0)
+        if (copy_to_user(list_addr, p->groups, (size_t)ngroups * sizeof(uint32_t)) < 0)
             return (uint64_t)(int64_t)-EFAULT;
     }
 
@@ -213,8 +206,7 @@ int64_t sys_getgroups(uint64_t size, uint64_t list_addr)
  * Returns 0 on success, -EPERM if not privileged, -EFAULT if
  * the list pointer is invalid, -EINVAL if size is too large.
  */
-int64_t sys_setgroups(uint64_t size, uint64_t list_addr)
-{
+int64_t sys_setgroups(uint64_t size, uint64_t list_addr) {
     struct process *p = process_get_current();
     if (!p)
         return (uint64_t)(int64_t)-ESRCH;
@@ -233,8 +225,7 @@ int64_t sys_setgroups(uint64_t size, uint64_t list_addr)
     /* Copy in new groups from user buffer */
     if (size > 0) {
         uint32_t buf[NGROUPS_MAX];
-        if (copy_from_user(buf, list_addr,
-                           (size_t)size * sizeof(uint32_t)) < 0)
+        if (copy_from_user(buf, list_addr, (size_t)size * sizeof(uint32_t)) < 0)
             return (uint64_t)(int64_t)-EFAULT;
 
         for (int i = 0; i < (int)size; i++)

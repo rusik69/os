@@ -8,12 +8,12 @@
  * non-negative value on success.
  */
 #define KERNEL_INTERNAL
-#include "syscall.h"
+#include "caps.h"
+#include "errno.h"
 #include "module.h"
 #include "process.h"
-#include "errno.h"
+#include "syscall.h"
 #include "uaccess.h"
-#include "caps.h"
 
 /* Module metadata */
 MODULE_LICENSE("GPL v2");
@@ -30,18 +30,16 @@ MODULE_AUTHOR("Ruslan Gustomiasov");
  *    header->version with LINUX_CAPABILITY_VERSION and returns -EINVAL.
  *    The caller must retry with the reported version.
  */
-static int cap_version_negotiate(struct __user_cap_header_struct *hdr)
-{
-	uint32_t ver = hdr->version;
+static int cap_version_negotiate(struct __user_cap_header_struct *hdr) {
+    uint32_t ver = hdr->version;
 
-	if (ver == _LINUX_CAPABILITY_VERSION_1 ||
-	    ver == _LINUX_CAPABILITY_VERSION_2 ||
-	    ver == _LINUX_CAPABILITY_VERSION_3)
-		return 0;
+    if (ver == _LINUX_CAPABILITY_VERSION_1 || ver == _LINUX_CAPABILITY_VERSION_2 ||
+        ver == _LINUX_CAPABILITY_VERSION_3)
+        return 0;
 
-	/* Negotiate: tell caller what version we support */
-	hdr->version = LINUX_CAPABILITY_VERSION;
-	return -EINVAL;
+    /* Negotiate: tell caller what version we support */
+    hdr->version = LINUX_CAPABILITY_VERSION;
+    return -EINVAL;
 }
 
 /*
@@ -56,36 +54,29 @@ static int cap_version_negotiate(struct __user_cap_header_struct *hdr)
  *
  * Returns 0 on success, -EFAULT on copy_to_user failure.
  */
-static int cap_fill_data(struct process *proc,
-			 uint64_t data_addr,
-			 uint32_t version)
-{
-	struct __user_cap_data_struct kdata[2];
-	int ndata = (version == _LINUX_CAPABILITY_VERSION_1) ? 1 : 2;
+static int cap_fill_data(struct process *proc, uint64_t data_addr, uint32_t version) {
+    struct __user_cap_data_struct kdata[2];
+    int ndata = (version == _LINUX_CAPABILITY_VERSION_1) ? 1 : 2;
 
-	/* data[0]: low 32 bits of each mask (caps 0-31) */
-	kdata[0].effective   = (uint32_t)(proc->cap_effective[0] & 0xFFFFFFFFULL);
-	kdata[0].permitted   = (uint32_t)(proc->cap_permitted[0] & 0xFFFFFFFFULL);
-	kdata[0].inheritable = (uint32_t)(proc->cap_inheritable[0] & 0xFFFFFFFFULL);
+    /* data[0]: low 32 bits of each mask (caps 0-31) */
+    kdata[0].effective = (uint32_t)(proc->cap_effective[0] & 0xFFFFFFFFULL);
+    kdata[0].permitted = (uint32_t)(proc->cap_permitted[0] & 0xFFFFFFFFULL);
+    kdata[0].inheritable = (uint32_t)(proc->cap_inheritable[0] & 0xFFFFFFFFULL);
 
-	if (ndata > 1) {
-		/* data[1]: next 32 bits (caps 32-63) */
-		uint64_t eff_hi   = (PROCESS_SYSCALL_CAP_WORDS > 1)
-				    ? proc->cap_effective[1] : 0;
-		uint64_t perm_hi = (PROCESS_SYSCALL_CAP_WORDS > 1)
-				    ? proc->cap_permitted[1] : 0;
-		uint64_t inh_hi  = (PROCESS_SYSCALL_CAP_WORDS > 1)
-				    ? proc->cap_inheritable[1] : 0;
-		kdata[1].effective   = (uint32_t)(eff_hi & 0xFFFFFFFFULL);
-		kdata[1].permitted   = (uint32_t)(perm_hi & 0xFFFFFFFFULL);
-		kdata[1].inheritable = (uint32_t)(inh_hi & 0xFFFFFFFFULL);
-	}
+    if (ndata > 1) {
+        /* data[1]: next 32 bits (caps 32-63) */
+        uint64_t eff_hi = (PROCESS_SYSCALL_CAP_WORDS > 1) ? proc->cap_effective[1] : 0;
+        uint64_t perm_hi = (PROCESS_SYSCALL_CAP_WORDS > 1) ? proc->cap_permitted[1] : 0;
+        uint64_t inh_hi = (PROCESS_SYSCALL_CAP_WORDS > 1) ? proc->cap_inheritable[1] : 0;
+        kdata[1].effective = (uint32_t)(eff_hi & 0xFFFFFFFFULL);
+        kdata[1].permitted = (uint32_t)(perm_hi & 0xFFFFFFFFULL);
+        kdata[1].inheritable = (uint32_t)(inh_hi & 0xFFFFFFFFULL);
+    }
 
-	if (copy_to_user(data_addr, kdata,
-			 (size_t)ndata * sizeof(struct __user_cap_data_struct)) < 0)
-		return -EFAULT;
+    if (copy_to_user(data_addr, kdata, (size_t)ndata * sizeof(struct __user_cap_data_struct)) < 0)
+        return -EFAULT;
 
-	return 0;
+    return 0;
 }
 
 /* ── sys_capget — get process capabilities ────────────────────────────
@@ -106,55 +97,54 @@ static int cap_fill_data(struct process *proc,
  *
  * Returns 0 on success, -EINVAL / -EPERM / -EFAULT / -ESRCH on error.
  */
-int64_t sys_capget(uint64_t header_addr, uint64_t data_addr)
-{
-	struct __user_cap_header_struct hdr;
-	struct __user_cap_data_struct kdata[2];
-	struct process *target, *caller;
-	int ret;
+int64_t sys_capget(uint64_t header_addr, uint64_t data_addr) {
+    struct __user_cap_header_struct hdr;
+    struct __user_cap_data_struct kdata[2];
+    struct process *target, *caller;
+    int ret;
 
-	/* Validate and copy header from userspace */
-	if (!header_addr || !data_addr)
-		return (uint64_t)(int64_t)-EINVAL;
+    /* Validate and copy header from userspace */
+    if (!header_addr || !data_addr)
+        return (uint64_t)(int64_t)-EINVAL;
 
-	if (copy_from_user(&hdr, header_addr, sizeof(hdr)) < 0)
-		return (uint64_t)(int64_t)-EFAULT;
+    if (copy_from_user(&hdr, header_addr, sizeof(hdr)) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
 
-	/* Version negotiation */
-	ret = cap_version_negotiate(&hdr);
-	if (ret < 0) {
-		/* Write back the negotiated version */
-		if (copy_to_user(header_addr, &hdr, sizeof(hdr)) < 0)
-			return (uint64_t)(int64_t)-EFAULT;
-		return (uint64_t)(int64_t)ret;
-	}
+    /* Version negotiation */
+    ret = cap_version_negotiate(&hdr);
+    if (ret < 0) {
+        /* Write back the negotiated version */
+        if (copy_to_user(header_addr, &hdr, sizeof(hdr)) < 0)
+            return (uint64_t)(int64_t)-EFAULT;
+        return (uint64_t)(int64_t)ret;
+    }
 
-	/* Find target process */
-	if (hdr.pid == 0) {
-		target = process_get_current();
-		if (!target)
-			return (uint64_t)(int64_t)-ESRCH;
-	} else {
-		target = process_get_by_pid((uint32_t)hdr.pid);
-		if (!target || target->state == PROCESS_UNUSED)
-			return (uint64_t)(int64_t)-ESRCH;
+    /* Find target process */
+    if (hdr.pid == 0) {
+        target = process_get_current();
+        if (!target)
+            return (uint64_t)(int64_t)-ESRCH;
+    } else {
+        target = process_get_by_pid((uint32_t)hdr.pid);
+        if (!target || target->state == PROCESS_UNUSED)
+            return (uint64_t)(int64_t)-ESRCH;
 
-		/* Check visibility: non-root callers cannot get caps
-		 * of other processes they cannot see */
-		caller = process_get_current();
-		if (caller && caller->euid != 0) {
-			if (!process_can_see(caller, target))
-				return (uint64_t)(int64_t)-EPERM;
-		}
-	}
+        /* Check visibility: non-root callers cannot get caps
+         * of other processes they cannot see */
+        caller = process_get_current();
+        if (caller && caller->euid != 0) {
+            if (!process_can_see(caller, target))
+                return (uint64_t)(int64_t)-EPERM;
+        }
+    }
 
-	/* Fill and write capability data */
-	ret = cap_fill_data(target, data_addr, hdr.version);
-	if (ret < 0)
-		return (uint64_t)(int64_t)ret;
+    /* Fill and write capability data */
+    ret = cap_fill_data(target, data_addr, hdr.version);
+    if (ret < 0)
+        return (uint64_t)(int64_t)ret;
 
-	(void)kdata; /* used in future extension — data array on stack for V2+ */
-	return 0;
+    (void)kdata; /* used in future extension — data array on stack for V2+ */
+    return 0;
 }
 
 /* ── sys_capset — set process capabilities ────────────────────────────
@@ -179,137 +169,134 @@ int64_t sys_capget(uint64_t header_addr, uint64_t data_addr)
  *
  * Returns 0 on success, -EINVAL / -EPERM / -EFAULT / -ESRCH on error.
  */
-int64_t sys_capset(uint64_t header_addr, uint64_t data_addr)
-{
-	struct __user_cap_header_struct hdr;
-	struct __user_cap_data_struct kdata[2];
-	struct process *target, *caller;
-	uint64_t new_eff, new_perm, new_inh;
-	uint64_t cur_perm, cur_inh;
-	int ret, ndata;
+int64_t sys_capset(uint64_t header_addr, uint64_t data_addr) {
+    struct __user_cap_header_struct hdr;
+    struct __user_cap_data_struct kdata[2];
+    struct process *target, *caller;
+    uint64_t new_eff, new_perm, new_inh;
+    uint64_t cur_perm, cur_inh;
+    int ret, ndata;
 
-	/* Validate and copy header from userspace */
-	if (!header_addr || !data_addr)
-		return (uint64_t)(int64_t)-EINVAL;
+    /* Validate and copy header from userspace */
+    if (!header_addr || !data_addr)
+        return (uint64_t)(int64_t)-EINVAL;
 
-	if (copy_from_user(&hdr, header_addr, sizeof(hdr)) < 0)
-		return (uint64_t)(int64_t)-EFAULT;
+    if (copy_from_user(&hdr, header_addr, sizeof(hdr)) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
 
-	/* Version negotiation */
-	ret = cap_version_negotiate(&hdr);
-	if (ret < 0) {
-		/* Write back the negotiated version */
-		if (copy_to_user(header_addr, &hdr, sizeof(hdr)) < 0)
-			return (uint64_t)(int64_t)-EFAULT;
-		return (uint64_t)(int64_t)ret;
-	}
+    /* Version negotiation */
+    ret = cap_version_negotiate(&hdr);
+    if (ret < 0) {
+        /* Write back the negotiated version */
+        if (copy_to_user(header_addr, &hdr, sizeof(hdr)) < 0)
+            return (uint64_t)(int64_t)-EFAULT;
+        return (uint64_t)(int64_t)ret;
+    }
 
-	/* Number of data structs: V1 = 1, V2/V3 = 2 */
-	ndata = (hdr.version == _LINUX_CAPABILITY_VERSION_1) ? 1 : 2;
+    /* Number of data structs: V1 = 1, V2/V3 = 2 */
+    ndata = (hdr.version == _LINUX_CAPABILITY_VERSION_1) ? 1 : 2;
 
-	/* Copy capability data from userspace */
-	if (copy_from_user(kdata, data_addr,
-			   (size_t)ndata * sizeof(struct __user_cap_data_struct)) < 0)
-		return (uint64_t)(int64_t)-EFAULT;
+    /* Copy capability data from userspace */
+    if (copy_from_user(kdata, data_addr, (size_t)ndata * sizeof(struct __user_cap_data_struct)) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
 
-	/* Reconstruct full 64-bit capability masks from the data structs */
-	new_eff   = (uint64_t)kdata[0].effective;
-	new_perm  = (uint64_t)kdata[0].permitted;
-	new_inh   = (uint64_t)kdata[0].inheritable;
+    /* Reconstruct full 64-bit capability masks from the data structs */
+    new_eff = (uint64_t)kdata[0].effective;
+    new_perm = (uint64_t)kdata[0].permitted;
+    new_inh = (uint64_t)kdata[0].inheritable;
 
-	if (ndata > 1) {
-		new_eff   |= (uint64_t)kdata[1].effective   << 32;
-		new_perm  |= (uint64_t)kdata[1].permitted   << 32;
-		new_inh   |= (uint64_t)kdata[1].inheritable << 32;
-	}
+    if (ndata > 1) {
+        new_eff |= (uint64_t)kdata[1].effective << 32;
+        new_perm |= (uint64_t)kdata[1].permitted << 32;
+        new_inh |= (uint64_t)kdata[1].inheritable << 32;
+    }
 
-	/* Find target process */
-	if (hdr.pid == 0) {
-		target = process_get_current();
-		if (!target)
-			return (uint64_t)(int64_t)-ESRCH;
-	} else {
-		target = process_get_by_pid((uint32_t)hdr.pid);
-		if (!target || target->state == PROCESS_UNUSED)
-			return (uint64_t)(int64_t)-ESRCH;
-	}
+    /* Find target process */
+    if (hdr.pid == 0) {
+        target = process_get_current();
+        if (!target)
+            return (uint64_t)(int64_t)-ESRCH;
+    } else {
+        target = process_get_by_pid((uint32_t)hdr.pid);
+        if (!target || target->state == PROCESS_UNUSED)
+            return (uint64_t)(int64_t)-ESRCH;
+    }
 
-	caller = process_get_current();
+    caller = process_get_current();
 
-	/* Permission checks */
-	if (hdr.pid != 0 && caller) {
-		/* Setting caps on another process needs CAP_SETPCAP */
-		int cword = CAP_SETPCAP / 64;
-		int cbit  = CAP_SETPCAP % 64;
-		if (cword < PROCESS_SYSCALL_CAP_WORDS &&
-		    !(caller->syscall_caps[cword] & (1ULL << cbit)))
-			return (uint64_t)(int64_t)-EPERM;
-	}
+    /* Permission checks */
+    if (hdr.pid != 0 && caller) {
+        /* Setting caps on another process needs CAP_SETPCAP */
+        int cword = CAP_SETPCAP / 64;
+        int cbit = CAP_SETPCAP % 64;
+        if (cword < PROCESS_SYSCALL_CAP_WORDS && !(caller->syscall_caps[cword] & (1ULL << cbit)))
+            return (uint64_t)(int64_t)-EPERM;
+    }
 
-	if (!caller)
-		return (uint64_t)(int64_t)-EPERM;
+    if (!caller)
+        return (uint64_t)(int64_t)-EPERM;
 
-	/* Save current permitted and inheritable sets for validation */
-	cur_perm = caller->cap_permitted[0];
-	cur_inh  = caller->cap_inheritable[0];
+    /* Save current permitted and inheritable sets for validation */
+    cur_perm = caller->cap_permitted[0];
+    cur_inh = caller->cap_inheritable[0];
 
-	/* ── Validate and apply ────────────────────────────────────── */
+    /* ── Validate and apply ────────────────────────────────────── */
 
-	/* If targeting another process, skip the self-capability
-	 * restrictions — CAP_SETPCAP was already checked above.
-	 * The kernel still applies the bounding set. */
-	if (hdr.pid != 0) {
-		/* Intersect with bounding set */
-		new_perm &= sys_cap_bset_get_word(0);
-		if (PROCESS_SYSCALL_CAP_WORDS > 1) {
-			uint64_t new_perm_hi = new_perm >> 32;
-			(void)new_perm_hi;
-		}
-		target->cap_permitted[0]   = new_perm;
-		target->cap_inheritable[0] = new_inh;
-		target->cap_effective[0]   = new_eff & new_perm;
-		return 0;
-	}
+    /* If targeting another process, skip the self-capability
+     * restrictions — CAP_SETPCAP was already checked above.
+     * The kernel still applies the bounding set. */
+    if (hdr.pid != 0) {
+        /* Intersect with bounding set */
+        new_perm &= sys_cap_bset_get_word(0);
+        if (PROCESS_SYSCALL_CAP_WORDS > 1) {
+            uint64_t new_perm_hi = new_perm >> 32;
+            (void)new_perm_hi;
+        }
+        target->cap_permitted[0] = new_perm;
+        target->cap_inheritable[0] = new_inh;
+        target->cap_effective[0] = new_eff & new_perm;
+        return 0;
+    }
 
-	/* ── Self-capset rules (pid == 0) ──────────────────────────── */
-	/* Following Linux kernel cap_set_user() semantics:
-	 *
-	 * 1. New permitted set: caps added to permitted must be in
-	 *    the caller's current permitted set AND the bounding set.
-	 *
-	 *    i.e. new_perm cannot contain bits outside
-	 *         (cur_perm & sys_cap_bset[0]).
-	 */
-	{
-		uint64_t source_perm = cur_perm & sys_cap_bset_get_word(0);
-		if (new_perm & ~source_perm)
-			return (uint64_t)(int64_t)-EPERM;
-	}
+    /* ── Self-capset rules (pid == 0) ──────────────────────────── */
+    /* Following Linux kernel cap_set_user() semantics:
+     *
+     * 1. New permitted set: caps added to permitted must be in
+     *    the caller's current permitted set AND the bounding set.
+     *
+     *    i.e. new_perm cannot contain bits outside
+     *         (cur_perm & sys_cap_bset[0]).
+     */
+    {
+        uint64_t source_perm = cur_perm & sys_cap_bset_get_word(0);
+        if (new_perm & ~source_perm)
+            return (uint64_t)(int64_t)-EPERM;
+    }
 
-	/*
-	 * 2. New inheritable set: caps added to inheritable must be
-	 *    in the caller's current inheritable set.
-	 *
-	 *    i.e. new_inh cannot contain bits outside cur_inh.
-	 */
-	if (new_inh & ~cur_inh)
-		return (uint64_t)(int64_t)-EPERM;
+    /*
+     * 2. New inheritable set: caps added to inheritable must be
+     *    in the caller's current inheritable set.
+     *
+     *    i.e. new_inh cannot contain bits outside cur_inh.
+     */
+    if (new_inh & ~cur_inh)
+        return (uint64_t)(int64_t)-EPERM;
 
-	/*
-	 * 3. New effective set must be a subset of new permitted set.
-	 */
-	if (new_eff & ~new_perm)
-		return (uint64_t)(int64_t)-EPERM;
+    /*
+     * 3. New effective set must be a subset of new permitted set.
+     */
+    if (new_eff & ~new_perm)
+        return (uint64_t)(int64_t)-EPERM;
 
-	/* Apply the new capability sets to the target (self) */
-	target->cap_permitted[0]   = new_perm;
-	target->cap_inheritable[0] = new_inh;
-	target->cap_effective[0]   = new_eff;
+    /* Apply the new capability sets to the target (self) */
+    target->cap_permitted[0] = new_perm;
+    target->cap_inheritable[0] = new_inh;
+    target->cap_effective[0] = new_eff;
 
-	/* Apply bounding set to all cap sets */
-	sys_cap_bset_apply(target);
+    /* Apply bounding set to all cap sets */
+    sys_cap_bset_apply(target);
 
-	return 0;
+    return 0;
 }
 
 /* ── sys_setsecurebits — set securebits for current process ────────────
@@ -324,22 +311,21 @@ int64_t sys_capset(uint64_t header_addr, uint64_t data_addr)
  * Returns 0 on success, -EINVAL on invalid bits, -EPERM on locked bits,
  * or -ESRCH if the current process cannot be determined.
  */
-int64_t sys_setsecurebits(uint64_t bits)
-{
-	struct process *p = process_get_current();
+int64_t sys_setsecurebits(uint64_t bits) {
+    struct process *p = process_get_current();
 
-	if (!p)
-		return (uint64_t)(int64_t)-ESRCH;
+    if (!p)
+        return (uint64_t)(int64_t)-ESRCH;
 
-	/* Validate: only accept the low byte (securebits is uint8_t) */
-	if (bits & ~0xFFULL)
-		return (uint64_t)(int64_t)-EINVAL;
+    /* Validate: only accept the low byte (securebits is uint8_t) */
+    if (bits & ~0xFFULL)
+        return (uint64_t)(int64_t)-EINVAL;
 
-	int ret = securebits_set(p, (uint8_t)bits);
-	if (ret < 0)
-		return (uint64_t)(int64_t)ret;
+    int ret = securebits_set(p, (uint8_t)bits);
+    if (ret < 0)
+        return (uint64_t)(int64_t)ret;
 
-	return 0;
+    return 0;
 }
 
 /* ── sys_getsecurebits — get securebits for current process ────────────
@@ -349,12 +335,11 @@ int64_t sys_setsecurebits(uint64_t bits)
  * Returns the current securebits flags for the calling process,
  * or -ESRCH if the current process cannot be determined.
  */
-int64_t sys_getsecurebits(void)
-{
-	struct process *p = process_get_current();
+int64_t sys_getsecurebits(void) {
+    struct process *p = process_get_current();
 
-	if (!p)
-		return (uint64_t)(int64_t)-ESRCH;
+    if (!p)
+        return (uint64_t)(int64_t)-ESRCH;
 
-	return (uint64_t)securebits_get(p);
+    return (uint64_t)securebits_get(p);
 }

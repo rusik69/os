@@ -14,25 +14,25 @@
  */
 
 #define KERNEL_INTERNAL
-#include "types.h"
-#include "errno.h"
-#include "ioctl.h"
-#include "process.h"
-#include "socket.h"
 #include "blockdev.h"
-#include "uaccess.h"
-#include "timer.h"
-#include "timers.h"
+#include "errno.h"
 #include "heap.h"
-#include "string.h"
-#include "printf.h"
+#include "ioctl.h"
 #include "module.h"
 #include "netdevice.h"
-#include "vfs.h"
-#include "sound_oss.h"
-#include "tmpfs.h"
-#include "signal.h"
 #include "pgrp.h"
+#include "printf.h"
+#include "process.h"
+#include "signal.h"
+#include "socket.h"
+#include "sound_oss.h"
+#include "string.h"
+#include "timer.h"
+#include "timers.h"
+#include "tmpfs.h"
+#include "types.h"
+#include "uaccess.h"
+#include "vfs.h"
 
 /* Declaration of global TTY termios accessor (defined in syscall.c) */
 extern struct termios *tty_get_termios(void);
@@ -54,52 +54,48 @@ MODULE_AUTHOR("OS Kernel Team");
  * FIONCLEX — Clear close-on-exec flag on fd.
  * The arg parameter is ignored (pass 0).
  */
-static int ioctl_fionclex(struct process *p, int fd)
-{
-	p->fd_table[fd].flags &= ~(uint8_t)FD_CLOEXEC;
-	return 0;
+static int ioctl_fionclex(struct process *p, int fd) {
+    p->fd_table[fd].flags &= ~(uint8_t)FD_CLOEXEC;
+    return 0;
 }
 
 /*
  * FIOCLEX — Set close-on-exec flag on fd.
  * The arg parameter is ignored (pass 0).
  */
-static int ioctl_fioclex(struct process *p, int fd)
-{
-	p->fd_table[fd].flags |= (uint8_t)FD_CLOEXEC;
-	return 0;
+static int ioctl_fioclex(struct process *p, int fd) {
+    p->fd_table[fd].flags |= (uint8_t)FD_CLOEXEC;
+    return 0;
 }
 
 /*
  * FIONBIO — Set or clear the O_NONBLOCK flag on fd.
  * arg is a userspace pointer to int: non-zero → set, zero → clear.
  */
-static int ioctl_fionbio(struct process *p, int fd, uint64_t arg)
-{
-	int val;
-	if (copy_from_user(&val, arg, sizeof(val)) < 0)
-		return -EFAULT;
-	if (val)
-		p->fd_table[fd].open_flags |= 04000;  /* O_NONBLOCK */
-	else
-		p->fd_table[fd].open_flags &= ~04000;
-	return 0;
+static int ioctl_fionbio(struct process *p, int fd, uint64_t arg) {
+    int val;
+    if (copy_from_user(&val, arg, sizeof(val)) < 0)
+        return -EFAULT;
+    if (val)
+        p->fd_table[fd].open_flags |= 04000; /* O_NONBLOCK */
+    else
+        p->fd_table[fd].open_flags &= ~04000;
+    return 0;
 }
 
 /*
  * FIOASYNC — Set or clear the async (signal-driven I/O) flag on fd.
  * arg is a userspace pointer to int: non-zero → set, zero → clear.
  */
-static int ioctl_fioasync(struct process *p, int fd, uint64_t arg)
-{
-	int val;
-	if (copy_from_user(&val, arg, sizeof(val)) < 0)
-		return -EFAULT;
-	if (val)
-		p->fd_table[fd].open_flags |= 0x2000;  /* O_ASYNC */
-	else
-		p->fd_table[fd].open_flags &= ~0x2000;
-	return 0;
+static int ioctl_fioasync(struct process *p, int fd, uint64_t arg) {
+    int val;
+    if (copy_from_user(&val, arg, sizeof(val)) < 0)
+        return -EFAULT;
+    if (val)
+        p->fd_table[fd].open_flags |= 0x2000; /* O_ASYNC */
+    else
+        p->fd_table[fd].open_flags &= ~0x2000;
+    return 0;
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -111,8 +107,7 @@ static int ioctl_fioasync(struct process *p, int fd, uint64_t arg)
  * arg is a userspace pointer to winsize struct { ws_row, ws_col,
  * ws_xpixel, ws_ypixel }.
  */
-static int ioctl_tiocgwinsz(uint64_t arg)
-{
+static int ioctl_tiocgwinsz(uint64_t arg) {
     struct winsize *ws = tty_get_winsize();
     if (!ws)
         return -ENOTTY;
@@ -127,8 +122,7 @@ static int ioctl_tiocgwinsz(uint64_t arg)
  * Stores the new size and sends SIGWINCH to the foreground process
  * group of the controlling terminal.
  */
-static int ioctl_tiocswinsz(uint64_t arg)
-{
+static int ioctl_tiocswinsz(uint64_t arg) {
     struct winsize new_ws;
     if (copy_from_user(&new_ws, arg, sizeof(new_ws)) < 0)
         return -EFAULT;
@@ -156,20 +150,19 @@ static int ioctl_tiocswinsz(uint64_t arg)
  * arg is a userspace pointer to struct termios.
  * Reads the global TTY termios state and copies it to user.
  */
-static int ioctl_tcgets(uint64_t arg)
-{
-	struct termios *t = tty_get_termios();
-	if (!t)
-		return -ENOTTY;
-	if (copy_to_user(arg, t, sizeof(*t)) < 0)
-		return -EFAULT;
-	return 0;
+static int ioctl_tcgets(uint64_t arg) {
+    struct termios *t = tty_get_termios();
+    if (!t)
+        return -ENOTTY;
+    if (copy_to_user(arg, t, sizeof(*t)) < 0)
+        return -EFAULT;
+    return 0;
 }
 
 /* ── Known termios flag masks for validation ──────────────────── */
 
 /* c_lflag known bits: ISIG, ICANON, NOFLSH, ECHO, TOSTOP */
-#define TERMIOS_LFLAG_KNOWN  (ISIG | ICANON | NOFLSH | ECHO | TOSTOP)
+#define TERMIOS_LFLAG_KNOWN (ISIG | ICANON | NOFLSH | ECHO | TOSTOP)
 
 /* c_iflag, c_oflag, c_cflag — no flags defined yet, all bits invalid */
 
@@ -177,17 +170,16 @@ static int ioctl_tcgets(uint64_t arg)
  * tty_termios_valid — Validate a struct termios before applying it.
  * Returns true if valid, false if bits outside the known masks are set.
  */
-static bool tty_termios_valid(const struct termios *t)
-{
-	if (t->c_iflag & ~0U)          /* no known flags yet → any non-zero is invalid */
-		return false;
-	if (t->c_oflag & ~0U)          /* no known flags yet → any non-zero is invalid */
-		return false;
-	if (t->c_cflag & ~0U)          /* no known flags yet → any non-zero is invalid */
-		return false;
-	if (t->c_lflag & ~TERMIOS_LFLAG_KNOWN)
-		return false;
-	return true;
+static bool tty_termios_valid(const struct termios *t) {
+    if (t->c_iflag & ~0U) /* no known flags yet → any non-zero is invalid */
+        return false;
+    if (t->c_oflag & ~0U) /* no known flags yet → any non-zero is invalid */
+        return false;
+    if (t->c_cflag & ~0U) /* no known flags yet → any non-zero is invalid */
+        return false;
+    if (t->c_lflag & ~TERMIOS_LFLAG_KNOWN)
+        return false;
+    return true;
 }
 
 /*
@@ -196,18 +188,17 @@ static bool tty_termios_valid(const struct termios *t)
  * Copies the termios struct from user, validates it, and updates the
  * global TTY state.  Returns -EINVAL if unknown or invalid flags are set.
  */
-static int ioctl_tcsets(uint64_t arg)
-{
-	struct termios t;
-	if (copy_from_user(&t, arg, sizeof(t)) < 0)
-		return -EFAULT;
-	if (!tty_termios_valid(&t))
-		return -EINVAL;
-	struct termios *dst = tty_get_termios();
-	if (!dst)
-		return -ENOTTY;
-	*dst = t;
-	return 0;
+static int ioctl_tcsets(uint64_t arg) {
+    struct termios t;
+    if (copy_from_user(&t, arg, sizeof(t)) < 0)
+        return -EFAULT;
+    if (!tty_termios_valid(&t))
+        return -EINVAL;
+    struct termios *dst = tty_get_termios();
+    if (!dst)
+        return -ENOTTY;
+    *dst = t;
+    return 0;
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -219,30 +210,29 @@ static int ioctl_tcsets(uint64_t arg)
  * arg points to a struct ifreq with ifr_ifindex set.
  * On success, ifr_name is filled with the interface name.
  */
-static int ioctl_siocgifname(uint64_t arg)
-{
-	struct ifreq ifr;
-	int ret;
+static int ioctl_siocgifname(uint64_t arg) {
+    struct ifreq ifr;
+    int ret;
 
-	ret = copy_from_user(&ifr, arg, sizeof(ifr));
-	if (ret < 0)
-		return -EFAULT;
+    ret = copy_from_user(&ifr, arg, sizeof(ifr));
+    if (ret < 0)
+        return -EFAULT;
 
-	int idx = ifr.ifr_ifindex;
-	if (idx < 0 || idx >= NETDEV_MAX)
-		return -ENODEV;
+    int idx = ifr.ifr_ifindex;
+    if (idx < 0 || idx >= NETDEV_MAX)
+        return -ENODEV;
 
-	struct net_device *dev = netif_get(idx);
-	if (!dev)
-		return -ENODEV;
+    struct net_device *dev = netif_get(idx);
+    if (!dev)
+        return -ENODEV;
 
-	strncpy(ifr.ifr_name, dev->name, IFNAMSIZ);
-	ifr.ifr_name[IFNAMSIZ - 1] = '\0';
+    strncpy(ifr.ifr_name, dev->name, IFNAMSIZ);
+    ifr.ifr_name[IFNAMSIZ - 1] = '\0';
 
-	ret = copy_to_user(arg, &ifr, sizeof(ifr));
-	if (ret < 0)
-		return -EFAULT;
-	return 0;
+    ret = copy_to_user(arg, &ifr, sizeof(ifr));
+    if (ret < 0)
+        return -EFAULT;
+    return 0;
 }
 
 /*
@@ -250,27 +240,26 @@ static int ioctl_siocgifname(uint64_t arg)
  * arg points to a struct ifreq with ifr_name set.
  * On success, ifr_ifindex is filled with the interface index.
  */
-static int ioctl_siocgifindex(uint64_t arg)
-{
-	struct ifreq ifr;
-	int ret;
+static int ioctl_siocgifindex(uint64_t arg) {
+    struct ifreq ifr;
+    int ret;
 
-	ret = copy_from_user(&ifr, arg, sizeof(ifr));
-	if (ret < 0)
-		return -EFAULT;
+    ret = copy_from_user(&ifr, arg, sizeof(ifr));
+    if (ret < 0)
+        return -EFAULT;
 
-	ifr.ifr_name[IFNAMSIZ - 1] = '\0';
+    ifr.ifr_name[IFNAMSIZ - 1] = '\0';
 
-	int idx = netif_name_to_index(ifr.ifr_name);
-	if (idx < 0)
-		return -ENODEV;
+    int idx = netif_name_to_index(ifr.ifr_name);
+    if (idx < 0)
+        return -ENODEV;
 
-	ifr.ifr_ifindex = idx;
+    ifr.ifr_ifindex = idx;
 
-	ret = copy_to_user(arg, &ifr, sizeof(ifr));
-	if (ret < 0)
-		return -EFAULT;
-	return 0;
+    ret = copy_to_user(arg, &ifr, sizeof(ifr));
+    if (ret < 0)
+        return -EFAULT;
+    return 0;
 }
 
 /*
@@ -278,32 +267,31 @@ static int ioctl_siocgifindex(uint64_t arg)
  * arg points to a struct ifreq with ifr_name set.
  * On success, ifr_hwaddr is filled with sa_family and 6-byte MAC.
  */
-static int ioctl_siocgifhwaddr(uint64_t arg)
-{
-	struct ifreq ifr;
-	int ret;
+static int ioctl_siocgifhwaddr(uint64_t arg) {
+    struct ifreq ifr;
+    int ret;
 
-	ret = copy_from_user(&ifr, arg, sizeof(ifr));
-	if (ret < 0)
-		return -EFAULT;
+    ret = copy_from_user(&ifr, arg, sizeof(ifr));
+    if (ret < 0)
+        return -EFAULT;
 
-	ifr.ifr_name[IFNAMSIZ - 1] = '\0';
+    ifr.ifr_name[IFNAMSIZ - 1] = '\0';
 
-	int idx = netif_name_to_index(ifr.ifr_name);
-	if (idx < 0)
-		return -ENODEV;
+    int idx = netif_name_to_index(ifr.ifr_name);
+    if (idx < 0)
+        return -ENODEV;
 
-	struct net_device *dev = netif_get(idx);
-	if (!dev)
-		return -ENODEV;
+    struct net_device *dev = netif_get(idx);
+    if (!dev)
+        return -ENODEV;
 
-	ifr.ifr_hwaddr.sa_family = 1;       /* ARPHRD_ETHER */
-	memcpy(ifr.ifr_hwaddr.sa_data, dev->mac, 6);
+    ifr.ifr_hwaddr.sa_family = 1; /* ARPHRD_ETHER */
+    memcpy(ifr.ifr_hwaddr.sa_data, dev->mac, 6);
 
-	ret = copy_to_user(arg, &ifr, sizeof(ifr));
-	if (ret < 0)
-		return -EFAULT;
-	return 0;
+    ret = copy_to_user(arg, &ifr, sizeof(ifr));
+    if (ret < 0)
+        return -EFAULT;
+    return 0;
 }
 
 /*
@@ -311,31 +299,30 @@ static int ioctl_siocgifhwaddr(uint64_t arg)
  * arg points to a struct ifreq with ifr_name set.
  * On success, ifr_flags is filled with the interface IFF_* flags.
  */
-static int ioctl_siocgifflags(uint64_t arg)
-{
-	struct ifreq ifr;
-	int ret;
+static int ioctl_siocgifflags(uint64_t arg) {
+    struct ifreq ifr;
+    int ret;
 
-	ret = copy_from_user(&ifr, arg, sizeof(ifr));
-	if (ret < 0)
-		return -EFAULT;
+    ret = copy_from_user(&ifr, arg, sizeof(ifr));
+    if (ret < 0)
+        return -EFAULT;
 
-	ifr.ifr_name[IFNAMSIZ - 1] = '\0';
+    ifr.ifr_name[IFNAMSIZ - 1] = '\0';
 
-	int idx = netif_name_to_index(ifr.ifr_name);
-	if (idx < 0)
-		return -ENODEV;
+    int idx = netif_name_to_index(ifr.ifr_name);
+    if (idx < 0)
+        return -ENODEV;
 
-	struct net_device *dev = netif_get(idx);
-	if (!dev)
-		return -ENODEV;
+    struct net_device *dev = netif_get(idx);
+    if (!dev)
+        return -ENODEV;
 
-	ifr.ifr_flags = (short)dev->flags;
+    ifr.ifr_flags = (short)dev->flags;
 
-	ret = copy_to_user(arg, &ifr, sizeof(ifr));
-	if (ret < 0)
-		return -EFAULT;
-	return 0;
+    ret = copy_to_user(arg, &ifr, sizeof(ifr));
+    if (ret < 0)
+        return -EFAULT;
+    return 0;
 }
 
 /*
@@ -343,33 +330,31 @@ static int ioctl_siocgifflags(uint64_t arg)
  * arg points to a struct ifreq with ifr_name and ifr_flags set.
  * Only the flags that are modifiable from userspace are applied.
  */
-static int ioctl_siocsifflags(uint64_t arg)
-{
-	struct ifreq ifr;
-	int ret;
+static int ioctl_siocsifflags(uint64_t arg) {
+    struct ifreq ifr;
+    int ret;
 
-	ret = copy_from_user(&ifr, arg, sizeof(ifr));
-	if (ret < 0)
-		return -EFAULT;
+    ret = copy_from_user(&ifr, arg, sizeof(ifr));
+    if (ret < 0)
+        return -EFAULT;
 
-	ifr.ifr_name[IFNAMSIZ - 1] = '\0';
+    ifr.ifr_name[IFNAMSIZ - 1] = '\0';
 
-	int idx = netif_name_to_index(ifr.ifr_name);
-	if (idx < 0)
-		return -ENODEV;
+    int idx = netif_name_to_index(ifr.ifr_name);
+    if (idx < 0)
+        return -ENODEV;
 
-	struct net_device *dev = netif_get(idx);
-	if (!dev)
-		return -ENODEV;
+    struct net_device *dev = netif_get(idx);
+    if (!dev)
+        return -ENODEV;
 
-	/* Only allow userspace to toggle IFF_UP, IFF_PROMISC,
-	 * IFF_ALLMULTI, IFF_MULTICAST — not running state, etc. */
-#define IFF_CHANGEABLE  (IFF_UP | IFF_PROMISC | IFF_ALLMULTI | IFF_MULTICAST)
+        /* Only allow userspace to toggle IFF_UP, IFF_PROMISC,
+         * IFF_ALLMULTI, IFF_MULTICAST — not running state, etc. */
+#define IFF_CHANGEABLE (IFF_UP | IFF_PROMISC | IFF_ALLMULTI | IFF_MULTICAST)
 
-	dev->flags = (dev->flags & ~IFF_CHANGEABLE) |
-	             (ifr.ifr_flags & IFF_CHANGEABLE);
+    dev->flags = (dev->flags & ~IFF_CHANGEABLE) | (ifr.ifr_flags & IFF_CHANGEABLE);
 
-	return 0;
+    return 0;
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -386,72 +371,70 @@ static int ioctl_siocsifflags(uint64_t arg)
  *
  * Returns 0 on success or negative errno.
  */
-static int ioctl_file_dispatch(struct process *p, int fd, uint64_t cmd,
-                               uint64_t arg)
-{
-	const char *path = p->fd_table[fd].path;
-	if (!path || path[0] == '\0')
-		return -EBADF;
+static int ioctl_file_dispatch(struct process *p, int fd, uint64_t cmd, uint64_t arg) {
+    const char *path = p->fd_table[fd].path;
+    if (!path || path[0] == '\0')
+        return -EBADF;
 
-	switch (cmd) {
-	case FIONREAD: {
-		/* Return the number of bytes immediately available to read.
-		 * For regular files this is the remaining bytes from the
-		 * current offset to EOF. */
-		struct vfs_stat st;
-		int ret = vfs_stat(path, &st);
-		if (ret < 0)
-			return ret;
+    switch (cmd) {
+    case FIONREAD: {
+        /* Return the number of bytes immediately available to read.
+         * For regular files this is the remaining bytes from the
+         * current offset to EOF. */
+        struct vfs_stat st;
+        int ret = vfs_stat(path, &st);
+        if (ret < 0)
+            return ret;
 
-		uint64_t offset = p->fd_table[fd].offset;
-		uint64_t avail = (st.size > offset) ? (st.size - offset) : 0;
+        uint64_t offset = p->fd_table[fd].offset;
+        uint64_t avail = (st.size > offset) ? (st.size - offset) : 0;
 
-		int val = (int)avail;
-		if (copy_to_user(arg, &val, sizeof(val)) < 0)
-			return -EFAULT;
-		return 0;
-	}
+        int val = (int)avail;
+        if (copy_to_user(arg, &val, sizeof(val)) < 0)
+            return -EFAULT;
+        return 0;
+    }
 
-	case FIOQSIZE: {
-		/* Return the file size as a 64-bit value */
-		struct vfs_stat st;
-		int ret = vfs_stat(path, &st);
-		if (ret < 0)
-			return ret;
+    case FIOQSIZE: {
+        /* Return the file size as a 64-bit value */
+        struct vfs_stat st;
+        int ret = vfs_stat(path, &st);
+        if (ret < 0)
+            return ret;
 
-		uint64_t size = st.size;
-		if (copy_to_user(arg, &size, sizeof(size)) < 0)
-			return -EFAULT;
-		return 0;
-	}
+        uint64_t size = st.size;
+        if (copy_to_user(arg, &size, sizeof(size)) < 0)
+            return -EFAULT;
+        return 0;
+    }
 
-	case FIGETBSZ: {
-		/* Return the filesystem block size */
-		struct vfs_statfs st;
-		int ret = vfs_statfs(path, &st);
-		if (ret < 0)
-			return ret;
+    case FIGETBSZ: {
+        /* Return the filesystem block size */
+        struct vfs_statfs st;
+        int ret = vfs_statfs(path, &st);
+        if (ret < 0)
+            return ret;
 
-		int bsize = (int)st.f_bsize;
-		if (copy_to_user(arg, &bsize, sizeof(bsize)) < 0)
-			return -EFAULT;
-		return 0;
-	}
+        int bsize = (int)st.f_bsize;
+        if (copy_to_user(arg, &bsize, sizeof(bsize)) < 0)
+            return -EFAULT;
+        return 0;
+    }
 
-	case FS_IOC_GETFLAGS:
-	case FS_IOC_SETFLAGS:
-	case FS_IOC_GETVERSION:
-	case FS_IOC_SETVERSION:
-	case TMPFS_IOC_MADVISE_MERGEABLE:
-	case TMPFS_IOC_UNMERGEABLE:
-	case TMPFS_IOC_STATFS:
-	case TMPFS_IOC_GET_INFO:
-		/* Dispatch filesystem-specific ioctls through VFS */
-		return vfs_ioctl(path, cmd, arg);
+    case FS_IOC_GETFLAGS:
+    case FS_IOC_SETFLAGS:
+    case FS_IOC_GETVERSION:
+    case FS_IOC_SETVERSION:
+    case TMPFS_IOC_MADVISE_MERGEABLE:
+    case TMPFS_IOC_UNMERGEABLE:
+    case TMPFS_IOC_STATFS:
+    case TMPFS_IOC_GET_INFO:
+        /* Dispatch filesystem-specific ioctls through VFS */
+        return vfs_ioctl(path, cmd, arg);
 
-	default:
-		return -ENOTTY;
-	}
+    default:
+        return -ENOTTY;
+    }
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -464,125 +447,119 @@ static int ioctl_file_dispatch(struct process *p, int fd, uint64_t cmd,
  * identified by the fd's path (/dev/sda, /dev/nvme0n1, etc.).
  * Returns sense data and status in the sg_io_hdr structure.
  */
-static int ioctl_sg_io(struct process *p, int fd, uint64_t arg)
-{
-	struct sg_io_hdr hdr;
+static int ioctl_sg_io(struct process *p, int fd, uint64_t arg) {
+    struct sg_io_hdr hdr;
 
-	if (copy_from_user(&hdr, arg, sizeof(hdr)) < 0)
-		return -EFAULT;
+    if (copy_from_user(&hdr, arg, sizeof(hdr)) < 0)
+        return -EFAULT;
 
-	/* Validate interface ID */
-	if (hdr.interface_id != 'S')
-		return -ENOTTY;
+    /* Validate interface ID */
+    if (hdr.interface_id != 'S')
+        return -ENOTTY;
 
-	/* iovec not supported in this simple implementation */
-	if (hdr.iovec_count != 0)
-		return -EINVAL;
+    /* iovec not supported in this simple implementation */
+    if (hdr.iovec_count != 0)
+        return -EINVAL;
 
-	/* Validate CDB length */
-	if (hdr.cmd_len > SG_MAX_CDB_SIZE || hdr.cmd_len == 0)
-		return -EINVAL;
+    /* Validate CDB length */
+    if (hdr.cmd_len > SG_MAX_CDB_SIZE || hdr.cmd_len == 0)
+        return -EINVAL;
 
-	/* Resolve block device ID from the fd's path */
-	const char *path = p->fd_table[fd].path;
-	if (!path || path[0] == '\0')
-		return -EBADF;
+    /* Resolve block device ID from the fd's path */
+    const char *path = p->fd_table[fd].path;
+    if (!path || path[0] == '\0')
+        return -EBADF;
 
-	int dev_id = blockdev_find_by_name(path);
-	if (dev_id < 0)
-		return -ENODEV;
+    int dev_id = blockdev_find_by_name(path);
+    if (dev_id < 0)
+        return -ENODEV;
 
-	/* Copy CDB from user space */
-	uint8_t cdb[SG_MAX_CDB_SIZE];
-	memset(cdb, 0, sizeof(cdb));
-	if (copy_from_user(cdb, (uint64_t)(uintptr_t)hdr.cmdp, hdr.cmd_len) < 0)
-		return -EFAULT;
+    /* Copy CDB from user space */
+    uint8_t cdb[SG_MAX_CDB_SIZE];
+    memset(cdb, 0, sizeof(cdb));
+    if (copy_from_user(cdb, (uint64_t)(uintptr_t)hdr.cmdp, hdr.cmd_len) < 0)
+        return -EFAULT;
 
-	/* Allocate data buffer (up to 64KB for safety) */
-	uint32_t data_len = hdr.dxfer_len;
-	if (data_len > 65536)
-		return -EINVAL;
+    /* Allocate data buffer (up to 64KB for safety) */
+    uint32_t data_len = hdr.dxfer_len;
+    if (data_len > 65536)
+        return -EINVAL;
 
-	void *data_buf = NULL;
-	if (data_len > 0 && hdr.dxferp) {
-		data_buf = (void *)kmalloc(data_len);
-		if (!data_buf)
-			return -ENOMEM;
+    void *data_buf = NULL;
+    if (data_len > 0 && hdr.dxferp) {
+        data_buf = (void *)kmalloc(data_len);
+        if (!data_buf)
+            return -ENOMEM;
 
-		if (hdr.dxfer_direction == SG_DXFER_TO_DEV ||
-		    hdr.dxfer_direction == SG_DXFER_TO_FROM_DEV) {
-			/* Copy data FROM user for writes */
-			if (copy_from_user(data_buf, (uint64_t)(uintptr_t)hdr.dxferp, data_len) < 0) {
-				kfree(data_buf);
-				return -EFAULT;
-			}
-		}
-	}
+        if (hdr.dxfer_direction == SG_DXFER_TO_DEV || hdr.dxfer_direction == SG_DXFER_TO_FROM_DEV) {
+            /* Copy data FROM user for writes */
+            if (copy_from_user(data_buf, (uint64_t)(uintptr_t)hdr.dxferp, data_len) < 0) {
+                kfree(data_buf);
+                return -EFAULT;
+            }
+        }
+    }
 
-	/* Sense buffer */
-	uint8_t sense[SG_MAX_SENSE_SIZE];
-	int sense_len = 0;
-	memset(sense, 0, sizeof(sense));
+    /* Sense buffer */
+    uint8_t sense[SG_MAX_SENSE_SIZE];
+    int sense_len = 0;
+    memset(sense, 0, sizeof(sense));
 
-	/* Submit the SCSI command */
-	uint64_t start_tick = 0;
-	if (timer_available())
-		start_tick = timer_get_ticks();
+    /* Submit the SCSI command */
+    uint64_t start_tick = 0;
+    if (timer_available())
+        start_tick = timer_get_ticks();
 
-	int ret = blockdev_scsi_submit(dev_id, cdb, hdr.cmd_len,
-	                               data_buf, (int)data_len,
-	                               hdr.dxfer_direction,
-	                               sense, &sense_len,
-	                               (int)hdr.timeout);
+    int ret = blockdev_scsi_submit(dev_id, cdb, hdr.cmd_len, data_buf, (int)data_len,
+                                   hdr.dxfer_direction, sense, &sense_len, (int)hdr.timeout);
 
-	/* Calculate duration in ms */
-	uint32_t duration_ms = 0;
-	if (timer_available()) {
-		uint64_t elapsed = timer_get_ticks() - start_tick;
-		duration_ms = (uint32_t)(elapsed * 1000 / TIMER_FREQ);
-	}
+    /* Calculate duration in ms */
+    uint32_t duration_ms = 0;
+    if (timer_available()) {
+        uint64_t elapsed = timer_get_ticks() - start_tick;
+        duration_ms = (uint32_t)(elapsed * 1000 / TIMER_FREQ);
+    }
 
-	/* Fill in the hdr result fields */
-	if (ret < 0) {
-		hdr.status = 0xFF;                        /* SCSI status = host error */
-		hdr.host_status = (unsigned short)(-ret);
-		hdr.resid = (int)data_len;                  /* all data residual */
-	} else {
-		hdr.status = 0;                              /* GOOD status */
-		hdr.host_status = 0;
-		hdr.resid = 0;
-	}
-	hdr.duration = duration_ms;
-	hdr.sb_len_wr = (unsigned char)sense_len;
-	if (sense_len > 0 && hdr.sbp) {
-		unsigned char mx_sb = hdr.mx_sb_len;
-		if ((int)mx_sb > sense_len)
-			mx_sb = (unsigned char)sense_len;
-		if (copy_to_user((uint64_t)(uintptr_t)hdr.sbp, sense, mx_sb) < 0) {
-			if (data_buf)
-				kfree(data_buf);
-			return -EFAULT;
-		}
-	}
+    /* Fill in the hdr result fields */
+    if (ret < 0) {
+        hdr.status = 0xFF; /* SCSI status = host error */
+        hdr.host_status = (unsigned short)(-ret);
+        hdr.resid = (int)data_len; /* all data residual */
+    } else {
+        hdr.status = 0; /* GOOD status */
+        hdr.host_status = 0;
+        hdr.resid = 0;
+    }
+    hdr.duration = duration_ms;
+    hdr.sb_len_wr = (unsigned char)sense_len;
+    if (sense_len > 0 && hdr.sbp) {
+        unsigned char mx_sb = hdr.mx_sb_len;
+        if ((int)mx_sb > sense_len)
+            mx_sb = (unsigned char)sense_len;
+        if (copy_to_user((uint64_t)(uintptr_t)hdr.sbp, sense, mx_sb) < 0) {
+            if (data_buf)
+                kfree(data_buf);
+            return -EFAULT;
+        }
+    }
 
-	/* Copy data back to user for reads */
-	if (data_buf && data_len > 0 && hdr.dxferp &&
-	    (hdr.dxfer_direction == SG_DXFER_FROM_DEV ||
-	     hdr.dxfer_direction == SG_DXFER_TO_FROM_DEV)) {
-		if (copy_to_user((uint64_t)(uintptr_t)hdr.dxferp, data_buf, data_len) < 0) {
-			kfree(data_buf);
-			return -EFAULT;
-		}
-	}
+    /* Copy data back to user for reads */
+    if (data_buf && data_len > 0 && hdr.dxferp &&
+        (hdr.dxfer_direction == SG_DXFER_FROM_DEV || hdr.dxfer_direction == SG_DXFER_TO_FROM_DEV)) {
+        if (copy_to_user((uint64_t)(uintptr_t)hdr.dxferp, data_buf, data_len) < 0) {
+            kfree(data_buf);
+            return -EFAULT;
+        }
+    }
 
-	if (data_buf)
-		kfree(data_buf);
+    if (data_buf)
+        kfree(data_buf);
 
-	/* Copy the updated hdr back to user */
-	if (copy_to_user(arg, &hdr, sizeof(hdr)) < 0)
-		return -EFAULT;
+    /* Copy the updated hdr back to user */
+    if (copy_to_user(arg, &hdr, sizeof(hdr)) < 0)
+        return -EFAULT;
 
-	return 0;
+    return 0;
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -598,120 +575,118 @@ static int ioctl_sg_io(struct process *p, int fd, uint64_t arg)
  * Returns 0 on success or a negative errno on failure (Linux syscall
  * convention — the caller wraps this in a uint64_t return).
  */
-int64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg)
-{
-	struct process *p = process_get_current();
-	if (!p)
-		return (uint64_t)(int64_t)-ESRCH;
-	if (fd >= PROCESS_FD_MAX || !p->fd_table[fd].used)
-		return (uint64_t)(int64_t)-EBADF;
+int64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg) {
+    struct process *p = process_get_current();
+    if (!p)
+        return (uint64_t)(int64_t)-ESRCH;
+    if (fd >= PROCESS_FD_MAX || !p->fd_table[fd].used)
+        return (uint64_t)(int64_t)-EBADF;
 
-	/*
-	 * FIOCLEX and FIONCLEX do not use arg as a pointer — allow arg == 0.
-	 * All other commands that take a pointer argument reject NULL.
-	 */
-	switch (cmd) {
-	case FIOCLEX:
-	case FIONCLEX:
-		break;
-	default:
-		if (!arg)
-			return (uint64_t)(int64_t)-EINVAL;
-		break;
-	}
+    /*
+     * FIOCLEX and FIONCLEX do not use arg as a pointer — allow arg == 0.
+     * All other commands that take a pointer argument reject NULL.
+     */
+    switch (cmd) {
+    case FIOCLEX:
+    case FIONCLEX:
+        break;
+    default:
+        if (!arg)
+            return (uint64_t)(int64_t)-EINVAL;
+        break;
+    }
 
-	/* Dispatch by command code */
-	switch (cmd) {
+    /* Dispatch by command code */
+    switch (cmd) {
+    /* ── FD-level ioctls ────────────────────────────────────── */
+    case FIONCLEX:
+        return (uint64_t)(int64_t)ioctl_fionclex(p, (int)fd);
+    case FIOCLEX:
+        return (uint64_t)(int64_t)ioctl_fioclex(p, (int)fd);
+    case FIONBIO:
+        return (uint64_t)(int64_t)ioctl_fionbio(p, (int)fd, arg);
+    case FIOASYNC:
+        return (uint64_t)(int64_t)ioctl_fioasync(p, (int)fd, arg);
 
-	/* ── FD-level ioctls ────────────────────────────────────── */
-	case FIONCLEX:
-		return (uint64_t)(int64_t)ioctl_fionclex(p, (int)fd);
-	case FIOCLEX:
-		return (uint64_t)(int64_t)ioctl_fioclex(p, (int)fd);
-	case FIONBIO:
-		return (uint64_t)(int64_t)ioctl_fionbio(p, (int)fd, arg);
-	case FIOASYNC:
-		return (uint64_t)(int64_t)ioctl_fioasync(p, (int)fd, arg);
+    /* ── Terminal ioctls ────────────────────────────────────── */
+    case TIOCGWINSZ:
+        return (uint64_t)(int64_t)ioctl_tiocgwinsz(arg);
+    case TIOCSWINSZ:
+        return (uint64_t)(int64_t)ioctl_tiocswinsz(arg);
+    case TCGETS:
+        return (uint64_t)(int64_t)ioctl_tcgets(arg);
+    case TCSETS:
+        return (uint64_t)(int64_t)ioctl_tcsets(arg);
 
-	/* ── Terminal ioctls ────────────────────────────────────── */
-	case TIOCGWINSZ:
-		return (uint64_t)(int64_t)ioctl_tiocgwinsz(arg);
-	case TIOCSWINSZ:
-		return (uint64_t)(int64_t)ioctl_tiocswinsz(arg);
-	case TCGETS:
-		return (uint64_t)(int64_t)ioctl_tcgets(arg);
-	case TCSETS:
-		return (uint64_t)(int64_t)ioctl_tcsets(arg);
+    /* ── Network / Socket ioctls ────────────────────────────── */
+    case SIOCGIFNAME:
+        return (uint64_t)(int64_t)ioctl_siocgifname(arg);
+    case SIOCGIFINDEX:
+        return (uint64_t)(int64_t)ioctl_siocgifindex(arg);
+    case SIOCGIFHWADDR:
+        return (uint64_t)(int64_t)ioctl_siocgifhwaddr(arg);
+    case SIOCGIFFLAGS:
+        return (uint64_t)(int64_t)ioctl_siocgifflags(arg);
+    case SIOCSIFFLAGS:
+        return (uint64_t)(int64_t)ioctl_siocsifflags(arg);
 
-	/* ── Network / Socket ioctls ────────────────────────────── */
-	case SIOCGIFNAME:
-		return (uint64_t)(int64_t)ioctl_siocgifname(arg);
-	case SIOCGIFINDEX:
-		return (uint64_t)(int64_t)ioctl_siocgifindex(arg);
-	case SIOCGIFHWADDR:
-		return (uint64_t)(int64_t)ioctl_siocgifhwaddr(arg);
-	case SIOCGIFFLAGS:
-		return (uint64_t)(int64_t)ioctl_siocgifflags(arg);
-	case SIOCSIFFLAGS:
-		return (uint64_t)(int64_t)ioctl_siocsifflags(arg);
+    /* ── Generic file ioctls ───────────────────────────────── */
+    case FIONREAD:
+    case FIOQSIZE:
+    case FIGETBSZ:
+    case FS_IOC_GETFLAGS:
+    case FS_IOC_SETFLAGS:
+    case FS_IOC_GETVERSION:
+    case FS_IOC_SETVERSION:
+        return (uint64_t)(int64_t)ioctl_file_dispatch(p, (int)fd, cmd, arg);
 
-	/* ── Generic file ioctls ───────────────────────────────── */
-	case FIONREAD:
-	case FIOQSIZE:
-	case FIGETBSZ:
-	case FS_IOC_GETFLAGS:
-	case FS_IOC_SETFLAGS:
-	case FS_IOC_GETVERSION:
-	case FS_IOC_SETVERSION:
-		return (uint64_t)(int64_t)ioctl_file_dispatch(p, (int)fd, cmd, arg);
+    /* ── Block-device ioctls ────────────────────────────────── */
+    case SG_IO:
+        return (uint64_t)(int64_t)ioctl_sg_io(p, (int)fd, arg);
 
-	/* ── Block-device ioctls ────────────────────────────────── */
-	case SG_IO:
-		return (uint64_t)(int64_t)ioctl_sg_io(p, (int)fd, arg);
+    /* ── OSS audio / sound ioctls ──────────────────────────── */
+    case SNDCTL_DSP_RESET:
+    case SNDCTL_DSP_SYNC:
+    case SNDCTL_DSP_SPEED:
+    case SNDCTL_DSP_GETBLKSIZE:
+    case SNDCTL_DSP_SETFMT:
+    case SNDCTL_DSP_CHANNELS:
+    case SNDCTL_DSP_GETTRIGGER:
+    case SNDCTL_DSP_SETTRIGGER:
+    case SNDCTL_DSP_GETOSPACE:
+    case SNDCTL_DSP_GETISPACE:
+    case SNDCTL_DSP_SETFRAGMENT:
+    case SNDCTL_DSP_GETCAPS:
+    case SNDCTL_DSP_POST:
+    case SNDCTL_DSP_GETIPTR:
+    case SNDCTL_DSP_GETOPTR:
+    case SNDCTL_DSP_SETRECORD_SOURCE:
+    case SNDCTL_DSP_GETRECORD_SOURCE:
+    case SNDCTL_DSP_SETRECORD_GAIN:
+    case SNDCTL_DSP_GETRECORD_GAIN:
+    case SNDCTL_DSP_GETFMTS:
+    case SNDCTL_DSP_GETODELAY:
+    case SNDCTL_DSP_GETCHANNELS:
+    case SNDCTL_DSP_SUBDIVIDE:
+    case SNDCTL_DSP_SETPLAYVOL:
+    case SNDCTL_DSP_GETPLAYVOL:
+    case SNDCTL_DSP_SETRECVOL:
+    case SNDCTL_DSP_GETRECVOL:
+    case SNDCTL_DSP_PROFILE:
+    case SNDCTL_DSP_GETERROR:
+    case SOUND_MIXER_READ_VOLUME:
+    case SOUND_MIXER_WRITE_VOLUME:
+    case SOUND_MIXER_READ_MUTE:
+    case SOUND_MIXER_WRITE_MUTE:
+    case SOUND_MIXER_READ_RECMASK:
+    case SOUND_MIXER_READ_DEVMASK:
+    case SOUND_MIXER_READ_RECSRC:
+    case SOUND_MIXER_WRITE_RECSRC:
+    case SOUND_MIXER_READ_STEREO:
+    case SOUND_MIXER_READ_CAPS:
+        return (uint64_t)(int64_t)sound_oss_ioctl((int)cmd, arg);
 
-	/* ── OSS audio / sound ioctls ──────────────────────────── */
-	case SNDCTL_DSP_RESET:
-	case SNDCTL_DSP_SYNC:
-	case SNDCTL_DSP_SPEED:
-	case SNDCTL_DSP_GETBLKSIZE:
-	case SNDCTL_DSP_SETFMT:
-	case SNDCTL_DSP_CHANNELS:
-	case SNDCTL_DSP_GETTRIGGER:
-	case SNDCTL_DSP_SETTRIGGER:
-	case SNDCTL_DSP_GETOSPACE:
-	case SNDCTL_DSP_GETISPACE:
-	case SNDCTL_DSP_SETFRAGMENT:
-	case SNDCTL_DSP_GETCAPS:
-	case SNDCTL_DSP_POST:
-	case SNDCTL_DSP_GETIPTR:
-	case SNDCTL_DSP_GETOPTR:
-	case SNDCTL_DSP_SETRECORD_SOURCE:
-	case SNDCTL_DSP_GETRECORD_SOURCE:
-	case SNDCTL_DSP_SETRECORD_GAIN:
-	case SNDCTL_DSP_GETRECORD_GAIN:
-	case SNDCTL_DSP_GETFMTS:
-	case SNDCTL_DSP_GETODELAY:
-	case SNDCTL_DSP_GETCHANNELS:
-	case SNDCTL_DSP_SUBDIVIDE:
-	case SNDCTL_DSP_SETPLAYVOL:
-	case SNDCTL_DSP_GETPLAYVOL:
-	case SNDCTL_DSP_SETRECVOL:
-	case SNDCTL_DSP_GETRECVOL:
-	case SNDCTL_DSP_PROFILE:
-	case SNDCTL_DSP_GETERROR:
-	case SOUND_MIXER_READ_VOLUME:
-	case SOUND_MIXER_WRITE_VOLUME:
-	case SOUND_MIXER_READ_MUTE:
-	case SOUND_MIXER_WRITE_MUTE:
-	case SOUND_MIXER_READ_RECMASK:
-	case SOUND_MIXER_READ_DEVMASK:
-	case SOUND_MIXER_READ_RECSRC:
-	case SOUND_MIXER_WRITE_RECSRC:
-	case SOUND_MIXER_READ_STEREO:
-	case SOUND_MIXER_READ_CAPS:
-		return (uint64_t)(int64_t)sound_oss_ioctl((int)cmd, arg);
-
-	default:
-		return (uint64_t)(int64_t)-ENOTTY;
-	}
+    default:
+        return (uint64_t)(int64_t)-ENOTTY;
+    }
 }

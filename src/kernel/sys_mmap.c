@@ -7,21 +7,21 @@
  * Each function returns (uint64_t)(int64_t)-errno on error, or a
  * non-negative value on success.
  */
-#include "syscall.h"
-#include "module.h"
-#include "process.h"
-#include "errno.h"
-#include "vmm.h"
-#include "pmm.h"
-#include "hugetlb.h"
-#include "mprotect.h"
-#include "wx_enforce.h"
-#include "printf.h"
-#include "string.h"
-#include "uaccess.h"
-#include "scheduler.h"
-#include "mseal.h"
 #include "aslr.h"
+#include "errno.h"
+#include "hugetlb.h"
+#include "module.h"
+#include "mprotect.h"
+#include "mseal.h"
+#include "pmm.h"
+#include "printf.h"
+#include "process.h"
+#include "scheduler.h"
+#include "string.h"
+#include "syscall.h"
+#include "uaccess.h"
+#include "vmm.h"
+#include "wx_enforce.h"
 
 /* ── Inline helper for TLB invalidation ──────────────────────── */
 static inline void local_invlpg(uint64_t addr) {
@@ -97,10 +97,8 @@ int64_t sys_munmap(uint64_t addr, uint64_t length) {
 
 /* ── sys_mremap — remap a virtual address range (with possible move) ── */
 
-int64_t sys_mremap(uint64_t old_addr, uint64_t old_size,
-                     uint64_t new_size, uint64_t flags,
-                     uint64_t new_addr)
-{
+int64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size, uint64_t flags,
+                   uint64_t new_addr) {
     struct process *proc = process_get_current();
     if (!proc || !proc->pml4)
         return (uint64_t)(int64_t)-EFAULT;
@@ -118,8 +116,7 @@ int64_t sys_mremap(uint64_t old_addr, uint64_t old_size,
 
     if (new_size < old_size) {
         /* Shrinking: unmap the extra pages */
-        vmm_unmap_user_pages(proc->pml4, old_addr + new_size,
-                             (old_size - new_size) / PAGE_SIZE);
+        vmm_unmap_user_pages(proc->pml4, old_addr + new_size, (old_size - new_size) / PAGE_SIZE);
         uint64_t freed = old_size - new_size;
         if (proc->mapped_bytes >= freed)
             proc->mapped_bytes -= freed;
@@ -141,8 +138,7 @@ int64_t sys_mremap(uint64_t old_addr, uint64_t old_size,
 
     /* Growing: try to extend in-place */
     int can_extend = 1;
-    for (uint64_t check = old_addr + old_size;
-         check < old_addr + new_size; check += PAGE_SIZE) {
+    for (uint64_t check = old_addr + old_size; check < old_addr + new_size; check += PAGE_SIZE) {
         if (vmm_page_is_mapped_user(proc->pml4, check)) {
             can_extend = 0;
             break;
@@ -151,10 +147,8 @@ int64_t sys_mremap(uint64_t old_addr, uint64_t old_size,
 
     if (can_extend) {
         /* Extend in place: just map the new pages */
-        uint64_t page_flags = VMM_FLAG_PRESENT | VMM_FLAG_USER |
-                              VMM_FLAG_WRITE | VMM_FLAG_LAZY;
-        if (vmm_map_user_pages(proc->pml4, old_addr + old_size,
-                               extend / PAGE_SIZE, page_flags) < 0)
+        uint64_t page_flags = VMM_FLAG_PRESENT | VMM_FLAG_USER | VMM_FLAG_WRITE | VMM_FLAG_LAZY;
+        if (vmm_map_user_pages(proc->pml4, old_addr + old_size, extend / PAGE_SIZE, page_flags) < 0)
             return (uint64_t)(int64_t)-ENOMEM;
         proc->mapped_bytes += extend;
         return old_addr;
@@ -170,13 +164,14 @@ int64_t sys_mremap(uint64_t old_addr, uint64_t old_size,
         new = 0x0000000001000000ULL;
         while (new + new_size < USER_VADDR_MAX) {
             int free = 1;
-            for (uint64_t check = new; check < new + new_size;
-                 check += PAGE_SIZE) {
+            for (uint64_t check = new; check < new + new_size; check += PAGE_SIZE) {
                 if (vmm_page_is_mapped_user(proc->pml4, check)) {
-                    free = 0; break;
+                    free = 0;
+                    break;
                 }
             }
-            if (free) break;
+            if (free)
+                break;
             new += 0x100000ULL;
         }
         if (new + new_size >= USER_VADDR_MAX)
@@ -190,11 +185,9 @@ int64_t sys_mremap(uint64_t old_addr, uint64_t old_size,
             uint64_t new_phys = pmm_alloc_frame();
             if (!new_phys)
                 return (uint64_t)(int64_t)-ENOMEM;
-            memcpy(PHYS_TO_VIRT(new_phys), PHYS_TO_VIRT(old_phys),
-                   PAGE_SIZE);
+            memcpy(PHYS_TO_VIRT(new_phys), PHYS_TO_VIRT(old_phys), PAGE_SIZE);
             vmm_map_user_page(proc->pml4, new + off, new_phys,
-                              VMM_FLAG_PRESENT | VMM_FLAG_USER |
-                              VMM_FLAG_WRITE);
+                              VMM_FLAG_PRESENT | VMM_FLAG_USER | VMM_FLAG_WRITE);
         }
     }
 
@@ -203,10 +196,9 @@ int64_t sys_mremap(uint64_t old_addr, uint64_t old_size,
 
     /* Map remaining new pages (if growing) */
     if (new_size > old_size) {
-        uint64_t page_flags = VMM_FLAG_PRESENT | VMM_FLAG_USER |
-                              VMM_FLAG_WRITE | VMM_FLAG_LAZY;
-        vmm_map_user_pages(proc->pml4, new + old_size,
-                           (new_size - old_size) / PAGE_SIZE, page_flags);
+        uint64_t page_flags = VMM_FLAG_PRESENT | VMM_FLAG_USER | VMM_FLAG_WRITE | VMM_FLAG_LAZY;
+        vmm_map_user_pages(proc->pml4, new + old_size, (new_size - old_size) / PAGE_SIZE,
+                           page_flags);
     }
 
     proc->mapped_bytes += extend;
@@ -217,8 +209,10 @@ int64_t sys_mremap(uint64_t old_addr, uint64_t old_size,
 
 int64_t sys_brk(uint64_t addr) {
     struct process *p = process_get_current();
-    if (!p) return (uint64_t)(int64_t)-ENOMEM;
-    if (!p->is_user || !p->pml4) return (uint64_t)(int64_t)-EFAULT;
+    if (!p)
+        return (uint64_t)(int64_t)-ENOMEM;
+    if (!p->is_user || !p->pml4)
+        return (uint64_t)(int64_t)-EFAULT;
 
     /* Track heap start/end — initialized lazily with ASLR offset */
     if (p->heap_end == 0) {
@@ -227,14 +221,16 @@ int64_t sys_brk(uint64_t addr) {
         p->heap_end = p->heap_start;
     }
 
-    if (addr == 0) return p->heap_end; /* brk(0) — get current */
+    if (addr == 0)
+        return p->heap_end; /* brk(0) — get current */
 
     /* Reject unaligned program break (must be page-aligned) */
     if ((addr & (PAGE_SIZE - 1)) != 0)
         return (uint64_t)(int64_t)-EINVAL;
 
     /* Guard against overflow */
-    if (addr > USER_VADDR_MAX) return (uint64_t)(int64_t)-ENOMEM;
+    if (addr > USER_VADDR_MAX)
+        return (uint64_t)(int64_t)-ENOMEM;
 
     uint64_t old_end = p->heap_end;
     if (addr > old_end) {
@@ -254,7 +250,8 @@ int64_t sys_brk(uint64_t addr) {
                 return (uint64_t)(int64_t)-ENOMEM;
         }
         uint64_t pages = (grow + PAGE_SIZE - 1) / PAGE_SIZE;
-        uint64_t page_flags = VMM_FLAG_PRESENT | VMM_FLAG_USER | VMM_FLAG_WRITE | VMM_FLAG_NOEXEC | VMM_FLAG_LAZY;
+        uint64_t page_flags =
+            VMM_FLAG_PRESENT | VMM_FLAG_USER | VMM_FLAG_WRITE | VMM_FLAG_NOEXEC | VMM_FLAG_LAZY;
         if (vmm_map_user_pages(p->pml4, old_end, pages, page_flags) < 0)
             return (uint64_t)(int64_t)-ENOMEM;
         p->heap_end = addr;
@@ -291,9 +288,8 @@ extern int mseal_check(uint64_t addr, uint64_t length);
 
 /* ── sys_mmap — map files or anonymous memory into userspace ── */
 
-int64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot,
-                   uint64_t flags, uint64_t fd, uint64_t offset)
-{
+int64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot, uint64_t flags, uint64_t fd,
+                 uint64_t offset) {
     struct process *proc = process_get_current();
     if (!proc || !proc->pml4)
         return (uint64_t)(int64_t)-EFAULT;
@@ -380,8 +376,7 @@ int64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot,
             return (uint64_t)-EINVAL;
 
         if (addr == 0) {
-            uint64_t mmap_base = 0x0000000001000000ULL +
-                                 (aslr_mmap_offset() * PAGE_SIZE);
+            uint64_t mmap_base = 0x0000000001000000ULL + (aslr_mmap_offset() * PAGE_SIZE);
             addr = (mmap_base + HUGETLB_PAGE_SIZE - 1) & ~(HUGETLB_PAGE_SIZE - 1ULL);
             while (addr + length < USER_VADDR_MAX) {
                 int free = 1;
@@ -391,7 +386,8 @@ int64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot,
                         break;
                     }
                 }
-                if (free) break;
+                if (free)
+                    break;
                 addr += HUGETLB_PAGE_SIZE;
             }
             if (addr + length >= USER_VADDR_MAX)
@@ -434,8 +430,7 @@ int64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot,
 
     /* If addr is 0, find a free region with ASLR */
     if (addr == 0) {
-        uint64_t mmap_base = 0x0000000001000000ULL +
-                             (aslr_mmap_offset() * PAGE_SIZE);
+        uint64_t mmap_base = 0x0000000001000000ULL + (aslr_mmap_offset() * PAGE_SIZE);
         if (length >= HUGE_PAGE_SIZE) {
             addr = (mmap_base + HUGE_PAGE_SIZE - 1) & ~(HUGE_PAGE_SIZE - 1ULL);
             while (addr + length < USER_VADDR_MAX) {
@@ -446,7 +441,8 @@ int64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot,
                         break;
                     }
                 }
-                if (free) break;
+                if (free)
+                    break;
                 addr += HUGE_PAGE_SIZE;
             }
         } else {
@@ -459,7 +455,8 @@ int64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot,
                         break;
                     }
                 }
-                if (free) break;
+                if (free)
+                    break;
                 addr += 0x100000ULL;
             }
         }

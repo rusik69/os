@@ -139,12 +139,12 @@ int64_t sys_getsecurebits(void);
 
 /* D123: Process & Signal syscalls — declared in sys_process.c */
 int64_t sys_rt_sigaction(uint64_t signum, uint64_t act_addr, uint64_t oldact_addr,
-                          uint64_t sigsetsize);
+                         uint64_t sigsetsize);
 int64_t sys_rt_sigprocmask(uint64_t how, uint64_t set_addr, uint64_t oldset_addr,
-                            uint64_t sigsetsize);
+                           uint64_t sigsetsize);
 int64_t sys_rt_sigreturn(void);
 int64_t sys_rt_sigtimedwait(uint64_t set_addr, uint64_t info_addr, uint64_t timeout_addr,
-                             uint64_t sigsetsize);
+                            uint64_t sigsetsize);
 int64_t sys_kill(uint64_t pid, uint64_t sig);
 int64_t sys_tkill(uint64_t pid, uint64_t sig);
 int64_t sys_tgkill(uint64_t tgid, uint64_t tid, uint64_t sig);
@@ -152,7 +152,7 @@ int64_t sys_rt_sigqueueinfo(uint64_t pid, uint64_t sig, uint64_t uinfo);
 int64_t sys_rt_tgsigqueueinfo(uint64_t tgid, uint64_t tid, uint64_t sig, uint64_t uinfo);
 int64_t sys_wait4(uint64_t pid, uint64_t wstatus_addr, uint64_t options, uint64_t rusage_addr);
 int64_t sys_waitid(uint64_t which, uint64_t id, uint64_t info_addr, uint64_t options,
-                    uint64_t rusage_addr);
+                   uint64_t rusage_addr);
 int64_t sys_exit_group(uint64_t code);
 int64_t sys_set_tid_address(uint64_t tidptr);
 
@@ -2350,7 +2350,7 @@ static int64_t sys_fs_write(uint64_t path_addr, uint64_t data_addr, uint64_t siz
 }
 
 static int64_t sys_fs_read(uint64_t path_addr, uint64_t buf_addr, uint64_t max_size,
-                            uint64_t out_addr) {
+                           uint64_t out_addr) {
     char ap[128];
     const char *rp =
         vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0 ? (const char *)path_addr : ap;
@@ -2435,7 +2435,7 @@ static int64_t sys_fs_get_usage(uint64_t out_addr) {
 }
 
 static int64_t sys_fs_list_names(uint64_t dir_addr, uint64_t prefix_addr, uint64_t names_addr,
-                                  uint64_t max) {
+                                 uint64_t max) {
     return (uint64_t)fs_list_names((const char *)dir_addr, (const char *)prefix_addr,
                                    (char(*)[FS_MAX_NAME])names_addr, (int)max);
 }
@@ -2457,7 +2457,7 @@ static int64_t sys_ahci_sectors(void) {
 }
 
 static int64_t sys_vfs_read(uint64_t path_addr, uint64_t buf_addr, uint64_t max,
-                             uint64_t out_addr) {
+                            uint64_t out_addr) {
     return (uint64_t)vfs_read((const char *)path_addr, (void *)buf_addr, (uint32_t)max,
                               (uint32_t *)out_addr);
 }
@@ -2534,14 +2534,14 @@ static int64_t sys_net_ping(uint64_t ip) {
 }
 
 static int64_t sys_net_udp_send(uint64_t dst_ip, uint64_t src_port, uint64_t dst_port,
-                                 uint64_t data_addr, uint64_t len) {
+                                uint64_t data_addr, uint64_t len) {
     net_udp_send((uint32_t)dst_ip, (uint16_t)src_port, (uint16_t)dst_port, (const void *)data_addr,
                  (uint16_t)len);
     return 0;
 }
 
 static int64_t sys_net_http_get(uint64_t host_addr, uint64_t port, uint64_t path_addr,
-                                 uint64_t buf_addr, uint64_t packed) {
+                                uint64_t buf_addr, uint64_t packed) {
     int bufsize = (int)(uint32_t)(packed >> 32);
     int follow = (int)(uint32_t)packed;
     return (uint64_t)net_http_get_ex((const char *)host_addr, (uint16_t)port,
@@ -2565,7 +2565,7 @@ static int64_t sys_net_tcp_send_conn(uint64_t conn_id, uint64_t buf_addr, uint64
 }
 
 static int64_t sys_net_tcp_recv_conn(uint64_t conn_id, uint64_t buf_addr, uint64_t len,
-                                      uint64_t timeout_ticks) {
+                                     uint64_t timeout_ticks) {
     return (uint64_t)(int64_t)net_tcp_recv((int)conn_id, (void *)buf_addr, (uint16_t)len,
                                            (int)timeout_ticks);
 }
@@ -2626,7 +2626,7 @@ static int64_t sys_net_udp_listen(uint64_t port) {
     return (uint64_t)(int64_t)net_udp_listen((uint16_t)port);
 }
 static int64_t sys_net_udp_recv(uint64_t port, uint64_t buf, uint64_t bufsz, uint64_t src_ip_ptr,
-                                 uint64_t src_port_ptr) {
+                                uint64_t src_port_ptr) {
     /* Allocate kernel buffer — net_udp_recv writes directly to buf */
     uint16_t kbufsz = (uint16_t)(bufsz > 1500 ? 1500 : bufsz);
     uint8_t *kbuf = kmalloc(kbufsz);
@@ -3279,7 +3279,7 @@ static int64_t sys_fork(void) {
 }
 
 static int64_t sys_clone(uint64_t flags, uint64_t child_stack, uint64_t ptid, uint64_t tls,
-                          uint64_t ctid) {
+                         uint64_t ctid) {
     struct process *parent = process_get_current();
     if (!parent)
         return (uint64_t)(int64_t)-EAGAIN;
@@ -3817,7 +3817,7 @@ static int64_t sys_gettid(void) {
     return (uint64_t)p->tgid ? (uint64_t)p->tgid : (uint64_t)p->pid;
 }
 
-   int64_t sys_set_tid_address(uint64_t tidptr) {
+int64_t sys_set_tid_address(uint64_t tidptr) {
     struct process *p = process_get_current();
     if (!p)
         return (uint64_t)-ESRCH;
@@ -4387,7 +4387,7 @@ static int64_t sys_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg) {
  *          -EINVAL if bad timeout value
  */
 static int64_t sys_select(uint64_t nfds, uint64_t readfds_addr, uint64_t writefds_addr,
-                           uint64_t exceptfds_addr, uint64_t timeout_addr) {
+                          uint64_t exceptfds_addr, uint64_t timeout_addr) {
     struct process *cur = process_get_current();
     if (!cur)
         return (uint64_t)(int64_t)-EINTR;
@@ -6198,7 +6198,7 @@ static int64_t sys_vga_clear(void) {
 /* ── rlimit/prlimit64/getrlimit/setrlimit ──────────────────────────── */
 
 static int64_t sys_prlimit64(uint64_t pid, uint64_t resource, uint64_t new_rlim_addr,
-                              uint64_t old_rlim_addr) {
+                             uint64_t old_rlim_addr) {
     if (resource >= _RLIMIT_NLIMITS)
         return (uint64_t)-1;
 
@@ -6402,7 +6402,7 @@ void futex_robust_list_cleanup(struct process *proc) {
 }
 
 static int64_t sys_futex(uint64_t uaddr, uint64_t op, uint64_t val, uint64_t timeout,
-                          uint64_t uaddr2, uint64_t val3) {
+                         uint64_t uaddr2, uint64_t val3) {
     uint32_t *addr = (uint32_t *)uaddr;
     uint32_t *addr2 = (uint32_t *)uaddr2;
 
@@ -7071,7 +7071,7 @@ static int64_t sys_arch_prctl(uint64_t code, uint64_t addr) {
 #define PSELECT6_SSIZE_OFFSET 8
 
 static int64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr, uint64_t writefds_addr,
-                             uint64_t exceptfds_addr, uint64_t timeout_addr) {
+                            uint64_t exceptfds_addr, uint64_t timeout_addr) {
     struct process *proc = process_get_current();
     if (!proc)
         return (uint64_t)-1;
@@ -7328,7 +7328,7 @@ static int64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr, uint64_t write
 /* ── ppoll — safer poll with atomic signal mask (Item 251) ─────────── */
 
 static int64_t sys_ppoll(uint64_t fds_addr, uint64_t nfds, uint64_t timeout_addr,
-                          uint64_t sigmask_addr) {
+                         uint64_t sigmask_addr) {
     if (syscall_is_user_process()) {
         if (!syscall_user_read_ok(fds_addr, nfds * sizeof(struct pollfd)))
             return (uint64_t)-1;
@@ -7536,8 +7536,7 @@ static int sock_send_raw(struct socket *s, int sockfd, const void *data, uint32_
  *   ENOMEM     cannot allocate bounce buffer
  *   ESPIPE     @in_fd is not a regular file
  */
-static int64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd, uint64_t offset_addr,
-                             uint64_t count) {
+static int64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd, uint64_t offset_addr, uint64_t count) {
     struct process *p = process_get_current();
     if (!p)
         return (uint64_t)(int64_t)-EPERM;
@@ -7908,7 +7907,7 @@ static int64_t sys_prctl(uint64_t op, uint64_t a2, uint64_t a3, uint64_t a4, uin
 /* ── mount/umount ──────────────────────────────────────────────────────── */
 
 static int64_t sys_mount(uint64_t src_addr, uint64_t target_addr, uint64_t fstype_addr,
-                          uint64_t flags, uint64_t data_addr) {
+                         uint64_t flags, uint64_t data_addr) {
     (void)data_addr;
     char src[64], target[64], fstype[16];
 
@@ -8123,7 +8122,7 @@ static int64_t sys_readdir(uint64_t fd, uint64_t buf_addr, uint64_t count) {
 /* ── execveat ──────────────────────────────────────────────────────────── */
 
 static int64_t sys_execveat(uint64_t dirfd, uint64_t path_addr, uint64_t argv_addr,
-                             uint64_t envp_addr, uint64_t flags) {
+                            uint64_t envp_addr, uint64_t flags) {
     (void)dirfd;
     (void)argv_addr;
     (void)envp_addr;
@@ -8431,7 +8430,7 @@ static int64_t sys_connect(uint64_t sockfd, uint64_t addr_addr, uint64_t addrlen
 }
 
 static int64_t sys_setsockopt(uint64_t sockfd, uint64_t level, uint64_t optname,
-                               uint64_t optval_addr, uint64_t optlen) {
+                              uint64_t optval_addr, uint64_t optlen) {
     /* optlen is truncated from uint64_t to uint32_t in the impl;
      * reject values that would overflow to prevent bypassing bounds checks. */
     if (optlen > 0xFFFFFFFFULL)
@@ -8443,7 +8442,7 @@ static int64_t sys_setsockopt(uint64_t sockfd, uint64_t level, uint64_t optname,
 }
 
 static int64_t sys_getsockopt(uint64_t sockfd, uint64_t level, uint64_t optname,
-                               uint64_t optval_addr, uint64_t optlen_addr) {
+                              uint64_t optval_addr, uint64_t optlen_addr) {
     if (syscall_is_user_process() && !syscall_user_write_ok(optval_addr, 4))
         return (uint64_t)(int64_t)-EFAULT;
     if (syscall_is_user_process() && !syscall_user_read_ok(optlen_addr, 4))
@@ -8496,8 +8495,7 @@ static int64_t sys_getpeername(uint64_t sockfd, uint64_t addr_addr, uint64_t add
                                                    (uint32_t *)addrlen_addr);
 }
 
-static int64_t sys_socketpair(uint64_t domain, uint64_t type, uint64_t protocol,
-                               uint64_t sv_addr) {
+static int64_t sys_socketpair(uint64_t domain, uint64_t type, uint64_t protocol, uint64_t sv_addr) {
     /* Validate that domain/type/protocol fit in int without truncation */
     if ((uint64_t)(int)domain != domain || (uint64_t)(int)type != type ||
         (uint64_t)(int)protocol != protocol)
@@ -8550,7 +8548,7 @@ static int64_t sys_epoll_ctl(uint64_t epfd, uint64_t op, uint64_t fd, uint64_t e
 }
 
 static int64_t sys_epoll_wait(uint64_t epfd, uint64_t events_addr, uint64_t maxevents,
-                               uint64_t timeout) {
+                              uint64_t timeout) {
     struct epoll_event *events = (struct epoll_event *)events_addr;
 
     if (maxevents == 0)
@@ -8567,7 +8565,7 @@ static int64_t sys_epoll_wait(uint64_t epfd, uint64_t events_addr, uint64_t maxe
 }
 
 static int64_t sys_epoll_pwait(uint64_t epfd, uint64_t events_addr, uint64_t maxevents,
-                                uint64_t timeout, uint64_t sigmask_addr) {
+                               uint64_t timeout, uint64_t sigmask_addr) {
     /*
      * The syscall dispatch saves the packed sigmask pointer + size
      * in syscall_arg6.  For epoll_pwait, a5 is the sigmask pointer.
@@ -8743,7 +8741,7 @@ static int64_t sys_mkdtemp(uint64_t template_addr) {
 /* (syscall.c includes vfs.h which provides these) */
 
 static int64_t sys_utimensat(uint64_t dirfd, uint64_t path_addr, uint64_t times_addr,
-                              uint64_t flags) {
+                             uint64_t flags) {
     (void)flags;
     /* Resolve path */
     char path[256];
@@ -9225,7 +9223,7 @@ static int64_t sys_mq_send(uint64_t mqd, uint64_t msg_addr, uint64_t msg_len, ui
 }
 
 static int64_t sys_mq_receive(uint64_t mqd, uint64_t msg_addr, uint64_t msg_len,
-                               uint64_t prio_addr) {
+                              uint64_t prio_addr) {
     int slot = (int)mqd - 800;
     if (slot < 0 || slot >= MQ_MAX || !mq_table[slot].in_use)
         return (uint64_t)-1;
@@ -9344,7 +9342,7 @@ static int64_t sys_unlinkat(uint64_t dirfd, uint64_t path_addr, uint64_t flags) 
 }
 
 static int64_t sys_renameat(uint64_t olddirfd, uint64_t oldpath_addr, uint64_t newdirfd,
-                             uint64_t newpath_addr) {
+                            uint64_t newpath_addr) {
     char koldpath[256], knewpath[256];
     if (strncpy_from_user(koldpath, oldpath_addr, sizeof(koldpath)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
@@ -9400,7 +9398,7 @@ static int64_t sys_symlinkat(uint64_t target_addr, uint64_t newdirfd, uint64_t l
 }
 
 static int64_t sys_readlinkat(uint64_t dirfd, uint64_t path_addr, uint64_t buf_addr,
-                               uint64_t bufsize) {
+                              uint64_t bufsize) {
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
@@ -9873,7 +9871,7 @@ static int64_t sys_madvise(uint64_t addr, uint64_t len, uint64_t advice) {
 /* ── NUMA memory policy syscalls ─────────────────────────────────── */
 
 static int64_t sys_mbind(uint64_t addr, uint64_t len, uint64_t mode, uint64_t nodemask,
-                          uint64_t maxnode, uint64_t flags) {
+                         uint64_t maxnode, uint64_t flags) {
     (void)maxnode;
     (void)flags;
     struct process *p = process_get_current();
@@ -9898,7 +9896,7 @@ static int64_t sys_set_mempolicy(uint64_t mode, uint64_t nodemask, uint64_t maxn
 }
 
 static int64_t sys_get_mempolicy(uint64_t mode_addr, uint64_t nodemask_addr, uint64_t maxnode,
-                                  uint64_t addr, uint64_t flags) {
+                                 uint64_t addr, uint64_t flags) {
     (void)maxnode;
     (void)addr;
     (void)flags;
@@ -9921,7 +9919,7 @@ static int64_t sys_get_mempolicy(uint64_t mode_addr, uint64_t nodemask_addr, uin
 }
 
 static int64_t sys_migrate_pages(uint64_t pid, uint64_t maxnode, uint64_t old_nodes_addr,
-                                  uint64_t new_nodes_addr) {
+                                 uint64_t new_nodes_addr) {
     (void)maxnode;
     (void)old_nodes_addr;
 
@@ -9936,7 +9934,7 @@ static int64_t sys_migrate_pages(uint64_t pid, uint64_t maxnode, uint64_t old_no
 }
 
 static int64_t sys_move_pages(uint64_t pid, uint64_t nr_pages, uint64_t pages_addr,
-                               uint64_t nodes_addr, uint64_t status_addr, uint64_t flags) {
+                              uint64_t nodes_addr, uint64_t status_addr, uint64_t flags) {
     struct process *target = NULL;
 
     if (nr_pages == 0)
@@ -10031,7 +10029,7 @@ static int64_t sys_move_pages(uint64_t pid, uint64_t nr_pages, uint64_t pages_ad
 }
 
 static int64_t sys_remap_file_pages(uint64_t addr, uint64_t size, uint64_t prot, uint64_t pgoff,
-                                     uint64_t flags) {
+                                    uint64_t flags) {
     /* remap_file_pages creates non-linear file mappings within an
      * existing MAP_SHARED file-backed VMA.  This kernel does not
      * currently support file-backed mmap with VMA tracking, so we
@@ -10279,7 +10277,7 @@ static int64_t sys_timerfd_create(uint64_t clockid, uint64_t flags) {
 }
 
 static int64_t sys_timerfd_settime(uint64_t fd, uint64_t flags, uint64_t new_addr,
-                                    uint64_t old_addr) {
+                                   uint64_t old_addr) {
     int slot = (int)fd - 500;
     if (slot < 0 || slot >= TIMERFD_MAX || !timerfd_table[slot].in_use)
         return (uint64_t)-1;
@@ -10632,7 +10630,7 @@ void signalfd_exec_close(void) {
  *   EIO    — VFS read/write failure
  */
 static int64_t sys_splice(uint64_t fd_in, uint64_t off_in_addr, uint64_t fd_out,
-                           uint64_t off_out_addr, uint64_t len, uint64_t flags) {
+                          uint64_t off_out_addr, uint64_t len, uint64_t flags) {
     (void)flags; /* SPLICE_F_* flags are advisory; non-blocking depends on O_NONBLOCK */
 
     struct process *p = process_get_current();
@@ -11123,7 +11121,7 @@ vmsplice_out:
  *   ESPIPE     — fd_in or fd_out refers to a pipe/FIFO (not supported yet)
  */
 static int64_t sys_copy_file_range(uint64_t fd_in, uint64_t off_in_addr, uint64_t fd_out,
-                                    uint64_t off_out_addr, uint64_t len, uint64_t flags) {
+                                   uint64_t off_out_addr, uint64_t len, uint64_t flags) {
     /* ── Parameter validation ── */
 
     /* Per POSIX.1-2016 / Linux, flags must be 0 */
@@ -11307,7 +11305,7 @@ static int64_t sys_sendmmsg(uint64_t sockfd, uint64_t msgvec_addr, uint64_t vlen
 }
 
 static int64_t sys_recvmmsg(uint64_t sockfd, uint64_t msgvec_addr, uint64_t vlen, uint64_t flags,
-                             uint64_t timeout_addr) {
+                            uint64_t timeout_addr) {
     (void)sockfd;
     (void)msgvec_addr;
     (void)vlen;
@@ -11929,12 +11927,12 @@ static int64_t sys_query_module(uint64_t name_addr, uint64_t info_buf_addr, uint
 static int64_t sys_membarrier(uint64_t cmd, uint64_t flags, uint64_t cpu_id);
 static int64_t sys_rseq(uint64_t rseq_addr, uint64_t rseq_len, uint64_t rseq_sig, uint64_t flags);
 static int64_t sys_name_to_handle_at(uint64_t dirfd, uint64_t pathname, uint64_t handle,
-                                      uint64_t mount_id, uint64_t flags);
+                                     uint64_t mount_id, uint64_t flags);
 static int64_t sys_open_by_handle_at(uint64_t mount_fd, uint64_t handle, uint64_t flags);
 
 /* Forward declaration for raw dispatch (no seccomp/audit/validation) */
 int64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4,
-                                   uint64_t a5);
+                                  uint64_t a5);
 
 /* Debug: called from syscall_entry_full assembly to trace syscall entry */
 void kprintf_syscall_trace(uint64_t num, uint64_t unused) {
@@ -11945,7 +11943,7 @@ void kprintf_syscall_trace(uint64_t num, uint64_t unused) {
 }
 
 int64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4,
-                          uint64_t a5) {
+                         uint64_t a5) {
     /* Seccomp check — must happen before any capability or argument validation */
     if (syscall_is_user_process()) {
         uint32_t seccomp_action = seccomp_evaluate_syscall(num, a1, a2, a3, 0);
@@ -12011,7 +12009,7 @@ int64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3, ui
 /* ── syscall_dispatch_internal — raw dispatch (no seccomp/audit/validation) ── */
 
 int64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4,
-                                   uint64_t a5) {
+                                  uint64_t a5) {
     switch (num) {
     case SYS_READ:
         return sys_read(a1, a2, a3);
@@ -13099,7 +13097,7 @@ static int fh_decode(const uint8_t *data, uint32_t data_len, uint32_t *ino, uint
  * and *mount_id receives the mount identifier.
  */
 static int64_t sys_name_to_handle_at(uint64_t dirfd, uint64_t pathname, uint64_t handle_addr,
-                                      uint64_t mount_id_addr, uint64_t flags) {
+                                     uint64_t mount_id_addr, uint64_t flags) {
     (void)dirfd; /* dirfd not used — we resolve from CWD */
 
     /* Copy path string from user (up to 255 chars) */

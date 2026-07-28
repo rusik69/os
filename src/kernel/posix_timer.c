@@ -16,55 +16,56 @@
  */
 
 #define KERNEL_INTERNAL
-#include "syscall.h"
-#include "types.h"
-#include "timer.h"
-#include "timers.h"
-#include "rtc.h"
-#include "process.h"
-#include "uaccess.h"
 #include "caps.h"
+#include "module.h"
+#include "printf.h"
+#include "process.h"
+#include "rtc.h"
 #include "scheduler.h"
 #include "string.h"
-#include "printf.h"
-#include "module.h"
+#include "syscall.h"
+#include "timer.h"
+#include "timers.h"
+#include "types.h"
+#include "uaccess.h"
 
 /* Module metadata */
 MODULE_LICENSE("GPL v2");
 MODULE_VERSION("1.0");
-MODULE_DESCRIPTION("POSIX timer and clock syscall implementations — clock_gettime, timer_create, etc.");
+MODULE_DESCRIPTION(
+    "POSIX timer and clock syscall implementations — clock_gettime, timer_create, etc.");
 MODULE_AUTHOR("Ruslan Gustomiasov");
 
 /* ── Clock identifiers (standard POSIX / Linux values) ─────────── */
 #ifndef CLOCK_REALTIME
-#define CLOCK_REALTIME                  0
+#define CLOCK_REALTIME 0
 #endif
 #ifndef CLOCK_MONOTONIC
-#define CLOCK_MONOTONIC                 1
+#define CLOCK_MONOTONIC 1
 #endif
 #ifndef CLOCK_PROCESS_CPUTIME_ID
-#define CLOCK_PROCESS_CPUTIME_ID        2
+#define CLOCK_PROCESS_CPUTIME_ID 2
 #endif
 #ifndef CLOCK_THREAD_CPUTIME_ID
-#define CLOCK_THREAD_CPUTIME_ID         3
+#define CLOCK_THREAD_CPUTIME_ID 3
 #endif
 #ifndef CLOCK_MONOTONIC_RAW
-#define CLOCK_MONOTONIC_RAW             4
+#define CLOCK_MONOTONIC_RAW 4
 #endif
 #ifndef CLOCK_REALTIME_COARSE
-#define CLOCK_REALTIME_COARSE           5
+#define CLOCK_REALTIME_COARSE 5
 #endif
 #ifndef CLOCK_MONOTONIC_COARSE
-#define CLOCK_MONOTONIC_COARSE          6
+#define CLOCK_MONOTONIC_COARSE 6
 #endif
 #ifndef CLOCK_BOOTTIME
-#define CLOCK_BOOTTIME                  7
+#define CLOCK_BOOTTIME 7
 #endif
 #ifndef CLOCK_REALTIME_ALARM
-#define CLOCK_REALTIME_ALARM            8
+#define CLOCK_REALTIME_ALARM 8
 #endif
 #ifndef CLOCK_BOOTTIME_ALARM
-#define CLOCK_BOOTTIME_ALARM            9
+#define CLOCK_BOOTTIME_ALARM 9
 #endif
 
 /* ── POSIX timer slots ─────────────────────────────────────────── */
@@ -72,29 +73,27 @@ MODULE_AUTHOR("Ruslan Gustomiasov");
 #define MAX_TIMERS POSIX_TIMER_MAX
 
 struct posix_timer {
-    int      in_use;
-    int      clockid;
-    int      signo;           /* signal to deliver on expiry */
-    int      notify;          /* SIGEV_SIGNAL, SIGEV_NONE */
-    uint64_t it_value;        /* ticks to first expiry */
-    uint64_t it_interval;     /* ticks between repeats */
-    uint64_t start_tick;      /* creation/arm tick */
-    uint64_t overrun;         /* overrun count */
-    uint32_t pid;             /* target process */
+    int in_use;
+    int clockid;
+    int signo;            /* signal to deliver on expiry */
+    int notify;           /* SIGEV_SIGNAL, SIGEV_NONE */
+    uint64_t it_value;    /* ticks to first expiry */
+    uint64_t it_interval; /* ticks between repeats */
+    uint64_t start_tick;  /* creation/arm tick */
+    uint64_t overrun;     /* overrun count */
+    uint32_t pid;         /* target process */
 };
 
 static struct posix_timer posix_timers[POSIX_TIMER_MAX];
 
 /* ── Helper: convert ticks to struct timespec ──────────────────── */
-static void ticks_to_timespec(uint64_t ticks, struct timespec *ts)
-{
-    ts->tv_sec  = ticks / TIMER_FREQ;
+static void ticks_to_timespec(uint64_t ticks, struct timespec *ts) {
+    ts->tv_sec = ticks / TIMER_FREQ;
     ts->tv_nsec = (ticks % TIMER_FREQ) * (1000000000ULL / TIMER_FREQ);
 }
 
 /* ── Helper: apply time-namespace monotonic offset ─────────────── */
-static void apply_mono_offset(struct timespec *ts, struct process *cur)
-{
+static void apply_mono_offset(struct timespec *ts, struct process *cur) {
     if (!cur || !(cur->ns_flags & CLONE_NEWTIME))
         return;
 
@@ -128,8 +127,7 @@ static void apply_mono_offset(struct timespec *ts, struct process *cur)
 }
 
 /* ── Helper: apply time-namespace boottime offset ──────────────── */
-static void apply_boottime_offset(struct timespec *ts, struct process *cur)
-{
+static void apply_boottime_offset(struct timespec *ts, struct process *cur) {
     if (!cur || !(cur->ns_flags & CLONE_NEWTIME))
         return;
 
@@ -177,8 +175,7 @@ static void apply_boottime_offset(struct timespec *ts, struct process *cur)
  *
  * Returns: 0 on success, -EFAULT on bad pointer, -EINVAL on invalid clockid.
  */
-int64_t sys_clock_gettime(uint64_t clockid, uint64_t tp_addr)
-{
+int64_t sys_clock_gettime(uint64_t clockid, uint64_t tp_addr) {
     struct timespec ts;
     uint64_t ticks = timer_get_ticks();
     struct process *cur = process_get_current();
@@ -188,7 +185,7 @@ int64_t sys_clock_gettime(uint64_t clockid, uint64_t tp_addr)
     case CLOCK_REALTIME_COARSE:
     case CLOCK_REALTIME_ALARM: {
         uint64_t epoch = rtc_get_epoch();
-        ts.tv_sec  = epoch + (ticks / TIMER_FREQ);
+        ts.tv_sec = epoch + (ticks / TIMER_FREQ);
         ts.tv_nsec = (ticks % TIMER_FREQ) * (1000000000ULL / TIMER_FREQ);
         break;
     }
@@ -241,11 +238,10 @@ int64_t sys_clock_gettime(uint64_t clockid, uint64_t tp_addr)
  * Returns: 0 on success, -EPERM if not privileged, -EFAULT on
  * bad pointer, -EINVAL on invalid clockid or invalid tv_nsec.
  */
-int64_t sys_clock_settime(uint64_t clockid, uint64_t tp_addr)
-{
+int64_t sys_clock_settime(uint64_t clockid, uint64_t tp_addr) {
     /* Only realtime clocks are settable */
-    if (clockid != CLOCK_REALTIME && clockid != CLOCK_REALTIME_COARSE
-        && clockid != CLOCK_REALTIME_ALARM)
+    if (clockid != CLOCK_REALTIME && clockid != CLOCK_REALTIME_COARSE &&
+        clockid != CLOCK_REALTIME_ALARM)
         return (uint64_t)(int64_t)-EINVAL;
 
     /* CLOCK_REALTIME_ALARM requires CAP_WAKE_ALARM;
@@ -277,8 +273,7 @@ int64_t sys_clock_settime(uint64_t clockid, uint64_t tp_addr)
      * If the desired time is before the boot (can't happen in
      * practice with a valid epoch), clamp to zero.
      */
-    uint64_t new_epoch = (ts.tv_sec >= ticks_sec)
-                         ? (ts.tv_sec - ticks_sec) : 0;
+    uint64_t new_epoch = (ts.tv_sec >= ticks_sec) ? (ts.tv_sec - ticks_sec) : 0;
     rtc_set_epoch(new_epoch);
     return 0;
 }
@@ -299,8 +294,7 @@ int64_t sys_clock_settime(uint64_t clockid, uint64_t tp_addr)
  * Returns: 0 on success, -EFAULT on bad pointer, -EINVAL on
  * invalid clockid.
  */
-int64_t sys_clock_getres(uint64_t clockid, uint64_t res_addr)
-{
+int64_t sys_clock_getres(uint64_t clockid, uint64_t res_addr) {
     /* Validate the clock ID */
     switch (clockid) {
     case CLOCK_REALTIME:
@@ -320,7 +314,7 @@ int64_t sys_clock_getres(uint64_t clockid, uint64_t res_addr)
 
     if (res_addr) {
         struct timespec ts;
-        ts.tv_sec  = 0;
+        ts.tv_sec = 0;
         ts.tv_nsec = NS_PER_TICK; /* 10 ms — tick-level resolution */
         if (copy_to_user(res_addr, &ts, sizeof(struct timespec)) < 0)
             return (uint64_t)(int64_t)-EFAULT;
@@ -353,13 +347,12 @@ int64_t sys_clock_getres(uint64_t clockid, uint64_t res_addr)
  * interrupted by a signal, -EINVAL on invalid clockid or
  * invalid tv_nsec.
  */
-int64_t sys_clock_nanosleep(uint64_t clockid, uint64_t flags,
-                             uint64_t req_addr, uint64_t rem_addr)
-{
+int64_t sys_clock_nanosleep(uint64_t clockid, uint64_t flags, uint64_t req_addr,
+                            uint64_t rem_addr) {
     struct process *proc;
     struct timespec req;
     uint64_t now;
-    uint64_t deadline;   /* target boot tick */
+    uint64_t deadline; /* target boot tick */
     uint64_t ticks;
 
     /* Validate clockid */
@@ -403,10 +396,9 @@ int64_t sys_clock_nanosleep(uint64_t clockid, uint64_t flags,
             uint64_t epoch = rtc_get_epoch();
             uint64_t req_sec = req.tv_sec;
             if (req_sec <= epoch) {
-                deadline = 0;  /* already passed */
+                deadline = 0; /* already passed */
             } else {
-                deadline = (req_sec - epoch) * TIMER_FREQ
-                         + req.tv_nsec / NS_PER_TICK;
+                deadline = (req_sec - epoch) * TIMER_FREQ + req.tv_nsec / NS_PER_TICK;
             }
             break;
         }
@@ -417,8 +409,7 @@ int64_t sys_clock_nanosleep(uint64_t clockid, uint64_t flags,
         case CLOCK_BOOTTIME:
         case CLOCK_BOOTTIME_ALARM:
             /* Monotonic absolute time is already in boot ticks */
-            deadline = req.tv_sec * TIMER_FREQ
-                     + req.tv_nsec / NS_PER_TICK;
+            deadline = req.tv_sec * TIMER_FREQ + req.tv_nsec / NS_PER_TICK;
             break;
 
         default:
@@ -431,10 +422,9 @@ int64_t sys_clock_nanosleep(uint64_t clockid, uint64_t flags,
 
     } else {
         /* Relative interval */
-        ticks = req.tv_sec * TIMER_FREQ
-              + req.tv_nsec / NS_PER_TICK;
+        ticks = req.tv_sec * TIMER_FREQ + req.tv_nsec / NS_PER_TICK;
         if (ticks == 0 && req.tv_nsec > 0)
-            ticks = 1;  /* minimum 1 tick */
+            ticks = 1; /* minimum 1 tick */
 
         deadline = now + ticks;
     }
@@ -453,16 +443,15 @@ int64_t sys_clock_nanosleep(uint64_t clockid, uint64_t flags,
 
         /* Woken early by signal — check SA_RESTART */
         if (proc->pending_signals && signal_has_sa_restart())
-            continue;  /* restart the sleep (SA_RESTART) */
+            continue; /* restart the sleep (SA_RESTART) */
 
         /* Compute remaining time and return -EINTR */
         uint64_t remaining = deadline - now;
         if (rem_addr) {
             struct timespec rem;
-            rem.tv_sec  = remaining / TIMER_FREQ;
+            rem.tv_sec = remaining / TIMER_FREQ;
             rem.tv_nsec = (remaining % TIMER_FREQ) * NS_PER_TICK;
-            if (copy_to_user(rem_addr, &rem,
-                             sizeof(struct timespec)) < 0)
+            if (copy_to_user(rem_addr, &rem, sizeof(struct timespec)) < 0)
                 return (uint64_t)(int64_t)-EFAULT;
         }
         return (uint64_t)(int64_t)-EINTR;
@@ -486,9 +475,7 @@ int64_t sys_clock_nanosleep(uint64_t clockid, uint64_t flags,
  * Returns: 0 on success, -EFAULT on bad pointer, -EINVAL on invalid
  * clockid or invalid sigevent, -EAGAIN if no timer slots available.
  */
-int64_t sys_timer_create(uint64_t clockid, uint64_t sevp_addr,
-                          uint64_t timerid_addr)
-{
+int64_t sys_timer_create(uint64_t clockid, uint64_t sevp_addr, uint64_t timerid_addr) {
     struct sigevent sev;
     int sig = SIGALRM; /* default signal */
     int notify = SIGEV_SIGNAL;
@@ -520,8 +507,7 @@ int64_t sys_timer_create(uint64_t clockid, uint64_t sevp_addr,
         switch (notify) {
         case SIGEV_SIGNAL:
             /* Signal number must be in valid range (1..31, 34..64) */
-            if (sev.sigev_signo < 1 ||
-                (sev.sigev_signo > 31 && sev.sigev_signo < 34) ||
+            if (sev.sigev_signo < 1 || (sev.sigev_signo > 31 && sev.sigev_signo < 34) ||
                 sev.sigev_signo > 64)
                 return (uint64_t)(int64_t)-EINVAL;
             sig = sev.sigev_signo;
@@ -575,9 +561,7 @@ int64_t sys_timer_create(uint64_t clockid, uint64_t sevp_addr,
  * Returns: 0 on success, -EFAULT on bad pointer, -EINVAL on invalid
  * timerid or invalid timespec fields.
  */
-int64_t sys_timer_settime(uint64_t timerid, uint64_t flags,
-                           uint64_t new_addr, uint64_t old_addr)
-{
+int64_t sys_timer_settime(uint64_t timerid, uint64_t flags, uint64_t new_addr, uint64_t old_addr) {
     int idx = (int)timerid - 1;
     if (idx < 0 || idx >= POSIX_TIMER_MAX || !posix_timers[idx].in_use)
         return (uint64_t)(int64_t)-EINVAL;
@@ -597,12 +581,10 @@ int64_t sys_timer_settime(uint64_t timerid, uint64_t flags,
     /* Return old timer value before overwriting */
     if (old_addr) {
         struct itimerspec old;
-        old.it_interval.tv_sec  = posix_timers[idx].it_interval / TIMER_FREQ;
-        old.it_interval.tv_nsec = (posix_timers[idx].it_interval % TIMER_FREQ)
-                                  * NS_PER_TICK;
-        old.it_value.tv_sec     = posix_timers[idx].it_value / TIMER_FREQ;
-        old.it_value.tv_nsec    = (posix_timers[idx].it_value % TIMER_FREQ)
-                                  * NS_PER_TICK;
+        old.it_interval.tv_sec = posix_timers[idx].it_interval / TIMER_FREQ;
+        old.it_interval.tv_nsec = (posix_timers[idx].it_interval % TIMER_FREQ) * NS_PER_TICK;
+        old.it_value.tv_sec = posix_timers[idx].it_value / TIMER_FREQ;
+        old.it_value.tv_nsec = (posix_timers[idx].it_value % TIMER_FREQ) * NS_PER_TICK;
         if (copy_to_user(old_addr, &old, sizeof(struct itimerspec)) < 0)
             return (uint64_t)(int64_t)-EFAULT;
     }
@@ -621,13 +603,11 @@ int64_t sys_timer_settime(uint64_t timerid, uint64_t flags,
             case CLOCK_REALTIME_ALARM: {
                 uint64_t epoch = rtc_get_epoch();
                 if (new_val.it_value.tv_sec > epoch) {
-                    uint64_t deadline =
-                        (new_val.it_value.tv_sec - epoch) * TIMER_FREQ
-                        + new_val.it_value.tv_nsec / NS_PER_TICK;
-                    posix_timers[idx].it_value =
-                        (deadline > now) ? (deadline - now) : 0;
+                    uint64_t deadline = (new_val.it_value.tv_sec - epoch) * TIMER_FREQ +
+                                        new_val.it_value.tv_nsec / NS_PER_TICK;
+                    posix_timers[idx].it_value = (deadline > now) ? (deadline - now) : 0;
                 } else {
-                    posix_timers[idx].it_value = 0;  /* already passed */
+                    posix_timers[idx].it_value = 0; /* already passed */
                 }
                 break;
             }
@@ -640,10 +620,8 @@ int64_t sys_timer_settime(uint64_t timerid, uint64_t flags,
             case CLOCK_PROCESS_CPUTIME_ID:
             case CLOCK_THREAD_CPUTIME_ID: {
                 uint64_t deadline =
-                    new_val.it_value.tv_sec * TIMER_FREQ
-                    + new_val.it_value.tv_nsec / NS_PER_TICK;
-                posix_timers[idx].it_value =
-                    (deadline > now) ? (deadline - now) : 0;
+                    new_val.it_value.tv_sec * TIMER_FREQ + new_val.it_value.tv_nsec / NS_PER_TICK;
+                posix_timers[idx].it_value = (deadline > now) ? (deadline - now) : 0;
                 break;
             }
 
@@ -653,15 +631,13 @@ int64_t sys_timer_settime(uint64_t timerid, uint64_t flags,
         } else {
             /* Relative interval */
             posix_timers[idx].it_value =
-                new_val.it_value.tv_sec * TIMER_FREQ
-                + new_val.it_value.tv_nsec / NS_PER_TICK;
+                new_val.it_value.tv_sec * TIMER_FREQ + new_val.it_value.tv_nsec / NS_PER_TICK;
         }
 
         posix_timers[idx].it_interval =
-            new_val.it_interval.tv_sec * TIMER_FREQ
-            + new_val.it_interval.tv_nsec / NS_PER_TICK;
+            new_val.it_interval.tv_sec * TIMER_FREQ + new_val.it_interval.tv_nsec / NS_PER_TICK;
         posix_timers[idx].start_tick = now;
-        posix_timers[idx].overrun    = 0;
+        posix_timers[idx].overrun = 0;
     }
 
     return 0;
@@ -676,25 +652,22 @@ int64_t sys_timer_settime(uint64_t timerid, uint64_t flags,
  * Returns: 0 on success, -EFAULT on bad pointer, -EINVAL on invalid
  * timerid.
  */
-int64_t sys_timer_gettime(uint64_t timerid, uint64_t cur_addr)
-{
+int64_t sys_timer_gettime(uint64_t timerid, uint64_t cur_addr) {
     int idx = (int)timerid - 1;
     if (idx < 0 || idx >= POSIX_TIMER_MAX || !posix_timers[idx].in_use)
         return (uint64_t)(int64_t)-EINVAL;
 
     struct itimerspec cur;
     uint64_t now = timer_get_ticks();
-    uint64_t elapsed = (now >= posix_timers[idx].start_tick)
-                       ? (now - posix_timers[idx].start_tick) : 0;
-    uint64_t remaining = posix_timers[idx].it_value > elapsed
-                         ? posix_timers[idx].it_value - elapsed : 0;
+    uint64_t elapsed =
+        (now >= posix_timers[idx].start_tick) ? (now - posix_timers[idx].start_tick) : 0;
+    uint64_t remaining =
+        posix_timers[idx].it_value > elapsed ? posix_timers[idx].it_value - elapsed : 0;
 
-    cur.it_interval.tv_sec  = posix_timers[idx].it_interval / TIMER_FREQ;
-    cur.it_interval.tv_nsec = (posix_timers[idx].it_interval % TIMER_FREQ)
-                              * NS_PER_TICK;
-    cur.it_value.tv_sec     = remaining / TIMER_FREQ;
-    cur.it_value.tv_nsec    = (remaining % TIMER_FREQ)
-                              * NS_PER_TICK;
+    cur.it_interval.tv_sec = posix_timers[idx].it_interval / TIMER_FREQ;
+    cur.it_interval.tv_nsec = (posix_timers[idx].it_interval % TIMER_FREQ) * NS_PER_TICK;
+    cur.it_value.tv_sec = remaining / TIMER_FREQ;
+    cur.it_value.tv_nsec = (remaining % TIMER_FREQ) * NS_PER_TICK;
 
     if (copy_to_user(cur_addr, &cur, sizeof(struct itimerspec)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
@@ -713,8 +686,7 @@ int64_t sys_timer_gettime(uint64_t timerid, uint64_t cur_addr)
  * Returns: overrun count (capped at DELAYTIMER_MAX, 0x7FFFFFFF)
  * on success, -EINVAL on invalid timerid.
  */
-int64_t sys_timer_getoverrun(uint64_t timerid)
-{
+int64_t sys_timer_getoverrun(uint64_t timerid) {
     int idx = (int)timerid - 1;
     if (idx < 0 || idx >= POSIX_TIMER_MAX || !posix_timers[idx].in_use)
         return (uint64_t)(int64_t)-EINVAL;
@@ -740,8 +712,7 @@ int64_t sys_timer_getoverrun(uint64_t timerid)
  *
  * Returns: 0 on success, -EINVAL on invalid timerid.
  */
-int64_t sys_timer_delete(uint64_t timerid)
-{
+int64_t sys_timer_delete(uint64_t timerid) {
     int idx = (int)timerid - 1;
     if (idx < 0 || idx >= POSIX_TIMER_MAX || !posix_timers[idx].in_use)
         return (uint64_t)(int64_t)-EINVAL;
@@ -756,8 +727,7 @@ int64_t sys_timer_delete(uint64_t timerid)
  * Called during boot from production_subsystems_init() to clear
  * the POSIX timer table.
  */
-void posix_timer_init(void)
-{
+void posix_timer_init(void) {
     memset(posix_timers, 0, sizeof(posix_timers));
 }
 
@@ -766,8 +736,7 @@ void posix_timer_init(void)
  * Called from the timer interrupt (timer.c) on every tick.
  * Checks all armed POSIX timers and delivers signals on expiry.
  */
-void posix_timer_tick(void)
-{
+void posix_timer_tick(void) {
     uint64_t now = timer_get_ticks();
     for (int i = 0; i < POSIX_TIMER_MAX; i++) {
         if (!posix_timers[i].in_use || posix_timers[i].it_value == 0)

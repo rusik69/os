@@ -9,21 +9,21 @@
  * non-negative value on success.
  */
 #define KERNEL_INTERNAL
-#include "syscall.h"
-#include "process.h"
-#include "signal.h"
-#include "module.h"
+#include "caps.h" /* for CAP_KILL, cap_bset_has */
 #include "errno.h"
-#include "uaccess.h"
-#include "spinlock.h"
+#include "module.h"
 #include "printf.h"
+#include "process.h"
+#include "scheduler.h" /* for scheduler_remove, scheduler_yield */
+#include "signal.h"
+#include "signal_frame.h" /* for ucontext_t, sigcontext */
+#include "signal_libc.h"  /* for struct sigaction (userspace ABI) */
+#include "spinlock.h"
 #include "string.h"
-#include "signal_libc.h"    /* for struct sigaction (userspace ABI) */
-#include "signal_frame.h"   /* for ucontext_t, sigcontext */
-#include "vmm.h"            /* for USER_VADDR_MAX */
-#include "timer.h"          /* for TIMER_FREQ, NS_PER_TICK, timer_get_ticks */
-#include "scheduler.h"      /* for scheduler_remove, scheduler_yield */
-#include "caps.h"           /* for CAP_KILL, cap_bset_has */
+#include "syscall.h"
+#include "timer.h" /* for TIMER_FREQ, NS_PER_TICK, timer_get_ticks */
+#include "uaccess.h"
+#include "vmm.h" /* for USER_VADDR_MAX */
 
 /* Module metadata */
 MODULE_LICENSE("GPL v2");
@@ -42,9 +42,8 @@ MODULE_AUTHOR("Ruslan Gustomiasov");
  *
  * Returns 0 on success, -errno on error.
  */
-int64_t sys_rt_sigaction(uint64_t signum, uint64_t act_addr,
-                          uint64_t oldact_addr, uint64_t sigsetsize)
-{
+int64_t sys_rt_sigaction(uint64_t signum, uint64_t act_addr, uint64_t oldact_addr,
+                         uint64_t sigsetsize) {
     struct process *p = process_get_current();
     if (!p)
         return (uint64_t)(int64_t)-ESRCH;
@@ -68,9 +67,9 @@ int64_t sys_rt_sigaction(uint64_t signum, uint64_t act_addr,
     if (oldact_addr) {
         struct sigaction old;
         old.sa_handler = (void (*)(int))(uintptr_t)p->sig_handlers[signum];
-        old.sa_sigaction = NULL;  /* sa_handler and sa_sigaction share the same slot in Linux */
-        old.sa_flags   = (int)p->sig_flags[signum];
-        old.sa_restorer = NULL;  /* not tracked per-signal */
+        old.sa_sigaction = NULL; /* sa_handler and sa_sigaction share the same slot in Linux */
+        old.sa_flags = (int)p->sig_flags[signum];
+        old.sa_restorer = NULL; /* not tracked per-signal */
         old.sa_mask.__bits[0] = p->sig_sa_mask[signum];
 
         spinlock_irqsave_release(&p->sig_lock, __sig_flags);
@@ -91,8 +90,7 @@ int64_t sys_rt_sigaction(uint64_t signum, uint64_t act_addr,
          * For user processes, SIG_DFL (0) and SIG_IGN (1) are the only
          * special values — anything else must be a valid userspace address. */
         signal_handler_t handler = (signal_handler_t)(uintptr_t)new_act.sa_handler;
-        if (p->is_user &&
-            handler != SIG_DFL && handler != SIG_IGN &&
+        if (p->is_user && handler != SIG_DFL && handler != SIG_IGN &&
             (uint64_t)(uintptr_t)handler >= USER_VADDR_MAX)
             return (uint64_t)(int64_t)-EINVAL;
 
@@ -108,10 +106,10 @@ int64_t sys_rt_sigaction(uint64_t signum, uint64_t act_addr,
         }
 
         p->sig_handlers[signum] = handler;
-        p->sig_flags[signum]    = (uint32_t)(new_act.sa_flags & 0xFFFFFFFFU);
+        p->sig_flags[signum] = (uint32_t)(new_act.sa_flags & 0xFFFFFFFFU);
         /* SIGKILL and SIGSTOP are unblockable — silently strip them from sa_mask */
-        p->sig_sa_mask[signum]  = new_act.sa_mask.__bits[0]
-                                  & ~((1ULL << SIGKILL) | (1ULL << SIGSTOP));
+        p->sig_sa_mask[signum] =
+            new_act.sa_mask.__bits[0] & ~((1ULL << SIGKILL) | (1ULL << SIGSTOP));
 
         /* SA_NODEFER: normally the signal is masked while its handler runs.
          * If set, don't mask it. This is handled at signal delivery time.
@@ -138,9 +136,8 @@ int64_t sys_rt_sigaction(uint64_t signum, uint64_t act_addr,
  *
  * Returns 0 on success, -errno on error.
  */
-int64_t sys_rt_sigprocmask(uint64_t how, uint64_t set_addr,
-                            uint64_t oldset_addr, uint64_t sigsetsize)
-{
+int64_t sys_rt_sigprocmask(uint64_t how, uint64_t set_addr, uint64_t oldset_addr,
+                           uint64_t sigsetsize) {
     struct process *p = process_get_current();
     if (!p)
         return (uint64_t)(int64_t)-ESRCH;
@@ -217,8 +214,7 @@ int64_t sys_rt_sigprocmask(uint64_t how, uint64_t set_addr,
  * the r15 slot — the base of the saved register frame. */
 extern volatile uint64_t syscall_entry_rsp_saved;
 
-int64_t sys_rt_sigreturn(void)
-{
+int64_t sys_rt_sigreturn(void) {
     struct process *p = process_get_current();
     if (!p)
         return (uint64_t)(int64_t)-ESRCH;
@@ -307,9 +303,8 @@ int64_t sys_rt_sigreturn(void)
  *
  * Returns the signal number on success, -errno on error.
  */
-int64_t sys_rt_sigtimedwait(uint64_t set_addr, uint64_t info_addr,
-                             uint64_t timeout_addr, uint64_t sigsetsize)
-{
+int64_t sys_rt_sigtimedwait(uint64_t set_addr, uint64_t info_addr, uint64_t timeout_addr,
+                            uint64_t sigsetsize) {
     struct process *p = process_get_current();
     if (!p)
         return (uint64_t)(int64_t)-ESRCH;
@@ -331,8 +326,8 @@ int64_t sys_rt_sigtimedwait(uint64_t set_addr, uint64_t info_addr,
     sig_set &= ~((1ULL << SIGKILL) | (1ULL << SIGSTOP));
 
     /* Parse timeout */
-    int poll_mode = 0;         /* 1 = return -EAGAIN if no signal pending now */
-    uint64_t timeout_abs = 0;  /* absolute tick deadline (0 = no timeout) */
+    int poll_mode = 0;        /* 1 = return -EAGAIN if no signal pending now */
+    uint64_t timeout_abs = 0; /* absolute tick deadline (0 = no timeout) */
     if (timeout_addr) {
         struct timespec ts;
         if (copy_from_user(&ts, timeout_addr, sizeof(ts)) < 0)
@@ -343,8 +338,7 @@ int64_t sys_rt_sigtimedwait(uint64_t set_addr, uint64_t info_addr,
         } else {
             /* Convert timespec to ticks, rounding up so we don't wake early */
             uint64_t timeout_ticks = ts.tv_sec * (uint64_t)TIMER_FREQ;
-            timeout_ticks += (ts.tv_nsec + (uint64_t)NS_PER_TICK - 1)
-                             / (uint64_t)NS_PER_TICK;
+            timeout_ticks += (ts.tv_nsec + (uint64_t)NS_PER_TICK - 1) / (uint64_t)NS_PER_TICK;
             if (timeout_ticks > 0)
                 timeout_abs = timer_get_ticks() + timeout_ticks;
             else
@@ -373,7 +367,7 @@ int64_t sys_rt_sigtimedwait(uint64_t set_addr, uint64_t info_addr,
                     memset(&p->sig_info[signum], 0, sizeof(struct siginfo));
                 } else {
                     saved_info.si_signo = signum;
-                    saved_info.si_code  = SI_USER;
+                    saved_info.si_code = SI_USER;
                 }
 
                 p->sigwait_mask = 0;
@@ -381,8 +375,7 @@ int64_t sys_rt_sigtimedwait(uint64_t set_addr, uint64_t info_addr,
 
                 /* Copy info to userspace if requested */
                 if (info_addr) {
-                    if (copy_to_user(info_addr, &saved_info,
-                                     sizeof(saved_info)) < 0)
+                    if (copy_to_user(info_addr, &saved_info, sizeof(saved_info)) < 0)
                         return (uint64_t)(int64_t)-EFAULT;
                 }
 
@@ -412,7 +405,7 @@ int64_t sys_rt_sigtimedwait(uint64_t set_addr, uint64_t info_addr,
         if (timeout_abs != 0)
             p->sleep_until = timeout_abs;
         else
-            p->sleep_until = 0;  /* unlimited wait */
+            p->sleep_until = 0; /* unlimited wait */
 
         p->state = PROCESS_BLOCKED;
         scheduler_remove(p);
@@ -465,14 +458,11 @@ int64_t sys_kill(uint64_t pid, uint64_t sig) {
         {
             int w = CAP_KILL / 64;
             int b = CAP_KILL % 64;
-            if (w < PROCESS_SYSCALL_CAP_WORDS &&
-                (cur->syscall_caps[w] & (1ULL << b)) &&
+            if (w < PROCESS_SYSCALL_CAP_WORDS && (cur->syscall_caps[w] & (1ULL << b)) &&
                 (cur->cap_bset[w] & (1ULL << b)))
                 has_cap_kill = 1;
         }
-        if (cur->euid != 0 && !has_cap_kill &&
-            cur->euid != target->euid &&
-            cur->uid  != target->uid)
+        if (cur->euid != 0 && !has_cap_kill && cur->euid != target->euid && cur->uid != target->uid)
             return (uint64_t)(int64_t)-EPERM;
 
         /* Null-signal probe: existence+permission check only */
@@ -512,8 +502,7 @@ int64_t sys_kill(uint64_t pid, uint64_t sig) {
         {
             int w = CAP_KILL / 64;
             int b = CAP_KILL % 64;
-            if (w < PROCESS_SYSCALL_CAP_WORDS &&
-                (cur->syscall_caps[w] & (1ULL << b)) &&
+            if (w < PROCESS_SYSCALL_CAP_WORDS && (cur->syscall_caps[w] & (1ULL << b)) &&
                 (cur->cap_bset[w] & (1ULL << b)))
                 has_cap_kill = 1;
         }
@@ -526,9 +515,8 @@ int64_t sys_kill(uint64_t pid, uint64_t sig) {
                 continue;
             if (sig != 0) {
                 /* Permission check per target */
-                if (cur->euid == 0 || has_cap_kill ||
-                    cur->euid == table[i].euid ||
-                    cur->uid  == table[i].uid)
+                if (cur->euid == 0 || has_cap_kill || cur->euid == table[i].euid ||
+                    cur->uid == table[i].uid)
                     signal_send(table[i].pid, (int)sig);
             }
         }
@@ -580,8 +568,7 @@ int64_t sys_kill(uint64_t pid, uint64_t sig) {
  *
  * Returns 0 on success, -errno on error.
  */
-int64_t sys_tkill(uint64_t pid, uint64_t sig)
-{
+int64_t sys_tkill(uint64_t pid, uint64_t sig) {
     struct process *cur = process_get_current();
     if (!cur)
         return (uint64_t)(int64_t)-ESRCH;
@@ -600,9 +587,7 @@ int64_t sys_tkill(uint64_t pid, uint64_t sig)
      * Follows POSIX.1-2008 semantics: either the real or effective
      * UID of the caller must match the real or saved UID of the target.
      * This kernel tracks real uid and effective uid per process. */
-    if (cur->euid != 0 &&
-        cur->euid != target->euid &&
-        cur->uid  != target->uid)
+    if (cur->euid != 0 && cur->euid != target->euid && cur->uid != target->uid)
         return (uint64_t)(int64_t)-EPERM;
 
     /* Null-signal probe: existence + permission check only */
@@ -613,9 +598,9 @@ int64_t sys_tkill(uint64_t pid, uint64_t sig)
     struct siginfo info;
     memset(&info, 0, sizeof(info));
     info.si_signo = (int)sig;
-    info.si_code  = SI_TKILL;
-    info.si_pid   = cur->pid;
-    info.si_uid   = cur->uid;
+    info.si_code = SI_TKILL;
+    info.si_pid = cur->pid;
+    info.si_uid = cur->uid;
 
     /* Deliver the signal via signal_send_info which handles
      * the si_code, pending bit setting, and process wakeup.
@@ -649,8 +634,7 @@ int64_t sys_tkill(uint64_t pid, uint64_t sig)
  *
  * Returns 0 on success, -errno on error.
  */
-int64_t sys_tgkill(uint64_t tgid, uint64_t tid, uint64_t sig)
-{
+int64_t sys_tgkill(uint64_t tgid, uint64_t tid, uint64_t sig) {
     struct process *cur = process_get_current();
     if (!cur)
         return (uint64_t)(int64_t)-ESRCH;
@@ -674,9 +658,7 @@ int64_t sys_tgkill(uint64_t tgid, uint64_t tid, uint64_t sig)
     /* Permission check — root (euid 0) or matching UID can signal.
      * Follows POSIX.1-2008 semantics: either the real or effective
      * UID of the caller must match the real or saved UID of the target. */
-    if (cur->euid != 0 &&
-        cur->euid != target->euid &&
-        cur->uid  != target->uid)
+    if (cur->euid != 0 && cur->euid != target->euid && cur->uid != target->uid)
         return (uint64_t)(int64_t)-EPERM;
 
     /* Null-signal probe: existence + permission check only */
@@ -687,9 +669,9 @@ int64_t sys_tgkill(uint64_t tgid, uint64_t tid, uint64_t sig)
     struct siginfo info;
     memset(&info, 0, sizeof(info));
     info.si_signo = (int)sig;
-    info.si_code  = SI_TKILL;
-    info.si_pid   = cur->pid;
-    info.si_uid   = cur->uid;
+    info.si_code = SI_TKILL;
+    info.si_pid = cur->pid;
+    info.si_uid = cur->uid;
 
     /* Deliver the signal via signal_send_info which handles
      * the si_code, pending bit setting, and process wakeup.
@@ -716,8 +698,7 @@ int64_t sys_tgkill(uint64_t tgid, uint64_t tid, uint64_t sig)
  *
  * If sig == 0, perform error checking only (null-signal probe).
  */
-int64_t sys_rt_sigqueueinfo(uint64_t pid, uint64_t sig, uint64_t uinfo)
-{
+int64_t sys_rt_sigqueueinfo(uint64_t pid, uint64_t sig, uint64_t uinfo) {
     struct process *cur = process_get_current();
     if (!cur)
         return (uint64_t)(int64_t)-ESRCH;
@@ -732,9 +713,7 @@ int64_t sys_rt_sigqueueinfo(uint64_t pid, uint64_t sig, uint64_t uinfo)
         return (uint64_t)(int64_t)-ESRCH;
 
     /* Permission check — must be same UID/EUID or root */
-    if (cur->euid != 0 &&
-        cur->euid != target->euid &&
-        cur->uid  != target->uid)
+    if (cur->euid != 0 && cur->euid != target->euid && cur->uid != target->uid)
         return (uint64_t)(int64_t)-EPERM;
 
     /* Null-signal probe */
@@ -749,16 +728,16 @@ int64_t sys_rt_sigqueueinfo(uint64_t pid, uint64_t sig, uint64_t uinfo)
             return (uint64_t)(int64_t)-EFAULT;
     } else {
         info.si_signo = (int)sig;
-        info.si_code  = SI_USER;
-        info.si_pid   = cur->pid;
-        info.si_uid   = cur->uid;
+        info.si_code = SI_USER;
+        info.si_pid = cur->pid;
+        info.si_uid = cur->uid;
     }
 
     /* Override si_code to distinguish sigqueue from kill */
     info.si_signo = (int)sig;
-    info.si_code  = SI_QUEUE;
-    info.si_pid   = cur->pid;
-    info.si_uid   = cur->uid;
+    info.si_code = SI_QUEUE;
+    info.si_pid = cur->pid;
+    info.si_uid = cur->uid;
 
     /* Deliver the signal via signal_send_info which checks RLIMIT_SIGPENDING.
      * Returns 0 on success, -EAGAIN on queue overflow, -1 on other errors. */
@@ -778,11 +757,9 @@ int64_t sys_rt_sigqueueinfo(uint64_t pid, uint64_t sig, uint64_t uinfo)
  *
  * Validates that tid belongs to tgid before delivering.
  */
-int64_t sys_rt_tgsigqueueinfo(uint64_t tgid, uint64_t tid,
-                                uint64_t sig, uint64_t uinfo)
-{
-    (void)tgid;  /* Thread group validation — in this kernel tgid == pid
-                  * for non-threaded processes; for threads we check below. */
+int64_t sys_rt_tgsigqueueinfo(uint64_t tgid, uint64_t tid, uint64_t sig, uint64_t uinfo) {
+    (void)tgid; /* Thread group validation — in this kernel tgid == pid
+                 * for non-threaded processes; for threads we check below. */
 
     struct process *cur = process_get_current();
     if (!cur)
@@ -801,9 +778,7 @@ int64_t sys_rt_tgsigqueueinfo(uint64_t tgid, uint64_t tid,
         return (uint64_t)(int64_t)-EINVAL;
 
     /* Permission check */
-    if (cur->euid != 0 &&
-        cur->euid != target->euid &&
-        cur->uid  != target->uid)
+    if (cur->euid != 0 && cur->euid != target->euid && cur->uid != target->uid)
         return (uint64_t)(int64_t)-EPERM;
 
     if (sig == 0)
@@ -817,15 +792,15 @@ int64_t sys_rt_tgsigqueueinfo(uint64_t tgid, uint64_t tid,
             return (uint64_t)(int64_t)-EFAULT;
     } else {
         info.si_signo = (int)sig;
-        info.si_code  = SI_USER;
-        info.si_pid   = cur->pid;
-        info.si_uid   = cur->uid;
+        info.si_code = SI_USER;
+        info.si_pid = cur->pid;
+        info.si_uid = cur->uid;
     }
 
     info.si_signo = (int)sig;
-    info.si_code  = SI_QUEUE;
-    info.si_pid   = cur->pid;
-    info.si_uid   = cur->uid;
+    info.si_code = SI_QUEUE;
+    info.si_pid = cur->pid;
+    info.si_uid = cur->uid;
 
     if (signal_send_info((uint32_t)tid, (int)sig, &info, 1) < 0)
         return (uint64_t)(int64_t)-EAGAIN;
@@ -838,22 +813,19 @@ int64_t sys_rt_tgsigqueueinfo(uint64_t tgid, uint64_t tid,
  *
  * Returns 1 if `child` is a living (non-UNUSED) child of `parent_pid`
  * that matches the wait4 pid pattern, 0 otherwise. */
-static int wait4_child_matches(const struct process *child,
-                                uint32_t parent_pid,
-                                uint32_t parent_pgid,
-                                int64_t req_pid)
-{
+static int wait4_child_matches(const struct process *child, uint32_t parent_pid,
+                               uint32_t parent_pgid, int64_t req_pid) {
     if (child->state == PROCESS_UNUSED)
         return 0;
     if (child->parent_pid != parent_pid)
         return 0;
     if (child->pid == parent_pid)
-        return 0;  /* skip self */
+        return 0; /* skip self */
 
     if (req_pid > 0)
         return child->pid == (uint32_t)req_pid;
     if (req_pid == -1)
-        return 1;  /* any child */
+        return 1; /* any child */
     if (req_pid == 0)
         return child->pgid == parent_pgid;
     if (req_pid < -1) {
@@ -888,9 +860,7 @@ static int wait4_child_matches(const struct process *child,
  *     -EFAULT — wstatus or rusage pointer is invalid
  *     -EINTR  — a signal was caught (not yet implemented)
  */
-int64_t sys_wait4(uint64_t pid, uint64_t wstatus_addr,
-                   uint64_t options, uint64_t rusage_addr)
-{
+int64_t sys_wait4(uint64_t pid, uint64_t wstatus_addr, uint64_t options, uint64_t rusage_addr) {
     struct process *cur = process_get_current();
     if (!cur)
         return (uint64_t)(int64_t)-ESRCH;
@@ -934,8 +904,7 @@ int64_t sys_wait4(uint64_t pid, uint64_t wstatus_addr,
 
                 /* Copy wait status to userspace */
                 if (wstatus_addr) {
-                    if (copy_to_user(wstatus_addr, &wstatus,
-                                     sizeof(wstatus)) < 0)
+                    if (copy_to_user(wstatus_addr, &wstatus, sizeof(wstatus)) < 0)
                         return (uint64_t)(int64_t)-EFAULT;
                 }
 
@@ -943,14 +912,14 @@ int64_t sys_wait4(uint64_t pid, uint64_t wstatus_addr,
                 if (rusage_addr) {
                     struct rusage ru;
                     memset(&ru, 0, sizeof(ru));
-                    ru.ru_utime.tv_sec  = child->utime_ticks / 100;
+                    ru.ru_utime.tv_sec = child->utime_ticks / 100;
                     ru.ru_utime.tv_usec = (child->utime_ticks % 100) * 10000;
-                    ru.ru_stime.tv_sec  = child->stime_ticks / 100;
+                    ru.ru_stime.tv_sec = child->stime_ticks / 100;
                     ru.ru_stime.tv_usec = (child->stime_ticks % 100) * 10000;
-                    ru.ru_minflt  = child->minflt;
-                    ru.ru_majflt  = child->majflt;
-                    ru.ru_nvcsw   = child->nvcsw;
-                    ru.ru_nivcsw  = child->nivcsw;
+                    ru.ru_minflt = child->minflt;
+                    ru.ru_majflt = child->majflt;
+                    ru.ru_nvcsw = child->nvcsw;
+                    ru.ru_nivcsw = child->nivcsw;
                     ru.ru_nsignals = child->signals_received;
 
                     if (copy_to_user(rusage_addr, &ru, sizeof(ru)) < 0)
@@ -1005,8 +974,7 @@ int64_t sys_wait4(uint64_t pid, uint64_t wstatus_addr,
         }
         /* Fallthrough: all matching children became zombies while
          * we were selecting one to wait on — loop back and collect. */
-rescan:
-        ;
+    rescan:;
     }
 }
 
@@ -1019,18 +987,14 @@ rescan:
  *
  * Returns 1 if `child` is a living (non-UNUSED) child of `parent_pid`
  * matching the criteria, 0 otherwise. */
-static int waitid_child_matches(const struct process *child,
-                                 uint32_t parent_pid,
-                                 uint32_t parent_pgid,
-                                 int which,
-                                 int64_t req_id)
-{
+static int waitid_child_matches(const struct process *child, uint32_t parent_pid,
+                                uint32_t parent_pgid, int which, int64_t req_id) {
     if (child->state == PROCESS_UNUSED)
         return 0;
     if (child->parent_pid != parent_pid)
         return 0;
     if (child->pid == parent_pid)
-        return 0;  /* skip self */
+        return 0; /* skip self */
 
     switch (which) {
     case P_PID:
@@ -1038,7 +1002,7 @@ static int waitid_child_matches(const struct process *child,
     case P_PGID:
         return child->pgid == (uint32_t)req_id;
     case P_ALL:
-        return 1;  /* any child */
+        return 1; /* any child */
     default:
         return 0;
     }
@@ -1071,9 +1035,8 @@ static int waitid_child_matches(const struct process *child,
  *   si_uid   = child UID
  *   si_status = child exit code
  */
-int64_t sys_waitid(uint64_t which, uint64_t id, uint64_t info_addr,
-                    uint64_t options, uint64_t rusage_addr)
-{
+int64_t sys_waitid(uint64_t which, uint64_t id, uint64_t info_addr, uint64_t options,
+                   uint64_t rusage_addr) {
     struct process *cur = process_get_current();
     if (!cur)
         return (uint64_t)(int64_t)-ESRCH;
@@ -1090,8 +1053,7 @@ int64_t sys_waitid(uint64_t which, uint64_t id, uint64_t info_addr,
         for (int i = 0; i < PROCESS_MAX; i++) {
             struct process *child = &table[i];
 
-            if (!waitid_child_matches(child, my_pid, my_pgid,
-                                       (int)which, (int64_t)id))
+            if (!waitid_child_matches(child, my_pid, my_pgid, (int)which, (int64_t)id))
                 continue;
 
             found_any = 1;
@@ -1102,13 +1064,12 @@ int64_t sys_waitid(uint64_t which, uint64_t id, uint64_t info_addr,
                 memset(&info, 0, sizeof(info));
                 info.si_signo = SIGCHLD;
                 info.si_errno = 0;
-                info.si_code  = (child->exit_code < 0) ? CLD_KILLED : CLD_EXITED;
-                info.si_pid   = child->pid;
-                info.si_uid   = child->uid;
-                info.si_status = (child->exit_code < 0)
-                                     ? (-child->exit_code)
-                                     : (child->exit_code & 0xff);
-                info.si_addr  = NULL;
+                info.si_code = (child->exit_code < 0) ? CLD_KILLED : CLD_EXITED;
+                info.si_pid = child->pid;
+                info.si_uid = child->uid;
+                info.si_status =
+                    (child->exit_code < 0) ? (-child->exit_code) : (child->exit_code & 0xff);
+                info.si_addr = NULL;
 
                 /* Copy siginfo to userspace */
                 if (info_addr) {
@@ -1120,14 +1081,14 @@ int64_t sys_waitid(uint64_t which, uint64_t id, uint64_t info_addr,
                 if (rusage_addr) {
                     struct rusage ru;
                     memset(&ru, 0, sizeof(ru));
-                    ru.ru_utime.tv_sec  = child->utime_ticks / 100;
+                    ru.ru_utime.tv_sec = child->utime_ticks / 100;
                     ru.ru_utime.tv_usec = (child->utime_ticks % 100) * 10000;
-                    ru.ru_stime.tv_sec  = child->stime_ticks / 100;
+                    ru.ru_stime.tv_sec = child->stime_ticks / 100;
                     ru.ru_stime.tv_usec = (child->stime_ticks % 100) * 10000;
-                    ru.ru_minflt  = child->minflt;
-                    ru.ru_majflt  = child->majflt;
-                    ru.ru_nvcsw   = child->nvcsw;
-                    ru.ru_nivcsw  = child->nivcsw;
+                    ru.ru_minflt = child->minflt;
+                    ru.ru_majflt = child->majflt;
+                    ru.ru_nvcsw = child->nvcsw;
+                    ru.ru_nivcsw = child->nivcsw;
                     ru.ru_nsignals = child->signals_received;
 
                     if (copy_to_user(rusage_addr, &ru, sizeof(ru)) < 0)
@@ -1138,7 +1099,7 @@ int64_t sys_waitid(uint64_t which, uint64_t id, uint64_t info_addr,
                 if (!do_not_reap)
                     process_cleanup(child);
 
-                return 0;  /* waitid returns 0 on success, not PID */
+                return 0; /* waitid returns 0 on success, not PID */
             }
         }
 
@@ -1155,8 +1116,7 @@ int64_t sys_waitid(uint64_t which, uint64_t id, uint64_t info_addr,
          * specifically (process_wake_waiter is PID-specific). */
         for (int i = 0; i < PROCESS_MAX; i++) {
             struct process *child = &table[i];
-            if (!waitid_child_matches(child, my_pid, my_pgid,
-                                       (int)which, (int64_t)id))
+            if (!waitid_child_matches(child, my_pid, my_pgid, (int)which, (int64_t)id))
                 continue;
             if (child->state != PROCESS_ZOMBIE) {
                 cur->wait_for_pid = child->pid;
@@ -1177,8 +1137,7 @@ int64_t sys_waitid(uint64_t which, uint64_t id, uint64_t info_addr,
         }
         /* Fallthrough: all matching children became zombies while
          * we were selecting one to wait on — loop back and collect. */
-rescan:
-        ;
+    rescan:;
     }
 }
 
@@ -1197,43 +1156,42 @@ rescan:
  * This function does not return (calls process_exit_code which
  * terminates the current process).
  */
-int64_t sys_exit_group(uint64_t code)
-{
-	struct process *cur = process_get_current();
-	if (!cur)
-		return (uint64_t)(int64_t)-ESRCH;
+int64_t sys_exit_group(uint64_t code) {
+    struct process *cur = process_get_current();
+    if (!cur)
+        return (uint64_t)(int64_t)-ESRCH;
 
-	uint32_t my_tgid = cur->tgid;
-	uint32_t my_pid = cur->pid;
+    uint32_t my_tgid = cur->tgid;
+    uint32_t my_pid = cur->pid;
 
-	/* Iterate the process table and signal every thread in the same group,
-	 * except the caller (which exits explicitly below). */
-	struct process *table = process_get_table();
-	for (int i = 0; i < PROCESS_MAX; i++) {
-		struct process *p = &table[i];
-		if (p->state == PROCESS_UNUSED)
-			continue;
-		if (p->tgid != my_tgid)
-			continue;
-		if (p->pid == my_pid)
-			continue;
+    /* Iterate the process table and signal every thread in the same group,
+     * except the caller (which exits explicitly below). */
+    struct process *table = process_get_table();
+    for (int i = 0; i < PROCESS_MAX; i++) {
+        struct process *p = &table[i];
+        if (p->state == PROCESS_UNUSED)
+            continue;
+        if (p->tgid != my_tgid)
+            continue;
+        if (p->pid == my_pid)
+            continue;
 
-		struct siginfo info;
-		memset(&info, 0, sizeof(info));
-		info.si_signo = SIGKILL;
-		info.si_errno = 0;
-		info.si_code  = SI_KERNEL;
-		info.si_pid   = my_pid;
-		info.si_uid   = cur->uid;
-		info.si_addr  = NULL;
-		info.si_status = 0;
+        struct siginfo info;
+        memset(&info, 0, sizeof(info));
+        info.si_signo = SIGKILL;
+        info.si_errno = 0;
+        info.si_code = SI_KERNEL;
+        info.si_pid = my_pid;
+        info.si_uid = cur->uid;
+        info.si_addr = NULL;
+        info.si_status = 0;
 
-		signal_send_info(p->pid, SIGKILL, &info, 0);
-	}
+        signal_send_info(p->pid, SIGKILL, &info, 0);
+    }
 
-	/* Terminate the caller — this doesn't return. */
-	process_exit_code((int)code);
+    /* Terminate the caller — this doesn't return. */
+    process_exit_code((int)code);
 
-	/* Unreachable */
-	return 0;
+    /* Unreachable */
+    return 0;
 }
