@@ -123,38 +123,38 @@ static int custom_syscall_table_initialized = 0;
 extern uint64_t syscall_arg6;
 
 /* D127: Credential syscalls — declared in sys_credentials.c */
-uint64_t sys_setuid(uint64_t uid);
-uint64_t sys_seteuid(uint64_t euid);
-uint64_t sys_setgid(uint64_t gid);
-uint64_t sys_setegid(uint64_t egid);
-uint64_t sys_getgroups(uint64_t size, uint64_t list_addr);
-uint64_t sys_setgroups(uint64_t size, uint64_t list_addr);
-uint64_t sys_getpgrp(void);
+int64_t sys_setuid(uint64_t uid);
+int64_t sys_seteuid(uint64_t euid);
+int64_t sys_setgid(uint64_t gid);
+int64_t sys_setegid(uint64_t egid);
+int64_t sys_getgroups(uint64_t size, uint64_t list_addr);
+int64_t sys_setgroups(uint64_t size, uint64_t list_addr);
+int64_t sys_getpgrp(void);
 
 /* D128: Capability syscalls — implemented in sys_caps.c */
-uint64_t sys_capget(uint64_t header_addr, uint64_t data_addr);
-uint64_t sys_capset(uint64_t header_addr, uint64_t data_addr);
-uint64_t sys_setsecurebits(uint64_t bits);
-uint64_t sys_getsecurebits(void);
+int64_t sys_capget(uint64_t header_addr, uint64_t data_addr);
+int64_t sys_capset(uint64_t header_addr, uint64_t data_addr);
+int64_t sys_setsecurebits(uint64_t bits);
+int64_t sys_getsecurebits(void);
 
 /* D123: Process & Signal syscalls — declared in sys_process.c */
-uint64_t sys_rt_sigaction(uint64_t signum, uint64_t act_addr, uint64_t oldact_addr,
+int64_t sys_rt_sigaction(uint64_t signum, uint64_t act_addr, uint64_t oldact_addr,
                           uint64_t sigsetsize);
-uint64_t sys_rt_sigprocmask(uint64_t how, uint64_t set_addr, uint64_t oldset_addr,
+int64_t sys_rt_sigprocmask(uint64_t how, uint64_t set_addr, uint64_t oldset_addr,
                             uint64_t sigsetsize);
-uint64_t sys_rt_sigreturn(void);
-uint64_t sys_rt_sigtimedwait(uint64_t set_addr, uint64_t info_addr, uint64_t timeout_addr,
+int64_t sys_rt_sigreturn(void);
+int64_t sys_rt_sigtimedwait(uint64_t set_addr, uint64_t info_addr, uint64_t timeout_addr,
                              uint64_t sigsetsize);
-uint64_t sys_kill(uint64_t pid, uint64_t sig);
-uint64_t sys_tkill(uint64_t pid, uint64_t sig);
-uint64_t sys_tgkill(uint64_t tgid, uint64_t tid, uint64_t sig);
-uint64_t sys_rt_sigqueueinfo(uint64_t pid, uint64_t sig, uint64_t uinfo);
-uint64_t sys_rt_tgsigqueueinfo(uint64_t tgid, uint64_t tid, uint64_t sig, uint64_t uinfo);
-uint64_t sys_wait4(uint64_t pid, uint64_t wstatus_addr, uint64_t options, uint64_t rusage_addr);
-uint64_t sys_waitid(uint64_t which, uint64_t id, uint64_t info_addr, uint64_t options,
+int64_t sys_kill(uint64_t pid, uint64_t sig);
+int64_t sys_tkill(uint64_t pid, uint64_t sig);
+int64_t sys_tgkill(uint64_t tgid, uint64_t tid, uint64_t sig);
+int64_t sys_rt_sigqueueinfo(uint64_t pid, uint64_t sig, uint64_t uinfo);
+int64_t sys_rt_tgsigqueueinfo(uint64_t tgid, uint64_t tid, uint64_t sig, uint64_t uinfo);
+int64_t sys_wait4(uint64_t pid, uint64_t wstatus_addr, uint64_t options, uint64_t rusage_addr);
+int64_t sys_waitid(uint64_t which, uint64_t id, uint64_t info_addr, uint64_t options,
                     uint64_t rusage_addr);
-uint64_t sys_exit_group(uint64_t code);
-uint64_t sys_set_tid_address(uint64_t tidptr);
+int64_t sys_exit_group(uint64_t code);
+int64_t sys_set_tid_address(uint64_t tidptr);
 
 /* ── Open file descriptor table (for lseek support) ────────────── */
 
@@ -1136,7 +1136,7 @@ struct winsize *tty_get_winsize(void) {
  *          with a valid current process.
  * Return: Number of bytes read on success, or (uint64_t)-1 on error.
  */
-static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
+static int64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
     if (!buf_addr && len > 0)
         return (uint64_t)(int64_t)-EFAULT;
     /* Negative fd — reject with EBADF */
@@ -1361,7 +1361,7 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
  *          with a valid current process.
  * Return: Number of bytes written on success, or (uint64_t)-1 on error.
  */
-static uint64_t sys_write(uint64_t fd, uint64_t buf_addr, uint64_t len) {
+static int64_t sys_write(uint64_t fd, uint64_t buf_addr, uint64_t len) {
     if (!buf_addr && len > 0)
         return (uint64_t)(int64_t)-EFAULT;
     /* Negative fd — reject with EBADF */
@@ -1645,7 +1645,7 @@ static uint64_t do_sys_open(const char *path, uint64_t flags, uint64_t mode) {
  *          with a valid current process.
  * Return: File descriptor (>= 3) on success, or negative errno on error.
  */
-static uint64_t sys_open(uint64_t path_addr, uint64_t flags, uint64_t mode) {
+static int64_t sys_open(uint64_t path_addr, uint64_t flags, uint64_t mode) {
     (void)mode;
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
@@ -1665,7 +1665,7 @@ static uint64_t sys_open(uint64_t path_addr, uint64_t flags, uint64_t mode) {
  * Context: Called from syscall dispatch. May sleep.
  * Return: 0 on success, or (uint64_t)-1 on error.
  */
-static uint64_t sys_close(uint64_t fd) {
+static int64_t sys_close(uint64_t fd) {
     /* stdin/stdout/stderr — cannot be closed */
     if (fd < 3)
         return 0;
@@ -1709,7 +1709,7 @@ static uint64_t sys_close(uint64_t fd) {
 }
 
 /* ── close_range — close all file descriptors in [first, last] ────── */
-static uint64_t sys_close_range(uint64_t first, uint64_t last, uint64_t flags) {
+static int64_t sys_close_range(uint64_t first, uint64_t last, uint64_t flags) {
     /* Validate range */
     if (first > last)
         return (uint64_t)(int64_t)-EINVAL;
@@ -1771,7 +1771,7 @@ static uint64_t sys_close_range(uint64_t first, uint64_t last, uint64_t flags) {
     return 0;
 }
 
-static uint64_t sys_exit(uint64_t code) {
+static int64_t sys_exit(uint64_t code) {
     struct process *p = process_get_current();
     /* If this is a user-mode process, clean up page tables */
     if (p && p->is_user && p->pml4) {
@@ -1783,14 +1783,14 @@ static uint64_t sys_exit(uint64_t code) {
     return 0; /* unreachable */
 }
 
-static uint64_t sys_getpid(void) {
+static int64_t sys_getpid(void) {
     struct process *p = process_get_current();
     /* Return namespace-local PID (Item 111) */
     return p ? pid_ns_get_ns_pid(p) : 0;
 }
 
 /* ── Signal registration (SYS_SIGNAL=213) ──────────────────────── */
-static uint64_t sys_signal(uint64_t signum, uint64_t handler_addr) {
+static int64_t sys_signal(uint64_t signum, uint64_t handler_addr) {
     if (signum <= 0 || signum >= SIG_MAX)
         return (uint64_t)-1ULL; /* SIG_ERR */
 
@@ -1824,7 +1824,7 @@ static uint64_t sys_signal(uint64_t signum, uint64_t handler_addr) {
 }
 
 /* ── File seek / truncate (SYS_LSEEK=214, SYS_TRUNCATE=215) ───── */
-static uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence) {
+static int64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence) {
     int i = (int)fd - 3;
     struct process_fd *pfd = sys_get_fd(i);
     if (!pfd || !pfd->used)
@@ -1864,7 +1864,7 @@ static uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence) {
     return (uint64_t)new_off;
 }
 
-static uint64_t sys_truncate(uint64_t path_addr, uint64_t len) {
+static int64_t sys_truncate(uint64_t path_addr, uint64_t len) {
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
@@ -1879,7 +1879,7 @@ static uint64_t sys_truncate(uint64_t path_addr, uint64_t len) {
 }
 
 /* ── Raw Ethernet send (SYS_RAW_SEND=216) ──────────────────────── */
-static uint64_t sys_raw_send(uint64_t buf_addr, uint64_t len) {
+static int64_t sys_raw_send(uint64_t buf_addr, uint64_t len) {
     if (len == 0 || len > 1514)
         return (uint64_t)(int64_t)-EINVAL;
     int r = net_link_send((const uint8_t *)(uintptr_t)buf_addr, (uint16_t)len);
@@ -1887,7 +1887,7 @@ static uint64_t sys_raw_send(uint64_t buf_addr, uint64_t len) {
 }
 
 /* ── FD-based read/write (SYS_FD_READ=217, SYS_FD_WRITE=218) ──── */
-static uint64_t sys_fd_read(uint64_t fd, uint64_t buf_addr, uint64_t count) {
+static int64_t sys_fd_read(uint64_t fd, uint64_t buf_addr, uint64_t count) {
     /* Negative fd — reject with EBADF */
     if ((int64_t)fd < 0)
         return (uint64_t)(int64_t)-EBADF;
@@ -2017,7 +2017,7 @@ static void do_sync_after_write(struct process_fd *pfd) {
     }
 }
 
-static uint64_t sys_fd_write(uint64_t fd, uint64_t buf_addr, uint64_t count) {
+static int64_t sys_fd_write(uint64_t fd, uint64_t buf_addr, uint64_t count) {
     /* Negative fd — reject with EBADF */
     if ((int64_t)fd < 0)
         return (uint64_t)(int64_t)-EBADF;
@@ -2107,7 +2107,7 @@ static uint64_t sys_fd_write(uint64_t fd, uint64_t buf_addr, uint64_t count) {
  * Context: Called from syscall dispatch. May sleep.
  * Return: Number of bytes read, 0 at EOF, or (uint64_t)-1 on error.
  */
-static uint64_t sys_pread64(uint64_t fd, uint64_t buf_addr, uint64_t count, uint64_t offset) {
+static int64_t sys_pread64(uint64_t fd, uint64_t buf_addr, uint64_t count, uint64_t offset) {
     if (fd < 3)
         return (uint64_t)(int64_t)-EBADF;
     int i = (int)fd - 3;
@@ -2179,7 +2179,7 @@ static uint64_t sys_pread64(uint64_t fd, uint64_t buf_addr, uint64_t count, uint
  * Context: Called from syscall dispatch. May sleep.
  * Return: Number of bytes written, or (uint64_t)-1 on error.
  */
-static uint64_t sys_pwrite64(uint64_t fd, uint64_t buf_addr, uint64_t count, uint64_t offset) {
+static int64_t sys_pwrite64(uint64_t fd, uint64_t buf_addr, uint64_t count, uint64_t offset) {
     if (fd < 3)
         return (uint64_t)(int64_t)-EBADF;
     int i = (int)fd - 3;
@@ -2247,16 +2247,16 @@ static uint64_t sys_pwrite64(uint64_t fd, uint64_t buf_addr, uint64_t count, uin
 
 /* ── Heap syscalls (malloc/free/calloc/realloc via kmalloc) ───── */
 
-static uint64_t sys_malloc(uint64_t size) {
+static int64_t sys_malloc(uint64_t size) {
     return (uint64_t)(uintptr_t)kmalloc((size_t)size);
 }
 
-static uint64_t sys_free(uint64_t ptr) {
+static int64_t sys_free(uint64_t ptr) {
     kfree((void *)(uintptr_t)ptr);
     return 0;
 }
 
-static uint64_t sys_realloc(uint64_t ptr, uint64_t new_size) {
+static int64_t sys_realloc(uint64_t ptr, uint64_t new_size) {
     if (!ptr)
         return sys_malloc(new_size);
     if (!new_size) {
@@ -2273,7 +2273,7 @@ static uint64_t sys_realloc(uint64_t ptr, uint64_t new_size) {
     return (uint64_t)(uintptr_t)newp;
 }
 
-static uint64_t sys_calloc(uint64_t nmemb, uint64_t size) {
+static int64_t sys_calloc(uint64_t nmemb, uint64_t size) {
     if (nmemb != 0 && (size_t)(nmemb * size) / (size_t)nmemb != (size_t)size)
         return 0;
     size_t total = (size_t)(nmemb * size);
@@ -2284,7 +2284,7 @@ static uint64_t sys_calloc(uint64_t nmemb, uint64_t size) {
     return (uint64_t)(uintptr_t)p;
 }
 
-static uint64_t sys_stat(uint64_t path_addr, uint64_t out_addr) {
+static int64_t sys_stat(uint64_t path_addr, uint64_t out_addr) {
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
@@ -2300,7 +2300,7 @@ static uint64_t sys_stat(uint64_t path_addr, uint64_t out_addr) {
     return 0;
 }
 
-static uint64_t sys_mkdir(uint64_t path_addr) {
+static int64_t sys_mkdir(uint64_t path_addr) {
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
@@ -2308,7 +2308,7 @@ static uint64_t sys_mkdir(uint64_t path_addr) {
     return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
 }
 
-static uint64_t sys_unlink(uint64_t path_addr) {
+static int64_t sys_unlink(uint64_t path_addr) {
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
@@ -2318,38 +2318,38 @@ static uint64_t sys_unlink(uint64_t path_addr) {
     return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
 }
 
-static uint64_t sys_time(void) {
+static int64_t sys_time(void) {
     return timer_get_ticks() / TIMER_FREQ;
 }
 
-static uint64_t sys_yield(void) {
+static int64_t sys_yield(void) {
     scheduler_yield();
     return 0;
 }
 
-static uint64_t sys_uptime(void) {
+static int64_t sys_uptime(void) {
     return timer_get_ticks();
 }
 
-static uint64_t sys_fs_format(void) {
+static int64_t sys_fs_format(void) {
     return (uint64_t)fs_format();
 }
 
-static uint64_t sys_fs_create(uint64_t path_addr, uint64_t type) {
+static int64_t sys_fs_create(uint64_t path_addr, uint64_t type) {
     char ap[128];
     const char *rp =
         vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0 ? (const char *)path_addr : ap;
     return (uint64_t)fs_create(rp, (uint8_t)type);
 }
 
-static uint64_t sys_fs_write(uint64_t path_addr, uint64_t data_addr, uint64_t size) {
+static int64_t sys_fs_write(uint64_t path_addr, uint64_t data_addr, uint64_t size) {
     char ap[128];
     const char *rp =
         vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0 ? (const char *)path_addr : ap;
     return (uint64_t)fs_write_file(rp, (const void *)data_addr, (uint32_t)size);
 }
 
-static uint64_t sys_fs_read(uint64_t path_addr, uint64_t buf_addr, uint64_t max_size,
+static int64_t sys_fs_read(uint64_t path_addr, uint64_t buf_addr, uint64_t max_size,
                             uint64_t out_addr) {
     char ap[128];
     const char *rp =
@@ -2357,21 +2357,21 @@ static uint64_t sys_fs_read(uint64_t path_addr, uint64_t buf_addr, uint64_t max_
     return (uint64_t)fs_read_file(rp, (void *)buf_addr, (uint32_t)max_size, (uint32_t *)out_addr);
 }
 
-static uint64_t sys_fs_delete(uint64_t path_addr) {
+static int64_t sys_fs_delete(uint64_t path_addr) {
     char ap[128];
     const char *rp =
         vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0 ? (const char *)path_addr : ap;
     return (uint64_t)fs_delete(rp);
 }
 
-static uint64_t sys_fs_list(uint64_t path_addr) {
+static int64_t sys_fs_list(uint64_t path_addr) {
     char ap[128];
     const char *rp =
         vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0 ? (const char *)path_addr : ap;
     return (uint64_t)fs_list(rp);
 }
 
-static uint64_t sys_fs_stat(uint64_t path_addr, uint64_t out_addr) {
+static int64_t sys_fs_stat(uint64_t path_addr, uint64_t out_addr) {
     char ap[128];
     const char *rp =
         vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0 ? (const char *)path_addr : ap;
@@ -2388,7 +2388,7 @@ static uint64_t sys_fs_stat(uint64_t path_addr, uint64_t out_addr) {
     return 0;
 }
 
-static uint64_t sys_fs_stat_ex(uint64_t path_addr, uint64_t out_addr) {
+static int64_t sys_fs_stat_ex(uint64_t path_addr, uint64_t out_addr) {
     char ap[128];
     const char *rp =
         vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0 ? (const char *)path_addr : ap;
@@ -2409,21 +2409,21 @@ static uint64_t sys_fs_stat_ex(uint64_t path_addr, uint64_t out_addr) {
     return 0;
 }
 
-static uint64_t sys_fs_chmod(uint64_t path_addr, uint64_t mode) {
+static int64_t sys_fs_chmod(uint64_t path_addr, uint64_t mode) {
     char ap[128];
     const char *rp =
         vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0 ? (const char *)path_addr : ap;
     return (uint64_t)fs_chmod(rp, (uint16_t)mode);
 }
 
-static uint64_t sys_fs_chown(uint64_t path_addr, uint64_t uid, uint64_t gid) {
+static int64_t sys_fs_chown(uint64_t path_addr, uint64_t uid, uint64_t gid) {
     char ap[128];
     const char *rp =
         vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0 ? (const char *)path_addr : ap;
     return (uint64_t)fs_chown(rp, (uint16_t)uid, (uint16_t)gid);
 }
 
-static uint64_t sys_fs_get_usage(uint64_t out_addr) {
+static int64_t sys_fs_get_usage(uint64_t out_addr) {
     uint32_t used_inodes = 0, total_inodes = 0, used_blocks = 0, data_start = 0;
     fs_get_usage(&used_inodes, &total_inodes, &used_blocks, &data_start);
     if (out_addr) {
@@ -2434,55 +2434,55 @@ static uint64_t sys_fs_get_usage(uint64_t out_addr) {
     return 0;
 }
 
-static uint64_t sys_fs_list_names(uint64_t dir_addr, uint64_t prefix_addr, uint64_t names_addr,
+static int64_t sys_fs_list_names(uint64_t dir_addr, uint64_t prefix_addr, uint64_t names_addr,
                                   uint64_t max) {
     return (uint64_t)fs_list_names((const char *)dir_addr, (const char *)prefix_addr,
                                    (char(*)[FS_MAX_NAME])names_addr, (int)max);
 }
 
-static uint64_t sys_ata_present(void) {
+static int64_t sys_ata_present(void) {
     return (uint64_t)ata_is_present();
 }
 
-static uint64_t sys_ata_sectors(void) {
+static int64_t sys_ata_sectors(void) {
     return (uint64_t)ata_get_sectors();
 }
 
-static uint64_t sys_ahci_present(void) {
+static int64_t sys_ahci_present(void) {
     return (uint64_t)ahci_is_present();
 }
 
-static uint64_t sys_ahci_sectors(void) {
+static int64_t sys_ahci_sectors(void) {
     return (uint64_t)ahci_get_sectors();
 }
 
-static uint64_t sys_vfs_read(uint64_t path_addr, uint64_t buf_addr, uint64_t max,
+static int64_t sys_vfs_read(uint64_t path_addr, uint64_t buf_addr, uint64_t max,
                              uint64_t out_addr) {
     return (uint64_t)vfs_read((const char *)path_addr, (void *)buf_addr, (uint32_t)max,
                               (uint32_t *)out_addr);
 }
 
-static uint64_t sys_vfs_write(uint64_t path_addr, uint64_t data_addr, uint64_t size) {
+static int64_t sys_vfs_write(uint64_t path_addr, uint64_t data_addr, uint64_t size) {
     return (uint64_t)vfs_write((const char *)path_addr, (const void *)data_addr, (uint32_t)size);
 }
 
-static uint64_t sys_vfs_stat(uint64_t path_addr, uint64_t st_addr) {
+static int64_t sys_vfs_stat(uint64_t path_addr, uint64_t st_addr) {
     return (uint64_t)vfs_stat((const char *)path_addr, (struct vfs_stat *)st_addr);
 }
 
-static uint64_t sys_vfs_create(uint64_t path_addr, uint64_t type) {
+static int64_t sys_vfs_create(uint64_t path_addr, uint64_t type) {
     return (uint64_t)vfs_create((const char *)path_addr, (uint8_t)type);
 }
 
-static uint64_t sys_vfs_unlink(uint64_t path_addr) {
+static int64_t sys_vfs_unlink(uint64_t path_addr) {
     return (uint64_t)vfs_unlink((const char *)path_addr);
 }
 
-static uint64_t sys_vfs_readdir(uint64_t path_addr) {
+static int64_t sys_vfs_readdir(uint64_t path_addr) {
     return (uint64_t)vfs_readdir((const char *)path_addr);
 }
 
-static uint64_t sys_waitpid(uint64_t pid, uint64_t status_addr, uint64_t options) {
+static int64_t sys_waitpid(uint64_t pid, uint64_t status_addr, uint64_t options) {
     /* Delegate to sys_wait4 which properly handles:
      *   pid > 0  → wait for child with specific PID
      *   pid == -1 → wait for any child
@@ -2492,16 +2492,16 @@ static uint64_t sys_waitpid(uint64_t pid, uint64_t status_addr, uint64_t options
     return sys_wait4(pid, status_addr, options, 0);
 }
 
-static uint64_t sys_sleep_ticks(uint64_t ticks) {
+static int64_t sys_sleep_ticks(uint64_t ticks) {
     process_sleep_ticks(ticks);
     return 0;
 }
 
-static uint64_t sys_net_present(void) {
+static int64_t sys_net_present(void) {
     return (uint64_t)e1000_is_present();
 }
 
-static uint64_t sys_net_get_mac(uint64_t mac_addr) {
+static int64_t sys_net_get_mac(uint64_t mac_addr) {
     uint8_t *mac = (uint8_t *)mac_addr;
     if (!mac)
         return (uint64_t)-1;
@@ -2509,7 +2509,7 @@ static uint64_t sys_net_get_mac(uint64_t mac_addr) {
     return 0;
 }
 
-static uint64_t sys_net_get_ip(uint64_t ip_addr) {
+static int64_t sys_net_get_ip(uint64_t ip_addr) {
     uint8_t *ip = (uint8_t *)ip_addr;
     if (!ip)
         return (uint64_t)-1;
@@ -2517,30 +2517,30 @@ static uint64_t sys_net_get_ip(uint64_t ip_addr) {
     return 0;
 }
 
-static uint64_t sys_net_get_gw(void) {
+static int64_t sys_net_get_gw(void) {
     return (uint64_t)net_get_gateway();
 }
 
-static uint64_t sys_net_get_mask(void) {
+static int64_t sys_net_get_mask(void) {
     return (uint64_t)net_get_mask();
 }
 
-static uint64_t sys_net_dns(uint64_t host_addr) {
+static int64_t sys_net_dns(uint64_t host_addr) {
     return (uint64_t)net_dns_resolve((const char *)host_addr);
 }
 
-static uint64_t sys_net_ping(uint64_t ip) {
+static int64_t sys_net_ping(uint64_t ip) {
     return (uint64_t)net_ping((uint32_t)ip);
 }
 
-static uint64_t sys_net_udp_send(uint64_t dst_ip, uint64_t src_port, uint64_t dst_port,
+static int64_t sys_net_udp_send(uint64_t dst_ip, uint64_t src_port, uint64_t dst_port,
                                  uint64_t data_addr, uint64_t len) {
     net_udp_send((uint32_t)dst_ip, (uint16_t)src_port, (uint16_t)dst_port, (const void *)data_addr,
                  (uint16_t)len);
     return 0;
 }
 
-static uint64_t sys_net_http_get(uint64_t host_addr, uint64_t port, uint64_t path_addr,
+static int64_t sys_net_http_get(uint64_t host_addr, uint64_t port, uint64_t path_addr,
                                  uint64_t buf_addr, uint64_t packed) {
     int bufsize = (int)(uint32_t)(packed >> 32);
     int follow = (int)(uint32_t)packed;
@@ -2550,37 +2550,37 @@ static uint64_t sys_net_http_get(uint64_t host_addr, uint64_t port, uint64_t pat
 
 /* ── TCP server syscalls ─────────────────────────────────────── */
 
-static uint64_t sys_net_tcp_listen(uint64_t port) {
+static int64_t sys_net_tcp_listen(uint64_t port) {
     net_tcp_listen((uint16_t)port, (tcp_connect_handler)0, (tcp_data_handler)0,
                    (tcp_close_handler)0);
     return 0;
 }
 
-static uint64_t sys_net_tcp_accept(uint64_t port, uint64_t timeout_ticks) {
+static int64_t sys_net_tcp_accept(uint64_t port, uint64_t timeout_ticks) {
     return (uint64_t)(int64_t)net_tcp_accept((uint16_t)port, (int)timeout_ticks);
 }
 
-static uint64_t sys_net_tcp_send_conn(uint64_t conn_id, uint64_t buf_addr, uint64_t len) {
+static int64_t sys_net_tcp_send_conn(uint64_t conn_id, uint64_t buf_addr, uint64_t len) {
     return (uint64_t)(int64_t)net_tcp_send((int)conn_id, (const void *)buf_addr, (uint16_t)len);
 }
 
-static uint64_t sys_net_tcp_recv_conn(uint64_t conn_id, uint64_t buf_addr, uint64_t len,
+static int64_t sys_net_tcp_recv_conn(uint64_t conn_id, uint64_t buf_addr, uint64_t len,
                                       uint64_t timeout_ticks) {
     return (uint64_t)(int64_t)net_tcp_recv((int)conn_id, (void *)buf_addr, (uint16_t)len,
                                            (int)timeout_ticks);
 }
 
-static uint64_t sys_net_tcp_close_conn(uint64_t conn_id) {
+static int64_t sys_net_tcp_close_conn(uint64_t conn_id) {
     net_tcp_close((int)conn_id);
     return 0;
 }
 
-static uint64_t sys_net_tcp_unlisten(uint64_t port) {
+static int64_t sys_net_tcp_unlisten(uint64_t port) {
     net_tcp_unlisten((uint16_t)port);
     return 0;
 }
 
-static uint64_t sys_net_tcp_connect(uint64_t ip, uint64_t port) {
+static int64_t sys_net_tcp_connect(uint64_t ip, uint64_t port) {
     return (uint64_t)(int64_t)net_tcp_connect((uint32_t)ip, (uint16_t)port);
 }
 
@@ -2588,44 +2588,44 @@ static uint64_t sys_net_tcp_connect(uint64_t ip, uint64_t port) {
 #include "mutex.h"
 #include "semaphore.h"
 
-static uint64_t sys_mutex_init(void) {
+static int64_t sys_mutex_init(void) {
     return (uint64_t)(int64_t)mutex_init();
 }
-static uint64_t sys_mutex_lock(uint64_t id) {
+static int64_t sys_mutex_lock(uint64_t id) {
     mutex_lock((int)id);
     return 0;
 }
-static uint64_t sys_mutex_unlock(uint64_t id) {
+static int64_t sys_mutex_unlock(uint64_t id) {
     mutex_unlock((int)id);
     return 0;
 }
-static uint64_t sys_mutex_destroy(uint64_t id) {
+static int64_t sys_mutex_destroy(uint64_t id) {
     mutex_destroy((int)id);
     return 0;
 }
 
 /* ── Semaphore syscalls ────────────────────────────────────────────────────── */
-static uint64_t sys_sem_init(uint64_t count) {
+static int64_t sys_sem_init(uint64_t count) {
     return (uint64_t)(int64_t)sem_init((int)count);
 }
-static uint64_t sys_sem_wait(uint64_t id) {
+static int64_t sys_sem_wait(uint64_t id) {
     sem_wait((int)id);
     return 0;
 }
-static uint64_t sys_sem_post(uint64_t id) {
+static int64_t sys_sem_post(uint64_t id) {
     sem_post((int)id);
     return 0;
 }
-static uint64_t sys_sem_destroy(uint64_t id) {
+static int64_t sys_sem_destroy(uint64_t id) {
     sem_destroy((int)id);
     return 0;
 }
 
 /* ── UDP server syscalls ──────────────────────────────────────────────────── */
-static uint64_t sys_net_udp_listen(uint64_t port) {
+static int64_t sys_net_udp_listen(uint64_t port) {
     return (uint64_t)(int64_t)net_udp_listen((uint16_t)port);
 }
-static uint64_t sys_net_udp_recv(uint64_t port, uint64_t buf, uint64_t bufsz, uint64_t src_ip_ptr,
+static int64_t sys_net_udp_recv(uint64_t port, uint64_t buf, uint64_t bufsz, uint64_t src_ip_ptr,
                                  uint64_t src_port_ptr) {
     /* Allocate kernel buffer — net_udp_recv writes directly to buf */
     uint16_t kbufsz = (uint16_t)(bufsz > 1500 ? 1500 : bufsz);
@@ -2652,13 +2652,13 @@ static uint64_t sys_net_udp_recv(uint64_t port, uint64_t buf, uint64_t bufsz, ui
         return (uint64_t)(int64_t)-EFAULT;
     return (uint64_t)(int64_t)ret;
 }
-static uint64_t sys_net_udp_unlisten(uint64_t port) {
+static int64_t sys_net_udp_unlisten(uint64_t port) {
     net_udp_unlisten((uint16_t)port);
     return 0;
 }
 
 /* ── FS extended syscalls ────────────────────────────────────────────────── */
-static uint64_t sys_fs_symlink(uint64_t path_addr, uint64_t target_addr) {
+static int64_t sys_fs_symlink(uint64_t path_addr, uint64_t target_addr) {
     char kpath[256], ktarget[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
@@ -2666,7 +2666,7 @@ static uint64_t sys_fs_symlink(uint64_t path_addr, uint64_t target_addr) {
         return (uint64_t)(int64_t)-EFAULT;
     return (uint64_t)(int64_t)fs_symlink(kpath, ktarget);
 }
-static uint64_t sys_fs_readlink(uint64_t path_addr, uint64_t buf_addr, uint64_t bufsz) {
+static int64_t sys_fs_readlink(uint64_t path_addr, uint64_t buf_addr, uint64_t bufsz) {
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
@@ -2682,7 +2682,7 @@ static uint64_t sys_fs_readlink(uint64_t path_addr, uint64_t buf_addr, uint64_t 
         return (uint64_t)(int64_t)-EFAULT;
     return 0;
 }
-static uint64_t sys_fs_lstat(uint64_t path_addr, uint64_t size_addr, uint64_t type_addr) {
+static int64_t sys_fs_lstat(uint64_t path_addr, uint64_t size_addr, uint64_t type_addr) {
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
@@ -2698,7 +2698,7 @@ static uint64_t sys_fs_lstat(uint64_t path_addr, uint64_t size_addr, uint64_t ty
     return 0;
 }
 
-static uint64_t sys_chdir(uint64_t path_addr) {
+static int64_t sys_chdir(uint64_t path_addr) {
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
@@ -2764,7 +2764,7 @@ static uint64_t sys_chdir(uint64_t path_addr) {
     return 0;
 }
 
-static uint64_t sys_getcwd(uint64_t buf_addr, uint64_t buf_size) {
+static int64_t sys_getcwd(uint64_t buf_addr, uint64_t buf_size) {
     char *ses_cwd = telnet_get_cwd_ctx();
     const char *cwd;
     if (ses_cwd)
@@ -2832,7 +2832,7 @@ static int priority_to_nice(int prio) {
  *
  * Returns 0 on success, -1 on error (EINVAL, ESRCH, EPERM).
  */
-static uint64_t sys_setpriority(uint64_t which, uint64_t who, uint64_t prio) {
+static int64_t sys_setpriority(uint64_t which, uint64_t who, uint64_t prio) {
     struct process *cur = process_get_current();
     if (!cur)
         return (uint64_t)(int64_t)-ESRCH;
@@ -2907,7 +2907,7 @@ static uint64_t sys_setpriority(uint64_t which, uint64_t who, uint64_t prio) {
  * on success, or -1 on error.  Note that nice values can legally be -1,
  * so callers must also check errno on -1 return.
  */
-static uint64_t sys_getpriority(uint64_t which, uint64_t who) {
+static int64_t sys_getpriority(uint64_t which, uint64_t who) {
     struct process *cur = process_get_current();
     if (!cur)
         return (uint64_t)(int64_t)-ESRCH;
@@ -2978,7 +2978,7 @@ static uint64_t sys_getpriority(uint64_t which, uint64_t who) {
  * On success, returns the 16-bit ioprio value.
  * On error, returns -ESRCH (no such process/pgrp/user) or -EINVAL.
  */
-static uint64_t sys_ioprio_get(uint64_t which, uint64_t who) {
+static int64_t sys_ioprio_get(uint64_t which, uint64_t who) {
     struct process *cur = process_get_current();
     if (!cur)
         return (uint64_t)(int64_t)-EINVAL;
@@ -3045,7 +3045,7 @@ static uint64_t sys_ioprio_get(uint64_t which, uint64_t who) {
  * ioprio encodes class (bits 15:13) and priority data (bits 12:0):
  *   IOPRIO_CLASS_RT (1), IOPRIO_CLASS_BE (2), IOPRIO_CLASS_IDLE (3)
  */
-static uint64_t sys_ioprio_set(uint64_t which, uint64_t who, uint64_t ioprio) {
+static int64_t sys_ioprio_set(uint64_t which, uint64_t who, uint64_t ioprio) {
     struct process *cur = process_get_current();
     if (!cur)
         return (uint64_t)(int64_t)-EINVAL;
@@ -3107,7 +3107,7 @@ static uint64_t sys_ioprio_set(uint64_t which, uint64_t who, uint64_t ioprio) {
     }
 }
 
-static uint64_t sys_setpgid(uint64_t pid, uint64_t pgid) {
+static int64_t sys_setpgid(uint64_t pid, uint64_t pgid) {
     struct process *cur = process_get_current();
     struct process *p;
 
@@ -3162,7 +3162,7 @@ static uint64_t sys_setpgid(uint64_t pid, uint64_t pgid) {
     return 0;
 }
 
-static uint64_t sys_getpgid(uint64_t pid) {
+static int64_t sys_getpgid(uint64_t pid) {
     struct process *p;
     if (pid == 0)
         p = process_get_current();
@@ -3173,28 +3173,28 @@ static uint64_t sys_getpgid(uint64_t pid) {
     return p->pgid;
 }
 
-static uint64_t sys_killpg(uint64_t pgid, uint64_t sig) {
+static int64_t sys_killpg(uint64_t pgid, uint64_t sig) {
     return (uint64_t)(int64_t)signal_send_group((uint32_t)pgid, (int)sig);
 }
 
-static uint64_t sys_shm_get(uint64_t key, uint64_t mode) {
+static int64_t sys_shm_get(uint64_t key, uint64_t mode) {
     return (uint64_t)(int64_t)shm_get((int)key, (uint16_t)mode);
 }
 
-static uint64_t sys_shm_at(uint64_t id) {
+static int64_t sys_shm_at(uint64_t id) {
     return shm_at((int)id);
 }
 
-static uint64_t sys_shm_dt(uint64_t id) {
+static int64_t sys_shm_dt(uint64_t id) {
     return (uint64_t)(int64_t)shm_dt((int)id);
 }
 
-static uint64_t sys_shm_free(uint64_t id) {
+static int64_t sys_shm_free(uint64_t id) {
     return (uint64_t)(int64_t)shm_free((int)id);
 }
 
 /* shmctl(id, cmd, arg) — control shared memory segment permissions */
-static uint64_t sys_shmctl(uint64_t id, uint64_t cmd, uint64_t arg) {
+static int64_t sys_shmctl(uint64_t id, uint64_t cmd, uint64_t arg) {
     int cid = (int)id;
     int ccmd = (int)cmd;
 
@@ -3233,7 +3233,7 @@ struct sem_perm {
     uint16_t mode;
 };
 
-static uint64_t sys_semctl(uint64_t semid, uint64_t semnum, uint64_t cmd, uint64_t arg) {
+static int64_t sys_semctl(uint64_t semid, uint64_t semnum, uint64_t cmd, uint64_t arg) {
     (void)semnum;
     int ccmd = (int)cmd;
 
@@ -3274,11 +3274,11 @@ static uint64_t sys_semctl(uint64_t semid, uint64_t semnum, uint64_t cmd, uint64
     return (uint64_t)-1; /* unknown command */
 }
 
-static uint64_t sys_fork(void) {
+static int64_t sys_fork(void) {
     return (uint64_t)(int64_t)process_fork();
 }
 
-static uint64_t sys_clone(uint64_t flags, uint64_t child_stack, uint64_t ptid, uint64_t tls,
+static int64_t sys_clone(uint64_t flags, uint64_t child_stack, uint64_t ptid, uint64_t tls,
                           uint64_t ctid) {
     struct process *parent = process_get_current();
     if (!parent)
@@ -3384,7 +3384,7 @@ static uint64_t sys_clone(uint64_t flags, uint64_t child_stack, uint64_t ptid, u
  *
  * Returns child PID on success, negative errno on failure.
  */
-static uint64_t sys_clone3(uint64_t uargs_addr, uint64_t size) {
+static int64_t sys_clone3(uint64_t uargs_addr, uint64_t size) {
     struct process *parent = process_get_current();
     if (!parent)
         return (uint64_t)(int64_t)-EAGAIN;
@@ -3530,7 +3530,7 @@ static uint64_t sys_clone3(uint64_t uargs_addr, uint64_t size) {
  *
  * Returns 0 on success, -1 with errno on failure.
  */
-static uint64_t sys_unshare(uint64_t flags) {
+static int64_t sys_unshare(uint64_t flags) {
     /* Only the namespace-related bits are accepted — all other flags
      * (CLONE_VM, CLONE_THREAD, etc.) are invalid for unshare. */
     uint64_t ns_mask = CLONE_NEWNS | CLONE_NEWUTS | CLONE_NEWPID | CLONE_NEWNET | CLONE_NEWIPC |
@@ -3659,7 +3659,7 @@ static uint64_t sys_unshare(uint64_t flags) {
  * Other namespace types are accepted but treated as no-ops (the
  * infrastructure will be extended as namespace isolation is deepened).
  */
-static uint64_t sys_setns(uint64_t fd, uint64_t nstype) {
+static int64_t sys_setns(uint64_t fd, uint64_t nstype) {
     struct process *cur = process_get_current();
     if (!cur)
         return (uint64_t)-EINVAL;
@@ -3783,14 +3783,14 @@ static uint64_t sys_setns(uint64_t fd, uint64_t nstype) {
 
 /* ── Thread syscalls (pthread support) ────────────────────────── */
 
-static uint64_t sys_thread_create(uint64_t fn_addr, uint64_t arg) {
+static int64_t sys_thread_create(uint64_t fn_addr, uint64_t arg) {
     void *(*fn)(void *) = (void *(*)(void *))(uintptr_t)fn_addr;
     void *user_arg = (void *)(uintptr_t)arg;
     int ret = process_thread_create(fn, user_arg);
     return (uint64_t)(int64_t)ret;
 }
 
-static uint64_t sys_thread_join(uint64_t thread_pid, uint64_t retval_addr) {
+static int64_t sys_thread_join(uint64_t thread_pid, uint64_t retval_addr) {
     int ret;
     if (retval_addr) {
         void *retval;
@@ -3810,14 +3810,14 @@ static void sys_thread_exit(void *retval) {
     /* never reaches here */
 }
 
-static uint64_t sys_gettid(void) {
+static int64_t sys_gettid(void) {
     struct process *p = process_get_current();
     if (!p)
         return 0;
     return (uint64_t)p->tgid ? (uint64_t)p->tgid : (uint64_t)p->pid;
 }
 
-uint64_t sys_set_tid_address(uint64_t tidptr) {
+   int64_t sys_set_tid_address(uint64_t tidptr) {
     struct process *p = process_get_current();
     if (!p)
         return (uint64_t)-ESRCH;
@@ -3829,7 +3829,7 @@ uint64_t sys_set_tid_address(uint64_t tidptr) {
     return (uint64_t)p->tgid ? (uint64_t)p->tgid : (uint64_t)p->pid;
 }
 
-static uint64_t sys_execve(uint64_t path_addr, uint64_t argv_addr, uint64_t envp_addr) {
+static int64_t sys_execve(uint64_t path_addr, uint64_t argv_addr, uint64_t envp_addr) {
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
@@ -3864,7 +3864,7 @@ static uint64_t sys_execve(uint64_t path_addr, uint64_t argv_addr, uint64_t envp
  *
  * Returns child PID on success, -errno on failure.
  */
-static uint64_t sys_posix_spawn(uint64_t path_addr, uint64_t argv_addr, uint64_t envp_addr) {
+static int64_t sys_posix_spawn(uint64_t path_addr, uint64_t argv_addr, uint64_t envp_addr) {
     struct process *cur = process_get_current();
     if (!cur || !cur->is_user)
         return (uint64_t)(int64_t)-ECHILD;
@@ -3933,7 +3933,7 @@ static uint64_t sys_posix_spawn(uint64_t path_addr, uint64_t argv_addr, uint64_t
 
 /* ── mseal — seal virtual memory ranges against further changes ── */
 
-static uint64_t sys_mseal(uint64_t addr, uint64_t length, uint64_t flags) {
+static int64_t sys_mseal(uint64_t addr, uint64_t length, uint64_t flags) {
     struct process *proc = process_get_current();
     if (!proc)
         return (uint64_t)(int64_t)-ENOMEM;
@@ -3954,7 +3954,7 @@ static uint64_t sys_mseal(uint64_t addr, uint64_t length, uint64_t flags) {
 
 /* ── seccomp(2) — standalone BPF-based syscall sandboxing ──── */
 
-static uint64_t sys_seccomp(uint64_t operation, uint64_t flags, uint64_t args) {
+static int64_t sys_seccomp(uint64_t operation, uint64_t flags, uint64_t args) {
     (void)args;
 
     switch (operation) {
@@ -3971,7 +3971,7 @@ static uint64_t sys_seccomp(uint64_t operation, uint64_t flags, uint64_t args) {
 
 /* ── mremap is implemented in sys_mmap.c ──────────────────────── */
 
-static uint64_t sys_sched_setaffinity(uint64_t pid, uint64_t cpuset) {
+static int64_t sys_sched_setaffinity(uint64_t pid, uint64_t cpuset) {
     struct process *proc = NULL;
     if (pid == 0) {
         proc = process_get_current();
@@ -3985,7 +3985,7 @@ static uint64_t sys_sched_setaffinity(uint64_t pid, uint64_t cpuset) {
     return 0;
 }
 
-static uint64_t sys_sched_getaffinity(uint64_t pid) {
+static int64_t sys_sched_getaffinity(uint64_t pid) {
     struct process *proc = NULL;
     if (pid == 0) {
         proc = process_get_current();
@@ -4017,7 +4017,7 @@ static int fd_find_free(struct process *proc) {
     return -1;
 }
 
-static uint64_t sys_dup(uint64_t old_fd) {
+static int64_t sys_dup(uint64_t old_fd) {
     struct process *proc = process_get_current();
     if (!proc)
         return (uint64_t)(int64_t)-EPERM;
@@ -4038,7 +4038,7 @@ static uint64_t sys_dup(uint64_t old_fd) {
     return (uint64_t)new_fd;
 }
 
-static uint64_t sys_dup2(uint64_t old_fd, uint64_t new_fd) {
+static int64_t sys_dup2(uint64_t old_fd, uint64_t new_fd) {
     struct process *proc = process_get_current();
     if (!proc)
         return (uint64_t)(int64_t)-EPERM;
@@ -4116,7 +4116,7 @@ static uint64_t sys_dup2(uint64_t old_fd, uint64_t new_fd) {
 #define O_ASYNC 0x2000
 /* O_NONBLOCK is defined in types.h (04000) */
 
-static uint64_t sys_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg) {
+static int64_t sys_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg) {
     struct process *proc = process_get_current();
     if (!proc)
         return (uint64_t)(int64_t)-ESRCH;
@@ -4386,7 +4386,7 @@ static uint64_t sys_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg) {
  *          -EINTR  if interrupted by a signal
  *          -EINVAL if bad timeout value
  */
-static uint64_t sys_select(uint64_t nfds, uint64_t readfds_addr, uint64_t writefds_addr,
+static int64_t sys_select(uint64_t nfds, uint64_t readfds_addr, uint64_t writefds_addr,
                            uint64_t exceptfds_addr, uint64_t timeout_addr) {
     struct process *cur = process_get_current();
     if (!cur)
@@ -4645,7 +4645,7 @@ void process_timer_tick(int was_user) {
     spinlock_irqsave_release(&proc_table_lock, __it_flags);
 }
 
-static uint64_t sys_setitimer(uint64_t which, uint64_t new_val_addr, uint64_t old_val_addr) {
+static int64_t sys_setitimer(uint64_t which, uint64_t new_val_addr, uint64_t old_val_addr) {
     struct process *proc = process_get_current();
     if (!proc)
         return (uint64_t)-1;
@@ -4681,7 +4681,7 @@ static uint64_t sys_setitimer(uint64_t which, uint64_t new_val_addr, uint64_t ol
     return 0;
 }
 
-static uint64_t sys_getitimer(uint64_t which, uint64_t cur_val_addr) {
+static int64_t sys_getitimer(uint64_t which, uint64_t cur_val_addr) {
     struct process *proc = process_get_current();
     if (!proc)
         return (uint64_t)-1;
@@ -4704,7 +4704,7 @@ static uint64_t sys_getitimer(uint64_t which, uint64_t cur_val_addr) {
 
 /* ── nanosleep ──────────────────────────────────────────────── */
 
-static uint64_t sys_nanosleep(uint64_t req_addr, uint64_t rem_addr) {
+static int64_t sys_nanosleep(uint64_t req_addr, uint64_t rem_addr) {
     struct process *proc = process_get_current();
     if (!proc)
         return (uint64_t)-1;
@@ -4761,7 +4761,7 @@ static uint64_t sys_nanosleep(uint64_t req_addr, uint64_t rem_addr) {
 #define _SC_NPROCESSORS_CONF 83
 #define _SC_NPROCESSORS_ONLN 84
 
-static uint64_t sys_sysconf(uint64_t name) {
+static int64_t sys_sysconf(uint64_t name) {
     switch (name) {
     case _SC_CLK_TCK:
         return 100; /* PIT frequency */
@@ -4782,7 +4782,7 @@ static char system_hostname[HOSTNAME_MAX] = "os";
 
 /* ── uname ──────────────────────────────────────────────────── */
 
-static uint64_t sys_uname(uint64_t buf_addr) {
+static int64_t sys_uname(uint64_t buf_addr) {
     if (!buf_addr)
         return (uint64_t)(int64_t)-EFAULT;
     struct utsname buf;
@@ -4808,7 +4808,7 @@ static uint64_t sys_uname(uint64_t buf_addr) {
 
 /* ── pipe() ──────────────────────────────────────────────────── */
 
-static uint64_t sys_pipe(uint64_t fds_addr) {
+static int64_t sys_pipe(uint64_t fds_addr) {
     if (!fds_addr)
         return (uint64_t)(int64_t)-EFAULT;
     struct process *proc = process_get_current();
@@ -4863,7 +4863,7 @@ static uint64_t sys_pipe(uint64_t fds_addr) {
 
 /* ── getppid() ───────────────────────────────────────────────── */
 
-static uint64_t sys_getppid(void) {
+static int64_t sys_getppid(void) {
     struct process *proc = process_get_current();
     if (!proc)
         return 0;
@@ -4872,7 +4872,7 @@ static uint64_t sys_getppid(void) {
 
 /* ── alarm() ─────────────────────────────────────────────────── */
 
-static uint64_t sys_alarm(uint64_t seconds) {
+static int64_t sys_alarm(uint64_t seconds) {
     struct process *proc = process_get_current();
     if (!proc)
         return (uint64_t)(int64_t)-ESRCH;
@@ -4900,7 +4900,7 @@ static uint64_t sys_alarm(uint64_t seconds) {
 
 /* ── pause() ─────────────────────────────────────────────────── */
 
-static uint64_t sys_pause(void) {
+static int64_t sys_pause(void) {
     /* Block the current process until a signal arrives.
      *
      * Per POSIX: pause() suspends the calling thread until delivery of a
@@ -4927,7 +4927,7 @@ static uint64_t sys_pause(void) {
 
 /* ── access() ────────────────────────────────────────────────── */
 
-static uint64_t sys_access(uint64_t path_addr, uint64_t mode) {
+static int64_t sys_access(uint64_t path_addr, uint64_t mode) {
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
@@ -4944,28 +4944,28 @@ static uint64_t sys_access(uint64_t path_addr, uint64_t mode) {
 
 /* ── getuid / geteuid / getgid / getegid ────────────────────── */
 
-static uint64_t sys_getuid(void) {
+static int64_t sys_getuid(void) {
     struct process *proc = process_get_current();
     if (!proc)
         return (uint64_t)(int64_t)-ESRCH;
     return (uint64_t)proc->uid;
 }
 
-static uint64_t sys_geteuid(void) {
+static int64_t sys_geteuid(void) {
     struct process *proc = process_get_current();
     if (!proc)
         return (uint64_t)(int64_t)-ESRCH;
     return (uint64_t)proc->euid;
 }
 
-static uint64_t sys_getgid(void) {
+static int64_t sys_getgid(void) {
     struct process *proc = process_get_current();
     if (!proc)
         return (uint64_t)(int64_t)-ESRCH;
     return (uint64_t)proc->gid;
 }
 
-static uint64_t sys_getegid(void) {
+static int64_t sys_getegid(void) {
     struct process *proc = process_get_current();
     if (!proc)
         return (uint64_t)(int64_t)-ESRCH;
@@ -4974,7 +4974,7 @@ static uint64_t sys_getegid(void) {
 
 /* ── rmdir() ─────────────────────────────────────────────────── */
 
-static uint64_t sys_rmdir(uint64_t path_addr) {
+static int64_t sys_rmdir(uint64_t path_addr) {
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
@@ -4988,7 +4988,7 @@ static uint64_t sys_rmdir(uint64_t path_addr) {
 
 /* ── rename() ────────────────────────────────────────────────── */
 
-static uint64_t sys_rename(uint64_t old_addr, uint64_t new_addr) {
+static int64_t sys_rename(uint64_t old_addr, uint64_t new_addr) {
     char old_kpath[256], new_kpath[256];
     if (strncpy_from_user(old_kpath, old_addr, sizeof(old_kpath)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
@@ -5006,7 +5006,7 @@ static uint64_t sys_rename(uint64_t old_addr, uint64_t new_addr) {
 
 /* ── chmod() ─────────────────────────────────────────────────── */
 
-static uint64_t sys_chmod(uint64_t path_addr, uint64_t mode) {
+static int64_t sys_chmod(uint64_t path_addr, uint64_t mode) {
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
@@ -5023,7 +5023,7 @@ static uint64_t sys_chmod(uint64_t path_addr, uint64_t mode) {
  * filesystem metadata via the VFS flush op, then flushes the block
  * device buffer cache.  Returns 0 on success or -errno on error.
  */
-static uint64_t sys_fsync(uint64_t fd) {
+static int64_t sys_fsync(uint64_t fd) {
     struct process *proc = process_get_current();
     if (!proc)
         return (uint64_t)-EBADF;
@@ -5076,7 +5076,7 @@ static uint64_t sys_fsync(uint64_t fd) {
  * dirty page cache pages + buffer cache.  This is a performance
  * optimization for applications that only need data durability.
  */
-static uint64_t sys_fdatasync(uint64_t fd) {
+static int64_t sys_fdatasync(uint64_t fd) {
     struct process *proc = process_get_current();
     if (!proc)
         return (uint64_t)-EBADF;
@@ -5116,7 +5116,7 @@ static uint64_t sys_fdatasync(uint64_t fd) {
 
 /* ── sigprocmask / sigpending ────────────────────────────────── */
 
-static uint64_t sys_sigprocmask(uint64_t how, uint64_t set_addr, uint64_t oldset_addr) {
+static int64_t sys_sigprocmask(uint64_t how, uint64_t set_addr, uint64_t oldset_addr) {
     struct process *proc = process_get_current();
     if (!proc)
         return (uint64_t)-1;
@@ -5167,7 +5167,7 @@ static uint64_t sys_sigprocmask(uint64_t how, uint64_t set_addr, uint64_t oldset
     return 0;
 }
 
-static uint64_t sys_sigpending(uint64_t set_addr) {
+static int64_t sys_sigpending(uint64_t set_addr) {
     struct process *proc = process_get_current();
     if (!proc)
         return (uint64_t)-1;
@@ -5265,7 +5265,7 @@ static int do_sigwait(uint64_t set_mask, int timeout_ticks, struct siginfo *out_
     }
 }
 
-static uint64_t sys_sigwaitinfo(uint64_t set_addr, uint64_t info_addr) {
+static int64_t sys_sigwaitinfo(uint64_t set_addr, uint64_t info_addr) {
     if (!set_addr)
         return (uint64_t)-1;
 
@@ -5310,7 +5310,7 @@ static uint64_t sys_sigwaitinfo(uint64_t set_addr, uint64_t info_addr) {
     return (uint64_t)(unsigned int)sig;
 }
 
-static uint64_t sys_sigtimedwait(uint64_t set_addr, uint64_t info_addr, uint64_t timeout_addr) {
+static int64_t sys_sigtimedwait(uint64_t set_addr, uint64_t info_addr, uint64_t timeout_addr) {
     if (!set_addr || !timeout_addr)
         return (uint64_t)-1;
 
@@ -5375,7 +5375,7 @@ static uint64_t sys_sigtimedwait(uint64_t set_addr, uint64_t info_addr, uint64_t
  * partial byte count rather than the error (consistent with Linux).
  * Zero-length iovs are skipped silently.
  */
-static uint64_t sys_readv(uint64_t fd, uint64_t iov_addr, uint64_t iovcnt) {
+static int64_t sys_readv(uint64_t fd, uint64_t iov_addr, uint64_t iovcnt) {
     if (iovcnt > 1024)
         return (uint64_t)(int64_t)-EINVAL;
     if (iovcnt == 0)
@@ -5427,7 +5427,7 @@ static uint64_t sys_readv(uint64_t fd, uint64_t iov_addr, uint64_t iovcnt) {
     return total;
 }
 
-static uint64_t sys_writev(uint64_t fd, uint64_t iov_addr, uint64_t iovcnt) {
+static int64_t sys_writev(uint64_t fd, uint64_t iov_addr, uint64_t iovcnt) {
     if (iovcnt > 1024)
         return (uint64_t)(int64_t)-EINVAL;
     if (iovcnt == 0)
@@ -5538,7 +5538,7 @@ void prng_add_entropy(uint64_t entropy) {
  *
  * Returns the number of bytes written on success, or a negative errno.
  */
-static uint64_t sys_getrandom(uint64_t buf_addr, uint64_t count, uint64_t flags) {
+static int64_t sys_getrandom(uint64_t buf_addr, uint64_t count, uint64_t flags) {
     /* Validate flags — reject unknown bits */
     if (flags & ~(GRND_NONBLOCK | GRND_RANDOM))
         return (uint64_t)(int64_t)-EINVAL;
@@ -5580,7 +5580,7 @@ static uint64_t sys_getrandom(uint64_t buf_addr, uint64_t count, uint64_t flags)
 
 /* ── kexec_load — register a kernel image for kexec reboot (Item 362) ── */
 
-static uint64_t sys_kexec_load(uint64_t phys_addr, uint64_t entry, uint64_t flags) {
+static int64_t sys_kexec_load(uint64_t phys_addr, uint64_t entry, uint64_t flags) {
     /* Lockdown: reject kexec_load at INTEGRITY level or above */
     if (lockdown_is_locked_down(LOCKDOWN_INTEGRITY))
         return (uint64_t)-EPERM;
@@ -5596,7 +5596,7 @@ static uint64_t sys_kexec_load(uint64_t phys_addr, uint64_t entry, uint64_t flag
 
 /* ── reboot() ────────────────────────────────────────────────── */
 
-static uint64_t sys_reboot(void) {
+static int64_t sys_reboot(void) {
     struct process *cur = process_get_current();
     struct process *table = process_get_table();
     uint64_t now;
@@ -5681,7 +5681,7 @@ static uint64_t sys_reboot(void) {
 
 /* ── sethostname / gethostname ───────────────────────────────── */
 
-static uint64_t sys_sethostname(uint64_t name_addr, uint64_t len) {
+static int64_t sys_sethostname(uint64_t name_addr, uint64_t len) {
     if (!name_addr)
         return (uint64_t)-1;
     struct process *proc = process_get_current();
@@ -5701,7 +5701,7 @@ static uint64_t sys_sethostname(uint64_t name_addr, uint64_t len) {
     return 0;
 }
 
-static uint64_t sys_gethostname(uint64_t name_addr, uint64_t len) {
+static int64_t sys_gethostname(uint64_t name_addr, uint64_t len) {
     if (!name_addr || len == 0)
         return (uint64_t)-1;
     struct process *proc = process_get_current();
@@ -5722,7 +5722,7 @@ static uint64_t sys_gethostname(uint64_t name_addr, uint64_t len) {
 
 /* ── umask() ─────────────────────────────────────────────────── */
 
-static uint64_t sys_umask(uint64_t mask) {
+static int64_t sys_umask(uint64_t mask) {
     struct process *proc = process_get_current();
     if (!proc)
         return (uint64_t)-1;
@@ -5733,7 +5733,7 @@ static uint64_t sys_umask(uint64_t mask) {
 
 /* ── mknod() ─────────────────────────────────────────────────── */
 
-static uint64_t sys_mknod(uint64_t path_addr, uint64_t mode, uint64_t dev) {
+static int64_t sys_mknod(uint64_t path_addr, uint64_t mode, uint64_t dev) {
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
         return (uint64_t)-EFAULT;
@@ -5797,7 +5797,7 @@ static void netstat_udp_cb(uint16_t port) {
     kprintf("  UDP  %5lu  *:*  LISTEN\n", (unsigned long)port);
 }
 
-static uint64_t sys_net_connlist(void) {
+static int64_t sys_net_connlist(void) {
     kprintf("Proto  LPort  Remote          State\n");
     net_conn_list(netstat_tcp_cb);
     net_udp_list(netstat_udp_cb);
@@ -5812,12 +5812,12 @@ static void arp_print_entry_sys(uint32_t ip, const uint8_t *mac) {
             (unsigned long)mac[5]);
 }
 
-static uint64_t sys_net_arp_list(void) {
+static int64_t sys_net_arp_list(void) {
     int n = net_arp_list(arp_print_entry_sys);
     return (uint64_t)n;
 }
 
-static uint64_t sys_proc_list(uint64_t out_addr, uint64_t max) {
+static int64_t sys_proc_list(uint64_t out_addr, uint64_t max) {
     struct syscall_process_info *out = (struct syscall_process_info *)out_addr;
     struct process *table = process_get_table();
     int written = 0;
@@ -5862,12 +5862,12 @@ static uint64_t sys_proc_list(uint64_t out_addr, uint64_t max) {
     return (uint64_t)written;
 }
 
-static uint64_t sys_pci_list(void) {
+static int64_t sys_pci_list(void) {
     pci_list();
     return 0;
 }
 
-static uint64_t sys_usb_list(void) {
+static int64_t sys_usb_list(void) {
     int n = usb_get_device_count();
     kprintf("USB devices: %lu\n", (unsigned long)n);
     for (int i = 0; i < n; i++) {
@@ -5883,7 +5883,7 @@ static uint64_t sys_usb_list(void) {
     return (uint64_t)n;
 }
 
-static uint64_t sys_hwinfo_print(void) {
+static int64_t sys_hwinfo_print(void) {
     uint32_t eax, ebx, ecx, edx;
     char vendor[13];
 
@@ -5907,7 +5907,7 @@ static uint64_t sys_hwinfo_print(void) {
 
 /* ── User/Session syscall handlers (Phase 3 Group 1) ─────── */
 
-static uint64_t sys_user_find(uint64_t name_addr, uint64_t out_addr) {
+static int64_t sys_user_find(uint64_t name_addr, uint64_t out_addr) {
     const char *username = (const char *)name_addr;
     struct user_entry *out = (struct user_entry *)out_addr;
     if (!username || !out)
@@ -5915,7 +5915,7 @@ static uint64_t sys_user_find(uint64_t name_addr, uint64_t out_addr) {
     return (uint64_t)user_find(username, out);
 }
 
-static uint64_t sys_user_add(uint64_t name_addr, uint64_t uid, uint64_t pass_addr) {
+static int64_t sys_user_add(uint64_t name_addr, uint64_t uid, uint64_t pass_addr) {
     struct user_session *sess = session_get();
     if (!sess || !sess->logged_in || sess->uid != 0)
         return (uint64_t)-2;
@@ -5927,7 +5927,7 @@ static uint64_t sys_user_add(uint64_t name_addr, uint64_t uid, uint64_t pass_add
     return (uint64_t)user_add(username, (uint32_t)uid, password);
 }
 
-static uint64_t sys_user_delete(uint64_t name_addr) {
+static int64_t sys_user_delete(uint64_t name_addr) {
     struct user_session *sess = session_get();
     if (!sess || !sess->logged_in || sess->uid != 0)
         return (uint64_t)-2;
@@ -5938,7 +5938,7 @@ static uint64_t sys_user_delete(uint64_t name_addr) {
     return (uint64_t)user_delete(username);
 }
 
-static uint64_t sys_user_passwd(uint64_t name_addr, uint64_t pass_addr) {
+static int64_t sys_user_passwd(uint64_t name_addr, uint64_t pass_addr) {
     struct user_session *sess = session_get();
     if (!sess || !sess->logged_in)
         return (uint64_t)-2;
@@ -5955,7 +5955,7 @@ static uint64_t sys_user_passwd(uint64_t name_addr, uint64_t pass_addr) {
     return (uint64_t)user_passwd(username, new_pass);
 }
 
-static uint64_t sys_session_login(uint64_t name_addr, uint64_t pass_addr) {
+static int64_t sys_session_login(uint64_t name_addr, uint64_t pass_addr) {
     const char *username = (const char *)name_addr;
     const char *password = (const char *)pass_addr;
     if (!username || !password)
@@ -5963,19 +5963,19 @@ static uint64_t sys_session_login(uint64_t name_addr, uint64_t pass_addr) {
     return (uint64_t)session_login(username, password);
 }
 
-static uint64_t sys_session_logout(void) {
+static int64_t sys_session_logout(void) {
     session_logout();
     return 0;
 }
 
-static uint64_t sys_session_get(void) {
+static int64_t sys_session_get(void) {
     if (syscall_is_user_process())
         return (uint64_t)-1;
     struct user_session *s = session_get();
     return (uint64_t)(uintptr_t)s;
 }
 
-static uint64_t sys_users_count(uint64_t mode) {
+static int64_t sys_users_count(uint64_t mode) {
     if (mode == 0) {
         return (uint64_t)users_count();
     } else if (mode == 1) {
@@ -5987,7 +5987,7 @@ static uint64_t sys_users_count(uint64_t mode) {
     return (uint64_t)-1;
 }
 
-static uint64_t sys_users_get_by_index(uint64_t idx, uint64_t out_addr) {
+static int64_t sys_users_get_by_index(uint64_t idx, uint64_t out_addr) {
     struct user_entry *out = (struct user_entry *)out_addr;
     struct user_entry *tbl = users_get_table();
     int max = users_count();
@@ -5997,7 +5997,7 @@ static uint64_t sys_users_get_by_index(uint64_t idx, uint64_t out_addr) {
     return 0;
 }
 
-static uint64_t sys_proc_set_cap_profile(uint64_t pid, uint64_t profile) {
+static int64_t sys_proc_set_cap_profile(uint64_t pid, uint64_t profile) {
     struct user_session *sess = session_get();
     if (!sess || !sess->logged_in || sess->uid != 0)
         return (uint64_t)-1;
@@ -6016,7 +6016,7 @@ static uint64_t sys_proc_set_cap_profile(uint64_t pid, uint64_t profile) {
 
 /* Hardware/Audio syscall handlers (Phase 3 Group 2) */
 
-static uint64_t sys_speaker_beep(uint64_t frequency, uint64_t duration_ms) {
+static int64_t sys_speaker_beep(uint64_t frequency, uint64_t duration_ms) {
     speaker_beep((uint32_t)frequency, (uint32_t)duration_ms);
     return 0;
 }
@@ -6041,7 +6041,7 @@ static int rtc_time_valid(const struct rtc_time *t) {
     return 1;
 }
 
-static uint64_t sys_rtc_get_time(uint64_t out_addr) {
+static int64_t sys_rtc_get_time(uint64_t out_addr) {
     struct rtc_time *out = (struct rtc_time *)out_addr;
     if (!out)
         return (uint64_t)-1;
@@ -6052,14 +6052,14 @@ static uint64_t sys_rtc_get_time(uint64_t out_addr) {
     return 0;
 }
 
-static uint64_t sys_acpi_shutdown(void) {
+static int64_t sys_acpi_shutdown(void) {
     acpi_shutdown();
     return 0;
 }
 
 /* I/O and Memory syscall handlers (Phase 3 Group 3a) */
 
-static uint64_t sys_mouse_get_state(uint64_t out_addr) {
+static int64_t sys_mouse_get_state(uint64_t out_addr) {
     struct mouse_state *out = (struct mouse_state *)out_addr;
     if (!out)
         return (uint64_t)-1;
@@ -6068,7 +6068,7 @@ static uint64_t sys_mouse_get_state(uint64_t out_addr) {
     return 0;
 }
 
-static uint64_t sys_serial_read(uint64_t buf_addr, uint64_t max) {
+static int64_t sys_serial_read(uint64_t buf_addr, uint64_t max) {
     uint8_t *buf = (uint8_t *)buf_addr;
     if (!buf || max <= 0)
         return (uint64_t)-1;
@@ -6079,7 +6079,7 @@ static uint64_t sys_serial_read(uint64_t buf_addr, uint64_t max) {
     return (uint64_t)n_read;
 }
 
-static uint64_t sys_serial_write(uint64_t buf_addr, uint64_t len) {
+static int64_t sys_serial_write(uint64_t buf_addr, uint64_t len) {
     const char *buf = (const char *)buf_addr;
     if (!buf || len == 0)
         return (uint64_t)0;
@@ -6087,13 +6087,13 @@ static uint64_t sys_serial_write(uint64_t buf_addr, uint64_t len) {
     return (uint64_t)len;
 }
 
-static uint64_t sys_cmos_read_byte(uint64_t addr) {
+static int64_t sys_cmos_read_byte(uint64_t addr) {
     uint8_t reg = (uint8_t)addr;
     outb(0x70, reg & 0x7F); /* mask NMI-disable bit */
     return (uint64_t)inb(0x71);
 }
 
-static uint64_t sys_pmm_get_stats(uint64_t out_addr) {
+static int64_t sys_pmm_get_stats(uint64_t out_addr) {
     struct pmm_stats *out = (struct pmm_stats *)out_addr;
     if (!out)
         return (uint64_t)-1;
@@ -6107,14 +6107,14 @@ static uint64_t sys_pmm_get_stats(uint64_t out_addr) {
 
 /* Specialized syscall handlers (Phase 3 Group 3b) */
 
-static uint64_t sys_elf_exec(uint64_t path_addr) {
+static int64_t sys_elf_exec(uint64_t path_addr) {
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
         return (uint64_t)-EFAULT;
     return (uint64_t)elf_exec(kpath);
 }
 
-static uint64_t sys_script_exec(uint64_t path_addr) {
+static int64_t sys_script_exec(uint64_t path_addr) {
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
@@ -6123,44 +6123,44 @@ static uint64_t sys_script_exec(uint64_t path_addr) {
     return (uint64_t)script_exec_ptr(kpath);
 }
 
-static uint64_t sys_fat_mount(uint64_t disk, uint64_t part_lba) {
+static int64_t sys_fat_mount(uint64_t disk, uint64_t part_lba) {
     if (part_lba > 0xFFFFFFFFULL)
         return (uint64_t)-EOVERFLOW;
     return (uint64_t)fat32_mount((fat32_disk_t)disk, (uint32_t)part_lba);
 }
 
-static uint64_t sys_fat_is_mounted(void) {
+static int64_t sys_fat_is_mounted(void) {
     return (uint64_t)fat32_is_mounted();
 }
 
-static uint64_t sys_fat_list_dir(uint64_t path_addr, uint64_t names_addr, uint64_t max) {
+static int64_t sys_fat_list_dir(uint64_t path_addr, uint64_t names_addr, uint64_t max) {
     return (uint64_t)fat32_list_dir((const char *)path_addr, (char(*)[FAT32_MAX_NAME])names_addr,
                                     (int)max);
 }
 
-static uint64_t sys_fat_read_file(uint64_t path_addr, uint64_t buf_addr, uint64_t max_size) {
+static int64_t sys_fat_read_file(uint64_t path_addr, uint64_t buf_addr, uint64_t max_size) {
     return (uint64_t)fat32_read_file((const char *)path_addr, (void *)buf_addr, (uint32_t)max_size);
 }
 
-static uint64_t sys_fat_file_size(uint64_t path_addr) {
+static int64_t sys_fat_file_size(uint64_t path_addr) {
     return (uint64_t)fat32_file_size((const char *)path_addr);
 }
 
-static uint64_t sys_fat_write_file(uint64_t path_addr, uint64_t data_addr, uint64_t size) {
+static int64_t sys_fat_write_file(uint64_t path_addr, uint64_t data_addr, uint64_t size) {
     return (uint64_t)fat32_write_file((const char *)path_addr, (const void *)data_addr,
                                       (uint32_t)size);
 }
 
-static uint64_t sys_fat_sync(void) {
+static int64_t sys_fat_sync(void) {
     return (uint64_t)fat32_sync();
 }
 
-static uint64_t sys_vga_set_color(uint64_t fg, uint64_t bg) {
+static int64_t sys_vga_set_color(uint64_t fg, uint64_t bg) {
     vga_set_color((uint8_t)fg, (uint8_t)bg);
     return 0;
 }
 
-static uint64_t sys_vga_get_fb_info(uint64_t out_addr) {
+static int64_t sys_vga_get_fb_info(uint64_t out_addr) {
     struct syscall_fb_info info;
     memset(&info, 0, sizeof(info));
     info.is_framebuffer = (uint8_t)(vga_is_framebuffer() ? 1 : 0);
@@ -6172,21 +6172,21 @@ static uint64_t sys_vga_get_fb_info(uint64_t out_addr) {
     return 0;
 }
 
-static uint64_t sys_keyboard_getchar(void) {
+static int64_t sys_keyboard_getchar(void) {
     return (uint64_t)(uint8_t)keyboard_getchar();
 }
 
-static uint64_t sys_vga_put_entry_at(uint64_t ch, uint64_t color, uint64_t row, uint64_t col) {
+static int64_t sys_vga_put_entry_at(uint64_t ch, uint64_t color, uint64_t row, uint64_t col) {
     vga_put_entry_at((char)(uint8_t)ch, (uint8_t)color, (uint16_t)row, (uint16_t)col);
     return 0;
 }
 
-static uint64_t sys_vga_set_cursor(uint64_t row, uint64_t col) {
+static int64_t sys_vga_set_cursor(uint64_t row, uint64_t col) {
     vga_set_cursor((uint16_t)row, (uint16_t)col);
     return 0;
 }
 
-static uint64_t sys_vga_clear(void) {
+static int64_t sys_vga_clear(void) {
     vga_clear();
     return 0;
 }
@@ -6197,7 +6197,7 @@ static uint64_t sys_vga_clear(void) {
 
 /* ── rlimit/prlimit64/getrlimit/setrlimit ──────────────────────────── */
 
-static uint64_t sys_prlimit64(uint64_t pid, uint64_t resource, uint64_t new_rlim_addr,
+static int64_t sys_prlimit64(uint64_t pid, uint64_t resource, uint64_t new_rlim_addr,
                               uint64_t old_rlim_addr) {
     if (resource >= _RLIMIT_NLIMITS)
         return (uint64_t)-1;
@@ -6401,7 +6401,7 @@ void futex_robust_list_cleanup(struct process *proc) {
     clac();
 }
 
-static uint64_t sys_futex(uint64_t uaddr, uint64_t op, uint64_t val, uint64_t timeout,
+static int64_t sys_futex(uint64_t uaddr, uint64_t op, uint64_t val, uint64_t timeout,
                           uint64_t uaddr2, uint64_t val3) {
     uint32_t *addr = (uint32_t *)uaddr;
     uint32_t *addr2 = (uint32_t *)uaddr2;
@@ -7014,7 +7014,7 @@ static uint64_t sys_futex(uint64_t uaddr, uint64_t op, uint64_t val, uint64_t ti
  * Returns 0 on success, or -ENOSYS for unknown codes.  GET operations
  * use copy_to_user() for SMAP-safe access. */
 
-static uint64_t sys_arch_prctl(uint64_t code, uint64_t addr) {
+static int64_t sys_arch_prctl(uint64_t code, uint64_t addr) {
     struct process *p = process_get_current();
 
     if (!p)
@@ -7070,7 +7070,7 @@ static uint64_t sys_arch_prctl(uint64_t code, uint64_t addr) {
 #define PSELECT6_SIGMASK_OFFSET 0
 #define PSELECT6_SSIZE_OFFSET 8
 
-static uint64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr, uint64_t writefds_addr,
+static int64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr, uint64_t writefds_addr,
                              uint64_t exceptfds_addr, uint64_t timeout_addr) {
     struct process *proc = process_get_current();
     if (!proc)
@@ -7327,7 +7327,7 @@ static uint64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr, uint64_t writ
 
 /* ── ppoll — safer poll with atomic signal mask (Item 251) ─────────── */
 
-static uint64_t sys_ppoll(uint64_t fds_addr, uint64_t nfds, uint64_t timeout_addr,
+static int64_t sys_ppoll(uint64_t fds_addr, uint64_t nfds, uint64_t timeout_addr,
                           uint64_t sigmask_addr) {
     if (syscall_is_user_process()) {
         if (!syscall_user_read_ok(fds_addr, nfds * sizeof(struct pollfd)))
@@ -7488,7 +7488,7 @@ static uint64_t sys_ppoll(uint64_t fds_addr, uint64_t nfds, uint64_t timeout_add
 
 /* ── eventfd ──────────────────────────────────────────────────────────── */
 
-static uint64_t sys_eventfd(uint64_t initval, uint64_t flags) {
+static int64_t sys_eventfd(uint64_t initval, uint64_t flags) {
     int fd = eventfd_syscall((uint32_t)initval, (int)flags);
     if (fd < 0)
         return (uint64_t)-1;
@@ -7536,7 +7536,7 @@ static int sock_send_raw(struct socket *s, int sockfd, const void *data, uint32_
  *   ENOMEM     cannot allocate bounce buffer
  *   ESPIPE     @in_fd is not a regular file
  */
-static uint64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd, uint64_t offset_addr,
+static int64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd, uint64_t offset_addr,
                              uint64_t count) {
     struct process *p = process_get_current();
     if (!p)
@@ -7730,7 +7730,7 @@ static int sock_send_raw(struct socket *s, int sockfd, const void *data, uint32_
 
 /* ── syslog/kmsg ───────────────────────────────────────────────────────── */
 
-static uint64_t sys_syslog(uint64_t type, uint64_t buf_addr, uint64_t len) {
+static int64_t sys_syslog(uint64_t type, uint64_t buf_addr, uint64_t len) {
     /* Lockdown CONFIDENTIALITY: block reading dmesg from userspace */
     if (lockdown_is_locked_down(LOCKDOWN_CONFIDENTIALITY)) {
         switch (type) {
@@ -7785,7 +7785,7 @@ static uint64_t sys_syslog(uint64_t type, uint64_t buf_addr, uint64_t len) {
 
 /* ── prctl ─────────────────────────────────────────────────────────────── */
 
-static uint64_t sys_prctl(uint64_t op, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5) {
+static int64_t sys_prctl(uint64_t op, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5) {
     (void)a3;
     (void)a4;
     (void)a5;
@@ -7907,7 +7907,7 @@ static uint64_t sys_prctl(uint64_t op, uint64_t a2, uint64_t a3, uint64_t a4, ui
 
 /* ── mount/umount ──────────────────────────────────────────────────────── */
 
-static uint64_t sys_mount(uint64_t src_addr, uint64_t target_addr, uint64_t fstype_addr,
+static int64_t sys_mount(uint64_t src_addr, uint64_t target_addr, uint64_t fstype_addr,
                           uint64_t flags, uint64_t data_addr) {
     (void)data_addr;
     char src[64], target[64], fstype[16];
@@ -7991,7 +7991,7 @@ static uint64_t sys_mount(uint64_t src_addr, uint64_t target_addr, uint64_t fsty
     return 0;
 }
 
-static uint64_t sys_umount(uint64_t target_addr) {
+static int64_t sys_umount(uint64_t target_addr) {
     char target[64];
     if (syscall_is_user_process() && !syscall_user_cstr_ok(target_addr))
         return (uint64_t)(int64_t)-EFAULT;
@@ -8019,7 +8019,7 @@ static uint64_t sys_umount(uint64_t target_addr) {
 
 /* ── pivot_root — change root filesystem (Item 118) ─────────────────── */
 
-static uint64_t sys_pivot_root(uint64_t new_root_addr, uint64_t put_old_addr) {
+static int64_t sys_pivot_root(uint64_t new_root_addr, uint64_t put_old_addr) {
     char new_root[64], put_old[64];
 
     if (syscall_is_user_process()) {
@@ -8040,7 +8040,7 @@ static uint64_t sys_pivot_root(uint64_t new_root_addr, uint64_t put_old_addr) {
 
 /* ── chroot (Item 117) ─────────────────────────────────────────── */
 
-static uint64_t sys_chroot(uint64_t path_addr) {
+static int64_t sys_chroot(uint64_t path_addr) {
     char path[256];
 
     if (syscall_is_user_process()) {
@@ -8059,7 +8059,7 @@ static uint64_t sys_chroot(uint64_t path_addr) {
 
 /* ── ftruncate ─────────────────────────────────────────────────────────── */
 
-static uint64_t sys_ftruncate(uint64_t fd, uint64_t length) {
+static int64_t sys_ftruncate(uint64_t fd, uint64_t length) {
     struct process *p = process_get_current();
     if (!p)
         return (uint64_t)(int64_t)-ESRCH;
@@ -8071,7 +8071,7 @@ static uint64_t sys_ftruncate(uint64_t fd, uint64_t length) {
 
 /* ── readdir ───────────────────────────────────────────────────────────── */
 
-static uint64_t sys_readdir(uint64_t fd, uint64_t buf_addr, uint64_t count) {
+static int64_t sys_readdir(uint64_t fd, uint64_t buf_addr, uint64_t count) {
     struct process *p = process_get_current();
     if (!p)
         return (uint64_t)(int64_t)-ESRCH;
@@ -8122,7 +8122,7 @@ static uint64_t sys_readdir(uint64_t fd, uint64_t buf_addr, uint64_t count) {
 
 /* ── execveat ──────────────────────────────────────────────────────────── */
 
-static uint64_t sys_execveat(uint64_t dirfd, uint64_t path_addr, uint64_t argv_addr,
+static int64_t sys_execveat(uint64_t dirfd, uint64_t path_addr, uint64_t argv_addr,
                              uint64_t envp_addr, uint64_t flags) {
     (void)dirfd;
     (void)argv_addr;
@@ -8164,7 +8164,7 @@ static uint64_t sys_execveat(uint64_t dirfd, uint64_t path_addr, uint64_t argv_a
 
 /* ── sched_setscheduler / sched_getscheduler ──────────────────────────── */
 
-static uint64_t sys_sched_setscheduler(uint64_t pid, uint64_t policy, uint64_t param_addr) {
+static int64_t sys_sched_setscheduler(uint64_t pid, uint64_t policy, uint64_t param_addr) {
     struct process *target;
     if (pid == 0)
         target = process_get_current();
@@ -8197,7 +8197,7 @@ static uint64_t sys_sched_setscheduler(uint64_t pid, uint64_t policy, uint64_t p
     return 0;
 }
 
-static uint64_t sys_sched_getscheduler(uint64_t pid) {
+static int64_t sys_sched_getscheduler(uint64_t pid) {
     struct process *target;
     if (pid == 0)
         target = process_get_current();
@@ -8220,7 +8220,7 @@ static uint64_t sys_sched_getscheduler(uint64_t pid) {
  *
  * Returns 0 on success, -1 with errno set on error.
  */
-static uint64_t sys_sched_setattr(uint64_t pid, uint64_t attr_addr, uint64_t flags) {
+static int64_t sys_sched_setattr(uint64_t pid, uint64_t attr_addr, uint64_t flags) {
     struct sched_attr attr;
     size_t user_size;
     int ret;
@@ -8272,7 +8272,7 @@ static uint64_t sys_sched_setattr(uint64_t pid, uint64_t attr_addr, uint64_t fla
  *
  * Returns 0 on success, -1 with errno set on error.
  */
-static uint64_t sys_sched_getattr(uint64_t pid, uint64_t attr_addr, uint64_t size, uint64_t flags) {
+static int64_t sys_sched_getattr(uint64_t pid, uint64_t attr_addr, uint64_t size, uint64_t flags) {
     struct sched_attr attr;
     int ret;
 
@@ -8386,7 +8386,7 @@ int sys_getsockname_impl(int sockfd, struct sockaddr_in *addr, uint32_t *addrlen
 int sys_getpeername_impl(int sockfd, struct sockaddr_in *addr, uint32_t *addrlen);
 int sys_socketpair_impl(int domain, int type, int protocol, int sv[2]);
 
-static uint64_t sys_socket(uint64_t domain, uint64_t type, uint64_t protocol) {
+static int64_t sys_socket(uint64_t domain, uint64_t type, uint64_t protocol) {
     /* Validate that domain/type/protocol fit in int without truncation */
     if ((uint64_t)(int)domain != domain || (uint64_t)(int)type != type ||
         (uint64_t)(int)protocol != protocol)
@@ -8395,7 +8395,7 @@ static uint64_t sys_socket(uint64_t domain, uint64_t type, uint64_t protocol) {
     return (uint64_t)(int64_t)ret;
 }
 
-static uint64_t sys_bind(uint64_t sockfd, uint64_t addr_addr, uint64_t addrlen) {
+static int64_t sys_bind(uint64_t sockfd, uint64_t addr_addr, uint64_t addrlen) {
     /* Reject negative or impossibly small addrlen */
     if ((int)addrlen < (int)sizeof(uint16_t))
         return (uint64_t)(int64_t)-EINVAL;
@@ -8406,11 +8406,11 @@ static uint64_t sys_bind(uint64_t sockfd, uint64_t addr_addr, uint64_t addrlen) 
                                             (int)addrlen);
 }
 
-static uint64_t sys_listen(uint64_t sockfd, uint64_t backlog) {
+static int64_t sys_listen(uint64_t sockfd, uint64_t backlog) {
     return (uint64_t)(int64_t)sys_listen_impl((int)sockfd, (int)backlog);
 }
 
-static uint64_t sys_accept(uint64_t sockfd, uint64_t addr_addr, uint64_t addrlen_addr) {
+static int64_t sys_accept(uint64_t sockfd, uint64_t addr_addr, uint64_t addrlen_addr) {
     if (addr_addr && addrlen_addr) {
         if (syscall_is_user_process() &&
             !syscall_user_write_ok(addr_addr, sizeof(struct sockaddr_in)))
@@ -8423,14 +8423,14 @@ static uint64_t sys_accept(uint64_t sockfd, uint64_t addr_addr, uint64_t addrlen
     return (uint64_t)(int64_t)fd;
 }
 
-static uint64_t sys_connect(uint64_t sockfd, uint64_t addr_addr, uint64_t addrlen) {
+static int64_t sys_connect(uint64_t sockfd, uint64_t addr_addr, uint64_t addrlen) {
     (void)addrlen;
     if (syscall_is_user_process() && !syscall_user_read_ok(addr_addr, sizeof(struct sockaddr_in)))
         return (uint64_t)(int64_t)-EFAULT;
     return (uint64_t)(int64_t)sys_connect_impl((int)sockfd, (const struct sockaddr_in *)addr_addr);
 }
 
-static uint64_t sys_setsockopt(uint64_t sockfd, uint64_t level, uint64_t optname,
+static int64_t sys_setsockopt(uint64_t sockfd, uint64_t level, uint64_t optname,
                                uint64_t optval_addr, uint64_t optlen) {
     /* optlen is truncated from uint64_t to uint32_t in the impl;
      * reject values that would overflow to prevent bypassing bounds checks. */
@@ -8442,7 +8442,7 @@ static uint64_t sys_setsockopt(uint64_t sockfd, uint64_t level, uint64_t optname
                                                   (const void *)optval_addr, (uint32_t)optlen);
 }
 
-static uint64_t sys_getsockopt(uint64_t sockfd, uint64_t level, uint64_t optname,
+static int64_t sys_getsockopt(uint64_t sockfd, uint64_t level, uint64_t optname,
                                uint64_t optval_addr, uint64_t optlen_addr) {
     if (syscall_is_user_process() && !syscall_user_write_ok(optval_addr, 4))
         return (uint64_t)(int64_t)-EFAULT;
@@ -8452,14 +8452,14 @@ static uint64_t sys_getsockopt(uint64_t sockfd, uint64_t level, uint64_t optname
                                                   (void *)optval_addr, (uint32_t *)optlen_addr);
 }
 
-static uint64_t sys_sendmsg(uint64_t sockfd, uint64_t msg_addr, uint64_t flags) {
+static int64_t sys_sendmsg(uint64_t sockfd, uint64_t msg_addr, uint64_t flags) {
     if (syscall_is_user_process() && !syscall_user_read_ok(msg_addr, sizeof(struct msghdr)))
         return (uint64_t)(int64_t)-EFAULT;
     return (uint64_t)(int64_t)sys_sendmsg_impl((int)sockfd, (const struct msghdr *)msg_addr,
                                                (int)flags);
 }
 
-static uint64_t sys_recvmsg(uint64_t sockfd, uint64_t msg_addr, uint64_t flags) {
+static int64_t sys_recvmsg(uint64_t sockfd, uint64_t msg_addr, uint64_t flags) {
     if (syscall_is_user_process() && !syscall_user_read_ok(msg_addr, sizeof(struct msghdr)))
         return (uint64_t)(int64_t)-EFAULT;
     if (syscall_is_user_process() && !syscall_user_write_ok(msg_addr, sizeof(struct msghdr)))
@@ -8478,7 +8478,7 @@ static uint64_t sys_recvmsg(uint64_t sockfd, uint64_t msg_addr, uint64_t flags) 
     return (uint64_t)(int64_t)sys_recvmsg_impl((int)sockfd, (struct msghdr *)msg_addr, (int)flags);
 }
 
-static uint64_t sys_getsockname(uint64_t sockfd, uint64_t addr_addr, uint64_t addrlen_addr) {
+static int64_t sys_getsockname(uint64_t sockfd, uint64_t addr_addr, uint64_t addrlen_addr) {
     if (syscall_is_user_process() && !syscall_user_write_ok(addr_addr, sizeof(struct sockaddr_in)))
         return (uint64_t)(int64_t)-EFAULT;
     if (syscall_is_user_process() && !syscall_user_read_ok(addrlen_addr, 4))
@@ -8487,7 +8487,7 @@ static uint64_t sys_getsockname(uint64_t sockfd, uint64_t addr_addr, uint64_t ad
                                                    (uint32_t *)addrlen_addr);
 }
 
-static uint64_t sys_getpeername(uint64_t sockfd, uint64_t addr_addr, uint64_t addrlen_addr) {
+static int64_t sys_getpeername(uint64_t sockfd, uint64_t addr_addr, uint64_t addrlen_addr) {
     if (syscall_is_user_process() && !syscall_user_write_ok(addr_addr, sizeof(struct sockaddr_in)))
         return (uint64_t)(int64_t)-EFAULT;
     if (syscall_is_user_process() && !syscall_user_read_ok(addrlen_addr, 4))
@@ -8496,7 +8496,7 @@ static uint64_t sys_getpeername(uint64_t sockfd, uint64_t addr_addr, uint64_t ad
                                                    (uint32_t *)addrlen_addr);
 }
 
-static uint64_t sys_socketpair(uint64_t domain, uint64_t type, uint64_t protocol,
+static int64_t sys_socketpair(uint64_t domain, uint64_t type, uint64_t protocol,
                                uint64_t sv_addr) {
     /* Validate that domain/type/protocol fit in int without truncation */
     if ((uint64_t)(int)domain != domain || (uint64_t)(int)type != type ||
@@ -8523,14 +8523,14 @@ static uint64_t sys_socketpair(uint64_t domain, uint64_t type, uint64_t protocol
  * The actual implementation lives in src/kernel/epoll.c.
  */
 
-static uint64_t sys_epoll_create1(uint64_t flags) {
+static int64_t sys_epoll_create1(uint64_t flags) {
     int ret = epoll_create1_syscall((int)flags);
     if (ret < 0)
         return (uint64_t)(int64_t)ret;
     return (uint64_t)ret;
 }
 
-static uint64_t sys_epoll_ctl(uint64_t epfd, uint64_t op, uint64_t fd, uint64_t event_addr) {
+static int64_t sys_epoll_ctl(uint64_t epfd, uint64_t op, uint64_t fd, uint64_t event_addr) {
     struct epoll_event ev;
     struct epoll_event *ev_ptr = NULL;
 
@@ -8549,7 +8549,7 @@ static uint64_t sys_epoll_ctl(uint64_t epfd, uint64_t op, uint64_t fd, uint64_t 
     return 0;
 }
 
-static uint64_t sys_epoll_wait(uint64_t epfd, uint64_t events_addr, uint64_t maxevents,
+static int64_t sys_epoll_wait(uint64_t epfd, uint64_t events_addr, uint64_t maxevents,
                                uint64_t timeout) {
     struct epoll_event *events = (struct epoll_event *)events_addr;
 
@@ -8566,7 +8566,7 @@ static uint64_t sys_epoll_wait(uint64_t epfd, uint64_t events_addr, uint64_t max
     return (uint64_t)ret;
 }
 
-static uint64_t sys_epoll_pwait(uint64_t epfd, uint64_t events_addr, uint64_t maxevents,
+static int64_t sys_epoll_pwait(uint64_t epfd, uint64_t events_addr, uint64_t maxevents,
                                 uint64_t timeout, uint64_t sigmask_addr) {
     /*
      * The syscall dispatch saves the packed sigmask pointer + size
@@ -8606,7 +8606,7 @@ static uint64_t sys_epoll_pwait(uint64_t epfd, uint64_t events_addr, uint64_t ma
 
 /* ── Modern FD operations ─────────────────────────────────────────────── */
 
-static uint64_t sys_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags) {
+static int64_t sys_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags) {
     /* Validate flags — only O_CLOEXEC is valid for dup3 */
     if (flags & ~(uint64_t)O_CLOEXEC)
         return (uint64_t)(int64_t)-EINVAL;
@@ -8651,7 +8651,7 @@ static uint64_t sys_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags) {
     return newfd;
 }
 
-static uint64_t sys_pipe2(uint64_t fds_addr, uint64_t flags) {
+static int64_t sys_pipe2(uint64_t fds_addr, uint64_t flags) {
     /* Validate flags — only O_CLOEXEC and O_NONBLOCK are valid for pipe2 */
     if (flags & ~(uint64_t)(O_CLOEXEC | O_NONBLOCK))
         return (uint64_t)(int64_t)-EINVAL;
@@ -8714,7 +8714,7 @@ static uint64_t sys_pipe2(uint64_t fds_addr, uint64_t flags) {
     return 0;
 }
 
-static uint64_t sys_mkdtemp(uint64_t template_addr) {
+static int64_t sys_mkdtemp(uint64_t template_addr) {
     char tmpl[256];
     if (strncpy_from_user(tmpl, template_addr, sizeof(tmpl)) < 0)
         return (uint64_t)-1;
@@ -8742,7 +8742,7 @@ static uint64_t sys_mkdtemp(uint64_t template_addr) {
 /* UTIME_NOW and UTIME_OMIT — now defined in vfs.h */
 /* (syscall.c includes vfs.h which provides these) */
 
-static uint64_t sys_utimensat(uint64_t dirfd, uint64_t path_addr, uint64_t times_addr,
+static int64_t sys_utimensat(uint64_t dirfd, uint64_t path_addr, uint64_t times_addr,
                               uint64_t flags) {
     (void)flags;
     /* Resolve path */
@@ -8802,7 +8802,7 @@ static uint64_t sys_utimensat(uint64_t dirfd, uint64_t path_addr, uint64_t times
     return 0;
 }
 
-static uint64_t sys_futimens(uint64_t fd, uint64_t times_addr) {
+static int64_t sys_futimens(uint64_t fd, uint64_t times_addr) {
     struct process *p = process_get_current();
     if (!p || fd >= PROCESS_FD_MAX || !p->fd_table[(int)fd].used)
         return (uint64_t)-1;
@@ -8841,7 +8841,7 @@ static uint64_t sys_futimens(uint64_t fd, uint64_t times_addr) {
 
 /* ── Filesystem & System Info ─────────────────────────────────────────── */
 
-static uint64_t sys_statfs(uint64_t path_addr, uint64_t buf_addr) {
+static int64_t sys_statfs(uint64_t path_addr, uint64_t buf_addr) {
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
@@ -8867,7 +8867,7 @@ static uint64_t sys_statfs(uint64_t path_addr, uint64_t buf_addr) {
     return 0;
 }
 
-static uint64_t sys_fstatfs(uint64_t fd, uint64_t buf_addr) {
+static int64_t sys_fstatfs(uint64_t fd, uint64_t buf_addr) {
     struct vfs_statfs vs;
     int ret = vfs_fstatfs((int)fd, &vs);
     if (ret < 0)
@@ -8889,7 +8889,7 @@ static uint64_t sys_fstatfs(uint64_t fd, uint64_t buf_addr) {
     return 0;
 }
 
-static uint64_t sys_getrusage(uint64_t who, uint64_t usage_addr) {
+static int64_t sys_getrusage(uint64_t who, uint64_t usage_addr) {
     if (syscall_is_user_process() && !syscall_user_write_ok(usage_addr, sizeof(struct rusage)))
         return (uint64_t)-1;
 
@@ -8949,7 +8949,7 @@ static uint64_t sys_getrusage(uint64_t who, uint64_t usage_addr) {
     return 0;
 }
 
-static uint64_t sys_sysinfo(uint64_t info_addr) {
+static int64_t sys_sysinfo(uint64_t info_addr) {
     if (syscall_is_user_process() && !syscall_user_write_ok(info_addr, sizeof(struct sysinfo)))
         return (uint64_t)-1;
 
@@ -8987,7 +8987,7 @@ static uint64_t sys_sysinfo(uint64_t info_addr) {
 
 /* ── Process Credentials & Scheduling ─────────────────────────────────── */
 
-static uint64_t sys_getresuid(uint64_t ruid_addr, uint64_t euid_addr, uint64_t suid_addr) {
+static int64_t sys_getresuid(uint64_t ruid_addr, uint64_t euid_addr, uint64_t suid_addr) {
     struct process *p = process_get_current();
     if (!p)
         return (uint64_t)(int64_t)-ESRCH;
@@ -9010,7 +9010,7 @@ static uint64_t sys_getresuid(uint64_t ruid_addr, uint64_t euid_addr, uint64_t s
     return 0;
 }
 
-static uint64_t sys_setresuid(uint64_t ruid, uint64_t euid, uint64_t suid) {
+static int64_t sys_setresuid(uint64_t ruid, uint64_t euid, uint64_t suid) {
     struct process *p = process_get_current();
     if (!p)
         return (uint64_t)(int64_t)-ESRCH;
@@ -9032,7 +9032,7 @@ static uint64_t sys_setresuid(uint64_t ruid, uint64_t euid, uint64_t suid) {
     return 0;
 }
 
-static uint64_t sys_getresgid(uint64_t rgid_addr, uint64_t egid_addr, uint64_t sgid_addr) {
+static int64_t sys_getresgid(uint64_t rgid_addr, uint64_t egid_addr, uint64_t sgid_addr) {
     struct process *p = process_get_current();
     if (!p)
         return (uint64_t)(int64_t)-ESRCH;
@@ -9055,7 +9055,7 @@ static uint64_t sys_getresgid(uint64_t rgid_addr, uint64_t egid_addr, uint64_t s
     return 0;
 }
 
-static uint64_t sys_setresgid(uint64_t rgid, uint64_t egid, uint64_t sgid) {
+static int64_t sys_setresgid(uint64_t rgid, uint64_t egid, uint64_t sgid) {
     struct process *p = process_get_current();
     if (!p)
         return (uint64_t)(int64_t)-ESRCH;
@@ -9076,7 +9076,7 @@ static uint64_t sys_setresgid(uint64_t rgid, uint64_t egid, uint64_t sgid) {
     return 0;
 }
 
-static uint64_t sys_sched_getparam(uint64_t pid, uint64_t param_addr) {
+static int64_t sys_sched_getparam(uint64_t pid, uint64_t param_addr) {
     struct process *target;
     if (pid == 0)
         target = process_get_current();
@@ -9095,7 +9095,7 @@ static uint64_t sys_sched_getparam(uint64_t pid, uint64_t param_addr) {
     return 0;
 }
 
-static uint64_t sys_sched_setparam(uint64_t pid, uint64_t param_addr) {
+static int64_t sys_sched_setparam(uint64_t pid, uint64_t param_addr) {
     struct process *target;
     if (pid == 0)
         target = process_get_current();
@@ -9147,7 +9147,7 @@ static struct mq *mq_find_by_name(const char *name) {
     return NULL;
 }
 
-static uint64_t sys_mq_open(uint64_t name_addr, uint64_t oflag, uint64_t mode, uint64_t attr_addr) {
+static int64_t sys_mq_open(uint64_t name_addr, uint64_t oflag, uint64_t mode, uint64_t attr_addr) {
     (void)mode;
     char name[64];
     if (!syscall_user_cstr_ok(name_addr))
@@ -9199,7 +9199,7 @@ static uint64_t sys_mq_open(uint64_t name_addr, uint64_t oflag, uint64_t mode, u
     return (uint64_t)-1;
 }
 
-static uint64_t sys_mq_send(uint64_t mqd, uint64_t msg_addr, uint64_t msg_len, uint64_t prio) {
+static int64_t sys_mq_send(uint64_t mqd, uint64_t msg_addr, uint64_t msg_len, uint64_t prio) {
     int slot = (int)mqd - 800;
     if (slot < 0 || slot >= MQ_MAX || !mq_table[slot].in_use)
         return (uint64_t)-1;
@@ -9224,7 +9224,7 @@ static uint64_t sys_mq_send(uint64_t mqd, uint64_t msg_addr, uint64_t msg_len, u
     return 0;
 }
 
-static uint64_t sys_mq_receive(uint64_t mqd, uint64_t msg_addr, uint64_t msg_len,
+static int64_t sys_mq_receive(uint64_t mqd, uint64_t msg_addr, uint64_t msg_len,
                                uint64_t prio_addr) {
     int slot = (int)mqd - 800;
     if (slot < 0 || slot >= MQ_MAX || !mq_table[slot].in_use)
@@ -9264,7 +9264,7 @@ static uint64_t sys_mq_receive(uint64_t mqd, uint64_t msg_addr, uint64_t msg_len
     return (uint64_t)copy_len;
 }
 
-static uint64_t sys_mq_unlink(uint64_t name_addr) {
+static int64_t sys_mq_unlink(uint64_t name_addr) {
     char name[64];
     if (!syscall_user_cstr_ok(name_addr))
         return (uint64_t)-1;
@@ -9290,7 +9290,7 @@ void production_subsystems_init(void) {
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 
-static uint64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags, uint64_t mode) {
+static int64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags, uint64_t mode) {
     (void)mode;
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
@@ -9302,7 +9302,7 @@ static uint64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags, u
     return do_sys_open(path, flags, 0);
 }
 
-static uint64_t sys_mkdirat(uint64_t dirfd, uint64_t path_addr, uint64_t mode) {
+static int64_t sys_mkdirat(uint64_t dirfd, uint64_t path_addr, uint64_t mode) {
     (void)mode;
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
@@ -9314,7 +9314,7 @@ static uint64_t sys_mkdirat(uint64_t dirfd, uint64_t path_addr, uint64_t mode) {
     return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
 }
 
-static uint64_t sys_fstatat(uint64_t dirfd, uint64_t path_addr, uint64_t buf_addr, uint64_t flags) {
+static int64_t sys_fstatat(uint64_t dirfd, uint64_t path_addr, uint64_t buf_addr, uint64_t flags) {
     (void)flags;
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
@@ -9331,7 +9331,7 @@ static uint64_t sys_fstatat(uint64_t dirfd, uint64_t path_addr, uint64_t buf_add
     return 0;
 }
 
-static uint64_t sys_unlinkat(uint64_t dirfd, uint64_t path_addr, uint64_t flags) {
+static int64_t sys_unlinkat(uint64_t dirfd, uint64_t path_addr, uint64_t flags) {
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
@@ -9343,7 +9343,7 @@ static uint64_t sys_unlinkat(uint64_t dirfd, uint64_t path_addr, uint64_t flags)
     return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
 }
 
-static uint64_t sys_renameat(uint64_t olddirfd, uint64_t oldpath_addr, uint64_t newdirfd,
+static int64_t sys_renameat(uint64_t olddirfd, uint64_t oldpath_addr, uint64_t newdirfd,
                              uint64_t newpath_addr) {
     char koldpath[256], knewpath[256];
     if (strncpy_from_user(koldpath, oldpath_addr, sizeof(koldpath)) < 0)
@@ -9372,7 +9372,7 @@ static uint64_t sys_renameat(uint64_t olddirfd, uint64_t oldpath_addr, uint64_t 
     return 0;
 }
 
-static uint64_t sys_symlinkat(uint64_t target_addr, uint64_t newdirfd, uint64_t linkpath_addr) {
+static int64_t sys_symlinkat(uint64_t target_addr, uint64_t newdirfd, uint64_t linkpath_addr) {
     char *ktarget = kmalloc(4096);
     if (!ktarget)
         return (uint64_t)(int64_t)-ENOMEM;
@@ -9399,7 +9399,7 @@ static uint64_t sys_symlinkat(uint64_t target_addr, uint64_t newdirfd, uint64_t 
     return 0;
 }
 
-static uint64_t sys_readlinkat(uint64_t dirfd, uint64_t path_addr, uint64_t buf_addr,
+static int64_t sys_readlinkat(uint64_t dirfd, uint64_t path_addr, uint64_t buf_addr,
                                uint64_t bufsize) {
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
@@ -9432,7 +9432,7 @@ static uint64_t sys_readlinkat(uint64_t dirfd, uint64_t path_addr, uint64_t buf_
 
 /* ── getdents64 ───────────────────────────────────────────────────────── */
 
-static uint64_t sys_getdents64(uint64_t fd, uint64_t dirp_addr, uint64_t count) {
+static int64_t sys_getdents64(uint64_t fd, uint64_t dirp_addr, uint64_t count) {
     struct process *p = process_get_current();
     if (!p)
         return (uint64_t)(int64_t)-ESRCH;
@@ -9493,7 +9493,7 @@ static uint64_t sys_getdents64(uint64_t fd, uint64_t dirp_addr, uint64_t count) 
 
 /* ── mlock / munlock / mincore / madvise / fallocate ──────────────────── */
 
-static uint64_t sys_mlock(uint64_t addr, uint64_t len) {
+static int64_t sys_mlock(uint64_t addr, uint64_t len) {
     struct process *p = process_get_current();
     if (!p || !p->pml4)
         return (uint64_t)-EINVAL;
@@ -9537,7 +9537,7 @@ static uint64_t sys_mlock(uint64_t addr, uint64_t len) {
     return 0;
 }
 
-static uint64_t sys_munlock(uint64_t addr, uint64_t len) {
+static int64_t sys_munlock(uint64_t addr, uint64_t len) {
     struct process *p = process_get_current();
     if (!p || !p->pml4)
         return (uint64_t)-EINVAL;
@@ -9567,7 +9567,7 @@ static uint64_t sys_munlock(uint64_t addr, uint64_t len) {
     return 0;
 }
 
-static uint64_t sys_mlockall(uint64_t flags) {
+static int64_t sys_mlockall(uint64_t flags) {
     struct process *p = process_get_current();
     if (!p)
         return (uint64_t)-ENOMEM;
@@ -9683,7 +9683,7 @@ static uint64_t sys_mlockall(uint64_t flags) {
     return 0;
 }
 
-static uint64_t sys_munlockall(void) {
+static int64_t sys_munlockall(void) {
     struct process *p = process_get_current();
     if (!p)
         return (uint64_t)-ENOMEM;
@@ -9755,7 +9755,7 @@ static uint64_t sys_munlockall(void) {
     return 0;
 }
 
-static uint64_t sys_mincore(uint64_t addr, uint64_t len, uint64_t vec_addr) {
+static int64_t sys_mincore(uint64_t addr, uint64_t len, uint64_t vec_addr) {
     struct process *p = process_get_current();
     if (!p || !p->pml4)
         return (uint64_t)(int64_t)-ENOMEM;
@@ -9794,7 +9794,7 @@ static uint64_t sys_mincore(uint64_t addr, uint64_t len, uint64_t vec_addr) {
     return 0;
 }
 
-static uint64_t sys_madvise(uint64_t addr, uint64_t len, uint64_t advice) {
+static int64_t sys_madvise(uint64_t addr, uint64_t len, uint64_t advice) {
     struct process *p = process_get_current();
     if (!p || !p->pml4)
         return (uint64_t)(int64_t)-EFAULT;
@@ -9872,7 +9872,7 @@ static uint64_t sys_madvise(uint64_t addr, uint64_t len, uint64_t advice) {
 
 /* ── NUMA memory policy syscalls ─────────────────────────────────── */
 
-static uint64_t sys_mbind(uint64_t addr, uint64_t len, uint64_t mode, uint64_t nodemask,
+static int64_t sys_mbind(uint64_t addr, uint64_t len, uint64_t mode, uint64_t nodemask,
                           uint64_t maxnode, uint64_t flags) {
     (void)maxnode;
     (void)flags;
@@ -9891,13 +9891,13 @@ static uint64_t sys_mbind(uint64_t addr, uint64_t len, uint64_t mode, uint64_t n
     return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
 }
 
-static uint64_t sys_set_mempolicy(uint64_t mode, uint64_t nodemask, uint64_t maxnode) {
+static int64_t sys_set_mempolicy(uint64_t mode, uint64_t nodemask, uint64_t maxnode) {
     (void)maxnode;
     int ret = mempolicy_set((int)mode, nodemask, -1);
     return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
 }
 
-static uint64_t sys_get_mempolicy(uint64_t mode_addr, uint64_t nodemask_addr, uint64_t maxnode,
+static int64_t sys_get_mempolicy(uint64_t mode_addr, uint64_t nodemask_addr, uint64_t maxnode,
                                   uint64_t addr, uint64_t flags) {
     (void)maxnode;
     (void)addr;
@@ -9920,7 +9920,7 @@ static uint64_t sys_get_mempolicy(uint64_t mode_addr, uint64_t nodemask_addr, ui
     return 0;
 }
 
-static uint64_t sys_migrate_pages(uint64_t pid, uint64_t maxnode, uint64_t old_nodes_addr,
+static int64_t sys_migrate_pages(uint64_t pid, uint64_t maxnode, uint64_t old_nodes_addr,
                                   uint64_t new_nodes_addr) {
     (void)maxnode;
     (void)old_nodes_addr;
@@ -9935,7 +9935,7 @@ static uint64_t sys_migrate_pages(uint64_t pid, uint64_t maxnode, uint64_t old_n
     return (ret < 0) ? (uint64_t)(int64_t)ret : 0;
 }
 
-static uint64_t sys_move_pages(uint64_t pid, uint64_t nr_pages, uint64_t pages_addr,
+static int64_t sys_move_pages(uint64_t pid, uint64_t nr_pages, uint64_t pages_addr,
                                uint64_t nodes_addr, uint64_t status_addr, uint64_t flags) {
     struct process *target = NULL;
 
@@ -10030,7 +10030,7 @@ static uint64_t sys_move_pages(uint64_t pid, uint64_t nr_pages, uint64_t pages_a
     return (ret < 0) ? (uint64_t)(int64_t)ret : nr_pages;
 }
 
-static uint64_t sys_remap_file_pages(uint64_t addr, uint64_t size, uint64_t prot, uint64_t pgoff,
+static int64_t sys_remap_file_pages(uint64_t addr, uint64_t size, uint64_t prot, uint64_t pgoff,
                                      uint64_t flags) {
     /* remap_file_pages creates non-linear file mappings within an
      * existing MAP_SHARED file-backed VMA.  This kernel does not
@@ -10053,7 +10053,7 @@ static uint64_t sys_remap_file_pages(uint64_t addr, uint64_t size, uint64_t prot
     return (uint64_t)-ENOSYS;
 }
 
-static uint64_t sys_msync(uint64_t addr, uint64_t len, uint64_t flags) {
+static int64_t sys_msync(uint64_t addr, uint64_t len, uint64_t flags) {
     (void)addr;
     (void)len;
     (void)flags;
@@ -10079,7 +10079,7 @@ static uint64_t sys_msync(uint64_t addr, uint64_t len, uint64_t flags) {
  * Return: 0 on success, or (uint64_t)-1 on error with errno encoded
  *         as a negative value.
  */
-static uint64_t sys_fallocate(uint64_t fd, uint64_t mode, uint64_t offset, uint64_t len) {
+static int64_t sys_fallocate(uint64_t fd, uint64_t mode, uint64_t offset, uint64_t len) {
     if (fd < 3)
         return (uint64_t)(int64_t)-EBADF;
     int i = (int)fd - 3;
@@ -10122,7 +10122,7 @@ static uint64_t sys_fallocate(uint64_t fd, uint64_t mode, uint64_t offset, uint6
  * Return: 0 on success, or (uint64_t)-1 on error with errno encoded
  *         as a negative value.
  */
-static uint64_t sys_readahead(uint64_t fd, uint64_t offset, uint64_t count) {
+static int64_t sys_readahead(uint64_t fd, uint64_t offset, uint64_t count) {
     if (fd < 3)
         return (uint64_t)(int64_t)-EBADF;
     int i = (int)fd - 3;
@@ -10161,7 +10161,7 @@ static uint64_t sys_readahead(uint64_t fd, uint64_t offset, uint64_t count) {
  *
  * Returns 0 on success, -1 on error with appropriate errno.
  */
-static uint64_t sys_fadvise64(uint64_t fd, uint64_t offset, uint64_t len, uint64_t advice) {
+static int64_t sys_fadvise64(uint64_t fd, uint64_t offset, uint64_t len, uint64_t advice) {
     /* Validate fd: must be a regular file descriptor */
     if (fd < 3 || fd >= 700)
         return (uint64_t)-EBADF;
@@ -10257,7 +10257,7 @@ static int timerfd_do_read(int slot, uint64_t *val) {
     return 0;
 }
 
-static uint64_t sys_timerfd_create(uint64_t clockid, uint64_t flags) {
+static int64_t sys_timerfd_create(uint64_t clockid, uint64_t flags) {
     (void)flags;
     if (clockid != CLOCK_MONOTONIC && clockid != CLOCK_REALTIME)
         return (uint64_t)-1;
@@ -10278,7 +10278,7 @@ static uint64_t sys_timerfd_create(uint64_t clockid, uint64_t flags) {
     return (uint64_t)-1;
 }
 
-static uint64_t sys_timerfd_settime(uint64_t fd, uint64_t flags, uint64_t new_addr,
+static int64_t sys_timerfd_settime(uint64_t fd, uint64_t flags, uint64_t new_addr,
                                     uint64_t old_addr) {
     int slot = (int)fd - 500;
     if (slot < 0 || slot >= TIMERFD_MAX || !timerfd_table[slot].in_use)
@@ -10341,7 +10341,7 @@ static uint64_t sys_timerfd_settime(uint64_t fd, uint64_t flags, uint64_t new_ad
     return 0;
 }
 
-static uint64_t sys_timerfd_gettime(uint64_t fd, uint64_t cur_addr) {
+static int64_t sys_timerfd_gettime(uint64_t fd, uint64_t cur_addr) {
     int slot = (int)fd - 500;
     if (slot < 0 || slot >= TIMERFD_MAX || !timerfd_table[slot].in_use)
         return (uint64_t)-1;
@@ -10484,7 +10484,7 @@ static int signalfd_do_read(int slot, void *buf, uint64_t count) {
     return (int)copy_size;
 }
 
-static uint64_t sys_signalfd(uint64_t fd, uint64_t mask_addr, uint64_t flags) {
+static int64_t sys_signalfd(uint64_t fd, uint64_t mask_addr, uint64_t flags) {
     uint32_t sigmask = 0;
     int sfd_flags = 0;
 
@@ -10631,7 +10631,7 @@ void signalfd_exec_close(void) {
  *   ENOMEM — cannot allocate bounce buffer
  *   EIO    — VFS read/write failure
  */
-static uint64_t sys_splice(uint64_t fd_in, uint64_t off_in_addr, uint64_t fd_out,
+static int64_t sys_splice(uint64_t fd_in, uint64_t off_in_addr, uint64_t fd_out,
                            uint64_t off_out_addr, uint64_t len, uint64_t flags) {
     (void)flags; /* SPLICE_F_* flags are advisory; non-blocking depends on O_NONBLOCK */
 
@@ -10850,7 +10850,7 @@ splice_out:
  *   EINVAL — fd is not a pipe
  *   ENOMEM — cannot allocate bounce buffer
  */
-static uint64_t sys_tee(uint64_t fd_in, uint64_t fd_out, uint64_t len, uint64_t flags) {
+static int64_t sys_tee(uint64_t fd_in, uint64_t fd_out, uint64_t len, uint64_t flags) {
     (void)flags;
 
     struct process *p = process_get_current();
@@ -10974,7 +10974,7 @@ tee_out:
  *   ENOMEM — cannot allocate iovec or bounce buffer
  *   EPIPE  — pipe has no readers
  */
-static uint64_t sys_vmsplice(uint64_t fd, uint64_t iov_addr, uint64_t nr_segs, uint64_t flags) {
+static int64_t sys_vmsplice(uint64_t fd, uint64_t iov_addr, uint64_t nr_segs, uint64_t flags) {
     (void)flags;
 
     struct process *p = process_get_current();
@@ -11122,7 +11122,7 @@ vmsplice_out:
  *   EXDEV      — cross-device copy (not an error here; we handle it)
  *   ESPIPE     — fd_in or fd_out refers to a pipe/FIFO (not supported yet)
  */
-static uint64_t sys_copy_file_range(uint64_t fd_in, uint64_t off_in_addr, uint64_t fd_out,
+static int64_t sys_copy_file_range(uint64_t fd_in, uint64_t off_in_addr, uint64_t fd_out,
                                     uint64_t off_out_addr, uint64_t len, uint64_t flags) {
     /* ── Parameter validation ── */
 
@@ -11284,7 +11284,7 @@ cfr_cleanup:
 
 /* For each iovec entry, send one message via net_tcp_send or similar.
  * Simplified: just send each iovec entry as if it were a regular write. */
-static uint64_t sys_sendmmsg(uint64_t sockfd, uint64_t msgvec_addr, uint64_t vlen, uint64_t flags) {
+static int64_t sys_sendmmsg(uint64_t sockfd, uint64_t msgvec_addr, uint64_t vlen, uint64_t flags) {
     (void)flags;
     struct process *p = process_get_current();
     if (!p || sockfd >= PROCESS_FD_MAX || !p->fd_table[sockfd].used)
@@ -11306,7 +11306,7 @@ static uint64_t sys_sendmmsg(uint64_t sockfd, uint64_t msgvec_addr, uint64_t vle
     return (uint64_t)sent;
 }
 
-static uint64_t sys_recvmmsg(uint64_t sockfd, uint64_t msgvec_addr, uint64_t vlen, uint64_t flags,
+static int64_t sys_recvmmsg(uint64_t sockfd, uint64_t msgvec_addr, uint64_t vlen, uint64_t flags,
                              uint64_t timeout_addr) {
     (void)sockfd;
     (void)msgvec_addr;
@@ -11318,12 +11318,12 @@ static uint64_t sys_recvmmsg(uint64_t sockfd, uint64_t msgvec_addr, uint64_t vle
 
 /* ── sync / syncfs ────────────────────────────────────────────────────── */
 
-static uint64_t sys_sync(void) {
+static int64_t sys_sync(void) {
     /* Flush all mounted filesystems and the buffer cache */
     return (uint64_t)vfs_sync_all();
 }
 
-static uint64_t sys_syncfs(uint64_t fd) {
+static int64_t sys_syncfs(uint64_t fd) {
     struct process *proc = process_get_current();
     if (!proc)
         return (uint64_t)-EBADF;
@@ -11343,7 +11343,7 @@ static uint64_t sys_syncfs(uint64_t fd) {
 
 /* ── setsid / getsid ──────────────────────────────────────────────────── */
 
-static uint64_t sys_setsid(void) {
+static int64_t sys_setsid(void) {
     struct process *p = process_get_current();
     if (!p)
         return (uint64_t)(int64_t)-ESRCH;
@@ -11370,7 +11370,7 @@ static uint64_t sys_setsid(void) {
     return (uint64_t)p->sid;
 }
 
-static uint64_t sys_getsid(uint64_t pid) {
+static int64_t sys_getsid(uint64_t pid) {
     struct process *target;
     if (pid == 0)
         target = process_get_current();
@@ -11398,7 +11398,7 @@ static uint64_t sys_getsid(uint64_t pid) {
  *
  * Returns 0 on success, -errno on failure.
  */
-static uint64_t sys_sigaltstack(uint64_t ss_addr, uint64_t old_ss_addr) {
+static int64_t sys_sigaltstack(uint64_t ss_addr, uint64_t old_ss_addr) {
     struct process *p = process_get_current();
     if (!p)
         return (uint64_t)(int64_t)-ESRCH;
@@ -11461,7 +11461,7 @@ static uint64_t sys_sigaltstack(uint64_t ss_addr, uint64_t old_ss_addr) {
 
 /* ── personality ──────────────────────────────────────────────────────── */
 
-static uint64_t sys_personality(uint64_t persona) {
+static int64_t sys_personality(uint64_t persona) {
     struct process *p = process_get_current();
     if (!p)
         return (uint64_t)-1;
@@ -11487,7 +11487,7 @@ static uint64_t sys_personality(uint64_t persona) {
  *
  * Only callable by privileged (kernel-mode) code — user processes get -EPERM.
  */
-static uint64_t sys_init_module(uint64_t path_addr, uint64_t params_addr) {
+static int64_t sys_init_module(uint64_t path_addr, uint64_t params_addr) {
     char kpath[256];
     char kparams[512];
 
@@ -11627,7 +11627,7 @@ static uint64_t sys_init_module(uint64_t path_addr, uint64_t params_addr) {
  * Same loading sequence as sys_init_module, but reads from the caller's
  * fd table instead of opening a path.
  */
-static uint64_t sys_finit_module(uint64_t fd, uint64_t params_addr, uint64_t flags) {
+static int64_t sys_finit_module(uint64_t fd, uint64_t params_addr, uint64_t flags) {
     char kparams[512];
     const char *params = NULL;
     if (params_addr) {
@@ -11777,7 +11777,7 @@ static uint64_t sys_finit_module(uint64_t fd, uint64_t params_addr, uint64_t fla
  *   - Returns -EINVAL if name is invalid or module cannot be unloaded
  *   - Returns 0 on successful unload
  */
-static uint64_t sys_delete_module(uint64_t name_addr, uint64_t flags) {
+static int64_t sys_delete_module(uint64_t name_addr, uint64_t flags) {
     /* Lockdown: reject module unloading at INTEGRITY level or above */
     if (lockdown_is_locked_down(LOCKDOWN_INTEGRITY))
         return (uint64_t)-EPERM;
@@ -11868,7 +11868,7 @@ static uint64_t sys_delete_module(uint64_t name_addr, uint64_t flags) {
  * On success, returns the number of bytes written (not including trailing \0
  * for enumeration mode). Returns -errno on failure.
  */
-static uint64_t sys_query_module(uint64_t name_addr, uint64_t info_buf_addr, uint64_t buf_size) {
+static int64_t sys_query_module(uint64_t name_addr, uint64_t info_buf_addr, uint64_t buf_size) {
     char *info_buf = (char *)info_buf_addr;
 
     if (!info_buf || buf_size == 0)
@@ -11926,14 +11926,14 @@ static uint64_t sys_query_module(uint64_t name_addr, uint64_t info_buf_addr, uin
 /* ══════════════════════════════════════════════════════════════════════════ */
 
 /* Forward declarations for syscalls defined after the dispatch */
-static uint64_t sys_membarrier(uint64_t cmd, uint64_t flags, uint64_t cpu_id);
-static uint64_t sys_rseq(uint64_t rseq_addr, uint64_t rseq_len, uint64_t rseq_sig, uint64_t flags);
-static uint64_t sys_name_to_handle_at(uint64_t dirfd, uint64_t pathname, uint64_t handle,
+static int64_t sys_membarrier(uint64_t cmd, uint64_t flags, uint64_t cpu_id);
+static int64_t sys_rseq(uint64_t rseq_addr, uint64_t rseq_len, uint64_t rseq_sig, uint64_t flags);
+static int64_t sys_name_to_handle_at(uint64_t dirfd, uint64_t pathname, uint64_t handle,
                                       uint64_t mount_id, uint64_t flags);
-static uint64_t sys_open_by_handle_at(uint64_t mount_fd, uint64_t handle, uint64_t flags);
+static int64_t sys_open_by_handle_at(uint64_t mount_fd, uint64_t handle, uint64_t flags);
 
 /* Forward declaration for raw dispatch (no seccomp/audit/validation) */
-uint64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4,
+int64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4,
                                    uint64_t a5);
 
 /* Debug: called from syscall_entry_full assembly to trace syscall entry */
@@ -11944,7 +11944,7 @@ void kprintf_syscall_trace(uint64_t num, uint64_t unused) {
         kprintf("[SYSCALL] PID %d nr=%lu\n", p->pid, (unsigned long)num);
 }
 
-uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4,
+int64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4,
                           uint64_t a5) {
     /* Seccomp check — must happen before any capability or argument validation */
     if (syscall_is_user_process()) {
@@ -12010,7 +12010,7 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3, u
 
 /* ── syscall_dispatch_internal — raw dispatch (no seccomp/audit/validation) ── */
 
-uint64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4,
+int64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4,
                                    uint64_t a5) {
     switch (num) {
     case SYS_READ:
@@ -12863,7 +12863,7 @@ uint64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2, uint6
  * Returns 0 on success, -errno on failure.
  * With RSEQ_FLAG_UNREGISTER in flags, unregisters the current rseq.
  */
-static uint64_t sys_rseq(uint64_t rseq_addr, uint64_t rseq_len, uint64_t rseq_sig, uint64_t flags) {
+static int64_t sys_rseq(uint64_t rseq_addr, uint64_t rseq_len, uint64_t rseq_sig, uint64_t flags) {
     struct process *cur = process_get_current();
     if (!cur)
         return (uint64_t)(int64_t)-ESRCH;
@@ -12915,7 +12915,7 @@ static uint64_t sys_rseq(uint64_t rseq_addr, uint64_t rseq_len, uint64_t rseq_si
  *   MEMBARRIER_CMD_PRIVATE_EXPEDITED         — barrier on process threads
  *   MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED— register for expedited private
  */
-static uint64_t sys_membarrier(uint64_t cmd, uint64_t flags, uint64_t cpu_id) {
+static int64_t sys_membarrier(uint64_t cmd, uint64_t flags, uint64_t cpu_id) {
     (void)cpu_id; /* CPU-id-based targeting is optional, ignored in this impl */
 
     /* Validate flags — only MEMBARRIER_CMD_FLAG_CPU is accepted */
@@ -13098,7 +13098,7 @@ static int fh_decode(const uint8_t *data, uint32_t data_len, uint32_t *ino, uint
  * On success, handle->handle_bytes is set to the actual size,
  * and *mount_id receives the mount identifier.
  */
-static uint64_t sys_name_to_handle_at(uint64_t dirfd, uint64_t pathname, uint64_t handle_addr,
+static int64_t sys_name_to_handle_at(uint64_t dirfd, uint64_t pathname, uint64_t handle_addr,
                                       uint64_t mount_id_addr, uint64_t flags) {
     (void)dirfd; /* dirfd not used — we resolve from CWD */
 
@@ -13202,7 +13202,7 @@ static uint64_t sys_name_to_handle_at(uint64_t dirfd, uint64_t pathname, uint64_
  *
  * Returns a file descriptor on success, -errno on error.
  */
-static uint64_t sys_open_by_handle_at(uint64_t mount_fd, uint64_t handle_addr, uint64_t flags) {
+static int64_t sys_open_by_handle_at(uint64_t mount_fd, uint64_t handle_addr, uint64_t flags) {
     (void)mount_fd; /* single mount — ignored */
     (void)flags;    /* open flags currently unused */
 

@@ -202,16 +202,16 @@
 #define SYS_CC_LINK          230  /* link multiple .o files into executable */
 
 /* Memory mapping syscalls (implementations in sys_mmap.c) */
-uint64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot,
+int64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot,
                    uint64_t flags, uint64_t fd, uint64_t offset);
-uint64_t sys_munmap(uint64_t addr, uint64_t length);
-uint64_t sys_brk(uint64_t addr);
+int64_t sys_munmap(uint64_t addr, uint64_t length);
+int64_t sys_brk(uint64_t addr);
 /* sys_mprotect declared in mprotect.h */
 
 /* Memory mapping syscalls */
 #define SYS_MREMAP           370
 
-uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size,
+int64_t sys_mremap(uint64_t old_addr, uint64_t old_size,
                      uint64_t new_size, uint64_t flags,
                      uint64_t new_addr);
 
@@ -505,7 +505,7 @@ struct file_handle {
 #endif
 
 /* Forward declarations for functions in syscall.c */
-uint64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2,
+int64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2,
                                     uint64_t a3, uint64_t a4, uint64_t a5);
 
 /* membarrier command codes */
@@ -1314,9 +1314,9 @@ struct linux_dirent64 {
  */
 #ifdef KERNEL_INTERNAL
 void syscall_init(void);
-uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
+int64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
                           uint64_t a3, uint64_t a4, uint64_t a5);
-uint64_t syscall_linux_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
+int64_t syscall_linux_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
                                  uint64_t a3, uint64_t a4, uint64_t a5);
 /* PRNG for kernel subsystems (ASLR, etc.) */
 uint64_t prng_rand64(void);
@@ -1330,48 +1330,48 @@ void posix_timer_tick(void);
 void posix_timer_init(void);
 
 /* ── POSIX Timer & Clock syscalls (implemented in posix_timer.c) ── */
-uint64_t sys_clock_gettime(uint64_t clockid, uint64_t tp_addr);
-uint64_t sys_clock_settime(uint64_t clockid, uint64_t tp_addr);
-uint64_t sys_clock_getres(uint64_t clockid, uint64_t res_addr);
-uint64_t sys_clock_nanosleep(uint64_t clockid, uint64_t flags,
+int64_t sys_clock_gettime(uint64_t clockid, uint64_t tp_addr);
+int64_t sys_clock_settime(uint64_t clockid, uint64_t tp_addr);
+int64_t sys_clock_getres(uint64_t clockid, uint64_t res_addr);
+int64_t sys_clock_nanosleep(uint64_t clockid, uint64_t flags,
                              uint64_t req_addr, uint64_t rem_addr);
-uint64_t sys_timer_create(uint64_t clockid, uint64_t sevp_addr, uint64_t timerid_addr);
-uint64_t sys_timer_settime(uint64_t timerid, uint64_t flags, uint64_t new_addr, uint64_t old_addr);
-uint64_t sys_timer_gettime(uint64_t timerid, uint64_t cur_addr);
-uint64_t sys_timer_getoverrun(uint64_t timerid);
-uint64_t sys_timer_delete(uint64_t timerid);
+int64_t sys_timer_create(uint64_t clockid, uint64_t sevp_addr, uint64_t timerid_addr);
+int64_t sys_timer_settime(uint64_t timerid, uint64_t flags, uint64_t new_addr, uint64_t old_addr);
+int64_t sys_timer_gettime(uint64_t timerid, uint64_t cur_addr);
+int64_t sys_timer_getoverrun(uint64_t timerid);
+int64_t sys_timer_delete(uint64_t timerid);
 
 /* ── Credential syscalls (implemented in sys_credentials.c) ── */
-uint64_t sys_setuid(uint64_t uid);
-uint64_t sys_seteuid(uint64_t euid);
-uint64_t sys_setgid(uint64_t gid);
-uint64_t sys_setegid(uint64_t egid);
-uint64_t sys_getgroups(uint64_t size, uint64_t list_addr);
-uint64_t sys_setgroups(uint64_t size, uint64_t list_addr);
-uint64_t sys_getpgrp(void);
+int64_t sys_setuid(uint64_t uid);
+int64_t sys_seteuid(uint64_t euid);
+int64_t sys_setgid(uint64_t gid);
+int64_t sys_setegid(uint64_t egid);
+int64_t sys_getgroups(uint64_t size, uint64_t list_addr);
+int64_t sys_setgroups(uint64_t size, uint64_t list_addr);
+int64_t sys_getpgrp(void);
 
 /* ── Capability syscalls (implemented in sys_caps.c) ── */
-uint64_t sys_capget(uint64_t header_addr, uint64_t data_addr);
-uint64_t sys_capset(uint64_t header_addr, uint64_t data_addr);
-uint64_t sys_setsecurebits(uint64_t bits);
-uint64_t sys_getsecurebits(void);
+int64_t sys_capget(uint64_t header_addr, uint64_t data_addr);
+int64_t sys_capset(uint64_t header_addr, uint64_t data_addr);
+int64_t sys_setsecurebits(uint64_t bits);
+int64_t sys_getsecurebits(void);
 
 /* ── Process & Signal syscalls (implemented in sys_process.c) ── */
-uint64_t sys_rt_sigaction(uint64_t signum, uint64_t act_addr,
+int64_t sys_rt_sigaction(uint64_t signum, uint64_t act_addr,
                           uint64_t oldact_addr, uint64_t sigsetsize);
-uint64_t sys_rt_sigprocmask(uint64_t how, uint64_t set_addr,
+int64_t sys_rt_sigprocmask(uint64_t how, uint64_t set_addr,
                             uint64_t oldset_addr, uint64_t sigsetsize);
-uint64_t sys_rt_sigreturn(void);
-uint64_t sys_rt_sigtimedwait(uint64_t set_addr, uint64_t info_addr,
+int64_t sys_rt_sigreturn(void);
+int64_t sys_rt_sigtimedwait(uint64_t set_addr, uint64_t info_addr,
                              uint64_t timeout_addr, uint64_t sigsetsize);
-uint64_t sys_kill(uint64_t pid, uint64_t sig);
-uint64_t sys_tkill(uint64_t pid, uint64_t sig);
-uint64_t sys_tgkill(uint64_t tgid, uint64_t tid, uint64_t sig);
-uint64_t sys_wait4(uint64_t pid, uint64_t wstatus_addr,
+int64_t sys_kill(uint64_t pid, uint64_t sig);
+int64_t sys_tkill(uint64_t pid, uint64_t sig);
+int64_t sys_tgkill(uint64_t tgid, uint64_t tid, uint64_t sig);
+int64_t sys_wait4(uint64_t pid, uint64_t wstatus_addr,
                    uint64_t options, uint64_t rusage_addr);
-uint64_t sys_waitid(uint64_t which, uint64_t id, uint64_t info_addr,
+int64_t sys_waitid(uint64_t which, uint64_t id, uint64_t info_addr,
                     uint64_t options, uint64_t rusage_addr);
-uint64_t sys_exit_group(uint64_t code);
+int64_t sys_exit_group(uint64_t code);
 
 /* Initialize production subsystems (socket, epoll, timers, mq) */
 void production_subsystems_init(void);

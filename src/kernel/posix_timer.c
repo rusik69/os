@@ -177,7 +177,7 @@ static void apply_boottime_offset(struct timespec *ts, struct process *cur)
  *
  * Returns: 0 on success, -EFAULT on bad pointer, -EINVAL on invalid clockid.
  */
-uint64_t sys_clock_gettime(uint64_t clockid, uint64_t tp_addr)
+int64_t sys_clock_gettime(uint64_t clockid, uint64_t tp_addr)
 {
     struct timespec ts;
     uint64_t ticks = timer_get_ticks();
@@ -241,7 +241,7 @@ uint64_t sys_clock_gettime(uint64_t clockid, uint64_t tp_addr)
  * Returns: 0 on success, -EPERM if not privileged, -EFAULT on
  * bad pointer, -EINVAL on invalid clockid or invalid tv_nsec.
  */
-uint64_t sys_clock_settime(uint64_t clockid, uint64_t tp_addr)
+int64_t sys_clock_settime(uint64_t clockid, uint64_t tp_addr)
 {
     /* Only realtime clocks are settable */
     if (clockid != CLOCK_REALTIME && clockid != CLOCK_REALTIME_COARSE
@@ -299,7 +299,7 @@ uint64_t sys_clock_settime(uint64_t clockid, uint64_t tp_addr)
  * Returns: 0 on success, -EFAULT on bad pointer, -EINVAL on
  * invalid clockid.
  */
-uint64_t sys_clock_getres(uint64_t clockid, uint64_t res_addr)
+int64_t sys_clock_getres(uint64_t clockid, uint64_t res_addr)
 {
     /* Validate the clock ID */
     switch (clockid) {
@@ -353,7 +353,7 @@ uint64_t sys_clock_getres(uint64_t clockid, uint64_t res_addr)
  * interrupted by a signal, -EINVAL on invalid clockid or
  * invalid tv_nsec.
  */
-uint64_t sys_clock_nanosleep(uint64_t clockid, uint64_t flags,
+int64_t sys_clock_nanosleep(uint64_t clockid, uint64_t flags,
                              uint64_t req_addr, uint64_t rem_addr)
 {
     struct process *proc;
@@ -486,7 +486,7 @@ uint64_t sys_clock_nanosleep(uint64_t clockid, uint64_t flags,
  * Returns: 0 on success, -EFAULT on bad pointer, -EINVAL on invalid
  * clockid or invalid sigevent, -EAGAIN if no timer slots available.
  */
-uint64_t sys_timer_create(uint64_t clockid, uint64_t sevp_addr,
+int64_t sys_timer_create(uint64_t clockid, uint64_t sevp_addr,
                           uint64_t timerid_addr)
 {
     struct sigevent sev;
@@ -575,7 +575,7 @@ uint64_t sys_timer_create(uint64_t clockid, uint64_t sevp_addr,
  * Returns: 0 on success, -EFAULT on bad pointer, -EINVAL on invalid
  * timerid or invalid timespec fields.
  */
-uint64_t sys_timer_settime(uint64_t timerid, uint64_t flags,
+int64_t sys_timer_settime(uint64_t timerid, uint64_t flags,
                            uint64_t new_addr, uint64_t old_addr)
 {
     int idx = (int)timerid - 1;
@@ -676,7 +676,7 @@ uint64_t sys_timer_settime(uint64_t timerid, uint64_t flags,
  * Returns: 0 on success, -EFAULT on bad pointer, -EINVAL on invalid
  * timerid.
  */
-uint64_t sys_timer_gettime(uint64_t timerid, uint64_t cur_addr)
+int64_t sys_timer_gettime(uint64_t timerid, uint64_t cur_addr)
 {
     int idx = (int)timerid - 1;
     if (idx < 0 || idx >= POSIX_TIMER_MAX || !posix_timers[idx].in_use)
@@ -713,7 +713,7 @@ uint64_t sys_timer_gettime(uint64_t timerid, uint64_t cur_addr)
  * Returns: overrun count (capped at DELAYTIMER_MAX, 0x7FFFFFFF)
  * on success, -EINVAL on invalid timerid.
  */
-uint64_t sys_timer_getoverrun(uint64_t timerid)
+int64_t sys_timer_getoverrun(uint64_t timerid)
 {
     int idx = (int)timerid - 1;
     if (idx < 0 || idx >= POSIX_TIMER_MAX || !posix_timers[idx].in_use)
@@ -740,7 +740,7 @@ uint64_t sys_timer_getoverrun(uint64_t timerid)
  *
  * Returns: 0 on success, -EINVAL on invalid timerid.
  */
-uint64_t sys_timer_delete(uint64_t timerid)
+int64_t sys_timer_delete(uint64_t timerid)
 {
     int idx = (int)timerid - 1;
     if (idx < 0 || idx >= POSIX_TIMER_MAX || !posix_timers[idx].in_use)

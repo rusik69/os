@@ -106,7 +106,7 @@ static int cap_fill_data(struct process *proc,
  *
  * Returns 0 on success, -EINVAL / -EPERM / -EFAULT / -ESRCH on error.
  */
-uint64_t sys_capget(uint64_t header_addr, uint64_t data_addr)
+int64_t sys_capget(uint64_t header_addr, uint64_t data_addr)
 {
 	struct __user_cap_header_struct hdr;
 	struct __user_cap_data_struct kdata[2];
@@ -179,7 +179,7 @@ uint64_t sys_capget(uint64_t header_addr, uint64_t data_addr)
  *
  * Returns 0 on success, -EINVAL / -EPERM / -EFAULT / -ESRCH on error.
  */
-uint64_t sys_capset(uint64_t header_addr, uint64_t data_addr)
+int64_t sys_capset(uint64_t header_addr, uint64_t data_addr)
 {
 	struct __user_cap_header_struct hdr;
 	struct __user_cap_data_struct kdata[2];
@@ -324,7 +324,7 @@ uint64_t sys_capset(uint64_t header_addr, uint64_t data_addr)
  * Returns 0 on success, -EINVAL on invalid bits, -EPERM on locked bits,
  * or -ESRCH if the current process cannot be determined.
  */
-uint64_t sys_setsecurebits(uint64_t bits)
+int64_t sys_setsecurebits(uint64_t bits)
 {
 	struct process *p = process_get_current();
 
@@ -349,7 +349,7 @@ uint64_t sys_setsecurebits(uint64_t bits)
  * Returns the current securebits flags for the calling process,
  * or -ESRCH if the current process cannot be determined.
  */
-uint64_t sys_getsecurebits(void)
+int64_t sys_getsecurebits(void)
 {
 	struct process *p = process_get_current();
 

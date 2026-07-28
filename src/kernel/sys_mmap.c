@@ -30,7 +30,7 @@ static inline void local_invlpg(uint64_t addr) {
 
 /* ── sys_munmap — unmap a range of pages ────────────────────────── */
 
-uint64_t sys_munmap(uint64_t addr, uint64_t length) {
+int64_t sys_munmap(uint64_t addr, uint64_t length) {
     struct process *proc = process_get_current();
     if (!proc || !proc->pml4)
         return (uint64_t)(int64_t)-EFAULT;
@@ -97,7 +97,7 @@ uint64_t sys_munmap(uint64_t addr, uint64_t length) {
 
 /* ── sys_mremap — remap a virtual address range (with possible move) ── */
 
-uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size,
+int64_t sys_mremap(uint64_t old_addr, uint64_t old_size,
                      uint64_t new_size, uint64_t flags,
                      uint64_t new_addr)
 {
@@ -215,7 +215,7 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size,
 
 /* ── sys_brk — program break (heap management) ──────────────────────── */
 
-uint64_t sys_brk(uint64_t addr) {
+int64_t sys_brk(uint64_t addr) {
     struct process *p = process_get_current();
     if (!p) return (uint64_t)(int64_t)-ENOMEM;
     if (!p->is_user || !p->pml4) return (uint64_t)(int64_t)-EFAULT;
@@ -291,7 +291,7 @@ extern int mseal_check(uint64_t addr, uint64_t length);
 
 /* ── sys_mmap — map files or anonymous memory into userspace ── */
 
-uint64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot,
+int64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot,
                    uint64_t flags, uint64_t fd, uint64_t offset)
 {
     struct process *proc = process_get_current();

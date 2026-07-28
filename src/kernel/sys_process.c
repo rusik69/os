@@ -42,7 +42,7 @@ MODULE_AUTHOR("Ruslan Gustomiasov");
  *
  * Returns 0 on success, -errno on error.
  */
-uint64_t sys_rt_sigaction(uint64_t signum, uint64_t act_addr,
+int64_t sys_rt_sigaction(uint64_t signum, uint64_t act_addr,
                           uint64_t oldact_addr, uint64_t sigsetsize)
 {
     struct process *p = process_get_current();
@@ -138,7 +138,7 @@ uint64_t sys_rt_sigaction(uint64_t signum, uint64_t act_addr,
  *
  * Returns 0 on success, -errno on error.
  */
-uint64_t sys_rt_sigprocmask(uint64_t how, uint64_t set_addr,
+int64_t sys_rt_sigprocmask(uint64_t how, uint64_t set_addr,
                             uint64_t oldset_addr, uint64_t sigsetsize)
 {
     struct process *p = process_get_current();
@@ -217,7 +217,7 @@ uint64_t sys_rt_sigprocmask(uint64_t how, uint64_t set_addr,
  * the r15 slot — the base of the saved register frame. */
 extern volatile uint64_t syscall_entry_rsp_saved;
 
-uint64_t sys_rt_sigreturn(void)
+int64_t sys_rt_sigreturn(void)
 {
     struct process *p = process_get_current();
     if (!p)
@@ -307,7 +307,7 @@ uint64_t sys_rt_sigreturn(void)
  *
  * Returns the signal number on success, -errno on error.
  */
-uint64_t sys_rt_sigtimedwait(uint64_t set_addr, uint64_t info_addr,
+int64_t sys_rt_sigtimedwait(uint64_t set_addr, uint64_t info_addr,
                              uint64_t timeout_addr, uint64_t sigsetsize)
 {
     struct process *p = process_get_current();
@@ -444,7 +444,7 @@ uint64_t sys_rt_sigtimedwait(uint64_t set_addr, uint64_t info_addr,
  *
  * Returns 0 on success, -errno on error.
  */
-uint64_t sys_kill(uint64_t pid, uint64_t sig) {
+int64_t sys_kill(uint64_t pid, uint64_t sig) {
     struct process *cur = process_get_current();
     if (!cur)
         return (uint64_t)(int64_t)-ESRCH;
@@ -580,7 +580,7 @@ uint64_t sys_kill(uint64_t pid, uint64_t sig) {
  *
  * Returns 0 on success, -errno on error.
  */
-uint64_t sys_tkill(uint64_t pid, uint64_t sig)
+int64_t sys_tkill(uint64_t pid, uint64_t sig)
 {
     struct process *cur = process_get_current();
     if (!cur)
@@ -649,7 +649,7 @@ uint64_t sys_tkill(uint64_t pid, uint64_t sig)
  *
  * Returns 0 on success, -errno on error.
  */
-uint64_t sys_tgkill(uint64_t tgid, uint64_t tid, uint64_t sig)
+int64_t sys_tgkill(uint64_t tgid, uint64_t tid, uint64_t sig)
 {
     struct process *cur = process_get_current();
     if (!cur)
@@ -716,7 +716,7 @@ uint64_t sys_tgkill(uint64_t tgid, uint64_t tid, uint64_t sig)
  *
  * If sig == 0, perform error checking only (null-signal probe).
  */
-uint64_t sys_rt_sigqueueinfo(uint64_t pid, uint64_t sig, uint64_t uinfo)
+int64_t sys_rt_sigqueueinfo(uint64_t pid, uint64_t sig, uint64_t uinfo)
 {
     struct process *cur = process_get_current();
     if (!cur)
@@ -778,7 +778,7 @@ uint64_t sys_rt_sigqueueinfo(uint64_t pid, uint64_t sig, uint64_t uinfo)
  *
  * Validates that tid belongs to tgid before delivering.
  */
-uint64_t sys_rt_tgsigqueueinfo(uint64_t tgid, uint64_t tid,
+int64_t sys_rt_tgsigqueueinfo(uint64_t tgid, uint64_t tid,
                                 uint64_t sig, uint64_t uinfo)
 {
     (void)tgid;  /* Thread group validation — in this kernel tgid == pid
@@ -888,7 +888,7 @@ static int wait4_child_matches(const struct process *child,
  *     -EFAULT — wstatus or rusage pointer is invalid
  *     -EINTR  — a signal was caught (not yet implemented)
  */
-uint64_t sys_wait4(uint64_t pid, uint64_t wstatus_addr,
+int64_t sys_wait4(uint64_t pid, uint64_t wstatus_addr,
                    uint64_t options, uint64_t rusage_addr)
 {
     struct process *cur = process_get_current();
@@ -1071,7 +1071,7 @@ static int waitid_child_matches(const struct process *child,
  *   si_uid   = child UID
  *   si_status = child exit code
  */
-uint64_t sys_waitid(uint64_t which, uint64_t id, uint64_t info_addr,
+int64_t sys_waitid(uint64_t which, uint64_t id, uint64_t info_addr,
                     uint64_t options, uint64_t rusage_addr)
 {
     struct process *cur = process_get_current();
@@ -1197,7 +1197,7 @@ rescan:
  * This function does not return (calls process_exit_code which
  * terminates the current process).
  */
-uint64_t sys_exit_group(uint64_t code)
+int64_t sys_exit_group(uint64_t code)
 {
 	struct process *cur = process_get_current();
 	if (!cur)

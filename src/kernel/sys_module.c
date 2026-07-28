@@ -47,7 +47,7 @@ MODULE_AUTHOR("OS Kernel Team");
  *   -EFAULT    — invalid user-space pointer for name.
  *   -EINVAL    — empty name string.
  */
-uint64_t sys_create_module(uint64_t name_addr, uint64_t size)
+int64_t sys_create_module(uint64_t name_addr, uint64_t size)
 {
 	(void)size;
 
@@ -102,7 +102,7 @@ uint64_t sys_create_module(uint64_t name_addr, uint64_t size)
  *   -ENOSYS    — always; this interface is not implemented.
  *   -EPERM     — caller lacks permission (not root, or lockdown active).
  */
-uint64_t sys_get_kernel_syms(uint64_t table_addr)
+int64_t sys_get_kernel_syms(uint64_t table_addr)
 {
 	(void)table_addr;
 
@@ -135,7 +135,7 @@ uint64_t sys_get_kernel_syms(uint64_t table_addr)
  *   -EPERM     — caller lacks permission (lockdown active).
  *   -EFAULT    — invalid user-space pointer for args.
  */
-uint64_t sys_sysctl(uint64_t args_addr)
+int64_t sys_sysctl(uint64_t args_addr)
 {
 	(void)args_addr;
 

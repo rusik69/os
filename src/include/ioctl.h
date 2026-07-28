@@ -118,6 +118,6 @@ struct termios {
 
 /* ── Syscall entry point (implemented in sys_ioctl.c) ─────────────── */
 
-uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg);
+int64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg);
 
 #endif /* IOCTL_H */

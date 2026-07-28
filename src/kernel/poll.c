@@ -164,7 +164,7 @@ int poll_schedule(struct poll_table *pt, uint64_t timeout_ms)
  *          -EINTR if interrupted by a signal
  *          -ENOMEM if kernel memory exhausted
  */
-uint64_t sys_poll(uint64_t fds_addr, uint64_t nfds, uint64_t timeout_ms)
+int64_t sys_poll(uint64_t fds_addr, uint64_t nfds, uint64_t timeout_ms)
 {
     /*
      * ── Arg validation ────────────────────────────────────────

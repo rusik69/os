@@ -198,7 +198,7 @@ poll_table_clear_error(struct poll_table *pt)
  * Returns number of ready file descriptors on success,
  * or negative errno on error.
  */
-uint64_t sys_poll(uint64_t fds_addr, uint64_t nfds, uint64_t timeout_ms);
+int64_t sys_poll(uint64_t fds_addr, uint64_t nfds, uint64_t timeout_ms);
 
 /*
  * vfs_poll_fd — unified file descriptor poll dispatcher.

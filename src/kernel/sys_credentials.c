@@ -32,7 +32,7 @@ MODULE_AUTHOR("Ruslan Gustomiasov");
  *
  * Returns 0 on success, -EPERM if not allowed.
  */
-uint64_t sys_setuid(uint64_t uid)
+int64_t sys_setuid(uint64_t uid)
 {
     struct process *p = process_get_current();
     if (!p)
@@ -66,7 +66,7 @@ uint64_t sys_setuid(uint64_t uid)
  *
  * Returns 0 on success, -EPERM if not allowed.
  */
-uint64_t sys_seteuid(uint64_t euid)
+int64_t sys_seteuid(uint64_t euid)
 {
     struct process *p = process_get_current();
     if (!p)
@@ -98,7 +98,7 @@ uint64_t sys_seteuid(uint64_t euid)
  *
  * Returns 0 on success, -EPERM if not allowed.
  */
-uint64_t sys_setgid(uint64_t gid)
+int64_t sys_setgid(uint64_t gid)
 {
     struct process *p = process_get_current();
     if (!p)
@@ -132,7 +132,7 @@ uint64_t sys_setgid(uint64_t gid)
  *
  * Returns 0 on success, -EPERM if not allowed.
  */
-uint64_t sys_setegid(uint64_t egid)
+int64_t sys_setegid(uint64_t egid)
 {
     struct process *p = process_get_current();
     if (!p)
@@ -161,7 +161,7 @@ uint64_t sys_setegid(uint64_t egid)
  * Returns the process group ID of the calling process.
  * Equivalent to getpgid(0).
  */
-uint64_t sys_getpgrp(void)
+int64_t sys_getpgrp(void)
 {
     struct process *p = process_get_current();
     if (!p)
@@ -178,7 +178,7 @@ uint64_t sys_getpgrp(void)
  * Returns the number of groups copied, or -EINVAL if size is
  * non-zero but smaller than the actual number of groups.
  */
-uint64_t sys_getgroups(uint64_t size, uint64_t list_addr)
+int64_t sys_getgroups(uint64_t size, uint64_t list_addr)
 {
     struct process *p = process_get_current();
     if (!p)
@@ -213,7 +213,7 @@ uint64_t sys_getgroups(uint64_t size, uint64_t list_addr)
  * Returns 0 on success, -EPERM if not privileged, -EFAULT if
  * the list pointer is invalid, -EINVAL if size is too large.
  */
-uint64_t sys_setgroups(uint64_t size, uint64_t list_addr)
+int64_t sys_setgroups(uint64_t size, uint64_t list_addr)
 {
     struct process *p = process_get_current();
     if (!p)

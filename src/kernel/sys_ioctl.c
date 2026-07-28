@@ -598,7 +598,7 @@ static int ioctl_sg_io(struct process *p, int fd, uint64_t arg)
  * Returns 0 on success or a negative errno on failure (Linux syscall
  * convention — the caller wraps this in a uint64_t return).
  */
-uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg)
+int64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg)
 {
 	struct process *p = process_get_current();
 	if (!p)

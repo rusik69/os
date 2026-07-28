@@ -626,18 +626,14 @@ int build_mod_dir(char *buf, int max, const char *mod_name);
  * Returns -ENOSYS; use finit_module/init_module instead.
  * Declared in module.h because module.h is included by syscall.c.
  */
-uint64_t sys_create_module(uint64_t name_addr, uint64_t size);
-
-/*
- * sys_get_kernel_syms — Legacy kernel symbol query syscall (Linux 2.4 era).
- * Returns -ENOSYS; use /proc/kallsyms instead.
- */
-uint64_t sys_get_kernel_syms(uint64_t table_addr);
+int64_t sys_create_module(uint64_t name_addr, uint64_t size);
+int64_t sys_get_kernel_syms(uint64_t table_addr);
+int64_t sys_sysctl(uint64_t args_addr);
 
 /*
  * sys_sysctl — Legacy sysctl(2) syscall (deprecated, Linux 2.0 era).
  * Returns -ENOSYS; use /proc/sys interface instead.
  */
-uint64_t sys_sysctl(uint64_t args_addr);
+int64_t sys_sysctl(uint64_t args_addr);
 
 #endif /* MODULE_H */
