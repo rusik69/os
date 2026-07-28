@@ -628,75 +628,270 @@ static struct termios g_tty_termios = {
     .c_cc    = {1, 0},   /* VMIN=1, VTIME=0 */
 };
 
-/* ── TTY input helper ──────────────────────────────────────────────────
+/* ── Canonical input buffer (for ICANON mode) ──────────────────────── */
+#define TTY_LINE_BUF_SIZE 256
+
+static char g_tty_line_buf[TTY_LINE_BUF_SIZE];
+static int g_tty_line_pos;   /* number of chars accumulated */
+static int g_tty_line_out;   /* index of next char to return to reader */
+
+/* ── TTY input helper ──────────────────────────────────────────────
  * Read one character from the keyboard/serial console.
- * Intercept special characters:
- *   Ctrl+C (0x03) -> send SIGINT to the foreground process group.
- *   Ctrl+\ (0x1C) -> send SIGQUIT to the foreground process group.
- *   Ctrl+Z (0x1A) -> send SIGTSTP to the foreground process group.
- * Echo the character to console output if ECHO flag is set.
- * Returns the next normal character to return to userspace.
+ *
+ * In canonical mode (c_lflag & ICANON), input is line-buffered.
+ * Characters are accumulated in g_tty_line_buf until a line delimiter
+ * (newline) is received.  Line editing is supported:
+ *   Backspace/DEL  — delete previous character
+ *   Ctrl+U (0x15)  — kill the entire line
+ *   Ctrl+W (0x17)  — delete word backwards
+ *
+ * In non-canonical mode, characters are returned immediately.
+ *
+ * Signal characters are intercepted when c_lflag & ISIG:
+ *   Ctrl+C (0x03) -> SIGINT   to the foreground process group.
+ *   Ctrl+\ (0x1C) -> SIGQUIT  to the foreground process group.
+ *   Ctrl+Z (0x1A) -> SIGTSTP  (job control suspend).
+ *
+ * Echoes to console output when c_lflag & ECHO.
+ * Returns the next character to return to userspace.
  */
-static char tty_read_char(void) {
+static char tty_read_char(void)
+{
+    /* ── Non-canonical (raw) mode — return characters immediately ── */
+    if (!(g_tty_termios.c_lflag & ICANON)) {
+        for (;;) {
+            char c = keyboard_getchar();
+            /* Signal characters (when ISIG) */
+            if (g_tty_termios.c_lflag & ISIG) {
+                if ((uint8_t)c == 0x03) {
+                    uint64_t fg = pgrp_get_foreground();
+                    if (fg == 0) {
+                        struct process *cur = process_get_current();
+                        if (cur && cur->pgid != 0)
+                            fg = cur->pgid;
+                    }
+                    if (fg != 0)
+                        signal_send_group((uint32_t)fg, SIGINT);
+                    continue;
+                }
+                if ((uint8_t)c == 0x1C) {
+                    uint64_t fg = pgrp_get_foreground();
+                    if (fg == 0) {
+                        struct process *cur = process_get_current();
+                        if (cur && cur->pgid != 0)
+                            fg = cur->pgid;
+                    }
+                    if (fg != 0)
+                        signal_send_group((uint32_t)fg, SIGQUIT);
+                    continue;
+                }
+                if ((uint8_t)c == 0x1A) {
+                    uint64_t fg = pgrp_get_foreground();
+                    if (fg == 0) {
+                        struct process *cur = process_get_current();
+                        if (cur && cur->pgid != 0)
+                            fg = cur->pgid;
+                    }
+                    if (fg != 0)
+                        signal_send_group((uint32_t)fg, SIGTSTP);
+                    continue;
+                }
+            }
+            /* Echo */
+            if (g_tty_termios.c_lflag & ECHO) {
+                if (c == '\n' || c == '\r') {
+                    vga_putchar('\r');
+                    serial_putchar('\r');
+                    vga_putchar('\n');
+                    serial_putchar('\n');
+                } else if (c == '\b' || c == 127) {
+                    vga_putchar('\b');
+                    serial_putchar('\b');
+                    vga_putchar(' ');
+                    serial_putchar(' ');
+                    vga_putchar('\b');
+                    serial_putchar('\b');
+                } else {
+                    vga_putchar(c);
+                    serial_putchar(c);
+                }
+            }
+            return c;
+        }
+    }
+
+    /* ── Canonical mode — line-buffered with editing ───────────── */
+
+    /* Return buffered characters first */
+    if (g_tty_line_out < g_tty_line_pos)
+        return g_tty_line_buf[g_tty_line_out++];
+
+    /* Buffer exhausted — read a new line */
+    g_tty_line_pos = 0;
+    g_tty_line_out = 0;
+
     for (;;) {
         char c = keyboard_getchar();
-        if ((uint8_t)c == 0x03) {  /* Ctrl+C -> SIGINT */
-            uint64_t fg = pgrp_get_foreground();
-            if (fg == 0) {
-                /* No foreground group set — send to current process group */
-                struct process *cur = process_get_current();
-                if (cur && cur->pgid != 0)
-                    fg = cur->pgid;
+
+        /* ── Signal characters (when ISIG) ──────────────────────── */
+        if (g_tty_termios.c_lflag & ISIG) {
+            if ((uint8_t)c == 0x03) {
+                uint64_t fg = pgrp_get_foreground();
+                if (fg == 0) {
+                    struct process *cur = process_get_current();
+                    if (cur && cur->pgid != 0)
+                        fg = cur->pgid;
+                }
+                if (fg != 0)
+                    signal_send_group((uint32_t)fg, SIGINT);
+                g_tty_line_pos = 0;
+                g_tty_line_out = 0;
+                if (g_tty_termios.c_lflag & ECHO) {
+                    vga_putchar('\r');
+                    serial_putchar('\r');
+                    vga_putchar('\n');
+                    serial_putchar('\n');
+                }
+                continue;
             }
-            if (fg != 0)
-                signal_send_group((uint32_t)fg, SIGINT);
-            /* Consume the character — don't return it */
+            if ((uint8_t)c == 0x1C) {
+                uint64_t fg = pgrp_get_foreground();
+                if (fg == 0) {
+                    struct process *cur = process_get_current();
+                    if (cur && cur->pgid != 0)
+                        fg = cur->pgid;
+                }
+                if (fg != 0)
+                    signal_send_group((uint32_t)fg, SIGQUIT);
+                g_tty_line_pos = 0;
+                g_tty_line_out = 0;
+                if (g_tty_termios.c_lflag & ECHO) {
+                    vga_putchar('\r');
+                    serial_putchar('\r');
+                    vga_putchar('\n');
+                    serial_putchar('\n');
+                }
+                continue;
+            }
+            if ((uint8_t)c == 0x1A) {
+                uint64_t fg = pgrp_get_foreground();
+                if (fg == 0) {
+                    struct process *cur = process_get_current();
+                    if (cur && cur->pgid != 0)
+                        fg = cur->pgid;
+                }
+                if (fg != 0)
+                    signal_send_group((uint32_t)fg, SIGTSTP);
+                g_tty_line_pos = 0;
+                g_tty_line_out = 0;
+                if (g_tty_termios.c_lflag & ECHO) {
+                    vga_putchar('\r');
+                    serial_putchar('\r');
+                    vga_putchar('\n');
+                    serial_putchar('\n');
+                }
+                continue;
+            }
+        }
+
+        /* ── Backspace / DEL — delete previous character ───────── */
+        if (c == '\b' || c == 127) {
+            if (g_tty_line_pos > 0) {
+                g_tty_line_pos--;
+                if (g_tty_termios.c_lflag & ECHO) {
+                    vga_putchar('\b');
+                    serial_putchar('\b');
+                    vga_putchar(' ');
+                    serial_putchar(' ');
+                    vga_putchar('\b');
+                    serial_putchar('\b');
+                }
+            }
             continue;
         }
-        if ((uint8_t)c == 0x1C) {  /* Ctrl+\ -> SIGQUIT with core dump */
-            uint64_t fg = pgrp_get_foreground();
-            if (fg == 0) {
-                struct process *cur = process_get_current();
-                if (cur && cur->pgid != 0)
-                    fg = cur->pgid;
+
+        /* ── Ctrl+U — kill the entire line ──────────────────────── */
+        if ((uint8_t)c == 0x15) {
+            if ((g_tty_termios.c_lflag & ECHO) && g_tty_line_pos > 0) {
+                int i;
+                for (i = 0; i < g_tty_line_pos; i++) {
+                    vga_putchar('\b');
+                    serial_putchar('\b');
+                    vga_putchar(' ');
+                    serial_putchar(' ');
+                    vga_putchar('\b');
+                    serial_putchar('\b');
+                }
             }
-            if (fg != 0)
-                signal_send_group((uint32_t)fg, SIGQUIT);
-            /* Consume the character — don't return it */
+            g_tty_line_pos = 0;
+            g_tty_line_out = 0;
             continue;
         }
-        if ((uint8_t)c == 0x1A) {  /* Ctrl+Z -> SIGTSTP (job control suspend) */
-            uint64_t fg = pgrp_get_foreground();
-            if (fg == 0) {
-                struct process *cur = process_get_current();
-                if (cur && cur->pgid != 0)
-                    fg = cur->pgid;
+
+        /* ── Ctrl+W — delete word backwards ────────────────────── */
+        if ((uint8_t)c == 0x17) {
+            if (g_tty_line_pos > 0) {
+                int count = 0;
+                /* Skip trailing spaces */
+                while (g_tty_line_pos > 0 &&
+                       g_tty_line_buf[g_tty_line_pos - 1] == ' ') {
+                    g_tty_line_pos--;
+                    count++;
+                }
+                /* Delete word characters (non-space) */
+                while (g_tty_line_pos > 0 &&
+                       g_tty_line_buf[g_tty_line_pos - 1] != ' ') {
+                    g_tty_line_pos--;
+                    count++;
+                }
+                /* Erase deleted characters on screen */
+                if (g_tty_termios.c_lflag & ECHO) {
+                    int i;
+                    for (i = 0; i < count; i++) {
+                        vga_putchar('\b');
+                        serial_putchar('\b');
+                        vga_putchar(' ');
+                        serial_putchar(' ');
+                        vga_putchar('\b');
+                        serial_putchar('\b');
+                    }
+                }
             }
-            if (fg != 0)
-                signal_send_group((uint32_t)fg, SIGTSTP);
-            /* Consume the character — don't return it */
             continue;
         }
-        /* Echo the character to console output if ECHO flag is set */
+
+        /* ── Echo ────────────────────────────────────────────────── */
         if (g_tty_termios.c_lflag & ECHO) {
             if (c == '\n' || c == '\r') {
                 vga_putchar('\r');
                 serial_putchar('\r');
                 vga_putchar('\n');
                 serial_putchar('\n');
-            } else if (c == '\b' || c == 127) {
-                vga_putchar('\b');
-                serial_putchar('\b');
-                vga_putchar(' ');
-                serial_putchar(' ');
-                vga_putchar('\b');
-                serial_putchar('\b');
             } else {
                 vga_putchar(c);
                 serial_putchar(c);
             }
         }
-        return c;
+
+        /* ── Newline completes the line ──────────────────────────── */
+        if (c == '\n' || c == '\r') {
+            g_tty_line_buf[g_tty_line_pos] = '\n';
+            g_tty_line_pos++;
+            g_tty_line_out = 0;
+            return g_tty_line_buf[g_tty_line_out++];
+        }
+
+        /* ── Add printable character to buffer ───────────────────── */
+        if ((uint8_t)c >= 0x20 && g_tty_line_pos < TTY_LINE_BUF_SIZE) {
+            g_tty_line_buf[g_tty_line_pos] = c;
+            g_tty_line_pos++;
+        }
+
+        /* ── Buffer full — flush to reader ───────────────────────── */
+        if (g_tty_line_pos >= TTY_LINE_BUF_SIZE) {
+            g_tty_line_out = 0;
+            return g_tty_line_buf[g_tty_line_out++];
+        }
     }
 }
 
