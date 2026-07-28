@@ -409,6 +409,11 @@ static int smfs_readlink(void *priv, const char *path, char *buf, int bufsize) {
 
 /* ── SMTF extensions for new VFS operations ────────────────────────── */
 
+static int smfs_truncate(void *priv, const char *path, uint32_t len) {
+    (void)priv;
+    return fs_truncate(path, len);
+}
+
 static int smfs_fallocate(void *priv, const char *path, int mode, uint32_t offset, uint32_t len) {
     (void)priv;
     (void)mode;
@@ -500,6 +505,7 @@ static const struct vfs_ops smfs_ops = {
     .create  = smfs_create,
     .unlink  = smfs_unlink,
     .readdir = smfs_readdir,
+    .truncate = smfs_truncate,
     .fallocate = smfs_fallocate,
     .dedup     = smfs_dedup,
     .resize    = smfs_resize,

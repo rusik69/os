@@ -1073,6 +1073,7 @@ int fs_truncate(const char *path, uint32_t len) {
     int idx = find_inode(path);
     if (idx < 0) return -EINVAL;
     if (inodes[idx].type != FS_TYPE_FILE) return -EINVAL;
+    if (fs_check_perm(path, 'w') < 0) return -3;
     uint32_t old_size = inodes[idx].size;
     if (len == old_size) return 0;
     if (len > old_size) {
