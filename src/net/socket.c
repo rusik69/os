@@ -349,6 +349,24 @@ int sys_bind_impl(int sockfd, const struct sockaddr_in *addr, int addrlen) {
     }
     s->local_ip = addr->sin_addr.s_addr;
     s->local_port = ntohs(addr->sin_port);
+
+    /* Check for port conflict — reject if port is already in use
+     * unless SO_REUSEADDR is set on this socket.  This implements
+     * standard BSD SO_REUSEADDR semantics: a socket with reuseaddr
+     * may bind to a port that is already bound by another socket
+     * (e.g. a previous instance in TIME_WAIT). */
+    if (s->type == SOCK_STREAM) {
+        if (net_tcp_port_in_use(s->local_port) && !s->reuseaddr) {
+            ret = -EADDRINUSE;
+            goto out;
+        }
+    } else if (s->type == SOCK_DGRAM) {
+        if (net_udp_port_in_use(s->local_port) && !s->reuseaddr) {
+            ret = -EADDRINUSE;
+            goto out;
+        }
+    }
+
     s->state = SOCK_STATE_BOUND;
 
     /* For UDP, bind the port */

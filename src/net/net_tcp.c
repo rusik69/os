@@ -1507,6 +1507,14 @@ void net_tcp_unlisten(uint16_t port) {
     }
 }
 
+int net_tcp_port_in_use(uint16_t port) {
+    for (int i = 0; i < net_num_listeners; i++) {
+        if (net_listeners[i].port == port)
+            return 1;
+    }
+    return 0;
+}
+
 int net_tcp_send(int conn_id, const void *data, uint16_t len) {
     if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return -1;
     struct tcp_conn *c = &tcp_conns[conn_id];

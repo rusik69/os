@@ -419,6 +419,7 @@ void net_tcp_listen(uint16_t port, tcp_connect_handler on_connect, tcp_data_hand
                     tcp_close_handler on_close);
 void net_tcp_unlisten(uint16_t port);
 int net_tcp_send(int conn_id, const void *data, uint16_t len);
+int net_tcp_port_in_use(uint16_t port);
 void net_tcp_close(int conn_id);
 
 /* DNS resolver - returns IP in host byte order, 0 on failure */
@@ -454,6 +455,7 @@ void net_udp_bind(uint16_t port, udp_recv_handler handler);
 
 /* UDP server — userspace listen/recv */
 int net_udp_listen(uint16_t port);
+int net_udp_port_in_use(uint16_t port);
 int net_udp_recv(uint16_t port, void *buf, uint16_t bufsize, uint32_t *src_ip_out,
                  uint16_t *src_port_out, int timeout_ticks);
 void net_udp_unlisten(uint16_t port);

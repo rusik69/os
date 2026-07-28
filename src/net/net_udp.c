@@ -621,6 +621,14 @@ int net_udp_listen(uint16_t port) {
     return -1; /* no free slot */
 }
 
+int net_udp_port_in_use(uint16_t port) {
+    for (int i = 0; i < UDP_LISTEN_MAX; i++) {
+        if (udp_slots[i].port == port)
+            return 1;
+    }
+    return 0;
+}
+
 int net_udp_recv(uint16_t port, void *buf, uint16_t bufsize,
                  uint32_t *src_ip_out, uint16_t *src_port_out, int timeout_ticks) {
     struct udp_listen_slot *s = NULL;
