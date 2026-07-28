@@ -865,12 +865,13 @@ int unix_sendmsg(int idx, const struct msghdr *msg, int flags)
     }
 
     /* SOCK_STREAM: write iovec data */
+    int nonblock_send = (flags & MSG_DONTWAIT) ? 1 : 0;
     uint64_t total = 0;
     for (uint32_t i = 0; i < msg->msg_iovlen; i++) {
         const void *data = msg->msg_iov[i].iov_base;
         uint64_t len = msg->msg_iov[i].iov_len;
         if (len == 0) continue;
-        int sent = unix_send(idx, data, (uint32_t)(len > 65535 ? 65535 : len), 0);
+        int sent = unix_send(idx, data, (uint32_t)(len > 65535 ? 65535 : len), nonblock_send);
         if (sent < 0) return total > 0 ? (int)total : sent;
         total += (uint64_t)sent;
     }
@@ -915,9 +916,10 @@ int unix_recvmsg(int idx, struct msghdr *msg, int flags)
     }
 
     /* SOCK_STREAM: read iovec data */
+    int nonblock_recv = (flags & MSG_DONTWAIT) ? 1 : 0;
     void *buf = msg->msg_iov[0].iov_base;
     uint64_t bufsize = msg->msg_iov[0].iov_len;
-    int n = unix_recv(idx, buf, (uint32_t)(bufsize > 65535 ? 65535 : bufsize), 0);
+    int n = unix_recv(idx, buf, (uint32_t)(bufsize > 65535 ? 65535 : bufsize), nonblock_recv);
     if (n <= 0) return -1;
 
     /* Provide ancillary data (credentials) if available.

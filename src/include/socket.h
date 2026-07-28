@@ -245,6 +245,7 @@ struct socket {
     int           busy_poll_usecs;    /* SO_BUSY_POLL */
     uint32_t      max_pacing_rate;    /* SO_MAX_PACING_RATE */
     int           no_check;           /* SO_NO_CHECK (UDP checksum disable) */
+    int           nonblock;           /* O_NONBLOCK flag for non-blocking I/O */
     int           ip_recvttl;         /* IP_RECVTTL */
     int           ip_recvdstaddr;     /* IP_RECVDSTADDR */
     /* UDP listener index (for net_udp_listen) */

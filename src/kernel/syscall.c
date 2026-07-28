@@ -4238,8 +4238,18 @@ static int64_t sys_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg) {
     struct process *proc = process_get_current();
     if (!proc)
         return (uint64_t)(int64_t)-ESRCH;
-    if (fd >= PROCESS_FD_MAX || !proc->fd_table[fd].used)
-        return (uint64_t)(int64_t)-EBADF;
+
+    /* Check for socket FDs (separate numbering space starting at 100) */
+    int is_sock = (fd >= 100 && fd < 100 + SOCK_MAX);
+
+    if (!is_sock) {
+        if (fd >= PROCESS_FD_MAX || !proc->fd_table[fd].used)
+            return (uint64_t)(int64_t)-EBADF;
+    } else {
+        /* For socket FDs, only F_GETFL and F_SETFL are supported currently */
+        if (cmd != F_GETFL && cmd != F_SETFL)
+            return (uint64_t)(int64_t)-EINVAL;
+    }
 
     switch (cmd) {
     case F_DUPFD: {
@@ -4279,9 +4289,29 @@ static int64_t sys_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg) {
         proc->fd_table[fd].flags = (uint8_t)arg;
         return 0;
     case F_GETFL:
+        /* Handle socket FDs */
+        if (is_sock) {
+            struct socket *s = sock_get(fd);
+            if (!s)
+                return (uint64_t)(int64_t)-EBADF;
+            int flags = O_RDWR;
+            if (s->nonblock)
+                flags |= O_NONBLOCK;
+            sock_put(s);
+            return (uint64_t)(int64_t)flags;
+        }
         /* Return simulated flags (always RDWR for now) */
         return 2; /* O_RDWR */
     case F_SETFL: {
+        /* Handle socket FDs */
+        if (is_sock) {
+            struct socket *s = sock_get(fd);
+            if (!s)
+                return (uint64_t)(int64_t)-EBADF;
+            s->nonblock = (arg & O_NONBLOCK) ? 1 : 0;
+            sock_put(s);
+            return 0;
+        }
         /* Handle O_NONBLOCK for pipe FDs */
         uint8_t nonblock = (arg & O_NONBLOCK) ? 1 : 0;
         /* Handle O_ASYNC for pipe FDs */

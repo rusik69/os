@@ -186,6 +186,16 @@ int sys_socket_impl(int domain, int type, int protocol) {
     if (slot < 0) return slot; /* -ENOMEM */
 
     struct socket *s = &socket_table[slot];
+
+    /* Extract SOCK_NONBLOCK and SOCK_CLOEXEC flags from type */
+    if (type & SOCK_NONBLOCK) {
+        s->nonblock = 1;
+        type &= ~SOCK_NONBLOCK;
+    }
+    /* SOCK_CLOEXEC handling would go here if we had a close-on-exec mechanism
+     * for socket FDs; for now we just strip the flag. */
+    type &= ~SOCK_CLOEXEC;
+
     s->domain = domain;
     s->type = type;
     s->protocol = protocol;
@@ -773,9 +783,15 @@ int sys_getsockopt_impl(int sockfd, int level, int optname,
 }
 
 int sys_sendmsg_impl(int sockfd, const struct msghdr *msg, int flags) {
-    (void)flags;
     struct socket *s = sock_get(sockfd);
     if (!s) return -EBADF;
+
+    /* Determine non-blocking mode: per-call MSG_DONTWAIT or socket nonblock flag */
+    int nonblock = (flags & MSG_DONTWAIT) || s->nonblock;
+    /* Set MSG_DONTWAIT in flags so underlying protocol handlers see it */
+    int send_flags = flags;
+    if (nonblock)
+        send_flags |= MSG_DONTWAIT;
 
     /* For now, just write the first iovec entry */
     if (msg->msg_iovlen < 1 || !msg->msg_iov) { sock_put(s); return -EINVAL; }
@@ -812,7 +828,7 @@ int sys_sendmsg_impl(int sockfd, const struct msghdr *msg, int flags) {
 
         /* AF_UNIX: dispatch to local socket handler using sendmsg */
         if (s->domain == AF_UNIX && s->unix_ep >= 0) {
-            int sent = unix_sendmsg(s->unix_ep, msg, flags);
+            int sent = unix_sendmsg(s->unix_ep, msg, send_flags);
             sock_put(s);
             if (sent < 0) return sent;
             return sent;
@@ -870,9 +886,14 @@ out:
 }
 
 int sys_recvmsg_impl(int sockfd, struct msghdr *msg, int flags) {
-    (void)flags;
     struct socket *s = sock_get(sockfd);
     if (!s) return -EBADF;
+
+    /* Determine non-blocking mode: per-call MSG_DONTWAIT or socket nonblock flag */
+    int nonblock = (flags & MSG_DONTWAIT) || s->nonblock;
+    int recv_flags = flags;
+    if (nonblock)
+        recv_flags |= MSG_DONTWAIT;
 
     if (msg->msg_iovlen < 1 || !msg->msg_iov) { sock_put(s); return -EINVAL; }
 
@@ -882,7 +903,7 @@ int sys_recvmsg_impl(int sockfd, struct msghdr *msg, int flags) {
 
     /* AF_UNIX: dispatch to local socket handler using recvmsg */
     if (s->domain == AF_UNIX && s->unix_ep >= 0) {
-        int n = unix_recvmsg(s->unix_ep, msg, flags);
+        int n = unix_recvmsg(s->unix_ep, msg, recv_flags);
         sock_put(s);
         if (n <= 0) return -EINVAL;
         return n;
@@ -934,17 +955,19 @@ int sys_recvmsg_impl(int sockfd, struct msghdr *msg, int flags) {
 
     int n = -EINVAL;
     if (s->type == SOCK_STREAM && s->conn_id >= 0) {
-        n = net_tcp_recv(s->conn_id, buf, (uint16_t)(bufsize > 65535 ? 65535 : bufsize), 10);
+        int timeout = nonblock ? 1 : 10;
+        n = net_tcp_recv(s->conn_id, buf, (uint16_t)(bufsize > 65535 ? 65535 : bufsize), timeout);
         sock_put(s);
-        if (n < 0) return -EINVAL;
+        if (n <= 0) return nonblock ? -EAGAIN : -EINVAL;
         return n;
     } else if (s->type == SOCK_DGRAM && s->udp_listener >= 0) {
         uint32_t src_ip;
         uint16_t src_port;
+        int timeout = nonblock ? 1 : 10;
         n = net_udp_recv((uint16_t)s->local_port, buf, (uint16_t)(bufsize > 1500 ? 1500 : bufsize),
-                         &src_ip, &src_port, 10);
+                         &src_ip, &src_port, timeout);
         sock_put(s);
-        if (n < 0) return -EINVAL;
+        if (n <= 0) return nonblock ? -EAGAIN : -EINVAL;
         if (msg->msg_name) {
             struct sockaddr_in *src = (struct sockaddr_in *)msg->msg_name;
             src->sin_family = AF_INET;
