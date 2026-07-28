@@ -58,6 +58,20 @@ uint64_t sys_munmap(uint64_t addr, uint64_t length) {
     if (mseal_check(addr, length) == 0)
         return (uint64_t)(int64_t)-EPERM;
 
+    /* Validate that at least one page in the range is actually mapped.
+     * If none are mapped, return -EINVAL (programming error in caller). */
+    {
+        int found_mapped = 0;
+        for (uint64_t check = addr; check < addr + length; check += PAGE_SIZE) {
+            if (vmm_page_is_mapped_user(proc->pml4, check)) {
+                found_mapped = 1;
+                break;
+            }
+        }
+        if (!found_mapped)
+            return (uint64_t)(int64_t)-EINVAL;
+    }
+
     /* Perform the unmap. vmm_unmap_user_pages skips unmapped pages,
      * freeing only pages that are actually present. */
     if (vmm_unmap_user_pages(proc->pml4, addr, length / PAGE_SIZE) < 0)
