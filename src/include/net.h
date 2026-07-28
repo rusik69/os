@@ -365,6 +365,7 @@ int  ipv6_ping6(const struct in6_addr *target);
 void ipv6_send_rs(void);
 
 /* Loopback interface */
+int  net_loopback_register(void);
 int  net_loopback_init(void);
 int  net_loopback_send(const void *data, int len);
 

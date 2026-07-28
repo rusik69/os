@@ -694,6 +694,29 @@ void send_ip(uint32_t dst_ip, uint8_t protocol, const void *payload, uint16_t le
                          sizeof(struct ip_header) + len) != 0)
         return;
 
+    /* ── Loopback routing ──────────────────────────────────────── */
+    if ((dst_ip & 0xFF000000) == 0x7F000000) {
+        int loop_ifindex = netif_name_to_index("lo");
+        if (loop_ifindex >= 0) {
+            /* Rewrite source IP to 127.0.0.1 for loopback */
+            ip->src_ip = htonl(0x7F000001);
+            ip->checksum = 0;
+            ip->checksum = net_checksum(ip, sizeof(struct ip_header));
+            /* Build Ethernet frame with dummy MAC and send via loopback */
+            uint8_t frame[1518];
+            struct eth_header *eth = (struct eth_header *)frame;
+            uint16_t total = sizeof(struct eth_header) + sizeof(struct ip_header) + len;
+            if (total <= sizeof(frame)) {
+                memset(eth->dst, 0, 6);
+                memset(eth->src, 0, 6);
+                eth->type = htons(ETH_TYPE_IP);
+                memcpy(frame + sizeof(struct eth_header), buf, sizeof(struct ip_header) + len);
+                netif_send(loop_ifindex, frame, total);
+            }
+        }
+        return;
+    }
+
     send_eth(dst_mac, ETH_TYPE_IP, buf, sizeof(struct ip_header) + len);
 }
 
@@ -808,6 +831,7 @@ static struct ip_frag_slot ip_frags[IP_FRAG_SLOTS];
 
 /* Forward declaration for dispatching reassembled packets */
 static void handle_ip(uint8_t *data, uint16_t len);
+int  net_loopback_register(void);
 
 /* net_frag_stats: copy current fragment reassembly statistics to caller */
 void net_frag_stats(struct frag_stats *out) {
@@ -1029,7 +1053,8 @@ static void handle_ip(uint8_t *data, uint16_t len) {
     uint32_t dst_ip = ntohl(ip->dst_ip);
 
     /* IP forwarding: if packet is not for us and forwarding is enabled, forward it */
-    if (dst_ip != net_our_ip && dst_ip != 0xFFFFFFFF) {
+    if (dst_ip != net_our_ip && dst_ip != 0xFFFFFFFF &&
+        (dst_ip & 0xFF000000) != 0x7F000000) {
         if (net_ip_forwarding) {
             uint32_t fwd_gw;
             int fwd_iface;
@@ -1193,7 +1218,8 @@ void net_rx_dispatch(uint8_t *pkt, uint16_t len)
         {
             struct ip_header *ip = (struct ip_header *)payload;
             uint32_t dst_ip = ntohl(ip->dst_ip);
-            if (dst_ip == net_our_ip || dst_ip == 0xFFFFFFFF) {
+            if (dst_ip == net_our_ip || dst_ip == 0xFFFFFFFF ||
+                (dst_ip & 0xFF000000) == 0x7F000000) {
                 if (nf_hook_traverse(NF_INET_LOCAL_IN, (void *)pkt,
                                      (void *)payload, payload_len) != 0)
                     return;
@@ -1370,6 +1396,9 @@ void net_init(void) {
 
     /* Initialize pluggable congestion control framework */
     cc_framework_init();
+
+    /* Bring up loopback interface with 127.0.0.1 */
+    net_loopback_register();
 }
 
 /* --- ARP list --- */
@@ -1391,6 +1420,50 @@ int net_arp_list(void (*cb)(uint32_t ip, const uint8_t *mac)) {
 static uint8_t loopback_buffer[LOOPBACK_BUF_SIZE];
 static uint16_t loopback_len = 0;
 static int loopback_initialized = 0;
+static int lo_ifindex = -1;
+
+/* Loopback transmit callback — feed the frame back into the receive path */
+static int lo_xmit(struct net_device *dev, const uint8_t *data, uint16_t len)
+{
+    (void)dev;
+    if (!data || len < sizeof(struct eth_header) || len > 1518)
+        return -1;
+    /* Re-inject the packet as if it arrived from the network.
+     * net_rx_dispatch takes non-const because XDP_TX path swaps MACs,
+     * but we own the data at this point so the cast is safe. */
+    net_rx_dispatch((uint8_t *)(uintptr_t)data, len);
+    return 0;
+}
+
+/* Register the loopback interface as a proper net_device.
+ * Called from net_init() to bring up "lo" at boot with 127.0.0.1. */
+int net_loopback_register(void)
+{
+    if (loopback_initialized)
+        return -1;
+
+    struct net_device lo_dev;
+    memset(&lo_dev, 0, sizeof(lo_dev));
+    strncpy(lo_dev.name, "lo", sizeof(lo_dev.name) - 1);
+    lo_dev.name[sizeof(lo_dev.name) - 1] = '\0';
+    lo_dev.transmit = lo_xmit;
+    lo_dev.mtu = 65535;
+    lo_dev.flags = IFF_LOOPBACK | IFF_UP | IFF_RUNNING | IFF_NOARP;
+    /* Loopback has no MAC — all zeros */
+
+    lo_ifindex = netif_register(&lo_dev);
+    if (lo_ifindex < 0) {
+        kprintf("[LO] netif_register failed\n");
+        return -1;
+    }
+
+    /* Add route for 127.0.0.0/8 via the loopback interface */
+    rt_add(0x7F000000, 0xFF000000, 0, lo_ifindex);
+
+    loopback_initialized = 1;
+    kprintf("[OK] Loopback: lo (127.0.0.1) up\n");
+    return 0;
+}
 
 int net_loopback_init(void) {
     if (loopback_initialized) return -1;
@@ -1418,6 +1491,7 @@ EXPORT_SYMBOL(net_set_ip);
 EXPORT_SYMBOL(net_get_gateway);
 EXPORT_SYMBOL(net_get_mask);
 EXPORT_SYMBOL(net_dhcp_discover);
+EXPORT_SYMBOL(net_loopback_register);
 EXPORT_SYMBOL(net_loopback_init);
 EXPORT_SYMBOL(net_loopback_send);
 EXPORT_SYMBOL(rt_add);
