@@ -260,6 +260,7 @@ int vfs_write(const char *path, const void *data, uint32_t size);
 int vfs_append(const char *path, const void *data, uint32_t size);
 int vfs_stat(const char *path, struct vfs_stat *st);
 int vfs_create(const char *path, uint8_t type);
+int vfs_mkdir_p(const char *path);
 int vfs_unlink(const char *path);
 int vfs_readdir(const char *path);
 

@@ -2032,3 +2032,76 @@ int vfs_ioctl(const char *path, uint64_t cmd, uint64_t arg)
 
     return m->ops->ioctl(m->priv, ap, cmd, arg);
 }
+
+/*
+ * vfs_mkdir_p — Create a directory and all intermediate parent directories
+ *               (mkdir -p semantics).
+ *
+ * Walks each path component and creates it if it does not exist.
+ * Returns 0 on success, or a negative errno on error.
+ * If the final component already exists as a directory, succeeds (no error).
+ * If any component exists but is not a directory, returns -ENOTDIR.
+ */
+int vfs_mkdir_p(const char *path)
+{
+    char ap[128];
+    char cur[128];
+    char component[128];
+
+    vfs_abs_path(path, ap, sizeof(ap));
+
+    /* Build path component by component */
+    const char *p = ap;
+    cur[0] = '\0';
+
+    /* If path starts with '/', preserve the root */
+    if (*p == '/') {
+        cur[0] = '/';
+        cur[1] = '\0';
+        p++;
+    }
+
+    while (*p) {
+        /* Skip consecutive slashes */
+        while (*p == '/') p++;
+        if (!*p) break;
+
+        /* Extract next path component */
+        int i = 0;
+        while (*p && *p != '/' && i < (int)sizeof(component) - 1) {
+            component[i++] = *p++;
+        }
+        component[i] = '\0';
+        if (i == 0) continue; /* trailing slash */
+
+        /* Build current path */
+        size_t cur_len = strlen(cur);
+        if (cur_len == 0 || (cur_len == 1 && cur[0] == '/')) {
+            /* Append to root */
+            int n = snprintf(cur, sizeof(cur), "/%s", component);
+            if (n < 0 || (size_t)n >= sizeof(cur))
+                return -ENAMETOOLONG;
+        } else {
+            int n = snprintf(cur + cur_len, sizeof(cur) - cur_len,
+                             "/%s", component);
+            if (n < 0 || cur_len + (size_t)n >= sizeof(cur))
+                return -ENAMETOOLONG;
+        }
+
+        /* Check if this component already exists */
+        struct vfs_stat st;
+        int ret = vfs_stat(cur, &st);
+        if (ret < 0) {
+            /* Does not exist — create as directory */
+            ret = vfs_create(cur, VFS_TYPE_DIR);
+            if (ret < 0)
+                return ret;
+        } else if (st.type != VFS_TYPE_DIR) {
+            /* Exists but is not a directory */
+            return -ENOTDIR;
+        }
+        /* Exists and is a directory — continue to next component */
+    }
+
+    return 0;
+}
