@@ -6023,14 +6023,21 @@ static uint64_t sys_speaker_beep(uint64_t frequency, uint64_t duration_ms) {
 
 /* ── Validate rtc_time fields ──────────────────────────────── */
 static int rtc_time_valid(const struct rtc_time *t) {
-    if (!t) return 0;
+    if (!t)
+        return 0;
     /* Reject impossible date/time values */
-    if (t->second > 59)           return 0;
-    if (t->minute > 59)           return 0;
-    if (t->hour > 23)             return 0;
-    if (t->day < 1 || t->day > 31) return 0;
-    if (t->month < 1 || t->month > 12) return 0;
-    if (t->year < 1970)           return 0;
+    if (t->second > 59)
+        return 0;
+    if (t->minute > 59)
+        return 0;
+    if (t->hour > 23)
+        return 0;
+    if (t->day < 1 || t->day > 31)
+        return 0;
+    if (t->month < 1 || t->month > 12)
+        return 0;
+    if (t->year < 1970)
+        return 0;
     return 1;
 }
 
