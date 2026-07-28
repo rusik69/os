@@ -1495,6 +1495,14 @@ static uint64_t do_sys_open(const char *path, uint64_t flags, uint64_t mode) {
             return (uint64_t)(int64_t)ima_ret;
     }
 
+    /* Compute O_APPEND initial offset before taking the lock */
+    uint64_t append_initial_offset = 0;
+    if (flags & O_APPEND) {
+        struct vfs_stat append_st;
+        if (vfs_stat(path, &append_st) >= 0)
+            append_initial_offset = (uint64_t)append_st.size;
+    }
+
     /* Allocate fd slot in current process's table */
     struct process *p = process_get_current();
     if (!p) return (uint64_t)(int64_t)-EPERM;
@@ -1511,7 +1519,7 @@ static uint64_t do_sys_open(const char *path, uint64_t flags, uint64_t mode) {
             }
             strncpy(p->fd_table[i].path, path, 63);
             p->fd_table[i].path[63] = '\0';
-            p->fd_table[i].offset = 0;
+            p->fd_table[i].offset = (flags & O_APPEND) ? append_initial_offset : 0;
             p->fd_table[i].used = true;
             p->fd_table[i].flags = (flags & O_CLOEXEC) ? FD_CLOEXEC : 0;
             p->fd_table[i].open_flags = (uint32_t)(flags & 0x3FFF); /* save relevant flags */
