@@ -919,6 +919,12 @@ int sys_sendmsg_impl(int sockfd, const struct msghdr *msg, int flags) {
         return -EINVAL;
     }
 
+    /* Reject iovec count exceeding IOV_MAX (1024) per POSIX */
+    if (msg->msg_iovlen > 1024) {
+        sock_put(s);
+        return -EINVAL;
+    }
+
     /* Validate msg_controllen to prevent pointer arithmetic overflow in
      * CMSG_FIRSTHDR / CMSG_NXTHDR.  If msg_controllen is large enough that
      * (unsigned char *)msg->msg_control + msg->msg_controllen wraps around,
@@ -1034,6 +1040,12 @@ int sys_recvmsg_impl(int sockfd, struct msghdr *msg, int flags) {
         recv_flags |= MSG_DONTWAIT;
 
     if (msg->msg_iovlen < 1 || !msg->msg_iov) {
+        sock_put(s);
+        return -EINVAL;
+    }
+
+    /* Reject iovec count exceeding IOV_MAX (1024) per POSIX */
+    if (msg->msg_iovlen > 1024) {
         sock_put(s);
         return -EINVAL;
     }
