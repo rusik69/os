@@ -12850,13 +12850,13 @@ int64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2, uint64
     case SYS_RT_SIGTIMEDWAIT:
         return sys_rt_sigtimedwait(a1, a2, a3, a4);
     default: {
-        uint64_t ret = (uint64_t)-1;
+        uint64_t ret = (uint64_t)(int64_t)-ENOSYS;
         audit_syscall_exit(ret);
         return ret;
     }
     }
     /* NOTREACHED */
-    return (uint64_t)-1;
+    return (uint64_t)(int64_t)-ENOSYS;
 }
 
 /* ── rseq — Restartable Sequences (Item 348) ─────────────────────────── */
