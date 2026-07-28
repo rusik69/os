@@ -2624,7 +2624,8 @@ static int64_t sys_sleep_ticks(uint64_t ticks) {
      * the scheduler makes us READY and we resume here. Check for
      * pending signals and return -ERESTARTSYS if interrupted. */
     struct process *cur = process_get_current();
-    if (!cur) return (uint64_t)-1;
+    if (!cur)
+        return (uint64_t)-1;
     cur->sleep_until = timer_get_ticks() + ticks;
     cur->state = PROCESS_BLOCKED;
     scheduler_remove(cur);
