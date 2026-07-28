@@ -650,6 +650,18 @@ static char tty_read_char(void) {
             /* Consume the character — don't return it */
             continue;
         }
+        if ((uint8_t)c == 0x1A) {  /* Ctrl+Z -> SIGTSTP (job control suspend) */
+            uint64_t fg = pgrp_get_foreground();
+            if (fg == 0) {
+                struct process *cur = process_get_current();
+                if (cur && cur->pgid != 0)
+                    fg = cur->pgid;
+            }
+            if (fg != 0)
+                signal_send_group((uint32_t)fg, SIGTSTP);
+            /* Consume the character — don't return it */
+            continue;
+        }
         return c;
     }
 }
