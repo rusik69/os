@@ -2347,18 +2347,14 @@ static uint64_t sys_vfs_readdir(uint64_t path_addr) {
     return (uint64_t)vfs_readdir((const char *)path_addr);
 }
 
-static uint64_t sys_waitpid(uint64_t pid, uint64_t status_addr) {
-    struct process *cur = process_get_current();
-    if (!cur)
-        return (uint64_t)(int64_t)-ESRCH;
-
-    /* waitpid(pid, ...) requires pid to be a direct child.
-     * Return ECHILD if no such child exists. */
-    struct process *child = process_get_by_pid((uint32_t)pid);
-    if (!child || child->parent_pid != cur->pid)
-        return (uint64_t)(int64_t)-ECHILD;
-
-    return (uint64_t)process_waitpid((uint32_t)pid, (int *)status_addr, 0);
+static uint64_t sys_waitpid(uint64_t pid, uint64_t status_addr, uint64_t options) {
+    /* Delegate to sys_wait4 which properly handles:
+     *   pid > 0  → wait for child with specific PID
+     *   pid == -1 → wait for any child
+     *   pid == 0  → wait for any child in same process group
+     *   pid < -1  → wait for any child in process group |pid|
+     * and respects WNOHANG, WUNTRACED, WCONTINUED. */
+    return sys_wait4(pid, status_addr, options, 0);
 }
 
 static uint64_t sys_sleep_ticks(uint64_t ticks) {
@@ -11537,7 +11533,7 @@ uint64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_VFS_CREATE:    return sys_vfs_create(a1, a2);
         case SYS_VFS_UNLINK:    return sys_vfs_unlink(a1);
         case SYS_VFS_READDIR:   return sys_vfs_readdir(a1);
-        case SYS_WAITPID:       return sys_waitpid(a1, a2);
+        case SYS_WAITPID:       return sys_waitpid(a1, a2, a3);
         case SYS_WAIT4:         return sys_wait4(a1, a2, a3, a4);
         case SYS_WAITID:        return sys_waitid(a1, a2, a3, a4, a5);
         case SYS_SLEEP_TICKS:   return sys_sleep_ticks(a1);
