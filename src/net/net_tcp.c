@@ -1,18 +1,18 @@
 /* net_tcp.c — TCP connection management */
 #define KERNEL_INTERNAL
 
+#include "errno.h"
+#include "mptcp.h" /* MPTCP options, MP_CAPABLE handling */
 #include "net_internal.h"
-#include "string.h"
 #include "printf.h"
-#include "timer.h"
 #include "scheduler.h"
 #include "sha256.h"
-#include "syscall.h"   /* for prng_rand64 */
-#include "errno.h"
-#include "tcp_bbr.h"   /* BBR congestion control (Item 157) */
-#include "spinlock.h"  /* spinlock_t, SPINLOCK_INIT */
-#include "socket.h"    /* struct sockaddr_in */
-#include "mptcp.h"     /* MPTCP options, MP_CAPABLE handling */
+#include "socket.h"   /* struct sockaddr_in */
+#include "spinlock.h" /* spinlock_t, SPINLOCK_INIT */
+#include "string.h"
+#include "syscall.h" /* for prng_rand64 */
+#include "tcp_bbr.h" /* BBR congestion control (Item 157) */
+#include "timer.h"
 
 /* TCP connection table lock — protects tcp_conns[] */
 static spinlock_t tcp_lock = SPINLOCK_INIT;
