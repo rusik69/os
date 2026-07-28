@@ -31,9 +31,14 @@
 #include "vfs.h"
 #include "sound_oss.h"
 #include "tmpfs.h"
+#include "signal.h"
+#include "pgrp.h"
 
 /* Declaration of global TTY termios accessor (defined in syscall.c) */
 extern struct termios *tty_get_termios(void);
+
+/* Declaration of global TTY window size accessor (defined in syscall.c) */
+extern struct winsize *tty_get_winsize(void);
 
 MODULE_LICENSE("MIT");
 MODULE_VERSION("1.0");
@@ -108,16 +113,42 @@ static int ioctl_fioasync(struct process *p, int fd, uint64_t arg)
  */
 static int ioctl_tiocgwinsz(uint64_t arg)
 {
-	struct {
-		unsigned short ws_row;
-		unsigned short ws_col;
-		unsigned short ws_xpixel;
-		unsigned short ws_ypixel;
-	} ws = { .ws_row = 25, .ws_col = 80, .ws_xpixel = 0, .ws_ypixel = 0 };
+    struct winsize *ws = tty_get_winsize();
+    if (!ws)
+        return -ENOTTY;
+    if (copy_to_user(arg, ws, sizeof(*ws)) < 0)
+        return -EFAULT;
+    return 0;
+}
 
-	if (copy_to_user(arg, &ws, sizeof(ws)) < 0)
-		return -EFAULT;
-	return 0;
+/*
+ * TIOCSWINSZ — Set terminal window size and send SIGWINCH.
+ * arg is a userspace pointer to winsize struct.
+ * Stores the new size and sends SIGWINCH to the foreground process
+ * group of the controlling terminal.
+ */
+static int ioctl_tiocswinsz(uint64_t arg)
+{
+    struct winsize new_ws;
+    if (copy_from_user(&new_ws, arg, sizeof(new_ws)) < 0)
+        return -EFAULT;
+
+    struct winsize *ws = tty_get_winsize();
+    if (!ws)
+        return -ENOTTY;
+    *ws = new_ws;
+
+    /* Send SIGWINCH to foreground process group */
+    uint64_t fg = pgrp_get_foreground();
+    if (fg == 0) {
+        struct process *cur = process_get_current();
+        if (cur && cur->pgid != 0)
+            fg = cur->pgid;
+    }
+    if (fg != 0)
+        signal_send_group((uint32_t)fg, SIGWINCH);
+
+    return 0;
 }
 
 /*
@@ -605,6 +636,8 @@ uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg)
 	/* ── Terminal ioctls ────────────────────────────────────── */
 	case TIOCGWINSZ:
 		return (uint64_t)(int64_t)ioctl_tiocgwinsz(arg);
+	case TIOCSWINSZ:
+		return (uint64_t)(int64_t)ioctl_tiocswinsz(arg);
 	case TCGETS:
 		return (uint64_t)(int64_t)ioctl_tcgets(arg);
 	case TCSETS:

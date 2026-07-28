@@ -63,6 +63,14 @@
 #define TIOCGWINSZ  0x5413     /* get terminal window size */
 #define TIOCSWINSZ  0x5414     /* set terminal window size */
 
+/* Terminal window size structure (Linux-compatible struct winsize) */
+struct winsize {
+    unsigned short ws_row;      /* rows, in characters */
+    unsigned short ws_col;      /* columns, in characters */
+    unsigned short ws_xpixel;   /* horizontal size, pixels (unused) */
+    unsigned short ws_ypixel;   /* vertical size, pixels (unused) */
+};
+
 /* ── Termios ioctls (TCGETS/TCSETS) ──────────────────────────────── */
 
 #define TCGETS      0x5401     /* get termios attributes */

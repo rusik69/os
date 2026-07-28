@@ -628,6 +628,14 @@ static struct termios g_tty_termios = {
     .c_cc    = {1, 0, 0, 0, 0x04, 0},   /* VMIN=1, VTIME=0, VEOF=Ctrl+D, VEOL=0 */
 };
 
+/* Global TTY window size — default 25 rows x 80 columns */
+static struct winsize g_tty_winsize = {
+    .ws_row    = 25,
+    .ws_col    = 80,
+    .ws_xpixel = 0,
+    .ws_ypixel = 0,
+};
+
 /* ── Canonical input buffer (for ICANON mode) ──────────────────────── */
 #define TTY_LINE_BUF_SIZE 256
 
@@ -1036,6 +1044,12 @@ static uint64_t tty_read_noncanonical(char *buf, uint64_t len)
 struct termios *tty_get_termios(void)
 {
     return &g_tty_termios;
+}
+
+/* Get pointer to the global TTY window size structure (for ioctl handlers) */
+struct winsize *tty_get_winsize(void)
+{
+    return &g_tty_winsize;
 }
 
 /**
