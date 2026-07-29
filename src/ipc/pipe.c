@@ -9,10 +9,14 @@
 #include "heap.h"
 #include "errno.h"
 #include "printf.h"
+#include "bug.h"
 
 static struct pipe pipe_table[PIPE_MAX];
 
 void pipe_init(void) {
+    /* Compile-time check: pipe buffer must be at least 4096 bytes */
+    BUILD_BUG_ON(PIPE_DEFAULT_SIZE < 4096);
+
     memset(pipe_table, 0, sizeof(pipe_table));
 }
 
