@@ -84,11 +84,33 @@ static int iscsi_receive_pdu(struct iscsi_session *sess,
                              struct iscsi_bhs *bhs_out,
                              void *data_buf, uint32_t *data_len_out)
 {
+    /* Validate pointers */
+    if (!sess || !bhs_out)
+        return -EINVAL;
+
     if (iscsi_tcp_recv(sess->conn_id, bhs_out, sizeof(struct iscsi_bhs), 100) < 0)
         return -EIO;
 
     uint32_t dlen = iscsi_htonl(bhs_out->data_seg_len);
-    if (dlen > 0 && data_buf && dlen <= *data_len_out) {
+
+    /* Validate PDU data segment length against maximum allowed */
+    if (dlen > ISCSI_MAX_PDU_DATA_SEG_LEN) {
+        kprintf("[ISCSI] PDU data segment length %u exceeds maximum %u\n",
+                dlen, ISCSI_MAX_PDU_DATA_SEG_LEN);
+        return -EINVAL;
+    }
+
+    /* If there is a data segment, we need both a buffer and a length output */
+    if (dlen > 0) {
+        if (!data_buf || !data_len_out) {
+            kprintf("[ISCSI] PDU has %u-byte data segment but no buffer provided\n", dlen);
+            return -EINVAL;
+        }
+        if (dlen > *data_len_out) {
+            kprintf("[ISCSI] PDU data segment length %u exceeds buffer capacity %u\n",
+                    dlen, *data_len_out);
+            return -ENOBUFS;
+        }
         if (iscsi_tcp_recv(sess->conn_id, data_buf, dlen, 100) < 0)
             return -EIO;
     }

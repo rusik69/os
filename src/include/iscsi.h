@@ -46,6 +46,9 @@
 #define ISCSI_FLAG_WRITE  0x20
 #define ISCSI_FLAG_FINAL  0x80
 
+/* Maximum data segment length for PDU validation (MaxRecvDataSegmentLength) */
+#define ISCSI_MAX_PDU_DATA_SEG_LEN  262144U  /* 256 KB */
+
 /* ── Structures ───────────────────────────────────────────────── */
 
 /* iSCSI Basic Header Segment (BHS) — 48 bytes */
