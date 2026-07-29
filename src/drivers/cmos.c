@@ -3,16 +3,38 @@
 #include "rtc.h"
 #include "errno.h"
 
-uint8_t cmos_read(uint8_t reg) {
-    outb(CMOS_ADDR, reg);
-    io_wait();
-    return inb(CMOS_DATA);
+/* Validate that reg is within the 0..0x7F CMOS register range.
+ * Returns the sanitised register value, or 0 if invalid (caller
+ * should check the return for equality with the input). */
+static uint8_t cmos_validate_reg(uint8_t reg)
+{
+    if (reg > 0x7F) {
+        /* Out-of-range CMOS register access — NVRAM space ends at 0x7F */
+        return 0;
+    }
+    return reg;
 }
 
-void cmos_write(uint8_t reg, uint8_t val) {
-    outb(CMOS_ADDR, reg);
+uint8_t cmos_read(uint8_t reg)
+{
+    reg = cmos_validate_reg(reg);
+    /* NMI-disable pattern: bit 7 of value written to port 0x70
+     * disables NMI during the CMOS register selection. */
+    outb(CMOS_ADDR, (uint8_t)(reg | 0x80));
+    io_wait();
+    uint8_t val = inb(CMOS_DATA);
+    outb(CMOS_ADDR, reg & 0x7F);  /* Re-enable NMI */
+    return val;
+}
+
+void cmos_write(uint8_t reg, uint8_t val)
+{
+    reg = cmos_validate_reg(reg);
+    /* NMI-disable pattern — see cmos_read() above */
+    outb(CMOS_ADDR, (uint8_t)(reg | 0x80));
     io_wait();
     outb(CMOS_DATA, val);
+    outb(CMOS_ADDR, reg & 0x7F);  /* Re-enable NMI */
     io_wait();
 }
 
