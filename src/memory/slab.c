@@ -564,6 +564,15 @@ struct kmem_cache *kmem_cache_create(const char *name, size_t obj_size,
 }
 
 void *kmem_cache_alloc(struct kmem_cache *cache, int gfp_flags) {
+    /* Validate that the cache is valid and initialized.
+     * A NULL cache pointer or a cache with obj_size == 0 indicates
+     * a bug in the caller (double-destroyed or never-initialized cache). */
+    if (!cache || cache->obj_size == 0) {
+        kprintf("[SLAB] ERROR: kmem_cache_alloc on invalid cache "
+                "(NULL or uninitialized, gfp_flags=%d)\n", gfp_flags);
+        return NULL;
+    }
+
     int cpu = smp_get_cpu_id();
     struct cpu_slab *cpu_s = &cache->cpu_slab[cpu];
 
@@ -624,6 +633,15 @@ void *kmem_cache_alloc(struct kmem_cache *cache, int gfp_flags) {
 
 void kmem_cache_free(struct kmem_cache *cache, void *obj) {
     if (!obj || !cache) return;
+
+    /* Validate that the cache has a sane object size.  A cache whose
+     * obj_size is zero was never properly initialized (or was already
+     * destroyed but the pointer is stale — a caching bug). */
+    if (cache->obj_size == 0) {
+        kprintf("[SLAB] ERROR: kmem_cache_free on invalid cache "
+                "(obj_size=0, obj=%p)\n", obj);
+        return;
+    }
 
     /* Check redzone before modifying the object.
      * On double-free, the redzone has been poisoned by the first free's
