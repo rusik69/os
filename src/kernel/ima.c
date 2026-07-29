@@ -235,6 +235,31 @@ int ima_measure(const char *path, int type)
     return 0;
 }
 
+/*
+ * ima_validate_hash_algorithm — Verify a hash algorithm string is supported.
+ * @algo: Hash algorithm name (e.g., "sha256")
+ *
+ * Returns 0 if supported, -EINVAL if unknown.
+ *
+ * Currently only SHA-256 is supported as the digest algorithm
+ * for IMA appraisal.  This function provides a single point to
+ * extend when additional algorithms are added in the future.
+ */
+static int ima_validate_hash_algorithm(const char *algo)
+{
+    if (!algo)
+        return -EINVAL;
+
+    /* Currently only SHA-256 is supported */
+    if (strcmp(algo, "sha256") == 0)
+        return 0;
+
+    kprintf_level(KERN_WARNING,
+        "[IMA] Unsupported hash algorithm \"%s\" for appraisal "
+        "(only sha256 is supported)\n", algo);
+    return -EINVAL;
+}
+
 /* ── Public API: ima_appraise ────────────────────────────────────── */
 
 int ima_appraise(const char *path)
@@ -275,11 +300,36 @@ int ima_appraise(const char *path)
         return -EACCES;
     }
 
-    /* Null-terminate the xattr value */
-    if (stored_size > 0 && stored_size < sizeof(stored_hex))
-        stored_hex[stored_size] = '\0';
-    else
-        stored_hex[sizeof(stored_hex) - 1] = '\0';
+    /*
+     * Validate hash algorithm.
+     *
+     * The security.ima xattr is expected to contain a hex-encoded
+     * SHA-256 hash (64 hex characters).  If the actual length of the
+     * stored hash differs, it indicates either a different hash
+     * algorithm was used (e.g., SHA-1 would be 40 hex chars) or the
+     * xattr has been corrupted.  Reject with a clear error.
+     */
+    if (ret != SHA256_DIGEST_SIZE * 2) {
+        kprintf_level(KERN_WARNING,
+            "[IMA] Unsupported hash algorithm in security.ima on %s "
+            "(expected %d hex chars, got %d)\n",
+            path, SHA256_DIGEST_SIZE * 2, ret);
+        ima_log_add(path, hash, IMA_FILE_READ, 1, 0);
+        return -EINVAL;
+    }
+
+    /* Validate the algorithm identifier for future extensibility */
+    if (ima_validate_hash_algorithm("sha256") < 0) {
+        /* Should never happen — kept as a safety check */
+        ima_log_add(path, hash, IMA_FILE_READ, 1, 0);
+        return -EINVAL;
+    }
+
+    /* Null-terminate the xattr value using the actual bytes read */
+    {
+        int actual_len = ret < (int)sizeof(stored_hex) - 1 ? ret : (int)sizeof(stored_hex) - 1;
+        stored_hex[actual_len] = '\0';
+    }
 
     /* Parse stored hex hash */
     if (hex_to_hash(stored_hex, stored_hash) < 0) {
