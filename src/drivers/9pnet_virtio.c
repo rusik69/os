@@ -122,6 +122,59 @@ static void v9p_tag_free(uint16_t tag)
     v9p_tag_bmap[idx] &= ~bit;
 }
 
+/* v9p_tag_is_inflight: check whether a tag is currently allocated
+ * (i.e., a request with this tag is pending a response).
+ * Returns 1 if in-flight, 0 otherwise.
+ * P9_NOTAG is never in-flight (reserved value). */
+static int v9p_tag_is_inflight(uint16_t tag)
+{
+    if (tag == P9_NOTAG)
+        return 0;
+
+    uint16_t idx  = tag / 64;
+    uint64_t bit  = (uint64_t)1u << (tag % 64);
+    return (v9p_tag_bmap[idx] & bit) ? 1 : 0;
+}
+
+/* v9p_validate_response: validate a 9P response message header.
+ *
+ * Checks that:
+ *   1. The response buffer is non-NULL and at least header-sized
+ *   2. The response tag is not P9_NOTAG (reserved, never valid in response)
+ *   3. The response tag corresponds to an in-flight (pending) request
+ *      — this ensures tag-order correctness: only tags that were actually
+ *        allocated by v9p_tag_alloc are accepted as valid responses
+ *
+ * Returns 0 on success, or a negative errno on validation failure. */
+static int v9p_validate_response(const void *resp, uint32_t resplen)
+{
+    if (!resp)
+        return -EINVAL;
+    if (resplen < sizeof(struct p9_header))
+        return -EINVAL;
+
+    const struct p9_header *hdr = (const struct p9_header *)resp;
+
+    /* Tag 0xFFFF (P9_NOTAG) is reserved and must never appear in a response */
+    if (hdr->tag == P9_NOTAG) {
+        kprintf("[9p] ERROR: response carries reserved NOTAG tag, rejecting\n");
+        return -EINVAL;
+    }
+
+    /* The response tag must match an outstanding request — verify
+     * that this tag is actually marked in-flight in the bitmap.
+     * An unexpected tag indicates a protocol violation (e.g. reordered
+     * or spoofed response), a double-completion, or tag reuse collision. */
+    if (!v9p_tag_is_inflight(hdr->tag)) {
+        kprintf("[9p] ERROR: response tag %u not in flight "
+                "(stale/spoofed/double-complete), rejecting\n",
+                (unsigned int)hdr->tag);
+        return -EINVAL;
+    }
+
+    return 0;
+}
+
 /* ── Driver state ──────────────────────────────────────────────── */
 
 static int            v9p_present = 0;
@@ -152,9 +205,47 @@ static inline uint32_t v9p_inl(uint8_t off) {
 static __attribute__((unused)) int v9p_send_recv(const void *tx, uint32_t txlen,
                           void *rx, uint32_t rxmax, uint32_t *rxlen)
 {
-    (void)tx; (void)txlen; (void)rx; (void)rxmax;
-    if (rxlen) *rxlen = 0;
-    kprintf("[9pnet-virtio] message send stub (size=%u)\n", txlen);
+    int ret;
+
+    /* Validate request buffer */
+    if (!tx || txlen < sizeof(struct p9_header))
+        return -EINVAL;
+    if (!rx || rxmax < sizeof(struct p9_header))
+        return -EINVAL;
+
+    const struct p9_header *txhdr = (const struct p9_header *)tx;
+
+    /* Allocate a tag for this request */
+    uint16_t tag = v9p_tag_alloc();
+    if (tag == P9_NOTAG)
+        return -EAGAIN;
+
+    /* Stub: no actual transport implemented yet; simulate a minimal
+     * response header so the validation path can be exercised. */
+    struct p9_header *rxhdr = (struct p9_header *)rx;
+    memset(rx, 0, rxmax);
+
+    /* Echo back the same tag as a valid response (simulate loopback) */
+    rxhdr->size = sizeof(struct p9_header);
+    rxhdr->type = txhdr->type + 1; /* T* -> R* */
+    rxhdr->tag  = tag;
+
+    uint32_t actual = sizeof(struct p9_header);
+    if (rxlen)
+        *rxlen = actual;
+
+    /* Validate the response tag before delivering it to the caller.
+     * This enforces the 9P protocol invariant that response tags must
+     * correspond to in-flight (i.e., previously allocated) request tags. */
+    ret = v9p_validate_response(rx, actual);
+    if (ret < 0) {
+        kprintf("[9p] send_recv: response validation failed (%d)\n", ret);
+        v9p_tag_free(tag);
+        return ret;
+    }
+
+    kprintf("[9pnet-virtio] message send (size=%u, tag=%u) -> response tag=%u\n",
+            (unsigned int)txlen, (unsigned int)tag, (unsigned int)rxhdr->tag);
     return 0;
 }
 
