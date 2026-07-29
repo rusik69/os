@@ -106,9 +106,22 @@ static int find_rsdp(struct acpi_rsdp *out)
             memcpy(sig, (void *)(uintptr_t)addr, 8);
             if (memcmp(sig, ACPI_RSDP_SIGNATURE, 8) == 0) {
                 memcpy(out, (void *)(uintptr_t)addr, sizeof(struct acpi_rsdp));
-                /* Validate first-checksum */
-                if (acpi_checksum(out, 20) == 0)
-                    return 0;
+                /* Validate first-checksum (covers bytes 0-19, required for all versions) */
+                if (acpi_checksum(out, 20) == 0) {
+                    /* For v2+, also validate extended checksum covering the
+                     * entire RSDP (including XSDT address and reserved fields). */
+                    if (out->revision >= 2) {
+                        /* Sanity-check length to prevent stack-buffer overread
+                         * from a corrupted or malicious RSDP length field. */
+                        if (out->length < sizeof(struct acpi_rsdp) ||
+                            out->length > RSDP_MAX_LENGTH)
+                            continue;
+                        if (acpi_checksum(out, out->length) == 0)
+                            return 0;
+                    } else {
+                        return 0;
+                    }
+                }
             }
         }
     }
