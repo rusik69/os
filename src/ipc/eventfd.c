@@ -60,6 +60,12 @@ static struct eventfd_info *eventfd_get(int fd) {
 /* ── Public API ─────────────────────────────────────────────────────── */
 
 int eventfd_create(uint32_t initval, int flags) {
+    /* Validate flags — reject unknown flag bits (same as Linux does) */
+    if (flags & ~(EFD_SEMAPHORE | EFD_CLOEXEC | EFD_NONBLOCK))
+        return -EINVAL;
+
+    /* initval is uint32_t, guaranteed non-negative by its type.
+     * No runtime check needed — the type system enforces this. */
     int fd = eventfd_alloc(initval, flags);
     if (fd < 0) return -ENFILE;
     return fd;
