@@ -110,6 +110,10 @@ int audit_netlink_send(int event_type, const char *payload, int payload_len) {
     if (!audit_enabled || !audit_nl_initialized)
         return -ENOMEM;
 
+    /* Validate event type is within the defined audit message range */
+    if (event_type < AUDIT_NLMSG_BASE || event_type > AUDIT_EVENT_USER)
+        return -EINVAL;
+
     if (!payload) payload = "";
     if (payload_len <= 0) payload_len = (int)strlen(payload);
 
@@ -188,6 +192,10 @@ void __init audit_init(void) {
 static void __printf(2, 3) audit_log_formatted(int event_type, const char *fmt, ...)
 {
     if (!audit_enabled || !fmt) return;
+
+    /* Validate event type before formatting and sending */
+    if (event_type < AUDIT_NLMSG_BASE || event_type > AUDIT_EVENT_USER)
+        return;
 
     char tmp[512];
     __builtin_va_list args;
