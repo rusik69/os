@@ -121,6 +121,13 @@ int ftrace_register(const char *func_name,
         return -EINVAL;
     }
 
+    /* Validate function name length to prevent buffer overflow */
+    if (strlen(func_name) >= sizeof(g_tracepoints[0].func_name)) {
+        kprintf("[ftrace] Function name too long: %s (max %zu chars)\n",
+                func_name, sizeof(g_tracepoints[0].func_name) - 1);
+        return -EINVAL;
+    }
+
     if (!g_ftrace_initialized) ftrace_init();
 
     uint64_t irq_flags;
@@ -662,6 +669,13 @@ int ftrace_graph_register(const char *func_name)
 {
     if (!func_name)
         return -EINVAL;
+
+    /* Validate function name length to prevent buffer overflow */
+    if (strlen(func_name) >= sizeof(g_graph_func_names[0])) {
+        kprintf("[ftrace] Graph: function name too long: %s (max %zu chars)\n",
+                func_name, sizeof(g_graph_func_names[0]) - 1);
+        return -EINVAL;
+    }
 
     if (!g_graph_buf.initialized)
         ftrace_graph_init();
