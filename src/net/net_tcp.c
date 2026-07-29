@@ -599,6 +599,12 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
                     /* MSS option: 2 bytes of MSS value */
                     client_mss = (uint16_t)payload[opt_off + 2] << 8
                                | (uint16_t)payload[opt_off + 3];
+                    /* Validate MSS option value per RFC 1122 §4.2.2.6.
+                     * The minimum MSS is 536 bytes (IPv4 minimum reassembly buffer).
+                     * Clamp to the protocol-required minimum if the peer advertises
+                     * an unreasonably small value. */
+                    if (client_mss < 536)
+                        client_mss = 536;
                 } else if (kind == 34) {
                     /* TCP Fast Open (TFO) Cookie option (kind 34) */
                     int cookie_len = olen - 2;
