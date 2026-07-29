@@ -10413,6 +10413,7 @@ static int64_t sys_fadvise64(uint64_t fd, uint64_t offset, uint64_t len, uint64_
 struct timerfd {
     int in_use;
     int clockid;
+    int flags;            /* TFD_NONBLOCK, TFD_CLOEXEC */
     int absolute;         /* 1 = TFD_TIMER_ABSTIME was set on last settime */
     uint64_t it_value;    /* ticks: relative value OR absolute expiration tick */
     uint64_t it_interval; /* ticks between repeated expirations */
@@ -10434,14 +10435,19 @@ static int timerfd_do_read(int slot, uint64_t *val) {
 }
 
 static int64_t sys_timerfd_create(uint64_t clockid, uint64_t flags) {
-    (void)flags;
+    /* Validate clock id */
     if (clockid != CLOCK_MONOTONIC && clockid != CLOCK_REALTIME)
-        return (uint64_t)-1;
+        return (uint64_t)-EINVAL;
+
+    /* Validate flags: only TFD_NONBLOCK and TFD_CLOEXEC are permitted */
+    if (flags & ~(uint64_t)(TFD_NONBLOCK | TFD_CLOEXEC))
+        return (uint64_t)-EINVAL;
 
     for (int i = 0; i < TIMERFD_MAX; i++) {
         if (!timerfd_table[i].in_use) {
             timerfd_table[i].in_use = 1;
             timerfd_table[i].clockid = (int)clockid;
+            timerfd_table[i].flags = (int)flags;
             timerfd_table[i].absolute = 0;
             timerfd_table[i].it_value = 0;
             timerfd_table[i].it_interval = 0;
@@ -10451,7 +10457,7 @@ static int64_t sys_timerfd_create(uint64_t clockid, uint64_t flags) {
             return (uint64_t)(500 + i);
         }
     }
-    return (uint64_t)-1;
+    return (uint64_t)-ENFILE;
 }
 
 static int64_t sys_timerfd_settime(uint64_t fd, uint64_t flags, uint64_t new_addr,
