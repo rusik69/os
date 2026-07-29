@@ -142,16 +142,57 @@ static uint32_t seccomp_run_filter(struct seccomp_data *sd,
     return SECCOMP_RET_ALLOW;
 }
 
+/* ── Filter validation ─────────────────────────────────────────── */
+
+/*
+ * Validate a seccomp BPF filter program before loading.
+ * Returns 0 on success, or a negative errno on failure.
+ *
+ * Checks performed:
+ *   - Non-null program and instruction pointer
+ *   - Instruction count within [1, SECCOMP_FILTER_MAX_INSNS]
+ *   - Every jump instruction's true/false targets stay within bounds
+ */
+static int seccomp_filter_validate(const struct sock_fprog *prog)
+{
+    if (!prog || !prog->filter)
+        return -EFAULT;
+
+    /* ── Instruction count validation ───────────────────────── */
+    if (prog->len == 0)
+        return -EINVAL;
+    if (prog->len > SECCOMP_FILTER_MAX_INSNS)
+        return -EINVAL;
+
+    /* ── Jump target bounds check ───────────────────────────── */
+    for (uint16_t i = 0; i < prog->len; i++) {
+        uint16_t code = prog->filter[i].code;
+        /* Only jump-class instructions need checking */
+        if ((code & 0x07) == 0x05) { /* BPF_JMP class */
+            /* After executing this instruction, pc becomes pc + 1 + jt/jf.
+             * Valid range is [0, prog->len - 1] (inclusive) so the while
+             * loop in seccomp_run_filter can execute it. */
+            uint32_t pc_true  = (uint32_t)i + 1 + (uint32_t)prog->filter[i].jt;
+            uint32_t pc_false = (uint32_t)i + 1 + (uint32_t)prog->filter[i].jf;
+            if (pc_true >= prog->len && pc_false >= prog->len)
+                return -EINVAL;
+        }
+    }
+
+    return 0;
+}
+
 /* ── Public API ───────────────────────────────────────────────── */
 
 int seccomp_filter_install(const struct sock_fprog *prog)
 {
     if (!seccomp_initialised)
         return 0;
-    if (!prog || !prog->filter)
-        return -EFAULT;
-    if (prog->len == 0 || prog->len > 4096)  /* sanity limit */
-        return -EINVAL;
+
+    /* Validate the filter program before loading */
+    int ret = seccomp_filter_validate(prog);
+    if (ret < 0)
+        return ret;
 
     struct process *current = process_get_current();
     if (!current)

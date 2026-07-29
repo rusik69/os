@@ -91,6 +91,10 @@ struct sock_fprog {
     struct sock_filter *filter;   /* pointer to instructions */
 };
 
+/* Maximum number of instructions in a seccomp BPF filter program.
+ * Linux enforces exactly BPF_MAXINSNS = 4096. */
+#define SECCOMP_FILTER_MAX_INSNS  4096
+
 /* ── API ──────────────────────────────────────────────────────── */
 
 /* Install a seccomp filter for the current process.
