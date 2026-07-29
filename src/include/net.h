@@ -305,6 +305,21 @@ struct icmp_header {
     uint16_t seq;
 } __attribute__((packed));
 
+/* ICMP type constants (RFC 792) */
+#define ICMP_ECHOREPLY      0   /* Echo Reply */
+#define ICMP_UNREACH        3   /* Destination Unreachable */
+#define ICMP_SOURCEQUENCH   4   /* Source Quench */
+#define ICMP_REDIRECT       5   /* Redirect */
+#define ICMP_ECHO           8   /* Echo Request */
+#define ICMP_TIMXCEED       11  /* Time Exceeded */
+#define ICMP_PARAMPROB      12  /* Parameter Problem */
+#define ICMP_TSTAMP         13  /* Timestamp */
+#define ICMP_TSTAMPREPLY    14  /* Timestamp Reply */
+#define ICMP_INFO           15  /* Information Request */
+#define ICMP_INFOREPLY      16  /* Information Reply */
+#define ICMP_MASKREQ        17  /* Address Mask Request */
+#define ICMP_MASKREPLY      18  /* Address Mask Reply */
+
 /* UDP header */
 struct udp_header {
     uint16_t src_port;

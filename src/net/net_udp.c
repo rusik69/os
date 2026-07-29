@@ -256,11 +256,6 @@ static void handle_dns_reply(const uint8_t *data, uint16_t len) {
  *                     default bit 12 (ICMP_PARAMPROB)
  */
 
-/* ICMP type constants */
-#define ICMP_UNREACH    3   /* Destination Unreachable */
-#define ICMP_TIMXCEED   11  /* Time Exceeded */
-#define ICMP_PARAMPROB  12  /* Parameter Problem */
-
 /* Per-destination rate limit tracking */
 #define ICMP_RATELIMIT_DEST_MAX 16
 

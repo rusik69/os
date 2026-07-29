@@ -795,16 +795,22 @@ static void handle_icmp(struct ip_header *ip, const uint8_t *payload, uint16_t l
         return;
     const struct icmp_header *icmp = (const struct icmp_header *)payload;
 
-    if (icmp->type == 8) {
+    /* Validate ICMP type is within known range before generating response */
+    if (icmp->type > ICMP_MASKREPLY) {
+        /* Unknown/unsupported ICMP type (>18 is unassigned per RFC 792) */
+        return;
+    }
+
+    if (icmp->type == ICMP_ECHO) {
         uint8_t reply_buf[1500];
         uint16_t reply_len = len < sizeof(reply_buf) ? len : sizeof(reply_buf);
         memcpy(reply_buf, payload, reply_len);
         struct icmp_header *reply = (struct icmp_header *)reply_buf;
-        reply->type = 0;
+        reply->type = ICMP_ECHOREPLY;
         reply->checksum = 0;
         reply->checksum = net_checksum(reply_buf, reply_len);
         send_ip(ntohl(ip->src_ip), IP_PROTO_ICMP, reply_buf, reply_len);
-    } else if (icmp->type == 0) {
+    } else if (icmp->type == ICMP_ECHOREPLY) {
         ping_reply_received = 1;
     }
 }
