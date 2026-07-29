@@ -5,6 +5,7 @@
 #include "types.h"
 #include "spinlock.h"
 #include "kernel.h"
+#include "uaccess.h"
 
 /* AIO enhanced - supplementary async I/O operations.
  * Builds on drivers/aio.c with additional poll/getevents wrappers.
@@ -114,6 +115,36 @@ static int aio_timeout(uint64_t ctx_id, const struct timespec *timeout)
 }
 
 /*
+ * aio_validate_iocb_data — validate an iocb's data buffer pointer
+ * before calling copy_from_user.
+ *
+ * Checks that:
+ *   1. aio_buf is not NULL (zero)
+ *   2. aio_buf + aio_nbytes does not overflow/wrap
+ *   3. The buffer range does not extend into kernel address space
+ *
+ * Returns 0 on success, -EINVAL if validation fails.
+ */
+static int aio_validate_iocb_data(const struct iocb *iocb)
+{
+    if (!iocb)
+        return -EINVAL;
+    /* Data buffer pointer must not be NULL */
+    if (iocb->aio_buf == 0)
+        return -EINVAL;
+    /* Reject wrap-around */
+    if (iocb->aio_buf + iocb->aio_nbytes < iocb->aio_buf)
+        return -EINVAL;
+    /* Reject kernel-space addresses (user data must reside below 0xFFFF800000000000) */
+    if (iocb->aio_buf >= 0xFFFF800000000000ULL)
+        return -EINVAL;
+    /* Reject excessively large transfer that would overflow kernel buffers */
+    if (iocb->aio_nbytes > 1024 * 1024) /* 1 MB cap */
+        return -EINVAL;
+    return 0;
+}
+
+/*
  * aio_batch — batch-submit multiple I/O operations.
  * Validates the batch array. Returns 0 for an empty batch, -EINVAL otherwise.
  */
@@ -124,10 +155,15 @@ static int aio_batch(uint64_t ctx_id, struct iocb **iocbs, long nr)
         return -EINVAL;
     if (nr == 0)
         return 0;
-    /* Validate each iocb pointer */
+    /* Validate each iocb pointer and data buffer */
     for (long i = 0; i < nr; i++) {
         if (!iocbs[i])
             return -EINVAL;
+        /* Validate the data buffer pointer within each iocb
+         * before any copy_from_user operation */
+        int ret = aio_validate_iocb_data(iocbs[i]);
+        if (ret != 0)
+            return ret;
     }
     return 0;
 }
@@ -149,6 +185,12 @@ static int aio_enhanced_submit(void *ctx, void *iocb, int nr)
     (void)ctx;
     (void)iocb;
     (void)nr;
+    /* Validate the iocb data buffer pointer before submit */
+    if (iocb) {
+        int ret = aio_validate_iocb_data((const struct iocb *)iocb);
+        if (ret != 0)
+            return ret;
+    }
     kprintf("[aio] aio_enhanced_submit: not yet implemented\n");
     return 0;
 }
