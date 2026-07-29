@@ -90,6 +90,42 @@ static int hex_decode(const char *hex, uint8_t *out, int max_bytes)
     return len;
 }
 
+/* ── Root hash validation ─────────────────────────────────────────── */
+
+/* Validate that the root hash is properly initialised.
+ *
+ * The root hash is the root of trust for dm-verity — it must not be
+ * all-zeros (uninitialised / sentinel state) or all-0xFF (bit-flip
+ * corruption).  Returns 0 on success, -EINVAL if invalid.
+ *
+ * @param vp  verity private data (must be non-NULL)
+ * @return 0 if the root hash is valid, -EINVAL otherwise
+ */
+static int verity_validate_root_hash(const struct verity_private *vp)
+{
+    int i;
+    int all_zero = 1;
+    int all_one  = 1;
+
+    for (i = 0; i < VERITY_HASH_SIZE; i++) {
+        if (vp->root_hash[i] != 0x00)
+            all_zero = 0;
+        if (vp->root_hash[i] != 0xFF)
+            all_one  = 0;
+    }
+
+    if (all_zero) {
+        kprintf("[DM-VERITY] root hash is all-zeros (uninitialised)\n");
+        return -EINVAL;
+    }
+    if (all_one) {
+        kprintf("[DM-VERITY] root hash is all-0xFF (corrupted)\n");
+        return -EINVAL;
+    }
+
+    return 0;
+}
+
 /* ── Hash tree helpers ─────────────────────────────────────────────── */
 
 /* Given a data block index, compute the hash device sector offset for
@@ -141,6 +177,21 @@ static int verity_verify_block(struct verity_private *vp,
     uint8_t  stored_hash[VERITY_HASH_SIZE];
     uint64_t hash_sector;
     int      ret;
+
+    /* ── Validate kernel root hash before trusting tree ──────────── */
+    ret = verity_validate_root_hash(vp);
+    if (ret != 0) {
+        kprintf("[DM-VERITY] verification rejected: invalid root hash\n");
+        return ret;
+    }
+
+    /* ── Validate block number is within range ───────────────────── */
+    if (block_num >= vp->total_blocks) {
+        kprintf("[DM-VERITY] block %llu out of range (total %llu)\n",
+                (unsigned long long)block_num,
+                (unsigned long long)vp->total_blocks);
+        return -EINVAL;
+    }
 
     /* Compute hash of the data block */
     sha256_hash(hash, buf, VERITY_BLOCK_SIZE);
@@ -247,6 +298,8 @@ static int verity_ctr(struct dm_target *ti, int argc, const char **argv)
         return -EINVAL;
     }
 
+    int ret;
+
     struct verity_private *priv = (struct verity_private *)
         kmalloc(sizeof(struct verity_private));
     if (!priv) return -ENOMEM;
@@ -308,6 +361,14 @@ static int verity_ctr(struct dm_target *ti, int argc, const char **argv)
                 VERITY_HASH_SIZE * 2, hash_len * 2);
         kfree(priv);
         return -EINVAL;
+    }
+
+    /* Validate the root hash is not all-zeros (uninitialised sentinel) */
+    ret = verity_validate_root_hash(priv);
+    if (ret != 0) {
+        kprintf("[DM-VERITY] ctr: root hash is invalid (all-zeros or all-0xFF)\n");
+        kfree(priv);
+        return ret;
     }
 
     /* Compute total blocks from the target length in sectors */
