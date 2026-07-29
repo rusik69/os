@@ -117,9 +117,18 @@ int ipv6_parse_exthdr(const uint8_t *data, uint16_t total_len,
     const uint8_t *ptr  = data + sizeof(struct ipv6_header);
     uint16_t remaining = payload_len;
     const struct ipv6_fragment *frag_hdr = NULL;
+    unsigned int chain_depth = 0;   /* guard against infinite/malicious chains (RFC 8200 §4.1) */
+    #define IPV6_MAX_EXTHDR_CHAIN 256
 
-    /* Walk the extension header chain */
+    /* Walk the extension header chain (max IPV6_MAX_EXTHDR_CHAIN iterations) */
     while (remaining > 0 && ipv6_is_extension_header(next_hdr)) {
+        /* Enforce maximum extension header chain depth */
+        if (++chain_depth > IPV6_MAX_EXTHDR_CHAIN) {
+            kprintf("[ipv6_core] extension header chain too deep "
+                    "(%u headers, max %u)\\n",
+                    chain_depth, IPV6_MAX_EXTHDR_CHAIN);
+            return -EINVAL;
+        }
         switch (next_hdr) {
         case IPV6_NEXTHDR_HOPOPT:   /* 0 — Hop-by-Hop Options */
         case IPV6_NEXTHDR_DEST: {   /* 60 — Destination Options */
