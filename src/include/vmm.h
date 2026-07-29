@@ -269,4 +269,40 @@ int vmm_get_committed(void);
 int __must_check vmm_commit(uint64_t bytes);
 void vmm_uncommit(uint64_t bytes);
 
+/* ── Valid VMM flag mask and PTE flag validation ────────────────────
+ * All known valid PTE/VMM flag bits. Flags passed to VMM mapping
+ * functions are validated against this mask to catch programming
+ * errors (e.g., stray high bits set by a caller, reserved-bit
+ * corruption). */
+#define VMM_FLAGS_VALID_MASK  (PTE_NX | VMM_FLAG_LOCKED | VMM_FLAG_SHARED | 0xFFFULL)
+
+/* Validate VMM page-table entry flags before setting a PTE.
+ * @param flags        VMM flags to validate (VMM_FLAG_* / PTE_*)
+ * @param user_mapping Non-zero if the target is a user-space mapping
+ * @return 0 on success, -EINVAL if flags contain undefined/reserved bits
+ *         or USER/NX consistency is violated.
+ *
+ * For kernel mappings (user_mapping == 0):
+ *   - The USER bit must NOT be set — kernel pages must be supervisor-only.
+ * For user mappings (user_mapping != 0):
+ *   - Present pages MUST have the USER bit set — otherwise user-space
+ *     accesses would fault with supervisor-only protection.
+ * In both cases:
+ *   - No bits outside VMM_FLAGS_VALID_MASK may be set. */
+static inline int vmm_validate_pte_flags(uint64_t flags, int user_mapping) {
+    /* Reject undefined/reserved bits */
+    if (flags & ~(uint64_t)VMM_FLAGS_VALID_MASK)
+        return -EINVAL;
+    if (user_mapping) {
+        /* For user mappings with PRESENT, USER bit must be set */
+        if ((flags & VMM_FLAG_PRESENT) && !(flags & PTE_USER))
+            return -EINVAL;
+    } else {
+        /* For kernel mappings, USER bit must NOT be set */
+        if (flags & PTE_USER)
+            return -EINVAL;
+    }
+    return 0;
+}
+
 #endif

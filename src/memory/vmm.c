@@ -208,6 +208,11 @@ void __init vmm_init(void) {
  * Return: 0 on success, -ENOMEM on page table allocation failure.
  */
 int vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
+    /* Validate PTE flags: no reserved bits, no USER bit for kernel mappings */
+    int ret_flags = vmm_validate_pte_flags(flags, 0);
+    if (ret_flags < 0)
+        return ret_flags;
+
     int pml4_idx = (virt >> 39) & 0x1FF;
     int pdpt_idx = (virt >> 30) & 0x1FF;
     int pd_idx   = (virt >> 21) & 0x1FF;
@@ -591,6 +596,10 @@ static uint64_t *get_or_create_table_in(uint64_t *table, int index, uint64_t fla
 int vmm_map_user_page(uint64_t *pml4, uint64_t virt, uint64_t phys, uint64_t flags) {
     if (!pml4) return -EINVAL;
     if (virt >= USER_VADDR_MAX) return -EINVAL;
+    /* Validate PTE flags: no reserved bits, USER bit required for present user mappings */
+    int ret_flags = vmm_validate_pte_flags(flags, 1);
+    if (ret_flags < 0)
+        return ret_flags;
 
     int pml4_idx = (virt >> 39) & 0x1FF;
     int pdpt_idx = (virt >> 30) & 0x1FF;
@@ -1293,6 +1302,11 @@ int vmm_map_user_hugepage_internal(uint64_t *pml4, uint64_t virt,
     if (huge_phys & (HUGE_PAGE_SIZE - 1)) return -EINVAL;
     if (virt >= USER_VADDR_MAX) return -EINVAL;
     if (!pml4) return -EINVAL;
+    /* Validate PTE flags: no reserved bits, USER bit required for present user mappings */
+    {
+        int ret_f = vmm_validate_pte_flags(flags, 1);
+        if (ret_f < 0) return ret_f;
+    }
 
     int idx4 = (virt >> 39) & 0x1FF;
     int idx3 = (virt >> 30) & 0x1FF;
