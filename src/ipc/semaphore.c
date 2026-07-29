@@ -49,6 +49,9 @@ struct sem_entry {
 static struct sem_entry sems[SEM_MAX];
 
 int sem_init(int count) {
+    /* Validate initial count is non-negative */
+    if (count < 0)
+        return -EINVAL;
     for (int i = 0; i < SEM_MAX; i++) {
         __asm__ volatile("cli");
         if (!sems[i].in_use) {
