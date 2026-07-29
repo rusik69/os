@@ -777,7 +777,15 @@ static void process_ssh_data(struct ssh_session *s, const uint8_t *data, int len
         if (remaining < 4) break;
 
         int pkt_len = g32(s->recv_buf + consumed);
-        if (pkt_len < 1 || pkt_len > 35000) break;
+        /* Validate packet length: must be at least 1 (padding_length)
+         * and at most the buffer capacity minus header/MAC overhead.
+         * SSH_SESS_BUF=16384, so max safe pkt_len is
+         * 16384 - 4(pkt_len) - 1(pad) - 1(type) = 16378 for cleartext,
+         * or 16384 - 4 - 32(MAC) = 16348 for encrypted. Use the tighter
+         * bound for both paths to keep the check simple. */
+        int max_pkt = (int)sizeof(s->recv_buf) - 4 - 32 - 1;
+        if (max_pkt < 1) max_pkt = 1;
+        if (pkt_len < 1 || pkt_len > max_pkt) break;
 
         int total_pkt = 4 + pkt_len;
         if (!s->encrypted)
@@ -794,6 +802,14 @@ static void process_ssh_data(struct ssh_session *s, const uint8_t *data, int len
 
         if (!s->encrypted) {
             int pad = pkt[4];
+            /* SSH requires padding_length >= 4 and padding must fit
+             * within the declared pkt_len (RFC 4253 §6). */
+            if (pad < 4 || pad > pkt_len - 2) {
+                /* Malformed packet — discard and disconnect */
+                net_tcp_close(s->conn_id);
+                s->active = 0;
+                break;
+            }
             type = pkt[5];
             payload = pkt + 6;
             payload_len = pkt_len - pad - 1 - 1;
@@ -808,6 +824,13 @@ static void process_ssh_data(struct ssh_session *s, const uint8_t *data, int len
                            decrypted, decrypted, dec_len);
 
             int pad = decrypted[0];
+            /* Validate padding: SSH requires padding_length >= 4 and
+             * must fit within the decrypted pkt_len. */
+            if (pad < 4 || pad > pkt_len - 2) {
+                net_tcp_close(s->conn_id);
+                s->active = 0;
+                break;
+            }
             type = decrypted[1];
             payload = decrypted + 2;
             payload_len = pkt_len - pad - 1 - 1;
