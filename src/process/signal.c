@@ -1,9 +1,13 @@
 /*
  * Signal handling — real-time signals + siginfo_t delivery
  *
- * Supports signals 1-64 (SIGRTMIN=32..SIGRTMAX=64).
+ * Supports signals 1-63 (standard 1-31, RT 32-63).
  * Real-time signals (SIGRTMIN-SIGRTMAX) are queued with siginfo_t.
  * SIGCHLD delivers exit status via siginfo_t.
+ *
+ * Signal number range: standard signals 1-31, real-time signals 32-63.
+ * The uint64_t pending_signals bitmask limits us to bits 1-63 (signal 64
+ * would require a shift beyond the type width and is thus unsupported).
  */
 #include "signal.h"
 
@@ -25,8 +29,8 @@
 #include "uaccess.h"  /* for copy_to_user */
 #include "vsyscall.h" /* for VSYSCALL_PAGE_VADDR, VSYSCALL_SIGRETURN, VDSO_ENTRY_SIZE */
 
-/* Maximum signal number (signals 1-64) — bounds all signal arrays */
-#define MAX_SIG 65
+/* Maximum signal number (signals 1-63) — bounds all signal arrays */
+#define MAX_SIG 64
 
 /* Forward declarations */
 void signal_notify_parent(struct process *p, int si_code, int si_status);
@@ -671,6 +675,12 @@ void signal_check(void) {
             continue;
 
         p->pending_signals &= ~(1ULL << sig);
+
+        /* Validate signal number range before delivery.
+         * signal_validate returns -EINVAL for signals outside 1..SIG_MAX-1.
+         * If invalid, we've already cleared the bit — just skip processing. */
+        if (signal_validate(sig) != 0)
+            continue;
 
         signal_handler_t handler = p->sig_handlers[sig];
 

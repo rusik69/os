@@ -39,7 +39,7 @@ for real-time tasks, plus SMP load balancing and NUMA-aware placement.
 |------|-------------|
 | `process.c` | Core process lifecycle: fork, exec, exit, wait. PID bitmap allocator, process table management, credentials, rlimits, namespace integration |
 | `scheduler.c` | SMP multi-class scheduler: CFS/EEVDF for SCHED_OTHER, priority queues for RT, idle balancing, PELT load tracking, context switch, NUMA-aware placement, preemption, PSI integration |
-| `signal.c` | Signal delivery (signals 1-64), real-time queued signals with siginfo_t, SIGCHLD exit status, core dump handler, signal mask and pending set management |
+| `signal.c` | Signal delivery (signals 1-63), real-time queued signals with siginfo_t, SIGCHLD exit status, core dump handler, signal mask and pending set management |
 | `thread.c` | Thread management: clone() implementation, TLS area setup via FS segment base, per-thread errno and signal masks, thread descriptor allocator |
 | `futex.c` | Fast Userspace Mutex: futex_wait/futex_wake/requeue operations with hash-based bucketing (256 buckets), timeout support, PI futex |
 | `pgrp.c` | Process group and session management: setpgid, getsid, session leaders, foreground process group tracking for job control |

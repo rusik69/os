@@ -59,7 +59,7 @@ struct siginfo {
 
 /* Real-time signals */
 #define SIGRTMIN  32
-#define SIGRTMAX  64
+#define SIGRTMAX  63
 
 /* SIGCHLD si_code values */
 #define CLD_EXITED    1
@@ -71,7 +71,7 @@ struct siginfo {
 
 typedef void (*signal_handler_t)(int signum);
 
-#define SIG_MAX  65  /* signals 1-64 */
+#define SIG_MAX  64  /* signals 1-63 (bit 63 is max addressable in uint64_t mask) */
 #define SIG_DFL  ((signal_handler_t)0)  /* Default action */
 #define SIG_IGN  ((signal_handler_t)1)  /* Ignore */
 

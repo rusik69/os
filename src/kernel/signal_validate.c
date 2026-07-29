@@ -166,11 +166,23 @@ int signal_validate_on_delivery(struct siginfo *info)
     return signal_validate_siginfo(info, 0);
 }
 
-/* ── Stub: signal_validate ─────────────────────────────── */
+/* ── signal_validate — validate signal number range ────────────────
+ *
+ * Validates that @sig is a valid signal number in the supported range.
+ * Standard signals: 1-31 (SIGHUP..SIGSYS)
+ * Real-time signals: 32-63 (SIGRTMIN..SIGRTMAX)
+ *
+ * Returns 0 if valid, -EINVAL if out of range.
+ * Called from signal_check() during signal delivery to ensure no
+ * out-of-range signal number is processed.
+ */
 int signal_validate(int sig)
 {
-    (void)sig;
-    kprintf("[signal] signal_validate: not yet implemented\n");
+    if (sig < 1 || sig >= SIG_MAX) {
+        kprintf("[signal] signal_validate: invalid signal number %d (valid range 1-%d)\n",
+                sig, SIG_MAX - 1);
+        return -EINVAL;
+    }
     return 0;
 }
 /* ── Stub: signal_valid_rt ─────────────────────────────── */

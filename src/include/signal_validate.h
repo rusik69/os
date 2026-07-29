@@ -15,6 +15,11 @@ int signal_validate_siginfo(struct siginfo *info, int is_from_userspace);
 /* Hook called at signal delivery point (just before userspace handler sees it). */
 int signal_validate_on_delivery(struct siginfo *info);
 
+/* Validate signal number range (1 to SIG_MAX-1).
+ * Returns 0 if valid, -EINVAL if out of range.
+ * Called from signal_check() during signal delivery. */
+int signal_validate(int sig);
+
 /* Set debug flag for preserving kernel addresses in si_addr */
 void signal_validate_set_debug(int val);
 
