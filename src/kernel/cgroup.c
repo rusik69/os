@@ -448,6 +448,11 @@ int cgroup_attach(int cg_id, int pid)
     if (!cgroup_valid(cg_id))
         return -EINVAL;
 
+    /* Validate PID — must be a positive integer (PID 0 is the idle
+     * process and cannot belong to a cgroup). */
+    if (pid <= 0)
+        return -EINVAL;
+
     spinlock_acquire(&g_cgroup_lock);
     struct cgroup *cg = &g_cgroups[cg_id];
 
