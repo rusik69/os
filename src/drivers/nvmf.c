@@ -68,19 +68,57 @@ static int nvmf_handle_connect(struct nvmf_target *tgt,
     struct nvmf_capsule_rsp rsp;
     uint8_t data_seg[256];
     uint32_t dlen;
+    uint32_t cdw10_host;
+    uint16_t qid;
+    uint16_t recfmt;
 
     kprintf("[NVMF] Received Fabrics CONNECT\n");
+
+    /*
+     * Validate connect command parameters before association.
+     * Per NVMe-oF spec, the connect command must carry at least the
+     * PDU header plus the connect command payload.
+     */
+    dlen = nvmf_htons(req_hdr->len);
+    if (dlen < sizeof(*req_hdr) + sizeof(conn_req)) {
+        kprintf("[NVMF] Connect: truncated PDU (%u < %zu)\n",
+                dlen, sizeof(*req_hdr) + sizeof(conn_req));
+        return -EINVAL;
+    }
 
     /* Read the connect command payload */
     if (nvmf_recv_exact(tgt, &conn_req, sizeof(conn_req), 100) < 0)
         return -EIO;
 
+    /* Validate opcode is a Fabric connect */
+    if (conn_req.opcode != NVMF_FABRIC_CONNECT) {
+        kprintf("[NVMF] Connect: invalid opcode 0x%02x\n", conn_req.opcode);
+        return -EINVAL;
+    }
+
+    /* Validate namespace ID is non-zero */
+    if (nvmf_htonl(conn_req.nsid) == 0) {
+        kprintf("[NVMF] Connect: invalid namespace ID 0\n");
+        return -EINVAL;
+    }
+
+    /* Validate RECFMT (bits 31:16 of cdw10) and QID (bits 15:0) */
+    cdw10_host = nvmf_htonl(conn_req.cdw10);
+    recfmt = (uint16_t)(cdw10_host >> 16);
+    qid = (uint16_t)(cdw10_host & 0xFFFF);
+
+    if (recfmt != 0) {
+        kprintf("[NVMF] Connect: unsupported record format %u\n", recfmt);
+        return -EINVAL;
+    }
+
+    if (qid > 16) {
+        kprintf("[NVMF] Connect: queue ID %u exceeds maximum (16)\n", qid);
+        return -EINVAL;
+    }
+
     /* Read optional data segment containing host/target NQN */
-    dlen = nvmf_htons(req_hdr->len);          /* convert to host byte order */
-    if (dlen < sizeof(*req_hdr) + sizeof(conn_req))
-        dlen = 0;                             /* malformed: no data segment */
-    else
-        dlen -= sizeof(*req_hdr) + sizeof(conn_req);
+    dlen -= sizeof(*req_hdr) + sizeof(conn_req);
     if (dlen > sizeof(data_seg))
         dlen = sizeof(data_seg);              /* clamp to buffer size */
     if (dlen > 0) {
@@ -88,8 +126,8 @@ static int nvmf_handle_connect(struct nvmf_target *tgt,
             return -EIO;
     }
 
-    kprintf("[NVMF] Connect: nsid=%u qid=%u\n",
-            nvmf_htonl(conn_req.nsid), conn_req.cdw10 & 0xFFFF);
+    kprintf("[NVMF] Connect: nsid=%u qid=%u recfmt=%u\n",
+            nvmf_htonl(conn_req.nsid), qid, recfmt);
 
     /* Build connect response */
     struct nvmf_connect_rsp *conn_rsp = (struct nvmf_connect_rsp *)&rsp.cqe.cdw0;
