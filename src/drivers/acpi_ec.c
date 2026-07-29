@@ -50,6 +50,14 @@
 #define EC_TIMEOUT_SHORT   5000    /* ~25us @ 200MHz core — fits in cache */
 #define EC_TIMEOUT_LONG    100000  /* ~500us — worst-case EC response */
 
+/*
+ * Total command timeout — bounds the entire ec_read/ec_write sequence.
+ * Each IO wait step deducts its worst-case from this budget, providing
+ * a cumulative cap so a stuck EC cannot consume unbounded CPU time
+ * across multiple wait loops within a single command.
+ */
+#define EC_CMD_TIMEOUT    900000  /* ~4.5ms @ 200MHz — total per command */
+
 static int ec_initialized = 0;
 static int ec_present = 0;
 static int ec_burst_supported = 0;
@@ -163,18 +171,30 @@ static int ec_ensure_burst(void)
 /* Read a byte from EC at given address */
 int ec_read(uint8_t addr, uint8_t *val)
 {
+    int remaining = EC_CMD_TIMEOUT;
+
     if (!ec_present) return -1;
+    if (!val) return -1;                     /* NULL check — prevent write to invalid address */
 
     /* Attempt to use burst mode */
     ec_ensure_burst();
+    /* Charge worst-case burst overhead (3 wait calls × EC_TIMEOUT_LONG) */
+    remaining -= 3 * EC_TIMEOUT_LONG;
+    if (remaining <= 0) return -1;
 
     if (ec_wait_ibf() < 0) return -1;
+    remaining -= EC_TIMEOUT_LONG;
+    if (remaining <= 0) return -1;
     outb(EC_CMD_READ, EC_CMD);
 
     if (ec_wait_ibf() < 0) return -1;
+    remaining -= EC_TIMEOUT_LONG;
+    if (remaining <= 0) return -1;
     outb(addr, EC_DATA);
 
     if (ec_wait_obf() < 0) return -1;
+    remaining -= EC_TIMEOUT_LONG;
+    if (remaining <= 0) return -1;
     *val = inb(EC_DATA);
     return 0;
 }
@@ -182,22 +202,35 @@ int ec_read(uint8_t addr, uint8_t *val)
 /* Write a byte to EC at given address */
 int ec_write(uint8_t addr, uint8_t val)
 {
+    int remaining = EC_CMD_TIMEOUT;
+
     if (!ec_present) return -1;
 
     /* Attempt to use burst mode */
     ec_ensure_burst();
+    /* Charge worst-case burst overhead (3 wait calls × EC_TIMEOUT_LONG) */
+    remaining -= 3 * EC_TIMEOUT_LONG;
+    if (remaining <= 0) return -1;
 
     if (ec_wait_ibf() < 0) return -1;
+    remaining -= EC_TIMEOUT_LONG;
+    if (remaining <= 0) return -1;
     outb(EC_CMD_WRITE, EC_CMD);
 
     if (ec_wait_ibf() < 0) return -1;
+    remaining -= EC_TIMEOUT_LONG;
+    if (remaining <= 0) return -1;
     outb(addr, EC_DATA);
 
     if (ec_wait_ibf() < 0) return -1;
+    remaining -= EC_TIMEOUT_LONG;
+    if (remaining <= 0) return -1;
     outb(val, EC_DATA);
 
     /* Wait for EC to consume the data byte (IBF=0) before returning */
     if (ec_wait_ibf() < 0) return -1;
+    remaining -= EC_TIMEOUT_LONG;
+    if (remaining <= 0) return -1;
 
     return 0;
 }
