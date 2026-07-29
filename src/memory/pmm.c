@@ -1,3 +1,110 @@
+/*
+ * ────────────────────────────────────────────────────────────────────────────
+ * PMM — Physical Memory Manager
+ * ────────────────────────────────────────────────────────────────────────────
+ *
+ * OVERVIEW
+ * --------
+ * The Physical Memory Manager (PMM) manages all physical 4 KB frames in the
+ * system.  It provides allocation and deallocation of individual frames and
+ * contiguous frame ranges.  The PMM is the foundation upon which the Virtual
+ * Memory Manager (VMM) and Slab allocator are built.
+ *
+ * DATA STRUCTURES
+ * ───────────────
+ *   frame_bitmap[]  — Bitmap of physical frames (MAX_FRAMES = 2M = 8 GB).
+ *                      Each bit represents one 4 KB frame: 1 = used, 0 = free.
+ *
+ *   frame_refcount[] — Per-frame reference count for Copy-on-Write (COW)
+ *                      tracking.  A value of PMM_BROKEN_REFCNT (0xFFFF)
+ *                      permanently marks a frame as broken (hardware error).
+ *
+ *   pmm_hint         — Last-known free frame index.  The bitmap linear scan
+ *                      starts from this hint to achieve locality and avoid
+ *                      re-scanning low frames on every allocation.
+ *
+ * ZONES & MIGRATION TYPES
+ * ───────────────────────
+ *   Physical frames are tracked by pageblock migration types (MIGRATE_*):
+ *   MIGRATE_UNMOVABLE, MIGRATE_MOVABLE, MIGRATE_RECLAIMABLE, etc.  Each
+ *   pageblock (typically 2 MB aligned) has a single migration type that
+ *   guides the compaction and page reclaim subsystems.  See pageblock.h.
+ *
+ * PER-CPU HOT CACHE
+ * ─────────────────
+ *   To reduce contention on the global bitmap spinlock, each CPU maintains
+ *   a small pre-allocated cache (PMM_CPU_CACHE_SIZE = 8 frames).  The fast
+ *   allocation path pops from this cache; the fast free path pushes to it.
+ *   Only the owning CPU accesses its own cache (lock-free with local IRQ
+ *   save/restore for reentrancy from interrupt handlers).
+ *
+ *   Cache refill (pmm_cache_refill) grabs pmm_global_lock, pops 8 frames
+ *   from the bitmap, and stores them in the per-CPU cache.  Drain does the
+ *   reverse: when the cache is full, half its entries are flushed back to
+ *   the bitmap under the global lock.  CPU hotplug uses pmm_cpu_offline()
+ *   to drain a going-offline CPU's cache before the CPU is deactivated.
+ *
+ * ALLOCATION FLOW  (pmm_alloc_frame, line ~1010)
+ * ─────────────────
+ *   1. Fast path: pop from per-CPU hot cache (lock-free with IRQ save).
+ *      Poison the page with 0xDEADBEEF pattern.  Increment vm_pgalloc.
+ *      Add page to MGLRU tracking.
+ *   2. Proactive reclaim check: before falling back to the global bitmap,
+ *      check if the system is near the reclaim watermark and try to free
+ *      pages preemptively (pmm_proactive_reclaim).
+ *   3. Slow path: refill the per-CPU cache from the global bitmap
+ *      (pmm_cache_refill under pmm_global_lock).  Then try the fast path
+ *      again.
+ *   4. OOM path: if still no frame available, run full OOM recovery
+ *      (pmm_oom_recover) which may invoke the OOM killer or compact
+ *      memory.  Record the failure in the ring buffer for diagnostics.
+ *   5. Return 0 on complete failure.
+ *
+ * FREE FLOW  (pmm_free_frame, line ~1318)
+ * ──────────
+ *   1. Validate address (page-aligned, not out of range, not broken).
+ *   2. Adjust reference count: if refcount > 1 (COW), decrement and
+ *      leave the frame allocated.
+ *   3. If refcount reaches 0, push to per-CPU hot cache.
+ *   4. If cache is full, drain half the cache to the global bitmap,
+ *      then push the frame.  Fallback to direct bitmap free if needed.
+ *   5. Poison the page with 0xDC pattern before recycling.
+ *   6. Remove page from MGLRU tracking.
+ *
+ * INITIALIZATION  (pmm_init, line ~386)
+ * ────────────────
+ *   pmm_init() parses the Multiboot memory map and builds the frame bitmap:
+ *     - First pass: marks all frames as used, then clears bits for
+ *       available (type 1) memory regions.
+ *     - Second pass: re-marks bits for non-available regions (types 2, 3,
+ *       4, ...) that overlap with type-1 ranges.
+ *     - Reserves kernel memory frames (from _kernel_start to _kernel_end).
+ *     - Advances the allocation hint past the first 64 MB to avoid
+ *       page-table corruption from huge-page self-references.
+ *     - Pre-populates the boot CPU's hot cache.
+ *     - Initializes pageblock migration type tracking.
+ *
+ * BROKEN PAGE TRACKING
+ * ─────────────────────
+ *   Pages that experience hardware memory errors (MCE / corrected errors)
+ *   are marked broken via pmm_mark_broken() which sets frame_refcount to
+ *   PMM_BROKEN_REFCNT (0xFFFF).  The allocator will never return a broken
+ *   page, and the free path will reject attempts to free one.
+ *
+ * PAGE POISONING
+ * ──────────────
+ *   When pmm_poison_enabled is set (default: yes), allocated pages are
+ *   filled with 0xDEADBEEF and freed pages are filled with 0xDC to detect
+ *   use-after-free and uninitialized-memory bugs.
+ *
+ * DIAGNOSTICS
+ * ───────────
+ *   Allocation failures are recorded in a ring buffer (pmm_fail_history[])
+ *   with caller IP, requested count, free frames at time of failure, and a
+ *   timestamp tick.  The history can be dumped via kprintf for post-mortem
+ *   analysis.  A sysctl interface exposes the failure count.
+ * ────────────────────────────────────────────────────────────────────────────
+ */
 #include "pmm.h"
 #include "vmm.h"
 #include "string.h"
