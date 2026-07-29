@@ -12,6 +12,7 @@
 #include "string.h"
 #include "io.h"
 #include "notifier.h"
+#include "errno.h"
 
 #include "module.h"
 
@@ -21,8 +22,12 @@
 #define PVPANIC_PORT            0x505
 #define PVPANIC_MMIO_BASE       0xFEDC0000   /* typical QEMU MMIO address */
 
-/* Event types */
+/* Event types — defined as bitmask per QEMU pvpanic spec */
 #define PVPANIC_EVENT_PANIC     0x01         /* kernel panic occurred */
+#define PVPANIC_EVENT_OOPS      0x02         /* kernel Oops occurred */
+
+/* Known valid event values for validation */
+#define PVPANIC_EVENTS_KNOWN    (PVPANIC_EVENT_PANIC | PVPANIC_EVENT_OOPS)
 
 /* Register offsets */
 #define PVPANIC_REG_EVENT       0x00         /* write event type here */
@@ -92,8 +97,12 @@ static int pvpanic_panic_notifier(struct notifier_block *nb,
 
 static int pvpanic_send(uint8_t event)
 {
+    /* Validate event ID against known panic event list */
+    if (event == 0 || (event & ~PVPANIC_EVENTS_KNOWN) != 0)
+        return -EINVAL;
+
     if (!pvpanic_detected)
-        return -1;
+        return -ENODEV;
 
     switch (pvpanic_mode) {
     case PVPANIC_MODE_ISA:
