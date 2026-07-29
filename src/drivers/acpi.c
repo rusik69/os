@@ -1115,13 +1115,17 @@ void __init acpi_init(void) {
                 (uint32_t)reset_reg_addr_space, (uint32_t)reset_value);
     }
 
-    /* Parse DSDT for sleep states */
-    parse_dsdt_for_sleep(fadt);
-
-    /* Proper DSDT table validation (signature, checksum, AML extraction) */
+    /* Validate DSDT table before any access — check signature, bounds, and
+     * checksum before parsing sleep states or feeding AML to the namespace
+     * builder.  This prevents OOB reads from a corrupted length field and
+     * ensures only validated ACPI tables are consumed downstream. */
     if (acpi_parse_dsdt(fadt) < 0) {
         kprintf("[--] ACPI: DSDT validation failed, ACPI features limited\n");
+        goto skip_dsdt;
     }
+
+    /* Parse DSDT for sleep states (S3/S5) — globals now validated */
+    parse_dsdt_for_sleep(fadt);
 
     /* Load SSDT tables (additional AML definition blocks) */
     acpi_load_ssdts();
@@ -1131,6 +1135,8 @@ void __init acpi_init(void) {
 
     /* Parse DSDT for dock station (Item 106) */
     parse_dsdt_for_dock(fadt);
+
+skip_dsdt:
 
     /* Check for power button */
     check_power_button(fadt);
