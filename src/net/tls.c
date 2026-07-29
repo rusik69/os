@@ -355,6 +355,11 @@ int tls_record_recv(struct tls_conn *conn,
 	hdr        = (const struct tls_record_header *)in;
 	cipher_len = ntohs(hdr->length);
 
+	/* Validate record length against TLS spec limits (RFC 8446 §5.1):
+	 * ciphertext must not exceed TLS_MAX_CIPHERTEXT_LEN (18432).
+	 * Also reject obviously invalid zero-length or negative values. */
+	if (cipher_len <= 0 || (unsigned)cipher_len > TLS_MAX_CIPHERTEXT_LEN)
+		return -EINVAL;
 	if (TLS_RECORD_HEADER_LEN + cipher_len > in_len)
 		return -EINVAL;
 	if (cipher_len > data_cap)
