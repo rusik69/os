@@ -744,6 +744,10 @@ static void handle_arp(const uint8_t *data, uint16_t len) {
         return;
     const struct arp_packet *arp = (const struct arp_packet *)data;
 
+    /* Validate hardware address length — only Ethernet (6 bytes) is supported */
+    if (arp->hw_len != 6)
+        return;
+
     uint32_t target = ntohl(arp->target_ip);
     uint32_t sender = ntohl(arp->sender_ip);
 
