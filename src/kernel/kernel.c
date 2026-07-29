@@ -197,6 +197,129 @@ void stdio_init(void);
 extern initcall_t __initcall_start[];
 extern initcall_t __initcall_end[];
 
+/* ── Module init ordering documentation ─────────────────────────────
+ *
+ * The kernel_main() function initialises all subsystems in a carefully
+ * ordered sequence divided into the following phases.  Dependencies flow
+ * top-to-bottom: a phase depends only on phases that precede it.
+ *
+ * Phase 1 — Early bootstrap (no heap, no memory manager)
+ *   serial_init → vga_init → gdt_init → pic_init → idt_init →
+ *   stack_guard_init → smp_init_bsp → pmm_init
+ *   Responsibility: bare-metal CPU state (GDT/IDT/PIC), physical memory
+ *   map discovery, and the earliest possible debug output.
+ *
+ * Phase 2 — Memory infrastructure
+ *   vmm_init → heap_init → slab_init → lockdep_init → jump_label_init
+ *   Responsibility: Virtual address space, dynamic allocation (heap +
+ *   slab), and locking correctness infrastructure.
+ *
+ * Phase 3 — Error detection & recovery
+ *   kasan_init → kmemleak_init → panic_init → pstore_init → kdump_init
+ *   → kexec_init
+ *   Responsibility: Memory corruptions detection, panic/oops handling,
+ *   crash dump capture.
+ *
+ * Phase 4 — Security foundations
+ *   seccomp_init → landlock_init → audit_init → yama_init →
+ *   kptr_restrict_init → dmesg_init → caps_init → sysrq_init →
+ *   nmi_watchdog_init
+ *   Responsibility: System-call sandboxing, access control, audit trail,
+ *   and watchdog/hang detection.
+ *
+ * Phase 5 — Memory management extensions
+ *   compaction_init → memhp_init → page_poison_init → cma_init →
+ *   ksm_init → thp_init → hugetlb_init → madvise_ext_init →
+ *   mem_policy_init → page_idle_init → page_allocator_ext_init →
+ *   rng_init → perf_init → pebs_init
+ *   Responsibility: Defragmentation, hotplug, memory dedup, huge pages,
+ *   performance counters.
+ *
+ * Phase 6 — Block device foundations
+ *   ramdisk_init → tmpfs_init → fbcon_init (framebuffer console)
+ *   Responsibility: Early block devices needed by the rest of the system.
+ *
+ * Phase 7 — Process & scheduling
+ *   process_init → rlimit_init → pidfd_init → cpu_topology_init →
+ *   sched_core_init → scheduler_init → psi_init → pm_qos_init →
+ *   cpuidle_init → nohz_init → pelt_subsys_init → sched_attr_init →
+ *   cpuset_init → rseq_init
+ *   Responsibility: Process table, scheduler tick, load tracking, CPU
+ *   idle states, and per-CPU user-space operations.
+ *
+ * Phase 8 — Interrupt delivery & SMP
+ *   apic_init_local → ipi_init → softirq_init → smp_boot_aps →
+ *   timer_init → x2apic_init → timers_init → workqueue_init
+ *   Responsibility: Local APIC, SMP bring-up, system timer, dynamic
+ *   timers, and deferred work execution.
+ *
+ * Phase 9 — Kernel services & modules
+ *   thread_info_init → fanotify_init → fsnotify_init → modules_init →
+ *   module_sig_init → ksym_init → do_initcalls (all __initcall funcs)
+ *   → tpm_rng_init → firmware_init → fault_inject_init
+ *   Responsibility: Module loader, symbol export, initcall dispatch,
+ *   firmware API, fault injection framework.
+ *
+ * Phase 10 — Device infrastructure
+ *   devtmpfs_init → overlay_init → keyboard_init → serial IRQ mode →
+ *   rtc_init → mouse_init → speaker_init → spi_init → acpi_init →
+ *   acpi_thermal_init → ec_init → syscall_init → production_subsystems
+ *   Responsibility: Dynamic device nodes, input, RTC, ACPI tables,
+ *   syscall dispatch, epoll/timerfd/mq.
+ *
+ * Phase 11 — Virtual filesystem
+ *   vfs_init → procfs_init → fstab_mount_all → swap_init → sysfs_init
+ *   → devfs_init → debugfs_init → tracefs_init → dyndbg_init →
+ *   kunit_init → file_lock_init → mount_prop_init → vsyscall_init →
+ *   memfd_init → mseal_init → uffd_init
+ *   Responsibility: VFS layer, /proc, /sys, /dev, swap, kernel unit
+ *   tests, memory sealing, userfaultfd.
+ *
+ * Phase 12 — IPC
+ *   pipe_init → shm_init
+ *   Responsibility: Inter-process communication primitives.
+ *
+ * Phase 13 — Block layer & storage drivers
+ *   blockdev_init → genhd_init → dm_init (linear, zero, error, crypt,
+ *   verity, raid) → mpath_init → cgroup_init → edac_init → ghes_init
+ *   → i3c_init → fsverity_init → zram_init → zswap_init → ata_init →
+ *   ahci_init → fat32_mount → fs_init → page_cache_init → mglru_init
+ *   Responsibility: Block device abstraction, device mapper, RAID,
+ *   compression (zram/zswap), disk drivers, filesystem+page cache.
+ *
+ * Phase 14 — Services & configuration
+ *   service_init → initramfs_extract → hostname setup → inittab setup
+ *   Responsibility: Service manager, embedded initramfs, boot config.
+ *
+ * Phase 15 — PCI, GPU, USB, users
+ *   pci_init → intel_gpu_init → usb_init → usb_msc_init → usb_hid_init
+ *   → usb_cdc_acm_init → usb_hub_init → users_init
+ *   Responsibility: PCI bus enumeration, GPU, USB, multi-user support.
+ *
+ * Phase 16 — Network
+ *   virtio_net_init → virtio_blk_init → nvme_init → raid_md_init →
+ *   pmem_init → netdevice_init → veth_init → e1000_init → vmxnet3_init
+ *   → nf_init → pkt_sched_init → bridge_init → vlan_init → tun_init →
+ *   net_ns_init → ipip_init → wg_init → ipvs_init → net_init →
+ *   dhcp_init → service registration → container_init → igmp_init →
+ *   lldp_init
+ *   Responsibility: NIC drivers, netfilter, bridging, VPN, DHCP,
+ *   service startup, container runtime, multicast/LLDP.
+ *
+ * Phase 17 — Userspace handoff
+ *   initrd loading → init process spawn → idle loop
+ *   Responsibility: Load initrd, spawn /sbin/init (or cmdline-specified
+ *   init binary), become idle process.
+ *
+ * Each subsystem init function should be idempotent where practical
+ * (safe to call twice) and must not depend on subsystems in later
+ * phases.  The do_initcalls() mechanism runs any function placed
+ * in the .initcall section; these typically cover optional drivers
+ * and late-stage hooks.
+ *
+ * See also: src/boot/boot.asm (early bootstrap), src/kernel/module.c
+ * (loadable module init), userspace/init/init.c (userspace init).
+ */
 void do_initcalls(void) {
     initcall_t *fn;
     for (fn = __initcall_start; fn < __initcall_end; fn++) {
