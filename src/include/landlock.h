@@ -19,6 +19,12 @@
 #define LANDLOCK_ACCESS_FS_READ_FILE    (1ULL << 2)
 #define LANDLOCK_ACCESS_FS_READ_DIR     (1ULL << 3)
 
+/* Bitmask of all valid filesystem access rights */
+#define LANDLOCK_ACCESS_FS_MASK         (LANDLOCK_ACCESS_FS_EXECUTE | \
+                                         LANDLOCK_ACCESS_FS_WRITE_FILE | \
+                                         LANDLOCK_ACCESS_FS_READ_FILE | \
+                                         LANDLOCK_ACCESS_FS_READ_DIR)
+
 /* Maximum entries in the ruleset / path tables */
 #define LANDLOCK_MAX_RULESETS     8
 #define LANDLOCK_MAX_RULES       16

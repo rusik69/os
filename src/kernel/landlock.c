@@ -100,6 +100,10 @@ int landlock_create_ruleset(const struct landlock_ruleset_attr *attr,
     if (size < sizeof(struct landlock_ruleset_attr))
         return -EINVAL;
 
+    /* Validate that only known access bits are handled */
+    if (attr->handled_access_fs & ~LANDLOCK_ACCESS_FS_MASK)
+        return -EINVAL;
+
     /* Find a free ruleset slot */
     int idx;
 
@@ -134,6 +138,10 @@ int landlock_add_rule(int ruleset_fd, int rule_type,
         return -EINVAL;
     if (!rule_attr)
         return -EFAULT;
+
+    /* Validate that allowed_access contains only known access bits */
+    if (rule_attr->allowed_access & ~LANDLOCK_ACCESS_FS_MASK)
+        return -EINVAL;
 
     struct landlock_ruleset *rs = &landlock_table[ruleset_fd];
 
