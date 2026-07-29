@@ -71,7 +71,9 @@ static const char *const exception_names[] = {
     "Hypervisor Injection", "VMM Communication", "Security Exception", "Reserved"
 };
 
-static void idt_set_gate(uint8_t num, uint64_t handler, uint16_t sel, uint8_t type_attr) {
+static void idt_set_gate(int num, uint64_t handler, uint16_t sel, uint8_t type_attr) {
+    if (num < 0 || num >= IDT_NUM_VECTORS)
+        return;
     idt[num].offset_low  = handler & 0xFFFF;
     idt[num].selector    = sel;
     idt[num].ist         = 0;
