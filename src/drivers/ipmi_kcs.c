@@ -101,6 +101,47 @@ static void kcs_abort(uint16_t base)
     }
 }
 
+/* ── KCS state machine validation ─────────────────────────────────────── */
+
+/* Extract the KCS state machine state from the status register.
+ * State is encoded in bits [3:2] (SMS and CD):
+ *   IDLE  (0): SMS=0, CD=0
+ *   READ  (1): SMS=0, CD=1
+ *   WRITE (2): SMS=1, CD=0
+ *   ERROR (3): SMS=1, CD=1
+ */
+static inline int kcs_get_state(uint8_t sts)
+{
+    return (int)((sts >> 2) & 0x03);
+}
+
+/* Validate a KCS state machine transition.
+ * Returns 0 if the current state matches the expected state,
+ * or logs a warning and returns -1 on mismatch/error.
+ * @sts: current status register value
+ * @expected: expected state (IDLE, READ, WRITE, or ERROR)
+ */
+static int kcs_validate_state(uint8_t sts, int expected)
+{
+    int cur = kcs_get_state(sts);
+
+    /* Check for ERROR state — both SMS and CD set */
+    if (cur == IPMI_KCS_ERROR) {
+        kprintf("[IPMI KCS] ERROR: state machine in ERROR state "
+                "(sts=0x%02x)\n", (unsigned)sts);
+        return -1;
+    }
+
+    if (cur != expected) {
+        kprintf("[IPMI KCS] WARNING: unexpected state %d "
+                "(expected %d, sts=0x%02x)\n", cur, expected,
+                (unsigned)sts);
+        return -1;
+    }
+
+    return 0;
+}
+
 /* ── KCS message transfer ─────────────────────────────────────────── */
 
 /*
@@ -129,6 +170,19 @@ int ipmi_send_cmd(struct ipmi_msg *msg)
     if (probe == 0xFF)
         return -1; /* no device at this base address */
 
+    /* Validate that the KCS state machine is in IDLE state before
+     * starting a new transaction.  If not, abort the stale session. */
+    {
+        uint8_t sts = kcs_read_status(base);
+        if (kcs_validate_state(sts, IPMI_KCS_IDLE) < 0) {
+            kcs_abort(base);
+            /* Re-check after abort */
+            sts = kcs_read_status(base);
+            if (kcs_validate_state(sts, IPMI_KCS_IDLE) < 0)
+                return -1;
+        }
+    }
+
     /* Abort any stale transaction */
     kcs_abort(base);
 
@@ -136,6 +190,16 @@ int ipmi_send_cmd(struct ipmi_msg *msg)
     kcs_write_cmd(base, IPMI_KCS_WRITE_START);
     if (kcs_wait_ibf(base, 5000) < 0)
         return -1;
+
+    /* After WRITE_START, the state machine should transition to
+     * WRITE state (SMS=1, CD=0).  Validate the transition. */
+    {
+        uint8_t sts = kcs_read_status(base);
+        if (kcs_validate_state(sts, IPMI_KCS_WRITE) < 0) {
+            kcs_abort(base);
+            return -1;
+        }
+    }
 
     /* ── Step 2: Write request NetFn / LUN ──────────────────────── */
     /* NetFn is in upper bits, LUN in lower 2 bits; we use LUN=0 */
@@ -154,12 +218,32 @@ int ipmi_send_cmd(struct ipmi_msg *msg)
         kcs_write_data(base, msg->data[i]);
         if (kcs_wait_ibf(base, 5000) < 0)
             return -1;
+        /* Validate state machine stays in WRITE state after each
+         * data byte write.  A transition to ERROR or IDLE here
+         * indicates a protocol violation from the BMC. */
+        if (i < msg->data_len - 1) {
+            uint8_t sts = kcs_read_status(base);
+            if (kcs_validate_state(sts, IPMI_KCS_WRITE) < 0) {
+                kcs_abort(base);
+                return -1;
+            }
+        }
     }
 
     /* ── Step 5: WRITE_END ──────────────────────────────────────── */
     kcs_write_cmd(base, IPMI_KCS_WRITE_END);
     if (kcs_wait_ibf(base, 5000) < 0)
         return -1;
+
+    /* After WRITE_END, the state machine should transition to READ
+     * state (SMS=0, CD=1) as the BMC prepares the response. */
+    {
+        uint8_t sts = kcs_read_status(base);
+        if (kcs_validate_state(sts, IPMI_KCS_READ) < 0) {
+            kcs_abort(base);
+            return -1;
+        }
+    }
 
     /* ── Step 6: Write 1's complement checksum ──────────────────── */
     {
@@ -226,6 +310,14 @@ int ipmi_send_cmd(struct ipmi_msg *msg)
         msg->rsp[rsp_idx++] = byte;
     }
     msg->rsp_len = (uint8_t)rsp_idx;
+
+    /* Validate that the state machine returned to IDLE after the
+     * response was fully consumed.  If still in READ state, abort. */
+    {
+        uint8_t sts = kcs_read_status(base);
+        if (kcs_validate_state(sts, IPMI_KCS_IDLE) < 0)
+            kcs_abort(base);
+    }
 
     return 0;
 }
