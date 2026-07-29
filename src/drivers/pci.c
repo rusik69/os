@@ -1,3 +1,127 @@
+/*
+ * ────────────────────────────────────────────────────────────────────────────
+ * PCI — Peripheral Component Interconnect Configuration Access API
+ * ────────────────────────────────────────────────────────────────────────────
+ *
+ * OVERVIEW
+ * --------
+ * This file implements the PCI/PCIe configuration space access API used by
+ * all PCI/PCIe device drivers in the kernel.  It supports two access methods:
+ *
+ *   1. Legacy PCI I/O Port Method (CF8/CFC) — via ports 0xCF8 and 0xCFC.
+ *      Used when PCIe ECAM is not available.  Supports 256-byte config space.
+ *
+ *   2. PCIe ECAM (Memory-Mapped Configuration Space) — the preferred method.
+ *      The physical ECAM base address is read from the ACPI MCFG table.
+ *      Supports 4096-byte extended config space (0x000-0xFFF).
+ *
+ * The file also provides:
+ *   - PCI device enumeration (bus scan), class/vendor/device matching
+ *   - Capability list traversal (MSI, MSI-X, PCIe, PM, LTR, ACS, etc.)
+ *   - BAR (Base Address Register) resource management
+ *   - MSI/MSI-X interrupt setup (pci_enable_msi, pci_disable_msi, etc.)
+ *   - PCI Express capability detection (pci_find_pcie_cap)
+ *   - Extended capabilities scanning (pci_find_ext_cap, pci_find_acs_cap, etc.)
+ *   - Interrupt routing (INTx) and bus-master enable/disable
+ *   - I/O and memory space allocation for device BARs
+ *   - Driver autoprobing via modalias matching against loaded modules
+ *   - SR-IOV (Single Root I/O Virtualization) support
+ *
+ * CONFIGURATION ACCESS METHODS
+ * ────────────────────────────
+ *
+ *   Legacy I/O Port (CF8/CFC):
+ *     Write bus/slot/func/offset to port 0xCF8 as a 32-bit address:
+ *       bit 31    = enable (must be 1)
+ *       bits 23:16 = bus number
+ *       bits 15:11 = slot/device number
+ *       bits 10:8  = function number
+ *       bits 7:0   = offset within config space (dword-aligned)
+ *     Then read/write 32-bit value via port 0xCFC.
+ *     Used by pci_write_config() and pci_read_config().
+ *
+ *   PCIe ECAM (Memory-Mapped):
+ *     Map a 256 MB physical region (from MCFG table) into the kernel's
+ *     virtual address space using 2 MB huge pages.  Each device's config
+ *     space is accessed by direct memory dereference at:
+ *       virt_addr = ecam_base + (bus << 20) | (slot << 15) | (func << 12)
+ *     This allows full 4 KB extended config space access (vs. 256 byte
+ *     legacy limit).  Used by pcie_read() and pcie_write().
+ *
+ * CONFIG SPACE LAYOUT (standard Type 0/1 header)
+ * ────────────────────
+ *   Offset │ Register
+ *   ───────┼──────────────────────────────────
+ *   0x00   │ Vendor ID (16-bit) / Device ID (16-bit)
+ *   0x04   │ Command / Status
+ *   0x08   │ Revision ID / Class Code (24-bit)
+ *   0x0C   │ Cache Line Size / Latency Timer / Header Type / BIST
+ *   0x10   │ BAR 0 (Base Address Register)
+ *   0x14   │ BAR 1
+ *   0x18   │ BAR 2
+ *   0x1C   │ BAR 3
+ *   0x20   │ BAR 4
+ *   0x24   │ BAR 5
+ *   0x28   │ CardBus CIS Pointer
+ *   0x2C   │ Subsystem Vendor / Subsystem Device ID
+ *   0x30   │ Expansion ROM Base Address
+ *   0x34   │ Capabilities Pointer
+ *   0x38   │ Reserved
+ *   0x3C   │ Interrupt Line / Interrupt Pin / Min Gnt / Max Lat
+ *   0x40+  │ Device-specific registers
+ *
+ * CAPABILITY LIST TRAVERSAL
+ * ──────────────────────────
+ * The Capabilities Pointer at offset 0x34 points to the first capability.
+ * Each capability header is:
+ *   byte 0: capability ID
+ *   byte 1: next-capability pointer (0 = end of list)
+ * The traversal is bounded by PCI_CAP_MAX_ITERATIONS (64) to prevent
+ * infinite loops on buggy devices.
+ *
+ * For PCIe devices, extended capabilities (starting at offset 0x100) use
+ * a similar chaining mechanism, bounded by PCI_EXT_CAP_MAX_ITERATIONS (256).
+ *
+ * DEVICE DETECTION & ENUMERATION
+ * ──────────────────────────────
+ * A device is present at a given bus/slot/func if its Vendor ID != 0xFFFF.
+ * pci_device_exists() checks this via a valid read.  The full enumeration
+ * (pci_init_bus) scans all 256 bus numbers, 32 slots per bus, and 8
+ * functions per slot (with multi-function detection via Header Type bit 7).
+ * Multi-function devices are detected when bit 7 of the header type
+ * register is set; otherwise only function 0 is checked.
+ *
+ * INTERRUPTS
+ * ──────────
+ *   INTx (legacy): The Interrupt Line register (offset 0x3C) stores
+ *     the IRQ routing assigned by firmware.  Used for device interrupts
+ *     when MSI is not enabled.
+ *
+ *   MSI (Message Signaled Interrupts): Optional capability with ID 0x05.
+ *     pci_enable_msi() configures the MSI Message Address/Data registers
+ *     with an APIC IRQ vector and enables MSI delivery.  Multi-vector MSI
+ *     is supported via the Multiple Message Enable field.
+ *
+ *   MSI-X: Optional capability with ID 0x11.  Supports up to 2048 vectors
+ *     per function via a table of per-vector Message Address/Data/Control
+ *     entries.  pci_enable_msix() configures vectors individually.
+ *
+ * DMA
+ * ───
+ * DMA is configured via the Command register (offset 0x04):
+ *   bit 0 = I/O space
+ *   bit 1 = Memory space
+ *   bit 2 = Bus Master (master abort & DMA enable)
+ *   bit 3 = Special Cycles
+ *   bit 4 = Memory Write & Invalidate Enable
+ *   bit 5 = VGA Palette Snoop
+ *   bit 6 = Parity Error Response
+ *   bit 7-10: Reserved / fast back-to-back / SERR / INTx disable
+ *
+ * pci_enable_bus_master() sets bit 2; pci_enable_ioport() sets bit 0;
+ * pci_enable_memspace() sets bit 1.
+ * ────────────────────────────────────────────────────────────────────────────
+ */
 #include "pci.h"
 #include "dma.h"
 #include "io.h"
