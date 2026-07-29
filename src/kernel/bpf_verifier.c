@@ -164,13 +164,22 @@ static int bpf_check_reg(int reg, int is_dst)
 int bpf_verify_program(const struct bpf_insn *prog, int insn_cnt,
                         int prog_type, char *log, int log_size)
 {
-    if (!prog || insn_cnt <= 0 || insn_cnt > BPF_MAX_INSN)
+    if (!prog) {
+        if (log && log_size > 0)
+            snprintf(log, log_size, "null program pointer");
         return -EINVAL;
+    }
 
-    /* Check program length boundaries */
-    if (insn_cnt < 1) {
+    /* Validate eBPF program instruction count (max 4096 per BPF spec) */
+    if (insn_cnt <= 0) {
         if (log && log_size > 0)
             snprintf(log, log_size, "program too short (%d insns)", insn_cnt);
+        return -EINVAL;
+    }
+    if (insn_cnt > BPF_MAX_INSN) {
+        if (log && log_size > 0)
+            snprintf(log, log_size, "program too long (%d insns, max %d)",
+                     insn_cnt, BPF_MAX_INSN);
         return -EINVAL;
     }
 

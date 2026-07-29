@@ -52,8 +52,11 @@ static spinlock_t g_progs_lock;
 int bpf_prog_load(int prog_type, const struct bpf_insn *insns, int insn_cnt,
                   const char *name, char *log, int log_size)
 {
-    if (!insns || insn_cnt <= 0 || insn_cnt > BPF_MAX_INSN)
+    if (!insns || insn_cnt <= 0 || insn_cnt > BPF_MAX_INSN) {
+        kprintf("[BPF] bpf_prog_load: invalid instruction count %d (max %d)\n",
+                insn_cnt, BPF_MAX_INSN);
         return -EINVAL;
+    }
     if (prog_type < 0 || prog_type > 4)
         return -EINVAL;
 
