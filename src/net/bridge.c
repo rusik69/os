@@ -187,8 +187,16 @@ void bridge_fdb_learn(const uint8_t *mac, int port) {
 void bridge_fdb_age(void) {
     uint64_t now = timer_get_ticks();
     for (int i = 0; i < BRIDGE_FDB_SIZE; i++) {
-        if (g_bridge.fdb[i].valid &&
-            now - g_bridge.fdb[i].learn_tick > BRIDGE_FDB_AGE_TICKS) {
+        /* Validate that learn_tick is not in the future before computing
+         * the age delta.  If learn_tick > now (timer wrap, corruption, or
+         * uninitialized data), skip this entry to avoid unsigned underflow
+         * that would cause the huge computed delta to exceed AGE_TICKS,
+         * spuriously expiring every entry. */
+        if (!g_bridge.fdb[i].valid)
+            continue;
+        if (g_bridge.fdb[i].learn_tick > now)
+            continue;
+        if (now - g_bridge.fdb[i].learn_tick > BRIDGE_FDB_AGE_TICKS) {
             g_bridge.fdb[i].valid = 0;
         }
     }
