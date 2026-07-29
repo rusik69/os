@@ -1,3 +1,102 @@
+/*
+ * src/kernel/gdt.c — Global Descriptor Table (GDT) management
+ *
+ * ── GDT layout (8 entries, flat memory model on x86-64) ──────────────
+ *
+ *   Index  Selector  Purpose           DPL  Description
+ *   ─────  ────────  ────────────────  ───  ───────────────────────────
+ *   0      0x00      Null descriptor   —    Mandatory first entry; not
+ *                                          accessible, used as terminator
+ *                                          and for segment register init.
+ *   1      0x08      Kernel code        0    64-bit code segment, exec+read.
+ *                                          Covers entire 4 GB address space
+ *                                          (0xFFFFF * 4K = 4 GiB limit).
+ *   2      0x10      Kernel data        0    Data segment, read+write.
+ *                                          Used for kernel stack DS, ES, SS.
+ *   3      0x18      User data          3    Data segment, read+write,
+ *                                          DPL = 3 for user-space access.
+ *                                          SYSRETQ loads SS from STAR[63:48]+8.
+ *   4      0x20      User code          3    64-bit code segment, exec+read,
+ *                                          DPL = 3.  SYSRETQ loads CS from
+ *                                          STAR[63:48]+16.
+ *   5+6    0x28      TSS (Task State    —    64-bit TSS descriptor spanning
+ *                   Segment)                 two GDT entries (low and high
+ *                                          halves of the 64-bit base address).
+ *                                          Holds IST stacks and RSP0 for
+ *                                          ring-0 entry on interrupts.
+ *
+ * ── Segment selector format ──────────────────────────────────────────
+ *   A selector is:  index << 3 | RPL
+ *   where RPL = requested privilege level (0 = kernel, 3 = user).
+ *   Examples:  0x08 = index 1 << 3 | RPL0     (kernel code)
+ *              0x1B = index 3 << 3 | RPL3     (user data)
+ *
+ * ── Access byte bit fields ───────────────────────────────────────────
+ *   Bit   Field    Description
+ *   7     P        Present (1 = segment loaded in memory)
+ *   6-5   DPL      Descriptor privilege level (0-3)
+ *   4     S        Descriptor type (1 = code/data, 0 = system)
+ *   3     Ex       Executable (1 = code segment)
+ *   2     DC       Direction/Conforming
+ *   1     RW       Readable (code) / Writable (data)
+ *   0     Ac       Accessed (set by CPU on first use)
+ *
+ *   Common access byte values used here:
+ *     0x9A  = 1001 1010 → kernel code:  P=1, DPL=0, S=1, Ex=1, RW=1
+ *     0x92  = 1001 0010 → kernel data:  P=1, DPL=0, S=1, Ex=0, RW=1
+ *     0xFA  = 1111 1010 → user   code:  P=1, DPL=3, S=1, Ex=1, RW=1
+ *     0xF2  = 1111 0010 → user   data:  P=1, DPL=3, S=1, Ex=0, RW=1
+ *     0x89  = 1000 1001 → TSS (system): P=1, DPL=0, S=0, type=1001 (64-bit TSS)
+ *
+ * ── Granularity byte bit fields ──────────────────────────────────────
+ *   Bit   Field    Description
+ *   7     G        Granularity (1 = 4 KiB blocks, 0 = 1 byte)
+ *   6     D/B      Default operation size (1 = 32-bit, 0 = 16-bit)
+ *   5     L        Long mode (1 = 64-bit code segment)
+ *   4     AVL      Available for OS use
+ *   3-0   limit_hi Upper 4 bits of segment limit (used with limit_low)
+ *
+ *   Common granularity values used here:
+ *     0xA0  = 1010 0000 → G=1, L=1  (4 KiB blocks, 64-bit code)
+ *     0xC0  = 1100 0000 → G=1, D=1  (4 KiB blocks, 32-bit default size)
+ *
+ * ── TSS (Task State Segment) ─────────────────────────────────────────
+ *   The TSS in long mode does not support hardware task switching; it
+ *   is used solely to provide:
+ *     • RSP0 — the kernel stack pointer loaded into RSP on ring-→0
+ *              transitions (interrupts, exceptions, SYSCALL entry).
+ *     • IST1–IST7 — Interrupt Stack Table entries.  Each IST index
+ *              can be assigned to one or more IDT gates via the IST
+ *              field in the interrupt gate descriptor.  When an
+ *              interrupt fires, the CPU loads RSP from the TSS IST
+ *              field instead of the current RSP, providing a known-
+ *              good kernel stack for critical exceptions.
+ *
+ *   ── IST assignments in this kernel ──
+ *     IST1 (#DF)    — Double fault (vector 8).  The early boot uses a
+ *                     BSS-resident stack (early_ist1_stack) before PMM
+ *                     is available; ist_init() replaces it with a 16 KB
+ *                     PMM-allocated stack.
+ *     IST2 (#NMI)   — Non-maskable interrupt (vector 2).  8 KB stack.
+ *     IST3 (#MC)    — Machine check (vector 18).  8 KB stack.
+ *     IST4 (#PF)    — Page fault (vector 14).  Needed for SMAP
+ *                     compatibility: after SYSCALL, RSP still points to
+ *                     the user stack; a page fault there would push the
+ *                     exception frame to a user page, SMAP blocks the
+ *                     ring-0 write, causing a double fault.  The IST
+ *                     stack avoids this entirely.  8 KB stack.
+ *
+ * ── SYSRETQ / SYSCALL interaction ────────────────────────────────────
+ *   The MSR STAR (0xC0000081) determines CS and SS selectors on
+ *   SYSCALL (kernel side) and SYSRETQ (user side):
+ *     STAR[47:32] = SYSCALL CS  (kernel code)
+ *     STAR[63:48] = SYSRETQ CS  (user code) and SYSRETQ SS (user data+8)
+ *   This kernel sets STAR so that:
+ *     SYSCALL CS   → index 1 (0x08, kernel code)
+ *     SYSRETQ CS   → index 4 (0x20, user code)
+ *     SYSRETQ SS   → index 3 (0x18 + RPL3 = 0x1B, user data)
+ */
+
 #include "gdt.h"
 #include "string.h"
 #include "pmm.h"
