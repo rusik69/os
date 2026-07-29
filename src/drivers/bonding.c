@@ -96,15 +96,21 @@ static int tx_active_backup(struct bonding *bond,
 
     int idx = bond->active_slave;
 
-    /* If the active slave index is out of bounds, or the active slave's
-     * link is down, scan for an alternative UP slave to prevent packet
-     * loss during the failover detection window (~1 sec for timer). */
+    /* Validate slave link status before active-backup switch.
+     * If the active slave index is out of bounds, or the active slave's
+     * link is down, or its net_device has been removed, scan for an
+     * alternative UP slave to prevent packet loss during the failover
+     * detection window (~1 sec for timer). */
     if (idx < 0 || idx >= bond->slave_count ||
-        !(bond->slaves[idx].state & BOND_SLAVE_UP)) {
+        !(bond->slaves[idx].state & BOND_SLAVE_UP) ||
+        !netif_get(bond->slaves[idx].ifindex)) {
 
         int found = -1;
         for (int i = 0; i < bond->slave_count; i++) {
-            if (bond->slaves[i].state & BOND_SLAVE_UP) {
+            /* Validate each candidate: net_device must still exist
+             * AND slave must report link UP before we switch to it. */
+            if ((bond->slaves[i].state & BOND_SLAVE_UP) &&
+                netif_get(bond->slaves[i].ifindex)) {
                 found = i;
                 break;
             }
@@ -114,7 +120,7 @@ static int tx_active_backup(struct bonding *bond,
             idx = found;
             bond->active_slave = found;
         } else {
-            /* No slaves are UP; fall back to first slave anyway */
+            /* No slaves are UP/reachable; fall back to first slave anyway */
             idx = 0;
             bond->active_slave = 0;
         }
@@ -241,7 +247,11 @@ void bonding_link_monitor(void)
                 bond->slaves[bond->active_slave].state &= ~BOND_SLAVE_ACTIVE;
 
             for (int i = 0; i < bond->slave_count; i++) {
-                if (bond->slaves[i].state & BOND_SLAVE_UP) {
+                /* Validate slave link status before active-backup switch:
+                 * ensure the candidate slave's net_device is still registered
+                 * AND the link is reported as UP before we mark it active. */
+                if ((bond->slaves[i].state & BOND_SLAVE_UP) &&
+                    netif_get(bond->slaves[i].ifindex) != NULL) {
                     bond->active_slave = i;
                     bond->slaves[i].state |= BOND_SLAVE_ACTIVE;
                     kprintf("[BOND] %s: failover to slave %d (ifindex %d)\n",
