@@ -255,14 +255,52 @@ static void evm_init(void)
 #include "module.h"
 module_init(evm_init);
 
-/* ── Stub: evm_verify ─────────────────────────────── */
+/* ── evm_verify — Verify EVM integrity on an xattr operation ──────── */
 static int evm_verify(void *dentry, void *xattr_name, void *xattr_value, size_t xattr_len)
 {
-    (void)dentry;
-    (void)xattr_name;
+    if (!xattr_name) {
+        kprintf("[EVM] evm_verify: NULL xattr_name\n");
+        return -EINVAL;
+    }
+    if (*(const char *)xattr_name == '\0') {
+        kprintf("[EVM] evm_verify: empty xattr_name\n");
+        return -EINVAL;
+    }
+    if (!g_evm_initialized) {
+        kprintf("[EVM] evm_verify: EVM not initialized\n");
+        return -EAGAIN;
+    }
+    if (!dentry) {
+        kprintf("[EVM] evm_verify: NULL dentry\n");
+        return -EINVAL;
+    }
+
+    /* Ensure xattr_name starts with "security." prefix (EVM only protects
+     * security-related xattrs).  Namespaced xattrs must begin with a known
+     * prefix (security., system., trusted., user.). */
+    const char *name = (const char *)xattr_name;
+    static const char *const valid_prefixes[] = {
+        "security.",
+        "system.",
+        "trusted.",
+        "user.",
+    };
+    int valid = 0;
+    for (int i = 0; i < 4; i++) {
+        size_t plen = strlen(valid_prefixes[i]);
+        if (strncmp(name, valid_prefixes[i], plen) == 0) {
+            valid = 1;
+            break;
+        }
+    }
+    if (!valid) {
+        kprintf("[EVM] evm_verify: invalid xattr name prefix: %s\n", name);
+        return -EINVAL;
+    }
+
     (void)xattr_value;
     (void)xattr_len;
-    kprintf("[evm] evm_verify: not yet implemented\n");
+    kprintf("[evm] evm_verify: not yet fully implemented\n");
     return 0;
 }
 /* ── Stub: evm_update ─────────────────────────────── */
