@@ -27,6 +27,8 @@ static struct gdt_pointer gdt_ptr;
 static uint8_t __attribute__((aligned(16))) early_ist1_stack[EARLY_IST1_STACK_SIZE];
 
 static void gdt_set_entry(int i, uint32_t base, uint32_t limit, uint8_t access, uint8_t gran) {
+    if (i < 0 || i >= GDT_ENTRIES)
+        return;
     gdt[i].base_low    = base & 0xFFFF;
     gdt[i].base_mid    = (base >> 16) & 0xFF;
     gdt[i].base_high   = (uint8_t)((base >> 24) & 0xFF);
