@@ -1671,7 +1671,11 @@ void pageblock_set_migratetype(uint64_t frame, enum migratetype mt)
     uint64_t block = pageblock_of_frame(frame);
     if (block >= PAGEBLOCK_MAX)
         return;
-    if (mt >= MIGRATE_TYPES)
+    /* Validate zone index (migration type): must be non-negative
+     * and within the valid range.  C enums are signed int, so we
+     * must guard against negative values to prevent storing an
+     * invalid type that could later cause OOB array accesses. */
+    if (mt < 0 || mt >= MIGRATE_TYPES)
         return;
     pageblock_types[block] = (uint8_t)mt;
 }
@@ -1705,7 +1709,9 @@ static uint64_t pageblock_scan_block(uint64_t block_idx)
 
 uint64_t pageblock_alloc_from_type(enum migratetype mt, uint64_t start_hint)
 {
-    if (mt >= MIGRATE_TYPES || mt == MIGRATE_ISOLATE)
+    /* Validate zone index: must be a valid non-negative migration type
+     * that is available for allocation (not MIGRATE_ISOLATE). */
+    if (mt < 0 || mt >= MIGRATE_TYPES || mt == MIGRATE_ISOLATE)
         return 0;
 
     uint64_t num_blocks = (total_frames + PAGEBLOCK_NR_PAGES - 1) >> PAGEBLOCK_ORDER;
@@ -1768,7 +1774,11 @@ void pageblock_dump_stats(void)
 
 uint64_t pmm_alloc_frame_migrate(enum migratetype mt)
 {
-    if (mt >= MIGRATE_TYPES || mt == MIGRATE_ISOLATE)
+    /* Validate zone index: must be a valid non-negative migration type
+     * that is available for allocation (not MIGRATE_ISOLATE).  Clamp
+     * invalid requests to MIGRATE_MOVABLE as a safe default rather
+     * than failing the allocation outright. */
+    if (mt < 0 || mt >= MIGRATE_TYPES || mt == MIGRATE_ISOLATE)
         mt = MIGRATE_MOVABLE;
 
     /* Try the preferred type first, then fallbacks */
