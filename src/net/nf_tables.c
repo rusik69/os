@@ -1321,14 +1321,22 @@ static int nft_expr_eval_limit(const struct nft_expr *expr,
 }
 
 /* Evaluate the expression chain of a rule.
- * Returns 1 if ALL expressions matched (rule applies), 0 if any failed. */
+ * Returns 1 if ALL expressions matched (rule applies), 0 if any failed.
+ * Uses a depth counter to prevent infinite loops in case of cycles. */
 static int nft_expr_eval_chain(struct nft_rule *rule,
                                struct nft_regs *regs,
                                const struct nft_eval_ctx *ctx)
 {
     struct nft_expr *expr = rule->exprs;
+    int depth = 0;
 
     while (expr) {
+        /* Safety: bound chain traversal — prevents infinite loop if
+         * the expression linked list has a cycle.  NFT_EXPR_CHAIN_MAX
+         * is the maximum allowed expressions per rule. */
+        if (depth >= NFT_EXPR_CHAIN_MAX)
+            return 0;
+
         int ret;
 
         switch (expr->type) {
@@ -1392,17 +1400,24 @@ static int nft_expr_eval_chain(struct nft_rule *rule,
         }
 
         expr = expr->next;
+        depth++;
     }
 
     return 1; /* all expressions matched */
 }
 
 /* Allocate and add an expression to a rule's expression chain.
- * Takes ownership of the expression memory. */
+ * Takes ownership of the expression memory.
+ * Returns -E2BIG if adding would exceed NFT_EXPR_CHAIN_MAX limit. */
 int nft_rule_add_expr(struct nft_rule *rule, struct nft_expr *expr)
 {
     if (!rule || !expr)
         return -EINVAL;
+
+    /* Validate expression chain length to prevent runaway linked list
+     * and bounded per-rule expression overhead. */
+    if (rule->n_exprs >= NFT_EXPR_CHAIN_MAX)
+        return -E2BIG;
 
     if (!rule->exprs) {
         rule->exprs = expr;

@@ -111,6 +111,11 @@ struct nft_set {
 /* Jump stack recursion limit (max nested chain jumps) */
 #define NFT_JUMP_STACK_DEPTH 8
 
+/* Maximum expression chain length per rule — prevents runaway linked
+ * list traversal and limits per-rule expression overhead.  Each rule
+ * can have at most this many chained expressions. */
+#define NFT_EXPR_CHAIN_MAX 32
+
 /* Chain type */
 #define NFT_CHAIN_FILTER   0
 #define NFT_CHAIN_NAT      1
