@@ -28,6 +28,138 @@
 #include "sched_attr.h"
 
 /* ── Compile-time struct size assertions ────────────────────────────── */
+
+/*
+ * ────────────────────────────────────────────────────────────────────────────
+ * Process Lifecycle State Machine
+ * ────────────────────────────────────────────────────────────────────────────
+ *
+ * Each process (struct process) transitions through a well-defined set of
+ * states during its lifetime.  The states are defined in include/process.h:
+ *
+ *   PROCESS_UNUSED  (0) — Slot is free (empty).  No process structure
+ *                         is allocated here.  This is the initial state
+ *                         of all process_table[] entries at boot.
+ *
+ *   PROCESS_READY   (1) — Process exists and is eligible to run.  It is
+ *                         enqueued in the scheduler's runqueue and will
+ *                         be selected by schedule() when its turn comes.
+ *                         All freshly created processes start here.
+ *
+ *   PROCESS_RUNNING (2) — Process is currently executing on a CPU core.
+ *                         Only the idle process (PID 0) is in this state
+ *                         permanently; user processes oscillate between
+ *                         READY and RUNNING as the scheduler dispatches
+ *                         and preempts them.
+ *
+ *   PROCESS_BLOCKED (3) — Process is waiting for an event (I/O completion,
+ *                         timer expiry, signal, mutex, semaphore, etc.).
+ *                         It is NOT in the scheduler runqueue.  When the
+ *                         wait condition is satisfied, the process is
+ *                         moved to PROCESS_READY and re-enqueued.
+ *
+ *   PROCESS_ZOMBIE  (4) — Process has exited (process_exit() called) but
+ *                         its parent has not yet called wait4()/waitpid()
+ *                         to collect its exit status.  The process holds
+ *                         no resources (memory, file descriptors, etc.)
+ *                         beyond the process_table[] slot itself, which
+ *                         is needed for the parent to read the exit code.
+ *                         When the parent reaps it, the slot returns to
+ *                         PROCESS_UNUSED.
+ *
+ *
+ * STATE TRANSITION DIAGRAM
+ * ────────────────────────
+ *
+ *     ┌────────────┐
+ *     │ UNUSED (0) │◄────────────────────────────┐
+ *     └─────┬──────┘   wait/reap recycles slot    │
+ *           │                                     │
+ *           │ process_create() / fork()           │
+ *           ▼                                     │
+ *     ┌───────────┐     schedule() picks proc     │
+ *     │ READY (1) │──────────────────────────────►│
+ *     └─────┬─────┘                               │
+ *           │◄────────────────────┐               │
+ *           │  preempt/yield      │               │
+ *           │                     │               │
+ *           ▼                     │               │
+ *     ┌─────────────┐            │               │
+ *     │ RUNNING (2) │             │               │
+ *     └──────┬──────┘             │               │
+ *            │                    │               │
+ *            │ I/O/sleep/wait     │               │
+ *            ▼                    │               │
+ *     ┌───────────┐   wakeup     │               │
+ *     │ BLOCKED(3)│────────────► │               │
+ *     └───────────┘              │               │
+ *                                │               │
+ *     ┌───────────┐  process_    │               │
+ *     │ ZOMBIE (4)│  exit()      │               │
+ *     └─────┬─────┘              │               │
+ *           │                                     │
+ *           │ parent calls wait4()/waitpid()      │
+ *           └─────────────────────────────────────┘
+ *
+ *
+ * KEY FUNCTIONS & TRANSITIONS
+ * ────────────────────────────
+ *
+ *   process_create()  ── UNUSED → READY
+ *     Allocates a new process slot, assigns a PID, allocates a guarded
+ *     kernel stack, and initializes scheduling/resource fields.  The new
+ *     process starts in PROCESS_READY and will be scheduled normally.
+ *
+ *   process_fork()    ── RUNNING → READY  (parent: RUNNING)
+ *     Duplicates the calling process.  The child is created in PROCESS_READY;
+ *     the parent remains PROCESS_RUNNING.  Both return from the fork with
+ *     different return values.
+ *
+ *   schedule()        ── RUNNING ↔ READY
+ *     The scheduler picks the next process from the runqueue.  The currently
+ *     running process is moved to PROCESS_READY (unless it has blocked or
+ *     exited).  The picked process transitions from READY to RUNNING.
+ *
+ *   scheduler_wait/sleep/block()  ── RUNNING → BLOCKED
+ *     When a process calls a blocking operation (read from empty pipe,
+ *     wait on semaphore, sleep(), etc.), it is moved to PROCESS_BLOCKED
+ *     and removed from the runqueue.  The scheduler picks another process.
+ *
+ *   scheduler_wakeup()  ── BLOCKED → READY
+ *     When the wait condition is satisfied (I/O arrives, timer fires,
+ *     signal is delivered, etc.), the blocked process is returned to
+ *     PROCESS_READY and re-enqueued in the runqueue.
+ *
+ *   process_exit()    ── RUNNING → ZOMBIE
+ *     The process terminates.  Resources are freed (memory, file descriptors,
+ *     kernel stack, etc.), but the process_table[] slot is preserved with
+ *     state = PROCESS_ZOMBIE so the parent can read the exit status.
+ *     The parent is notified via SIGCHLD.
+ *
+ *   wait4()/waitpid()  ── ZOMBIE → UNUSED
+ *     The parent calls wait4() to collect the child's exit status.  The
+ *     zombie's process_table[] slot is cleared and returned to UNUSED,
+ *     making it available for future process_create() calls.  If the
+ *     parent exits first, orphaned children are re-parented to init
+ *     (PID 1), which periodically reaps them.
+ *
+ * ORPHANED PROCESS GROUPS
+ * ────────────────────────
+ *   When a session leader exits, the kernel checks for orphaned process
+ *   groups within that session.  An orphaned process group has no member
+ *   whose parent is in the same session and process group.  The kernel
+ *   delivers SIGHUP followed by SIGCONT to all members of each orphaned
+ *   group (POSIX.1 job-control semantics).  See check_orphaned_process_groups().
+ *
+ * THE IDLE PROCESS (PID 0)
+ * ─────────────────────────
+ *   PID 0 is the idle process, created at boot in process_init().  It runs
+ *   only when no other process is READY.  Idle has state PROCESS_RUNNING
+ *   permanently.  It is never allocated via process_create() and never
+ *   transitions to any other state.
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
 _Static_assert(sizeof(struct process) >= 2048, "struct process must be at least 2048 bytes for fixed-size table");
 _Static_assert(sizeof(struct cpu_context) == 64, "cpu_context must be 8 x uint64_t (packed)");
 _Static_assert(sizeof(struct itimerval) == 16, "itimerval must be 2 x uint64_t");
