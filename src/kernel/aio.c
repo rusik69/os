@@ -161,6 +161,10 @@ static void aio_work_handler(void *arg)
 static int aio_submit(struct aiocb *user_cb) {
     if (!aio_initialized || !user_cb) return -EINVAL;
 
+    /* Validate iocb command type: 0 = read, 1 = write */
+    if (user_cb->aio_lio_opcode < 0 || user_cb->aio_lio_opcode > 1)
+        return -EINVAL;
+
     /* Find free slot */
     int idx = -1;
     for (int i = 0; i < AIO_MAX_IO; i++) {
