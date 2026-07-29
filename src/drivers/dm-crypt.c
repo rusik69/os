@@ -92,6 +92,20 @@ static void _crypt_aes_cbc_decrypt(const uint8_t *key, int key_len,
 /* Compute ESSIV IV from sector number */
 static void essiv_iv(struct essiv_ctx *ctx, uint64_t sector, uint8_t *iv_out)
 {
+    /* Validate context and output buffer to prevent IV reuse from
+     * using uninitialized state, NULL pointers, or invalid key length.
+     * The IV must be unique per sector — a bad key_len or NULL context
+     * would silently produce duplicate IVs across different sectors. */
+    if (!ctx || !iv_out) {
+        kprintf("[DM-CRYPT] essiv_iv: NULL context or output buffer\n");
+        return;
+    }
+    if (ctx->key_len != 16 && ctx->key_len != 32) {
+        kprintf("[DM-CRYPT] essiv_iv: invalid key length %d\n", ctx->key_len);
+        memset(iv_out, 0, 16);
+        return;
+    }
+
     /* ESSIV: IV = AES(salt, sector_number)
      * Encrypt the sector number (as 16-byte block) using the salt key */
     uint8_t sector_bytes[16];
@@ -298,6 +312,17 @@ static int crypt_map(struct dm_target *ti, struct blk_request *req,
 
     /* Calculate the virtual sector offset within this target */
     uint64_t offset = req->lba - ti->start;
+
+    /* Validate that the sector range does not overflow — a wrap-around
+     * would cause different logical sectors to share the same IV, breaking
+     * the no-IV-reuse guarantee essential for XTS and CBC-ESSIV security. */
+    uint64_t num_sectors_u64 = req->count;
+    if (offset + num_sectors_u64 < offset) {
+        kprintf("[DM-CRYPT] map: sector offset %llu + count %llu overflows\n",
+                (unsigned long long)offset, (unsigned long long)num_sectors_u64);
+        return -EOVERFLOW;
+    }
+
     /* Actual sector on the backing device */
     uint64_t target_lba = priv->start_sector + offset;
 
