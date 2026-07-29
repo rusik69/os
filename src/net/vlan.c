@@ -42,12 +42,17 @@ uint16_t vlan_parse_tci(const uint8_t *frame, int len) {
     if (!frame || len < 18) return 0;  /* eth(14) + vlan(4) */
     const struct vlan_header *vh = (const struct vlan_header *)(frame + 12);
     if (ntohs(vh->tpid) != VLAN_TPID) return 0;
-    return ntohs(vh->tci) & VLAN_VID_MASK;
+    uint16_t vid = ntohs(vh->tci) & VLAN_VID_MASK;
+    /* Validate extracted VID before returning */
+    if (vid >= VLAN_MAX_VID) return 0;
+    return vid;
 }
 
 int vlan_tag_frame(uint8_t *frame, int len, uint16_t vid) {
-    if (!frame || len < 14) return -1;
-    if (len + 4 > 1518) return -1;  /* MTU check */
+    if (!frame || len < 14) return -EINVAL;
+    if (len + 4 > 1518) return -EINVAL;  /* MTU check */
+    /* Validate VID: must be in 0-4095 range */
+    if (vid >= VLAN_MAX_VID) return -EINVAL;
 
     /* Shift EtherType + payload by 4 bytes to make room for VLAN header.
      * Original frame: [DMAC(6)][SMAC(6)][EtherType(2)][Payload(N)]
