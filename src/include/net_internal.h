@@ -166,6 +166,7 @@ struct tcp_conn {
     uint32_t our_seq;
     uint32_t their_seq;
     uint16_t their_window;
+    uint8_t  their_wscale;      /* window scale shift from peer (RFC 7323), 0-14 */
     uint8_t  rxbuf[4096];
     int      rxlen;
     volatile int rx_fin;

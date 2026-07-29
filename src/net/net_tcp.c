@@ -483,7 +483,7 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
 
     int conn_id = find_conn(remote_ip, src_port, dst_port);
 
-    /* Parse TCP options — extract SACK blocks if present (only for established conns) */
+    /* Parse TCP options — extract SACK, MD5, TFO, window scale if present (for established conns) */
     if (conn_id >= 0) {
         int opt_offset = sizeof(struct tcp_header);
         while (opt_offset + 1 < (int)hdr_len) {
@@ -552,6 +552,16 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
                 if (cookie_len > 0 && opt_offset + 2 + cookie_len <= (int)hdr_len) {
                     __builtin_memcpy(sc->tfo_cookie, payload + opt_offset + 2, cookie_len);
                 }
+            } else if (kind == 3 && olen == 3) {
+                /* Window scale option (RFC 7323 §2.2):
+                 *   kind(1) + len(1) + shift.cnt(1)
+                 * The shift count must be in range 0-14 inclusive.
+                 * Values above 14 are reserved and MUST be rejected. */
+                uint8_t wscale = payload[opt_offset + 2];
+                if (wscale <= 14) {
+                    struct tcp_conn *sc = &tcp_conns[conn_id];
+                    sc->their_wscale = wscale;
+                }
             } else if (kind == 30) { /* MPTCP option (kind 30, TCPOPT_MPTCP) */
                 /* Determine MPTCP subtype and dispatch */
                 if (olen >= MPTCP_FASTCLOSE_LEN &&
@@ -580,8 +590,9 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
             return;
         }
 
-        /* Parse TCP options from the SYN — extract MSS and TFO cookie */
+        /* Parse TCP options from the SYN — extract MSS, window scale, and TFO cookie */
         uint16_t client_mss = 1460; /* default MSS for Ethernet */
+        uint8_t  client_wscale = 0; /* default: no window scaling */
         int syn_has_tfo = 0;
         uint8_t syn_tfo_cookie[8];
         int syn_has_mptcp = 0;
@@ -605,6 +616,15 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
                      * an unreasonably small value. */
                     if (client_mss < 536)
                         client_mss = 536;
+                } else if (kind == 3 && olen == 3) {
+                    /* Window scale option (RFC 7323 §2.2):
+                     *   kind(1) + len(1) + shift.cnt(1)
+                     * The shift count must be in range 0-14 inclusive.
+                     * Values above 14 are reserved and MUST be treated
+                     * as a validation failure. */
+                    client_wscale = payload[opt_off + 2];
+                    if (client_wscale > 14)
+                        client_wscale = 14; /* clamp to maximum */
                 } else if (kind == 34) {
                     /* TCP Fast Open (TFO) Cookie option (kind 34) */
                     int cookie_len = olen - 2;
@@ -656,6 +676,7 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
         c->our_seq = 1000 + net_ip_id_counter * 1000;
         c->their_seq = seq + 1;
         c->their_window = ntohs(tcp->window);
+        c->their_wscale = client_wscale; /* window scale from peer (0-14) */
         c->rxlen = 0;    /* reset stale state from previous use */
         c->rx_fin = 0;
         c->cwnd = 1;
@@ -1371,6 +1392,7 @@ int net_tcp_connect(uint32_t ip, uint16_t port) {
     c->our_seq = 10000 + net_ip_id_counter * 1000;
     c->their_seq = 0;
     c->their_window = 0;
+    c->their_wscale = 0; /* no window scaling until SYN-ACK */
     c->rxlen = 0;
     c->rx_fin = 0;
     c->cwnd = 1;
