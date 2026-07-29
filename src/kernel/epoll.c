@@ -169,6 +169,11 @@ int epoll_ctl_syscall(int epfd, int op, int fd,
             (event->events & EPOLLONESHOT))
             return -EINVAL;
 
+        /* EPOLLEXCLUSIVE cannot be combined with EPOLLWAKEUP */
+        if ((event->events & EPOLLEXCLUSIVE) &&
+            (event->events & EPOLLWAKEUP))
+            return -EINVAL;
+
         /* Check if the fd is already monitored */
         if (epoll_find_entry(ep, fd)) {
             ret = -EEXIST;
