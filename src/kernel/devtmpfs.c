@@ -48,6 +48,10 @@ int devtmpfs_mknod(const char *path, uint8_t type, uint32_t major, uint32_t mino
     if (!path || (type != DT_CHAR && type != DT_BLOCK))
         return -EINVAL;
 
+    /* Device numbers must fit in the VFS stat structure (uint16_t each) */
+    if (major > 0xFFFFU || minor > 0xFFFFU)
+        return -EINVAL;
+
     if (!devtmpfs_initialised)
         return 0;
 
