@@ -183,6 +183,12 @@ int overlay_mount(const char *lower[], int num_lower,
     ovl->num_lower = num_lower;
 
     for (int i = 0; i < num_lower; i++) {
+        /* Validate lower layer path — null pointer check */
+        if (!lower[i])
+            return -EINVAL;
+        /* Validate lower layer path length fits in the fixed-size buffer */
+        if (strlen(lower[i]) >= sizeof(ovl->lower_dirs[i]))
+            return -ENAMETOOLONG;
         strncpy(ovl->lower_dirs[i], lower[i], sizeof(ovl->lower_dirs[i]) - 1);
         ovl->lower_dirs[i][sizeof(ovl->lower_dirs[i]) - 1] = '\0';
     }
