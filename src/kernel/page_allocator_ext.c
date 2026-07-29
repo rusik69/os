@@ -49,6 +49,12 @@ uint64_t alloc_pages(int gfp_mask, int order)
     if (!page_allocator_ext_initialised)
         return 0;
 
+    /* Validate order: must be 0..MAX_ORDER-1 to prevent overflow
+     * in (1ULL << order) and ensure the request is within the
+     * buddy allocator's supported range. */
+    if (order < 0 || order >= MAX_ORDER)
+        return 0;
+
     int atomic_ok = (gfp_mask & GFP_ATOMIC) != 0;
     int zero = (gfp_mask & GFP_ZERO) != 0;
     (void)atomic_ok;  /* reserve for future use — GFP_ATOMIC disables sleep */
@@ -104,6 +110,9 @@ uint64_t alloc_pages(int gfp_mask, int order)
 void free_pages(uint64_t addr, int order)
 {
     if (!page_allocator_ext_initialised)
+        return;
+    /* Validate order to prevent overflow in (1ULL << order). */
+    if (order < 0 || order >= MAX_ORDER)
         return;
     if (addr == 0)
         return;
