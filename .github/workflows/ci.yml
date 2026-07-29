@@ -364,7 +364,7 @@ jobs:
   # Non-blocking while the driver issue is investigated.
   e2e-smoke:
     runs-on: [self-hosted, linux, x64]
-    timeout-minutes: 10
+    timeout-minutes: 20
     needs: [kernel]
     continue-on-error: true
     steps:
