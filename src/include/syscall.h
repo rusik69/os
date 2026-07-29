@@ -3,6 +3,117 @@
 
 #include "types.h"
 
+/*
+ * ──────────────────────────────────────────────────────────────────────────────
+ * Syscall Table Architecture
+ * ──────────────────────────────────────────────────────────────────────────────
+ *
+ * This kernel uses a dual-numbering scheme:
+ *
+ *   SYS_* macros (e.g. SYS_READ = 0) — primary kernel-internal syscall numbers,
+ *   used by the native dispatch table in syscall.c. These span several ranges:
+ *
+ *   Range          Category
+ *   ─────          ────────
+ *   0-13           Core Linux-compatible ABI (read, write, open, close, exit, …)
+ *   78             getdents64 (Linux compat slot 78)
+ *   100-137        Extended FS and network syscalls (ATA, AHCI, net, VFS, …)
+ *   138-146        User/Session management (find, add, delete, login, …)
+ *   147-149        Hardware/Audio (RTC, speaker, ACPI shutdown)
+ *   150-154        I/O and Memory (mouse, serial, CMOS, PMM)
+ *   155-161        Specialized (ELF exec, script exec, FAT mount, …)
+ *   162-165        Shell-core (history, readline, vars, exec)
+ *   166-167        Display (VGA color, framebuffer info)
+ *   168            Compiler (CC compile)
+ *   169-178        Tmux isolation (keyboard, VGA, shell tab-complete, …)
+ *   179-182        Heap (malloc, free, realloc, calloc)
+ *   183-189        TCP server (listen, accept, send, recv, close, connect)
+ *   190-193        Mutex (init, lock, unlock, destroy)
+ *   194-197        Semaphore (init, wait, post, destroy)
+ *   198-200        UDP server (listen, recv, unlisten)
+ *   201-203        FS extended (symlink, readlink, lstat)
+ *   204-206        Working directory (chdir, getcwd, setpriority)
+ *   207-210        Shared memory IPC (shmget, shmat, shmdt, shmfree)
+ *   211            Fork
+ *   212            Connection list (net_connlist)
+ *   213            Signal handler registration
+ *   214-215        File seek/truncate (lseek, truncate)
+ *   216            Raw Ethernet send
+ *   217-218        FD-based read/write
+ *   219-278        Job control, priority, scheduling, and related
+ *   231-234        Clone, execve, gettid, tkill (process/thread)
+ *   235-237        Memory mapping (mmap, munmap, mprotect)
+ *   238-239        CPU affinity (sched_{set,get}affinity)
+ *   240-242        FD manipulation (dup, dup2, fcntl)
+ *   243            select
+ *   244-245        Per-process timers (setitimer, getitimer)
+ *   246            nanosleep
+ *   247-248        System config (sysconf, uname)
+ *   249-270        FS/dir/process operations (pipe, ppid, alarm, access, …)
+ *   272-287        Production-ready improvements (prlimit64, futex, poll, …)
+ *   288-294        *at syscall family (openat, mkdirat, fstatat, …)
+ *   296-314        Memory management (mlock, madvise, fallocate, …)
+ *   303-306        Event/timer file descriptors (timerfd, signalfd)
+ *   307-312        I/O and data transfer (splice, tee, sync, syncfs)
+ *   313-316        Process and session management (setsid, sigaltstack, …)
+ *   317-328        BSD Socket API (socket, bind, listen, accept, connect, …)
+ *   329-332        epoll (create1, ctl, wait, pwait)
+ *   333-340        POSIX Clocks & Timers
+ *   341-345        Modern FD ops (dup3, pipe2, mkdtemp, utimensat, futimens)
+ *   346-349        FS & system info (statfs, fstatfs, getrusage, sysinfo)
+ *   350-355        Process credentials & scheduling
+ *   356-359        POSIX IPC Message Queues
+ *   360-362        CPU info, preadv, pwritev
+ *   363-364        Signal wait (sigwaitinfo, sigtimedwait)
+ *   365            memfd_create
+ *   366-369        Module syscalls (init, finit, delete, query)
+ *   370-374        mremap, readahead, fadvise64, membarrier, pivot_root
+ *   375-376        pselect6, ppoll
+ *   377-378        chroot, copy_file_range
+ *   379-380        File handles (name_to_handle_at, open_by_handle_at)
+ *   381-383        inotify (init1, add_watch, rm_watch)
+ *   384            userfaultfd
+ *   385-386        positional read/write (pread64, pwrite64)
+ *   387            vmsplice
+ *   388            clock_nanosleep
+ *   389-393        NUMA memory policy (mbind, set/ get_mempolicy, migrate_pages, move_pages)
+ *   394-396        Namespace (unshare, setns, rseq)
+ *   397-399        Extended sched (sched_setattr, sched_getattr, kcov)
+ *   400            remap_file_pages
+ *   401-407        Credentials (setuid, seteuid, setgid, getgroups, …)
+ *   424-428        pidfd operations, io_uring, semctl
+ *   434-438        pidfd_open, pidfd_send_signal, close_range, …
+ *   442            mount_setattr
+ *   450-460        D123: Signal & process syscalls (rt_sigaction, wait4, waitid, …)
+ *   500-502        Swap, mseal
+ *   503            seccomp
+ *   504-507        Userspace framebuffer (put_pixel, blit, clear, refresh)
+ *   508-510        Keyboard state
+ *   511-513        Legacy module/sysctl (returns -ENOSYS)
+ *   550-552        Threading (create, join, exit)
+ *   555-556        ioprio (set, get)
+ *   570-571        Capabilities (capget, capset)
+ *   572            fdatasync
+ *   573-575        Robust list (set, get), shmctl
+ *   576            pkey_mprotect
+ *   577-578        securebits (set, get)
+ *   777            posix_spawn
+ *   778            kexec_load
+ *   800            msync
+ *
+ *   __NR_* macros (0-334) — Linux x86-64 ABI compatibility layer. These match
+ *   the standard Linux x86-64 syscall numbers exactly and are dispatched via
+ *   syscall_linux_dispatch() in syscall.c. They let musl/glibc-compatible
+ *   binaries use the kernel without recompilation.
+ *
+ * Dispatch structure:
+ *   syscall_dispatch() — native dispatch for SYS_* numbers
+ *   syscall_linux_dispatch() — Linux-compat dispatch for __NR_* numbers
+ *   Both route through syscall_dispatch_internal() for shared logic.
+ *
+ * All syscalls follow the calling convention: args in rdi, rsi, rdx, r10, r8, r9;
+ * return value in rax. Negative return values (-errno) indicate errors.
+ */
 /* Syscall numbers (Linux-compatible ABI) */
 #define SYS_READ 0
 #define SYS_WRITE 1
