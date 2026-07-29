@@ -31,6 +31,11 @@
 #include "kdump.h"
 #include "module.h"
 
+/* Maximum timeout in seconds (65535 = ~18 hours, safe limit to prevent
+ * overflow when converting to timer ticks with TIMER_FREQ=100). */
+#define WDT_MAX_TIMEOUT_SECS  65535
+#define WDT_MIN_TIMEOUT_SECS  1
+
 static int g_watchdog_timer_id = -1;
 static int g_pretimeout_timer_id = -1;
 static uint64_t g_watchdog_timeout_ticks = 0;
@@ -210,7 +215,19 @@ void watchdog_init(int timeout_seconds) {
         watchdog_stop();
     }
 
-    if (timeout_seconds <= 0) timeout_seconds = 10;
+    /* Validate timeout against hardware limits */
+    if (timeout_seconds < WDT_MIN_TIMEOUT_SECS) {
+        kprintf("[WATCHDOG] WARNING: timeout %ds below minimum %d, "
+                "clamping to %d\n", timeout_seconds,
+                WDT_MIN_TIMEOUT_SECS, WDT_MIN_TIMEOUT_SECS);
+        timeout_seconds = WDT_MIN_TIMEOUT_SECS;
+    }
+    if (timeout_seconds > WDT_MAX_TIMEOUT_SECS) {
+        kprintf("[WATCHDOG] WARNING: timeout %ds exceeds maximum %d, "
+                "clamping to %d\n", timeout_seconds,
+                WDT_MAX_TIMEOUT_SECS, WDT_MAX_TIMEOUT_SECS);
+        timeout_seconds = WDT_MAX_TIMEOUT_SECS;
+    }
 
     g_watchdog_timeout_ticks = (uint64_t)timeout_seconds * TIMER_FREQ;
     g_watchdog_active = 1;
@@ -272,6 +289,13 @@ void watchdog_stop(void) {
 }
 
 void watchdog_set_pretimeout(int secs) {
+    /* Validate pretimeout: must be non-negative and less than the
+     * current watchdog timeout.  Negative values are clamped to 0. */
+    if (secs < 0) {
+        kprintf("[WATCHDOG] WARNING: negative pretimeout %d, clamping to 0\n",
+                secs);
+        secs = 0;
+    }
     g_pretimeout_secs = secs;
 }
 
