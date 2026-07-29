@@ -8,12 +8,124 @@
 #include "spinlock.h"
 
 /*
- * Heap lives in the high-half VMA region (boot code maps the first 1 GB via 2MB
- * huge pages so no vmm_map_page calls are needed for the heap).  We place it
- * right above the kernel binary and incrementally reserve the physical frames
- * in PMM as the heap grows, so VMM page-table allocations cannot steal heap pages.
+ * ────────────────────────────────────────────────────────────────────────────
+ * Heap — Kernel Dynamic Memory Allocator
+ * ────────────────────────────────────────────────────────────────────────────
+ *
+ * OVERVIEW
+ * --------
+ * The kernel heap provides dynamic memory allocation for kernel code via
+ * kmalloc(), kfree(), krealloc(), and kcalloc().  It uses a first-fit
+ * free-list algorithm with immediate coalescing of adjacent free blocks.
+ *
+ * The heap lives in the high-half VMA region (KERNEL_VMA_OFFSET offset).
+ * Boot code maps the first 1 GB via 2 MB huge pages so no VMM page-table
+ * calls are needed for the initial heap.  Physical frames are reserved
+ * incrementally in PMM as the heap grows (via pmm_reserve_frames), ensuring
+ * that VMM page-table allocations cannot accidentally steal heap pages.
+ *
+ * MEMORY LAYOUT
+ * ─────────────
+ *   heap_base       — Start of heap region (right above kernel .bss end,
+ *                     aligned to PAGE_SIZE)
+ *   heap_current    — Current allocation pointer (top of used area)
+ *   heap_limit      — End of currently reserved physical frames
+ *   heap_base_phys  — Physical address corresponding to heap_base
+ *   HEAP_MAX_SIZE   — Maximum heap size: 64 MB
+ *   HEAP_INITIAL    — Initial reservation: 4 pages (16 KB)
+ *
+ * The heap expands on demand: when a first-fit scan finds no suitable free
+ * block, heap_expand() reserves additional physical frames and extends
+ * heap_limit.  If the expansion would exceed HEAP_MAX_SIZE, ENOMEM is
+ * returned.
+ *
+ * BLOCK STRUCTURE  (struct heap_block)
+ * ─────────────────
+ * Each allocation is preceded by a block header:
+ *
+ *   ┌─────────────────────────────┐
+ *   │ struct heap_block           │ ← 40 bytes overhead per allocation
+ *   │   magic  (8 bytes) — canary │     (rounded to 48 with alignment)
+ *   │   size   (8 bytes)          │
+ *   │   free   (4 bytes)          │
+ *   │   next   (8 bytes) — ptr    │
+ *   │   prev   (8 bytes) — ptr    │
+ *   ├─────────────────────────────┤
+ *   │ caller's data               │ ← returned by kmalloc
+ *   │   ...                       │
+ *   └─────────────────────────────┘
+ *
+ *   magic = HEAP_BLOCK_MAGIC (0xE1E0E3E2E5E4E7E6) — detects heap metadata
+ *           corruption via buffer overflows or wild pointers.
+ *   size  = usable bytes for the caller (not including header).
+ *   free  = 1 if the block is free, 0 if allocated.
+ *   next  = pointer to next block in the doubly linked list.
+ *   prev  = pointer to previous block in the doubly linked list.
+ *
+ * ALLOCATION  (kmalloc, line ~148)
+ * ────────────
+ *   1. Validate size (non-zero, overflow-safe for alignment).
+ *   2. Align to 16 bytes (required for x86-64 SSE/AVX compatibility).
+ *   3. Acquire heap_lock (spinlock with IRQ save).
+ *   4. First-fit search: scan the free list from heap_start_block.
+ *      - If the block is large enough and has room to split (> header + 16),
+ *        split into allocated + remainder free block.
+ *      - Mark as used, update heap_used_bytes, call KASAN/ kmemleak hooks.
+ *   5. If no fit found, call heap_expand() to grow the heap.
+ *      - Check for SIZE_MAX overflow before expanding.
+ *      - Create a new block at heap_current, advance pointer.
+ *   6. Return pointer to the data portion (header + 16).
+ *
+ * DEALLOCATION  (kfree, line ~241)
+ * ──────────────
+ *   1. NULL check (kfree(NULL) is a safe no-op).
+ *   2. Acquire heap_lock.
+ *   3. Get block header from (ptr - BLOCK_HDR_SIZE).
+ *   4. Validate magic canary — if corrupted, log a critical warning
+ *      but continue freeing (least-worst option to avoid leaks).
+ *   5. Call KASAN free hook (poison the freed region).
+ *   6. Call kmemleak free hook.
+ *   7. Mark block as free.
+ *   8. Forward coalesce: if the next block is free, merge them.
+ *   9. Backward coalesce: if the previous block is free, merge them.
+ *
+ * REALLOCATION  (krealloc, line ~255)
+ * ───────────────
+ *   1. NULL ptr → kmalloc(new_size).
+ *   2. Zero new_size → kfree(ptr), return NULL.
+ *   3. If existing block is large enough, return ptr as-is.
+ *   4. Otherwise allocate new block, memcpy old data, free old block.
+ *
+ * CANARY / CORRUPTION DETECTION
+ * ──────────────────────────────
+ * Each heap block starts with a magic value (HEAP_BLOCK_MAGIC).  This is
+ * verified on every kfree and krealloc.  A mismatch indicates heap metadata
+ * corruption (typically a buffer overflow from the previous allocation).
+ * The kernel logs a critical message but attempts to continue, avoiding
+ * a double-free or memory leak.
+ *
+ * DEBUGGING & INTEGRITY
+ * ──────────────────────
+ *   heap_check()   — Walks the entire free list, validating block sizes,
+ *                    magic canaries, prev/next pointer consistency, and
+ *                    detecting adjacent-free-block violations.
+ *   heap_stats()   — Returns total/used/free bytes and block counts.
+ *   KASAN          — Marks allocated regions accessible, freed regions
+ *                    poisoned to catch use-after-free.
+ *   kmemleak       — Tracks every allocation by caller IP for memory leak
+ *                    detection.
+ *   fault injection — kmalloc can optionally fail to test OOM paths
+ *                     (fault_inject_should_fail_kmalloc).
+ *
+ * THREAD SAFETY
+ * ──────────────
+ * All heap operations are protected by a single spinlock (heap_lock) with
+ * IRQ save/restore, making them safe from both process context and interrupt
+ * handlers.  The internal _kmalloc_locked / _kfree_locked helpers exist so
+ * that krealloc can call both without recursive lock deadlock.
+ * ────────────────────────────────────────────────────────────────────────────
  */
-
+#include "heap.h"
 #define HEAP_MAX_SIZE (64ULL * 1024 * 1024)   /* 64 MB — cc needs ~7 MB per compile */
 #define HEAP_INITIAL  (4ULL * 4096)            /* 4 pages */
 
