@@ -559,10 +559,54 @@ out:
     return ret;
 }
 
+/* Validate socket option level against socket domain/type.
+ * Prevents dispatch of protocol-specific options to wrong socket types.
+ * Returns 0 on success, -ENOPROTOOPT if the level is inappropriate. */
+static int sock_validate_level(struct socket *s, int level) {
+    /* SOL_SOCKET is valid for all sockets */
+    if (level == SOL_SOCKET)
+        return 0;
+
+    /* SOL_TCP requires a TCP socket (AF_INET/AF_INET6 + SOCK_STREAM) */
+    if (level == SOL_TCP) {
+        if (s->domain != AF_INET && s->domain != AF_INET6)
+            return -ENOPROTOOPT;
+        if (s->type != SOCK_STREAM)
+            return -ENOPROTOOPT;
+        return 0;
+    }
+
+    /* SOL_IP requires an IP socket (AF_INET/AF_INET6) */
+    if (level == SOL_IP) {
+        if (s->domain != AF_INET && s->domain != AF_INET6)
+            return -ENOPROTOOPT;
+        return 0;
+    }
+
+    /* SOL_CAN_RAW / SOL_CAN_BASE require a CAN socket */
+    if (level == SOL_CAN_RAW || level == SOL_CAN_BASE) {
+        if (s->domain != AF_CAN)
+            return -ENOPROTOOPT;
+        return 0;
+    }
+
+    /* Any other level is unknown */
+    return -ENOPROTOOPT;
+}
+
 int sys_setsockopt_impl(int sockfd, int level, int optname, const void *optval, uint32_t optlen) {
     struct socket *s = sock_get(sockfd);
     if (!s)
         return -EBADF;
+
+    /* Validate socket option level before dispatch */
+    {
+        int ret = sock_validate_level(s, level);
+        if (ret) {
+            sock_put(s);
+            return ret;
+        }
+    }
 
     /* Validate optlen — must be at least sizeof(int) for integer options */
     if (!optval || optlen < sizeof(int)) {
