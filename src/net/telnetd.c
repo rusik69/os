@@ -210,14 +210,23 @@ static void on_data(int conn_id, const void *data, uint16_t len) {
                 i += 2;                         /* skip command + option */
                 continue;
             } else if (cmd == SB) {
-                /* Variable-length subnegotiation: IAC SB ... IAC SE */
+                /* Variable-length subnegotiation: IAC SB <option> <params> IAC SE
+                 * RFC 854 §3.3: within params, IAC is escaped as IAC IAC.
+                 * Parse carefully to avoid premature SE detection on escaped IAC. */
                 uint16_t j;
-                for (j = i + 2; j + 1 < len; j++)
-                    if (p[j] == IAC && p[j + 1] == SE) {
-                        i = j + 1;              /* skip to end of SE */
-                        break;
+                for (j = i + 2; j < len; j++) {
+                    if (p[j] == IAC) {
+                        if (j + 1 < len && p[j + 1] == SE) {
+                            i = j + 1;          /* skip to end of SE */
+                            break;
+                        }
+                        /* IAC IAC within subnegotiation data — skip the
+                         * doubled byte and continue scanning. */
+                        if (j + 1 < len && p[j + 1] == IAC)
+                            j++;
                     }
-                if (j + 1 >= len)
+                }
+                if (j >= len)
                     i = len - 1;                /* truncated — advance to end */
                 continue;
             } else {
