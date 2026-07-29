@@ -1,3 +1,136 @@
+/*
+ * ────────────────────────────────────────────────────────────────────────────
+ * VMM — Virtual Memory Manager
+ * ────────────────────────────────────────────────────────────────────────────
+ *
+ * OVERVIEW
+ * --------
+ * The Virtual Memory Manager (VMM) manages x86-64 page tables and virtual
+ * address space for both kernel and user processes.  It provides functions
+ * to map, unmap, and query page-table entries, as well as higher-level
+ * operations like mmap, munmap, mprotect, and fork-address-space cloning.
+ *
+ * x86-64 PAGE TABLE LAYOUT  (4-level paging)
+ * ──────────────────────────
+ * Each page table walk uses a 4-level hierarchy:
+ *
+ *   PML4 (Level 4) — 1 entry  → 512 GB  (index bits 47:39)
+ *   PDPT (Level 3) — 1 entry  →   1 GB  (index bits 38:30)
+ *   PD   (Level 2) — 1 entry  →   2 MB  (index bits 29:21)
+ *   PT   (Level 1) — 1 entry  →   4 KB  (index bits 20:12)
+ *
+ * Each level has 512 entries indexed by 9 bits of the virtual address.
+ * Entries are 8-byte PTEs with the format defined in vmm.h.
+ * Large pages: 2 MB (PS=1 at PD level) and 1 GB (PS=1 at PDPT level).
+ *
+ * VIRTUAL ADDRESS SPACE LAYOUT
+ * ─────────────────────────────
+ * On x86-64, the 48-bit virtual address space is split at the
+ * canonical boundary (bit 47):
+ *
+ *   0x0000000000000000 – 0x00007FFFFFFFFFFF    User space (128 TB)
+ *     0x0000000000400000                       User ELF code base
+ *     0x00007FFFFFFFE000                       User stack top (grows down)
+ *     0x00007FFFFFFFFFFF                       User address limit
+ *     (gap)                                    Guard page
+ *
+ *   0xFFFF800000000000 – 0xFFFFFFFFFFFFFFFF    Kernel space (128 TB)
+ *     0xFFFF800000000000                       Kernel direct map base
+ *        PHYS_TO_VIRT(phys) = phys + KERNEL_VMA_OFFSET (0xFFFF800000000000)
+ *        VIRT_TO_PHYS(virt) = virt - KERNEL_VMA_OFFSET
+ *     0xFFFFFFFF80000000                       Kernel .text (high mapping)
+ *                                                (linker.ld places code here)
+ *     0xFFFFFFFFFFFFFFFF                       End of address space
+ *
+ * The kernel is mapped in the high half using KERNEL_VMA_OFFSET for the
+ * direct physical map.  All physical memory accesses go through this offset
+ * so that the identity map can be removed (improving security by preventing
+ * speculative access to physical memory via non-canonical addresses).
+ *
+ * KERNEL PAGE TABLE
+ * ─────────────────
+ * The kernel PML4 (kernel_pml4) is initialized at boot by vmm_init().
+ * It maps:
+ *   - The kernel .text section (loaded by the bootloader at 1 MB physical)
+ *     to the high half at ~0xFFFFFFFF80000000 via a static 2 MB huge page.
+ *   - The full physical memory range via the direct map
+ *     (PHYS_TO_VIRT offset = KERNEL_VMA_OFFSET).
+ *   - Device MMIO regions (PCI config space, framebuffer, etc.) as needed
+ *     by drivers.
+ *   - Per-CPU data (GDT, TSS, stacks) in the per-CPU region.
+ *
+ * USER PAGE TABLES
+ * ────────────────
+ * Each process has its own PML4 (created by vmm_create_user_pml4).
+ * The user PML4 is a copy of the kernel PML4 with separate user-space
+ * half.  On fork(), vmm_clone_user_pml4() deep-copies the user half to
+ * create a COW-consistent child address space.  vmm_destroy_user_pml4()
+ * frees all page-table pages on process exit.
+ *
+ * COW (COPY-ON-WRITE)
+ * ────────────────────
+ * Pages mapped with VMM_FLAG_COW are shared between parent and child
+ * after fork.  The PTE is set read-only even for writable mappings.
+ * On a write fault, vmm_handle_cow_fault() allocates a new physical frame,
+ * copies the content, and updates the PTE to writable.  The reference
+ * count in pmm is decremented on the old frame.
+ *
+ * DEMAND / LAZY ALLOCATION
+ * ─────────────────────────
+ * Pages mapped with VMM_FLAG_LAZY are backed by the shared zero page
+ * (vmm_zero_page_frame) instead of a real physical frame.  On first
+ * write, the COW handler allocates a real page and copies the zero
+ * content.  This avoids allocating physical memory for BSS and other
+ * zero-filled regions until they are actually touched.
+ *
+ * SHARED ZERO PAGE
+ * ────────────────
+ * A single zero-filled physical frame (vmm_zero_page_frame) is shared
+ * across all lazy/COW mappings.  Its reference count is incremented
+ * on each lazy map and never freed.  On first write to a lazy page,
+ * the COW handler allocates a unique frame and decrements the zero
+ * page refcount.
+ *
+ * LOCKED PAGES
+ * ────────────
+ * Pages marked VMM_FLAG_LOCKED have an elevated physical frame refcount
+ * and must not be swapped out or freed.  Used by mlock/munlock and
+ * for MMIO mappings that must remain resident.
+ *
+ * SHARED MAPPINGS
+ * ───────────────
+ * Pages marked VMM_FLAG_SHARED are shared between processes (MAP_SHARED).
+ * Unlike COW pages, they remain writable after fork(), so writes by
+ * one process are immediately visible to the other.
+ *
+ * NX (NO-EXECUTE)
+ * ────────────────
+ * NX support is detected at boot via CPUID (bit 20 of 0x80000001 EDX).
+ * If supported, EFER.NXE is set and non-executable pages are marked
+ * with PTE_NX (bit 63).  vmm_nx_init() performs the detection.
+ *
+ * EXECUTE-ONLY PAGES
+ * ───────────────────
+ * x86-64 has no hardware read-disable bit when present is set.
+ * Execute-only is approximated via a software bit (VMM_FLAG_EXECONLY,
+ * PTE bit 11).  The page is mapped as PRESENT|USER|NX-clear, but
+ * tagged with the software bit.  In the page-fault handler, a read/write
+ * access (not instruction fetch) to such a page delivers SIGSEGV.
+ *
+ * TLB MANAGEMENT
+ * ──────────────
+ * On SMP, TLB shootdowns use IPI (smp_tlb_shootdown).  On UP, local
+ * invlpg is used.  The kernel never flushes the entire TLB (no CR3
+ * reload) unless switching address spaces.
+ *
+ * OVERCOMMIT TRACKING
+ * ────────────────────
+ * vmm_committed_bytes tracks the total amount of memory committed via
+ * mmap (MAP_ANONYMOUS without MAP_NORESERVE).  If the committed total
+ * exceeds VMM_OVERCOMMIT_LIMIT (256 MB), new allocations return ENOMEM.
+ * This prevents runaway allocation from exhausting physical memory.
+ * ────────────────────────────────────────────────────────────────────────────
+ */
 #include "vmm.h"
 #include "pmm.h"
 #include "string.h"
