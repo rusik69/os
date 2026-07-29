@@ -231,8 +231,34 @@ static int nbd_submit_fn(struct blk_request *req)
     uint32_t type   = is_write ? NBD_CMD_WRITE : NBD_CMD_READ;
     uint64_t handle = (uint64_t)((uintptr_t)req);
 
+    /* Validate handle uniqueness: ensure no other request with the same
+     * handle is currently inflight on this device.  The handle is derived
+     * from the request pointer, which could be recycled after the original
+     * request is freed — if a delayed reply for the previous request
+     * arrives after a new request gets the same pointer, a handle collision
+     * would silently corrupt data.  A non-zero inflight_handle means a
+     * request is already in flight; reject the duplicate. */
+    if (dev->inflight_handle == handle) {
+        kprintf("[NBD] Duplicate handle %llx — request still inflight on dev %d\n",
+                (unsigned long long)handle, dev_id);
+        return -EALREADY;
+    }
+    if (dev->inflight_handle != 0) {
+        /* Another request (different handle) is still in flight — this should
+         * not happen on a synchronous transport but we catch it defensively
+         * in case an async path is added later or a race occurs on SMP. */
+        kprintf("[NBD] Handle %llx collides with inflight handle %llx on dev %d\n",
+                (unsigned long long)handle,
+                (unsigned long long)dev->inflight_handle, dev_id);
+        return -EAGAIN;
+    }
+    dev->inflight_handle = handle;
+
     int ret = nbd_issue_command(conn_id, type, offset, len, handle,
                                 req->buf, is_write);
+
+    /* Clear inflight marker after the command completes (or fails) */
+    dev->inflight_handle = 0;
 
     req->result = ret;
     return ret;

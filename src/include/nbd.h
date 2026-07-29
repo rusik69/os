@@ -63,6 +63,7 @@ struct nbd_device {
     uint64_t export_size;   /* size in bytes */
     uint32_t flags;         /* NBD flags */
     int     connected;
+    uint64_t inflight_handle;  /* handle of the currently inflight request (0 = none) */
 };
 
 /* ── Public API ─────────────────────────────────────────────────────── */
