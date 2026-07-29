@@ -422,6 +422,20 @@ void ipv6_nd_handle_na(struct ipv6_header *ip6,
 
 	na = (const struct nd_neighbor *)payload;
 
+	/* ── Target address validation (RFC 4861 §7.2.5) ────────────────
+	 *
+	 * The Target Address in a Neighbor Advertisement MUST NOT be:
+	 *   - the unspecified address (::)
+	 *   - a multicast address (FF00::/8)
+	 * If it is, the node MUST silently discard the advertisement.
+	 */
+	if (ipv6_addr_is_unspecified(&na->target)) {
+		return;
+	}
+	if (ipv6_addr_is_multicast(&na->target)) {
+		return;
+	}
+
 	/* ── DAD conflict detection ─────────────────────────────────────
 	 * Per RFC 4862 §5.4.2: if an NA is received for a TENTATIVE address,
 	 * the address is a duplicate.  Transition to DETACHED state.
