@@ -273,6 +273,9 @@ static void handle_dhcp_response(const uint8_t *data, uint16_t len) {
         uint8_t code = *opt++;
         if (opt >= end) break;
         uint8_t olen = *opt++;
+        /* Validate DHCP option length before parsing (RFC 2131 §4.1):
+         * ensure option data fits within the received packet to prevent
+         * buffer over-read from a malformed option length field */
         if (opt + olen > end) break;
 
         switch (code) {
