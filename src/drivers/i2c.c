@@ -403,8 +403,38 @@ uint8_t i2c_read_byte(int ack) {
 
 /* ── Convenience: combined master write with stop ───────────────────── */
 
+/* Validate a 7-bit I2C slave address.
+ * Returns 0 if valid, -EINVAL if reserved or out of range.
+ * Reserved ranges per I2C spec:
+ *   0x00        — general call
+ *   0x01        — CBUS address
+ *   0x02-0x07   — reserved
+ *   0x78-0x7F   — 10-bit address extension (upper 7 bits)
+ * Valid addresses for general use: 0x08-0x77.
+ * We reject reserved addresses to prevent protocol violations. */
+static int i2c_validate_addr(uint8_t dev_addr)
+{
+    if (dev_addr >= 0x80) {
+        kprintf("[I2C] ERROR: address 0x%02x exceeds 7-bit range "
+                "(max 0x7F)\n", (unsigned)dev_addr);
+        return -1;
+    }
+    if (dev_addr >= 0x78) {
+        kprintf("[I2C] WARNING: address 0x%02x is in the 10-bit address "
+                "extension range (0x78-0x7F)\n", (unsigned)dev_addr);
+        return -1;
+    }
+    if (dev_addr <= 0x07) {
+        kprintf("[I2C] WARNING: address 0x%02x is a reserved address "
+                "(0x00-0x07)\n", (unsigned)dev_addr);
+        return -1;
+    }
+    return 0;
+}
+
 static int i2c_master_write(uint8_t dev_addr, const uint8_t *data, int len, int send_stop) {
     if (!g_i2c_initialised || !data || len <= 0) return -1;
+    if (i2c_validate_addr(dev_addr) < 0) return -1;
 
     i2c_start();
     if (g_arbitration_lost) return -2;
@@ -431,6 +461,7 @@ static int i2c_master_write(uint8_t dev_addr, const uint8_t *data, int len, int 
 
 static int i2c_master_read(uint8_t dev_addr, uint8_t *buf, int len, int send_stop) {
     if (!g_i2c_initialised || !buf || len <= 0) return -1;
+    if (i2c_validate_addr(dev_addr) < 0) return -1;
 
     /* Repeated start followed by address + read bit */
     i2c_repeated_start();
