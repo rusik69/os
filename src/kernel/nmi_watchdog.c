@@ -57,7 +57,8 @@ static int nmi_pmc_available = 0;
 
 /*
  * Check CPUID leaf 0x0A (Architectural Performance Monitoring).
- * Returns non-zero if PMCs are present and we can use them for NMI.
+ * Validates that PMCs are present with sufficient counter width
+ * for NMI watchdog operation.  Returns non-zero if valid.
  */
 static int nmi_pmc_check_support(void) {
     uint32_t eax, ebx, ecx, edx;
@@ -65,8 +66,32 @@ static int nmi_pmc_check_support(void) {
         : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
         : "a"(0x0A));
     (void)ebx; (void)ecx; (void)edx;
+
+    /* Validate PMU version (must be >= 1) */
     uint8_t version = (uint8_t)(eax & 0xFF);
-    return version > 0;
+    if (version == 0) {
+        kprintf("[NMI] CPU does not support architectural PMU (CPUID.0AH: version=0)\n");
+        return 0;
+    }
+
+    /* Validate that at least one general-purpose counter exists */
+    uint8_t num_counters = (uint8_t)((eax >> 8) & 0xFF);
+    if (num_counters == 0) {
+        kprintf("[NMI] No general-purpose PMC counters available (num_counters=0)\n");
+        return 0;
+    }
+
+    /* Validate counter width is sufficient for our ~2s overflow period.
+     * NMI_PMC_COUNT_INIT is a 48-bit negative value; a 32-bit counter
+     * would silently truncate it, producing unpredictable overflow timing. */
+    uint8_t counter_width = (uint8_t)((eax >> 16) & 0xFF);
+    if (counter_width < 48) {
+        kprintf("[NMI] PMC counter width (%u bits) too small for NMI period "
+                "(need >= 48 bits)\n", (unsigned int)counter_width);
+        return 0;
+    }
+
+    return 1;
 }
 
 /*
@@ -77,6 +102,41 @@ static int nmi_pmc_check_support(void) {
 static int nmi_pmc_setup(void) {
     if (!nmi_pmc_check_support()) {
         kprintf("[NMI] PMC not available — hard lockup detection via NMI disabled\n");
+        return -1;
+    }
+
+    /* ── Validate EVTSEL configuration before writing MSRs ────────────
+     * IA32_PERFEVTSEL0 bits:
+     *   0-7   : Event select (0x3C = CPU_CLK_UNHALTED.THREAD_P)
+     *   8-15  : Unit mask
+     *   16    : USR (count at CPL > 0)
+     *   17    : OS  (count at CPL = 0)
+     *   18    : Edge detect
+     *   19    : Pin control
+     *   20    : INT (APIC interrupt on overflow)
+     *   21    : ANY (count on any thread in core)
+     *   22    : EN  (enable counter)
+     *   23    : INV (invert counter mask)
+     *   24-30 : Counter mask
+     *   31    : Reserved (must be 0)
+     *   63-32 : Reserved (must be 0)
+     *
+     * Verify no reserved bits are accidentally set. */
+    uint64_t evtsel_val = EVTSEL_EN | EVTSEL_INT |
+                          EVTSEL_OS | EVTSEL_USR | EVTSEL_EVENT_UNHALTED;
+    if (evtsel_val & 0xFFFFFFFF80000000ULL) {
+        kprintf("[NMI] Invalid EVTSEL configuration: reserved bits set (0x%lx)\n",
+                (unsigned long)evtsel_val);
+        return -1;
+    }
+
+    /* ── Validate counter initial value ───────────────────────────────
+     * NMI_PMC_COUNT_INIT must be a negative (two's complement) value
+     * so the counter counts up toward overflow, triggering an NMI.
+     * A non-negative value would not overflow within a reasonable
+     * time frame. */
+    if ((int64_t)NMI_PMC_COUNT_INIT >= 0) {
+        kprintf("[NMI] Invalid counter initial value: not negative\n");
         return -1;
     }
 
