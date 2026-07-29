@@ -56,6 +56,26 @@ void cmos_init(void) {
 #include "module.h"
 module_init(cmos_init);
 
+/* Validate century BCD byte at CMOS register 0x32.
+ * Returns the decimal century value (e.g. 20 for years 2000-2099)
+ * or a safe default if the register is missing or malformed.
+ * On PC hardware this register is always BCD; valid BCD values
+ * range from 0x19 (decimal 19, year 1900s) to 0x99 (decimal 99,
+ * year 9999s).  A read of 0x00 (missing register), invalid BCD
+ * (a nibble > 9), or an out-of-range century defaults to 20
+ * (year 2000-2099) so the caller gets a usable year. */
+static uint8_t cmos_validate_century(uint8_t bcd_cent)
+{
+    /* Validate BCD encoding: each nibble must be 0-9 */
+    if ((bcd_cent & 0x0F) > 9 || ((bcd_cent >> 4) & 0x0F) > 9)
+        return 20;  /* Invalid BCD — default to 2000s */
+    uint8_t cent = (uint8_t)((bcd_cent & 0x0F) + ((bcd_cent >> 4) * 10));
+    /* Century must be at least 19 (year 1900) and at most 99 (year 9999) */
+    if (cent < 19 || cent > 99)
+        return 20;  /* Out of range — default to 2000s */
+    return cent;
+}
+
 /* ── Get time from CMOS RTC ─────────────────────────── */
 static int cmos_get_time(void *time)
 {
@@ -74,7 +94,7 @@ static int cmos_get_time(void *time)
     t->day         = cmos_read(0x07);
     t->month       = cmos_read(0x08);
     uint16_t yr    = cmos_read(0x09);
-    uint16_t cent  = cmos_read(0x32);
+    uint8_t raw_cent = cmos_read(0x32);
 
     /* Convert BCD to binary if needed — only time registers (0x00-0x09)
      * follow the DM bit of Status Register B.  The century byte at CMOS
@@ -90,11 +110,10 @@ static int cmos_get_time(void *time)
         yr        = (uint16_t)((yr & 0x0F) + ((yr / 16) * 10));
     }
 
-    /* Century byte at CMOS 0x32 is always BCD on PC hardware — convert
-     * unconditionally.  A missing century register (reading 0x00) yields
-     * cent = 0, which produces year = yr (the 2-digit year, wrong but
-     * safe).  We accept this because the item spec says 0x32 is present. */
-    cent = (uint16_t)((cent & 0x0F) + ((cent / 16) * 10));
+    /* Validate the century register and convert BCD to decimal.
+     * cmos_validate_century() returns a safe default (20) if the
+     * register is missing, contains invalid BCD, or is out of range. */
+    uint16_t cent = cmos_validate_century(raw_cent);
 
     t->year = yr + cent * 100;
 
@@ -106,6 +125,12 @@ static int cmos_set_time(const void *time)
 {
     const struct rtc_time *t = (const struct rtc_time *)time;
     if (!t)
+        return -EINVAL;
+
+    /* Validate year range: PC CMOS RTC stores 2-digit year + century;
+     * we support years 1900-9999 which covers all valid BCD century
+     * values (0x19-0x99). */
+    if (t->year < 1900 || t->year > 9999)
         return -EINVAL;
 
     /* Check data mode: DM bit (bit 2) of Status Register B.
