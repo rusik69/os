@@ -39,6 +39,13 @@ struct ip_vs_conn *ip_vs_conn_new(uint32_t c_ip, uint16_t c_port,
 {
     if (!ipvs_initialized) return NULL;
 
+    /* Validate connection tracking table size: reject if table is full */
+    if (g_conn_count >= IPVS_CONN_MAX) {
+        kprintf("[ipvs] ip_vs_conn_new: connection tracking table full (%d/%d)\n",
+                g_conn_count, IPVS_CONN_MAX);
+        return NULL;
+    }
+
     /* Check for existing connection (avoid duplicates) */
     struct ip_vs_conn *existing = ip_vs_conn_lookup(c_ip, c_port, v_ip, v_port, protocol);
     if (existing)

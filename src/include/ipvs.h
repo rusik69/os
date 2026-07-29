@@ -10,6 +10,7 @@
 /* Connection tracking constants */
 #define IPVS_CONN_HASH_SIZE 64
 #define IPVS_CONN_TIMEOUT_MS 300000  /* 5 minutes default */
+#define IPVS_CONN_MAX       (IPVS_CONN_HASH_SIZE * 4)  /* max tracked connections (256) */
 
 /* Virtual service */
 struct ipvs_virtual {
