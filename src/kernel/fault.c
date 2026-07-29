@@ -15,6 +15,150 @@
 #include "pmm.h"
 #include "userfaultfd.h"
 
+/*
+ * ────────────────────────────────────────────────────────────────────────────
+ * Exception Handler Categories
+ * ────────────────────────────────────────────────────────────────────────────
+ *
+ * This file implements handlers for CPU exceptions that require complex
+ * recovery or diagnosis.  Registration happens in fault_init() which wires
+ * each handler to its IDT vector via idt_register_handler().
+ *
+ *
+ * HANDLER REGISTRATION TABLE  (see fault_init at bottom of file)
+ * ─────────────────────────────────────────────────────────────────
+ *   Vector  │ Exception       │ Handler                  │ Category
+ *   ────────┼─────────────────┼──────────────────────────┼─────────────────
+ *   1       │ #DB — Debug     │ kprobe_debug_handler()   │ Kprobes (kprobes.c)
+ *   2       │ NMI             │ nmi_handler()            │ Hardware/fatal
+ *   3       │ #BP — Breakpoint│ kprobe_int3_handler()    │ Kprobes (kprobes.c)
+ *   8       │ #DF — Double F. │ double_fault_handler()   │ Fatal/IST
+ *   13      │ #GP — Gen. Prot.│ gp_fault_handler()       │ Fatal
+ *   14      │ #PF — Page F.   │ page_fault_handler()     │ Complex recovery
+ *   18      │ #MC — Machine C.│ mce_handler()            │ Fatal/HW (mce.c)
+ *
+ *
+ * 1. PAGE FAULT (#PF, vector 14) — page_fault_handler()
+ * ────────────────────────────────────────────────────────
+ *    The most complex handler.  Handles the following cases in priority order:
+ *
+ *    a) Recursive / kernel-mode fault → panic with full register dump, walk
+ *       the page table to classify major vs. minor fault, check for stack
+ *       guard page hits, and call arch_print_backtrace() before panic().
+ *
+ *    b) NX violation (error bit 4 set, present=1) → the CPU attempted to
+ *       fetch an instruction from a non-executable page.  Delegated to
+ *       nx_enforce_check_fault() which panics for kernel NX violations or
+ *       delivers SIGSEGV for user NX violations.
+ *
+ *    c) Execute-only violation (present=1, NOT an instruction fetch) → a
+ *       read/write access to a page tagged VMM_FLAG_EXECONLY.  The OS
+ *       approximates execute-only via a software bit because x86-64's PTE
+ *       PRESENT always implies readability.  Delivers SIGSEGV to the user
+ *       process.
+ *
+ *    d) Kernel-mode fault → print CR2/error/RIP/RSP, scan the process table
+ *       for guard page matches (kernel stack overflow detection), then panic.
+ *
+ *    e) User-mode write fault → attempt Copy-on-Write (COW) resolution via
+ *       vmm_handle_cow_fault().  If that succeeds the fault is resolved.
+ *
+ *    f) User stack auto-grow → a valid user-mode write to an unmapped page
+ *       just below the stack bottom triggers stack expansion within
+ *       RLIMIT_STACK limits.  The new page is mapped as present/writable
+ *       and a new guard page is created below it.
+ *
+ *    g) Userfaultfd → if the fault address is within a registered userfaultfd
+ *       range, the event is queued (or SIGBUS is sent) instead of mapping.
+ *
+ *    h) Unhandled user fault → kill the process with SIGSEGV and populate
+ *       siginfo with fault address, trap number, and error code.
+ *
+ *
+ * 2. DOUBLE FAULT (#DF, vector 8) — double_fault_handler()
+ * ────────────────────────────────────────────────────────────
+ *    Runs on a dedicated IST stack (IST1), so it has a guaranteed-valid
+ *    stack even when the interrupted context's kernel stack has overflowed.
+ *    The handler saves debug state to the kdump region early (before
+ *    printing, since console I/O might itself fault), then prints register
+ *    dumps and attempts to classify the root cause:
+ *
+ *      Cause 1 (CR2 != 0): The first fault was a page fault (#PF) that
+ *        occurred while the kernel stack was full — the #PF handler's
+ *        push of error+frame caused a second #PF → #DF.  This is the
+ *        classic kernel-stack-overflow scenario.  Checks for guard-page
+ *        hits.
+ *
+ *      Cause 2 (CR2 == 0, suspicious CS/SS): A segment-error recovery
+ *        failure — IRET to a bad segment loaded invalid CS/SS, causing
+ *        #GP whose handler faulted again, giving #DF.
+ *
+ *      Cause 3 (IF=0 in saved RFLAGS): A fault occurred inside another
+ *        interrupt handler, suggesting a bug in a handler that didn't
+ *        account for re-entrancy.
+ *
+ *      Cause 4 (default): Unknown — prints a generic message.
+ *
+ *    After analysis, calls panic() which captures the kdump, resets the
+ *    watchdog, and halts.
+ *
+ *
+ * 3. GENERAL PROTECTION FAULT (#GP, vector 13) — gp_fault_handler()
+ * ────────────────────────────────────────────────────────────────────
+ *    Prints a full register dump including the error code (which encodes
+ *    segment selector or IDT index involved).  The handler then halts
+ *    with interrupts disabled — #GP in kernel mode is unrecoverable.
+ *    (User-mode #GP is handled by isr_common_handler in idt.c, which
+ *    delivers SIGSEGV via signal_send_info().)
+ *
+ *
+ * 4. NON-MASKABLE INTERRUPT (NMI, vector 2) — nmi_handler()
+ * ────────────────────────────────────────────────────────────
+ *    Runs on a dedicated IST stack.  NMIs are typically triggered by
+ *    hardware issues: RAM parity errors (port 0x61 bit 7), channel
+ *    checks (port 0x61 bit 6), or watchdog timeouts.  The handler
+ *    reports the source via kprintf and returns — NMIs are generally
+ *    recoverable.
+ *
+ *
+ * 5. MACHINE CHECK EXCEPTION (#MC, vector 18) — mce_handler()
+ * ─────────────────────────────────────────────────────────────
+ *    Delegated to the production MCE infrastructure in mce.c, which
+ *    reads the machine-check MSRs (IA32_MCi_STATUS, etc.) to classify
+ *    the hardware error and either recover or panic.  See mce.c for
+ *    the full implementation.
+ *
+ *
+ * 6. BREAKPOINT (#BP, vector 3) — kprobe_int3_handler()
+ *    DEBUG (#DB, vector 1)     — kprobe_debug_handler()
+ * ─────────────────────────────────────────────────────
+ *    Both are owned by the kprobes subsystem (kprobes.c).  Breakpoints
+ *    are triggered by INT3 instructions placed by kprobes, live patching,
+ *    or user debuggers.  Debug exceptions are used for single-stepping
+ *    after kprobe hit.
+ *
+ *
+ * STACK USAGE & IST ALLOCATION
+ * ────────────────────────────
+ *   IST0 — Default (no IST switch)
+ *   IST1 — #DF (double_fault_handler)
+ *   IST2 — NMI (if enabled — see also nmi_watchdog.c)
+ *   IST3 — #MC (machine check exception stack)
+ *
+ * The IST mechanism guarantees the handler has a valid stack regardless
+ * of the interrupted context's stack state — critical for #DF recovery
+ * and NMI reliability.
+ *
+ *
+ * PER-TASK STACK TRACKING
+ * ────────────────────────
+ *   task_stack_usage() and task_update_stack_watermark() track the
+ *   deepest kernel-stack usage for each process.  The watermark is
+ *   updated on every context switch and can be read via /proc to
+ *   detect near-overflow conditions before they cause a #DF.
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
 /* Add vmm.h inclusion for vm_pgfault counter - already present via vmm.h */
 
 /* PTE flags needed for execute-only page-table walking in the
