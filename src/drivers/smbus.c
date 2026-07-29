@@ -121,6 +121,24 @@ int smbus_write_word(uint8_t addr, uint8_t reg, uint16_t val) {
     return 0;
 }
 
+/* ── Block count validation ───────────────────────────────────────── */
+
+/* SMBus specification limits: block transfers carry a count byte that
+ * must be 1-32 (inclusive).  A count of 0 or >32 is a protocol violation
+ * from the device or a bus error.  Counts <= 0 are impossible from the
+ * hardware (uint8_t) but we check defensively.
+ *
+ * Returns 0 if valid, -1 on violation.  Logs a warning on violation. */
+static int smbus_validate_block_count(int count)
+{
+    if (count <= 0 || count > 32) {
+        kprintf("[SMBus] WARNING: invalid block count %d "
+                "(must be 1-32 per SMBus spec)\n", count);
+        return -1;
+    }
+    return 0;
+}
+
 int smbus_block_read(uint8_t addr, uint8_t cmd, uint8_t *buf, int len) {
     if (!g_smbus_present || !buf || len <= 0 || len > 32)
         return -1;
@@ -141,18 +159,12 @@ int smbus_block_read(uint8_t addr, uint8_t cmd, uint8_t *buf, int len) {
     /* Read block length from DATA0 */
     int count = inb(SMBUS_DATA0);
 
-    /*
-     * Validate count: SMBus block read must return 1-32 bytes per
-     * the SMBus specification.  A count of 0 or >32 indicates a
-     * protocol violation or corrupted device response.
-     *
-     * When count > 32, drain the block data FIFO before returning
-     * so stale data does not corrupt subsequent SMBus operations.
-     * SMBUS_BLOCK (0xEF4) is shared with SMBUS_DATA1; leaving
-     * unconsumed bytes would silently corrupt word/block reads.
-     */
-    if (count <= 0 || count > 32) {
-        /* Drain block data FIFO when count > 32 */
+    /* Validate block count using the shared helper; drain the FIFO
+     * on failure so stale data does not corrupt subsequent operations. */
+    if (smbus_validate_block_count(count) < 0) {
+        /* Drain block data FIFO when count > 32 (the FIFO depth is
+         * exactly 32 bytes per Intel PCH, so we drain that many).
+         * For count == 0 there is nothing to drain. */
         if (count > 32) {
             for (int i = 0; i < 32; i++)
                 (void)inb(SMBUS_BLOCK);
@@ -179,9 +191,17 @@ int smbus_block_read(uint8_t addr, uint8_t cmd, uint8_t *buf, int len) {
 #include "module.h"
 module_init(smbus_init);
 
-/* ── Stub: smbus_read_block ─────────────────────────────── */
-static int smbus_read_block(__maybe_unused int addr, __maybe_unused int reg, __maybe_unused void *buf, __maybe_unused size_t len)
+/* ── Stub: smbus_read_block (reserved for future use) ─────────── */
+static int smbus_read_block(int addr, int reg, void *buf, size_t len)
 {
+    /* Validate parameters */
+    if (addr < 0 || addr > 127)
+        return -1;
+    if (!buf || len == 0 || len > 32)
+        return -1;
+    if (smbus_validate_block_count((int)len) < 0)
+        return -1;
+
     kprintf("[SMBUS] smbus_read_block: not yet implemented\n");
-    return 0;
+    return -1;
 }
