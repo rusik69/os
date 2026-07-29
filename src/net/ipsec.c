@@ -9,6 +9,7 @@
 #include "errno.h"
 #include "heap.h"
 #include "spinlock.h"
+#include "timer.h"
 
 /* IP protocol numbers for AH and ESP */
 #define IP_PROTO_AH   51
@@ -65,6 +66,10 @@ struct security_assoc {
     /* Anti-replay window */
     uint32_t replay_win;      /* bitmap of last 32 sequence numbers */
     uint32_t last_seq;        /* last received sequence number */
+    /* SA lifetime (hard limit) — once creation_time + lifetime_ticks passes,
+     * the SA is expired and packets are rejected. Zero lifetime = unlimited. */
+    uint64_t creation_time;   /* timer_get_ticks() at SA creation */
+    uint64_t lifetime_ticks;  /* ticks before expiry (0 = unlimited) */
 };
 
 static struct security_assoc sadb[SADB_MAX_SAS];
@@ -103,7 +108,8 @@ static int sadb_find_by_spi(uint32_t spi, uint32_t dst_ip)
 static int ipsec_sa_add(uint32_t spi, uint32_t src_ip, uint32_t dst_ip,
                  uint8_t proto, uint8_t mode,
                  const uint8_t *auth_key, int auth_key_len,
-                 const uint8_t *enc_key, int enc_key_len)
+                 const uint8_t *enc_key, int enc_key_len,
+                 uint64_t lifetime_ticks)
 {
     if (!ipsec_initialised) return -ENOSYS;
     if (proto != SADB_PROTO_AH && proto != SADB_PROTO_ESP) return -EINVAL;
@@ -124,6 +130,8 @@ static int ipsec_sa_add(uint32_t spi, uint32_t src_ip, uint32_t dst_ip,
     sa->spi = spi;
     sa->src_ip = src_ip;
     sa->dst_ip = dst_ip;
+    sa->creation_time = timer_get_ticks();
+    sa->lifetime_ticks = lifetime_ticks;
 
     if (auth_key && auth_key_len > 0) {
         int len = auth_key_len > 32 ? 32 : auth_key_len;
@@ -171,6 +179,18 @@ static void ipsec_sa_flush(void)
     kprintf("ipsec: all SAs flushed\n");
 }
 
+/* Check if an SA has exceeded its hard lifetime.
+ * Returns 0 if the SA is still valid, -ETIME if expired.
+ * Must be called under sadb_lock. */
+static int ipsec_sa_check_lifetime(struct security_assoc *sa)
+{
+    if (sa->lifetime_ticks == 0)
+        return 0; /* unlimited */
+    if (timer_get_ticks() - sa->creation_time >= sa->lifetime_ticks)
+        return -ETIME;
+    return 0;
+}
+
 static int ipsec_compute_icv(struct security_assoc *sa, const uint8_t *data,
                               int data_len, uint8_t *icv_out)
 {
@@ -202,6 +222,14 @@ static int ipsec_output_ah(struct ip_header *outer_ip, uint8_t *buf, int *len, i
         return -ENOENT;
     }
     struct security_assoc *sa = &sadb[idx];
+    uint32_t sa_spi = sa->spi;
+
+    /* Reject output if the SA has expired */
+    if (ipsec_sa_check_lifetime(sa) < 0) {
+        spinlock_release(&sadb_lock);
+        kprintf("ipsec: SA expired (spi=0x%x), dropping AH output\n", sa_spi);
+        return -ETIME;
+    }
 
     int payload_len = *len;
     int ah_hdr_size = sizeof(struct ah_header) + 12; /* header + ICV */
@@ -252,6 +280,14 @@ static int ipsec_output_esp(struct ip_header *outer_ip, uint8_t *buf, int *len, 
         return -ENOENT;
     }
     struct security_assoc *sa = &sadb[idx];
+    uint32_t sa_spi = sa->spi;
+
+    /* Reject output if the SA has expired */
+    if (ipsec_sa_check_lifetime(sa) < 0) {
+        spinlock_release(&sadb_lock);
+        kprintf("ipsec: SA expired (spi=0x%x), dropping ESP output\n", sa_spi);
+        return -ETIME;
+    }
 
     int payload_len = *len;
     /* ESP header + payload + padding + pad_len + next_hdr + ICV */
@@ -295,6 +331,7 @@ static int ipsec_output_esp(struct ip_header *outer_ip, uint8_t *buf, int *len, 
 
 static int ipsec_input_ah(struct ip_header *ip_hdr, const uint8_t *payload, int len)
 {
+    int ret;
     const struct ah_header *ah = (const struct ah_header *)payload;
     spinlock_acquire(&sadb_lock);
     int idx = sadb_find_by_spi(ah->spi, ip_hdr->src_ip);
@@ -304,6 +341,14 @@ static int ipsec_input_ah(struct ip_header *ip_hdr, const uint8_t *payload, int 
         return -ENOENT;
     }
     struct security_assoc *sa = &sadb[idx];
+
+    /* Reject packets if the SA has expired */
+    ret = ipsec_sa_check_lifetime(sa);
+    if (ret < 0) {
+        spinlock_release(&sadb_lock);
+        kprintf("ipsec: SA expired (spi=0x%x), dropping AH packet\n", ah->spi);
+        return ret;
+    }
 
     if (ah->seq_no <= sa->last_seq) {
         spinlock_release(&sadb_lock);
@@ -337,6 +382,7 @@ static int ipsec_input_ah(struct ip_header *ip_hdr, const uint8_t *payload, int 
 
 static int ipsec_input_esp(struct ip_header *ip_hdr, const uint8_t *payload, int len)
 {
+    int ret;
     const struct esp_header *esp = (const struct esp_header *)payload;
 
     uint8_t enc_key[32];
@@ -353,6 +399,14 @@ static int ipsec_input_esp(struct ip_header *ip_hdr, const uint8_t *payload, int
         return -ENOENT;
     }
     struct security_assoc *sa = &sadb[idx];
+
+    /* Reject packets if the SA has expired */
+    ret = ipsec_sa_check_lifetime(sa);
+    if (ret < 0) {
+        spinlock_release(&sadb_lock);
+        kprintf("ipsec: SA expired (spi=0x%x), dropping ESP packet\n", esp_spi);
+        return ret;
+    }
 
     if (esp_seq_no <= sa->last_seq) {
         spinlock_release(&sadb_lock);
