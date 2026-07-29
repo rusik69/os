@@ -286,6 +286,13 @@ int macsec_decrypt(uint64_t sci, const uint8_t *cipher, uint16_t cipher_len,
                 return -EBADMSG;
             }
 
+            /* Validate ICV length before replay check.
+             * Per 802.1AE, the Integrity Check Value (ICV) is always exactly
+             * 16 bytes for GCM-AES-128/256 cipher suites. Compute the secure
+             * data length and verify the ICV is at the expected position before
+             * any further processing. */
+            uint16_t data_len = cipher_len - sizeof(struct macsec_header) - MACSEC_ICV_LEN;
+
             /* Anti-replay check: reject stale or replayed packets.
              * Per 802.1AE the receiver must verify PN >= lowest acceptable PN. */
             uint32_t pn = ntohl(mh->packet_number);
@@ -296,7 +303,6 @@ int macsec_decrypt(uint64_t sci, const uint8_t *cipher, uint16_t cipher_len,
             }
             sa->lowest_pn = pn + 1;
 
-            uint16_t data_len = (uint16_t)(cipher_len - sizeof(struct macsec_header) - MACSEC_ICV_LEN);
             const uint8_t *secdata = cipher + sizeof(struct macsec_header);
             const uint8_t *icv = secdata + data_len;
 
