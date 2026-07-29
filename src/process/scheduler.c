@@ -342,7 +342,13 @@ static void recompute_time_slices(void) {
  * so lock-free reads are safe. */
 static inline uint16_t slice_for_prio(int lvl) {
     if (lvl < 0 || lvl >= SCHED_LEVELS) lvl = 1;
-    return computed_slices[lvl];
+    uint16_t s = computed_slices[lvl];
+    /* Validate: time slice must be non-zero to prevent busy-waits and
+     * division-by-zero in downstream scheduling decisions.  If the
+     * table hasn't been computed yet or a bug clobbered an entry,
+     * fall back to a safe minimum of 1 tick. */
+    if (s == 0) s = 1;
+    return s;
 }
 
 /* ── Sysctl handlers for scheduler latency/granularity ──────────── */
