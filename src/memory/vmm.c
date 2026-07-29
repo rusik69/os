@@ -1467,6 +1467,14 @@ int vmm_set_user_pages_flags(uint64_t *pml4, uint64_t virt, size_t num_pages,
     if (virt + num_pages * PAGE_SIZE < virt) return -EOVERFLOW; /* add overflow */
     if (virt + num_pages * PAGE_SIZE > USER_VADDR_MAX) return -EINVAL;
 
+    /* Validate PTE flags for user mapping — no reserved bits, USER bit
+     * required for present pages.  This mirrors the validation done in
+     * vmm_map_user_page and vmm_map_user_hugepage_internal. */
+    {
+        int ret_f = vmm_validate_pte_flags(new_flags, 1);
+        if (ret_f < 0) return ret_f;
+    }
+
     for (size_t i = 0; i < num_pages; i++) {
         uint64_t addr = virt + i * PAGE_SIZE;
         int pml4_idx = (addr >> 39) & 0x1FF;
