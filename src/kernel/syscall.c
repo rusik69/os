@@ -3669,7 +3669,8 @@ static int64_t sys_clone3(uint64_t uargs_addr, uint64_t size) {
  * Returns 0 on success, -1 with errno on failure.
  */
 static int64_t sys_unshare(uint64_t flags) {
-    /* Only the namespace-related bits are accepted — all other flags
+    /* ── Flag validation ──────────────────────────────────────────────
+     * Only the namespace-related bits are accepted — all other flags
      * (CLONE_VM, CLONE_THREAD, etc.) are invalid for unshare. */
     uint64_t ns_mask = CLONE_NEWNS | CLONE_NEWUTS | CLONE_NEWPID | CLONE_NEWNET | CLONE_NEWIPC |
                        CLONE_NEWCGROUP | CLONE_NEWTIME | CLONE_NEWUSER;
@@ -3680,6 +3681,25 @@ static int64_t sys_unshare(uint64_t flags) {
     struct process *cur = process_get_current();
     if (!cur)
         return (uint64_t)-EINVAL;
+
+    /* ── CLONE_NEWPID requires a single-threaded process ────────────
+     * Linux enforces that unshare(CLONE_NEWPID) may only be called by
+     * a single-threaded process.  If there are other threads sharing
+     * the same thread group (same tgid), the operation is denied. */
+    if (flags & CLONE_NEWPID) {
+        struct process *table = process_get_table();
+        int nr_threads = 0;
+        for (int i = 0; i < PROCESS_MAX; i++) {
+            if (table[i].state != PROCESS_UNUSED &&
+                table[i].tgid == cur->tgid) {
+                nr_threads++;
+            }
+        }
+        /* nr_threads > 1 means the caller has sibling threads sharing
+         * this thread group; unshare(CLONE_NEWPID) is not safe. */
+        if (nr_threads > 1)
+            return (uint64_t)-EINVAL;
+    }
 
     /* ── CLONE_NEWUTS: copy hostname/domainname ──────────────── */
     if (flags & CLONE_NEWUTS) {
