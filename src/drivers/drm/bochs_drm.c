@@ -460,6 +460,42 @@ static int bochs_drm_init(void)
     priv->lfb_phys = 0xFC000000;  /* typical QEMU bochs LFB address */
     priv->lfb_size = 16 * 1024 * 1024;  /* 16 MB typical */
 
+    /*
+     * Validate framebuffer address before mapping.
+     *
+     * The LFB physical address must be non-zero, page-aligned, and
+     * the size must be at least enough for a reasonable minimum
+     * resolution (e.g. 640x480x32bpp = 1,228,800 bytes) and no
+     * larger than a sane maximum for a bochs device.
+     */
+#define BOCHS_LFB_MIN_SIZE  (640U * 480U * 4U)    /* 640×480×32bpp */
+#define BOCHS_LFB_MAX_SIZE  (64U * 1024U * 1024U) /* 64 MB sanity cap */
+
+    if (priv->lfb_phys == 0) {
+        kprintf("[bochs-drm] error: LFB physical address is zero\n");
+        kfree(priv);
+        return -ENXIO;
+    }
+    if ((priv->lfb_phys & (PAGE_SIZE - 1)) != 0) {
+        kprintf("[bochs-drm] error: LFB physical address 0x%llx "
+                "is not page-aligned\n",
+                (unsigned long long)priv->lfb_phys);
+        kfree(priv);
+        return -EINVAL;
+    }
+    if (priv->lfb_size < BOCHS_LFB_MIN_SIZE) {
+        kprintf("[bochs-drm] error: LFB size %u is below minimum %u\n",
+                priv->lfb_size, BOCHS_LFB_MIN_SIZE);
+        kfree(priv);
+        return -EINVAL;
+    }
+    if (priv->lfb_size > BOCHS_LFB_MAX_SIZE) {
+        kprintf("[bochs-drm] error: LFB size %u exceeds maximum %u\n",
+                priv->lfb_size, BOCHS_LFB_MAX_SIZE);
+        kfree(priv);
+        return -EINVAL;
+    }
+
     /* Map LFB into kernel space for scanout */
     priv->lfb_virt = vmm_map_phys(priv->lfb_phys, priv->lfb_size,
                                    VMM_FLAG_PRESENT | VMM_FLAG_WRITE |
