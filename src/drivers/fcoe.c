@@ -97,6 +97,49 @@ static int fcoe_xmit_frame(const uint8_t *dst_mac, const uint8_t *src_mac,
     return 0;
 }
 
+/* ── FCoE CRC validation ─────────────────────────────────────────────── */
+
+/**
+ * fcoe_validate_crc - Validate CRC-32C of a received FCoE frame
+ * @buf:  Pointer to the full Ethernet frame (starting with FCoE header)
+ * @len:  Total length of the frame in bytes
+ *
+ * An FCoE frame on the wire is laid out as:
+ *   [FCoE Header: 22B][FC Frame: N bytes][CRC-32C: 4B][EOF: 1B]
+ *
+ * The CRC-32C (Castagnoli polynomial) covers the FC frame data only
+ * (everything after the FCoE header up to the CRC field).  Returns 0
+ * if the CRC matches, -EINVAL if the frame is too short or pointers
+ * are NULL, or -EBADMSG if the CRC does not match.
+ */
+static int fcoe_validate_crc(const uint8_t *buf, uint32_t len)
+{
+    uint32_t fc_data_len, expected_crc, frame_crc;
+
+    if (!buf)
+        return -EINVAL;
+
+    /* Minimum: FCoE header (22) + SOF (1) + CRC (4) + EOF (1) = 28 bytes */
+    if (len < sizeof(struct fcoe_frame) + 6)
+        return -EINVAL;
+
+    fc_data_len = len - sizeof(struct fcoe_frame) - 4 - 1;  /* strip CRC + EOF */
+    if (fc_data_len == 0)
+        return -EINVAL;
+
+    /* Compute expected CRC over the FC frame data */
+    expected_crc = crc32c(0, buf + sizeof(struct fcoe_frame), fc_data_len);
+    expected_crc = fcoe_htonl(expected_crc);
+
+    /* Extract CRC from the frame */
+    memcpy(&frame_crc, buf + sizeof(struct fcoe_frame) + fc_data_len, sizeof(frame_crc));
+
+    if (frame_crc != expected_crc)
+        return -EBADMSG;
+
+    return 0;
+}
+
 /* ── Receive and parse FCoE frame ───────────────────────────────────── */
 
 static int fcoe_recv_frame(__maybe_unused uint8_t *fc_frame_buf,
@@ -401,6 +444,12 @@ void fcoe_poll(void)
     uint8_t dst_mac[6], src_mac[6];
 
     if (fcoe_recv_frame(fc_frame, &fc_len, dst_mac, src_mac) == 0) {
+        /* Validate CRC before forwarding to FC processing */
+        if (fcoe_validate_crc(fc_frame, fc_len) < 0) {
+            kprintf("[FCOE] RX: CRC validation failed, dropping frame\n");
+            kfree(fc_frame);
+            return;
+        }
         /* Process received FC frame */
         struct fc_header *hdr = (struct fc_header *)fc_frame;
         kprintf("[FCOE] RX: r_ctl=0x%02x type=0x%02x s_id=0x%02x%02x%02x\n",
