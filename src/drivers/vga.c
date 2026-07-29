@@ -1,3 +1,86 @@
+/*
+ * VGA Console Driver — Text Mode & Framebuffer Mode
+ * ===================================================
+ *
+ * Architecture:
+ *
+ * This driver provides the system console via two mutually exclusive rendering
+ * paths selected at runtime:
+ *
+ *   ┌─ TEXT MODE (fb_active == 0) ────────────────────────────────────┐
+ *   │ Uses the legacy VGA text buffer at VGA_MEMORY (0xB8000 in       │
+ *   │ x86 VGA-compatible memory). Each entry is a 16-bit cell:        │
+ *   │   bits 0-7   : ASCII character                                  │
+ *   │   bits 8-11  : foreground color (4-bit palette)                 │
+ *   │   bits 12-14 : background color (4-bit palette)                 │
+ *   │   bit 15     : blink attribute                                  │
+ *   │ The cursor is managed through VGA CRTC registers via ports      │
+ *   │ 0x3D4/0x3D5. No pixel manipulation is performed.               │
+ *   └─────────────────────────────────────────────────────────────────┘
+ *
+ *   ┌─ FRAMEBUFFER MODE (fb_active == 1) ───────────────────────────┐
+ *   │ Uses a linear framebuffer (memory-mapped pixel array). The    │
+ *   │ framebuffer can be obtained from one of three sources:        │
+ *   │                                                               │
+ *   │ 1. Multiboot bootloader — passed via vga_try_init_fb() from   │
+ *   │    the multiboot_info structure (addr, width, height, bpp,    │
+ *   │    pitch). Must be type 1 (RGB), 24- or 32-bit.              │
+ *   │                                                               │
+ *   │ 2. Bochs VBE PCI interface — vga_try_bochs_vbe() detects the │
+ *   │    Bochs/QEMU DISPI extension (ports 0x01CE/0x01CF) and sets │
+ *   │    a linear framebuffer at VBE_DISPI_LFB_PHYS (0xE0000000)   │
+ *   │    or via PCI BAR0 lookup on QEMU -vga std.                  │
+ *   │                                                               │
+ *   │ 3. Software fallback — kmalloc'd heap buffer when no real    │
+ *   │    hardware framebuffer is available (displayed via whatever  │
+ *   │    hardware multiboot path exists).                           │
+ *   │                                                               │
+ *   │ Text is rendered into the framebuffer by blitting glyphs     │
+ *   │ from the built-in 5x7 font table (font5x7() function).       │
+ *   │ Each VGA cell (80x25) maps to a fixed-size pixel region      │
+ *   │ of FB_CELL_W × FB_CELL_H (8×16 pixels).                      │
+ *   │ Color is converted from the 16-entry VGA palette (see        │
+ *   │ vga_palette[]) to 24/32-bit RGB.                             │
+ *   └───────────────────────────────────────────────────────────────┘
+ *
+ * Data Flow — Text->Pixel Rendering:
+ *
+ *   vga_putchar(c) ──> vga_cells[row*VGA_WIDTH+col] (scrollback)
+ *         │
+ *         ├── fb_active ? fb_put_pixel() : VGA_MEMORY[]
+ *         │
+ *         ├── render_cell(row, col) — draws one character cell
+ *         │      └── font5x7(ch) → 8×7 bitmap glyph
+ *         │      └── fb_put_pixel(x0..x0+7, y0..y0+15, bg)
+ *         │      └── fb_put_pixel(px, py, fg) for each set bit
+ *         │
+ *         └── vga_scroll() — scrolls vga_cells[] on overflow
+ *
+ * Scrollback:
+ *   A ring buffer (scrollback_buf[VGA_SCROLLBACK_SIZE]) records
+ *   every character written via vga_putchar() for later inspection
+ *   through /dev/console or the debug shell.
+ *
+ * VGA Hardware Registers (legacy text mode):
+ *   - Port 0x3D4: CRTC index register
+ *   - Port 0x3D5: CRTC data register
+ *   - Index 0x0F: cursor location (low byte)
+ *   - Index 0x0E: cursor location (high byte)
+ *   - Port 0x3C8: DAC write index (palette)
+ *   - Port 0x3C9: DAC data (R,G,B)
+ *   - Port 0x3C0: attribute controller
+ *
+ * Bochs VBE DISPI Registers:
+ *   - Port 0x01CE: index register
+ *   - Port 0x01CF: data register
+ *   - Index 0x0 (ID), 0x1 (XRES), 0x2 (YRES), 0x3 (BPP),
+ *     0x4 (ENABLE), 0x6 (VIRT_WIDTH)
+ *
+ * Exported symbols (for loadable modules like doom.ko):
+ *   vga_putchar, vga_write, vga_clear, vga_set_color,
+ *   vga_put_pixel, vga_is_framebuffer, vga_get_framebuffer_info,
+ *   vga_get_framebuffer_ptr, vga_clear_framebuffer, vga_refresh_console
+ */
 #include "vga.h"
 #include "io.h"
 #include "string.h"
