@@ -168,6 +168,34 @@ static void drbd_handle_packet(struct drbd_resource *res)
         drbd_send_packet(res, P_ACK, 0, 0, NULL, 0);
         break;
 
+    case P_CONN_STATE:
+        /* Peer initiated a protocol version handshake */
+        {
+            uint64_t peer_ver   = drbd_htonll(hdr.sector);
+            uint32_t peer_major = (uint32_t)(peer_ver >> 32);
+            uint32_t peer_minor = (uint32_t)(peer_ver & 0xFFFFFFFFULL);
+
+            kprintf("[DRBD] Received P_CONN_STATE: peer version %u.%u\n",
+                    peer_major, peer_minor);
+
+            /* Reply with our own protocol version */
+            drbd_send_packet(res, P_CONN_STATE,
+                             DRBD_PROTOCOL_VERSION, 0, NULL, 0);
+
+            if (peer_major != DRBD_PROTOCOL_MAJOR) {
+                kprintf("[DRBD] Incompatible peer protocol: "
+                        "%u.%u != %u.%u — disconnecting\n",
+                        peer_major, peer_minor,
+                        DRBD_PROTOCOL_MAJOR, DRBD_PROTOCOL_MINOR);
+                res->conn_state = DRBD_STATE_STANDALONE;
+            } else {
+                kprintf("[DRBD] Peer protocol version accepted: %u.%u\n",
+                        peer_major, peer_minor);
+                res->conn_state = DRBD_STATE_CONNECTED;
+            }
+        }
+        break;
+
     default:
         kprintf("[DRBD] Unknown packet type: 0x%04x\n", type);
         break;
@@ -311,9 +339,12 @@ int drbd_create_resource(const char *name, int local_dev_id)
 int drbd_connect_peer(int res_id, uint32_t peer_ip, uint16_t port)
 {
     if (res_id < 0 || res_id >= DRBD_MAX_RESOURCES || !g_resources[res_id].active)
-        return -1;
+        return -EINVAL;
 
     struct drbd_resource *res = &g_resources[res_id];
+
+    if (res->conn_state >= DRBD_STATE_CONNECTED)
+        return -EISCONN;
 
     if (port == 0) port = DRBD_PORT;
 
@@ -322,16 +353,85 @@ int drbd_connect_peer(int res_id, uint32_t peer_ip, uint16_t port)
     if (conn_id < 0) {
         kprintf("[DRBD] Failed to connect to peer %d.%d.%d.%d:%d\n",
                 NIPQUAD(peer_ip), port);
-        return -1;
+        return -ECONNREFUSED;
     }
 
     res->conn_id = conn_id;
     res->peer_ip = peer_ip;
     res->peer_port = port;
+
+    /* ── Protocol version handshake ──────────────────────────────────
+     *
+     * Before we accept the connection as established, we exchange
+     * protocol version information with the peer.  This ensures both
+     * ends speak a compatible wire format.
+     *
+     * 1. Send a P_CONN_STATE packet containing our protocol version
+     *    (major.minor packed into the header's sector field).
+     * 2. Wait for the peer's P_CONN_STATE reply.
+     * 3. Validate major version equality — a mismatch means the
+     *    on-wire format is incompatible.
+     */
+
+    /* Send our protocol version to peer */
+    int ret = drbd_send_packet(res, P_CONN_STATE,
+                                DRBD_PROTOCOL_VERSION, 0, NULL, 0);
+    if (ret < 0) {
+        kprintf("[DRBD] Failed to send protocol version handshake\n");
+        net_tcp_close(conn_id);
+        res->conn_id = -1;
+        return -EIO;
+    }
+
+    /* Receive peer's protocol version reply */
+    {
+        struct drbd_packet_hdr resp_hdr;
+        ret = drbd_tcp_recv(res, &resp_hdr, sizeof(resp_hdr), 500);
+        if (ret < 0) {
+            kprintf("[DRBD] No handshake reply from peer (timeout)\n");
+            net_tcp_close(conn_id);
+            res->conn_id = -1;
+            return -ETIMEDOUT;
+        }
+
+        uint16_t resp_magic = drbd_htons(resp_hdr.magic);
+        uint16_t resp_type  = drbd_htons(resp_hdr.type);
+
+        if (resp_magic != DRBD_MAGIC || resp_type != P_CONN_STATE) {
+            kprintf("[DRBD] Unexpected handshake response: magic=0x%04x type=0x%04x\n",
+                    resp_magic, resp_type);
+            net_tcp_close(conn_id);
+            res->conn_id = -1;
+            return -EPROTO;
+        }
+
+        uint64_t peer_ver   = drbd_htonll(resp_hdr.sector);
+        uint32_t peer_major = (uint32_t)(peer_ver >> 32);
+        uint32_t peer_minor = (uint32_t)(peer_ver & 0xFFFFFFFFULL);
+
+        kprintf("[DRBD] Peer protocol version: %u.%u\n",
+                peer_major, peer_minor);
+
+        if (peer_major != DRBD_PROTOCOL_MAJOR) {
+            kprintf("[DRBD] Protocol version mismatch! "
+                    "peer=%u.%u, we=%u.%u\n",
+                    peer_major, peer_minor,
+                    DRBD_PROTOCOL_MAJOR, DRBD_PROTOCOL_MINOR);
+            net_tcp_close(conn_id);
+            res->conn_id = -1;
+            return -EPROTONOSUPPORT;
+        }
+
+        kprintf("[DRBD] Peer protocol version accepted: %u.%u\n",
+                peer_major, peer_minor);
+    }
+
     res->conn_state = DRBD_STATE_CONNECTED;
 
-    kprintf("[DRBD] Connected to peer %d.%d.%d.%d:%d on resource '%s'\n",
-            NIPQUAD(peer_ip), port, res->name);
+    kprintf("[DRBD] Connected to peer %d.%d.%d.%d:%d on resource '%s' "
+            "(protocol %u.%u)\n",
+            NIPQUAD(peer_ip), port, res->name,
+            DRBD_PROTOCOL_MAJOR, DRBD_PROTOCOL_MINOR);
     return 0;
 }
 

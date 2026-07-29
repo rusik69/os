@@ -9,6 +9,13 @@
 #define DRBD_MAX_RESOURCES      1
 #define DRBD_SECTOR_SIZE        512
 
+/* DRBD protocol version — bumped when wire format changes. Both ends
+ * must agree on the major version to communicate. */
+#define DRBD_PROTOCOL_MAJOR     1
+#define DRBD_PROTOCOL_MINOR     0
+#define DRBD_PROTOCOL_VERSION   ((uint64_t)DRBD_PROTOCOL_MAJOR << 32 | \
+                                 (uint64_t)DRBD_PROTOCOL_MINOR)
+
 /* DRBD packet types */
 #define P_DATA                  0x01
 #define P_DATA_REPLY            0x02
