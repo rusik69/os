@@ -40,7 +40,27 @@ int tpm_is_present(void);
 static struct tpm_device g_tpm;
 static spinlock_t g_tpm_lock = 0;
 
-/* ── MMIO helpers ─────────────────────────────────────────────────── */
+/* ── TIS register access helpers with locality validation ──────────── */
+
+/* TPM TIS localities: each locality's register space is at a 4K
+ * offset from the MMIO base.  Per the TCG TIS specification, valid
+ * locality numbers are 0-4 inclusive.  Locality 0 is the default
+ * for standard operation. */
+#define TIS_MAX_LOCALITY       4
+#define TIS_IS_VALID_LOCALITY(l)  ((l) >= 0 && (l) <= TIS_MAX_LOCALITY)
+#define TIS_LOCALITY_OFFSET(locality)  ((locality) * 0x1000)
+
+/* Validate a TPM TIS locality number.  Returns 0 on success,
+ * -EINVAL if the locality is outside the valid range [0-4]. */
+static int tis_validate_locality(int locality)
+{
+    if (!TIS_IS_VALID_LOCALITY(locality)) {
+        kprintf("[TPM TIS] ERROR: invalid locality %d (valid range 0-%d)\n",
+                locality, TIS_MAX_LOCALITY);
+        return -EINVAL;
+    }
+    return 0;
+}
 
 static inline uint8_t  tis_read8(struct tpm_device *dev, uint16_t off) {
     return dev->mmio_base[off];
@@ -103,21 +123,31 @@ static int tis_wait_for_bit(struct tpm_device *dev, uint16_t reg,
  *   IDLE → REQUEST_USE → READY → RECEIVE → EXECUTE → COMPLETE → IDLE
  */
 
-static int tis_request_locality(struct tpm_device *dev) {
-    /* Access register is at offset 0 for locality 0 */
-    tis_write8(dev, TIS_ACCESS, TIS_ACC_REQ_USE);
+static int tis_request_locality(struct tpm_device *dev, int locality) {
+    /* Validate locality number before accessing TIS registers */
+    if (tis_validate_locality(locality) < 0)
+        return -EINVAL;
 
-    if (tis_wait_for_bit(dev, TIS_ACCESS, TIS_ACC_ACTIVE_LOC, 1,
+    /* Access register is at offset (locality * 0x1000) */
+    uint16_t access_off = (uint16_t)(TIS_ACCESS + TIS_LOCALITY_OFFSET(locality));
+    tis_write8(dev, access_off, TIS_ACC_REQ_USE);
+
+    if (tis_wait_for_bit(dev, access_off, TIS_ACC_ACTIVE_LOC, 1,
                          TPM_TIMEOUT_A) < 0) {
-        kprintf("[TPM] timeout requesting locality\n");
+        kprintf("[TPM] timeout requesting locality %d\n", locality);
         return -ETIMEDOUT;
     }
     return 0;
 }
 
-static int tis_relinquish_locality(struct tpm_device *dev) {
+static int tis_relinquish_locality(struct tpm_device *dev, int locality) {
+    /* Validate locality number before accessing TIS registers */
+    if (tis_validate_locality(locality) < 0)
+        return -EINVAL;
+
     /* Write requestUse to signal end of locality use (per TCG TIS spec) */
-    tis_write8(dev, TIS_ACCESS, TIS_ACC_REQ_USE);
+    uint16_t access_off = (uint16_t)(TIS_ACCESS + TIS_LOCALITY_OFFSET(locality));
+    tis_write8(dev, access_off, TIS_ACC_REQ_USE);
     return 0;
 }
 
@@ -191,7 +221,7 @@ int tpm_transmit(const uint8_t *cmd, uint32_t cmd_len,
     spinlock_acquire(&g_tpm_lock);
 
     /* 1. Request locality */
-    if (tis_request_locality(dev) < 0)
+    if (tis_request_locality(dev, 0) < 0)
         goto out;
 
     /* 2. Transition to ready */
@@ -318,7 +348,7 @@ int tpm_transmit(const uint8_t *cmd, uint32_t cmd_len,
 cancel:
     tis_cancel(dev);
 release:
-    tis_relinquish_locality(dev);
+    tis_relinquish_locality(dev, 0);
 out:
     spinlock_release(&g_tpm_lock);
     return ret;
@@ -500,9 +530,10 @@ int tpm_init(void) {
     }
 
     /* ── Claim locality 0 ──────────────────────────────────────── */
-    if (tis_request_locality(dev) < 0) {
+    if (tis_request_locality(dev, 0) < 0) {
         vmm_unmap_phys(virt, TPM_TIS_SIZE);
         dev->mmio_base = NULL;
+        kprintf("[TPM] failed to claim locality\n");
         return -EINVAL;
     }
 
@@ -514,7 +545,7 @@ int tpm_init(void) {
     dev->initialized = 1;
     dev->state = TIS_STATE_IDLE;
 
-    tis_relinquish_locality(dev);
+    tis_relinquish_locality(dev, 0);
 
     kprintf("[TPM] TPM 2.0 device ready (DID=0x%04x VID=0x%04x rev=0x%02x)\n",
             dev->did, dev->vid, dev->revision);
