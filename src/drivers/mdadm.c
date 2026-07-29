@@ -20,9 +20,20 @@ int raid_write_super(uint8_t *buffer, uint64_t sector_offset,
                      const uint8_t *uuid) {
     if (!buffer) return -1;
 
+    /* Validate superblock offset — prevent overflow in sector_offset * 512 */
+    if (sector_offset > (UINT64_MAX / 512)) {
+        kprintf("[MDADM] write_super: sector_offset %llu causes 64-bit overflow\n",
+                (unsigned long long)sector_offset);
+        return -1;
+    }
+    uint64_t byte_offset = sector_offset * 512;
+    if (byte_offset + sizeof(struct raid_super) < byte_offset) {
+        kprintf("[MDADM] write_super: byte_offset + superblock size wraps around\n");
+        return -1;
+    }
+
     /* Place superblock at byte offset within the buffer */
-    struct raid_super *super = (struct raid_super *)(buffer + sector_offset * 512);
-    if (!super) return -1;
+    struct raid_super *super = (struct raid_super *)(buffer + byte_offset);
 
     memset(super, 0, sizeof(*super));
     super->magic = RAID_SUPER_MAGIC;
@@ -46,9 +57,20 @@ int raid_read_super(const uint8_t *buffer, uint64_t sector_offset,
                     struct raid_super *super) {
     if (!buffer || !super) return -1;
 
+    /* Validate superblock offset — prevent overflow in sector_offset * 512 */
+    if (sector_offset > (UINT64_MAX / 512)) {
+        kprintf("[MDADM] read_super: sector_offset %llu causes 64-bit overflow\n",
+                (unsigned long long)sector_offset);
+        return -1;
+    }
+    uint64_t byte_offset = sector_offset * 512;
+    if (byte_offset + sizeof(struct raid_super) < byte_offset) {
+        kprintf("[MDADM] read_super: byte_offset + superblock size wraps around\n");
+        return -1;
+    }
+
     const struct raid_super *sb =
-        (const struct raid_super *)(buffer + sector_offset * 512);
-    if (!sb) return -1;
+        (const struct raid_super *)(buffer + byte_offset);
 
     /* Check magic */
     if (sb->magic != RAID_SUPER_MAGIC) {
