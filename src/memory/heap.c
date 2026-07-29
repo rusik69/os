@@ -154,6 +154,13 @@ void * __malloc kmalloc(size_t size) {
         return NULL;
     }
 
+    /* Validate allocation size to prevent overflow during alignment.
+     * If size is too close to SIZE_MAX, the (size + 15) alignment step
+     * would wrap, producing a small or zero allocation that does not
+     * match the caller's intended buffer size. */
+    if (size > SIZE_MAX - 16)
+        return NULL;
+
     /* Align to 16 bytes */
     size = (size + 15) & ~15ULL;
 
@@ -278,6 +285,10 @@ void *krealloc(void *ptr, size_t new_size) {
         spinlock_irqsave_release(&heap_lock, flags);
         return ptr;
     }
+
+    /* Validate new_size to prevent overflow during alignment */
+    if (new_size > SIZE_MAX - 16)
+        return NULL;
 
     /* Align size for the new allocation */
     size_t aligned_size = (new_size + 15) & ~15ULL;
