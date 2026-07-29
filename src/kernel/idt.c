@@ -7,6 +7,103 @@
 #include "signal.h"
 #include "process.h"
 
+/*
+ * ────────────────────────────────────────────────────────────────────────────
+ * IDT — Interrupt Descriptor Table
+ * ────────────────────────────────────────────────────────────────────────────
+ *
+ * OVERVIEW
+ * --------
+ * The Interrupt Descriptor Table (IDT) maps each of the 256 x86-64 interrupt
+ * vectors (0..255) to a handler address, privilege level, and stack selector.
+ * When an interrupt or exception occurs, the CPU uses the vector number to
+ * look up the corresponding IDT entry, checks the privilege against the DPL
+ * (Descriptor Privilege Level), switches stacks if necessary (via the IST
+ * mechanism), and jumps to the handler.
+ *
+ * This file implements:
+ *   - IDT entry setup  (idt_set_gate, idt_set_gate_ist)
+ *   - Handler dispatch (isr_common_handler → per-vector handlers[])
+ *   - Dynamic IRQ allocation (irq_alloc_range / irq_free_range)
+ *   - Interrupt statistics  (irq_counts[], vector_names[])
+ *
+ *
+ * IDT ENTRY LAYOUT  (struct idt_entry, see include/idt.h)
+ * ─────────────────
+ * Each 16-byte descriptor has the following fields:
+ *
+ *   offset_low   (16 bits)  — Bits  0..15 of the handler address
+ *   selector     (16 bits)  — Code-segment selector (0x08 = ring-0 kernel code)
+ *   ist          ( 8 bits)  — Interrupt Stack Table index (0 = no IST switch;
+ *                              1..7 = switch to IST1..IST7 on entry)
+ *   type_attr    ( 8 bits)  — Gate type and attributes:
+ *                               Bit 7    = Present (1 = gate is present)
+ *                               Bits 6-5 = DPL (Descriptor Privilege Level)
+ *                               Bit 4    = 0 (interrupt gate) / 1 (trap gate)
+ *                               Bits 3-0 = 0xE (32/64-bit interrupt gate)
+ *                              Common values:
+ *                               0x8E = present, ring-0, 64-bit interrupt gate
+ *                               0xEE = present, ring-3, 64-bit interrupt gate
+ *                               0x8F = present, ring-0, 64-bit trap gate
+ *   offset_mid   (16 bits)  — Bits 16..31 of the handler address
+ *   offset_high  (32 bits)  — Bits 32..63 of the handler address (x86-64)
+ *   reserved     (32 bits)  — Reserved (must be 0)
+ *
+ * The 64-bit handler address is reconstructed as:
+ *   offset_high << 32 | offset_mid << 16 | offset_low
+ *
+ *
+ * ISR WIRING  (assembly → C dispatch)
+ * ──────────
+ * Each interrupt vector has a tiny assembly stub in idt_asm.asm.  The stubs
+ * follow a consistent pattern:
+ *
+ *   1. Push a dummy error code (0) for vectors where the CPU does not push
+ *      one automatically (#DF, #TS, #NP, #SS, #GP, #PF, #AC — vectors 8,
+ *      10, 11, 12, 13, 14, 17, 21 — do push a real error code).
+ *   2. Push the vector number as the second stack item.
+ *   3. Jump to isr_common_stub, which:
+ *        a. Saves all GP registers (rax, rbx, rcx, rdx, rsi, rdi, rbp,
+ *           r8..r15) in the order defined by struct interrupt_frame.
+ *        b. Passes RSP (now pointing at the saved frame) to the C function
+ *           isr_common_handler().
+ *        c. On return, restores registers and executes iretq.
+ *
+ * The C dispatch in isr_common_handler() does:
+ *   1. Save the interrupt frame in the per-CPU cpu_info for signal delivery.
+ *   2. Increment the per-CPU per-vector counter (irq_counts[]).
+ *   3. Call the registered handler from handlers[vector], if any.
+ *   4. For unhandled exception vectors (0..31), print diagnostic info and
+ *      either deliver a signal (user-mode exception) or halt (kernel-mode).
+ *   5. For unhandled IRQ vectors, the interrupt is silently ignored.
+ *
+ *
+ * VECTOR ALLOCATION SCHEME
+ * ────────────────────────
+ *   Vectors 0–31    : CPU exceptions (ISR0..ISR31)
+ *   Vectors 32–47   : Legacy PIC hardware IRQs  (IRQ0..IRQ15, remapped)
+ *   Vectors 48–239  : Dynamic allocation via irq_alloc_range()
+ *   Vectors 240–243 : Inter-processor interrupts (IPI)
+ *                       240 = IPI_VECTOR_RESCHEDULE
+ *                       241 = IPI_VECTOR_TLB_SHOOT
+ *                       242 = IPI_VECTOR_BACKTRACE
+ *                       243 = IPI_VECTOR_MEMBARRIER
+ *   Vectors 244–255 : Reserved for future use
+ *
+ *
+ * IST (INTERRUPT STACK TABLE) USAGE
+ * ─────────────────────────────────
+ *   IST0 — (reserved; not used, value 0 means "no IST switch")
+ *   IST1 — #DF (double-fault) handler stack — see fault.c double_fault_handler
+ *   IST2 — NMI stack (if enabled)
+ *   IST3–7 — available for per-driver stacks (MCE, NMI watchdogs, etc.)
+ *
+ * Each IST entry points to a dedicated stack that the CPU loads BEFORE
+ * pushing the interrupt frame.  This guarantees a valid stack even when the
+ * interrupted context's stack has overflowed (critical for #DF recovery).
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
 static struct idt_entry idt[256];
 static struct idt_pointer idt_ptr;
 static isr_handler_t handlers[256];
