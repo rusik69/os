@@ -141,6 +141,22 @@ void __init hpet_init(void)
     kprintf("[HPET] Main counter frequency: %llu Hz (period=%u fs)\n",
             freq_hz, period);
 
+    /* Validate the comparator value before programming the timer.
+     * A zero comparator would cause an immediate match on every
+     * counter cycle, leading to a livelock.  In 32-bit mode, the
+     * comparator must not exceed the 32-bit counter width to avoid
+     * truncation (the hardware ignores upper bits, resulting in
+     * an incorrect period). */
+    if (freq_hz == 0) {
+        kprintf("[WARN] HPET: comparator value is 0 -- cannot program timer\n");
+        return;
+    }
+    if (!hpet_64bit && freq_hz > 0xFFFFFFFFULL) {
+        kprintf("[WARN] HPET: comparator 0x%llx exceeds 32-bit counter "
+                "range, clamping\n", freq_hz);
+        freq_hz = 0xFFFFFFFFULL;
+    }
+
     /*
      * ── Configure Timer 0 for periodic mode ──────────────────────────
      *
