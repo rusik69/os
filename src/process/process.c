@@ -1556,6 +1556,13 @@ void process_set_current(struct process *proc) {
 }
 
 struct process *process_get_by_pid(uint32_t pid) {
+    /* Validate PID range: only 0..PROCESS_MAX-1 are valid table indices.
+     * PIDs outside this range can never exist — reject early to avoid
+     * a useless linear scan and to harden against callers passing
+     * uninitialised or attacker-controlled values. */
+    if (pid >= PROCESS_MAX)
+        return NULL;
+
     struct process *fallback = NULL;
     for (int i = 0; i < PROCESS_MAX; i++) {
         if (process_table[i].state != PROCESS_UNUSED && process_table[i].pid == pid) {
