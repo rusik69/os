@@ -390,10 +390,26 @@ static int keyring_add_key(const char *ring, const char *desc, const void *paylo
 /* ── Stub: keyring_search ─────────────────────────────── */
 static int keyring_search(const char *ring, const char *desc, void *payload, size_t *len)
 {
-    (void)ring;
-    (void)desc;
-    (void)payload;
-    (void)len;
+    /* Validate key type (ring name) and key descriptor */
+    if (!ring || !desc || !payload || !len)
+        return -EINVAL;
+
+    /* Key type (ring name) must be a non-empty string */
+    if (ring[0] == '\0')
+        return -EINVAL;
+
+    /* Key descriptor must be a non-empty string */
+    if (desc[0] == '\0')
+        return -EINVAL;
+
+    /* Key type must not exceed maximum name length */
+    if (strlen(ring) >= KEY_NAME_MAX)
+        return -ENAMETOOLONG;
+
+    /* Key descriptor must not exceed maximum name length */
+    if (strlen(desc) >= KEY_NAME_MAX)
+        return -ENAMETOOLONG;
+
     kprintf("[keyring] keyring_search: not yet implemented\n");
     return 0;
 }
