@@ -485,21 +485,54 @@ void icmp_send_timeexceeded(uint32_t dst, uint32_t src, uint8_t *orig_pkt, uint1
     send_ip(dst, IP_PROTO_ICMP, buf, icmp_len);
 }
 
+/* Validate UDP checksum before delivering packet to the application.
+ *
+ * For IPv4, the UDP checksum is optional (RFC 768).  A zero checksum
+ * means the sender did not compute one.  When non-zero, it MUST be
+ * validated: the pseudo-header checksum is computed over the source
+ * and destination IP addresses, protocol number, and UDP datagram.
+ * Invalid checksums are discarded and counted as receive errors.
+ */
 void handle_udp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
-    if (len < sizeof(struct udp_header)) return;
+    /* Validate input pointers */
+    if (!ip_hdr || !payload) {
+        net_iface_stats.rx_errors++;
+        return;
+    }
+
+    if (len < sizeof(struct udp_header)) {
+        net_iface_stats.rx_errors++;
+        return;
+    }
+
     struct udp_header *udp = (struct udp_header *)payload;
     uint16_t dst_port = ntohs(udp->dst_port);
     uint16_t src_port = ntohs(udp->src_port);
     uint16_t udp_len = ntohs(udp->length);
-    if (udp_len < sizeof(struct udp_header) || udp_len > len) return;
 
-    /* Verify UDP checksum if present (0 = disabled per RFC 768) */
+    /* Validate UDP length field */
+    if (udp_len < sizeof(struct udp_header) || udp_len > len) {
+        net_iface_stats.rx_errors++;
+        return;
+    }
+
+    /*
+     * Verify UDP checksum before delivering the packet.
+     * Per RFC 768, a zero checksum means the sender did not compute one
+     * (optional for IPv4).  When a non-zero checksum is present, it MUST
+     * be validated; packets with invalid checksums are discarded.
+     */
     if (udp->checksum != 0) {
         uint16_t saved = udp->checksum;
         udp->checksum = 0;
         if (net_transport_checksum(ntohl(ip_hdr->src_ip), ntohl(ip_hdr->dst_ip),
-                                   IP_PROTO_UDP, payload, udp_len) != saved)
+                                   IP_PROTO_UDP, payload, udp_len) != saved) {
+            /* Checksum validation failed — discard the packet */
+            net_iface_stats.rx_errors++;
+            udp->checksum = saved; /* restore for debugging */
             return;
+        }
+        udp->checksum = saved; /* restore for downstream use */
     }
 
     const uint8_t *data = payload + sizeof(struct udp_header);
