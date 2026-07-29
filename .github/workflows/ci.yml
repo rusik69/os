@@ -300,9 +300,11 @@ jobs:
           echo "- No cppcheck warnings found" >> $GITHUB_STEP_SUMMARY
 
   # ── Comprehensive static analysis ─────────────────────────────────
+  # cppcheck on 732 files takes 15+ min. Timeout must accommodate it
+  # plus clang-tidy, check-padded, sparse.
   static-analysis:
     runs-on: [self-hosted, linux, x64]
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
