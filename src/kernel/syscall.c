@@ -101,6 +101,121 @@ MODULE_VERSION("1.0");
 MODULE_DESCRIPTION("Syscall dispatch — main kernel syscall interface and handler dispatch");
 MODULE_AUTHOR("Ruslan Gustomiasov");
 
+/*
+ * ────────────────────────────────────────────────────────────────────────────
+ * Syscall Dispatch Table Architecture
+ * ────────────────────────────────────────────────────────────────────────────
+ *
+ * OVERVIEW
+ * --------
+ * Syscalls are the primary interface between userspace and the kernel.  On
+ * x86-64, user code executes the SYSCALL instruction, which:
+ *   1. Loads CS/RIP from MSR_LSTAR (the syscall entry point).
+ *   2. Switches to the kernel stack (RSP loaded from MSR_STAR[31:0]).
+ *   3. Saves the user RIP into RCX and user RFLAGS into R11.
+ *   4. Clears IF (disables interrupts) and sets the CPL to 0.
+ *
+ * The entry point is either syscall_entry (direct, non-KPTI) or a KPTI
+ * trampoline that switches page tables before calling syscall_entry_full.
+ *
+ * DISPATCH FLOW
+ * ─────────────
+ * The assembly entry point (syscall_asm.asm) saves registers and arguments,
+ * then calls:
+ *
+ *   syscall_dispatch(num, a1, a2, a3, a4, a5)
+ *     │
+ *     ├─ 1. Seccomp evaluation (seccomp_evaluate_syscall)
+ *     │       Filter actions: ALLOW → continue
+ *     │                        TRAP  → send SIGSYS, return -1
+ *     │                        KILL  → exit process via SIGSYS
+ *     │
+ *     ├─ 2. BPF seccomp (mode SECCOMP_MODE_FILTER_BPF)
+ *     │       Same actions via BPF virtual machine evaluation.
+ *     │
+ *     ├─ 3. Audit syscall entry (audit_syscall_entry)
+ *     │       Logs the syscall number and arguments for auditd.
+ *     │
+ *     ├─ 4. Capability check (process_caps_has)
+ *     │       Verifies the process has the required capability bit
+ *     │       for the requested syscall number.
+ *     │
+ *     ├─ 5. Argument validation (syscall_validate_user_args)
+ *     │       Verifies all user-space pointers are within valid
+ *     │       mapped regions (read/write/string checks).  Returns
+ *     │       -EFAULT for invalid pointers.
+ *     │
+ *     └─ 6. Internal dispatch (syscall_dispatch_internal)
+ *             └─ switch(num) on SYS_* constant → calls sys_*()
+ *                 Returns -ENOSYS for unknown syscall numbers.
+ *
+ *     After dispatch: signal_convert_erestartsys converts ERESTARTSYS
+ *     from signal-interrupted syscalls.
+ *
+ * DISPATCH TABLE (syscall_dispatch_internal, lines ~12215–13053)
+ * ──────────────
+ * The main dispatch is a switch statement with ~200+ cases covering
+ * the full range of SYS_* constants defined in include/syscall.h.
+ * Each case calls the corresponding sys_*() implementation function.
+ * The switch falls through to a default case returning -ENOSYS.
+ *
+ * The syscall number ranges are defined and documented in syscall.h:
+ *   0-13         Core Linux-compatible ABI
+ *   78           getdents64
+ *   100-137      Extended FS and network syscalls
+ *   138-146      User/Session management
+ *   147-149      Hardware/Audio
+ *   150-154      I/O and Memory
+ *   155-161      Specialized (ELF exec, script exec, FAT mount, ...)
+ *   162-165      Shell-core
+ *   166-167      Display
+ *   168          Compiler (CC compile)
+ *   169-178      Tmux isolation
+ *   179-182      Heap
+ *   183-189      TCP server
+ *   190-193      Mutex
+ *   194-197      Semaphore
+ *   198-200      UDP server
+ *   201-203      FS extended (symlink, readlink, lstat)
+ *   204-206      Working directory
+ *   207-210      Shared memory IPC
+ *   211          Fork
+ *   212          Connection list
+ *   213          Signal handler registration
+ *   214-215      File seek/truncate
+ *   216          Raw Ethernet send
+ *   217-218      FD-based read/write
+ *   219-278      Job control, priority, scheduling
+ *   231-234      Clone, execve, gettid, tkill
+ *   235-237      Memory mapping (mmap, munmap, mprotect)
+ *   238-239      CPU affinity
+ *   240-242      FD manipulation (dup, dup2, fcntl)
+ *   243          select
+ *   244-245      Per-process timers
+ *   246          nanosleep
+ *   ...and many more custom syscalls up to ~350.
+ *
+ * CUSTOM SYSCALL TABLE
+ * ────────────────────
+ * In addition to the built-in switch dispatch, modules can register
+ * custom syscall handlers via syscall_register() / syscall_unregister().
+ * These are stored in custom_syscall_table[256] and are checked first
+ * by syscall_table_lookup().
+ *
+ * ENTRY POINT INITIALIZATION
+ * ───────────────────────────
+ * syscall_init() (line ~13489) configures the MSRs:
+ *   MSR_EFER.SCE — enables the SYSCALL instruction
+ *   MSR_STAR     — sets kernel CS (bits 47:32) and user CS base (bits 63:48)
+ *   MSR_LSTAR    — sets the syscall entry point RIP
+ *   MSR_SFMASK   — masks IF during syscall execution
+ *
+ * The kernel can be built with KPTI (page-table isolation), in which case
+ * MSR_LSTAR points to a trampoline that switches to the kernel page table
+ * before reaching the main dispatch.
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+
 #ifndef UINT32_MAX
 #define UINT32_MAX 4294967295U
 #endif
