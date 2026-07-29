@@ -63,10 +63,10 @@ static int simplefb_drm_load(struct drm_device *dev, unsigned long flags)
 		return -1;
 	}
 
-	/* Create a connector (type 13 = DRM_MODE_CONNECTOR_VGA is a
-	 * reasonable default for a simple framebuffer; on real hardware
-	 * the actual connector type depends on the board). */
-	int conn_id = drm_add_connector(dev, 13);
+	/* Create a connector with VGA type — a reasonable default for
+	 * a simple framebuffer; on real hardware the actual connector
+	 * type depends on the board. */
+	int conn_id = drm_add_connector(dev, DRM_MODE_CONNECTOR_VGA);
 	if (conn_id < 0) {
 		kprintf("[simplefb-drm] failed to create connector\n");
 		return -1;

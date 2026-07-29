@@ -108,7 +108,7 @@ static int drm_multi_check_layout(struct drm_device *dev,
         }
     }
 
-    /* Verify each connector ID exists in the device */
+    /* Verify each connector ID exists in the device and has a valid type */
     uint32_t *conn_ids = (uint32_t *)(uintptr_t)layout->connector_ids_ptr;
 
     for (uint32_t i = 0; i < layout->count_connectors; i++) {
@@ -116,6 +116,17 @@ static int drm_multi_check_layout(struct drm_device *dev,
         for (int j = 0; j < DRM_MAX_CONNECTOR; j++) {
             if (dev->connectors[j].in_use &&
                 dev->connectors[j].connector_id == conn_ids[i]) {
+                /* Validate that this connector has a known type.
+                 * An invalid type indicates a driver bug or
+                 * corruption — refuse to modeset with it. */
+                if (!drm_connector_type_valid(
+                        dev->connectors[j].connector_type)) {
+                    kprintf("[DRM multi] connector %u has invalid "
+                            "type %u, rejecting layout\n",
+                            conn_ids[i],
+                            dev->connectors[j].connector_type);
+                    return -EINVAL;
+                }
                 found = 1;
                 break;
             }

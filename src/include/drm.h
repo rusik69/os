@@ -385,6 +385,43 @@ struct drm_crtc {
     uint32_t connector_mask;  /* bitmask: bit N = drives dev->connectors[N] */
 };
 
+/* ── Connector type constants ────────────────────────────────── */
+
+/* Standard DRM connector types matching the values used
+ * by the kernel's connector drivers (bochs, simplefb, etc.). */
+#define DRM_MODE_CONNECTOR_Unknown      0
+#define DRM_MODE_CONNECTOR_VGA          1
+#define DRM_MODE_CONNECTOR_DVII         2
+#define DRM_MODE_CONNECTOR_DVID         3
+#define DRM_MODE_CONNECTOR_DVIA         4
+#define DRM_MODE_CONNECTOR_Composite    5
+#define DRM_MODE_CONNECTOR_SVIDEO       6
+#define DRM_MODE_CONNECTOR_LVDS         7
+#define DRM_MODE_CONNECTOR_Component    8
+#define DRM_MODE_CONNECTOR_9PinDIN      9
+#define DRM_MODE_CONNECTOR_DisplayPort  10
+#define DRM_MODE_CONNECTOR_HDMIA        11
+#define DRM_MODE_CONNECTOR_HDMIB        12
+#define DRM_MODE_CONNECTOR_TV           13
+#define DRM_MODE_CONNECTOR_eDP          14
+#define DRM_MODE_CONNECTOR_VIRTUAL      15
+#define DRM_MODE_CONNECTOR_DSI          16
+#define DRM_MODE_CONNECTOR_DPI          17
+#define DRM_MODE_CONNECTOR_WRITEBACK    18
+
+/* Maximum valid connector type value (inclusive). */
+#define DRM_MODE_CONNECTOR_MAX          18
+
+/*
+ * drm_connector_type_valid — Check whether a connector type code is
+ *                            within the known range.
+ * Returns 1 if valid, 0 otherwise.
+ */
+static inline int drm_connector_type_valid(uint32_t type)
+{
+    return type <= DRM_MODE_CONNECTOR_MAX;
+}
+
 struct drm_connector {
     int      in_use;
     uint32_t connector_id;

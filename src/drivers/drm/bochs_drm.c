@@ -319,8 +319,8 @@ static int bochs_drm_load(struct drm_device *dev, unsigned long flags)
         return -ENOMEM;
     }
 
-    /* Create a connector (type 13 = DRM_MODE_CONNECTOR_VGA) */
-    int conn_id = drm_add_connector(dev, 13);  /* VGA connector type */
+    /* Create a connector with VGA type */
+    int conn_id = drm_add_connector(dev, DRM_MODE_CONNECTOR_VGA);
     if (conn_id < 0) {
         kprintf("[bochs-drm] failed to create connector\n");
         return -ENOMEM;
@@ -334,7 +334,7 @@ static int bochs_drm_load(struct drm_device *dev, unsigned long flags)
         kprintf("[bochs-drm] warning: second CRTC not created\n");
     }
 
-    int conn2_id = drm_add_connector(dev, 14);  /* DRM_MODE_CONNECTOR_DVI */
+    int conn2_id = drm_add_connector(dev, DRM_MODE_CONNECTOR_DVII);  /* DVI-I connector */
     if (conn2_id < 0) {
         kprintf("[bochs-drm] warning: second connector not created\n");
     }

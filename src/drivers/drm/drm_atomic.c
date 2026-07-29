@@ -650,6 +650,28 @@ static int atomic_check_obj(struct drm_device *dev,
 	if (ret < 0)
 		return -ENOENT;
 
+	/* Validate connector objects have a known connector type
+	 * before allowing any property changes through the atomic
+	 * mode-setting path.  An invalid type indicates a driver
+	 * bug or corrupted state. */
+	if (obj_type == DRM_MODE_OBJECT_CONNECTOR) {
+		for (int i = 0; i < DRM_MAX_CONNECTOR; i++) {
+			if (dev->connectors[i].in_use &&
+			    dev->connectors[i].connector_id == obj_req->obj_id) {
+				if (!drm_connector_type_valid(
+				        dev->connectors[i].connector_type)) {
+					kprintf("[DRM atomic] check: "
+					        "connector %u has invalid "
+					        "type %u\n",
+					        obj_req->obj_id,
+					        dev->connectors[i].connector_type);
+					return -EINVAL;
+				}
+				break;
+			}
+		}
+	}
+
 	/* Validate each property */
 	for (uint32_t i = 0; i < obj_req->num_props; i++) {
 		struct drm_property *prop =

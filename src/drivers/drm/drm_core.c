@@ -601,6 +601,14 @@ int drm_add_connector(struct drm_device *dev, uint32_t type)
 {
     if (!dev) return -1;
 
+    /* Validate connector type before creating the connector.
+     * Unknown/bogus types indicate a driver bug and could lead
+     * to incorrect mode setting downstream. */
+    if (!drm_connector_type_valid(type)) {
+        kprintf("[DRM] drm_add_connector: invalid type %u rejected\n", type);
+        return -EINVAL;
+    }
+
     spinlock_acquire(&g_drm_lock);
 
     for (int i = 0; i < DRM_MAX_CONNECTOR; i++) {
