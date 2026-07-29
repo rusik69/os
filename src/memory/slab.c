@@ -12,18 +12,146 @@
 #include "page_allocator_ext.h"
 
 /*
- * Slab allocator — O(1) allocate/free for fixed-size kernel objects.
+ * ────────────────────────────────────────────────────────────────────────────
+ * Slab Allocator — Fixed-Size Object Cache
+ * ────────────────────────────────────────────────────────────────────────────
  *
- * Each cache manages a set of slabs (contiguous physical pages). Objects are
- * carved from slabs and tracked via an intrusive free list stored in freed
- * objects (no bitmap overhead). Slabs move between three lists:
+ * OVERVIEW
+ * --------
+ * The slab allocator provides O(1) allocation and deallocation for fixed-size
+ * kernel objects (e.g. process structures, inodes, dentries).  It reduces
+ * internal fragmentation by packing same-sized objects into contiguous
+ * physical pages (slabs), and improves cache locality by keeping objects of
+ * the same type on contiguous memory.
  *
- *   slabs_partial  — some objects free, some allocated (preferred for alloc)
- *   slabs_full     — all objects allocated
- *   slabs_free     — all objects free (candidate for reaping)
+ * Each cache is a collection of slabs (contiguous physical pages, typically
+ * 1-8 pages per slab). Objects are carved from slabs and tracked via an
+ * intrusive free list stored directly in freed objects — no separate bitmap
+ * overhead.  Slabs move between three doubly-linked lists as their occupancy
+ * changes.
  *
- * Per-CPU object cache (cpu_slab) provides a lockless fast path for the
- * common case, avoiding contention on the cache spinlock on SMP systems.
+ * SLAB STATE LISTS
+ * ────────────────
+ *   slabs_partial  — Some objects free, some allocated.  Preferred target
+ *                    for allocation (no need to allocate a new slab).  A
+ *                    single allocation here can fill the last free slot,
+ *                    moving the slab to slabs_full.
+ *
+ *   slabs_full     — All objects are allocated.  No free objects available.
+ *                    When an object is freed back, the slab becomes partial
+ *                    (unless the free leaves all objects free, in which
+ *                    case it goes to slabs_free).
+ *
+ *   slabs_free     — All objects are free (empty slab).  Candidate for
+ *                    reaping (freeing pages back to PMM).  The reaper
+ *                    periodically scans slabs_free lists and frees pages
+ *                    to reclaim memory.
+ *
+ * STRUCTURE
+ * ─────────
+ *   struct kmem_cache  (line ~71) — Per-type cache descriptor:
+ *     name          — Human-readable name (e.g. "task_struct")
+ *     obj_size      — Actual object size (rounded+aligned, includes redzone)
+ *     user_size     — Caller-requested size (without redzone)
+ *     align         — Requested alignment
+ *     gfporder      — 2^gfporder pages per slab
+ *     num           — Objects per slab
+ *     ctor          — Constructor for fresh objects (may be NULL)
+ *     colour_off    — Max colour offset for cache-line coloring
+ *     colour_next   — Next colour to use (cycling per slab)
+ *     slabs_full    — Doubly-linked list of full slabs
+ *     slabs_partial — Doubly-linked list of partial slabs
+ *     slabs_free    — Doubly-linked list of free slabs
+ *     cpu_slab[]    — Per-CPU object cache for lockless fast path
+ *     next          — Linked list of all caches (for slab reaper)
+ *     lock          — Spinlock protecting slab lists
+ *
+ *   struct slab  (line ~60) — Per-slab header at the start of each slab:
+ *     next, prev   — Doubly-linked list pointers
+ *     free_list    — Head of intrusive free object linked list
+ *     free_count   — Number of free objects in this slab
+ *     total        — Total objects in this slab
+ *     state        — FULL / PARTIAL / FREE (which list this slab is in)
+ *
+ *   struct cpu_slab  (line ~47) — Per-CPU object cache:
+ *     objects[]    — Array of pre-fetched free object pointers
+ *     count        — Number of valid entries in objects[]
+ *
+ * PER-CPU FAST PATH
+ * ─────────────────
+ * Each cache maintains a small per-CPU array (SLAB_CPU_CACHE_SIZE = 8) of
+ * pre-fetched free object pointers.  The fast allocation path (with IRQ
+ * save/restore for reentrancy) pops from this array.  If empty, it
+ * refills from the slab list under the cache's spinlock.  The fast free
+ * path pushes to the per-CPU array.  If full, it flushes to the slab list
+ * under the spinlock.
+ *
+ * This design provides a lockless fast path for the common case (no
+ * atomic ops or spinlock contention) on SMP systems.  Only local IRQ
+ * save/restore is needed for reentrancy from interrupt handlers on the
+ * same CPU.
+ *
+ * ALLOCATION FLOW  (kmem_cache_alloc)
+ * ─────────────────
+ *   1. Try per-CPU cache: pop objects[--count] (fast, lockless).
+ *   2. If per-CPU cache empty, acquire cache lock and try slabs_partial.
+ *      - Iterate slabs_partial list, find a slab with free objects.
+ *      - Pop from slab's free_list (intrusive linked list).
+ *      - If slab becomes full, relink to slabs_full.
+ *      - Refill per-CPU cache from remaining free objects.
+ *   3. If no partial slab, try slabs_free.
+ *      - Pop from slab's free_list.
+ *      - Relink slab to slabs_partial.
+ *   4. If no free slab, allocate new pages from PMM and create a new slab.
+ *   5. On success: check free poison (UAF detection), apply alloc poison,
+ *      set redzone, call constructor if present, call KASAN/kmemleak hooks.
+ *   6. Return object pointer.
+ *
+ * FREE FLOW  (kmem_cache_free)
+ * ──────────
+ *   1. Check alloc poison (detect use-after-free by caller), check redzone
+ *      (detect buffer overrun), apply free poison.
+ *   2. Try per-CPU cache: push to objects[count++] (fast, lockless).
+ *   3. If per-CPU cache full, acquire cache lock and flush per-CPU entries
+ *      to the source slab's free list.
+ *      - Update slab's free_count.
+ *      - Relink slab between slabs_partial, slabs_full, slabs_free as needed.
+ *   4. Call KASAN/kmemleak hooks.
+ *
+ * POISONING & REDZONE
+ * ───────────────────
+ *   SLAB_POISON_FREE  (0x6b) — Fills freed objects to detect UAF writes.
+ *     The first 8 bytes are left intact (used for the free-list pointer).
+ *     On alloc, bytes 8-15 are checked — if disturbed, a UAF write occurred.
+ *
+ *   SLAB_POISON_ALLOC (0x6a) — Fills freshly allocated objects to detect
+ *     use of uninitialized data.
+ *
+ *   SLAB_REDZONE_SIZE (8 bytes at end of each object) — Filled with
+ *     0xFDFDFDFDFDFDFDFD on alloc.  Checked on free.  If disturbed, the
+ *     caller wrote past the end of the object (buffer overflow).
+ *
+ * RANDOM FREELIST INSERTION
+ * ──────────────────────────
+ * Instead of always pushing freed objects to the head of the slab's free
+ * list (LIFO), freed objects are inserted at a random depth of up to
+ * FREELIST_RANDOM_DEPTH (4) entries.  This scrambles the allocation order
+ * so that sequential kmem_cache_alloc calls return unpredictably-arranged
+ * addresses, making heap exploits harder to construct.
+ *
+ * CACHE-LINE COLOURING
+ * ────────────────────
+ * Slabs within the same cache are shifted by a different colour offset
+ * (colour_off, cycling through colour_next).  This ensures that objects
+ * at the same relative offset in different slabs map to different cache
+ * lines, reducing cache-line contention on SMP systems.
+ *
+ * SLAB REAPER
+ * ───────────
+ * A periodic slab_reap() function scans all caches (via the cache_list
+ * linked list) and frees pages from slabs_free lists back to PMM.  This
+ * reclaims memory from caches whose objects have all been freed.
+ * ────────────────────────────────────────────────────────────────────────────
  */
 
 /* Size of per-CPU object cache (number of free object pointers per CPU) */
