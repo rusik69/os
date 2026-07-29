@@ -402,6 +402,14 @@ static int raid1_submit_fn(struct blk_request *req)
 int raid_set_level_raid0(struct raid_super *super)
 {
     if (!super) return -EINVAL;
+
+    /* Validate superblock magic before modifying */
+    if (super->magic != RAID_SUPER_MAGIC) {
+        kprintf("[MDADM] raid_set_level_raid0: bad superblock magic 0x%x (expected 0x%x)\n",
+                (uint32_t)super->magic, (uint32_t)RAID_SUPER_MAGIC);
+        return -EINVAL;
+    }
+
     super->level = 0;
     super->checksum = raid_super_checksum(super);
     kprintf("[MDADM] RAID superblock set to RAID0\n");
