@@ -1,9 +1,136 @@
 /*
- * Per-CPU scheduler with SMP load balancing
+ * ────────────────────────────────────────────────────────────────────────────
+ * Scheduler — Process Scheduling Policy
+ * ────────────────────────────────────────────────────────────────────────────
  *
- * Each CPU maintains its own multilevel priority queue (4 levels).
- * Idle CPUs pull tasks from busy CPUs via load_balance().
- * Cross-CPU wakeups use IPI reschedule.
+ * OVERVIEW
+ * --------
+ * This kernel implements a hybrid scheduling architecture combining multiple
+ * scheduling classes.  Each CPU maintains its own runqueue, and idle CPUs
+ * pull work from busy CPUs via load_balance().  Cross-CPU wakeups use IPI
+ * reschedule.
+ *
+ * SCHEDULING CLASSES (in selection priority order)
+ * ─────────────────────────────────────────────────
+ *
+ *   1. SCHED_DEADLINE  (policy 4)  — Earliest Deadline First
+ *      ──────────────────────────────────────────────────
+ *      Managed in sched_deadline.c.  Tasks declare worst-case execution time
+ *      (runtime), period, and relative deadline.  EDF guarantees that if the
+ *      total utilisation on a CPU is ≤ 1, every deadline task meets its timing
+ *      constraints.  Picked first in schedule().
+ *
+ *   2. SCHED_FIFO  (policy 1)  — First-In-First-Out real-time
+ *      ─────────────────────────────────────────────────────────
+ *      Strict priority-based FIFO.  A SCHED_FIFO task runs until it blocks
+ *      (I/O, sleep) or yields.  No preemption by other SCHED_FIFO tasks of
+ *      equal or lower priority.  Higher priority always preempts lower.
+ *      Handled via the multilevel priority queue (level 0 = highest).
+ *
+ *   3. SCHED_RR  (policy 2)  — Round-Robin real-time
+ *      ─────────────────────────────────────────────────
+ *      Like SCHED_FIFO but enforces a time slice.  When a SCHED_RR task
+ *      exhausts its quantum, it is moved to the tail of its priority level.
+ *
+ *   4. SCHED_OTHER / SCHED_BATCH  (policies 0, 3)  — CFS / EEVDF
+ *      ───────────────────────────────────────────────────────────────
+ *      The default (fair) scheduling class.  Two algorithms are available:
+ *
+ *      a) Multilevel feedback queue (default): 4 priority levels.  Tasks
+ *         start at level 2 and are promoted/demoted based on behaviour:
+ *         I/O-bound tasks migrate to higher levels (faster response);
+ *         CPU-bound tasks sink to lower levels.
+ *
+ *      b) EEVDF (Earliest Eligible Virtual Deadline First): enabled via
+ *         /sys/kernel/sched_eevdf.  Maintains a virtual deadline per task
+ *         computed from its weight (nice value) and the elapsed time.
+ *         The scheduler picks the task with the smallest eligible deadline:
+ *           eligible_deadline = deadline - lag  (when lag ≥ 0)
+ *                              = deadline + |lag|  (when lag < 0)
+ *         Lag tracks fairness: lag += (1 - weight/weight_sum) * elapsed.
+ *         When a task is dequeued/re-enqueued, its deadline is recalculated:
+ *           deadline = now + slice * weight_sum / weight
+ *
+ *   5. SCHED_IDLE  (policy 5)  — Idle scheduling
+ *      ───────────────────────────────────────────
+ *      Only runs when no other task in any other class is runnable.
+ *      Used for low-priority background jobs.
+ *
+ *
+ * QUEUE ARCHITECTURE
+ * ──────────────────
+ * Each CPU has:
+ *   - A 4-level multilevel priority queue (scheduler.h: SCHED_LEVELS = 4)
+ *     Level 0: Real-time tasks (SCHED_FIFO/RR) + highest-priority CFS
+ *     Level 1: I/O-bound fair tasks
+ *     Level 2: Default fair tasks
+ *     Level 3: CPU-bound batch tasks + SCHED_IDLE
+ *   - A red-black tree based EEVDF runqueue (when enabled)
+ *   - A deadline runqueue (sched_deadline.c) for SCHED_DEADLINE tasks
+ *
+ * The priority queue is implemented as a simple linked list per level
+ * (head/tail pointers in struct cpu_info).  Each runqueue slot stores
+ * the next pointer in struct process.next.
+ *
+ *
+ * SCHEDULE() FLOW  (line ~860)
+ * ─────────────────────────────
+ *   1. Check preempt_count — if schedule() was called while preemption
+ *      was disabled, print a warning and reset.
+ *   2. Disable interrupts; clear need_resched.
+ *   3. Try sched_deadline_pick_next() → SCHED_DEADLINE task.
+ *   4. If EEVDF is enabled, try eevdf_pick_next().
+ *   5. If no task yet, fall back to dequeue_next() which scans the
+ *      multilevel priority queue (level 0 first → level 3 last).
+ *   6. Apply core scheduling compatibility check (sched_core_allow).
+ *   7. If no task found, try load_balance() to steal from busy CPUs.
+ *   8. If still nothing, run the idle process (or idle loop with HLT).
+ *   9. Context-switch via context_switch() — saves old process CPU
+ *      context, loads new process context, updates current_process.
+ *
+ * SMP LOAD BALANCING
+ * ───────────────────
+ * load_balance() runs when a CPU's runqueue is empty.  It scans CPUs
+ * in topology order (smt → core → llc → numa) and steals one task
+ * from the busiest queue.  The stolen task is added to the local CPU's
+ * runqueue via scheduler_add_locked().  Cross-CPU IPIs are sent via
+ * apic_send_ipi() when a task is woken on a remote CPU.
+ *
+ * TIMER TICK & PREEMPTION
+ * ────────────────────────
+ * scheduler_tick() is called from the timer interrupt (typically 1000 Hz).
+ * It decrements the current task's time slice, updates vruntime for CFS,
+ * updates EEVDF lag and deadline, handles POSIX per-process timers
+ * (ITIMER_VIRTUAL, ITIMER_PROF), and sets need_resched when the task's
+ * time is up.  The need_resched flag is checked:
+ *   - On return from interrupt/exception
+ *   - On return from syscall
+ *   - When a higher-priority task becomes runnable
+ *   - In preempt_enable() if preemption was disabled
+ *
+ * CFS WEIGHT / NICE
+ * ──────────────────
+ * The nice value (-20..+19) maps to a scheduling weight via the
+ * sched_prio_to_weight[] table (Linux-compatible scale).  Each nice
+ * level differs from the next by a factor of ~1.25 (5% CPU share).
+ * Nice 0 → weight 1024; nice -20 → weight ~88761 (~86× of nice 0);
+ * nice +19 → weight 15 (~1/68 of nice 0).
+ *   weight = 1024 / (1.25 ^ nice)
+ *   CPU_share = weight / total_weight_sum
+ *
+ * AUTOGROUPS
+ * ──────────
+ * Processes in the same session (e.g. all processes in a terminal) are
+ * grouped into an autogroup.  CPU time is first divided among autogroups,
+ * then among processes within each group.  This prevents a single terminal
+ * with many processes from dominating the CPU.  max 16 groups.
+ *
+ * STATISTICS
+ * ──────────
+ * The scheduler tracks context_switches, preemptions, yields, idle_ticks,
+ * per-CPU runqueue depth, and per-process cpu_user / cpu_system ticks
+ * for /proc/stat and /proc/<pid>/stat.
+ * ────────────────────────────────────────────────────────────────────────────
  */
 #include "scheduler.h"
 #include "process.h"
