@@ -4,6 +4,7 @@
 #include "io.h"
 #include "string.h"
 #include "timer.h"
+#include "errno.h"
 #include "export.h"
 
 /*
@@ -18,12 +19,16 @@
  *
  * All operations are IRQ-safe: interrupts are disabled while manipulating
  * shared state, then restored to their previous state.
+ *
+ * Every public function validates the wait_queue pointer before use.
  */
 
 int wait_queue_sleep(struct wait_queue *wq) {
     uint64_t flags;
-    struct process *cur = process_get_current();
-    if (!cur) return -1;
+    struct process *cur;
+    if (!wq) return -EINVAL;
+    cur = process_get_current();
+    if (!cur) return -ESRCH;
 
     spinlock_irqsave_acquire(&wq->lock, &flags);
 
@@ -70,6 +75,8 @@ int wait_queue_wake(struct wait_queue *wq) {
     uint64_t flags;
     int woken = 0;
 
+    if (!wq) return -EINVAL;
+
     spinlock_irqsave_acquire(&wq->lock, &flags);
 
     if (wq->count == 0) {
@@ -109,6 +116,8 @@ int wait_queue_wake_pid(struct wait_queue *wq, uint32_t pid) {
     uint64_t flags;
     int found = 0;
 
+    if (!wq) return -EINVAL;
+
     spinlock_irqsave_acquire(&wq->lock, &flags);
 
     for (int i = 0; i < wq->count; i++) {
@@ -143,8 +152,10 @@ int wait_queue_wake_pid(struct wait_queue *wq, uint32_t pid) {
  * signal is pending before sleeping or after being woken. */
 int wait_queue_sleep_interruptible(struct wait_queue *wq) {
     uint64_t flags;
-    struct process *cur = process_get_current();
-    if (!cur) return -1;
+    struct process *cur;
+    if (!wq) return -EINVAL;
+    cur = process_get_current();
+    if (!cur) return -ESRCH;
 
     /* Check for pending signals before blocking */
     if (cur->pending_signals) {
@@ -202,8 +213,10 @@ int wait_queue_sleep_interruptible(struct wait_queue *wq) {
  * Returns 0 if woken, -62 (-ETIME) on timeout, -1 on queue full. */
 int wait_queue_sleep_timeout(struct wait_queue *wq, uint64_t ticks) {
     uint64_t flags;
-    struct process *cur = process_get_current();
-    if (!cur) return -1;
+    struct process *cur;
+    if (!wq) return -EINVAL;
+    cur = process_get_current();
+    if (!cur) return -ESRCH;
 
     uint64_t deadline = timer_get_ticks() + ticks;
 
@@ -256,8 +269,10 @@ int wait_queue_sleep_timeout(struct wait_queue *wq, uint64_t ticks) {
 /* Interruptible sleep with timeout */
 int wait_queue_sleep_interruptible_timeout(struct wait_queue *wq, uint64_t ticks) {
     uint64_t flags;
-    struct process *cur = process_get_current();
-    if (!cur) return -1;
+    struct process *cur;
+    if (!wq) return -EINVAL;
+    cur = process_get_current();
+    if (!cur) return -ESRCH;
 
     if (cur->pending_signals) return -4; /* -EINTR */
 
@@ -343,8 +358,10 @@ int wait_queue_sleep_spinunlock(struct wait_queue *wq,
                                  const uint64_t *cond_flags)
 {
     uint64_t flags;
-    struct process *cur = process_get_current();
-    if (!cur) return -1;
+    struct process *cur;
+    if (!wq) return -EINVAL;
+    cur = process_get_current();
+    if (!cur) return -ESRCH;
 
     spinlock_irqsave_acquire(&wq->lock, &flags);
 

@@ -53,6 +53,7 @@ struct wait_queue {
 #define WAITQUEUE_INIT { .lock = SPINLOCK_INIT, .head = 0, .count = 0, .pids = {0} }
 
 static inline void wait_queue_init(struct wait_queue *wq) {
+    if (!wq) return;
     spinlock_init(&wq->lock);
     wq->head  = 0;
     wq->count = 0;
@@ -142,6 +143,7 @@ int wait_queue_wake_pid(struct wait_queue *wq, uint32_t pid);
  * Return true (1) if the queue has any waiters.
  */
 static inline int wait_queue_has_waiters(struct wait_queue *wq) {
+    if (!wq) return 0;
     return wq->count > 0;
 }
 

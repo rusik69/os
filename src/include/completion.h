@@ -34,7 +34,7 @@ static inline void completion_init(struct completion *c) {
  * Otherwise blocks until completion_done() is called.
  */
 static inline void completion_wait(struct completion *c) {
-    if (c->done) return;
+    if (!c || c->done) return;
     /* Keep sleeping until done */
     while (!c->done)
         wait_queue_sleep(&c->wq);
@@ -45,7 +45,7 @@ static inline void completion_wait(struct completion *c) {
  * Safe to call multiple times; only the first does the wake.
  */
 static inline void completion_done(struct completion *c) {
-    if (c->done) return;
+    if (!c || c->done) return;
     c->done = 1;
     wait_queue_wake_all(&c->wq);
 }
@@ -54,6 +54,7 @@ static inline void completion_done(struct completion *c) {
  * Non-blocking check: is this completion done?
  */
 static inline int completion_is_done(struct completion *c) {
+    if (!c) return 0;
     return c->done;
 }
 
