@@ -68,6 +68,9 @@
 #define TEXT_POKE_BASE  0xFFFFFF8000000000ULL  /* scratch VA in high half */
 #define TEXT_POKE_PAGES 1
 
+/* Linker-defined kernel text region boundaries for address validation */
+extern char _text_start[], _text_end[];
+
 /* ── Kprobe table ──────────────────────────────────────────────────── */
 
 static struct kprobe *g_kprobes[KPROBES_MAX];
@@ -351,6 +354,17 @@ void __init kprobes_init(void) {
 int register_kprobe(struct kprobe *kp) {
     if (!kp || !kp->addr) {
         kprintf("[KPROBES] register_kprobe: NULL probe or addr\n");
+        return -EINVAL;
+    }
+
+    /* Validate that the probe address falls within kernel text region */
+    if ((uint64_t)kp->addr < (uint64_t)_text_start ||
+        (uint64_t)kp->addr >= (uint64_t)_text_end) {
+        kprintf("[KPROBES] register_kprobe: addr 0x%llX is not in kernel text "
+                "[0x%llX, 0x%llX)\n",
+                (unsigned long long)kp->addr,
+                (unsigned long long)_text_start,
+                (unsigned long long)_text_end);
         return -EINVAL;
     }
 
