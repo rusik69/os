@@ -291,6 +291,13 @@ void mutex_unlock(int id) {
     if (id < 0 || id >= MUTEX_MAX || !mutexes[id].in_use) return;
     struct mutex_entry *m = &mutexes[id];
 
+    /* Validate that the calling thread is the actual owner.
+     * A thread that does not own the mutex must not be allowed
+     * to unlock it — doing so would corrupt the held-mutex list
+     * and the priority inheritance state. */
+    struct process *self = process_get_current();
+    if (!self || self->pid != m->owner_pid) return;
+
     /* Lockdep: release before unlocking */
     lock_release("mutex", (uint64_t)&mutexes[id], LOCK_TYPE_MUTEX);
 
