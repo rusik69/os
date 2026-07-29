@@ -344,6 +344,7 @@ static void handle_request(int conn_id) {
     /* Parse Content-Length and body_offset BEFORE modifying the buffer with
      * null bytes (my_strstr stops at '\0', so we must search the clean buffer). */
     int content_length = 0;
+    int content_length_parsed = 0;
     {
         char *cl = my_strstr(recv_buf, "Content-Length:");
         if (!cl) cl = my_strstr(recv_buf, "content-length:");
@@ -351,12 +352,31 @@ static void handle_request(int conn_id) {
             cl += 15;
             while (*cl == ' ') cl++;
             while (*cl >= '0' && *cl <= '9') {
-                content_length = content_length * 10 + (*cl - '0');
+                /* Guard against integer overflow from malicious
+                 * Content-Length values (e.g., 9999999999999). */
+                int digit = *cl - '0';
+                if (content_length > (2147483647 - digit) / 10) {
+                    send_error(conn_id, 400, "Bad Request",
+                               "Invalid Content-Length value");
+                    return;
+                }
+                content_length = content_length * 10 + digit;
                 cl++;
+                content_length_parsed = 1;
             }
         }
     }
     int body_offset = (int)(hdr_end + 4 - recv_buf);
+    /* Validate Content-Length: reject negative values (overflow) and
+     * values that would exceed the receive buffer capacity. */
+    if (content_length_parsed) {
+        if (content_length < 0 ||
+            body_offset + content_length > (int)sizeof(recv_buf) - 1) {
+            send_error(conn_id, 400, "Bad Request",
+                       "Invalid Content-Length");
+            return;
+        }
+    }
     /* If body not yet fully received, read more (before buffer is modified). */
     while (recv_len - body_offset < content_length &&
            recv_len < (int)sizeof(recv_buf) - 1) {
