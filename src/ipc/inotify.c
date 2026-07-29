@@ -306,6 +306,10 @@ int sys_inotify_rm_watch(int fd, int wd)
     if (!g_inotify_initialized)
         inotify_init_subsystem();
 
+    /* Validate watch descriptor — wd values start at 1 */
+    if (wd <= 0)
+        return -EINVAL;
+
     struct inotify_instance *inst = inst_from_fd(fd);
     if (!inst)
         return -EBADF;
