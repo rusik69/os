@@ -1,13 +1,66 @@
 /*
  * devfs.c — /dev virtual filesystem with dynamic device registration
  *
- * Character device nodes: /dev/null, /dev/zero, /dev/random, /dev/kmsg
- * are built-in.  Drivers can dynamically register additional device nodes
- * via devfs_register_device() / devfs_unregister_device().
+ * ── Architecture Overview ──────────────────────────────────────────
  *
- * The dynamic device table supports up to DEVFS_MAX_DEVICES entries.
- * Each device has a name, optional private data, and optional
- * read/write callbacks that override the built-in fallback.
+ * devfs provides a lightweight /dev filesystem that exposes both
+ * built-in device nodes (null, zero, random, kmsg) and dynamically
+ * registered device nodes from kernel drivers.
+ *
+ * ── Device Node Management ─────────────────────────────────────────
+ *
+ * The device node table is a fixed-size array (DEVFS_MAX_DEVICES = 32)
+ * of struct devfs_device entries.  Each entry encodes:
+ *   .name     — device node name string (max 47 chars, no '/' allowed)
+ *   .priv     — opaque pointer passed back to the driver callbacks
+ *   .read_fn  — optional read callback; NULL => read returns 0 bytes
+ *   .write_fn — optional write callback; NULL => write silently accepted
+ *   .in_use   — slot occupancy flag (1 = occupied, 0 = free)
+ *
+ * ── Device Lifecycle ───────────────────────────────────────────────
+ *
+ * Registration (devfs_register_device):
+ *   1. Validate name (non-NULL, non-empty, ≤ 47 chars, no '/').
+ *   2. Scan table for duplicate names (reject if found).
+ *   3. Find first free slot (.in_use == 0).
+ *   4. Populate slot, set .in_use = 1.
+ *   5. Return 0 on success, -1 on full table or duplicate.
+ *
+ * Lookup (devfs_find_device — internal):
+ *   1. Linear scan of the table.
+ *   2. Return pointer to matching entry or NULL.
+ *
+ * Unregistration (devfs_unregister_device):
+ *   1. Validate name.
+ *   2. Scan table for a matching in-use entry.
+ *   3. Clear all fields, set .in_use = 0.
+ *   4. Return 0 on success, -1 if not found.
+ *
+ * ── Built-in vs Dynamic Devices ────────────────────────────────────
+ *
+ * Four built-in devices are hardcoded in the VFS operations and are
+ * NOT stored in the dynamic device table:
+ *   /dev/null   — Write sink, read returns empty (EOF)
+ *   /dev/zero   — Read returns zero-filled buffers
+ *   /dev/random — LCG-based pseudo-random byte source
+ *   /dev/kmsg   — Kernel message log access (read dmesg, write to log)
+ *
+ * Dynamic devices are registered by drivers (e.g. ttyS0, i2c-X) and
+ * live in the devfs_devices[] table.  The VFS operations check built-in
+ * devices first, then strip the "/dev/" prefix and consult the table.
+ *
+ * ── Thread Safety ─────────────────────────────────────────────────
+ *
+ * devfs does NOT use any locking.  The device table is modified only
+ * during driver init/exit (before/after SMP is up) or in single-threaded
+ * contexts.  Concurrent registration from multiple drivers is not
+ * expected in the current design.
+ *
+ * ── Module Support ──────────────────────────────────────────────────
+ *
+ * When compiled as a loadable module (MODULE defined), devfs_init() is
+ * called from init_module() on insmod, and cleanup_module() on rmmod
+ * tears down all dynamic device entries.
  */
 
 #include "vfs.h"
@@ -325,13 +378,26 @@ static int devfs_readdir_names(void *priv, const char *path,
     return count;
 }
 
+/* ── VFS operations table ────────────────────────────── */
+/**
+ * devfs_ops - VFS operation table for /dev
+ *
+ * Provides read, write, stat, readdir, and readdir_names callbacks
+ * for the /dev mount point.  Built-in devices are handled by string
+ * comparison on the full path; dynamic devices are looked up in the
+ * device table after stripping the "/dev/" prefix.
+ *
+ * .create and .unlink are deliberately NULL — /dev does not support
+ * creating or deleting device nodes from userspace.  Only drivers
+ * can register/unregister via the public API.
+ */
 struct vfs_ops devfs_ops = {
-    .read         = devfs_read,
-    .write        = devfs_write,
-    .stat         = devfs_stat,
-    .create       = NULL,
-    .unlink       = NULL,
-    .readdir      = devfs_readdir,
+    .read          = devfs_read,
+    .write         = devfs_write,
+    .stat          = devfs_stat,
+    .create        = NULL,
+    .unlink        = NULL,
+    .readdir       = devfs_readdir,
     .readdir_names = devfs_readdir_names,
 };
 
@@ -410,6 +476,24 @@ MODULE_ALIAS("devfs");
 #endif /* MODULE */
 
 /* ── devfs_register ───────────────────────────────────── */
+/**
+ * devfs_register - Register a device node in the devfs table (simple API)
+ * @name:   Device node name (e.g. "ttyS0")
+ * @major:  Major device number (unused in current implementation)
+ * @minor:  Minor device number (unused in current implementation)
+ *
+ * Legacy helper that registers a device by name only, without custom
+ * read/write callbacks or private data.  Used by drivers that only
+ * need their device node to appear in /dev/ listings and do not
+ * override the default I/O behaviour.
+ *
+ * Returns: 0 on success, -ENOMEM if the device table is full.
+ *
+ * NOTE: This function does NOT validate the name string.  Callers
+ * must ensure the name is non-NULL, non-empty, ≤ 47 chars, and
+ * does not contain '/'.  Prefer devfs_register_device() for new
+ * code — it provides proper validation and callback support.
+ */
 static int devfs_register(const char *name, int major, int minor)
 {
     /* Register a device in devfs */
@@ -427,6 +511,15 @@ static int devfs_register(const char *name, int major, int minor)
     return 0;
 }
 /* ── devfs_unregister ─────────────────────────────────── */
+/**
+ * devfs_unregister - Remove a device node from the devfs table (simple API)
+ * @name:  Name of the device node to remove
+ *
+ * Legacy counter-part of devfs_register().  Finds the device by name,
+ * clears its table slot, and logs the removal.
+ *
+ * Returns: 0 on success, -ENOENT if the device was not found.
+ */
 static int devfs_unregister(const char *name)
 {
     for (int i = 0; i < DEVFS_MAX_DEVICES; i++) {
