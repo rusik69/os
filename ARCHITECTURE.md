@@ -988,6 +988,117 @@ System Calls (open/read/write/close/stat/mount/umount)
 └─────────────────────────────────────────────┘
 ```
 
+## Userspace Subsystem
+
+The userspace layer runs atop the kernel and comprises several major components:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Userspace                            │
+│  ┌──────────┐  ┌──────┐  ┌─────┐  ┌──────┐  ┌──────┐  │
+│  │  Init    │  │ Shell│  │ GUI │  │ Doom │  │ DOS  │  │
+│  │ (init.c) │  │(sh.c)│  │     │  │      │  │ Emu  │  │
+│  └────┬─────┘  └──────┘  └─────┘  └──────┘  └──────┘  │
+│       │                                                 │
+│  ┌────┴─────────────────────────────────────────────┐   │
+│  │            libc (userspace/libc/)                 │   │
+│  │  unistd.h, stdio.h, string.h, stdlib.h,          │   │
+│  │  pthread.h, math.h, signal.h, fcntl.h, etc.      │   │
+│  └──────────────────────────────────────────────────┘   │
+│  ┌──────────────────────────────────────────────────┐   │
+│  │   Kernel Modules (226 .ko files in initramfs)     │   │
+│  │   Loaded by init via modprobe at boot             │   │
+│  └──────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Init (`userspace/init/init.c`)
+The first userspace process (PID 1). Responsible for:
+- Mounting the real root filesystem
+- Loading kernel modules from `/modules/` in initramfs
+- Launching the shell and GUI on the console
+- Handling orphaned child processes (reaping zombies)
+- System shutdown/reboot coordination
+
+### Shell (`userspace/bin/sh.c`)
+A feature-rich shell with 356+ built-in commands. Features:
+- Command parsing with pipes, redirection, and background jobs
+- Variable expansion (`${var:-default}`, `${var:+alt}`, `${#var}`)
+- Shell arrays indexed from 0
+- Tab completion and persistent command history
+- Command table (`cmd_table.inc`) auto-generated from registrations
+- Job control with foreground/background process groups
+- Builtins: eval, read, type, dirs/pushd/popd, cd, export, alias, exec, test, etc.
+
+### GUI (`userspace/gui/`)
+A graphical desktop environment with:
+- Window manager with overlapping windows and decorations
+- Drawing primitives (lines, rectangles, circles, text rendering)
+- Widget toolkit (buttons, text fields, scrollbars, menus)
+- Application registration and event dispatch
+- Framebuffer-backed rendering (VESA or GOP modes)
+
+### Doom (`userspace/kmods/doom/`)
+A port of the classic game DOOM, running as a userspace process with:
+- Full software renderer
+- Sound effects via PC speaker or AC97
+- Keyboard input handling
+- Optimized for the kernel's framebuffer API
+
+### DOS Emulator (`userspace/kmods/dosbox/`)
+An x86 emulator for running legacy DOS programs:
+- 8086 CPU emulation with real-mode segmentation
+- DOS system call (INT 21h) emulation
+- VGA text/graphics mode emulation
+- Basic sound (PC speaker, AdLib) support
+
+### libc (`userspace/libc/`)
+Standard C library implementation providing:
+- POSIX syscall wrappers (open, read, write, close, etc.)
+- stdio (printf, scanf, fopen, fread, fwrite)
+- string/memory functions (strcpy, memcpy, memset)
+- stdlib functions (malloc, free, atoi, strtol)
+- pthread API subset (mutex, thread creation, TLS)
+- math library (sin, cos, sqrt, etc.)
+
+## Directory Structure Overview
+
+```
+/ (repo root)
+├── ARCHITECTURE.md          — this file
+├── Makefile                 — top-level build system
+├── linker.ld                — kernel linker script
+├── src/                     — kernel source (~317K lines)
+│   ├── kernel/              — core kernel (init, syscalls, process, scheduler)
+│   ├── memory/              — PMM, VMM, heap, slab allocators
+│   ├── drivers/             — device drivers (PCI, ATA, AHCI, NVMe, e1000, etc.)
+│   ├── fs/                  — filesystem implementations and VFS
+│   ├── net/                 — networking stack (TCP, UDP, IPv4, IPv6, sockets)
+│   ├── ipc/                 — inter-process communication (pipes, shm, semaphores)
+│   ├── process/             — signal handling, scheduler details
+│   ├── lib/                 — in-kernel library (string, printf, AES, SHA, CRC)
+│   ├── shell/               — built-in kernel shell
+│   ├── test/                — in-kernel test framework
+│   ├── container/           — container runtime, network, image
+│   ├── orch/                — orchestrator (manifest, RBAC)
+│   ├── boot/                — boot assembly, UEFI GOP
+│   ├── power/               — suspend/resume
+│   └── include/             — kernel headers (453+ header files)
+├── userspace/               — userspace programs
+│   ├── init/                — init process (PID 1)
+│   ├── bin/                 — shell and utility binaries
+│   ├── gui/                 — graphical desktop environment
+│   ├── kmods/               — userspace module components (doom, dosbox)
+│   ├── libc/                — C standard library + headers
+│   └── lib/                 — userspace libraries
+├── tests/                   — host-side and e2e tests
+│   ├── host_libc/           — libc tests compiled against host glibc
+│   └── e2e.sh               — QEMU-based end-to-end smoke test
+├── build/                   — build output (kernel.bin, disk.img, .ko files)
+├── .github/workflows/       — CI workflow definitions
+└── .hermes/                 — Hermes agent configuration (local only)
+```
+
 ## Production Hardening
 
 The codebase underwent systematic production-readiness hardening:
