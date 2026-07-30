@@ -1,4 +1,107 @@
-/* net_tcp.c — TCP connection management */
+/* net_tcp.c — TCP connection management
+ *
+ * ── TCP State Machine ──────────────────────────────────────────────────
+ *
+ * This file implements the TCP state machine as defined in RFC 793 with
+ * extensions for modern congestion control, loss detection, and features.
+ *
+ * ── States ────────────────────────────────────────────────────────────
+ *
+ *   TCP_CLOSED        = 0   — Initial/terminal state, no connection.
+ *   TCP_LISTEN        = 1   — Server waiting for incoming SYN.
+ *   TCP_SYN_SENT      = 2   — Client sent SYN, waiting for SYN-ACK.
+ *   TCP_SYN_RECEIVED  = 3   — Server received SYN, sent SYN-ACK,
+ *                             waiting for ACK.
+ *   TCP_ESTABLISHED   = 4   — Connection open, data can flow in both
+ *                             directions.
+ *   TCP_FIN_WAIT      = 5   — Local application closed, sent FIN,
+ *                             waiting for ACK of FIN.
+ *   TCP_FIN_WAIT_2    = 6   — ACK of local FIN received, waiting for
+ *                             remote FIN.
+ *   TCP_CLOSE_WAIT    = 7   — Remote FIN received, waiting for local
+ *                             application to close.
+ *   TCP_LAST_ACK      = 8   — Local application closed in CLOSE_WAIT,
+ *                             sent FIN, waiting for ACK.
+ *   TCP_TIME_WAIT     = 9   — Both sides closed; waiting 2*MSL before
+ *                             returning to CLOSED.
+ *   TCP_CLOSING       = 10  — Simultaneous close: both sides sent FIN
+ *                             but neither ACK arrived yet.
+ *
+ * ── Passive Open (Server) Transitions ─────────────────────────────────
+ *
+ *   CLOSED ──[listen()]──→ LISTEN
+ *   LISTEN ──[SYN]────────→ SYN_RECEIVED  (alloc_conn, send SYN-ACK)
+ *   SYN_RECEIVED ──[ACK]──→ ESTABLISHED   (notify listener/accept queue)
+ *   SYN_RECEIVED ──[TFO SYN+data]──→ ESTABLISHED  (RFC 7413 fast path)
+ *   ESTABLISHED ──[FIN]───→ CLOSE_WAIT   (notify app of remote close)
+ *   CLOSE_WAIT ──[close()]→ LAST_ACK     (app calls net_tcp_close)
+ *   LAST_ACK ──[ACK]──────→ CLOSED
+ *
+ *   If connection table is full during SYN:
+ *     LISTEN ──[SYN]──→ SYN cookie (RFC 4987) sent as SYN-ACK,
+ *     then on valid ACK: ──→ ESTABLISHED (cookie validated)
+ *
+ * ── Active Open (Client) Transitions ──────────────────────────────────
+ *
+ *   CLOSED ──[connect()]──→ SYN_SENT     (net_tcp_connect, send SYN)
+ *   SYN_SENT ──[SYN-ACK]──→ ESTABLISHED  (send ACK, handshake done)
+ *   SYN_SENT ──[RST]──────→ CLOSED       (connection refused)
+ *
+ * ── Close Transitions ─────────────────────────────────────────────────
+ *
+ *   ESTABLISHED ──[close()]──→ FIN_WAIT      (app calls net_tcp_close)
+ *   FIN_WAIT ──[ACK of FIN]──→ FIN_WAIT_2
+ *   FIN_WAIT ──[FIN]────────→ TIME_WAIT      (simultaneous close start)
+ *   FIN_WAIT_2 ──[FIN]──────→ TIME_WAIT      (remote closes)
+ *   TIME_WAIT ──[2*MSL]─────→ CLOSED         (timer expires)
+ *
+ *   Simultaneous close:
+ *     ESTABLISHED ──[FIN]──→ CLOSE_WAIT (not shown, see above)
+ *     ESTABLISHED ──[close()+FIN]──→ FIN_WAIT
+ *     FIN_WAIT ──[FIN]──────→ CLOSING  (both FIN in flight)
+ *     CLOSING ──[ACK]──────→ TIME_WAIT
+ *
+ * ── Implementation ────────────────────────────────────────────────────
+ *
+ * The main state machine dispatcher is handle_tcp() (line 457). It is
+ * invoked from the IP layer when a TCP segment arrives for a local port.
+ * The function:
+ *   1. Validates the TCP header and checksum.
+ *   2. Looks up an existing connection via find_conn().
+ *   3. If no connection found and flag is SYN, attempts passive open.
+ *   4. If no connection found and ACK with SYN cookie — validates and
+ *      promotes to ESTABLISHED.
+ *   5. Otherwise dispatches on the connection's current state.
+ *
+ * Connection lifecycle functions:
+ *   net_tcp_connect()   — active open: allocates conn, sends SYN.
+ *   net_tcp_listen()    — registers a listener port (state stored
+ *                          separately, not as a conn table entry).
+ *   net_tcp_accept()    — blocking accept from listener queue.
+ *   net_tcp_close()     — local close: sends FIN or RST depending
+ *                          on state, transitions state forward.
+ *   net_tcp_send()      — sends data with Nagle/CORK/NODELAY support.
+ *   net_tcp_recv()      — blocking receive with timeout.
+ *
+ * ── Notable Sub-protocols ─────────────────────────────────────────────
+ *
+ *   - SYN cookies (RFC 4987):  Used when the connection table is full.
+ *     Encodes a 4-tuple hash + MSS index in the ISN; validated on ACK.
+ *   - TCP Fast Open (RFC 7413): Allows data in SYN for repeat
+ *     connections, saving one RTT.  Uses SHA-256 cookies.
+ *   - MPTCP (RFC 8684):  Multi-path TCP via MP_CAPABLE options on SYN.
+ *   - Selective ACK (RFC 2018): SACK blocks parsed from TCP options
+ *     to report non-contiguous received data.
+ *   - PRR (RFC 6937):  Proportional Rate Reduction for loss recovery.
+ *   - RACK loss detection:  Recent ACKnowledgment-based loss detection
+ *     (tracking the highest delivered sequence, reordering window).
+ *   - Delayed ACK (RFC 1122 §4.2.3.2):  Defer ACK to piggyback on data.
+ *   - Nagle algorithm:  Buffer small writes and coalesce into full MSS.
+ *   - TCP_CORK:  Like Nagle, but holds data until explicit flush.
+ *   - Keepalive:  Periodic probes to detect dead peers.
+ *   - Window scale (RFC 7323):  Allows windows > 64 KB.
+ *   - Congestion control: CUBIC (default), BBR, BBRv3, or NewReno.
+ */
 #define KERNEL_INTERNAL
 
 #include "errno.h"
