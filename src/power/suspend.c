@@ -1,17 +1,168 @@
 /*
- * suspend.c — ACPI S3 Suspend-to-RAM and S0ix (Suspend-to-Idle) support
+ * suspend.c — Full-system suspend/resume support
+ * ================================================
  *
- * Implements:
- *   - ACPI S3 (Suspend-to-RAM): save/restore CPU state, enter via PM1a_CNT
- *   - S0ix (Suspend-to-Idle): Modern idle/suspend using MWAIT(C1e) loop
- *     for platforms that support this low-power mode.
+ * This module implements the entire system suspend/resume lifecycle for
+ * the Hermes OS kernel.  It covers three sleep states plus the PM suspend
+ * state machine that ties them together.
  *
- * References:
+ *
+ * SUSPEND STATE MACHINE OVERVIEW
+ * ------------------------------
+ *
+ * The classic kernel suspend cycle follows a three-phase pattern:
+ *
+ *   1. suspend_prepare(state)
+ *        - Notify / suspend registered devices (leaf → root order)
+ *        - Freeze userspace processes and kernel threads
+ *        - Sync filesystems
+ *        - Prepare secondary CPUs (bring them down on SMP)
+ *
+ *   2. suspend_enter(state)
+ *        - Disable interrupts
+ *        - Switch to the requested sleep state:
+ *            PM_SUSPEND_STANDBY → S0ix / s2idle (MWAIT-based)
+ *            PM_SUSPEND_MEM     → ACPI S3 Suspend-to-RAM
+ *            PM_SUSPEND_DISK    → ACPI S4 Hibernate (Suspend-to-Disk)
+ *        - Re-enable interrupts after resume (or on entry failure)
+ *
+ *   3. suspend_wakeup()
+ *        - Resume devices in reverse order (root → leaf)
+ *        - Notify drivers of resume event
+ *        - Thaw frozen processes
+ *        - Clear pending wakeup counters
+ *
+ * The top-level coordinator is pm_suspend_cycle() which calls all three
+ * phases and updates statistics.  Each phase can abort the cycle if it
+ * returns a negative error code.
+ *
+ *
+ * SLEEP STATE DETAILS
+ * -------------------
+ *
+ * ─── S0ix / Suspend-to-Idle (MWAIT C1e loop) ───────────────────────
+ *
+ *   suspend_s0ix_enter() puts the CPU into a deep idle state using the
+ *   MONITOR / MWAIT instruction pair with configurable C-state hints:
+ *
+ *     hint 0x00 = C1  (shallow, lowest latency)
+ *     hint 0x10 = C1e (enhanced C1, better power saving)
+ *     hint 0x20 = C2  (moderate)
+ *     hint 0x30 = C3  (deep, highest latency/savings)
+ *
+ *   The CPU stays in the chosen idle state until a wake event (interrupt,
+ *   timer, device DMA) occurs.  On wake the MWAIT instruction completes
+ *   and the loop re-evaluates whether to re-enter idle or exit.
+ *
+ *   On platforms without MWAIT support (determined via CPUID leaf 1,
+ *   ECX bit 3), the function returns 0 immediately.  S0ix statistics
+ *   (entry count, total ticks) are tracked in g_s0ix_entries and
+ *   g_s0ix_total_ticks.
+ *
+ *   Reference: Intel 64/IA-32 SDM Vol 2A — MONITOR / MWAIT
+ *              Intel Low Power S0ix Idle (White Paper #339604)
+ *
+ * ─── ACPI S3 / Suspend-to-RAM ───────────────────────────────────────
+ *
+ *   suspend_s3() implements the traditional S3 sleep state.
+ *
+ *   Flow:
+ *     1. Lockdown check — abort if LOCKDOWN_INTEGRITY is active
+ *     2. Verify platform supports S3 via ACPI FADT (acpi_sleep_supported)
+ *     3. Allocate a 4 KB save area that survives S3 (RAM self-refresh)
+ *     4. Set up the resume vector (suspend_restore_cpu_state) once
+ *     5. Save CPU state via suspend_save_cpu_state():
+ *          - GDT / IDT pseudo-descriptors  (SGDT / SIDT)
+ *          - Control registers CR0, CR2, CR3, CR4
+ *          - Segment selectors CS, DS, ES, FS, GS, SS
+ *          - EFER MSR (0xC0000080)
+ *          - Stack pointer RSP for resume
+ *          - Magic number SUSPEND_MAGIC (0x53555330)
+ *     6. Disable interrupts
+ *     7. Write SLP_TYP + SLP_EN to PM1a_CNT (acpi_sleep)
+ *     8. If we return, S3 failed — re-enable interrupts, restore
+ *        CPU state, return -3
+ *
+ *   On resume the firmware jumps to the ACPI wakeup vector, the
+ *   trampoline re-establishes long mode, then calls
+ *   suspend_restore_cpu_state() which restores in this order:
+ *     GDT → segment registers → IDT → CR3 → CR4 → EFER → CR0
+ *
+ *   The magic check detects if the save area was corrupted during
+ *   suspend (e.g., by firmware stomping on the page).
+ *
+ *   Reference: ACPI Specification v6.5, Section 4.8.4
+ *
+ * ─── ACPI S4 / Hibernate (Suspend-to-Disk) ──────────────────────────
+ *
+ *   suspend_hibernate() writes the entire memory image to a swap device
+ *   and enters S4 sleep.
+ *
+ *   Flow:
+ *     1. Lockdown check (same as S3)
+ *     2. Scan registered block devices for a swap signature
+ *        ('SWAPSPACE2' or 'SWAP-SPACE' at offset 0xFF6 of sector 0)
+ *     3. Calculate image size (#pages × 8 sectors per 4 KB page)
+ *     4. Verify the swap device is large enough
+ *     5. Write a hibernate header to swap sector 0 containing:
+ *          - Signature "HIBERNATE"
+ *          - Image offset / size / total pages
+ *          - Checksum and format version
+ *     6. Iterate memory pages, copy each to a temporary buffer,
+ *        and write 8 sectors at a time to the swap device
+ *     7. Enter ACPI S4 sleep (or return if S4 is unavailable)
+ *
+ *   On next boot, the kernel detects the hibernate header and
+ *   restores the memory image from swap before continuing boot.
+ *
+ *
+ * DEVICE SUSPEND ORDERING
+ * -----------------------
+ *
+ * Devices are tracked in g_suspend_devices[] (max 64 entries) and are
+ * suspended in registration order (leaf → root) during suspend_prepare(),
+ * then resumed in reverse order during suspend_wakeup().  The
+ * suspend_device_register() function adds a device name to the table.
+ *
+ * This is deliberately simpler than Linux's dpm_list — each registered
+ * device is marked with a 'suspended' flag, and the suspend/resume
+ * helpers iterate the array forward/backward respectively.
+ *
+ *
+ * WAKEUP EVENT TRACKING
+ * ---------------------
+ *
+ * The pm_wakeup_event() function is called from interrupt handlers to
+ * record wakeup events.  It maintains:
+ *   - total_count  : cumulative events since boot
+ *   - pending      : events that have not been cleared by wakeup
+ *   - history[]    : ring buffer of the last 16 event timestamps
+ *
+ * After resume, suspend_wakeup() clears the pending counter.
+ * The suspend_wakeup_count_check() function returns >0 if events
+ * are still pending — drivers can use this to decide whether the
+ * suspend should be retried or aborted.
+ *
+ *
+ * STATISTICS & LOCKING
+ * --------------------
+ *
+ * Suspend success/fail counters are protected by g_suspend_stats_lock.
+ * S0ix entry/tick counters are lock-free (updated only on the BSP).
+ * The g_pm_state variable (0 = active, PM_SUSPEND_* = suspending)
+ * is used for quick in_suspend checks and is updated under no lock
+ * (single-threaded during suspend cycles).
+ *
+ *
+ * REFERENCES
+ * ----------
  *   ACPI Specification v6.5, Section 4.8.4 — System Sleep (S3)
  *   Intel 64 and IA-32 Architectures SDM, Vol 3A, Chapter 9 — SMM
  *   Intel Low Power S0ix Idle (White Paper #339604)
+ *   swsusp / Software Suspend (Linux kernel documentation)
  *
  * Item 124 — Suspend-to-Idle (S0ix) via MWAIT(C1e) loop
+ * Item 159 — Document suspend/resume flow
  */
 
 #include "suspend.h"
