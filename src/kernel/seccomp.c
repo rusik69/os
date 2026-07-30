@@ -11,6 +11,197 @@
 #include "kallsyms.h"
 
 /*
+ * ═══════════════════════════════════════════════════════════════════════════
+ * Seccomp — Secure Computing Mode
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Implements a Linux-compatible seccomp (secure computing) facility that
+ * allows a process to place a secure computing sandbox on itself.  Once
+ * seccomp is enabled, the process can only make a restricted set of system
+ * calls — any call outside the allowed set is blocked, logged, or results
+ * in process termination.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ARCHITECTURE OVERVIEW
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ┌─────────────────────────────────────────────────────────────────────┐
+ * │                       seccomp_evaluate_syscall()                    │
+ * │                                                                     │
+ * │   Entry point called from syscall dispatch on EVERY system call     │
+ * │   when the current process has seccomp enabled.                     │
+ * │                                                                     │
+ * │   ┌─────────────────────────────────────────────────────────────┐   │
+ * │   │  STRICT mode (SECCOMP_MODE_STRICT)                          │   │
+ * │   │  ─────────────────────────────────────                      │   │
+ * │   │  Allows ONLY read, write, exit, and rt_sigreturn.           │   │
+ * │   │  Any other syscall → SECCOMP_RET_KILL (immediate death).    │   │
+ * │   │  Useful for pure computation sandboxes (no I/O).            │   │
+ * │   │  Enabled via: prctl(PR_SET_SECCOMP, SECCOMP_MODE_STRICT)    │   │
+ * │   └─────────────────────────────────────────────────────────────┘   │
+ * │                                                                     │
+ * │   ┌─────────────────────────────────────────────────────────────┐   │
+ * │   │  FILTER mode (SECCOMP_MODE_FILTER)                          │   │
+ * │   │  ──────────────────────────────────────                     │   │
+ * │   │  Evaluates a per-process seccomp_filter containing an       │   │
+ * │   │  ordered list of rules (struct seccomp_rule[]).             │   │
+ * │   │  First matching rule wins (Linux convention).               │   │
+ * │   │  No match → default action: SECCOMP_RET_ALLOW.              │   │
+ * │   │  Enabled via: seccomp(SECCOMP_SET_MODE_FILTER, flags, prog) │   │
+ * │   └─────────────────────────────────────────────────────────────┘   │
+ * │                                                                     │
+ * │   ╔══════════════════════════════════════════════════════════════╗   │
+ * │   ║  ACTIONS (seccomp return values)                            ║   │
+ * │   ║  ─────────────────────────────                               ║   │
+ * │   ║  SECCOMP_RET_ALLOW  → Allow the syscall, no logging         ║   │
+ * │   ║  SECCOMP_RET_LOG    → Log via audit, then allow             ║   │
+ * │   ║  SECCOMP_RET_TRAP   → Send SIGSYS with seccomp_data        ║   │
+ * │   ║  SECCOMP_RET_KILL   → Log violation, kill process           ║   │
+ * │   ╚══════════════════════════════════════════════════════════════╝   │
+ * └─────────────────────────────────────────────────────────────────────┘
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * KEY DATA STRUCTURES
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *   struct seccomp_filter  (per process, heap-allocated)
+ *     ├── num_rules  (int)  — number of active rules
+ *     └── rules[]    (struct seccomp_rule[SECCOMP_FILTER_RULES_MAX])
+ *         ├── syscall_nr  (int)  — system call number (-1 = wildcard)
+ *         └── action      (uint32_t)  — ALLOW/LOG/TRAP/KILL
+ *
+ *   Process-level fields (struct process):
+ *     ├── seccomp_mode     (int)     — DISABLED / STRICT / FILTER
+ *     ├── seccomp_filter   (struct seccomp_filter*)  — pointer to filter
+ *     ├── no_new_privs     (int)     — required for FILTER mode
+ *     └── securebits       (uint8_t) — SECBIT_KEEP_CAPS, etc.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * EVALUATION FLOW
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *   1. seccomp_evaluate_syscall() is called from syscall dispatch
+ *      ├─ If disabled → return SECCOMP_RET_ALLOW immediately
+ *      ├─ If STRICT mode:
+ *      │     ├─ Match against strict_allowed[] (read/write/exit/sigreturn)
+ *      │     ├─ Hit   → ALLOW (no logging)
+ *      │     └─ Miss  → log audit, return KILL
+ *      └─ If FILTER mode:
+ *            ├─ Walk seccomp_filter->rules[] in order
+ *            ├─ First match (by syscall_nr or wildcard -1):
+ *            │     ALLOW → return ALLOW
+ *            │     LOG   → log audit, return LOG
+ *            │     TRAP  → log audit, return TRAP
+ *            │     KILL  → log audit, return KILL
+ *            └─ No match → return ALLOW (default)
+ *
+ *   2. seccomp_check_syscall() (legacy wrapper, called from syscall layer):
+ *      ├─ Evaluates via seccomp_evaluate_syscall()
+ *      ├─ ALLOW/LOG  → return 1 (allowed)
+ *      ├─ TRAP       → seccomp_send_sigsys(), return 0
+ *      └─ KILL       → process_exit_code(SIGSYS), never returns
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AUDIT LOGGING
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *   seccomp_audit_log() writes a structured audit record including:
+ *     - Action string (KILL/TRAP/LOG/ALLOW)
+ *     - Syscall number and up to 3 arguments (hex)
+ *     - Process PID, name
+ *     - Instruction pointer (RIP) with kernel symbol resolution
+ *
+ *   Audit events are dispatched through audit_log_event() and also
+ *   printed to the kernel log for immediate visibility.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * SIGNAL DELIVERY (SECCOMP_RET_TRAP)
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *   seccomp_send_sigsys() sends a SIGSYS signal with a siginfo_t
+ *   containing:
+ *     - si_signo = SIGSYS
+ *     - si_code  = SI_KERNEL
+ *     - si_addr  = RIP of the violating syscall instruction
+ *
+ *   The process can install a SIGSYS handler to gracefully handle
+ *   denied syscalls (e.g., emulate them in userspace).  Default
+ *   SIGSYS action is termination with core dump.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THREAD SYNC (SECCOMP_FILTER_FLAG_TSYNC)
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *   seccomp_tsync() propagates the calling thread's seccomp mode and
+ *   filter to all sibling threads in the same thread group (tgid).
+ *   Each sibling receives a deep copy (kmalloc + memcpy) of the filter
+ *   rules so that cleanup on thread exit is independent.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * MODE TRANSITIONS
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *   seccomp_set_mode(mode, flags):
+ *     - Can only transition from DISABLED → STRICT or DISABLED → FILTER
+ *     - Once active, seccomp mode cannot be disabled or changed
+ *     - FILTER mode requires no_new_privs to be set first
+ *       (prevents privilege escalation via seccomp + setuid binaries)
+ *
+ *   Rule addition (FILTER mode only):
+ *     seccomp_add_rule(syscall_nr, action):
+ *       - Adds a rule to the current process's filter
+ *       - Actions: ALLOW, KILL, TRAP, LOG
+ *       - Max rules: SECCOMP_FILTER_RULES_MAX per filter
+ *       - Wildcard: syscall_nr = -1 matches all syscalls
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * IMPLEMENTATION NOTES
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * - BPF (Berkeley Packet Filter) program loading via SECCOMP_SET_MODE_FILTER
+ *   is not yet implemented — rules are added programmatically via
+ *   seccomp_add_rule() from kernel-level callers.
+ * - The strict_allowed[] table mirrors Linux's SECCOMP_SET_MODE_STRICT and
+ *   must be kept in sync with the actual syscall numbers.
+ * - FILTER mode rules are ordered arrays (not BPF bytecode); first match
+ *   wins, matching Linux's BPF semantics.
+ * - seccomp_register_mode / seccomp_unregister_mode are stubs for future
+ *   pluggable mode handlers.
+ * - seccomp.h defines the public API and data structures.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * API REFERENCE
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *   void seccomp_init(void)
+ *     Initialize seccomp subsystem (called during boot).
+ *
+ *   uint32_t seccomp_evaluate_syscall(num, a1, a2, a3, rip)
+ *     Evaluate a syscall against the current process's policy.
+ *     Returns SECCOMP_RET_* action code.
+ *
+ *   int seccomp_check_syscall(num)
+ *     Legacy boolean wrapper: returns 1 if allowed, 0 if blocked.
+ *     Handles TRAP (sends SIGSYS) and KILL (terminates process).
+ *
+ *   int seccomp_set_mode(mode, flags)
+ *     Set seccomp mode for the current process.
+ *
+ *   int seccomp_get_mode(void)
+ *     Get the current seccomp mode.
+ *
+ *   int seccomp_add_rule(syscall_nr, action)
+ *     Add a filter rule (FILTER mode only).
+ *
+ *   int seccomp_tsync(void)
+ *     Synchronize seccomp filter to all threads.
+ *
+ *   void seccomp_send_sigsys(num, rip)
+ *     Send SIGSYS with seccomp data to the current process.
+ *
+ *   int seccomp_filter_check(num)
+ *     Direct filter evaluation (for seccomp_run_filters stub).
+ *
  * ── Seccomp — SECCOMP_RET_LOG / TRAP / KILL with audit logging ──────
  *
  * Extends the basic seccomp filter with:
