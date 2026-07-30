@@ -2525,12 +2525,180 @@ A feature-rich shell with 356+ built-in commands. Features:
 - Builtins: eval, read, type, dirs/pushd/popd, cd, export, alias, exec, test, etc.
 
 ### GUI (`userspace/gui/`)
-A graphical desktop environment with:
-- Window manager with overlapping windows and decorations
-- Drawing primitives (lines, rectangles, circles, text rendering)
-- Widget toolkit (buttons, text fields, scrollbars, menus)
-- Application registration and event dispatch
-- Framebuffer-backed rendering (VESA or GOP modes)
+
+A graphical desktop environment providing a complete windowing system, widget toolkit, and drawing library for the OS. It runs as a userspace process (or kernel task) and renders into the VGA framebuffer via `vga_put_pixel()`.
+
+#### Architecture Overview
+
+The GUI framework is structured around six subsystems:
+
+| Subsystem | Files | Description |
+|-----------|-------|-------------|
+| Core context & window manager | `gui.c`, `gui.h` | Global GUI state, window list, focus management, event dispatch, rendering pipeline |
+| Drawing primitives | `gui_draw.c`, `gui_draw.h` | 50+ rasterization primitives — lines, circles, ellipses, beziers, polygons, gradients, filled shapes |
+| Widget toolkit | `gui_widgets.c`, `gui_widgets.h` | Concrete widget types (button, textbox, label, textedit, tabview, tooltip, notification, filebrowser, taskbar) |
+| Demo applications | `gui_apps.c`, `gui_apps.h` | 80+ runnable demo apps (Mandelbrot, calculator, paint, clock, minesweeper, snake, tetris, sorting viz, etc.) |
+| Desktop shell | `gui_shell.c`, `gui_shell.h` | Desktop shell with app launcher, taskbar, file browser, and window drag support |
+| Kernel GUI task | `gui_task.c` | Background kernel task variant of the desktop shell |
+
+#### Core Architecture (`gui.c`)
+
+**1. Global GUI Context (`g_gui_ctx`)**
+A single static `struct gui_context` holds all display state:
+- Doubly-linked list of all windows (inserted at head, rendered back-to-front)
+- Pointer to the currently focused window (receives keyboard events)
+- Mouse position (`mouse_x`, `mouse_y`) and button state (`mouse_buttons`)
+- Current cursor shape (`gui_cursor_t`)
+- Theme colors (title bar, window background, button background)
+- Initialization flag
+
+```c
+struct gui_context {
+    gui_window_t *windows;
+    gui_window_t *focused_window;
+    int32_t mouse_x, mouse_y;
+    int mouse_buttons;
+    int initialized;
+    gui_cursor_t cursor;
+    gui_color_t theme_title_bg;
+    gui_color_t theme_window_bg;
+    gui_color_t theme_button_bg;
+};
+```
+
+**2. Window Management**
+Windows are the top-level containers in the display. Each `gui_window_t` stores:
+- Position & size (`x, y, w, h`) and a saved rectangle for minimize/restore
+- Title string (up to 64 characters)
+- Background color and visibility flag
+- State: `NORMAL`, `MINIMIZED`, or `MAXIMIZED`
+- Minimum dimensions (`min_w`, `min_h`)
+- A singly-linked list of child widgets (`struct gui_widget`)
+- Pointer to the focused child widget
+- Doubly-linked list pointers for z-order traversal
+
+Key operations:
+- `gui_window_create()` — allocates and initialises a new window
+- `gui_add_window()` / `gui_remove_window()` — manage the window list
+- `gui_window_bring_to_front()` — reorders the z-stack
+- `gui_window_minimize()` / `gui_window_maximize()` / `gui_window_restore()` — state transitions
+- `gui_window_close()` — closes and destroys a window
+- `gui_window_titlebar_at()` / `gui_window_resize_handle_at()` — hit-testing for window chrome
+
+**3. Widget System**
+Every widget is a self-drawing, event-handling rectangle with polymorphic dispatch:
+
+```c
+struct gui_widget {
+    gui_rect_t rect;
+    gui_color_t bg, fg;
+    int visible;
+    int enabled;
+    uint32_t flags;
+    struct gui_widget *next;
+    void *data;                          /* type-specific data pointer */
+    gui_widget_draw_fn draw;             /* called each frame to render */
+    gui_widget_event_fn on_event;        /* called on input events */
+    gui_widget_destroy_fn destroy;       /* called to clean up */
+};
+```
+
+Concrete widget types each store their specific data in a struct referenced via the generic `data` pointer:
+
+| Widget | Data struct | Description |
+|--------|-------------|-------------|
+| `gui_button_create()` | `gui_button_data_t` | Clickable with `on_click` callback, label, auto-sizing |
+| `gui_textbox_create()` | `gui_textbox_data_t` | Single-line text input, cursor, max length |
+| `gui_label_create()` | `gui_label_data_t` | Static text display |
+| `gui_textedit_create()` | `gui_textedit_data_t` | Multi-line text editor with scrolling (2048 chars) |
+| `gui_tabview_create()` | `gui_tabview_data_t` | Tabbed container with linked list of `gui_tab_t` |
+| `gui_tooltip_create()` | `gui_tooltip_data_t` | Small popup label with configurable delay |
+| `gui_notification_create()` | `gui_notification_data_t` | Color-bar toast with configurable lifetime |
+| `gui_filebrowser_create()` | `gui_filebrowser_t` | Directory listing with navigation and on-select callback |
+| `gui_taskbar_create()` | `gui_taskbar_t` | System taskbar with application launcher buttons |
+
+**4. Drawing Primitives (`gui_draw.c`)**
+
+The rendering layer provides 50+ primitives targeting a pixel-addressable framebuffer:
+
+| Category | Primitives | Algorithm |
+|----------|------------|-----------|
+| Lines | `draw_line`, `draw_dashed_line`, `draw_thick_line`, `draw_arrow_line` | Bresenham (integer arithmetic, no FP) |
+| Circles & Ellipses | `draw_circle`, `draw_circle_filled`, `draw_ellipse`, `draw_ellipse_filled` | Midpoint algorithm |
+| Arcs & Pies | `draw_arc`, `draw_pie` | Angular sweep with sin/cos LUT |
+| Beziers | `draw_bezier_cubic`, `draw_bezier_quad` | De Casteljau evaluation |
+| Polygons | `draw_polyline`, `draw_polygon`, `draw_polygon_filled` | Scan-line active-edge fill |
+| Triangles | `draw_triangle`, `draw_triangle_filled` | Scan-line with barycentric interpolation |
+| Rounded Rects | `draw_rounded_rect`, `draw_rounded_rect_filled` | Corner arc blending |
+| Gradients | `draw_gradient_v`, `draw_gradient_h`, `draw_gradient_radial` | Per-pixel color lerp |
+| Images | `draw_image_raw`, `draw_checkerboard` | Pixel buffer copy |
+| Extended | `draw_star`, `draw_progress_bar`, `draw_3d_frame`, `draw_hex_grid`, `draw_sine_wave`, `draw_gauge`, `draw_led`, `draw_heart`, `draw_spiral`, and more | Specialized rasterization |
+
+**5. Bitmap Font**
+A built-in 5×7 pixel monochrome font (`font5x7[]`) provides 47 glyphs:
+- A–Z, a–z, 0–9, space, period, comma, dash, slash, parentheses, colon, underscore, plus, equals
+- Each glyph is a 7-byte bitmap with 5 bits per row
+- Characters are rendered at 10×14 pixels (2× scaling) via `render_glyph()`
+- `font_char_index()` maps any ASCII character to its font index (returns space for unsupported)
+- Clipping is applied against the window's clip rectangle
+
+**6. Rendering Pipeline (`gui_render_frame()`)**
+
+Called periodically (~30 FPS) to produce a complete frame:
+1. Clear the VGA framebuffer to black
+2. Traverse windows from back to front (tail → head of the list)
+3. For each visible window:
+   a. Fill the window rectangle with its background colour
+   b. Draw the title bar (with [close] [minimize] [maximize] buttons) if a title exists
+   c. Draw the border — white if focused, dark gray if unfocused
+   d. Draw resize handle indicators in the bottom-right corner
+   e. Iterate and draw all child widgets via their `draw` function pointers
+4. Overdraw the mouse cursor on top of everything (8 cursor shapes)
+5. Call `vga_refresh_console()` to commit the frame
+
+**7. Input Event Handling (`gui_handle_event()`)**
+Events (mouse down/up/move/drag, keyboard char) are dispatched to the focused window's focused widget. Mouse coordinates are validated against the widget's bounding rectangle before dispatch to prevent off-screen or negative coordinates from triggering unintended actions.
+
+**8. Main Loop (`gui_run_loop()`)**
+The event-driven GUI loop:
+- Polls the keyboard for character input (ESCAPE to exit)
+- Polls the mouse for position and button changes
+- Dispatches input events to the focused widget
+- Triggers a full frame redraw every ~33 ms or on input events
+- Calls `scheduler_yield()` each iteration to cooperate with other tasks
+
+#### GUI Applications (`gui_apps.c`)
+
+Over 80 demo applications demonstrate the framework's capabilities:
+
+| Category | Apps |
+|----------|------|
+| Drawing | draw, colors, gradient, shapes, checker, typography, flood_fill |
+| Math/Nature | mandelbrot, julia, lorenz, snowflake, biorhythm, complex |
+| Games | minesweeper, snake, tetris, pong, bouncing_ball |
+| Visualization | sort_viz, sort_compare, chart_bar, chart_line, chart_pie, wave, noise, heatmap, fractal_tree, sierpinski, moire, tunnel, metaballs, rotozoom, kaleidoscope, starfield, fire, plasma, particles, wave_interference, boids, voronoi, fireworks, fluid, softbody |
+| Demos | lights, terrain, bezier_demo, text_editor, cube_3d, pendulum, fourier, wave_eq, reaction_diff, cellular, cellular2, maze_gen, pathfind, bintree, color_wheel, dither, edge, spirograph, ascii_art, audio_viz, memory_map, pong, tiling, clock_alarm, text_editor, convolution, buddha |
+| Clock | analog_clock, digital_clock, clock_dual, stopwatch |
+| Utilities | calc, rgb_mixer, paint, info, screensaver, biorhythm, solar, turing, gravity, eyes |
+
+#### Desktop Shell (`gui_shell.c` / `gui_task.c`)
+
+The desktop shell provides the full graphical environment:
+- **Window drag** — click-and-drag title bars to move windows
+- **Taskbar** — dark bar at screen bottom (y=750, h=18) with application launcher buttons and a status bar showing IP address and system uptime
+- **File browser** — `gui_filebrowser_t` widget with directory navigation and on-select callbacks
+- **App launcher** — two pages of launcher buttons organized via macros; each macro generates a `launch_<app>()` callback
+
+#### Dependencies
+
+```
+gui.c → gui.h → gui_draw.h
+  ↓        ↓
+vga.h (framebuffer put_pixel, clear, refresh)
+string.h, stdlib.h, stdio.h (libc)
+```
+
+Drawing primitives access the framebuffer without locking (caller must ensure mutual exclusion). Widget data structures use internal kmalloc/kfree; callers should not access widget data fields directly after creation.
 
 ### Doom (`userspace/kmods/doom/`)
 A port of the classic game DOOM, running as a userspace process with:
