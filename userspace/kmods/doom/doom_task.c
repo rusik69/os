@@ -1,3 +1,41 @@
+/**
+ * doom_task.c — DOOM game module for Hermes OS (kernel-mode task version)
+ *
+ * Architecture overview:
+ * ----------------------
+ * This file implements the kernel-mode DOOM game module, providing a
+ * full first-person shooter experience running inside the kernel as a
+ * schedulable task. It bridges the DOOM engine (map, renderer, combat,
+ * player state from the shared doom_*.c sources) with kernel services
+ * (VGA framebuffer, keyboard/mouse input, process lifecycle, scheduler).
+ *
+ * Key responsibilities:
+ *   - doom_init():   Initialize math tables, map, and VGA framebuffer.
+ *   - doom_task():   Main game loop — polls input, updates game state,
+ *                    renders frames, and yields the CPU each iteration.
+ *   - doom_shutdown(): Clean up input state and restore VGA console.
+ *   - doom_poll_input(): Read keyboard and mouse, dispatch fire/quit/move.
+ *   - doom_update():  Advance map and combat simulation one tick.
+ *
+ * Module lifecycle (when built as a kernel module):
+ *   - init_module()    → calls doom_init()
+ *   - cleanup_module() → calls doom_shutdown()
+ *
+ * The module exports MODULE_LICENSE, MODULE_AUTHOR, MODULE_DESCRIPTION,
+ * and MODULE_VERSION for module metadata tooling (lsmod, modinfo).
+ *
+ * Controls:
+ *   WASD    — move / turn
+ *   Mouse   — turn (left/right)
+ *   LMB     — fire weapon
+ *   1       — pistol
+ *   2       — shotgun
+ *   Space/E — use door
+ *   Q/ESC   — quit
+ *
+ * Dependencies: doom.h (map/combat/player/render), vga.h, keyboard.h,
+ *               mouse.h, scheduler.h, process.h, printf.h, module.h.
+ */
 #include "doom.h"
 #include "vga.h"
 #include "keyboard.h"
