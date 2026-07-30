@@ -17,6 +17,92 @@
 #include "timer.h"
 #include "types.h"
 
+/* ══════════════════════════════════════════════════════════════════════
+ * Socket API Dispatch
+ * ══════════════════════════════════════════════════════════════════════
+ *
+ * Architecture overview
+ * ─────────────────────
+ * This file implements the kernel socket subsystem — the glue between
+ * the POSIX socket syscall interface and the underlying protocol
+ * implementations (TCP, UDP, AF_UNIX, AF_PACKET, AF_NETLINK, AF_CAN).
+ *
+ *                   ┌──────────────┐
+ *                   │  Userspace   │  (socket, bind, connect, send, …)
+ *                   └──────┬───────┘
+ *                          │ syscall
+ *                          ▼
+ *                   ┌──────────────┐
+ *                   │  socket.c    │  sys_*_impl() dispatch functions
+ *                   │  (this file) │   │
+ *                   └───┬───┬───┬──┘   ├─ domain == AF_UNIX    → unix_*()
+ *                       │   │   │      ├─ domain == AF_PACKET  → packet_*()
+ *              ┌────────┘   │   └───┐  ├─ domain == AF_NETLINK → netlink_*()
+ *              ▼            ▼       ▼  ├─ domain == AF_CAN     → can_*()
+ *         ┌────────┐ ┌────────┐ ┌────┐ └─ (default) AF_INET    → net_tcp_* / net_udp_*
+ *         │unix_*()│ │packet*││netlink│
+ *         └────────┘ └────────┘ └────┘
+ *
+ * Socket table (fixed-size)
+ * ─────────────────────────
+ * Sockets are stored in a fixed-size array `socket_table[SOCK_MAX]`
+ * indexed by slot number.  File descriptors are derived as:
+ *
+ *     fd = slot + 100
+ *
+ * The +100 offset avoids collision with normal file descriptors
+ * (stdin/stdout/stderr and VFS-based open() calls).
+ *
+ * Locking model
+ * ─────────────
+ * Two locks protect socket state:
+ *
+ *   1. socket_lock (global) — serialises sock_alloc() and sock_free()
+ *      so no slot is recycled while protocol teardown is in progress.
+ *   2. s->lock (per-socket) — acquired by sock_get(), released by
+ *      sock_put().  Protects in_use, state, conn_id and other fields
+ *      so that concurrent operations on the same socket see a
+ *      consistent view.
+ *
+ * Lock ordering:  socket_lock → s->lock  (never the reverse).
+ *
+ * Dispatch pattern
+ * ────────────────
+ * Each sys_*_impl() function follows the same pattern:
+ *
+ *   1. sock_get(fd) → obtain socket pointer with s->lock held.
+ *   2. Validate arguments (bounds, state, null checks).
+ *   3. Switch on s->domain to dispatch to the correct handler:
+ *         AF_UNIX    → unix_create / unix_bind / unix_sendmsg / …
+ *         AF_PACKET  → packet_create / packet_bind / packet_send / …
+ *         AF_NETLINK → netlink_create / netlink_bind / netlink_sendmsg / …
+ *         AF_CAN     → can_create / can_bind / can_sendmsg / …
+ *         (default)  → net_tcp_* / net_udp_* (AF_INET)
+ *   4. sock_put(s) to release per-socket lock.
+ *   5. Return result to caller.
+ *
+ * Supported address families
+ * ──────────────────────────
+ *   AF_UNIX    — Local UNIX domain sockets (filesystem or abstract)
+ *   AF_INET    — TCP/IPv4 (SOCK_STREAM) and UDP/IPv4 (SOCK_DGRAM)
+ *   AF_INET6   — Not natively supported; triggers request_module("ipv6")
+ *                for optional module autoloading.
+ *   AF_PACKET  — Raw packet sockets (ETH_P_ALL, etc.)
+ *   AF_NETLINK — Kernel-userspace netlink IPC
+ *   AF_CAN     — CAN bus (SocketCAN)
+ *   domain=0   — Legacy raw socket compat (maps to AF_PACKET)
+ *
+ * Socket states
+ * ─────────────
+ *   SOCK_STATE_CREATED     — After sock_alloc()
+ *   SOCK_STATE_BOUND       — After successful bind()
+ *   SOCK_STATE_LISTENING   — After successful listen()
+ *   SOCK_STATE_CONNECTING  — connect() in progress (non-blocking)
+ *   SOCK_STATE_CONNECTED   — After successful connect() or accept()
+ *   SOCK_STATE_FREE        — Slot released, available for re-use
+ *
+ * ══════════════════════════════════════════════════════════════════════ */
+
 /* ── Compile-time struct size assertions ────────────────────────────── */
 _Static_assert(sizeof(struct socket) >= 64,
                "struct socket must be at least 64 bytes for fixed-size table");
