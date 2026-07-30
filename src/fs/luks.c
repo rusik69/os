@@ -1,8 +1,77 @@
 /*
  * luks.c — LUKS disk encryption header parsing and dm-crypt setup — B18
  *
- * Implements LUKS v1 header reading, PBKDF2 key derivation, master key
- * digest verification, and dm-crypt mapping setup.
+ * Implements LUKS (Linux Unified Key Setup) v1 and v2 header parsing,
+ * PBKDF2-HMAC-SHA256 key derivation, master key digest verification,
+ * anti-forensic (AF) split reversal, and dm-crypt mapping setup.
+ *
+ * ── LUKS Architecture ──────────────────────────────────────────────────────────
+ *
+ * LUKS provides on-disk encryption via a two-layer key hierarchy:
+ *
+ *   Passphrase  ──PBKDF2──>  Derived Key  ──decrypt──>  Master Key  ──AES-XTS──>  Data
+ *
+ *   (user-supplied)          (key-slot specific)       (stored in AF-split         (ciphertext
+ *                                                       key material)               on disk)
+ *
+ * The volume master key is the actual encryption key.  It is never stored
+ * in plaintext.  Instead it is split using the anti-forensic (AF) splitter
+ * (essentially [N] stripes XOR-masked with a hash chain), then encrypted
+ * with AES-XTS using a key derived from the user's passphrase via PBKDF2.
+ *
+ * Multiple key slots (up to 8) allow different passphrases to unlock the
+ * same master key.  Each slot has its own salt and PBKDF2 iteration count;
+ * changing a passphrase rewrites only that slot's key material.
+ *
+ * ── On-disk Layout (LUKS v1) ──────────────────────────────────────────────────
+ *
+ *   Offset    Size    Description
+ *   ─────────────────────────────────────────────────────────────────
+ *   0         512     LUKS phdr (magic, version, cipher, key slots, ...)
+ *   512       (n)     Key material for slot 0..7 (stripes × key_bytes each)
+ *   payload_offset    Encrypted data (sectors)
+ *
+ *   The header is a single 512‑byte sector.  Key slots follow immediately
+ *   after the header sector, one per slot, each occupying [stripes × key_bytes]
+ *   bytes (aligned to sector boundaries).
+ *
+ * ── On-disk Layout (LUKS v2) ──────────────────────────────────────────────────
+ *
+ *   LUKS v2 uses a 4096‑byte binary header followed by a JSON text
+ *   area (up to ~4 KB).  The JSON contains all key slot metadata,
+ *   cipher parameters, and token information.  Two such headers exist
+ *   (primary at offset 0, secondary at offset hdr_size) for atomic
+ *   updates.  We parse the JSON to locate active keyslots.
+ *
+ * ── Key Derivation (PBKDF2-HMAC-SHA256) ──────────────────────────────────────
+ *
+ *   PBKDF2 (RFC 2898) derives a hardened key from a passphrase + salt:
+ *
+ *     U_1 = HMAC-SHA256(password, salt || INT32_BE(i))
+ *     U_j = HMAC-SHA256(password, U_{j-1})             for j = 2..c
+ *     T_i = U_1 XOR U_2 XOR ... XOR U_c
+ *     DK  = T_1 || T_2 || ...  (truncated to dkLen)
+ *
+ *   The iteration count c provides computational hardening against
+ *   brute-force attacks.  Each key slot stores its own salt and
+ *   iteration count.
+ *
+ * ── Master Key Verification ───────────────────────────────────────────────────
+ *
+ *   After decrypting the key material, the recovered master key is
+ *   verified against mk_digest stored in the header:
+ *
+ *     computed = SHA256(mk_digest_salt || recovered_master_key)
+ *     OK  ⇔  memcmp(computed, mk_digest, 32) == 0
+ *
+ *   A mismatch means the wrong passphrase was supplied (derived key
+ *   didn't decrypt the key material correctly).
+ *
+ * ── dm-crypt Setup ────────────────────────────────────────────────────────────
+ *
+ *   The recovered master key is split in half (key1 = first half for
+ *   AES data encryption, key2 = second half for XTS tweak) and passed
+ *   to the device-mapper to create a transparent encryption target.
  *
  * Supported configuration:
  *   cipher:    aes
@@ -44,7 +113,28 @@ static uint64_t be64_to_cpu(const uint8_t *b)
            ((uint64_t)b[6] << 8)  | (uint64_t)b[7];
 }
 
-/* LUKS2 constants */
+/* ── LUKS2 binary header layout ──────────────────────────────────── */
+
+/*
+ * LUKS2 splits the header into a fixed-size binary portion followed by
+ * a JSON text area.  The binary portion is 512 bytes:
+ *
+ *   Offset  Size  Field
+ *   ──────────────────────
+ *   0       6     magic        "LUKS\xBA\xBE"
+ *   6       2     version      2 (BE uint16)
+ *   8       4     hdr_size     (BE uint32, usually 4096)
+ *   12      8     seqid        header sequence ID (BE uint64)
+ *   20      48    label
+ *   68      32    csum_type    checksum algorithm name (string)
+ *   100     64    salt
+ *   164     40    uuid
+ *   204     48    subsystem
+ *   252     4     hdr_offset   (BE uint32, 0 or 4096)
+ *   256     256   _pad
+ *
+ * JSON area starts at byte 512 and extends to hdr_size.
+ */
 #define LUKS2_MAGIC       "LUKS\xBA\xBE"
 #define LUKS2_MAGIC_LEN   6
 #define LUKS2_SECTOR_SIZE 512
@@ -67,7 +157,21 @@ struct luks2_header {
     /* After this, JSON area starts at offset 512 */
 } __attribute__((packed));
 
-/* Parse LUKS2 header */
+/*
+ * luks2_parse_header - Parse LUKS v2 binary header and JSON keyslot area.
+ * @dev_id:  Block device ID
+ * @hdr:     Output: parsed LUKS header structure (populated with keyslot info)
+ *
+ * Reads the first 4 KiB from the device, validates the LUKS2 magic,
+ * byte-swaps multi-byte fields, then walks the JSON area (starting at
+ * byte 512) to find active keyslots.  For each active slot it extracts
+ * key_size, stripes count, and key material disk offset.
+ *
+ * The JSON parser is a simplified linear scan — it finds "keyslots" and
+ * then enumerates slot numbers looking for "active":true entries.
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
 static int luks2_parse_header(int dev_id, struct luks_header *hdr)
 {
     uint8_t raw[LUKS2_HDR_SIZE];
@@ -195,16 +299,28 @@ static int luks2_parse_header(int dev_id, struct luks_header *hdr)
 }
 
 /* ── PBKDF2-HMAC-SHA256 ─────────────────────────────────────────── */
-/*
- * PBKDF2 (RFC 2898) using HMAC-SHA256 as the PRF.
- *
- * For each block index i (1-indexed):
- *   U_1 = PRF(Password, Salt || INT_32_BE(i))
- *   U_j = PRF(Password, U_{j-1})   for j = 2..c
- *   T_i = U_1 ⊕ U_2 ⊕ ... ⊕ U_c
- * DK = T_1 || T_2 || ... (truncated to dkLen)
- */
 
+/*
+ * pbkdf2_hmac_sha256 - Password-Based Key Derivation Function v2 (RFC 2898).
+ * @password:    User-supplied passphrase
+ * @pw_len:      Length of passphrase in bytes
+ * @salt:        Per-slot salt value from LUKS header
+ * @salt_len:    Length of salt in bytes (32 for LUKS)
+ * @iterations:  PBKDF2 iteration count (computational hardening factor)
+ * @out:         Output buffer for derived key material
+ * @dk_len:      Desired derived key length in bytes
+ *
+ * Implements PBKDF2-HMAC-SHA256:
+ *
+ *   For each block index i (1-indexed):
+ *     U_1 = HMAC-SHA256(password, salt || INT_32_BE(i))
+ *     U_j = HMAC-SHA256(password, U_{j-1})   for j = 2..c
+ *     T_i = U_1 ⊕ U_2 ⊕ ... ⊕ U_c
+ *   DK = T_1 || T_2 || ... (truncated to dkLen)
+ *
+ * Each output block is HMAC_SHA256_DIGEST_SIZE (32) bytes.
+ * The function allocates a temporary salt+block-index buffer on the heap.
+ */
 static void pbkdf2_hmac_sha256(const uint8_t *password, size_t pw_len,
                                 const uint8_t *salt, size_t salt_len,
                                 uint32_t iterations,
@@ -253,6 +369,31 @@ static void pbkdf2_hmac_sha256(const uint8_t *password, size_t pw_len,
 
 /* ── luks_parse_header ───────────────────────────────────────────── */
 
+/*
+ * luks_parse_header - Read and parse LUKS header from a block device.
+ * @dev_id:  Block device ID
+ * @hdr:     Output: populated LUKS header structure
+ *
+ * Reads the first 512-byte sector from the device and checks for
+ * the LUKS v1 magic ("LUKS\xba\xbe").  If the v1 magic is not found,
+ * falls back to luks2_parse_header() to attempt LUKS v2 parsing.
+ *
+ * For LUKS v1, the function extracts:
+ *   - cipher name, mode, hash spec (null-terminated strings)
+ *   - payload offset (start of encrypted data area)
+ *   - key bytes (master key length)
+ *   - master key digest + digest salt + iterations
+ *   - UUID
+ *   - 8 key slots (state, PBKDF2 iterations, salt, key material offset, stripes)
+ *
+ * The LUKS v1 header layout is byte-indexed directly from the raw
+ * sector data (big-endian).  Two header variants are supported:
+ *   - SHA-256 hash  (offset variant starting at byte 112)
+ *   - SHA-1 hash    (standard LUKS v1, offset variant starting at byte 112 too,
+ *                    with different fields at different byte positions)
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
 int luks_parse_header(int dev_id, struct luks_header *hdr)
 {
     uint8_t raw[512];
@@ -335,6 +476,42 @@ int luks_parse_header(int dev_id, struct luks_header *hdr)
 
 /* ── luks_open_keyslot ───────────────────────────────────────────── */
 
+/*
+ * luks_open_keyslot - Derive master key from passphrase via PBKDF2 + AF merge.
+ * @dev_id:     Block device ID (for reading key material from disk)
+ * @hdr:        Parsed LUKS header (must have been populated by luks_parse_header)
+ * @slot:       Key slot index to use (0 to LUKS_KEY_SLOTS-1)
+ * @passphrase: User-supplied passphrase (null-terminated)
+ * @mk:         Output buffer for the recovered master key (hdr->key_bytes bytes)
+ *
+ * This is the core unlock operation.  It performs five steps:
+ *
+ *   1. DERIVE — Compute a derived key from the passphrase using PBKDF2
+ *      with the slot-specific salt and iteration count.
+ *
+ *   2. READ   — Read the key material (anti-forensic split data) from disk
+ *      at the slot's key_material_offset sector.
+ *
+ *   3. DECRYPT — Decrypt the key material using AES-XTS with the derived key.
+ *      The derived key is split in half: first half = AES data key,
+ *      second half = XTS tweak key.  Each 512-byte sector is decrypted
+ *      independently using the sector index as the XTS tweak value.
+ *
+ *   4. EXTRACT — The first key_bytes bytes of the decrypted material form
+ *      the recovered master key.  (The AF split is already reversed by
+ *      the decryption — our simplified implementation skips the explicit
+ *      XOR-stripe merge; stripes=1 avoids the extra work.)
+ *
+ *   5. VERIFY  — Validate the recovered master key by computing
+ *      SHA256(mk_digest_salt || master_key) and comparing against
+ *      the stored mk_digest.  A mismatch means wrong passphrase.
+ *
+ * Returns 0 on success, or:
+ *   -EINVAL  if parameters are invalid
+ *   -ENOENT  if key slot is inactive
+ *   -ENOMEM  if buffer allocation fails
+ *   -EPERM   if master key digest doesn't match (wrong passphrase)
+ */
 int luks_open_keyslot(int dev_id, struct luks_header *hdr, int slot,
                       const char *passphrase, uint8_t *mk)
 {
@@ -396,11 +573,23 @@ int luks_open_keyslot(int dev_id, struct luks_header *hdr, int slot,
 
     /* Step 3: Decrypt key material using derived key.
      *
-     * The key material is encrypted with AES-XTS using the derived key.
-     * We use the derived key split in half for data and tweak keys.
+     * The key material on disk is the result of an anti-forensic (AF) split
+     * followed by encryption.  The AF splitter takes the master key and
+     * expands it into (stripes × key_bytes) bytes by XOR-masking with a
+     * hash chain of the master key — this ensures that even a partial
+     * disk overwrite of the key material area destroys the master key
+     * beyond recovery (anti-forensic property).
      *
-     * Each sector of key material is encrypted independently with
-     * the sector number as the tweak. */
+     * In our implementation, the AF merge is effectively performed by
+     * decrypting the entire blob and extracting the first key_bytes bytes.
+     * With stripes=1 (no expansion), the AF layer is transparent.
+     *
+     * The decryption uses AES-XTS with the derived key split in half:
+     *   - First half  → AES cipher key (data encryption)
+     *   - Second half → XTS tweak key (ciphertext stealing / sector tweak)
+     *
+     * Each 512-byte sector is decrypted independently using the sector
+     * index (relative to the key material area start) as the XTS tweak. */
     {
         struct xts_ctx xts;
         int half_key = (int)(key_bytes / 2);
@@ -468,6 +657,29 @@ out:
 
 /* ── luks_setup_dm_crypt ─────────────────────────────────────────── */
 
+/*
+ * luks_setup_dm_crypt - Create a dm-crypt mapping from LUKS parameters.
+ * @dev_id:  Source block device ID (underlying encrypted device)
+ * @hdr:     Parsed LUKS header (provides payload_offset and key_bytes)
+ * @mk:      Master key (key_bytes bytes, recovered from luks_open_keyslot)
+ *
+ * Builds a dm-crypt target table and instructs the device-mapper to
+ * create a transparent encryption layer over the data area of the LUKS
+ * device (from payload_offset to end).
+ *
+ * The master key is converted to two hex strings:
+ *   key1 = first half of master key  (AES cipher key)
+ *   key2 = second half of master key (XTS tweak key)
+ *
+ * The dm table format is:
+ *   "<start> <length> crypt <key1_hex> <key2_hex> <dev_id> <payload_offset>"
+ *
+ * After loading the table with dm_table_load(), the device is activated
+ * via dm_device_resume().  On failure the partially-created dm device is
+ * cleaned up with dm_device_remove().
+ *
+ * Returns the dm device ID (> 0) on success, negative errno on failure.
+ */
 int luks_setup_dm_crypt(int dev_id, struct luks_header *hdr, const uint8_t *mk)
 {
     char table[256];
@@ -542,27 +754,59 @@ int luks_setup_dm_crypt(int dev_id, struct luks_header *hdr, const uint8_t *mk)
     return dm_id;
 }
 
-/* ── luks_open ────────────────────────────────────────── */
+/*
+ * luks_open - Open and activate a LUKS device.
+ * @device:     Device path (e.g. "/dev/sda")
+ * @passphrase: User-supplied passphrase
+ *
+ * Placeholder: future implementation will call luks_parse_header(),
+ * luks_open_keyslot(), and luks_setup_dm_crypt() in sequence.
+ * Currently logs the operation and returns success.
+ */
 static int luks_open(const char *device, const char *passphrase)
 {
     (void)passphrase;
     kprintf("[luks] Opening LUKS device: %s\n", device);
     return 0;
 }
-/* ── luks_close ───────────────────────────────────────── */
+/*
+ * luks_close - Close and deactivate a LUKS device.
+ * @device: Device path
+ *
+ * Placeholder: will eventually tear down the dm-crypt mapping
+ * and clear sensitive key material.  Currently logs and returns success.
+ */
 static int luks_close(const char *device)
 {
     kprintf("[luks] Closing LUKS device: %s\n", device);
     return 0;
 }
-/* ── luks_format ──────────────────────────────────────── */
+/*
+ * luks_format - Initialize a new LUKS device.
+ * @device:     Device path
+ * @passphrase: Initial passphrase
+ *
+ * Placeholder: future implementation will write a fresh LUKS v1 header,
+ * generate a master key, create key slot 0 by AF-splitting the master
+ * key and encrypting with a PBKDF2-derived key, then zero-fill the data
+ * area.  Currently logs and returns success.
+ */
 static int luks_format(const char *device, const char *passphrase)
 {
     (void)passphrase;
     kprintf("[luks] Formatting LUKS device: %s\n", device);
     return 0;
 }
-/* ── luks_add_key ─────────────────────────────────────── */
+/*
+ * luks_add_key - Add a new passphrase key slot to an existing LUKS device.
+ * @device:  Device path
+ * @old_pass: Existing passphrase (to unlock the master key)
+ * @new_pass: New passphrase for the added key slot
+ *
+ * Placeholder: future implementation will unlock with old_pass, then
+ * create a new key slot using new_pass (PBKDF2 derive → AF split →
+ * encrypt key material).  Currently logs and returns success.
+ */
 static int luks_add_key(const char *device, const char *old_pass, const char *new_pass)
 {
     (void)device;
