@@ -8,13 +8,135 @@
 #include "process.h"
 
 /*
- * manifest.c — YAML/JSON manifest parser (Item C199)
+ * manifest.c — Orchestrator manifest parser (Kubernetes-style)
  *
- * Parses Kubernetes-style resource manifests in JSON format and
- * dispatches creation/update/deletion of orchestration resources.
+ * ── Overview ──────────────────────────────────────────────────────────
  *
- * Supported kinds: Pod, Service, Namespace, ReplicaSet, Deployment,
- *                  DaemonSet, ConfigMap, Secret
+ * This module implements a lightweight Kubernetes-compatible manifest
+ * parser for the OS orchestrator. It accepts resource definitions in
+ * JSON format (a subset of the Kubernetes resource model) and dispatches
+ * lifecycle operations — create/apply, validate, delete, list — to the
+ * underlying container and orchestration primitives.
+ *
+ * ── Manifest Format ───────────────────────────────────────────────────
+ *
+ * Manifests are JSON objects following a Kubernetes-style schema with
+ * the following top-level fields:
+ *
+ *   {
+ *     "kind":        "<ResourceKind>",     // Required: Pod, Service, ...
+ *     "apiVersion":  "<apiVersion>",       // e.g. "v1"
+ *     "metadata": {
+ *       "name":        "<resource-name>",  // Required
+ *       "namespace":   "<namespace>"       // Optional, defaults to "default"
+ *     },
+ *     "spec": { ... },  // Kind-specific configuration (captured as raw JSON)
+ *     "data": { ... }   // ConfigMap/Secret data (captured as raw JSON)
+ *   }
+ *
+ * The parser does NOT perform a deep schema validation of spec/data
+ * contents — those are stored as raw JSON strings in the `spec` field
+ * for downstream interpretation. Structural validation (required fields
+ * present, kind recognized) is done by manifest_validate().
+ *
+ * ── Supported Resource Kinds ──────────────────────────────────────────
+ *
+ *   Pod         — Single container instance, backed by container_alloc()
+ *   Service     — Network service endpoint (registration only, no LB yet)
+ *   Namespace   — Logical grouping for resource isolation
+ *   ReplicaSet  — Replicated pod controller, backed by container_alloc()
+ *   Deployment  — Rolling-update controller, backed by container_alloc()
+ *   DaemonSet   — Node-wide daemon controller, backed by container_alloc()
+ *   ConfigMap   — Key-value configuration data store
+ *   Secret      — Sensitive data store (base64-encoded values expected)
+ *   ImageManifest — OCI/Docker image manifest descriptor
+ *
+ * ── OCI Image Manifest Support ────────────────────────────────────────
+ *
+ * In addition to Kubernetes-style resource manifests, the parser
+ * accepts OCI image manifest descriptors (kind "ImageManifest" or
+ * "Manifest"). These follow the OCI Distribution Spec v1.0 format:
+ *
+ *   {
+ *     "schemaVersion": 2,
+ *     "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+ *     "config": {
+ *       "mediaType": "application/vnd.docker.container.image.v1+json",
+ *       "digest": "sha256:...",
+ *       "size": 1234
+ *     },
+ *     "layers": [{
+ *       "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+ *       "digest": "sha256:...",
+ *       "size": 5678
+ *     }]
+ *   }
+ *
+ * Parsed fields (config digest/size, layer digests/sizes/media types)
+ * are stored in the orch_resource structure for downstream use by the
+ * container image puller and layer cache.
+ *
+ * ── Data Structures ───────────────────────────────────────────────────
+ *
+ *   struct orch_resource
+ *     Represents a single parsed manifest entry. Contains:
+ *     - kind / api_version / name / namespace — resource identity
+ *     - spec — raw JSON of the spec/data section
+ *     - in_use — slot occupancy flag for the static table
+ *     - OCI fields (media_type, schema_version, config_digest/size,
+ *       num_layers, layer_digests/sizes/media_types)
+ *
+ *   manifest_resources[MANIFEST_MAX_RESOURCES]
+ *     Static table of up to 64 tracked resources. Protected by
+ *     manifest_lock (spinlock). Managed via manifest_apply() and
+ *     manifest_delete().
+ *
+ * ── Key Functions ─────────────────────────────────────────────────────
+ *
+ *   manifest_parse(json_string, out)
+ *     Tokenizes a JSON string and populates an orch_resource.  Returns
+ *     0 on success, -EINVAL on parse error.
+ *
+ *   manifest_validate(res)
+ *     Checks required fields per-kind (name, kind, spec for certain
+ *     types, OCI-specific fields for image manifests).  Returns 0 if
+ *     valid, -EINVAL with diagnostic kprintf on failure.
+ *
+ *   manifest_apply(res)
+ *     Validates + persists the resource. For Pod/ReplicaSet/Deployment/
+ *     DaemonSet, allocates and starts a container. Stores the resource
+ *     entry in the static table. Returns 0 on success, negative errno.
+ *
+ *   manifest_delete(res)
+ *     Matches by name (+ optionally kind), stops any backing container,
+ *     and marks the slot free. Returns 0 on success, -ENOENT if not
+ *     found.
+ *
+ *   manifest_list()
+ *     Prints a formatted table of all tracked resources. Returns 0.
+ *
+ * ── Lifecycle & Thread Safety ────────────────────────────────────────
+ *
+ * The manifest_resources table is protected by a spinlock. All public
+ * functions (manifest_apply, manifest_delete, manifest_list) acquire
+ * the lock before accessing shared state. The internal tokenizer and
+ * parser are reentrant (operate on caller-provided buffers only).
+ *
+ * ── Limitations ───────────────────────────────────────────────────────
+ *
+ * - Only JSON input is supported (no YAML front-matter yet).
+ * - Nested spec/data is captured as raw text, not deep-parsed.
+ * - Maximum resource name length: 64 chars.
+ * - Maximum manifest JSON size: ~4 KB.
+ * - Maximum 64 resources tracked simultaneously.
+ *
+ * ── Dependencies ─────────────────────────────────────────────────────
+ *
+ *   heap.h   — (indirect, via container_alloc)
+ *   errno.h  — Error code definitions
+ *   spinlock.h — Thread-safe resource table access
+ *   container.h — Container lifecycle for Pod/ReplicaSet/Deployment/DaemonSet
+ *   process.h — Process management (for container-backed resources)
  */
 
 /* ── Constants ─────────────────────────────────────────────────────── */
