@@ -1,7 +1,63 @@
 /*
  * procfs.c — /proc virtual filesystem
  *
- * Read-only VFS that exposes kernel state as pseudo-files.
+ * Overview
+ * ========
+ * procfs is a read-mostly pseudo-filesystem mounted at /proc that
+ * exposes kernel internal state to userspace as regular files.
+ * It implements the VFS interface (vfs_ops) so that standard file
+ * I/O syscalls (open, read, write, readdir) work transparently.
+ *
+ * Architecture
+ * ------------
+ * 1. **Initialisation** — procfs_init() calls vfs_mount("/proc",
+ *    &procfs_ops, NULL) to register the filesystem.  When built as
+ *    a module, init_module() calls procfs_init(); cleanup_module()
+ *    handles unload.
+ *
+ * 2. **File content generators** — Each /proc file has a dedicated
+ *    generator function (e.g. procfs_gen_uptime, procfs_gen_cpuinfo,
+ *    procfs_gen_meminfo).  These write formatted text into a caller-
+ *    supplied buffer up to a given max_size.  Generators live in
+ *    this file or in split-out files (procfs_cpuinfo.c, etc.).
+ *
+ * 3. **Path dispatch** — procfs_read() is the single read entry
+ *    point.  It parses the path, handles /proc/self/ rewriting,
+ *    and dispatches to the correct generator.  PID-specific paths
+ *    (/proc/<pid>/status, /proc/<pid>/fd, etc.) extract the PID
+ *    from the path, validate the process exists, and call the
+ *    per-file generator.
+ *
+ * 4. **Writable files** — Only /proc/sysrq-trigger and sysctl
+ *    files under /proc/sys/kernel/ accept writes; all other paths
+ *    return -EINVAL.
+ *
+ * 5. **Directory listing** — procfs_readdir() enumerates static
+ *    files, live PIDs, and per-PID fd entries using kprintf().
+ *
+ * 6. **Concurrency** — A global spinlock (procfs_lock) protects
+ *    per-callback globals used by ARP and TCP table generators on
+ *    SMP systems.
+ *
+ * Data flow
+ * ---------
+ *   syscall (read)  →  VFS  →  procfs_read(path, buf)
+ *                               ↓
+ *                    +--->  Known path?  →  generator(buf)
+ *                    |                    →  *out_size = len
+ *                    +--->  /proc/self/  →  rewrite path
+ *                    |                    →  recursive call
+ *                    +--->  /proc/<pid>/ →  parse PID
+ *                                         →  verify process
+ *                                         →  per-file generator
+ *                    +--->  unknown      →  return -EINVAL
+ *
+ * Error handling
+ * --------------
+ * All generators return error codes as negative errno values
+ * (-EINVAL for invalid PID, -EISDIR for directory paths,
+ * -ELOOP for broken symlink targets, -ENOSPC for truncated output).
+ * procfs_read propagates these directly to the VFS layer.
  */
 
 #include "vfs.h"
@@ -1158,6 +1214,27 @@ static int procfs_gen_pid_limits(uint32_t pid, char *buf, int max) {
 
 /* ─── VFS ops ────────────────────────────────────────────────────────────────── */
 
+/**
+ * procfs_read — Read a procfs virtual file.
+ * @priv:   Opaque mount-private data (unused here).
+ * @path:   Absolute path under /proc (e.g. "/proc/uptime",
+ *          "/proc/123/status", "/proc/self/exe").
+ * @buf_v:  Destination buffer for the generated content.
+ * @max_size: Maximum number of bytes to write into buf_v.
+ * @out_size: On success, set to the number of bytes written.
+ *
+ * This is the single entry point for reading any /proc file.
+ * Path resolution logic:
+ *   1. `/proc/self/<subpath>` is rewritten to `/proc/<current_pid>/...`
+ *   2. Known static paths delegate to their generator function
+ *   3. Sysctl paths (/proc/sys/kernel/...) go to sysctl subsystem
+ *   4. PID-specific paths parse the numeric PID and call per-file
+ *      generators (status, fd, cmdline, environ, maps, smaps, etc.)
+ *   5. /proc/<pid>/fd/<N> resolves fd number and returns symlink path
+ *   6. /proc/<pid>/ns/<type> returns "type:[inode]" namespace IDs
+ *
+ * Return: 0 on success, negative errno on error.
+ */
 static int procfs_read(void *priv, const char *path, void *buf_v,
                        uint32_t max_size, uint32_t *out_size) {
     (void)priv;
@@ -1385,6 +1462,24 @@ static int procfs_read(void *priv, const char *path, void *buf_v,
     return 0;
 }
 
+/**
+ * procfs_write — Write to a writable procfs file.
+ * @priv:  Opaque mount-private data (unused here).
+ * @path:  Absolute path under /proc (e.g. "/proc/sysrq-trigger").
+ * @data:  User-supplied data buffer.
+ * @size:  Number of bytes in @data.
+ *
+ * Currently writable files are:
+ *   - /proc/sysrq-trigger  — accepts a single command character
+ *     that triggers a SysRq action (reboot, sync, etc.).
+ *   - /proc/sys/kernel/... — sysctl tunable writes, forwarded
+ *     to the sysctl subsystem.
+ *
+ * All other paths return -EINVAL because procfs is primarily
+ * a read-only status interface.
+ *
+ * Return: 0 on success, negative errno on error.
+ */
 static int procfs_write(void *priv, const char *path, const void *data, uint32_t size) {
     (void)priv;
     const char *buf = (const char *)data;
@@ -1410,6 +1505,22 @@ static int procfs_write(void *priv, const char *path, const void *data, uint32_t
     return -EINVAL;
 }
 
+/**
+ * procfs_stat — Return metadata for a procfs path.
+ * @priv: Opaque mount-private data (unused here).
+ * @path: Absolute path under /proc.
+ * @st:   Pointer to the output stat structure.
+ *
+ * Maps each known path to a file type and approximate size.
+ * - Files (type=1) get a generous size estimate (typically
+ *   128-1024 bytes) so that read() doesn't truncate.
+ * - Directories (type=2) are reported with zero size.
+ * - PID-based paths dynamically verify the process exists
+ *   by calling process_get_by_pid() before returning success.
+ *
+ * Return: 0 on success (st is populated), negative errno if
+ *         the path is not found or the process doesn't exist.
+ */
 static int procfs_stat(void *priv, const char *path, struct vfs_stat *st) {
     (void)priv;
     /* /proc itself is a directory */
@@ -1544,6 +1655,22 @@ static int procfs_stat(void *priv, const char *path, struct vfs_stat *st) {
     return -EINVAL;
 }
 
+/**
+ * procfs_readdir — List directory entries under a procfs path.
+ * @priv: Opaque mount-private data (unused here).
+ * @path: Absolute directory path (e.g. "/proc", "/proc/123/fd").
+ *
+ * Uses kprintf() to emit one entry per line.  The caller (VFS
+ * layer) splits the output into individual dirent structures.
+ *
+ * Supported directories:
+ *   - /proc              — static files (uptime, meminfo, ...)
+ *                          plus numeric PIDs of live processes.
+ *   - /proc/<pid>/fd/    — numeric file descriptors of the process.
+ *   - /proc/pressure/    — cpu, memory, io pressure-stall files.
+ *
+ * Return: 0 on success, negative errno on error.
+ */
 static int procfs_readdir(void *priv, const char *path) {
     (void)priv;
     if (strcmp(path, "/proc") == 0) {
@@ -1584,6 +1711,17 @@ static int procfs_readdir(void *priv, const char *path) {
     return -EINVAL;
 }
 
+/**
+ * procfs_ops — VFS operations registration for the procfs filesystem.
+ *
+ * This struct is passed to vfs_mount() during init to register
+ * read, write, stat, and readdir handlers.  create and unlink
+ * are NULL because procfs is a pseudo-filesystem; files are
+ * synthesized on-the-fly and cannot be created or deleted by
+ * userspace.
+ *
+ * procfs is mounted at /proc during early kernel init.
+ */
 struct vfs_ops procfs_ops = {
     .read    = procfs_read,
     .write   = procfs_write,
