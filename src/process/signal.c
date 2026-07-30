@@ -1,13 +1,73 @@
 /*
  * Signal handling — real-time signals + siginfo_t delivery
  *
- * Supports signals 1-63 (standard 1-31, RT 32-63).
- * Real-time signals (SIGRTMIN-SIGRTMAX) are queued with siginfo_t.
- * SIGCHLD delivers exit status via siginfo_t.
+ * ── Architecture Overview ─────────────────────────────────────────
  *
- * Signal number range: standard signals 1-31, real-time signals 32-63.
- * The uint64_t pending_signals bitmask limits us to bits 1-63 (signal 64
- * would require a shift beyond the type width and is thus unsupported).
+ * Signal delivery is a two-phase process:
+ *
+ *   Phase 1 — signal_send() / signal_send_info()
+ *     Called by sys_kill, sys_tkill, sys_rt_sigqueueinfo, or kernel-internal
+ *     code.  Sets the appropriate bit in the target process's
+ *     pending_signals bitmask, optionally stores a siginfo_t, and — if the
+ *     target is in a blockable sleep (PROCESS_BLOCKED, not suspended) —
+ *     wakes it to PROCESS_READY so it resumes execution and can check for
+ *     the newly arrived signal on the next scheduler dispatch.
+ *
+ *   Phase 2 — signal_check()
+ *     Called from the scheduler just before returning to a user-space
+ *     process (or from the kernel's interrupt return path).  Iterates
+ *     over the pending_signals bitmask, skips masked signals, and
+ *     dispatches each unmasked pending signal according to its disposition:
+ *
+ *       ┌─────────────┬──────────────────────────────────────────┐
+ *       │ Disposition │ Action                                   │
+ *       ├─────────────┼──────────────────────────────────────────┤
+ *       │ SIG_IGN     │ Clear bit, continue                      │
+ *       │ SIG_DFL     │ See default-action switch below          │
+ *       │ custom      │ Invoke the registered handler            │
+ *       └─────────────┴──────────────────────────────────────────┘
+ *
+ *   ── Handler dispatch for custom handlers ─────────────────────
+ *
+ *   Kernel-space processes (p->is_user == 0):
+ *     The handler is called directly as handler(sig) while holding
+ *     the process's sig_lock.  The lock is released around the call
+ *     to avoid deadlock if the handler itself invokes signal ops.
+ *
+ *   User-space processes (p->is_user == 1):
+ *     A sigframe (struct rt_sigframe) is built on the user stack
+ *     containing the saved register state, siginfo_t, ucontext, and
+ *     a return trampoline address pointing to the VDSO sigreturn
+ *     stub.  The interrupt frame's RIP/RSP are redirected to the
+ *     handler — when the CPU returns from the interrupt/syscall the
+ *     handler runs in user mode.  On return the handler either chains
+ *     or calls sigreturn, which copies the saved state from the frame
+ *     back onto the CPU via sys_rt_sigreturn.
+ *
+ *   ── Default action dispatch table ────────────────────────────
+ *
+ *   Terminate+coredump: SIGSEGV, SIGQUIT, SIGABRT
+ *   Terminate:          SIGKILL, SIGTERM, SIGPIPE
+ *   Stop (suspend):     SIGSTOP, SIGTSTP, SIGTTIN, SIGTTOU
+ *   Ignore:             SIGCHLD, SIGCONT, RT signals (no handler)
+ *
+ *   ── Signal mask and restart semantics ────────────────────────
+ *
+ *   When a custom handler runs:
+ *     - The signal's sa_mask is OR'd into sig_mask (blocks specified
+ *       signals during handler execution).
+ *     - The delivered signal is also masked (unless SA_NODEFER).
+ *     - SIGKILL and SIGSTOP are never blockable — stripped from mask.
+ *     - SA_RESETHAND: reset handler to SIG_DFL after first delivery.
+ *     - SA_RESTART: blocking syscalls interrupted by this signal are
+ *       automatically re-dispatched (via ERESTARTSYS mechanism).
+ *
+ *   ── Signal numbers ───────────────────────────────────────────
+ *
+ *   Standard signals: 1-31  (POSIX defined)
+ *   Real-time signals: 32-63 (SIGRTMIN-SIGRTMAX, queued with siginfo_t)
+ *   Maximum: SIG_MAX = 64 — limited by uint64_t pending_signals bitmask.
+ *   Signal 64 would require a shift beyond the type width.
  */
 #include "signal.h"
 
@@ -657,7 +717,81 @@ int signal_has_sa_restart(void) {
     return 0;
 }
 
-/* ── signal_check — Check and deliver pending signals ────────────────── */
+/* ── signal_check — Signal delivery and handler dispatch core ──────────
+ *
+ * Called by the scheduler just before returning to a READY process
+ * (interrupt/syscall return path).  Iterates over all pending unmasked
+ * signals for the current process and dispatches each one.
+ *
+ * ── Dispatch algorithm (per pending signal) ──────────────────────
+ *
+ *   For each signal sig from 1 to SIG_MAX-1:
+ *     1. Skip if not pending in p->pending_signals
+ *     2. Skip if masked by p->sig_mask
+ *     3. Clear the pending bit (it's being delivered now)
+ *     4. Validate via signal_validate(sig)
+ *     5. Dispatch according to handler disposition:
+ *
+ *        SIG_IGN → skip (signal is ignored)
+ *        SIG_DFL → execute default action via switch() below
+ *        custom  → invoke the registered handler
+ *
+ * ── Custom handler dispatch ─────────────────────────────────────
+ *
+ *   Kernel process (p->is_user == 0):
+ *     The handler function is called directly.  sig_lock is released
+ *     around the call to prevent re-entrancy issues.
+ *
+ *   User process (p->is_user == 1):
+ *     - siginfo is captured from p->sig_info[] (one-shot, cleared)
+ *     - The signal's sa_mask is OR'd into p->sig_mask (SIGKILL/SIGSTOP
+ *       excluded; SA_NODEFER skips self-masking)
+ *     - SA_RESETHAND: handler reset to SIG_DFL before delivery
+ *     - sig_lock is released
+ *     - signal_setup_frame_userspace() builds an rt_sigframe on the
+ *       user stack and redirects the interrupt frame's RIP/RSP
+ *     - If frame setup fails (copy_to_user fault), the pending bit
+ *       and handler are restored and the signal is retried next time
+ *     - If no interrupt frame is available (unlikely), the pending
+ *       bit is also restored for retry
+ *
+ * ── Default action dispatch (SIG_DFL) ────────────────────────────
+ *
+ *    Terminate+coredump (SIGSEGV, SIGQUIT, SIGABRT):
+ *      do_coredump(), set ZOMBIE, notify parent with CLD_DUMPED,
+ *      scheduler_yield() — never returns
+ *
+ *    Terminate (SIGKILL, SIGTERM, SIGPIPE):
+ *      Set ZOMBIE, notify parent with CLD_KILLED, yield — never returns
+ *
+ *    Ignore (SIGCHLD, SIGCONT):
+ *      Clear pending bit, continue scanning
+ *
+ *    Stop (SIGSTOP, SIGTSTP, SIGTTIN, SIGTTOU):
+ *      Set is_suspended=1, state=BLOCKED, remove from scheduler,
+ *      notify parent with CLD_STOPPED, yield.  On resume (SIGCONT),
+ *      re-acquire sig_lock and continue scanning more signals.
+ *
+ *    Real-time signals (SIGRTMIN-SIGRTMAX) with no handler:
+ *      Ignored (POSIX: default action for RT signals is ignore).
+ *
+ *    Unknown signals:
+ *      Terminate (safe fallback for unimplemented signals).
+ *
+ * ── Locking ─────────────────────────────────────────────────────
+ *
+ *   p->sig_lock is held for the entire dispatch loop.  It is
+ *   released around user-space frame setup (copy_to_user may fault)
+ *   and re-acquired immediately after.  When a stop action yields the
+ *   CPU, the lock is released before yield and re-acquired on resume.
+ *
+ * ── Retry semantics ─────────────────────────────────────────────
+ *
+ *   If signal_setup_frame_userspace() fails (e.g. bad user stack),
+ *   the pending bit and original handler are restored so the signal
+ *   will be tried again on the next signal_check() invocation.
+ *   This is safe because the sig_lock serialises concurrent delivery
+ *   attempts across CPUs. */
 void signal_check(void) {
     struct process *p = process_get_current();
     if (!p || !p->pending_signals)
