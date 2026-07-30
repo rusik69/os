@@ -3,14 +3,67 @@ section .text
 
 extern kpti_user_entry_trace
 
-; void context_switch(struct cpu_context **old, struct cpu_context *new_ctx)
-; rdi = &old->context (pointer to pointer), may be NULL (e.g. AP first switch)
-; rsi = new->context
+; ───────────────────────────────────────────────────────────────────────────────
+; CONTEXT SWITCH — Save old task context, restore new task context
 ;
-; IMPORTANT: caller must disable interrupts (cli) before calling this
-; function and re-enable them (sti) after it returns.  A timer interrupt
-; between register restore and ret would re-enter schedule() and corrupt
-; the partially-restored context frame.
+; C prototype: void context_switch(struct cpu_context **old, struct cpu_context *new_ctx)
+;   rdi = &old->context  (pointer-to-pointer to save old RSP into; may be NULL)
+;   rsi = new->context   (the target task's saved RSP to restore)
+;
+; CALLER REQUIREMENTS
+; ────────────────────
+; 1. IRQs must be disabled (cli) BEFORE calling context_switch() and re-enabled
+;    (sti) AFTER it returns.  A timer interrupt between register restore and
+;    the final ret would re-enter schedule() and corrupt the partially-restored
+;    context frame, leading to a crash or privilege escalation.
+; 2. The caller must hold any necessary locks (e.g. sched_lock) or have them
+;    dropped before the actual switch, depending on the locking protocol.
+;
+; STACK LAYOUT (after saving, before restore)
+; ────────────
+; After pushing callee-saved registers, the outgoing task's stack looks like
+; this (from low to high addresses, RSP points at the lowest):
+;
+;   [r15]           ← RSP (saved into *old)
+;   [r14]
+;   [r13]
+;   [r12]
+;   [rbx]
+;   [rbp]
+;   [return addr]   ← where context_switch returns to (in schedule())
+;
+; The incoming task's stack must have the same layout so that the restore
+; pops the same register order.  This is established by:
+;   - process_init(): pushes 6 slots + a return address (process_entry_trampoline)
+;     for newly created kernel tasks.
+;   - fork/exec: copies the parent's stack frame so the child restores the
+;     same registers.
+;
+; FLOW
+; ────
+;   1. If old != NULL: push callee-saved regs (rbp, rbx, r12-r15) onto the
+;      current stack, then save RSP into *old.  The saved RSP value points
+;      at the top of the 6-register save area.
+;   2. If old == NULL (e.g. first switch on AP): skip save entirely; no
+;      outgoing context to preserve.
+;   3. Restore: load RSP from new_ctx (the incoming task's saved RSP), which
+;      points at the top of a 6-register save area.
+;   4. Pop callee-saved regs in reverse order (r15, r14, r13, r12, rbx, rbp).
+;   5. ret — pops the return address from the stack.  For a running task being
+;      resumed, this returns to wherever schedule() was at the time of the
+;      original switch-out.  For a new task, it returns to the trampoline
+;      (process_entry_trampoline or user_entry_trampoline).
+;
+; NOTES
+; ─────
+; - CR3 (page tables) is NOT switched here — the caller (schedule()) switches
+;   page tables explicitly before calling context_switch(), because the
+;   outgoing task's userspace may need to be accessed (e.g. for rseq) before
+;   the switch.
+; - KPTI CR3 patching is also handled by the caller, not here.
+; - This function does not touch debug registers, FPU/SSE state, or LBR MSRs;
+;   those are saved/restored by the caller.
+; ───────────────────────────────────────────────────────────────────────────────
 global context_switch
 context_switch:
     ; Check if old context pointer is NULL (e.g. AP with no current process)

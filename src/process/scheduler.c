@@ -1256,7 +1256,50 @@ uint64_t scheduler_get_idle_ticks(void) {
     return this_cpu()->idle_ticks;
 }
 
-/* ── Timer tick handler ─────────────────────────────────────────────── */
+/* ── Timer tick handler ───────────────────────────────────────────────
+ *
+ * Called from the timer interrupt handler (TIMER_FREQ Hz, typically 1000 Hz)
+ * on every timer tick while a process is running on this CPU.  Performs the
+ * following steps in order:
+ *
+ *   1. Soft watchdog pet — proves timer IRQs reach the scheduler (distinguishes
+ *      soft lockups from hard lockups).
+ *   2. Soft lockup check — verifies schedule() has been called recently.
+ *   3. CPU time accounting — increments utime_ticks (user) or stime_ticks
+ *      (system) for the current process.
+ *   4. PELT load tracking update — updates the per-task PELT utilisation
+ *      signal (runnable=1, running=1 since the task is on-CPU).
+ *   5. RLIMIT_CPU enforcement — checks cumulative CPU time against the
+ *      soft/hard limit; sends SIGXCPU at the soft limit and SIGKILL after
+ *      a one-second grace period.
+ *   6. CFS vruntime update — calls update_vruntime(cur, 1) for the EEVDF/CFS
+ *      virtual deadline tracking.
+ *   7. PSI CPU pressure update — if there are tasks waiting in the runqueue
+ *      while the current task is running, the CPU is partially stalled on
+ *      overcommit; updates the Pressure Stall Information counters.
+ *   8. MGLRU aging — advances multi-generational LRU page reclaim generation.
+ *   9. CPU cgroup accounting — charges one tick to the task's cpu_cgroup.
+ *  10. SCHED_DEADLINE tick — budget consumption accounting via CBS; if
+ *      throttled, immediately reschedules.
+ *  11. EEVDF tick — updates lag/eligible_deadline for the current process.
+ *  12. Signal check — if pending signals exist, calls signal_check() which
+ *      may need to reschedule if the signal causes state change.
+ *  13. First-tick quantum assignment — if ticks_remaining==0, assigns a fresh
+ *      timeslice based on the task's scheduling policy.
+ *  14. Normal-tick quantum decrement — decrements ticks_remaining; on
+ *      expiry applies policy-specific action:
+ *        - SCHED_FIFO: replenish quantum, no preempt
+ *        - SCHED_RR: replenish and rotate to end of priority queue
+ *        - SCHED_DEADLINE: keep running (budget managed by CBS above)
+ *        - SCHED_OTHER/BATCH/IDLE: set need_resched (or call schedule()
+ *          if preemptible) to preempt the current task
+ *  15. Deadline replenishment check — periodic replenish for SCHED_DEADLINE
+ *      tasks (every 4 ticks or whenever dl_active is set).
+ *  16. Background writeback (CPU 0 only) — flushes dirty pages ~every 1s.
+ *
+ * The function is called with IRQs already disabled by the timer ISR.
+ * It acquires/releases sched_lock as needed for process accounting fields
+ * that may be accessed concurrently by other CPUs. */
 void scheduler_tick(int was_user) {
     struct cpu_info *ci = this_cpu();
     if (!ci->scheduler_enabled) return;
