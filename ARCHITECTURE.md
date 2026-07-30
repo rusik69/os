@@ -1396,6 +1396,289 @@ Linux-compatible packet filtering with five hook points (PREROUTING, LOCAL_IN, F
 
 **SOCKS5** (`src/net/socks5.c`): SOCKS5 proxy client with TCP-connect-based tunneling, username/password authentication, and remote DNS resolution.
 
+### Socket Buffer & Packet Data Path
+
+The network stack processes packets through a layered pipeline from driver interrupt to application socket. Unlike Linux's `struct sk_buff`, this kernel uses fixed per-connection receive buffers (typically 1-4 KB) allocated during connection setup — packets are copied into socket receive queues during `net_poll()`, and the application reads from these queues via the socket API.
+
+**Receive path (IRQ → application):**
+
+```
+NIC IRQ → net_rx_signal() → net_poll() → net_link_recv()
+  → net_rx_dispatch()          [ethertype demux: ARP / IPv4 / IPv6]
+    → nf_hook_traverse()       [netfilter PRE_ROUTING]
+      → handle_ip()             [IP reassembly → protocol demux]
+        → nf_hook_traverse()   [netfilter LOCAL_IN]
+          → handle_tcp() / handle_udp() / handle_icmp()
+            → skb_enqueue()     [socket receive buffer]
+              → wake up application (poll/select)
+```
+
+**Transmit path (application → NIC):**
+
+```
+socket send()/sendto()
+  → send_ip()                   [build IP header, fragment if needed]
+    → nf_hook_traverse()       [netfilter LOCAL_OUT]
+      → conntrack lookup
+        → nf_hook_traverse()   [netfilter POST_ROUTING]
+          → arp_resolve_or_queue() [MAC resolution]
+            → send_eth()        [build Ethernet header]
+              → net_link_send() [qdisc enqueue → driver dequeue]
+                → NIC transmit
+```
+
+**Concurrent packet processing** is achieved through:
+- **NAPI polling** — drivers batch packets during a single poll cycle, reducing interrupt overhead
+- **RPS/RFS** (`src/net/rps.c`): Receive Packet Steering distributes flows across CPUs by hash; Receive Flow Steering tracks flow-to-CPU affinity for cache locality
+- **XDP** (`src/net/xdp.c`): BPF-based early processing at the driver level before any kernel protocol parsing — supports `XDP_DROP`, `XDP_PASS`, `XDP_TX` actions
+- **Per-connection locking** — each TCP/UDP connection has its own spinlock for socket buffer access
+
+**Buffer management:** The kernel does not use a shared socket buffer allocator. Instead:
+- Each TCP connection has a fixed receive ring (up to 16 segments × MSS) and a send buffer
+- UDP uses per-slot datagram queues (up to 16 pending datagrams per socket)
+- Raw sockets (AF_PACKET, AF_UNIX) use simple FIFO queues with configurable limits
+- Driver-level DMA buffers are pre-allocated by each NIC driver during probe
+
+### Traffic Control & QoS
+
+**Files:** `src/net/pkt_sched.c`, `src/net/fq_codel.c`, `src/net/cake.c`, `src/net/sch_fq.c`, `src/net/sch_red.c`, `src/net/sch_tbf.c`, `src/include/pkt_sched.h`
+
+This kernel implements a Linux-compatible qdisc (queueing discipline) framework with support for multiple schedulers, each attachable to a specific interface:
+
+| Qdisc | File | Type | Algorithm |
+|-------|------|------|-----------|
+| **pfifo_fast** | `pkt_sched.c` | Classless | 3-band priority FIFO (ICMP→0, TCP→1, bulk→2) |
+| **fq_codel** | `fq_codel.c` | Classless | Fair Queuing + Controlled Delay (per-flow queues + CoDel AQM) |
+| **cake** | `cake.c` | Classless | Common Applications Kept Enhanced — bandwidth shaping + AQM + 8 TINs |
+| **FQ** | `sch_fq.c` | Classless | Fair Queue with per-flow Deficit Round Robin + pacing |
+| **RED** | `sch_red.c` | Classless | Random Early Detection — probabilistic AQM with ECN marking |
+| **TBF** | `sch_tbf.c` | Classless | Token Bucket Filter — rate limiting with burst support |
+| **HTB** | `pkt_sched.c` | Classful | Hierarchical Token Bucket — multi-level bandwidth hierarchy |
+
+**Architecture:**
+
+```
+Application sends packet → net_link_send()
+  → tc_get_qdisc(dev) → qdisc->enqueue()
+    → qdisc->dequeue()  [driven by NIC transmit or watchdog timer]
+      → netif_send(ifindex, data, len)
+        → NIC driver transmit callback
+```
+
+Each qdisc implements the standard operations: `enqueue()`, `dequeue()`, `drop()`, `get_stats()`. Classful qdiscs (HTB) additionally support per-class statistics and hierarchical bandwidth partitioning.
+
+**pfifo_fast** is the default qdisc (applied at init) — it provides simple priority queuing with 3 bands. Band 0 (highest) carries ICMP, band 1 carries TCP control/ACK packets, and band 2 carries bulk data. This prevents starvation of latency-sensitive traffic.
+
+**fq_codel** applies fair queuing across flows (hash-based flow classification) with CoDel AQM to control latency under load. Each flow gets a separate FIFO queue; the CoDel algorithm drops packets from queues with excessive sojourn time (>5 ms target).
+
+**CAKE** (`src/net/cake.c`) is a comprehensive shaper/AQM that combines bandwidth shaping, per-flow queuing, and ECN marking into a single qdisc. It classifies traffic into 8 TINs (tins) by DSCP marking and applies per-tin bandwidth limits, drop/mark thresholds, and priority levels.
+
+**HTB** enables hierarchical bandwidth allocation — a root class distributes bandwidth among child classes according to configured rates and ceilings, supporting complex traffic shaping topologies (e.g., per-customer rate limits with burst allowance).
+
+### Network Namespaces
+
+**Files:** `src/net/net_ns.c`, `src/include/net_ns.h`
+
+Network namespaces provide per-isolation-domain network state, modeled after Linux `CLONE_NEWNET`. Each namespace has its own:
+
+```c
+struct net_ns {
+    int               id;                  /* namespace ID (0 = init) */
+    char              name[32];            /* human-readable name */
+    uint32_t          ip_addr;             /* per-ns IPv4 address */
+    uint32_t          gateway;             /* per-ns default gateway */
+    uint32_t          subnet_mask;         /* per-ns subnet mask */
+    uint32_t          dns_server;          /* per-ns DNS resolver */
+    uint8_t           mac[6];              /* per-ns MAC address */
+    int               num_ifaces;          /* interfaces in this namespace */
+    int               iface_ids[NET_NS_MAX_IFACES];
+    struct rt_entry   rt_table[NET_NS_RT_MAX];   /* per-ns routing table */
+    int               rt_num_entries;
+    struct nf_rule    nf_rules[NET_NS_NF_MAX];    /* per-ns netfilter rules */
+    int               nf_num_rules;
+    int               in_use;
+};
+```
+
+**API:**
+
+- `net_ns_create(name)` — create a new empty namespace (up to `NET_NS_MAX` total)
+- `net_ns_destroy(ns_id)` — tear down a namespace (cannot destroy init_ns)
+- `net_ns_set_current(ns_id)` — switch the current thread's network namespace
+- `net_ns_get_current()` — return the current namespace pointer
+- `net_ns_add_iface(ns_id, ifindex)` — move an interface between namespaces
+- `net_ns_remove_iface(ns_id, ifindex)` — detach an interface
+
+**Isolation guarantees:**
+- Each namespace has its own IP address, MAC, routing table, and netfilter rules
+- Interfaces can be moved between namespaces via `net_ns_add_iface()` (removes from old, adds to new)
+- The init namespace (ID 0) is created at boot and always present
+- Namespace operations are guarded by `net_ns_lock` (spinlock)
+- Used by the container runtime for per-container network isolation
+
+**Integration with containers:**
+```
+container_create() → net_ns_create("c1")
+  → net_ns_add_iface(ns1, veth_peer)  // veth pair half in container
+  → configure IP, routes, and netfilter inside ns1
+  → attach process to namespace via net_ns_set_current()
+```
+
+### Network Source File Layout
+
+All networking source files live under `src/net/` (93 files organized by layer):
+
+```
+src/net/
+├── Core packet processing
+│   ├── net.c              — Link/network layer core, ARP, IP, ICMP, routing
+│   ├── net_ext.c          — Extended network operations
+│   └── netdevice.c        — Netdevice registration and dispatch
+│
+├── Transport protocols
+│   ├── net_tcp.c          — TCP state machine, connection table, retransmit
+│   ├── net_udp.c          — UDP datagram dispatch and bindings
+│   ├── sctp.c / sctp_sm.c / sctp_tsn.c  — SCTP stream transport
+│   ├── dccp.c             — DCCP datagram congestion control
+│   └── mptcp.c / mptcp_sched.c  — Multipath TCP subflow management
+│
+├── TCP congestion control (8 pluggable algorithms)
+│   ├── tcp_cc.c           — Congestion control framework (pluggable)
+│   ├── tcp_newreno.c      — NewReno (default)
+│   ├── tcp_cubic.c        — CUBIC (high-BDP)
+│   ├── tcp_bbr.c / tcp_bbr2.c / tcp_bbr3.c — BBRv1/v2/v3 (model-based)
+│   ├── tcp_bic.c          — BIC (binary increase)
+│   ├── tcp_vegas.c        — Vegas (delay-based)
+│   ├── tcp_westwood.c     — Westwood (bandwidth-estimation)
+│   ├── tcp_hybla.c        — Hybla (satellite links)
+│   └── tcp_illinois.c     — Illinois (delay-window hybrid)
+│
+├── Network layer (IPv4, IPv6)
+│   ├── ipv4 fragments     — (in net.c via handle_ip_fragment)
+│   ├── ipv6.c / ipv6_core.c       — IPv6 main processing
+│   ├── ipv6_ndisc.c       — Neighbor Discovery (RFC 4861)
+│   ├── ipv6_mld.c         — Multicast Listener Discovery
+│   ├── ipv6_pmtu.c        — Path MTU Discovery
+│   └── ipv6 addressing    — (in net_internal.h, ipv6_addr_table)
+│
+├── Socket layer
+│   ├── socket.c / socket_ext.c    — BSD socket API dispatch
+│   ├── af_unix.c           — AF_UNIX domain sockets
+│   ├── af_packet.c         — AF_PACKET raw packet sockets
+│   ├── netlink.c           — AF_NETLINK kernel-userspace IPC
+│   ├── can.c               — AF_CAN SocketCAN
+│   ├── vsock.c             — AF_VSOCK VM sockets
+│   └── tipc.c              — AF_TIPC cluster messaging
+│
+├── Security & filtering
+│   ├── netfilter.c / netfilter_hooks.c  — Packet filter hooks
+│   ├── nf_tables.c         — nf_tables ruleset management
+│   ├── conntrack.c / conntrack_helpers.c — Connection tracking
+│   ├── ipsec.c             — IPsec ESP/AH (transport + tunnel)
+│   ├── pfkey.c             — PF_KEYv2 SA management
+│   ├── macsec.c            — IEEE 802.1AE MAC security
+│   ├── wireguard.c / wg_netlink.c  — WireGuard VPN
+│   └── ktls.c              — Kernel TLS offload
+│
+├── Traffic control & QoS
+│   ├── pkt_sched.c         — Qdisc framework + pfifo_fast + HTB
+│   ├── fq_codel.c          — Fair Queuing + CoDel AQM
+│   ├── cake.c              — Common Applications Kept Enhanced
+│   ├── sch_fq.c            — Fair Queue with pacing
+│   ├── sch_red.c           — Random Early Detection
+│   └── sch_tbf.c           — Token Bucket Filter
+│
+├── Tunneling & virtual interfaces
+│   ├── gre.c               — GRE (RFC 2784)
+│   ├── ipip.c              — IPIP (RFC 2003)
+│   ├── vxlan.c             — VXLAN (RFC 7348)
+│   ├── l2tp.c              — L2TPv3 (RFC 3931)
+│   ├── pptp.c              — PPTP (RFC 2637)
+│   ├── 6lowpan.c           — 6LoWPAN header compression
+│   ├── tun.c               — TUN/TAP virtual interfaces
+│   └── veth.c              — veth pair virtual Ethernet
+│
+├── Link layer
+│   ├── bridge.c            — Ethernet bridge with STP
+│   ├── stp.c               — Spanning Tree Protocol (802.1D)
+│   ├── garp.c / mrp.c      — Generic/Multiple Registration Protocol
+│   ├── lacp.c              — Link Aggregation Control Protocol (802.3ad)
+│   ├── vlan.c              — VLAN 802.1Q tag/untag
+│   ├── lldp.c              — Link Layer Discovery Protocol (802.1AB)
+│   ├── ipoib.c             — IP over InfiniBand
+│   └── bonding             — (in src/drivers/bonding.c)
+│
+├── Application protocols
+│   ├── dhcp.c / dhcp6.c    — DHCPv4/v6 client
+│   ├── dns_cache.c / dns_resolver.c / dns_server.c — DNS resolver + server
+│   ├── httpd.c             — HTTP/1.1 server
+│   ├── sshd.c              — SSH server (key exchange + channel)
+│   ├── telnetd.c           — Telnet server
+│   ├── smtp.c              — SMTP client
+│   ├── ntp.c               — NTP client
+│   ├── socks5.c            — SOCKS5 proxy client
+│   └── tls.c / tls_aead.c / tls_handshake.c / tls_session.c / tls_x509.c — TLS 1.3
+│
+├── Infrastructure
+│   ├── net_ns.c            — Network namespaces
+│   ├── xdp.c               — eXpress Data Path
+│   ├── rps.c               — Receive Packet Steering
+│   ├── openvswitch.c       — Open vSwitch data path
+│   └── ipvs.c              — IP Virtual Server (load balancer)
+│
+└── Headers (src/include/)
+    ├── net.h               — Core types and protocol constants
+    ├── net_internal.h      — Internal state (ARP cache, IPv6 table, etc.)
+    ├── socket.h            — Socket types, SOL_*, SO_* constants
+    ├── netdevice.h         — net_device structure and registration API
+    ├── netfilter.h         — Netfilter hook API
+    ├── pkt_sched.h         — Qdisc operations and statistics
+    ├── conntrack.h         — Connection tracking structures
+    ├── af_unix.h           — AF_UNIX socket types
+    ├── net_ns.h            — Network namespace API
+    └── tcp_cc.h            — Congestion control pluggable framework
+```
+
+### Packet Statistics & Monitoring
+
+**Per-interface statistics** are tracked in `net_iface_stats[]` (defined in `net.c`) and exposed via `/proc/net/dev`:
+
+| Counter | Description |
+|---------|-------------|
+| `rx_packets` / `tx_packets` | Total packets received/transmitted |
+| `rx_bytes` / `tx_bytes` | Total bytes received/transmitted |
+| `rx_errors` / `tx_errors` | Hardware/driver errors |
+| `rx_dropped` / `tx_dropped` | Packets dropped (buffer full, netfilter reject) |
+| `rx_overruns` | Ring buffer overflows |
+| `multicast` | Multicast packets received |
+
+**Network monitoring interfaces:**
+- `/proc/net/tcp` — active TCP connections and state
+- `/proc/net/udp` — UDP socket bindings
+- `/proc/net/arp` — ARP cache entries
+- `/proc/net/route` — IPv4 routing table
+- `/proc/net/dev` — per-interface statistics
+- `/proc/net/snmp` — IP/ICMP/TCP/UDP protocol statistics (MIB-compatible)
+- `/proc/net/netfilter` — netfilter rules and counters
+- `/proc/net/conntrack` — connection tracking table
+- `/proc/net/netstat` — extended network statistics
+
+### Interface Lifecycle
+
+```
+1. Driver probe → netif_register(dev)     [assigns ifindex, sets IFF_UP]
+2. Address assignment (DHCP or static):
+   - net_our_ip, net_subnet_mask, net_gateway configured
+   - ARP cache initialized
+3. Default route added to routing table
+4. Interface becomes operational:
+   - IFF_RUNNING set
+   - net_poll() begins receiving packets
+5. (Optional) Teardown:
+   - netif_unregister(ifindex) — removes from table
+   - Driver releases DMA buffers, MSI-X vectors
+```
+
 ## eBPF Subsystem
 
 **Files:** `src/kernel/bpf_verifier.c`, `src/kernel/bpf_maps.c`, `src/kernel/bpf_progs.c`, `src/kernel/bpf_helpers.c`, `src/include/{bpf_verifier,bpf_maps,bpf_progs,bpf_helpers}.h`
