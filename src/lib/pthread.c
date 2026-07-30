@@ -1,23 +1,133 @@
 /*
  * pthread.c — Minimal POSIX threads library (Item U18)
  *
- * Provides:
- *   - Thread creation / join / exit via SYS_THREAD_CREATE / JOIN / EXIT
- *   - Mutex with NORMAL, RECURSIVE, ERRORCHECK types via SYS_FUTEX
- *   - Condition variables via SYS_FUTEX
- *   - pthread_once, pthread_self, pthread_equal
- *   - Thread attribute get/set functions
+ * ── Architecture Overview ──────────────────────────────────────────
  *
- * All functions are callable from both ring-0 (built-in shell commands) and
- * ring-3 (user-space ELF programs).  The syscall dispatch handles both paths.
+ * This file provides a minimal implementation of the POSIX threads (pthreads)
+ * API, callable from both ring-0 (built-in shell commands compiled into the
+ * kernel binary) and ring-3 (user-space ELF programs).  The syscall dispatch
+ * layer (SYS_THREAD_CREATE / JOIN / EXIT, SYS_FUTEX, SYS_GETTID) handles
+ * both paths transparently.
  *
- * Mutex implementation uses the kernel's futex syscall with states:
+ * The implementation depends on the kernel's futex syscall for all
+ * synchronization primitives.  No spinlocks or interrupt-disabling are used
+ * by this layer — blocking synchronisation is always mediated by the kernel's
+ * futex wait/wake mechanism.
+ *
+ * ── Components ─────────────────────────────────────────────────────
+ *
+ * Thread management    — pthread_create/join/exit/self/equal
+ * Thread attributes    — pthread_attr_{init,destroy,set/get}*
+ * Mutex                — FUTEX-based; supports NORMAL, RECURSIVE, ERRORCHECK
+ * Condition variables  — FUTEX-based; signal/broadcast with signal_cnt
+ * Barriers             — Simple counter-based generation barrier
+ * RW locks             — Readers-writer lock (no priority)
+ * Keys (TLS)           — Static linear-scan key allocator
+ * pthread_once         — Simple test-and-set
+ *
+ * ── Mutex States ───────────────────────────────────────────────────
+ *
+ * Each mutex uses a single 32-bit futex word with three states:
  *   0 = unlocked
- *   1 = locked, no waiters
- *   2 = locked, waiters present
+ *   1 = locked, no waiters (fast path, no syscall on unlock)
+ *   2 = locked, waiters present (slow path, FUTEX_WAKE on unlock)
  *
- * Condition variables use a simple futex word:
- *   signal_cnt increments on each signal/broadcast to prevent lost wakeups.
+ * Locking algorithm (pthread_mutex_lock):
+ *   1. Fast path: cmpxchg(0→1).  Acquired if old==0.
+ *   2. Slow path loop:
+ *      a. cmpxchg(0→2) — catch any concurrent unlock between 0→1 try and here
+ *      b. atomic_xchg(1→2) — ensure waiter flag is set
+ *      c. FUTEX_WAIT(&lock, 2) — sleep until kernel wakes us
+ *
+ * Unlocking (pthread_mutex_unlock):
+ *   1. atomic_xchg(&lock, 0) — release and read old state atomically
+ *   2. If old state was 2 (had waiters), FUTEX_WAKE one waiter.
+ *      If 1 (no waiters), no syscall needed — the single waiter spinning
+ *      on step 2a will succeed.
+ *
+ * ── Condition Variables ────────────────────────────────────────────
+ *
+ * Condition variables use a monotonically-increasing signal_cnt as the
+ * futex word.  pthread_cond_signal increments signal_cnt and wakes one
+ * waiter.  pthread_cond_broadcast increments and wakes all.  pthread_cond_wait
+ * saves the current signal_cnt, releases the mutex, then FUTEX_WAITs on
+ * signal_cnt until it changes (meaning a signal or broadcast happened).
+ *
+ * This pattern avoids lost-wakeup races: the waiter is guaranteed to see
+ * either the signal_cnt change (if a signal occurs after the save) or the
+ * unlocked mutex state (if the release completes before any signal).
+ *
+ * ── Barriers ───────────────────────────────────────────────────────
+ *
+ * Barrier state is stored as a simple array of three ints:
+ *   [0] total count    [1] remaining count    [2] futex word / generation
+ * The last thread to arrive resets remaining to total, increments the
+ * generation, and wakes all waiting threads.
+ *
+ * ── RW Locks ───────────────────────────────────────────────────────
+ *
+ * Readers-writer locks track [readers, writer_flag] as separate ints.
+ * Writers spin on the writer_flag using test-and-set + FUTEX_WAIT.
+ * Readers increment count optimistically, then back off if a writer
+ * snuck in between the check and the increment.  This is a simple
+ * writer-preference-free implementation.
+ *
+ * ── Thread Keys (TLS) ──────────────────────────────────────────────
+ *
+ * Thread-specific data uses a static linear-scan key allocator with a
+ * fixed maximum of PTHREAD_KEYS_MAX (128) keys.  The global storage array
+ * pthread_key_values[] holds values for all keys — this is NOT per-thread
+ * storage.  See limitations below.
+ *
+ * ── Known Limitations ──────────────────────────────────────────────
+ *
+ * 1. No true per-thread TLS:   pthread_key_values[] is a global array,
+ *    shared across all threads.  pthread_getspecific / setspecific
+ *    operate on a single global store.  True __thread or __declspec(thread)
+ *    TLS requires per-thread data structures (e.g. an array of arrays,
+ *    indexed by tid) which are not yet implemented.
+ *
+ * 2. No cancellation:   pthread_cancel, pthread_testcancel, and
+ *    cleanup handlers are not implemented.  Threads run until they
+ *    call pthread_exit or the process exits.
+ *
+ * 3. No detached thread cleanup:   Detached threads (PTHREAD_CREATE_DETACHED)
+ *    are accepted by pthread_attr_setdetachstate but the attribute is
+ *    ignored at pthread_create time — all threads are joinable.  There
+ *    is no thread reaper / destructor callback for detached threads.
+ *
+ * 4. No spinlock or rwlock attributes:   pthread_rwlockattr_t and
+ *    pthread_spinlock_t are not implemented.  The rwlock functions are
+ *    defined but are static (not yet exposed in the public headers).
+ *
+ * 5. No priority inheritance:   Mutexes do not support
+ *    PTHREAD_PRIO_INHERIT or PTHREAD_PRIO_PROTECT.  Priority inversion
+ *    is possible.
+ *
+ * 6. No robust mutexes:   PTHREAD_MUTEX_ROBUST is not supported.  If a
+ *    thread holding a mutex terminates without unlocking, waiters will
+ *    deadlock.
+ *
+ * 7. No thread scheduling attributes:   pthread_attr_setschedparam,
+ *    pthread_attr_setschedpolicy, pthread_attr_setscope have no effect.
+ *    All threads share the kernel's default scheduling policy.
+ *
+ * 8. CPU affinity not supported:   pthread_setaffinity_np and
+ *    pthread_getaffinity_np are not implemented.
+ *
+ * 9. Barrier functions are static:   pthread_barrier_{init,wait,destroy}
+ *    are defined as static and not yet linked to the public API,
+ *    pending header exposure.
+ *
+ * 10. Keys not per-thread:   The pthread_key API uses a single global
+ *     storage array.  All threads share the same value for any given
+ *     key.  See limitation #1.
+ *
+ * 11. No name or stack guard pages:   pthread_setname_np and guard-page
+ *     support in stack allocation are not implemented.
+ *
+ * 12. Futex syscall errors not relayed:   Some fast-path futex wake
+ *     failures are silently ignored.  Robustness could be improved.
  */
 
 #include "pthread.h"
