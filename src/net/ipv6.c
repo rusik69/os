@@ -1,15 +1,110 @@
 /*
- * ipv6.c — IPv6 basic stateless auto-configuration (SLAAC)
+ * ipv6.c — IPv6 addressing architecture and Neighbor Discovery
  *
- * Implements:
- *  - Link-local address generation (FE80::/10 via modified EUI-64)
- *  - ICMPv6 Neighbor Discovery (NS/NA)
- *  - Router Solicitation on startup
- *  - Router Advertisement processing for SLAAC
- *  - IPv6 packet dispatch
+ * ── IPv6 Addressing Architecture (RFC 4291) ───────────────────────────
  *
- * This is a minimal production-quality IPv6 stack suitable for
- * a hobby OS. It covers RFC 4861 (NDP) and RFC 4862 (SLAAC).
+ * IPv6 addresses are 128-bit identifiers assigned to interfaces.  Three
+ * fundamental address types exist:
+ *
+ *   Unicast    — one-to-one delivery to a single interface
+ *   Multicast  — one-to-many delivery to a group of interfaces (FF00::/8)
+ *   Anycast    — one-to-nearest (topologically) delivery
+ *
+ * (IPv6 has no broadcast; multicast replaces it.)
+ *
+ * ── Address Scopes (RFC 4007, RFC 6724 §3.1) ─────────────────────────
+ *
+ * Every unicast address has a scope that limits its validity region:
+ *
+ *   Scope   | Value  | Example prefix       | Description
+ *   ────────┼────────┼──────────────────────┼─────────────────────
+ *   Loopback| 0x01   | ::1/128              | Interface-local
+ *   Link    | 0x02   | FE80::/10            | Single link (not routed)
+ *   Unique  | 0x08   | FC00::/7 (ULA)       | Site/organisation-local
+ *   Global  | 0x0E   | 2000::/3 (GUA)       | Internet-global
+ *
+ * For multicast addresses the scope is encoded in bits 4-7 of byte 1
+ * (interface, link, site, etc.).
+ *
+ * ── Address Lifecycle ────────────────────────────────────────────────
+ *
+ * An IPv6 unicast address on an interface follows this state machine:
+ *
+ *           +──────────+
+ *           │TENTATIVE │  ← DAD in progress (RFC 4862 §5.4)
+ *           +────┬─────+
+ *                │ DAD succeeds (no duplicate)
+ *           ┌────┴─────┐
+ *           │ PREFERRED │  ← May be used freely as source/destination
+ *           └────┬─────┘
+ *                │ preferred_lifetime expires
+ *           ┌────┴──────┐
+ *           │ DEPRECATED │  ← SHOULD NOT be used for new communications
+ *           └────┬──────┘
+ *                │ valid_lifetime expires → removed entirely
+ *           ┌──────────┐
+ *           │ DETACHED  │  ← DAD detected a duplicate (permanent error)
+ *           └──────────┘
+ *
+ * Addresses marked PERMANENT (static/Link-local/solicited-node) bypass
+ * the PREFERRED→DEPRECATED transition and stay indefinitely.
+ *
+ * ── Neighbor Discovery Protocol (RFC 4861) ───────────────────────────
+ *
+ * NDP replaces ARP for IPv6 and provides five ICMPv6 message types:
+ *
+ *   NS  (135) — Neighbor Solicitation  — resolve MAC, DAD, NUD probes
+ *   NA  (136) — Neighbor Advertisement — response to NS, link-layer addr
+ *   RS  (133) — Router Solicitation    — request RAs at boot
+ *   RA  (134) — Router Advertisement   — prefix/L3 config (SLAAC flags)
+ *   Redirect (137) — better next-hop   — (not yet implemented)
+ *
+ * Key NDP design properties:
+ *   - Hop Limit MUST be 255 (off-path packets discarded)
+ *   - Source Link-Layer Address option included in NS (except DAD)
+ *   - Solicited-node multicast address used instead of flooding
+ *   - Neighbor Unreachability Detection (NUD) for link-local recovery
+ *
+ * ── Stateless Address Autoconfiguration (SLAAC — RFC 4862) ───────────
+ *
+ * SLAAC lets a host configure its own IPv6 address without a server:
+ *   1. Generate link-local address (FE80::/10 + EUI-64)
+ *   2. Perform DAD on the link-local address
+ *   3. Send Router Solicitation(s) to FF02::2
+ *   4. Process received Router Advertisement:
+ *      a. Extract on-link prefixes for address configuration
+ *      b. Form Global Unicast Address from prefix + EUI-64
+ *      c. Perform DAD on the new GUA
+ *      d. If M/O flags set, also start DHCPv6 (not yet implemented)
+ *
+ * ── Duplicate Address Detection (RFC 4862 §5.4) ──────────────────────
+ *
+ * Before assigning an address to the interface, DAD verifies uniqueness
+ * on the link by sending IPV6_DUPADDR_DETECT_TRANSMITS (3) Neighbor
+ * Solicitations with source address :: (unspecified).  If any NA (or NS
+ * from a non-:: source) is received for the address during DAD, the
+ * address transitions to DETACHED.
+ *
+ * ── Implementation Status ───────────────────────────────────────────
+ *
+ *   ✓ Link-local address generation (FE80::/10 via modified EUI-64)
+ *   ✓ ICMPv6 Neighbor Discovery (NS/NA with NUD reachability)
+ *   ✓ Router Solicitation + retry with exponential back-off
+ *   ✓ Router Advertisement parsing for SLAAC prefixes
+ *   ✓ Duplicate Address Detection (DAD)
+ *   ✓ IPv6 packet dispatch with Extension Header processing
+ *   ✓ ICMPv6 Echo Request/Reply (ping6)
+ *   ✓ Fragmentation (RFC 8200 §4.5)
+ *   ✓ Flow Label computation (RFC 6437)
+ *   ✓ Path MTU Discovery tracking via ICMPv6 Packet Too Big
+ *   ✓ MLDv2 multicast group management
+ *   ✗ NDP Redirect handling
+ *   ✗ DHCPv6 client (stateless/stateful)
+ *   ✗ IPsec for IPv6 (ESP/AH)
+ *
+ * This implementation covers RFC 4291, RFC 4861, RFC 4862, and
+ * partial RFC 4443.  It is designed for a hobby OS and prioritises
+ * correctness over performance.
  */
 
 #define KERNEL_INTERNAL
@@ -20,7 +115,32 @@
 #include "timer.h"
 #include "rng.h"
 
-/* ── IPv6 state ──────────────────────────────────────────────────── */
+/* ── IPv6 state ────────────────────────────────────────────────────
+ *
+ * Global state for this host's IPv6 interface.  These mirror a subset of
+ * what would be per-interface state in a full OS — our OS assumes a
+ * single Ethernet-like link.
+ *
+ *   net_our_ipv6_ll      — FE80::/10 link-local address (derived from
+ *                          net_our_mac via modified EUI-64)
+ *   net_our_ipv6_gua     — Global Unicast Address assigned via SLAAC
+ *   net_ipv6_ll_ready    — 1 after ipv6_init() completes address setup
+ *   net_ipv6_gua_valid   — 1 after DAD confirms the GUA (via SLAAC)
+ *   net_ipv6_gateway     — Default gateway learned from RA
+ *   net_ipv6_dns         — RDNSS server learned from RA (RFC 8106)
+ *   net_ipv6_ns_count    — Count of Neighbor Solicitations sent (debug)
+ *   net_ipv6_link_mtu    — L2 link MTU (typically 1500 for Ethernet)
+ *
+ * Address table:
+ *   ipv6_addr_table[]    — Array of IPV6_ADDR_TABLE_SIZE entries tracking
+ *                          all configured addresses (link-local, GUA,
+ *                          multicast groups, solicited-node).
+ *   ipv6_addr_count      — Number of valid entries in the table.
+ *
+ * Router Solicitation retry state:
+ *   rs_sent, rs_retries, rs_last_tick — Track RS retransmissions so we
+ *   don't flood the all-routers multicast group.
+ */
 
 struct in6_addr net_our_ipv6_ll;    /* link-local address */
 struct in6_addr net_our_ipv6_gua;   /* global unicast (via SLAAC) */
@@ -31,7 +151,28 @@ struct in6_addr net_ipv6_dns;       /* DNS server (from RDNSS) */
 uint32_t net_ipv6_ns_count = 0;     /* NS counter for duplicate detection */
 uint32_t net_ipv6_link_mtu = 1500;  /* link MTU (Ethernet default = 1500) */
 
-/* ── IPv6 address table ───────────────────────────────────────── */
+/* ── IPv6 address table ─────────────────────────────────────────── *
+ *
+ * A fixed-size table tracking all addresses associated with the
+ * interface.  Each entry (struct ipv6_addr_entry) stores:
+ *
+ *   addr              — The 128-bit IPv6 address
+ *   prefix_len        — Prefix length (e.g. 64 for /64)
+ *   state             — Address state in the lifecycle state machine:
+ *                         TENTATIVE, PREFERRED, DEPRECATED, PERMANENT,
+ *                         DETACHED
+ *   scope             — Cached scope from ipv6_addr_get_scope()
+ *   valid_lifetime    — Remaining lifetime (seconds) before removal
+ *   preferred_lifetime— Remaining lifetime (seconds) before deprecation
+ *   expiry_tick       — Absolute tick when valid_lifetime expires
+ *   preferred_expiry_tick — Absolute tick when preferred_lifetime expires
+ *   flags             — IPV6_ADDR_F_AUTOCONF | IPV6_ADDR_F_DAD | ...
+ *   valid             — 1 if this slot is occupied
+ *
+ * Table operations: ipv6_addr_add(), ipv6_addr_del(), ipv6_addr_find(),
+ * ipv6_addr_select_source() (RFC 6724), ipv6_addr_is_ours(),
+ * ipv6_addr_get_ll(), ipv6_addr_get_gua(), ipv6_addr_dump().
+ */
 struct ipv6_addr_entry ipv6_addr_table[IPV6_ADDR_TABLE_SIZE];
 int ipv6_addr_count = 0;
 
