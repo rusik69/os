@@ -1,3 +1,49 @@
+/*
+ * kernel printf implementation — format string engine
+ * ====================================================
+ *
+ * Architecture overview:
+ *   This file implements the kernel's formatted output subsystem. It provides
+ *   three output families:
+ *
+ *   (A) Direct console output via kprintf() / vkprintf() — sends formatted
+ *       text to VGA display, serial port, and the dmesg ring buffer.
+ *   (B) printf-like log-level output via kprintf_level() — adds priority
+ *       filtering against console_loglevel.
+ *   (C) Buffer-based formatting via vsnprintf() / snprintf() / sprintf() —
+ *       writes into caller-provided character buffers (used by userspace
+ *       fallbacks and module code).
+ *
+ * Format specifiers supported (common to all paths):
+ *   %s  — null-terminated string (shows "(null)" for NULL pointer)
+ *   %d, %i — signed 64-bit decimal integer
+ *   %u  — unsigned 64-bit decimal integer
+ *   %x  — unsigned 64-bit hexadecimal (lowercase a-f)
+ *   %p  — pointer (always 0x-prefixed, 16 hex digits on LP64)
+ *   %c  — single character
+ *   %%  — literal percent sign
+ *   %f, %F — double in fixed-point notation (%f only in buffer path)
+ *   %e, %E — double in scientific notation (buffer path only)
+ *   %g, %G — double in shortest representation (buffer path only)
+ *   %pK — kernel pointer with access restriction (hides from unprivileged)
+ *   %pX — hex dump of N bytes (takes two args: addr, len)
+ *   %pV — va_format passthrough for structured log messages
+ *   %pf — function address (prints as hex pointer)
+ *
+ * Flags and modifiers:
+ *   -  : left-align the output within the field width
+ *   0  : zero-pad numeric fields (ignored when left-align is active)
+ *   <digits> : minimum field width (right-pad with spaces, or zero-pad with '0')
+ *   l, ll, z : length modifiers — all behave identically on LP64 (64-bit),
+ *              consumed but ignored.
+ *
+ * Output architecture:
+ *   Every formatted character eventually flows through kputchar() which:
+ *     1. Writes it into the dmesg ring buffer (circular, 64 KB static)
+ *     2. Dispatches to output_hook if set, otherwise to vga_putchar() + serial
+ *   The ring buffer supports dmesg readback, resize, and flush-to-serial.
+ */
+
 #include "printf.h"
 #include "vga.h"
 #include "serial.h"
@@ -207,6 +253,16 @@ void kputchar(char c) {
     serial_putchar(c);
 }
 
+/* ── Core integer-to-string conversion ──────────────────────────────── */
+/*
+ * print_uint — convert an unsigned 64-bit value to its text representation.
+ * @val:     the value to print
+ * @base:    numeric base (10 for decimal, 16 for hexadecimal)
+ * @pad:     minimum field width (right-padded with padchar if wider than digits)
+ * @padchar: padding character (' ' for space, '0' for zero)
+ *
+ * Returns the number of characters emitted via kputchar().
+ */
 static int print_uint(uint64_t val, int base, int pad, char padchar) {
     char buf[64];
     int i = 0, chars = 0;
@@ -236,6 +292,18 @@ static int print_int(int64_t val, int pad, char padchar) {
     return chars + print_uint((uint64_t)val, 10, pad, padchar);
 }
 
+/* ── Variadic kernel printf (format engine core) ───────────────────── */
+/*
+ * vkprintf — kernel printf core accepting a va_list.
+ * @fmt: format string with %-specifiers
+ * @ap:  variable argument list
+ *
+ * Parses and processes format specifiers, dispatching each character
+ * through kputchar(). This is a simplified engine compared to kprintf():
+ * it does NOT handle left-align or floating-point specifiers, but
+ * supports the core integer, string, pointer, and character formats.
+ * Used internally by kprintf_level() and as a fallback for %pV.
+ */
 __printf(1, 0)
 int vkprintf(const char *fmt, va_list ap) {
     /* Re-use kprintf's format engine by simulating variadic dispatch.
@@ -287,6 +355,26 @@ int vkprintf(const char *fmt, va_list ap) {
     return count;
 }
 
+/* ── Main kernel printf (full format engine) ───────────────────────── */
+/*
+ * kprintf — kernel printf with full format support.
+ * @fmt: format string with %-specifiers
+ *
+ * This is the primary print entry-point for kernel code. It supports the
+ * full set of format specifiers documented at the top of this file,
+ * including left-alignment ('-'), zero-padding ('0'), minimum field width,
+ * and the %p extended pointer specifiers (%pK, %pX, %pV, %pf).
+ *
+ * Format parsing state machine:
+ *   1. Copy literal characters verbatim -> kputchar()
+ *   2. On '%', enter format-specifier parsing:
+ *      a. Optional '-' flag -> left_align = 1
+ *      b. Optional '0' flag -> padchar = '0'
+ *      c. Optional digit sequence -> pad (field width)
+ *      d. Optional length modifier (l/ll/z) -> consumed, ignored on LP64
+ *      e. Single-char conversion specifier -> dispatch
+ *   3. Unknown specifiers -> emit '%' + the unknown char literally
+ */
 __printf(1, 2)
 int kprintf(const char *fmt, ...) {
     va_list ap;
@@ -457,8 +545,9 @@ int kprintf_level(int level, const char *fmt, ...) {
     return count;
 }
 
-/* --- vsnprintf / snprintf / sprintf ---------------------------------- */
+/* ── snprintf buffer-writer and helpers ─────────────────────────────── */
 
+/* Buffer context passed through snprintf format expansion. */
 typedef struct { char *buf; size_t pos; size_t max; } snbuf_t;
 
 static void sn_write(snbuf_t *b, char c) {
@@ -478,9 +567,23 @@ static int sn_uint(snbuf_t *b, uint64_t val, int base, int pad,
     return written;
 }
 
-/* ── Floating-point helpers ──────────────────────────────────────────── */
+/* ── Floating-point formatting (buffer-only: vsnprintf path) ────────── */
+/*
+ * This family implements IEEE 754 double-precision conversion for the
+ * three standard printf floating-point specifiers:
+ *
+ *   %f / %F — fixed-point ("123.456000")
+ *   %e / %E — scientific notation ("1.234560e+02")
+ *   %g / %G — shortest representation (fixed or sci, whichever is shorter)
+ *
+ * All three convert via double → integer part + fractional part with the
+ * specified precision (default 6). Clamping guards against NaN and values
+ * exceeding UINT64_MAX. These are only available in the vsnprintf() path
+ * (buffer output), not in the direct-console kprintf() path.
+ */
 
-/* Format a double in fixed-point notation (%f). */
+/* Format a double in fixed-point notation (%f).
+ * Writes the integer part, a decimal point, and {precision} fractional digits. */
 static int sn_double_fixed(snbuf_t *b, double val, int precision) {
     int written = 0;
     if (val < 0) { sn_write(b, '-'); written++; val = -val; }
@@ -544,8 +647,21 @@ static int sn_double_shortest(snbuf_t *b, double val, int precision) {
     }
 }
 
-/* ── vsnprintf ───────────────────────────────────────────────────────── */
-
+/* ── vsnprintf — formatted output into a fixed-size buffer ──────────── */
+/*
+ * vsnprintf — format a string into a caller-provided buffer.
+ * @buf: destination buffer (NULL-safe: returns 0 if NULL)
+ * @n:   size of destination buffer (0-safe: returns 0 if 0)
+ * @fmt: printf-style format string
+ * @ap:  variable argument list
+ *
+ * This is the buffer-based counterpart of kprintf(). It supports all
+ * format specifiers that kprintf() does PLUS floating-point (%f, %e, %g).
+ * The output is always NUL-terminated (writes at most n-1 characters
+ * plus the NUL terminator). Returns the number of characters that would
+ * have been written had the buffer been large enough (excluding NUL),
+ * consistent with C99 snprintf semantics for the buffer path.
+ */
 __printf(3, 0)
 int vsnprintf(char *buf, size_t n, const char *fmt, va_list ap) {
     if (!buf || n == 0) return 0;
@@ -690,6 +806,13 @@ int vsnprintf(char *buf, size_t n, const char *fmt, va_list ap) {
     return count;
 }
 
+/* ── snprintf — vsnprintf wrapper with va_args ───────────────────────── */
+/*
+ * snprintf — convenience wrapper around vsnprintf for variadic callers.
+ * @buf: destination buffer
+ * @n:   buffer size
+ * @fmt: printf-style format string
+ */
 __printf(3, 4)
 int snprintf(char *buf, size_t n, const char *fmt, ...) {
     va_list ap; va_start(ap, fmt);
@@ -697,6 +820,16 @@ int snprintf(char *buf, size_t n, const char *fmt, ...) {
     va_end(ap); return r;
 }
 
+/* ── sprintf — unbounded variant (use snprintf instead) ─────────────── */
+/*
+ * sprintf — format into an unbounded buffer.
+ * @buf: destination buffer (assumed large enough)
+ * @fmt: printf-style format string
+ *
+ * WARNING: This function does not take a size parameter and will
+ * overrun the buffer if the output exceeds its capacity. Prefer
+ * snprintf() in all new code.
+ */
 __printf(2, 3)
 int sprintf(char *buf, const char *fmt, ...) {
     va_list ap; va_start(ap, fmt);
@@ -705,9 +838,16 @@ int sprintf(char *buf, const char *fmt, ...) {
 }
 
 /* ── Exported symbols for module loading ──────────────────────────── */
+/* kprintf is exported so loadable kernel modules can use formatted output. */
 EXPORT_SYMBOL(kprintf);
 
-/* ── vsprintf ─────────────────────────────── */
+/* ── vsprintf — unbounded buffer variant (static, internal only) ──── */
+/*
+ * vsprintf — format into an unbounded buffer (internal helper).
+ * This is a static function used only within this file as the va_list
+ * counterpart of sprintf(). No overflow protection — callers must
+ * ensure the buffer is large enough.
+ */
 __printf(2, 0)
 static int vsprintf(char *buf, const char *fmt, va_list args)
 {
