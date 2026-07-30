@@ -1,31 +1,63 @@
+# =============================================================================
 # CI Builder Image for rusik69/os
-# Contains all cross-compilation, QEMU, and analysis tools
-# for running CI jobs in isolated Docker containers.
+# =============================================================================
+#
+# Purpose:
+#   This Dockerfile defines the CI builder image used on self-hosted GitHub
+#   Actions runners. It provides a reproducible, pre-cached environment with
+#   all toolchains and tools needed to build, test, and analyze the OS kernel.
+#
+# Build Stages:
+#   There is a single build stage (no multi-stage) that installs everything
+#   into the base Ubuntu image. The image is rebuilt periodically (see
+#   docker-ci-image.yml workflow) to pick up security updates.
+#
+# CI Matrix Builds:
+#   The CI workflow (ci.yml) uses this image for all matrix entries:
+#     - x86_64-linux-gnu cross-compilation (primary target, default config)
+#     - Clang host compilation (alternative toolchain via CC=clang)
+#     - Cppcheck static analysis (make analyze)
+#     - QEMU e2e tests (kernel boot + userspace verification)
+#
+# Notes:
+#   - All compilation happens inside the container; host tools are irrelevant.
+#   - ccache is configured with a 500 MB limit stored under /tmp/ccache.
+#   - Packages are cleaned up in the same RUN layer to keep the image small.
+# =============================================================================
 FROM ubuntu:26.04
 
+# ---------------------------------------------------------------------------
+# Base toolchain & build dependencies
+# ---------------------------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # Cross-compilation toolchain
+    # Cross-compilation toolchain (target: x86_64-unknown-elf / x86_64-linux-gnu)
     gcc-x86-64-linux-gnu \
     binutils-x86-64-linux-gnu \
     nasm \
     ccache \
-    # Native tools (gcc cross-compiler still calls `as`)
+    # Native binutils (cross-gcc calls `as` for the host arch during build)
     binutils \
     make \
-    # QEMU for kernel tests
+    # QEMU system emulator for running kernel e2e tests in CI
     qemu-system-x86 \
-    # Analysis
+    # Static analysis tools (run via `make analyze`)
     cppcheck \
     clang-format-18 \
-    # Clang compiler for Clang CI matrix builds
+    # Clang/LLVM toolchain for Clang CI matrix builds
     clang \
     lld \
+    # DOS filesystem tools for creating FAT disk images
     dosfstools \
     mtools \
-    # E2E tests
+    # Python 3 runtime for e2e test scripts and utility tooling
     python3 \
     && rm -rf /var/lib/apt/lists/*
 
-# ccache defaults
+# ---------------------------------------------------------------------------
+# ccache configuration
+# ---------------------------------------------------------------------------
+# Speed up rebuilds by caching compilation artifacts across CI runs.
+# Cache is stored on the host runner volume; 500 MB limit prevents disk
+# pressure on the self-hosted machines.
 ENV CCACHE_DIR=/tmp/ccache \
     CCACHE_MAXSIZE=500M
