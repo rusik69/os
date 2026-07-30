@@ -1,4 +1,48 @@
-/* httpd.c — HTTP server: userspace-style task using blocking accept */
+/* httpd.c — HTTP/1.1 server: userspace-style persistent task using blocking accept.
+ *
+ * === Architecture ===
+ *
+ * This module implements a minimal HTTP/1.1 server as a freestanding kernel
+ * task.  It serves static files from a chroot-like directory (HTTPD_ROOT_DIR)
+ * and supports GET, HEAD, POST, and DELETE methods.  There is no dependency
+ * on libc — string helpers are provided locally.
+ *
+ * === Request Lifecycle ===
+ *
+ *   httpd_task()          persistent event loop (kernel thread)
+ *     ├─ net_tcp_accept()   blocking accept on port 80
+ *     ├─ handle_request()   ═══ MAIN PARSER & ROUTER ═══
+ *     │   ├─ Read raw HTTP request (header + body) into recv_buf
+ *     │   ├─ Split header from body at "\r\n\r\n"
+ *     │   ├─ Parse Content-Length (with overflow guard)
+ *     │   ├─ Tokenise request-line:  METHOD SP PATH SP HTTP_VERSION
+ *     │   └─ Route by method string:
+ *     │       ├─ GET    → handle_get()    serve file from HTTPD_ROOT_DIR
+ *     │       ├─ HEAD   → handle_get()    serve headers only
+ *     │       ├─ POST   → handle_post()   write body → raw fs path
+ *     │       └─ DELETE → handle_delete() remove raw fs path
+ *     ├─ net_tcp_close()    close connection
+ *     └─ net_poll() ×32    drain pending FIN/ACK
+ *
+ * === Routing Rules ===
+ *
+ *   Method   | Target path     | Action
+ *   ---------|-----------------|-----------------------------------------
+ *   GET      | /path           | File served under HTTPD_ROOT_DIR/path
+ *   HEAD     | /path           | Same as GET but no body (headers only)
+ *   POST     | /path           | Body written to /path (raw fs, no prefix)
+ *   DELETE   | /path           | /path removed from filesystem
+ *
+ * Path traversal ("..") is rejected for all methods.
+ *
+ * === Security Considerations ===
+ *
+ * - Path-traversal check: my_strstr(full_path, "..") before any file operation.
+ * - Content-Length overflow guard: arithmetic overflow detection (lines 356-364).
+ * - Buffer sizing: recv_buf is 4096 bytes; requests exceeding it are truncated
+ *   but still parseable as long as the header boundary is found.
+ * - No dynamic allocation: all buffers are stack- or statically-sized.
+ */
 
 #include "httpd.h"
 #include "net.h"
@@ -205,6 +249,19 @@ static void httpd_build_path(const char *path, char *full_path, int max) {
 
 /* --- File handler --- */
 
+/* ── GET/HEAD handler ───────────────────────────────────────────────────
+ *
+ * Serves a file under HTTPD_ROOT_DIR.  Steps:
+ *   (1) Strip query string (?...) from the path.
+ *   (2) Map "/" → "/index.html".
+ *   (3) Build the full filesystem path by prepending HTTPD_ROOT_DIR.
+ *   (4) Reject requests containing ".." (path traversal).
+ *   (5) Stat the file; return 404 if not found.
+ *   (6) For small files (≤ 4096 bytes) and non-HEAD requests, read the
+ *       whole file into a static buffer and send with Content-Length.
+ *   (7) For larger files, send headers immediately with Content-Length,
+ *       then stream the file in HTTPD_BODY_SIZE chunks.
+ */
 static void handle_get(int conn_id, char *path, int head_only) {
     /* Strip query string */
     char *q = my_strchr(path, '?');
@@ -277,6 +334,12 @@ static void ensure_parent_dirs(const char *path) {
 }
 
 /* --- POST handler: write body to file (raw path, no HTTPD_ROOT_DIR) --- */
+/* ── POST handler ───────────────────────────────────────────────────────
+ *
+ * Writes the request body to a raw filesystem path (no HTTPD_ROOT_DIR
+ * prefix).  Creates parent directories as needed.  Returns 201 Created
+ * on success, or appropriate error on failure.
+ */
 static void handle_post(int conn_id, const char *path, const char *body, int body_len) {
     /* Strip leading / for raw fs path */
     const char *rp = path;
@@ -301,6 +364,12 @@ static void handle_post(int conn_id, const char *path, const char *body, int bod
 }
 
 /* --- DELETE handler: remove file (raw path, no HTTPD_ROOT_DIR) --- */
+/* ── DELETE handler ─────────────────────────────────────────────────────
+ *
+ * Removes a raw filesystem path (no HTTPD_ROOT_DIR prefix).  Returns 200
+ * OK with body "Deleted" on success, 404 if the file does not exist, or
+ * 403 if the path contains "..".
+ */
 static void handle_delete(int conn_id, const char *path) {
     const char *rp = path;
     while (*rp == '/') rp++;
@@ -321,6 +390,30 @@ static void handle_delete(int conn_id, const char *path) {
                   sizeof(ok_body)-1, ok_body, sizeof(ok_body)-1, 0);
 }
 
+/* ── Request parser & router ────────────────────────────────────────────
+ *
+ * handle_request() implements the HTTP/1.1 request parsing algorithm:
+ *
+ *   STEP 1 — RECV: Read client data into recv_buf until "\r\n\r\n" is
+ *             found or the buffer is exhausted.
+ *   STEP 2 — HEADER SPLIT: Locate "\r\n\r\n" (end-of-headers marker).
+ *             Everything before it is the header block; everything after
+ *             is (or begins) the message body.
+ *   STEP 3 — CONTENT-LENGTH: Scan the header block for
+ *             "Content-Length:" / "content-length:", parse the decimal
+ *             value with overflow protection, and validate it against
+ *             the remaining buffer capacity.
+ *   STEP 4 — BODY RECV: If Content-Length indicates more body data
+ *             remains, continue reading from the socket.
+ *   STEP 5 — METHOD TOKEN: Extract the first space-delimited token from
+ *             the request-line → method string (GET/HEAD/POST/DELETE).
+ *   STEP 6 — PATH TOKEN:  Extract the second space-delimited token →
+ *             request-URI (the path).
+ *   STEP 7 — ROUTE: Dispatch to the appropriate handler based on method.
+ *
+ * Error responses (400 Bad Request, 501 Not Implemented) are generated
+ * inline when parsing fails or an unsupported method is used.
+ */
 static void handle_request(int conn_id) {
     char recv_buf[HTTPD_RECV_SIZE];
     int recv_len = 0;
@@ -438,7 +531,14 @@ static void handle_request(int conn_id) {
     handle_get(conn_id, path, strcmp(method, "HEAD") == 0);
 }
 
-/* --- Service interface --- */
+/* ── Service lifecycle ──────────────────────────────────────────────────
+ *
+ * httpd_init()   — called at boot to start the server.
+ * httpd_start()  — registers a TCP listen on port 80 (accept-queue mode,
+ *                  no per-connection callbacks) and sets the running flag.
+ * httpd_stop()   — clears the running flag and unregisters port 80.
+ *                  The accept loop sees the flag and idles gracefully.
+ */
 
 static volatile int httpd_running = 0;
 
@@ -466,6 +566,19 @@ void httpd_init(void) {
 
 /* --- Userspace-style task: own kernel process, persistent accept loop --- */
 
+/* ── Main accept loop (userspace-style kernel task) ────────────────────
+ *
+ * Runs as a persistent kernel thread.  Each iteration:
+ *   (1) Check httpd_running flag — idle with scheduler_yield() if stopped.
+ *   (2) Block on net_tcp_accept(80, timeout) for a new connection.
+ *   (3) On accept, dispatch handle_request() for the full request lifecycle.
+ *   (4) Close the connection after the response is sent.
+ *   (5) Drain pending packets (net_poll() ×32) to clean up TCP state
+ *       before attempting the next accept.
+ *
+ * The accept timeout (HTTPD_ACCEPT_TIMEOUT = 100 ticks) ensures the task
+ * is responsive to stop signals even under idle conditions.
+ */
 void httpd_task(void) {
     for (;;) {
         if (!httpd_running) {
