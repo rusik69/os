@@ -1963,35 +1963,289 @@ BPF programs can attach to kprobes (`SEC("kprobe/sys_*")`), tracepoints, and per
 ## Kernel Modules
 
 **Files:** `src/kernel/module.c`, `src/kernel/module_elf.c`, `src/kernel/module_deps.c`, `src/kernel/module_alias.c`, `src/kernel/module_compress.c`, `src/kernel/module_signature.c`, `src/kernel/module_async.c`, `src/kernel/module_autoload.c`
+**Headers:** `src/include/module.h`, `src/include/module_elf.h`, `src/include/module_deps.h`, `src/include/module_signature.h`, `src/include/module_compress.h`, `src/include/module_autoload.h`
 
-The kernel supports loadable modules as standalone `.ko` files. 226 modules compile from `obj-m` entries in the Makefile.
+The kernel supports loadable modules as standalone `.ko` files. 226 modules compile from `obj-m` entries across the source tree. Each module is an ELF64 relocatable object (ET_REL) with its own `.text`, `.rodata`, `.data`, and `.bss` sections, plus meta-sections for symbol tables, relocation entries, signature data, and modinfo strings.
+
+### Module Architecture
+
+```text
+┌─────────────────────────────────────────────────┐
+│                  Userspace                      │
+│  insmod / modprobe / rmmod / lsmod / modinfo   │
+└──────────────────────┬──────────────────────────┘
+                       │ syscall (module_init / module_delete / module_query)
+                       ▼
+┌─────────────────────────────────────────────────┐
+│              Kernel Module Loader               │
+│  ┌─────────────┐  ┌──────────┐  ┌───────────┐  │
+│  │  ELF Parser  │  │ Relocator│  │ Symtable  │  │
+│  │ module_elf.c │  │ (RELA)   │  │ resolver  │  │
+│  └──────┬───────┘  └──────────┘  └─────┬─────┘  │
+│         │                               │        │
+│  ┌──────▼───────────────────────────────▼──────┐ │
+│  │        64 MB Module Virtual Region          │ │
+│  │  0xFFFF800100000000 — 0xFFFF800140000000    │ │
+│  │  ┌─────┐ ┌────────┐ ┌──────┐ ┌────────┐   │ │
+│  │  │.text│ │.rodata │ │.data │ │ .bss  │... │ │
+│  │  │ (RX)│ │  (RO)  │ │ (RW) │ │ (RW)  │   │ │
+│  │  └─────┘ └────────┘ └──────┘ └────────┘   │ │
+│  └─────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────┘
+```
+
+### Module Data Structures
+
+Each loaded module is represented by a `struct kernel_module` (defined in `src/include/module.h`), allocated in a fixed-size global table `g_modules[MODULE_MAX=16]`:
+
+```c
+struct kernel_module {
+    char           name[32];           /* Module name (e.g. "e1000") */
+    module_entry_t entry;              /* module_init() entry point */
+    module_exit_t  exit_fn;            /* module_exit() cleanup */
+    enum module_state state;           /* Current lifecycle state */
+    uint64_t base_addr;                /* Virtual base in module region */
+    uint64_t size;                     /* Total allocated size */
+    struct module_section sections[16];/* Per-section tracking (vaddr/size/flags) */
+    int num_sections;
+    int refcount;                      /* Reference counter (get/put) */
+    int module_id;                     /* Slot index in g_modules[] */
+    struct module_dep deps[16];        /* Dependency list */
+    int num_deps;
+    uint32_t flags;                    /* Async probe, etc. */
+    struct list_head params;           /* Module parameter list */
+    int param_count;
+};
+```
+
+The `struct module_section` tracks individual ELF sections within module memory:
+
+```c
+struct module_section {
+    uint64_t vaddr;       /* Virtual address in module region */
+    uint64_t size;        /* Size in bytes */
+    uint32_t sh_flags;    /* ELF section flags (SHF_WRITE, SHF_ALLOC, SHF_EXECINSTR) */
+};
+```
+
+### Module State Machine
+
+Modules progress through five states during their lifecycle:
+
+```text
+                  ┌──────────────────┐
+                  │   MODULE_UNUSED   │  (slot free)
+                  └────────┬─────────┘
+                           │ module_load() called
+                           ▼
+                  ┌──────────────────┐
+                  │  MODULE_LOADING   │  (ELF parse, relocate, verify)
+                  └────────┬─────────┘
+                           │ module_elf_finalize() succeeds
+                           ▼
+                  ┌──────────────────┐
+                  │   MODULE_LIVE    │  (entry() called, module active)
+                  └────────┬─────────┘
+                           │ module_unload() called
+                           ▼
+                  ┌──────────────────┐
+                  │ MODULE_UNLOADING  │  (exit_fn() called, refs drained)
+                  └────────┬─────────┘
+                           │ resources freed
+                           ▼
+                  ┌──────────────────┐
+                  │   MODULE_DEAD    │  (slot reusable)
+                  └──────────────────┘
+```
+
+If any loading step fails, the module transitions directly from `MODULE_LOADING` to `MODULE_ERROR`, and the allocated memory regions are freed.
+
+### Module Loading Sequence (Detailed)
+
+The full load path from `insmod`/`modprobe` to a live module consists of nine stages:
+
+**Stage 1 — Verify signature (module_signature.c)**
+The .ko file's `.module_sig` ELF section is extracted and verified. Two verification methods exist:
+- **Raw RSA-2048/SHA-256:** The module's SHA-256 hash is computed and compared against the PKCS#1 v1.5 signature carried in `.module_sig`, using the kernel's embedded RSA public key (shared with the SSH host key via `rsa_key.h`).
+- **PKCS#7 chain verification:** The `.module_sig` section may contain a PKCS#7 SignedData structure with a signer certificate whose SubjectKeyIdentifier must match a registered trusted key fingerprint. Up to 8 trusted keys can be registered.
+- **Enforcement modes:** Mode 0 = warn-only (log but allow unsigned/invalid), Mode 1 = enforce (reject unsigned or invalid modules, default).
+
+**Stage 2 — Validate ELF header (module_elf.c)**
+The module ELF header is checked for:
+- ELF magic number (`\x7fELF`)
+- 64-bit class (ELFCLASS64)
+- x86-64 machine type (EM_X86_64)
+- Relocatable object type (ET_REL)
+- Proper section header offset, string table indices, and file size bounds
+
+**Stage 3 — Parse section headers**
+All section headers are read from the ELF file. The section name string table (`.shstrtab`) is located and used to identify each section's type:
+- `.text` → executable code (RX)
+- `.rodata` → read-only data (RO)  
+- `.data` → writable data (RW)
+- `.bss` → zero-initialized data (RW)
+- `.symtab` / `.strtab` → symbol table and string table
+- `.rela.text`, `.rela.data`, `.rela.rodata` → RELA relocation entries
+- `.modinfo` → module metadata (license, author, description, dependencies, aliases)
+- `.module_sig` → RSA-2048/SHA-256 signature
+- `.gnu.linkonce.this_module` → embedded `struct module` data
+
+**Stage 4 — Parse symbol table**
+The `.symtab` section is parsed to identify:
+- **Defined (exported) symbols** — global symbols the module provides to the kernel
+- **Undefined (imported) symbols** — references that must be resolved against the kernel's EXPORT_SYMBOL table
+- **Local symbols** — module-internal references
+
+**Stage 5 — Check blacklist and vermagic**
+The module name is checked against the boot-time blacklist (`modprobe.blacklist=mod1,mod2` on the kernel command line). Blacklisted modules are rejected immediately.
+The module's embedded vermagic string (kernel version + SMP/preempt/arch flags) is compared against the running kernel's `module_vermagic[]`. A mismatch taints the kernel (`TAINT_MODULE_VERMAGIC_MISMATCH`) and, depending on configuration, may reject the module.
+
+**Stage 6 — Resolve dependencies (module_deps.c)**
+Dependencies declared in `.modinfo` (`depends=mod1,mod2,...`) are resolved transitively:
+1. For each dependency, check if the module is already loaded
+2. If not, call `request_module()` to auto-load it
+3. Recursively resolve the dependency's dependencies
+4. A topological sort places dependencies before dependents in the load order
+5. The `module_can_unload()` function checks for reverse dependencies before allowing unload
+
+**Stage 7 — Allocate module memory region (M10)**
+A block of the required size is allocated from the 64 MB module virtual region (`MODULES_VADDR` to `MODULES_END`, 0xFFFF800100000000 to 0xFFFF800140000000). The region allocator (`module_alloc_region()`) uses a simple first-fit algorithm within the pre-reserved virtual address space. Sections are mapped with appropriate permissions:
+- `.text` → RX (PAGE_PRESENT | PAGE_USER)
+- `.rodata` → RO (PAGE_PRESENT | PAGE_USER | PAGE_NX)
+- `.data` / `.bss` → RW (PAGE_PRESENT | PAGE_USER | PAGE_RW | PAGE_NX)
+
+**Stage 8 — Apply RELA relocations**
+For each `.rela.*` section, the loader walks all RELA entries (64-bit relocation with addend, the standard x86-64 ELF format) and applies them:
+- `R_X86_64_64` — 64-bit absolute address (direct S + A)
+- `R_X86_64_PC32` — 32-bit PC-relative offset
+- `R_X86_64_PLT32` — PLT-relative (resolved via GOT/PLT if needed)
+- `R_X86_64_GOTPCREL` — GOT-relative (Global Offset Table reference)
+- Undefined symbols trigger module load failure with a descriptive error
+
+**Stage 9 — Call module_init() and transition to LIVE**
+After all sections are loaded, permissions set, and relocations applied, the module's init function (`module_init(fn)`) is called. If successful, the module transitions from `MODULE_LOADING` to `MODULE_LIVE`. If init fails, the module enters `MODULE_ERROR` and resources are freed.
+
+### Symbol Export System (EXPORT_SYMBOL)
+
+The kernel maintains an exported symbol table (`export.c`, `src/include/export.h`) that modules resolve against during loading:
+
+```c
+struct kernel_symbol {
+    uint64_t value;         /* Address of the symbol */
+    const char *name;       /* Symbol name string */
+};
+```
+
+Key characteristics:
+- **50+ symbols exported** across core kernel subsystems (memory allocation, string functions, device I/O, timer, VFS operations, etc.)
+- **Symbol table** — a sorted array of `struct kernel_symbol` entries, searched via binary search during resolution
+- **EXPORT_SYMBOL_GPL variant** — restricts usage to GPL-licensed modules (checked via `.modinfo` license field)
+- **Module-to-module symbol resolution** — one module's exported symbols become available to subsequently loaded modules
+- **Lookup function:** `find_exported_symbol(name)` — iterates the kernel export table, returns the symbol value or NULL
+
+### Module Parameter System
+
+Modules can declare parameters that are configurable at load time via the kernel command line or `insmod`:
+
+```c
+module_param(name, type, perm);  // Declares a named parameter
+```
+
+Parameter types supported:
+| Type | C type | Example |
+|------|--------|---------|
+| `PARAM_TYPE_INT` | `int` | `module_param(debug, int, 0644)` |
+| `PARAM_TYPE_UINT` | `unsigned int` | `module_param(buf_size, uint, 0)` |
+| `PARAM_TYPE_CHARP` | `char *` | `module_param(name, charp, 0)` |
+| `PARAM_TYPE_STRING` | `char[N]` | Fixed-size buffer |
+| `PARAM_TYPE_BOOL` | `bool` | Accepts 0/1, y/n, on/off |
+
+Parameters are registered via the linked list `struct kernel_module.params` and exposed through `/sys/module/<name>/parameters/` for runtime inspection and modification (when permissions allow).
+
+Boot-time module parameters can also be specified on the kernel command line:
+```
+e1000.debug=1 ext2.verbose_mount=1
+```
+These are parsed by `modules_init()` into a static cache (`g_cmdline_params[]`) and applied to modules as they load, before their init function runs.
+
+### Module Autoload (request_module)
+
+The kernel automatically loads modules when needed through `request_module()`:
+
+**Trigger points:**
+- **PCI device discovery:** `pci_autoprobe_work()` generates modalias strings (`pci:v0000VVVVd0000DDDDsv0000SSSS...`) and calls `request_module()` for each unknown device
+- **USB device discovery:** Similar modalias-based loading for USB devices
+- **Filesystem mount:** `vfs_mount()` calls `request_module("ext2")` when an unknown filesystem type is encountered
+- **Socket creation:** `request_module("ipv6")` is called when an AF_INET6 socket is created
+- **Network protocol:** Protocol-specific autoload for netfilter, tunnels, crypto modules
+
+**Module loading flow in request_module():**
+1. Check if the module is already loaded (by name)
+2. Search the default module path: `/modules/<name>.ko` (or `/modules/<name>.ko.gz` for compressed)
+3. Detect compression type (gzip or xz) via magic bytes
+4. Decompress the module data if needed
+5. Pass decompressed data to the standard ELF module loader
+6. Trigger dependency resolution and auto-load missing dependencies
+
+**Module aliasing:** Modules declare alias patterns in `.modinfo` via `MODULE_DEVICE_TABLE(pci, table)`. During autoload, the modalias string is matched against all registered module aliases (`module_alias.c`). The alias table supports wildcard patterns (e.g., `pci:v00008086d*` for all Intel devices).
+
+### Module Compression
+
+Modules can be stored compressed in the initramfs to reduce disk and memory footprint:
+
+| Format | Magic bytes | Implementation |
+|--------|-------------|----------------|
+| **gzip** | `0x1f 0x8b` | Full DEFLATE inflator (RFC 1951/1952) — 1300+ lines of decompression code |
+| **xz** | `0xfd 0x37 0x7a 0x58 0x5a 0x00` | Detection only (LZMA2 decompression stubbed for future implementation) |
+
+Detection occurs via magic byte matching in `module_compress.c`. Compressed files use the `.ko.gz` or `.ko.xz` extension. The decompressed data is passed to the standard ELF loader.
+
+### Module Signature Verification
+
+All modules are verified cryptographically before loading:
 
 ```
-Module Loading:
-  insmod → syscall → module loader → ELF relocation → memory allocation
-          ↓                                                    ↓
-       Read .ko file                                   Module in RX/RO/RW
-       Parse ELF headers                               64MB region
-       Verify signature (RSA)                          Symtab registration
-       Resolve symbols (EXPORT_SYMBOL)                 module_init() call
-       Apply relocations                               
+module.ko → SHA-256 hash → RSA-2048 sign (PKCS#1 v1.5) → .module_sig section
+kernel    → embed RSA public key → on load: re-hash + RSA verify
 ```
 
-**Module infrastructure:**
-- `.ko` ELF loader — full RELA relocation for x86-64, GOT/PLT handling
-- Module state machine: LOADING → LIVE → UNLOADING → DEAD
-- 64MB module region (0xFFFF800100000000) with per-section page permissions (RX/RO/RW)
-- EXPORT_SYMBOL system — 50+ symbols exported across kernel subsystems
-- Module signatures (RSA-2048/SHA-256) — verified before loading
-- Module dependency tracking (`src/kernel/module_deps.c`)
-- Module aliasing for `request_module()` autoload
-- Module compression (xz/gzip) — decompressed on load
-- Module autoload via `request_module()` on device discovery
+**Key management:**
+- The kernel's RSA public key is embedded at build time from `rsa_key.h` (shared with SSH host key infrastructure)
+- Additional trusted keys can be registered at runtime (up to `MAX_TRUSTED_KEYS=8`)
+- PKCS#7 chain verification allows signing by X.509 certificates whose SubjectKeyIdentifier matches a registered trusted key
 
-**User commands:** `insmod.elf`, `modprobe.elf`, `rmmod.elf`, `lsmod.elf`, `modinfo.elf` (all in `/userspace/`)
-**Initramfs integration:** 226 modules bundled in initramfs at `/modules/`, auto-loaded on boot via `/etc/modules` list
+**Enforcement modes (configurable at boot):**
+- `module.sig_enforce=0` — warn-only, log but allow unsigned/invalid modules
+- `module.sig_enforce=1` — enforced, reject unsigned or invalid modules (default)
 
-**Build:** `make modules` produces all module `.ko` files; `make` builds both kernel and modules together if `obj-m` is non-empty.
+Unsigned modules or those with mismatched vermagic taint the kernel (`TAINT_MODULE_UNSIGNED`, `TAINT_MODULE_VERMAGIC_MISMATCH`).
+
+### Userspace Tools
+
+| Command | Source | Purpose |
+|---------|--------|---------|
+| `insmod.elf` | `userspace/bin/insmod.c` | Load a single .ko file via syscall |
+| `modprobe.elf` | `userspace/bin/modprobe.c` | Load module + dependencies by name |
+| `rmmod.elf` | `userspace/bin/rmmod.c` | Unload a module |
+| `lsmod.elf` | `userspace/bin/lsmod.c` | List loaded modules (name, size, refcount, dependents) |
+| `modinfo.elf` | `userspace/bin/modinfo.c` | Display module metadata (license, author, params, aliases, deps) |
+
+### Initramfs Integration
+
+- All 226 `.ko` files are bundled in the initramfs image at `/modules/`
+- The init process (`/sbin/init`) reads `/etc/modules` and loads the listed modules at boot via `modprobe`
+- The initramfs extraction (`initramfs_extract()`) unpacks the CPIO archive and populates the module directory before init starts
+- Modules are stored uncompressed or gzip-compressed depending on the build configuration
+
+### Build System
+
+- Modules are compiled with the `-DMODULE` flag, which adds `#define MODULE 1` to the preprocessor, enabling module-specific code paths
+- Each module is compiled from `obj-m` entries in the Makefile — e.g., `obj-m += e1000.o` produces `e1000.ko`
+- `make modules` builds all `.ko` files without rebuilding the kernel
+- `make all` (or just `make`) builds the kernel and all modules together
+- The linker produces relocatable ET_REL objects (not ET_EXEC or ET_DYN), which the kernel loader handles via full RELA relocation
+- Module build uses the same cross-compiler and flags as the kernel (`CC=x86_64-linux-gnu-gcc`)
+- Modules are collected into `build/modules/` after compilation and bundled into the initramfs
 
 ## Container Runtime & Orchestrator
 
