@@ -124,12 +124,44 @@ struct vring_used {
 };
 #pragma pack(pop)
 
-/* Request header prepended to each I/O */
+/* ── Virtio-blk request format (VirtIO spec §5.2.6) ───────────────
+ *
+ * Every I/O request uses a 3-descriptor chain in the virtqueue:
+ *
+ *   Descriptor 0 — Request header (struct virtio_blk_req_hdr):
+ *     [0..3]    type:     VIRTIO_BLK_T_IN (0), VIRTIO_BLK_T_OUT (1),
+ *                          VIRTIO_BLK_T_FLUSH (4), VIRTIO_BLK_T_DISCARD (11),
+ *                          or VIRTIO_BLK_T_WRITE_ZEROES (13)
+ *     [4..7]    reserved: must be 0
+ *     [8..15]   sector:   starting sector address (64-bit little-endian)
+ *
+ *   Descriptor 1 — Data buffer (for IN/OUT) OR discard/write-zeroes
+ *                  descriptor (for DISCARD/WRITE_ZEROES):
+ *     - For read (T_IN): flags = VRING_DESC_F_WRITE (device writes data here)
+ *     - For write (T_OUT): flags = 0 (device reads data from here)
+ *     - For discard (T_DISCARD) / write-zeroes (T_WRITE_ZEROES):
+ *       struct virtio_blk_discard_write_zeroes { sector(8), num_sectors(4),
+ *                                                 flags(4) }
+ *       flags = 0 (device-readable, no VRING_DESC_F_WRITE)
+ *
+ *   Descriptor 2 — Status byte:
+ *     The device writes a single byte status value:
+ *       0x00 = OK, 0x01 = IO_ERR, 0x02 = UNSUPPORTED
+ *     flags = VRING_DESC_F_WRITE (device-writable)
+ *
+ * After submitting via the avail ring and notifying the device,
+ * the driver busy-waits on the used ring index to advance, then
+ * reads the status byte from descriptor 2 to determine success.
+ *
+ * The request header and status byte are stored per-queue in
+ * struct vblk_queue (req_hdr and status_byte) to avoid per-I/O
+ * allocation; the data buffer is caller-provided.
+ */
 #pragma pack(push, 1)
 struct virtio_blk_req_hdr {
-    uint32_t type;
-    uint32_t reserved;
-    uint64_t sector;
+    uint32_t type;      /* Request type (VIRTIO_BLK_T_IN/OUT/FLUSH/DISCARD/WRITE_ZEROES) */
+    uint32_t reserved;  /* Must be zero */
+    uint64_t sector;    /* Starting sector (512-byte blocks) */
 };
 #pragma pack(pop)
 
