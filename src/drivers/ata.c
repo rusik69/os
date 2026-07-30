@@ -6,6 +6,81 @@
 #include "module.h"
 #endif
 
+/* ── ATA PIO Transfer Model ───────────────────────────────────────────
+ *
+ * This driver implements Programmed I/O (PIO) on the primary IDE bus
+ * (master drive).  PIO is the simplest ATA transfer mode: the CPU
+ * directly reads/writes data registers on the device using in/out
+ * instructions.  No DMA (Direct Memory Access) is used — the CPU
+ * manages every word transfer.
+ *
+ * ── Register Map (Primary Bus, 0x1F0–0x1F7) ───────────────────────
+ *
+ *    Offset  Register        Access  Description
+ *    ──────  ─────────────── ──────  ───────────────────────────────
+ *    0x1F0   DATA            R/W     Data port (16-bit, 256 words/sector)
+ *    0x1F1   ERROR / FEAT    R/W     Error (read) / Features (write)
+ *    0x1F2   SECTOR COUNT    R/W     Number of sectors to transfer (1–255)
+ *    0x1F3   LBA LOW         R/W     LBA bits 7:0
+ *    0x1F4   LBA MID         R/W     LBA bits 15:8
+ *    0x1F5   LBA HIGH        R/W     LBA bits 23:16
+ *    0x1F6   DRIVE/HEAD      R/W     Drive sel | LBA bits 27:24 | 0xE0
+ *    0x1F7   STATUS / CMD    R/W     Status (read) / Command (write)
+ *
+ * ── Status Register Bits ────────────────────────────────────────────
+ *
+ *    Bit 7 (BSY)   :  Device is busy — no other bits valid
+ *    Bit 6 (DRDY)  :  Drive ready for commands
+ *    Bit 5 (DF)    :  Device fault
+ *    Bit 3 (DRQ)   :  Data request — ready to transfer a word
+ *    Bit 0 (ERR)   :  Error — check error register
+ *
+ * ── PIO Read Protocol (ata_read_sectors) ────────────────────────────
+ *
+ *    1.  Wait for BSY to clear (ata_wait_bsy)
+ *    2.  Program the drive/head, sector count, and LBA registers
+ *    3.  Write the READ PIO command (0x20)
+ *    4.  Wait 400ns (four reads of status register)
+ *    5.  For each sector:
+ *        a.  Wait for BSY to clear
+ *        b.  Check for ERR
+ *        c.  Wait for DRQ to assert (data ready)
+ *        d.  Read 256 words from the DATA port (512 bytes)
+ *    6.  Return 0 on success, -1 on any error
+ *
+ * ── PIO Write Protocol (ata_write_sectors) ──────────────────────────
+ *
+ *    1.  Wait for BSY to clear
+ *    2.  Program drive/head, sector count, and LBA registers
+ *    3.  Write the WRITE PIO command (0x30)
+ *    4.  Wait 400ns
+ *    5.  For each sector:
+ *        a.  Wait for BSY to clear
+ *        b.  Wait for DRQ to assert (device ready to receive)
+ *        c.  Write 256 words to the DATA port (512 bytes)
+ *    6.  Issue FLUSH CACHE command (0xE7) and wait for BSY
+ *    7.  Return 0 on success, -1 on any error
+ *
+ * ── DMA Notes ───────────────────────────────────────────────────────
+ *
+ *    This driver is PIO-only.  DMA commands (0xC8 READ DMA, 0xCA WRITE
+ *    DMA) are defined in ata_pio.h but not used here.  DMA would require
+ *    bus-mastering IDE support via the PCI bus master BAR (typically at
+ *    PCI function 0x20) and a scatter-gather descriptor table, enabling
+ *    the controller to transfer data directly to/from memory without CPU
+ *    intervention.  The PIO approach is simpler and sufficient for the
+ *    legacy primary master drive.
+ *
+ * ── Redirect Mechanism ──────────────────────────────────────────────
+ *
+ *    When ata_set_redirect() is called (e.g. by the ramdisk driver),
+ *    ata_read_sectors and ata_write_sectors delegate to the provided
+ *    callbacks instead of touching real ATA hardware.  This allows
+ *    the filesystem layer to work identically on a ramdisk or real
+ *    disk without conditional code.
+ *
+ * ───────────────────────────────────────────────────────────────────*/
+
 /* Optional redirect: if set, ata_read_sectors/write_sectors delegate
  * to these callbacks instead of real ATA PIO.  Used by the ramdisk
  * driver so that fs.c works without ATA hardware. */
@@ -44,6 +119,10 @@ void ata_set_redirect(int (*read_fn)(uint32_t, uint8_t, void *),
 static int ata_present = 0;
 static uint32_t ata_total_sectors = 0;
 
+/* Wait for BSY bit to clear (device ready for next command).
+ * Polls the status register in a tight loop with a PAUSE hint,
+ * timing out after ~10 million iterations.  Returns 0 on success,
+ * -1 if the device hangs. */
 static int ata_wait_bsy(void) {
     int timeout = 10000000;
     while ((inb(ATA_STATUS) & ATA_SR_BSY) && --timeout > 0)
@@ -51,6 +130,9 @@ static int ata_wait_bsy(void) {
     return timeout > 0 ? 0 : -1;
 }
 
+/* Wait for DRQ bit to be set (device has data ready to transfer, or
+ * is ready to accept data).  Same polling strategy as ata_wait_bsy.
+ * Returns 0 on success, -1 on timeout. */
 static int ata_wait_drq(void) {
     int timeout = 10000000;
     while (!(inb(ATA_STATUS) & ATA_SR_DRQ) && --timeout > 0)
@@ -58,11 +140,27 @@ static int ata_wait_drq(void) {
     return timeout > 0 ? 0 : -1;
 }
 
+/* Perform the ATA-specified 400ns recovery delay by reading the
+ * alternate status register four times.  Required between PIO
+ * commands to give the device time to update its status bits. */
 static void ata_400ns_delay(void) {
     inb(ATA_STATUS); inb(ATA_STATUS);
     inb(ATA_STATUS); inb(ATA_STATUS);
 }
 
+/* Initialize the primary ATA master drive.
+ *
+ * Sequence:
+ *   1. Select master drive (0xA0 for master on primary bus)
+ *   2. Wait 400ns
+ *   3. Send IDENTIFY DEVICE command (0xEC)
+ *   4. Wait for BSY to clear, check for non-ATA signature
+ *   5. Wait for DRQ, then read 256 words of IDENTIFY data
+ *   6. Extract total sector count from words 60-61
+ *   7. Register with the block device layer
+ *
+ * If no ATA hardware is present (status == 0) or the device is
+ * non-ATA (ATAPI), ata_present remains 0 and the driver is inert. */
 void __init ata_init(void) {
     /* Select master drive */
     outb(ATA_DRIVE_HEAD, 0xA0);
@@ -115,10 +213,16 @@ void __init ata_init(void) {
 #include "initcall.h"
 device_initcall(ata_init);
 
+/* Return 1 if ATA hardware (or a redirect) is available.
+ * Used by the block device layer and fs.c to decide whether
+ * to probe the disk. */
 int ata_is_present(void) {
     return ata_present || redirect_read;
 }
 
+/* Return the total number of 512-byte sectors on the disk.
+ * Populated during ata_init() from IDENTIFY words 60-61.
+ * Returns 0 if no ATA hardware was found. */
 uint32_t ata_get_sectors(void) {
     return ata_total_sectors;
 }
