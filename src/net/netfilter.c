@@ -1,4 +1,117 @@
-/* netfilter.c — Packet filtering framework, connection tracking, NAT */
+/* netfilter.c — Packet filtering framework, connection tracking, NAT
+ *
+ * ── Architecture Overview ────────────────────────────────────────────
+ *
+ * Netfilter provides a hook-based packet filtering and manipulation
+ * framework inspired by Linux netfilter.  The core abstraction is a set
+ * of hook points (NF_INET_PRE_ROUTING, NF_INET_LOCAL_IN,
+ * NF_INET_FORWARD, NF_INET_LOCAL_OUT, NF_INET_POST_ROUTING) at which
+ * dynamically-registered callback functions can inspect, drop, modify,
+ * or queue packets as they traverse the network stack.
+ *
+ * ── Hook Chain Model ────────────────────────────────────────────────
+ *
+ * Each hook point maintains a singly-linked list of nf_hook_entry
+ * structures (nf_hooks[hook]).  When a packet reaches a hook point:
+ *
+ *   1. nf_hook_traverse() is called with the hook point, the packet
+ *      buffer (skb), and (if applicable) the IP header for ICMP replies.
+ *   2. Inside, nf_iterate_hooks() walks the linked list in priority
+ *      order (higher priority first — see nf_register_hook()).
+ *   3. Each entry's callback fn(skb, hook) is invoked.
+ *   4. If any callback returns NF_DROP, NF_REJECT, NF_STOLEN, or
+ *      NF_QUEUE, traversal stops and the verdict is processed.
+ *   5. If all callbacks return NF_ACCEPT, the packet continues.
+ *
+ *      Packet arrives
+ *           │
+ *           ▼
+ *   ┌─ PRE_ROUTING ──────────────────────┐
+ *   │  hook[0] → hook[1] → ... → hook[N] │
+ *   │  If any returns ≠ NF_ACCEPT → halt │
+ *   └──────────┬──────────────────────────┘
+ *              │ NF_ACCEPT
+ *              ▼
+ *   ┌─ Routing decision ────────────────┐
+ *   │  Local ↗              Forward ↘  │
+ *   └──────┬────────────────────────────┘
+ *          │                    │
+ *          ▼                    ▼
+ *   ┌─ LOCAL_IN ───┐    ┌─ FORWARD ─────────┐
+ *   │  hooks[]     │    │  hooks[]          │
+ *   └──────┬───────┘    └────────┬──────────┘
+ *          │ NF_ACCEPT           │ NF_ACCEPT
+ *          ▼                     ▼
+ *       Local stack          ┌─ POST_ROUTING ──┐
+ *                             │  hooks[]       │
+ *                             └───────┬────────┘
+ *                                     │ NF_ACCEPT
+ *                                     ▼
+ *                                  Send to NIC
+ *
+ * ── Hook Registration ───────────────────────────────────────────────
+ *
+ * nf_register_hook(hook, fn, priority) allocates an nf_hook_entry and
+ * inserts it into the appropriate chain in priority order.  The same
+ * callback function can be registered on multiple hook points.
+ *
+ * nf_unregister_hook(hook, fn) finds and removes the first matching
+ * entry for the given callback and frees its memory.
+ *
+ * The lock nf_hook_lock protects all chain modifications and traversals
+ * because hooks are touched from both process context (registration)
+ * and IRQ/softirq context (packet receive — nf_iterate_hooks is called
+ * from net.c's receive path).  spinlock_irqsave_acquire() / _release()
+ * are used to disable local IRQs while the lock is held.
+ *
+ * ── Rule-based Filtering ────────────────────────────────────────────
+ *
+ * In addition to hook callbacks, a static rule table (nf_rules[]) is
+ * maintained for simple stateless filtering without callback overhead.
+ * nf_check_rules() performs linear scan comparing src_ip, dst_ip,
+ * ports, and protocol against each nf_rule entry.  Matches return the
+ * rule's action (NF_ACCEPT or NF_DROP).
+ *
+ * ── Connection Tracking & NAT ───────────────────────────────────────
+ *
+ * nf_conntrack_init() (from conntrack_helper.h) initialises the
+ * connection tracking tables at boot.  NAT rules (nf_nat_rules[]) can
+ * be applied at PRE_ROUTING (DNAT — change destination) and
+ * POST_ROUTING (SNAT/MASQUERADE — change source).  Both use simple
+ * linear scan over the NAT rule table.
+ *
+ * ── Verdict Handling ────────────────────────────────────────────────
+ *
+ * After all hooks on a chain return (or one breaks early), the verdict
+ * is dispatched by nf_process_verdict():
+ *
+ *   NF_ACCEPT  → packet continues (return 0)
+ *   NF_DROP    → packet silently dropped (return -1)
+ *   NF_REJECT  → drop + send ICMP Unreachable (admin prohibited)
+ *   NF_STOLEN  → callback took ownership; drop (return -1)
+ *   NF_QUEUE   → should queue to userspace; currently treated as drop
+ *   NF_REPEAT  → should re-evaluate; currently treated as drop
+ *
+ * ── Initialisation ──────────────────────────────────────────────────
+ *
+ * nf_init() zeroes all state, initialises the spin lock, and calls
+ * nf_hooks_init(), nf_conntrack_init(), nf_helper_init() in sequence.
+ * It is registered as a module_init() so it runs at boot.
+ *
+ * ── Entry Points (exported to net.c) ────────────────────────────────
+ *
+ *   nf_hook_traverse(hook, skb, iph, iph_len)
+ *       — main entry for packet traversal through hook chain
+ *
+ *   nf_add_rule(), nf_del_rule(), nf_flush_rules()
+ *       — manage static rule table
+ *
+ *   nf_check_rules(skb, src_ip, dst_ip, src_port, dst_port, protocol)
+ *       — stateless rule match, used by net.c fast path
+ *
+ *   nf_print_rules()
+ *       — debug dump of all rules (for `nft list ruleset`)
+ */
 
 #define KERNEL_INTERNAL
 #include "netfilter.h"
