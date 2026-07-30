@@ -1,5 +1,45 @@
 #include "gui_widgets.h"
 
+/*
+ * ===== Widget Lifecycle =====
+ *
+ * Every widget in the GUI framework follows a consistent lifecycle
+ * governed by function pointers stored in gui_widget_t (defined in gui.h):
+ *
+ *   1. CREATION  — gui_filebrowser_create() / gui_taskbar_create()
+ *      Allocates the widget-specific struct (e.g., gui_filebrowser_t,
+ *      gui_taskbar_t) via kmalloc, zeroes it, sets up the base
+ *      gui_widget_t fields (rect, colors, visibility), and wires the
+ *      three lifecycle callbacks:
+ *        w->draw      = fb_draw      (or tb_draw)
+ *        w->on_event  = fb_event     (or tb_event)
+ *        w->destroy   = fb_destroy   (or tb_destroy)
+ *      The widget is then ready to be added to a window via
+ *      gui_window_add_widget().
+ *
+ *   2. DRAWING  — draw callback (fb_draw / tb_draw)
+ *      Called by gui_render_frame() each frame. The widget paints
+ *      itself onto the framebuffer (background, border, content).
+ *      The widget is responsible for its own clipping and should
+ *      not draw outside its rect.
+ *
+ *   3. EVENT HANDLING  — on_event callback (fb_event / tb_event)
+ *      Called by the window's event dispatcher when mouse or keyboard
+ *      events occur. The widget checks event type/coordinates and
+ *      updates internal state (selection, scroll position, etc.).
+ *
+ *   4. DESTRUCTION  — destroy callback / gui_*_destroy() public API
+ *      The destroy callback (fb_destroy / tb_destroy) frees any
+ *      sub-resources (child widgets, strings) and then kfree()s the
+ *      widget struct itself. The public gui_filebrowser_destroy() /
+ *      gui_taskbar_destroy() functions provide the external API for
+ *      cleanup and are safe to call with NULL.
+ *
+ * Both widgets below (gui_filebrowser_t and gui_taskbar_t) embed
+ * gui_widget_t as their first member so that a pointer cast from
+ * (gui_widget_t *) to the concrete type is valid.
+ */
+
 #define MAX_FILES 64
 #define MAX_PATH_LEN 256
 
