@@ -167,11 +167,22 @@ def ensure_std_dirs(t: Telnet) -> None:
 
 
 def connect_telnet() -> Telnet:
-    t = Telnet(HOST, PORT)
-    banner = t.read_until(PROMPT, timeout=BOOT_TIMEOUT)
-    if b"os>" not in banner:
-        raise ConnectionError(f"no shell prompt in {BOOT_TIMEOUT}s")
-    return t
+    deadline = time.monotonic() + BOOT_TIMEOUT
+    last_err = None
+    while time.monotonic() < deadline:
+        try:
+            t = Telnet(HOST, PORT)
+            banner = t.read_until(PROMPT, timeout=5)
+            if b"os>" in banner:
+                return t
+        except (ConnectionRefusedError, ConnectionResetError, OSError) as e:
+            last_err = e
+            time.sleep(1)
+        except Exception:
+            raise
+    raise ConnectionError(
+        f"no shell prompt in {BOOT_TIMEOUT}s (last err: {last_err})"
+    )
 
 
 def ok(name: str) -> None:
