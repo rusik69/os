@@ -1,3 +1,48 @@
+/**
+ * gui_draw.c — GUI Drawing Primitives
+ *
+ * ===== Overview =====
+ * This file implements the full set of drawing primitives for the OS GUI
+ * subsystem. All rendering ultimately targets a pixel-addressable framebuffer
+ * via the vga_put_pixel() function (wrapped as __put()). Primitives are
+ * implemented using well-known rasterization algorithms:
+ *
+ *   - Lines:         Bresenham's line algorithm (integer arithmetic, no FP)
+ *   - Circles:       Midpoint circle algorithm
+ *   - Ellipses:      Midpoint ellipse algorithm
+ *   - Arcs/Pies:     Angular sweep with precomputed sin/cos look-up tables
+ *   - Beziers:       De Casteljau evaluation (cubic & quadratic)
+ *   - Polygons/fill: Scan-line active-edge fill algorithm
+ *   - Triangles:     Scan-line fill with barycentric coordinate interpolation
+ *
+ * ===== Coordinate System =====
+ *   - Origin (0,0) is the top-left corner of the screen.
+ *   - Positive x moves right, positive y moves down.
+ *   - Angles are measured in degrees: 0° = right, increasing counter-clockwise.
+ *   - Colors are 32-bit RGBA values (gui_color_t alias for uint32_t).
+ *
+ * ===== File Structure =====
+ *   1.  Integer math helpers (abs, min, max, swap, isqrt)
+ *   2.  Core primitives: line, circle, ellipse, arc, pie
+ *   3.  Rounded rectangles (outline & filled)
+ *   4.  Gradients (vertical, horizontal, radial, multi-stop)
+ *   5.  Triangles & Beziers (cubic, quadratic)
+ *   6.  Polylines & Polygons (outline & filled)
+ *   7.  Decorative primitives: dashed lines, thick lines, arrows,
+ *       3D frames, grids, hearts, stars, diamonds, crosshairs, etc.
+ *   8.  Color utilities (lerp, darken, lighten, blend, HSV, etc.)
+ *   9.  Widget implementations (listbox, checkbox, slider, spinbox,
+ *       toggle, dropdown, scrollbar, progress, radio, separator,
+ *       panel, groupbox)
+ *   10. Extended primitives (multi-stop gradient, pattern fill, gauge,
+ *       LED, text effects, hex grid, sine wave, progress arc, etc.)
+ *
+ * ===== Thread Safety =====
+ * Drawing primitives are NOT thread-safe — they access the shared
+ * framebuffer without locking. Callers must ensure mutual exclusion.
+ * Widget data structures use internal kmalloc/kfree; callers should
+ * not access widget data fields directly after creation.
+ */
 #include "gui_draw.h"
 #include "gui.h"
 #include "string.h"
