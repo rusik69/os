@@ -97,27 +97,40 @@ cd tests/host_libc && make && ./test_libc
 
 ## Project Structure
 
-| Directory     | Purpose |
-|---------------|---------|
-| `src/boot/`   | Multiboot1 entry, 32→64-bit transition, page table setup, UEFI runtime |
-| `src/kernel/` | Core kernel: GDT/IDT, syscalls (500+), interrupts, SMP, RCU, lockdep, ASLR, security (IMA, SMACK, seccomp), eBPF, perf, ftrace, kprobes, uprobes |
-| `src/memory/` | PMM (bitmap allocator), VMM (4-level paging), slab, heap, KSM, THP, MGLRU, NUMA balancing, compaction, page pool, huge page migration, zram/zswap |
-| `src/process/`| Scheduler (CFS + EEVDF), signals, process lifecycle, users/groups, PELT, idle injection |
-| `src/fs/`     | VFS layer + 30+ filesystem implementations |
-| `src/net/`    | Full TCP/IP stack, 8 congestion control algos, UDP, IPv6, SCTP, DCCP, MPTCP, AF_UNIX, AF_PACKET, WireGuard, IPsec, bridging, netfilter, XDP, bonding, 6LoWPAN, TIPC, L2TP |
-| `src/drivers/`| PCI, ACPI, NVMe (multipath, PMR), AHCI (NCQ), ATA, e1000 (RSS), virtio-blk/net/gpu/input/rng/scsi/console/fs/iommu, USB EHCI/xHCI, keyboard, mouse, VGA, framebuffer, AC97 audio, TPM 2.0, watchdog, I3C, SPI, EDAC, iSCSI, FCoE, DRBD, Ceph/RBD, vhost-scsi/blk, VFIO, vDPA, balloon |
-| `src/ipc/`    | Pipes, FIFOs, shared memory, mutexes, semaphores, eventfd, signalfd, timerfd, mqueue, futex (robust, PI, bitset, requeue) |
-| `src/shell/`  | Built-in shell with 356+ commands, command table, scripting, arrays, job control |
-| `src/lib/`    | Kernel libc: printf, string, bitmap, CRC, AES, ChaCha20, SHA256, SHA512, MD5, radix tree, UUID |
-| `src/compiler/`| In-kernel C compiler (cc, as, ld) — compiles C to ELF at runtime |
-| `src/doom/`   | DOOM game engine port (raycaster, renderer, textures) |
-| `src/dos/`    | DOS API emulation (INT 21h, program loading) |
-| `src/gui/`    | Graphical window system with widgets and mouse support |
-| `src/include/`| Master headers for all subsystems (453 headers) |
-| `src/test/`   | Kernel-resident test suite (200+ tests + KUnit) |
-| `tests/`      | Host-side libc tests, E2E QEMU smoke tests |
-| `docker/`     | CI container definitions |
-| `docs/`       | Architecture diagram and documentation |
+The project follows a two-level layout: **kernel space** (everything under `src/`) and **userspace** (everything under `userspace/`). Subsystems within `src/` are organized by functional domain — memory management, process/scheduler, filesystems, networking, device drivers, and IPC. Userspace programs include an init process, a full-featured shell, graphical environment (GUI), DOOM port, DOS emulator, and libc.
+
+| Directory            | Subsystem            | Purpose |
+|----------------------|----------------------|---------|
+| `src/boot/`          | Boot                 | Multiboot1 entry, 32→64-bit transition, page table setup, UEFI GOP framebuffer |
+| `src/kernel/`        | Core Kernel          | GDT/IDT, syscalls (500+), interrupts, SMP/APIC, RCU, lockdep, KASLR, security (IMA, SMACK, seccomp, Landlock), eBPF, perf, ftrace, kprobes, uprobes, KDB debugger, ACPI integration, modules, caps, audit |
+| `src/memory/`        | Memory Management    | PMM (bitmap allocator), VMM (4-level paging), slab allocator, kernel heap, KSM, THP, MGLRU, NUMA balancing, compaction, page pool, huge page migration, zram/zswap, CMA, page poisoning |
+| `src/process/`       | Process Management   | Scheduler (CFS + EEVDF, round-robin), signals, fork/exec/exit, process lifecycle, user/groups, PELT, idle injection, rlimit, cgroups integration |
+| `src/fs/`            | Filesystems          | VFS layer, 30+ filesystems (ext2/3/4, FAT32, NTFS, Btrfs, HFS+, ISO9660, tmpfs, OverlayFS, NFS, CIFS, squashfs, devfs, procfs, sysfs, debugfs, FUSE, and more), page cache, buffer cache, xattr, POSIX ACL, inotify/fanotify, quota |
+| `src/net/`           | Networking           | Full TCP/IP stack, 8 congestion control algorithms, UDP, IPv6, SCTP, DCCP, MPTCP, AF_UNIX, AF_PACKET, WireGuard, IPsec, bridging, netfilter, XDP, bonding, VLAN, VXLAN, GRE, 6LoWPAN, TIPC, L2TP, DHCP, DNS, HTTPd, Telnetd, SSHd |
+| `src/drivers/`       | Device Drivers       | PCI enumeration, ACPI (tables, EC, thermal), NVMe (multipath, PMR), AHCI (NCQ), ATA PIO, e1000 (RSS), virtio (blk/net/gpu/input/rng/scsi/console/fs/iommu), USB (EHCI/xHCI, HID, MSC), PS/2 keyboard/mouse, VGA, framebuffer, AC97 audio, TPM 2.0, watchdog, HPET, PIT, RTC/CMOS, I2C/SMBus, SPI, GPIO, EDAC, I3C, iSCSI, FCoE, DRBD, Ceph/RBD, IPMI, vhost-scsi/blk, VFIO, vDPA, balloon, 9pnet, pvpanic, ivshmem |
+| `src/ipc/`           | Inter-Process Comm   | Pipes, FIFOs, shared memory, mutexes, semaphores, eventfd, signalfd, timerfd, mqueue, futex (robust, PI, bitset, requeue) |
+| `src/shell/`         | Shell                | Built-in shell: 356+ commands, command table, scripting, arrays, job control, pipelines, redirection, loops, arithmetic expansion, heredocs |
+| `src/lib/`           | Kernel Library       | printf, string, bitmap, CRC, AES, ChaCha20, SHA256, SHA512, MD5, radix tree, UUID, mempool, bitops, sort, list, RB-tree |
+| `src/compiler/`      | In-Kernel Compiler   | C compiler (lexer, parser, codegen), assembler, linker — compiles C to ELF at runtime |
+| `src/container/`     | Container Runtime    | OCI-compatible container runtime: lifecycle, namespaces, cgroups, OverlayFS storage, image pull/push, checkpoint/restore, seccomp notify |
+| `src/orch/`          | Orchestration        | Kubernetes-inspired orchestrator: pods, services, deployments, controllers (Deployment, StatefulSet, DaemonSet, Job/CronJob), HPA/VPA, CRDs, operator framework, RBAC, scheduler policies |
+| `src/cluster/`       | Cluster Management   | Cluster node discovery, heartbeat, distributed consensus, cluster-wide state replication |
+| `src/modules/`       | Kernel Modules       | Dynamically loadable module loader, ELF parsing, relocation, symbol resolution, module signing |
+| `src/power/`         | Power Management     | ACPI thermal zones, cpufreq governors, cpuidle, suspend/resume (S2RAM, S2Idle), PM QoS, RAPL, devfreq, energy model |
+| `src/include/`       | Headers              | Master headers for all subsystems (453 headers covering types, errno, fcntl, signal, stat, mmap, socket, netinet, syscall, etc.) |
+| `src/test/`          | Tests                | Kernel-resident test suite (200+ tests + KUnit framework) |
+| `userspace/init/`    | Userspace — Init     | Boot init process (PID 1), /etc/rc script interpreter, service manager |
+| `userspace/bin/`     | Userspace — Binaries | Shell, coreutils, networking tools, admin tools, game binaries |
+| `userspace/libc/`    | Userspace — Libc     | C standard library (stdio, stdlib, string, unistd, pthread, math, signals, IPC wrappers) for userspace programs |
+| `userspace/gui/`     | Userspace — GUI      | Graphical window system: window manager, widgets, compositing, mouse cursor, taskbar, app framework |
+| `userspace/doom/`    | Userspace — DOOM     | DOOM game engine port: raycaster, renderer, textures, sound, input |
+| `userspace/dos/`     | Userspace — DOS Emu  | DOS API emulation (INT 21h, .COM/.EXE loading, file I/O, console I/O) |
+| `userspace/kmods/`   | Userspace — Kernel Modules | Userspace-side dynamic module management, module build helpers |
+| `userspace/initramfs/`| Userspace — Initramfs | Initramfs build scripts and rootfs skeleton |
+| `userspace/clusterd/`| Userspace — Cluster  | Cluster daemon, node heartbeat, configuration sync |
+| `tests/`             | Test Infrastructure  | Host-side libc unit tests, E2E QEMU smoke tests (e2e.sh) |
+| `docker/`            | CI/CD                | Docker CI image definitions (cross-compiler toolchain in containers) |
+| `docs/`              | Documentation        | Architecture diagrams, subsystem documentation, design notes |
 
 ## Features
 
