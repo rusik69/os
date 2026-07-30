@@ -9,6 +9,15 @@
 #define VMM_FLAG_USER     (1ULL << 2)
 /* Software bit 9 (available to OS) used for Copy-on-Write */
 #define VMM_FLAG_COW      (1ULL << 9)
+/* Software bits 10-11 used for lazy/execute-only mappings */
+#define VMM_FLAG_LAZY     (1ULL << 10)
+#define VMM_FLAG_EXECONLY (1ULL << 11)
+#define VMM_FLAG_LOCKED   (1ULL << 52)
+#define VMM_FLAG_SHARED   (1ULL << 53)
+#define VMM_FLAG_REPLACE  (1ULL << 54)  /* Allow overwriting existing PTE */
+
+#define VMM_FLAG_NOCACHE  (1ULL << 4)  /* PCD = Page Cache Disable */
+#define VMM_FLAG_NOEXEC   (1ULL << 63) /* No-Execute (NX bit) */
 
 /* ── x86-64 Page Table Entry (PTE) constants ──────────────────────────
  * These correspond to the hardware page-table entry bit layout.
@@ -274,7 +283,7 @@ void vmm_uncommit(uint64_t bytes);
  * functions are validated against this mask to catch programming
  * errors (e.g., stray high bits set by a caller, reserved-bit
  * corruption). */
-#define VMM_FLAGS_VALID_MASK  (PTE_NX | VMM_FLAG_LOCKED | VMM_FLAG_SHARED | 0xFFFULL)
+#define VMM_FLAGS_VALID_MASK  (PTE_NX | VMM_FLAG_LOCKED | VMM_FLAG_SHARED | VMM_FLAG_REPLACE | 0xFFFULL)
 
 /* Validate VMM page-table entry flags before setting a PTE.
  * @param flags        VMM flags to validate (VMM_FLAG_* / PTE_*)

@@ -397,10 +397,13 @@ int vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
     }
 
     /* Refuse to silently overwrite an existing mapping.
-     * Caller must unmap first if they want to remap. */
+     * Caller must unmap first if they want to remap, or pass
+     * VMM_FLAG_REPLACE to allow overwriting. */
     if (pt[pt_idx] & PTE_PRESENT) {
-        ret = -EEXIST;
-        goto out;
+        if (!(flags & VMM_FLAG_REPLACE)) {
+            ret = -EEXIST;
+            goto out;
+        }
     }
 
     pt[pt_idx] = (phys & PTE_ADDR_MASK) | (flags & 0xFFF) | PTE_PRESENT
@@ -655,7 +658,7 @@ void *vmm_map_phys(uint64_t phys, uint64_t size, uint64_t flags) {
     uint64_t end   = (phys + size + PAGE_SIZE - 1ULL) & ~(PAGE_SIZE - 1ULL);
     for (uint64_t off = 0; off < end - start; off += PAGE_SIZE) {
         uint64_t vaddr = KERNEL_VMA_OFFSET + start + off;
-        if (vmm_map_page(vaddr, start + off, flags) < 0)
+        if (vmm_map_page(vaddr, start + off, flags | VMM_FLAG_REPLACE) < 0)
             return ERR_PTR(-ENOMEM);
     }
     return (void *)(KERNEL_VMA_OFFSET + phys);

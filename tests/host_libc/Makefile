@@ -752,7 +752,7 @@ test_logbuf: $(LOGBUF_OBJS) stubs.o
 	$(CC) -o $@ $^
 
 logbuf.o: $(KSRCDIR)/logbuf.c
-	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+	$(CC) $(KERNEL_CFLAGS) -DLOGBUF_HOST_TEST -c -o $@ $<
 
 test_logbuf.o: test_logbuf.c
 	$(CC) $(TEST_CFLAGS) -c -o $@ $<
