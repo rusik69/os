@@ -9,6 +9,136 @@
  *   - NVMe multipath: round-robin across paths, per-path statistics
  *   - ANA-less multipath (simple: same NSID -> multipath device)
  *
+ * ── NVMe Queue Pair Model ──────────────────────────────────────────────
+ *
+ * The NVMe specification defines a queue-based command interface with two
+ * queue types:
+ *
+ *   Submission Queue (SQ) — host writes commands to be executed.
+ *   Completion Queue (CQ) — controller writes completion entries.
+ *
+ * Each queue is a circular buffer in host memory; the controller and host
+ * coordinate via doorbell registers in the MMIO BAR and phase-tag bits.
+ *
+ * ── Queue Numbering ───────────────────────────────────────────────────
+ *
+ *   QID 0   Admin Queue Pair (admin_sq / admin_cq)
+ *              - Controller configuration, queue creation/deletion,
+ *                identify, features, sanitize, AER
+ *              - Depth fixed at 64 entries per NVMe spec
+ *              - Created first in nvme_setup_admin_queues()
+ *
+ *   QID 1..N I/O Queue Pairs (io_queues[0]..io_queues[N-1])
+ *              - Namespace read/write, deallocate (DSM), copy
+ *              - Depth NVME_IO_QUEUE_SIZE (64 entries)
+ *              - Each queue pair pinned to a specific CPU:
+ *                  io_queues[i].qid = i + 1
+ *                  io_queues[i].cpu_id = i
+ *              - CPU-to-queue lookup via nvme_get_io_queue():
+ *                  smp_get_cpu_id() indexes into io_queues[]
+ *              - Fallback: CPU ≥ nr_io_queues → queue 0
+ *
+ * ── Queue Creation Order ──────────────────────────────────────────────
+ *
+ * The NVMe spec requires that CQs be created before the SQs that reference
+ * them.  Creation flow (nvme_setup_io_queues):
+ *
+ *   1. Negotiate queue count via Set Features (NumberOfQueues, FID 0x07)
+ *      → host requests N, controller grants M ≤ N in completion cdw0
+ *   2. For each queue i:
+ *      a. nvme_create_io_cq(): allocate physically-contiguous page,
+ *         send Create I/O CQ admin command (PC=1, IEN=IRQ enabled)
+ *      b. nvme_create_io_sq(): allocate physically-contiguous page,
+ *         send Create I/O SQ admin command (PC=1, CQID = same qid)
+ *   3. On failure, rollback: delete CQ via admin command, free page
+ *
+ * Both SQ and CQ use physically-contiguous (PC bit) 4KB pages with
+ * 64 entries each (NVME_IO_QUEUE_SIZE).  Each SQ entry is 64 bytes;
+ * each CQ entry is 16 bytes, well within a single page.
+ *
+ * ── Doorbell Register Layout ──────────────────────────────────────────
+ *
+ * Doorbells are located at BAR0 offset 0x1000 and spaced by the
+ * controller's doorbell stride (CAP.DSTRD, stride = 4 << dstrd bytes):
+ *
+ *   SQ doorbell for QID n:  0x1000 + (2 * n)     * stride
+ *   CQ doorbell for QID n:  0x1000 + (2 * n + 1) * stride
+ *
+ * Writing the SQ tail pointer to the SQ doorbell signals new commands.
+ * Writing the CQ head pointer to the CQ doorbell re-arms (relaxes) the
+ * CQ so the controller may write new completions.
+ *
+ * All doorbell writes are validated by nvme_ring_sq_doorbell():
+ *   - QID must be 0 (admin, always valid if admin_sq exists) or
+ *     in range [1, nr_io_queues] with io_queues[qid-1].valid set
+ *   - Tail pointer must be < queue depth
+ *
+ * ── Phase Tag (P bit) ─────────────────────────────────────────────────
+ *
+ * The NVMe CQ uses a phase-tag mechanism to distinguish newly-written
+ * completion entries from stale ones without clearing them:
+ *
+ *   - Bit 0 of the CQE status field is the Phase Tag (P).
+ *   - Controller initialises P = 1 after CC.EN is set.
+ *   - Controller toggles P each time it wraps the CQ head pointer.
+ *   - Host maintains a local copy of the expected P for each CQ.
+ *   - When processing a CQE, host checks (cqe.status & 1) == expected P.
+ *   - If it matches → new completion; consume, advance head.
+ *   - If it mismatches → stale entry; skip (may be previous cycle's data).
+ *   - When host head wraps (head reaches 0), host toggles its expected P
+ *     to match the controller's next cycle.
+ *
+ * This design avoids the need to explicitly clear CQ entries; the host
+ * only writes the CQ doorbell with the new head pointer to re-arm.
+ *
+ * ── I/O Submission Path ───────────────────────────────────────────────
+ *
+ *  nvme_blk_submit() ← called from blockdev layer (blockdev_submit)
+ *    │
+ *    ├─ Determine namespace index from req->dev_id - NVME_BLOCKDEV_ID
+ *    ├─ Allocate DMA pages (physically-contiguous frame array)
+ *    ├─ Build PRP1 / PRP list for data pointers
+ *    ├─ nvme_io_submit_on_queue():
+ *    │     Write nvme_sq_entry to SQ[tail], advance tail, ring doorbell
+ *    └─ nvme_poll_io_cq():
+ *          Spin-wait for CQE with matching phase tag
+ *          Validate status code, copy data from DMA buffer (for reads),
+ *          free DMA pages, re-arm CQ doorbell
+ *
+ *   For multi-page transfers, a PRP list page is allocated and PRP1
+ *   points to it; PRP2 points to the first data page.  A single PRP
+ *   page can hold up to 512 entries (8 bytes each), limiting transfers
+ *   to ~2 MB per command.
+ *
+ * ── Admin Command Path ────────────────────────────────────────────────
+ *
+ *  nvme_submit_admin_cmd() is used for all admin operations:
+ *    - Assigns a CID (Command Identifier, bits 31:16 of cdw0) from
+ *      a monotonically incrementing counter to distinguish AER completions.
+ *    - Writes the command to admin SQ[tail], rings admin SQ doorbell.
+ *    - Spins on admin CQ matching CID & phase tag, draining both stale
+ *      entries and unexpected AER completions via nvme_aer_poll().
+ *    - Re-arms admin CQ doorbell after consumption.
+ *
+ * ── Multipath Model ──────────────────────────────────────────────────
+ *
+ *  A separate nvme_mpath_dev and nvme_mpath_submit() are layered on top
+ *  of the base QP model:
+ *    - Each unique NSID gets one multipath device (nvme0n<NSID>-mpath)
+ *    - Paths are individual nvme path block devices (ctrl_index, nsid)
+ *    - I/O uses round-robin across active paths via nvme_mpath_submit()
+ *    - Per-path statistics track success/fail counts and latency
+ *    - On failure, retry next path (up to 2 attempts)
+ *
+ * ── Interrupt Model ──────────────────────────────────────────────────
+ *
+ *  The driver currently polls (synchronous submission/completion in
+ *  nvme_blk_submit).  IRQs are acknowledged via reading CSTS but not
+ *  used to drive completion processing.  Multi-vector MSI-X is
+ *  configured per-queue (io_queues[i].irq_vector = i for MSI-X, 0
+ *  otherwise) and could be wired to per-CPU interrupt handlers for
+ *  true interrupt-driven I/O.
+ *
  * Architecture:
  *   Admin queue (qid 0): controller configuration, queue creation
  *   I/O queues (qid 1..N): per-CPU I/O submission and completion
