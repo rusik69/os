@@ -1,4 +1,63 @@
-/* gui_apps.c — 47 GUI application programs (7 existing + 40 new) */
+/* gui_apps.c — GUI application programs
+ *
+ * ===== App Registration Mechanism =====
+ *
+ * Each GUI application in this project follows a simple registration
+ * pattern with three parts:
+ *
+ * 1. DEFINITION (this file)
+ *    Every app is a function of the form:
+ *        void gui_app_<name>_run(void)
+ *    Each function creates its own window (gui_window_create), populates
+ *    it with widgets and drawing primitives, and returns. The framework
+ *    takes care of rendering and event processing.
+ *
+ * 2. DECLARATION (gui_apps.h)
+ *    Every app function is declared in gui_apps.h so the launcher shell
+ *    can call it. Adding a new app requires:
+ *      - A function definition in gui_apps.c
+ *      - A matching prototype in gui_apps.h
+ *
+ * 3. LAUNCHER BINDING (gui_shell.c)
+ *    The GUI desktop shell uses a LAUNCHER(name) macro that expands to:
+ *        static void launch_<name>(gui_widget_t *btn) {
+ *            (void)btn; gui_app_<name>_run();
+ *        }
+ *    Each launcher callback is stored in a tb_btn_t struct along with
+ *    its label, position (x, width), and a pointer to the dispatch
+ *    function. The shell's draw_taskbar() renders these as taskbar
+ *    buttons, and the main event loop dispatches mouse clicks to the
+ *    corresponding callback.
+ *
+ *    47 GUI application programs (7 original + 40 existing + 40 new).
+ *
+ * ===== App List =====
+ *
+ * Group 1 (7 original apps):
+ *   draw, widgets, colors, gradient, shapes, checker, info
+ *
+ * Group 2 (40 existing apps):
+ *   mandelbrot, calc, rgb_mixer, analog_clock, digital_clock,
+ *   paint, minesweeper, snake, tetris, lissajous, starfield,
+ *   fire, plasma, particles, sort_viz, wave, noise, heatmap,
+ *   fractal_tree, sierpinski, cellular, moire, tunnel, metaballs,
+ *   snow, gravity, rotozoom, kaleidoscope, eyes, bars,
+ *   bouncing_ball, spiral, chart_bar, chart_line, chart_pie,
+ *   typography, flood_fill, wave_interference, clock_dual, heartbeat
+ *
+ * Group 3 (40 new apps — D115):
+ *   text_editor, cube_3d, julia, lorenz, pendulum, fourier,
+ *   wave_eq, reaction_diff, cellular2, maze_gen, pathfind,
+ *   sort_compare, bintree, color_wheel, dither, edge, spirograph,
+ *   voronoi, fireworks, boids, complex, screensaver, biorhythm,
+ *   stopwatch, solar, turing, snowflake, ascii_art, bezier_demo,
+ *   lighting, terrain, pong, audio_viz, memory_map, clock_alarm,
+ *   tiling, fluid, softbody, convolution, buddha
+ *
+ * ===== Helpers =====
+ * __icos/__isin — integer sine/cosine lookup-table approximation
+ * __isqrt     — integer square root via Newton-Raphson
+ */
 #include "gui_apps.h"
 #include "gui.h"
 #include "gui_draw.h"
