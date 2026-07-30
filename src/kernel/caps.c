@@ -14,6 +14,148 @@ MODULE_DESCRIPTION("Capability enforcement — system-wide capability bounding s
 MODULE_AUTHOR("Ruslan Gustomiasov");
 
 /*
+ * Kernel Capability Model
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * OVERVIEW
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Implements a Linux-compatible capability security model that partitions
+ * superuser privileges into distinct, independently-enforceable units.
+ * Instead of a binary root/non-root distinction, capabilities allow fine-
+ * grained privilege management: a process may have CAP_NET_RAW (to open
+ * raw sockets) without having CAP_SYS_MODULE (to load kernel modules).
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * CAPABILITY SETS (per process, stored in struct process)
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *   Effective  (proc->syscall_caps[] / proc->cap_effective[])
+ *     The set of capabilities used by the kernel for permission checks.
+ *     cap_capable_audit() checks here first.  A capability must be present
+ *     in the effective set for a privileged operation to succeed.
+ *
+ *   Permitted  (proc->cap_permitted[])
+ *     The superset of capabilities a process can ever have in its effective
+ *     set.  A process can voluntarily reduce its effective set (via capset
+ *     or exec) but cannot gain capabilities not in its permitted set.
+ *
+ *   Inheritable (proc->cap_inheritable[])
+ *     Capabilities preserved across exec().  During exec, the new effective
+ *     set is computed as (inheritable & permitted), and then further
+ *     constrained by the bounding set and securebits rules.
+ *
+ *   Bounding   (proc->cap_bset[])
+ *     A per-process "capability ceiling": no capability may be in the
+ *     permitted set if it is NOT in the bounding set.  Once a capability
+ *     is dropped from the bounding set (via PR_CAPBSET_DROP), it can never
+ *     be regained — not even by root.  On fork/exec, the bounding set is
+ *     ANDed with the system-wide bounding set (sys_cap_bset[]).
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * SYSTEM-WIDE BOUNDING SET (sys_cap_bset[])
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * An administrator-configurable global mask that limits what capabilities
+ * ANY process on the system can ever acquire.  Implemented as a static
+ * array of CAP_BSET_SIZE 64-bit words.
+ *
+ *   sys_cap_bset_drop(cap)   — permanently drop a capability system-wide
+ *   sys_cap_bset_has(cap)    — check if a capability is still allowed
+ *   sys_cap_bset_apply(proc) — AND a process's caps with the global mask
+ *                              (called during fork/clone and exec)
+ *
+ * The global bounding set is initialized with all capabilities set (1).
+ * Admin can drop capabilities via sysctl / procfs (not yet wired).
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * SECUREBITS (proc->securebits)
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Per-process security flags that modify capability semantics:
+ *
+ *   SECBIT_KEEP_CAPS          — Preserve effective set across exec()
+ *                                (PR_SET_KEEPCAPS / PR_GET_KEEPCAPS)
+ *   SECBIT_NO_SETUID_FIXUP    — Don't automatically grant caps when
+ *                                changing UID to/from root
+ *   SECBIT_NOROOT             — Root gets no special capability treatment;
+ *                                all process capabilities must be explicitly
+ *                                set via capset or inherited
+ *   SECBIT_KEEP_CAPS_LOCKED   — Lock the KEEP_CAPS bit (can't unset)
+ *   SECBIT_NO_SETUID_FIXUP_LOCKED  — Lock the NO_SETUID_FIXUP bit
+ *   SECBIT_NOROOT_LOCKED      — Lock the NOROOT bit
+ *
+ * Managed via cap_task_prctl() for option PR_SET_SECUREBITS (28) /
+ * PR_GET_SECUREBITS (27).
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * CAPABILITY-AUDITED ENFORCEMENT
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * cap_capable_audit(cap, audit_msg) is the primary enforcement function:
+ *
+ *   1. Kernel context (p->is_user == 0) is always granted
+ *   2. Check effective set (syscall_caps) for the requested capability
+ *   3. Check per-process bounding set (cap_bset) as a secondary gate
+ *   4. If either check fails, log an audit denial event and return -EPERM
+ *
+ * Convenience wrappers for commonly-checked capabilities:
+ *   cap_sys_rawio_check()   → CAP_SYS_RAWIO (port I/O, /dev/mem)
+ *   cap_sys_boot_check()    → CAP_SYS_BOOT (kexec, reboot)
+ *   cap_sys_module_check()  → CAP_SYS_MODULE (module loading)
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * EXEC-TIME CREDENTIAL SETUP (cap_bprm_set_creds)
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Called during execve() to recompute capability sets:
+ *   1. If SECBIT_KEEP_CAPS not set, clear effective set
+ *   2. Apply bounding set: permitted &= cap_bset
+ *   3. Compute new effective: effective = inheritable & permitted
+ *   4. Apply file capabilities (if supported — stub for now)
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * cap_capget / cap_capset (Linux-compatible prctl interfaces)
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *   cap_capget(target, &effective, &inheritable, &permitted)
+ *     Read capability sets from a target process.
+ *
+ *   cap_capset(target, &effective, &inheritable, &permitted)
+ *     Write capability sets to a target process.
+ *     - Caller must have CAP_SETPCAP in their effective set
+ *     - Cannot add capabilities not in the permitted set
+ *     - Changes to permitted set are ANDed with system-wide bounding set
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * SYSTEM CALL CAPABILITY CHECKS
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *   cap_task_setscheduler()  — CAP_SYS_NICE for sched_setscheduler
+ *   cap_task_setioprio()     — CAP_SYS_ADMIN (other) / CAP_SYS_NICE (self)
+ *   cap_task_setnice()       — CAP_SYS_NICE for lowering nice value
+ *   cap_vm_enough_memory()   — CAP_SYS_ADMIN for memory overcommit
+ *   cap_task_prctl()         — prctl handler for PR_SET_KEEPCAPS,
+ *                              PR_CAPBSET_READ, PR_CAPBSET_DROP,
+ *                              PR_SET_SECUREBITS, PR_GET_SECUREBITS,
+ *                              PR_SET_NO_NEW_PRIVS, PR_GET_NO_NEW_PRIVS
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * IMPLEMENTATION NOTES
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * - The per-process capability sets are stored in struct process as
+ *   PROCESS_SYSCALL_CAP_WORDS 64-bit words, indexed by cap/64.
+ * - CAP_LAST_CAP defines the highest valid capability number.
+ * - File capability support (setcap/getcap on executables) is a stub
+ *   for future implementation.
+ * - Capability names and descriptions for /proc/self/status are in
+ *   caps_names[] in caps.h.
+ *
+ * Capability enumeration values (CAP_* constants) are defined in caps.h
+ * and follow the Linux capability numbering scheme (CAP_CHOWN=0 through
+ * CAP_LAST_CAP).
+ *
  * System-wide capability bounding set — limits what capabilities
  * any process on the system can ever acquire.
  *
