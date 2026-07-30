@@ -420,6 +420,70 @@ The container runtime provides OCI-compatible lifecycle management:
 | `orchctl` | Orchestration CLI — manage pods, services, deployments, controllers |
 | `compose` | Compose file runner — `compose up/down/ps/logs` from docker-compose YAML |
 
+## Build Prerequisites
+
+Before building the OS, install the following tools:
+
+### Required
+
+| Tool | Recommended Package | Purpose |
+|------|-------------------|---------|
+| **x86-64 Cross GCC** | `x86_64-elf-gcc` or `gcc-x86-64-linux-gnu` | Compiles kernel and userspace C sources to x86-64 ELF |
+| **NASM** | `nasm` | Assembles 32-bit and 64-bit boot assembly (boot.asm, GDT, trampoline) |
+| **GNU Make** | `make` | Build system orchestrator (run `make` targets) |
+| **QEMU** | `qemu-system-x86-64` | Emulator for testing the kernel without real hardware |
+
+### Optional
+
+| Tool | Package | Purpose |
+|------|---------|---------|
+| **ccache** | `ccache` | Compiler cache — dramatically speeds up rebuilds (auto-detected) |
+| **grub-mkrescue + xorriso** | `grub-common` + `xorriso` | Create bootable ISO images for real hardware / UEFI |
+| **OVMF** | `ovmf` | UEFI firmware for QEMU (`make run-uefi`) |
+| **GDB** | `gdb` | Source-level debugging via QEMU's GDB stub (`make debug`) |
+| **Python 3** | `python3` | Required for E2E tests and build scripts |
+| **distcc** | `distcc` | Distributed compilation across network hosts (set `DISTCC_HOSTS`) |
+
+### Installation by Platform
+
+**Ubuntu / Debian:**
+```bash
+sudo apt-get install -y gcc-x86-64-linux-gnu nasm make qemu-system-x86 ccache xorriso grub-common ovmf gdb python3
+```
+
+If you prefer a bare-metal target cross-compiler (`x86_64-elf-gcc`), build it from [crosstool-NG](https://github.com/crosstool-ng/crosstool-ng) or install a prebuilt package from a PPA. The `x86_64-linux-gnu-gcc` Linux-to-Linux cross-compiler works as a drop-in alternative when passed via `CC=x86_64-linux-gnu-gcc`.
+
+**macOS (Homebrew):**
+```bash
+brew install x86_64-elf-gcc nasm qemu xorriso ccache
+```
+
+**Fedora / RHEL:**
+```bash
+sudo dnf install gcc-x86_64-linux-gnu nasm make qemu-system-x86 ccache xorriso grub2-tools ovmf gdb python3
+```
+
+**Arch Linux:**
+```bash
+sudo pacman -S x86_64-elf-gcc nasm make qemu-system-x86 ccache xorriso ovmf gdb python3
+```
+
+### Verifying the Toolchain
+
+```bash
+x86_64-elf-gcc --version || x86_64-linux-gnu-gcc --version
+nasm --version
+make --version
+qemu-system-x86_64 --version
+```
+
+The default toolchain is `x86_64-elf-gcc`. To use the Linux-to-Linux cross-compiler instead:
+```bash
+make CC=x86_64-linux-gnu-gcc LD=x86_64-linux-gnu-ld OBJCOPY=x86_64-linux-gnu-objcopy
+```
+
+If `ccache` is installed, it is automatically detected and wraps the compiler with zero configuration.
+
 ## Building
 
 ```bash
@@ -472,7 +536,7 @@ make ccache-stats
 make modules
 ```
 
-Uses `ccache` automatically if installed. Cross-compiler toolchain: `x86_64-elf-gcc`.
+Uses `ccache` automatically if installed. Cross-compiler toolchain: `x86_64-elf-gcc` (or override with `CC=x86_64-linux-gnu-gcc`).
 
 ## Running
 
