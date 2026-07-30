@@ -1,9 +1,107 @@
 /*
  * Buffer cache — LRU sector cache for FAT32 and other block-level users.
  *
- * Caches recently-read sectors by (dev_id, lba) for fast reuse.
- * Evicts least-recently-used entries when full.
- * Tracks dirty entries for write-back.
+ * ── Design Overview ────────────────────────────────────────────────────
+ *
+ * The buffer cache stores recently-accessed disk sectors (SECT_SIZE = 512
+ * bytes each) in a fixed-size array of BC_CAPACITY (64) entries.  Entries
+ * are indexed by (dev_id, LBA) via a hash table for O(1) lookups, and
+ * ordered by access recency via a doubly-linked LRU list for O(1)
+ * eviction.
+ *
+ * ── LRU List (doubly-linked) ───────────────────────────────────────────
+ *
+ *   g_lru_head                     g_lru_tail
+ *       │                             │
+ *       ▼  prev=-1     prev ◄───▸ next     prev ◄───▸ next=-1
+ *   ┌───────┐ ◄───▸ ┌───────┐     ┌───────┐
+ *   │ MRU   │       │ ...   │ ... │ LRU   │
+ *   │ entry │       │       │     │ entry │
+ *   └───────┘       └───────┘     └───────┘
+ *
+ * The LRU list is a doubly-linked list implemented as parallel arrays
+ * (g_lru[BC_CAPACITY]) storing prev/next indices.  g_lru_head points to
+ * the most-recently-used (MRU) entry and g_lru_tail points to the
+ * least-recently-used (LRU) entry.  On every cache hit the touched entry
+ * is moved to the head (lru_touch).  On eviction we start scanning from
+ * the tail (coldest entries) to find a victim.
+ *
+ * ── Free Pool ──────────────────────────────────────────────────────────
+ *
+ * All empty slots live at the *tail* end of the LRU list, forming a "free
+ * pool" linked together.  When g_count < BC_CAPACITY, the tail entry is
+ * guaranteed to be unused (valid=0) and can be claimed directly without
+ * calling evict_one().  When a slot is freed (via invalidate or read
+ * failure), it is appended back to the tail.
+ *
+ * ── Hash Table ─────────────────────────────────────────────────────────
+ *
+ * A simple hash table with BC_HASH_SIZE (64) buckets provides O(1) lookup
+ * by (dev_id, LBA).  The hash function HASH() XORs the LBA with a
+ * shifted version of itself and the dev_id, then masks to the bucket
+ * count.  Collisions are chained via hash_next indices (-1 = end of
+ * chain).  On eviction the victim is removed from its hash chain.
+ *
+ * ── Eviction Policy ────────────────────────────────────────────────────
+ *
+ * evict_one() uses a two-pass algorithm:
+ *
+ *   Pass 1 — Prefer clean eviction:
+ *     Scan the LRU list from tail (coldest) toward head.  Return the
+ *     first entry that is NOT dirty AND has refcount == 0.  This avoids
+ *     write-back overhead on the common (hot-clean) path.
+ *
+ *   Pass 2 — Force eviction with write-back:
+ *     If no clean victim is found (all entries dirty), re-scan from tail
+ *     and take the first entry with refcount == 0.  The dirty data is
+ *     copied into an evict_wb struct so the caller can perform the
+ *     block write AFTER releasing the spinlock (avoiding lock ordering
+ *     issues with the block layer).
+ *
+ *   If ALL entries have non-zero refcount (pinned by callers), eviction
+ *   fails and the cache returns -1, forcing the caller to fall back to
+ *   direct I/O.
+ *
+ * ── Write-back & Dirty Tracking ────────────────────────────────────────
+ *
+ * Each entry has a dirty flag.  Entries are marked dirty via
+ * bufcache_mark_dirty() or bufcache_write().  Dirty data is written back
+ * when:
+ *   1. The entry is evicted (forced write-back in evict_one pass 2).
+ *   2. A per-device dirty threshold (BC_MAX_DIRTY_PER_DEV = 32) is
+ *      exceeded (bufcache_throttle_writes).
+ *   3. The caller explicitly calls bufcache_flush() / bufcache_flush_all().
+ *   4. The cache is disabled (bufcache_disable).
+ *
+ * All write-back I/O is performed outside the g_bc_lock spinlock to
+ * prevent deadlocks with the block layer (which may call back into the
+ * buffer cache).
+ *
+ * ── Refcounting ────────────────────────────────────────────────────────
+ *
+ * bufcache_read() increments the entry's refcount to pin it in the cache
+ * for the caller.  The caller must call bufcache_release() to decrement
+ * the refcount when done with the data pointer.  An entry with
+ * refcount > 0 cannot be evicted.  This ensures the returned data pointer
+ * remains valid even if another thread triggers eviction.
+ *
+ * ── Working-Set Estimation ─────────────────────────────────────────────
+ *
+ * Each entry tracks an access_count (frequency).  g_ws_est is a running
+ * estimate of the active working-set size.  When an entry's access_count
+ * exceeds g_ws_est, the estimate is boosted exponentially:
+ *   g_ws_est = (g_ws_est + 1) * 2
+ * The estimate decays implicitly as cold entries' access_count falls
+ * behind (the counter is reset to 0 on eviction).
+ *
+ * ── Thread Safety ──────────────────────────────────────────────────────
+ *
+ * All cache state is protected by g_bc_lock (a spinlock).  I/O operations
+ * (disk reads/writes) are performed outside the lock to avoid blocking
+ * other cache users during I/O.  A double-check pattern is used in
+ * bufcache_read(): after I/O completes the lock is re-acquired and the
+ * hash table is checked again to handle races where another thread
+ * inserted the same sector while we were reading from disk.
  */
 #include "bufcache.h"
 #include "blockdev.h"
