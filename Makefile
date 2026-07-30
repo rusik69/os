@@ -946,14 +946,14 @@ kernel: $(BUILDDIR)/kernel.elf
         help debug clean deps \
         test test-kernel test-serial test-cli test-clean test-coverage clean-all \
         nic-test \
-        check check-full check-padded check-clean check-app-boundary check-debug fsck-test doom-test \
+        check check-full check-padded check-clean check-app-boundary check-debug fsck-test ext4-fsck-test doom-test \
         format format-check check-whitespace lint lint-full cppcheck-check \
         ccache-stats count build-info count-lines count-funcs count-headers \
         run-test unit-test junit-test bench \
         e2e e2e-smoke e2e-test e2e-list \
         stress stress-help \
         modules modules_install build-strict analyze bug-scan cppcheck cppcheck-all \
-        clang-tidy-check ctags etags doccheck sparse todo \
+        clang-tidy-check clang-tidy-host ctags etags doccheck sparse todo \
         release dist \
         install install-clean \
         clean-kernel clean-test verify
@@ -1788,6 +1788,10 @@ help:
 	@echo "  e2e-list        - List E2E test case descriptions"
 	@echo "  doom-test       - Verify DOOM framebuffer renders non-black pixels"
 	@echo "  junit-test      - Run unit tests with JUnit XML output"
+	@echo "  fsck-test       - Run ext2 fsck validation tests on generated images"
+	@echo "  ext4-fsck-test  - Run ext4 fsck validation tests on generated images"
+	@echo "  test-cli        - Build everything + run CLI command tests in QEMU"
+	@echo "  nic-test        - Boot with each NIC model to verify driver init"
 	@echo ""
 	@echo "=== Static Analysis Targets ==="
 	@echo "  cppcheck-all    - Run cppcheck with warning/performance/style checks"
