@@ -13,18 +13,87 @@ A production-oriented x86-64 hobby operating system kernel written in C17 and NA
 
 ## Quick Start
 
+This guide walks you from zero to booting the OS in QEMU in a few minutes.
+
+### 1. Install Prerequisites
+
 ```bash
-# Build
-make -j$(nproc)
+# Ubuntu / Debian
+sudo apt-get install -y x86_64-linux-gnu-gcc nasm make qemu-system-x86 ccache
 
-# Run in QEMU
-make run
+# Fedora / RHEL
+sudo dnf install gcc-x86_64-linux-gnu nasm make qemu-system-x86 ccache
 
-# Run tests
-./tests/run_tests.sh kernel.elf disk.img
+# Arch Linux
+sudo pacman -S x86_64-elf-gcc nasm make qemu-system-x86 ccache
+
+# macOS (Homebrew)
+brew install x86_64-elf-gcc nasm qemu ccache
 ```
 
-Dependencies: `x86_64-elf-gcc`, `nasm`, `qemu-system-x86_64`, `make`.
+> The build supports both `x86_64-elf-gcc` (native cross-compiler) and `x86_64-linux-gnu-gcc` (Linux-to-Linux cross-compiler). Either works — pass the correct `CC` variable to `make`.
+>
+> `ccache` is auto-detected and used automatically if installed.
+
+### 2. Build
+
+```bash
+# Clone (if you haven't already)
+git clone https://github.com/rusik69/os.git
+cd os
+
+# Full build — kernel, userspace, and bootable disk image
+make -j$(nproc) CC=x86_64-linux-gnu-gcc LD=x86_64-linux-gnu-ld OBJCOPY=x86_64-linux-gnu-objcopy
+```
+
+Output goes to `build/arch/release/kernel.elf` (kernel binary) and `build/disk.img` (bootable disk image).
+
+### 3. Run in QEMU
+
+```bash
+# Standard QEMU run with IDE disk + e1000 NIC
+make run
+
+# SMP with 4 CPUs
+make run-smp
+
+# UEFI boot
+make run-uefi
+
+# Debug with GDB stub (port 1234)
+make debug
+```
+
+### 4. Verify It Works
+
+You should see the boot splash, then a shell prompt (`/>`). Try:
+
+```bash
+# Built-in commands
+help
+uname -a
+ls /proc/
+meminfo
+uptime
+```
+
+### 5. Run Tests
+
+```bash
+# Built-in kernel test suite (200+ tests)
+make test
+
+# Full strict check: -Werror build + tests + E2E smoke
+make check
+
+# Host-side libc unit tests
+cd tests/host_libc && make && ./test_libc
+
+# E2E QEMU smoke test
+./tests/e2e.sh
+```
+
+> See [Build Prerequisites](#build-prerequisites) for a full tool list, [Building](#building) for all build targets, [Running](#running) for VM options, and [Testing](#testing) for test details.
 
 ## Project Structure
 
