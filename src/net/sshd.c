@@ -13,6 +13,67 @@
 #include "scheduler.h"
 #include "shell.h"
 
+/*
+ * ── SSH Protocol State Machine ─────────────────────────────────────────
+ *
+ * This file implements an SSH-2.0 server daemon (OSSSH) with a strict
+ * state machine that governs the protocol handshake and session lifecycle.
+ * The states are defined by the `enum ssh_phase` below and transition in
+ * this order:
+ *
+ *   SSH_PHASE_VERSION             (initial)
+ *       │  Client sends "SSH-2.0-..." version line
+ *       │  handle_version() → sets phase to KEX_INIT
+ *       ▼
+ *   SSH_PHASE_KEX_INIT
+ *       │  Client sends SSH_MSG_KEXINIT
+ *       │  handle_kexinit() → builds and sends server KEXINIT,
+ *       │    stores both KEXINIT payloads for exchange hash
+ *       ▼
+ *   SSH_PHASE_KEX
+ *       │  Client sends SSH_MSG_KEXDH_INIT (DH public key e)
+ *       │  handle_kexdh_init() → generates server DH key pair f,
+ *       │    computes shared secret K, exchange hash H,
+ *       │    signs H with RSA host key, sends KEXDH_REPLY
+ *       │  Client sends SSH_MSG_NEWKEYS
+ *       │  handle_newkeys() → derive_keys() for cipher/MAC
+ *       ▼
+ *   SSH_PHASE_NEWKEYS
+ *       │  Client sends SSH_MSG_SERVICE_REQUEST("ssh-userauth")
+ *       │  handle_service_request() → sends SERVICE_ACCEPT
+ *       ▼
+ *   SSH_PHASE_AUTH
+ *       │  Client sends SSH_MSG_USERAUTH_REQUEST
+ *       │  handle_userauth_request() → validates password
+ *       │    against system users (session_login); sends
+ *       │    USERAUTH_SUCCESS or USERAUTH_FAILURE
+ *       ▼
+ *   SSH_PHASE_CHANNEL
+ *       │  Client sends SSH_MSG_CHANNEL_OPEN("session")
+ *       │  handle_channel_open() → sends CHANNEL_OPEN_CONFIRMATION
+ *       │  Client sends SSH_MSG_CHANNEL_REQUEST("shell"|"pty"|...)
+ *       │  handle_channel_request() → starts shell or responds
+ *       ▼
+ *   SSH_PHASE_SESSION
+ *       │  Client sends SSH_MSG_CHANNEL_DATA (keystrokes)
+ *       │  handle_channel_data() → command buffer / process_command()
+ *       │  Client sends SSH_MSG_CHANNEL_CLOSE → disconnect
+ *       │  Client sends SSH_MSG_CHANNEL_REQUEST → resize/signal
+ *       └──────────────────────────────────────────────────────
+ *
+ * Protocol dispatch is handled by process_ssh_data(), which reassembles
+ * TCP data into SSH packets, validates packet_length/padding_length,
+ * decrypts if encrypted, and dispatches based on the current phase.
+ *
+ * Key cryptographic elements (declared from ssh_crypto.c):
+ *   - DH Group14 (diffie-hellman-group14-sha256) for key exchange
+ *   - RSA (ssh-rsa) for host key signatures
+ *   - AES-128-CBC for bulk encryption
+ *   - HMAC-SHA2-256 for packet integrity
+ *
+ * Maximum sessions: SSH_MAX_SESSIONS (4), stored in a static array.
+ * ------------------------------------------------------------------------ */
+
 /* ── Forward declarations from ssh_crypto.c ─────────────────── */
 extern void bn_from_bytes(bignum *r, const uint8_t *bytes, int len);
 extern int bn_to_bytes(const bignum *a, uint8_t *bytes, int min_len);
