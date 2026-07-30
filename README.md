@@ -631,23 +631,140 @@ make doom-test
 
 ## Testing
 
+The kernel uses a multi-layered testing strategy: **in-kernel built-in tests**, **KUnit lightweight unit tests**, **host-side libc unit tests**, **E2E QEMU tests**, and **stress tests**.
+
+### Quick Reference
+
 ```bash
-# Full test suite: build test kernel + boot QEMU + run 200+ tests
+# ── Full test suite (clean build + host tests + QEMU boot test) ──
 make test
 
-# Strict check: -Werror build + tests + E2E smoke
+# ── Strict pre-merge validation: -Werror build + tests + E2E smoke ──
 make check
 
-# Host-side libc unit tests
+# ── Host-side libc unit tests (compile kernel libc on host gcc) ──
 cd tests/host_libc && make && ./test_libc
 
-# E2E QEMU smoke test (boot to shell + commands)
-./tests/e2e.sh
+# ── E2E QEMU smoke test (boot normal kernel, run shell commands) ──
+make e2e-smoke
 
-# KUnit kernel tests (page alloc, slab, scheduler, VMM, security, power)
+# ── Full E2E test suite (boot + shell + networking + HTTP) ──
+make e2e
+
+# ── KUnit kernel unit tests (run inside kernel) ──
+# After boot: echo 1 > /sys/kernel/debug/kunit/run_all
+# Or automated: ./scripts/run_kunit.sh
+
+# ── DOOM framebuffer test ──
+make doom-test
 ```
 
-The kernel has 200+ built-in tests plus expandable KUnit test suites covering: scheduler, VMM, PMM, slab, IPC, VFS, TCP, UDP, socket API, device drivers, security, and power management. Tests run in QEMU and report PASS/FAIL via serial. CI enforces all tests pass on every commit.
+### Test Types
+
+#### 1. In-Kernel Built-in Tests (`src/test/test.c`)
+
+Compiled into a special **test kernel** (`build_test/kernel.bin`) when `-DTEST_MODE` is defined. On boot, `test_run_all()` executes as a kernel process, exercises every subsystem (scheduler, VMM, PMM, slab, IPC, VFS, TCP, UDP, socket API, device drivers, security, power management), prints `[PASS]` / `[FAIL]` per test to serial, then calls `acpi_shutdown()` to exit QEMU cleanly.
+
+- **Run:** `make test` (builds test kernel, boots in QEMU, checks results)
+- **Exit codes:** 33 (0x31) = ALL PASSED, 16 (0x10) = SOME FAILED
+- **Total:** 200+ individual tests
+- **Coverage:** PMM, VMM, slab, heap, scheduler, signals, pipe, mutex, semaphore, VFS (ext2, FAT32, tmpfs), networking (TCP, UDP, socket), block devices, ACPI, USB, security, syscalls, timers, workqueues, RCU, lockdep, module loading, ELF loading, DOOM, DOS emulator, and more.
+
+#### 2. KUnit Tests (`src/test/kunit*.c`)
+
+Lightweight unit tests that register with the KUnit framework. Each suite has setup/teardown per test case.
+
+- **Suites:** PMM (`kunit_pmm`), slab (`kunit_slab`), VMM (`kunit_vmm`), scheduler (`kunit_sched`), VFS (`kunit_vfs`), networking (`kunit_net`), security (`kunit_security`, `kunit_security_new`), power (`kunit_power`), USB (`kunit_usb`), TLS (`kunit_tls`), memory (`kunit_memory`), cluster (`kunit_cluster`), container extensions (`kunit_container_ext`), errno (`kunit_errno`), regression (`kunit_regression`), coverage (`kunit_coverage`)
+- **Run inside kernel:** `echo 1 > /sys/kernel/debug/kunit/run_all` then `cat /sys/kernel/debug/kunit/results`
+- **Automated:** `./scripts/run_kunit.sh --log <serial-log> --quiet`
+- **Add a new suite:** Create `kunit_<subsystem>.c`, define `KUNIT_CASE`s, register with `kunit_<subsystem>_register()`, and add the call to `kunit_tests.c`.
+
+#### 3. Host-Side Libc Unit Tests (`tests/host_libc/`)
+
+Kernel libc sources (`src/lib/`) compiled with host `gcc` for fast, native unit testing without QEMU. Tests cover string, stdlib, printf, crypto (AES, ChaCha20-Poly1305, SHA-256/512, MD5, HMAC), data structures (radix tree, klist, llist, interval tree, prio tree, cpumask, bitmap, IDR), CRC, UUID, time, compression, refcount, memory pool, modules, search algorithms, logging, errno, and more.
+
+- **Run:** `cd tests/host_libc && make && ./test_libc`
+- **Build variants:** `make test_${name}` for individual test binaries
+- **Test discovery:** Each `.c` file in `tests/host_libc/` is auto-detected and compiled
+
+#### 4. E2E Tests (`tests/e2e.sh` + `tests/e2e.py`)
+
+Boot the **normal (non-test) kernel** in QEMU with user-mode networking, telnet into the shell, and run shell commands to verify functionality.
+
+- **Prerequisites:** QEMU, Python 3, telnet (or netcat)
+- **Run:** `make e2e` (full suite) or `make e2e-smoke` (fast CI subset)
+- **Environment variables:**
+  - `E2E_HOST` — telnet host (default: `127.0.0.1`)
+  - `E2E_PORT` — host telnet port (auto-selected if unset)
+  - `E2E_HTTP_PORT` — HTTP port for network tests (auto-selected)
+  - `E2E_TIMEOUT` — per-command timeout seconds (default: 30)
+  - `E2E_BOOT_TIMEOUT` — boot + DHCP timeout seconds (default: 90)
+  - `E2E_SMOKE=1` — run smoke-test subset only
+- **What it tests:** Boot to shell, `help`, `uname`, `ls /proc/`, `meminfo`, `uptime`, networking (DHCP, HTTP server), filesystem operations
+- **Exit codes:** 0 = all passed, 1 = some failed, 2 = QEMU/scripts failed
+
+#### 5. Unit Tests (`tests/unit/`)
+
+Native host-side unit tests for kernel libraries compiled with host gcc:
+
+```bash
+cd tests/unit && make test
+```
+
+Covers memory, filesystem, socket, list, string, and bitmap operations.
+
+#### 6. Stress Tests (`src/test/stress/`)
+
+Long-running stress tests that run inside the kernel (test kernel build):
+- **CPU stress** — scheduler + context-switch thrashing
+- **Memory stress** — PMM/VMM allocation/deallocation storms
+- **Disk stress** — block I/O with concurrent read/write contention
+- **Runner:** `src/test/stress/stress_runner.c` orchestrates workloads
+
+#### 7. DOOM Framebuffer Test
+
+Verifies the Bochs VBE framebuffer renders non-black pixels:
+
+```bash
+make doom-test
+```
+
+### Test Runner Output
+
+```
+=== Building test kernel (clean build) ===
+[CC] src/kernel/...
+[CC] src/mm/...
+...
+=== Running host-side unit tests ===
+[PASS] string tests
+[PASS] crypto tests
+...
+=== Running QEMU boot test ===
+==> Booting test kernel (timeout=30s)...
+==> Checking results...
+========================================
+  ALL TESTS PASSED  (217 passed)
+========================================
+```
+
+### How to Add a New Test
+
+1. **In-kernel test:** Add a test function to `src/test/test.c` (or a new `src/test/test_*.c`). Use `TEST_ASSERT(condition, "description")` macros. Add the function call to `test_run_all()`.
+2. **KUnit test:** Create `src/test/kunit_<subsys>.c` following the pattern in `kunit_pmm.c`. Register with `kunit_<subsys>_register()` and add to `kunit_tests.c`.
+3. **Host-side libc test:** Add a `.c` file to `tests/host_libc/`. It's auto-discovered. Use standard `assert()` or custom macros.
+4. **E2E test:** Add test steps to `tests/e2e.py`.
+5. **Stress test:** Add a workload to `src/test/stress/stress_runner.c`.
+
+### CI Integration
+
+The self-hosted CI runner executes `make check` on every push to `main`, which runs:
+1. Clean build with `-Werror` (`build_check/`)
+2. QEMU boot test (200+ in-kernel tests + KUnit suites)
+3. Host-side libc unit tests
+4. E2E smoke tests
+
+All tests must pass (exit 0) for CI to report green. The CI workflow is defined in `.github/workflows/ci.yml`.
 
 ## Architecture
 
