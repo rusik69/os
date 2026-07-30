@@ -1,4 +1,94 @@
-/* net.c — Core networking: state, ethernet/IP, ARP, ICMP, poll, init */
+/*
+ * net.c — Core networking: state, ethernet/IP, ARP, ICMP, poll, init
+ *
+ * ── Network Stack Layering ─────────────────────────────────────────────
+ *
+ * This file implements the core of the OS network stack, organized in
+ * a traditional layered architecture:
+ *
+ *   1. LINK LAYER (Ethernet)
+ *      ── Functions: send_eth(), net_link_send(), net_link_recv()
+ *      ── Handles Ethernet frame encapsulation/decapsulation.
+ *      ── Sends frames via the netdevice layer (netif_send) when
+ *         interfaces are registered, falling back to legacy direct
+ *         driver calls (virtio_net, e1000).
+ *      ── ARP (Address Resolution Protocol): resolves IP → MAC mappings.
+ *         See arp_cache_add(), arp_cache_lookup(), arp_send_request(),
+ *         arp_resolve_or_queue(), arp_gc(), arp_retry_pending(),
+ *         arp_flush_pending().
+ *      ── ARP cache entries expire after ARP_TIMEOUT_TICKS and are
+ *         garbage-collected by arp_gc() during net_poll().
+ *      ── Pending ARP resolution queue stores frames awaiting MAC
+ *         resolution, flushed by arp_flush_pending() on reply.
+ *
+ *   2. NETWORK LAYER (IPv4)
+ *      ── Functions: send_ip(), handle_ip(), handle_ip_fragment()
+ *      ── IP packet transmit: assembles IPv4 headers, handles
+ *         fragmentation for packets > 1500 bytes MTU.
+ *      ── IP packet receive: validates checksum, dispatches via
+ *         protocol demux (ICMP, TCP, UDP, SCTP).
+ *      ── IP routing table (rt_table[]): longest-prefix-match lookup
+ *         via rt_lookup(), managed by rt_add()/rt_del().
+ *      ── IP forwarding: when net_ip_forwarding is enabled, packets
+ *         not destined for us are forwarded via the routing table.
+ *      ── Fragment reassembly: production-quality RFC 791 reassembly
+ *         with bitmaps, overlap rejection, and TTL-based eviction.
+ *         See handle_ip_fragment(), ip_frags[] slots.
+ *
+ *   2b. NETWORK LAYER (IPv6)
+ *      ── V6 packets are dispatched from net_rx_dispatch() to
+ *         handle_ipv6() in ipv6.c. Neighbor discovery cache updates
+ *         are handled inline.
+ *
+ *   3. TRANSPORT LAYER
+ *      ── ICMP: handle_icmp() — echo request/reply, rate-limited.
+ *      ── TCP: handle_tcp() (in net_tcp.c) — full state machine.
+ *      ── UDP: handle_udp() (in net_udp.c) — connectionless sockets.
+ *      ── SCTP: handle_sctp() (in net_sctp.c) — stream transport.
+ *      ── Demux happens in handle_ip() based on ip->protocol.
+ *
+ *   4. SOCKET / APPLICATION LAYER
+ *      ── Socket API: socket.c dispatches to TCP/UDP/raw handlers.
+ *      ── DNS: dns_cache.c — client-side caching resolver.
+ *      ── DHCP: dhcp.c — dynamic IP configuration.
+ *      ── Loopback (lo): simulated interface at 127.0.0.0/8.
+ *
+ *   5. CROSS-CUTTING SERVICES
+ *      ── Conntrack (nf_conntrack): tracks connection state for TCP,
+ *         UDP, ICMP; invoked from handle_ip() and send_ip().
+ *      ── Netfilter (nf_hook_traverse): hooks at PRE_ROUTING,
+ *         LOCAL_IN, FORWARD, LOCAL_OUT, POST_ROUTING.
+ *      ── XDP (xdp_run): early packet processing before protocol
+ *         dispatch — DROP, TX, or PASS actions.
+ *      ── RPS (Receive Packet Steering): flow-hash-based distribution
+ *         of packet processing across CPUs (net_poll → rps_enqueue).
+ *      ── RFS (Receive Flow Steering): tracks flow-to-CPU affinity
+ *         for cache locality.
+ *      ── Interface statistics (net_iface_stats): per-interface
+ *         counters for rx/tx packets, bytes, errors, drops.
+ *      ── Pluggable congestion control (cc_framework): per-connection
+ *         CC algorithm selection.
+ *
+ *   DATA FLOW (RECEIVE):
+ *     IRQ → net_rx_signal() → net_poll() → net_link_recv()
+ *       → (optional RPS remap) → net_rx_dispatch()
+ *         → XDP hook → netfilter PRE_ROUTING
+ *           → ARP / IPv4 / IPv6 handler
+ *             → netfilter LOCAL_IN → handle_ip()
+ *               → ICMP / TCP / UDP / SCTP handler
+ *
+ *   DATA FLOW (TRANSMIT):
+ *     Application → send_ip() → netfilter LOCAL_OUT
+ *       → conntrack → netfilter POST_ROUTING
+ *         → loopback check → send_eth()
+ *           → net_link_send() → netdevice / driver
+ *
+ * ── Globals & Locking ─────────────────────────────────────────────────
+ * All shared state (routing table, ARP cache, TCP connections, UDP
+ * bindings, listeners) is guarded by net_lock (spinlock_t). The lock
+ * must be held when reading or writing any of these structures.
+ * net_poll() is non-blocking and must not sleep.
+ */
 
 #include "conntrack_helper.h"
 #include "e1000.h"
