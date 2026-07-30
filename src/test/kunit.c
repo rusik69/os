@@ -1,21 +1,169 @@
 /*
  * kunit.c — Lightweight in-kernel unit test framework (KUnit-like).
  *
- * Provides a debugfs interface at /sys/kernel/debug/kunit/ for running
- * and inspecting kernel unit tests.
+ * ── Architecture Overview ──────────────────────────────────────────────
  *
- * Debugfs entries:
- *   control    - Read available commands, write 'reset'/'list'/'status'/'run_all'
- *   run_all    - Write "1" to execute all registered test suites
- *   run_suite  - Write a suite name to run a specific suite
- *   results    - Read to get a summary of all test results
- *   status     - Read to get the current pass/fail counts
- *   filter     - Write a substring to filter tests, write empty to clear
- *   iterations - Read/write u32 iteration count (default 1)
- *   verbose    - Read/write u32 verbosity: 0=quiet, 1=normal, 2=verbose
- *   timeout_ms - Read/write u32 per-test timeout in ms (0=no timeout)
+ * This file implements a self-contained unit test framework that runs
+ * entirely in kernel space.  Tests are organised into *suites*
+ * (struct kunit_suite), each containing an array of *cases*
+ * (struct kunit_case).  A case is a single test function plus optional
+ * metadata (parameter generator, stress level, fuzz generator).
  *
- * Item 266: KUnit — kernel unit test framework
+ * The framework is registered through two mechanisms:
+ *   1. Manual registration — kunit_register_suite() is called explicitly
+ *      for suites declared in the forward-declaration pattern (used by
+ *      src/test/kunit_tests.c with FILL_CASES macro).
+ *   2. Section-based auto-registration — suites declared via the
+ *      KUNIT_TEST_SUITE() macro are collected in the .kunit_test_suites
+ *      linker section and registered automatically at init time by
+ *      kunit_register_section_suites().
+ *
+ * All state is exposed through debugfs files under
+ * /sys/kernel/debug/kunit/, enabling interactive use from a shell.
+ *
+ *
+ * ── Key Data Structures ────────────────────────────────────────────────
+ *
+ * struct kunit_suite  - A named collection of test cases.  Fields:
+ *     name         - Human-readable suite name (used for filtering/lookup)
+ *     cases[]      - Null-terminated array of struct kunit_case
+ *     setup/testdown - Optional per-suite init/cleanup callbacks
+ *
+ * struct kunit_case - A single test case.  Fields:
+ *     name         - Test case name
+ *     run(ctx)     - The actual test function (required; NULL = end marker)
+ *     params[]     - Optional parameterised-test table (name/value pairs)
+ *     stress_max   - Minimum stress level required to run this test
+ *     fuzz         - Optional fuzz generator callback
+ *     fuzz_iters   - Per-case fuzz iteration override (0 = use global default)
+ *
+ * struct kunit     - Per-invocation test context:
+ *     name         - Test case name
+ *     status       - KUNIT_SUCCESS or KUNIT_FAILURE
+ *     failures     - Count of assertion failures within the test
+ *     priv         - Opaque pointer for parameter/fuzz data
+ *
+ * struct kunit_param - A single parameter for parameterised tests:
+ *     name         - Parameter label
+ *     value        - Opaque pointer
+ *
+ * Global state (kernel-global counters and configuration):
+ *     g_suites[]               - Registered suite pointer array (spinlock-guarded)
+ *     g_suite_count            - Number of registered suites
+ *     g_total_tests_run/...    - Across-suite cumulative atomics
+ *     g_filter / g_filter_active - Test name substring filter
+ *     g_kunit_iterations       - How many times to run every suite
+ *     g_kunit_verbose          - Console verbosity (0/1/2)
+ *     g_kunit_timeout_ms       - Per-test timeout (not yet enforced)
+ *     g_kunit_parallel         - Sequential (0) or workqueue-based (1) execution
+ *     g_kunit_fuzz_*           - Fuzz mode settings
+ *     g_kunit_stress_level     - Current stress threshold
+ *     g_kunit_log_*            - Ring-buffer state for log capture
+ *     g_last_suite_result      - Cached string from last run_suite command
+ *
+ *
+ * ── Debugfs Interface ───────────────────────────────────────────────────
+ *
+ * All files live under /sys/kernel/debug/kunit/:
+ *
+ *   control      - Read: shows command help + current status.
+ *                  Write: "reset" | "list" | "status" | "run_all"
+ *   results      - Read: formatted test result summary with suite list
+ *   results_json - Read: structured JSON dump of all results
+ *   status       - Read: single-line status string (machine-parseable)
+ *   run_all      - Write: any content triggers "run all suites"
+ *   run_suite    - Write: a suite name runs only that suite
+ *                  Read: last run_suite result string
+ *   filter       - Write: substring filter pattern; empty clears filter
+ *   iterations   - Read/write u32: iteration count (default 1)
+ *   verbose      - Read/write u32: 0=quiet, 1=normal, 2=verbose
+ *   timeout_ms   - Read/write u32: per-test timeout in ms (0=no timeout)
+ *   parallel     - Read/write u32: 0=sequential, 1=parallel
+ *   coverage     - Read: coverage report.  Write: "reset" | "status"
+ *   regression   - Read: last comparison report or baseline list.
+ *                  Write: "save <label>" | "compare <label>" | "list" | "clear"
+ *   stress_level - Read: current level.  Write: "light"|"moderate"|"heavy"
+ *   fuzz_enable  - Read: 0/1.  Write: 0/1, on/off, yes/no
+ *   fuzz_iterations - Read/write u32: default fuzz iters per test
+ *   fuzz_seed    - Read/write u32: deterministic PRNG seed
+ *   log          - Read: dump ring-buffer contents.  Write: "clear"
+ *   log_size     - Read/write u32: ring-buffer capacity in bytes
+ *
+ *
+ * ── Test Execution Lifecycle ────────────────────────────────────────────
+ *
+ * 1. kunit_run_all() or kunit_run_suite_by_name() is called (via debugfs).
+ * 2. Global counters are reset (kunit_reset(), kunit_coverage_reset()).
+ * 3. For each iteration [0..g_kunit_iterations):
+ *      For each suite (sequential) or dispatch via workqueue (parallel):
+ *        a. kunit_run_suite() logs the suite name and case count
+ *        b. For each non-NULL case: kunit_run_case()
+ *             i.   Filter check: skip if neither suite nor case name matches
+ *             ii.  Stress check: skip if case stress_max > global threshold
+ *             iii. Increment g_total_tests_run
+ *             iv.  Setup: suite->setup(&ctx) if defined
+ *             v.   Run: case->run(&ctx) — the actual test function
+ *                  - For parameterised tests, run once per kc->params[] entry
+ *                  - ctx.priv is set to the parameter value
+ *             vi.  Teardown: suite->teardown(&ctx) if defined
+ *             vii. Record pass/fail based on ctx.status
+ *             viii. If fuzz mode enabled AND kc->fuzz is set:
+ *                  - Run fuzz_count additional iterations with random params
+ *                  - Each fuzz iteration is a full lifecycle (setup→run→teardown)
+ * 4. Summary log is emitted with pass/fail/assertion/coverage counts.
+ *
+ * Parallel execution: suites are dispatched on an unbound workqueue in
+ * batches of WORKQUEUE_MAX.  Completions synchronise each batch before
+ * the next batch starts.  Falls back to sequential if workqueue_create()
+ * fails.
+ *
+ *
+ * ── Fuzz Mode ───────────────────────────────────────────────────────────
+ *
+ * When fuzz mode is enabled (g_kunit_fuzz_enabled != 0) and a test case
+ * provides a fuzz generator callback (kc->fuzz), additional iterations
+ * are run after the normal test body completes.  Each fuzz iteration
+ * has its own test context (struct kunit) and is a full setup→run→teardown
+ * cycle.  The fuzz generator is called with an iteration index and must
+ * populate a struct kunit_param; the test function receives the param
+ * through ctx.priv.
+ *
+ * A deterministic per-test seed is computed from the global fuzz seed
+ * and the suite/test name hashes, ensuring reproducible fuzzing.
+ *
+ *
+ * ── Log Buffer ──────────────────────────────────────────────────────────
+ *
+ * A ring buffer (default 4096 bytes) captures all KUnit diagnostic output
+ * alongside serial console emission.  The buffer can be resized at runtime
+ * (256 – 65536 bytes).  Reading /sys/kernel/debug/kunit/log dumps the
+ * ring buffer from oldest to newest entry.  Writing "clear" resets it.
+ *
+ *
+ * ── Regression Database ────────────────────────────────────────────────
+ *
+ * The framework can save "baselines" (snapshots of current test results)
+ * and compare against them later.  This catches regressions introduced
+ * by new code.  Operations are available through /sys/kernel/debug/kunit/
+ * regression: save <label>, compare <label>, list, clear.
+ *
+ *
+ * ── Coverage Tracking ──────────────────────────────────────────────────
+ *
+ * Inspired by gcov, a lightweight instrumentation point system counts
+ * how many times each marked code point is hit during tests.  Points
+ * are registered via KUNIT_COVERAGE() annotations.  The coverage report
+ * shows active points and total hit counts.  Counter data survives
+ * across runs until explicitly reset.
+ *
+ *
+ * ── Thread Safety ──────────────────────────────────────────────────────
+ *
+ * The registered-suite array (g_suites[]) is protected by g_kunit_lock
+ * (a spinlock).  Registration, filter updates, stress-level changes, and
+ * fuzz configuration all acquire this lock.  The cumulative test counters
+ * (g_total_tests_*) use atomic operations so they are safe to update
+ * from multiple workers during parallel execution.
  */
 
 #include "kunit.h"
