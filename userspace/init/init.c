@@ -1,11 +1,57 @@
-/* Init process — PID 1 for userspace.
+/*
+ * Init process — PID 1 for userspace.
  *
- * Opens /dev/console, spawns /bin/sh, then waits for children.
- * This is the first userspace process started by the kernel.
+ * Architecture:
+ *   Init is the first userspace process spawned by the kernel after mounting
+ *   the root filesystem.  It acts as the ancestor of all user tasks, the
+ *   reaper of orphaned zombies, and the orchestrator of system shutdown.
+ *
+ * Init process stages:
+ *
+ *   Stage 1 — Signal handler registration (main, lines ~76-77):
+ *     Install SIGTERM -> shutdown_handler (triggers shutdown sequence) and
+ *     SIGINT -> forward_signal_to_child (pass break/interrupt to the active
+ *     getty/shell).  These handlers are registered before any fork() so that
+ *     children inherit the default disposition (SIG_DFL) while init keeps
+ *     its custom handlers.
+ *
+ *   Stage 2 — Console setup (main, lines ~80-92):
+ *     Open /dev/console.  On success, dup2() the fd onto stdin/stdout/stderr
+ *     so that all subsequent printf() and file I/O goes to the system console.
+ *     If /dev/console does not exist (e.g., early boot without devtmpfs),
+ *     init falls back to raw stdin/stdout.
+ *
+ *   Stage 3 — Getty/Shell spawn loop (main, lines ~97-152):
+ *     In a loop: fork() a child, attempt execve("/bin/getty", ...) for a
+ *     proper login prompt, falling back to execve("/bin/sh", ...) if getty
+ *     is unavailable.  After spawning, the parent saves the child PID in
+ *     g_child_pid (for signal forwarding), reaps any zombies accumulated
+ *     so far, then blocks on waitpid() for the child to exit.  On child
+ *     exit the loop respawns, unless g_shutting_down is set (see Stage 5).
+ *
+ *   Stage 4 — Zombie reaping (reap_children, lines ~54-65):
+ *     Called after each fork() and after each waitpid() to collect any
+ *     orphaned children that were reparented to init.  Uses waitpid(-1, ...,
+ *     WNOHANG) in a loop so it never blocks.  Prevents zombie accumulation
+ *     when grandchildren outlive their parent process.
+ *
+ *   Stage 5 — Shutdown sequence (shutdown_handler + main shutdown block,
+ *              lines ~37-48 and ~133-149):
+ *     On SIGTERM: g_shutting_down is set, SIGTERM is forwarded to the child.
+ *     When the child exits, the main loop detects g_shutting_down and:
+ *       a) Calls sync() twice to flush all filesystem buffers.
+ *       b) Calls reboot() to halt / power-off the system.
+ *       c) If reboot() somehow returns, enters an infinite HLT loop.
+ *
+ *   Stage 6 — Fallback halt (main, lines ~155-158):
+ *     If fork() fails or the spawn loop cannot exec any binary, init
+ *     prints an error and enters a permanent pause loop.  The kernel
+ *     will panic if init exits, so this loop prevents that.
  *
  * Signal handling:
- *   SIGTERM — initiates shutdown sequence: kills all children,
- *             syncs filesystems, then calls reboot().
+ *   SIGTERM — initiates shutdown sequence: sets g_shutting_down,
+ *             forwards the signal to the child, and after the child
+ *             exits, syncs filesystems and calls reboot().
  *   SIGINT  — forwarded to the child process (break/interrupt).
  *
  * SIGKILL cannot be caught or ignored.
