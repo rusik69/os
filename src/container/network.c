@@ -1,6 +1,85 @@
 /*
  * network.c — Container networking: CNI, netns, DNS (Items C51–C65)
  *
+ * ██████████████████████████████████████████████████████████████████████
+ * CONTAINER NETWORK ISOLATION ARCHITECTURE
+ * ██████████████████████████████████████████████████████████████████████
+ *
+ * 1. NETWORK NAMESPACES (netns)
+ *    Each container gets its own network namespace, providing complete
+ *    isolation of network stack state: interfaces, routing tables,
+ *    firewall rules (iptables/nftables), socket connections, and
+ *    /proc/net entries.  A container inside its netns sees only its
+ *    own virtual interfaces and cannot observe or affect the host's
+ *    network or any other container's network.
+ *
+ *    Lifecycle (container_create_netns / container_delete_netns):
+ *      - A bind-mount file in /var/run/netns/<container_id> serves as
+ *        the namespace anchor.  The kernel holds a reference to the
+ *        netns as long as any process with that netns is alive.
+ *      - On container exit, the bind-mount is unlinked; when the last
+ *        process in the namespace exits, the kernel destroys the netns.
+ *
+ * 2. VETH PAIRS (C52)
+ *    A veth (virtual Ethernet) pair acts like a patch cable: packets
+ *    sent on one end emerge on the other end.  One end is placed in
+ *    the container's netns (as eth0), the other in the host netns
+ *    (as veth-<id>).  This provides:
+ *      - Layer-2 isolation: containers cannot directly sniff or inject
+ *        packets on the host's physical interfaces.
+ *      - Traffic control: the host-side veth endpoint is a regular
+ *        kernel netdev — it can be attached to a bridge, shaped via
+ *        tc, filtered by iptables/nftables, or monitored.
+ *      - Resource accounting: per-interface byte/packet counters.
+ *
+ * 3. BRIDGE (net_create_bridge / net_attach / net_detach)
+ *    Containers on the same bridge can communicate at Layer 2 without
+ *    going through the host IP stack (unless firewall rules enforce
+ *    isolation).  The bridge:
+ *      - Learns MAC addresses via standard Ethernet learning.
+ *      - Forwards frames between attached veth endpoints.
+ *      - Supports per-port isolation via ebtables/nftables if needed.
+ *    Cross-bridge traffic is always mediated by the host IP stack.
+ *
+ * 4. FIREWALL RULES / PORT MAPPING (C55, C58)
+ *    Default policy: drop all inbound, allow all outbound.
+ *    Port mappings create DNAT-like ACCEPT rules in the netfilter
+ *    table, allowing host→container traffic on specified ports.
+ *    Local rule tracking (g_container_rules[]) mirrors what has been
+ *    installed so that rules can be cleaned up on container exit.
+ *
+ * 5. IPAM (C53)
+ *    Simple host-local IPAM allocates IPs from a configured subnet
+ *    (default 10.88.0.0/16).  Gateway is .1, first container gets .2,
+ *    and so on.  This avoids address conflicts within a host but does
+ *    not prevent cross-host duplication — a full CNI plugin (e.g.
+ *    host-local or dhcp) would be needed for multi-host setups.
+ *
+ * 6. DNS & HOSTS (C64, C65)
+ *    Each container gets a synthetic /etc/resolv.conf (nameservers
+ *    injected by the orchestrator, falling back to 8.8.8.8/1.1.1.1)
+ *    and /etc/hosts (localhost + container hostname + extra entries).
+ *    These files live under the container's rootfs and are visible
+ *    only to processes inside the container's mount + net namespaces.
+ *
+ * ██████████████████████████████████████████████████████████████████████
+ * ISOLATION PROPERTIES
+ * ██████████████████████████████████████████████████████████████████████
+ *
+ *   Container A ─── veth ──── host netns ──── veth ─── Container B
+ *                                │
+ *                            [ bridge ]
+ *                                │
+ *        Container C ─── veth ───┘
+ *
+ *   - A and B on different bridges: completely isolated at L2.
+ *   - A and B on same bridge: can communicate unless ebtables/nftables
+ *     rules isolate them (default: allow same-bridge communication).
+ *   - All containers: isolated from host physical interfaces unless
+ *     explicit port mappings forward traffic in.
+ *   - Host can always reach containers; containers cannot reach host
+ *     services unless explicitly forwarded or routed.
+ *
  * Simplified implementation using existing kernel networking APIs.
  * C51: CNI plugin executor
  * C52: veth pair creation for container networking
