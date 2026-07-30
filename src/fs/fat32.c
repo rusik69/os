@@ -25,10 +25,109 @@
 #include "module.h"
 #endif
 
-/* ── FAT type detection and constants ───────────────────────────────────────── */
+/* ── FAT32 on-disk structures (Microsoft FAT32 spec §2-3) ──────────
+ *
+ * A FAT32 volume is divided into these regions (in order):
+ *
+ *   1. Reserved Region (Boot Sector + FSInfo + Backup)
+ *   2. FAT Region (File Allocation Table, usually 2 copies)
+ *   3. Root Directory Region (cluster chain starting at root_cluster)
+ *   4. Data Region (file and subdirectory clusters)
+ *
+ * ── Boot Sector / BPB (struct fat32_bpb) ────────────────────────
+ *   Offset  Size  Field                Description
+ *   0x00    3     jump[jmp_code]       x86 jump to boot code (ignored)
+ *   0x03    8     oem_name             OEM identifier string
+ *   0x0B    2     bytes_per_sector     512, 1024, 2048, or 4096
+ *   0x0D    1     sectors_per_cluster  1,2,4,8,16,32,64,128
+ *   0x0E    2     reserved_sectors     Count of sectors before first FAT
+ *   0x10    1     num_fats             Number of FAT copies (usually 2)
+ *   0x11    2     root_entry_count     Must be 0 for FAT32
+ *   0x13    2     total_sectors_16     Must be 0 for FAT32
+ *   0x15    1     media_type           0xF8 = hard disk
+ *   0x16    2     fat_size_16          Must be 0 for FAT32
+ *   0x18    2     sectors_per_track    CHS geometry (optional)
+ *   0x1A    2     num_heads            CHS geometry (optional)
+ *   0x1C    4     hidden_sectors       LBA of partition start
+ *   0x20    4     total_sectors_32     Total sectors (if total_sectors_16=0)
+ *   0x24    4     fat_size_32          Sectors per FAT
+ *   0x28    2     ext_flags            Bit 7=active FAT, bits 0-3=active FAT#
+ *   0x2A    2     fs_version           Usually 0
+ *   0x2C    4     root_cluster         First cluster of root dir (typ. 2)
+ *   0x30    2     fs_info              Sector of FSInfo (typ. 1)
+ *   0x32    2     backup_boot_sector   Backup boot sector (typ. 6)
+ *   0x34    12    reserved             Reserved bytes
+ *   0x40    1     drive_number         INT 13h drive number
+ *   0x41    1     reserved1
+ *   0x42    1     boot_signature       0x29 = extended BPB present
+ *   0x43    4     volume_id            Serial number
+ *   0x47    11    volume_label         Volume label (padded with spaces)
+ *   0x52    8     fs_type              "FAT32   "
+ *   0x5A    420   boot_code            Bootstrap code
+ *   0x1FE   2     signature            0x55 0xAA
+ *
+ * ── FSInfo sector (sector 1, at fs_info_lba) ─────────────────────
+ *   Offset  Size  Field
+ *   0x00    4     Lead signature (0x41615252)
+ *   0x1E4   480   Reserved
+ *   0x1E8   4     Struct signature (0x61417272)
+ *   0x1EC   4     FSI_Free_Count — last known free cluster count
+ *   0x1F0   4     FSI_Nxt_Free — hint for next free cluster
+ *   0x1F4   12    Reserved
+ *   0x1FE   2     Trail signature (0x55 0xAA)
+ *
+ * ── Directory entry (struct fat32_dirent) ────────────────────────
+ *   Each 32-byte entry describes one file or subdirectory:
+ *     name[8]        — 8.3 filename (padded with spaces)
+ *     ext[3]         — Extension (padded with spaces)
+ *     attr           — Attribute byte (see FAT32_ATTR_* flags):
+ *                       bit 0=READ_ONLY, 1=HIDDEN, 2=SYSTEM,
+ *                       bit 3=VOLUME_ID, 4=DIRECTORY, 5=ARCHIVE
+ *     reserved       — Reserved (NT use: case bits)
+ *     ctime_tenth    — Create time, 10ms units (0-199)
+ *     ctime          — Create time (hours+minutes+seconds*2)
+ *     cdate          — Create date
+ *     adate          — Last access date
+ *     cluster_hi     — High 16 bits of first cluster (FAT32 only)
+ *     mtime          — Last modify time
+ *     mdate          — Last modify date
+ *     cluster_lo     — Low 16 bits of first cluster
+ *     file_size      — File size in bytes (0 for directories)
+ *
+ * ── LFN directory entry (struct fat32_lfn) ───────────────────────
+ *   Long File Names span multiple 32-byte entries (1-20), stored
+ *   immediately before the corresponding 8.3 entry in reverse
+ *   order (last LFN entry first):
+ *     order(1)       ordinal | 0x40=last, 0x00=free, 0xE5=deleted
+ *     name1[5..10b]  Characters 1-5 (UCS-2)
+ *     attr(1)        Must be 0x0F
+ *     type(1)        Reserved (=0)
+ *     checksum(1)    Checksum of the associated 8.3 name
+ *     name2[6..12b]  Characters 6-11 (UCS-2)
+ *     cluster(2)     Always 0
+ *     name3[2..4b]   Characters 12-13 (UCS-2)
+ *
+ * ── FAT chain structure ─────────────────────────────────────────
+ *   Each FAT entry is 32 bits (only low 28 bits used on FAT32):
+ *     0x00000000  = Free cluster
+ *     0x00000002-0x0FFFFFEF = Data cluster (value = next cluster)
+ *     0x0FFFFFF0-0x0FFFFFF6 = Reserved
+ *     0x0FFFFFF7  = Bad cluster
+ *     0x0FFFFFF8-0x0FFFFFFF = End-of-chain (EOC) marker
+ *   Clusters 0 and 1 are reserved (cluster 0 = FAT ID, cluster 1 = dirty flag).
+ *
+ * ── Layout computation ──────────────────────────────────────────
+ *   fat_start      = part_start + reserved_sectors
+ *   data_start     = fat_start + num_fats * fat_size_32
+ *   total_data_sectors = total_sectors_32 - (data_start - part_start)
+ *   total_clusters = total_data_sectors / sectors_per_cluster
+ *
+ * References: Microsoft FAT32 File System Specification (2000),
+ *             ECMA-107 Volume and File Structure of Disk Cartridges.
+ */
 enum fat_type { FAT_TYPE_UNKNOWN = 0, FAT12, FAT16, FAT32 };
 
-/* ── FAT32 on-disk structures ───────────────────────────────────────────────── */
+/* ── FAT32 on-disk structure definitions ──────────────────────────── */
 struct fat32_bpb {
     uint8_t jump[3];
     char oem_name[8];
