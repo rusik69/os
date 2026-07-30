@@ -4,24 +4,84 @@
  * Provides fopen / fclose / fread / fwrite / fprintf / fscanf and related
  * stdio functions atop the kernel's fd-based syscall interface.
  *
- * Buffering:
- *   - Read buffer: filled lazily on first fgetc/fread after buffer is empty.
- *   - Write buffer: flushed on fflush, fclose, or when full.
- *   - Default buffer size: 4096 bytes (BUFSIZ).
+ * ── Buffered I/O Model ──────────────────────────────────────────────
  *
- * Mode support:
- *   "r"  — read-only, start at beginning.
- *   "w"  — write-only, truncate to zero.
- *   "a"  — append, start at end, write-only.
- *   "r+" — read+write, start at beginning.
- *   "w+" — read+write, truncate to zero.
- *   "a+" — read+append, start at end.
- *   "b"  — binary flag (no-op, handled transparently).
+ * Each FILE stream has two independent internal buffers (struct stdio_buf):
  *
- * Limitations:
+ *   rbuf (read buffer)
+ *     - Filled lazily on the first fgetc/fread after the buffer is empty.
+ *     - fill_rbuf() issues a kernel fd read (libc_fd_read) to refill.
+ *     - The kernel fd is read in large chunks (BUFSIZ = 4096 bytes by
+ *       default) to minimise syscall overhead on small sequential reads.
+ *     - rbuf.pos tracks how many bytes the consumer has already consumed
+ *       from the buffer; rbuf.len is the total valid bytes from the last
+ *       kernel read.
+ *     - When rbuf.pos >= rbuf.len, the buffer is exhausted and the next
+ *       read triggers a refill.
+ *
+ *   wbuf (write buffer)
+ *     - Accumulates written data until one of three conditions triggers
+ *       a flush (flush_wbuf()):
+ *         (a) The buffer is full  (wbuf.len >= wbuf.cap).
+ *         (b) fflush() is called explicitly.
+ *         (c) fclose() is called.
+ *     - flush_wbuf() issues a kernel fd write (libc_fd_write) with all
+ *       pending bytes, then resets wbuf.len to 0.
+ *     - For stderr the buffer capacity is 1 byte, forcing every write to
+ *       flush immediately (unbuffered behaviour).
+ *
+ *   Single-char pushback (ungetc)
+ *     - A single unsigned character can be pushed back via ungetc().
+ *     - It is stored in the FILE.unget field (EOF = no pushback).
+ *     - The next fgetc/fread checks unget first before consulting rbuf.
+ *     - fseek() clears the pushback and resets the read buffer.
+ *
+ *   Interaction with fseek/ftell
+ *     - Before seeking, the write buffer is flushed so pending data is
+ *       committed to the kernel fd and the position is synchronised.
+ *     - The read buffer is discarded (len = pos = 0) and pushback is
+ *       cleared because data cached from the old position would be stale
+ *       after the seek.
+ *     - ftell() adjusts the raw kernel fd offset by subtracting unconsumed
+ *       read bytes (rbuf) and adding pending write bytes (wbuf) to return
+ *       an accurate logical offset.
+ *
+ * ── Stream Table ───────────────────────────────────────────────────
+ *
+ * FILE structs are allocated from a static array (stdio_streams[]) with
+ * a maximum of STDIO_MAX_STREAMS (32) simultaneous open streams.
+ * Slots are tracked by a combination of fd == 0 and flags == 0 to
+ * indicate a free slot.  Standard streams (stdin / stdout / stderr) are
+ * pinned at boot and never freed.
+ *
+ * ── Standard Streams ────────────────────────────────────────────────
+ *
+ *   stdin  — fd 0, read-only,  full buffering (BUFSIZ read buffer).
+ *   stdout — fd 1, write-only, full buffering (BUFSIZ write buffer).
+ *   stderr — fd 2, write-only, unbuffered (1-byte write buffer forces
+ *            immediate flush on every write).
+ *
+ * They are initialised once by stdio_init_streams(), called either
+ * explicitly via stdio_init() or lazily on the first fopen().
+ *
+ * ── Mode Support ────────────────────────────────────────────────────
+ *
+ *   "r"   — read-only,        start at beginning.
+ *   "w"   — write-only,       truncate to zero.
+ *   "a"   — append,           start at end, write-only.
+ *   "r+"  — read+write,       start at beginning.
+ *   "w+"  — read+write,       truncate to zero.
+ *   "a+"  — read+append,      start at end.
+ *   "b"   — binary flag       (no-op, handled transparently).
+ *
+ * ── Limitations ─────────────────────────────────────────────────────
+ *
  *   - Maximum 32 simultaneous FILE streams.
- *   - No wide-character support.
+ *   - No wide-character or locale support.
  *   - fscanf supports only the most common format specifiers.
+ *   - No support for read-buffer/write-buffer interleaving for
+ *     read-write streams without an intervening fseek (the C standard
+ *     requires a file-positioning call between switching directions).
  */
 
 #include "stdio.h"
