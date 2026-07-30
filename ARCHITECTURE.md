@@ -1471,3 +1471,202 @@ Three-tier testing framework:
 - `krealloc_array`/`kmalloc_array`/`kcalloc_array` wrappers — overflow-checked
   allocation for multiply-based sizes
 - Stack canary per-task for kernel stack overflow detection
+
+## Syscall Table
+
+**File:** `src/kernel/syscall.c`, `src/include/syscall.h`
+
+The kernel uses a **dual-numbering scheme** for system calls: native `SYS_*` constants and Linux-compatible `__NR_*` constants.
+
+### Numbering Scheme
+
+| Constant Type | Range | Purpose |
+|---|---|---|
+| `SYS_*` | 0–800+ | Primary kernel-internal native syscall numbers |
+| `__NR_*` | 0–334 | Linux x86-64 ABI compatibility layer |
+
+### Native Syscall Number Ranges (`SYS_*`)
+
+| Range | Category | Description |
+|---|---|---|
+| 0–13 | Core ABI | read, write, open, close, exit, getpid, kill, brk, stat, mkdir, unlink, time, yield, uptime |
+| 78 | Linux compat | getdents64 (Linux slot 78) |
+| 100–137 | Extended FS/Net | ATA, AHCI, VFS operations, network status, PCI/USB list, DNS, ping, ARP |
+| 138–146 | User/Session | find, add, delete, login, logout, session management |
+| 147–149 | Hardware/Audio | RTC get time, speaker beep, ACPI shutdown |
+| 150–154 | I/O & Memory | mouse, serial, CMOS, PMM stats |
+| 155–161 | Specialized | ELF exec, script exec, FAT mount, kernel exec, module insert |
+| 162–165 | Shell-core | history, readline, variables, exec |
+| 166–167 | Display | VGA color, framebuffer info |
+| 168 | Compiler | CC compile |
+| 169–178 | Tmux isolation | keyboard, VGA, shell tab-complete, terminal, etc. |
+| 179–182 | Heap | malloc, free, realloc, calloc |
+| 183–189 | TCP server | listen, accept, send, recv, close, connect |
+| 190–193 | Mutex | init, lock, unlock, destroy |
+| 194–197 | Semaphore | init, wait, post, destroy |
+| 198–200 | UDP server | listen, recv, unlisten |
+| 201–203 | FS extended | symlink, readlink, lstat |
+| 204–206 | Working dir | chdir, getcwd, setpriority |
+| 207–210 | Shared mem IPC | shmget, shmat, shmdt, shmfree |
+| 211 | Fork | fork |
+| 212 | Connection list | net_connlist |
+| 213 | Signal | signal handler registration |
+| 214–215 | File ops | lseek, truncate |
+| 216 | Raw Ethernet | raw ethernet send |
+| 217–218 | FD-based I/O | fd_read, fd_write |
+| 219–278 | Job control | priority, scheduling, process groups |
+| 231–234 | Process/thread | clone, execve, gettid, tkill |
+| 235–237 | Memory mapping | mmap, munmap, mprotect |
+| 238–239 | CPU affinity | sched_setaffinity, sched_getaffinity |
+| 240–242 | FD manipulation | dup, dup2, fcntl |
+| 243 | I/O multiplexing | select |
+| 244–245 | Per-process timers | setitimer, getitimer |
+| 246 | Sleep | nanosleep |
+| 247–248 | System config | sysconf, uname |
+| 249–270 | FS/dir/process | pipe, ppid, alarm, access, chroot, etc. |
+| 272–287 | Modern Linux compat | prlimit64, futex, poll, ppoll, pselect6, etc. |
+| 288–294 | \*at family | openat, mkdirat, fstatat, unlinkat, renameat, linkat, symlinkat |
+| 296–314 | Memory management | mlock, madvise, fallocate, membarrier, mremap, msync, etc. |
+| 303–306 | Event/timer fds | timerfd_create, timerfd_settime, signalfd |
+| 307–312 | Data transfer | splice, tee, sync, syncfs, vmsplice |
+| 313–316 | Process mgmt | setsid, getsid, sigaltstack, rt_sigprocmask |
+| 317–328 | BSD Socket API | socket, bind, listen, accept, connect, sendto, recvfrom, getsockname, getpeername, socketpair, shutdown, setsockopt, getsockopt |
+| 329–332 | epoll | epoll_create1, epoll_ctl, epoll_wait, epoll_pwait |
+| 333–340 | POSIX Clocks & Timers | clock_gettime, clock_settime, timer_create, timer_settime, timer_gettime, timer_getoverrun, timer_delete, clock_getres |
+| 341–345 | Modern FD ops | dup3, pipe2, mkdtemp, utimensat, futimens |
+| 346–349 | FS & system info | statfs, fstatfs, getrusage, sysinfo |
+| 350–355 | Credentials & sched | getuid, geteuid, getgid, getegid, setresuid, setresgid |
+| 356–359 | POSIX Message Queues | mq_open, mq_unlink, mq_timedsend, mq_timedreceive |
+| 360–362 | CPU info, preadv/pwritev | sched_getcpu, preadv, pwritev |
+| 363–364 | Signal wait | sigwaitinfo, sigtimedwait |
+| 365 | memfd | memfd_create |
+| 366–369 | Module syscalls | module_init, module_finit, module_delete, module_query |
+| 370–374 | Misc | mremap, readahead, fadvise64, membarrier, pivot_root |
+| 375–376 | Signal-safe I/O | pselect6, ppoll |
+| 377–378 | chroot & copy | chroot, copy_file_range |
+| 379–380 | File handles | name_to_handle_at, open_by_handle_at |
+| 381–383 | inotify | inotify_init1, inotify_add_watch, inotify_rm_watch |
+| 384 | userfaultfd | userfaultfd |
+| 385–386 | Positional I/O | pread64, pwrite64 |
+| 387 | vmsplice | vmsplice |
+| 388 | clock_nanosleep | clock_nanosleep |
+| 389–393 | NUMA memory policy | mbind, set_mempolicy, get_mempolicy, migrate_pages, move_pages |
+| 394–396 | Namespace/rseq | unshare, setns, rseq |
+| 397–399 | Extended sched | sched_setattr, sched_getattr, kcov |
+| 400 | remap_file_pages | remap_file_pages |
+| 401–407 | Credentials | setuid, seteuid, setgid, getgroups, setgroups, etc. |
+| 424–428 | pidfd/io_uring/semctl | pidfd operations, io_uring, semctl |
+| 434–438 | pidfd | pidfd_open, pidfd_send_signal, close_range, pidfd_getfd |
+| 442 | mount_setattr | mount_setattr |
+| 450–460 | D123: Signal & process | rt_sigaction, rt_sigpending, rt_sigtimedwait, wait4, waitid |
+| 500–502 | Swap & mseal | swapon, swapoff, mseal |
+| 503 | seccomp | seccomp (syscall filtering) |
+| 504–507 | Framebuffer | put_pixel, blit, clear, refresh |
+| 508–510 | Keyboard state | keyboard state queries |
+| 511–513 | Legacy stubs | module/sysctl (return -ENOSYS) |
+| 550–552 | Threading | thread_create, thread_join, thread_exit |
+| 555–556 | ioprio | ioprio_set, ioprio_get |
+| 570–571 | Capabilities | capget, capset |
+| 572 | fdatasync | fdatasync |
+| 573–575 | Robust list & shmctl | robust_list, set_robust_list, shmctl |
+| 576 | pkey_mprotect | pkey_mprotect |
+| 577–578 | securebits | set_securebits, get_securebits |
+| 777 | posix_spawn | posix_spawn |
+| 778 | kexec | kexec_load |
+| 800 | msync | msync |
+
+### Linux x86-64 Compat Syscall Numbers (`__NR_*`)
+
+The kernel also implements the standard Linux x86-64 syscall ABI (numbers 0–334), dispatched via `syscall_linux_dispatch()` in `syscall.c`. These include the canonical Linux numbers for:
+
+- **Standard I/O:** `__NR_read (0)`, `__NR_write (1)`, `__NR_open (2)`, `__NR_close (3)`, `__NR_stat (4)`, `__NR_fstat (5)`, `__NR_lstat (6)`, `__NR_poll (7)`, `__NR_lseek (8)`, `__NR_mmap (9)`, `__NR_mprotect (10)`, `__NR_munmap (11)`, `__NR_brk (12)`
+- **Process:** `__NR_fork (57)`, `__NR_vfork (58)`, `__NR_execve (59)`, `__NR_exit (60)`, `__NR_wait4 (61)`, `__NR_clone (56)`, `__NR_getpid (39)`, `__NR_gettid (186)`
+- **Signals:** `__NR_rt_sigaction (13)`, `__NR_rt_sigprocmask (14)`, `__NR_rt_sigreturn (15)`, `__NR_kill (62)`, `__NR_tkill (200)`, `__NR_sigaltstack (131)`
+- **Time:** `__NR_nanosleep (35)`, `__NR_clock_gettime (228)`, `__NR_gettimeofday (96)`, `__NR_time (201)`
+- **Network:** `__NR_socket (41)`, `__NR_connect (42)`, `__NR_accept (43)`, `__NR_sendto (44)`, `__NR_recvfrom (45)`, `__NR_sendmsg (46)`, `__NR_recvmsg (47)`, `__NR_shutdown (48)`, `__NR_bind (49)`, `__NR_listen (50)`, `__NR_getsockname (51)`, `__NR_getpeername (52)`, `__NR_setsockopt (54)`, `__NR_getsockopt (55)`
+- **Filesystem:** `__NR_mkdir (83)`, `__NR_rmdir (84)`, `__NR_unlink (87)`, `__NR_link (86)`, `__NR_rename (82)`, `__NR_chdir (80)`, `__NR_getcwd (79)`, `__NR_mount (165)`, `__NR_umount2 (166)`, `__NR_openat (257)`, `__NR_mkdirat (258)`, `__NR_newfstatat (262)`, `__NR_unlinkat (263)`, `__NR_renameat (264)`, `__NR_linkat (265)`, `__NR_symlinkat (266)`, `__NR_readlinkat (267)`
+- **Memory:** `__NR_mlock (149)`, `__NR_munlock (150)`, `__NR_mlockall (151)`, `__NR_munlockall (152)`, `__NR_mincore (218)`, `__NR_madvise (219)`, `__NR_remap_file_pages (219)`, `__NR_mbind (235)`, `__NR_set_mempolicy (236)`, `__NR_get_mempolicy (237)`
+- **Modern Linux:** `__NR_eventfd2 (290)`, `__NR_epoll_create1 (291)`, `__NR_dup3 (292)`, `__NR_pipe2 (293)`, `__NR_inotify_init1 (294)`, `__NR_preadv (295)`, `__NR_pwritev (296)`, `__NR_sendmmsg (307)`, `__NR_getrandom (318)`, `__NR_memfd_create (319)`, `__NR_kexec_file_load (320)`, `__NR_pkey_alloc (330)`, `__NR_pkey_free (331)`, `__NR_pkey_mprotect (332)`
+
+### Dispatch Flow
+
+```
+Userspace: SYSCALL instruction
+     │
+     ▼
+  [MSR_LSTAR entry point]
+     │
+     ├─ KPTI trampoline (if CONFIG_KPTI) — switch to kernel page tables
+     │
+     ▼
+  syscall_entry_full (syscall_asm.asm)
+     │   Save all registers (push GPRs, save RSP, store in pt_regs)
+     │   Switch to per-CPU kernel stack
+     │   Stash 6th argument (via pselect6 ABI trick)
+     ▼
+  syscall_dispatch(num, a1, a2, a3, a4, a5)
+     │
+     ├─ 1. Seccomp filter evaluation (seccomp_evaluate_syscall)
+     │       → ALLOW: continue
+     │       → KILL: exit with SIGSYS
+     │       → TRAP: notify tracer
+     │       → ERRNO: return -errno
+     │
+     ├─ 2. Audit record generation (if audit enabled)
+     │
+     ├─ 3. KCOV trace recording
+     │
+     ├─ 4. Pointer validation (uaccess — check userspace addresses
+     │      for syscalls that take pointers)
+     │
+     ├─ 5. Stackleak (erase kernel stack after syscall)
+     │
+     └─ 6. syscall_dispatch_internal(num, ...)
+              │
+              ├─ Native SYS_* dispatch (switch statement, ~200+ cases)
+              │   Returns -ENOSYS for unrecognized numbers.
+              │
+              └─ Custom syscall registration (syscall_register/syscall_unregister)
+                  Modules can register handlers in custom_syscall_table[256]
+                  Checked first by syscall_table_lookup()
+```
+
+### Custom Syscall Registration
+
+Kernel modules can register custom syscall handlers at runtime:
+
+```c
+int syscall_register(int nr, void *handler);
+int syscall_unregister(int nr);
+```
+
+- **Table:** `custom_syscall_table[256]` — shared read-mostly array
+- **Lookup:** checked in `syscall_table_lookup()` before the built-in switch dispatch
+- **Constraints:** maximum 256 custom entries; registration fails with `-EBUSY` if slot is taken, `-ENOSPC` if nr ≥ 256
+
+### Calling Convention
+
+All syscalls follow the standard x86-64 syscall ABI:
+
+| Register | Role |
+|---|---|
+| RAX | Syscall number |
+| RDI | Argument 1 |
+| RSI | Argument 2 |
+| RDX | Argument 3 |
+| R10 | Argument 4 |
+| R8  | Argument 5 |
+| R9  | Argument 6 |
+| RCX | (clobbered — saved by SYSCALL instruction) |
+| R11 | (clobbered — saved by SYSCALL instruction) |
+| RAX (return) | Return value (negative = -errno on error) |
+
+### Key Syscall Source Files
+
+| File | Purpose |
+|---|---|
+| `src/kernel/syscall.c` | Main dispatch logic, syscall_dispatch(), syscall_dispatch_internal() |
+| `src/kernel/syscall_asm.asm` | Assembly entry/exit trampolines (syscall_entry_full) |
+| `src/kernel/syscall_linux.c` | Linux compat dispatch (__NR_* numbers) |
+| `src/include/syscall.h` | All SYS_* and __NR_* constant definitions |
+| `src/kernel/seccomp.c` | Seccomp-BPF filter evaluation on syscall entry |
