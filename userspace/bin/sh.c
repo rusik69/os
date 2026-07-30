@@ -1,8 +1,77 @@
 /* sh.c — BusyBox-style single-binary userspace shell
  *
- * Prints prompt "sh$ " and reads input line by line.
- * Supports built-in commands and external command execution via PATH.
- * Supports pipe chains (cmd1 | cmd2 | ...) with proper EPIPE/SIGPIPE handling.
+ * ============================================================================
+ * Shell Command Parsing Architecture
+ * ============================================================================
+ *
+ * The shell processes user input through a multi-stage pipeline:
+ *
+ * 1. LINE INPUT  (sh_getline, lines 303-325)
+ *    Reads stdin character-by-character with backspace editing.
+ *    Stops on newline (stores as NUL-terminated string) or EOF.
+ *
+ * 2. VARIABLE EXPANSION  (sh_expand_line, lines 345-378)
+ *    Scans line for $? and replaces it with the textual representation of
+ *    last_exit_code. Runs BEFORE parsing so expansion happens on raw input.
+ *    Currently only $? is supported — future expansion could include $VAR
+ *    variables with ${} syntax.
+ *
+ * 3. PIPE-SEGMENTED PARSING  (sh_split_pipes, lines 101-155)
+ *    Splits the (potentially expanded) line by the '|' character.
+ *    Each pipe segment is decomposed into an argv array by whitespace
+ *    tokenization (spaces/tabs delimit arguments; the tokens are NUL-
+ *    separated in-place within the line buffer). The result is an array
+ *    of struct cmd_segment, each holding an argv[] + argc.
+ *    Returns the segment count, or -1 if any segment exceeds MAX_ARGS.
+ *    Edge cases handled: leading/trailing whitespace, empty segments
+ *    between consecutive pipes (e.g. "a || b"), leading pipes.
+ *
+ * 4. SINGLE-COMMAND PARSING  (sh_parse, lines 328-342)
+ *    Fallback used when sh_split_pipes returns 0 segments (no pipe in
+ *    the line). A simpler tokenizer that also replaces whitespace with
+ *    NULs in-place and populates a flat argv array up to MAX_ARGS.
+ *
+ * 5. BUILT-IN DISPATCH  (run_builtin, lines 655-752)
+ *    Matches argv[0] against known built-in command names via strcmp.
+ *    Returns the exit code (>= 0) or -1 if the command is not a built-in.
+ *    Built-ins: cd, pwd, exit, help, echo, clear, exec, export, which,
+ *    ps, free, uptime, uname.
+ *
+ * 6. EXTERNAL COMMAND EXECUTION  (sh_exec_ext, lines 383-444)
+ *    For non-built-in commands, forks a child process. If argv[0] starts
+ *    with '/' or '.', it attempts execve directly. Otherwise it searches
+ *    PATH (from sh_env's PATH variable, defaulting to "/bin") by iterating
+ *    colon-separated directories. Returns the child PID on success, -1 if
+ *    all PATH entries failed.
+ *
+ * 7. PIPELINE EXECUTION  (sh_exec_pipeline, lines 162-300)
+ *    When multiple pipe segments are present, creates N-1 pipes and forks
+ *    N children. Each child's stdin/stdout is redirected to the appropriate
+ *    pipe ends. After forking, the parent closes ALL pipe fds (critical for
+ *    avoiding hangs — otherwise readers never see EOF). The parent then
+ *    waits for all children and records the last command's exit status.
+ *
+ *    SIGPIPE handling: the shell itself ignores SIGPIPE so it survives
+ *    broken pipes. Children inherit default SIGPIPE handling (termination),
+ *    which lets them die cleanly when their reader exits.
+ *
+ * Interactive Loop (main, lines 754-846):
+ *   ┌─────────────────────────────────────────────────────┐
+ *   │  print prompt → sh_getline → sh_expand_line          │
+ *   │      ↓                                                │
+ *   │  sh_split_pipes          ← returns segments?          │
+ *   │   ├─ Yes (nsegs > 0): sh_exec_pipeline(segs, nsegs)  │
+ *   │   └─ No  (nsegs == 0): sh_parse → run_builtin?       │
+ *   │       ├─ Yes (>=0): record exit code                  │
+ *   │       └─ No  (-1):   sh_exec_ext → waitpid → status  │
+ *   │      ↓                                                │
+ *   │  update last_exit_code → loop                         │
+ *   └─────────────────────────────────────────────────────┘
+ *
+ * Non-interactive mode (argc >= 2): runs the given command + arguments
+ * directly through run_builtin or sh_exec_ext + waitpid and exits.
+ *
+ * ============================================================================
  */
 
 #include "stdarg.h"
