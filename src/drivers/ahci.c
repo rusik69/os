@@ -14,6 +14,103 @@
  *   Each PM device registers as a separate block device but shares
  *   the physical port's command list, slots, and PRDT entries.
  *   The PM Port number is encoded in the FIS pmport_c field.
+ *
+ * AHCI HBA Memory Map (BAR5, PCI memory-mapped I/O)
+ * ────────────────────────────────────────────────
+ *
+ * The HBA registers are accessed via PCI BAR5 which maps the entire
+ * HBA memory region. The layout is:
+ *
+ *   Offset      Size    Register
+ *   ──────────────────────────────────────
+ *   0x00        4       CAP   — Host Capabilities
+ *   0x04        4       GHC   — Global Host Control
+ *   0x08        4       IS    — Interrupt Status
+ *   0x0C        4       PI    — Ports Implemented
+ *   0x10        4       VS    — Version
+ *   0x14        4       CCC_CTL — Command Completion Coalescing Control
+ *   0x18        4       CCC_PORTS — CCC Ports
+ *   0x1C        4       EM_LOC — Enclosure Management Location
+ *   0x20        4       EM_CTL — Enclosure Management Control
+ *   0x24        4       CAP2  — Host Capabilities Extended
+ *   0x28        4       BOHC  — BIOS/OS Handoff Control and Status
+ *   0x2C        4       N/A   — Reserved (or NVMHCI if supported)
+ *   0x30-0x9C   -       Reserved
+ *   0xA0-0xBF   32B     Vendor-specific registers
+ *   0xC0-0xFF   64B     NVMHCI (if NVM support) or reserved
+ *   ──────────────────────────────────────
+ *   0x100+      32×80B  Port registers (Port 0-31)
+ *     Port N offset = 0x100 + N * 0x80
+ *   ──────────────────────────────────────
+ *
+ * Generic Host Register Details:
+ *   CAP[0x00]   — Capabilities: 64-bit addressing, NCQ, SNotification,
+ *                 PMP support, number of ports, command slots, etc.
+ *   GHC[0x04]   — Global Host Control: AE (AHCI Enable, bit 31),
+ *                 IE (Interrupt Enable, bit 1), HR (HBA Reset, bit 0).
+ *   IS[0x08]    — Interrupt Status: one bit per port, set when any
+ *                 port asserts an interrupt, cleared by writing.
+ *   PI[0x0C]    — Ports Implemented: bitmask of physical ports present.
+ *   VS[0x10]    — Version: major.minor revision (e.g. 0x00010100 = 1.1).
+ *   CAP2[0x24]  — Extended capabilities (e.g. SNCQ, SDB, etc.).
+ *   BOHC[0x28]  — BIOS/OS handoff: BB (BIOS Busy), OS (OS Ownership).
+ *
+ * Per-Port Register Layout (each port occupies 0x80 bytes):
+ *   Offset  Size  Register
+ *   ──────────────────────────────────────
+ *   0x00    4     CLB  — Command List Base Address (lower 32 bits)
+ *   0x04    4     CLBU — Command List Base Address (upper 32 bits)
+ *   0x08    4     FB  — FIS Base Address (lower 32 bits)
+ *   0x0C    4     FBU — FIS Base Address (upper 32 bits)
+ *   0x10    4     IS  — Interrupt Status
+ *   0x14    4     IE  — Interrupt Enable
+ *   0x18    4     CMD — Command and Status
+ *   0x1C    4     Reserved
+ *   0x20    4     TFD — Task File Data
+ *   0x24    4     SIG — Signature
+ *   0x28    4     SSTS — SATA Status
+ *   0x2C    4     SCTL — SATA Control
+ *   0x30    4     SERR — SATA Error
+ *   0x34    4     SACT — SATA Active (NCQ command tag mask)
+ *   0x38    4     CI  — Command Issue (write to issue command)
+ *   0x3C    4     SNTF — SNotification
+ *   0x40-0x7C -    Reserved
+ *   ──────────────────────────────────────
+ *
+ * System Memory Data Structures (programmed via port registers):
+ *
+ *   Command List (aligned to 1KB boundary, pointed to by CLB/CLBU):
+ *     Array of 32 Command Headers (32 bytes each = 1024 bytes total).
+ *     Each Command Header:
+ *       word 0: [15:10=PRDTL, 9:8=PMP, 7:6=CFIS_len, 5:C, 4:A, 3:W, 2:B, 1:R, 0:P]
+ *       word 1: PRDTL — Physical Region Descriptor Table Length
+ *       dword 1: PRDBC — PRD Byte Count Transferred
+ *       dword 2: CTBA — Command Table Base Address (lower)
+ *       dword 3: CTBAU — Command Table Base Address (upper)
+ *       dword 4-7: Reserved
+ *
+ *   Received FIS Area (aligned to 256B boundary, pointed to by FB/FBU):
+ *     0x00-0x1B  DSFIS — DMA Setup FIS (28 bytes)
+ *     0x1C-0x1F  Reserved
+ *     0x20-0x33  PSFIS — PIO Setup FIS (20 bytes)
+ *     0x34-0x3F  Reserved
+ *     0x40-0x53  RFIS — D2H Register FIS (20 bytes)
+ *     0x54-0x57  Reserved
+ *     0x58-0x5F  SDBFIS — Set Device Bits FIS (8 bytes)
+ *     0x60-0x9F  UFIS — Unknown FIS (64 bytes)
+ *     0xA0-0xFF  Reserved
+ *
+ *   Command Table (aligned to 128B boundary, pointed to by CTBA/CTBAU):
+ *     CFIS[0-63] — Command FIS (64 bytes, 8 dwords)
+ *     ATA CMD[0-15] — ATA command / ATAPI (16 bytes)
+ *     Reserved[0-47] — padding
+ *     PRDT[0-N] — Physical Region Descriptor Table (16 bytes each, N = 1..65535)
+ *       Each PRDT entry: DBA (data base addr lo), DBAU (data base addr hi),
+ *       Reserved, DBC[31:2=data_byte_count, 1=I, 0:0]
+ *
+ * The driver sets up one command list per port with up to 32 command slots,
+ * each slot can address a command table via its CTBA field. PRDT entries
+ * within each command table point to the physical data buffers for DMA.
  */
 #include "ahci.h"
 #include "blockdev.h"
