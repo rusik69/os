@@ -1,3 +1,69 @@
+/*
+ * src/ipc/pipe.c — Pipe Ring Buffer Implementation
+ *
+ * Architecture Overview
+ * =====================
+ * Pipes provide an inter-process communication (IPC) channel that acts as a
+ * unidirectional byte stream.  Each pipe is backed by two ring buffers (buf
+ * and buf2) of equal capacity, enabling a zero-copy splice operation between
+ * two pipes.
+ *
+ * Ring Buffer Mechanics
+ * ---------------------
+ * Data flows through a circular buffer using modular arithmetic:
+ *
+ *   - write_pos:  next insertion point in the ring (mod capacity)
+ *   - read_pos:   next consumption point in the ring  (mod capacity)
+ *   - count:      number of bytes currently in the buffer
+ *   - capacity:   total size of the ring in bytes
+ *
+ *   Wrap-around index:  index = (base + offset) % capacity
+ *
+ * The buffer is full  when count == capacity  (write blocks or returns EAGAIN).
+ * The buffer is empty when count == 0          (read blocks or returns EAGAIN).
+ *
+ * Double-Buffering for Zero-Copy Splice
+ * --------------------------------------
+ * Each pipe carries a second buffer (buf2) that is used exclusively by the
+ * pipe_splice() function.  When splicing a large chunk (>= half the capacity)
+ * from source to destination pipe and the destination is empty, the
+ * implementation swaps the source pipe's primary buffer with the destination
+ * pipe's buffer, and hands back the destination's old buffer (via the source's
+ * buf) to the source writer.  This avoids a data copy entirely.
+ *
+ *   Before splice:  src->buf  dst->buf  src->buf2  dst->buf2
+ *   After splice:   dst->buf = old_src_buf,  src->buf = old_dst_buf2
+ *
+ * Wait Queue Synchronization
+ * ---------------------------
+ * Each pipe has two wait queues:
+ *
+ *   - read_wq:  readers block here when the buffer is empty
+ *   - write_wq: writers block here when the buffer is full
+ *
+ * After a successful write(), readers on read_wq are woken.
+ * After a successful read(),  writers on write_wq are woken.
+ * When the peer end closes, all blocked waiters are woken so they can
+ * observe the new readers/writers count and return EOF or EPIPE.
+ *
+ * Non-blocking I/O
+ * ----------------
+ * When PIPE_FLAG_NONBLOCK is set (via pipe_set_nonblock or fcntl F_SETFL),
+ * read() returns -EAGAIN if no data is available and write() returns -EAGAIN
+ * if the buffer is full, instead of blocking.
+ *
+ * SIGPIPE Handling
+ * ----------------
+ * A write() to a pipe with no reader triggers SIGPIPE delivery to the
+ * writing process and returns -EPIPE.  This follows POSIX semantics.
+ *
+ * Pipe Table
+ * ----------
+ * All pipes are pre-allocated in a fixed-size table (PIPE_MAX entries).
+ * The in_use flag tracks which slots are active.  A slot is freed only
+ * when both the read and write ends have been closed.
+ */
+
 #include "pipe.h"
 #include "scheduler.h"
 #include "string.h"
