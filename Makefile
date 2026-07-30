@@ -1,3 +1,30 @@
+# ── Environment Variable Overrides ────────────────────────────────────
+#
+# The following environment variables can be set at build time to override
+# default toolchain and configuration settings:
+#
+#   CC          — C compiler (default: x86_64-elf-gcc)
+#                 If ccache is found on $PATH, it is auto-wrapped around CC.
+#                 If DISTCC_HOSTS is set, distcc is prepended or composed
+#                 via CCACHE_PREFIX (see distcc auto-detection below).
+#   LD          — Linker (default: x86_64-elf-ld)
+#   OBJCOPY     — Object copy tool (default: x86_64-elf-objcopy)
+#   AS          — Assembler (default: nasm)
+#   CFLAGS_EXTRA— Extra flags appended to the end of CFLAGS, useful for
+#                 adding -D defines or overriding warning suppressions.
+#   KVERSION    — Kernel version string for module vermagic (default: 6.1.0-osdev)
+#   DISTCC_HOSTS— If non-empty, enables distributed compilation via distcc.
+#                 Set e.g. DISTCC_HOSTS="localhost 10.0.0.1".
+#   CCACHE_PREFIX— Command prefix used by ccache (set automatically when
+#                 both ccache and distcc are active).
+#   V           — Set to 1 to enable verbose build output
+#   TEST        — Set to 1 to build test images instead of the production kernel
+#
+# Example usage:
+#   make CC=x86_64-linux-gnu-gcc LD=x86_64-linux-gnu-ld OBJCOPY=x86_64-linux-gnu-objcopy
+#   make CFLAGS_EXTRA=-DCONFIG_DEBUG_KERNEL V=1
+#   KVERSION=6.2.0-custom make -j$(nproc)
+#
 # ── Compiler / Toolchain ──────────────────────────────────────────────
 
 ifeq ($(origin CC), undefined)
