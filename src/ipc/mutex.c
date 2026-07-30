@@ -1,25 +1,105 @@
 /*
  * mutex.c — Priority Inheritance mutex with optimistic spinning
  *
- * Implements the Priority Inheritance Protocol (PIP) to prevent
- * priority inversion: when a high-priority task waits on a mutex
- * held by a low-priority task, the holder is temporarily boosted
- * to the waiter's priority.  Properly handles nested mutexes:
- * when a process holds multiple mutexes and releases one, the
- * priority is recomputed from the remaining held mutexes' highest
- * waiter priorities.
+ * ── Design Overview ─────────────────────────────────────────────────
  *
- * Optimistic spinning (Item 289): before yielding the CPU, a waiter
- * spins for a limited number of iterations if the lock owner is
- * currently executing on another CPU.  This avoids the expensive
- * sleep/wakeup context switch when the lock is held for a short
- * duration (common for well-designed mutexes).  Spinning stops
- * early if the owner is scheduled out, preventing wasteful busy-
- * waiting.
+ * This module implements a hybrid mutex that combines the Priority
+ * Inheritance Protocol (PIP) with MCS-style optimistic spinning.
+ * Mutexes are identified by an integer ID (0..MUTEX_MAX-1), allocated
+ * from a fixed-size global array.  Each mutex is backed by a
+ * struct mutex_entry that tracks the owner, waiters, PI state, and
+ * spinning counts.
  *
- * Integrates with lockdep for deadlock detection and provides
- * owner-tracking debug helpers (mutex_owner(), mutex_owner_name(),
- * mutex_is_locked()).
+ * ── Priority Inheritance Protocol (PIP) ─────────────────────────────
+ *
+ * PIP prevents priority inversion: when a high-priority task waits
+ * on a mutex held by a low-priority task, the holder is temporarily
+ * boosted to the waiter's priority.  The boosting logic:
+ *
+ *   1. On lock — if the mutex is held, the waiter's priority is
+ *      compared against the current highest-waiter priority.  If the
+ *      new waiter has higher priority (lower numeric value), the
+ *      owner is boosted via scheduler_set_priority().
+ *
+ *   2. On unlock — the owner's priority is recomputed from all
+ *      REMAINING held mutexes via held_mutex_effective_prio().
+ *      If no other mutex requires a boost, the priority returns
+ *      to base_priority.
+ *
+ *   3. Nested mutexes — when a process holds multiple mutexes,
+ *      releasing one triggers a full re-evaluation of the effective
+ *      priority across all still-held mutexes.  The effective
+ *      priority is the highest (lowest numeric) among base_priority
+ *      and all active highest_waiter_prio values.
+ *
+ * ── Optimistic Spinning ─────────────────────────────────────────────
+ *
+ * Before yielding the CPU, a waiter spins for a limited number of
+ * iterations if the lock owner is currently executing on another CPU.
+ * This avoids the expensive sleep/wakeup context switch when the lock
+ * is held for a short duration (common for well-designed mutexes).
+ *
+ * Spinning uses an Optimistic Spin Queue (OSQ) — at most MUTEX_OSQ_MAX
+ * spinners are allowed on a single mutex simultaneously.  A waiter
+ * stops spinning under any of these conditions:
+ *
+ *   a) The owner releases the lock — the waiter acquires it directly.
+ *   b) The owner is scheduled out (owner->on_cpu == 0) — spinning
+ *      would be wasteful since the owner won't make progress.
+ *   c) The spin count exceeds MUTEX_SPIN_MAX — prevents starvation
+ *      of runnable tasks on the same CPU.
+ *
+ * The `pause` instruction is used in the tight loop to reduce power
+ * consumption and improve hyperthreading/frequency-scaling behaviour.
+ *
+ * ── Locking / Atomicity ─────────────────────────────────────────────
+ *
+ * All mutex state transitions are performed with interrupts disabled
+ * (cli/sti around the critical section).  This ensures mutual
+ * exclusion on UP and provides the memory ordering required for the
+ * volatile `locked` flag to be visible across CPUs.  Interrupt state
+ * is saved before cli and restored after sti to preserve the caller's
+ * IF flag (important for early-boot code that runs with interrupts
+ * masked).
+ *
+ * ── Deadlock Detection (lockdep) ────────────────────────────────────
+ *
+ * Every mutex_lock() and mutex_unlock() call is annotated with
+ * lock_acquire()/lock_release().  The lockdep subsystem tracks
+ * lock ordering across all synchronisation primitives (mutexes,
+ * spinlocks, rwlocks) and panics on potential deadlock cycles.
+ *
+ * ── Data Structures ─────────────────────────────────────────────────
+ *
+ * Mutex state is held in a fixed-size global array:
+ *
+ *   static struct mutex_entry mutexes[MUTEX_MAX];
+ *
+ * Each process also maintains a held-mutex list (held_mutex_ids[]
+ * in struct process) for PI re-evaluation and debugging.
+ *
+ * ── API Summary ─────────────────────────────────────────────────────
+ *
+ *   mutex_init()          — Allocate a new mutex, return its ID
+ *   mutex_lock(id)        — Blocking acquire with PI + spinning
+ *   mutex_trylock(id)     — Non-blocking attempt (returns -EBUSY)
+ *   mutex_lock_interruptible(id) — Blocking acquire, interruptible
+ *   mutex_unlock(id)      — Release with PI restoration
+ *   mutex_destroy(id)     — Deallocate a mutex
+ *   mutex_owner(id)       — Debug: return owner PID
+ *   mutex_owner_name(id)  — Debug: return owner process name
+ *   mutex_owner_rip(id)   — Debug: return acquisition RIP
+ *   mutex_is_locked(id)   — Debug: return 1 if held
+ *   mutex_spin_stats(...) — Return optimistic spin counters
+ *
+ * ── Scheduler Integration ────────────────────────────────────────────
+ *
+ * Priority boosting and restoration call scheduler_set_priority()
+ * directly.  When the owner yields or is preempted, the scheduler
+ * respects the boosted priority, ensuring the high-priority waiter
+ * makes progress.  The held_mutex_effective_prio() function provides
+ * the recomputed priority across all held mutexes and is called
+ * from both mutex_lock() (after boost) and restore_owner_priority().
  */
 
 #include "mutex.h"
@@ -46,16 +126,16 @@ static uint64_t mutex_spin_abandoned  = 0;  /* spins abandoned (owner off CPU) *
 static uint64_t mutex_spin_timeout    = 0;  /* spins that timed out -> yield */
 
 struct mutex_entry {
-    volatile int locked;
-    int in_use;
-    uint32_t owner_pid;              /* PID of current owner (0 = free) */
-    uint64_t owner_rip;              /* RIP where owner acquired the lock */
-    uint8_t  owner_orig_prio;        /* owner's priority before any boost */
-    uint8_t  highest_waiter_prio;    /* highest priority among waiters (9 = none) */
-    int      waiter_count;
+    volatile int locked;          /* 1 = held by some thread; read/written with cli/sti */
+    int in_use;                   /* 1 = slot allocated; 0 = free */
+    uint32_t owner_pid;           /* PID of current owner (0 = free) */
+    uint64_t owner_rip;           /* RIP where owner acquired the lock (debug) */
+    uint8_t  owner_orig_prio;     /* owner's base priority before any boost (for restore) */
+    uint8_t  highest_waiter_prio; /* highest (lowest numeric) priority among waiters; 9 = none */
+    int      waiter_count;        /* number of PIDs in waiter_pids[] */
     uint32_t waiter_pids[MUTEX_WAITERS_MAX]; /* PIDs waiting on this mutex */
-    int      owner_cpu;              /* CPU where owner was last running (for spin heuristics) */
-    int      spinner_count;          /* number of tasks currently spinning on this mutex */
+    int      owner_cpu;           /* CPU where owner was last running (for spin heuristics) */
+    int      spinner_count;       /* number of tasks currently spinning on this mutex (OSQ) */
 };
 
 static struct mutex_entry mutexes[MUTEX_MAX];
@@ -448,7 +528,19 @@ EXPORT_SYMBOL(mutex_init);
 EXPORT_SYMBOL(mutex_lock);
 EXPORT_SYMBOL(mutex_unlock);
 
-/* ── mutex_trylock (non-blocking) ──────────────────────── */
+/* ── mutex_trylock (non-blocking) ────────────────────────
+ *
+ * Attempt to acquire mutex @id without blocking.  If the mutex
+ * is free, this function acquires it and returns 0.  If another
+ * thread holds the mutex, it returns -EBUSY immediately.
+ *
+ * Unlike mutex_lock(), this function does NOT perform priority
+ * inheritance or optimistic spinning — it either succeeds or
+ * fails atomically.  This is suitable for fast-path acquisition
+ * where the caller can handle the "busy" case (e.g., try another
+ * resource or defer work).
+ *
+ * Returns: 0 on success, -EBUSY if held, -EINVAL on bad @id. */
 static int mutex_trylock(int id)
 {
     if (id < 0 || id >= MUTEX_MAX || !mutexes[id].in_use)
@@ -472,7 +564,20 @@ static int mutex_trylock(int id)
     return -EBUSY;
 }
 
-/* ── mutex_lock_interruptible ──────────────────────────── */
+/* ── mutex_lock_interruptible ────────────────────────────
+ *
+ * Blocking mutex acquire that can be interrupted by a signal.
+ * This is identical to mutex_lock() except that it checks for
+ * pending signals before each blocking iteration and returns
+ * -EINTR if a signal is pending (and not masked).
+ *
+ * The short inline spin loop (64 iterations) provides a quick
+ * check for recently-released mutexes before yielding, similar
+ * to the optimistic spinning in mutex_lock() but without the
+ * OSQ concurrency limit or owner-on-CPU heuristic.
+ *
+ * Returns: 0 on success, -EINTR if interrupted by signal,
+ *          -EINVAL on bad @id. */
 static int mutex_lock_interruptible(int id)
 {
     if (id < 0 || id >= MUTEX_MAX || !mutexes[id].in_use)
@@ -524,7 +629,14 @@ static int mutex_lock_interruptible(int id)
     }
 }
 
-/* ── mutex_trylock_debug ─────────────────────────────── */
+/* ── mutex_trylock_debug ───────────────────────────────
+ *
+ * Debug wrapper for trylock that logs the file and line of
+ * the acquisition site.  Used by lockdep-aware macros.
+ * Casts the opaque @lock pointer to spinlock_t and attempts
+ * a non-blocking acquire.
+ *
+ * Returns: 0 on success, -EBUSY if held, -EINVAL if @lock is NULL. */
 static int mutex_trylock_debug(void *lock, const char *file, int line)
 {
     (void)file;
@@ -535,7 +647,13 @@ static int mutex_trylock_debug(void *lock, const char *file, int line)
         return 0;
     return -EBUSY;
 }
-/* ── mutex_unlock_debug ─────────────────────────────── */
+/* ── mutex_unlock_debug ───────────────────────────────
+ *
+ * Debug wrapper for unlock that logs the file and line of
+ * the release site.  Used by lockdep-aware macros.
+ * Casts the opaque @lock pointer to spinlock_t and releases it.
+ *
+ * Returns: 0 on success, -EINVAL if @lock is NULL. */
 static int mutex_unlock_debug(void *lock, const char *file, int line)
 {
     (void)file;
