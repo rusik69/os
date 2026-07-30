@@ -12,6 +12,96 @@
  * HTree (hash tree) directory indexing provides O(log n) directory
  * lookups for large directories, as specified in the ext3/4 design.
  * The hash function used is half MD4 (the most common for ext3/4).
+ *
+ * ═══════════════════════════════════════════════════════════════════════
+ * Ext2 volume layout
+ * ═══════════════════════════════════════════════════════════════════════
+ *
+ * An Ext2 filesystem is divided into block groups.  Each block group
+ * contains redundant copies of critical metadata for robustness.
+ *
+ * ── Layout of a single block group ───────────────────────────────
+ *
+ *   ┌────────────────────────────────┐
+ *   │ Superblock (if present)        │ ← block 0 (or s_first_data_block)
+ *   ├────────────────────────────────┤
+ *   │ Block group descriptor table   │ ← follows superblock (if present)
+ *   ├────────────────────────────────┤
+ *   │ Block bitmap (1 block)         │ ← one bit per block in the group
+ *   ├────────────────────────────────┤
+ *   │ Inode bitmap (1 block)         │ ← one bit per inode in the group
+ *   ├────────────────────────────────┤
+ *   │ Inode table                    │ ← contiguous blocks, one per inode
+ *   ├────────────────────────────────┤
+ *   │ Data blocks                    │ ← files, directories, symlinks
+ *   └────────────────────────────────┘
+ *
+ *   Superblock and block group descriptors are NOT present in every
+ *   group when SPARSE_SUPER is enabled (only groups 0, 1, and groups
+ *   whose number is a power of 3, 5, or 7).
+ *
+ * ── Superblock (struct ext2_superblock) ──────────────────────────
+ *   Located at offset 1024 from the start of the partition (byte 1024).
+ *   Key fields:
+ *     s_inodes_count      — Total number of inodes on the filesystem
+ *     s_blocks_count      — Total number of blocks
+ *     s_log_block_size    — Block size = 1024 << s_log_block_size
+ *     s_blocks_per_group  — Blocks in each block group
+ *     s_inodes_per_group  — Inodes in each block group
+ *     s_magic             — Must be 0xEF53
+ *     s_rev_level         — 0 = GOOD_OLD_REV (128-byte inodes),
+ *                            1 = DYNAMIC_REV (variable-size inodes)
+ *     s_inode_size        — Inode size (128 or 256 bytes)
+ *     s_feature_compat    — Compatible features (can mount read-write)
+ *     s_feature_incompat  — Incompatible features (must understand them)
+ *     s_feature_ro_compat — Read-only compatible features
+ *     s_def_hash_seed[4]  — Seed for HTree directory hashing
+ *
+ * ── Block group descriptor (struct ext2_bg_desc) ─────────────────
+ *   One descriptor per block group, stored contiguously in the BGD
+ *   table (located right after the superblock).  Each descriptor:
+ *     bg_block_bitmap   — Block number of the block bitmap
+ *     bg_inode_bitmap   — Block number of the inode bitmap
+ *     bg_inode_table    — Block number of the inode table start
+ *     bg_free_blocks_count — Free blocks in this group
+ *     bg_free_inodes_count — Free inodes in this group
+ *     bg_used_dirs_count   — Number of directories in this group
+ *
+ * ── Inode structure (struct ext2_inode) ──────────────────────────
+ *   Each inode is a fixed-size structure (128 or 256 bytes) stored
+ *   in the inode table of its block group.  Group = (ino-1) / ipg,
+ *   index = (ino-1) % ipg.
+ *     i_mode        — File type + permissions (S_IFREG, S_IFDIR, etc.)
+ *     i_uid/i_gid   — Owner user/group ID
+ *     i_size        — File size in bytes (lower 32 bits)
+ *     i_dir_acl     — Upper 32 bits of file size (LARGE_FILE feature)
+ *     i_atime/ctime/mtime/dtime — Access, change, modify, delete timestamps
+ *     i_blocks      — Number of 512-byte blocks allocated to this file
+ *     i_flags       — Inode flags (EXT2_INDEX_FL, EXT2_DIRSYNC_FL, etc.)
+ *     i_block[15]   — Block pointers:
+ *                       [0..11]  — Direct block pointers
+ *                       [12]     — Singly indirect block pointer
+ *                       [13]     — Doubly indirect block pointer
+ *                       [14]     — Triply indirect block pointer
+ *       (When EXTENTS feature is set, i_block[] stores the
+ *        extent tree root header + entries instead.)
+ *     i_file_acl    — File extended attribute block
+ *     i_generation  — Inode generation number (for NFS)
+ *
+ * ── Indirect block resolution ────────────────────────────────────
+ *   For logical block N:
+ *     N < 12        → direct: i_block[N]
+ *     12 ≤ N < 12+K  → singly indirect: i_block[12] → read K ptrs
+ *     12+K ≤ N < 12+K+K² → doubly indirect: i_block[13]
+ *     12+K+K² ≤ N < 12+K+K²+K³ → triply indirect: i_block[14]
+ *   where K = block_size / 4  (entries per indirect block).
+ *
+ * ── HTree directory indexing ─────────────────────────────────────
+ *   When EXT2_FEATURE_COMPAT_DIR_INDEX and EXT2_INDEX_FL are set,
+ *   the directory uses a hash tree for O(log n) lookups.  The root
+ *   node is stored in the first data block of the directory inode.
+ *   See struct ext2_dx_root, ext2_dx_entry, ext2_dx_node in ext2.h.
+ * ═══════════════════════════════════════════════════════════════════════
  */
 
 #define KERNEL_INTERNAL
