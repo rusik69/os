@@ -7,6 +7,79 @@
  *   - Rock Ridge Interchange Protocol (RRIP) for POSIX permissions,
  *     long filenames, symlinks, and UID/GID
  *   - Falls back gracefully if Rock Ridge is not present
+ *
+ * ═══════════════════════════════════════════════════════════════════════
+ * ISO9660 Volume structure and on-disk formats
+ * ═══════════════════════════════════════════════════════════════════════
+ *
+ * ISO9660 (ECMA-119) is the standard filesystem for CD-ROM media.
+ * Data is stored in logical blocks of 2048 bytes (typically).
+ *
+ * ── Volume Descriptor Set ──────────────────────────────────────────
+ * Located at LBA 16 (sector 16).  A sequence of 2048-byte sectors:
+ *   Sector 0: Primary Volume Descriptor  (PVD, type 1)
+ *   Sector 1..N: Optional Supplementary VDs (Joliet, type 2)
+ *   Last: Volume Descriptor Set Terminator (VDST, type 255)
+ * Each sector starts with:
+ *   byte 0: type (1=PVD, 2=SVD, 3=partition, 255=terminator)
+ *   bytes 1-5: "CD001" identifier
+ *   byte 6: version (1)
+ *
+ * ── Primary Volume Descriptor (struct iso_primary_desc, 2048 bytes) ─
+ *   Offset  Size  Field                   Description
+ *   0       1     type                    = 1 (PVD)
+ *   1       5     id                      "CD001"
+ *   6       1     version                 = 1
+ *   8       32    system_id               System identifier
+ *   40      32    volume_id               Volume/disk label
+ *   80      8     (unused)
+ *   88      8     volume_space_size       Total sectors (LE+BE uint32)
+ *   128     32    (unused)
+ *   160     4     volume_set_size         (LE+BE uint16)
+ *   164     4     volume_seq_number       (LE+BE uint16)
+ *   168     4     logical_block_size      Block size in bytes (LE+BE uint16)
+ *   172     8     path_table_size         (LE+BE uint32)
+ *   180     4     path_table_l_location   Type-L path table location (LE+BE)
+ *   184     4     path_table_opt_location Optional type-L path table (LE+BE)
+ *   190     34    root_directory_entry    Root dir record (struct iso_dir_record)
+ *   224     128   volume_set_id
+ *   352     128   publisher_id
+ *   480     128   preparer_id
+ *   608     128   application_id
+ *   ...     ...   (copyright, abstract, bibliographic, creation/modify times)
+ *
+ * ── Directory Record (struct iso_dir_record) ───────────────────────
+ *   Variable-length record describing one file or subdirectory:
+ *   Offset  Size  Field                   Description
+ *   0       1     length                  Record size (including this byte)
+ *   1       1     ext_attr_length         Extended attribute record length
+ *   2       8     extent_location         LBA of data extent (LE+BE uint32)
+ *   10      8     data_length             Size of data (LE+BE uint32)
+ *   18      7     datetime                Recording time (ISO 7-byte format)
+ *   25      1     flags                   Bit 0=Hidden, 1=Dir, 2=Associated
+ *   26      1     file_unit_size          Interleave unit size (0=not interleaved)
+ *   27      1     interleave_gap          Interleave gap
+ *   28      4     volume_seq_number       Volume sequence (LE+BE uint16)
+ *   32      1     name_len                Length of file identifier (filename)
+ *   33      N     name                    File identifier (filename), padded to even
+ *
+ *   The name field follows ISO9660 level constraints:
+ *     Level 1: 8.3 chars, A-Z, 0-9, _
+ *     Level 2: up to 31 chars
+ *     Level 3: same as level 2, non-interleaved
+ *   Rock Ridge NM entries provide longer names (up to 255 chars).
+ *
+ * ── Path Tables ─────────────────────────────────────────────────────
+ *   Located at LBA from PVD path_table_l_location.  A linear list of
+ *   (directory_id, parent_index, extent) entries used for fast
+ *   traversal.  Not currently used by this driver (directory reads
+ *   are done via extent scanning).
+ *
+ * ── Data Space ──────────────────────────────────────────────────────
+ *   Files and directories are stored in contiguous extents.  Each extent
+ *   is described by a directory record.  The ISO9660 standard does not
+ *   support fragmentation — a file is a single contiguous extent.
+ * ═══════════════════════════════════════════════════════════════════════
  */
 
 #define KERNEL_INTERNAL
