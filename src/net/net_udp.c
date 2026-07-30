@@ -1,4 +1,66 @@
-/* net_udp.c — UDP, DHCP, DNS, HTTP */
+/*
+ * net_udp.c — UDP socket layer, DHCP client, DNS resolver, HTTP client
+ *
+ * ── Architecture Overview ──────────────────────────────────────────────
+ *
+ * This file implements four interrelated networking subsystems in a
+ * single translation unit:
+ *
+ * 1.  UDP datagram receive path (handle_udp)
+ *     ─ Entry point for all incoming UDP packets from the IP layer.
+ *       Validates length and checksum (RFC 768), then demultiplexes by
+ *       destination port to a registered handler or the listen/recv ring.
+ *       Ports 68 (DHCP client) and 1053 (DNS client) are handled
+ *       directly; all other ports consult the dynamic binding table.
+ *
+ * 2.  UDP socket binding (net_udp_bind / net_udp_unlisten)
+ *     ─ A fixed-size table (net_udp_bindings[]) maps destination ports
+ *       to callback handlers.  Protected by udp_bind_lock; lock order
+ *       is socket_lock → udp_bind_lock.
+ *
+ * 3.  UDP userspace listen/recv (udp_listen_slot / udp_pkt ring)
+ *     ─ A small static pool of UDP_LISTEN_MAX slots, each with a
+ *       UDP_RING_SIZE-deep ring buffer of udp_pkt entries.  Packets
+ *       are enqueued by a per-slot trampoline handler and dequeued
+ *       by net_udp_recv() which spins polling net_poll().
+ *
+ * 4.  ICMP error generation with rate limiting
+ *     ─ icmp_send_unreachable() and icmp_send_timeexceeded() construct
+ *       ICMP Destination Unreachable (type 3, code 3) and Time Exceeded
+ *       (type 11, code 0) messages respectively.  Both use a per-
+ *       destination token bucket (icmp_rate_table[]) keyed by the
+ *       offending packet's destination IP.  sysctl tunables
+ *       icmp_ratelimit (ms) and icmp_ratemask (hex bitmask) control
+ *       the rate and which ICMP types are subject to limiting.
+ *
+ * Higher-level protocols built on top:
+ *     ● DHCP (RFC 2131)  ── net_dhcp_discover(),
+ *                            net_dhcp_renew_if_needed()
+ *     ● DNS  (RFC 1035)  ── net_dns_resolve(),
+ *                            handle_dns_reply()
+ *     ● HTTP (RFC 7230)  ── net_http_get(), net_http_get_ex()
+ *
+ * ── Data Structures ────────────────────────────────────────────────────
+ *
+ *   struct udp_header       — 8-byte on-wire UDP header (src/dst port,
+ *                             length, checksum)
+ *   struct dhcp_packet      — Full DHCP message including option space
+ *   struct icmp_rate_entry  — Per-destination ICMP rate-limit tracking
+ *   struct udp_listen_slot  — A listening UDP port with ring buffer
+ *   struct udp_pkt          — Single packet queued in the ring buffer
+ *
+ * ── Locking ────────────────────────────────────────────────────────────
+ *
+ *   udp_bind_lock (spinlock)
+ *       Protects net_udp_bindings[] from concurrent modification.
+ *       handle_udp() reads under the lock; net_udp_bind() and
+ *       net_udp_unlisten() write under it.  Lock ordering:
+ *       socket_lock → udp_bind_lock.
+ *
+ *   icmp_rate_lock (spinlock)
+ *       Protects icmp_rate_table[] from concurrent access by
+ *       icmp_ratelimit_per_dst().
+ */
 
 #include "net_internal.h"
 #include "dns_cache.h"
@@ -1065,14 +1127,36 @@ void net_udp_list(void (*cb)(uint16_t port)) {
     }
 }
 
-/* ── Implement: udp_open ──────────────────────────────── */
+/*
+ * ── Socket interface: UDP protocol operations ──────────────────────
+ *
+ * These functions implement the socket-layer vtable for UDP sockets.
+ * They are registered by the socket subsystem and called through
+ * struct socket_ops function pointers.  All entry points validate
+ * their arguments before proceeding.
+ *
+ * The operations are intentionally thin wrappers: open/close manage
+ * the listen slot lifecycle, connect records the peer address, and
+ * sendmsg/recvmsg bridge between struct msghdr and the underlying
+ * net_udp_send()/net_udp_recv() transport.
+ */
+
+/* ── udp_open ────────────────────────────────────────────────────────
+ * Allocate and initialise a UDP socket.  Currently a no-op beyond
+ * argument validation; actual listen-side resources are allocated
+ * on demand by the socket layer.
+ */
 static int udp_open(void *sk)
 {
     if (!sk) return -EINVAL;
     kprintf("[udp] udp_open: UDP socket created\n");
     return 0;
 }
-/* ── Implement: udp_close ─────────────────────────────── */
+
+/* ── udp_close ───────────────────────────────────────────────────────
+ * Tear down a UDP socket.  If the socket was listening (listener >= 0),
+ * remove the binding from udp_slots[] and the bindings table.
+ */
 static int udp_close(void *sk)
 {
     if (!sk) return -EINVAL;
@@ -1082,7 +1166,13 @@ static int udp_close(void *sk)
     }
     return 0;
 }
-/* ── Implement: udp_connect ───────────────────────────── */
+
+/* ── udp_connect ─────────────────────────────────────────────────────
+ * Record the default destination address for a UDP socket (connected
+ * UDP — not a real connection, just a default send target per RFC 768).
+ * The address is stored in the socket structure and used as the
+ * destination for subsequent sendmsg() calls that omit msg_name.
+ */
 static int udp_connect(void *sk, void *addr)
 {
     if (!sk || !addr) return -EINVAL;
@@ -1091,7 +1181,17 @@ static int udp_connect(void *sk, void *addr)
             NIPQUAD(sin->sin_addr.s_addr), ntohs(sin->sin_port));
     return 0;
 }
-/* ── Implement: udp_sendmsg ───────────────────────────── */
+
+/* ── udp_sendmsg ─────────────────────────────────────────────────────
+ * Send a UDP datagram.  Extracts the destination address from the
+ * message header (msg_name if present, otherwise uses the connected
+ * address from a prior connect() call), builds the UDP datagram, and
+ * hands it to the IP output path.
+ *
+ * The payload is truncated at 1500 bytes (Ethernet MTU minus IP/UDP
+ * headers).  UDP fragmentation is not supported — the caller must
+ * ensure datagrams fit within the path MTU.
+ */
 static int udp_sendmsg(void *sk, void *msg, size_t len)
 {
     if (!sk || !msg) return -EINVAL;
@@ -1111,7 +1211,14 @@ static int udp_sendmsg(void *sk, void *msg, size_t len)
     net_udp_send(dst_ip, 0, dst_port, data, send_len);
     return (int)dlen;
 }
-/* ── Implement: udp_recvmsg ───────────────────────────── */
+
+/* ── udp_recvmsg ─────────────────────────────────────────────────────
+ * Receive a UDP datagram.  Blocks for up to 10 timer ticks (~100ms)
+ * polling the network stack.  On success, copies the payload to the
+ * caller's buffer and fills in msg_name with the source address and
+ * port (connectionless semantics per RFC 768).  Returns the number
+ * of bytes received, 0 on timeout, or -EAGAIN if no data is available.
+ */
 static int udp_recvmsg(void *sk, void *msg, size_t len)
 {
     if (!sk || !msg) return -EINVAL;
