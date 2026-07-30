@@ -898,6 +898,270 @@ On-disk filesystem source files:
 | overlay | `src/kernel/overlay.c`, `src/fs/overlay_enhance.c` | Union mounts |
 | FUSE | `src/fs/fuse.c` | Userspace filesystem |
 
+### VFS Operations and Data Structures
+
+The VFS layer is defined by three primary data structures that together provide a complete filesystem abstraction:
+
+#### struct vfs_ops — Filesystem Operations Dispatch Table
+
+**Header:** `src/include/vfs.h`
+
+Each mounted filesystem provides a `const struct vfs_ops` table implementing all VFS operations for that filesystem. This combines the roles of Linux's `super_operations`, `inode_operations`, and `file_operations` into a single per-filesystem dispatch table.
+
+**Required operations (all filesystems must implement):**
+- `read(priv, path, buf, max_size, *out_size)` — Read file contents into buffer, returns byte count or negative errno
+- `write(priv, path, data, size)` — Write data to file, returns 0 or negative errno
+- `stat(priv, path, *st)` — Get file metadata into `struct vfs_stat`, returns 0 or negative errno
+- `create(priv, path, type)` — Create a new file/directory, returns 0 or negative errno
+- `unlink(priv, path)` — Remove a file, returns 0 or negative errno
+- `readdir(priv, path)` — List directory entries via `kprintf`, returns 0 or negative errno
+
+**Optional operations (may be NULL; VFS applies sensible defaults or returns `-ENOTTY`):**
+- `readdir_names(priv, path, names[], max)` — Get directory entry names as an array
+- `truncate(priv, path, len)` — Truncate/extend file to given length
+- `fallocate(priv, path, mode, offset, len)` — Pre-allocate disk space
+- `dedup(priv, path1, path2)` — File deduplication (find and share identical blocks)
+- `resize(priv, new_block_count)` — Resize the filesystem
+- `journal_start/commit/abort(priv)` — Journal transaction management
+- `link(priv, oldpath, newpath)` — Create a hard link
+- `symlink(priv, target, linkpath)` — Create a symbolic link
+- `readlink(priv, path, buf, bufsize)` — Read symlink target
+- `mknod(priv, path, mode, dev_major, dev_minor)` — Create a device node
+- `flush(priv)` — Flush cached data to backing store
+- `set_time(priv, path, atime, mtime)` — Set file timestamps (with UTIME_NOW/UTIME_OMIT semantics)
+- `rename(priv, old_path, new_path)` — Rename/move within the same filesystem
+- `tmpfile(priv, mode)` — Create unnamed temporary file (O_TMPFILE)
+- `ioctl(priv, path, cmd, arg)` — Device-specific file operations
+- `seek(priv, path, offset, whence)` — Seek to data/hole boundary in sparse files
+- `setxattr/getxattr/listxattr/removexattr(priv, path, ...)` — Extended attribute operations
+
+The `<priv>` pointer from `struct vfs_mount` is passed as the first argument to every callback, allowing the filesystem driver to identify its instance state without global state.
+
+#### struct vfs_mount — Mounted Filesystem Instance
+
+**Header:** `src/include/vfs.h`
+
+Represents a single mounted filesystem, binding a mountpoint path to a specific `vfs_ops` implementation and its private driver data. Analogous to Linux's `struct super_block` + `struct mount` combined.
+
+```c
+struct vfs_mount {
+    char          mountpoint[64];      /* e.g. "/", "/mnt", "/boot" */
+    const struct vfs_ops *ops;         /* per-filesystem dispatch table */
+    void          *priv;               /* filesystem driver private data */
+    int           flags;               /* MS_RDONLY, MS_BIND, etc. */
+    char          bind_source[64];     /* for bind mounts: source path */
+    int           is_bind;             /* 1 if this is a bind mount */
+    int           journal_active;      /* 1 if journal transaction in progress */
+    uint32_t      journal_seq;         /* transaction sequence number */
+    int           encrypted;           /* 1 if per-mount encryption enabled */
+    uint8_t       enc_key[16];         /* AES-128 encryption key */
+};
+```
+
+**Lifecycle:**
+- Created by `vfs_mount(path, ops, priv)` or `vfs_mount_ex(path, ops, priv, flags)`
+- The mount table (`mounts[]`, up to `VFS_MAX_MOUNTS=16` entries) is protected by a spinlock (`mount_lock` in `vfs.c`)
+- Removed by `vfs_umount(path)`, which checks for busy filesystems first (`vfs_umount_check_busy`)
+- Per-process mount namespaces (via `CLONE_NEWNS`) each hold a private copy of the mount table
+
+#### struct vfs_filesystem_type — Registered Filesystem Type
+
+**Header:** `src/include/vfs.h`
+
+Each filesystem driver calls `vfs_register_filesystem(name, ops)` at init time to make its type available. Entries are enumerated via `/proc/filesystems` for userspace inspection.
+
+```c
+struct vfs_filesystem_type {
+    char name[32];                /* "ext2", "fat32", "tmpfs", etc. */
+    const struct vfs_ops *ops;    /* default ops for this type */
+    int registered;               /* 1 = type is registered */
+};
+```
+
+### Path Resolution Algorithm
+
+The core of the VFS is the path resolution algorithm, which translates a user-supplied path to a specific filesystem operation:
+
+```
+User path (may be relative)
+  │
+  ▼
+vfs_abs_path() — convert relative to absolute
+  ┌─────────────────────┐
+  │ CWD-based conversion │  (uses current process's working directory)
+  └─────────────────────┘
+  │
+  ▼
+vfs_resolve_mount() — find best-matching mount entry
+  ┌──────────────────────────────────────────────┐
+  │ Walks mounts[] array, longest-prefix match   │
+  │ e.g., path="/mnt/data/file.txt" matches     │
+  │ mountpoint="/mnt" → subpath="/data/file.txt" │
+  │ mountpoint="/"   → subpath="/mnt/data/..."   │
+  └──────────────────────────────────────────────┘
+  │
+  ▼
+vfs_ops->read(priv, subpath, ...) — dispatch to FS
+  ┌──────────────────────────────────────┐
+  │ FS operates relative to its own root  │
+  │ No knowledge of global mount hierarchy│
+  └──────────────────────────────────────┘
+```
+
+The longest-prefix match ensures that the most specific mount entry handles the path. This allows nested mounts (e.g., `/` at ext2 root, `/home` at tmpfs, `/mnt/usb` at FAT32) to coexist and function correctly.
+
+### Dentry Cache (dcache)
+
+**Files:** `src/include/dcache.h`, `src/kernel/vfs.c`
+
+The dcache is a fixed-size array (`DCACHE_SIZE=128` entries) caching resolved path metadata to avoid repeated filesystem accesses for `stat()` and related calls.
+
+```c
+struct dcache_entry {
+    char  path[DCACHE_PATH_LEN];   /* absolute path key (128 bytes) */
+    void *mount;                    /* mount pointer for bulk invalidate */
+    uint8_t  type;                  /* 1=file, 2=dir, 3=link */
+    uint32_t size;
+    uint16_t uid;
+    uint16_t gid;
+    uint16_t mode;
+    uint32_t mtime;
+    uint32_t atime;
+    uint32_t nlink;
+    uint32_t ino;                  /* inode number */
+    uint16_t dev_major;
+    uint16_t dev_minor;
+    uint32_t last_tick;            /* LRU timestamp for eviction */
+    int      in_use;               /* 1 = slot occupied */
+};
+```
+
+**Cache operations:**
+- `dcache_lookup(path, *st)` — Returns 0 on hit (data copied under lock), -1 on miss
+- `dcache_add(path, mount, type, size, ...)` — Insert or update; evicts LRU entry if full
+- `dcache_remove(path)` — Remove entry by path (on file deletion)
+- `dcache_remove_mount(mount)` — Invalidate all entries for a mount (on umount)
+
+**Eviction policy:** LRU (Least Recently Used) via a global monotonic tick counter. `dcache_shrink(n)` evicts up to `n` entries under memory pressure, called from the OOM handler. `dcache_evict_one()` removes the single oldest entry.
+
+**Locking:** All dcache operations are protected by `dcache_lock` (spinlock) for SMP safety. The lookup function copies the result while holding the lock, so a successful lookup's data cannot be invalidated between lookup and use.
+
+### Mount Namespace and Bind Mounts
+
+#### Mount Namespaces
+
+**Files:** `src/kernel/mnt_namespace.c`, `src/include/mnt_namespace.h`
+
+Per-process mount namespaces provide isolated mount table views, typically used for containerization:
+
+```c
+struct mnt_namespace {
+    int              refcount;
+    struct vfs_mount mounts[VFS_MAX_MOUNTS];  /* per-ns mount table */
+    int              num_mounts;
+};
+```
+
+- **Root namespace** wraps the global mount table. Created once during `vfs_init()`.
+- **CLONE_NEWNS** (via `unshare()` or `clone()`) creates a new namespace by deep-copying the parent's mount table.
+- **Propagation types** (implemented in `src/kernel/fs_mount_prop.c`):
+  - `SHARED` — mount events propagate to all peers in the namespace group
+  - `SLAVE` — receives propagation events but does not send them
+  - `PRIVATE` — fully isolated, no propagation in either direction
+
+#### Bind Mounts
+
+Bind mounts make a directory subtree visible at multiple locations in the mount hierarchy:
+
+- `vfs_bind_mount(src, target)` — Attach `src` tree at `target` path
+- `vfs_bind_mount_recursive(src, target)` — Recursive subtree bind (for mount namespaces)
+- `vfs_is_bind_mount(path)` — Check if a path is a bind mount
+- `vfs_bind_source(path)` — Get the original source path of a bind mount
+
+Bind mounts are tracked via the `is_bind` field and `bind_source` path in `struct vfs_mount`. They share the same `ops` and `priv` as the original mount.
+
+### File Locking, Extended Attributes, and POSIX ACLs
+
+#### File Locking
+
+**Header:** `src/include/vfs.h`
+
+POSIX advisory file locks (`fcntl/F_SETLK`, `F_SETLKW`, `F_GETLK`) provide cooperative inter-process file synchronization:
+
+```c
+struct file_lock {
+    int      l_type;          /* F_RDLCK, F_WRLCK, F_UNLCK */
+    int      l_whence;        /* SEEK_SET, SEEK_CUR, SEEK_END */
+    int64_t  l_start;         /* offset relative to whence */
+    int64_t  l_len;           /* 0 = to EOF */
+    int32_t  l_pid;           /* owning process PID */
+    int      used;
+    int      mandatory;       /* 1 = kernel-enforced mandatory lock */
+    char     path_storage[64]; /* path the lock applies to */
+};
+```
+
+**Conflict rules:**
+- Multiple read locks (F_RDLCK) on the same range are compatible
+- A write lock (F_WRLCK) conflicts with all other locks on the same range
+- Locks are automatically released when the file descriptor is closed
+- `vfs_setlk(path, flk, wait)` — Acquire/check/release a lock (wait=1 for F_SETLKW blocking)
+- `vfs_getlk(path, flk)` — Test if a conflicting lock exists, returns info about the blocker
+
+#### Extended Attributes (xattr)
+
+Extended attributes provide a mechanism for associating metadata with files outside the standard stat structure. The kernel supports the `user.` namespace:
+
+```c
+struct xattr_entry {
+    char  name[VFS_XATTR_NAME_MAX];    /* attr name (max 16 bytes) */
+    char  value[VFS_XATTR_VALUE_MAX];  /* attr value (max 64 bytes) */
+    int   size;                         /* actual value length */
+    int   in_use;
+};
+```
+
+**Limits:** Up to `VFS_XATTR_PER_INODE=4` extended attributes per file.
+
+**Operations:** `vfs_setxattr()`, `vfs_getxattr()`, `vfs_listxattr()`, `vfs_removexattr()`.
+
+Filesystems may override xattr handling by providing `setxattr`/`getxattr`/`listxattr`/`removexattr` in their `vfs_ops` table. If not provided, the VFS falls back to the global path-based xattr table.
+
+#### POSIX ACLs
+
+POSIX Access Control Lists extend the traditional UNIX permission model with arbitrary user and group entries:
+
+```c
+struct posix_acl_entry {
+    uint16_t tag;   /* ACL_USER_OBJ, ACL_USER, ACL_GROUP_OBJ, ACL_GROUP, ACL_MASK, ACL_OTHER */
+    uint16_t perm;  /* permission bits (r/w/x combination) */
+    uint32_t id;    /* user/group ID (for ACL_USER/ACL_GROUP entries) */
+};
+
+struct posix_acl {
+    struct posix_acl_entry entries[POSIX_ACL_MAX_ENTRIES];  /* max 3 entries */
+    int count;                                               /* actual entry count */
+};
+```
+
+**Access check order:**
+1. If the process's UID matches the file owner, use `ACL_USER_OBJ` (owner permissions)
+2. If the process's UID matches a named `ACL_USER` entry, use that entry (masked by `ACL_MASK`)
+3. If the process's GID matches the file group or a named `ACL_GROUP`, use the matching entry (masked by `ACL_MASK`)
+4. Otherwise, use `ACL_OTHER`
+5. If no ACL exists, fall back to traditional mode bits
+
+### VFS Permission Model
+
+The permission model uses a layered approach, checked in order:
+
+1. **DAC — UNIX mode bits:** Standard `rwx` permissions for owner/group/other, checked by `generic_permission()`.
+2. **POSIX ACL:** If a file has an ACL, it is consulted first as described above.
+3. **Landlock MAC:** Path-based Mandatory Access Control. During `vfs_open()`, `landlock_check_path()` verifies the requested access against the process's Landlock ruleset.
+4. **Capability checks:** Privileged operations (mount, unmount, `pivot_root`) require `CAP_SYS_ADMIN`.
+
+The `vfs_check_perms(path, uid, gid, op)` function provides a unified entry point that chains these checks appropriately for the requested operation (`VFS_R_OK=4` for read, `VFS_W_OK=2` for write, `VFS_X_OK=1` for execute, `VFS_F_OK=0` for existence).
+
 ### Block Cache and Buffer Cache
 
 The kernel uses a two-tier caching strategy for block-level I/O:
