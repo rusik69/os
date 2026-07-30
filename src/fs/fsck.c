@@ -1,24 +1,82 @@
 /*
  * fsck.c — Online filesystem integrity check (Items 277, S148, S153)
  *
- * Scans ext2 filesystem metadata for inconsistencies, logs errors,
- * and optionally attempts simple repairs.
+ * Implements an online (read-only by default) filesystem consistency
+ * checker for ext2, analogous to e2fsck.  It scans all metadata on a
+ * mounted ext2 filesystem, reports inconsistencies via kprintf() with
+ * a "[FSCK]" prefix, and optionally performs repairs.
  *
- * Checks performed:
- *   1. Superblock validation (magic 0xEF53, geometry, feature flags)
- *   2. Block group descriptor consistency
- *   3. Block/inode bitmap verification (all blocks marked free actually free)
- *   4. Inode field sanity (mode, size, link count, block count)
- *   5. Directory entry validity (name length, valid inode refs)
- *   6. Inode link counts vs actual directory entries
- *   7. Cross-reference: inodes referencing valid blocks marked free
- *   8. Salvage orphans to lost+found (auto-repair)
+ * ── Algorithm Overview ─────────────────────────────────────────────────
  *
- * Design:
- *   - Allocates working buffers dynamically so large filesystems are handled.
- *   - Bitmap scanning is done one block group at a time to keep memory
- *     usage low.
- *   - Errors are reported via kprintf() with a clear prefix "[FSCK]".
+ * The check proceeds in five sequential phases:
+ *
+ *   Phase 1 — Superblock validation
+ *     Reads the ext2 superblock at block offset 1 (byte offset 1024).
+ *     Verifies the magic number (0xEF53), checks geometry sanity
+ *     (inodes/block counts non-zero, log_block_size ≤ 5), and reports
+ *     the mount count and filesystem state (clean/dirty).
+ *
+ *   Phase 2 — Block Group Descriptor (BGD) loading
+ *     Computes how many blocks the BGD array spans and loads them all
+ *     into a heap-allocated buffer.  Each BGD is validated: block/inode
+ *     bitmap pointers and inode table pointers must be non-zero.
+ *
+ *   Phase 3 — Per-group bitmap scan
+ *     For each block group:
+ *       a) Load the block bitmap and count set bits.  Compare the count
+ *          of used blocks against bgd->bg_free_blocks_count.
+ *       b) Load the inode bitmap, count set bits, compare against
+ *          bgd->bg_free_inodes_count.
+ *       c) Spot-check allocated inodes (full check on first 32, then
+ *          every 16th inode) for:
+ *            - Zero i_mode (inode marked allocated but has no type)
+ *            - Zero link count (orphaned inode; optionally salvage)
+ *            - Directory entry structure validity (if inode is a dir)
+ *            - i_blocks vs i_size consistency (for regular files)
+ *
+ *   Phase 4 — Link count cross-reference
+ *     After scanning all directory entries in Phase 3, compares each
+ *     inode's i_links_count against the number of directory entries
+ *     that reference it.  Reports mismatches; optionally fixes them.
+ *
+ *   Phase 5 — Report / summary
+ *     Prints CLEAN or number of errors found.  Returns the error count
+ *     (0 = clean, >0 = errors found, negative = I/O or invalid arg).
+ *
+ * ── Design Decisions ───────────────────────────────────────────────────
+ *
+ *   - Memory: Bitmaps are read one block group at a time so that even
+ *     very large filesystems (multi-TB) require only ~block_size bytes
+ *     per bitmap.  The BGD array and inode directory-entry link counts
+ *     are the only large allocations (bounded by FSCK_MAX_INODES).
+ *
+ *   - Stack safety: Inode reads use sector-sized I/O (512-byte chunks
+ *     into a 1 KiB buffer) rather than allocating large on-stack blocks.
+ *     This avoids stack overflow when block_size is 4096 or larger.
+ *
+ *   - Repair: Controlled by FSCK_FLAG_FIX, FSCK_FLAG_AUTO_REPAIR, and
+ *     FSCK_FLAG_ASSUME_YES flags.  Repairs are write-in-place: the
+ *     affected sector is read, modified, and written back.  No journal
+ *     is used (consistent with the simple ext2 driver).
+ *
+ *   - Errors: All errors increment a running counter.  The check
+ *     continues past errors wherever possible, so a single run catches
+ *     multiple independent issues.  The phase-4 link-count scan and
+ *     phase-5 auto-repair loops are bounded to at most 200 errors to
+ *     prevent runaway output on severely corrupted filesystems.
+ *
+ * ── Filesystem Type ────────────────────────────────────────────────────
+ *
+ *   Currently only ext2 is supported (fsck_ext2).  The public API
+ *   function fsck_check() dispatches by filesystem type; adding support
+ *   for ext4, FAT32, or ISO9660 requires adding a new fsck_* function
+ *   and a type check in fsck_check().
+ *
+ * ── Related Items ──────────────────────────────────────────────────────
+ *
+ *   Items 277, S148, S153 — Original requirements for superblock check,
+ *   bitmap consistency, directory entry validation, orphan salvage, and
+ *   link count cross-reference.
  */
 
 #define KERNEL_INTERNAL
@@ -64,6 +122,31 @@ static struct vfs_mount *fsck_find_mount(const char *path)
 
 /* ── Public API ─────────────────────────────────────────────────────── */
 
+/*
+ * fsck_check() — Entry point: run filesystem integrity check on a mount.
+ *
+ * @mountpoint  Filesystem path to check (e.g., "/", "/mnt/disk").
+ *              Must be non-NULL and non-empty.
+ * @flags       Bitfield of FSCK_FLAG_* values controlling behaviour:
+ *                FSCK_FLAG_QUIET      — suppress informational messages
+ *                FSCK_FLAG_VERBOSE    — print extra per-group details
+ *                FSCK_FLAG_FIX        — attempt repairs interactively
+ *                FSCK_FLAG_AUTO_REPAIR — repair without asking
+ *                FSCK_FLAG_ASSUME_YES — skip prompts during fix
+ *                FSCK_FLAG_CHECK_BLOCKS — full cross-reference check
+ * @errors_out  If non-NULL, written with the total number of errors
+ *              found (0 = clean).
+ *
+ * Returns: 0 on clean filesystem, >0 on errors found, negative errno
+ * on failure (-EINVAL for bad args, -ENODEV if mount not found,
+ * -EIO on I/O error, -ENOMEM on allocation failure).
+ *
+ * Algorithm:
+ *   1. Locate the mount in the VFS mount table via fsck_find_mount().
+ *   2. Dispatch to the filesystem-specific checker (currently only
+ *      fsck_ext2()).
+ *   3. Pass through the result, which includes any repairs done.
+ */
 int fsck_check(const char *mountpoint, int flags, int *errors_out)
 {
     if (!mountpoint || !mountpoint[0])
@@ -219,11 +302,57 @@ static int get_ext2_dev_id(struct vfs_mount *mnt, uint8_t *dev_id_out,
 }
 
 /*
- * Check an ext2 filesystem for consistency.
+ * fsck_ext2() — Check an ext2 filesystem for consistency.
  *
- * Walks all block groups, loading the block and inode bitmaps,
- * comparing their set-bit counts against the block group descriptor
- * free counts, checking directory entries, and optionally repairing.
+ * This is the core of the fsck implementation.  It implements the
+ * five-phase algorithm documented at the top of this file.
+ *
+ * Phase breakdown within this function:
+ *
+ *   Lines marked "Step 1" — Superblock validation
+ *     Reads the superblock, verifies magic (0xEF53) and geometry.
+ *     Reports mount count warning if s_mnt_count ≥ s_max_mnt_count.
+ *     Warns if filesystem state != 1 (clean unmount).
+ *
+ *   Lines marked "Step 2" — BGD loading
+ *     Allocates a contiguous buffer for all block group descriptors.
+ *     Computes the number of BGD blocks from num_groups and block_size.
+ *
+ *   Lines marked "Step 3" — Per-group bitmap scan (the main loop)
+ *     For each block group g:
+ *       - Validates BGD metadata pointers are non-zero.
+ *       - Reads block bitmap → counts set bits → compares free count.
+ *       - Reads inode bitmap → counts set bits → compares free count.
+ *       - If FSCK_FLAG_CHECK_BLOCKS, verifies free blocks are not
+ *         metadata blocks (block/inode bitmap or inode table).
+ *       - Spot-checks allocated inodes:
+ *           · Full check on first 32 inodes, then every 16th.
+ *           · Validates i_mode (non-zero = type present).
+ *           · Checks link count (i_links_count > 0).
+ *           · If directory (S_IFDIR), reads first data block and
+ *             walks directory entries to validate inode refs and
+ *             name lengths, and counts links for Phase 4.
+ *           · For regular files, compares i_blocks vs i_size.
+ *
+ *   Lines marked "Step 4" — Link count cross-reference
+ *     Re-scans all inodes, comparing i_links_count against the
+ *     directory entry counts accumulated in dir_link_counts[].
+ *     Reports every mismatch (limited to 200 to avoid flood).
+ *
+ *   Lines marked "Step 5" — Auto-repair link counts
+ *     If FSCK_FLAG_AUTO_REPAIR is set, reads each mismatched inode,
+ *     sets i_links_count to the actual directory entry count, and
+ *     writes the sector back.
+ *
+ * @mnt         The VFS mount structure for the filesystem to check.
+ * @flags       FSCK_FLAG_* controlling verbosity and repair behaviour.
+ * @errors_out  If non-NULL, written with total error count.
+ *
+ * Returns: 0 on success, negative errno on failure (-EIO, -ENOMEM,
+ * -EFSCORRUPTED), or positive error count (errors found but no failure).
+ *
+ * Memory: bgd_buf is allocated for the duration.  Bitmaps are allocated
+ * and freed per group.  dir_link_counts persists across all groups.
  */
 static int fsck_ext2(struct vfs_mount *mnt, int flags, int *errors_out)
 {
