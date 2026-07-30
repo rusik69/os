@@ -22,13 +22,98 @@
 #define AC97_CLASS    0x04
 #define AC97_SUBCLASS 0x01
 
-/* ── Register offsets ───────────────────────────────────────────── */
+/* ── AC97 codec register map (AC97 spec §5) ───────────────────────
+ *
+ * The AC97 audio codec exposes two separate I/O register spaces
+ * through two PCI BARs:
+ *
+ *   BAR0 (I/O) — NAM (Native Audio Mixer), 256 bytes, 16-bit access.
+ *   BAR1 (I/O) — NABM (Native Audio Bus Master), 64 bytes, 8/16/32-bit.
+ *
+ * ── NAM register layout (AC97 spec §5.1, §5.7) ──────────────────
+ *   Each register is 16 bits wide, accessed at even byte offsets
+ *   (odd offsets are reserved).  Volume registers use an inverted
+ *   5-bit scale: 0 = 0dB (max), 31 = -46.5dB (min), 1.5dB/step.
+ *
+ *   Offset │ Register              │ Description
+ *   ───────┼───────────────────────┼─────────────────────────────
+ *   0x00   │ Reset                 │ Write 1 to reset codec
+ *   0x02   │ Master Volume         │ L(4:0) R(12:8) Mute(15)
+ *   0x04   │ AUX Out Volume        │ Same format as Master
+ *   0x06   │ Master Mono Volume    │ Mono volume (5-bit)
+ *   0x08   │ Master Tone (L/R)     │ Bass(3:0) Treble(11:8)
+ *   0x0A   │ PC_BEEP Volume        │ Beep vol(5:0) — can also be MASTER_TONE_R
+ *   0x0C   │ Phone Volume          │ Phone/headset volume
+ *   0x0E   │ Mic Volume            │ Mic vol(5:0) 20dB boost(6)
+ *   0x10   │ Line In Volume        │ Stereo line input
+ *   0x12   │ CD Volume             │ CD audio input
+ *   0x14   │ Video Volume          │ Video input
+ *   0x16   │ AUX In Volume         │ Auxiliary input
+ *   0x18   │ PCM Out Volume        │ PCM DAC output
+ *   0x1A   │ (reserved)            │
+ *   0x1C   │ Record Gain           │ L(3:0) R(11:8) Mute(15) — 1.5dB steps
+ *   0x1E   │ Record Select         │ L(2:0) R(10:8) — 0=Mic,1=CD,2=Video,...
+ *   0x20.. │ (reserved)            │
+ *   0x26   │ (reserved)            │
+ *   0x28   │ Extended Audio ID     │ VRA(0), SPDIF(1) — read-only
+ *   0x2A   │ Extended Audio Ctrl   │ VRA(0), SPDIF(1) — write to enable
+ *   0x2C   │ Front DAC Rate        │ Sample rate in Hz (VRA must be set)
+ *   0x2E.. │ (reserved)            │
+ *   0x30   │ (reserved)            │
+ *   0x32   │ PCM ADC Rate          │ Capture rate in Hz (VRA must be set)
+ *   0x34.. │ (reserved)            │
+ *   0x7C   │ Vendor ID1            │ First 16 bits of 32-bit vendor ID
+ *   0x7E   │ Vendor ID2            │ Last 16 bits of 32-bit vendor ID
+ *
+ * ── NABM register layout (AC97 spec §6) ─────────────────────────
+ *   The NABM engine uses a Buffer Descriptor List (BDL) ring for
+ *   DMA-based audio streaming.  Each BDL entry (struct ac97_bdl_entry)
+ *   points to a physical audio buffer with a sample count and flags.
+ *
+ *   Offset │ Register              │ Description
+ *   ───────┼───────────────────────┼─────────────────────────────
+ *   0x00   │ PCM Out BDBAR         │ BDL base address (32-bit phys)
+ *   0x04   │ (reserved)            │
+ *   0x08   │ (reserved)            │
+ *   0x0C   │ (reserved)            │
+ *   0x10   │ PCM Out BDBAR         │ BDL base address (32-bit phys)
+ *   0x14   │ PCM Out CIV           │ Current BDL index (8-bit)
+ *   0x15   │ PCM Out LVI           │ Last valid BDL index (8-bit)
+ *   0x16   │ PCM Out SR            │ Status register (16-bit)
+ *   0x18.. │ (reserved)            │
+ *   0x1B   │ PCM Out CR            │ Control register (8-bit)
+ *   0x1C.. │ (reserved)            │
+ *   0x20   │ PCM In BDBAR          │ BDL base address
+ *   0x24   │ PCM In CIV            │ Current BDL index
+ *   0x25   │ PCM In LVI            │ Last valid BDL index
+ *   0x26   │ PCM In SR             │ Status register
+ *   0x28   │ PCM In PICB           │ Position in current buffer (16-bit)
+ *   0x2A   │ (reserved)            │
+ *   0x2B   │ PCM In CR             │ Control register (8-bit)
+ *   0x2C   │ Global Control        │ Cold reset(2), Warm reset(1)
+ *   0x30   │ Global Status         │ Interrupt status (32-bit)
+ *
+ * ── BDL entry format ────────────────────────────────────────────
+ *   Each entry (4 bytes addr + 2 bytes samples + 2 bytes ctrl):
+ *     addr    – 32-bit physical address of the audio buffer
+ *     samples – Number of 16-bit samples in the buffer (not bytes!)
+ *     ctrl    – BUP(14)=Buffer Underrun Policy, IOC(15)=Interrupt
+ *               on Completion
+ *
+ * ── Data flow ───────────────────────────────────────────────────
+ *   Playback: Driver fills BDL entries → programs BDBAR + LVI →
+ *   sets CR_RPBM → DMA engine reads buffers and streams to DAC.
+ *   Capture:  DMA engine writes captured PCM into BDL buffers →
+ *   raises IOC → driver copies data to PCM stream.
+ *
+ * ── Register offsets (driver defines) ───────────────────────────
+ */
 /* NAM (Native Audio Mixer) — mapped to BAR0 (I/O) */
 #define NAM_RESET          0x00
 #define NAM_MASTER_VOL     0x02
 #define NAM_PCM_VOL        0x18
 #define NAM_REC_GAIN       0x1C   /* Recording gain (0-15 each channel) */
-#define NAM_REC_SELECT     0x1E   /* Record source select */
+#define NAM_REC_SELECT     0x1E   /* Record source select: see REC_SEL_* values */
 #define NAM_EXTENDED_AUDIO 0x28   /* Extended audio status/control */
 #define NAM_SAMPLE_RATE    0x2C   /* PCM front DAC rate */
 #define NAM_PCM_IN_RATE    0x32   /* PCM ADC sample rate (if VRA enabled) */
