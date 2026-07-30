@@ -12,6 +12,77 @@
  *
  * Read-only — no journal, no encryption, no htree indexing.
  * Backward-compatible with ext2/ext3; detected by feature flags.
+ *
+ * ═══════════════════════════════════════════════════════════════════════
+ * Ext4 extent tree structure
+ * ═══════════════════════════════════════════════════════════════════════
+ *
+ * When the EXT4_EXTENTS_FL (0x00080000) inode flag is set, the inode
+ * uses an extent tree instead of the traditional indirect block pointer
+ * scheme (direct[12] → singly → doubly → triply indirect).
+ *
+ * ── Overview ────────────────────────────────────────────────────────
+ * The 60-byte i_block[15] field in the inode stores the root of an
+ * extent tree.  This is a balanced tree whose leaves describe runs of
+ * contiguous physical blocks.  Each extent covers up to 32768 blocks
+ * (EXT4_EXT_MAX_LEN).  A typical small file needs only 1-4 extents.
+ *
+ * ── Tree structure ─────────────────────────────────────────────────
+ *
+ *   i_block[0..14]  (60 bytes, inode embedded)
+ *     │
+ *     ▼
+ *   struct ext4_extent_header  (12 bytes)
+ *     ├─ eh_magic     = 0xF30A
+ *     ├─ eh_entries   = number of valid entries
+ *     ├─ eh_max       = array capacity
+ *     ├─ eh_depth     = 0 (leaf), 1, 2, ... (internal nodes)
+ *     └─ eh_generation = generation number
+ *
+ *   If depth == 0 (leaf node):
+ *     Followed by struct ext4_extent entries[]:
+ *       ┌─ ee_block    = first logical block covered
+ *       ├─ ee_len      = number of blocks (bit 15 = uninitialized)
+ *       ├─ ee_start_hi = upper 16 bits of physical block
+ *       └─ ee_start_lo = lower 32 bits of physical block
+ *     → Physical block = (ee_start_hi << 32) | ee_start_lo
+ *
+ *   If depth > 0 (internal/index node):
+ *     Followed by struct ext4_extent_idx entries[]:
+ *       ┌─ ei_block    = first logical block covered by subtree
+ *       ├─ ei_leaf_lo  = lower 32 bits of child block
+ *       ├─ ei_leaf_hi  = upper 16 bits of child block
+ *       └─ ei_unused
+ *     → Child block = (ei_leaf_hi << 32) | ei_leaf_lo
+ *     → Each child block contains another header + entries
+ *       at the next depth level.
+ *
+ * ── Tree traversal (ext4_ext_find_extent) ──────────────────────────
+ *   1. Read the root header from i_block[] (in-memory copy).
+ *   2. If depth > 0, binary search index entries for the child
+ *      whose ei_block ≤ target iblock.
+ *   3. Read the child block from disk.
+ *   4. Repeat at each level until depth == 0 (leaf).
+ *   5. At the leaf, binary search extent entries for one covering
+ *      target iblock: ee_block ≤ iblock < ee_block + ee_len.
+ *   6. Return physical block = ee_start + (iblock - ee_block).
+ *
+ * ── Hole handling ──────────────────────────────────────────────────
+ * If no extent covers the target block, it is a hole (sparse region).
+ * Reads return zeros.  No physical block is allocated.
+ *
+ * ── Uninitialized extents ──────────────────────────────────────────
+ * Bit 15 (0x8000) of ee_len marks an uninitialized extent.  The
+ * blocks are allocated on disk but contain no data (written as zeros
+ * by fallocate).  Reads return zeros; writes would convert to normal.
+ *
+ * ── Comparison with indirect blocks ────────────────────────────────
+ *   Indirect blocks: O(1) for D[0..11], O(K) for S, O(K²) for Dbl.
+ *   Extent tree:    O(log N) where N = number of extents, and each
+ *                   extent covers up to 32768 contiguous blocks.
+ *   Extents are far more space-efficient for large files and avoid
+ *   the metadata write amplification of indirect blocks.
+ * ═══════════════════════════════════════════════════════════════════════
  */
 
 #define KERNEL_INTERNAL
