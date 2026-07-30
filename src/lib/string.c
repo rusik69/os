@@ -2,6 +2,84 @@
 #include "stdlib.h"
 #include "export.h"
 
+/*
+ * src/lib/string.c — Kernel Libc String Function Implementations
+ *
+ * This file provides the kernel's internal C string and memory library.
+ * All functions operate on raw memory regions or NUL-terminated strings
+ * and are used throughout the kernel, drivers, and filesystem code.
+ *
+ * ── Design Notes ──────────────────────────────────────────────────────
+ *
+ * • Portability: These are freestanding implementations with no external
+ *   dependencies other than the kernel-internal headers.  They match the
+ *   signatures of the C standard libc (ISO C99 / POSIX.1-2001/2008) so
+ *   that common codebases compile without modification.
+ *
+ * • No NULL-pointer checking:  Following standard C convention, passing
+ *   NULL to any string function that reads from a pointer (e.g. strlen,
+ *   strcmp, memcpy) produces undefined behaviour.  Callers must ensure
+ *   pointers are valid.  The overhead of runtime checks on every call
+ *   (especially in hot paths like memcpy) is unjustified for kernel
+ *   internal code where the caller already holds a valid reference.
+ *
+ * • Avoidance of large temporal buffers:  memcpy and memmove operate
+ *   word-by-word through the supplied pointer; no intermediate bounce
+ *   buffer is used.
+ *
+ * • Thread safety:  Functions that operate only on caller-provided
+ *   memory (memset, memcpy, strcmp, etc.) are inherently reentrant.
+ *   The only stateful function is strtok(), which uses a static
+ *   save-pointer and is NOT thread-safe; strtok_r() is provided as
+ *   the reentrant alternative.
+ *
+ * ── Function Summary ──────────────────────────────────────────────────
+ *
+ *   Memory ops
+ *     memset    — fill n bytes of s with byte c
+ *     memcpy    — copy n bytes from src to dest (non-overlapping)
+ *     memmove   — copy n bytes, handling overlap correctly
+ *     memcmp    — compare first n bytes of s1 and s2
+ *     memchr    — locate byte c in first n bytes of s
+ *     memccpy   — copy until byte c found or n bytes exhausted
+ *
+ *   String ops (length, copy, concat)
+ *     strlen    — return length of NUL-terminated string
+ *     strnlen   — bounded strlen (at most maxlen)
+ *     strcpy    — copy NUL-terminated string (unbounded)
+ *     strncpy   — bounded copy, pads remainder with NUL
+ *     strlcpy   — BSD-style bounded copy, always NUL-terminates
+ *     strcat    — append src to dest (unbounded)
+ *     strncat   — bounded append, NUL-terminates
+ *     strlcat   — BSD-style bounded append
+ *
+ *   String comparison
+ *     strcmp    — compare two NUL-terminated strings
+ *     strncmp   — bounded compare (at most n chars)
+ *
+ *   String search
+ *     strchr    — find first occurrence of char c in s
+ *     strrchr   — find last occurrence of char c in s
+ *     strstr    — find substring (needle) in haystack
+ *     strspn    — length of prefix containing only chars from accept
+ *     strcspn   — length of prefix containing NO chars from reject
+ *     strpbrk   — find first char from accept in s
+ *
+ *   Tokenization
+ *     strtok    — non-reentrant tokenize (uses static state)
+ *     strtok_r  — reentrant tokenize (caller provides saveptr)
+ *     strsep    — alternative tokenize (modifies stringp)
+ *
+ *   String trimming
+ *     strtrim   — remove leading/trailing whitespace in-place
+ *
+ *   Conversion
+ *     strtol    — string to long (supports base 0/8/10/16)
+ *     strtoul   — string to unsigned long
+ */
+
+/* ── Memory operations ────────────────────────────────────────────── */
+
 void *memset(void *s, int c, size_t n) {
     unsigned char *p = (unsigned char *)s;
     while (n--) *p++ = (unsigned char)c;
@@ -179,7 +257,9 @@ void *memchr(const void *s, int c, size_t n) {
     return (void *)0;
 }
 
-/* strtok: tokenize str on first call (non-NULL), subsequent calls pass NULL */
+/* ── String tokenization (reentrant and non-reentrant) ──────────── */
+
+/* strtok: non-reentrant tokenize (uses static state; NOT thread-safe) */
 static char *strtok_saveptr = (char *)0;
 char *strtok(char *str, const char *delim) {
     if (str) strtok_saveptr = str;
