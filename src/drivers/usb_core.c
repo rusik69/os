@@ -4,11 +4,45 @@
  * Provides USB driver registration, device matching via struct
  * usb_device_id, and probe()/disconnect() lifecycle management.
  *
- * Architecture:
- *   - usb_register_driver() / usb_deregister_driver()
- *   - struct usb_device_id with match flags (VID:PID, class/subclass/protocol)
- *   - Match USB drivers to devices via probe()
- *   - Reference counting; detach on disconnect
+ * USB Host Controller Driver Model:
+ * ─────────────────────────────────
+ * The USB subsystem is layered into three tiers:
+ *
+ *   1. USB Class Drivers (HID, MSC, CDC, Audio, Video, etc.)
+ *      - Call usb_control_msg(), usb_bulk_msg(), usb_int_msg(),
+ *        usb_isochronous_msg() to communicate with devices.
+ *      - Register via usb_register_driver() with a usb_device_id table
+ *        for VID:PID or class/subclass/protocol matching.
+ *
+ *   2. USB Core (usb_core.c + usb_transfer.c)
+ *      - Manages the global driver list (g_drivers[]) and device table
+ *        (g_core_devices[]), both protected by g_drivers_lock.
+ *      - Routes transfer requests to the registered host controller
+ *        via the usb_hc_ops function table.
+ *      - Provides descriptor parsing (device, config, interface,
+ *        endpoint, IAD), alternate setting management, and IAD support.
+ *      - DMA-safe buffer allocation (usb_alloc_dma_buf / usb_free_dma_buf).
+ *
+ *   3. Host Controller Drivers (EHCI, OHCI, UHCI, xHCI)
+ *      - Implement struct usb_hc_ops (defined in usb_core.h):
+ *          .control_transfer()    — Setup-data-status lifecycle on EP0
+ *          .bulk_transfer()       — Large data on async schedule
+ *          .interrupt_transfer()  — Periodic polling (HID, etc.)
+ *          .isochronous_transfer()— Time-sensitive streaming (Audio, Video)
+ *      - Register their ops table at init via usb_register_hc_ops().
+ *      - At most one HC can be active at a time (global singleton ops).
+ *      - EHCI currently provides the primary HC implementation
+ *        (usb_ehci.c), with an xHCI stub returning -ENOSYS.
+ *
+ * Transfer Flow:
+ *   Class driver → usb_control_msg/bulk_msg/int_msg/isochronous_msg()
+ *                → usb_transfer.c dispatch (spinlock-protected)
+ *                → hc_ops->control_transfer/bulk_transfer/interrupt_transfer/
+ *                  isochronous_transfer()
+ *                → HC hardware (EHCI async/periodic schedules)
+ *
+ * The usb_init() entry point initialises the core device model and
+ * probes for EHCI controllers.  usb_exit() tears everything down.
  *
  * Item S36 — USB core device model
  */
