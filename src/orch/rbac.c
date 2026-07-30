@@ -1,9 +1,76 @@
 /*
- * rbac.c — Role-Based Access Control and service accounts (C188–C189)
+ * rbac.c — Orchestrator RBAC model (Role-Based Access Control)
  *
- * Implements:
- *   C188: RBAC — roles, bindings, and authorization checks
- *   C189: Service accounts — create, retrieve tokens
+ * ── Overview ──────────────────────────────────────────────────────────────
+ * This file implements a Kubernetes-inspired Role-Based Access Control (RBAC)
+ * model for the orchestrator subsystem.  RBAC governs what subjects (users,
+ * groups, service accounts) are allowed to do on which resources within a
+ * given namespace.  The model is built from three core abstractions:
+ *
+ *   1. Roles  — A named set of permissions (verbs) scoped to a resource type.
+ *               Each role has a name, a resource pattern, and a list of verbs
+ *               (e.g. "get", "list", "create", "delete", "*").
+ *               Resources support a wildcard "*" that matches all resources.
+ *
+ *   2. Bindings — A binding associates a role with a subject (user, group,
+ *                 or service account).  Bindings are optionally scoped to a
+ *                 namespace; an empty namespace means the binding is
+ *                 cluster-wide and applies in every namespace.
+ *
+ *   3. Service Accounts — A named identity used by orchestrator workloads.
+ *                         Each service account resides in a namespace and
+ *                         is issued a bearer token at creation time for
+ *                         authentication and authorization.
+ *
+ * ── Authorization Flow ───────────────────────────────────────────────────
+ *   rbac_authorize(subject_kind, subject_name, resource, verb, namespace)
+ *       ↓
+ *   Iterates all bindings that match the subject (kind + name)
+ *       ↓
+ *   For each matching binding, checks namespace scope:
+ *     - If the binding has a namespace, it must match the request's namespace
+ *     - An empty namespace on the binding means "cluster-wide" (matches all)
+ *       ↓
+ *   Looks up the role referenced by the binding
+ *       ↓
+ *   Checks that the role's resource matches (exact or "*")
+ *       ↓
+ *   Checks that one of the role's verbs matches (exact or "*")
+ *       ↓
+ *   Returns 0 (authorized) on first match, -EACCES if nothing matches
+ *
+ * ── Data Structures ──────────────────────────────────────────────────────
+ *   struct rbac_role       — in_use flag, name, resource pattern, verb[]
+ *   struct rbac_binding    — in_use flag, role_name, subject_kind/name, namespace
+ *   struct service_account — in_use flag, name, namespace, token[], created_at
+ *
+ *   All data is stored in statically-allocated fixed-size tables protected by
+ *   a single spinlock (rbac_lock).  This keeps the implementation simple and
+ *   safe for use in the kernel's single-address-space environment.
+ *
+ * ── Constants (see #defines) ─────────────────────────────────────────────
+ *   ROLES_MAX       = 16  — maximum number of roles
+ *   BINDINGS_MAX    = 32  — maximum number of role bindings
+ *   SA_MAX          = 16  — maximum number of service accounts
+ *   RBAC_NAME_MAX   = 64  — max length for names
+ *   RBAC_RESOURCE_MAX= 64 — max length for resource patterns
+ *   VERBS_MAX       = 8   — max verbs per role
+ *   TOKEN_LEN       = 128 — length of auto-generated bearer tokens
+ *
+ * ── Thread Safety ────────────────────────────────────────────────────────
+ * All public API functions acquire rbac_lock (a spinlock) before reading or
+ * writing any table.  Lock ordering: callers must not hold any other lock
+ * when calling into rbac.c to avoid deadlock.
+ *
+ * ── Spec References ──────────────────────────────────────────────────────
+ *   C188 — RBAC: roles, bindings, authorization checks
+ *   C189 — Service accounts: creation, token retrieval, deletion
+ *
+ * ── Future Work ──────────────────────────────────────────────────────────
+ * - Dynamic cluster roles (ClusterRole / ClusterRoleBinding)
+ * - Role aggregation
+ * - Audit logging of authorization decisions
+ * - Token rotation / expiry for service accounts
  */
 
 #define KERNEL_INTERNAL
