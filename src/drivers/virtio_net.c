@@ -87,7 +87,78 @@
 #define VRING_DESC_F_NEXT  1
 #define VRING_DESC_F_WRITE 2
 
-/* ── Virtqueue structures ────────────────────────────────────────── */
+/* ── Virtio descriptor ring layout ─────────────────────────────────
+ *
+ * Each virtqueue consists of three areas packed into a single
+ * page-aligned memory region:
+ *
+ *   1. Descriptor Table (array of struct vring_desc, VRING_SIZE entries)
+ *      ┌────────┬──────────┬───────┬──────┐
+ *      │  addr  │   len    │ flags │ next │
+ *      │ (8 B)  │  (4 B)   │ (2 B) │ (2 B)│
+ *      └────────┴──────────┴───────┴──────┘
+ *      - addr: physical address of the data buffer (guest-physical)
+ *      - len:  number of readable/writable bytes in the buffer
+ *      - flags:
+ *          VRING_DESC_F_NEXT  (1) — descriptor is chained to descs[next]
+ *          VRING_DESC_F_WRITE (2) — buffer is device-writable (RX)
+ *          (When neither flag is set, the buffer is driver-writable / TX)
+ *      - next: index of the next descriptor in the chain (valid only
+ *        when VRING_DESC_F_NEXT is set).  A descriptor chain ends
+ *        when flags & NEXT == 0.
+ *
+ *   2. Available Ring (struct vring_avail)
+ *      ┌───────┬──────┬────────────────────────────┐
+ *      │ flags │  idx │  ring[0..VRING_SIZE-1]     │
+ *      │ (2 B) │ (2 B)│  (each entry: 2 B)         │
+ *      └───────┴──────┴────────────────────────────┘
+ *      - flags: 0 normally; VIRTQ_AVAIL_F_NO_INTERRUPT (1) suppresses
+ *        interrupts when the device consumes entries
+ *      - idx:   next free slot in ring[] (driver writes after adding;
+ *        device reads to learn how many entries are available)
+ *      - ring[]: array of descriptor-chain head indices that the
+ *        driver has made available to the device
+ *      The device reads ring[avail->idx_prev .. avail->idx - 1] to
+ *      find new descriptor chains to process.
+ *
+ *   3. Used Ring (struct vring_used)
+ *      ┌───────┬──────┬────────────────────────────────────┐
+ *      │ flags │  idx │  ring[0..VRING_SIZE-1]             │
+ *      │ (2 B) │ (2 B)│  (each entry: id(4 B) + len(4 B)) │
+ *      └───────┴──────┴────────────────────────────────────┘
+ *      - flags: 0 normally; VIRTQ_USED_F_NO_NOTIFY (1) tells
+ *        the device to suppress notifications when it uses entries
+ *      - idx:   next slot the device will write (device writes
+ *        after consuming; driver reads to learn how many are done)
+ *      - ring[]: array of used_elem entries { id, len } where:
+ *          id  — head index of the completed descriptor chain
+ *          len — number of bytes the device wrote (for WRITE descs)
+ *
+ * Memory layout within the 4096-byte queue memory:
+ *   [0 .. sizeof(vring_desc)*VRING_SIZE-1]           — descriptor table
+ *   [sizeof(vring_desc)*VRING_SIZE .. +sizeof(vring_avail)] — avail ring
+ *   [padding to 4-byte boundary]                      — padding
+ *   [aligned offset .. end]                           — used ring
+ *
+ * The helper functions vring_avail_ptr() and vring_used_ptr() compute
+ * these offsets at runtime.
+ *
+ * Descriptor chain walk (TX example):
+ *   descs[0] → (virtio_net_hdr, NEXT=1, next=1)
+ *   descs[1] → (packet data, NEXT=0)
+ *   avail->ring[avail->idx & (VRING_SIZE-1)] = 0  (head of chain)
+ *   avail->idx++                                    (make available)
+ *   Device reads the chain from head 0, processes header + data,
+ *   writes used_elem { .id = 0, .len = bytes_processed },
+ *   increments used->idx.
+ *
+ * RX uses a single-descriptor-per-buffer arrangement:
+ *   descs[i].flags = WRITE, .addr = rx_pkt_bufs[i], .len = RX_BUF_SIZE
+ *   All VRING_SIZE entries are placed in the avail ring at init time.
+ *   The device writes received data into the buffer and reports the
+ *   descriptor index via the used ring.
+ *
+ * ──────────────────────────────────────────────────────────────── */
 #pragma pack(push, 1)
 struct vring_desc {
     uint64_t addr;
