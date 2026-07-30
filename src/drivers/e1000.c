@@ -18,6 +18,133 @@
 #include "module.h"
 #endif
 
+/*
+ * █████╗ ████████╗ █████╗  ██████╗ ██████╗
+ * ██╔══██╗╚══██╔══╝██╔══██╗██╔═══██╗██╔══██╗
+ * ███████║   ██║   ███████║██║   ██║██████╔╝
+ * ██╔══██║   ██║   ██╔══██║██║   ██║██╔══██╗
+ * ██║  ██║   ██║   ██║  ██║╚██████╔╝██║  ██║
+ * ╚═╝  ╚═╝   ╚═╝   ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝
+ *
+ * Intel PRO/1000 (E1000/E1000E) PCI Ethernet Driver
+ * =================================================
+ *
+ * Supported devices:
+ *   82540EM  (PCI ID 0x100E) — QEMU default, 1 queue, legacy ITR only
+ *   82574L   (PCI ID 0x10D3) — 2 queues, RSS, IVAR per-queue vectors
+ *   82576    (PCI ID 0x10C9) — up to 4 queues, per-queue EITR, RSS, MSI-X
+ *
+ * ── MMIO Register Layout ──────────────────────────────────────────────
+ *
+ * BAR0 maps a 128 KB (0x20000 byte) MMIO region starting at offset 0x0000.
+ * Registers are 32-bit wide and accessed via e1000_read()/e1000_write().
+ * The register space is organized into the following groups:
+ *
+ *   Offset range   | Group                      | Key registers
+ *   ---------------+----------------------------+---------------------------
+ *   0x0000-0x001C  | Control & Status           | CTRL, STATUS, EERD
+ *   0x00C0-0x00D8  | Interrupt                  | ICR, IMS, IMC, ITR
+ *   0x0100-0x0148  | Receive Control            | RCTL, RDBAL0..RDT0
+ *   0x0400-0x0448  | Transmit Control           | TCTL, TDBAL0..TDT0
+ *   0x2800-0x2818  | RX Queue 0 rings           | RDBAL, RDBAH, RDLEN, RDH, RDT
+ *   0x2C00-0x2C18  | RX Queue 1 rings           | (same layout, +0x400)
+ *   0x3000-0x3018  | RX Queue 2 rings (82576)   | (same layout, +0x400)
+ *   0x3400-0x3418  | RX Queue 3 rings (82576)   | (same layout, +0x400)
+ *   0x3800-0x3818  | TX Queue 0 rings           | TDBAL, TDBAH, TDLEN, TDH, TDT
+ *   0x3C00-0x3C18  | TX Queue 1 rings           | (same layout, +0x400)
+ *   0x4000-0x4018  | TX Queue 2 rings (82576)   | (same layout, +0x400)
+ *   0x4400-0x4418  | TX Queue 3 rings (82576)   | (same layout, +0x400)
+ *   0x5200-0x53FC  | Multicast Table Array (MTA) | 128 dword hash filter
+ *   0x5400-0x5408  | MAC Address (RAL, RAH)     | 6-byte station address
+ *   0x5600-0x57FC  | VLAN Filter Table (VFTA)   | 128 dword VLAN bitmap
+ *   0x5818         | MRQC                      | Multi-Queue / RSS command
+ *   0x5C00-0x5C7C  | RSS Redirection Table      | 32 dwords (128 entries)
+ *   0x5C80-0x5C8C  | RSS Random Key             | 4 dwords (128-bit key)
+ *   0x01680-0x0168C| Per-queue EITR (82576)     | EITR0..EITR3
+ *   0x01700-0x0170C| IVAR (82574/82576)         | Interrupt vector alloc
+ *
+ * Per-queue ring registers (RDBAL/RDBAH/RDLEN/RDH/RDT and their TX
+ * equivalents) are spaced 0x400 bytes apart, allowing up to 4 queues.
+ * The RX/TX register tables in RX_Q_REGS[] and TX_Q_REGS[] map queue
+ * index -> register offsets for concise access.
+ *
+ * ── Descriptor Ring Model ─────────────────────────────────────────────
+ *
+ * Both RX and TX use circular ring buffers in physical memory.  Each
+ * ring consists of N descriptor entries (NUM_RX_DESC/NUM_TX_DESC = 32),
+ * each 16 bytes and 16-byte aligned.  Two pointers control the ring:
+ *
+ *   RDH/TDH (Head)  — hardware-owned: points to the next descriptor the
+ *                     hardware will process (hardware advances after use).
+ *   RDT/TDT (Tail)  — software-owned: points to the last available
+ *                     descriptor; writing TDT signals new work to HW.
+ *
+ * Ring empty:  RDH == RDT    → no work to do.
+ * Ring full:   next(RDT) == RDH  → software must wait before adding more.
+ *             (next() = (cur + 1) % N; we reserve one descriptor to
+ *              distinguish full from empty).
+ *
+ * RX descriptor flow:
+ *   1. SW allocates buffers (pre-mapped DMA), writes physical addresses
+ *      into descriptors, clears status (DD=0), advances RDT.
+ *   2. HW receives a packet, DMA-writes into the buffer, sets status.DD.
+ *   3. SW polls DD bit, reads packet, clears DD, advances RDT.
+ *
+ * TX descriptor flow:
+ *   1. SW writes packet data into pre-mapped buffer, sets length/cmd in
+ *      descriptor, clears status, advances TDT to notify HW.
+ *   2. HW DMA-reads the buffer and transmits on wire.
+ *   3. HW sets status.DD when transmission completes.
+ *   4. SW polls DD before reusing the descriptor.
+ *
+ * ── Descriptor Structures ─────────────────────────────────────────────
+ *
+ * struct e1000_rx_desc (16 bytes):
+ *   offset | field      | description
+ *   -------+------------+-----------------------------------------------
+ *   0-7    | addr       | 64-bit physical address of data buffer
+ *   8-9    | length     | bytes written by HW (valid when DD=1)
+ *   10-11  | checksum   | hardware-computed checksum (optional)
+ *   12     | status     | DD, EOP, IXSM, VPCS flags
+ *   13     | errors     | CE, IPE, RXE, TCPE, SEQE bits
+ *   14-15  | special    | vlan tag (when VME enabled) or RSS hash
+ *
+ * struct e1000_tx_desc (16 bytes):
+ *   offset | field      | description
+ *   -------+------------+-----------------------------------------------
+ *   0-7    | addr       | 64-bit physical address of data buffer
+ *   8-9    | length     | bytes to transmit
+ *   10     | cso        | checksum offset (for TCO/offload)
+ *   11     | cmd        | EOP, IFCS, RS, RPS, VLE, IDE bits
+ *   12     | status     | DD (Descriptor Done)
+ *   13     | css        | checksum start (for TCO/offload)
+ *   14-15  | special    | vlan TCI (when VLE=1) or CSO field
+ *
+ * ── Device Variant Differences ────────────────────────────────────────
+ *
+ * Feature            | 82540EM  | 82574L      | 82576
+ * -------------------+----------+-------------+---------------
+ * Max queues         | 1        | 2           | 4
+ * RSS                | No       | Yes (2Q)    | Yes (4Q)
+ * Per-queue EITR     | No       | No          | Yes (EITR0-3)
+ * IVAR (per-q vec)   | No       | Yes         | Yes
+ * MSI-X support      | No       | No          | Yes (4 vectors)
+ * VFTA (VLAN filter) | 128 dwords | 128 dwords | 128 dwords
+ *
+ * ── Interrupt Architecture ────────────────────────────────────────────
+ *
+ * The driver uses a single legacy IRQ (or MSI-X vectors on 82576).
+ * ICR (Interrupt Cause Read) is read in the ISR to determine the
+ * source; writing IMW clears bits.  The ISR masks RX further interrupts
+ * (NAPI-model), signals the net_rx_signal() softirq, and is re-armed
+ * by e1000_irq_rearm() after the poll loop drains the RX rings.
+ *
+ * Interrupt moderation (ITR): the ITR register holds an interval in
+ * 256 ns units (0 = off, 0xFFFF = max).  The driver supports adaptive
+ * ITR that adjusts based on observed packets-per-second, as well as
+ * per-queue RDTR/RADV (RX) and TIDV/TADV (TX) delay timers.
+ */
+
 /* ── Register offsets ──────────────────────────────────────────────── */
 #define REG_CTRL       0x0000
 #define REG_STATUS     0x0008
