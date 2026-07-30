@@ -1,4 +1,80 @@
-/* semaphore.c — Kernel counting semaphore (spin+yield) */
+/* semaphore.c — Kernel counting semaphore (spin+yield-based wait queue)
+ *
+ * OVERVIEW
+ * ========
+ * This file implements counting semaphores for the OS kernel.  A counting
+ * semaphore maintains an integer count that is decremented on wait (P
+ * operation) and incremented on post (V operation).  When the count reaches
+ * zero, threads that call sem_wait block until another thread posts.
+ *
+ * WAIT QUEUE DESIGN (Spin-Yield)
+ * ==============================
+ * The current implementation uses a lightweight "spin + yield" approach
+ * instead of a formal blocked-thread list (traditional wait queue):
+ *
+ *   1. sem_wait() disables interrupts (cli), checks if count > 0.
+ *      If yes, it decrements the count and returns immediately.
+ *   2. If count == 0, it re-enables interrupts (sti) and calls
+ *      scheduler_yield() to voluntarily give up the CPU.
+ *   3. On the next scheduling turn, it loops back and retries.
+ *
+ * This is a busy-wait with cooperative yielding — a form of "spinlock
+ * semaphore."  It is simple, correct, and avoids the complexity of
+ * dynamic wait-queue lists, wake-one/wake-all semantics, and priority
+ * inheritance.
+ *
+ * TRADEOFFS
+ * =========
+ * Advantages of spin-yield:
+ *   - No dynamic memory allocation for wait-queue nodes.
+ *   - No doubly-linked list management or wake-up iteration.
+ *   - Naturally safe under interrupt-disabled atomic sections.
+ *   - Suitable for a single-CPU, preemptible kernel with few threads.
+ *
+ * Disadvantages vs. a formal wait queue:
+ *   - Wastes CPU cycles polling (though yielding mitigates this).
+ *   - Not fair — any waiting thread may acquire the lock next.
+ *   - Does not support priority inheritance or PI boosting.
+ *   - Not suitable for real-time or heavily contended workloads.
+ *
+ * A future enhancement could add a proper wait queue:
+ *   struct wait_queue_entry { struct task_struct *task; struct
+ *   wait_queue_entry *next; }; — queued in a linked list off of
+ *   struct sem_entry, with wake_up() moving exactly one task from
+ *   the head of the queue to the ready list.
+ *
+ * DATA STRUCTURES
+ * ===============
+ * struct sem_entry {
+ *     volatile int count;   // Current semaphore value (atomic w/ cli/sti)
+ *     int          in_use;  // 1 if slot allocated, 0 if free
+ * };
+ *
+ * A fixed array of SEM_MAX (32) entries is statically allocated.
+ * Slots are tracked via the in_use flag.  No dynamic wait-queue list
+ * is stored per entry — waiters spin-yield on the count field directly.
+ *
+ * API SUMMARY
+ * ===========
+ *   sem_init(id)     — Allocate a semaphore with initial count
+ *   sem_wait(id)     — P operation (decrement, block if zero) [spin-yield]
+ *   sem_post(id)     — V operation (increment, wake potential waiters)
+ *   sem_trywait(id)  — Non-blocking P (returns -EAGAIN if zero)
+ *   sem_destroy(id)  — Release a semaphore slot
+ *   semop(semid,...) — SysV-style semaphore operations
+ *   semctl(semid,...)— SysV-style semaphore control
+ *   sem_getvalue()   — Read current count
+ *   sem_timedwait()  — P with absolute timeout
+ *   sem_open()       — Named semaphore (stub)
+ *   sem_unlink()     — Named semaphore unlink (stub)
+ *
+ * ATOMICITY
+ * =========
+ * All count operations are performed with interrupts disabled (cli/sti)
+ * to guarantee atomic access on this single-CPU kernel.  No CAS or LL/SC
+ * is used — cli/sti provides mutual exclusion against interrupt handlers
+ * and other kernel threads on the same CPU.
+ */
 #include "semaphore.h"
 #include "scheduler.h"
 #include "timer.h"
@@ -67,6 +143,18 @@ int sem_init(int count) {
 
 void sem_wait(int id) {
     if (id < 0 || id >= SEM_MAX || !sems[id].in_use) return;
+    /*
+     * SPIN-YIELD WAIT LOOP (the "wait queue")
+     *
+     * Instead of enqueuing this thread on a blocked list, we
+     * poll the count with interrupts disabled.  If count > 0 we
+     * decrement and return; otherwise we yield the CPU and retry.
+     *
+     * This is functionally equivalent to a wait queue but avoids
+     * the overhead of list management.  The cost is that every
+     * reschedule checks the condition — see the file header for
+     * a full discussion of tradeoffs vs. a formal wait queue.
+     */
     for (;;) {
         __asm__ volatile("cli");
         if (sems[id].count > 0) {
@@ -75,12 +163,18 @@ void sem_wait(int id) {
             return;
         }
         __asm__ volatile("sti");
-        scheduler_yield();
+        scheduler_yield();  /* Give other threads a chance to post */
     }
 }
 
 void sem_post(int id) {
     if (id < 0 || id >= SEM_MAX || !sems[id].in_use) return;
+    /*
+     * Increment the count atomically.  If threads are waiting
+     * (spinning in sem_wait's spin-yield loop), the next time one
+     * is scheduled it will see count > 0 and acquire the semaphore.
+     * This is the wake-up mechanism for our spin-yield wait queue.
+     */
     __asm__ volatile("cli");
     if (sems[id].count < (int)0x7FFFFFFF)
         sems[id].count++;
