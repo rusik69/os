@@ -426,6 +426,350 @@ Timers:
 - Timerfd: userspace timer via file descriptor
 - hrtimer slack for power-efficient coalescing
 
+## Driver Model
+
+This kernel uses a hybrid driver model combining **compile-time registration** (via the initcall system), **direct initialization in `kernel_main()`**, and **loadable kernel modules** (for runtime-loaded drivers). There is no unified `struct device_driver`/`struct device` bus abstraction like Linux; instead, each driver subsystem defines its own registration and probe mechanism.
+
+### Initcall-Based Driver Registration
+
+The initcall system (`src/include/initcall.h`) provides a linker-section-based mechanism for registering driver initialization functions at compile time:
+
+```c
+typedef void (*initcall_t)(void);
+
+#define pure_initcall(fn)       __define_initcall(fn, 0)   /* earliest */
+#define core_initcall(fn)       __define_initcall(fn, 1)
+#define postcore_initcall(fn)   __define_initcall(fn, 2)
+#define arch_initcall(fn)       __define_initcall(fn, 3)
+#define subsys_initcall(fn)     __define_initcall(fn, 4)
+#define device_initcall(fn)     __define_initcall(fn, 5)   /* default for drivers */
+#define fs_initcall(fn)         __define_initcall(fn, 4)   /* fs alias */
+#define late_initcall(fn)       __define_initcall(fn, 5)   /* latest */
+```
+
+Each macro places a function pointer into a specific `.initcall.N` linker section. The linker script (linker.ld) emits these sections in level order. `do_initcalls()` in `src/kernel/kernel.c` iterates from `__initcall_start` to `__initcall_end`, calling every registered function once during boot.
+
+**Typical driver usage:**
+
+```c
+#include "initcall.h"
+
+static int my_driver_init(void) {
+    /* probe hardware, register IRQ handlers, set up device state */
+    return 0;
+}
+device_initcall(my_driver_init);
+```
+
+Drivers compiled as **loadable modules** use `module_init(fn)` instead. For built-in compilation, `module_init` maps to `device_initcall`; for module compilation it creates an `init_module` alias that the ELF module loader can call by name.
+
+### Direct Initialization in `kernel_main()`
+
+Many core drivers and infrastructure modules are called explicitly in `kernel_main()` as part of the 17-phase boot sequence (see Boot Sequence, Phase 3). This covers drivers that must be available before `do_initcalls()` runs or that have strict ordering dependencies:
+
+| Phase | Drivers initialized | Examples |
+|-------|-------------------|----------|
+| 1 – Early bootstrap | Serial, VGA | `serial_init()`, `vga_init()` |
+| 6 – Block foundations | Ramdisk, tmpfs, framebuffer console | `ramdisk_init()`, `tmpfs_init()` |
+| 8 – Interrupt / SMP | Timer, APIC, workqueue | `timer_init()`, `apic_init_local()` |
+| 10 – Device infrastructure | Keyboard, RTC, ACPI, serial IRQ | `keyboard_init()`, `rtc_init()`, `acpi_init()` |
+| 13 – Block layer & storage | ATA, AHCI, NVMe, device-mapper | `ata_init()`, `ahci_init()`, `dm_init()` |
+| 15 – PCI, GPU, USB | PCI bus, Intel GPU, USB core | `pci_init()`, `intel_gpu_init()`, `usb_init()` |
+| 16 – Network | e1000, virtio-net, bridge, bonding | `e1000_init()`, `bridge_init()`, `bonding_init()` |
+
+Drivers initialized this way have deterministic ordering and can rely on all preceding phases being complete.
+
+### PCI Subsystem (`src/drivers/pci.c`)
+
+The PCI subsystem is the most structured bus-level driver framework in the kernel. It provides:
+
+**Configuration Space Access (two methods):**
+
+1. **Legacy I/O Port (CF8/CFC):** Write bus/slot/func/offset to port 0xCF8, then read/write the 32-bit value via port 0xCFC. Used when PCIe ECAM is unavailable. Supports 256-byte standard config space.
+
+2. **PCIe ECAM (memory-mapped):** The physical ECAM base address is read from the ACPI MCFG table and mapped into the kernel virtual address space using 2MB huge pages. Each device's config space is accessed by direct memory dereference at:
+   ```
+   virt_addr = ecam_base + (bus << 20) | (slot << 15) | (func << 12)
+   ```
+   This enables full 4096-byte extended config space access.
+
+**Device Enumeration:**
+
+```c
+// Scan all 256 buses × 32 slots × 8 functions
+for (bus = 0; bus < 256; bus++)
+    for (slot = 0; slot < 32; slot++)
+        for (func = 0; func < 8; func++)
+            if (pci_device_exists(bus, slot, func))
+                // multi-function detection via Header Type bit 7
+```
+
+A device is present if its Vendor ID register reads a value other than `0xFFFF`. Multi-function devices are detected when bit 7 of the header type register is set; otherwise only function 0 is probed.
+
+**Device Matching (modalias):**
+
+Each discovered PCI device generates a modalias string in the standard format:
+```
+pci:vXXXXdXXXXsvXXXXsdXXXXbcXXccXX
+```
+Where:
+- `v` = vendor ID, `d` = device ID
+- `sv` = subsystem vendor, `sd` = subsystem device
+- `bc` = base class, `cc` = subclass
+
+The modalias is used for **deferred autoprobe**: during early boot (when interrupts may be disabled and the module loader needs a preemptible context), devices are queued in a static array (`g_autoprobe_queue[PCI_AUTOPROBE_MAX_ENTRIES]`). Later, `pci_autoprobe_work()` runs in a workqueue context and calls `request_module()` for each queued modalias, triggering module autoloading.
+
+**Capability List Traversal:**
+
+```c
+/* Standard capabilities (offset 0x34 pointer) */
+for (cap = pci_read8(bus, slot, func, 0x34);
+     cap != 0 && iterations < PCI_CAP_MAX_ITERATIONS;
+     cap = next_cap)
+
+/* PCIe extended capabilities (offset 0x100 range) */
+for (ecap = 0x100;
+     ecap != 0 && iterations < PCI_EXT_CAP_MAX_ITERATIONS;
+     ecap = next_ecap)
+```
+
+Capability IDs include: MSI (0x05), MSI-X (0x11), PCIe (0x10), PM (0x01), LTR (0x18), ACS (0x0D), and others.
+
+**Key PCI Driver API:**
+
+| Function | Purpose |
+|----------|---------|
+| `pci_read16/32(bus, slot, func, offset)` | Read PCI config space (safe: returns 0xFFFF if no device) |
+| `pci_write16/32(bus, slot, func, offset, val)` | Write PCI config space |
+| `pci_find_device(vendor, device, out)` | Scan for a specific vendor:device |
+| `pci_find_class(cls, sub, out)` | Scan for a class/subclass |
+| `pci_read_bar(bus, slot, func, bar_index, out_val)` | Read Base Address Register |
+| `pci_enable_bus_master(dev)` | Set bus master bit (DMA enable) |
+| `pci_enable_msi(dev, vector)` | Configure MSI capability |
+| `pci_enable_msix(dev, entries, nvec)` | Configure MSI-X vectors |
+| `pci_find_cap(dev, cap_id)` | Find capability by ID |
+| `pci_find_ext_cap(dev, cap_id)` | Find extended capability |
+| `pci_find_pcie_cap(dev)` | Find PCIe capability |
+| `pci_find_acs_cap(dev)` | Find ACS capability |
+
+### Block Device Drivers
+
+Block devices register via the block device layer (`src/include/blockdev.h`). Each driver provides read/write operations on a numbered device:
+
+```c
+struct block_device_ops {
+    int (*read)(uint64_t lba, uint8_t *buffer, uint32_t sectors);
+    int (*write)(uint64_t lba, const uint8_t *buffer, uint32_t sectors);
+};
+
+int blockdev_register(int dev_id, const char *name,
+                      uint64_t num_sectors, uint32_t sector_size,
+                      struct block_device_ops *ops);
+```
+
+Supported block device drivers:
+
+| Driver | Source | Transport | Features |
+|--------|--------|-----------|----------|
+| ATA PIO | `src/drivers/ata.c` | Legacy IDE | PIO mode, LBA28/48, IRQ-driven |
+| AHCI | `src/drivers/ahci.c` | PCI (SATA) | NCQ, multi-port, MSI |
+| NVMe | `src/drivers/nvme.c` | PCIe | Queue pairs, PRP/SGL, MSI-X |
+| virtio-blk | `src/drivers/virtio_blk.c` | virtio PCI | Multi-queue, indirect descs |
+| Ramdisk | `src/drivers/ramdisk.c` | Memory | Static initramfs, dynamic ramdisks |
+| Loop | `src/drivers/loop.c` | File-backed | Backed by regular file, offset support |
+| Device-mapper | `src/drivers/dm-*.c` | Stackable | Linear, zero, error, crypt, verity, raid, snapshot, era |
+| Multipath | `src/drivers/mpath.c` | Stackable | Path failover, I/O policy |
+| iSCSI | `src/drivers/iscsi.c` | Network | Full session mgmt, CHAP auth, MC/S |
+| NVMe-oF | `src/drivers/nvmf.c` | RDMA/TCP | Queue pairs, namespace export |
+| FCoE | `src/drivers/fcoe.c` | Ethernet | FIP login, FC-2 framing |
+| DRBD | `src/drivers/drbd.c` | Network | Sync/async replication, dual-primary |
+| NBD | `src/drivers/nbd.c` | Network | Network block device protocol |
+| Ceph RBD | `src/drivers/rbd.c` | Network | CRUSH placement, snapshots |
+| bcache | `src/drivers/bcache.c` | Caching | SSD caching for HDD |
+
+### Network Device Drivers
+
+Network drivers register via the netdevice layer (`src/net/netdevice.c`):
+
+```c
+struct net_device {
+    char name[IFNAMSIZ];
+    uint8_t mac[6];
+    int (*transmit)(struct net_device *dev, struct sk_buff *skb);
+    int (*open)(struct net_device *dev);
+    int (*close)(struct net_device *dev);
+    // ...
+};
+
+int netif_register(struct net_device *dev);
+```
+
+Supported NIC drivers:
+
+| Driver | Source | Features |
+|--------|--------|----------|
+| e1000 | `src/drivers/e1000.c` | MSI-X multi-queue, RSS, interrupt moderation (ITR), NAPI polling |
+| virtio-net | `src/drivers/virtio_net.c` | Multi-queue, indirect descriptors, checksum offload |
+| loopback | `src/net/loopback.c` | Internal loopback |
+| TUN/TAP | `src/net/tun.c` | Userspace packet injection |
+| veth | `src/net/veth.c` | Virtual Ethernet pair for net namespaces |
+| bonding | `src/drivers/bonding.c` | 802.3ad (LACP), balance-xor, active-backup |
+| vmxnet3 | `src/drivers/vmxnet3.c` | VMware VMXNET3, multi-queue |
+
+Network features: RPS/RFS flow steering (`src/net/rps.c`), NAPI polling, multi-queue RSS, XDP fast path, checksum offload.
+
+### USB Subsystem (`src/drivers/usb_core.c`)
+
+USB uses a host-controller-centric model with device enumeration on the root hub:
+
+```c
+int usb_init(void);           // Initialize USB HCIs (EHCI/XHCI)
+int usb_hub_init(void);       // Hub driver for port enumeration
+int usb_msc_init(void);       // Mass Storage Class driver
+int usb_hid_init(void);       // Human Interface Device driver
+```
+
+Key layers:
+- **Host Controller**: EHCI (USB 2.0) and XHCI (USB 3.x) drivers manage transfer rings and port routing
+- **Hub driver**: Detects connect/disconnect events, manages power switching
+- **Device drivers**: Match against interface class/subclass/protocol (MSC, HID, CDC ACM, UAS, serial, wifi)
+
+USB transfer types supported: control, bulk, interrupt, isochronous.
+
+### Virtio Family
+
+The virtio family of drivers uses a shared transport layer (`src/drivers/virtio_pci_modern.c`) with device-specific frontends:
+
+| Driver | Source | Purpose |
+|--------|--------|---------|
+| virtio-net | `src/drivers/virtio_net.c` | Network interface |
+| virtio-blk | `src/drivers/virtio_blk.c` | Block device |
+| virtio-scsi | `src/drivers/virtio_scsi.c` | SCSI controller |
+| virtio-gpu | `src/drivers/virtio_gpu.c` | 2D/3D graphics |
+| virtio-input | `src/drivers/virtio_input.c` | Keyboard/mouse |
+| virtio-console | `src/drivers/virtio_console.c` | Serial console |
+| virtio-rng | `src/drivers/virtio_rng.c` | Entropy source |
+| virtio-fs | `src/drivers/virtio_fs.c` | Shared filesystem (FUSE) |
+| virtio-iommu | `src/drivers/virtio_iommu.c` | IOMMU |
+| balloon | `src/drivers/balloon.c` | Memory balloon |
+
+Transport layer handles: virtqueue negotiation, feature bit negotiation, MSI-X vector assignment, modern/legacy interface detection.
+
+### DRM / GPU Drivers (`src/drivers/drm/`)
+
+The DRM (Direct Rendering Manager) subsystem provides a unified interface for graphics output:
+
+| Driver | Source | Description |
+|--------|--------|-------------|
+| DRM core | `src/drivers/drm/drm_core.c` | Mode setting, connector management, framebuffer, CRTC |
+| bochs-drm | `src/drivers/drm/bochs_drm.c` | QEMU Bochs VGA (standard QEMU display) |
+| simplefb | `src/drivers/drm/simplefb.c` | Simple framebuffer (early boot console handoff) |
+| intel-gpu | `src/drivers/intel_gpu.c` | Intel integrated GPU (i915-like, native mode setting) |
+| DRM atomic | `src/drivers/drm/drm_atomic.c` | Atomic modeset/plane update |
+
+### Audio Drivers (`src/drivers/`)
+
+| Driver | Source | Description |
+|--------|--------|-------------|
+| AC97 | `src/drivers/ac97.c` | AC97 audio codec (PCI, I/O port based) |
+| Sound core | `src/drivers/sound_core.c` | /dev/dsp and /dev/mixer interface |
+| OSS | `src/drivers/sound_oss.c` | Open Sound System compatibility |
+| FM synth | `src/drivers/fm_synth.c` | FM synthesis (OPL2/OPL3) |
+| MIDI | `src/drivers/sound_midi.c` | MIDI UART interface |
+| PC speaker | `src/drivers/speaker.c` | PC timer-based beep |
+
+### Misc / Platform Drivers
+
+| Driver | Source | Description |
+|--------|--------|-------------|
+| TPM TIS | `src/drivers/tpm_tis.c` | TPM 2.0 TIS FIFO interface |
+| IPMI KCS | `src/drivers/ipmi_kcs.c` | IPMI Keyboard Controller Style |
+| Watchdog | `src/drivers/watchdog.c` | WDT timer reset |
+| I6300ESB | `src/drivers/i6300esb.c` | Intel 6300ESB watchdog |
+| HPET | `src/drivers/hpet.c` | High Precision Event Timer |
+| I2C | `src/drivers/i2c.c` | I2C bus master/slave |
+| SMBUS | `src/drivers/smbus.c` | System Management Bus |
+| RTC/CMOS | `src/drivers/cmos.c` | MC146818 RTC via CMOS |
+| ACPI | `src/drivers/acpi.c` | ACPI table parsing, EC, thermal |
+| Serial | `src/drivers/serial.c` | UART 16550 (COM1-4) |
+| Keyboard | `src/drivers/keyboard.c` | PS/2 keyboard (8042) |
+| Mouse | `src/drivers/mouse.c` | PS/2 mouse |
+| VGA | `src/drivers/vga.c` | VGA text/framebuffer modes |
+| EDAC | `src/drivers/edac.c` | Error Detection And Correction |
+| SPI | `src/drivers/spi.c` | Serial Peripheral Interface |
+| GPIO IRQ | `src/drivers/gpio_irq.c` | GPIO interrupt controller |
+| PVpanic | `src/drivers/pvpanic.c` | QEMU panic notification device |
+| VMware balloon | `src/drivers/vmw_balloon.c` | VMware memory balloon |
+
+### Loadable Module Drivers
+
+226 kernel modules (`.ko` files) are built from `obj-m` entries across the source tree and bundled in initramfs. The module build system (`src/modules/drivers.mk`) organizes drivers into categories:
+
+```
+Core/basic     — e1000, speaker, coredump, floppy, virtio, NVMe, TPM, AHCI, USB
+Device mapper  — dm-*, ramdisk, loop, bcache, mpath
+Virtio family  — virtio_*, vhost_*, vfio, vdpa
+Graphics       — intel_gpu, bochs, simplefb
+Audio          — ac97, sound_*, fm_synth
+PCIe           — pcie_aer, pcie_dpc, pcie_ptm, sriov
+USB sub-modules — usb_uas, usb_serial, usb_cdc_ether, usb_wifi
+Misc           — firmware_class, dma-api, i2c, smbus, watchdog, rtc, cmos, battery
+```
+
+Module loading flow:
+```
+insormod → syscall → module loader → ELF parse → RELA relocation → 
+EXPORT_SYMBOL resolution → RSA-2048/SHA-256 signature verification →
+module_init() call
+```
+
+See the **Kernel Modules** section below for more detail.
+
+### Driver Source Files
+
+All driver source code lives under `src/drivers/`, organized by protocol/hardware:
+
+```
+src/drivers/
+├── pci.c              — PCI/PCIe config space access, enumeration
+├── ata.c              — ATA PIO mode
+├── ahci.c             — AHCI SATA (NCQ)
+├── nvme.c             — NVMe SSD
+├── e1000.c            — Intel PRO/1000 NIC
+├── virtio_net.c       — Virtio network
+├── virtio_blk.c       — Virtio block
+├── usb_core.c         — USB host controller
+├── usb_ehci.c         — EHCI USB 2.0
+├── usb_xhci.c         — xHCI USB 3.x
+├── drm/               — DRM core + GPU drivers
+│   ├── drm_core.c
+│   ├── bochs_drm.c
+│   ├── simplefb_drm.c
+│   └── drm_atomic.c
+├── ac97.c             — AC97 audio
+├── cmos.c             — RTC/CMOS
+├── acpi.c             — ACPI tables
+├── watchdog.c         — Watchdog timer
+├── tpm_tis.c          — TPM 2.0
+├── iscsi.c            — iSCSI initiator
+├── nvmf.c             — NVMe-over-Fabrics
+├── fcoe.c             — Fibre Channel over Ethernet
+├── drbd.c             — Distributed Replicated Block Device
+├── bonding.c          — NIC bonding
+├── dm-crypt.c         — Device mapper crypto
+├── dm-verity.c        — Device mapper integrity
+└── ... (50+ additional driver files)
+```
+
+### Driver Initialization Summary
+
+| Method | When | Used by |
+|--------|------|---------|
+| `kernel_main()` direct call | Phases 1–17 (ordered) | Core drivers (serial, VGA, timer, keyboard, ACPI, ATA, PCI, USB, network) |
+| `device_initcall()` | After phase 9 (do_initcalls) | Additional built-in drivers, diagnostic modules |
+| `module_init()` (module) | On `insmod`/`modprobe` | 226 loadable `.ko` drivers |
+| PCI deferred autoprobe | Workqueue context | PCI driver autoloading by modalias |
+
 ### io_uring
 
 **File:** `src/kernel/io_uring.c`
