@@ -33,8 +33,32 @@ static volatile sysrq_callback_t g_sysrq_cb = NULL;
 static uint8_t kb_layout = KB_LAYOUT_US;
 static volatile uint8_t kb_led_state = 0;
 
-/* ── Scancode tables ──────────────────────────────────────────────── */
-/* US Layout */
+/* ── Scancode translation tables (PS/2 Set 1 → ASCII) ───────────────
+ *
+ * These tables convert PS/2 scancode set 1 "make" codes (0x00–0x7F) to
+ * their corresponding ASCII characters.  The 128-element array is indexed
+ * directly by the lower 7 bits of the scancode (scancode & 0x7F); bit 7
+ * being set indicates a key release (break) and is handled before lookup.
+ *
+ * A table entry of 0 (NUL) means the scancode has no ASCII equivalent —
+ * it maps to a modifier key (Shift, Ctrl, Alt), a non-printing control
+ * key (Esc, Backspace, Enter, Tab), or an extended key handled elsewhere
+ * (arrows, function keys, etc.).  Scancodes 0x00 and 0xFF are always
+ * invalid (controller error / buffer overrun) and are rejected before
+ * table lookup.
+ *
+ * Two layouts are provided:
+ *   US — standard US QWERTY layout (ANSI 101-key).
+ *   UK — standard UK QWERTY layout, differing in the '#', '"', '@', '~',
+ *        '|', and '\' positions relative to US.
+ *
+ * Each layout has two tables:
+ *   *_scancode — base (unshifted) mapping, used when Shift is NOT held.
+ *   *_shift    — shifted mapping, used when Shift IS held (or Caps Lock
+ *                logically toggles shift for alphabetic keys only).
+ */
+
+/* US layout — unshifted (makes lowercase letters, digits, symbols) */
 static const char us_scancode[128] = {
     0,  27, '1','2','3','4','5','6','7','8','9','0','-','=','\b',
     '\t','q','w','e','r','t','y','u','i','o','p','[',']','\n',
@@ -47,6 +71,7 @@ static const char us_scancode[128] = {
     0, 0, 0, 0, 0, 0, 0
 };
 
+/* US layout — shifted (uppercase letters, shifted symbols like ! @ # $ % etc.) */
 static const char us_shift[128] = {
     0,  27, '!','@','#','$','%','^','&','*','(',')','_','+','\b',
     '\t','Q','W','E','R','T','Y','U','I','O','P','{','}','\n',
@@ -59,7 +84,9 @@ static const char us_shift[128] = {
     0, 0, 0, 0, 0, 0, 0
 };
 
-/* UK Layout */
+/* UK layout — unshifted (similar to US but with # where US has \,
+ * and ` (backtick) moved to the Esc key position; the backslash
+ * key produces # instead of \). */
 static const char uk_scancode[128] = {
     0,  27, '1','2','3','4','5','6','7','8','9','0','-','=','\b',
     '\t','q','w','e','r','t','y','u','i','o','p','[',']','\n',
@@ -72,6 +99,8 @@ static const char uk_scancode[128] = {
     0, 0, 0, 0, 0, 0, 0
 };
 
+/* UK layout — shifted (differs from US: " instead of @, @ instead of ",
+ * ~ instead of `, and | where US has ~) */
 static const char uk_shift[128] = {
     0,  27, '!','"','$','%','^','&','*','(',')','_','+','\b',
     '\t','Q','W','E','R','T','Y','U','I','O','P','{','}','\n',
