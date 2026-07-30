@@ -146,7 +146,125 @@ int module_elf_validate(struct module_elf_context *ctx,
     return 0;
 }
 
-/* ── Section header parsing (M12) ────────────────────────────────────── */
+/* ══════════════════════════════════════════════════════════════════════
+ *  ELF SECTION HANDLING ARCHITECTURE
+ * ══════════════════════════════════════════════════════════════════════
+ *
+ * A kernel module (.ko) is an ELF64 ET_REL (relocatable) object file.
+ * Unlike executables or shared libraries, relocatable objects have no
+ * fixed load address — all addresses are relative (file-relative or
+ * section-relative) and must be relocated against the kernel's address
+ * space before execution.
+ *
+ * ── Section types in a .ko file ──────────────────────────────────────
+ *
+ *   .text         Executable code (PROGBITS, SHF_ALLOC|SHF_EXECINSTR)
+ *   .data         Initialized writable data (PROGBITS, SHF_ALLOC|SHF_WRITE)
+ *   .rodata       Read-only data (PROGBITS, SHF_ALLOC)
+ *   .bss          Zero-initialized data (NOBITS, SHF_ALLOC|SHF_WRITE)
+ *   .symtab       Symbol table (SHT_SYMTAB) — not loaded into memory
+ *   .strtab       Symbol name strings (SHT_STRTAB) — not loaded
+ *   .shstrtab     Section header name strings (SHT_STRTAB) — not loaded
+ *   .rela.text    Relocations for .text (SHT_RELA, sh_info → .text)
+ *   .rela.data    Relocations for .data (SHT_RELA, sh_info → .data)
+ *   .rela.rodata  Relocations for .rodata (SHT_RELA, sh_info → .rodata)
+ *   .modinfo      Module metadata (license, author, depends, vermagic, ...)
+ *   .kparamvals   Module parameter definitions for auto-registration
+ *   .note.gnu.property  GNU property note (GCC's -fcf-protection, etc.)
+ *   .comment       Build toolchain comments (not loaded)
+ *   .note.*        Various notes (not loaded)
+ *
+ * ── Section-parsing pipeline ─────────────────────────────────────────
+ *
+ *   STAGE A: parse_section_headers()
+ *     - Reads shdr[] from ELF header (e_shoff, e_shnum, e_shentsize)
+ *     - Validates each section header is within file bounds
+ *     - Locates shstrtab (.shstrtab) section for name lookup
+ *     - Converts raw ELF64_Shdr entries into module_elf_section[]
+ *       with pointer-based names (no string copies)
+ *
+ *   STAGE B: parse_symbol_table()
+ *     - Scans sections for SHT_SYMTAB (.symtab) and SHT_STRTAB (.strtab)
+ *     - Validates entry sizes (sh_entsize) and file bounds
+ *     - Parses each ELF64_Sym into module_elf_sym[], noting:
+ *       - st_name → pointer into .strtab for symbol name
+ *       - st_shndx → section index (SHN_UNDEF = imported symbol)
+ *       - st_value → section-relative offset (for defined symbols)
+ *       - st_info → bind (local/global/weak) and type (func/object)
+ *     - Skips index 0 (null symbol per ELF spec)
+ *
+ *   STAGE C: parse_rela_sections()
+ *     - Scans sections for type SHT_RELA (only RELA, not REL, on x86_64)
+ *     - Groups relocations by target section (sh_info → target section)
+ *     - Validates entry sizes and file bounds per entry
+ *     - Parses each ELF64_Rela into module_elf_rela[]:
+ *       - r_offset → byte offset within the target section
+ *       - r_info → relocation type (low 32 bits) + symbol index (high 32)
+ *       - r_addend → constant addend for the relocation formula
+ *     - Handles R_X86_64_64, R_X86_64_PC32, R_X86_64_PLT32,
+ *       R_X86_64_GOTPCREL, R_X86_64_GOT64, R_X86_64_GOTPLT64,
+ *       R_X86_64_GOTPCREL64, R_X86_64_PLTOFF64, R_X86_64_32,
+ *       R_X86_64_32S, R_X86_64_PC64, R_X86_64_PC16, R_X86_64_PC8,
+ *       R_X86_64_16, R_X86_64_8, R_X86_64_PTPOFF, R_X86_64_GOTOFF64,
+ *       R_X86_64_GOTPC32, and R_X86_64_SIZE32/R_X86_64_SIZE64.
+ *
+ * ── Section-to-memory loading (module_elf_load_sections) ──────────────
+ *
+ *   PHASE 1 — Layout calculation:
+ *     - Walk all sections; only SHF_ALLOC sections are loaded into memory
+ *     - Each section gets a page-aligned slot in the module region,
+ *       allowing per-section page permissions (RX for .text, RO for
+ *       .rodata, RW for .data/.bss)
+ *     - GOT entries are counted from relocation groups and allocated
+ *       contiguous space after all sections
+ *     - Total size must fit within MODULES_SIZE (64 MB max)
+ *
+ *   PHASE 2 — Memory allocation:
+ *     - Calls module_alloc_region() to reserve RW virtual space in the
+ *       64 MB module region (KASLR-randomized base)
+ *     - All pages are initially mapped RW for relocation patching,
+ *       then changed to final permissions (Step 4 of finalize)
+ *
+ *   PHASE 3 — Data copy:
+ *     - PROGBITS sections: memcpy from file data to module memory
+ *     - NOBITS sections (.bss): zero-filled in module memory
+ *     - Remaining page padding zeroed (pre-zeros for permissions)
+ *     - GOT region zeroed, ready for relocation population
+ *
+ * ── Key data structures ──────────────────────────────────────────────
+ *
+ *   struct module_elf_context    (per-load, holds all state)
+ *     ├── file_data / file_size  (raw ELF file contents)
+ *     ├── hdr                    (parsed ELF64_Ehdr)
+ *     ├── shdrs[]                (raw ELF64_Shdr array)
+ *     ├── sections[]             (module_elf_section descriptors)
+ *     ├── syms[]                 (module_elf_sym symbol table)
+ *     ├── relas[]                (module_elf_rela_group per target section)
+ *     ├── shstrtab / strtab      (string table pointers)
+ *     ├── name                   (module name from .modinfo)
+ *     ├── depends                (dependency list from .modinfo)
+ *     ├── aliases                (modalias patterns from .modinfo)
+ *     ├── got_base / got_size    (GOT region in module memory)
+ *     └── got_sym_idx[]          (dedup table: symbol→GOT slot)
+ *
+ *   struct module_elf_section    (one per section)
+ *     ├── name, shndx, sh_type, sh_flags
+ *     ├── file_offset, file_size  (position in the .ko file)
+ *     └── mem_addr, mem_size      (loaded address in module region)
+ *
+ *   struct module_elf_sym        (one per symbol)
+ *     ├── name, shndx, value, size
+ *     ├── bind, type              (ELF symbol binding and type)
+ *     └── resolved                (flag: has been matched to an address)
+ *
+ *   struct module_elf_rela_group (one group per target section)
+ *     ├── section_idx             (target section index)
+ *     └── entries[]               (module_elf_rela array)
+ *
+ *   struct module_elf_rela       (one relocation entry)
+ *     ├── offset, type, sym_idx, addend
+ *
+ * ── Section header parsing (M12) ────────────────────────────────────── */
 
 static int parse_section_headers(struct module_elf_context *ctx)
 {
