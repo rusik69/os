@@ -15,26 +15,137 @@ Boot:  Multiboot1 -> boot.asm (32-bit) -> long_mode_entry -> kernel_main
 
 ## Memory Layout
 
-```
-Physical Memory:
-  0x0000000000000000 - 0x000000000009FC00  : Low memory (IVT, BDA, EBDA)
-  0x0000000000100000 - ...                  : Kernel .text/.data/.bss
-  ...                                       : Free (PMM managed)
-  0x0000000008000000 - ...                  : PCI MMIO, ACPI tables
-  0x0000000100000000+                       : Hotplug memory / high phys
+The kernel uses a high-half virtual memory layout on x86-64. Physical memory is identity-mapped at offset `KERNEL_VMA_OFFSET` (0xFFFF800000000000), so any physical address `phys` can be accessed as `PHYS_TO_VIRT(phys) = phys + 0xFFFF800000000000`.
 
-Virtual Memory (per-process):
-  0x0000000000000000 - 0x00007FFFFFFFFFFF  : Userspace (lower half)
-  0xFFFF800000000000 - 0xFFFFFFFFFFFFFFFF  : Kernel (higher half)
-      0xFFFF800000000000 - 0xFFFF8000100000 : Kernel .text (PHYS_TO_VIRT)
-      0xFFFF8000100000 - 0xFFFF8000200000  : Kernel .rodata/.data/.bss
-      0xFFFF8000200000 - ...                : Kernel heap (kmalloc)
-      0xFFFF800100000000 - 0xFFFF800140000000: Module region (64MB, RX/RO/RW)
-      ...                                   : Kernel stacks + guard pages
-      ...                                   : io_uring SQ/CQ rings
+**PML4 entries used:**
+- Entry 0   → identity map (low 512 GB, removed after boot)
+- Entry 256 → kernel high-half map (0xFFFF800000000000+)
+- Entries 257–511 → per-process userspace (one PML4 per process)
+
+### Physical Memory Layout
+
+```
+Address               Region                      Notes
+────────────────────  ──────────────────────────  ──────────────────────────
+0x0000000000000000    ┌──────────────────────┐
+                      │ Low Memory           │ IVT (0x00000–0x003FF)
+                      │                      │ BDA (0x00400–0x004FF)
+                      │                      │ EBDA (0x9FC00+)
+0x000000000009FC00    ├──────────────────────┤
+                      │ BIOS / ACPI / SMBIOS │ Firmware data tables
+0x0000000000100000    ├──────────────────────┤
+                      │ Kernel binary        │ Loaded by GRUB (Multiboot)
+                      │ .multiboot / .boot   │
+0x0000000000126000    ├──────────────────────┤
+                      │ Kernel .text / .roda-│ Linked at KERNEL_TEXT_LMA
+                      │ ta / .data / .bss    │
+kernel_end            ├──────────────────────┤
+                      │ Free physical memory │ Managed by PMM bitmap
+                      │ (PMM frames)         │ Per-CPU hot caches,
+                      │                      │ refcounting, COW
+0x0000000008000000    ├──────────────────────┤
+                      │ PCI MMIO / ACPI      │ Device BARs, MMCFG,
+                      │                      │ FADT, MADT
+0x0000000100000000    ├──────────────────────┤
+                      │ Hotplug / high mem   │ NUMA node memory,
+                      │                      │ device-dax ranges
+0xFFFFFFFFFFFFFFFF    └──────────────────────┘
 ```
 
-The kernel uses a `PHYS_TO_VIRT` macro: `virt = (phys + KERNEL_VMA_OFFSET)` where `KERNEL_VMA_OFFSET = 0xFFFF800000000000`. PML4 entry 256 maps the kernel's PDPT which itself maps the kernel's PDs — everything from 0xFFFF800000000000 upward.
+### Virtual Memory Layout (per-process address space)
+
+```
+Half   Start                 End                Region          Details
+─────  ─────                 ───                ──────          ───────
+Lower  0x0000000000000000   0x00007FFFFFFFFFFF  Userspace       Process-private
+       ┌───────────────────────────────────────────────────┐
+       │  .text   (ELF entry, ASLR-randomized start)       │
+       │  .rodata                                          │
+       │  .data / .bss                                     │
+       │  heap (brk, ASLR-randomized start address)        │
+       │  mmap (shared libs, ASLR-randomized)              │
+       │  stack (USER_STACK_SIZE = 64 KB + guard page,     │
+       │         ASLR-randomized top)                      │
+       └───────────────────────────────────────────────────┘
+       (unmapped) — access causes page fault
+
+Upper  0xFFFF800000000000   0xFFFFFFFFFFFFFFFF  Kernel space   All processes share
+       ┌───────────────────────────────────────────────────┐
+       │  Kernel direct map (PHYS_TO_VIRT)                  │
+       │  VMA = phys + KERNEL_VMA_OFFSET                   │
+       │  ┌─────────────────────────────────────────────┐   │
+0xFFFF800000126000 │  .text section                        │ RX│
+0xFFFF80000xxxxxxx │  .init.text / .rodata                 │ RO│
+0xFFFF80001xxxxxxx │  .data / .bss                         │ RW│
+       │  └─────────────────────────────────────────────┘   │
+       │  ┌─────────────────────────────────────────────┐   │
+0xFFFF800020000000 │  Kernel heap (kmalloc arena)           │ RW│
+       │  │   HEAP_MAX_SIZE = 64 MB                       │   │
+       │  │   First-fit free-list with coalescing         │   │
+       │  │   Initial: 16 KB, grows via heap_expand()     │   │
+       │  │   Block header: magic(8)+size(8)+free(4)+     │   │
+       │  │                    next(8)+prev(8) = 40 bytes │   │
+       │  └─────────────────────────────────────────────┘   │
+       │  ┌─────────────────────────────────────────────┐   │
+0xFFFF800100000000 │  Module region (MODULES_VADDR)         │   │
+       │  │   MODULES_SIZE  = 64 MB                       │   │
+       │  │   .text   → RX  (code)                        │   │
+       │  │   .rodata → RO  (constants)                   │   │
+       │  │   .data   → RW  (globals)                     │   │
+       │  │   .bss    → RW  (zero-fill)                   │   │
+0xFFFF800140000000 │  ── Module region end (MODULES_END)   │   │
+       │  └─────────────────────────────────────────────┘   │
+       │  ┌─────────────────────────────────────────────┐   │
+       │  │  Per-CPU kernel stacks                       │   │
+       │  │  KERNEL_STACK_SIZE = 128 KB per task         │   │
+       │  │  IRQ_STACK_SIZE    =  16 KB per CPU          │   │
+       │  │  Guard page (unmapped) below each stack      │   │
+       │  └─────────────────────────────────────────────┘   │
+       │  ┌─────────────────────────────────────────────┐   │
+       │  │  io_uring SQ / CQ rings                     │   │
+       │  │  (shared mmap between kernel and userspace)  │   │
+       │  └─────────────────────────────────────────────┘   │
+       │  ┌─────────────────────────────────────────────┐   │
+       │  │  Page tables (PML4 / PDPT / PD / PT)        │   │
+       │  │  Allocated from PMM, accessed via            │   │
+       │  │  PHYS_TO_VIRT                               │   │
+       │  └─────────────────────────────────────────────┘   │
+       │  ┌─────────────────────────────────────────────┐   │
+       │  │  KASAN shadow memory                        │   │
+       │  │  (if CONFIG_KASAN_LIGHT is enabled)          │   │
+       │  └─────────────────────────────────────────────┘   │
+0xFFFFFFFFFFFFFFFF └───────────────────────────────────────────┘
+```
+
+### Key Address Constants
+
+| Constant          | Value                     | Description                               |
+|-------------------|---------------------------|-------------------------------------------|
+| `KERNEL_VMA_OFFSET` | `0xFFFF800000000000`    | High-half base for direct physical map    |
+| `KERNEL_LMA`        | `0x100000`              | Physical load address (Multiboot entry)   |
+| `KERNEL_TEXT_LMA`   | `0x126000`              | Physical address of `.text` section       |
+| `MODULES_VADDR`     | `0xFFFF800100000000`    | Virtual base of loadable module region    |
+| `MODULES_SIZE`      | `0x04000000` (64 MB)    | Size of module region                     |
+| `MODULES_END`       | `0xFFFF800140000000`    | End of module region                      |
+| `HEAP_MAX_SIZE`     | 64 MB                   | Maximum kernel heap (kmalloc) size        |
+| `HEAP_INITIAL`      | 16 KB                   | Initial kernel heap reservation           |
+| `KERNEL_STACK_SIZE` | 128 KB                  | Per-task kernel stack size                |
+| `USER_STACK_SIZE`   | 64 KB                   | Per-process userspace stack size          |
+| `IRQ_STACK_SIZE`    | 16 KB                   | Per-CPU interrupt stack size              |
+| `PAGE_SIZE`         | 4096                    | x86-64 page size (4 KB)                   |
+
+### Address Translation
+
+Physical addresses are converted to kernel virtual addresses via the direct-map offset:
+
+```c
+#define KERNEL_VMA_OFFSET  0xFFFF800000000000ULL
+#define PHYS_TO_VIRT(addr) ((void *)((uint64_t)(addr) + KERNEL_VMA_OFFSET))
+#define VIRT_TO_PHYS(addr) ((uint64_t)(uintptr_t)(addr) - KERNEL_VMA_OFFSET)
+```
+
+**Example:** Kernel `.text` at physical `0x126000` is accessed at virtual `0xFFFF800000126000`.
+PML4 entry 256 maps the kernel's PDPT which itself maps the kernel's PDs — everything from `0xFFFF800000000000` upward.
 
 ## Boot Sequence
 
