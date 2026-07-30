@@ -396,16 +396,28 @@ int vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
         return -ENOMEM;
     }
 
-    /* Refuse to silently overwrite an existing mapping.
-     * Caller must unmap first if they want to remap, or pass
-     * VMM_FLAG_REPLACE to allow overwriting. */
+    /* If the PTE already exists for the same physical address, just add
+     * the requested flags (e.g. VMM_FLAG_WRITE) on top of existing flags.
+     * Otherwise (different phys or missing), create a new mapping.
+     * VMM_FLAG_REPLACE forces overwrite regardless. */
     if (pt[pt_idx] & PTE_PRESENT) {
-        if (!(flags & VMM_FLAG_REPLACE)) {
-            ret = -EEXIST;
+        if (flags & VMM_FLAG_REPLACE) {
+            goto write_pte;
+        }
+        uint64_t existing_phys = pt[pt_idx] & PTE_ADDR_MASK;
+        uint64_t wanted_phys  = phys & PTE_ADDR_MASK;
+        if (existing_phys == wanted_phys) {
+            /* Same physical address — merge the requested flags in */
+            pt[pt_idx] |= (flags & 0xFFF) | PTE_PRESENT;
+            if (flags & VMM_FLAG_NOEXEC)
+                pt[pt_idx] |= PTE_NX;
             goto out;
         }
+        ret = -EEXIST;
+        goto out;
     }
 
+write_pte:
     pt[pt_idx] = (phys & PTE_ADDR_MASK) | (flags & 0xFFF) | PTE_PRESENT
                  | ((flags & VMM_FLAG_NOEXEC) ? PTE_NX : 0);
 
