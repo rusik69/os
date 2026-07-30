@@ -1,5 +1,116 @@
 /*
- * image.c — OCI image management: manifest, config, layers (Items C31–C40)
+ * image.c — OCI image management: manifest, config, layers (Items C31–C50)
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * CONTAINER IMAGE FORMAT
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * This module manages OCI (Open Container Initiative) container images
+ * in accordance with the OCI Image Format Specification v1.0.
+ *
+ * ── Image Model ───────────────────────────────────────────────────────────
+ *
+ * An OCI container image is composed of a _manifest_, a _config_, and
+ * one or more _layer blobs_.  Every blob is content-addressable by its
+ * SHA-256 digest (format: "sha256:<hex>").
+ *
+ *   ┌──────────────────────┐
+ *   │   Image Manifest     │  ← JSON; lists config blob + layer blobs
+ *   │   (mediaType: ...)   │     The manifest's own digest IS the image ID.
+ *   ├──────────────────────┤
+ *   │   Image Config       │  ← JSON; describes container config (Cmd, Env,
+ *   │                      │     Entrypoint, Env, Volumes, ExposedPorts, ...)
+ *   ├──────────────────────┤
+ *   │   Layer Blob #1      │  ← tar+gzip diff from parent layer
+ *   │   Layer Blob #2      │  ← stacked on top of #1
+ *   │   ...                │
+ *   │   Layer Blob #N      │  ← the final (readable) filesystem layer
+ *   └──────────────────────┘
+ *
+ * Image references follow the Docker/OCI convention:
+ *   [registry/][namespace/]repo[:tag]
+ *   e.g., "docker.io/library/nginx:latest"
+ *   Default tag: "latest"
+ *   Default registry: "registry-1.docker.io"
+ *
+ * ── On-Disk Layout ────────────────────────────────────────────────────────
+ *
+ * Locally stored images reside under /var/lib/containers/images/:
+ *
+ *   /var/lib/containers/images/
+ *   ├── oci-layout              ← {"imageLayoutVersion":"1.0.0"}
+ *   ├── index.json              ← top-level manifest index
+ *   ├── blobs/
+ *   │   └── sha256/
+ *   │       ├── <config-digest>          ← config JSON blob
+ *   │       ├── <layer1-digest>          ← layer tar+gzip blob
+ *   │       ├── <layer2-digest>          ← layer tar+gzip blob
+ *   │       └── ...
+ *   ├── repositories.json       ← mapping of repo:tag → digest
+ *   └── images/                 ← (reserved for future listing index)
+ *
+ * ── Image Descriptor (struct image) ──────────────────────────────────────
+ *
+ * The struct image (defined in this file) represents a resolved image
+ * loaded into the in-memory image_table:
+ *
+ *   Field             Description
+ *   ────────────────────────────────────────────────────────────
+ *   in_use            Slot allocation flag (0 = free, 1 = occupied)
+ *   image_id          SHA-256 digest of the manifest (the image identity)
+ *   repo              Repository name (e.g. "nginx", "library/alpine")
+ *   tag               Tag/reference (e.g. "latest", "1.25")
+ *   config_digest     SHA-256 digest of the config blob
+ *   layer_digests[]   Ordered array of SHA-256 digests of layer blobs
+ *   num_layers        Number of layer digests in the array
+ *   refcount          Number of containers currently using this image
+ *   size_bytes        Total on-disk size of all blobs (bytes)
+ *
+ * The static image_table[MAX_IMAGES] (64 entries) holds all known images.
+ * Lookup is O(n) linear scan — acceptable at this scale.
+ *
+ * ── Image Lifecycle ──────────────────────────────────────────────────────
+ *
+ *   PULL ──────────────────────────────────────────────┐
+ *    │                                                  │
+ *    ▼                                                  ▼
+ * ┌──────────┐    ┌───────────┐    ┌─────────┐    ┌────────┐
+ * │ Manifest │ →  │  Config   │ →  │ Layers  │ →  │ table  │
+ * │ (JSON)   │    │  (JSON)   │    │ (blobs) │    │ slot   │
+ * └──────────┘    └───────────┘    └─────────┘    └────────┘
+ *    SHA-256                           │              │
+ *    ↓                                 │              │
+ *  image_id = digest(manifest)         ▼              ▼
+ *                              blobs stored ←  image registered
+ *                              in blobs/sha256/   in table
+ *
+ *   SAVE:  Export image_id + metadata → tar archive on disk
+ *   LOAD:  Import tar archive → register new image in table
+ *   TAG:   Clone an existing image with a different tag
+ *   LIST:  Enumerate every in_use entry in image_table
+ *   REMOVE: Free slot if refcount == 0 (returns -EBUSY otherwise)
+ *   PRUNE:  Remove all entries with refcount ≤ 0
+ *
+ * ── Registry API (OCI Distribution Spec v2) ──────────────────────────────
+ *
+ * The HTTP GET helper (http_get()) implements a minimal subset of the
+ * OCI Distribution Spec v2 API over plain HTTP:
+ *
+ *   GET /v2/<name>/manifests/<tag>   → returns manifest JSON
+ *   GET /v2/<name>/blobs/<digest>    → returns blob content
+ *
+ * In the current implementation, if the registry is unreachable the
+ * system falls back to a simulated manifest to support offline testing
+ * and development.  A future enhancement (item C48) will add TLS support
+ * via the kernel's TLS socket layer.
+ *
+ * ── References ───────────────────────────────────────────────────────────
+ *
+ *   - OCI Image Format Spec:  https://github.com/opencontainers/image-spec
+ *   - OCI Distribution Spec:  https://github.com/opencontainers/distribution-spec
+ *   - Docker Registry V2 API: https://docs.docker.com/registry/spec/api/
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
  *
  * Implements:
  *   C31: OCI image layout specification
