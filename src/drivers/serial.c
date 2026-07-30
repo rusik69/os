@@ -6,6 +6,101 @@
 #include "printf.h"
 #include "string.h"
 
+/* ═══════════════════════════════════════════════════════════════════════
+ *  UART 16550 Register Programming Guide
+ *
+ *  The NS16550A UART is accessed through 8 I/O ports starting at the
+ *  COM base address.  Register assignment depends on the Divisor Latch
+ *  Access Bit (DLAB, bit 7 of LCR) and read vs write:
+ *
+ *  ┌────────┬───────────────┬──────────────────┬──────────────────────┐
+ *  │ Offset │ DLAB=0 (read) │ DLAB=0 (write)   │ DLAB=1               │
+ *  ├────────┼───────────────┼──────────────────┼──────────────────────┤
+ *  │  0     │ RBR (RX data) │ THR (TX data)    │ DLL (divisor lo)     │
+ *  │  1     │ IER           │ IER              │ DLM (divisor hi)     │
+ *  │  2     │ IIR           │ FCR              │ (same)               │
+ *  │  3     │ LCR           │ LCR              │ LCR (same)           │
+ *  │  4     │ MCR           │ MCR              │ MCR (same)           │
+ *  │  5     │ LSR           │ LSR              │ LSR (same)           │
+ *  │  6     │ MSR           │ MSR              │ MSR (same)           │
+ *  │  7     │ SCR           │ SCR              │ SCR (same)           │
+ *  └────────┴───────────────┴──────────────────┴──────────────────────┘
+ *
+ *  Key registers and their fields:
+ *
+ *  IER (Interrupt Enable Register) — offsets [1], DLAB=0
+ *    Bit 0: RDA — Received Data Available interrupt
+ *    Bit 1: THRE — Transmitter Holding Register Empty interrupt
+ *    Bit 2: RLS — Receiver Line Status interrupt
+ *    Bit 3: MS — Modem Status interrupt
+ *
+ *  IIR (Interrupt Identification Register) — offset [2], read-only
+ *    Bit 0: 0 if interrupt pending
+ *    Bits 1-3: Interrupt type ID (1=THRE, 2=RDA, 3=RLS, 6=MS, 7=timeout)
+ *
+ *  FCR (FIFO Control Register) — offset [2], write-only
+ *    Bit 0: Enable FIFOs (must be set for 16550A mode)
+ *    Bit 1: Clear receive FIFO (self-clearing)
+ *    Bit 2: Clear transmit FIFO (self-clearing)
+ *    Bits 6-7: RX trigger level (00=1, 01=4, 10=8, 11=14 bytes)
+ *
+ *  LCR (Line Control Register) — offset [3]
+ *    Bits 0-1: Word length (00=5, 01=6, 10=7, 11=8 bits)
+ *    Bit 2: Stop bits (0=1, 1=2)
+ *    Bit 3: Parity enable
+ *    Bit 4: Even parity select (0=odd, 1=even)
+ *    Bit 5: Stick parity
+ *    Bit 6: Set break (forces TX line low)
+ *    Bit 7: DLAB — Divisor Latch Access Bit
+ *
+ *  MCR (Modem Control Register) — offset [4]
+ *    Bit 0: DTR — Data Terminal Ready
+ *    Bit 1: RTS — Request To Send
+ *    Bit 2: OUT1 — auxiliary output 1
+ *    Bit 3: OUT2 — auxiliary output 2 (must be set for IRQs on PC)
+ *    Bit 4: Loopback mode (for diagnostics)
+ *
+ *  LSR (Line Status Register) — offset [5], read-only
+ *    Bit 0: DR — Data Ready (RX data available)
+ *    Bit 1: OE — Overrun Error
+ *    Bit 2: PE — Parity Error
+ *    Bit 3: FE — Framing Error
+ *    Bit 4: BI — Break Interrupt
+ *    Bit 5: THRE — Transmitter Holding Register Empty
+ *    Bit 6: TEMT — Transmitter Empty (THR + TSR both empty)
+ *    Bit 7: FIFOERR — Error in RX FIFO (if FIFOs enabled)
+ *
+ *  MSR (Modem Status Register) — offset [6]
+ *    Bit 0: DCTS — Delta Clear To Send
+ *    Bit 1: DDSR — Delta Data Set Ready
+ *    Bit 2: TERI — Trailing Edge Ring Indicator
+ *    Bit 3: DDCD — Delta Data Carrier Detect
+ *    Bit 4: CTS — Clear To Send
+ *    Bit 5: DSR — Data Set Ready
+ *    Bit 6: RI — Ring Indicator
+ *    Bit 7: DCD — Data Carrier Detect
+ *
+ *  Baud rate divisor calculation:
+ *
+ *    Divisor = UART_CLOCK_HZ / (16 * baud_rate)
+ *
+ *    For a standard 1.8432 MHz UART clock and 115200 baud:
+ *      Divisor = 1843200 / (16 * 115200) = 1843200 / 1843200 = 1
+ *
+ *    The divisor is split across DLL (LSB) and DLM (MSB).  DLAB=1 must
+ *    be set in LCR before accessing DLL/DLM, then DLAB must be cleared
+ *    before normal register access resumes.
+ *
+ *  Initialisation sequence (uart_init_port):
+ *    1. Disable all interrupts (IER = 0x00)
+ *    2. Set DLAB=1 (LCR |= 0x80)
+ *    3. Program divisor: DLL = divisor & 0xFF, DLM = divisor >> 8
+ *    4. Clear DLAB and set 8N1 mode (LCR = 0x03 = UART_LCR_8BIT)
+ *    5. Enable FIFOs with 1-byte trigger (FCR = 0x07)
+ *    6. Set DTR, RTS, OUT2 (MCR = 0x0B)
+ *
+ * ═══════════════════════════════════════════════════════════════════════ */
+
 /* ── Per-port state ────────────────────────────────────────────────── */
 
 struct serial_port_state {
