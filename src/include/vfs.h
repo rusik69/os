@@ -4,6 +4,88 @@
 #include "types.h"
 #include "errno.h"
 
+/*
+ * ── VFS (Virtual Filesystem Switch) Architecture ──────────────────────────
+ *
+ * The VFS layer provides a uniform interface for filesystem operations,
+ * allowing multiple filesystem implementations (FAT32, EXT2, EXT4, tmpfs,
+ * procfs, devfs, etc.) to coexist under a single API.
+ *
+ * Architecture Model
+ * ──────────────────
+ * Unlike Linux's dentry/inode/file model, this VFS uses a path-based
+ * dispatch model:
+ *
+ *   ┌─────────────────────────────────────────────────────┐
+ *   │          System Calls / Userspace (open, read)      │
+ *   ├─────────────────────────────────────────────────────┤
+ *   │                  VFS Layer (vfs.c)                  │
+ *   │   - Path resolution via mount table                 │
+ *   │   - Permission checks (POSIX ACL, mode bits)        │
+ *   │   - Dentry cache (dcache) for stat results          │
+ *   │   - Writeback / sync orchestration                  │
+ *   ├─────────────────────────────────────────────────────┤
+ *   │           struct vfs_ops (per-filesystem)            │
+ *   │   Mount 1: FAT32       Mount 2: EXT4   Mount 3: ... │
+ *   │   ┌──────────┐       ┌──────────┐                  │
+ *   │   │ vfs_ops  │       │ vfs_ops  │                  │
+ *   │   │ .read    │       │ .read    │                  │
+ *   │   │ .write   │       │ .write   │                  │
+ *   │   │ .stat    │       │ .stat    │                  │
+ *   │   └──────────┘       └──────────┘                  │
+ *   └─────────────────────────────────────────────────────┘
+ *
+ * Key Structures (in this header)
+ * ────────────────────────────────
+ *   struct vfs_ops             — Filesystem operations (analogous to
+ *                                Linux's super_operations + inode_operations).
+ *                                Each mounted filesystem instance provides
+ *                                a pointer to a const vfs_ops struct.
+ *
+ *   struct vfs_mount           — A mounted filesystem instance. Contains
+ *                                the mountpoint path, pointer to vfs_ops,
+ *                                filesystem-private data, and mount flags.
+ *                                Analogous to Linux's struct mount +
+ *                                struct super_block combined.
+ *
+ *   struct vfs_filesystem_type — Registration entry for a filesystem type.
+ *                                Used by /proc/filesystems enumeration.
+ *
+ *   struct vfs_stat            — Generic stat result. Analogous to Linux's
+ *                                struct kstat — returned by vfs_stat(),
+ *                                cached in the dentry cache (dcache).
+ *
+ *   struct file_lock           — POSIX advisory file lock (fcntl/F_SETLK).
+ *
+ *   struct posix_acl /         — POSIX Access Control List support for
+ *   struct posix_acl_entry       fine-grained permission enforcement.
+ *
+ *   struct xattr_entry         — Extended attribute storage (user. namespace).
+ *
+ * Inode Support (per-filesystem)
+ * ──────────────────────────────
+ * Each filesystem manages its own on-disk / in-memory inode structures
+ * (e.g. struct ext2_inode, struct ext4_inode, struct fat32_dentry).
+ * The VFS layer treats inode numbers as opaque identifiers and never
+ * interprets per-filesystem inode data directly. Filesystems expose
+ * inode-level operations through struct vfs_ops callbacks.
+ *
+ * Dentry Cache (dcache.c)
+ * ────────────────────────
+ * A fixed-size array cache indexed by absolute path, storing vfs_stat
+ * results. LRU eviction on full cache; dcache_shrink() called on OOM.
+ * This is simpler than Linux's dcache tree but serves the same purpose
+ * of accelerating path-to-metadata lookups.
+ *
+ * Mount Namespace Support
+ * ────────────────────────
+ * The VFS supports per-process mount namespaces (struct mnt_namespace
+ * in mnt_namespace.h). Each process can have its own mount table view,
+ * isolated from other containers/processes. The resolve() function
+ * checks the current process's namespace before falling back to the
+ * global mount table.
+ */
+
 /* Maximum open files across all processes */
 #define VFS_MAX_OPEN 32
 /* Maximum filesystem mounts */
@@ -144,7 +226,33 @@ struct vfs_statfs {
     uint64_t f_namelen;
 };
 
-/* Operations a filesystem must implement */
+/*
+ * struct vfs_ops — Filesystem Operations (Superblock + Inode Ops)
+ *
+ * Each mounted filesystem provides a const vfs_ops table implementing
+ * all VFS operations for that filesystem. This is analogous to combining
+ * Linux's super_operations, inode_operations, and file_operations into
+ * a single per-filesystem dispatch table.
+ *
+ * The @priv pointer (from struct vfs_mount) is passed as the first
+ * argument to every callback, allowing the filesystem driver to
+ * identify its instance state.
+ *
+ * Required Operations:
+ *   read, write, stat, create, unlink, readdir
+ *
+ * Optional Operations (may be NULL):
+ *   readdir_names, truncate, fallocate, dedup, resize,
+ *   journal_start/commit/abort, link, symlink, readlink,
+ *   mknod, flush, set_time, rename, tmpfile, ioctl, seek,
+ *   setxattr, getxattr, listxattr, removexattr
+ *
+ * Conventions:
+ *   - All operations return 0 on success or negative errno on error.
+ *   - read() returns byte count via *out_size (<0 on error).
+ *   - When an optional operation is NULL, the VFS layer applies a
+ *     sensible default or returns -ENOTTY as appropriate.
+ */
 struct vfs_ops {
     /* Returns byte count read, or <0 on error */
     int (*read)(void *priv, const char *path, void *buf,
@@ -228,7 +336,30 @@ struct vfs_ops {
     int (*removexattr)(void *priv, const char *path, const char *name);
 };
 
-/* A mounted filesystem */
+/*
+ * struct vfs_mount — A Mounted Filesystem Instance
+ *
+ * Represents a single mounted filesystem, binding a mountpoint path
+ * to a specific vfs_ops implementation and its private driver data.
+ * Analogous to Linux's struct super_block + struct mount combined.
+ *
+ * Fields:
+ *     mountpoint       — Absolute path where this FS is mounted (e.g., "/", "/mnt")
+ *     ops              — Pointer to the filesystem's vfs_ops dispatch table
+ *     priv             — Filesystem driver private data (e.g., ext2_priv, fat32_priv)
+ *     flags            — Mount flags: MS_RDONLY (ro), MS_BIND (bind mount)
+ *     bind_source      — For bind mounts: the source path this was bound from
+ *     is_bind          — 1 if this is a bind mount
+ *     journal_active   — 1 if a journal transaction is in progress
+ *     journal_seq      — Monotonic journal transaction sequence number
+ *     encrypted        — 1 if per-mount encryption is enabled
+ *     enc_key          — Per-mount encryption key (16 bytes, AES-128)
+ *
+ * Lifecycle:
+ *   Created by vfs_mount() / vfs_mount_ex(), removed by vfs_umount().
+ *   The mount table is protected by a spinlock (mount_lock in vfs.c).
+ *   Each process may have its own mnt_namespace overriding the global view.
+ */
 struct vfs_mount {
     char          mountpoint[64]; /* e.g. "/" */
     const struct vfs_ops *ops;
@@ -244,7 +375,22 @@ struct vfs_mount {
     uint8_t       enc_key[16];    /* per-mount encryption key */
 };
 
-/* Registered filesystem type */
+/*
+ * struct vfs_filesystem_type — Registered Filesystem Type
+ *
+ * Each filesystem driver calls vfs_register_filesystem() at init time
+ * to make its type available. Entries are enumerated via
+ * /proc/filesystems for userspace inspection.
+ *
+ * Fields:
+ *     name         — Human-readable filesystem name ("ext2", "fat32", "tmpfs", etc.)
+ *     ops          — Default vfs_ops for instances of this type
+ *     registered   — 1 if registration is active
+ *
+ * Note: Unlike Linux's file_system_type, this does not support a
+ * mount() callback — the caller provides ops and priv directly to
+ * vfs_mount().
+ */
 struct vfs_filesystem_type {
     char name[32];
     const struct vfs_ops *ops;
