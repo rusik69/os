@@ -610,7 +610,129 @@ void page_cache_discard(uint64_t ino, uint64_t block) {
 
 
 /* ══════════════════════════════════════════════════════════════════════
- * ── Readahead Infrastructure ─────────────────────────────────────────
+ * ── Readahead (Predictive Prefetch) Strategy ─────────────────────────
+ * ══════════════════════════════════════════════════════════════════════
+ *
+ * OVERVIEW
+ * --------
+ * The page cache implements a transparent readahead (predictive prefetch)
+ * mechanism that detects sequential file access patterns and
+ * speculatively loads upcoming pages into the cache before the
+ * application requests them.  This hides I/O latency and improves
+ * throughput for workloads that read files sequentially (e.g., cp, cat,
+ * streaming media, log playback, database table scans).
+ *
+ * The strategy has four key design goals:
+ *   1. Accuracy — avoid prefetching pages the application never uses.
+ *   2. Adaptivity — ramp up aggressively for steady sequential streams
+ *      and back off instantly on seeks or random access.
+ *   3. Timeliness — prefetch far enough ahead that the next page is
+ *      cached by the time the application asks for it.
+ *   4. Efficiency — batch contiguous blocks into fewer, larger I/O
+ *      requests to maximise driver throughput.
+ *
+ *
+ * SEQUENTIAL DETECTION (ra_detect_sequential)
+ * -------------------------------------------
+ * A per-inode tracker (struct readahead_state) records:
+ *   - last_block     : the most recently accessed block number
+ *   - sequential     : count of consecutive sequential accesses
+ *   - window         : current readahead prefetch size (pages)
+ *   - enabled        : on/off switch (per-inode)
+ *
+ * On each call from page_cache_read():
+ *   - First access (last_block == UINT64_MAX): initialise tracker,
+ *     set window = READAHEAD_WINDOW_INIT, do NOT prefetch yet.
+ *   - Sequential (block == last_block + 1):
+ *       * Increment sequential counter.
+ *       * Every 4 sequential accesses, double the window (cap at
+ *         READAHEAD_WINDOW_MAX) — this provides exponential ramp-up.
+ *       * After 2 sequential accesses, return the current window size
+ *         to trigger a prefetch of that many upcoming pages.
+ *   - Non-sequential (block != last_block + 1):
+ *       * Reset sequential counter back to 0.
+ *       * Reset window to READAHEAD_WINDOW_INIT (immediate back-off).
+ *       * Update last_block but do NOT prefetch.
+ *   - Repeated same block (block == last_block) is treated as a
+ *     re-read of the same location — no reset, no prefetch trigger.
+ *
+ * Prefetched pages are NOT counted as sequential hits when they are
+ * later accessed; the `prefetched` flag is cleared on first use.
+ *
+ *
+ * ADAPTIVE WINDOW SIZING
+ * ----------------------
+ * Constants (defined in page_cache.h):
+ *   READAHEAD_WINDOW_INIT  — initial window (small, conservative)
+ *   READAHEAD_WINDOW_MIN   — floor after any back-off
+ *   READAHEAD_WINDOW_MAX   — ceiling (prevent over-prefetch)
+ *
+ * Growth: window doubles every 4 sequential hits (exponential).
+ * Shrink: immediate reset to INIT on any non-sequential access.
+ *
+ * This means a streaming reader rapidly grows from a 1-page prefetch
+ * to the maximum window, but a random-access workload never triggers
+ * prefetch at all — the window stays at INIT and sequential < 2.
+ *
+ *
+ * PREFETCH EXECUTION (page_cache_readahead)
+ * -----------------------------------------
+ * page_cache_readahead() prefetches a contiguous range of blocks:
+ *   1. Skip any blocks already resident in the cache.
+ *   2. Read each missing block from the backing store callback.
+ *   3. Insert it into the cache via page_cache_add().
+ *   4. Mark the entry with prefetched=1 so the eviction policy
+ *      treats it as a "first to evict" candidate (see evict_one()).
+ *
+ * The prefetch is best-effort: failures (EIO, ENOMEM) silently stop
+ * the loop.  The application never sees an error from prefetch; the
+ * worst case is a cache miss on the next read, which falls through to
+ * the synchronous backing-store path.
+ *
+ *
+ * BATCH PREFETCH (page_cache_batch_readahead)
+ * -------------------------------------------
+ * For truly sequential access, the batch readahead variant groups
+ * consecutive blocks that map to consecutive backing-store LBAs into
+ * a SINGLE driver callback.  This reduces per-I/O overhead and is
+ * especially beneficial on rotational disks and flash devices with
+ * command-queuing limits.
+ *
+ * The function:
+ *   1. Scans for runs of missing (uncached) consecutive blocks.
+ *   2. Allocates physical pages for the entire run up-front.
+ *   3. Issues one backing_store() call covering the full run.
+ *   4. Inserts each page into the cache as a prefetched entry.
+ *
+ *
+ * INTEGRATION WITH page_cache_read()
+ * -----------------------------------
+ * The main read path (page_cache_read) ties detection and prefetch
+ * together in a single call:
+ *   1. Look up the requested block in the cache.
+ *      - If found (and prefetched flag set): count a readahead hit.
+ *      - If found and not prefetched: return data directly.
+ *   2. On cache miss: read the block synchronously from the driver,
+ *      add it to the cache (best-effort), then copy to the caller.
+ *   3. After the synchronous read: call ra_detect_sequential().
+ *      If it returns a window > 0, call page_cache_readahead() to
+ *      optimistically load the next window of blocks.
+ *
+ * Because step 3 happens AFTER the caller already has its data, no
+ * application latency is added by the prefetch logic.
+ *
+ *
+ * STATISTICS & MONITORING
+ * -----------------------
+ * Three counters track readahead effectiveness:
+ *   ra_hits       — the application accessed a page that was prefetched
+ *   ra_misses     — readahead pages were evicted before being used
+ *                   (estimated as cache_misses - ra_hits)
+ *   ra_prefetches — total prefetched pages inserted into the cache
+ *
+ * These are exposed via page_cache_readahead_stats() for /proc or
+ * debug dumps.
+ *
  * ══════════════════════════════════════════════════════════════════════ */
 
 /* ── Find or allocate readahead tracker for an inode ───────────────── */
