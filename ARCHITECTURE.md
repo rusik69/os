@@ -1993,6 +1993,150 @@ Module Loading:
 
 **Build:** `make modules` produces all module `.ko` files; `make` builds both kernel and modules together if `obj-m` is non-empty.
 
+## Container Runtime & Orchestrator
+
+**Files:** `src/container/` (runtime.c, config.c, image.c, storage.c, network.c, state.c, ext.c, orch.c, checkpoint.c, scheduler_policy.c, service_proxy.c, seccomp_notify.c, security_scan.c, container_exec_enhanced.c)
+**Headers:** `src/include/container.h`, `src/include/container_exec_enhanced.h`, `src/include/orch_api.h`, `src/include/orch_health.h`, `src/include/orch_hooks.h`
+
+This kernel implements an OCI (Open Container Initiative) compatible container runtime entirely in-kernel, with a complementary HTTP-based orchestration API, pod abstraction, service discovery, and health checking.
+
+### Architecture Overview
+
+The container runtime follows a layered design:
+
+```
+OCI Runtime (runtime.c, config.c)
+    ├── Storage (storage.c, image.c)
+    │     Download/verify layers → unpack → overlay mount → rootfs
+    ├── Networking (network.c)
+    │     Create netns → veth pair → bridge attach → IPAM → firewall rules
+    ├── Lifecycle (state.c, ext.c, checkpoint.c, container_exec_enhanced.c)
+    │     Exec, attach, logs, pause/unpause, stats, checkpoint/restore
+    └── Orchestration (orch.c, scheduler_policy.c, service_proxy.c)
+          Pod/deployment management, health probes, service discovery,
+          resource quotas, affinity/anti-affinity, seccomp notify
+```
+
+### Container Table & State Machine
+
+A fixed-size global table (`container_table[CONTAINER_MAX]` with CONTAINER_MAX=64) holds all active container descriptors. Each slot is protected by a per-container spinlock; the global table lock guards table-wide operations (alloc, free, iteration).
+
+**OCI runtime-spec state machine:**
+
+```text
+CREATING → CREATED → RUNNING → STOPPED → DELETED
+                         ↓
+                      PAUSED
+```
+
+State transitions are validated by `container_set_state()` and persist state to `/run/containers/<id>/state.json` on every change.
+
+### Container Lifecycle
+
+| Step | Function | Description |
+|------|----------|-------------|
+| 1 | `container_init()` | Create `/var/lib/containers/` and `/run/containers/` directories |
+| 2 | `container_alloc()` | Allocate a slot in the global container table |
+| 3 | `container_set_id()` | Generate a unique 16-char hex ID from (PID + tick + counter) |
+| 4 | `container_create()` | Build OCI directory hierarchy, mount virtual filesystems (proc, sys, dev, tmpfs), transition to CREATED |
+| 5 | `container_start()` | Parse config.json, spawn init process via `process_spawn()`, apply resource limits, transition to RUNNING |
+| 6 | `container_stop()` | Send SIGTERM → wait timeout → SIGKILL, transition to STOPPED |
+| 7 | `container_delete()` | Remove directories, free descriptor slot, transition to DELETED |
+
+Extended lifecycle operations (ext.c): `container_exec()` (run process in container), `container_attach()` (stream I/O), `container_pause()`/`container_unpause()` (freeze/thaw processes), `container_wait()` (block until exit), `container_stats()` (cgroup resource usage), `container_top()` (list PIDs), `container_inspect()` (JSON metadata dump).
+
+### Enhanced Exec (`container_exec_enhanced.c`)
+
+Provides interactive process execution inside containers with:
+
+- **PTY allocation** — pseudo-terminal master/slave pair for full terminal support
+- **stdin/stdout/stderr channels** — pipe-based I/O multiplexing
+- **Terminal resize** — SIGWINCH forwarding for dynamic terminal dimensions
+- **Non-destructive detach** — process continues running after client disconnects
+
+### Container Images (`image.c`, `storage.c`)
+
+OCI image format support with content-addressable storage:
+
+```text
+Image Manifest (JSON)
+    ├── Image Config (JSON) — Cmd, Entrypoint, Env, Volumes, ExposedPorts
+    └── Layer Blobs (tar+gzip) — stacked via overlay mounts
+        Layer N (top) ← writable container layer
+        Layer N-1
+        ...
+        Layer 1 (base)
+```
+
+- **Pull/Push** — Docker Registry v2 API with auth (basic, bearer token)
+- **Layer cache** — blobs stored at `/var/lib/containers/images/blobs/sha256/<digest>`
+- **Overlay mount** — lowerdir=layers, upperdir=container diff, workdir=work
+- **Tag management** — local repository index at `/var/lib/containers/images/repositories.json`
+- **Prune** — garbage-collect unreferenced layers
+
+### Container Networking (`network.c`)
+
+Per-container network isolation using standard kernel networking primitives:
+
+```text
+Host netns                          Container netns
+┌──────────────────────┐         ┌──────────────────────┐
+│  bridge (docker0)    │         │  eth0 (veth peer)    │
+│  veth-<id1> ─────────┼─────────┤  IP: 10.0.2.x/24    │
+│  veth-<id2> ─────────┼──┐      │  Gateway: 10.0.2.1  │
+│  IP: 10.0.2.1/24     │  │      └──────────────────────┘
+│  iptables MASQUERADE  │  │      ┌──────────────────────┐
+│  Port forwarding:     │  │      │ Container netns #2   │
+│    host:8080→10.0.2.2│80│      │  eth0: 10.0.2.3/24  │
+└──────────────────────┘  │      └──────────────────────┘
+                          └─────── bridge isolates L2
+                                  traffic between containers
+```
+
+1. **Network namespace** — each container gets an isolated netns anchored by a bind-mount file in `/var/run/netns/<id>`
+2. **veth pair** — one end in container (eth0), one end in host (veth-`<id>`)
+3. **Bridge** — veth endpoints attach to a Linux bridge for L2 connectivity
+4. **IPAM** — static IP assignment or DHCP within the container subnet
+5. **Port mapping** — netfilter DNAT rules for host-to-container port forwarding
+6. **Firewall** — default: drop all inbound, allow all outbound; per-container rules tracked for cleanup
+
+### Orchestration API (`orch.c`, `orch/`)
+
+HTTP REST API server on port 8375 providing orchestration primitives:
+
+**Pod abstraction** (`MAX_PODS=32`, `MAX_CONTAINERS_PER_POD=16`): A pod is a group of containers that share the same network namespace, IPC namespace, and PID namespace. Containers within a pod communicate via localhost and can share volumes.
+
+**Service abstraction**: Services provide stable network endpoints to pods:
+- ClusterIP — virtual IP within the cluster network
+- NodePort — expose on host port across all nodes
+- LoadBalancer — external load balancer integration
+
+**Health checking** (`orch_health.h`): Configurable liveness and readiness probes:
+- Exec probes — run command inside container, check exit code 0
+- HTTP probes — HTTP GET to container-ip:port, expect 2xx/3xx
+- Configurable: initial delay, period, timeout, success/failure thresholds
+
+**Lifecycle hooks** (`orch_hooks.h`): PostStart and PreStop hooks with exec and HTTP support. Best-effort execution: hook failure is logged but does not block container lifecycle.
+
+**Scheduler policies** (`scheduler_policy.c`): Resource quotas, limit ranges, pod priority/preemption, inter-pod affinity/anti-affinity, taints and tolerations.
+
+**Service proxy** (`service_proxy.c`): Layer-4 load balancing with iptables and userspace modes, DNS-based service discovery, ConfigMap and Secret volume mounting.
+
+### Security & Isolation
+
+- **seccomp notify** (`seccomp_notify.c`) — user-space policy daemon for syscall interception via seccomp
+- **Security scanning** (`security_scan.c`) — in-kernel CVE matching against image layer package manifests
+- **Checkpoint/restore** (`checkpoint.c`) — CRIU-like container state freeze and restore for live migration
+- **Namespace isolation** — each container gets its own PID, mount, network, and IPC namespaces (via CLONE_NEW* flags)
+
+### Cross-References
+
+- **Network Namespaces** — see the Network Namespaces section earlier in this document for the low-level netns API
+- **Kernel Modules** — 226 kernel modules provide drivers that containers can use (e.g., filesystem modules for storage drivers)
+- **Seccomp** — `src/kernel/seccomp.c` provides the BPF-based syscall filtering used by container security policies
+- **IPC subsystem** — `src/ipc/` is used for signal delivery and process synchronisation within containers
+- **VFS layer** — overlay filesystem (`src/kernel/overlay.c`) enables union-mount container rootfs
+
 ## Cluster Architecture
 
 **The cluster subsystem has been moved to userspace.** See `userspace/clusterd/` and `docs/cluster-architecture.md`.
