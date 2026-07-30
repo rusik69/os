@@ -1,3 +1,101 @@
+/*
+ * src/fs/tmpfs.c — Temporary filesystem (tmpfs)
+ *
+ * ████████████████████████████████████████████████████████████████████████████
+ * ── Overview ──────────────────────────────────────────────────────────────
+ *
+ * tmpfs is a RAM-backed filesystem designed for /tmp, /dev/shm, container
+ * mounts, and other transient storage.  All file data lives in kernel memory
+ * (kmalloc or page-allocated buffers).  The filesystem is simple, fast, and
+ * supports files, directories, symbolic links, and device nodes.
+ *
+ * ── Inode Table ───────────────────────────────────────────────────────────
+ *
+ * A flat static array (inodes[], TMPFS_MAX_INODES = 256 entries) indexed by
+ * a numeric index (0 = root directory).  Each inode is a struct tmpfs_inode
+ * that stores:
+ *
+ *   • Metadata: name, type, size, uid/gid, mode, parent index.
+ *   • Data pointer: virtual address of the file content buffer.
+ *   • Page tracking: data_phys (physical address for page-backed buffers),
+ *     numa_node (NUMA node of allocation), is_huge (2MB page flag).
+ *   • Swap backing: swap_map[] array tracking per-page swap-device/slot
+ *     mappings, used when inodes are evicted to the swap device.
+ *   • Directory hash: dir_htable (per-directory O(1) hash table, NULL for
+ *     non-directories).
+ *   • KSM: ksm_registered flag for Kernel Same-page Merging integration.
+ *   • Extended attributes: dynamically allocated xattrs array (user.
+ *     namespace only).
+ *
+ * Path resolution (find_inode / find_inode_rel) walks the inode table either
+ * hierarchically (component-by-component from root) or by flat leaf-name
+ * scan (legacy fallback).
+ *
+ * ── Page / Buffer Allocation Strategy ─────────────────────────────────────
+ *
+ * File data buffers are allocated according to size:
+ *
+ *   [Size < PAGE_SIZE/4]       → kmalloc (small objects, no NUMA affinity).
+ *   [PAGE_SIZE/4 ... 2MB)      → alloc_pages_node() from the local NUMA
+ *                                node (physically contiguous, page-aligned).
+ *   [>= 2MB]                   → try a huge page (order-9 / 2MB) first;
+ *                                fall back to order-for-size page alloc.
+ *
+ * The helper tmpfs_alloc_pages_numa() handles the size-based policy and
+ * returns a kernel virtual address + physical address (or 0 for kmalloc'd
+ * buffers).  The reciprocal tmpfs_free_pages_or_kmem() selects the correct
+ * deallocation path.
+ *
+ * ── Swap Backing ──────────────────────────────────────────────────────────
+ *
+ * Under memory pressure, tmpfs can swap file data to a block swap device:
+ *
+ *   tmpfs_swap_out_inode():  Evicts all page-allocated data of a file inode
+ *     to the swap device.  Each page-sized chunk is written via swap_out(),
+ *     the physical pages are freed, and is_swapped is set.
+ *
+ *   tmpfs_swap_in_inode():   Restores from swap.  Allocates fresh pages,
+ *     reads each swap slot via swap_in(), frees the swap slots, and clears
+ *     is_swapped.  Called transparently from tmpfs_read / tmpfs_write.
+ *
+ *   tmpfs_try_evict():       Called from the OOM / kswapd path.  Scans the
+ *     inode table for page-allocated file inodes and evicts them until
+ *     @target_pages have been freed.
+ *
+ * ── Directory Lookup ──────────────────────────────────────────────────────
+ *
+ * Each directory inode has a per-directory chained hash table
+ * (struct tmpfs_dir_htable, TMPFS_HASH_BUCKETS = 16 buckets) allocated on
+ * first use.  Lookups use the DJB2 hash (tmpfs_hash_name).  Insertion,
+ * removal, and lookup are O(1) average case.
+ *
+ * ── Quota / Size Limits ───────────────────────────────────────────────────
+ *
+ * Per-mount size and inode quotas can be set via tmpfs_mount_with_limit()
+ * or the runtime API (tmpfs_set_size_limit / tmpfs_set_inode_limit).
+ * Writes that would exceed the configured limit return -ENOSPC.
+ *
+ * ── KSM Integration ──────────────────────────────────────────────────────
+ *
+ * Page-allocated inodes can be registered with Kernel Same-page Merging
+ * (KSM) to deduplicate identical pages across processes.  Registration
+ * happens via tmpfs_register_ksm() (called from madvise / ioctl) and
+ * automatic unregistration on data reallocation or inode free.
+ *
+ * ── Extended Attributes ──────────────────────────────────────────────────
+ *
+ * Only the user. namespace is supported.  Attributes are stored in a
+ * dynamically-allocated per-inode array (max 4 entries of 256 bytes each).
+ *
+ * ── NFS Export ───────────────────────────────────────────────────────────
+ *
+ * tmpfs can act as an NFS server backing store.  tmpfs_nfs_export() mounts
+ * tmpfs at a VFS path and registers an NFS export; path resolution in
+ * find_inode() strips the mountpoint prefix before walking the inode table.
+ *
+ * ████████████████████████████████████████████████████████████████████████████
+ */
+
 #define KERNEL_INTERNAL
 #include "tmpfs.h"
 #include "types.h"
