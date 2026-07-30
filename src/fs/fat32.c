@@ -1034,8 +1034,17 @@ int fat32_mount(fat32_disk_t disk, uint32_t part_lba) {
                 break;
             }
         }
-        if (part_lba == 0)
-            return -3; /* no FAT partition found */
+        /* If no partition table found (all entries empty), assume
+         * superfloppy format — the BPB/VBR is at LBA 0 itself. */
+        if (part_lba == 0) {
+            /* Check the first byte of the VBR: FAT32 BPB jump opcodes
+             * (EB 58 90 or EB 5B 90 or similar).  If it looks like a
+             * BPB, treat LBA 0 as the partition. */
+            if (mbr[0] == 0xEB && mbr[2] == 0x90)
+                part_lba = 0;
+            else
+                return -3; /* no FAT partition found */
+        }
     }
 
     /* Read BPB */

@@ -1471,6 +1471,7 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
      * (especially those reparented to init) don't accumulate. */
     for (;;) {
         process_reap_zombies();
+        net_poll();
         if (need_resched())
             schedule();
         cpuidle_idle();

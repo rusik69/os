@@ -34,8 +34,8 @@ def mbr_sector(part_start_lba, part_size_lba):
 def build_image(src_dir, size_mb, output):
     total_sectors = (size_mb * 1024 * 1024) // SECTOR_SIZE
     img = bytearray(total_sectors * SECTOR_SIZE)
-    part_start = 2048
-    part_sectors = total_sectors - part_start
+    part_start = 0  # superfloppy — FAT32 at LBA 0, no MBR partition table
+    part_sectors = total_sectors
 
     # Collect files
     file_list = []
