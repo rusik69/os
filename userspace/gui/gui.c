@@ -1,3 +1,120 @@
+/*
+ * userspace/gui/gui.c — OS GUI Framework Core
+ *
+ * =============================================================================
+ * OVERVIEW
+ * =============================================================================
+ * This file implements the top-level graphical user interface framework for the
+ * OS. It provides a windowing system, widget toolkit, input event routing, and
+ * a frame-based rendering pipeline built on top of the VGA framebuffer.
+ *
+ * The framework is structured around these key subsystems:
+ *
+ *   1. Global GUI Context (g_gui_ctx)
+ *      A single static struct gui_context holds the entire display state:
+ *      - A doubly-linked list of all windows (struct gui_window)
+ *      - Pointer to the currently focused window
+ *      - Mouse position (mouse_x, mouse_y) and button state (mouse_buttons)
+ *      - Current cursor shape (gui_cursor_t)
+ *      - Theme colours (title bar, window background, button background)
+ *      - Initialization flag (initialized)
+ *
+ *   2. Window Management (struct gui_window)
+ *      Windows are the top-level containers. Each window stores:
+ *      - Position, size, and saved rectangle (for minimize/restore)
+ *      - Title string (up to 64 chars)
+ *      - Background colour and visibility flag
+ *      - State: NORMAL, MINIMIZED, or MAXIMIZED
+ *      - Minimum dimensions (min_w, min_h)
+ *      - A singly-linked list of child widgets (struct gui_widget)
+ *      - Pointer to the focused child widget
+ *      - Doubly-linked list pointers (next, prev) for z-order traversal
+ *      Windows are created via gui_window_create(), which allocates and
+ *      initialises a new window. The window list is managed through
+ *      gui_add_window() / gui_remove_window(). Rendered back-to-front by
+ *      traversing the list in reverse order (tail first).
+ *
+ *   3. Widget System
+ *      Every widget (struct gui_widget) is a self-drawing, event-handling
+ *      rectangle with a polymorphic dispatch interface:
+ *         - draw   : called each frame to render the widget
+ *         - on_event : called when an input event occurs
+ *         - destroy  : called to clean up widget-specific data
+ *      Concrete widget types:
+ *         - Button       : clickable, emits an on_click callback
+ *         - TextBox      : single-line text input
+ *         - Label        : static text display
+ *         - TextEdit     : multi-line text editor
+ *         - TabView      : tabbed container holding one content widget per tab
+ *         - Tooltip      : small popup label with yellow background
+ *         - Notification : coloured bar with text for transient messages
+ *      Each widget type stores its specific data in a type-specific struct
+ *      (e.g., gui_button_data_t) referenced via the generic 'data' pointer.
+ *
+ *   4. Bitmap Font
+ *      A built-in 5×7 pixel monochrome font (font5x7[]) provides glyphs for
+ *      A-Z, a-z, 0-9, and common punctuation. Each glyph is a 7-byte bitmap
+ *      with 5 bits per row. Characters are rasterised at 10×14 pixels (2×
+ *      scaling) via render_glyph(), which applies window-relative clipping
+ *      against the supplied clip rectangle. font_char_index() maps an ASCII
+ *      character to its font array index (returns space [index 36] for
+ *      unsupported characters).
+ *
+ *   5. Rendering Pipeline (gui_render_frame)
+ *      Called periodically (every ~33 ms, ~30 FPS) to produce a complete frame:
+ *       a) Clear the VGA framebuffer to black
+ *       b) Traverse windows from back to front (tail → head)
+ *       c) For each visible window:
+ *           - Fill the window rectangle with its background colour
+ *           - Draw the title bar + window control buttons if a title exists
+ *             [close] [minimize] [maximize] with distinct colours
+ *           - Draw the border (focused = white, unfocused = dark gray)
+ *           - Draw resize handle indicators in the bottom-right corner
+ *           - Iterate and draw all child widgets
+ *       d) Overdraw the mouse cursor on top of everything
+ *       e) Refresh the VGA console (vga_refresh_console)
+ *
+ *   6. Input Event Handling (gui_handle_event)
+ *      Events (mouse down/up/move/drag, keyboard char) are dispatched to the
+ *      focused window's focused widget. Mouse events are validated against the
+ *      widget's bounding rectangle before dispatch to prevent off-screen or
+ *      negative coordinates from triggering unintended actions.
+ *
+ *   7. Main Loop (gui_run_loop)
+ *      The event-driven GUI loop:
+ *      - Polls the keyboard for character input (ESCAPE to exit)
+ *      - Polls the mouse for position and button changes
+ *      - Dispatches input events to the current focused widget
+ *      - Triggers a full frame redraw when input arrives or the 33 ms timer
+ *        expires
+ *      - Calls scheduler_yield() each iteration to cooperate with other tasks
+ *
+ *   8. Mouse Cursor (draw_mouse_cursor)
+ *      Renders the correct cursor shape each frame based on g_gui_ctx.cursor:
+ *      - GUI_CURSOR_ARROW      : small diagonal arrow (12 px)
+ *      - GUI_CURSOR_TEXT       : I-beam (16 px × 3 px)
+ *      - GUI_CURSOR_HAND       : filled circle (hand icon)
+ *      - GUI_CURSOR_CROSSHAIR  : crosshair with circle
+ *      - GUI_CURSOR_RESIZE_H/V : horizontal/vertical resize lines
+ *      - Default               : cross with axis lines (fallback)
+ *
+ * DEPENDENCIES
+ * =============================================================================
+ *   - gui.h        : Type definitions, colour macros, widget data structs
+ *   - gui_draw.h   : Drawing primitives (circle, line)
+ *   - vga.h (implied) : VGA framebuffer, put_pixel, clear, refresh
+ *   - <string.h>   : memset, strlen, strncpy
+ *   - kernel memory allocator (kmalloc, kfree), timer, keyboard, mouse,
+ *     scheduler (extern symbols from kernel lib or harness)
+ *
+ * All functions follow a consistent null-pointer safety pattern: they accept
+ * NULL for optional window/widget parameters and return early with no-op or
+ * a safe default value. Public API functions prefixed with "gui_" are
+ * declared in gui.h. Internal helpers (render_glyph, font_char_index,
+ * draw_mouse_cursor) are file-scoped static.
+ * =============================================================================
+ */
+
 #include "gui.h"
 #include "gui_draw.h"
 #include <string.h>
