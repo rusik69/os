@@ -5,6 +5,38 @@
 
 struct vfs_ops;
 
+/* ═══════════════════════════════════════════════════════════════════════
+ * FAT32 Driver — Public API
+ *
+ * Provides read/write access to FAT32 (and limited FAT12/16) volumes
+ * backed by a block device (ATA, AHCI, or USB).  Uses a buffer cache
+ * for sector-level I/O and supports VFAT long filenames.
+ *
+ * ── Key internal data structures (defined in fat32.c) ──────────────
+ *   fat32_bpb     — BIOS Parameter Block (on-disk boot sector layout)
+ *   fat32_dirent  — On-disk 32-byte 8.3 directory entry
+ *   fat32_lfn     — VFAT long filename directory entry
+ *
+ * ── Constants ──────────────────────────────────────────────────────
+ *   LFN_MAX_ENTRIES (20) — Max VFAT LFN entries per file (255 chars)
+ *   FAT32_MAX_NAME (256) — Max path component length in bytes
+ *
+ * ── Mount workflow ─────────────────────────────────────────────────
+ *   1. fat32_mount(disk, part_lba) — mount FAT32 from block device
+ *   2. fat32_is_mounted()          — check if a volume is mounted
+ *   3. fat32_read_file/pread/list_dir etc. — I/O operations
+ *   4. fat32_sync()                — flush FAT copies to disk
+ *
+ * ── Error handling ────────────────────────────────────────────────
+ *   All functions return 0 or positive on success, negative errno
+ *   values on failure (see errno.h for definitions).
+ *
+ * ── Thread safety ─────────────────────────────────────────────────
+ *   The driver uses a single global mount state (static variables in
+ *   fat32.c).  Concurrent access from multiple threads is NOT safe.
+ *   Future work: add a per-filesystem lock.
+ * ═══════════════════════════════════════════════════════════════════════ */
+
 /* Max 20 VFAT LFN entries per directory entry (255 chars / 13 per entry). */
 #define LFN_MAX_ENTRIES 20
 
@@ -12,9 +44,9 @@ struct vfs_ops;
 
 /* Mount point: which disk to use for FAT32 */
 typedef enum {
-    FAT32_DISK_ATA  = 0,
-    FAT32_DISK_AHCI = 1,
-    FAT32_DISK_USB0 = 2,
+    FAT32_DISK_ATA  = 0,  /* Legacy PIO-ATA interface */
+    FAT32_DISK_AHCI = 1,  /* AHCI SATA controller */
+    FAT32_DISK_USB0 = 2,  /* USB mass storage (first device) */
 } fat32_disk_t;
 
 int  fat32_mount(fat32_disk_t disk, uint32_t part_lba); /* 0 = auto-detect partition */
