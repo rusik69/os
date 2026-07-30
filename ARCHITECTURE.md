@@ -149,50 +149,144 @@ PML4 entry 256 maps the kernel's PDPT which itself maps the kernel's PDs — eve
 
 ## Boot Sequence
 
-### Phase 1: boot.asm (32-bit)
-1. GRUB loads the kernel at physical `0x100000` via the Multiboot1 header
-2. `_start` (32-bit): clears BSS, sets up identity-mapped page tables (PAE format)
-3. PML4[0] = identity map PDPT (covers first 1GB)
-4. PML4[256] = same PDPT → high-half mapping after paging enabled
-5. Enables PAE → sets EFER.LME (long mode) → enables paging (CR0.PG)
-6. Far jump to `long_mode_entry` (64-bit CS)
+The full boot path from power-on to userspace spans four distinct phases:
+firmware → bootloader → kernel → init.
 
-### Phase 2: long_mode_entry (64-bit)
-7. Sets up GDT with 64-bit code/data segments (ring 0 and ring 3)
-8. Loads GS/FS base for per-CPU data (MSR GS_BASE/FS_BASE)
-9. Sets up initial kernel stack (4 pages + guard page)
-10. Calls `kernel_main`
+```
+ BIOS          GRUB              boot.asm          kernel_main         init (PID 1)
+ ┌─────┐      ┌──────┐          ┌────────┐         ┌──────────┐        ┌──────────┐
+ │POST │ ───> │ Load │ ───────> │32-bit  │ ──────> │ Init all  │ ───> │ Fork     │
+ │MBR  │      │kernel│          │startup │         │subsystems │       │shell loop│
+ │Grub │      │at    │          │PAE+LM  │         │Spawn init │       │Reap kids │
+ │menu │      │1 MB  │          │→64-bit │         │→ idle loop│       │Shutdown  │
+ └─────┘      └──────┘          └────────┘         └──────────┘        └──────────┘
+    ↓            ↓                  ↓                   ↓                   ↓
+ Real mode    Protected          Long mode           Long mode           Long mode
+ (16-bit)     (32-bit)           (64-bit)            (64-bit)            (64-bit)
+                                  Ring 0              Ring 0              Ring 3
+```
 
-### Phase 3: kernel_main
-11. Initialization order (linear, ~35 steps):
-    1. `early_serial_init()` — early serial output before full console
-    2. `gdt_init()` — final GDT with TSS, IST entries
-    3. `idt_init()` — IDT with interrupt gates and IST assignments
-    4. `pic_remap()` — remap PIC IRQs to vectors 0x20-0x2F
-    5. `pmm_init()` — detect physical memory from Multiboot, build bitmap
-    6. `vmm_init()` — finalize page tables, enable NX, PAT
-    7. `heap_init()` — set up kmalloc arena
-    8. `slab_init()` — initialize kmem_cache subsystem
-    9. `smp_init()` — detect APs via ACPI MADT, send INIT-SIPI-SIPI
-    10. `process_init()` — create idle process, process table
-    11. `timer_init()` — program PIT/HPET/TSC deadline timer (100 Hz) + hrtimer
-    12. `keyboard_init()` — PS/2 keyboard interrupt handler
-    13. `serial_init()` — COM1/COM2 serial console
-    14. `pci_init()` — enumerate PCI bus, discover devices
-    15. `ahci_init()`, `ata_init()` — storage device detection
-    16. `nvme_init()` — NVMe subsystem initialization
-    17. `fs_init()` — mount root filesystem (tmpfs or disk)
-    18. `net_init()` — initialize networking stack + NIC
-    19. `efi_runtime_init()` — UEFI runtime services
-    20. `acpi_init()` — parse ACPI tables, battery, thermal
-    21. `tpm_init()` — TPM 2.0 driver initialization
-    22. `syscall_init()` — set up MSR_LSTAR syscall entry
-    23. `module_init()` — load built-in modules from initramfs
-    24. `kvm_init()` — KVM virtualization setup
-    25. `bpf_init()` — eBPF subsystem initialization
-    26. `io_uring_init()` — async I/O ring setup
-    27. `shell_init()` — launch shell on /dev/console
-    28. `asm("sti")` — enable interrupts → idle loop
+### Phase 0: BIOS / Firmware (real mode, 16-bit)
+
+1. **Power-on reset** — CPU starts executing at `0xFFFFFFF0` (reset vector) in real mode.
+   CS:IP = 0xF000:0xFFF0. Jumps to BIOS entry point.
+2. **POST** — Power-On Self-Test: CPU/detection, memory sizing (via CMOS/SPD),
+   chipset initialization, PCI bus enumeration, option ROM execution.
+3. **Boot device selection** — BIOS checks boot order (floppy → HDD → CD-ROM → PXE).
+   Reads the Master Boot Record (MBR, LBA 0) into `0x7C00` and transfers control.
+4. **Bootloader (GRUB)** — The first 446 bytes of the MBR load GRUB's Stage 2 from
+   the boot partition. GRUB reads `/boot/grub/grub.cfg`, presents a boot menu,
+   and parses the target kernel's ELF / Multiboot1 header.
+5. **Kernel loading** — The Multiboot1 header (at offset 0 of the kernel image)
+   specifies `load_addr = 0x100000` (1 MB — the conventional x86 kernel load
+   point above the 640 KB–1 MB BIOS/ROM hole). GRUB copies the kernel segments
+   to physical memory and passes control to `_start` with:
+   - **EAX** = `0x2BADB002` (Multiboot magic — validates the loader)
+   - **EBX** = physical address of the Multiboot info structure
+
+### Phase 1: boot.asm (32-bit protected mode → long mode)
+
+6. `_start` (32-bit): saves the multiboot info pointer, sets up a bootstrap stack
+   (128 KB in the `.boot` section), and builds page tables:
+   - **PML4[0]** → `boot_pdpt` (identity map for physical 0x0–0x3FFFFFFF)
+   - **PML4[256]** → same `boot_pdpt` (high-half alias: kernel at `0xFFFF800000000000+`)
+   - **PDPT[0]** → `boot_pd` (512 × 2 MB huge pages = 1 GB, phys 0x0–0x3FFFFFFF)
+   - **PDPT[3]** → `boot_pd2` (512 × 2 MB huge pages, phys 0xC0000000–0xFFFFFFFF / PCI MMIO)
+7. Enables PAE (CR4.PAE) → sets IA32_EFER.LME (Long Mode Enable MSR bit 8) →
+   enables paging (CR0.PG, which atomically activates long mode).
+8. Loads the 64-bit GDT and executes a far jump to `long_mode_entry` (long mode CS).
+
+### Phase 2: long_mode_entry (64-bit long mode)
+
+9. Reloads all data segments with the 64-bit flat-model selectors.
+10. Zeroes the `.bss` section (all uninitialized globals).
+11. Initializes KASLR offset (stubbed to 0; `kaslr_init()` in C randomizes later).
+12. Switches the stack pointer to the high-half VMA (`RSP += KERNEL_VMA_OFFSET`)
+    so all C code uses `0xFFFF800000000000+` addresses from the start.
+13. Calls `kernel_main(multiboot_magic, multiboot_info_phys)`.
+
+### Phase 3: kernel_main — kernel subsystem initialization
+
+14. Initialization order (linear, ~40+ steps in `src/kernel/kernel.c`):
+
+    | # | Call                      | Purpose                                      |
+    |---|---------------------------|----------------------------------------------|
+    | 1 | `early_serial_init()`     | Early COM1 debug output before any state     |
+    | 2 | `gdt_init()`              | Final GDT with TSS + IST entries             |
+    | 3 | `pic_init()`              | Remap PIC IRQs to vectors 0x20–0x2F          |
+    | 4 | `idt_init()`              | IDT with interrupt gates and IST assignments |
+    | 5 | `stack_guard_init()`      | Guard pages below kernel stacks              |
+    | 6 | `pmm_init()`              | Detect physical memory from Multiboot info   |
+    | 7 | `ist_init()`              | IST stacks for #DF / NMI / MCE              |
+    | 8 | `fault_init()`            | Register exception handlers                  |
+    | 9 | `vmm_init()`              | Finalize page tables, enable NX/PAT          |
+    |10 | `cpu_security_init()`     | SMEP, SMAP, NXE, UMIP                        |
+    |11 | `kpti_init()`             | Kernel Page-Table Isolation (Meltdown fix)   |
+    |12 | `heap_init()`             | kmalloc arena (first-fit, 16 KB initial)     |
+    |13 | `slab_init()`             | kmem_cache subsystem (per-CPU caches)        |
+    |14 | `process_init()`          | Idle process, process table                  |
+    |15 | `scheduler_init()`        | Per-CPU runqueues, pick_next_task            |
+    |16 | `apic_init_local()`       | Local APIC (replaces PIC for interrupts)     |
+    |17 | `smp_boot_aps()`          | INIT-SIPI-SIPI → discover + start AP cores   |
+    |18 | `timer_init()`            | PIT / HPET / TSC deadline timer (100 Hz)    |
+    |19 | `x2apic_init()`           | Switch to x2APIC mode (if CPU supports)      |
+    |20 | `timers_init()`           | High-resolution timers, timerfd              |
+    |21 | `workqueue_init()`        | Deferred work execution threads              |
+    |22 | `modules_init()`          | Kernel module (kmod) API + symbol table      |
+    |23 | `acpi_init()`             | Parse ACPI tables (FADT, MADT, DSDT, ...)    |
+    |24 | `syscall_init()`          | MSR_LSTAR syscall fast-path                  |
+    |25 | `vfs_init()`              | Virtual filesystem layer                     |
+    |26 | `devtmpfs_init()`         | Dynamic /dev device node creation            |
+    |27 | `procfs_init()`           | /proc virtual filesystem                     |
+    |28 | `sysfs_init()`            | /sys kernel object tree                      |
+    |29 | `keyboard_init()`         | PS/2 keyboard IRQ handler                    |
+    |30 | `rtc_init()`              | Real-time clock (CMOS-based)                 |
+    |31 | `ata_init()` / `ahci_init()` | Storage: ATA PIO / AHCI SATA            |
+    |32 | `nvme_init()`             | NVMe SSD (queue pairs)                       |
+    |33 | `fs_init()`               | Mount root filesystem (tmpfs or disk)        |
+    |34 | `initramfs_extract()`     | Extract embedded CPIO archive                |
+    |35 | `pci_init()`              | Enumerate PCI bus, discover devices          |
+    |36 | `usb_init()`              | USB controller + device enumeration          |
+    |37 | `net_init()`              | Network stack + NIC (e1000/virtio/vmxnet3)   |
+    |38 | `dhcp_discover()`         | DHCP client for IP assignment                |
+    |39 | `service_start()`         | Start telnetd, httpd, sshd                   |
+    |40 | `container_init()`        | OCI container runtime                        |
+
+15. After all subsystems are initialized, `kernel_main` loads the initrd from
+    the Multiboot module (if present), then spawns userspace init:
+    ```c
+    int pid = process_spawn_kernel("/mnt/sbin/init");
+    ```
+    If `init=` was given on the kernel command line, that path is used instead.
+
+16. The boot thread then transitions to the **idle loop** — reaping zombie
+    processes and executing `cpuidle_idle()` when no tasks are runnable.
+
+### Phase 4: Userspace Init (PID 1)
+
+17. **`/sbin/init`** (source: `userspace/init/init.c`) is the first userspace
+    process. It manages the entire user session lifecycle:
+
+    1. **Signal handler registration** — Installs SIGTERM → `shutdown_handler`
+       and SIGINT → `forward_signal_to_child`. These custom handlers are
+       registered before any `fork()` so children inherit `SIG_DFL`.
+    2. **Console setup** — Opens `/dev/console` and `dup2()`s it onto
+       stdin/stdout/stderr. Falls back to raw I/O if the device node doesn't
+       exist (e.g., early boot without devtmpfs).
+    3. **Shell spawn loop** — The main loop `fork()`s a child, attempts
+       `execve("/bin/getty", ...)` for a login prompt, falling back to
+       `execve("/bin/sh", ...)` if getty is unavailable. Saves child PID
+       for signal forwarding, reaps zombie orphans, then blocks on `waitpid()`.
+       On child exit the loop respawns (unless shutting down).
+    4. **Zombie reaping** — `reap_children()` uses `waitpid(-1, WNOHANG)`
+       in a loop to collect orphaned grandchildren reparented to PID 1.
+    5. **Shutdown sequence** — On SIGTERM: sets `g_shutting_down`, forwards
+       the signal to the child, waits for child to exit, then calls `sync()`
+       twice and `reboot()`. If `reboot()` returns, enters a permanent HLT
+       loop.
+    6. **Fallback halt** — If `fork()` or `execve()` fails fatally, init
+       prints an error and pauses forever (preventing a kernel panic from
+       init's exit).
 
 ## Subsystem Architecture
 
