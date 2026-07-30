@@ -5,8 +5,113 @@
  * a 64MB module memory region allocator with per-section permissions,
  * reference counting, and dependency tracking.
  *
- * M9: Extended struct kernel_module with base address, sections, refcount.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * MODULE LOADING PIPELINE (ELF parse → relocate → init)
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Loading a kernel .ko module proceeds through a well-defined sequence of
+ * stages, split across the ELF loader (module_elf.c) and the module state
+ * machine (this file).  The high-level call chain starts from either:
+ *
+ *   sys_init_module()  — load from a filesystem path (syscall.c)
+ *   sys_finit_module() — load from an open file descriptor (syscall.c)
+ *
+ * The full pipeline, managed by sys_init_module / sys_finit_module, is:
+ *
+ *   ┌──────────────────────────────────────────────────────────────────┐
+ *   │ STAGE 1: VALIDATE       module_elf_validate()   [module_elf.c]  │
+ *   │   - Verify ELF magic (EI_MAG0..EI_MAG3)                         │
+ *   │   - Check 64-bit class (ELFCLASS64), little-endian (ELFDATA2LSB)│
+ *   │   - Confirm ET_REL (relocatable) type, x86_64 machine           │
+ *   │   - Validate program & section header offsets and sizes         │
+ *   │   - Bounds-check that the entire ELF header fits within data    │
+ *   ├──────────────────────────────────────────────────────────────────┤
+ *   │ STAGE 2: PARSE          module_elf_parse()      [module_elf.c]  │
+ *   │   - Parse section headers, locate shstrtab / strtab tables     │
+ *   │   - Parse symbol table (.symtab), identify undefined imports    │
+ *   │   - Parse RELA relocation entries (.rela.text, .rela.data, etc)│
+ *   │   - Extract .modinfo metadata (license, author, description,    │
+ *   │     depends, vermagic, alias, parmtype, kparamvals)            │
+ *   │   - Verify vermagic matches running kernel                      │
+ *   ├──────────────────────────────────────────────────────────────────┤
+ *   │ STAGE 3: FINALIZE       module_elf_finalize()   [module_elf.c]  │
+ *   │   ├─ Step 0: Resolve dependencies (module_dep_resolve_list)     │
+ *   │   │   - Ensure all 'depends=' modules are already loaded        │
+ *   │   │   - Load missing dependencies via request_module()          │
+ *   │   ├─ Step 1: Resolve symbols  (module_elf_resolve)              │
+ *   │   │   - Match undefined symbols against kernel exported table   │
+ *   │   │   - Match against exports of already-loaded modules         │
+ *   │   ├─ Step 2: Load sections   (module_elf_load_sections)         │
+ *   │   │   - Allocate module memory region via module_alloc_region()│
+ *   │   │   - Copy PROGBITS sections (.text, .data, .rodata, .bss)   │
+ *   │   │   - Zero-initialize NOBITS (BSS) sections                  │
+ *   │   ├─ Step 3: Apply relocations (module_elf_apply_rela)          │
+ *   │   │   - Apply x86_64 RELA relocations (R_X86_64_64,            │
+ *   │   │     R_X86_64_PC32, R_X86_64_PLT32, R_X86_64_GOTPCREL, etc) │
+ *   │   ├─ Step 4: Set page perms  (module_elf_set_perms)             │
+ *   │   │   - Set RX on .text (executable, read-only)                │
+ *   │   │   - Set RO on .rodata (read-only data)                     │
+ *   │   │   - Set RW on .data / .bss (writable data)                 │
+ *   │   ├─ Step 5: Find init function (find_module_entry)             │
+ *   │   │   - Locate 'init_module' symbol in the relocated symtab    │
+ *   │   ├─ Step 7: Register module   module_load()      [module.c]   │
+ *   │   │   - Find free slot in g_modules[] table                    │
+ *   │   │   - Set state = MODULE_LOADING                             │
+ *   │   │   - Register module name, entry function, base address     │
+ *   │   ├─ Step 7a: Discover & register params from .kparamvals       │
+ *   │   ├─ Step 8: Set exit function (cleanup_module)                 │
+ *   │   ├─ Step 9: Apply boot-time cmdline parameters                 │
+ *   │   ├─ Step 10: Register exported symbols                         │
+ *   │   ├─ Step 11: Deferred init     module_init_with_deps()         │
+ *   │   │   - If all deps are LIVE, call init function immediately    │
+ *   │   │   - Otherwise enqueue for deferred init (retry later)      │
+ *   │   ├─ Step 12: Transition LIVE   module_set_live()   [module.c] │
+ *   │   │   - Set state = MODULE_LIVE                                 │
+ *   │   │   - Trigger module_process_deferred_inits() (cascade)      │
+ *   │   ├─ Step 13: Create sysfs param entries                        │
+ *   │   └─ Step 14: Register aliases (module_alias_register)         │
+ *   └──────────────────────────────────────────────────────────────────┘
+ *
+ * Module state machine transitions:
+ *
+ *   UNUSED ──module_load()──→ LOADING ──module_set_live()──→ LIVE
+ *                                  ↑                              │
+ *                                  │                              │
+ *                             init fails                     unload
+ *                                  │                              │
+ *                                  └──→ DEAD ◄── DEAD ←── UNLOADING
+ *
+ * Key design decisions:
+ *   - The g_modules[] table is a fixed-size array of MODULE_MAX entries.
+ *     Slot 0 is reserved for the kernel/vmlinux pseudo-module.
+ *   - Module memory is allocated from a 64 MB virtual region with KASLR
+ *     randomization of the base offset (module_base_offset).
+ *   - A text_mutex serialises all code-section modifications (load,
+ *     unload, kprobes, ftrace) to prevent concurrent text patching.
+ *   - Deferred init allows topological ordering: a module that depends
+ *     on another not-yet-LIVE module is queued; when the dependency
+ *     reaches LIVE, the queue is scanned and ready modules are init'd.
+ *   - Reference counting (module_get/module_put) prevents unloading a
+ *     module while another module or kernel path is actively using its
+ *     symbols or functions.
+ *
+ * M9:  Extended struct kernel_module with base address, sections, refcount.
  * M10: Module memory region allocator (MODULES_VADDR .. MODULES_VADDR+64MB).
+ * M11: Module validation (ELF header checks) in module_elf_validate().
+ * M12: Section parsing and loading in module_elf.c.
+ * M13: Symbol resolution against kernel export table.
+ * M14: RELA relocation application for x86_64.
+ * M15: Per-section page permission setting (RX/RO/RW).
+ * M16: Module init function calling and LIVE transition.
+ * M17: sys_init_module (load from path).
+ * M18: sys_finit_module (load from fd).
+ * M19: sys_delete_module (unload by name).
+ * M20: sys_query_module (enumerate loaded modules).
+ * M25: Module dependency resolution.
+ * M26: Module reference counting (module_get/module_put).
+ * M29: Module parameter infrastructure.
+ * M33: Boot-time cmdline module parameters.
+ * M38: Module alias (modalias) matching engine.
  */
 
 #include "module.h"
