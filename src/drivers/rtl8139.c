@@ -15,6 +15,75 @@
 #ifdef MODULE
 #endif
 
+/* ---- RTL8139 C+ (C-plus) Mode Operation ----------------------------------
+ *
+ * The RTL8139 chipset exists in two major variants:
+ *
+ *   RTL8139C (aka "A/B/C revision") -- legacy mode only
+ *   RTL8139C+ / RTL8139D          -- legacy + C+ mode
+ *
+ * -- Legacy mode (currently implemented) -----------------------------------
+ *
+ * - 4 fixed TX descriptor slots (TDSTAT0-3 / TSAD0-3 registers).
+ * - Single contiguous receive ring buffer (RTL8139_RX_BUF_SIZE = 64 KB).
+ * - CAPR/CBR registers track NIC/driver read positions in the RX ring.
+ * - No hardware checksum offload or TSO; the driver must compute/verify
+ *   IP/TCP/UDP checksums in software.
+ * - Each TX descriptor is programmed by writing the packet length with
+ *   the OWN bit to the TDSTAT register and the DMA address to TSAD.
+ *
+ * -- C+ mode (not yet implemented) -----------------------------------------
+ *
+ * The C+ mode uses a descriptor-ring architecture similar to the
+ * RTL8169 Gigabit Ethernet controller.  When enabled via the C+ Command
+ * Register (0xE0 on RTL8139C+; offset 0xE0 differs from the PHY BMCR
+ * register that exists at the same offset on older chips), the NIC
+ * ignores the legacy TDSTAT/TSAD/CAPR/CBR registers and instead uses
+ * descriptor tables in host memory.
+ *
+ * C+ Key Registers (RTL8139D / 8139C+ only):
+ *   TxConfig_8139C+  0x52  -- C+ TX configuration (IFG, DMA burst)
+ *   RxConfig_8139C+  0xE0  -- C+ Command Register (enable C+ mode)
+ *   TxDescStartAddr  0x64  -- Physical address of TX descriptor ring
+ *   TxDescStartAddr_HI 0x68 -- High 32 bits (64-bit addressing)
+ *   RxDescStartAddr  0xE4  -- Physical address of RX descriptor ring
+ *   RxDescStartAddr_HI 0xE8 -- High 32 bits (64-bit addressing)
+ *
+ * C+ Descriptor Format (per descriptor, 16 bytes):
+ *   struct rtl8139cp_desc {
+ *       uint32_t addr_lo;    -- Buffer physical address, low 32 bits
+ *       uint32_t addr_hi;    -- Buffer physical address, high 32 bits
+ *       uint32_t len_opts;   -- Length (lower 16) + VLAN/TSO opts
+ *       uint32_t status;     -- Ownership flag + status / error bits
+ *   };
+ *
+ * C+ Features:
+ * - TCP Segmentation Offload (TSO): The NIC segments large TCP packets
+ *   in hardware up to 64 KB per descriptor.
+ * - IP/TCP/UDP checksum offload: Hardware computes/verifies checksums
+ *   (IPv4 checksum, TCP pseudo-header checksum, UDP checksum).
+ * - VLAN hardware tagging: Insert/remove 802.1Q tags via descriptor
+ *   options without copying data.
+ * - Priority Queues: Two independent TX descriptor rings (high and
+ *   normal priority) for QoS support.
+ * - 64-bit DMA addressing: Separate high-32-bit descriptor address
+ *   registers for buffers above 4 GB.
+ * - RX checksum verification: NIC attaches a 16-bit hardware checksum
+ *   field after each received frame, which the driver can use instead
+ *   of computing software checksums.
+ *
+ * To enable C+ mode the driver must:
+ *   1) Detect the chip revision via TCR[29:23] (HWVERID field).
+ *   2) Allocate physically-contiguous descriptor rings in memory.
+ *   3) Write ring base addresses to TxDescStartAddr / RxDescStartAddr.
+ *   4) Set the C+ mode bit in the C+ Command Register (0xE0).
+ *   5) Reconfigure TCR/RCR for descriptor-ring operation.
+ *
+ * The current driver implementation uses only legacy mode, which is
+ * sufficient for basic network I/O on all RTL8139 chip revisions.
+ * C+ mode support should be added when hardware checksum offload or
+ * TSO performance is required.
+ * ----------------------------------------------------------------------- */
 /* ── Static driver state ─────────────────────────────────────────── */
 static struct rtl8139_priv rtl8139_state;
 static spinlock_t rtl8139_lock = SPINLOCK_INIT;
