@@ -1,6 +1,59 @@
 #ifndef _UNISTD_H
 #define _UNISTD_H
 
+/**
+ * @file unistd.h
+ * @brief POSIX syscall wrapper API for the OS kernel.
+ *
+ * Architecture overview:
+ * ----------------------
+ * This header defines the userspace interface to the kernel's syscall ABI.
+ * Each wrapper function translates a standard POSIX call (or custom OS call)
+ * into a kernel trap via the architecture-specific syscall mechanism
+ * (software interrupt, VMM hypercall, or CPU instruction).
+ *
+ * Layout of this file:
+ *   1. Syscall numbers (SYS_*) — constants matching the kernel's syscall.c
+ *      dispatch table. Each #define corresponds to a slot in the kernel's
+ *      syscall handler array.
+ *   2. Standard POSIX constants — STDIN/STDOUT/STDERR, open flags (O_RDONLY,
+ *      O_WRONLY, etc.), seek flags (SEEK_SET/CUR/END), waitpid flags, signal
+ *      numbers, and AT_* constants for *at family syscalls.
+ *   3. Data structures — struct stat, dirent, timespec, statfs, sysinfo,
+ *      utsname. These must match the kernel's definitions exactly.
+ *   4. Syscall number catalog (additional SYS_*) — extended syscalls for
+ *      module loading, swap, mount, VGA framebuffer operations, container
+ *      management, etc.
+ *   5. Function prototypes — one `extern` declaration per syscall wrapper.
+ *      Implementations live in userspace/libc/src/unistd.c (or inline asm
+ *      stubs). The wrappers marshal arguments according to the kernel's
+ *      calling convention and return the kernel's status code (0 on success,
+ *      negated errno on failure, typically restored to -1 + errno).
+ *
+ * Syscall groups:
+ *   - File I/O:    read, write, open, close, lseek, dup, dup2, ioctl
+ *   - Filesystem:  stat, fstat, fstatat, mkdir, rmdir, unlink, link, symlink,
+ *                  rename, chdir, getcwd, chmod, access, statfs, mount, umount
+ *   - Process:     fork, execve, exit, waitpid, getpid, getppid, getuid,
+ *                  geteuid, getgid, getegid, setpgid, getpgid, setpgrp,
+ *                  getpgrp, nice (via SYS_SETPRIORITY), umask, chroot
+ *   - Signals:     kill, signal, alarm
+ *   - Memory:      brk (heap expansion)
+ *   - Time:        nanosleep, clock_gettime, alarm, gettimeofday
+ *   - Networking:  net_present, net_get_{mac,ip,gw,mask}, net_dns,
+ *                  net_ping, net_{udp,tcp}_* wrappers
+ *   - VGA/Input:   vga_put_pixel, vga_blit, keyboard_* wrappers
+ *   - Misc:        uname, sysinfo, sync, reboot, gethostname,
+ *                  getdents64, pipe, posix_spawn, init_module,
+ *                  delete_module, query_module, swapon, swapoff,
+ *                  utimensat, ftruncate
+ *
+ * Implementation note:
+ *   The actual syscall mechanism (int $0x80, syscall/sysret, or VMM hypercall)
+ *   is abstracted in the per-architecture syscall stub assembly. The libc's
+ *   unistd.c source wraps each stub with errno handling per POSIX semantics.
+ */
+
 /* Syscall number defines (matching kernel's syscall.h) */
 #define SYS_READ      0
 #define SYS_WRITE     1
