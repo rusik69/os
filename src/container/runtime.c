@@ -302,6 +302,109 @@ int container_remove_dirs(struct container *c) {
     return 0;
 }
 
+/* ── Container Lifecycle Stages ──────────────────────────────────────
+ *
+ * The OCI container runtime implements a six-state lifecycle model
+ * that mirrors the standard container lifecycle defined by the OCI
+ * Runtime Specification.  Each container transitions through these
+ * states in a strict order; invalid transitions are rejected by
+ * is_valid_transition() and container_set_state().
+ *
+ * ┌─────────────────────────────────────────────────────────────────┐
+ * │                    STATE MACHINE DIAGRAM                       │
+ * │                                                                 │
+ * │  (nonexistent)                                                  │
+ * │       │                                                         │
+ * │       │ container_alloc()                                       │
+ * │       ▼                                                         │
+ * │  ┌──────────┐   container_create()   ┌──────────┐              │
+ * │  │ CREATING ├──────────────────────► │  CREATED │              │
+ * │  └──────────┘                        └────┬─────┘              │
+ * │                                           │                     │
+ * │                              container_start()                  │
+ * │                                           ▼                     │
+ * │                                    ┌──────────┐                │
+ * │                  ┌─────────────────│ RUNNING  │─────────────┐   │
+ * │                  │                 └────┬─────┘             │   │
+ * │                  │                      │ container_pause() │   │
+ * │                  │ container_stop()     ▼                    │   │
+ * │                  │                ┌──────────┐              │   │
+ * │                  │                │  PAUSED  │              │   │
+ * │                  │                └────┬─────┘              │   │
+ * │                  │                     │ container_resume() │   │
+ * │                  │                     └─────────►──────────┘   │
+ * │                  ▼                                              │
+ * │            ┌──────────┐   container_delete()   ┌──────────┐   │
+ * │            │  STOPPED ├────────────────────────► │ DELETING │   │
+ * │            └──────────┘                         └────┬─────┘   │
+ * │                                                       │         │
+ * │                                          container_free()      │
+ * │                                                       ▼         │
+ * │                                              (freed slot)       │
+ * └─────────────────────────────────────────────────────────────────┘
+ *
+ * STAGES DETAILED:
+ *
+ * 1. CREATING (initial state after container_alloc)
+ *    - Container descriptor allocated from container_table[]
+ *    - No ID assigned yet, no directories exist
+ *    - Transition: only to CREATED (via container_create)
+ *
+ * 2. CREATED (after container_create completes)
+ *    - Container has a unique ID, directory hierarchy created:
+ *      /var/lib/containers/<id>/  (data dir — rootfs, config.json, log/)
+ *      /run/containers/<id>/      (run dir — state.json)
+ *    - Rootfs subdirectories created (proc, sys, dev, etc...)
+ *    - Virtual filesystems mounted inside rootfs
+ *    - state.json persisted to disk
+ *    - Container is ready but NOT running — no init process
+ *    - Transition: only to RUNNING (via container_start)
+ *
+ * 3. RUNNING (after container_start completes)
+ *    - Init process has been spawned via process_spawn() from config.json
+ *    - Init PID recorded in container descriptor
+ *    - Container has an active process tree rooted at init
+ *    - state.json updated with init PID
+ *    - Transition: to STOPPED (via container_stop) or PAUSED (via pause)
+ *
+ * 4. PAUSED (optional — after container_pause)
+ *    - Container's processes are frozen (SIGSTOP to process tree)
+ *    - Resources (memory, fd) preserved but not executing
+ *    - Transition: back to RUNNING (via container_resume)
+ *    - Note: Pause/resume is a CGroup/freezer operation, managed in
+ *      the controller subsystem; the state machine just tracks it.
+ *
+ * 5. STOPPED (after container_stop completes)
+ *    - Init process has exited (gracefully via SIGTERM or forced via SIGKILL)
+ *    - Container directories and data still exist (inspectable)
+ *    - Container descriptor still valid (id, directories preserved)
+ *    - State is frozen — no further lifecycle actions possible except delete
+ *    - Transition: only to DELETING (via container_delete)
+ *
+ * 6. DELETING (terminal state — after container_delete begins)
+ *    - Container directories being removed (data + run + rootfs)
+ *    - state.json / config.json removed
+ *    - After cleanup, container_free() invalidates the descriptor
+ *    - Slot returns to "free" pool for reuse
+ *    - No further transitions possible
+ *
+ * REFERENCE COUNTS:
+ *   Each container descriptor has a refcount field.  Internal callers
+ *   (container_alloc, container_free) manage the initial count.
+ *   External subsystems (monitoring, orchestration) should increment
+ *   the refcount via container_get()/container_put() to prevent
+ *   premature deallocation while references exist.
+ *
+ * LOCKING:
+ *   The container_table[] is protected by container_global_lock (spinlock).
+ *   Individual container descriptors are protected by c->lock (spinlock).
+ *   Lock ordering: always acquire container_global_lock before c->lock
+ *   when both are needed (see container_set_state for single-lock
+ *   operations).  I/O-heavy operations (container_create_dirs,
+ *   container_mount_vfs) run with c->lock released to avoid blocking
+ *   the scheduler.
+ */
+
 /* ── State machine ─────────────────────────────────────────────────── */
 
 static int is_valid_transition(int old_state, int new_state) {
