@@ -9,29 +9,130 @@
 #include "errno.h"
 
 /*
- * Module Signature Verification (Item 75)
+ * Module Signature Verification
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * OVERVIEW
+ * ═══════════════════════════════════════════════════════════════════════════
  *
  * Verifies RSA+SHA256 signatures on loadable kernel modules before they
  * are loaded into the kernel.  Signed modules carry a .module_sig ELF
- * section containing a PKCS#1 v1.5 RSA-2048 signature of the module's
- * SHA-256 hash.
+ * section containing an RSA-2048 PKCS#1 v1.5 signature of the module's
+ * SHA-256 hash (traditional), or a PKCS#7/CMS SignedData blob wrapping
+ * the same RSA+SHA256 signature with X.509-like chain-of-trust metadata.
  *
- * Enhanced with PKCS#7 signature chain verification (S109):
- *   - Supports signed module verification against a chain of trusted
- *     X.509-like public keys embedded in the kernel.
- *   - Multiple trusted keys can be registered.
- *   - The module_sig section can contain PKCS#7 SignedData structures
- *     in addition to raw RSA signatures.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * VERIFICATION PIPELINE
+ * ═══════════════════════════════════════════════════════════════════════════
  *
- * The public key is shared with the SSH host key (rsa_key.h).  Module
- * authors sign modules using OpenSSL or a similar tool:
+ *   ENTRY POINT: module_verify_elf(elf_data, elf_size)
+ *     Called from module_elf_validate() in module_elf.c during STAGE 1
+ *     of the ELF loading pipeline, before any sections are parsed.
  *
- *   openssl dgst -sha256 -sign private.pem module.ko -out module.sig
- *   objcopy --add-section .module_sig=module.sig module.ko
+ *   STEP 1: Locate .module_sig section
+ *     elf_find_section_by_name() walks the ELF section headers looking
+ *     for a section named ".module_sig".  If absent:
+ *       - enforce mode  → reject with -EKEYREJECTED
+ *       - warn-only mode → log warning, taint kernel (TAINT_MODULE_UNSIGNED),
+ *                           allow loading
  *
- * Enforcement modes:
- *   0 = warn-only (log but allow unsigned/invalid modules)
- *   1 = enforce  (reject unsigned or invalid modules)
+ *   STEP 2: Read signature metadata
+ *     The .module_sig section begins with a struct module_sig_info header:
+ *       - sig_len: length of the RSA signature (must be MODULE_SIG_LEN)
+ *       - sig:     the raw RSA-2048 PKCS#1 v1.5 signature bytes
+ *     Validates section bounds and signature length.
+ *
+ *   STEP 3: Compute module content hash
+ *     SHA-256 is computed over the entire ELF file EXCEPT the .module_sig
+ *     section itself.  This allows appending an external signature image
+ *     without altering the bytes being signed:
+ *
+ *       hash = SHA256( elf_data[0 .. sig_offset) ||
+ *                      elf_data[sig_offset + sig_size .. elf_size) )
+ *
+ *   STEP 4a: Try raw RSA signature verification
+ *     rsa_verify(digest, sig_info->sig) performs PKCS#1 v1.5 RSA-2048
+ *     verification using the kernel's embedded public key (from rsa_key.h,
+ *     shared with the SSH host key infrastructure).
+ *
+ *   STEP 4b: Fall back to PKCS#7 chain verification (S109)
+ *     If raw RSA fails and the .module_sig section looks like a DER
+ *     SEQUENCE (PKCS#7 blob), attempt chain verification:
+ *       pkcs7_verify_chain():
+ *         ├─ Check for PKCS#7 SignedData OID (1.2.840.113549.1.7.2)
+ *         ├─ Extract signer key hash (simplified: hash entire PKCS#7 blob)
+ *         ├─ Match signer fingerprint against trusted key table
+ *         │   (g_trusted_keys[] — up to MAX_TRUSTED_KEYS entries)
+ *         ├─ Extract content digest and RSA signature from PKCS#7 blob
+ *         ├─ Verify content digest matches module hash
+ *         └─ Verify RSA signature over content digest
+ *
+ *   OUTCOME:
+ *     - Success (0):     Module is authentic, loading proceeds
+ *     - Failure (-errno): Module is rejected / tainted accordingly
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ENFORCEMENT MODES
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *   enforce=1 (default): Unsigned modules or modules with invalid
+ *     signatures are REJECTED — -EKEYREJECTED is returned to the loader.
+ *     Only properly signed modules with valid RSA signatures may load.
+ *
+ *   enforce=0 (warn-only): Unsigned modules are ALLOWED but the kernel
+ *     is tainted with TAINT_MODULE_UNSIGNED.  Invalid signatures still
+ *     cause rejection.  Useful during development and testing.
+ *
+ *   Taint flags set by signature verification:
+ *     TAINT_MODULE_UNSIGNED       — module had no .module_sig section
+ *     TAINT_MODULE_PROPRIETARY    — module has non-GPL-compatible license
+ *     TAINT_MODULE_VERMAGIC_MISMATCH — module built for different kernel
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * KEY DATA STRUCTURES
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *   struct module_sig_info  (from module_signature.h)
+ *     ├── sig_len    (uint32_t)  — signature byte length
+ *     └── sig[]      (uint8_t[])  — raw RSA-2048 PKCS#1 v1.5 signature
+ *
+ *   struct trusted_key  (internal, for PKCS#7 chain verification)
+ *     ├── fingerprint  (uint8_t[KEY_HASH_LEN]) — SHA-256 hash of public key
+ *     └── in_use       (int)                   — slot is occupied flag
+ *
+ *   g_trusted_keys[]  — static array of MAX_TRUSTED_KEYS (8) entries,
+ *     managed by module_sig_add_trusted_key() and
+ *     module_sig_clear_trusted_keys().
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * DER / PKCS#7 PARSING HELPERS
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *   pkcs7_parse_der_length()   — parse DER TLV length field (short/long form)
+ *   pkcs7_skip_der_tlv()       — skip a DER TLV (tag + length + value)
+ *   pkcs7_find_oid()           — search for a specific OID in DER blob
+ *   pkcs7_extract_key_hash()   — compute signer fingerprint (simplified)
+ *   pkcs7_extract_sig_and_hash() — extract content digest + RSA signature
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * SIGNATURE FORMATS SUPPORTED
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *   1. Raw RSA-2048 PKCS#1 v1.5  (traditional, compact)
+ *      .module_sig = struct module_sig_info { sig_len; sig[256]; }
+ *      Generated with:
+ *        openssl dgst -sha256 -sign private.pem module.ko -out module.sig
+ *        objcopy --add-section .module_sig=module.sig module.ko
+ *
+ *   2. PKCS#7/CMS SignedData (S109, chain-of-trust)
+ *      .module_sig = DER-encoded PKCS#7 SignedData blob
+ *      Generated with:
+ *        openssl cms -sign -signer cert.pem -binary -in module.ko \\
+ *            -out module.sig -outform DER
+ *        objcopy --add-section .module_sig=module.sig module.ko
+ *
+ * Item 75: Module signature verification.
+ * S109:    PKCS#7 signature chain verification.
  */
 
 /* ── State ───────────────────────────────────────────────────────────── */
