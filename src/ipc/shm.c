@@ -1,14 +1,84 @@
 /*
- * shm.c — shared memory segments with permission control
+ * shm.c — System V shared memory segments with permission control
  *
- * 16 segments, each one 4096-byte page.
- * shmget(key, mode) → segment id (0-15), or -1 if no slots.
- *   - If segment exists: returns id, mode is ignored.
- *   - If new: owner = current process uid/gid, mode stored.
- * shmat(id)   → maps the segment page into the caller's PML4;
- *               checks read permission. Returns virt addr or 0.
- * shmdt(id)   → unmaps from caller's PML4 (always allowed).
- * shmfree(id) → free the segment; owner or root only.
+ * ── Architecture Overview ──────────────────────────────────────────
+ *
+ * This subsystem implements System V-style shared memory IPC. It provides
+ * 16 fixed-size segments (each backed by one 4096-byte physical page).
+ * Processes attach (map) these pages into their virtual address space
+ * so that multiple processes can share and communicate through the same
+ * physical memory.
+ *
+ * ── Virtual Address Layout ─────────────────────────────────────────
+ *
+ * All shared memory segments are mapped into a reserved region of each
+ * process's user address space starting at SHM_VIRT_BASE
+ * (0x0000700000000000). Each segment occupies a 64-KiB window
+ * (id × 0x10000) to leave room for guard spacing; only the first 4 KiB
+ * of each window is actually backed by physical memory.
+ *
+ *   SHM_VIRT_BASE + 0x00000  → segment 0 (4 KiB page)
+ *   SHM_VIRT_BASE + 0x10000  → segment 1 (4 KiB page)
+ *   SHM_VIRT_BASE + 0x20000  → segment 2 (4 KiB page)
+ *   ...
+ *   SHM_VIRT_BASE + 0xF0000  → segment 15
+ *
+ * ── Page Lifecycle ─────────────────────────────────────────────────
+ *
+ *  1. Allocation (shm_get):
+ *     A physical frame is obtained from pmm_alloc_frame() and reference-
+ *     counted with pmm_ref_frame() so the page stays pinned for as long
+ *     as any process has it mapped. The page is zeroed before first use.
+ *     Each segment's physical frame address is stored in shm_table[id].phys.
+ *
+ *  2. Mapping (shm_at / shm_mmap):
+ *     The page is mapped into the caller's page table (PML4) via
+ *     vmm_map_user_page() with PRESENT|USER|WRITE flags. A per-segment
+ *     reference count (shm_table[id].refs) is incremented on each attach.
+ *
+ *  3. Unmapping (shm_dt):
+ *     The page is unmapped from the caller's page table via
+ *     vmm_unmap_user_page() and the reference count is decremented.
+ *     The physical page itself remains allocated as long as refs > 0.
+ *
+ *  4. Deallocation (shm_free):
+ *     When all processes have detached (refs == 0) and the creator or
+ *     root calls shm_free(), pmm_unref_frame() releases the physical
+ *     page back to the page allocator. The segment slot is marked unused.
+ *
+ * ── Reference Counting ─────────────────────────────────────────────
+ *
+ *   - pmm_ref_frame() / pmm_unref_frame() tracks the physical frame's
+ *     global reference count (shared across all mappings).
+ *   - shm_table[id].refs tracks the number of user-space mappings
+ *     active for this segment.
+ *   - shm_free() checks refs == 0 before releasing the physical page.
+ *
+ * ── Permission Model ───────────────────────────────────────────────
+ *
+ *   Each segment carries a uid, gid, and mode (rwxrwxrwx-style bits).
+ *   shm_check_perm() implements the standard Unix permission check:
+ *     - root (uid == 0) always passes
+ *     - owner matches → owner permission bits
+ *     - group matches (direct or supplementary) → group permission bits
+ *     - otherwise → other permission bits
+ *   The permission check is performed during shmget (existing segment),
+ *   shmat (read check), and shm_mmap (prot-based flags).
+ *
+ * ── API Summary ────────────────────────────────────────────────────
+ *
+ *   shm_init()        – Initialise all segment slots (called at boot).
+ *   shm_get(key,mode) – Look up or create a segment by key.
+ *   shm_at(id)        – Attach (map) segment into caller's address space.
+ *   shm_dt(id)        – Detach (unmap) segment from caller's address space.
+ *   shm_free(id)      – Release a segment (owner or root only).
+ *   shm_perm_set()    – Change uid/gid/mode (owner or root).
+ *   shm_perm_get()    – Query segment metadata.
+ *   shm_open()        – POSIX shm_open wrapper (name → hash key).
+ *   shm_unlink()      – POSIX shm_unlink wrapper.
+ *   shm_mmap()        – mmap-style mapping with prot/flags.
+ *   shm_stat()        – Statistics (total/used/max segments).
+ *   shm_show_fdinfo() – Format segment info for /proc-style output.
  */
 
 #include "shm.h"
