@@ -801,6 +801,93 @@ See [MODULARITY.md](MODULARITY.md) for the monolithic-to-modular transition plan
 
 Also see [docs/architecture-diagram.html](docs/architecture-diagram.html) for an interactive visual diagram.
 
+## Contributing
+
+We welcome contributions! This is a community-driven hobby OS project, and every improvement — big or small — makes a difference.
+
+### Getting Started
+
+1. **Fork** the repository on GitHub.
+2. **Clone** your fork: `git clone https://github.com/<your-username>/os.git`
+3. **Set up the toolchain** — see [Build Prerequisites](#build-prerequisites) for your platform.
+4. **Build and verify** the OS boots before making changes:
+   ```bash
+   make -j$(nproc) CC=x86_64-linux-gnu-gcc LD=x86_64-linux-gnu-ld OBJCOPY=x86_64-linux-gnu-objcopy
+   ```
+
+### What to Work On
+
+- **Bug fixes** and **input validation** — check open issues for unvalidated function parameters, missing null/bounds/state checks.
+- **Documentation** — inline comments, header docs, ARCHITECTURE.md, README improvements.
+- **New features** — file an issue first to discuss design and avoid duplicated effort.
+- **Tests** — unit tests, KUnit suites, E2E smoke tests, host-side libc tests.
+- **Performance** — optimizations to the scheduler, memory allocator, network stack, or filesystem drivers.
+
+### Code Style
+
+- **Language:** C17 (GNU C extensions where required by hardware) and NASM assembly.
+- **Indentation:** K&R style with tabs for indentation, spaces for alignment. Run `make format` before committing (uses clang-format with `.clang-format`).
+- **Naming:** `snake_case` for functions and variables, `SCREAMING_SNAKE_CASE` for macros and constants, `PascalCase` for struct types.
+- **Headers:** Include guards with `#ifndef HEADER_H` / `#define HEADER_H` / `#endif` pattern.
+- **Comments:** Prefer `/* */` block comments for file/function headers, `//` for inline notes. Document *why* not just *what*.
+- **Error handling:** Return negative errno values (`-EINVAL`, `-ENOMEM`, etc.) for kernel functions. Check all return values from memory allocations and copy_from_user.
+- **No magic numbers:** Use named constants (`#define` or `enum`) instead of bare literals.
+
+### Commit Guidelines
+
+We use **conventional commits** for a clean, navigable history:
+
+```
+feat: add TCP congestion control framework
+fix: validate PAE page table entry flags before setting
+docs: document process lifecycle states in process.c
+refactor: extract common PCI config read path
+test: add KUnit suite for slab allocator
+ci: update runner image to GCC 14
+```
+
+Commit messages should be **imperative present tense**, **capitalized**, and **under 72 characters** for the first line. Add a blank line followed by context if needed.
+
+### Pull Request Process
+
+1. **Create a feature branch:** `git checkout -b feat/my-change`
+2. **Make focused commits** — one logical change per commit. Avoid "fix typo" fixups; squash them instead.
+3. **Build before pushing:**
+   ```bash
+   make -j$(nproc) CC=x86_64-linux-gnu-gcc LD=x86_64-linux-gnu-ld OBJCOPY=x86_64-linux-gnu-objcopy
+   ```
+   **Zero warnings required** — the project builds with `-Wall -Wextra -Werror`.
+4. **Check formatting:**
+   ```bash
+   make format-check
+   ```
+   If it fails, run `make format` and commit the formatting fixes.
+5. **Check for trailing whitespace:**
+   ```bash
+   make check-whitespace
+   ```
+6. **Run tests locally** (if possible):
+   ```bash
+   make test
+   ```
+7. **Push and open a PR** against the `main` branch.
+8. **Wait for CI** — the self-hosted runner will build, run tests, and report a green checkmark.
+9. **Address review feedback** — push additional commits or amend existing ones.
+
+### CI Expectations
+
+- **Self-hosted runner only.** The CI builds on a Linux x86-64 machine. Do not add `ubuntu-latest` or any GitHub-hosted runner label.
+- **Clean build mandatory.** Every commit must compile with zero warnings and zero errors.
+- **All tests must pass.** The test kernel (200+ built-in tests) must exit with code 33 (ALL PASS).
+- **Format check enforced.** Run `make format-check` before pushing; CI rejects misformatted code.
+- **Whitespace check enforced.** CI runs `make check-whitespace` and rejects trailing whitespace.
+
+### Need Help?
+
+- Check existing issues and pull requests for context.
+- File a new issue for bugs, feature requests, or questions.
+- Look at the code — the codebase is heavily commented and follows consistent patterns across subsystems.
+
 ## Acknowledgments
 
 This kernel is developed as a community-driven hobby OS project. It stands on the shoulders of:
