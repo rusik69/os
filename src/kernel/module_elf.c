@@ -26,20 +26,21 @@
 
 #define KERNEL_INTERNAL
 #include "module_elf.h"
-#include "module.h"
-#include "module_signature.h"
-#include "module_deps.h"
-#include "printf.h"
-#include "string.h"
-#include "pmm.h"
-#include "vmm.h"
+
 #include "export.h"
 #include "kernel.h"
+#include "module.h"
+#include "module_deps.h"
+#include "module_signature.h"
+#include "pmm.h"
+#include "printf.h"
+#include "string.h"
+#include "vmm.h"
 
 /* ── Integer limit constants (not all compilers provide <stdint.h>
  *     in -ffreestanding, and types.h only defines INT32_MAX). ─────── */
 #ifndef INT32_MIN
-#define INT32_MIN  (-2147483647 - 1)
+#define INT32_MIN (-2147483647 - 1)
 #endif
 #ifndef UINT32_MAX
 #define UINT32_MAX 4294967295U
@@ -53,12 +54,10 @@ static int parse_rela_sections(struct module_elf_context *ctx);
 
 /* ── Validation (M11) ────────────────────────────────────────────────── */
 
-int module_elf_validate(struct module_elf_context *ctx,
-                        const uint8_t *data, uint64_t size)
-{
+int module_elf_validate(struct module_elf_context *ctx, const uint8_t *data, uint64_t size) {
     if (!ctx || !data) {
-        if (ctx) snprintf(ctx->error_msg, sizeof(ctx->error_msg),
-                          "module_elf: NULL arguments");
+        if (ctx)
+            snprintf(ctx->error_msg, sizeof(ctx->error_msg), "module_elf: NULL arguments");
         return -1;
     }
 
@@ -70,8 +69,8 @@ int module_elf_validate(struct module_elf_context *ctx,
     /* Must be at least as big as the ELF header */
     if (size < sizeof(struct elf64_header)) {
         snprintf(ctx->error_msg, sizeof(ctx->error_msg),
-                 "module_elf: file too small (%llu bytes, need %zu)",
-                 (unsigned long long)size, sizeof(struct elf64_header));
+                 "module_elf: file too small (%llu bytes, need %zu)", (unsigned long long)size,
+                 sizeof(struct elf64_header));
         return -1;
     }
 
@@ -82,23 +81,22 @@ int module_elf_validate(struct module_elf_context *ctx,
     unsigned int elf_magic;
     __builtin_memcpy(&elf_magic, ctx->hdr.e_ident, sizeof(elf_magic));
     if (elf_magic != ELF_MAGIC) {
-        snprintf(ctx->error_msg, sizeof(ctx->error_msg),
-                 "module_elf: bad ELF magic 0x%08x",
+        snprintf(ctx->error_msg, sizeof(ctx->error_msg), "module_elf: bad ELF magic 0x%08x",
                  elf_magic);
         return -1;
     }
 
     /* Must be 64-bit */
     if (ctx->hdr.e_ident[4] != ELF_CLASS64) {
-        snprintf(ctx->error_msg, sizeof(ctx->error_msg),
-                 "module_elf: not a 64-bit ELF (class=%d)", ctx->hdr.e_ident[4]);
+        snprintf(ctx->error_msg, sizeof(ctx->error_msg), "module_elf: not a 64-bit ELF (class=%d)",
+                 ctx->hdr.e_ident[4]);
         return -1;
     }
 
     /* Must be x86-64 */
     if (ctx->hdr.e_machine != EM_X86_64) {
-        snprintf(ctx->error_msg, sizeof(ctx->error_msg),
-                 "module_elf: not x86-64 (machine=0x%x)", ctx->hdr.e_machine);
+        snprintf(ctx->error_msg, sizeof(ctx->error_msg), "module_elf: not x86-64 (machine=0x%x)",
+                 ctx->hdr.e_machine);
         return -1;
     }
 
@@ -111,20 +109,18 @@ int module_elf_validate(struct module_elf_context *ctx,
 
     /* Validate section header table location */
     if (ctx->hdr.e_shoff == 0 || ctx->hdr.e_shnum == 0) {
-        snprintf(ctx->error_msg, sizeof(ctx->error_msg),
-                 "module_elf: no section headers");
+        snprintf(ctx->error_msg, sizeof(ctx->error_msg), "module_elf: no section headers");
         return -1;
     }
 
     if (ctx->hdr.e_shentsize < sizeof(struct elf64_shdr)) {
         snprintf(ctx->error_msg, sizeof(ctx->error_msg),
-                 "module_elf: section header entry too small (%d bytes)",
-                 ctx->hdr.e_shentsize);
+                 "module_elf: section header entry too small (%d bytes)", ctx->hdr.e_shentsize);
         return -1;
     }
 
-    uint64_t shdr_table_end = ctx->hdr.e_shoff +
-        (uint64_t)ctx->hdr.e_shnum * (uint64_t)ctx->hdr.e_shentsize;
+    uint64_t shdr_table_end =
+        ctx->hdr.e_shoff + (uint64_t)ctx->hdr.e_shnum * (uint64_t)ctx->hdr.e_shentsize;
     if (shdr_table_end > size) {
         snprintf(ctx->error_msg, sizeof(ctx->error_msg),
                  "module_elf: section header table out of bounds (%llu > %llu)",
@@ -137,8 +133,7 @@ int module_elf_validate(struct module_elf_context *ctx,
         int sig_ret = module_verify_elf(data, size);
         if (sig_ret != 0) {
             snprintf(ctx->error_msg, sizeof(ctx->error_msg),
-                     "module_elf: signature verification failed (err=%d)",
-                     sig_ret);
+                     "module_elf: signature verification failed (err=%d)", sig_ret);
             return -1;
         }
     }
@@ -266,8 +261,7 @@ int module_elf_validate(struct module_elf_context *ctx,
  *
  * ── Section header parsing (M12) ────────────────────────────────────── */
 
-static int parse_section_headers(struct module_elf_context *ctx)
-{
+static int parse_section_headers(struct module_elf_context *ctx) {
     const uint8_t *data = ctx->file_data;
     uint64_t size = ctx->file_size;
     uint16_t shnum = ctx->hdr.e_shnum;
@@ -276,8 +270,7 @@ static int parse_section_headers(struct module_elf_context *ctx)
 
     if (shnum > MODULE_ELF_MAX_SECTIONS) {
         snprintf(ctx->error_msg, sizeof(ctx->error_msg),
-                 "module_elf: too many sections (%d, max %d)",
-                 shnum, MODULE_ELF_MAX_SECTIONS);
+                 "module_elf: too many sections (%d, max %d)", shnum, MODULE_ELF_MAX_SECTIONS);
         return -1;
     }
 
@@ -293,14 +286,11 @@ static int parse_section_headers(struct module_elf_context *ctx)
 
         /* Validate section data is within file (for non-NOBITS sections) */
         if (ctx->shdrs[i].sh_type != SHT_NOBITS &&
-            ctx->shdrs[i].sh_offset + ctx->shdrs[i].sh_size > size &&
-            ctx->shdrs[i].sh_size > 0) {
+            ctx->shdrs[i].sh_offset + ctx->shdrs[i].sh_size > size && ctx->shdrs[i].sh_size > 0) {
             snprintf(ctx->error_msg, sizeof(ctx->error_msg),
-                     "module_elf: section %d data out of bounds (off=%llu + sz=%llu > %llu)",
-                     i,
+                     "module_elf: section %d data out of bounds (off=%llu + sz=%llu > %llu)", i,
                      (unsigned long long)ctx->shdrs[i].sh_offset,
-                     (unsigned long long)ctx->shdrs[i].sh_size,
-                     (unsigned long long)size);
+                     (unsigned long long)ctx->shdrs[i].sh_size, (unsigned long long)size);
             return -1;
         }
     }
@@ -309,8 +299,7 @@ static int parse_section_headers(struct module_elf_context *ctx)
     /* Locate section header string table */
     if (shstrndx >= shnum) {
         snprintf(ctx->error_msg, sizeof(ctx->error_msg),
-                 "module_elf: shstrndx %d out of range (sections=%d)",
-                 shstrndx, shnum);
+                 "module_elf: shstrndx %d out of range (sections=%d)", shstrndx, shnum);
         return -1;
     }
 
@@ -319,8 +308,7 @@ static int parse_section_headers(struct module_elf_context *ctx)
 
     /* Verify at least the first byte of shstrtab is accessible */
     if (ctx->shstrtab_size == 0) {
-        snprintf(ctx->error_msg, sizeof(ctx->error_msg),
-                 "module_elf: shstrtab is empty");
+        snprintf(ctx->error_msg, sizeof(ctx->error_msg), "module_elf: shstrtab is empty");
         return -1;
     }
 
@@ -329,8 +317,7 @@ static int parse_section_headers(struct module_elf_context *ctx)
 
 /* ── Symbol table parsing (M13) ──────────────────────────────────────── */
 
-static int parse_symbol_table(struct module_elf_context *ctx)
-{
+static int parse_symbol_table(struct module_elf_context *ctx) {
     const uint8_t *data = ctx->file_data;
     int symtab_idx = -1;
     int strtab_idx = -1;
@@ -349,14 +336,12 @@ static int parse_symbol_table(struct module_elf_context *ctx)
     }
 
     if (symtab_idx < 0) {
-        snprintf(ctx->error_msg, sizeof(ctx->error_msg),
-                 "module_elf: no .symtab section found");
+        snprintf(ctx->error_msg, sizeof(ctx->error_msg), "module_elf: no .symtab section found");
         return -1;
     }
 
     if (strtab_idx < 0) {
-        snprintf(ctx->error_msg, sizeof(ctx->error_msg),
-                 "module_elf: no .strtab section found");
+        snprintf(ctx->error_msg, sizeof(ctx->error_msg), "module_elf: no .strtab section found");
         return -1;
     }
 
@@ -365,8 +350,7 @@ static int parse_symbol_table(struct module_elf_context *ctx)
     ctx->strtab_size = ctx->shdrs[strtab_idx].sh_size;
 
     if (ctx->strtab_size == 0) {
-        snprintf(ctx->error_msg, sizeof(ctx->error_msg),
-                 "module_elf: strtab is empty");
+        snprintf(ctx->error_msg, sizeof(ctx->error_msg), "module_elf: strtab is empty");
         return -1;
     }
 
@@ -400,9 +384,9 @@ static int parse_symbol_table(struct module_elf_context *ctx)
         struct module_elf_sym *sym = &ctx->syms[i];
         sym->shndx = raw.st_shndx;
         sym->value = raw.st_value;
-        sym->size  = raw.st_size;
-        sym->bind  = ELF64_ST_BIND(raw.st_info);
-        sym->type  = ELF64_ST_TYPE(raw.st_info);
+        sym->size = raw.st_size;
+        sym->bind = ELF64_ST_BIND(raw.st_info);
+        sym->type = ELF64_ST_TYPE(raw.st_info);
         sym->resolved = 0;
 
         /* Look up name in strtab */
@@ -418,8 +402,7 @@ static int parse_symbol_table(struct module_elf_context *ctx)
 
 /* ── RELA relocation section parsing (M11) ──────────────────────────── */
 
-static int parse_rela_sections(struct module_elf_context *ctx)
-{
+static int parse_rela_sections(struct module_elf_context *ctx) {
     const uint8_t *data = ctx->file_data;
     int num_rela_seen = 0;
 
@@ -427,27 +410,33 @@ static int parse_rela_sections(struct module_elf_context *ctx)
         if (ctx->shdrs[i].sh_type != SHT_RELA)
             continue;
 
-        if (num_rela_seen >= MODULE_ELF_MAX_SECTIONS) {
-            snprintf(ctx->error_msg, sizeof(ctx->error_msg),
-                     "module_elf: too many RELA sections");
-            return -1;
-        }
-
         /* sh_info = section index that this RELA section applies to */
         uint32_t target_idx = ctx->shdrs[i].sh_info;
 
         if (target_idx >= (uint32_t)ctx->num_sections) {
             snprintf(ctx->error_msg, sizeof(ctx->error_msg),
-                     "module_elf: RELA section %d has invalid sh_info=%u",
-                     i, (unsigned int)target_idx);
+                     "module_elf: RELA section %d has invalid sh_info=%u", i,
+                     (unsigned int)target_idx);
+            return -1;
+        }
+
+        /* Skip relocations for non-ALLOC sections (debug info, etc.) —
+         * their targets are never loaded, and apply_rela would reject
+         * them ("targets unloaded section").  shell.ko's .rela.debug_info
+         * alone has 47020 entries. */
+        if (!(ctx->shdrs[target_idx].sh_flags & SHF_ALLOC))
+            continue;
+
+        if (num_rela_seen >= MODULE_ELF_MAX_SECTIONS) {
+            snprintf(ctx->error_msg, sizeof(ctx->error_msg), "module_elf: too many RELA sections");
             return -1;
         }
 
         /* Validate RELA entry size */
         if (ctx->shdrs[i].sh_entsize < sizeof(struct elf64_rela)) {
             snprintf(ctx->error_msg, sizeof(ctx->error_msg),
-                     "module_elf: RELA section %d entry too small (%llu bytes)",
-                     i, (unsigned long long)ctx->shdrs[i].sh_entsize);
+                     "module_elf: RELA section %d entry too small (%llu bytes)", i,
+                     (unsigned long long)ctx->shdrs[i].sh_entsize);
             return -1;
         }
 
@@ -462,8 +451,8 @@ static int parse_rela_sections(struct module_elf_context *ctx)
         rela->count = 0;
 
         for (int j = 0; j < num_entries; j++) {
-            uint64_t off = ctx->shdrs[i].sh_offset +
-                (uint64_t)j * (uint64_t)ctx->shdrs[i].sh_entsize;
+            uint64_t off =
+                ctx->shdrs[i].sh_offset + (uint64_t)j * (uint64_t)ctx->shdrs[i].sh_entsize;
             if (off + sizeof(struct elf64_rela) > ctx->file_size) {
                 /* Truncated — stop */
                 break;
@@ -473,10 +462,10 @@ static int parse_rela_sections(struct module_elf_context *ctx)
             memcpy(&raw, data + off, sizeof(raw));
 
             struct module_elf_rela *entry = &rela->entries[rela->count];
-            entry->offset  = raw.r_offset;
-            entry->type    = ELF64_R_TYPE(raw.r_info);
+            entry->offset = raw.r_offset;
+            entry->type = ELF64_R_TYPE(raw.r_info);
             entry->sym_idx = (uint32_t)ELF64_R_SYM(raw.r_info);
-            entry->addend  = raw.r_addend;
+            entry->addend = raw.r_addend;
             rela->count++;
         }
 
@@ -489,11 +478,11 @@ static int parse_rela_sections(struct module_elf_context *ctx)
 
 /* ── Top-level parse ─────────────────────────────────────────────────── */
 
-int module_elf_parse(struct module_elf_context *ctx)
-{
+int module_elf_parse(struct module_elf_context *ctx) {
     if (!ctx || !ctx->file_data) {
-        if (ctx) snprintf(ctx->error_msg, sizeof(ctx->error_msg),
-                          "module_elf: NULL context or file data");
+        if (ctx)
+            snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+                     "module_elf: NULL context or file data");
         return -1;
     }
 
@@ -509,7 +498,7 @@ int module_elf_parse(struct module_elf_context *ctx)
         sec->sh_flags = ctx->shdrs[i].sh_flags;
         sec->file_offset = ctx->shdrs[i].sh_offset;
         sec->file_size = ctx->shdrs[i].sh_size;
-        sec->mem_addr = 0;   /* will be set during loading */
+        sec->mem_addr = 0; /* will be set during loading */
         sec->mem_size = 0;
         sec->loaded = 0;
 
@@ -537,8 +526,8 @@ int module_elf_parse(struct module_elf_context *ctx)
         /* Look for .modinfo section and parse key=value fields */
         int modinfo_idx = module_elf_find_section(ctx, ".modinfo");
         if (modinfo_idx >= 0) {
-            const char *modinfo_data = (const char *)(ctx->file_data +
-                ctx->sections[modinfo_idx].file_offset);
+            const char *modinfo_data =
+                (const char *)(ctx->file_data + ctx->sections[modinfo_idx].file_offset);
             uint64_t modinfo_size = ctx->sections[modinfo_idx].file_size;
 
             uint64_t pos = 0;
@@ -551,8 +540,7 @@ int module_elf_parse(struct module_elf_context *ctx)
                     /* Extract the dependency list for M25 resolution */
                     const char *d = modinfo_data + pos + 8;
                     int dlen = 0;
-                    while (pos + 8 + dlen < modinfo_size &&
-                           modinfo_data[pos + 8 + dlen] != '\0')
+                    while (pos + 8 + dlen < modinfo_size && modinfo_data[pos + 8 + dlen] != '\0')
                         dlen++;
                     if (dlen > 0 && (size_t)dlen < sizeof(ctx->depends)) {
                         memcpy(ctx->depends, d, (size_t)dlen);
@@ -562,8 +550,7 @@ int module_elf_parse(struct module_elf_context *ctx)
                     /* Extract module alias pattern for M38 matching */
                     const char *a = modinfo_data + pos + 6;
                     int alen = 0;
-                    while (pos + 6 + alen < modinfo_size &&
-                           modinfo_data[pos + 6 + alen] != '\0')
+                    while (pos + 6 + alen < modinfo_size && modinfo_data[pos + 6 + alen] != '\0')
                         alen++;
                     if (alen > 0) {
                         int cur_len = (int)strlen(ctx->aliases);
@@ -580,12 +567,9 @@ int module_elf_parse(struct module_elf_context *ctx)
                      * Only GPL-compatible licenses are safe for the
                      * kernel.  Proprietary modules taint the kernel. */
                     const char *lic = modinfo_data + pos + 8;
-                    if (strncmp(lic, "GPL", 3) != 0 &&
-                        strncmp(lic, "BSD", 3) != 0 &&
-                        strncmp(lic, "MIT", 3) != 0 &&
-                        strncmp(lic, "MPL", 3) != 0 &&
-                        strncmp(lic, "Apache", 6) != 0 &&
-                        strncmp(lic, "Artistic", 8) != 0 &&
+                    if (strncmp(lic, "GPL", 3) != 0 && strncmp(lic, "BSD", 3) != 0 &&
+                        strncmp(lic, "MIT", 3) != 0 && strncmp(lic, "MPL", 3) != 0 &&
+                        strncmp(lic, "Apache", 6) != 0 && strncmp(lic, "Artistic", 8) != 0 &&
                         strncmp(lic, "Public domain", 13) != 0) {
                         add_taint(TAINT_MODULE_PROPRIETARY);
                     }
@@ -607,21 +591,19 @@ int module_elf_parse(struct module_elf_context *ctx)
             if (strcmp(mod_vermagic, VERMAGIC_STRING) != 0) {
                 kprintf("[MOD_ELF] WARNING: vermagic mismatch for '%s': "
                         "kernel has \"%s\", module has \"%s\"\n",
-                        name ? name : "?",
-                        VERMAGIC_STRING, mod_vermagic);
+                        name ? name : "?", VERMAGIC_STRING, mod_vermagic);
                 /* Taint the kernel — loading a module built for a
                  * different kernel version may cause subtle ABI
                  * corruption.  The module is still loaded. */
                 add_taint(TAINT_MODULE_VERMAGIC_MISMATCH);
             } else {
-                kprintf("[MOD_ELF] Vermagic OK for '%s' (%s)\n",
-                        name ? name : "?", VERMAGIC_STRING);
+                kprintf("[MOD_ELF] Vermagic OK for '%s' (%s)\n", name ? name : "?",
+                        VERMAGIC_STRING);
             }
         } else {
             /* Modules without vermagic are allowed but warned.
              * During transition, not all modules may have it yet. */
-            kprintf("[MOD_ELF] WARNING: '%s' has no vermagic field\n",
-                    name ? name : ctx->name);
+            kprintf("[MOD_ELF] WARNING: '%s' has no vermagic field\n", name ? name : ctx->name);
         }
 
         /* Fall back to first text section name or "unnamed" */
@@ -640,15 +622,12 @@ int module_elf_parse(struct module_elf_context *ctx)
 
 /* ── Section lookup ──────────────────────────────────────────────────── */
 
-int module_elf_find_section(const struct module_elf_context *ctx,
-                            const char *name)
-{
+int module_elf_find_section(const struct module_elf_context *ctx, const char *name) {
     if (!ctx || !name)
         return -1;
 
     for (int i = 0; i < ctx->num_sections; i++) {
-        if (ctx->sections[i].name &&
-            strcmp(ctx->sections[i].name, name) == 0) {
+        if (ctx->sections[i].name && strcmp(ctx->sections[i].name, name) == 0) {
             return i;
         }
     }
@@ -657,21 +636,18 @@ int module_elf_find_section(const struct module_elf_context *ctx,
 
 /* ── Debug dump ──────────────────────────────────────────────────────── */
 
-void module_elf_print_info(const struct module_elf_context *ctx)
-{
-    if (!ctx) return;
+void module_elf_print_info(const struct module_elf_context *ctx) {
+    if (!ctx)
+        return;
 
     kprintf("[MOD_ELF] Module: %s\n", ctx->name);
-    kprintf("[MOD_ELF]   File size: %llu bytes\n",
-            (unsigned long long)ctx->file_size);
+    kprintf("[MOD_ELF]   File size: %llu bytes\n", (unsigned long long)ctx->file_size);
     kprintf("[MOD_ELF]   Sections: %d\n", ctx->num_sections);
 
     for (int i = 0; i < ctx->num_sections; i++) {
         const struct module_elf_section *sec = &ctx->sections[i];
-        kprintf("[MOD_ELF]   [%2d] %s (type=%d flags=0x%llx size=%llu)\n",
-                i, sec->name ? sec->name : "?",
-                sec->sh_type,
-                (unsigned long long)sec->sh_flags,
+        kprintf("[MOD_ELF]   [%2d] %s (type=%d flags=0x%llx size=%llu)\n", i,
+                sec->name ? sec->name : "?", sec->sh_type, (unsigned long long)sec->sh_flags,
                 (unsigned long long)sec->file_size);
     }
 
@@ -681,51 +657,43 @@ void module_elf_print_info(const struct module_elf_context *ctx)
         if (sym->name && sym->name[0]) {
             kprintf("[MOD_ELF]     [%3d] %-32s bind=%d type=%d shndx=%u "
                     "value=0x%llx size=%llu%s\n",
-                    i, sym->name, sym->bind, sym->type,
-                    (unsigned int)sym->shndx,
-                    (unsigned long long)sym->value,
-                    (unsigned long long)sym->size,
+                    i, sym->name, sym->bind, sym->type, (unsigned int)sym->shndx,
+                    (unsigned long long)sym->value, (unsigned long long)sym->size,
                     sym->shndx == 0 ? " (UNDEF/import)" : "");
         }
     }
 
     kprintf("[MOD_ELF]   RELA groups: %d\n", ctx->num_rela_sections);
     for (int r = 0; r < ctx->num_rela_sections; r++) {
-        const char *target_name = (ctx->relas[r].section_idx >= 0 &&
-            ctx->relas[r].section_idx < ctx->num_sections)
-            ? ctx->sections[ctx->relas[r].section_idx].name : "?";
-        kprintf("[MOD_ELF]     Group %d: section %d (%s), %d entries\n",
-                r,
-                ctx->relas[r].section_idx,
-                target_name ? target_name : "?",
-                ctx->relas[r].count);
+        const char *target_name =
+            (ctx->relas[r].section_idx >= 0 && ctx->relas[r].section_idx < ctx->num_sections)
+                ? ctx->sections[ctx->relas[r].section_idx].name
+                : "?";
+        kprintf("[MOD_ELF]     Group %d: section %d (%s), %d entries\n", r,
+                ctx->relas[r].section_idx, target_name ? target_name : "?", ctx->relas[r].count);
 
         /* Show first 5 entries as a sample */
         int show = ctx->relas[r].count < 5 ? ctx->relas[r].count : 5;
         for (int j = 0; j < show; j++) {
             const struct module_elf_rela *rel = &ctx->relas[r].entries[j];
-            const char *sym_name = (rel->sym_idx < (uint32_t)ctx->num_syms)
-                ? ctx->syms[rel->sym_idx].name : "?";
+            const char *sym_name =
+                (rel->sym_idx < (uint32_t)ctx->num_syms) ? ctx->syms[rel->sym_idx].name : "?";
             kprintf("[MOD_ELF]       [%3d] off=0x%llx type=%d sym=%d(%s) "
                     "addend=%lld\n",
-                    j,
-                    (unsigned long long)rel->offset,
-                    rel->type, rel->sym_idx,
-                    sym_name ? sym_name : "?",
-                    (long long)rel->addend);
+                    j, (unsigned long long)rel->offset, rel->type, rel->sym_idx,
+                    sym_name ? sym_name : "?", (long long)rel->addend);
         }
         if (ctx->relas[r].count > 5) {
-            kprintf("[MOD_ELF]       ... (%d more)\n",
-                    ctx->relas[r].count - 5);
+            kprintf("[MOD_ELF]       ... (%d more)\n", ctx->relas[r].count - 5);
         }
     }
 }
 
 /* ── Cleanup ─────────────────────────────────────────────────────────── */
 
-void module_elf_free(struct module_elf_context *ctx)
-{
-    if (!ctx) return;
+void module_elf_free(struct module_elf_context *ctx) {
+    if (!ctx)
+        return;
     /* Currently all arrays are static within the context struct,
      * so there is nothing to free.  This hook exists for future
      * dynamic allocations (e.g., if we move to heap-allocated
@@ -737,15 +705,20 @@ void module_elf_free(struct module_elf_context *ctx)
  *  M13 — Symbol resolver: connect module imports to kernel exports
  * ══════════════════════════════════════════════════════════════════════ */
 
-int module_elf_resolve(struct module_elf_context *ctx, int gpl_ok)
-{
+int module_elf_resolve(struct module_elf_context *ctx, int gpl_ok) {
     if (!ctx || !ctx->file_data) {
-        if (ctx) snprintf(ctx->error_msg, sizeof(ctx->error_msg),
-                          "module_elf_resolve: NULL context");
+        if (ctx)
+            snprintf(ctx->error_msg, sizeof(ctx->error_msg), "module_elf_resolve: NULL context");
         return -1;
     }
 
     int unresolved = 0;
+
+    /* Symbol 0 is the ELF null symbol — S=0, always "resolved".  Absolute
+     * relocations with just an addend (e.g. R_X86_64_32 against sym 0,
+     * emitted by -fstack-clash-protection probes) rely on this. */
+    ctx->syms[0].resolved = 1;
+    ctx->syms[0].value = 0;
 
     for (int i = 1; i < ctx->num_syms; i++) { /* skip index 0 (null symbol) */
         struct module_elf_sym *sym = &ctx->syms[i];
@@ -759,6 +732,15 @@ int module_elf_resolve(struct module_elf_context *ctx, int gpl_ok)
 
         /* Skip unnamed symbols (section-relative, etc.) */
         if (!sym->name || sym->name[0] == '\0') {
+            sym->resolved = 1;
+            sym->value = 0;
+            continue;
+        }
+
+        /* _GLOBAL_OFFSET_TABLE_ is a special marker symbol — GOT-relative
+         * relocations (GOTPC32/GOTPC64/GOTOFF64) use ctx->got_base, not
+         * this symbol's value, so it never needs a real address. */
+        if (strcmp(sym->name, "_GLOBAL_OFFSET_TABLE_") == 0) {
             sym->resolved = 1;
             sym->value = 0;
             continue;
@@ -790,8 +772,7 @@ int module_elf_resolve(struct module_elf_context *ctx, int gpl_ok)
         /* Unresolved required symbol — collect first error */
         if (unresolved == 0) {
             snprintf(ctx->error_msg, sizeof(ctx->error_msg),
-                     "module_elf: unresolved symbol '%s' (index %d)",
-                     sym->name, i);
+                     "module_elf: unresolved symbol '%s' (index %d)", sym->name, i);
         }
         unresolved++;
     }
@@ -800,8 +781,7 @@ int module_elf_resolve(struct module_elf_context *ctx, int gpl_ok)
         /* Append total count if more than one */
         if (unresolved > 1) {
             char tmp[64];
-            snprintf(tmp, sizeof(tmp), " (+%d more unresolved symbols)",
-                     unresolved - 1);
+            snprintf(tmp, sizeof(tmp), " (+%d more unresolved symbols)", unresolved - 1);
             size_t cur = strlen(ctx->error_msg);
             size_t max = sizeof(ctx->error_msg) - cur - 1;
             if (cur < sizeof(ctx->error_msg) - 1) {
@@ -811,8 +791,8 @@ int module_elf_resolve(struct module_elf_context *ctx, int gpl_ok)
         return -1;
     }
 
-    kprintf("[MOD_ELF] Resolved %d symbols (including %d imports)\n",
-            ctx->num_syms - 1, 0); /* second count is for imports only; skip detail */
+    kprintf("[MOD_ELF] Resolved %d symbols (including %d imports)\n", ctx->num_syms - 1,
+            0); /* second count is for imports only; skip detail */
     return 0;
 }
 
@@ -820,12 +800,11 @@ int module_elf_resolve(struct module_elf_context *ctx, int gpl_ok)
  *  M12 (continued) — load PROGBITS sections to module memory, zero BSS
  * ══════════════════════════════════════════════════════════════════════ */
 
-uint64_t module_elf_load_sections(struct module_elf_context *ctx,
-                                   uint64_t *total_out)
-{
+uint64_t module_elf_load_sections(struct module_elf_context *ctx, uint64_t *total_out) {
     if (!ctx || !ctx->file_data) {
-        if (ctx) snprintf(ctx->error_msg, sizeof(ctx->error_msg),
-                          "module_elf_load_sections: NULL context");
+        if (ctx)
+            snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+                     "module_elf_load_sections: NULL context");
         return 0;
     }
 
@@ -860,7 +839,7 @@ uint64_t module_elf_load_sections(struct module_elf_context *ctx,
          * page permissions independently. */
         total = (total + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
 
-        sec->mem_addr = total;  /* offset within module region (relative) */
+        sec->mem_addr = total; /* offset within module region (relative) */
         sec->mem_size = (mem_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
         sec->loaded = 0;
 
@@ -895,6 +874,8 @@ uint64_t module_elf_load_sections(struct module_elf_context *ctx,
             case R_X86_64_GOT64:
             case R_X86_64_GOTPLT64:
             case R_X86_64_GOTPCREL64:
+            case R_X86_64_GOTPC32:
+            case R_X86_64_GOTPC64:
             case R_X86_64_PLTOFF64:
                 ctx->num_got_entries++;
                 break;
@@ -917,15 +898,13 @@ uint64_t module_elf_load_sections(struct module_elf_context *ctx,
 
     if (total > MODULES_SIZE) {
         snprintf(ctx->error_msg, sizeof(ctx->error_msg),
-                 "module_elf: module too large (%llu bytes, max %llu)",
-                 (unsigned long long)total,
+                 "module_elf: module too large (%llu bytes, max %llu)", (unsigned long long)total,
                  (unsigned long long)MODULES_SIZE);
         return 0;
     }
 
     /* ── Phase 2: Allocate module memory (RW initially for patching) ─── */
-    uint64_t base_vaddr = module_alloc_region(total,
-        VMM_FLAG_PRESENT | VMM_FLAG_WRITE);
+    uint64_t base_vaddr = module_alloc_region(total, VMM_FLAG_PRESENT | VMM_FLAG_WRITE);
     if (base_vaddr == 0) {
         snprintf(ctx->error_msg, sizeof(ctx->error_msg),
                  "module_elf: failed to allocate %llu bytes in module region",
@@ -946,7 +925,7 @@ uint64_t module_elf_load_sections(struct module_elf_context *ctx,
 
         uint64_t vaddr = base_vaddr + offset;
         sec->mem_addr = vaddr;
-        sec->mem_size = ctx->shdrs[i].sh_size;  /* actual content size */
+        sec->mem_size = ctx->shdrs[i].sh_size; /* actual content size */
 
         if (sec->sh_type == SHT_NOBITS) {
             /* BSS: zero-fill */
@@ -958,34 +937,27 @@ uint64_t module_elf_load_sections(struct module_elf_context *ctx,
                 uint64_t copy_size = ctx->file_size - sec->file_offset;
                 if (copy_size > sec->file_size)
                     copy_size = sec->file_size;
-                memcpy((void *)vaddr,
-                       ctx->file_data + sec->file_offset, copy_size);
+                memcpy((void *)vaddr, ctx->file_data + sec->file_offset, copy_size);
                 if (sec->file_size > copy_size)
-                    memset((void *)(vaddr + copy_size), 0,
-                           sec->file_size - copy_size);
+                    memset((void *)(vaddr + copy_size), 0, sec->file_size - copy_size);
             } else {
-                memcpy((void *)vaddr,
-                       ctx->file_data + sec->file_offset, sec->file_size);
+                memcpy((void *)vaddr, ctx->file_data + sec->file_offset, sec->file_size);
             }
             /* Zero-fill any remaining memory beyond file_size (padding) */
-            uint64_t pg_size = (ctx->shdrs[i].sh_size + PAGE_SIZE - 1)
-                               & ~(PAGE_SIZE - 1);
+            uint64_t pg_size = (ctx->shdrs[i].sh_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
             if (ctx->shdrs[i].sh_size < pg_size) {
-                memset((void *)(vaddr + ctx->shdrs[i].sh_size), 0,
-                       pg_size - ctx->shdrs[i].sh_size);
+                memset((void *)(vaddr + ctx->shdrs[i].sh_size), 0, pg_size - ctx->shdrs[i].sh_size);
             }
         }
         /* Round up the stored mem_size to page boundary for later
          * permission changes */
-        sec->mem_size = (ctx->shdrs[i].sh_size + PAGE_SIZE - 1)
-                        & ~(PAGE_SIZE - 1);
+        sec->mem_size = (ctx->shdrs[i].sh_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
         sec->loaded = 1;
 
         offset += sec->mem_size;
 
         kprintf("[MOD_ELF]   Loaded section '%s' at 0x%llx (size=%llu)\n",
-                sec->name ? sec->name : "?",
-                (unsigned long long)vaddr,
+                sec->name ? sec->name : "?", (unsigned long long)vaddr,
                 (unsigned long long)ctx->shdrs[i].sh_size);
     }
 
@@ -996,17 +968,14 @@ uint64_t module_elf_load_sections(struct module_elf_context *ctx,
      * The GOT region is writable (will be populated during apply_rela). */
     if (ctx->got_size > 0) {
         ctx->got_base = base_vaddr + offset;
-        memset((void *)(unsigned long)ctx->got_base, 0,
-               (size_t)ctx->got_size);
+        memset((void *)(unsigned long)ctx->got_base, 0, (size_t)ctx->got_size);
         kprintf("[MOD_ELF] GOT at 0x%llx, %d entries (%llu bytes)\n",
-                (unsigned long long)ctx->got_base,
-                ctx->num_got_entries,
+                (unsigned long long)ctx->got_base, ctx->num_got_entries,
                 (unsigned long long)ctx->got_size);
     }
 
-    kprintf("[MOD_ELF] Loaded %d sections, total %llu bytes at 0x%llx\n",
-            loadable_count, (unsigned long long)total,
-            (unsigned long long)base_vaddr);
+    kprintf("[MOD_ELF] Loaded %d sections, total %llu bytes at 0x%llx\n", loadable_count,
+            (unsigned long long)total, (unsigned long long)base_vaddr);
     return base_vaddr;
 }
 
@@ -1024,13 +993,11 @@ uint64_t module_elf_load_sections(struct module_elf_context *ctx,
  * On success, returns the GOT slot index (0-based).  The caller can
  * compute the GOT entry address as:  ctx->got_base + slot * 8.
  * On failure (GOT exhausted), returns -1 and sets error_msg. */
-static int got_alloc_entry(struct module_elf_context *ctx,
-                           uint32_t sym_idx, uint64_t sym_value)
-{
+static int got_alloc_entry(struct module_elf_context *ctx, uint32_t sym_idx, uint64_t sym_value) {
     /* Check if there is already a GOT entry for this symbol */
     for (int i = 0; i < ctx->num_got_entries; i++) {
         if (ctx->got_sym_idx[i] == sym_idx)
-            return i;  /* reuse */
+            return i; /* reuse */
     }
 
     /* Find a free slot */
@@ -1042,17 +1009,20 @@ static int got_alloc_entry(struct module_elf_context *ctx,
         }
     }
 
-    snprintf(ctx->error_msg, sizeof(ctx->error_msg),
-             "module_elf: GOT exhausted (%d entries)",
+    kprintf("[MOD_ELF] GOT exhausted: %d entries, sym_idx=%u sym='%s' num_syms=%d\n",
+            ctx->num_got_entries, (unsigned)sym_idx,
+            sym_idx < (uint32_t)ctx->num_syms && ctx->syms[sym_idx].name ? ctx->syms[sym_idx].name
+                                                                         : "?",
+            ctx->num_syms);
+    snprintf(ctx->error_msg, sizeof(ctx->error_msg), "module_elf: GOT exhausted (%d entries)",
              ctx->num_got_entries);
     return -1;
 }
 
-int module_elf_apply_rela(struct module_elf_context *ctx)
-{
+int module_elf_apply_rela(struct module_elf_context *ctx) {
     if (!ctx || !ctx->file_data) {
-        if (ctx) snprintf(ctx->error_msg, sizeof(ctx->error_msg),
-                          "module_elf_apply_rela: NULL context");
+        if (ctx)
+            snprintf(ctx->error_msg, sizeof(ctx->error_msg), "module_elf_apply_rela: NULL context");
         return -1;
     }
 
@@ -1065,8 +1035,7 @@ int module_elf_apply_rela(struct module_elf_context *ctx)
         int target_idx = ctx->relas[r].section_idx;
         if (target_idx < 0 || target_idx >= ctx->num_sections) {
             snprintf(ctx->error_msg, sizeof(ctx->error_msg),
-                     "module_elf: RELA group %d has invalid target section %d",
-                     r, target_idx);
+                     "module_elf: RELA group %d has invalid target section %d", r, target_idx);
             return -1;
         }
 
@@ -1074,8 +1043,7 @@ int module_elf_apply_rela(struct module_elf_context *ctx)
         struct module_elf_section *target = &ctx->sections[target_idx];
         if (!target->loaded || target->mem_addr == 0) {
             snprintf(ctx->error_msg, sizeof(ctx->error_msg),
-                     "module_elf: RELA group %d targets unloaded section %d",
-                     r, target_idx);
+                     "module_elf: RELA group %d targets unloaded section %d", r, target_idx);
             return -1;
         }
 
@@ -1100,14 +1068,28 @@ int module_elf_apply_rela(struct module_elf_context *ctx)
                 snprintf(ctx->error_msg, sizeof(ctx->error_msg),
                          "module_elf: RELA entry references unresolved "
                          "symbol '%s' (index %u)",
-                         sym->name ? sym->name : "?",
-                         (unsigned int)rel->sym_idx);
+                         sym->name ? sym->name : "?", (unsigned int)rel->sym_idx);
                 return -1;
             }
 
-            uint64_t S = sym->value;   /* resolved symbol address */
-            int64_t  A = rel->addend;  /* addend from RELA entry */
-            uint64_t P = patch_addr;   /* location being patched */
+            /* Resolve the symbol's absolute address.
+             * Symbols defined in a section (functions, local labels,
+             * section symbols like .bss) carry a SECTION-RELATIVE st_value
+             * — they must be relocated to the section's LOADED address.
+             * Modules are built with -mcmodel=small, so local data access
+             * emits R_X86_64_PC32 against section symbols (st_value 0);
+             * using the raw value gave a garbage offset (observed:
+             * R_X86_64_PC32 overflow at .text+0xff, value=0x7ffe0000...,
+             * sym=''). */
+            uint64_t S;
+            if (sym->shndx >= 1 && (uint32_t)sym->shndx < (uint32_t)ctx->num_sections &&
+                ctx->sections[sym->shndx].loaded && ctx->sections[sym->shndx].mem_addr != 0) {
+                S = ctx->sections[sym->shndx].mem_addr + sym->value;
+            } else {
+                S = sym->value; /* kernel import (SHN_UNDEF) or SHN_ABS */
+            }
+            int64_t A = rel->addend; /* addend from RELA entry */
+            uint64_t P = patch_addr; /* location being patched */
 
             switch (rel->type) {
             case R_X86_64_NONE:
@@ -1130,8 +1112,7 @@ int module_elf_apply_rela(struct module_elf_context *ctx)
                     snprintf(ctx->error_msg, sizeof(ctx->error_msg),
                              "module_elf: R_X86_64_PC32 overflow at "
                              "0x%llx (value=%lld, sym='%s')",
-                             (unsigned long long)patch_addr,
-                             (long long)value,
+                             (unsigned long long)patch_addr, (long long)value,
                              sym->name ? sym->name : "?");
                     return -1;
                 }
@@ -1146,8 +1127,7 @@ int module_elf_apply_rela(struct module_elf_context *ctx)
                     snprintf(ctx->error_msg, sizeof(ctx->error_msg),
                              "module_elf: R_X86_64_32 overflow at "
                              "0x%llx (value=0x%llx, sym='%s')",
-                             (unsigned long long)patch_addr,
-                             (unsigned long long)value,
+                             (unsigned long long)patch_addr, (unsigned long long)value,
                              sym->name ? sym->name : "?");
                     return -1;
                 }
@@ -1162,8 +1142,7 @@ int module_elf_apply_rela(struct module_elf_context *ctx)
                     snprintf(ctx->error_msg, sizeof(ctx->error_msg),
                              "module_elf: R_X86_64_32S overflow at "
                              "0x%llx (value=%lld, sym='%s')",
-                             (unsigned long long)patch_addr,
-                             (long long)value,
+                             (unsigned long long)patch_addr, (long long)value,
                              sym->name ? sym->name : "?");
                     return -1;
                 }
@@ -1178,33 +1157,35 @@ int module_elf_apply_rela(struct module_elf_context *ctx)
                 break;
             }
 
-            /* ══════════════════════════════════════════════════════
-             *  GOT / PLT based relocations (x86-64)
-             *
-             *  GOT entries are created during load_sections and
-             *  resolved here.  For relocation types that require a
-             *  per-symbol GOT entry, we call got_alloc_entry() which
-             *  deduplicates by symbol index and stores the resolved
-             *  address in the GOT slot.
-             *
-             *  Relocation types that only need the GOT base address
-             *  (GOTPC32, GOTPC64, GOTOFF64) use ctx->got_base
-             *  directly without allocating a per-symbol entry.
-             * ══════════════════════════════════════════════════════ */
+                /* ══════════════════════════════════════════════════════
+                 *  GOT / PLT based relocations (x86-64)
+                 *
+                 *  GOT entries are created during load_sections and
+                 *  resolved here.  For relocation types that require a
+                 *  per-symbol GOT entry, we call got_alloc_entry() which
+                 *  deduplicates by symbol index and stores the resolved
+                 *  address in the GOT slot.
+                 *
+                 *  Relocation types that only need the GOT base address
+                 *  (GOTPC32, GOTPC64, GOTOFF64) use ctx->got_base
+                 *  directly without allocating a per-symbol entry.
+                 * ══════════════════════════════════════════════════════ */
 
             case R_X86_64_GOTPCREL: {
                 /* G + GOT + A - P: PC-relative offset to GOT entry */
-                if (ctx->got_size == 0) { goto unsupported_got; }
+                if (ctx->got_size == 0) {
+                    goto unsupported_got;
+                }
                 int slot = got_alloc_entry(ctx, rel->sym_idx, S);
-                if (slot < 0) return -1;
+                if (slot < 0)
+                    return -1;
                 uint64_t got_entry = ctx->got_base + (uint64_t)slot * 8;
                 int64_t value = (int64_t)(got_entry + (uint64_t)A - P);
                 if (value < INT32_MIN || value > INT32_MAX) {
                     snprintf(ctx->error_msg, sizeof(ctx->error_msg),
                              "module_elf: R_X86_64_GOTPCREL overflow at "
                              "0x%llx (value=%lld, sym='%s')",
-                             (unsigned long long)patch_addr,
-                             (long long)value,
+                             (unsigned long long)patch_addr, (long long)value,
                              sym->name ? sym->name : "?");
                     return -1;
                 }
@@ -1215,9 +1196,12 @@ int module_elf_apply_rela(struct module_elf_context *ctx)
             case R_X86_64_GOT64:
             case R_X86_64_GOTPLT64: {
                 /* G + A: offset of GOT entry within the GOT table */
-                if (ctx->got_size == 0) { goto unsupported_got; }
+                if (ctx->got_size == 0) {
+                    goto unsupported_got;
+                }
                 int slot = got_alloc_entry(ctx, rel->sym_idx, S);
-                if (slot < 0) return -1;
+                if (slot < 0)
+                    return -1;
                 uint64_t value = (uint64_t)slot * 8 + (uint64_t)A;
                 *(volatile uint64_t *)patch_addr = value;
                 break;
@@ -1225,7 +1209,9 @@ int module_elf_apply_rela(struct module_elf_context *ctx)
 
             case R_X86_64_GOTOFF64: {
                 /* S + A - GOT: offset from GOT base to the symbol */
-                if (ctx->got_size == 0) { goto unsupported_got; }
+                if (ctx->got_size == 0) {
+                    goto unsupported_got;
+                }
                 int64_t value = (int64_t)(S + (uint64_t)A - ctx->got_base);
                 *(volatile int64_t *)patch_addr = value;
                 break;
@@ -1233,9 +1219,12 @@ int module_elf_apply_rela(struct module_elf_context *ctx)
 
             case R_X86_64_GOTPCREL64: {
                 /* G + GOT + A - P: 64-bit PC-relative offset to GOT entry */
-                if (ctx->got_size == 0) { goto unsupported_got; }
+                if (ctx->got_size == 0) {
+                    goto unsupported_got;
+                }
                 int slot = got_alloc_entry(ctx, rel->sym_idx, S);
-                if (slot < 0) return -1;
+                if (slot < 0)
+                    return -1;
                 uint64_t got_entry = ctx->got_base + (uint64_t)slot * 8;
                 int64_t value = (int64_t)(got_entry + (uint64_t)A - P);
                 *(volatile int64_t *)patch_addr = value;
@@ -1244,14 +1233,15 @@ int module_elf_apply_rela(struct module_elf_context *ctx)
 
             case R_X86_64_GOTPC32: {
                 /* GOT + A - P: 32-bit PC-relative offset to GOT base */
-                if (ctx->got_size == 0) { goto unsupported_got; }
+                if (ctx->got_size == 0) {
+                    goto unsupported_got;
+                }
                 int64_t value = (int64_t)(ctx->got_base + (uint64_t)A - P);
                 if (value < INT32_MIN || value > INT32_MAX) {
                     snprintf(ctx->error_msg, sizeof(ctx->error_msg),
                              "module_elf: R_X86_64_GOTPC32 overflow at "
                              "0x%llx (value=%lld)",
-                             (unsigned long long)patch_addr,
-                             (long long)value);
+                             (unsigned long long)patch_addr, (long long)value);
                     return -1;
                 }
                 *(volatile int32_t *)patch_addr = (int32_t)value;
@@ -1260,7 +1250,9 @@ int module_elf_apply_rela(struct module_elf_context *ctx)
 
             case R_X86_64_GOTPC64: {
                 /* GOT + A - P: 64-bit PC-relative offset to GOT base */
-                if (ctx->got_size == 0) { goto unsupported_got; }
+                if (ctx->got_size == 0) {
+                    goto unsupported_got;
+                }
                 int64_t value = (int64_t)(ctx->got_base + (uint64_t)A - P);
                 *(volatile int64_t *)patch_addr = value;
                 break;
@@ -1269,7 +1261,9 @@ int module_elf_apply_rela(struct module_elf_context *ctx)
             case R_X86_64_PLTOFF64: {
                 /* L + A - GOT: offset from GOT base to PLT entry.
                  * For kernel modules without dynamic PLT, L = S. */
-                if (ctx->got_size == 0) { goto unsupported_got; }
+                if (ctx->got_size == 0) {
+                    goto unsupported_got;
+                }
                 int64_t value = (int64_t)(S + (uint64_t)A - ctx->got_base);
                 *(volatile int64_t *)patch_addr = value;
                 break;
@@ -1285,9 +1279,7 @@ int module_elf_apply_rela(struct module_elf_context *ctx)
                 snprintf(ctx->error_msg, sizeof(ctx->error_msg),
                          "module_elf: unsupported relocation type %d "
                          "at 0x%llx (sym='%s')",
-                         rel->type,
-                         (unsigned long long)patch_addr,
-                         sym->name ? sym->name : "?");
+                         rel->type, (unsigned long long)patch_addr, sym->name ? sym->name : "?");
                 return -1;
             }
 
@@ -1295,8 +1287,7 @@ int module_elf_apply_rela(struct module_elf_context *ctx)
         }
     }
 
-    kprintf("[MOD_ELF] Applied %d relocations across %d groups\n",
-            applied, ctx->num_rela_sections);
+    kprintf("[MOD_ELF] Applied %d relocations across %d groups\n", applied, ctx->num_rela_sections);
     return 0;
 }
 
@@ -1304,8 +1295,7 @@ int module_elf_apply_rela(struct module_elf_context *ctx)
  *  M15 — Set per-section page permissions
  * ══════════════════════════════════════════════════════════════════════ */
 
-static uint64_t section_to_vmm_flags(uint64_t sh_flags)
-{
+static uint64_t section_to_vmm_flags(uint64_t sh_flags) {
     uint64_t flags = VMM_FLAG_PRESENT;
 
     if (sh_flags & SHF_WRITE)
@@ -1318,8 +1308,7 @@ static uint64_t section_to_vmm_flags(uint64_t sh_flags)
     return flags;
 }
 
-int module_elf_set_perms(struct module_elf_context *ctx)
-{
+int module_elf_set_perms(struct module_elf_context *ctx) {
     if (!ctx) {
         return -1;
     }
@@ -1348,8 +1337,7 @@ int module_elf_set_perms(struct module_elf_context *ctx)
                 snprintf(ctx->error_msg, sizeof(ctx->error_msg),
                          "module_elf: failed to set permissions on "
                          "section '%s' at 0x%llx",
-                         sec->name ? sec->name : "?",
-                         (unsigned long long)(vaddr + p * PAGE_SIZE));
+                         sec->name ? sec->name : "?", (unsigned long long)(vaddr + p * PAGE_SIZE));
                 return -1;
             }
         }
@@ -1388,9 +1376,7 @@ int module_elf_set_perms(struct module_elf_context *ctx)
  * Never fails — a missing or empty .kparamvals section is normal
  * for modules with no declared parameters.
  */
-int module_elf_load_params(const struct module_elf_context *ctx,
-                            struct kernel_module *mod)
-{
+int module_elf_load_params(const struct module_elf_context *ctx, struct kernel_module *mod) {
     if (!ctx || !mod)
         return 0;
 
@@ -1406,16 +1392,13 @@ int module_elf_load_params(const struct module_elf_context *ctx,
     /* The section data resides at the loaded virtual address.
      * struct kernel_param entries are laid out contiguously. */
     uint64_t vaddr = sec->mem_addr;
-    uint64_t size = sec->file_size;  /* content size from the file */
+    uint64_t size = sec->file_size; /* content size from the file */
 
     /* Sanity: size must be a multiple of kernel_param */
-    if (size < sizeof(struct kernel_param) ||
-        size % sizeof(struct kernel_param) != 0) {
+    if (size < sizeof(struct kernel_param) || size % sizeof(struct kernel_param) != 0) {
         kprintf("[MOD_ELF] Warning: .kparamvals section size %llu is "
                 "not a multiple of kernel_param (%zu) in '%s'\n",
-                (unsigned long long)size,
-                sizeof(struct kernel_param),
-                ctx->name);
+                (unsigned long long)size, sizeof(struct kernel_param), ctx->name);
         return 0;
     }
 
@@ -1424,8 +1407,7 @@ int module_elf_load_params(const struct module_elf_context *ctx,
 
     for (int i = 0; i < count; i++) {
         const struct kernel_param *kp_src =
-            (const struct kernel_param *)(vaddr + (uint64_t)i *
-                                         sizeof(struct kernel_param));
+            (const struct kernel_param *)(vaddr + (uint64_t)i * sizeof(struct kernel_param));
 
         if (kp_src->name[0] == '\0')
             continue;
@@ -1433,14 +1415,8 @@ int module_elf_load_params(const struct module_elf_context *ctx,
         /* Register the parameter with the module system.
          * module_add_param() kmemdup's the struct, so we pass all fields
          * from the section-resident kernel_param. */
-        int ret = module_add_param(mod,
-                                   kp_src->name,
-                                   kp_src->type,
-                                   kp_src->data,
-                                   kp_src->data_len,
-                                   kp_src->perm,
-                                   kp_src->set_fn,
-                                   kp_src->get_fn);
+        int ret = module_add_param(mod, kp_src->name, kp_src->type, kp_src->data, kp_src->data_len,
+                                   kp_src->perm, kp_src->set_fn, kp_src->get_fn);
         if (ret < 0) {
             kprintf("[MOD_ELF] Failed to register param '%s' for '%s': "
                     "error %d\n",
@@ -1452,7 +1428,8 @@ int module_elf_load_params(const struct module_elf_context *ctx,
 
     if (registered > 0) {
         kprintf("[MOD_ELF] Registered %d parameter(s) from .kparamvals "
-                "for '%s'\n", registered, ctx->name);
+                "for '%s'\n",
+                registered, ctx->name);
     }
 
     return registered;
@@ -1466,13 +1443,17 @@ int module_elf_load_params(const struct module_elf_context *ctx,
  * Find the module init function in the symbol table.
  * Standard .ko files use the symbol name "init_module".
  */
-static uint64_t find_module_entry(const struct module_elf_context *ctx)
-{
+static uint64_t find_module_entry(const struct module_elf_context *ctx) {
     for (int i = 1; i < ctx->num_syms; i++) {
         const struct module_elf_sym *sym = &ctx->syms[i];
-        if (sym->name && sym->resolved &&
-            sym->value != 0 &&
+        if (sym->name && sym->resolved && sym->value != 0 &&
             strcmp(sym->name, "init_module") == 0) {
+            /* Defined symbols are section-relative — return the LOADED
+             * address, not the raw st_value offset (which would point
+             * into unmapped low memory and fault on the init call). */
+            if (sym->shndx >= 1 && (uint32_t)sym->shndx < (uint32_t)ctx->num_sections &&
+                ctx->sections[sym->shndx].mem_addr != 0)
+                return ctx->sections[sym->shndx].mem_addr + sym->value;
             return sym->value;
         }
     }
@@ -1485,24 +1466,24 @@ static uint64_t find_module_entry(const struct module_elf_context *ctx)
  * Unlike init_module, a missing cleanup_module is not an error —
  * some modules have no cleanup to perform.
  */
-static uint64_t find_module_exit(const struct module_elf_context *ctx)
-{
+static uint64_t find_module_exit(const struct module_elf_context *ctx) {
     for (int i = 1; i < ctx->num_syms; i++) {
         const struct module_elf_sym *sym = &ctx->syms[i];
-        if (sym->name && sym->resolved &&
-            sym->value != 0 &&
+        if (sym->name && sym->resolved && sym->value != 0 &&
             strcmp(sym->name, "cleanup_module") == 0) {
+            if (sym->shndx >= 1 && (uint32_t)sym->shndx < (uint32_t)ctx->num_sections &&
+                ctx->sections[sym->shndx].mem_addr != 0)
+                return ctx->sections[sym->shndx].mem_addr + sym->value;
             return sym->value;
         }
     }
     return 0;
 }
 
-int module_elf_finalize(struct module_elf_context *ctx, const char *name)
-{
+int module_elf_finalize(struct module_elf_context *ctx, const char *name) {
     if (!ctx || !ctx->file_data) {
-        if (ctx) snprintf(ctx->error_msg, sizeof(ctx->error_msg),
-                          "module_elf_finalize: NULL context");
+        if (ctx)
+            snprintf(ctx->error_msg, sizeof(ctx->error_msg), "module_elf_finalize: NULL context");
         return -1;
     }
 
@@ -1511,11 +1492,10 @@ int module_elf_finalize(struct module_elf_context *ctx, const char *name)
      * modules declared via "depends=" in .modinfo are loaded.
      * Their exported symbols must be available for symbol resolution. */
     if (ctx->depends[0]) {
-        kprintf("[MOD_ELF] Resolving dependencies for '%s': %s\n",
-                name ? name : ctx->name, ctx->depends);
-        if (module_dep_resolve_list(ctx->depends,
-                                     ctx->error_msg,
-                                     (int)sizeof(ctx->error_msg)) < 0) {
+        kprintf("[MOD_ELF] Resolving dependencies for '%s': %s\n", name ? name : ctx->name,
+                ctx->depends);
+        if (module_dep_resolve_list(ctx->depends, ctx->error_msg, (int)sizeof(ctx->error_msg)) <
+            0) {
             return -1;
         }
     }
@@ -1528,8 +1508,7 @@ int module_elf_finalize(struct module_elf_context *ctx, const char *name)
     text_mutex_lock();
 
     /* Step 1: Resolve symbols */
-    kprintf("[MOD_ELF] Resolving symbols for '%s'...\n",
-            name ? name : ctx->name);
+    kprintf("[MOD_ELF] Resolving symbols for '%s'...\n", name ? name : ctx->name);
     if (module_elf_resolve(ctx, 1) < 0) {
         /* error_msg already set */
         text_mutex_unlock();
@@ -1546,8 +1525,7 @@ int module_elf_finalize(struct module_elf_context *ctx, const char *name)
     }
 
     /* Step 3: Apply relocations */
-    kprintf("[MOD_ELF] Applying relocations for '%s'...\n",
-            name ? name : ctx->name);
+    kprintf("[MOD_ELF] Applying relocations for '%s'...\n", name ? name : ctx->name);
     if (module_elf_apply_rela(ctx) < 0) {
         /* Free the allocated region on failure */
         if (base != 0 && total_size > 0)
@@ -1557,8 +1535,7 @@ int module_elf_finalize(struct module_elf_context *ctx, const char *name)
     }
 
     /* Step 4: Set final page permissions */
-    kprintf("[MOD_ELF] Setting permissions for '%s'...\n",
-            name ? name : ctx->name);
+    kprintf("[MOD_ELF] Setting permissions for '%s'...\n", name ? name : ctx->name);
     if (module_elf_set_perms(ctx) < 0) {
         if (base != 0 && total_size > 0)
             module_free_region(base, total_size);
@@ -1570,8 +1547,7 @@ int module_elf_finalize(struct module_elf_context *ctx, const char *name)
     uint64_t entry_addr = find_module_entry(ctx);
     if (entry_addr == 0) {
         snprintf(ctx->error_msg, sizeof(ctx->error_msg),
-                 "module_elf: no 'init_module' symbol found in '%s'",
-                 name ? name : ctx->name);
+                 "module_elf: no 'init_module' symbol found in '%s'", name ? name : ctx->name);
         if (base != 0 && total_size > 0)
             module_free_region(base, total_size);
         text_mutex_unlock();
@@ -1586,7 +1562,8 @@ int module_elf_finalize(struct module_elf_context *ctx, const char *name)
     if (mod_id < 0) {
         snprintf(ctx->error_msg, sizeof(ctx->error_msg),
                  "module_elf: failed to register module '%s' "
-                 "(duplicate or full table)", mod_name);
+                 "(duplicate or full table)",
+                 mod_name);
         if (base != 0 && total_size > 0)
             module_free_region(base, total_size);
         text_mutex_unlock();
@@ -1610,7 +1587,8 @@ int module_elf_finalize(struct module_elf_context *ctx, const char *name)
         int nparams = module_elf_load_params(ctx, mod);
         if (nparams > 0) {
             kprintf("[MOD_ELF] Auto-registered %d parameter(s) from "
-                    ".kparamvals section for '%s'\n", nparams, mod_name);
+                    ".kparamvals section for '%s'\n",
+                    nparams, mod_name);
         }
     }
 
@@ -1629,8 +1607,8 @@ int module_elf_finalize(struct module_elf_context *ctx, const char *name)
         uint64_t exit_addr = find_module_exit(ctx);
         if (exit_addr != 0) {
             mod->exit_fn = (module_exit_t)exit_addr;
-            kprintf("[MOD_ELF] Found cleanup_module for '%s' at 0x%llx\n",
-                    mod_name, (unsigned long long)exit_addr);
+            kprintf("[MOD_ELF] Found cleanup_module for '%s' at 0x%llx\n", mod_name,
+                    (unsigned long long)exit_addr);
         } else {
             mod->exit_fn = NULL;
             kprintf("[MOD_ELF] No cleanup_module for '%s' — module has no exit function\n",
@@ -1642,14 +1620,13 @@ int module_elf_finalize(struct module_elf_context *ctx, const char *name)
      * Dependency ordering is ensured by step 0 (module_dep_resolve_list)
      * which recursively loads and initializes all dependencies before
      * we reach this point. */
-    kprintf("[MOD] Initializing '%s' (entry=0x%llx)...\n",
-            mod_name, (unsigned long long)entry_addr);
+    kprintf("[MOD] Initializing '%s' (entry=0x%llx)...\n", mod_name,
+            (unsigned long long)entry_addr);
 
     int init_ret = entry_fn();
 
     if (init_ret != 0) {
-        kprintf("[MOD] ERROR: '%s' init returned %d — unloading\n",
-                mod_name, init_ret);
+        kprintf("[MOD] ERROR: '%s' init returned %d — unloading\n", mod_name, init_ret);
         /* Release text mutex before calling module_unload (which may
          * need the lock if called from another context; more importantly,
          * the mutex is not recursive so holding it across module_unload
@@ -1657,8 +1634,7 @@ int module_elf_finalize(struct module_elf_context *ctx, const char *name)
         text_mutex_unlock();
         module_unload(mod_id);
         snprintf(ctx->error_msg, sizeof(ctx->error_msg),
-                 "module_elf: init function for '%s' returned %d",
-                 mod_name, init_ret);
+                 "module_elf: init function for '%s' returned %d", mod_name, init_ret);
         return -1;
     }
 
@@ -1696,8 +1672,7 @@ int module_elf_finalize(struct module_elf_context *ctx, const char *name)
         }
     }
 
-    kprintf("[MOD] Loaded: %s (id=%d, base=0x%llx, size=%llu)\n",
-            mod_name, mod_id,
+    kprintf("[MOD] Loaded: %s (id=%d, base=0x%llx, size=%llu)\n", mod_name, mod_id,
             (unsigned long long)base, (unsigned long long)total_size);
 
     /* Release text mutex — module is now fully live with correct
@@ -1707,24 +1682,21 @@ int module_elf_finalize(struct module_elf_context *ctx, const char *name)
 }
 
 /* ── Stub: module_elf_load ─────────────────────────────── */
-static int module_elf_load(const char *path, void *mod)
-{
+static int module_elf_load(const char *path, void *mod) {
     (void)path;
     (void)mod;
     kprintf("[modelf] module_elf_load: not yet implemented\n");
     return 0;
 }
 /* ── Stub: module_elf_relocate ─────────────────────────────── */
-static int module_elf_relocate(void *mod, void *relocs)
-{
+static int module_elf_relocate(void *mod, void *relocs) {
     (void)mod;
     (void)relocs;
     kprintf("[modelf] module_elf_relocate: not yet implemented\n");
     return 0;
 }
 /* ── Stub: module_elf_check ─────────────────────────────── */
-static int module_elf_check(const void *data, size_t size)
-{
+static int module_elf_check(const void *data, size_t size) {
     (void)data;
     (void)size;
     kprintf("[modelf] module_elf_check: not yet implemented\n");

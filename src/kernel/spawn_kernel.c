@@ -10,28 +10,29 @@
  */
 
 #define KERNEL_INTERNAL
-#include "types.h"
 #include "elf.h"
-#include "process.h"
-#include "vmm.h"
+#include "err.h"
+#include "errno.h"
+#include "heap.h"
 #include "pmm.h"
 #include "printf.h"
+#include "process.h"
 #include "string.h"
-#include "heap.h"
+#include "types.h"
 #include "vfs.h"
-#include "errno.h"
-#include "err.h"
+#include "vmm.h"
 
 /* Max ELF binary we'll try to load from disk */
 #define ELF_MAX_SIZE (1024 * 1024)
-#define PAGE_SIZE    4096
+#define PAGE_SIZE 4096
 
 /* Spawn a userspace process from kernel context (path must be VFS path).
  * Returns PID on success, negative errno on failure. */
 int process_spawn_kernel(const char *path) {
     /* Read the ELF binary from VFS */
     uint8_t *buf = (uint8_t *)kmalloc(ELF_MAX_SIZE);
-    if (!buf) return -ENOMEM;
+    if (!buf)
+        return -ENOMEM;
 
     uint32_t size = 0;
     int rc = vfs_read(path, buf, ELF_MAX_SIZE, &size);
@@ -45,8 +46,7 @@ int process_spawn_kernel(const char *path) {
     const struct elf64_header *hdr = (const struct elf64_header *)buf;
     unsigned int elf_magic;
     __builtin_memcpy(&elf_magic, hdr->e_ident, sizeof(elf_magic));
-    if (size < sizeof(struct elf64_header) ||
-        elf_magic != ELF_MAGIC ||
+    if (size < sizeof(struct elf64_header) || elf_magic != ELF_MAGIC ||
         hdr->e_ident[4] != ELF_CLASS64) {
         kprintf("[spawn_kernel] Bad ELF header for: %s\n", path);
         kfree(buf);
@@ -94,53 +94,79 @@ int process_spawn_kernel(const char *path) {
             (const struct elf64_phdr *)(buf + hdr->e_phoff +
                                         (uint64_t)i * (uint64_t)hdr->e_phentsize);
 
-        if (ph->p_type != PT_LOAD) continue;
+        if (ph->p_type != PT_LOAD)
+            continue;
 
         /* Validate segment is in user space */
         if (ph->p_vaddr >= 0x0000800000000000ULL) {
             kprintf("[spawn_kernel] Segment outside user space\n");
-            map_ok = 0; break;
+            map_ok = 0;
+            break;
         }
 
         /* Segment bounds (page-aligned) */
         uint64_t seg_start = ph->p_vaddr & ~0xFFFULL;
-        uint64_t seg_end   = (ph->p_vaddr + ph->p_memsz + 0xFFF) & ~0xFFFULL;
+        uint64_t seg_end = (ph->p_vaddr + ph->p_memsz + 0xFFF) & ~0xFFFULL;
 
         /* Map flags: user + present by default */
         uint64_t flags = VMM_FLAG_PRESENT | VMM_FLAG_USER;
-        if (ph->p_flags & 2) flags |= VMM_FLAG_WRITE;   /* PF_W */
-        if (!(ph->p_flags & 1)) flags |= VMM_FLAG_NOEXEC; /* PF_X not set */
+        if (ph->p_flags & 2)
+            flags |= VMM_FLAG_WRITE; /* PF_W */
+        if (!(ph->p_flags & 1))
+            flags |= VMM_FLAG_NOEXEC; /* PF_X not set */
 
         for (uint64_t va = seg_start; va < seg_end; va += 0x1000) {
             uint64_t frame = pmm_alloc_frame();
             if (!frame) {
                 kprintf("[spawn_kernel] OOM mapping segment\n");
-                map_ok = 0; break;
+                map_ok = 0;
+                break;
             }
 
             /* Zero the frame first */
             memset(PHYS_TO_VIRT(frame), 0, 0x1000);
 
-            /* Copy segment data to the physical frame */
-            uint64_t page_off = va - (ph->p_vaddr & ~0xFFFULL);
-            if (ph->p_filesz > page_off) {
-                uint64_t copy_sz = ph->p_filesz - page_off;
-                if (copy_sz > 0x1000) copy_sz = 0x1000;
-                memcpy(PHYS_TO_VIRT(frame),
-                       buf + ph->p_offset + page_off, copy_sz);
+            /* Copy the bytes of this segment that fall within this page.
+             * Segments may start at unaligned vaddrs (e.g. .rodata right
+             * after .text), so intersect [p_vaddr, p_vaddr+p_filesz) with
+             * [va, va+PAGE_SIZE) instead of assuming page alignment. */
+            uint64_t seg_va_start = ph->p_vaddr;
+            uint64_t seg_va_end = ph->p_vaddr + ph->p_filesz;
+            uint64_t copy_start = seg_va_start > va ? seg_va_start : va;
+            uint64_t copy_end = seg_va_end < va + 0x1000 ? seg_va_end : va + 0x1000;
+            if (copy_start < copy_end) {
+                memcpy(PHYS_TO_VIRT(frame) + (copy_start - va),
+                       buf + ph->p_offset + (copy_start - seg_va_start), copy_end - copy_start);
             }
 
             int map_rc = vmm_map_user_page(new_pml4, va, frame, flags);
             if (map_rc == -EEXIST) {
-                /* Page already mapped by a prior overlapping segment — normal for ELF */
+                /* Page already mapped by a prior overlapping segment — normal
+                 * for ELF (e.g. .rodata sharing its first page with .text).
+                 * The first mapping won; copy this segment's bytes into the
+                 * existing frame, then merge permissions. */
+                uint64_t exist_va_start = ph->p_vaddr;
+                uint64_t exist_va_end = ph->p_vaddr + ph->p_filesz;
+                uint64_t ec_start = exist_va_start > va ? exist_va_start : va;
+                uint64_t ec_end = exist_va_end < va + 0x1000 ? exist_va_end : va + 0x1000;
+                if (ec_start < ec_end) {
+                    uint64_t exist_frame = 0;
+                    if (vmm_user_virt_to_phys(new_pml4, va, &exist_frame) == 0 && exist_frame) {
+                        memcpy(PHYS_TO_VIRT(exist_frame) + (ec_start - va),
+                               buf + ph->p_offset + (ec_start - exist_va_start), ec_end - ec_start);
+                    }
+                }
                 pmm_free_frame(frame);
+                vmm_merge_user_page_flags(new_pml4, va, flags);
                 continue;
             }
             if (map_rc < 0) {
-                kprintf("[spawn_kernel] vmm_map_user_page failed: va=0x%lx frame=0x%lx flags=0x%lx rc=%d\n",
+                kprintf("[spawn_kernel] vmm_map_user_page failed: va=0x%lx frame=0x%lx flags=0x%lx "
+                        "rc=%d\n",
                         va, frame, flags, map_rc);
                 pmm_free_frame(frame);
-                map_ok = 0; break;
+                map_ok = 0;
+                break;
             }
         }
     }
@@ -165,8 +191,8 @@ int process_spawn_kernel(const char *path) {
         }
         memset(PHYS_TO_VIRT(frame), 0, 0x1000);
         if (vmm_map_user_page(new_pml4, va, frame,
-                              VMM_FLAG_PRESENT | VMM_FLAG_USER |
-                              VMM_FLAG_WRITE | VMM_FLAG_NOEXEC) < 0) {
+                              VMM_FLAG_PRESENT | VMM_FLAG_USER | VMM_FLAG_WRITE | VMM_FLAG_NOEXEC) <
+            0) {
             pmm_free_frame(frame);
             vmm_destroy_user_pml4(new_pml4);
             return -ENOMEM;
@@ -178,7 +204,8 @@ int process_spawn_kernel(const char *path) {
 
     /* Copy path for process name */
     size_t plen = strlen(path);
-    if (plen > 63) plen = 63;
+    if (plen > 63)
+        plen = 63;
     char *pname = (char *)kmalloc(plen + 1);
     if (pname) {
         memcpy(pname, path, plen);
@@ -192,14 +219,15 @@ int process_spawn_kernel(const char *path) {
     if (!proc) {
         kprintf("[spawn_kernel] process_create_user failed for: %s\n", path);
         vmm_destroy_user_pml4(new_pml4);
-        if (pname != path) kfree(pname);
+        if (pname != path)
+            kfree(pname);
         return -ENOMEM;
     }
 
     /* Set process metadata */
     proc->user_stack_bottom = stack_base - (stack_pages * 0x1000);
-    proc->user_stack_top    = stack_base;
-    proc->user_stack_guard  = proc->user_stack_bottom; /* no explicit guard page in this path */
+    proc->user_stack_top = stack_base;
+    proc->user_stack_guard = proc->user_stack_bottom; /* no explicit guard page in this path */
     strncpy(proc->exe_path, path, 255);
     proc->exe_path[255] = '\0';
 
@@ -213,8 +241,7 @@ int process_spawn_kernel(const char *path) {
 }
 
 /* ── Stub: spawn_kernel_thread ─────────────────────────────── */
-static int spawn_kernel_thread(void *fn, void *arg, const char *name)
-{
+static int spawn_kernel_thread(void *fn, void *arg, const char *name) {
     (void)fn;
     (void)arg;
     (void)name;
@@ -222,16 +249,14 @@ static int spawn_kernel_thread(void *fn, void *arg, const char *name)
     return 0;
 }
 /* ── Stub: spawn_kernel_task ─────────────────────────────── */
-static int spawn_kernel_task(void *fn, void *arg)
-{
+static int spawn_kernel_task(void *fn, void *arg) {
     (void)fn;
     (void)arg;
     kprintf("[spawn] spawn_kernel_task: not yet implemented\n");
     return 0;
 }
 /* ── Stub: spawn_kernel_wait ─────────────────────────────── */
-static int spawn_kernel_wait(int pid)
-{
+static int spawn_kernel_wait(int pid) {
     (void)pid;
     kprintf("[spawn] spawn_kernel_wait: not yet implemented\n");
     return 0;

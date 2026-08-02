@@ -15,21 +15,25 @@
  */
 
 #include "cpu.h"
-#include "cpuhp.h"
-#include "smp.h"
-#include "printf.h"
-#include "string.h"
-#include "process.h"
-#include "scheduler.h"
+
 #include "apic.h"
-#include "timer.h"
+#include "cpuhp.h"
 #include "irq_work.h"
 #include "pmm.h"
+#include "printf.h"
+#include "process.h"
+#include "scheduler.h"
 #include "slab.h"
+#include "smp.h"
+#include "string.h"
+#include "timer.h"
 
 /* ═══════════════════════════════════════════════════════════════════════
  * Section 1 — CPU Security Features
  * ═══════════════════════════════════════════════════════════════════════ */
+
+/* Set by cpu_security_init() based on CPUID (SMAP support). */
+int smap_supported = 0;
 
 /* Enable CPU security features: SMEP, SMAP, NXE, UMIP.
  *
@@ -50,8 +54,7 @@
  *   SLDT, SMSW, STR instructions. These leak kernel addresses.
  *
  * Returns 0 on success, -1 if any feature is unavailable. */
-int cpu_security_init(void)
-{
+int cpu_security_init(void) {
     uint64_t cr4 = read_cr4();
     uint64_t efer = read_msr(0xC0000080); /* IA32_EFER */
     int rax, rbx, rcx, rdx;
@@ -70,8 +73,10 @@ int cpu_security_init(void)
     /* Enable SMAP if supported (ECX bit 20) */
     if (rcx & (1U << 20)) {
         cr4 |= CR4_SMAP;
+        smap_supported = 1;
         kprintf("[CPU] SMAP enabled\n");
     } else {
+        smap_supported = 0;
         kprintf("[CPU] SMAP not supported\n");
     }
 
@@ -110,20 +115,20 @@ int cpu_security_init(void)
         int c1_eax, c1_ebx, c1_ecx, c1_edx;
         __asm__ volatile("cpuid" : "=a"(c1_eax), "=b"(c1_ebx), "=c"(c1_ecx), "=d"(c1_edx) : "a"(1));
 
-        uint64_t desired = 0x3; /* x87 (bit 0) + SSE (bit 1) — always available on x86-64 */
-        if (c1_ecx & (1U << 28)) /* CPUID.1:ECX.AVX (bit 28) */
+        uint64_t desired = 0x3;     /* x87 (bit 0) + SSE (bit 1) — always available on x86-64 */
+        if (c1_ecx & (1U << 28))    /* CPUID.1:ECX.AVX (bit 28) */
             desired |= (1ULL << 2); /* AVX (bit 2) */
 
-        __asm__ volatile("xsetbv" : : "c"(0), "a"((uint32_t)desired), "d"((uint32_t)(desired >> 32)));
+        __asm__ volatile("xsetbv"
+                         :
+                         : "c"(0), "a"((uint32_t)desired), "d"((uint32_t)(desired >> 32)));
 
         /* Read back to verify */
         uint32_t xcr0_lo, xcr0_hi;
         __asm__ volatile("xgetbv" : "=a"(xcr0_lo), "=d"(xcr0_hi) : "c"(0));
         uint64_t xcr0_now = ((uint64_t)xcr0_hi << 32) | xcr0_lo;
-        kprintf("[CPU] XCR0 = 0x%llx (x87=%d SSE=%d AVX=%d)\n",
-                (unsigned long long)xcr0_now,
-                (int)(xcr0_now & 1), (int)((xcr0_now >> 1) & 1),
-                (int)((xcr0_now >> 2) & 1));
+        kprintf("[CPU] XCR0 = 0x%llx (x87=%d SSE=%d AVX=%d)\n", (unsigned long long)xcr0_now,
+                (int)(xcr0_now & 1), (int)((xcr0_now >> 1) & 1), (int)((xcr0_now >> 2) & 1));
     }
 
     /* Enable NXE in EFER if supported */
@@ -160,8 +165,7 @@ static int cpuhp_notifier_count = 0;
 
 /* ── Initialisation ─────────────────────────────────────────────────── */
 
-void cpuhp_init(void)
-{
+void cpuhp_init(void) {
     for (int i = 0; i < CPUHP_MAX_CPUS; i++)
         cpuhp_cpu_state[i] = CPUHP_STATE_DEAD;
 
@@ -176,8 +180,7 @@ void cpuhp_init(void)
 
 /* ── Notifier registration ──────────────────────────────────────────── */
 
-int cpuhp_register_notify(cpuhp_notify_fn fn)
-{
+int cpuhp_register_notify(cpuhp_notify_fn fn) {
     if (!fn)
         return -EINVAL;
 
@@ -195,8 +198,7 @@ int cpuhp_register_notify(cpuhp_notify_fn fn)
     return 0;
 }
 
-void cpuhp_notify(void)
-{
+void cpuhp_notify(void) {
     for (int i = 0; i < cpuhp_notifier_count; i++) {
         if (cpuhp_notifiers[i])
             cpuhp_notifiers[i]();
@@ -205,8 +207,7 @@ void cpuhp_notify(void)
 
 /* ── State query helpers ────────────────────────────────────────────── */
 
-int cpuhp_is_online(int cpu_id)
-{
+int cpuhp_is_online(int cpu_id) {
     if (cpu_id < 0 || cpu_id >= CPUHP_MAX_CPUS)
         return 0;
     __asm__ volatile("" ::: "memory");
@@ -215,8 +216,7 @@ int cpuhp_is_online(int cpu_id)
     return state == CPUHP_STATE_ONLINE;
 }
 
-int cpuhp_online_count(void)
-{
+int cpuhp_online_count(void) {
     int count = 0;
     for (int i = 0; i < smp_cpu_count; i++) {
         __asm__ volatile("" ::: "memory");
@@ -237,8 +237,7 @@ int cpuhp_online_count(void)
  *
  * Returns CPUHP_OK on success, CPUHP_ERR_BUSY if migration was incomplete.
  */
-int cpuhp_migrate_tasks_away(int cpu_id)
-{
+int cpuhp_migrate_tasks_away(int cpu_id) {
     int migrated;
 
     if (cpu_id < 0 || cpu_id >= smp_cpu_count)
@@ -260,8 +259,7 @@ int cpuhp_migrate_tasks_away(int cpu_id)
     /* Delegate to scheduler */
     migrated = scheduler_migrate_tasks_from(cpu_id);
     if (migrated < 0) {
-        kprintf("[CPU] Task migration from CPU %d failed (err=%d)\n",
-                cpu_id, migrated);
+        kprintf("[CPU] Task migration from CPU %d failed (err=%d)\n", cpu_id, migrated);
         return CPUHP_ERR_BUSY;
     }
 
@@ -274,8 +272,7 @@ int cpuhp_migrate_tasks_away(int cpu_id)
      * internally and performs NUMA-aware placement on the current
      * (running) CPU's queue. */
     struct cpu_info *ci = &cpu_info_array[cpu_id];
-    if (ci->current_process &&
-        ci->current_process->state == PROCESS_RUNNING) {
+    if (ci->current_process && ci->current_process->state == PROCESS_RUNNING) {
         struct process *cur = ci->current_process;
         cur->state = PROCESS_READY;
         cur->on_cpu = 0;
@@ -295,8 +292,7 @@ int cpuhp_migrate_tasks_away(int cpu_id)
  * the offline request via an IPI. Here we do a lightweight spin-wait
  * to let any pending operations drain.
  */
-static void cpuhp_drain_pending(int cpu_id)
-{
+static void cpuhp_drain_pending(int cpu_id) {
     (void)cpu_id;
     /* Brief pause to allow pending operations to complete */
     for (volatile int i = 0; i < 10000; i++) {
@@ -306,8 +302,7 @@ static void cpuhp_drain_pending(int cpu_id)
 
 /* ── Public API ─────────────────────────────────────────────────────── */
 
-int cpuhp_bring_cpu(int cpu_id)
-{
+int cpuhp_bring_cpu(int cpu_id) {
     int ret = CPUHP_OK;
 
     if (cpu_id < 0 || cpu_id >= CPUHP_MAX_CPUS)
@@ -336,8 +331,7 @@ int cpuhp_bring_cpu(int cpu_id)
 
     /* Transition OFFLINE → ONLINE */
     cpuhp_cpu_state[cpu_id] = CPUHP_STATE_ONLINE;
-    kprintf("[CPU] CPU %d brought online (now %d online)\n",
-            cpu_id, cpuhp_online_count());
+    kprintf("[CPU] CPU %d brought online (now %d online)\n", cpu_id, cpuhp_online_count());
     cpuhp_notify();
 
     /* Clear the per-CPU PMM hot cache so stale entries from before
@@ -356,8 +350,7 @@ out:
     return ret;
 }
 
-int cpuhp_take_cpu_offline(int cpu_id)
-{
+int cpuhp_take_cpu_offline(int cpu_id) {
     int ret = CPUHP_OK;
 
     if (cpu_id < 0 || cpu_id >= CPUHP_MAX_CPUS)
@@ -425,8 +418,7 @@ int cpuhp_take_cpu_offline(int cpu_id)
 
     /* ── Step 6: transition state ──────────────────────────────────── */
     cpuhp_cpu_state[cpu_id] = CPUHP_STATE_OFFLINE;
-    kprintf("[CPU] CPU %d taken offline (now %d online)\n",
-            cpu_id, cpuhp_online_count());
+    kprintf("[CPU] CPU %d taken offline (now %d online)\n", cpu_id, cpuhp_online_count());
     cpuhp_notify();
 
 out:
@@ -445,9 +437,9 @@ out:
  * Return: 0 on success, -EINVAL if @cpu_id is out of range, or a negative
  *         error code from cpuhp_bring_cpu().
  */
-static int cpu_init(int cpu_id)
-{
-    if (cpu_id < 0 || cpu_id >= CPUHP_MAX_CPUS) return -EINVAL;
+static int cpu_init(int cpu_id) {
+    if (cpu_id < 0 || cpu_id >= CPUHP_MAX_CPUS)
+        return -EINVAL;
 
     kprintf("[CPU] cpu_init: initializing CPU %d\n", cpu_id);
 
@@ -472,16 +464,15 @@ static int cpu_init(int cpu_id)
  *          before returning.
  * Return: 0 on success.
  */
-static int cpu_idle(void)
-{
+static int cpu_idle(void) {
     /* Enter halt state to conserve power while waiting for interrupts */
     __asm__ volatile("sti; hlt; cli");
     return 0;
 }
 /* ── cpu_die: Take a CPU offline ──────────────────────────────────────── */
-static int cpu_die(int cpu_id)
-{
-    if (cpu_id < 0 || cpu_id >= CPUHP_MAX_CPUS) return -EINVAL;
+static int cpu_die(int cpu_id) {
+    if (cpu_id < 0 || cpu_id >= CPUHP_MAX_CPUS)
+        return -EINVAL;
 
     kprintf("[CPU] cpu_die: taking CPU %d offline\n", cpu_id);
 
@@ -495,8 +486,8 @@ static int cpu_die(int cpu_id)
     return 0;
 }
 /* ── cpu_online: Check if a CPU is online ─────────────────────────────── */
-static int cpu_online(int cpu_id)
-{
-    if (cpu_id < 0 || cpu_id >= CPUHP_MAX_CPUS) return 0;
+static int cpu_online(int cpu_id) {
+    if (cpu_id < 0 || cpu_id >= CPUHP_MAX_CPUS)
+        return 0;
     return cpuhp_is_online(cpu_id);
 }

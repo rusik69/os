@@ -1,31 +1,32 @@
 #define KERNEL_INTERNAL
 #include "process.h"
-#include "ioprio.h"
-#include "scheduler.h"
-#include "printf.h"
-#include "heap.h"
-#include "string.h"
-#include "timer.h"
-#include "vmm.h"
-#include "pmm.h"
-#include "smp.h"
-#include "signal.h"
-#include "syscall.h"  /* for prng_rand64(), syscall_dispatch(), etc. */
-#include "futex.h"    /* for futex_robust_list_cleanup() */
-#include "cpu_topology.h"
+
+#include "bug.h"
 #include "caps.h"
-#include "sysctl.h"    /* for sysctl_get_hostname() */
-#include "pid_namespace.h"
 #include "cgroup_namespace.h"
-#include "mnt_namespace.h"
-#include "user_namespace.h"
+#include "cpu_topology.h"
+#include "errno.h"
+#include "export.h"
+#include "futex.h" /* for futex_robust_list_cleanup() */
+#include "heap.h"
+#include "ioprio.h"
 #include "kcov.h"
 #include "kpti.h"
-#include "errno.h"
-#include "bug.h"
-#include "uaccess.h"
-#include "export.h"
+#include "mnt_namespace.h"
+#include "pid_namespace.h"
+#include "pmm.h"
+#include "printf.h"
 #include "sched_attr.h"
+#include "scheduler.h"
+#include "signal.h"
+#include "smp.h"
+#include "string.h"
+#include "syscall.h" /* for prng_rand64(), syscall_dispatch(), etc. */
+#include "sysctl.h"  /* for sysctl_get_hostname() */
+#include "timer.h"
+#include "uaccess.h"
+#include "user_namespace.h"
+#include "vmm.h"
 
 /* ── Compile-time struct size assertions ────────────────────────────── */
 
@@ -160,7 +161,8 @@
  * ────────────────────────────────────────────────────────────────────────────
  */
 
-_Static_assert(sizeof(struct process) >= 2048, "struct process must be at least 2048 bytes for fixed-size table");
+_Static_assert(sizeof(struct process) >= 2048,
+               "struct process must be at least 2048 bytes for fixed-size table");
 _Static_assert(sizeof(struct cpu_context) == 64, "cpu_context must be 8 x uint64_t (packed)");
 _Static_assert(sizeof(struct itimerval) == 16, "itimerval must be 2 x uint64_t");
 
@@ -178,11 +180,11 @@ static spinlock_t pid_lock;
 #define PID_BITMAP_WORDS 4
 
 static int pid_is_free_in_table(uint32_t pid) {
-    if (pid == 0) return 0;  /* PID 0 is reserved for idle */
+    if (pid == 0)
+        return 0; /* PID 0 is reserved for idle */
     for (int i = 0; i < PROCESS_MAX; i++) {
-        if (process_table[i].state != PROCESS_UNUSED &&
-            process_table[i].pid == pid) {
-            return 0;  /* still in use by another slot */
+        if (process_table[i].state != PROCESS_UNUSED && process_table[i].pid == pid) {
+            return 0; /* still in use by another slot */
         }
     }
     return 1;
@@ -205,17 +207,19 @@ static uint32_t alloc_pid(void) {
      * PROCESS_MAX iterations (256) — negligible cost for fork. */
     for (uint32_t i = 1; i < PROCESS_MAX; i++) {
         uint32_t candidate = (last_pid + i) % PROCESS_MAX;
-        if (candidate == 0) continue;          /* skip PID 0 */
+        if (candidate == 0)
+            continue; /* skip PID 0 */
 
         int w = (int)(candidate / 64);
         int bit = (int)(candidate % 64);
 
-        if (pid_bitmap[w] & (1ULL << bit)) continue;
+        if (pid_bitmap[w] & (1ULL << bit))
+            continue;
 
         /* Defense-in-depth: verify the PID is truly free in the
          * process table (the bitmap can drift in edge cases). */
         if (!pid_is_free_in_table(candidate)) {
-            pid_bitmap[w] |= (1ULL << bit);   /* sync bitmap with reality */
+            pid_bitmap[w] |= (1ULL << bit); /* sync bitmap with reality */
             continue;
         }
 
@@ -239,7 +243,8 @@ static uint32_t alloc_pid(void) {
 }
 
 static void free_pid(uint32_t pid) {
-    if (pid >= PROCESS_MAX) return;
+    if (pid >= PROCESS_MAX)
+        return;
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&pid_lock, &irq_flags);
     int w = pid / 64;
@@ -265,10 +270,21 @@ static int alloc_guarded_kernel_stack(struct process *proc) {
         return -ENOMEM;
     }
 
-    uint64_t guard_phys  = (uint64_t)phys;
-    uint64_t stack_phys  = guard_phys + PAGE_SIZE;
-    uint64_t guard_vma   = (uint64_t)PHYS_TO_VIRT(guard_phys);
-    uint64_t stack_vma   = (uint64_t)PHYS_TO_VIRT(stack_phys);
+    uint64_t guard_phys = (uint64_t)phys;
+    uint64_t stack_phys = guard_phys + PAGE_SIZE;
+    uint64_t guard_vma = (uint64_t)PHYS_TO_VIRT(guard_phys);
+    uint64_t stack_vma = (uint64_t)PHYS_TO_VIRT(stack_phys);
+
+    /* Pin every frame of the kernel stack in the page-table bitmap.
+     * Kernel stacks live in the physmap (PHYS_TO_VIRT) and the guard
+     * page PTE is deliberately unmapped for overflow detection — if
+     * compaction ever migrates one of these frames (refcount == 1,
+     * MOVABLE pageblock), the physmap hole at the guard PTE makes
+     * PHYS_TO_VIRT fault and the stack is corrupted under the live
+     * process (observed: #PF in migrate_one_page on a kernel-stack
+     * frame after OOM-triggered compaction). */
+    for (size_t i = 0; i < KERNEL_STACK_TOTAL_PAGES; i++)
+        pmm_mark_pt_frame(guard_phys + i * PAGE_SIZE);
 
     /* Call vmm_map_page for the guard VMA — this splits the 2MB huge page
      * into 4KB PTEs for the region if needed.  Then unmap just the guard.
@@ -276,35 +292,41 @@ static int alloc_guarded_kernel_stack(struct process *proc) {
      * which means the huge page has been split successfully. */
     int map_rc = vmm_map_page(guard_vma, guard_phys, VMM_FLAG_WRITE);
     if (map_rc < 0 && map_rc != -EEXIST) {
-        kprintf("[alloc_kernel_stack] vmm_map_page(0x%lx, 0x%lx) failed rc=%d\n", guard_vma, guard_phys, map_rc);
-        for (size_t i = 0; i < KERNEL_STACK_TOTAL_PAGES; i++)
+        kprintf("[alloc_kernel_stack] vmm_map_page(0x%lx, 0x%lx) failed rc=%d\n", guard_vma,
+                guard_phys, map_rc);
+        for (size_t i = 0; i < KERNEL_STACK_TOTAL_PAGES; i++) {
+            pmm_unmark_pt_frame(guard_phys + i * PAGE_SIZE);
             pmm_free_frame(guard_phys + i * PAGE_SIZE);
+        }
         return -EINVAL;
     }
     vmm_unmap_page(guard_vma);
 
-    proc->guard_page    = guard_vma;
-    proc->kernel_stack  = stack_vma;
-    proc->stack_top     = stack_vma + KERNEL_STACK_SIZE;
+    proc->guard_page = guard_vma;
+    proc->kernel_stack = stack_vma;
+    proc->stack_top = stack_vma + KERNEL_STACK_SIZE;
     return 0;
 }
 
 /* Free a kernel stack previously allocated by alloc_guarded_kernel_stack.
  * Re-maps the guard page first so freeing its physical frame is safe. */
 static void free_guarded_kernel_stack(struct process *proc) {
-    if (!proc->kernel_stack) return;
+    if (!proc->kernel_stack)
+        return;
 
     uint64_t guard_phys = VIRT_TO_PHYS(proc->guard_page);
 
     /* Re-map guard page so the PTEs are consistent while we free */
     vmm_map_page(proc->guard_page, guard_phys, VMM_FLAG_WRITE);
 
-    for (size_t i = 0; i < KERNEL_STACK_TOTAL_PAGES; i++)
+    for (size_t i = 0; i < KERNEL_STACK_TOTAL_PAGES; i++) {
+        pmm_unmark_pt_frame(guard_phys + i * PAGE_SIZE);
         pmm_free_frame(guard_phys + i * PAGE_SIZE);
+    }
 
-    proc->guard_page    = 0;
-    proc->kernel_stack  = 0;
-    proc->stack_top     = 0;
+    proc->guard_page = 0;
+    proc->kernel_stack = 0;
+    proc->stack_top = 0;
 }
 
 static inline int process_cap_valid(uint32_t num) {
@@ -312,28 +334,34 @@ static inline int process_cap_valid(uint32_t num) {
 }
 
 void process_caps_clear_all(struct process *proc) {
-    if (!proc) return;
+    if (!proc)
+        return;
     memset(proc->syscall_caps, 0, sizeof(proc->syscall_caps));
 }
 
 void process_caps_allow(struct process *proc, uint32_t num) {
-    if (!proc || !process_cap_valid(num)) return;
+    if (!proc || !process_cap_valid(num))
+        return;
     proc->syscall_caps[num / 64] |= (1ULL << (num % 64));
 }
 
 void process_caps_allow_all(struct process *proc) {
-    if (!proc) return;
+    if (!proc)
+        return;
     for (int i = 0; i < PROCESS_SYSCALL_CAP_WORDS; i++) {
         proc->syscall_caps[i] = ~0ULL;
     }
 }
 
 int process_caps_has(const struct process *proc, uint32_t num) {
-    if (!proc || !process_cap_valid(num)) return 0;
+    if (!proc || !process_cap_valid(num))
+        return 0;
     /* Check capability and bounding set */
-    if (!(proc->syscall_caps[num / 64] & (1ULL << (num % 64)))) return 0;
+    if (!(proc->syscall_caps[num / 64] & (1ULL << (num % 64))))
+        return 0;
     /* Also check bounding set */
-    if (!(proc->cap_bset[num / 64] & (1ULL << (num % 64)))) return 0;
+    if (!(proc->cap_bset[num / 64] & (1ULL << (num % 64))))
+        return 0;
     return 1;
 }
 
@@ -357,6 +385,14 @@ static void process_caps_apply_user_default(struct process *proc) {
     process_caps_allow(proc, SYS_UPTIME);
     process_caps_allow(proc, SYS_WAITPID);
     process_caps_allow(proc, SYS_SLEEP_TICKS);
+
+    /* Process lifecycle: fork/exec/signals — required by init and the
+     * shell to spawn children and install handlers. */
+    process_caps_allow(proc, SYS_FORK);
+    process_caps_allow(proc, SYS_EXECVE);
+    process_caps_allow(proc, SYS_SIGNAL);
+    process_caps_allow(proc, SYS_DUP);
+    process_caps_allow(proc, SYS_DUP2);
 
     /* Filesystem/VFS through syscall boundary */
     process_caps_allow(proc, SYS_FS_CREATE);
@@ -407,6 +443,9 @@ static void process_caps_apply_user_default(struct process *proc) {
     process_caps_allow(proc, SYS_IO_URING_SETUP);
     process_caps_allow(proc, SYS_IO_URING_ENTER);
     process_caps_allow(proc, SYS_IO_URING_REGISTER);
+
+    /* Kernel module loading (insmod) */
+    process_caps_allow(proc, SYS_INIT_MODULE);
 }
 
 static void process_caps_apply_user_trusted(struct process *proc) {
@@ -414,20 +453,21 @@ static void process_caps_apply_user_trusted(struct process *proc) {
 }
 
 int process_set_cap_profile(struct process *proc, enum process_cap_profile profile) {
-    if (!proc) return -EINVAL;
+    if (!proc)
+        return -EINVAL;
 
     switch (profile) {
-        case PROCESS_CAP_PROFILE_NONE:
-            process_caps_clear_all(proc);
-            break;
-        case PROCESS_CAP_PROFILE_USER_DEFAULT:
-            process_caps_apply_user_default(proc);
-            break;
-        case PROCESS_CAP_PROFILE_USER_TRUSTED:
-            process_caps_apply_user_trusted(proc);
-            break;
-        default:
-            return -EINVAL;
+    case PROCESS_CAP_PROFILE_NONE:
+        process_caps_clear_all(proc);
+        break;
+    case PROCESS_CAP_PROFILE_USER_DEFAULT:
+        process_caps_apply_user_default(proc);
+        break;
+    case PROCESS_CAP_PROFILE_USER_TRUSTED:
+        process_caps_apply_user_trusted(proc);
+        break;
+    default:
+        return -EINVAL;
     }
 
     proc->cap_profile = (uint8_t)profile;
@@ -441,17 +481,17 @@ static void rlimit_init_defaults(struct process *proc) {
         proc->rlim_max[i] = ~0ULL;
     }
     /* Set sensible defaults */
-    proc->rlim_cur[RLIMIT_NOFILE] = 1024;                    /* RLIMIT_NOFILE soft = 1024 */
-    proc->rlim_max[RLIMIT_NOFILE] = 4096;                    /* RLIMIT_NOFILE hard = 4096 */
-    proc->rlim_cur[RLIMIT_NPROC]  = 4096;                    /* RLIMIT_NPROC  soft = 4096 */
-    proc->rlim_max[RLIMIT_NPROC]  = 4096;                    /* RLIMIT_NPROC  hard = 4096 */
-    proc->rlim_cur[RLIMIT_AS]     = 1024ULL * 1024 * 1024;   /* RLIMIT_AS = 1GB */
-    proc->rlim_max[RLIMIT_AS]     = 1024ULL * 1024 * 1024;
-    proc->rlim_cur[RLIMIT_CORE]   = 1024ULL * 1024;          /* RLIMIT_CORE = 1MB */
-    proc->rlim_max[RLIMIT_CORE]   = 1024ULL * 1024;
-    proc->rlim_cur[RLIMIT_STACK]  = 8ULL * 1024 * 1024;       /* RLIMIT_STACK = 8MB */
-    proc->rlim_max[RLIMIT_STACK]  = 8ULL * 1024 * 1024;
-    proc->rlim_cur[RLIMIT_MEMLOCK] = 1024ULL * 64;           /* RLIMIT_MEMLOCK = 64KB */
+    proc->rlim_cur[RLIMIT_NOFILE] = 1024;              /* RLIMIT_NOFILE soft = 1024 */
+    proc->rlim_max[RLIMIT_NOFILE] = 4096;              /* RLIMIT_NOFILE hard = 4096 */
+    proc->rlim_cur[RLIMIT_NPROC] = 4096;               /* RLIMIT_NPROC  soft = 4096 */
+    proc->rlim_max[RLIMIT_NPROC] = 4096;               /* RLIMIT_NPROC  hard = 4096 */
+    proc->rlim_cur[RLIMIT_AS] = 1024ULL * 1024 * 1024; /* RLIMIT_AS = 1GB */
+    proc->rlim_max[RLIMIT_AS] = 1024ULL * 1024 * 1024;
+    proc->rlim_cur[RLIMIT_CORE] = 1024ULL * 1024; /* RLIMIT_CORE = 1MB */
+    proc->rlim_max[RLIMIT_CORE] = 1024ULL * 1024;
+    proc->rlim_cur[RLIMIT_STACK] = 8ULL * 1024 * 1024; /* RLIMIT_STACK = 8MB */
+    proc->rlim_max[RLIMIT_STACK] = 8ULL * 1024 * 1024;
+    proc->rlim_cur[RLIMIT_MEMLOCK] = 1024ULL * 64; /* RLIMIT_MEMLOCK = 64KB */
     proc->rlim_max[RLIMIT_MEMLOCK] = 1024ULL * 64;
 }
 
@@ -498,12 +538,12 @@ void __init process_init(void) {
     process_table[0].priority = 1;
     process_table[0].base_priority = 1;
     process_table[0].nice = NICE_DEFAULT;
-    process_table[0].cpu_affinity = 0;  /* allow any CPU */
-    process_table[0].uid = 0;     /* root */
+    process_table[0].cpu_affinity = 0; /* allow any CPU */
+    process_table[0].uid = 0;          /* root */
     process_table[0].gid = 0;
     process_table[0].euid = 0;
     process_table[0].egid = 0;
-    process_table[0].umask = 0022;  /* default: rwxr-xr-x */
+    process_table[0].umask = 0022; /* default: rwxr-xr-x */
     memset(process_table[0].itimers, 0, sizeof(process_table[0].itimers));
     process_table[0].cap_profile = PROCESS_CAP_PROFILE_USER_TRUSTED;
     process_caps_allow_all(&process_table[0]);
@@ -516,7 +556,7 @@ void __init process_init(void) {
     process_table[0].alt_stack_flags = SS_DISABLE;
     process_table[0].personality = 0;
     process_table[0].coredump_enabled = 1;
-    process_table[0].dumpable = 1;        /* SUID_DUMP_USER */
+    process_table[0].dumpable = 1; /* SUID_DUMP_USER */
     memset(process_table[0].proc_comm, 0, 16);
     rlimit_init_defaults(&process_table[0]);
     cap_bset_init(&process_table[0]);
@@ -526,7 +566,7 @@ void __init process_init(void) {
     process_table[0].ns_pid = 0;
     /* Assign the idle process to the root user namespace */
     process_table[0].user_ns = &init_user_ns;
-    process_table[0].landlock_ruleset_ids[0] = -1;  /* no landlock restrictions */
+    process_table[0].landlock_ruleset_ids[0] = -1; /* no landlock restrictions */
     process_table[0].landlock_ruleset_ids[1] = -1;
     process_table[0].landlock_ruleset_ids[2] = -1;
     process_table[0].landlock_ruleset_ids[3] = -1;
@@ -577,7 +617,8 @@ struct process *process_create(void (*entry)(void), const char *name) {
             break;
         }
     }
-    if (!proc) return NULL;
+    if (!proc)
+        return NULL;
 
     /* Enforce RLIMIT_NPROC: check processes owned by the same UID */
     struct process *cur = process_get_current();
@@ -587,8 +628,7 @@ struct process *process_create(void (*entry)(void), const char *name) {
             uint64_t same_user_count = 0;
             for (int i = 0; i < PROCESS_MAX; i++) {
                 if (process_table[i].state != PROCESS_UNUSED &&
-                    process_table[i].state != PROCESS_ZOMBIE &&
-                    process_table[i].uid == cur->uid) {
+                    process_table[i].state != PROCESS_ZOMBIE && process_table[i].uid == cur->uid) {
                     same_user_count++;
                 }
             }
@@ -598,7 +638,8 @@ struct process *process_create(void (*entry)(void), const char *name) {
     }
 
     /* Allocate kernel stack with guard page */
-    if (alloc_guarded_kernel_stack(proc) < 0) return NULL;
+    if (alloc_guarded_kernel_stack(proc) < 0)
+        return NULL;
 
     proc->pid = alloc_pid();
     if (proc->pid == (uint32_t)-1) {
@@ -617,26 +658,26 @@ struct process *process_create(void (*entry)(void), const char *name) {
     proc->user_entry = 0;
     proc->user_rsp = 0;
     proc->pml4 = NULL;
-    proc->parent_pid  = current_process ? current_process->pid : 0;
+    proc->parent_pid = current_process ? current_process->pid : 0;
     proc->pgid = current_process ? current_process->pgid : proc->pid;
     proc->sid = current_process ? current_process->sid : proc->pid;
-    proc->exit_code   = 0;
+    proc->exit_code = 0;
     proc->sleep_until = 0;
     proc->is_background = 0;
     proc->is_suspended = 0;
-    proc->priority    = 1; /* normal priority */
-    proc->nice        = NICE_DEFAULT;
+    proc->priority = 1; /* normal priority */
+    proc->nice = NICE_DEFAULT;
     proc->cpu_affinity = 0; /* allow any CPU */
-    proc->on_cpu      = 0; /* not yet executing */
+    proc->on_cpu = 0;       /* not yet executing */
     proc->uid = 0;
     proc->gid = 0;
     proc->euid = 0;
     proc->egid = 0;
     proc->ngroups = 0;
     proc->umask = 0022;
-    proc->wait_for_pid   = 0;
+    proc->wait_for_pid = 0;
     proc->ticks_remaining = 0; /* set by scheduler on first run */
-    proc->last_run_tick  = timer_get_ticks();
+    proc->last_run_tick = timer_get_ticks();
     /* Inherit cwd from parent */
     if (current_process && current_process->cwd[0])
         strncpy(proc->cwd, current_process->cwd, 63);
@@ -650,7 +691,7 @@ struct process *process_create(void (*entry)(void), const char *name) {
     proc->alt_stack_flags = SS_DISABLE;
     proc->personality = 0;
     proc->coredump_enabled = 1;
-    proc->dumpable = 1;       /* default: dumpable (SUID_DUMP_USER) */
+    proc->dumpable = 1; /* default: dumpable (SUID_DUMP_USER) */
     memset(proc->proc_comm, 0, sizeof(proc->proc_comm));
     strncpy(proc->proc_comm, name, sizeof(proc->proc_comm) - 1);
     proc->proc_comm[sizeof(proc->proc_comm) - 1] = '\0';
@@ -659,11 +700,11 @@ struct process *process_create(void (*entry)(void), const char *name) {
     memset(proc->itimers, 0, sizeof(proc->itimers));
     rlimit_init_defaults(proc);
     cap_bset_init(proc);
-    proc->landlock_ruleset_ids[0] = -1;  /* no landlock restrictions */
+    proc->landlock_ruleset_ids[0] = -1; /* no landlock restrictions */
     proc->landlock_ruleset_ids[1] = -1;
     proc->landlock_ruleset_ids[2] = -1;
     proc->landlock_ruleset_ids[3] = -1;
-    proc->ptracer_pid = 0;        /* YAMA: no tracer allowed by default */
+    proc->ptracer_pid = 0; /* YAMA: no tracer allowed by default */
     kcov_process_init(proc);
 
     /* Initialize CPU time accounting */
@@ -688,7 +729,8 @@ struct process *process_create(void (*entry)(void), const char *name) {
 
     /* ── UTS namespace: inherit hostname/domainname from parent or global ── */
     {
-        const char *src_host = current_process ? current_process->ns_hostname : sysctl_get_hostname();
+        const char *src_host =
+            current_process ? current_process->ns_hostname : sysctl_get_hostname();
         strncpy(proc->ns_hostname, src_host ? src_host : "localhost",
                 sizeof(proc->ns_hostname) - 1);
         proc->ns_hostname[sizeof(proc->ns_hostname) - 1] = '\0';
@@ -703,7 +745,8 @@ struct process *process_create(void (*entry)(void), const char *name) {
     /* ── Time namespace: inherit offsets from parent ──────────────────── */
     {
         proc->timens_mono_offset = current_process ? current_process->timens_mono_offset : 0;
-        proc->timens_boottime_offset = current_process ? current_process->timens_boottime_offset : 0;
+        proc->timens_boottime_offset =
+            current_process ? current_process->timens_boottime_offset : 0;
     }
 
     /* ── PID namespace: inherit from parent (Item 111) ──────────── */
@@ -729,7 +772,7 @@ struct process *process_create(void (*entry)(void), const char *name) {
         if (parent && parent->cgroup_ns) {
             proc->cgroup_ns = cgroup_ns_get(parent->cgroup_ns);
         } else {
-            proc->cgroup_ns = NULL;  /* root namespace */
+            proc->cgroup_ns = NULL; /* root namespace */
         }
     }
 
@@ -739,7 +782,7 @@ struct process *process_create(void (*entry)(void), const char *name) {
         if (parent && parent->user_ns) {
             proc->user_ns = parent->user_ns;
         } else {
-            proc->user_ns = &init_user_ns;  /* root namespace */
+            proc->user_ns = &init_user_ns; /* root namespace */
         }
     }
     proc->cpu_system = 0;
@@ -754,8 +797,8 @@ struct process *process_create(void (*entry)(void), const char *name) {
     pelt_init(&proc->pelt);
 
     /* Initialize wakee flips heuristic fields */
-    proc->last_wakee      = NULL;
-    proc->wakee_flip_cnt  = 0;
+    proc->last_wakee = NULL;
+    proc->wakee_flip_cnt = 0;
     proc->wakee_flip_tick = 0;
 
     /* Set up initial context on the stack */
@@ -766,13 +809,13 @@ struct process *process_create(void (*entry)(void), const char *name) {
      * then jmp r15 (the real entry point). This is needed because schedule()
      * does cli before context_switch. */
     sp -= 7;
-    sp[0] = (uint64_t)entry;   /* r15 = real entry point */
-    sp[1] = 0;                  /* r14 */
-    sp[2] = 0;                  /* r13 */
-    sp[3] = 0;                  /* r12 */
-    sp[4] = 0;                  /* rbx */
-    sp[5] = 0;                  /* rbp */
-    sp[6] = (uint64_t)process_entry_trampoline;  /* rip = trampoline */
+    sp[0] = (uint64_t)entry;                    /* r15 = real entry point */
+    sp[1] = 0;                                  /* r14 */
+    sp[2] = 0;                                  /* r13 */
+    sp[3] = 0;                                  /* r12 */
+    sp[4] = 0;                                  /* rbx */
+    sp[5] = 0;                                  /* rbp */
+    sp[6] = (uint64_t)process_entry_trampoline; /* rip = trampoline */
 
     proc->context = (struct cpu_context *)sp;
 
@@ -784,8 +827,8 @@ struct process *process_create(void (*entry)(void), const char *name) {
     return proc;
 }
 
-struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
-                                    uint64_t *pml4, const char *name) {
+struct process *process_create_user(uint64_t entry, uint64_t user_rsp, uint64_t *pml4,
+                                    const char *name) {
     struct process *proc = NULL;
 
     for (int i = 0; i < PROCESS_MAX; i++) {
@@ -794,7 +837,8 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
             break;
         }
     }
-    if (!proc) return NULL;
+    if (!proc)
+        return NULL;
 
     /* Allocate kernel stack for syscall handling */
     if (alloc_guarded_kernel_stack(proc) < 0) {
@@ -831,12 +875,15 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
     proc->nice = NICE_DEFAULT;
     proc->cpu_affinity = 0;
     proc->base_priority = 1;
-    proc->uid = 0; proc->gid = 0; proc->euid = 0; proc->egid = 0;
+    proc->uid = 0;
+    proc->gid = 0;
+    proc->euid = 0;
+    proc->egid = 0;
     proc->ngroups = 0;
     proc->umask = 0022;
-    proc->wait_for_pid   = 0;
+    proc->wait_for_pid = 0;
     proc->ticks_remaining = 0;
-    proc->last_run_tick  = timer_get_ticks();
+    proc->last_run_tick = timer_get_ticks();
     process_set_cap_profile(proc, PROCESS_CAP_PROFILE_USER_DEFAULT);
     proc->sched_policy = SCHED_OTHER;
     proc->alt_stack_sp = NULL;
@@ -844,7 +891,7 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
     proc->alt_stack_flags = SS_DISABLE;
     proc->personality = 0;
     proc->coredump_enabled = 1;
-    proc->dumpable = 1;       /* default: dumpable (SUID_DUMP_USER) */
+    proc->dumpable = 1; /* default: dumpable (SUID_DUMP_USER) */
     memset(proc->proc_comm, 0, sizeof(proc->proc_comm));
     strncpy(proc->proc_comm, name, sizeof(proc->proc_comm) - 1);
     proc->proc_comm[sizeof(proc->proc_comm) - 1] = '\0';
@@ -852,11 +899,11 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
     memset(proc->exe_path, 0, sizeof(proc->exe_path));
     rlimit_init_defaults(proc);
     cap_bset_init(proc);
-    proc->landlock_ruleset_ids[0] = -1;  /* no landlock restrictions */
+    proc->landlock_ruleset_ids[0] = -1; /* no landlock restrictions */
     proc->landlock_ruleset_ids[1] = -1;
     proc->landlock_ruleset_ids[2] = -1;
     proc->landlock_ruleset_ids[3] = -1;
-    proc->ptracer_pid = 0;        /* YAMA: no tracer allowed by default */
+    proc->ptracer_pid = 0; /* YAMA: no tracer allowed by default */
     kcov_process_init(proc);
 
     /* Inherit parent's bounding set */
@@ -882,13 +929,13 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
      * r15 = user RIP, r14 = user RSP */
     uint64_t *sp = (uint64_t *)(proc->stack_top);
     sp -= 7;
-    sp[0] = entry;          /* r15 = user entry point */
-    sp[1] = user_rsp;       /* r14 = user stack pointer */
-    sp[2] = 0;              /* r13 */
-    sp[3] = 0;              /* r12 */
-    sp[4] = 0;              /* rbx */
-    sp[5] = 0;              /* rbp */
-    sp[6] = (uint64_t)user_entry_trampoline;  /* rip = ring3 trampoline */
+    sp[0] = entry;                           /* r15 = user entry point */
+    sp[1] = user_rsp;                        /* r14 = user stack pointer */
+    sp[2] = 0;                               /* r13 */
+    sp[3] = 0;                               /* r12 */
+    sp[4] = 0;                               /* rbx */
+    sp[5] = 0;                               /* rbp */
+    sp[6] = (uint64_t)user_entry_trampoline; /* rip = ring3 trampoline */
 
     proc->context = (struct cpu_context *)sp;
 
@@ -922,7 +969,8 @@ void process_exit(void) {
     process_wake_waiter(current_process->pid);
     scheduler_yield();
     /* should never reach here */
-    for (;;) __asm__ volatile("hlt");
+    for (;;)
+        __asm__ volatile("hlt");
 }
 
 /* ── Orphaned process group detection ────────────────────────────────── */
@@ -940,12 +988,12 @@ static int is_pgid_orphaned(uint32_t pgid, uint32_t sid) {
         /* Found a living member — check its parent */
         struct process *parent = process_get_by_pid(table[i].parent_pid);
         if (!parent || parent->state == PROCESS_UNUSED || parent->state == PROCESS_ZOMBIE)
-            continue;  /* parent gone → orphaned condition met for this member */
+            continue; /* parent gone → orphaned condition met for this member */
         /* If parent is in same session AND same process group, NOT orphaned */
         if (parent->sid == sid && parent->pgid == pgid)
             return 0;
     }
-    return 1;  /* orphaned */
+    return 1; /* orphaned */
 }
 
 /* Check for orphaned process groups in the given session.
@@ -974,7 +1022,8 @@ static void check_orphaned_process_groups(uint32_t sid) {
                 break;
             }
         }
-        if (already_seen) continue;
+        if (already_seen)
+            continue;
         if (n_seen < PROCESS_MAX)
             seen_pgids[n_seen++] = pgid;
 
@@ -991,8 +1040,7 @@ void process_exit_code(int code) {
     uint32_t my_pid = current_process->pid;
     uint32_t my_sid = current_process->sid;
     for (int i = 0; i < PROCESS_MAX; i++) {
-        if (process_table[i].state != PROCESS_UNUSED &&
-            process_table[i].parent_pid == my_pid &&
+        if (process_table[i].state != PROCESS_UNUSED && process_table[i].parent_pid == my_pid &&
             process_table[i].pid != my_pid) {
             process_table[i].parent_pid = 1;
         }
@@ -1018,8 +1066,7 @@ void process_exit_code(int code) {
         uint32_t *ctid_uaddr = (uint32_t *)current_process->ctid_ptr;
         __asm__ volatile("cli");
         for (int i = 0; i < FUTEX_MAX_WAITERS; i++) {
-            if (futex_waiters[i].proc &&
-                futex_waiters[i].uaddr == ctid_uaddr) {
+            if (futex_waiters[i].proc && futex_waiters[i].uaddr == ctid_uaddr) {
                 struct process *wake_p = futex_waiters[i].proc;
                 futex_waiters[i].proc = NULL;
                 futex_waiters[i].uaddr = NULL;
@@ -1028,7 +1075,7 @@ void process_exit_code(int code) {
                     wake_p->state = PROCESS_READY;
                     scheduler_add(wake_p);
                 }
-                break;  /* wake only 1 waiter */
+                break; /* wake only 1 waiter */
             }
         }
         __asm__ volatile("sti");
@@ -1036,7 +1083,8 @@ void process_exit_code(int code) {
     /* Send SIGCHLD to parent with full siginfo_t */
     signal_notify_parent(current_process, CLD_EXITED, code);
     scheduler_yield();
-    for (;;) __asm__ volatile("hlt");
+    for (;;)
+        __asm__ volatile("hlt");
 }
 
 /* ── O_CLOEXEC support ───────────────────────────────────────────────── */
@@ -1044,7 +1092,8 @@ void process_exit_code(int code) {
 /* Close all file descriptors with FD_CLOEXEC flag set */
 void process_exec_close_cloexec(void) {
     struct process *cur = process_get_current();
-    if (!cur) return;
+    if (!cur)
+        return;
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&cur->fd_table_lock, &irq_flags);
     for (int i = 0; i < PROCESS_FD_MAX; i++) {
@@ -1060,7 +1109,8 @@ void process_exec_close_cloexec(void) {
 
 struct process *process_get_current(void) {
     struct process *proc = get_current_process();
-    if (!proc) return current_process;
+    if (!proc)
+        return current_process;
     return proc;
 }
 
@@ -1068,22 +1118,25 @@ struct process *process_get_current(void) {
 
 void cap_bset_drop(uint32_t cap) {
     struct process *p = process_get_current();
-    if (!p || cap >= PROCESS_SYSCALL_MAX) return;
+    if (!p || cap >= PROCESS_SYSCALL_MAX)
+        return;
     int word = cap / 64;
-    int bit  = cap % 64;
+    int bit = cap % 64;
     p->cap_bset[word] &= ~(1ULL << bit);
 }
 
 int cap_bset_has(uint32_t cap) {
     struct process *p = process_get_current();
-    if (!p || cap >= PROCESS_SYSCALL_MAX) return 0;
+    if (!p || cap >= PROCESS_SYSCALL_MAX)
+        return 0;
     int word = cap / 64;
-    int bit  = cap % 64;
+    int bit = cap % 64;
     return (p->cap_bset[word] & (1ULL << bit)) != 0;
 }
 
 void cap_bset_init(struct process *proc) {
-    if (!proc) return;
+    if (!proc)
+        return;
     /* Initialize bounding set to all ones (all caps allowed by default) */
     for (int i = 0; i < PROCESS_SYSCALL_CAP_WORDS; i++)
         proc->cap_bset[i] = ~0ULL;
@@ -1092,12 +1145,14 @@ void cap_bset_init(struct process *proc) {
 /* ── Securebits ─────────────────────────────────────────────────────── */
 
 int securebits_get(struct process *proc) {
-    if (!proc) return 0;
+    if (!proc)
+        return 0;
     return (int)proc->securebits;
 }
 
 int securebits_set(struct process *proc, uint8_t bits) {
-    if (!proc) return -EINVAL;
+    if (!proc)
+        return -EINVAL;
     /* Only allow setting bits that aren't locked */
     if (proc->securebits & SECBIT_LOCKED_MASK)
         return -EINVAL;
@@ -1119,12 +1174,14 @@ int securebits_set(struct process *proc, uint8_t bits) {
 
 void process_exec_caps(void) {
     struct process *p = process_get_current();
-    if (!p) return;
+    if (!p)
+        return;
 
-    /* If SECBIT_KEEP_CAPS is not set, clear the permitted set */
-    if (!(p->securebits & SECBIT_KEEP_CAPS)) {
-        process_caps_clear_all(p);
-    }
+    /* NOTE: the syscall_caps bitmap is the syscall-dispatch gate for this
+     * kernel, NOT the Linux "permitted set".  Clearing it on exec would
+     * leave every exec'd binary with zero allowed syscalls (exit itself
+     * denied), so we preserve it across exec.  The per-process bounding
+     * set is still ANDed below so caps can only drop, never grow. */
 
     /* Apply system-wide bounding set: per-process caps must be
      * further limited by the global bounding set that an admin
@@ -1139,23 +1196,27 @@ void process_exec_caps(void) {
 
 /* ── Process credential API ─────────────────────────────────── */
 
-int process_get_cred(uint32_t pid, uint32_t *uid, uint32_t *gid,
-                     uint32_t *euid, uint32_t *egid) {
+int process_get_cred(uint32_t pid, uint32_t *uid, uint32_t *gid, uint32_t *euid, uint32_t *egid) {
     struct process *p = process_get_by_pid(pid);
-    if (!p || p->state == PROCESS_UNUSED) return -EINVAL;
-    if (uid)  *uid  = p->uid;
-    if (gid)  *gid  = p->gid;
-    if (euid) *euid = p->euid;
-    if (egid) *egid = p->egid;
+    if (!p || p->state == PROCESS_UNUSED)
+        return -EINVAL;
+    if (uid)
+        *uid = p->uid;
+    if (gid)
+        *gid = p->gid;
+    if (euid)
+        *euid = p->euid;
+    if (egid)
+        *egid = p->egid;
     return 0;
 }
 
-int process_set_cred(uint32_t pid, uint32_t uid, uint32_t gid,
-                     uint32_t euid, uint32_t egid) {
+int process_set_cred(uint32_t pid, uint32_t uid, uint32_t gid, uint32_t euid, uint32_t egid) {
     struct process *p = process_get_by_pid(pid);
-    if (!p || p->state == PROCESS_UNUSED) return -EINVAL;
-    p->uid  = uid;
-    p->gid  = gid;
+    if (!p || p->state == PROCESS_UNUSED)
+        return -EINVAL;
+    p->uid = uid;
+    p->gid = gid;
     p->euid = euid;
     p->egid = egid;
     return 0;
@@ -1164,13 +1225,16 @@ int process_set_cred(uint32_t pid, uint32_t uid, uint32_t gid,
 /* ── Dumpable flag ──────────────────────────────────────────────── */
 
 int process_get_dumpable(struct process *proc) {
-    if (!proc) return -EINVAL;
+    if (!proc)
+        return -EINVAL;
     return proc->dumpable;
 }
 
 int process_set_dumpable(struct process *proc, int val) {
-    if (!proc) return -EINVAL;
-    if (val != 0 && val != 1) return -EINVAL;
+    if (!proc)
+        return -EINVAL;
+    if (val != 0 && val != 1)
+        return -EINVAL;
     proc->dumpable = val;
     return 0;
 }
@@ -1179,7 +1243,8 @@ int process_set_dumpable(struct process *proc, int val) {
 
 void process_exec_cred_security(uint32_t orig_euid, uint32_t orig_egid) {
     struct process *p = process_get_current();
-    if (!p) return;
+    if (!p)
+        return;
 
     /* NO_NEW_PRIVS enforcement:
      * When no_new_privs is set, execve() must not gain new privileges.
@@ -1204,7 +1269,7 @@ void process_exec_cred_security(uint32_t orig_euid, uint32_t orig_egid) {
         memset(p->cap_bset, 0, sizeof(p->cap_bset));
 
         /* ── Disable core dumps (sensitive exec) ──────────────── */
-        p->dumpable = 0;  /* SUID_DUMP_DISABLE */
+        p->dumpable = 0; /* SUID_DUMP_DISABLE */
 
         /* ── Clear securebits for fresh start with no privs ───── */
         p->securebits = 0;
@@ -1245,7 +1310,7 @@ void process_exec_cred_security(uint32_t orig_euid, uint32_t orig_egid) {
          *  - Clear securebits exec state
          *  - Reset capability effective set
          */
-        p->dumpable = 0;  /* SUID_DUMP_DISABLE */
+        p->dumpable = 0; /* SUID_DUMP_DISABLE */
 
         /* Clear sensitive state: if the new binary changed credentials,
          * we must not leak privileged state from before exec. */
@@ -1266,10 +1331,36 @@ extern void fork_child_trampoline(void);
 extern uint64_t syscall_user_rsp;
 extern uint64_t syscall_user_rip;
 extern uint64_t syscall_user_rflags;
+extern uint64_t syscall_user_r15;
+extern uint64_t syscall_user_r14;
+extern uint64_t syscall_user_r13;
+extern uint64_t syscall_user_r12;
+extern uint64_t syscall_user_rbx;
+extern uint64_t syscall_user_rbp;
 
 int process_fork(void) {
     struct process *parent = current_process;
     struct process *child = NULL;
+
+    /* ── Snapshot the user registers captured at syscall entry ─────
+     * These live in GLOBAL variables (syscall_user_r*). Reading them
+     * lazily at the bottom of this function is racy: alloc_guarded_
+     * kernel_stack() / vmm_clone_user_pml4() / kpti_setup_process()
+     * can take long enough for a timer tick to fire, the scheduler
+     * then runs another task (e.g. netd), and ITS syscalls overwrite
+     * the globals — so the child would inherit netd's (or worse,
+     * garbage) registers and execve with a corrupt path/argv (seen:
+     * "execve(path=0x5) failed: -EFAULT" + boot hang). Snapshot once
+     * here, before any preemption point. */
+    uint64_t fork_ursp = syscall_user_rsp;
+    uint64_t fork_urip = syscall_user_rip;
+    uint64_t fork_urfl = syscall_user_rflags;
+    uint64_t fork_ur15 = syscall_user_r15;
+    uint64_t fork_ur14 = syscall_user_r14;
+    uint64_t fork_ur13 = syscall_user_r13;
+    uint64_t fork_ur12 = syscall_user_r12;
+    uint64_t fork_urbx = syscall_user_rbx;
+    uint64_t fork_urbp = syscall_user_rbp;
 
     /* RLIMIT_NPROC: count processes owned by the same UID */
     uint64_t nproc_limit = parent->rlim_cur[RLIMIT_NPROC];
@@ -1277,8 +1368,7 @@ int process_fork(void) {
         uint64_t same_user_count = 0;
         for (int i = 0; i < PROCESS_MAX; i++) {
             if (process_table[i].state != PROCESS_UNUSED &&
-                process_table[i].state != PROCESS_ZOMBIE &&
-                process_table[i].uid == parent->uid) {
+                process_table[i].state != PROCESS_ZOMBIE && process_table[i].uid == parent->uid) {
                 same_user_count++;
             }
         }
@@ -1295,7 +1385,10 @@ int process_fork(void) {
             break;
         }
     }
-    if (unlikely(!child)) { __asm__ volatile("sti"); return -EAGAIN; }
+    if (unlikely(!child)) {
+        __asm__ volatile("sti");
+        return -EAGAIN;
+    }
 
     child->state = PROCESS_UNUSED;
     *child = *parent;
@@ -1311,7 +1404,7 @@ int process_fork(void) {
                 *shared = parent->fd_table[i].offset;
                 parent->fd_table[i].shared_offset = shared;
                 child->fd_table[i].shared_offset = shared;
-                child->fd_table[i].offset = *shared;  /* keep local copy in sync */
+                child->fd_table[i].offset = *shared; /* keep local copy in sync */
             }
         }
     }
@@ -1352,9 +1445,13 @@ int process_fork(void) {
         kpti_setup_process(child);
     }
 
-    /* ── Validate user stack pointer ───────────── */
-    if (!syscall_user_rsp || syscall_user_rsp >= USER_VADDR_MAX ||
-        (syscall_user_rsp & 0xF) != 0) {
+    /* ── Validate user stack pointer ─────────────
+     * RSP must be a user address, 8-byte aligned.  NOTE: at a syscall
+     * entry RSP is 8 mod 16 (the userspace `call` that invoked the libc
+     * wrapper pushed a return address), so the old 16-byte alignment
+     * check wrongly rejected every fork() and the child was never
+     * scheduled. */
+    if (!fork_ursp || fork_ursp >= USER_VADDR_MAX || (fork_ursp & 0x7) != 0) {
         free_pid(child->pid);
         free_guarded_kernel_stack(child);
         child->state = PROCESS_UNUSED;
@@ -1362,17 +1459,28 @@ int process_fork(void) {
         return -EFAULT;
     }
 
+    /* Set up child's kernel stack so that when context_switch() restores
+     * it, execution flows: pop r15..rbp (6 slots) → ret → fork_child_trampoline,
+     * whose RSP then points at [user RFLAGS][user RIP][user RSP] (see
+     * switch.asm fork_child_trampoline).  Layout (from stack_top down): */
     uint64_t *sp = (uint64_t *)child->stack_top;
-    sp -= 9;
-    sp[0] = 0;
-    sp[1] = 0;
-    sp[2] = 0;
-    sp[3] = 0;
-    sp[4] = 0;
-    sp[5] = 0;
-    sp[6] = syscall_user_rflags;
-    sp[7] = syscall_user_rip;
-    sp[8] = syscall_user_rsp;
+    sp -= 10;
+    /* The child must inherit the parent's user callee-saved registers
+     * (r15..rbp): userspace code legitimately keeps values in them across
+     * the fork() call (e.g. init holds the getty argv/envp pointers in
+     * r13/rbx).  Zeroing them made the child see NULL argv/envp — getty
+     * ran with argc=0 and respawned forever.  The values are captured by
+     * the syscall entry (syscall_user_r* globals). */
+    sp[0] = fork_ur15;                       /* r15 (popped by context_switch) */
+    sp[1] = fork_ur14;                       /* r14 */
+    sp[2] = fork_ur13;                       /* r13 */
+    sp[3] = fork_ur12;                       /* r12 */
+    sp[4] = fork_urbx;                       /* rbx */
+    sp[5] = fork_urbp;                       /* rbp */
+    sp[6] = (uint64_t)fork_child_trampoline; /* ret target → trampoline */
+    sp[7] = fork_urfl;                       /* popped into r11 for sysret */
+    sp[8] = fork_urip;                       /* popped into rcx for sysret */
+    sp[9] = fork_ursp;                       /* popped into rsp for sysret */
     child->context = (struct cpu_context *)sp;
 
     if (scheduler_add(child) < 0) {
@@ -1382,6 +1490,17 @@ int process_fork(void) {
         __asm__ volatile("sti");
         return -EINVAL;
     }
+    /* Child-runs-first boost: give the fresh child the same EEVDF
+     * eligible-deadline 0 treatment as the netd's wake-boost, so it
+     * wins the next pick after the parent blocks.  Without this, the
+     * child (deadline = now + slice) loses every pick to the netd's
+     * permanent deadline=0 boost and is starved indefinitely (observed:
+     * boot hangs with the forked child never running after the parent's
+     * first COW fault).  sched_boost_on_wake keeps the boost applied on
+     * EVERY re-enqueue — a one-shot deadline=0 is lost when the child
+     * is preempted and re-added (eevdf_enqueue resets the deadline). */
+    child->eevdf_deadline = 0;
+    child->sched_boost_on_wake = 1;
     __asm__ volatile("sti");
     return (int)child->pid;
 }
@@ -1389,9 +1508,15 @@ int process_fork(void) {
 /* ── Clone: create a thread (child may share address space) ──── */
 extern void clone_child_trampoline(void);
 
-int process_clone(struct process *parent, uint64_t flags, void *child_stack,
-                  uint64_t user_rip, uint64_t user_rflags) {
+int process_clone(struct process *parent, uint64_t flags, void *child_stack, uint64_t user_rip,
+                  uint64_t user_rflags) {
     struct process *child = NULL;
+
+    /* Snapshot the syscall-entry user registers once, up front.  Reading
+     * the syscall_user_r* globals later (after allocations/preemption)
+     * races with other processes' syscalls clobbering them (see the
+     * process_fork snapshot comment). */
+    uint64_t clone_ursp = syscall_user_rsp;
 
     /* ── Validate user-space stack pointer ───────────────────── */
     /* For user-mode callers, ensure child_stack is a valid user address.
@@ -1402,10 +1527,9 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
         uint64_t stack_addr = (uint64_t)(uintptr_t)child_stack;
         if (stack_addr == 0) {
             /* NULL child_stack: inherit parent's stack pointer */
-            if (!syscall_user_rsp || syscall_user_rsp >= USER_VADDR_MAX ||
-                (syscall_user_rsp & 0xF) != 0)
+            if (!clone_ursp || clone_ursp >= USER_VADDR_MAX || (clone_ursp & 0xF) != 0)
                 return -EFAULT;
-            child_stack = (void *)syscall_user_rsp;
+            child_stack = (void *)clone_ursp;
         } else {
             /* Explicit stack pointer: validate it */
             if (stack_addr >= USER_VADDR_MAX || (stack_addr & 0xF) != 0)
@@ -1419,8 +1543,7 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
         uint64_t same_user_count = 0;
         for (int i = 0; i < PROCESS_MAX; i++) {
             if (process_table[i].state != PROCESS_UNUSED &&
-                process_table[i].state != PROCESS_ZOMBIE &&
-                process_table[i].uid == parent->uid) {
+                process_table[i].state != PROCESS_ZOMBIE && process_table[i].uid == parent->uid) {
                 same_user_count++;
             }
         }
@@ -1437,7 +1560,10 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
             break;
         }
     }
-    if (unlikely(!child)) { __asm__ volatile("sti"); return -EINVAL; }
+    if (unlikely(!child)) {
+        __asm__ volatile("sti");
+        return -EINVAL;
+    }
 
     child->state = PROCESS_UNUSED;
     *child = *parent;
@@ -1505,8 +1631,8 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
     /* ── Handle CLONE_NEWCGROUP: child gets a new cgroup namespace (Item 117) ── */
     if (flags & CLONE_NEWCGROUP) {
         /* Use the parent's cgroup path as the namespace root */
-        struct cgroup_namespace *new_ns = cgroup_ns_create(parent->cgroup_ns
-            ? parent->cgroup_ns->root_path : "/");
+        struct cgroup_namespace *new_ns =
+            cgroup_ns_create(parent->cgroup_ns ? parent->cgroup_ns->root_path : "/");
         if (unlikely(!new_ns)) {
             free_pid(child->pid);
             child->state = PROCESS_UNUSED;
@@ -1517,8 +1643,8 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
         if (child->cgroup_ns)
             cgroup_ns_put(child->cgroup_ns);
         child->cgroup_ns = new_ns;
-        kprintf("[CGROUP_NS] clone(NEWCGROUP): child pid=%d, root='%s'\n",
-                child->pid, new_ns->root_path);
+        kprintf("[CGROUP_NS] clone(NEWCGROUP): child pid=%d, root='%s'\n", child->pid,
+                new_ns->root_path);
     } else if (parent->cgroup_ns) {
         /* Increment refcount on inherited namespace */
         cgroup_ns_get(child->cgroup_ns);
@@ -1526,8 +1652,7 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
 
     /* ── Handle CLONE_NEWNS: child gets a new mount namespace (Item 112) ── */
     if (flags & CLONE_NEWNS) {
-        struct mnt_namespace *new_ns = mnt_ns_copy(parent->mnt_ns
-            ? parent->mnt_ns : NULL);
+        struct mnt_namespace *new_ns = mnt_ns_copy(parent->mnt_ns ? parent->mnt_ns : NULL);
         if (unlikely(!new_ns)) {
             free_pid(child->pid);
             child->state = PROCESS_UNUSED;
@@ -1546,9 +1671,8 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
 
     /* ── Handle CLONE_NEWUSER: child gets a new user namespace (Item 114) ── */
     if (flags & CLONE_NEWUSER) {
-        struct user_namespace *new_ns = user_ns_create(parent->user_ns
-            ? parent->user_ns : &init_user_ns,
-            parent->uid, parent->gid);
+        struct user_namespace *new_ns = user_ns_create(
+            parent->user_ns ? parent->user_ns : &init_user_ns, parent->uid, parent->gid);
         if (unlikely(!new_ns)) {
             free_pid(child->pid);
             child->state = PROCESS_UNUSED;
@@ -1560,8 +1684,8 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
          * to UID 0 (root).  The parent's UID/GID in the parent namespace
          * are mapped to 0 inside — set the child's euid to 0 to reflect
          * that it has root-equivalent privileges inside this namespace. */
-        child->uid  = 0;
-        child->gid  = 0;
+        child->uid = 0;
+        child->gid = 0;
         child->euid = 0;
         child->egid = 0;
         kprintf("[USERNS] clone(NEWUSER): child pid=%d is root in new namespace id=%d\n",
@@ -1649,25 +1773,25 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
 
     /* Syscall return frame (9 values, bottom): */
     sp -= 9;
-    sp[0] = 0;                    /* junk r15 (unused) */
-    sp[1] = 0;                    /* junk r14 */
-    sp[2] = 0;                    /* junk r13 */
-    sp[3] = 0;                    /* junk r12 */
-    sp[4] = 0;                    /* junk rbx */
-    sp[5] = 0;                    /* junk rbp */
-    sp[6] = user_rflags;         /* r11 → user RFLAGS for sysret */
-    sp[7] = user_rip;            /* rcx → user RIP for sysret */
+    sp[0] = 0;                     /* junk r15 (unused) */
+    sp[1] = 0;                     /* junk r14 */
+    sp[2] = 0;                     /* junk r13 */
+    sp[3] = 0;                     /* junk r12 */
+    sp[4] = 0;                     /* junk rbx */
+    sp[5] = 0;                     /* junk rbp */
+    sp[6] = user_rflags;           /* r11 → user RFLAGS for sysret */
+    sp[7] = user_rip;              /* rcx → user RIP for sysret */
     sp[8] = (uint64_t)child_stack; /* user RSP for sysret */
 
     /* Context switch frame (7 values, above): */
     sp -= 7;
-    sp[0] = 0;                    /* r15 */
-    sp[1] = 0;                    /* r14 */
-    sp[2] = 0;                    /* r13 */
-    sp[3] = 0;                    /* r12 */
-    sp[4] = 0;                    /* rbx */
-    sp[5] = 0;                    /* rbp */
-    sp[6] = (uint64_t)clone_child_trampoline;  /* rip → trampoline */
+    sp[0] = 0;                                /* r15 */
+    sp[1] = 0;                                /* r14 */
+    sp[2] = 0;                                /* r13 */
+    sp[3] = 0;                                /* r12 */
+    sp[4] = 0;                                /* rbx */
+    sp[5] = 0;                                /* rbp */
+    sp[6] = (uint64_t)clone_child_trampoline; /* rip → trampoline */
 
     child->context = (struct cpu_context *)sp;
 
@@ -1701,7 +1825,8 @@ struct process *process_get_by_pid(uint32_t pid) {
             /* Prefer non-zombie processes (live) over zombie (dead) */
             if (process_table[i].state != PROCESS_ZOMBIE)
                 return &process_table[i];
-            if (!fallback) fallback = &process_table[i];
+            if (!fallback)
+                fallback = &process_table[i];
         }
     }
     return fallback;
@@ -1712,10 +1837,13 @@ struct process *process_get_by_pid(uint32_t pid) {
  * Kernel-internal callers should use process_get_by_pid() directly. */
 struct process *process_get_by_pid_visible(uint32_t pid) {
     struct process *target = process_get_by_pid(pid);
-    if (!target) return NULL;
+    if (!target)
+        return NULL;
     struct process *cur = process_get_current();
-    if (!cur) return target;  /* kernel context, allow */
-    if (!process_can_see(cur, target)) return NULL;
+    if (!cur)
+        return target; /* kernel context, allow */
+    if (!process_can_see(cur, target))
+        return NULL;
     return target;
 }
 
@@ -1727,8 +1855,10 @@ struct process *process_get_table(void) {
 /* Check if the caller process can see (access) the target process.
  * Returns 1 if visible, 0 if not. */
 int process_can_see(const struct process *caller, const struct process *target) {
-    if (!caller || !target) return 0;
-    if (caller == target) return 1;                /* self */
+    if (!caller || !target)
+        return 0;
+    if (caller == target)
+        return 1; /* self */
 
     /* PID namespace visibility check (Item 111):
      * A process can only see processes in its own namespace
@@ -1736,9 +1866,12 @@ int process_can_see(const struct process *caller, const struct process *target) 
     if (!pid_ns_visible(caller, target))
         return 0;
 
-    if (caller->euid == 0) return 1;               /* root sees all */
-    if (caller->euid == target->euid) return 1;    /* same uid */
-    if (target->parent_pid == caller->pid) return 1; /* caller is parent */
+    if (caller->euid == 0)
+        return 1; /* root sees all */
+    if (caller->euid == target->euid)
+        return 1; /* same uid */
+    if (target->parent_pid == caller->pid)
+        return 1; /* caller is parent */
     return 0;
 }
 
@@ -1749,7 +1882,8 @@ int process_can_see(const struct process *caller, const struct process *target) 
  * exits. */
 int process_waitpid(uint32_t pid, int *status, int options) {
     struct process *child = process_get_by_pid(pid);
-    if (!child) return -ENOENT;
+    if (!child)
+        return -ENOENT;
 
     if (child->state != PROCESS_ZOMBIE && child->state != PROCESS_UNUSED) {
         /* WNOHANG: return 0 immediately instead of blocking */
@@ -1763,7 +1897,8 @@ int process_waitpid(uint32_t pid, int *status, int options) {
          * the per-CPU version guarantees we modify the correct process
          * even if another CPU has called schedule() since we last ran. */
         struct process *cur = process_get_current();
-        if (!cur) return -EINVAL;
+        if (!cur)
+            return -EINVAL;
         cur->wait_for_pid = pid;
         cur->state = PROCESS_BLOCKED;
         scheduler_remove(cur);
@@ -1773,10 +1908,12 @@ int process_waitpid(uint32_t pid, int *status, int options) {
         cur = process_get_current();
         cur->wait_for_pid = 0;
         child = process_get_by_pid(pid);
-        if (!child || child->state == PROCESS_UNUSED) return -EINVAL;
+        if (!child || child->state == PROCESS_UNUSED)
+            return -EINVAL;
     }
 
-    if (status) *status = child->exit_code;
+    if (status)
+        *status = child->exit_code;
     process_cleanup(child);
     return 0;
 }
@@ -1787,7 +1924,8 @@ int process_waitpid(uint32_t pid, int *status, int options) {
  * process_set_current() in schedule(). */
 void process_sleep_ticks(uint64_t nticks) {
     struct process *cur = process_get_current();
-    if (!cur) return;
+    if (!cur)
+        return;
     cur->sleep_until = timer_get_ticks() + nticks;
     cur->state = PROCESS_BLOCKED;
     scheduler_remove(cur);
@@ -1872,8 +2010,7 @@ void process_reap_zombies(void) {
             }
             /* Non-background: reap if parent is gone */
             struct process *parent = process_get_by_pid(process_table[i].parent_pid);
-            if (!parent || parent->state == PROCESS_ZOMBIE ||
-                parent->state == PROCESS_UNUSED) {
+            if (!parent || parent->state == PROCESS_ZOMBIE || parent->state == PROCESS_UNUSED) {
                 process_cleanup(&process_table[i]);
                 continue;
             }
@@ -1891,15 +2028,15 @@ void process_reap_zombies(void) {
 
 /* ── Per-CPU kthread API ────────────────────────────────────── */
 
-struct process *kthread_create(void (*entry)(void *arg), void *arg,
-                                const char *name) {
+struct process *kthread_create(void (*entry)(void *arg), void *arg, const char *name) {
     return kthread_create_on_cpu(entry, arg, name, -1);
 }
 
-struct process *kthread_create_on_cpu(void (*entry)(void *arg), void *arg,
-                                       const char *name, int cpu_id) {
+struct process *kthread_create_on_cpu(void (*entry)(void *arg), void *arg, const char *name,
+                                      int cpu_id) {
     struct process *proc = process_create((void (*)(void))entry, name);
-    if (!proc) return NULL;
+    if (!proc)
+        return NULL;
 
     proc->kthread_arg = arg;
     if (cpu_id >= 0 && cpu_id < SMP_MAX_CPUS)
@@ -1922,10 +2059,10 @@ struct process *kthread_create_on_cpu(void (*entry)(void *arg), void *arg,
 #define THREAD_INFO_MAX 64
 
 struct thread_info {
-    volatile int  used;
-    volatile int  finished;
-    int           pid;               /* thread's kernel PID */
-    void         *retval;            /* returned value from start_routine */
+    volatile int used;
+    volatile int finished;
+    int pid;      /* thread's kernel PID */
+    void *retval; /* returned value from start_routine */
 };
 
 static struct thread_info g_thread_info[THREAD_INFO_MAX];
@@ -1935,7 +2072,7 @@ static int g_thread_info_inited = 0;
 struct thread_start_args {
     void *(*start_routine)(void *);
     void *arg;
-    int   info_idx;   /* index into g_thread_info[] */
+    int info_idx; /* index into g_thread_info[] */
 };
 
 static void thread_wrapper(void *arg) {
@@ -1949,7 +2086,7 @@ static void thread_wrapper(void *arg) {
 
     /* Store return value and mark finished */
     if (idx >= 0 && idx < THREAD_INFO_MAX && g_thread_info[idx].used) {
-        g_thread_info[idx].retval   = retval;
+        g_thread_info[idx].retval = retval;
         g_thread_info[idx].finished = 1;
     }
 
@@ -1958,14 +2095,16 @@ static void thread_wrapper(void *arg) {
     current_process->state = PROCESS_ZOMBIE;
     scheduler_remove(current_process);
     process_wake_waiter(current_process->pid);
-    for (;;) __asm__ volatile("hlt"); /* should never reach here */
+    for (;;)
+        __asm__ volatile("hlt"); /* should never reach here */
 }
 
 /*
  * Initialize thread info table (called once during boot).
  */
 void thread_info_init(void) {
-    if (g_thread_info_inited) return;
+    if (g_thread_info_inited)
+        return;
     memset(g_thread_info, 0, sizeof(g_thread_info));
     g_thread_info_inited = 1;
 }
@@ -1975,8 +2114,10 @@ void thread_info_init(void) {
  * Returns the thread ID (PID) on success, or -1 on error.
  */
 int process_thread_create(void *(*start_routine)(void *), void *arg) {
-    if (!start_routine) return -EINVAL;
-    if (!g_thread_info_inited) thread_info_init();
+    if (!start_routine)
+        return -EINVAL;
+    if (!g_thread_info_inited)
+        thread_info_init();
 
     /* Find a free thread info slot */
     int idx = -1;
@@ -1986,20 +2127,22 @@ int process_thread_create(void *(*start_routine)(void *), void *arg) {
             break;
         }
     }
-    if (idx < 0) return -EINVAL;
+    if (idx < 0)
+        return -EINVAL;
 
     /* Allocate and fill the start arguments */
-    struct thread_start_args *tsa = (struct thread_start_args *)
-        kmalloc(sizeof(struct thread_start_args));
-    if (unlikely(!tsa)) return -ENOMEM;
+    struct thread_start_args *tsa =
+        (struct thread_start_args *)kmalloc(sizeof(struct thread_start_args));
+    if (unlikely(!tsa))
+        return -ENOMEM;
     tsa->start_routine = start_routine;
-    tsa->arg           = arg;
-    tsa->info_idx      = idx;
+    tsa->arg = arg;
+    tsa->info_idx = idx;
 
     /* Prepare the thread info slot */
-    g_thread_info[idx].used     = 1;
+    g_thread_info[idx].used = 1;
     g_thread_info[idx].finished = 0;
-    g_thread_info[idx].retval   = NULL;
+    g_thread_info[idx].retval = NULL;
 
     /* Create a kernel thread — it shares the kernel address space
      * with the rest of the system, so CLONE_VM is implicit. */
@@ -2025,7 +2168,8 @@ int process_thread_create(void *(*start_routine)(void *), void *arg) {
  * Returns 0 on success, -1 on error.
  */
 int process_thread_join(int thread_pid, void **retval) {
-    if (thread_pid <= 0) return -EINVAL;
+    if (thread_pid <= 0)
+        return -EINVAL;
 
     /* Find the thread info slot */
     int idx = -1;
@@ -2035,13 +2179,15 @@ int process_thread_join(int thread_pid, void **retval) {
             break;
         }
     }
-    if (idx < 0) return -EINVAL;
+    if (idx < 0)
+        return -EINVAL;
 
     /* Wait for the thread to finish by blocking on its PID.
      * We leverage the existing scheduler wake mechanism: when the
      * thread exits (becomes ZOMBIE), the scheduler yields back to us. */
     for (int spin = 0; spin < 10000000; spin++) {
-        if (g_thread_info[idx].finished) break;
+        if (g_thread_info[idx].finished)
+            break;
         /* Yield to let the thread run */
         scheduler_yield();
     }
@@ -2086,7 +2232,7 @@ void process_thread_exit(void *retval) {
     /* Find and update the thread info slot */
     for (int i = 0; i < THREAD_INFO_MAX; i++) {
         if (g_thread_info[i].used && g_thread_info[i].pid == pid) {
-            g_thread_info[i].retval   = retval;
+            g_thread_info[i].retval = retval;
             g_thread_info[i].finished = 1;
             break;
         }
@@ -2096,22 +2242,26 @@ void process_thread_exit(void *retval) {
     current_process->state = PROCESS_ZOMBIE;
     scheduler_remove(current_process);
     process_wake_waiter(current_process->pid);
-    for (;;) __asm__ volatile("hlt"); /* never reached */
+    for (;;)
+        __asm__ volatile("hlt"); /* never reached */
 }
 
 /* ── process_is_kthread / process_set_user_process ──────────── */
 
 int process_is_kthread(struct process *proc) {
-    if (!proc) return 0;
+    if (!proc)
+        return 0;
     return (proc->is_user == 0 && proc->pid > 0);
 }
 
 int process_set_user_process(uint64_t entry, uint64_t stack, uint64_t *pml4) {
     struct process *proc = process_get_current();
-    if (!proc) return -EINVAL;
+    if (!proc)
+        return -EINVAL;
 
     /* Can only convert kernel threads to user processes */
-    if (proc->is_user) return -EINVAL;  /* already a user process */
+    if (proc->is_user)
+        return -EINVAL; /* already a user process */
 
     proc->is_user = 1;
     proc->user_entry = entry;
@@ -2143,9 +2293,9 @@ EXPORT_SYMBOL(process_exit);
  *
  * Returns 0 if execute is allowed, -EACCES if denied.
  */
-int process_check_exec_perms(const char *binary_path, uint32_t uid, uint32_t gid)
-{
-    if (!binary_path) return -EINVAL;
+int process_check_exec_perms(const char *binary_path, uint32_t uid, uint32_t gid) {
+    if (!binary_path)
+        return -EINVAL;
 
     /* Stat the binary to get its mode and ownership */
     struct vfs_stat st;
@@ -2176,11 +2326,11 @@ int process_check_exec_perms(const char *binary_path, uint32_t uid, uint32_t gid
 }
 
 /* ── process_wait ─────────────────────────────── */
-static int process_wait(int pid, int *status, int options)
-{
+static int process_wait(int pid, int *status, int options) {
     (void)options;
     struct process *cur = process_get_current();
-    if (!cur) return -EINVAL;
+    if (!cur)
+        return -EINVAL;
 
     struct process *table = process_get_table();
 
@@ -2220,8 +2370,7 @@ static int process_wait(int pid, int *status, int options)
         /* Check if any children exist at all */
         int has_children = 0;
         for (int i = 0; i < PROCESS_MAX; i++) {
-            if (table[i].state != PROCESS_UNUSED &&
-                table[i].parent_pid == cur->pid) {
+            if (table[i].state != PROCESS_UNUSED && table[i].parent_pid == cur->pid) {
                 has_children = 1;
                 break;
             }
@@ -2239,9 +2388,9 @@ static int process_wait(int pid, int *status, int options)
 }
 
 /* ── process_kill ─────────────────────────────── */
-static int process_kill(int pid, int sig)
-{
-    if (pid <= 0) return -EINVAL;
+static int process_kill(int pid, int sig) {
+    if (pid <= 0)
+        return -EINVAL;
 
     if (sig == 0) {
         /* Signal 0 is used to check if process exists */

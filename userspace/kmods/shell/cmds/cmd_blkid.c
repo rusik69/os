@@ -14,35 +14,34 @@
  *   swap      — swap signature "SWAPSPACE2" or "SWAP-SPACE"
  *   XFS       — XFS superblock magic "XFSB"
  */
-#include "shell_cmds.h"
-#include "printf.h"
-#include "string.h"
-#include "stdlib.h"
-#include "types.h"
 #include "blockdev.h"
+#include "printf.h"
+#include "shell_cmds.h"
+#include "stdlib.h"
+#include "string.h"
+#include "types.h"
 
 /* ── Filesystem signature scanning ────────────────────────────────── */
 
 struct blkid_fs_info {
     char type[16];
-    char uuid[37];     /* UUID string (36 chars + null) */
+    char uuid[37]; /* UUID string (36 chars + null) */
     char label[32];
     char partuuid[37];
-    int  detected;
+    int detected;
 };
 
 /* Swap signature offsets */
 #define SWAP_SIG1 "SWAPSPACE2"
 #define SWAP_SIG2 "SWAP-SPACE"
-#define SWAP_OFFSET 4086   /* at byte 4086 in page 0 */
+#define SWAP_OFFSET 4086 /* at byte 4086 in page 0 */
 
 /* XFS superblock magic */
 #define XFS_MAGIC "XFSB"
-#define XFS_OFFSET 0   /* at byte 0 of sector 0 */
+#define XFS_OFFSET 0 /* at byte 0 of sector 0 */
 
 /* Scan ext2/3/4 superblock (at byte offset 1024) */
-static void scan_ext2(int dev_id, struct blkid_fs_info *info, uint64_t lba)
-{
+static void scan_ext2(int dev_id, struct blkid_fs_info *info, uint64_t lba) {
     uint8_t buf[1024];
 
     /* Read 2 sectors starting at LBA 2 (byte offset 1024) */
@@ -81,9 +80,9 @@ static void scan_ext2(int dev_id, struct blkid_fs_info *info, uint64_t lba)
         uint32_t feature_compat;
         uint32_t feature_incompat;
         uint32_t feature_ro_compat;
-        uint8_t  uuid[16];
-        char     volume_name[16];
-        char     last_mounted[64];
+        uint8_t uuid[16];
+        char volume_name[16];
+        char last_mounted[64];
     } __attribute__((packed));
 
     struct ext2_sb_scan sb;
@@ -98,23 +97,24 @@ static void scan_ext2(int dev_id, struct blkid_fs_info *info, uint64_t lba)
 
     /* Format UUID */
     snprintf(info->uuid, sizeof(info->uuid),
-             "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
-             sb.uuid[0], sb.uuid[1], sb.uuid[2], sb.uuid[3],
-             sb.uuid[4], sb.uuid[5], sb.uuid[6], sb.uuid[7],
-             sb.uuid[8], sb.uuid[9], sb.uuid[10], sb.uuid[11],
-             sb.uuid[12], sb.uuid[13], sb.uuid[14], sb.uuid[15]);
+             "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x", sb.uuid[0],
+             sb.uuid[1], sb.uuid[2], sb.uuid[3], sb.uuid[4], sb.uuid[5], sb.uuid[6], sb.uuid[7],
+             sb.uuid[8], sb.uuid[9], sb.uuid[10], sb.uuid[11], sb.uuid[12], sb.uuid[13],
+             sb.uuid[14], sb.uuid[15]);
 
     /* Format label (may not be null-terminated) */
     int i;
     for (i = 0; i < 16 && sb.volume_name[i] && sb.volume_name[i] != ' '; i++)
         info->label[i] = sb.volume_name[i];
     info->label[i] = '\0';
-    if (i == 0) { strncpy(info->label, "(none)", sizeof(info->label) - 1); info->label[sizeof(info->label) - 1] = '\0'; }
+    if (i == 0) {
+        strncpy(info->label, "(none)", sizeof(info->label) - 1);
+        info->label[sizeof(info->label) - 1] = '\0';
+    }
 }
 
 /* Scan FAT12/16/32 boot sector (at LBA 0) */
-static void scan_fat(int dev_id, struct blkid_fs_info *info, uint64_t lba)
-{
+static void scan_fat(int dev_id, struct blkid_fs_info *info, uint64_t lba) {
     uint8_t buf[512];
     if (blk_submit_sync(dev_id, lba, 1, buf, BLK_REQ_READ) != 0)
         return;
@@ -129,12 +129,12 @@ static void scan_fat(int dev_id, struct blkid_fs_info *info, uint64_t lba)
 
     /* Determine FAT type */
     uint16_t bytes_per_sector = *(uint16_t *)(buf + 11);
-    uint8_t  sectors_per_cluster = buf[13];
+    uint8_t sectors_per_cluster = buf[13];
     uint16_t reserved_sectors = *(uint16_t *)(buf + 14);
-    uint8_t  num_fats = buf[16];
+    uint8_t num_fats = buf[16];
     uint16_t root_entries = *(uint16_t *)(buf + 17);
     uint16_t total_sectors_16 = *(uint16_t *)(buf + 19);
-    uint8_t  media = buf[21];
+    uint8_t media = buf[21];
     uint16_t fat_size_16 = *(uint16_t *)(buf + 22);
 
     if (bytes_per_sector != 512)
@@ -149,38 +149,37 @@ static void scan_fat(int dev_id, struct blkid_fs_info *info, uint64_t lba)
 
     uint32_t fat_size = fat_size_16;
     if (fat_size == 0)
-        fat_size = *(uint32_t *)(buf + 36);  /* FAT32 */
+        fat_size = *(uint32_t *)(buf + 36); /* FAT32 */
 
     uint32_t root_dir_sectors = (root_entries * 32 + bytes_per_sector - 1) / bytes_per_sector;
-    uint32_t data_sectors = total_sectors - reserved_sectors - num_fats * fat_size - root_dir_sectors;
+    uint32_t data_sectors =
+        total_sectors - reserved_sectors - num_fats * fat_size - root_dir_sectors;
     uint32_t total_clusters = data_sectors / sectors_per_cluster;
 
-    if (total_clusters < 4085)
-        strncpy(info->type, "vfat", sizeof(info->type) - 1);
-    else if (total_clusters < 65525)
-        strncpy(info->type, "vfat", sizeof(info->type) - 1);
-    else
-        strncpy(info->type, "vfat", sizeof(info->type) - 1);
+    /* All FAT sizes (FAT12/16/32) report as vfat here */
+    strncpy(info->type, "vfat", sizeof(info->type) - 1);
     info->type[sizeof(info->type) - 1] = '\0';
 
     info->detected = 1;
 
     /* Volume ID at offset 39 (4 bytes) */
     uint32_t vol_id = *(uint32_t *)(buf + 39);
-    snprintf(info->uuid, sizeof(info->uuid), "%04X-%04X",
-             (unsigned int)(vol_id >> 16), (unsigned int)(vol_id & 0xFFFF));
+    snprintf(info->uuid, sizeof(info->uuid), "%04X-%04X", (unsigned int)(vol_id >> 16),
+             (unsigned int)(vol_id & 0xFFFF));
 
     /* Volume label at offset 43 (11 bytes) */
     int i;
     for (i = 0; i < 11 && buf[43 + i] && buf[43 + i] != ' '; i++)
         info->label[i] = buf[43 + i];
     info->label[i] = '\0';
-    if (i == 0) { strncpy(info->label, "(none)", sizeof(info->label) - 1); info->label[sizeof(info->label) - 1] = '\0'; }
+    if (i == 0) {
+        strncpy(info->label, "(none)", sizeof(info->label) - 1);
+        info->label[sizeof(info->label) - 1] = '\0';
+    }
 }
 
 /* Scan swap signature */
-static void scan_swap(int dev_id, struct blkid_fs_info *info, uint64_t lba)
-{
+static void scan_swap(int dev_id, struct blkid_fs_info *info, uint64_t lba) {
     uint8_t buf[512];
 
     /* Swap signature is at offset 4086 within the first page (sectors 0-7) */
@@ -189,10 +188,10 @@ static void scan_swap(int dev_id, struct blkid_fs_info *info, uint64_t lba)
         return;
 
     uint32_t byte_off = SWAP_OFFSET % 512;
-    if (byte_off + 10 > 512) return;
+    if (byte_off + 10 > 512)
+        return;
 
-    if (memcmp(buf + byte_off, SWAP_SIG1, 10) == 0 ||
-        memcmp(buf + byte_off, SWAP_SIG2, 10) == 0) {
+    if (memcmp(buf + byte_off, SWAP_SIG1, 10) == 0 || memcmp(buf + byte_off, SWAP_SIG2, 10) == 0) {
         info->detected = 1;
         strncpy(info->type, "swap", sizeof(info->type) - 1);
         info->type[sizeof(info->type) - 1] = '\0';
@@ -204,8 +203,7 @@ static void scan_swap(int dev_id, struct blkid_fs_info *info, uint64_t lba)
 }
 
 /* Scan XFS superblock (at offset 0) */
-static void scan_xfs(int dev_id, struct blkid_fs_info *info, uint64_t lba)
-{
+static void scan_xfs(int dev_id, struct blkid_fs_info *info, uint64_t lba) {
     uint8_t buf[512];
     if (blk_submit_sync(dev_id, lba, 1, buf, BLK_REQ_READ) != 0)
         return;
@@ -221,35 +219,36 @@ static void scan_xfs(int dev_id, struct blkid_fs_info *info, uint64_t lba)
     /* UUID at offset 32 (16 bytes) */
     uint8_t *uuid = buf + 32;
     snprintf(info->uuid, sizeof(info->uuid),
-             "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
-             uuid[0], uuid[1], uuid[2], uuid[3],
-             uuid[4], uuid[5], uuid[6], uuid[7],
-             uuid[8], uuid[9], uuid[10], uuid[11],
-             uuid[12], uuid[13], uuid[14], uuid[15]);
+             "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x", uuid[0],
+             uuid[1], uuid[2], uuid[3], uuid[4], uuid[5], uuid[6], uuid[7], uuid[8], uuid[9],
+             uuid[10], uuid[11], uuid[12], uuid[13], uuid[14], uuid[15]);
 
     /* Label at offset 108 (12 chars) */
     int i;
     for (i = 0; i < 12 && buf[108 + i] && buf[108 + i] != ' '; i++)
         info->label[i] = buf[108 + i];
     info->label[i] = '\0';
-    if (i == 0) { strncpy(info->label, "(none)", sizeof(info->label) - 1); info->label[sizeof(info->label) - 1] = '\0'; }
+    if (i == 0) {
+        strncpy(info->label, "(none)", sizeof(info->label) - 1);
+        info->label[sizeof(info->label) - 1] = '\0';
+    }
 }
 
 /* ── Main command ──────────────────────────────────────────────────── */
 
-void cmd_blkid(const char *args)
-{
+void cmd_blkid(const char *args) {
     char device[64] = "";
     int output_value = 0;
     char show_tag[32] = "";
-    int tag_mode = 0;  /* 0 = show all, 1 = show specific tag */
+    int tag_mode = 0; /* 0 = show all, 1 = show specific tag */
     char *saveptr;
     char buf[256];
 
     /* Parse args */
     if (args && args[0]) {
         size_t alen = strlen(args);
-        if (alen >= sizeof(buf)) alen = sizeof(buf) - 1;
+        if (alen >= sizeof(buf))
+            alen = sizeof(buf) - 1;
         memcpy(buf, args, alen);
         buf[alen] = '\0';
 
@@ -291,13 +290,17 @@ void cmd_blkid(const char *args)
 
         /* Try each filesystem signature */
         scan_ext2(dev_id, &info, 0);
-        if (!info.detected) scan_fat(dev_id, &info, 0);
-        if (!info.detected) scan_swap(dev_id, &info, 0);
-        if (!info.detected) scan_xfs(dev_id, &info, 0);
+        if (!info.detected)
+            scan_fat(dev_id, &info, 0);
+        if (!info.detected)
+            scan_swap(dev_id, &info, 0);
+        if (!info.detected)
+            scan_xfs(dev_id, &info, 0);
 
         /* Output results */
         const char *dev_name = blockdev_name(dev_id);
-        if (!dev_name) dev_name = device;
+        if (!dev_name)
+            dev_name = device;
 
         if (output_value && tag_mode) {
             if (strcmp(show_tag, "TYPE") == 0)
@@ -307,8 +310,8 @@ void cmd_blkid(const char *args)
             else if (strcmp(show_tag, "LABEL") == 0)
                 kprintf("%s\n", info.detected ? info.label : "(unknown)");
         } else if (info.detected) {
-            kprintf("%s: TYPE=\"%s\" UUID=\"%s\" LABEL=\"%s\"\n",
-                    dev_name, info.type, info.uuid, info.label);
+            kprintf("%s: TYPE=\"%s\" UUID=\"%s\" LABEL=\"%s\"\n", dev_name, info.type, info.uuid,
+                    info.label);
         } else {
             kprintf("%s: TYPE=\"(unknown)\"\n", dev_name);
         }
@@ -323,17 +326,21 @@ void cmd_blkid(const char *args)
             memset(&info, 0, sizeof(info));
 
             scan_ext2(dev_id, &info, 0);
-            if (!info.detected) scan_fat(dev_id, &info, 0);
-            if (!info.detected) scan_swap(dev_id, &info, 0);
-            if (!info.detected) scan_xfs(dev_id, &info, 0);
+            if (!info.detected)
+                scan_fat(dev_id, &info, 0);
+            if (!info.detected)
+                scan_swap(dev_id, &info, 0);
+            if (!info.detected)
+                scan_xfs(dev_id, &info, 0);
 
             const char *dev_name = blockdev_name(dev_id);
-            if (!dev_name) continue;
+            if (!dev_name)
+                continue;
 
             if (info.detected) {
                 found_any = 1;
-                kprintf("%s: TYPE=\"%s\" UUID=\"%s\" LABEL=\"%s\"\n",
-                        dev_name, info.type, info.uuid, info.label);
+                kprintf("%s: TYPE=\"%s\" UUID=\"%s\" LABEL=\"%s\"\n", dev_name, info.type,
+                        info.uuid, info.label);
             }
         }
 
@@ -343,9 +350,11 @@ void cmd_blkid(const char *args)
             kprintf("========================\n\n");
 
             for (int dev_id = 0; dev_id < BLOCKDEV_MAX_DEVICES; dev_id++) {
-                if (!blockdev_is_registered(dev_id)) continue;
+                if (!blockdev_is_registered(dev_id))
+                    continue;
                 const char *dev_name = blockdev_name(dev_id);
-                if (!dev_name) continue;
+                if (!dev_name)
+                    continue;
 
                 uint64_t sectors = blockdev_get_sectors(dev_id);
                 uint32_t mb = (uint32_t)(sectors / 2048);

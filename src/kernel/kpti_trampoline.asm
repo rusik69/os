@@ -52,6 +52,13 @@ bits 64
 global syscall_entry_trampoline
 syscall_entry_trampoline:
 
+    ; CRITICAL: syscall does NOT clear IF.  Disable interrupts immediately —
+    ; a timer interrupt here would push the interrupt frame onto the USER
+    ; stack (RSP still points there until we switch stacks below), corrupting
+    ; it so a later userspace `ret` jumps to kernel addresses.  IF is restored
+    ; by sysret (from user R11) at exit.
+    cli
+
     ; Load r15 with RIP-relative pointer to the data area.
     ; lea r15, [rip + disp32] always works correctly regardless of org.
     lea     r15, [rel kpti_cr3_kernel_dword]
@@ -74,6 +81,12 @@ syscall_entry_trampoline:
     ; Now on kernel PML4 — kernel memory is accessible.
     ; Load per-CPU kernel stack pointer via GS.
     mov     rsp, [gs:CPU_INFO_KERNEL_RSP_OFF]
+
+    ; We're now in kernel page table mode with kernel stack — the
+    ; user-stack corruption window is closed.  Re-enable interrupts so
+    ; the scheduler can preempt (e.g. a blocking waitpid must be
+    ; interruptible, and the timer softirq must keep running).
+    sti
 
     ; We're now in kernel page table mode with kernel stack.
     ; Jump to the real syscall handler at kernel VMA.
@@ -104,6 +117,13 @@ times KPTI_OFF_EXIT - ($ - $$) db 0
 
 global syscall_exit_trampoline
 syscall_exit_trampoline:
+
+    ; CRITICAL: RSP is the USER stack here (popped by the kernel return path)
+    ; and IF must be 0 — an interrupt in this window would push the interrupt
+    ; frame onto the user stack and corrupt it.  The entry trampoline cleared
+    ; IF, but clear it again defensively (covers any future path that enters
+    ; with IF set).  sysret restores IF from R11.
+    cli
 
     ; Load r15 with RIP-relative pointer to the data area
     lea     r15, [rel kpti_cr3_kernel_dword]

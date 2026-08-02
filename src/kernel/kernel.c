@@ -1,190 +1,188 @@
 #define KERNEL_INTERNAL
-#include "types.h"
-#include "vga.h"
-#include "gdt.h"
-#include "idt.h"
-#include "pic.h"
-#include "fault.h"
-#include "timer.h"
-#include "keyboard.h"
-#include "pmm.h"
-#include "vmm.h"
-#include "page_cache.h"
-#include "heap.h"
-#include "process.h"
-#include "scheduler.h"
-
-#include "serial.h"
-#include "printf.h"
-#include "string.h"
-#include "io.h"
-#include "ata.h"
-#include "fs.h"
-#include "pci.h"
-#include "e1000.h"
-#include "vmxnet3.h"
-#include "net.h"
-#include "dhcp.h"
-#include "netfilter.h"
-#include "pkt_sched.h"
-#include "bridge.h"
-#include "vlan.h"
-#include "tun.h"
-#include "netdevice.h"
-#include "veth.h"
-#include "net_ns.h"
-#include "ipip.h"
-#include "wireguard.h"
-#include "ipvs.h"
-#include "telnetd.h"
-#include "ssh.h"
-#include "rtc.h"
-#include "mouse.h"
-#include "speaker.h"
-#include "sound_mixer_sw.h"
 #include "acpi.h"
-#include "cpupstate.h"
-#include "syscall.h"
 #include "ahci.h"
+#include "ata.h"
+#include "bridge.h"
+#include "cpupstate.h"
+#include "dhcp.h"
+#include "e1000.h"
+#include "fault.h"
+#include "fs.h"
+#include "gdt.h"
+#include "heap.h"
+#include "idt.h"
+#include "io.h"
+#include "ipip.h"
+#include "ipvs.h"
+#include "keyboard.h"
+#include "mouse.h"
+#include "net.h"
+#include "net_ns.h"
+#include "netdevice.h"
+#include "netfilter.h"
+#include "page_cache.h"
+#include "pci.h"
+#include "pic.h"
+#include "pkt_sched.h"
+#include "pmm.h"
+#include "printf.h"
+#include "process.h"
+#include "rtc.h"
+#include "scheduler.h"
+#include "serial.h"
+#include "sound_mixer_sw.h"
+#include "speaker.h"
+#include "ssh.h"
+#include "string.h"
+#include "syscall.h"
+#include "telnetd.h"
+#include "timer.h"
+#include "tun.h"
+#include "types.h"
+#include "uhid.h"
 #include "usb.h"
 #include "usb_msc.h"
-#include "uhid.h"
+#include "veth.h"
+#include "vga.h"
+#include "vlan.h"
+#include "vmm.h"
+#include "vmxnet3.h"
+#include "wireguard.h"
 /* Externs for USB drivers without dedicated kernel includes */
 extern int usb_cdc_acm_init(void);
 extern int usb_hub_init(void);
-#include "service.h"
-#include "httpd.h"
-
-#include "intel_gpu.h"
-#include "fat32.h"
-#include "users.h"
-#include "vfs.h"
-#include "fstab.h"
-#include "pipe.h"
-#include "blockdev.h"
-#include "genhd.h"
-#include "dm.h"
-#include "shm.h"
-#include "swap.h"
-#include "virtio_net.h"
-#include "virtio_blk.h"
-#include "nvme.h"
-#include "container.h"
-#include "mdadm.h"
 #include "ac97.h"
-#include "smp.h"
-#include "cgroup.h"
-#include "mpath.h"
-#include "edac.h"
-#include "ghes.h"
-#include "i3c.h"
-#include "verity.h"
+#include "acpi_ec.h"
+#include "acpi_thermal.h"
+#include "aio_enhanced.h"
 #include "apic.h"
-#include "elf.h"
+#include "aslr.h"
+#include "audit.h"
+#include "blockdev.h"
+#include "caps.h"
+#include "cgroup.h"
+#include "cma.h"
+#include "cmdline.h"
+#include "compaction.h"
+#include "config_gz.h"
+#include "container.h"
+#include "core_sched.h"
 #include "cpu.h"
 #include "cpu_features.h"
 #include "cpu_topology.h"
-#include "x2apic.h"
-#include "tsc_deadline.h"
-#include "vsyscall.h"
-#include "slab.h"
-#include "oom.h"
-#include "rcu.h"
-#include "aslr.h"
-#include "seccomp.h"
-#include "audit.h"
-#include "yama.h"
-#include "kptr_restrict.h"
+#include "cpuidle.h"
+#include "cpuset.h"
+#include "debugfs.h"
+#include "devfs.h"
+#include "devtmpfs.h"
+#include "dm.h"
 #include "dmesg.h"
-#include "caps.h"
-#include "sysrq.h"
-#include "mce.h"
-#include "panic.h"
-#include "nmi_watchdog.h"
-#include "lockdep.h"
-#include "tmpfs.h"
-#include "acpi_thermal.h"
-#include "acpi_ec.h"
-#include "psi.h"
-#include "compaction.h"
-#include "memhotplug.h"
-#include "page_poison.h"
-#include "cma.h"
-#include "zram.h"
-#include "zswap.h"
-#include "ksm.h"
-#include "thp.h"
-#include "cmdline.h"
-#include "ramdisk.h"
-#include "timers.h"
-#include "workqueue.h"
-#include "rng.h"
-#include "kaslr.h"
-#include "fsnotify.h"
-#include "kprobes.h"
-#include "module.h"
-#include "module_signature.h"
-#include "initcall.h"
-#include "spi.h"
-#include "watchdog.h"
+#include "dyndbg.h"
+#include "edac.h"
+#include "elf.h"
+#include "export.h"
+#include "fanotify.h"
+#include "fat32.h"
+#include "fault_inject.h"
 #include "fbcon.h"
-#include "perf_events.h"
+#include "file_lock.h"
+#include "firmware.h"
+#include "fs_mount_prop.h"
+#include "fsnotify.h"
+#include "fstab.h"
+#include "genhd.h"
+#include "ghes.h"
+#include "httpd.h"
+#include "hugetlb.h"
+#include "i3c.h"
+#include "initcall.h"
+#include "intel_gpu.h"
+#include "irq_regs.h"
 #include "jump_label.h"
-#include "pstore.h"
+#include "kasan_light.h"
+#include "kaslr.h"
 #include "kdump.h"
 #include "kexec.h"
-#include "mce.h"
-#include "config_gz.h"
-#include "nx_enforce.h"
-#include "wx_enforce.h"
-#include "stack_guard.h"
-#include "rseq.h"
-#include "kasan_light.h"
 #include "kmemleak.h"
-#include "firmware.h"
-#include "fault_inject.h"
-#include "memfd.h"
-#include "irq_regs.h"
-#include "softirq.h"
-#include "mseal.h"
-#include "userfaultfd.h"
-#include "cpuidle.h"
-#include "pm_qos.h"
-#include "pelt.h"
-#include "madvise_ext.h"
-#include "mem_policy.h"
-#include "page_idle.h"
-#include "page_allocator_ext.h"
-#include "sched_attr.h"
-#include "cpuset.h"
-#include "core_sched.h"
-#include "nohz.h"
-#include "pidfd.h"
-#include "landlock.h"
-#include "seccomp_bpf.h"
-#include "process_rlimit.h"
-#include "devtmpfs.h"
-#include "export.h"
-#include "stdio.h"
-#include "overlay.h"
-#include "overlay_enhance.h"
-#include "splash.h"
-#include "sysfs.h"
-#include "devfs.h"
-#include "debugfs.h"
-#include "tracefs.h"
-#include "dyndbg.h"
+#include "kprobes.h"
+#include "kptr_restrict.h"
+#include "ksm.h"
 #include "kunit.h"
-#include "fanotify.h"
-#include "fs_mount_prop.h"
-#include "hugetlb.h"
+#include "landlock.h"
+#include "lockdep.h"
+#include "madvise_ext.h"
+#include "mce.h"
+#include "mdadm.h"
+#include "mem_policy.h"
+#include "memfd.h"
+#include "memhotplug.h"
+#include "module.h"
+#include "module_elf.h"
+#include "module_signature.h"
+#include "mpath.h"
+#include "mseal.h"
 #include "net_igmp.h"
 #include "net_lldp.h"
 #include "net_rps.h"
-#include "aio_enhanced.h"
-#include "file_lock.h"
+#include "nmi_watchdog.h"
+#include "nohz.h"
+#include "nvme.h"
+#include "nx_enforce.h"
+#include "oom.h"
+#include "overlay.h"
+#include "overlay_enhance.h"
+#include "page_allocator_ext.h"
+#include "page_idle.h"
+#include "page_poison.h"
+#include "panic.h"
+#include "pelt.h"
+#include "perf_events.h"
+#include "pidfd.h"
+#include "pipe.h"
+#include "pm_qos.h"
+#include "process_rlimit.h"
+#include "psi.h"
+#include "pstore.h"
+#include "ramdisk.h"
+#include "rcu.h"
+#include "rng.h"
+#include "rseq.h"
+#include "sched_attr.h"
+#include "seccomp.h"
+#include "seccomp_bpf.h"
+#include "service.h"
+#include "shm.h"
+#include "slab.h"
+#include "smp.h"
+#include "softirq.h"
+#include "spi.h"
+#include "splash.h"
+#include "stack_guard.h"
+#include "stdio.h"
 #include "string.h"
+#include "swap.h"
 #include "sysctl.h"
+#include "sysfs.h"
+#include "sysrq.h"
+#include "thp.h"
+#include "timers.h"
+#include "tmpfs.h"
+#include "tracefs.h"
+#include "tsc_deadline.h"
+#include "userfaultfd.h"
+#include "users.h"
+#include "verity.h"
+#include "vfs.h"
+#include "virtio_blk.h"
+#include "virtio_net.h"
+#include "vsyscall.h"
+#include "watchdog.h"
+#include "workqueue.h"
+#include "wx_enforce.h"
+#include "x2apic.h"
+#include "yama.h"
+#include "zram.h"
+#include "zswap.h"
 #ifdef TEST_MODE
 #include "test.h"
 #endif
@@ -334,8 +332,7 @@ static uint64_t boot_start_tsc = 0;
 static uint64_t boot_time_ms = 0;
 
 /* Read the x86 Time-Stamp Counter */
-static inline uint64_t rdtsc(void)
-{
+static inline uint64_t rdtsc(void) {
     uint32_t lo, hi;
     __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
     return ((uint64_t)hi << 32) | (uint64_t)lo;
@@ -345,18 +342,15 @@ static inline uint64_t rdtsc(void)
  * On modern x86_64, the TSC frequency is usually the max core frequency.
  * We approximate ms by dividing TSC delta by (TSC_FREQ / 1000).
  * A more precise calibration could come from CPUID leaf 0x15 or MSR 0xCE. */
-#define TSC_FREQ_ESTIMATE 2000000000ULL  /* 2 GHz default estimate */
+#define TSC_FREQ_ESTIMATE 2000000000ULL /* 2 GHz default estimate */
 
 static uint32_t tsc_khz_estimate = 0;
 
 /* Calibrate TSC frequency using CPUID leaf 0x15 (TSC/clock ratio).
  * Returns 0 on success, -1 if not available (uses default). */
-static int calibrate_tsc(void)
-{
+static int calibrate_tsc(void) {
     uint32_t eax, ebx, ecx, edx;
-    __asm__ volatile("cpuid"
-        : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
-        : "a"(0x15));
+    __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(0x15));
     if (ecx != 0 && ebx != 0) {
         /* TSC frequency = (ecx * ebx / eax) */
         uint64_t freq = (uint64_t)ecx * (uint64_t)ebx / (uint64_t)eax;
@@ -368,21 +362,17 @@ static int calibrate_tsc(void)
     return -1;
 }
 
-static uint64_t tsc_to_ms(uint64_t tsc_delta)
-{
-    uint64_t khz = (tsc_khz_estimate > 0) ? (uint64_t)tsc_khz_estimate
-                                          : (TSC_FREQ_ESTIMATE / 1000);
+static uint64_t tsc_to_ms(uint64_t tsc_delta) {
+    uint64_t khz = (tsc_khz_estimate > 0) ? (uint64_t)tsc_khz_estimate : (TSC_FREQ_ESTIMATE / 1000);
     return tsc_delta / khz;
 }
 
-static void boot_timing_report(void)
-{
+static void boot_timing_report(void) {
     uint64_t now = rdtsc();
     uint64_t delta = now - boot_start_tsc;
     boot_time_ms = tsc_to_ms(delta);
     kprintf("\n[Boot] Took %llu ms (TSC delta = %llu cycles, %u KHz)\n",
-            (unsigned long long)boot_time_ms,
-            (unsigned long long)delta, tsc_khz_estimate);
+            (unsigned long long)boot_time_ms, (unsigned long long)delta, tsc_khz_estimate);
 }
 uint64_t __stack_chk_guard = 0xDEADBEEFCAFEBABEULL;
 
@@ -393,7 +383,8 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys);
 void __attribute__((noreturn)) __stack_chk_fail(void) {
     kprintf("\n*** KERNEL STACK SMASHING DETECTED ***\n");
     cli();
-    for (;;) hlt();
+    for (;;)
+        hlt();
 }
 
 void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
@@ -425,7 +416,8 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     if (magic != 0x2BADB002) {
         kprintf("ERROR: Not booted by Multiboot (magic: 0x%x)\n", magic);
         cli();
-        for (;;) hlt();
+        for (;;)
+            hlt();
     }
     kprintf("[OK] Multiboot verified\n");
 
@@ -451,7 +443,8 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* Physical memory manager */
     pmm_init(multiboot_info_phys);
     kprintf("[OK] PMM initialized: %llu KB total, %llu KB used\n",
-            (unsigned long long)pmm_get_total_frames() * 4, (unsigned long long)pmm_get_used_frames() * 4);
+            (unsigned long long)pmm_get_total_frames() * 4,
+            (unsigned long long)pmm_get_used_frames() * 4);
 
     /*
      * IST stacks for double fault, NMI, MCE protection.
@@ -688,7 +681,10 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* Process subsystem */
     process_init();
-    khugepaged_start();
+    /* khugepaged disabled: its full-address-space scan (0 → 0x800000000000
+     * in 2MB steps per user process) intermittently stalls early boot on
+     * QEMU, delaying the network/init path past the e2e timeout. */
+    /* khugepaged_start(); */
     kprintf("[OK] Process subsystem initialized\n");
     splash_progress(3);
 
@@ -750,8 +746,7 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* I/O APIC and SMP boot */
     int ap_count = smp_boot_aps();
     if (ap_count > 0)
-        kprintf("[OK] SMP: %d AP(s) booted, total %d CPU(s)\n",
-                ap_count, (int)smp_get_cpu_count());
+        kprintf("[OK] SMP: %d AP(s) booted, total %d CPU(s)\n", ap_count, (int)smp_get_cpu_count());
 
     /* Timer (starts scheduling) */
     timer_init();
@@ -798,6 +793,12 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* Kernel symbol export table — for module symbol resolution */
     ksym_init();
 
+    /* Block device registry — must be initialized BEFORE do_initcalls()
+     * runs driver initcalls (ata_init, ramdisk_init, ...) that register
+     * devices.  Previously called later, which memset() the array and
+     * wiped those registrations. */
+    blockdev_init();
+
     /* Initcall system — run all registered initcalls in order.
      * Enable interrupts first so udelay/timer_get_ticks() work. */
     sti();
@@ -837,9 +838,8 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     rtc_init();
     struct rtc_time rtc;
     rtc_get_time(&rtc);
-    kprintf("[OK] RTC: %u-%u-%u %u:%u:%u\n",
-            rtc.year, rtc.month, rtc.day,
-            rtc.hour, rtc.minute, rtc.second);
+    kprintf("[OK] RTC: %u-%u-%u %u:%u:%u\n", rtc.year, rtc.month, rtc.day, rtc.hour, rtc.minute,
+            rtc.second);
 
     /* RTC sysfs interface (wakealarm) */
     rtc_sysfs_init();
@@ -963,9 +963,6 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     shm_init();
     kprintf("[OK] Shared memory initialized\n");
 
-    /* Block device registry */
-    blockdev_init();
-
     /* Generic disk layer (gendisk) — above blockdev, below partitions/filesystems */
     genhd_init();
 
@@ -1017,7 +1014,7 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     else
         kprintf("[--] No AHCI controller\n");
 
-    /* FAT32 — try to mount before fs_init so we don't format over it */
+        /* FAT32 — try to mount before fs_init so we don't format over it */
 #ifndef TEST_MODE
     if (ahci_is_present()) {
         int fat_rc = fat32_mount(FAT32_DISK_AHCI, 0);
@@ -1037,7 +1034,7 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
         }
     }
 #else
-    /* Test mode: skip slow FAT32 probe on ATA; use ramdisk. */
+        /* Test mode: skip slow FAT32 probe on ATA; use ramdisk. */
 #endif
 
     /* Filesystem */
@@ -1101,15 +1098,14 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
              * Runlevels: empty = all runlevels.
              * The init process (PID 1) parses /etc/inittab and manages
              * service lifecycle (respawn, once, sysinit, etc.). */
-            const char *default_inittab =
-                "# /etc/inittab - init configuration\n"
-                "# Format: id:runlevels:action:process\n"
-                "\n"
-                "# Serial console getty\n"
-                "ttyS0::respawn:/bin/getty\n"
-                "\n"
-                "# Primary console shell\n"
-                "console::askfirst:/bin/sh\n";
+            const char *default_inittab = "# /etc/inittab - init configuration\n"
+                                          "# Format: id:runlevels:action:process\n"
+                                          "\n"
+                                          "# Serial console getty\n"
+                                          "ttyS0::respawn:/bin/getty\n"
+                                          "\n"
+                                          "# Primary console shell\n"
+                                          "console::askfirst:/bin/sh\n";
             vfs_create("/etc/inittab", 1);
             vfs_write("/etc/inittab", default_inittab, (uint32_t)strlen(default_inittab));
             kprintf("[OK] Created default /etc/inittab\n");
@@ -1126,7 +1122,7 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     else
         kprintf("[--] No Intel GPU found\n");
 
-    /* USB (built-in only; module init handles its own init) */
+        /* USB (built-in only; module init handles its own init) */
 #ifndef MODULE
     if (usb_init() == 0) {
         kprintf("[OK] USB initialized\n");
@@ -1224,9 +1220,8 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     if (e1000_init() == 0) {
         uint8_t mac[6];
         e1000_get_mac(mac);
-        kprintf("[OK] e1000 NIC: %x:%x:%x:%x:%x:%x\n",
-                mac[0], mac[1], mac[2],
-                mac[3], mac[4], mac[5]);
+        kprintf("[OK] e1000 NIC: %x:%x:%x:%x:%x:%x\n", mac[0], mac[1], mac[2], mac[3], mac[4],
+                mac[5]);
     } else {
         kprintf("[--] e1000 NIC not found\n");
     }
@@ -1269,19 +1264,18 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 #else
         /* Test mode: set QEMU user-mode defaults, skip slow DHCP */
         extern uint32_t net_our_ip, net_gateway_ip, net_subnet_mask, net_dns_server;
-        net_our_ip      = (10U << 24) | (0U << 16) | (2U << 8) | 15U;
-        net_gateway_ip  = (10U << 24) | (0U << 16) | (2U << 8) | 2U;
+        net_our_ip = (10U << 24) | (0U << 16) | (2U << 8) | 15U;
+        net_gateway_ip = (10U << 24) | (0U << 16) | (2U << 8) | 2U;
         net_subnet_mask = (255U << 24) | (255U << 16) | (255U << 8) | 0U;
-        net_dns_server  = (10U << 24) | (0U << 16) | (2U << 8) | 3U;
+        net_dns_server = (10U << 24) | (0U << 16) | (2U << 8) | 3U;
 #endif
         uint8_t ip[4];
         net_get_ip(ip);
-        kprintf("[OK] Network: %u.%u.%u.%u\n",
-                ip[0], ip[1], ip[2], ip[3]);
+        kprintf("[OK] Network: %u.%u.%u.%u\n", ip[0], ip[1], ip[2], ip[3]);
         /* Register & start services */
         service_register("telnetd", telnetd_start, telnetd_stop);
-        service_register("httpd",   httpd_start,   httpd_stop);
-        service_register("sshd",   sshd_start,    sshd_stop);
+        service_register("httpd", httpd_start, httpd_stop);
+        service_register("sshd", sshd_start, sshd_stop);
 
         /* ── Service dependency setup (Item U3) ────────────────────
          * httpd depends on telnetd; sshd depends on httpd.
@@ -1291,7 +1285,7 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
         service_add_dep("sshd", "httpd");
 
         /* Start services in dependency order (telnetd first, then httpd, then sshd) */
-        service_start("sshd");  /* triggers sorted start of deps */
+        service_start("sshd"); /* triggers sorted start of deps */
         kprintf("[OK] Services started\n");
 
         /* Initialize OCI container runtime */
@@ -1346,9 +1340,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
             if (mods_count > 0 && mods_addr > 0) {
                 uint32_t *mod = (uint32_t *)PHYS_TO_VIRT(mods_addr);
                 uint64_t mod_start = (uint64_t)mod[0];
-                uint64_t mod_end   = (uint64_t)mod[1];
+                uint64_t mod_end = (uint64_t)mod[1];
                 uint64_t mod_size = mod_end - mod_start;
-                if (mod_size > 0 && mod_size < 16*1024*1024) {
+                if (mod_size > 0 && mod_size < 16 * 1024 * 1024) {
                     kprintf("[OK] Initrd module: %llu bytes at 0x%llx\n",
                             (unsigned long long)mod_size, (unsigned long long)mod_start);
                     void *mod_data = PHYS_TO_VIRT(mod_start);
@@ -1356,13 +1350,34 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
                         uint32_t num_sectors = (uint32_t)((mod_size + 511) / 512);
                         if (num_sectors <= ramdisk_get_sectors()) {
                             for (uint32_t s = 0; s < num_sectors; s++) {
-                                ramdisk_write_sectors(s, 1, (const uint8_t*)mod_data + s * 512);
+                                ramdisk_write_sectors(s, 1, (const uint8_t *)mod_data + s * 512);
                             }
                             kprintf("[OK] Initrd loaded into ramdisk (%u sectors)\n", num_sectors);
                         }
                     }
                 }
             }
+        }
+    }
+
+    /* Spawn the network polling thread.  The netd kthread drains the NIC
+     * in process context: the e1000 legacy IRQ is unreliable (never
+     * asserts), and the idle loop is starved once userspace init runs.
+     * It must NOT run on the timer's IRQ stack — the TCP send path
+     * re-enters tcp_lock from there and deadlocks. */
+    {
+        extern void telnetd_task(void);
+        struct process *netd = kthread_create((void (*)(void *))telnetd_task, NULL, "netd");
+        if (netd) {
+            /* Wake-boost: the netd's vruntime is reset below the CFS min
+             * on every wake, so it wins the runqueue pick each time it
+             * polls.  Without this, EEVDF starves it once userspace
+             * init's fork loop floods the runqueue with fresh children
+             * and no packet ever gets processed. */
+            netd->sched_boost_on_wake = 1;
+            kprintf("[OK] netd: network polling thread (PID %d)\n", (int)netd->pid);
+        } else {
+            kprintf("[!!] netd: failed to create network thread\n");
         }
     }
 
@@ -1374,8 +1389,7 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
             init_ok = 1;
             kprintf("[OK] Userspace init: %s (PID %d)\n", init_path, pid);
         } else {
-            kprintf("[!!] process_spawn_kernel(%s) failed with %d\n",
-                    init_path, pid);
+            kprintf("[!!] process_spawn_kernel(%s) failed with %d\n", init_path, pid);
         }
     }
 
@@ -1417,12 +1431,13 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 #else
             "none (cooperative)"
 #endif
-           );
+    );
     {
         uint64_t total_mb = (uint64_t)pmm_get_total_frames() * 4096ULL / (1024ULL * 1024ULL);
-        uint64_t free_mb = (uint64_t)(pmm_get_total_frames() - pmm_get_used_frames()) * 4096ULL / (1024ULL * 1024ULL);
-        kprintf("  Memory: %llu MB total, %llu MB free\n",
-                (unsigned long long)total_mb, (unsigned long long)free_mb);
+        uint64_t free_mb = (uint64_t)(pmm_get_total_frames() - pmm_get_used_frames()) * 4096ULL /
+                           (1024ULL * 1024ULL);
+        kprintf("  Memory: %llu MB total, %llu MB free\n", (unsigned long long)total_mb,
+                (unsigned long long)free_mb);
     }
     kprintf("============================================\n\n");
 
@@ -1455,7 +1470,6 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
      * 2MB huge pages that span section boundaries are split to 4KB
      * first so each section gets correct per-page permissions. */
     nx_enforce_protect_kernel_sections();
-
 #ifdef TEST_MODE
     /* Yield once so the test task gets a chance to run immediately */
     scheduler_yield();
@@ -1474,31 +1488,53 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
         net_poll();
         if (need_resched())
             schedule();
+        /* ── Debug: detect a stuck runqueue (a READY process that never
+         * gets picked) — prints once. */
+        {
+            static int dbg_printed = 0;
+            static uint64_t dbg_last_check = 0;
+            uint64_t now = timer_get_ticks();
+            if (!dbg_printed && now - dbg_last_check > 500) {
+                dbg_last_check = now;
+                extern struct process *process_get_table(void);
+                struct process *t = process_get_table();
+                for (int i = 0; i < PROCESS_MAX; i++) {
+                    if (t[i].state == PROCESS_READY && t[i].pid > 0 && t[i].on_cpu == 0 &&
+                        now - t[i].last_run_tick > 300) {
+                        kprintf("[STUCK] pid=%u name=%s ready=%lu ticks (last_run=%lu) "
+                                "deadline=%lu lag=%ld prio=%u\n",
+                                (unsigned int)t[i].pid, t[i].name ? t[i].name : "?",
+                                (unsigned long)(now - t[i].last_run_tick),
+                                (unsigned long)t[i].last_run_tick,
+                                (unsigned long)t[i].eevdf_deadline, (long)t[i].eevdf_lag,
+                                (unsigned int)t[i].priority);
+                        dbg_printed = 1;
+                        break;
+                    }
+                }
+            }
+        }
         cpuidle_idle();
     }
 }
 
 /* ── Stub: kernel_reboot ─────────────────────────────── */
-static int kernel_reboot(void)
-{
+static int kernel_reboot(void) {
     kprintf("[kernel] kernel_reboot: not yet implemented\n");
     return 0;
 }
 /* ── Stub: kernel_halt ─────────────────────────────── */
-static int kernel_halt(void)
-{
+static int kernel_halt(void) {
     kprintf("[kernel] kernel_halt: not yet implemented\n");
     return 0;
 }
 /* ── Stub: kernel_poweroff ─────────────────────────────── */
-static int kernel_poweroff(void)
-{
+static int kernel_poweroff(void) {
     kprintf("[kernel] kernel_poweroff: not yet implemented\n");
     return 0;
 }
 /* ── Stub: kernel_restart ─────────────────────────────── */
-static int kernel_restart(const char *cmd)
-{
+static int kernel_restart(const char *cmd) {
     (void)cmd;
     kprintf("[kernel] kernel_restart: not yet implemented\n");
     return 0;

@@ -106,23 +106,24 @@
  * ────────────────────────────────────────────────────────────────────────────
  */
 #include "pmm.h"
-#include "vmm.h"
-#include "string.h"
-#include "printf.h"
-#include "oom.h"
-#include "panic.h"
-#include "scheduler.h"
+
 #include "compaction.h"
-#include "slab.h"
-#include "io.h"
-#include "spinlock.h"
-#include "smp.h"
+#include "errno.h" /* -EINVAL etc. for pmm_mark_broken */
 #include "export.h"
+#include "io.h"
+#include "mglru.h" /* Multi-Generational LRU page reclaim */
+#include "oom.h"
 #include "pageblock.h"
-#include "timer.h"    /* timer_get_ticks() for failure timestamps */
-#include "psi.h"      /* psi_memstall_enter/leave for memory stall tracking */
-#include "mglru.h"    /* Multi-Generational LRU page reclaim */
-#include "errno.h"    /* -EINVAL etc. for pmm_mark_broken */
+#include "panic.h"
+#include "printf.h"
+#include "psi.h" /* psi_memstall_enter/leave for memory stall tracking */
+#include "scheduler.h"
+#include "slab.h"
+#include "smp.h"
+#include "spinlock.h"
+#include "string.h"
+#include "timer.h" /* timer_get_ticks() for failure timestamps */
+#include "vmm.h"
 
 /* Multiboot1 info structure (relevant fields) */
 struct multiboot_info {
@@ -145,12 +146,42 @@ struct multiboot_mmap_entry {
     uint32_t type; /* 1 = available */
 } __attribute__((packed));
 
-#define MAX_FRAMES (2 * 1024 * 1024) /* up to 8 GB with 4 KB pages (matches PAGEBLOCK_MAX = 4096 × 2 MB) */
-static uint8_t  frame_bitmap[MAX_FRAMES / 8];
+#define MAX_FRAMES \
+    (2 * 1024 * 1024) /* up to 8 GB with 4 KB pages (matches PAGEBLOCK_MAX = 4096 × 2 MB) */
+static uint8_t frame_bitmap[MAX_FRAMES / 8];
 static uint16_t frame_refcount[MAX_FRAMES]; /* COW reference counts */
 static uint64_t total_frames = 0;
 static uint64_t used_frames = 0;
 static uint64_t pmm_hint = 0; /* last-known free frame; speeds up allocation */
+
+/* Page-table frame tracking: a frame currently in use as a page-table
+ * page (PML4/PDPT/PD/PT) must never be moved by memory compaction —
+ * migrating it frees the frame while the parent table entry still
+ * points at it, leaving a dangling table (observed: physmap hole →
+ * #PF in migrate_one_page under OOM pressure).  The bitmap is set when
+ * a frame becomes a table and cleared when the table is freed. */
+static uint8_t pt_frame_bitmap[MAX_FRAMES / 8];
+
+void pmm_mark_pt_frame(uint64_t phys) {
+    uint64_t frame = phys / PAGE_SIZE;
+    if (frame >= MAX_FRAMES)
+        return;
+    pt_frame_bitmap[frame / 8] |= (uint8_t)(1u << (frame % 8));
+}
+
+void pmm_unmark_pt_frame(uint64_t phys) {
+    uint64_t frame = phys / PAGE_SIZE;
+    if (frame >= MAX_FRAMES)
+        return;
+    pt_frame_bitmap[frame / 8] &= (uint8_t) ~(1u << (frame % 8));
+}
+
+int pmm_is_pt_frame(uint64_t phys) {
+    uint64_t frame = phys / PAGE_SIZE;
+    if (frame >= MAX_FRAMES)
+        return 0;
+    return (pt_frame_bitmap[frame / 8] >> (frame % 8)) & 1;
+}
 
 /* Page poisoning: fill freed pages with 0xDC and allocated pages with 0xDEADBEEF */
 int __read_mostly pmm_poison_enabled = 1;
@@ -170,11 +201,11 @@ int __read_mostly pmm_poison_enabled = 1;
 #define PMM_BROKEN_REFCNT 0xFFFF
 
 /* Memory zone count — guards zone-like migration type array accesses */
-#define ZONE_MAX   MIGRATE_TYPES
+#define ZONE_MAX MIGRATE_TYPES
 
 struct pmm_cpu_cache {
     uint64_t frames[PMM_CPU_CACHE_SIZE]; /* cached physical page addresses */
-    int      count;                       /* number of valid entries */
+    int count;                           /* number of valid entries */
 };
 
 /* One cache slot per possible CPU */
@@ -192,16 +223,16 @@ static spinlock_t pmm_global_lock;
 #define PMM_FAIL_HISTORY_MAX 32
 
 struct pmm_fail_record {
-    uint64_t caller_ip;       /* return address of failing allocator call */
-    uint64_t requested;       /* number of pages requested */
-    uint64_t free_at_fail;    /* free frames at time of failure */
-    uint64_t timestamp_tick;  /* kernel tick when failure occurred */
+    uint64_t caller_ip;      /* return address of failing allocator call */
+    uint64_t requested;      /* number of pages requested */
+    uint64_t free_at_fail;   /* free frames at time of failure */
+    uint64_t timestamp_tick; /* kernel tick when failure occurred */
 };
 
 /* Ring buffer of recent allocation failures (for diagnostics / post-mortem) */
 static struct pmm_fail_record pmm_fail_history[PMM_FAIL_HISTORY_MAX];
-static uint64_t pmm_fail_count_total = 0;   /* total failures since boot */
-static uint64_t pmm_fail_history_idx = 0;   /* next slot in ring buffer */
+static uint64_t pmm_fail_count_total = 0; /* total failures since boot */
+static uint64_t pmm_fail_history_idx = 0; /* next slot in ring buffer */
 static spinlock_t pmm_fail_lock;
 
 /* Record an allocation failure in the ring buffer.  Safe to call from
@@ -210,14 +241,12 @@ static spinlock_t pmm_fail_lock;
 static void pmm_record_fail(uint64_t caller_ip, uint64_t requested) {
     uint64_t irq_flags;
     /* Manual trylock: save flags, cli, then try to acquire */
-    __asm__ volatile(
-        "pushfq\n\t"
-        "pop %0\n\t"
-        "cli\n\t"
-        : "=r"(irq_flags)
-        :
-        : "memory"
-    );
+    __asm__ volatile("pushfq\n\t"
+                     "pop %0\n\t"
+                     "cli\n\t"
+                     : "=r"(irq_flags)
+                     :
+                     : "memory");
     if (!spinlock_try_acquire(&pmm_fail_lock)) {
         /* Couldn't get lock — restore interrupts and skip recording */
         if (irq_flags & 0x200)
@@ -226,9 +255,9 @@ static void pmm_record_fail(uint64_t caller_ip, uint64_t requested) {
     }
 
     struct pmm_fail_record *rec = &pmm_fail_history[pmm_fail_history_idx];
-    rec->caller_ip      = caller_ip;
-    rec->requested      = requested;
-    rec->free_at_fail   = (total_frames > used_frames) ? (total_frames - used_frames) : 0;
+    rec->caller_ip = caller_ip;
+    rec->requested = requested;
+    rec->free_at_fail = (total_frames > used_frames) ? (total_frames - used_frames) : 0;
     rec->timestamp_tick = timer_get_ticks();
 
     pmm_fail_history_idx = (pmm_fail_history_idx + 1) % PMM_FAIL_HISTORY_MAX;
@@ -256,28 +285,28 @@ static void pmm_dump_fail_history(void) {
     if (total < PMM_FAIL_HISTORY_MAX)
         start_idx = 0;
     else
-        start_idx = pmm_fail_history_idx;  /* points to oldest */
+        start_idx = pmm_fail_history_idx; /* points to oldest */
 
     for (uint64_t i = 0; i < shown; i++) {
         uint64_t idx = (start_idx + i) % PMM_FAIL_HISTORY_MAX;
         const struct pmm_fail_record *rec = &pmm_fail_history[idx];
         if (rec->caller_ip == 0 && rec->requested == 0)
-            continue;  /* empty slot */
+            continue; /* empty slot */
 
         /* Print caller address (symbol resolution would need ksymtab) */
         kprintf("[PMM]   [%llu] caller=0x%llx requested=%llu pages free=%llu ticks=%llu\n",
-                (unsigned long long)i,
-                (unsigned long long)rec->caller_ip,
-                (unsigned long long)rec->requested,
-                (unsigned long long)rec->free_at_fail,
+                (unsigned long long)i, (unsigned long long)rec->caller_ip,
+                (unsigned long long)rec->requested, (unsigned long long)rec->free_at_fail,
                 (unsigned long long)rec->timestamp_tick);
     }
 }
 
 /* ── Poison helpers ──────────────────────────────────────────────────── */
 static void poison_fill(uint64_t phys_addr, uint32_t pattern) {
-    if (!pmm_poison_enabled) return;
-    if (phys_addr == 0) return;
+    if (!pmm_poison_enabled)
+        return;
+    if (phys_addr == 0)
+        return;
     uint64_t *virt = (uint64_t *)PHYS_TO_VIRT(phys_addr);
     /* Fill 4KB page with 64-bit pattern */
     uint64_t pat64;
@@ -286,27 +315,29 @@ static void poison_fill(uint64_t phys_addr, uint32_t pattern) {
     } else {
         /* Expand byte-pattern to fill all 64 bits (e.g. 0xDC -> 0xDCDCDCDCDCDCDCDC) */
         uint8_t byte = (uint8_t)(pattern & 0xFF);
-        pat64 = ((uint64_t)byte << 56) | ((uint64_t)byte << 48) |
-                ((uint64_t)byte << 40) | ((uint64_t)byte << 32) |
-                ((uint64_t)byte << 24) | ((uint64_t)byte << 16) |
-                ((uint64_t)byte << 8)  | (uint64_t)byte;
+        pat64 = ((uint64_t)byte << 56) | ((uint64_t)byte << 48) | ((uint64_t)byte << 40) |
+                ((uint64_t)byte << 32) | ((uint64_t)byte << 24) | ((uint64_t)byte << 16) |
+                ((uint64_t)byte << 8) | (uint64_t)byte;
     }
     for (int i = 0; i < (int)(PAGE_SIZE / 8); i++)
         virt[i] = pat64;
 }
 
 static void bitmap_set(uint64_t frame) {
-    if (frame >= MAX_FRAMES) return;
+    if (frame >= MAX_FRAMES)
+        return;
     frame_bitmap[frame / 8] |= (uint8_t)(1U << (frame % 8));
 }
 
 static void bitmap_clear(uint64_t frame) {
-    if (frame >= MAX_FRAMES) return;
-    frame_bitmap[frame / 8] &= (uint8_t)~(1U << (frame % 8));
+    if (frame >= MAX_FRAMES)
+        return;
+    frame_bitmap[frame / 8] &= (uint8_t) ~(1U << (frame % 8));
 }
 
 static int bitmap_test(uint64_t frame) {
-    if (frame >= MAX_FRAMES) return 1; /* out-of-range frames appear used */
+    if (frame >= MAX_FRAMES)
+        return 1; /* out-of-range frames appear used */
     return frame_bitmap[frame / 8] & (1U << (frame % 8));
 }
 
@@ -322,7 +353,8 @@ static uint64_t bitmap_alloc_one_locked(void) {
             used_frames++;
             frame_refcount[i] = 1;
             pmm_hint = i + 1;
-            if (pmm_hint >= total_frames) pmm_hint = 0;
+            if (pmm_hint >= total_frames)
+                pmm_hint = 0;
 
 #ifdef CONFIG_DEBUG_PAGEALLOC
             /* ── Use-after-free detection ──────────────────────────────
@@ -350,8 +382,7 @@ static uint64_t bitmap_alloc_one_locked(void) {
                     kprintf("[PMM] WARNING: page 0x%llx (frame %llu) "
                             "does NOT contain poison pattern — "
                             "possible use-after-free!\n",
-                            (unsigned long long)(i * PAGE_SIZE),
-                            (unsigned long long)i);
+                            (unsigned long long)(i * PAGE_SIZE), (unsigned long long)i);
                     /* Re-poison to be safe */
                     poison_fill(i * PAGE_SIZE, 0xDC);
                 }
@@ -361,18 +392,23 @@ static uint64_t bitmap_alloc_one_locked(void) {
             return i * PAGE_SIZE;
         }
         i++;
-        if (i >= total_frames) i = 0;
+        if (i >= total_frames)
+            i = 0;
     } while (i != pmm_hint);
     return 0;
 }
 
 /* Free one frame back to the bitmap; caller must hold pmm_global_lock. */
 static void bitmap_free_one_locked(uint64_t addr) {
-    if (addr & (PAGE_SIZE - 1)) return;
+    if (addr & (PAGE_SIZE - 1))
+        return;
     uint64_t frame = addr / PAGE_SIZE;
-    if (frame >= MAX_FRAMES) return;
-    if (!bitmap_test(frame)) return;
-    if (frame_refcount[frame] > 1) return;
+    if (frame >= MAX_FRAMES)
+        return;
+    if (!bitmap_test(frame))
+        return;
+    if (frame_refcount[frame] > 1)
+        return;
 
     poison_fill(addr, 0xDC);
     vm_pgfree++;
@@ -400,7 +436,8 @@ static void pmm_cache_refill(void) {
 
     while (cache->count < PMM_CPU_CACHE_SIZE) {
         uint64_t frame = bitmap_alloc_one_locked();
-        if (!frame) break;
+        if (!frame)
+            break;
         cache->frames[cache->count++] = frame;
     }
 
@@ -512,13 +549,16 @@ void __init pmm_init(uint64_t multiboot_info_phys) {
                     uint64_t start = entry->addr;
                     uint64_t end = entry->addr + entry->len;
 
-                    if (start < 0x100000) start = 0x100000;
+                    if (start < 0x100000)
+                        start = 0x100000;
 
                     uint64_t start_frame = (start + PAGE_SIZE - 1) / PAGE_SIZE;
                     uint64_t end_frame = end / PAGE_SIZE;
 
-                    if (end_frame > MAX_FRAMES) end_frame = MAX_FRAMES;
-                    if (end_frame > total_frames) total_frames = end_frame;
+                    if (end_frame > MAX_FRAMES)
+                        end_frame = MAX_FRAMES;
+                    if (end_frame > total_frames)
+                        total_frames = end_frame;
 
                     for (uint64_t f = start_frame; f < end_frame; f++) {
                         bitmap_clear(f);
@@ -545,7 +585,8 @@ void __init pmm_init(uint64_t multiboot_info_phys) {
                     uint64_t start = entry->addr;
                     uint64_t end = entry->addr + entry->len;
 
-                    if (start < 0x100000) start = 0x100000;
+                    if (start < 0x100000)
+                        start = 0x100000;
 
                     uint64_t start_frame = (start + PAGE_SIZE - 1) / PAGE_SIZE;
                     uint64_t end_frame = end / PAGE_SIZE;
@@ -554,7 +595,8 @@ void __init pmm_init(uint64_t multiboot_info_phys) {
                         mmap_addr += entry->size + 4;
                         continue;
                     }
-                    if (end_frame > MAX_FRAMES) end_frame = MAX_FRAMES;
+                    if (end_frame > MAX_FRAMES)
+                        end_frame = MAX_FRAMES;
 
                     for (uint64_t f = start_frame; f < end_frame; f++)
                         bitmap_set(f);
@@ -566,7 +608,8 @@ void __init pmm_init(uint64_t multiboot_info_phys) {
         /* Fallback: use mem_upper (KB above 1MB) */
         uint64_t mem_bytes = (uint64_t)(mbi->mem_upper) * 1024 + 0x100000;
         uint64_t end_frame = mem_bytes / PAGE_SIZE;
-        if (end_frame > MAX_FRAMES) end_frame = MAX_FRAMES;
+        if (end_frame > MAX_FRAMES)
+            end_frame = MAX_FRAMES;
         total_frames = end_frame;
 
         for (uint64_t f = 0x100000 / PAGE_SIZE; f < end_frame; f++) {
@@ -577,7 +620,8 @@ void __init pmm_init(uint64_t multiboot_info_phys) {
         /* If mem_upper was 0 (QEMU -kernel multiboot fallback), assume 256MB */
         if (end_frame <= 256) {
             uint64_t assume_total = (256ULL * 1024 * 1024) / PAGE_SIZE;
-            if (assume_total > MAX_FRAMES) assume_total = MAX_FRAMES;
+            if (assume_total > MAX_FRAMES)
+                assume_total = MAX_FRAMES;
             total_frames = assume_total;
             for (uint64_t f = 256; f < total_frames; f++) {
                 bitmap_clear(f);
@@ -611,7 +655,8 @@ void __init pmm_init(uint64_t multiboot_info_phys) {
     /* Recount used frames based on actual total */
     used_frames = 0;
     for (uint64_t f = 0; f < total_frames; f++) {
-        if (bitmap_test(f)) used_frames++;
+        if (bitmap_test(f))
+            used_frames++;
     }
 
     /* Initialize spinlocks for SMP-safe access */
@@ -625,15 +670,15 @@ void __init pmm_init(uint64_t multiboot_info_phys) {
     pageblock_init(total_frames);
 
     kprintf("[OK] Physical Memory Manager: %llu frames (%llu MB), %llu free\n",
-            (unsigned long long)total_frames,
-            (unsigned long long)((total_frames * 4ULL) / 1024ULL),
+            (unsigned long long)total_frames, (unsigned long long)((total_frames * 4ULL) / 1024ULL),
             (unsigned long long)(total_frames - used_frames));
 }
 
 void pmm_reserve_frames(uint64_t phys_start, uint64_t byte_size) {
     uint64_t start_frame = phys_start / PAGE_SIZE;
-    uint64_t end_frame   = (phys_start + byte_size + PAGE_SIZE - 1) / PAGE_SIZE;
-    if (end_frame > MAX_FRAMES) end_frame = MAX_FRAMES;
+    uint64_t end_frame = (phys_start + byte_size + PAGE_SIZE - 1) / PAGE_SIZE;
+    if (end_frame > MAX_FRAMES)
+        end_frame = MAX_FRAMES;
 
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&pmm_global_lock, &irq_flags);
@@ -644,7 +689,8 @@ void pmm_reserve_frames(uint64_t phys_start, uint64_t byte_size) {
      * or freed to the bitmap behind our back during this scan. */
     for (int cpu = 0; cpu < SMP_MAX_CPUS; cpu++) {
         struct pmm_cpu_cache *cache = &pmm_cpu_cache[cpu];
-        if (cache->count == 0) continue;
+        if (cache->count == 0)
+            continue;
         for (int j = 0; j < (int)cache->count; j++) {
             uint64_t f = cache->frames[j] / PAGE_SIZE;
             if (f >= start_frame && f < end_frame) {
@@ -675,7 +721,8 @@ void pmm_reserve_frames(uint64_t phys_start, uint64_t byte_size) {
      * will not hand it out. */
     for (int cpu = 0; cpu < SMP_MAX_CPUS; cpu++) {
         struct pmm_cpu_cache *cache = &pmm_cpu_cache[cpu];
-        if (cache->count == 0) continue;
+        if (cache->count == 0)
+            continue;
         for (int j = 0; j < (int)cache->count; j++) {
             uint64_t f = cache->frames[j] / PAGE_SIZE;
             if (f >= start_frame && f < end_frame) {
@@ -713,13 +760,15 @@ void pmm_advance_hint(uint64_t phys_addr) {
  *
  * Context: May sleep.  Holds pmm_global_lock internally.
  */
-void pmm_add_free_frames(uint64_t phys_start, uint64_t byte_size)
-{
+void pmm_add_free_frames(uint64_t phys_start, uint64_t byte_size) {
     uint64_t start_frame = phys_start / PAGE_SIZE;
-    uint64_t end_frame   = (phys_start + byte_size + PAGE_SIZE - 1) / PAGE_SIZE;
-    if (start_frame >= MAX_FRAMES) return;
-    if (end_frame > MAX_FRAMES) end_frame = MAX_FRAMES;
-    if (start_frame >= end_frame) return;
+    uint64_t end_frame = (phys_start + byte_size + PAGE_SIZE - 1) / PAGE_SIZE;
+    if (start_frame >= MAX_FRAMES)
+        return;
+    if (end_frame > MAX_FRAMES)
+        end_frame = MAX_FRAMES;
+    if (start_frame >= end_frame)
+        return;
 
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&pmm_global_lock, &irq_flags);
@@ -758,7 +807,7 @@ void pmm_add_free_frames(uint64_t phys_start, uint64_t byte_size)
      * the internal pageblock_types[] array. */
     {
         uint64_t start_block = pageblock_of_frame(start_frame);
-        uint64_t end_block   = pageblock_of_frame(end_frame - 1) + 1;
+        uint64_t end_block = pageblock_of_frame(end_frame - 1) + 1;
         if (end_block > PAGEBLOCK_MAX)
             end_block = PAGEBLOCK_MAX;
         for (uint64_t b = start_block; b < end_block; b++)
@@ -769,8 +818,7 @@ void pmm_add_free_frames(uint64_t phys_start, uint64_t byte_size)
 
     kprintf("[PMM] hotplug: added %llu free frames (%llu KB) at 0x%llx\n",
             (unsigned long long)(end_frame - start_frame),
-            (unsigned long long)((end_frame - start_frame) * 4ULL),
-            (unsigned long long)phys_start);
+            (unsigned long long)((end_frame - start_frame) * 4ULL), (unsigned long long)phys_start);
 }
 
 /* ── Memory reclaim watermark ───────────────────────────────────────────
@@ -805,11 +853,13 @@ uint64_t pmm_largest_free_block(void) {
         if (!bitmap_test(f)) {
             cur_run++;
         } else {
-            if (cur_run > max_run) max_run = cur_run;
+            if (cur_run > max_run)
+                max_run = cur_run;
             cur_run = 0;
         }
     }
-    if (cur_run > max_run) max_run = cur_run;
+    if (cur_run > max_run)
+        max_run = cur_run;
 
     spinlock_irqsave_release(&pmm_global_lock, irq_flags);
     return max_run;
@@ -824,7 +874,10 @@ uint64_t pmm_free_block_count(void) {
     int in_run = 0;
     for (uint64_t f = 0; f < total_frames; f++) {
         if (!bitmap_test(f)) {
-            if (!in_run) { runs++; in_run = 1; }
+            if (!in_run) {
+                runs++;
+                in_run = 1;
+            }
         } else {
             in_run = 0;
         }
@@ -842,8 +895,7 @@ uint64_t pmm_free_block_count(void) {
  *
  * Safe for SMP: acquires pmm_global_lock to synchronise bitmap access with
  * concurrent pmm_alloc_frame / pmm_free_frame callers. */
-uint64_t pmm_find_free_region(uint64_t start_frame, uint64_t *out_count)
-{
+uint64_t pmm_find_free_region(uint64_t start_frame, uint64_t *out_count) {
     if (out_count)
         *out_count = 0;
     if (start_frame >= total_frames)
@@ -887,20 +939,20 @@ uint64_t pmm_find_free_region(uint64_t start_frame, uint64_t *out_count)
 /* Print detailed physical memory state: usage, largest free block, fragmentation */
 void pmm_dump_stats(void) {
     uint64_t total = total_frames;
-    uint64_t used  = used_frames;
-    uint64_t free  = (total > used) ? (total - used) : 0;
+    uint64_t used = used_frames;
+    uint64_t free = (total > used) ? (total - used) : 0;
     uint64_t free_pct = (total > 0) ? (free * 100ULL) / total : 0;
 
     kprintf("[PMM] frames: total=%llu (%llu MB), used=%llu, free=%llu (%llu%%)\n",
             (unsigned long long)total, (unsigned long long)((total * 4ULL) / 1024ULL),
-            (unsigned long long)used, (unsigned long long)free,
-            (unsigned long long)free_pct);
+            (unsigned long long)used, (unsigned long long)free, (unsigned long long)free_pct);
 
-    uint64_t max_run   = pmm_largest_free_block();
+    uint64_t max_run = pmm_largest_free_block();
     uint64_t free_runs = pmm_free_block_count();
 
     uint64_t frag_pct = (free > 0) ? ((free_runs * 100ULL) / free) : 0;
-    if (frag_pct > 100) frag_pct = 100;
+    if (frag_pct > 100)
+        frag_pct = 100;
 
     kprintf("[PMM] largest free block: %llu frames (%llu KB), free runs: %llu, frag: %llu%%\n",
             (unsigned long long)max_run, (unsigned long long)(max_run * 4ULL),
@@ -909,10 +961,8 @@ void pmm_dump_stats(void) {
     /* Append OOM subsystem statistics */
     extern uint64_t oom_kill_count;
     kprintf("[PMM] OOM kills: %llu  |  pgalloc=%llu pgfree=%llu pgfault=%llu\n",
-            (unsigned long long)oom_kill_count,
-            (unsigned long long)vm_pgalloc,
-            (unsigned long long)vm_pgfree,
-            (unsigned long long)vm_pgfault);
+            (unsigned long long)oom_kill_count, (unsigned long long)vm_pgalloc,
+            (unsigned long long)vm_pgfree, (unsigned long long)vm_pgfault);
 
     /* Allocation failure history */
     pmm_dump_fail_history();
@@ -921,8 +971,8 @@ void pmm_dump_stats(void) {
     int total_cached = 0;
     for (int c = 0; c < smp_get_cpu_count(); c++)
         total_cached += pmm_cpu_cache[c].count;
-    kprintf("[PMM] per-CPU caches: %d frames cached across %d CPUs\n",
-            total_cached, smp_get_cpu_count());
+    kprintf("[PMM] per-CPU caches: %d frames cached across %d CPUs\n", total_cached,
+            smp_get_cpu_count());
 
     /* Dump pageblock migration type distribution */
     pageblock_dump_stats();
@@ -943,7 +993,7 @@ static inline int pmm_cache_pop_irqsafe(uint64_t *addr_out, uint64_t *irq_save_o
     if (cache->count > 0) {
         cache->count--;
         *addr_out = cache->frames[cache->count];
-        return 1;  /* caller must restore IRQs via pmm_irq_restore() */
+        return 1; /* caller must restore IRQs via pmm_irq_restore() */
     }
     return 0;
 }
@@ -965,7 +1015,7 @@ static inline void pmm_irq_restore(uint64_t irq_save) {
  */
 static int pmm_proactive_reclaim(uint64_t needed_pages) {
     uint64_t total = total_frames;
-    uint64_t used  = used_frames;
+    uint64_t used = used_frames;
     uint64_t free_pages = (total > used) ? (total - used) : 0;
 
     /* Get the current reclaim watermark */
@@ -1028,14 +1078,10 @@ static uint64_t pmm_oom_recover(uint64_t needed_pages, uint64_t caller_ip) {
      *   Level 2: Compaction + OOM kill + yield
      *   Level 3: panic() with full diagnostics
      */
-    static const char *const level_names[] = {
-        "slab reaping + OOM",
-        "compaction + OOM"
-    };
+    static const char *const level_names[] = {"slab reaping + OOM", "compaction + OOM"};
 
     for (int level = 0; level < 2; level++) {
-        kprintf("[PMM] OOM recovery level %d/%d: %s...\n",
-                level + 1, 2, level_names[level]);
+        kprintf("[PMM] OOM recovery level %d/%d: %s...\n", level + 1, 2, level_names[level]);
 
         if (level == 0) {
             /* Level 1: Try quick reclaims first — no OOM kill yet */
@@ -1068,7 +1114,7 @@ static uint64_t pmm_oom_recover(uint64_t needed_pages, uint64_t caller_ip) {
             poison_fill(addr, 0xDEADBEEF);
             vm_pgalloc++;
             mglru_add_page(addr);
-            return addr;  /* return the physical address directly */
+            return addr; /* return the physical address directly */
         }
         pmm_irq_restore(irq_save);
     }
@@ -1090,8 +1136,7 @@ static uint64_t pmm_oom_recover(uint64_t needed_pages, uint64_t caller_ip) {
  *
  * Returns the number of pages actually freed, or negative on error.
  */
-int page_reclaim(int nr_pages, unsigned int gfp_mask)
-{
+int page_reclaim(int nr_pages, unsigned int gfp_mask) {
     if (nr_pages <= 0)
         return 0;
 
@@ -1121,6 +1166,9 @@ uint64_t pmm_alloc_frame(void) {
     /* ── Fast path: pop from per-CPU hot cache ── */
     if (pmm_cache_pop_irqsafe(&addr, &irq_save)) {
         pmm_irq_restore(irq_save);
+        if (addr >= 0x4000000ULL && addr < 0x4040000ULL)
+            kprintf("[pmm] ALLOC 0x%llx (hot cache) from=%p\n", (unsigned long long)addr,
+                    (void *)__builtin_return_address(0));
         poison_fill(addr, 0xDEADBEEF);
         vm_pgalloc++;
         mglru_add_page(addr);
@@ -1184,8 +1232,7 @@ uint64_t pmm_alloc_frame(void) {
  * Returns physical address of the frame, or 0 if the frame is out of
  * range, already in use, or beyond total_frames.
  */
-uint64_t pmm_alloc_frame_at(uint64_t frame)
-{
+uint64_t pmm_alloc_frame_at(uint64_t frame) {
     if (frame >= total_frames || frame >= MAX_FRAMES)
         return 0;
 
@@ -1219,15 +1266,17 @@ uint64_t pmm_alloc_frame_at(uint64_t frame)
         uint64_t poison64 = 0xDCDCDCDCDCDCDCDCULL;
         for (int w = 0; w < (int)(PAGE_SIZE / 8); w++) {
             if (virt[w] != poison64) {
-                if (w > 4) { found_non_poison = 1; break; }
+                if (w > 4) {
+                    found_non_poison = 1;
+                    break;
+                }
             }
         }
         if (found_non_poison) {
             kprintf("[PMM] WARNING: page 0x%llx (frame %llu) "
                     "does NOT contain poison pattern — "
                     "possible use-after-free!\n",
-                    (unsigned long long)(frame * PAGE_SIZE),
-                    (unsigned long long)frame);
+                    (unsigned long long)(frame * PAGE_SIZE), (unsigned long long)frame);
             poison_fill(frame * PAGE_SIZE, 0xDC);
         }
     }
@@ -1242,7 +1291,8 @@ uint64_t pmm_alloc_frame_at(uint64_t frame)
 
 /* Allocate count contiguous frames. Returns first frame physical addr, or 0 on failure. */
 uint64_t *pmm_alloc_frames(size_t count) {
-    if (count == 0) return NULL;
+    if (count == 0)
+        return NULL;
 
     /* Single-frame allocations go through the fast per-CPU cache path */
     if (count == 1)
@@ -1256,7 +1306,7 @@ uint64_t *pmm_alloc_frames(size_t count) {
      * near the watermark and try early reclaim.  This is especially
      * important for multi-page allocations which are harder to satisfy. */
     uint64_t total = total_frames;
-    uint64_t used  = used_frames;
+    uint64_t used = used_frames;
     uint64_t free_pages = (total > used) ? (total - used) : 0;
     uint64_t watermark = pmm_reclaim_watermark;
 
@@ -1273,7 +1323,8 @@ uint64_t *pmm_alloc_frames(size_t count) {
     uint64_t i = pmm_hint;
     do {
         if (!bitmap_test(i)) {
-            if (found == 0) start = i;
+            if (found == 0)
+                start = i;
             found++;
             if (found == count) {
                 /* Allocate all frames */
@@ -1289,15 +1340,17 @@ uint64_t *pmm_alloc_frames(size_t count) {
                         uint64_t poison64 = 0xDCDCDCDCDCDCDCDCULL;
                         for (int w = 0; w < (int)(PAGE_SIZE / 8); w++) {
                             if (virt[w] != poison64) {
-                                if (w > 4) { found_non_poison = 1; break; }
+                                if (w > 4) {
+                                    found_non_poison = 1;
+                                    break;
+                                }
                             }
                         }
                         if (found_non_poison) {
                             kprintf("[PMM] WARNING: page 0x%llx (frame %llu) "
                                     "does NOT contain poison pattern — "
                                     "possible use-after-free!\n",
-                                    (unsigned long long)(j * PAGE_SIZE),
-                                    (unsigned long long)j);
+                                    (unsigned long long)(j * PAGE_SIZE), (unsigned long long)j);
                             poison_fill(j * PAGE_SIZE, 0xDC);
                         }
                     }
@@ -1305,18 +1358,24 @@ uint64_t *pmm_alloc_frames(size_t count) {
                     poison_fill(j * PAGE_SIZE, 0xDEADBEEF);
                 }
                 pmm_hint = start + count;
-                if (pmm_hint >= total_frames) pmm_hint = 0;
+                if (pmm_hint >= total_frames)
+                    pmm_hint = 0;
                 spinlock_irqsave_release(&pmm_global_lock, irq_flags);
                 /* Track each allocated frame in MGLRU */
                 for (uint64_t j = start; j < start + count; j++)
                     mglru_add_page(j * PAGE_SIZE);
+                if (start * PAGE_SIZE >= 0x4000000ULL && start * PAGE_SIZE < 0x4040000ULL)
+                    kprintf("[pmm] ALLOC_FRAMES 0x%llx count=%zu from=%p\n",
+                            (unsigned long long)(start * PAGE_SIZE), count,
+                            (void *)__builtin_return_address(0));
                 return (uint64_t *)(start * PAGE_SIZE);
             }
         } else {
             found = 0;
         }
         i++;
-        if (i >= total_frames) i = 0;
+        if (i >= total_frames)
+            i = 0;
     } while (i != pmm_hint);
 
     spinlock_irqsave_release(&pmm_global_lock, irq_flags);
@@ -1329,8 +1388,8 @@ uint64_t *pmm_alloc_frames(size_t count) {
 
     /* Run OOM recovery and retry */
     for (int level = 0; level < 2; level++) {
-        kprintf("[PMM] OOM recovery level %d for %llu contiguous frames: ",
-                level + 1, (unsigned long long)count);
+        kprintf("[PMM] OOM recovery level %d for %llu contiguous frames: ", level + 1,
+                (unsigned long long)count);
 
         if (level == 0) {
             kprintf("slab reaping + OOM...\n");
@@ -1351,7 +1410,8 @@ uint64_t *pmm_alloc_frames(size_t count) {
         i = pmm_hint;
         do {
             if (!bitmap_test(i)) {
-                if (found == 0) start = i;
+                if (found == 0)
+                    start = i;
                 found++;
                 if (found == count) {
                     for (uint64_t j = start; j < start + count; j++) {
@@ -1366,15 +1426,17 @@ uint64_t *pmm_alloc_frames(size_t count) {
                             uint64_t poison64 = 0xDCDCDCDCDCDCDCDCULL;
                             for (int w = 0; w < (int)(PAGE_SIZE / 8); w++) {
                                 if (virt[w] != poison64) {
-                                    if (w > 4) { found_non_poison = 1; break; }
+                                    if (w > 4) {
+                                        found_non_poison = 1;
+                                        break;
+                                    }
                                 }
                             }
                             if (found_non_poison) {
                                 kprintf("[PMM] WARNING: page 0x%llx (frame %llu) "
                                         "does NOT contain poison pattern — "
                                         "possible use-after-free!\n",
-                                        (unsigned long long)(j * PAGE_SIZE),
-                                        (unsigned long long)j);
+                                        (unsigned long long)(j * PAGE_SIZE), (unsigned long long)j);
                                 poison_fill(j * PAGE_SIZE, 0xDC);
                             }
                         }
@@ -1382,7 +1444,8 @@ uint64_t *pmm_alloc_frames(size_t count) {
                         poison_fill(j * PAGE_SIZE, 0xDEADBEEF);
                     }
                     pmm_hint = start + count;
-                    if (pmm_hint >= total_frames) pmm_hint = 0;
+                    if (pmm_hint >= total_frames)
+                        pmm_hint = 0;
                     spinlock_irqsave_release(&pmm_global_lock, irq_flags);
                     psi_memstall_leave();
                     /* Track each allocated frame in MGLRU */
@@ -1394,7 +1457,8 @@ uint64_t *pmm_alloc_frames(size_t count) {
                 found = 0;
             }
             i++;
-            if (i >= total_frames) i = 0;
+            if (i >= total_frames)
+                i = 0;
         } while (i != pmm_hint);
         spinlock_irqsave_release(&pmm_global_lock, irq_flags);
     }
@@ -1404,7 +1468,7 @@ uint64_t *pmm_alloc_frames(size_t count) {
     /* ── Final: return error — callers must handle ENOMEM ── */
     pmm_dump_stats();
     kprintf("[PMM] Out of memory — cannot allocate %llu contiguous frames\n",
-          (unsigned long long)count);
+            (unsigned long long)count);
     return NULL;
 }
 
@@ -1423,13 +1487,17 @@ uint64_t *pmm_alloc_frames(size_t count) {
  * Return: void.
  */
 void pmm_free_frame(uint64_t addr) {
-    if (addr & (PAGE_SIZE - 1)) return;
+    if (addr & (PAGE_SIZE - 1))
+        return;
+
+    if (addr >= 0x4000000ULL && addr < 0x4040000ULL)
+        kprintf("[pmm] FREE 0x%llx from=%p\n", (unsigned long long)addr,
+                (void *)__builtin_return_address(0));
 
     /* Reject freeing a page known to have hardware memory errors —
      * attempting to recycle it would risk re-allocating faulty memory. */
     if (pmm_is_broken(addr)) {
-        kprintf("[PMM] WARNING: ignoring free of broken page 0x%llx\n",
-                (unsigned long long)addr);
+        kprintf("[PMM] WARNING: ignoring free of broken page 0x%llx\n", (unsigned long long)addr);
         return;
     }
 
@@ -1450,11 +1518,13 @@ void pmm_free_frame(uint64_t addr) {
          * the global bitmap). */
         poison_fill(addr, 0xDC);
         cache->frames[cache->count++] = addr;
-        if (irq_save & 0x200) __asm__ volatile("sti" : : : "memory");
+        if (irq_save & 0x200)
+            __asm__ volatile("sti" : : : "memory");
         return;
     }
 
-    if (irq_save & 0x200) __asm__ volatile("sti" : : : "memory");
+    if (irq_save & 0x200)
+        __asm__ volatile("sti" : : : "memory");
 
     /* ── Slow path: drain cache to global, then free ── */
     pmm_cache_drain();
@@ -1464,14 +1534,17 @@ void pmm_free_frame(uint64_t addr) {
     if (cache->count < PMM_CPU_CACHE_SIZE) {
         poison_fill(addr, 0xDC);
         cache->frames[cache->count++] = addr;
-        if (irq_save & 0x200) __asm__ volatile("sti" : : : "memory");
+        if (irq_save & 0x200)
+            __asm__ volatile("sti" : : : "memory");
         return;
     }
-    if (irq_save & 0x200) __asm__ volatile("sti" : : : "memory");
+    if (irq_save & 0x200)
+        __asm__ volatile("sti" : : : "memory");
 
     /* Fallback: direct free to global if cache still full */
     uint64_t frame = addr / PAGE_SIZE;
-    if (frame >= MAX_FRAMES) return;
+    if (frame >= MAX_FRAMES)
+        return;
 
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&pmm_global_lock, &irq_flags);
@@ -1482,8 +1555,10 @@ void pmm_free_frame(uint64_t addr) {
 /* Free 'count' contiguous physical frames starting at 'phys'.
  * Bypasses the per-CPU hot cache for efficiency with bulk operations. */
 void pmm_free_frames_contiguous(uint64_t phys, size_t count) {
-    if (count == 0 || phys == 0) return;
-    if (phys & (PAGE_SIZE - 1)) return;
+    if (count == 0 || phys == 0)
+        return;
+    if (phys & (PAGE_SIZE - 1))
+        return;
 
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&pmm_global_lock, &irq_flags);
@@ -1491,9 +1566,12 @@ void pmm_free_frames_contiguous(uint64_t phys, size_t count) {
     for (size_t i = 0; i < count; i++) {
         uint64_t addr = phys + i * PAGE_SIZE;
         uint64_t frame = addr / PAGE_SIZE;
-        if (frame >= MAX_FRAMES) break;
-        if (!bitmap_test(frame)) continue;
-        if (frame_refcount[frame] > 1) continue;
+        if (frame >= MAX_FRAMES)
+            break;
+        if (!bitmap_test(frame))
+            continue;
+        if (frame_refcount[frame] > 1)
+            continue;
 
         mglru_remove_page(addr);
         poison_fill(addr, 0xDC);
@@ -1508,7 +1586,8 @@ void pmm_free_frames_contiguous(uint64_t phys, size_t count) {
 
 void pmm_ref_frame(uint64_t phys) {
     uint64_t frame = phys / PAGE_SIZE;
-    if (frame >= MAX_FRAMES) return;
+    if (frame >= MAX_FRAMES)
+        return;
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&pmm_global_lock, &irq_flags);
     if (frame_refcount[frame] < 65535)
@@ -1518,7 +1597,8 @@ void pmm_ref_frame(uint64_t phys) {
 
 int pmm_unref_frame(uint64_t phys) {
     uint64_t frame = phys / PAGE_SIZE;
-    if (frame >= MAX_FRAMES) return 0;
+    if (frame >= MAX_FRAMES)
+        return 0;
 
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&pmm_global_lock, &irq_flags);
@@ -1547,7 +1627,8 @@ int pmm_unref_frame(uint64_t phys) {
 
 int pmm_refcount(uint64_t phys) {
     uint64_t frame = phys / PAGE_SIZE;
-    if (frame >= MAX_FRAMES) return 0;
+    if (frame >= MAX_FRAMES)
+        return 0;
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&pmm_global_lock, &irq_flags);
     int ret = (int)frame_refcount[frame];
@@ -1555,8 +1636,12 @@ int pmm_refcount(uint64_t phys) {
     return ret;
 }
 
-uint64_t pmm_get_total_frames(void) { return total_frames; }
-uint64_t pmm_get_used_frames(void)  { return used_frames; }
+uint64_t pmm_get_total_frames(void) {
+    return total_frames;
+}
+uint64_t pmm_get_used_frames(void) {
+    return used_frames;
+}
 
 /**
  * pmm_is_phys_ram - Check if a physical address is in available RAM.
@@ -1575,8 +1660,7 @@ uint64_t pmm_get_used_frames(void)  { return used_frames; }
  *          are advisory and racy by nature).
  * Return: 1 if the address is in available RAM, 0 otherwise.
  */
-int pmm_is_phys_ram(uint64_t phys)
-{
+int pmm_is_phys_ram(uint64_t phys) {
     uint64_t frame = phys / PAGE_SIZE;
     if (frame >= MAX_FRAMES)
         return 0; /* out of managed range — not RAM */
@@ -1600,8 +1684,7 @@ EXPORT_SYMBOL(pmm_is_phys_ram);
  *          since writes to total_frames happen only during init/hotplug).
  * Return: 1 if valid, 0 if out of range.
  */
-int pfn_valid(uint64_t pfn)
-{
+int pfn_valid(uint64_t pfn) {
     return (pfn < total_frames && pfn < MAX_FRAMES);
 }
 
@@ -1630,24 +1713,23 @@ void pmm_set_poison(int enable) {
  *  refcount array) and provides O(1) lookup via pmm_is_broken().
  * ══════════════════════════════════════════════════════════════════════════ */
 
- /**
-  * pmm_mark_broken - Permanently disable a physical page after a hardware
-  *                   memory error
-  * @phys_addr: Physical address of the faulty page
-  *
-  * Removes the page from all per-CPU hot caches, marks it used in the bitmap
-  * (if it was free), and sets the refcount to the broken sentinel so that
-  * every path in the allocator/free code treats it as permanently in-use and
-  * never hands it out again.
-  *
-  * Idempotent: calling multiple times on the same page is safe.
-  *
-  * Context: Any context (SMP-safe via pmm_global_lock with IRQ save/restore).
+/**
+ * pmm_mark_broken - Permanently disable a physical page after a hardware
+ *                   memory error
+ * @phys_addr: Physical address of the faulty page
+ *
+ * Removes the page from all per-CPU hot caches, marks it used in the bitmap
+ * (if it was free), and sets the refcount to the broken sentinel so that
+ * every path in the allocator/free code treats it as permanently in-use and
+ * never hands it out again.
+ *
+ * Idempotent: calling multiple times on the same page is safe.
+ *
+ * Context: Any context (SMP-safe via pmm_global_lock with IRQ save/restore).
  *          Must not be called from NMI context.
  * Return: 0 on success, -EINVAL on unaligned or out-of-range address.
  */
-int pmm_mark_broken(uint64_t phys_addr)
-{
+int pmm_mark_broken(uint64_t phys_addr) {
     if (phys_addr & (PAGE_SIZE - 1))
         return -EINVAL;
 
@@ -1712,8 +1794,7 @@ int pmm_mark_broken(uint64_t phys_addr)
  * (benign — the caller may briefly operate on a page being concurrently
  * marked broken, which is a racy scenario anyway).
  */
-int pmm_is_broken(uint64_t phys_addr)
-{
+int pmm_is_broken(uint64_t phys_addr) {
     uint64_t frame = phys_addr / PAGE_SIZE;
     if (frame >= MAX_FRAMES)
         return 0;
@@ -1738,19 +1819,18 @@ static uint8_t pageblock_types[PAGEBLOCK_MAX];
  * MIGRATE_ISOLATE is temporary and never used for regular allocation. */
 const enum migratetype fallbacks[MIGRATE_TYPES][MIGRATE_TYPES] = {
     /* MIGRATE_UNMOVABLE   → RECLAIMABLE → MOVABLE → CMA */
-    { MIGRATE_RECLAIMABLE, MIGRATE_MOVABLE,     MIGRATE_CMA,     MIGRATE_ISOLATE },
+    {MIGRATE_RECLAIMABLE, MIGRATE_MOVABLE, MIGRATE_CMA, MIGRATE_ISOLATE},
     /* MIGRATE_MOVABLE     → RECLAIMABLE → UNMOVABLE → CMA */
-    { MIGRATE_RECLAIMABLE, MIGRATE_UNMOVABLE,   MIGRATE_CMA,     MIGRATE_ISOLATE },
+    {MIGRATE_RECLAIMABLE, MIGRATE_UNMOVABLE, MIGRATE_CMA, MIGRATE_ISOLATE},
     /* MIGRATE_RECLAIMABLE → UNMOVABLE → MOVABLE → CMA */
-    { MIGRATE_UNMOVABLE,   MIGRATE_MOVABLE,     MIGRATE_CMA,     MIGRATE_ISOLATE },
+    {MIGRATE_UNMOVABLE, MIGRATE_MOVABLE, MIGRATE_CMA, MIGRATE_ISOLATE},
     /* MIGRATE_CMA         → MOVABLE → RECLAIMABLE → UNMOVABLE */
-    { MIGRATE_MOVABLE,     MIGRATE_RECLAIMABLE, MIGRATE_UNMOVABLE, MIGRATE_ISOLATE },
+    {MIGRATE_MOVABLE, MIGRATE_RECLAIMABLE, MIGRATE_UNMOVABLE, MIGRATE_ISOLATE},
     /* MIGRATE_ISOLATE     → no fallback (should never be allocated from) */
-    { MIGRATE_ISOLATE,     MIGRATE_ISOLATE,     MIGRATE_ISOLATE, MIGRATE_ISOLATE },
+    {MIGRATE_ISOLATE, MIGRATE_ISOLATE, MIGRATE_ISOLATE, MIGRATE_ISOLATE},
 };
 
-void pageblock_init(uint64_t frames)
-{
+void pageblock_init(uint64_t frames) {
     uint64_t num_blocks = (frames + PAGEBLOCK_NR_PAGES - 1) >> PAGEBLOCK_ORDER;
     if (num_blocks > PAGEBLOCK_MAX)
         num_blocks = PAGEBLOCK_MAX;
@@ -1761,20 +1841,17 @@ void pageblock_init(uint64_t frames)
     memset(pageblock_types, MIGRATE_MOVABLE, (size_t)num_blocks);
 
     kprintf("[PMM] pageblocks: %llu blocks of %lu KB each (default MOVABLE)\n",
-            (unsigned long long)num_blocks,
-            (unsigned long)(PAGEBLOCK_SIZE / 1024));
+            (unsigned long long)num_blocks, (unsigned long)(PAGEBLOCK_SIZE / 1024));
 }
 
-enum migratetype pageblock_get_migratetype(uint64_t frame)
-{
+enum migratetype pageblock_get_migratetype(uint64_t frame) {
     uint64_t block = pageblock_of_frame(frame);
     if (block >= PAGEBLOCK_MAX)
         return MIGRATE_MOVABLE;
     return (enum migratetype)pageblock_types[block];
 }
 
-void pageblock_set_migratetype(uint64_t frame, enum migratetype mt)
-{
+void pageblock_set_migratetype(uint64_t frame, enum migratetype mt) {
     uint64_t block = pageblock_of_frame(frame);
     if (block >= PAGEBLOCK_MAX)
         return;
@@ -1788,8 +1865,7 @@ void pageblock_set_migratetype(uint64_t frame, enum migratetype mt)
 }
 
 /* Internal: scan a pageblock for a free frame.  Returns phys addr or 0. */
-static uint64_t pageblock_scan_block(uint64_t block_idx)
-{
+static uint64_t pageblock_scan_block(uint64_t block_idx) {
     uint64_t base_frame = block_idx << PAGEBLOCK_ORDER;
     uint64_t end_frame = base_frame + PAGEBLOCK_NR_PAGES;
     if (end_frame > total_frames)
@@ -1814,8 +1890,7 @@ static uint64_t pageblock_scan_block(uint64_t block_idx)
     return 0;
 }
 
-uint64_t pageblock_alloc_from_type(enum migratetype mt, uint64_t start_hint)
-{
+uint64_t pageblock_alloc_from_type(enum migratetype mt, uint64_t start_hint) {
     /* Validate zone index: must be a valid non-negative migration type
      * that is available for allocation (not MIGRATE_ISOLATE). */
     if (mt < 0 || mt >= MIGRATE_TYPES || mt == MIGRATE_ISOLATE)
@@ -1844,8 +1919,7 @@ uint64_t pageblock_alloc_from_type(enum migratetype mt, uint64_t start_hint)
     return 0;
 }
 
-void pageblock_dump_stats(void)
-{
+void pageblock_dump_stats(void) {
     uint64_t num_blocks = (total_frames + PAGEBLOCK_NR_PAGES - 1) >> PAGEBLOCK_ORDER;
     if (num_blocks > PAGEBLOCK_MAX)
         num_blocks = PAGEBLOCK_MAX;
@@ -1858,9 +1932,7 @@ void pageblock_dump_stats(void)
     }
 
     kprintf("[PMM] pageblocks: UNMOVABLE=%u MOVABLE=%u RECLAIMABLE=%u CMA=%u\n",
-            counts[MIGRATE_UNMOVABLE],
-            counts[MIGRATE_MOVABLE],
-            counts[MIGRATE_RECLAIMABLE],
+            counts[MIGRATE_UNMOVABLE], counts[MIGRATE_MOVABLE], counts[MIGRATE_RECLAIMABLE],
             counts[MIGRATE_CMA]);
 }
 
@@ -1879,8 +1951,7 @@ void pageblock_dump_stats(void)
  * pmm_alloc_frame_migrate(MIGRATE_UNMOVABLE) to help prevent fragmentation.
  */
 
-uint64_t pmm_alloc_frame_migrate(enum migratetype mt)
-{
+uint64_t pmm_alloc_frame_migrate(enum migratetype mt) {
     /* Validate zone index: must be a valid non-negative migration type
      * that is available for allocation (not MIGRATE_ISOLATE).  Clamp
      * invalid requests to MIGRATE_MOVABLE as a safe default rather
@@ -1922,8 +1993,7 @@ EXPORT_SYMBOL(pmm_ref_frame);
 EXPORT_SYMBOL(pfn_valid);
 
 /* ── pmm_defrag ───────────────────────────────────────── */
-static int pmm_defrag(void)
-{
+static int pmm_defrag(void) {
     kprintf("[pmm] pmm_defrag: defragmenting physical memory\n");
     /* Compact physical memory, merge buddies.
      * Delegate to the compaction subsystem. */
@@ -1933,8 +2003,7 @@ static int pmm_defrag(void)
 }
 
 /* ── pmm_reclaim ───────────────────────────────────────── */
-static int pmm_reclaim(int nr_pages)
-{
+static int pmm_reclaim(int nr_pages) {
     if (nr_pages <= 0)
         return 0;
 
@@ -1958,13 +2027,11 @@ static int pmm_reclaim(int nr_pages)
     uint64_t used = pmm_get_used_frames();
     uint64_t free_pages = (total > used) ? (total - used) : 0;
 
-    kprintf("[pmm] pmm_reclaim: freed pages, now %llu free\n",
-            (unsigned long long)free_pages);
+    kprintf("[pmm] pmm_reclaim: freed pages, now %llu free\n", (unsigned long long)free_pages);
     return (int)(free_pages < (uint64_t)nr_pages ? 0 : nr_pages);
 }
 /* ── pmm_alloc_pages ──────────────────────────── */
-static void* pmm_alloc_pages(size_t count)
-{
+static void *pmm_alloc_pages(size_t count) {
     if (count == 0)
         return NULL;
     if (count == 1) {
@@ -1978,8 +2045,7 @@ static void* pmm_alloc_pages(size_t count)
 }
 
 /* ── pmm_free_pages ─────────────────────────────── */
-static int pmm_free_pages(void *addr, size_t count)
-{
+static int pmm_free_pages(void *addr, size_t count) {
     if (!addr || count == 0)
         return -EINVAL;
     uint64_t phys = VIRT_TO_PHYS((uint64_t)(uintptr_t)addr);
@@ -1995,9 +2061,9 @@ static int pmm_free_pages(void *addr, size_t count)
 }
 
 /* ── pmm_stats ─────────────────────────────── */
-int pmm_stats(void *stats)
-{
-    if (!stats) return -EFAULT;
+int pmm_stats(void *stats) {
+    if (!stats)
+        return -EFAULT;
     struct {
         uint64_t total_frames;
         uint64_t used_frames;
@@ -2008,13 +2074,13 @@ int pmm_stats(void *stats)
         uint64_t pgfree;
     } st;
 
-    st.total_frames      = total_frames;
-    st.used_frames       = used_frames;
-    st.free_frames       = (total_frames > used_frames) ? (total_frames - used_frames) : 0;
+    st.total_frames = total_frames;
+    st.used_frames = used_frames;
+    st.free_frames = (total_frames > used_frames) ? (total_frames - used_frames) : 0;
     st.largest_free_block = pmm_largest_free_block();
-    st.free_block_count   = pmm_free_block_count();
-    st.pgalloc            = vm_pgalloc;
-    st.pgfree             = vm_pgfree;
+    st.free_block_count = pmm_free_block_count();
+    st.pgalloc = vm_pgalloc;
+    st.pgfree = vm_pgfree;
 
     memcpy(stats, &st, sizeof(st));
     return 0;

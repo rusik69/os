@@ -76,6 +76,16 @@ syscall_entry_rsp_saved: dq 0
 ; clobbered by mov r15, KPTI_TRAMP_VADDR before push
 global syscall_user_r15
 syscall_user_r15: dq 0
+global syscall_user_r14
+syscall_user_r14: dq 0
+global syscall_user_r13
+syscall_user_r13: dq 0
+global syscall_user_r12
+syscall_user_r12: dq 0
+global syscall_user_rbx
+syscall_user_rbx: dq 0
+global syscall_user_rbp
+syscall_user_rbp: dq 0
 
 ; ── KPTI mode selector: 0 = disabled, 1 = active ────────────────────
 ; Set by kpti_init().  When active, the original syscall_entry is not used
@@ -100,6 +110,13 @@ kpti_active_flag: dq 0
 
 section .text
 syscall_entry:
+    ; CRITICAL: syscall does NOT clear IF.  Disable interrupts immediately
+    ; so a timer/NMI cannot fire while RSP still points at the user stack,
+    ; which would push the interrupt frame onto the user stack and corrupt
+    ; it (userspace `ret` then jumps to kernel addresses).  Interrupts stay
+    ; disabled through dispatch (original design) and are restored by sysret.
+    cli
+
     mov     [rel syscall_user_rsp], rsp        ; save user RSP
     mov     rsp, [gs:CPU_INFO_KERNEL_RSP_OFF]  ; switch to per-CPU process kernel stack
 
@@ -206,6 +223,14 @@ syscall_linux_entry:
     ; Save user R9 (6th syscall argument) before clobbering it.
     mov     [rel syscall_arg6], r9
 
+    ; Save user callee-saved registers for fork() child inheritance.
+    mov     [rel syscall_user_rbp], rbp
+    mov     [rel syscall_user_rbx], rbx
+    mov     [rel syscall_user_r12], r12
+    mov     [rel syscall_user_r13], r13
+    mov     [rel syscall_user_r14], r14
+    mov     [rel syscall_user_r15], r15
+
     ; Arg shuffle: syscall_linux_dispatch(num, a1, a2, a3, a4, a5) — SysV
     mov     r9,  r8         ; a5  (save before r8 is overwritten)
     mov     r8,  r10        ; a4  (r10 holds arg4 per Linux syscall ABI)
@@ -277,15 +302,16 @@ syscall_entry_full:
     mov     rsp, [gs:CPU_INFO_KERNEL_RSP_OFF]
 
     ; Debug: trace syscall entry (rax = syscall number)
-    push    rax
-    push    rcx
-    push    r11
-    mov     rdi, rax
-    xor     esi, esi
-    call    kprintf_syscall_trace
-    pop     r11
-    pop     rcx
-    pop     rax
+    ; (disabled — per-syscall kprintf floods the boot log)
+    ; push    rax
+    ; push    rcx
+    ; push    r11
+    ; mov     rdi, rax
+    ; xor     esi, esi
+    ; call    kprintf_syscall_trace
+    ; pop     r11
+    ; pop     rcx
+    ; pop     rax
 
     ; Push saved state (same frame as syscall_entry)
     push    qword [rel syscall_user_rsp]       ; saved user RSP
@@ -308,6 +334,18 @@ syscall_entry_full:
 
     ; Save arg6
     mov     [rel syscall_arg6], r9
+
+    ; Save the remaining user callee-saved registers for fork(): the
+    ; fork child must inherit the parent's rbp/rbx/r12/r13/r14/r15
+    ; (userspace relies on them across the fork call — e.g. init keeps
+    ; argv/envp pointers in r13/rbx for the getty exec).  r15 was saved
+    ; above; the rest are still pristine here (only rax/rcx/r11/rsp/r15
+    ; and the arg registers have been touched since the syscall entry).
+    mov     [rel syscall_user_rbp], rbp
+    mov     [rel syscall_user_rbx], rbx
+    mov     [rel syscall_user_r12], r12
+    mov     [rel syscall_user_r13], r13
+    mov     [rel syscall_user_r14], r14
 
     ; Arg shuffle (same as syscall_entry) — RAX now holds syscall number
     mov     r9,  r8
@@ -340,6 +378,12 @@ syscall_entry_full:
     mov     rdi, [rel syscall_entry_rsp_saved]
     call    zero_kernel_stack_uapi
     pop     rax                                 ; restore syscall return value
+
+    ; Disable interrupts BEFORE popping the user RSP — from here to sysret
+    ; the stack pointer will be the USER stack, and a timer interrupt in
+    ; this window would push its frame onto the user stack, corrupting it
+    ; (userspace `ret` then jumps to kernel addresses).
+    cli
 
     pop     r15                                 ; user R15 (saved via syscall_user_r15 global)
     pop     r14

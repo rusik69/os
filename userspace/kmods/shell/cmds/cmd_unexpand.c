@@ -1,28 +1,32 @@
 /* cmd_unexpand.c -- Convert spaces to tabs */
-#include "shell_cmds.h"
 #include "libc.h"
 #include "printf.h"
-#include "string.h"
+#include "shell_cmds.h"
 #include "stdlib.h"
+#include "string.h"
 #include "types.h"
 
 int cmd_unexpand(int argc, char **argv) {
     int tabstop = 8;
     int all = 0;
-    int optind = 1;
+    int optidx = 1;
 
-    while (optind < argc && argv[optind][0] == '-') {
-        if (strcmp(argv[optind], "--") == 0) { optind++; break; }
-        char *p = argv[optind] + 1;
+    while (optidx < argc && argv[optidx][0] == '-') {
+        if (strcmp(argv[optidx], "--") == 0) {
+            optidx++;
+            break;
+        }
+        char *p = argv[optidx] + 1;
         while (*p) {
-            if (*p == 'a')      all = 1;
+            if (*p == 'a')
+                all = 1;
             else if (*p == 't') {
                 if (p[1]) {
                     tabstop = atoi(p + 1);
                     p += strlen(p) - 1;
-                } else if (optind + 1 < argc) {
-                    tabstop = atoi(argv[optind + 1]);
-                    optind++;
+                } else if (optidx + 1 < argc) {
+                    tabstop = atoi(argv[optidx + 1]);
+                    optidx++;
                     p += strlen(p) - 1;
                 } else {
                     kprintf("unexpand: -t requires argument\n");
@@ -34,21 +38,29 @@ int cmd_unexpand(int argc, char **argv) {
             }
             p++;
         }
-        optind++;
+        optidx++;
     }
-    if (tabstop < 1) tabstop = 1;
+    if (tabstop < 1)
+        tabstop = 1;
 
     /* Read input */
     static char fbuf[16384];
     uint32_t fsize = 0;
 
-    if (optind < argc) {
+    if (optidx < argc) {
         char path[64];
-        const char *fn = argv[optind];
-        if (fn[0] != '/') { path[0] = '/'; strncpy(path + 1, fn, 61); path[62] = '\0'; }
-        else { strncpy(path, fn, 63); path[63] = '\0'; }
+        const char *fn = argv[optidx];
+        if (fn[0] != '/') {
+            path[0] = '/';
+            strncpy(path + 1, fn, 61);
+            path[62] = '\0';
+        } else {
+            strncpy(path, fn, 63);
+            path[63] = '\0';
+        }
         int pl = (int)strlen(path);
-        while (pl > 0 && path[pl - 1] == ' ') path[--pl] = '\0';
+        while (pl > 0 && path[pl - 1] == ' ')
+            path[--pl] = '\0';
         if (vfs_read(path, fbuf, (uint32_t)(sizeof(fbuf) - 1), &fsize) != 0) {
             kprintf("unexpand: cannot read '%s'\n", fn);
             return 1;
@@ -71,16 +83,18 @@ int cmd_unexpand(int argc, char **argv) {
         while (*p && *p != '\n' && li < 4095)
             line[li++] = *p++;
         line[li] = '\0';
-        if (*p == '\n') p++;
+        if (*p == '\n')
+            p++;
 
         if (all) {
             /* Convert all runs of spaces to tabs */
             char out[8192];
             int oi = 0, col = 0;
-            for (int si = 0; si < li; ) {
+            for (int si = 0; si < li;) {
                 if (line[si] == ' ') {
                     int sc = 0;
-                    while (si + sc < li && line[si + sc] == ' ') sc++;
+                    while (si + sc < li && line[si + sc] == ' ')
+                        sc++;
                     /* Emit tabs greedily */
                     int remain = sc;
                     while (remain > 0) {
@@ -94,7 +108,10 @@ int cmd_unexpand(int argc, char **argv) {
                             break;
                         }
                     }
-                    while (remain-- > 0) { out[oi++] = ' '; col++; }
+                    while (remain-- > 0) {
+                        out[oi++] = ' ';
+                        col++;
+                    }
                     si += sc;
                 } else if (line[si] == '\t') {
                     out[oi++] = '\t';
@@ -111,7 +128,8 @@ int cmd_unexpand(int argc, char **argv) {
         } else {
             /* Only convert leading spaces to tabs */
             int sc = 0;
-            while (sc < li && line[sc] == ' ') sc++;
+            while (sc < li && line[sc] == ' ')
+                sc++;
             int col = 0;
             int remain = sc;
             while (remain > 0) {
@@ -125,7 +143,10 @@ int cmd_unexpand(int argc, char **argv) {
                     break;
                 }
             }
-            while (remain-- > 0) { kprintf(" "); col++; }
+            while (remain-- > 0) {
+                kprintf(" ");
+                col++;
+            }
             /* Output rest of line (original pointer) */
             kprintf("%s\n", line + sc);
         }

@@ -1,13 +1,12 @@
 /* cmd_getopt.c — parse getopt-style options */
-#include "shell_cmds.h"
 #include "libc.h"
 #include "printf.h"
-#include "string.h"
+#include "shell_cmds.h"
 #include "stdlib.h"
+#include "string.h"
 #include "types.h"
 
-int cmd_getopt(int argc, char **argv)
-{
+int cmd_getopt(int argc, char **argv) {
     if (argc < 2) {
         kprintf("usage: getopt <optstring> [parameters...]\n");
         kprintf("  Parses options using getopt-like semantics and shows results.\n");
@@ -16,7 +15,7 @@ int cmd_getopt(int argc, char **argv)
     }
 
     const char *optstring = argv[1];
-    int optind = 2;  /* index into argv */
+    int optidx = 2; /* index into argv */
 
     kprintf("getopt: parsing with optstring='%s'\n", optstring);
     kprintf("  argc=%d argv:", argc);
@@ -24,19 +23,19 @@ int cmd_getopt(int argc, char **argv)
         kprintf(" '%s'", argv[i]);
     kprintf("\n\n");
 
-    if (optind >= argc) {
+    if (optidx >= argc) {
         kprintf("  (no parameters to parse)\n");
         return 0;
     }
 
     /* Simple getopt-like parser */
     int non_opts = 0;
-    while (optind < argc) {
-        const char *arg = argv[optind];
+    while (optidx < argc) {
+        const char *arg = argv[optidx];
 
         /* End of options marker */
         if (strcmp(arg, "--") == 0) {
-            optind++;
+            optidx++;
             break;
         }
 
@@ -48,7 +47,7 @@ int cmd_getopt(int argc, char **argv)
         /* Single char option (no long options) */
         if (arg[1] == '\0') {
             kprintf("  found option '-' (bare dash)\n");
-            optind++;
+            optidx++;
             continue;
         }
 
@@ -66,7 +65,7 @@ int cmd_getopt(int argc, char **argv)
                         requires_arg = 1;
                         /* Check for optional arg (::) */
                         if (optstring[osi + 2] == ':')
-                            requires_arg = 2;  /* optional arg */
+                            requires_arg = 2; /* optional arg */
                     }
                     break;
                 }
@@ -78,17 +77,17 @@ int cmd_getopt(int argc, char **argv)
             }
 
             if (requires_arg) {
-                const char *optarg = NULL;
+                const char *optargx = NULL;
                 if (requires_arg == 1) {
                     /* Mandatory arg: can be next argv or right after option */
                     if (arg[ci + 1] != '\0') {
                         /* arg is right after option char: -obar */
-                        optarg = arg + ci + 1;
-                        ci = (int)strlen(arg);  /* skip rest of this arg */
-                    } else if (optind + 1 < argc) {
+                        optargx = arg + ci + 1;
+                        ci = (int)strlen(arg); /* skip rest of this arg */
+                    } else if (optidx + 1 < argc) {
                         /* arg is next argv */
-                        optind++;
-                        optarg = argv[optind];
+                        optidx++;
+                        optargx = argv[optidx];
                     } else {
                         kprintf("  option '-%c' requires an argument (missing)\n", optchar);
                         break;
@@ -96,42 +95,41 @@ int cmd_getopt(int argc, char **argv)
                 } else {
                     /* Optional arg: check if it's right after or in next argv */
                     if (arg[ci + 1] != '\0') {
-                        optarg = arg + ci + 1;
+                        optargx = arg + ci + 1;
                         ci = (int)strlen(arg);
-                    } else if (optind + 1 < argc && argv[optind + 1][0] != '-') {
-                        optind++;
-                        optarg = argv[optind];
+                    } else if (optidx + 1 < argc && argv[optidx + 1][0] != '-') {
+                        optidx++;
+                        optargx = argv[optidx];
                     }
                     /* else: no arg provided, that's OK for optional */
                 }
 
-                if (optarg)
-                    kprintf("  option '-%c' with value '%s'\n", optchar, optarg);
+                if (optargx)
+                    kprintf("  option '-%c' with value '%s'\n", optchar, optargx);
                 else
                     kprintf("  option '-%c' (no value)\n", optchar);
             } else {
                 kprintf("  option '-%c'\n", optchar);
             }
         }
-        optind++;
+        optidx++;
     }
 
     /* Remaining non-option arguments */
     kprintf("\n  remaining arguments:");
-    if (optind >= argc && non_opts == 0) {
+    if (optidx >= argc && non_opts == 0) {
         kprintf(" (none)\n");
     } else {
         kprintf("\n");
-        while (optind < argc) {
-            kprintf("    [%d] '%s'\n", optind, argv[optind]);
-            optind++;
+        while (optidx < argc) {
+            kprintf("    [%d] '%s'\n", optidx, argv[optidx]);
+            optidx++;
         }
     }
 
     return 0;
 }
 
-void getopt_init(void)
-{
+void getopt_init(void) {
     kprintf("[OK] cmd_getopt: option parser ready\n");
 }

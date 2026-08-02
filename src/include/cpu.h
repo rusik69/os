@@ -4,17 +4,17 @@
 #include "types.h"
 
 /* CR4 bits */
-#define CR4_PAE      (1ULL << 5)
-#define CR4_PSE      (1ULL << 4)
-#define CR4_SMEP     (1ULL << 20)  /* Supervisor Mode Execution Prevention */
-#define CR4_SMAP     (1ULL << 21)  /* Supervisor Mode Access Prevention */
-#define CR4_UMIP     (1ULL << 11)  /* User-Mode Instruction Prevention */
+#define CR4_PAE (1ULL << 5)
+#define CR4_PSE (1ULL << 4)
+#define CR4_SMEP (1ULL << 20) /* Supervisor Mode Execution Prevention */
+#define CR4_SMAP (1ULL << 21) /* Supervisor Mode Access Prevention */
+#define CR4_UMIP (1ULL << 11) /* User-Mode Instruction Prevention */
 
 /* EFER bits */
-#define EFER_SCE     (1ULL << 0)   /* Syscall Enable */
-#define EFER_LME     (1ULL << 8)   /* Long Mode Enable */
-#define EFER_LMA     (1ULL << 10)  /* Long Mode Active */
-#define EFER_NXE     (1ULL << 11)  /* No-Execute Enable */
+#define EFER_SCE (1ULL << 0)  /* Syscall Enable */
+#define EFER_LME (1ULL << 8)  /* Long Mode Enable */
+#define EFER_LMA (1ULL << 10) /* Long Mode Active */
+#define EFER_NXE (1ULL << 11) /* No-Execute Enable */
 
 /* Read/write control registers */
 static inline uint64_t read_cr0(void) {
@@ -57,13 +57,21 @@ static inline void write_msr(uint32_t msr, uint64_t val) {
     __asm__ volatile("wrmsr" : : "c"(msr), "a"((uint32_t)val), "d"((uint32_t)(val >> 32)));
 }
 
+/* SMAP support flag — set by cpu_security_init() based on CPUID.
+ * On CPUs without SMAP, the stac/clac instructions would raise #UD, so
+ * the uaccess paths must skip them entirely. */
+extern int smap_supported;
+
 /* SMAP toggling: stac (Set AC Flag) / clac (Clear AC Flag)
- * These are no-ops if SMAP is not enabled in CR4. */
+ * These are no-ops if SMAP is not supported by the CPU (the instruction
+ * itself faults with #UD on SMAP-less CPUs, e.g. QEMU's default CPU). */
 static inline void stac(void) {
-    __asm__ volatile("stac" : : : "memory");
+    if (smap_supported)
+        __asm__ volatile("stac" : : : "memory");
 }
 static inline void clac(void) {
-    __asm__ volatile("clac" : : : "memory");
+    if (smap_supported)
+        __asm__ volatile("clac" : : : "memory");
 }
 
 /* Initialize CPU security features (SMEP, SMAP, NXE, UMIP).

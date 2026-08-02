@@ -1,54 +1,59 @@
 #include "telnetd.h"
-#include "net.h"
+
+#include "dhcp.h"
 #include "e1000.h"
-#include "string.h"
-#include "printf.h"
-#include "timer.h"
-#include "scheduler.h"
 #include "fs.h"
+#include "net.h"
+#include "printf.h"
+#include "process.h"
+#include "scheduler.h"
 #include "service.h"
+#include "shell.h"
+#include "spinlock.h"
+#include "string.h"
+#include "timer.h"
 
 #define TELNET_PORT 23
 
 /* Telnet negotiation bytes */
-#define IAC  255
+#define IAC 255
 #define WILL 251
 #define WONT 252
-#define DO   253
+#define DO 253
 #define DONT 254
-#define OPT_ECHO       1
+#define OPT_ECHO 1
 #define OPT_SUPPRESS_GA 3
-#define OPT_LINEMODE   34
+#define OPT_LINEMODE 34
 
 /* Telnet command bytes (RFC 854) */
-#define SE   240
-#define NOP  241
-#define BRK  243
-#define IP   244
-#define AO   245
-#define AYT  246
-#define EC   247
-#define EL   248
-#define GA   249
-#define SB   250
+#define SE 240
+#define NOP 241
+#define BRK 243
+#define IP 244
+#define AO 245
+#define AYT 246
+#define EC 247
+#define EL 248
+#define GA 249
+#define SB 250
 
 /* Per-connection state */
 #define TELNET_BUF_SIZE 256
 #define TELNET_OUT_SIZE 32768
-#define TELNET_OUT_FLUSH  (TELNET_OUT_SIZE - 512)
+#define TELNET_OUT_FLUSH (TELNET_OUT_SIZE - 512)
 
 struct telnet_session {
     int conn_id;
     int active;
-    int processing;  /* 1 while a command is executing (prevents re-entry) */
+    int processing; /* 1 while a command is executing (prevents re-entry) */
     char cmd_buf[TELNET_BUF_SIZE];
     int cmd_len;
     char out_buf[TELNET_OUT_SIZE];
     int out_len;
     int negotiated;
-    int hist_pos;    /* current history navigation position */
-    int esc_state;   /* 0=normal, 1=got ESC, 2=got ESC[ */
-    char cwd[64];    /* per-session working directory */
+    int hist_pos;  /* current history navigation position */
+    int esc_state; /* 0=normal, 1=got ESC, 2=got ESC[ */
+    char cwd[64];  /* per-session working directory */
 };
 
 static struct telnet_session sessions[8];
@@ -58,11 +63,14 @@ static struct telnet_session sessions[8];
  * process happens to call net_poll() and trigger on_data(). */
 static char *g_session_cwd = NULL;
 
-char *telnet_get_cwd_ctx(void) { return g_session_cwd; }
+char *telnet_get_cwd_ctx(void) {
+    return g_session_cwd;
+}
 
 static struct telnet_session *find_session(int conn_id) {
     for (int i = 0; i < 8; i++)
-        if (sessions[i].active && sessions[i].conn_id == conn_id) return &sessions[i];
+        if (sessions[i].active && sessions[i].conn_id == conn_id)
+            return &sessions[i];
     return NULL;
 }
 
@@ -94,6 +102,16 @@ static void ses_write(struct telnet_session *s, const char *data, int len) {
 
 static void ses_flush(struct telnet_session *s) {
     if (s->out_len > 0) {
+        /* Defer the send when called from inside a spinlock critical
+         * section: the packet-dispatch path (net_rx_dispatch → TCP
+         * receive) holds tcp_lock, and net_tcp_send would deadlock
+         * re-acquiring it on the same CPU (observed: spinlock lockup
+         * in tcp_lock when a shell command over telnet printed output
+         * while netd was dispatching the incoming packet).  The
+         * telnetd poll loop flushes deferred output when the locks
+         * are free. */
+        if (lockdep_holding_spinlock())
+            return;
         net_tcp_send(s->conn_id, s->out_buf, (uint16_t)s->out_len);
         s->out_len = 0;
     }
@@ -118,13 +136,16 @@ static void ses_flush_hook(void *ctx) {
 
 static void process_telnet_cmd(struct telnet_session *s) {
     char *cmd = s->cmd_buf;
-    while (*cmd == ' ') cmd++;
-    if (*cmd == '\0') return;
+    while (*cmd == ' ')
+        cmd++;
+    if (*cmd == '\0')
+        return;
 
     /* Handle telnet-specific commands before full processing */
     {
         char *c = cmd;
-        while (*c == ' ') c++;
+        while (*c == ' ')
+            c++;
         if (strcmp(c, "exit") == 0 || strcmp(c, "quit") == 0) {
             kprintf_set_hook(telnet_output_hook, s);
             kprintf("Goodbye!\n");
@@ -142,10 +163,14 @@ static void process_telnet_cmd(struct telnet_session *s) {
     /* Point global CWD context at this session's cwd buffer */
     g_session_cwd = s->cwd;
 
-    /* Redirect kprintf output to this session */
+    /* Redirect kprintf output to this session, execute the command via
+     * the kernel shell (all builtins: dmesg, arp, route, uname, ...),
+     * then restore the hooks.  The shell is a loadable module that
+     * registers shell_process_line_ptr — guard in case it isn't loaded. */
     kprintf_set_hook(telnet_output_hook, s);
     kprintf_set_flush(ses_flush_hook, s);
-    kprintf("cmd: %s\n", cmd);
+    if (shell_process_line_ptr)
+        shell_process_line_ptr(cmd);
     kprintf_set_flush(0, 0);
     kprintf_set_hook(0, 0);
 
@@ -160,15 +185,17 @@ static void process_telnet_cmd(struct telnet_session *s) {
 
 static void on_connect(int conn_id) {
     struct telnet_session *s = alloc_session(conn_id);
-    if (!s) { net_tcp_close(conn_id); return; }
+    if (!s) {
+        net_tcp_close(conn_id);
+        return;
+    }
     service_log("telnetd", "client connected");
 
     /* Send telnet negotiation: server will echo, suppress go-ahead */
     uint8_t neg[] = {
-        IAC, WILL, OPT_ECHO,
-        IAC, WILL, OPT_SUPPRESS_GA,
-        IAC, DONT, OPT_LINEMODE,
+        IAC, WILL, OPT_ECHO, IAC, WILL, OPT_SUPPRESS_GA, IAC, DONT, OPT_LINEMODE,
     };
+    net_tcp_set_nodelay(conn_id, 1); /* interactive: send every byte immediately */
     net_tcp_send(conn_id, neg, sizeof(neg));
 
     kprintf_set_hook(telnet_output_hook, s);
@@ -186,28 +213,32 @@ static void on_connect(int conn_id) {
 
 static void on_data(int conn_id, const void *data, uint16_t len) {
     struct telnet_session *s = find_session(conn_id);
-    if (!s) return;
+    if (!s)
+        return;
 
     const uint8_t *p = (const uint8_t *)data;
 
     /* Prevent re-entrant command processing */
-    if (s->processing) return;
+    if (s->processing)
+        return;
     for (uint16_t i = 0; i < len; i++) {
         uint8_t c = p[i];
 
         /* ── Telnet IAC negotiation parsing (RFC 854) ────────────── */
         if (c == IAC) {
-            if (i + 1 >= len) continue;        /* truncated — skip lone IAC */
+            if (i + 1 >= len)
+                continue; /* truncated — skip lone IAC */
             uint8_t cmd = p[i + 1];
 
             if (cmd == IAC) {
                 /* IAC IAC = escaped literal 0xFF (data byte 255) */
-                i++;                            /* skip second IAC byte */
-                continue;                       /* 0xFF won't pass the printable check below */
+                i++;      /* skip second IAC byte */
+                continue; /* 0xFF won't pass the printable check below */
             } else if (cmd == WILL || cmd == WONT || cmd == DO || cmd == DONT) {
                 /* 3-byte: IAC WILL/WONT/DO/DONT <option> */
-                if (i + 2 >= len) continue;     /* truncated — need option byte */
-                i += 2;                         /* skip command + option */
+                if (i + 2 >= len)
+                    continue; /* truncated — need option byte */
+                i += 2;       /* skip command + option */
                 continue;
             } else if (cmd == SB) {
                 /* Variable-length subnegotiation: IAC SB <option> <params> IAC SE
@@ -217,7 +248,7 @@ static void on_data(int conn_id, const void *data, uint16_t len) {
                 for (j = i + 2; j < len; j++) {
                     if (p[j] == IAC) {
                         if (j + 1 < len && p[j + 1] == SE) {
-                            i = j + 1;          /* skip to end of SE */
+                            i = j + 1; /* skip to end of SE */
                             break;
                         }
                         /* IAC IAC within subnegotiation data — skip the
@@ -227,35 +258,44 @@ static void on_data(int conn_id, const void *data, uint16_t len) {
                     }
                 }
                 if (j >= len)
-                    i = len - 1;                /* truncated — advance to end */
+                    i = len - 1; /* truncated — advance to end */
                 continue;
             } else {
                 /* 2-byte commands: NOP, DM, BRK, IP, AO, AYT, EC, EL, GA, etc. */
-                i++;                            /* skip command byte */
+                i++; /* skip command byte */
                 continue;
             }
         }
 
         /* ANSI escape sequence state machine for arrow keys */
         if (s->esc_state == 1) {
-            if (c == '[') { s->esc_state = 2; continue; }
+            if (c == '[') {
+                s->esc_state = 2;
+                continue;
+            }
             s->esc_state = 0;
             /* fall through to process c normally */
         } else if (s->esc_state == 2) {
             s->esc_state = 0;
             if (c == 'A' || c == 'B') {
                 /* Erase current input */
-                for (int k = 0; k < s->cmd_len; k++) ses_write(s, "\b ", 2);
-                for (int k = 0; k < s->cmd_len; k++) ses_write(s, "\b", 1);
+                for (int k = 0; k < s->cmd_len; k++)
+                    ses_write(s, "\b ", 2);
+                for (int k = 0; k < s->cmd_len; k++)
+                    ses_write(s, "\b", 1);
                 ses_flush(s);
             }
             /* ignore other escape sequences */
             continue;
         }
 
-        if (c == 0x1b) { s->esc_state = 1; continue; }
+        if (c == 0x1b) {
+            s->esc_state = 1;
+            continue;
+        }
 
-        if (c == '\r') continue; /* ignore CR, handle LF */
+        if (c == '\r')
+            continue; /* ignore CR, handle LF */
         if (c == '\n' || c == '\0') {
             /* Execute command */
             s->cmd_buf[s->cmd_len] = '\0';
@@ -292,14 +332,16 @@ static void on_data(int conn_id, const void *data, uint16_t len) {
 
 static void on_close(int conn_id) {
     struct telnet_session *s = find_session(conn_id);
-    if (s) s->active = 0;
+    if (s)
+        s->active = 0;
     service_log("telnetd", "client disconnected");
 }
 
 static int telnetd_running = 0;
 
 int telnetd_start(void) {
-    if (telnetd_running) return 0;
+    if (telnetd_running)
+        return 0;
     memset(sessions, 0, sizeof(sessions));
     net_tcp_listen(TELNET_PORT, on_connect, on_data, on_close);
     telnetd_running = 1;
@@ -307,7 +349,8 @@ int telnetd_start(void) {
 }
 
 void telnetd_stop(void) {
-    if (!telnetd_running) return;
+    if (!telnetd_running)
+        return;
     net_tcp_unlisten(TELNET_PORT);
     memset(sessions, 0, sizeof(sessions));
     telnetd_running = 0;
@@ -318,16 +361,36 @@ void telnetd_init(void) {
 }
 
 void telnetd_task(void) {
+    uint8_t pkt[2048];
     for (;;) {
-        net_wait_for_packet();
-        net_poll();
+        process_sleep_ticks(2);
+
+        /* Flush deferred telnet output (ses_flush skips sending while a
+         * spinlock — tcp_lock — is held, to avoid same-CPU deadlock;
+         * here the locks are free so pending output goes out). */
+        for (int i = 0; i < 8; i++) {
+            if (sessions[i].active && sessions[i].out_len > 0)
+                ses_flush(&sessions[i]);
+        }
+
+        /* Skip while a DHCP transaction is in flight: the DHCP client's
+         * direct spin-poll owns the RX descriptors during that window
+         * (racing it corrupts the descriptor ring). */
+        if (dhcp_client_busy())
+            continue;
+
+        /* Drain ALL pending packets — the RX ring is small (32 descs);
+         * taking one packet per 2-tick poll lets it overflow and the NIC
+         * silently drops (the client's data then never arrives). */
+        int n;
+        while ((n = net_link_recv(pkt, sizeof(pkt))) > 0)
+            net_rx_dispatch(pkt, (uint16_t)n);
         net_dhcp_renew_if_needed();
     }
 }
 
 /* ── Implement: telnetd_handle_client ────────────────── */
-static int telnetd_handle_client(void *client)
-{
+static int telnetd_handle_client(void *client) {
     if (!client) {
         kprintf("[telnetd] telnetd_handle_client: NULL client\n");
         return -EINVAL;

@@ -1,11 +1,12 @@
+#include "printf.h"
 #include "shell.h"
 #include "shell_cmds.h"
-#include "printf.h"
 #include "string.h"
 
 /* cmd_nft — nftables rule listing and management */
 void cmd_nft(const char *args) {
-    if (!args) args = "";
+    if (!args)
+        args = "";
 
     if (strcmp(args, "list ruleset") == 0 || strcmp(args, "list") == 0 || *args == '\0') {
         kprintf("nftables ruleset:\n");
@@ -17,11 +18,12 @@ void cmd_nft(const char *args) {
         kprintf("  }\n");
     } else if (strncmp(args, "add rule", 8) == 0) {
         const char *rule = args + 8;
-        while (*rule == ' ') rule++;
+        while (*rule == ' ')
+            rule++;
         kprintf("Adding nftables rule: %s\n", rule);
 
-        extern int nf_add_rule(void *rule);
-        int ret = nf_add_rule((void*)rule);
+        extern int nf_add_rule(const void *rule);
+        int ret = nf_add_rule(rule);
         if (ret == 0) {
             kprintf("Rule added successfully\n");
         } else {

@@ -75,22 +75,16 @@ SECTIONS
         _data_end = .;
     }
 
-    .bss ALIGN(4K) : AT(ADDR(.bss) - KERNEL_VMA_OFFSET) {
-        _bss_start = .;
-        *(.bss .bss.*)
-        *(COMMON)
-        _bss_end = .;
-    }
-
-    .lbss ALIGN(4K) : AT(ADDR(.lbss) - KERNEL_VMA_OFFSET) {
-        _lbss_start = .;
-        *(.lbss .lbss.*)
-        _lbss_end = .;
-    }
-
     /* ── Kernel symbol export table ────────────────────────────────
      * Collected from EXPORT_SYMBOL / EXPORT_SYMBOL_GPL uses across
-     * the kernel.  Used by the module loader for symbol resolution. */
+     * the kernel.  Used by the module loader for symbol resolution.
+     *
+     * IMPORTANT: these metadata sections MUST stay in the FILE-BACKED
+     * part of the data segment (before .bss).  When they were placed
+     * after .bss, the linker emitted them as a separate PT_LOAD segment
+     * at phys ~0x3fa2000 which QEMU's multiboot loader did not load —
+     * the ksymtab came up as all zeros and every EXPORT_SYMBOL name
+     * was NULL (module resolve crashed in strcmp with CR2=0). */
     .ksymtab ALIGN(16) : AT(ADDR(.ksymtab) - KERNEL_VMA_OFFSET) {
         __ksymtab_start = .;
         KEEP(*(.ksymtab))
@@ -139,6 +133,21 @@ SECTIONS
         __kunit_suites_start = .;
         KEEP(*(.kunit_test_suites))
         __kunit_suites_end = .;
+    }
+
+    /* .bss / .lbss come AFTER the file-backed metadata sections so the
+     * loader's NOBITS zero-fill never overlaps them (see .ksymtab above). */
+    .bss ALIGN(4K) : AT(ADDR(.bss) - KERNEL_VMA_OFFSET) {
+        _bss_start = .;
+        *(.bss .bss.*)
+        *(COMMON)
+        _bss_end = .;
+    }
+
+    .lbss ALIGN(4K) : AT(ADDR(.lbss) - KERNEL_VMA_OFFSET) {
+        _lbss_start = .;
+        *(.lbss .lbss.*)
+        _lbss_end = .;
     }
 
     _kernel_end = .;

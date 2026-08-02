@@ -13,9 +13,9 @@
  */
 
 #include "dos.h"
-#include "string.h"
 #include "printf.h"
 #include "scheduler.h"
+#include "string.h"
 #include "vfs.h"
 #ifdef MODULE
 #include "module.h"
@@ -40,19 +40,18 @@ static uint8_t dos_memory_pool[DOS_CONV_MEM_SIZE];
 /*   All segment registers set to 0.                                   */
 /*   SP = 0xFFFE (top of the 64 KB segment minus 2).                  */
 /* ------------------------------------------------------------------ */
-int dos_load_com(struct dos_cpu_state *state, const uint8_t *data, uint32_t size)
-{
+int dos_load_com(struct dos_cpu_state *state, const uint8_t *data, uint32_t size) {
     state->memory = dos_memory_pool;
     __builtin_memset(state->memory, 0, DOS_CONV_MEM_SIZE);
 
     /* Set up minimal PSP at segment 0, offset 0 */
-    state->memory[0] = 0xCD;       /* INT */
-    state->memory[1] = 0x20;       /* 20h */
-    state->memory[2] = 0xFF;       /* end of memory (top of segment) */
+    state->memory[0] = 0xCD; /* INT */
+    state->memory[1] = 0x20; /* 20h */
+    state->memory[2] = 0xFF; /* end of memory (top of segment) */
     state->memory[3] = 0xFF;
-    state->memory[0x2C] = 0;       /* environment segment = 0 */
+    state->memory[0x2C] = 0; /* environment segment = 0 */
     state->memory[0x2D] = 0;
-    state->memory[0x80] = 0;       /* command tail length = 0 */
+    state->memory[0x80] = 0; /* command tail length = 0 */
 
     /* Load program image at offset 0x100 */
     uint32_t copy_size = size;
@@ -67,7 +66,7 @@ int dos_load_com(struct dos_cpu_state *state, const uint8_t *data, uint32_t size
     state->ss = 0;
     state->ip = 0x100;
     state->sp = 0xFFFE;
-    state->flags = 0x0002;          /* bit 1 always set */
+    state->flags = 0x0002; /* bit 1 always set */
 
     return 0;
 }
@@ -78,8 +77,7 @@ int dos_load_com(struct dos_cpu_state *state, const uint8_t *data, uint32_t size
 /* Reads the MZ header to determine load layout, copies the image,     */
 /* applies relocations, and sets initial CS:IP / SS:SP.                */
 /* ------------------------------------------------------------------ */
-int dos_load_mz(struct dos_cpu_state *state, const uint8_t *data, uint32_t size)
-{
+int dos_load_mz(struct dos_cpu_state *state, const uint8_t *data, uint32_t size) {
     if (size < sizeof(struct mz_header))
         return -1;
 
@@ -96,8 +94,8 @@ int dos_load_mz(struct dos_cpu_state *state, const uint8_t *data, uint32_t size)
     uint16_t load_seg = 0x60;
 
     /* Set up minimal PSP at segment 0 */
-    state->memory[0] = 0xCD;       /* INT */
-    state->memory[1] = 0x20;       /* 20h */
+    state->memory[0] = 0xCD; /* INT */
+    state->memory[1] = 0x20; /* 20h */
     state->memory[2] = 0xFF;
     state->memory[3] = 0xFF;
     state->memory[0x2C] = 0;
@@ -106,7 +104,7 @@ int dos_load_mz(struct dos_cpu_state *state, const uint8_t *data, uint32_t size)
 
     /* Copy load image from file offset (e_cparhdr * 16) */
     uint32_t image_off = (uint32_t)hdr->e_cparhdr * 16;
-    uint32_t image_sz  = size - image_off;
+    uint32_t image_sz = size - image_off;
     uint32_t load_linear = (uint32_t)load_seg << 4;
     if (image_sz > DOS_CONV_MEM_SIZE - load_linear)
         image_sz = DOS_CONV_MEM_SIZE - load_linear;
@@ -115,26 +113,23 @@ int dos_load_mz(struct dos_cpu_state *state, const uint8_t *data, uint32_t size)
 
     /* Apply relocations */
     uint32_t reloc_count = hdr->e_crlc;
-    uint32_t reloc_tab   = hdr->e_lfarlc;
+    uint32_t reloc_tab = hdr->e_lfarlc;
 
     for (uint32_t i = 0; i < reloc_count; i++) {
         uint32_t entry_off = reloc_tab + i * 4;
-        if (entry_off + 4 > size) break;
+        if (entry_off + 4 > size)
+            break;
 
-        uint16_t reloc_off = (uint16_t)data[entry_off]
-                           | ((uint16_t)data[entry_off + 1] << 8);
-        uint16_t reloc_seg = (uint16_t)data[entry_off + 2]
-                           | ((uint16_t)data[entry_off + 3] << 8);
+        uint16_t reloc_off = (uint16_t)data[entry_off] | ((uint16_t)data[entry_off + 1] << 8);
+        uint16_t reloc_seg = (uint16_t)data[entry_off + 2] | ((uint16_t)data[entry_off + 3] << 8);
 
-        uint32_t target = load_linear
-                        + ((uint32_t)reloc_seg << 4)
-                        + reloc_off;
-        if (target + 2 > DOS_CONV_MEM_SIZE) continue;
+        uint32_t target = load_linear + ((uint32_t)reloc_seg << 4) + reloc_off;
+        if (target + 2 > DOS_CONV_MEM_SIZE)
+            continue;
 
-        uint16_t old = (uint16_t)state->memory[target]
-                     | ((uint16_t)state->memory[target + 1] << 8);
+        uint16_t old = (uint16_t)state->memory[target] | ((uint16_t)state->memory[target + 1] << 8);
         uint16_t newv = old + load_seg;
-        state->memory[target]     = (uint8_t)newv;
+        state->memory[target] = (uint8_t)newv;
         state->memory[target + 1] = (uint8_t)(newv >> 8);
     }
 
@@ -157,8 +152,7 @@ int dos_load_mz(struct dos_cpu_state *state, const uint8_t *data, uint32_t size)
 /* loads, initialises, and runs the emulator.                          */
 /* Returns 0 on success, -1 on error.                                  */
 /* ------------------------------------------------------------------ */
-int dos_exec(const char *path)
-{
+int dos_exec(const char *path) {
     uint8_t file_buf[65536];
     uint32_t file_size = 0;
 
@@ -196,7 +190,19 @@ int dos_exec(const char *path)
 /* Module entry point — called by the module ELF loader on insmod */
 int init_module(void) {
     kprintf("[dos] DOS emulator module loaded\n");
-    return 0;  /* success */
+    /* Register the kernel shell hooks (shell_process_line etc.) so the
+     * telnetd/sshd remote shells can execute commands. Without this the
+     * shell_process_line_ptr stays NULL and remote commands silently do
+     * nothing. (shell_init() would also run the 2500-line cli_test
+     * script — too heavy for module load; register hooks only.) */
+    extern void shell_register_hooks(void (*)(const char *), void (*)(const char *));
+    extern void shell_process_line(const char *line);
+    extern void shell_history_add(const char *cmd_line);
+    shell_register_hooks(shell_process_line, shell_history_add);
+    extern int script_exec(const char *path);
+    extern void shell_register_script_exec(int (*)(const char *));
+    shell_register_script_exec(script_exec);
+    return 0; /* success */
 }
 
 /* Module exit point — called by the module ELF loader on rmmod */

@@ -1,29 +1,30 @@
 /* cmd_expand.c -- Convert tabs to spaces */
-#include "shell_cmds.h"
 #include "libc.h"
 #include "printf.h"
-#include "string.h"
+#include "shell_cmds.h"
 #include "stdlib.h"
+#include "string.h"
 #include "types.h"
 
 int cmd_expand(int argc, char **argv) {
     int tabstop = 8;
-    int optind = 1;
+    int optidx = 1;
 
-    while (optind < argc && argv[optind][0] == '-') {
-        if (strcmp(argv[optind], "-t") == 0) {
-            if (optind + 1 >= argc) {
+    while (optidx < argc && argv[optidx][0] == '-') {
+        if (strcmp(argv[optidx], "-t") == 0) {
+            if (optidx + 1 >= argc) {
                 kprintf("expand: -t requires an argument\n");
                 return 1;
             }
-            tabstop = atoi(argv[optind + 1]);
-            if (tabstop < 1) tabstop = 1;
-            optind += 2;
-        } else if (strcmp(argv[optind], "--") == 0) {
-            optind++;
+            tabstop = atoi(argv[optidx + 1]);
+            if (tabstop < 1)
+                tabstop = 1;
+            optidx += 2;
+        } else if (strcmp(argv[optidx], "--") == 0) {
+            optidx++;
             break;
         } else {
-            kprintf("expand: unknown option '%s'\n", argv[optind]);
+            kprintf("expand: unknown option '%s'\n", argv[optidx]);
             return 1;
         }
     }
@@ -33,14 +34,21 @@ int cmd_expand(int argc, char **argv) {
     static char fbuf[4096];
     uint32_t fsize = 0;
 
-    if (optind < argc) {
+    if (optidx < argc) {
         /* Read from file */
         char path[64];
-        const char *fn = argv[optind];
-        if (fn[0] != '/') { path[0] = '/'; strncpy(path + 1, fn, 61); path[62] = '\0'; }
-        else { strncpy(path, fn, 63); path[63] = '\0'; }
+        const char *fn = argv[optidx];
+        if (fn[0] != '/') {
+            path[0] = '/';
+            strncpy(path + 1, fn, 61);
+            path[62] = '\0';
+        } else {
+            strncpy(path, fn, 63);
+            path[63] = '\0';
+        }
         int pl = (int)strlen(path);
-        while (pl > 0 && path[pl - 1] == ' ') path[--pl] = '\0';
+        while (pl > 0 && path[pl - 1] == ' ')
+            path[--pl] = '\0';
         if (vfs_read(path, fbuf, 4095, &fsize) != 0) {
             kprintf("expand: cannot read '%s'\n", fn);
             return 1;

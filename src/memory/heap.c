@@ -1,11 +1,12 @@
 #include "heap.h"
-#include "pmm.h"
-#include "string.h"
+
 #include "export.h"
 #include "fault_inject.h"
 #include "kasan_light.h"
 #include "kmemleak.h"
+#include "pmm.h"
 #include "spinlock.h"
+#include "string.h"
 
 /*
  * ────────────────────────────────────────────────────────────────────────────
@@ -126,30 +127,38 @@
  * ────────────────────────────────────────────────────────────────────────────
  */
 #include "heap.h"
-#define HEAP_MAX_SIZE (64ULL * 1024 * 1024)   /* 64 MB — cc needs ~7 MB per compile */
-#define HEAP_INITIAL  (4ULL * 4096)            /* 4 pages */
+#define HEAP_MAX_SIZE (64ULL * 1024 * 1024) /* 64 MB — cc needs ~7 MB per compile */
+#define HEAP_INITIAL (4ULL * 4096)          /* 4 pages */
+
+/* Dedicated heap region base (physical).  The heap MUST NOT sit right above
+ * _kernel_end: that region is where the PMM hot cache / get_or_create_table
+ * allocate page-table frames (phys 0x4000000-0x4007000) and where the kernel
+ * stacks live.  The heap grew UP through those frames and kmalloc handed the
+ * kernel .text PT (phys 0x4002000) out as a file buffer — FAT reads then
+ * clobbered the page tables (infinite #PF fetch loop in page_fault_handler).
+ * 0x4200000 (66 MB) is above every pre-heap_init allocation and is
+ * identity-mapped by the physmap huge pages (pd[0x21]+). */
+#define HEAP_PHYS_BASE 0x4200000ULL
 
 #define HEAP_BLOCK_MAGIC 0xE1E0E3E2E5E4E7E6ULL /* canary — detects heap metadata corruption */
 
 struct heap_block {
-    uint64_t magic;          /* must be HEAP_BLOCK_MAGIC — corruption canary */
+    uint64_t magic; /* must be HEAP_BLOCK_MAGIC — corruption canary */
     size_t size;
-    int    free;
+    int free;
     struct heap_block *next;
     struct heap_block *prev;
 };
 
 #define BLOCK_HDR_SIZE sizeof(struct heap_block)
 
-extern char _kernel_end[];   /* linker symbol */
-
 static struct heap_block *heap_start_block = NULL;
-static uint64_t heap_base    = 0;
+static uint64_t heap_base = 0;
 static uint64_t heap_current = 0;
-static uint64_t heap_limit   = 0;
-static uint64_t heap_base_phys = 0; /* physical address of heap base */
+static uint64_t heap_limit = 0;
+static uint64_t heap_base_phys = 0;  /* physical address of heap base */
 static uint64_t heap_used_bytes = 0; /* running total of bytes in use */
-static spinlock_t heap_lock;          /* protects all shared state above */
+static spinlock_t heap_lock;         /* protects all shared state above */
 
 static int heap_expand(size_t needed) {
     uint64_t new_limit = heap_current + needed;
@@ -167,26 +176,33 @@ static int heap_expand(size_t needed) {
 }
 
 void __init heap_init(void) {
-    /* Align heap base to PAGE_SIZE above the kernel binary */
-    heap_base    = ((uint64_t)_kernel_end + PAGE_SIZE - 1) & ~(uint64_t)(PAGE_SIZE - 1);
+    /* Dedicated heap region at HEAP_PHYS_BASE — see the define above for why
+     * it must not sit right above the kernel image. */
+    heap_base = (uint64_t)PHYS_TO_VIRT(HEAP_PHYS_BASE);
     heap_current = heap_base + HEAP_INITIAL;
-    heap_limit   = heap_current;
+    heap_limit = heap_current;
     heap_base_phys = VIRT_TO_PHYS(heap_base);
 
-    /* Reserve the initial heap pages in PMM so they are not stolen.
-     * heap_base_phys is the physical address of the heap region. */
-    pmm_reserve_frames(heap_base_phys, HEAP_INITIAL);
+    /* Reserve the ENTIRE heap range up front so the PMM never hands these
+     * frames to page tables / kernel stacks / disk buffers.  The previous
+     * lazy per-expansion reservation was unsafe: pmm_reserve_frames()
+     * silently skips frames that are already allocated, so when the heap
+     * grew into a range the PMM had already given to get_or_create_table,
+     * the expansion "succeeded" and kmalloc reused those page-table frames
+     * as data (FAT reads clobbered the kernel .text PT → #PF fetch loop). */
+    pmm_reserve_frames(heap_base_phys, HEAP_MAX_SIZE);
 
-    /* Advance PMM alloc hint past the initial heap region */
-    pmm_advance_hint(heap_base_phys + HEAP_INITIAL);
+    /* Advance PMM alloc hint past the reserved heap region so scanning
+     * allocations (user pages, stacks, page tables) come from above it. */
+    pmm_advance_hint(heap_base_phys + HEAP_MAX_SIZE);
 
     /* Set up initial free block (high-half VMA — mapped via PML4[256] huge pages) */
-    heap_start_block        = (struct heap_block *)heap_base;
+    heap_start_block = (struct heap_block *)heap_base;
     heap_start_block->magic = HEAP_BLOCK_MAGIC;
-    heap_start_block->size  = HEAP_INITIAL - BLOCK_HDR_SIZE;
-    heap_start_block->free  = 1;
-    heap_start_block->next  = NULL;
-    heap_start_block->prev  = NULL;
+    heap_start_block->size = HEAP_INITIAL - BLOCK_HDR_SIZE;
+    heap_start_block->free = 1;
+    heap_start_block->next = NULL;
+    heap_start_block->prev = NULL;
 
     spinlock_init(&heap_lock);
 }
@@ -196,8 +212,7 @@ void __init heap_init(void) {
  * These are used by krealloc to avoid recursive spinlock deadlock.
  */
 
-static void *_kmalloc_locked(size_t size)
-{
+static void *_kmalloc_locked(size_t size) {
     /* size must already be aligned and > 0 */
 
     /* First fit */
@@ -206,13 +221,15 @@ static void *_kmalloc_locked(size_t size)
         if (block->free && block->size >= size) {
             /* Split if possible */
             if (block->size > size + BLOCK_HDR_SIZE + 16) {
-                struct heap_block *new_block = (struct heap_block *)((uint8_t *)block + BLOCK_HDR_SIZE + size);
+                struct heap_block *new_block =
+                    (struct heap_block *)((uint8_t *)block + BLOCK_HDR_SIZE + size);
                 new_block->magic = HEAP_BLOCK_MAGIC;
                 new_block->size = block->size - size - BLOCK_HDR_SIZE;
                 new_block->free = 1;
                 new_block->next = block->next;
                 new_block->prev = block;
-                if (new_block->next) new_block->next->prev = new_block;
+                if (new_block->next)
+                    new_block->next->prev = new_block;
                 block->next = new_block;
                 block->size = size;
             }
@@ -225,7 +242,8 @@ static void *_kmalloc_locked(size_t size)
             kmemleak_alloc(ptr, block->size, KMEMLEAK_HEAP);
             return ptr;
         }
-        if (!block->next) break;
+        if (!block->next)
+            break;
         block = block->next;
     }
 
@@ -245,8 +263,10 @@ static void *_kmalloc_locked(size_t size)
     new_block->next = NULL;
     new_block->prev = block;
 
-    if (block) block->next = new_block;
-    else heap_start_block = new_block;
+    if (block)
+        block->next = new_block;
+    else
+        heap_start_block = new_block;
 
     heap_used_bytes += total;
     void *ptr = (void *)((uint8_t *)new_block + BLOCK_HDR_SIZE);
@@ -257,9 +277,11 @@ static void *_kmalloc_locked(size_t size)
     return ptr;
 }
 
-void * __malloc kmalloc(size_t size) {
-    if (size == 0) return NULL;
-    if (heap_base == 0) return NULL;
+void *__malloc kmalloc(size_t size) {
+    if (size == 0)
+        return NULL;
+    if (heap_base == 0)
+        return NULL;
 
     /* Fault injection: if enabled, fail this allocation to test error paths */
     if (fault_inject_should_fail_kmalloc()) {
@@ -300,7 +322,8 @@ uint64_t heap_get_free(void) {
     spinlock_irqsave_acquire(&heap_lock, &flags);
     uint64_t used = heap_used_bytes;
     spinlock_irqsave_release(&heap_lock, flags);
-    if (used >= HEAP_MAX_SIZE) return 0;
+    if (used >= HEAP_MAX_SIZE)
+        return 0;
     return HEAP_MAX_SIZE - used;
 }
 
@@ -308,16 +331,14 @@ uint64_t heap_get_free(void) {
  * Internal locked helper — caller must hold heap_lock.
  * Called by kfree and krealloc.
  */
-static void _kfree_locked(void *ptr)
-{
+static void _kfree_locked(void *ptr) {
     struct heap_block *block = (struct heap_block *)((uint8_t *)ptr - BLOCK_HDR_SIZE);
 
     /* Verify heap block canary — detects buffer overflows and corruption */
     if (block->magic != HEAP_BLOCK_MAGIC) {
         kprintf("[heap] CRITICAL: heap corruption detected in kfree(%p) — "
                 "block %p magic mismatch (expected 0x%016llx, actual 0x%016llx)\n",
-                ptr, (void *)block,
-                (unsigned long long)HEAP_BLOCK_MAGIC,
+                ptr, (void *)block, (unsigned long long)HEAP_BLOCK_MAGIC,
                 (unsigned long long)block->magic);
         /* Continue with the free to avoid leaking memory — the corruption
          * may have already damaged the allocator state, but freeing the
@@ -338,7 +359,8 @@ static void _kfree_locked(void *ptr)
         block->size += BLOCK_HDR_SIZE + block->next->size;
         struct heap_block *old_next = block->next->next;
         block->next = old_next;
-        if (old_next) old_next->prev = block;
+        if (old_next)
+            old_next->prev = block;
     }
 
     /* Backward coalesce with previous block */
@@ -346,12 +368,14 @@ static void _kfree_locked(void *ptr)
         struct heap_block *prev = block->prev;
         prev->size += BLOCK_HDR_SIZE + block->size;
         prev->next = block->next;
-        if (block->next) block->next->prev = prev;
+        if (block->next)
+            block->next->prev = prev;
     }
 }
 
 void kfree(void *ptr) {
-    if (!ptr) return;
+    if (!ptr)
+        return;
     uint64_t flags;
     spinlock_irqsave_acquire(&heap_lock, &flags);
     _kfree_locked(ptr);
@@ -383,8 +407,7 @@ void *krealloc(void *ptr, size_t new_size) {
     if (block->magic != HEAP_BLOCK_MAGIC) {
         kprintf("[heap] CRITICAL: heap corruption detected in krealloc(%p) — "
                 "block %p magic mismatch (expected 0x%016llx, actual 0x%016llx)\n",
-                ptr, (void *)block,
-                (unsigned long long)HEAP_BLOCK_MAGIC,
+                ptr, (void *)block, (unsigned long long)HEAP_BLOCK_MAGIC,
                 (unsigned long long)block->magic);
         spinlock_irqsave_release(&heap_lock, flags);
         return NULL;
@@ -424,7 +447,7 @@ void *krealloc(void *ptr, size_t new_size) {
 
 /* ── kcalloc — zero-initialised array allocation ─────────────────── */
 
-void * __malloc kcalloc(size_t nmemb, size_t size) {
+void *__malloc kcalloc(size_t nmemb, size_t size) {
     size_t total = nmemb * size;
     /* Check for overflow */
     if (nmemb != 0 && total / nmemb != size)
@@ -436,9 +459,9 @@ void * __malloc kcalloc(size_t nmemb, size_t size) {
 }
 
 /* ── heap_stats ─────────────────────────────── */
-int heap_stats(void *stats)
-{
-    if (!stats) return -EINVAL;
+int heap_stats(void *stats) {
+    if (!stats)
+        return -EINVAL;
     /* Fill a heap_stat structure */
     struct {
         uint64_t total_size;
@@ -451,9 +474,9 @@ int heap_stats(void *stats)
     uint64_t flags;
     spinlock_irqsave_acquire(&heap_lock, &flags);
 
-    st.total_size     = HEAP_MAX_SIZE;
-    st.used_bytes     = heap_used_bytes;
-    st.free_bytes     = (heap_used_bytes >= HEAP_MAX_SIZE) ? 0 : HEAP_MAX_SIZE - heap_used_bytes;
+    st.total_size = HEAP_MAX_SIZE;
+    st.used_bytes = heap_used_bytes;
+    st.free_bytes = (heap_used_bytes >= HEAP_MAX_SIZE) ? 0 : HEAP_MAX_SIZE - heap_used_bytes;
 
     /* Count blocks */
     st.block_count = 0;
@@ -461,7 +484,8 @@ int heap_stats(void *stats)
     struct heap_block *b = heap_start_block;
     while (b) {
         st.block_count++;
-        if (b->free) st.free_block_count++;
+        if (b->free)
+            st.free_block_count++;
         b = b->next;
     }
 
@@ -472,8 +496,7 @@ int heap_stats(void *stats)
 }
 
 /* ── heap_check ─────────────────────────────── */
-static int heap_check(void)
-{
+static int heap_check(void) {
     uint64_t flags;
     spinlock_irqsave_acquire(&heap_lock, &flags);
 
@@ -483,42 +506,38 @@ static int heap_check(void)
     while (b) {
         /* Validate block header sanity */
         if (b->size == 0 || b->size > HEAP_MAX_SIZE) {
-            kprintf("[heap] heap_check: ERROR block %p has invalid size %llu\n",
-                    (void *)b, (unsigned long long)b->size);
+            kprintf("[heap] heap_check: ERROR block %p has invalid size %llu\n", (void *)b,
+                    (unsigned long long)b->size);
             errors++;
         }
         /* Validate block magic (canary) — detects heap metadata corruption */
         if (b->magic != HEAP_BLOCK_MAGIC) {
             kprintf("[heap] heap_check: ERROR block %p has corrupted magic "
                     "(expected 0x%016llx, actual 0x%016llx)\n",
-                    (void *)b,
-                    (unsigned long long)HEAP_BLOCK_MAGIC,
-                    (unsigned long long)b->magic);
+                    (void *)b, (unsigned long long)HEAP_BLOCK_MAGIC, (unsigned long long)b->magic);
             errors++;
         }
         /* Validate prev/next consistency */
         if (b->next && b->next->prev != b) {
-            kprintf("[heap] heap_check: ERROR block %p: next->prev mismatch\n",
-                    (void *)b);
+            kprintf("[heap] heap_check: ERROR block %p: next->prev mismatch\n", (void *)b);
             errors++;
         }
         if (b->prev && b->prev->next != b) {
-            kprintf("[heap] heap_check: ERROR block %p: prev->next mismatch\n",
-                    (void *)b);
+            kprintf("[heap] heap_check: ERROR block %p: prev->next mismatch\n", (void *)b);
             errors++;
         }
         /* Adjacent free blocks should have been coalesced */
         if (b->free && b->next && b->next->free) {
-            kprintf("[heap] heap_check: ERROR adjacent free blocks at %p and %p\n",
-                    (void *)b, (void *)b->next);
+            kprintf("[heap] heap_check: ERROR adjacent free blocks at %p and %p\n", (void *)b,
+                    (void *)b->next);
             errors++;
         }
         b = b->next;
     }
 
     if (errors == 0)
-        kprintf("[heap] heap_check: OK (%d blocks, %llu bytes used)\n",
-                errors, (unsigned long long)heap_used_bytes);
+        kprintf("[heap] heap_check: OK (%d blocks, %llu bytes used)\n", errors,
+                (unsigned long long)heap_used_bytes);
     else
         kprintf("[heap] heap_check: %d ERRORS found\n", errors);
 

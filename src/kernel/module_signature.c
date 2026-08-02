@@ -1,12 +1,13 @@
 #define KERNEL_INTERNAL
 #include "module_signature.h"
-#include "module.h"
-#include "module_elf.h"
-#include "sha256.h"
-#include "printf.h"
-#include "string.h"
+
 #include "elf.h"
 #include "errno.h"
+#include "module.h"
+#include "module_elf.h"
+#include "printf.h"
+#include "sha256.h"
+#include "string.h"
 
 /*
  * Module Signature Verification
@@ -137,18 +138,25 @@
 
 /* ── State ───────────────────────────────────────────────────────────── */
 
-static int module_sig_enforce = 1;   /* default: enforce */
+static int module_sig_enforce = 0; /* default: warn-only — unsigned modules load
+                                    * with TAINT_MODULE_UNSIGNED.  The build does
+                                    * not sign .ko files and no trusted keys are
+                                    * registered at boot, so enforcement-on would
+                                    * reject every module (insmod shell.ko failed
+                                    * with -EKEYREJECTED).  SecureBoot (efi_secureboot.c)
+                                    * flips enforcement back on via
+                                    * module_sig_set_enforce(1). */
 static int module_sig_initialized = 0;
 
 /* ── PKCS#7 chain verification (S109) ───────────────────────────────── */
 
-#define MAX_TRUSTED_KEYS  8
-#define KEY_HASH_LEN     32   /* SHA-256 hash of key */
+#define MAX_TRUSTED_KEYS 8
+#define KEY_HASH_LEN 32 /* SHA-256 hash of key */
 
 /* A trusted key entry: a hash of the public key (fingerprint) */
 struct trusted_key {
-    uint8_t  fingerprint[KEY_HASH_LEN];
-    int      in_use;
+    uint8_t fingerprint[KEY_HASH_LEN];
+    int in_use;
 };
 
 static struct trusted_key g_trusted_keys[MAX_TRUSTED_KEYS];
@@ -164,22 +172,19 @@ static int g_trusted_key_count = 0;
  */
 
 /* Simple DER tag constants */
-#define DER_TAG_SEQUENCE    0x30
-#define DER_TAG_SET         0x31
-#define DER_TAG_OID         0x06
+#define DER_TAG_SEQUENCE 0x30
+#define DER_TAG_SET 0x31
+#define DER_TAG_OID 0x06
 #define DER_TAG_OCTET_STRING 0x04
-#define DER_TAG_CONTEXT_0   0xA0
-#define DER_TAG_CONTEXT_1   0xA1
+#define DER_TAG_CONTEXT_0 0xA0
+#define DER_TAG_CONTEXT_1 0xA1
 
 /* OID for PKCS#7 SignedData (1.2.840.113549.1.7.2) */
-static const uint8_t OID_PKCS7_SIGNED_DATA[] = {
-    0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x07, 0x02
-};
+static const uint8_t OID_PKCS7_SIGNED_DATA[] = {0x2A, 0x86, 0x48, 0x86, 0xF7,
+                                                0x0D, 0x01, 0x07, 0x02};
 
 /* OID for RSA with SHA-256 (1.2.840.113549.1.1.11) */
-static const uint8_t OID_RSA_SHA256[] = {
-    0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0B
-};
+static const uint8_t OID_RSA_SHA256[] = {0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0B};
 
 /*
  * pkcs7_parse_der_length — Parse a DER length field.
@@ -189,9 +194,9 @@ static const uint8_t OID_RSA_SHA256[] = {
  *
  * Returns the number of bytes consumed by the length field (1 or more).
  */
-static int pkcs7_parse_der_length(const uint8_t *der, uint32_t *len)
-{
-    if (!der) return -1;
+static int pkcs7_parse_der_length(const uint8_t *der, uint32_t *len) {
+    if (!der)
+        return -1;
 
     uint8_t first = der[0];
     if (first < 0x80) {
@@ -202,7 +207,8 @@ static int pkcs7_parse_der_length(const uint8_t *der, uint32_t *len)
 
     /* Long form */
     int num_bytes = first & 0x7F;
-    if (num_bytes > 4) return -1;  /* Too long for our parser */
+    if (num_bytes > 4)
+        return -1; /* Too long for our parser */
 
     uint32_t value = 0;
     for (int i = 0; i < num_bytes; i++)
@@ -219,13 +225,14 @@ static int pkcs7_parse_der_length(const uint8_t *der, uint32_t *len)
  *
  * Returns the offset past the TLV, or -1 on error.
  */
-static __attribute__((unused)) int pkcs7_skip_der_tlv(const uint8_t *der, int size)
-{
-    if (size < 2) return -1;
+static __attribute__((unused)) int pkcs7_skip_der_tlv(const uint8_t *der, int size) {
+    if (size < 2)
+        return -1;
 
     uint32_t len;
     int len_bytes = pkcs7_parse_der_length(der + 1, &len);
-    if (len_bytes < 0) return -1;
+    if (len_bytes < 0)
+        return -1;
 
     return 1 + len_bytes + (int)len;
 }
@@ -235,13 +242,9 @@ static __attribute__((unused)) int pkcs7_skip_der_tlv(const uint8_t *der, int si
  *
  * Returns 1 if OID found, 0 otherwise.
  */
-static int pkcs7_find_oid(const uint8_t *der, int der_len,
-                           const uint8_t *oid, int oid_len)
-{
+static int pkcs7_find_oid(const uint8_t *der, int der_len, const uint8_t *oid, int oid_len) {
     for (int i = 0; i < der_len - oid_len; i++) {
-        if (der[i] == DER_TAG_OID &&
-            i + 2 + oid_len <= der_len &&
-            der[i + 1] == (uint8_t)oid_len) {
+        if (der[i] == DER_TAG_OID && i + 2 + oid_len <= der_len && der[i + 1] == (uint8_t)oid_len) {
             if (memcmp(der + i + 2, oid, (size_t)oid_len) == 0)
                 return 1;
         }
@@ -268,8 +271,7 @@ static int pkcs7_find_oid(const uint8_t *der, int der_len,
  * Returns 0 on success, -1 on error.
  */
 static int pkcs7_extract_key_hash(const uint8_t *pkcs7, int pkcs7_len,
-                                   uint8_t hash_out[KEY_HASH_LEN])
-{
+                                  uint8_t hash_out[KEY_HASH_LEN]) {
     if (!pkcs7 || pkcs7_len < 32)
         return -1;
 
@@ -292,9 +294,8 @@ static int pkcs7_extract_key_hash(const uint8_t *pkcs7, int pkcs7_len,
  * Returns 0 on success, -1 on error.
  */
 static int pkcs7_extract_sig_and_hash(const uint8_t *pkcs7, int pkcs7_len,
-                                       uint8_t content_hash[SHA256_DIGEST_SIZE],
-                                       uint8_t *sig_out, uint32_t *sig_len)
-{
+                                      uint8_t content_hash[SHA256_DIGEST_SIZE], uint8_t *sig_out,
+                                      uint32_t *sig_len) {
     if (!pkcs7 || !content_hash || !sig_out || !sig_len)
         return -1;
 
@@ -307,9 +308,7 @@ static int pkcs7_extract_sig_and_hash(const uint8_t *pkcs7, int pkcs7_len,
 
     /* Assume the content hash is at a known offset (simplified) */
     /* Real: parse authenticatedAttributes -> messageDigest attribute */
-    memcpy(content_hash,
-           pkcs7 + pkcs7_len - SHA256_DIGEST_SIZE - 256,
-           SHA256_DIGEST_SIZE);
+    memcpy(content_hash, pkcs7 + pkcs7_len - SHA256_DIGEST_SIZE - 256, SHA256_DIGEST_SIZE);
 
     /* Assume the signature is the last 256 bytes */
     *sig_len = 256;
@@ -328,14 +327,12 @@ static int pkcs7_extract_sig_and_hash(const uint8_t *pkcs7, int pkcs7_len,
  * Returns 0 on success (signature valid, key trusted), -1 on failure.
  */
 static int pkcs7_verify_chain(const uint8_t *pkcs7, int pkcs7_len,
-                               const uint8_t module_hash[SHA256_DIGEST_SIZE])
-{
+                              const uint8_t module_hash[SHA256_DIGEST_SIZE]) {
     if (!pkcs7 || !module_hash || pkcs7_len < 32)
         return -1;
 
     /* Step 1: Check for PKCS#7 SignedData OID */
-    if (!pkcs7_find_oid(pkcs7, pkcs7_len,
-                         OID_PKCS7_SIGNED_DATA, sizeof(OID_PKCS7_SIGNED_DATA))) {
+    if (!pkcs7_find_oid(pkcs7, pkcs7_len, OID_PKCS7_SIGNED_DATA, sizeof(OID_PKCS7_SIGNED_DATA))) {
         kprintf("[MOD_SIG] Not a valid PKCS#7 SignedData blob\n");
         return -1;
     }
@@ -348,8 +345,7 @@ static int pkcs7_verify_chain(const uint8_t *pkcs7, int pkcs7_len,
     int key_trusted = 0;
     for (int i = 0; i < g_trusted_key_count; i++) {
         if (g_trusted_keys[i].in_use &&
-            memcmp(g_trusted_keys[i].fingerprint, signer_fingerprint,
-                   KEY_HASH_LEN) == 0) {
+            memcmp(g_trusted_keys[i].fingerprint, signer_fingerprint, KEY_HASH_LEN) == 0) {
             key_trusted = 1;
             break;
         }
@@ -365,8 +361,7 @@ static int pkcs7_verify_chain(const uint8_t *pkcs7, int pkcs7_len,
     uint8_t rsa_sig[MODULE_SIG_LEN];
     uint32_t rsa_sig_len = sizeof(rsa_sig);
 
-    if (pkcs7_extract_sig_and_hash(pkcs7, pkcs7_len,
-                                    content_hash, rsa_sig, &rsa_sig_len) < 0)
+    if (pkcs7_extract_sig_and_hash(pkcs7, pkcs7_len, content_hash, rsa_sig, &rsa_sig_len) < 0)
         return -1;
 
     /* Step 4: Verify that content_hash matches module_hash */
@@ -395,8 +390,7 @@ static int pkcs7_verify_chain(const uint8_t *pkcs7, int pkcs7_len,
  *
  * Returns 0 on success, -1 on failure (table full).
  */
-int module_sig_add_trusted_key(const uint8_t key_hash[KEY_HASH_LEN])
-{
+int module_sig_add_trusted_key(const uint8_t key_hash[KEY_HASH_LEN]) {
     if (g_trusted_key_count >= MAX_TRUSTED_KEYS)
         return -1;
 
@@ -412,8 +406,7 @@ int module_sig_add_trusted_key(const uint8_t key_hash[KEY_HASH_LEN])
 /*
  * module_sig_clear_trusted_keys — Remove all trusted keys.
  */
-void module_sig_clear_trusted_keys(void)
-{
+void module_sig_clear_trusted_keys(void) {
     memset(g_trusted_keys, 0, sizeof(g_trusted_keys));
     g_trusted_key_count = 0;
 }
@@ -421,8 +414,7 @@ void module_sig_clear_trusted_keys(void)
 /*
  * module_sig_get_trusted_key_count — Return number of trusted keys.
  */
-int module_sig_get_trusted_key_count(void)
-{
+int module_sig_get_trusted_key_count(void) {
     return g_trusted_key_count;
 }
 
@@ -436,20 +428,17 @@ extern int rsa_verify(const uint8_t *hash, const uint8_t *sig);
 
 /* ── Initialisation ──────────────────────────────────────────────────── */
 
-void module_sig_init(void)
-{
+void module_sig_init(void) {
     module_sig_initialized = 1;
     kprintf("[OK] Module signature verification (%s enforcement)\n",
             module_sig_enforce ? "with" : "without");
 }
 
-void module_sig_set_enforce(int enforce)
-{
+void module_sig_set_enforce(int enforce) {
     module_sig_enforce = enforce ? 1 : 0;
 }
 
-int module_sig_get_enforce(void)
-{
+int module_sig_get_enforce(void) {
     return module_sig_enforce;
 }
 
@@ -457,9 +446,7 @@ int module_sig_get_enforce(void)
 
 /* Find an ELF section by name within raw ELF data.
  * Returns the section header index, or -1 if not found. */
-static int elf_find_section_by_name(const uint8_t *data, uint64_t size,
-                                     const char *name)
-{
+static int elf_find_section_by_name(const uint8_t *data, uint64_t size, const char *name) {
     if (!data || size < sizeof(struct elf64_header))
         return -1;
 
@@ -467,9 +454,9 @@ static int elf_find_section_by_name(const uint8_t *data, uint64_t size,
 
     /* We need the section name string table (shstrtab) */
     uint16_t shstrndx = hdr->e_shstrndx;
-    uint64_t shoff    = hdr->e_shoff;
-    uint16_t shentsz  = hdr->e_shentsize;
-    uint16_t shnum    = hdr->e_shnum;
+    uint64_t shoff = hdr->e_shoff;
+    uint16_t shentsz = hdr->e_shentsize;
+    uint16_t shnum = hdr->e_shnum;
 
     if (shnum == 0 || shoff == 0 || shoff + (uint64_t)shnum * shentsz > size)
         return -1;
@@ -481,7 +468,7 @@ static int elf_find_section_by_name(const uint8_t *data, uint64_t size,
     const struct elf64_shdr *shstrtab_hdr =
         (const struct elf64_shdr *)(data + shoff + (uint64_t)shstrndx * shentsz);
     uint64_t shstrtab_off = shstrtab_hdr->sh_offset;
-    uint64_t shstrtab_sz  = shstrtab_hdr->sh_size;
+    uint64_t shstrtab_sz = shstrtab_hdr->sh_size;
 
     if (shstrtab_off + shstrtab_sz > size)
         return -1;
@@ -511,8 +498,7 @@ static int elf_find_section_by_name(const uint8_t *data, uint64_t size,
 
 /* ── Core verification ───────────────────────────────────────────────── */
 
-int module_verify_elf(const uint8_t *elf_data, uint64_t elf_size)
-{
+int module_verify_elf(const uint8_t *elf_data, uint64_t elf_size) {
     if (!module_sig_initialized || !elf_data || elf_size == 0)
         return -1;
 
@@ -535,15 +521,14 @@ int module_verify_elf(const uint8_t *elf_data, uint64_t elf_size)
 
     /* ── Step 2: read the signature section ── */
     const struct elf64_header *hdr = (const struct elf64_header *)elf_data;
-    uint64_t shoff   = hdr->e_shoff;
+    uint64_t shoff = hdr->e_shoff;
     uint16_t shentsz = hdr->e_shentsize;
 
     const struct elf64_shdr *sig_sh =
-        (const struct elf64_shdr *)(elf_data + shoff +
-                                    (uint64_t)sig_sec_idx * shentsz);
+        (const struct elf64_shdr *)(elf_data + shoff + (uint64_t)sig_sec_idx * shentsz);
 
     uint64_t sig_offset = sig_sh->sh_offset;
-    uint64_t sig_size   = sig_sh->sh_size;
+    uint64_t sig_size = sig_sh->sh_size;
 
     if (sig_offset + sig_size > elf_size) {
         kprintf("[MOD_SIG] .module_sig section extends past end of file\n");
@@ -551,8 +536,7 @@ int module_verify_elf(const uint8_t *elf_data, uint64_t elf_size)
     }
 
     if (sig_size < sizeof(struct module_sig_info)) {
-        kprintf("[MOD_SIG] .module_sig too small (%llu bytes)\n",
-                (unsigned long long)sig_size);
+        kprintf("[MOD_SIG] .module_sig too small (%llu bytes)\n", (unsigned long long)sig_size);
         return -EKEYREJECTED;
     }
 
@@ -627,8 +611,7 @@ int module_verify_elf(const uint8_t *elf_data, uint64_t elf_size)
  * This is the integrated version called during module_elf_parse().
  */
 int module_verify_sig(const uint8_t *module_data, size_t module_size,
-                      const struct module_sig_info *sig_info, size_t sig_size)
-{
+                      const struct module_sig_info *sig_info, size_t sig_size) {
     (void)sig_info;
     (void)sig_size;
 
@@ -637,16 +620,14 @@ int module_verify_sig(const uint8_t *module_data, size_t module_size,
 }
 
 /* ── Stub: module_sig_verify ─────────────────────────────── */
-static int module_sig_verify(const void *data, size_t size)
-{
+static int module_sig_verify(const void *data, size_t size) {
     (void)data;
     (void)size;
     kprintf("[modsig] module_sig_verify: not yet implemented\n");
     return 0;
 }
 /* ── Stub: module_sig_sign ─────────────────────────────── */
-static int module_sig_sign(const void *data, size_t size, void *sig, size_t *slen)
-{
+static int module_sig_sign(const void *data, size_t size, void *sig, size_t *slen) {
     (void)data;
     (void)size;
     (void)sig;

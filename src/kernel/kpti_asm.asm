@@ -53,6 +53,13 @@ global kpti_interrupt_return
 
 global kpti_trampoline_entry
 kpti_trampoline_entry:
+    ; CRITICAL: syscall does NOT clear IF.  Disable interrupts immediately
+    ; so a timer/NMI cannot fire while RSP still points at the user stack —
+    ; the CPU would push the interrupt frame onto the user stack, corrupting
+    ; it (observed as userspace `ret` jumping to kernel addresses).  Interrupts
+    ; are re-enabled below, once we are safely on the kernel stack.
+    cli
+
     ; Save user RSP and RCX/R11 to the trampoline data area
     ; (RIP-relative addressing works because we're at a fixed VA)
     mov     [KPTI_OFF_SAVED_RSP], rsp

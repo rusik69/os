@@ -9,37 +9,38 @@
  */
 
 #include "iommu.h"
+
 #include "acpi.h"
+#include "errno.h"
+#include "heap.h"
+#include "io.h"
 #include "pci.h"
 #include "pmm.h"
 #include "printf.h"
-#include "string.h"
-#include "heap.h"
-#include "errno.h"
-#include "io.h"
 #include "spinlock.h"
+#include "string.h"
 
 /* ── VT-d Register Offsets (Memory-mapped, from DRHD base_addr) ─────── */
-#define VTD_REG_VER           0x00   /* Version Register */
-#define VTD_REG_CAP           0x08   /* Capability Register */
-#define VTD_REG_ECAP          0x10   /* Extended Capability Register */
-#define VTD_REG_GCMD          0x18   /* Global Command Register */
-#define VTD_REG_GSTS          0x1C   /* Global Status Register */
-#define VTD_REG_RTADDR        0x20   /* Root Table Address Register */
-#define VTD_REG_IQH           0x40   /* Invalidation Queue Head */
-#define VTD_REG_IQT           0x44   /* Invalidation Queue Tail */
-#define VTD_REG_IQA           0x48   /* Invalidation Queue Address */
+#define VTD_REG_VER 0x00    /* Version Register */
+#define VTD_REG_CAP 0x08    /* Capability Register */
+#define VTD_REG_ECAP 0x10   /* Extended Capability Register */
+#define VTD_REG_GCMD 0x18   /* Global Command Register */
+#define VTD_REG_GSTS 0x1C   /* Global Status Register */
+#define VTD_REG_RTADDR 0x20 /* Root Table Address Register */
+#define VTD_REG_IQH 0x40    /* Invalidation Queue Head */
+#define VTD_REG_IQT 0x44    /* Invalidation Queue Tail */
+#define VTD_REG_IQA 0x48    /* Invalidation Queue Address */
 
 /* Global Command bits */
-#define VTD_GCMD_SIRTP        (1U << 24)  /* Set Interrupt Remap Table Pointer */
-#define VTD_GCMD_SRTP         (1U << 30)  /* Set Root Table Pointer */
-#define VTD_GCMD_TE           (1U << 31)  /* Translation Enable */
-#define VTD_GCMD_SRTP_SHIFT   30
-#define VTD_GCMD_SIRTP_SHIFT  24
+#define VTD_GCMD_SIRTP (1U << 24) /* Set Interrupt Remap Table Pointer */
+#define VTD_GCMD_SRTP (1U << 30)  /* Set Root Table Pointer */
+#define VTD_GCMD_TE (1U << 31)    /* Translation Enable */
+#define VTD_GCMD_SRTP_SHIFT 30
+#define VTD_GCMD_SIRTP_SHIFT 24
 
 /* Global Status bits */
-#define VTD_GSTS_RTPS         (1U << 30)  /* Root Table Pointer Set */
-#define VTD_GSTS_TES          (1U << 31)  /* Translation Enable Status */
+#define VTD_GSTS_RTPS (1U << 30) /* Root Table Pointer Set */
+#define VTD_GSTS_TES (1U << 31)  /* Translation Enable Status */
 
 /* Root-table entry: points to a context-table (4K-aligned) */
 struct vtd_root_entry {
@@ -48,12 +49,12 @@ struct vtd_root_entry {
 } __attribute__((packed));
 
 /* Context-table entry per PCI device/function */
-#define VTD_CTX_ENTRY_PRESENT    (1ULL << 0)
-#define VTD_CTX_ENTRY_TT_SHIFT   2    /* Translation Type: 0=host, 1=guest, 2=pass-through */
-#define VTD_CTX_ENTRY_TT_MASK    (3ULL << 2)
-#define VTD_CTX_ENTRY_AW_SHIFT   4    /* Address Width: 0=32b/2L, 1=39b/3L, 2=48b/4L */
-#define VTD_CTX_ENTRY_AW_MASK    (7ULL << 4)
-#define VTD_CTX_ENTRY_AW_4LEVEL  (2ULL << 4)  /* 4-level page tables, 48-bit */
+#define VTD_CTX_ENTRY_PRESENT (1ULL << 0)
+#define VTD_CTX_ENTRY_TT_SHIFT 2 /* Translation Type: 0=host, 1=guest, 2=pass-through */
+#define VTD_CTX_ENTRY_TT_MASK (3ULL << 2)
+#define VTD_CTX_ENTRY_AW_SHIFT 4 /* Address Width: 0=32b/2L, 1=39b/3L, 2=48b/4L */
+#define VTD_CTX_ENTRY_AW_MASK (7ULL << 4)
+#define VTD_CTX_ENTRY_AW_4LEVEL (2ULL << 4) /* 4-level page tables, 48-bit */
 #define VTD_CTX_ENTRY_ADDR_SHIFT 12
 
 struct vtd_ctx_entry {
@@ -63,23 +64,23 @@ struct vtd_ctx_entry {
 
 /* ── Per-device IOVA tracking ────────────────────────────────────────── */
 
-#define MAX_IOMMU_DEVICES  64
+#define MAX_IOMMU_DEVICES 64
 
 struct iommu_device {
-    uint8_t  bus, slot, func;
+    uint8_t bus, slot, func;
     uint16_t segment;
-    struct vtd_ctx_entry *ctx_entry;  /* Pointer to context table entry */
-    struct iommu_domain   domain;
-    int     used;
+    struct vtd_ctx_entry *ctx_entry; /* Pointer to context table entry */
+    struct iommu_domain domain;
+    int used;
 };
 
 /* ── Global IOMMU state ──────────────────────────────────────────────── */
 
 static struct iommu_hw_unit {
-    uint64_t base_addr;       /* MMIO register base (from DRHD) */
+    uint64_t base_addr; /* MMIO register base (from DRHD) */
     uint16_t segment;
-    uint8_t  flags;
-    int      initialized;
+    uint8_t flags;
+    int initialized;
     struct vtd_root_entry *root_table;
     uint64_t root_table_phys;
 } g_iommu_units[8];
@@ -98,47 +99,44 @@ static spinlock_t iommu_lock = SPINLOCK_INIT;
 
 /* ── Internal helpers ────────────────────────────────────────────────── */
 
-static inline uint32_t vtd_read32(struct iommu_hw_unit *unit, uint64_t reg)
-{
+static inline uint32_t vtd_read32(struct iommu_hw_unit *unit, uint64_t reg) {
     volatile uint32_t *ptr = (volatile uint32_t *)(unit->base_addr + reg);
     return *ptr;
 }
 
-static inline void vtd_write32(struct iommu_hw_unit *unit, uint64_t reg, uint32_t val)
-{
+static inline void vtd_write32(struct iommu_hw_unit *unit, uint64_t reg, uint32_t val) {
     volatile uint32_t *ptr = (volatile uint32_t *)(unit->base_addr + reg);
     *ptr = val;
 }
 
-static inline uint64_t vtd_read64(struct iommu_hw_unit *unit, uint64_t reg)
-{
+static inline uint64_t vtd_read64(struct iommu_hw_unit *unit, uint64_t reg) {
     volatile uint64_t *ptr = (volatile uint64_t *)(unit->base_addr + reg);
     return *ptr;
 }
 
-static inline void vtd_write64(struct iommu_hw_unit *unit, uint64_t reg, uint64_t val)
-{
+static inline void vtd_write64(struct iommu_hw_unit *unit, uint64_t reg, uint64_t val) {
     volatile uint64_t *ptr = (volatile uint64_t *)(unit->base_addr + reg);
     *ptr = val;
 }
 
 /* Wait for a command to complete by polling status bits */
-static int vtd_wait_cmd(struct iommu_hw_unit *unit, uint32_t mask, int set)
-{
+static int vtd_wait_cmd(struct iommu_hw_unit *unit, uint32_t mask, int set) {
     for (int i = 0; i < 1000000; i++) {
         uint32_t sts = vtd_read32(unit, VTD_REG_GSTS);
-        if (set && (sts & mask)) return 0;
-        if (!set && !(sts & mask)) return 0;
+        if (set && (sts & mask))
+            return 0;
+        if (!set && !(sts & mask))
+            return 0;
         __asm__ volatile("pause");
     }
-    return -1;  /* Timeout */
+    return -1; /* Timeout */
 }
 
 /* Allocate a zeroed 4K page for hardware (returns physical address) */
-static uint64_t iommu_alloc_hw_page(void)
-{
+static uint64_t iommu_alloc_hw_page(void) {
     uint64_t phys = pmm_alloc_frame();
-    if (!phys) return 0;
+    if (!phys)
+        return 0;
     void *virt = PHYS_TO_VIRT(phys);
     memset(virt, 0, 4096);
     return phys;
@@ -150,14 +148,12 @@ static uint64_t iommu_alloc_hw_page(void)
  * iommu_parse_dmar — walk the DMAR table and extract DRHD/RMRR entries.
  * Called from iommu_init().
  */
-static void iommu_parse_dmar(struct acpi_header *dmar_hdr)
-{
+static void iommu_parse_dmar(struct acpi_header *dmar_hdr) {
     struct dmar_table *dmar = (struct dmar_table *)dmar_hdr;
-    uint8_t *pos = (uint8_t *)(dmar + 1);  /* Skip DMAR header */
+    uint8_t *pos = (uint8_t *)(dmar + 1); /* Skip DMAR header */
     uint8_t *end = (uint8_t *)dmar + dmar->header.length;
 
-    kprintf("[IOMMU] DMAR: host_addr_width=%u, flags=0x%02x\n",
-            dmar->host_addr_width, dmar->flags);
+    kprintf("[IOMMU] DMAR: host_addr_width=%u, flags=0x%02x\n", dmar->host_addr_width, dmar->flags);
 
     while (pos + sizeof(struct dmar_sub_header) <= end) {
         struct dmar_sub_header *sub = (struct dmar_sub_header *)pos;
@@ -173,27 +169,23 @@ static void iommu_parse_dmar(struct acpi_header *dmar_hdr)
             }
             struct iommu_hw_unit *unit = &g_iommu_units[g_num_iommu_units];
             unit->base_addr = drhd->base_addr;
-            unit->segment   = drhd->segment;
-            unit->flags     = drhd->flags;
+            unit->segment = drhd->segment;
+            unit->flags = drhd->flags;
             unit->initialized = 0;
             g_num_iommu_units++;
 
             kprintf("[IOMMU] DRHD: base=0x%llx, seg=%u, flags=0x%02x\n",
-                    (unsigned long long)drhd->base_addr,
-                    drhd->segment, drhd->flags);
+                    (unsigned long long)drhd->base_addr, drhd->segment, drhd->flags);
             break;
         }
         case DMAR_TYPE_RMRR: {
             struct dmar_rmrr *rmrr = (struct dmar_rmrr *)pos;
-            kprintf("[IOMMU] RMRR: seg=%u, base=0x%llx, end=0x%llx\n",
-                    rmrr->segment,
-                    (unsigned long long)rmrr->base_addr,
-                    (unsigned long long)rmrr->end_addr);
+            kprintf("[IOMMU] RMRR: seg=%u, base=0x%llx, end=0x%llx\n", rmrr->segment,
+                    (unsigned long long)rmrr->base_addr, (unsigned long long)rmrr->end_addr);
             break;
         }
         default:
-            kprintf("[IOMMU] DMAR sub-table type %u (len=%u)\n",
-                    sub->type, sub->length);
+            kprintf("[IOMMU] DMAR sub-table type %u (len=%u)\n", sub->type, sub->length);
             break;
         }
 
@@ -206,8 +198,7 @@ static void iommu_parse_dmar(struct acpi_header *dmar_hdr)
 
 /* ── IOMMU unit initialization ───────────────────────────────────────── */
 
-static int iommu_init_unit(struct iommu_hw_unit *unit)
-{
+static int iommu_init_unit(struct iommu_hw_unit *unit) {
     uint32_t ver = vtd_read32(unit, VTD_REG_VER);
     kprintf("[IOMMU] VT-d version: %u.%u\n", ver >> 4, ver & 0xF);
 
@@ -216,9 +207,8 @@ static int iommu_init_unit(struct iommu_hw_unit *unit)
     uint64_t ecap = vtd_read64(unit, VTD_REG_ECAP);
 
     uint64_t num_domains = (cap >> 48) & 0xFF;
-    kprintf("[IOMMU] CAP=0x%llx, ECAP=0x%llx, num_domains=%llu\n",
-            (unsigned long long)cap, (unsigned long long)ecap,
-            (unsigned long long)num_domains);
+    kprintf("[IOMMU] CAP=0x%llx, ECAP=0x%llx, num_domains=%llu\n", (unsigned long long)cap,
+            (unsigned long long)ecap, (unsigned long long)num_domains);
 
     /* Allocate root table (must be 4K-aligned) */
     unit->root_table_phys = iommu_alloc_hw_page();
@@ -253,15 +243,13 @@ static int iommu_init_unit(struct iommu_hw_unit *unit)
     }
 
     unit->initialized = 1;
-    kprintf("[IOMMU] VT-d unit initialized (base=0x%llx)\n",
-            (unsigned long long)unit->base_addr);
+    kprintf("[IOMMU] VT-d unit initialized (base=0x%llx)\n", (unsigned long long)unit->base_addr);
     return 0;
 }
 
 /* ── Context entry setup for a PCI device ────────────────────────────── */
 
-static struct iommu_hw_unit *iommu_find_unit(uint16_t segment)
-{
+static struct iommu_hw_unit *iommu_find_unit(uint16_t segment) {
     for (int i = 0; i < g_num_iommu_units; i++) {
         if (g_iommu_units[i].segment == segment)
             return &g_iommu_units[i];
@@ -269,8 +257,7 @@ static struct iommu_hw_unit *iommu_find_unit(uint16_t segment)
     return NULL;
 }
 
-static int iommu_setup_device_context(struct iommu_device *dev)
-{
+static int iommu_setup_device_context(struct iommu_device *dev) {
     struct iommu_hw_unit *unit = iommu_find_unit(dev->segment);
     if (!unit) {
         kprintf("[IOMMU] No IOMMU unit for segment %u\n", dev->segment);
@@ -287,11 +274,12 @@ static int iommu_setup_device_context(struct iommu_device *dev)
 
     if (!(re->low & 1)) {
         ctx_table_phys = iommu_alloc_hw_page();
-        if (!ctx_table_phys) return -1;
+        if (!ctx_table_phys)
+            return -1;
         ctx_table = PHYS_TO_VIRT(ctx_table_phys);
         memset(ctx_table, 0, 4096);
 
-        re->low = ctx_table_phys | 1;  /* Present */
+        re->low = ctx_table_phys | 1; /* Present */
         re->high = 0;
     } else {
         ctx_table_phys = re->low & ~0xFFFULL;
@@ -303,15 +291,16 @@ static int iommu_setup_device_context(struct iommu_device *dev)
     struct vtd_ctx_entry *ce = &ctx_table[ctx_idx];
 
     if (ce->low & VTD_CTX_ENTRY_PRESENT) {
-        kprintf("[IOMMU] Device %02x:%02x.%x already has context\n",
-                dev->bus, dev->slot, dev->func);
+        kprintf("[IOMMU] Device %02x:%02x.%x already has context\n", dev->bus, dev->slot,
+                dev->func);
         dev->ctx_entry = ce;
         return 0;
     }
 
     /* Allocate domain page table (first-level translation) */
     uint64_t domain_pgd_phys = iommu_alloc_hw_page();
-    if (!domain_pgd_phys) return -1;
+    if (!domain_pgd_phys)
+        return -1;
 
     uint64_t *domain_pgd = PHYS_TO_VIRT(domain_pgd_phys);
 
@@ -327,9 +316,8 @@ static int iommu_setup_device_context(struct iommu_device *dev)
     dev->domain.pgd = domain_pgd;
     dev->domain.initialized = 1;
 
-    kprintf("[IOMMU] Device %02x:%02x.%x context set up, pgd=0x%llx\n",
-            dev->bus, dev->slot, dev->func,
-            (unsigned long long)domain_pgd_phys);
+    kprintf("[IOMMU] Device %02x:%02x.%x context set up, pgd=0x%llx\n", dev->bus, dev->slot,
+            dev->func, (unsigned long long)domain_pgd_phys);
     return 0;
 }
 
@@ -343,8 +331,7 @@ static int iommu_setup_device_context(struct iommu_device *dev)
  *
  * Returns 0 on success, <0 on failure.
  */
-static int iommu_init(void)
-{
+static int iommu_init(void) {
     uint64_t flags;
     spinlock_irqsave_acquire(&iommu_lock, &flags);
 
@@ -364,8 +351,7 @@ static int iommu_init(void)
      * In a full implementation, the ACPI subsystem would export
      * the table list; here we rely on the existing RSDT walk.
      */
-    struct rsdp *rsdp = PHYS_TO_VIRT((uint64_t)(uintptr_t)0x80000 +
-                         0xFFFF800000000000ULL);
+    struct rsdp *rsdp = PHYS_TO_VIRT((uint64_t)(uintptr_t)0x80000 + 0xFFFF800000000000ULL);
     /* Can't do that easily — let's just return -1 and try a simpler approach */
     spinlock_irqsave_release(&iommu_lock, flags);
 
@@ -432,15 +418,15 @@ static int iommu_init(void)
 
 /* ── Public IOMMU status API ─────────────────────────────────────────── */
 
-static int iommu_is_active(void) {
+int iommu_is_active(void) {
     return g_iommu_initialized;
 }
 
-static int iommu_unit_count(void) {
+int iommu_unit_count(void) {
     return g_num_iommu_units;
 }
 
-static int iommu_device_count(void) {
+int iommu_device_count(void) {
     return g_num_iommu_devs;
 }
 
@@ -454,8 +440,7 @@ static int iommu_device_count(void) {
  *
  * Returns 0 on success, <0 on error.
  */
-int iommu_map_page(struct pci_device *dev, uint64_t phys_addr, uint64_t iova, uint64_t flags)
-{
+int iommu_map_page(struct pci_device *dev, uint64_t phys_addr, uint64_t iova, uint64_t flags) {
     if (!dev || !g_iommu_initialized)
         return -EINVAL;
 
@@ -465,10 +450,8 @@ int iommu_map_page(struct pci_device *dev, uint64_t phys_addr, uint64_t iova, ui
     /* Find or create device entry */
     struct iommu_device *idev = NULL;
     for (int i = 0; i < g_num_iommu_devs; i++) {
-        if (g_iommu_devs[i].used &&
-            g_iommu_devs[i].bus   == dev->bus &&
-            g_iommu_devs[i].slot  == dev->slot &&
-            g_iommu_devs[i].func  == dev->func) {
+        if (g_iommu_devs[i].used && g_iommu_devs[i].bus == dev->bus &&
+            g_iommu_devs[i].slot == dev->slot && g_iommu_devs[i].func == dev->func) {
             idev = &g_iommu_devs[i];
             break;
         }
@@ -484,7 +467,7 @@ int iommu_map_page(struct pci_device *dev, uint64_t phys_addr, uint64_t iova, ui
         idev->bus = dev->bus;
         idev->slot = dev->slot;
         idev->func = dev->func;
-        idev->segment = 0;  /* Default segment */
+        idev->segment = 0; /* Default segment */
         idev->used = 1;
         idev->domain.initialized = 0;
         idev->domain.pgd = NULL;
@@ -519,8 +502,7 @@ int iommu_map_page(struct pci_device *dev, uint64_t phys_addr, uint64_t iova, ui
  *
  * Returns 0 on success, <0 on error.
  */
-int iommu_unmap_page(struct pci_device *dev, uint64_t iova)
-{
+int iommu_unmap_page(struct pci_device *dev, uint64_t iova) {
     if (!dev || !g_iommu_initialized)
         return -EINVAL;
 
@@ -529,10 +511,8 @@ int iommu_unmap_page(struct pci_device *dev, uint64_t iova)
 
     struct iommu_device *idev = NULL;
     for (int i = 0; i < g_num_iommu_devs; i++) {
-        if (g_iommu_devs[i].used &&
-            g_iommu_devs[i].bus   == dev->bus &&
-            g_iommu_devs[i].slot  == dev->slot &&
-            g_iommu_devs[i].func  == dev->func) {
+        if (g_iommu_devs[i].used && g_iommu_devs[i].bus == dev->bus &&
+            g_iommu_devs[i].slot == dev->slot && g_iommu_devs[i].func == dev->func) {
             idev = &g_iommu_devs[i];
             break;
         }
@@ -552,8 +532,7 @@ int iommu_unmap_page(struct pci_device *dev, uint64_t iova)
 /*
  * iommu_is_enabled — check if IOMMU is active
  */
-int iommu_is_enabled(void)
-{
+int iommu_is_enabled(void) {
     return g_iommu_initialized && (g_num_iommu_units > 0);
 }
 
@@ -561,21 +540,18 @@ int iommu_is_enabled(void)
 struct device;
 
 /* ── Stub: iommu_enable ─────────────────────────────── */
-static int iommu_enable(void)
-{
+static int iommu_enable(void) {
     kprintf("[IOMMU] iommu_enable: not yet implemented\n");
     return 0;
 }
 
 /* ── Stub: iommu_disable ─────────────────────────────── */
-static void iommu_disable(void)
-{
+static void iommu_disable(void) {
     kprintf("[IOMMU] iommu_disable: not yet implemented\n");
 }
 
 /* ── Stub: iommu_attach_device ─────────────────────────────── */
-static int iommu_attach_device(struct iommu_domain *domain, struct device *dev)
-{
+static int iommu_attach_device(struct iommu_domain *domain, struct device *dev) {
     (void)domain;
     (void)dev;
     kprintf("[IOMMU] iommu_attach_device: not yet implemented\n");
@@ -583,16 +559,14 @@ static int iommu_attach_device(struct iommu_domain *domain, struct device *dev)
 }
 
 /* ── Stub: iommu_detach_device ─────────────────────────────── */
-static void iommu_detach_device(struct iommu_domain *domain, struct device *dev)
-{
+static void iommu_detach_device(struct iommu_domain *domain, struct device *dev) {
     (void)domain;
     (void)dev;
     kprintf("[IOMMU] iommu_detach_device: not yet implemented\n");
 }
 
 /* ── Stub: iommu_set_fault_handler ─────────────────────────────── */
-static int iommu_set_fault_handler(struct iommu_domain *domain, void *handler, void *data)
-{
+static int iommu_set_fault_handler(struct iommu_domain *domain, void *handler, void *data) {
     (void)domain;
     (void)handler;
     (void)data;
@@ -601,16 +575,14 @@ static int iommu_set_fault_handler(struct iommu_domain *domain, void *handler, v
 }
 
 /* ── Stub: iommu_get_domain_for_dev ─────────────────────────────── */
-static struct iommu_domain *iommu_get_domain_for_dev(struct device *dev)
-{
+static struct iommu_domain *iommu_get_domain_for_dev(struct device *dev) {
     (void)dev;
     kprintf("[IOMMU] iommu_get_domain_for_dev: not yet implemented\n");
     return NULL;
 }
 
 /* ── Stub: iommu_iova_to_phys ─────────────────────────────── */
-static uint64_t iommu_iova_to_phys(struct iommu_domain *domain, unsigned long iova)
-{
+static uint64_t iommu_iova_to_phys(struct iommu_domain *domain, unsigned long iova) {
     (void)domain;
     (void)iova;
     kprintf("[IOMMU] iommu_iova_to_phys: not yet implemented\n");
@@ -618,15 +590,13 @@ static uint64_t iommu_iova_to_phys(struct iommu_domain *domain, unsigned long io
 }
 
 /* ── Stub: iommu_resume ─────────────────────────────── */
-static int iommu_resume(void)
-{
+static int iommu_resume(void) {
     kprintf("[IOMMU] iommu_resume: not yet implemented\n");
     return 0;
 }
 
 /* ── Stub: iommu_suspend ─────────────────────────────── */
-static int iommu_suspend(void)
-{
+static int iommu_suspend(void) {
     kprintf("[IOMMU] iommu_suspend: not yet implemented\n");
     return 0;
 }

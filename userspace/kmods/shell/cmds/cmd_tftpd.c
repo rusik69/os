@@ -9,34 +9,34 @@
  *   RFC 1350 — The TFTP Protocol (Revision 2)
  */
 
-#include "shell_cmds.h"
-#include "printf.h"
-#include "string.h"
-#include "stdlib.h"
-#include "net.h"
-#include "vfs.h"
 #include "heap.h"
+#include "net.h"
+#include "printf.h"
+#include "shell_cmds.h"
+#include "stdlib.h"
+#include "string.h"
 #include "timer.h"
+#include "vfs.h"
 
 /* TFTP opcodes */
-#define TFTP_RRQ    1
-#define TFTP_WRQ    2
-#define TFTP_DATA   3
-#define TFTP_ACK    4
-#define TFTP_ERROR  5
+#define TFTP_RRQ 1
+#define TFTP_WRQ 2
+#define TFTP_DATA 3
+#define TFTP_ACK 4
+#define TFTP_ERROR 5
 
 /* TFTP error codes */
-#define TFTP_ERR_UNDEFINED       0
-#define TFTP_ERR_FILE_NOT_FOUND  1
+#define TFTP_ERR_UNDEFINED 0
+#define TFTP_ERR_FILE_NOT_FOUND 1
 #define TFTP_ERR_ACCESS_VIOLATION 2
-#define TFTP_ERR_DISK_FULL       3
-#define TFTP_ERR_ILLEGAL_OP      4
+#define TFTP_ERR_DISK_FULL 3
+#define TFTP_ERR_ILLEGAL_OP 4
 
-#define TFTP_PORT       69
-#define TFTP_BLKSIZE    512
-#define TFTP_TIMEOUT_TICKS 200  /* 2 seconds (100 Hz) */
-#define TFTP_MAX_RETRIES    5
-#define TFTP_MAX_FILE_SIZE  (1024 * 1024)  /* 1 MB max file size */
+#define TFTP_PORT 69
+#define TFTP_BLKSIZE 512
+#define TFTP_TIMEOUT_TICKS 200 /* 2 seconds (100 Hz) */
+#define TFTP_MAX_RETRIES 5
+#define TFTP_MAX_FILE_SIZE (1024 * 1024) /* 1 MB max file size */
 
 #define TFTP_ROOT "/tftpboot"
 
@@ -45,13 +45,13 @@
 static int tftp_running = 0;
 
 struct tftp_transfer {
-    int      active;
+    int active;
     uint32_t client_ip;
     uint16_t client_port;
-    int      block;
+    int block;
     uint8_t *file_data;
-    int      file_remaining;
-    int      retries;
+    int file_remaining;
+    int retries;
     uint64_t last_send_tick;
 };
 
@@ -68,23 +68,27 @@ static void send_error(uint32_t ip, uint16_t port, uint16_t code, const char *ms
     *op = htons(TFTP_ERROR);
     *ec = htons(code);
     int mlen = strlen(msg) + 1;
-    if (mlen > 510) mlen = 510;
+    if (mlen > 510)
+        mlen = 510;
     memcpy(buf + 4, msg, mlen);
     net_udp_send(ip, TFTP_PORT, port, buf, 4 + mlen);
 }
 
 static int is_safe_path(const char *filename) {
-    if (!filename || !*filename) return 0;
-    if (filename[0] == '/') return 0;
-    if (strstr(filename, "..") != NULL) return 0;
-    if (strlen(filename) > 240) return 0;
+    if (!filename || !*filename)
+        return 0;
+    if (filename[0] == '/')
+        return 0;
+    if (strstr(filename, "..") != NULL)
+        return 0;
+    if (strlen(filename) > 240)
+        return 0;
     return 1;
 }
 
 /* ── RRQ handler — read request ────────────────────────────────────── */
 
-static int handle_rrq(const uint8_t *data, int len,
-                       uint32_t client_ip, uint16_t client_port) {
+static int handle_rrq(const uint8_t *data, int len, uint32_t client_ip, uint16_t client_port) {
     const char *filename = (const char *)(data + 2);
     int flen = strlen(filename);
     if (flen <= 0 || flen > 255) {
@@ -102,7 +106,7 @@ static int handle_rrq(const uint8_t *data, int len,
     snprintf(fullpath, sizeof(fullpath), "%s/%s", TFTP_ROOT, filename);
 
     struct vfs_stat st;
-    if (vfs_stat(fullpath, &st) < 0 || st.type != 1) {  /* 1 = VFS_TYPE_FILE */
+    if (vfs_stat(fullpath, &st) < 0 || st.type != 1) { /* 1 = VFS_TYPE_FILE */
         send_error(client_ip, client_port, TFTP_ERR_FILE_NOT_FOUND, "File not found");
         return -1;
     }
@@ -125,7 +129,10 @@ static int handle_rrq(const uint8_t *data, int len,
     /* Find free transfer slot */
     int slot = -1;
     for (int i = 0; i < TFTP_MAX_TRANSFERS; i++) {
-        if (!g_transfers[i].active) { slot = i; break; }
+        if (!g_transfers[i].active) {
+            slot = i;
+            break;
+        }
     }
     if (slot < 0) {
         kfree(file_buf);
@@ -143,11 +150,9 @@ static int handle_rrq(const uint8_t *data, int len,
     t->retries = 0;
     t->last_send_tick = 0;
 
-    kprintf("[TFTP] RRQ %s from %u.%u.%u.%u:%u (%d bytes)\n",
-            filename,
-            (client_ip >> 24) & 0xFF, (client_ip >> 16) & 0xFF,
-            (client_ip >> 8) & 0xFF, client_ip & 0xFF,
-            client_port, file_size);
+    kprintf("[TFTP] RRQ %s from %u.%u.%u.%u:%u (%d bytes)\n", filename, (client_ip >> 24) & 0xFF,
+            (client_ip >> 16) & 0xFF, (client_ip >> 8) & 0xFF, client_ip & 0xFF, client_port,
+            file_size);
 
     /* Send first block */
     uint16_t opcode = htons(TFTP_DATA);
@@ -174,16 +179,17 @@ static int handle_rrq(const uint8_t *data, int len,
 static int handle_ack(uint32_t client_ip, uint16_t client_port, uint16_t block) {
     struct tftp_transfer *t = NULL;
     for (int i = 0; i < TFTP_MAX_TRANSFERS; i++) {
-        if (g_transfers[i].active &&
-            g_transfers[i].client_ip == client_ip &&
+        if (g_transfers[i].active && g_transfers[i].client_ip == client_ip &&
             g_transfers[i].client_port == client_port) {
             t = &g_transfers[i];
             break;
         }
     }
-    if (!t) return -1;
+    if (!t)
+        return -1;
 
-    if (block != (uint16_t)t->block) return 0;  /* stale ACK */
+    if (block != (uint16_t)t->block)
+        return 0; /* stale ACK */
 
     t->retries = 0;
 
@@ -218,12 +224,13 @@ static int handle_ack(uint32_t client_ip, uint16_t client_port, uint16_t block) 
 /* ── Retransmit handler ─────────────────────────────────────────────── */
 
 static void tftp_retransmit(struct tftp_transfer *t) {
-    if (!t->active) return;
+    if (!t->active)
+        return;
 
     t->retries++;
     if (t->retries > TFTP_MAX_RETRIES) {
         kprintf("[TFTP] Transfer timeout, aborting\n");
-        kfree(t->file_data);  /* This may not free the original buffer correctly */
+        kfree(t->file_data); /* This may not free the original buffer correctly */
         t->active = 0;
         return;
     }
@@ -236,11 +243,12 @@ static void tftp_retransmit(struct tftp_transfer *t) {
 
 /* ── Main UDP handler ───────────────────────────────────────────────── */
 
-static void handle_tftp_packet(uint32_t src_ip, uint16_t src_port,
-                                const uint8_t *data, uint16_t len) {
-    if (len < 2) return;
+static void handle_tftp_packet(uint32_t src_ip, uint16_t src_port, const uint8_t *data,
+                               uint16_t len) {
+    if (len < 2)
+        return;
 
-    uint16_t opcode = ntohs(*(uint16_t *)data);
+    uint16_t opcode = ntohs(*(const uint16_t *)data);
 
     switch (opcode) {
     case TFTP_RRQ:
@@ -249,7 +257,7 @@ static void handle_tftp_packet(uint32_t src_ip, uint16_t src_port,
 
     case TFTP_ACK:
         if (len >= 4) {
-            uint16_t block = ntohs(*(uint16_t *)(data + 2));
+            uint16_t block = ntohs(*(const uint16_t *)(data + 2));
             handle_ack(src_ip, src_port, block);
         }
         break;
@@ -265,7 +273,8 @@ static __attribute__((unused)) void tftp_poll(void) {
     uint64_t now = timer_get_ticks();
 
     for (int i = 0; i < TFTP_MAX_TRANSFERS; i++) {
-        if (!g_transfers[i].active) continue;
+        if (!g_transfers[i].active)
+            continue;
 
         if (now - g_transfers[i].last_send_tick > TFTP_TIMEOUT_TICKS) {
             tftp_retransmit(&g_transfers[i]);

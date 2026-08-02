@@ -1613,12 +1613,6 @@ static int64_t sys_write(uint64_t fd, uint64_t buf_addr, uint64_t len) {
                 return (uint64_t)(int64_t)-EINTR;
             }
         }
-        {
-            struct process *dbg = process_get_current();
-            if (dbg && len > 0 && len < 256)
-                kprintf("[SYS_WRITE] PID %d fd=%d len=%d buf=0x%lx\n", dbg->pid, (int)fd, (int)len,
-                        buf_addr);
-        }
         /* Copy from user-space to avoid SMAP fault */
         uint8_t *kbuf = kmalloc(len > 4096 ? 4096 : (len > 0 ? len : 1));
         if (!kbuf)
@@ -2008,14 +2002,34 @@ static int64_t sys_close_range(uint64_t first, uint64_t last, uint64_t flags) {
 
 static int64_t sys_exit(uint64_t code) {
     struct process *p = process_get_current();
-    /* If this is a user-mode process, clean up page tables */
-    if (p && p->is_user && p->pml4) {
+    /* If this is a user-mode process, clean up page tables.
+     * Guard: never destroy the kernel PML4 itself — a process whose pml4
+     * aliases vmm_get_pml4() (allocator frame reuse) must not have its
+     * live page table torn down under the running code (this caused an
+     * instruction-fetch triple fault in sys_exit). */
+    if (p && p->is_user && p->pml4 && p->pml4 != vmm_get_pml4()) {
+        /* Mark the process non-runnable BEFORE destroying its page tables.
+         * A timer tick during the teardown would otherwise make the
+         * scheduler re-select this still-READY process and switch CR3 back
+         * to its pml4; the destroy then frees+poisons that live frame and
+         * the next kernel fetch triple-faults (observed: CR3=0xdd1d000 =
+         * the destroyed pml4, fetch fault at sys_exit+0xb1). */
+        p->state = PROCESS_ZOMBIE;
+        scheduler_remove(p);
         vmm_switch_pml4(vmm_get_pml4()); /* switch back to kernel pages */
         vmm_destroy_user_pml4(p->pml4);
         p->pml4 = NULL;
     }
     process_exit_code((int)code);
-    return 0; /* unreachable */
+    /* Never return to the caller: the process is now a zombie removed
+     * from the run queue.  If no other task is runnable the scheduler
+     * would fall through and we would return to userspace (where the
+     * crt0's trailing hlt would #GP).  Spin with interrupts enabled so
+     * the timer tick can still wake other tasks. */
+    for (;;) {
+        __asm__ volatile("sti; hlt");
+    }
+    return 0; /* never reached — silences -Werror=return-type */
 }
 
 static int64_t sys_getpid(void) {
@@ -3805,8 +3819,7 @@ static int64_t sys_unshare(uint64_t flags) {
         struct process *table = process_get_table();
         int nr_threads = 0;
         for (int i = 0; i < PROCESS_MAX; i++) {
-            if (table[i].state != PROCESS_UNUSED &&
-                table[i].tgid == cur->tgid) {
+            if (table[i].state != PROCESS_UNUSED && table[i].tgid == cur->tgid) {
                 nr_threads++;
             }
         }
@@ -4104,12 +4117,10 @@ int64_t sys_set_tid_address(uint64_t tidptr) {
 
 static int64_t sys_execve(uint64_t path_addr, uint64_t argv_addr, uint64_t envp_addr) {
     char kpath[256];
-    if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
+    long uc_ret = strncpy_from_user(kpath, path_addr, sizeof(kpath));
+    if (uc_ret < 0)
         return (uint64_t)(int64_t)-EFAULT;
     const char *path = kpath;
-    /* For now, ignore argv/envp */
-    (void)argv_addr;
-    (void)envp_addr;
 
     /* IMA appraisal: measure executable file before execution */
     {
@@ -4119,7 +4130,7 @@ static int64_t sys_execve(uint64_t path_addr, uint64_t argv_addr, uint64_t envp_
             return (uint64_t)(int64_t)ima_ret;
     }
 
-    int ret = process_execve(path, NULL, NULL);
+    int ret = process_execve(path, (char *const *)argv_addr, (char *const *)envp_addr);
     /* If execve succeeds, we never return here (the process is redirected).
      * If it fails, we return -1. */
     return (uint64_t)(int64_t)ret;
@@ -11805,12 +11816,17 @@ static int64_t sys_personality(uint64_t persona) {
  * Only callable by privileged (kernel-mode) code — user processes get -EPERM.
  */
 static int64_t sys_init_module(uint64_t path_addr, uint64_t params_addr) {
+    kprintf("[MOD] init_module entry path=0x%llx params=0x%llx\n", (unsigned long long)path_addr,
+            (unsigned long long)params_addr);
     char kpath[256];
     char kparams[512];
 
     /* Copy path from user-space (safe uaccess) */
-    if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
+    if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0) {
+        kprintf("[MOD] init_module: strncpy_from_user failed\n");
         return (uint64_t)-EFAULT;
+    }
+    kprintf("[MOD] init_module path='%s'\n", kpath);
 
     /* Copy params from user-space (optional) */
     const char *params = NULL;
@@ -11823,21 +11839,28 @@ static int64_t sys_init_module(uint64_t path_addr, uint64_t params_addr) {
     const char *path = kpath;
 
     /* Lockdown: reject module loading at INTEGRITY level or above */
-    if (lockdown_is_locked_down(LOCKDOWN_INTEGRITY))
+    if (lockdown_is_locked_down(LOCKDOWN_INTEGRITY)) {
+        kprintf("[MOD] init_module: lockdown\n");
         return (uint64_t)-EPERM;
+    }
 
     /* CAP_SYS_MODULE check — required to load kernel modules */
     {
         int cap_ret = cap_sys_module_check();
-        if (cap_ret < 0)
+        if (cap_ret < 0) {
+            kprintf("[MOD] init_module: cap check failed %d\n", cap_ret);
             return (uint64_t)(int64_t)cap_ret;
+        }
     }
 
     /* Only root (or kernel context) can load modules */
     if (syscall_is_user_process()) {
         struct process *p = process_get_current();
-        if (!p || p->euid != 0)
+        if (!p || p->euid != 0) {
+            kprintf("[MOD] init_module: euid check failed (p=%p euid=%u)\n", (void *)p,
+                    p ? (unsigned int)p->euid : 0);
             return (uint64_t)-EPERM;
+        }
     }
 
     /* Validate the path string */
@@ -11846,8 +11869,11 @@ static int64_t sys_init_module(uint64_t path_addr, uint64_t params_addr) {
 
     /* Stat the file to get its size */
     struct vfs_stat st;
-    if (vfs_stat(path, &st) < 0)
+    if (vfs_stat(path, &st) < 0) {
+        kprintf("[MOD] init_module(%s): stat failed\n", path);
         return (uint64_t)-ENOENT;
+    }
+    kprintf("[MOD] init_module stat ok size=%llu\n", (unsigned long long)st.size);
 
     uint64_t file_size = st.size;
     if (file_size == 0 || file_size > 8 * 1024 * 1024) {
@@ -11869,26 +11895,38 @@ static int64_t sys_init_module(uint64_t path_addr, uint64_t params_addr) {
     }
 
     /* Run the ELF module loader */
-    struct module_elf_context ctx;
+    /* NOTE: struct module_elf_context is ~6MB (relas[64] x 4096 entries) —
+     * it MUST live on the heap, not the kernel stack (which is 128KB).
+     * A stack local triggers -fstack-clash-protection's probe loop and
+     * instantly overflows the stack guard (observed: kernel stack
+     * overflow at sys_init_module+0x20). */
+    struct module_elf_context *ctx = kmalloc(sizeof(*ctx));
+    if (!ctx) {
+        kfree(buf);
+        return (uint64_t)-ENOMEM;
+    }
+    memset(ctx, 0, sizeof(*ctx));
     int result = -1;
 
     /* Step 1: Validate ELF header */
-    if (module_elf_validate(&ctx, (const uint8_t *)buf, file_size) < 0) {
-        kprintf("[MOD] init_module(%s): validation failed: %s\n", path, ctx.error_msg);
+    if (module_elf_validate(ctx, (const uint8_t *)buf, file_size) < 0) {
+        kprintf("[MOD] init_module(%s): validation failed: %s\n", path, ctx->error_msg);
         kfree(buf);
+        kfree(ctx);
         return (uint64_t)-EINVAL;
     }
 
     /* Step 2: Parse ELF sections, symbols, relocations */
-    if (module_elf_parse(&ctx) < 0) {
-        kprintf("[MOD] init_module(%s): parse failed: %s\n", path, ctx.error_msg);
+    if (module_elf_parse(ctx) < 0) {
+        kprintf("[MOD] init_module(%s): parse failed: %s\n", path, ctx->error_msg);
         kfree(buf);
+        kfree(ctx);
         return (uint64_t)-EINVAL;
     }
 
     /* Step 3: Finalize (resolve, load, relocate, set perms, call init) */
     /* Use the filename (without .ko suffix) as the module name */
-    const char *mod_name = ctx.name;
+    const char *mod_name = ctx->name;
     if (mod_name[0] == '\0') {
         /* Fall back to filename without path */
         const char *slash = path;
@@ -11901,14 +11939,22 @@ static int64_t sys_init_module(uint64_t path_addr, uint64_t params_addr) {
         mod_name = last;
     }
 
-    result = module_elf_finalize(&ctx, mod_name);
-    module_elf_free(&ctx);
+    result = module_elf_finalize(ctx, mod_name);
+    if (result < 0) {
+        /* Read error_msg BEFORE module_elf_free() wipes the context —
+         * it memsets the whole struct, so printing afterwards always
+         * showed an empty "finalize failed: " and hid the real error
+         * (observed: relocation failure with no message). */
+        kprintf("[MOD] init_module(%s): finalize failed: %s\n", path, ctx->error_msg);
+    }
+    module_elf_free(ctx);
     kfree(buf);
 
     if (result < 0) {
-        kprintf("[MOD] init_module(%s): finalize failed: %s\n", path, ctx.error_msg);
+        kfree(ctx);
         return (uint64_t)-EINVAL;
     }
+    kfree(ctx);
 
     kprintf("[MOD] init_module(%s): loaded as id=%d\n", path, result);
 
@@ -12014,23 +12060,32 @@ static int64_t sys_finit_module(uint64_t fd, uint64_t params_addr, uint64_t flag
     }
 
     /* Run the ELF module loader */
-    struct module_elf_context ctx;
+    /* ~6MB context — heap-allocate, never on the kernel stack (see
+     * sys_init_module for details). */
+    struct module_elf_context *ctx = kmalloc(sizeof(*ctx));
+    if (!ctx) {
+        kfree(buf);
+        return (uint64_t)-ENOMEM;
+    }
+    memset(ctx, 0, sizeof(*ctx));
     int result = -1;
 
-    if (module_elf_validate(&ctx, (const uint8_t *)buf, file_size) < 0) {
-        kprintf("[MOD] finit_module(fd=%llu): validation failed: %s\n", fd, ctx.error_msg);
+    if (module_elf_validate(ctx, (const uint8_t *)buf, file_size) < 0) {
+        kprintf("[MOD] finit_module(fd=%llu): validation failed: %s\n", fd, ctx->error_msg);
         kfree(buf);
+        kfree(ctx);
         return (uint64_t)-EINVAL;
     }
 
-    if (module_elf_parse(&ctx) < 0) {
-        kprintf("[MOD] finit_module(fd=%llu): parse failed: %s\n", fd, ctx.error_msg);
+    if (module_elf_parse(ctx) < 0) {
+        kprintf("[MOD] finit_module(fd=%llu): parse failed: %s\n", fd, ctx->error_msg);
         kfree(buf);
+        kfree(ctx);
         return (uint64_t)-EINVAL;
     }
 
     /* Derive module name from the file path */
-    const char *mod_name = ctx.name;
+    const char *mod_name = ctx->name;
     if (mod_name[0] == '\0') {
         const char *slash = path;
         const char *last = path;
@@ -12042,15 +12097,16 @@ static int64_t sys_finit_module(uint64_t fd, uint64_t params_addr, uint64_t flag
         mod_name = last;
     }
 
-    result = module_elf_finalize(&ctx, mod_name);
-    module_elf_free(&ctx);
+    result = module_elf_finalize(ctx, mod_name);
+    module_elf_free(ctx);
     kfree(buf);
 
     if (result < 0) {
-        kprintf("[MOD] finit_module(fd=%llu): finalize failed: %s\n", fd, ctx.error_msg);
+        kprintf("[MOD] finit_module(fd=%llu): finalize failed: %s\n", fd, ctx->error_msg);
+        kfree(ctx);
         return (uint64_t)-EINVAL;
     }
-
+    kfree(ctx);
     kprintf("[MOD] finit_module(fd=%llu): loaded as id=%d\n", fd, result);
 
     /* Parse module parameters if provided (M29) */
@@ -12254,6 +12310,8 @@ int64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2, uint64
                                   uint64_t a5);
 
 /* Debug: called from syscall_entry_full assembly to trace syscall entry */
+/* (disabled — the assembly call site is commented out; kept only so the
+ * symbol exists for future debugging) */
 void kprintf_syscall_trace(uint64_t num, uint64_t unused) {
     (void)unused;
     struct process *p = process_get_current();
@@ -12263,6 +12321,8 @@ void kprintf_syscall_trace(uint64_t num, uint64_t unused) {
 
 int64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4,
                          uint64_t a5) {
+    if (num == 4)
+        kprintf("[sys4] exit called (a1=0x%llx)\n", (unsigned long long)a1);
     /* Seccomp check — must happen before any capability or argument validation */
     if (syscall_is_user_process()) {
         uint32_t seccomp_action = seccomp_evaluate_syscall(num, a1, a2, a3, 0);
@@ -12311,8 +12371,11 @@ int64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3, ui
 
     if (syscall_is_user_process()) {
         struct process *p = process_get_current();
-        if (!p || !process_caps_has(p, (uint32_t)num))
+        if (!p || !process_caps_has(p, (uint32_t)num)) {
+            if (num == 4)
+                kprintf("[sys4] CAPS DENIED (p=%p)\n", (void *)p);
             return (uint64_t)-1;
+        }
     }
 
     {

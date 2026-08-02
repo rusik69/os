@@ -1,32 +1,34 @@
 /* cmd_fold.c -- Fold (wrap) long lines */
-#include "shell_cmds.h"
 #include "libc.h"
 #include "printf.h"
-#include "string.h"
+#include "shell_cmds.h"
 #include "stdlib.h"
+#include "string.h"
 #include "types.h"
 
 int cmd_fold(int argc, char **argv) {
     int width = 80;
     int break_at_spaces = 0;
-    int optind = 1;
+    int optidx = 1;
 
-    while (optind < argc && argv[optind][0] == '-') {
-        if (strcmp(argv[optind], "-w") == 0) {
-            if (optind + 1 >= argc) {
+    while (optidx < argc && argv[optidx][0] == '-') {
+        if (strcmp(argv[optidx], "-w") == 0) {
+            if (optidx + 1 >= argc) {
                 kprintf("fold: -w requires an argument\n");
                 return 1;
             }
-            width = atoi(argv[optind + 1]);
-            if (width < 1) width = 1;
-            optind += 2;
-        } else if (strcmp(argv[optind], "-s") == 0) {
+            width = atoi(argv[optidx + 1]);
+            if (width < 1)
+                width = 1;
+            optidx += 2;
+        } else if (strcmp(argv[optidx], "-s") == 0) {
             break_at_spaces = 1;
-            optind++;
-        } else if (strcmp(argv[optind], "--") == 0) {
-            optind++; break;
+            optidx++;
+        } else if (strcmp(argv[optidx], "--") == 0) {
+            optidx++;
+            break;
         } else {
-            kprintf("fold: unknown option '%s'\n", argv[optind]);
+            kprintf("fold: unknown option '%s'\n", argv[optidx]);
             return 1;
         }
     }
@@ -35,13 +37,20 @@ int cmd_fold(int argc, char **argv) {
     static char fbuf[32768];
     uint32_t fsize = 0;
 
-    if (optind < argc) {
+    if (optidx < argc) {
         char path[64];
-        const char *fn = argv[optind];
-        if (fn[0] != '/') { path[0] = '/'; strncpy(path + 1, fn, 61); path[62] = '\0'; }
-        else { strncpy(path, fn, 63); path[63] = '\0'; }
+        const char *fn = argv[optidx];
+        if (fn[0] != '/') {
+            path[0] = '/';
+            strncpy(path + 1, fn, 61);
+            path[62] = '\0';
+        } else {
+            strncpy(path, fn, 63);
+            path[63] = '\0';
+        }
         int pl = (int)strlen(path);
-        while (pl > 0 && path[pl - 1] == ' ') path[--pl] = '\0';
+        while (pl > 0 && path[pl - 1] == ' ')
+            path[--pl] = '\0';
         if (vfs_read(path, fbuf, (uint32_t)(sizeof(fbuf) - 1), &fsize) != 0) {
             kprintf("fold: cannot read '%s'\n", fn);
             return 1;
@@ -65,7 +74,8 @@ int cmd_fold(int argc, char **argv) {
         while (*p && *p != '\n' && li < 4095)
             line[li++] = *p++;
         line[li] = '\0';
-        if (*p == '\n') p++;
+        if (*p == '\n')
+            p++;
 
         /* If line fits within width, output as-is */
         if (li <= width) {
@@ -81,7 +91,8 @@ int cmd_fold(int argc, char **argv) {
                 int end = pos + width;
                 if (end >= li) {
                     /* Last chunk */
-                    for (int k = pos; k < li; k++) kprintf("%c", line[k]);
+                    for (int k = pos; k < li; k++)
+                        kprintf("%c", line[k]);
                     kprintf("\n");
                     break;
                 }
@@ -93,18 +104,21 @@ int cmd_fold(int argc, char **argv) {
                 }
                 if (break_point > pos) {
                     /* Break at the space */
-                    for (int k = pos; k < break_point; k++) kprintf("%c", line[k]);
+                    for (int k = pos; k < break_point; k++)
+                        kprintf("%c", line[k]);
                     kprintf("\n");
                     pos = break_point + 1; /* skip the space */
                 } else {
                     /* No space found in range, break at width */
-                    for (int k = pos; k < pos + width && k < li; k++) kprintf("%c", line[k]);
+                    for (int k = pos; k < pos + width && k < li; k++)
+                        kprintf("%c", line[k]);
                     kprintf("\n");
                     pos += width;
                 }
             } else {
                 /* Hard break at width */
-                for (int k = pos; k < pos + width && k < li; k++) kprintf("%c", line[k]);
+                for (int k = pos; k < pos + width && k < li; k++)
+                    kprintf("%c", line[k]);
                 kprintf("\n");
                 pos += width;
             }

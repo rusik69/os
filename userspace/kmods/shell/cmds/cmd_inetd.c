@@ -24,86 +24,80 @@
  *   inetd reload       — reload /etc/inetd.conf
  */
 
-#include "shell_cmds.h"
-#include "printf.h"
-#include "string.h"
+#include "elf.h"
 #include "libc.h"
 #include "net.h"
-#include "syscall.h"
+#include "printf.h"
 #include "process.h"
-#include "elf.h"
+#include "shell_cmds.h"
+#include "string.h"
+#include "syscall.h"
 
 /* ── Constants ──────────────────────────────────────────────────────── */
 
 /* Maximum services we can manage */
-#define INETD_MAX_SERVICES       16
+#define INETD_MAX_SERVICES 16
 
 /* Maximum line length in inetd.conf */
-#define INETD_MAX_LINE           256
+#define INETD_MAX_LINE 256
 
 /* Maximum path length for executable */
-#define INETD_MAX_PATH           64
+#define INETD_MAX_PATH 64
 
 /* Maximum service name length */
-#define INETD_MAX_NAME           24
+#define INETD_MAX_NAME 24
 
 /* Accept timeout (in ticks) — short enough to remain responsive to stop */
-#define INETD_ACCEPT_TIMEOUT     50   /* 0.5 seconds at 100 Hz */
+#define INETD_ACCEPT_TIMEOUT 50 /* 0.5 seconds at 100 Hz */
 
 /* Polling interval for the main loop */
-#define INETD_POLL_INTERVAL      10   /* 0.1 seconds */
+#define INETD_POLL_INTERVAL 10 /* 0.1 seconds */
 
 /* Buffer size for built-in service reads */
-#define INETD_BUF_SIZE           1024
+#define INETD_BUF_SIZE 1024
 
 /* Config file path */
-#define INETD_CONF_PATH          "/etc/inetd.conf"
-#define INETD_LOG_PATH           "/var/log/inetd.log"
+#define INETD_CONF_PATH "/etc/inetd.conf"
+#define INETD_LOG_PATH "/var/log/inetd.log"
 
 /* ── Service types ──────────────────────────────────────────────────── */
 
 /* Protocol types */
-enum inetd_proto {
-    INETD_PROTO_TCP = 0,
-    INETD_PROTO_UDP = 1
-};
+enum inetd_proto { INETD_PROTO_TCP = 0, INETD_PROTO_UDP = 1 };
 
 /* Wait/nowait flag — if wait, inetd waits for service to finish before
  * accepting another connection on this port (used for datagram services).
  * For TCP stream services, always "nowait". */
-enum inetd_wait {
-    INETD_NOWAIT = 0,
-    INETD_WAIT   = 1
-};
+enum inetd_wait { INETD_NOWAIT = 0, INETD_WAIT = 1 };
 
 /* Built-in service types */
 enum inetd_builtin {
-    INETD_BUILTIN_NONE     = 0,
-    INETD_BUILTIN_ECHO     = 1,   /* RFC 862 — echo back received data */
-    INETD_BUILTIN_DISCARD  = 2,   /* RFC 863 — discard received data */
-    INETD_BUILTIN_DAYTIME  = 3,   /* RFC 867 — return current date/time */
-    INETD_BUILTIN_CHARGEN  = 4    /* RFC 864 — return character generator */
+    INETD_BUILTIN_NONE = 0,
+    INETD_BUILTIN_ECHO = 1,    /* RFC 862 — echo back received data */
+    INETD_BUILTIN_DISCARD = 2, /* RFC 863 — discard received data */
+    INETD_BUILTIN_DAYTIME = 3, /* RFC 867 — return current date/time */
+    INETD_BUILTIN_CHARGEN = 4  /* RFC 864 — return character generator */
 };
 
 /* ── Service entry ──────────────────────────────────────────────────── */
 
 struct inetd_service {
-    int    active;           /* 1 = slot in use */
-    char   name[INETD_MAX_NAME];  /* service name */
-    uint16_t port;           /* port number */
-    enum inetd_proto proto;  /* TCP or UDP */
-    enum inetd_wait  wait;   /* wait/nowait */
-    char   user[24];         /* user to run service as */
-    enum inetd_builtin builtin;  /* built-in service type */
-    char   executable[INETD_MAX_PATH];  /* path to executable */
-    char   args[INETD_MAX_LINE];       /* command arguments */
-    uint64_t conn_count;     /* total connections handled */
+    int active;                      /* 1 = slot in use */
+    char name[INETD_MAX_NAME];       /* service name */
+    uint16_t port;                   /* port number */
+    enum inetd_proto proto;          /* TCP or UDP */
+    enum inetd_wait wait;            /* wait/nowait */
+    char user[24];                   /* user to run service as */
+    enum inetd_builtin builtin;      /* built-in service type */
+    char executable[INETD_MAX_PATH]; /* path to executable */
+    char args[INETD_MAX_LINE];       /* command arguments */
+    uint64_t conn_count;             /* total connections handled */
 };
 
 /* ── Daemon state ───────────────────────────────────────────────────── */
 
 static volatile int inetd_stop_requested = 0;
-static volatile int inetd_running       = 0;
+static volatile int inetd_running = 0;
 
 /* Service table */
 static struct inetd_service inetd_services[INETD_MAX_SERVICES];
@@ -116,7 +110,8 @@ static int builtin_port_count = 0;
 /* ── Logging helper ─────────────────────────────────────────────────── */
 
 static void inetd_log(const char *msg) {
-    if (!msg) return;
+    if (!msg)
+        return;
     kprintf("[inetd] %s\n", msg);
     /* Ensure /var/log exists */
     libc_vfs_create("/var/log", 2);
@@ -137,7 +132,8 @@ static void inetd_handle_echo(int conn_id) {
     char buf[INETD_BUF_SIZE];
     for (;;) {
         int n = net_tcp_recv(conn_id, buf, sizeof(buf), 200);
-        if (n <= 0) break;
+        if (n <= 0)
+            break;
         net_tcp_send(conn_id, buf, (uint16_t)n);
     }
 }
@@ -147,7 +143,8 @@ static void inetd_handle_discard(int conn_id) {
     char buf[INETD_BUF_SIZE];
     for (;;) {
         int n = net_tcp_recv(conn_id, buf, sizeof(buf), 200);
-        if (n <= 0) break;
+        if (n <= 0)
+            break;
         /* Data discarded */
     }
 }
@@ -165,13 +162,9 @@ static void inetd_handle_daytime(int conn_id) {
     int sec = (int)(remaining % 60);
 
     /* Day of week (epoch was Thursday = 4) */
-    static const char *wday_names[7] = {
-        "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"
-    };
-    static const char *mon_names[12] = {
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
-    };
+    static const char *wday_names[7] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+    static const char *mon_names[12] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
     int wday = (int)((days + 4) % 7);
 
     /* Year */
@@ -179,28 +172,29 @@ static void inetd_handle_daytime(int conn_id) {
     while (1) {
         int leap = (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
         int days_in_year = leap ? 366 : 365;
-        if ((uint64_t)days_in_year > days) break;
+        if ((uint64_t)days_in_year > days)
+            break;
         days -= days_in_year;
         y++;
     }
 
     /* Month */
-    static const int dim[12] = {31,28,31,30,31,30,31,31,30,31,30,31};
+    static const int dim[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
     int m = 0;
     while (m < 11) {
         int d = dim[m];
         if (m == 1 && ((y % 4 == 0 && y % 100 != 0) || (y % 400 == 0)))
             d = 29;
-        if ((int)days < d) break;
+        if ((int)days < d)
+            break;
         days -= d;
         m++;
     }
     int day = (int)(days + 1);
 
     /* Format daytime string: "Wed Jun 10 14:30:00 2026\n" */
-    int len = snprintf(buf, sizeof(buf), "%s %s %2d %02d:%02d:%02d %04d\n",
-                       wday_names[wday], mon_names[m], day,
-                       hour, minute, sec, y);
+    int len = snprintf(buf, sizeof(buf), "%s %s %2d %02d:%02d:%02d %04d\n", wday_names[wday],
+                       mon_names[m], day, hour, minute, sec, y);
     if (len > 0)
         net_tcp_send(conn_id, buf, (uint16_t)(len < (int)sizeof(buf) ? len : (int)sizeof(buf) - 1));
 }
@@ -228,7 +222,8 @@ static void inetd_handle_chargen(int conn_id) {
         net_tcp_send(conn_id, line, (uint16_t)wi);
         start = (start + 1) % pi;
         /* Yield to allow other processing */
-        if (l % 10 == 0) libc_sleep_ticks(1);
+        if (l % 10 == 0)
+            libc_sleep_ticks(1);
     }
 }
 
@@ -242,16 +237,16 @@ static void inetd_handle_chargen(int conn_id) {
  * For UDP services, reads a datagram and passes it to the service.
  */
 static void inetd_handle_external(int conn_id, const struct inetd_service *svc) {
-    if (!svc || !svc->active) return;
+    if (!svc || !svc->active)
+        return;
 
     char logmsg[INETD_MAX_LINE + 40];
-    snprintf(logmsg, sizeof(logmsg),
-             "[inetd] Connection on port %u → %s (external, forking)",
+    snprintf(logmsg, sizeof(logmsg), "[inetd] Connection on port %u → %s (external, forking)",
              (unsigned)svc->port, svc->name);
     inetd_log(logmsg);
 
-    kprintf("[inetd] Forking external service '%s' on port %u (conn=%d)...\n",
-            svc->name, (unsigned)svc->port, conn_id);
+    kprintf("[inetd] Forking external service '%s' on port %u (conn=%d)...\n", svc->name,
+            (unsigned)svc->port, conn_id);
 
     /* Fork a child process to handle this connection */
     int child_pid = process_fork();
@@ -282,11 +277,16 @@ static void inetd_handle_external(int conn_id, const struct inetd_service *svc) 
         int argc = 0;
         char *ap = argbuf;
         while (*ap && argc < 15) {
-            while (*ap == ' ') ap++;
-            if (!*ap) break;
+            while (*ap == ' ')
+                ap++;
+            if (!*ap)
+                break;
             argv[argc++] = ap;
-            while (*ap && *ap != ' ') ap++;
-            if (*ap) { *ap++ = '\0'; }
+            while (*ap && *ap != ' ')
+                ap++;
+            if (*ap) {
+                *ap++ = '\0';
+            }
         }
         argv[argc] = NULL;
 
@@ -354,48 +354,65 @@ static void inetd_handle_connection(uint16_t port, int conn_id) {
 
 /* Map built-in service name to type */
 static enum inetd_builtin inetd_lookup_builtin(const char *name) {
-    if (!name) return INETD_BUILTIN_NONE;
-    if (strcmp(name, "echo") == 0)    return INETD_BUILTIN_ECHO;
-    if (strcmp(name, "discard") == 0)  return INETD_BUILTIN_DISCARD;
-    if (strcmp(name, "daytime") == 0)  return INETD_BUILTIN_DAYTIME;
-    if (strcmp(name, "chargen") == 0)  return INETD_BUILTIN_CHARGEN;
+    if (!name)
+        return INETD_BUILTIN_NONE;
+    if (strcmp(name, "echo") == 0)
+        return INETD_BUILTIN_ECHO;
+    if (strcmp(name, "discard") == 0)
+        return INETD_BUILTIN_DISCARD;
+    if (strcmp(name, "daytime") == 0)
+        return INETD_BUILTIN_DAYTIME;
+    if (strcmp(name, "chargen") == 0)
+        return INETD_BUILTIN_CHARGEN;
     return INETD_BUILTIN_NONE;
 }
 
 /* Map built-in type to string */
 static const char *inetd_builtin_name(enum inetd_builtin bt) {
     switch (bt) {
-    case INETD_BUILTIN_ECHO:    return "echo";
-    case INETD_BUILTIN_DISCARD: return "discard";
-    case INETD_BUILTIN_DAYTIME: return "daytime";
-    case INETD_BUILTIN_CHARGEN: return "chargen";
-    default: return "external";
+    case INETD_BUILTIN_ECHO:
+        return "echo";
+    case INETD_BUILTIN_DISCARD:
+        return "discard";
+    case INETD_BUILTIN_DAYTIME:
+        return "daytime";
+    case INETD_BUILTIN_CHARGEN:
+        return "chargen";
+    default:
+        return "external";
     }
 }
 
 /* Lookup standard port for a built-in service name */
 static uint16_t inetd_default_port(const char *name) {
-    if (!name) return 0;
-    if (strcmp(name, "echo") == 0)    return 7;
-    if (strcmp(name, "discard") == 0)  return 9;
-    if (strcmp(name, "daytime") == 0)  return 13;
-    if (strcmp(name, "chargen") == 0)  return 19;
+    if (!name)
+        return 0;
+    if (strcmp(name, "echo") == 0)
+        return 7;
+    if (strcmp(name, "discard") == 0)
+        return 9;
+    if (strcmp(name, "daytime") == 0)
+        return 13;
+    if (strcmp(name, "chargen") == 0)
+        return 19;
     return 0;
 }
 
 /* Parse one inetd.conf line. Returns 1 if a valid service was added. */
 static int inetd_parse_line(const char *line) {
-    if (!line || !*line) return 0;
+    if (!line || !*line)
+        return 0;
 
     /* Skip leading whitespace */
-    while (*line == ' ' || *line == '\t') line++;
+    while (*line == ' ' || *line == '\t')
+        line++;
 
     /* Empty line or comment */
-    if (*line == '\0' || *line == '#' || *line == '\n') return 0;
+    if (*line == '\0' || *line == '#' || *line == '\n')
+        return 0;
 
     if (inetd_num_services >= INETD_MAX_SERVICES) {
-        kprintf("[inetd] Max services (%d) reached, extra line ignored\n",
-                INETD_MAX_SERVICES);
+        kprintf("[inetd] Max services (%d) reached, extra line ignored\n", INETD_MAX_SERVICES);
         return 0;
     }
 
@@ -422,16 +439,22 @@ static int inetd_parse_line(const char *line) {
     char *p = buf;
     while (*p && ntokens < 8) {
         /* Skip whitespace */
-        while (*p == ' ' || *p == '\t') p++;
-        if (!*p) break;
+        while (*p == ' ' || *p == '\t')
+            p++;
+        if (!*p)
+            break;
         tokens[ntokens++] = p;
         /* Advance to next whitespace */
-        while (*p && *p != ' ' && *p != '\t') p++;
-        if (*p) { *p++ = '\0'; }
+        while (*p && *p != ' ' && *p != '\t')
+            p++;
+        if (*p) {
+            *p++ = '\0';
+        }
     }
 
     /* Minimum fields: service-name socket-type protocol wait/nowait user executable */
-    if (ntokens < 6) return 0;
+    if (ntokens < 6)
+        return 0;
 
     struct inetd_service svc;
     memset(&svc, 0, sizeof(svc));
@@ -485,8 +508,7 @@ static int inetd_parse_line(const char *line) {
     /* Determine port */
     svc.port = inetd_default_port(svc.name);
     if (svc.port == 0) {
-        kprintf("[inetd] Invalid port %u for service %s\n",
-                (unsigned)svc.port, svc.name);
+        kprintf("[inetd] Invalid port %u for service %s\n", (unsigned)svc.port, svc.name);
         return 0;
     }
 
@@ -496,7 +518,8 @@ static int inetd_parse_line(const char *line) {
         char args_buf[INETD_MAX_LINE];
         int ai = 0;
         for (int t = 6; t < ntokens && ai < INETD_MAX_LINE - 2; t++) {
-            if (t > 6) args_buf[ai++] = ' ';
+            if (t > 6)
+                args_buf[ai++] = ' ';
             const char *src = tokens[t];
             while (*src && ai < INETD_MAX_LINE - 2)
                 args_buf[ai++] = *src++;
@@ -511,8 +534,7 @@ static int inetd_parse_line(const char *line) {
     /* Add to service table */
     inetd_services[inetd_num_services++] = svc;
 
-    kprintf("[inetd] Registered: %s (port %u, %s)\n",
-            svc.name, (unsigned)svc.port,
+    kprintf("[inetd] Registered: %s (port %u, %s)\n", svc.name, (unsigned)svc.port,
             inetd_builtin_name(svc.builtin));
     return 1;
 }
@@ -534,8 +556,7 @@ static int inetd_load_config(void) {
     int ret = libc_vfs_read(INETD_CONF_PATH, buf, sizeof(buf) - 1, &size);
     if (ret < 0 || size == 0) {
         /* Config file doesn't exist or is empty — use defaults */
-        kprintf("[inetd] No %s found, using built-in defaults\n",
-                INETD_CONF_PATH);
+        kprintf("[inetd] No %s found, using built-in defaults\n", INETD_CONF_PATH);
         return 0;
     }
 
@@ -546,7 +567,8 @@ static int inetd_load_config(void) {
     char *line = buf;
     while (line && *line && inetd_num_services < INETD_MAX_SERVICES) {
         char *nl = line;
-        while (*nl && *nl != '\n') nl++;
+        while (*nl && *nl != '\n')
+            nl++;
 
         char saved = *nl;
         *nl = '\0';
@@ -566,19 +588,18 @@ static int inetd_load_config(void) {
 /* Register TCP listeners for all configured services */
 static void inetd_register_listeners(void) {
     for (int i = 0; i < inetd_num_services; i++) {
-        if (!inetd_services[i].active) continue;
+        if (!inetd_services[i].active)
+            continue;
 
         if (inetd_services[i].proto == INETD_PROTO_TCP) {
             /* Register in accept-queue mode (no callbacks) */
             net_tcp_listen(inetd_services[i].port, NULL, NULL, NULL);
-            kprintf("[inetd] Listening on TCP port %u (%s)\n",
-                    (unsigned)inetd_services[i].port,
+            kprintf("[inetd] Listening on TCP port %u (%s)\n", (unsigned)inetd_services[i].port,
                     inetd_services[i].name);
         } else if (inetd_services[i].proto == INETD_PROTO_UDP) {
             /* Register UDP listener via net_udp_listen */
             net_udp_listen(inetd_services[i].port);
-            kprintf("[inetd] Listening on UDP port %u (%s)\n",
-                    (unsigned)inetd_services[i].port,
+            kprintf("[inetd] Listening on UDP port %u (%s)\n", (unsigned)inetd_services[i].port,
                     inetd_services[i].name);
         }
     }
@@ -595,7 +616,8 @@ static void inetd_register_listeners(void) {
 /* Unregister all listeners */
 static void inetd_unregister_listeners(void) {
     for (int i = 0; i < inetd_num_services; i++) {
-        if (!inetd_services[i].active) continue;
+        if (!inetd_services[i].active)
+            continue;
         if (inetd_services[i].proto == INETD_PROTO_TCP) {
             net_tcp_unlisten(inetd_services[i].port);
         } else if (inetd_services[i].proto == INETD_PROTO_UDP) {
@@ -610,13 +632,10 @@ static void inetd_unregister_listeners(void) {
 /* Create a default inetd.conf with standard built-in services */
 static void inetd_create_default_config(void) {
     /* Define default built-in services */
-    static const char *default_services[] = {
-        "echo    stream  tcp  nowait  root  internal",
-        "discard stream  tcp  nowait  root  internal",
-        "daytime stream  tcp  nowait  root  internal",
-        "chargen stream  tcp  nowait  root  internal",
-        NULL
-    };
+    static const char *default_services[] = {"echo    stream  tcp  nowait  root  internal",
+                                             "discard stream  tcp  nowait  root  internal",
+                                             "daytime stream  tcp  nowait  root  internal",
+                                             "chargen stream  tcp  nowait  root  internal", NULL};
 
     for (int i = 0; default_services[i]; i++) {
         inetd_parse_line(default_services[i]);
@@ -633,16 +652,13 @@ static void inetd_show_status(void) {
         kprintf("  (no services configured)\n");
         return;
     }
-    kprintf("  %-16s %-6s %-10s %-12s %s\n",
-            "NAME", "PORT", "TYPE", "BUILTIN", "CONNECTIONS");
+    kprintf("  %-16s %-6s %-10s %-12s %s\n", "NAME", "PORT", "TYPE", "BUILTIN", "CONNECTIONS");
     for (int i = 0; i < inetd_num_services; i++) {
         struct inetd_service *s = &inetd_services[i];
-        if (!s->active) continue;
-        kprintf("  %-16s %-6u %-10s %-12s %llu\n",
-                s->name,
-                (unsigned)s->port,
-                s->proto == INETD_PROTO_TCP ? "tcp" : "udp",
-                inetd_builtin_name(s->builtin),
+        if (!s->active)
+            continue;
+        kprintf("  %-16s %-6u %-10s %-12s %llu\n", s->name, (unsigned)s->port,
+                s->proto == INETD_PROTO_TCP ? "tcp" : "udp", inetd_builtin_name(s->builtin),
                 (unsigned long long)s->conn_count);
     }
 }
@@ -663,8 +679,7 @@ static void inetd_run_daemon(void) {
     /* Register TCP listeners */
     inetd_register_listeners();
 
-    kprintf("[inetd] Internet super-server started with %d service(s)\n",
-            inetd_num_services);
+    kprintf("[inetd] Internet super-server started with %d service(s)\n", inetd_num_services);
     inetd_log("inetd daemon started");
 
     /* Main accept loop */
@@ -683,7 +698,8 @@ static void inetd_run_daemon(void) {
                     break;
                 }
             }
-            if (!svc) continue;
+            if (!svc)
+                continue;
 
             if (svc->proto == INETD_PROTO_TCP) {
                 int conn_id = net_tcp_accept(port, 1); /* very short timeout */
@@ -700,18 +716,16 @@ static void inetd_run_daemon(void) {
                 char udp_buf[INETD_BUF_SIZE];
                 uint32_t src_ip = 0;
                 uint16_t src_port = 0;
-                int n = net_udp_recv(port, udp_buf, sizeof(udp_buf),
-                                      &src_ip, &src_port, 0);  /* non-blocking */
-                if (n > 0) {
-                    kprintf("[inetd] Received %d bytes UDP on port %u\n",
-                            n, (unsigned)port);
+                int nrecv = net_udp_recv(port, udp_buf, sizeof(udp_buf), &src_ip, &src_port,
+                                         0); /* non-blocking */
+                if (nrecv > 0) {
+                    kprintf("[inetd] Received %d bytes UDP on port %u\n", nrecv, (unsigned)port);
                     /* For UDP external services, fork and pass the data */
                     if (svc->builtin == INETD_BUILTIN_NONE) {
                         inetd_handle_external(-1, svc);
                     } else {
                         /* Built-in UDP services handled inline */
-                        kprintf("[inetd] Built-in UDP on port %u\n",
-                                (unsigned)port);
+                        kprintf("[inetd] Built-in UDP on port %u\n", (unsigned)port);
                     }
                     handled++;
                 }
@@ -737,7 +751,8 @@ void cmd_inetd(const char *args) {
     /* Handle arguments */
     if (args && *args) {
         /* Skip leading whitespace */
-        while (*args == ' ') args++;
+        while (*args == ' ')
+            args++;
 
         if (strcmp(args, "stop") == 0) {
             if (!inetd_running) {
@@ -764,8 +779,7 @@ void cmd_inetd(const char *args) {
             inetd_unregister_listeners();
             inetd_load_config();
             inetd_register_listeners();
-            kprintf("inetd: configuration reloaded (%d services)\n",
-                    inetd_num_services);
+            kprintf("inetd: configuration reloaded (%d services)\n", inetd_num_services);
             return;
         }
 

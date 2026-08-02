@@ -486,9 +486,11 @@ static inline int pmm_get_stats(struct libc_pmm_stats *out) {
 }
 
 /* Specialized compatibility wrappers */
+#ifndef ELF_H
 static inline int elf_exec(const char *path) {
     return libc_elf_exec(path);
 }
+#endif
 static inline int script_exec(const char *path) {
     return libc_script_exec(path);
 }

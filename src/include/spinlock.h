@@ -1,8 +1,8 @@
 #ifndef SPINLOCK_H
 #define SPINLOCK_H
 
+#include "io.h" /* for pause/rep nop */
 #include "types.h"
-#include "io.h"  /* for pause/rep nop */
 
 /*
  * Spinlock — busy-wait lock with exponential backoff.
@@ -10,7 +10,7 @@
  */
 typedef volatile int spinlock_t;
 
-#include "preempt.h"  /* preempt_disable / preempt_enable */
+#include "preempt.h" /* preempt_disable / preempt_enable */
 
 /*
  * Spinlock — busy-wait lock with exponential backoff.
@@ -26,7 +26,7 @@ typedef volatile int spinlock_t;
 #define SPINLOCK_INIT 0
 
 /* Lockup detection threshold — ~1 billion PAUSE iterations */
-#define SPINLOCK_LOCKUP_THRESHOLD  1000000000ULL
+#define SPINLOCK_LOCKUP_THRESHOLD 10000000ULL
 
 /* ── Spinlock lockup detection threshold constant ────────────────── */
 
@@ -49,18 +49,31 @@ void spinlock_release_all_on_panic(void);
 /* Spinlock nesting tracking for sleeping-while-atomic detection */
 void lockdep_spinlock_acquired(void);
 void lockdep_spinlock_released(void);
-int  lockdep_holding_spinlock(void);
+int lockdep_holding_spinlock(void);
 
 #else
 
 /* Stubs when debugging is disabled */
-static inline void spinlock_register_owner(spinlock_t *lock, uint64_t caller_rip) { (void)lock; (void)caller_rip; }
-static inline void spinlock_unregister_owner(spinlock_t *lock) { (void)lock; }
-static inline void spinlock_detect_lockup(spinlock_t *lock, uint64_t spin_count) { (void)lock; (void)spin_count; }
-static inline void spinlock_release_all_on_panic(void) {}
-static inline void lockdep_spinlock_acquired(void) {}
-static inline void lockdep_spinlock_released(void) {}
-static inline int  lockdep_holding_spinlock(void) { return 0; }
+static inline void spinlock_register_owner(spinlock_t *lock, uint64_t caller_rip) {
+    (void)lock;
+    (void)caller_rip;
+}
+static inline void spinlock_unregister_owner(spinlock_t *lock) {
+    (void)lock;
+}
+static inline void spinlock_detect_lockup(spinlock_t *lock, uint64_t spin_count) {
+    (void)lock;
+    (void)spin_count;
+}
+static inline void spinlock_release_all_on_panic(void) {
+}
+static inline void lockdep_spinlock_acquired(void) {
+}
+static inline void lockdep_spinlock_released(void) {
+}
+static inline int lockdep_holding_spinlock(void) {
+    return 0;
+}
 
 #endif /* SPINLOCK_DEBUG_DISABLE */
 
@@ -88,13 +101,13 @@ static inline void spinlock_acquire(spinlock_t *lock) {
             __asm__ volatile("pause");
         }
         if (backoff < max_backoff)
-            backoff <<= 1;  /* exponential backoff */
+            backoff <<= 1; /* exponential backoff */
         spin_count += (uint64_t)backoff;
 
         /* Lockup detection: if we've been spinning too long, dump diagnostics */
         if (spin_count >= SPINLOCK_LOCKUP_THRESHOLD) {
             spinlock_detect_lockup(lock, spin_count);
-            spin_count = 0;  /* reset to avoid repeat floods */
+            spin_count = 0; /* reset to avoid repeat floods */
         }
     }
     __sync_synchronize(); /* full memory barrier */
@@ -140,14 +153,12 @@ static inline int spinlock_try_acquire(spinlock_t *lock) {
 
 /* IRQ-safe variant: save interrupt flag, disable, acquire */
 static inline void spinlock_irqsave_acquire(spinlock_t *lock, uint64_t *flags) {
-    __asm__ volatile(
-        "pushfq\n\t"
-        "pop %0\n\t"
-        "cli\n\t"
-        : "=r"(*flags)
-        :
-        : "memory"
-    );
+    __asm__ volatile("pushfq\n\t"
+                     "pop %0\n\t"
+                     "cli\n\t"
+                     : "=r"(*flags)
+                     :
+                     : "memory");
     /* spinlock_acquire() calls preempt_disable() internally, which
      * pairs with the preempt_enable() inside spinlock_release().
      * IRQs are off so preemption is implicitly blocked as well. */

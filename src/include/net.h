@@ -306,19 +306,19 @@ struct icmp_header {
 } __attribute__((packed));
 
 /* ICMP type constants (RFC 792) */
-#define ICMP_ECHOREPLY      0   /* Echo Reply */
-#define ICMP_UNREACH        3   /* Destination Unreachable */
-#define ICMP_SOURCEQUENCH   4   /* Source Quench */
-#define ICMP_REDIRECT       5   /* Redirect */
-#define ICMP_ECHO           8   /* Echo Request */
-#define ICMP_TIMXCEED       11  /* Time Exceeded */
-#define ICMP_PARAMPROB      12  /* Parameter Problem */
-#define ICMP_TSTAMP         13  /* Timestamp */
-#define ICMP_TSTAMPREPLY    14  /* Timestamp Reply */
-#define ICMP_INFO           15  /* Information Request */
-#define ICMP_INFOREPLY      16  /* Information Reply */
-#define ICMP_MASKREQ        17  /* Address Mask Request */
-#define ICMP_MASKREPLY      18  /* Address Mask Reply */
+#define ICMP_ECHOREPLY 0    /* Echo Reply */
+#define ICMP_UNREACH 3      /* Destination Unreachable */
+#define ICMP_SOURCEQUENCH 4 /* Source Quench */
+#define ICMP_REDIRECT 5     /* Redirect */
+#define ICMP_ECHO 8         /* Echo Request */
+#define ICMP_TIMXCEED 11    /* Time Exceeded */
+#define ICMP_PARAMPROB 12   /* Parameter Problem */
+#define ICMP_TSTAMP 13      /* Timestamp */
+#define ICMP_TSTAMPREPLY 14 /* Timestamp Reply */
+#define ICMP_INFO 15        /* Information Request */
+#define ICMP_INFOREPLY 16   /* Information Reply */
+#define ICMP_MASKREQ 17     /* Address Mask Request */
+#define ICMP_MASKREPLY 18   /* Address Mask Reply */
 
 /* UDP header */
 struct udp_header {
@@ -368,9 +368,11 @@ struct tcp_pseudo {
 
 void net_init(void);
 void net_poll(void);
+int net_stack_ready(void);
 void net_rx_signal(void);
 void net_rx_dispatch(uint8_t *data, uint16_t len);
 int net_rx_pending(void);
+int net_link_recv(void *buf, uint16_t max_len);
 /* Block until a network packet is available (waitqueue-based) */
 void net_wait_for_packet(void);
 int net_link_send(const void *data, uint16_t len);
@@ -434,6 +436,7 @@ void net_tcp_listen(uint16_t port, tcp_connect_handler on_connect, tcp_data_hand
                     tcp_close_handler on_close);
 void net_tcp_unlisten(uint16_t port);
 int net_tcp_send(int conn_id, const void *data, uint16_t len);
+void net_tcp_set_nodelay(int conn_id, int val);
 int net_tcp_port_in_use(uint16_t port);
 void net_tcp_close(int conn_id);
 

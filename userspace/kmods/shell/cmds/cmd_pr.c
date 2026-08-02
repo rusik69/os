@@ -1,17 +1,16 @@
 /* cmd_pr.c -- Paginate files for printing (headers, page numbers) */
-#include "shell_cmds.h"
 #include "libc.h"
 #include "printf.h"
-#include "string.h"
+#include "shell_cmds.h"
 #include "stdlib.h"
+#include "string.h"
 #include "types.h"
 
-static void write_header(int page_num, const char *filename, int has_time, struct libc_rtc_time *tm) {
+static void write_header(int page_num, const char *filename, int has_time,
+                         struct libc_rtc_time *tm) {
     if (has_time) {
-        kprintf("%04d-%02d-%02d %02d:%02d  %s  Page %d\n\n",
-                tm->year, tm->month, tm->day,
-                tm->hour, tm->minute,
-                filename, page_num);
+        kprintf("%04d-%02d-%02d %02d:%02d  %s  Page %d\n\n", tm->year, tm->month, tm->day, tm->hour,
+                tm->minute, filename, page_num);
     } else {
         kprintf("%s  Page %d\n\n", filename, page_num);
     }
@@ -19,21 +18,23 @@ static void write_header(int page_num, const char *filename, int has_time, struc
 
 int cmd_pr(int argc, char **argv) {
     int page_size = 66;
-    int optind = 1;
+    int optidx = 1;
 
-    while (optind < argc && argv[optind][0] == '-') {
-        if (strcmp(argv[optind], "-l") == 0) {
-            if (optind + 1 >= argc) {
+    while (optidx < argc && argv[optidx][0] == '-') {
+        if (strcmp(argv[optidx], "-l") == 0) {
+            if (optidx + 1 >= argc) {
                 kprintf("pr: -l requires an argument\n");
                 return 1;
             }
-            page_size = atoi(argv[optind + 1]);
-            if (page_size < 1) page_size = 1;
-            optind += 2;
-        } else if (strcmp(argv[optind], "--") == 0) {
-            optind++; break;
+            page_size = atoi(argv[optidx + 1]);
+            if (page_size < 1)
+                page_size = 1;
+            optidx += 2;
+        } else if (strcmp(argv[optidx], "--") == 0) {
+            optidx++;
+            break;
         } else {
-            kprintf("pr: unknown option '%s'\n", argv[optind]);
+            kprintf("pr: unknown option '%s'\n", argv[optidx]);
             return 1;
         }
     }
@@ -43,14 +44,21 @@ int cmd_pr(int argc, char **argv) {
     uint32_t fsize = 0;
     const char *filename = "stdin";
 
-    if (optind < argc) {
+    if (optidx < argc) {
         char path[64];
-        const char *fn = argv[optind];
+        const char *fn = argv[optidx];
         filename = fn;
-        if (fn[0] != '/') { path[0] = '/'; strncpy(path + 1, fn, 61); path[62] = '\0'; }
-        else { strncpy(path, fn, 63); path[63] = '\0'; }
+        if (fn[0] != '/') {
+            path[0] = '/';
+            strncpy(path + 1, fn, 61);
+            path[62] = '\0';
+        } else {
+            strncpy(path, fn, 63);
+            path[63] = '\0';
+        }
         int pl = (int)strlen(path);
-        while (pl > 0 && path[pl - 1] == ' ') path[--pl] = '\0';
+        while (pl > 0 && path[pl - 1] == ' ')
+            path[--pl] = '\0';
         if (vfs_read(path, fbuf, (uint32_t)(sizeof(fbuf) - 1), &fsize) != 0) {
             kprintf("pr: cannot read '%s'\n", fn);
             return 1;
@@ -85,7 +93,8 @@ int cmd_pr(int argc, char **argv) {
         while (*p && *p != '\n' && li < 4095)
             line[li++] = *p++;
         line[li] = '\0';
-        if (*p == '\n') p++;
+        if (*p == '\n')
+            p++;
 
         kprintf("%s\n", line);
         line_on_page++;

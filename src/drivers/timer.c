@@ -97,24 +97,26 @@
 #define KERNEL_INTERNAL
 
 #include "timer.h"
-#include "timers.h"
-#include "idt.h"
-#include "pic.h"
-#include "io.h"
-#include "scheduler.h"
-#include "process.h"
-#include "apic.h"
-#include "printf.h"
-#include "syscall.h"   /* timerfd_tick, posix_timer_tick */
-#include "rcu.h"       /* rcu_check_stall */
-#include "nmi_watchdog.h"
-#include "vsyscall.h"
-#include "nohz.h"
-#include "export.h"
-#include "softirq.h"
 
-#define PIT_CMD  0x43
-#define PIT_CH0  0x40
+#include "apic.h"
+#include "export.h"
+#include "idt.h"
+#include "io.h"
+#include "net.h" /* net_poll — network stack polling on each tick */
+#include "nmi_watchdog.h"
+#include "nohz.h"
+#include "pic.h"
+#include "printf.h"
+#include "process.h"
+#include "rcu.h" /* rcu_check_stall */
+#include "scheduler.h"
+#include "softirq.h"
+#include "syscall.h" /* timerfd_tick, posix_timer_tick */
+#include "timers.h"
+#include "vsyscall.h"
+
+#define PIT_CMD 0x43
+#define PIT_CH0 0x40
 
 static volatile uint64_t ticks = 0;
 
@@ -124,14 +126,15 @@ static void timer_handler(struct interrupt_frame *frame) {
     int was_user = (frame->cs == 0x1b);
 
     /* Account this tick to the NO_HZ subsystem */
-    nohz_tick_account(0);  /* CPU 0 handles the timer; tick state tracked globally */
+    nohz_tick_account(0); /* CPU 0 handles the timer; tick state tracked globally */
 
     scheduler_tick(was_user);
 
-    /* Raise the TIMER softirq so registered dynamic timers are dispatched,
-     * then process all pending softirqs with interrupts enabled.
-     * iretq in the assembly stub will restore the original RFLAGS (IF).
-     * This also enables tasklets, network RX/TX, and other softirq types. */
+    /* NOTE: the NIC is NOT polled from the timer.  The netd kthread
+     * (telnetd_task) drains the NIC in process context — running the full
+     * TCP stack on the IRQ stack re-enters tcp_lock from the timer's own
+     * send path and deadlocks. */
+
     softirq_raise(SOFTIRQ_TIMER);
     sti();
     do_softirq();
@@ -185,21 +188,18 @@ uint64_t timer_get_ms(void) {
 }
 
 /* ── Stub: timer_read ─────────────────────────────── */
-static uint64_t timer_read(void)
-{
+static uint64_t timer_read(void) {
     kprintf("[timer] timer_read: not yet implemented\n");
     return 0;
 }
 /* ── Stub: timer_set_period ─────────────────────────────── */
-static int timer_set_period(uint64_t period)
-{
+static int timer_set_period(uint64_t period) {
     (void)period;
     kprintf("[timer] timer_set_period: not yet implemented\n");
     return 0;
 }
 /* ── Stub: timer_get_freq ─────────────────────────────── */
-static uint64_t timer_get_freq(void)
-{
+static uint64_t timer_get_freq(void) {
     kprintf("[timer] timer_get_freq: not yet implemented\n");
     return 0;
 }

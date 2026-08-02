@@ -817,7 +817,7 @@ DEPS = $(C_OBJS:.o=.d)
 # Module compilation flags: same as CFLAGS but with -DMODULE and without
 # -nostdinc (modules include kernel headers via the same include paths).
 MODULE_CFLAGS  = $(filter-out -nostdinc -fno-builtin -mno-mmx -mno-sse -mno-sse2 -fstack-protector-strong -mstack-protector-guard=global -mcmodel=large, $(CFLAGS)) \
-                 -DMODULE -ffreestanding -nostdlib -fno-builtin -fno-stack-protector -mcmodel=small -Isrc/include \
+                 -DMODULE -ffreestanding -nostdlib -fno-builtin -fno-stack-protector -mcmodel=large -Isrc/include \
                  -Iuserspace/kmods/shell -Iuserspace/kmods/doom -Iuserspace/kmods/dos -Iuserspace/kmods/gui
 MODULE_LDFLAGS = -r -z max-page-size=0x1000
 
@@ -1091,9 +1091,37 @@ $(BUILDDIR)/%.o: src/%.asm
 	@mkdir -p $(dir $@)
 	$(AS) $(ASFLAGS) $< -o $@
 
-$(BUILDDIR)/kernel.elf: check-app-boundary $(PCH_FILE) $(OBJS)
+# Three-pass link for the kallsyms table (Linux-style):
+#   pass 1: link kernel-prelink.elf (no generated table)
+#   pass 2: nm prelink -> gen kallsyms_gen.c -> relink kernel-pass2.elf
+#   pass 3: nm pass2 -> regen kallsyms_gen2.c -> relink kernel.elf (final)
+# The table sits after all code/data it references but BEFORE .bss, so
+# text/data addresses are stable across passes; only .bss shifts.  Pass 3's
+# layout is byte-identical to pass 2's (same table size), so the pass-2 nm
+# addresses — including .bss symbols — are final.
+$(BUILDDIR)/kernel-prelink.elf: check-app-boundary $(PCH_FILE) $(OBJS)
 	@mkdir -p $(BUILDDIR)
 	$(LD) $(LDFLAGS) -o $@ $(OBJS) $(LIBGCC)
+
+$(BUILDDIR)/kallsyms_gen.c: $(BUILDDIR)/kernel-prelink.elf
+	python3 scripts/gen_kallsyms.py $< $@
+
+$(BUILDDIR)/kallsyms_gen.o: $(BUILDDIR)/kallsyms_gen.c $(PCH_FILE)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILDDIR)/kernel-pass2.elf: check-app-boundary $(BUILDDIR)/kallsyms_gen.o $(PCH_FILE) $(OBJS)
+	@mkdir -p $(BUILDDIR)
+	$(LD) $(LDFLAGS) -o $@ $(OBJS) $(BUILDDIR)/kallsyms_gen.o $(LIBGCC)
+
+$(BUILDDIR)/kallsyms_gen2.c: $(BUILDDIR)/kernel-pass2.elf
+	python3 scripts/gen_kallsyms.py $< $@
+
+$(BUILDDIR)/kallsyms_gen2.o: $(BUILDDIR)/kallsyms_gen2.c $(PCH_FILE)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILDDIR)/kernel.elf: check-app-boundary $(BUILDDIR)/kernel-pass2.elf $(BUILDDIR)/kallsyms_gen2.o
+	@mkdir -p $(BUILDDIR)
+	$(LD) $(LDFLAGS) -o $@ $(OBJS) $(BUILDDIR)/kallsyms_gen2.o $(LIBGCC)
 
 # config_gz.o depends on the auto-generated header
 $(BUILDDIR)/kernel/config_gz.o: $(BUILD_CONFIG_GZ_H)

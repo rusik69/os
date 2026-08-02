@@ -1,13 +1,14 @@
 #include "blockdev.h"
-#include "string.h"
-#include "printf.h"
-#include "heap.h"
-#include "spinlock.h"
-#include "timer.h"
+
 #include "export.h"
-#include "process.h"
+#include "heap.h"
 #include "ioprio.h"
-#include "psi.h"      /* psi_io_enter/leave for IO stall tracking */
+#include "printf.h"
+#include "process.h"
+#include "psi.h" /* psi_io_enter/leave for IO stall tracking */
+#include "spinlock.h"
+#include "string.h"
+#include "timer.h"
 
 /* Global device table */
 static struct blockdev_entry g_blockdevs[BLOCKDEV_MAX_DEVICES];
@@ -23,8 +24,7 @@ static int g_initialized = 0;
  * Must be called with g_dev_lock NOT held (it acquires it internally).
  * The caller must hold q->lock or otherwise ensure no concurrent
  * unregistration can happen between the active check and get. */
-static int blockdev_get(int dev_id)
-{
+static int blockdev_get(int dev_id) {
     if (dev_id < 0 || dev_id >= BLOCKDEV_MAX_DEVICES)
         return -EINVAL;
 
@@ -44,8 +44,7 @@ static int blockdev_get(int dev_id)
 /**
  * blockdev_put — Release a reference on a block device.
  * Safe to call with an inactive device (e.g. after unregister). */
-static void blockdev_put(int dev_id)
-{
+static void blockdev_put(int dev_id) {
     if (dev_id < 0 || dev_id >= BLOCKDEV_MAX_DEVICES)
         return;
 
@@ -62,7 +61,8 @@ static void blockdev_put(int dev_id)
 
 struct blk_request *blk_request_alloc(void) {
     struct blk_request *req = (struct blk_request *)kmalloc(sizeof(struct blk_request));
-    if (!req) return NULL;
+    if (!req)
+        return NULL;
     memset(req, 0, sizeof(*req));
     /* Capture the current process's I/O priority so the block layer can
      * order requests appropriately (RT > BE > IDLE). */
@@ -72,7 +72,8 @@ struct blk_request *blk_request_alloc(void) {
 }
 
 void blk_request_free(struct blk_request *req) {
-    if (req) kfree(req);
+    if (req)
+        kfree(req);
 }
 
 /* ── Request queue operations ─────────────────────────────────────── */
@@ -112,26 +113,31 @@ static void queue_insert(struct blk_request_queue *q, struct blk_request *req) {
                                   (req->expiry == (*pp)->expiry && req->lba < (*pp)->lba);
                 }
             }
-            if (insert_here) break;
+            if (insert_here)
+                break;
             pp = &(*pp)->next;
         }
         req->next = *pp;
         *pp = req;
-        if (!req->next) q->tail = req;
+        if (!req->next)
+            q->tail = req;
         return;
     }
 }
 
 static struct blk_request *queue_peek(struct blk_request_queue *q) {
-    if (!q->head) return NULL;
+    if (!q->head)
+        return NULL;
     return q->head;
 }
 
 static struct blk_request *queue_pop(struct blk_request_queue *q) {
     struct blk_request *req = q->head;
-    if (!req) return NULL;
+    if (!req)
+        return NULL;
     q->head = req->next;
-    if (!q->head) q->tail = NULL;
+    if (!q->head)
+        q->tail = NULL;
     req->next = NULL;
     q->queued_count--;
     return req;
@@ -139,9 +145,8 @@ static struct blk_request *queue_pop(struct blk_request_queue *q) {
 
 /* ── Statistics API ───────────────────────────────────────────────── */
 
-void blockdev_stats_update(int dev_id, int is_write, int is_discard,
-                           int is_flush, uint64_t sectors, uint64_t duration_ms)
-{
+void blockdev_stats_update(int dev_id, int is_write, int is_discard, int is_flush, uint64_t sectors,
+                           uint64_t duration_ms) {
     if (dev_id < 0 || dev_id >= BLOCKDEV_MAX_DEVICES || !g_blockdevs[dev_id].active)
         return;
 
@@ -170,8 +175,7 @@ void blockdev_stats_update(int dev_id, int is_write, int is_discard,
     spinlock_irqsave_release(&g_dev_lock, irq_flags);
 }
 
-void blockdev_stats_reset(int dev_id)
-{
+void blockdev_stats_reset(int dev_id) {
     if (dev_id < 0 || dev_id >= BLOCKDEV_MAX_DEVICES)
         return;
 
@@ -182,10 +186,12 @@ void blockdev_stats_reset(int dev_id)
 }
 
 int blockdev_get_stats(int dev, struct blockdev_stats *s) {
-    if (!g_initialized) return -EINVAL;
+    if (!g_initialized)
+        return -EINVAL;
     if (dev < 0 || dev >= BLOCKDEV_MAX_DEVICES || !g_blockdevs[dev].active)
         return -EINVAL;
-    if (!s) return -EINVAL;
+    if (!s)
+        return -EINVAL;
 
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&g_dev_lock, &irq_flags);
@@ -199,8 +205,7 @@ int blockdev_get_stats(int dev, struct blockdev_stats *s) {
  * Called when a request is dispatched to the driver (increment) or completed
  * (decrement). Updates io_ticks (jiffies with at least one I/O in flight) and
  * weighted_io_ticks (sum of io_in_flight * elapsed time). */
-static void blockdev_track_inflight(int dev_id, int delta)
-{
+static void blockdev_track_inflight(int dev_id, int delta) {
     if (dev_id < 0 || dev_id >= BLOCKDEV_MAX_DEVICES || !g_blockdevs[dev_id].active)
         return;
 
@@ -220,7 +225,7 @@ static void blockdev_track_inflight(int dev_id, int delta)
     }
 
     if (delta > 0) {
-        s->io_ticks = now;  /* Mark start of busy period */
+        s->io_ticks = now; /* Mark start of busy period */
     }
 
     if (delta > 0) {
@@ -232,13 +237,13 @@ static void blockdev_track_inflight(int dev_id, int delta)
     if (s->io_in_flight == 0) {
         /* I/O period just ended; accumulate io_ticks */
         uint64_t busy = now - s->io_ticks;
-        s->io_ticks = busy;  /* Now holds total busy jiffies */
-        s->weighted_io_ticks = now;  /* Reset marker for next busy period */
+        s->io_ticks = busy;         /* Now holds total busy jiffies */
+        s->weighted_io_ticks = now; /* Reset marker for next busy period */
     } else {
         /* I/O still in flight; update weighted sum */
         uint64_t elapsed = now - s->weighted_io_ticks;
         s->weighted_io_ticks += elapsed * (uint64_t)s->io_in_flight;
-        s->io_ticks = now;  /* Keep as timestamp, we'll compute at end */
+        s->io_ticks = now; /* Keep as timestamp, we'll compute at end */
     }
 
     spinlock_irqsave_release(&g_dev_lock, irq_flags);
@@ -246,8 +251,7 @@ static void blockdev_track_inflight(int dev_id, int delta)
 
 /* ── Proc/diskstats-style formatting ──────────────────────────────── */
 
-int blockdev_stats_format(char *buf, int size, int dev)
-{
+int blockdev_stats_format(char *buf, int size, int dev) {
     if (!buf || size <= 0 || dev < 0 || dev >= BLOCKDEV_MAX_DEVICES)
         return 0;
 
@@ -281,27 +285,19 @@ int blockdev_stats_format(char *buf, int size, int dev)
      */
 
     int n = snprintf(buf, size,
-        "%llu %llu %llu %llu "
-        "%llu %llu %llu %llu "
-        "%u %llu %llu "
-        "%llu %llu %llu "
-        "%llu %llu",
-        (unsigned long long)s->read_ops,
-        (unsigned long long)s->read_merges,
-        (unsigned long long)s->read_sectors,
-        (unsigned long long)s->read_ms,
-        (unsigned long long)s->write_ops,
-        (unsigned long long)s->write_merges,
-        (unsigned long long)s->write_sectors,
-        (unsigned long long)s->write_ms,
-        s->io_in_flight,
-        (unsigned long long)s->io_ticks,
-        (unsigned long long)s->weighted_io_ticks,
-        (unsigned long long)s->discard_ops,
-        (unsigned long long)s->discard_sectors,
-        (unsigned long long)s->discard_ms,
-        (unsigned long long)s->flush_ops,
-        (unsigned long long)s->flush_ms);
+                     "%llu %llu %llu %llu "
+                     "%llu %llu %llu %llu "
+                     "%u %llu %llu "
+                     "%llu %llu %llu "
+                     "%llu %llu",
+                     (unsigned long long)s->read_ops, (unsigned long long)s->read_merges,
+                     (unsigned long long)s->read_sectors, (unsigned long long)s->read_ms,
+                     (unsigned long long)s->write_ops, (unsigned long long)s->write_merges,
+                     (unsigned long long)s->write_sectors, (unsigned long long)s->write_ms,
+                     s->io_in_flight, (unsigned long long)s->io_ticks,
+                     (unsigned long long)s->weighted_io_ticks, (unsigned long long)s->discard_ops,
+                     (unsigned long long)s->discard_sectors, (unsigned long long)s->discard_ms,
+                     (unsigned long long)s->flush_ops, (unsigned long long)s->flush_ms);
 
     spinlock_irqsave_release(&g_dev_lock, irq_flags);
     return n;
@@ -310,7 +306,8 @@ int blockdev_stats_format(char *buf, int size, int dev)
 /* ── Core submission path ─────────────────────────────────────────── */
 
 int blk_submit_async(struct blk_request *req) {
-    if (!req || !g_initialized) return -EINVAL;
+    if (!req || !g_initialized)
+        return -EINVAL;
     int dev_id = req->dev_id;
     if (dev_id < 0 || dev_id >= BLOCKDEV_MAX_DEVICES)
         return -EINVAL;
@@ -347,13 +344,13 @@ int blk_submit_async(struct blk_request *req) {
 
         req->inflight = 1;
         q->inflight_count++;
-        blockdev_track_inflight(dev_id, 1);  /* Track I/O dispatch */
+        blockdev_track_inflight(dev_id, 1); /* Track I/O dispatch */
         spinlock_irqsave_release(&q->lock, irq_flags);
 
         if (!g_blockdevs[dev_id].submit_fn) {
             req->inflight = 0;
             q->inflight_count--;
-            blockdev_track_inflight(dev_id, -1);  /* Undo the dispatch tracking */
+            blockdev_track_inflight(dev_id, -1); /* Undo the dispatch tracking */
             blockdev_put(dev_id);
             req->result = -1;
             req->done = 1;
@@ -380,8 +377,8 @@ int blk_submit_async(struct blk_request *req) {
         req->done = 1;
 
         /* Update stats for synchronous completion */
-        blockdev_stats_update(dev_id,
-            !(req->flags & BLK_REQ_READ),           /* is_write */
+        blockdev_stats_update(
+            dev_id, !(req->flags & BLK_REQ_READ),   /* is_write */
             (req->flags & BLK_REQ_DISCARD) ? 1 : 0, /* is_discard */
             (req->flags & (BLK_REQ_FLUSH | BLK_REQ_PREFLUSH | BLK_REQ_FUA)) ? 1 : 0, /* is_flush */
             req->count, elapsed_ms);
@@ -403,11 +400,26 @@ int blk_submit_async(struct blk_request *req) {
     return 0;
 }
 
-int blk_submit_sync(int dev_id, uint64_t lba, uint32_t count,
-                    void *buf, uint32_t flags) {
-    if (!g_initialized) return -EINVAL;
+int blk_submit_sync(int dev_id, uint64_t lba, uint32_t count, void *buf, uint32_t flags) {
+    if (!g_initialized)
+        return -EINVAL;
     if (dev_id < 0 || dev_id >= BLOCKDEV_MAX_DEVICES || !g_blockdevs[dev_id].active)
         return -EINVAL;
+
+    /* ── Guard: never write sector 0 through the block layer.  The FAT32
+     * VBR (and MBR) lives there; a misdirected write corrupts the boot
+     * sector mid-boot (observed repeatedly: dirty bufcache entry with
+     * lba=0 written back during an eviction → mount fails → native FS
+     * format → everything downstream breaks).  The fs.c native-FS layer
+     * has its own LBA-0 redirect; this is the block-layer backstop. ── */
+    if ((flags & BLK_REQ_WRITE) && lba == 0) {
+        uint64_t ra = (uint64_t)__builtin_return_address(0);
+        kprintf("[DISKWR] BLOCKED LBA=0 WRITE dev=%d count=%u buf=%p from=%p first=%02x %02x %02x "
+                "%02x\n",
+                dev_id, (unsigned int)count, buf, (void *)ra, ((const uint8_t *)buf)[0],
+                ((const uint8_t *)buf)[1], ((const uint8_t *)buf)[2], ((const uint8_t *)buf)[3]);
+        return -EINVAL;
+    }
 
     uint32_t max_xfer = g_blockdevs[dev_id].max_transfer;
 
@@ -425,7 +437,8 @@ int blk_submit_sync(int dev_id, uint64_t lba, uint32_t count,
             uint32_t chunk = (remaining > max_xfer) ? max_xfer : (uint32_t)remaining;
 
             struct blk_request *req = blk_request_alloc();
-            if (!req) return -6;
+            if (!req)
+                return -6;
 
             req->dev_id = (uint8_t)dev_id;
             req->lba = cur_lba;
@@ -440,7 +453,8 @@ int blk_submit_sync(int dev_id, uint64_t lba, uint32_t count,
             int ret = blk_submit_async(req);
             if (ret < 0) {
                 blk_request_free(req);
-                if (!first_error) first_error = ret;
+                if (!first_error)
+                    first_error = ret;
                 break;
             }
 
@@ -454,7 +468,8 @@ int blk_submit_sync(int dev_id, uint64_t lba, uint32_t count,
             blk_request_free(req);
 
             if (ret < 0) {
-                if (!first_error) first_error = ret;
+                if (!first_error)
+                    first_error = ret;
                 break;
             }
 
@@ -468,7 +483,8 @@ int blk_submit_sync(int dev_id, uint64_t lba, uint32_t count,
 
     /* ── Fast path: single request fits within limits ── */
     struct blk_request *req = blk_request_alloc();
-    if (!req) return -6;
+    if (!req)
+        return -6;
 
     req->dev_id = (uint8_t)dev_id;
     req->lba = lba;
@@ -511,7 +527,8 @@ int blk_submit_sync(int dev_id, uint64_t lba, uint32_t count,
  * Returns 0 on success, -errno on error.
  */
 int blockdev_discard(int dev_id, uint64_t lba, uint32_t count) {
-    if (!g_initialized) return -EINVAL;
+    if (!g_initialized)
+        return -EINVAL;
     if (dev_id < 0 || dev_id >= BLOCKDEV_MAX_DEVICES || !g_blockdevs[dev_id].active)
         return -EINVAL;
     if (count == 0)
@@ -529,7 +546,8 @@ int blockdev_discard(int dev_id, uint64_t lba, uint32_t count) {
             uint32_t chunk = (remaining > max_xfer) ? max_xfer : (uint32_t)remaining;
 
             struct blk_request *req = blk_request_alloc();
-            if (!req) return -6;
+            if (!req)
+                return -6;
 
             req->dev_id = (uint8_t)dev_id;
             req->lba = cur_lba;
@@ -544,7 +562,8 @@ int blockdev_discard(int dev_id, uint64_t lba, uint32_t count) {
             int ret = blk_submit_async(req);
             if (ret < 0) {
                 blk_request_free(req);
-                if (!first_error) first_error = ret;
+                if (!first_error)
+                    first_error = ret;
                 break;
             }
 
@@ -558,7 +577,8 @@ int blockdev_discard(int dev_id, uint64_t lba, uint32_t count) {
             blk_request_free(req);
 
             if (ret < 0) {
-                if (!first_error) first_error = ret;
+                if (!first_error)
+                    first_error = ret;
                 break;
             }
 
@@ -571,7 +591,8 @@ int blockdev_discard(int dev_id, uint64_t lba, uint32_t count) {
 
     /* Build a discard request and submit synchronously */
     struct blk_request *req = blk_request_alloc();
-    if (!req) return -6;
+    if (!req)
+        return -6;
 
     req->dev_id = (uint8_t)dev_id;
     req->lba = lba;
@@ -599,7 +620,8 @@ int blockdev_discard(int dev_id, uint64_t lba, uint32_t count) {
 }
 
 void blk_request_done(struct blk_request *req) {
-    if (!req) return;
+    if (!req)
+        return;
 
     if (req->dev_id >= BLOCKDEV_MAX_DEVICES) {
         req->done = 1;
@@ -631,7 +653,8 @@ void blk_request_done(struct blk_request *req) {
 }
 
 int blk_request_dequeue(struct blk_request_queue *q, struct blk_request **out) {
-    if (!q || !out) return 0;
+    if (!q || !out)
+        return 0;
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&q->lock, &irq_flags);
 
@@ -652,7 +675,8 @@ int blk_request_dequeue(struct blk_request_queue *q, struct blk_request **out) {
 }
 
 struct blk_request *blk_request_deadline_peek(struct blk_request_queue *q) {
-    if (!q) return NULL;
+    if (!q)
+        return NULL;
     return queue_peek(q);
 }
 
@@ -685,13 +709,12 @@ void __init blockdev_init(void) {
     g_initialized = 1;
 }
 
-int blockdev_register(int id, const char *name,
-                      blk_driver_submit_fn submit_fn,
-                      blk_driver_idle_fn idle_fn,
-                      uint64_t sector_count,
-                      int flags) {
-    if (id < 0 || id >= BLOCKDEV_MAX_DEVICES) return -EINVAL;
-    if (!submit_fn) return -EINVAL;
+int blockdev_register(int id, const char *name, blk_driver_submit_fn submit_fn,
+                      blk_driver_idle_fn idle_fn, uint64_t sector_count, int flags) {
+    if (id < 0 || id >= BLOCKDEV_MAX_DEVICES)
+        return -EINVAL;
+    if (!submit_fn)
+        return -EINVAL;
 
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&g_dev_lock, &irq_flags);
@@ -756,7 +779,7 @@ int blockdev_register(int id, const char *name,
 
 #if !defined(BLOCKDEV_NEW_ONLY)
 struct legacy_driver {
-    blockdev_read_fn  read_fn;
+    blockdev_read_fn read_fn;
     blockdev_write_fn write_fn;
 };
 
@@ -770,36 +793,38 @@ static int legacy_submit_fn_adapter(struct blk_request *req) {
     uint64_t start_ticks = timer_get_ticks();
 
     if (req->flags & BLK_REQ_READ) {
-        if (!g_legacy[dev_id].read_fn) { req->result = -1; return -EINVAL; }
-        req->result = g_legacy[dev_id].read_fn((uint32_t)req->lba,
-                                                (uint8_t)req->count,
-                                                req->buf);
+        if (!g_legacy[dev_id].read_fn) {
+            req->result = -1;
+            return -EINVAL;
+        }
+        req->result = g_legacy[dev_id].read_fn((uint32_t)req->lba, (uint8_t)req->count, req->buf);
     } else if (req->flags & BLK_REQ_WRITE) {
-        if (!g_legacy[dev_id].write_fn) { req->result = -1; return -EINVAL; }
-        req->result = g_legacy[dev_id].write_fn((uint32_t)req->lba,
-                                                 (uint8_t)req->count,
-                                                 (const void *)req->buf);
+        if (!g_legacy[dev_id].write_fn) {
+            req->result = -1;
+            return -EINVAL;
+        }
+        req->result = g_legacy[dev_id].write_fn((uint32_t)req->lba, (uint8_t)req->count,
+                                                (const void *)req->buf);
     } else {
         req->result = -1;
         return -EINVAL;
     }
 
     uint64_t elapsed_ms = (timer_get_ticks() - start_ticks) * 1000 / TIMER_FREQ;
-    blockdev_stats_update(dev_id,
-        !(req->flags & BLK_REQ_READ), /* is_write */
-        0, /* is_discard */
-        0, /* is_flush */
-        req->count, elapsed_ms);
+    blockdev_stats_update(dev_id, !(req->flags & BLK_REQ_READ), /* is_write */
+                          0,                                    /* is_discard */
+                          0,                                    /* is_flush */
+                          req->count, elapsed_ms);
 
     return req->result;
 }
 
-int blockdev_register_legacy(int id, const char *name,
-                              blockdev_read_fn read_fn,
-                              blockdev_write_fn write_fn,
-                              blockdev_size_fn size_fn) {
-    if (id < 0 || id >= BLOCKDEV_MAX_DEVICES) return -EIO;
-    if (!read_fn) return -EIO;
+int blockdev_register_legacy(int id, const char *name, blockdev_read_fn read_fn,
+                             blockdev_write_fn write_fn, blockdev_size_fn size_fn) {
+    if (id < 0 || id >= BLOCKDEV_MAX_DEVICES)
+        return -EIO;
+    if (!read_fn)
+        return -EIO;
 
     g_legacy[id].read_fn = read_fn;
     g_legacy[id].write_fn = write_fn;
@@ -807,19 +832,22 @@ int blockdev_register_legacy(int id, const char *name,
     uint64_t nsectors = size_fn ? size_fn() : 0;
 
     int ret = blockdev_register(id, name, legacy_submit_fn_adapter, NULL, nsectors, 0);
-    if (ret < 0) return ret;
+    if (ret < 0)
+        return ret;
 
     return 0;
 }
 #endif
 
 int blockdev_is_registered(int id) {
-    if (id < 0 || id >= BLOCKDEV_MAX_DEVICES) return 0;
+    if (id < 0 || id >= BLOCKDEV_MAX_DEVICES)
+        return 0;
     return g_blockdevs[id].active;
 }
 
 int blockdev_unregister(int id) {
-    if (id < 0 || id >= BLOCKDEV_MAX_DEVICES) return -EINVAL;
+    if (id < 0 || id >= BLOCKDEV_MAX_DEVICES)
+        return -EINVAL;
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&g_dev_lock, &irq_flags);
     g_blockdevs[id].active = 0;
@@ -837,37 +865,43 @@ int blockdev_unregister(int id) {
 }
 
 const char *blockdev_name(int id) {
-    if (!blockdev_is_registered(id)) return "";
+    if (!blockdev_is_registered(id))
+        return "";
     return g_blockdevs[id].name;
 }
 
 uint64_t blockdev_get_sectors(int id) {
-    if (!blockdev_is_registered(id)) return 0;
+    if (!blockdev_is_registered(id))
+        return 0;
     return g_blockdevs[id].sector_count;
 }
 
 struct blk_request_queue *blockdev_get_queue(int id) {
-    if (!blockdev_is_registered(id)) return NULL;
+    if (!blockdev_is_registered(id))
+        return NULL;
     return &g_queues[id];
 }
 
 int blockdev_set_scheduler(int id, enum blk_scheduler sched) {
-    if (!blockdev_is_registered(id)) return -EINVAL;
-    if (sched >= BLK_SCHED_COUNT) return -EINVAL;
+    if (!blockdev_is_registered(id))
+        return -EINVAL;
+    if (sched >= BLK_SCHED_COUNT)
+        return -EINVAL;
     g_queues[id].sched = sched;
     return 0;
 }
 
 enum blk_scheduler blockdev_get_scheduler(int id) {
-    if (!blockdev_is_registered(id)) return BLK_SCHED_NOOP;
+    if (!blockdev_is_registered(id))
+        return BLK_SCHED_NOOP;
     return g_queues[id].sched;
 }
 
 /* ── Transfer limit configuration (Item 328) ──────────────────────── */
 
-int blockdev_set_max_transfer(int dev_id, uint32_t max_sectors)
-{
-    if (!g_initialized) return -EINVAL;
+int blockdev_set_max_transfer(int dev_id, uint32_t max_sectors) {
+    if (!g_initialized)
+        return -EINVAL;
     if (dev_id < 0 || dev_id >= BLOCKDEV_MAX_DEVICES || !g_blockdevs[dev_id].active)
         return -EINVAL;
     if (max_sectors == 0) {
@@ -878,16 +912,15 @@ int blockdev_set_max_transfer(int dev_id, uint32_t max_sectors)
     return 0;
 }
 
-uint32_t blockdev_get_max_transfer(int dev_id)
-{
-    if (!blockdev_is_registered(dev_id)) return 0;
+uint32_t blockdev_get_max_transfer(int dev_id) {
+    if (!blockdev_is_registered(dev_id))
+        return 0;
     return g_blockdevs[dev_id].max_transfer;
 }
 
 /* ── SCSI generic passthrough (SG_IO) ───────────────────────────── */
 
-int blockdev_register_scsi_cmd(int dev_id, scsi_submit_cmd_fn fn)
-{
+int blockdev_register_scsi_cmd(int dev_id, scsi_submit_cmd_fn fn) {
     if (dev_id < 0 || dev_id >= BLOCKDEV_MAX_DEVICES || !g_blockdevs[dev_id].active)
         return -EINVAL;
 
@@ -898,36 +931,31 @@ int blockdev_register_scsi_cmd(int dev_id, scsi_submit_cmd_fn fn)
     return 0;
 }
 
-int blockdev_scsi_submit(int dev_id,
-                          const uint8_t *cdb, int cdb_len,
-                          void *data, int data_len,
-                          int dir,
-                          uint8_t *sense, int *sense_len,
-                          int timeout_ms)
-{
+int blockdev_scsi_submit(int dev_id, const uint8_t *cdb, int cdb_len, void *data, int data_len,
+                         int dir, uint8_t *sense, int *sense_len, int timeout_ms) {
     if (dev_id < 0 || dev_id >= BLOCKDEV_MAX_DEVICES || !g_blockdevs[dev_id].active)
         return -ETIMEDOUT;
 
     scsi_submit_cmd_fn fn = g_blockdevs[dev_id].scsi_cmd_fn;
     if (!fn)
-        return -ENOTTY;  /* not a SCSI device */
+        return -ENOTTY; /* not a SCSI device */
 
-    return fn(dev_id, cdb, cdb_len, data, data_len, dir,
-              sense, sense_len, timeout_ms);
+    return fn(dev_id, cdb, cdb_len, data, data_len, dir, sense, sense_len, timeout_ms);
 }
 
 /* ── Find a block device by name ──────────────────────────────────── */
 
-int blockdev_find_by_name(const char *name)
-{
-    if (!name || !name[0]) return -EINVAL;
+int blockdev_find_by_name(const char *name) {
+    if (!name || !name[0])
+        return -EINVAL;
 
     /* Strip "/dev/" prefix if present */
     const char *devname = name;
     if (strncmp(name, "/dev/", 5) == 0)
         devname = name + 5;
 
-    if (!devname[0]) return -EINVAL;
+    if (!devname[0])
+        return -EINVAL;
 
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&g_dev_lock, &irq_flags);
@@ -965,8 +993,7 @@ EXPORT_SYMBOL(blockdev_stats_reset);
 EXPORT_SYMBOL(blockdev_stats_format);
 
 /* ── Stub: blockdev_read ─────────────────────────────── */
-static int blockdev_read(void *buf, size_t count, uint64_t offset)
-{
+static int blockdev_read(void *buf, size_t count, uint64_t offset) {
     (void)buf;
     (void)count;
     (void)offset;
@@ -974,8 +1001,7 @@ static int blockdev_read(void *buf, size_t count, uint64_t offset)
     return 0;
 }
 /* ── Stub: blockdev_write ─────────────────────────────── */
-static int blockdev_write(const void *buf, size_t count, uint64_t offset)
-{
+static int blockdev_write(const void *buf, size_t count, uint64_t offset) {
     (void)buf;
     (void)count;
     (void)offset;
@@ -983,16 +1009,14 @@ static int blockdev_write(const void *buf, size_t count, uint64_t offset)
     return 0;
 }
 /* ── Stub: blockdev_open ─────────────────────────────── */
-static int blockdev_open(const char *name, int flags)
-{
+static int blockdev_open(const char *name, int flags) {
     (void)name;
     (void)flags;
     kprintf("[BLOCKDEV] blockdev_open: not yet implemented\n");
     return 0;
 }
 /* ── Stub: blockdev_release ─────────────────────────────── */
-static int blockdev_release(void *dev)
-{
+static int blockdev_release(void *dev) {
     (void)dev;
     kprintf("[BLOCKDEV] blockdev_release: not yet implemented\n");
     return 0;

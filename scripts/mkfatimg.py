@@ -56,8 +56,12 @@ def build_image(src_dir, size_mb, output):
     num_fats = 2
     reserved = 32
 
-    # Calculate FAT size
-    for guess in range(1, 512):
+    # Calculate FAT size.  Iterate over the full sector count — the old
+    # range(1,512) cap fell back to 128 sectors for disks whose FAT needs
+    # more (a 64MB image needs ~1024), so the FAT content written below
+    # (sized by the real cluster count) overflowed the reserved region
+    # and clobbered the root directory + file data.
+    for guess in range(1, part_sectors):
         fat_total = guess * num_fats
         ds = part_sectors - reserved - fat_total
         if ds <= 0: continue
@@ -89,13 +93,21 @@ def build_image(src_dir, size_mb, output):
     dir_clusters = {'': 2}
     dir_num_clusters = {'': 1}
     for d in sorted(dir_set, key=lambda x: len(x.split('/'))):
-        # Count entries in this dir
+        # Count entries in this dir — each file contributes its 8.3 short
+        # entry PLUS one LFN entry per 13-char chunk of its long name.
+        # (Under-counting LFN entries truncated big dirs like /bin: the
+        # cluster chain was too short and alphabetically-late files —
+        # sh, ls, … — silently never made it onto the image.)
         prefix = d + '/' if d else ''
         nentries = 2  # . and ..
         for alloc in allocs:
             dst = alloc[0]
             if dst.startswith(prefix) and '/' not in dst[len(prefix):]:
                 nentries += 1
+                cname = dst[len(prefix):]
+                name_u = cname.upper()
+                if cname != name_u or len(cname) > 12:
+                    nentries += max(1, math.ceil(len(cname) / 13))
         for sd in dir_set:
             if sd != d and sd.startswith(prefix) and '/' not in sd[len(prefix):]:
                 nentries += 1

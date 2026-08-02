@@ -11,32 +11,32 @@
  * and the process scheduler's signal delivery.
  */
 
-#include "types.h"
-#include "shell.h"
+#include "errno.h"
+#include "printf.h"
 #include "process.h"
 #include "scheduler.h"
-#include "printf.h"
-#include "string.h"
+#include "shell.h"
 #include "signal.h"
-#include "errno.h"
+#include "string.h"
+#include "types.h"
 
 /* Maximum number of tracked jobs */
 #define JOBS_MAX 64
 
 /* Job states */
-#define JOB_RUNNING  0
-#define JOB_STOPPED  1
-#define JOB_DONE     2
+#define JOB_RUNNING 0
+#define JOB_STOPPED 1
+#define JOB_DONE 2
 #define JOB_TERMINATED 3
 
 /* ── Job table ───────────────────────────────────────────────────── */
 
 struct job_entry {
-    int     used;
-    int     job_id;        /* 1-based job ID for shell display */
-    uint64_t pgid;         /* process group ID (PID of leader) */
-    int     state;
-    char    command[128];  /* command line for display */
+    int used;
+    int job_id;    /* 1-based job ID for shell display */
+    uint64_t pgid; /* process group ID (PID of leader) */
+    int state;
+    char command[128]; /* command line for display */
 };
 
 static struct job_entry jobs[JOBS_MAX];
@@ -46,8 +46,7 @@ static int next_job_id = 1;
  *
  * Initialise the job control subsystem.
  */
-void job_control_init(void)
-{
+void job_control_init(void) {
     memset(jobs, 0, sizeof(jobs));
     next_job_id = 1;
 }
@@ -56,16 +55,14 @@ void job_control_init(void)
  *
  * Add a new job to the job table. Returns the job ID.
  */
-int job_control_add(uint64_t pgid, const char *command)
-{
+int job_control_add(uint64_t pgid, const char *command) {
     for (int i = 0; i < JOBS_MAX; i++) {
         if (!jobs[i].used) {
             jobs[i].used = 1;
             jobs[i].job_id = next_job_id++;
             jobs[i].pgid = pgid;
             jobs[i].state = JOB_RUNNING;
-            strncpy(jobs[i].command, command ? command : "",
-                    sizeof(jobs[i].command) - 1);
+            strncpy(jobs[i].command, command ? command : "", sizeof(jobs[i].command) - 1);
             jobs[i].command[sizeof(jobs[i].command) - 1] = '\0';
             return jobs[i].job_id;
         }
@@ -77,8 +74,7 @@ int job_control_add(uint64_t pgid, const char *command)
  *
  * Remove a job from the table by job ID.
  */
-void job_control_remove(int job_id)
-{
+void job_control_remove(int job_id) {
     for (int i = 0; i < JOBS_MAX; i++) {
         if (jobs[i].used && jobs[i].job_id == job_id) {
             jobs[i].used = 0;
@@ -91,8 +87,7 @@ void job_control_remove(int job_id)
  *
  * Find a job by process group ID.
  */
-struct job_entry *job_control_find_by_pgid(uint64_t pgid)
-{
+struct job_entry *job_control_find_by_pgid(uint64_t pgid) {
     for (int i = 0; i < JOBS_MAX; i++) {
         if (jobs[i].used && jobs[i].pgid == pgid)
             return &jobs[i];
@@ -104,8 +99,7 @@ struct job_entry *job_control_find_by_pgid(uint64_t pgid)
  *
  * Find a job by job ID.
  */
-struct job_entry *job_control_find_by_id(int job_id)
-{
+struct job_entry *job_control_find_by_id(int job_id) {
     for (int i = 0; i < JOBS_MAX; i++) {
         if (jobs[i].used && jobs[i].job_id == job_id)
             return &jobs[i];
@@ -117,8 +111,7 @@ struct job_entry *job_control_find_by_id(int job_id)
  *
  * Update the state of a job (e.g., JOB_RUNNING → JOB_STOPPED).
  */
-void job_control_update_state(uint64_t pgid, int state)
-{
+void job_control_update_state(uint64_t pgid, int state) {
     struct job_entry *job = job_control_find_by_pgid(pgid);
     if (job)
         job->state = state;
@@ -128,8 +121,7 @@ void job_control_update_state(uint64_t pgid, int state)
  *
  * Print the list of all tracked jobs (for the 'jobs' built-in).
  */
-void job_control_list(void)
-{
+void job_control_list(void) {
     kprintf("JOB  STATUS   PGID   COMMAND\n");
     kprintf("---  ------   ----   -------\n");
     for (int i = 0; i < JOBS_MAX; i++) {
@@ -137,16 +129,23 @@ void job_control_list(void)
             continue;
         const char *state_str = "unknown";
         switch (jobs[i].state) {
-        case JOB_RUNNING:     state_str = "running";   break;
-        case JOB_STOPPED:     state_str = "stopped";   break;
-        case JOB_DONE:        state_str = "done";      break;
-        case JOB_TERMINATED:  state_str = "terminated"; break;
-        default: break;
+        case JOB_RUNNING:
+            state_str = "running";
+            break;
+        case JOB_STOPPED:
+            state_str = "stopped";
+            break;
+        case JOB_DONE:
+            state_str = "done";
+            break;
+        case JOB_TERMINATED:
+            state_str = "terminated";
+            break;
+        default:
+            break;
         }
-        kprintf("[%d]  %-8s  %-6llu  %s\n",
-               jobs[i].job_id, state_str,
-               (unsigned long long)jobs[i].pgid,
-               jobs[i].command);
+        kprintf("[%d]  %-8s  %-6llu  %s\n", jobs[i].job_id, state_str,
+                (unsigned long long)jobs[i].pgid, jobs[i].command);
     }
 }
 
@@ -158,8 +157,7 @@ void job_control_list(void)
  * Proper terminal handling: sets the foreground process group
  * of the terminal before continuing the job.
  */
-int job_control_fg(int job_id)
-{
+int job_control_fg(int job_id) {
     struct job_entry *job = job_control_find_by_id(job_id);
     if (!job) {
         kprintf("fg: job not found: %d\n", job_id);
@@ -180,7 +178,7 @@ int job_control_fg(int job_id)
     /* Wait for the job to complete */
     int status;
     while (1) {
-        uint64_t waited = process_waitpid((uint32_t)job->pgid, &status);
+        uint64_t waited = process_waitpid((uint32_t)job->pgid, &status, 0);
         if (waited == (uint64_t)-1)
             break;
         if (waited == (uint64_t)job->pgid || waited == 0)
@@ -189,7 +187,8 @@ int job_control_fg(int job_id)
 
     /* Restore shell as foreground process group */
     struct process *cur = process_get_current();
-    if (cur) pgrp_set_foreground(cur->pgid);
+    if (cur)
+        pgrp_set_foreground(cur->pgid);
 
     /* Notify job termination status */
     if (status != 0) {
@@ -206,8 +205,7 @@ int job_control_fg(int job_id)
  *
  * Put a stopped job into the background (continue it).
  */
-int job_control_bg(int job_id)
-{
+int job_control_bg(int job_id) {
     struct job_entry *job = job_control_find_by_id(job_id);
     if (!job) {
         kprintf("bg: job not found: %d\n", job_id);
@@ -229,8 +227,7 @@ int job_control_bg(int job_id)
  * Marks the job as stopped so the shell can manage it.
  * Restores terminal foreground process group to the shell.
  */
-void job_control_handle_suspend(uint64_t pgid)
-{
+void job_control_handle_suspend(uint64_t pgid) {
     struct job_entry *job = job_control_find_by_pgid(pgid);
     if (job) {
         job->state = JOB_STOPPED;
@@ -249,11 +246,9 @@ void job_control_handle_suspend(uint64_t pgid)
  *
  * Remove completed/terminated jobs from the table.
  */
-void job_control_cleanup(void)
-{
+void job_control_cleanup(void) {
     for (int i = 0; i < JOBS_MAX; i++) {
-        if (jobs[i].used &&
-            (jobs[i].state == JOB_DONE || jobs[i].state == JOB_TERMINATED)) {
+        if (jobs[i].used && (jobs[i].state == JOB_DONE || jobs[i].state == JOB_TERMINATED)) {
             jobs[i].used = 0;
         }
     }

@@ -1,19 +1,20 @@
 #include "fault.h"
+
 #include "idt.h"
-#include "vmm.h"
-#include "process.h"
-#include "printf.h"
-#include "nx_enforce.h"
 #include "io.h"
-#include "panic.h"
 #include "kdump.h"
-#include "smp.h"
-#include "mce.h"
-#include "signal.h"
 #include "kprobes.h"
-#include "string.h"
+#include "mce.h"
+#include "nx_enforce.h"
+#include "panic.h"
 #include "pmm.h"
+#include "printf.h"
+#include "process.h"
+#include "signal.h"
+#include "smp.h"
+#include "string.h"
 #include "userfaultfd.h"
+#include "vmm.h"
 
 /*
  * ────────────────────────────────────────────────────────────────────────────
@@ -166,9 +167,9 @@
  * are replicated here because vmm.c's internal constants are not
  * exposed via vmm.h.  VMM_FLAG_* equivalents (from vmm.h) are used
  * for the software-defined bits. */
-#define PF_PTE_PRESENT   (1ULL << 0)
+#define PF_PTE_PRESENT (1ULL << 0)
 #define PF_PTE_ADDR_MASK 0x000FFFFFFFFFF000ULL
-#define PF_PTE_HUGE      (1ULL << 7)
+#define PF_PTE_HUGE (1ULL << 7)
 
 static inline uint64_t read_cr2(void) {
     uint64_t val;
@@ -204,15 +205,15 @@ void page_fault_trace_enable(int enable) {
 /* Kernel stack depth check: verify RSP is within the current process's kernel stack */
 int check_kernel_stack_depth(void) {
     struct process *proc = process_get_current();
-    if (!proc) return 1; /* no process context, assume OK */
+    if (!proc)
+        return 1; /* no process context, assume OK */
     uint64_t rsp;
     __asm__ volatile("mov %%rsp, %0" : "=r"(rsp));
     /* Kernel stack is between kernel_stack and stack_top */
     if (rsp < proc->kernel_stack || rsp >= proc->stack_top) {
         kprintf("*** KERNEL STACK OVERFLOW DETECTED *** pid=%u name=%s "
                 "rsp=0x%llx stack_base=0x%llx stack_top=0x%llx\n",
-                proc->pid, proc->name ? proc->name : "?",
-                rsp, proc->kernel_stack, proc->stack_top);
+                proc->pid, proc->name ? proc->name : "?", rsp, proc->kernel_stack, proc->stack_top);
         return 0;
     }
     return 1;
@@ -251,8 +252,8 @@ static void page_fault_handler(struct interrupt_frame *frame) {
             uint64_t *pml4_f = cur_fault->pml4;
             int pml4_idx = (cr2 >> 39) & 0x1FF;
             int pdpt_idx = (cr2 >> 30) & 0x1FF;
-            int pd_idx   = (cr2 >> 21) & 0x1FF;
-            int pt_idx   = (cr2 >> 12) & 0x1FF;
+            int pd_idx = (cr2 >> 21) & 0x1FF;
+            int pt_idx = (cr2 >> 12) & 0x1FF;
 
             if ((pml4_f[pml4_idx] & PF_PTE_PRESENT)) {
                 uint64_t *pdpt_f = (uint64_t *)PHYS_TO_VIRT(pml4_f[pml4_idx] & PF_PTE_ADDR_MASK);
@@ -263,7 +264,8 @@ static void page_fault_handler(struct interrupt_frame *frame) {
                             /* 2 MB huge page — always in memory, not swapped */
                             is_major = 0;
                         } else {
-                            uint64_t *pt_f = (uint64_t *)PHYS_TO_VIRT(pd_f[pd_idx] & PF_PTE_ADDR_MASK);
+                            uint64_t *pt_f =
+                                (uint64_t *)PHYS_TO_VIRT(pd_f[pd_idx] & PF_PTE_ADDR_MASK);
                             uint64_t pte = pt_f[pt_idx];
                             /* A swap entry is a non-present PTE with the
                              * software-defined swap marker bit set (bit 1). */
@@ -299,13 +301,11 @@ static void page_fault_handler(struct interrupt_frame *frame) {
         /* Verify kernel pointers are within valid range */
         if (!(err & (1ULL << 2))) {
             /* Kernel-mode fault: validate RIP and RSP */
-            if (frame->rip < 0xFFFF800000000000ULL ||
-                frame->rip >= 0xFFFFFFFFFFFFFFFFULL) {
+            if (frame->rip < 0xFFFF800000000000ULL || frame->rip >= 0xFFFFFFFFFFFFFFFFULL) {
                 kprintf("*** WARNING: kernel fault with invalid RIP=0x%llx ***\n",
                         (unsigned long long)frame->rip);
             }
-            if (frame->rsp < 0xFFFF800000000000ULL ||
-                frame->rsp >= 0xFFFFFFFFFFFFFFFFULL) {
+            if (frame->rsp < 0xFFFF800000000000ULL || frame->rsp >= 0xFFFFFFFFFFFFFFFFULL) {
                 kprintf("*** WARNING: kernel fault with invalid RSP=0x%llx ***\n",
                         (unsigned long long)frame->rsp);
             }
@@ -317,10 +317,8 @@ static void page_fault_handler(struct interrupt_frame *frame) {
             if (guard_page && (cr2 & ~(uint64_t)0xFFF) == (guard_page & ~(uint64_t)0xFFF)) {
                 kprintf("*** STACK GUARD PAGE ACCESS *** process=%s pid=%u "
                         "addr=0x%llx rip=0x%llx\n",
-                        dbg_proc->name ? dbg_proc->name : "?",
-                        (unsigned int)dbg_proc->pid,
-                        (unsigned long long)cr2,
-                        (unsigned long long)frame->rip);
+                        dbg_proc->name ? dbg_proc->name : "?", (unsigned int)dbg_proc->pid,
+                        (unsigned long long)cr2, (unsigned long long)frame->rip);
                 /* Deeper check: if RSP is at or below the guard page,
                  * this is a confirmed stack overflow */
                 uint64_t rsp;
@@ -328,8 +326,7 @@ static void page_fault_handler(struct interrupt_frame *frame) {
                 if (rsp < dbg_proc->kernel_stack) {
                     kprintf("*** CONFIRMED KERNEL STACK OVERFLOW *** "
                             "RSP=0x%llx below stack base=0x%llx\n",
-                            (unsigned long long)rsp,
-                            (unsigned long long)dbg_proc->kernel_stack);
+                            (unsigned long long)rsp, (unsigned long long)dbg_proc->kernel_stack);
                 }
             }
         }
@@ -341,14 +338,9 @@ static void page_fault_handler(struct interrupt_frame *frame) {
     /* Page fault tracing */
     if (page_fault_trace) {
         struct process *proc = process_get_current();
-        kprintf("[PFTRACE] addr=0x%llx err=0x%llx (%s %s %s %s) rip=0x%llx pid=%u name=%s\n",
-                cr2, err,
-                (err & 1) ? "prot" : "np",
-                (err & 2) ? "wr" : "rd",
-                (err & 4) ? "usr" : "sup",
-                (err & 16) ? "if" : "",
-                frame->rip,
-                proc ? (unsigned int)proc->pid : 0,
+        kprintf("[PFTRACE] addr=0x%llx err=0x%llx (%s %s %s %s) rip=0x%llx pid=%u name=%s\n", cr2,
+                err, (err & 1) ? "prot" : "np", (err & 2) ? "wr" : "rd", (err & 4) ? "usr" : "sup",
+                (err & 16) ? "if" : "", frame->rip, proc ? (unsigned int)proc->pid : 0,
                 proc && proc->name ? proc->name : "?");
     }
 
@@ -391,8 +383,8 @@ static void page_fault_handler(struct interrupt_frame *frame) {
             /* Walk the page table to check PTE_EXECONLY */
             int pml4_idx = (cr2 >> 39) & 0x1FF;
             int pdpt_idx = (cr2 >> 30) & 0x1FF;
-            int pd_idx   = (cr2 >> 21) & 0x1FF;
-            int pt_idx   = (cr2 >> 12) & 0x1FF;
+            int pd_idx = (cr2 >> 21) & 0x1FF;
+            int pt_idx = (cr2 >> 12) & 0x1FF;
 
             if ((pml4[pml4_idx] & PF_PTE_PRESENT)) {
                 uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(pml4[pml4_idx] & PF_PTE_ADDR_MASK);
@@ -404,8 +396,7 @@ static void page_fault_handler(struct interrupt_frame *frame) {
                             if (pd[pd_idx] & VMM_FLAG_EXECONLY) {
                                 kprintf("[exec-only] SIGSEGV pid=%u addr=0x%llx "
                                         "execute-only page read%s at rip=0x%llx\n",
-                                        (unsigned int)proc->pid, cr2,
-                                        (err & 2) ? "/write" : "",
+                                        (unsigned int)proc->pid, cr2, (err & 2) ? "/write" : "",
                                         frame->rip);
                                 /* Populate siginfo before terminating */
                                 struct siginfo sinfo;
@@ -424,8 +415,7 @@ static void page_fault_handler(struct interrupt_frame *frame) {
                             if ((pt[pt_idx] & PF_PTE_PRESENT) && (pt[pt_idx] & VMM_FLAG_EXECONLY)) {
                                 kprintf("[exec-only] SIGSEGV pid=%u addr=0x%llx "
                                         "execute-only page read%s at rip=0x%llx\n",
-                                        (unsigned int)proc->pid, cr2,
-                                        (err & 2) ? "/write" : "",
+                                        (unsigned int)proc->pid, cr2, (err & 2) ? "/write" : "",
                                         frame->rip);
                                 /* Populate siginfo before terminating */
                                 {
@@ -458,38 +448,116 @@ static void page_fault_handler(struct interrupt_frame *frame) {
             if (pt[i].guard_page &&
                 (cr2 & ~(uint64_t)0xFFF) == (pt[i].guard_page & ~(uint64_t)0xFFF)) {
                 kprintf("*** KERNEL STACK OVERFLOW DETECTED! Process: %s (pid=%u) ***\n",
-                        pt[i].name ? pt[i].name : "?",
-                        (unsigned int)pt[i].pid);
+                        pt[i].name ? pt[i].name : "?", (unsigned int)pt[i].pid);
                 break;
             }
         }
-        kprintf("CR2=0x%llx  error=0x%llx  (PF: %s %s %s)\n", cr2, err,
-                (err & 1) ? "prot" : "np",
-                (err & 2) ? "wr" : "rd",
-                (err & 4) ? "usr" : "sup");
-        kprintf("RIP=0x%llx  RSP=0x%llx  RBP=0x%llx\n",
-                frame->rip, frame->rsp, frame->rbp);
-        kprintf("RAX=0x%llx  RBX=0x%llx  RCX=0x%llx  RDX=0x%llx\n",
-                frame->rax, frame->rbx, frame->rcx, frame->rdx);
-        kprintf("RSI=0x%llx  RDI=0x%llx  R8=0x%llx   R9=0x%llx\n",
-                frame->rsi, frame->rdi, frame->r8, frame->r9);
-        kprintf("R10=0x%llx  R11=0x%llx  R12=0x%llx  R13=0x%llx\n",
-                frame->r10, frame->r11, frame->r12, frame->r13);
+        kprintf("CR2=0x%llx  error=0x%llx  (PF: %s %s %s)\n", cr2, err, (err & 1) ? "prot" : "np",
+                (err & 2) ? "wr" : "rd", (err & 4) ? "usr" : "sup");
+        kprintf("RIP=0x%llx  RSP=0x%llx  RBP=0x%llx\n", frame->rip, frame->rsp, frame->rbp);
+        kprintf("RAX=0x%llx  RBX=0x%llx  RCX=0x%llx  RDX=0x%llx\n", frame->rax, frame->rbx,
+                frame->rcx, frame->rdx);
+        kprintf("RSI=0x%llx  RDI=0x%llx  R8=0x%llx   R9=0x%llx\n", frame->rsi, frame->rdi,
+                frame->r8, frame->r9);
+        kprintf("R10=0x%llx  R11=0x%llx  R12=0x%llx  R13=0x%llx\n", frame->r10, frame->r11,
+                frame->r12, frame->r13);
         kprintf("R14=0x%llx  R15=0x%llx\n", frame->r14, frame->r15);
-        kprintf("CS=0x%llx  SS=0x%llx  RFLAGS=0x%llx\n",
-                frame->cs, frame->ss, frame->rflags);
+
+        /* ── User stack physical dump (KPTI-safe: walk user PML4 and read
+         * the physical page directly — no kernel-context user deref) ── */
+        {
+            struct process *fp = process_get_current();
+            uint64_t ustack = frame->rsp;
+            if (fp && fp->pml4 && ustack >= 0x1000 && ustack < 0x800000000000ULL) {
+                uint64_t *pml4_u = fp->pml4;
+                int i4 = (int)((ustack >> 39) & 0x1FF);
+                int i3 = (int)((ustack >> 30) & 0x1FF);
+                int i2 = (int)((ustack >> 21) & 0x1FF);
+                int i1 = (int)((ustack >> 12) & 0x1FF);
+                uint64_t phys = 0;
+                if ((pml4_u[i4] & 1)) {
+                    uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(pml4_u[i4] & PTE_ADDR_MASK);
+                    if ((pdpt[i3] & 1)) {
+                        uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[i3] & PTE_ADDR_MASK);
+                        if ((pd[i2] & 1)) {
+                            if (pd[i2] & (1ULL << 7)) {
+                                phys = (pd[i2] & 0x000FFFFFFFE00000ULL) + (ustack & 0x1FFFFF);
+                            } else {
+                                uint64_t *pt_u = (uint64_t *)PHYS_TO_VIRT(pd[i2] & PTE_ADDR_MASK);
+                                if ((pt_u[i1] & 1))
+                                    phys = (pt_u[i1] & PTE_ADDR_MASK) + (ustack & 0xFFF);
+                            }
+                        }
+                    }
+                }
+                kprintf("USER-STACK dump at 0x%llx phys=0x%llx:\n", ustack, phys);
+                if (phys) {
+                    volatile uint64_t *sp = (volatile uint64_t *)PHYS_TO_VIRT(phys & PTE_ADDR_MASK);
+                    uint64_t off = (phys & 0xFFF) / 8;
+                    for (int i = -4; i <= 8; i++) {
+                        uint64_t v = sp[off + i];
+                        kprintf("  [%+d] %016llx%s\n", i * 8, v, (i == 0) ? "  <-- RSP" : "");
+                    }
+                }
+            }
+        }
+        kprintf("CS=0x%llx  SS=0x%llx  RFLAGS=0x%llx\n", frame->cs, frame->ss, frame->rflags);
+        /* ── Trampoline frame dump: if RIP is in the KPTI trampoline range,
+         * walk the current page table and dump the physical frame content. */
+        if (frame->rip >= 0x7ffffffe0000ULL && frame->rip < 0x7ffffffe2000ULL) {
+            uint64_t tcr3 = read_cr3();
+            int t_pml4 = (int)((0x7ffffffe0000ULL >> 39) & 0x1FF);
+            int t_pdpt = (int)((0x7ffffffe0000ULL >> 30) & 0x1FF);
+            int t_pd = (int)((0x7ffffffe0000ULL >> 21) & 0x1FF);
+            int t_pt = (int)((0x7ffffffe0000ULL >> 12) & 0x1FF);
+            uint64_t *tbl = (uint64_t *)PHYS_TO_VIRT(tcr3 & 0x000FFFFFFFFFF000ULL);
+            uint64_t tpte = 0;
+            if (tbl && (tbl[t_pml4] & 1)) {
+                uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(tbl[t_pml4] & 0x000FFFFFFFFFF000ULL);
+                if (pdpt && (pdpt[t_pdpt] & 1)) {
+                    uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[t_pdpt] & 0x000FFFFFFFFFF000ULL);
+                    if (pd && (pd[t_pd] & 1) && !(pd[t_pd] & (1ULL << 7))) {
+                        uint64_t *pt2 = (uint64_t *)PHYS_TO_VIRT(pd[t_pd] & 0x000FFFFFFFFFF000ULL);
+                        tpte = pt2[t_pt];
+                        kprintf("[TRAMP-DUMP] cr3=0x%llx pte=0x%llx phys=0x%llx\n", tcr3, tpte,
+                                tpte & 0x000FFFFFFFFFF000ULL);
+                        if (tpte & 1) {
+                            volatile uint8_t *fp =
+                                (volatile uint8_t *)PHYS_TO_VIRT(tpte & 0x000FFFFFFFFFF000ULL);
+                            kprintf("[TRAMP-BYTES] 0x00: ");
+                            for (int i = 0; i < 0x60; i++)
+                                kprintf("%02x ", fp[i]);
+                            kprintf("\n[TRAMP-BYTES] 0x60: ");
+                            for (int i = 0x60; i < 0xC0; i++)
+                                kprintf("%02x ", fp[i]);
+                            kprintf("\n[TRAMP-BYTES] 0xC0: ");
+                            for (int i = 0xC0; i < 0x140; i++)
+                                kprintf("%02x ", fp[i]);
+                            kprintf("\n[TRAMP-SLOTS] CR3_KERN=0x%llx CR3_USER=0x%llx "
+                                    "SAVE_RSP=0x%llx SAVE_RIP=0x%llx SAVE_RAX=0x%llx\n",
+                                    *(volatile uint64_t *)(fp + 0x100),
+                                    *(volatile uint64_t *)(fp + 0x108),
+                                    *(volatile uint64_t *)(fp + 0x110),
+                                    *(volatile uint64_t *)(fp + 0x118),
+                                    *(volatile uint64_t *)(fp + 0x130));
+                        }
+                    }
+                }
+            }
+        }
         arch_print_backtrace();
         panic("KERNEL PAGE FAULT at RIP=0x%llx CR2=0x%llx error=0x%llx",
-              (unsigned long long)frame->rip,
-              (unsigned long long)cr2,
-              (unsigned long long)err);
+              (unsigned long long)frame->rip, (unsigned long long)cr2, (unsigned long long)err);
     }
 
     /* User-mode write fault — check for COW */
     if ((err & (1ULL << 1))) {
         struct process *proc = process_get_current();
         if (proc && proc->pml4 && vmm_handle_cow_fault(proc->pml4, cr2)) {
-            if (proc) proc->minflt++;
+            if (proc)
+                proc->minflt++;
+            kprintf("[cow] handled rip=0x%llx pid=%u\n", (unsigned long long)frame->rip,
+                    proc ? (unsigned int)proc->pid : 0);
             return; /* handled */
         }
     }
@@ -512,8 +580,7 @@ static void page_fault_handler(struct interrupt_frame *frame) {
             /* Check if this is below the guard page — true stack overflow */
             if (fault_page < proc->user_stack_guard) {
                 kprintf("[stack-guard] OVERFLOW pid=%u addr=0x%llx below guard=0x%llx\n",
-                        (unsigned int)proc->pid,
-                        (unsigned long long)cr2,
+                        (unsigned int)proc->pid, (unsigned long long)cr2,
                         (unsigned long long)proc->user_stack_guard);
                 goto user_sigsegv;
             }
@@ -521,9 +588,8 @@ static void page_fault_handler(struct interrupt_frame *frame) {
             /* Fault must be below current bottom (growth downward) and at or
              * above the guard page.  The guard page itself is mapped and a
              * new guard is created below it. */
-            if (fault_page < proc->user_stack_bottom &&
-                fault_page >= proc->user_stack_guard) {
-                uint64_t new_sz  = proc->user_stack_top - fault_page;
+            if (fault_page < proc->user_stack_bottom && fault_page >= proc->user_stack_guard) {
+                uint64_t new_sz = proc->user_stack_top - fault_page;
                 /* Check RLIMIT_STACK (index 6) — RLIM_INFINITY means unlimited */
                 uint64_t stack_limit = proc->rlim_cur[6]; /* RLIMIT_STACK */
                 if (stack_limit == (uint64_t)-1 || new_sz <= stack_limit) {
@@ -532,8 +598,8 @@ static void page_fault_handler(struct interrupt_frame *frame) {
                     if (paddr) {
                         memset(PHYS_TO_VIRT(paddr), 0, PAGE_SIZE);
                         if (vmm_map_user_page(proc->pml4, fault_page, paddr,
-                                              VMM_FLAG_PRESENT | VMM_FLAG_WRITE |
-                                              VMM_FLAG_USER | VMM_FLAG_NOEXEC) == 0) {
+                                              VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_USER |
+                                                  VMM_FLAG_NOEXEC) == 0) {
                             /* Before updating bottom, if we are AT the guard page,
                              * create a new guard one page below */
                             if (fault_page == proc->user_stack_guard) {
@@ -541,11 +607,11 @@ static void page_fault_handler(struct interrupt_frame *frame) {
                             }
                             proc->user_stack_bottom = fault_page;
                             proc->minflt++;
-                            kprintf("[stack-grow] pid=%u stack 0x%llx -> 0x%llx (used=%llu limit=%llu)\n",
+                            kprintf("[stack-grow] pid=%u stack 0x%llx -> 0x%llx (used=%llu "
+                                    "limit=%llu)\n",
                                     (unsigned int)proc->pid,
                                     (unsigned long long)proc->user_stack_top,
-                                    (unsigned long long)fault_page,
-                                    (unsigned long long)new_sz,
+                                    (unsigned long long)fault_page, (unsigned long long)new_sz,
                                     (unsigned long long)stack_limit);
                             return; /* retry faulting instruction */
                         }
@@ -562,7 +628,7 @@ static void page_fault_handler(struct interrupt_frame *frame) {
     /* For user-mode faults, check if any userfaultfd context has a
      * registered range covering the fault address.  If so, queue a
      * page fault event (or send SIGBUS) instead of mapping the page. */
-    if ((err & (1ULL << 2))) {  /* user-mode fault */
+    if ((err & (1ULL << 2))) { /* user-mode fault */
         int write_flag = (err & (1ULL << 1)) ? 1 : 0;
         int uffd_fd = userfaultfd_find_for_addr(cr2, NULL);
         if (uffd_fd >= 0) {
@@ -591,10 +657,10 @@ user_sigsegv:
         struct siginfo sinfo;
         memset(&sinfo, 0, sizeof(sinfo));
         sinfo.si_signo = SIGSEGV;
-        sinfo.si_code  = (err & 1) ? SEGV_ACCERR : SEGV_MAPERR;
-        sinfo.si_addr  = (void *)(uintptr_t)cr2;
-        sinfo.si_pid   = proc->pid;
-        sinfo.si_uid   = proc->uid;
+        sinfo.si_code = (err & 1) ? SEGV_ACCERR : SEGV_MAPERR;
+        sinfo.si_addr = (void *)(uintptr_t)cr2;
+        sinfo.si_pid = proc->pid;
+        sinfo.si_uid = proc->uid;
         signal_send_info(proc->pid, SIGSEGV, &sinfo, 0);
     }
 
@@ -636,10 +702,9 @@ static void double_fault_handler(struct interrupt_frame *frame) {
     {
         char msg[96];
         struct process *proc = process_get_current();
-        int n = snprintf(msg, sizeof(msg),
-            "DOUBLE FAULT at RIP=0x%lx CR2=0x%lx cpu=%u pid=%u",
-            (unsigned long)frame->rip, (unsigned long)cr2,
-            (unsigned int)smp_get_cpu_id(), proc ? (unsigned int)proc->pid : 0);
+        int n = snprintf(msg, sizeof(msg), "DOUBLE FAULT at RIP=0x%lx CR2=0x%lx cpu=%u pid=%u",
+                         (unsigned long)frame->rip, (unsigned long)cr2,
+                         (unsigned int)smp_get_cpu_id(), proc ? (unsigned int)proc->pid : 0);
         if (n < 0 || (size_t)n >= sizeof(msg)) {
             /* Truncation is acceptable — msg is best-effort here */
         }
@@ -650,26 +715,19 @@ static void double_fault_handler(struct interrupt_frame *frame) {
     kprintf("\n*** DOUBLE FAULT (#DF) ***\n");
     kprintf("Error code: %lu  (always 0 on x86-64 — cause inferred from state)\n",
             (unsigned long)frame->error_code);
-    kprintf("RIP: 0x%lx  RSP: 0x%lx  RBP: 0x%lx\n",
-            (unsigned long)frame->rip, (unsigned long)frame->rsp,
-            (unsigned long)frame->rbp);
-    kprintf("RAX: 0x%lx  RBX: 0x%lx  RCX: 0x%lx  RDX: 0x%lx\n",
-            (unsigned long)frame->rax, (unsigned long)frame->rbx,
-            (unsigned long)frame->rcx, (unsigned long)frame->rdx);
-    kprintf("RSI: 0x%lx  RDI: 0x%lx  R8: 0x%lx   R9: 0x%lx\n",
-            (unsigned long)frame->rsi, (unsigned long)frame->rdi,
-            (unsigned long)frame->r8, (unsigned long)frame->r9);
-    kprintf("R10: 0x%lx  R11: 0x%lx  R12: 0x%lx  R13: 0x%lx\n",
-            (unsigned long)frame->r10, (unsigned long)frame->r11,
-            (unsigned long)frame->r12, (unsigned long)frame->r13);
-    kprintf("R14: 0x%lx  R15: 0x%lx\n",
-            (unsigned long)frame->r14, (unsigned long)frame->r15);
-    kprintf("CS: 0x%lx  SS: 0x%lx  RFLAGS: 0x%lx\n",
-            (unsigned long)frame->cs, (unsigned long)frame->ss,
-            (unsigned long)frame->rflags);
-    kprintf("CR0: 0x%lx  CR2: 0x%lx  CR3: 0x%lx  CR4: 0x%lx\n",
-            (unsigned long)cr0, (unsigned long)cr2,
-            (unsigned long)cr3, (unsigned long)cr4);
+    kprintf("RIP: 0x%lx  RSP: 0x%lx  RBP: 0x%lx\n", (unsigned long)frame->rip,
+            (unsigned long)frame->rsp, (unsigned long)frame->rbp);
+    kprintf("RAX: 0x%lx  RBX: 0x%lx  RCX: 0x%lx  RDX: 0x%lx\n", (unsigned long)frame->rax,
+            (unsigned long)frame->rbx, (unsigned long)frame->rcx, (unsigned long)frame->rdx);
+    kprintf("RSI: 0x%lx  RDI: 0x%lx  R8: 0x%lx   R9: 0x%lx\n", (unsigned long)frame->rsi,
+            (unsigned long)frame->rdi, (unsigned long)frame->r8, (unsigned long)frame->r9);
+    kprintf("R10: 0x%lx  R11: 0x%lx  R12: 0x%lx  R13: 0x%lx\n", (unsigned long)frame->r10,
+            (unsigned long)frame->r11, (unsigned long)frame->r12, (unsigned long)frame->r13);
+    kprintf("R14: 0x%lx  R15: 0x%lx\n", (unsigned long)frame->r14, (unsigned long)frame->r15);
+    kprintf("CS: 0x%lx  SS: 0x%lx  RFLAGS: 0x%lx\n", (unsigned long)frame->cs,
+            (unsigned long)frame->ss, (unsigned long)frame->rflags);
+    kprintf("CR0: 0x%lx  CR2: 0x%lx  CR3: 0x%lx  CR4: 0x%lx\n", (unsigned long)cr0,
+            (unsigned long)cr2, (unsigned long)cr3, (unsigned long)cr4);
 
     /* ── Cause analysis ─────────────────────────────────────────── */
     struct process *proc = process_get_current();
@@ -683,8 +741,7 @@ static void double_fault_handler(struct interrupt_frame *frame) {
     if (cr2 != 0) {
         kprintf("*** LIKELY CAUSE: Nested page fault (kernel stack overflow?) ***\n");
         kprintf("    Faulting address (CR2): 0x%lx\n", (unsigned long)cr2);
-        if (proc && proc->guard_page &&
-            (cr2 & ~0xFFFULL) == (proc->guard_page & ~0xFFFULL)) {
+        if (proc && proc->guard_page && (cr2 & ~0xFFFULL) == (proc->guard_page & ~0xFFFULL)) {
             kprintf("    *** CONFIRMED: Guard page hit — kernel stack overflow "
                     "for process %s (pid=%u) ***\n",
                     proc->name ? proc->name : "?", (unsigned int)proc->pid);
@@ -703,14 +760,12 @@ static void double_fault_handler(struct interrupt_frame *frame) {
      * bad segment, or a segment-load instruction that faulted and the
      * #GP handler itself crashed).
      */
-    else if ((frame->cs & 0xFFFF) == 0 ||
-             (frame->ss & 0xFFFF) == 0 ||
+    else if ((frame->cs & 0xFFFF) == 0 || (frame->ss & 0xFFFF) == 0 ||
              (frame->cs & 0xFFFF) > 0x18) {
         kprintf("*** LIKELY CAUSE: Segment error (#GP/#NP/#SS/#TS) — "
                 "recovery failure ***\n");
         kprintf("    Suspicious CS=0x%lx or SS=0x%lx in saved frame\n",
-                (unsigned long)(frame->cs & 0xFFFF),
-                (unsigned long)(frame->ss & 0xFFFF));
+                (unsigned long)(frame->cs & 0xFFFF), (unsigned long)(frame->ss & 0xFFFF));
     }
 
     /*
@@ -733,9 +788,8 @@ static void double_fault_handler(struct interrupt_frame *frame) {
 
     /* ── Stack trace ────────────────────────────────────────────── */
     if (proc) {
-        kprintf("Process: %s (pid=%u, state=%u)\n",
-                proc->name ? proc->name : "?", (unsigned int)proc->pid,
-                (uint32_t)proc->state);
+        kprintf("Process: %s (pid=%u, state=%u)\n", proc->name ? proc->name : "?",
+                (unsigned int)proc->pid, (uint32_t)proc->state);
     }
 
     /* Print backtrace (walks the frame pointer chain on the IST stack) */
@@ -747,14 +801,14 @@ static void double_fault_handler(struct interrupt_frame *frame) {
      * are still intact. */
     uint64_t orig_rsp = frame->rsp;
     if (orig_rsp >= 0xFFFF800000000000ULL && orig_rsp < 0xFFFFFFFFFFFFFFFFULL) {
-        kprintf("Original-stack backtrace (via saved RSP=0x%lx):\n",
-                (unsigned long)orig_rsp);
+        kprintf("Original-stack backtrace (via saved RSP=0x%lx):\n", (unsigned long)orig_rsp);
         uint64_t *stack = (uint64_t *)orig_rsp;
-        int limit = (proc && proc->stack_top)
-                    ? (int)((proc->stack_top - orig_rsp) / sizeof(uint64_t))
-                    : 64;
-        if (limit > 64) limit = 64;
-        if (limit < 1)   limit = 1;
+        int limit =
+            (proc && proc->stack_top) ? (int)((proc->stack_top - orig_rsp) / sizeof(uint64_t)) : 64;
+        if (limit > 64)
+            limit = 64;
+        if (limit < 1)
+            limit = 1;
         for (int i = 0; i < limit; i++) {
             uint64_t val = stack[i];
             if (val >= 0xFFFF800000000000ULL && val < 0xFFFFFFFFFFFFFFFFULL) {
@@ -774,8 +828,7 @@ static void double_fault_handler(struct interrupt_frame *frame) {
  * hardware issues (ECC errors, watchdog, etc.) */
 static void nmi_handler(struct interrupt_frame *frame) {
     kprintf("\n*** NMI — Non-Maskable Interrupt ***\n");
-    kprintf("RIP: 0x%lx  RSP: 0x%lx\n",
-            (unsigned long)frame->rip, (unsigned long)frame->rsp);
+    kprintf("RIP: 0x%lx  RSP: 0x%lx\n", (unsigned long)frame->rip, (unsigned long)frame->rsp);
 
     /* Attempt to check for NMI source via port 0x61 (PC-style) */
     uint8_t nmi_status = inb(0x61);
@@ -796,24 +849,19 @@ static void nmi_handler(struct interrupt_frame *frame) {
 static void gp_fault_handler(struct interrupt_frame *frame) {
     kprintf("\n*** GENERAL PROTECTION FAULT (#13) ***\n");
     kprintf("Error code: 0x%lx\n", (unsigned long)frame->error_code);
-    kprintf("RIP: 0x%lx  RSP: 0x%lx\n",
-            (unsigned long)frame->rip, (unsigned long)frame->rsp);
-    kprintf("RAX: 0x%lx  RBX: 0x%lx  RCX: 0x%lx  RDX: 0x%lx\n",
-            (unsigned long)frame->rax, (unsigned long)frame->rbx,
-            (unsigned long)frame->rcx, (unsigned long)frame->rdx);
-    kprintf("RSI: 0x%lx  RDI: 0x%lx  R8:  0x%lx  R9:  0x%lx\n",
-            (unsigned long)frame->rsi, (unsigned long)frame->rdi,
-            (unsigned long)frame->r8, (unsigned long)frame->r9);
-    kprintf("R10: 0x%lx  R11: 0x%lx  R12: 0x%lx  R13: 0x%lx\n",
-            (unsigned long)frame->r10, (unsigned long)frame->r11,
-            (unsigned long)frame->r12, (unsigned long)frame->r13);
-    kprintf("R14: 0x%lx  R15: 0x%lx\n",
-            (unsigned long)frame->r14, (unsigned long)frame->r15);
-    kprintf("CS: 0x%lx  SS: 0x%lx  RFLAGS: 0x%lx\n",
-            (unsigned long)frame->cs, (unsigned long)frame->ss,
-            (unsigned long)frame->rflags);
+    kprintf("RIP: 0x%lx  RSP: 0x%lx\n", (unsigned long)frame->rip, (unsigned long)frame->rsp);
+    kprintf("RAX: 0x%lx  RBX: 0x%lx  RCX: 0x%lx  RDX: 0x%lx\n", (unsigned long)frame->rax,
+            (unsigned long)frame->rbx, (unsigned long)frame->rcx, (unsigned long)frame->rdx);
+    kprintf("RSI: 0x%lx  RDI: 0x%lx  R8:  0x%lx  R9:  0x%lx\n", (unsigned long)frame->rsi,
+            (unsigned long)frame->rdi, (unsigned long)frame->r8, (unsigned long)frame->r9);
+    kprintf("R10: 0x%lx  R11: 0x%lx  R12: 0x%lx  R13: 0x%lx\n", (unsigned long)frame->r10,
+            (unsigned long)frame->r11, (unsigned long)frame->r12, (unsigned long)frame->r13);
+    kprintf("R14: 0x%lx  R15: 0x%lx\n", (unsigned long)frame->r14, (unsigned long)frame->r15);
+    kprintf("CS: 0x%lx  SS: 0x%lx  RFLAGS: 0x%lx\n", (unsigned long)frame->cs,
+            (unsigned long)frame->ss, (unsigned long)frame->rflags);
     cli();
-    for (;;) hlt();
+    for (;;)
+        hlt();
 }
 
 /* ── Machine Check Exception handler (vector 18) ───────────────── */
@@ -845,7 +893,7 @@ void arch_print_backtrace(void) {
     uint64_t stack_low = 0, stack_high = ~0ULL;
     struct process *proc = process_get_current();
     if (proc) {
-        stack_low  = proc->kernel_stack;
+        stack_low = proc->kernel_stack;
         stack_high = proc->stack_top;
     }
 
@@ -874,8 +922,7 @@ void arch_print_backtrace(void) {
 
 /* ── kpanic — print a formatted message then halt ─────────────────── */
 
-__printf(1, 2)
-void kpanic(const char *fmt, ...) {
+__printf(1, 2) void kpanic(const char *fmt, ...) {
     __builtin_va_list ap;
     __asm__ volatile("cli");
     kprintf("\n*** KERNEL PANIC ***\n");
@@ -883,17 +930,19 @@ void kpanic(const char *fmt, ...) {
     vkprintf(fmt, ap);
     __builtin_va_end(ap);
     kprintf("\n");
-    kprintf("CR0=0x%llx  CR2=0x%llx  CR3=0x%llx  CR4=0x%llx\n",
-            read_cr0(), read_cr2(), read_cr3(), read_cr4());
+    kprintf("CR0=0x%llx  CR2=0x%llx  CR3=0x%llx  CR4=0x%llx\n", read_cr0(), read_cr2(), read_cr3(),
+            read_cr4());
     arch_print_backtrace();
-    for (;;) __asm__ volatile("hlt");
+    for (;;)
+        __asm__ volatile("hlt");
     __builtin_unreachable();
 }
 
 /* ── Per-task stack usage ─────────────────────────────────────── */
 
 uint64_t task_stack_usage(struct process *p) {
-    if (!p || p->kernel_stack == 0 || p->stack_top == 0) return 0;
+    if (!p || p->kernel_stack == 0 || p->stack_top == 0)
+        return 0;
     /* Read current RSP */
     uint64_t rsp;
     __asm__ volatile("mov %%rsp, %0" : "=r"(rsp));
@@ -913,7 +962,8 @@ uint64_t task_stack_usage(struct process *p) {
 
 /* Update stack watermark on context switch - called from scheduler */
 void task_update_stack_watermark(struct process *p) {
-    if (!p) return;
+    if (!p)
+        return;
     uint64_t rsp;
     __asm__ volatile("mov %%rsp, %0" : "=r"(rsp));
     if (rsp < p->stack_watermark || p->stack_watermark == 0)
@@ -921,23 +971,20 @@ void task_update_stack_watermark(struct process *p) {
 }
 
 /* ── Stub: fault_handle_page_fault ─────────────────────────────── */
-static int fault_handle_page_fault(uint64_t addr, uint64_t error_code)
-{
+static int fault_handle_page_fault(uint64_t addr, uint64_t error_code) {
     (void)addr;
     (void)error_code;
     kprintf("[fault] fault_handle_page_fault: not yet implemented\n");
     return 0;
 }
 /* ── Stub: fault_handle_gpf ─────────────────────────────── */
-static int fault_handle_gpf(uint64_t error_code)
-{
+static int fault_handle_gpf(uint64_t error_code) {
     (void)error_code;
     kprintf("[fault] fault_handle_gpf: not yet implemented\n");
     return 0;
 }
 /* ── Stub: fault_handle_df ─────────────────────────────── */
-static int fault_handle_df(uint64_t error_code)
-{
+static int fault_handle_df(uint64_t error_code) {
     (void)error_code;
     kprintf("[fault] fault_handle_df: not yet implemented\n");
     return 0;

@@ -1,4 +1,5 @@
 #include "ata.h"
+
 #include "blockdev.h"
 #include "io.h"
 #include "printf.h"
@@ -94,27 +95,27 @@ void ata_set_redirect(int (*read_fn)(uint32_t, uint8_t, void *),
 }
 
 /* Primary ATA bus ports */
-#define ATA_DATA       0x1F0
-#define ATA_ERROR      0x1F1
-#define ATA_SECT_CNT   0x1F2
-#define ATA_LBA_LO     0x1F3
-#define ATA_LBA_MID    0x1F4
-#define ATA_LBA_HI     0x1F5
+#define ATA_DATA 0x1F0
+#define ATA_ERROR 0x1F1
+#define ATA_SECT_CNT 0x1F2
+#define ATA_LBA_LO 0x1F3
+#define ATA_LBA_MID 0x1F4
+#define ATA_LBA_HI 0x1F5
 #define ATA_DRIVE_HEAD 0x1F6
-#define ATA_STATUS     0x1F7
-#define ATA_COMMAND    0x1F7
+#define ATA_STATUS 0x1F7
+#define ATA_COMMAND 0x1F7
 
 /* Status bits */
-#define ATA_SR_BSY  0x80
+#define ATA_SR_BSY 0x80
 #define ATA_SR_DRDY 0x40
-#define ATA_SR_DRQ  0x08
-#define ATA_SR_ERR  0x01
+#define ATA_SR_DRQ 0x08
+#define ATA_SR_ERR 0x01
 
 /* Commands */
-#define ATA_CMD_READ_PIO  0x20
+#define ATA_CMD_READ_PIO 0x20
 #define ATA_CMD_WRITE_PIO 0x30
-#define ATA_CMD_IDENTIFY  0xEC
-#define ATA_CMD_FLUSH     0xE7
+#define ATA_CMD_IDENTIFY 0xEC
+#define ATA_CMD_FLUSH 0xE7
 
 static int ata_present = 0;
 static uint32_t ata_total_sectors = 0;
@@ -144,8 +145,10 @@ static int ata_wait_drq(void) {
  * alternate status register four times.  Required between PIO
  * commands to give the device time to update its status bits. */
 static void ata_400ns_delay(void) {
-    inb(ATA_STATUS); inb(ATA_STATUS);
-    inb(ATA_STATUS); inb(ATA_STATUS);
+    inb(ATA_STATUS);
+    inb(ATA_STATUS);
+    inb(ATA_STATUS);
+    inb(ATA_STATUS);
 }
 
 /* Initialize the primary ATA master drive.
@@ -162,6 +165,11 @@ static void ata_400ns_delay(void) {
  * If no ATA hardware is present (status == 0) or the device is
  * non-ATA (ATAPI), ata_present remains 0 and the driver is inert. */
 void __init ata_init(void) {
+    static int ata_inited = 0;
+    if (ata_inited)
+        return; /* already probed (device_initcall + direct call from kernel.c) */
+    ata_inited = 1;
+
     /* Select master drive */
     outb(ATA_DRIVE_HEAD, 0xA0);
     ata_400ns_delay();
@@ -180,7 +188,10 @@ void __init ata_init(void) {
         return;
     }
 
-    if (ata_wait_bsy() < 0) { ata_present = 0; return; }
+    if (ata_wait_bsy() < 0) {
+        ata_present = 0;
+        return;
+    }
 
     /* Check for non-ATA */
     if (inb(ATA_LBA_MID) != 0 || inb(ATA_LBA_HI) != 0) {
@@ -191,11 +202,18 @@ void __init ata_init(void) {
     /* Wait for DRQ or ERR */
     for (int timeout = 0; timeout < 100000; timeout++) {
         status = inb(ATA_STATUS);
-        if (status & ATA_SR_ERR) { ata_present = 0; return; }
-        if (status & ATA_SR_DRQ) break;
+        if (status & ATA_SR_ERR) {
+            ata_present = 0;
+            return;
+        }
+        if (status & ATA_SR_DRQ)
+            break;
         __asm__ volatile("pause");
     }
-    if (!(status & ATA_SR_DRQ)) { ata_present = 0; return; }
+    if (!(status & ATA_SR_DRQ)) {
+        ata_present = 0;
+        return;
+    }
 
     /* Read identify data (256 words) */
     uint16_t identify[256];
@@ -206,7 +224,8 @@ void __init ata_init(void) {
 
     uint32_t sectors = identify[60] | ((uint32_t)identify[61] << 16);
     ata_total_sectors = sectors;
-    blockdev_register_legacy(BLOCKDEV_ATA, "ata", ata_read_sectors, ata_write_sectors, ata_get_sectors);
+    blockdev_register_legacy(BLOCKDEV_ATA, "ata", ata_read_sectors, ata_write_sectors,
+                             ata_get_sectors);
     kprintf("  ATA disk: %llu sectors (%llu MB)\n", (unsigned long long)sectors,
             (unsigned long long)(sectors / 2048));
 }
@@ -229,16 +248,27 @@ uint32_t ata_get_sectors(void) {
 
 int ata_read_sectors(uint32_t lba, uint8_t count, void *buf) {
     /* If a redirect is active (ramdisk mode), use it instead of real ATA */
-    if (redirect_read) return redirect_read(lba, count, buf);
-    if (!ata_present) return -1;
+    if (redirect_read)
+        return redirect_read(lba, count, buf);
+    if (!ata_present)
+        return -1;
+
+    /* ── Debug: trace module-read region (stall root-cause) ── */
+    if ((lba >= 8600 && lba < 9000) || lba < 100)
+        kprintf("[ata] read lba=%u count=%u\n", (unsigned int)lba, (unsigned int)count);
 
     /* Validate LBA range before issuing ATA command */
-    if (count == 0) return -1;                     /* must read at least 1 sector */
-    if (lba >= ata_total_sectors) return -1;       /* start LBA out of range */
-    if (lba + count < lba) return -1;              /* uint32_t overflow check */
-    if (lba + count > ata_total_sectors) return -1; /* end exceeds disk size */
+    if (count == 0)
+        return -1; /* must read at least 1 sector */
+    if (lba >= ata_total_sectors)
+        return -1; /* start LBA out of range */
+    if (lba + count < lba)
+        return -1; /* uint32_t overflow check */
+    if (lba + count > ata_total_sectors)
+        return -1; /* end exceeds disk size */
 
-    if (ata_wait_bsy() < 0) return -1;
+    if (ata_wait_bsy() < 0)
+        return -1;
     outb(ATA_DRIVE_HEAD, 0xE0 | ((lba >> 24) & 0x0F));
     outb(ATA_SECT_CNT, count);
     outb(ATA_LBA_LO, lba & 0xFF);
@@ -249,10 +279,13 @@ int ata_read_sectors(uint32_t lba, uint8_t count, void *buf) {
     uint8_t *ptr = (uint8_t *)buf;
     for (int s = 0; s < count; s++) {
         ata_400ns_delay();
-        if (ata_wait_bsy() < 0) return -1;
+        if (ata_wait_bsy() < 0)
+            return -1;
         uint8_t status = inb(ATA_STATUS);
-        if (status & ATA_SR_ERR) return -1;
-        if (ata_wait_drq() < 0) return -1;
+        if (status & ATA_SR_ERR)
+            return -1;
+        if (ata_wait_drq() < 0)
+            return -1;
         for (int i = 0; i < 256; i++) {
             uint16_t word = inw(ATA_DATA);
             __builtin_memcpy(ptr + i * 2, &word, 2);
@@ -264,16 +297,23 @@ int ata_read_sectors(uint32_t lba, uint8_t count, void *buf) {
 
 int ata_write_sectors(uint32_t lba, uint8_t count, const void *buf) {
     /* If a redirect is active (ramdisk mode), use it instead of real ATA */
-    if (redirect_write) return redirect_write(lba, count, buf);
-    if (!ata_present) return -1;
+    if (redirect_write)
+        return redirect_write(lba, count, buf);
+    if (!ata_present)
+        return -1;
 
     /* Validate LBA range before issuing ATA command */
-    if (count == 0) return -1;                     /* must write at least 1 sector */
-    if (lba >= ata_total_sectors) return -1;       /* start LBA out of range */
-    if (lba + count < lba) return -1;              /* uint32_t overflow check */
-    if (lba + count > ata_total_sectors) return -1; /* end exceeds disk size */
+    if (count == 0)
+        return -1; /* must write at least 1 sector */
+    if (lba >= ata_total_sectors)
+        return -1; /* start LBA out of range */
+    if (lba + count < lba)
+        return -1; /* uint32_t overflow check */
+    if (lba + count > ata_total_sectors)
+        return -1; /* end exceeds disk size */
 
-    if (ata_wait_bsy() < 0) return -1;
+    if (ata_wait_bsy() < 0)
+        return -1;
     outb(ATA_DRIVE_HEAD, 0xE0 | ((lba >> 24) & 0x0F));
     outb(ATA_SECT_CNT, count);
     outb(ATA_LBA_LO, lba & 0xFF);
@@ -284,8 +324,10 @@ int ata_write_sectors(uint32_t lba, uint8_t count, const void *buf) {
     const uint8_t *ptr = (const uint8_t *)buf;
     for (int s = 0; s < count; s++) {
         ata_400ns_delay();
-        if (ata_wait_bsy() < 0) return -1;
-        if (ata_wait_drq() < 0) return -1;
+        if (ata_wait_bsy() < 0)
+            return -1;
+        if (ata_wait_drq() < 0)
+            return -1;
         for (int i = 0; i < 256; i++) {
             uint16_t word;
             __builtin_memcpy(&word, ptr + i * 2, 2);
@@ -296,7 +338,8 @@ int ata_write_sectors(uint32_t lba, uint8_t count, const void *buf) {
 
     /* Flush cache */
     outb(ATA_COMMAND, ATA_CMD_FLUSH);
-    if (ata_wait_bsy() < 0) return -1;
+    if (ata_wait_bsy() < 0)
+        return -1;
     return 0;
 }
 
@@ -323,8 +366,7 @@ MODULE_DESCRIPTION("Legacy ATA PIO driver — primary IDE controller (master)");
 MODULE_ALIAS("ata");
 #endif /* MODULE */
 
-static int ata_identify(void *ident_data)
-{
+static int ata_identify(void *ident_data) {
     if (!ident_data)
         return -EINVAL;
     if (!ata_present)
@@ -340,15 +382,20 @@ static int ata_identify(void *ident_data)
     outb(ATA_COMMAND, ATA_CMD_IDENTIFY);
     ata_400ns_delay();
     uint8_t status = inb(ATA_STATUS);
-    if (status == 0) return -ENODEV;
-    if (ata_wait_bsy() < 0) return -EIO;
+    if (status == 0)
+        return -ENODEV;
+    if (ata_wait_bsy() < 0)
+        return -EIO;
     for (int timeout = 0; timeout < 100000; timeout++) {
         status = inb(ATA_STATUS);
-        if (status & ATA_SR_ERR) return -EIO;
-        if (status & ATA_SR_DRQ) break;
+        if (status & ATA_SR_ERR)
+            return -EIO;
+        if (status & ATA_SR_DRQ)
+            break;
         __asm__ volatile("pause");
     }
-    if (!(status & ATA_SR_DRQ)) return -EIO;
+    if (!(status & ATA_SR_DRQ))
+        return -EIO;
     uint16_t *ident = (uint16_t *)ident_data;
     for (int i = 0; i < 256; i++)
         ident[i] = inw(ATA_DATA);
@@ -356,28 +403,31 @@ static int ata_identify(void *ident_data)
     return 0;
 }
 
-static int ata_reset(int bus)
-{
+static int ata_reset(int bus) {
     (void)bus;
     kprintf("[ATA] Soft resetting ATA bus\n");
     if (bus == 0) {
         outb(0x3F6, 0x04);
         ata_400ns_delay();
         /* small delay */
-        for (volatile int _d = 0; _d < 5000; _d++) io_wait();
+        for (volatile int _d = 0; _d < 5000; _d++)
+            io_wait();
         outb(0x3F6, 0x00);
         ata_400ns_delay();
-        if (ata_wait_bsy() < 0) { kprintf("[ATA] Reset failed\n"); return -EIO; }
+        if (ata_wait_bsy() < 0) {
+            kprintf("[ATA] Reset failed\n");
+            return -EIO;
+        }
         ata_present = 0;
         return 0;
     } else if (bus == 1) {
         outb(0x376, 0x04);
         ata_400ns_delay();
-        for (volatile int _dl = 0; _dl < 5000; _dl++) io_wait();
+        for (volatile int _dl = 0; _dl < 5000; _dl++)
+            io_wait();
         outb(0x376, 0x00);
         ata_400ns_delay();
         return 0;
     }
     return -EINVAL;
 }
-

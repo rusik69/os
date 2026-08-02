@@ -91,6 +91,7 @@
  */
 
 #include "conntrack_helper.h"
+#include "dhcp.h"
 #include "e1000.h"
 #include "export.h"
 #include "net_internal.h"
@@ -1349,6 +1350,11 @@ void net_rx_dispatch(uint8_t *pkt, uint16_t len) {
 
 void net_poll(void) {
     static int poll_count = 0;
+    /* Safe before net_init: the net stack isn't up yet — skip everything
+     * (the timer tick calls net_poll from early boot before drivers are
+     * probed). */
+    if (!net_stack_ready())
+        return;
 
     /* Periodic ARP maintenance: run GC and retries every ~100 polls */
     poll_count++;
@@ -1358,7 +1364,8 @@ void net_poll(void) {
         arp_retry_pending();
     }
 
-    /* Fast path: if no IRQ signaled data, skip descriptor read (saves MMIO) */
+    /* Fast path: if no IRQ signaled data, skip descriptor read.  The
+     * netd kthread (created after DHCP) hard-polls the NIC regardless. */
     if (!net_rx_flag)
         return;
     net_rx_flag = 0;
@@ -1479,11 +1486,20 @@ void net_poll(void) {
 
 /* --- Init --- */
 
+static int net_stack_initialized = 0;
+
+/* Returns 1 once net_init() has completed — net_poll() is safe to call
+ * from the timer tick only after the net stack state is set up. */
+int net_stack_ready(void) {
+    return net_stack_initialized;
+}
+
 void net_wait_for_packet(void) {
     wait_queue_sleep(&net_rx_wq);
 }
 
 void net_init(void) {
+    net_stack_initialized = 0;
     net_our_ip = 0;
     net_gateway_ip = 0;
     net_subnet_mask = 0;
@@ -1494,9 +1510,15 @@ void net_init(void) {
         e1000_get_mac(net_our_mac);
     memset(ip_frags, 0, sizeof(ip_frags));
     memset(tcp_conns, 0, sizeof(tcp_conns));
-    memset(net_listeners, 0, sizeof(net_listeners));
+    /* Do NOT wipe net_listeners: service_init() may have registered
+     * listeners (telnetd etc.) BEFORE net_init() runs — clearing the
+     * table here would silently kill them (the port then RSTs every
+     * connection attempt).  Only clear if nothing was registered yet. */
+    if (net_num_listeners == 0) {
+        memset(net_listeners, 0, sizeof(net_listeners));
+        net_num_listeners = 0;
+    }
     memset(net_arp_cache, 0, sizeof(net_arp_cache));
-    net_num_listeners = 0;
 
     /* Initialize IPv6 */
     ipv6_init();
@@ -1512,6 +1534,8 @@ void net_init(void) {
 
     /* Bring up loopback interface with 127.0.0.1 */
     net_loopback_register();
+
+    net_stack_initialized = 1;
 }
 
 /* --- ARP list --- */

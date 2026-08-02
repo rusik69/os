@@ -137,7 +137,26 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    printf("[init] Starting shell /bin/sh...\n");
+    printf("[init] Starting shell /mnt/bin/sh...\n");
+
+    /* Load the kernel shell module so telnet/serial shell commands work.
+     * The shell registers shell_process_line_ptr, which the kernel's
+     * telnetd/sshd use to execute commands. */
+    {
+        int mpid = fork();
+        if (mpid == 0) {
+            char *const m_argv[] = {"/mnt/bin/insmod", "/mnt/modules/shell.ko", NULL};
+            char *const m_envp[] = {"PATH=/mnt/bin", "HOME=/", NULL};
+            execve("/mnt/bin/insmod", m_argv, m_envp);
+            printf("[init] execve /mnt/bin/insmod failed\n");
+            exit(127);
+        }
+        if (mpid > 0) {
+            int mst = 0;
+            waitpid(mpid, &mst, 0);
+            printf("[init] shell module load exit status: %d\n", mst == 0 ? 0 : (mst >> 8));
+        }
+    }
 
     /* Try to spawn /bin/sh */
     while (1) {
@@ -149,16 +168,16 @@ int main(int argc, char *argv[]) {
 
         if (pid == 0) {
             /* Child — exec getty on console */
-            char *const argv[] = {"/bin/getty", "/dev/console", NULL};
-            char *const envp[] = {"PATH=/bin", "HOME=/", NULL};
-            execve("/bin/getty", argv, envp);
+            char *const argv[] = {"/mnt/bin/getty", "/dev/console", NULL};
+            char *const envp[] = {"PATH=/mnt/bin", "HOME=/", NULL};
+            execve("/mnt/bin/getty", argv, envp);
             /* If exec returns, it failed — fallback to direct shell */
-            printf("[init] execve /bin/getty failed, trying /bin/sh...\n");
+            printf("[init] execve /mnt/bin/getty failed, trying /mnt/bin/sh...\n");
             {
-                char *const sh_argv[] = {"/bin/sh", NULL};
-                execve("/bin/sh", sh_argv, envp);
+                char *const sh_argv[] = {"/mnt/bin/sh", NULL};
+                execve("/mnt/bin/sh", sh_argv, envp);
             }
-            printf("[init] execve /bin/sh also failed\n");
+            printf("[init] execve /mnt/bin/sh also failed\n");
             exit(1);
         }
 
@@ -195,6 +214,12 @@ int main(int argc, char *argv[]) {
         }
 
         printf("[init] Getty exited (status %d), respawning...\n", status);
+
+        /* Brief delay before respawn — without it a shell that exits
+         * immediately (e.g. stdin EOF on a headless console) creates a
+         * tight fork/exec/exit loop that churns memory until OOM. */
+        for (volatile int i = 0; i < 5000000; i++)
+            __asm__ volatile("pause");
     }
 
     /* Fallback — just loop */

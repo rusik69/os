@@ -250,11 +250,10 @@ static char g_volume_label[12];
  *
  * Returns 1 if the entry is fully within bounds, 0 if it would overflow.
  */
-static inline int lfn_entry_in_bounds(const uint8_t *buf, int buf_size,
-                                       const void *entries, int idx)
-{
+static inline int lfn_entry_in_bounds(const uint8_t *buf, int buf_size, const void *entries,
+                                      int idx) {
     const uint8_t *start = (const uint8_t *)entries + (size_t)idx * sizeof(struct fat32_dirent);
-    const uint8_t *end   = start + sizeof(struct fat32_dirent);
+    const uint8_t *end = start + sizeof(struct fat32_dirent);
     return (start >= buf && end <= buf + buf_size);
 }
 
@@ -263,17 +262,39 @@ static int read_sector(uint64_t lba, void *buf) {
     void *cached = bufcache_read(lba, (uint8_t)disk_id);
     if (cached) {
         memcpy(buf, cached, SECT_SIZE);
+        /* Release the pin taken by bufcache_read — without this the
+         * refcount leaks on every read, the cache fills with pinned
+         * entries, eviction fails and every subsequent read falls
+         * through to slow direct I/O (the 648 KB module read ground
+         * to a halt mid-transfer). */
+        if (lba < 100)
+            kprintf("[fat] read_sector lba=%llu releasing\n", (unsigned long long)lba);
+        bufcache_release(lba, (uint8_t)disk_id);
         return 0;
     }
+    if (lba < 100)
+        kprintf("[fat] read_sector lba=%llu direct-read\n", (unsigned long long)lba);
     return blockdev_read_sectors(disk_id, lba, 1, buf);
 }
 
 static int write_sector(uint64_t lba, const void *buf) {
+    /* Absolute guard: the FAT32 VBR (sector 0) must NEVER be overwritten.
+     * Recurring disk corruption was traced to a dirty bufcache entry with
+     * lba=0 being written back (corrupting the VBR mid-boot, which then
+     * broke the mount, the FAT chain reads and everything downstream).
+     * The mount/repair code that legitimately wants to touch sector 0
+     * must use the dedicated repair path, not a blind write. */
+    if (lba == 0) {
+        kprintf("[fat] BLOCKED write to sector 0 (buf=%p from=%p first=%02x %02x %02x %02x)\n", buf,
+                (void *)__builtin_return_address(0), ((const uint8_t *)buf)[0],
+                ((const uint8_t *)buf)[1], ((const uint8_t *)buf)[2], ((const uint8_t *)buf)[3]);
+        return -EINVAL;
+    }
     return bufcache_write(lba, (uint8_t)disk_id, buf);
 }
 
 /* Forward declarations for FSInfo functions defined later in the file */
-static int  fat32_validate_fsinfo(const uint8_t *buf);
+static int fat32_validate_fsinfo(const uint8_t *buf);
 static void fat32_repair_fsinfo(uint8_t *buf);
 
 static void fsinfo_write_hint(uint32_t next) {
@@ -484,8 +505,7 @@ static uint64_t cluster_to_lba(uint32_t cluster) {
     if (cluster < 2 || cluster >= FAT_MAX_CLUSTER()) {
         kprintf("[fat32] WARNING: invalid cluster %lu (valid: 2-%lu), "
                 "returning data_start to prevent wild access\n",
-                (unsigned long)cluster,
-                (unsigned long)(FAT_MAX_CLUSTER() - 1));
+                (unsigned long)cluster, (unsigned long)(FAT_MAX_CLUSTER() - 1));
         return (uint64_t)data_start;
     }
     return (uint64_t)data_start + (uint64_t)(cluster - 2) * (uint64_t)spc;
@@ -1016,12 +1036,22 @@ int fat32_mount(fat32_disk_t disk, uint32_t part_lba) {
     bufcache_enable();
 
     uint8_t mbr[SECT_SIZE];
-    /* Auto-detect: if part_lba == 0, read MBR and find any FAT partition */
+    /* Auto-detect: if part_lba == 0, read MBR and find any FAT partition.
+     * The sector-0 read is retried: a transient ATA read glitch would
+     * otherwise fail the mount, and the fallback native-FS format would
+     * then destroy the FAT32 VBR (the disk has been corrupted this way
+     * repeatedly). */
     if (part_lba == 0) {
-        if (read_sector(0, mbr) != 0)
-            return -EIO;
-        if (mbr[510] != 0x55 || mbr[511] != 0xAA)
+        int rd_ok = 0;
+        for (int try = 0; try < 3 && !rd_ok; try++) {
+            if (read_sector(0, mbr) == 0 && mbr[510] == 0x55 && mbr[511] == 0xAA)
+                rd_ok = 1;
+        }
+        if (!rd_ok) {
+            if (read_sector(0, mbr) != 0)
+                return -EIO;
             return -2;
+        }
         uint8_t *pt = mbr + 0x1BE;
         for (int i = 0; i < 4; i++) {
             uint8_t ptype = pt[i * 16 + 4];
@@ -1186,12 +1216,15 @@ int fat32_read_file(const char *path, void *buf, uint32_t max_size) {
         return -EINVAL;
     if (!buf)
         return -EINVAL;
+    kprintf("[fat] read '%s' max=%u\n", path, max_size);
     int is_dir = 0;
     uint32_t fsize = 0;
     uint32_t cluster = path_resolve(path, &is_dir, &fsize);
+    kprintf("[fat] resolve '%s' -> cluster=%lu is_dir=%d size=%u\n", path, (unsigned long)cluster,
+            is_dir, fsize);
     if (!cluster || is_dir) {
-        kprintf("[fat32_read_file] path_resolve('%s') failed: cluster=%lu is_dir=%d\n",
-                path, (unsigned long)cluster, is_dir);
+        kprintf("[fat32_read_file] path_resolve('%s') failed: cluster=%lu is_dir=%d\n", path,
+                (unsigned long)cluster, is_dir);
         return -EINVAL;
     }
 
@@ -1204,10 +1237,24 @@ int fat32_read_file(const char *path, void *buf, uint32_t max_size) {
     while (!FAT_IS_EOC(clus) && done < to_read) {
         if (++_chain_cnt > FAT_MAX_CLUSTER())
             return -EIO;
+        if ((_chain_cnt % 128) == 1)
+            kprintf("[fat] reading %s: sector %u/%u (cluster %lu)\n", path,
+                    (unsigned int)done / SECT_SIZE, (unsigned int)to_read / SECT_SIZE,
+                    (unsigned long)clus);
         uint64_t lba = cluster_to_lba(clus);
         for (uint32_t s = 0; s < spc && done < to_read; s++) {
-            if (read_sector(lba + s, sect_buf) != 0)
+            extern uint64_t timer_get_ticks(void);
+            uint64_t t0 = timer_get_ticks();
+            int r = read_sector(lba + s, sect_buf);
+            uint64_t t1 = timer_get_ticks();
+            if (lba + s >= 8600)
+                kprintf("[fat] read lba=%llu rc=%d took=%llu ticks\n",
+                        (unsigned long long)(lba + s), r, (unsigned long long)(t1 - t0));
+            if (r != 0)
                 return (int)done;
+            if (t1 - t0 > 100)
+                kprintf("[fat] SLOW read lba=%llu took %llu ticks\n", (unsigned long long)(lba + s),
+                        (unsigned long long)(t1 - t0));
             uint32_t chunk = SECT_SIZE;
             if (chunk > to_read - done)
                 chunk = to_read - done;
@@ -3313,7 +3360,7 @@ static int fat32_vfs_stat(void *priv, const char *path, struct vfs_stat *st) {
     st->size = (uint32_t)sz;
     st->type = 1;
     st->uid = st->gid = 0;
-    st->mode = 0644;
+    st->mode = 0755; /* FAT32 has no permissions; grant read+exec to all */
     st->mtime = 0;
     return 0;
 }

@@ -1,15 +1,16 @@
 #define KERNEL_INTERNAL
 #include "dhcp.h"
-#include "printf.h"
-#include "types.h"
-#include "string.h"
+
+#include "e1000.h"
+#include "errno.h"
 #include "net.h"
 #include "net_internal.h"
+#include "printf.h"
+#include "string.h"
 #include "timer.h"
-#include "e1000.h"
-#include "virtio_net.h"
+#include "types.h"
 #include "vfs.h"
-#include "errno.h"
+#include "virtio_net.h"
 
 /*
  * Real DHCP client implementation.
@@ -29,10 +30,10 @@
 
 /* DHCP packet structure (mirrors net_udp.c) */
 struct dhcp_packet {
-    uint8_t  op;
-    uint8_t  htype;
-    uint8_t  hlen;
-    uint8_t  hops;
+    uint8_t op;
+    uint8_t htype;
+    uint8_t hlen;
+    uint8_t hops;
     uint32_t xid;
     uint16_t secs;
     uint16_t flags;
@@ -40,17 +41,17 @@ struct dhcp_packet {
     uint32_t yiaddr;
     uint32_t siaddr;
     uint32_t giaddr;
-    uint8_t  chaddr[16];
-    uint8_t  sname[64];
-    uint8_t  file[128];
+    uint8_t chaddr[16];
+    uint8_t sname[64];
+    uint8_t file[128];
     uint32_t magic_cookie;
 } __attribute__((packed));
 
 #define DHCP_MAGIC 0x63825363
 #define DHCP_DISCOVER 1
-#define DHCP_OFFER    2
-#define DHCP_REQUEST  3
-#define DHCP_ACK      5
+#define DHCP_OFFER 2
+#define DHCP_REQUEST 3
+#define DHCP_ACK 5
 
 /* Our MAC address (from net_internal.h) */
 extern uint8_t net_our_mac[6];
@@ -68,25 +69,36 @@ static uint32_t dhcp_result_ip = 0;
 static uint32_t dhcp_result_gateway = 0;
 static uint32_t dhcp_result_netmask = 0;
 static uint32_t dhcp_result_dns = 0;
-static volatile int dhcp_state = 0;  /* 0=idle, 1=discover sent, 2=request sent, 3=done */
+static volatile int dhcp_state = 0; /* 0=idle, 1=discover sent, 2=request sent, 3=done */
 static volatile int dhcp_done = 0;
+/* 1 while dhcp_discover()'s spin-poll owns the RX descriptors directly —
+ * the netd kthread must not touch the NIC during that window. */
+static volatile int dhcp_direct_poll = 0;
+
+/* True while the boot DHCP transaction spin-polls the NIC directly.
+ * The netd kthread (and any other poller) gates itself off during this
+ * window so it cannot race the DHCP client for the RX descriptors.
+ * Renewals do NOT set this — they rely on the netd's dispatch. */
+int dhcp_client_busy(void) {
+    return dhcp_direct_poll;
+}
 
 /* ── T1/T2 renewal timer state (RFC 2131 §4.4.5) ────────────────── */
 /* T1 = 0.5 × lease_time — unicast renewal to original server
  * T2 = 0.875 × lease_time — broadcast rebind to any server */
-static uint64_t dhcp_t1_tick = 0;           /* Timer tick threshold for T1 */
-static uint64_t dhcp_t2_tick = 0;           /* Timer tick threshold for T2  */
-static int      dhcp_t1_triggered = 0;       /* 1 when T1 tick has been reached */
-static int      dhcp_t2_triggered = 0;       /* 1 when T2 tick has been reached */
-static int      dhcp_renewal_running = 0;    /* 1 while a renewal is in flight */
+static uint64_t dhcp_t1_tick = 0;    /* Timer tick threshold for T1 */
+static uint64_t dhcp_t2_tick = 0;    /* Timer tick threshold for T2  */
+static int dhcp_t1_triggered = 0;    /* 1 when T1 tick has been reached */
+static int dhcp_t2_triggered = 0;    /* 1 when T2 tick has been reached */
+static int dhcp_renewal_running = 0; /* 1 while a renewal is in flight */
 
 /* Forward declarations */
 static void dhcp_schedule_timers(void);
 
 /* ── Low-level send ─────────────────────────────────────────────────── */
 
-static void send_udp_broadcast(uint16_t src_port, uint16_t dst_port,
-                                const void *data, uint16_t data_len) {
+static void send_udp_broadcast(uint16_t src_port, uint16_t dst_port, const void *data,
+                               uint16_t data_len) {
     uint8_t buf[1500];
     struct ip_header *ip = (struct ip_header *)buf;
     struct udp_header *udp = (struct udp_header *)(buf + sizeof(struct ip_header));
@@ -95,8 +107,8 @@ static void send_udp_broadcast(uint16_t src_port, uint16_t dst_port,
     ip->version_ihl = 0x45;
     ip->ttl = 64;
     ip->protocol = IP_PROTO_UDP;
-    ip->src_ip = 0;  /* 0.0.0.0 before we have an IP */
-    ip->dst_ip = htonl(0xFFFFFFFF);  /* 255.255.255.255 */
+    ip->src_ip = 0;                 /* 0.0.0.0 before we have an IP */
+    ip->dst_ip = htonl(0xFFFFFFFF); /* 255.255.255.255 */
 
     uint16_t udp_len = sizeof(struct udp_header) + data_len;
     ip->total_len = htons(sizeof(struct ip_header) + udp_len);
@@ -117,7 +129,7 @@ static void send_udp_broadcast(uint16_t src_port, uint16_t dst_port,
 
 /* Send a UDP packet to a specific IP (unicast) */
 static void send_udp_unicast(uint32_t dst_ip, uint16_t src_port, uint16_t dst_port,
-                              const void *data, uint16_t data_len) {
+                             const void *data, uint16_t data_len) {
     uint8_t buf[1500];
     struct ip_header *ip = (struct ip_header *)buf;
     struct udp_header *udp = (struct udp_header *)(buf + sizeof(struct ip_header));
@@ -181,18 +193,21 @@ static void dhcp_build_discover(void) {
     memset(buf, 0, sizeof(buf));
     struct dhcp_packet *dhcp = (struct dhcp_packet *)buf;
 
-    dhcp->op = 1;   /* BOOTREQUEST */
+    dhcp->op = 1;    /* BOOTREQUEST */
     dhcp->htype = 1; /* Ethernet */
     dhcp->hlen = 6;
     dhcp->xid = htonl(dhcp_xid);
-    dhcp->flags = htons(0x8000);  /* Broadcast flag */
+    dhcp->flags = htons(0x8000); /* Broadcast flag */
     dhcp->magic_cookie = htonl(DHCP_MAGIC);
     memcpy(dhcp->chaddr, net_our_mac, 6);
 
     /* DHCP options */
     uint8_t *opt = buf + sizeof(struct dhcp_packet);
-    *opt++ = 53; *opt++ = 1; *opt++ = DHCP_DISCOVER;  /* DHCP message type */
-    *opt++ = 55; *opt++ = 3;                            /* Parameter request list */
+    *opt++ = 53;
+    *opt++ = 1;
+    *opt++ = DHCP_DISCOVER; /* DHCP message type */
+    *opt++ = 55;
+    *opt++ = 3;   /* Parameter request list */
     *opt++ = 1;   /* Subnet mask */
     *opt++ = 3;   /* Router */
     *opt++ = 6;   /* DNS server */
@@ -218,34 +233,49 @@ static void dhcp_build_request(void) {
     memcpy(dhcp->chaddr, net_our_mac, 6);
 
     uint8_t *opt = buf + sizeof(struct dhcp_packet);
-    *opt++ = 53; *opt++ = 1; *opt++ = DHCP_REQUEST;
+    *opt++ = 53;
+    *opt++ = 1;
+    *opt++ = DHCP_REQUEST;
     /* Requested IP option (50) */
-    *opt++ = 50; *opt++ = 4;
+    *opt++ = 50;
+    *opt++ = 4;
     *opt++ = (uint8_t)(dhcp_offered_ip >> 24);
     *opt++ = (uint8_t)(dhcp_offered_ip >> 16);
     *opt++ = (uint8_t)(dhcp_offered_ip >> 8);
     *opt++ = (uint8_t)(dhcp_offered_ip);
     /* Server identifier option (54) */
-    *opt++ = 54; *opt++ = 4;
+    *opt++ = 54;
+    *opt++ = 4;
     *opt++ = (uint8_t)(dhcp_server_id >> 24);
     *opt++ = (uint8_t)(dhcp_server_id >> 16);
     *opt++ = (uint8_t)(dhcp_server_id >> 8);
     *opt++ = (uint8_t)(dhcp_server_id);
-    *opt++ = 55; *opt++ = 3;
-    *opt++ = 1; *opt++ = 3; *opt++ = 6;
+    *opt++ = 55;
+    *opt++ = 3;
+    *opt++ = 1;
+    *opt++ = 3;
+    *opt++ = 6;
     *opt++ = 255;
 
     uint16_t pkt_len = (uint16_t)(opt - buf);
     send_udp_broadcast(DHCP_CLIENT_PORT, DHCP_SERVER_PORT, buf, pkt_len);
     dhcp_state = 2;
-    kprintf("[dhcp] Sent REQUEST for %u.%u.%u.%u\n",
-            (uint32_t)((dhcp_offered_ip >> 24) & 0xFF),
-            (uint32_t)((dhcp_offered_ip >> 16) & 0xFF),
-            (uint32_t)((dhcp_offered_ip >> 8) & 0xFF),
+    kprintf("[dhcp] Sent REQUEST for %u.%u.%u.%u\n", (uint32_t)((dhcp_offered_ip >> 24) & 0xFF),
+            (uint32_t)((dhcp_offered_ip >> 16) & 0xFF), (uint32_t)((dhcp_offered_ip >> 8) & 0xFF),
             (uint32_t)(dhcp_offered_ip & 0xFF));
 }
 
 /* ── DHCP response handler ──────────────────────────────────────────── */
+
+static void handle_dhcp_response(const uint8_t *data, uint16_t len);
+
+/* Public entry point used by the shared RX dispatch (net_poll path).
+ * The client's own spin-poll was removed because it raced with net_poll
+ * for the same NIC descriptors; all DHCP client replies now arrive via
+ * the normal packet dispatch. */
+void dhcp_client_handle_packet(const uint8_t *data, uint16_t len) {
+    handle_dhcp_response(data, len);
+}
 
 /* Store lease time for renewal tracking */
 static uint32_t dhcp_lease_time = 0;
@@ -253,11 +283,15 @@ static uint64_t dhcp_acquired_tick = 0;
 static int dhcp_has_lease = 0;
 
 static void handle_dhcp_response(const uint8_t *data, uint16_t len) {
-    if (len < sizeof(struct dhcp_packet)) return;
+    if (len < sizeof(struct dhcp_packet))
+        return;
     const struct dhcp_packet *dhcp = (const struct dhcp_packet *)data;
-    if (dhcp->op != 2) return;  /* BOOTREPLY */
-    if (ntohl(dhcp->xid) != dhcp_xid) return;
-    if (ntohl(dhcp->magic_cookie) != DHCP_MAGIC) return;
+    if (dhcp->op != 2)
+        return; /* BOOTREPLY */
+    if (ntohl(dhcp->xid) != dhcp_xid)
+        return;
+    if (ntohl(dhcp->magic_cookie) != DHCP_MAGIC)
+        return;
 
     const uint8_t *opt = data + sizeof(struct dhcp_packet);
     const uint8_t *end = data + len;
@@ -269,30 +303,36 @@ static void handle_dhcp_response(const uint8_t *data, uint16_t len) {
     uint32_t lease __attribute__((unused)) = 0;
 
     while (opt < end && *opt != 255) {
-        if (*opt == 0) { opt++; continue; }
+        if (*opt == 0) {
+            opt++;
+            continue;
+        }
         uint8_t code = *opt++;
-        if (opt >= end) break;
+        if (opt >= end)
+            break;
         uint8_t olen = *opt++;
         /* Validate DHCP option length before parsing (RFC 2131 §4.1):
          * ensure option data fits within the received packet to prevent
          * buffer over-read from a malformed option length field */
-        if (opt + olen > end) break;
+        if (opt + olen > end)
+            break;
 
         switch (code) {
         case 53: /* DHCP message type */
-            if (olen >= 1) msg_type = opt[0];
+            if (olen >= 1)
+                msg_type = opt[0];
             break;
-        case 1:  /* Subnet mask */
+        case 1: /* Subnet mask */
             if (olen >= 4)
                 mask = ((uint32_t)opt[0] << 24) | ((uint32_t)opt[1] << 16) |
                        ((uint32_t)opt[2] << 8) | opt[3];
             break;
-        case 3:  /* Router / Gateway */
+        case 3: /* Router / Gateway */
             if (olen >= 4)
                 router = ((uint32_t)opt[0] << 24) | ((uint32_t)opt[1] << 16) |
                          ((uint32_t)opt[2] << 8) | opt[3];
             break;
-        case 6:  /* DNS server */
+        case 6: /* DNS server */
             if (olen >= 4)
                 dns = ((uint32_t)opt[0] << 24) | ((uint32_t)opt[1] << 16) |
                       ((uint32_t)opt[2] << 8) | opt[3];
@@ -321,8 +361,9 @@ static void handle_dhcp_response(const uint8_t *data, uint16_t len) {
         kprintf("[dhcp] Received OFFER for %u.%u.%u.%u from server %u.%u.%u.%u\n",
                 (uint32_t)((yiaddr >> 24) & 0xFF), (uint32_t)((yiaddr >> 16) & 0xFF),
                 (uint32_t)((yiaddr >> 8) & 0xFF), (uint32_t)(yiaddr & 0xFF),
-                (uint32_t)((dhcp_server_id >> 24) & 0xFF), (uint32_t)((dhcp_server_id >> 16) & 0xFF),
-                (uint32_t)((dhcp_server_id >> 8) & 0xFF), (uint32_t)(dhcp_server_id & 0xFF));
+                (uint32_t)((dhcp_server_id >> 24) & 0xFF),
+                (uint32_t)((dhcp_server_id >> 16) & 0xFF), (uint32_t)((dhcp_server_id >> 8) & 0xFF),
+                (uint32_t)(dhcp_server_id & 0xFF));
         dhcp_build_request();
     } else if (msg_type == DHCP_ACK && dhcp_state == 2) {
         dhcp_result_ip = yiaddr;
@@ -330,15 +371,17 @@ static void handle_dhcp_response(const uint8_t *data, uint16_t len) {
         dhcp_result_gateway = router ? router : (yiaddr & dhcp_result_netmask) | 1;
         dhcp_result_dns = dns ? dns : dhcp_result_gateway;
 
-        kprintf("[dhcp] Received ACK: IP=%u.%u.%u.%u, GW=%u.%u.%u.%u, MASK=%u.%u.%u.%u, DNS=%u.%u.%u.%u\n",
-                (uint32_t)((yiaddr >> 24) & 0xFF), (uint32_t)((yiaddr >> 16) & 0xFF),
-                (uint32_t)((yiaddr >> 8) & 0xFF), (uint32_t)(yiaddr & 0xFF),
-                (uint32_t)((dhcp_result_gateway >> 24) & 0xFF), (uint32_t)((dhcp_result_gateway >> 16) & 0xFF),
-                (uint32_t)((dhcp_result_gateway >> 8) & 0xFF), (uint32_t)(dhcp_result_gateway & 0xFF),
-                (uint32_t)((mask >> 24) & 0xFF), (uint32_t)((mask >> 16) & 0xFF),
-                (uint32_t)((mask >> 8) & 0xFF), (uint32_t)(mask & 0xFF),
-                (uint32_t)((dns >> 24) & 0xFF), (uint32_t)((dns >> 16) & 0xFF),
-                (uint32_t)((dns >> 8) & 0xFF), (uint32_t)(dns & 0xFF));
+        kprintf(
+            "[dhcp] Received ACK: IP=%u.%u.%u.%u, GW=%u.%u.%u.%u, MASK=%u.%u.%u.%u, "
+            "DNS=%u.%u.%u.%u\n",
+            (uint32_t)((yiaddr >> 24) & 0xFF), (uint32_t)((yiaddr >> 16) & 0xFF),
+            (uint32_t)((yiaddr >> 8) & 0xFF), (uint32_t)(yiaddr & 0xFF),
+            (uint32_t)((dhcp_result_gateway >> 24) & 0xFF),
+            (uint32_t)((dhcp_result_gateway >> 16) & 0xFF),
+            (uint32_t)((dhcp_result_gateway >> 8) & 0xFF), (uint32_t)(dhcp_result_gateway & 0xFF),
+            (uint32_t)((mask >> 24) & 0xFF), (uint32_t)((mask >> 16) & 0xFF),
+            (uint32_t)((mask >> 8) & 0xFF), (uint32_t)(mask & 0xFF), (uint32_t)((dns >> 24) & 0xFF),
+            (uint32_t)((dns >> 16) & 0xFF), (uint32_t)((dns >> 8) & 0xFF), (uint32_t)(dns & 0xFF));
 
         dhcp_state = 3;
         dhcp_done = 1;
@@ -353,8 +396,7 @@ static void handle_dhcp_response(const uint8_t *data, uint16_t len) {
 
 /* Write a nameserver line to /etc/resolv.conf.  Replaces the entire file
  * content with "nameserver A.B.C.D\\n".  Returns 0 on success, negative on error. */
-static int resolv_conf_write_nameserver(uint32_t dns_ip)
-{
+static int resolv_conf_write_nameserver(uint32_t dns_ip) {
     char buf[64];
     int len;
 
@@ -362,11 +404,9 @@ static int resolv_conf_write_nameserver(uint32_t dns_ip)
         return 0; /* no DNS server — nothing to write */
 
     /* Format: "nameserver A.B.C.D\\n" */
-    len = snprintf(buf, sizeof(buf), "nameserver %u.%u.%u.%u\n",
-                   (uint32_t)((dns_ip >> 24) & 0xFF),
-                   (uint32_t)((dns_ip >> 16) & 0xFF),
-                   (uint32_t)((dns_ip >>  8) & 0xFF),
-                   (uint32_t)( dns_ip        & 0xFF));
+    len = snprintf(buf, sizeof(buf), "nameserver %u.%u.%u.%u\n", (uint32_t)((dns_ip >> 24) & 0xFF),
+                   (uint32_t)((dns_ip >> 16) & 0xFF), (uint32_t)((dns_ip >> 8) & 0xFF),
+                   (uint32_t)(dns_ip & 0xFF));
     if (len < 0 || len >= (int)sizeof(buf))
         return -EINVAL;
 
@@ -383,18 +423,15 @@ static int resolv_conf_write_nameserver(uint32_t dns_ip)
         return ret;
     }
 
-    kprintf("[resolv.conf] wrote 'nameserver %u.%u.%u.%u'\n",
-            (uint32_t)((dns_ip >> 24) & 0xFF),
-            (uint32_t)((dns_ip >> 16) & 0xFF),
-            (uint32_t)((dns_ip >>  8) & 0xFF),
-            (uint32_t)( dns_ip        & 0xFF));
+    kprintf("[resolv.conf] wrote 'nameserver %u.%u.%u.%u'\n", (uint32_t)((dns_ip >> 24) & 0xFF),
+            (uint32_t)((dns_ip >> 16) & 0xFF), (uint32_t)((dns_ip >> 8) & 0xFF),
+            (uint32_t)(dns_ip & 0xFF));
     return 0;
 }
 
 /* Read the first nameserver line from /etc/resolv.conf and return its
  * IP in host byte order, or 0 if none found / file missing / error. */
-uint32_t net_resolv_conf_read_first(void)
-{
+uint32_t net_resolv_conf_read_first(void) {
     char buf[128];
     uint32_t out_size = 0;
 
@@ -430,16 +467,17 @@ uint32_t net_resolv_conf_read_first(void)
                 p++;
             }
             if (pi == 3) {
-                uint32_t ip = (parts[0] << 24) | (parts[1] << 16) |
-                              (parts[2] << 8)  | parts[3];
+                uint32_t ip = (parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3];
                 return ip;
             }
             break; /* malformed nameserver line */
         }
 
         /* Skip to end of line */
-        while (*p && *p != '\n') p++;
-        if (*p == '\n') p++;
+        while (*p && *p != '\n')
+            p++;
+        if (*p == '\n')
+            p++;
     }
 
     return 0;
@@ -472,26 +510,21 @@ void dhcp_init(void) {
  * Renew the DHCP lease by sending a REQUEST to the server that
  * granted the current lease.  Returns 0 on success, -1 on failure.
  */
-int dhcp_renew(void)
-{
+int dhcp_renew(void) {
     if (!dhcp_has_lease || dhcp_server_id == 0) {
         /* No existing lease — fall back to full discover */
         return dhcp_discover();
     }
 
-    dhcp_xid = (uint32_t)(timer_get_ticks() ^ 0xA5A5A5A5u ^
-                          ((uint64_t)net_our_mac[2] << 24) ^
-                          ((uint64_t)net_our_mac[3] << 16) ^
-                          ((uint64_t)net_our_mac[4] << 8) ^
+    dhcp_xid = (uint32_t)(timer_get_ticks() ^ 0xA5A5A5A5u ^ ((uint64_t)net_our_mac[2] << 24) ^
+                          ((uint64_t)net_our_mac[3] << 16) ^ ((uint64_t)net_our_mac[4] << 8) ^
                           net_our_mac[5]);
     dhcp_state = 0;
     dhcp_done = 0;
 
     /* Send a unicast DHCPREQUEST to renew the current lease */
-    kprintf("[dhcp] Renewing lease for %u.%u.%u.%u\n",
-            (uint32_t)((dhcp_result_ip >> 24) & 0xFF),
-            (uint32_t)((dhcp_result_ip >> 16) & 0xFF),
-            (uint32_t)((dhcp_result_ip >> 8) & 0xFF),
+    kprintf("[dhcp] Renewing lease for %u.%u.%u.%u\n", (uint32_t)((dhcp_result_ip >> 24) & 0xFF),
+            (uint32_t)((dhcp_result_ip >> 16) & 0xFF), (uint32_t)((dhcp_result_ip >> 8) & 0xFF),
             (uint32_t)(dhcp_result_ip & 0xFF));
 
     /* Build and send unicast DHCPREQUEST */
@@ -508,15 +541,19 @@ int dhcp_renew(void)
     memcpy(dhcp->chaddr, net_our_mac, 6);
 
     uint8_t *opt = buf + sizeof(struct dhcp_packet);
-    *opt++ = 53; *opt++ = 1; *opt++ = DHCP_REQUEST;
+    *opt++ = 53;
+    *opt++ = 1;
+    *opt++ = DHCP_REQUEST;
     /* Requested IP option (50) */
-    *opt++ = 50; *opt++ = 4;
+    *opt++ = 50;
+    *opt++ = 4;
     *opt++ = (uint8_t)(dhcp_result_ip >> 24);
     *opt++ = (uint8_t)(dhcp_result_ip >> 16);
     *opt++ = (uint8_t)(dhcp_result_ip >> 8);
     *opt++ = (uint8_t)(dhcp_result_ip);
     /* Server identifier option (54) */
-    *opt++ = 54; *opt++ = 4;
+    *opt++ = 54;
+    *opt++ = 4;
     *opt++ = (uint8_t)(dhcp_server_id >> 24);
     *opt++ = (uint8_t)(dhcp_server_id >> 16);
     *opt++ = (uint8_t)(dhcp_server_id >> 8);
@@ -536,7 +573,8 @@ int dhcp_renew(void)
         uint64_t now = timer_get_ticks();
         uint64_t elapsed = now - start;
 
-        if (elapsed > 300) break; /* 3 second timeout */
+        if (elapsed > 300)
+            break; /* 3 second timeout */
 
         /* Poll network */
         if (e1000_is_present()) {
@@ -544,17 +582,20 @@ int dhcp_renew(void)
             int n = e1000_receive(pkt, sizeof(pkt));
             if (n > 0) {
                 struct eth_header *eth = (struct eth_header *)pkt;
-                if (ntohs(eth->type) == ETH_TYPE_IP && n >= (int)sizeof(struct eth_header) + (int)sizeof(struct ip_header)) {
+                if (ntohs(eth->type) == ETH_TYPE_IP &&
+                    n >= (int)sizeof(struct eth_header) + (int)sizeof(struct ip_header)) {
                     struct ip_header *ip = (struct ip_header *)(pkt + sizeof(struct eth_header));
                     if (ip->protocol == IP_PROTO_UDP) {
                         int ip_hdr_len = (ip->version_ihl & 0x0F) * 4;
                         int total_len = ntohs(ip->total_len);
                         if (ip_hdr_len + (int)sizeof(struct udp_header) <= total_len &&
                             total_len <= n - (int)sizeof(struct eth_header)) {
-                            struct udp_header *udp = (struct udp_header *)(pkt + sizeof(struct eth_header) + ip_hdr_len);
+                            struct udp_header *udp =
+                                (struct udp_header *)(pkt + sizeof(struct eth_header) + ip_hdr_len);
                             if (ntohs(udp->dst_port) == DHCP_CLIENT_PORT) {
                                 uint16_t udp_len_val = ntohs(udp->length);
-                                int data_off = sizeof(struct eth_header) + ip_hdr_len + sizeof(struct udp_header);
+                                int data_off = sizeof(struct eth_header) + ip_hdr_len +
+                                               sizeof(struct udp_header);
                                 int data_len = (int)(udp_len_val - sizeof(struct udp_header));
                                 if (data_off + data_len <= n) {
                                     handle_dhcp_response(pkt + data_off, (uint16_t)data_len);
@@ -571,17 +612,20 @@ int dhcp_renew(void)
             int n = virtio_net_receive(pkt, sizeof(pkt));
             if (n > 0) {
                 struct eth_header *eth = (struct eth_header *)pkt;
-                if (ntohs(eth->type) == ETH_TYPE_IP && n >= (int)sizeof(struct eth_header) + (int)sizeof(struct ip_header)) {
+                if (ntohs(eth->type) == ETH_TYPE_IP &&
+                    n >= (int)sizeof(struct eth_header) + (int)sizeof(struct ip_header)) {
                     struct ip_header *ip = (struct ip_header *)(pkt + sizeof(struct eth_header));
                     if (ip->protocol == IP_PROTO_UDP) {
                         int ip_hdr_len = (ip->version_ihl & 0x0F) * 4;
                         int total_len = ntohs(ip->total_len);
                         if (ip_hdr_len + (int)sizeof(struct udp_header) <= total_len &&
                             total_len <= n - (int)sizeof(struct eth_header)) {
-                            struct udp_header *udp = (struct udp_header *)(pkt + sizeof(struct eth_header) + ip_hdr_len);
+                            struct udp_header *udp =
+                                (struct udp_header *)(pkt + sizeof(struct eth_header) + ip_hdr_len);
                             if (ntohs(udp->dst_port) == DHCP_CLIENT_PORT) {
                                 uint16_t udp_len_val = ntohs(udp->length);
-                                int data_off = sizeof(struct eth_header) + ip_hdr_len + sizeof(struct udp_header);
+                                int data_off = sizeof(struct eth_header) + ip_hdr_len +
+                                               sizeof(struct udp_header);
                                 int data_len = (int)(udp_len_val - sizeof(struct udp_header));
                                 if (data_off + data_len <= n) {
                                     handle_dhcp_response(pkt + data_off, (uint16_t)data_len);
@@ -634,11 +678,10 @@ uint32_t dhcp_get_lease_time(void) {
  *
  * Must be called after a lease is acquired or renewed (with dhcp_lease_time
  * and dhcp_acquired_tick set correctly). */
-static void dhcp_schedule_timers(void)
-{
+static void dhcp_schedule_timers(void) {
     uint64_t now = timer_get_ticks();
     uint32_t lease = dhcp_lease_time ? dhcp_lease_time : 3600; /* default 1 h */
-    uint64_t lease_ticks = (uint64_t)lease * 100; /* timer runs at 100 Hz */
+    uint64_t lease_ticks = (uint64_t)lease * 100;              /* timer runs at 100 Hz */
 
     /* T1 = 50% of lease. Clamp minimum to a few ticks so very short
      * leases don't immediately expire. */
@@ -671,8 +714,7 @@ static void dhcp_schedule_timers(void)
  *
  * Returns 0 on success (lease extended), -1 on failure (lease expires).
  */
-static int dhcp_rebind(void)
-{
+static int dhcp_rebind(void) {
     int resends;
     uint64_t start;
     uint16_t pkt_len;
@@ -688,19 +730,15 @@ static int dhcp_rebind(void)
         return dhcp_discover();
     }
 
-    dhcp_xid = (uint32_t)(timer_get_ticks() ^ 0xC3C3C3C3u ^
-                          ((uint64_t)net_our_mac[2] << 24) ^
-                          ((uint64_t)net_our_mac[3] << 16) ^
-                          ((uint64_t)net_our_mac[4] << 8) ^
+    dhcp_xid = (uint32_t)(timer_get_ticks() ^ 0xC3C3C3C3u ^ ((uint64_t)net_our_mac[2] << 24) ^
+                          ((uint64_t)net_our_mac[3] << 16) ^ ((uint64_t)net_our_mac[4] << 8) ^
                           net_our_mac[5]);
     dhcp_state = 0;
     dhcp_done = 0;
 
     kprintf("[dhcp] T2 reached — rebinding %u.%u.%u.%u (broadcast)\n",
-            (uint32_t)((dhcp_result_ip >> 24) & 0xFF),
-            (uint32_t)((dhcp_result_ip >> 16) & 0xFF),
-            (uint32_t)((dhcp_result_ip >> 8) & 0xFF),
-            (uint32_t)(dhcp_result_ip & 0xFF));
+            (uint32_t)((dhcp_result_ip >> 24) & 0xFF), (uint32_t)((dhcp_result_ip >> 16) & 0xFF),
+            (uint32_t)((dhcp_result_ip >> 8) & 0xFF), (uint32_t)(dhcp_result_ip & 0xFF));
 
     /* Build broadcast DHCPREQUEST with ciaddr */
     memset(buf, 0, sizeof(buf));
@@ -715,18 +753,22 @@ static int dhcp_rebind(void)
     memcpy(dhcp->chaddr, net_our_mac, 6);
 
     opt = buf + sizeof(struct dhcp_packet);
-    *opt++ = 53; *opt++ = 1; *opt++ = DHCP_REQUEST;
-    *opt++ = 50; *opt++ = 4;  /* Requested IP */
+    *opt++ = 53;
+    *opt++ = 1;
+    *opt++ = DHCP_REQUEST;
+    *opt++ = 50;
+    *opt++ = 4; /* Requested IP */
     *opt++ = (uint8_t)(dhcp_result_ip >> 24);
     *opt++ = (uint8_t)(dhcp_result_ip >> 16);
     *opt++ = (uint8_t)(dhcp_result_ip >> 8);
     *opt++ = (uint8_t)(dhcp_result_ip);
     /* No server identifier — any server can respond */
-    *opt++ = 55; *opt++ = 3;  /* Parameter request list */
-    *opt++ = 1;                 /* Subnet mask */
-    *opt++ = 3;                 /* Router */
-    *opt++ = 6;                 /* DNS server */
-    *opt++ = 255;               /* End */
+    *opt++ = 55;
+    *opt++ = 3;   /* Parameter request list */
+    *opt++ = 1;   /* Subnet mask */
+    *opt++ = 3;   /* Router */
+    *opt++ = 6;   /* DNS server */
+    *opt++ = 255; /* End */
     pkt_len = (uint16_t)(opt - buf);
 
     send_udp_broadcast(DHCP_CLIENT_PORT, DHCP_SERVER_PORT, buf, pkt_len);
@@ -740,7 +782,8 @@ static int dhcp_rebind(void)
         uint64_t now = timer_get_ticks();
         uint64_t elapsed = now - start;
 
-        if (elapsed > 500) break; /* 5 second total timeout */
+        if (elapsed > 500)
+            break; /* 5 second total timeout */
 
         /* Poll all network interfaces */
         if (e1000_is_present()) {
@@ -748,18 +791,20 @@ static int dhcp_rebind(void)
             int n = e1000_receive(pkt, sizeof(pkt));
             if (n > 0) {
                 eth = (struct eth_header *)pkt;
-                if (ntohs(eth->type) == ETH_TYPE_IP
-                    && n >= (int)(sizeof(struct eth_header) + sizeof(struct ip_header))) {
+                if (ntohs(eth->type) == ETH_TYPE_IP &&
+                    n >= (int)(sizeof(struct eth_header) + sizeof(struct ip_header))) {
                     ip = (struct ip_header *)(pkt + sizeof(struct eth_header));
                     if (ip->protocol == IP_PROTO_UDP) {
                         int ip_hdr_len = (ip->version_ihl & 0x0F) * 4;
                         int total_len = ntohs(ip->total_len);
-                        if (ip_hdr_len + (int)sizeof(struct udp_header) <= total_len
-                            && total_len <= n - (int)sizeof(struct eth_header)) {
-                            udp = (struct udp_header *)(pkt + sizeof(struct eth_header) + ip_hdr_len);
+                        if (ip_hdr_len + (int)sizeof(struct udp_header) <= total_len &&
+                            total_len <= n - (int)sizeof(struct eth_header)) {
+                            udp =
+                                (struct udp_header *)(pkt + sizeof(struct eth_header) + ip_hdr_len);
                             if (ntohs(udp->dst_port) == DHCP_CLIENT_PORT) {
                                 uint16_t udp_len_val = ntohs(udp->length);
-                                int data_off = (int)(sizeof(struct eth_header) + ip_hdr_len + sizeof(struct udp_header));
+                                int data_off = (int)(sizeof(struct eth_header) + ip_hdr_len +
+                                                     sizeof(struct udp_header));
                                 int data_len = (int)(udp_len_val - sizeof(struct udp_header));
                                 if (data_off + data_len <= n)
                                     handle_dhcp_response(pkt + data_off, (uint16_t)data_len);
@@ -775,18 +820,20 @@ static int dhcp_rebind(void)
             int n = virtio_net_receive(pkt, sizeof(pkt));
             if (n > 0) {
                 eth = (struct eth_header *)pkt;
-                if (ntohs(eth->type) == ETH_TYPE_IP
-                    && n >= (int)(sizeof(struct eth_header) + sizeof(struct ip_header))) {
+                if (ntohs(eth->type) == ETH_TYPE_IP &&
+                    n >= (int)(sizeof(struct eth_header) + sizeof(struct ip_header))) {
                     ip = (struct ip_header *)(pkt + sizeof(struct eth_header));
                     if (ip->protocol == IP_PROTO_UDP) {
                         int ip_hdr_len = (ip->version_ihl & 0x0F) * 4;
                         int total_len = ntohs(ip->total_len);
-                        if (ip_hdr_len + (int)sizeof(struct udp_header) <= total_len
-                            && total_len <= n - (int)sizeof(struct eth_header)) {
-                            udp = (struct udp_header *)(pkt + sizeof(struct eth_header) + ip_hdr_len);
+                        if (ip_hdr_len + (int)sizeof(struct udp_header) <= total_len &&
+                            total_len <= n - (int)sizeof(struct eth_header)) {
+                            udp =
+                                (struct udp_header *)(pkt + sizeof(struct eth_header) + ip_hdr_len);
                             if (ntohs(udp->dst_port) == DHCP_CLIENT_PORT) {
                                 uint16_t udp_len_val = ntohs(udp->length);
-                                int data_off = (int)(sizeof(struct eth_header) + ip_hdr_len + sizeof(struct udp_header));
+                                int data_off = (int)(sizeof(struct eth_header) + ip_hdr_len +
+                                                     sizeof(struct udp_header));
                                 int data_len = (int)(udp_len_val - sizeof(struct udp_header));
                                 if (data_off + data_len <= n)
                                     handle_dhcp_response(pkt + data_off, (uint16_t)data_len);
@@ -830,8 +877,7 @@ static int dhcp_rebind(void)
  *
  * Returns 1 if a renewal/rebind was attempted, 0 otherwise.
  */
-int dhcp_process_timers(void)
-{
+int dhcp_process_timers(void) {
     uint64_t now;
 
     /* Don't start a new renewal while one is already in flight */
@@ -855,8 +901,7 @@ int dhcp_process_timers(void)
         dhcp_t2_triggered = 1;
         dhcp_t1_triggered = 1; /* T1 moot once T2 fires */
         dhcp_renewal_running = 1;
-        kprintf("[dhcp] T2 timer fired at tick %llu — rebinding\n",
-                (unsigned long long)now);
+        kprintf("[dhcp] T2 timer fired at tick %llu — rebinding\n", (unsigned long long)now);
         (void)dhcp_rebind();
         dhcp_renewal_running = 0;
         return 1;
@@ -866,8 +911,7 @@ int dhcp_process_timers(void)
     if (dhcp_t1_tick > 0 && now >= dhcp_t1_tick && !dhcp_t1_triggered) {
         dhcp_t1_triggered = 1;
         dhcp_renewal_running = 1;
-        kprintf("[dhcp] T1 timer fired at tick %llu — renewing\n",
-                (unsigned long long)now);
+        kprintf("[dhcp] T1 timer fired at tick %llu — renewing\n", (unsigned long long)now);
         (void)dhcp_renew(); /* may fall through to T2 on failure */
         dhcp_renewal_running = 0;
         return 1;
@@ -878,10 +922,8 @@ int dhcp_process_timers(void)
 
 int dhcp_discover(void) {
     /* Generate a random transaction ID from timer */
-    dhcp_xid = (uint32_t)(timer_get_ticks() ^ 0xA5A5A5A5u ^
-                          ((uint64_t)net_our_mac[2] << 24) ^
-                          ((uint64_t)net_our_mac[3] << 16) ^
-                          ((uint64_t)net_our_mac[4] << 8) ^
+    dhcp_xid = (uint32_t)(timer_get_ticks() ^ 0xA5A5A5A5u ^ ((uint64_t)net_our_mac[2] << 24) ^
+                          ((uint64_t)net_our_mac[3] << 16) ^ ((uint64_t)net_our_mac[4] << 8) ^
                           net_our_mac[5]);
     dhcp_state = 0;
     dhcp_done = 0;
@@ -891,7 +933,11 @@ int dhcp_discover(void) {
     /* Send DISCOVER */
     dhcp_build_discover();
 
-    /* Loop: poll for packets and check for timeout */
+    /* Loop: poll for packets and check for timeout.  We poll the NIC
+     * directly here — while dhcp_direct_poll is set, the netd kthread
+     * gates itself off (dhcp_client_busy()) so there is no race for the
+     * RX descriptors. */
+    dhcp_direct_poll = 1;
     uint64_t start = timer_get_ticks();
     int resends = 0;
     const int max_resends = 4;
@@ -903,9 +949,13 @@ int dhcp_discover(void) {
         spin_count++;
 
         /* Timeout: 5 seconds of timer ticks */
-        if (elapsed > 500) break;
-        /* Spin-count fallback if timer isn't advancing */
-        if (now == start && spin_count > 50000000) break;
+        if (elapsed > 500)
+            break;
+        /* Hard iteration cap — never allow the boot to hang here even if
+         * the timer stops advancing (a single tick disables the old
+         * now==start fallback, which could spin forever). */
+        if (spin_count > 50000000)
+            break;
 
         /* Poll the network interface for incoming packets */
         if (e1000_is_present()) {
@@ -914,18 +964,21 @@ int dhcp_discover(void) {
             if (n > 0) {
                 /* Parse Ethernet/IP/UDP header */
                 struct eth_header *eth = (struct eth_header *)pkt;
-                if (ntohs(eth->type) == ETH_TYPE_IP && n >= (int)sizeof(struct eth_header) + (int)sizeof(struct ip_header)) {
+                if (ntohs(eth->type) == ETH_TYPE_IP &&
+                    n >= (int)sizeof(struct eth_header) + (int)sizeof(struct ip_header)) {
                     struct ip_header *ip = (struct ip_header *)(pkt + sizeof(struct eth_header));
                     if (ip->protocol == IP_PROTO_UDP) {
                         int ip_hdr_len = (ip->version_ihl & 0x0F) * 4;
                         int total_len = ntohs(ip->total_len);
                         if (ip_hdr_len + (int)sizeof(struct udp_header) <= total_len &&
                             total_len <= n - (int)sizeof(struct eth_header)) {
-                            struct udp_header *udp = (struct udp_header *)(pkt + sizeof(struct eth_header) + ip_hdr_len);
+                            struct udp_header *udp =
+                                (struct udp_header *)(pkt + sizeof(struct eth_header) + ip_hdr_len);
                             if (ntohs(udp->dst_port) == DHCP_CLIENT_PORT) {
                                 /* Extract DHCP payload */
                                 uint16_t udp_len_val = ntohs(udp->length);
-                                int data_off = sizeof(struct eth_header) + ip_hdr_len + sizeof(struct udp_header);
+                                int data_off = sizeof(struct eth_header) + ip_hdr_len +
+                                               sizeof(struct udp_header);
                                 int data_len = (int)(udp_len_val - sizeof(struct udp_header));
                                 if (data_off + data_len <= n) {
                                     handle_dhcp_response(pkt + data_off, (uint16_t)data_len);
@@ -942,17 +995,20 @@ int dhcp_discover(void) {
             int n = virtio_net_receive(pkt, sizeof(pkt));
             if (n > 0) {
                 struct eth_header *eth = (struct eth_header *)pkt;
-                if (ntohs(eth->type) == ETH_TYPE_IP && n >= (int)sizeof(struct eth_header) + (int)sizeof(struct ip_header)) {
+                if (ntohs(eth->type) == ETH_TYPE_IP &&
+                    n >= (int)sizeof(struct eth_header) + (int)sizeof(struct ip_header)) {
                     struct ip_header *ip = (struct ip_header *)(pkt + sizeof(struct eth_header));
                     if (ip->protocol == IP_PROTO_UDP) {
                         int ip_hdr_len = (ip->version_ihl & 0x0F) * 4;
                         int total_len = ntohs(ip->total_len);
                         if (ip_hdr_len + (int)sizeof(struct udp_header) <= total_len &&
                             total_len <= n - (int)sizeof(struct eth_header)) {
-                            struct udp_header *udp = (struct udp_header *)(pkt + sizeof(struct eth_header) + ip_hdr_len);
+                            struct udp_header *udp =
+                                (struct udp_header *)(pkt + sizeof(struct eth_header) + ip_hdr_len);
                             if (ntohs(udp->dst_port) == DHCP_CLIENT_PORT) {
                                 uint16_t udp_len_val = ntohs(udp->length);
-                                int data_off = sizeof(struct eth_header) + ip_hdr_len + sizeof(struct udp_header);
+                                int data_off = sizeof(struct eth_header) + ip_hdr_len +
+                                               sizeof(struct udp_header);
                                 int data_len = (int)(udp_len_val - sizeof(struct udp_header));
                                 if (data_off + data_len <= n) {
                                     handle_dhcp_response(pkt + data_off, (uint16_t)data_len);
@@ -971,13 +1027,14 @@ int dhcp_discover(void) {
             dhcp_build_discover();
         }
     }
+    dhcp_direct_poll = 0;
 
     if (dhcp_state != 3) {
         kprintf("[dhcp] DHCP transaction failed (timeout), using QEMU defaults\n");
-        net_our_ip      = (10U << 24) | (0U << 16) | (2U << 8) | 15U;
-        net_gateway_ip  = (10U << 24) | (0U << 16) | (2U << 8) | 2U;
+        net_our_ip = (10U << 24) | (0U << 16) | (2U << 8) | 15U;
+        net_gateway_ip = (10U << 24) | (0U << 16) | (2U << 8) | 2U;
         net_subnet_mask = (255U << 24) | (255U << 16) | (255U << 8) | 0U;
-        net_dns_server  = (10U << 24) | (0U << 16) | (2U << 8) | 3U;
+        net_dns_server = (10U << 24) | (0U << 16) | (2U << 8) | 3U;
         arp_resolve_gateway();
         return -1;
     }
@@ -994,18 +1051,14 @@ int dhcp_discover(void) {
     arp_resolve_gateway();
 
     kprintf("[OK] DHCP: assigned %u.%u.%u.%u, GW %u.%u.%u.%u, MASK %u.%u.%u.%u\n",
-            (uint32_t)((dhcp_result_ip >> 24) & 0xFF),
-            (uint32_t)((dhcp_result_ip >> 16) & 0xFF),
-            (uint32_t)((dhcp_result_ip >> 8) & 0xFF),
-            (uint32_t)(dhcp_result_ip & 0xFF),
+            (uint32_t)((dhcp_result_ip >> 24) & 0xFF), (uint32_t)((dhcp_result_ip >> 16) & 0xFF),
+            (uint32_t)((dhcp_result_ip >> 8) & 0xFF), (uint32_t)(dhcp_result_ip & 0xFF),
             (uint32_t)((dhcp_result_gateway >> 24) & 0xFF),
             (uint32_t)((dhcp_result_gateway >> 16) & 0xFF),
-            (uint32_t)((dhcp_result_gateway >> 8) & 0xFF),
-            (uint32_t)(dhcp_result_gateway & 0xFF),
+            (uint32_t)((dhcp_result_gateway >> 8) & 0xFF), (uint32_t)(dhcp_result_gateway & 0xFF),
             (uint32_t)((dhcp_result_netmask >> 24) & 0xFF),
             (uint32_t)((dhcp_result_netmask >> 16) & 0xFF),
-            (uint32_t)((dhcp_result_netmask >> 8) & 0xFF),
-            (uint32_t)(dhcp_result_netmask & 0xFF));
+            (uint32_t)((dhcp_result_netmask >> 8) & 0xFF), (uint32_t)(dhcp_result_netmask & 0xFF));
 
     return 0;
 }
@@ -1033,17 +1086,17 @@ uint32_t dhcp_get_server(void) {
 
 /* Relay agent state */
 static int dhcp_relay_enabled = 0;
-static uint32_t dhcp_relay_server_ip = 0;  /* DHCP server to forward to */
-static uint32_t dhcp_relay_giaddr = 0;      /* Our IP (gateway IP addr) */
-static uint8_t  dhcp_relay_circuit_id[8];   /* Circuit ID (subopt 1) */
-static uint8_t  dhcp_relay_remote_id[8];    /* Remote ID (subopt 2) */
+static uint32_t dhcp_relay_server_ip = 0; /* DHCP server to forward to */
+static uint32_t dhcp_relay_giaddr = 0;    /* Our IP (gateway IP addr) */
+static uint8_t dhcp_relay_circuit_id[8];  /* Circuit ID (subopt 1) */
+static uint8_t dhcp_relay_remote_id[8];   /* Remote ID (subopt 2) */
 static int dhcp_relay_circuit_id_len = 0;
 static int dhcp_relay_remote_id_len = 0;
 
 /* Option 82 sub-option codes */
-#define DHCP_RELAY_OPT82          82
-#define OPT82_SUB_CIRCUIT_ID      1
-#define OPT82_SUB_REMOTE_ID       2
+#define DHCP_RELAY_OPT82 82
+#define OPT82_SUB_CIRCUIT_ID 1
+#define OPT82_SUB_REMOTE_ID 2
 
 /*
  * Insert Relay Agent Information option (82) into a DHCP packet.
@@ -1051,8 +1104,7 @@ static int dhcp_relay_remote_id_len = 0;
  *
  * The option is inserted before the End option (255).
  */
-static int dhcp_relay_insert_option82(uint8_t *buf, int len, int max_len)
-{
+static int dhcp_relay_insert_option82(uint8_t *buf, int len, int max_len) {
     if (!dhcp_relay_enabled || !buf || len <= 0)
         return len;
 
@@ -1064,8 +1116,10 @@ static int dhcp_relay_insert_option82(uint8_t *buf, int len, int max_len)
             end_pos = i;
             break;
         }
-        if (buf[i] == 0) continue; /* pad */
-        if (i + 1 >= len) break;
+        if (buf[i] == 0)
+            continue; /* pad */
+        if (i + 1 >= len)
+            break;
         int opt_len = buf[i + 1];
         i += 1 + opt_len;
     }
@@ -1103,7 +1157,7 @@ static int dhcp_relay_insert_option82(uint8_t *buf, int len, int max_len)
 
     /* Fill in option 82 */
     int pos = end_pos;
-    buf[pos++] = 82; /* option code */
+    buf[pos++] = 82;                       /* option code */
     buf[pos++] = (uint8_t)(opt82_len - 2); /* total data length */
 
     if (dhcp_relay_circuit_id_len > 0) {
@@ -1127,8 +1181,7 @@ static int dhcp_relay_insert_option82(uint8_t *buf, int len, int max_len)
  * Strip Relay Agent Information option (82) from a DHCP packet.
  * Returns the new packet length.
  */
-static __attribute__((unused)) int dhcp_relay_strip_option82(uint8_t *buf, int len)
-{
+static __attribute__((unused)) int dhcp_relay_strip_option82(uint8_t *buf, int len) {
     if (!buf || len <= 0)
         return len;
 
@@ -1164,8 +1217,7 @@ static __attribute__((unused)) int dhcp_relay_strip_option82(uint8_t *buf, int l
  * After enabling, DHCP packets received on local interfaces are forwarded
  * to the specified server, with Option 82 inserted.
  */
-void dhcp_relay_enable(uint32_t server_ip, uint32_t giaddr)
-{
+void dhcp_relay_enable(uint32_t server_ip, uint32_t giaddr) {
     dhcp_relay_enabled = 1;
     dhcp_relay_server_ip = server_ip;
     dhcp_relay_giaddr = giaddr;
@@ -1183,26 +1235,20 @@ void dhcp_relay_enable(uint32_t server_ip, uint32_t giaddr)
     dhcp_relay_remote_id_len = 4;
 
     kprintf("[dhcp] Relay enabled: server=%u.%u.%u.%u giaddr=%u.%u.%u.%u\n",
-            (uint32_t)((server_ip >> 24) & 0xFF),
-            (uint32_t)((server_ip >> 16) & 0xFF),
-            (uint32_t)((server_ip >> 8) & 0xFF),
-            (uint32_t)(server_ip & 0xFF),
-            (uint32_t)((giaddr >> 24) & 0xFF),
-            (uint32_t)((giaddr >> 16) & 0xFF),
-            (uint32_t)((giaddr >> 8) & 0xFF),
-            (uint32_t)(giaddr & 0xFF));
+            (uint32_t)((server_ip >> 24) & 0xFF), (uint32_t)((server_ip >> 16) & 0xFF),
+            (uint32_t)((server_ip >> 8) & 0xFF), (uint32_t)(server_ip & 0xFF),
+            (uint32_t)((giaddr >> 24) & 0xFF), (uint32_t)((giaddr >> 16) & 0xFF),
+            (uint32_t)((giaddr >> 8) & 0xFF), (uint32_t)(giaddr & 0xFF));
 }
 
 /* Disable DHCP relay mode */
-void dhcp_relay_disable(void)
-{
+void dhcp_relay_disable(void) {
     dhcp_relay_enabled = 0;
     kprintf("[dhcp] Relay disabled\n");
 }
 
 /* Check if DHCP relay is active */
-int dhcp_relay_is_active(void)
-{
+int dhcp_relay_is_active(void) {
     return dhcp_relay_enabled;
 }
 
@@ -1211,13 +1257,13 @@ int dhcp_relay_is_active(void)
  * @data: pointer to the circuit ID bytes
  * @len:  length of circuit ID (max 64)
  */
-void dhcp_relay_set_circuit_id(const uint8_t *data, int len)
-{
+void dhcp_relay_set_circuit_id(const uint8_t *data, int len) {
     if (!data || len <= 0) {
         dhcp_relay_circuit_id_len = 0;
         return;
     }
-    if (len > 64) len = 64;
+    if (len > 64)
+        len = 64;
     __builtin_memcpy(dhcp_relay_circuit_id, data, len);
     dhcp_relay_circuit_id_len = len;
 }
@@ -1227,13 +1273,13 @@ void dhcp_relay_set_circuit_id(const uint8_t *data, int len)
  * @data: pointer to the remote ID bytes
  * @len:  length of remote ID (max 64)
  */
-void dhcp_relay_set_remote_id(const uint8_t *data, int len)
-{
+void dhcp_relay_set_remote_id(const uint8_t *data, int len) {
     if (!data || len <= 0) {
         dhcp_relay_remote_id_len = 0;
         return;
     }
-    if (len > 64) len = 64;
+    if (len > 64)
+        len = 64;
     __builtin_memcpy(dhcp_relay_remote_id, data, len);
     dhcp_relay_remote_id_len = len;
 }
@@ -1243,8 +1289,7 @@ void dhcp_relay_set_remote_id(const uint8_t *data, int len)
  * Takes a received DHCP packet, modifies the giaddr, inserts Option 82,
  * and unicasts it to the configured DHCP server.
  */
-int dhcp_relay_forward(const uint8_t *pkt, int len, int from_port)
-{
+int dhcp_relay_forward(const uint8_t *pkt, int len, int from_port) {
     if (!dhcp_relay_enabled || !pkt || len < (int)sizeof(struct dhcp_packet))
         return -1;
 
@@ -1269,19 +1314,18 @@ int dhcp_relay_forward(const uint8_t *pkt, int len, int from_port)
 
     if (from_port == DHCP_CLIENT_PORT) {
         /* Client → Server: forward to DHCP server port */
-        send_udp_unicast(dhcp_relay_server_ip, DHCP_SERVER_PORT,
-                         DHCP_SERVER_PORT, fwd_buf, (uint16_t)new_len);
+        send_udp_unicast(dhcp_relay_server_ip, DHCP_SERVER_PORT, DHCP_SERVER_PORT, fwd_buf,
+                         (uint16_t)new_len);
         kprintf("[dhcp-relay] Forwarded client msg to server\n");
     } else {
         /* Server → Client: forward to DHCP client port */
         uint32_t client_ip = ntohl(dhcp->yiaddr);
         if (client_ip) {
-            send_udp_unicast(client_ip, DHCP_CLIENT_PORT,
-                             DHCP_CLIENT_PORT, fwd_buf, (uint16_t)new_len);
+            send_udp_unicast(client_ip, DHCP_CLIENT_PORT, DHCP_CLIENT_PORT, fwd_buf,
+                             (uint16_t)new_len);
             kprintf("[dhcp-relay] Forwarded server reply to client\n");
         } else {
-            send_udp_broadcast(DHCP_CLIENT_PORT, DHCP_CLIENT_PORT,
-                               fwd_buf, (uint16_t)new_len);
+            send_udp_broadcast(DHCP_CLIENT_PORT, DHCP_CLIENT_PORT, fwd_buf, (uint16_t)new_len);
             kprintf("[dhcp-relay] Broadcasted server reply\n");
         }
     }
@@ -1298,23 +1342,23 @@ int dhcp_relay_forward(const uint8_t *pkt, int len, int from_port)
  * ══════════════════════════════════════════════════════════════════════ */
 
 /* DHCPv6 message types */
-#define DHCPV6_SOLICIT    1
-#define DHCPV6_ADVERTISE  2
-#define DHCPV6_REQUEST    3
-#define DHCPV6_REPLY      7
+#define DHCPV6_SOLICIT 1
+#define DHCPV6_ADVERTISE 2
+#define DHCPV6_REQUEST 3
+#define DHCPV6_REPLY 7
 
 /* DHCPv6 option codes */
-#define DHCPV6_OPT_CLIENTID  1
-#define DHCPV6_OPT_SERVERID  2
-#define DHCPV6_OPT_IA_PD     25   /* Identity Association for Prefix Delegation */
-#define DHCPV6_OPT_IAPREFIX  26
+#define DHCPV6_OPT_CLIENTID 1
+#define DHCPV6_OPT_SERVERID 2
+#define DHCPV6_OPT_IA_PD 25 /* Identity Association for Prefix Delegation */
+#define DHCPV6_OPT_IAPREFIX 26
 
 /* DHCPv6 DUID (simplified: DUID-LLT with our MAC) */
 struct dhcpv6_duid {
-    uint16_t type;     /* 1 = DUID-LLT */
-    uint16_t htype;    /* 1 = Ethernet */
-    uint32_t time;     /* seconds since Jan 1 2000 */
-    uint8_t  mac[6];   /* link-layer address */
+    uint16_t type;  /* 1 = DUID-LLT */
+    uint16_t htype; /* 1 = Ethernet */
+    uint32_t time;  /* seconds since Jan 1 2000 */
+    uint8_t mac[6]; /* link-layer address */
 } __attribute__((packed));
 
 /* DHCPv6 client IA_PD option */
@@ -1328,14 +1372,14 @@ struct dhcpv6_ia_pd {
 struct dhcpv6_ia_prefix {
     uint32_t preferred_lifetime;
     uint32_t valid_lifetime;
-    uint8_t  prefix_length;
-    uint8_t  prefix[16];
+    uint8_t prefix_length;
+    uint8_t prefix[16];
 } __attribute__((packed));
 
 /* DHCPv6 header */
 struct dhcpv6_header {
-    uint8_t  msg_type;
-    uint8_t  transaction_id[3];
+    uint8_t msg_type;
+    uint8_t transaction_id[3];
     /* options follow */
 } __attribute__((packed));
 
@@ -1348,8 +1392,7 @@ static uint8_t dhcpv6_prefix_length = 64; /* default /64 */
  * Send a DHCPv6 SOLICIT for prefix delegation.
  * Returns 0 on success, -1 on failure.
  */
-int dhcpv6_pd_solicit(void)
-{
+int dhcpv6_pd_solicit(void) {
     uint8_t buf[512];
     struct dhcpv6_header *hdr = (struct dhcpv6_header *)buf;
     memset(buf, 0, sizeof(buf));
@@ -1366,9 +1409,9 @@ int dhcpv6_pd_solicit(void)
     /* Client Identifier option */
     {
         struct dhcpv6_duid *duid = (struct dhcpv6_duid *)&buf[pos + 4];
-        duid->type  = htons(1);   /* DUID-LLT */
-        duid->htype = htons(1);   /* Ethernet */
-        duid->time  = htonl((uint32_t)(timer_get_ticks() & 0xFFFFFFFF));
+        duid->type = htons(1);  /* DUID-LLT */
+        duid->htype = htons(1); /* Ethernet */
+        duid->time = htonl((uint32_t)(timer_get_ticks() & 0xFFFFFFFF));
         memcpy(duid->mac, net_our_mac, 6);
 
         uint16_t opt_len = sizeof(struct dhcpv6_duid);
@@ -1383,8 +1426,8 @@ int dhcpv6_pd_solicit(void)
     {
         struct dhcpv6_ia_pd *iapd = (struct dhcpv6_ia_pd *)&buf[pos + 4];
         iapd->iaid = htonl(1);  /* IAID = 1 */
-        iapd->t1   = htonl(3600);  /* T1 = 1 hour */
-        iapd->t2   = htonl(5400);  /* T2 = 1.5 hours */
+        iapd->t1 = htonl(3600); /* T1 = 1 hour */
+        iapd->t2 = htonl(5400); /* T2 = 1.5 hours */
 
         uint16_t opt_len = sizeof(struct dhcpv6_ia_pd);
         buf[pos + 0] = (uint8_t)(DHCPV6_OPT_IA_PD >> 8);
@@ -1398,9 +1441,9 @@ int dhcpv6_pd_solicit(void)
     {
         uint16_t elapsed = htons(0); /* 0 = first message */
         buf[pos + 0] = 0;
-        buf[pos + 1] = 8;   /* option code 8 */
+        buf[pos + 1] = 8; /* option code 8 */
         buf[pos + 2] = 0;
-        buf[pos + 3] = 2;   /* length = 2 */
+        buf[pos + 3] = 2; /* length = 2 */
         buf[pos + 4] = (uint8_t)(elapsed >> 8);
         buf[pos + 5] = (uint8_t)(elapsed);
         pos += 6;
@@ -1415,18 +1458,18 @@ int dhcpv6_pd_solicit(void)
         struct udp_header *udp = (struct udp_header *)udp_buf;
         uint16_t udp_len = sizeof(struct udp_header) + (uint16_t)pos;
 
-        udp->src_port = htons(546);   /* DHCPv6 client port */
-        udp->dst_port = htons(547);   /* DHCPv6 server port */
-        udp->length   = htons(udp_len);
+        udp->src_port = htons(546); /* DHCPv6 client port */
+        udp->dst_port = htons(547); /* DHCPv6 server port */
+        udp->length = htons(udp_len);
         udp->checksum = 0;
 
         /* Copy DHCPv6 payload after UDP header */
         memcpy(udp_buf + sizeof(struct udp_header), buf, (size_t)pos);
 
         /* Compute UDP checksum over IPv6 pseudo-header */
-        struct in6_addr all_servers = { { 0xFF,0x02,0,0,0,0,0,0,0,0,0,0,0,0,0,2 } };
-        udp->checksum = ipv6_checksum(&net_our_ipv6_ll, &all_servers,
-                                       IP_PROTO_UDP, udp_buf, udp_len);
+        struct in6_addr all_servers = {{0xFF, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2}};
+        udp->checksum =
+            ipv6_checksum(&net_our_ipv6_ll, &all_servers, IP_PROTO_UDP, udp_buf, udp_len);
 
         send_ipv6(&all_servers, IP_PROTO_UDP, udp_buf, udp_len);
     }
@@ -1439,16 +1482,14 @@ int dhcpv6_pd_solicit(void)
 /*
  * Check if DHCPv6 prefix delegation is active.
  */
-int dhcpv6_pd_is_active(void)
-{
+int dhcpv6_pd_is_active(void) {
     return dhcpv6_pd_active;
 }
 
 /*
  * Get the delegated prefix (16 bytes, network byte order).
  */
-int dhcpv6_pd_get_prefix(uint8_t *prefix_out, uint8_t *length_out)
-{
+int dhcpv6_pd_get_prefix(uint8_t *prefix_out, uint8_t *length_out) {
     if (!dhcpv6_pd_active)
         return -1;
     if (prefix_out)
@@ -1465,94 +1506,96 @@ module_init(dhcp_init);
  * The caller is expected to have set dhcp_xid before calling.
  * Returns 0 on success, negative errno on failure.
  */
-int dhcp_send_discover(struct net_device *dev)
-{
-	uint8_t frame[1518];
-	uint8_t dhcp_buf[300];
-	struct eth_header *eth;
-	struct ip_header *ip;
-	struct udp_header *udp;
-	uint8_t *opt;
-	uint16_t dhcp_len;
-	uint16_t udp_len;
-	uint16_t frame_len;
-	int ret;
+int dhcp_send_discover(struct net_device *dev) {
+    uint8_t frame[1518];
+    uint8_t dhcp_buf[300];
+    struct eth_header *eth;
+    struct ip_header *ip;
+    struct udp_header *udp;
+    uint8_t *opt;
+    uint16_t dhcp_len;
+    uint16_t udp_len;
+    uint16_t frame_len;
+    int ret;
 
-	if (!dev || !dev->transmit) {
-		kprintf("[dhcp] dhcp_send_discover: NULL dev or no transmit\n");
-		return -EINVAL;
-	}
+    if (!dev || !dev->transmit) {
+        kprintf("[dhcp] dhcp_send_discover: NULL dev or no transmit\n");
+        return -EINVAL;
+    }
 
-	/* Build DHCP DISCOVER payload */
-	memset(dhcp_buf, 0, sizeof(dhcp_buf));
-	{
-		struct dhcp_packet *dhcp = (struct dhcp_packet *)dhcp_buf;
-		dhcp->op = 1;           /* BOOTREQUEST */
-		dhcp->htype = 1;        /* Ethernet */
-		dhcp->hlen = 6;
-		dhcp->xid = htonl(dhcp_xid);
-		dhcp->flags = htons(0x8000);  /* Broadcast flag */
-		dhcp->magic_cookie = htonl(DHCP_MAGIC);
-		memcpy(dhcp->chaddr, dev->mac, 6);
-	}
+    /* Build DHCP DISCOVER payload */
+    memset(dhcp_buf, 0, sizeof(dhcp_buf));
+    {
+        struct dhcp_packet *dhcp = (struct dhcp_packet *)dhcp_buf;
+        dhcp->op = 1;    /* BOOTREQUEST */
+        dhcp->htype = 1; /* Ethernet */
+        dhcp->hlen = 6;
+        dhcp->xid = htonl(dhcp_xid);
+        dhcp->flags = htons(0x8000); /* Broadcast flag */
+        dhcp->magic_cookie = htonl(DHCP_MAGIC);
+        memcpy(dhcp->chaddr, dev->mac, 6);
+    }
 
-	/* DHCP options */
-	opt = dhcp_buf + sizeof(struct dhcp_packet);
-	*opt++ = 53; *opt++ = 1; *opt++ = DHCP_DISCOVER;  /* Message type */
-	*opt++ = 55; *opt++ = 3;                            /* Parameter list */
-	*opt++ = 1;   /* Subnet mask */
-	*opt++ = 3;   /* Router */
-	*opt++ = 6;   /* DNS server */
-	*opt++ = 255; /* End option */
-	dhcp_len = (uint16_t)(opt - dhcp_buf);
+    /* DHCP options */
+    opt = dhcp_buf + sizeof(struct dhcp_packet);
+    *opt++ = 53;
+    *opt++ = 1;
+    *opt++ = DHCP_DISCOVER; /* Message type */
+    *opt++ = 55;
+    *opt++ = 3;   /* Parameter list */
+    *opt++ = 1;   /* Subnet mask */
+    *opt++ = 3;   /* Router */
+    *opt++ = 6;   /* DNS server */
+    *opt++ = 255; /* End option */
+    dhcp_len = (uint16_t)(opt - dhcp_buf);
 
-	/* Build IP header */
-	ip = (struct ip_header *)(frame + sizeof(struct eth_header));
-	memset(ip, 0, sizeof(*ip));
-	ip->version_ihl = 0x45;
-	ip->ttl = 64;
-	ip->protocol = IP_PROTO_UDP;
-	ip->src_ip = 0;           /* 0.0.0.0 before we have an IP */
-	ip->dst_ip = htonl(0xFFFFFFFFU);  /* 255.255.255.255 */
+    /* Build IP header */
+    ip = (struct ip_header *)(frame + sizeof(struct eth_header));
+    memset(ip, 0, sizeof(*ip));
+    ip->version_ihl = 0x45;
+    ip->ttl = 64;
+    ip->protocol = IP_PROTO_UDP;
+    ip->src_ip = 0;                  /* 0.0.0.0 before we have an IP */
+    ip->dst_ip = htonl(0xFFFFFFFFU); /* 255.255.255.255 */
 
-	udp_len = sizeof(struct udp_header) + dhcp_len;
-	ip->total_len = htons((uint16_t)(sizeof(struct ip_header) + udp_len));
-	ip->id = htons((uint16_t)__sync_fetch_and_add(&net_ip_id_counter, 1));
-	ip->checksum = 0;
+    udp_len = sizeof(struct udp_header) + dhcp_len;
+    ip->total_len = htons((uint16_t)(sizeof(struct ip_header) + udp_len));
+    ip->id = htons((uint16_t)__sync_fetch_and_add(&net_ip_id_counter, 1));
+    ip->checksum = 0;
 
-	/* Build UDP header */
-	udp = (struct udp_header *)(frame + sizeof(struct eth_header) + sizeof(struct ip_header));
-	udp->src_port = htons(DHCP_CLIENT_PORT);
-	udp->dst_port = htons(DHCP_SERVER_PORT);
-	udp->length = htons(udp_len);
-	udp->checksum = 0;
+    /* Build UDP header */
+    udp = (struct udp_header *)(frame + sizeof(struct eth_header) + sizeof(struct ip_header));
+    udp->src_port = htons(DHCP_CLIENT_PORT);
+    udp->dst_port = htons(DHCP_SERVER_PORT);
+    udp->length = htons(udp_len);
+    udp->checksum = 0;
 
-	/* Copy DHCP payload after UDP header */
-	memcpy(frame + sizeof(struct eth_header) + sizeof(struct ip_header) + sizeof(struct udp_header),
-	       dhcp_buf, dhcp_len);
+    /* Copy DHCP payload after UDP header */
+    memcpy(frame + sizeof(struct eth_header) + sizeof(struct ip_header) + sizeof(struct udp_header),
+           dhcp_buf, dhcp_len);
 
-	/* Compute IP checksum */
-	ip->checksum = net_checksum(ip, sizeof(struct ip_header));
+    /* Compute IP checksum */
+    ip->checksum = net_checksum(ip, sizeof(struct ip_header));
 
-	/* Build Ethernet header */
-	eth = (struct eth_header *)frame;
-	memset(eth->dst, 0xFF, 6);           /* Broadcast */
-	memcpy(eth->src, dev->mac, 6);
-	eth->type = htons(ETH_TYPE_IP);
+    /* Build Ethernet header */
+    eth = (struct eth_header *)frame;
+    memset(eth->dst, 0xFF, 6); /* Broadcast */
+    memcpy(eth->src, dev->mac, 6);
+    eth->type = htons(ETH_TYPE_IP);
 
-	frame_len = (uint16_t)(sizeof(struct eth_header) + sizeof(struct ip_header) + udp_len);
+    frame_len = (uint16_t)(sizeof(struct eth_header) + sizeof(struct ip_header) + udp_len);
 
-	/* Send via device */
-	ret = dev->transmit(dev, frame, frame_len);
-	if (ret < 0) {
-		kprintf("[dhcp] dhcp_send_discover: transmit failed (%d)\n", ret);
-		return ret;
-	}
+    /* Send via device */
+    ret = dev->transmit(dev, frame, frame_len);
+    if (ret < 0) {
+        kprintf("[dhcp] dhcp_send_discover: transmit failed (%d)\n", ret);
+        return ret;
+    }
 
-	dhcp_state = 1;
-	kprintf("[dhcp] dhcp_send_discover: sent DISCOVER on %s (xid=0x%x)\n",
-	        dev->name, (uint32_t)dhcp_xid);
-	return 0;
+    dhcp_state = 1;
+    kprintf("[dhcp] dhcp_send_discover: sent DISCOVER on %s (xid=0x%x)\n", dev->name,
+            (uint32_t)dhcp_xid);
+    return 0;
 }
 
 /* ── dhcp_send_request ────────────────────────────────────────────
@@ -1561,113 +1604,114 @@ int dhcp_send_discover(struct net_device *dev)
  * The caller is expected to have set dhcp_xid and dhcp_server_id before calling.
  * Returns 0 on success, negative errno on failure.
  */
-int dhcp_send_request(struct net_device *dev, uint32_t offered_ip)
-{
-	uint8_t frame[1518];
-	uint8_t dhcp_buf[300];
-	struct eth_header *eth;
-	struct ip_header *ip;
-	struct udp_header *udp;
-	uint8_t *opt;
-	uint16_t dhcp_len;
-	uint16_t udp_len;
-	uint16_t frame_len;
-	int ret;
+int dhcp_send_request(struct net_device *dev, uint32_t offered_ip) {
+    uint8_t frame[1518];
+    uint8_t dhcp_buf[300];
+    struct eth_header *eth;
+    struct ip_header *ip;
+    struct udp_header *udp;
+    uint8_t *opt;
+    uint16_t dhcp_len;
+    uint16_t udp_len;
+    uint16_t frame_len;
+    int ret;
 
-	if (!dev || !dev->transmit) {
-		kprintf("[dhcp] dhcp_send_request: NULL dev or no transmit\n");
-		return -EINVAL;
-	}
-	if (offered_ip == 0) {
-		kprintf("[dhcp] dhcp_send_request: invalid offered IP\n");
-		return -EINVAL;
-	}
+    if (!dev || !dev->transmit) {
+        kprintf("[dhcp] dhcp_send_request: NULL dev or no transmit\n");
+        return -EINVAL;
+    }
+    if (offered_ip == 0) {
+        kprintf("[dhcp] dhcp_send_request: invalid offered IP\n");
+        return -EINVAL;
+    }
 
-	/* Build DHCP REQUEST payload */
-	memset(dhcp_buf, 0, sizeof(dhcp_buf));
-	{
-		struct dhcp_packet *dhcp = (struct dhcp_packet *)dhcp_buf;
-		dhcp->op = 1;           /* BOOTREQUEST */
-		dhcp->htype = 1;        /* Ethernet */
-		dhcp->hlen = 6;
-		dhcp->xid = htonl(dhcp_xid);
-		dhcp->flags = htons(0x8000);  /* Broadcast flag */
-		dhcp->magic_cookie = htonl(DHCP_MAGIC);
-		memcpy(dhcp->chaddr, dev->mac, 6);
-	}
+    /* Build DHCP REQUEST payload */
+    memset(dhcp_buf, 0, sizeof(dhcp_buf));
+    {
+        struct dhcp_packet *dhcp = (struct dhcp_packet *)dhcp_buf;
+        dhcp->op = 1;    /* BOOTREQUEST */
+        dhcp->htype = 1; /* Ethernet */
+        dhcp->hlen = 6;
+        dhcp->xid = htonl(dhcp_xid);
+        dhcp->flags = htons(0x8000); /* Broadcast flag */
+        dhcp->magic_cookie = htonl(DHCP_MAGIC);
+        memcpy(dhcp->chaddr, dev->mac, 6);
+    }
 
-	/* DHCP options */
-	opt = dhcp_buf + sizeof(struct dhcp_packet);
-	*opt++ = 53; *opt++ = 1; *opt++ = DHCP_REQUEST;  /* Message type */
-	/* Requested IP option (50) */
-	*opt++ = 50; *opt++ = 4;
-	*opt++ = (uint8_t)(offered_ip >> 24);
-	*opt++ = (uint8_t)(offered_ip >> 16);
-	*opt++ = (uint8_t)(offered_ip >> 8);
-	*opt++ = (uint8_t)(offered_ip);
-	/* Server identifier option (54) */
-	*opt++ = 54; *opt++ = 4;
-	*opt++ = (uint8_t)(dhcp_server_id >> 24);
-	*opt++ = (uint8_t)(dhcp_server_id >> 16);
-	*opt++ = (uint8_t)(dhcp_server_id >> 8);
-	*opt++ = (uint8_t)(dhcp_server_id);
-	/* Parameter request list (55) */
-	*opt++ = 55; *opt++ = 3;
-	*opt++ = 1;   /* Subnet mask */
-	*opt++ = 3;   /* Router */
-	*opt++ = 6;   /* DNS server */
-	*opt++ = 255; /* End option */
-	dhcp_len = (uint16_t)(opt - dhcp_buf);
+    /* DHCP options */
+    opt = dhcp_buf + sizeof(struct dhcp_packet);
+    *opt++ = 53;
+    *opt++ = 1;
+    *opt++ = DHCP_REQUEST; /* Message type */
+    /* Requested IP option (50) */
+    *opt++ = 50;
+    *opt++ = 4;
+    *opt++ = (uint8_t)(offered_ip >> 24);
+    *opt++ = (uint8_t)(offered_ip >> 16);
+    *opt++ = (uint8_t)(offered_ip >> 8);
+    *opt++ = (uint8_t)(offered_ip);
+    /* Server identifier option (54) */
+    *opt++ = 54;
+    *opt++ = 4;
+    *opt++ = (uint8_t)(dhcp_server_id >> 24);
+    *opt++ = (uint8_t)(dhcp_server_id >> 16);
+    *opt++ = (uint8_t)(dhcp_server_id >> 8);
+    *opt++ = (uint8_t)(dhcp_server_id);
+    /* Parameter request list (55) */
+    *opt++ = 55;
+    *opt++ = 3;
+    *opt++ = 1;   /* Subnet mask */
+    *opt++ = 3;   /* Router */
+    *opt++ = 6;   /* DNS server */
+    *opt++ = 255; /* End option */
+    dhcp_len = (uint16_t)(opt - dhcp_buf);
 
-	/* Build IP header */
-	ip = (struct ip_header *)(frame + sizeof(struct eth_header));
-	memset(ip, 0, sizeof(*ip));
-	ip->version_ihl = 0x45;
-	ip->ttl = 64;
-	ip->protocol = IP_PROTO_UDP;
-	ip->src_ip = 0;           /* May not have an IP yet */
-	ip->dst_ip = htonl(0xFFFFFFFFU);  /* Broadcast */
+    /* Build IP header */
+    ip = (struct ip_header *)(frame + sizeof(struct eth_header));
+    memset(ip, 0, sizeof(*ip));
+    ip->version_ihl = 0x45;
+    ip->ttl = 64;
+    ip->protocol = IP_PROTO_UDP;
+    ip->src_ip = 0;                  /* May not have an IP yet */
+    ip->dst_ip = htonl(0xFFFFFFFFU); /* Broadcast */
 
-	udp_len = sizeof(struct udp_header) + dhcp_len;
-	ip->total_len = htons((uint16_t)(sizeof(struct ip_header) + udp_len));
-	ip->id = htons((uint16_t)__sync_fetch_and_add(&net_ip_id_counter, 1));
-	ip->checksum = 0;
+    udp_len = sizeof(struct udp_header) + dhcp_len;
+    ip->total_len = htons((uint16_t)(sizeof(struct ip_header) + udp_len));
+    ip->id = htons((uint16_t)__sync_fetch_and_add(&net_ip_id_counter, 1));
+    ip->checksum = 0;
 
-	/* Build UDP header */
-	udp = (struct udp_header *)(frame + sizeof(struct eth_header) + sizeof(struct ip_header));
-	udp->src_port = htons(DHCP_CLIENT_PORT);
-	udp->dst_port = htons(DHCP_SERVER_PORT);
-	udp->length = htons(udp_len);
-	udp->checksum = 0;
+    /* Build UDP header */
+    udp = (struct udp_header *)(frame + sizeof(struct eth_header) + sizeof(struct ip_header));
+    udp->src_port = htons(DHCP_CLIENT_PORT);
+    udp->dst_port = htons(DHCP_SERVER_PORT);
+    udp->length = htons(udp_len);
+    udp->checksum = 0;
 
-	/* Copy DHCP payload after UDP header */
-	memcpy(frame + sizeof(struct eth_header) + sizeof(struct ip_header) + sizeof(struct udp_header),
-	       dhcp_buf, dhcp_len);
+    /* Copy DHCP payload after UDP header */
+    memcpy(frame + sizeof(struct eth_header) + sizeof(struct ip_header) + sizeof(struct udp_header),
+           dhcp_buf, dhcp_len);
 
-	/* Compute IP checksum */
-	ip->checksum = net_checksum(ip, sizeof(struct ip_header));
+    /* Compute IP checksum */
+    ip->checksum = net_checksum(ip, sizeof(struct ip_header));
 
-	/* Build Ethernet header */
-	eth = (struct eth_header *)frame;
-	memset(eth->dst, 0xFF, 6);           /* Broadcast */
-	memcpy(eth->src, dev->mac, 6);
-	eth->type = htons(ETH_TYPE_IP);
+    /* Build Ethernet header */
+    eth = (struct eth_header *)frame;
+    memset(eth->dst, 0xFF, 6); /* Broadcast */
+    memcpy(eth->src, dev->mac, 6);
+    eth->type = htons(ETH_TYPE_IP);
 
-	frame_len = (uint16_t)(sizeof(struct eth_header) + sizeof(struct ip_header) + udp_len);
+    frame_len = (uint16_t)(sizeof(struct eth_header) + sizeof(struct ip_header) + udp_len);
 
-	/* Send via device */
-	ret = dev->transmit(dev, frame, frame_len);
-	if (ret < 0) {
-		kprintf("[dhcp] dhcp_send_request: transmit failed (%d)\n", ret);
-		return ret;
-	}
+    /* Send via device */
+    ret = dev->transmit(dev, frame, frame_len);
+    if (ret < 0) {
+        kprintf("[dhcp] dhcp_send_request: transmit failed (%d)\n", ret);
+        return ret;
+    }
 
-	dhcp_state = 2;
-	kprintf("[dhcp] dhcp_send_request: sent REQUEST for %u.%u.%u.%u on %s\n",
-	        (unsigned)((offered_ip >> 24) & 0xFF),
-	        (unsigned)((offered_ip >> 16) & 0xFF),
-	        (unsigned)((offered_ip >> 8) & 0xFF),
-	        (unsigned)(offered_ip & 0xFF),
-	        dev->name);
-	return 0;
+    dhcp_state = 2;
+    kprintf("[dhcp] dhcp_send_request: sent REQUEST for %u.%u.%u.%u on %s\n",
+            (unsigned)((offered_ip >> 24) & 0xFF), (unsigned)((offered_ip >> 16) & 0xFF),
+            (unsigned)((offered_ip >> 8) & 0xFF), (unsigned)(offered_ip & 0xFF), dev->name);
+    return 0;
 }

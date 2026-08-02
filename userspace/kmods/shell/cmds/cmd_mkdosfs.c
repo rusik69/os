@@ -12,27 +12,27 @@
  *
  * Writes a proper boot sector with BPB (BIOS Parameter Block).
  */
-#include "shell_cmds.h"
-#include "printf.h"
-#include "string.h"
-#include "stdlib.h"
-#include "types.h"
 #include "blockdev.h"
+#include "printf.h"
+#include "shell_cmds.h"
+#include "stdlib.h"
+#include "string.h"
+#include "types.h"
 
 /* ── FAT BPB on-disk structures ─────────────────────────────────────── */
 
 /* BPB common to all FAT types */
 struct fat_bpb_common {
-    uint8_t  jump[3];
-    char     oem_name[8];
+    uint8_t jump[3];
+    char oem_name[8];
     uint16_t bytes_per_sector;
-    uint8_t  sectors_per_cluster;
+    uint8_t sectors_per_cluster;
     uint16_t reserved_sectors;
-    uint8_t  num_fats;
+    uint8_t num_fats;
     uint16_t root_entry_count;
     uint16_t total_sectors_16;
-    uint8_t  media_type;
-    uint16_t fat_size_16;         /* 0 for FAT32 */
+    uint8_t media_type;
+    uint16_t fat_size_16; /* 0 for FAT32 */
     uint16_t sectors_per_track;
     uint16_t num_heads;
     uint32_t hidden_sectors;
@@ -47,40 +47,40 @@ struct fat32_ext_bpb {
     uint32_t root_cluster;
     uint16_t fs_info;
     uint16_t backup_boot_sector;
-    uint8_t  reserved[12];
-    uint8_t  drive_number;
-    uint8_t  reserved1;
-    uint8_t  boot_signature;
+    uint8_t reserved[12];
+    uint8_t drive_number;
+    uint8_t reserved1;
+    uint8_t boot_signature;
     uint32_t volume_id;
-    char     volume_label[11];
-    char     fs_type[8];
+    char volume_label[11];
+    char fs_type[8];
 } __attribute__((packed));
 
 /* Combined FAT32 boot sector (512 bytes total) */
 struct fat32_boot_sector {
     struct fat_bpb_common common;
-    struct fat32_ext_bpb  ext;
-    uint8_t               boot_code[420];  /* rest of 512 bytes */
-    uint16_t              boot_signature;  /* 0xAA55 */
+    struct fat32_ext_bpb ext;
+    uint8_t boot_code[420];  /* rest of 512 bytes */
+    uint16_t boot_signature; /* 0xAA55 */
 } __attribute__((packed));
 
 /* FAT12/16 extended BPB */
 struct fat16_ext_bpb {
-    uint8_t  drive_number;
-    uint8_t  reserved1;
+    uint8_t drive_number;
+    uint8_t reserved1;
     uint32_t volume_id;
-    char     volume_label[11];
-    char     fs_type[8];
-    uint8_t  boot_code[448];
-    uint16_t boot_signature;  /* 0xAA55 */
+    char volume_label[11];
+    char fs_type[8];
+    uint8_t boot_code[448];
+    uint16_t boot_signature; /* 0xAA55 */
 } __attribute__((packed));
 
 /* ── Constants ──────────────────────────────────────────────────────── */
 
 #define SECTOR_SIZE 512
 #define BOOT_SIGNATURE 0xAA55
-#define FAT12_MAX_CLUSTERS 4085    /* < 4085 = FAT12 */
-#define FAT16_MAX_CLUSTERS 65525   /* < 65525 = FAT16, >= = FAT32 */
+#define FAT12_MAX_CLUSTERS 4085  /* < 4085 = FAT12 */
+#define FAT16_MAX_CLUSTERS 65525 /* < 65525 = FAT16, >= = FAT32 */
 
 /* Media descriptor byte */
 #define MEDIA_FIXED 0xF8
@@ -94,14 +94,13 @@ struct fat16_ext_bpb {
 #define DEFAULT_FS_TYPE_FAT12 "FAT12   "
 
 /* ── Helper: pad to 11 chars, uppercase ────────────────────────────── */
-static void format_label(const char *in, char *out)
-{
+static void format_label(const char *in, char *out) {
     int i;
     for (i = 0; i < 11; i++) {
         if (in && in[i] && in[i] >= 0x20) {
             char c = in[i];
             if (c >= 'a' && c <= 'z')
-                c -= 32;  /* uppercase */
+                c -= 32; /* uppercase */
             out[i] = c;
         } else {
             out[i] = ' ';
@@ -111,12 +110,11 @@ static void format_label(const char *in, char *out)
 
 /* ── Core implementation (argc/argv based) ──────────────────────────── */
 
-static int mkdosfs_core(int argc, char **argv)
-{
+static int mkdosfs_core(int argc, char **argv) {
     const char *device = NULL;
     const char *vol_label = DEFAULT_VOLUME_LABEL;
     uint32_t vol_id = 0;
-    int fat_type = 0;        /* 0 = auto, 12/16/32 = force */
+    int fat_type = 0; /* 0 = auto, 12/16/32 = force */
     uint32_t block_count = 0;
     int dev_id = -1;
     int use_vol_id = 0;
@@ -140,7 +138,7 @@ static int mkdosfs_core(int argc, char **argv)
             use_vol_id = 1;
         } else if (argv[i][0] != '-') {
             device = argv[i];
-            if (i + 1 < argc && argv[i+1][0] != '-') {
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
                 block_count = (uint32_t)atoi(argv[++i]);
             }
         }
@@ -258,7 +256,8 @@ static int mkdosfs_core(int argc, char **argv)
     if (!use_vol_id) {
         vol_id = 0;
         const char *p = device;
-        while (*p) vol_id = (vol_id << 5) - vol_id + (uint8_t)(*p++);
+        while (*p)
+            vol_id = (vol_id << 5) - vol_id + (uint8_t)(*p++);
         vol_id ^= block_count;
     }
 
@@ -308,7 +307,8 @@ static int mkdosfs_core(int argc, char **argv)
         bs->boot_signature = BOOT_SIGNATURE;
     } else {
         struct fat_bpb_common *bpb = (struct fat_bpb_common *)sector;
-        struct fat16_ext_bpb *ext = (struct fat16_ext_bpb *)(sector + sizeof(struct fat_bpb_common));
+        struct fat16_ext_bpb *ext =
+            (struct fat16_ext_bpb *)(sector + sizeof(struct fat_bpb_common));
 
         bpb->jump[0] = 0xEB;
         bpb->jump[1] = 0x3C;
@@ -351,11 +351,20 @@ static int mkdosfs_core(int argc, char **argv)
     /* ── Write FSINFO sector (FAT32 only) ─────────────────────────── */
     if (fat_type == 32) {
         memset(sector, 0, SECTOR_SIZE);
-        sector[0] = 0x52; sector[1] = 0x52; sector[2] = 0x61; sector[3] = 0x41;
-        sector[484] = 0x72; sector[485] = 0x72; sector[486] = 0x41; sector[487] = 0x61;
+        sector[0] = 0x52;
+        sector[1] = 0x52;
+        sector[2] = 0x61;
+        sector[3] = 0x41;
+        sector[484] = 0x72;
+        sector[485] = 0x72;
+        sector[486] = 0x41;
+        sector[487] = 0x61;
         *(uint32_t *)(sector + 488) = total_clusters - 1;
         *(uint32_t *)(sector + 492) = 2;
-        sector[508] = 0x00; sector[509] = 0x00; sector[510] = 0x55; sector[511] = 0xAA;
+        sector[508] = 0x00;
+        sector[509] = 0x00;
+        sector[510] = 0x55;
+        sector[511] = 0xAA;
 
         if (blockdev_write_sectors(dev_id, 1, 1, sector) < 0)
             kprintf("mkdosfs: warning: failed to write FSINFO sector\n");
@@ -379,12 +388,8 @@ static int mkdosfs_core(int argc, char **argv)
         sector[5] = 0xFF;
         sector[6] = 0xFF;
         sector[7] = 0x0F;
-    } else if (fat_type == 16) {
-        sector[0] = MEDIA_FIXED;
-        sector[1] = 0xFF;
-        sector[2] = 0xFF;
-        sector[3] = 0xFF;
     } else {
+        /* FAT12 and FAT16 share the same first-FAT-entry layout */
         sector[0] = MEDIA_FIXED;
         sector[1] = 0xFF;
         sector[2] = 0xFF;
@@ -395,8 +400,8 @@ static int mkdosfs_core(int argc, char **argv)
         uint32_t fat_lba = fat_start + fat_copy * fat_size;
         for (uint32_t s = 0; s < fat_size; s++) {
             if (blockdev_write_sectors(dev_id, fat_lba + s, 1, sector) < 0) {
-                kprintf("mkdosfs: failed to write FAT copy %u sector %u\n",
-                        (unsigned int)fat_copy, (unsigned int)s);
+                kprintf("mkdosfs: failed to write FAT copy %u sector %u\n", (unsigned int)fat_copy,
+                        (unsigned int)s);
                 free(sector);
                 return 1;
             }
@@ -404,17 +409,17 @@ static int mkdosfs_core(int argc, char **argv)
                 memset(sector, 0, SECTOR_SIZE);
         }
     }
-    kprintf("  FAT table(s) written (%u copies x %u sectors)\n",
-            (unsigned int)num_fats, (unsigned int)fat_size);
+    kprintf("  FAT table(s) written (%u copies x %u sectors)\n", (unsigned int)num_fats,
+            (unsigned int)fat_size);
 
     /* ── Write root directory ─────────────────────────────────────── */
     memset(sector, 0, SECTOR_SIZE);
     uint32_t root_dir_lba = fat_start + num_fats * fat_size;
 
     struct {
-        char     name[11];
-        uint8_t  attr;
-        uint8_t  reserved[10];
+        char name[11];
+        uint8_t attr;
+        uint8_t reserved[10];
         uint16_t time;
         uint16_t date;
         uint16_t cluster;
@@ -434,8 +439,7 @@ static int mkdosfs_core(int argc, char **argv)
     } else {
         for (uint32_t s = 0; s < root_dir_sectors; s++) {
             if (blockdev_write_sectors(dev_id, root_dir_lba + s, 1, sector) < 0) {
-                kprintf("mkdosfs: failed to write root directory sector %u\n",
-                        (unsigned int)s);
+                kprintf("mkdosfs: failed to write root directory sector %u\n", (unsigned int)s);
                 free(sector);
                 return 1;
             }
@@ -457,20 +461,20 @@ static int mkdosfs_core(int argc, char **argv)
 
 #define MKFS_MAX_ARGS 16
 
-void cmd_mkdosfs(const char *args)
-{
+void cmd_mkdosfs(const char *args) {
     char *argv[MKFS_MAX_ARGS];
     int argc = 0;
     char buf[256];
 
     if (!args || !args[0]) {
-        const char *dummy_argv[] = { "mkdosfs", NULL };
-        mkdosfs_core(1, (char **)dummy_argv);
+        char *dummy_argv[] = {"mkdosfs", NULL};
+        mkdosfs_core(1, dummy_argv);
         return;
     }
 
     size_t alen = strlen(args);
-    if (alen >= sizeof(buf)) alen = sizeof(buf) - 1;
+    if (alen >= sizeof(buf))
+        alen = sizeof(buf) - 1;
     memcpy(buf, args, alen);
     buf[alen] = '\0';
 
@@ -486,7 +490,6 @@ void cmd_mkdosfs(const char *args)
     mkdosfs_core(argc, argv);
 }
 
-void mkdosfs_init(void)
-{
+void mkdosfs_init(void) {
     kprintf("[OK] cmd_mkdosfs: FAT filesystem creator ready (FAT12/16/32)\n");
 }

@@ -1,22 +1,23 @@
 /* thp.c — Transparent Huge Pages tracking + khugepaged daemon */
 
 #include "thp.h"
+
 #include "pmm.h"
-#include "vmm.h"
-#include "string.h"
 #include "printf.h"
 #include "process.h"
 #include "scheduler.h"
-#include "timer.h"
 #include "spinlock.h"
+#include "string.h"
+#include "timer.h"
+#include "vmm.h"
 
 #define THP_MAX_PAGES 64
 
 struct thp_entry {
-    uint64_t virt_addr;    /* Virtual address of the huge page */
-    uint64_t phys_addr;    /* Physical address of the huge page */
-    uint64_t *pml4;        /* Page-table root of the owning process (NULL if unknown) */
-    int state;             /* THP_RAW, THP_SPLIT, or THP_PARTIAL */
+    uint64_t virt_addr; /* Virtual address of the huge page */
+    uint64_t phys_addr; /* Physical address of the huge page */
+    uint64_t *pml4;     /* Page-table root of the owning process (NULL if unknown) */
+    int state;          /* THP_RAW, THP_SPLIT, or THP_PARTIAL */
     int present;
 };
 
@@ -70,7 +71,8 @@ int thp_is_enabled(void) {
 
 /* Internal: caller must hold thp_lock */
 static int __thp_track_hugepage_locked(uint64_t virt_addr, uint64_t phys_addr, uint64_t *pml4) {
-    if (thp_entry_count >= THP_MAX_PAGES) return -ENOSPC;
+    if (thp_entry_count >= THP_MAX_PAGES)
+        return -ENOSPC;
 
     /* Check for duplicate */
     for (int i = 0; i < thp_entry_count; i++) {
@@ -81,7 +83,7 @@ static int __thp_track_hugepage_locked(uint64_t virt_addr, uint64_t phys_addr, u
     struct thp_entry *entry = &thp_entries[thp_entry_count++];
     entry->virt_addr = virt_addr;
     entry->phys_addr = phys_addr;
-    entry->pml4      = pml4;
+    entry->pml4 = pml4;
     entry->state = THP_RAW;
     entry->present = 1;
     thp_total++;
@@ -92,7 +94,10 @@ int thp_track_hugepage(uint64_t virt_addr, uint64_t phys_addr, uint64_t *pml4) {
     uint64_t irq_flags;
     int ret;
     spinlock_irqsave_acquire(&thp_lock, &irq_flags);
-    if (!thp_enabled) { ret = -ENODEV; goto out; }
+    if (!thp_enabled) {
+        ret = -ENODEV;
+        goto out;
+    }
     ret = __thp_track_hugepage_locked(virt_addr, phys_addr, pml4);
 out:
     spinlock_irqsave_release(&thp_lock, irq_flags);
@@ -133,7 +138,7 @@ static int __thp_split_hugepage_locked(uint64_t virt_addr) {
                 if (pml4) {
                     int pml4_idx = (int)((virt_addr >> 39) & 0x1FF);
                     int pdpt_idx = (int)((virt_addr >> 30) & 0x1FF);
-                    int pd_idx   = (int)((virt_addr >> 21) & 0x1FF);
+                    int pd_idx = (int)((virt_addr >> 21) & 0x1FF);
 
                     /* Walk to the PDE and verify it is still a huge page.
                      * We tolerate non-present / non-huge entries because
@@ -150,6 +155,7 @@ static int __thp_split_hugepage_locked(uint64_t virt_addr) {
                                 uint64_t pt_phys = pmm_alloc_frame();
                                 if (!pt_phys)
                                     return -ENOMEM;
+                                pmm_mark_pt_frame(pt_phys);
 
                                 uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pt_phys);
                                 memset(pt, 0, PAGE_SIZE);
@@ -158,21 +164,18 @@ static int __thp_split_hugepage_locked(uint64_t virt_addr) {
                                  * Strip the HUGE/PS bit (bit 7) — these are
                                  * now 4KB leaf PTEs, not a 2MB leaf PDE. */
                                 uint64_t pflags = (huge_pde & 0xFFF) & ~(uint64_t)PTE_HUGE;
-                                uint64_t pnx    = huge_pde & PTE_NX;
+                                uint64_t pnx = huge_pde & PTE_NX;
 
                                 for (int j = 0; j < 512; j++) {
-                                    pt[j] = (base + (uint64_t)j * PAGE_SIZE)
-                                          | pflags | pnx | PTE_PRESENT;
+                                    pt[j] = (base + (uint64_t)j * PAGE_SIZE) | pflags | pnx |
+                                            PTE_PRESENT;
                                 }
 
                                 /* Replace the PDE — now points to a 4K page
                                  * table instead of a 2MB huge page.  Keep
                                  * the same user/kernel/write flags on the
                                  * PD entry itself. */
-                                pd[pd_idx] = pt_phys
-                                           | PTE_PRESENT
-                                           | PTE_WRITE
-                                           | PTE_USER;
+                                pd[pd_idx] = pt_phys | PTE_PRESENT | PTE_WRITE | PTE_USER;
 
                                 /* Flush TLB for this virtual address range.
                                  * invlpg at the start suffices — x86 hardware
@@ -248,22 +251,22 @@ uint64_t thp_get_split_pages(void) {
 
 /* ── Page table entry flag definitions (from vmm.c, duplicated for
  *    convenience to avoid including vmm.c internals) ──────────────── */
-#define KHUGE_PTE_PRESENT  (1ULL << 0)
-#define KHUGE_PTE_WRITE    (1ULL << 1)
-#define KHUGE_PTE_USER     (1ULL << 2)
-#define KHUGE_PTE_HUGE     (1ULL << 7)
-#define KHUGE_PTE_COW      (1ULL << 9)   /* Software bit: COW */
-#define KHUGE_PTE_LAZY     (1ULL << 10)  /* Software bit: lazy/demand */
-#define KHUGE_PTE_NX       (1ULL << 63)
-#define KHUGE_PTE_ADDR_MASK  0x000FFFFFFFFFF000ULL
-#define KHUGE_PDE_ADDR_MASK  0x000FFFFFFFE00000ULL  /* For 2MB pages */
+#define KHUGE_PTE_PRESENT (1ULL << 0)
+#define KHUGE_PTE_WRITE (1ULL << 1)
+#define KHUGE_PTE_USER (1ULL << 2)
+#define KHUGE_PTE_HUGE (1ULL << 7)
+#define KHUGE_PTE_COW (1ULL << 9)   /* Software bit: COW */
+#define KHUGE_PTE_LAZY (1ULL << 10) /* Software bit: lazy/demand */
+#define KHUGE_PTE_NX (1ULL << 63)
+#define KHUGE_PTE_ADDR_MASK 0x000FFFFFFFFFF000ULL
+#define KHUGE_PDE_ADDR_MASK 0x000FFFFFFFE00000ULL /* For 2MB pages */
 
 /* User virtual address space limit (from vmm.h) */
 #define KHUGE_USER_VADDR_MAX 0x0000800000000000ULL
 
 /* ── Configuration ───────────────────────────────────────────────── */
 static volatile int khugepaged_enabled = 0;
-static volatile int khugepaged_sleep_ms = 1000;  /* 1 second default interval */
+static volatile int khugepaged_sleep_ms = 1000; /* 1 second default interval */
 static struct process *khugepaged_thread = NULL;
 
 /* ── Statistics ──────────────────────────────────────────────────── */
@@ -288,8 +291,10 @@ int khugepaged_is_enabled(void) {
 }
 
 void khugepaged_set_sleep_ms(int ms) {
-    if (ms < 10) ms = 10;   /* minimum 10 ms */
-    if (ms > 60000) ms = 60000;  /* maximum 60 seconds */
+    if (ms < 10)
+        ms = 10; /* minimum 10 ms */
+    if (ms > 60000)
+        ms = 60000; /* maximum 60 seconds */
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&khugepaged_lock, &irq_flags);
     khugepaged_sleep_ms = ms;
@@ -341,12 +346,11 @@ uint64_t khugepaged_get_failed(void) {
  *
  * Returns 1 if eligible, 0 if not (or on error).
  */
-static int khugepaged_check_range(uint64_t *pml4, uint64_t virt,
-                                   uint64_t *out_phys, uint64_t *out_flags)
-{
+static int khugepaged_check_range(uint64_t *pml4, uint64_t virt, uint64_t *out_phys,
+                                  uint64_t *out_flags) {
     int pml4_idx = (int)((virt >> 39) & 0x1FF);
     int pdpt_idx = (int)((virt >> 30) & 0x1FF);
-    int pd_idx   = (int)((virt >> 21) & 0x1FF);
+    int pd_idx = (int)((virt >> 21) & 0x1FF);
 
     /* ── Walk to the page-directory entry ── */
     if (!(pml4[pml4_idx] & KHUGE_PTE_PRESENT))
@@ -393,7 +397,7 @@ static int khugepaged_check_range(uint64_t *pml4, uint64_t virt,
         uint64_t page_phys = pte & KHUGE_PTE_ADDR_MASK;
 
         /* Must not be the shared zero page */
-        if (page_phys == 0)  /* Zero page is at a known phys, but 0 is safe filter */
+        if (page_phys == 0) /* Zero page is at a known phys, but 0 is safe filter */
             return 0;
 
         /* Refcount must be exactly 1 (not shared via fork) */
@@ -416,7 +420,7 @@ static int khugepaged_check_range(uint64_t *pml4, uint64_t virt,
         }
     }
 
-    *out_phys  = first_phys;
+    *out_phys = first_phys;
     *out_flags = flags;
     return 1;
 }
@@ -437,9 +441,8 @@ static int khugepaged_check_range(uint64_t *pml4, uint64_t virt,
  *
  * Returns 0 on success, -1 on failure.
  */
-static int khugepaged_promote_range(uint64_t *pml4, uint64_t virt,
-                                     uint64_t old_phys, uint64_t flags)
-{
+static int khugepaged_promote_range(uint64_t *pml4, uint64_t virt, uint64_t old_phys,
+                                    uint64_t flags) {
     int pd_idx = (int)((virt >> 21) & 0x1FF);
 
     /* ── Allocate 512 contiguous frames for the huge page ── */
@@ -453,18 +456,15 @@ static int khugepaged_promote_range(uint64_t *pml4, uint64_t virt,
     for (int i = 0; i < 512; i++) {
         uint64_t src_phys = old_phys + (uint64_t)i * PAGE_SIZE;
         uint64_t dst_phys = huge_phys + (uint64_t)i * PAGE_SIZE;
-        memcpy((void *)PHYS_TO_VIRT(dst_phys),
-               (void *)PHYS_TO_VIRT(src_phys), PAGE_SIZE);
+        memcpy((void *)PHYS_TO_VIRT(dst_phys), (void *)PHYS_TO_VIRT(src_phys), PAGE_SIZE);
     }
 
     /* ── Build the huge page PDE ──
      * The PDE physical address mask for 2MB pages is 0x000FFFFFFFE00000.
      * We keep the low 9 bits of protection flags (bits 8:0) plus the
      * HUGE bit and PRESENT bit.  The NX bit (bit 63) is kept as well. */
-    uint64_t pde = (huge_phys & KHUGE_PDE_ADDR_MASK)
-                   | (flags & 0x1FF)          /* low 9 flag bits */
-                   | KHUGE_PTE_HUGE
-                   | KHUGE_PTE_PRESENT;
+    uint64_t pde = (huge_phys & KHUGE_PDE_ADDR_MASK) | (flags & 0x1FF) /* low 9 flag bits */
+                   | KHUGE_PTE_HUGE | KHUGE_PTE_PRESENT;
 
     /* Preserve the NX bit from the original flags */
     if (flags & KHUGE_PTE_NX)
@@ -486,7 +486,7 @@ static int khugepaged_promote_range(uint64_t *pml4, uint64_t virt,
     if (!(pdpt[pdpt_idx] & KHUGE_PTE_PRESENT))
         goto fail_free_huge;
 
-    uint64_t *pd   = (uint64_t *)PHYS_TO_VIRT(pdpt[pdpt_idx] & KHUGE_PTE_ADDR_MASK);
+    uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[pdpt_idx] & KHUGE_PTE_ADDR_MASK);
     if (!(pd[pd_idx] & KHUGE_PTE_PRESENT) || (pd[pd_idx] & KHUGE_PTE_HUGE))
         goto fail_free_huge;
 
@@ -542,21 +542,17 @@ fail_free_huge:
  * chunk that has a present PD entry pointing to a PT (not a huge page),
  * checks whether all 512 PTEs can be coalesced.
  */
-static void khugepaged_scan_process(struct process *proc)
-{
+static void khugepaged_scan_process(struct process *proc) {
     uint64_t *pml4 = proc->pml4;
     if (!pml4)
         return;
 
     /* Scan the full user address space in 2MB steps */
-    for (uint64_t virt = 0;
-         virt < KHUGE_USER_VADDR_MAX;
-         virt += THP_HPAGE_SIZE) {
-
+    for (uint64_t virt = 0; virt < KHUGE_USER_VADDR_MAX; virt += THP_HPAGE_SIZE) {
         /* Quick filter: check if the PML4/PDPT/PD entries exist */
         int pml4_idx = (int)((virt >> 39) & 0x1FF);
         int pdpt_idx = (int)((virt >> 30) & 0x1FF);
-        int pd_idx   = (int)((virt >> 21) & 0x1FF);
+        int pd_idx = (int)((virt >> 21) & 0x1FF);
 
         if (!(pml4[pml4_idx] & KHUGE_PTE_PRESENT)) {
             /* Skip the entire 512GB PML4 range */
@@ -605,12 +601,10 @@ static void khugepaged_scan_process(struct process *proc)
 
 /* ── Daemon entry point ──────────────────────────────────────────── */
 
-static void khugepaged_daemon(void *arg)
-{
+static void khugepaged_daemon(void *arg) {
     (void)arg;
 
-    kprintf("[khugepaged] daemon started (scan interval=%d ms)\n",
-            khugepaged_sleep_ms);
+    kprintf("[khugepaged] daemon started (scan interval=%d ms)\n", khugepaged_sleep_ms);
 
     while (khugepaged_is_enabled()) {
         uint64_t scan_start = timer_get_ticks();
@@ -669,8 +663,7 @@ static void khugepaged_daemon(void *arg)
 
 /* ── Initialization ──────────────────────────────────────────────── */
 
-void khugepaged_start(void)
-{
+void khugepaged_start(void) {
     if (khugepaged_thread) {
         kprintf("[khugepaged] already running\n");
         return;
@@ -679,8 +672,7 @@ void khugepaged_start(void)
     spinlock_init(&khugepaged_lock);
     khugepaged_enabled = 1;
 
-    khugepaged_thread = kthread_create(khugepaged_daemon, NULL,
-                                        "khugepaged");
+    khugepaged_thread = kthread_create(khugepaged_daemon, NULL, "khugepaged");
     if (khugepaged_thread) {
         kprintf("[OK] khugepaged daemon created\n");
     } else {
@@ -692,14 +684,16 @@ void khugepaged_start(void)
 module_init(thp_init);
 
 /* ── split_huge_page ─────────────────────────────────────────── */
-static int split_huge_page(uint64_t addr)
-{
+static int split_huge_page(uint64_t addr) {
     uint64_t irq_flags;
     int ret;
 
     spinlock_irqsave_acquire(&thp_lock, &irq_flags);
 
-    if (!thp_enabled) { ret = -ENODEV; goto out; }
+    if (!thp_enabled) {
+        ret = -ENODEV;
+        goto out;
+    }
     if (addr & (THP_HPAGE_SIZE - 1)) {
         kprintf("[thp] split_huge_page: addr 0x%llx not 2MB-aligned\n", (unsigned long long)addr);
         ret = -EINVAL;
@@ -729,16 +723,19 @@ out:
 }
 
 /* ── collapse_huge_page ──────────────────────────────────────── */
-static int collapse_huge_page(uint64_t addr)
-{
+static int collapse_huge_page(uint64_t addr) {
     uint64_t irq_flags;
     int ret;
 
     spinlock_irqsave_acquire(&thp_lock, &irq_flags);
 
-    if (!thp_enabled) { ret = -ENODEV; goto out_unlock; }
+    if (!thp_enabled) {
+        ret = -ENODEV;
+        goto out_unlock;
+    }
     if (addr & (THP_HPAGE_SIZE - 1)) {
-        kprintf("[thp] collapse_huge_page: addr 0x%llx not 2MB-aligned\n", (unsigned long long)addr);
+        kprintf("[thp] collapse_huge_page: addr 0x%llx not 2MB-aligned\n",
+                (unsigned long long)addr);
         ret = -EINVAL;
         goto out_unlock;
     }
@@ -760,7 +757,8 @@ static int collapse_huge_page(uint64_t addr)
     spinlock_irqsave_release(&thp_lock, irq_flags);
 
     uint64_t phys = (uint64_t)pmm_alloc_frames(512);
-    if (!phys) return -ENOMEM;
+    if (!phys)
+        return -ENOMEM;
 
     spinlock_irqsave_acquire(&thp_lock, &irq_flags);
     ret = __thp_track_hugepage_locked(addr, phys, NULL);
@@ -775,19 +773,17 @@ out_unlock:
 }
 
 /* ── thp_restore_page ────────────────────────────────────────── */
-static int thp_restore_page(uint64_t addr)
-{
-    if (!thp_enabled) return -ENODEV;
+static int thp_restore_page(uint64_t addr) {
+    if (!thp_enabled)
+        return -ENODEV;
     /* Write-back / restore a THP page from swap.
      * For now, a stub that returns success. */
-    kprintf("[thp] thp_restore_page: 0x%llx restored from swap\n",
-            (unsigned long long)addr);
+    kprintf("[thp] thp_restore_page: 0x%llx restored from swap\n", (unsigned long long)addr);
     return 0;
 }
 
 /* ── thp_get_unmapped_area — Return THP-aligned address ────── */
-static uint64_t thp_get_unmapped_area(uint64_t addr, size_t len, unsigned long flags)
-{
+static uint64_t thp_get_unmapped_area(uint64_t addr, size_t len, unsigned long flags) {
     (void)flags;
     if (!thp_enabled)
         return addr;
@@ -813,13 +809,14 @@ static uint64_t thp_get_unmapped_area(uint64_t addr, size_t len, unsigned long f
 }
 
 /* ── deferred_split_huge_page — Queue a THP for deferred split ── */
-static void deferred_split_huge_page(uint64_t addr)
-{
+static void deferred_split_huge_page(uint64_t addr) {
     uint64_t irq_flags;
 
     spinlock_irqsave_acquire(&thp_lock, &irq_flags);
 
-    if (!thp_enabled) { goto out; }
+    if (!thp_enabled) {
+        goto out;
+    }
     if (addr & (THP_HPAGE_SIZE - 1)) {
         kprintf("[thp] deferred_split_huge_page: addr 0x%llx not 2MB-aligned\n",
                 (unsigned long long)addr);

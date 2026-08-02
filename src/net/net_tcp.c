@@ -124,15 +124,15 @@ static spinlock_t tcp_lock = SPINLOCK_INIT;
 #define TCP_TIME_WAIT_MSL_TICKS 6000
 
 /* ── TCP Fast Open (TFO) — RFC 7413 (Item 159) ──────────────────────── */
-#define TFO_COOKIE_LEN     8   /* TFO cookie is 8 bytes */
-#define TFO_CACHE_SIZE     16  /* max cached destinations */
-#define TCP_RXBUF_SIZE     4096 /* receive buffer size */
+#define TFO_COOKIE_LEN 8    /* TFO cookie is 8 bytes */
+#define TFO_CACHE_SIZE 16   /* max cached destinations */
+#define TCP_RXBUF_SIZE 4096 /* receive buffer size */
 
 /* TFO cookie cache entry */
 struct tfo_cookie_entry {
-    uint32_t ip;                            /* destination IP */
-    uint8_t  cookie[TFO_COOKIE_LEN];        /* cached cookie */
-    uint64_t last_used;                     /* for LRU eviction */
+    uint32_t ip;                    /* destination IP */
+    uint8_t cookie[TFO_COOKIE_LEN]; /* cached cookie */
+    uint64_t last_used;             /* for LRU eviction */
 };
 
 /* TFO cookie cache */
@@ -146,14 +146,13 @@ static uint64_t tfo_secret[2];
  * Cookie = first 8 bytes of SHA256(client_ip | server_ip | port | secret)
  * This matches the standard Linux-style cookie generation approach.
  * The 16-byte secret is generated at boot, preventing forgery. */
-static void tfo_generate_cookie(uint32_t client_ip, uint32_t server_ip,
-                                 uint16_t server_port, uint8_t cookie[8])
-{
+static void tfo_generate_cookie(uint32_t client_ip, uint32_t server_ip, uint16_t server_port,
+                                uint8_t cookie[8]) {
     struct sha256_ctx ctx;
     uint8_t digest[32];
     uint32_t ncip = htonl(client_ip);
     uint32_t nsip = htonl(server_ip);
-    uint16_t nsp  = htons(server_port);
+    uint16_t nsp = htons(server_port);
 
     sha256_init(&ctx);
     sha256_update(&ctx, &ncip, 4);
@@ -166,9 +165,8 @@ static void tfo_generate_cookie(uint32_t client_ip, uint32_t server_ip,
 }
 
 /* Validate a received TFO cookie matches what we would generate */
-static int tfo_validate_cookie(uint32_t client_ip, uint32_t server_ip,
-                                uint16_t server_port, const uint8_t cookie[8])
-{
+static int tfo_validate_cookie(uint32_t client_ip, uint32_t server_ip, uint16_t server_port,
+                               const uint8_t cookie[8]) {
     uint8_t expected[8];
     tfo_generate_cookie(client_ip, server_ip, server_port, expected);
     return (memcmp(expected, cookie, 8) == 0);
@@ -176,8 +174,7 @@ static int tfo_validate_cookie(uint32_t client_ip, uint32_t server_ip,
 
 /* ── Look up a cached TFO cookie for the given destination IP.
  * Returns 1 and copies cookie if found, 0 on miss. */
-static int tfo_cache_lookup(uint32_t ip, uint8_t cookie[8])
-{
+static int tfo_cache_lookup(uint32_t ip, uint8_t cookie[8]) {
     for (int i = 0; i < tfo_cache_count; i++) {
         if (tfo_cache[i].ip == ip) {
             memcpy(cookie, tfo_cache[i].cookie, 8);
@@ -190,8 +187,7 @@ static int tfo_cache_lookup(uint32_t ip, uint8_t cookie[8])
 
 /* Store (or update) a TFO cookie for the given destination IP.
  * Uses LRU eviction if the cache is full. */
-static void tfo_cache_store(uint32_t ip, const uint8_t cookie[8])
-{
+static void tfo_cache_store(uint32_t ip, const uint8_t cookie[8]) {
     /* Update if already in cache */
     for (int i = 0; i < tfo_cache_count; i++) {
         if (tfo_cache[i].ip == ip) {
@@ -225,8 +221,7 @@ static void tfo_cache_store(uint32_t ip, const uint8_t cookie[8])
 }
 
 /* Initialize TFO — generate the secret key (called at boot) */
-void tcp_tfo_init(void)
-{
+void tcp_tfo_init(void) {
     tfo_secret[0] = prng_rand64();
     tfo_secret[1] = prng_rand64();
     kprintf("[TFO] TCP Fast Open initialized\n");
@@ -258,8 +253,7 @@ static void tcp_flush_nagle(struct tcp_conn *c);
  *   3. We may send up to 'limit' bytes.
  *
  * Returns the number of bytes we may send (0 if none). */
-static uint32_t prr_send_allowed(struct tcp_conn *c, uint32_t delivered_data)
-{
+static uint32_t prr_send_allowed(struct tcp_conn *c, uint32_t delivered_data) {
     if (!c->in_recovery)
         return 0;
 
@@ -270,8 +264,7 @@ static uint32_t prr_send_allowed(struct tcp_conn *c, uint32_t delivered_data)
      * In our implementation:
      *   limit = max(0, (int)delivered_data - ((int)c->prr_delivered - (int)c->prr_out))
      *           + MSS (to allow 1 segment per ACK minimum) */
-    int32_t delta = (int32_t)delivered_data
-                  - ((int32_t)c->prr_delivered - (int32_t)c->prr_out);
+    int32_t delta = (int32_t)delivered_data - ((int32_t)c->prr_delivered - (int32_t)c->prr_out);
     if (delta < 0)
         delta = 0;
 
@@ -315,14 +308,14 @@ static uint32_t prr_send_allowed(struct tcp_conn *c, uint32_t delivered_data)
  * Index 0 is a reasonable default (536 = IPv4 minimum). */
 #define SYN_COOKIE_MSS_TABLE_SIZE 8
 static const uint16_t syn_cookie_mss_table[SYN_COOKIE_MSS_TABLE_SIZE] = {
-    536,   /* IPv4 minimum reassembly buffer */
-    1460,  /* typical Ethernet + no options */
-    1440,  /* Ethernet + timestamp */
-    1400,  /* conservative */
-    1300,  /* PPPoE / VPN */
-    1200,  /* tunnel / low MTU */
-    1024,  /* safe fallback */
-    896    /* dialup / low-end */
+    536,  /* IPv4 minimum reassembly buffer */
+    1460, /* typical Ethernet + no options */
+    1440, /* Ethernet + timestamp */
+    1400, /* conservative */
+    1300, /* PPPoE / VPN */
+    1200, /* tunnel / low MTU */
+    1024, /* safe fallback */
+    896   /* dialup / low-end */
 };
 
 /* 16-byte secret key for SYN cookie computation.
@@ -332,7 +325,8 @@ static int syn_cookie_seeded = 0;
 
 /* Seed the SYN cookie secret from the kernel PRNG */
 static void syn_cookie_seed(void) {
-    if (syn_cookie_seeded) return;
+    if (syn_cookie_seeded)
+        return;
     for (int i = 0; i < 16; i++)
         syn_cookie_secret[i] = (uint8_t)(prng_rand64() & 0xFF);
     syn_cookie_seeded = 1;
@@ -340,10 +334,8 @@ static void syn_cookie_seed(void) {
 
 /* Compute a SYN cookie for the given 4-tuple + MSS.
  * Returns a 32-bit value to use as the SYN-ACK initial sequence number. */
-static uint32_t compute_syn_cookie(uint32_t saddr, uint16_t sport,
-                                   uint32_t daddr, uint16_t dport,
-                                   uint16_t mss)
-{
+static uint32_t compute_syn_cookie(uint32_t saddr, uint16_t sport, uint32_t daddr, uint16_t dport,
+                                   uint16_t mss) {
     uint8_t digest[SHA256_DIGEST_SIZE];
     struct sha256_ctx ctx;
 
@@ -375,23 +367,20 @@ static uint32_t compute_syn_cookie(uint32_t saddr, uint16_t sport,
         mss_index = SYN_COOKIE_MSS_TABLE_SIZE - 1;
 
     /* Combine hash bits (26 bits from first 4 bytes) with MSS index (6 bits) */
-    uint32_t hash_part = (uint32_t)digest[0]
-                       | ((uint32_t)digest[1] << 8)
-                       | ((uint32_t)digest[2] << 16)
-                       | ((uint32_t)(digest[3] & 0x03) << 24);
+    uint32_t hash_part = (uint32_t)digest[0] | ((uint32_t)digest[1] << 8) |
+                         ((uint32_t)digest[2] << 16) | ((uint32_t)(digest[3] & 0x03) << 24);
     return (hash_part & ~0x3F) | mss_index;
 }
 
 /* Validate a SYN cookie and extract the encoded MSS value.
  * Returns the MSS on success, or 0 if the cookie is invalid. */
-static uint16_t check_syn_cookie(uint32_t cookie, uint32_t saddr,
-                                  uint16_t sport, uint32_t daddr,
-                                  uint16_t dport)
-{
+static uint16_t check_syn_cookie(uint32_t cookie, uint32_t saddr, uint16_t sport, uint32_t daddr,
+                                 uint16_t dport) {
     uint8_t digest[SHA256_DIGEST_SIZE];
     struct sha256_ctx ctx;
 
-    if (!syn_cookie_seeded) return 0;
+    if (!syn_cookie_seeded)
+        return 0;
 
     /* Recompute the hash */
     sha256_init(&ctx);
@@ -403,10 +392,8 @@ static uint16_t check_syn_cookie(uint32_t cookie, uint32_t saddr,
     sha256_final(digest, &ctx);
 
     /* Extract the expected hash part */
-    uint32_t expected_hash = (uint32_t)digest[0]
-                           | ((uint32_t)digest[1] << 8)
-                           | ((uint32_t)digest[2] << 16)
-                           | ((uint32_t)(digest[3] & 0x03) << 24);
+    uint32_t expected_hash = (uint32_t)digest[0] | ((uint32_t)digest[1] << 8) |
+                             ((uint32_t)digest[2] << 16) | ((uint32_t)(digest[3] & 0x03) << 24);
 
     /* Bits 6-31 must match */
     if ((cookie & ~0x3F) != (expected_hash & ~0x3F))
@@ -421,7 +408,7 @@ static uint16_t check_syn_cookie(uint32_t cookie, uint32_t saddr,
 }
 
 uint16_t net_transport_checksum(uint32_t src_ip, uint32_t dst_ip, uint8_t protocol,
-                                 const void *data, uint16_t data_len) {
+                                const void *data, uint16_t data_len) {
     struct tcp_pseudo pseudo;
     pseudo.src_ip = htonl(src_ip);
     pseudo.dst_ip = htonl(dst_ip);
@@ -432,13 +419,23 @@ uint16_t net_transport_checksum(uint32_t src_ip, uint32_t dst_ip, uint8_t protoc
     uint32_t sum = 0;
     const uint8_t *pb = (const uint8_t *)&pseudo;
     for (int i = 0; i < (int)sizeof(pseudo); i += 2) {
-        uint16_t w; __builtin_memcpy(&w, pb + i, 2); sum += w;
+        uint16_t w;
+        __builtin_memcpy(&w, pb + i, 2);
+        sum += w;
     }
     pb = (const uint8_t *)data;
     int len = data_len;
-    while (len > 1) { uint16_t w; __builtin_memcpy(&w, pb, 2); sum += w; pb += 2; len -= 2; }
-    if (len == 1) sum += *pb;
-    while (sum >> 16) sum = (sum & 0xFFFF) + (sum >> 16);
+    while (len > 1) {
+        uint16_t w;
+        __builtin_memcpy(&w, pb, 2);
+        sum += w;
+        pb += 2;
+        len -= 2;
+    }
+    if (len == 1)
+        sum += *pb;
+    while (sum >> 16)
+        sum = (sum & 0xFFFF) + (sum >> 16);
     return ~(uint16_t)sum;
 }
 
@@ -479,17 +476,16 @@ void send_tcp(struct tcp_conn *conn, uint8_t flags, const void *data, uint16_t d
             /* Server-side SYN-ACK: always generate and attach a cookie
              * so the client can use TFO on its next connection. */
             uint8_t tfo_cookie[TFO_COOKIE_LEN];
-            tfo_generate_cookie(conn->remote_ip, net_our_ip,
-                                conn->local_port, tfo_cookie);
-            opts[opt_len++] = 34;      /* TFO option kind */
-            opts[opt_len++] = 10;      /* len: kind(1) + len(1) + cookie(8) */
+            tfo_generate_cookie(conn->remote_ip, net_our_ip, conn->local_port, tfo_cookie);
+            opts[opt_len++] = 34; /* TFO option kind */
+            opts[opt_len++] = 10; /* len: kind(1) + len(1) + cookie(8) */
             memcpy(opts + opt_len, tfo_cookie, 8);
             opt_len += 8;
         } else if (conn->tfo_cookie_present) {
             /* Client-side SYN: attach cached cookie so server can
              * accept data immediately without the full handshake. */
-            opts[opt_len++] = 34;      /* TFO option kind */
-            opts[opt_len++] = 10;      /* length */
+            opts[opt_len++] = 34; /* TFO option kind */
+            opts[opt_len++] = 10; /* length */
             memcpy(opts + opt_len, conn->tfo_cookie, 8);
             opt_len += 8;
         }
@@ -501,9 +497,7 @@ void send_tcp(struct tcp_conn *conn, uint8_t flags, const void *data, uint16_t d
          * subtype 0 (MPTCP_CAPABLE). */
         if (conn->mptcp_token != 0) {
             uint16_t mptcp_opt_len = MPTCP_CAPABLE_SYN_LEN;
-            int ret = mptcp_build_capable_syn(opts + opt_len,
-                                               &mptcp_opt_len,
-                                               conn->mptcp_snd_key);
+            int ret = mptcp_build_capable_syn(opts + opt_len, &mptcp_opt_len, conn->mptcp_snd_key);
             if (ret == 0) {
                 opt_len += mptcp_opt_len;
             }
@@ -517,55 +511,58 @@ void send_tcp(struct tcp_conn *conn, uint8_t flags, const void *data, uint16_t d
     if (data && data_len > 0)
         memcpy(buf + hdr_len, data, data_len);
     tcp->checksum = 0;
-    tcp->checksum = net_transport_checksum(net_our_ip, conn->remote_ip, IP_PROTO_TCP,
-                                           buf, hdr_len + data_len);
+    tcp->checksum =
+        net_transport_checksum(net_our_ip, conn->remote_ip, IP_PROTO_TCP, buf, hdr_len + data_len);
 
     send_ip(conn->remote_ip, IP_PROTO_TCP, buf, hdr_len + data_len);
 }
 
 static struct tcp_listener *find_listener(uint16_t port) {
     for (int i = 0; i < net_num_listeners; i++)
-        if (net_listeners[i].port == port) return &net_listeners[i];
+        if (net_listeners[i].port == port)
+            return &net_listeners[i];
     return NULL;
 }
 
 static int find_conn(uint32_t remote_ip, uint16_t remote_port, uint16_t local_port) {
-    uint64_t __flags;
-    spinlock_irqsave_acquire(&tcp_lock, &__flags);
+    /* NOTE: caller (handle_tcp) already holds tcp_lock — do NOT acquire
+     * it here or we deadlock (non-recursive spinlock). */
     int ret = -1;
     for (int i = 0; i < MAX_TCP_CONNS; i++) {
         if (tcp_conns[i].state != TCP_CLOSED &&
             tcp_conns[i].state != TCP_TIME_WAIT && /* skip TIME_WAIT for reuse */
-            tcp_conns[i].remote_ip == remote_ip &&
-            tcp_conns[i].remote_port == remote_port &&
+            tcp_conns[i].remote_ip == remote_ip && tcp_conns[i].remote_port == remote_port &&
             tcp_conns[i].local_port == local_port) {
             ret = i;
             break;
         }
     }
-    spinlock_irqsave_release(&tcp_lock, __flags);
     return ret;
 }
 
 static int alloc_conn(void) {
-    uint64_t __flags;
-    spinlock_irqsave_acquire(&tcp_lock, &__flags);
+    /* NOTE: caller (handle_tcp) already holds tcp_lock — do NOT acquire
+     * it here or we deadlock (non-recursive spinlock). */
     int ret = -1;
     for (int i = 0; i < MAX_TCP_CONNS; i++)
-        if (tcp_conns[i].state == TCP_CLOSED) { ret = i; break; }
-    spinlock_irqsave_release(&tcp_lock, __flags);
+        if (tcp_conns[i].state == TCP_CLOSED) {
+            ret = i;
+            break;
+        }
     return ret;
 }
 
 void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
-    if (len < sizeof(struct tcp_header)) return;
+    if (len < sizeof(struct tcp_header))
+        return;
     struct tcp_header *tcp = (struct tcp_header *)payload;
 
     /* Verify TCP checksum */
     uint32_t csum_src = ntohl(ip_hdr->src_ip);
     uint32_t csum_dst = ntohl(ip_hdr->dst_ip);
     uint16_t saved_csum = tcp->checksum;
-    if (saved_csum == 0) return; /* RFC 793: TCP requires a valid checksum; 0 is never valid for TCP */
+    if (saved_csum == 0)
+        return; /* RFC 793: TCP requires a valid checksum; 0 is never valid for TCP */
     tcp->checksum = 0;
     if (net_transport_checksum(csum_src, csum_dst, IP_PROTO_TCP, payload, len) != saved_csum)
         return;
@@ -577,7 +574,8 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
     uint32_t ack = ntohl(tcp->ack_num);
     uint8_t flags = tcp->flags;
     uint16_t hdr_len = (tcp->data_off >> 4) * 4;
-    if (hdr_len < sizeof(struct tcp_header) || hdr_len > len) return;
+    if (hdr_len < sizeof(struct tcp_header) || hdr_len > len)
+        return;
     uint16_t data_len = len - hdr_len;
     const uint8_t *data = payload + hdr_len;
 
@@ -586,26 +584,34 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
 
     int conn_id = find_conn(remote_ip, src_port, dst_port);
 
-    /* Parse TCP options — extract SACK, MD5, TFO, window scale if present (for established conns) */
+    /* Parse TCP options — extract SACK, MD5, TFO, window scale if present (for established conns)
+     */
     if (conn_id >= 0) {
         int opt_offset = sizeof(struct tcp_header);
         while (opt_offset + 1 < (int)hdr_len) {
             uint8_t kind = payload[opt_offset];
-            if (kind == 0) break; /* End of options */
-            if (kind == 1) { opt_offset++; continue; } /* NOP */
-            if (opt_offset + 1 >= (int)hdr_len) break;
+            if (kind == 0)
+                break; /* End of options */
+            if (kind == 1) {
+                opt_offset++;
+                continue;
+            } /* NOP */
+            if (opt_offset + 1 >= (int)hdr_len)
+                break;
             uint8_t olen = payload[opt_offset + 1];
-            if (olen < 2 || opt_offset + olen > (int)hdr_len) break;
+            if (olen < 2 || opt_offset + olen > (int)hdr_len)
+                break;
             if (kind == 5) { /* SACK option */
                 int num_blocks = (olen - 2) / 8;
-                if (num_blocks > TCP_MAX_SACK_BLOCKS) num_blocks = TCP_MAX_SACK_BLOCKS;
+                if (num_blocks > TCP_MAX_SACK_BLOCKS)
+                    num_blocks = TCP_MAX_SACK_BLOCKS;
                 struct tcp_conn *sc = &tcp_conns[conn_id];
                 memset(sc->sack_blocks, 0, sizeof(sc->sack_blocks));
                 for (int sb = 0; sb < num_blocks; sb++) {
                     int off = opt_offset + 2 + sb * 8;
                     if (off + 8 <= (int)hdr_len) {
-                        sc->sack_blocks[sb].left = ntohl(*(uint32_t*)(payload + off));
-                        sc->sack_blocks[sb].right = ntohl(*(uint32_t*)(payload + off + 4));
+                        sc->sack_blocks[sb].left = ntohl(*(uint32_t *)(payload + off));
+                        sc->sack_blocks[sb].right = ntohl(*(uint32_t *)(payload + off + 4));
                     }
                 }
                 sc->sack_pending = 1;
@@ -615,11 +621,8 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
                  * The scoreboard tracks high_sacked, pipe, and scoring
                  * state for enhanced loss detection during recovery. */
                 if (sc->cc_algo == 3) {
-                    newreno_sack_scoreboard_update(&sc->newreno,
-                                                   sc->sack_blocks,
-                                                   num_blocks,
-                                                   sc->last_ack,
-                                                   sc->tx_unacked_len,
+                    newreno_sack_scoreboard_update(&sc->newreno, sc->sack_blocks, num_blocks,
+                                                   sc->last_ack, sc->tx_unacked_len,
                                                    sc->tx_unacked_seq);
                 }
                 /* ── RACK: update fwd_mark from highest SACK right edge ──
@@ -630,7 +633,7 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
                 for (int sb = 0; sb < num_blocks; sb++) {
                     int off = opt_offset + 2 + sb * 8;
                     if (off + 8 <= (int)hdr_len) {
-                        uint32_t right = ntohl(*(uint32_t*)(payload + off + 4));
+                        uint32_t right = ntohl(*(uint32_t *)(payload + off + 4));
                         if ((int32_t)(right - max_sack) > 0)
                             max_sack = right;
                     }
@@ -651,7 +654,8 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
                 sc->tfo_cookie_present = 1;
                 /* Option 34 format: kind(1) + len(1) + cookie(0-8 bytes) */
                 int cookie_len = olen - 2;
-                if (cookie_len > 8) cookie_len = 8;
+                if (cookie_len > 8)
+                    cookie_len = 8;
                 if (cookie_len > 0 && opt_offset + 2 + cookie_len <= (int)hdr_len) {
                     __builtin_memcpy(sc->tfo_cookie, payload + opt_offset + 2, cookie_len);
                 }
@@ -690,12 +694,13 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
             tmp.our_seq = ack;
             tmp.their_seq = seq + 1;
             send_tcp(&tmp, TCP_RST | TCP_ACK, NULL, 0);
+            spinlock_irqsave_release(&tcp_lock, __tcp_flags);
             return;
         }
 
         /* Parse TCP options from the SYN — extract MSS, window scale, and TFO cookie */
         uint16_t client_mss = 1460; /* default MSS for Ethernet */
-        uint8_t  client_wscale = 0; /* default: no window scaling */
+        uint8_t client_wscale = 0;  /* default: no window scaling */
         int syn_has_tfo = 0;
         uint8_t syn_tfo_cookie[8];
         int syn_has_mptcp = 0;
@@ -704,15 +709,21 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
             int opt_off = sizeof(struct tcp_header);
             while (opt_off + 1 < (int)hdr_len) {
                 uint8_t kind = payload[opt_off];
-                if (kind == 0) break; /* End of options */
-                if (kind == 1) { opt_off++; continue; } /* NOP */
-                if (opt_off + 1 >= (int)hdr_len) break;
+                if (kind == 0)
+                    break; /* End of options */
+                if (kind == 1) {
+                    opt_off++;
+                    continue;
+                } /* NOP */
+                if (opt_off + 1 >= (int)hdr_len)
+                    break;
                 uint8_t olen = payload[opt_off + 1];
-                if (olen < 2 || opt_off + olen > (int)hdr_len) break;
+                if (olen < 2 || opt_off + olen > (int)hdr_len)
+                    break;
                 if (kind == 2 && olen == 4) {
                     /* MSS option: 2 bytes of MSS value */
-                    client_mss = (uint16_t)payload[opt_off + 2] << 8
-                               | (uint16_t)payload[opt_off + 3];
+                    client_mss =
+                        (uint16_t)payload[opt_off + 2] << 8 | (uint16_t)payload[opt_off + 3];
                     /* Validate MSS option value per RFC 1122 §4.2.2.6.
                      * The minimum MSS is 536 bytes (IPv4 minimum reassembly buffer).
                      * Clamp to the protocol-required minimum if the peer advertises
@@ -731,7 +742,8 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
                 } else if (kind == 34) {
                     /* TCP Fast Open (TFO) Cookie option (kind 34) */
                     int cookie_len = olen - 2;
-                    if (cookie_len > 8) cookie_len = 8;
+                    if (cookie_len > 8)
+                        cookie_len = 8;
                     if (cookie_len > 0 && opt_off + 2 + cookie_len <= (int)hdr_len) {
                         syn_has_tfo = 1;
                         memset(syn_tfo_cookie, 0, 8);
@@ -753,9 +765,8 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
         conn_id = alloc_conn();
         if (conn_id < 0) {
             /* ── Connection table full → use SYN cookie (RFC 4987) ── */
-            uint32_t cookie = compute_syn_cookie(remote_ip, src_port,
-                                                  ip_hdr->dst_ip, dst_port,
-                                                  client_mss);
+            uint32_t cookie =
+                compute_syn_cookie(remote_ip, src_port, ip_hdr->dst_ip, dst_port, client_mss);
             /* Send SYN-ACK with the cookie as our initial sequence number.
              * We build the reply manually since send_tcp expects a full
              * tcp_conn struct. */
@@ -780,21 +791,21 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
         c->their_seq = seq + 1;
         c->their_window = ntohs(tcp->window);
         c->their_wscale = client_wscale; /* window scale from peer (0-14) */
-        c->rxlen = 0;    /* reset stale state from previous use */
+        c->rxlen = 0;                    /* reset stale state from previous use */
         c->rx_fin = 0;
         c->cwnd = 1;
         c->ssthresh = 65535;
         c->dupack_count = 0;
         c->srtt = 0;
         c->rttvar = 0;
-        c->tx_unacked_len  = 0;
-        c->tx_unacked_seq  = 0;
-        c->last_send_tick  = 0;
-        c->retrans_count   = 0;
-        c->rto             = 30;   /* 3000ms initial RTO (100Hz) */
-        c->tcp_nodelay     = 0;
-        c->tcp_cork        = 0;
-        c->keepalive       = 0;
+        c->tx_unacked_len = 0;
+        c->tx_unacked_seq = 0;
+        c->last_send_tick = 0;
+        c->retrans_count = 0;
+        c->rto = 30; /* 3000ms initial RTO (100Hz) */
+        c->tcp_nodelay = 0;
+        c->tcp_cork = 0;
+        c->keepalive = 0;
         c->keepalive_interval = 500;
         c->keepalive_probes = 0;
         c->keepalive_probes_max = 3;
@@ -812,12 +823,12 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
         /* Congestion control initialization */
         cubic_init(&c->cubic);
         newreno_init(&c->newreno);
-        c->cc_algo = 0;  /* 0 = CUBIC (default), 1 = BBR, 2 = BBRv3, 3 = NewReno */
+        c->cc_algo = 0; /* 0 = CUBIC (default), 1 = BBR, 2 = BBRv3, 3 = NewReno */
         /* RACK (Recent ACKnowledgment) loss detection initialization */
-        c->rack_fwd_mark    = 0;
-        c->rack_fwd_tick    = 0;
-        c->rack_reo_wnd     = 1;   /* default: 1 tick reordering window */
-        c->rack_min_rtt     = 0;
+        c->rack_fwd_mark = 0;
+        c->rack_fwd_tick = 0;
+        c->rack_reo_wnd = 1; /* default: 1 tick reordering window */
+        c->rack_min_rtt = 0;
         /* Nagle / Delayed ACK initialization */
         c->delayed_ack_pending = 0;
         c->nagle_buf_len = 0;
@@ -839,8 +850,8 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
             if (mptcp_token >= 0) {
                 int ret = mptcp_associate(conn_id, (uint32_t)mptcp_token);
                 if (ret == 0) {
-                    kprintf("[TCP] MP_CAPABLE SYN on conn %d, MPTCP token=%d\n",
-                            conn_id, mptcp_token);
+                    kprintf("[TCP] MP_CAPABLE SYN on conn %d, MPTCP token=%d\n", conn_id,
+                            mptcp_token);
                 }
             }
         }
@@ -851,14 +862,13 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
          * without waiting for the ACK that completes the three-way handshake.
          * This saves one RTT on repeat connections (RFC 7413). */
         if (syn_has_tfo && data_len > 0 &&
-            tfo_validate_cookie(remote_ip, ip_hdr->dst_ip,
-                                dst_port, syn_tfo_cookie)) {
+            tfo_validate_cookie(remote_ip, ip_hdr->dst_ip, dst_port, syn_tfo_cookie)) {
             /* Valid TFO cookie — accept the data in the SYN */
             /* Validate that data fits within our advertised window (RFC 7413 §4.2) */
             uint32_t their_win = c->their_window ? c->their_window : 65535;
             if (data_len > their_win) {
-                kprintf("[TCP] TFO data exceeds window: data_len=%u, window=%u\n",
-                        data_len, their_win);
+                kprintf("[TCP] TFO data exceeds window: data_len=%u, window=%u\n", data_len,
+                        their_win);
                 send_tcp(c, TCP_SYN | TCP_ACK, NULL, 0);
                 c->our_seq++;
                 spinlock_irqsave_release(&tcp_lock, __tcp_flags);
@@ -875,9 +885,8 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
 
             kprintf("[TFO] Valid cookie from %d.%d.%d.%d:%d, "
                     "accepted %u bytes in SYN\n",
-                    (remote_ip >> 24) & 0xFF, (remote_ip >> 16) & 0xFF,
-                    (remote_ip >> 8) & 0xFF, remote_ip & 0xFF,
-                    src_port, copy_len);
+                    (remote_ip >> 24) & 0xFF, (remote_ip >> 16) & 0xFF, (remote_ip >> 8) & 0xFF,
+                    remote_ip & 0xFF, src_port, copy_len);
 
             /* Notify the listener about the new connection */
             send_tcp(c, TCP_SYN | TCP_ACK, NULL, 0);
@@ -913,9 +922,8 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
          * initiated via SYN cookies), validate the cookie and create
          * a full connection on the fly. */
         if ((flags & TCP_ACK) && !(flags & TCP_SYN) && data_len == 0) {
-            uint16_t decoded_mss = check_syn_cookie(ack - 1, remote_ip,
-                                                     src_port, ip_hdr->dst_ip,
-                                                     dst_port);
+            uint16_t decoded_mss =
+                check_syn_cookie(ack - 1, remote_ip, src_port, ip_hdr->dst_ip, dst_port);
             if (decoded_mss > 0) {
                 /* Valid SYN cookie — allocate a connection */
                 conn_id = alloc_conn();
@@ -926,17 +934,17 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
                     c->remote_ip = remote_ip;
                     c->remote_port = src_port;
                     c->local_port = dst_port;
-                    c->our_seq = ack;           /* matches what we sent */
-                    c->their_seq = seq + 1;      /* next expected from peer */
+                    c->our_seq = ack;       /* matches what we sent */
+                    c->their_seq = seq + 1; /* next expected from peer */
                     c->their_window = ntohs(tcp->window);
                     c->cwnd = 1;
                     c->ssthresh = 65535;
                     c->rto = 30;
                     /* RACK (Recent ACKnowledgment) loss detection init */
-                    c->rack_fwd_mark    = 0;
-                    c->rack_fwd_tick    = 0;
-                    c->rack_reo_wnd     = 1;
-                    c->rack_min_rtt     = 0;
+                    c->rack_fwd_mark = 0;
+                    c->rack_fwd_tick = 0;
+                    c->rack_reo_wnd = 1;
+                    c->rack_min_rtt = 0;
                     memset(c->sack_blocks, 0, sizeof(c->sack_blocks));
                     c->sack_pending = 0;
 
@@ -1015,7 +1023,8 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
             c->rx_fin = 1;
             tcp_close_handler _cb = l ? l->on_close : NULL;
             spinlock_irqsave_release(&tcp_lock, __tcp_flags);
-            if (_cb) _cb(conn_id);
+            if (_cb)
+                _cb(conn_id);
             return;
         }
 
@@ -1032,23 +1041,21 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
                      * is delivered.  rack_fwd_mark tracks the highest
                      * sequence number delivered to the peer. */
                     if ((int32_t)(ack - c->rack_fwd_mark) > 0) {
-                        c->rack_fwd_mark  = ack;
-                        c->rack_fwd_tick  = timer_get_ticks();
+                        c->rack_fwd_mark = ack;
+                        c->rack_fwd_tick = timer_get_ticks();
                     }
                     if ((int32_t)(ack - (c->tx_unacked_seq + c->tx_unacked_len)) >= 0) {
                         /* Fully ACKed — clear unacked buffer */
                         acked_some = 1;
                         delivered_data = c->tx_unacked_len;
                         c->tx_unacked_len = 0;
-                        c->retrans_count  = 0;
+                        c->retrans_count = 0;
                         c->dupack_count = 0;
                         /* Exit PRR recovery when all pending data is ACKed */
                         if (c->in_recovery) {
                             if (c->cc_algo == 3) {
                                 /* NewReno: exit recovery with deflate */
-                                newreno_on_full_ack(&c->newreno,
-                                                     &c->cwnd,
-                                                     c->ssthresh);
+                                newreno_on_full_ack(&c->newreno, &c->cwnd, c->ssthresh);
                                 c->in_recovery = 0;
                             } else {
                                 c->in_recovery = 0;
@@ -1065,7 +1072,8 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
                         uint16_t acked16 = (uint16_t)(acked_len > 65535 ? 65535 : acked_len);
                         c->tx_unacked_len -= acked16;
                         if (c->tx_unacked_len > 0) {
-                            memmove(c->tx_unacked_buf, c->tx_unacked_buf + acked16, c->tx_unacked_len);
+                            memmove(c->tx_unacked_buf, c->tx_unacked_buf + acked16,
+                                    c->tx_unacked_len);
                             c->tx_unacked_seq = ack;
                         } else {
                             c->tx_unacked_seq = 0;
@@ -1079,19 +1087,13 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
                          * partial ACK (doesn't cover all outstanding),
                          * retransmit the first unacknowledged segment
                          * (RFC 6582 §3.2 Step 3). */
-                        if (c->cc_algo == 3 &&
-                            c->in_recovery &&
-                            c->tx_unacked_len > 0 &&
-                            newreno_on_partial_ack(&c->newreno,
-                                                    &c->cwnd,
-                                                    c->ssthresh)) {
+                        if (c->cc_algo == 3 && c->in_recovery && c->tx_unacked_len > 0 &&
+                            newreno_on_partial_ack(&c->newreno, &c->cwnd, c->ssthresh)) {
                             /* Retransmit the first unacknowledged segment */
                             uint32_t saved_seq = c->our_seq;
                             c->our_seq = c->tx_unacked_seq;
-                            uint16_t chunk = c->tx_unacked_len > 1400
-                                             ? 1400 : c->tx_unacked_len;
-                            send_tcp(c, TCP_PSH | TCP_ACK,
-                                     c->tx_unacked_buf, chunk);
+                            uint16_t chunk = c->tx_unacked_len > 1400 ? 1400 : c->tx_unacked_len;
+                            send_tcp(c, TCP_PSH | TCP_ACK, c->tx_unacked_buf, chunk);
                             c->our_seq += chunk;
                             c->our_seq = saved_seq;
                             c->last_send_tick = timer_get_ticks();
@@ -1121,85 +1123,91 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
                                  * For now, PRR paces retransmits via ACK clock. */
                             }
                         } else
-                        /* ── Congestion control update (normal, not in recovery) ── */
-                        if (c->cc_algo == 1) {
-                            /* BBR model-based congestion control */
-                            uint64_t now = timer_get_ticks();
-                            uint32_t rtt_ticks = (c->srtt > 0) ? (uint32_t)(c->srtt / 8) : 10;
-                            if (rtt_ticks < 1) rtt_ticks = 1;
-                            /* Use cwnd * 1460 as a proxy for bytes delivered this ACK.
-                             * The exact count is tricky because tx_unacked_len is reset
-                             * before we reach here for fully-ACKed segments.  BBR's
-                             * estimate converges quickly regardless. */
-                            uint32_t bbr_bytes = c->cwnd * 1460;
-                            bbr_on_ack(&c->bbr, bbr_bytes,
-                                       c->cwnd, rtt_ticks, now);
-                            /* BBR may set the pacing rate; follow its target cwnd */
-                            c->cwnd = bbr_get_cwnd(&c->bbr, c->cwnd);
-                            /* BBR paces sends; we need to ensure cwnd respects pacing */
-                            uint32_t bbr_pacing = bbr_get_pacing_rate(&c->bbr);
-                            if (bbr_pacing > 0 && c->cwnd > bbr_pacing * 2) {
-                                /* cwnd capped to pacing_rate * 2 to prevent bursts */
-                                uint32_t paced_cwnd = bbr_pacing * 2;
-                                if (paced_cwnd < 4) paced_cwnd = 4;
-                                if (c->cwnd > paced_cwnd)
-                                    c->cwnd = paced_cwnd;
-                            }
-                        } else if (c->cc_algo == 3) {
-                            /* NewReno AIMD congestion control */
-                            newreno_on_ack(&c->newreno, &c->cwnd,
-                                           c->ssthresh);
-                        } else {
-                            /* CUBIC congestion control (default) */
-                            if (c->cwnd < c->ssthresh) {
-                                /* Slow start: exponential growth.
-                                 * CUBIC hybrid slow start (RFC 8312 §3): monitor
-                                 * ACK spacing and RTT to detect incipient
-                                 * congestion and exit slow start before loss. */
-                                uint64_t now_ms = timer_get_ms();
-                                uint32_t rtt_delta = (uint32_t)(timer_get_ticks() -
-                                                                c->last_send_tick);
-                                uint32_t rtt_ms = rtt_delta * 10;
-                                if (cubic_hystart_update(&c->cubic, rtt_ms,
-                                                         now_ms)) {
-                                    c->ssthresh = c->cwnd;
-                                }
-                                c->cwnd++;
-                            } else {
-                                /* Congestion avoidance: use CUBIC cubic function */
+                            /* ── Congestion control update (normal, not in recovery) ── */
+                            if (c->cc_algo == 1) {
+                                /* BBR model-based congestion control */
                                 uint64_t now = timer_get_ticks();
                                 uint32_t rtt_ticks = (c->srtt > 0) ? (uint32_t)(c->srtt / 8) : 10;
-                                if (rtt_ticks < 1) rtt_ticks = 1;
-                                uint32_t target = cubic_update(&c->cubic, c->cwnd, now, rtt_ticks);
-                                /* Aim for the CUBIC target, but ensure at least Reno-equivalent
-                                 * growth (1 segment per RTT) for fairness with Reno flows */
-                                uint32_t reno_target = c->cwnd + 1;
-                                if (target > reno_target)
-                                    c->cwnd = target;
-                                else
-                                    c->cwnd = reno_target;
+                                if (rtt_ticks < 1)
+                                    rtt_ticks = 1;
+                                /* Use cwnd * 1460 as a proxy for bytes delivered this ACK.
+                                 * The exact count is tricky because tx_unacked_len is reset
+                                 * before we reach here for fully-ACKed segments.  BBR's
+                                 * estimate converges quickly regardless. */
+                                uint32_t bbr_bytes = c->cwnd * 1460;
+                                bbr_on_ack(&c->bbr, bbr_bytes, c->cwnd, rtt_ticks, now);
+                                /* BBR may set the pacing rate; follow its target cwnd */
+                                c->cwnd = bbr_get_cwnd(&c->bbr, c->cwnd);
+                                /* BBR paces sends; we need to ensure cwnd respects pacing */
+                                uint32_t bbr_pacing = bbr_get_pacing_rate(&c->bbr);
+                                if (bbr_pacing > 0 && c->cwnd > bbr_pacing * 2) {
+                                    /* cwnd capped to pacing_rate * 2 to prevent bursts */
+                                    uint32_t paced_cwnd = bbr_pacing * 2;
+                                    if (paced_cwnd < 4)
+                                        paced_cwnd = 4;
+                                    if (c->cwnd > paced_cwnd)
+                                        c->cwnd = paced_cwnd;
+                                }
+                            } else if (c->cc_algo == 3) {
+                                /* NewReno AIMD congestion control */
+                                newreno_on_ack(&c->newreno, &c->cwnd, c->ssthresh);
+                            } else {
+                                /* CUBIC congestion control (default) */
+                                if (c->cwnd < c->ssthresh) {
+                                    /* Slow start: exponential growth.
+                                     * CUBIC hybrid slow start (RFC 8312 §3): monitor
+                                     * ACK spacing and RTT to detect incipient
+                                     * congestion and exit slow start before loss. */
+                                    uint64_t now_ms = timer_get_ms();
+                                    uint32_t rtt_delta =
+                                        (uint32_t)(timer_get_ticks() - c->last_send_tick);
+                                    uint32_t rtt_ms = rtt_delta * 10;
+                                    if (cubic_hystart_update(&c->cubic, rtt_ms, now_ms)) {
+                                        c->ssthresh = c->cwnd;
+                                    }
+                                    c->cwnd++;
+                                } else {
+                                    /* Congestion avoidance: use CUBIC cubic function */
+                                    uint64_t now = timer_get_ticks();
+                                    uint32_t rtt_ticks =
+                                        (c->srtt > 0) ? (uint32_t)(c->srtt / 8) : 10;
+                                    if (rtt_ticks < 1)
+                                        rtt_ticks = 1;
+                                    uint32_t target =
+                                        cubic_update(&c->cubic, c->cwnd, now, rtt_ticks);
+                                    /* Aim for the CUBIC target, but ensure at least Reno-equivalent
+                                     * growth (1 segment per RTT) for fairness with Reno flows */
+                                    uint32_t reno_target = c->cwnd + 1;
+                                    if (target > reno_target)
+                                        c->cwnd = target;
+                                    else
+                                        c->cwnd = reno_target;
+                                }
                             }
-                        }
-                        if (c->cwnd > 1024) c->cwnd = 1024;
+                        if (c->cwnd > 1024)
+                            c->cwnd = 1024;
 
                         /* RTT estimation (Jacobson's algorithm) */
                         int32_t m = (int32_t)(timer_get_ticks() - c->last_send_tick);
                         if (m > 0) {
-                            m = (m > 300) ? 300 : m;  /* clamp to 3s */
-                            m = m * 8;  /* scale for srtt */
+                            m = (m > 300) ? 300 : m; /* clamp to 3s */
+                            m = m * 8;               /* scale for srtt */
                             if (c->srtt == 0) {
                                 c->srtt = m;
                                 c->rttvar = m / 2;
                             } else {
                                 int32_t delta = m - c->srtt;
                                 c->srtt += delta / 8;
-                                if (delta < 0) delta = -delta;
+                                if (delta < 0)
+                                    delta = -delta;
                                 c->rttvar += (delta - c->rttvar) / 4;
                             }
                             /* RTO = srtt + 4 * rttvar, in ms */
                             int32_t rto_ms = (c->srtt + 4 * c->rttvar) / 8;
-                            if (rto_ms < 100) rto_ms = 100;
-                            if (rto_ms > 12000) rto_ms = 12000;
+                            if (rto_ms < 100)
+                                rto_ms = 100;
+                            if (rto_ms > 12000)
+                                rto_ms = 12000;
                             c->rto = (uint16_t)(rto_ms / 10 + 1);
                             /* ── RACK: track minimum RTT and reordering window ──
                              * rack_min_rtt is the minimum observed RTT in ticks.
@@ -1239,15 +1247,16 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
                         while (remain > 0) {
                             uint16_t skip = 0;
                             for (int sb = 0; sb < TCP_MAX_SACK_BLOCKS; sb++) {
-                                if (c->sack_blocks[sb].left == 0 &&
-                                    c->sack_blocks[sb].right == 0) continue;
+                                if (c->sack_blocks[sb].left == 0 && c->sack_blocks[sb].right == 0)
+                                    continue;
                                 uint32_t base = c->tx_unacked_seq;
                                 if ((int32_t)(base + remain - c->sack_blocks[sb].left) > 0 &&
                                     (int32_t)(base - c->sack_blocks[sb].right) < 0) {
                                     if (c->sack_blocks[sb].left > base &&
                                         c->sack_blocks[sb].left < base + remain) {
                                         uint16_t s = (uint16_t)(c->sack_blocks[sb].left - base);
-                                        if (s > skip) skip = s;
+                                        if (s > skip)
+                                            skip = s;
                                     }
                                 }
                             }
@@ -1260,7 +1269,7 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
                                 first_chunk = remain > 1400 ? 1400 : remain;
                                 send_tcp(c, TCP_PSH | TCP_ACK, rp, first_chunk);
                                 c->our_seq += first_chunk;
-                                break;  /* Send only one segment per 3 dupacks */
+                                break; /* Send only one segment per 3 dupacks */
                             }
                         }
                         c->our_seq = saved_seq;
@@ -1273,35 +1282,33 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
                             bbr_on_loss(&c->bbr);
                             if (c->ssthresh > c->cwnd / 2)
                                 c->ssthresh = c->cwnd / 2;
-                            if (c->ssthresh < 2) c->ssthresh = 2;
+                            if (c->ssthresh < 2)
+                                c->ssthresh = 2;
                             c->cwnd = bbr_get_cwnd(&c->bbr, c->cwnd);
                         } else if (c->cc_algo == 3) {
                             /* NewReno: fast retransmit + fast recovery */
-                            newreno_on_3dupacks(&c->newreno, &c->cwnd,
-                                                &c->ssthresh, c->our_seq);
+                            newreno_on_3dupacks(&c->newreno, &c->cwnd, &c->ssthresh, c->our_seq);
                             /* Initialise SACK scoreboard for this recovery
                              * episode (RFC 6675 §4).  Records the starting
                              * outstanding range and enables SACK-based scoring
                              * for loss detection below the 3-dupACK threshold. */
-                            newreno_sack_scoreboard_init(&c->newreno,
-                                                         c->last_ack,
-                                                         c->our_seq);
+                            newreno_sack_scoreboard_init(&c->newreno, c->last_ack, c->our_seq);
                         } else {
                             /* CUBIC: handle congestion event */
                             c->ssthresh = cubic_on_loss(&c->cubic, c->cwnd, timer_get_ticks());
-                            c->cwnd = c->ssthresh;  /* PRR manages window during recovery */
+                            c->cwnd = c->ssthresh; /* PRR manages window during recovery */
                         }
 
                         /* Initialize PRR state — Item 158 */
-                        c->in_recovery   = 1;
+                        c->in_recovery = 1;
                         c->prr_delivered = 0;
-                        c->prr_out       = first_chunk;
+                        c->prr_out = first_chunk;
 
                         c->dupack_count = 0;
                         c->last_send_tick = timer_get_ticks();
 
                         /* Exit recovery flag: when all pending data is ACKed */
-                        (void)prr_recover_seq;  /* used implicitly via tx_unacked_len == 0 */
+                        (void)prr_recover_seq; /* used implicitly via tx_unacked_len == 0 */
                     } else if (c->dupack_count >= 3 && c->cc_algo == 3 && c->in_recovery) {
                         /* ── NewReno: additional dupack during recovery ───
                          * Inflate cwnd by 1 MSS per additional dupack
@@ -1319,7 +1326,8 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
             c->rx_fin = 1;
             tcp_close_handler _cb = l ? l->on_close : NULL;
             spinlock_irqsave_release(&tcp_lock, __tcp_flags);
-            if (_cb) _cb(conn_id);
+            if (_cb)
+                _cb(conn_id);
             return;
         }
 
@@ -1345,8 +1353,8 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
              * Data outside this window should be silently dropped (RFC 793). */
             uint32_t their_win = c->their_window ? c->their_window : 8192;
             if (seq + data_len > c->their_seq + their_win) {
-                kprintf("[TCP] window violation: seq=%u, len=%u, their_seq=%u, window=%u\n",
-                        seq, data_len, c->their_seq, their_win);
+                kprintf("[TCP] window violation: seq=%u, len=%u, their_seq=%u, window=%u\n", seq,
+                        data_len, c->their_seq, their_win);
                 spinlock_irqsave_release(&tcp_lock, __tcp_flags);
                 return;
             }
@@ -1407,6 +1415,12 @@ void handle_tcp(struct ip_header *ip_hdr, uint8_t *payload, uint16_t len) {
                 }
                 spinlock_irqsave_release(&tcp_lock, __tcp_flags);
             }
+        } else {
+            /* Pure ACK / keepalive / window-probe segment (data_len == 0):
+             * the data block above was skipped, so release the lock
+             * acquired at entry (it was leaking here — next packet's
+             * handle_tcp spun forever on tcp_lock). */
+            spinlock_irqsave_release(&tcp_lock, __tcp_flags);
         }
         return;
     }
@@ -1467,7 +1481,8 @@ static uint16_t next_ephemeral_port = 49152;
 
 int net_tcp_connect(uint32_t ip, uint16_t port) {
     int conn_id = alloc_conn();
-    if (conn_id < 0) return -1;
+    if (conn_id < 0)
+        return -1;
 
     uint64_t __tcp_flags;
     spinlock_irqsave_acquire(&tcp_lock, &__tcp_flags);
@@ -1480,17 +1495,20 @@ int net_tcp_connect(uint32_t ip, uint16_t port) {
     int port_tries = 0;
     do {
         c->local_port = next_ephemeral_port++;
-        if (next_ephemeral_port > 60000) next_ephemeral_port = 49152;
+        if (next_ephemeral_port > 60000)
+            next_ephemeral_port = 49152;
         port_tries++;
         /* Check if port is already in use by any connection */
         int port_in_use = 0;
         for (int i = 0; i < MAX_TCP_CONNS; i++) {
             if (i != conn_id && tcp_conns[i].state != TCP_CLOSED &&
                 tcp_conns[i].local_port == c->local_port) {
-                port_in_use = 1; break;
+                port_in_use = 1;
+                break;
             }
         }
-        if (!port_in_use) break;
+        if (!port_in_use)
+            break;
     } while (port_tries < 1000);
     c->our_seq = 10000 + net_ip_id_counter * 1000;
     c->their_seq = 0;
@@ -1503,14 +1521,14 @@ int net_tcp_connect(uint32_t ip, uint16_t port) {
     c->dupack_count = 0;
     c->srtt = 0;
     c->rttvar = 0;
-    c->tx_unacked_len  = 0;
-    c->tx_unacked_seq  = 0;
-    c->last_send_tick  = 0;
-    c->retrans_count   = 0;
-    c->rto             = 30;
-    c->tcp_nodelay     = 0;
-    c->tcp_cork        = 0;
-    c->keepalive       = 0;
+    c->tx_unacked_len = 0;
+    c->tx_unacked_seq = 0;
+    c->last_send_tick = 0;
+    c->retrans_count = 0;
+    c->rto = 30;
+    c->tcp_nodelay = 0;
+    c->tcp_cork = 0;
+    c->keepalive = 0;
     c->keepalive_interval = 500;
     c->keepalive_probes = 0;
     c->keepalive_probes_max = 3;
@@ -1532,12 +1550,12 @@ int net_tcp_connect(uint32_t ip, uint16_t port) {
     /* Congestion control initialization */
     cubic_init(&c->cubic);
     newreno_init(&c->newreno);
-    c->cc_algo = 0;  /* 0 = CUBIC (default), 1 = BBR, 2 = BBRv3, 3 = NewReno */
+    c->cc_algo = 0; /* 0 = CUBIC (default), 1 = BBR, 2 = BBRv3, 3 = NewReno */
     /* RACK (Recent ACKnowledgment) loss detection initialization */
-    c->rack_fwd_mark    = 0;
-    c->rack_fwd_tick    = 0;
-    c->rack_reo_wnd     = 1;
-    c->rack_min_rtt     = 0;
+    c->rack_fwd_mark = 0;
+    c->rack_fwd_tick = 0;
+    c->rack_reo_wnd = 1;
+    c->rack_min_rtt = 0;
     /* Nagle / Delayed ACK initialization */
     c->delayed_ack_pending = 0;
     c->nagle_buf_len = 0;
@@ -1549,9 +1567,9 @@ int net_tcp_connect(uint32_t ip, uint16_t port) {
     memset(c->mptcp_rcv_key, 0, 8);
 
     /* PRR (Proportional Rate Reduction) initialization — Item 158 */
-    c->in_recovery   = 0;
+    c->in_recovery = 0;
     c->prr_delivered = 0;
-    c->prr_out       = 0;
+    c->prr_out = 0;
 
     send_tcp(c, TCP_SYN, NULL, 0);
     c->our_seq++;
@@ -1582,7 +1600,8 @@ int net_tcp_connect(uint32_t ip, uint16_t port) {
 }
 
 int net_tcp_recv(int conn_id, void *buf, uint16_t bufsize, int timeout_ticks) {
-    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return -1;
+    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS)
+        return -1;
     struct tcp_conn *c = &tcp_conns[conn_id];
 
     uint64_t start = timer_get_ticks();
@@ -1612,16 +1631,17 @@ int net_tcp_recv(int conn_id, void *buf, uint16_t bufsize, int timeout_ticks) {
     return got;
 }
 
-void net_tcp_listen(uint16_t port, tcp_connect_handler on_connect,
-                    tcp_data_handler on_data, tcp_close_handler on_close) {
-    if (net_num_listeners >= MAX_LISTENERS) return;
+void net_tcp_listen(uint16_t port, tcp_connect_handler on_connect, tcp_data_handler on_data,
+                    tcp_close_handler on_close) {
+    if (net_num_listeners >= MAX_LISTENERS)
+        return;
     struct tcp_listener *l = &net_listeners[net_num_listeners];
-    l->port       = port;
+    l->port = port;
     l->on_connect = on_connect;
-    l->on_data    = on_data;
-    l->on_close   = on_close;
-    l->accept_head  = 0;
-    l->accept_tail  = 0;
+    l->on_data = on_data;
+    l->on_close = on_close;
+    l->accept_head = 0;
+    l->accept_tail = 0;
     l->accept_count = 0;
     net_num_listeners++;
 }
@@ -1647,13 +1667,17 @@ int net_tcp_port_in_use(uint16_t port) {
 }
 
 int net_tcp_send(int conn_id, const void *data, uint16_t len) {
-    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return -1;
+    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS)
+        return -1;
     struct tcp_conn *c = &tcp_conns[conn_id];
 
     uint64_t __tcp_flags;
     spinlock_irqsave_acquire(&tcp_lock, &__tcp_flags);
 
-    if (c->state != TCP_ESTABLISHED) { spinlock_irqsave_release(&tcp_lock, __tcp_flags); return -1; }
+    if (c->state != TCP_ESTABLISHED) {
+        spinlock_irqsave_release(&tcp_lock, __tcp_flags);
+        return -1;
+    }
 
     /* Clamp to fit in the retransmit buffer */
     uint16_t send_len = len;
@@ -1680,7 +1704,8 @@ int net_tcp_send(int conn_id, const void *data, uint16_t len) {
         /* Merge any accumulated Nagle data with this send */
         if (c->nagle_buf_len > 0) {
             uint16_t merge = (uint16_t)sizeof(c->tx_unacked_buf) - send_len;
-            if (merge > c->nagle_buf_len) merge = c->nagle_buf_len;
+            if (merge > c->nagle_buf_len)
+                merge = c->nagle_buf_len;
             /* Build merged buffer: Nagle data first, then new data */
             memcpy(c->tx_unacked_buf, c->nagle_buf, merge);
             memcpy(c->tx_unacked_buf + merge, data, send_len);
@@ -1707,7 +1732,8 @@ int net_tcp_send(int conn_id, const void *data, uint16_t len) {
         c->retrans_count = 0;
         c->dupack_count = 0;
         c->last_activity_tick = c->last_send_tick;
-        if (c->rto == 0) c->rto = 30;
+        if (c->rto == 0)
+            c->rto = 30;
         spinlock_irqsave_release(&tcp_lock, __tcp_flags);
         return 0;
     }
@@ -1753,7 +1779,8 @@ int net_tcp_send(int conn_id, const void *data, uint16_t len) {
     c->retrans_count = 0;
     c->dupack_count = 0;
     c->last_activity_tick = c->last_send_tick;
-    if (c->rto == 0) c->rto = 30;
+    if (c->rto == 0)
+        c->rto = 30;
     spinlock_irqsave_release(&tcp_lock, __tcp_flags);
     return 0;
 }
@@ -1777,7 +1804,8 @@ static void tcp_flush_delayed_ack(struct tcp_conn *c) {
  * have data waiting in the buffer.
  */
 static void tcp_flush_nagle(struct tcp_conn *c) {
-    if (c->nagle_buf_len == 0) return;
+    if (c->nagle_buf_len == 0)
+        return;
 
     uint16_t remaining = c->nagle_buf_len;
     const uint8_t *p = c->nagle_buf;
@@ -1803,7 +1831,8 @@ static void tcp_flush_nagle(struct tcp_conn *c) {
 }
 
 void net_tcp_close(int conn_id) {
-    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return;
+    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS)
+        return;
     struct tcp_conn *c = &tcp_conns[conn_id];
 
     uint64_t __tcp_flags;
@@ -1815,33 +1844,33 @@ void net_tcp_close(int conn_id) {
         tcp_flush_nagle(c);
 
     switch (c->state) {
-        case TCP_ESTABLISHED:
-            send_tcp(c, TCP_FIN | TCP_ACK, NULL, 0);
-            c->our_seq++;
-            c->state = TCP_FIN_WAIT;
-            break;
-        case TCP_CLOSE_WAIT:
-            send_tcp(c, TCP_FIN | TCP_ACK, NULL, 0);
-            c->our_seq++;
-            c->state = TCP_LAST_ACK;
-            break;
-        case TCP_SYN_SENT:
-            /* fallthrough */
-        case TCP_SYN_RECEIVED:
-            send_tcp(c, TCP_RST, NULL, 0);
-            c->state = TCP_CLOSED;
-            break;
-        case TCP_FIN_WAIT:
-            /* fallthrough */
-        case TCP_FIN_WAIT_2:
-            /* fallthrough */
-        case TCP_CLOSING:
-            /* fallthrough */
-        case TCP_LAST_ACK:
-            /* fallthrough */
-        case TCP_CLOSED:
-        default:
-            break;
+    case TCP_ESTABLISHED:
+        send_tcp(c, TCP_FIN | TCP_ACK, NULL, 0);
+        c->our_seq++;
+        c->state = TCP_FIN_WAIT;
+        break;
+    case TCP_CLOSE_WAIT:
+        send_tcp(c, TCP_FIN | TCP_ACK, NULL, 0);
+        c->our_seq++;
+        c->state = TCP_LAST_ACK;
+        break;
+    case TCP_SYN_SENT:
+        /* fallthrough */
+    case TCP_SYN_RECEIVED:
+        send_tcp(c, TCP_RST, NULL, 0);
+        c->state = TCP_CLOSED;
+        break;
+    case TCP_FIN_WAIT:
+        /* fallthrough */
+    case TCP_FIN_WAIT_2:
+        /* fallthrough */
+    case TCP_CLOSING:
+        /* fallthrough */
+    case TCP_LAST_ACK:
+        /* fallthrough */
+    case TCP_CLOSED:
+    default:
+        break;
     }
     spinlock_irqsave_release(&tcp_lock, __tcp_flags);
 }
@@ -1850,12 +1879,13 @@ void net_tcp_close(int conn_id) {
 
 int net_tcp_accept(uint16_t port, int timeout_ticks) {
     struct tcp_listener *l = find_listener(port);
-    if (!l) return -1;
+    if (!l)
+        return -1;
 
     uint64_t start = timer_get_ticks();
     while (l->accept_count == 0) {
         net_poll();
-        scheduler_yield();  /* allow other processes to run while waiting */
+        scheduler_yield(); /* allow other processes to run while waiting */
         if (timeout_ticks > 0) {
             uint64_t now = timer_get_ticks();
             if (now != start && (int)(now - start) > timeout_ticks)
@@ -1871,8 +1901,7 @@ int net_tcp_accept(uint16_t port, int timeout_ticks) {
     }
     int conn_id = l->accept_queue[l->accept_head];
     /* Validate conn_id — must be a valid established connection */
-    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS ||
-        tcp_conns[conn_id].state == TCP_CLOSED) {
+    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS || tcp_conns[conn_id].state == TCP_CLOSED) {
         spinlock_irqsave_release(&tcp_lock, __tcp_flags);
         return -1;
     }
@@ -1887,8 +1916,8 @@ void net_conn_list(void (*cb)(uint16_t lport, uint32_t rip, uint16_t rport, int 
     spinlock_irqsave_acquire(&tcp_lock, &__tcp_flags);
     for (int i = 0; i < MAX_TCP_CONNS; i++) {
         if (tcp_conns[i].state != TCP_CLOSED)
-            cb(tcp_conns[i].local_port, tcp_conns[i].remote_ip,
-               tcp_conns[i].remote_port, (int)tcp_conns[i].state);
+            cb(tcp_conns[i].local_port, tcp_conns[i].remote_ip, tcp_conns[i].remote_port,
+               (int)tcp_conns[i].state);
     }
     spinlock_irqsave_release(&tcp_lock, __tcp_flags);
 }
@@ -1909,7 +1938,8 @@ void net_tcp_check_retransmit(void) {
         }
 
         /* Skip connections that are not established */
-        if (c->state != TCP_ESTABLISHED) continue;
+        if (c->state != TCP_ESTABLISHED)
+            continue;
 
         /*
          * Delayed ACK timeout (RFC 1122 §4.2.3.2):
@@ -1928,14 +1958,14 @@ void net_tcp_check_retransmit(void) {
          * accumulated data anyway (up to ~50ms = 5 ticks).
          * This prevents starvation when the peer is slow to ACK.
          */
-        if (c->nagle_buf_len > 0 && c->tx_unacked_len > 0 &&
-            (now - c->last_send_tick >= 5)) {
+        if (c->nagle_buf_len > 0 && c->tx_unacked_len > 0 && (now - c->last_send_tick >= 5)) {
             /* Merge Nagle buffer with outstanding data and send */
             uint16_t total = c->tx_unacked_len + c->nagle_buf_len;
             if (total > sizeof(c->tx_unacked_buf))
                 total = sizeof(c->tx_unacked_buf);
             uint16_t merge = total - c->tx_unacked_len;
-            if (merge > c->nagle_buf_len) merge = c->nagle_buf_len;
+            if (merge > c->nagle_buf_len)
+                merge = c->nagle_buf_len;
             memcpy(c->tx_unacked_buf + c->tx_unacked_len, c->nagle_buf, merge);
             c->nagle_buf_len -= merge;
             if (c->nagle_buf_len > 0)
@@ -1965,10 +1995,8 @@ void net_tcp_check_retransmit(void) {
          *
          * This catches single-packet losses much faster than the
          * classic dupack-count approach. */
-        if (c->tx_unacked_len > 0 && c->rack_fwd_mark > 0 &&
-            c->sack_pending &&
-            (int32_t)(c->rack_fwd_mark - (c->tx_unacked_seq + c->tx_unacked_len)) > 0)
-        {
+        if (c->tx_unacked_len > 0 && c->rack_fwd_mark > 0 && c->sack_pending &&
+            (int32_t)(c->rack_fwd_mark - (c->tx_unacked_seq + c->tx_unacked_len)) > 0) {
             uint64_t elapsed = now - c->last_send_tick;
             uint32_t rack_thresh = c->rack_reo_wnd + c->rack_min_rtt;
             if (rack_thresh > 0 && elapsed >= rack_thresh &&
@@ -1990,7 +2018,8 @@ void net_tcp_check_retransmit(void) {
                             if (c->sack_blocks[sb].left > base &&
                                 c->sack_blocks[sb].left < base + remain) {
                                 uint16_t s = (uint16_t)(c->sack_blocks[sb].left - base);
-                                if (s > skip) skip = s;
+                                if (s > skip)
+                                    skip = s;
                             }
                         }
                     }
@@ -2010,8 +2039,7 @@ void net_tcp_check_retransmit(void) {
                 /* Congestion event: handle based on CC algorithm */
                 if (c->cc_algo == 3) {
                     /* NewReno: fast retransmit */
-                    newreno_on_3dupacks(&c->newreno, &c->cwnd,
-                                        &c->ssthresh, c->our_seq);
+                    newreno_on_3dupacks(&c->newreno, &c->cwnd, &c->ssthresh, c->our_seq);
                     c->in_recovery = 1;
                     c->prr_delivered = 0;
                     c->prr_out = 0;
@@ -2032,8 +2060,10 @@ void net_tcp_check_retransmit(void) {
         }
 
         /* ── RTO-based retransmission ────────────────────────── */
-        if (c->tx_unacked_len == 0) continue;
-        if (now - c->last_send_tick < c->rto) continue;
+        if (c->tx_unacked_len == 0)
+            continue;
+        if (now - c->last_send_tick < c->rto)
+            continue;
 
         /* Give up after 5 retransmissions (RTO would be ~32 s at that point) */
         if (c->retrans_count >= 5) {
@@ -2063,7 +2093,8 @@ void net_tcp_check_retransmit(void) {
                     if (c->sack_blocks[sb].left > seq_off &&
                         c->sack_blocks[sb].left < seq_off + remain) {
                         uint16_t s = (uint16_t)(c->sack_blocks[sb].left - seq_off);
-                        if (s > skip) skip = s;
+                        if (s > skip)
+                            skip = s;
                     }
                 }
             }
@@ -2091,14 +2122,17 @@ void net_tcp_check_retransmit(void) {
         if (c->cc_algo == 3) {
             /* NewReno: undo any partial ACK tracking, standard RTO action */
             c->ssthresh = c->cwnd / 2;
-            if (c->ssthresh < 2) c->ssthresh = 2;
+            if (c->ssthresh < 2)
+                c->ssthresh = 2;
         } else {
             /* CUBIC congestion control: handle RTO timeout event */
             c->ssthresh = cubic_on_loss(&c->cubic, c->cwnd, now);
-            if (c->ssthresh < 2) c->ssthresh = 2;
+            if (c->ssthresh < 2)
+                c->ssthresh = 2;
         }
         c->cwnd = 1;
     }
+    spinlock_irqsave_release(&tcp_lock, __tcp_flags);
 }
 
 /* ── TCP auto-tuning ────────────────────────────────────────────── */
@@ -2108,16 +2142,17 @@ void net_tcp_check_retransmit(void) {
  * connections.  Starts at 64KB, rises to 256KB on good connection,
  * decreases on loss (retransmission or dupack).
  */
-#define TCP_MIN_RCV_WND  65536   /* start at 64KB */
-#define TCP_MAX_RCV_WND  262144  /* max 256KB */
+#define TCP_MIN_RCV_WND 65536  /* start at 64KB */
+#define TCP_MAX_RCV_WND 262144 /* max 256KB */
 
-static void net_tcp_auto_tune_rcv_wnd(struct tcp_conn *c)
-{
-    if (c->state != TCP_ESTABLISHED) return;
+static void net_tcp_auto_tune_rcv_wnd(struct tcp_conn *c) {
+    if (c->state != TCP_ESTABLISHED)
+        return;
 
     /* Estimate RTT in ticks — use min_rtt or a fallback of 10 ticks (~100ms) */
     uint32_t rtt = c->rack_min_rtt > 0 ? c->rack_min_rtt : 10;
-    if (rtt < 1) rtt = 1;
+    if (rtt < 1)
+        rtt = 1;
 
     /* Base window on cwnd: start at 64KB, scale with cwnd growth.
      * On good connection (no loss, high cwnd), window grows toward 256KB.
@@ -2130,7 +2165,7 @@ static void net_tcp_auto_tune_rcv_wnd(struct tcp_conn *c)
             target = TCP_MIN_RCV_WND / 2;
     } else {
         /* Normal operation — scale with cwnd */
-        target = c->cwnd * 1460;  /* cwnd in segments × MSS */
+        target = c->cwnd * 1460; /* cwnd in segments × MSS */
         if (target > TCP_MAX_RCV_WND)
             target = TCP_MAX_RCV_WND;
     }
@@ -2150,9 +2185,9 @@ static void net_tcp_auto_tune_rcv_wnd(struct tcp_conn *c)
  * (typically 10 segments per RFC 6928) to avoid bursting.
  * This is called before sending data on an idle connection.
  */
-static void net_tcp_slow_start_after_idle(struct tcp_conn *c)
-{
-    if (!c || c->state != TCP_ESTABLISHED) return;
+static void net_tcp_slow_start_after_idle(struct tcp_conn *c) {
+    if (!c || c->state != TCP_ESTABLISHED)
+        return;
 
     uint64_t now = timer_get_ticks();
     uint64_t idle_ticks = now - c->last_send_tick;
@@ -2169,7 +2204,8 @@ static void net_tcp_slow_start_after_idle(struct tcp_conn *c)
                 c->newreno.reno_ack_count = 0;
             }
             c->ssthresh = c->cwnd / 2;
-            if (c->ssthresh < 2) c->ssthresh = 2;
+            if (c->ssthresh < 2)
+                c->ssthresh = 2;
             c->cwnd = 10; /* initial window per RFC 6928 */
             c->dupack_count = 0;
         }
@@ -2177,11 +2213,11 @@ static void net_tcp_slow_start_after_idle(struct tcp_conn *c)
 }
 
 /* ── Call the auto-tuning for all established connections ───────── */
-static void net_tcp_auto_tune_all(void)
-{
+static void net_tcp_auto_tune_all(void) {
     for (int i = 0; i < MAX_TCP_CONNS; i++) {
         struct tcp_conn *c = &tcp_conns[i];
-        if (c->state != TCP_ESTABLISHED) continue;
+        if (c->state != TCP_ESTABLISHED)
+            continue;
         net_tcp_auto_tune_rcv_wnd(c);
         net_tcp_slow_start_after_idle(c);
     }
@@ -2189,18 +2225,18 @@ static void net_tcp_auto_tune_all(void)
 
 /* ── TCP socket option helpers (called from socket.c, acquire tcp_lock) ── */
 
-void net_tcp_set_nodelay(int conn_id, int val)
-{
-    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return;
+void net_tcp_set_nodelay(int conn_id, int val) {
+    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS)
+        return;
     uint64_t __tcp_flags;
     spinlock_irqsave_acquire(&tcp_lock, &__tcp_flags);
     tcp_conns[conn_id].tcp_nodelay = val;
     spinlock_irqsave_release(&tcp_lock, __tcp_flags);
 }
 
-int net_tcp_get_nodelay(int conn_id)
-{
-    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return 0;
+int net_tcp_get_nodelay(int conn_id) {
+    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS)
+        return 0;
     uint64_t __tcp_flags;
     spinlock_irqsave_acquire(&tcp_lock, &__tcp_flags);
     int ret = tcp_conns[conn_id].tcp_nodelay;
@@ -2208,9 +2244,9 @@ int net_tcp_get_nodelay(int conn_id)
     return ret;
 }
 
-void net_tcp_set_cork(int conn_id, int val)
-{
-    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return;
+void net_tcp_set_cork(int conn_id, int val) {
+    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS)
+        return;
     uint64_t __tcp_flags;
     spinlock_irqsave_acquire(&tcp_lock, &__tcp_flags);
     struct tcp_conn *c = &tcp_conns[conn_id];
@@ -2231,9 +2267,9 @@ void net_tcp_set_cork(int conn_id, int val)
     spinlock_irqsave_release(&tcp_lock, __tcp_flags);
 }
 
-int net_tcp_get_cork(int conn_id)
-{
-    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return 0;
+int net_tcp_get_cork(int conn_id) {
+    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS)
+        return 0;
     uint64_t __tcp_flags;
     spinlock_irqsave_acquire(&tcp_lock, &__tcp_flags);
     int ret = tcp_conns[conn_id].tcp_cork;
@@ -2241,9 +2277,9 @@ int net_tcp_get_cork(int conn_id)
     return ret;
 }
 
-void net_tcp_get_tcpinfo(int conn_id, struct tcp_info *info)
-{
-    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return;
+void net_tcp_get_tcpinfo(int conn_id, struct tcp_info *info) {
+    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS)
+        return;
     uint64_t __tcp_flags;
     spinlock_irqsave_acquire(&tcp_lock, &__tcp_flags);
     struct tcp_conn *c = &tcp_conns[conn_id];
@@ -2268,7 +2304,8 @@ void net_tcp_get_tcpinfo(int conn_id, struct tcp_info *info)
 #define KEEPALIVE_PROBES_MAX_DEFAULT 3
 
 void net_tcp_set_keepalive(int conn_id, int keepalive) {
-    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return;
+    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS)
+        return;
     uint64_t __tcp_flags;
     spinlock_irqsave_acquire(&tcp_lock, &__tcp_flags);
     struct tcp_conn *c = &tcp_conns[conn_id];
@@ -2283,7 +2320,8 @@ void net_tcp_set_keepalive(int conn_id, int keepalive) {
 }
 
 int net_tcp_get_keepalive(int conn_id) {
-    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return 0;
+    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS)
+        return 0;
     uint64_t __tcp_flags;
     spinlock_irqsave_acquire(&tcp_lock, &__tcp_flags);
     int ret = tcp_conns[conn_id].keepalive;
@@ -2297,7 +2335,8 @@ void net_tcp_check_keepalive(void) {
     uint64_t now = timer_get_ticks();
     for (int i = 0; i < MAX_TCP_CONNS; i++) {
         struct tcp_conn *c = &tcp_conns[i];
-        if (c->state != TCP_ESTABLISHED || !c->keepalive) continue;
+        if (c->state != TCP_ESTABLISHED || !c->keepalive)
+            continue;
         if (now - c->last_activity_tick >= c->keepalive_interval) {
             if (c->keepalive_probes >= c->keepalive_probes_max) {
                 c->state = TCP_CLOSED;
@@ -2305,8 +2344,7 @@ void net_tcp_check_keepalive(void) {
                 continue;
             }
             uint32_t saved_seq = c->our_seq;
-            c->our_seq = c->tx_unacked_seq > 0 ?
-                         c->tx_unacked_seq - 1 : c->our_seq - 1;
+            c->our_seq = c->tx_unacked_seq > 0 ? c->tx_unacked_seq - 1 : c->our_seq - 1;
             send_tcp(c, TCP_ACK, NULL, 0);
             c->our_seq = saved_seq;
             c->keepalive_probes++;
@@ -2317,11 +2355,15 @@ void net_tcp_check_keepalive(void) {
 }
 
 int net_tcp_get_info(int conn_id, struct tcp_conn_info *info) {
-    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return -1;
+    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS)
+        return -1;
     uint64_t __tcp_flags;
     spinlock_irqsave_acquire(&tcp_lock, &__tcp_flags);
     struct tcp_conn *c = &tcp_conns[conn_id];
-    if (c->state == TCP_CLOSED) { spinlock_irqsave_release(&tcp_lock, __tcp_flags); return -1; }
+    if (c->state == TCP_CLOSED) {
+        spinlock_irqsave_release(&tcp_lock, __tcp_flags);
+        return -1;
+    }
     info->local_port = c->local_port;
     info->remote_ip = c->remote_ip;
     info->remote_port = c->remote_port;
@@ -2335,22 +2377,23 @@ int net_tcp_get_info(int conn_id, struct tcp_conn_info *info) {
 }
 
 /* Return number of bytes available in the TCP receive buffer */
-int net_tcp_available(int conn_id)
-{
-    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return 0;
+int net_tcp_available(int conn_id) {
+    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS)
+        return 0;
     uint64_t __tcp_flags;
     spinlock_irqsave_acquire(&tcp_lock, &__tcp_flags);
     struct tcp_conn *c = &tcp_conns[conn_id];
     int ret = 0;
-    if (c->state != TCP_CLOSED) ret = c->rxlen;
+    if (c->state != TCP_CLOSED)
+        ret = c->rxlen;
     spinlock_irqsave_release(&tcp_lock, __tcp_flags);
     return ret;
 }
 
 /* Return 1 if the TCP connection is in ESTABLISHED state (writable) */
-int net_tcp_is_connected(int conn_id)
-{
-    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return 0;
+int net_tcp_is_connected(int conn_id) {
+    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS)
+        return 0;
     uint64_t __tcp_flags;
     spinlock_irqsave_acquire(&tcp_lock, &__tcp_flags);
     int ret = (tcp_conns[conn_id].state == TCP_ESTABLISHED) ? 1 : 0;
@@ -2359,9 +2402,9 @@ int net_tcp_is_connected(int conn_id)
 }
 
 /* Return 1 if the TCP connection has received FIN or is closed */
-int net_tcp_has_closed(int conn_id)
-{
-    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return 1; /* invalid = closed */
+int net_tcp_has_closed(int conn_id) {
+    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS)
+        return 1; /* invalid = closed */
     uint64_t __tcp_flags;
     spinlock_irqsave_acquire(&tcp_lock, &__tcp_flags);
     struct tcp_conn *c = &tcp_conns[conn_id];
@@ -2371,9 +2414,9 @@ int net_tcp_has_closed(int conn_id)
 }
 
 /* ── Implement: tcp_open ──────────────────────────────── */
-static int tcp_open(void *sk)
-{
-    if (!sk) return -EINVAL;
+static int tcp_open(void *sk) {
+    if (!sk)
+        return -EINVAL;
     kprintf("[tcp] tcp_open: allocating TCP connection\n");
     uint64_t __tcp_flags;
     spinlock_irqsave_acquire(&tcp_lock, &__tcp_flags);
@@ -2395,30 +2438,32 @@ static int tcp_open(void *sk)
     return ret;
 }
 /* ── Implement: tcp_close ─────────────────────────────── */
-static int tcp_close(void *sk)
-{
-    if (!sk) return -EINVAL;
+static int tcp_close(void *sk) {
+    if (!sk)
+        return -EINVAL;
     int conn_id = *(int *)sk;
-    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return -EINVAL;
+    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS)
+        return -EINVAL;
     if (tcp_conns[conn_id].state != TCP_CLOSED) {
         net_tcp_close(conn_id);
     }
     return 0;
 }
 /* ── Implement: tcp_connect ───────────────────────────── */
-static int tcp_connect(void *sk, void *addr)
-{
-    if (!sk || !addr) return -EINVAL;
+static int tcp_connect(void *sk, void *addr) {
+    if (!sk || !addr)
+        return -EINVAL;
     struct sockaddr_in *sin = (struct sockaddr_in *)addr;
     int conn_id = net_tcp_connect(sin->sin_addr.s_addr, ntohs(sin->sin_port));
-    if (conn_id < 0) return -ECONNREFUSED;
+    if (conn_id < 0)
+        return -ECONNREFUSED;
     *(int *)sk = conn_id;
     return 0;
 }
 /* ── Implement: tcp_disconnect ────────────────────────── */
-static int tcp_disconnect(void *sk)
-{
-    if (!sk) return -EINVAL;
+static int tcp_disconnect(void *sk) {
+    if (!sk)
+        return -EINVAL;
     int conn_id = *(int *)sk;
     if (conn_id >= 0 && conn_id < MAX_TCP_CONNS) {
         if (tcp_conns[conn_id].state != TCP_CLOSED) {
@@ -2432,21 +2477,24 @@ static int tcp_disconnect(void *sk)
     return 0;
 }
 /* ── Implement: tcp_sendmsg ───────────────────────────── */
-static int tcp_sendmsg(void *sk, void *msg, size_t len)
-{
-    if (!sk || !msg) return -EINVAL;
+static int tcp_sendmsg(void *sk, void *msg, size_t len) {
+    if (!sk || !msg)
+        return -EINVAL;
     int conn_id = *(int *)sk;
-    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return -EINVAL;
-    if (tcp_conns[conn_id].state != TCP_ESTABLISHED) return -ENOTCONN;
+    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS)
+        return -EINVAL;
+    if (tcp_conns[conn_id].state != TCP_ESTABLISHED)
+        return -ENOTCONN;
     uint16_t send_len = (uint16_t)(len > 65535 ? 65535 : len);
     return net_tcp_send(conn_id, msg, send_len);
 }
 /* ── Implement: tcp_recvmsg ───────────────────────────── */
-static int tcp_recvmsg(void *sk, void *msg, size_t len)
-{
-    if (!sk || !msg) return -EINVAL;
+static int tcp_recvmsg(void *sk, void *msg, size_t len) {
+    if (!sk || !msg)
+        return -EINVAL;
     int conn_id = *(int *)sk;
-    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return -EINVAL;
+    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS)
+        return -EINVAL;
     uint16_t recv_len = (uint16_t)(len > 65535 ? 65535 : len);
     return net_tcp_recv(conn_id, msg, recv_len, 10);
 }

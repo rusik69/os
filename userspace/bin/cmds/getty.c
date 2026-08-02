@@ -1,8 +1,8 @@
 /* getty.c — terminal getty */
-#include "unistd.h"
 #include "stdio.h"
-#include "string.h"
 #include "stdlib.h"
+#include "string.h"
+#include "unistd.h"
 
 int main(int argc, char *argv[]) {
     int local_flag = 0;
@@ -50,15 +50,18 @@ int main(int argc, char *argv[]) {
     /* Open the TTY device */
     int fd = open(tty_path, O_RDWR, 0);
     if (fd < 0) {
-        printf("getty: cannot open '%s'\n", tty_path);
-        return 1;
+        /* Fall back to raw stdin/stdout (the boot console) instead of
+         * exiting — init respawns getty in a tight loop when it exits,
+         * which burns memory and OOM-crashes the system. */
+        fd = STDIN_FILENO;
     }
 
     /* Redirect stdin/stdout/stderr to the TTY */
     dup2(fd, STDIN_FILENO);
     dup2(fd, STDOUT_FILENO);
     dup2(fd, STDERR_FILENO);
-    if (fd > 2) close(fd);
+    if (fd > 2)
+        close(fd);
 
     /* Print /etc/issue if it exists */
     int issue_fd = open("/etc/issue", O_RDONLY, 0);
@@ -75,16 +78,17 @@ int main(int argc, char *argv[]) {
     write(STDOUT_FILENO, "\r\n", 2);
 
     /* Start shell or login */
-    char *shell_args[] = {"/bin/sh", "-i", 0};
+    char *shell_args[] = {"/mnt/bin/sh", 0};
 
-    /* Try /bin/login first if it exists */
-    if (access("/bin/login", 0) == 0) {
-        char *login_args[] = {"/bin/login", 0};
-        execve("/bin/login", login_args, 0);
+    /* Try /mnt/bin/login first if it exists (the FAT root is mounted
+     * at /mnt, so /bin/... paths do not resolve) */
+    if (access("/mnt/bin/login", 0) == 0) {
+        char *login_args[] = {"/mnt/bin/login", 0};
+        execve("/mnt/bin/login", login_args, 0);
     }
 
     /* Fallback to shell */
-    execve("/bin/sh", shell_args, 0);
+    execve("/mnt/bin/sh", shell_args, 0);
 
     /* If we get here, both failed */
     write(STDOUT_FILENO, "getty: cannot start shell or login\r\n", 36);

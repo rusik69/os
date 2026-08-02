@@ -1,24 +1,24 @@
 /* cmd_tee.c -- Copy stdin to stdout and to files */
-#include "shell_cmds.h"
 #include "libc.h"
 #include "printf.h"
-#include "string.h"
+#include "shell_cmds.h"
 #include "stdlib.h"
+#include "string.h"
 #include "types.h"
 
 int cmd_tee(int argc, char **argv) {
     int append = 0;
-    int optind = 1;
+    int optidx = 1;
 
-    while (optind < argc && argv[optind][0] == '-') {
-        if (strcmp(argv[optind], "-a") == 0) {
+    while (optidx < argc && argv[optidx][0] == '-') {
+        if (strcmp(argv[optidx], "-a") == 0) {
             append = 1;
-            optind++;
-        } else if (strcmp(argv[optind], "--") == 0) {
-            optind++;
+            optidx++;
+        } else if (strcmp(argv[optidx], "--") == 0) {
+            optidx++;
             break;
         } else {
-            kprintf("tee: unknown option '%s'\n", argv[optind]);
+            kprintf("tee: unknown option '%s'\n", argv[optidx]);
             return 1;
         }
     }
@@ -37,13 +37,20 @@ int cmd_tee(int argc, char **argv) {
     kprintf("%s", fbuf);
 
     /* Write to each file */
-    for (int i = optind; i < argc; i++) {
+    for (int i = optidx; i < argc; i++) {
         const char *fn = argv[i];
         char path[64];
-        if (fn[0] != '/') { path[0] = '/'; strncpy(path + 1, fn, 61); path[62] = '\0'; }
-        else { strncpy(path, fn, 63); path[63] = '\0'; }
+        if (fn[0] != '/') {
+            path[0] = '/';
+            strncpy(path + 1, fn, 61);
+            path[62] = '\0';
+        } else {
+            strncpy(path, fn, 63);
+            path[63] = '\0';
+        }
         int pl = (int)strlen(path);
-        while (pl > 0 && path[pl - 1] == ' ') path[--pl] = '\0';
+        while (pl > 0 && path[pl - 1] == ' ')
+            path[--pl] = '\0';
 
         if (append) {
             /* For append, we need to read existing content and combine.

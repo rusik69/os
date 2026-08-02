@@ -4,11 +4,12 @@
 #include "types.h"
 
 void pmm_init(uint64_t multiboot_info_phys);
-void pmm_reserve_frames(uint64_t phys_start, uint64_t byte_size); /* mark a range used */
+void pmm_reserve_frames(uint64_t phys_start, uint64_t byte_size);  /* mark a range used */
 void pmm_add_free_frames(uint64_t phys_start, uint64_t byte_size); /* mark a range free (hotplug) */
 void pmm_advance_hint(uint64_t phys_addr); /* advance alloc hint past given phys addr */
 uint64_t pmm_alloc_frame(void);
-uint64_t pmm_alloc_frame_at(uint64_t frame);  /* allocate a specific frame by frame number (NUMA/interleave support) */
+uint64_t pmm_alloc_frame_at(
+    uint64_t frame); /* allocate a specific frame by frame number (NUMA/interleave support) */
 uint64_t *pmm_alloc_frames(size_t count);
 void pmm_free_frame(uint64_t frame);
 void pmm_free_frames_contiguous(uint64_t phys, size_t count); /* free contiguous frames */
@@ -23,9 +24,16 @@ uint64_t pmm_alloc_frame_migrate(enum migratetype mt);
 uint64_t pmm_get_total_frames(void);
 uint64_t pmm_get_used_frames(void);
 /* Reference counting for COW */
-void pmm_ref_frame(uint64_t phys);      /* increment refcount */
-int  pmm_unref_frame(uint64_t phys);    /* decrement; frees if 0, returns new count */
-int  pmm_refcount(uint64_t phys);       /* query current refcount */
+void pmm_ref_frame(uint64_t phys);  /* increment refcount */
+int pmm_unref_frame(uint64_t phys); /* decrement; frees if 0, returns new count */
+int pmm_refcount(uint64_t phys);    /* query current refcount */
+
+/* Page-table frame tracking: marks a frame as in-use as a page table so
+ * memory compaction never migrates it (migrating a live PT frees the
+ * frame under its parent table entry → dangling table / physmap hole). */
+void pmm_mark_pt_frame(uint64_t phys);
+void pmm_unmark_pt_frame(uint64_t phys);
+int pmm_is_pt_frame(uint64_t phys);
 
 /* Dump detailed physical memory statistics (total, used, free, largest block, fragmentation) */
 void pmm_dump_stats(void);

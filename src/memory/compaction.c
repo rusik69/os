@@ -23,34 +23,34 @@
  */
 
 #include "compaction.h"
-#include "pmm.h"
+
+#include "export.h"
 #include "pageblock.h"
+#include "panic.h"
+#include "pmm.h"
 #include "printf.h"
 #include "string.h"
-#include "panic.h"
 #include "timer.h"
-#include "export.h"
 
 /* ── Tunables ────────────────────────────────────────────────────────── */
 
 /* Maximum number of pages to move in a single compaction_run() call.
  * This prevents compaction from starving other work during OOM recovery. */
-#define COMPACT_MAX_MOVE        64
+#define COMPACT_MAX_MOVE 64
 
 /* Minimum free-run count that triggers compaction attempt.
  * If there are fewer free runs than this, memory is not very fragmented. */
-#define COMPACT_MIN_RUNS        4
+#define COMPACT_MIN_RUNS 4
 
 /* ── Forward declarations ───────────────────────────────────────────── */
 
-static int  page_is_movable(uint64_t phys_addr);
-static int  page_should_migrate(uint64_t phys_addr);
-static int  migrate_one_page(uint64_t old_phys);
+static int page_is_movable(uint64_t phys_addr);
+static int page_should_migrate(uint64_t phys_addr);
+static int migrate_one_page(uint64_t old_phys);
 
 /* ── Initialisation ──────────────────────────────────────────────────── */
 
-void __init compaction_init(void)
-{
+void __init compaction_init(void) {
     kprintf("[compaction] memory compaction subsystem ready\n");
 }
 EXPORT_SYMBOL(compaction_init);
@@ -68,16 +68,16 @@ EXPORT_SYMBOL(compaction_init);
  *
  * Returns a value between 0 (not fragmented) and 100 (max fragmention).
  */
-uint64_t compaction_fragmentation_pct(void)
-{
+uint64_t compaction_fragmentation_pct(void) {
     uint64_t total = pmm_get_total_frames();
-    uint64_t used  = pmm_get_used_frames();
+    uint64_t used = pmm_get_used_frames();
 
     if (total == 0)
         return 0;
 
     if (total <= used)
-        return 100;  /* completely out of memory */;
+        return 100; /* completely out of memory */
+    ;
 
     uint64_t free_count = total - used;
     if (free_count == 0)
@@ -85,7 +85,7 @@ uint64_t compaction_fragmentation_pct(void)
 
     uint64_t largest = pmm_largest_free_block();
     if (largest == 0)
-        return 100;  /* no contiguous free space at all */
+        return 100; /* no contiguous free space at all */
 
     /* If the largest free block is nearly all free memory, fragmentation is low.
      * Compute: 100 - (largest * 100 / free_count) gives the fragmentation pct. */
@@ -103,8 +103,7 @@ EXPORT_SYMBOL(compaction_fragmentation_pct);
 
 /* Check whether a page (given its physical address) is in a MOVABLE
  * pageblock and thus eligible for compaction migration. */
-static int page_is_movable(uint64_t phys_addr)
-{
+static int page_is_movable(uint64_t phys_addr) {
     uint64_t frame = phys_addr / PAGE_SIZE;
     enum migratetype mt = pageblock_get_migratetype(frame);
     return mt == MIGRATE_MOVABLE;
@@ -118,8 +117,7 @@ static int page_is_movable(uint64_t phys_addr)
  *
  * We do NOT move pages with refcount != 1 because COW mappings or
  * kernel-internal references (page tables, slab allocator) would break. */
-static int page_should_migrate(uint64_t phys_addr)
-{
+static int page_should_migrate(uint64_t phys_addr) {
     if (phys_addr == 0)
         return 0;
 
@@ -131,6 +129,14 @@ static int page_should_migrate(uint64_t phys_addr)
 
     /* Must have exactly one reference — safe to copy and free */
     if (pmm_refcount(phys_addr) != 1)
+        return 0;
+
+    /* Never migrate a frame that is in use as a page table (PML4/PDPT/
+     * PD/PT).  Migrating it copies the table contents elsewhere and frees
+     * the original frame while the parent table entry still points at it —
+     * leaving a dangling table (observed: physmap hole → kernel #PF in
+     * migrate_one_page after OOM-triggered compaction). */
+    if (pmm_is_pt_frame(phys_addr))
         return 0;
 
     /* Sanity check: the frame must be within range */
@@ -151,12 +157,11 @@ static int page_should_migrate(uint64_t phys_addr)
  * memcpy the 4 KB of data, and free the original.  The freed page then
  * becomes available for coalescing with adjacent free regions.
  */
-static int migrate_one_page(uint64_t old_phys)
-{
+static int migrate_one_page(uint64_t old_phys) {
     /* Allocate a new page to receive the contents */
     uint64_t new_phys = pmm_alloc_frame();
     if (new_phys == 0)
-        return 0;   /* no memory for migration target */
+        return 0; /* no memory for migration target */
 
     /* Map both pages into the kernel address space for copying.
      * PHYS_TO_VIRT gives us the kernel's linear mapping. */
@@ -170,7 +175,7 @@ static int migrate_one_page(uint64_t old_phys)
     /* Free the original page — this extends the adjacent free region. */
     pmm_free_frame(old_phys);
 
-    return 1;   /* successfully migrated */
+    return 1; /* successfully migrated */
 }
 
 /* ── Main compaction pass ────────────────────────────────────────────── */
@@ -189,8 +194,7 @@ static int migrate_one_page(uint64_t old_phys)
  *
  * Returns the number of pages successfully moved (compacted).
  */
-uint64_t compaction_run(void)
-{
+uint64_t compaction_run(void) {
     uint64_t total_frames = pmm_get_total_frames();
     uint64_t total_free = total_frames - pmm_get_used_frames();
 
@@ -203,7 +207,7 @@ uint64_t compaction_run(void)
      * free region already spans most of free memory), skip compaction. */
     uint64_t runs = pmm_free_block_count();
     if (runs < COMPACT_MIN_RUNS)
-        return 0;   /* already well-consolidated */
+        return 0; /* already well-consolidated */
 
     uint64_t largest = pmm_largest_free_block();
     (void)largest; /* used below in the success measurement */
@@ -265,10 +269,8 @@ uint64_t compaction_run(void)
         kprintf("[compaction] moved %llu pages (scanned %llu, "
                 "largest free run %llu → %llu frames, "
                 "fragmentation %llu%%)\n",
-                (unsigned long long)moved,
-                (unsigned long long)scanned,
-                (unsigned long long)best_free_count,
-                (unsigned long long)new_largest,
+                (unsigned long long)moved, (unsigned long long)scanned,
+                (unsigned long long)best_free_count, (unsigned long long)new_largest,
                 (unsigned long long)compaction_fragmentation_pct());
     }
 
@@ -279,13 +281,12 @@ EXPORT_SYMBOL(compaction_run);
 module_init(compaction_init);
 
 /* ── compact_zone ─────────────────────────────────────────── */
-static int compact_zone(uint64_t zone_pfn_start, uint64_t zone_pfn_end)
-{
+static int compact_zone(uint64_t zone_pfn_start, uint64_t zone_pfn_end) {
     if (zone_pfn_start >= zone_pfn_end)
         return -EINVAL;
 
-    kprintf("[compaction] compact_zone: 0x%llx - 0x%llx\n",
-            (unsigned long long)zone_pfn_start, (unsigned long long)zone_pfn_end);
+    kprintf("[compaction] compact_zone: 0x%llx - 0x%llx\n", (unsigned long long)zone_pfn_start,
+            (unsigned long long)zone_pfn_end);
 
     /* Delegate to the existing compaction_run() for the zone range.
      * In a real kernel, this would restrict to the given zone.
@@ -295,8 +296,7 @@ static int compact_zone(uint64_t zone_pfn_start, uint64_t zone_pfn_end)
 }
 
 /* ── compaction_suitable ──────────────────────────────────── */
-static int compaction_suitable(uint64_t zone_pfn_start, uint64_t zone_pfn_end)
-{
+static int compaction_suitable(uint64_t zone_pfn_start, uint64_t zone_pfn_end) {
     if (zone_pfn_start >= zone_pfn_end)
         return 0;
 
@@ -307,14 +307,13 @@ static int compaction_suitable(uint64_t zone_pfn_start, uint64_t zone_pfn_end)
     /* Suitable if fragmentation > 30% — arbitrary threshold */
     int suitable = (frag > 30) ? 1 : 0;
 
-    kprintf("[compaction] compaction_suitable: frag=%llu%% -> %s\n",
-            (unsigned long long)frag, suitable ? "yes" : "no");
+    kprintf("[compaction] compaction_suitable: frag=%llu%% -> %s\n", (unsigned long long)frag,
+            suitable ? "yes" : "no");
     return suitable;
 }
 
 /* ── isolate_migratepages ────────────────────────────────── */
-static int isolate_migratepages(uint64_t *start_pfn, uint64_t *end_pfn)
-{
+static int isolate_migratepages(uint64_t *start_pfn, uint64_t *end_pfn) {
     if (!start_pfn || !end_pfn)
         return -EINVAL;
 
@@ -323,9 +322,11 @@ static int isolate_migratepages(uint64_t *start_pfn, uint64_t *end_pfn)
 
     /* Scan the given PFN range for movable pages that can be migrated */
     uint64_t scan_start = *start_pfn;
-    if (scan_start >= total_frames) scan_start = 0;
+    if (scan_start >= total_frames)
+        scan_start = 0;
     uint64_t scan_end = *end_pfn;
-    if (scan_end > total_frames) scan_end = total_frames;
+    if (scan_end > total_frames)
+        scan_end = total_frames;
 
     for (uint64_t pfn = scan_start; pfn < scan_end && isolated < 64; pfn++) {
         uint64_t phys = pfn * PAGE_SIZE;
@@ -343,8 +344,7 @@ static int isolate_migratepages(uint64_t *start_pfn, uint64_t *end_pfn)
 }
 
 /* ── Stub: migrate_pages ─────────────────────────────────────── */
-static int migrate_pages(uint64_t *from_pfns, uint64_t *to_pfns, int nr_pages)
-{
+static int migrate_pages(uint64_t *from_pfns, uint64_t *to_pfns, int nr_pages) {
     (void)from_pfns;
     (void)to_pfns;
     (void)nr_pages;
@@ -353,8 +353,7 @@ static int migrate_pages(uint64_t *from_pfns, uint64_t *to_pfns, int nr_pages)
 }
 
 /* ── Stub: compact_finished ──────────────────────────────────── */
-static int compact_finished(void)
-{
+static int compact_finished(void) {
     kprintf("[compaction] compact_finished: not yet implemented\n");
     return 0;
 }

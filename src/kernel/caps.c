@@ -1,11 +1,13 @@
 #define KERNEL_INTERNAL
 #include "caps.h"
-#include "process.h"
-#include "string.h"
-#include "printf.h"
+
 #include "audit.h"
 #include "errno.h"
 #include "module.h"
+#include "printf.h"
+#include "process.h"
+#include "string.h"
+#include "syscall.h"
 
 /* Module metadata */
 MODULE_LICENSE("GPL v2");
@@ -180,7 +182,8 @@ void sys_cap_bset_init(void) {
 /* Drop a capability from the system-wide bounding set.
  * Once dropped, no process can ever re-acquire this capability. */
 void sys_cap_bset_drop(uint32_t cap) {
-    if (cap > CAP_LAST_CAP) return;
+    if (cap > CAP_LAST_CAP)
+        return;
     int word = cap / 64;
     int bit = cap % 64;
     if (word < CAP_BSET_SIZE) {
@@ -190,10 +193,12 @@ void sys_cap_bset_drop(uint32_t cap) {
 
 /* Check if a capability is present in the system-wide bounding set */
 int sys_cap_bset_has(uint32_t cap) {
-    if (cap > CAP_LAST_CAP) return 0;
+    if (cap > CAP_LAST_CAP)
+        return 0;
     int word = cap / 64;
     int bit = cap % 64;
-    if (word >= CAP_BSET_SIZE) return 0;
+    if (word >= CAP_BSET_SIZE)
+        return 0;
     return (sys_cap_bset[word] >> bit) & 1;
 }
 
@@ -201,23 +206,24 @@ int sys_cap_bset_has(uint32_t cap) {
  * Called during fork/clone and exec to ensure no process exceeds
  * the global bounding set limits. */
 void sys_cap_bset_apply(struct process *proc) {
-	if (!proc) return;
-	/* The per-process syscall_caps (permitted set) is ANDed with
-	 * the global bounding set so dropping a cap at system level
-	 * immediately restricts all processes. */
-	for (int i = 0; i < PROCESS_SYSCALL_CAP_WORDS && i < CAP_BSET_SIZE; i++) {
-		proc->syscall_caps[i] &= sys_cap_bset[i];
-		proc->cap_bset[i]     &= sys_cap_bset[i];
-	}
+    if (!proc)
+        return;
+    /* The per-process syscall_caps (permitted set) is ANDed with
+     * the global bounding set so dropping a cap at system level
+     * immediately restricts all processes. */
+    for (int i = 0; i < PROCESS_SYSCALL_CAP_WORDS && i < CAP_BSET_SIZE; i++) {
+        proc->syscall_caps[i] &= sys_cap_bset[i];
+        proc->cap_bset[i] &= sys_cap_bset[i];
+    }
 }
 
 /* Get one word (64-bit) of the system-wide capability bounding set.
  * Returns 0 if 'word' is out of bounds. Used by sys_capset for
  * permission validation against the global bounding mask. */
 uint64_t sys_cap_bset_get_word(int word) {
-	if (word < 0 || word >= CAP_BSET_SIZE)
-		return 0;
-	return sys_cap_bset[word];
+    if (word < 0 || word >= CAP_BSET_SIZE)
+        return 0;
+    return sys_cap_bset[word];
 }
 
 /*
@@ -235,8 +241,7 @@ uint64_t sys_cap_bset_get_word(int word) {
  * @cap:   The capability number (CAP_* constant)
  * @audit_msg:  Descriptive string for the audit log (e.g. "ioperm")
  */
-int cap_capable_audit(uint32_t cap, const char *audit_msg)
-{
+int cap_capable_audit(uint32_t cap, const char *audit_msg) {
     struct process *p = process_get_current();
 
     /* Kernel context always has capabilities */
@@ -245,7 +250,7 @@ int cap_capable_audit(uint32_t cap, const char *audit_msg)
 
     /* Check per-process syscall caps (effective set) */
     int word = cap / 64;
-    int bit  = cap % 64;
+    int bit = cap % 64;
     if (word >= PROCESS_SYSCALL_CAP_WORDS)
         return -EPERM;
 
@@ -262,31 +267,40 @@ int cap_capable_audit(uint32_t cap, const char *audit_msg)
     if (!(p->cap_bset[word] & (1ULL << bit)))
         goto deny;
 
-    return 0;  /* granted */
+    return 0; /* granted */
 
 deny:
     /* Denied — log audit event */
-    audit_log_denial(audit_msg ? audit_msg : "unknown",
-                     "capability", "want_cap");
+    audit_log_denial(audit_msg ? audit_msg : "unknown", "capability", "want_cap");
     return -EPERM;
 }
 
 /* Convenience wrapper for CAP_SYS_RAWIO checks (ioperm, iopl, port I/O, /dev/mem) */
-int cap_sys_rawio_check(void)
-{
+int cap_sys_rawio_check(void) {
     return cap_capable_audit(CAP_SYS_RAWIO, "cap_sys_rawio");
 }
 
 /* Convenience wrapper for CAP_SYS_BOOT checks (kexec_load) */
-int cap_sys_boot_check(void)
-{
+int cap_sys_boot_check(void) {
     return cap_capable_audit(CAP_SYS_BOOT, "cap_sys_boot");
 }
 
 /* Convenience wrapper for CAP_SYS_MODULE checks (init_module, finit_module) */
-int cap_sys_module_check(void)
-{
-    return cap_capable_audit(CAP_SYS_MODULE, "cap_sys_module");
+int cap_sys_module_check(void) {
+    struct process *p = process_get_current();
+    if (!p || !p->is_user)
+        return 0;
+
+    /* Gate on the per-process syscall capability for the actual module-
+     * loading syscalls (SYS_INIT_MODULE/SYS_FINIT_MODULE).  The generic
+     * cap_capable_audit(CAP_SYS_MODULE) path tests the Linux capability
+     * number (16) against the syscall-number bitmap, which never matches,
+     * so it wrongly denied every user-space module load (observed:
+     * insmod "cannot load" — the USER_DEFAULT profile grants module
+     * loading to init so it can load the shell module). */
+    if (!process_caps_has(p, SYS_INIT_MODULE) && !process_caps_has(p, SYS_FINIT_MODULE))
+        return -EPERM;
+    return 0;
 }
 
 /* Forward declarations for stub functions */
@@ -299,8 +313,8 @@ struct mm_struct;
  * Get the capability sets of a target process.
  * Returns 0 on success, -EINVAL on invalid parameters.
  */
-static int cap_capget(struct task_struct *target, uint64_t *effective, uint64_t *inheritable, uint64_t *permitted)
-{
+static int cap_capget(struct task_struct *target, uint64_t *effective, uint64_t *inheritable,
+                      uint64_t *permitted) {
     if (!target)
         return -EINVAL;
 
@@ -322,8 +336,8 @@ static int cap_capget(struct task_struct *target, uint64_t *effective, uint64_t 
  * Requires CAP_SETPCAP in the caller's effective set.
  * Returns 0 on success, -EPERM/‑EINVAL on error.
  */
-static int cap_capset(struct task_struct *target, uint64_t *effective, uint64_t *inheritable, uint64_t *permitted)
-{
+static int cap_capset(struct task_struct *target, uint64_t *effective, uint64_t *inheritable,
+                      uint64_t *permitted) {
     if (!target)
         return -EINVAL;
 
@@ -336,9 +350,8 @@ static int cap_capset(struct task_struct *target, uint64_t *effective, uint64_t 
 
     /* Check if caller has CAP_SETPCAP */
     int word = CAP_SETPCAP / 64;
-    int bit  = CAP_SETPCAP % 64;
-    if (word < PROCESS_SYSCALL_CAP_WORDS &&
-        !(caller->syscall_caps[word] & (1ULL << bit))) {
+    int bit = CAP_SETPCAP % 64;
+    if (word < PROCESS_SYSCALL_CAP_WORDS && !(caller->syscall_caps[word] & (1ULL << bit))) {
         return -EPERM;
     }
 
@@ -374,8 +387,7 @@ static int cap_capset(struct task_struct *target, uint64_t *effective, uint64_t 
  *
  * Returns 0 on success, negative on error.
  */
-int cap_bprm_set_creds(struct linux_binprm *bprm)
-{
+int cap_bprm_set_creds(struct linux_binprm *bprm) {
     if (!bprm)
         return -EINVAL;
 
@@ -425,8 +437,7 @@ int cap_bprm_set_creds(struct linux_binprm *bprm)
  *
  * Returns 0 on success, -EINVAL for unknown options.
  */
-static int cap_task_prctl(int option, unsigned long arg2, unsigned long arg3)
-{
+static int cap_task_prctl(int option, unsigned long arg2, unsigned long arg3) {
     struct process *p = process_get_current();
     if (!p)
         return -EINVAL;
@@ -466,8 +477,7 @@ static int cap_task_prctl(int option, unsigned long arg2, unsigned long arg3)
         if ((p->securebits & SECBIT_NO_SETUID_FIXUP_LOCKED) &&
             ((new_bits ^ p->securebits) & SECBIT_NO_SETUID_FIXUP))
             return -EPERM;
-        if ((p->securebits & SECBIT_NOROOT_LOCKED) &&
-            ((new_bits ^ p->securebits) & SECBIT_NOROOT))
+        if ((p->securebits & SECBIT_NOROOT_LOCKED) && ((new_bits ^ p->securebits) & SECBIT_NOROOT))
             return -EPERM;
         p->securebits = new_bits;
         return 0;
@@ -496,8 +506,7 @@ static int cap_task_prctl(int option, unsigned long arg2, unsigned long arg3)
  * Check capability for setting scheduler parameters.
  * Requires CAP_SYS_NICE.
  */
-static int cap_task_setscheduler(struct task_struct *p)
-{
+static int cap_task_setscheduler(struct task_struct *p) {
     if (!p)
         return -EINVAL;
 
@@ -509,8 +518,7 @@ static int cap_task_setscheduler(struct task_struct *p)
  * Check capability for setting I/O priority.
  * Requires CAP_SYS_ADMIN or CAP_SYS_NICE depending on target.
  */
-static int cap_task_setioprio(struct task_struct *p, int ioprio)
-{
+static int cap_task_setioprio(struct task_struct *p, int ioprio) {
     if (!p)
         return -EINVAL;
 
@@ -539,8 +547,7 @@ static int cap_task_setioprio(struct task_struct *p, int ioprio)
  * Check capability for setting nice value.
  * Requires CAP_SYS_NICE.
  */
-static int cap_task_setnice(struct task_struct *p, int nice)
-{
+static int cap_task_setnice(struct task_struct *p, int nice) {
     if (!p)
         return -EINVAL;
 
@@ -575,8 +582,7 @@ static int cap_task_setnice(struct task_struct *p, int nice)
  *
  * CAP_SYS_ADMIN allows overcommit to always succeed.
  */
-static int cap_vm_enough_memory(struct mm_struct *mm, long pages)
-{
+static int cap_vm_enough_memory(struct mm_struct *mm, long pages) {
     if (!mm)
         return -EINVAL;
 

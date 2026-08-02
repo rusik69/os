@@ -7,64 +7,66 @@
  * writes a value to the device to signal the hypervisor.
  */
 
-#include "types.h"
+#include "errno.h"
+#include "io.h"
+#include "module.h"
+#include "notifier.h"
 #include "printf.h"
 #include "string.h"
-#include "io.h"
-#include "notifier.h"
-#include "errno.h"
-
-#include "module.h"
+#include "types.h"
 
 /* ── pvpanic constants ─────────────────────────────────────────── */
 
 /* Standard ACPI/ISA pvpanic port */
-#define PVPANIC_PORT            0x505
-#define PVPANIC_MMIO_BASE       0xFEDC0000   /* typical QEMU MMIO address */
+#define PVPANIC_PORT 0x505
+#define PVPANIC_MMIO_BASE 0xFEDC0000 /* typical QEMU MMIO address */
 
 /* Event types — defined as bitmask per QEMU pvpanic spec */
-#define PVPANIC_EVENT_PANIC     0x01         /* kernel panic occurred */
-#define PVPANIC_EVENT_OOPS      0x02         /* kernel Oops occurred */
+#define PVPANIC_EVENT_PANIC 0x01 /* kernel panic occurred */
+#define PVPANIC_EVENT_OOPS 0x02  /* kernel Oops occurred */
 
 /* Known valid event values for validation */
-#define PVPANIC_EVENTS_KNOWN    (PVPANIC_EVENT_PANIC | PVPANIC_EVENT_OOPS)
+#define PVPANIC_EVENTS_KNOWN (PVPANIC_EVENT_PANIC | PVPANIC_EVENT_OOPS)
 
 /* Register offsets */
-#define PVPANIC_REG_EVENT       0x00         /* write event type here */
+#define PVPANIC_REG_EVENT 0x00 /* write event type here */
 
 /* ── Driver mode ───────────────────────────────────────────────── */
 
-#define PVPANIC_MODE_UNKNOWN    0
-#define PVPANIC_MODE_ISA        1
-#define PVPANIC_MODE_MMIO       2
+#define PVPANIC_MODE_UNKNOWN 0
+#define PVPANIC_MODE_ISA 1
+#define PVPANIC_MODE_MMIO 2
 
 /* ── Driver state ──────────────────────────────────────────────── */
 
-static int  pvpanic_mode     = PVPANIC_MODE_UNKNOWN;
-static int  pvpanic_detected = 0;
+static int pvpanic_mode = PVPANIC_MODE_UNKNOWN;
+static int pvpanic_detected = 0;
 
 /* ── Probe / detect the pvpanic device ─────────────────────────── */
 
-static void pvpanic_detect_isa(void)
-{
+static void pvpanic_detect_isa(void) {
     uint8_t val = inb(PVPANIC_PORT);
     if (val != 0xFF) {
         pvpanic_mode = PVPANIC_MODE_ISA;
         pvpanic_detected = 1;
-        kprintf("[PVPANIC] detected at ISA I/O port 0x%04x (val=0x%02x)\n",
-                PVPANIC_PORT, val);
+        kprintf("[PVPANIC] detected at ISA I/O port 0x%04x (val=0x%02x)\n", PVPANIC_PORT, val);
     }
 }
 
-static void pvpanic_detect_mmio(void)
-{
-    volatile uint8_t *reg = (volatile uint8_t *)(uint64_t)PVPANIC_MMIO_BASE;
+static void pvpanic_detect_mmio(void) {
+    /* Use the HIGH-HALF alias (PHYS_TO_VIRT) — the raw physical address
+     * is only mapped in the boot/kernel CR3's low identity.  The panic
+     * notifier runs under the FAULTING process's CR3 (user pml4), where
+     * the low identity is the user's own mapping and 0xFEDC0000 is
+     * unmapped (observed: secondary page fault inside panic at
+     * pvpanic_panic_notifier, cr2=0xfedc0000).  The high half is shared
+     * by every address space via the boot PDPT. */
+    volatile uint8_t *reg = (volatile uint8_t *)PHYS_TO_VIRT(PVPANIC_MMIO_BASE);
     uint8_t val = *reg;
     if (val != 0xFF) {
         pvpanic_mode = PVPANIC_MODE_MMIO;
         pvpanic_detected = 1;
-        kprintf("[PVPANIC] detected at MMIO 0x%08x (val=0x%02x)\n",
-                PVPANIC_MMIO_BASE, val);
+        kprintf("[PVPANIC] detected at MMIO 0x%08x (val=0x%02x)\n", PVPANIC_MMIO_BASE, val);
     }
 }
 
@@ -75,14 +77,12 @@ static int pvpanic_send(uint8_t event);
 
 static struct notifier_block pvpanic_nb = {
     .notifier_call = NULL,
-    .next          = NULL,
+    .next = NULL,
 };
 
 /* Called on kernel panic (via NOTIFIER_PANIC chain). Sends a panic
  * event to the QEMU hypervisor so it can record or react. */
-static int pvpanic_panic_notifier(struct notifier_block *nb,
-                                  unsigned long action, void *data)
-{
+static int pvpanic_panic_notifier(struct notifier_block *nb, unsigned long action, void *data) {
     (void)nb;
     (void)data;
 
@@ -95,8 +95,7 @@ static int pvpanic_panic_notifier(struct notifier_block *nb,
 
 /* ── Send a panic event to the hypervisor ─────────────────────── */
 
-static int pvpanic_send(uint8_t event)
-{
+static int pvpanic_send(uint8_t event) {
     /* Validate event ID against known panic event list */
     if (event == 0 || (event & ~PVPANIC_EVENTS_KNOWN) != 0)
         return -EINVAL;
@@ -109,8 +108,8 @@ static int pvpanic_send(uint8_t event)
         outb(PVPANIC_PORT + PVPANIC_REG_EVENT, event);
         break;
     case PVPANIC_MODE_MMIO: {
-        volatile uint8_t *reg = (volatile uint8_t *)(uint64_t)
-            (PVPANIC_MMIO_BASE + PVPANIC_REG_EVENT);
+        volatile uint8_t *reg =
+            (volatile uint8_t *)(PHYS_TO_VIRT(PVPANIC_MMIO_BASE) + PVPANIC_REG_EVENT);
         *reg = event;
         break;
     }
@@ -122,8 +121,7 @@ static int pvpanic_send(uint8_t event)
 
 /* ── Init ──────────────────────────────────────────────────────── */
 
-static void pvpanic_init(void)
-{
+static void pvpanic_init(void) {
     pvpanic_detect_isa();
     if (!pvpanic_detected)
         pvpanic_detect_mmio();
@@ -146,7 +144,8 @@ static void pvpanic_init(void)
 
 /* ── Built-in / modular init and exit ───────────────────────── */
 
-static void pvpanic_exit(void) {}
+static void pvpanic_exit(void) {
+}
 
 module_init(pvpanic_init);
 module_exit(pvpanic_exit);

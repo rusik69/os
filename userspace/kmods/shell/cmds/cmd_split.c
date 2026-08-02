@@ -1,9 +1,9 @@
 /* cmd_split.c — split a file into line-count pieces */
-#include "shell_cmds.h"
 #include "libc.h"
 #include "printf.h"
+#include "shell_cmds.h"
+#include "stdlib.h" /* itoa */
 #include "string.h"
-#include "stdlib.h"    /* itoa */
 
 void cmd_split(const char *args) {
     if (!args || !args[0]) {
@@ -14,34 +14,51 @@ void cmd_split(const char *args) {
     int chunk = 100;
     const char *p = args;
 
-    if (*p == '-' && *(p+1) == 'l') {
+    if (*p == '-' && *(p + 1) == 'l') {
         p += 2;
-        while (*p == ' ') p++;
-        chunk = (int)strtol(p, (char **)&p, 10);
-        if (chunk < 1) chunk = 100;
-        while (*p == ' ') p++;
+        while (*p == ' ')
+            p++;
+        char *end = NULL;
+        chunk = (int)strtol(p, &end, 10);
+        p = end;
+        if (chunk < 1)
+            chunk = 100;
+        while (*p == ' ')
+            p++;
     }
 
-    if (!*p) { kprintf("split: no file specified\n"); return; }
+    if (!*p) {
+        kprintf("split: no file specified\n");
+        return;
+    }
 
     char inpath[64], prefix[32];
     int i = 0;
-    while (*p && *p != ' ' && i < 63) inpath[i++] = *p++;
+    while (*p && *p != ' ' && i < 63)
+        inpath[i++] = *p++;
     inpath[i] = '\0';
-    while (*p == ' ') p++;
+    while (*p == ' ')
+        p++;
     i = 0;
-    while (*p && *p != ' ' && i < 31) prefix[i++] = *p++;
+    while (*p && *p != ' ' && i < 31)
+        prefix[i++] = *p++;
     prefix[i] = '\0';
-    if (!prefix[0]) { strncpy(prefix, "x", sizeof(prefix) - 1); prefix[sizeof(prefix) - 1] = '\0'; }
+    if (!prefix[0]) {
+        strncpy(prefix, "x", sizeof(prefix) - 1);
+        prefix[sizeof(prefix) - 1] = '\0';
+    }
 
     char path[64];
-    if (inpath[0] != '/') { path[0] = '/'; strncpy(path+1, inpath, 62); }
-    else strncpy(path, inpath, 63);
+    if (inpath[0] != '/') {
+        path[0] = '/';
+        strncpy(path + 1, inpath, 62);
+    } else
+        strncpy(path, inpath, 63);
     path[63] = '\0';
 
     static char buf[8192];
     uint32_t size = 0;
-    if (vfs_read(path, buf, sizeof(buf)-1, &size) != 0) {
+    if (vfs_read(path, buf, sizeof(buf) - 1, &size) != 0) {
         kprintf("split: cannot read '%s'\n", path);
         return;
     }
@@ -55,8 +72,10 @@ void cmd_split(const char *args) {
     while (*q || q > start) {
         /* Find next line end */
         char *nl = strchr(q, '\n');
-        if (!nl) nl = buf + size;
-        else nl++;
+        if (!nl)
+            nl = buf + size;
+        else
+            nl++;
         q = nl;
         line++;
 
@@ -66,8 +85,7 @@ void cmd_split(const char *args) {
             char suffix[8];
             itoa(part, suffix, 10);
             /* zero-pad to 2 digits */
-            snprintf(outname, sizeof(outname), "/%s%s%s", prefix,
-                     (part < 10 ? "0" : ""), suffix);
+            snprintf(outname, sizeof(outname), "/%s%s%s", prefix, (part < 10 ? "0" : ""), suffix);
             uint32_t len = (uint32_t)(q - start);
             vfs_create(outname, 1);
             vfs_write(outname, start, len);
@@ -77,5 +95,6 @@ void cmd_split(const char *args) {
             part++;
         }
     }
-    if (part == 0) kprintf("split: empty file\n");
+    if (part == 0)
+        kprintf("split: empty file\n");
 }

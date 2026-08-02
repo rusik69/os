@@ -21,13 +21,18 @@
  */
 
 /* Maximum number of saved register frames per CPU */
-#define IRQ_REGS_MAX_FRAMES    8
+#define IRQ_REGS_MAX_FRAMES 8
 
 /* Size of per-CPU IRQ stack (must be page-aligned) */
-#define IRQ_STACK_SIZE        16384   /* 16 KB per CPU */
+#define IRQ_STACK_SIZE \
+    65536 /* 64 KB per CPU — the timer's net_poll_hard \
+           * runs the full network stack (send_tcp \
+           * buf[1500] + send_ip buf[1500] + send_eth \
+           * frame[1518] + e1000 vlan_buf) on this \
+           * stack; 16 KB overflows and triple-faults */
 
 /* Magic value written at the bottom of each IRQ stack for overflow detection */
-#define IRQ_STACK_MAGIC       0xD15AB1EDDEADC0DEULL
+#define IRQ_STACK_MAGIC 0xD15AB1EDDEADC0DEULL
 
 /* Saved x86-64 register context */
 struct pt_regs {
@@ -56,7 +61,7 @@ struct pt_regs {
 /* Per-CPU IRQ register stack */
 struct irq_regs_cpu {
     struct pt_regs *frames[IRQ_REGS_MAX_FRAMES];
-    int             depth;
+    int depth;
 };
 
 /*
@@ -65,11 +70,11 @@ struct irq_regs_cpu {
  * stack-use checks can be performed at IRQ entry/exit.
  */
 struct irq_stack_info {
-    uint64_t stack_bottom;   /* lowest address (start of allocated pages) */
-    uint64_t stack_top;      /* highest address (top of page) */
-    uint64_t stack_watermark;/* lowest RSP ever recorded on this stack */
-    uint64_t magic;          /* IRQ_STACK_MAGIC if initialized */
-    int      cpu_id;
+    uint64_t stack_bottom;    /* lowest address (start of allocated pages) */
+    uint64_t stack_top;       /* highest address (top of page) */
+    uint64_t stack_watermark; /* lowest RSP ever recorded on this stack */
+    uint64_t magic;           /* IRQ_STACK_MAGIC if initialized */
+    int cpu_id;
 };
 
 /*
@@ -120,8 +125,7 @@ int irq_stack_check(void);
  *                   handling an interrupt (i.e., we're in IRQ context
  *                   rather than process context).
  */
-static inline int in_irq_context(void)
-{
+static inline int in_irq_context(void) {
     return get_irq_regs() != NULL;
 }
 

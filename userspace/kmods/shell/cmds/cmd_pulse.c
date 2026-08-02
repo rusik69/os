@@ -18,71 +18,67 @@
  */
 
 #define KERNEL_INTERNAL
-#include "shell_cmds.h"
-#include "printf.h"
-#include "string.h"
-#include "socket.h"
-#include "process.h"
-#include "vfs.h"
-#include "errno.h"
-#include "spinlock.h"
-#include "timer.h"
-#include "pmm.h"
 #include "ac97.h"
+#include "errno.h"
 #include "heap.h"
+#include "pmm.h"
+#include "printf.h"
+#include "process.h"
+#include "shell_cmds.h"
+#include "socket.h"
+#include "spinlock.h"
+#include "string.h"
+#include "timer.h"
+#include "vfs.h"
 
 /* Forward declarations for VFS functions */
 int vfs_open(const char *path, int flags, int mode);
 
 /* Close a file descriptor using the kernel close syscall.
  * Cannot call sys_close() directly as it's static. */
-static inline void vfs_close(int fd)
-{
-    __asm__ volatile(
-        "mov $3, %%rax\n\t"  /* SYS_CLOSE */
-        "syscall"
-        :
-        : "D"(fd)
-        : "rax", "rcx", "r11", "memory"
-    );
+static inline void pulse_close_fd(int fd) {
+    __asm__ volatile("mov $3, %%rax\n\t" /* SYS_CLOSE */
+                     "syscall"
+                     :
+                     : "D"(fd)
+                     : "rax", "rcx", "r11", "memory");
 }
 
 /* ── Configuration ─────────────────────────────────────────────── */
 
-#define PULSE_SOCK_PATH   "/tmp/pulse.sock"
+#define PULSE_SOCK_PATH "/tmp/pulse.sock"
 #define PULSE_MAX_CLIENTS 8
-#define PULSE_BUF_SIZE    4096       /* per-client buffer (samples) */
-#define PULSE_MIX_BUF     8192       /* mixed output buffer (samples) */
+#define PULSE_BUF_SIZE 4096 /* per-client buffer (samples) */
+#define PULSE_MIX_BUF 8192  /* mixed output buffer (samples) */
 #define PULSE_SAMPLE_RATE 44100
-#define PULSE_CHANNELS    2
-#define PULSE_BACKLOG     8
+#define PULSE_CHANNELS 2
+#define PULSE_BACKLOG 8
 
 /* ── Per-stream state ──────────────────────────────────────────── */
 
 struct pulse_stream {
-    int          active;
-    int          fd;           /* AF_UNIX connection fd */
-    uint32_t     volume;       /* 0..100 */
-    int16_t     *buf;          /* PCM sample buffer */
-    uint32_t     buf_fill;     /* samples in buffer */
-    uint32_t     buf_capacity;
-    spinlock_t   lock;
+    int active;
+    int fd;            /* AF_UNIX connection fd */
+    uint32_t volume;   /* 0..100 */
+    int16_t *buf;      /* PCM sample buffer */
+    uint32_t buf_fill; /* samples in buffer */
+    uint32_t buf_capacity;
+    spinlock_t lock;
 };
 
 /* ── Server state ──────────────────────────────────────────────── */
 
 static struct {
-    int                 sock_fd;      /* listening socket */
-    int                 running;
+    int sock_fd; /* listening socket */
+    int running;
     struct pulse_stream streams[PULSE_MAX_CLIENTS];
-    int16_t             mix_buf[PULSE_MIX_BUF * PULSE_CHANNELS];
-    spinlock_t          lock;
+    int16_t mix_buf[PULSE_MIX_BUF * PULSE_CHANNELS];
+    spinlock_t lock;
 } g_pulse;
 
 /* ── Socket helpers (using AF_UNIX kernel API) ─────────────────── */
 
-static __attribute__((unused)) int create_unix_socket(const char *path)
-{
+static __attribute__((unused)) int create_unix_socket(const char *path) {
     /* Use the kernel AF_UNIX socket API to create a listener */
     struct sockaddr_un addr;
     memset(&addr, 0, sizeof(addr));
@@ -121,17 +117,15 @@ static __attribute__((unused)) int create_unix_socket(const char *path)
 
 /* ── Stream management ─────────────────────────────────────────── */
 
-static __attribute__((unused)) struct pulse_stream *stream_alloc(void)
-{
+static __attribute__((unused)) struct pulse_stream *stream_alloc(void) {
     for (int i = 0; i < PULSE_MAX_CLIENTS; i++) {
         if (!g_pulse.streams[i].active) {
             struct pulse_stream *s = &g_pulse.streams[i];
             memset(s, 0, sizeof(*s));
             s->active = 1;
-            s->volume = 100;  /* default volume */
+            s->volume = 100; /* default volume */
             s->buf_capacity = PULSE_BUF_SIZE;
-            s->buf = (int16_t *)kmalloc(PULSE_BUF_SIZE * PULSE_CHANNELS *
-                                         sizeof(int16_t));
+            s->buf = (int16_t *)kmalloc(PULSE_BUF_SIZE * PULSE_CHANNELS * sizeof(int16_t));
             if (!s->buf) {
                 s->active = 0;
                 return NULL;
@@ -143,9 +137,9 @@ static __attribute__((unused)) struct pulse_stream *stream_alloc(void)
     return NULL;
 }
 
-static __attribute__((unused)) void stream_free(struct pulse_stream *s)
-{
-    if (!s || !s->active) return;
+static __attribute__((unused)) void stream_free(struct pulse_stream *s) {
+    if (!s || !s->active)
+        return;
     s->active = 0;
     if (s->buf) {
         kfree(s->buf);
@@ -156,8 +150,7 @@ static __attribute__((unused)) void stream_free(struct pulse_stream *s)
 
 /* ── Mixing engine ─────────────────────────────────────────────── */
 
-static void mix_streams(void)
-{
+static void mix_streams(void) {
     spinlock_acquire(&g_pulse.lock);
 
     /* Clear mix buffer */
@@ -178,15 +171,17 @@ static void mix_streams(void)
             count = (uint32_t)PULSE_MIX_BUF * PULSE_CHANNELS;
 
         for (uint32_t j = 0; j < count; j++) {
-            int32_t sample = (int32_t)g_pulse.mix_buf[j] +
-                             (int32_t)(s->buf[j] * vol_scale);
+            int32_t sample = (int32_t)g_pulse.mix_buf[j] + (int32_t)(s->buf[j] * vol_scale);
             /* Clamp to 16-bit range */
-            if (sample > 32767) sample = 32767;
-            if (sample < -32768) sample = -32768;
+            if (sample > 32767)
+                sample = 32767;
+            if (sample < -32768)
+                sample = -32768;
             g_pulse.mix_buf[j] = (int16_t)sample;
         }
 
-        if ((int)count > max_samples) max_samples = (int)count;
+        if ((int)count > max_samples)
+            max_samples = (int)count;
         s->buf_fill = 0;
         spinlock_release(&s->lock);
     }
@@ -205,9 +200,8 @@ static void mix_streams(void)
 
 /* ── Client data ingestion ─────────────────────────────────────── */
 
-static __attribute__((unused)) int stream_write_pcm(struct pulse_stream *s,
-                          const int16_t *data, uint32_t samples)
-{
+static __attribute__((unused)) int stream_write_pcm(struct pulse_stream *s, const int16_t *data,
+                                                    uint32_t samples) {
     if (!s || !s->active || !data || samples == 0)
         return -1;
 
@@ -224,8 +218,7 @@ static __attribute__((unused)) int stream_write_pcm(struct pulse_stream *s,
 
 /* ── Daemon main loop ──────────────────────────────────────────── */
 
-static void pulse_daemon(void)
-{
+static void pulse_daemon(void) {
     kprintf("[pulse] sound server starting on %s\n", PULSE_SOCK_PATH);
 
     g_pulse.running = 1;
@@ -247,7 +240,7 @@ static void pulse_daemon(void)
 
     /* For the initial implementation, use a simple timer-based approach */
     uint64_t last_mix = timer_get_ticks();
-    uint64_t mix_interval = TIMER_FREQ / 50;  /* mix every 20ms */
+    uint64_t mix_interval = TIMER_FREQ / 50; /* mix every 20ms */
 
     /* Main event loop (simplified — runs in kernel thread context) */
     while (g_pulse.running) {
@@ -277,8 +270,7 @@ static void pulse_daemon(void)
  *  Command entry point
  * ═══════════════════════════════════════════════════════════════════ */
 
-void cmd_pulse(const char *args)
-{
+void cmd_pulse(const char *args) {
     /* Parse arguments */
     if (args && strcmp(args, "--daemon") == 0) {
         kprintf("[pulse] starting daemon...\n");

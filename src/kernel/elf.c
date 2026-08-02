@@ -1,26 +1,27 @@
 #define KERNEL_INTERNAL
 #include "elf.h"
-#include "process.h"
-#include "vmm.h"
-#include "pmm.h"
-#include "printf.h"
-#include "string.h"
-#include "heap.h"
-#include "vfs.h"
-#include "scheduler.h"
+
 #include "aslr.h"
 #include "auxv.h"
 #include "err.h"
+#include "heap.h"
+#include "pmm.h"
+#include "printf.h"
+#include "process.h"
+#include "scheduler.h"
 #include "signalfd.h"
+#include "string.h"
+#include "vfs.h"
+#include "vmm.h"
 
 /* External ASLR policy: determines load-base offset per ELF type (PIE vs non-PIE) */
 extern uint64_t execshield_aslr_base_offset(const struct elf64_header *ehdr);
 
 /* Max ELF binary we'll try to load from disk */
-#define ELF_MAX_SIZE (1024 * 1024)  /* 1MB — increased from 64KB to support real binaries */
+#define ELF_MAX_SIZE (1024 * 1024) /* 1MB — increased from 64KB to support real binaries */
 
 /* Maximum number of program headers we'll process — bounds phnum array loop */
-#define ELF_MAX_PHNUM  128
+#define ELF_MAX_PHNUM 128
 
 /**
  * elf_validate - Validate ELF headers and return entry point
@@ -38,7 +39,8 @@ extern uint64_t execshield_aslr_base_offset(const struct elf64_header *ehdr);
  * Return: The ELF entry point address, or 0 if validation fails.
  */
 static uint64_t elf_validate(const uint8_t *data, uint64_t size, int *out_is_userland) {
-    if (size < sizeof(struct elf64_header)) return 0;
+    if (size < sizeof(struct elf64_header))
+        return 0;
 
     const struct elf64_header *hdr = (const struct elf64_header *)data;
 
@@ -66,20 +68,20 @@ static uint64_t elf_validate(const uint8_t *data, uint64_t size, int *out_is_use
         return 0;
     }
     if (hdr->e_phnum > ELF_MAX_PHNUM) {
-        kprintf("elf: too many program headers (%u > %u)\n",
-                hdr->e_phnum, ELF_MAX_PHNUM);
+        kprintf("elf: too many program headers (%u > %u)\n", hdr->e_phnum, ELF_MAX_PHNUM);
         return 0;
     }
     int userland = (hdr->e_entry < 0x800000000000ULL);
-    if (out_is_userland) *out_is_userland = userland;
+    if (out_is_userland)
+        *out_is_userland = userland;
 
     /* Validate program header entry size matches expected structure size.
      * If e_phentsize < sizeof(elf64_phdr), individual header reads
      * (p_type, p_offset, p_vaddr, etc.) extend beyond the entry boundary
      * into adjacent data, potentially reading out-of-bounds for the last entry. */
     if (hdr->e_phentsize < sizeof(struct elf64_phdr)) {
-        kprintf("elf: program header entry size too small (%u < %zu)\n",
-                hdr->e_phentsize, sizeof(struct elf64_phdr));
+        kprintf("elf: program header entry size too small (%u < %zu)\n", hdr->e_phentsize,
+                sizeof(struct elf64_phdr));
         return 0;
     }
 
@@ -94,7 +96,9 @@ static uint64_t elf_validate(const uint8_t *data, uint64_t size, int *out_is_use
     }
 
     /* First pass: collect PT_LOAD segment bounds */
-    struct seg_bounds { uint64_t start, end; } segs[64];
+    struct seg_bounds {
+        uint64_t start, end;
+    } segs[64];
     int nsegs = 0;
     uint64_t entry_in_seg = 0;
 
@@ -102,10 +106,10 @@ static uint64_t elf_validate(const uint8_t *data, uint64_t size, int *out_is_use
         const struct elf64_phdr *ph =
             (const struct elf64_phdr *)(data + hdr->e_phoff + i * hdr->e_phentsize);
 
-        if (ph->p_type != PT_LOAD) continue;
+        if (ph->p_type != PT_LOAD)
+            continue;
         /* Check for integer overflow before using p_offset + p_filesz */
-        if (ph->p_offset > size || ph->p_filesz > size ||
-            ph->p_offset + ph->p_filesz > size) {
+        if (ph->p_offset > size || ph->p_filesz > size || ph->p_offset + ph->p_filesz > size) {
             kprintf("elf: segment out of bounds (overflow check)\n");
             return 0;
         }
@@ -113,8 +117,7 @@ static uint64_t elf_validate(const uint8_t *data, uint64_t size, int *out_is_use
             kprintf("elf: segment address overflow\n");
             return 0;
         }
-        if (ph->p_memsz > ph->p_filesz &&
-            ph->p_vaddr + ph->p_memsz < ph->p_vaddr) {
+        if (ph->p_memsz > ph->p_filesz && ph->p_vaddr + ph->p_memsz < ph->p_vaddr) {
             kprintf("elf: segment memsz overflow\n");
             return 0;
         }
@@ -143,13 +146,14 @@ static uint64_t elf_validate(const uint8_t *data, uint64_t size, int *out_is_use
 
         /* Record bounds for overlap detection */
         segs[nsegs].start = ph->p_vaddr;
-        segs[nsegs].end   = seg_end;
+        segs[nsegs].end = seg_end;
         nsegs++;
     }
 
     /* Entry point must be within at least one PT_LOAD segment */
     if (!entry_in_seg) {
-        kprintf("elf: entry point 0x%lx outside all loadable segments\n", (unsigned long)hdr->e_entry);
+        kprintf("elf: entry point 0x%lx outside all loadable segments\n",
+                (unsigned long)hdr->e_entry);
         return 0;
     }
 
@@ -186,11 +190,13 @@ static uint64_t elf_validate(const uint8_t *data, uint64_t size, int *out_is_use
 uint64_t elf_load(const uint8_t *data, uint64_t size) {
     int is_userland = 0;
     uint64_t entry = elf_validate(data, size, &is_userland);
-    if (!entry) return 0;
+    if (!entry)
+        return 0;
 
     /* For kernel-mode ELFs, load segments directly (they target mapped vaddrs).
      * For userland ELFs, this is a no-op; the caller does the mapping. */
-    if (is_userland) return entry;
+    if (is_userland)
+        return entry;
 
     const struct elf64_header *hdr = (const struct elf64_header *)data;
 
@@ -198,7 +204,8 @@ uint64_t elf_load(const uint8_t *data, uint64_t size) {
         const struct elf64_phdr *ph =
             (const struct elf64_phdr *)(data + hdr->e_phoff + i * hdr->e_phentsize);
 
-        if (ph->p_type != PT_LOAD) continue;
+        if (ph->p_type != PT_LOAD)
+            continue;
 
         /* Copy file bytes to vaddr */
         uint8_t *dst = (uint8_t *)ph->p_vaddr;
@@ -227,8 +234,7 @@ uint64_t elf_load(const uint8_t *data, uint64_t size) {
  * Return: 0 if PT_INTERP found and path extracted, 1 if no PT_INTERP
  *         (statically linked binary), -errno on error.
  */
-int elf_find_interp(const uint8_t *data, uint64_t size, char *out_path)
-{
+int elf_find_interp(const uint8_t *data, uint64_t size, char *out_path) {
     if (!data || !out_path || size < sizeof(struct elf64_header))
         return -EINVAL;
 
@@ -250,22 +256,20 @@ int elf_find_interp(const uint8_t *data, uint64_t size, char *out_path)
 
         /* PT_INTERP: p_offset points to interpreter path string in file,
          * p_filesz is the length including NUL terminator. */
-        if (ph->p_offset >= size || ph->p_filesz >= 256 ||
-            ph->p_offset + ph->p_filesz > size || ph->p_filesz < 1) {
+        if (ph->p_offset >= size || ph->p_filesz >= 256 || ph->p_offset + ph->p_filesz > size ||
+            ph->p_filesz < 1) {
             kprintf("elf: bad PT_INTERP segment (off=%llu sz=%llu)\n",
-                    (unsigned long long)ph->p_offset,
-                    (unsigned long long)ph->p_filesz);
+                    (unsigned long long)ph->p_offset, (unsigned long long)ph->p_filesz);
             return -ENOEXEC;
         }
 
         memcpy(out_path, data + ph->p_offset, (size_t)ph->p_filesz);
         out_path[255] = '\0'; /* Ensure null-terminated */
-        return 0; /* Found interpreter */
+        return 0;             /* Found interpreter */
     }
 
     return 1; /* No PT_INTERP — statically linked */
 }
-
 
 
 /**
@@ -284,15 +288,18 @@ int elf_find_interp(const uint8_t *data, uint64_t size, char *out_path)
  *         -EACCES, -ENOEXEC) on failure.
  */
 int elf_exec(const char *path) {
-    if (!path) return -EINVAL;
+    if (!path)
+        return -EINVAL;
 
     uint8_t *buf = (uint8_t *)kmalloc(ELF_MAX_SIZE);
-    if (unlikely(!buf)) return -ENOMEM;
+    if (unlikely(!buf))
+        return -ENOMEM;
 
     /* Copy path to kernel heap so proc->name is a stable kernel-space pointer,
      * regardless of whether path came from user space or a caller's stack. */
     size_t plen = strlen(path);
-    if (plen > 255) plen = 255;
+    if (plen > 255)
+        plen = 255;
     char *name = (char *)kmalloc(plen + 1);
     if (unlikely(!name)) {
         kfree(buf);
@@ -335,9 +342,8 @@ int elf_exec(const char *path) {
 
     /* Check execute permission on the binary file (Item X10) */
     struct process *cur_proc = process_get_current();
-    if (process_check_exec_perms(path,
-            cur_proc ? cur_proc->euid : 0,
-            cur_proc ? cur_proc->egid : 0) < 0) {
+    if (process_check_exec_perms(path, cur_proc ? cur_proc->euid : 0,
+                                 cur_proc ? cur_proc->egid : 0) < 0) {
         kprintf("elf: permission denied for %s\n", path);
         kfree(buf);
         kfree(name);
@@ -375,15 +381,16 @@ int elf_exec(const char *path) {
         uint64_t aslr_base = aslr_base_pages * PAGE_SIZE;
         if (aslr_base_pages > 0) {
             entry += aslr_base;
-            kprintf("elf: '%s' PIE base randomized +%llu pages\n",
-                    path, (unsigned long long)aslr_base_pages);
+            kprintf("elf: '%s' PIE base randomized +%llu pages\n", path,
+                    (unsigned long long)aslr_base_pages);
         }
 
         /* Create per-process page tables */
         uint64_t *user_pml4 = vmm_create_user_pml4();
         if (IS_ERR(user_pml4)) {
             kprintf("elf: cannot create page tables\n");
-            kfree(buf); kfree(name);
+            kfree(buf);
+            kfree(name);
             return -ENOMEM;
         }
 
@@ -392,50 +399,63 @@ int elf_exec(const char *path) {
         for (uint16_t i = 0; i < hdr->e_phnum && map_ok; i++) {
             const struct elf64_phdr *ph =
                 (const struct elf64_phdr *)(buf + hdr->e_phoff + i * hdr->e_phentsize);
-            if (ph->p_type != PT_LOAD) continue;
+            if (ph->p_type != PT_LOAD)
+                continue;
 
             if ((ph->p_vaddr + aslr_base) >= 0x0000800000000000ULL) {
                 kprintf("elf: user segment outside user address space\n");
-                map_ok = 0; break;
+                map_ok = 0;
+                break;
             }
 
             /* Map pages covering [vaddr+aslr_base, vaddr+aslr_base+memsz) */
             uint64_t seg_start = (ph->p_vaddr + aslr_base) & ~0xFFFULL;
-            uint64_t seg_end   = (ph->p_vaddr + ph->p_memsz + aslr_base + 0xFFF) & ~0xFFFULL;
+            uint64_t seg_end = (ph->p_vaddr + ph->p_memsz + aslr_base + 0xFFF) & ~0xFFFULL;
             uint64_t flags = VMM_FLAG_PRESENT | VMM_FLAG_USER;
-            if (ph->p_flags & 2) flags |= VMM_FLAG_WRITE; /* PF_W */
-            if (!(ph->p_flags & 1)) flags |= VMM_FLAG_NOEXEC; /* PF_X not set → NX */
+            if (ph->p_flags & 2)
+                flags |= VMM_FLAG_WRITE; /* PF_W */
+            if (!(ph->p_flags & 1))
+                flags |= VMM_FLAG_NOEXEC; /* PF_X not set → NX */
 
             for (uint64_t va = seg_start; va < seg_end; va += PAGE_SIZE) {
                 /* Allocate a physical frame and map it */
                 uint64_t frame = pmm_alloc_frame();
-                if (unlikely(!frame)) { kprintf("elf: OOM mapping segment\n"); map_ok = 0; break; }
+                if (unlikely(!frame)) {
+                    kprintf("elf: OOM mapping segment\n");
+                    map_ok = 0;
+                    break;
+                }
                 /* Zero the frame first */
                 memset(PHYS_TO_VIRT(frame), 0, PAGE_SIZE);
 
-                /* Copy segment data to the physical frame via the high-half VMA.
-                 * buf is safe because it's a kernel heap address already in the
-                 * high-half, reachable regardless of which PML4 is active. */
-                uint64_t page_off = va - seg_start;
-                if (ph->p_filesz > page_off) {
-                    uint64_t copy_sz = ph->p_filesz - page_off;
-                    if (copy_sz > PAGE_SIZE) copy_sz = PAGE_SIZE;
-                    memcpy(PHYS_TO_VIRT(frame), buf + ph->p_offset + page_off, copy_sz);
+                /* Copy the bytes of this segment that fall within this page.
+                 * Segments may start at unaligned vaddrs, so intersect
+                 * [p_vaddr, p_vaddr+p_filesz) with [va, va+PAGE_SIZE). */
+                uint64_t seg_va_start = ph->p_vaddr;
+                uint64_t seg_va_end = ph->p_vaddr + ph->p_filesz;
+                uint64_t copy_start = seg_va_start > va ? seg_va_start : va;
+                uint64_t copy_end = seg_va_end < va + PAGE_SIZE ? seg_va_end : va + PAGE_SIZE;
+                if (copy_start < copy_end) {
+                    memcpy(PHYS_TO_VIRT(frame) + (copy_start - va),
+                           buf + ph->p_offset + (copy_start - seg_va_start), copy_end - copy_start);
                 }
 
                 if (vmm_map_user_page(user_pml4, va, frame, flags) < 0) {
                     kprintf("elf: vmm_map_user_page failed\n");
                     pmm_free_frame(frame);
-                    map_ok = 0; break;
+                    map_ok = 0;
+                    break;
                 }
             }
 
-            if (!map_ok) break;
+            if (!map_ok)
+                break;
         }
 
         if (!map_ok) {
             vmm_destroy_user_pml4(user_pml4);
-            kfree(buf); kfree(name);
+            kfree(buf);
+            kfree(name);
             return -ENOMEM;
         }
 
@@ -452,16 +472,19 @@ int elf_exec(const char *path) {
             if (unlikely(!frame)) {
                 kprintf("elf: OOM for user stack\n");
                 vmm_destroy_user_pml4(user_pml4);
-                kfree(buf); kfree(name);
+                kfree(buf);
+                kfree(name);
                 return -ENOMEM;
             }
             memset(PHYS_TO_VIRT(frame), 0, PAGE_SIZE);
             if (vmm_map_user_page(user_pml4, va, frame,
-                                  VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_USER | VMM_FLAG_NOEXEC) < 0) {
+                                  VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_USER |
+                                      VMM_FLAG_NOEXEC) < 0) {
                 kprintf("elf: vmm_map_user_page failed for stack\n");
                 pmm_free_frame(frame);
                 vmm_destroy_user_pml4(user_pml4);
-                kfree(buf); kfree(name);
+                kfree(buf);
+                kfree(name);
                 return -ENOMEM;
             }
         }
@@ -480,10 +503,10 @@ int elf_exec(const char *path) {
         }
 
         p->user_stack_bottom = user_stack_bottom + PAGE_SIZE; /* skip unmapped guard page */
-        p->user_stack_top    = user_stack_top;
-        p->user_stack_guard  = user_stack_bottom; /* absolute bottom of stack region (guard) */
-        kprintf("elf: launched '%s' (pid %lu, ring 3, entry 0x%lx)\n",
-                name ? name : "(null)", (unsigned long)p->pid, (unsigned long)entry);
+        p->user_stack_top = user_stack_top;
+        p->user_stack_guard = user_stack_bottom; /* absolute bottom of stack region (guard) */
+        kprintf("elf: launched '%s' (pid %lu, ring 3, entry 0x%lx)\n", name ? name : "(null)",
+                (unsigned long)p->pid, (unsigned long)entry);
         strncpy(p->exe_path, path, 255);
         p->exe_path[255] = '\0';
         return 0;
@@ -498,8 +521,8 @@ int elf_exec(const char *path) {
         return -ENOMEM;
     }
 
-    kprintf("elf: creating kernel process pid=%lu entry=0x%lx\n",
-            (unsigned long)p->pid, (unsigned long)entry);
+    kprintf("elf: creating kernel process pid=%lu entry=0x%lx\n", (unsigned long)p->pid,
+            (unsigned long)entry);
     strncpy(p->exe_path, path, 255);
     p->exe_path[255] = '\0';
     return 0;
@@ -514,17 +537,24 @@ extern volatile uint64_t execve_user_rflags;
 extern volatile uint64_t execve_user_rsp;
 
 int process_execve(const char *path, char *const argv[], char *const envp[]) {
-    if (!path) return -EINVAL;
+    if (!path)
+        return -EINVAL;
 
     struct process *cur = process_get_current();
-    if (!cur) return -EINVAL;
-    if (!cur->is_user) return -EACCES;
+    if (!cur)
+        return -EINVAL;
+    if (!cur->is_user)
+        return -EACCES;
 
     uint8_t *buf = (uint8_t *)kmalloc(ELF_MAX_SIZE);
-    if (unlikely(!buf)) return -ENOMEM;
+    if (unlikely(!buf)) {
+        kprintf("[exec] kmalloc(ELF_MAX_SIZE) failed\n");
+        return -ENOMEM;
+    }
 
     uint32_t size = 0;
     if (vfs_read(path, buf, ELF_MAX_SIZE, &size) < 0) {
+        kprintf("[exec] vfs_read(%s) failed\n", path);
         kfree(buf);
         return -ENOENT;
     }
@@ -581,49 +611,99 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
     uint64_t aslr_base = aslr_base_pages * PAGE_SIZE;
     if (aslr_base_pages > 0) {
         entry += aslr_base;
-        kprintf("execve: '%s' PIE base randomized +%llu pages\n",
-                path, (unsigned long long)aslr_base_pages);
+        kprintf("execve: '%s' PIE base randomized +%llu pages\n", path,
+                (unsigned long long)aslr_base_pages);
     }
 
     uint64_t *new_pml4 = vmm_create_user_pml4();
-    if (IS_ERR(new_pml4)) { kfree(buf); return -ENOMEM; }
+    if (IS_ERR(new_pml4)) {
+        kprintf("[exec] vmm_create_user_pml4 failed\n");
+        kfree(buf);
+        return -ENOMEM;
+    }
 
     int map_ok = 1;
     for (uint16_t i = 0; i < hdr->e_phnum && map_ok; i++) {
         const struct elf64_phdr *ph =
             (const struct elf64_phdr *)(buf + hdr->e_phoff + i * hdr->e_phentsize);
-        if (ph->p_type != PT_LOAD) continue;
-        if ((ph->p_vaddr + aslr_base) >= 0x0000800000000000ULL) { map_ok = 0; break; }
+        if (ph->p_type != PT_LOAD)
+            continue;
+        if ((ph->p_vaddr + aslr_base) >= 0x0000800000000000ULL) {
+            map_ok = 0;
+            break;
+        }
 
         uint64_t seg_start = (ph->p_vaddr + aslr_base) & ~0xFFFULL;
-        uint64_t seg_end   = (ph->p_vaddr + ph->p_memsz + aslr_base + 0xFFF) & ~0xFFFULL;
+        uint64_t seg_end = (ph->p_vaddr + ph->p_memsz + aslr_base + 0xFFF) & ~0xFFFULL;
         uint64_t flags = VMM_FLAG_PRESENT | VMM_FLAG_USER;
-        if (ph->p_flags & 2) flags |= VMM_FLAG_WRITE;
-        if (!(ph->p_flags & 1)) flags |= VMM_FLAG_NOEXEC;
+        if (ph->p_flags & 2)
+            flags |= VMM_FLAG_WRITE;
+        if (!(ph->p_flags & 1))
+            flags |= VMM_FLAG_NOEXEC;
 
         for (uint64_t va = seg_start; va < seg_end; va += PAGE_SIZE) {
             uint64_t frame = pmm_alloc_frame();
-            if (unlikely(!frame)) { map_ok = 0; break; }
+            if (unlikely(!frame)) {
+                kprintf("[exec] OOM frame at va=0x%llx\n", (unsigned long long)va);
+                map_ok = 0;
+                break;
+            }
             memset(PHYS_TO_VIRT(frame), 0, PAGE_SIZE);
 
-            /* Copy segment data via high-half VMA (buf is kernel addr). */
-            uint64_t page_off = va - seg_start;
-            if (ph->p_filesz > page_off) {
-                uint64_t copy_sz = ph->p_filesz - page_off;
-                if (copy_sz > PAGE_SIZE) copy_sz = PAGE_SIZE;
-                memcpy(PHYS_TO_VIRT(frame), buf + ph->p_offset + page_off, copy_sz);
+            /* Copy the bytes of this segment that fall within this page.
+             * Segments may start at unaligned vaddrs (e.g. .rodata right
+             * after .text), so intersect [p_vaddr, p_vaddr+p_filesz) with
+             * [va, va+PAGE_SIZE) instead of assuming page alignment. */
+            uint64_t seg_va_start = ph->p_vaddr;
+            uint64_t seg_va_end = ph->p_vaddr + ph->p_filesz;
+            uint64_t copy_start = seg_va_start > va ? seg_va_start : va;
+            uint64_t copy_end = seg_va_end < va + PAGE_SIZE ? seg_va_end : va + PAGE_SIZE;
+            if (copy_start < copy_end) {
+                memcpy(PHYS_TO_VIRT(frame) + (copy_start - va),
+                       buf + ph->p_offset + (copy_start - seg_va_start), copy_end - copy_start);
             }
 
-            if (vmm_map_user_page(new_pml4, va, frame, flags) < 0) {
+            int map_rc = vmm_map_user_page(new_pml4, va, frame, flags);
+            if (map_rc == -EEXIST) {
+                /* Overlapping segments (e.g. .rodata sharing its first page
+                 * with .text): the first mapping won, but its data does not
+                 * cover this segment's bytes — copy them into the existing
+                 * frame, then merge permissions. */
+                uint64_t exist_va_start = ph->p_vaddr;
+                uint64_t exist_va_end = ph->p_vaddr + ph->p_filesz;
+                uint64_t ec_start = exist_va_start > va ? exist_va_start : va;
+                uint64_t ec_end = exist_va_end < va + PAGE_SIZE ? exist_va_end : va + PAGE_SIZE;
+                if (ec_start < ec_end) {
+                    uint64_t exist_frame = 0;
+                    if (vmm_user_virt_to_phys(new_pml4, va, &exist_frame) == 0 && exist_frame) {
+                        memcpy(PHYS_TO_VIRT(exist_frame) + (ec_start - va),
+                               buf + ph->p_offset + (ec_start - exist_va_start), ec_end - ec_start);
+                    }
+                }
                 pmm_free_frame(frame);
-                map_ok = 0; break;
+                vmm_merge_user_page_flags(new_pml4, va, flags);
+                continue;
+            }
+            if (map_rc < 0) {
+                kprintf("[exec] vmm_map_user_page(va=0x%llx) failed: %d\n", (unsigned long long)va,
+                        map_rc);
+                pmm_free_frame(frame);
+                map_ok = 0;
+                break;
             }
         }
-        if (!map_ok) break;
+        if (!map_ok)
+            break;
     }
 
-    kfree(buf); buf = NULL;
-    if (!map_ok) { vmm_destroy_user_pml4(new_pml4); return -ENOMEM; }
+    kfree(buf);
+    buf = NULL;
+    if (!map_ok) {
+        kprintf("[exec] segment mapping failed\n");
+        vmm_destroy_user_pml4(new_pml4);
+        return -ENOMEM;
+    }
+    kprintf("[exec] segments mapped\n");
 
     /* Close all FD_CLOEXEC file descriptors before exec */
     process_exec_close_cloexec();
@@ -668,20 +748,36 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
 
     /* AT_SECURE flag: set if real != effective uid/gid, or setuid binary */
     int at_secure = (cur->uid != cur->euid || cur->gid != cur->egid || has_setuid);
-    (void)at_secure;  /* used later in auxv setup */
+    (void)at_secure; /* used later in auxv setup */
 
-    /* Allocate user stack (64KB) with ASLR offset and guard page */
+    /* ── Verify no PT_LOAD segment overlaps with the user stack region ──
+     * Must run BEFORE the stack pages are mapped, otherwise the freshly
+     * mapped stack pages themselves look like an overlap. */
     uint64_t aslr_pages = aslr_stack_offset();
     uint64_t user_stack_top = USER_STACK_TOP - (aslr_pages * PAGE_SIZE);
     uint64_t user_stack_bottom = user_stack_top - USER_STACK_SIZE;
+    for (uint64_t va = user_stack_bottom; va < user_stack_top; va += PAGE_SIZE) {
+        if (vmm_page_is_mapped_user(new_pml4, va)) {
+            kprintf("elf: segment overlaps user stack region\n");
+            goto fail_cleanup;
+        }
+    }
+
+    /* Allocate user stack (64KB) with ASLR offset and guard page */
     /* The bottommost page (user_stack_bottom) is deliberately left unmapped
      * as a guard page — a stack underflow past it will fault with SIGSEGV. */
     for (uint64_t va = user_stack_bottom + PAGE_SIZE; va < user_stack_top; va += PAGE_SIZE) {
         uint64_t frame = pmm_alloc_frame();
-        if (unlikely(!frame)) { vmm_destroy_user_pml4(new_pml4); return -ENOMEM; }
+        if (unlikely(!frame)) {
+            kprintf("[exec] stack OOM at va=0x%llx\n", (unsigned long long)va);
+            vmm_destroy_user_pml4(new_pml4);
+            return -ENOMEM;
+        }
         memset(PHYS_TO_VIRT(frame), 0, PAGE_SIZE);
         if (vmm_map_user_page(new_pml4, va, frame,
-                              VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_USER | VMM_FLAG_NOEXEC) < 0) {
+                              VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_USER | VMM_FLAG_NOEXEC) <
+            0) {
+            kprintf("[exec] stack map failed at va=0x%llx\n", (unsigned long long)va);
             pmm_free_frame(frame);
             vmm_destroy_user_pml4(new_pml4);
             return -ENOMEM;
@@ -690,16 +786,8 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
     /* Guard page at user_stack_bottom is left unmapped — a stack underflow
      * (past the bottom) will fault on this page, caught as a SIGSEGV. */
     cur->user_stack_bottom = user_stack_bottom + PAGE_SIZE; /* first mapped stack page */
-    cur->user_stack_top    = user_stack_top;
-    cur->user_stack_guard  = user_stack_bottom; /* absolute bottom of stack region (guard) */
-
-    /* ── Verify no PT_LOAD segment overlaps with the user stack ────── */
-    for (uint64_t va = user_stack_bottom; va < user_stack_top; va += PAGE_SIZE) {
-        if (vmm_page_is_mapped_user(new_pml4, va)) {
-            kprintf("elf: segment overlaps user stack region\n");
-            goto fail_cleanup;
-        }
-    }
+    cur->user_stack_top = user_stack_top;
+    cur->user_stack_guard = user_stack_bottom; /* absolute bottom of stack region (guard) */
 
     /* ── Set up user stack with argv/envp ───────────────────── */
     /* We're still running on the old page tables. Read argv/envp
@@ -714,7 +802,8 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
             memcpy(&ptr, &argv[argc], sizeof(uint64_t));
             (void)ptr;
             argc++;
-            if (argc > 256) break;  /* sanity */
+            if (argc > 256)
+                break; /* sanity */
         }
     }
 
@@ -725,13 +814,14 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
             memcpy(&ptr, &envp[envc], sizeof(uint64_t));
             (void)ptr;
             envc++;
-            if (envc > 256) break;
+            if (envc > 256)
+                break;
         }
     }
 
     /* First pass: compute total string size */
     uint64_t total_str_size = 0;
-    char *tmp_buf[512];  /* pointers into kernel heap */
+    char *tmp_buf[512]; /* pointers into kernel heap */
     int total_args = argc + envc;
 
     if (total_args > 0) {
@@ -741,15 +831,18 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
 
         for (int i = 0; i < argc; i++) {
             const char *s = argv[i];
-            if (!s) continue;
+            if (!s)
+                continue;
             /* Copy string from old userspace, char by char via safe access */
             int len = 0;
             char *kstr = (char *)kmalloc(256);
-            if (!kstr) continue;
+            if (!kstr)
+                continue;
             while (len < 255) {
                 char c;
                 memcpy(&c, &s[len], 1);
-                if (c == '\0') break;
+                if (c == '\0')
+                    break;
                 kstr[len++] = c;
             }
             kstr[len] = '\0';
@@ -758,14 +851,17 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
         }
         for (int i = 0; i < envc; i++) {
             const char *s = (const char *)envp[i];
-            if (!s) continue;
+            if (!s)
+                continue;
             int len = 0;
             char *kstr = (char *)kmalloc(256);
-            if (!kstr) continue;
+            if (!kstr)
+                continue;
             while (len < 255) {
                 char c;
                 memcpy(&c, &s[len], 1);
-                if (c == '\0') break;
+                if (c == '\0')
+                    break;
                 kstr[len++] = c;
             }
             kstr[len] = '\0';
@@ -781,41 +877,45 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
      * We write via PHYS_TO_VIRT of the new stack's physical pages. */
     uint64_t stack_phys_base = 0;
     {
-        /* Find the physical address of the user stack bottom */
-        int idx4 = (user_stack_bottom >> 39) & 0x1FF;
-        int idx3 = (user_stack_bottom >> 30) & 0x1FF;
-        int idx2 = (user_stack_bottom >> 21) & 0x1FF;
-        int idx1 = (user_stack_bottom >> 12) & 0x1FF;
+        /* Find the physical address of the first mapped user stack page.
+         * The guard page at user_stack_bottom is deliberately unmapped, so
+         * walk from user_stack_bottom + PAGE_SIZE. */
+        uint64_t first_va = user_stack_bottom + PAGE_SIZE;
+        int idx4 = (first_va >> 39) & 0x1FF;
+        int idx3 = (first_va >> 30) & 0x1FF;
+        int idx2 = (first_va >> 21) & 0x1FF;
+        int idx1 = (first_va >> 12) & 0x1FF;
         if (new_pml4[idx4] & 1) {
-            uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(new_pml4[idx4] & ~0xFFFULL);
+            uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(new_pml4[idx4] & PTE_ADDR_MASK);
             if (pdpt[idx3] & 1) {
-                uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[idx3] & ~0xFFFULL);
+                uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[idx3] & PTE_ADDR_MASK);
                 if (pd[idx2] & 1) {
-                    uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[idx2] & ~0xFFFULL);
-                    stack_phys_base = pt[idx1] & ~0xFFFULL;
+                    uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[idx2] & PTE_ADDR_MASK);
+                    stack_phys_base = pt[idx1] & PTE_ADDR_MASK;
                 }
             }
         }
     }
 
     uint64_t stack_top_virt = user_stack_top;
-    uint64_t sp = stack_top_virt;  /* start writing from top down */
+    uint64_t sp = stack_top_virt; /* start writing from top down */
 
     /* Check argv+envp total size against user stack capacity.
      * If total_str_size + pointer arrays + argc exceed the stack,
      * return -E2BIG to prevent stack pointer underflow (which would
      * corrupt kernel memory by writing into unmapped/guard region). */
-    uint64_t stack_overhead = total_str_size
-        + (uint64_t)(argc + 1) * sizeof(uint64_t)   /* argv[] + NULL */
-        + (uint64_t)(envc + 1) * sizeof(uint64_t)   /* envp[] + NULL */
-        + sizeof(uint64_t);                           /* argc */
+    uint64_t stack_overhead = total_str_size +
+                              (uint64_t)(argc + 1) * sizeof(uint64_t)   /* argv[] + NULL */
+                              + (uint64_t)(envc + 1) * sizeof(uint64_t) /* envp[] + NULL */
+                              + sizeof(uint64_t);                       /* argc */
     if (stack_overhead > USER_STACK_SIZE - PAGE_SIZE) {
         kprintf("execve: argv+envp too large (%llu bytes > %llu)\n",
                 (unsigned long long)stack_overhead,
                 (unsigned long long)(USER_STACK_SIZE - PAGE_SIZE));
         /* Clean up tmp_buf allocations before returning */
         for (int i = 0; i < total_args; i++)
-            if (tmp_buf[i]) kfree(tmp_buf[i]);
+            if (tmp_buf[i])
+                kfree(tmp_buf[i]);
         kfree(buf);
         vmm_destroy_user_pml4(new_pml4);
         return -E2BIG;
@@ -829,11 +929,12 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
 
     /* Write string data first (at the top of the stack area) */
     sp -= total_str_size;
-    sp &= ~0xFULL;  /* align to 16 bytes */
+    sp &= ~0xFULL; /* align to 16 bytes */
 
     uint64_t str_pos = sp;
     for (int i = 0; i < argc; i++) {
-        if (!tmp_buf[i]) continue;
+        if (!tmp_buf[i])
+            continue;
         arg_str_addrs[i] = str_pos;
         char *s = tmp_buf[i];
         int len = (int)strlen(s) + 1;
@@ -845,21 +946,26 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
             int pi3 = (va >> 30) & 0x1FF;
             int pi2 = (va >> 21) & 0x1FF;
             int pi1 = (va >> 12) & 0x1FF;
-            if (!(new_pml4[pi4] & 1)) break;
-            uint64_t *ppdpt = (uint64_t *)PHYS_TO_VIRT(new_pml4[pi4] & ~0xFFFULL);
-            if (!(ppdpt[pi3] & 1)) break;
-            uint64_t *ppd = (uint64_t *)PHYS_TO_VIRT(ppdpt[pi3] & ~0xFFFULL);
-            if (!(ppd[pi2] & 1)) break;
-            uint64_t *ppt = (uint64_t *)PHYS_TO_VIRT(ppd[pi2] & ~0xFFFULL);
-            if (!(ppt[pi1] & 1)) break;
-            uint64_t phys = (ppt[pi1] & ~0xFFFULL) + (va & 0xFFF);
+            if (!(new_pml4[pi4] & 1))
+                break;
+            uint64_t *ppdpt = (uint64_t *)PHYS_TO_VIRT(new_pml4[pi4] & PTE_ADDR_MASK);
+            if (!(ppdpt[pi3] & 1))
+                break;
+            uint64_t *ppd = (uint64_t *)PHYS_TO_VIRT(ppdpt[pi3] & PTE_ADDR_MASK);
+            if (!(ppd[pi2] & 1))
+                break;
+            uint64_t *ppt = (uint64_t *)PHYS_TO_VIRT(ppd[pi2] & PTE_ADDR_MASK);
+            if (!(ppt[pi1] & 1))
+                break;
+            uint64_t phys = (ppt[pi1] & PTE_ADDR_MASK) + (va & 0xFFF);
             *(volatile char *)PHYS_TO_VIRT(phys) = s[j];
         }
         str_pos += len;
     }
     for (int i = 0; i < envc; i++) {
         int idx = argc + i;
-        if (!tmp_buf[idx]) continue;
+        if (!tmp_buf[idx])
+            continue;
         env_str_addrs[i] = str_pos;
         char *s = tmp_buf[idx];
         int len = (int)strlen(s) + 1;
@@ -869,14 +975,18 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
             int pi3 = (va >> 30) & 0x1FF;
             int pi2 = (va >> 21) & 0x1FF;
             int pi1 = (va >> 12) & 0x1FF;
-            if (!(new_pml4[pi4] & 1)) break;
-            uint64_t *ppdpt = (uint64_t *)PHYS_TO_VIRT(new_pml4[pi4] & ~0xFFFULL);
-            if (!(ppdpt[pi3] & 1)) break;
-            uint64_t *ppd = (uint64_t *)PHYS_TO_VIRT(ppdpt[pi3] & ~0xFFFULL);
-            if (!(ppd[pi2] & 1)) break;
-            uint64_t *ppt = (uint64_t *)PHYS_TO_VIRT(ppd[pi2] & ~0xFFFULL);
-            if (!(ppt[pi1] & 1)) break;
-            uint64_t phys = (ppt[pi1] & ~0xFFFULL) + (va & 0xFFF);
+            if (!(new_pml4[pi4] & 1))
+                break;
+            uint64_t *ppdpt = (uint64_t *)PHYS_TO_VIRT(new_pml4[pi4] & PTE_ADDR_MASK);
+            if (!(ppdpt[pi3] & 1))
+                break;
+            uint64_t *ppd = (uint64_t *)PHYS_TO_VIRT(ppdpt[pi3] & PTE_ADDR_MASK);
+            if (!(ppd[pi2] & 1))
+                break;
+            uint64_t *ppt = (uint64_t *)PHYS_TO_VIRT(ppd[pi2] & PTE_ADDR_MASK);
+            if (!(ppt[pi1] & 1))
+                break;
+            uint64_t phys = (ppt[pi1] & PTE_ADDR_MASK) + (va & 0xFFF);
             *(volatile char *)PHYS_TO_VIRT(phys) = s[j];
         }
         str_pos += len;
@@ -884,12 +994,12 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
 
     /* Free temporary kernel buffers */
     for (int i = 0; i < total_args; i++) {
-        if (tmp_buf[i]) kfree(tmp_buf[i]);
+        if (tmp_buf[i])
+            kfree(tmp_buf[i]);
     }
 
     /* ── Write auxiliary vector (auxv) entries ───────────────── */
-    /*
-     * Standard Linux x86-64 auxv layout (highest → lowest stack address):
+    /* Standard Linux x86-64 auxv layout (highest → lowest stack address):
      *   AT_PHDR, AT_PHENT, AT_PHNUM, AT_PAGESZ, AT_BASE,
      *   AT_FLAGS, AT_ENTRY, AT_UID, AT_EUID, AT_GID, AT_EGID,
      *   AT_SECURE, AT_CLKTCK, AT_RANDOM, AT_EXECFN, AT_NULL
@@ -905,46 +1015,46 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
         int a = 0;
 
         auxv_buf[a].a_type = AT_PHDR;
-        auxv_buf[a].a_val  = 0;                    /* Not mapped separately yet */
+        auxv_buf[a].a_val = 0; /* Not mapped separately yet */
         a++;
         auxv_buf[a].a_type = AT_PHENT;
-        auxv_buf[a].a_val  = sizeof(struct elf64_phdr);
+        auxv_buf[a].a_val = sizeof(struct elf64_phdr);
         a++;
         auxv_buf[a].a_type = AT_PHNUM;
-        auxv_buf[a].a_val  = (uint64_t)hdr->e_phnum;
+        auxv_buf[a].a_val = (uint64_t)hdr->e_phnum;
         a++;
         auxv_buf[a].a_type = AT_PAGESZ;
-        auxv_buf[a].a_val  = 4096;
+        auxv_buf[a].a_val = 4096;
         a++;
         auxv_buf[a].a_type = AT_BASE;
-        auxv_buf[a].a_val  = 0;                    /* No interpreter for static binaries */
+        auxv_buf[a].a_val = 0; /* No interpreter for static binaries */
         a++;
         auxv_buf[a].a_type = AT_FLAGS;
-        auxv_buf[a].a_val  = 0;
+        auxv_buf[a].a_val = 0;
         a++;
         auxv_buf[a].a_type = AT_ENTRY;
-        auxv_buf[a].a_val  = entry;
+        auxv_buf[a].a_val = entry;
         a++;
         auxv_buf[a].a_type = AT_UID;
-        auxv_buf[a].a_val  = (uint64_t)cur->uid;
+        auxv_buf[a].a_val = (uint64_t)cur->uid;
         a++;
         auxv_buf[a].a_type = AT_EUID;
-        auxv_buf[a].a_val  = (uint64_t)cur->euid;
+        auxv_buf[a].a_val = (uint64_t)cur->euid;
         a++;
         auxv_buf[a].a_type = AT_GID;
-        auxv_buf[a].a_val  = (uint64_t)cur->gid;
+        auxv_buf[a].a_val = (uint64_t)cur->gid;
         a++;
         auxv_buf[a].a_type = AT_EGID;
-        auxv_buf[a].a_val  = (uint64_t)cur->egid;
+        auxv_buf[a].a_val = (uint64_t)cur->egid;
         a++;
         auxv_buf[a].a_type = AT_SECURE;
-        auxv_buf[a].a_val  = (uint64_t)(at_secure ? 1UL : 0UL);
+        auxv_buf[a].a_val = (uint64_t)(at_secure ? 1UL : 0UL);
         a++;
         auxv_buf[a].a_type = AT_CLKTCK;
-        auxv_buf[a].a_val  = 100;
+        auxv_buf[a].a_val = 100;
         a++;
         auxv_buf[a].a_type = AT_NULL;
-        auxv_buf[a].a_val  = 0;
+        auxv_buf[a].a_val = 0;
         a++;
 
         size_t auxv_bytes = (size_t)a * sizeof(Elf64_auxv_t);
@@ -953,23 +1063,60 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
         sp -= auxv_bytes;
         sp &= ~0xFULL;
 
-        /* Copy the auxv array to the new user stack (via PHYS_TO_VIRT) */
-        uint64_t *aux_virt = (uint64_t *)PHYS_TO_VIRT(
-            stack_phys_base + (sp - user_stack_bottom));
-        if (aux_virt)
-            memcpy(aux_virt, auxv_buf, auxv_bytes);
+        /* Copy the auxv array to the new user stack (via PHYS_TO_VIRT).
+         * NOTE: stack pages are individually allocated (non-contiguous
+         * physical frames), so a single stack_phys_base + offset is only
+         * valid within ONE page.  Each element must resolve its own VA →
+         * phys, exactly like the string writes above. */
+        {
+            uint64_t *av = (uint64_t *)auxv_buf;
+            for (size_t i = 0; i < auxv_bytes / sizeof(uint64_t); i++) {
+                uint64_t va = sp + i * sizeof(uint64_t);
+                int pi4 = (va >> 39) & 0x1FF;
+                int pi3 = (va >> 30) & 0x1FF;
+                int pi2 = (va >> 21) & 0x1FF;
+                int pi1 = (va >> 12) & 0x1FF;
+                if (!(new_pml4[pi4] & 1))
+                    break;
+                uint64_t *ppdpt = (uint64_t *)PHYS_TO_VIRT(new_pml4[pi4] & PTE_ADDR_MASK);
+                if (!(ppdpt[pi3] & 1))
+                    break;
+                uint64_t *ppd = (uint64_t *)PHYS_TO_VIRT(ppdpt[pi3] & PTE_ADDR_MASK);
+                if (!(ppd[pi2] & 1))
+                    break;
+                uint64_t *ppt = (uint64_t *)PHYS_TO_VIRT(ppd[pi2] & PTE_ADDR_MASK);
+                if (!(ppt[pi1] & 1))
+                    break;
+                uint64_t phys = (ppt[pi1] & PTE_ADDR_MASK) + (va & 0xFFF);
+                *(volatile uint64_t *)PHYS_TO_VIRT(phys) = av[i];
+            }
+        }
     }
 
     /* Write envp[] array (envp pointers pointing to actual string data, then NULL) */
     sp -= (envc + 1) * sizeof(uint64_t);
     sp &= ~0xFULL;
     {
-        uint64_t *envp_virt_ptr = (uint64_t *)PHYS_TO_VIRT(
-            stack_phys_base + (sp - user_stack_bottom));
-        if (envp_virt_ptr) {
-            for (int i = 0; i < envc; i++)
-                envp_virt_ptr[i] = env_str_addrs[i];
-            envp_virt_ptr[envc] = 0;  /* NULL terminator */
+        for (int i = 0; i <= envc; i++) {
+            uint64_t va = sp + (uint64_t)i * sizeof(uint64_t);
+            int pi4 = (va >> 39) & 0x1FF;
+            int pi3 = (va >> 30) & 0x1FF;
+            int pi2 = (va >> 21) & 0x1FF;
+            int pi1 = (va >> 12) & 0x1FF;
+            if (!(new_pml4[pi4] & 1))
+                break;
+            uint64_t *ppdpt = (uint64_t *)PHYS_TO_VIRT(new_pml4[pi4] & PTE_ADDR_MASK);
+            if (!(ppdpt[pi3] & 1))
+                break;
+            uint64_t *ppd = (uint64_t *)PHYS_TO_VIRT(ppdpt[pi3] & PTE_ADDR_MASK);
+            if (!(ppd[pi2] & 1))
+                break;
+            uint64_t *ppt = (uint64_t *)PHYS_TO_VIRT(ppd[pi2] & PTE_ADDR_MASK);
+            if (!(ppt[pi1] & 1))
+                break;
+            uint64_t phys = (ppt[pi1] & PTE_ADDR_MASK) + (va & 0xFFF);
+            uint64_t val = (i < envc) ? env_str_addrs[i] : 0;
+            *(volatile uint64_t *)PHYS_TO_VIRT(phys) = val;
         }
     }
 
@@ -977,25 +1124,58 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
     sp -= (argc + 1) * sizeof(uint64_t);
     sp &= ~0xFULL;
     {
-        uint64_t *argv_virt_ptr = (uint64_t *)PHYS_TO_VIRT(
-            stack_phys_base + (sp - user_stack_bottom));
-        if (argv_virt_ptr) {
-            for (int i = 0; i < argc; i++)
-                argv_virt_ptr[i] = arg_str_addrs[i];
-            argv_virt_ptr[argc] = 0;  /* NULL terminator */
+        for (int i = 0; i <= argc; i++) {
+            uint64_t va = sp + (uint64_t)i * sizeof(uint64_t);
+            int pi4 = (va >> 39) & 0x1FF;
+            int pi3 = (va >> 30) & 0x1FF;
+            int pi2 = (va >> 21) & 0x1FF;
+            int pi1 = (va >> 12) & 0x1FF;
+            if (!(new_pml4[pi4] & 1))
+                break;
+            uint64_t *ppdpt = (uint64_t *)PHYS_TO_VIRT(new_pml4[pi4] & PTE_ADDR_MASK);
+            if (!(ppdpt[pi3] & 1))
+                break;
+            uint64_t *ppd = (uint64_t *)PHYS_TO_VIRT(ppdpt[pi3] & PTE_ADDR_MASK);
+            if (!(ppd[pi2] & 1))
+                break;
+            uint64_t *ppt = (uint64_t *)PHYS_TO_VIRT(ppd[pi2] & PTE_ADDR_MASK);
+            if (!(ppt[pi1] & 1))
+                break;
+            uint64_t phys = (ppt[pi1] & PTE_ADDR_MASK) + (va & 0xFFF);
+            uint64_t val = (i < argc) ? arg_str_addrs[i] : 0;
+            *(volatile uint64_t *)PHYS_TO_VIRT(phys) = val;
         }
     }
 
     /* Write argc */
     sp -= sizeof(uint64_t);
-    uint64_t *argc_ptr = (uint64_t *)PHYS_TO_VIRT(stack_phys_base + (sp - user_stack_bottom));
-    if (argc_ptr) *argc_ptr = (uint64_t)argc;
+    {
+        uint64_t va = sp;
+        int pi4 = (va >> 39) & 0x1FF;
+        int pi3 = (va >> 30) & 0x1FF;
+        int pi2 = (va >> 21) & 0x1FF;
+        int pi1 = (va >> 12) & 0x1FF;
+        if ((new_pml4[pi4] & 1)) {
+            uint64_t *ppdpt = (uint64_t *)PHYS_TO_VIRT(new_pml4[pi4] & PTE_ADDR_MASK);
+            if ((ppdpt[pi3] & 1)) {
+                uint64_t *ppd = (uint64_t *)PHYS_TO_VIRT(ppdpt[pi3] & PTE_ADDR_MASK);
+                if ((ppd[pi2] & 1)) {
+                    uint64_t *ppt = (uint64_t *)PHYS_TO_VIRT(ppd[pi2] & PTE_ADDR_MASK);
+                    if ((ppt[pi1] & 1)) {
+                        uint64_t phys = (ppt[pi1] & PTE_ADDR_MASK) + (va & 0xFFF);
+                        *(volatile uint64_t *)PHYS_TO_VIRT(phys) = (uint64_t)argc;
+                    }
+                }
+            }
+        }
+    }
 
     uint64_t new_rsp = sp;
 
     /* Update process name and exe path */
     size_t plen = strlen(path);
-    if (plen > 255) plen = 255;
+    if (plen > 255)
+        plen = 255;
     char *kname = (char *)kmalloc(plen + 1);
     if (kname) {
         memcpy(kname, path, plen);
@@ -1037,28 +1217,40 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
         spinlock_irqsave_release(&cur->sig_lock, __exec_sig_flags);
     }
 
-    /* Destroy old user page tables */
-    if (cur->pml4) vmm_destroy_user_pml4(cur->pml4);
-
-    /* Switch to new page tables */
+    /* Switch to new page tables BEFORE destroying the old one.
+     * Destroying the table that CR3 currently points at poisons/frees
+     * the very PML4 the CPU is walking — the poison fill (0xDC) and any
+     * reuse of the freed frames corrupts the active page tables and the
+     * kernel triple-faults (observed: boot silently halts mid-exec with
+     * no output after the destroy walk). */
+    uint64_t *old_pml4 = cur->pml4;
     cur->pml4 = new_pml4;
     cur->user_entry = entry;
     __asm__ volatile("cli");
     vmm_switch_pml4(new_pml4);
     __asm__ volatile("sti");
 
+    /* Destroy old user page tables (safe now — CR3 references new_pml4) */
+    if (old_pml4)
+        vmm_destroy_user_pml4(old_pml4);
+
+    /* Rebuild the KPTI user-CR3 state — the old pml4 was destroyed above
+     * and the trampoline's CR3_USER slot still points at it. */
+    if (kpti_is_active())
+        kpti_setup_process(cur);
+
     /* Set up the execve return state.
      * The syscall return path (syscall_asm.asm) checks execve_pending
      * and uses these values for the sysret instead of the stack state. */
     __asm__ volatile("cli");
     execve_user_rip = entry;
-    execve_user_rflags = 0x202;  /* IF=1 */
+    execve_user_rflags = 0x202; /* IF=1 */
     execve_user_rsp = new_rsp;
     execve_pending = 1;
     __asm__ volatile("sti");
 
-    kprintf("execve: %s (entry 0x%lx, rsp 0x%lx, pid %lu, argc %d)\n",
-            path, (unsigned long)entry, (unsigned long)new_rsp, (unsigned long)cur->pid, argc);
+    kprintf("execve: %s (entry 0x%lx, rsp 0x%lx, pid %lu, argc %d)\n", path, (unsigned long)entry,
+            (unsigned long)new_rsp, (unsigned long)cur->pid, argc);
     return 0;
 
 fail_cleanup:
@@ -1079,8 +1271,7 @@ fail_cleanup:
  *
  * Item 306: posix_spawn / posix_spawnp
  */
-int process_spawn(const char *path, char *const argv[], char *const envp[])
-{
+int process_spawn(const char *path, char *const argv[], char *const envp[]) {
     struct process *parent = process_get_current();
     if (!parent || !parent->is_user)
         return -ECHILD;
@@ -1103,7 +1294,8 @@ int process_spawn(const char *path, char *const argv[], char *const envp[])
 
     /* ── 1. Read the ELF file ───────────────────────────────────── */
     uint8_t *buf = (uint8_t *)kmalloc(ELF_MAX_SIZE);
-    if (unlikely(!buf)) return -ENOMEM;
+    if (unlikely(!buf))
+        return -ENOMEM;
 
     uint32_t size = 0;
     if (vfs_read(path, buf, ELF_MAX_SIZE, &size) < 0) {
@@ -1158,50 +1350,93 @@ int process_spawn(const char *path, char *const argv[], char *const envp[])
     uint64_t aslr_base = aslr_base_pages * PAGE_SIZE;
     if (aslr_base_pages > 0) {
         entry += aslr_base;
-        kprintf("spawn: '%s' PIE base randomized +%llu pages\n",
-                path, (unsigned long long)aslr_base_pages);
+        kprintf("spawn: '%s' PIE base randomized +%llu pages\n", path,
+                (unsigned long long)aslr_base_pages);
     }
 
     /* ── 3. Create fresh page tables ────────────────────────────── */
     uint64_t *new_pml4 = vmm_create_user_pml4();
-    if (IS_ERR(new_pml4)) { kfree(buf); return -ENOMEM; }
+    if (IS_ERR(new_pml4)) {
+        kfree(buf);
+        return -ENOMEM;
+    }
 
     /* ── 4. Map all PT_LOAD segments ────────────────────────────── */
     int map_ok = 1;
     for (uint16_t i = 0; i < hdr->e_phnum && map_ok; i++) {
         const struct elf64_phdr *ph =
             (const struct elf64_phdr *)(buf + hdr->e_phoff + i * hdr->e_phentsize);
-        if (ph->p_type != PT_LOAD) continue;
-        if ((ph->p_vaddr + aslr_base) >= 0x0000800000000000ULL) { map_ok = 0; break; }
+        if (ph->p_type != PT_LOAD)
+            continue;
+        if ((ph->p_vaddr + aslr_base) >= 0x0000800000000000ULL) {
+            map_ok = 0;
+            break;
+        }
 
         uint64_t seg_start = (ph->p_vaddr + aslr_base) & ~0xFFFULL;
-        uint64_t seg_end   = (ph->p_vaddr + ph->p_memsz + aslr_base + 0xFFF) & ~0xFFFULL;
+        uint64_t seg_end = (ph->p_vaddr + ph->p_memsz + aslr_base + 0xFFF) & ~0xFFFULL;
         uint64_t flags = VMM_FLAG_PRESENT | VMM_FLAG_USER;
-        if (ph->p_flags & 2) flags |= VMM_FLAG_WRITE;
-        if (!(ph->p_flags & 1)) flags |= VMM_FLAG_NOEXEC;
+        if (ph->p_flags & 2)
+            flags |= VMM_FLAG_WRITE;
+        if (!(ph->p_flags & 1))
+            flags |= VMM_FLAG_NOEXEC;
 
         for (uint64_t va = seg_start; va < seg_end; va += PAGE_SIZE) {
             uint64_t frame = pmm_alloc_frame();
-            if (unlikely(!frame)) { map_ok = 0; break; }
+            if (unlikely(!frame)) {
+                map_ok = 0;
+                break;
+            }
             memset(PHYS_TO_VIRT(frame), 0, PAGE_SIZE);
 
-            uint64_t page_off = va - seg_start;
-            if (ph->p_filesz > page_off) {
-                uint64_t copy_sz = ph->p_filesz - page_off;
-                if (copy_sz > PAGE_SIZE) copy_sz = PAGE_SIZE;
-                memcpy(PHYS_TO_VIRT(frame), buf + ph->p_offset + page_off, copy_sz);
+            /* Copy the bytes of this segment that fall within this page.
+             * Segments may start at unaligned vaddrs, so intersect
+             * [p_vaddr, p_vaddr+p_filesz) with [va, va+PAGE_SIZE). */
+            uint64_t seg_va_start = ph->p_vaddr;
+            uint64_t seg_va_end = ph->p_vaddr + ph->p_filesz;
+            uint64_t copy_start = seg_va_start > va ? seg_va_start : va;
+            uint64_t copy_end = seg_va_end < va + PAGE_SIZE ? seg_va_end : va + PAGE_SIZE;
+            if (copy_start < copy_end) {
+                memcpy(PHYS_TO_VIRT(frame) + (copy_start - va),
+                       buf + ph->p_offset + (copy_start - seg_va_start), copy_end - copy_start);
             }
 
-            if (vmm_map_user_page(new_pml4, va, frame, flags) < 0) {
+            int map_rc = vmm_map_user_page(new_pml4, va, frame, flags);
+            if (map_rc == -EEXIST) {
+                /* Overlapping segments (e.g. .rodata sharing its first page
+                 * with .text): the first mapping won, but its data does not
+                 * cover this segment's bytes — copy them into the existing
+                 * frame, then merge permissions. */
+                uint64_t exist_va_start = ph->p_vaddr;
+                uint64_t exist_va_end = ph->p_vaddr + ph->p_filesz;
+                uint64_t ec_start = exist_va_start > va ? exist_va_start : va;
+                uint64_t ec_end = exist_va_end < va + PAGE_SIZE ? exist_va_end : va + PAGE_SIZE;
+                if (ec_start < ec_end) {
+                    uint64_t exist_frame = 0;
+                    if (vmm_user_virt_to_phys(new_pml4, va, &exist_frame) == 0 && exist_frame) {
+                        memcpy(PHYS_TO_VIRT(exist_frame) + (ec_start - va),
+                               buf + ph->p_offset + (ec_start - exist_va_start), ec_end - ec_start);
+                    }
+                }
                 pmm_free_frame(frame);
-                map_ok = 0; break;
+                vmm_merge_user_page_flags(new_pml4, va, flags);
+                continue;
+            }
+            if (map_rc < 0) {
+                pmm_free_frame(frame);
+                map_ok = 0;
+                break;
             }
         }
-        if (!map_ok) break;
+        if (!map_ok)
+            break;
     }
 
     kfree(buf);
-    if (!map_ok) { vmm_destroy_user_pml4(new_pml4); return -ENOMEM; }
+    if (!map_ok) {
+        vmm_destroy_user_pml4(new_pml4);
+        return -ENOMEM;
+    }
 
     /* ── 5. Allocate user stack (64KB) with ASLR offset and guard page ── */
     /* The bottommost page (user_stack_bottom) is deliberately left unmapped
@@ -1211,10 +1446,14 @@ int process_spawn(const char *path, char *const argv[], char *const envp[])
     uint64_t user_stack_bottom = user_stack_top - USER_STACK_SIZE;
     for (uint64_t va = user_stack_bottom + PAGE_SIZE; va < user_stack_top; va += PAGE_SIZE) {
         uint64_t frame = pmm_alloc_frame();
-        if (unlikely(!frame)) { vmm_destroy_user_pml4(new_pml4); return -ENOMEM; }
+        if (unlikely(!frame)) {
+            vmm_destroy_user_pml4(new_pml4);
+            return -ENOMEM;
+        }
         memset(PHYS_TO_VIRT(frame), 0, PAGE_SIZE);
         if (vmm_map_user_page(new_pml4, va, frame,
-                              VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_USER | VMM_FLAG_NOEXEC) < 0) {
+                              VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_USER | VMM_FLAG_NOEXEC) <
+            0) {
             pmm_free_frame(frame);
             vmm_destroy_user_pml4(new_pml4);
             return -ENOMEM;
@@ -1229,7 +1468,8 @@ int process_spawn(const char *path, char *const argv[], char *const envp[])
             memcpy(&ptr, &argv[argc], sizeof(uint64_t));
             (void)ptr;
             argc++;
-            if (argc > 256) break;
+            if (argc > 256)
+                break;
         }
     }
 
@@ -1240,7 +1480,8 @@ int process_spawn(const char *path, char *const argv[], char *const envp[])
             memcpy(&ptr, &envp[envc], sizeof(uint64_t));
             (void)ptr;
             envc++;
-            if (envc > 256) break;
+            if (envc > 256)
+                break;
         }
     }
 
@@ -1255,14 +1496,17 @@ int process_spawn(const char *path, char *const argv[], char *const envp[])
 
         for (int i = 0; i < argc; i++) {
             const char *s = argv[i];
-            if (!s) continue;
+            if (!s)
+                continue;
             int len = 0;
             char *kstr = (char *)kmalloc(256);
-            if (!kstr) continue;
+            if (!kstr)
+                continue;
             while (len < 255) {
                 char c;
                 memcpy(&c, &s[len], 1);
-                if (c == '\0') break;
+                if (c == '\0')
+                    break;
                 kstr[len++] = c;
             }
             kstr[len] = '\0';
@@ -1271,14 +1515,17 @@ int process_spawn(const char *path, char *const argv[], char *const envp[])
         }
         for (int i = 0; i < envc; i++) {
             const char *s = (const char *)envp[i];
-            if (!s) continue;
+            if (!s)
+                continue;
             int len = 0;
             char *kstr = (char *)kmalloc(256);
-            if (!kstr) continue;
+            if (!kstr)
+                continue;
             while (len < 255) {
                 char c;
                 memcpy(&c, &s[len], 1);
-                if (c == '\0') break;
+                if (c == '\0')
+                    break;
                 kstr[len++] = c;
             }
             kstr[len] = '\0';
@@ -1288,25 +1535,32 @@ int process_spawn(const char *path, char *const argv[], char *const envp[])
     }
 
     /* ── 8. Lay out stack data (strings, envp[], argv[], argc) ──── */
+    uint64_t arg_str_addrs[256];
+    uint64_t env_str_addrs[256];
+    memset(arg_str_addrs, 0, sizeof(arg_str_addrs));
+    memset(env_str_addrs, 0, sizeof(env_str_addrs));
     uint64_t stack_phys_base = 0;
     {
-        int idx4 = (user_stack_bottom >> 39) & 0x1FF;
-        int idx3 = (user_stack_bottom >> 30) & 0x1FF;
-        int idx2 = (user_stack_bottom >> 21) & 0x1FF;
-        int idx1 = (user_stack_bottom >> 12) & 0x1FF;
+        /* Walk from the first mapped page — the guard page at
+         * user_stack_bottom is deliberately unmapped. */
+        uint64_t first_va = user_stack_bottom + PAGE_SIZE;
+        int idx4 = (first_va >> 39) & 0x1FF;
+        int idx3 = (first_va >> 30) & 0x1FF;
+        int idx2 = (first_va >> 21) & 0x1FF;
+        int idx1 = (first_va >> 12) & 0x1FF;
         if (new_pml4[idx4] & 1) {
-            uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(new_pml4[idx4] & ~0xFFFULL);
+            uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(new_pml4[idx4] & PTE_ADDR_MASK);
             if (pdpt[idx3] & 1) {
-                uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[idx3] & ~0xFFFULL);
+                uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[idx3] & PTE_ADDR_MASK);
                 if (pd[idx2] & 1) {
-                    uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[idx2] & ~0xFFFULL);
-                    stack_phys_base = pt[idx1] & ~0xFFFULL;
+                    uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[idx2] & PTE_ADDR_MASK);
+                    stack_phys_base = pt[idx1] & PTE_ADDR_MASK;
                 }
             }
         }
     }
 
-    uint64_t sp = user_stack_top;  /* start writing from top down */
+    uint64_t sp = user_stack_top; /* start writing from top down */
 
     /* Write string data first */
     sp -= total_str_size;
@@ -1314,46 +1568,58 @@ int process_spawn(const char *path, char *const argv[], char *const envp[])
     uint64_t str_pos = sp;
 
     for (int i = 0; i < argc; i++) {
-        if (!tmp_buf[i]) continue;
+        if (!tmp_buf[i])
+            continue;
         char *s = tmp_buf[i];
         int len = (int)strlen(s) + 1;
+        arg_str_addrs[i] = str_pos;
         for (int j = 0; j < len; j++) {
             uint64_t va = str_pos + j;
             int pi4 = (va >> 39) & 0x1FF;
             int pi3 = (va >> 30) & 0x1FF;
             int pi2 = (va >> 21) & 0x1FF;
             int pi1 = (va >> 12) & 0x1FF;
-            if (!(new_pml4[pi4] & 1)) break;
-            uint64_t *ppdpt = (uint64_t *)PHYS_TO_VIRT(new_pml4[pi4] & ~0xFFFULL);
-            if (!(ppdpt[pi3] & 1)) break;
-            uint64_t *ppd = (uint64_t *)PHYS_TO_VIRT(ppdpt[pi3] & ~0xFFFULL);
-            if (!(ppd[pi2] & 1)) break;
-            uint64_t *ppt = (uint64_t *)PHYS_TO_VIRT(ppd[pi2] & ~0xFFFULL);
-            if (!(ppt[pi1] & 1)) break;
-            uint64_t phys = (ppt[pi1] & ~0xFFFULL) + (va & 0xFFF);
+            if (!(new_pml4[pi4] & 1))
+                break;
+            uint64_t *ppdpt = (uint64_t *)PHYS_TO_VIRT(new_pml4[pi4] & PTE_ADDR_MASK);
+            if (!(ppdpt[pi3] & 1))
+                break;
+            uint64_t *ppd = (uint64_t *)PHYS_TO_VIRT(ppdpt[pi3] & PTE_ADDR_MASK);
+            if (!(ppd[pi2] & 1))
+                break;
+            uint64_t *ppt = (uint64_t *)PHYS_TO_VIRT(ppd[pi2] & PTE_ADDR_MASK);
+            if (!(ppt[pi1] & 1))
+                break;
+            uint64_t phys = (ppt[pi1] & PTE_ADDR_MASK) + (va & 0xFFF);
             *(volatile char *)PHYS_TO_VIRT(phys) = s[j];
         }
         str_pos += len;
     }
     for (int i = 0; i < envc; i++) {
         int idx = argc + i;
-        if (!tmp_buf[idx]) continue;
+        if (!tmp_buf[idx])
+            continue;
         char *s = tmp_buf[idx];
         int len = (int)strlen(s) + 1;
+        env_str_addrs[i] = str_pos;
         for (int j = 0; j < len; j++) {
             uint64_t va = str_pos + j;
             int pi4 = (va >> 39) & 0x1FF;
             int pi3 = (va >> 30) & 0x1FF;
             int pi2 = (va >> 21) & 0x1FF;
             int pi1 = (va >> 12) & 0x1FF;
-            if (!(new_pml4[pi4] & 1)) break;
-            uint64_t *ppdpt = (uint64_t *)PHYS_TO_VIRT(new_pml4[pi4] & ~0xFFFULL);
-            if (!(ppdpt[pi3] & 1)) break;
-            uint64_t *ppd = (uint64_t *)PHYS_TO_VIRT(ppdpt[pi3] & ~0xFFFULL);
-            if (!(ppd[pi2] & 1)) break;
-            uint64_t *ppt = (uint64_t *)PHYS_TO_VIRT(ppd[pi2] & ~0xFFFULL);
-            if (!(ppt[pi1] & 1)) break;
-            uint64_t phys = (ppt[pi1] & ~0xFFFULL) + (va & 0xFFF);
+            if (!(new_pml4[pi4] & 1))
+                break;
+            uint64_t *ppdpt = (uint64_t *)PHYS_TO_VIRT(new_pml4[pi4] & PTE_ADDR_MASK);
+            if (!(ppdpt[pi3] & 1))
+                break;
+            uint64_t *ppd = (uint64_t *)PHYS_TO_VIRT(ppdpt[pi3] & PTE_ADDR_MASK);
+            if (!(ppd[pi2] & 1))
+                break;
+            uint64_t *ppt = (uint64_t *)PHYS_TO_VIRT(ppd[pi2] & PTE_ADDR_MASK);
+            if (!(ppt[pi1] & 1))
+                break;
+            uint64_t phys = (ppt[pi1] & PTE_ADDR_MASK) + (va & 0xFFF);
             *(volatile char *)PHYS_TO_VIRT(phys) = s[j];
         }
         str_pos += len;
@@ -1361,21 +1627,86 @@ int process_spawn(const char *path, char *const argv[], char *const envp[])
 
     /* Free temporary kernel buffers */
     for (int i = 0; i < total_args; i++) {
-        if (tmp_buf[i]) kfree(tmp_buf[i]);
+        if (tmp_buf[i])
+            kfree(tmp_buf[i]);
     }
 
-    /* Write envp[] array */
+    /* Write envp[] array (envp pointers pointing to actual string data, then NULL) */
     sp -= (envc + 1) * sizeof(uint64_t);
     sp &= ~0xFULL;
+    {
+        for (int i = 0; i <= envc; i++) {
+            uint64_t va = sp + (uint64_t)i * sizeof(uint64_t);
+            int pi4 = (va >> 39) & 0x1FF;
+            int pi3 = (va >> 30) & 0x1FF;
+            int pi2 = (va >> 21) & 0x1FF;
+            int pi1 = (va >> 12) & 0x1FF;
+            if (!(new_pml4[pi4] & 1))
+                break;
+            uint64_t *ppdpt = (uint64_t *)PHYS_TO_VIRT(new_pml4[pi4] & PTE_ADDR_MASK);
+            if (!(ppdpt[pi3] & 1))
+                break;
+            uint64_t *ppd = (uint64_t *)PHYS_TO_VIRT(ppdpt[pi3] & PTE_ADDR_MASK);
+            if (!(ppd[pi2] & 1))
+                break;
+            uint64_t *ppt = (uint64_t *)PHYS_TO_VIRT(ppd[pi2] & PTE_ADDR_MASK);
+            if (!(ppt[pi1] & 1))
+                break;
+            uint64_t phys = (ppt[pi1] & PTE_ADDR_MASK) + (va & 0xFFF);
+            uint64_t val = (i < envc) ? env_str_addrs[i] : 0;
+            *(volatile uint64_t *)PHYS_TO_VIRT(phys) = val;
+        }
+    }
 
-    /* Write argv[] array */
+    /* Write argv[] array (argv pointers pointing to actual string data, then NULL) */
     sp -= (argc + 1) * sizeof(uint64_t);
     sp &= ~0xFULL;
+    {
+        for (int i = 0; i <= argc; i++) {
+            uint64_t va = sp + (uint64_t)i * sizeof(uint64_t);
+            int pi4 = (va >> 39) & 0x1FF;
+            int pi3 = (va >> 30) & 0x1FF;
+            int pi2 = (va >> 21) & 0x1FF;
+            int pi1 = (va >> 12) & 0x1FF;
+            if (!(new_pml4[pi4] & 1))
+                break;
+            uint64_t *ppdpt = (uint64_t *)PHYS_TO_VIRT(new_pml4[pi4] & PTE_ADDR_MASK);
+            if (!(ppdpt[pi3] & 1))
+                break;
+            uint64_t *ppd = (uint64_t *)PHYS_TO_VIRT(ppdpt[pi3] & PTE_ADDR_MASK);
+            if (!(ppd[pi2] & 1))
+                break;
+            uint64_t *ppt = (uint64_t *)PHYS_TO_VIRT(ppd[pi2] & PTE_ADDR_MASK);
+            if (!(ppt[pi1] & 1))
+                break;
+            uint64_t phys = (ppt[pi1] & PTE_ADDR_MASK) + (va & 0xFFF);
+            uint64_t val = (i < argc) ? arg_str_addrs[i] : 0;
+            *(volatile uint64_t *)PHYS_TO_VIRT(phys) = val;
+        }
+    }
 
     /* Write argc */
     sp -= sizeof(uint64_t);
-    uint64_t *argc_ptr = (uint64_t *)PHYS_TO_VIRT(stack_phys_base + (sp - user_stack_bottom));
-    if (argc_ptr) *argc_ptr = (uint64_t)argc;
+    {
+        uint64_t va = sp;
+        int pi4 = (va >> 39) & 0x1FF;
+        int pi3 = (va >> 30) & 0x1FF;
+        int pi2 = (va >> 21) & 0x1FF;
+        int pi1 = (va >> 12) & 0x1FF;
+        if ((new_pml4[pi4] & 1)) {
+            uint64_t *ppdpt = (uint64_t *)PHYS_TO_VIRT(new_pml4[pi4] & PTE_ADDR_MASK);
+            if ((ppdpt[pi3] & 1)) {
+                uint64_t *ppd = (uint64_t *)PHYS_TO_VIRT(ppdpt[pi3] & PTE_ADDR_MASK);
+                if ((ppd[pi2] & 1)) {
+                    uint64_t *ppt = (uint64_t *)PHYS_TO_VIRT(ppd[pi2] & PTE_ADDR_MASK);
+                    if ((ppt[pi1] & 1)) {
+                        uint64_t phys = (ppt[pi1] & PTE_ADDR_MASK) + (va & 0xFFF);
+                        *(volatile uint64_t *)PHYS_TO_VIRT(phys) = (uint64_t)argc;
+                    }
+                }
+            }
+        }
+    }
 
     uint64_t new_rsp = sp;
 
@@ -1387,14 +1718,14 @@ int process_spawn(const char *path, char *const argv[], char *const envp[])
     }
 
     /* Inherit parent's credentials, umask, rlimits, and groups */
-    child->uid  = parent->uid;
-    child->gid  = parent->gid;
+    child->uid = parent->uid;
+    child->gid = parent->gid;
     child->euid = parent->euid;
     child->egid = parent->egid;
     child->umask = parent->umask;
     child->user_stack_bottom = user_stack_bottom + PAGE_SIZE; /* skip unmapped guard page */
-    child->user_stack_top    = user_stack_top;
-    child->user_stack_guard  = user_stack_bottom; /* absolute bottom of stack region (guard) */
+    child->user_stack_top = user_stack_top;
+    child->user_stack_guard = user_stack_bottom; /* absolute bottom of stack region (guard) */
     for (int i = 0; i < PROCESS_SYSCALL_CAP_WORDS; i++)
         child->cap_bset[i] = parent->cap_bset[i];
 
@@ -1412,19 +1743,21 @@ int process_spawn(const char *path, char *const argv[], char *const envp[])
 
     /* Set child name from last component of path */
     const char *slash = path;
-    while (*path) { if (*path == '/') slash = path + 1; path++; }
+    while (*path) {
+        if (*path == '/')
+            slash = path + 1;
+        path++;
+    }
     child->name = slash;
 
-    kprintf("spawn: %s (entry 0x%lx, rsp 0x%lx, child pid %lu)\n",
-            child->name, (unsigned long)entry, (unsigned long)new_rsp,
-            (unsigned long)child->pid);
+    kprintf("spawn: %s (entry 0x%lx, rsp 0x%lx, child pid %lu)\n", child->name,
+            (unsigned long)entry, (unsigned long)new_rsp, (unsigned long)child->pid);
 
     return (int)child->pid;
 }
 
 /* ── Stub: elf_load_segment ─────────────────────────────── */
-static int elf_load_segment(const void *elf, void *dest, size_t size)
-{
+static int elf_load_segment(const void *elf, void *dest, size_t size) {
     (void)elf;
     (void)dest;
     (void)size;
@@ -1432,24 +1765,21 @@ static int elf_load_segment(const void *elf, void *dest, size_t size)
     return 0;
 }
 /* ── Stub: elf_parse_header ─────────────────────────────── */
-static int elf_parse_header(const void *data, size_t size)
-{
+static int elf_parse_header(const void *data, size_t size) {
     (void)data;
     (void)size;
     kprintf("[elf] elf_parse_header: not yet implemented\n");
     return 0;
 }
 /* ── Stub: elf_lookup_sym ─────────────────────────────── */
-static void* elf_lookup_sym(const void *elf, const char *name)
-{
+static void *elf_lookup_sym(const void *elf, const char *name) {
     (void)elf;
     (void)name;
     kprintf("[elf] elf_lookup_sym: not yet implemented\n");
     return NULL;
 }
 /* ── Stub: elf_relocate ─────────────────────────────── */
-static int elf_relocate(const void *elf, const char *symname, void *addr)
-{
+static int elf_relocate(const void *elf, const char *symname, void *addr) {
     (void)elf;
     (void)symname;
     (void)addr;
