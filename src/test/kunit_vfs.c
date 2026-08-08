@@ -261,7 +261,9 @@ static struct kunit_suite vfs_test_suite;
 void kunit_vfs_register(void)
 {
     int ci = 0;
-    for (int i = 0; vfs_test_cases[i].run != NULL && i < KUNIT_MAX_CASES - 1; i++) {
+    for (int i = 0; i < (int)(sizeof(vfs_test_cases) / sizeof(vfs_test_cases[0])) &&
+                    vfs_test_cases[i].run != NULL;
+         i++) {
         vfs_test_suite.cases[ci].name = vfs_test_cases[i].name;
         vfs_test_suite.cases[ci].run  = vfs_test_cases[i].run;
         ci++;

@@ -311,8 +311,10 @@ void kunit_cluster_register(void)
     /* ── Autoscaler ── */
     {
         int ci = 0;
-        for (int i = 0; autoscaler_test_cases[i].run != NULL &&
-             i < KUNIT_MAX_CASES - 1; i++) {
+        for (int i = 0;
+             i < (int)(sizeof(autoscaler_test_cases) / sizeof(autoscaler_test_cases[0])) &&
+             autoscaler_test_cases[i].run != NULL;
+             i++) {
             cluster_autoscaler_test_suite.cases[ci].name =
                 autoscaler_test_cases[i].name;
             cluster_autoscaler_test_suite.cases[ci].run  =
@@ -330,8 +332,10 @@ void kunit_cluster_register(void)
     /* ── Descheduler ── */
     {
         int ci = 0;
-        for (int i = 0; descheduler_test_cases[i].run != NULL &&
-             i < KUNIT_MAX_CASES - 1; i++) {
+        for (int i = 0;
+             i < (int)(sizeof(descheduler_test_cases) / sizeof(descheduler_test_cases[0])) &&
+             descheduler_test_cases[i].run != NULL;
+             i++) {
             cluster_descheduler_test_suite.cases[ci].name =
                 descheduler_test_cases[i].name;
             cluster_descheduler_test_suite.cases[ci].run  =
@@ -349,8 +353,9 @@ void kunit_cluster_register(void)
     /* ── Ingress ── */
     {
         int ci = 0;
-        for (int i = 0; ingress_test_cases[i].run != NULL &&
-             i < KUNIT_MAX_CASES - 1; i++) {
+        for (int i = 0; i < (int)(sizeof(ingress_test_cases) / sizeof(ingress_test_cases[0])) &&
+                        ingress_test_cases[i].run != NULL;
+             i++) {
             cluster_ingress_test_suite.cases[ci].name =
                 ingress_test_cases[i].name;
             cluster_ingress_test_suite.cases[ci].run  =

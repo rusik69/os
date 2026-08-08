@@ -1247,9 +1247,6 @@ int fat32_read_file(const char *path, void *buf, uint32_t max_size) {
             uint64_t t0 = timer_get_ticks();
             int r = read_sector(lba + s, sect_buf);
             uint64_t t1 = timer_get_ticks();
-            if (lba + s >= 8600)
-                kprintf("[fat] read lba=%llu rc=%d took=%llu ticks\n",
-                        (unsigned long long)(lba + s), r, (unsigned long long)(t1 - t0));
             if (r != 0)
                 return (int)done;
             if (t1 - t0 > 100)

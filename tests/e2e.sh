@@ -104,8 +104,38 @@ if ! grep -qE "Services started|HTTP server on port 80" "$SERIAL_LOG" 2>/dev/nul
     exit 2
 fi
 
-echo "==> Kernel booted. Waiting 3s for scheduler to start..."
-sleep 3
+echo "==> Kernel booted. Waiting for shell module to load..."
+
+# The telnetd banner appears as soon as services start, but command
+# execution needs the shell module (shell.ko) to be loaded and its
+# shell_process_line hook registered by init.  Poll the serial log for
+# the module-load completion marker before running the command tests.
+shell_ready=0
+elapsed=0
+while [ "$elapsed" -lt "${E2E_SHELL_WAIT:-60}" ]; do
+    if ! kill -0 "$QEMU_PID" 2>/dev/null; then
+        echo "ERROR: QEMU exited unexpectedly while waiting for shell" >&2
+        echo "--- Serial log ---"
+        cat "$SERIAL_LOG"
+        exit 2
+    fi
+    if grep -qE "shell module load exit status: 0" "$SERIAL_LOG" 2>/dev/null; then
+        shell_ready=1
+        break
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+done
+
+if [ "$shell_ready" -ne 1 ]; then
+    echo "ERROR: shell module did not load within ${E2E_SHELL_WAIT:-60}s" >&2
+    echo "--- Serial log (last 40 lines) ---"
+    tail -40 "$SERIAL_LOG"
+    exit 2
+fi
+
+# Extra settle time for the module hook registration.
+sleep 2
 echo "==> Running e2e tests..."
 echo ""
 

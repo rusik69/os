@@ -520,7 +520,8 @@ static int procfs_gen_kallsyms(char *buf, int max) {
     int p = 0;
     int hide = kptr_restrict_check();  /* 1 = hide addresses when kptr_restrict >= 1 */
 
-    int count = (int)(__kallsyms_end - __kallsyms_start);
+    int count = (int)(((uintptr_t)__kallsyms_end - (uintptr_t)__kallsyms_start) /
+                      sizeof(struct ksym_entry));
     if (count < 0) count = 0;
 
     for (int i = 0; i < count && p < max - 80; i++) {

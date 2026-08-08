@@ -496,7 +496,9 @@ void kunit_vmm_register(void)
 {
     /* Populate the fixed-size case array */
     int ci = 0;
-    for (int i = 0; vmm_test_cases[i].run != NULL && i < KUNIT_MAX_CASES - 1; i++) {
+    for (int i = 0; i < (int)(sizeof(vmm_test_cases) / sizeof(vmm_test_cases[0])) &&
+                    vmm_test_cases[i].run != NULL;
+         i++) {
         vmm_test_suite.cases[ci].name = vmm_test_cases[i].name;
         vmm_test_suite.cases[ci].run  = vmm_test_cases[i].run;
         ci++;

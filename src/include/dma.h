@@ -25,7 +25,13 @@
  */
 
 /* DMA_BIT_MASK(n) — create a DMA address mask for n address bits */
-#define DMA_BIT_MASK(n)  (((n) == 64) ? ~0ULL : ((1ULL << (n)) - 1))
+static inline uint64_t dma_bit_mask(int n) {
+    if (n >= 64)
+        return ~0ULL;
+    return (1ULL << n) - 1;
+}
+
+#define DMA_BIT_MASK(n) dma_bit_mask(n)
 
 /* Forward declaration for PCI device (included from pci.h) */
 struct pci_device;

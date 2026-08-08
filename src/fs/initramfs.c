@@ -77,7 +77,7 @@ extern uint8_t _binary_build_initramfs_cpio_end[] __attribute__((weak));
 int initramfs_extract(void) {
     uint8_t *start = _binary_build_initramfs_cpio_start;
     uint8_t *end   = _binary_build_initramfs_cpio_end;
-    uint32_t size  = (uint32_t)(end - start);
+    uint32_t size = (uint32_t)((uintptr_t)end - (uintptr_t)start);
 
     if (size == 0 || size < CPIO_HEADER_SIZE) {
         kprintf("[initramfs] No embedded cpio archive found\n");

@@ -489,6 +489,7 @@ static int inflate_dynamic(struct bit_reader *br,
 
     /* Build literal/length table */
     struct huff_sym_len lit_syms[288];
+    memset(lit_syms, 0, sizeof(lit_syms));
     int lit_num = 0;
     for (int i = 0; i < hlit && i < 286; i++) {
         if (code_lengths[i] > 0) {

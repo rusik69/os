@@ -538,7 +538,9 @@ void kunit_ext_register(void)
     /* ── IPVS ── */
     {
         int ci = 0;
-        for (int i = 0; ipvs_test_cases[i].run != NULL && i < KUNIT_MAX_CASES - 1; i++) {
+        for (int i = 0; i < (int)(sizeof(ipvs_test_cases) / sizeof(ipvs_test_cases[0])) &&
+                        ipvs_test_cases[i].run != NULL;
+             i++) {
             ipvs_test_suite.cases[ci].name = ipvs_test_cases[i].name;
             ipvs_test_suite.cases[ci].run  = ipvs_test_cases[i].run;
             ci++;
@@ -554,7 +556,9 @@ void kunit_ext_register(void)
     /* ── NVMe PMR ── */
     {
         int ci = 0;
-        for (int i = 0; nvme_pmr_test_cases[i].run != NULL && i < KUNIT_MAX_CASES - 1; i++) {
+        for (int i = 0; i < (int)(sizeof(nvme_pmr_test_cases) / sizeof(nvme_pmr_test_cases[0])) &&
+                        nvme_pmr_test_cases[i].run != NULL;
+             i++) {
             nvme_pmr_test_suite.cases[ci].name = nvme_pmr_test_cases[i].name;
             nvme_pmr_test_suite.cases[ci].run  = nvme_pmr_test_cases[i].run;
             ci++;
@@ -570,7 +574,9 @@ void kunit_ext_register(void)
     /* ── I/O Scheduler ── */
     {
         int ci = 0;
-        for (int i = 0; iosched_test_cases[i].run != NULL && i < KUNIT_MAX_CASES - 1; i++) {
+        for (int i = 0; i < (int)(sizeof(iosched_test_cases) / sizeof(iosched_test_cases[0])) &&
+                        iosched_test_cases[i].run != NULL;
+             i++) {
             iosched_test_suite.cases[ci].name = iosched_test_cases[i].name;
             iosched_test_suite.cases[ci].run  = iosched_test_cases[i].run;
             ci++;
@@ -586,7 +592,9 @@ void kunit_ext_register(void)
     /* ── RTC ── */
     {
         int ci = 0;
-        for (int i = 0; rtc_test_cases[i].run != NULL && i < KUNIT_MAX_CASES - 1; i++) {
+        for (int i = 0; i < (int)(sizeof(rtc_test_cases) / sizeof(rtc_test_cases[0])) &&
+                        rtc_test_cases[i].run != NULL;
+             i++) {
             rtc_test_suite.cases[ci].name = rtc_test_cases[i].name;
             rtc_test_suite.cases[ci].run  = rtc_test_cases[i].run;
             ci++;
@@ -602,7 +610,9 @@ void kunit_ext_register(void)
     /* ── madvise ── */
     {
         int ci = 0;
-        for (int i = 0; madvise_test_cases[i].run != NULL && i < KUNIT_MAX_CASES - 1; i++) {
+        for (int i = 0; i < (int)(sizeof(madvise_test_cases) / sizeof(madvise_test_cases[0])) &&
+                        madvise_test_cases[i].run != NULL;
+             i++) {
             madvise_test_suite.cases[ci].name = madvise_test_cases[i].name;
             madvise_test_suite.cases[ci].run  = madvise_test_cases[i].run;
             ci++;
@@ -618,7 +628,9 @@ void kunit_ext_register(void)
     /* ── RLIMIT ── */
     {
         int ci = 0;
-        for (int i = 0; rlimit_test_cases[i].run != NULL && i < KUNIT_MAX_CASES - 1; i++) {
+        for (int i = 0; i < (int)(sizeof(rlimit_test_cases) / sizeof(rlimit_test_cases[0])) &&
+                        rlimit_test_cases[i].run != NULL;
+             i++) {
             rlimit_test_suite.cases[ci].name = rlimit_test_cases[i].name;
             rlimit_test_suite.cases[ci].run  = rlimit_test_cases[i].run;
             ci++;

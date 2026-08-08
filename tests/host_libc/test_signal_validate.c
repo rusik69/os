@@ -47,9 +47,9 @@
 #define SIGWINCH  28
 #define SIGIO     29
 #define SIGSYS    31
-#define SIGRTMIN  32
-#define SIGRTMAX  64
-#define SIG_MAX   65
+#define SIGRTMIN 32
+#define SIGRTMAX 63
+#define SIG_MAX 64
 
 /* si_code values */
 #define SI_USER     0
@@ -352,8 +352,7 @@ static void test_signal_validate_extended(void)
             ret = signal_validate_siginfo(&info, 0);
             if (ret != 0) { all_ok = 0; break; }
         }
-        TEST("signal_validate: all RT signals 32-64 accepted from kernel",
-             all_ok);
+        TEST("signal_validate: all RT signals 32-63 accepted from kernel", all_ok);
     }
 
     /* 3. Invalid signo values: just above max */
@@ -438,8 +437,7 @@ static void test_signal_validate_extended(void)
             ret = signal_validate_siginfo(&info, 1);
             if (ret != 0) { all_ok = 0; break; }
         }
-        TEST("signal_validate: RT signals 32-64 SI_QUEUE from userspace OK",
-             all_ok);
+        TEST("signal_validate: RT signals 32-63 SI_QUEUE from userspace OK", all_ok);
     }
 
     /* 11. SI_KERNEL from kernel with SIGHUP */

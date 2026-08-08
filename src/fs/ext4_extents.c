@@ -917,6 +917,11 @@ int ext4_ext_insert_extent(struct ext4_priv *ep,
     uint8_t root_buf[60];
     uint8_t node_buf[EXT4_MAX_BLOCK_SIZE];
 
+    /* Buffer for the parent index node when it is not the embedded
+     * root (parent_block != 0).  Hoisted to function scope: parent_eh
+     * points into it and is used after the read block. */
+    uint8_t parent_buf[EXT4_MAX_BLOCK_SIZE];
+
     memcpy(root_buf, inode->i_block, 60);
 
     struct ext4_extent_header *root_eh =
@@ -1218,7 +1223,6 @@ int ext4_ext_insert_extent(struct ext4_priv *ep,
              * there is no disk block to read — root_buf already holds
              * the authoritative copy and we skip disk I/O/journaling. */
             if (parent_block != 0) {
-                uint8_t parent_buf[EXT4_MAX_BLOCK_SIZE];
                 ret = ext4_read_block(ep, parent_block, parent_buf);
                 if (ret < 0)
                     goto out_free_new;

@@ -192,6 +192,7 @@ static void handle_crash(void)
     _Pragma("GCC diagnostic ignored \"-Wanalyzer-null-dereference\"")
 #endif
     volatile int *p = (volatile int *)0;
+    /* cppcheck-suppress nullPointer */
     *p = 0xDEAD;
 #if !defined(__clang__)
     _Pragma("GCC diagnostic pop")

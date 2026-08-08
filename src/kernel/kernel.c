@@ -320,7 +320,9 @@ extern initcall_t __initcall_end[];
  */
 void do_initcalls(void) {
     initcall_t *fn;
-    for (fn = __initcall_start; fn < __initcall_end; fn++) {
+    uintptr_t start = (uintptr_t)__initcall_start;
+    uintptr_t end = (uintptr_t)__initcall_end;
+    for (fn = (initcall_t *)start; (uintptr_t)fn < end; fn++) {
         if (*fn) {
             (*fn)();
         }
@@ -1413,10 +1415,10 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
      * Display the kernel version and build date after all subsystems
      * are initialised, just before the final hardening steps. */
     kprintf("\n============================================\n");
-    kprintf("  Hermes OS Kernel — Version " KVERSION "\n");
+    kprintf("  Hermes OS Kernel — Version %s\n", KVERSION);
     kprintf("  Built: " __DATE__ " " __TIME__ "\n");
 #ifdef BUILD_TIME
-    kprintf("  Build config: " BUILD_TIME "\n");
+    kprintf("  Build config: %s\n", BUILD_TIME);
 #endif
     kprintf("  SMP: %s, Preempt: %s\n",
 #ifdef CONFIG_SMP

@@ -1976,7 +1976,7 @@ int scheduler_migrate_tasks_from(int from_cpu) {
                     continue;
 
                 /* Pick a destination CPU respecting CPU affinity */
-                int dst = -1;
+                int dst = dst_cpus[0];
                 int start = spread % num_dst;
                 uint8_t aff = proc->cpu_affinity;
                 for (int k = 0; k < num_dst; k++) {

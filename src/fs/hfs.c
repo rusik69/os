@@ -195,9 +195,11 @@ static __attribute__((unused)) int hfs_load_mdb(struct hfs_priv *hp)
     hp->first_alloc_block = hp->mdb.drAlBlSt;
 
     /* Catalog file extents */
-    memcpy(hp->cat_extents, hp->mdb.drCtlRec, sizeof(hp->cat_extents));
+    memset(hp->cat_extents, 0, sizeof(hp->cat_extents));
+    memcpy(hp->cat_extents, hp->mdb.drCtlRec, sizeof(hp->mdb.drCtlRec));
     /* Extents overflow file extents */
-    memcpy(hp->ext_extents, hp->mdb.drExtRec, sizeof(hp->ext_extents));
+    memset(hp->ext_extents, 0, sizeof(hp->ext_extents));
+    memcpy(hp->ext_extents, hp->mdb.drExtRec, sizeof(hp->mdb.drExtRec));
 
     /* Catalog start in device blocks */
     hp->cat_start_block = hp->first_alloc_block;

@@ -346,7 +346,9 @@ void kunit_pmm_register(void)
 {
     /* Populate the fixed-size case array */
     int ci = 0;
-    for (int i = 0; pmm_test_cases[i].run != NULL && i < KUNIT_MAX_CASES - 1; i++) {
+    for (int i = 0; i < (int)(sizeof(pmm_test_cases) / sizeof(pmm_test_cases[0])) &&
+                    pmm_test_cases[i].run != NULL;
+         i++) {
         pmm_test_suite.cases[ci].name = pmm_test_cases[i].name;
         pmm_test_suite.cases[ci].run  = pmm_test_cases[i].run;
         ci++;
@@ -422,7 +424,9 @@ static struct kunit_suite oom_test_suite;
 void kunit_oom_register(void)
 {
     int ci = 0;
-    for (int i = 0; oom_test_cases[i].run != NULL && i < KUNIT_MAX_CASES - 1; i++) {
+    for (int i = 0; i < (int)(sizeof(oom_test_cases) / sizeof(oom_test_cases[0])) &&
+                    oom_test_cases[i].run != NULL;
+         i++) {
         oom_test_suite.cases[ci].name = oom_test_cases[i].name;
         oom_test_suite.cases[ci].run  = oom_test_cases[i].run;
         ci++;

@@ -1462,6 +1462,8 @@ static int virtio_gpu_get_edid(uint32_t scanout, uint8_t *edid_buf,
     struct virtio_gpu_resp_edid resp;
     int ret;
 
+    memset(&resp, 0, sizeof(resp));
+
     if (!gpu_present)
         return -ENODEV;
     if (!edid_buf || !edid_size_out)

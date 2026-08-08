@@ -430,21 +430,24 @@ static struct kunit_suite rapl_test_suite;
  *  Registration
  * ==================================================================== */
 
-#define REGISTER_SUITE(suite_var, cases_arr, suite_name) do {          \
-    int __ci = 0;                                                       \
-    for (int __i = 0; cases_arr[__i].run != NULL && __i < KUNIT_MAX_CASES - 1; __i++) { \
-        suite_var.cases[__ci].name = cases_arr[__i].name;               \
-        suite_var.cases[__ci].run  = cases_arr[__i].run;                \
-        __ci++;                                                         \
-    }                                                                   \
-    suite_var.cases[__ci].name = NULL;                                  \
-    suite_var.cases[__ci].run  = NULL;                                  \
-    suite_var.name     = suite_name;                                    \
-    suite_var.setup    = NULL;                                          \
-    suite_var.teardown = NULL;                                          \
-    kunit_register_suite(&suite_var);                                   \
-    kprintf("[KUnit] %s tests registered (%d cases)\\n", suite_name, __ci); \
-} while(0)
+#define REGISTER_SUITE(suite_var, cases_arr, suite_name) \
+    do { \
+        int __ci = 0; \
+        for (int __i = 0; __i < (int)(sizeof(cases_arr) / sizeof((cases_arr)[0])) && \
+                          cases_arr[__i].run != NULL; \
+             __i++) { \
+            suite_var.cases[__ci].name = cases_arr[__i].name; \
+            suite_var.cases[__ci].run = cases_arr[__i].run; \
+            __ci++; \
+        } \
+        suite_var.cases[__ci].name = NULL; \
+        suite_var.cases[__ci].run = NULL; \
+        suite_var.name = suite_name; \
+        suite_var.setup = NULL; \
+        suite_var.teardown = NULL; \
+        kunit_register_suite(&suite_var); \
+        kprintf("[KUnit] %s tests registered (%d cases)\\n", suite_name, __ci); \
+    } while (0)
 
 void kunit_power_register(void)
 {

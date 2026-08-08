@@ -222,7 +222,7 @@ void rseq_migrate(struct process *proc, int old_cpu, int new_cpu)
          * If RIP falls within that range, we set it to abort_ip so
          * userspace retries from the abort handler on the correct CPU. */
         struct interrupt_frame *frame = get_cpu_info()->current_frame;
-        if (frame && (frame->cs & 3) && rseq_cs_val < USER_VADDR_MAX) {
+        if (frame && (frame->cs & 3) && rseq_cs_val != 0 && rseq_cs_val < USER_VADDR_MAX) {
             /* Read the rseq_cs descriptor from userspace.
              * The current task's page tables are still active because
              * schedule() calls us before switching to next's CR3. */

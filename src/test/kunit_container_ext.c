@@ -99,8 +99,10 @@ void kunit_container_ext_register(void)
     /* ── Exec Enhanced ── */
     {
         int ci = 0;
-        for (int i = 0; exec_enhanced_test_cases[i].run != NULL &&
-             i < KUNIT_MAX_CASES - 1; i++) {
+        for (int i = 0;
+             i < (int)(sizeof(exec_enhanced_test_cases) / sizeof(exec_enhanced_test_cases[0])) &&
+             exec_enhanced_test_cases[i].run != NULL;
+             i++) {
             exec_enhanced_test_suite.cases[ci].name =
                 exec_enhanced_test_cases[i].name;
             exec_enhanced_test_suite.cases[ci].run  =

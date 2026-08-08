@@ -56,7 +56,7 @@ static uint32_t bn_sub(uint32_t *r, const uint32_t *a, const uint32_t *b, int nw
     for (int i = 0; i < nwords; i++) {
         borrow = (uint64_t)a[i] - (uint64_t)b[i] - (borrow >> 63);
         r[i] = (uint32_t)borrow;
-        borrow = ((int64_t)borrow >> 63) & 1;
+        borrow = (borrow >> 63) & 1;
     }
     return (uint32_t)borrow;
 }

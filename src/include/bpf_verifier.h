@@ -3,15 +3,6 @@
 
 #include "types.h"
 
-/* eBPF program types */
-enum bpf_prog_type {
-    BPF_PROG_TYPE_UNSPEC = 0,
-    BPF_PROG_TYPE_KPROBE = 1,
-    BPF_PROG_TYPE_TRACEPOINT = 2,
-    BPF_PROG_TYPE_XDP = 3,
-    BPF_PROG_TYPE_SOCKET_FILTER = 4,
-};
-
 /* Verify an eBPF program.
  * @prog:     pointer to eBPF instruction array
  * @insn_cnt: number of instructions in the program

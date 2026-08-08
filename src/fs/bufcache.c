@@ -276,11 +276,8 @@ void bufcache_stats(int *hits, int *misses, int *writes) {
 static void lru_touch(int16_t idx) {
     if (idx == g_lru_head)
         return; /* already MRU */
-    kprintf("[lru] touch idx=%d head=%d tail=%d prev=%d next=%d\n", (int)idx, (int)g_lru_head,
-            (int)g_lru_tail, (int)g_lru[idx].prev, (int)g_lru[idx].next);
     lru_remove(idx);
     lru_push_head(idx);
-    kprintf("[lru] touched idx=%d head=%d tail=%d\n", (int)idx, (int)g_lru_head, (int)g_lru_tail);
 }
 
 static void lru_remove(int16_t idx) {
@@ -436,9 +433,6 @@ void *bufcache_read(uint64_t lba, uint8_t dev_id) {
 
     /* Check cache */
     int16_t idx = hash_lookup(lba, dev_id);
-    if (lba < 100 || lba >= 8600)
-        kprintf("[bc] read lba=%llu dev=%u lookup=%d count=%d\n", (unsigned long long)lba,
-                (unsigned int)dev_id, (int)idx, (int)g_count);
     if (idx >= 0) {
         /* Cache hit — touch LRU, increment access count, and return data pointer */
         lru_touch(idx);

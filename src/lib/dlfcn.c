@@ -164,10 +164,9 @@ static uint64_t dl_next_base = DL_DEFAULT_BASE;
 /* ── Error handling ────────────────────────────────────────────────── */
 
 static void dl_set_error(const char *msg) {
-    int i;
-    for (i = 0; i < 255 && msg[i] != '\0'; i++)
-        dl_errbuf[i] = msg[i];
-    dl_errbuf[i] = '\0';
+    size_t len = strnlen(msg, sizeof(dl_errbuf) - 1);
+    memcpy(dl_errbuf, msg, len);
+    dl_errbuf[len] = '\0';
     dl_err_set = 1;
 }
 

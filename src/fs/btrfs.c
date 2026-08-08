@@ -574,6 +574,7 @@ static int btrfs_parse_root_tree(struct btrfs_priv *bp)
     uint8_t tree_buf[4096];
     uint32_t ri_idx;
     int ri_exact;
+    uint8_t ri_data[sizeof(struct btrfs_root_item) + 64];
     ret = btrfs_search_tree(bp, bp->root_bytenr, bp->root_level,
                              BTRFS_FS_TREE_OBJECTID, BTRFS_ROOT_ITEM_KEY, 0,
                              tree_buf, sizeof(tree_buf), &ri_idx, &ri_exact);
@@ -583,7 +584,6 @@ static int btrfs_parse_root_tree(struct btrfs_priv *bp)
     }
 
     if (ri_exact) {
-        uint8_t ri_data[sizeof(struct btrfs_root_item) + 64];
         uint32_t ri_size;
         ret = btrfs_read_item_data(bp, bp->root_bytenr, tree_buf, ri_idx,
                                     ri_data, &ri_size);
@@ -619,14 +619,14 @@ static int btrfs_parse_root_tree(struct btrfs_priv *bp)
             bp->csum_root_bytenr = 0;
         } else {
             /* Look up CSUM_TREE root item in root tree for level */
+            uint8_t csum_ri_data[sizeof(struct btrfs_root_item) + 64];
+            uint32_t csum_ri_size;
             ret = btrfs_search_tree(bp, bp->root_bytenr, bp->root_level,
                                      BTRFS_CSUM_TREE_OBJECTID,
                                      BTRFS_ROOT_ITEM_KEY, 0,
                                      tree_buf, sizeof(tree_buf),
                                      &ri_idx, &ri_exact);
             if (ret == 0 && ri_exact) {
-                uint8_t csum_ri_data[sizeof(struct btrfs_root_item) + 64];
-                uint32_t csum_ri_size;
                 ret = btrfs_read_item_data(bp, bp->root_bytenr, tree_buf,
                                             ri_idx, csum_ri_data,
                                             &csum_ri_size);
@@ -681,6 +681,7 @@ static int btrfs_parse_extent_tree(struct btrfs_priv *bp)
     int ret;
     uint32_t extent_count;
     uint32_t metadata_count;
+    uint8_t ri_data[sizeof(struct btrfs_root_item) + 64];
 
     /* Safety check: nodesize must fit in our stack buffer.
      * btrfs_search_tree passes buf to btrfs_read_node which writes
@@ -726,7 +727,6 @@ static int btrfs_parse_extent_tree(struct btrfs_priv *bp)
     }
 
     if (exact) {
-        uint8_t ri_data[sizeof(struct btrfs_root_item) + 64];
         uint32_t ri_size;
         ret = btrfs_read_item_data(bp, bp->root_bytenr, buf, item_idx,
                                     ri_data, &ri_size);

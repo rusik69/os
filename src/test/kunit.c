@@ -955,10 +955,10 @@ static void kunit_register_section_suites(void)
 {
     struct kunit_suite **ptr;
     int count = 0;
+    uintptr_t start = (uintptr_t)__kunit_suites_start;
+    uintptr_t end = (uintptr_t)__kunit_suites_end;
 
-    for (ptr = (struct kunit_suite **)__kunit_suites_start;
-         ptr < (struct kunit_suite **)__kunit_suites_end;
-         ptr++) {
+    for (ptr = (struct kunit_suite **)start; (uintptr_t)ptr < end; ptr++) {
         if (*ptr) {
             kunit_register_suite(*ptr);
             count++;

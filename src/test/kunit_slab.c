@@ -474,7 +474,9 @@ void kunit_slab_register(void)
 {
     /* Populate the fixed-size case array from our termination-checked list */
     int ci = 0;
-    for (int i = 0; slab_full_test_cases[i].run != NULL && i < KUNIT_MAX_CASES - 1; i++) {
+    for (int i = 0; i < (int)(sizeof(slab_full_test_cases) / sizeof(slab_full_test_cases[0])) &&
+                    slab_full_test_cases[i].run != NULL;
+         i++) {
         slab_full_test_suite.cases[ci].name = slab_full_test_cases[i].name;
         slab_full_test_suite.cases[ci].run  = slab_full_test_cases[i].run;
         ci++;

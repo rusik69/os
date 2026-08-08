@@ -503,7 +503,9 @@ void kunit_sched_register(void)
 {
     /* Populate the fixed-size case array from our sentinel-terminated list */
     int ci = 0;
-    for (int i = 0; sched_test_cases[i].run != NULL && i < KUNIT_MAX_CASES - 1; i++) {
+    for (int i = 0; i < (int)(sizeof(sched_test_cases) / sizeof(sched_test_cases[0])) &&
+                    sched_test_cases[i].run != NULL;
+         i++) {
         sched_test_suite.cases[ci].name = sched_test_cases[i].name;
         sched_test_suite.cases[ci].run  = sched_test_cases[i].run;
         ci++;

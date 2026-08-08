@@ -803,7 +803,9 @@ static struct kunit_suite net_test_suite;
 void kunit_net_register(void)
 {
     int ci = 0;
-    for (int i = 0; net_test_cases[i].run != NULL && i < KUNIT_MAX_CASES - 1; i++) {
+    for (int i = 0; i < (int)(sizeof(net_test_cases) / sizeof(net_test_cases[0])) &&
+                    net_test_cases[i].run != NULL;
+         i++) {
         net_test_suite.cases[ci].name = net_test_cases[i].name;
         net_test_suite.cases[ci].run  = net_test_cases[i].run;
         ci++;

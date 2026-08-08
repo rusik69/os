@@ -4244,6 +4244,7 @@ static void test_negative_path(void) {
     ASSERT_EQ("strtol empty", strtol("", &ep, 10), 0L);
 
     /* strtol invalid base returns 0 */
+    /* cppcheck-suppress invalidFunctionArg */
     ASSERT_EQ("strtol base 1", strtol("123", &ep, 1), 0L);
 
     /* strtol just '-' returns 0 */
@@ -4584,22 +4585,28 @@ static void test_null_safety(void) {
     /* memcpy with NULL and len=0 avoids dereference */
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wnonnull"
+    /* cppcheck-suppress nullPointer */
     memcpy(buf, NULL, 0);
     ASSERT_EQ("memcpy NULL src len0 byte0", (uint8_t)buf[0], 0);
+    /* cppcheck-suppress nullPointer */
     memcpy(NULL, buf, 0);
     t_ok("memcpy NULL dst len0 safe");
 
     /* memset with NULL and len=0 is safe */
+    /* cppcheck-suppress nullPointer */
     memset(NULL, 0, 0);
     t_ok("memset NULL len0 safe");
 
     /* memmove with NULL and len=0 is safe */
+    /* cppcheck-suppress nullPointer */
     memmove(buf, NULL, 0);
     t_ok("memmove NULL src len0 safe");
+    /* cppcheck-suppress nullPointer */
     memmove(NULL, buf, 0);
     t_ok("memmove NULL dst len0 safe");
 
     /* memcmp with NULL and len=0 returns 0 */
+    /* cppcheck-suppress nullPointer */
     ASSERT("memcmp NULL NULL len0", memcmp(NULL, NULL, 0) == 0);
 
     /* strnlen(NULL, 0) returns 0 without crashing */

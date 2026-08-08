@@ -265,16 +265,20 @@ static struct kunit_suite icmp_ratelimit_suite = {
 };
 
 /* Helper macro to populate a fixed-size array from a NULL-terminated list */
-#define FILL_CASES(suite_var, cases_array) do {                     \
-    int __ci = 0;                                                   \
-    for (int __i = 0; cases_array[__i].run != NULL && __i < KUNIT_MAX_CASES - 1; __i++) { \
-        suite_var.cases[__ci].name = cases_array[__i].name;         \
-        suite_var.cases[__ci].run  = cases_array[__i].run;          \
-        __ci++;                                                     \
-    }                                                               \
-    suite_var.cases[__ci].name = NULL;                              \
-    suite_var.cases[__ci].run  = NULL;                              \
-} while(0)
+#define FILL_CASES(suite_var, cases_array) \
+    do { \
+        int __ci = 0; \
+        size_t __n = sizeof(cases_array) / sizeof((cases_array)[0]); \
+        for (size_t __i = 0; \
+             __i < __n && __i < (size_t)(KUNIT_MAX_CASES - 1) && cases_array[__i].run != NULL; \
+             __i++) { \
+            suite_var.cases[__ci].name = cases_array[__i].name; \
+            suite_var.cases[__ci].run = cases_array[__i].run; \
+            __ci++; \
+        } \
+        suite_var.cases[__ci].name = NULL; \
+        suite_var.cases[__ci].run = NULL; \
+    } while (0)
 
 void kunit_security_new_register(void)
 {

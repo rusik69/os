@@ -58,9 +58,8 @@ static int tarfs_parse(struct tarfs_priv *priv) {
         if (hdr->name[0] == '\0')
             break;
 
-        /* Check magic */
-        if (memcmp(hdr->magic, TAR_MAGIC, 5) != 0 &&
-            memcmp(hdr->magic, TAR_MAGIC_OLD, 7) != 0)
+        /* Check magic: "ustar" for POSIX, blank/spaces for old-style tar */
+        if (memcmp(hdr->magic, TAR_MAGIC, 5) != 0 && hdr->magic[0] != '\0' && hdr->magic[0] != ' ')
             break;
 
         uint64_t file_size = parse_octal(hdr->size, 12);
