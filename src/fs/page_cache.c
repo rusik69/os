@@ -219,6 +219,25 @@ void page_cache_remove(uint64_t ino, uint64_t block) {
     memset(pce, 0, sizeof(struct page_cache_entry));
 }
 
+/* Drop every cached page belonging to @ino.  Used after a file is
+ * overwritten/truncated so stale pre-overwrite data is never served
+ * from the cache. */
+void page_cache_invalidate_ino(uint64_t ino) {
+    for (int i = 0; i < PAGE_CACHE_MAX_PAGES; i++) {
+        struct page_cache_entry *pce = &page_cache[i];
+        if (pce->in_use && pce->ino == ino) {
+            spinlock_acquire(&dirty_lock);
+            if ((pce->flags & PAGE_CACHE_DIRTY) && nr_dirty_pages > 0)
+                nr_dirty_pages--;
+            spinlock_release(&dirty_lock);
+
+            if (pce->phys_addr)
+                pmm_free_frame(pce->phys_addr);
+            memset(pce, 0, sizeof(struct page_cache_entry));
+        }
+    }
+}
+
 
 /* ── Mark page as dirty ────────────────────────────────────────────── */
 void page_cache_mark_dirty(uint64_t ino, uint64_t block) {

@@ -12321,8 +12321,6 @@ void kprintf_syscall_trace(uint64_t num, uint64_t unused) {
 
 int64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4,
                          uint64_t a5) {
-    if (num == 4)
-        kprintf("[sys4] exit called (a1=0x%llx)\n", (unsigned long long)a1);
     /* Seccomp check — must happen before any capability or argument validation */
     if (syscall_is_user_process()) {
         uint32_t seccomp_action = seccomp_evaluate_syscall(num, a1, a2, a3, 0);

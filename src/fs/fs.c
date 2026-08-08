@@ -660,6 +660,13 @@ int fs_write_file(const char *path, const void *data, uint32_t size) {
 
     save_inodes();
     save_super();
+
+    /* Invalidate any cached pages for this file — the write went straight
+     * to disk, so stale pre-overwrite pages in the page cache would be
+     * served on the next read (observed: cat of a freshly overwritten
+     * file returned old/garbage content). */
+    page_cache_invalidate_ino((uint64_t)idx + 1);
+
     return 0;
 }
 

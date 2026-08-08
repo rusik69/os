@@ -259,18 +259,42 @@ static void free_pid(uint32_t pid) {
 
 /* ── Kernel stack with guard page ───────────────────────────────────── */
 
+/* Kernel-stack cache: freed 33-frame contiguous stack blocks are kept as
+ * whole units instead of returning them to the pmm bitmap, where pinned
+ * stack frames permanently fragment free runs (observed: 99% fragmentation,
+ * largest free run 32 frames — one short of the 33 needed → OOM kills the
+ * shell mid-e2e-suite).  Caching the freed block lets the next fork reuse
+ * it without a contiguous-bitmap scan. */
+#define KSTACK_CACHE_MAX 8
+static uint64_t g_kstack_cache[KSTACK_CACHE_MAX]; /* phys base (guard frame) */
+static int g_kstack_cache_count;
+static spinlock_t g_kstack_cache_lock;
+
 /* Allocate a kernel stack with an unmapped guard page at the bottom.
  * Stack grows downward: [guard (unmapped)][kernel_stack ... stack_top]
  * A stack overflow past kernel_stack will hit the guard page and fault.
  * Returns 0 on success, -1 on failure (all frames freed on error). */
 static int alloc_guarded_kernel_stack(struct process *proc) {
-    uint64_t *phys = pmm_alloc_frames(KERNEL_STACK_TOTAL_PAGES);
-    if (unlikely(!phys)) {
-        kprintf("[alloc_kernel_stack] pmm_alloc_frames(%d) failed\n", KERNEL_STACK_TOTAL_PAGES);
-        return -ENOMEM;
-    }
+    uint64_t guard_phys;
+    int from_cache = 0;
 
-    uint64_t guard_phys = (uint64_t)phys;
+    /* Prefer a cached block — no bitmap scan, keeps contiguity intact */
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_kstack_cache_lock, &irq_flags);
+    if (g_kstack_cache_count > 0) {
+        guard_phys = g_kstack_cache[--g_kstack_cache_count];
+        from_cache = 1;
+    }
+    spinlock_irqsave_release(&g_kstack_cache_lock, irq_flags);
+
+    if (!from_cache) {
+        uint64_t *phys = pmm_alloc_frames(KERNEL_STACK_TOTAL_PAGES);
+        if (unlikely(!phys)) {
+            kprintf("[alloc_kernel_stack] pmm_alloc_frames(%d) failed\n", KERNEL_STACK_TOTAL_PAGES);
+            return -ENOMEM;
+        }
+        guard_phys = (uint64_t)phys;
+    }
     uint64_t stack_phys = guard_phys + PAGE_SIZE;
     uint64_t guard_vma = (uint64_t)PHYS_TO_VIRT(guard_phys);
     uint64_t stack_vma = (uint64_t)PHYS_TO_VIRT(stack_phys);
@@ -294,9 +318,21 @@ static int alloc_guarded_kernel_stack(struct process *proc) {
     if (map_rc < 0 && map_rc != -EEXIST) {
         kprintf("[alloc_kernel_stack] vmm_map_page(0x%lx, 0x%lx) failed rc=%d\n", guard_vma,
                 guard_phys, map_rc);
-        for (size_t i = 0; i < KERNEL_STACK_TOTAL_PAGES; i++) {
-            pmm_unmark_pt_frame(guard_phys + i * PAGE_SIZE);
-            pmm_free_frame(guard_phys + i * PAGE_SIZE);
+        if (from_cache) {
+            /* Return the block to the cache — frames stay pinned/allocated */
+            uint64_t rflags;
+            spinlock_irqsave_acquire(&g_kstack_cache_lock, &rflags);
+            if (g_kstack_cache_count < KSTACK_CACHE_MAX)
+                g_kstack_cache[g_kstack_cache_count++] = guard_phys;
+            else
+                from_cache = 0; /* cache full — fall through to free below */
+            spinlock_irqsave_release(&g_kstack_cache_lock, rflags);
+        }
+        if (!from_cache) {
+            for (size_t i = 0; i < KERNEL_STACK_TOTAL_PAGES; i++) {
+                pmm_unmark_pt_frame(guard_phys + i * PAGE_SIZE);
+                pmm_free_frame(guard_phys + i * PAGE_SIZE);
+            }
         }
         return -EINVAL;
     }
@@ -309,7 +345,9 @@ static int alloc_guarded_kernel_stack(struct process *proc) {
 }
 
 /* Free a kernel stack previously allocated by alloc_guarded_kernel_stack.
- * Re-maps the guard page first so freeing its physical frame is safe. */
+ * Re-maps the guard page first so freeing its physical frame is safe.
+ * The 33-frame block is cached as a whole unit (frames stay pinned and
+ * allocated) so the next fork reuses it without a contiguous-bitmap scan. */
 static void free_guarded_kernel_stack(struct process *proc) {
     if (!proc->kernel_stack)
         return;
@@ -318,6 +356,20 @@ static void free_guarded_kernel_stack(struct process *proc) {
 
     /* Re-map guard page so the PTEs are consistent while we free */
     vmm_map_page(proc->guard_page, guard_phys, VMM_FLAG_WRITE);
+
+    /* Cache the whole block — frames remain allocated + PT-pinned, so
+     * compaction can't move them and the block keeps its contiguity. */
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_kstack_cache_lock, &irq_flags);
+    if (g_kstack_cache_count < KSTACK_CACHE_MAX) {
+        g_kstack_cache[g_kstack_cache_count++] = guard_phys;
+        spinlock_irqsave_release(&g_kstack_cache_lock, irq_flags);
+        proc->guard_page = 0;
+        proc->kernel_stack = 0;
+        proc->stack_top = 0;
+        return;
+    }
+    spinlock_irqsave_release(&g_kstack_cache_lock, irq_flags);
 
     for (size_t i = 0; i < KERNEL_STACK_TOTAL_PAGES; i++) {
         pmm_unmark_pt_frame(guard_phys + i * PAGE_SIZE);
@@ -505,6 +557,7 @@ void __init process_init(void) {
     memset(process_table, 0, sizeof(process_table));
     memset(pid_bitmap, 0, sizeof(pid_bitmap));
     spinlock_init(&pid_lock);
+    spinlock_init(&g_kstack_cache_lock);
     pid_bitmap[0] = 1; /* PID 0 (idle) is always allocated */
 
     /* Initialize per-process fd_table locks */
@@ -643,6 +696,7 @@ struct process *process_create(void (*entry)(void), const char *name) {
 
     proc->pid = alloc_pid();
     if (proc->pid == (uint32_t)-1) {
+        kprintf("[process_create] alloc_pid failed for '%s'\n", name ? name : "?");
         free_guarded_kernel_stack(proc);
         return NULL;
     }

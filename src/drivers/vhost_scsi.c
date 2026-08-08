@@ -7,9 +7,10 @@
  */
 
 #include "vhost_scsi.h"
+
+#include "pmm.h"
 #include "printf.h"
 #include "string.h"
-#include "pmm.h"
 
 /* ── Internal state ────────────────────────────────────────────────── */
 
@@ -22,37 +23,30 @@ static int vhost_scsi_num_luns = 0;
 /* ── SCSI command helpers ──────────────────────────────────────────── */
 
 /* Build standard INQUIRY data */
-static void scsi_build_inquiry(struct scsi_inquiry_data *inq,
-                               struct vhost_scsi_lun *lun)
-{
+static void scsi_build_inquiry(struct scsi_inquiry_data *inq, struct vhost_scsi_lun *lun) {
     memset(inq, 0, sizeof(*inq));
-    inq->peripheral      = SCSI_INQ_PERIPH_DIRECT;
-    inq->rmb             = 0x00;
-    inq->version         = 0x06; /* SPC-4 */
-    inq->response_data   = SCSI_INQ_RESPONSE_DATA;
+    inq->peripheral = SCSI_INQ_PERIPH_DIRECT;
+    inq->rmb = 0x00;
+    inq->version = 0x06; /* SPC-4 */
+    inq->response_data = SCSI_INQ_RESPONSE_DATA;
     inq->additional_length = 0x1F; /* 31 bytes */
-    inq->flags[0]        = 0x00;
-    inq->flags[1]        = 0x00;
-    inq->cmd_queue       = 0x02; /* CmdQue=1, multi-port? */
-    memcpy(inq->vendor,   lun->vendor,   8);
-    memcpy(inq->product,  lun->product,  16);
+    inq->flags[0] = 0x00;
+    inq->flags[1] = 0x00;
+    inq->cmd_queue = 0x02; /* CmdQue=1, multi-port? */
+    memcpy(inq->vendor, lun->vendor, 8);
+    memcpy(inq->product, lun->product, 16);
     memcpy(inq->revision, lun->revision, 4);
 }
 
 /* Build READ CAPACITY(10) data */
-static void scsi_build_capacity10(struct scsi_capacity_data *cap,
-                                  struct vhost_scsi_lun *lun)
-{
-    uint32_t last_lba = (lun->num_blocks > 0) ?
-                         (uint32_t)(lun->num_blocks - 1) : 0;
-    cap->lba        = __builtin_bswap32(last_lba);
+static void scsi_build_capacity10(struct scsi_capacity_data *cap, struct vhost_scsi_lun *lun) {
+    uint32_t last_lba = (lun->num_blocks > 0) ? (uint32_t)(lun->num_blocks - 1) : 0;
+    cap->lba = __builtin_bswap32(last_lba);
     cap->block_size = __builtin_bswap32(VHOST_SCSI_SECTOR_SIZE);
 }
 
 /* Build REPORT LUNS data */
-static void scsi_build_report_luns(struct scsi_report_luns_data *rld,
-                                   int num_luns)
-{
+static void scsi_build_report_luns(struct scsi_report_luns_data *rld, int num_luns) {
     memset(rld, 0, sizeof(*rld));
     uint32_t list_len = (uint32_t)num_luns * 8;
     rld->lun_list_length = __builtin_bswap32(list_len);
@@ -64,11 +58,31 @@ static void scsi_build_report_luns(struct scsi_report_luns_data *rld,
 
 /* ── Handle a SCSI command ─────────────────────────────────────────── */
 
-int vhost_scsi_handle_cmd(struct virtio_scsi_cmd_req *req,
-                           struct virtio_scsi_cmd_resp *resp,
-                           uint8_t *data_buf, uint32_t data_len)
-{
-    if (!req || !resp) return -1;
+/* Lazily allocate a LUN's backing store on first access.  The default
+ * LUN is created at boot without any backing RAM (16 MB simulated disk
+ * with no real vhost-scsi hardware behind it) so we don't burn memory
+ * in VMs that never issue a SCSI command. */
+static int vhost_scsi_lun_ensure_data(struct vhost_scsi_lun *lun) {
+    if (!lun)
+        return -1;
+    if (lun->data)
+        return 0;
+
+    uint64_t num_pages = (16ULL * 1024 * 1024) / PAGE_SIZE;
+    uint64_t lun_mem = (uint64_t)pmm_alloc_frames((size_t)num_pages);
+    if (!lun_mem) {
+        kprintf("[vhost-scsi] Failed to allocate backing storage on demand\n");
+        return -1;
+    }
+    lun->data = (uint8_t *)PHYS_TO_VIRT(lun_mem);
+    kprintf("[vhost-scsi] Backing store allocated on demand: 16 MB\n");
+    return 0;
+}
+
+int vhost_scsi_handle_cmd(struct virtio_scsi_cmd_req *req, struct virtio_scsi_cmd_resp *resp,
+                          uint8_t *data_buf, uint32_t data_len) {
+    if (!req || !resp)
+        return -1;
 
     uint8_t *cdb = req->cdb;
     uint8_t opcode = cdb[0];
@@ -120,8 +134,7 @@ int vhost_scsi_handle_cmd(struct virtio_scsi_cmd_req *req,
         if (data_buf && data_len >= sizeof(cap))
             memcpy(data_buf, &cap, sizeof(cap));
         resp->status = VHOST_SCSI_GOOD;
-        kprintf("[vhost-scsi] READ_CAPACITY10: blocks=%llu\n",
-                lun->num_blocks);
+        kprintf("[vhost-scsi] READ_CAPACITY10: blocks=%llu\n", lun->num_blocks);
         return 0;
     }
 
@@ -130,14 +143,24 @@ int vhost_scsi_handle_cmd(struct virtio_scsi_cmd_req *req,
             resp->status = VHOST_SCSI_CHECK_COND;
             return -1;
         }
-        uint32_t lba = (cdb[2] << 24) | (cdb[3] << 16) |
-                       (cdb[4] << 8)  | cdb[5];
+        uint32_t lba = (cdb[2] << 24) | (cdb[3] << 16) | (cdb[4] << 8) | cdb[5];
         uint32_t num_blocks = (cdb[7] << 8) | cdb[8];
-        if (num_blocks == 0) num_blocks = 256;
+        if (num_blocks == 0)
+            num_blocks = 256;
 
         uint64_t offset = (uint64_t)lba * VHOST_SCSI_SECTOR_SIZE;
         uint64_t length = (uint64_t)num_blocks * VHOST_SCSI_SECTOR_SIZE;
         uint64_t backing_size = lun->num_blocks * VHOST_SCSI_SECTOR_SIZE;
+
+        /* Ensure backing RAM exists before touching lun->data */
+        if (vhost_scsi_lun_ensure_data(lun) < 0) {
+            resp->status = VHOST_SCSI_CHECK_COND;
+            return -1;
+        }
+        if (!lun->data) {
+            resp->status = VHOST_SCSI_CHECK_COND;
+            return -1;
+        }
 
         /* Guard against integer overflow in offset+length */
         if (offset > backing_size || length > backing_size - offset) {
@@ -157,14 +180,24 @@ int vhost_scsi_handle_cmd(struct virtio_scsi_cmd_req *req,
             resp->status = VHOST_SCSI_CHECK_COND;
             return -1;
         }
-        uint32_t lba = (cdb[2] << 24) | (cdb[3] << 16) |
-                       (cdb[4] << 8)  | cdb[5];
+        uint32_t lba = (cdb[2] << 24) | (cdb[3] << 16) | (cdb[4] << 8) | cdb[5];
         uint32_t num_blocks = (cdb[7] << 8) | cdb[8];
-        if (num_blocks == 0) num_blocks = 256;
+        if (num_blocks == 0)
+            num_blocks = 256;
 
         uint64_t offset = (uint64_t)lba * VHOST_SCSI_SECTOR_SIZE;
         uint64_t length = (uint64_t)num_blocks * VHOST_SCSI_SECTOR_SIZE;
         uint64_t backing_size = lun->num_blocks * VHOST_SCSI_SECTOR_SIZE;
+
+        /* Ensure backing RAM exists before touching lun->data */
+        if (vhost_scsi_lun_ensure_data(lun) < 0) {
+            resp->status = VHOST_SCSI_CHECK_COND;
+            return -1;
+        }
+        if (!lun->data) {
+            resp->status = VHOST_SCSI_CHECK_COND;
+            return -1;
+        }
 
         /* Guard against integer overflow in offset+length */
         if (offset > backing_size || length > backing_size - offset) {
@@ -186,8 +219,7 @@ int vhost_scsi_handle_cmd(struct virtio_scsi_cmd_req *req,
         }
         struct scsi_report_luns_data rld;
         scsi_build_report_luns(&rld, vhost_scsi_num_luns);
-        uint32_t alloc_len = (cdb[6] << 24) | (cdb[7] << 16) |
-                             (cdb[8] << 8)  | cdb[9];
+        uint32_t alloc_len = (cdb[6] << 24) | (cdb[7] << 16) | (cdb[8] << 8) | cdb[9];
         uint32_t rld_len = sizeof(rld);
         uint32_t copy_len = (alloc_len < rld_len) ? alloc_len : rld_len;
 
@@ -243,9 +275,9 @@ int vhost_scsi_handle_cmd(struct virtio_scsi_cmd_req *req,
  *  4. Write back the response
  *  5. Update the used ring
  */
-int vhost_scsi_handle_kick(int vq_idx)
-{
-    if (!vhost_scsi_initialized) return -1;
+int vhost_scsi_handle_kick(int vq_idx) {
+    if (!vhost_scsi_initialized)
+        return -1;
 
     kprintf("[vhost-scsi] kick on virtqueue %d\n", vq_idx);
 
@@ -268,27 +300,24 @@ int vhost_scsi_handle_kick(int vq_idx)
 
 /* ── LUN management ────────────────────────────────────────────────── */
 
-int vhost_scsi_add_lun(struct vhost_scsi_lun *lun)
-{
+int vhost_scsi_add_lun(struct vhost_scsi_lun *lun) {
     if (vhost_scsi_num_luns >= VHOST_SCSI_MAX_LUNS)
         return -1;
 
-    if (!lun || !lun->data) return -1;
+    if (!lun)
+        return -1;
 
-    memcpy(&vhost_scsi_luns[vhost_scsi_num_luns], lun,
-           sizeof(struct vhost_scsi_lun));
+    memcpy(&vhost_scsi_luns[vhost_scsi_num_luns], lun, sizeof(struct vhost_scsi_lun));
     vhost_scsi_num_luns++;
 
-    kprintf("[vhost-scsi] LUN %d added: %llu blocks, readonly=%d\n",
-            vhost_scsi_num_luns - 1,
+    kprintf("[vhost-scsi] LUN %d added: %llu blocks, readonly=%d\n", vhost_scsi_num_luns - 1,
             lun->num_blocks, lun->readonly);
     return 0;
 }
 
 /* ── Cleanup ───────────────────────────────────────────────────────── */
 
-void vhost_scsi_cleanup(void)
-{
+void vhost_scsi_cleanup(void) {
     memset(vhost_scsi_luns, 0, sizeof(vhost_scsi_luns));
     vhost_scsi_num_luns = 0;
     vhost_scsi_initialized = 0;
@@ -297,26 +326,20 @@ void vhost_scsi_cleanup(void)
 
 /* ── Init ──────────────────────────────────────────────────────────── */
 
-int vhost_scsi_init(void)
-{
+int vhost_scsi_init(void) {
     memset(vhost_scsi_luns, 0, sizeof(vhost_scsi_luns));
     vhost_scsi_num_luns = 0;
 
-    /* Create default LUN 0 (16 MB, writable, memory-backed) */
-    uint64_t num_pages = (16ULL * 1024 * 1024) / PAGE_SIZE;
-    uint64_t lun_mem = (uint64_t)pmm_alloc_frames((size_t)num_pages);
-    if (!lun_mem) {
-        kprintf("[vhost-scsi] Failed to allocate backing storage\n");
-        return -1;
-    }
-
+    /* Create default LUN 0 (16 MB, writable, memory-backed).
+     * Backing RAM is allocated lazily on first READ/WRITE — see
+     * vhost_scsi_lun_ensure_data(). */
     struct vhost_scsi_lun default_lun;
     memset(&default_lun, 0, sizeof(default_lun));
-    default_lun.data       = (uint8_t *)PHYS_TO_VIRT(lun_mem);
+    default_lun.data = NULL; /* lazy */
     default_lun.num_blocks = (16ULL * 1024 * 1024) / 512;
-    default_lun.readonly   = 0;
-    memcpy(default_lun.vendor,   "HERMES", 6);
-    memcpy(default_lun.product,  "vHost SCSI Disk ", 16);
+    default_lun.readonly = 0;
+    memcpy(default_lun.vendor, "HERMES", 6);
+    memcpy(default_lun.product, "vHost SCSI Disk ", 16);
     memcpy(default_lun.revision, "1.0 ", 4);
 
     if (vhost_scsi_add_lun(&default_lun) < 0) {
@@ -326,22 +349,21 @@ int vhost_scsi_init(void)
 
     vhost_scsi_initialized = 1;
     kprintf("[vhost-scsi] vhost SCSI target initialized: "
-            "%d LUN(s)\n", vhost_scsi_num_luns);
+            "%d LUN(s)\n",
+            vhost_scsi_num_luns);
     return 0;
 }
 #include "module.h"
 module_init(vhost_scsi_init);
 
 /* ── Stub: vhost_scsi_start ─────────────────────────────── */
-static int vhost_scsi_start(void *dev)
-{
+static int vhost_scsi_start(void *dev) {
     (void)dev;
     kprintf("[vhost] vhost_scsi_start: not yet implemented\n");
     return 0;
 }
 /* ── Stub: vhost_scsi_stop ─────────────────────────────── */
-static int vhost_scsi_stop(void *dev)
-{
+static int vhost_scsi_stop(void *dev) {
     (void)dev;
     kprintf("[vhost] vhost_scsi_stop: not yet implemented\n");
     return 0;

@@ -1281,11 +1281,17 @@ void schedule(void) {
 }
 
 void scheduler_yield(void) {
-    /* Priority boost: voluntarily yielding processes get a temporary
-     * priority bump to discourage busy-waiting and improve interactivity */
+    /* Voluntary yields move the process to a LOWER priority level
+     * (higher index), so busy-yielding loops (idle workqueue workers,
+     * polling shell) drift toward the back of the scheduling order and
+     * cannot starve level-1/level-2 tasks.  The previous code
+     * decremented priority — boosting yielders up to level 0 — which
+     * let the idle workqueue and shell monopolize the highest-priority
+     * queue and starve every other runnable process (observed: a
+     * background `sleep 2 &` job never got scheduled). */
     struct process *cur = process_get_current();
-    if (cur && cur->priority > 0) {
-        cur->priority--; /* boost by one level */
+    if (cur && cur->priority < SCHED_LEVELS - 1) {
+        cur->priority++; /* demote by one level */
     }
 
     /* If preemption is disabled (e.g., holding a spinlock), yield is
@@ -1360,6 +1366,21 @@ void scheduler_tick(int was_user) {
      * process_sleep_ticks()/wait_queue sleeps never wake up (the
      * scheduler's wake-sleepers scan was only wired into a kunit test). */
     scheduler_wake_sleepers();
+
+    /* Periodically reap zombies.  The idle loop's reaper is starved once
+     * userspace init runs (netd/telnetd keep the CPU busy), so orphaned
+     * zombies (reparented to PID 1) and background jobs accumulate and
+     * eventually exhaust the PID space (seen: 48+ zombies at boot, then
+     * process_create()/fork() fail with -EAGAIN).  Rate-limit to ~10 Hz —
+     * the scan is O(PROCESS_MAX) with a cheap per-slot check. */
+    {
+        static uint64_t last_reap_tick = 0;
+        uint64_t now_tick = timer_get_ticks();
+        if (now_tick - last_reap_tick >= (uint64_t)(TIMER_FREQ / 10)) {
+            last_reap_tick = now_tick;
+            process_reap_zombies();
+        }
+    }
 
     /* Check for soft lockup (scheduler not invoked despite timer ticks) */
     nmi_watchdog_check_soft();

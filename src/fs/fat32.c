@@ -1216,12 +1216,9 @@ int fat32_read_file(const char *path, void *buf, uint32_t max_size) {
         return -EINVAL;
     if (!buf)
         return -EINVAL;
-    kprintf("[fat] read '%s' max=%u\n", path, max_size);
     int is_dir = 0;
     uint32_t fsize = 0;
     uint32_t cluster = path_resolve(path, &is_dir, &fsize);
-    kprintf("[fat] resolve '%s' -> cluster=%lu is_dir=%d size=%u\n", path, (unsigned long)cluster,
-            is_dir, fsize);
     if (!cluster || is_dir) {
         kprintf("[fat32_read_file] path_resolve('%s') failed: cluster=%lu is_dir=%d\n", path,
                 (unsigned long)cluster, is_dir);
@@ -1237,10 +1234,6 @@ int fat32_read_file(const char *path, void *buf, uint32_t max_size) {
     while (!FAT_IS_EOC(clus) && done < to_read) {
         if (++_chain_cnt > FAT_MAX_CLUSTER())
             return -EIO;
-        if ((_chain_cnt % 128) == 1)
-            kprintf("[fat] reading %s: sector %u/%u (cluster %lu)\n", path,
-                    (unsigned int)done / SECT_SIZE, (unsigned int)to_read / SECT_SIZE,
-                    (unsigned long)clus);
         uint64_t lba = cluster_to_lba(clus);
         for (uint32_t s = 0; s < spc && done < to_read; s++) {
             extern uint64_t timer_get_ticks(void);

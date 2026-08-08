@@ -1364,10 +1364,6 @@ uint64_t *pmm_alloc_frames(size_t count) {
                 /* Track each allocated frame in MGLRU */
                 for (uint64_t j = start; j < start + count; j++)
                     mglru_add_page(j * PAGE_SIZE);
-                if (start * PAGE_SIZE >= 0x4000000ULL && start * PAGE_SIZE < 0x4040000ULL)
-                    kprintf("[pmm] ALLOC_FRAMES 0x%llx count=%zu from=%p\n",
-                            (unsigned long long)(start * PAGE_SIZE), count,
-                            (void *)__builtin_return_address(0));
                 return (uint64_t *)(start * PAGE_SIZE);
             }
         } else {

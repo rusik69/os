@@ -59,6 +59,15 @@ syscall_entry_trampoline:
     ; by sysret (from user R11) at exit.
     cli
 
+    ; Save user R15/R10 BEFORE clobbering them.  R15 is callee-saved:
+    ; userspace code compiled against the SysV ABI relies on it surviving
+    ; the syscall (the exit trampoline restores it before sysret).  R10 is
+    ; also restored for symmetry (it held syscall arg4).  Without this the
+    ; shell's gcc15 build crashes with a #GP when it keeps a pointer in R15
+    ; across a syscall (observed: R15=0x7ffffffe0100 in the #GP dump).
+    mov     [rel kpti_saved_user_r15], r15
+    mov     [rel kpti_saved_user_r10], r10
+
     ; Load r15 with RIP-relative pointer to the data area.
     ; lea r15, [rip + disp32] always works correctly regardless of org.
     lea     r15, [rel kpti_cr3_kernel_dword]
@@ -144,6 +153,14 @@ syscall_exit_trampoline:
     mov     r11, [r15 + KPTI_OFF_SAVE_RFL - KPTI_OFF_CR3_KERN]
     mov     rsp, [r15 + KPTI_OFF_SAVE_RSP - KPTI_OFF_CR3_KERN]
 
+    ; Restore user R15/R10 (saved by the entry trampoline before it used
+    ; r15 as its data-area base).  R15 is callee-saved — the ABI requires
+    ; it to survive the syscall; R10 held syscall arg4.  These were the
+    ; values clobbered by the lea below, so restore them now.  sysret only
+    ; consumes RCX/R11/RSP, so R15/R10 pass through untouched.
+    mov     r15, [rel kpti_saved_user_r15]
+    mov     r10, [rel kpti_saved_user_r10]
+
     o64 sysret
 
 ; ============================================================================
@@ -168,3 +185,7 @@ kpti_real_handler_addr:
     dq 0  ; KPTI_OFF_EXIT_RIP: patched to kernel's syscall_entry_full address
 kpti_saved_rax:
     dq 0  ; KPTI_OFF_SAVE_RAX: saved RAX (syscall number / return value)
+kpti_saved_user_r15:
+    dq 0  ; KPTI_OFF_SAVE_R15: real user R15 (saved by entry, restored by exit)
+kpti_saved_user_r10:
+    dq 0  ; KPTI_OFF_SAVE_R10: real user R10 (saved by entry, restored by exit)

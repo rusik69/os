@@ -355,7 +355,11 @@ static int serial_read_char(int port_idx)
     /* Fall back to polling */
     uint16_t base = (port_idx == 0) ? SERIAL_COM1 : SERIAL_COM2;
     if (inb(base + UART_LSR) & UART_LSR_DR) {
-        return (uint8_t)inb(base + UART_RBR);
+        uint8_t c = (uint8_t)inb(base + UART_RBR);
+        /* Unconnected serial line reads 0xFF (idle) — never a real byte */
+        if (c == 0xFF)
+            return -1;
+        return (int)c;
     }
     return -1;
 }

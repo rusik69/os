@@ -129,6 +129,17 @@ static void serial_irq_handler(struct interrupt_frame *frame, int port_idx) {
 
     while (inb(port->base + UART_LSR) & UART_LSR_DR) {
         char c = (char)inb(port->base + UART_RBR);
+
+        /* An unconnected serial line reads as all-1s (0xFF) — QEMU's
+         * "-serial file:" mode never feeds RX data, so the UART sees an
+         * idle line and delivers 0xFF bytes.  Feeding those to the
+         * console shell makes it try to exec a huge 0xFF command line
+         * (observed: "sh: <0xFF spam>: not found" fork/exec/exit loop
+         * that leaks a zombie per iteration until the PID space is
+         * exhausted).  Drop idle-line bytes. */
+        if ((unsigned char)c == 0xFF)
+            continue;
+
         int next = (port->rx_head + 1) % (int)sizeof(port->rx_buffer);
         if (next != port->rx_tail) {
             port->rx_buffer[port->rx_head] = c;
@@ -218,7 +229,10 @@ int serial_getchar(void) {
         __asm__ volatile("pause");
     if (timeout == 0)
         return -1;
-    return (uint8_t)inb(SERIAL_COM1);
+    uint8_t c = (uint8_t)inb(SERIAL_COM1);
+    if (c == 0xFF)
+        return -1;
+    return c;
 }
 
 void serial_read_line(char *buf, int max) {

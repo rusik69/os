@@ -903,7 +903,11 @@ static void bg_cmd_entry(void) {
     struct process *me = process_get_current();
     int slot = -1;
     for (int i = 0; i < 8; i++) {
-        if (me->name == bg_slots[i].cmd) {
+        /* Compare by value — process_create copies the name into the
+         * process's own proc_comm buffer, so me->name and bg_slots[i].cmd
+         * are different pointers; a pointer comparison always fails and
+         * the background job exits immediately without running. */
+        if (me->name && bg_slots[i].cmd[0] && strcmp(me->name, bg_slots[i].cmd) == 0) {
             slot = i;
             break;
         }

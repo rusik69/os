@@ -1,6 +1,14 @@
+#include "libc.h"
+#include "printf.h"
 #include "shell.h"
 #include "shell_cmds.h"
-#include "printf.h"
+#include "string.h"
+#include "unistd.h"
+
 void cmd_pwd(void) {
-    kprintf("/\n");
+    char cwd[256];
+    if (getcwd(cwd, sizeof(cwd)) == 0)
+        kprintf("%s\n", cwd);
+    else
+        kprintf("/\n");
 }

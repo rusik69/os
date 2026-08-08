@@ -22,8 +22,11 @@ struct page_cache_entry *page_cache_lookup(uint64_t ino, uint64_t block);
  * Returns 0 on success, negative on error. */
 int page_cache_add(uint64_t ino, uint64_t block, const void *data);
 
-/* Remove a page from the cache (frees physical frame). */
+/* Drop a page from the cache (frees physical frame). */
 void page_cache_remove(uint64_t ino, uint64_t block);
+
+/* Drop every cached page belonging to an inode (file overwrite/truncate). */
+void page_cache_invalidate_ino(uint64_t ino);
 
 /* Mark a cached page as dirty (needs writeback). */
 void page_cache_mark_dirty(uint64_t ino, uint64_t block);

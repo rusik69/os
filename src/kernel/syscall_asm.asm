@@ -40,6 +40,8 @@ extern zero_kernel_stack_uapi
 %define KPTI_OFF_SAVE_RFL  0x120
 %define KPTI_OFF_EXIT_RIP  0x128
 %define KPTI_OFF_SAVE_RAX  0x130
+%define KPTI_OFF_SAVE_R15  0x138
+%define KPTI_OFF_SAVE_R10  0x140
 %define KPTI_OFF_EXIT      0x080
 
 ; Per-CPU kernel stack pointer offset within cpu_info struct (smp.h)
@@ -286,10 +288,15 @@ syscall_linux_entry:
 ; we jump back to the exit trampoline (which switches CR3 to user PML4).
 
 syscall_entry_full:
-    ; Save user R15 before clobbering with KPTI base pointer
-    mov     [rel syscall_user_r15], r15
     ; Load KPTI base address once
     mov     r15, KPTI_TRAMP_VADDR
+    ; Read the REAL user R15 saved by the entry trampoline (it clobbered
+    ; r15 with the data-area base before jumping here).  The old code read
+    ; the clobbered r15, so fork() inherited the trampoline address as the
+    ; child's R15 — and every normal syscall returned with R15 pointing at
+    ; the KPTI data area, crashing gcc15 userspace with a #GP.
+    mov     rax, [r15 + KPTI_OFF_SAVE_R15]
+    mov     [rel syscall_user_r15], rax
     ; Read saved user state from trampoline page
     mov     rcx, [r15 + KPTI_OFF_SAVE_RIP]   ; user RIP
     mov     r11, [r15 + KPTI_OFF_SAVE_RFL]    ; user RFLAGS
@@ -367,6 +374,14 @@ syscall_entry_full:
     mov     r11, [rel execve_user_rflags]
     mov     rsp, [rel execve_user_rsp]
     mov     qword [rel execve_pending], 0
+
+    ; Fresh exec: the new process starts with zeroed callee-saved regs
+    ; (Linux ABI: all regs except RSP are zeroed at exec entry).  Zero the
+    ; trampoline's saved R15/R10 slots so the exit trampoline restores 0
+    ; instead of the old process's values.  r15 is still KPTI_TRAMP_VADDR
+    ; here (set at syscall_entry_full entry), so write via r15-relative.
+    mov     qword [r15 + KPTI_OFF_SAVE_R15], 0
+    mov     qword [r15 + KPTI_OFF_SAVE_R10], 0
 
     ; Jump to exit trampoline via RAX (won't disturb R15 for new process)
     mov     rax, KPTI_TRAMP_VADDR + KPTI_OFF_EXIT
