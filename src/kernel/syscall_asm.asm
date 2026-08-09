@@ -383,9 +383,18 @@ syscall_entry_full:
     mov     qword [r15 + KPTI_OFF_SAVE_R15], 0
     mov     qword [r15 + KPTI_OFF_SAVE_R10], 0
 
-    ; Jump to exit trampoline via RAX (won't disturb R15 for new process)
-    mov     rax, KPTI_TRAMP_VADDR + KPTI_OFF_EXIT
-    jmp     rax
+    ; Jump to exit trampoline WITHOUT clobbering RAX.  The exit trampoline
+    ; saves RAX into KPTI_OFF_SAVE_RAX and restores it as the new process's
+    ; return value — so RAX must arrive here already 0 (Linux ABI: RAX=0 at
+    ; exec entry).  Jumping via `mov rax, KPTI_TRAMP_VADDR+KPTI_OFF_EXIT;
+    ; jmp rax` made the trampoline restore the trampoline address into RAX
+    ; (observed: userspace #GP at getty _start with RAX=0x7ffffffe0080).
+    ; r15 is safe as the jump register: the exit trampoline's first
+    ; instruction is `lea r15, [rel base]` which clobbers it, and it then
+    ; restores r15 from the (zeroed) SAVE_R15 slot — so the new process
+    ; starts with r15 = 0 per the ABI.
+    mov     r15, KPTI_TRAMP_VADDR + KPTI_OFF_EXIT
+    jmp     r15
 
 .full_normal_return:
     ; Zero kernel stack

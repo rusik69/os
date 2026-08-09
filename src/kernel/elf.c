@@ -11,6 +11,7 @@
 #include "scheduler.h"
 #include "signalfd.h"
 #include "string.h"
+#include "uaccess.h"
 #include "vfs.h"
 #include "vmm.h"
 
@@ -797,25 +798,30 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
     /* Count argc and envc */
     int argc = 0;
     if (argv) {
-        while (argv[argc]) {
+        while (argc < 256) {
             uint64_t ptr = 0;
-            memcpy(&ptr, &argv[argc], sizeof(uint64_t));
-            (void)ptr;
+            /* argv is a user pointer — read it fault-safely.  A direct
+             * kernel dereference of argv[argc] panics when the user stack
+             * page holding the array isn't present (observed: init pid 6
+             * execve of /mnt/bin/sh crashing ~1 in 10 boots with a kernel
+             * page fault at CR2=0x7fffefffff70 in process_execve). */
+            if (copy_from_user(&ptr, (uint64_t)(uintptr_t)&argv[argc], sizeof(uint64_t)) < 0)
+                break;
+            if (!ptr)
+                break;
             argc++;
-            if (argc > 256)
-                break; /* sanity */
         }
     }
 
     int envc = 0;
     if (envp) {
-        while (envp[envc]) {
+        while (envc < 256) {
             uint64_t ptr = 0;
-            memcpy(&ptr, &envp[envc], sizeof(uint64_t));
-            (void)ptr;
-            envc++;
-            if (envc > 256)
+            if (copy_from_user(&ptr, (uint64_t)(uintptr_t)&envp[envc], sizeof(uint64_t)) < 0)
                 break;
+            if (!ptr)
+                break;
+            envc++;
         }
     }
 
@@ -830,43 +836,41 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
             tmp_buf[i] = NULL;
 
         for (int i = 0; i < argc; i++) {
-            const char *s = argv[i];
+            uint64_t s = 0;
+            if (copy_from_user(&s, (uint64_t)(uintptr_t)&argv[i], sizeof(uint64_t)) < 0)
+                continue;
             if (!s)
                 continue;
-            /* Copy string from old userspace, char by char via safe access */
-            int len = 0;
+            /* Copy string from old userspace, fault-safely */
             char *kstr = (char *)kmalloc(256);
             if (!kstr)
                 continue;
-            while (len < 255) {
-                char c;
-                memcpy(&c, &s[len], 1);
-                if (c == '\0')
-                    break;
-                kstr[len++] = c;
+            long len = strncpy_from_user(kstr, s, 256);
+            if (len <= 0) {
+                kfree(kstr);
+                continue;
             }
-            kstr[len] = '\0';
             tmp_buf[i] = kstr;
-            total_str_size += len + 1;
+            total_str_size += (uint64_t)len;
         }
         for (int i = 0; i < envc; i++) {
-            const char *s = (const char *)envp[i];
+            uint64_t s = 0;
+            if (copy_from_user(&s, (uint64_t)(uintptr_t)&envp[i], sizeof(uint64_t)) < 0)
+                continue;
             if (!s)
                 continue;
             int len = 0;
             char *kstr = (char *)kmalloc(256);
             if (!kstr)
                 continue;
-            while (len < 255) {
-                char c;
-                memcpy(&c, &s[len], 1);
-                if (c == '\0')
-                    break;
-                kstr[len++] = c;
+            long n = strncpy_from_user(kstr, s, 256);
+            if (n <= 0) {
+                kfree(kstr);
+                continue;
             }
-            kstr[len] = '\0';
+            len = (int)n;
             tmp_buf[argc + i] = kstr;
-            total_str_size += len + 1;
+            total_str_size += (uint64_t)len;
         }
     }
 
@@ -1463,25 +1467,25 @@ int process_spawn(const char *path, char *const argv[], char *const envp[]) {
     /* ── 6. Count argc and envc ─────────────────────────────────── */
     int argc = 0;
     if (argv) {
-        while (argv[argc]) {
+        while (argc < 256) {
             uint64_t ptr = 0;
-            memcpy(&ptr, &argv[argc], sizeof(uint64_t));
-            (void)ptr;
-            argc++;
-            if (argc > 256)
+            if (copy_from_user(&ptr, (uint64_t)(uintptr_t)&argv[argc], sizeof(uint64_t)) < 0)
                 break;
+            if (!ptr)
+                break;
+            argc++;
         }
     }
 
     int envc = 0;
     if (envp) {
-        while (envp[envc]) {
+        while (envc < 256) {
             uint64_t ptr = 0;
-            memcpy(&ptr, &envp[envc], sizeof(uint64_t));
-            (void)ptr;
-            envc++;
-            if (envc > 256)
+            if (copy_from_user(&ptr, (uint64_t)(uintptr_t)&envp[envc], sizeof(uint64_t)) < 0)
                 break;
+            if (!ptr)
+                break;
+            envc++;
         }
     }
 
@@ -1495,42 +1499,38 @@ int process_spawn(const char *path, char *const argv[], char *const envp[]) {
             tmp_buf[i] = NULL;
 
         for (int i = 0; i < argc; i++) {
-            const char *s = argv[i];
+            uint64_t s = 0;
+            if (copy_from_user(&s, (uint64_t)(uintptr_t)&argv[i], sizeof(uint64_t)) < 0)
+                continue;
             if (!s)
                 continue;
-            int len = 0;
             char *kstr = (char *)kmalloc(256);
             if (!kstr)
                 continue;
-            while (len < 255) {
-                char c;
-                memcpy(&c, &s[len], 1);
-                if (c == '\0')
-                    break;
-                kstr[len++] = c;
+            long len = strncpy_from_user(kstr, s, 256);
+            if (len <= 0) {
+                kfree(kstr);
+                continue;
             }
-            kstr[len] = '\0';
             tmp_buf[i] = kstr;
-            total_str_size += len + 1;
+            total_str_size += (uint64_t)len;
         }
         for (int i = 0; i < envc; i++) {
-            const char *s = (const char *)envp[i];
+            uint64_t s = 0;
+            if (copy_from_user(&s, (uint64_t)(uintptr_t)&envp[i], sizeof(uint64_t)) < 0)
+                continue;
             if (!s)
                 continue;
-            int len = 0;
             char *kstr = (char *)kmalloc(256);
             if (!kstr)
                 continue;
-            while (len < 255) {
-                char c;
-                memcpy(&c, &s[len], 1);
-                if (c == '\0')
-                    break;
-                kstr[len++] = c;
+            long len = strncpy_from_user(kstr, s, 256);
+            if (len <= 0) {
+                kfree(kstr);
+                continue;
             }
-            kstr[len] = '\0';
             tmp_buf[argc + i] = kstr;
-            total_str_size += len + 1;
+            total_str_size += (uint64_t)len;
         }
     }
 
