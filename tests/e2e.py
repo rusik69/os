@@ -96,7 +96,10 @@ class Telnet:
             result = self._buf[:end]
             self._buf = b""
         else:
-            result, self._buf = self._buf, b""
+            # Timeout / no marker yet: consume nothing and keep the buffer
+            # so a retry (send_cmd's second, longer attempt) continues
+            # reading the same in-flight response instead of losing it.
+            result = b""
         return result
 
     def drain(self, t: float = 0.2) -> None:
@@ -116,19 +119,32 @@ class Telnet:
         """Send command, wait for next prompt, return output as string."""
         time.sleep(0.05)
         raw = b""
+        to = timeout or TIMEOUT
         for attempt in range(2):
             try:
-                self.sock.send((cmd + "\n").encode("latin-1"))
-                raw = self.read_until(PROMPT, timeout=timeout)
+                if attempt == 0:
+                    self.sock.send((cmd + "\n").encode("latin-1"))
+                # On the second attempt the command was already sent — just
+                # keep reading on the same socket with a longer patience
+                # window.  The response may be slow (QEMU under TCG with no
+                # KVM on the CI host); re-sending would duplicate side
+                # effects (mkdir twice, echo >> file twice) and reconnecting
+                # would discard the pending output and misattribute the
+                # next command's response.
+                raw = self.read_until(PROMPT, timeout=to)
                 if raw and PROMPT in raw:
                     break
                 if attempt == 0:
-                    self.reconnect()
+                    to = max(to, 90.0)
             except (BrokenPipeError, ConnectionResetError):
                 if attempt == 0:
                     self.reconnect()
                     continue
                 raise
+        if raw and PROMPT not in raw:
+            # Both attempts timed out — drop any partial data so it can't
+            # pollute the next command's response.
+            self._buf = b""
         if os.environ.get("E2E_DEBUG"):
             print(f"DEBUG cmd={cmd!r:30} raw_tail={raw[-60:]!r}", flush=True)
         # Decode and strip the echoed command + trailing prompt

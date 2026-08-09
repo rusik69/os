@@ -364,7 +364,9 @@ jobs:
   # Non-blocking while the driver issue is investigated.
   e2e-smoke:
     runs-on: [self-hosted, linux, x64]
-    timeout-minutes: 20
+    # The self-hosted runner has no /dev/kvm, so QEMU runs under TCG
+    # emulation and the 136-assertion suite takes ~15-20 min.
+    timeout-minutes: 40
     needs: [kernel]
     continue-on-error: true
     steps:
@@ -390,7 +392,7 @@ jobs:
           E2E_SMOKE=1 ./tests/e2e.sh build/kernel.bin build/disk.img
         env:
           E2E_BOOT_TIMEOUT: "60"
-          E2E_TIMEOUT: "15"
+          E2E_TIMEOUT: "30"
           E2E_EXTERNAL_DNS: "0"
 
       - name: Summary

@@ -75,6 +75,8 @@ boot_attempt() {
     qemu-system-x86_64 \
         -kernel "$KERNEL" \
         -m 256M \
+        -smp 2 \
+        -accel tcg,thread=multi \
         -serial "file:$SERIAL_LOG" \
         -display none \
         -vga none \

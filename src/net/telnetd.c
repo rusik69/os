@@ -116,17 +116,30 @@ static void ses_flush(struct telnet_session *s) {
          * (tx_unacked_buf) and silently drops the excess — a single
          * large send of help's 16KB output would lose everything past
          * 4KB (observed: `help` showing only 86 of 362 commands).  Send
-         * in 4KB chunks. */
-        int off = 0;
-        while (off < s->out_len) {
-            int chunk = s->out_len - off;
-            if (chunk > 4096)
-                chunk = 4096;
-            if (net_tcp_send(s->conn_id, s->out_buf + off, (uint16_t)chunk) < 0)
-                break;
-            off += chunk;
+         * in 4KB chunks.
+         *
+         * Only send ONE chunk per flush and keep the remainder in
+         * out_buf: net_tcp_send's immediate path (telnetd sets nodelay)
+         * overwrites tx_unacked_buf with the new data even when the
+         * previous chunk is still unACKed.  Sending chunk 2 right after
+         * chunk 1 clobbers the retransmit copy — if chunk 1 is then
+         * lost and retransmitted, the client receives chunk 2's bytes
+         * in its place and the stream corrupts (telnet hangs mid-command
+         * under CI's slower/lossy timing).  The poll loop calls ses_flush
+         * repeatedly, so the remaining bytes go out on the next tick
+         * after the ACK lands. */
+        int chunk = s->out_len > 4096 ? 4096 : s->out_len;
+        if (net_tcp_send(s->conn_id, s->out_buf, (uint16_t)chunk) < 0) {
+            /* Connection gone — drop the whole buffer. */
+            s->out_len = 0;
+            return;
         }
-        s->out_len = 0;
+        if (chunk < s->out_len) {
+            memmove(s->out_buf, s->out_buf + chunk, (size_t)(s->out_len - chunk));
+            s->out_len -= (uint16_t)chunk;
+        } else {
+            s->out_len = 0;
+        }
     }
 }
 
