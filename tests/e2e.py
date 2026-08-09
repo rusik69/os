@@ -118,6 +118,12 @@ class Telnet:
     def send_cmd(self, cmd: str, timeout: float = None) -> str:
         """Send command, wait for next prompt, return output as string."""
         time.sleep(0.05)
+        # Discard any residual data left over from a previous command whose
+        # response was split across TCP segments (common under slow TCG
+        # emulation): if the previous read returned at the first "os> " but
+        # the guest had already sent more bytes, they'd be misattributed to
+        # this command.
+        self.drain(t=0.15)
         raw = b""
         to = timeout or TIMEOUT
         for attempt in range(2):
@@ -142,8 +148,21 @@ class Telnet:
                     continue
                 raise
         if raw and PROMPT not in raw:
-            # Both attempts timed out — drop any partial data so it can't
-            # pollute the next command's response.
+            # Both attempts timed out — the guest's late response may still
+            # be in flight and would be misattributed to the next command.
+            # Drain it (with a short patience) so the next command reads a
+            # clean stream, without losing session state (cwd, etc.) that a
+            # full reconnect would discard.
+            try:
+                self.sock.settimeout(3.0)
+                while True:
+                    chunk = self.sock.recv(16384)
+                    if not chunk:
+                        break
+            except socket.timeout:
+                pass
+            except OSError:
+                pass
             self._buf = b""
         if os.environ.get("E2E_DEBUG"):
             print(f"DEBUG cmd={cmd!r:30} raw_tail={raw[-60:]!r}", flush=True)
