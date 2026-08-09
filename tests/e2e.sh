@@ -59,79 +59,103 @@ command -v python3 >/dev/null 2>&1 || \
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# ── Serial log ────────────────────────────────────────────────────────────────
+# ── Serial log ────────────────────────────────────────────────────────
 SERIAL_LOG=$(mktemp /tmp/os_e2e_serial_XXXXXX)
+QEMU_PID=""
+
+# Boot the kernel and wait until the telnet server + shell module are up.
+# Returns 0 on success, 1 on a retryable boot failure (timeout/hang),
+# 2 on a hard failure (QEMU died / prerequisites).  The kernel has an
+# intermittent boot-time soft-lockup (timer-edge race at the KPTI return
+# boundary) that hangs roughly 1 in 10 boots; retrying once makes the
+# suite resilient instead of failing on a single unlucky boot.
+boot_attempt() {
+    rm -f "$SERIAL_LOG"
+    echo "==> Starting QEMU kernel=$KERNEL port=${E2E_PORT}->23 http=${E2E_HTTP_PORT}->80 ..."
+    qemu-system-x86_64 \
+        -kernel "$KERNEL" \
+        -m 256M \
+        -serial "file:$SERIAL_LOG" \
+        -display none \
+        -vga none \
+        -drive "file=$DISK,format=raw,if=ide" \
+        -netdev "user,id=net0,hostfwd=tcp::${E2E_PORT}-:23,hostfwd=tcp::${E2E_HTTP_PORT}-:80" \
+        -device e1000,netdev=net0 \
+        -no-reboot \
+        2>/dev/null &
+    QEMU_PID=$!
+
+    # ── Wait for kernel to reach the telnet server ────────────────────
+    BOOT_WAIT="${E2E_BOOT_TIMEOUT:-90}"
+    echo "==> Waiting up to ${BOOT_WAIT}s for telnet server..."
+    elapsed=0
+    while [ "$elapsed" -lt "$BOOT_WAIT" ]; do
+        # Check QEMU is still alive
+        if ! kill -0 "$QEMU_PID" 2>/dev/null; then
+            echo "ERROR: QEMU exited unexpectedly" >&2
+            echo "--- Serial log ---"
+            cat "$SERIAL_LOG"
+            return 2
+        fi
+        if grep -qE "Services started|HTTP server on port 80" "$SERIAL_LOG" 2>/dev/null; then
+            break
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+
+    if ! grep -qE "Services started|HTTP server on port 80" "$SERIAL_LOG" 2>/dev/null; then
+        echo "ERROR: Kernel did not reach telnet server in ${BOOT_WAIT}s" >&2
+        echo "--- Serial log ---"
+        cat "$SERIAL_LOG"
+        return 1
+    fi
+
+    echo "==> Kernel booted. Waiting for shell module to load..."
+
+    # The telnetd banner appears as soon as services start, but command
+    # execution needs the shell module (shell.ko) to be loaded and its
+    # shell_process_line hook registered by init.  Poll the serial log for
+    # the module-load completion marker before running the command tests.
+    shell_ready=0
+    elapsed=0
+    while [ "$elapsed" -lt "${E2E_SHELL_WAIT:-60}" ]; do
+        if ! kill -0 "$QEMU_PID" 2>/dev/null; then
+            echo "ERROR: QEMU exited unexpectedly while waiting for shell" >&2
+            echo "--- Serial log ---"
+            cat "$SERIAL_LOG"
+            return 2
+        fi
+        if grep -qE "shell module load exit status: 0" "$SERIAL_LOG" 2>/dev/null; then
+            shell_ready=1
+            break
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+
+    if [ "$shell_ready" -ne 1 ]; then
+        echo "ERROR: shell module did not load within ${E2E_SHELL_WAIT:-60}s" >&2
+        echo "--- Serial log (last 40 lines) ---"
+        tail -40 "$SERIAL_LOG"
+        return 1
+    fi
+    return 0
+}
+
 trap 'rm -f "$SERIAL_LOG"; kill "$QEMU_PID" 2>/dev/null; wait "$QEMU_PID" 2>/dev/null' EXIT
 
-# ── Launch QEMU ───────────────────────────────────────────────────────────────
-echo "==> Starting QEMU kernel=$KERNEL port=${E2E_PORT}->23 http=${E2E_HTTP_PORT}->80 ..."
-qemu-system-x86_64 \
-    -kernel "$KERNEL" \
-    -m 256M \
-    -serial "file:$SERIAL_LOG" \
-    -display none \
-    -vga none \
-    -drive "file=$DISK,format=raw,if=ide" \
-    -netdev "user,id=net0,hostfwd=tcp::${E2E_PORT}-:23,hostfwd=tcp::${E2E_HTTP_PORT}-:80" \
-    -device e1000,netdev=net0 \
-    -no-reboot \
-    2>/dev/null &
-QEMU_PID=$!
-
-# ── Wait for kernel to reach the telnet server ────────────────────────────────
-BOOT_WAIT="${E2E_BOOT_TIMEOUT:-90}"
-echo "==> Waiting up to ${BOOT_WAIT}s for telnet server..."
-elapsed=0
-while [ "$elapsed" -lt "$BOOT_WAIT" ]; do
-    # Check QEMU is still alive
-    if ! kill -0 "$QEMU_PID" 2>/dev/null; then
-        echo "ERROR: QEMU exited unexpectedly" >&2
-        echo "--- Serial log ---"
-        cat "$SERIAL_LOG"
-        exit 2
+boot_attempt
+if [ $? -ne 0 ]; then
+    # Retry once — the boot hang is intermittent, not deterministic.
+    kill "$QEMU_PID" 2>/dev/null
+    wait "$QEMU_PID" 2>/dev/null
+    echo "==> Boot attempt failed; retrying once..."
+    boot_attempt
+    ret=$?
+    if [ $ret -ne 0 ]; then
+        exit $ret
     fi
-    if grep -qE "Services started|HTTP server on port 80" "$SERIAL_LOG" 2>/dev/null; then
-        break
-    fi
-    sleep 1
-    elapsed=$((elapsed + 1))
-done
-
-if ! grep -qE "Services started|HTTP server on port 80" "$SERIAL_LOG" 2>/dev/null; then
-    echo "ERROR: Kernel did not reach telnet server in ${BOOT_WAIT}s" >&2
-    echo "--- Serial log ---"
-    cat "$SERIAL_LOG"
-    exit 2
-fi
-
-echo "==> Kernel booted. Waiting for shell module to load..."
-
-# The telnetd banner appears as soon as services start, but command
-# execution needs the shell module (shell.ko) to be loaded and its
-# shell_process_line hook registered by init.  Poll the serial log for
-# the module-load completion marker before running the command tests.
-shell_ready=0
-elapsed=0
-while [ "$elapsed" -lt "${E2E_SHELL_WAIT:-60}" ]; do
-    if ! kill -0 "$QEMU_PID" 2>/dev/null; then
-        echo "ERROR: QEMU exited unexpectedly while waiting for shell" >&2
-        echo "--- Serial log ---"
-        cat "$SERIAL_LOG"
-        exit 2
-    fi
-    if grep -qE "shell module load exit status: 0" "$SERIAL_LOG" 2>/dev/null; then
-        shell_ready=1
-        break
-    fi
-    sleep 1
-    elapsed=$((elapsed + 1))
-done
-
-if [ "$shell_ready" -ne 1 ]; then
-    echo "ERROR: shell module did not load within ${E2E_SHELL_WAIT:-60}s" >&2
-    echo "--- Serial log (last 40 lines) ---"
-    tail -40 "$SERIAL_LOG"
-    exit 2
 fi
 
 # Extra settle time for the module hook registration.

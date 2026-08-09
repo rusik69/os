@@ -267,13 +267,9 @@ static int read_sector(uint64_t lba, void *buf) {
          * entries, eviction fails and every subsequent read falls
          * through to slow direct I/O (the 648 KB module read ground
          * to a halt mid-transfer). */
-        if (lba < 100)
-            kprintf("[fat] read_sector lba=%llu releasing\n", (unsigned long long)lba);
         bufcache_release(lba, (uint8_t)disk_id);
         return 0;
     }
-    if (lba < 100)
-        kprintf("[fat] read_sector lba=%llu direct-read\n", (unsigned long long)lba);
     return blockdev_read_sectors(disk_id, lba, 1, buf);
 }
 
