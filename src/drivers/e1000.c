@@ -1722,8 +1722,6 @@ static int e1000_netdev_transmit(struct net_device *dev,
 {
     (void)dev;
 
-    kprintf("[DBG] e1000_netdev_transmit: len=%u\n", len);
-
     /* Choose a TX queue: hash src+dst IP from ethernet/IP header if possible */
     int tx_q = 0;
     if (num_queues > 1 && len > 14) {
@@ -1823,7 +1821,6 @@ static int e1000_netdev_transmit(struct net_device *dev,
     qp->stats.tx_packets++;
     qp->stats.tx_bytes += len;
 
-    kprintf("[DBG] e1000_netdev_transmit: done, new tx_cur=%u\n", qp->tx_cur);
     return 0;
 }
 

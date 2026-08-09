@@ -178,10 +178,7 @@ int net_link_send(const void *data, uint16_t len) {
         for (int i = 0; i < NETDEV_MAX; i++) {
             struct net_device *dev = netif_get(i);
             if (dev && dev->transmit && memcmp(dev->mac, net_our_mac, 6) == 0) {
-                kprintf("[dbg] net_link_send: mac match at %d, calling transmit\n", i);
-                int ret = dev->transmit(dev, (const uint8_t *)data, len);
-                kprintf("[dbg] net_link_send: transmit returned %d\n", ret);
-                return ret;
+                return dev->transmit(dev, (const uint8_t *)data, len);
             }
         }
         kprintf("[dbg] net_link_send: no mac match (netif_count=%d)\n", netif_count());
