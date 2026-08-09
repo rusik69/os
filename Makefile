@@ -1185,6 +1185,7 @@ $(ROOTFS_STAMP): userspace-build
 		x86_64-linux-gnu-strip $(ROOTFS_DIR)/sbin/init $(ROOTFS_DIR)/sbin/init2 $(ROOTFS_DIR)/sbin/initramfs $(ROOTFS_DIR)/bin/* 2>/dev/null || true; \
 	fi
 	# Create /etc/inittab (kernel also creates a default at boot)
+	@mkdir -p $(ROOTFS_DIR)/etc
 	@echo 'ttyS0::respawn:/bin/sh' > $(ROOTFS_DIR)/etc/inittab
 	@echo 'console::askfirst:/bin/sh' >> $(ROOTFS_DIR)/etc/inittab
 	@touch $@
