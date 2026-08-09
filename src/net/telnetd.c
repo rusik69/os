@@ -112,7 +112,20 @@ static void ses_flush(struct telnet_session *s) {
          * are free. */
         if (lockdep_holding_spinlock())
             return;
-        net_tcp_send(s->conn_id, s->out_buf, (uint16_t)s->out_len);
+        /* net_tcp_send clamps each call to its 4KB retransmit buffer
+         * (tx_unacked_buf) and silently drops the excess — a single
+         * large send of help's 16KB output would lose everything past
+         * 4KB (observed: `help` showing only 86 of 362 commands).  Send
+         * in 4KB chunks. */
+        int off = 0;
+        while (off < s->out_len) {
+            int chunk = s->out_len - off;
+            if (chunk > 4096)
+                chunk = 4096;
+            if (net_tcp_send(s->conn_id, s->out_buf + off, (uint16_t)chunk) < 0)
+                break;
+            off += chunk;
+        }
         s->out_len = 0;
     }
 }
@@ -169,6 +182,11 @@ static void process_telnet_cmd(struct telnet_session *s) {
      * registers shell_process_line_ptr — guard in case it isn't loaded. */
     kprintf_set_hook(telnet_output_hook, s);
     kprintf_set_flush(ses_flush_hook, s);
+    /* Add the command to shell history (mirrors the sshd path) — the
+     * telnet path goes through shell_process_line() directly, which
+     * does NOT record history (only the keyboard loop does). */
+    if (shell_history_add_ptr)
+        shell_history_add_ptr(cmd);
     if (shell_process_line_ptr)
         shell_process_line_ptr(cmd);
     kprintf_set_flush(0, 0);

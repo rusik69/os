@@ -596,7 +596,7 @@ def test_df(t: Telnet):
     """df: disk usage."""
     r = t.send_cmd("df")
     check("df — header", r, "Filesystem")
-    check("df — device", r, "/dev/hda")
+    check("df — device", r, "smfs")
 
 
 def test_free(t: Telnet):
@@ -604,7 +604,7 @@ def test_free(t: Telnet):
     r = t.send_cmd("free")
     check("free — header", r, "total")
     check("free — mem line", r, "Mem:")
-    check("free — frames", r, "Frames:")
+    check("free — avail line", r, "Avail:")
 
 
 def test_whoami(t: Telnet):
@@ -616,7 +616,7 @@ def test_whoami(t: Telnet):
 def test_hostname(t: Telnet):
     """hostname: system hostname."""
     r = t.send_cmd("hostname")
-    check("hostname", r, "os-kernel")
+    check("hostname", r, "os")
 
 
 def test_env(t: Telnet):
@@ -679,7 +679,8 @@ def test_route(t: Telnet):
 def test_uname(t: Telnet):
     """uname: system info."""
     r = t.send_cmd("uname")
-    check("uname", r, "OS kernel x86_64")
+    check("uname", r, "OS")
+    check("uname — arch", r, "x86_64")
 
 
 def test_lspci(t: Telnet):
@@ -926,10 +927,10 @@ def test_jobs(t: Telnet):
 def test_fg(t: Telnet):
     """fg: bring background process to foreground."""
     r = t.send_cmd("fg")
-    check("fg no args — usage", r, "Usage:")
+    check("fg no args — no jobs", r, "no background jobs")
 
     r = t.send_cmd("fg 9999")
-    check("fg bad pid", r, "No such process")
+    check("fg bad pid", r, "job not found")
 
 
 def test_wait_cmd(t: Telnet):

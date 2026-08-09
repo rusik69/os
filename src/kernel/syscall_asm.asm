@@ -369,6 +369,13 @@ syscall_entry_full:
     je      .full_normal_return
 
     ; Execve path: jump to exit trampoline (process replacement — no R15 restore needed)
+    ; CRITICAL: disable interrupts BEFORE switching RSP to the user stack.
+    ; From here to sysret the stack pointer is the USER stack, and a timer
+    ; interrupt in this window would push its frame onto the user stack,
+    ; corrupting it (userspace #GP at the exec'd binary's _start, ~1 in 5
+    ; boots).  The .full_normal_return path has the same cli for the same
+    ; reason; the exit trampoline re-clears IF defensively.
+    cli
     xor     eax, eax
     mov     rcx, [rel execve_user_rip]
     mov     r11, [rel execve_user_rflags]
@@ -382,6 +389,23 @@ syscall_entry_full:
     ; here (set at syscall_entry_full entry), so write via r15-relative.
     mov     qword [r15 + KPTI_OFF_SAVE_R15], 0
     mov     qword [r15 + KPTI_OFF_SAVE_R10], 0
+
+    ; Zero the remaining GP registers too — the exit trampoline only
+    ; restores RAX/RCX/R11/RSP/R15/R10, so RSI/RDX/RBX/R8/R9/R12/R13/R14
+    ; pass through from syscall_dispatch's return state (kernel
+    ; addresses).  A fresh exec must present a clean register file
+    ; (observed: userspace #GP at getty _start with RSI=0xffff8000... and
+    ; garbage R12/R13/R14 leaking from the old process).
+    xor     esi, esi
+    xor     edx, edx
+    xor     ebx, ebx
+    xor     r8d, r8d
+    xor     r9d, r9d
+    xor     r12d, r12d
+    xor     r13d, r13d
+    xor     r14d, r14d
+    xor     ebp, ebp
+    xor     edi, edi
 
     ; Jump to exit trampoline WITHOUT clobbering RAX.  The exit trampoline
     ; saves RAX into KPTI_OFF_SAVE_RAX and restores it as the new process's
