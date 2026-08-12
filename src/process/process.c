@@ -874,6 +874,10 @@ struct process *process_create(void (*entry)(void), const char *name) {
     proc->context = (struct cpu_context *)sp;
 
     if (scheduler_add(proc) < 0) {
+        /* Release the PID and the inherited cgroup-namespace ref taken above */
+        free_pid(proc->pid);
+        if (proc->cgroup_ns)
+            cgroup_ns_put(proc->cgroup_ns);
         free_guarded_kernel_stack(proc);
         proc->state = PROCESS_UNUSED;
         return NULL;
@@ -994,6 +998,8 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp, uint64_t 
     proc->context = (struct cpu_context *)sp;
 
     if (scheduler_add(proc) < 0) {
+        /* Release the PID allocated above (was leaked before) */
+        free_pid(proc->pid);
         free_guarded_kernel_stack(proc);
         proc->state = PROCESS_UNUSED;
         return NULL;
@@ -1538,6 +1544,9 @@ int process_fork(void) {
     child->context = (struct cpu_context *)sp;
 
     if (scheduler_add(child) < 0) {
+        /* Destroy the freshly cloned user page tables (fork deep-copies) */
+        if (child->pml4)
+            vmm_destroy_user_pml4(child->pml4);
         free_pid(child->pid);
         free_guarded_kernel_stack(child);
         child->state = PROCESS_UNUSED;
@@ -1561,6 +1570,33 @@ int process_fork(void) {
 
 /* ── Clone: create a thread (child may share address space) ──── */
 extern void clone_child_trampoline(void);
+
+/* Roll back namespace setup performed by process_clone's CLONE_NEW*
+ * handling.  Must be called on every error return AFTER the namespace
+ * block has run (i.e. after child->pid_ns/cgroup_ns/mnt_ns/user_ns have
+ * been set up): it releases both freshly-created namespaces (CLONE_NEW*)
+ * and the inherited-reference increments (cgroup_ns_get/mnt_ns_get) so a
+ * failed clone leaks neither namespace slots nor refcounts. */
+static void clone_rollback_namespaces(struct process *child, struct process *parent) {
+    if (child->pid_ns && child->pid_ns != parent->pid_ns) {
+        /* CLONE_NEWPID: namespace was created for this child */
+        pid_ns_destroy(child->pid_ns);
+    } else if (child->pid_ns && child->pid_ns != &init_pid_ns && child->ns_pid > 0) {
+        /* Inherited non-root namespace: release the local pid we allocated */
+        pid_ns_free_pid(child->pid_ns, child->ns_pid);
+    }
+    if (child->cgroup_ns) {
+        cgroup_ns_put(child->cgroup_ns);
+        child->cgroup_ns = NULL;
+    }
+    if (child->mnt_ns) {
+        mnt_ns_put(child->mnt_ns);
+        child->mnt_ns = NULL;
+    }
+    if (child->user_ns && child->user_ns != parent->user_ns) {
+        user_ns_destroy(child->user_ns);
+    }
+}
 
 int process_clone(struct process *parent, uint64_t flags, void *child_stack, uint64_t user_rip,
                   uint64_t user_rflags) {
@@ -1751,28 +1787,10 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack, uin
 
     /* Allocate fresh kernel stack */
     if (alloc_guarded_kernel_stack(child) < 0) {
-        /* Free any namespaces that were allocated above before failing */
-        if (flags & CLONE_NEWPID) {
-            /* child->pid_ns was allocated by pid_ns_create */
-            if (child->pid_ns && child->pid_ns != parent->pid_ns)
-                pid_ns_destroy(child->pid_ns);
-        } else if (parent->pid_ns && child->pid_ns != parent->pid_ns) {
-            /* child has its own PID namespace */
-            pid_ns_destroy(child->pid_ns);
-        }
-        if (flags & CLONE_NEWCGROUP) {
-            /* child->cgroup_ns was allocated by cgroup_ns_create */
-            if (child->cgroup_ns && child->cgroup_ns != parent->cgroup_ns)
-                cgroup_ns_put(child->cgroup_ns);
-        }
-        if (flags & CLONE_NEWNS) {
-            if (child->mnt_ns && child->mnt_ns != parent->mnt_ns)
-                mnt_ns_put(child->mnt_ns);
-        }
-        if (flags & CLONE_NEWUSER) {
-            if (child->user_ns && child->user_ns != parent->user_ns)
-                user_ns_destroy(child->user_ns);
-        }
+        /* Roll back namespaces allocated/ref'd by the CLONE_NEW* block
+         * AND release the PID allocated above (was leaked before). */
+        clone_rollback_namespaces(child, parent);
+        free_pid(child->pid);
         child->state = PROCESS_UNUSED;
         __asm__ volatile("sti");
         return -EINVAL;
@@ -1790,6 +1808,8 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack, uin
         if (parent->pml4) {
             child->pml4 = vmm_clone_user_pml4(parent->pml4);
             if (!child->pml4) {
+                /* Roll back the CLONE_NEW* namespaces (were leaked before) */
+                clone_rollback_namespaces(child, parent);
                 free_pid(child->pid);
                 free_guarded_kernel_stack(child);
                 child->state = PROCESS_UNUSED;
@@ -1850,6 +1870,10 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack, uin
     child->context = (struct cpu_context *)sp;
 
     if (scheduler_add(child) < 0) {
+        /* Roll back namespaces + the freshly cloned pml4 (non-CLONE_VM) */
+        clone_rollback_namespaces(child, parent);
+        if (!(flags & CLONE_VM) && child->pml4 && child->pml4 != parent->pml4)
+            vmm_destroy_user_pml4(child->pml4);
         free_pid(child->pid);
         free_guarded_kernel_stack(child);
         child->state = PROCESS_UNUSED;
