@@ -30,6 +30,7 @@ struct aiocb {
     uint64_t aio_return;
     int      in_use;
     uint32_t pid; /* owner PID */
+    uint64_t aio_user_ptr; /* user-space aiocb address, for aio_cancel matching */
 };
 
 /* Event for aio_return/suspend */
@@ -179,6 +180,7 @@ static int aio_submit(struct aiocb *user_cb) {
     memcpy(&aio_cbs[idx], user_cb, sizeof(struct aiocb));
     aio_cbs[idx].in_use = 1;
     aio_cbs[idx].aio_state = 1; /* in progress */
+    aio_cbs[idx].aio_user_ptr = (uint64_t)user_cb;
     struct process *cur = process_get_current();
     aio_cbs[idx].pid = cur ? cur->pid : 0;
 
@@ -216,17 +218,17 @@ static int aio_suspend(uint64_t *aiocb_list, int nent, uint64_t timeout) {
     return 0;
 }
 
-/* Cancel an AIO request */
+/* Cancel a specific AIO request (matching fd + user aiocb pointer) */
 static int aio_cancel(int fd, uint64_t aiocb_ptr) {
-    (void)fd;
-    (void)aiocb_ptr;
     for (int i = 0; i < AIO_MAX_IO; i++) {
-        if (aio_cbs[i].in_use) {
+        if (aio_cbs[i].in_use && aio_cbs[i].aio_fildes == fd &&
+            aio_cbs[i].aio_user_ptr == aiocb_ptr) {
             aio_cbs[i].in_use = 0;
-            break;
+            aio_cbs[i].aio_state = 3; /* cancelled */
+            return 0;
         }
     }
-    return 0;
+    return -EINVAL; /* no matching request */
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -241,9 +243,7 @@ static int aio_cancel_all(int fd)
     kprintf("[AIO] aio_cancel_all: cancelling all requests for fd %d\n", fd);
     int count = 0;
     for (int i = 0; i < AIO_MAX_IO; i++) {
-        if (aio_cbs[i].in_use) {
-            const char *path = aio_fd_to_path(fd);
-            if (!path) continue;
+        if (aio_cbs[i].in_use && aio_cbs[i].aio_fildes == fd) {
             aio_cbs[i].in_use = 0;
             aio_cbs[i].aio_state = 3; /* cancelled */
             count++;
