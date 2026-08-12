@@ -118,7 +118,17 @@ static int mark_add(struct fanotify_group *g, const char *path, uint64_t mask)
         }
     }
 
-    struct fanotify_mark *m = &g->marks[g->mark_count];
+    /* Find first free slot — the mark table can be sparse after mark_remove() */
+    struct fanotify_mark *m = NULL;
+    for (int i = 0; i < FAN_MAX_MARKS; i++) {
+        if (!g->marks[i].in_use) {
+            m = &g->marks[i];
+            break;
+        }
+    }
+    if (!m)
+        return -ENOSPC; /* cannot happen: mark_count < FAN_MAX_MARKS implies a hole */
+
     m->in_use = 1;
     strncpy(m->path, path, FAN_PATH_MAX - 1);
     m->path[FAN_PATH_MAX - 1] = '\0';
