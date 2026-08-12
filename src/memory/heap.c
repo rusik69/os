@@ -422,8 +422,10 @@ void *krealloc(void *ptr, size_t new_size) {
     }
 
     /* Validate new_size to prevent overflow during alignment */
-    if (new_size > SIZE_MAX - 16)
+    if (new_size > SIZE_MAX - 16) {
+        spinlock_irqsave_release(&heap_lock, flags);
         return NULL;
+    }
 
     /* Align size for the new allocation */
     size_t aligned_size = (new_size + 15) & ~15ULL;
