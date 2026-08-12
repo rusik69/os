@@ -71,7 +71,16 @@ mqd_t mq_open(const char *name, int oflag, ...) {
 int mq_close(mqd_t mqdes) {
     if (mqdes < 0 || mqdes >= MQUEUE_MAX || !mqueue_table[mqdes].in_use)
         return -EBADF;
-    mqueue_table[mqdes].in_use = 0;
+
+    struct mqueue *q = &mqueue_table[mqdes];
+    q->in_use = 0;
+
+    /* Wake any blocked readers/writers so they can observe the queue is
+     * gone and return -EBADF (same as mq_unlink).  Without this, a process
+     * blocked in mq_send/mq_receive sleeps forever — and if the slot is
+     * reused, alloc_queue() wipes its wait registration entirely. */
+    wait_queue_wake_all(&q->r_wq);
+    wait_queue_wake_all(&q->w_wq);
     return 0;
 }
 
