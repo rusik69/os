@@ -113,6 +113,12 @@ static int overlay_copy_up(struct overlay_mount *ovl, const char *path)
     return -ENOENT;
 
 found:
+    /* st currently holds the lower file's stat — save its size now, before
+     * the parent-directory stat below overwrites st. Using the directory's
+     * size for the copy-up buffer/read would truncate any file larger than
+     * the parent directory's reported size. */
+    uint64_t file_size = st.size;
+
     /* Resolve the upper path */
     ret = overlay_resolve(ovl, 0, path, upper_path, sizeof(upper_path));
     if (ret < 0)
@@ -139,12 +145,12 @@ found:
         return ret;
 
     /* Read from lower and write to upper */
-    void *buf = kmalloc(st.size ? st.size : 4096);
+    void *buf = kmalloc(file_size ? file_size : 4096);
     if (!buf)
         return -ENOMEM;
 
     uint32_t bytes_read = 0;
-    ret = vfs_read(lower_path, buf, (uint32_t)st.size, &bytes_read);
+    ret = vfs_read(lower_path, buf, (uint32_t)file_size, &bytes_read);
     if (ret != 0) {
         kfree(buf);
         return ret;
@@ -177,11 +183,11 @@ int overlay_mount(const char *lower[], int num_lower,
         return -ENOSPC;
 
     struct overlay_mount *ovl = &overlay_table[idx];
-    ovl->in_use = 1;
-    strncpy(ovl->mountpoint, mntpt, sizeof(ovl->mountpoint) - 1);
-    ovl->mountpoint[sizeof(ovl->mountpoint) - 1] = '\0';
-    ovl->num_lower = num_lower;
 
+    /* Validate every lower layer path BEFORE touching the slot: a failure
+     * here must not leave a partially-populated entry marked in_use
+     * (permanently leaking the slot and exposing uninitialized lower_dirs
+     * to overlay_for_path/overlay_resolve). */
     for (int i = 0; i < num_lower; i++) {
         /* Validate lower layer path — null pointer check */
         if (!lower[i])
@@ -189,6 +195,14 @@ int overlay_mount(const char *lower[], int num_lower,
         /* Validate lower layer path length fits in the fixed-size buffer */
         if (strlen(lower[i]) >= sizeof(ovl->lower_dirs[i]))
             return -ENAMETOOLONG;
+    }
+
+    ovl->in_use = 1;
+    strncpy(ovl->mountpoint, mntpt, sizeof(ovl->mountpoint) - 1);
+    ovl->mountpoint[sizeof(ovl->mountpoint) - 1] = '\0';
+    ovl->num_lower = num_lower;
+
+    for (int i = 0; i < num_lower; i++) {
         strncpy(ovl->lower_dirs[i], lower[i], sizeof(ovl->lower_dirs[i]) - 1);
         ovl->lower_dirs[i][sizeof(ovl->lower_dirs[i]) - 1] = '\0';
     }
