@@ -61,7 +61,9 @@ static int btrfs_read_node(struct btrfs_priv *bp, uint64_t bytenr,
     uint32_t sectors = bp->nodesize / 512;
     uint64_t lba = bytenr / 512;
     for (uint32_t i = 0; i < sectors; i++) {
-        if (blockdev_read_sectors(bp->dev_id, (uint32_t)(lba + i), 1,
+        /* blockdev_read_sectors takes uint64_t lba — no cast, or
+         * volumes > 2^32 sectors (>2TB) silently truncate. */
+        if (blockdev_read_sectors(bp->dev_id, lba + i, 1,
                                    buf + i * 512) != 0)
             return -1;
     }
@@ -115,10 +117,14 @@ static int btrfs_parse_superblock(struct btrfs_priv *bp)
     /* Save FSID — every node/leaf header must match this */
     memcpy(bp->fsid, sb->fsid, 16);
 
-    /* Sanity-check critical geometry fields */
+    /* Sanity-check critical geometry fields.  The whole driver uses
+     * fixed 4K stack buffers for node reads (btrfs_search_tree callers
+     * pass uint8_t buf[4096]), so nodesize/sectorsize must fit that
+     * limit.  Real btrfs images commonly use nodesize 16K — reject
+     * them cleanly instead of overflowing the stack. */
     if (sb->sectorsize == 0 || sb->nodesize == 0)
         return -EINVAL;
-    if (sb->sectorsize > 65536 || sb->nodesize > 65536)
+    if (sb->sectorsize > 4096 || sb->nodesize > 4096)
         return -EINVAL;
     if ((sb->sectorsize & (sb->sectorsize - 1U)) != 0U)
         return -EINVAL;  /* not a power of 2 */
@@ -941,7 +947,7 @@ static int btrfs_parse_csum_tree(struct btrfs_priv *bp)
                         uint64_t lba = physical_addr / 512;
                         for (uint32_t k = 0; k < block_size / 512; k++) {
                             if (blockdev_read_sectors(
-                                    bp->dev_id, (uint32_t)(lba + k), 1,
+                                    bp->dev_id, lba + k, 1,
                                     verify_buf + k * 512) != 0) {
                                 break;
                             }
