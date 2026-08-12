@@ -26,9 +26,10 @@
  * ── Page Lifecycle ─────────────────────────────────────────────────
  *
  *  1. Allocation (shm_get):
- *     A physical frame is obtained from pmm_alloc_frame() and reference-
- *     counted with pmm_ref_frame() so the page stays pinned for as long
- *     as any process has it mapped. The page is zeroed before first use.
+ *     A physical frame is obtained from pmm_alloc_frame(), which returns
+ *     it with refcount 1 — that reference pins the page for as long as
+ *     any process has it mapped (shm_free()'s pmm_unref_frame() releases
+ *     it). The page is zeroed before first use.
  *     Each segment's physical frame address is stored in shm_table[id].phys.
  *
  *  2. Mapping (shm_at / shm_mmap):
@@ -170,8 +171,11 @@ int shm_get(int key, uint16_t mode)
             uint64_t frame = pmm_alloc_frame();
             if (!frame) return -ENOMEM;
 
-            /* Pin the shared page */
-            pmm_ref_frame(frame);
+            /* pmm_alloc_frame() returns the frame with refcount 1 — that
+             * reference IS the segment pin (released by the single
+             * pmm_unref_frame() in shm_free()).  No extra ref here: an
+             * unbalanced pmm_ref_frame() would leave the frame stuck at
+             * refcount 1 after shm_free(), leaking it forever. */
 
             /* Zero the shared page */
             memset(PHYS_TO_VIRT(frame), 0, SHM_PAGE);
