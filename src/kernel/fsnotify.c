@@ -123,9 +123,6 @@ void fsnotify_notify(const char *path, uint32_t event) {
     }
 
     if (matched) {
-        /* Deliver to inotify instances */
-        inotify_deliver(path, event);
-
         /* Store event in ring buffer */
         int idx = g_event_head;
         strncpy(g_event_ring[idx].path, path, 63);
@@ -138,6 +135,16 @@ void fsnotify_notify(const char *path, uint32_t event) {
     }
 
     spinlock_irqsave_release(&g_fsn_lock, irq_flags);
+
+    if (matched) {
+        /* Deliver to inotify instances.  Must NOT hold g_fsn_lock here:
+         * inotify_deliver() takes per-instance locks, while
+         * sys_inotify_add_watch()/inotify_close() take an instance lock and
+         * then g_fsn_lock (via fsnotify_watch/fsnotify_unwatch).  Calling
+         * deliver while holding g_fsn_lock would invert that order and
+         * deadlock (AB-BA) on SMP. */
+        inotify_deliver(path, event);
+    }
 }
 
 /**
