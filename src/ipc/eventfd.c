@@ -96,6 +96,12 @@ int eventfd_read(int fd, uint64_t *val) {
 
         /* Block until write happens */
         wait_queue_sleep(&efd->wq);
+
+        /* Re-check slot state after wake: the eventfd may have been
+         * closed while we slept.  Stop blocking and report -EBADF
+         * instead of re-sleeping on a (possibly reused) wait queue. */
+        if (!efd->in_use)
+            return -EBADF;
     }
 }
 
@@ -132,6 +138,11 @@ void eventfd_close(int fd) {
     if (!efd) return;
     efd->in_use = 0;
     efd->counter = 0;
+    /* Wake blocked readers so they observe !in_use and return -EBADF.
+     * Without this, a reader blocked on an empty counter sleeps forever —
+     * and if the slot is later reused, eventfd_alloc()'s wait_queue_init()
+     * wipes its wait registration entirely, orphaning the process. */
+    wait_queue_wake_all(&efd->wq);
 }
 
 /* ── Poll support ─────────────────────────────────────────────────────── */
