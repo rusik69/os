@@ -183,11 +183,21 @@ int64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size, uint
         uint64_t old_phys = 0;
         if (vmm_user_virt_to_phys(proc->pml4, old_addr + off, &old_phys) == 0 && old_phys) {
             uint64_t new_phys = pmm_alloc_frame();
-            if (!new_phys)
+            if (!new_phys) {
+                /* Roll back the pages already copied into the new region so
+                 * no frames leak and no partial mapping remains at 'new'. */
+                vmm_unmap_user_pages(proc->pml4, new, off / PAGE_SIZE);
                 return (uint64_t)(int64_t)-ENOMEM;
+            }
             memcpy(PHYS_TO_VIRT(new_phys), PHYS_TO_VIRT(old_phys), PAGE_SIZE);
-            vmm_map_user_page(proc->pml4, new + off, new_phys,
-                              VMM_FLAG_PRESENT | VMM_FLAG_USER | VMM_FLAG_WRITE);
+            if (vmm_map_user_page(proc->pml4, new + off, new_phys,
+                                  VMM_FLAG_PRESENT | VMM_FLAG_USER | VMM_FLAG_WRITE) < 0) {
+                /* The frame was allocated but never mapped — unmap of the
+                 * prefix cannot see it, so free it directly, then roll back. */
+                pmm_free_frame(new_phys);
+                vmm_unmap_user_pages(proc->pml4, new, off / PAGE_SIZE);
+                return (uint64_t)(int64_t)-ENOMEM;
+            }
         }
     }
 
