@@ -124,13 +124,12 @@ static void io_ring_process_sqe(struct io_ring *ring, struct io_uring_sqe *sqe)
 
     case IORING_OP_READV: {
         /* Vectored read: addr = pointer to iovec array, len = iov count */
-        if (!cur || sqe->fd < 0 || (uint64_t)sqe->fd >= PROCESS_FD_MAX) {
+        if (!cur || sqe->fd < 3 || sqe->fd - 3 >= PROCESS_FD_MAX) {
             cqe.res = -EBADF;
             break;
         }
         int fd_idx = sqe->fd - 3;  /* adjust for fd offset */
-        if (fd_idx < 0 || fd_idx >= PROCESS_FD_MAX ||
-            !cur->fd_table[fd_idx].used) {
+        if (!cur->fd_table[fd_idx].used) {
             cqe.res = -EBADF;
             break;
         }
@@ -179,13 +178,12 @@ static void io_ring_process_sqe(struct io_ring *ring, struct io_uring_sqe *sqe)
 
     case IORING_OP_WRITEV: {
         /* Vectored write: addr = pointer to iovec array, len = iov count */
-        if (!cur || sqe->fd < 0 || (uint64_t)sqe->fd >= PROCESS_FD_MAX) {
+        if (!cur || sqe->fd < 3 || sqe->fd - 3 >= PROCESS_FD_MAX) {
             cqe.res = -EBADF;
             break;
         }
         int fd_idx = sqe->fd - 3;
-        if (fd_idx < 0 || fd_idx >= PROCESS_FD_MAX ||
-            !cur->fd_table[fd_idx].used) {
+        if (!cur->fd_table[fd_idx].used) {
             cqe.res = -EBADF;
             break;
         }
@@ -226,13 +224,12 @@ static void io_ring_process_sqe(struct io_ring *ring, struct io_uring_sqe *sqe)
 
     case IORING_OP_FSYNC: {
         /* File sync: fsync(fd) */
-        if (!cur || sqe->fd < 0 || (uint64_t)sqe->fd >= PROCESS_FD_MAX) {
+        if (!cur || sqe->fd < 3 || sqe->fd - 3 >= PROCESS_FD_MAX) {
             cqe.res = -EBADF;
             break;
         }
         int fd_idx = sqe->fd - 3;
-        if (fd_idx < 0 || fd_idx >= PROCESS_FD_MAX ||
-            !cur->fd_table[fd_idx].used) {
+        if (!cur->fd_table[fd_idx].used) {
             cqe.res = -EBADF;
             break;
         }
@@ -393,26 +390,34 @@ int64_t sys_io_uring_setup(uint32_t entries, struct io_uring_params *params)
     struct process *cur = process_get_current();
     ring->owner_pid = cur ? cur->pid : 0;
 
-    /* Find a free fd slot for this ring */
+    /* Find a free fd slot for this ring.  The user-visible fd follows the
+     * kernel-wide convention (fd = slot index + 3, see do_sys_open), so the
+     * ring fd does not collide with other file descriptors and close(fd)
+     * resolves back to the same slot. */
+    int slot = -1;
     int fd = -1;
     if (cur) {
+        uint64_t fd_irq;
+        spinlock_irqsave_acquire(&cur->fd_table_lock, &fd_irq);
         for (uint64_t i = 0; i < PROCESS_FD_MAX; i++) {
             if (!cur->fd_table[i].used) {
-                fd = (int)i;
-                cur->fd_table[fd].used = 1;
-                snprintf(cur->fd_table[fd].path, sizeof(cur->fd_table[fd].path),
+                slot = (int)i;
+                cur->fd_table[slot].used = 1;
+                snprintf(cur->fd_table[slot].path, sizeof(cur->fd_table[slot].path),
                          "[io_uring:%p]", (void *)ring);
-                cur->fd_table[fd].offset = 0;
+                cur->fd_table[slot].offset = 0;
                 break;
             }
         }
+        spinlock_irqsave_release(&cur->fd_table_lock, fd_irq);
     }
 
-    if (fd < 0) {
+    if (slot < 0) {
         io_ring_free(ring);
         return -EMFILE;
     }
 
+    fd = slot + 3;
     ring->ring_fd = fd;
 
     /* Fill in the params fields to return to userspace */
@@ -432,8 +437,15 @@ int64_t sys_io_uring_setup(uint32_t entries, struct io_uring_params *params)
 
     /* Copy updated params back to userspace */
     if (copy_to_user((uint64_t)params, &kparams, sizeof(kparams)) < 0) {
+        /* Roll back the fd slot claim before freeing the ring */
+        if (cur) {
+            uint64_t fd_irq;
+            spinlock_irqsave_acquire(&cur->fd_table_lock, &fd_irq);
+            cur->fd_table[slot].used = 0;
+            cur->fd_table[slot].path[0] = '\0';
+            spinlock_irqsave_release(&cur->fd_table_lock, fd_irq);
+        }
         io_ring_free(ring);
-        if (cur) cur->fd_table[fd].used = 0;
         return -EFAULT;
     }
 
@@ -558,12 +570,19 @@ static int io_uring_delete(struct io_ring *ring)
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&g_ring_lock, &irq_flags);
 
-    /* Remove from process fd table if applicable */
+    /* Remove from process fd table if applicable.
+     * ring_fd is a user-visible fd (slot index + 3), so the slot is
+     * ring_fd - 3 — matching the convention used by sys_close. */
     struct process *cur = process_get_current();
-    if (cur && ring->ring_fd >= 0) {
+    if (cur && ring->ring_fd >= 3) {
         int fd_idx = ring->ring_fd - 3;
-        if (fd_idx >= 0 && fd_idx < PROCESS_FD_MAX)
+        if (fd_idx < PROCESS_FD_MAX) {
+            uint64_t fd_irq;
+            spinlock_irqsave_acquire(&cur->fd_table_lock, &fd_irq);
             cur->fd_table[fd_idx].used = 0;
+            cur->fd_table[fd_idx].path[0] = '\0';
+            spinlock_irqsave_release(&cur->fd_table_lock, fd_irq);
+        }
     }
 
     /* Free all allocated memory */
