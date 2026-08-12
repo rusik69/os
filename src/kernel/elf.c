@@ -510,6 +510,9 @@ int elf_exec(const char *path) {
                 (unsigned long)p->pid, (unsigned long)entry);
         strncpy(p->exe_path, path, 255);
         p->exe_path[255] = '\0';
+        /* name was copied into p->proc_comm by process_create_user — the
+         * heap buffer is caller-owned and must be freed here. */
+        kfree(name);
         return 0;
     }
 
@@ -526,6 +529,9 @@ int elf_exec(const char *path) {
             (unsigned long)entry);
     strncpy(p->exe_path, path, 255);
     p->exe_path[255] = '\0';
+    /* name was copied into p->proc_comm by process_create — free the
+     * caller-owned heap buffer (same leak as the userland branch). */
+    kfree(name);
     return 0;
 }
 
