@@ -1537,12 +1537,13 @@ static int64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
         struct memfd *mfd = memfd_get_by_fd((int)fd);
         if (!mfd)
             return (uint64_t)-1;
-        uint8_t *kbuf = kmalloc(len > 65536 ? 65536 : len);
+        size_t rlen = len > 65536 ? 65536 : len;
+        uint8_t *kbuf = kmalloc(rlen > 0 ? rlen : 1);
         if (!kbuf) {
             memfd_put(mfd);
             return (uint64_t)(int64_t)-ENOMEM;
         }
-        int64_t ret = memfd_read(mfd, kbuf, len, 0);
+        int64_t ret = memfd_read(mfd, kbuf, rlen, 0);
         if (ret > 0) {
             if (copy_to_user(buf_addr, kbuf, (size_t)ret) < 0) {
                 kfree(kbuf);
