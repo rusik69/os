@@ -291,7 +291,7 @@ static int cgroup_v2_write(void *priv, const char *path, const void *buf,
                 }
             }
         }
-        return cgroup_attach(pid, cg_id);
+        return cgroup_attach(cg_id, pid);
     }
 
     /* Key-value setting: "cpu.max 50000 100000", "memory.max 1048576", etc. */
@@ -427,10 +427,22 @@ int cgroup_destroy(int cg_id)
     spinlock_acquire(&g_cgroup_lock);
     struct cgroup *cg = &g_cgroups[cg_id];
 
-    /* Move all processes to root */
+    /* Move all processes to root. Migrate inline while holding
+     * g_cgroup_lock: cgroup_attach() re-acquires the same non-recursive
+     * spinlock, so calling it here would self-deadlock. */
     for (int i = 0; i < CGROUP_MAX_PIDS; i++) {
-        if (cg->members[i] != 0) {
-            cgroup_attach(0, cg->members[i]);
+        int pid = cg->members[i];
+        if (pid == 0) continue;
+        cg->members[i] = 0;
+        cg->num_pids--;
+        /* Attach to root cgroup (best effort — root may be full) */
+        struct cgroup *root = &g_cgroups[0];
+        for (int k = 0; k < CGROUP_MAX_PIDS; k++) {
+            if (root->members[k] == 0) {
+                root->members[k] = pid;
+                root->num_pids++;
+                break;
+            }
         }
     }
 
@@ -456,6 +468,29 @@ int cgroup_attach(int cg_id, int pid)
     spinlock_acquire(&g_cgroup_lock);
     struct cgroup *cg = &g_cgroups[cg_id];
 
+    /* Already a member of the destination — idempotent success. */
+    for (int i = 0; i < CGROUP_MAX_PIDS; i++) {
+        if (cg->members[i] == pid) {
+            spinlock_release(&g_cgroup_lock);
+            return 0;
+        }
+    }
+
+    /* Find a free slot in the destination BEFORE removing the pid from
+     * its old cgroup, so a full destination (-ENOSPC) leaves the pid's
+     * current membership untouched (no partial migration on error). */
+    int slot = -1;
+    for (int i = 0; i < CGROUP_MAX_PIDS; i++) {
+        if (cg->members[i] == 0) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot < 0) {
+        spinlock_release(&g_cgroup_lock);
+        return -ENOSPC; /* cgroup full — old membership unchanged */
+    }
+
     /* Remove from old cgroup first */
     for (int i = 0; i < CGROUP_MAX_PIDS; i++) {
         for (int j = 0; j < CGROUP_MAX; j++) {
@@ -470,17 +505,10 @@ int cgroup_attach(int cg_id, int pid)
         }
     }
 found:
-    /* Find free slot in new cgroup */
-    for (int i = 0; i < CGROUP_MAX_PIDS; i++) {
-        if (cg->members[i] == 0) {
-            cg->members[i] = pid;
-            cg->num_pids++;
-            spinlock_release(&g_cgroup_lock);
-            return 0;
-        }
-    }
+    cg->members[slot] = pid;
+    cg->num_pids++;
     spinlock_release(&g_cgroup_lock);
-    return -ENOSPC; /* cgroup full */
+    return 0;
 }
 EXPORT_SYMBOL(cgroup_attach);
 
@@ -1049,7 +1077,7 @@ static int cgroup_fork(struct process *task)
     if (parent) {
         int cg_id = cgroup_of_pid(parent->pid);
         if (cg_id >= 0) {
-            cgroup_attach(task->pid, cg_id);
+            cgroup_attach(cg_id, task->pid);
         }
     }
     kprintf("[cgroup] cgroup_fork: pid=%d\n", task->pid);
