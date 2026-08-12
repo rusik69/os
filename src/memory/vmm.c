@@ -1500,11 +1500,14 @@ int vmm_map_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages, uint64_t
         uint64_t phys = pmm_alloc_frame();
         if (unlikely(!phys)) {
             for (size_t j = 0; j < i; j++) {
-                uint64_t p;
-                vmm_unmap_user_page(pml4, virt + j * PAGE_SIZE);
+                uint64_t p = 0;
+                /* Resolve the frame BEFORE unmapping: vmm_unmap_user_page
+                 * clears the PTE, so resolving afterwards always fails and
+                 * the frame refcount is never dropped (permanent leak). */
                 if (vmm_user_virt_to_phys(pml4, virt + j * PAGE_SIZE, &p) == 0 && p &&
                     p != vmm_zero_page_frame)
                     pmm_unref_frame(p);
+                vmm_unmap_user_page(pml4, virt + j * PAGE_SIZE);
             }
             return -ENOMEM;
         }
@@ -1512,11 +1515,14 @@ int vmm_map_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages, uint64_t
         if (vmm_map_user_page(pml4, cur_virt, phys, flags) < 0) {
             pmm_free_frame(phys);
             for (size_t j = 0; j < i; j++) {
-                uint64_t p;
-                vmm_unmap_user_page(pml4, virt + j * PAGE_SIZE);
+                uint64_t p = 0;
+                /* Resolve the frame BEFORE unmapping: vmm_unmap_user_page
+                 * clears the PTE, so resolving afterwards always fails and
+                 * the frame refcount is never dropped (permanent leak). */
                 if (vmm_user_virt_to_phys(pml4, virt + j * PAGE_SIZE, &p) == 0 && p &&
                     p != vmm_zero_page_frame)
                     pmm_unref_frame(p);
+                vmm_unmap_user_page(pml4, virt + j * PAGE_SIZE);
             }
             return -ENOMEM;
         }
@@ -1525,12 +1531,15 @@ int vmm_map_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages, uint64_t
 
 unwind:
     for (size_t j = 0; j < i; j++) {
-        uint64_t p;
-        vmm_unmap_user_page(pml4, virt + j * PAGE_SIZE);
+        uint64_t p = 0;
+        /* Resolve the frame BEFORE unmapping: vmm_unmap_user_page
+         * clears the PTE, so resolving afterwards always fails and
+         * the frame refcount is never dropped (permanent leak). */
         if (vmm_user_virt_to_phys(pml4, virt + j * PAGE_SIZE, &p) == 0 && p) {
             if (p != vmm_zero_page_frame)
                 pmm_unref_frame(p);
         }
+        vmm_unmap_user_page(pml4, virt + j * PAGE_SIZE);
     }
     return -ENOMEM;
 }
