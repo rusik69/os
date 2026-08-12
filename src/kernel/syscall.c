@@ -907,6 +907,7 @@ static void wrmsr(uint32_t msr, uint64_t val) {
 
 /* Forward declarations for timerfd/signalfd read helpers (used in sys_read) */
 static int timerfd_do_read(int slot, uint64_t *val);
+static int timerfd_sysclose(int fd);
 static int signalfd_do_read(int slot, void *buf, uint64_t count);
 
 /* ── Syscall handlers ─────────────────────────────────────────── */
@@ -1495,7 +1496,10 @@ static int64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
     if (fd >= 500 && fd < 516) {
         int slot = (int)fd - 500;
         uint64_t tval = 0;
-        if (timerfd_do_read(slot, &tval) == 0 && syscall_user_write_ok(buf_addr, 8)) {
+        int rret = timerfd_do_read(slot, &tval);
+        if (rret < 0)
+            return (uint64_t)(int64_t)-EBADF;
+        if (syscall_user_write_ok(buf_addr, 8)) {
             if (copy_to_user(buf_addr, &tval, 8) < 0)
                 return (uint64_t)(int64_t)-EFAULT;
         }
@@ -1901,6 +1905,11 @@ static int64_t sys_close(uint64_t fd) {
     /* Negative fd — reject with EBADF */
     if ((int64_t)fd < 0)
         return (uint64_t)(int64_t)-EBADF;
+    /* timerfd close (fd range 500-515) */
+    if (fd >= 500 && fd < 516) {
+        int ret = timerfd_sysclose((int)fd);
+        return ret < 0 ? (uint64_t)(int64_t)ret : 0;
+    }
     /* inotify close (fd range 720-727) */
     if (fd >= INOTIFY_FD_BASE && fd < INOTIFY_FD_BASE + INOTIFY_INSTANCES) {
         int ret = inotify_close((int)fd);
@@ -10596,11 +10605,25 @@ static struct timerfd timerfd_table[TIMERFD_MAX];
 /* Read from timerfd: returns number of expirations */
 static int timerfd_do_read(int slot, uint64_t *val) {
     if (slot < 0 || slot >= TIMERFD_MAX || !timerfd_table[slot].in_use)
-        return -1;
+        return -EBADF;
     if (timerfd_table[slot].expirations == 0)
         return 0;
     *val = timerfd_table[slot].expirations;
     timerfd_table[slot].expirations = 0;
+    return 0;
+}
+
+/* Close a timerfd: release the slot so it can be reused */
+static int timerfd_sysclose(int fd) {
+    int slot = (int)fd - 500;
+    if (slot < 0 || slot >= TIMERFD_MAX || !timerfd_table[slot].in_use)
+        return -EBADF;
+    timerfd_table[slot].in_use = 0;
+    timerfd_table[slot].it_value = 0;
+    timerfd_table[slot].it_interval = 0;
+    timerfd_table[slot].expirations = 0;
+    timerfd_table[slot].absolute = 0;
+    timerfd_table[slot].start_tick = 0;
     return 0;
 }
 
@@ -10634,12 +10657,12 @@ static int64_t sys_timerfd_settime(uint64_t fd, uint64_t flags, uint64_t new_add
                                    uint64_t old_addr) {
     int slot = (int)fd - 500;
     if (slot < 0 || slot >= TIMERFD_MAX || !timerfd_table[slot].in_use)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EBADF;
 
     struct itimerspec new_val;
     if (new_addr) {
         if (copy_from_user(&new_val, new_addr, sizeof(struct itimerspec)) < 0)
-            return (uint64_t)-1;
+            return (uint64_t)(int64_t)-EFAULT;
     }
 
     /* Return old value if requested */
@@ -10663,7 +10686,7 @@ static int64_t sys_timerfd_settime(uint64_t fd, uint64_t flags, uint64_t new_add
         old_val.it_interval.tv_nsec =
             (timerfd_table[slot].it_interval % TIMER_FREQ) * (1000000000ULL / TIMER_FREQ);
         if (copy_to_user(old_addr, &old_val, sizeof(struct itimerspec)) < 0)
-            return (uint64_t)-1;
+            return (uint64_t)(int64_t)-EFAULT;
     }
 
     /* Set new timer */
@@ -10696,7 +10719,7 @@ static int64_t sys_timerfd_settime(uint64_t fd, uint64_t flags, uint64_t new_add
 static int64_t sys_timerfd_gettime(uint64_t fd, uint64_t cur_addr) {
     int slot = (int)fd - 500;
     if (slot < 0 || slot >= TIMERFD_MAX || !timerfd_table[slot].in_use)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EBADF;
 
     struct itimerspec cur;
 
@@ -10721,7 +10744,7 @@ static int64_t sys_timerfd_gettime(uint64_t fd, uint64_t cur_addr) {
         (timerfd_table[slot].it_interval % TIMER_FREQ) * (1000000000ULL / TIMER_FREQ);
 
     if (copy_to_user(cur_addr, &cur, sizeof(struct itimerspec)) < 0)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EFAULT;
     return 0;
 }
 
