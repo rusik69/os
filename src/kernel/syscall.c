@@ -7474,19 +7474,19 @@ static int64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr, uint64_t write
     /* Copy in from userspace — skip NULL sets */
     if (readfds_addr) {
         if (copy_from_user(&orig_readfds, readfds_addr, sizeof(fd_set)) < 0)
-            return (uint64_t)-1;
+            goto pselect6_err;
     } else {
         FD_ZERO(&orig_readfds);
     }
     if (writefds_addr) {
         if (copy_from_user(&orig_writefds, writefds_addr, sizeof(fd_set)) < 0)
-            return (uint64_t)-1;
+            goto pselect6_err;
     } else {
         FD_ZERO(&orig_writefds);
     }
     if (exceptfds_addr) {
         if (copy_from_user(&orig_exceptfds, exceptfds_addr, sizeof(fd_set)) < 0)
-            return (uint64_t)-1;
+            goto pselect6_err;
     } else {
         FD_ZERO(&orig_exceptfds);
     }
@@ -7497,7 +7497,7 @@ static int64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr, uint64_t write
     if (timeout_addr) {
         struct timespec ts;
         if (copy_from_user(&ts, timeout_addr, sizeof(ts)) < 0)
-            return (uint64_t)-1;
+            goto pselect6_err;
         /* Validate: timespec fields must be non-negative */
         if ((int64_t)ts.tv_sec >= 0 && (int64_t)ts.tv_nsec >= 0) {
             timeout_ticks =
@@ -7617,11 +7617,11 @@ static int64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr, uint64_t write
         if (ready) {
             /* Copy results back to userspace */
             if (readfds_addr && copy_to_user(readfds_addr, &readfds, sizeof(fd_set)) < 0)
-                return (uint64_t)-1;
+                goto pselect6_err;
             if (writefds_addr && copy_to_user(writefds_addr, &writefds, sizeof(fd_set)) < 0)
-                return (uint64_t)-1;
+                goto pselect6_err;
             if (exceptfds_addr && copy_to_user(exceptfds_addr, &exceptfds, sizeof(fd_set)) < 0)
-                return (uint64_t)-1;
+                goto pselect6_err;
             /* Restore original signal mask */
             if (have_sigmask) {
                 uint64_t __ps_flags3;
@@ -7655,11 +7655,11 @@ static int64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr, uint64_t write
     if (exceptfds_addr)
         FD_ZERO(&exceptfds);
     if (readfds_addr && copy_to_user(readfds_addr, &readfds, sizeof(fd_set)) < 0)
-        return (uint64_t)-1;
+        goto pselect6_err;
     if (writefds_addr && copy_to_user(writefds_addr, &writefds, sizeof(fd_set)) < 0)
-        return (uint64_t)-1;
+        goto pselect6_err;
     if (exceptfds_addr && copy_to_user(exceptfds_addr, &exceptfds, sizeof(fd_set)) < 0)
-        return (uint64_t)-1;
+        goto pselect6_err;
 
     /* Restore original signal mask */
     if (have_sigmask) {
@@ -7669,6 +7669,17 @@ static int64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr, uint64_t write
         spinlock_irqsave_release(&proc->sig_lock, __ps_flags4);
     }
     return 0;
+
+pselect6_err:
+	/* Restore original signal mask on error - the temporary mask must
+	 * not leak past the syscall boundary on a failure return. */
+	if (have_sigmask) {
+		uint64_t __ps_err_flags;
+		spinlock_irqsave_acquire(&proc->sig_lock, &__ps_err_flags);
+		proc->sig_mask = old_mask;
+		spinlock_irqsave_release(&proc->sig_lock, __ps_err_flags);
+	}
+	return (uint64_t)-1;
 }
 
 /* ── ppoll — safer poll with atomic signal mask (Item 251) ─────────── */
@@ -7711,15 +7722,15 @@ static int64_t sys_ppoll(uint64_t fds_addr, uint64_t nfds, uint64_t timeout_addr
         n = 256;
     if (fds_addr) {
         if (copy_from_user(fds_buf, fds_addr, sizeof(struct pollfd) * (size_t)n) < 0)
-            return (uint64_t)-1;
+            goto ppoll_err;
     } else {
-        return (uint64_t)-1;
+        goto ppoll_err;
     }
     uint64_t timeout_ticks = ~0ULL; /* infinite */
     if (timeout_addr) {
         struct timespec ts;
         if (copy_from_user(&ts, timeout_addr, sizeof(ts)) < 0)
-            return (uint64_t)-1;
+            goto ppoll_err;
         if ((int64_t)ts.tv_sec >= 0 && (int64_t)ts.tv_nsec >= 0) {
             timeout_ticks =
                 (uint64_t)(int64_t)ts.tv_sec * 100 + (uint64_t)(int64_t)ts.tv_nsec / 10000000;
@@ -7790,7 +7801,7 @@ static int64_t sys_ppoll(uint64_t fds_addr, uint64_t nfds, uint64_t timeout_addr
 
         /* Write results back to userspace */
         if (copy_to_user(fds_addr, fds_buf, sizeof(struct pollfd) * (size_t)n) < 0)
-            return (uint64_t)-1;
+            goto ppoll_err;
 
         if (ready > 0) {
             if (sigmask_addr) {
@@ -7821,7 +7832,7 @@ static int64_t sys_ppoll(uint64_t fds_addr, uint64_t nfds, uint64_t timeout_addr
         fds_buf[i].revents = 0;
     }
     if (copy_to_user(fds_addr, fds_buf, sizeof(struct pollfd) * (size_t)n) < 0)
-        return (uint64_t)-1;
+        goto ppoll_err;
 
     if (sigmask_addr) {
         uint64_t __pp_flags4;
@@ -7830,6 +7841,17 @@ static int64_t sys_ppoll(uint64_t fds_addr, uint64_t nfds, uint64_t timeout_addr
         spinlock_irqsave_release(&proc->sig_lock, __pp_flags4);
     }
     return 0;
+
+ppoll_err:
+	/* Restore original signal mask on error - the temporary mask must
+	 * not leak past the syscall boundary on a failure return. */
+	if (have_pp_sigmask) {
+		uint64_t __pp_err_flags;
+		spinlock_irqsave_acquire(&proc->sig_lock, &__pp_err_flags);
+		proc->sig_mask = old_mask;
+		spinlock_irqsave_release(&proc->sig_lock, __pp_err_flags);
+	}
+	return (uint64_t)-1;
 }
 
 /* ── eventfd ──────────────────────────────────────────────────────────── */
