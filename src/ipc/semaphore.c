@@ -138,7 +138,9 @@ int sem_init(int count) {
         }
         __asm__ volatile("sti");
     }
-    return -1;
+    /* All SEM_MAX slots in use — report exhaustion with a specific errno
+     * (matches sem_open's identical ENFILE for the same condition). */
+    return -ENFILE;
 }
 
 void sem_wait(int id) {
