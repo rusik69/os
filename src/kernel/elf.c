@@ -706,51 +706,6 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
     }
     kprintf("[exec] segments mapped\n");
 
-    /* Close all FD_CLOEXEC file descriptors before exec */
-    process_exec_close_cloexec();
-    /* Close signalfd fds marked with SFD_CLOEXEC */
-    signalfd_exec_close();
-
-    /* ── Check for setuid/setgid on the binary file ──────────────── */
-    struct vfs_stat bin_stat;
-    int has_setuid = 0;
-
-    /* Save original credentials BEFORE setuid/setgid so
-     * process_exec_cred_security can properly detect changes. */
-    uint32_t orig_euid = cur->euid;
-    uint32_t orig_egid = cur->egid;
-
-    if (vfs_stat(path, &bin_stat) == 0) {
-        if (bin_stat.mode & S_ISUID) {
-            kprintf("execve: setuid (euid %u -> %u)\n", cur->euid, bin_stat.uid);
-            cur->euid = bin_stat.uid;
-            has_setuid = 1;
-        }
-        if (bin_stat.mode & S_ISGID) {
-            cur->egid = bin_stat.gid;
-        }
-    }
-
-    /* Apply exec credential security:
-     *  - Capability bounding set AND with permitted set
-     *  - Securebits processing
-     *  - Dumpable flag based on credential changes
-     *  - NO_NEW_PRIVS enforcement
-     *  - AT_SECURE calculation */
-    process_exec_cred_security(orig_euid, orig_egid);
-
-    /* Cancel setuid if no_new_privs was set (NO_NEW_PRIVS blocks elevation) */
-    if (cur->no_new_privs && has_setuid) {
-        /* process_exec_cred_security already cleared caps;
-         * restore euid to the original real uid */
-        cur->euid = cur->uid;
-        has_setuid = 0;
-    }
-
-    /* AT_SECURE flag: set if real != effective uid/gid, or setuid binary */
-    int at_secure = (cur->uid != cur->euid || cur->gid != cur->egid || has_setuid);
-    (void)at_secure; /* used later in auxv setup */
-
     /* ── Verify no PT_LOAD segment overlaps with the user stack region ──
      * Must run BEFORE the stack pages are mapped, otherwise the freshly
      * mapped stack pages themselves look like an overlap. */
@@ -1002,6 +957,53 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
             kfree(tmp_buf[i]);
     }
 
+    /* ── Check for setuid/setgid on the binary file ──────────────── */
+    /* Credential switching is deliberately deferred until AFTER every
+     * failure-prone operation (segment mapping, stack overlap check,
+     * stack page allocation, argv/envp size check) has succeeded.
+     * On a failed execve the old image keeps running, so any early
+     * euid/egid elevation or capability mutation would leak privileged
+     * state into it — e.g. execve() of a setuid-root binary with an
+     * oversized argv/envp used to return -E2BIG with euid left at 0. */
+    struct vfs_stat bin_stat;
+    int has_setuid = 0;
+
+    /* Save original credentials BEFORE setuid/setgid so
+     * process_exec_cred_security can properly detect changes. */
+    uint32_t orig_euid = cur->euid;
+    uint32_t orig_egid = cur->egid;
+
+    if (vfs_stat(path, &bin_stat) == 0) {
+        if (bin_stat.mode & S_ISUID) {
+            kprintf("execve: setuid (euid %u -> %u)\n", cur->euid, bin_stat.uid);
+            cur->euid = bin_stat.uid;
+            has_setuid = 1;
+        }
+        if (bin_stat.mode & S_ISGID) {
+            cur->egid = bin_stat.gid;
+        }
+    }
+
+    /* Apply exec credential security:
+     *  - Capability bounding set AND with permitted set
+     *  - Securebits processing
+     *  - Dumpable flag based on credential changes
+     *  - NO_NEW_PRIVS enforcement
+     *  - AT_SECURE calculation */
+    process_exec_cred_security(orig_euid, orig_egid);
+
+    /* Cancel setuid if no_new_privs was set (NO_NEW_PRIVS blocks elevation) */
+    if (cur->no_new_privs && has_setuid) {
+        /* process_exec_cred_security already cleared caps;
+         * restore euid to the original real uid */
+        cur->euid = cur->uid;
+        has_setuid = 0;
+    }
+
+    /* AT_SECURE flag: set if real != effective uid/gid, or setuid binary */
+    int at_secure = (cur->uid != cur->euid || cur->gid != cur->egid || has_setuid);
+    (void)at_secure; /* used later in auxv setup */
+
     /* ── Write auxiliary vector (auxv) entries ───────────────── */
     /* Standard Linux x86-64 auxv layout (highest → lowest stack address):
      *   AT_PHDR, AT_PHENT, AT_PHNUM, AT_PAGESZ, AT_BASE,
@@ -1195,6 +1197,10 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
             memset(&cur->fd_table[i], 0, sizeof(struct process_fd));
         }
     }
+    /* Close signalfd fds marked with SFD_CLOEXEC.
+     * Done here — on the no-failure tail — so a failed execve
+     * (e.g. -E2BIG / -ENOMEM) leaves the process's fds intact. */
+    signalfd_exec_close();
 
     /* Reset signal handlers per POSIX execve(2) semantics:
      * All caught signals are reset to SIG_DFL. Signals already set to
