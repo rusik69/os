@@ -299,6 +299,13 @@ int epoll_wait_syscall(int epfd, struct epoll_event *events,
 
     int ret = -EINTR;  /* default: interrupted */
     for (;;) {
+        /* Instance closed while we were waiting — terminate with EBADF.
+         * This also releases the EPOLLWAKEUP source registered above. */
+        if (!ep->in_use) {
+            ret = -EBADF;
+            break;
+        }
+
         int ready = 0;
 
         for (int i = 0; i < ep->num_entries && ready < maxevents; i++) {
