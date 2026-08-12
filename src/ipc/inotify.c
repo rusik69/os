@@ -143,15 +143,13 @@ static void inst_push_event(struct inotify_instance *inst,
                             const char *name)
 {
     if (inst->ev_count >= INOTIFY_EVENT_QUEUE_SIZE) {
-        /* Queue full — drop the oldest event */
-        int oldest = (inst->ev_head - inst->ev_count + INOTIFY_EVENT_QUEUE_SIZE)
-                     % INOTIFY_EVENT_QUEUE_SIZE;
-        inst->ev_count--;
-        /* Advance head past the dropped event (conceptually) */
-        (void)oldest;
+        /* Queue full — drop the oldest event and advance head past it */
+        inst->ev_head = (inst->ev_head + 1) % INOTIFY_EVENT_QUEUE_SIZE;
+    } else {
+        inst->ev_count++;
     }
 
-    int idx = (inst->ev_head + inst->ev_count) % INOTIFY_EVENT_QUEUE_SIZE;
+    int idx = (inst->ev_head + inst->ev_count - 1) % INOTIFY_EVENT_QUEUE_SIZE;
     inst->events[idx].wd     = wd;
     inst->events[idx].mask   = mask;
     inst->events[idx].cookie = cookie;
@@ -283,7 +281,14 @@ int sys_inotify_add_watch(int fd, const char *user_path, uint32_t mask)
     int fsn_wid = -1;
     if (fs_mask) {
         fsn_wid = fsnotify_watch(abspath, fs_mask);
-        /* fsnotify_watch may return -1 if path doesn't exist or table full */
+        if (fsn_wid < 0) {
+            /* Watch registration failed (path doesn't exist or the
+             * global fsnotify table is full).  Do not create a dead
+             * watch that can never deliver events — report the error
+             * and leave the slot unused. */
+            spinlock_release(&inst->lock);
+            return -ENOENT;
+        }
     }
 
     /* Fill in the watch entry */
@@ -368,6 +373,12 @@ int inotify_read(int fd, void *buf, size_t count)
         if (ret < 0)
             return ret;  /* signal interrupted */
 
+        /* Re-check slot state after wake: the instance may have been
+         * closed while we slept.  Stop blocking and report -EBADF
+         * instead of re-sleeping on a (possibly reused) wait queue. */
+        if (!inst->in_use)
+            return -EBADF;
+
         /* Loop and check again */
     }
 
@@ -377,9 +388,7 @@ int inotify_read(int fd, void *buf, size_t count)
 
     while (inst->ev_count > 0 && written < max_events) {
         /* Peek the oldest event */
-        int oldest = (inst->ev_head - inst->ev_count + INOTIFY_EVENT_QUEUE_SIZE)
-                     % INOTIFY_EVENT_QUEUE_SIZE;
-        struct inotify_event_entry *src = &inst->events[oldest];
+        struct inotify_event_entry *src = &inst->events[inst->ev_head];
 
         /* Compute name length */
         uint32_t name_len = (uint32_t)strnlen(src->name, sizeof(src->name));
@@ -411,6 +420,7 @@ int inotify_read(int fd, void *buf, size_t count)
         }
 
         dst += total_len;
+        inst->ev_head = (inst->ev_head + 1) % INOTIFY_EVENT_QUEUE_SIZE;
         inst->ev_count--;
         written++;
     }
@@ -443,6 +453,9 @@ int inotify_close(int fd)
         return -EBADF;
 
     spinlock_acquire(&inst->lock);
+    /* Wake blocked readers BEFORE freeing — inst_free() zeroes the wait
+     * queue, which would orphan any process still blocked on it. */
+    wait_queue_wake_all(&inst->wq);
     inst_free(inst);
     /* inst_free sets in_use=0 */
     spinlock_release(&inst->lock);
