@@ -1497,6 +1497,17 @@ void pmm_free_frame(uint64_t addr) {
         return;
     }
 
+    /* Reject freeing a frame that is not exclusively owned (COW refcount
+     * != 1).  The slow paths (bitmap_free_one_locked /
+     * pmm_free_frames_contiguous) enforce this; without the same guard
+     * here, a shared frame would be pushed into the per-CPU hot cache and
+     * reallocated while other owners still reference it, and an already
+     * free frame would be double-cached.  Best-effort unlocked read, same
+     * as pmm_is_broken(). */
+    uint64_t frame = addr / PAGE_SIZE;
+    if (frame < MAX_FRAMES && frame_refcount[frame] != 1)
+        return;
+
     /* Remove from MGLRU tracking before recycling */
     mglru_remove_page(addr);
 
@@ -1538,7 +1549,6 @@ void pmm_free_frame(uint64_t addr) {
         __asm__ volatile("sti" : : : "memory");
 
     /* Fallback: direct free to global if cache still full */
-    uint64_t frame = addr / PAGE_SIZE;
     if (frame >= MAX_FRAMES)
         return;
 
@@ -1611,6 +1621,14 @@ int pmm_unref_frame(uint64_t phys) {
     }
     frame_refcount[frame]--;
     if (frame_refcount[frame] == 0) {
+        /* Remove from MGLRU tracking before recycling.  Every other free
+         * path (pmm_free_frame, pmm_free_frames_contiguous) does this;
+         * skipping it leaves a stale generation-list entry for a frame
+         * that is already free in the bitmap, so mglru_reclaim_pages()
+         * can isolate it and pmm_free_frame() it a second time — the
+         * frame ends up in the hot cache while the bitmap still marks
+         * it free, and is handed to two owners. */
+        mglru_remove_page(phys);
         poison_fill(phys, 0xDC);
         vm_pgfree++;
         bitmap_clear(frame);
