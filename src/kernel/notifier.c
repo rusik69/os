@@ -16,6 +16,15 @@ int notifier_chain_register(int type, struct notifier_block *nb) {
     if (!notifier_init_done || type < 0 || type >= NOTIFIER_MAX || !nb) return -1;
     uint64_t flags;
     spinlock_irqsave_acquire(&notifier_lock, &flags);
+    /* Reject duplicate registration: inserting the same block twice
+     * creates a self-loop (nb->next = nb) that corrupts the chain
+     * (callback fired repeatedly, unregister cannot fully clean up). */
+    for (struct notifier_block *p = notifier_list[type]; p; p = p->next) {
+        if (p == nb) {
+            spinlock_irqsave_release(&notifier_lock, flags);
+            return -1;
+        }
+    }
     nb->next = notifier_list[type];
     notifier_list[type] = nb;
     spinlock_irqsave_release(&notifier_lock, flags);
