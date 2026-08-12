@@ -2,14 +2,18 @@
 #include "kernel.h"
 #include "printf.h"
 #include "errno.h"
+#include "spinlock.h"
 
 static struct mseal_range mseal_ranges[MSEAL_SEAL_COUNT];
+static spinlock_t mseal_lock;
 static int mseal_initialised = 0;
 
 void __init mseal_init(void)
 {
     if (mseal_initialised)
         return;
+
+    spinlock_init(&mseal_lock);
 
     for (int i = 0; i < MSEAL_SEAL_COUNT; i++) {
         mseal_ranges[i].used = 0;
@@ -38,6 +42,13 @@ int mseal(uint64_t addr, uint64_t len, int flags)
     if (len == 0)
         return -EINVAL;
 
+    /* Serialise the overlap check and slot claim: without this, two
+     * concurrent sys_mseal calls can both pass the overlap scan and
+     * both claim the same free slot, silently clobbering an existing
+     * seal (the range becomes modifiable again) or recording
+     * overlapping ranges. */
+    spinlock_acquire(&mseal_lock);
+
     /* Check for overlap with existing sealed ranges. */
     for (int i = 0; i < MSEAL_SEAL_COUNT; i++) {
         if (!mseal_ranges[i].used)
@@ -50,17 +61,23 @@ int mseal(uint64_t addr, uint64_t len, int flags)
         if (a_end == b_start || b_end == a_start)
             continue;
         /* Check mutual overlap. */
-        if (a_start < b_end && b_start < a_end)
+        if (a_start < b_end && b_start < a_end) {
+            spinlock_release(&mseal_lock);
             return -EINVAL;  /* overlaps an existing sealed region */
+        }
     }
 
     int idx = mseal_find_free();
-    if (idx < 0)
+    if (idx < 0) {
+        spinlock_release(&mseal_lock);
         return idx;
+    }
 
     mseal_ranges[idx].virt_start = addr;
     mseal_ranges[idx].virt_end   = addr + len;
     mseal_ranges[idx].used = 1;
+
+    spinlock_release(&mseal_lock);
 
     return 0;
 }
@@ -72,16 +89,23 @@ int mseal_check(uint64_t addr, uint64_t len)
     if (len == 0)
         return -EINVAL;
 
+    spinlock_acquire(&mseal_lock);
+
+    int result = -EACCES;
     for (int i = 0; i < MSEAL_SEAL_COUNT; i++) {
         if (!mseal_ranges[i].used)
             continue;
         uint64_t r_start = mseal_ranges[i].virt_start;
         uint64_t r_end   = mseal_ranges[i].virt_end;
         /* Check if the query range falls entirely within this sealed range. */
-        if (addr >= r_start && addr + len <= r_end)
-            return 0;
+        if (addr >= r_start && addr + len <= r_end) {
+            result = 0;
+            break;
+        }
     }
-    return -EACCES;
+
+    spinlock_release(&mseal_lock);
+    return result;
 }
 
 int mseal_is_sealed(uint64_t addr)
@@ -89,13 +113,20 @@ int mseal_is_sealed(uint64_t addr)
     if (!mseal_initialised)
         return 0;
 
+    spinlock_acquire(&mseal_lock);
+
+    int sealed = 0;
     for (int i = 0; i < MSEAL_SEAL_COUNT; i++) {
         if (!mseal_ranges[i].used)
             continue;
-        if (addr >= mseal_ranges[i].virt_start && addr < mseal_ranges[i].virt_end)
-            return 1;
+        if (addr >= mseal_ranges[i].virt_start && addr < mseal_ranges[i].virt_end) {
+            sealed = 1;
+            break;
+        }
     }
-    return 0;
+
+    spinlock_release(&mseal_lock);
+    return sealed;
 }
 
 /* ── Stub: mseal_seal ─────────────────────────────── */
