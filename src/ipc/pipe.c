@@ -456,6 +456,18 @@ void pipe_close_read(int pipe_id) {
         if (p->readers == 0) wait_queue_wake(&p->write_wq);
         if (p->writers == 0) wait_queue_wake(&p->read_wq);
     }
+    /* Free pipe when both ends closed (mirror pipe_close) */
+    if (p->readers == 0 && p->writers == 0) {
+        if (p->buf) {
+            kfree(p->buf);
+            p->buf = NULL;
+        }
+        if (p->buf2) {
+            kfree(p->buf2);
+            p->buf2 = NULL;
+        }
+        memset(p, 0, sizeof(*p));
+    }
 }
 
 void pipe_close_write(int pipe_id) {
@@ -466,6 +478,18 @@ void pipe_close_write(int pipe_id) {
     if (p->readers <= 0 || p->writers <= 0) {
         if (p->readers == 0) wait_queue_wake(&p->write_wq);
         if (p->writers == 0) wait_queue_wake(&p->read_wq);
+    }
+    /* Free pipe when both ends closed (mirror pipe_close) */
+    if (p->readers == 0 && p->writers == 0) {
+        if (p->buf) {
+            kfree(p->buf);
+            p->buf = NULL;
+        }
+        if (p->buf2) {
+            kfree(p->buf2);
+            p->buf2 = NULL;
+        }
+        memset(p, 0, sizeof(*p));
     }
 }
 
