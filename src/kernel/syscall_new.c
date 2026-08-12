@@ -179,7 +179,13 @@ static int do_pipe2(int fds[2], int flags)
             else if (write_fd < 0) { write_fd = i; break; }
         }
     }
-    if (read_fd < 0 || write_fd < 0) return -EMFILE;
+    if (read_fd < 0 || write_fd < 0) {
+        /* Roll back the pipe created above — close both ends so the
+         * pipe slot and its buffers are not leaked. */
+        pipe_close(id, 1);
+        pipe_close(id, 0);
+        return -EMFILE;
+    }
 
     proc->fd_table[read_fd].used = 1;
     proc->fd_table[read_fd].offset = (uint32_t)id;

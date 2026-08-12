@@ -5154,8 +5154,13 @@ static int64_t sys_pipe(uint64_t fds_addr) {
             }
         }
     }
-    if (read_fd < 0 || write_fd < 0)
+    if (read_fd < 0 || write_fd < 0) {
+        /* Roll back the pipe created above — close both ends so the
+         * pipe slot and its buffers are not leaked. */
+        pipe_close(id, 1);
+        pipe_close(id, 0);
         return (uint64_t)(int64_t)-EMFILE;
+    }
 
     /* Store pipe index as part of fd path */
     proc->fd_table[read_fd].used = true;
@@ -5170,8 +5175,15 @@ static int64_t sys_pipe(uint64_t fds_addr) {
 
     /* Write fds back to userspace */
     uint32_t fds[2] = {(uint32_t)read_fd, (uint32_t)write_fd};
-    if (copy_to_user(fds_addr, fds, sizeof(fds)) < 0)
+    if (copy_to_user(fds_addr, fds, sizeof(fds)) < 0) {
+        /* Release the fd slots and close both pipe ends so neither
+         * the descriptors nor the pipe are leaked on failure. */
+        proc->fd_table[read_fd].used = false;
+        proc->fd_table[write_fd].used = false;
+        pipe_close(id, 1);
+        pipe_close(id, 0);
         return (uint64_t)-1;
+    }
     return 0;
 }
 
@@ -9015,8 +9027,13 @@ static int64_t sys_pipe2(uint64_t fds_addr, uint64_t flags) {
             }
         }
     }
-    if (read_fd < 0 || write_fd < 0)
+    if (read_fd < 0 || write_fd < 0) {
+        /* Roll back the pipe created above — close both ends so the
+         * pipe slot and its buffers are not leaked. */
+        pipe_close(id, 1);
+        pipe_close(id, 0);
         return (uint64_t)(int64_t)-EMFILE;
+    }
 
     /* Store pipe index as fd entries */
     proc->fd_table[read_fd].used = true;
@@ -9031,8 +9048,15 @@ static int64_t sys_pipe2(uint64_t fds_addr, uint64_t flags) {
 
     /* Write fds back to userspace */
     uint32_t fds[2] = {(uint32_t)read_fd, (uint32_t)write_fd};
-    if (copy_to_user(fds_addr, fds, sizeof(fds)) < 0)
+    if (copy_to_user(fds_addr, fds, sizeof(fds)) < 0) {
+        /* Release the fd slots and close both pipe ends so neither
+         * the descriptors nor the pipe are leaked on failure. */
+        proc->fd_table[read_fd].used = false;
+        proc->fd_table[write_fd].used = false;
+        pipe_close(id, 1);
+        pipe_close(id, 0);
         return (uint64_t)(int64_t)-EFAULT;
+    }
     return 0;
 }
 
