@@ -105,6 +105,12 @@ int64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size, uint
     if (old_addr & (PAGE_SIZE - 1))
         return (uint64_t)(int64_t)-EINVAL;
 
+    /* MREMAP_FIXED requires a page-aligned new address.  An unaligned
+     * target would create a mapping that munmap can never release
+     * (permanent frame leak until exit); Linux returns -EINVAL here. */
+    if ((flags & MREMAP_FIXED) && (new_addr & (PAGE_SIZE - 1)))
+        return (uint64_t)(int64_t)-EINVAL;
+
     old_size = (old_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
     new_size = (new_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
     if (old_size == 0)
@@ -201,15 +207,23 @@ int64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size, uint
         }
     }
 
-    /* Unmap old region */
-    vmm_unmap_user_pages(proc->pml4, old_addr, old_size / PAGE_SIZE);
-
-    /* Map remaining new pages (if growing) */
+    /* Map remaining new pages (if growing) BEFORE unmapping the old
+     * region, so a tail-allocation failure leaves the old mapping
+     * intact and returns an error instead of silently reporting a
+     * mapping that has an unmapped hole (later SIGSEGV on the tail).
+     * On failure, roll back the pages already copied into the new
+     * region — the unmap unrefs their frames, so nothing leaks. */
     if (new_size > old_size) {
         uint64_t page_flags = VMM_FLAG_PRESENT | VMM_FLAG_USER | VMM_FLAG_WRITE | VMM_FLAG_LAZY;
-        vmm_map_user_pages(proc->pml4, new + old_size, (new_size - old_size) / PAGE_SIZE,
-                           page_flags);
+        if (vmm_map_user_pages(proc->pml4, new + old_size, (new_size - old_size) / PAGE_SIZE,
+                               page_flags) < 0) {
+            vmm_unmap_user_pages(proc->pml4, new, old_size / PAGE_SIZE);
+            return (uint64_t)(int64_t)-ENOMEM;
+        }
     }
+
+    /* Unmap old region */
+    vmm_unmap_user_pages(proc->pml4, old_addr, old_size / PAGE_SIZE);
 
     proc->mapped_bytes += extend;
     return new;
@@ -326,6 +340,13 @@ int64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot, uint64_t flags, 
         return (uint64_t)-EINVAL;
     if (length > 0 && addr + length < addr)
         return (uint64_t)-EINVAL;
+
+    /* MAP_FIXED/MAP_FIXED_NOREPLACE require a page-aligned address.
+     * An unaligned fixed mapping could never be released (munmap rejects
+     * unaligned addresses) and would leak its frames until process exit;
+     * Linux returns -EINVAL here. */
+    if ((flags & (MAP_FIXED | MAP_FIXED_NOREPLACE)) && (addr & (PAGE_SIZE - 1)))
+        return (uint64_t)(int64_t)-EINVAL;
 
     /* RLIMIT_AS: reject if cumulative address space would exceed limit */
     uint64_t as_limit = proc->rlim_cur[RLIMIT_AS];
