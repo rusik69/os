@@ -8,6 +8,7 @@
 #include "types.h"
 #include "smp.h"
 #include "idt.h"
+#include "cpu.h"
 
 /*
  * rseq.c — Restartable Sequences (Item 348)
@@ -52,6 +53,69 @@ static struct rseq_state *rseq_get_state(struct process *proc)
     return &rseq_table[proc->pid];
 }
 
+/*
+ * rseq_user_access — validated, SMAP-safe copy to/from a process's
+ * user-space memory.
+ *
+ * All rseq user pointers must go through this helper (never a raw
+ * dereference): the kernel runs with SMAP enabled on capable CPUs, so a
+ * raw access faults with #PF, and without validation a user-supplied
+ * address can point at an unmapped page (kernel oops) or at
+ * kernel-mapped low memory (arbitrary kernel memory corruption on
+ * SMAP-less CPUs).  The generic copy_from_user/copy_to_user cannot be
+ * used here because they resolve the target process via
+ * process_get_current() — wrong in rseq_migrate(), where the scheduler
+ * has already set current to the *incoming* task while the outgoing
+ * task's page tables are still active — and because they unconditionally
+ * re-enable interrupts (sti), which would enable interrupts in the
+ * middle of schedule()'s IF=0 critical section.
+ *
+ * proc is the process whose address space addr belongs to.  The caller
+ * must guarantee proc's page tables are (or can be made) active; the
+ * helper switches CR3 to proc's pml4 if needed, exactly like the uaccess
+ * helpers do, and preserves the interrupt state it was called with.
+ *
+ * Returns 0 on success, -EFAULT on any validation or copy failure.
+ */
+static int rseq_user_access(struct process *proc, uint64_t addr,
+                            void *buf, size_t n, int to_user)
+{
+    if (!proc || !proc->pml4)
+        return -EFAULT;
+    if (addr == 0)
+        return -EFAULT;
+    if (addr + n < addr || addr + n > USER_VADDR_MAX)
+        return -EFAULT;
+    /* Reject unmapped, non-user, and (for writes) non-writable pages. */
+    if (!vmm_user_range_ok(proc->pml4, addr, n, to_user ? 1 : 0))
+        return -EFAULT;
+
+    /* Save IF so this works both from syscall context (IF=1) and from
+     * schedule() (IF=0, timer IRQ).  Never enable interrupts in the
+     * middle of a context switch. */
+    uint64_t flags;
+    __asm__ volatile("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
+
+    uint64_t old_cr3 = read_cr3();
+    uint64_t user_cr3 = VIRT_TO_PHYS((uint64_t)proc->pml4);
+    int switched = ((old_cr3 & PTE_ADDR_MASK) != user_cr3);
+    if (switched)
+        write_cr3(user_cr3);
+
+    stac();
+    if (to_user)
+        memcpy((void *)(uintptr_t)addr, buf, n);
+    else
+        memcpy(buf, (const void *)(uintptr_t)addr, n);
+    clac();
+
+    if (switched)
+        write_cr3(old_cr3);
+    if (flags & 0x200) /* X86_EFLAGS_IF */
+        __asm__ volatile("sti");
+    return 0;
+}
+
 int rseq_register(struct process *proc, uint64_t addr, uint32_t len, uint32_t sig)
 {
     if (!rseq_initialized || !proc)
@@ -72,22 +136,25 @@ int rseq_register(struct process *proc, uint64_t addr, uint32_t len, uint32_t si
     if (state->registered)
         return -EBUSY;
 
+    /* Initialize the cpu_id fields in the user-space rseq struct.
+     * Userspace is expected to have zero-initialized the structure, but
+     * we set cpu_id_start and cpu_id so they're correct immediately.
+     * Done BEFORE committing the registration so a failed user write
+     * (unmapped page, non-user address) leaves no half-registered
+     * state behind. */
+    {
+        uint32_t cpu = (uint32_t)smp_get_cpu_id();
+        if (rseq_user_access(proc, addr, &cpu, sizeof(cpu), 1) < 0)
+            return -EFAULT;
+        if (rseq_user_access(proc, addr + 4, &cpu, sizeof(cpu), 1) < 0)
+            return -EFAULT;
+    }
+
     state->rseq_addr = addr;
     state->rseq_len = len;
     state->rseq_sig = sig;
     state->registered = 1;
     state->last_cpu = smp_get_cpu_id();
-
-    /* Initialize the cpu_id fields in the user-space rseq struct.
-     * Userspace is expected to have zero-initialized the structure, but
-     * we set cpu_id_start and cpu_id so they're correct immediately. */
-    {
-        uint32_t cpu = (uint32_t)smp_get_cpu_id();
-        volatile uint32_t *cpu_id_start = (volatile uint32_t *)addr;
-        volatile uint32_t *cpu_id = (volatile uint32_t *)(addr + 4);
-        *cpu_id_start = cpu;
-        *cpu_id = cpu;
-    }
 
     return 0;
 }
@@ -129,8 +196,11 @@ void rseq_abort(struct process *proc)
     if (addr >= USER_VADDR_MAX)
         return;
 
-    /* Write 0 to rseq_cs atomically (8 bytes) */
-    *(volatile uint64_t *)addr = 0;
+    /* Write 0 to rseq_cs atomically (8 bytes) via validated user access:
+     * the page may have been unmapped since registration — skip instead
+     * of faulting the kernel. */
+    uint64_t zero = 0;
+    rseq_user_access(proc, addr, &zero, sizeof(zero), 1);
 }
 
 /*
@@ -158,16 +228,15 @@ void rseq_update_cpu_id(struct process *proc)
 
     /* Update cpu_id_start first, then cpu_id.
      * If cpu_id_start != cpu_id after the critical section, userspace
-     * knows it was preempted and must retry. */
-    volatile uint32_t *cpu_id_start = (volatile uint32_t *)addr;
-    volatile uint32_t *cpu_id = (volatile uint32_t *)(addr + 4);
-
-    /* Memory barrier: ensure all prior writes are visible before updating
-     * cpu_id_start, and cpu_id_start is visible before cpu_id. */
+     * knows it was preempted and must retry.  Both writes go through
+     * validated user access so an unmapped rseq page (munmap'd by the
+     * task) can never fault the scheduler. */
+    uint32_t val = cpu;
     __sync_synchronize();
-    *cpu_id_start = cpu;
+    if (rseq_user_access(proc, addr, &val, sizeof(val), 1) < 0)
+        return;
     __sync_synchronize();
-    *cpu_id = cpu;
+    rseq_user_access(proc, addr + 4, &val, sizeof(val), 1);
 }
 
 /*
@@ -192,20 +261,25 @@ void rseq_migrate(struct process *proc, int old_cpu, int new_cpu)
     state->last_cpu = new_cpu;
 
     /* Check if the process has an active rseq critical section.
-     * Read from the user-space rseq_cs pointer. */
+     * Read the user-space rseq_cs pointer via validated user access —
+     * the task may have unmapped the rseq page since registration,
+     * which must not fault the scheduler. */
     uint64_t rseq_cs_addr = state->rseq_addr +
         __builtin_offsetof(struct rseq, rseq_cs);
 
     if (rseq_cs_addr >= USER_VADDR_MAX)
         return;
 
-    /* Read the current rseq_cs value from userspace */
-    uint64_t rseq_cs_val = *(volatile uint64_t *)rseq_cs_addr;
+    uint64_t rseq_cs_val = 0;
+    if (rseq_user_access(proc, rseq_cs_addr, &rseq_cs_val,
+                         sizeof(rseq_cs_val), 0) < 0)
+        return;
 
     if (rseq_cs_val != 0) {
         /* Process is in an rseq critical section — abort it.
          * Clear rseq_cs so the userspace retry loop restarts. */
-        *(volatile uint64_t *)rseq_cs_addr = 0;
+        uint64_t zero = 0;
+        rseq_user_access(proc, rseq_cs_addr, &zero, sizeof(zero), 1);
 
         /* ── Redirect instruction pointer to abort handler ──────────
          *
@@ -222,18 +296,22 @@ void rseq_migrate(struct process *proc, int old_cpu, int new_cpu)
          * If RIP falls within that range, we set it to abort_ip so
          * userspace retries from the abort handler on the correct CPU. */
         struct interrupt_frame *frame = get_cpu_info()->current_frame;
-        if (frame && (frame->cs & 3) && rseq_cs_val != 0 && rseq_cs_val < USER_VADDR_MAX) {
-            /* Read the rseq_cs descriptor from userspace.
+        if (frame && (frame->cs & 3)) {
+            /* Read the rseq_cs descriptor from userspace via validated
+             * access: rseq_cs_val is fully user-controlled and may point
+             * at an unmapped or non-user address.
              * The current task's page tables are still active because
              * schedule() calls us before switching to next's CR3. */
-            volatile struct rseq_cs *cs =
-                (volatile struct rseq_cs *)(uintptr_t)rseq_cs_val;
-            uint64_t start_ip = cs->start_ip;
-            uint64_t end_ip   = cs->start_ip + cs->post_commit_offset;
-            uint64_t abort_ip = cs->abort_ip;
+            struct rseq_cs cs;
+            if (rseq_user_access(proc, rseq_cs_val, &cs, sizeof(cs), 0) == 0) {
+                uint64_t start_ip = cs.start_ip;
+                uint64_t end_ip   = cs.start_ip + cs.post_commit_offset;
+                uint64_t abort_ip = cs.abort_ip;
 
-            if (frame->rip >= start_ip && frame->rip < end_ip) {
-                frame->rip = abort_ip;
+                if (frame->rip >= start_ip && frame->rip < end_ip &&
+                    abort_ip < USER_VADDR_MAX) {
+                    frame->rip = abort_ip;
+                }
             }
         }
 
