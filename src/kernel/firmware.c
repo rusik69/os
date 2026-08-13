@@ -231,30 +231,38 @@ int request_firmware(const struct firmware **fw_ptr, const char *name)
 
     /* 1. Check cache first (fastest path) */
     {
+        /* The lookup and the copy of the cached blob must happen under
+         * fw_lock: a concurrent LRU eviction (fw_cache_insert) or
+         * firmware_cache_flush() can kfree() the entry's data as soon
+         * as the lock is dropped, so reading ce->data/ce->size outside
+         * the lock is a use-after-free race. */
         struct fw_cache_entry *ce;
         spinlock_acquire(&fw_lock);
         ce = fw_cache_lookup(name);
-        spinlock_release(&fw_lock);
-
         if (ce) {
             /* Allocate a lightweight firmware descriptor with a
              * dedicated copy of the data.  The caller owns the copy,
              * so the cache can evict/swap independently without
              * causing use-after-free in any outstanding references. */
             struct firmware *fw = (struct firmware *)kmalloc(sizeof(struct firmware));
-            if (!fw)
+            if (!fw) {
+                spinlock_release(&fw_lock);
                 return -ENOMEM;
+            }
             uint8_t *copy = (uint8_t *)kmalloc(ce->size);
             if (!copy) {
                 kfree(fw);
+                spinlock_release(&fw_lock);
                 return -ENOMEM;
             }
             memcpy(copy, ce->data, ce->size);
             fw->data = copy;
             fw->size = ce->size;
+            spinlock_release(&fw_lock);
             *fw_ptr = fw;
             return 0;
         }
+        spinlock_release(&fw_lock);
     }
 
     /* 2. Check built-in table (no need to cache — it's already in ROM) */
@@ -268,7 +276,17 @@ int request_firmware(const struct firmware **fw_ptr, const char *name)
             struct firmware *fw = (struct firmware *)kmalloc(sizeof(struct firmware));
             if (!fw)
                 return -ENOMEM;
-            fw->data = bf->data;
+            /* Make a dedicated copy just like the other paths:
+             * release_firmware() always kfree()s fw->data, so handing
+             * out a pointer into the static builtin table would corrupt
+             * the heap on release. */
+            uint8_t *copy = (uint8_t *)kmalloc(bf->size);
+            if (!copy) {
+                kfree(fw);
+                return -ENOMEM;
+            }
+            memcpy(copy, bf->data, bf->size);
+            fw->data = copy;
             fw->size = bf->size;
             *fw_ptr = fw;
             return 0;
@@ -353,7 +371,11 @@ static void async_fw_work_handler(void *arg)
 
     if (aw->cont)
         aw->cont(fw, aw->context);
-    else if (fw)
+    else if (fw && !aw->fw_ptr)
+        /* Only auto-release when nobody can consume the result: if the
+         * caller supplied fw_ptr, the descriptor lives on in *fw_ptr
+         * and the caller owns it (release_firmware), so freeing it
+         * here would leave a dangling pointer. */
         release_firmware(fw);
 
     kfree(aw);
