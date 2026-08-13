@@ -197,8 +197,17 @@ static int do_pipe2(int fds[2], int flags)
     snprintf(proc->fd_table[write_fd].path, 64, "pipe_write_%d", id);
     proc->fd_table[write_fd].flags = (flags & O_CLOEXEC) ? FD_CLOEXEC : 0;
 
-    fds[0] = read_fd;
-    fds[1] = write_fd;
+    /* Deliver the fd numbers via copy_to_user() — fds is a user-supplied
+     * pointer; never dereference it directly. */
+    int out_fds[2] = { read_fd, write_fd };
+    if (copy_to_user((uint64_t)(uintptr_t)fds, out_fds, sizeof(out_fds)) < 0) {
+        /* Roll back the fd slots and the pipe so nothing leaks. */
+        proc->fd_table[read_fd].used = 0;
+        proc->fd_table[write_fd].used = 0;
+        pipe_close(id, 1);
+        pipe_close(id, 0);
+        return -EFAULT;
+    }
     return 0;
 }
 
@@ -209,18 +218,23 @@ static int do_pipe2(int fds[2], int flags)
 static int do_sysinfo(struct sysinfo *info)
 {
     if (!info) return -EFAULT;
-    memset(info, 0, sizeof(*info));
 
-    info->uptime = timer_get_ticks() / TIMER_FREQ;
-    info->totalram = (uint64_t)pmm_get_total_frames() * 4096ULL;
-    info->freeram = (uint64_t)(pmm_get_total_frames() - pmm_get_used_frames()) * 4096ULL;
-    info->procs = 0;
-    info->mem_unit = 1;
+    /* Build the result in a kernel-local struct and deliver it with a
+     * single copy_to_user() — info is a user-supplied pointer; never
+     * memset or write fields through it directly. */
+    struct sysinfo kinfo;
+    memset(&kinfo, 0, sizeof(kinfo));
+
+    kinfo.uptime = timer_get_ticks() / TIMER_FREQ;
+    kinfo.totalram = (uint64_t)pmm_get_total_frames() * 4096ULL;
+    kinfo.freeram = (uint64_t)(pmm_get_total_frames() - pmm_get_used_frames()) * 4096ULL;
+    kinfo.procs = 0;
+    kinfo.mem_unit = 1;
 
     struct process *table = process_get_table();
     for (int i = 0; i < PROCESS_MAX; i++) {
         if (table[i].state != PROCESS_UNUSED)
-            info->procs++;
+            kinfo.procs++;
     }
 
     /* Load averages: count running/ready processes as a simple load metric */
@@ -230,9 +244,12 @@ static int do_sysinfo(struct sysinfo *info)
             run++;
     }
     /* Scale by 1024 (SI_LOAD_SHIFT convention) */
-    info->loads[0] = (uint64_t)run * 1024ULL;
-    info->loads[1] = (uint64_t)run * 1024ULL;
-    info->loads[2] = (uint64_t)run * 1024ULL;
+    kinfo.loads[0] = (uint64_t)run * 1024ULL;
+    kinfo.loads[1] = (uint64_t)run * 1024ULL;
+    kinfo.loads[2] = (uint64_t)run * 1024ULL;
+
+    if (copy_to_user((uint64_t)(uintptr_t)info, &kinfo, sizeof(kinfo)) < 0)
+        return -EFAULT;
 
     return 0;
 }
@@ -247,9 +264,14 @@ static ssize_t do_getrandom(void *buf, size_t count, unsigned int flags)
     if (!buf || count == 0) return 0;
     if (count > 4096) count = 4096;
 
-    uint8_t *b = (uint8_t *)buf;
+    /* Fill a kernel buffer and deliver via copy_to_user() — buf is a
+     * user-supplied pointer; never write through it directly. */
+    uint8_t kbuf[4096];
     for (size_t i = 0; i < count; i++)
-        b[i] = (uint8_t)(local_xorshift64() >> 56);
+        kbuf[i] = (uint8_t)(local_xorshift64() >> 56);
+
+    if (copy_to_user((uint64_t)(uintptr_t)buf, kbuf, count) < 0)
+        return -EFAULT;
 
     return (ssize_t)count;
 }
@@ -329,12 +351,17 @@ static int do_prctl(int option, unsigned long arg2, unsigned long arg3,
     if (!p) return -1;
 
     switch (option) {
-    case PR_SET_NAME:
+    case PR_SET_NAME: {
+        char name[16];
         if (!arg2) return -EFAULT;
-        memset(p->proc_comm, 0, 16);
-        memcpy(p->proc_comm, (const char *)arg2, 15);
+        /* arg2 is a user-supplied pointer — copy through copy_from_user(),
+         * never dereference it directly. */
+        if (copy_from_user(name, arg2, sizeof(name)) < 0)
+            return -EFAULT;
+        memcpy(p->proc_comm, name, 15);
         p->proc_comm[15] = '\0';
         return 0;
+    }
 
     case PR_GET_NAME: {
         char name[16];
