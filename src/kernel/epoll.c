@@ -388,13 +388,17 @@ int epoll_pwait_syscall(int epfd, struct epoll_event *events,
  *
  * Marks the slot as free and wakes any waiters so they can
  * return -EBADF on the next interaction.
+ *
+ * Returns 0 on success, or -EBADF if @epfd is not a valid
+ * (in-use) epoll instance.
  */
-void epoll_close(int epfd)
+int epoll_close(int epfd)
 {
     struct epoll_instance *ep = epoll_get(epfd);
     if (!ep)
-        return;
+        return -EBADF;
 
     ep->in_use = 0;
     wait_queue_wake_all(&ep->wq);
+    return 0;
 }

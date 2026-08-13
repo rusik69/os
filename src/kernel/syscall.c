@@ -1916,6 +1916,12 @@ static int64_t sys_close(uint64_t fd) {
         int ret = inotify_close((int)fd);
         return ret < 0 ? (uint64_t)(int64_t)ret : 0;
     }
+    /* epoll close (fd range 730-745) — releases the instance slot so
+     * it can be reused by a later epoll_create1 */
+    if (fd >= EPOLL_FD_BASE && fd < EPOLL_FD_BASE + EPOLL_MAX) {
+        int ret = epoll_close((int)fd);
+        return ret < 0 ? (uint64_t)(int64_t)ret : 0;
+    }
     int i = (int)fd - 3;
     struct process *proc = process_get_current();
     if (!proc)

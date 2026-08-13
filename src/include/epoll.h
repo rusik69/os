@@ -124,8 +124,12 @@ int epoll_wait_syscall(int epfd, struct epoll_event *events,
 
 /*
  * epoll_close — release an epoll instance.
+ *
+ * Returns 0 on success, or -EBADF if @epfd is not a valid
+ * epoll instance.  Idempotent: closing an already-closed
+ * instance returns -EBADF without side effects.
  */
-void epoll_close(int epfd);
+int epoll_close(int epfd);
 
 /*
  * epoll_pwait_syscall — epoll_wait with signal mask.
