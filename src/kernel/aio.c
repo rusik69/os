@@ -156,6 +156,11 @@ static void aio_work_handler(void *arg)
         cb->aio_state = 3;
         cb->aio_errno = -ret;
     }
+
+    /* Release the slot: the request is complete (done or error).
+     * Without this put, every completed request leaks its slot and
+     * the table is exhausted after AIO_MAX_IO submissions. */
+    aio_cbs[idx].in_use = 0;
 }
 
 /* Submit aio request */
