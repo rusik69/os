@@ -4,6 +4,7 @@
 #include "string.h"
 #include "errno.h"
 #include "kernel.h"
+#include "uaccess.h"
 
 /*
  * Static pidfd table.
@@ -100,7 +101,14 @@ int pidfd_send_signal(int pidfd, int sig, struct siginfo *info, uint32_t flags)
 
     /* Send the signal using the kernel's signal infrastructure */
     if (info) {
-        return signal_send_info(entry->pid, sig, info, 1);
+        /* info is a user-space pointer — copy it into kernel memory before
+         * passing it to signal_send_info, which dereferences the siginfo
+         * (raw deref of the user pointer would fault under SMAP and lets
+         * userspace crash the kernel with an unmapped address). */
+        struct siginfo kinfo;
+        if (copy_from_user(&kinfo, (uint64_t)info, sizeof(kinfo)) < 0)
+            return -EFAULT;
+        return signal_send_info(entry->pid, sig, &kinfo, 1);
     } else {
         return signal_send(entry->pid, sig);
     }
