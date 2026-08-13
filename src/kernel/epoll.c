@@ -37,6 +37,7 @@
 #include "errno.h"
 #include "wakeup.h"
 #include "poll.h"
+#include "uaccess.h"
 
 /* ── Global state ────────────────────────────────────────────── */
 
@@ -258,6 +259,13 @@ int epoll_ctl_syscall(int epfd, int op, int fd,
  * under a timeout.  When events become available (or on timeout),
  * copies the ready events to the user-provided buffer.
  *
+ * The user events buffer is never dereferenced directly — ready
+ * events are staged in a kernel buffer and written back with
+ * copy_to_user() after the wait loop.  The range was validated by
+ * the syscall wrapper, but the buffer may be unmapped or repurposed
+ * by another thread of the same process while this syscall blocks
+ * in scheduler_yield(), so a raw deref would fault or corrupt.
+ *
  * Returns the number of ready events on success, 0 on timeout,
  * or a negative errno:
  *   -EBADF  if epfd is not a valid epoll instance
@@ -276,6 +284,10 @@ int epoll_wait_syscall(int epfd, struct epoll_event *events,
         maxevents = EPOLL_MAX_EVENTS;
     if (maxevents <= 0)
         return -EINVAL;
+
+    /* Kernel staging buffer for ready events — written back to the
+     * user buffer via copy_to_user() after the wait loop. */
+    struct epoll_event evbuf[EPOLL_MAX_EVENTS];
 
     /* Compute deadline for timeout */
     uint64_t deadline = 0;
@@ -326,12 +338,12 @@ int epoll_wait_syscall(int epfd, struct epoll_event *events,
                     e->last_reported = revents;
                     if (!new_events)
                         continue;
-                    events[ready].events = new_events;
+                    evbuf[ready].events = new_events;
                 } else {
                     /* Level-triggered: report all ready events */
-                    events[ready].events = revents;
+                    evbuf[ready].events = revents;
                 }
-                events[ready].data   = e->data;
+                evbuf[ready].data   = e->data;
                 ready++;
 
                 /* EPOLLONESHOT: disarm after first event report */
@@ -354,6 +366,13 @@ int epoll_wait_syscall(int epfd, struct epoll_event *events,
         /* Yield CPU while waiting */
         scheduler_yield();
     }
+
+    /* Write ready events back to the user buffer.  copy_to_user()
+     * faults safely if the buffer was unmapped while we blocked. */
+    if (ret > 0 &&
+        copy_to_user((uint64_t)(uintptr_t)events, evbuf,
+                     (size_t)ret * sizeof(struct epoll_event)) < 0)
+        ret = -EFAULT;
 
     /* EPOLLWAKEUP: release the wakeup source before returning */
     if (wsrc >= 0)
