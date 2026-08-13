@@ -158,7 +158,6 @@ static void inst_push_event(struct inotify_instance *inst,
     else
         inst->events[idx].name[0] = '\0';
     inst->events[idx].name[sizeof(inst->events[idx].name) - 1] = '\0';
-    inst->ev_count++;
 }
 
 /* ── Initialization ──────────────────────────────────────────────── */
