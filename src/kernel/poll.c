@@ -17,6 +17,7 @@
 #include "syscall.h"
 #include "timer.h"
 #include "timerfd.h"
+#include "uaccess.h"
 
 /*
  * poll.c — Poll infrastructure implementation
@@ -173,7 +174,19 @@ int64_t sys_poll(uint64_t fds_addr, uint64_t nfds, uint64_t timeout_ms) {
     if (fds_size / sizeof(struct pollfd) != nfds)
         return (uint64_t)(int64_t)-EINVAL;
 
-    struct pollfd *fds = (struct pollfd *)fds_addr;
+    /*
+     * Copy the user pollfd array into a kernel buffer before
+     * touching it.  sys_poll is reachable from the Linux-ABI
+     * dispatch path (lin_poll -> syscall_dispatch_internal),
+     * which skips the central syscall_validate_user_args() gate
+     * (see sys_getcwd for the same class), so the raw fds_addr
+     * must never be dereferenced directly.  The kernel buffer is
+     * bounded by POLL_MAX_FDS entries.
+     */
+    struct pollfd fds[POLL_MAX_FDS];
+    if (copy_from_user(fds, fds_addr, fds_size) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
+
     int n = (int)nfds;
     int ready = 0;
     int timed_out = 0;
@@ -342,6 +355,10 @@ int64_t sys_poll(uint64_t fds_addr, uint64_t nfds, uint64_t timeout_ms) {
         }
         /* Woken normally — loop and re-check */
     }
+
+    /* Write updated revents back to userspace */
+    if (copy_to_user(fds_addr, fds, fds_size) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
 
     return (uint64_t)ready;
 }
