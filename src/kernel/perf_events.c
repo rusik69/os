@@ -730,9 +730,11 @@ void topdown_disable(void) {
     if (!g_topdown_configured)
         return;
 
-    /* Disable fixed counter 2 */
+    /* Disable fixed counter 2 — clear exactly the control bits that
+     * topdown_enable() set (EN | KERNEL | USER).  FIXED_CTR2_CTRL_EN is
+     * already (1ULL << 16), so do not shift it again. */
     uint64_t fc_ctrl = read_msr(IA32_FIXED_CTR_CTRL);
-    fc_ctrl &= ~(FIXED_CTR2_CTRL_EN << 16);
+    fc_ctrl &= ~(FIXED_CTR2_CTRL_EN | FIXED_CTR2_CTRL_KERNEL | FIXED_CTR2_CTRL_USER);
     write_msr(IA32_FIXED_CTR_CTRL, fc_ctrl);
 
     /* Clear the metrics enable bit */
