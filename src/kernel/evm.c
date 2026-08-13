@@ -64,10 +64,11 @@ static int evm_compute_hmac(const char *path, uint8_t hmac_out[SHA256_DIGEST_SIZ
 
     for (int i = 0; i < EVM_XATTR_MAX; i++) {
         uint8_t xattr_val[256];
-        uint32_t xattr_len = sizeof(xattr_val);
 
-        if (vfs_getxattr(path, g_evm_protected_xattrs[i], xattr_val, sizeof(xattr_val)) < 0)
+        int xret = vfs_getxattr(path, g_evm_protected_xattrs[i], xattr_val, sizeof(xattr_val));
+        if (xret < 0)
             continue;  /* xattr doesn't exist — skip */
+        uint32_t xattr_len = (uint32_t)xret;
 
         /* Append name + value to buffer */
         uint32_t name_len = (uint32_t)strlen(g_evm_protected_xattrs[i]);
@@ -139,12 +140,14 @@ static int evm_verify_xattr(const char *path)
 
     /* Read security.evm xattr */
     uint8_t stored_hmac[SHA256_DIGEST_SIZE];
-    uint32_t stored_len = sizeof(stored_hmac);
+    uint32_t stored_len = 0;
 
-    if (vfs_getxattr(path, "security.evm", stored_hmac, sizeof(stored_hmac)) < 0) {
+    int sret = vfs_getxattr(path, "security.evm", stored_hmac, sizeof(stored_hmac));
+    if (sret < 0) {
         /* No EVM xattr — maybe not protected, or not yet initialized */
         return 0;  /* Treat as failure */
     }
+    stored_len = (uint32_t)sret;
 
     if (stored_len != SHA256_DIGEST_SIZE)
         return 0;
