@@ -13336,15 +13336,15 @@ int64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2, uint64
     /* ── pidfd operations ─────────────────────────────────────── */
     case SYS_PIDFD_OPEN: {
         int ret = pidfd_open((uint32_t)a1, (uint32_t)a2);
-        return ret < 0 ? (uint64_t)-1 : (uint64_t)ret;
+        return (uint64_t)(int64_t)ret; /* sign-extend to preserve -errno */
     }
     case SYS_PIDFD_SEND_SIGNAL: {
         int ret = pidfd_send_signal((int)a1, (int)a2, (struct siginfo *)a3, (uint32_t)a4);
-        return ret < 0 ? (uint64_t)-1 : 0;
+        return (uint64_t)(int64_t)ret; /* sign-extend to preserve -errno */
     }
     case SYS_PIDFD_GETFD: {
         int ret = pidfd_getfd((int)a1, (int)a2, (uint32_t)a3);
-        return ret < 0 ? (uint64_t)-1 : (uint64_t)ret;
+        return (uint64_t)(int64_t)ret; /* sign-extend to preserve -errno */
     }
     /* ── mount_setattr ────────────────────────────────────────── */
     case SYS_MOUNT_SETATTR:

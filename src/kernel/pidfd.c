@@ -110,7 +110,10 @@ int pidfd_send_signal(int pidfd, int sig, struct siginfo *info, uint32_t flags)
             return -EFAULT;
         return signal_send_info(entry->pid, sig, &kinfo, 1);
     } else {
-        return signal_send(entry->pid, sig);
+        int r = signal_send(entry->pid, sig);
+        /* signal_send returns generic -1; map to ESRCH to match the
+         * siginfo path (process can exit between the check above and here) */
+        return r < 0 ? -ESRCH : r;
     }
 }
 
