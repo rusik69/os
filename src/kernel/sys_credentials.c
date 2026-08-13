@@ -185,7 +185,7 @@ int64_t sys_getgroups(uint64_t size, uint64_t list_addr) {
         return (uint64_t)(int64_t)ngroups;
 
     /* Size must be at least the number of groups */
-    if ((int)size < ngroups)
+    if (size < (uint64_t)ngroups)
         return (uint64_t)(int64_t)-EINVAL;
 
     /* Copy groups to user buffer */
@@ -215,8 +215,10 @@ int64_t sys_setgroups(uint64_t size, uint64_t list_addr) {
     if (p->euid != 0)
         return (uint64_t)(int64_t)-EPERM;
 
-    /* Validate size */
-    if ((int)size > NGROUPS_MAX)
+    /* Validate size against NGROUPS_MAX on the FULL 64-bit value —
+     * narrowing to int first would let e.g. 0xFFFFFFFF truncate to
+     * -1 and bypass the check, overflowing buf[] below. */
+    if (size > NGROUPS_MAX)
         return (uint64_t)(int64_t)-EINVAL;
 
     /* Clear existing groups */
