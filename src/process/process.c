@@ -2074,8 +2074,24 @@ uint32_t process_get_count(void) {
 }
 
 void process_cleanup(struct process *proc) {
+    /* Idempotency guard: a slot already reaped must not be cleaned again.
+     * All callers check state == PROCESS_ZOMBIE before calling, but that
+     * check-then-act is not atomic — a concurrent reaper (another thread
+     * in wait4, or the periodic process_reap_zombies) can observe ZOMBIE
+     * while we are mid-cleanup.  Without this guard the second cleanup
+     * would double-put the pid namespace (pid_ns_free_pid/pid_ns_destroy)
+     * and re-walk the dead process's futex robust list. */
+    if (proc->state == PROCESS_UNUSED)
+        return;
+
+    /* Claim the slot FIRST so any concurrent reaper that observed ZOMBIE
+     * sees UNUSED before a single resource is released — closing the
+     * window between the state check and the resource frees below. */
+    proc->state = PROCESS_UNUSED;
+
     /* Cleanup robust futex list */
     futex_robust_list_cleanup(proc);
+    proc->ctid_ptr = NULL;
     /* Cleanup KCOV coverage buffer (Item 208) */
     kcov_process_exit(proc);
 
@@ -2087,7 +2103,6 @@ void process_cleanup(struct process *proc) {
         vmm_destroy_user_pml4(proc->pml4);
         proc->pml4 = NULL;
     }
-    proc->state = PROCESS_UNUSED;
     if (proc->pid) {
         free_pid(proc->pid);
     }
@@ -2098,6 +2113,8 @@ void process_cleanup(struct process *proc) {
         if (proc->pid_ns->process_count <= 0) {
             pid_ns_destroy(proc->pid_ns);
         }
+        proc->pid_ns = NULL;
+        proc->ns_pid = 0;
     }
     /* Release cgroup namespace reference (Item 117) */
     if (proc->cgroup_ns) {
