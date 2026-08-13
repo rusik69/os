@@ -89,6 +89,16 @@ struct user_namespace *user_ns_create(struct user_namespace *parent,
 /* Destroy a user namespace (must be empty of processes). */
 void user_ns_destroy(struct user_namespace *ns);
 
+/* Take a reference on a user namespace (increments process_count).
+ * Returns ns (or NULL/init_user_ns unchanged).  Called when a process
+ * inherits or joins a namespace shared with other processes. */
+struct user_namespace *user_ns_get(struct user_namespace *ns);
+
+/* Drop a reference on a user namespace (decrements process_count).
+ * The namespace is freed when the last reference is dropped.
+ * The initial namespace is never freed. */
+void user_ns_put(struct user_namespace *ns);
+
 /* ── UID/GID translation ──────────────────────────────────────────
  *
  * Translate a UID from inside this namespace to the parent namespace.

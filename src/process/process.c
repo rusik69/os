@@ -834,7 +834,8 @@ struct process *process_create(void (*entry)(void), const char *name) {
     {
         struct process *parent = current_process;
         if (parent && parent->user_ns) {
-            proc->user_ns = parent->user_ns;
+            /* Take a reference on the inherited namespace */
+            proc->user_ns = user_ns_get(parent->user_ns);
         } else {
             proc->user_ns = &init_user_ns; /* root namespace */
         }
@@ -878,6 +879,9 @@ struct process *process_create(void (*entry)(void), const char *name) {
         free_pid(proc->pid);
         if (proc->cgroup_ns)
             cgroup_ns_put(proc->cgroup_ns);
+        /* Release the inherited user-namespace ref taken above */
+        if (proc->user_ns)
+            user_ns_put(proc->user_ns);
         /* Release the namespace-local PID allocated for a non-root
          * inherited PID namespace above (was leaked before). */
         if (proc->pid_ns && proc->pid_ns != &init_pid_ns && proc->ns_pid > 0)
@@ -1595,7 +1599,8 @@ static void clone_rollback_pidns(struct process *child, struct process *parent) 
     }
 }
 
-static void clone_rollback_namespaces(struct process *child, struct process *parent) {
+static void clone_rollback_namespaces(struct process *child, struct process *parent,
+                                      bool user_ns_ref_taken) {
     clone_rollback_pidns(child, parent);
     if (child->cgroup_ns) {
         cgroup_ns_put(child->cgroup_ns);
@@ -1605,8 +1610,14 @@ static void clone_rollback_namespaces(struct process *child, struct process *par
         mnt_ns_put(child->mnt_ns);
         child->mnt_ns = NULL;
     }
-    if (child->user_ns && child->user_ns != parent->user_ns) {
-        user_ns_destroy(child->user_ns);
+    /* Release the user-namespace reference: either a fresh CLONE_NEWUSER
+     * namespace (creation refcount 1) or an inherited reference taken by
+     * user_ns_get() in the else branch.  user_ns_ref_taken distinguishes
+     * the latter from the plain struct-copy alias of the parent's
+     * namespace, which holds no reference and must not be put. */
+    if (child->user_ns && (child->user_ns != parent->user_ns || user_ns_ref_taken)) {
+        user_ns_put(child->user_ns);
+        child->user_ns = NULL;
     }
 }
 
@@ -1619,6 +1630,11 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack, uin
      * races with other processes' syscalls clobbering them (see the
      * process_fork snapshot comment). */
     uint64_t clone_ursp = syscall_user_rsp;
+
+    /* Set when the CLONE_NEWUSER else-branch takes an inherited
+     * user-namespace reference; lets clone_rollback_namespaces() release
+     * it on error without touching the plain struct-copy alias. */
+    bool user_ns_ref_taken = false;
 
     /* ── Validate user-space stack pointer ───────────────────── */
     /* For user-mode callers, ensure child_stack is a valid user address.
@@ -1798,7 +1814,7 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack, uin
             /* All namespace blocks have now run: release the PID-namespace
              * state plus the cgroup and mount references (and the fresh
              * user namespace, had it been created — it was not). */
-            clone_rollback_namespaces(child, parent);
+            clone_rollback_namespaces(child, parent, user_ns_ref_taken);
             free_pid(child->pid);
             child->state = PROCESS_UNUSED;
             __asm__ volatile("sti");
@@ -1816,15 +1832,16 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack, uin
         kprintf("[USERNS] clone(NEWUSER): child pid=%d is root in new namespace id=%d\n",
                 child->pid, new_ns->id);
     } else {
-        /* Inherit parent's user namespace (just copy the pointer) */
-        child->user_ns = parent->user_ns;
+        /* Inherit parent's user namespace (take a reference) */
+        child->user_ns = user_ns_get(parent->user_ns);
+        user_ns_ref_taken = true;
     }
 
     /* Allocate fresh kernel stack */
     if (alloc_guarded_kernel_stack(child) < 0) {
         /* Roll back namespaces allocated/ref'd by the CLONE_NEW* block
          * AND release the PID allocated above (was leaked before). */
-        clone_rollback_namespaces(child, parent);
+        clone_rollback_namespaces(child, parent, user_ns_ref_taken);
         free_pid(child->pid);
         child->state = PROCESS_UNUSED;
         __asm__ volatile("sti");
@@ -1844,7 +1861,7 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack, uin
             child->pml4 = vmm_clone_user_pml4(parent->pml4);
             if (!child->pml4) {
                 /* Roll back the CLONE_NEW* namespaces (were leaked before) */
-                clone_rollback_namespaces(child, parent);
+                clone_rollback_namespaces(child, parent, user_ns_ref_taken);
                 free_pid(child->pid);
                 free_guarded_kernel_stack(child);
                 child->state = PROCESS_UNUSED;
@@ -1906,7 +1923,7 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack, uin
 
     if (scheduler_add(child) < 0) {
         /* Roll back namespaces + the freshly cloned pml4 (non-CLONE_VM) */
-        clone_rollback_namespaces(child, parent);
+        clone_rollback_namespaces(child, parent, user_ns_ref_taken);
         if (!(flags & CLONE_VM) && child->pml4 && child->pml4 != parent->pml4)
             vmm_destroy_user_pml4(child->pml4);
         free_pid(child->pid);
@@ -2091,6 +2108,11 @@ void process_cleanup(struct process *proc) {
     if (proc->mnt_ns) {
         mnt_ns_put(proc->mnt_ns);
         proc->mnt_ns = NULL;
+    }
+    /* Release user namespace reference (Item 114) */
+    if (proc->user_ns) {
+        user_ns_put(proc->user_ns);
+        proc->user_ns = NULL;
     }
     proc->pid = 0;
     proc->name = NULL;

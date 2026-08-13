@@ -3920,6 +3920,13 @@ static int64_t sys_unshare(uint64_t flags) {
         if (!new_ns) {
             return (uint64_t)-ENOMEM;
         }
+        /* Drop the reference to the old namespace, mirroring the
+         * CLONE_NEWCGROUP / CLONE_NEWNS blocks above.  If other
+         * processes (e.g. forked children) still share it, only the
+         * count is decremented; the slot is freed when the last
+         * reference goes away. */
+        if (cur->user_ns)
+            user_ns_put(cur->user_ns);
         cur->user_ns = new_ns;
         /* Inside the new user namespace, the process gets UID 0 (root).
          * The caller's UID/GID in the parent namespace are mapped to 0

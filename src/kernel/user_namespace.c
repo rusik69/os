@@ -98,7 +98,7 @@ struct user_namespace *user_ns_create(struct user_namespace *parent,
     ns->level = parent ? (parent->level + 1) : 1;
     ns->owner_uid = caller_uid;
     ns->owner_gid = caller_gid;
-    ns->process_count = 0;
+    ns->process_count = 1;  /* the creating process is the first member */
     ns->setgroups_denied = 0;
 
     /* Set up initial mapping: caller's UID/GID → 0 inside */
@@ -121,6 +121,47 @@ struct user_namespace *user_ns_create(struct user_namespace *parent,
             (unsigned long)caller_uid, (unsigned long)caller_gid);
 
     return ns;
+}
+
+/* ── Reference counting ─────────────────────────────────────────── */
+
+struct user_namespace *user_ns_get(struct user_namespace *ns)
+{
+    if (!ns || ns == &init_user_ns)
+        return ns;
+
+    spinlock_acquire(&user_ns_lock);
+    ns->process_count++;
+    spinlock_release(&user_ns_lock);
+
+    return ns;
+}
+
+void user_ns_put(struct user_namespace *ns)
+{
+    if (!ns || ns == &init_user_ns) return;  /* never free root */
+
+    spinlock_acquire(&user_ns_lock);
+
+    if (!ns->in_use) {
+        /* Already freed by the last put — a stale put must not
+         * re-enter the free path (guards against double-free). */
+        spinlock_release(&user_ns_lock);
+        return;
+    }
+
+    if (ns->process_count > 0)
+        ns->process_count--;
+
+    if (ns->process_count == 0) {
+        memset(ns, 0, sizeof(*ns));
+        user_ns_count--;
+        spinlock_release(&user_ns_lock);
+        kprintf("[USERNS] Namespace freed\n");
+        return;
+    }
+
+    spinlock_release(&user_ns_lock);
 }
 
 /* ── Destroy a user namespace ──────────────────────────────────── */
