@@ -269,33 +269,52 @@ static int __request_module_internal(const char *name, const char *params, int f
     }
 
     /* ── Step 4: Run the ELF module loader ───────────────────────── */
-    struct module_elf_context ctx;
+    /* struct module_elf_context is ~24MB (relas[64] x 16384 entries) —
+     * it MUST live on the heap, not the kernel stack (which is 128KB).
+     * A stack local triggers -fstack-clash-protection's probe loop and
+     * instantly overflows the stack guard (same failure mode as the
+     * former stack local in sys_init_module). */
+    struct module_elf_context *ctx = kmalloc(sizeof(*ctx));
+    if (!ctx) {
+        module_decompress_free(elf_data, was_compressed);
+        return -ENOMEM;
+    }
+    memset(ctx, 0, sizeof(*ctx));
     int result = -1;
 
     /* Validate ELF header */
-    if (module_elf_validate(&ctx, (const uint8_t *)elf_data, elf_size) < 0) {
+    if (module_elf_validate(ctx, (const uint8_t *)elf_data, elf_size) < 0) {
         kprintf("[MOD] request_module(%s): ELF validation failed: %s\n",
-                name, ctx.error_msg);
+                name, ctx->error_msg);
+        kfree(ctx);
         module_decompress_free(elf_data, was_compressed);
         return -EINVAL;
     }
 
     /* Parse ELF sections, symbols, relocations */
-    if (module_elf_parse(&ctx) < 0) {
+    if (module_elf_parse(ctx) < 0) {
         kprintf("[MOD] request_module(%s): ELF parse failed: %s\n",
-                name, ctx.error_msg);
+                name, ctx->error_msg);
+        kfree(ctx);
         module_decompress_free(elf_data, was_compressed);
         return -EINVAL;
     }
 
     /* Finalize: resolve symbols, apply relocations, set perms, call init */
-    result = module_elf_finalize(&ctx, name);
-    module_elf_free(&ctx);
+    result = module_elf_finalize(ctx, name);
+    if (result < 0) {
+        /* Read error_msg BEFORE module_elf_free() wipes the context —
+         * it memsets the whole struct, so printing afterwards always
+         * showed an empty "finalize failed: " (same fix as
+         * sys_init_module). */
+        kprintf("[MOD] request_module(%s): finalize failed: %s\n",
+                name, ctx->error_msg);
+    }
+    module_elf_free(ctx);
     module_decompress_free(elf_data, was_compressed);
+    kfree(ctx);
 
     if (result < 0) {
-        kprintf("[MOD] request_module(%s): finalize failed: %s\n",
-                name, ctx.error_msg);
         return -EINVAL;
     }
 

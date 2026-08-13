@@ -12197,11 +12197,17 @@ static int64_t sys_finit_module(uint64_t fd, uint64_t params_addr, uint64_t flag
     }
 
     result = module_elf_finalize(ctx, mod_name);
+    if (result < 0) {
+        /* Read error_msg BEFORE module_elf_free() wipes the context —
+         * it memsets the whole struct, so printing afterwards always
+         * showed an empty "finalize failed: " (same fix as
+         * sys_init_module). */
+        kprintf("[MOD] finit_module(fd=%llu): finalize failed: %s\n", fd, ctx->error_msg);
+    }
     module_elf_free(ctx);
     kfree(buf);
 
     if (result < 0) {
-        kprintf("[MOD] finit_module(fd=%llu): finalize failed: %s\n", fd, ctx->error_msg);
         kfree(ctx);
         return (uint64_t)-EINVAL;
     }
