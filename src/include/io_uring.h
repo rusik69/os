@@ -331,4 +331,11 @@ int64_t sys_io_uring_enter(int fd, uint32_t to_submit, uint32_t min_complete,
 int64_t sys_io_uring_register(int fd, uint32_t opcode, void *arg,
                                uint32_t nr_args);
 
+/* io_uring_close — Release a ring when its fd is closed.
+ * Called from sys_close/sys_close_range for fds tagged "[io_uring:...]".
+ * Frees the ring buffers and marks the g_rings slot free.  Without this,
+ * closing a ring fd leaked every ring allocation and permanently consumed
+ * a ring slot.  Returns 0 on success, or -EBADF if @fd is not a ring fd. */
+int io_uring_close(int fd);
+
 #endif /* IO_URING_H */

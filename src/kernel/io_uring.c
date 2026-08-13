@@ -610,6 +610,19 @@ static int io_uring_delete(struct io_ring *ring)
     return 0;
 }
 
+/* io_uring_close — release a ring when its fd is closed.
+ * Wires the ring teardown into sys_close/sys_close_range.  Without this
+ * entry point the ring buffers (~400 KB per ring) leaked and the static
+ * g_rings slot stayed in_use forever, so after IO_URING_MAX_RINGS
+ * create/close cycles io_uring_setup permanently returned -ENOMEM. */
+int io_uring_close(int fd)
+{
+    struct io_ring *ring = io_ring_lookup(fd);
+    if (!ring)
+        return -EBADF;
+    return io_uring_delete(ring);
+}
+
 /* ── io_uring_cancel: cancel pending operations for a ring/pid ── */
 static int io_uring_cancel(struct io_ring *ring, int pid)
 {

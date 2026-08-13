@@ -1935,6 +1935,8 @@ static int64_t sys_close(uint64_t fd) {
         strncpy(tmp_path, pfd->path, 63);
         tmp_path[63] = '\0';
     }
+    /* If this is an io_uring ring fd, release the ring after unlocking */
+    uint8_t is_uring = (strncmp(pfd->path, "[io_uring:", 10) == 0);
 
     pfd->used = false;
     pfd->flags = 0;
@@ -1944,6 +1946,11 @@ static int64_t sys_close(uint64_t fd) {
     /* Unlink after releasing the lock (vfs_unlink may sleep) */
     if (is_tmpfile && tmp_path[0])
         vfs_unlink(tmp_path);
+    /* Release the io_uring ring after releasing the lock — io_uring_delete
+     * takes g_ring_lock (and re-clears the now-empty fd slot), so it must
+     * not run while fd_table_lock is held, same as vfs_unlink above. */
+    if (is_uring)
+        io_uring_close((int)fd);
     return 0;
 }
 
@@ -1972,6 +1979,9 @@ static int64_t sys_close_range(uint64_t first, uint64_t last, uint64_t flags) {
     /* Collect TMPFILE paths to unlink after releasing the lock */
     char tmp_unlinks[PROCESS_FD_MAX][64];
     int tmp_count = 0;
+    /* Collect io_uring ring fds to release after releasing the lock */
+    int uring_fds[PROCESS_FD_MAX];
+    int uring_count = 0;
     uint64_t __cr_irq;
     spinlock_irqsave_acquire(&p->fd_table_lock, &__cr_irq);
     for (uint64_t fd = first; fd <= last; fd++) {
@@ -1993,6 +2003,8 @@ static int64_t sys_close_range(uint64_t first, uint64_t last, uint64_t flags) {
                 tmp_unlinks[tmp_count][63] = '\0';
                 tmp_count++;
             }
+            if (strncmp(pfd->path, "[io_uring:", 10) == 0)
+                uring_fds[uring_count++] = (int)fd;
             pfd->used = false;
             pfd->flags = 0;
             pfd->path[0] = '\0';
@@ -2006,6 +2018,10 @@ static int64_t sys_close_range(uint64_t first, uint64_t last, uint64_t flags) {
         if (tmp_unlinks[t][0])
             vfs_unlink(tmp_unlinks[t]);
     }
+
+    /* Release io_uring rings after releasing the lock */
+    for (int u = 0; u < uring_count; u++)
+        io_uring_close(uring_fds[u]);
 
     return 0;
 }
