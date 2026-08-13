@@ -878,6 +878,10 @@ struct process *process_create(void (*entry)(void), const char *name) {
         free_pid(proc->pid);
         if (proc->cgroup_ns)
             cgroup_ns_put(proc->cgroup_ns);
+        /* Release the namespace-local PID allocated for a non-root
+         * inherited PID namespace above (was leaked before). */
+        if (proc->pid_ns && proc->pid_ns != &init_pid_ns && proc->ns_pid > 0)
+            pid_ns_free_pid(proc->pid_ns, proc->ns_pid);
         free_guarded_kernel_stack(proc);
         proc->state = PROCESS_UNUSED;
         return NULL;
@@ -1577,7 +1581,11 @@ extern void clone_child_trampoline(void);
  * been set up): it releases both freshly-created namespaces (CLONE_NEW*)
  * and the inherited-reference increments (cgroup_ns_get/mnt_ns_get) so a
  * failed clone leaks neither namespace slots nor refcounts. */
-static void clone_rollback_namespaces(struct process *child, struct process *parent) {
+/* Roll back the PID-namespace state set up by process_clone's NEWPID
+ * handling: either a fresh namespace created for this child (CLONE_NEWPID)
+ * or a local PID allocated in an inherited non-root namespace.  Safe to
+ * call on any error path once the NEWPID block has run. */
+static void clone_rollback_pidns(struct process *child, struct process *parent) {
     if (child->pid_ns && child->pid_ns != parent->pid_ns) {
         /* CLONE_NEWPID: namespace was created for this child */
         pid_ns_destroy(child->pid_ns);
@@ -1585,6 +1593,10 @@ static void clone_rollback_namespaces(struct process *child, struct process *par
         /* Inherited non-root namespace: release the local pid we allocated */
         pid_ns_free_pid(child->pid_ns, child->ns_pid);
     }
+}
+
+static void clone_rollback_namespaces(struct process *child, struct process *parent) {
+    clone_rollback_pidns(child, parent);
     if (child->cgroup_ns) {
         cgroup_ns_put(child->cgroup_ns);
         child->cgroup_ns = NULL;
@@ -1724,14 +1736,22 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack, uin
         struct cgroup_namespace *new_ns =
             cgroup_ns_create(parent->cgroup_ns ? parent->cgroup_ns->root_path : "/");
         if (unlikely(!new_ns)) {
+            /* The NEWPID block above may have created a fresh namespace or
+             * taken a local PID in an inherited one — roll that back.  The
+             * cgroup/mnt/user blocks have not run yet, so no other
+             * namespace references are held here. */
+            clone_rollback_pidns(child, parent);
             free_pid(child->pid);
             child->state = PROCESS_UNUSED;
             __asm__ volatile("sti");
             return -EINVAL;
         }
-        /* Release the inherited reference (copied by *child = *parent) */
-        if (child->cgroup_ns)
-            cgroup_ns_put(child->cgroup_ns);
+        /* The struct copy above only aliased the parent's namespace: no
+         * reference was taken on it (the child's inherited reference is
+         * taken by cgroup_ns_get() in the else branch below).  Putting it
+         * here would release a ref the child never held and could free a
+         * namespace the parent still uses.  The new namespace's creation
+         * refcount (1) is the child's membership reference instead. */
         child->cgroup_ns = new_ns;
         kprintf("[CGROUP_NS] clone(NEWCGROUP): child pid=%d, root='%s'\n", child->pid,
                 new_ns->root_path);
@@ -1744,14 +1764,25 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack, uin
     if (flags & CLONE_NEWNS) {
         struct mnt_namespace *new_ns = mnt_ns_copy(parent->mnt_ns ? parent->mnt_ns : NULL);
         if (unlikely(!new_ns)) {
+            /* Roll back the PID-namespace state AND the cgroup-namespace
+             * reference taken by the block above (a fresh CLONE_NEWCGROUP
+             * namespace or the inherited cgroup_ns_get).  The mount-namespace
+             * reference is only taken in the else branch, which has not run
+             * yet, so no mnt ref is held here. */
+            clone_rollback_pidns(child, parent);
+            if (child->cgroup_ns) {
+                cgroup_ns_put(child->cgroup_ns);
+                child->cgroup_ns = NULL;
+            }
             free_pid(child->pid);
             child->state = PROCESS_UNUSED;
             __asm__ volatile("sti");
             return -EINVAL;
         }
-        /* Release the inherited reference (copied by *child = *parent) */
-        if (child->mnt_ns)
-            mnt_ns_put(child->mnt_ns);
+        /* Same as NEWCGROUP: the struct copy took no reference on the
+         * parent's mount namespace, so there is nothing to release here.
+         * The new namespace's creation refcount (1) is the child's
+         * membership reference. */
         child->mnt_ns = new_ns;
         kprintf("[MNT_NS] clone(NEWNS): child pid=%d\n", child->pid);
     } else if (child->mnt_ns) {
@@ -1764,6 +1795,10 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack, uin
         struct user_namespace *new_ns = user_ns_create(
             parent->user_ns ? parent->user_ns : &init_user_ns, parent->uid, parent->gid);
         if (unlikely(!new_ns)) {
+            /* All namespace blocks have now run: release the PID-namespace
+             * state plus the cgroup and mount references (and the fresh
+             * user namespace, had it been created — it was not). */
+            clone_rollback_namespaces(child, parent);
             free_pid(child->pid);
             child->state = PROCESS_UNUSED;
             __asm__ volatile("sti");
