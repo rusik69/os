@@ -185,6 +185,7 @@ static int g_cmdline_param_count = 0;
 /* Forward declarations */
 static void module_scan_cmdline_params(void);
 static void module_free_params(struct kernel_module *mod);
+static void module_deferred_cancel(struct kernel_module *mod);
 
 /* ── Global module table ────────────────────────────────────────── */
 
@@ -774,6 +775,14 @@ int module_unload(int module_id) {
      * so no reader/writer can access module data after it's freed.
      * Call outside the lock since sysfs may have its own locking. */
     spinlock_irqsave_release(&g_mod_lock, irq_flags);
+
+    /* Cancel any deferred-init queue entry for this module.  The entry
+     * was queued at load time while the module waited for dependencies;
+     * if it survived teardown it would (a) leak a queue slot forever and
+     * (b) fire the stale init pointer into freed module memory if the
+     * slot is later reused by a module still in LOADING state. */
+    module_deferred_cancel(mod);
+
     module_sysfs_remove_params(mod);
 
     /* Free the kmalloc'd kernel_param nodes (and any kernel-owned
@@ -1940,6 +1949,46 @@ int module_set_live(struct kernel_module *mod)
     module_process_deferred_inits();
 
     return 0;
+}
+
+/* ── module_deferred_cancel ────────────────────────────────────────
+ *
+ * Remove every deferred-init queue entry referencing @mod.  Called
+ * from module_unload() so pending deferred init work — queued at load
+ * time while the module waited for its dependencies to become live —
+ * cannot outlive the module's teardown.  Without this, the stale entry
+ * would permanently consume a queue slot (the processor only advances
+ * entries whose module is still MODULE_LOADING) and, if the freed slot
+ * is later reused by a module in LOADING state, would fire the old
+ * init pointer into freed module memory (use-after-free).
+ *
+ * Takes g_deferred_lock only; never nests it with g_mod_lock (matching
+ * module_process_deferred_inits, which releases one before taking the
+ * other).
+ */
+static void module_deferred_cancel(struct kernel_module *mod) {
+    if (!mod)
+        return;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_deferred_lock, &irq_flags);
+
+    int i = 0;
+    while (i < g_deferred_init_count) {
+        if (g_deferred_init[i].mod != mod) {
+            i++;
+            continue;
+        }
+        /* Remove entry i by shifting the tail down */
+        if (i < g_deferred_init_count - 1) {
+            memmove(&g_deferred_init[i], &g_deferred_init[i + 1],
+                    (size_t)(g_deferred_init_count - i - 1) * sizeof(struct deferred_init_entry));
+        }
+        g_deferred_init_count--;
+        /* Stay at the same index: the tail shifted down. */
+    }
+
+    spinlock_irqsave_release(&g_deferred_lock, irq_flags);
 }
 
 /* ── module_process_deferred_inits ────────────────────────────────
