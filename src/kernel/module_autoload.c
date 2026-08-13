@@ -276,7 +276,12 @@ static int __request_module_internal(const char *name, const char *params, int f
      * former stack local in sys_init_module). */
     struct module_elf_context *ctx = kmalloc(sizeof(*ctx));
     if (!ctx) {
-        module_decompress_free(elf_data, was_compressed);
+        /* elf_data aliases buf when the module was not compressed —
+         * free whichever buffer is live on this exit path. */
+        if (was_compressed)
+            module_decompress_free(elf_data, was_compressed);
+        else
+            kfree(elf_data);
         return -ENOMEM;
     }
     memset(ctx, 0, sizeof(*ctx));
@@ -287,7 +292,12 @@ static int __request_module_internal(const char *name, const char *params, int f
         kprintf("[MOD] request_module(%s): ELF validation failed: %s\n",
                 name, ctx->error_msg);
         kfree(ctx);
-        module_decompress_free(elf_data, was_compressed);
+        /* elf_data aliases buf when the module was not compressed —
+         * free whichever buffer is live on this exit path. */
+        if (was_compressed)
+            module_decompress_free(elf_data, was_compressed);
+        else
+            kfree(elf_data);
         return -EINVAL;
     }
 
@@ -296,7 +306,12 @@ static int __request_module_internal(const char *name, const char *params, int f
         kprintf("[MOD] request_module(%s): ELF parse failed: %s\n",
                 name, ctx->error_msg);
         kfree(ctx);
-        module_decompress_free(elf_data, was_compressed);
+        /* elf_data aliases buf when the module was not compressed —
+         * free whichever buffer is live on this exit path. */
+        if (was_compressed)
+            module_decompress_free(elf_data, was_compressed);
+        else
+            kfree(elf_data);
         return -EINVAL;
     }
 
@@ -311,7 +326,12 @@ static int __request_module_internal(const char *name, const char *params, int f
                 name, ctx->error_msg);
     }
     module_elf_free(ctx);
-    module_decompress_free(elf_data, was_compressed);
+    /* elf_data aliases buf when the module was not compressed —
+     * free whichever buffer is live on this exit path. */
+    if (was_compressed)
+        module_decompress_free(elf_data, was_compressed);
+    else
+        kfree(elf_data);
     kfree(ctx);
 
     if (result < 0) {
