@@ -22,6 +22,7 @@
 #include "errno.h"
 #include "vfs.h"
 #include "socket.h"   /* POLLIN */
+#include "uaccess.h"
 
 /* ── Constants ────────────────────────────────────────────────────── */
 
@@ -223,12 +224,21 @@ int sys_inotify_add_watch(int fd, const char *user_path, uint32_t mask)
     if (!(mask & known))
         return -EINVAL;
 
-    /* Copy path from user space (direct memory access — kernel can read user pages) */
+    /* Copy path from user space via the validated uaccess path.
+     * sys_inotify_add_watch is reachable from a user syscall
+     * (SYS_INOTIFY_ADD_WATCH) with a userspace pointer, and from
+     * kernel context (inotify_add_to_dir) with a kernel pointer.
+     * strncpy_from_user() handles both: user callers get full range
+     * validation plus a CR3 switch, kernel callers get a plain copy.
+     * The raw strnlen/memcpy used here before would page-fault the
+     * kernel under KPTI (user addr unmapped in kernel CR3) or read
+     * arbitrary kernel memory if a kernel-space addr was passed. */
     char path[128];
-    const char *u_path = (const char *)user_path;
-    size_t path_len = strnlen(u_path, sizeof(path) - 1);
-    memcpy(path, u_path, path_len);
-    path[path_len] = '\0';
+    long uc_ret = strncpy_from_user(path, (uint64_t)(uintptr_t)user_path,
+                                    sizeof(path));
+    if (uc_ret < 0)
+        return -EFAULT;
+    size_t path_len = (size_t)uc_ret - 1; /* uc_ret counts the NUL */
     if (path_len == 0)
         return -ENOENT;
 
