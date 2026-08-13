@@ -1184,16 +1184,20 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
 
     uint64_t new_rsp = sp;
 
-    /* Update process name and exe path */
+    /* Update process name (comm) and exe path.
+     * process->name must point at the embedded proc_comm array: the rest of
+     * the kernel treats name as a borrowed pointer (process.c sets
+     * proc->name = proc->proc_comm at creation and NULLs it on teardown
+     * without kfree; spawn_kernel.c documents "Don't kfree(proc->name) —
+     * it points to proc->proc_comm").  A kmalloc'd buffer here leaked
+     * strlen(path)+1 bytes of heap on every successful execve and would
+     * double-free if teardown ever grew a kfree. */
     size_t plen = strlen(path);
-    if (plen > 255)
-        plen = 255;
-    char *kname = (char *)kmalloc(plen + 1);
-    if (kname) {
-        memcpy(kname, path, plen);
-        kname[plen] = '\0';
-        cur->name = kname;
-    }
+    if (plen > sizeof(cur->proc_comm) - 1)
+        plen = sizeof(cur->proc_comm) - 1;
+    memcpy(cur->proc_comm, path, plen);
+    cur->proc_comm[plen] = '\0';
+    cur->name = cur->proc_comm;
     strncpy(cur->exe_path, path, 255);
     cur->exe_path[255] = '\0';
 
