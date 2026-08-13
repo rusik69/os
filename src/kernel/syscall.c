@@ -2746,12 +2746,70 @@ static int64_t sys_ahci_sectors(void) {
 
 static int64_t sys_vfs_read(uint64_t path_addr, uint64_t buf_addr, uint64_t max,
                             uint64_t out_addr) {
-    return (uint64_t)vfs_read((const char *)path_addr, (void *)buf_addr, (uint32_t)max,
-                              (uint32_t *)out_addr);
+    /* The VFS layer (and the procfs/sysctl handlers it calls) expects
+     * kernel-space buffers — sys_read() bounces through a kernel tmp
+     * buffer for exactly this reason.  Forwarding the raw user pointers
+     * here lets sysctl_read_* memcpy() into user memory with no
+     * STAC/CR3 switch and no range validation: with KPTI or SMAP the
+     * kernel CR3 does not map user pages (#PF), and on SMAP-less CPUs
+     * a caller can make the kernel write bounded data at arbitrary
+     * kernel addresses.  Copy the path and bounce the read through a
+     * kernel buffer, then deliver via copy_to_user(). */
+    char kpath[128];
+    long plen = strncpy_from_user(kpath, path_addr, sizeof(kpath));
+    if (plen <= 0)
+        return (uint64_t)(int64_t)-EFAULT;
+    /* Reject paths that don't fit — vfs_abs_path() caps at 128 bytes and
+     * returns -ENAMETOOLONG; silently truncating could resolve the path
+     * to a different file. */
+    if (plen >= (long)sizeof(kpath))
+        return (uint64_t)(int64_t)-ENAMETOOLONG;
+    if (max > UINT32_MAX)
+        max = UINT32_MAX;
+    uint8_t *tmp = kmalloc(max > 0 ? max : 1);
+    if (!tmp)
+        return (uint64_t)(int64_t)-ENOMEM;
+    uint32_t nread = 0;
+    int r = vfs_read(kpath, tmp, (uint32_t)max, &nread);
+    if (r == 0) {
+        if (nread > 0 && copy_to_user(buf_addr, tmp, nread) < 0) {
+            kfree(tmp);
+            return (uint64_t)(int64_t)-EFAULT;
+        }
+        if (out_addr && copy_to_user(out_addr, &nread, sizeof(nread)) < 0) {
+            kfree(tmp);
+            return (uint64_t)(int64_t)-EFAULT;
+        }
+    }
+    kfree(tmp);
+    return (uint64_t)r;
 }
 
 static int64_t sys_vfs_write(uint64_t path_addr, uint64_t data_addr, uint64_t size) {
-    return (uint64_t)vfs_write((const char *)path_addr, (const void *)data_addr, (uint32_t)size);
+    /* Same bounce-buffer requirement as sys_vfs_read: procfs_write()
+     * forwards the buffer to sysctl_write_* handlers which memcpy() out
+     * of it.  A raw user pointer would be dereferenced with no STAC/CR3
+     * switch — #PF under KPTI/SMAP, arbitrary kernel-address reads on
+     * SMAP-less CPUs.  Copy the path and data into kernel buffers first. */
+    char kpath[128];
+    long plen = strncpy_from_user(kpath, path_addr, sizeof(kpath));
+    if (plen <= 0)
+        return (uint64_t)(int64_t)-EFAULT;
+    /* Reject paths that don't fit — see sys_vfs_read. */
+    if (plen >= (long)sizeof(kpath))
+        return (uint64_t)(int64_t)-ENAMETOOLONG;
+    if (size > UINT32_MAX)
+        size = UINT32_MAX;
+    uint8_t *tmp = kmalloc(size > 0 ? size : 1);
+    if (!tmp)
+        return (uint64_t)(int64_t)-ENOMEM;
+    if (size > 0 && copy_from_user(tmp, data_addr, size) < 0) {
+        kfree(tmp);
+        return (uint64_t)(int64_t)-EFAULT;
+    }
+    int r = vfs_write(kpath, tmp, (uint32_t)size);
+    kfree(tmp);
+    return (uint64_t)r;
 }
 
 static int64_t sys_vfs_stat(uint64_t path_addr, uint64_t st_addr) {
