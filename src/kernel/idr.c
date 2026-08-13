@@ -8,7 +8,6 @@
 #include "idr.h"
 #include "heap.h"
 #include "string.h"
-#include "printf.h"
 
 int idr_init(struct idr *idr, int max) {
     if (!idr || max <= 0) return -1;
@@ -51,10 +50,15 @@ int idr_find(struct idr *idr, int id) {
     return (idr->bitmap[w] & (1ULL << bit)) != 0;
 }
 
-/* ── Stub: idr_destroy ─────────────────────────────── */
-int idr_destroy(void *idr)
+/* Release all resources held by an IDR (frees the bitmap). */
+int idr_destroy(struct idr *idr)
 {
-    (void)idr;
-    kprintf("[idr] idr_destroy: not yet implemented\n");
+    if (!idr) return -1;
+    if (idr->bitmap) {
+        kfree(idr->bitmap);
+        idr->bitmap = NULL;
+    }
+    idr->max = 0;
+    idr->nwords = 0;
     return 0;
 }

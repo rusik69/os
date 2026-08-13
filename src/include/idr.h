@@ -21,4 +21,7 @@ void idr_remove(struct idr *idr, int id);
 /* Check if an ID is allocated. Returns 1 if allocated, 0 if free. */
 int idr_find(struct idr *idr, int id);
 
+/* Release all resources held by an IDR. Returns 0 on success, -1 on error. */
+int idr_destroy(struct idr *idr);
+
 #endif /* IDR_H */
