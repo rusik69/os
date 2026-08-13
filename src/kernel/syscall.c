@@ -3072,14 +3072,25 @@ static int64_t sys_getcwd(uint64_t buf_addr, uint64_t buf_size) {
         struct process *cur = process_get_current();
         cwd = (cur && cur->cwd[0]) ? cur->cwd : "/";
     }
-    char *buf = (char *)buf_addr;
     if (buf_size == 0)
         return (uint64_t)(int64_t)-EINVAL;
-    if (!buf)
+    if (!buf_addr)
         return (uint64_t)(int64_t)-EFAULT;
     size_t max = buf_size;
-    strncpy(buf, cwd, max - 1);
-    buf[max - 1] = '\0';
+    /* Write the result through copy_to_user() — never dereference the
+     * user-supplied buffer directly. The raw strncpy form is reachable
+     * from the Linux-ABI dispatch path (lin_getcwd -> SYS_GETCWD ->
+     * syscall_dispatch_internal), which skips the central
+     * syscall_validate_user_args() gate; with no SMAP (e.g. QEMU's
+     * default CPU) a caller can write a bounded string to an arbitrary
+     * kernel address, and with SMAP enabled the raw write faults. */
+    size_t len = strlen(cwd);
+    if (len > max - 1)
+        len = max - 1;
+    if (copy_to_user(buf_addr, cwd, len) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
+    if (copy_to_user(buf_addr + len, "\0", 1) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
     return 0;
 }
 
