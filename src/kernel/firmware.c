@@ -403,7 +403,7 @@ int request_firmware_nowait(const struct firmware **fw_ptr, const char *name,
         return -EAGAIN;
     }
 
-    kprintf("[FW] Async firmware request initiated for '%s'\\n", name);
+    kprintf("[FW] Async firmware request initiated for '%s'\n", name);
     return 0;
 }
 
