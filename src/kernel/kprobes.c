@@ -696,10 +696,15 @@ static int kretprobe_entry_handler(struct kprobe *kp, struct interrupt_frame *fr
     /* Allocate an instance slot (protected by g_kretprobe_lock) */
     int slot = kretprobe_alloc_instance(rp);
     if (slot < 0) {
-        /* No free trampoline slots — let this call proceed normally */
+        /* No free trampoline slots — let this call proceed normally.
+         * The return address is NOT redirected to the trampoline, so
+         * kretprobe_trampoline_handler() will never fire for this call
+         * and active_count must NOT be incremented here — doing so
+         * would leak the counter upward until active_count >= maxactive
+         * is permanently true and the kretprobe silently stops
+         * intercepting (same accounting as the maxactive-exceeded path). */
         kprintf("[KPROBES] kretprobe: no free instance slot for %s (addr 0x%llX)\n",
                 "function", (unsigned long long)rp->addr);
-        rp->active_count++;
         spinlock_irqsave_release(&g_kretprobe_lock, irq_flags);
         return KPROBE_ACTION_CONTINUE;
     }
