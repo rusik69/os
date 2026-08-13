@@ -7150,13 +7150,20 @@ static int64_t sys_futex(uint64_t uaddr, uint64_t op, uint64_t val, uint64_t tim
         if (!cur)
             return (uint64_t)-1;
 
+        /* Validate the user futex word for both read and write */
+        if (syscall_is_user_process() &&
+            (!syscall_user_read_ok(uaddr, 4) || !syscall_user_write_ok(uaddr, 4)))
+            return (uint64_t)-1;
+
         uint32_t cur_val;
-        memcpy(&cur_val, addr, 4);
+        if (copy_from_user(&cur_val, uaddr, 4) < 0)
+            return (uint64_t)-1;
 
         if (cur_val == 0) {
             /* Free — try to acquire directly */
             uint32_t tid = cur->pid;
-            memcpy(addr, &tid, 4);
+            if (copy_to_user(uaddr, &tid, 4) < 0)
+                return (uint64_t)-1;
             return 0;
         }
 
@@ -7184,7 +7191,12 @@ static int64_t sys_futex(uint64_t uaddr, uint64_t op, uint64_t val, uint64_t tim
 
         /* Block */
         uint32_t tid = cur->pid | 0x80000000U; /* set high bit = contended */
-        memcpy(addr, &tid, 4);
+        if (copy_to_user(uaddr, &tid, 4) < 0) {
+            /* Undo the waiter registration on failure */
+            if (futex_pi_table[pi_idx].waiter_count > 0)
+                futex_pi_table[pi_idx].waiter_count--;
+            return (uint64_t)-1;
+        }
 
         cur->state = PROCESS_BLOCKED;
         scheduler_remove(cur);
@@ -7198,8 +7210,14 @@ static int64_t sys_futex(uint64_t uaddr, uint64_t op, uint64_t val, uint64_t tim
         if (!cur)
             return (uint64_t)-1;
 
+        /* Validate the user futex word for both read and write */
+        if (syscall_is_user_process() &&
+            (!syscall_user_read_ok(uaddr, 4) || !syscall_user_write_ok(uaddr, 4)))
+            return (uint64_t)-1;
+
         uint32_t cur_val;
-        memcpy(&cur_val, addr, 4);
+        if (copy_from_user(&cur_val, uaddr, 4) < 0)
+            return (uint64_t)-1;
 
         if ((cur_val & 0x7FFFFFFF) != cur->pid)
             return (uint64_t)-1; /* not owner */
@@ -7225,7 +7243,8 @@ static int64_t sys_futex(uint64_t uaddr, uint64_t op, uint64_t val, uint64_t tim
                 /* Transfer ownership to next waiter */
                 futex_pi_table[pi_idx].owner_pid = next_pid;
                 uint32_t new_owner_tid = next_pid;
-                memcpy(addr, &new_owner_tid, 4);
+                if (copy_to_user(uaddr, &new_owner_tid, 4) < 0)
+                    return (uint64_t)-1;
 
                 /* Wake the next owner */
                 struct process *next = process_get_by_pid(next_pid);
@@ -7236,12 +7255,14 @@ static int64_t sys_futex(uint64_t uaddr, uint64_t op, uint64_t val, uint64_t tim
             } else {
                 /* No waiters — mark as free */
                 uint32_t zero = 0;
-                memcpy(addr, &zero, 4);
+                if (copy_to_user(uaddr, &zero, 4) < 0)
+                    return (uint64_t)-1;
                 futex_pi_table[pi_idx].in_use = 0;
             }
         } else {
             uint32_t zero = 0;
-            memcpy(addr, &zero, 4);
+            if (copy_to_user(uaddr, &zero, 4) < 0)
+                return (uint64_t)-1;
         }
         return 0;
     }
@@ -7287,7 +7308,8 @@ static int64_t sys_futex(uint64_t uaddr, uint64_t op, uint64_t val, uint64_t tim
 
         /* Read old value from uaddr2 */
         uint32_t oldval;
-        memcpy(&oldval, addr2, 4);
+        if (copy_from_user(&oldval, uaddr2, 4) < 0)
+            return (uint64_t)-1;
 
         /* Compute new value */
         uint32_t newval = oldval;
@@ -7312,7 +7334,8 @@ static int64_t sys_futex(uint64_t uaddr, uint64_t op, uint64_t val, uint64_t tim
         }
 
         /* Write new value to uaddr2 */
-        memcpy(addr2, &newval, 4);
+        if (copy_to_user(uaddr2, &newval, 4) < 0)
+            return (uint64_t)-1;
 
         /* ── Always wake up to 'val2' waiters on uaddr2 ────────── */
         int woken1 = 0;
