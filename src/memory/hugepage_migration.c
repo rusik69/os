@@ -11,7 +11,8 @@
  *   - Uses thp.c for huge page tracking (thp_track_hugepage, thp_split_hugepage)
  *   - Uses pmm.c for frame allocation/release
  *   - Uses vmm.c for page table manipulation
- *   - Uses existing numa_migrate_page() for 4K page migration after split
+ *   - 4K page migration after split is deferred until a PTE-rewrite
+ *     path exists (numa_migrate_page() would leak the new frame)
  */
 
 #include "hugepage_migration.h"
@@ -222,25 +223,21 @@ int migrate_huge_page(uint64_t phys_addr, int target_node)
         /* Increment isolation counter for the split pages */
         hugepage_inc_isolated(1, nr_pages);
 
-        /* Migrate each 4K page individually */
+        /* Base-page migration is deferred.  numa_migrate_page() allocates
+         * a NEW frame, copies the contents, and hands ownership to the
+         * caller, which must then rewrite the PTE and free the old page.
+         * The split path has no page-table rewrite: the user PTEs still
+         * point at the old remote frames, and the scanner only walks
+         * existing PTEs, so it can never discover an orphaned new frame.
+         * Calling it here would leak one frame per page per scan cycle
+         * (cooldown only slows the leak).  Keep the split pages in place
+         * until a PTE-rewrite path exists. */
         int migrated = 0;
-        for (int i = 0; i < nr_pages; i++) {
-            uint64_t page_phys = phys_addr + (uint64_t)i * PAGE_SIZE;
-
-            /* Use existing NUMA page migration (now returns new frame) */
-            uint64_t new_frame = numa_migrate_page(page_phys, target_node);
-            if (new_frame) {
-                /* Note: page table update for the split path is not yet
-                 * implemented here — the scanner thread will pick up
-                 * the new mapping on its next cycle, or the next
-                 * context switch will propagate via CR3 reload. */
-                migrated++;
-            }
-        }
 
         hugepage_dec_isolated(1, nr_pages);
 
-        kprintf("[hugepage-mig] Split-migrated %d/%d base pages to node %d\n",
+        kprintf("[hugepage-mig] Split-migrated %d/%d base pages to node %d "
+                "(PTE rewrite not implemented, migration deferred)\n",
                 migrated, nr_pages, target_node);
 
         return (migrated == nr_pages) ? 0 : -EAGAIN;
