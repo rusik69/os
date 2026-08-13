@@ -388,7 +388,11 @@ int64_t userfaultfd_read(int fd, void *buf, uint64_t count)
         return -EINVAL;
     }
 
-    memcpy(buf, ev, sizeof(*ev));
+    /* buf is a user-supplied buffer — copy out, never raw-deref it */
+    if (copy_to_user((uint64_t)(uintptr_t)buf, ev, sizeof(*ev)) < 0) {
+        spinlock_release(&ctx->lock);
+        return -EFAULT;
+    }
     ev->pending = 0;
     ctx->event_tail = (ctx->event_tail + 1) % UFFD_EVENT_RING_SIZE;
 
