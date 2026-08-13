@@ -143,10 +143,23 @@ int ftrace_register(const char *func_name,
         }
     }
 
-    if (g_num_tracepoints >= FTRACE_MAX_TRACEPOINTS) {
-        spinlock_irqsave_release(&g_ftrace_lock, irq_flags);
-        kprintf("[ftrace] Tracepoint table full\n");
-        return -ENOSPC;
+    /* Find a free slot: reuse an inactive slot (freed by ftrace_unregister)
+     * before appending, so register/unregister cycles cannot exhaust the
+     * table with dead entries. */
+    int idx = -1;
+    for (int i = 0; i < g_num_tracepoints; i++) {
+        if (!g_tracepoints[i].active) {
+            idx = i;
+            break;
+        }
+    }
+    if (idx < 0) {
+        if (g_num_tracepoints >= FTRACE_MAX_TRACEPOINTS) {
+            spinlock_irqsave_release(&g_ftrace_lock, irq_flags);
+            kprintf("[ftrace] Tracepoint table full\n");
+            return -ENOSPC;
+        }
+        idx = g_num_tracepoints;
     }
 
     /* Find the kernel symbol address */
@@ -157,7 +170,6 @@ int ftrace_register(const char *func_name,
         return -ENOENT;
     }
 
-    int idx = g_num_tracepoints;
     memset(&g_tracepoints[idx], 0, sizeof(g_tracepoints[idx]));
     strncpy(g_tracepoints[idx].func_name, func_name,
             sizeof(g_tracepoints[idx].func_name) - 1);
@@ -179,7 +191,10 @@ int ftrace_register(const char *func_name,
         return -EIO;
     }
 
-    g_num_tracepoints++;
+    /* Only extend the high-water mark when appending a fresh slot;
+     * reusing an inactive slot keeps g_num_tracepoints unchanged. */
+    if (idx == g_num_tracepoints)
+        g_num_tracepoints++;
     spinlock_irqsave_release(&g_ftrace_lock, irq_flags);
 
     kprintf("[ftrace] Registered trace on %s at 0x%llx\n",
@@ -198,7 +213,15 @@ int ftrace_unregister(const char *func_name)
     for (int i = 0; i < g_num_tracepoints; i++) {
         if (g_tracepoints[i].active &&
             strcmp(g_tracepoints[i].func_name, func_name) == 0) {
-            unregister_kprobe(&g_trace_kprobes[i]);
+            /* If the kprobe cannot be removed (e.g. text restore failed),
+             * the kprobe table still references this struct — keep the
+             * tracepoint intact rather than zeroing a live probe. */
+            if (unregister_kprobe(&g_trace_kprobes[i]) < 0) {
+                spinlock_irqsave_release(&g_ftrace_lock, irq_flags);
+                kprintf("[ftrace] Failed to unregister kprobe for %s\n",
+                        func_name);
+                return -EIO;
+            }
 
             g_tracepoints[i].active = 0;
             g_tracepoints[i].callback = NULL;
@@ -749,8 +772,16 @@ int ftrace_graph_unregister(const char *func_name)
         return -ENOENT;
     }
 
-    /* Unregister the kretprobe */
-    unregister_kretprobe(&g_graph_kretprobes[idx]);
+    /* Unregister the kretprobe.  If the underlying kprobe cannot be
+     * removed (e.g. text restore failed), the kprobe table still
+     * references this struct — keep the entry intact rather than
+     * zeroing a live probe. */
+    if (unregister_kretprobe(&g_graph_kretprobes[idx]) < 0) {
+        spinlock_irqsave_release(&g_graph_lock, irq_flags);
+        kprintf("[ftrace] Graph: failed to unregister kretprobe for %s\n",
+                func_name);
+        return -EIO;
+    }
 
     /* Remove from the list by shifting */
     memset(&g_graph_kretprobes[idx], 0, sizeof(struct kretprobe));
