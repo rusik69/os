@@ -59,10 +59,17 @@ int cpu_security_init(void) {
     uint64_t efer = read_msr(0xC0000080); /* IA32_EFER */
     int rax, rbx, rcx, rdx;
 
-    /* Check CPUID leaf 1 for feature bits */
+    /* Check CPUID leaf 1 for SMEP (ECX bit 7) */
     __asm__ volatile("cpuid" : "=a"(rax), "=b"(rbx), "=c"(rcx), "=d"(rdx) : "a"(1));
 
-    /* Enable SMEP if supported (ECX bit 7) */
+    /* Check CPUID leaf 7, subleaf 0 for SMAP (EBX bit 20) and UMIP (ECX bit 2).
+     * Leaf 1 ECX bits 20/2 are SSE4.2/DTES64, NOT SMAP/UMIP — probing the
+     * wrong leaf would set CR4.SMAP/CR4.UMIP on CPUs lacking the feature,
+     * causing a #GP on the CR4 write (boot crash on pre-Broadwell Intel). */
+    int l7_ebx, l7_ecx;
+    __asm__ volatile("cpuid" : "=a"(rax), "=b"(l7_ebx), "=c"(l7_ecx), "=d"(rdx) : "a"(7), "c"(0));
+
+    /* Enable SMEP if supported (leaf 1 ECX bit 7) */
     if (rcx & (1U << 7)) {
         cr4 |= CR4_SMEP;
         kprintf("[CPU] SMEP enabled\n");
@@ -70,8 +77,8 @@ int cpu_security_init(void) {
         kprintf("[CPU] SMEP not supported\n");
     }
 
-    /* Enable SMAP if supported (ECX bit 20) */
-    if (rcx & (1U << 20)) {
+    /* Enable SMAP if supported (leaf 7 EBX bit 20) */
+    if (l7_ebx & (1U << 20)) {
         cr4 |= CR4_SMAP;
         smap_supported = 1;
         kprintf("[CPU] SMAP enabled\n");
@@ -80,8 +87,8 @@ int cpu_security_init(void) {
         kprintf("[CPU] SMAP not supported\n");
     }
 
-    /* Enable UMIP if supported (ECX bit 2) */
-    if (rcx & (1U << 2)) {
+    /* Enable UMIP if supported (leaf 7 ECX bit 2) */
+    if (l7_ecx & (1U << 2)) {
         cr4 |= CR4_UMIP;
         kprintf("[CPU] UMIP enabled\n");
     } else {
