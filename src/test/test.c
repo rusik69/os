@@ -2205,6 +2205,10 @@ static void test_idr(void) {
     idr_remove(&small, s1);
     ASSERT("idr find after remove 0", idr_find(&small, s1) == 0);
 
+    /* Cleanup: every idr_init must be paired with idr_destroy */
+    ASSERT("idr destroy", idr_destroy(&idr) == 0);
+    ASSERT("idr destroy small", idr_destroy(&small) == 0);
+
     t_ok("idr test");
 }
 
