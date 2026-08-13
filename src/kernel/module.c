@@ -184,6 +184,7 @@ static int g_cmdline_param_count = 0;
 
 /* Forward declarations */
 static void module_scan_cmdline_params(void);
+static void module_free_params(struct kernel_module *mod);
 
 /* ── Global module table ────────────────────────────────────────── */
 
@@ -774,14 +775,22 @@ int module_unload(int module_id) {
      * Call outside the lock since sysfs may have its own locking. */
     spinlock_irqsave_release(&g_mod_lock, irq_flags);
     module_sysfs_remove_params(mod);
-    spinlock_irqsave_acquire(&g_mod_lock, &irq_flags);
 
-    /* Free module memory region */
+    /* Free the kmalloc'd kernel_param nodes (and any kernel-owned
+     * CHARP payloads).  Must run while module memory is still mapped:
+     * kp->data points into the module's own .data section. */
+    spinlock_irqsave_acquire(&g_mod_lock, &irq_flags);
+    module_free_params(mod);
+    spinlock_irqsave_release(&g_mod_lock, irq_flags);
+
+    /* Free module memory region.  module_free_region() acquires
+     * g_mod_lock itself, so it must NOT be called while held. */
     if (mod->base_addr != 0 && mod->size > 0) {
         module_free_region(mod->base_addr, mod->size);
     }
 
     /* Clear the slot */
+    spinlock_irqsave_acquire(&g_mod_lock, &irq_flags);
     memset(mod, 0, sizeof(*mod));
     INIT_LIST_HEAD(&mod->params);
     mod->state = MODULE_DEAD;
@@ -936,6 +945,34 @@ int module_add_param(struct kernel_module *mod, const char *name,
     spinlock_irqsave_release(&g_mod_lock, irq_flags);
 
     return 0;
+}
+
+/* Free all kmalloc'd kernel_param nodes registered for @mod, including
+ * any kernel-owned PARAM_TYPE_CHARP payloads (copies allocated by the
+ * kernel's param setters).  Callers must have removed the module's sysfs
+ * entries first so no callback can still reference a node.  Must be
+ * called with g_mod_lock held, and while module memory is still mapped:
+ * kp->data points into the module's own .data section. */
+static void module_free_params(struct kernel_module *mod)
+{
+    struct kernel_param *kp, *tmp;
+
+    if (!mod)
+        return;
+
+    list_for_each_entry_safe(kp, tmp, &mod->params, list) {
+        /* The kernel's CHARP setters store a kmalloc'd copy and set
+         * data_len = strlen+1; an untouched module param keeps the
+         * module's own pointer with data_len == sizeof(char *).  Only
+         * free the kernel-owned copy. */
+        if (kp->type == PARAM_TYPE_CHARP && kp->data &&
+            kp->data_len != (int)sizeof(char *) && *(char **)kp->data) {
+            kfree(*(char **)kp->data);
+        }
+        list_del(&kp->list);
+        kfree(kp);
+    }
+    mod->param_count = 0;
 }
 
 struct kernel_param *module_find_param(struct kernel_module *mod, const char *name) {
