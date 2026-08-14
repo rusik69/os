@@ -7313,7 +7313,7 @@ static int64_t sys_futex(uint64_t uaddr, uint64_t op, uint64_t val, uint64_t tim
 
         /* Compute new value */
         uint32_t newval = oldval;
-        switch (op) {
+        switch (futex_op) {
         case FUTEX_OP_SET:
             newval = (uint32_t)oparg;
             break;
