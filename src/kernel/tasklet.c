@@ -68,6 +68,25 @@ int tasklet_schedule(struct tasklet_struct *t)
         /* Already scheduled — nothing to do. */
         goto out;
     }
+
+    /* The tasklet may already be registered in the list with state == 0:
+     * tasklet_handler() clears state when it snapshots but does not remove
+     * the entry, so an executed tasklet stays in the list until killed.
+     * Re-scheduling must NOT append a duplicate entry — the handler
+     * snapshots by list position, so a duplicate would run the callback
+     * twice per pass, and tasklet_kill() (which removes only the first
+     * match) would leave a stale duplicate behind that outlives the
+     * tasklet and is replayed against freed memory once the caller frees
+     * it (use-after-free of callback data).  If already present, just
+     * re-mark it pending. */
+    for (int i = 0; i < tasklet_count; i++) {
+        if (tasklet_list[i] == t) {
+            t->state = 1;
+            softirq_raise(SOFTIRQ_TASKLET);
+            goto out;
+        }
+    }
+
     if (tasklet_count >= TASKLET_MAX) {
         ret = -1;
         goto out;
