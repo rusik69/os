@@ -292,7 +292,7 @@ int ladder_reflect(void *dev, int index)
     /* Called after wake from C-state @index.
      * Record the recent state for promotion/demotion decisions. */
     if (index >= 0 && index < LADDER_MAX_STATES) {
-        struct ladder_cpu_state *state = &ladder_state[index];
+        struct ladder_cpu_state *state = this_ladder_state();
         state->recent_idx = index;
         state->recent_count++;
         if (state->recent_count > LADDER_HISTORY_SIZE)
