@@ -207,7 +207,39 @@ int hrtimer_start(struct hrtimer *timer, uint64_t ns)
     uint64_t delay_ticks = (ns + NS_PER_TICK - 1) / NS_PER_TICK;
     if (delay_ticks < 1) delay_ticks = 1;
 
+retry_arm:
     spinlock_irqsave_acquire(&timer->lock, &irq_flags);
+
+    /* Re-check under the lock before arming: a concurrent
+     * hrtimer_start() (external reprogram, or an IRQ nested over our
+     * own callback) may have armed the timer while we were waiting
+     * out the old dispatch above.  If we ignored it and scheduled a
+     * second slot, the other slot stays live in the timer table,
+     * fires the callback at the wrong time, clobbers timer_id/state
+     * on expiry, and silently swallows the expiry we arm here (missed
+     * expiry); it then remains armed as a phantom dispatch.  Cancel
+     * the other arming, wait out any dispatch dequeued for it, and
+     * retry. */
+    if (timer->timer_id >= 0) {
+        slot = timer->timer_id;
+        timer_cancel(slot);
+        timer->timer_id = -1;
+        timer->state = 0;
+        spinlock_irqsave_release(&timer->lock, irq_flags);
+
+        if (g_cb_timer[hrtimer_cur_cpu()] == timer) {
+            /* In-callback path: never wait on timer->running — that
+             * flag only clears when our own dispatch returns, so
+             * waiting would self-deadlock.  Only a dispatch already
+             * dequeued for the canceled slot can still run. */
+            while (timer_callback_pending(slot, timer))
+                __asm__ volatile("pause");
+        } else {
+            while (timer->running || timer_callback_pending(slot, timer))
+                __asm__ volatile("pause");
+        }
+        goto retry_arm;
+    }
 
     int tid = timer_schedule(hrtimer_dispatch, timer, delay_ticks);
     if (tid < 0) {
