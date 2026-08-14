@@ -87,12 +87,28 @@ void irq_work_run(void)
         work = llist_entry(node, struct irq_work, llnode);
         node = node->next;
 
-        /* Clear PENDING, set BUSY, execute, clear BUSY */
+        /* Consume PENDING, mark the item in-flight (BUSY) so that
+         * irq_work_sync() can wait for the callback to finish. */
         __sync_synchronize();
-        work->flags = IRQ_WORK_BUSY;
+        WRITE_ONCE(work->flags, IRQ_WORK_BUSY);
         work->func(work);
-        __sync_synchronize();
-        work->flags = 0;
+
+        /*
+         * Return the item to the free state unless the callback
+         * re-queued it.  A re-queue (from the callback itself or
+         * another CPU) sets PENDING again and links the node onto the
+         * list; an unconditional clear here would drop that fresh
+         * PENDING flag, so a later irq_work_queue() would llist_add()
+         * the same node a second time — a cycle that makes this loop
+         * spin forever.  The atomic exchange closes the read-modify-
+         * write race with a concurrent cross-CPU re-queue.
+         *
+         * NOTE: the callback must not free the struct irq_work itself;
+         * free it only after irq_work_sync() returns.
+         */
+        int oflags = __sync_lock_test_and_set(&work->flags, 0);
+        if (oflags & IRQ_WORK_PENDING)
+            WRITE_ONCE(work->flags, IRQ_WORK_PENDING);
     }
 
     spinlock_release(irq_work_lock(cpu));
@@ -104,8 +120,12 @@ void irq_work_sync(struct irq_work *work)
         return;
 
     /* Busy-wait until the work is no longer pending or busy.
-     * In a real system this would use a completion. */
-    while (work->flags & (IRQ_WORK_PENDING | IRQ_WORK_BUSY)) {
+     * In a real system this would use a completion.  READ_ONCE is
+     * required: the flag is written by irq_work_run() on another CPU
+     * (or by the timer IRQ), and a plain load could be hoisted out of
+     * the loop, making sync return while the callback is still running
+     * — the caller would then free the callback data under it. */
+    while (READ_ONCE(work->flags) & (IRQ_WORK_PENDING | IRQ_WORK_BUSY)) {
         __asm__ volatile("pause");
     }
 }
