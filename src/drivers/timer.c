@@ -130,6 +130,14 @@ static void timer_handler(struct interrupt_frame *frame) {
 
     scheduler_tick(was_user);
 
+    /* Drive POSIX per-process timer expiry (timer_create/timer_settime).
+     * The 89aade74 boot-sequence rework dropped this call and it was never
+     * re-wired: without it, armed POSIX timers never expire, never deliver
+     * their expiry signal, and one-shot slots never disarm (leaking the
+     * slot).  signal_send() is safe from this context — scheduler_tick's
+     * RLIMIT_CPU enforcement already delivers signals from here. */
+    posix_timer_tick();
+
     /* NOTE: the NIC is NOT polled from the timer.  The netd kthread
      * (telnetd_task) drains the NIC in process context — running the full
      * TCP stack on the IRQ stack re-enters tcp_lock from the timer's own
