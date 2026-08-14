@@ -619,11 +619,11 @@ static int syscall_validate_user_args(uint64_t num, uint64_t a1, uint64_t a2, ui
         return 0;
     case SYS_SCHED_SETATTR:
         if (!a2)
-            return -EINVAL;
+            return -EFAULT;
         return syscall_user_read_ok(a2, sizeof(struct sched_attr)) ? 0 : -EFAULT;
     case SYS_SCHED_GETATTR:
         if (!a2)
-            return -EINVAL;
+            return -EFAULT;
         return syscall_user_write_ok(a2, a3) ? 0 : -EFAULT;
     /* New production syscalls (batch 2) */
     case SYS_OPENAT:
@@ -8718,7 +8718,7 @@ static int64_t sys_sched_setattr(uint64_t pid, uint64_t attr_addr, uint64_t flag
     int ret;
 
     if (!attr_addr)
-        return (uint64_t)(int64_t)-EINVAL;
+        return (uint64_t)(int64_t)-EFAULT;
 
     /* Step 1: Read just the size field to learn the caller's struct extent.
      * We use copy_from_user() which safely handles SMAP (STAC/CLAC) and
@@ -8768,7 +8768,9 @@ static int64_t sys_sched_getattr(uint64_t pid, uint64_t attr_addr, uint64_t size
     struct sched_attr attr;
     int ret;
 
-    if (!attr_addr || size == 0 || size > sizeof(struct sched_attr))
+    if (!attr_addr)
+        return (uint64_t)(int64_t)-EFAULT;
+    if (size == 0 || size > sizeof(struct sched_attr))
         return (uint64_t)(int64_t)-EINVAL;
 
     if (syscall_is_user_process() &&
