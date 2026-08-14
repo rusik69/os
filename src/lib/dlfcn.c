@@ -16,12 +16,14 @@
  */
 
 #include "dlfcn.h"
+
 #include "elf.h"
-#include "syscall.h"
-#include "string.h"
-#include "types.h"
-#include "printf.h"
 #include "heap.h"
+#include "printf.h"
+#include "string.h"
+#include "syscall.h"
+#include "types.h"
+#include "vmm.h"
 
 /* ── Internal constants ─────────────────────────────────────────────── */
 
@@ -88,7 +90,12 @@ static inline int64_t dl_lseek(int fd, int64_t offset, int whence) {
 }
 
 static inline void *dl_mmap(uint64_t addr, uint64_t length, uint64_t prot) {
-    return (void *)libc_syscall(SYS_MMAP, addr, length, prot, 0, 0);
+    /* sys_mmap(addr, length, prot, flags, fd, offset) — 6-arg syscall.
+     * Flags MUST include exactly one of MAP_SHARED/MAP_PRIVATE, otherwise
+     * vmm_validate_mmap_flags() rejects the call with -EINVAL.  dlfcn maps
+     * anonymous memory and copies the segment bytes itself, so it needs
+     * MAP_PRIVATE|MAP_ANONYMOUS (offset is ignored for anonymous maps). */
+    return (void *)libc_syscall(SYS_MMAP, addr, length, prot, MAP_PRIVATE | MAP_ANONYMOUS, 0);
 }
 
 static inline int dl_munmap(uint64_t addr, uint64_t length) {
