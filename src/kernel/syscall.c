@@ -12611,6 +12611,9 @@ int64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2, uint64
     case SYS_CLOSE:
         return sys_close(a1);
     case SYS_CLOSE_RANGE:
+        /* close_range(first, last, flags) — 3-arg handler; must NOT
+         * fall through to sys_exit (that would terminate the process). */
+        return sys_close_range(a1, a2, a3);
     case SYS_EXIT:
         return sys_exit(a1);
     case SYS_EXIT_GROUP:
