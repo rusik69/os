@@ -34,6 +34,7 @@ static volatile int watchdog_running = 0;
 #define NMI_MSR_PERFEVTSEL0    0x186
 #define NMI_MSR_PMC0           0xC1
 #define NMI_MSR_PERF_GLOBAL_CTRL 0x38F
+#define NMI_MSR_PERF_GLOBAL_STATUS_RESET 0x390
 
 /* EVTSEL0 bit definitions */
 #define EVTSEL_EN              (1UL << 22)  /* Enable counter */
@@ -54,6 +55,11 @@ static volatile int watchdog_running = 0;
 
 /* Static: non-zero if the PMC-based NMI source is available */
 static int nmi_pmc_available = 0;
+
+/* PMU version from CPUID.0AH:EAX[7:0].  The IA32_PERF_GLOBAL_STATUS_RESET
+ * MSR only exists on version >= 2 hardware; writing it on v1 would #GP
+ * (fatal in NMI context), so the overflow-status clear is version-gated. */
+static int nmi_pmc_version = 0;
 
 /*
  * Check CPUID leaf 0x0A (Architectural Performance Monitoring).
@@ -90,6 +96,8 @@ static int nmi_pmc_check_support(void) {
                 "(need >= 48 bits)\n", (unsigned int)counter_width);
         return 0;
     }
+
+    nmi_pmc_version = version;
 
     return 1;
 }
@@ -368,6 +376,22 @@ void nmi_watchdog_handler(struct interrupt_frame *frame) {
     (void)frame;
 
     if (!watchdog_running) return;
+
+    /* ── Re-arm the PMC counter on every overflow ────────────────────
+     * A hardware counter wraps to zero on overflow and keeps counting;
+     * on Intel, once the overflow status bit in IA32_PERF_GLOBAL_STATUS
+     * is set, further overflows do NOT re-deliver the PMI until the
+     * status is cleared.  Without re-arming + status-clear here, the
+     * periodic NMI would fire exactly once after nmi_watchdog_start()
+     * and every subsequent expiry would be missed (the next overflow
+     * of a 48-bit counter is ~2^48 cycles ≈ 1.6 days later) — the hard
+     * lockup detector would silently go deaf.  This mirrors Linux's
+     * x86_pmu handler, which also re-arms the period in NMI context. */
+    if (nmi_pmc_available) {
+        write_msr(NMI_MSR_PMC0, (uint64_t)NMI_PMC_COUNT_INIT);
+        if (nmi_pmc_version >= 2)
+            write_msr(NMI_MSR_PERF_GLOBAL_STATUS_RESET, 1UL); /* clear PMC0 overflow */
+    }
 
     struct nmi_watchdog_cpu *wd = this_watchdog();
     wd->nmi_count++;
