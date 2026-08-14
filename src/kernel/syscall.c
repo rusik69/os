@@ -12941,7 +12941,10 @@ int64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2, uint64
     case SYS_CALLOC:
         return sys_calloc(a1, a2);
     case SYS_MMAP:
-        return sys_mmap(a1, a2, a3, a4, a5, 0);
+        /* mmap() is a 6-arg syscall on x86-64 — the asm entry saves user r9
+         * (offset) into syscall_arg6.  Forward it like futex/splice do;
+         * a hardcoded 0 silently drops non-zero file offsets. */
+        return sys_mmap(a1, a2, a3, a4, a5, syscall_arg6);
     case SYS_MUNMAP:
         return sys_munmap(a1, a2);
     case SYS_MPROTECT:
