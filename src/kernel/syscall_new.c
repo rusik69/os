@@ -261,7 +261,8 @@ static int do_sysinfo(struct sysinfo *info)
 static ssize_t do_getrandom(void *buf, size_t count, unsigned int flags)
 {
     (void)flags;
-    if (!buf || count == 0) return 0;
+    if (count == 0) return 0;
+    if (!buf) return -EFAULT;
     if (count > 4096) count = 4096;
 
     /* Fill a kernel buffer and deliver via copy_to_user() — buf is a
@@ -439,7 +440,7 @@ static int do_utimensat(int dirfd, const char *pathname, const struct timespec t
     char path[256];
 
     if (!pathname) {
-        if (dirfd == -100) return -EINVAL;
+        if (dirfd == -100) return -EFAULT; /* NULL path + AT_FDCWD: bad user pointer */
         struct process *p = process_get_current();
         if (!p || dirfd >= PROCESS_FD_MAX || !p->fd_table[dirfd].used)
             return -EBADF;
