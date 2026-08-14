@@ -56,11 +56,19 @@ static void hrtimer_dispatch(void *arg)
 
     spinlock_irqsave_acquire(&timer->lock, &irq_flags);
 
+    /* Mark the dispatch as running BEFORE the state check so that a
+     * dispatch already dequeued by the timer softirq is fully covered
+     * by hrtimer_cancel()'s completion wait: cancel() waits for
+     * running to drop to 0, which now also covers the state == 0
+     * early-exit path below. */
+    timer->running = 1;
+
     /* If the timer was canceled (or never armed), do not invoke the
      * user callback.  timer_handler_soft() dequeues the slot before
      * calling us, so this is the only fence between hrtimer_cancel()
      * returning and the callback running. */
     if (timer->state == 0) {
+        timer->running = 0;
         spinlock_irqsave_release(&timer->lock, irq_flags);
         return;
     }
@@ -74,9 +82,9 @@ static void hrtimer_dispatch(void *arg)
     function = timer->function;
     data = timer->data;
 
-    /* Mark the callback as running before releasing the lock, so
-     * hrtimer_cancel() can wait for completion. */
-    timer->running = 1;
+    /* running was set to 1 above while holding the lock, so a
+     * concurrent hrtimer_cancel() will wait for the callback to
+     * complete before returning. */
     spinlock_irqsave_release(&timer->lock, irq_flags);
 
     if (function)
@@ -148,6 +156,22 @@ int hrtimer_cancel(struct hrtimer *timer)
     while (timer->running) {
         __asm__ volatile("pause");
     }
+
+    /* The callback may have re-armed the timer (hrtimer_start() from
+     * within the callback, e.g. periodic timers) after we cleared
+     * state above.  That arming is still live and would invoke the
+     * callback again after cancel returns — a use-after-free of the
+     * callback data if the caller frees it now.  Re-check under the
+     * lock and cancel any timer re-armed while the callback was
+     * running, so that after hrtimer_cancel() returns the callback
+     * can never fire again. */
+    spinlock_irqsave_acquire(&timer->lock, &irq_flags);
+    if (timer->timer_id >= 0) {
+        timer_cancel(timer->timer_id);
+        timer->timer_id = -1;
+    }
+    timer->state = 0;
+    spinlock_irqsave_release(&timer->lock, irq_flags);
 
     return 0;
 }
