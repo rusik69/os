@@ -172,7 +172,6 @@ static inline void do_mwait_hint(uint64_t hint)
 /* ── Global state ────────────────────────────────────────────────── */
 static int g_cpuidle_initialized = 0;
 static int cpuidle_global_enabled = 1;
-static int g_state_count = 0;
 
 /*
  * POLL idle state — busy-wait with PAUSE instruction.
@@ -747,6 +746,8 @@ void cpuidle_init(void)
     /* Register the built-in menu governor */
     cpuidle_register_governor(&menu_governor);
 
+    g_cpuidle_initialized = 1;
+
     kprintf("[cpuidle] Initialised (%s governor active, %d states)\n",
             active_governor ? active_governor->name : "none",
             idle_state_count);
@@ -886,7 +887,7 @@ void cpuidle_enable(void)
 
 int cpuidle_state_count(void)
 {
-    return g_state_count;
+    return idle_state_count;
 }
 
 /* ── Stub: cpuidle_select ──────────────────────────────────────────── */
