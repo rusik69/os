@@ -399,8 +399,8 @@ static int64_t lin_exit(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint
 
 static int64_t lin_wait4(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                          uint64_t a6) {
-    lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_WAITPID, a1, a2, 0, 0, 0);
+    lin_discard2(a5, a6);
+    return syscall_dispatch_internal(SYS_WAIT4, a1, a2, a3, a4, 0);
 }
 
 static int64_t lin_kill(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
@@ -1177,8 +1177,8 @@ static int64_t lin_pidfd_open(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4
 
 static int64_t lin_pidfd_send_signal(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4,
                                      uint64_t a5, uint64_t a6) {
-    lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_PIDFD_SEND_SIGNAL, a1, a2, a3, 0, 0);
+    lin_discard2(a5, a6);
+    return syscall_dispatch_internal(SYS_PIDFD_SEND_SIGNAL, a1, a2, a3, a4, 0);
 }
 
 static int64_t lin_pidfd_getfd(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
@@ -1219,8 +1219,8 @@ static int64_t lin_mount_setattr(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t
 
 static int64_t lin_pkey_mprotect(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                  uint64_t a6) {
-    lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_MPROTECT, a1, a2, a3, 0, 0);
+    lin_discard2(a5, a6);
+    return syscall_dispatch_internal(SYS_PKEY_MPROTECT, a1, a2, a3, a4, 0);
 }
 
 static int64_t lin_mbind(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
