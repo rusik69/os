@@ -221,10 +221,10 @@ int64_t sys_setgroups(uint64_t size, uint64_t list_addr) {
     if (size > NGROUPS_MAX)
         return (uint64_t)(int64_t)-EINVAL;
 
-    /* Clear existing groups */
-    p->ngroups = 0;
-
-    /* Copy in new groups from user buffer */
+    /* Copy in new groups from user buffer.  Commit p->ngroups only
+     * after a successful copy: a failed copy (bad user pointer,
+     * -EFAULT) must leave the existing group set untouched (Linux
+     * setgroups semantics). */
     if (size > 0) {
         uint32_t buf[NGROUPS_MAX];
         if (copy_from_user(buf, list_addr, (size_t)size * sizeof(uint32_t)) < 0)
@@ -232,8 +232,8 @@ int64_t sys_setgroups(uint64_t size, uint64_t list_addr) {
 
         for (int i = 0; i < (int)size; i++)
             p->groups[i] = buf[i];
-        p->ngroups = (uint16_t)size;
     }
+    p->ngroups = (uint16_t)size;
 
     return 0;
 }
