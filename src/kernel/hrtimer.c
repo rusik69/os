@@ -101,16 +101,56 @@ int hrtimer_start(struct hrtimer *timer, uint64_t ns)
     if (!timer_available()) return -1;
 
     uint64_t irq_flags;
-    spinlock_irqsave_acquire(&timer->lock, &irq_flags);
+    int slot;
 
-    /* Cancel any previously-scheduled underlying timer first.
+    /* Cancel any previously-scheduled underlying timer first, waiting
+     * out any dispatch already dequeued for it before re-arming.
+     *
      * timer->timer_id is only non-negative while the underlying timer
      * is genuinely pending: hrtimer_dispatch() resets it to -1 on
      * expiry, so this can never cancel an unrelated timer that
-     * recycled the slot. */
-    if (timer->timer_id >= 0) {
-        timer_cancel(timer->timer_id);
-        timer->timer_id = -1;
+     * recycled the slot.
+     *
+     * The drain (the same fence hrtimer_cancel() uses) closes the
+     * reprogram-vs-dispatch race: without it, a dispatch dequeued by
+     * timer_handler_soft() just before the reprogram (slot marked
+     * firing) runs after we re-arm, sees state == 1, invokes the
+     * callback for the old expiry, and resets timer_id/state —
+     * silently cancelling the new arming (the reprogrammed expiry
+     * never fires) and leaving the new slot scheduled as a phantom
+     * dispatch that dereferences the timer after the owner freed it.
+     * state is cleared before the wait, so a stale dispatch
+     * early-exits without invoking the callback.  In-callback re-arms
+     * never wait: timer_id is already -1 by the time
+     * hrtimer_dispatch() calls the user function, so the periodic
+     * re-arm pattern schedules directly. */
+    for (;;) {
+        spinlock_irqsave_acquire(&timer->lock, &irq_flags);
+
+        if (timer->timer_id >= 0) {
+            slot = timer->timer_id;
+            timer_cancel(slot);
+            timer->timer_id = -1;
+            timer->state = 0;
+        } else {
+            slot = -1;
+        }
+
+        spinlock_irqsave_release(&timer->lock, irq_flags);
+
+        if (slot < 0)
+            break;
+
+        if (!timer->running && !timer_callback_pending(slot, timer))
+            break;
+
+        /* A dispatch for the canceled slot is running or about to
+         * run.  It sees state == 0 and returns without invoking the
+         * callback; the loop re-checks in case the in-flight callback
+         * re-armed the timer while we waited. */
+        while (timer->running || timer_callback_pending(slot, timer)) {
+            __asm__ volatile("pause");
+        }
     }
 
     /* Convert nanoseconds to ticks.
@@ -118,6 +158,8 @@ int hrtimer_start(struct hrtimer *timer, uint64_t ns)
      * Divide and round up so even tiny ns values yield at least 1 tick. */
     uint64_t delay_ticks = (ns + NS_PER_TICK - 1) / NS_PER_TICK;
     if (delay_ticks < 1) delay_ticks = 1;
+
+    spinlock_irqsave_acquire(&timer->lock, &irq_flags);
 
     int tid = timer_schedule(hrtimer_dispatch, timer, delay_ticks);
     if (tid < 0) {
