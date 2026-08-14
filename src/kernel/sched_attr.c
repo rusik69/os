@@ -103,23 +103,19 @@ int sched_setattr(uint32_t pid, const struct sched_attr *attr, uint32_t flags)
 
     int idx = sched_attr_index(pid);
 
-    /* Store the scheduling attributes */
-    memcpy(&sched_attr_table[idx], attr, sizeof(struct sched_attr));
-    sched_attr_used[idx] = 1;
+    /* ── SCHED_DEADLINE: admission control must succeed BEFORE any state is
+     * committed.  Committing SCHED_DEADLINE first would strand the process
+     * on failure: scheduler_add_locked() never enqueues SCHED_DEADLINE-policy
+     * tasks into the normal priority queues, and a failed admission leaves
+     * it in no deadline runqueue either — permanent starvation. ─────────── */
+    if (attr->sched_policy == SCHED_DEADLINE) {
+        uint8_t saved_policy = proc->sched_policy;
+        uint64_t saved_runtime = proc->dl_runtime;
+        uint64_t saved_deadline = proc->dl_deadline;
+        uint64_t saved_period = proc->dl_period;
+        int saved_active = proc->dl_active;
+        int saved_throttled = proc->dl_throttled;
 
-    /* Also persist sched_flags in the process struct for fork/clone checks */
-    proc->sched_flags = attr->sched_flags;
-
-    /* Also update the process's in-core scheduling policy/priority */
-    if (attr->sched_policy == SCHED_FIFO || attr->sched_policy == SCHED_RR ||
-        attr->sched_policy == SCHED_OTHER || attr->sched_policy == SCHED_BATCH) {
-        proc->sched_policy = (uint8_t)attr->sched_policy;
-        proc->priority     = (uint8_t)(attr->sched_priority & 0xFF);
-    } else if (attr->sched_policy == SCHED_IDLE) {
-        proc->sched_policy = SCHED_IDLE;
-        proc->priority     = SCHED_LEVELS - 1; /* lowest priority level */
-    } else if (attr->sched_policy == SCHED_DEADLINE) {
-        /* Configure SCHED_DEADLINE parameters */
         proc->sched_policy  = SCHED_DEADLINE;
         proc->dl_runtime    = attr->sched_runtime;
         proc->dl_deadline   = attr->sched_deadline;
@@ -136,8 +132,34 @@ int sched_setattr(uint32_t pid, const struct sched_attr *attr, uint32_t flags)
                     (unsigned long long)attr->sched_runtime,
                     (unsigned long long)attr->sched_deadline,
                     (unsigned long long)attr->sched_period);
+            /* Roll back so the process is not left with SCHED_DEADLINE
+             * policy while absent from every deadline runqueue. */
+            proc->sched_policy = saved_policy;
+            proc->dl_runtime = saved_runtime;
+            proc->dl_deadline = saved_deadline;
+            proc->dl_period = saved_period;
+            proc->dl_active = saved_active;
+            proc->dl_throttled = saved_throttled;
             return -EBUSY;
         }
+    }
+
+    /* Store the scheduling attributes */
+    memcpy(&sched_attr_table[idx], attr, sizeof(struct sched_attr));
+    sched_attr_used[idx] = 1;
+
+    /* Also persist sched_flags in the process struct for fork/clone checks */
+    proc->sched_flags = attr->sched_flags;
+
+    /* Also update the process's in-core scheduling policy/priority.
+     * SCHED_DEADLINE was configured and admitted above. */
+    if (attr->sched_policy == SCHED_FIFO || attr->sched_policy == SCHED_RR ||
+        attr->sched_policy == SCHED_OTHER || attr->sched_policy == SCHED_BATCH) {
+        proc->sched_policy = (uint8_t)attr->sched_policy;
+        proc->priority = (uint8_t)(attr->sched_priority & 0xFF);
+    } else if (attr->sched_policy == SCHED_IDLE) {
+        proc->sched_policy = SCHED_IDLE;
+        proc->priority = SCHED_LEVELS - 1; /* lowest priority level */
     }
 
     return 0;
