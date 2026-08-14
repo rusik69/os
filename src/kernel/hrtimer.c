@@ -29,6 +29,24 @@
 #include "hrtimer.h"
 #include "types.h"
 #include "timers.h"
+#include "smp.h"
+
+/* Per-CPU: the hrtimer whose user callback is currently executing on
+ * this CPU (set/cleared by hrtimer_dispatch()).  Lets hrtimer_start()
+ * recognize an in-callback re-arm: such a re-arm must not wait on
+ * timer->running — that flag only clears when the dispatch returns,
+ * i.e. after the callback itself returns, so waiting on it from inside
+ * the callback would self-deadlock the callback's CPU. */
+static struct hrtimer *volatile g_cb_timer[SMP_MAX_CPUS];
+
+/* Current CPU id, clamped to the per-CPU array bounds. */
+static inline int hrtimer_cur_cpu(void)
+{
+    int cpu = smp_get_cpu_id();
+    if (cpu < 0 || cpu >= SMP_MAX_CPUS)
+        cpu = 0;
+    return cpu;
+}
 
 void hrtimer_init(struct hrtimer *timer, void (*function)(void *), void *data)
 {
@@ -60,8 +78,11 @@ static void hrtimer_dispatch(void *arg)
      * dispatch already dequeued by the timer softirq is fully covered
      * by hrtimer_cancel()'s completion wait: cancel() waits for
      * running to drop to 0, which now also covers the state == 0
-     * early-exit path below. */
+     * early-exit path below.  Record the dispatching CPU so
+     * hrtimer_start() can recognize an in-callback re-arm. */
     timer->running = 1;
+    int cpu = hrtimer_cur_cpu();
+    g_cb_timer[cpu] = timer;
 
     /* If the timer was canceled (or never armed), do not invoke the
      * user callback.  timer_handler_soft() dequeues the slot before
@@ -69,6 +90,7 @@ static void hrtimer_dispatch(void *arg)
      * returning and the callback running. */
     if (timer->state == 0) {
         timer->running = 0;
+        g_cb_timer[cpu] = NULL;
         spinlock_irqsave_release(&timer->lock, irq_flags);
         return;
     }
@@ -92,6 +114,7 @@ static void hrtimer_dispatch(void *arg)
 
     spinlock_irqsave_acquire(&timer->lock, &irq_flags);
     timer->running = 0;
+    g_cb_timer[cpu] = NULL;
     spinlock_irqsave_release(&timer->lock, irq_flags);
 }
 
@@ -121,9 +144,12 @@ int hrtimer_start(struct hrtimer *timer, uint64_t ns)
      * dispatch that dereferences the timer after the owner freed it.
      * state is cleared before the wait, so a stale dispatch
      * early-exits without invoking the callback.  In-callback re-arms
-     * never wait: timer_id is already -1 by the time
+     * never wait on running: timer_id is already -1 by the time
      * hrtimer_dispatch() calls the user function, so the periodic
-     * re-arm pattern schedules directly. */
+     * re-arm pattern schedules directly (an in-callback re-arm only
+     * waits out a dispatch dequeued for a slot it just canceled, and
+     * only on the rare path where a concurrent reprogram armed the
+     * timer mid-callback). */
     for (;;) {
         spinlock_irqsave_acquire(&timer->lock, &irq_flags);
 
@@ -138,7 +164,21 @@ int hrtimer_start(struct hrtimer *timer, uint64_t ns)
 
         spinlock_irqsave_release(&timer->lock, irq_flags);
 
-        if (slot < 0)
+        /* In-callback re-arm (the callback of THIS timer re-arming
+         * itself, e.g. the periodic vblank pattern): never wait on
+         * timer->running — that flag is only cleared when
+         * hrtimer_dispatch() returns, which requires the callback to
+         * return first, so waiting would self-deadlock.  The only
+         * thing to wait out is a dispatch already dequeued for the
+         * slot we just canceled (pending); it sees state == 0 and
+         * early-exits without invoking the callback. */
+        if (g_cb_timer[hrtimer_cur_cpu()] == timer) {
+            while (timer_callback_pending(slot, timer))
+                __asm__ volatile("pause");
+            break;
+        }
+
+        if (slot < 0 && !timer->running)
             break;
 
         if (!timer->running && !timer_callback_pending(slot, timer))
@@ -147,7 +187,15 @@ int hrtimer_start(struct hrtimer *timer, uint64_t ns)
         /* A dispatch for the canceled slot is running or about to
          * run.  It sees state == 0 and returns without invoking the
          * callback; the loop re-checks in case the in-flight callback
-         * re-armed the timer while we waited. */
+         * re-armed the timer while we waited.
+         *
+         * This wait also covers slot < 0 with running == 1 — the
+         * dispatch already cleared timer_id and its callback is still
+         * executing.  Waiting for it to finish BEFORE re-arming closes
+         * the reprogram-vs-callback race: if we re-armed while the
+         * callback was still running, the callback's own re-arm would
+         * cancel our fresh slot and then spin on running == 1 (set by
+         * its own dispatch), deadlocking the callback's CPU. */
         while (timer->running || timer_callback_pending(slot, timer)) {
             __asm__ volatile("pause");
         }
