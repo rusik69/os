@@ -278,24 +278,27 @@ static void __init uid16_init(void)
     kprintf("[OK] UID16: 16-bit UID syscall compatibility layer\n");
 }
 
-/* ── Stub: uid16_to_uid ─────────────────────────────── */
+/* ── Conversion helpers (16-bit <-> 32-bit UID translation) ────────── */
 static int uid16_to_uid(uint16_t uid16)
 {
-    (void)uid16;
-    kprintf("[uid] uid16_to_uid: not yet implemented\n");
-    return 0;
+    /* 0xFFFE is the "unrepresentable in 16 bits" overflow marker and
+     * 0xFFFF is the "no change" sentinel used by the set*uid16 callers;
+     * neither is a valid UID value. */
+    if (uid16 == 0xFFFE || uid16 == 0xFFFF)
+        return -EINVAL;
+    return (int)uid_from_16(uid16);
 }
-/* ── Stub: uid_to_uid16 ─────────────────────────────── */
+
 static uint16_t uid_to_uid16(int uid)
 {
-    (void)uid;
-    kprintf("[uid] uid_to_uid16: not yet implemented\n");
-    return 0;
+    if (uid < 0)
+        return 0xFFFE;  /* negative UIDs are unrepresentable in 16 bits */
+    return uid_to_16((uint32_t)uid);
 }
-/* ── Stub: uid16_validate ─────────────────────────────── */
+
 static int uid16_validate(uint16_t uid16)
 {
-    (void)uid16;
-    kprintf("[uid] uid16_validate: not yet implemented\n");
+    if (uid16 == 0xFFFE || uid16 == 0xFFFF)
+        return -EINVAL;
     return 0;
 }
