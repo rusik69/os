@@ -1174,23 +1174,11 @@ static int64_t lin_ioprio_get(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4
     return syscall_dispatch_internal(SYS_IOPRIO_GET, a1, a2, 0, 0, 0, a6);
 }
 
-static int64_t lin_pidfd_open(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
-                              uint64_t a6) {
-    lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_PIDFD_OPEN, a1, a2, 0, 0, 0, a6);
-}
-
-static int64_t lin_pidfd_send_signal(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4,
-                                     uint64_t a5, uint64_t a6) {
-    lin_discard2(a5, a6);
-    return syscall_dispatch_internal(SYS_PIDFD_SEND_SIGNAL, a1, a2, a3, a4, 0, a6);
-}
-
-static int64_t lin_pidfd_getfd(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
-                               uint64_t a6) {
-    lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_PIDFD_GETFD, a1, a2, a3, 0, 0, a6);
-}
+/* pidfd syscalls (Linux __NR_pidfd_send_signal=424, __NR_pidfd_open=434,
+ * __NR_pidfd_getfd=438) are NOT reachable via sys_call_table[]: the table is
+ * sized __NR_syscalls (335) and syscall_linux_dispatch rejects num >= 335
+ * with -ENOSYS.  The internal SYS_PIDFD_* dispatch in syscall_dispatch_internal
+ * is the live path (arg counts verified against pidfd.h signatures there). */
 
 static int64_t lin_close_range(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                uint64_t a6) {
