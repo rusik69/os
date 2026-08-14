@@ -103,10 +103,9 @@ int64_t sys_capget(uint64_t header_addr, uint64_t data_addr) {
     struct process *target, *caller;
     int ret;
 
-    /* Validate and copy header from userspace */
-    if (!header_addr || !data_addr)
-        return (uint64_t)(int64_t)-EINVAL;
-
+    /* Validate and copy header from userspace.
+     * NULL / bad user pointers are rejected by copy_from_user /
+     * copy_to_user with -EFAULT (Linux-compatible), never -EINVAL. */
     if (copy_from_user(&hdr, header_addr, sizeof(hdr)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
 
@@ -177,10 +176,9 @@ int64_t sys_capset(uint64_t header_addr, uint64_t data_addr) {
     uint64_t cur_perm, cur_inh;
     int ret, ndata;
 
-    /* Validate and copy header from userspace */
-    if (!header_addr || !data_addr)
-        return (uint64_t)(int64_t)-EINVAL;
-
+    /* Validate and copy header from userspace.
+     * NULL / bad user pointers are rejected by copy_from_user /
+     * copy_to_user with -EFAULT (Linux-compatible), never -EINVAL. */
     if (copy_from_user(&hdr, header_addr, sizeof(hdr)) < 0)
         return (uint64_t)(int64_t)-EFAULT;
 
