@@ -577,7 +577,7 @@ struct __sysctl_args {
 #define SYS_OPEN_BY_HANDLE_AT 380 /* open_by_handle_at(mount_fd, handle, flags) */
 
 /* userfaultfd — Linux-compatible syscall number 323, using 384 in this kernel */
-#define SYS_USERFAULTFD 384 /* userfaultfd(cmd, arg) */
+#define SYS_USERFAULTFD 384 /* userfaultfd(fd, cmd, arg) — multiplexed UFFDIO dispatch */
 
 /* Positional read/write — Linux-compatible pread64/pwrite64 */
 #define SYS_PREAD64 385  /* pread64(fd, buf, count, offset) — read at offset */

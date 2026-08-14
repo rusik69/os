@@ -15,6 +15,7 @@
 #include "errno.h"
 #include "module.h"
 #include "syscall.h"
+#include "userfaultfd.h"
 
 /* Module metadata */
 MODULE_LICENSE("GPL v2");
@@ -1010,7 +1011,11 @@ static int64_t lin_execveat(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, 
 static int64_t lin_userfaultfd(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                uint64_t a6) {
     lin_discard5(a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_USERFAULTFD, a1, 0, 0, 0, 0, a6);
+    /* Linux ABI: userfaultfd(flags) creates a NEW context and returns its fd.
+     * Do NOT route through SYS_USERFAULTFD's (fd, cmd, arg) multiplexer —
+     * that would treat the Linux flags value as an fd and always hit the
+     * default case (-ENOSYS).  Create the context directly. */
+    return (int64_t)userfaultfd_create((int)a1);
 }
 
 static int64_t lin_membarrier(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,

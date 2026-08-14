@@ -168,11 +168,11 @@ int userfaultfd_writeprotect(int fd, struct uffdio_writeprotect *wp_arg);
 int userfaultfd_continue(int fd, struct uffdio_continue *cont_arg);
 int userfaultfd_api(int fd, struct uffdio_api *api_arg);
 
-/* Syscall entry point: cmd and arg are passed from the userfaultfd syscall.
+/* Syscall entry point — SYS_USERFAULTFD dispatch passes (fd, cmd, arg):
+ * fd   = userfaultfd context fd (or -1 for UFFDIO_API create)
+ * cmd  = UFFDIO_* command
+ * arg  = userspace pointer to command-specific struct
  * Returns fd for UFFDIO_API (create case), or 0 on success, or -errno. */
-int64_t sys_userfaultfd(uint64_t cmd, uint64_t arg);
-
-/* Unified userfaultfd syscall: fd, cmd, arg. */
 int64_t sys_userfaultfd2(uint64_t fd, uint64_t cmd, uint64_t arg);
 
 /* Initialise the userfaultfd subsystem. */
