@@ -183,9 +183,9 @@ static int sysctl_write_reclaim_watermark(const char *buf, int len)
 static int sysctl_write_timens_mono_offset(const char *buf, int len)
 {
     struct process *cur = process_get_current();
-    if (!cur) return -1;
+    if (!cur) return -EINVAL;
     if (!(cur->ns_flags & CLONE_NEWTIME))
-        return -1; /* Not in a time namespace — cannot set offsets */
+        return -EINVAL; /* Not in a time namespace — cannot set offsets */
 
     int64_t val = 0;
     int sign = 1, i = 0;
@@ -200,9 +200,9 @@ static int sysctl_write_timens_mono_offset(const char *buf, int len)
 static int sysctl_write_timens_boottime_offset(const char *buf, int len)
 {
     struct process *cur = process_get_current();
-    if (!cur) return -1;
+    if (!cur) return -EINVAL;
     if (!(cur->ns_flags & CLONE_NEWTIME))
-        return -1; /* Not in a time namespace */
+        return -EINVAL; /* Not in a time namespace */
 
     int64_t val = 0;
     int sign = 1, i = 0;
@@ -251,7 +251,7 @@ int sysctl_register(const char *name,
     spinlock_acquire(&g_sysctl_lock);
     if (g_num_entries >= SYSCTL_MAX_ENTRIES) {
         spinlock_release(&g_sysctl_lock);
-        return -1;
+        return -ENOSPC;
     }
     g_entries[g_num_entries].name = name;
     g_entries[g_num_entries].read_handler = read_handler;
@@ -265,7 +265,7 @@ int sysctl_register(const char *name,
 }
 
 int sysctl_read(const char *name, char *buf, int max) {
-    if (!name || !buf) return -1;
+    if (!name || !buf) return -EINVAL;
 
     /* Search the registered table under lock */
     int (*handler)(char *, int) = NULL;
@@ -294,11 +294,11 @@ int sysctl_read(const char *name, char *buf, int max) {
         return sysctl_read_rand_va(buf, max);
     if (strcmp(name, "vm.reclaim_watermark") == 0)
         return sysctl_read_reclaim_watermark(buf, max);
-    return -1;
+    return -ENOENT;
 }
 
 int sysctl_write(const char *name, const char *buf, int len) {
-    if (!name || !buf) return -1;
+    if (!name || !buf) return -EINVAL;
 
     /* Search the registered table under lock */
     int (*handler)(const char *, int) = NULL;
@@ -329,7 +329,7 @@ int sysctl_write(const char *name, const char *buf, int len) {
         return sysctl_write_timens_boottime_offset(buf, len);
     if (strcmp(name, "sysrq") == 0)
         return sysctl_write_sysrq(buf, len);
-    return -1;
+    return -ENOENT;
 }
 
 /* ─── List registered sysctl entries ──────────────────────────────── */
