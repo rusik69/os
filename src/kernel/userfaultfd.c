@@ -365,7 +365,9 @@ int64_t userfaultfd_read(int fd, void *buf, uint64_t count)
         return 0;
     if (fd < 0 || fd >= UFFD_MAX_CONTEXTS)
         return -EBADF;
-    if (!buf || count < sizeof(struct uffd_event))
+    if (!buf)
+        return -EFAULT; /* bad user pointer */
+    if (count < sizeof(struct uffd_event))
         return -EINVAL;
 
     struct uffd_context *ctx = &uffd_table[fd];
