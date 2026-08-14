@@ -6,6 +6,7 @@
 #include "types.h"
 #include "vfs.h"
 #include "errno.h"
+#include "uaccess.h"
 
 /* Propagation type for newly mounted filesystems (default: PRIVATE) */
 #define MS_DEFAULT_PROPAGATION MS_PRIVATE
@@ -147,8 +148,25 @@ int mount_setattr(int dirfd, const char *path, uint32_t flags,
     if (!mount_attr_initialised)
         mount_attr_init();
 
-    if (!path || !attr || size < sizeof(struct mount_attr))
+    /* path and attr are userspace pointers (SYS_MOUNT_SETATTR) — copy
+     * them through the validated uaccess path before dereferencing.
+     * copy_from_user()/strncpy_from_user() range-check user callers and
+     * plain-copy for kernel-mode callers; a NULL or unmapped pointer
+     * yields -EFAULT. */
+    if (!path || !attr)
+        return -EFAULT; /* bad user pointer */
+    if (size < sizeof(struct mount_attr))
         return -EINVAL;
+
+    char kpath[256];
+    struct mount_attr kattr;
+    if (strncpy_from_user(kpath, (uint64_t)(uintptr_t)path, sizeof(kpath)) < 0)
+        return -EFAULT;
+    if (copy_from_user(&kattr, (uint64_t)(uintptr_t)attr, sizeof(kattr)) < 0)
+        return -EFAULT;
+
+    path = kpath;
+    attr = &kattr;
 
     /* ── Determine the new propagation type ───────────────────────── */
     uint32_t new_prop = MS_DEFAULT_PROPAGATION;

@@ -22,6 +22,7 @@
 #include "heap.h"
 #include "errno.h"
 #include "spinlock.h"
+#include "uaccess.h"
 #include "export.h"
 #include "zswap.h"
 
@@ -142,12 +143,22 @@ static void swap_bitmap_clear(uint64_t *bitmap, int slot)
 int swap_swapon(const char *name)
 {
     if (!swap_initialised) return -ENODEV;
-    if (!name || !name[0]) return -EINVAL;
+    if (!name) return -EFAULT; /* bad user pointer */
+
+    /* name is a userspace pointer (SYS_SWAPON) — copy it through the
+     * validated uaccess path before dereferencing.  strncpy_from_user()
+     * range-checks user callers and plain-copies for kernel callers;
+     * a NULL or unmapped pointer yields -EFAULT. */
+    char kname[128];
+    if (strncpy_from_user(kname, (uint64_t)(uintptr_t)name, sizeof(kname)) < 0)
+        return -EFAULT;
+    if (kname[0] == '\0')
+        return -EINVAL; /* empty device name */
 
     /* Strip "/dev/" prefix if present and resolve to block device ID. */
-    const char *devname = name;
-    if (strncmp(name, "/dev/", 5) == 0)
-        devname = name + 5;
+    const char *devname = kname;
+    if (strncmp(kname, "/dev/", 5) == 0)
+        devname = kname + 5;
     if (!devname[0]) return -EINVAL;
 
     int dev_id = blockdev_find_by_name(devname);
@@ -263,11 +274,19 @@ int swap_swapon(const char *name)
 int swap_swapoff(const char *name)
 {
     if (!swap_initialised) return -ENODEV;
-    if (!name || !name[0]) return -EINVAL;
+    if (!name) return -EFAULT; /* bad user pointer */
 
-    const char *devname = name;
-    if (strncmp(name, "/dev/", 5) == 0)
-        devname = name + 5;
+    /* name is a userspace pointer (SYS_SWAPOFF) — copy it through the
+     * validated uaccess path before dereferencing (see swap_swapon). */
+    char kname[128];
+    if (strncpy_from_user(kname, (uint64_t)(uintptr_t)name, sizeof(kname)) < 0)
+        return -EFAULT;
+    if (kname[0] == '\0')
+        return -EINVAL; /* empty device name */
+
+    const char *devname = kname;
+    if (strncmp(kname, "/dev/", 5) == 0)
+        devname = kname + 5;
     if (!devname[0]) return -EINVAL;
 
     int dev_id = blockdev_find_by_name(devname);
