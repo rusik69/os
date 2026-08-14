@@ -138,10 +138,13 @@ int hrtimer_cancel(struct hrtimer *timer)
     if (!timer) return -1;
 
     uint64_t irq_flags;
+    int slot = -1;
+
     spinlock_irqsave_acquire(&timer->lock, &irq_flags);
 
     if (timer->timer_id >= 0) {
-        timer_cancel(timer->timer_id);
+        slot = timer->timer_id;
+        timer_cancel(slot);
         timer->timer_id = -1;
     }
     timer->state = 0;
@@ -152,8 +155,15 @@ int hrtimer_cancel(struct hrtimer *timer)
      * finish.  hrtimer_dispatch() re-checks state under the lock, so
      * a callback that has not started yet will see state == 0 and
      * return without invoking the user function — after this loop the
-     * caller can safely free the callback data. */
-    while (timer->running) {
+     * caller can safely free the callback data.
+     *
+     * A dispatch dequeued by timer_handler_soft() (slot marked firing)
+     * but not yet entered into hrtimer_dispatch() is invisible to the
+     * running flag, so also wait it out via timer_callback_pending().
+     * This closes the dequeue-to-entry window where a cancel could
+     * otherwise return while the dispatch is about to dereference the
+     * (freed) timer. */
+    while (timer->running || timer_callback_pending(slot, timer)) {
         __asm__ volatile("pause");
     }
 
@@ -163,15 +173,25 @@ int hrtimer_cancel(struct hrtimer *timer)
      * callback again after cancel returns — a use-after-free of the
      * callback data if the caller frees it now.  Re-check under the
      * lock and cancel any timer re-armed while the callback was
-     * running, so that after hrtimer_cancel() returns the callback
-     * can never fire again. */
-    spinlock_irqsave_acquire(&timer->lock, &irq_flags);
-    if (timer->timer_id >= 0) {
-        timer_cancel(timer->timer_id);
+     * running (waiting out any dispatch dequeued for it), so that
+     * after hrtimer_cancel() returns the callback can never fire
+     * again. */
+    for (;;) {
+        spinlock_irqsave_acquire(&timer->lock, &irq_flags);
+        if (timer->timer_id < 0) {
+            spinlock_irqsave_release(&timer->lock, irq_flags);
+            break;
+        }
+        slot = timer->timer_id;
+        timer_cancel(slot);
         timer->timer_id = -1;
+        timer->state = 0;
+        spinlock_irqsave_release(&timer->lock, irq_flags);
+
+        while (timer->running || timer_callback_pending(slot, timer)) {
+            __asm__ volatile("pause");
+        }
     }
-    timer->state = 0;
-    spinlock_irqsave_release(&timer->lock, irq_flags);
 
     return 0;
 }

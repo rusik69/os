@@ -17,6 +17,7 @@ static struct {
     void            *arg;
     uint64_t         expire_tick;  /* tick at which this timer fires */
     int              active;       /* 1 = scheduled, 0 = free slot */
+    int firing;                    /* 1 = dequeued, callback running/pending */
 } g_timers[TIMER_MAX];
 
 static spinlock_t g_timers_lock;
@@ -48,7 +49,10 @@ int timer_schedule(timer_callback_t fn, void *arg, uint64_t delay_ticks) {
 
     int slot = -1;
     for (int i = 0; i < TIMER_MAX; i++) {
-        if (!g_timers[i].active) {
+        /* Skip firing slots: their callback is still running/pending and
+         * the fn/arg pair is retained for cancellation detection until the
+         * callback completes (see timer_handler_soft). */
+        if (!g_timers[i].active && !g_timers[i].firing) {
             slot = i;
             break;
         }
@@ -75,11 +79,38 @@ void timer_cancel(int timer_id) {
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&g_timers_lock, &irq_flags);
 
+    if (g_timers[timer_id].firing) {
+        /* The callback has already been dequeued and is running or about
+         * to run.  Do not clear fn/arg: timer_handler_soft() clears them
+         * when the callback completes, and the retained firing marker +
+         * arg lets hrtimer_cancel() detect and wait out this dispatch. */
+        spinlock_irqsave_release(&g_timers_lock, irq_flags);
+        return;
+    }
+
     g_timers[timer_id].active = 0;
     g_timers[timer_id].fn = NULL;
     g_timers[timer_id].arg = NULL;
 
     spinlock_irqsave_release(&g_timers_lock, irq_flags);
+}
+
+/* Returns 1 while the given slot holds a dequeued dispatch whose callback
+ * is running (or about to run) with arg == expected_arg.  Used by
+ * hrtimer_cancel() to wait out a dispatch that timer_handler_soft() has
+ * dequeued but hrtimer_dispatch() has not yet entered: that window is
+ * invisible to the hrtimer's own running flag, so without this check a
+ * cancel could return while the dispatch is about to dereference a freed
+ * timer. */
+int timer_callback_pending(int timer_id, void *expected_arg) {
+    if (timer_id < 0 || timer_id >= TIMER_MAX || !g_timers_initialized)
+        return 0;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_timers_lock, &irq_flags);
+    int pending = (g_timers[timer_id].firing && g_timers[timer_id].arg == expected_arg);
+    spinlock_irqsave_release(&g_timers_lock, irq_flags);
+    return pending;
 }
 
 void timer_handler_soft(void) {
@@ -113,13 +144,23 @@ void timer_handler_soft(void) {
             continue;
         }
         g_timers[i].active = 0;
+        g_timers[i].firing = 1;
         timer_callback_t fn = g_timers[i].fn;
         void *arg = g_timers[i].arg;
+        spinlock_irqsave_release(&g_timers_lock, irq_flags);
+
+        /* Fire outside the lock.  fn/arg are retained in the slot (marked
+         * firing) until the callback returns so a concurrent cancel can
+         * detect the in-flight dispatch via timer_callback_pending();
+         * timer_schedule() skips firing slots, so the retained fn/arg
+         * cannot be overwritten by a new timer. */
+        if (fn) fn(arg);
+
+        /* Callback finished — release the slot for reuse. */
+        spinlock_irqsave_acquire(&g_timers_lock, &irq_flags);
+        g_timers[i].firing = 0;
         g_timers[i].fn = NULL;
         g_timers[i].arg = NULL;
         spinlock_irqsave_release(&g_timers_lock, irq_flags);
-
-        /* Fire outside the lock */
-        if (fn) fn(arg);
     }
 }

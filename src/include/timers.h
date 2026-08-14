@@ -14,6 +14,11 @@ int timer_schedule(timer_callback_t fn, void *arg, uint64_t delay_ticks);
 /* Cancel a pending timer by its ID */
 void timer_cancel(int timer_id);
 
+/* Returns 1 while a dispatch dequeued for timer_id is still running (or
+ * about to run) with the given callback arg — lets hrtimer_cancel() wait
+ * out a dispatch that is invisible to the hrtimer running flag. */
+int timer_callback_pending(int timer_id, void *expected_arg);
+
 /* Called from the timer IRQ (src/drivers/timer.c) — drives the timer subsystem */
 void timer_handler_soft(void);
 
