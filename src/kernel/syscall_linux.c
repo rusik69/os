@@ -95,1132 +95,1132 @@ static inline void lin_discard1(uint64_t a1) {
 static int64_t lin_read(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                         uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_READ, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_READ, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_write(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                          uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_WRITE, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_WRITE, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_open(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                         uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_OPEN, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_OPEN, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_close(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                          uint64_t a6) {
     lin_discard5(a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_CLOSE, a1, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_CLOSE, a1, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_stat(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                         uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_STAT, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_STAT, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_lseek(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                          uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_LSEEK, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_LSEEK, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_mmap(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                         uint64_t a6) {
-    return syscall_dispatch_internal(SYS_MMAP, a1, a2, a3, a4, a5);
+    return syscall_dispatch_internal(SYS_MMAP, a1, a2, a3, a4, a5, a6);
 }
 
 static int64_t lin_mprotect(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                             uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_MPROTECT, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_MPROTECT, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_munmap(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                           uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_MUNMAP, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_MUNMAP, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_brk(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                        uint64_t a6) {
     lin_discard5(a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_BRK, a1, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_BRK, a1, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_ioctl(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                          uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_IOCTL, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_IOCTL, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_pread64(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                            uint64_t a6) {
     lin_discard2(a5, a6);
-    return syscall_dispatch_internal(SYS_PREAD64, a1, a2, a3, a4, 0);
+    return syscall_dispatch_internal(SYS_PREAD64, a1, a2, a3, a4, 0, a6);
 }
 
 static int64_t lin_pwrite64(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                             uint64_t a6) {
     lin_discard2(a5, a6);
-    return syscall_dispatch_internal(SYS_PWRITE64, a1, a2, a3, a4, 0);
+    return syscall_dispatch_internal(SYS_PWRITE64, a1, a2, a3, a4, 0, a6);
 }
 
 static int64_t lin_readv(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                          uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_READV, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_READV, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_writev(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                           uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_WRITEV, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_WRITEV, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_access(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                           uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_ACCESS, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_ACCESS, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_pipe(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                         uint64_t a6) {
     lin_discard5(a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_PIPE, a1, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_PIPE, a1, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_select(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                           uint64_t a6) {
     (void)a6;
-    return syscall_dispatch_internal(SYS_SELECT, a1, a2, a3, a4, a5);
+    return syscall_dispatch_internal(SYS_SELECT, a1, a2, a3, a4, a5, a6);
 }
 
 static int64_t lin_sched_yield(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                uint64_t a6) {
     lin_discard6(a1, a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_YIELD, 0, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_YIELD, 0, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_mremap(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                           uint64_t a6) {
     lin_discard1(a6);
-    return syscall_dispatch_internal(SYS_MREMAP, a1, a2, a3, a4, a5);
+    return syscall_dispatch_internal(SYS_MREMAP, a1, a2, a3, a4, a5, a6);
 }
 
 static int64_t lin_msync(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                          uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_MSYNC, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_MSYNC, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_mincore(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                            uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_MINCORE, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_MINCORE, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_madvise(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                            uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_MADVISE, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_MADVISE, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_shmget(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                           uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_SHM_GET, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_SHM_GET, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_shmat(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                          uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_SHM_AT, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_SHM_AT, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_shmctl(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                           uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_SHMCTL, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_SHMCTL, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_dup(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                        uint64_t a6) {
     lin_discard5(a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_DUP, a1, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_DUP, a1, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_dup2(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                         uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_DUP2, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_DUP2, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_pause(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                          uint64_t a6) {
     lin_discard6(a1, a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_PAUSE, 0, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_PAUSE, 0, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_nanosleep(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                              uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_NANOSLEEP, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_NANOSLEEP, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_getitimer(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                              uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_GETITIMER, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_GETITIMER, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_alarm(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                          uint64_t a6) {
     lin_discard5(a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_ALARM, a1, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_ALARM, a1, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_setitimer(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                              uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_SETITIMER, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_SETITIMER, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_getpid(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                           uint64_t a6) {
     lin_discard6(a1, a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_GETPID, 0, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_GETPID, 0, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_sendfile(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                             uint64_t a6) {
     lin_discard2(a5, a6);
-    return syscall_dispatch_internal(SYS_SENDFILE, a1, a2, a3, a4, 0);
+    return syscall_dispatch_internal(SYS_SENDFILE, a1, a2, a3, a4, 0, a6);
 }
 
 static int64_t lin_socket(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                           uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_SOCKET, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_SOCKET, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_connect(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                            uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_CONNECT, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_CONNECT, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_accept(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                           uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_ACCEPT, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_ACCEPT, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_sendmsg(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                            uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_SENDMSG, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_SENDMSG, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_recvmsg(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                            uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_RECVMSG, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_RECVMSG, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_bind(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                         uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_BIND, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_BIND, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_listen(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                           uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_LISTEN, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_LISTEN, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_getsockname(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_GETSOCKNAME, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_GETSOCKNAME, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_getpeername(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_GETPEERNAME, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_GETPEERNAME, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_socketpair(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                               uint64_t a6) {
     lin_discard2(a5, a6);
-    return syscall_dispatch_internal(SYS_SOCKETPAIR, a1, a2, a3, a4, 0);
+    return syscall_dispatch_internal(SYS_SOCKETPAIR, a1, a2, a3, a4, 0, a6);
 }
 
 static int64_t lin_setsockopt(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                               uint64_t a6) {
     (void)a6;
-    return syscall_dispatch_internal(SYS_SETSOCKOPT, a1, a2, a3, a4, a5);
+    return syscall_dispatch_internal(SYS_SETSOCKOPT, a1, a2, a3, a4, a5, a6);
 }
 
 static int64_t lin_getsockopt(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                               uint64_t a6) {
     (void)a6;
-    return syscall_dispatch_internal(SYS_GETSOCKOPT, a1, a2, a3, a4, a5);
+    return syscall_dispatch_internal(SYS_GETSOCKOPT, a1, a2, a3, a4, a5, a6);
 }
 
 static int64_t lin_clone(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                          uint64_t a6) {
     (void)a6;
-    return syscall_dispatch_internal(SYS_CLONE, a1, a2, a3, a4, a5);
+    return syscall_dispatch_internal(SYS_CLONE, a1, a2, a3, a4, a5, a6);
 }
 
 static int64_t lin_fork(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                         uint64_t a6) {
     lin_discard6(a1, a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_FORK, 0, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_FORK, 0, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_execve(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                           uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_EXECVE, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_EXECVE, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_exit(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                         uint64_t a6) {
     lin_discard5(a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_EXIT, a1, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_EXIT, a1, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_wait4(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                          uint64_t a6) {
     lin_discard2(a5, a6);
-    return syscall_dispatch_internal(SYS_WAIT4, a1, a2, a3, a4, 0);
+    return syscall_dispatch_internal(SYS_WAIT4, a1, a2, a3, a4, 0, a6);
 }
 
 static int64_t lin_kill(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                         uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_KILL, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_KILL, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_uname(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                          uint64_t a6) {
     lin_discard5(a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_UNAME, a1, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_UNAME, a1, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_fcntl(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                          uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_FCNTL, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_FCNTL, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_fsync(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                          uint64_t a6) {
     lin_discard5(a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_FSYNC, a1, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_FSYNC, a1, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_fdatasync(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                              uint64_t a6) {
     lin_discard5(a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_FDATASYNC, a1, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_FDATASYNC, a1, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_truncate(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                             uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_TRUNCATE, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_TRUNCATE, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_ftruncate(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                              uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_FTRUNCATE, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_FTRUNCATE, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_getdents(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                             uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_GETDENTS64, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_GETDENTS64, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_getcwd(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                           uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_GETCWD, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_GETCWD, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_chdir(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                          uint64_t a6) {
     lin_discard5(a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_CHDIR, a1, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_CHDIR, a1, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_rename(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                           uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_RENAME, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_RENAME, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_mkdir(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                          uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_MKDIR, a1, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_MKDIR, a1, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_rmdir(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                          uint64_t a6) {
     lin_discard5(a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_RMDIR, a1, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_RMDIR, a1, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_unlink(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                           uint64_t a6) {
     lin_discard5(a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_UNLINK, a1, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_UNLINK, a1, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_chmod(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                          uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_CHMOD, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_CHMOD, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_umask(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                          uint64_t a6) {
     lin_discard5(a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_UMASK, a1, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_UMASK, a1, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_getrusage(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                              uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_GETRUSAGE, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_GETRUSAGE, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_sysinfo(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                            uint64_t a6) {
     lin_discard5(a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_SYSINFO, a1, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_SYSINFO, a1, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_getuid(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                           uint64_t a6) {
     lin_discard6(a1, a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_GETUID, 0, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_GETUID, 0, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_syslog(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                           uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_SYSLOG, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_SYSLOG, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_getgid(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                           uint64_t a6) {
     lin_discard6(a1, a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_GETGID, 0, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_GETGID, 0, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_geteuid(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                            uint64_t a6) {
     lin_discard6(a1, a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_GETEUID, 0, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_GETEUID, 0, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_getegid(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                            uint64_t a6) {
     lin_discard6(a1, a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_GETEGID, 0, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_GETEGID, 0, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_setpgid(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                            uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_SETPGID, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_SETPGID, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_getppid(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                            uint64_t a6) {
     lin_discard6(a1, a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_GETPPID, 0, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_GETPPID, 0, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_setsid(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                           uint64_t a6) {
     lin_discard6(a1, a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_SETSID, 0, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_SETSID, 0, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_getresuid(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                              uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_GETRESUID, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_GETRESUID, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_setresuid(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                              uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_SETRESUID, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_SETRESUID, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_getresgid(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                              uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_GETRESGID, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_GETRESGID, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_setresgid(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                              uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_SETRESGID, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_SETRESGID, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_sigaltstack(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_SIGALTSTACK, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_SIGALTSTACK, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_mknod(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                          uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_MKNOD, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_MKNOD, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_personality(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                uint64_t a6) {
     lin_discard5(a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_PERSONALITY, a1, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_PERSONALITY, a1, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_statfs(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                           uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_STATFS, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_STATFS, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_fstatfs(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                            uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_FSTATFS, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_FSTATFS, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_getpriority(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_GETPRIORITY, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_GETPRIORITY, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_setpriority(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_SETPRIORITY, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_SETPRIORITY, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_sched_setscheduler(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4,
                                       uint64_t a5, uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_SCHED_SETSCHEDULER, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_SCHED_SETSCHEDULER, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_sched_getscheduler(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4,
                                       uint64_t a5, uint64_t a6) {
     lin_discard5(a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_SCHED_GETSCHEDULER, a1, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_SCHED_GETSCHEDULER, a1, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_mlock(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                          uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_MLOCK, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_MLOCK, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_munlock(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                            uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_MUNLOCK, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_MUNLOCK, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_mlockall(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                             uint64_t a6) {
     lin_discard5(a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_MLOCKALL, a1, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_MLOCKALL, a1, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_munlockall(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                               uint64_t a6) {
     lin_discard6(a1, a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_MUNLOCKALL, 0, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_MUNLOCKALL, 0, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_pivot_root(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                               uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_PIVOT_ROOT, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_PIVOT_ROOT, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_prctl(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                          uint64_t a6) {
     (void)a6;
-    return syscall_dispatch_internal(SYS_PRCTL, a1, a2, a3, a4, a5);
+    return syscall_dispatch_internal(SYS_PRCTL, a1, a2, a3, a4, a5, a6);
 }
 
 static int64_t lin_arch_prctl(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                               uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_ARCH_PRCTL, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_ARCH_PRCTL, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_chroot(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                           uint64_t a6) {
     lin_discard5(a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_CHROOT, a1, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_CHROOT, a1, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_sync(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                         uint64_t a6) {
     lin_discard6(a1, a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_SYNC, 0, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_SYNC, 0, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_mount(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                          uint64_t a6) {
     (void)a6;
-    return syscall_dispatch_internal(SYS_MOUNT, a1, a2, a3, a4, a5);
+    return syscall_dispatch_internal(SYS_MOUNT, a1, a2, a3, a4, a5, a6);
 }
 
 static int64_t lin_umount2(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                            uint64_t a6) {
     lin_discard5(a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_UMOUNT, a1, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_UMOUNT, a1, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_reboot(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                           uint64_t a6) {
     lin_discard6(a1, a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_REBOOT, 0, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_REBOOT, 0, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_sethostname(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_SETHOSTNAME, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_SETHOSTNAME, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_sched_setaffinity(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4,
                                      uint64_t a5, uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_SCHED_SETAFFINITY, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_SCHED_SETAFFINITY, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_sched_getaffinity(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4,
                                      uint64_t a5, uint64_t a6) {
     lin_discard5(a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_SCHED_GETAFFINITY, a1, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_SCHED_GETAFFINITY, a1, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_gettid(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                           uint64_t a6) {
     lin_discard6(a1, a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_GETTID, 0, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_GETTID, 0, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_tkill(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                          uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_TKILL, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_TKILL, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_rt_sigqueueinfo(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                    uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_RT_SIGQUEUEINFO, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_RT_SIGQUEUEINFO, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_rt_tgsigqueueinfo(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4,
                                      uint64_t a5, uint64_t a6) {
     lin_discard2(a5, a6);
-    return syscall_dispatch_internal(SYS_RT_TGSIGQUEUEINFO, a1, a2, a3, a4, 0);
+    return syscall_dispatch_internal(SYS_RT_TGSIGQUEUEINFO, a1, a2, a3, a4, 0, a6);
 }
 
 static int64_t lin_futex(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                          uint64_t a6) {
-    return syscall_dispatch_internal(SYS_FUTEX, a1, a2, a3, a4, a5);
+    return syscall_dispatch_internal(SYS_FUTEX, a1, a2, a3, a4, a5, a6);
 }
 
 static int64_t lin_set_robust_list(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                    uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_SET_ROBUST_LIST, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_SET_ROBUST_LIST, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_get_robust_list(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                    uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_GET_ROBUST_LIST, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_GET_ROBUST_LIST, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_splice(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                           uint64_t a6) {
     (void)a6;
-    return syscall_dispatch_internal(SYS_SPLICE, a1, a2, a3, a4, a5);
+    return syscall_dispatch_internal(SYS_SPLICE, a1, a2, a3, a4, a5, a6);
 }
 
 static int64_t lin_tee(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                        uint64_t a6) {
     lin_discard2(a5, a6);
-    return syscall_dispatch_internal(SYS_TEE, a1, a2, a3, a4, 0);
+    return syscall_dispatch_internal(SYS_TEE, a1, a2, a3, a4, 0, a6);
 }
 
 static int64_t lin_openat(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                           uint64_t a6) {
     lin_discard2(a5, a6);
-    return syscall_dispatch_internal(SYS_OPENAT, a1, a2, a3, a4, 0);
+    return syscall_dispatch_internal(SYS_OPENAT, a1, a2, a3, a4, 0, a6);
 }
 
 static int64_t lin_mkdirat(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                            uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_MKDIRAT, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_MKDIRAT, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_newfstatat(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                               uint64_t a6) {
     lin_discard2(a5, a6);
-    return syscall_dispatch_internal(SYS_FSTATAT, a1, a2, a3, a4, 0);
+    return syscall_dispatch_internal(SYS_FSTATAT, a1, a2, a3, a4, 0, a6);
 }
 
 static int64_t lin_unlinkat(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                             uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_UNLINKAT, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_UNLINKAT, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_renameat(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                             uint64_t a6) {
     lin_discard2(a5, a6);
-    return syscall_dispatch_internal(SYS_RENAMEAT, a1, a2, a3, a4, 0);
+    return syscall_dispatch_internal(SYS_RENAMEAT, a1, a2, a3, a4, 0, a6);
 }
 
 static int64_t lin_symlinkat(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                              uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_SYMLINKAT, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_SYMLINKAT, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_readlinkat(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                               uint64_t a6) {
     lin_discard2(a5, a6);
-    return syscall_dispatch_internal(SYS_READLINKAT, a1, a2, a3, a4, 0);
+    return syscall_dispatch_internal(SYS_READLINKAT, a1, a2, a3, a4, 0, a6);
 }
 
 static int64_t lin_pselect6(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                             uint64_t a6) {
-    return syscall_dispatch_internal(SYS_PSELECT6, a1, a2, a3, a4, a5);
+    return syscall_dispatch_internal(SYS_PSELECT6, a1, a2, a3, a4, a5, a6);
 }
 
 static int64_t lin_ppoll(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                          uint64_t a6) {
     lin_discard2(a5, a6);
-    return syscall_dispatch_internal(SYS_PPOLL, a1, a2, a3, a4, 0);
+    return syscall_dispatch_internal(SYS_PPOLL, a1, a2, a3, a4, 0, a6);
 }
 
 static int64_t lin_unshare(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                            uint64_t a6) {
     lin_discard5(a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_UNSHARE, a1, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_UNSHARE, a1, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_setns(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                          uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_SETNS, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_SETNS, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_utimensat(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                              uint64_t a6) {
     lin_discard2(a5, a6);
-    return syscall_dispatch_internal(SYS_UTIMENSAT, a1, a2, a3, a4, 0);
+    return syscall_dispatch_internal(SYS_UTIMENSAT, a1, a2, a3, a4, 0, a6);
 }
 
 static int64_t lin_fallocate(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                              uint64_t a6) {
     lin_discard2(a5, a6);
-    return syscall_dispatch_internal(SYS_FALLOCATE, a1, a2, a3, a4, 0);
+    return syscall_dispatch_internal(SYS_FALLOCATE, a1, a2, a3, a4, 0, a6);
 }
 
 static int64_t lin_fadvise64(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                              uint64_t a6) {
     lin_discard2(a5, a6);
-    return syscall_dispatch_internal(SYS_FADVISE64, a1, a2, a3, a4, 0);
+    return syscall_dispatch_internal(SYS_FADVISE64, a1, a2, a3, a4, 0, a6);
 }
 
 static int64_t lin_timerfd_create(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                   uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_TIMERFD_CREATE, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_TIMERFD_CREATE, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_timerfd_settime(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                    uint64_t a6) {
     lin_discard2(a5, a6);
-    return syscall_dispatch_internal(SYS_TIMERFD_SETTIME, a1, a2, a3, a4, 0);
+    return syscall_dispatch_internal(SYS_TIMERFD_SETTIME, a1, a2, a3, a4, 0, a6);
 }
 
 static int64_t lin_timerfd_gettime(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                    uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_TIMERFD_GETTIME, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_TIMERFD_GETTIME, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_signalfd(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                             uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_SIGNALFD, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_SIGNALFD, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_eventfd(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                            uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_EVENTFD, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_EVENTFD, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_epoll_create1(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                  uint64_t a6) {
     lin_discard5(a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_EPOLL_CREATE1, a1, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_EPOLL_CREATE1, a1, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_epoll_ctl(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                              uint64_t a6) {
     lin_discard2(a5, a6);
-    return syscall_dispatch_internal(SYS_EPOLL_CTL, a1, a2, a3, a4, 0);
+    return syscall_dispatch_internal(SYS_EPOLL_CTL, a1, a2, a3, a4, 0, a6);
 }
 
 static int64_t lin_epoll_wait(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                               uint64_t a6) {
     lin_discard2(a5, a6);
-    return syscall_dispatch_internal(SYS_EPOLL_WAIT, a1, a2, a3, a4, 0);
+    return syscall_dispatch_internal(SYS_EPOLL_WAIT, a1, a2, a3, a4, 0, a6);
 }
 
 static int64_t lin_epoll_pwait(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                uint64_t a6) {
     (void)a6;
-    return syscall_dispatch_internal(SYS_EPOLL_PWAIT, a1, a2, a3, a4, a5);
+    return syscall_dispatch_internal(SYS_EPOLL_PWAIT, a1, a2, a3, a4, a5, a6);
 }
 
 static int64_t lin_dup3(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                         uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_DUP3, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_DUP3, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_pipe2(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                          uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_PIPE2, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_PIPE2, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_inotify_init1(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                  uint64_t a6) {
     lin_discard5(a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_INOTIFY_INIT1, a1, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_INOTIFY_INIT1, a1, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_prlimit64(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                              uint64_t a6) {
     lin_discard2(a5, a6);
-    return syscall_dispatch_internal(SYS_PRLIMIT64, a1, a2, a3, a4, 0);
+    return syscall_dispatch_internal(SYS_PRLIMIT64, a1, a2, a3, a4, 0, a6);
 }
 
 static int64_t lin_name_to_handle_at(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4,
                                      uint64_t a5, uint64_t a6) {
     (void)a6;
-    return syscall_dispatch_internal(SYS_NAME_TO_HANDLE_AT, a1, a2, a3, a4, a5);
+    return syscall_dispatch_internal(SYS_NAME_TO_HANDLE_AT, a1, a2, a3, a4, a5, a6);
 }
 
 static int64_t lin_open_by_handle_at(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4,
                                      uint64_t a5, uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_OPEN_BY_HANDLE_AT, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_OPEN_BY_HANDLE_AT, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_syncfs(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                           uint64_t a6) {
     lin_discard5(a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_SYNCFS, a1, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_SYNCFS, a1, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_sendmmsg(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                             uint64_t a6) {
     lin_discard2(a5, a6);
-    return syscall_dispatch_internal(SYS_SENDMMSG, a1, a2, a3, a4, 0);
+    return syscall_dispatch_internal(SYS_SENDMMSG, a1, a2, a3, a4, 0, a6);
 }
 
 static int64_t lin_recvmmsg(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                             uint64_t a6) {
     (void)a6;
-    return syscall_dispatch_internal(SYS_RECVMMSG, a1, a2, a3, a4, a5);
+    return syscall_dispatch_internal(SYS_RECVMMSG, a1, a2, a3, a4, a5, a6);
 }
 
 static int64_t lin_getcpu(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                           uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_GETCPU, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_GETCPU, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_finit_module(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                 uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_FINIT_MODULE, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_FINIT_MODULE, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_seccomp(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                            uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_SECCOMP, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_SECCOMP, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_getrandom(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                              uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_GETRANDOM, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_GETRANDOM, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_memfd_create(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                 uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_MEMFD_CREATE, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_MEMFD_CREATE, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_execveat(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                             uint64_t a6) {
     (void)a6;
-    return syscall_dispatch_internal(SYS_EXECVEAT, a1, a2, a3, a4, a5);
+    return syscall_dispatch_internal(SYS_EXECVEAT, a1, a2, a3, a4, a5, a6);
 }
 
 static int64_t lin_userfaultfd(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                uint64_t a6) {
     lin_discard5(a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_USERFAULTFD, a1, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_USERFAULTFD, a1, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_membarrier(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                               uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_MEMBARRIER, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_MEMBARRIER, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_copy_file_range(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                    uint64_t a6) {
-    return syscall_dispatch_internal(SYS_COPY_FILE_RANGE, a1, a2, a3, a4, a5);
+    return syscall_dispatch_internal(SYS_COPY_FILE_RANGE, a1, a2, a3, a4, a5, a6);
 }
 
 static int64_t lin_rseq(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                         uint64_t a6) {
     lin_discard2(a5, a6);
-    return syscall_dispatch_internal(SYS_RSEQ, a1, a2, a3, a4, 0);
+    return syscall_dispatch_internal(SYS_RSEQ, a1, a2, a3, a4, 0, a6);
 }
 
 /* ── rt_sigreturn wrapper — no arguments ──────────────────────── */
 static int64_t lin_rt_sigreturn(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                 uint64_t a6) {
     lin_discard6(a1, a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_RT_SIGRETURN, 0, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_RT_SIGRETURN, 0, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_readahead(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                              uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_READAHEAD, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_READAHEAD, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_accept4(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                            uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_ACCEPT, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_ACCEPT, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_signalfd4(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                              uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_SIGNALFD, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_SIGNALFD, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_eventfd2(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                             uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_EVENTFD, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_EVENTFD, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_poll(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                         uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_POLL, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_POLL, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_getdents64(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                               uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_GETDENTS64, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_GETDENTS64, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_clock_gettime(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                  uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_CLOCK_GETTIME, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_CLOCK_GETTIME, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_clock_settime(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                  uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_CLOCK_SETTIME, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_CLOCK_SETTIME, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_clock_getres(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                 uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_CLOCK_GETRES, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_CLOCK_GETRES, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_timer_create(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                 uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_TIMER_CREATE, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_TIMER_CREATE, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_timer_settime(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                  uint64_t a6) {
     lin_discard2(a5, a6);
-    return syscall_dispatch_internal(SYS_TIMER_SETTIME, a1, a2, a3, a4, 0);
+    return syscall_dispatch_internal(SYS_TIMER_SETTIME, a1, a2, a3, a4, 0, a6);
 }
 
 static int64_t lin_timer_gettime(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                  uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_TIMER_GETTIME, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_TIMER_GETTIME, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_timer_getoverrun(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                     uint64_t a6) {
     lin_discard5(a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_TIMER_GETOVERRUN, a1, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_TIMER_GETOVERRUN, a1, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_timer_delete(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                 uint64_t a6) {
     lin_discard5(a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_TIMER_DELETE, a1, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_TIMER_DELETE, a1, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_timerfd_create2(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                    uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_TIMERFD_CREATE, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_TIMERFD_CREATE, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_sched_setattr(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                  uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_SCHED_SETATTR, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_SCHED_SETATTR, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_sched_getattr(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                  uint64_t a6) {
     lin_discard2(a5, a6);
-    return syscall_dispatch_internal(SYS_SCHED_GETATTR, a1, a2, a3, a4, 0);
+    return syscall_dispatch_internal(SYS_SCHED_GETATTR, a1, a2, a3, a4, 0, a6);
 }
 
 static int64_t lin_shmdt(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                          uint64_t a6) {
     lin_discard5(a2, a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_SHM_DT, a1, 0, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_SHM_DT, a1, 0, 0, 0, 0, a6);
 }
 
 static int64_t lin_capget(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                           uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_CAPGET, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_CAPGET, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_capset(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                           uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_CAPSET, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_CAPSET, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_ioprio_set(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                               uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_IOPRIO_SET, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_IOPRIO_SET, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_ioprio_get(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                               uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_IOPRIO_GET, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_IOPRIO_GET, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_pidfd_open(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                               uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_PIDFD_OPEN, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_PIDFD_OPEN, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_pidfd_send_signal(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4,
                                      uint64_t a5, uint64_t a6) {
     lin_discard2(a5, a6);
-    return syscall_dispatch_internal(SYS_PIDFD_SEND_SIGNAL, a1, a2, a3, a4, 0);
+    return syscall_dispatch_internal(SYS_PIDFD_SEND_SIGNAL, a1, a2, a3, a4, 0, a6);
 }
 
 static int64_t lin_pidfd_getfd(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_PIDFD_GETFD, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_PIDFD_GETFD, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_close_range(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                uint64_t a6) {
     lin_discard3(a4, a5, a6);
-    return syscall_dispatch_internal(SYS_CLOSE_RANGE, a1, a2, a3, 0, 0);
+    return syscall_dispatch_internal(SYS_CLOSE_RANGE, a1, a2, a3, 0, 0, a6);
 }
 
 static int64_t lin_io_uring_setup(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                   uint64_t a6) {
     lin_discard4(a3, a4, a5, a6);
-    return syscall_dispatch_internal(SYS_IO_URING_SETUP, a1, a2, 0, 0, 0);
+    return syscall_dispatch_internal(SYS_IO_URING_SETUP, a1, a2, 0, 0, 0, a6);
 }
 
 static int64_t lin_io_uring_enter(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                   uint64_t a6) {
     lin_discard2(a5, a6);
-    return syscall_dispatch_internal(SYS_IO_URING_ENTER, a1, a2, a3, a4, 0);
+    return syscall_dispatch_internal(SYS_IO_URING_ENTER, a1, a2, a3, a4, 0, a6);
 }
 
 static int64_t lin_io_uring_register(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4,
                                      uint64_t a5, uint64_t a6) {
     lin_discard2(a5, a6);
-    return syscall_dispatch_internal(SYS_IO_URING_REGISTER, a1, a2, a3, a4, 0);
+    return syscall_dispatch_internal(SYS_IO_URING_REGISTER, a1, a2, a3, a4, 0, a6);
 }
 
 static int64_t lin_mount_setattr(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                  uint64_t a6) {
     (void)a6;
-    return syscall_dispatch_internal(SYS_MOUNT_SETATTR, a1, a2, a3, a4, a5);
+    return syscall_dispatch_internal(SYS_MOUNT_SETATTR, a1, a2, a3, a4, a5, a6);
 }
 
 static int64_t lin_pkey_mprotect(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,
                                  uint64_t a6) {
     lin_discard2(a5, a6);
-    return syscall_dispatch_internal(SYS_PKEY_MPROTECT, a1, a2, a3, a4, 0);
+    return syscall_dispatch_internal(SYS_PKEY_MPROTECT, a1, a2, a3, a4, 0, a6);
 }
 
 static int64_t lin_mbind(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5,

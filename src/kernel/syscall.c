@@ -7538,17 +7538,21 @@ static int64_t sys_arch_prctl(uint64_t code, uint64_t addr) {
 #define PSELECT6_SSIZE_OFFSET 8
 
 static int64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr, uint64_t writefds_addr,
-                            uint64_t exceptfds_addr, uint64_t timeout_addr) {
+                            uint64_t exceptfds_addr, uint64_t timeout_addr, uint64_t packed_arg) {
     struct process *proc = process_get_current();
     if (!proc)
         return (uint64_t)-1;
 
+    /* The packed 6th argument (sigmask pointer + sigsetsize) is delivered
+     * as an explicit parameter — syscall_arg6 is a single global shared
+     * across CPUs and may have been clobbered by a concurrent syscall
+     * before dispatch reached this case.  Use the entry-time snapshot. */
+    uint64_t packed = packed_arg;
     /* Extract sigmask from the packed 6th argument.
      * Read the packed struct and the actual sigmask value from user-space
      * BEFORE acquiring any locks — copy_from_user may page fault. */
     int have_sigmask = 0;
     uint64_t sigmask_val = 0; /* pre-read sigmask value from userspace */
-    uint64_t packed = syscall_arg6;
     if (packed) {
         if (syscall_is_user_process() &&
             !syscall_user_read_ok(packed, sizeof(uint64_t *) + sizeof(size_t)))
@@ -12504,7 +12508,7 @@ static int64_t sys_open_by_handle_at(uint64_t mount_fd, uint64_t handle, uint64_
 
 /* Forward declaration for raw dispatch (no seccomp/audit/validation) */
 int64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4,
-                                  uint64_t a5);
+                                  uint64_t a5, uint64_t a6);
 
 /* Debug: called from syscall_entry_full assembly to trace syscall entry */
 /* (disabled — the assembly call site is commented out; kept only so the
@@ -12518,6 +12522,16 @@ void kprintf_syscall_trace(uint64_t num, uint64_t unused) {
 
 int64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4,
                          uint64_t a5) {
+    /* Snapshot the 6th syscall argument IMMEDIATELY.  syscall_arg6 is a
+     * single global written by every CPU's asm entry (mov [syscall_arg6],
+     * r9) at syscall entry.  Reading it later — after the seccomp/audit/
+     * caps/validation work below, or after a timer-tick preemption on
+     * another process's syscall (KPTI re-enables interrupts before the
+     * dispatch call) — can return ANOTHER process's r9 value.  Thread the
+     * snapshot through to the switch so 6-arg syscalls (mmap offset, futex
+     * val3, splice flags, ...) always see this syscall's own 6th arg. */
+    uint64_t a6 = syscall_arg6;
+
     /* Seccomp check — must happen before any capability or argument validation */
     if (syscall_is_user_process()) {
         uint32_t seccomp_action = seccomp_evaluate_syscall(num, a1, a2, a3, 0);
@@ -12580,13 +12594,13 @@ int64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3, ui
         }
     }
 
-    return signal_convert_erestartsys(syscall_dispatch_internal(num, a1, a2, a3, a4, a5));
+    return signal_convert_erestartsys(syscall_dispatch_internal(num, a1, a2, a3, a4, a5, a6));
 }
 
 /* ── syscall_dispatch_internal — raw dispatch (no seccomp/audit/validation) ── */
 
 int64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4,
-                                  uint64_t a5) {
+                                  uint64_t a5, uint64_t a6) {
     switch (num) {
     case SYS_READ:
         return sys_read(a1, a2, a3);
@@ -12941,10 +12955,11 @@ int64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2, uint64
     case SYS_CALLOC:
         return sys_calloc(a1, a2);
     case SYS_MMAP:
-        /* mmap() is a 6-arg syscall on x86-64 — the asm entry saves user r9
-         * (offset) into syscall_arg6.  Forward it like futex/splice do;
-         * a hardcoded 0 silently drops non-zero file offsets. */
-        return sys_mmap(a1, a2, a3, a4, a5, syscall_arg6);
+        /* mmap() is a 6-arg syscall on x86-64 — a6 is the snapshot taken
+         * at dispatch entry (the asm entry saves user r9 into syscall_arg6,
+         * but that global is shared across CPUs and can be clobbered by a
+         * concurrent syscall before we get here). */
+        return sys_mmap(a1, a2, a3, a4, a5, a6);
     case SYS_MUNMAP:
         return sys_munmap(a1, a2);
     case SYS_MPROTECT:
@@ -13036,13 +13051,13 @@ int64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2, uint64
     case SYS_PRLIMIT64:
         return sys_prlimit64(a1, a2, a3, a4);
     case SYS_FUTEX:
-        return sys_futex(a1, a2, a3, a4, a5, syscall_arg6);
+        return sys_futex(a1, a2, a3, a4, a5, a6);
     case SYS_ARCH_PRCTL:
         return sys_arch_prctl(a1, a2);
     case SYS_POLL:
         return sys_poll(a1, a2, a3);
     case SYS_PSELECT6:
-        return sys_pselect6(a1, a2, a3, a4, a5);
+        return sys_pselect6(a1, a2, a3, a4, a5, a6);
     case SYS_PPOLL:
         return sys_ppoll(a1, a2, a3, a4);
     case SYS_EVENTFD:
@@ -13107,7 +13122,7 @@ int64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2, uint64
         return sys_madvise(a1, a2, a3);
     /* NUMA memory policy */
     case SYS_MBIND:
-        return sys_mbind(a1, a2, a3, a4, a5, syscall_arg6);
+        return sys_mbind(a1, a2, a3, a4, a5, a6);
     case SYS_SET_MEMPOLICY:
         return sys_set_mempolicy(a1, a2, a3);
     case SYS_GET_MEMPOLICY:
@@ -13115,7 +13130,7 @@ int64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2, uint64
     case SYS_MIGRATE_PAGES:
         return sys_migrate_pages(a1, a2, a3, a4);
     case SYS_MOVE_PAGES:
-        return sys_move_pages(a1, a2, a3, a4, a5, syscall_arg6);
+        return sys_move_pages(a1, a2, a3, a4, a5, a6);
     case SYS_REMAP_FILE_PAGES:
         return sys_remap_file_pages(a1, a2, a3, a4, a5);
     case SYS_MSYNC:
@@ -13141,13 +13156,13 @@ int64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2, uint64
     case SYS_MEMFD_CREATE:
         return (uint64_t)memfd_syscall_create((const char *)a1, (unsigned int)a2);
     case SYS_SPLICE:
-        return sys_splice(a1, a2, a3, a4, a5, syscall_arg6);
+        return sys_splice(a1, a2, a3, a4, a5, a6);
     case SYS_TEE:
         return sys_tee(a1, a2, a3, a4);
     case SYS_VMSPLICE:
         return sys_vmsplice(a1, a2, a3, a4);
     case SYS_COPY_FILE_RANGE:
-        return sys_copy_file_range(a1, a2, a3, a4, a5, syscall_arg6);
+        return sys_copy_file_range(a1, a2, a3, a4, a5, a6);
     case SYS_SENDMMSG:
         return sys_sendmmsg(a1, a2, a3, a4);
     case SYS_RECVMMSG:
