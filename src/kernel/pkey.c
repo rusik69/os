@@ -170,6 +170,14 @@ int pkey_mprotect(void *addr, size_t len, int prot, int pkey)
     if (vaddr & 0xFFFULL) return -EINVAL;      /* addr not page-aligned */
     if (len == 0) return 0;
 
+    /* Pre-rounding overflow guard: reject lengths so large that rounding
+     * up to PAGE_SIZE would overflow in unsigned arithmetic (silently
+     * wrapping to a small page count and bypassing the range check
+     * below, turning the syscall into a silent no-op that reports
+     * success without applying any protection key). */
+    if (len > UINT64_MAX - (PAGE_SIZE - 1))
+        return -EINVAL;
+
     /* Get current process page table */
     struct process *proc = process_get_current();
     if (!proc || !proc->pml4) return -EPERM;
