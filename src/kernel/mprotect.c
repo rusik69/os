@@ -72,11 +72,14 @@ int64_t sys_mprotect(uint64_t addr, uint64_t length, uint64_t prot) {
     /* ── Round length to page boundary ─────────────────────────────── */
     length = (length + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
 
-    /* ── Check for overflow and user-space boundary ────────────────── */
+    /* ── Check for overflow and user-space boundary ──────────────────
+     * A range beyond USER_VADDR_MAX is a bad user pointer (kernel-space
+     * or out-of-range address) — return -EFAULT, matching sys_munmap
+     * and sys_mseal for the identical condition. */
     if (addr + length < addr)
         return (int64_t)-EINVAL;
     if (addr + length > USER_VADDR_MAX)
-        return (int64_t)-ENOMEM;
+        return (int64_t)-EFAULT;
 
     /* ── Check mseal (sealed ranges are immutable) ─────────────────── */
     if (mseal_check(addr, length) == 0)
@@ -92,10 +95,14 @@ int64_t sys_mprotect(uint64_t addr, uint64_t length, uint64_t prot) {
     uint8_t ast = vmm_prot_to_ast(prot);
     uint64_t page_flags = vmm_ast_to_vmm_flags(ast, 1, 1);
 
-    /* ── Update page table entries ─────────────────────────────────── */
-    if (vmm_set_user_pages_flags(proc->pml4, addr,
-                                 length / PAGE_SIZE, page_flags) < 0)
-        return (int64_t)-EFAULT;
+    /* ── Update page table entries ───────────────────────────────────
+     * Propagate the underlying errno instead of masking: -EFAULT for
+     * unmapped ranges (bad user pointers), -ENOMEM if a COW-break
+     * allocation fails inside vmm_set_user_pages_flags. */
+    int ret = vmm_set_user_pages_flags(proc->pml4, addr,
+                                       length / PAGE_SIZE, page_flags);
+    if (ret < 0)
+        return (int64_t)ret;
 
     /* ── Flush TLB for the modified range ────────────────────────────
      * If this is the current process's page table, flush each page.

@@ -31,10 +31,11 @@
  *
  * Errors:
  *   -EINVAL  Invalid protection flags or non-page-aligned address
- *   -ENOMEM  Range exceeds USER_VADDR_MAX or out of memory
+ *   -ENOMEM  Out of memory (COW-break allocation failure)
  *   -EACCES  W+X requested but W^X is enforced
  *   -EPERM   Range contains sealed (mseal) mappings
- *   -EFAULT  Address range is not fully mapped
+ *   -EFAULT  Bad user pointer (range exceeds USER_VADDR_MAX)
+ *            or address range is not fully mapped
  */
 int64_t sys_mprotect(uint64_t addr, uint64_t len, uint64_t prot);
 
