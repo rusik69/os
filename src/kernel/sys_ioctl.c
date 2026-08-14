@@ -583,18 +583,12 @@ int64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg) {
         return (uint64_t)(int64_t)-EBADF;
 
     /*
-     * FIOCLEX and FIONCLEX do not use arg as a pointer — allow arg == 0.
-     * All other commands that take a pointer argument reject NULL.
+     * No generic NULL-arg gate: Linux ioctl semantics leave bad user
+     * pointers to each handler's copy_from_user()/copy_to_user(), which
+     * returns -EFAULT on a NULL pointer.  Commands that take no argument
+     * (FIOCLEX, FIONCLEX, SNDCTL_DSP_RESET/SYNC/POST) are legitimately
+     * called with arg == 0 and must not be rejected.
      */
-    switch (cmd) {
-    case FIOCLEX:
-    case FIONCLEX:
-        break;
-    default:
-        if (!arg)
-            return (uint64_t)(int64_t)-EINVAL;
-        break;
-    }
 
     /* Dispatch by command code */
     switch (cmd) {
