@@ -163,6 +163,7 @@ extern int usb_hub_init(void);
 #include "string.h"
 #include "swap.h"
 #include "sysctl.h"
+#include "tasklet.h"
 #include "sysfs.h"
 #include "sysrq.h"
 #include "thp.h"
@@ -748,6 +749,13 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* SoftIRQ subsystem (deferred interrupt processing) */
     softirq_init();
+
+    /* Tasklets — softirq-driven deferred callbacks.  Must be initialized
+     * AFTER softirq_init() (which memsets the handler array), otherwise
+     * tasklet_init()'s handler registration would be wiped and every
+     * tasklet_schedule() raise would be silently dropped by do_softirq()
+     * (lost wakeup — tasklet callbacks would never run). */
+    tasklet_init();
 
     /* I/O APIC and SMP boot */
     int ap_count = smp_boot_aps();
