@@ -420,6 +420,8 @@ int floppy_read_sectors(int drive, uint32_t lba, uint8_t count, void *buf)
 
     if (cylinder >= FLOPPY_CYLINDERS)
         return -EINVAL;
+    if (total_bytes > 0x10000)
+        return -EINVAL;  /* ISA DMA count register is 16-bit (max 64 KiB) */
 
     kprintf("[FLOPPY] Read drive %d: LBA=%u -> CHS=%d/%d/%d count=%d\n",
             drive, lba, cylinder, head, sector, count);
@@ -627,6 +629,8 @@ static int floppy_write_sectors(int drive, uint32_t lba, void *buf, int count)
 
     if (cylinder >= FLOPPY_CYLINDERS)
         return -EINVAL;
+    if (total_bytes > 0x10000)
+        return -EINVAL;  /* ISA DMA count register is 16-bit (max 64 KiB) */
 
     kprintf("[FLOPPY] Write drive %d: LBA=%u -> CHS=%d/%d/%d count=%d\n",
             drive, lba, cylinder, head, sector, count);

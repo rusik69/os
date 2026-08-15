@@ -13,7 +13,7 @@ int floppy_is_present(void);
 /* Read sectors from floppy disk.
    drive: 0 for A:, 1 for B:
    lba: sector number
-   count: number of sectors (max 256)
+   count: number of sectors (max 128 — ISA DMA count register is 16-bit)
    buf: output buffer (must be count * 512 bytes)
    Returns number of sectors read on success, -1 on error. */
 int floppy_read_sectors(int drive, uint32_t lba, uint8_t count, void *buf);
