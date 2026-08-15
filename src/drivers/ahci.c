@@ -2421,11 +2421,9 @@ static int ahci_init_phys_port(int p, int irq, int *is_pm) {
  */
 static int ahci_probe_device(struct ahci_port *port, int pm_port __attribute__((unused)),
                               const char *devname_fmt, const char *blkdev_name) {
-    /* IDENTIFY device */
-    uint64_t identify_data = pmm_alloc_frame();
-    if (!identify_data) return -1;
-    memset(PHYS_TO_VIRT((void*)(uintptr_t)(identify_data * 4096)), 0, 4096);
-
+    /* IDENTIFY device — the DMA target is the slot's own 4KB data buffer
+     * (slots[0].data_buf_phys), which is allocated at port init and freed
+     * only at teardown, so its lifetime spans the command. */
     ahci_build_raw_cmd(port, 0, ATA_CMD_IDENTIFY, 0, 1,
                        port->slots[0].data_buf_phys, 0,
                        sizeof(struct fis_reg_h2d) / 4);
@@ -2451,7 +2449,6 @@ static int ahci_probe_device(struct ahci_port *port, int pm_port __attribute__((
 
         /* Bail out if zero size (no device on this PM port) */
         if (sector_count == 0) {
-            pmm_free_frame(identify_data);
             return -1;
         }
 
@@ -2478,8 +2475,6 @@ static int ahci_probe_device(struct ahci_port *port, int pm_port __attribute__((
                 capacity_str,
                 port->ncq_capable ? " NCQ" : "");
 
-        pmm_free_frame(identify_data);
-
         /* Register with block device layer */
         int bd_id = BLOCKDEV_AHCI + ahci_port_count;
         int ret = blockdev_register(bd_id, blkdev_name,
@@ -2494,7 +2489,6 @@ static int ahci_probe_device(struct ahci_port *port, int pm_port __attribute__((
         }
         return -1;
     } else {
-        pmm_free_frame(identify_data);
         return -1;
     }
 }
