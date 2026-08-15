@@ -36,9 +36,18 @@ static uint64_t hwlat_measure(void)
 {
     volatile uint64_t sink = 0;
     uint64_t start, end;
+    uint64_t irq_save;
 
-    /* Disable interrupts to avoid measuring our own latency sources */
-    __asm__ volatile("cli");
+    /*
+     * Disable interrupts to avoid measuring our own latency sources, but
+     * save the previous interrupt state first and restore it afterwards.
+     * A blind sti() here would re-enable interrupts even when the caller
+     * entered with them masked (IRQ handler, irqsave critical section,
+     * wakeup path), breaking the caller's IRQ-off invariant and risking
+     * lost wakeups between this premature enable and the caller's
+     * condition re-check.
+     */
+    __asm__ volatile("pushfq; pop %0; cli" : "=r"(irq_save) : : "memory");
 
     start = timer_get_ticks();
 
@@ -49,7 +58,10 @@ static uint64_t hwlat_measure(void)
     }
 
     end = timer_get_ticks();
-    __asm__ volatile("sti");
+
+    /* Restore the saved interrupt state (sti only if IF was set on entry) */
+    if (irq_save & 0x200)
+        __asm__ volatile("sti" : : : "memory");
 
     (void)sink;
 
