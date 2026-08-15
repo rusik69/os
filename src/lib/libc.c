@@ -42,8 +42,8 @@ int libc_ahci_is_present(void) {
     return (int)libc_syscall(SYS_AHCI_PRESENT, 0, 0, 0, 0, 0);
 }
 
-uint32_t libc_ahci_get_sectors(void) {
-    return (uint32_t)libc_syscall(SYS_AHCI_SECTORS, 0, 0, 0, 0, 0);
+uint64_t libc_ahci_get_sectors(void) {
+    return (uint64_t)libc_syscall(SYS_AHCI_SECTORS, 0, 0, 0, 0, 0);
 }
 
 uint64_t libc_uptime_ticks(void) {

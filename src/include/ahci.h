@@ -53,7 +53,7 @@
 int  ahci_init(void);
 void ahci_exit(void);
 int  ahci_is_present(void);
-uint32_t ahci_get_sectors(void);
+uint64_t ahci_get_sectors(void);
 int  ahci_read_sectors(uint32_t lba, uint8_t count, void *buf);
 int  ahci_write_sectors(uint32_t lba, uint8_t count, const void *buf);
 
@@ -69,13 +69,11 @@ int  ahci_has_ncq_cap(void);
  * @count:    sector count (1-8 typically)
  * @buf:      data buffer (size = count * 512)
  * Returns 0 on success, -1 on error. */
-int  ahci_ncq_read(int port_num, int pm_port, uint32_t lba,
-                    uint8_t count, void *buf);
+int ahci_ncq_read(int port_num, int pm_port, uint64_t lba, uint8_t count, void *buf);
 
 /* Submit a queued NCQ WRITE FPDMA QUEUED command.
  * Same parameters as ahci_ncq_read. */
-int  ahci_ncq_write(int port_num, int pm_port, uint32_t lba,
-                     uint8_t count, const void *buf);
+int ahci_ncq_write(int port_num, int pm_port, uint64_t lba, uint8_t count, const void *buf);
 
 /* Poll for NCQ completions on a physical port.
  * Checks the SDB FIS (Set Device Bits) and completes finished commands.

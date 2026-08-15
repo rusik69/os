@@ -171,7 +171,7 @@ uint64_t libc_syscall(uint64_t num, uint64_t a1, uint64_t a2,
 int libc_ata_is_present(void);
 uint32_t libc_ata_get_sectors(void);
 int libc_ahci_is_present(void);
-uint32_t libc_ahci_get_sectors(void);
+uint64_t libc_ahci_get_sectors(void);
 uint64_t libc_uptime_ticks(void);
 uint64_t libc_time_seconds(void);
 uint64_t libc_getpid(void);
@@ -370,7 +370,9 @@ void *libc_calloc(size_t nmemb, size_t size);
 static inline int ata_is_present(void) { return libc_ata_is_present(); }
 static inline uint32_t ata_get_sectors(void) { return libc_ata_get_sectors(); }
 static inline int ahci_is_present(void) { return libc_ahci_is_present(); }
-static inline uint32_t ahci_get_sectors(void) { return libc_ahci_get_sectors(); }
+static inline uint64_t ahci_get_sectors(void) {
+    return libc_ahci_get_sectors();
+}
 
 static inline int fs_format(void) { return libc_fs_format(); }
 static inline int fs_create(const char *path, uint8_t type) { return libc_fs_create(path, type); }

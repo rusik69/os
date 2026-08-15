@@ -60,10 +60,11 @@ void cmd_lshw(const char *args) {
         kprintf("   size: %uMB (%u sectors)\n", ata_mb, ata_sects);
     }
     if (libc_ahci_is_present()) {
-        uint32_t ahci_sects = libc_ahci_get_sectors();
-        uint32_t ahci_mb = ahci_sects / 2048;
+        uint64_t ahci_sects = libc_ahci_get_sectors();
+        uint64_t ahci_mb = ahci_sects / 2048;
         kprintf("   description: AHCI Disk\n");
-        kprintf("   size: %uMB (%u sectors)\n", ahci_mb, ahci_sects);
+        kprintf("   size: %lluMB (%llu sectors)\n", (unsigned long long)ahci_mb,
+                (unsigned long long)ahci_sects);
     }
 
     /* Network */

@@ -278,7 +278,7 @@ struct ahci_port {
     int                 port_num;          /* physical port index (0-31) */
     int                 pm_port;           /* PM Port (-1 = direct, 0-14 = via PM) */
     int                 is_pm;             /* 1 if this is a PM sub-port entry */
-    uint32_t            sector_count;
+    uint64_t sector_count;
     int                 ncq_capable;       /* word 76 bit 8 */
     int                 blockdev_id;
     uint8_t             irq_line;
@@ -453,9 +453,8 @@ static void ahci_build_ncq_cmd(struct ahci_port *port, int slot,
 }
 
 /* ── Build a non-NCQ command (IDENTIFY, etc.) ───────────────────────── */
-static void ahci_build_raw_cmd(struct ahci_port *port, int slot,
-                                uint8_t ata_cmd, uint32_t lba, uint8_t count,
-                                uint64_t data_phys, int is_write, int fis_len_dw) {
+static void ahci_build_raw_cmd(struct ahci_port *port, int slot, uint8_t ata_cmd, uint64_t lba,
+                               uint8_t count, uint64_t data_phys, int is_write, int fis_len_dw) {
     struct ahci_cmd_hdr *hdr = (struct ahci_cmd_hdr *)
         PHYS_TO_VIRT(port->cmd_list_phys) + slot;
     struct ahci_cmd_table *tbl = (struct ahci_cmd_table *)
@@ -483,8 +482,8 @@ static void ahci_build_raw_cmd(struct ahci_port *port, int slot,
     fis->lba1 = (uint8_t)(lba >>  8);
     fis->lba2 = (uint8_t)(lba >> 16);
     fis->lba3 = (uint8_t)(lba >> 24);
-    fis->lba4 = 0;
-    fis->lba5 = 0;
+    fis->lba4 = (uint8_t)(lba >> 32);
+    fis->lba5 = (uint8_t)(lba >> 40);
     fis->countl = count;
     fis->counth = 0;
 
@@ -601,13 +600,11 @@ static void ahci_drain_queue(struct ahci_port *port) {
                 port->slots[slot].req = NULL;
                 blk_request_done(req);
             } else {
-                ahci_build_raw_cmd(port, slot,
-                                   (req->flags & BLK_REQ_READ) ? ATA_CMD_READ_DMA_EX
-                                                                : ATA_CMD_WRITE_DMA_EX,
-                                   (uint32_t)req->lba, (uint8_t)req->count,
-                                   port->slots[slot].data_buf_phys,
-                                   (req->flags & BLK_REQ_WRITE) ? 1 : 0,
-                                   sizeof(struct fis_reg_h2d) / 4);
+                ahci_build_raw_cmd(
+                    port, slot,
+                    (req->flags & BLK_REQ_READ) ? ATA_CMD_READ_DMA_EX : ATA_CMD_WRITE_DMA_EX,
+                    req->lba, (uint8_t)req->count, port->slots[slot].data_buf_phys,
+                    (req->flags & BLK_REQ_WRITE) ? 1 : 0, sizeof(struct fis_reg_h2d) / 4);
                 /* Copy data to DMA buffer for writes */
                 if (req->flags & BLK_REQ_WRITE) {
                     memcpy(port->slots[slot].data_buf_virt, req->buf,
@@ -809,9 +806,7 @@ int ahci_has_ncq_cap(void)
  * ahci_ncq_read — submit an NCQ READ FPDMA QUEUED command to a port.
  * Returns 0 on success, -1 on error.
  */
-int ahci_ncq_read(int port_num, int pm_port, uint32_t lba, uint8_t count,
-                   void *buf)
-{
+int ahci_ncq_read(int port_num, int pm_port, uint64_t lba, uint8_t count, void *buf) {
     /* Find the port by physical port number and PM port */
     struct ahci_port *port = NULL;
     for (int i = 0; i < ahci_port_count; i++) {
@@ -890,9 +885,7 @@ int ahci_ncq_read(int port_num, int pm_port, uint32_t lba, uint8_t count,
  * ahci_ncq_write — submit an NCQ WRITE FPDMA QUEUED command.
  * Returns 0 on success, -1 on error.
  */
-int ahci_ncq_write(int port_num, int pm_port, uint32_t lba, uint8_t count,
-                    const void *buf)
-{
+int ahci_ncq_write(int port_num, int pm_port, uint64_t lba, uint8_t count, const void *buf) {
     /* Find the port */
     struct ahci_port *port = NULL;
     for (int i = 0; i < ahci_port_count; i++) {
@@ -2037,56 +2030,52 @@ static int ahci_hotplug_add_device(int phys_port, int pm_port)
 		return -1;
 
 	uint16_t *id = (uint16_t *)phys_entry->slots[0].data_buf_virt;
-	uint32_t lo = ((uint32_t)id[101] << 16) | id[100];
-	uint32_t nsectors = lo ? lo : ((uint32_t)id[57] |
-	                         ((uint32_t)id[58] << 16));
-	if (nsectors == 0)
-		return -1;
+    /* 48-bit LBA capacity from IDENTIFY words 100-103; fall back to the
+     * 28-bit words 57-58 when the 48-bit field is not populated. */
+    uint64_t nsectors = (uint64_t)id[100] | ((uint64_t)id[101] << 16) | ((uint64_t)id[102] << 32) |
+                        ((uint64_t)id[103] << 48);
+    if (nsectors == 0)
+        nsectors = (uint64_t)id[57] | ((uint64_t)id[58] << 16);
+    if (nsectors == 0)
+        return -1;
 
-	/* Create a new port entry */
-	struct ahci_port *new_port = &ahci_ports[ahci_port_count];
-	memcpy(new_port, phys_entry, sizeof(struct ahci_port));
-	new_port->pm_port = pm_port;
-	new_port->is_pm = (pm_port >= 0) ? 1 : 0;
-	new_port->sector_count = nsectors;
-	new_port->ncq_capable = (id[76] & (1u << 8)) ? 1 : 0;
-	new_port->inflight_mask = 0;
-	new_port->tag_bitmap = 0;
-	for (int s = 0; s < AHCI_SLOT_COUNT; s++)
-		new_port->slots[s].req = NULL;
+    /* Create a new port entry */
+    struct ahci_port *new_port = &ahci_ports[ahci_port_count];
+    memcpy(new_port, phys_entry, sizeof(struct ahci_port));
+    new_port->pm_port = pm_port;
+    new_port->is_pm = (pm_port >= 0) ? 1 : 0;
+    new_port->sector_count = nsectors;
+    new_port->ncq_capable = (id[76] & (1u << 8)) ? 1 : 0;
+    new_port->inflight_mask = 0;
+    new_port->tag_bitmap = 0;
+    for (int s = 0; s < AHCI_SLOT_COUNT; s++)
+        new_port->slots[s].req = NULL;
 
-	/* Build a block device name */
-	char blkname[16];
-	if (pm_port >= 0) {
-		snprintf(blkname, sizeof(blkname), "ahci%dp%d%s",
-		         phys_port, pm_port,
-		         is_atapi ? "-cd" : "");
-	} else {
-		snprintf(blkname, sizeof(blkname), "ahci%d", phys_port);
-	}
+    /* Build a block device name */
+    char blkname[16];
+    if (pm_port >= 0) {
+        snprintf(blkname, sizeof(blkname), "ahci%dp%d%s", phys_port, pm_port,
+                 is_atapi ? "-cd" : "");
+    } else {
+        snprintf(blkname, sizeof(blkname), "ahci%d", phys_port);
+    }
 
-	int bd_id = (pm_port >= 0)
-	    ? BLOCKDEV_AHCI_PM_BASE + ahci_port_count
-	    : BLOCKDEV_AHCI + ahci_port_count;
+    int bd_id =
+        (pm_port >= 0) ? BLOCKDEV_AHCI_PM_BASE + ahci_port_count : BLOCKDEV_AHCI + ahci_port_count;
 
-	int ret = blockdev_register(bd_id, blkname,
-	                            ahci_submit_fn,
-	                            ahci_idle_fn,
-	                            nsectors,
-	                            BLK_DRIVER_ASYNC);
-	if (ret == 0) {
-		new_port->blockdev_id = bd_id;
-		ahci_port_count++;
-		ahci_present = 1;
-		kprintf("AHCI: hotplug added port %d PM%d: %lu sectors%s%s\n",
-		        phys_port, pm_port,
-		        (unsigned long)nsectors,
-		        new_port->ncq_capable ? " NCQ" : "",
-		        is_atapi ? " ATAPI" : "");
-		return 0;
-	}
+    int ret =
+        blockdev_register(bd_id, blkname, ahci_submit_fn, ahci_idle_fn, nsectors, BLK_DRIVER_ASYNC);
+    if (ret == 0) {
+        new_port->blockdev_id = bd_id;
+        ahci_port_count++;
+        ahci_present = 1;
+        kprintf("AHCI: hotplug added port %d PM%d: %lu sectors%s%s\n", phys_port, pm_port,
+                (unsigned long)nsectors, new_port->ncq_capable ? " NCQ" : "",
+                is_atapi ? " ATAPI" : "");
+        return 0;
+    }
 
-	return -1;
+    return -1;
 }
 
 /**
@@ -2380,8 +2369,12 @@ static int ahci_probe_device(struct ahci_port *port, int pm_port __attribute__((
 
     if (ahci_issue_non_ncq(port, 0) == 0) {
         uint16_t *id = (uint16_t *)port->slots[0].data_buf_virt;
-        uint32_t lo = ((uint32_t)id[101] << 16) | id[100];
-        uint32_t sector_count = lo ? lo : ((uint32_t)id[57] | ((uint32_t)id[58] << 16));
+        /* 48-bit LBA capacity from IDENTIFY words 100-103; fall back to the
+         * 28-bit words 57-58 when the 48-bit field is not populated. */
+        uint64_t sector_count = (uint64_t)id[100] | ((uint64_t)id[101] << 16) |
+                                ((uint64_t)id[102] << 32) | ((uint64_t)id[103] << 48);
+        if (sector_count == 0)
+            sector_count = (uint64_t)id[57] | ((uint64_t)id[58] << 16);
 
         /* Bail out if zero size (no device on this PM port) */
         if (sector_count == 0) {
@@ -2397,13 +2390,13 @@ static int ahci_probe_device(struct ahci_port *port, int pm_port __attribute__((
         }
 
         char capacity_str[32];
-        uint32_t capacity_mb = sector_count / 2048;
+        uint64_t capacity_mb = sector_count / 2048;
         if (capacity_mb >= 1024) {
-            snprintf(capacity_str, sizeof(capacity_str), "%lu GB",
-                     (unsigned long)(capacity_mb / 1024));
+            snprintf(capacity_str, sizeof(capacity_str), "%llu GB",
+                     (unsigned long long)(capacity_mb / 1024));
         } else {
-            snprintf(capacity_str, sizeof(capacity_str), "%lu MB",
-                     (unsigned long)capacity_mb);
+            snprintf(capacity_str, sizeof(capacity_str), "%llu MB",
+                     (unsigned long long)capacity_mb);
         }
 
         kprintf("  %s: %lu sectors (%s)%s\n",
@@ -2580,8 +2573,12 @@ int __init ahci_init(void) {
 
                     /* For ATA devices: sector count from IDENTIFY words 100-101 or 57-58 */
                     /* For ATAPI devices: sector count from words 100-101 or 57-58 */
-                    uint32_t lo = ((uint32_t)id[101] << 16) | id[100];
-                    uint32_t sector_count = lo ? lo : ((uint32_t)id[57] | ((uint32_t)id[58] << 16));
+                    /* 48-bit LBA capacity from words 100-103; fall back to the
+                     * 28-bit words 57-58 when the 48-bit field is not populated. */
+                    uint64_t sector_count = (uint64_t)id[100] | ((uint64_t)id[101] << 16) |
+                                            ((uint64_t)id[102] << 32) | ((uint64_t)id[103] << 48);
+                    if (sector_count == 0)
+                        sector_count = (uint64_t)id[57] | ((uint64_t)id[58] << 16);
 
                     if (sector_count == 0) continue;
 
@@ -2741,7 +2738,7 @@ void ahci_exit(void) {
 }
 
 int ahci_is_present(void) { return ahci_present; }
-uint32_t ahci_get_sectors(void) {
+uint64_t ahci_get_sectors(void) {
     if (ahci_port_count > 0) return ahci_ports[0].sector_count;
     return 0;
 }
