@@ -30,8 +30,13 @@ static int iscsi_tcp_send(int conn_id, const void *data, uint32_t len)
 {
     if (!net_tcp_is_connected(conn_id))
         return -1;
-    int sent = net_tcp_send(conn_id, data, (uint16_t)len);
-    return (sent == (int)len) ? 0 : -1;
+    /* net_tcp_send() returns 0 on success, -1 on error — NOT a byte
+     * count.  Comparing it to len would report every non-empty send as
+     * a failure.  Also reject lengths that the uint16_t wire API would
+     * truncate, instead of silently sending a short segment. */
+    if (len > 0xFFFF)
+        return -1;
+    return (net_tcp_send(conn_id, data, (uint16_t)len) == 0) ? 0 : -1;
 }
 
 static int iscsi_tcp_recv(int conn_id, void *buf, uint32_t len, int timeout_ticks)
@@ -39,7 +44,12 @@ static int iscsi_tcp_recv(int conn_id, void *buf, uint32_t len, int timeout_tick
     uint8_t *p = (uint8_t *)buf;
     uint32_t remaining = len;
     while (remaining > 0) {
-        int n = net_tcp_recv(conn_id, p, (uint16_t)remaining, timeout_ticks);
+        /* Cap each net_tcp_recv() call at 65535 bytes: the API takes a
+         * uint16_t bufsize, and casting a remaining count of exactly
+         * 65536 (or any multiple) would truncate to 0, making the
+         * receive loop fail on transfers >= 64 KiB. */
+        uint16_t chunk = (remaining > 0xFFFF) ? 0xFFFF : (uint16_t)remaining;
+        int n = net_tcp_recv(conn_id, p, chunk, timeout_ticks);
         if (n <= 0) return -1;
         p += n;
         remaining -= (uint32_t)n;
