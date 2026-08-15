@@ -395,6 +395,8 @@ int mpath_status(int mpath_id, char *buf, int max)
     if (mpath_id < 0 || mpath_id >= MPATH_MAX_DEVS ||
         !g_mpath_devs[mpath_id].in_use)
         return -EINVAL;
+    if (!buf || max <= 0)
+        return -EINVAL;
 
     struct mpath_dev *mp = &g_mpath_devs[mpath_id];
     int pos = 0;
