@@ -91,6 +91,7 @@ struct gendisk *alloc_disk(int minors)
 {
     struct gendisk *disk;
     int slot;
+    uint64_t irq_flags;
 
     if (!g_genhd_initialised)
         return NULL;
@@ -98,16 +99,20 @@ struct gendisk *alloc_disk(int minors)
     if (minors < 1)
         minors = 1;
 
+    /* The free-slot search must run under g_table_lock: another CPU's
+     * concurrent alloc_disk() could otherwise pick the same free slot
+     * (check-then-act race), and its memset would clobber the disk we
+     * are about to claim. */
+    spinlock_irqsave_acquire(&g_table_lock, &irq_flags);
+
     slot = genhd_find_free_slot();
     if (slot < 0) {
+        spinlock_irqsave_release(&g_table_lock, irq_flags);
         kprintf("[!!] genhd: no free slots (%d in use)\n", GENHD_MAX_DISKS);
         return NULL;
     }
 
     disk = &g_disk_table[slot];
-
-    uint64_t irq_flags;
-    spinlock_irqsave_acquire(&g_table_lock, &irq_flags);
 
     memset(disk, 0, sizeof(*disk));
     disk->in_use    = 1;
