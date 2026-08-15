@@ -1106,6 +1106,13 @@ static int nvme_blk_submit(struct blk_request *req) {
     if (!req)
         return -EIO;
 
+    /* Zero-length requests must never reach the controller: NLB in cdw12 is
+     * 0-based (count - 1), so count == 0 underflows to 0xFFFFFFFF and the
+     * controller would DMA ~2 TiB against the single-page buffer allocated
+     * below.  Mirrors the count == 0 guard in nvme_deallocate(). */
+    if (req->count == 0)
+        return -EINVAL;
+
     /* Determine namespace from device ID */
     int ns_index = req->dev_id - NVME_BLOCKDEV_ID;
     if (ns_index < 0 || ns_index >= (int)g_nvme_ctrl.nn)
