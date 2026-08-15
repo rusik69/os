@@ -252,6 +252,9 @@ static int raid1_map(struct raid_private *priv, struct blk_request *req,
     if (req->flags & BLK_REQ_WRITE) {
         /* Write to all mirrors */
         if (num_mirrors > DM_RAID_MAX_DEVS) num_mirrors = DM_RAID_MAX_DEVS;
+        /* Never exceed the framework's mapped[] array capacity */
+        if (num_mirrors > DM_MAX_MAPPED_REQUESTS)
+            num_mirrors = DM_MAX_MAPPED_REQUESTS;
         int alloc_count = 0;
         for (int i = 0; i < num_mirrors; i++) {
             struct blk_request *clone = blk_request_alloc();

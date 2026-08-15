@@ -189,7 +189,7 @@ static int dm_submit_to_targets(struct dm_device *dm, struct blk_request *req)
             ti->length >= req_start + req->count) {
             /* Fast path: single target covers the entire device.
              * Let the target map the request directly. */
-            struct blk_request *mapped[4];
+            struct blk_request *mapped[DM_MAX_MAPPED_REQUESTS];
             int mapped_count = 0;
 
             spinlock_release(&dm->lock);
@@ -226,7 +226,7 @@ static int dm_submit_to_targets(struct dm_device *dm, struct blk_request *req)
         sub_req->buf    = (uint8_t *)req->buf + offset_bytes;
         sub_req->dev_id = req->dev_id;
 
-        struct blk_request *mapped[4];
+        struct blk_request *mapped[DM_MAX_MAPPED_REQUESTS];
         int mapped_count = 0;
         ret = ti->ops->map(ti, sub_req, mapped, &mapped_count);
         if (ret != 0) {

@@ -12,6 +12,13 @@
 #define DM_NAME_MAX         32      /* max device name length */
 #define DM_TARGET_NAME_MAX  16      /* max target type name length */
 
+/* Max requests a target map() may emit into the caller's mapped[] array.
+ * Must be >= the largest fan-out of any registered target: dm-raid RAID1
+ * write path mirrors to DM_RAID_MAX_DEVS (8) backing devices. The block
+ * framework sizes its mapped[] array with this constant, and targets must
+ * clamp their mapped_count to it. */
+#define DM_MAX_MAPPED_REQUESTS 8
+
 /* Device mapper device numbers (use a reserved blockdev range) */
 #define DM_DEVBASE          24      /* first dm blockdev ID */
 #define DM_DEV_COUNT        8       /* number of dm blockdev IDs */
