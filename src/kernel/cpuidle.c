@@ -136,20 +136,33 @@ static void cpuidle_detect_caps(void)
 }
 
 /* ── MWAIT wrapper ────────────────────────────────────────────────── */
-
 /* Execute MONITOR for address tracking, then MWAIT with hint.
  * The hint is: bits [3:0] = C-state sub-state, bits [7:4] = C-state.
- * Returns immediately on wake (store to monitored address or interrupt). */
+ * Returns immediately on wake (store to monitored address or interrupt).
+ *
+ * Interrupt state: STI is placed IMMEDIATELY before MWAIT so that the
+ * STI "interrupts recognized after the next instruction" rule makes
+ * IF=1 exactly as MWAIT begins.  Any interrupt pending at that point
+ * (e.g. one that arrived while the idle loop ran with IF=0, or a
+ * reschedule IPI / timer tick) therefore wakes MWAIT instantly instead
+ * of being consumed by its handler before the sleep — which would leave
+ * the CPU sleeping with the wakeup already handled (a lost wakeup until
+ * the next unrelated interrupt).  Interrupts are disabled again before
+ * returning, matching the enter-state contract (IF=0 on return). */
 static inline void do_mwait(volatile uint64_t *addr, uint32_t hint)
 {
     __asm__ volatile(
+        "cli\n\t"
         "movq %[addr], %%rax\n\t"
         "xor %%rcx, %%rcx\n\t"
         "xor %%rdx, %%rdx\n\t"
         "monitor\n\t"
         "movq %[hint], %%rax\n\t"
         "xor %%rcx, %%rcx\n\t"
+        "xor %%rdx, %%rdx\n\t"
+        "sti\n\t"
         "mwait\n\t"
+        "cli\n\t"
         :
         : [addr] "r" (addr), [hint] "r" ((uint64_t)hint)
         : "rax", "rcx", "rdx", "memory");
@@ -160,9 +173,7 @@ static inline void do_mwait(volatile uint64_t *addr, uint32_t hint)
 static inline void do_mwait_hint(uint64_t hint)
 {
     volatile uint64_t monitor_addr = 0;
-    __asm__ volatile("sti" : : : "memory");
     do_mwait(&monitor_addr, (uint32_t)hint);
-    __asm__ volatile("cli" : : : "memory");
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -222,10 +233,8 @@ int cpuidle_c1e_mwait_enter(struct cpuidle_state *self)
 {
     (void)self;
     volatile uint64_t monitor_addr = 0;
-    __asm__ volatile("sti" : : : "memory");
     /* C1E hint: sub-state 1, C-state 1 */
     do_mwait(&monitor_addr, 0x11);
-    __asm__ volatile("cli" : : : "memory");
     return 0;
 }
 
@@ -234,10 +243,8 @@ int cpuidle_c2_mwait_enter(struct cpuidle_state *self)
 {
     (void)self;
     volatile uint64_t monitor_addr = 0;
-    __asm__ volatile("sti" : : : "memory");
     /* C2 hint: sub-state 0, C-state 2 */
     do_mwait(&monitor_addr, 0x20);
-    __asm__ volatile("cli" : : : "memory");
     return 0;
 }
 
@@ -246,10 +253,8 @@ int cpuidle_c3_mwait_enter(struct cpuidle_state *self)
 {
     (void)self;
     volatile uint64_t monitor_addr = 0;
-    __asm__ volatile("sti" : : : "memory");
     /* C3 hint: sub-state 0, C-state 3 */
     do_mwait(&monitor_addr, 0x30);
-    __asm__ volatile("cli" : : : "memory");
     return 0;
 }
 
