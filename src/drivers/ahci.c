@@ -931,7 +931,20 @@ int ahci_ncq_read(int port_num, int pm_port, uint64_t lba, uint8_t count, void *
     spinlock_irqsave_acquire(&ahci_lock, &irq_flags);
     port->slots[slot].req = NULL;
     port->inflight_mask &= ~(1u << slot);
-    ahci_free_slot(port, slot);
+    /* DMA buffer lifetime: only release the tag when the hardware is no
+     * longer busy with this slot.  If CI/SACT still shows it active, the
+     * stale command's DMA may still be transferring into
+     * slots[slot].data_buf_virt; freeing the tag now would let
+     * ahci_find_free_slot re-issue the slot — whose PRDT points at the
+     * same 4KB data buffer — while that DMA is in flight (data
+     * corruption).  Keep the tag reserved: the stale-sync in
+     * ahci_find_free_slot (tag_bitmap &= ~(tag_bitmap & ~hw_busy))
+     * releases it once the hardware clears CI/SACT, and
+     * ahci_ncq_recover_port() reclaims all tags on port reset. */
+    uint32_t hw_ci   = port_read(port->port_num, PORT_CI);
+    uint32_t hw_sact = port_read(port->port_num, PORT_SACT);
+    if (!((hw_ci | hw_sact) & (1u << slot)))
+        ahci_free_slot(port, slot);
     spinlock_irqsave_release(&ahci_lock, irq_flags);
     blk_request_free(req);
     return -1;
@@ -1020,7 +1033,12 @@ int ahci_ncq_write(int port_num, int pm_port, uint64_t lba, uint8_t count, const
     spinlock_irqsave_acquire(&ahci_lock, &irq_flags);
     port->slots[slot].req = NULL;
     port->inflight_mask &= ~(1u << slot);
-    ahci_free_slot(port, slot);
+    /* DMA buffer lifetime: only release the tag when the hardware is no
+     * longer busy with this slot (see ahci_ncq_read timeout path). */
+    uint32_t hw_ci   = port_read(port->port_num, PORT_CI);
+    uint32_t hw_sact = port_read(port->port_num, PORT_SACT);
+    if (!((hw_ci | hw_sact) & (1u << slot)))
+        ahci_free_slot(port, slot);
     spinlock_irqsave_release(&ahci_lock, irq_flags);
     blk_request_free(req);
     return -1;
