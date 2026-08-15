@@ -57,7 +57,10 @@ void __init ramdisk_init(void) {
 
 int ramdisk_read_sectors(uint32_t lba, uint8_t count, void *buf) {
     if (!ramdisk_ready) return -1;
-    if (lba + count > RAMDISK_SECTORS) return -1;
+    /* Compare in two steps so lba + count cannot wrap in uint32: a wrapped
+     * sum (lba >= 2^32 - count) would pass the check and then index
+     * ramdisk_pages[] out of bounds. */
+    if (lba > RAMDISK_SECTORS || count > RAMDISK_SECTORS - lba) return -1;
 
     uint8_t *dst = (uint8_t *)buf;
     for (uint32_t i = 0; i < count; i++) {
@@ -68,7 +71,10 @@ int ramdisk_read_sectors(uint32_t lba, uint8_t count, void *buf) {
 
 int ramdisk_write_sectors(uint32_t lba, uint8_t count, const void *buf) {
     if (!ramdisk_ready) return -1;
-    if (lba + count > RAMDISK_SECTORS) return -1;
+    /* Compare in two steps so lba + count cannot wrap in uint32: a wrapped
+     * sum (lba >= 2^32 - count) would pass the check and then index
+     * ramdisk_pages[] out of bounds. */
+    if (lba > RAMDISK_SECTORS || count > RAMDISK_SECTORS - lba) return -1;
 
     const uint8_t *src = (const uint8_t *)buf;
     for (uint32_t i = 0; i < count; i++) {
