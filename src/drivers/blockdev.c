@@ -790,6 +790,17 @@ static int legacy_submit_fn_adapter(struct blk_request *req) {
     if (dev_id < 0 || dev_id >= BLOCKDEV_MAX_DEVICES || !g_blockdevs[dev_id].active)
         return -EINVAL;
 
+    /* The legacy read/write interface addresses LBAs as uint32_t and
+     * sector counts as uint8_t.  Reject requests that exceed those limits
+     * instead of silently truncating: on a volume > 2^32 sectors (2 TB at
+     * 512 B/sector), a truncated LBA wraps to a low sector — sector 2^32
+     * becomes sector 0 — reading/writing the wrong location and bypassing
+     * the blk_submit_sync LBA-0 write guard. */
+    if (req->lba > 0xFFFFFFFFull || req->count > 255) {
+        req->result = -EOVERFLOW;
+        return -EOVERFLOW;
+    }
+
     uint64_t start_ticks = timer_get_ticks();
 
     if (req->flags & BLK_REQ_READ) {
