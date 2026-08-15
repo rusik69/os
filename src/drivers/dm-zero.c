@@ -48,9 +48,14 @@ static void zero_dtr(struct dm_target *ti)
 /* Map: handle read/write to zero device.
  * Reads: fill the buffer with zeros.
  * Writes: discard the data (no-op).
- * Completion is signalled via blk_request_done() and mapped_count is
- * set to 0 so the dm framework does not attempt to submit to a
- * backing device.
+ * The request is NOT completed here: dm devices are registered as
+ * synchronous block drivers (blockdev_register(..., flags = 0)), so
+ * blk_submit_async() completes the request after submit_fn returns.
+ * Calling blk_request_done() here would double-complete: the uint8_t
+ * inflight_count underflows to 255, permanently disabling the fast
+ * path, and every later I/O queues forever (dm has no idle fn/IRQ to
+ * drain the queue).  mapped_count is set to 0 so the dm framework
+ * does not attempt to submit to a backing device.
  */
 static int zero_map(struct dm_target *ti, struct blk_request *req,
                     struct blk_request *mapped[], int *mapped_count)
@@ -65,7 +70,6 @@ static int zero_map(struct dm_target *ti, struct blk_request *req,
     /* Writes are silently discarded — no-op */
 
     req->result = 0;
-    blk_request_done(req);
 
     /* No mapped requests to submit; we handled it entirely here */
     *mapped_count = 0;

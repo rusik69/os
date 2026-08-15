@@ -44,8 +44,12 @@ static void error_dtr(__maybe_unused struct dm_target *ti)
 }
 
 /* Map: return -EIO for all I/O operations.
- * Completes the request with an error and sets mapped_count to 0
- * so the dm framework does not attempt to submit to a backing device.
+ * Sets the result and mapped_count to 0 so the dm framework does not
+ * attempt to submit to a backing device.  The request is completed by
+ * blk_submit_async() (dm devices are synchronous drivers, flags = 0) —
+ * calling blk_request_done() here would double-complete and underflow
+ * the device's uint8_t inflight_count, wedging the fast path so every
+ * later I/O queues forever.
  */
 static int error_map(struct dm_target *ti, struct blk_request *req,
                      struct blk_request *mapped[], int *mapped_count)
@@ -55,7 +59,6 @@ static int error_map(struct dm_target *ti, struct blk_request *req,
 
     /* Return I/O error — simulate a failed disk sector */
     req->result = -EIO;
-    blk_request_done(req);
 
     /* No mapped requests to submit; we handled it entirely here */
     *mapped_count = 0;
