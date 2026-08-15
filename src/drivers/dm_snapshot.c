@@ -117,9 +117,13 @@ static ssize_t dm_snapshot_read(int snap_id, uint64_t sector,
         /* Read from COW store */
         uint64_t offset = cow_chunk * snap->chunk_size +
                           (sector % (snap->chunk_size / 512)) * 512;
-        if (offset + len <= snap->cow_size) {
-            memcpy(buf, snap->cow_data + offset, len);
+        if (offset + len > snap->cow_size) {
+            /* Request would exceed the COW store: report the error
+             * instead of returning success with uninitialized data. */
+            spinlock_irqsave_release(&snap->lock, irq_flags);
+            return -EIO;
         }
+        memcpy(buf, snap->cow_data + offset, len);
     } else {
         /* Read from origin (not modified in snapshot) */
         kprintf("[DM-SNAP] Reading unmodified chunk from origin for snap %d\n",
@@ -150,27 +154,44 @@ static ssize_t dm_snapshot_write(int snap_id, uint64_t sector,
     uint64_t chunk = sector / (snap->chunk_size / 512);
     uint64_t cow_chunk = (uint64_t)-1;
 
-    /* Find a free COW chunk */
+    /* Reuse the existing COW chunk if this origin chunk was already
+     * copied; only allocate a fresh slot on the first write to it.
+     * (Without this, a second write to the same chunk allocates a new
+     * slot and dm_snapshot_read's first-match scan returns stale data,
+     * while the COW store fills up after chunk_count writes.) */
     for (uint64_t i = 0; i < snap->chunk_count; i++) {
-        if (snap->chunk_map[i] == (uint64_t)-1) {
+        if (snap->chunk_map[i] == chunk) {
             cow_chunk = i;
             break;
         }
     }
-
     if (cow_chunk == (uint64_t)-1) {
-        /* COW full */
+        /* First write to this chunk: find a free COW slot */
+        for (uint64_t i = 0; i < snap->chunk_count; i++) {
+            if (snap->chunk_map[i] == (uint64_t)-1) {
+                cow_chunk = i;
+                break;
+            }
+        }
+        if (cow_chunk == (uint64_t)-1) {
+            /* COW full */
+            spinlock_irqsave_release(&snap->lock, irq_flags);
+            return -ENOSPC;
+        }
+    }
+
+    uint64_t offset = cow_chunk * snap->chunk_size +
+                      (sector % (snap->chunk_size / 512)) * 512;
+    if (offset + len > snap->cow_size) {
+        /* Request would exceed the COW store: report the error instead
+         * of silently dropping the data while claiming success. */
         spinlock_irqsave_release(&snap->lock, irq_flags);
-        return -ENOSPC;
+        return -EIO;
     }
 
     /* Copy original data to COW (in real impl, we'd read from origin first) */
     snap->chunk_map[cow_chunk] = chunk;
-    uint64_t offset = cow_chunk * snap->chunk_size +
-                      (sector % (snap->chunk_size / 512)) * 512;
-    if (offset + len <= snap->cow_size) {
-        memcpy(snap->cow_data + offset, buf, len);
-    }
+    memcpy(snap->cow_data + offset, buf, len);
     snap->block_writes++;
     spinlock_irqsave_release(&snap->lock, irq_flags);
     return (ssize_t)len;
