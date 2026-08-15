@@ -76,9 +76,12 @@ static int linear_ctr(struct dm_target *ti, int argc, const char **argv)
         start = start * 10 + (*s++ - '0');
     }
 
-    /* Check that the range fits on the backing device */
+    /* Check that the range fits on the backing device.
+     * Overflow-safe: evaluate start + length without wrapping uint64_t,
+     * otherwise a start near 2^64 bypasses the range check and mapped
+     * LBAs wrap to wrong regions of the backing device. */
     uint64_t backing_sectors = blockdev_get_sectors(dev_id);
-    if (start + ti->length > backing_sectors) {
+    if (start > backing_sectors || ti->length > backing_sectors - start) {
         kprintf("[DM-LINEAR] ctr: range [%llu, %llu) exceeds backing device size %llu\n",
                 (unsigned long long)start,
                 (unsigned long long)(start + ti->length),
