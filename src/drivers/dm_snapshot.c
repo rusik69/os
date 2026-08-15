@@ -23,7 +23,7 @@ struct dm_snapshot {
     uint64_t cow_size;       /* COW size in bytes */
     uint64_t chunk_size;
     uint64_t *chunk_map;     /* Block -> COW chunk mapping */
-    int chunk_count;
+    uint64_t chunk_count;
     uint64_t snap_id;
     uint64_t block_writes;
     spinlock_t lock;
@@ -65,16 +65,16 @@ static int64_t dm_snapshot_create(const char *origin, const char *cow_dev,
     memset(snap->cow_data, 0, cow_size);
 
     /* Chunk map: -1 means not yet copied */
-    snap->chunk_count = (int)(cow_size / DM_SNAP_CHUNK_SIZE);
+    snap->chunk_count = cow_size / DM_SNAP_CHUNK_SIZE;
     snap->chunk_map = (uint64_t *)kmalloc(
-        (size_t)snap->chunk_count * sizeof(uint64_t));
+        snap->chunk_count * sizeof(uint64_t));
     if (!snap->chunk_map) {
         kfree(snap->cow_data);
         spinlock_irqsave_release(&snap->lock, irq_flags);
         return -ENOMEM;
     }
     memset(snap->chunk_map, 0xFF,
-           (size_t)snap->chunk_count * sizeof(uint64_t));
+           snap->chunk_count * sizeof(uint64_t));
 
     snap->active = 1;
     spinlock_irqsave_release(&snap->lock, irq_flags);
@@ -103,19 +103,19 @@ static ssize_t dm_snapshot_read(int snap_id, uint64_t sector,
     spinlock_irqsave_acquire(&snap->lock, &irq_flags);
 
     uint64_t chunk = sector / (snap->chunk_size / 512);
-    int cow_chunk = -1;
+    uint64_t cow_chunk = (uint64_t)-1;
 
     /* Check if this chunk was copied to COW */
-    for (int i = 0; i < snap->chunk_count; i++) {
+    for (uint64_t i = 0; i < snap->chunk_count; i++) {
         if (snap->chunk_map[i] == chunk) {
             cow_chunk = i;
             break;
         }
     }
 
-    if (cow_chunk >= 0) {
+    if (cow_chunk != (uint64_t)-1) {
         /* Read from COW store */
-        uint64_t offset = (uint64_t)cow_chunk * snap->chunk_size +
+        uint64_t offset = cow_chunk * snap->chunk_size +
                           (sector % (snap->chunk_size / 512)) * 512;
         if (offset + len <= snap->cow_size) {
             memcpy(buf, snap->cow_data + offset, len);
@@ -148,17 +148,17 @@ static ssize_t dm_snapshot_write(int snap_id, uint64_t sector,
     spinlock_irqsave_acquire(&snap->lock, &irq_flags);
 
     uint64_t chunk = sector / (snap->chunk_size / 512);
-    int cow_chunk = -1;
+    uint64_t cow_chunk = (uint64_t)-1;
 
     /* Find a free COW chunk */
-    for (int i = 0; i < snap->chunk_count; i++) {
+    for (uint64_t i = 0; i < snap->chunk_count; i++) {
         if (snap->chunk_map[i] == (uint64_t)-1) {
             cow_chunk = i;
             break;
         }
     }
 
-    if (cow_chunk < 0) {
+    if (cow_chunk == (uint64_t)-1) {
         /* COW full */
         spinlock_irqsave_release(&snap->lock, irq_flags);
         return -ENOSPC;
@@ -166,7 +166,7 @@ static ssize_t dm_snapshot_write(int snap_id, uint64_t sector,
 
     /* Copy original data to COW (in real impl, we'd read from origin first) */
     snap->chunk_map[cow_chunk] = chunk;
-    uint64_t offset = (uint64_t)cow_chunk * snap->chunk_size +
+    uint64_t offset = cow_chunk * snap->chunk_size +
                       (sector % (snap->chunk_size / 512)) * 512;
     if (offset + len <= snap->cow_size) {
         memcpy(snap->cow_data + offset, buf, len);
