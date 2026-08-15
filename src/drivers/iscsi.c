@@ -305,6 +305,15 @@ static int iscsi_read_capacity_10(struct iscsi_session *sess)
     uint32_t block_len = iscsi_htonl(block_len_raw);
 
     sess->sector_count = (uint64_t)last_lba + 1;
+
+    /* Validate the reported block length before it feeds the
+     * count * sector_size arithmetic in iscsi_submit_fn(): a zero or
+     * oversized value from a broken/malicious target would make the
+     * uint32 transfer-length computation overflow or fail every I/O. */
+    if (block_len == 0 || block_len > 65536) {
+        kprintf("[ISCSI] Target reported invalid block length %u\n", block_len);
+        return -EINVAL;
+    }
     sess->sector_size = block_len;
     kprintf("[ISCSI] Capacity: %llu sectors, %u bytes/sector\n",
             (unsigned long long)sess->sector_count, sess->sector_size);
@@ -334,7 +343,31 @@ static int iscsi_submit_fn(struct blk_request *req)
     int is_write = (req->flags & BLK_REQ_WRITE) ? 1 : 0;
     uint64_t lba = req->lba;
     uint32_t count = req->count;
-    uint32_t byte_len = count * sess->sector_size;
+
+    /* CDB field-width guards: READ(10)/WRITE(10) encode LBA in 32 bits
+     * and transfer length in 16 bits.  Without these, a request whose
+     * LBA has bits above 2^32 (volumes > 2TB) or whose count exceeds
+     * 65535 would have those high bits silently dropped — reading or
+     * writing the wrong sector, or transferring fewer sectors than the
+     * caller expects.  Reject instead of truncating. */
+    if (lba > 0xFFFFFFFFULL) {
+        req->result = -EOVERFLOW;
+        return -EOVERFLOW;
+    }
+    if (count == 0 || count > 0xFFFF) {
+        req->result = -EOVERFLOW;
+        return -EOVERFLOW;
+    }
+
+    /* Compute the transfer length in 64-bit so count * sector_size
+     * cannot wrap uint32_t, and reject lengths that would overflow the
+     * signed data_len parameter of iscsi_submit_scsi_cmd(). */
+    uint64_t byte_len_64 = (uint64_t)count * sess->sector_size;
+    if (byte_len_64 > 0x7FFFFFFFULL) {
+        req->result = -EOVERFLOW;
+        return -EOVERFLOW;
+    }
+    uint32_t byte_len = (uint32_t)byte_len_64;
     uint8_t cdb[10];
     int ret;
 
