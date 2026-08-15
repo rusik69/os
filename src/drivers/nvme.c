@@ -550,11 +550,18 @@ int nvme_sanitize_get_status(struct nvme_sanitize_status *status)
          * The struct nvme_sanitize_status is packed and matches the
          * NVMe-specified layout at offset 0 of the data buffer. */
         memcpy(status, data_virt, sizeof(struct nvme_sanitize_status));
+        pmm_free_frame(data_frame);
+    } else if (ret == -ETIMEDOUT) {
+        /* DMA buffer lifetime: the controller may still be filling the
+         * buffer — retain it so the in-flight DMA cannot land on
+         * reallocated memory (see nvme_blk_submit timeout path). */
+        kprintf("[NVME] Get Features (Sanitize Status) timed out — "
+                "buffer retained\n");
     } else {
         kprintf("[NVME] Get Features (Sanitize Status) command failed: %d\n", ret);
+        pmm_free_frame(data_frame);
     }
 
-    pmm_free_frame(data_frame);
     return ret;
 }
 
@@ -645,7 +652,12 @@ int nvme_submit_admin_cmd(struct nvme_sq_entry *cmd, struct nvme_cq_entry *cqe)
         __asm__ volatile("pause");
     }
 
-    return -EINVAL;
+    /* Distinguish a controller timeout from a parameter error so callers
+     * with DMA buffers attached (identify, get-features, ...) can retain
+     * them: on timeout the command may still be in flight and the
+     * controller can DMA into/out of the PRP-referenced pages at any
+     * later moment. */
+    return -ETIMEDOUT;
 }
 
 /* ── Parse power state descriptors from identify controller data ──── */
@@ -713,11 +725,16 @@ int nvme_identify_ctrl(struct nvme_identify_ctrl *id) {
 
         /* Parse power state descriptors from raw identify data */
         nvme_parse_power_states(data_virt);
+        pmm_free_frame(data_frame);
+    } else if (ret == -ETIMEDOUT) {
+        /* DMA buffer lifetime: the controller may still be filling the
+         * identify buffer — retain it so the in-flight DMA cannot land
+         * on reallocated memory (see nvme_blk_submit timeout path). */
+        kprintf("[NVME] Identify controller timed out — buffer retained\n");
     } else {
         kprintf("[NVME] Identify controller command failed\n");
+        pmm_free_frame(data_frame);
     }
-
-    pmm_free_frame(data_frame);
     return ret;
 }
 
@@ -744,10 +761,17 @@ static int nvme_identify_ns(uint32_t nsid, struct nvme_identify_ns *id) {
     struct nvme_cq_entry cqe;
     int ret = nvme_submit_admin_cmd(&cmd, &cqe);
 
-    if (ret == 0)
+    if (ret == 0) {
         memcpy(id, data_virt, sizeof(struct nvme_identify_ns));
-
-    pmm_free_frame(data_frame);
+        pmm_free_frame(data_frame);
+    } else if (ret == -ETIMEDOUT) {
+        /* DMA buffer lifetime: retain the identify buffer on timeout
+         * (see nvme_identify_ctrl). */
+        kprintf("[NVME] Identify namespace %u timed out — buffer retained\n",
+                nsid);
+    } else {
+        pmm_free_frame(data_frame);
+    }
     return ret;
 }
 
@@ -1094,6 +1118,14 @@ int nvme_deallocate(int ns_id, uint64_t lba, uint32_t count) {
 
     /* Poll for completion */
     int ret = nvme_poll_io_cq(q, 10000000);
+    if (ret == -ETIMEDOUT) {
+        /* DMA buffer lifetime: the controller may still be reading the
+         * DSM range list from this page.  Retain (leak) it so a later
+         * allocation cannot reclaim the page under the in-flight DMA. */
+        kprintf("[NVME] DSM timeout nsid %u — range page retained\n",
+                (unsigned)ns_id);
+        return ret;
+    }
 
     pmm_free_frame(range_frame);
     return ret;
@@ -1232,6 +1264,21 @@ static int nvme_blk_submit(struct blk_request *req) {
 
     /* Poll for completion (synchronous for now) */
     ret = nvme_poll_io_cq(q, 10000000);
+    if (ret == -ETIMEDOUT) {
+        /* DMA buffer lifetime: the command may still be in flight — the
+         * controller can complete it at any moment and DMA into/out of
+         * the PRP-listed data pages.  Freeing the frames now would put
+         * them back on the pmm freelist, and the next allocation (an FS
+         * retry of this very request, or any other pmm user) would
+         * reclaim the same physical pages while the stale DMA is still
+         * running — silent data/memory corruption.  Deliberately retain
+         * (leak) the buffers so the in-flight DMA always lands on
+         * reserved memory; they are reclaimed only on driver reinit. */
+        kprintf("[NVME] I/O timeout qid %u nsid %u lba %llu count %u — "
+                "DMA buffers retained\n",
+                q->qid, nsid, (unsigned long long)req->lba, nr_sectors);
+        return -ETIMEDOUT;
+    }
     if (ret == 0 && (req->flags & BLK_REQ_READ)) {
         /* For reads: copy data from DMA buffer to request buffer.
          * Data may span multiple pages, copy page by page. */
@@ -1820,6 +1867,13 @@ int nvme_set_apst(int enable, struct nvme_apst_entry *table, int nr_entries)
         cmd.cdw11 = 1;          /* APSTE = 1 (enable) */
 
         int ret = nvme_submit_admin_cmd(&cmd, &cqe);
+        if (ret == -ETIMEDOUT) {
+            /* DMA buffer lifetime: retain the APST table page on
+             * timeout — the controller may still be reading it (see
+             * nvme_blk_submit timeout path). */
+            kprintf("[NVME] APST enable timed out — table page retained\n");
+            return ret;
+        }
         pmm_free_frame(data_frame);
 
         if (ret == 0) {
