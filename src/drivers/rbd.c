@@ -43,8 +43,21 @@ static inline uint64_t rbd_htonll(uint64_t v) {
 static int rbd_tcp_send(int conn_id, const void *data, uint32_t len)
 {
     if (!net_tcp_is_connected(conn_id)) return -ENOTCONN;
-    int sent = net_tcp_send(conn_id, data, (uint16_t)len);
-    return (sent == (int)len) ? 0 : -EIO;
+
+    /* net_tcp_send() takes a uint16_t length and returns 0 on success,
+     * -1 on failure — never a partial byte count.  Loop over uint16_t-sized
+     * pieces so chunks larger than 64 KiB (e.g. a full 4 MiB RBD object)
+     * are not silently truncated by the narrowing cast. */
+    const uint8_t *p = (const uint8_t *)data;
+    uint32_t remaining = len;
+    while (remaining > 0) {
+        uint16_t piece = (remaining > 0xFFFF) ? 0xFFFF : (uint16_t)remaining;
+        if (net_tcp_send(conn_id, p, piece) < 0)
+            return -EIO;
+        p += piece;
+        remaining -= piece;
+    }
+    return 0;
 }
 
 static int rbd_tcp_recv(int conn_id, void *buf, uint32_t len, int timeout)
@@ -52,7 +65,11 @@ static int rbd_tcp_recv(int conn_id, void *buf, uint32_t len, int timeout)
     uint8_t *p = (uint8_t *)buf;
     uint32_t remaining = len;
     while (remaining > 0) {
-        int n = net_tcp_recv(conn_id, p, (uint16_t)remaining, timeout);
+        /* Cap each read at 64 KiB: net_tcp_recv() takes a uint16_t
+         * bufsize, and a truncated 0 would make the call read nothing
+         * and fail with -EIO even though bytes are available. */
+        uint16_t piece = (remaining > 0xFFFF) ? 0xFFFF : (uint16_t)remaining;
+        int n = net_tcp_recv(conn_id, p, piece, timeout);
         if (n <= 0) return -EIO;
         p += n;
         remaining -= (uint32_t)n;
@@ -108,13 +125,13 @@ static int ceph_recv_message(int conn_id,
     if (type_out) *type_out = rbd_htons(hdr.type);
     if (tid_out) *tid_out = rbd_htonll(hdr.tid);
 
-    if (front_len > 0 && front_buf && front_len <= *front_len_out) {
+    if (front_len > 0 && front_buf && front_len_out && front_len <= *front_len_out) {
         if (rbd_tcp_recv(conn_id, front_buf, front_len, 100) < 0)
             return -EIO;
     }
     if (front_len_out) *front_len_out = front_len;
 
-    if (data_len > 0 && data_buf && data_len <= *data_len_out) {
+    if (data_len > 0 && data_buf && data_len_out && data_len <= *data_len_out) {
         if (rbd_tcp_recv(conn_id, data_buf, data_len, 100) < 0)
             return -EIO;
     }
@@ -403,8 +420,11 @@ int rbd_connect(uint32_t mon_ip, uint32_t osd_ip)
             (unsigned long long)dev->sector_count,
             (unsigned long long)dev->num_objects);
 
-    /* Register as block device */
-    int rbd_id = slot + 60;  /* Start RBD IDs at 60 */
+    /* Register as block device.  IDs must stay below
+     * BLOCKDEV_MAX_DEVICES (32); band 10-13 is clear of the fixed ids
+     * (0-7), NVMe namespaces (8+), RAMDISK/USB (15-17) and MD arrays
+     * (14+). */
+    int rbd_id = slot + 10;
     dev->dev_id = rbd_id;
 
     char name[16];
