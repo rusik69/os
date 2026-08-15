@@ -711,8 +711,8 @@ static int raid0_submit_fn(struct blk_request *req)
                                   stripe.disk_lba, (uint32_t)this_count,
                                   buf + buf_offset, 1);
                 if (r != 0) {
-                    /* Mark member as failed */
-                    raid1_member_failed(dev_id, local_array.disks[stripe.disk].dev_id);
+                    /* Mark member as failed (RAID0 lookup, not RAID1) */
+                    md_member_failed(dev_id, local_array.disks[stripe.disk].dev_id, 0);
                     if (result == 0) result = r;
                 }
             }
@@ -741,7 +741,7 @@ static int raid0_submit_fn(struct blk_request *req)
                                   stripe.disk_lba, (uint32_t)this_count,
                                   buf + buf_offset, 0);
                 if (r != 0) {
-                    raid1_member_failed(dev_id, local_array.disks[stripe.disk].dev_id);
+                    md_member_failed(dev_id, local_array.disks[stripe.disk].dev_id, 0);
                     if (result == 0) result = r;
                 }
             } else {
