@@ -839,6 +839,9 @@ static int blk_mq_batch_dispatch(struct blk_mq_request **reqs, int count,
     uint64_t irq_flags;
     int i;
 
+    if (count <= 0 || !reqs)
+        return -EINVAL;
+
     spinlock_irqsave_acquire(&hwq->lock, &irq_flags);
 
     if (hwq->state != BLK_MQ_HW_RUNNING) {
