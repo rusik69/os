@@ -399,8 +399,10 @@ static void eevdf_dequeue(struct process *p) {
 
 /* ── End EEVDF section ─────────────────────────────────────────────── */
 
-/* Global lock for cross-CPU operations (load balancing, process table walks) */
-static spinlock_t sched_lock = SPINLOCK_INIT;
+/* Global lock for cross-CPU operations (load balancing, process table walks).
+ * Non-static: sleep paths (clock_nanosleep etc.) take it to detect a wake
+ * that raced their PROCESS_BLOCKED transition (see posix_timer.c). */
+spinlock_t sched_lock = SPINLOCK_INIT;
 
 /* ── Scheduler latency and granularity tunables ────────────────────────
  *

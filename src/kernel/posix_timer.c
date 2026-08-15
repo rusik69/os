@@ -22,6 +22,7 @@
 #include "process.h"
 #include "rtc.h"
 #include "scheduler.h"
+#include "spinlock.h"
 #include "string.h"
 #include "syscall.h"
 #include "timer.h"
@@ -434,7 +435,29 @@ int64_t sys_clock_nanosleep(uint64_t clockid, uint64_t flags, uint64_t req_addr,
         proc->sleep_until = deadline;
         proc->state = PROCESS_BLOCKED;
         scheduler_remove(proc);
-        scheduler_yield();
+
+        /*
+         * Lost-wakeup guard: the timer-IRQ wake scan (scheduler_wake_sleepers)
+         * can fire between the state write above and scheduler_remove().  It
+         * clears sleep_until, marks the process PROCESS_READY and queues it —
+         * which scheduler_remove() then undoes, leaving the process READY but
+         * off the runqueue with sleep_until == 0.  No wake source ever touches
+         * it again (the wake scan needs BLOCKED + sleep_until > 0) and it
+         * sleeps forever.  Snapshot under sched_lock — held by the wake scan
+         * across its whole check-and-queue — to detect an already-delivered
+         * wake: if it fired before our remove un-queued us, keep running
+         * instead of yielding.
+         */
+        uint64_t __sleep_flags;
+        spinlock_irqsave_acquire(&sched_lock, &__sleep_flags);
+        int wake_delivered = (proc->sleep_until == 0 && proc->state == PROCESS_READY);
+        int wake_queued = proc->on_queue;
+        spinlock_irqsave_release(&sched_lock, __sleep_flags);
+
+        if (wake_delivered && !wake_queued)
+            proc->state = PROCESS_RUNNING; /* wake already delivered — keep running */
+        else
+            scheduler_yield();
 
         /* Process woke up — check if timer expired or signal */
         now = timer_get_ticks();

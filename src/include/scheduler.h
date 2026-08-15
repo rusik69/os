@@ -5,6 +5,12 @@
 struct process;
 
 #include "types.h"
+#include "spinlock.h"
+
+/* Global scheduler lock (defined in scheduler.c).  Held by the timer-IRQ
+ * wake scan (scheduler_wake_sleepers) across its check-and-queue; sleep
+ * paths snapshot process state under it to avoid lost wakeups. */
+extern spinlock_t sched_lock;
 
 /* Scheduling policies */
 #define SCHED_OTHER  0
