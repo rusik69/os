@@ -92,12 +92,19 @@ static int loop_submit(struct blk_request *req) {
     if (!blockdev_is_registered(backing_dev))
         return -ENODEV;
 
-    /* Translate LBA: add the backing offset */
-    uint64_t backing_lba = req->lba + backing_offset;
-
-    /* Validate the request fits within our sector range */
-    if (req->lba + req->count > sectors)
+    /* Validate the request fits within our sector range.  Overflow-safe:
+     * req->lba + req->count must not wrap uint64_t before the compare,
+     * otherwise a near-UINT64_MAX lba would pass the check and the
+     * translated backing_lba would wrap to an arbitrary low LBA on the
+     * backing device (out-of-bounds sector access). */
+    if (req->lba > sectors || req->count > sectors - req->lba)
         return -EIO;
+
+    /* Translate LBA: add the backing offset.  Cannot wrap here: the
+     * check above guarantees req->lba <= sectors, and loop_create()
+     * validated backing_offset + sectors against the backing device
+     * size. */
+    uint64_t backing_lba = req->lba + backing_offset;
 
     /*
      * Multi-segment handling: if the request buffer is NULL but
@@ -138,9 +145,13 @@ int loop_create(int backing_dev_id, uint64_t backing_offset, uint64_t sectors) {
     if (sectors == 0 || sectors > LOOP_MAX_SECTORS)
         return -EINVAL;
 
-    /* Check the backing device has enough sectors */
+    /* Check the backing device has enough sectors.  Overflow-safe:
+     * backing_offset + sectors must not wrap uint64_t, otherwise a huge
+     * caller-supplied offset would pass the check and the loop device
+     * would map sectors past the real end of the backing device. */
     uint64_t backing_sectors = blockdev_get_sectors(backing_dev_id);
-    if (backing_offset + sectors > backing_sectors)
+    if (backing_offset > backing_sectors ||
+        sectors > backing_sectors - backing_offset)
         return -EINVAL;
 
     uint64_t irq_flags;
