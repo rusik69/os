@@ -399,6 +399,12 @@ static void ahci_build_ncq_cmd(struct ahci_port *port, int slot,
     uint64_t lba = req->lba;
     uint32_t count = req->count;
 
+    /* Clamp the transfer size to the slot's 4KB data buffer BEFORE the
+     * data copy: the FIS/PRDT clamp below used to happen after this
+     * memcpy, so a request with count > AHCI_DATA_FRAME_SECTORS wrote
+     * past the 4096-byte slot buffer into adjacent slot memory. */
+    if (count > AHCI_DATA_FRAME_SECTORS) count = AHCI_DATA_FRAME_SECTORS;
+
     memset(hdr, 0, sizeof(*hdr));
     memset(tbl, 0, sizeof(*tbl));
 
@@ -436,7 +442,6 @@ static void ahci_build_ncq_cmd(struct ahci_port *port, int slot,
     /* NCQ: countl encodes TAG (bits 7:3) + count high bits (bits 2:0)
      * counth is count low 8 bits.
      * Sector count max 65535 per NCQ command, but our buffer limits to 8. */
-    if (count > AHCI_DATA_FRAME_SECTORS) count = AHCI_DATA_FRAME_SECTORS;
     fis->countl = (uint8_t)((slot & 0x1F) << 3) | (uint8_t)((count >> 8) & 0x07);
     fis->counth = (uint8_t)(count & 0xFF);
     /* NCQ priority: 0=simple, 1=deterministic, 2=high */
@@ -550,6 +555,14 @@ static void ahci_drain_queue(struct ahci_port *port) {
             spinlock_irqsave_release(&ahci_lock, irq_flags);
             return; /* queue empty */
         }
+
+        /* Bound the request size to the slot's 4KB data buffer before
+         * any memcpy below touches it: oversized requests would write
+         * past the 4096-byte per-slot buffer (OOB write).  The block
+         * layer normally splits via max_transfer, but this is the
+         * driver-side backstop. */
+        if (req->count > AHCI_DATA_FRAME_SECTORS)
+            req->count = AHCI_DATA_FRAME_SECTORS;
 
         /* For non-NCQ (slot 0 or device doesn't support NCQ) */
         if (slot == 0 || !port->ncq_capable) {
@@ -819,6 +832,8 @@ int ahci_ncq_read(int port_num, int pm_port, uint64_t lba, uint8_t count, void *
     }
     if (!port || !port->ncq_capable)
         return -1;
+    if (count == 0 || count > AHCI_DATA_FRAME_SECTORS)
+        return -1;
 
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&ahci_lock, &irq_flags);
@@ -897,6 +912,8 @@ int ahci_ncq_write(int port_num, int pm_port, uint64_t lba, uint8_t count, const
         }
     }
     if (!port || !port->ncq_capable)
+        return -1;
+    if (count == 0 || count > AHCI_DATA_FRAME_SECTORS)
         return -1;
 
     uint64_t irq_flags;
