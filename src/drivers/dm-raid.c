@@ -43,8 +43,7 @@ struct raid_private {
     int     level;                   /* RAID level */
     int     num_devs;                /* number of backing devices */
     int     dev_ids[DM_RAID_MAX_DEVS]; /* backing device IDs */
-    uint64_t stripe_size;            /* stripe size in sectors (RAID0/10) */
-    uint64_t stripe_sectors;         /* total sectors per stripe */
+    uint64_t stripe_size;            /* stripe (chunk) size in sectors (RAID0/10) */
 };
 
 /* ── Forward declarations ─────────────────────────────────────────── */
@@ -181,8 +180,6 @@ static int raid_ctr(struct dm_target *ti, int argc, const char **argv)
         }
     }
 
-    priv->stripe_sectors = priv->stripe_size * priv->num_devs;
-
     ti->private = priv;
 
     kprintf("[DM-RAID] ctr: level=%s, devs=%d, stripe=%llu\n",
@@ -212,11 +209,14 @@ static int raid0_map(struct raid_private *priv, struct blk_request *req,
                      struct blk_request *mapped[], int *mapped_count)
 {
     uint64_t offset = req->lba;
-    uint64_t stripe = offset / priv->stripe_sectors;
-    uint64_t remainder = offset % priv->stripe_sectors;
-    int dev_idx = (int)(stripe % priv->num_devs);
-    uint64_t dev_stripe = stripe / priv->num_devs;
-    uint64_t dev_lba = dev_stripe * priv->stripe_size + remainder;
+    /* RAID0: chunks of stripe_size sectors round-robin across the member
+     * devices.  chunk selects the device; the per-device LBA is the
+     * chunk's stripe index times stripe_size plus the in-chunk offset. */
+    uint64_t chunk = offset / priv->stripe_size;
+    uint64_t chunk_rem = offset % priv->stripe_size;
+    int dev_idx = (int)(chunk % priv->num_devs);
+    uint64_t dev_stripe = chunk / priv->num_devs;
+    uint64_t dev_lba = dev_stripe * priv->stripe_size + chunk_rem;
 
     /* Clamp to device size */
     uint64_t dev_sectors = blockdev_get_sectors(priv->dev_ids[dev_idx]);
@@ -322,11 +322,15 @@ static int raid10_map(struct raid_private *priv, struct blk_request *req,
     }
 
     uint64_t offset = req->lba;
-    uint64_t stripe = offset / priv->stripe_sectors;
-    uint64_t remainder = offset % priv->stripe_sectors;
-    int set_idx = (int)(stripe % mirror_sets);
-    uint64_t dev_stripe = stripe / mirror_sets;
-    uint64_t dev_lba = dev_stripe * priv->stripe_size + remainder;
+    /* RAID10: chunks of stripe_size sectors round-robin across the mirror
+     * sets; each chunk is mirrored within its set.  The chunk selects the
+     * set; the per-device LBA is the chunk's stripe index times stripe_size
+     * plus the in-chunk offset. */
+    uint64_t chunk = offset / priv->stripe_size;
+    uint64_t chunk_rem = offset % priv->stripe_size;
+    int set_idx = (int)(chunk % mirror_sets);
+    uint64_t dev_stripe = chunk / mirror_sets;
+    uint64_t dev_lba = dev_stripe * priv->stripe_size + chunk_rem;
 
     if (req->flags & BLK_REQ_WRITE) {
         /* Write to both mirrors in the set */
