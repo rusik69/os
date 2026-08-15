@@ -5,6 +5,7 @@
 #include "pic.h"
 #include "printf.h"
 #include "string.h"
+#include "timer.h" /* TIMER_FREQ, timer_get_ticks */
 #include "waitqueue.h"
 #include "devfs.h"
 #include "signal.h"
@@ -269,6 +270,17 @@ int rtc_set_alarm_epoch(uint64_t epoch_sec) {
         g_wakealarm_epoch = 0;
         return 0;
     }
+
+    /* Reject alarm times at or before the current wall-clock time.
+     * The CMOS alarm is a time-of-day comparison (sec/min/hour match):
+     * an alarm whose time-of-day has already passed today would
+     * silently fire at the next matching time-of-day (up to ~24h late)
+     * instead of at the requested time — a missed expiry for a
+     * wake-from-suspend alarm.  Per the documented contract, past
+     * times are ignored and reported as an error (nothing is armed). */
+    uint64_t now_sec = rtc_get_epoch() + (timer_get_ticks() / TIMER_FREQ);
+    if (epoch_sec <= now_sec)
+        return -1;
 
     /* Convert epoch seconds to rtc_time */
     uint64_t remaining = epoch_sec;
