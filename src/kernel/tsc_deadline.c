@@ -4,9 +4,26 @@
 #include "cpu.h"
 #include "printf.h"
 #include "apic.h"
+#include "idt.h"
+
+/* Dedicated IDT vector for TSC deadline expiry interrupts.  Must not
+ * collide with the PIT timer (32), keyboard (33), RTC (40), the IPI
+ * vectors (0xF0-0xF5), or the spurious vector (0xFF). */
+#define TSC_DEADLINE_VECTOR 0xE0
 
 static int tsc_deadline_available = 0;
 static uint64_t tsc_deadline_cached = 0;
+
+/* IRQ handler for TSC deadline expiry.  Runs on an interrupt gate with
+ * IF already cleared by hardware, so there is no interrupt state to
+ * save or restore.  The critical duty is the EOI: without it the local
+ * APIC in-service bit stays set and every subsequent LAPIC interrupt is
+ * blocked (lost wakeups). */
+static void tsc_deadline_handler(struct interrupt_frame *frame)
+{
+    (void)frame;
+    apic_eoi();
+}
 
 int tsc_deadline_init(void) {
     int rax, rbx, rcx, rdx;
@@ -31,6 +48,14 @@ int tsc_deadline_init(void) {
     uint32_t lvt_timer = apic_read(LAPIC_LVT_TIMER);
     lvt_timer &= ~(3 << 17);    /* Clear timer mode bits */
     lvt_timer |= (1U << 18);     /* Set TSC deadline mode (bit 18) */
+    /* Program a real vector: apic_init_local() masked the timer with
+     * TIMER_MASKED (vector field 0), and an expiry on vector 0 would
+     * hit the #DE divide-error gate with no EOI — the deadline wakeup
+     * is lost and the LAPIC in-service bit wedges all later
+     * interrupts.  Register the handler before unmasking. */
+    lvt_timer = (lvt_timer & ~0xFFU) | TSC_DEADLINE_VECTOR;
+    idt_register_handler_named(TSC_DEADLINE_VECTOR, tsc_deadline_handler,
+                               "tsc_deadline");
     lvt_timer &= ~(1U << 16);    /* Unmask */
     apic_write(LAPIC_LVT_TIMER, lvt_timer);
 
