@@ -453,9 +453,19 @@ static int verity_map(struct dm_target *ti, struct blk_request *req,
             return ret;
         }
 
-        /* Verify each block in the request against the Merkle hash tree */
+        /* Verify each block in the request against the Merkle hash tree.
+         * Block b covers device sectors [b*8, b*8+8); buffer byte 0 is
+         * device sector `offset`, so block b's data sits at
+         * (b*8 - offset) * 512 in the buffer.  Blocks whose data is not
+         * fully contained in the request buffer — a leading block cut by
+         * an unaligned request offset, or a trailing partial block — are
+         * skipped: hashing shifted bytes would verify the wrong sectors
+         * and falsely fail intact data with -EIO. */
         for (uint64_t b = first_block; b <= last_block; b++) {
-            uint64_t block_offset = (b - first_block) * VERITY_BLOCK_SIZE;
+            uint64_t block_dev_sector = b * VERITY_BLOCK_SECTORS;
+            if (block_dev_sector < offset)
+                continue; /* leading partial block — data not in buffer */
+            uint64_t block_offset = (block_dev_sector - offset) * 512;
             if (block_offset + VERITY_BLOCK_SIZE > (uint64_t)req->count * 512)
                 break; /* partial block at end — skip (verified next time) */
 
