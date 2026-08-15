@@ -323,6 +323,17 @@ static int crypt_map(struct dm_target *ti, struct blk_request *req,
         return -EOVERFLOW;
     }
 
+    /* The crypto loops below index the buffer with an int sector counter
+     * (num_sectors, s * 512).  Reject counts that would narrow to a
+     * negative int — otherwise encryption/decryption would be silently
+     * skipped while the I/O still proceeds (plaintext written to the
+     * backing device, or ciphertext returned as data). */
+    if (num_sectors_u64 > 0x7FFFFFFFULL) {
+        kprintf("[DM-CRYPT] map: request count %u exceeds INT_MAX\n",
+                (unsigned int)req->count);
+        return -EOVERFLOW;
+    }
+
     /* Actual sector on the backing device */
     uint64_t target_lba = priv->start_sector + offset;
 
