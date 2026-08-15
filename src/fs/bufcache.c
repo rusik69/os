@@ -629,8 +629,26 @@ int bufcache_write(uint64_t lba, uint8_t dev_id, const void *data) {
     int was_evicted = 0;
 
     if (g_count < BC_CAPACITY) {
-        victim = g_lru_tail;
-        lru_remove(victim);
+        /* Use the LRU tail (free pool entry) — but only if it is really
+         * a pool entry.  If the count accounting ever drifts (see the
+         * was_evicted increment below), the LRU tail can be an ACTIVE
+         * entry; reusing it without hash_remove corrupts the hash chain
+         * (same hazard as bufcache_read's pool path). */
+        int16_t pool_tail = g_lru_tail;
+        if (pool_tail >= 0 && !g_entries[pool_tail].valid) {
+            victim = pool_tail;
+            lru_remove(victim);
+        } else {
+            victim = evict_one(&wb);
+            if (victim < 0) {
+                /* Cache full with dirty entries — write directly */
+                spinlock_irqsave_release(&g_bc_lock, irq_flags);
+                return blk_submit_sync(dev_id, lba, 1, (void *)(uintptr_t)data,
+                                       BLK_REQ_WRITE);
+            }
+            was_evicted = 1;
+            lru_remove(victim);
+        }
     } else {
         victim = evict_one(&wb);
         if (victim < 0) {
@@ -651,8 +669,12 @@ int bufcache_write(uint64_t lba, uint8_t dev_id, const void *data) {
     memcpy(e->data, data, SECT_SIZE);
     hash_insert(victim);
     lru_push_head(victim);
-    if (!was_evicted)
-        g_count++;
+    /* Count one valid entry.  evict_one already decremented g_count for
+     * the evicted victim; the new entry replaces it, so the count must
+     * always come back up — the old `if (!was_evicted)` guard let the
+     * count drift down, which made the free-pool path above reuse ACTIVE
+     * entries and corrupt the hash chain (infinite hash_lookup). */
+    g_count++;
 
     spinlock_irqsave_release(&g_bc_lock, irq_flags);
 
