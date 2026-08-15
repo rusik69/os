@@ -156,6 +156,7 @@ extern void irq16(void);
 extern void irq17(void);
 extern void irq18(void);
 extern void irq19(void);
+extern void irq20(void);
 
 static const char *const exception_names[] = {
     "Division By Zero", "Debug", "NMI", "Breakpoint",
@@ -335,6 +336,9 @@ void idt_init(void) {
     vector_names[242] = "IPI-backtrace";
     vector_names[243] = "IPI-membarrier";
 
+    /* Spurious vector (LAPIC SVR spurious vector = 0xFF) */
+    vector_names[255] = "spurious";
+
     /* 0x8E = present, ring 0, interrupt gate */
     idt_set_gate(0,  (uint64_t)isr0,  0x08, 0x8E);
     idt_set_gate(1,  (uint64_t)isr1,  0x08, 0x8E);
@@ -392,6 +396,13 @@ void idt_init(void) {
     idt_set_gate(241, (uint64_t)irq17, 0x08, 0x8E);
     idt_set_gate(242, (uint64_t)irq18, 0x08, 0x8E);
     idt_set_gate(243, (uint64_t)irq19, 0x08, 0x8E);
+
+    /* Spurious vector: LAPIC SVR is programmed with spurious vector 0xFF
+     * (apic_init_local).  The gate must be present, otherwise a spurious
+     * interrupt (common with ExtINT/PIC forwarding) hits a not-present
+     * IDT entry and #GP-halts the CPU.  The stub returns without EOI,
+     * which is correct: spurious interrupts are never acknowledged. */
+    idt_set_gate(255, (uint64_t)irq20, 0x08, 0x8E);
 
     idt_ptr.limit = sizeof(idt) - 1;
     idt_ptr.base = (uint64_t)&idt;

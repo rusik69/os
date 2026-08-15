@@ -92,6 +92,13 @@ IRQ 17, 241  ; IPI_VECTOR_TLB_SHOOT (0xF1)
 IRQ 18, 242  ; IPI_VECTOR_BACKTRACE (0xF2)
 IRQ 19, 243  ; IPI_VECTOR_MEMBARRIER (0xF3)
 
+; Spurious interrupt vector (matches LAPIC SVR spurious vector 0xFF).
+; The gate must be present so a spurious interrupt does not #GP on a
+; not-present IDT entry.  The common stub returns without EOI, which is
+; exactly correct: per the Intel SDM, spurious interrupts are not
+; acknowledged (the APIC does not set the ISR bit for them).
+IRQ 20, 255  ; spurious (0xFF)
+
 ; Common stub: save all registers, call C handler, restore, iretq
 isr_common_stub:
     ; Save general-purpose registers
