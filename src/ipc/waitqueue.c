@@ -42,10 +42,16 @@ int wait_queue_sleep(struct wait_queue *wq) {
     wq->pids[tail] = cur->pid;
     wq->count++;
 
-    /* Mark process BLOCKED and remove from scheduler */
+    /* Mark process BLOCKED and remove from scheduler.  The removal must
+     * happen while wq->lock is still held: if a wake (another CPU, or the
+     * timer tick for timeout sleeps) ran after the lock release instead,
+     * scheduler_remove() would unlink the freshly re-queued process,
+     * leaving it READY but in no runqueue — a lost wakeup that hangs the
+     * sleeper forever.  While RUNNING the process is off-queue, so the
+     * remove here is a no-op; its purpose is to close that window. */
     cur->state = PROCESS_BLOCKED;
-    spinlock_irqsave_release(&wq->lock, flags);  /* properly restores IRQ state */
     scheduler_remove(cur);
+    spinlock_irqsave_release(&wq->lock, flags);  /* properly restores IRQ state */
 
     /* Yield the CPU — scheduler will pick another process */
     scheduler_yield();
@@ -174,10 +180,16 @@ int wait_queue_sleep_interruptible(struct wait_queue *wq) {
     wq->pids[tail] = cur->pid;
     wq->count++;
 
-    /* Mark process BLOCKED and remove from scheduler */
+    /* Mark process BLOCKED and remove from scheduler.  The removal must
+     * happen while wq->lock is still held: if a wake (another CPU, or the
+     * timer tick for timeout sleeps) ran after the lock release instead,
+     * scheduler_remove() would unlink the freshly re-queued process,
+     * leaving it READY but in no runqueue — a lost wakeup that hangs the
+     * sleeper forever.  While RUNNING the process is off-queue, so the
+     * remove here is a no-op; its purpose is to close that window. */
     cur->state = PROCESS_BLOCKED;
-    spinlock_irqsave_release(&wq->lock, flags);  /* properly restores IRQ state */
     scheduler_remove(cur);
+    spinlock_irqsave_release(&wq->lock, flags);  /* properly restores IRQ state */
 
     /* Yield the CPU — scheduler will pick another process */
     scheduler_yield();
@@ -234,8 +246,12 @@ int wait_queue_sleep_timeout(struct wait_queue *wq, uint64_t ticks) {
     /* Set timeout so scheduler_wake_sleepers can wake us */
     cur->sleep_until = deadline;
     cur->state = PROCESS_BLOCKED;
-    spinlock_irqsave_release(&wq->lock, flags);
+    /* Remove from scheduler while wq->lock is still held — see the
+     * comment in wait_queue_sleep(): removal after the release would
+     * let a timer-tick wake (scheduler_wake_sleepers) be undone,
+     * stranding the process READY but off every runqueue. */
     scheduler_remove(cur);
+    spinlock_irqsave_release(&wq->lock, flags);
 
     /* Yield the CPU — scheduler will pick another process */
     scheduler_yield();
@@ -291,8 +307,8 @@ int wait_queue_sleep_interruptible_timeout(struct wait_queue *wq, uint64_t ticks
 
     cur->sleep_until = deadline;
     cur->state = PROCESS_BLOCKED;
+    scheduler_remove(cur); /* while wq->lock held — see wait_queue_sleep() */
     spinlock_irqsave_release(&wq->lock, flags);
-    scheduler_remove(cur);
 
     /* Yield the CPU — scheduler will pick another process */
     scheduler_yield();
@@ -378,6 +394,12 @@ int wait_queue_sleep_spinunlock(struct wait_queue *wq,
     /* Mark process BLOCKED */
     cur->state = PROCESS_BLOCKED;
 
+    /* Remove from scheduler while wq->lock is still held — see the
+     * comment in wait_queue_sleep(): removal after the release would
+     * let a concurrent wake be undone, stranding the process READY
+     * but off every runqueue (lost wakeup). */
+    scheduler_remove(cur);
+
     /* Release wq lock */
     spinlock_irqsave_release(&wq->lock, flags);
 
@@ -386,8 +408,7 @@ int wait_queue_sleep_spinunlock(struct wait_queue *wq,
     if (cond_lock && cond_flags)
         spinlock_irqsave_release(cond_lock, *cond_flags);
 
-    /* Remove from scheduler and yield */
-    scheduler_remove(cur);
+    /* Yield */
     scheduler_yield();
 
     /* Woken up: re-acquire wq lock to clean up */
