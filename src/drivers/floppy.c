@@ -502,7 +502,7 @@ int floppy_read_sectors(int drive, uint32_t lba, uint8_t count, void *buf)
     }
 
     /* Read result bytes from FDC */
-    uint8_t st[7];
+    uint8_t st[7] = {0};
     int res_count = fdc_recv_result(st, 7);
 
     floppy_deselect_drive(drive);
@@ -725,7 +725,7 @@ static int floppy_write_sectors(int drive, uint32_t lba, void *buf, int count)
     }
 
     /* Read result bytes */
-    uint8_t st[7];
+    uint8_t st[7] = {0};
     int res_count = fdc_recv_result(st, 7);
 
     floppy_deselect_drive(drive);
