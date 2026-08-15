@@ -223,6 +223,17 @@ void __init ata_init(void) {
     ata_present = 1;
 
     uint32_t sectors = identify[60] | ((uint32_t)identify[61] << 16);
+
+    /* 28-bit LBA PIO: the drive/head register only carries LBA bits
+     * 27:24 ((lba >> 24) & 0x0F), so the largest expressible LBA is
+     * 2^28 - 1 (a 128 GiB disk at 512 B/sector).  Clamp the reported
+     * capacity to 2^28 sectors: without this, a disk larger than
+     * 128 GiB passes the lba < ata_total_sectors validation but its
+     * high LBA bits are silently dropped when the registers are
+     * programmed — LBA 2^28 wraps to sector 0, corrupting data on
+     * the wrong location instead of failing. */
+    if (sectors > (1U << 28))
+        sectors = 1U << 28;
     ata_total_sectors = sectors;
     blockdev_register_legacy(BLOCKDEV_ATA, "ata", ata_read_sectors, ata_write_sectors,
                              ata_get_sectors);
