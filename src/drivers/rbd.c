@@ -311,9 +311,9 @@ static int rbd_submit_fn(struct blk_request *req)
 
     int is_write = (req->flags & BLK_REQ_WRITE) ? 1 : 0;
     uint64_t byte_offset = req->lba * dev->sector_size;
-    uint32_t byte_len = req->count * dev->sector_size;
+    uint64_t byte_len = (uint64_t)req->count * dev->sector_size;
     uint8_t *buf = (uint8_t *)req->buf;
-    uint32_t remaining = byte_len;
+    uint64_t remaining = byte_len;
     uint64_t cur_offset = byte_offset;
     int ret;
 
@@ -325,7 +325,9 @@ static int rbd_submit_fn(struct blk_request *req)
         rbd_offset_to_object(dev, cur_offset, &obj_no, &obj_off, &obj_len);
 
         uint32_t chunk = obj_len - (uint32_t)obj_off;
-        if (chunk > remaining) chunk = remaining;
+        /* chunk <= RBD_OBJECT_SIZE, so a 64-bit remaining that is smaller
+         * than chunk always fits in uint32_t. */
+        if ((uint64_t)chunk > remaining) chunk = (uint32_t)remaining;
 
         ret = rados_op(dev, is_write, obj_no, obj_off, buf, chunk);
         if (ret < 0) {
