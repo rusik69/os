@@ -235,7 +235,10 @@ static int dm_submit_to_targets(struct dm_device *dm, struct blk_request *req)
             return ret;
         }
 
-        /* Submit each mapped sub-request */
+        /* Submit each mapped sub-request.
+         * Targets that map in place (linear, crypt) return sub_req itself,
+         * while targets that clone (raid) return a new request — free clones
+         * here, and free sub_req exactly once below. */
         for (int i = 0; i < mapped_count; i++) {
             int sub_ret = blk_submit_sync(mapped[i]->dev_id,
                                            mapped[i]->lba,
@@ -243,7 +246,8 @@ static int dm_submit_to_targets(struct dm_device *dm, struct blk_request *req)
                                            mapped[i]->buf,
                                            mapped[i]->flags);
             if (sub_ret != 0) ret = sub_ret;
-            blk_request_free(mapped[i]);
+            if (mapped[i] != sub_req)
+                blk_request_free(mapped[i]);
         }
         blk_request_free(sub_req);
     }
