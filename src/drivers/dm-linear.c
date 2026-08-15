@@ -54,7 +54,18 @@ static int linear_ctr(struct dm_target *ti, int argc, const char **argv)
             kfree(priv);
             return -EINVAL;
         }
-        dev_id = dev_id * 10 + (*s++ - '0');
+        int d = *s++ - '0';
+        /* Reject values beyond the block device ID space BEFORE the
+         * multiply, so a long digit string can never overflow int (UB)
+         * and wrap into a small, valid-looking ID that would silently
+         * map requests to the wrong backing device. */
+        if (dev_id > (BLOCKDEV_MAX_DEVICES - 1 - d) / 10) {
+            kprintf("[DM-LINEAR] ctr: dev_id '%s' out of range (max %d)\n",
+                    argv[0], BLOCKDEV_MAX_DEVICES - 1);
+            kfree(priv);
+            return -EINVAL;
+        }
+        dev_id = dev_id * 10 + d;
     }
 
     /* Validate the backing device exists */
@@ -73,7 +84,18 @@ static int linear_ctr(struct dm_target *ti, int argc, const char **argv)
             kfree(priv);
             return -EINVAL;
         }
-        start = start * 10 + (*s++ - '0');
+        uint64_t d = (uint64_t)(*s++ - '0');
+        /* Reject overflow BEFORE the multiply: a wrapped start_sector
+         * (e.g. "18446744073709551616" → 0) would bypass the
+         * backing-device range check below and map the target onto the
+         * wrong region of the backing device. */
+        if (start > (UINT64_MAX - d) / 10) {
+            kprintf("[DM-LINEAR] ctr: start_sector '%s' overflows 64-bit\n",
+                    argv[1]);
+            kfree(priv);
+            return -EINVAL;
+        }
+        start = start * 10 + d;
     }
 
     /* Check that the range fits on the backing device.
@@ -156,21 +178,3 @@ void dm_linear_init(void)
 }
 #include "module.h"
 module_init(dm_linear_init);
-
-/* ── Stub: dm_linear_ctr ─────────────────────────────── */
-static int dm_linear_ctr(void *ti, unsigned int argc, char **argv)
-{
-    (void)ti;
-    (void)argc;
-    (void)argv;
-    kprintf("[DM] dm_linear_ctr: not yet implemented\n");
-    return 0;
-}
-/* ── Stub: dm_linear_map ─────────────────────────────── */
-static int dm_linear_map(void *ti, void *bio)
-{
-    (void)ti;
-    (void)bio;
-    kprintf("[DM] dm_linear_map: not yet implemented\n");
-    return 0;
-}
