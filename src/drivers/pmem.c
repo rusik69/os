@@ -86,8 +86,12 @@ static int pmem_submit(struct blk_request *req) {
     uint64_t offset = lba * 512ULL;  /* 512-byte sectors */
     uint64_t length = (uint64_t)count * 512ULL;
 
-    /* Bounds check: ensure the request fits within the SPA range */
-    if (offset + length > spa.spa_length) {
+    /* Bounds check: ensure the request fits within the SPA range.
+     * Compare length against (spa_length - offset) rather than computing
+     * (offset + length): the sum can wrap uint64_t for huge LBAs
+     * (>= 2^55 sectors), bypassing the check and letting the subsequent
+     * spa_base + offset wrap target an arbitrary physical address. */
+    if (offset > spa.spa_length || length > spa.spa_length - offset) {
         kprintf("[PMEM] ERROR: request beyond device boundary "
                 "(lba=%llu count=%u offset=0x%llx length=0x%llx "
                 "spa_length=0x%llx)\n",
