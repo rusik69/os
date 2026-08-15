@@ -39,9 +39,20 @@ static int nbd_tcp_send(int conn_id, const void *data, uint32_t len)
     if (!net_tcp_is_connected(conn_id))
         return -1;
 
-    int sent = net_tcp_send(conn_id, data, (uint16_t)len);
-    if (sent != (int)len)
-        return -1;
+    /* net_tcp_send() returns 0 on success (NOT the byte count) and clamps
+     * each call to its 4KB retransmit buffer (tx_unacked_buf), silently
+     * dropping any excess — a single call with len > 4096 would lose the
+     * tail of the payload and desynchronise the NBD request/reply framing.
+     * Send in 4KB chunks so multi-sector payloads are transmitted whole. */
+    const uint8_t *p = (const uint8_t *)data;
+    uint32_t remaining = len;
+    while (remaining > 0) {
+        uint16_t chunk = (remaining > 4096) ? 4096 : (uint16_t)remaining;
+        if (net_tcp_send(conn_id, p, chunk) != 0)
+            return -1;
+        p += chunk;
+        remaining -= chunk;
+    }
     return 0;
 }
 
@@ -52,7 +63,12 @@ static int nbd_tcp_recv(int conn_id, void *buf, uint32_t len, int timeout_ticks)
     uint32_t remaining = len;
 
     while (remaining > 0) {
-        int n = net_tcp_recv(conn_id, p, (uint16_t)remaining, timeout_ticks);
+        /* Cap each recv at 4KB: net_tcp_recv() takes a uint16_t bufsize,
+         * and a remaining value that is an exact multiple of 65536 would
+         * wrap to 0 and fail the transfer.  Chunking is harmless — the
+         * loop keeps calling until all 'len' bytes are received. */
+        uint16_t want = (remaining > 4096) ? 4096 : (uint16_t)remaining;
+        int n = net_tcp_recv(conn_id, p, want, timeout_ticks);
         if (n <= 0)
             return -1;
         p += n;
