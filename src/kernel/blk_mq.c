@@ -969,9 +969,13 @@ static int blk_mq_sw_queue_back_merge(struct blk_mq_sw_queue *swq,
     if (!blk_mq_can_back_merge(tail_req, new_req))
         return 0;
 
-    /* Extend the existing request */
+    /* Extend the existing request.  Cover new_req's full byte range,
+     * including any partial-sector remainder (sibling front-merge
+     * ceil-extends to the sector boundary; flooring here would drop
+     * new_req->count % BLOCK_SIZE bytes of I/O). */
     tail_req->count = (size_t)((new_req->sector + (new_req->count / BLOCK_SIZE)
-                                - tail_req->sector) * BLOCK_SIZE);
+                                - tail_req->sector) * BLOCK_SIZE
+                               + (new_req->count % BLOCK_SIZE));
 
     /* Free the merged request back to the tag pool */
     blk_mq_free_request(new_req);
