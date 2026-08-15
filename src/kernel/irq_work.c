@@ -64,12 +64,20 @@ void irq_work_run(void)
     struct llist_head *list = irq_work_list(cpu);
     struct llist_node *node, *next;
     struct irq_work *work;
+    uint64_t irq_flags;
 
     node = llist_del_all(list);
     if (!node)
         return;
 
-    spinlock_acquire(irq_work_lock(cpu));
+    /* The per-CPU lock serialises execution.  Use the irqsave variant:
+     * irq_work_run() is documented to be called from IRQ context (timer
+     * IRQ), but IRQ_WORK_LAZY also permits non-IRQ execution; a plain
+     * spinlock would leave interrupts enabled, so a nested IRQ on this
+     * CPU re-entering irq_work_run() would spin forever on the lock held
+     * by the preempted context.  Disabling interrupts around the drain
+     * also prevents the same CPU from re-entering and double-draining. */
+    spinlock_irqsave_acquire(irq_work_lock(cpu), &irq_flags);
 
     /* The llist is singly-linked in reverse order (LIFO).
      * Reverse it for FIFO execution. */
@@ -111,7 +119,7 @@ void irq_work_run(void)
             WRITE_ONCE(work->flags, IRQ_WORK_PENDING);
     }
 
-    spinlock_release(irq_work_lock(cpu));
+    spinlock_irqsave_release(irq_work_lock(cpu), irq_flags);
 }
 
 void irq_work_sync(struct irq_work *work)
