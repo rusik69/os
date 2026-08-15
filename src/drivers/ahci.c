@@ -863,6 +863,13 @@ int ahci_ncq_read(int port_num, int pm_port, uint64_t lba, uint8_t count, void *
     req->count = count;
     req->buf = buf;
     req->flags = BLK_REQ_READ;
+    /* Ad-hoc request: NOT enqueued through blk_submit_async()/dequeue, so
+     * the queue's inflight_count is never incremented and no device ref is
+     * taken.  Mark dev_id out of range so blk_request_done() (called by the
+     * IRQ completion path) takes its early-return branch instead of
+     * underflowing g_queues[0].inflight_count (uint8_t -> 255, wedging the
+     * fast-path dispatch) and putting a refcount that was never taken. */
+    req->dev_id = 0xFF;
 
     /* Copy data buffer into the slot's DMA buffer (direction: device→host) */
     /* For reads, the slot data buf will be written by the device */
@@ -942,6 +949,13 @@ int ahci_ncq_write(int port_num, int pm_port, uint64_t lba, uint8_t count, const
     req->count = count;
     req->buf = (void *)(uintptr_t)buf;
     req->flags = BLK_REQ_WRITE;
+    /* Ad-hoc request: NOT enqueued through blk_submit_async()/dequeue, so
+     * the queue's inflight_count is never incremented and no device ref is
+     * taken.  Mark dev_id out of range so blk_request_done() (called by the
+     * IRQ completion path) takes its early-return branch instead of
+     * underflowing g_queues[0].inflight_count (uint8_t -> 255, wedging the
+     * fast-path dispatch) and putting a refcount that was never taken. */
+    req->dev_id = 0xFF;
 
     ahci_build_ncq_cmd(port, slot, req);
     port->tag_bitmap |= (1u << slot);
