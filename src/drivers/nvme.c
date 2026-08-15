@@ -1113,6 +1113,11 @@ static int nvme_blk_submit(struct blk_request *req) {
     if (req->count == 0)
         return -EINVAL;
 
+    /* Max number of PRP entries that fit in one 4KB page (each entry is 8 bytes).
+     * A single PRP list page covers at most NVME_PRP_MAX_PER_PAGE + 1 data
+     * pages (~2 MB); larger transfers must be rejected up front. */
+    #define NVME_PRP_MAX_PER_PAGE 512
+
     /* Determine namespace from device ID */
     int ns_index = req->dev_id - NVME_BLOCKDEV_ID;
     if (ns_index < 0 || ns_index >= (int)g_nvme_ctrl.nn)
@@ -1132,10 +1137,28 @@ static int nvme_blk_submit(struct blk_request *req) {
     if (!q || !q->valid)
         return -EIO;
 
-    /* Allocate physically-contiguous pages for DMA */
+    /* Allocate physically-contiguous pages for DMA.
+     * Compute the page count in 64-bit: nr_sectors * 512 is uint32
+     * arithmetic, which wraps for counts >= 2^23 sectors (4 GiB).  A
+     * wrapped value makes nr_pages underflow below the PRP guard below,
+     * so the controller would DMA the full request length against a
+     * single-page buffer (OOB DMA write). */
     uint32_t nr_sectors = req->count;
-    uint32_t nr_pages = (nr_sectors * 512 + 4095) / 4096;
-    if (nr_pages == 0) nr_pages = 1;
+    uint64_t nr_bytes = (uint64_t)nr_sectors * 512;
+    uint64_t nr_pages64 = (nr_bytes + 4095) / 4096;
+    if (nr_pages64 == 0)
+        nr_pages64 = 1;
+
+    /* Guard against PRP list overflow (more pages than fit in one PRP page).
+     * Must run BEFORE allocating frames: an oversized request is rejected
+     * without touching the allocator, and the 64-bit page count keeps this
+     * guard effective even for huge sector counts. */
+    if (nr_pages64 > (uint64_t)NVME_PRP_MAX_PER_PAGE + 1) {
+        kprintf("[NVME] PRP list overflow: %llu pages requested, max %u\n",
+                (unsigned long long)nr_pages64, NVME_PRP_MAX_PER_PAGE + 1);
+        return -ENOSPC;
+    }
+    uint32_t nr_pages = (uint32_t)nr_pages64;
 
     /* Allocate pages as an array of physically-contiguous frames.
      * For small transfers (1 page), use PRP1 directly.
@@ -1172,24 +1195,11 @@ static int nvme_blk_submit(struct blk_request *req) {
     }
 
     /* Build PRP list if multi-page (NVMe PRP entries cannot cross page boundaries) */
-    /* Max number of PRP entries that fit in one 4KB page (each entry is 8 bytes) */
-    #define NVME_PRP_MAX_PER_PAGE 512
-
     uint64_t prp1 = data_phys;
     uint64_t prp2 = 0;
     uint64_t *prp_list = NULL;
 
     if (nr_pages > 1) {
-        /* Guard against PRP list overflow (more pages than fit in one PRP page) */
-        if ((nr_pages - 1) > NVME_PRP_MAX_PER_PAGE) {
-            kprintf("[NVME] PRP list overflow: %u pages requested, max %u\n",
-                    nr_pages, NVME_PRP_MAX_PER_PAGE + 1);
-            for (uint32_t i = 0; i < nr_pages; i++)
-                pmm_free_frame(frames[i]);
-            kfree(frames);
-            return -ENOSPC;
-        }
-
         /* Allocate a dedicated page for the PRP list (do NOT reuse a data page) */
         uint64_t prp_list_frame = pmm_alloc_frame();
         if (unlikely(!prp_list_frame)) {

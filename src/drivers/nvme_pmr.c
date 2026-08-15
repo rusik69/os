@@ -173,8 +173,11 @@ static int nvme_pmr_find_bar(void) {
         /* Get the base address (high bits, low 4 bits = flags) */
         uint64_t base = (uint64_t)(bar_val & 0xFFFFFFF0);
 
-        /* For 64-bit BARs, consume the next BAR as upper 32 bits */
-        if ((bar_val & 0x6) == 0x4) {  /* 64-bit MMIO BAR */
+        /* For 64-bit BARs, consume the next BAR as upper 32 bits.
+         * Guard the index: a 64-bit BAR in BAR5 would need a BAR6 that
+         * does not exist (pci.bar is 6 entries), so skip the upper-dword
+         * read at i == 5 instead of reading past the array. */
+        if ((bar_val & 0x6) == 0x4 && i + 1 < 6) {  /* 64-bit MMIO BAR */
             uint32_t bar_upper = pci.bar[i + 1];
             base |= ((uint64_t)bar_upper << 32);
         }
@@ -367,7 +370,9 @@ int nvme_pmr_read(uint64_t offset, void *buf, uint64_t len) {
     if (!g_pmr.enabled || !g_pmr.pmr_virt)
         return -EIO;
 
-    if (offset + len > g_pmr.pmr_size)
+    /* Subtraction-form check: `offset + len` can wrap for huge offsets,
+     * passing the naive sum test and reading out of the PMR window. */
+    if (offset > g_pmr.pmr_size || len > g_pmr.pmr_size - offset)
         return -EINVAL;
 
     memcpy(buf, (uint8_t *)g_pmr.pmr_virt + offset, (size_t)len);
@@ -378,7 +383,9 @@ int nvme_pmr_write(uint64_t offset, const void *buf, uint64_t len) {
     if (!g_pmr.enabled || !g_pmr.pmr_virt)
         return -EIO;
 
-    if (offset + len > g_pmr.pmr_size)
+    /* Subtraction-form check: `offset + len` can wrap for huge offsets,
+     * passing the naive sum test and writing out of the PMR window. */
+    if (offset > g_pmr.pmr_size || len > g_pmr.pmr_size - offset)
         return -EINVAL;
 
     memcpy((uint8_t *)g_pmr.pmr_virt + offset, buf, (size_t)len);
@@ -438,13 +445,17 @@ static int nvme_pmr_submit(struct blk_request *req)
 
     uint64_t lba = req->lba;
     uint32_t count = req->count;
-    uint64_t offset = lba * 512ULL;
-    uint64_t length = (uint64_t)count * 512ULL;
 
-    if (offset + length > g_pmr.pmr_size) {
-        req->result = -1;
-        return -1;
-    }
+    /* Bounds check without 64-bit wraparound: `lba * 512` and
+     * `offset + length` can wrap for huge LBA/count values, letting a
+     * wrapped sum pass the range test and the memcpy below run out of
+     * the PMR window.  Use subtraction-form checks instead. */
+    if (lba > g_pmr.pmr_size / 512ULL)
+        goto oob;
+    uint64_t offset = lba * 512ULL;
+    if ((uint64_t)count > (g_pmr.pmr_size - offset) / 512ULL)
+        goto oob;
+    uint64_t length = (uint64_t)count * 512ULL;
 
     void *pmr_addr = (uint8_t *)g_pmr.pmr_virt + offset;
     void *buf = req->buf;
@@ -466,6 +477,10 @@ static int nvme_pmr_submit(struct blk_request *req)
 
     req->result = 0;
     return 0;
+
+oob:
+    req->result = -1;
+    return -1;
 }
 
 /* ── Block device registration ────────────────────────────────────── */
@@ -526,7 +541,9 @@ static int nvme_pmr_secure_erase(void *dev, uint64_t offset, size_t count)
     if (!g_pmr.enabled || !g_pmr.pmr_virt)
         return -EIO;
 
-    if (offset + count > g_pmr.pmr_size)
+    /* Subtraction-form check: `offset + count` can wrap for huge offsets,
+     * passing the naive sum test and zeroing out of the PMR window. */
+    if (offset > g_pmr.pmr_size || (uint64_t)count > g_pmr.pmr_size - offset)
         return -EINVAL;
 
     /* Overwrite with zeros, then flush */
