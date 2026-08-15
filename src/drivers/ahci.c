@@ -499,15 +499,24 @@ static void ahci_build_raw_cmd(struct ahci_port *port, int slot, uint8_t ata_cmd
 }
 
 /* ── Issue a command (set CI bit, non-NCQ) ──────────────────────────── */
-static int ahci_issue_non_ncq(struct ahci_port *port, int slot) {
+/* Write SERR/IS/CI to hand the command to the HBA.  Callers that track
+ * slot state (ahci_drain_queue) MUST call this while holding ahci_lock
+ * so the hardware busy mask (CI) is updated before the lock is released:
+ * issuing after unlock left a window where a concurrent drain could
+ * re-allocate the slot and clobber the descriptor ring.  Single-flight
+ * probe paths may use ahci_issue_non_ncq() directly (no lock needed). */
+static void ahci_non_ncq_issue(struct ahci_port *port, int slot) {
     int p = port->port_num;
     /* Clear errors */
     port_write(p, PORT_SERR, port_read(p, PORT_SERR));
     port_write(p, PORT_IS,   port_read(p, PORT_IS));
 
     port_write(p, PORT_CI, (1u << slot));
+}
 
-    /* Poll for completion */
+/* Poll for completion — must be called WITHOUT ahci_lock (spin-waits). */
+static int ahci_non_ncq_wait(struct ahci_port *port, int slot) {
+    int p = port->port_num;
     int timeout = 2000000;
     while (--timeout) {
         uint32_t ci  = port_read(p, PORT_CI);
@@ -518,6 +527,11 @@ static int ahci_issue_non_ncq(struct ahci_port *port, int slot) {
     }
     if (timeout == 0) return -2;
     return 0;
+}
+
+static int ahci_issue_non_ncq(struct ahci_port *port, int slot) {
+    ahci_non_ncq_issue(port, slot);
+    return ahci_non_ncq_wait(port, slot);
 }
 
 /* ── Issue NCQ commands to the HBA ──────────────────────────────────── */
@@ -604,11 +618,15 @@ static void ahci_drain_queue(struct ahci_port *port) {
                 /* TRIM data transfer is 8 bytes (one range entry) */
                 tbl->prdt[0].dbc = sizeof(struct trim_entry) - 1;
 
-                /* Submit synchronously */
+                /* Submit synchronously: issue the command while still
+                 * holding ahci_lock so CI reflects the busy slot before
+                 * the lock is released (see ahci_non_ncq_issue).  Only
+                 * the completion poll runs outside the lock. */
                 port->slots[slot].req = req;
+                ahci_non_ncq_issue(port, slot);
                 spinlock_irqsave_release(&ahci_lock, irq_flags);
 
-                int ret = ahci_issue_non_ncq(port, slot);
+                int ret = ahci_non_ncq_wait(port, slot);
                 req->result = ret;
                 port->slots[slot].req = NULL;
                 blk_request_done(req);
@@ -624,15 +642,17 @@ static void ahci_drain_queue(struct ahci_port *port) {
                            (size_t)req->count * AHCI_SECTOR_SIZE);
                 }
 
-                /* Submit synchronous for slot 0 (non-NCQ) */
+                /* Submit synchronous for slot 0 (non-NCQ): issue under
+                 * the lock (see ahci_non_ncq_issue), poll outside it. */
                 port->slots[slot].req = req;
+                ahci_non_ncq_issue(port, slot);
                 spinlock_irqsave_release(&ahci_lock, irq_flags);
 
                 /* Signal activity LED for this port */
                 ahci_led_activity(port->port_num);
 
-                /* Non-NCQ: issue synchronously (will poll briefly), then complete */
-                int ret = ahci_issue_non_ncq(port, slot);
+                /* Non-NCQ: poll for completion, then complete */
+                int ret = ahci_non_ncq_wait(port, slot);
 
                 /* Copy data back for reads */
                 if (ret == 0 && (req->flags & BLK_REQ_READ)) {
@@ -645,15 +665,21 @@ static void ahci_drain_queue(struct ahci_port *port) {
                 blk_request_done(req);
             }
         } else {
-            /* NCQ: build and issue asynchronously */
+            /* NCQ: build and issue asynchronously.  The SACT/CI writes
+             * happen under the lock so the hardware busy mask is updated
+             * before the lock is released.  Issuing after unlock left a
+             * window where a concurrent drain (IRQ handler or idle_fn)
+             * could re-allocate this slot — ahci_find_free_slot's
+             * stale-sync clears tag bits the hardware does not show busy
+             * yet — and two requests would share one slot, clobbering
+             * the command list/table and losing one completion. */
             ahci_build_ncq_cmd(port, slot, req);
             port->inflight_mask |= (1u << slot);
+            ahci_issue_ncq(port, slot);
             spinlock_irqsave_release(&ahci_lock, irq_flags);
 
             /* Signal activity LED for this port */
             ahci_led_activity(port->port_num);
-
-            ahci_issue_ncq(port, slot);
         }
     }
 }
@@ -845,7 +871,14 @@ int ahci_ncq_read(int port_num, int pm_port, uint64_t lba, uint8_t count, void *
 
     int slot = -1;
     for (int i = 1; i < AHCI_SLOT_COUNT; i++) {
-        if (!(busy & (1u << i))) { slot = i; break; }
+        /* Consider the software tag bitmap too, not just hardware
+         * CI/SACT: a slot allocated by drain_queue is reflected in
+         * hardware only after issue, so consulting hardware alone
+         * could double-allocate it here. */
+        if (!(busy & (1u << i)) && !(port->tag_bitmap & (1u << i))) {
+            slot = i;
+            break;
+        }
     }
     if (slot < 0) {
         spinlock_irqsave_release(&ahci_lock, irq_flags);
@@ -878,9 +911,10 @@ int ahci_ncq_read(int port_num, int pm_port, uint64_t lba, uint8_t count, void *
     port->tag_bitmap |= (1u << slot);
     port->inflight_mask |= (1u << slot);
     port->slots[slot].req = req;
-    spinlock_irqsave_release(&ahci_lock, irq_flags);
-
+    /* Issue under the lock (see ahci_drain_queue) so the slot cannot be
+     * re-allocated between allocation and hardware issue. */
     ahci_issue_ncq(port, slot);
+    spinlock_irqsave_release(&ahci_lock, irq_flags);
 
     /* Wait for completion */
     int timeout = 10000000;
@@ -932,7 +966,14 @@ int ahci_ncq_write(int port_num, int pm_port, uint64_t lba, uint8_t count, const
 
     int slot = -1;
     for (int i = 1; i < AHCI_SLOT_COUNT; i++) {
-        if (!(busy & (1u << i))) { slot = i; break; }
+        /* Consider the software tag bitmap too, not just hardware
+         * CI/SACT: a slot allocated by drain_queue is reflected in
+         * hardware only after issue, so consulting hardware alone
+         * could double-allocate it here. */
+        if (!(busy & (1u << i)) && !(port->tag_bitmap & (1u << i))) {
+            slot = i;
+            break;
+        }
     }
     if (slot < 0) {
         spinlock_irqsave_release(&ahci_lock, irq_flags);
@@ -961,9 +1002,10 @@ int ahci_ncq_write(int port_num, int pm_port, uint64_t lba, uint8_t count, const
     port->tag_bitmap |= (1u << slot);
     port->inflight_mask |= (1u << slot);
     port->slots[slot].req = req;
-    spinlock_irqsave_release(&ahci_lock, irq_flags);
-
+    /* Issue under the lock (see ahci_drain_queue) so the slot cannot be
+     * re-allocated between allocation and hardware issue. */
     ahci_issue_ncq(port, slot);
+    spinlock_irqsave_release(&ahci_lock, irq_flags);
 
     /* Wait for completion */
     int timeout = 10000000;
