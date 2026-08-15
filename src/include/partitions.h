@@ -62,7 +62,7 @@ struct ebr {
 struct mbr_partition {
     uint8_t   bootable;       /* 0x80 = active, 0x00 = inactive */
     uint8_t   type;           /* partition type byte */
-    uint32_t  start_lba;      /* absolute start LBA */
+    uint64_t start_lba;       /* absolute start LBA */
     uint32_t  sector_count;   /* size in sectors */
     int       is_logical;     /* 1 = logical partition (from EBR), 0 = primary */
     int       index;          /* partition number (1-based, e.g. sda1 → 1) */

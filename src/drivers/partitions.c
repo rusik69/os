@@ -322,16 +322,19 @@ int mbr_parse(disk_read_callback_t disk_read, uint64_t disk_sectors,
 
             ebr_depth++;
 
-            /* Validate the logical partition's bounds */
-            uint32_t abs_start = (uint32_t)(ebr_lba + logical_raw.start_lba);
+            /* Validate the logical partition's bounds.
+             * The absolute start is ebr_lba (64-bit) plus the entry's
+             * relative offset — must NOT be narrowed to uint32_t, or
+             * logical partitions beyond the 2 TiB mark (2^32 sectors)
+             * on large disks wrap to bogus small LBAs. */
+            uint64_t abs_start = ebr_lba + logical_raw.start_lba;
 
-            if (abs_start > disk_sectors ||
-                logical_raw.sector_count == 0 ||
-                (uint64_t)abs_start + logical_raw.sector_count > disk_sectors) {
+            if (abs_start > disk_sectors || logical_raw.sector_count == 0 ||
+                abs_start + logical_raw.sector_count > disk_sectors) {
                 kprintf("[MBR] Logical partition at EBR %llu: "
-                        "invalid bounds (abs_start=%u count=%u)\n",
-                        (unsigned long long)ebr_lba,
-                        abs_start, logical_raw.sector_count);
+                        "invalid bounds (abs_start=%llu count=%u)\n",
+                        (unsigned long long)ebr_lba, (unsigned long long)abs_start,
+                        logical_raw.sector_count);
                 ebr_lba = next_ebr_lba;
                 continue;
             }
