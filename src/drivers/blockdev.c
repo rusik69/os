@@ -348,8 +348,12 @@ int blk_submit_async(struct blk_request *req) {
         spinlock_irqsave_release(&q->lock, irq_flags);
 
         if (!g_blockdevs[dev_id].submit_fn) {
-            req->inflight = 0;
+            /* Undo the dispatch accounting under the queue lock, matching
+             * the async-reject path below. */
+            spinlock_irqsave_acquire(&q->lock, &irq_flags);
             q->inflight_count--;
+            spinlock_irqsave_release(&q->lock, irq_flags);
+            req->inflight = 0;
             blockdev_track_inflight(dev_id, -1); /* Undo the dispatch tracking */
             blockdev_put(dev_id);
             req->result = -1;
@@ -367,7 +371,25 @@ int blk_submit_async(struct blk_request *req) {
 
         if (g_blockdevs[dev_id].flags & BLK_DRIVER_ASYNC) {
             /* Driver will call blk_request_done() asynchronously —
-             * the device reference is released there. */
+             * the device reference is released there.  If the driver
+             * rejected the request outright (submit_fn < 0), it will
+             * NOT call blk_request_done(): undo the dispatch accounting
+             * and complete the request here, mirroring the
+             * !submit_fn branch above.  Otherwise inflight_count would
+             * stay wedged at a nonzero value and the device reference
+             * would leak, permanently disabling the fast path. */
+            if (ret < 0) {
+                spinlock_irqsave_acquire(&q->lock, &irq_flags);
+                q->inflight_count--;
+                spinlock_irqsave_release(&q->lock, irq_flags);
+                req->inflight = 0;
+                blockdev_track_inflight(dev_id, -1);
+                blockdev_put(dev_id);
+                req->result = ret;
+                req->done = 1;
+                if (req->done_wq)
+                    wait_queue_wake(req->done_wq);
+            }
             return ret < 0 ? ret : 0;
         }
 
@@ -387,6 +409,15 @@ int blk_submit_async(struct blk_request *req) {
             wait_queue_wake(req->done_wq);
         }
         return ret < 0 ? ret : 0;
+    }
+
+    /* Queue path: enforce the queue depth bound so queued_count (uint8_t)
+     * can never wrap.  A wrapped queued_count would make the fast-path
+     * check above spuriously true while requests are still queued,
+     * dispatching out of order past the pending queue. */
+    if (q->queued_count >= BLK_QUEUE_MAX_DEPTH) {
+        spinlock_irqsave_release(&q->lock, irq_flags);
+        return -EAGAIN;
     }
 
     /* Queue path: acquire device ref BEFORE inserting into the queue

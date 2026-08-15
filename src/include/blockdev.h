@@ -28,6 +28,12 @@
 #define BLK_REQ_DISCARD   (1ULL << 5)  /* Deallocate/TRIM — data not written */
 #define BLK_REQ_SYNC      (1ULL << 6)  /* Synchronous I/O — process waits for completion */
 
+/* Maximum requests queued per device.  Bounds the request queue so the
+ * uint8_t queued_count can never wrap (which would corrupt the fast-path
+ * dispatch decision in blk_submit_async) and memory cannot grow without
+ * limit when a driver stalls. */
+#define BLK_QUEUE_MAX_DEPTH 128
+
 /* Driver flags */
 #define BLK_DRIVER_ASYNC  1   /* Driver handles completion asynchronously via blk_request_done() */
 
