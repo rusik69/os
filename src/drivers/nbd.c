@@ -242,7 +242,28 @@ static int nbd_submit_fn(struct blk_request *req)
     int conn_id = dev->conn_id;
 
     uint64_t offset = req->lba * 512ULL;
-    uint32_t len    = req->count * 512;
+    uint64_t len64  = (uint64_t)req->count * 512ULL;
+
+    /* Bounds-check the request before touching the wire: req->count is
+     * uint32_t, so the old 32-bit `req->count * 512` wrapped for
+     * count >= 2^23 (4 GiB), silently truncating I/Os (a partial read
+     * returned success with a half-filled buffer; a partial write lost
+     * its tail).  Compute in 64-bit, honor the NBD protocol's uint32
+     * length field, and reject requests that fall outside the
+     * negotiated export size instead of relying on the server. */
+    if (req->count == 0 ||
+        len64 > 0xFFFFFFFFULL ||
+        req->lba > dev->export_size / 512 ||
+        len64 > dev->export_size - offset) {
+        kprintf("[NBD] Rejecting out-of-range request: dev=%d lba=%llu "
+                "count=%u len=%llu export=%llu\n",
+                dev_id, (unsigned long long)req->lba, req->count,
+                (unsigned long long)len64,
+                (unsigned long long)dev->export_size);
+        return -EINVAL;
+    }
+    uint32_t len = (uint32_t)len64;
+
     int is_write    = (req->flags & BLK_REQ_WRITE);
     uint32_t type   = is_write ? NBD_CMD_WRITE : NBD_CMD_READ;
     uint64_t handle = (uint64_t)((uintptr_t)req);
