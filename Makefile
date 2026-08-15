@@ -643,6 +643,7 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/iommu.c \
          src/kernel/sched_idle.c \
          src/kernel/hrtimer.c \
+         src/kernel/hung_task.c \
          src/kernel/idle_inject.c \
          src/kernel/core_sched.c \
          src/kernel/nohz.c \

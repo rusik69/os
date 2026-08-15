@@ -143,6 +143,7 @@
 #include "export.h"
 #include "fault.h"
 #include "gdt.h"
+#include "hung_task.h"
 #include "io.h"
 #include "kpti.h"
 #include "mglru.h"
@@ -1368,6 +1369,12 @@ void scheduler_tick(int was_user) {
      * process_sleep_ticks()/wait_queue sleeps never wake up (the
      * scheduler's wake-sleepers scan was only wired into a kunit test). */
     scheduler_wake_sleepers();
+
+    /* Hung-task detection (rate-limited internally to every 5 s).  Runs in
+     * timer-IRQ context with IRQs already disabled and takes sched_lock,
+     * so it cannot race the wake scan above — no false detections, and
+     * sleep_until/state reads are atomic w.r.t. concurrent wakeups. */
+    hung_task_check();
 
     /* Periodically reap zombies.  The idle loop's reaper is starved once
      * userspace init runs (netd/telnetd keep the CPU busy), so orphaned

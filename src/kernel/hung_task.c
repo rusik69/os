@@ -16,6 +16,7 @@
 #include "scheduler.h"
 #include "process.h"
 #include "spinlock.h"
+#include "panic.h"
 
 /* ── Configuration ─────────────────────────────────────────────────── */
 
@@ -50,6 +51,60 @@ void hung_task_set_panic(int enable)
     kprintf("[hung_task] Panic on hung task: %s\n", enable ? "enabled" : "disabled");
 }
 
+/* Run one detection pass over the process table.  Returns the number of
+ * hung tasks found.
+ *
+ * The scan holds sched_lock with IRQs saved/restored — the same lock the
+ * scheduler's wake scan (scheduler_wake_sleepers) and the sleep paths use
+ * to avoid lost wakeups.  Without it, a task woken concurrently on another
+ * CPU can be observed mid-wakeup (BLOCKED + stale sleep_until) and falsely
+ * reported as hung, which with panic mode enabled turns a benign wakeup
+ * race into a spurious kernel panic. */
+static int hung_task_scan(uint64_t now)
+{
+    struct process *table = process_get_table();
+    int hung_found = 0;
+    uint64_t irq_flags;
+
+    spinlock_irqsave_acquire(&sched_lock, &irq_flags);
+
+    for (int i = 0; i < PROCESS_MAX; i++) {
+        struct process *p = &table[i];
+        if (p->state == PROCESS_UNUSED || p->state == PROCESS_ZOMBIE)
+            continue;
+
+        /* Check for D-state (uninterruptible sleep) tasks */
+        if (p->state == PROCESS_BLOCKED && !p->is_suspended) {
+            uint64_t blocked_since = p->sleep_until;
+            if (blocked_since > 0 && now > blocked_since + g_hung_task_timeout_ticks) {
+                /* Task has been blocked longer than timeout */
+                kprintf("\n=== HUNG TASK DETECTED ===\n");
+                kprintf("PID: %u  NAME: %s\n", p->pid, p->name ? p->name : "?");
+                kprintf("Blocked since tick: %llu (now: %llu, elapsed: %llu ticks)\n",
+                        (unsigned long long)blocked_since,
+                        (unsigned long long)now,
+                        (unsigned long long)(now - blocked_since));
+                kprintf("Timeout: %llu ticks\n",
+                        (unsigned long long)g_hung_task_timeout_ticks);
+                kprintf("State: %d  KSTACK: 0x%llx\n",
+                        (int)p->state, (unsigned long long)p->kernel_stack);
+
+                hung_found++;
+            }
+        }
+    }
+
+    spinlock_irqsave_release(&sched_lock, irq_flags);
+
+    /* Panic after releasing the lock — panic() may need the scheduler. */
+    if (hung_found > 0 && g_hung_task_panic) {
+        kprintf("Hung task panic triggered!\n");
+        panic("Hung task detected");
+    }
+
+    return hung_found;
+}
+
 /* Check all tasks for hung state.
  * Called periodically from the timer tick. */
 void hung_task_check(void)
@@ -66,40 +121,7 @@ void hung_task_check(void)
 
     g_hung_task_check_count++;
 
-    /* Iterate all processes looking for blocked tasks */
-    int hung_found = 0;
-    for (uint32_t pid = 1; pid < 4096; pid++) {
-        struct process *p = process_get_by_pid(pid);
-        if (!p || p->state == PROCESS_UNUSED || p->state == PROCESS_ZOMBIE)
-            continue;
-
-        /* Check for D-state (uninterruptible sleep) tasks */
-        if (p->state == PROCESS_BLOCKED && !p->is_suspended) {
-            uint64_t blocked_since = p->sleep_until;
-            if (blocked_since > 0 && now > blocked_since + g_hung_task_timeout_ticks) {
-                /* Task has been blocked longer than timeout */
-                kprintf("\n=== HUNG TASK DETECTED ===\n");
-                kprintf("PID: %u  NAME: %s\n", pid, p->name ? p->name : "?");
-                kprintf("Blocked since tick: %llu (now: %llu, elapsed: %llu ticks)\n",
-                        (unsigned long long)blocked_since,
-                        (unsigned long long)now,
-                        (unsigned long long)(now - blocked_since));
-                kprintf("Timeout: %llu ticks\n",
-                        (unsigned long long)g_hung_task_timeout_ticks);
-                kprintf("State: %d  KSTACK: 0x%llx\n",
-                        (int)p->state, (unsigned long long)p->kernel_stack);
-
-                hung_found++;
-
-                if (g_hung_task_panic) {
-                    /* Dump and panic */
-                    kprintf("Hung task panic triggered!\n");
-                    panic("Hung task detected");
-                }
-            }
-        }
-    }
-
+    int hung_found = hung_task_scan(now);
     if (hung_found > 0) {
         kprintf("[hung_task] %d hung task(s) detected in check #%d\n",
                 hung_found, g_hung_task_check_count);
@@ -127,29 +149,28 @@ void hung_task_init(void)
             120, "disabled");
 }
 
-/* ── Stub: hung_task_detect ────────────────────────────────────────── */
+/* ── Immediate detection / panic / stats API ───────────────────────── */
+
+/* Run a detection pass now; returns number of hung tasks found. */
 int hung_task_detect(void)
 {
-    kprintf("[HUNG_TASK] hung_task_detect: not yet implemented\n");
-    return 0;
+    return hung_task_scan(timer_get_ticks());
 }
 
-/* ── Stub: hung_task_panic ─────────────────────────────────────────── */
+/* Panic with the hung-task message. */
 void hung_task_panic(void)
 {
-    kprintf("[HUNG_TASK] hung_task_panic: not yet implemented\n");
+    panic("Hung task detected");
 }
 
-/* ── Stub: hung_task_check_count ───────────────────────────────────── */
+/* Number of periodic checks performed so far. */
 int hung_task_check_count(void)
 {
-    kprintf("[HUNG_TASK] hung_task_check_count: not yet implemented\n");
-    return 0;
+    return g_hung_task_check_count;
 }
 
-/* ── Stub: hung_task_timeout_secs ──────────────────────────────────── */
+/* Configured timeout in seconds (0 = disabled). */
 uint64_t hung_task_timeout_secs(void)
 {
-    kprintf("[HUNG_TASK] hung_task_timeout_secs: not yet implemented\n");
-    return 0;
+    return g_hung_task_timeout_ticks / TIMER_FREQ;
 }

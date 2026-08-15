@@ -124,6 +124,7 @@ extern int usb_hub_init(void);
 #include "net_igmp.h"
 #include "net_lldp.h"
 #include "net_rps.h"
+#include "hung_task.h"
 #include "nmi_watchdog.h"
 #include "nohz.h"
 #include "nvme.h"
@@ -626,6 +627,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* NMI watchdog for hang detection */
     nmi_watchdog_init();
+
+    /* Hung-task detection (scan wired into scheduler_tick) */
+    hung_task_init();
 
     /* Memory compaction / defragmentation */
     compaction_init();
