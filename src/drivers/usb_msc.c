@@ -691,6 +691,7 @@ static int usb_msc_parse_config(void)
                     uint8_t ep_type = config[ep_offset + 1];
 
                     if (ep_len == 0) break;
+                    if (ep_offset + ep_len > total_len) break;
                     if (ep_type == USB_DT_ENDPOINT && ep_len >= 7) {
                         uint8_t ep_addr = config[ep_offset + 2];
                         uint8_t ep_attr = config[ep_offset + 3];

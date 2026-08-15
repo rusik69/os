@@ -633,6 +633,8 @@ static int uas_parse_config(void)
 
 					if (ep_len == 0)
 						break;
+					if (ep_offset + ep_len > total_len)
+						break;
 					if (ep_type == USB_DT_ENDPOINT &&
 					    ep_len >= 7) {
 						uint8_t ep_addr =
