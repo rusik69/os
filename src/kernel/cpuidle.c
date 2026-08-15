@@ -854,13 +854,19 @@ void cpuidle_idle(void)
     state->enter(state);
 
     /* ── Exit idle ───────────────────────────────────────────────
-     * Clear the idle flag and re-pet the watchdog so the NMI handler
-     * has a fresh timestamp, covering the case where the PMC counter
-     * was near overflow when we entered idle (the NMI would fire
-     * during wake processing with the old stale timestamp). */
-    nmi_watchdog_idle_exit();
-    extern void nmi_watchdog_pet(void);
+     * Re-pet the watchdog BEFORE clearing the idle flag so the NMI
+     * handler always sees a fresh timestamp once the idle flag is
+     * clear.  The reversed order leaves a window (flag already
+     * cleared, pet timestamp still stale from before idle) in which
+     * a PMC-overflow NMI arriving during wake processing misreads a
+     * CPU that slept in a deep C-state (NO_HZ — potentially minutes
+     * without a timer tick) as a hard lockup: a false-positive
+     * report and, after escalation, a spurious panic.  With
+     * pet-first, every interleaving is safe: an NMI before the pet
+     * still sees the idle flag set and bails via the idle guard;
+     * one after the flag-clear sees fresh timestamps. */
     nmi_watchdog_pet();
+    nmi_watchdog_idle_exit();
 
     /* Compute time spent in ticks */
     uint64_t elapsed = timer_get_ticks() - start;
