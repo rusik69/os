@@ -707,6 +707,17 @@ static int enumerate_hub(uint8_t dev_addr) {
         return -2;
     }
 
+    /* Validate declared length: fixed header is 7 bytes (USB 2.0 spec
+     * §11.23.1, Table 11-13).  A shorter bDescLength means a crafted
+     * descriptor that does not actually contain the fields below. */
+    if (desc->bDescLength < sizeof(struct hub_descriptor)) {
+        kprintf("[USB HUB] Hub addr=%d: descriptor too short (len=%d, "
+                "need %u)\n", dev_addr, desc->bDescLength,
+                (unsigned)sizeof(struct hub_descriptor));
+        pmm_free_frame(VIRT_TO_PHYS((uint64_t)buf));
+        return -4;
+    }
+
     /* Validate bNbrPorts: must be between 1 and USB_MAX_PORTS_PER_HUB */
     if (desc->bNbrPorts == 0 || desc->bNbrPorts > USB_MAX_PORTS_PER_HUB) {
         kprintf("[USB HUB] Hub addr=%d: invalid bNbrPorts=%d (max %d)\n",
