@@ -319,10 +319,18 @@ static inline uint64_t ticks_to_us(uint64_t ticks)
  */
 static inline uint64_t menu_ema_update(uint64_t ema, uint64_t sample)
 {
-    /* Fixed-point arithmetic: ema and sample are in microseconds */
+    /* Fixed-point arithmetic: ema and sample are in microseconds.
+     * delta carries the SIGN of (sample - ema): the EMA must move
+     * toward the sample in both directions.  Taking |delta| would
+     * turn the EMA into a ratchet that only ever increases,
+     * over-predicting idle durations and biasing the governor
+     * toward deeper C-states. */
     int64_t diff = (int64_t)sample - (int64_t)ema;
     int64_t delta = (diff * MENU_EMA_ALPHA_NUM) / MENU_EMA_ALPHA_DENOM;
-    return ema + (uint64_t)(delta >= 0 ? delta : -delta);
+    if (delta >= 0)
+        return ema + (uint64_t)delta;
+    uint64_t mag = (uint64_t)(-delta);
+    return (mag >= ema) ? 0 : ema - mag;
 }
 
 /*
