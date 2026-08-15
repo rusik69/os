@@ -734,6 +734,25 @@ int gpt_decode_entries(const uint8_t *raw_entries, uint32_t num,
     const uint8_t zero_guid[16] = {0, 0, 0, 0, 0, 0, 0, 0,
                                    0, 0, 0, 0, 0, 0, 0, 0};
 
+    /* Raw buffer layout is num entries of entry_size bytes each.
+     * Refuse undersized entries: every struct gpt_entry field read
+     * (including the 72-byte name) would over-run the entry. */
+    if (!raw_entries || !out || max_out <= 0)
+        return -1;
+    if (entry_size < sizeof(struct gpt_entry))
+        return -1;
+
+    /* The name field is the last member of struct gpt_entry, so only
+     * (entry_size - name_offset) bytes are readable within the entry.
+     * Clamp the UTF-16 decode so the final entry never over-reads
+     * past the end of the raw buffer (entry_size == 128 with 128
+     * entries gives exactly 32 sectors — no padding slack). */
+    size_t name_avail = (size_t)entry_size -
+                        (sizeof(struct gpt_entry) - sizeof(((struct gpt_entry *)0)->name));
+    int name_max = (int)sizeof(out[0].name);
+    if (name_avail < (size_t)name_max * 2)
+        name_max = (int)(name_avail / 2) + 1;
+
     for (uint32_t i = 0; i < num && count < max_out; i++) {
         const struct gpt_entry *raw = (const struct gpt_entry *)
             (raw_entries + (uint64_t)i * entry_size);
@@ -754,7 +773,7 @@ int gpt_decode_entries(const uint8_t *raw_entries, uint32_t num,
         out[count].attr      = raw->attr;
 
         /* Decode UTF-16LE partition name to ASCII */
-        utf16le_to_ascii(raw->name, out[count].name, (int)sizeof(out[count].name));
+        utf16le_to_ascii(raw->name, out[count].name, name_max);
 
         count++;
     }
