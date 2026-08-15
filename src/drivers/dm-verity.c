@@ -51,6 +51,9 @@
 /* Number of hashes that fit in one hash block */
 #define VERITY_HASHES_PER_BLOCK  (VERITY_BLOCK_SIZE / VERITY_HASH_SIZE)
 
+/* Number of hashes that fit in one 512-byte sector */
+#define VERITY_HASHES_PER_SECTOR (512 / VERITY_HASH_SIZE)
+
 /* Maximum root hash hex string length */
 #define VERITY_ROOT_HASH_HEX_LEN 65
 
@@ -174,7 +177,7 @@ static int verity_verify_block(struct verity_private *vp,
                                uint64_t block_num, const uint8_t *buf)
 {
     uint8_t  hash[VERITY_HASH_SIZE];
-    uint8_t  stored_hash[VERITY_HASH_SIZE];
+    uint8_t  stored_hash[512];  /* one sector: 16 hashes of 32 bytes */
     uint64_t hash_sector;
     int      ret;
 
@@ -204,7 +207,7 @@ static int verity_verify_block(struct verity_private *vp,
         /* Calculate the hash sector on the hash device for this level */
         hash_sector = verity_hash_offset(vp, current_block, level);
 
-        /* Read the stored hash (32 bytes = 1 sector's worth of hashes) */
+        /* Read the sector containing the stored hash (512 bytes = 16 hashes) */
         ret = blk_submit_sync(vp->hash_dev_id, hash_sector, 1,
                               stored_hash, BLK_REQ_READ);
         if (ret != 0) {
@@ -215,8 +218,11 @@ static int verity_verify_block(struct verity_private *vp,
             return ret;
         }
 
-        /* Compare the computed hash with the stored hash */
-        if (memcmp(hash, stored_hash, VERITY_HASH_SIZE) != 0) {
+        /* Compare the computed hash with the stored hash at its
+         * in-sector offset (32 bytes per hash, 16 hashes per sector) */
+        const uint8_t *stored = stored_hash +
+            (current_block % VERITY_HASHES_PER_SECTOR) * VERITY_HASH_SIZE;
+        if (memcmp(hash, stored, VERITY_HASH_SIZE) != 0) {
             kprintf("[DM-VERITY] VERIFICATION FAILED at level %d, "
                     "block %llu: hash mismatch\n",
                     level, (unsigned long long)current_block);
@@ -225,7 +231,7 @@ static int verity_verify_block(struct verity_private *vp,
                 kprintf("%02x", hash[i]);
             kprintf("\n  stored:   ");
             for (int i = 0; i < VERITY_HASH_SIZE; i++)
-                kprintf("%02x", stored_hash[i]);
+                kprintf("%02x", stored[i]);
             kprintf("\n");
             return -EIO;
         }
