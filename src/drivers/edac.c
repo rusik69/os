@@ -364,13 +364,3 @@ void edac_dump_status(void)
 EXPORT_SYMBOL(edac_dump_status);
 #include "module.h"
 module_init(edac_init);
-
-/* ── Stub: edac_report_error ─────────────────────────────── */
-static int edac_report_error(void *dev, int type, const char *msg)
-{
-    (void)dev;
-    (void)type;
-    (void)msg;
-    kprintf("[EDAC] edac_report_error: not yet implemented\n");
-    return 0;
-}
