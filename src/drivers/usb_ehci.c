@@ -1113,7 +1113,16 @@ int ehci_submit_isochronous(uint8_t dev_addr, uint8_t ep,
     (void)dev_addr;  /* device address embedded in iTD endpoint char */
     (void)ep;        /* endpoint number — currently single-µframe */
     if (!g_periodic_on) return -1;
-    if (!buf || len == 0 || len > 4096) return -2;
+    /*
+     * A single isochronous packet is at most USB_ISO_MAX_PACKET bytes and
+     * the iTD transaction record carries no byte-count field — the DMA
+     * region is bounded only by the programmed buffer pages.  Enforce the
+     * documented API contract (usb_core.h: len ≤ USB_ISO_MAX_PACKET) here
+     * so a direct caller cannot program an iTD whose DMA region exceeds
+     * its (len-byte) buffer: an IN packet larger than the buffer would be
+     * DMA-written past it (silent overrun, no babble error).
+     */
+    if (!buf || len == 0 || len > USB_ISO_MAX_PACKET) return -2;
     if (ehci_count < 1) return -3;
 
     /*
@@ -1466,12 +1475,23 @@ static int ehci_submit_async_qtd(uint8_t dev_addr, uint8_t ep,
     uint32_t pg_base = buf_phys & ~0xFFFu;
     uint32_t pg_off = buf_phys & 0xFFFu;
 
-    /* Buffer pointers */
+    /*
+     * A qTD can address at most 5 buffer pages (20 KB) and its token
+     * byte-count field is 15 bits (max 0x7FFF).  Reject larger transfers
+     * up front: the DMA would otherwise walk past the programmed page
+     * pointers (zeros → physical address 0) and corrupt low memory.
+     */
+    if (len > 20480u - pg_off || len > 0x7FFFu) {
+        pmm_free_frame(qtd_phys);
+        return -EINVAL;
+    }
+
+    /* Buffer pointers (up to 5 pages) */
     qtd[3] = pg_base;                            /* buf_ptr0 */
     qtd[4] = (pg_off + len > 4096) ? (pg_base + 0x1000u) : 0;
-    qtd[5] = 0;
-    qtd[6] = 0;
-    qtd[7] = 0;
+    qtd[5] = (qtd[4] && (pg_off + len > 8192)) ? (pg_base + 0x2000u) : 0;
+    qtd[6] = (qtd[5] && (pg_off + len > 12288)) ? (pg_base + 0x3000u) : 0;
+    qtd[7] = (qtd[6] && (pg_off + len > 16384)) ? (pg_base + 0x4000u) : 0;
 
     /* Token: status + PID + length + toggle */
     uint32_t bytes_to_send = (len > 0) ? (len << 16) : 0;
