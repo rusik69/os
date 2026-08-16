@@ -69,11 +69,40 @@ void *dma_alloc_coherent_aligned(struct pci_device *dev, size_t size,
         return NULL;
     }
 
+    /* Alignment must be a non-zero power of two: the address arithmetic
+     * ((uintptr_t)buf + align - 1) & ~(align - 1) and the offset math are
+     * only well-defined for pow2 align.  A non-pow2/zero align can make
+     * the aligned pointer fall below buf, underflowing offset and wrapping
+     * aligned_dma into a garbage DMA address handed to the device. */
+    if (align == 0 || (align & (align - 1)) != 0) {
+        if (dma_handle)
+            *dma_handle = 0;
+        return NULL;
+    }
+
+    /* Reject sizes whose page rounding would wrap uint64_t: for
+     * size > UINT64_MAX - (PAGE_SIZE - 1) the add below overflows and
+     * alloc_size collapses to a tiny value, returning a buffer far too
+     * small for the DMA the caller will issue into it. */
+    if (size > UINT64_MAX - (PAGE_SIZE - 1)) {
+        if (dma_handle)
+            *dma_handle = 0;
+        return NULL;
+    }
+
     /* Align size up to page boundary */
     size_t alloc_size = (size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
 
     /* Allocate extra to guarantee alignment */
     size_t extra = (align > PAGE_SIZE) ? align : PAGE_SIZE;
+
+    /* Guard the addition: a wrapped total_alloc allocates a buffer too
+     * small for the requested DMA range. */
+    if (extra > UINT64_MAX - alloc_size) {
+        if (dma_handle)
+            *dma_handle = 0;
+        return NULL;
+    }
     size_t total_alloc = alloc_size + extra;
 
     uint64_t tmp_handle;
