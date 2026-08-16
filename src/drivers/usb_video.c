@@ -1439,6 +1439,7 @@ struct uvc_parse_ctx {
 	uint8_t current_iface_class;
 	uint8_t current_iface_subclass;
 	uint8_t current_iface_protocol;
+	uint8_t current_alt_setting;   /* bAlternateSetting of current iface */
 	int    in_vs_header;   /* inside a VS_HEADER, expect format descs */
 	int    in_format;       /* inside a format, expect frame descs */
 };
@@ -1463,6 +1464,7 @@ static int uvc_desc_callback(uint8_t bDescriptorType,
 		ctx->current_iface_class = iface->bInterfaceClass;
 		ctx->current_iface_subclass = iface->bInterfaceSubClass;
 		ctx->current_iface_protocol = iface->bInterfaceProtocol;
+		ctx->current_alt_setting = iface->bAlternateSetting;
 		ctx->in_vs_header = 0;
 		ctx->in_format = 0;
 
@@ -1561,6 +1563,17 @@ static int uvc_desc_callback(uint8_t bDescriptorType,
 
 		if (ep_addr & USB_ENDPOINT_DIR_IN) {
 			dev->iso_in_ep = ep_addr;
+			/* Record the alternate setting that actually carries
+			 * this endpoint: the first VideoStreaming interface
+			 * descriptor is typically altsetting 0 (zero
+			 * bandwidth, no endpoints), so the setting captured
+			 * from it would never activate the isochronous
+			 * endpoint at stream start.  Use the altsetting of
+			 * the interface this endpoint was parsed from so
+			 * SET_INTERFACE and the capture endpoint index stay
+			 * consistent.
+			 */
+			dev->alt_setting = ctx->current_alt_setting;
 			kprintf("[usb_video]   ISO IN ep 0x%02X max=%u\n",
 				ep_addr, max_pkt);
 		} else {
