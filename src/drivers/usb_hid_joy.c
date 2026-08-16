@@ -707,6 +707,12 @@ int usb_hid_joy_register(uint8_t dev_addr, uint16_t vid, uint16_t pid,
 	if (g_joy_count >= GAMEPAD_MAX_DEVICES)
 		return -ENOSPC;
 
+	/* Validate the endpoint index before use: the interrupt IN
+	 * endpoint must be non-zero and carry the IN direction bit
+	 * (0x80), per the usb_hid_joy_register() API contract. */
+	if (input_ep == 0 || !(input_ep & 0x80))
+		return -EINVAL;
+
 	struct hid_gamepad_dev *dev = &g_gamepads[g_joy_count];
 	memset(dev, 0, sizeof(*dev));
 
