@@ -245,11 +245,15 @@ int igb_setup_rx_ring(struct igb_priv *priv, int q_idx)
     rxq->descs_phys = phys;
 
     /* Allocate RX data buffers from the global buffer pool.
-     * The buffers are pre-allocated contiguously by igb_init_hw(). */
+     * The buffers are pre-allocated contiguously by igb_init_hw().
+     * Each queue owns a slice of the pool of IGB_RX_RING_SIZE
+     * buffers; store the per-queue addresses in the per-queue
+     * arrays (index i), using the global pool index only to
+     * compute the pool offset. */
     for (i = 0; i < rxq->size; i++) {
         if (priv->buf_pool_virt != NULL) {
             int buf_idx = q_idx * IGB_RX_RING_SIZE + i;
-            rxq->buf_phys[buf_idx] = priv->buf_pool_phys +
+            rxq->buf_phys[i] = priv->buf_pool_phys +
                 (uint64_t)(buf_idx * IGB_RX_BUF_SIZE);
             rxq->buffers[i] = (uint8_t *)priv->buf_pool_virt +
                 (buf_idx * IGB_RX_BUF_SIZE);
