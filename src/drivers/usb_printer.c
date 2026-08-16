@@ -222,6 +222,16 @@ static int printer_desc_callback(uint8_t bDescriptorType,
 			ctx->current_iface_valid = 1;
 			ctx->current_iface_num = iface->bInterfaceNumber;
 			ctx->current_protocol = iface->bInterfaceProtocol;
+			/*
+			 * Record the interface number of the first printer
+			 * interface whose bulk endpoints will be captured.
+			 * A later printer interface in the walk must not
+			 * override it, or the wIndex used for class-specific
+			 * requests (GET_DEVICE_ID/GET_STATUS) would no longer
+			 * match the endpoints collected above.
+			 */
+			if (!ctx->found_bulk_out && !ctx->found_bulk_in)
+				ctx->iface_num = iface->bInterfaceNumber;
 		} else {
 			ctx->current_iface_valid = 0;
 		}
