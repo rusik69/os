@@ -871,24 +871,30 @@ static uint64_t pci_probe_bar_size(int bus, int slot, int func,
 }
 
 /*
- * pci_read_bar - Read a PCI BAR register with alignment validation.
+ * pci_read_bar - Read a PCI BAR register with encoding validation.
  * @bus, @slot, @func: PCI device address
  * @bar_index: BAR index (0-5)
  * @out_val: On success, receives the raw BAR value read from config space
  *           at offset 0x10 + bar_index*4.
  *
- * Reads the BAR and validates its base address alignment per PCI
+ * Reads the BAR and validates its space/type encoding per PCI
  * Local Bus Specification rev 3.0, Section 6.2.5.1:
  *   - I/O BAR (bit 0 = 1): address is in bits [31:2], 4-byte aligned.
  *     Bit 1 is reserved (must be 0), so (bar_val & 3) must be 0x01.
  *   - 32-bit memory BAR (bits [2:1] = 00, bit 0 = 0): address in
  *     bits [31:4], 16-byte aligned.
- *   - 64-bit memory BAR (bits [2:1] = 10, bit 0 = 0): same alignment
- *     as 32-bit; upper dword holds bits [63:32].
+ *   - 64-bit memory BAR (bits [2:1] = 10, bit 0 = 0): address in
+ *     bits [63:4]; upper dword holds bits [63:32].
  *   - Reserved encoding (bits [2:1] = 01 or 11 with bit 0 = 0) is
  *     reported as invalid.
  *
- * Returns 0 on success, -EINVAL on invalid alignment or reserved type.
+ * No alignment check is applied to memory BAR bits [3:0]: those bits
+ * are encoding attributes (bit 0 = space, bits [2:1] = type, bit 3 =
+ * prefetchable), not address bits — the address starts at bit 4 by
+ * definition.  Flagging a 64-bit BAR (bit 2 set) or a prefetchable
+ * BAR (bit 3 set) as "misaligned" would reject valid devices.
+ *
+ * Returns 0 on success, -EINVAL on reserved type encoding.
  * A diagnostic warning is logged via kprintf on mismatch. */
 int pci_read_bar(uint8_t bus, uint8_t slot, uint8_t func,
                  int bar_index, uint32_t *out_val)
@@ -927,16 +933,15 @@ int pci_read_bar(uint8_t bus, uint8_t slot, uint8_t func,
                     (unsigned int)mem_type);
             return -EINVAL;
         }
-        /* 32-bit and 64-bit memory BARs: address is in bits [31:4],
-         * so bits [3:0] must be zero for proper 16-byte alignment. */
-        if (bar_val & 0xF) {
-            kprintf("[PCI] WARNING: %02x:%02x.%x BAR%d memory BAR "
-                    "address is not 16-byte aligned (raw=0x%x)\n",
-                    (unsigned int)bus, (unsigned int)slot,
-                    (unsigned int)func, bar_index,
-                    (unsigned int)bar_val);
-            return -EINVAL;
-        }
+        /* Note: bits [3:0] of a memory BAR are encoding attributes,
+         * NOT address bits (PCI Local Bus Spec r3.0 §6.2.5.1):
+         *   bit 0   = 0 (memory space)
+         *   bits[2:1] = type (00 = 32-bit, 10 = 64-bit; bit 2 set
+         *              for every 64-bit BAR)
+         *   bit 3   = prefetchable (set for prefetchable BARs)
+         * The base address occupies bits [31:4] by definition, so no
+         * additional alignment check exists — every valid memory BAR
+         * passes here once the type bits are validated above. */
     }
 
     return 0;
