@@ -183,8 +183,15 @@
 #define UVC_MAX_DEVICES              4   /* max video devices tracked */
 #define UVC_MAX_FRAME_SIZE          (1920 * 1080 * 3) /* max raw frame buffer */
 #define UVC_MAX_CONTROLS            32   /* max cached control values */
-#define UVC_VS_PROBE_SIZE           26   /* VS_PROBE_CONTROL (UVC 1.5) */
-#define UVC_VS_COMMIT_SIZE          26   /* VS_COMMIT_CONTROL (UVC 1.5) */
+/* VS_PROBE_CONTROL / VS_COMMIT_CONTROL buffer sizes.  These must be at
+ * least sizeof(struct uvc_probe_commit) (35 bytes): uvc_commit_stream()
+ * and uvc_probe_transaction() issue transfers of that exact length, and
+ * a buffer smaller than the transfer would let the EHCI controller
+ * DMA-read/write past the end (short-buffer overrun on GET, over-read of
+ * adjacent struct fields on SET).  The _Static_assert below keeps the
+ * two in lockstep. */
+#define UVC_VS_PROBE_SIZE           35   /* VS_PROBE_CONTROL (UVC 1.5) */
+#define UVC_VS_COMMIT_SIZE          35   /* VS_COMMIT_CONTROL (UVC 1.5) */
 #define UVC_STILL_PROBE_SIZE        26   /* VS_STILL_PROBE_CONTROL */
 
 /* ── Terminal / unit types for disambiguation ─────────────────────────── */
@@ -409,6 +416,16 @@ struct uvc_probe_commit {
 	uint8_t  bMaxVersion;
 	uint8_t  bInterfaceNumber;  /* UVC 1.5: interface to stream on */
 } __attribute__((packed));
+
+/* The probe/commit device buffers (probe_buf/commit_buf in struct
+ * uvc_device) are sized with UVC_VS_PROBE_SIZE/UVC_VS_COMMIT_SIZE and
+ * the transfer helpers pass sizeof(struct uvc_probe_commit).  Keep the
+ * two in lockstep: a buffer smaller than the transfer length would let
+ * the host controller DMA past the buffer end (overrun on GET, over-read
+ * on SET). */
+_Static_assert(sizeof(struct uvc_probe_commit) == UVC_VS_PROBE_SIZE &&
+	       sizeof(struct uvc_probe_commit) == UVC_VS_COMMIT_SIZE,
+	       "UVC probe/commit buffers must match transfer struct size");
 
 /* ── Global state ─────────────────────────────────────────────────────── */
 
