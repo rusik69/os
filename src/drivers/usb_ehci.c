@@ -1487,7 +1487,7 @@ static int ehci_submit_async_qtd(uint8_t dev_addr, uint8_t ep,
     }
 
     /* Buffer pointers (up to 5 pages) */
-    qtd[3] = pg_base;                            /* buf_ptr0 */
+    qtd[3] = buf_phys;                            /* buf_ptr0 (keeps pg_off) */
     qtd[4] = (pg_off + len > 4096) ? (pg_base + 0x1000u) : 0;
     qtd[5] = (qtd[4] && (pg_off + len > 8192)) ? (pg_base + 0x2000u) : 0;
     qtd[6] = (qtd[5] && (pg_off + len > 12288)) ? (pg_base + 0x3000u) : 0;
@@ -1611,7 +1611,7 @@ static int ehci_sync_submit(uint8_t dev_addr, uint8_t ep,
     }
 
     /* Buffer pointer entries (up to 5 pages) */
-    qtd[3] = pg_base;
+    qtd[3] = buf_phys;   /* keep pg_off: EHCI DMA start offset = low 12 bits */
     qtd[4] = (pg_off + len > 4096) ? (pg_base + 0x1000u) : 0;
     qtd[5] = (qtd[4] && (pg_off + len > 8192)) ? (pg_base + 0x2000u) : 0;
     qtd[6] = (qtd[5] && (pg_off + len > 12288)) ? (pg_base + 0x3000u) : 0;
@@ -1892,7 +1892,7 @@ static int ehci_interrupt_transfer(uint8_t dev_addr, uint8_t ep,
     }
 
     /* Buffer pointer entries (up to 5 pages) */
-    qtd[3] = pg_base;
+    qtd[3] = buf_phys;   /* keep pg_off: EHCI DMA start offset = low 12 bits */
     qtd[4] = (pg_off + len > 4096) ? (pg_base + 0x1000u) : 0;
     qtd[5] = (qtd[4] && (pg_off + len > 8192)) ? (pg_base + 0x2000u) : 0;
     qtd[6] = (qtd[5] && (pg_off + len > 12288)) ? (pg_base + 0x3000u) : 0;
