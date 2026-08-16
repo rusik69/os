@@ -162,6 +162,11 @@ static void iommu_parse_dmar(struct acpi_header *dmar_hdr) {
 
         switch (sub->type) {
         case DMAR_TYPE_DRHD: {
+            if (sub->length < sizeof(struct dmar_drhd) ||
+                pos + sizeof(struct dmar_drhd) > end) {
+                kprintf("[IOMMU] DMAR DRHD entry too short (len=%u)\n", sub->length);
+                break;
+            }
             struct dmar_drhd *drhd = (struct dmar_drhd *)pos;
             if (g_num_iommu_units >= 8) {
                 kprintf("[IOMMU] WARNING: too many IOMMU units\n");
@@ -179,6 +184,11 @@ static void iommu_parse_dmar(struct acpi_header *dmar_hdr) {
             break;
         }
         case DMAR_TYPE_RMRR: {
+            if (sub->length < sizeof(struct dmar_rmrr) ||
+                pos + sizeof(struct dmar_rmrr) > end) {
+                kprintf("[IOMMU] DMAR RMRR entry too short (len=%u)\n", sub->length);
+                break;
+            }
             struct dmar_rmrr *rmrr = (struct dmar_rmrr *)pos;
             kprintf("[IOMMU] RMRR: seg=%u, base=0x%llx, end=0x%llx\n", rmrr->segment,
                     (unsigned long long)rmrr->base_addr, (unsigned long long)rmrr->end_addr);
