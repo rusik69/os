@@ -738,6 +738,20 @@ int pci_setup_interrupts(struct pci_device *dev,
              * it the table address is truncated to 32 bits. */
             if ((((bar_val >> 1) & 0x3) == 0x2) && bir + 1 < 6)
                 phys_base |= (uint64_t)dev->bar[bir + 1] << 32;
+            /* Guard the BAR-base + table-offset addition itself: a
+             * 64-bit BAR parked in the top ~4GB of the address space
+             * would wrap here to a small table_phys, defeating the
+             * region wrap check below and mapping/writing the vector
+             * table into arbitrary low memory. */
+            if (phys_base > UINT64_MAX - msix_info.table_offset) {
+                kprintf("[PCI] %02x:%02x.%x: MSI-X table base 0x%llx "
+                        "wraps address space; falling back\n",
+                        (unsigned int)dev->bus, (unsigned int)dev->slot,
+                        (unsigned int)dev->func,
+                        (unsigned long long)phys_base);
+                pci_disable_msix(dev);
+                goto try_msi;
+            }
             uint64_t table_phys = phys_base + msix_info.table_offset;
 
             /* Allocate vectors */
