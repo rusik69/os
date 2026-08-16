@@ -209,7 +209,7 @@ static int ghes_process_source(struct ghes_source *gs)
 {
     if (!gs->enabled) return 0;
 
-    uint8_t buf[GHES_GEN_ERROR_BLOCK_SIZE];
+    uint8_t buf[GHES_GEN_ERROR_BLOCK_SIZE] = {0};
     if (ghes_read_error_block(gs, buf, sizeof(buf)) != 0)
         return 0;
 
