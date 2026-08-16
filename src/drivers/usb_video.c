@@ -1298,7 +1298,8 @@ static int parse_uvc_frame_desc(struct uvc_device *dev,
 		}
 	} else {
 		/* Discrete intervals: N × 4-byte values */
-		fr->min_interval = *(const uint32_t *)(data + 26);
+		if (length >= 30)
+			fr->min_interval = *(const uint32_t *)(data + 26);
 	}
 
 	kprintf("[usb_video] Frame %u: %ux%u max_size=%u default_int=%u\n",
@@ -1402,6 +1403,11 @@ static int uvc_desc_callback(uint8_t bDescriptorType,
 	if (bDescriptorType == USB_DT_INTERFACE) {
 		const struct usb_interface_descriptor *iface =
 			(const struct usb_interface_descriptor *)data;
+		/* Standard interface descriptor is 9 bytes.  Refuse short
+		 * descriptors before the cast so the field reads below
+		 * (up to data[7]) stay within the declared bLength. */
+		if (bLength < 9)
+			return -EINVAL;
 		ctx->current_iface = iface->bInterfaceNumber;
 		ctx->current_iface_class = iface->bInterfaceClass;
 		ctx->current_iface_subclass = iface->bInterfaceSubClass;
@@ -1489,6 +1495,11 @@ static int uvc_desc_callback(uint8_t bDescriptorType,
 	    ctx->current_iface_subclass == UVC_SUBCLASS_STREAMING) {
 		const struct usb_endpoint_descriptor *ep =
 			(const struct usb_endpoint_descriptor *)data;
+		/* Standard endpoint descriptor is 7 bytes.  Refuse short
+		 * descriptors before the cast so the field reads below
+		 * (up to data[5]) stay within the declared bLength. */
+		if (bLength < 7)
+			return -EINVAL;
 		uint8_t ep_addr = ep->bEndpointAddress;
 		uint8_t ep_attr = ep->bmAttributes;
 
