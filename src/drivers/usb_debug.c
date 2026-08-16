@@ -174,11 +174,18 @@ static void dbc_flush_output(struct dbc_device *dbc)
     trb->status = (uint32_t)g_dbc_console_pos;  /* TRB transfer length */
     trb->control = TRB_C | (TRB_TYPE_NORMAL << TRB_TYPE_SHIFT) | TRB_IOC;
 
-    /* Ring the doorbell (write to DCCP with endpoint context index) */
-    /* Endpoint context index 1 = DbC OUT endpoint */
+    /* Ring the doorbell (write to DBC doorbell with endpoint context index) */
+    /* Endpoint context index 1 = DbC OUT endpoint (xHCI spec §7.6.5) */
     dbc_write32(dbc, (uint32_t)dbc->dbc_offset + 0x10, 1);
 
-    dbc->bulk_out.enqueue_idx = (idx + 1) % DBC_TRB_RING_SIZE;
+    /*
+     * Advance the enqueue index.  The last ring slot holds the Link TRB
+     * (see dbc_init_trb_ring), so the data region must wrap one slot
+     * before the end -- indexing it with % DBC_TRB_RING_SIZE would
+     * overwrite the Link TRB on the 16th flush, after which the
+     * controller walks past the ring on the next lap.
+     */
+    dbc->bulk_out.enqueue_idx = (idx + 1) % (DBC_TRB_RING_SIZE - 1);
     g_dbc_console_pos = 0;
 
     spinlock_release(&dbc->lock);
