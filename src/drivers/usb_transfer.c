@@ -83,6 +83,36 @@ void usb_free_dma_buf(void *virt)
 /* ── Core control transfer API ────────────────────────────────────── */
 
 /*
+ * Validate a non-control endpoint address byte before it reaches the
+ * host controller.  USB 2.0 spec §9.6.6 defines the endpoint address:
+ * bits 4-6 are reserved (must be zero), bit 7 is the direction, bits
+ * 0-3 the endpoint number.  Endpoint number 0 is exclusively the
+ * control endpoint and must never be used for bulk/INT/ISO transfers.
+ *
+ * Returns 0 if valid, negative errno otherwise.
+ */
+static int usb_validate_ep_addr(uint8_t ep)
+{
+    /* Reserved bits must be zero */
+    if (ep & 0x70u)
+        return -EINVAL;
+
+    /* Endpoint 0 is the control endpoint — bulk/INT/ISO may not use it */
+    if ((ep & USB_ENDPOINT_NUMBER_MASK) == 0)
+        return -EINVAL;
+
+    return 0;
+}
+
+/* USB device addresses are 7-bit (1-127 after enumeration; 0 = default) */
+#define USB_DEV_ADDR_MAX 127
+
+static int usb_validate_dev_addr(uint8_t dev_addr)
+{
+    return (dev_addr > USB_DEV_ADDR_MAX) ? -EINVAL : 0;
+}
+
+/*
  * Build an 8-byte setup packet from its constituent fields.
  */
 static void build_setup_packet(struct usb_setup_packet *pkt,
@@ -117,6 +147,12 @@ int usb_control_msg(uint8_t dev_addr, uint8_t bmReqType,
     if (wLength > 0 && !data) {
         kprintf("[USB] control_msg: data buffer required for wLength=%u\\n",
                 (unsigned)wLength);
+        return -EINVAL;
+    }
+
+    if (usb_validate_dev_addr(dev_addr) < 0) {
+        kprintf("[USB] control_msg: invalid device address %u\n",
+                (unsigned)dev_addr);
         return -EINVAL;
     }
 
@@ -168,6 +204,14 @@ int usb_bulk_msg(uint8_t dev_addr, uint8_t ep,
         return -EINVAL;
     }
 
+    if (usb_validate_dev_addr(dev_addr) < 0 ||
+        usb_validate_ep_addr(ep) < 0 ||
+        ((ep & USB_ENDPOINT_DIR_IN) && !dir_in)) {
+        kprintf("[USB] bulk_msg: invalid addr=%u ep=0x%02x dir_in=%d\n",
+                (unsigned)dev_addr, ep, dir_in);
+        return -EINVAL;
+    }
+
     kprintf("[USB] bulk_msg: addr=%d ep=0x%02x dir=%s len=%u "
             "toggle=%d\n",
             dev_addr, ep, dir_in ? "IN" : "OUT",
@@ -209,6 +253,14 @@ int usb_int_msg(uint8_t dev_addr, uint8_t ep,
     if (len > 0 && !data) {
         kprintf("[USB] int_msg: data buffer required for len=%u\n",
                 (unsigned)len);
+        return -EINVAL;
+    }
+
+    if (usb_validate_dev_addr(dev_addr) < 0 ||
+        usb_validate_ep_addr(ep) < 0 ||
+        ((ep & USB_ENDPOINT_DIR_IN) && !dir_in)) {
+        kprintf("[USB] int_msg: invalid addr=%u ep=0x%02x dir_in=%d\n",
+                (unsigned)dev_addr, ep, dir_in);
         return -EINVAL;
     }
 
@@ -260,6 +312,13 @@ int usb_isochronous_msg(uint8_t dev_addr, uint8_t ep,
         kprintf("[USB] iso_msg: len %u exceeds max isochronous packet "
                 "size %u\n",
                 (unsigned)len, USB_ISO_MAX_PACKET);
+        return -EINVAL;
+    }
+
+    if (usb_validate_dev_addr(dev_addr) < 0 ||
+        usb_validate_ep_addr(ep) < 0) {
+        kprintf("[USB] iso_msg: invalid addr=%u ep=0x%02x\n",
+                (unsigned)dev_addr, ep);
         return -EINVAL;
     }
 
