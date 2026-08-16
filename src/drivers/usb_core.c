@@ -1254,7 +1254,11 @@ int usb_get_iad(uint8_t dev_addr, int index,
         return -ENODEV;
     }
 
-    if ((uint8_t)index >= g_core_devices[idx].num_iads) {
+    /* Compare the full int index: casting to uint8_t first would wrap
+     * index >= 256 (e.g. 260 -> 4) and could pass the bounds check while
+     * iad_table[index] below reads far out of bounds.  num_iads is
+     * uint8_t, so the promotion to int makes this comparison exact. */
+    if (index >= g_core_devices[idx].num_iads) {
         spinlock_release(&g_drivers_lock);
         return -ENOENT;
     }
