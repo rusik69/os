@@ -86,7 +86,21 @@ struct dma_buf *dma_buf_alloc(size_t size, uint32_t flags)
     if (!g_dma_buf_inited) return NULL;
     if (size == 0) return NULL;
 
+    /* Reject sizes whose page rounding would wrap uint64_t: for
+     * size > UINT64_MAX - (PAGE_SIZE - 1) the add in round_up_page()
+     * overflows and the aligned size collapses to a tiny value (or 0),
+     * returning a buffer far too small for the DMA the caller will
+     * issue into it. */
+    if (size > UINT64_MAX - (PAGE_SIZE - 1)) return NULL;
+
     size_t aligned = round_up_page(size);
+
+    /* The frame count is stored as int; reject requests that would
+     * truncate (aligned spans more than INT32_MAX pages) so
+     * num_frames stays consistent with dmabuf->size and the free
+     * loop in dma_buf_free(). */
+    if (aligned / PAGE_SIZE > (size_t)INT32_MAX) return NULL;
+
     int num_frames = (int)(aligned / PAGE_SIZE);
     if (num_frames == 0) num_frames = 1;
 
