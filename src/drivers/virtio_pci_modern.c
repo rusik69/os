@@ -783,6 +783,17 @@ int virtio_pci_modern_enable_msix(struct vpci_modern_device *vdev,
 		kprintf("[VPCI-MODERN] MSI-X table BAR is I/O space?\n");
 		return -1;
 	}
+	/* Guard the BAR-base + table-offset addition itself: a 64-bit
+	 * BAR parked in the top ~4GB of the address space would wrap
+	 * here to a small table_phys, defeating the region wrap check
+	 * below and mapping/writing the vector table into arbitrary low
+	 * memory. */
+	if (table_phys > UINT64_MAX - msix_info.table_offset) {
+		kprintf("[VPCI-MODERN] MSI-X table base 0x%llx wraps "
+		        "address space\n",
+		        (unsigned long long)table_phys);
+		return -1;
+	}
 	table_phys += msix_info.table_offset;
 
 	/* Bound the number of entries programmed: the kernel's vector
@@ -799,12 +810,30 @@ int virtio_pci_modern_enable_msix(struct vpci_modern_device *vdev,
 	 * in whatever happens to be mapped at PHYS_TO_VIRT() of the
 	 * table address (page fault, or silent corruption of adjacent
 	 * physical memory if the device's table offset/size is bogus). */
+	uint64_t table_region = (uint64_t)n * 16;
+	/* table_phys derives from device-controlled BAR/capability
+	 * values.  If the region would wrap the 64-bit address space,
+	 * the end-page arithmetic (and the += PAGE_SIZE loop increment)
+	 * wraps too, mapping every page from 0 upward — an unbounded
+	 * loop.  Refuse the table. */
+	if (table_phys > UINT64_MAX - table_region + 1) {
+		kprintf("[VPCI-MODERN] MSI-X table 0x%llx+%u wraps address "
+		        "space\n",
+		        (unsigned long long)table_phys,
+		        (unsigned int)(n * 16));
+		return -1;
+	}
 	uint64_t table_start_page = table_phys & ~(uint64_t)(PAGE_SIZE - 1);
-	uint64_t table_end = table_phys + (uint64_t)n * 16 - 1;
-	uint64_t table_end_page = table_end & ~(uint64_t)(PAGE_SIZE - 1);
+	uint64_t table_end_page =
+		(table_phys + table_region - 1) & ~(uint64_t)(PAGE_SIZE - 1);
+	uint64_t table_npages =
+		(table_end_page - table_start_page) / PAGE_SIZE + 1;
 
-	for (uint64_t page = table_start_page; page <= table_end_page;
-	     page += PAGE_SIZE) {
+	/* Iterate by page index: the last page may sit inside the final
+	 * 4 KB of the address space, where a += PAGE_SIZE loop increment
+	 * would wrap to 0 and never terminate. */
+	for (uint64_t i = 0; i < table_npages; i++) {
+		uint64_t page = table_start_page + i * PAGE_SIZE;
 		uint64_t virt = (uint64_t)PHYS_TO_VIRT(page);
 		vmm_map_page(virt, page,
 		             VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_NOCACHE);
