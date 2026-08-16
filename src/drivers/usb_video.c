@@ -650,20 +650,42 @@ static int uvc_capture_frame(struct uvc_device *dev,
 
 	*out_bytes = 0;
 
+	/* The isochronous transfer API requires a DMA-safe, permanently
+	 * mapped buffer (usb_core.h): kernel stacks live at a KASLR-shifted
+	 * VMA, not at KERNEL_VMA_OFFSET + phys, so VIRT_TO_PHYS() on a stack
+	 * address yields the wrong physical frame and the EHCI iTD would DMA
+	 * packet data into arbitrary physical memory.  Allocate one DMA-safe
+	 * page for the whole capture loop instead.
+	 */
+	uint8_t *pkt_buf = (uint8_t *)usb_alloc_dma_buf();
+	if (!pkt_buf)
+		return -ENOMEM;
+
+	const uint32_t pkt_size = USB_ISO_MAX_PACKET;
+
 	for (int i = 0; i < max_retries; i++) {
-		uint8_t pkt_buf[USB_ISO_MAX_PACKET];
-		uint32_t pkt_size = sizeof(pkt_buf);
+		/* usb_isochronous_msg() returns the requested length on
+		 * success, not the actual received byte count, so a short
+		 * device packet leaves the remainder of the buffer stale.
+		 * Zero it before every transfer so a short read cannot copy
+		 * stale bytes into the captured frame.
+		 */
+		memset(pkt_buf, 0, pkt_size);
 
 		ret = usb_isochronous_msg(dev->dev_addr, dev->iso_in_ep,
 					  pkt_buf, pkt_size, i & 0x3FF);
 		if (ret < 0)
-			return ret;
+			goto out;
 
 		/* Calculate actual payload (first 2 bytes are USB header) */
-		/* In practice, usb_isochronous_msg may strip the header */
+		/* In practice, usb_isochronous_msg may strip the header.
+		 * Note: on success the API returns the requested length, so
+		 * this is an upper bound; the copy below is clamped to both
+		 * the transfer buffer and the destination size.
+		 */
 		uint32_t payload_len = ret;
-		if (payload_len > sizeof(pkt_buf))
-			payload_len = sizeof(pkt_buf);
+		if (payload_len > pkt_size)
+			payload_len = pkt_size;
 
 		/* Copy payload to output buffer */
 		uint32_t copy_len = payload_len;
@@ -682,7 +704,8 @@ static int uvc_capture_frame(struct uvc_device *dev,
 		 */
 		if (total >= dev->max_frame_size) {
 			*out_bytes = total;
-			return 0;
+			ret = 0;
+			goto out;
 		}
 
 		/* Safety: if payload_len < expected header + data, frame
@@ -691,17 +714,23 @@ static int uvc_capture_frame(struct uvc_device *dev,
 		 */
 		if (payload_len < 4) {
 			*out_bytes = total;
-			return 0;
+			ret = 0;
+			goto out;
 		}
 	}
 
 	/* Timeout — partial frame is better than nothing */
 	if (total > 0) {
 		*out_bytes = total;
-		return 0;
+		ret = 0;
+		goto out;
 	}
 
-	return -ETIMEDOUT;
+	ret = -ETIMEDOUT;
+
+out:
+	usb_free_dma_buf(pkt_buf);
+	return ret;
 }
 
 /* ── UVC processing unit control helpers ──────────────────────────────── */
