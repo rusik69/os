@@ -188,6 +188,16 @@ static int ehci_do_transfer(uint32_t pid, uint8_t ep, void *data,
 	if (!g_op_base)
 		return -ENODEV;
 
+	/*
+	 * qTD buffer addressing is limited to 5 pages (20 KB) and the token
+	 * byte-count field is 15 bits (max 0x7FFF).  Reject larger transfers
+	 * instead of letting the controller DMA past the programmed buffer
+	 * pages into adjacent physical memory.
+	 */
+	if (len > 20480u - ((uint32_t)(uintptr_t)VIRT_TO_PHYS(data) & 0xFFFu) ||
+	    len > 0x7FFFu)
+		return -EINVAL;
+
 	struct ehci_qh  *qh  = (struct ehci_qh  *)alloc_dma(sizeof(*qh));
 	struct ehci_qtd *qtd = (struct ehci_qtd *)alloc_dma(sizeof(*qtd));
 	if (!qh || !qtd) {

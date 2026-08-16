@@ -1579,12 +1579,23 @@ static int ehci_sync_submit(uint8_t dev_addr, uint8_t ep,
     uint32_t pg_base = buf_phys & ~0xFFFu;
     uint32_t pg_off = buf_phys & 0xFFFu;
 
+    /*
+     * A qTD can address at most 5 buffer pages (20 KB) and its token
+     * byte-count field is 15 bits (max 0x7FFF).  Reject larger transfers
+     * up front: the DMA would otherwise walk past the programmed page
+     * pointers (zeros → physical address 0) and corrupt low memory.
+     */
+    if (len > 20480u - pg_off || len > 0x7FFFu) {
+        pmm_free_frame(qtd_phys);
+        return -EINVAL;
+    }
+
     /* Buffer pointer entries (up to 5 pages) */
     qtd[3] = pg_base;
     qtd[4] = (pg_off + len > 4096) ? (pg_base + 0x1000u) : 0;
     qtd[5] = (qtd[4] && (pg_off + len > 8192)) ? (pg_base + 0x2000u) : 0;
-    qtd[6] = 0;
-    qtd[7] = 0;
+    qtd[6] = (qtd[5] && (pg_off + len > 12288)) ? (pg_base + 0x3000u) : 0;
+    qtd[7] = (qtd[6] && (pg_off + len > 16384)) ? (pg_base + 0x4000u) : 0;
 
     /* Token: status + PID + CERR + length + toggle */
     uint32_t bytes_field = (len > 0) ? (len << QTD_TOKEN_BYTES_SHIFT) : 0;
@@ -1849,12 +1860,23 @@ static int ehci_interrupt_transfer(uint8_t dev_addr, uint8_t ep,
     uint32_t pg_base = buf_phys & ~0xFFFu;
     uint32_t pg_off = buf_phys & 0xFFFu;
 
+    /*
+     * A qTD can address at most 5 buffer pages (20 KB) and its token
+     * byte-count field is 15 bits (max 0x7FFF).  Reject larger transfers
+     * up front: the DMA would otherwise walk past the programmed page
+     * pointers (zeros → physical address 0) and corrupt low memory.
+     */
+    if (len > 20480u - pg_off || len > 0x7FFFu) {
+        pmm_free_frame(qtd_phys);
+        return -EINVAL;
+    }
+
     /* Buffer pointer entries (up to 5 pages) */
     qtd[3] = pg_base;
     qtd[4] = (pg_off + len > 4096) ? (pg_base + 0x1000u) : 0;
     qtd[5] = (qtd[4] && (pg_off + len > 8192)) ? (pg_base + 0x2000u) : 0;
-    qtd[6] = 0;
-    qtd[7] = 0;
+    qtd[6] = (qtd[5] && (pg_off + len > 12288)) ? (pg_base + 0x3000u) : 0;
+    qtd[7] = (qtd[6] && (pg_off + len > 16384)) ? (pg_base + 0x4000u) : 0;
 
     /* Token: status + PID + CERR + length + toggle */
     uint32_t pid = dir_in ? QTD_TOKEN_PID_INPUT : QTD_TOKEN_PID_OUTPUT;
